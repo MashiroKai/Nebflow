@@ -76,11 +76,8 @@ private[agent] object AgentFrozen:
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     for
       _ <- state.sessionId.fold(IO.unit) { sid =>
-        ctx.forkTurn(
-          (resources.sessionStore.saveMessagesForSession(sid, state.messages) *>
-            resources.sessionStore.flushIndex)
-            .handleErrorWith(e => NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}"))
-        )
+        resources.sessionStore.durableSwapMessages(sid, state.messages) *>
+          resources.sessionStore.flushIndex
       }
       _ <- IO {
         logAgentEvent(

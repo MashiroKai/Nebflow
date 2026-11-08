@@ -2,6 +2,7 @@ package nebflow.core
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.db.format.SessionEnvelope
@@ -24,6 +25,57 @@ import scala.concurrent.duration.*
  *     有帧（真实写+读回路，验收④）。
  */
 class SessionStoreThreeStateSpec extends FunSuite:
+
+  test("durable snapshot serializes behind a dirty flush that already captured older data"):
+    val home = os.temp.dir(prefix = "ss-freeze-race")
+    val store = SessionStore(home / "sessions", home / "tasks")
+    val sid = "race-session"
+    val old = List(Message(MessageRole.User, Left("old")))
+    val latest = List(Message(MessageRole.User, Left("latest")))
+    val io = for
+      captured <- cats.effect.Deferred[IO, Unit]
+      release <- cats.effect.Deferred[IO, Unit]
+      _ <- IO { store.beforeDirtyMessageWrite = _ => captured.complete(()).void *> release.get }
+      _ <- store.saveMessagesForSession(sid, old)
+      flush <- store.flushPendingMessages.start
+      _ <- captured.get
+      write <- store.durableSwapMessages(sid, latest).start
+      _ <- release.complete(())
+      _ <- flush.joinWithNever
+      _ <- write.joinWithNever
+      restored <- SessionStore(home / "sessions", home / "tasks").loadMessagesForSession(sid)
+    yield assertEquals(restored, latest)
+    io.unsafeRunSync()
+
+  test("failed durable snapshot is reported and cannot replace the previous disk image"):
+    val home = os.temp.dir(prefix = "ss-freeze-write-fail")
+    val sessions = home / "sessions"
+    val store = SessionStore(sessions, home / "tasks")
+    val blocked = sessions / "bad.json"
+    os.makeDir.all(blocked)
+    os.write(blocked / "keep", "old")
+    val result = store.durableSwapMessages("bad", List(Message(MessageRole.User, Left("new")))).attempt.unsafeRunSync()
+    assert(result.isLeft)
+    assertEquals(os.read(blocked / "keep"), "old")
+
+
+  test("failed dirty flush keeps the pending snapshot available for a later retry"):
+    val home = os.temp.dir(prefix = "ss-flush-retry")
+    val store = SessionStore(home / "sessions", home / "tasks")
+    val latest = List(Message(MessageRole.User, Left("must survive failed flush")))
+    val io = for
+      _ <- store.saveMessagesForSession("retry", latest)
+      _ <- IO { store.beforeDirtyMessageWrite = _ => IO.raiseError(new RuntimeException("simulated disk failure")) }
+      failed <- store.flushPendingMessages.attempt
+      preserved <- store.loadMessagesForSession("retry")
+      _ <- IO { store.beforeDirtyMessageWrite = _ => IO.unit }
+      _ <- store.flushPendingMessages
+      restored <- SessionStore(home / "sessions", home / "tasks").loadMessagesForSession("retry")
+    yield
+      assert(failed.isLeft)
+      assertEquals(preserved, latest)
+      assertEquals(restored, latest)
+    io.unsafeRunSync()
 
   private def corruptNames(dir: os.Path): List[String] =
     if !os.exists(dir) then Nil else os.list(dir).filter(_.last.contains(".corrupt-")).map(_.last).toList

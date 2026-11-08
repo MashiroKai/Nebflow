@@ -350,13 +350,8 @@ private[agent] object AgentProcessing:
                 )
               }.sequence_
               _ <- state.sessionId.fold(IO.unit)(sid =>
-                ctx.forkTurn(
-                  (resources.sessionStore.saveMessagesForSession(sid, updatedState.execution.messages) *>
-                    resources.sessionStore.flushIndex)
-                    .handleErrorWith(e =>
-                      NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
-                    )
-                )
+                resources.sessionStore.durableSwapMessages(sid, updatedState.execution.messages) *>
+                  resources.sessionStore.flushIndex
               )
               _ <- state.sessionId.fold(IO.unit)(sid =>
                 ctx.forkTurn(
@@ -483,13 +478,8 @@ private[agent] object AgentProcessing:
                 _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
                   // Persist the conversation before failing so the parent can
                   // resume from saved history (re-dispatch / fork on this session).
-                  ctx.forkTurn(
-                    (resources.sessionStore.saveMessagesForSession(sid, cleanedState.messages) *>
-                      resources.sessionStore.flushIndex)
-                      .handleErrorWith(e =>
-                        NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}")
-                      )
-                  )
+                  resources.sessionStore.durableSwapMessages(sid, cleanedState.messages) *>
+                    resources.sessionStore.flushIndex
                 }
                 // #25: a fatal failure must discharge the completion debt with
                 // Failed — a parked requester (supervisor/bridge waiting for the
