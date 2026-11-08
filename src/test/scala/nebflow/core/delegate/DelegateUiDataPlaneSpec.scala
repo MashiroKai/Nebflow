@@ -15,8 +15,8 @@ import nebflow.shared.{PathUtil, SubAgentTask}
  *    只上不下（single < subagent-star < agentflow）、查无记录 = Left。
  *  - **G3** `SubAgentTaskStore.findByParent` 按父整表读 + recordTask 记账点的
  *    星型惰性升级挂钩（父为 delegate 记录 ⇒ 升 subagent-star）。
- *  - **G5** rows 排队条件键纪律：未排队行 `mergeQueue` / `mergeQueuePos` **缺键**
- * （「只收非空项」同款；排队态真源 = MergeQueue 进程内队列，spec 零注入）。
+ *  - **G5** rows 条件键纪律：非命中条件键**缺键**
+ * （「只收非空项」同款；spec 零注入）。
  *  - **G6** `archive` 单旗写幂等；rows 臂在册窗/历史窗互补零重叠（零删除）。
  *  - **G4** `ChainsReadFace.delegateJson` 聚合形状（record/live/verdict/task/childrenCount）。
  *
