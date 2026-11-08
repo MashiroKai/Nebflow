@@ -100,9 +100,19 @@ object DelegateTerminal:
     sessionToolCalls: Option[Int] = None
   ): IO[Outcome] =
     val record = DelegateRegistry.find(delegateId)
-    if record.exists(r => r.worktree.isDefined || r.mode.contains(DualModeConfig.ModeMerger)) then
+    // Managed workspace rounds settle through the open-identity gate below, so
+    // this block MUST early-return: falling through would run the verdict chain
+    // over a round that has to keep its ledger workspace and live owner (the
+    // supervisor's WorkComplete leg reports the round, parks standby and settles
+    // the ledger; the chain only produces terminal Release). The gate is keyed
+    // on WorkspaceLedger ownership (dispatch registers every managed worktree)
+    // plus the merger identity; a delegate without a ledger workspace (external
+    // executor / legacy row) keeps the verdict-chain semantics.
+    val managedRound = WorkspaceLedger.default.owned(delegateId).isDefined ||
+      record.exists(r => r.mode.contains(DualModeConfig.ModeMerger))
+    if managedRound then
       val declared = record.flatMap(_.reportStatus)
-      DelegateInflightGate.check(delegateId).flatMap { inflight =>
+      return DelegateInflightGate.check(delegateId).flatMap { inflight =>
         if declared.contains(nebflow.core.tools.DelegateReportTool.StandbyValue) then
           parkStandbyOutcome(delegateId, record.flatMap(_.taskId), record.flatMap(_.reportDetail).getOrElse(""))
             .flatTap(_ =>
