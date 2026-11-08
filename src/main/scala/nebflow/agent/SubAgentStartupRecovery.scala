@@ -198,13 +198,7 @@ object SubAgentStartupRecovery:
       case Nil => settle().as(Report())
       case allOrphans =>
         // ── 会话死亡台账结算（2026-10-28 · R1 同族监督持久性面）────────────────
-        // ready-to-merge 行的分诊（旧 sweep 视野只有 running/restarting——已停靠
-        // 合并轮的行死后永远无人终态化，实证四行僵尸面板挂 进行中/待合并 1-2d）：
-        //  ① 有开放合并队列成员 = 合并轮在管（MergeQueueBootSweep 稍后对账：
-        //     已并关账 / 无可并物关账 / owner-gone 关账+任务行 failed）——**零触碰**；
-        //  ② 无成员 =「ready 前被杀连账本条目都没有」的僵尸形态（报告二 R5 后半
-        //     的行面后果）→ 本 sweep 直接落终态（recoverOne：interrupted 指纹 +
-        //     F2 幂等父通知 + registry 重启打断旗——与墓碑同族持久性面）。
+        // ready-to-merge 行（legacy 状态值）单独分诊：终态化/待恢复见 rtmSettled。
         val (rtmRows, rest1) = allOrphans.partition(_.status == "ready-to-merge")
         // 错误冻结批（2026-11-01）：冻结行单独分诊——**绝不进收殓链**（冻结不是
         // 在飞孤儿，忠实终态化 = 把作者要保留的现场判死）。有复活腿 ⇒ 与在飞孤儿
@@ -250,46 +244,28 @@ object SubAgentStartupRecovery:
                   )
               )
               .map(_.flatten)
+        // ready-to-merge 行（legacy 状态值，现行引擎不再写入）：没有合并队列可再
+        // 授予合并轮 ⇒ 全部按「重启丢失」终态化（branch/worktree 原样保留；集成走
+        // 项目 merger 的授权请求）。
         val rtmSettled: IO[List[String]] =
           if rtmRows.isEmpty then IO.pure(Nil)
           else
-            IO
-              .blocking(nebflow.core.delegate.MergeQueue.openSnapshot.map(_.delegateId).toSet)
-              .handleErrorWith(e =>
-                logger
-                  .warn(s"[startup-recovery] merge-queue snapshot read failed (treating as empty): ${e.getMessage}")
-                  .as(Set.empty[String])
+            logger
+              .warn(
+                s"[startup-recovery] ${rtmRows.size} ready-to-merge row(s) survived a restart — settling to interrupted: ${rtmRows.map(_.taskId).mkString(", ")}"
               )
-              .flatMap { queued =>
-                val (queuedRows, zombies) = rtmRows.partition(t => queued.contains(t.taskId))
-                val noteQueued =
-                  if queuedRows.isEmpty then IO.unit
-                  else
+              .as(()) *> rtmRows
+              .traverse { t =>
+                val head =
+                  s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
+                    "had reached ready-to-merge under a previous engine version; no merge round can be granted for it anymore — " +
+                    "the row is settled to interrupted (branch/worktree kept as-is; integration goes through an authorized merger request)."
+                recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources))
+                  .handleErrorWith { e =>
                     logger
-                      .info(
-                        s"[startup-recovery] ${queuedRows.size} ready-to-merge row(s) left to the merge-queue boot reconcile: ${queuedRows.map(_.taskId).mkString(", ")}"
-                      )
-                val settled: IO[List[String]] =
-                  if zombies.isEmpty then IO.pure(Nil)
-                  else
-                    logger
-                      .warn(
-                        s"[startup-recovery] ${zombies.size} ready-to-merge row(s) with NO merge-queue membership survived a restart — settling to interrupted: ${zombies.map(_.taskId).mkString(", ")}"
-                      )
-                      .as(()) *> zombies
-                      .traverse { t =>
-                        val head =
-                          s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
-                            "had reached ready-to-merge but NO merge-queue membership survived the restart — " +
-                            "the merge round can never run; the row is settled to interrupted (branch/worktree kept as-is)."
-                        recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources))
-                          .handleErrorWith { e =>
-                            logger
-                              .warn(s"[startup-recovery] rtm settle failed for ${t.taskId}: ${e.getMessage}")
-                              .as(t.taskId)
-                          }
-                      }
-                noteQueued *> settled
+                      .warn(s"[startup-recovery] rtm settle failed for ${t.taskId}: ${e.getMessage}")
+                      .as(t.taskId)
+                  }
               }
         def salvageAll(tasks: List[SubAgentTask]): IO[List[String]] =
           if tasks.isEmpty then IO.pure(Nil)
@@ -325,29 +301,9 @@ object SubAgentStartupRecovery:
                   )
                   .as(t.taskId)
               )
-        // 手动模式下的 ready-to-merge 分诊：有合并队列成员的行零触碰（合并轮对账
-        // 照旧）；无成员的僵尸不收殓（那是判死+通知）→ 标 pending-recovery 待手动恢复。
-        def rtmManual(): IO[List[String]] =
-          if rtmRows.isEmpty then IO.pure(Nil)
-          else
-            IO
-              .blocking(nebflow.core.delegate.MergeQueue.openSnapshot.map(_.delegateId).toSet)
-              .handleErrorWith(e =>
-                logger
-                  .warn(s"[startup-recovery] merge-queue snapshot read failed (treating as empty): ${e.getMessage}")
-                  .as(Set.empty[String])
-              )
-              .flatMap { queued =>
-                val (queuedRows, zombies) = rtmRows.partition(t => queued.contains(t.taskId))
-                val noteQueued =
-                  if queuedRows.isEmpty then IO.unit
-                  else
-                    logger
-                      .info(
-                        s"[startup-recovery] ${queuedRows.size} ready-to-merge row(s) left to the merge-queue boot reconcile: ${queuedRows.map(_.taskId).mkString(", ")}"
-                      )
-                noteQueued *> markPending(zombies)
-              }
+        // 手动模式下的 ready-to-merge 行：不收殓（那是判死+通知）→ 标
+        // pending-recovery 待手动恢复。
+        def rtmManual(): IO[List[String]] = markPending(rtmRows)
         frozenNote *> (
           if manual then
             rtmManual().flatMap { pendedRtm =>
@@ -420,11 +376,8 @@ object SubAgentStartupRecovery:
 
   /**
    * 在飞任务全量（running/restarting/ready-to-merge/frozen；单遍 findAllTasks 后过滤——boot 一次性）。
-   * [合并融合] 标记腿与 #692 收宽同向：本 helper 服务 boot sweep（一次性全量），
-   * 运行期视野走 watchdogSweep 的 findRunningTasks（已加宽 running∨restarting）。
-   * [会话死亡台账结算 2026-10-28] ready-to-merge 收入视野——旧视野只有
-   * running/restarting，停靠合并轮的行死后永远无人终态化（四行僵尸实证）；
-   * sweep 内按「有无开放合并队列成员」分诊（见 sweep 注）。
+   * ready-to-merge = legacy 状态值（现行引擎不再写入）；旧盘残留行收入视野，sweep
+   * 内统一终态化或标待恢复（见 sweep 注）。
    * [中断恢复批 2026-11-04] `includeRestartLost`：failed ∧ 重启指纹行进复活视野
    * （任务②）；仅复活腿开启时收（legacy / kill-switch off = 逐字节回本批前现状，
    * failed 行不进任何处置面）。
@@ -498,8 +451,7 @@ object SubAgentStartupRecovery:
    * ——在飞视野只有 running/restarting/ready-to-merge/frozen，completed 行永远轮不到
    * 任何人收敛，父会话静默不知道结果已到。
    *
-   * 机械判据（盘上可求值，与验收台架 README §3 同口径——刻意**不用**「分支已合并」，
-   * 那需要 git 上下文且会与 MergeQueueBootSweep 的分诊抢判）：
+   * 机械判据（盘上可求值，与验收台架 README §3 同口径）：
    * {{{
    *   任务行 status == "completed" ∧ source != "subtask"
    *   ∧ registry.workReport 非空          （工作轮终稿在盘 = 活真干完了）

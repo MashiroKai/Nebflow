@@ -71,10 +71,12 @@ private[gateway] object PresenceRoutes:
   private val jevTestGate = new ProviderModelProbe.Gate
   private val imagegenTestGate = new ImageGenProbe.Gate
 
-  /** Shared probe shell for POST /provider/test（fourfix 批 ②件起为存储配置腿
-    * 与表单覆写腿两条共用）：单飞闸 → 一次最小真实调用 → 脱敏判决。
-    * `sanitizePool` 覆盖一切可能被厂家错误回显的 key 材料（覆写腿的表单 key +
-    * stored key；探测本体已对其入参 key 先做一轮）。 */
+  /**
+   * Shared probe shell for POST /provider/test（fourfix 批 ②件起为存储配置腿
+   * 与表单覆写腿两条共用）：单飞闸 → 一次最小真实调用 → 脱敏判决。
+   * `sanitizePool` 覆盖一切可能被厂家错误回显的 key 材料（覆写腿的表单 key +
+   * stored key；探测本体已对其入参 key 先做一轮）。
+   */
   private def runProviderTest(
     protocol: LlmProtocol,
     baseUrl: String,
@@ -88,21 +90,23 @@ private[gateway] object PresenceRoutes:
       val verdict = IO.blocking(
         ProviderModelProbe.call(protocol, baseUrl, apiKey, model)
       )
-      verdict.flatMap {
-        case ProviderModelProbe.Verdict.Ok(latency, reply) =>
-          val reply2 = sanitizePool.foldLeft(reply)((acc, k) => ProviderModelProbe.sanitize(acc, k))
-          Ok(
-            Json.obj(
-              "ok" -> true.asJson,
-              "latencyMs" -> latency.asJson,
-              "reply" -> reply2.asJson
+      verdict
+        .flatMap {
+          case ProviderModelProbe.Verdict.Ok(latency, reply) =>
+            val reply2 = sanitizePool.foldLeft(reply)((acc, k) => ProviderModelProbe.sanitize(acc, k))
+            Ok(
+              Json.obj(
+                "ok" -> true.asJson,
+                "latencyMs" -> latency.asJson,
+                "reply" -> reply2.asJson
+              )
             )
-          )
-        case ProviderModelProbe.Verdict.Failed(detail) =>
-          // 可诊断错误文本（服务侧脱敏后）——面板红 ✗ + 详情位的显示面。
-          val detail2 = sanitizePool.foldLeft(detail)((acc, k) => ProviderModelProbe.sanitize(acc, k))
-          Ok(Json.obj("ok" -> false.asJson, "error" -> detail2.asJson))
-      }.guarantee(IO.blocking(modelTestGate.release()))
+          case ProviderModelProbe.Verdict.Failed(detail) =>
+            // 可诊断错误文本（服务侧脱敏后）——面板红 ✗ + 详情位的显示面。
+            val detail2 = sanitizePool.foldLeft(detail)((acc, k) => ProviderModelProbe.sanitize(acc, k))
+            Ok(Json.obj("ok" -> false.asJson, "error" -> detail2.asJson))
+        }
+        .guarantee(IO.blocking(modelTestGate.release()))
 
   // ── 远端尾拉单飞缓存（输出查看补全批 2026-10-25）────────────────────────
   //
@@ -118,7 +122,13 @@ private[gateway] object PresenceRoutes:
   private def putRemoteTailCache(jobId: String, nowMs: Long, body: Json): IO[Unit] =
     remoteTailCache.update(m => m.updated(jobId, (nowMs, body)))
 
-  private def unavailableRemoteTail(jobId: String, deviceName: String, outputPath: String, reason: String, reasonKind: String): Json =
+  private def unavailableRemoteTail(
+    jobId: String,
+    deviceName: String,
+    outputPath: String,
+    reason: String,
+    reasonKind: String
+  ): Json =
     Json.obj(
       "taskId" -> jobId.asJson,
       "status" -> "running".asJson,
@@ -140,7 +150,10 @@ private[gateway] object PresenceRoutes:
    *     合法对端（nebflow 引擎互联，[[nebflow.neblink.relay.NeblinkPresenceService]]
    *     监听器）对服务端 ping 必回 pong ⇒ 健康连接入站帧间隔 ≤ tick，永不误杀。
    */
-  def PresenceWsLiveness(tick: FiniteDuration = 10.seconds, deadAfter: FiniteDuration = 30.seconds): WsZombieGuard.Liveness =
+  def PresenceWsLiveness(
+    tick: FiniteDuration = 10.seconds,
+    deadAfter: FiniteDuration = 30.seconds
+  ): WsZombieGuard.Liveness =
     WsZombieGuard.Liveness(tick, deadAfter)
 
   /**
@@ -660,77 +673,6 @@ private[gateway] object PresenceRoutes:
             )
         }
 
-      // GET /api/merge-queue — 合并队列**状态面**（台账 #896 交通引导员制
-      // 2026-10-26 的账本面板口；只读诊断口）。真源 = MergeQueue 持久账本
-      // （`<dataRoot>/merge-ledger.json` + 进程内投影；与 queueViewOf/NodeList
-      // mergeQueuePos 键同源——引擎闸本体）。每 project 一组：entries = 开放成员
-      // （waiting / turn-granted，位次按开放成员 FIFO 序）+ recent = 最近关账成员
-      // （merged / owner-gone / failed，处置可见——绝不静默消失）。owner-gone /
-      // failed 成员 =「需 dispatcher 处置」的面板呈现面。
-      case req @ GET -> Root / "merge-queue" =>
-        withAuth(req) {
-          IO.blocking(nebflow.core.delegate.MergeQueue.snapshot).flatMap { all =>
-            val reasons = IO.blocking(
-              nebflow.core.delegate.MergeQueue.lastReasons(all.map(_.delegateId).toSet)
-            ).handleErrorWith(_ => IO.pure(Map.empty[String, String]))
-            reasons.flatMap { reasonBy =>
-              val M = nebflow.core.delegate.MergeQueue
-              import M.State
-              val queues = all
-                .groupBy(_.projectKey)
-                .toList
-                .map { (projectKey, ms) =>
-                  val sorted = ms.sortBy(m => (m.readyAt, m.delegateId))
-                  val open = sorted.filter(_.open)
-                  val holder = open.find(_.state == State.TurnGranted).map(_.delegateId)
-                  val recent = sorted.filterNot(_.open).takeRight(20)
-                  Json.obj(
-                    "projectKey" -> projectKey.asJson,
-                    "holder" -> holder.asJson,
-                    "entries" -> open
-                      .map { m =>
-                        val pos = open.indexWhere(_.delegateId == m.delegateId) + 1
-                        Json.obj(
-                          "delegateId" -> m.delegateId.asJson,
-                          "description" -> m.description.asJson,
-                          "branch" -> m.branch.asJson,
-                          "baseBranch" -> m.baseBranch.asJson,
-                          "baseWs" -> m.baseWs.asJson,
-                          "taskId" -> m.taskId.asJson,
-                          "parentSessionId" -> m.parentSessionId.asJson,
-                          "position" -> pos.asJson,
-                          "total" -> open.size.asJson,
-                          "holder" -> holder.asJson,
-                          "state" -> m.state.asJson,
-                          "grantedAt" -> m.grantedAt.asJson,
-                          "grantedBaseTip" -> m.grantedBaseTip.asJson,
-                          "readyAt" -> m.readyAt.asJson,
-                          "lastBlockReason" -> m.lastBlockReason.asJson,
-                          "lastEventReason" -> reasonBy.getOrElse(m.delegateId, "").asJson
-                        )
-                      }
-                      .asJson,
-                    "recent" -> recent
-                      .map { m =>
-                        Json.obj(
-                          "delegateId" -> m.delegateId.asJson,
-                          "description" -> m.description.asJson,
-                          "branch" -> m.branch.asJson,
-                          "baseBranch" -> m.baseBranch.asJson,
-                          "state" -> m.state.asJson,
-                          "closedAt" -> m.closedAt.asJson,
-                          "closeReason" -> m.closeReason.asJson
-                        )
-                      }
-                      .asJson
-                  )
-                }
-                .asJson
-              Ok(Json.obj("generatedAt" -> System.currentTimeMillis().asJson, "queues" -> queues))
-            }
-          }
-        }
-
       // ===== Flow Editor APIs =====
 
       // GET /bg-tasks/:jobId/output?offset=N — background task output view
@@ -815,8 +757,15 @@ private[gateway] object PresenceRoutes:
                 case None =>
                   nebflow.core.tools.RemoteExecutor.current match
                     case None =>
-                      Ok(unavailableRemoteTail(jobId, t.deviceName, t.outputPath,
-                        "remote executor not initialized (NebLink disabled?)", "noExecutor"))
+                      Ok(
+                        unavailableRemoteTail(
+                          jobId,
+                          t.deviceName,
+                          t.outputPath,
+                          "remote executor not initialized (NebLink disabled?)",
+                          "noExecutor"
+                        )
+                      )
                     case Some(re) =>
                       re.readBgLogTail(t.deviceName, t.outputPath).flatMap {
                         case Right(text) =>
@@ -826,7 +775,10 @@ private[gateway] object PresenceRoutes:
                             "available" -> true.asJson,
                             "output" -> text.asJson,
                             "tailBytes" -> text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong.asJson,
-                            "truncated" -> (text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong >= nebflow.core.tools.RemoteBgOutputLog.TailMaxBytes).asJson,
+                            "truncated" -> (text
+                              .getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                              .length
+                              .toLong >= nebflow.core.tools.RemoteBgOutputLog.TailMaxBytes).asJson,
                             "deviceName" -> t.deviceName.asJson,
                             "outputPath" -> t.outputPath.asJson
                           )
@@ -874,8 +826,7 @@ private[gateway] object PresenceRoutes:
             case Some(deps) =>
               req.as[Json].flatMap { body =>
                 val taskId = body.hcursor.downField("taskId").as[String].getOrElse("").trim
-                if taskId.isEmpty then
-                  BadRequest(Json.obj("error" -> "missing taskId".asJson))
+                if taskId.isEmpty then BadRequest(Json.obj("error" -> "missing taskId".asJson))
                 else
                   nebflow.agent.ManualRevival.restoreOne(deps, sharedResources.subAgentTaskStore, taskId).flatMap {
                     case Right(()) => Ok(Json.obj("ok" -> true.asJson, "taskId" -> taskId.asJson))
@@ -908,7 +859,7 @@ private[gateway] object PresenceRoutes:
 
       // GET /delegates — delegate 列表读面（delegate 视图重设计实施批 2026-10-21 ·
       // 引擎 UI 最小集）：行投影与 /api/chains 同源同语义（rowsJson 单点——live/
-      // verdict/taskStatus/mergeQueue/mergeQueuePos + G1 merging taskStatus 覆写），
+      // verdict/taskStatus），
       // 加宽两面：`?project=` 列表过滤参数（G4 最小臂，精确匹配挂载项目名）＋ 行内
       // `topology` 子过程拓扑载荷（G5 批量面：children = 星扇全集（SubAgentTaskStore
       // .findByParent 注入）、steps = agentflow 链节点紧凑形）。`?archived=1` 历史
@@ -927,7 +878,14 @@ private[gateway] object PresenceRoutes:
               .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
               .flatMap { case (taskRows, statuses) =>
                 ChainsReadFace
-                  .delegatesJson(reg, archived, statuses, project, sharedResources.subAgentTaskStore.findByParent, taskRows)
+                  .delegatesJson(
+                    reg,
+                    archived,
+                    statuses,
+                    project,
+                    sharedResources.subAgentTaskStore.findByParent,
+                    taskRows
+                  )
                   .flatMap(body => HttpCache.conditionalOk(req, body, HttpCache.ofJson(body)))
               }
           }
@@ -984,7 +942,9 @@ private[gateway] object PresenceRoutes:
               case None => NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
               case Some(_) =>
                 sharedResources.subAgentTaskStore.findByParent(id).flatMap { children =>
-                  Ok(Json.obj("delegateId" -> id.asJson, "count" -> children.size.asJson, "children" -> children.asJson))
+                  Ok(
+                    Json.obj("delegateId" -> id.asJson, "count" -> children.size.asJson, "children" -> children.asJson)
+                  )
                 }
             }
         }
@@ -993,15 +953,21 @@ private[gateway] object PresenceRoutes:
       case req @ GET -> Root / "session-children" / id =>
         withAuth(req) {
           if !nebflow.core.delegate.DelegateRegistry.validId(id) ||
-              !(id.startsWith("node-") || id.startsWith("dispatcher-")) then
-            BadRequest(Json.obj("error" -> "invalid session id".asJson))
+            !(id.startsWith("node-") || id.startsWith("dispatcher-"))
+          then BadRequest(Json.obj("error" -> "invalid session id".asJson))
           else
             sharedResources.subAgentTaskStore.findByParent(id).flatMap { children =>
               val projected = children.map { c =>
-                Json.obj("taskId" -> c.taskId.asJson, "parentSessionId" -> c.parentSessionId.asJson,
-                  "agentName" -> c.agentName.asJson, "status" -> c.status.asJson,
-                  "source" -> c.source.asJson, "spawnedAt" -> c.spawnedAt.asJson,
-                  "completedAt" -> c.completedAt.asJson, "retryCount" -> c.retryCount.asJson)
+                Json.obj(
+                  "taskId" -> c.taskId.asJson,
+                  "parentSessionId" -> c.parentSessionId.asJson,
+                  "agentName" -> c.agentName.asJson,
+                  "status" -> c.status.asJson,
+                  "source" -> c.source.asJson,
+                  "spawnedAt" -> c.spawnedAt.asJson,
+                  "completedAt" -> c.completedAt.asJson,
+                  "retryCount" -> c.retryCount.asJson
+                )
               }
               Ok(Json.obj("children" -> projected.asJson))
             }
@@ -1151,11 +1117,12 @@ private[gateway] object PresenceRoutes:
               // **虚拟模型槽**（nebflow.core.ModelRoles——只有 model sidecar、不是完整
               // agent 实体），EntityLoader 查无此人是正常态 ⇒ 槽名跳过存在性闸，
               // 直接进解析面（own chain 现读 + follow 语义与实体 agent 完全一致）。
-              exists <- if nebflow.core.ModelRoles.isVirtualSlot(slotName) then IO.pure(true)
-                        else EntityLoader.findAgentByName(slotName).map(_.isDefined)
+              exists <-
+                if nebflow.core.ModelRoles.isVirtualSlot(slotName) then IO.pure(true)
+                else EntityLoader.findAgentByName(slotName).map(_.isDefined)
               result <-
                 if !exists then NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-                else {
+                else
                   val policy = nebflow.core.SchemePolicy
                   val own = policy.ownChainOf(slotName).filter(policy.hasChain)
                   val (effective, resolvedFrom) = policy.resolveModel(slotName, own)
@@ -1182,19 +1149,17 @@ private[gateway] object PresenceRoutes:
                         "resolvedFrom" -> resolvedFrom.asJson,
                         "current" -> current.asJson,
                         "settable" -> policy.isSettable(agentName).asJson,
-                        "scheduleRestricted" -> scheduleRestricted
-                          .collect { case (ref, windows, active) if windows.nonEmpty =>
+                        "scheduleRestricted" -> scheduleRestricted.collect {
+                          case (ref, windows, active) if windows.nonEmpty =>
                             Json.obj(
                               "ref" -> ref.asJson,
                               "windows" -> windows.asJson,
                               "active" -> active.asJson
                             )
-                          }
-                          .asJson
+                        }.asJson
                       )
                     )
                   yield body)
-                }
             yield result
         }
 
@@ -1296,50 +1261,53 @@ private[gateway] object PresenceRoutes:
                             // fallback 废除批：链成员资格 = preferred 一根（fallbacks
                             // 不再进请求链，驻留 pin 对着死数据判断成员会误清/误留）。
                             val chainRefs = effective.preferred.toList.toSet
-                            sharedResources.sessionModelOverrides.modify { overrides =>
-                              val (keep, drop) =
-                                overrides.partition((_, c) => chainRefs.contains(s"${c.providerId}/${c.model}"))
-                              (keep, drop.keys.toList)
-                            }.flatMap { droppedIds =>
-                              val persistedLeg =
-                                if sessionStore == null then IO.unit
-                                else droppedIds.traverse_(id => sessionStore.updateSessionModel(id, None))
-                              // config-single-source batch (2026-11-05): the Nebula
-                              // primary chain IS the global chain, and its single
-                              // source is `llm.fallback` in the config file. Mirror the
-                              // write there so the panel edit is visible/editable in
-                              // `stand.json` and the engine (which reads the file
-                              // first) never serves a stale order. Failure is loud but
-                              // non-fatal for the sidecar write that already landed.
-                              val configLeg =
-                                if slotName != nebflow.core.SchemePolicy.NebulaName then IO.unit
-                                else
-                                  // fallback 废除批：镜像进 llm.fallback 的链只带 preferred
-                                  // （该段已退役为「全局默认模型」面，fallbacks 不再被读——
-                                  // 不再往盘上写死数据）。
-                                  nebflow.service.ConfigService
-                                    .setFallbackChain(own.map(c => c.copy(fallbacks = Nil)))
-                                    .attempt.flatMap {
-                                    case Right(_) => IO.unit
-                                    case Left(e) =>
-                                      IO.delay(
-                                        nebflow.shared.NebflowLogger
-                                          .forName("nebflow.config.fallback")
-                                          .warnSync(
-                                            s"[fallback-chain] mirroring the Nebula chain into llm.fallback failed: ${e.getMessage}"
+                            sharedResources.sessionModelOverrides
+                              .modify { overrides =>
+                                val (keep, drop) =
+                                  overrides.partition((_, c) => chainRefs.contains(s"${c.providerId}/${c.model}"))
+                                (keep, drop.keys.toList)
+                              }
+                              .flatMap { droppedIds =>
+                                val persistedLeg =
+                                  if sessionStore == null then IO.unit
+                                  else droppedIds.traverse_(id => sessionStore.updateSessionModel(id, None))
+                                // config-single-source batch (2026-11-05): the Nebula
+                                // primary chain IS the global chain, and its single
+                                // source is `llm.fallback` in the config file. Mirror the
+                                // write there so the panel edit is visible/editable in
+                                // `stand.json` and the engine (which reads the file
+                                // first) never serves a stale order. Failure is loud but
+                                // non-fatal for the sidecar write that already landed.
+                                val configLeg =
+                                  if slotName != nebflow.core.SchemePolicy.NebulaName then IO.unit
+                                  else
+                                    // fallback 废除批：镜像进 llm.fallback 的链只带 preferred
+                                    // （该段已退役为「全局默认模型」面，fallbacks 不再被读——
+                                    // 不再往盘上写死数据）。
+                                    nebflow.service.ConfigService
+                                      .setFallbackChain(own.map(c => c.copy(fallbacks = Nil)))
+                                      .attempt
+                                      .flatMap {
+                                        case Right(_) => IO.unit
+                                        case Left(e) =>
+                                          IO.delay(
+                                            nebflow.shared.NebflowLogger
+                                              .forName("nebflow.config.fallback")
+                                              .warnSync(
+                                                s"[fallback-chain] mirroring the Nebula chain into llm.fallback failed: ${e.getMessage}"
+                                              )
                                           )
-                                      )
-                                  }
-                              configLeg *> persistedLeg *> Ok(
-                                Json.obj(
-                                  "updated" -> true.asJson,
-                                  "mode" -> mode.asJson,
-                                  "chain" -> own.asJson,
-                                  "effectiveChain" -> effective.asJson,
-                                  "resolvedFrom" -> resolvedFrom.asJson
+                                      }
+                                configLeg *> persistedLeg *> Ok(
+                                  Json.obj(
+                                    "updated" -> true.asJson,
+                                    "mode" -> mode.asJson,
+                                    "chain" -> own.asJson,
+                                    "effectiveChain" -> effective.asJson,
+                                    "resolvedFrom" -> resolvedFrom.asJson
+                                  )
                                 )
-                              )
-                            }
+                              }
                           case false =>
                             InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
                         }
@@ -1349,6 +1317,7 @@ private[gateway] object PresenceRoutes:
                   end for
               end match
             }
+          end if
         }
 
       // PUT /agents/:name/model — SUPERSEDED by the chain-face arm above.
@@ -1467,7 +1436,8 @@ private[gateway] object PresenceRoutes:
                 case None => NotFound(Json.obj("error" -> "no custom avatar".asJson))
                 case Some(sha) =>
                   Ok(
-                    Json.obj("sha256" -> sha.asJson, "updatedAt" -> rec.updatedAt.asJson)
+                    Json
+                      .obj("sha256" -> sha.asJson, "updatedAt" -> rec.updatedAt.asJson)
                       .deepMerge(Json.obj("displayName" -> rec.displayName.asJson))
                   )
             }
@@ -1583,6 +1553,7 @@ private[gateway] object PresenceRoutes:
                     known += Json.fromJsonObject(withPin)
                   case UnknownSource(reason) =>
                     unknown += Json.obj("name" -> p.name.asJson, "reason" -> reason.asJson)
+                end match
               }
               Json.obj("sources" -> known.result().asJson, "unknownSources" -> unknown.result().asJson)
             }.flatMap(Ok(_))
@@ -2233,11 +2204,10 @@ private[gateway] object PresenceRoutes:
                   case (None, Some(p)) =>
                     if !p.models.exists(_.id == model) then
                       NotFound(Json.obj("error" -> s"provider '$name' has no model '$model'".asJson))
-                    else
-                      runProviderTest(p.protocol, p.baseUrl, p.apiKey, model, List(p.apiKey))
+                    else runProviderTest(p.protocol, p.baseUrl, p.apiKey, model, List(p.apiKey))
                   case (Some(base), _) =>
                     // 覆写腿（provider 配置页测试未保存表单值）：协议缺省 openai
-                    //（编辑弹窗协议下拉的通用兜底同源）；stored key 并入脱敏池。
+                    // （编辑弹窗协议下拉的通用兜底同源）；stored key 并入脱敏池。
                     val proto = protocolDecoded.toOption.flatten.getOrElse(LlmProtocol.OpenAI)
                     val key = apiKeyOv.getOrElse(stored.map(_.apiKey).getOrElse(""))
                     runProviderTest(proto, base, key, model, List(key) ++ stored.map(_.apiKey).toList)
@@ -2281,7 +2251,10 @@ private[gateway] object PresenceRoutes:
                     if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
                     else DecisionProvider.DefaultTypesafeEndpoint
                   )
-                val model = entry.flatMap(_.model).map(_.trim).filter(_.nonEmpty)
+                val model = entry
+                  .flatMap(_.model)
+                  .map(_.trim)
+                  .filter(_.nonEmpty)
                   .orElse(stored.flatMap(_.model))
                   .getOrElse(DecisionProvider.DefaultModel)
                 val keyRef = keyRefOv
@@ -2290,12 +2263,14 @@ private[gateway] object PresenceRoutes:
                 if !jevTestGate.tryAcquire() then
                   Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
                 else
-                  IO.blocking(JevProbe.callWithToken(provider, endpoint, model, apiKeyOv, keyRef)).flatMap {
-                    case JevProbe.Verdict.Ok(latency, reply) =>
-                      Ok(Json.obj("ok" -> true.asJson, "latencyMs" -> latency.asJson, "reply" -> reply.asJson))
-                    case JevProbe.Verdict.Failed(detail) =>
-                      Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
-                  }.guarantee(IO.blocking(jevTestGate.release()))
+                  IO.blocking(JevProbe.callWithToken(provider, endpoint, model, apiKeyOv, keyRef))
+                    .flatMap {
+                      case JevProbe.Verdict.Ok(latency, reply) =>
+                        Ok(Json.obj("ok" -> true.asJson, "latencyMs" -> latency.asJson, "reply" -> reply.asJson))
+                      case JevProbe.Verdict.Failed(detail) =>
+                        Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
+                    }
+                    .guarantee(IO.blocking(jevTestGate.release()))
               }
             end if
           }
@@ -2310,8 +2285,7 @@ private[gateway] object PresenceRoutes:
       // 产物除外。
       case req @ POST -> Root / "imagegen" / "test" =>
         withAuth(req) {
-          if !ImageGenSeal.CompiledIn then
-            NotFound(Json.obj("error" -> "imagegen face is not compiled in".asJson))
+          if !ImageGenSeal.CompiledIn then NotFound(Json.obj("error" -> "imagegen face is not compiled in".asJson))
           else
             req.as[Json].flatMap { body =>
               val name = body.hcursor.downField("provider").as[String].toOption.map(_.trim).getOrElse("")
@@ -2341,28 +2315,32 @@ private[gateway] object PresenceRoutes:
                               if generate then ImageGenProbe.generateCall(adapter, baseUrl, model, token)
                               else ImageGenProbe.lightCall(adapter, baseUrl, token)
                             )
-                            verdict.flatMap {
-                              case ImageGenProbe.Verdict.Ok(latency, absent) =>
-                                val base = Json.obj(
-                                  "ok" -> true.asJson,
-                                  "mode" -> "probe".asJson,
-                                  "latencyMs" -> latency.asJson
-                                )
-                                Ok(absent.fold(base)(c => base.deepMerge(Json.obj("modelsFaceAbsent" -> c.asJson))))
-                              case ImageGenProbe.Verdict.Generated(latency, bytes, ext, path, dataUrl) =>
-                                val base = Json.obj(
-                                  "ok" -> true.asJson,
-                                  "mode" -> "generate".asJson,
-                                  "latencyMs" -> latency.asJson,
-                                  "bytes" -> bytes.asJson,
-                                  "format" -> ext.asJson,
-                                  "tempPath" -> path.asJson
-                                )
-                                Ok(dataUrl.fold(base)(u => base.deepMerge(Json.obj("thumbnail" -> u.asJson))))
-                              case ImageGenProbe.Verdict.Failed(detail) =>
-                                Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
-                            }.guarantee(IO.blocking(imagegenTestGate.release()))
+                            verdict
+                              .flatMap {
+                                case ImageGenProbe.Verdict.Ok(latency, absent) =>
+                                  val base = Json.obj(
+                                    "ok" -> true.asJson,
+                                    "mode" -> "probe".asJson,
+                                    "latencyMs" -> latency.asJson
+                                  )
+                                  Ok(absent.fold(base)(c => base.deepMerge(Json.obj("modelsFaceAbsent" -> c.asJson))))
+                                case ImageGenProbe.Verdict.Generated(latency, bytes, ext, path, dataUrl) =>
+                                  val base = Json.obj(
+                                    "ok" -> true.asJson,
+                                    "mode" -> "generate".asJson,
+                                    "latencyMs" -> latency.asJson,
+                                    "bytes" -> bytes.asJson,
+                                    "format" -> ext.asJson,
+                                    "tempPath" -> path.asJson
+                                  )
+                                  Ok(dataUrl.fold(base)(u => base.deepMerge(Json.obj("thumbnail" -> u.asJson))))
+                                case ImageGenProbe.Verdict.Failed(detail) =>
+                                  Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
+                              }
+                              .guarantee(IO.blocking(imagegenTestGate.release()))
+                      end match
                     }
+              end match
             }
         }
 

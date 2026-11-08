@@ -21,16 +21,13 @@ import nebflow.shared.{Defaults, NebflowLogger}
  *     异常 / 配额取消）——同一会话（同 id、同历史、同 worktree）就地停住，
  *     **不判 failed、不 respawn、不重试**；唤醒才是续跑（作者：「冻结即停，
  *     唤醒才是重试」）；
- *   - `merge`（`ready-to-merge` 停靠 / [[MergeQueue]]）= 工作相完成、等合并轮
- *     窗口——`Waiting` 语义，与本件正交（冻结批在合并队列里的处置见
- *     [[requeueMergeMember]]）。
  *
  * == 冻结保留什么（落盘、跨重启仍在）==
  *   ① 会话完整历史（SessionStore transcript——错误路径已 persist 后才冻结）；
  *   ② 工作区/worktree 引用与未提交改动（`DelegateRegistry.Record` 的
  *      cwd/worktree/branch/baseBranch；worktree 目录原样不动）；
  *   ③ 任务台账条目（`SubAgentTaskStore` 行 status=`frozen`——不进 boot 收殓视野）；
- *   ④ 已合并进度指针（[[MergeQueue]] 成员资格保留，不 owner-gone）；
+ *   ④ 工作分支与 workspace 锚原样（worktree 注册不动）；
  *   ⑤ 失败原因与最后一次错误上下文（registry `frozenReason/frozenDetail`，含
  *      provider/model 串——来自错误消息原文）。
  *
@@ -46,7 +43,7 @@ import nebflow.shared.{Defaults, NebflowLogger}
  *   - 不 live（进程重启后）：同 id 复活（`DelegateRevival` 的冻结腿，transcript
  *     checkpoint 续跑，**不新建会话**）；
  *   - 唤醒后 registry 冻结槽清空（[[DelegateRegistry.clearFrozen]]）、任务行翻
- *     running、合并队列重排（[[onWoken]]）。
+ *     running（[[onWoken]]）。
  *
  * == 兜底（不许无声堆积）==
  * [[staleDormant]] 纯函数 + [[dormantSweep]]：长期无人唤醒 ⇒ 面板提示
@@ -56,7 +53,7 @@ import nebflow.shared.{Defaults, NebflowLogger}
  *
  * == 分层 ==
  * 本件 ∈ core.delegate：只用 `AgentRuntimePort`（registry / taskStore）、
- * core 内单例（[[MergeQueue]] / [[ChainStore]] / [[DelegateRegistry]]）与
+ * core 内单例（[[ChainStore]] / [[DelegateRegistry]]）与
  * `shared.Defaults`——不 import agent 层。agent 侧的冻结腿（监督者）与唤醒腿
  * （同 id 复活）在 agent 层调用本件的公开面。
  */
@@ -91,6 +88,8 @@ object DelegateFreeze:
 
     /** 配额/预算类取消（额度耗尽触发的 cancel）。 */
     case CancelledByQuota
+
+  end Reason
 
   /** 全部原因（枚举序；重放面识别回执原因用——Scala 3 `enum` 无反射式 `values`）。 */
   val All: List[Reason] =
@@ -299,22 +298,6 @@ object DelegateFreeze:
   end park
 
   /**
-   * 冻结期合并队列处置（任务书「合并队列里批次冻结时的处置明确规则」）：
-   * 已持窗（turn-granted）成员 ⇒ [[MergeQueue.requeueForLane]]（退回 waiting，
-   * **保留 FIFO 位**＋ lastBlockReason 标冻结原因）；未持窗的在队成员零动作
-   * （成员资格天然保留，`careTick` 因冻结不判 owner-gone——见该处豁免）。
-   * fail-soft：队列面故障只 WARN（冻结本身不受影响）。
-   */
-  def requeueMergeMember(delegateId: String, detail: String): Unit =
-    try
-      val held =
-        MergeQueue.snapshot.exists(m => m.delegateId == delegateId && m.state == MergeQueue.State.TurnGranted)
-      if held then MergeQueue.requeueForLane(delegateId, s"delegate frozen: ${compactDetail(detail, 180)}")
-    catch
-      case e: Throwable =>
-        logger.warn(s"[delegate-freeze] merge-queue handling failed for $delegateId: ${e.getMessage}")
-
-  /**
    * 唤醒后收口（Mail 唤醒 / 面板唤醒 / 同 id 复活三腿共用）：清冻结槽 + 审计行 +
    * 合并队列重排（道净后本成员自动重排，无留队僵尸）+ **状态变更帧**。fail-soft。
    *
@@ -404,12 +387,7 @@ object DelegateFreeze:
             )
           }
       }
-      _ <- IO
-        .blocking(MergeQueue.careTick())
-        .handleErrorWith(e =>
-          logger.warn(s"[delegate-freeze] merge-queue re-pump failed after wake of $delegateId: ${e.getMessage}")
-        )
-      _ <- logger.info(s"[delegate-freeze] $delegateId woken via $via (frozen slot cleared, merge lane re-pumped)")
+      _ <- logger.info(s"[delegate-freeze] $delegateId woken via $via (frozen slot cleared)")
     yield ()
 
   /**

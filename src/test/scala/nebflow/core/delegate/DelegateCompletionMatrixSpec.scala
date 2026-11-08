@@ -31,20 +31,19 @@ class DelegateCompletionMatrixSpec extends CatsEffectSuite:
       "作者 18:14：只有 idle×complete 才有 system reminder"
     )
     assertEquals(decide(SessionState.Standby), NotifyDecision.QueueSilently, "🔴 已经报了 stand by，还通知什么——零注入零唤醒")
-    assertEquals(decide(SessionState.Merge), NotifyDecision.QueueSilently, "等合并停靠：零注入零唤醒")
     assertEquals(decide(SessionState.Finish), NotifyDecision.ReportToParent, "finish 结果照常回报主 agent，不额外 reminder")
   }
 
   test(
-    "matrix totality: all four states map (idle/standby/merge/finish), standby==merge==QueueSilently, finish is the only ReportToParent"
+    "matrix totality: all three states map (idle/standby/finish), finish is the only ReportToParent"
   ) {
     import DelegateCompletionMatrix.*
-    val all: List[SessionState] = List(SessionState.Idle, SessionState.Standby, SessionState.Merge, SessionState.Finish)
-    assertEquals(all.map(decide).size, 4, "四行齐全（无缺行）")
+    val all: List[SessionState] = List(SessionState.Idle, SessionState.Standby, SessionState.Finish)
+    assertEquals(all.map(decide).size, 3, "三行齐全（无缺行）")
     assertEquals(
       all.map(decide).distinct.toSet,
       Set[NotifyDecision](NotifyDecision.InjectReminder, NotifyDecision.QueueSilently, NotifyDecision.ReportToParent),
-      "决策面恰三值（standby 与 merge 同为静默）"
+      "决策面恰三值"
     )
     assertEquals(
       all.count(decide(_) == NotifyDecision.InjectReminder),

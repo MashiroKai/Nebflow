@@ -282,8 +282,8 @@ object BuiltinAgents:
    *    正文」的错配源头；面板只读展示现经 [[panelPromptFaces]] 双面投影，
    *    delegate 面默认页签 + node 面第二页签，标注与正文逐面对齐。）
    *  - **delegate 面** = [[NebflowDelegatePrompt]]：delegate 语义独立成稿——
-   *    executor/dispatcher/manager 三角色、分工面、delegate_report 三态申报纪律
-   *    （finish/merge/blocked + MergeQueue 合并轮）；**模型可见面零 node_report
+   *    executor/dispatcher/manager 三角色、分工面、delegate_report 申报纪律
+   *    （finish/standby）；**模型可见面零 node_report
    *    指令**。解析路径 = [[delegateEntry]]（DelegateTool.spawnKernel 新鲜派发 +
    *    MailTool 续聊复活腿——delegate spawn 的唯二读点）。
    * 二者是两个常量 + 两条解析路径，机械可分；判据门 =
@@ -305,7 +305,7 @@ object BuiltinAgents:
   /**
    * delegate 面系统提示词（来源拆分批 2026-10-08，见 [[NebflowNodePrompt]] 头注）：
    * **独立成稿**，只承载 delegate 语义——三角色（executor/dispatcher/manager）、
-   * 分工面、delegate_report 三态申报（finish/merge/blocked + MergeQueue 合并轮）、
+   * 分工面、delegate_report 申报（finish/standby）、
    * delegate 实际工具面（BaseTools + Subagent/AgentFlow/ChainWrite + Node 三件
    * 作用域面 + Mail + delegate_report；🔴 无 node_report、无 TaskBoard、无 Delegate
    * 派发件——那三件不在此会话身份的工具面上）。**模型可见面零 node_report 指令**
@@ -315,9 +315,8 @@ object BuiltinAgents:
 // 🔴 上两串常量 = 提示词来源拆分批（2026-10-08 作者令）的两个独立来源——
 // 节点面（NebflowNodePrompt）/ delegate 面（NebflowDelegatePrompt），一模板双面
 // 引用的旧形态（单一 NebflowPrompt）已拆。delegate 面模型可见文本零 node_report。
-// 「Merge discipline (hard)」行 = worktree-judge-fifo 批 #1224 增补 §3.3 改写
-// （R7 原拟「不得自行安排合并」→「未收合并 reminder 不得自行合并；收到即自执行」），
-// 本批随 delegate 面逐字迁入；§16 待过目（模型可见文案，成稿归 N3 提示词批）。
+// 「Integration discipline (hard)」行钉死：delegate 永不自并——落地 = 项目 merger
+// 的授权请求。§16 待过目（模型可见文案，成稿归 N3 提示词批）。
 // 注记用 Scala 注释而非 HTML 注释：种子契约（NodeSeedOutputContractSpec）要求
 // 代码级 prompt 零 HTML 注释。
 

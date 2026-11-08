@@ -22,7 +22,7 @@ import scala.io.Source
  * 外加「不许刷屏」：同来源同状态的重复注入必须折叠（键与策略见
  * [[nebflow.core.InjectionChannel.dedupKey]]）。
  *
- * 改前必红锚：改前 `visibleExternalEventSource` 对 merge-queue / bg-lifecycle /
+ * 改前必红锚：改前 `visibleExternalEventSource` 对 bg-lifecycle /
  * waiting-dock-care / chain-orphan / team 恒 None ⇒ 这些外部事件**只有**
  * `<system-reminder>` 进 LLM 上下文、前端零气泡（= 作者「我又被触发了但看不到」）。
  */
@@ -62,9 +62,9 @@ class ExternalInjectionChannelSpec extends FunSuite:
 
   // ── 判据 ②：可见性判据必须**覆盖**外部事件全集（改前红）────────────────
 
-  test("① 所有外部事件来源都得到可见气泡标签（改前：merge-queue/bg-lifecycle/waiting-dock-care/chain-orphan/team 恒 None）"):
+  test("① 所有外部事件来源都得到可见气泡标签（改前：bg-lifecycle/waiting-dock-care/chain-orphan/team 恒 None）"):
     val mustBeVisible = List(
-      "merge-queue" -> "failed",
+      "bg-lifecycle" -> "failed",
       "bg-lifecycle" -> "nudge",
       "waiting-dock-care" -> "failed",
       "chain-orphan" -> "chain-orphaned",
@@ -84,7 +84,7 @@ class ExternalInjectionChannelSpec extends FunSuite:
   test("② 来源标签口径：delegate-frozen / background 保留专属标签，其余取原 source（前端逐值可登记）"):
     assertEquals(AgentActor.visibleExternalEventSource("delegate", "frozen"), Some("delegate-frozen"))
     assertEquals(AgentActor.visibleExternalEventSource("background-task", "completed"), Some("background"))
-    assertEquals(AgentActor.visibleExternalEventSource("merge-queue", "failed"), Some("merge-queue"))
+    assertEquals(AgentActor.visibleExternalEventSource("bg-lifecycle", "failed"), Some("bg-lifecycle"))
     assertEquals(AgentActor.visibleExternalEventSource("bg-lifecycle", "nudge"), Some("bg-lifecycle"))
     // API 注入源由调用方提供（用户域），恒可见。
     assertEquals(AgentActor.visibleExternalEventSource("custom-source", "inject"), Some("custom-source"))
@@ -104,8 +104,8 @@ class ExternalInjectionChannelSpec extends FunSuite:
       val send: InjectionChannel.Send = j =>
         IO { frames.incrementAndGet(); lastFrame = Some(j) }
 
-      val body = "[merge-queue] delegate 'x' membership closed as OWNER-GONE: done"
-      val out = InjectionChannel.deliver(store, send, Sid, row(body, "merge-queue"), dedup = true).unsafeRunSync()
+      val body = "[bg-lifecycle] background job 'x' has been idle for a while: nudge"
+      val out = InjectionChannel.deliver(store, send, Sid, row(body, "bg-lifecycle"), dedup = true).unsafeRunSync()
 
       assertEquals(out, InjectionChannel.Outcome.Emitted)
       assertEquals(frames.get(), 1, "每次投递必须且只能广播一帧")
@@ -113,11 +113,11 @@ class ExternalInjectionChannelSpec extends FunSuite:
       assertEquals(rows.size, 1, "每次投递必须且只能落一条注入行")
       val stored = rows.head.asInstanceOf[UiMessage.User]
       assertEquals(stored.injected, true, "判据 ①：气泡行必须是注入行")
-      assertEquals(stored.source, Some("merge-queue"), "判据 ②：行必须带来源标识")
+      assertEquals(stored.source, Some("bg-lifecycle"), "判据 ②：行必须带来源标识")
       assertEquals(stored.text, body, "判据 ③：落盘正文必须与注入内容逐字一致")
       val frame = lastFrame.getOrElse(fail("没有广播帧"))
       assertEquals(frame.hcursor.get[String]("text").toOption, Some(body), "判据 ③：帧正文逐字一致")
-      assertEquals(frame.hcursor.get[String]("source").toOption, Some("merge-queue"), "判据 ②：帧带来源")
+      assertEquals(frame.hcursor.get[String]("source").toOption, Some("bg-lifecycle"), "判据 ②：帧带来源")
       assertEquals(frame.hcursor.get[Boolean]("injected").toOption, Some(true))
       assertEquals(frame.hcursor.get[String]("sessionId").toOption, Some(Sid))
     }
@@ -148,13 +148,13 @@ class ExternalInjectionChannelSpec extends FunSuite:
       InjectionChannel.resetForTest()
       val frames = new AtomicInteger(0)
       val send: InjectionChannel.Send = _ => IO(frames.incrementAndGet())
-      val first = "[merge-queue] member 'a' blocked: base workspace busy"
-      val changed = "[merge-queue] member 'a' blocked: granted to another delegate"
+      val first = "[bg-lifecycle] member 'a' blocked: base workspace busy"
+      val changed = "[bg-lifecycle] member 'a' blocked: granted to another delegate"
 
-      val o1 = InjectionChannel.deliver(store, send, Sid, row(first, "merge-queue"), dedup = true).unsafeRunSync()
-      val o2 = InjectionChannel.deliver(store, send, Sid, row(first, "merge-queue"), dedup = true).unsafeRunSync()
-      val o3 = InjectionChannel.deliver(store, send, Sid, row(first, "merge-queue"), dedup = true).unsafeRunSync()
-      val o4 = InjectionChannel.deliver(store, send, Sid, row(changed, "merge-queue"), dedup = true).unsafeRunSync()
+      val o1 = InjectionChannel.deliver(store, send, Sid, row(first, "bg-lifecycle"), dedup = true).unsafeRunSync()
+      val o2 = InjectionChannel.deliver(store, send, Sid, row(first, "bg-lifecycle"), dedup = true).unsafeRunSync()
+      val o3 = InjectionChannel.deliver(store, send, Sid, row(first, "bg-lifecycle"), dedup = true).unsafeRunSync()
+      val o4 = InjectionChannel.deliver(store, send, Sid, row(changed, "bg-lifecycle"), dedup = true).unsafeRunSync()
 
       assertEquals(o1, InjectionChannel.Outcome.Emitted)
       assertEquals(o2, InjectionChannel.Outcome.Collapsed)
@@ -169,16 +169,16 @@ class ExternalInjectionChannelSpec extends FunSuite:
   test("⑦ 去重键含来源与发送方：不同来源/不同成员的同文不互相吞"):
     val same = "identical body"
     assertNotEquals(
-      InjectionChannel.dedupKey(Sid, row(same, "merge-queue", "failed", Some("delegate-a"))),
-      InjectionChannel.dedupKey(Sid, row(same, "bg-lifecycle", "failed", Some("delegate-a")))
+      InjectionChannel.dedupKey(Sid, row(same, "bg-lifecycle", "failed", Some("delegate-a"))),
+      InjectionChannel.dedupKey(Sid, row(same, "bg-lifecycle", "failed", Some("delegate-b")))
     )
     assertNotEquals(
-      InjectionChannel.dedupKey(Sid, row(same, "merge-queue", "failed", Some("delegate-a"))),
-      InjectionChannel.dedupKey(Sid, row(same, "merge-queue", "failed", Some("delegate-b")))
+      InjectionChannel.dedupKey(Sid, row(same, "bg-lifecycle", "failed", Some("delegate-a"))),
+      InjectionChannel.dedupKey(Sid, row(same, "team", "failed", Some("delegate-a")))
     )
     assertEquals(
-      InjectionChannel.dedupKey(Sid, row(same, "merge-queue")),
-      InjectionChannel.dedupKey(Sid, row(same, "merge-queue")),
+      InjectionChannel.dedupKey(Sid, row(same, "bg-lifecycle")),
+      InjectionChannel.dedupKey(Sid, row(same, "bg-lifecycle")),
       "同一行必须给同一把键（否则永远折叠不到）"
     )
 
@@ -192,7 +192,7 @@ class ExternalInjectionChannelSpec extends FunSuite:
         val send: InjectionChannel.Send = _ => IO(frames.incrementAndGet())
         val body = "same notice"
         val outs = (1 to 3)
-          .map(_ => InjectionChannel.deliver(store, send, Sid, row(body, "merge-queue"), dedup = true).unsafeRunSync())
+          .map(_ => InjectionChannel.deliver(store, send, Sid, row(body, "bg-lifecycle"), dedup = true).unsafeRunSync())
           .toList
         assertEquals(outs, List.fill(3)(InjectionChannel.Outcome.Emitted))
         assertEquals(frames.get(), 3)

@@ -24,9 +24,10 @@ import java.util.concurrent.atomic.AtomicReference
  * 零模型调用），判否的「只读座位」概念随之作废。
  *
  * 本件只剩一个判定时机（终态两态判词 [[Face.judgeTerminal]]）：delegate 终态后
- * 判 completed(+注记) / ready-to-merge（原文 Batch 4 终态 judge；输入 = 任务书＋
- * 结果＋git status 摘要＋delegate_report 自申报；#566：blocked 判词退役——判官的
- * 「没做成」折 completed＋注记，不是状态）。
+ * 判 completed(+注记)（原文 Batch 4 终态 judge；输入 = 任务书＋结果＋git status
+ * 摘要＋delegate_report 自申报；blocked 判词已退役——判官的「没做成」折
+ * completed＋注记，不是状态）。集成面 = 项目 merger 的授权请求，不再是 delegate
+ * 的判词类别。
  *
  * 失败语义（fail-open，JevAllocator 同款裁定：派发与终态绝不因判定机阻塞）：
  * `IO[Option[_]]`——`None` = 判定机不可用/失败，调用方走回落（终态腿 =
@@ -35,36 +36,33 @@ import java.util.concurrent.atomic.AtomicReference
 object DelegateJudge:
 
   /**
-   * 终态判词（#566 修复批 2026-10-19 · 作者令：delegate 面退役 blocked 状态——
+   * 终态判词（#566 修复批 · 作者令：delegate 面退役 blocked 状态——
    * 「delegate 是不应该有 blocked 型状态的，直接上报就行了，blocked 是给
    * agentflow 用的」）。
    *
-   * 原文 Batch 4 三态（completed / blocked(+原因) / ready-to-merge）改为两态＋注记：
-   * 判官的「没找到合并 / 任务没做成」之类**只是报告注记，不是状态**——delegate
-   * 到点交报告就是 completed（注记随判词行 reason 通道与交付尾注走）；failed 保留
-   * 给真失败（引擎 failed 终态腿，不经本枚举）。
+   * 原文 Batch 4 三态（completed / blocked(+原因) / ready-to-merge）收敛为
+   * completed＋注记：判官的「没找到合并 / 任务没做成」之类**只是报告注记，不是
+   * 状态**——delegate 到点交报告就是 completed（注记随判词行 reason 通道与交付尾注
+   * 走）；failed 保留给真失败（引擎 failed 终态腿，不经本枚举）；ready-to-merge
+   * 类别随合并队列机制移除（集成 = 项目 merger 的授权请求）。
    */
   enum Verdict:
-    /** 任务完成、无可合并产物（或合并已完成后）——报 Nebula（既有链）。 */
+    /** 任务完成——报 Nebula（既有链）。 */
     case Completed
 
     /**
      * completed 判词的**注记形**（原 blocked 判词的唯一残留通道）：wire 仍编
-     * `completed`（无独立状态），note = 判官/预检/漂移闸/验收闸的注记文本，
+     * `completed`（无独立状态），note = 判官/预检/漂移闸的注记文本，
      * 随判词行 reason 与交付尾注走。引擎控制流与裸 Completed 同面（Release）。
      */
     case CompletedNote(note: String)
 
-    /** 工作分支上有可合并产物——入 MergeQueue（FIFO 按完成时间），合并轮终态再判。 */
-    case ReadyToMerge
-
     /**
-     * completed 形判词判定（裸 Completed 与注记形都算——机械验收闸等「completed
+     * completed 形判词判定（裸 Completed 与注记形都算——「completed
      *  形态全过闸」的判据单点）。
      */
     def isCompletedShaped: Boolean = this match
       case Completed | CompletedNote(_) => true
-      case _ => false
   end Verdict
 
   /** 判定机对一次终态 judge 的全部输入。 */
@@ -77,12 +75,10 @@ object DelegateJudge:
     /** git status 摘要（[[nebflow.core.GitWorktrees.statusDigest]]；非 git 工作区 = ""）。 */
     gitDigest: String,
     /**
-     * delegate_report 自申报（status, detail）——值域 finish | merge；blocked 为
-     *  退役前旧申报（#566 起映射 completed＋注记，不再产生独立状态）。
+     * delegate_report 自申报（status, detail）——值域 finish | standby；`merge` /
+     * `blocked` 为退役前旧申报（映射 completed＋注记，不再产生独立状态）。
      */
     selfReport: Option[(String, String)],
-    /** true = 该 delegate 已在合并轮（MergeQueue 已注入过合并 reminder）。 */
-    mergeRound: Boolean,
     /**
      * N1 刀2 ⑸（候裁采纳项）：**在飞链计数**——该 delegate 自己作用域图内
      * 「存在非终态成员」的链数（fail-soft 缺席 = 0）。供判定机区分「工作全部
@@ -93,7 +89,7 @@ object DelegateJudge:
      * 四修②（2026-10-07 修复令）：**全会话工具调用计数**（Completed 事件携
      * 带的全会话消息面现算，BackoffSupervisor 传入）。`None` = 调用方未计数
      * （外部执行器腿 / 直接调用——确定性预检跳过，既有语义）；`Some(0)` 且
-     * resultText 空/空烧 stub ⇒ 终态确定性预检直接判 blocked（不依赖 LLM 判）。
+     * resultText 空/空烧 stub ⇒ 终态确定性预检直接判未完成（不依赖 LLM 判）。
      */
     sessionToolCalls: Option[Int] = None
   )
@@ -135,6 +131,7 @@ object DelegateJudge:
      */
     val Blocked: String = "blocked"
 
+    /** 退役 wire 词（合并队列机制）：引擎**永不写出**；保留仅供旧盘判词行解析容错。 */
     val ReadyToMerge: String = "ready-to-merge"
 
     /**
@@ -150,7 +147,6 @@ object DelegateJudge:
     def encode(v: Verdict): String = v match
       case Verdict.Completed => Completed
       case Verdict.CompletedNote(_) => Completed // 注记形无独立 wire 词（注记走 reason）
-      case Verdict.ReadyToMerge => ReadyToMerge
   end VerdictWire
 
   /** 判定行 payload 的承重键（ChainStore `terminal-verdict` 行 / spec 共用）。 */

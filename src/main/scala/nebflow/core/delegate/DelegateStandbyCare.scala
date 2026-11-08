@@ -26,8 +26,8 @@ import scala.concurrent.duration.*
  * == 职责与红线 ==
  *   - 只**提醒**，零 wall-clock 判死：提醒穷尽 ⇒ 回纯事件驱动（Mail 随时唤醒，
  *     「无超时」红线照旧——空等会话绝不因超时被终态化）；
- *   - 注入形态 = `<system-reminder>` 的 UserInput（MergeQueue.notifyTurn 同款通道：
- *     replyTo=supervisor，唤醒轮的 Completed 仍回监督者矩阵）；
+ *   - 注入形态 = `<system-reminder>` 的 UserInput（replyTo=supervisor，唤醒轮的
+ *     Completed 仍回监督者矩阵）；
  *   - 自取消判据（每次到点注入前复验，fail-soft）：记录在册未归档 ∧ 活体在册 ∧
  *     **会话未处于申报待命**（`standbySince` 置位即静默——Mail 唤醒清槽 / 会话终态
  *     同样自断了断）；外加本 caretaker 的槽仍是当前槽（槽被撤 ⇒ 静默退出）。

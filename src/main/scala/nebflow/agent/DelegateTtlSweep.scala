@@ -13,8 +13,8 @@ import nebflow.shared.NebflowLogger
  * 判读单源 = [[nebflow.core.delegate.DelegateTerminalTtl]]（终态锚解析 + 三态 +
  * 7 天边界全在那边）；本对象只做**动作编排**（每条 registry 记录）：
  *
- *  1. **在飞守卫（红线）**：活体 actor 在册（agentRegistry）∨ 开放合并队列成员
- *     （MergeQueue）⇒ 零触碰（在飞会话绝不清理；待合并 = 合并机在管）；
+ *  1. **在飞守卫（红线）**：活体 actor 在册（agentRegistry）⇒ 零触碰（在飞会话
+ *     绝不清理；开放 workspace 的属主座位照常保留）；
  *  2. **到期判读**：`DelegateTerminalTtl.verdict` —— 保存态（standby/frozen）以
  *     停靠时刻为终态锚（作者 20:36 新规：保存态待手动恢复同属终态计时，7 天后
  *     一并清理，保存态不能无限堆积）；任务行终态以 completedAt 为锚；owner-gone
@@ -40,21 +40,22 @@ object DelegateTtlSweep:
   private val logger = NebflowLogger.forName("nebflow.agent.delegate-ttl-sweep")
 
   final case class Report(
-      /** 到期条目（进了清理面的 id，按处理序）。 */
-      expired: List[String] = Nil,
-      /** worktree 已回收的 delegate id。 */
-      worktreesRemoved: List[String] = Nil,
-      /** worktree 保留的 delegate id（git 拒绝 = 脏树/未领先提交在场）。 */
-      worktreesKept: List[String] = Nil,
-      /** 任务行已剪行的 delegate id。 */
-      taskRowsPruned: List[String] = Nil,
-      /** 登记条目已移除的 delegate id。 */
-      recordsRemoved: List[String] = Nil,
-      /** 在飞守卫放行的 delegate id（零触碰）。 */
-      inFlightKept: List[String] = Nil,
-      /** 到期但清理链部分失败保留现场的 delegate id（fail-soft 留痕）。 */
-      keptOnError: List[(String, String)] = Nil
+    /** 到期条目（进了清理面的 id，按处理序）。 */
+    expired: List[String] = Nil,
+    /** worktree 已回收的 delegate id。 */
+    worktreesRemoved: List[String] = Nil,
+    /** worktree 保留的 delegate id（git 拒绝 = 脏树/未领先提交在场）。 */
+    worktreesKept: List[String] = Nil,
+    /** 任务行已剪行的 delegate id。 */
+    taskRowsPruned: List[String] = Nil,
+    /** 登记条目已移除的 delegate id。 */
+    recordsRemoved: List[String] = Nil,
+    /** 在飞守卫放行的 delegate id（零触碰）。 */
+    inFlightKept: List[String] = Nil,
+    /** 到期但清理链部分失败保留现场的 delegate id（fail-soft 留痕）。 */
+    keptOnError: List[(String, String)] = Nil
   ):
+
     def hasWork: Boolean =
       expired.nonEmpty || inFlightKept.nonEmpty || keptOnError.nonEmpty
 
@@ -62,6 +63,8 @@ object DelegateTtlSweep:
       s"expired=${expired.size} worktreesRemoved=${worktreesRemoved.size} worktreesKept=${worktreesKept.size} " +
         s"taskRowsPruned=${taskRowsPruned.size} recordsRemoved=${recordsRemoved.size} " +
         s"inFlightKept=${inFlightKept.size} keptOnError=${keptOnError.size}"
+
+  end Report
 
   /** boot 清理入口（GatewayMain 装配链；失败只 WARN 绝不阻塞启动）。 */
   def run(resources: SharedResources): IO[Report] =
@@ -71,13 +74,6 @@ object DelegateTtlSweep:
         logger.warn(s"[delegate-ttl] task-row scan failed: ${e.getMessage}").as(Nil)
       }
       rowsById = rows.map(t => t.taskId -> t).toMap
-      queued <- IO
-        .blocking(nebflow.core.delegate.MergeQueue.openSnapshot.map(_.delegateId).toSet)
-        .handleErrorWith { e =>
-          logger
-            .warn(s"[delegate-ttl] merge-queue snapshot read failed (treating as empty): ${e.getMessage}")
-            .as(Set.empty[String])
-        }
       live <- resources.agentRegistry.get.map(_.keySet).handleErrorWith { e =>
         logger
           .warn(s"[delegate-ttl] live-session read failed (treating as empty): ${e.getMessage}")
@@ -88,20 +84,19 @@ object DelegateTtlSweep:
         .handleErrorWith(e => logger.warn(s"[delegate-ttl] registry read failed: ${e.getMessage}").as(Nil))
       ref <- Ref.of[IO, Report](Report())
       _ <- records.traverse_ { rec =>
-        // ① 在飞守卫（红线）：活体 actor ∨ 开放合并队列成员 ⇒ 零触碰。
-        if live.contains(rec.id) || queued.contains(rec.id) then
-          ref.update(r => r.copy(inFlightKept = r.inFlightKept :+ rec.id))
+        // ① 在飞守卫（红线）：活体 actor ⇒ 零触碰。
+        if live.contains(rec.id) then ref.update(r => r.copy(inFlightKept = r.inFlightKept :+ rec.id))
         else
           // ② 到期判读（单源）。
           nebflow.core.delegate.DelegateTerminalTtl.verdict(rec, rowsById.get(rec.id), now) match
-            case nebflow.core.delegate.DelegateTerminalTtl.InFlight      => IO.unit
-            case _: nebflow.core.delegate.DelegateTerminalTtl.WithinTtl  => IO.unit
+            case nebflow.core.delegate.DelegateTerminalTtl.InFlight => IO.unit
+            case _: nebflow.core.delegate.DelegateTerminalTtl.WithinTtl => IO.unit
             case expired: nebflow.core.delegate.DelegateTerminalTtl.Expired =>
               // ③ 清理动作（worktree 回收 → 任务行剪行 → 登记移除；fail-soft）。
               for
                 wtRemoved <-
                   nebflow.core.delegate.PostMergeCleanup
-                    .run(Some(rec), allowLiveOwner = false, expiredTerminal = true)
+                    .run(Some(rec))
                     .handleError(_ => false)
                 _ <-
                   rowsById.get(rec.id).traverse_ { t =>
@@ -119,12 +114,9 @@ object DelegateTtlSweep:
                 _ <- ref.update { r =>
                   r.copy(
                     expired = r.expired :+ rec.id,
-                    worktreesRemoved =
-                      if wtRemoved then r.worktreesRemoved :+ rec.id else r.worktreesRemoved,
-                    worktreesKept =
-                      if !wtRemoved then r.worktreesKept :+ rec.id else r.worktreesKept,
-                    taskRowsPruned =
-                      if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
+                    worktreesRemoved = if wtRemoved then r.worktreesRemoved :+ rec.id else r.worktreesRemoved,
+                    worktreesKept = if !wtRemoved then r.worktreesKept :+ rec.id else r.worktreesKept,
+                    taskRowsPruned = if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
                     recordsRemoved = if rm.isRight then r.recordsRemoved :+ rec.id else r.recordsRemoved,
                     keptOnError = rm.fold(err => r.keptOnError :+ (rec.id -> err.getMessage), _ => r.keptOnError)
                   )

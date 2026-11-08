@@ -45,15 +45,13 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    MergeQueue.reset()
     nebflow.ForceRemove.removeAll(tempRoot / "chains")
     nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
 
-  override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
-
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -62,10 +60,12 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
 
   /** 判定机在场的证明件：被问即炸——待命裁决必须零 LLM 消耗。 */
   private class ExplodingJudge extends DelegateJudge.DelegateJudgePort.Face:
+
     def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
       IO.raiseError(new RuntimeException("judge must NOT be consulted on a standby turn"))
 
   private class CompletedJudge extends DelegateJudge.DelegateJudgePort.Face:
+
     def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
       IO.pure(Some(DelegateJudge.Verdict.Completed))
 
@@ -104,6 +104,8 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
     }
     dir
 
+  end mkRealRepo
+
   private def noopRefs(system: ActorSystem): IO[(ActorRef[AgentCommand], ActorRef[AgentEvent])] =
     for
       child <- system.spawn(
@@ -134,7 +136,9 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
       e.payload.hcursor.get[String]("delegateId").toOption.filter(_ == delegateId).map(_ => e.payload)
     }
 
-  test("① self-declared standby (with a real receipt as the final text — the live-incident form) ⇒ Outcome.Standby, no verdict, dock parked, zero LLM") {
+  test(
+    "① self-declared standby (with a real receipt as the final text — the live-incident form) ⇒ Outcome.Standby, no verdict, dock parked, zero LLM"
+  ) {
     val system = ActorSystem(s"dt-sb-1-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -180,7 +184,9 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
     end try
   }
 
-  test("② anti-degradation gate: standby declared BUT the branch carries unmerged deliverable commits (real repo, ahead>0) ⇒ NOT honored — the verdict chain runs and the merge obligation settles") {
+  test(
+    "② anti-degradation gate: standby declared BUT the branch carries unmerged deliverable commits (real repo, ahead>0) ⇒ NOT honored — the verdict chain runs and the merge obligation settles"
+  ) {
     val system = ActorSystem(s"dt-sb-2-${scala.util.Random.nextInt(100000)}")
     val repo = mkRealRepo(tempRoot / "repo-sb2", "delegate/delegate-sb-blocked", ahead = 2)
     try
@@ -224,7 +230,9 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
     end try
   }
 
-  test("③ wake semantics (matrix): after a parked standby, clearStandby (the Mail wake point) resets both slots ⇒ the woken turn with NO new report is REMINDED (NudgeIdle), and a finish declaration is judged normally") {
+  test(
+    "③ wake semantics (matrix): after a parked standby, clearStandby (the Mail wake point) resets both slots ⇒ the woken turn with NO new report is REMINDED (NudgeIdle), and a finish declaration is judged normally"
+  ) {
     val system = ActorSystem(s"dt-sb-3-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -234,8 +242,15 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
         _ = seedRecord("delegate-sb-wake", Some("93"), tempRoot, branch = None)
         _ = DelegateRegistry.updateReport("delegate-sb-wake", "standby", "等 Mail", "")
         parked <- DelegateTerminal.onCompleted(
-          res, "delegate-sb-wake", "nebula-root", "t", "brief",
-          resultText = "待命回执", child, sup, sessionToolCalls = Some(1)
+          res,
+          "delegate-sb-wake",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = "待命回执",
+          child,
+          sup,
+          sessionToolCalls = Some(1)
         )
         _ = assert(parked.isInstanceOf[DelegateTerminal.Outcome.Standby])
         // ── Mail 唤醒（deliverToDelegate live 腿的执行点）──
@@ -243,16 +258,30 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
         cleared = DelegateRegistry.find("delegate-sb-wake")
         // 唤醒轮：无新申报、有真实产出 → 矩阵未申报腿（提醒，绝不静默判完成）。
         wokenNoReport <- DelegateTerminal.onCompleted(
-          res, "delegate-sb-wake", "nebula-root", "t", "brief",
-          resultText = "按 Mail 指示干完了活，交付如下……", child, sup, sessionToolCalls = Some(4)
+          res,
+          "delegate-sb-wake",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = "按 Mail 指示干完了活，交付如下……",
+          child,
+          sup,
+          sessionToolCalls = Some(4)
         )
         // 唤醒轮补报 finish → 正常终判（矩阵唯一终判组合；ExplodingJudge 会让咨询
         // 炸——先卸载端口模拟判定机缺席，自申报背书 completed）。
         _ = DelegateJudge.DelegateJudgePort.clear()
         _ = DelegateRegistry.updateReport("delegate-sb-wake", "finish", "干完了", "")
         wokenFinish <- DelegateTerminal.onCompleted(
-          res, "delegate-sb-wake", "nebula-root", "t", "brief",
-          resultText = "干完了", child, sup, sessionToolCalls = Some(2)
+          res,
+          "delegate-sb-wake",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = "干完了",
+          child,
+          sup,
+          sessionToolCalls = Some(2)
         )
         rec = DelegateRegistry.find("delegate-sb-wake")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
@@ -274,7 +303,9 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
     end try
   }
 
-  test("④ a fresh finish report after a parked standby supersedes it: updateReport clears standbySince (new declaration wins)") {
+  test(
+    "④ a fresh finish report after a parked standby supersedes it: updateReport clears standbySince (new declaration wins)"
+  ) {
     val id = "delegate-sb-supersede"
     seedRecord(id, Some("94"), tempRoot, branch = None)
     DelegateRegistry.updateReport(id, "standby", "等 Mail", "")

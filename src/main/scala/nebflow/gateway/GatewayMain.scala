@@ -1135,12 +1135,11 @@ object GatewayMain extends IOApp:
                                   // 随交通引导员制退役——互踩与重复合并轮的根因）。
                                   // 排在 startupMount/projectBootWake 之后；无开放成员 =
                                   // 零动作；失败只 WARN 绝不阻塞启动。
-                                  val mergeQueueBootSweep: IO[Unit] = IO.unit // Legacy merge recovery is retired.
                                   // 消息身份牌（msgtokens 批 2026-10-31）：启动对账——扫描
                                   // sessions/*/msg-tokens.jsonl 全量载入内存索引（重启后铸牌
                                   // 序号续走、派发引牌即解，无需等首次铸牌触发的惰性装载），
-                                  // 已删会话的映射文件清除（孤儿不收容）。排在 mergeQueueBootSweep
-                                  // 邻位；无映射文件 = 零动作；失败只 WARN 绝不阻塞启动。
+                                  // 已删会话的映射文件清除（孤儿不收容）。boot 对账邻位；
+                                  // 无映射文件 = 零动作；失败只 WARN 绝不阻塞启动。
                                   val msgTokensBootReconcile: IO[Unit] =
                                     nebflow.core.msgtokens.MsgTokenRegistry.global.reconcileAll().attempt.flatMap {
                                       case Right(r) => logger.info(s"Msg-token boot reconcile: ${r.summary}").void
@@ -1279,7 +1278,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -2524,7 +2523,7 @@ object GatewayMain extends IOApp:
                                                           // 绝不杀会话——「无超时」哲学不动（投递自检 ≠ 任务超时）。
                                                           // seal 批（2026-11-03）：本拍是**邮件后台腿**（held 回执催注），
                                                           // 经 ProcessSeal 引导——封存下零注册、只留一行 `[seal]` 说明；
-                                                          // 同拍搭车的 MergeQueueCare/DelegateDeliveryReceipts/…
+                                                          // 同拍搭车的 DelegateDeliveryReceipts 等邻居
                                                           // 不属邮件/心跳，不动（见 TaskStuckWatcher 注）。
                                                           _ <- ProcessSeal.launch(
                                                             ProcessSeal.Realm.Mail,

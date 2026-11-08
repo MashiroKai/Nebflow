@@ -29,7 +29,6 @@ import { restoreDelegate, restoreAllDelegates } from '../delegateApi.js';
 import { ensureChildren } from '../delegateChainProvider.js';
 // panel-merge-status 批（2026-10-25）：候合并行队列细节（位次/重试/拒绝摘要）——
 // /api/merge-queue 只读状态面单点（叶子模块，事件驱动 + 节流退避，禁空转轮询）。
-import { ensureMergeQueueStatus, mergeQueueEntryFor } from '../mergeQueueStatus.js';
 // 来源链批（作者令 2026-11-01 19:23）：孤儿行来源角标升级为名字链——父不可见行的
 // 「挂在谁下面」标注读上层 delegate 名字（bgSourceChain 单点解析；解析不到回退
 // 既有类型词）。
@@ -325,14 +324,6 @@ export function armBgUptimeTick(view) {
         const started = Number(el.getAttribute('data-started-at'));
         if (started > 0) el.textContent = fmtUptime(Date.now() - started);
       });
-      // panel-merge-status 批（2026-10-25）：面板在开且含候合并行 ⇒ uptick 同拍取
-      // 一次合并队列状态面（模块内 15s 节流 + 失败 60s 退避兜底——位次/拒绝摘要
-      // 随队列推进在开面板期间自愈刷新；无候合并行零取数）。取到新内容重渲染。
-      if (dd.querySelector('.bg-task-waiting')) {
-        ensureMergeQueueStatus().then((changed) => {
-          if (changed) renderBgAgentDropdown();
-        }).catch(() => {});
-      }
       // bg-panel-ghost-resync 批（2026-10-28）：面板在开 ⇒ 每第 2 拍（30s，与
       // BG_SNAPSHOT_STALE_MS 对齐）回填一次 activeAgents 快照。幽灵行清道夫
       // （合并规则②记 _missSince + 规则③ 30s 陈旧淘汰）只吃快照，而快照旧来
@@ -1972,36 +1963,11 @@ function bgTaskRowHtml(id, info, opts = {}) {
   // Waiting（held-receipt 投递可靠性批 2026-10-21 fix 4）：显式停靠标签——
   // 「等合并轮」的 delegate 行显示等待词，不再貌似 Idle 完成。
   // 台账 #896 交通引导员制（2026-10-26 · 前身 = panel-merge-status 批 2026-10-25）：
-  // 候合并行在静态「等待合并轮」词之上追加队列细节段（' · ' 连接，一段一行）：
-  //   · 放行 —— state=turn-granted（合并窗持有中）→「轮到你合并」段（位次段让位）；
-  //   · 位次 —— state=waiting 且前面还有人（N = position-1，载荷只读）→「前面还有
-  //     N 位」；
-  //   · 原因 —— lastBlockReason 非空（waiting：为什么还没放行——base 未净空等）→
-  //     一句原因摘要（展示截断，全文进 tooltip）。
-  // 数据 = /api/merge-queue 状态面（mergeQueueStatus 单点；join key = 行 sid）。
-  // 降级红线：查无条目 / API 未生效（404）⇒ 各段全缺，行回静态「等待合并轮」
-  // 既有形态——零报错、零占位、零 console 噪音。
+  // 停靠行（waiting）：mode=standby = 申报待命（徽标词 subagents.status.standby，
+  // tooltip = 申报的「在等什么」）。合并队列细节段已随合并队列机制移除。
   let waitingText = '';
   let waitingTip = '';
-  // 案A 待命批 2026-10-31（状态矩阵批收编）：mode=standby 行（delegateWaiting 帧 /
-  // 快照 standbySince 复原）跳过 merge-queue 查询——「待命」不是合并态；徽标词换
-  // subagents.status.standby（tooltip = 申报的「在等什么」）。
   const waitingMode = (info && info.waiting && info.waiting.mode) || '';
-  if (rowState === 'waiting' && waitingMode !== 'standby') {
-    const mq = mergeQueueEntryFor(String((info && info.sessionId) || '').replace(/^team-/, ''));
-    if (mq) {
-      const segs = [];
-      if (mq.state === 'turn-granted') segs.push(t('subagents.mergeQueue.turn'));
-      else if (mq.ahead > 0) segs.push(t('subagents.mergeQueue.ahead', { n: mq.ahead }));
-      if (mq.reason) segs.push(t('subagents.mergeQueue.reason', { reason: mq.reason }));
-      if (segs.length) {
-        waitingText = ' · ' + segs.join(' · ');
-        waitingTip = (mq.reasonFull || mq.reason)
-          ? t('subagents.mergeQueue.reason', { reason: mq.reasonFull || mq.reason })
-          : '';
-      }
-    }
-  }
   // 错误冻结批（2026-11-01 · 作者令「冻结态方便被唤醒 接着做」）：冻结行的
   // **原因徽标 + 唤醒入口**。与 waitingPart（候合并/待命，自愿停靠）显式分家：
   //   · 徽标词 = subagents.status.frozen（已冻结），tooltip = 冻结原因（中文短名 /
@@ -2338,15 +2304,6 @@ export function renderBgAgentDropdown() {
   const entries = model.entries;
   // 台账 #929：远端投影行（展示专用组，缀在本地行后；不入计数——见处理器红线注）。
   const remoteHtml = bgRemoteRowsHtml();
-  // panel-merge-status 批（2026-10-25）：面板含候合并行 ⇒ 事件驱动取一次合并队列
-  // 状态面（mergeQueueStatus 单点；模块内节流+退避，本次渲染先以缓存/静态形态落）。
-  // 取到新内容 → 面板在开才重渲染（关着不打扰；throttle 使重渲染链自然收敛）。
-  if (entries.some(([, info]) => bgRowState(info) === 'waiting')) {
-    ensureMergeQueueStatus().then((changed) => {
-      const carrier = activeView && activeView.dom.bgDropdownEl;
-      if (changed && carrier && !carrier.classList.contains('hidden')) renderBgAgentDropdown();
-    }).catch(() => {});
-  }
   // Panel header carries the live count (aria-live polite, spec §5).
   const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
   if (headerEl) {

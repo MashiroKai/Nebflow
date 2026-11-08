@@ -11,9 +11,8 @@
 //
 // 数据面（入口统一 · 作者令⑤）：与任务列表同一读取口（delegateChainStub read
 // port → delegateChainProvider REST /api/delegates 镜像）；行载荷 = provider 加宽
-// 投影（taskStatus 含 G1 `merging` 一等态 / mergeQueue / mergeQueuePos / topology）。
-// 🔴 前端零派生：merging 判据 = 引擎 taskStatus 原值；位次 = mergeQueuePos 原值
-// （缺键 = 不渲染数字，mergeQueueView 降级红线同款）；子过程 = topology 原值。
+// 投影（taskStatus / topology；排队位次键已随合并队列机制移除——相关徽标分支
+// 对缺键天然静默）。🔴 前端零派生：状态词 = 引擎 taskStatus 原值；子过程 = topology 原值。
 //
 // 入口：任务列表点 delegate 行（openDelegatePanorama(project, {focus})）/ 项目面板
 // 项目卡标题点按（openDelegatePanorama(project)）/ 「项目流程图」圆钮（全量）——

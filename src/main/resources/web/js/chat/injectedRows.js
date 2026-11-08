@@ -67,7 +67,6 @@ const INJECTED_SOURCE_LABELS = {
   // 改判为「除自写行腿外一律可见」后这些 source 真的会到达本表 ⇒ 逐值显式登记
   // （禁首字母大写兜底；契约门 InjectionSourceContractSpec ② 同源对账
   // `InjectionAttribution.BackendNamedSources`）。
-  //   merge-queue       放行/阻塞/属主失联通知（SharedResources / MergeQueue）
   //   bg-lifecycle      后台任务生命周期催办（BgLifecycleReconciler）
   //   waiting-dock-care 等待坞超时升级（TaskStuckWatcher）
   //   chain-orphan      孤儿链回收通报（ProjectCrashRecovery）
@@ -76,7 +75,6 @@ const INJECTED_SOURCE_LABELS = {
   // 解冻轮把静默族冻结回执合成一条状态行（引擎 `FreezeNotice.collapseSilentReceipts`）
   // ⇒ 独立来源名，渲染为「等待恢复中」而不是冻结回执。
   'frozen-waiting': 'FrozenWaiting',
-  'merge-queue': 'MergeQueue',
   'bg-lifecycle': 'BgLifecycle',
   'waiting-dock-care': 'DockCare',
   'chain-orphan': 'ChainOrphan',

@@ -45,12 +45,9 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    MergeQueue.reset()
     os.remove.all(tempRoot / "chains")
     os.remove.all(tempRoot / "delegates")
     os.remove.all(tempRoot / "subagent-tasks")
-
-  override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -63,7 +60,6 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
 
   /** 判定机在场的证明件：被问即炸——确定性预检必须零 LLM 消耗。 */
   private class ExplodingJudge extends DelegateJudge.DelegateJudgePort.Face:
-
 
     def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
       IO.raiseError(new RuntimeException("judge must NOT be consulted when the deterministic precheck fires"))
@@ -102,6 +98,8 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     }
     dir
+
+  end mkRealRepo
 
   /** 落在真仓座位上的记录（cwd=repo、branch=工作分支、无 worktree——就地座位）。 */
   private def seedRealRecord(id: String, taskId: String, repo: os.Path, branch: String): Unit =
@@ -174,7 +172,10 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         )
         v = lastVerdict("delegate-precheck-empty")
         rec = DelegateRegistry.find("delegate-precheck-empty")
-        standbyLines = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "standby")
+        standbyLines = ChainStore
+          .listSync()
+          .flatMap(_.entries)
+          .filter(_.kind == "standby")
           .filter(_.payload.hcursor.get[String]("delegateId").toOption.contains("delegate-precheck-empty"))
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
@@ -196,7 +197,9 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
     end try
   }
 
-  test("② the max_tokens empty-burn stub is NOT real output either: stub + zero tools + no report ⇒ the same NudgeIdle (the incident form, no fake completion)") {
+  test(
+    "② the max_tokens empty-burn stub is NOT real output either: stub + zero tools + no report ⇒ the same NudgeIdle (the incident form, no fake completion)"
+  ) {
     val system = ActorSystem(s"dtp-2-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -258,9 +261,6 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         )
         v = lastVerdict("delegate-unjudged")
         rec = DelegateRegistry.find("delegate-unjudged")
-        unmergedNote = ChainStore.listSync().flatMap(_.entries)
-          .filter(_.kind == "unmerged-work")
-          .filter(_.payload.hcursor.get[String]("delegateId").toOption.contains("delegate-unjudged"))
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
         // fail-open 不变：verdict 仍是 completed（既有语义/下游零迁移）……
@@ -269,13 +269,9 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         assertEquals(v.map(_._2), Some("unjudged"), "the chain line must mark the unjudged form")
         val line = outcome.toString
         assert(line.contains("(unjudged — judge unavailable)"), s"the honest marker must be in the verdict line: $line")
-        // 未申报 + ahead>0 + 无 worktree ⇒ 就地座位角：Release；零 queueFlip
-        // （翻转只认 worktree 座位）、零停靠。unmerged-work 注记行在此形态不可达
-        // （aheadOfBase 只对 worktree/ReadyToMerge 座位计算——既有语义，非本批面）。
+        // 未申报 + ahead>0 + 无 worktree ⇒ 就地座位角：Release；零停靠。
         assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
-        assertEquals(unmergedNote, Nil, "the in-place-seat corner carries no unmerged-work audit row (existing semantics)")
-        assert(rec.flatMap(_.standbySince).isEmpty, "no standby parking on the anti-degradation leg")
-        assert(MergeQueue.snapshot.isEmpty, "no worktree ⇒ no queue flip")
+        assert(rec.flatMap(_.standbySince).isEmpty, "no standby parking on the undeclared leg")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
@@ -352,10 +348,17 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         // 未申报（无论产出形态）= 提醒腿：零判词行、零终态。
         assertEquals(v1, None, "undeclared + tools ⇒ reminded, not unjudged-completed")
         assertEquals(v2, None, "undeclared + uncounted ⇒ reminded, not judged")
-        assertEquals(v2b, None, "a substantive report WITHOUT a declaration is still just reminded (finish is the only judged-complete combination)")
+        assertEquals(
+          v2b,
+          None,
+          "a substantive report WITHOUT a declaration is still just reminded (finish is the only judged-complete combination)"
+        )
         assert(r1.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle], s"got: $r1")
         assert(r2.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle], s"got: $r2")
-        assert(r2b.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle], "substantive but undeclared ⇒ remind (matrix), s got: $r2b")
+        assert(
+          r2b.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle],
+          "substantive but undeclared ⇒ remind (matrix), s got: $r2b"
+        )
         // finish 自申报 → 判词链（判定机缺席 → 自申报背书 completed，source=judge）
         assertEquals(v3.map(_._1), Some("completed"))
         assertEquals(v3.map(_._2), Some("judge"), "a self-reported finish is NOT the unjudged form")

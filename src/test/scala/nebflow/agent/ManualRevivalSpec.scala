@@ -7,8 +7,8 @@ import cats.syntax.all.*
 import munit.FunSuite
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.delegate.{DelegateRegistry, MergeQueue}
 import nebflow.core.mail.SessionMailbox
+import nebflow.core.delegate.DelegateRegistry
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
@@ -105,7 +105,6 @@ class ManualRevivalSpec extends FunSuite:
     val tmp = os.temp.dir(prefix = s"manual-revival-$name")
     val seat = os.temp.dir(prefix = s"manual-revival-seat-$name")
     PathUtil.setDataRoot(tmp / "data")
-    MergeQueue.reset()
     nebflow.gateway.ManualRevivalHost.reset()
     val system = nebflow.actor.ActorSystem(s"manual-revival-$name-${java.util.UUID.randomUUID().toString.take(6)}")
     val io =
@@ -146,7 +145,6 @@ class ManualRevivalSpec extends FunSuite:
     finally
       system.stopAll.attempt.void.unsafeRunSync()
       nebflow.gateway.ManualRevivalHost.reset()
-      MergeQueue.reset()
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
       os.remove.all(seat)

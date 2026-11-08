@@ -20,8 +20,7 @@
 // 缺键容忍不臆造）：
 //   ① DelegateRow 加宽 G1 `orchestrationMode`（single/subagent-star/agentflow；
 //      null → ''，读面禁折叠 None→single——过渡启发兜底归渲染层）＋ G6
-//      `archivedAt` ＋ G5 行内排队条件键 `mergeQueue`/`mergeQueuePos`（引擎闸
-//      单点判据透传，未排队 = null；🔴 禁前端复刻判据）。
+//      `archivedAt`。
 //   ② 星型子代理读取口（G3 `GET /api/delegates/:id/children` 投影）：
 //      setChildrenSource 挂 provider（照 setSource 换源缝同款），渲染面经
 //      listDelegateChildren 读取——零 WS 直连。
@@ -79,7 +78,6 @@ export const FRAME_KINDS = {
   // 已落集（#1224 ChainStore 写入行，键逐字对齐引擎面）：
   DELEGATE_SPAWN: 'delegate-spawn',   // DelegateWorkspace.spawnPayload：delegateId/executor/project/branch/worktree/cwd/baseWorkspace/baseBranch/baseSha；jev-plugins additive: plugins[]/allocation (optional — absent in old rows)
   TERMINAL_VERDICT: 'terminal-verdict', // DelegateJudge.verdictPayload：delegateId/taskId/verdict/reason/source
-  MERGE_QUEUE: 'merge-queue',         // MergeQueue.record：action/delegateId/branch/projectKey/readyAt(+extra)
   // 候定集（N1 结构帧，字段未定稿——透传不解读）：
   CHAIN_REGISTERED: 'chain-registered',
   CHAIN_NODE_STATE: 'chain-node-state',
@@ -108,12 +106,6 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  *                                      Record.mode：kernel|dispatcher；'' = 双模式闸关/
  *                                      旧盘/外部执行器——徽标零渲染判据）
  * @property {number|null} archivedAt   G6 归档时间戳 epoch ms（null = 在册未归档）
- * @property {{projectKey: string, ahead: string[], holder: string|null, state: string}|null} mergeQueue
- *                                      G5 行内排队可见性槽（引擎闸透传；未排队 = null；
- *                                      state = 账本状态机 waiting|turn-granted——台账
- *                                      #896 交通引导员制，reminderSent 语义已退役）
- * @property {{position: number, total: number, readyAt: number, branch: string, baseBranch: string}|null} mergeQueuePos
- *                                      G5 行内排队位次（引擎自排序透传；未排队 = null）
  * @property {number|null} restartInterruptedAt  重启打断旗（对账批 2026-10-22，epoch ms；
  *                                      null = 未打断）——引擎 boot 对账单写，行显示态
  *                                      （徽标/灰态/折叠）的判据字段
@@ -165,7 +157,6 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  *                                      empty-catalog；惰性态 disabled/off/auto-off 与旧行缺键 → ''）
  * @property {{verdict: string, reason: string, source: string, at: number}|null} verdict
  *                                      terminal-verdict 行投影（三判词 + reason）
- * @property {Array<{delegateId: string, branch: string, projectKey: string, readyAt: number, action: string, at: number}>} mergeQueue
  *                                      merge-queue 行投影——**FIFO 排序键 = 完成时间**
  *                                     （readyAt ↑；S11 改义：非创建时间）
  * @property {Array<{kind: string, at: number, payload: Object<string, any>}>} frames
@@ -226,9 +217,7 @@ export function rowFromRegistry(record, live) {
   else if (ENGINE_TERMINAL.has(engine)) status = engine; // ⑤ 常规失败（#566 终态权威）
   else status = ROW_STATUS.RUNNING;
   // G1/G5/G6 加宽（delegate-ui 批）：缺键容忍——旧盘 null → mode '' / archivedAt
-  // null / 队列两键 null（读面禁折叠 None→single；未排队缺键纪律在引擎侧）。
-  const q = r.mergeQueue && typeof r.mergeQueue === 'object' ? r.mergeQueue : null;
-  const qp = r.mergeQueuePos && typeof r.mergeQueuePos === 'object' ? r.mergeQueuePos : null;
+  // null（读面禁折叠 None→single）。
   return {
     taskNo: String(r.taskId || ''),
     delegateId: String(r.id || ''),
@@ -250,19 +239,6 @@ export function rowFromRegistry(record, live) {
     // 重启对账批 2026-10-22：打断旗 + 接续指针（缺键容忍——旧引擎行 = null/''）。
     restartInterruptedAt,
     continuedBy: String(r.continuedBy || ''),
-    mergeQueue: q ? {
-      projectKey: String(q.projectKey || ''),
-      ahead: Array.isArray(q.ahead) ? q.ahead.map((x) => String(x || '')) : [],
-      holder: q.holder == null ? null : String(q.holder),
-      state: String(q.state || ''),
-    } : null,
-    mergeQueuePos: qp ? {
-      position: typeof qp.position === 'number' ? qp.position : 0,
-      total: typeof qp.total === 'number' ? qp.total : 0,
-      readyAt: typeof qp.readyAt === 'number' ? qp.readyAt : 0,
-      branch: String(qp.branch || ''),
-      baseBranch: String(qp.baseBranch || ''),
-    } : null,
   };
 }
 
@@ -272,9 +248,8 @@ export function rowFromRegistry(record, live) {
  * 三行族逐键投影（键面见 FRAME_KINDS 注释；缺键 = 空投影，不臆造）：
  *   - delegate-spawn（最新一行生效）→ worktree 投影；
  *   - terminal-verdict（最新一行生效）→ verdict 投影；
- *   - merge-queue（全量收）→ mergeQueue，经 mergeQueueFifo 按**完成时间**
- *     （readyAt ↑）排序——S11 排序键改义在此落定；
- *   - 其余 kind（含 N1 候定帧）→ frames 原样透传。
+ *   - 其余 kind（含 N1 候定帧与历史 merge-queue 行）→ frames 原样透传（账本是
+ *     审计面，前端不丢行）。
  * @param {Record<string, any>} record ChainStore Record 形 JSON（{taskId, entries[]}；缺形容忍）
  * @returns {ChainView}
  */
@@ -283,8 +258,6 @@ export function chainFromStoreRecord(record) {
   const entries = Array.isArray(rec.entries) ? rec.entries : [];
   /** @type {{kind: string, at: number, payload: Object<string, any>}[]} */
   const frames = [];
-  /** @type {{delegateId: string, branch: string, projectKey: string, readyAt: number, action: string, at: number}[]} */
-  const queue = [];
   let worktree = null;
   let verdict = null;
   let spawnAt = -1;
@@ -330,15 +303,6 @@ export function chainFromStoreRecord(record) {
           at,
         };
       }
-    } else if (kind === FRAME_KINDS.MERGE_QUEUE) {
-      queue.push({
-        delegateId: String(p.delegateId || ''),
-        branch: String(p.branch || ''),
-        projectKey: String(p.projectKey || ''),
-        readyAt: typeof p.readyAt === 'number' ? p.readyAt : at,
-        action: String(p.action || ''),
-        at,
-      });
     } else if (!PENDING_N1_KINDS.has(kind)) {
       // 未声明帧（未来行族）也透传——账本是审计面，前端不丢行。
       frames.push({ kind, at, payload: p });
@@ -369,7 +333,6 @@ export function chainFromStoreRecord(record) {
     plugins: allocPlugins,
     allocation: allocMode,
     verdict,
-    mergeQueue: mergeQueueFifo(queue),
     frames,
   };
 }
@@ -387,22 +350,6 @@ export function verdictToStatus(v) {
   if (v === 'blocked') return ROW_STATUS.COMPLETED; // #566：退役词 → completed
   if (v === 'completed') return ROW_STATUS.COMPLETED;
   return ROW_STATUS.RUNNING;
-}
-
-/**
- * merge-queue FIFO 排序（S11 排序键改义单点）：**完成时间**（readyAt）↑，
- * 同刻按到达序（at ↑）、再按 delegateId（确定性收尾）。返回新数组（不改入参）。
- * @param {Array<{delegateId: string, branch: string, projectKey: string, readyAt: number, action: string, at: number}>} queue
- * @returns {Array<{delegateId: string, branch: string, projectKey: string, readyAt: number, action: string, at: number}>}
- */
-export function mergeQueueFifo(queue) {
-  const list = Array.isArray(queue) ? queue.slice() : [];
-  list.sort((a, b) => {
-    if (a.readyAt !== b.readyAt) return a.readyAt - b.readyAt;
-    if (a.at !== b.at) return a.at - b.at;
-    return a.delegateId < b.delegateId ? -1 : a.delegateId > b.delegateId ? 1 : 0;
-  });
-  return list;
 }
 
 // ── 读取口（read port）＋ 换源钩子 ────────────────────────────────────────

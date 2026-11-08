@@ -34,9 +34,8 @@ import nebflow.shared.{Defaults, NebflowLogger, SubAgentTask}
  * == 分工边界（防双头管理，设计 §2.5）==
  *  - 本对象只是 `SubAgentStartupRecovery` sweep 的**复活腿**：资格不满足/预算耗尽/
  *    复活失败 → 调用方落既有收殓链（逐字不改）。无第二个 sweep、无新 watchdog。
- *  - `ProjectCrashRecovery`（flow-map 节点轨 L1/L2）零触碰；`MergeQueueBootSweep`
- *    （ready-to-merge 合并轮）零交集——任务行状态不同域。
- *  - 复活重建的监督链此后归 `BackoffSupervisor` 管（respawn/终态/合并停靠全链复用）。
+ *  - `ProjectCrashRecovery`（flow-map 节点轨 L1/L2）零触碰。
+ *  - 复活重建的监督链此后归 `BackoffSupervisor` 管（respawn/终态/停靠全链复用）。
  *
  * == 复活判据（设计 §2.2，全部满足才复活）==
  * kill-switch 开 ∧ source=delegate ∧ registry 记录在（内置执行器、未归档）∧ 座位目录
@@ -88,13 +87,11 @@ object DelegateRevival:
   // 判据（全部可从盘上机械求值；任一在场即「有未完成业务」⇒ 走复活腿）：
   //   ① 作用域图仍有**非终态节点**（`SessionResumption.openNodeCount`，读
   //      `<base>/.nebflow/flow-maps/<id>/flow-map.json`）——等自家链 = 在飞；
-  //   ② **合并队列在册**（`MergeQueue.openSnapshot`，`~/.stand/merge-queue` 账本）——
-  //      等合并轮 = 在飞（`delegate_report` 文案同判据：「分支上有未合并交付提交时
-  //      standby 不予采纳」）；
-  //   ③ **worktree 脏**（`GitWorktrees.dirtyPaths`，`git status --porcelain`）——手上
-  //      有未提交/未合并的工作；
-  //   ④ **分支领先基分支**（`git rev-list --count <base>..<branch>`）——有未合并交付
-  //      提交（`record.branch` / `record.baseBranch` 均在 registry 上）。
+  //   ② **worktree 脏**（`GitWorktrees.dirtyPaths`，`git status --porcelain`）——手上
+  //      有未提交的工作；
+  //   ③ **分支领先基分支**（`git rev-list --count <base>..<branch>`）——有未合并交付
+  //      提交（`record.branch` / `record.baseBranch` 均在 registry 上；集成走项目
+  //      merger 的授权请求，未并提交 = 未完业务）。
   // 反向（纯待命等作者，语义保留）：以上全缺席 ⇒ 不复活（诚实 failed + 父通知，
   // Mail 可续）。
   //
@@ -107,18 +104,17 @@ object DelegateRevival:
   /** standby 记录的**在飞旁证**读数（分型判据的载体；全零 = 纯待命等作者）。 */
   final case class StandbyEvidence(
     openChainNodes: Int,
-    mergeQueueMember: Boolean,
     dirtyWorktreePaths: Int,
     unmergedCommits: Int
   ):
 
     /** 任一在场 = 有未完成业务（在飞）⇒ 可复活。 */
     def inFlight: Boolean =
-      openChainNodes > 0 || mergeQueueMember || dirtyWorktreePaths > 0 || unmergedCommits > 0
+      openChainNodes > 0 || dirtyWorktreePaths > 0 || unmergedCommits > 0
 
     /** 判词/日志读数（一行机械可核）。 */
     def describe: String =
-      s"openChainNodes=$openChainNodes mergeQueueMember=$mergeQueueMember " +
+      s"openChainNodes=$openChainNodes " +
         s"dirtyWorktreePaths=$dirtyWorktreePaths unmergedCommits=$unmergedCommits"
 
   end StandbyEvidence
@@ -164,12 +160,8 @@ object DelegateRevival:
    */
   private def standbyTriage(rec: DelegateRegistry.Record): IO[StandbyEvidence] =
     IO.blocking {
-      val queued =
-        try nebflow.core.delegate.MergeQueue.openSnapshot.exists(_.delegateId == rec.id)
-        catch case _: Throwable => false
       StandbyEvidence(
         openChainNodes = openNodesOf(rec),
-        mergeQueueMember = queued,
         dirtyWorktreePaths = dirtyPathsOf(rec),
         unmergedCommits = unmergedCommitsOf(rec)
       )
@@ -178,7 +170,7 @@ object DelegateRevival:
       if ev.inFlight then
         logger.info(
           s"[delegate-revival] standby triage for ${rec.id}: IN-FLIGHT (${ev.describe}) — " +
-            "waiting on its own chain/merge, revivable through the boot revival leg"
+            "waiting on its own chain or holding unfinished work, revivable through the boot revival leg"
         )
       else
         logger.info(
@@ -191,7 +183,7 @@ object DelegateRevival:
         .warn(
           s"[delegate-revival] standby triage read failed for ${rec.id} (treating as pure standby): ${e.getMessage}"
         )
-        .as(StandbyEvidence(0, false, 0, 0))
+        .as(StandbyEvidence(0, 0, 0))
     )
 
   /**

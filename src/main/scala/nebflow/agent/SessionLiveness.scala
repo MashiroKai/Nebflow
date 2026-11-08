@@ -12,16 +12,14 @@ import nebflow.shared.NebflowLogger
  * == 病灶（读到本文件即别再自造判据）==
  *
  * 2026-11-06 08:21 / 08:26 两批 delegate（`41cd2d19` / `20056caf`）在 AgentControl 里
- * 明明是 `Idle`、`lastActivity 0s`、root 会话健在，合并队列却把合并轮通知判成
- * `parent-session-gone` 并关账 OWNER-GONE。判据实现在
+ * 明明是 `Idle`、`lastActivity 0s`、root 会话健在，投递判据却把通知判成
+ * `parent-session-gone` 丢弃。判据实现在
  * `MailboxProducer.deliver`：`sessionStore.listSessions.exists(_.id == parentSessionId)`。
  * 而 `listSessions` 只读**会话索引** `_index.json`——**delegate 会话从不进索引**
  * （`SessionStore.listSessionsIncludeUnindexed` 与 `shared.SessionScope` 头注写死了
  * 这条事实：后台 agent 会话只把 `<id>.json` / `<id>.ui.json` 落盘）。于是该谓词对
- * **任何** delegate 收件方恒假 ⇒ 投递必被判死 ⇒
- * `MergeQueue.grant ⑥` → `markOwnerGone`；同一谓词还被
- * `SharedResources.OwnerDeliveryPort.present` 用于 careTick 的「持窗属主还在吗」，
- * 于是持窗也会被同一误判断掉。
+ * **任何** delegate 收件方恒假 ⇒ 投递必被判死丢弃。同一谓词还服务
+ * 面板/看护面的「会话还在吗」判读，于是活会话也会被同一误判断掉。
  *
  * == 判据（三态合一，绝不凭派生信号判死）==
  *
@@ -30,12 +28,11 @@ import nebflow.shared.NebflowLogger
  *   2. 否则看**会话记录**：索引行 ∪ 盘上记录（`SessionStore.sessionRecordExists`）
  *      ⇒ 存活。delegate 会话正是落在这一格：索引没有它，但转录与 UI 件都在盘上，
  *      落盘邮箱写进去照样会在它下次 spawn / resume 时被消费（P1 身份化的本意）。
- *   3. 两者都读不到 ⇒ **真 gone**（会话被删干净 / 从未存在）。真 OWNER-GONE 的
- *      关账语义逐字保留——本判据只去掉「索引里没有 = 已死」这个**假否**。
+ *   3. 两者都读不到 ⇒ **真 gone**（会话被删干净 / 从未存在）。本判据只去掉
+ *      「索引里没有 = 已死」这个**假否**。
  *
  * 读数故障（存储面异常）⇒ **fail-open**（当真 = 允许投递）：一份写不进读的邮箱件
- * 由 boot 对账兜底，而误判 OWNER-GONE 会把一条活分支的合并槽直接关掉——两害相权，
- * 绝不在读不到的时候判死（与 MergeQueue 既有的「读数不可得 = 不判」同纪律）。
+ * 由 boot 对账兜底——两害相权，绝不在读不到的时候判死（读数不可得 = 不判）。
  */
 private[agent] object SessionLiveness:
 
@@ -65,6 +62,10 @@ private[agent] object SessionLiveness:
           }
       }
 
+    end if
+
+  end alive
+
   /** 生产便捷面（`resources` = SharedResources / 任何 AgentRuntimePort 视图）。 */
   def alive(resources: AgentRuntimePort, sessionId: String): IO[Boolean] =
     alive(resources.sessionStore, resources.agentRegistry, sessionId)
@@ -78,10 +79,12 @@ private[agent] object SessionLiveness:
    */
   def recordAlive(store: SessionStore, sessionId: String): IO[Boolean] =
     store.sessionRecordExists(sessionId).handleErrorWith { e =>
-      logger.warn(
-        s"[session-liveness] record read failed for '${Option(sessionId).getOrElse("")}': " +
-          s"${Option(e.getMessage).getOrElse(e.toString).take(160)} — treating as ALIVE (fail-open)"
-      ).as(true)
+      logger
+        .warn(
+          s"[session-liveness] record read failed for '${Option(sessionId).getOrElse("")}': " +
+            s"${Option(e.getMessage).getOrElse(e.toString).take(160)} — treating as ALIVE (fail-open)"
+        )
+        .as(true)
     }
 
   /**

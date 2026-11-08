@@ -1146,7 +1146,7 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
    * the id is the `delegate:<id>` continuation-address payload.
    * `private[nebflow]`: the Mail delegate leg's continue path reuses this
    * single spawn point (no parallel spawn path); 引擎加固批 2026-10-09（P2-5）
-   * 起 boot sweep 的内部腿恢复通道（MergeQueueBootSweep.internalRevival）同点
+   * 起 boot 对账腿的内部恢复通道同点
    * 复用——仍无第二 spawn 路径，仅可见域从 tools 放宽到本工程。
    *
    * worktree-judge-fifo 批（#1224）：`judgeWorkspace = true` 仅新鲜派发腿
@@ -1336,8 +1336,6 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
                     resolvedRoot,
                     // 座位分配腿（参数决定；dispatcher 与 kernel 同一条腿——节点层 seal
                     // 不动：节点永不建 worktree，而是落分发器的座位里干活，不是嵌套）。
-                    // 终态面零新增代码：HoldForMerge/MergeQueue 全程由绑定驱动
-                    // （DelegateTerminal.holdForMerge 读 rec.branch/baseBranch/worktree）。
                     allocateSeat,
                     seatPlan,
                     subagentId,

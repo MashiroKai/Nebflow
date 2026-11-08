@@ -741,13 +741,12 @@ object TaskStuckWatcher:
           // / AgentCore.askUserPermission), so true hangs stay reachable.
           .filter(rec => rec.status != AgentStatus.WaitingForUser)
         // 显式等待停靠态（平台修复批 fix 4，2026-10-21；steward 批 D3-④
-        // 2026-10-23 改判据）：Waiting =「等合并轮提醒」一类引擎停靠（delegate
-        // ready-to-merge 被 MergeQueue 持有）——推进者 = 引擎合并轮转，不是本
-        // 会话进程。原「整族豁免」显式守卫已删：Waiting 仍不进「无进展卡死」
-        // 候选（上方 Processing 过滤已排除——等待期没有 agent 侧活动是合法态，
-        // 时间判据禁用），但死亡停靠不再无人管：改由本拍 IO 链首环
-        // careWaitingDock 以**活性/事件判据**单列看护（registry 行在、actor
-        // 已死 = 明确死亡事件 ⇒ 释放合并队列窗 + 台账翻 failed + 升级上报）；
+        // 2026-10-23 改判据）：Waiting = 引擎停靠（standby 申报待命等事件）——
+        // 推进者 = 下一封 Mail / 作者续聊，不是本会话进程。Waiting 仍不进
+        // 「无进展卡死」候选（上方 Processing 过滤已排除——等待期没有 agent 侧
+        // 活动是合法态，时间判据禁用），但死亡停靠不再无人管：改由本拍 IO 链
+        // 首环 careWaitingDock 以**活性/事件判据**单列看护（registry 行在、
+        // actor 已死 = 明确死亡事件 ⇒ 台账翻 failed + 升级上报）；
         // alive 停靠零动作（等待屏障语义保持）。
         // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
         // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
@@ -905,11 +904,8 @@ object TaskStuckWatcher:
           case true => IO.unit
           case false =>
             val detail =
-              s"waiting dock orphaned: session '${rec.sessionId}' is docked waiting-merge but its actor has exited"
+              s"waiting dock orphaned: session '${rec.sessionId}' is docked in standby but its actor has exited"
             logger.warn(s"[waiting-dock-care] $detail") *>
-              IO.blocking(
-                nebflow.core.delegate.MergeQueue.markOwnerGone(rec.sessionId, s"$detail — needs dispatcher handling")
-              ).handleErrorWith(e => logger.warn(s"[waiting-dock-care] merge queue advance failed: ${e.getMessage}")) *>
               IO
                 .whenA(rec.parentSessionId.trim.nonEmpty)(
                   resources.subAgentTaskStore
@@ -944,7 +940,7 @@ object TaskStuckWatcher:
             source = "waiting-dock-care",
             eventType = "failed",
             payload =
-              s"""[waiting-dock-care] delegate '${rec.sessionId}': $detail. The merge-ledger membership was closed as owner-gone (fact-checked first; no merge rounds are revived) and the task row was marked failed — needs dispatcher handling; escalated here because the previous responsible party is not live.""",
+              s"""[waiting-dock-care] delegate '${rec.sessionId}': $detail. The task row was marked failed — needs dispatcher handling; escalated here because the previous responsible party is not live.""",
             metadata = io.circe.JsonObject(
               "delegateId" -> rec.sessionId.asJson,
               "action" -> "waiting-dock-dead".asJson,

@@ -318,8 +318,6 @@ export default {
   // Queue-position row (queuepos batch 2026-09-15): the detail panel had no queue
   // field at all before this (author's report). Same source as the card badge
   // (`mergeQueuePos`, unique per node, truth = SEM-2 rank ascending).
-  'flowmap.detail.queue': 'Queue position',
-  'flowmap.detail.queueValue': 'Queued · {n} of {m} ({queue})',
   'flowmap.detail.yes': 'Yes',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
   // Chain-level cancel (R2, chaincancel batch 2026-09-17): control label + the
@@ -372,16 +370,8 @@ export default {
   // SIZE OF THE BLOCKING SET (identical for every waiter while one merge runs), so
   // the keys queue.ahead / badgeTitle / untrustedTitle are retired and the old
   // "N ahead" wording is gone.
-  'flowmap.queue.held': 'Queued',
-  'flowmap.queue.pos': 'Queued · {n} of {m}',
-  'flowmap.queue.posHead': 'Queued on the merge window ({queue}) · {n} of {m}',
-  'flowmap.queue.heldHead': 'Queued on the merge window',
-  'flowmap.queue.blockedBy': 'Blocked by {names}',
-  'flowmap.queue.untrustedHead': 'Queued on the merge window · position unreliable (same git dir, multiple projects)',
-  'flowmap.queue.untrustedSuffix': ' (position unreliable: same git dir, multiple projects)',
   // Queue name (the engine supplies the token; the frontend only translates — an
   // unknown token is echoed verbatim, never invented)
-  'flowmap.queue.name.merge-window': 'merge window',
   // LoopNode running-phase labels (2026-09-06): loop card desc line shows worker/verify
   'flowmap.loopPhase.worker': 'Producing',
   'flowmap.loopPhase.verify': 'Verifying',
@@ -976,20 +966,15 @@ export default {
   'subagents.empty': 'No running sub-agents',
   'subagents.indicatorTitle': 'Background sub-agents',
   'subagents.status.running': 'Running',
-  // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
-  // panel-merge-status 批（2026-10-25 · 作者令）：候合并从通用「Waiting」提升为
-  // 钉住的可见状态词——面板行状态位直显「Merge-queued」。
-  'subagents.status.waiting': 'Merge-queued',
-  'subagents.status.waitingMerge': 'waiting-merge (FIFO)',
-  // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 显式待命态（delegate_report
-  // standby）——行状态位直显「待命」，区别于候合并（tooltip = 申报的「在等什么」）。
+  // Explicit waiting dock (Waiting): the row status word is "Docked, waiting"
+  // (legacy Waiting snapshots without a declaration slot share the word; declared
+  // standby rows use the standby word).
+  'subagents.status.waiting': 'Docked, waiting',
+  'subagents.status.waitingMerge': 'docked, waiting',
+  // Delegate explicit standby (delegate_report standby) — the row status word is
+  // "Standby" (tooltip = what it declared it is waiting for).
   'subagents.status.standby': 'Standby (awaiting orders)',
   'subagents.status.idle': 'Idle',
-  // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
-  // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「waiting-merge」降级）。
-  'subagents.mergeQueue.ahead': '{n} ahead in merge queue',
-  'subagents.mergeQueue.turn': 'your merge turn — window held',
-  'subagents.mergeQueue.reason': 'hold reason: {reason}',
   // #752 idle-subdivision: what an idle delegate is waiting on + long-idle badge.
   'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
   'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',
@@ -1016,7 +1001,7 @@ export default {
   'subagents.status.roundComplete': 'Round complete; available',
   'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
   'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
-  'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes, task-ledger row and merge-queue slot are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
+  'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes and task-ledger row are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
   'subagents.frozenReason': 'Reason: {reason}',
   'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
   'subagents.wake': 'Wake',
@@ -2154,7 +2139,6 @@ export default {
   // ③ S11 structure overview header
   'delegate.structure': 'Delegate structure',
   // ④ S11 FIFO lane header
-  'delegate.mergeQueue': 'Merge queue',
   // ⑤ S11 worktree seat label
   'delegate.worktree': 'Worktree',
   // ⑤b Device-worktree ownership fix (2026-10-30): device project without a worktree

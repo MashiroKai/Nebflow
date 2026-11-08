@@ -2,8 +2,6 @@ package nebflow.core.delegate
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import io.circe.Json
-import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentEvent, Behavior, Behaviors}
 import nebflow.agent.{SharedResources, SpecResources}
@@ -14,21 +12,18 @@ import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 
 /**
- * DelegateTerminal 终态判定钩子判读（worktree-judge-fifo 批 #1224 增补 §3.1/§3.3；
- * #566 修复批：blocked 判词退役——判官/预检/漂移/验收的「没做成」一律 completed＋注记）：
+ * DelegateTerminal 终态判定钩子判读（#566 修复批：blocked 判词退役——判官/预检/
+ * 漂移的「没做成」一律 completed＋注记）：
  *
- *  - ① 判定机全败回落链（fail-open）：无自申报 → completed（既有语义）；
+ *  - ① 判定机全败回落链（fail-open）：无自申报 → NudgeIdle（矩阵 complete×idle）；
  *    自申报 finish → completed；自申报 blocked（退役词）→ completed＋注记；
- *  - ② 判定机判 ready-to-merge：任务库状态改 ready-to-merge（completedAt = FIFO
- *    锚）+ MergeQueue 入队 + Outcome.HoldForMerge（**不报父不停 actor** 的判据面
- *    = 返回值），ChainStore 落 terminal-verdict 行；
- *  - ③ 无分支可并的 ready-to-merge = 降级 completed（诚实终态）；A5 步1 扩展
- *    （例⑤）：分支在但零领先提交同降级（commitsAhead==0，防空合并轮）；
  *  - ④ onTerminalCleanup：completed 腿不重复落判词行；failed/cancelled 补
- *    engine 判词行（#566：verdict=failed/cancelled 真值）+ MergeQueue 出队幂等。
- *  - ⑥-⑩（A5 步2 漂移闸红验①-⑤）：确证 → completed＋注记（source=drift）/
- *    账本归因豁免 / 合并轮豁免 / 读数不可确证 fail-open / worktree 座位只注记
+ *    engine 判词行（verdict=failed/cancelled 真值）。
+ *  - ⑥-⑫（A5 步2 漂移闸红验）：确证 → completed＋注记（source=drift）/
+ *    delegate 分支落地归属豁免 / 读数不可确证 fail-open / worktree 座位只注记
  *    ——另附分类器纯函数锚（读数显式入参，零 git）。
+ *  - ⑬ judged-completed 工作座位 × 分支领先 ⇒ completed 交付 + unmerged-work
+ *    注记行（集成走项目 merger 的授权请求，引擎零代并、零入队）。
  *
  * 判定机输入注入 = DelegateJudgePort 注册器（fake Face——M2 先例的测试装配面）。
  */
@@ -46,30 +41,16 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    MergeQueue.reset()
-    // P1 投递身份化：身份投递端口（生产实现 = 磁盘邮箱；此处 = 记录型，投递恒成功）。
-    nebflow.core.delegate.MergeQueueTestPorts.install()
     nebflow.ForceRemove.removeAll(tempRoot / "chains")
     nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
 
-  override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
-
-  /**
-   * `SharedResources` 的构造行会安装**生产**投递端口（磁盘邮箱 + 会话行在场判定）——
-   * `mkResources` 因此会把 beforeEach 里装好的测试端口顶掉，而本套夹具的 delegate 行
-   * 是直写 `DelegateRegistry` 的（会话行不存在）⇒ 生产端口如实回 `parent-session-gone`
-   * ⇒ 放行即 owner-gone，合并轮形态当场失位（本套要判的是终态判定，不是投递可达性）。
-   *
-   * 因此每次构造后把测试端口**重新装回**：夹具声明「属主会话在场，投递恒成功」，与
-   * 生产端口的契约面（身份 → 落盘邮箱）同形，断言强度不变。
-   */
-  private def mkResourcesWithTestPort(
+  private def mkResources(
     system: ActorSystem,
     tmp: os.Path,
     llm: LlmHandle[IO]
   ): IO[SharedResources] =
-    SpecResources.mkResources(system, tmp, llm).flatTap(_ => IO(MergeQueueTestPorts.install()))
+    SpecResources.mkResources(system, tmp, llm)
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -106,33 +87,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         worktreeJudged = worktreeJudged
       )
     )
-
-  /**
-   * 真仓夹具（A5 步1 判据需要 git 面可读）：main 上 init；ahead > 0 ⇒ branch 上
-   * 造领先提交（工作座位形态），ahead = 0 ⇒ branch park 在 main HEAD（只读座位
-   * 形态）。GitWorktreesSpec 同款 git 序列。
-   */
-  private def mkRealRepo(dir: os.Path, branch: String, ahead: Int): os.Path =
-    nebflow.ForceRemove.removeAll(dir)
-    os.makeDir.all(dir)
-    os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-    os.proc("git", "-C", dir.toString, "config", "user.email", "spec@nebflow.local").call(check = true)
-    os.proc("git", "-C", dir.toString, "config", "user.name", "spec").call(check = true)
-    os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "init")
-      .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-    if ahead > 0 then
-      os.proc("git", "-C", dir.toString, "checkout", "-b", branch)
-        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-      (1 to ahead).foreach { i =>
-        os.write(dir / f"deliverable-$i.txt", s"deliverable $i")
-        os.proc("git", "-C", dir.toString, "add", ".").call(check = true)
-        os.proc("git", "-C", dir.toString, "commit", "-m", s"deliverable $i")
-          .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-      }
-    else os.proc("git", "-C", dir.toString, "branch", branch).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-    dir
-
-  end mkRealRepo
 
   private def noopRefs(system: ActorSystem): IO[(ActorRef[AgentCommand], ActorRef[AgentEvent])] =
     for
@@ -171,11 +125,11 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       .lastOption
 
   test(
-    "① matrix (2026-11-01): judge absent + no self-report ⇒ NudgeIdle (complete×idle = remind, never complete); self-report finish → completed; self-report blocked (retired) → completed + note"
+    "① matrix: judge absent + no self-report ⇒ NudgeIdle (complete×idle = remind, never complete); self-report finish → completed; self-report blocked (retired) → completed + note; self-report merge (retired) → completed + note"
   ) {
     val system = ActorSystem(s"dt-1-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
+      res <- mkResources(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       _ = seedRecord("delegate-nebflow-f1", Some("41"))
       r1 <- withJudgeAbsent(
@@ -191,14 +145,19 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       r3 <- withJudgeAbsent(
         DelegateTerminal.onCompleted(res, "delegate-nebflow-f3", "nebula-root", "t", "brief", "gave up", child, sup)
       )
+      _ = seedRecord("delegate-nebflow-f4", Some("44"))
+      _ = DelegateRegistry.updateReport("delegate-nebflow-f4", "merge", "left on the branch", "")
+      r4 <- withJudgeAbsent(
+        DelegateTerminal.onCompleted(res, "delegate-nebflow-f4", "nebula-root", "t", "brief", "left it", child, sup)
+      )
       v1 = verdictLine("delegate-nebflow-f1")
       v2 = verdictLine("delegate-nebflow-f2")
       v3 = verdictLine("delegate-nebflow-f3")
+      v4 = verdictLine("delegate-nebflow-f4")
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      // 状态矩阵批（作者令 2026-11-01）：complete × 未申报 = 提醒调整状态，绝不
-      // 判完成——NudgeIdle、零判词行、零父投递形态（旧「no judge + no report ⇒
-      // legacy completed」回落就此退役）。
+      // 状态矩阵批（作者令）：complete × 未申报 = 提醒调整状态，绝不判完成
+      // ——NudgeIdle、零判词行。
       assert(
         r1.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle],
         s"undeclared turn end must be reminded (NudgeIdle), never completed: $r1"
@@ -206,7 +165,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       assertEquals(v1, None, "an undeclared turn writes NO verdict line")
       assert(r2.isInstanceOf[DelegateTerminal.Outcome.Release])
       assertEquals(v2, Some("completed"))
-      // #566：退役 blocked 申报 → completed＋注记（wire 无 blocked；注记走尾注+reason）。
+      // 退役 blocked 申报 → completed＋注记（wire 无 blocked；注记走尾注+reason）。
       assert(
         r3.isInstanceOf[DelegateTerminal.Outcome.Release] && r3.toString.contains("completed"),
         "self-report blocked (retired) → completed release"
@@ -214,210 +173,23 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       assert(r3.toString.contains("missing key material"), "the retired-blocked detail rides the report note")
       assertEquals(v3, Some("completed"), "no separate blocked wire word is ever written")
       assert(r3.toString.contains("[delegate-judge] note:"), "the note channel is explicit in the release suffix")
+      // 退役 merge 申报 → completed＋注记（集成 = 项目 merger 的授权请求）。
+      assert(
+        r4.isInstanceOf[DelegateTerminal.Outcome.Release] && r4.toString.contains("completed"),
+        "self-report merge (retired) → completed release"
+      )
+      assert(r4.toString.contains("left on the branch"), "the retired-merge detail rides the report note")
+      assertEquals(v4, Some("completed"), "no separate merge wire word is ever written")
     end for
   }
 
   test(
-    "② judge says ready-to-merge: task status becomes ready-to-merge (completedAt anchored), the entry is enqueued (FIFO), outcome = HoldForMerge, verdict line = ready-to-merge"
-  ) {
-    val system = ActorSystem(s"dt-2-${scala.util.Random.nextInt(100000)}")
-    try
-      for
-        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
-        // 注册在 mkResources **之后**——SharedResources 构造行安装的是真判定机
-        // 执行体（DelegateJudgeMachine.face），先装会被覆盖（测试装配顺序面）。
-        _ = DelegateJudge.DelegateJudgePort.install(
-          new DelegateJudge.DelegateJudgePort.Face:
-            def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
-              IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
-        )
-        (child, sup) <- noopRefs(system)
-        // A5 步1 配套：ready-to-merge 新资格 = 分支上确有领先提交 ⇒ 座位夹具从
-        // 裸 tempRoot（无该分支 ⇒ commitsAhead fail-soft 0 会被新判据降级）换成
-        // 真仓 + 真领先提交（下方既有断言逐字不动——红验⑤）。
-        holdRepo = mkRealRepo(tempRoot / "hold-repo", branch = "delegate/delegate-nebflow-hold", ahead = 1)
-        // 座位形态归位：基工作区 HEAD 回 main（可并形态——放行净空闸要求目标
-        // 分支必须是检出分支；台账 #896 交通引导员制）。
-        _ = os
-          .proc("git", "-C", holdRepo.toString, "checkout", "main")
-          .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-        _ = seedRecord(
-          "delegate-nebflow-hold",
-          Some("51"),
-          branch = Some("delegate/delegate-nebflow-hold"),
-          cwd = holdRepo
-        )
-        _ <- res.subAgentTaskStore.recordTask(
-          nebflow.shared.SubAgentTask(
-            taskId = "delegate-nebflow-hold",
-            parentSessionId = "nebula-root",
-            agentName = "nebflow",
-            prompt = "brief",
-            description = "t",
-            status = "running",
-            retryCount = 0,
-            spawnedAt = 1L,
-            completedAt = None,
-            lastError = None,
-            source = "delegate"
-          )
-        )
-        // 宣告闸批 2026-11-04：授窗前提 = 属主**明确宣告**完成且可合（判定机判词不算）——
-        // 真实流程里这条宣告来自属主的 `delegate_report(category="merge")`。
-        _ <- IO(MergeDeclaration.write("delegate-nebflow-hold", MergeDeclaration.Source.ReportMerge))
-        outcome <- DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-hold",
-          "nebula-root",
-          "t",
-          "brief",
-          "commits ready",
-          child,
-          sup
-        )
-        tasks <- res.subAgentTaskStore.findByTaskId("delegate-nebflow-hold")
-        queued = MergeQueue.find("delegate-nebflow-hold")
-        _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-      yield
-        assert(
-          outcome == DelegateTerminal.Outcome.HoldForMerge,
-          "ready-to-merge must HOLD (no parent notify, no actor stop)"
-        )
-        assertEquals(tasks.map(_.status), Some("ready-to-merge"))
-        assertEquals(tasks.flatMap(_.completedAt).isDefined, true, "completedAt = the FIFO rank anchor")
-        assert(queued.isDefined, "the entry must be enqueued for the merge round")
-        assertEquals(queued.map(_.branch), Some("delegate/delegate-nebflow-hold"))
-        assertEquals(verdictLine("delegate-nebflow-hold"), Some("ready-to-merge"))
-        // 审计行：enqueued 1 行；空队列 pump 立即放行（放行 = 通知）⇒ granted 1 行
-        val mqLines = ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind)
-        assertEquals(
-          mqLines.count(l => l.payload.hcursor.get[String]("action").toOption.contains("enqueued")),
-          1,
-          "the enqueued audit line lands"
-        )
-        assertEquals(
-          mqLines.count(l => l.payload.hcursor.get[String]("action").toOption.contains("granted")),
-          1,
-          "the empty-queue pump grants the turn immediately (notification = grant, single-flight holder)"
-        )
-      end for
-    finally DelegateJudge.DelegateJudgePort.clear()
-    end try
-  }
-
-  test("③ no branch to merge ⇒ ready-to-merge degrades to completed (honest terminal: nothing mergeable exists)") {
-    val system = ActorSystem(s"dt-3-${scala.util.Random.nextInt(100000)}")
-    try
-      for
-        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
-        // 同②：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
-        _ = DelegateJudge.DelegateJudgePort.install(
-          new DelegateJudge.DelegateJudgePort.Face:
-            def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
-              IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
-        )
-        (child, sup) <- noopRefs(system)
-        // branch = None（非 git 工作区形态）——无可并之物
-        _ = seedRecord("delegate-nebflow-nobranch", Some("61"), branch = None)
-        // 状态矩阵批：判词链门票 = finish 申报（未申报回合被槽位闸接去提醒腿）。
-        _ = DelegateRegistry.updateReport("delegate-nebflow-nobranch", "finish", "declared", "")
-        outcome <- DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-nobranch",
-          "nebula-root",
-          "t",
-          "brief",
-          "done",
-          child,
-          sup
-        )
-        _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-      yield
-        assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
-        assertEquals(verdictLine("delegate-nebflow-nobranch"), Some("completed"))
-      end for
-    finally DelegateJudge.DelegateJudgePort.clear()
-    end try
-  }
-
-  test(
-    "⑤ (A5 步1 红验④) branch present but ZERO commits ahead ⇒ ready-to-merge degrades to completed (empty merge round prevented)"
-  ) {
-    val system = ActorSystem(s"dt-5-${scala.util.Random.nextInt(100000)}")
-    try
-      for
-        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
-        // 同②③：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
-        _ = DelegateJudge.DelegateJudgePort.install(
-          new DelegateJudge.DelegateJudgePort.Face:
-            def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
-              IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
-        )
-        (child, sup) <- noopRefs(system)
-        // 只读座位形态（A5 步1 判否腿）：分支已建但零领先提交——judge 误判
-        // ready-to-merge ⇒ 凭 commitsAhead==0 降级，绝不进空合并轮。
-        zeroRepo = mkRealRepo(tempRoot / "zero-repo", branch = "delegate/delegate-nebflow-zero", ahead = 0)
-        _ = seedRecord(
-          "delegate-nebflow-zero",
-          Some("62"),
-          branch = Some("delegate/delegate-nebflow-zero"),
-          cwd = zeroRepo
-        )
-        // 状态矩阵批：finish 申报 = 判词链门票。
-        _ = DelegateRegistry.updateReport("delegate-nebflow-zero", "finish", "declared", "")
-        outcome <- DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-zero",
-          "nebula-root",
-          "t",
-          "brief",
-          "done reading",
-          child,
-          sup
-        )
-        _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-      yield
-        assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
-        assertEquals(
-          verdictLine("delegate-nebflow-zero"),
-          Some("completed"),
-          "zero commits ahead ⇒ degrade to completed (honest terminal)"
-        )
-        assert(
-          MergeQueue.find("delegate-nebflow-zero").isEmpty,
-          "an empty branch must never be enqueued into a merge round"
-        )
-      end for
-    finally DelegateJudge.DelegateJudgePort.clear()
-    end try
-  }
-
-  test(
-    "④ cleanup: failed/cancelled terminals write the engine verdict line (verdict=failed, #566 true value) and dequeue; the completed leg does NOT double-write"
+    "④ cleanup: failed/cancelled terminals write the engine verdict line (verdict=failed, true value); the completed leg does NOT double-write"
   ) {
     val system = ActorSystem(s"dt-4-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
-      (child, sup) <- noopRefs(system)
+      res <- mkResources(system, tempRoot, new SilentLlm)
       _ = seedRecord("delegate-nebflow-fail", Some("71"), branch = Some("delegate/delegate-nebflow-fail"))
-      _ = MergeQueue.enqueue(
-        MergeQueue.Member(
-          delegateId = "delegate-nebflow-fail",
-          branch = "delegate/delegate-nebflow-fail",
-          baseWs = tempRoot.toString,
-          baseBranch = "main",
-          worktree = false,
-          projectKey = "p-fail",
-          taskId = Some("71"),
-          parentSessionId = "nebula-root",
-          description = "t",
-          readyAt = 1L,
-          // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
-          declaredAt = Some(1_000L),
-          declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
-          channelKind = "identity",
-        )
-      )
       _ <- DelegateTerminal.onTerminalCleanup(res, "delegate-nebflow-fail", "nebula-root", "failed", "failed")
       // completed 腿（onCompleted 已写 judge 行）→ cleanup 不得再补 engine 行
       before = ChainStore
@@ -431,16 +203,9 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         .count(e => e.kind == "terminal-verdict" && e.payload.hcursor.get[String]("source").toOption.contains("engine"))
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      // 台账 #896：终态 = **关账**（成员留在持久账本，state 落终态；开放队列视图
-      // 释放）——不再是「出队消失」。关账前账实核对先行（此处分支未并 ⇒ owner-gone）。
-      assert(
-        MergeQueue.find("delegate-nebflow-fail").exists(m => !m.open),
-        "any terminal closes the queue membership (no open state survives)"
-      )
-      assert(MergeQueue.queueViewOf("delegate-nebflow-fail").isEmpty, "the closed member leaves the open queue view")
       assertEquals(before, 1, "the failed terminal wrote exactly one engine verdict line")
       assertEquals(after, before, "the completed leg must not double-write an engine verdict line")
-      // #566：engine 判词行写真值（verdict=failed），不再冒充 blocked。
+      // engine 判词行写真值（verdict=failed），不再冒充 blocked。
       assert(
         ChainStore
           .listSync()
@@ -454,7 +219,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     end for
   }
 
-  // ── A5 步2 漂移闸（评审 §六步2 红验①-⑤）─────────────────────────────
+  // ── A5 步2 漂移闸（评审 §六步2 红验）─────────────────────────────────
 
   /** 判词行三元读数：(verdict, source, reason)——payload 承重键直读。 */
   private def verdictRows(delegateId: String): List[(String, String, String)] =
@@ -475,7 +240,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   /**
    * 漂移真仓夹具：main@init(F) + delegate 分支 park 在 F（只读座位形态）；
    * advance="direct" ⇒ main 直写一笔（不可归属证据）；advance="delegateMerge" ⇒
-   * delegate/other 一笔后 `--no-ff` 并回 main（归属候选——账本行由测试侧落）。
+   * delegate/other 一笔后 `--no-ff` 并回 main（归属候选——delegate 分支的落地只能
+   * 经项目 merger 的授权请求）。
    * 返回 (repo, forkSha, baseTipSha)——全 sha，与判词 reason 里的证据直比。
    */
   private def mkDriftRepo(dir: os.Path, delegateBranch: String, advance: String): (os.Path, String, String) =
@@ -512,11 +278,11 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     wt
 
   test(
-    "⑥ (A5 步2 红验①; #566) shared-checkout seat + zero-ahead + non-attributable base advance ⇒ completed+note, source=drift, reason carries fork/baseTip/commits"
+    "⑥ (drift red ①) shared-checkout seat + zero-ahead + non-attributable base advance ⇒ completed+note, source=drift, reason carries fork/baseTip/commits"
   ) {
     val system = ActorSystem(s"dt-6-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
+      res <- mkResources(system, tempRoot, new SilentLlm)
       // 判定机缺席：漂移闸独立定罪（确证 ⇒ 根本不进判定机——闸先于判定机）
       (child, sup) <- noopRefs(system)
       (repo, fork, baseTip) = mkDriftRepo(
@@ -542,7 +308,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       rows = verdictRows("delegate-nebflow-dg1")
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      // #566：确证漂移 = completed＋注记（source=drift），不再是独立 blocked 状态。
+      // 确证漂移 = completed＋注记（source=drift），不是独立 blocked 状态。
       assert(outcome.toString.contains("completed"), s"confirmed drift must land a completed release: $outcome")
       assert(
         outcome.toString.contains("[delegate-judge] note:"),
@@ -562,31 +328,17 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         reason.contains("non-attributable commits") && reason.contains(baseTip) && reason.contains("direct commit"),
         s"reason must carry the non-attributable commit list: $reason"
       )
-      assert(MergeQueue.find("delegate-nebflow-dg1").isEmpty, "a drift block must land BEFORE the merge queue")
     end for
   }
 
   test(
-    "⑦ (红验②) same drift shape but the base advance is another delegate's merge WITH a merge-queue ledger row ⇒ not penalized"
+    "⑦ (drift red ②) same drift shape but the base advance is another delegate's merge ⇒ not penalized (delegate/ prefix attribution)"
   ) {
     val system = ActorSystem(s"dt-7-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
+      res <- mkResources(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-attr", "delegate/delegate-nebflow-dg2", advance = "delegateMerge")
-      // 账本行：真流程由 MergeQueue.record 落在被并 delegate 自己的键下（跨键扫描
-      // 才可达）——此处按同一行契约直落 merge-merged 行
-      _ = ChainStore.appendSync(
-        "other-task-51",
-        MergeQueue.EntryKind,
-        Json.obj(
-          "action" -> "merge-merged".asJson,
-          "delegateId" -> "delegate-nebflow-other".asJson,
-          "branch" -> "delegate/other".asJson,
-          "projectKey" -> "p-other".asJson,
-          "readyAt" -> 1L.asJson
-        )
-      )
       _ = seedRecord("delegate-nebflow-dg2", Some("92"), branch = Some("delegate/delegate-nebflow-dg2"), cwd = repo)
       // 状态矩阵批：finish 申报 = 判词链门票。
       _ = DelegateRegistry.updateReport("delegate-nebflow-dg2", "finish", "declared", "")
@@ -611,90 +363,12 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         "a fully-attributable base advance must NOT be penalized"
       )
       assert(!rows.map(_._2).contains("drift"), "no drift source may land on the attributable shape")
-      assert(MergeQueue.find("delegate-nebflow-dg2").isEmpty, "zero-ahead ⇒ still never enqueued (step-1 degradation)")
-      assert(outcome.toString.contains("completed"), s"got: $outcome")
-    end for
-  }
-
-  test("⑧ (红验③) mergeRound=true ⇒ drift exempt (the A4 merge-round re-judge stays reachable)") {
-    val system = ActorSystem(s"dt-8-${scala.util.Random.nextInt(100000)}")
-    for
-      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
-      // 判定机缺席（withJudgeAbsent 同⑥⑦⑨）：闸豁免后走既有回落链——completed
-      (child, sup) <- noopRefs(system)
-      (repo, _, _) = mkDriftRepo(tempRoot / "drift-round", "delegate/delegate-nebflow-dg3", advance = "direct")
-      // 支先落一笔真实交付提交（分叉形态——若 park 在 fork，放行时账实核对直接
-      // 关账 merged，合并轮在飞形态就位不了）。落笔后 HEAD 回 main。
-      _ = os
-        .proc("git", "-C", repo.toString, "checkout", "delegate/delegate-nebflow-dg3")
-        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-      _ = os.write(repo / "dg3-deliverable.txt", "dg3 deliverable")
-      _ = os.proc("git", "-C", repo.toString, "add", ".").call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-      _ = os
-        .proc("git", "-C", repo.toString, "commit", "-m", "dg3 deliverable")
-        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-      _ = os
-        .proc("git", "-C", repo.toString, "checkout", "main")
-        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-      _ = seedRecord("delegate-nebflow-dg3", Some("93"), branch = Some("delegate/delegate-nebflow-dg3"), cwd = repo)
-      // 合并轮在飞（账本 turn-granted ⇒ mergeRound=true，台账 #896 放行判据）
-      _ = MergeQueue.enqueue(
-        MergeQueue.Member(
-          delegateId = "delegate-nebflow-dg3",
-          branch = "delegate/delegate-nebflow-dg3",
-          baseWs = repo.toString,
-          baseBranch = "main",
-          worktree = false,
-          projectKey = "p-dg3",
-          taskId = Some("93"),
-          parentSessionId = "nebula-root",
-          description = "t",
-          readyAt = 1L,
-          // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
-          declaredAt = Some(1_000L),
-          declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
-          channelKind = "identity",
-        )
-      )
-      // 引擎加固批 2026-10-09（P1-1① 机械验收闸）：合并轮 completed 判词的 Release
-      // 前置闸要求基分支 HEAD 真是「双亲 merge ＋第二亲=支头」——夹具必须**真并**
-      // （放行后属主自己完成合并——交通引导员制的真实时序：grant → 属主 git merge
-      // → 回报终态）。原先 park 在 fork 的零领先形态 `merge --no-ff` = Already up
-      // to date 不产 merge commit，在 P1-1① 起会被判否。
-      _ = os
-        .proc("git", "-C", repo.toString, "merge", "--no-ff", "delegate/delegate-nebflow-dg3", "-m", "merge dg3")
-        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-      outcome <- withJudgeAbsent(
-        DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-dg3",
-          "nebula-root",
-          "t",
-          "brief",
-          "merge round done",
-          child,
-          sup
-        )
-      )
-      rows = verdictRows("delegate-nebflow-dg3")
-      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield
-      assertEquals(
-        rows.map(_._1).lastOption,
-        Some("completed"),
-        "merge-round delegates are exempt (own A4 merge moved the base)"
-      )
-      assert(!rows.map(_._2).contains("drift"), "no drift source may land inside a merge round")
-      assert(
-        !rows.map(_._2).contains("merge-verify"),
-        "a really-landed merge passes the mechanical acceptance gate (no refusal)"
-      )
       assert(outcome.toString.contains("completed"), s"got: $outcome")
     end for
   }
 
   test(
-    "⑨ (红验④) git reading unverifiable ⇒ no penalty, WARN only (fail-open, no fake block); classifier Warn branch anchored"
+    "⑨ (drift red ④) git reading unverifiable ⇒ no penalty, WARN only (fail-open, no fake block); classifier Warn branch anchored"
   ) {
     val system = ActorSystem(s"dt-9-${scala.util.Random.nextInt(100000)}")
     // 分类器纯函数锚（零 git）：锚读数缺失 ⇒ Warn，绝不 Penalty（🔴 禁假阻塞）
@@ -712,7 +386,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     )
     val warned = DelegateTerminal.classifyDrift(
       rec,
-      mergeRound = false,
       DelegateTerminal.DriftReadings(
         fork = None,
         baseTip = Some("bt"),
@@ -720,11 +393,10 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         baseAdvances = (_, _) => None,
         branchTips = () => None,
         isAncestorOf = (_, _) => Some(false)
-      ),
-      queueFootprint = _ => true
+      )
     )
     for
-      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
+      res <- mkResources(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       // e2e：branch ref 缺失（rev-parse 不可确证）⇒ 闸 WARN 不罚
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-gone", "delegate/delegate-nebflow-dg4", advance = "direct")
@@ -750,13 +422,13 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     end for
   }
 
-  test("⑩ (红验⑤) worktree seat, same drift shape ⇒ note merged into the judge digest, no penalty") {
+  test("⑩ (drift red ⑤) worktree seat, same drift shape ⇒ note merged into the judge digest, no penalty") {
     val system = ActorSystem(s"dt-10-${scala.util.Random.nextInt(100000)}")
     val captured = ListBuffer.empty[DelegateJudge.TerminalInput]
     try
       for
-        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
-        // fake 判定机（后装覆盖真机——同②③⑤装配序）：捕获 gitDigest 输入
+        res <- mkResources(system, tempRoot, new SilentLlm)
+        // fake 判定机（后装覆盖真机）：捕获 gitDigest 输入
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
@@ -823,9 +495,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       branchTips = () => Some(Nil),
       isAncestorOf = (_, _) => Some(false)
     )
-    val fp = (b: String) => b == "delegate/other"
     // 共享座位 × 不可归属直写 ⇒ Penalty，reason 携证据三件
-    val p = DelegateTerminal.classifyDrift(base, mergeRound = false, shared, fp)
+    val p = DelegateTerminal.classifyDrift(base, shared)
     assert(p.isInstanceOf[DelegateTerminal.DriftResult.Penalty], s"got: $p")
     val reason = p.asInstanceOf[DelegateTerminal.DriftResult.Penalty].reason
     assert(
@@ -834,11 +505,9 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     )
     // worktree 座位同读数 ⇒ NoteOnly（只注记不罚）
     val wtRec = base.copy(worktree = Some("/wt"))
-    assert(DelegateTerminal.classifyDrift(wtRec, false, shared, fp).isInstanceOf[DelegateTerminal.DriftResult.NoteOnly])
-    // 合并轮 ⇒ Clear（豁免先于读数）
-    assert(DelegateTerminal.classifyDrift(base, mergeRound = true, shared, fp) == DelegateTerminal.DriftResult.Clear)
-    // delegate 形 merge（有账本行）＋其搭载提交（可达被并 tip）⇒ Clear（归属豁免——
-    // fork..baseTip 含被并分支自身提交，随并归属）
+    assert(DelegateTerminal.classifyDrift(wtRec, shared).isInstanceOf[DelegateTerminal.DriftResult.NoteOnly])
+    // delegate 形 merge（delegate/ 前缀归属）＋其搭载提交（可达被并 tip）⇒ Clear
+    // （归属豁免——fork..baseTip 含被并分支自身提交，随并归属）
     val merged = shared.copy(
       baseAdvances = (_, _) =>
         Some(
@@ -850,31 +519,26 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       branchTips = () => Some(List("delegate/other" -> "t2")),
       isAncestorOf = (c, t) => Some(c == "d1" && t == "t2")
     )
-    assert(DelegateTerminal.classifyDrift(base, false, merged, fp) == DelegateTerminal.DriftResult.Clear)
-    // delegate 形 merge 但无账本行 ⇒ Warn（不可确证压过一切，fail-open）
-    assert(
-      DelegateTerminal.classifyDrift(base, false, merged, _ => false).isInstanceOf[DelegateTerminal.DriftResult.Warn]
-    )
+    assert(DelegateTerminal.classifyDrift(base, merged) == DelegateTerminal.DriftResult.Clear)
     // 搭载提交不可达（祖先读数不可确证）⇒ Warn（fail-open）
     val brokenAncestry = merged.copy(isAncestorOf = (_, _) => None)
     assert(
-      DelegateTerminal.classifyDrift(base, false, brokenAncestry, fp).isInstanceOf[DelegateTerminal.DriftResult.Warn]
+      DelegateTerminal.classifyDrift(base, brokenAncestry).isInstanceOf[DelegateTerminal.DriftResult.Warn]
     )
-    // 非 delegate ref 的 merge（有行也不豁免）＋不在任何 attributable 支上的单亲 ⇒ Penalty
+    // 非 delegate ref 的 merge ＋不在任何 attributable 支上的单亲 ⇒ Penalty
     val foreignMerge = merged.copy(
       branchTips = () => Some(List("feat/landing" -> "t2")),
       isAncestorOf = (_, _) => Some(false)
     )
-    val fpNone = (b: String) => false
     assert(
       DelegateTerminal
-        .classifyDrift(base, false, foreignMerge, fpNone)
+        .classifyDrift(base, foreignMerge)
         .isInstanceOf[DelegateTerminal.DriftResult.Penalty]
     )
   }
 
   test(
-    "⑫ legacy shapes stay Clear: no branch anchor, non-git cwd, zero-ahead with unmoved base (existing ①③⑤ regression)"
+    "⑫ legacy shapes stay Clear: no branch anchor, non-git cwd, zero-ahead with unmoved base (existing regression)"
   ) {
     val base = DelegateRegistry.Record(
       id = "dg-l",
@@ -890,61 +554,34 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     )
     val readings = DelegateTerminal.DriftReadings(None, None, None, (_, _) => None, () => None, (_, _) => Some(false))
     // 无锚 ⇒ 闸盲（外部执行器腿 / 判否零绑定 legacy 记录同形）
-    assert(DelegateTerminal.classifyDrift(base, false, readings, _ => false) == DelegateTerminal.DriftResult.Clear)
+    assert(DelegateTerminal.classifyDrift(base, readings) == DelegateTerminal.DriftResult.Clear)
     // D1∨D2 不成立 ⇒ Clear（delegate 自己有领先提交 / 基未动的零领先）
     val noDrift =
       DelegateTerminal.DriftReadings(Some("f"), Some("f"), Some("f"), (_, _) => None, () => None, (_, _) => Some(false))
     val withBranch = base.copy(branch = Some("delegate/l"))
-    assert(DelegateTerminal.classifyDrift(withBranch, false, noDrift, _ => false) == DelegateTerminal.DriftResult.Clear)
+    assert(DelegateTerminal.classifyDrift(withBranch, noDrift) == DelegateTerminal.DriftResult.Clear)
     val ownWork =
       DelegateTerminal.DriftReadings(Some("f"), Some("b"), Some("w"), (_, _) => None, () => None, (_, _) => Some(false))
-    assert(DelegateTerminal.classifyDrift(withBranch, false, ownWork, _ => false) == DelegateTerminal.DriftResult.Clear)
+    assert(DelegateTerminal.classifyDrift(withBranch, ownWork) == DelegateTerminal.DriftResult.Clear)
   }
 
   test(
-    "⑬ (P2-3 只读座位诚实化 × 台账 #896 交通引导员制) judged-completed seat + commits ahead ⇒ flips to ready-to-merge (auto-enqueued) for BOTH read-only and working seats; the engine never merges anything itself"
+    "⑬ judged-completed working seat + commits ahead ⇒ completed release + unmerged-work audit row; the engine never merges anything itself and never enqueues anything"
   ) {
     val system = ActorSystem(s"dt-13-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
-        // 同②③：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
-        // 判定机裁定 completed（「无可并之物」的误判形态——引擎凭确定性读数翻转）。
+        res <- mkResources(system, tempRoot, new SilentLlm)
+        // 真判定机在 mkResources 构造行安装，fake 必须后装才生效。
+        // 判定机裁定 completed（交付走项目 merger 的授权请求，未并提交只注记）。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.Completed))
         )
         (child, sup) <- noopRefs(system)
-        // 只读座位形态：分支领先 1（delegate 违反只读纪律交了活）＋ 判否旗在场
-        readOnlyRepo = mkRealRepo(tempRoot / "ro-flip-repo", branch = "delegate/delegate-nebflow-ro", ahead = 1)
-        _ = seedRecord(
-          "delegate-nebflow-ro",
-          Some("63"),
-          branch = Some("delegate/delegate-nebflow-ro"),
-          cwd = readOnlyRepo,
-          worktree = Some(readOnlyRepo),
-          worktreeJudged = Some(false)
-        )
-        flipOutcome <- DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-ro",
-          "nebula-root",
-          "t",
-          "brief",
-          "done (made commits anyway)",
-          child,
-          sup
-        )
-        queued = MergeQueue.find("delegate-nebflow-ro")
-        flipVerdict = verdictLine("delegate-nebflow-ro")
-        // 工作座位对照：同形态但判是旗在场 ⇒ 台账 #896 起同样翻转入队（引擎零代并
-        // ——DelegateAutoMerge 已退役，交付走队列：放行 = 通知属主自己合并）。
-        workingRepo = mkRealRepo(tempRoot / "work-note-repo", branch = "delegate/delegate-nebflow-wn", ahead = 1)
-        // 座位形态归位：基工作区 HEAD 回 main（可并形态——目标分支必须是检出分支）
-        _ = os
-          .proc("git", "-C", workingRepo.toString, "checkout", "main")
-          .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+        // 工作座位形态：分支领先 1。
+        workingRepo = mkRealRepoLike(tempRoot / "work-note-repo", branch = "delegate/delegate-nebflow-wn", ahead = 1)
         _ = seedRecord(
           "delegate-nebflow-wn",
           Some("64"),
@@ -963,7 +600,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           child,
           sup
         )
-        queuedWn = MergeQueue.find("delegate-nebflow-wn")
         noteRows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "unmerged-work").flatMap { e =>
           e.payload.hcursor
             .get[String]("delegateId")
@@ -974,95 +610,45 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
         assert(
-          flipOutcome == DelegateTerminal.Outcome.HoldForMerge,
-          "a read-only seat with delivered commits must flip to ready-to-merge (delivery is never silently dropped)"
+          workOutcome.isInstanceOf[DelegateTerminal.Outcome.Release],
+          s"a completed verdict releases to the parent: $workOutcome"
         )
-        assertEquals(flipVerdict, Some("ready-to-merge"), "the flipped verdict line is ready-to-merge")
-        assert(queued.isDefined, "the flipped delegate must be enqueued into the merge queue")
-        assertEquals(queued.map(_.branch), Some("delegate/delegate-nebflow-ro"))
-        assert(
-          workOutcome == DelegateTerminal.Outcome.HoldForMerge,
-          "a working seat with delivered commits flips too — the engine never runs merges itself (traffic-controller model)"
-        )
-        assertEquals(verdictLine("delegate-nebflow-wn"), Some("ready-to-merge"), "the working seat's verdict line flips as well")
-        assertEquals(queuedWn.map(_.branch), Some("delegate/delegate-nebflow-wn"), "the working seat is enqueued")
+        assert(workOutcome.toString.contains("completed"), s"got: $workOutcome")
+        assertEquals(verdictLine("delegate-nebflow-wn"), Some("completed"), "the verdict line is completed")
+        assertEquals(noteRows.flatMap(_.toList), List(1), "the unmerged-work audit row carries the ahead count")
         assert(
           !GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true),
-          "the engine did NOT merge anything itself (zero proxy-merge — the queue only notifies)"
-        )
-        // 台账 #896：旧 unmerged-work 注记被「翻转入队」取代（交付不再只注记）。
-        assertEquals(
-          noteRows,
-          Nil,
-          "the legacy unmerged-work note is superseded by the queue flip (delivery goes through the merge queue)"
+          "the engine did NOT merge anything itself (integration is a separate authorized merger request)"
         )
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
-  test(
-    "⑭ (misc②; #566) ready-to-merge without a recorded baseBranch ⇒ completed+note (refuses to guess 'main'), engine-source verdict row lands"
-  ) {
-    val system = ActorSystem(s"dt-14-${scala.util.Random.nextInt(100000)}")
-    try
-      for
-        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
-        _ = DelegateJudge.DelegateJudgePort.install(
-          new DelegateJudge.DelegateJudgePort.Face:
-            def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
-              IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
-        )
-        (child, sup) <- noopRefs(system)
-        // detached-HEAD 形态：spawn 绑定缺 baseBranch 锚——holdForMerge 绝不猜 main
-        _ = DelegateRegistry.put(
-          DelegateRegistry.Record(
-            id = "delegate-nebflow-nobase",
-            executor = "nebflow",
-            cwd = tempRoot.toString,
-            project = None,
-            taskId = Some("65"),
-            parentSessionId = "nebula-root",
-            title = "seeded",
-            createdAt = 1L,
-            branch = Some("delegate/delegate-nebflow-nobase"),
-            baseBranch = None,
-            projectWorkspace = Some(tempRoot.toString)
-          )
-        )
-        // 状态矩阵批：finish 申报 = 判词链门票。
-        _ = DelegateRegistry.updateReport("delegate-nebflow-nobase", "finish", "declared", "")
-        outcome <- DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-nobase",
-          "nebula-root",
-          "t",
-          "brief",
-          "ready to merge",
-          child,
-          sup
-        )
-        rows = verdictRows("delegate-nebflow-nobase")
-        _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-      yield
-        assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
-        // #566：降级 = completed＋注记（无独立 blocked 状态——注记交付）。
-        assert(outcome.toString.contains("completed"), "the hold-degraded terminal must release as completed")
-        assert(outcome.toString.contains("[delegate-judge] note:"), "the refusal rides the note channel")
-        assert(
-          outcome.toString.contains("refusing to guess 'main'"),
-          s"the refusal reason must name the no-guessing rule: $outcome"
-        )
-        assertEquals(rows.lastOption.map(_._1), Some("completed"), "the verdict line is completed (note form)")
-        assertEquals(
-          rows.lastOption.map(_._2),
-          Some("engine"),
-          "the note line is engine-sourced (closes the ready-to-merge row)"
-        )
-        assert(MergeQueue.find("delegate-nebflow-nobase").isEmpty, "nothing must be enqueued without a merge target")
-      end for
-    finally DelegateJudge.DelegateJudgePort.clear()
-    end try
-  }
+  /**
+   * 真仓夹具（⑬ 判据需要 git 面可读）：main 上 init；ahead > 0 ⇒ branch 上造领先
+   * 提交（工作座位形态），ahead = 0 ⇒ branch park 在 main HEAD。
+   */
+  private def mkRealRepoLike(dir: os.Path, branch: String, ahead: Int): os.Path =
+    nebflow.ForceRemove.removeAll(dir)
+    os.makeDir.all(dir)
+    os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    os.proc("git", "-C", dir.toString, "config", "user.email", "spec@nebflow.local").call(check = true)
+    os.proc("git", "-C", dir.toString, "config", "user.name", "spec").call(check = true)
+    os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "init")
+      .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    if ahead > 0 then
+      os.proc("git", "-C", dir.toString, "checkout", "-b", branch)
+        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      (1 to ahead).foreach { i =>
+        os.write(dir / f"deliverable-$i.txt", s"deliverable $i")
+        os.proc("git", "-C", dir.toString, "add", ".").call(check = true)
+        os.proc("git", "-C", dir.toString, "commit", "-m", s"deliverable $i")
+          .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      }
+    else os.proc("git", "-C", dir.toString, "branch", branch).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    dir
+
+  end mkRealRepoLike
 
 end DelegateTerminalSpec

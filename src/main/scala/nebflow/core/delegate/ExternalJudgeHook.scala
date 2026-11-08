@@ -7,38 +7,29 @@ import cats.effect.IO
  * 批 #1225 留缝；判定机本体归 worktree-judge-fifo 批 #1224）。
  *
  * == 增补条款 3.3（R6/R7＋⑦ 判定同族）==
- * 外部 judge 同走 #1224 的 DelegateJudge 入口（Jev 优先＋SmallJudge 兜底），
- * 复用其判词枚举（completed(+注记) / ready-to-merge——#566：blocked 判词退役）
- * 与 per-project MergeQueue（FIFO 完成时间排序）。本批与 #1224 **并行在飞**——
- * 接口先行对齐：本缝就是那个接口的外部侧消费点。#1224 落地后由其接线（一个赋值点，
- * 见 [[classify]]）；本批**不实现判定机**、不建第二套。
+ * 外部 judge 同走 DelegateJudge 入口（Jev 优先＋SmallJudge 兜底），复用其判词
+ * 枚举（completed(+注记)）。接口先行对齐：本缝就是那个接口的外部侧消费点，接线
+ * 是一个赋值点（见 [[classify]]）；本件**不实现判定机**、不建第二套。
  *
- * == 本批缺省行为（缝未接线）==
+ * == 缺省行为（缝未接线）==
  * `classify` 缺省恒 `None` ⇒ runner 按进程结果直判：exit 0 且流面无失败帧
  * ⇒ completed；否则 failed（＋原因——真失败归 failed，作者令 #566）。
- * 「ready-to-merge」在本批缺省永不产生 ⇒ 无 barrier 悬挂（#1224 的合并轮经
- * MailTool 外部续聊腿注入**一条 resume 消息**（`merge --no-ff` 回基分支 brief）
- * 驱动——S15 钉死，通道已由本批建好）。
  *
- * == 合同（#1224 接线时遵守）==
+ * == 合同（接线时遵守）==
  *   - 输入 = 外部腿的判定素材（任务书摘要 + CLI final 文本 + 进程结果）；
  *   - 输出 = None（弃判，runner 走缺省直判）或判词；
- *   - ready-to-merge 判词下 runner **不发**父终态通知（MergeQueue 持有该
- *     delegate 的父回报权，合并轮终态再判——原书 Batch 4/5 语义）；
  *   - failed 判词下父通知 eventType="failed"、failureType="failed"（外部
  *     无 AgentFrozen 冻结面——⑬：失败经判词 failed 上报，不建旁路上送）。
  */
 object ExternalJudgeHook:
 
   /**
-   * 判词（#1224 DelegateJudge 枚举的外部侧镜像；接线后以 #1224 为准）。
-   * #566：镜像的 blocked 改名 Failed——外部腿的「做不成」= 进程/结果真失败，
-   * 终态恒 failed（无独立 blocked 状态）。
+   * 判词（DelegateJudge 枚举的外部侧镜像）。blocked 改名 Failed——外部腿的
+   * 「做不成」= 进程/结果真失败，终态恒 failed（无独立 blocked 状态）。
    */
   enum Verdict:
     case Completed
     case Failed(reason: String)
-    case ReadyToMerge
 
   /** 判定素材（结果输入 = CLI final 文本——原书不变）。 */
   final case class Input(
@@ -59,26 +50,22 @@ object ExternalJudgeHook:
      * [[nebflow.core.GitWorktrees.statusDigest]] ＋漂移注记（P1-2 注记级覆盖）。
      * 非 git 工作区 = ""（判定机侧同内部腿的空摘要语义）。
      */
-    gitDigest: String = "",
-    /** true = 本次 settle 是合并轮 resume 的终态（合并指令经 MergeQueue 注入过）。 */
-    mergeRound: Boolean = false
+    gitDigest: String = ""
   )
 
   /**
-   * #1224 接线点：`ExternalJudgeHook.classify = input => IO(Some(verdict))`。
+   * 接线点：`ExternalJudgeHook.classify = input => IO(Some(verdict))`。
    * 缺省 = 恒 None（缝未接线——进程结果直判）。volatile 单点，进程级唯一。
    *
    * 引擎加固批 2026-10-09（P1-2）：[[defaultClassify]] 把缝接到同一判定机
-   * （DelegateJudgePort——SharedResources 构造行装配，与内部腿同族）。接线后
-   * 外部腿终态可产出三态判词；`ready-to-merge` 由 runner 并入 MergeQueue
-   * （外部通道条目——合并轮经续聊通道注入，settle 终态再判）。
+   * （DelegateJudgePort——SharedResources 构造行装配，与内部腿同族）。
    */
   @volatile var classify: Input => IO[Option[Verdict]] = _ => IO.pure(None)
 
   /**
    * 缺省接线工厂（P1-2）：同一 DelegateJudge 判定机（Jev 优先＋SmallJudge 兜底）
-   * → 三态镜像。`TerminalInput.taskBrief` = 判定素材里的任务摘要（title——外部
-   * 腿无平台 brief 注入，title 即派发描述）；gitDigest / mergeRound 直传。装配点
+   * → 镜像。`TerminalInput.taskBrief` = 判定素材里的任务摘要（title——外部
+   * 腿无平台 brief 注入，title 即派发描述）；gitDigest 直传。装配点
    * = `agent.SharedResources` 构造行（DelegateJudgePort.install 邻位——同一注册
    * 纪律：构造即注册，幂等）。
    */
@@ -91,17 +78,15 @@ object ExternalJudgeHook:
           resultText = input.finalText,
           gitDigest = input.gitDigest,
           selfReport = None,
-          mergeRound = input.mergeRound,
           sessionToolCalls = None
         )
       )
       .map(_.map {
-        // #566：core CompletedNote（退役 blocked 的注记形）→ 镜像 Completed——
+        // core CompletedNote（退役 blocked 的注记形）→ 镜像 Completed——
         // 外部腿的注记面归终端报告文本；判官「没做成」不在此翻 Failed（进程
         // 结果兜底才是失败判据）。
         case DelegateJudge.Verdict.Completed => Verdict.Completed
         case DelegateJudge.Verdict.CompletedNote(_) => Verdict.Completed
-        case DelegateJudge.Verdict.ReadyToMerge => Verdict.ReadyToMerge
       })
 
   /** runner 的终态决策入口：缝优先，缝未接线走进程结果直判。 */

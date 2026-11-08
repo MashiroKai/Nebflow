@@ -44,6 +44,7 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit = resetGlobals()
   override def afterEach(context: munit.AfterEach): Unit = resetGlobals()
+
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
     nebflow.core.LlmLogWriter.setEnabled(true)
@@ -154,6 +155,8 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
       os.remove.all(tmp)
       os.remove.all(seat)
 
+  end withFx
+
   private def sweepWith(fx: Fx) =
     SubAgentStartupRecovery.sweep(
       fx.store,
@@ -170,7 +173,9 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
 
   // ── 改前红 A：收殓零重播 ──────────────────────────────────────────────
 
-  test("A · 收殓零重播: an ancient restart-lost row (failed ∧ fingerprint ∧ 9d old) never re-enters the revival/salvage视野 — zero revival, zero salvage, zero mailbox notice, row untouched") {
+  test(
+    "A · 收殓零重播: an ancient restart-lost row (failed ∧ fingerprint ∧ 9d old) never re-enters the revival/salvage视野 — zero revival, zero salvage, zero mailbox notice, row untouched"
+  ) {
     withFx("ancient-restart-lost") { fx =>
       val parent = "ttl-parent-a"
       val id = "delegate-nebflow-ttl-a"
@@ -200,12 +205,15 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
         _ = assertEquals(row.status, "failed", "the ancient row keeps its honest terminal state")
         _ = assertEquals(row.completedAt, Some(NineDaysAgo), "the ancient row's terminal timestamp is untouched")
       yield ()
+      end for
     }
   }
 
   // ── 改前红 B：账面合成零重播 ──────────────────────────────────────────
 
-  test("B · 合成零重播: an ancient terminal row falling inside a long-downtime reconcile window is never synthesized into the parent mailbox") {
+  test(
+    "B · 合成零重播: an ancient terminal row falling inside a long-downtime reconcile window is never synthesized into the parent mailbox"
+  ) {
     withFx("ancient-mbox-synth") { fx =>
       val parent = "ttl-parent-b"
       val id = "delegate-nebflow-ttl-b"
@@ -235,6 +243,7 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
         events <- mailboxEvents(parent)
         _ = assertEquals(events, Nil, "ancient row must not reach the parent mailbox")
       yield ()
+      end for
     }
   }
 
@@ -266,12 +275,15 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
         rec <- IO(nebflow.core.delegate.DelegateRegistry.find(id).get)
         _ = assertEquals(rec.reportStatus, None, "the record stays un-delivered (silence, not convergence)")
       yield ()
+      end for
     }
   }
 
   // ── 改后绿 D：TTL 边界三态（机械边界，唯一比较点在 DelegateTerminalTtl.ageVerdict）──
 
-  test("D · 边界三态: 6d23h59m kept, exactly 7d expired, 7d+1m expired — and a 100d-old RUNNING row is NEVER expired (in-flight red line)") {
+  test(
+    "D · 边界三态: 6d23h59m kept, exactly 7d expired, 7d+1m expired — and a 100d-old RUNNING row is NEVER expired (in-flight red line)"
+  ) {
     val now = 1_000_000_000_000L
     import nebflow.core.delegate.DelegateTerminalTtl
     // 6天23h59m → WithinTtl
@@ -296,7 +308,9 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
 
   // ── 改后绿 E：终态锚解析（保存态 > 任务行 > 登记兜底）─────────────────
 
-  test("E · 锚解析: saved-state anchors (frozen/standby) win over the task row; owner-gone falls back to cancel marker then createdAt") {
+  test(
+    "E · 锚解析: saved-state anchors (frozen/standby) win over the task row; owner-gone falls back to cancel marker then createdAt"
+  ) {
     val now = 1_000_000_000_000L
     import nebflow.core.delegate.{DelegateRegistry, DelegateTerminalTtl}
     val task = mkTask("delegate-nebflow-ttl-e", "p", status = "failed", completedAt = now - 1L * Day) // 新终态
@@ -314,26 +328,28 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     )
     DelegateTerminalTtl.verdict(standbyRec, Some(task), now) match
       case DelegateTerminalTtl.WithinTtl(_, name) => assertEquals(name, "standby")
-      case other                                  => fail(s"expected WithinTtl(standby), got $other")
+      case other => fail(s"expected WithinTtl(standby), got $other")
     // 无保存态 → 任务行锚（completedAt 1d 前 = WithinTtl）
     DelegateTerminalTtl.verdict(mkRecord("delegate-nebflow-ttl-e", "p", "/tmp/seat"), Some(task), now) match
       case DelegateTerminalTtl.WithinTtl(_, name) => assertEquals(name, "task-row")
-      case other                                  => fail(s"expected WithinTtl(task-row), got $other")
+      case other => fail(s"expected WithinTtl(task-row), got $other")
     // owner-gone（无任务行）→ 取消墓碑兜底
     val cancelled = mkRecord("delegate-nebflow-ttl-e", "p", "/tmp/seat").copy(cancelRequestedAt = Some(now - 8L * Day))
     DelegateTerminalTtl.verdict(cancelled, None, now) match
       case DelegateTerminalTtl.Expired(_, name) => assertEquals(name, "registry-cancel-marker")
-      case other                                => fail(s"expected Expired(registry-cancel-marker), got $other")
+      case other => fail(s"expected Expired(registry-cancel-marker), got $other")
     // owner-gone 无任何旗 → 登记时间兜底（createdAt 9d 前）
     val noMarker = mkRecord("delegate-nebflow-ttl-e", "p", "/tmp/seat").copy(createdAt = now - 9L * Day)
     DelegateTerminalTtl.verdict(noMarker, None, now) match
       case DelegateTerminalTtl.Expired(_, name) => assertEquals(name, "registry-created")
-      case other                                => fail(s"expected Expired(registry-created), got $other")
+      case other => fail(s"expected Expired(registry-created), got $other")
   }
 
   // ── 改后绿 F：清理 sweep（登记移除 + 任务行剪行 + 在飞守卫 + 未满不动）──
 
-  test("F · 清理面: expired dead entries are cleaned (row pruned + record removed), fresh ones and in-flight sessions are never touched") {
+  test(
+    "F · 清理面: expired dead entries are cleaned (row pruned + record removed), fresh ones and in-flight sessions are never touched"
+  ) {
     withFx("sweep-e2e") { fx =>
       val parent = "ttl-parent-f"
       val deadId = "delegate-nebflow-ttl-dead"
@@ -341,7 +357,9 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
       val liveId = "delegate-nebflow-ttl-live"
       for
         _ <- fx.sessionStore.getOrCreateSession(parent, "ttl spec parent", agentName = Some("Nebula"))
-        _ <- fx.store.recordTask(mkTask(deadId, parent, status = "failed", completedAt = NineDaysAgo, lastError = Some("old boom")))
+        _ <- fx.store.recordTask(
+          mkTask(deadId, parent, status = "failed", completedAt = NineDaysAgo, lastError = Some("old boom"))
+        )
         // 未满 TTL（2 天前终态）——保留腿对照。
         _ <- fx.store.recordTask(
           mkTask(freshId, parent, status = "failed", completedAt = System.currentTimeMillis() - 2L * Day)
@@ -380,6 +398,7 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
         liveRec <- IO(nebflow.core.delegate.DelegateRegistry.find(liveId).map(_.id))
         _ = assertEquals(liveRec, Some(liveId), "in-flight record untouched (red line)")
       yield ()
+      end for
     }
   }
 
@@ -396,7 +415,8 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
         _ <- fx.store.recordTask(mkTask(freshStandbyId, parent, status = "running", completedAt = NineDaysAgo))
         _ <- IO(
           nebflow.core.delegate.DelegateRegistry.put(
-            mkRecord(oldFrozenId, parent, fx.seat.toString).copy(frozenSince = Some(NineDaysAgo), frozenReason = Some("llm-failure"))
+            mkRecord(oldFrozenId, parent, fx.seat.toString)
+              .copy(frozenSince = Some(NineDaysAgo), frozenReason = Some("llm-failure"))
           )
         )
         _ <- IO(
@@ -410,10 +430,15 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
         )
         report <- DelegateTtlSweep.run(fx.resources)
         _ = assertEquals(report.expired, List(oldFrozenId), s"expired saved-state cleaned: ${report.summary}")
-        _ = assertEquals(report.taskRowsPruned, List(oldFrozenId), "the frozen row is pruned too (row status 'frozen' is dead, not in-flight)")
+        _ = assertEquals(
+          report.taskRowsPruned,
+          List(oldFrozenId),
+          "the frozen row is pruned too (row status 'frozen' is dead, not in-flight)"
+        )
         freshRec <- IO(nebflow.core.delegate.DelegateRegistry.find(freshStandbyId).map(_.id))
         _ = assertEquals(freshRec, Some(freshStandbyId), "fresh parked standby untouched (within TTL)")
       yield ()
+      end for
     }
   }
 
@@ -429,7 +454,9 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     os.proc("git", "-C", repo, "commit", "-m", "seed").call()
     repo
 
-  test("H · worktree 联动回收: expired-terminal leg recycles the tree; unmerged commits keep the branch (zero-ahead still guards branch deletion)") {
+  test(
+    "H · worktree 联动回收: expired-terminal leg recycles the tree; unmerged commits keep the branch (zero-ahead still guards branch deletion)"
+  ) {
     withFx("worktree-recycle") { fx =>
       IO.blocking {
         // H1 干净树：树回收 + 分支删除（零领先）。
@@ -443,7 +470,7 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
           projectWorkspace = Some(repo1.toString)
         )
         val removed1 = nebflow.core.delegate.PostMergeCleanup
-          .run(Some(rec1), allowLiveOwner = false, expiredTerminal = true)
+          .run(Some(rec1))
           .unsafeRunSync()
         assert(removed1, "clean tree recycled by the TTL leg")
         assert(!os.exists(wt1), "worktree directory removed")
@@ -463,7 +490,7 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
           projectWorkspace = Some(repo2.toString)
         )
         val removed2 = nebflow.core.delegate.PostMergeCleanup
-          .run(Some(rec2), allowLiveOwner = false, expiredTerminal = true)
+          .run(Some(rec2))
           .unsafeRunSync()
         assert(removed2, "tree recycled even with an unmerged branch")
         assert(!os.exists(wt2), "worktree directory removed (worktree was clean after the commit)")
@@ -476,7 +503,9 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
 
   // ── 改后绿 I：TTL 单源对齐 ────────────────────────────────────────────
 
-  test("I · 单源: DelegateTerminalTtl.TtlMs == Defaults.DelegateTerminalTtlMs == 7d; freeze retention derives from the same point") {
+  test(
+    "I · 单源: DelegateTerminalTtl.TtlMs == Defaults.DelegateTerminalTtlMs == 7d; freeze retention derives from the same point"
+  ) {
     import nebflow.core.delegate.DelegateTerminalTtl
     assertEquals(Defaults.DelegateTerminalTtlMs, 7L * 24 * 3600 * 1000)
     assertEquals(DelegateTerminalTtl.TtlMs, Defaults.DelegateTerminalTtlMs)

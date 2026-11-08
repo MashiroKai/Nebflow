@@ -992,21 +992,6 @@ object Defaults:
   /** 扫描拍频（秒）——稿 §3.2 的 30s 档（HeldDeliveryScanIntervalSec 同款形态）。 */
   val BgLifecycleScanIntervalSec: Int = 30
 
-  // ── 合并队列活性守卫（merge-fifo 批 2026-11-03 · 作者报障「两个会话都已经报了
-  // merge，为什么还没收到通知」）────────────────────────────────────────────
-
-  /**
-   * [[nebflow.core.delegate.MergeEnqueueWatch]] 的静默阈值（秒）：会话 Idle 且
-   * 最后一次 agent 侧活动距今 ≥ 本值、分支上仍有未并交付提交、任务行
-   * running/restarting、账本又没有开放条目 ⇒ 判「漏排」（申报腿与终态腿双失），
-   * 由守卫拍补入队 + `watch-queued` 通知。
-   *
-   * 10min 的取值理由：申报 `merge` 之后终态腿通常在秒级内跑完（同一回合收尾），
-   * 10min 静默后仍未入队 = 那条腿确实没跑成，而不是「还在同一个回合里」。可经
-   * 系统属性 `nebflow.merge.enqueueWatch.idleSec` 覆盖（spec 用 0/999/1000 探边界）。
-   */
-  val MergeEnqueueWatchIdleSec: Long = 600L
-
   /**
    * 自基线观测窗 K（ms）：任务头 K 分钟的活跃间隔采样窗，到龄冻结中位为基线
    * （稿 §3.3「任务头 K 分钟的观测中位×系数」；§9-② 建议先自基线+全局默认档）。
