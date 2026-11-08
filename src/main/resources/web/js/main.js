@@ -3081,6 +3081,9 @@ onMessage('modelOptions', (msg, view) => {
 });
 
 onMessage('sessionModelSet', (msg, view) => {
+  if (!msg.sessionId) return;
+  state.sessionModelSelections ||= {};
+  state.sessionModelSelections[msg.sessionId] = msg.modelRef === 'default' ? '' : msg.modelRef;
 });
 
 // --- Runtime model change (fallback kicked in) ---

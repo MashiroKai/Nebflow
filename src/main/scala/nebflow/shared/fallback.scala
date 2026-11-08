@@ -114,22 +114,22 @@ class FallbackExhaustedError(
         // 归到 format 族里，作者只能读到「provider 失败了」这种笼统面；单列
         // 一族并点名模型，才是可理解的错误条目。
         case _ if ImageCapabilityRejection.isRejection(a.message.getOrElse("")) => "image-capability"
-        case Some(FailoverReason.RateLimit)       => "quota"    // 额度/频率闸：等得来
-        case Some(FailoverReason.Overloaded)      => "overload"
-        case Some(FailoverReason.Auth)            => "auth"     // key/权限问题：等不来
-        case Some(FailoverReason.ModelNotFound)   => "model"
-        case Some(FailoverReason.Format)          => "format"   // 请求/响应形状 vs 契约
-        case Some(FailoverReason.Timeout)         => "timeout"
+        case Some(FailoverReason.RateLimit) => "quota" // 额度/频率闸：等得来
+        case Some(FailoverReason.Overloaded) => "overload"
+        case Some(FailoverReason.Auth) => "auth" // key/权限问题：等不来
+        case Some(FailoverReason.ModelNotFound) => "model"
+        case Some(FailoverReason.Format) => "format" // 请求/响应形状 vs 契约
+        case Some(FailoverReason.Timeout) => "timeout"
         case Some(FailoverReason.ConnectionReset) => "conn-reset"
         case Some(FailoverReason.NetworkUnreachable) => "network"
-        case Some(FailoverReason.ServerError)     => "server"
-        case Some(FailoverReason.EmptyStream)     => "empty"
-        case Some(FailoverReason.ProviderError)   => "provider"
-        case _                                    => "unknown"
+        case Some(FailoverReason.ServerError) => "server"
+        case Some(FailoverReason.EmptyStream) => "empty"
+        case Some(FailoverReason.ProviderError) => "provider"
+        case _ => "unknown"
     val families = attempts.map(familyOf).distinct
     val summary = attempts
       .map { a =>
-        val detail = a.message.map(m => s" — ${m.replaceAll("\\s+", " ").take(300)}").getOrElse("")
+        val detail = a.message.map(m => s" — ${ProviderFailureDetail.sanitize(m)}").getOrElse("")
         s"  [${familyOf(a)}] ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}$detail"
       }
       .mkString("\n")
@@ -149,10 +149,12 @@ class FallbackExhaustedError(
     // 并把「试过谁 / 跳过谁 / 为什么跳过 / 有没有人静默消失」整表贴在下面。
     // delegate 冻结通知 = err.getMessage 逐字 ⇒ 这一表就是作者看到的那张表。
     disposition match
-      case None => s"All providers failed (${attempts.size} attempt(s); families: ${families.mkString(",")}):\n$summary$verdict"
+      case None =>
+        s"All providers failed (${attempts.size} attempt(s); families: ${families.mkString(",")}):\n$summary$verdict"
       case Some(d) =>
         val failedBy = attempts
           .map(a => s"${a.providerId}/${a.model}" -> s"${familyOf(a)} ${a.reason.map(_.toString).getOrElse("unknown")}")
           .toMap
         s"${d.headline(attempts.size, families.mkString(","))}:\n$summary$verdict\n${d.render(failedBy)}"
+  end getMessage
 end FallbackExhaustedError

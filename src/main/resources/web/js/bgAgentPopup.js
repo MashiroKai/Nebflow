@@ -770,6 +770,9 @@ onMessage('usageUpdate', () => { if (popupOverlay) renderModelBadge(); });
 onMessage('done', () => { if (popupOverlay) renderModelBadge(); });
 // main.js 保存 modelOptions；等同一帧的所有监听器执行后再读取，避免打开时选项迟到而不刷新。
 onMessage('modelOptions', () => { queueMicrotask(() => { if (popupOverlay) renderModelBadge(); }); });
+onMessage('sessionModelSet', (msg) => {
+  if (popupOverlay && msg.sessionId === currentStepId) queueMicrotask(() => renderModelBadge());
+});
 
 // ── WS event interception ────────────────────────────────
 
@@ -1222,7 +1225,8 @@ function renderModelSwitch() {
   if (!el) return;
   const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
   const cfg = popupModelCfg || {};
-  const current = live || cfg.current || cfg.preferred || '';
+  const selected = state.sessionModelSelections?.[currentStepId];
+  const current = selected !== undefined ? selected : (live || cfg.current || cfg.preferred || '');
   const refs = (state.allModelRefs || []).slice();
   if (current && !refs.includes(current)) refs.unshift(current);
   const sig = current + '|' + refs.join(',');
@@ -1249,12 +1253,8 @@ function renderModelSwitch() {
     const v = el.value || '';
     if (!currentStepId) return;
     sendWs({ type: 'setSessionModel', sessionId: currentStepId, modelRef: v || null });
-    // 乐观反馈（权威 live 值随下一 turn 的 modelChanged 帧覆盖）：
-    if (v) {
-      const prev = state.sessionModelInfo[currentStepId] || {};
-      state.sessionModelInfo[currentStepId] = { ...prev, model: v };
-    }
-    renderModelBadge();
+    // Wait for the server acknowledgement; selecting is not a retry.
+    el.value = current;
   };
 }
 

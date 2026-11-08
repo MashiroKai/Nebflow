@@ -124,17 +124,19 @@ object FreezeAlertSweep:
     serving || episodeAgeMs >= Defaults.DelegateFreezeAutoResumeForceAfterMs
 
   /**
-   * 自动续跑一拍：provider 故障族 + 已过龄阈 + 间隔已到 + （provider 已服务 **或**
-   * 已过健康表容忍窗）⇒ 用既有唤醒腿续跑一次（同一会话、续在检查点）。**成功/失败
-   * 都不发通知**。
-   *
-   * 本批（provider 故障降噪 2026-11-05）三处语义修正：
-   *   ① **不再按「次数用尽」停手**：次数只作面板读数，续跑一直持续到恢复或本轮冻结
-   *      超过升级时限（30 分钟）——冻结不是终点；
-   *   ② 间隔走**指数退避 + 封顶**（[[FreezeNotice.autoResumeDue]]），并跨「冻→续→
-   *      又冻」按 [[FreezeNotice.episodeOf]] 累计，不会因为一冻一续把退避打回起点；
-   *   ③ 健康表**只延迟不否决**（[[shouldAttemptResume]]）——修 fallback 那条旧缺陷。
+   * Only known temporary failures may consume the bounded automatic budget.
+   * Unknown and configuration failures remain available for manual recovery.
    */
+  private[agent] def automaticRecoveryAllowed(detail: String, attempts: Int): Boolean =
+    import nebflow.core.delegate.ProviderFault
+    val temporary = Set(
+      ProviderFault.Family.Upstream5xx,
+      ProviderFault.Family.ConnectTimeout,
+      ProviderFault.Family.RateLimited
+    )
+    attempts < Defaults.DelegateFreezeAutoResumeMax &&
+    ProviderFault.familyOf(detail).exists(temporary.contains)
+
   def autoResumeTick(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]]): IO[Unit] =
     if !Defaults.DelegateFreezeEnabled || !Defaults.DelegateFreezeAutoResume then IO.unit
     else
@@ -144,6 +146,7 @@ object FreezeAlertSweep:
           FreezeNotice
             .itemsOf(recs, now, windowMs = 0L)
             .filter(_.infra)
+            .filter(i => automaticRecoveryAllowed(i.detail, i.autoResumes))
             .filter(i => FreezeNotice.autoResumeDue(i.frozenSince, now, i.autoResumes))
             .filter { i =>
               val age = FreezeNotice.episodeAgeMs(i.delegateId, i.frozenSince, now)
