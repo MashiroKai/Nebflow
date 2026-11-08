@@ -380,6 +380,11 @@ class TodoFace {
     // hintTimer/hintLayer 三个状态位同时摘除（hover 侧零状态）。
     this.chipDeleteMode = false;
     this.tagPopover = null;
+    // 标签窗口的关场监听（桌面/手机同一份）+ 未保存草稿（保留用户输入）
+    this.tagDismissDown = null;
+    this.tagDismissKey = null;
+    this.tagDraft = null;
+    this.tagDismissAt = 0;
     this.outsideBound = false;
     this.cancelMorph = null;
     // 灵动岛批 2026-11-05：岛盒缓存 + 形变闸 + 面板尺寸守望
@@ -1047,6 +1052,9 @@ class TodoFace {
     const down = this.blankDown;
     this.blankDown = null;
     if (this.destroyed || !this.expanded) return;
+    // ⑤ 关标签窗的那一次点按不兼任「开新建行」（见 bindTagPopoverDismiss）
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (this.tagDismissAt && now - this.tagDismissAt < 400) { this.tagDismissAt = 0; return; }
     // ① 互斥：创建行在开 / 任一输入框聚焦 ⇒ 不打断不重开
     if (this.creating || this.editingId != null) return;
     const active = document.activeElement;
@@ -2615,7 +2623,22 @@ class TodoFace {
     this.setChipScroll(this.chipScroll);
   }
 
-  // ── 标签 popover（CalendarChipPopover 复刻：名 + 十色 5 列网格）─────────
+  // ── 标签 popover（名 + 十色 5 列网格 + 取消/保存 + 校验反馈）──────────────
+  //
+  // 作者报障 2026-11-07：「代办的这个添加标签的窗口会一直卡住。」
+  // 隔离浏览器复现（桌面 1280×800 / 手机 375×812 真链入口，读数见
+  // reports-evidence/todo-label-popover__20261107/）四条实证：
+  //   ① 手机腿**没有任何关场通道**：点页面空白、点页顶、乃至再开「⋯」菜单，
+  //      窗口原样留在原地（面板的 bindOutsideClose 对 mobile 早退；本 popover
+  //      自己只认输入框里的 Esc/Enter —— 手机没有物理键盘 ⇒ 用户只能一直看着它）。
+  //   ② 桌面腿窗口里**没有保存/取消按钮**（`buttons: []`）：确认只能盲打回车，
+  //      关场只能 Esc 或点面板**外**（点面板内任何位置都不关）。
+  //   ③ 输入了名字再点外面 ⇒ 面板收起、草稿静默丢弃，重开输入框是空的。
+  //   ④ 空名回车 / 重名回车 = 静默关闭，零反馈（重名在真源面 id=`g:<名>` 下
+  //      直接不建组，用户读作「点了保存什么都没发生」）。
+  // 本批修根因（不是把界面藏起来）：窗口自带三条关场通道（点外部 / Esc / 取消）
+  // + 显式保存按钮 + 校验反馈 + 草稿保留；关场监听桌面与手机同一份（不再按
+  // `this.mobile` 早退）。颜色与名字改为**保存时一并落**（取消才是真取消）。
 
   openTagPopover(editTagId, anchorEl = null) {
     this.closeTagPopover(false);
@@ -2623,31 +2646,62 @@ class TodoFace {
     const tag = editing ? todoStore.tagById(editTagId) : null;
     this.editingTagId = editing ? editTagId : null;
     this.creatingTag = !editing;
+    // 草稿（作者令「保留用户输入」）：非保存路径关场时把名字/颜色留在 this.tagDraft，
+    // 下次打开新建窗口原样恢复；保存成功即清空。编辑态不吃草稿（编辑对象另有真值）。
+    const draft = (!editing && this.tagDraft) ? this.tagDraft : null;
     const pop = el('div', 'tfl-tag-popover');
     pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', editing ? t('todoface.tagRename') : t('todoface.tagNew'));
     const name = el('input', 'tfl-tag-name');
     name.type = 'text';
-    name.value = tag ? tag.name : '';
+    name.value = tag ? tag.name : (draft ? draft.name : '');
     name.placeholder = t('todoface.tagName');
     name.setAttribute('aria-label', t('todoface.tagName'));
+    name.setAttribute('autocomplete', 'off');
     pop.appendChild(name);
+    const err = el('div', 'tfl-tag-err');
+    err.hidden = true;
+    err.setAttribute('role', 'alert');
+    pop.appendChild(err);
+    const showErr = (msg) => {
+      err.textContent = msg;
+      err.hidden = !msg;
+      name.classList.toggle('is-invalid', !!msg);
+      name.setAttribute('aria-invalid', String(!!msg));
+    };
     const grid = el('div', 'tfl-tag-colors');
-    let draftColor = tag ? tag.color : TAG_COLOR_PRESETS[5];
+    let draftColor = tag ? tag.color : (draft ? draft.color : TAG_COLOR_PRESETS[5]);
     const dots = [];
     TAG_COLOR_PRESETS.forEach((c, i) => {
       const dot = el('button', 'tfl-tag-color' + (c === draftColor ? ' selected' : ''));
       dot.type = 'button';
       dot.style.setProperty('--tag-color', c);
       dot.setAttribute('aria-label', t('todoface.colorN', { n: String(i + 1) }));
+      dot.setAttribute('aria-pressed', String(c === draftColor));
       dot.addEventListener('click', () => {
         draftColor = c;
-        dots.forEach((d) => d.classList.toggle('selected', d === dot));
-        if (editing) todoStore.updateTag(editTagId, { color: c }); // 复刻 onColorChange 即时保存
+        dots.forEach((d) => {
+          d.classList.toggle('selected', d === dot);
+          d.setAttribute('aria-pressed', String(d === dot));
+        });
+        this.keepTagDraft(editing, name.value, draftColor);
       });
       dots.push(dot);
       grid.appendChild(dot);
     });
     pop.appendChild(grid);
+    // 显式动作行（保存 = 唯一确认入口；取消 = 关场且**保留草稿**）
+    const actions = el('div', 'tfl-tag-actions');
+    const cancelBtn = el('button', 'tfl-tag-btn');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = t('todoface.cancel');
+    cancelBtn.addEventListener('click', () => this.closeTagPopover(false));
+    const saveBtn = el('button', 'tfl-tag-btn is-primary');
+    saveBtn.type = 'button';
+    saveBtn.textContent = t('todoface.tagSave');
+    saveBtn.addEventListener('click', () => commit());
+    actions.append(cancelBtn, saveBtn);
+    pop.appendChild(actions);
     // 锚定 chip 下方（arrowEdge .bottom 等价；近底翻转向上）。
     // 手机页面态没有 chips 行（本批退役）⇒ 由调用点把锚点**以节点传入**
     // （顶部「⋯」钮），本函数不跨面查 DOM（组件契约 R2）。
@@ -2656,40 +2710,97 @@ class TodoFace {
     if (!anchor && this.chipsTrack) anchor = this.chipsTrack.querySelector('.tfl-chip-add');
     document.body.appendChild(pop);
     this.tagPopover = pop;
-    if (anchor) {
-      const r = anchor.getBoundingClientRect();
-      const pw = 220;
-      const px = Math.min(Math.max(8, r.left + r.width / 2 - pw / 2), window.innerWidth - pw - 8);
-      const below = window.innerHeight - r.bottom > 190;
-      pop.style.left = `${px}px`;
-      pop.style.top = below ? `${r.bottom + 6}px` : '';
-      if (!below) pop.style.bottom = `${window.innerHeight - r.top + 6}px`;
-    }
+    this.positionTagPopover(pop, anchor);
     pop.classList.add('open');
+    this.bindTagPopoverDismiss(pop);
     name.focus();
+    name.addEventListener('input', () => {
+      showErr('');
+      this.keepTagDraft(editing, name.value, draftColor);
+    });
     const commit = () => {
       if (isImeComposing(null, name)) return; // IME 组合 Return = 上屏确认（复刻）
       const trimmed = name.value.trim();
-      if (editing) {
-        if (trimmed) todoStore.updateTag(editTagId, { name: trimmed });
-        this.closeTagPopover(true);
-      } else {
-        if (trimmed) todoStore.createTag(trimmed, draftColor);
-        this.closeTagPopover(true);
-      }
+      if (!trimmed) { showErr(t('todoface.tagErrEmpty')); name.focus(); return; }
+      const dup = todoStore.tags.find((x) => x.name === trimmed && x.id !== (editing ? editTagId : null));
+      if (dup) { showErr(t('todoface.tagErrDup')); name.focus(); return; }
+      if (editing) todoStore.updateTag(editTagId, { name: trimmed, color: draftColor });
+      else todoStore.createTag(trimmed, draftColor);
+      this.tagDraft = null; // 已落：草稿作废
+      this.closeTagPopover(true);
     };
     this.tagCommit = commit;
     name.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !isImeComposing(e, name)) { e.preventDefault(); e.stopPropagation(); commit(); }
-      if (e.key === 'Escape') { e.preventDefault(); this.closeTagPopover(false); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.closeTagPopover(false); }
     });
     pop.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  /** 草稿留痕（非保存路径关场用；编辑态不写草稿）。 */
+  keepTagDraft(editing, nameValue, color) {
+    if (editing) return;
+    this.tagDraft = { name: String(nameValue == null ? '' : nameValue), color };
+  }
+
+  /** popover 定位（视口内收口）：左缘夹在 [8, innerWidth-w-8]，纵向按真实高度
+   *  判上下翻转 —— 原实现用写死的 190 常量判是否放得下，加了动作行以后会判错。 */
+  positionTagPopover(pop, anchor) {
+    const m = 8;
+    const pw = pop.offsetWidth || 220;
+    const ph = pop.offsetHeight || 160;
+    let left = Math.round((window.innerWidth - pw) / 2);
+    let top = m;
+    if (anchor && anchor.getBoundingClientRect) {
+      const r = anchor.getBoundingClientRect();
+      left = Math.round(r.left + r.width / 2 - pw / 2);
+      const roomBelow = window.innerHeight - r.bottom - m;
+      const roomAbove = r.top - m;
+      if (roomBelow >= ph + 6 || roomBelow >= roomAbove) top = Math.round(r.bottom + 6);
+      else top = Math.round(r.top - ph - 6);
+    }
+    pop.style.bottom = ''; // position:fixed 同时给 top/bottom 会被拉伸
+    pop.style.left = `${Math.max(m, Math.min(left, window.innerWidth - pw - m))}px`;
+    pop.style.top = `${Math.max(m, Math.min(top, window.innerHeight - ph - m))}px`;
+  }
+
+  /** 关场通道（桌面/手机同一份）：点窗口外任意处 / Esc ⇒ 关场并**保留草稿**。
+   *  面板自己的 outside-close 只管面板（card 外的点按会顺带收面板，那是它的语义）；
+   *  本监听只负责这个浮窗，且**不**因 mobile 早退（作者报障的手机腿正是这里缺）。 */
+  bindTagPopoverDismiss(pop) {
+    this.unbindTagPopoverDismiss();
+    this.tagDismissDown = (e) => {
+      if (!this.tagPopover || this.tagPopover !== pop) return;
+      const path = e.composedPath ? e.composedPath() : [];
+      if (path.includes(pop)) return;
+      // 记下「这一次点按是来关窗的」：面板空白区的「点空白 = 开新建行」手势
+      // 不该在同一次点按里顺带触发（关窗就是关窗，不连带建一条空待办）。
+      this.tagDismissAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      this.closeTagPopover(false);
+    };
+    document.addEventListener('pointerdown', this.tagDismissDown, true);
+    this.tagDismissKey = (e) => {
+      if (e.key !== 'Escape' || !this.tagPopover) return;
+      if (isImeComposing(e, null)) return; // 组合期 Esc = 取消候选，不关窗
+      e.preventDefault();
+      e.stopPropagation(); // 不再让面板的 escHandler 顺带收起整个面板
+      this.closeTagPopover(false);
+    };
+    document.addEventListener('keydown', this.tagDismissKey, true);
+  }
+
+  unbindTagPopoverDismiss() {
+    if (this.tagDismissDown) document.removeEventListener('pointerdown', this.tagDismissDown, true);
+    if (this.tagDismissKey) document.removeEventListener('keydown', this.tagDismissKey, true);
+    this.tagDismissDown = null;
+    this.tagDismissKey = null;
   }
 
   closeTagPopover(saved) {
     if (this.tagPopover) {
       const pop = this.tagPopover;
       this.tagPopover = null;
+      this.unbindTagPopoverDismiss();
       pop.classList.remove('open');
       setTimeout(() => pop.remove(), 150);
     }
@@ -2710,6 +2821,7 @@ class TodoFace {
     this.closeItemBox(true);
     this.unsub();
     this.unbindOutsideClose();
+    this.unbindTagPopoverDismiss();
     if (this.cancelMorph) this.cancelMorph();
     if (this.islandRo) { this.islandRo.disconnect(); this.islandRo = null; }
     if (this.tagPopover) this.tagPopover.remove();

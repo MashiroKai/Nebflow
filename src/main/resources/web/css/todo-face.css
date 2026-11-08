@@ -695,6 +695,47 @@
 .tfl-tag-color.selected::before {
   box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--color-text, #fff) 80%, transparent);
 }
+/* 校验反馈行（作者报障批 2026-11-07：空名/重名原先静默关闭，零反馈 ⇒ 读作
+   「点了没反应」。文案只陈述事实，不写操作教学） */
+.tfl-tag-err {
+  margin-top: var(--ds-space-1h);
+  font: 500 var(--ds-fs-hint)/1.3 ui-monospace, SFMono-Regular, monospace;
+  color: var(--tfl-red);
+}
+.tfl-tag-name.is-invalid {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tfl-red) 75%, transparent);
+}
+/* 显式动作行（取消 / 保存）：窗口原先只有隐式回车与隐式 Esc，手机端没有物理
+   键盘 ⇒ 看不出怎么收场（报障「一直卡住」的直接观感来源之一）。保存 = 唯一
+   确认入口（危险动作才用红档，这里按仓内「绿档留给确认动作」口径取 primary）。 */
+.tfl-tag-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
+}
+.tfl-tag-btn {
+  min-height: 26px;
+  padding: 0 var(--ds-space-3);
+  border: 0.6px solid color-mix(in srgb, var(--color-text, #fff) 22%, transparent);
+  border-radius: var(--ds-radius-chip);
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text, #fff) 82%, transparent);
+  font: 500 var(--ds-fs-hint)/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+  cursor: pointer;
+}
+.tfl-tag-btn:hover { background: color-mix(in srgb, var(--color-text, #fff) 10%, transparent); }
+.tfl-tag-btn.is-primary {
+  border-color: transparent;
+  background: var(--color-primary);
+  color: rgba(255, 255, 255, 0.96);
+  font-weight: 600;
+}
+.tfl-tag-btn.is-primary:hover { background: var(--color-primary-hover); }
+.tfl-tag-btn:focus-visible {
+  outline: 2px solid var(--btn-focus-ring, var(--color-info));
+  outline-offset: 1px;
+}
 
 /* ── 列表 ─────────────────────────────────────────────────────────────── */
 /* 列表包裹层（胶囊面交互批 2026-11-04）：列表 + 右下角新建加号 + 撤回条的

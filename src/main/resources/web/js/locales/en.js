@@ -3360,6 +3360,9 @@ export default {
   'todoface.tagDeleteTitle': 'Delete tag',
   'todoface.tagDeleteConfirm': 'Deleting “{name}” removes it from every todo. This cannot be undone.',
   'todoface.colorN': 'Color {n}',
+  'todoface.tagSave': 'Save',
+  'todoface.tagErrEmpty': 'Name cannot be empty',
+  'todoface.tagErrDup': 'A tag with this name already exists',
   // Top floating "⋯" two-level menu (todo-mobile-topmenu batch 2026-11-06)
   'todoface.menu': 'Menu',
   'todoface.menuView': 'Tags',

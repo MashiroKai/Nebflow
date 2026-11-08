@@ -5,7 +5,7 @@ PASS  B4 旧顶部控制零命中（旧入口真退役，不并存）  — {".tf
 PASS  A0 一级菜单首行 = 新建待办（入口仍在菜单里，承载已按撤回批回页底）  — 新建待办
 PASS  A1 首条元素零位移（≤0.5px）  — before={"x":22,"y":90.59,"w":331,"h":52.08} after={"x":22,"y":90.59,"w":331,"h":52.08}
 PASS  A2 dock 位置不变（#mobile-dock = 底栏；[data-chrome] 顶缘键同页）  — {"x":12,"y":750,"w":351,"h":54} → {"x":12,"y":750,"w":351,"h":54}
-PASS  A3 列表滚区 scrollTop/scrollHeight/clientHeight 不变  — {"top":0,"sh":661,"ch":661} → {"top":0,"sh":661,"ch":661}
+PASS  A3 列表滚区 scrollTop/scrollHeight/clientHeight 不变  — {"top":0,"sh":589,"ch":589} → {"top":0,"sh":589,"ch":589}
 PASS  A4 文档滚轴 scrollTop/scrollHeight 不变（无 body 级滚动跳动）  — {"top":0,"sh":812} → {"top":0,"sh":812} / winY 0→0
 PASS  A5 表单落在页面底缘（底承载；.mf-drawer-top 修饰类零残留）  — box.bottom=750 page.bottom=750 top-style=0
 PASS  G1 标题框聚焦无蓝边（outline 退役 + outline/border 均非蓝主导）  — {"isActive":true,"outlineStyle":"none","outlineWidth":"3px","outlineColor":"rgb(27, 30, 38)","borderColor":"color(srgb 0.105882 0.117647 0.14902 / 0.26)","borderWidth":"0px"}
