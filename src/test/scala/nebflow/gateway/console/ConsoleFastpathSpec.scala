@@ -41,7 +41,8 @@ import java.util.Base64
  *  ③ 隧道首开打包转换（[[StaticRoutes.packedIndexHtml]] / rewriteCssUrls，
  *    纯函数直钉）：stylesheet link 全部内联成 <style>、media 属性保留、
  *    vendor defer script 内联、module script 与 favicon 逐字保留、CSS 相对
- *    url() 重写为绝对（katex fonts 用例）。
+ *    url() 重写为绝对（rewriteCssUrls 纯函数直钉——katex css 已改为运行时
+ *    按需加载，不再进打包文档）。
  */
 class ConsoleFastpathSpec extends CatsEffectSuite:
 
@@ -165,9 +166,11 @@ class ConsoleFastpathSpec extends CatsEffectSuite:
       .withEntity(Json.obj("paths" -> Json.fromValues(paths.map(Json.fromString))))
 
   private def batchJson(paths: List[String]): Json =
-    ConsoleAssetBatchRoutes.routes(batchReq(paths)).value
+    ConsoleAssetBatchRoutes
+      .routes(batchReq(paths))
+      .value
       .map {
-        case None        => fail("route fell through")
+        case None => fail("route fell through")
         case Some(resp) =>
           assertEquals(resp.status, Status.Ok)
           parse(new String(resp.body.compile.toVector.unsafeRunSync().toArray, StandardCharsets.UTF_8))
@@ -196,8 +199,10 @@ class ConsoleFastpathSpec extends CatsEffectSuite:
 
   test("② console-assets：traversal / 超前缀 / 超体积一律 missing，无存在性预言面") {
     val json = batchJson(List("../secret.txt", "api/nf-ticket", "js/../../etc/passwd", "vendor/xlsx.full.min.js"))
-    assertEquals(json.hcursor.downField("missing").as[List[String]].getOrElse(Nil).toSet,
-      Set("../secret.txt", "api/nf-ticket", "js/../../etc/passwd", "vendor/xlsx.full.min.js"))
+    assertEquals(
+      json.hcursor.downField("missing").as[List[String]].getOrElse(Nil).toSet,
+      Set("../secret.txt", "api/nf-ticket", "js/../../etc/passwd", "vendor/xlsx.full.min.js")
+    )
     assert(json.hcursor.downField("assets").focus.exists(_.asObject.exists(_.isEmpty)))
   }
 
@@ -213,8 +218,7 @@ class ConsoleFastpathSpec extends CatsEffectSuite:
     val assets = json.hcursor.downField("assets")
     assert(assets.downField("vendor/marked.min.js").succeeded)
     assert(assets.downField("favicon.svg").succeeded)
-    assertEquals(assets.downField("favicon.svg").downField("contentType").as[String].getOrElse(""),
-      "image/svg+xml")
+    assertEquals(assets.downField("favicon.svg").downField("contentType").as[String].getOrElse(""), "image/svg+xml")
   }
 
   // ── ③ 首开打包转换（纯函数）──────────────────────────────
@@ -226,11 +230,45 @@ class ConsoleFastpathSpec extends CatsEffectSuite:
     val packed = StaticRoutes.packedIndexHtml(indexHtml)
     assert(!packed.contains("<link rel=\"stylesheet\""), "no stylesheet link may survive packing")
     // media 查询保留（highlight 双主题语义）。
-    assert(packed.contains("<style media=\"(prefers-color-scheme: light)\">"),
-      "media attr must be preserved on the style tag")
-    // katex 字体相对引用重写为 /vendor/ 绝对基（内联 <style> 的解析基是文档）。
-    assert(packed.contains("url(/vendor/fonts/KaTeX_AMS-Regular.woff2)"),
-      "relative css url() must be rewritten absolute against the asset dir")
+    assert(
+      packed.contains("<style media=\"(prefers-color-scheme: light)\">"),
+      "media attr must be preserved on the style tag"
+    )
+    // katex.min.css 已不在首开文档：由 js/mathRender.js 运行时按需插入
+    // <link data-nf-katex>（rich-render 批，23KB 不进开屏关键路径），打包面
+    // 自然见不到它；按需加载走 /vendor/ 真实路径，相对引用照常解析。
+    // （KaTeX_AMS = css 的 @font-face family，css 被内联时才出现在打包体里。）
+    assert(
+      !packed.contains("KaTeX_AMS"),
+      "katex css is lazy-loaded at runtime and must not re-enter the packed document"
+    )
+    // url() 重写契约钉在纯函数上（打包文档里已无携带相对 url() 的 css：
+    // mobileLayer 是片段引用 #、mermaid 是 data: URI——都命中排除类）。
+    // 内联 <style> 的解析基是文档，vendor/ 下的相对字体引用必须重写到 /vendor/。
+    assertEquals(
+      StaticRoutes.rewriteCssUrls("url(fonts/KaTeX_AMS-Regular.woff2)", "/vendor/"),
+      "url(/vendor/fonts/KaTeX_AMS-Regular.woff2)",
+      "relative css url() must be rewritten absolute against the asset dir"
+    )
+    assertEquals(
+      StaticRoutes.rewriteCssUrls("""url('fonts/KaTeX_Main-Regular.woff2')""", "/vendor/"),
+      "url('/vendor/fonts/KaTeX_Main-Regular.woff2')",
+      "quoted relative url() keeps its quote style under the rewrite"
+    )
+    // 绝对 / http(s) / data / 协议相对 / 锚引用不碰。
+    for untouched <- List(
+        "url(/css/x.css)",
+        "url(https://a/b.png)",
+        "url(data:image/svg+xml,x)",
+        "url(//c/d)",
+        "url(#g2-refract)"
+      )
+    do
+      assertEquals(
+        StaticRoutes.rewriteCssUrls(untouched, "/vendor/"),
+        untouched,
+        s"non-relative url() must pass through verbatim: $untouched"
+      )
     // module 脚本与 favicon 链接逐字保留。
     assert(packed.contains("<script type=\"module\" src=\"js/main.js\"></script>"))
     assert(packed.contains("favicon-32.png"))
