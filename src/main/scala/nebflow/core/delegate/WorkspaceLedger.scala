@@ -81,6 +81,130 @@ final class WorkspaceLedger(val path: os.Path):
       (s.copy(workspaces = s.workspaces.map(w => replacements.getOrElse(w.id, w))), Right(reserved))
   }
 
+  /** Immutable authorization scope and reservation are committed in the same write. */
+  def requestMerge(request: MergeRequest): Either[String, MergeRequest] = transaction { s =>
+    s.requests.find(_.id == request.id) match
+      case Some(existing) =>
+        val same = existing.repository == request.repository && existing.mergerId == request.mergerId &&
+          existing.authorization == request.authorization &&
+          existing.items.map(i => (i.workspaceId, i.sourceCommit, i.targetBranch)) ==
+          request.items.map(i => (i.workspaceId, i.sourceCommit, i.targetBranch))
+        (s, if same then Right(existing) else Left("Request identity conflicts with its recorded authorization scope"))
+      case None =>
+        val selected = request.items.flatMap(i => s.workspaces.find(_.id == i.workspaceId))
+        val invalid = request.id.isEmpty || request.authorization.trim.isEmpty || selected.isEmpty ||
+          selected.size != request.items.size || selected.map(_.id).distinct.size != selected.size ||
+          selected.exists(w => w.repository != request.repository || w.lifecycle != "open" || w.activity != "idle") ||
+          request.items.exists(i =>
+            !i.sourceCommit.matches("[0-9a-f]{40}|[0-9a-f]{64}") ||
+              !selected.find(_.id == i.workspaceId).exists(_.baseBranch == i.targetBranch)
+          ) ||
+          !s.mergers.exists(m => m.repository == request.repository && m.delegateId == request.mergerId)
+        if invalid then
+          (s, Left("Merge request needs an existing merger, authorized scope, pinned commits, and idle workspaces"))
+        else
+          val ids = selected.map(_.id).toSet
+          val next = s.workspaces.map(w =>
+            if ids(w.id) then w.copy(lifecycle = "reserved", reservation = Some(request.id), revision = w.revision + 1)
+            else w
+          )
+          val accepted = request.copy(
+            status = "accepted",
+            revision = 0L,
+            cancelRequested = false,
+            items = request.items.map(i => i.copy(phase = "reserved", mergeCommit = None, verification = None)),
+            events = Map.empty
+          )
+          (s.copy(workspaces = next, requests = s.requests :+ accepted), Right(accepted))
+        end if
+  }
+
+  def cancelRequest(id: String): Either[String, MergeRequest] = transaction { s =>
+    s.requests.find(_.id == id) match
+      case None => (s, Left("Unknown merge request"))
+      case Some(r) if r.status == "completed" || r.status == "cancelled" => (s, Right(r))
+      case Some(r) =>
+        val next = r.copy(cancelRequested = true, revision = r.revision + 1)
+        (s.copy(requests = s.requests.map(x => if x.id == id then next else x)), Right(next))
+  }
+
+  /** validate is a read-only facts check performed while the ledger is locked. */
+  def reportMerge(id: String, caller: String, event: MergeReport)(
+    validate: (Workspace, MergeItem, MergeReport) => Either[String, Unit]
+  ): Either[String, MergeRequest] = transaction { s =>
+    s.requests.find(_.id == id) match
+      case None => (s, Left("Unknown merge request"))
+      case Some(r) if r.mergerId != caller => (s, Left("Only the recorded merger may report this request"))
+      case Some(r) if r.events.contains(event.eventId) =>
+        (s, if r.events(event.eventId) == event.asJson.noSpaces then Right(r) else Left("Event identity conflict"))
+      case Some(r)
+          if s.requests
+            .find(x =>
+              x.repository == r.repository &&
+                x.status != "completed" && x.status != "cancelled"
+            )
+            .exists(_.id != id) =>
+        (s, Left("Another request must finish or pause resolution before this request can run"))
+      case Some(r) if event.eventId.isEmpty || event.expectedRevision != r.revision =>
+        (s, Left("Stale merge request revision"))
+      case Some(r) =>
+        val item = r.items.find(_.workspaceId == event.workspaceId)
+        val workspace = s.workspaces.find(_.id == event.workspaceId)
+        val firstOpen = r.items.find(i => i.phase != "completed" && i.phase != "cancelled")
+        val allowed = Map(
+          "reserved" -> Set("checking", "cancelled"),
+          "checking" -> Set("merging", "awaiting-user", "failed", "cancelled"),
+          "merging" -> Set("validating", "merged-cleanup-pending", "awaiting-user", "failed"),
+          "awaiting-user" -> Set("checking", "merging", "validating", "cancelled"),
+          "validating" -> Set("merged-cleanup-pending", "failed", "awaiting-user"),
+          "merged-cleanup-pending" -> Set("completed"),
+          "failed" -> Set("checking", "cancelled")
+        )
+        if item.isEmpty || workspace.isEmpty || !firstOpen.exists(_.workspaceId == event.workspaceId) ||
+          !workspace.exists(_.reservation.contains(id)) ||
+          !item.exists(i => allowed.getOrElse(i.phase, Set.empty).contains(event.phase))
+        then (s, Left("Invalid or out-of-order merge transition"))
+        else
+          validate(workspace.get, item.get, event) match
+            case Left(error) => (s, Left(error))
+            case Right(_) =>
+              val nextItem = item.get.copy(
+                phase = event.phase,
+                mergeCommit = event.mergeCommit.orElse(item.get.mergeCommit),
+                verification = event.verification.orElse(item.get.verification)
+              )
+              val items = r.items.map(i => if i.workspaceId == event.workspaceId then nextItem else i)
+              val status =
+                if items.forall(_.phase == "completed") then "completed"
+                else if items.forall(i => i.phase == "completed" || i.phase == "cancelled") then "cancelled"
+                else if event.phase == "failed" || event.phase == "awaiting-user" then "paused"
+                else "processing"
+              val next = r.copy(
+                items = items,
+                status = status,
+                revision = r.revision + 1,
+                events = r.events.updated(event.eventId, event.asJson.noSpaces)
+              )
+              val lifecycle = event.phase match
+                case "completed" => "closed-merged"
+                case "cancelled" => "open"
+                case phase => phase
+              val workspaces = s.workspaces.map(w =>
+                if w.id == event.workspaceId then
+                  w.copy(
+                    lifecycle = lifecycle,
+                    reservation = if event.phase == "cancelled" then None else w.reservation,
+                    revision = w.revision + 1
+                  )
+                else w
+              )
+              (
+                s.copy(workspaces = workspaces, requests = s.requests.map(x => if x.id == id then next else x)),
+                Right(next)
+              )
+        end if
+  }
+
   def baseline(repository: String): String = snapshot.baselines.getOrElse(repository, "main")
 
   def setBaseline(repository: String, branch: String): Either[String, Unit] = transaction { s =>
@@ -159,10 +283,44 @@ object WorkspaceLedger:
   )
   final case class Merger(project: String, repository: String, delegateId: String)
 
+  final case class MergeItem(
+    workspaceId: String,
+    sourceCommit: String,
+    targetBranch: String,
+    phase: String = "reserved",
+    mergeCommit: Option[String] = None,
+    verification: Option[String] = None
+  )
+
+  final case class MergeRequest(
+    id: String,
+    repository: String,
+    mergerId: String,
+    authorization: String,
+    items: List[MergeItem],
+    status: String = "accepted",
+    revision: Long = 0L,
+    cancelRequested: Boolean = false,
+    events: Map[String, String] = Map.empty
+  )
+
+  final case class MergeReport(
+    eventId: String,
+    expectedRevision: Long,
+    workspaceId: String,
+    phase: String,
+    mergeCommit: Option[String] = None,
+    verification: Option[String] = None
+  )
+  given io.circe.Codec[MergeItem] = deriveCodec
+  given io.circe.Codec[MergeRequest] = deriveCodec
+  given io.circe.Codec[MergeReport] = deriveCodec
+
   final case class State(
     workspaces: List[Workspace] = Nil,
     mergers: List[Merger] = Nil,
-    baselines: Map[String, String] = Map.empty
+    baselines: Map[String, String] = Map.empty,
+    requests: List[MergeRequest] = Nil
   )
   given io.circe.Codec[Workspace] = deriveCodec
   given io.circe.Codec[Merger] = deriveCodec
@@ -173,7 +331,8 @@ object WorkspaceLedger:
       workspaces <- c.get[List[Workspace]]("workspaces")
       mergers <- c.get[List[Merger]]("mergers")
       baselines <- c.get[Option[Map[String, String]]]("baselines")
-    yield State(workspaces, mergers, baselines.getOrElse(Map.empty))
+      requests <- c.get[Option[List[MergeRequest]]]("requests")
+    yield State(workspaces, mergers, baselines.getOrElse(Map.empty), requests.getOrElse(Nil))
   }
 
   def resolveBaseline(workspace: os.Path, ledger: WorkspaceLedger = default): (String, String) =
