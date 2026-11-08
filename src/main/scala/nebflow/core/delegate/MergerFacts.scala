@@ -93,19 +93,30 @@ object MergerFacts:
         val pinned = pinSource(workspace).fold(error => throw new IllegalStateException(error), identity)
         require(pinned.sourceCommit == item.sourceCommit, "Source branch changed after authorization; ask the user")
       if Set("validating", "merged-cleanup-pending", "completed").contains(report.phase) then
-        val merge = report.mergeCommit
-          .orElse(item.mergeCommit)
-          .getOrElse(throw new IllegalArgumentException("Actual merge commit is required"))
-        require(merge.matches("[0-9a-f]{40}|[0-9a-f]{64}"), "Merge commit must be a full object id")
-        val parents = git("show", "-s", "--format=%P", merge).split(" ").toList
-        require(
-          parents.size == 2 && parents(1) == item.sourceCommit,
-          "Merge must retain both parents and the authorized source"
-        )
-        require(
-          ancestor(merge, target) && ancestor(item.sourceCommit, merge),
-          "Reported merge is not contained in the target"
-        )
+        val sourceAncestor = report.integration.orElse(item.integration).contains("source-ancestor")
+        if sourceAncestor then
+          // The source is already contained in the target without this flow's merge commit
+          // (externally integrated, or recovered after a crash): cleanup-only closure.
+          require(
+            report.mergeCommit.isEmpty && item.mergeCommit.isEmpty,
+            "An externally integrated source carries no merge commit"
+          )
+          require(ancestor(item.sourceCommit, target), "Source is not contained in the target; ask the user")
+        else
+          val merge = report.mergeCommit
+            .orElse(item.mergeCommit)
+            .getOrElse(throw new IllegalArgumentException("Actual merge commit is required"))
+          require(merge.matches("[0-9a-f]{40}|[0-9a-f]{64}"), "Merge commit must be a full object id")
+          val parents = git("show", "-s", "--format=%P", merge).split(" ").toList
+          require(
+            parents.size == 2 && parents(1) == item.sourceCommit,
+            "Merge must retain both parents and the authorized source"
+          )
+          require(
+            ancestor(merge, target) && ancestor(item.sourceCommit, merge),
+            "Reported merge is not contained in the target"
+          )
+        end if
         if report.phase == "completed" then
           val registered = git("worktree", "list", "--porcelain").linesIterator
             .filter(_.startsWith("worktree "))
@@ -136,9 +147,37 @@ object MergerFacts:
           val proof = io.circe.parser.parse(os.read(os.Path(evidencePath))).fold(throw _, identity).hcursor
           require(
             proof.get[String]("status").toOption.contains("passed") &&
-              proof.get[String]("sourceCommit").toOption.contains(item.sourceCommit) &&
-              proof.get[String]("mergeCommit").toOption.contains(merge),
+              proof.get[String]("sourceCommit").toOption.contains(item.sourceCommit),
             "Verification record does not match this merge"
+          )
+          if sourceAncestor then
+            require(
+              proof.get[String]("integration").toOption.contains("source-ancestor") &&
+                proof.get[String]("mergeCommit").toOption.isEmpty,
+              "Verification record must declare the source-ancestor integration without a merge commit"
+            )
+          else
+            require(
+              proof
+                .get[String]("mergeCommit")
+                .toOption
+                .contains(
+                  report.mergeCommit.orElse(item.mergeCommit).getOrElse("")
+                ),
+              "Verification record does not match this merge"
+            )
+          end if
+          require(
+            proof.get[String]("command").toOption.exists(_.trim.nonEmpty),
+            "Verification record must carry the command that ran"
+          )
+          require(
+            proof.get[Int]("exitCode").toOption.contains(0),
+            "Verification record must carry a zero exit code"
+          )
+          require(
+            proof.get[String]("ranAt").toOption.exists(_.trim.nonEmpty),
+            "Verification record must carry the run timestamp"
           )
         end if
       end if

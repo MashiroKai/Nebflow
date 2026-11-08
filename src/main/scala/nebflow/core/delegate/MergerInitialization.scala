@@ -2,6 +2,7 @@ package nebflow.core.delegate
 
 import cats.effect.{IO, Resource}
 import cats.syntax.all.*
+import io.circe.syntax.*
 import nebflow.core.AgentRuntimePort
 import nebflow.shared.{Message, MessageRole, NebflowLogger, PathUtil, SubAgentTask}
 import java.nio.channels.{FileChannel, OverlappingFileLockException}
@@ -108,7 +109,22 @@ object MergerInitialization:
     resources.agentRegistry.get.flatMap { live =>
       if live.contains(id) then IO.unit
       else
-        IO.blocking(WorkspaceLedger.default.snapshot.mergerBootstraps.get(id)).flatMap {
+        // Read-only startup reconciliation of this merger's in-flight requests:
+        // the structured reading is logged for the actor and the panel; nothing
+        // auto-continues (recovery stays manual). Failures never block recovery.
+        val reconcile = IO
+          .blocking(RequestReconcile.forMerger(id))
+          .flatMap { readings =>
+            readings.traverse_ { reading =>
+              IO.whenA(reading.items.nonEmpty)(
+                IO(logger.info(s"Merger $id startup reconcile (read-only): ${reading.asJson.noSpaces}"))
+              )
+            }
+          }
+          .handleErrorWith(error =>
+            IO(logger.warn(s"Merger $id startup reconcile could not read requests: ${error.getMessage}"))
+          )
+        reconcile *> IO.blocking(WorkspaceLedger.default.snapshot.mergerBootstraps.get(id)).flatMap {
           case Some(seed) if seed.status != "ready" || DelegateRegistry.find(id).isEmpty =>
             val needsFreeze = seed.status == "initializing" || !DelegateRegistry.isFrozen(id)
             prepareLocked(

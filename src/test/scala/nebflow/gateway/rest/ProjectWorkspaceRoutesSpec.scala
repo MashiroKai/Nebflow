@@ -201,7 +201,9 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
                 "status" -> "passed".asJson,
                 "sourceCommit" -> source.asJson,
                 "mergeCommit" -> merge.asJson,
-                "command" -> "git diff --check".asJson
+                "command" -> "git diff --check".asJson,
+                "exitCode" -> 0.asJson,
+                "ranAt" -> "2026-11-08T00:00:00Z".asJson
               )
               .noSpaces
           )

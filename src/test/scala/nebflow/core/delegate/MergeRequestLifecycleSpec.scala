@@ -137,12 +137,44 @@ class MergeRequestLifecycleSpec extends munit.FunSuite:
       val item = MergeItem("task", source, "main", "merged-cleanup-pending", Some(merge))
       val proof = repo / ".nebflow" / "evidence" / "verification.json"
       os.makeDir.all(proof / os.up)
-      os.write(proof, s"""{"status":"passed","sourceCommit":"$source","mergeCommit":"$merge"}""")
+      os.write(
+        proof,
+        s"""{"status":"passed","sourceCommit":"$source","mergeCommit":"$merge","command":"git diff --check","exitCode":0,"ranAt":"2026-11-08T00:00:00Z"}"""
+      )
       val event = MergeReport("complete", 1, "task", "completed", Some(merge), Some(proof.toString))
       assert(MergerFacts.validate(workspace, item, event).isLeft)
       git("worktree", "remove", tree.toString)
       assertEquals(MergerFacts.validate(workspace, item, event), Right(()))
-      os.write.over(proof, """{"status":"passed","sourceCommit":"wrong"}""")
+      os.write.over(proof, s"""{"status":"passed","sourceCommit":"$source","mergeCommit":"$merge"}""")
+      assert(MergerFacts.validate(workspace, item, event).isLeft)
+      os.write.over(
+        proof,
+        s"""{"status":"passed","sourceCommit":"$source","mergeCommit":"$merge","command":"git diff --check","exitCode":0,"ranAt":"2026-11-08T00:00:00Z"}"""
+      )
+      os.write.over(
+        proof,
+        """{"status":"passed","sourceCommit":"wrong","mergeCommit":"wrong","command":"c","exitCode":0,"ranAt":"t"}"""
+      )
+      assert(MergerFacts.validate(workspace, item, event).isLeft)
+      os.write.over(
+        proof,
+        s"""{"status":"passed","sourceCommit":"$source","mergeCommit":"$merge","exitCode":0,"ranAt":"t"}"""
+      )
+      assert(MergerFacts.validate(workspace, item, event).isLeft)
+      os.write.over(
+        proof,
+        s"""{"status":"passed","sourceCommit":"$source","mergeCommit":"$merge","command":"git diff --check","ranAt":"t"}"""
+      )
+      assert(MergerFacts.validate(workspace, item, event).isLeft)
+      os.write.over(
+        proof,
+        s"""{"status":"passed","sourceCommit":"$source","mergeCommit":"$merge","command":"git diff --check","exitCode":1,"ranAt":"t"}"""
+      )
+      assert(MergerFacts.validate(workspace, item, event).isLeft)
+      os.write.over(
+        proof,
+        s"""{"status":"passed","sourceCommit":"$source","mergeCommit":"$merge","command":"git diff --check","exitCode":0}"""
+      )
       assert(MergerFacts.validate(workspace, item, event).isLeft)
       assert(MergerFacts.validate(workspace, item, event.copy(phase = "cancelled")).isLeft)
     finally os.remove.all(root)

@@ -180,17 +180,36 @@ final class WorkspaceLedger(val path: os.Path):
         val workspace = s.workspaces.find(_.id == event.workspaceId)
         val firstOpen = r.items.find(i => i.phase != "completed" && i.phase != "cancelled")
         val allowed = Map(
-          "reserved" -> Set("checking", "awaiting-user", "cancelled"),
-          "checking" -> Set("merging", "awaiting-user", "failed", "cancelled"),
+          "reserved" -> Set("checking", "merged-cleanup-pending", "awaiting-user", "cancelled"),
+          "checking" -> Set("merging", "merged-cleanup-pending", "awaiting-user", "failed", "cancelled"),
           "merging" -> Set("validating", "merged-cleanup-pending", "awaiting-user", "failed"),
-          "awaiting-user" -> Set("checking", "merging", "validating", "cancelled"),
+          "awaiting-user" -> Set("checking", "merging", "validating", "merged-cleanup-pending", "cancelled"),
           "validating" -> Set("merged-cleanup-pending", "failed", "awaiting-user"),
           "merged-cleanup-pending" -> Set("completed"),
           "failed" -> Set("checking", "cancelled")
         )
+        // An integration declaration closes an externally integrated (or recovered)
+        // source without a new merge; the validate closure still proves the Git fact.
+        val integrationLegal = event.integration.forall { kind =>
+          kind match
+            case "source-ancestor" =>
+              event.phase == "merged-cleanup-pending" && event.mergeCommit.isEmpty &&
+                item.exists(i => i.mergeCommit.isEmpty)
+            case "merge-commit" =>
+              Set("validating", "merged-cleanup-pending", "completed").contains(event.phase) &&
+                item.forall(i => i.integration.forall(_ == "merge-commit"))
+            case _ => false
+        }
+        // A closure landing without evidence of the integration (no recorded merge
+        // commit on the item, none reported, no declared kind) is out of order.
+        val bareClosure = item.exists(i =>
+          event.phase == "merged-cleanup-pending" && i.mergeCommit.isEmpty &&
+            event.mergeCommit.isEmpty && event.integration.isEmpty
+        )
         if item.isEmpty || workspace.isEmpty || !firstOpen.exists(_.workspaceId == event.workspaceId) ||
           !workspace.exists(_.reservation.contains(id)) ||
-          !item.exists(i => allowed.getOrElse(i.phase, Set.empty).contains(event.phase))
+          !item.exists(i => allowed.getOrElse(i.phase, Set.empty).contains(event.phase)) ||
+          !integrationLegal || bareClosure
         then (s, Left("Invalid or out-of-order merge transition"))
         else
           validate(workspace.get, item.get, event) match
@@ -199,7 +218,8 @@ final class WorkspaceLedger(val path: os.Path):
               val nextItem = item.get.copy(
                 phase = event.phase,
                 mergeCommit = event.mergeCommit.orElse(item.get.mergeCommit),
-                verification = event.verification.orElse(item.get.verification)
+                verification = event.verification.orElse(item.get.verification),
+                integration = event.integration.orElse(item.get.integration)
               )
               val items = r.items.map(i => if i.workspaceId == event.workspaceId then nextItem else i)
               val status =
@@ -403,7 +423,8 @@ object WorkspaceLedger:
     targetBranch: String,
     phase: String = "reserved",
     mergeCommit: Option[String] = None,
-    verification: Option[String] = None
+    verification: Option[String] = None,
+    integration: Option[String] = None
   )
 
   final case class MergeRequest(
@@ -424,7 +445,8 @@ object WorkspaceLedger:
     workspaceId: String,
     phase: String,
     mergeCommit: Option[String] = None,
-    verification: Option[String] = None
+    verification: Option[String] = None,
+    integration: Option[String] = None
   )
   given io.circe.Codec[MergeItem] = deriveCodec
   given io.circe.Codec[MergeRequest] = deriveCodec
