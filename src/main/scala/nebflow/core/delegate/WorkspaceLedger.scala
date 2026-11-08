@@ -156,7 +156,7 @@ final class WorkspaceLedger(val path: os.Path):
         val workspace = s.workspaces.find(_.id == event.workspaceId)
         val firstOpen = r.items.find(i => i.phase != "completed" && i.phase != "cancelled")
         val allowed = Map(
-          "reserved" -> Set("checking", "cancelled"),
+          "reserved" -> Set("checking", "awaiting-user", "cancelled"),
           "checking" -> Set("merging", "awaiting-user", "failed", "cancelled"),
           "merging" -> Set("validating", "merged-cleanup-pending", "awaiting-user", "failed"),
           "awaiting-user" -> Set("checking", "merging", "validating", "cancelled"),
