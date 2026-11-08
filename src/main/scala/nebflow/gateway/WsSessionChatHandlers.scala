@@ -1407,6 +1407,12 @@ private[gateway] object WsSessionChatHandlers:
                 ) *>
                   // 台账 #929（后台子智能体跨设备透明）：远端投影行搭本连接快照回复
                   // 同拍直发（刷新/重连恢复路径——前端零新请求型；投影仓空 = 零帧）。
+                  IO.blocking(nebflow.core.delegate.DelegateRegistry.list()).flatMap { records =>
+                    wsSend(
+                      nebflow.core.delegate.FreezeNotice
+                        .digestJson(nebflow.core.delegate.FreezeNotice.fullDigest(records, System.currentTimeMillis()))
+                    )
+                  } *>
                   nebflow.neblink.sync.AgentSessionSync.pushRemoteRowsTo(wsSend)
               }
           }

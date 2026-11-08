@@ -451,3 +451,19 @@ export async function cancelProjectMerge(name, requestId) {
   if (!response.ok) throw new Error(data.error || `cancel request ${response.status}`);
   return data;
 }
+
+export async function previewProjectWorkspaceCleanup(name, id) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/${encodeURIComponent(id)}/cleanup`, { headers: authHeaders() });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `cleanup preview ${response.status}`);
+  return data;
+}
+
+export async function cleanProjectWorkspace(name, id, confirmation) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/${encodeURIComponent(id)}/cleanup`, {
+    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(confirmation),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `cleanup ${response.status}`);
+  return data;
+}

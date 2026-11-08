@@ -508,7 +508,7 @@ object BackoffSupervisor:
                           s"BackoffSupervisor: matrix invariant drift for $subagentId — standby×complete decided '$other' " +
                             "(expected QueueSilently); the parked standby leg still sends no reminder"
                         )
-                  roundReport *> standbySilence
+                  val parkRound = standbySilence
                     .*>(
                       logger.info(
                         s"BackoffSupervisor: delegate $subagentId parked in standby " +
@@ -570,6 +570,15 @@ object BackoffSupervisor:
                         bgWaitCapFired
                       )
                     )
+                  roundReport.attempt.flatMap {
+                    case Right(_) => parkRound
+                    case Left(error) =>
+                      freezeAndHold(
+                        s"Round completion delivery needs manual recovery: ${error.getMessage}",
+                        nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
+                        childAlive = true
+                      )
+                  }
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.NudgeIdle(chainsInFlight, emptyTurn)) =>
                   // 未申报空等提醒（状态矩阵批 2026-11-01 · 作者令「complete ×
                   // idle（未申报）⇒ system reminder 提醒其调整状态，不终判」）：
@@ -1121,7 +1130,26 @@ object BackoffSupervisor:
       end receive
 
       override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+        lazy val workspacePolicy = scala.util.Try {
+          val snapshot = nebflow.core.delegate.WorkspaceLedger.default.snapshot
+          val workspace = snapshot.workspaces.find(_.owner == subagentId)
+          (
+            workspace.exists(_.lifecycle.startsWith("closed-")),
+            workspace.nonEmpty || snapshot.mergers.exists(_.delegateId == subagentId)
+          )
+        }
         signal match
+          case SystemSignal.Terminated(_) if workspacePolicy.toOption.exists(_._1) =>
+            resources.agentRegistry.update(_ - subagentId) *>
+              nebflow.core.project.DelegateFlowHosts.unmount(subagentId) *>
+              logger.info(s"Workspace owner $subagentId closed; supervisor will not restart it") *>
+              IO.pure(Behaviors.stopped)
+          case SystemSignal.Terminated(_) if workspacePolicy.isFailure || workspacePolicy.toOption.exists(_._2) =>
+            freezeAndHold(
+              "Managed workspace execution stopped; explicit manual recovery is required",
+              nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
+              childAlive = false
+            )
           case SystemSignal.Terminated(_) =>
             val now = System.currentTimeMillis()
             val recentRestarts = restartHistory.filter(t => now - t < withinTimeRange.toMillis)
@@ -1158,6 +1186,8 @@ object BackoffSupervisor:
                      )
                    ))
             end if
+        end match
+      end onSignal
 
       /**
        * 错误冻结腿（错误冻结批 2026-11-01 · 作者令「所有因错误状态的 delegate 应该

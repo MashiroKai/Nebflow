@@ -28,10 +28,14 @@ final class WorkspaceLedger(val path: os.Path):
               .fold(e => throw new IllegalStateException("Workspace ledger is unreadable", e), identity)
           else State()
         val (after, result) = f(before)
-        if after != before then AtomicJson.writeSync(path, after.asJson.noSpaces)
+        if after != before then
+          val committed = after.copy(revision = before.revision + 1)
+          AtomicJson.writeSync(path, committed.asJson.noSpaces)
+          WorkspaceLedger.changed(path, committed.revision)
         result
       finally lock.release()
     finally channel.close()
+    end try
   }
 
   def snapshot: State = transaction(s => (s, s))
@@ -205,6 +209,44 @@ final class WorkspaceLedger(val path: os.Path):
         end if
   }
 
+  def claimCleanup(id: String, revision: Long, token: String): Either[String, Workspace] = transaction { s =>
+    s.workspaces.find(_.id == id) match
+      case None => (s, Left("Unknown workspace"))
+      case Some(w) if w.revision != revision => (s, Left("Workspace changed; inspect it again"))
+      case Some(w) if !Set("open", "merged-cleanup-pending").contains(w.lifecycle) || w.activity != "idle" =>
+        (s, Left("Workspace is busy, frozen, reserved or closed"))
+      case Some(w) =>
+        val next = w.copy(lifecycle = "cleaning", revision = w.revision + 1)
+        val claim = CleanupClaim(token, w.lifecycle, removed = false, error = None)
+        (
+          s.copy(
+            workspaces = s.workspaces.map(x => if x.id == id then next else x),
+            cleanups = s.cleanups.updated(id, claim)
+          ),
+          Right(next)
+        )
+  }
+
+  def finishCleanup(id: String, token: String, integrated: Boolean, error: Option[String]): Either[String, Workspace] =
+    transaction { s =>
+      (s.workspaces.find(_.id == id), s.cleanups.get(id)) match
+        case (Some(w), Some(claim)) if w.lifecycle == "cleaning" && claim.token == token =>
+          val lifecycle =
+            if error.nonEmpty then claim.previousLifecycle
+            else if claim.previousLifecycle == "merged-cleanup-pending" then "merged-cleanup-pending"
+            else if integrated then "closed-merged"
+            else "closed-discarded"
+          val next = w.copy(lifecycle = lifecycle, revision = w.revision + 1)
+          (
+            s.copy(
+              workspaces = s.workspaces.map(x => if x.id == id then next else x),
+              cleanups = s.cleanups.updated(id, claim.copy(removed = error.isEmpty, error = error))
+            ),
+            Right(next)
+          )
+        case _ => (s, Left("Cleanup claim changed; reconcile the actual directory before continuing"))
+    }
+
   def baseline(repository: String): String = snapshot.baselines.getOrElse(repository, "main")
 
   def setBaseline(repository: String, branch: String): Either[String, Unit] = transaction { s =>
@@ -221,7 +263,13 @@ final class WorkspaceLedger(val path: os.Path):
     s.workspaces.find(_.owner == owner) match
       case None => (s, Right(())) // read-only / unmanaged legacy delegate
       case Some(w) if w.lifecycle.startsWith("closed-") =>
-        (s, Left("delegate 已终态、worktree 已关闭，请重新派发"))
+        (
+          s,
+          Left(
+            if w.lifecycle == "closed-merged" then "delegate 已终态、worktree 已合并，请重新派发"
+            else "delegate 已终态、worktree 已清理（分支保留），请重新派发"
+          )
+        )
       case Some(w) if w.lifecycle != "open" =>
         (s, Left("Workspace is reserved for merger; development cannot resume"))
       case Some(w) if w.activity == "frozen" && !allowFrozen =>
@@ -257,6 +305,13 @@ final class WorkspaceLedger(val path: os.Path):
 end WorkspaceLedger
 
 object WorkspaceLedger:
+  @volatile private var listener: (os.Path, Long) => Unit = (_, _) => ()
+  def onChanged(callback: (os.Path, Long) => Unit): Unit = listener = callback
+
+  private[delegate] def changed(path: os.Path, revision: Long): Unit =
+    try listener(path, revision)
+    catch case scala.util.control.NonFatal(_) => () // Notifications are hints; snapshots remain authoritative.
+
   def default: WorkspaceLedger = new WorkspaceLedger(nebflow.shared.PathUtil.dataRoot / "workspaces" / "ledger.json")
 
   def repositoryKey(workspace: os.Path): String =
@@ -316,11 +371,16 @@ object WorkspaceLedger:
   given io.circe.Codec[MergeRequest] = deriveCodec
   given io.circe.Codec[MergeReport] = deriveCodec
 
+  final case class CleanupClaim(token: String, previousLifecycle: String, removed: Boolean, error: Option[String])
+  given io.circe.Codec[CleanupClaim] = deriveCodec
+
   final case class State(
     workspaces: List[Workspace] = Nil,
     mergers: List[Merger] = Nil,
     baselines: Map[String, String] = Map.empty,
-    requests: List[MergeRequest] = Nil
+    requests: List[MergeRequest] = Nil,
+    cleanups: Map[String, CleanupClaim] = Map.empty,
+    revision: Long = 0L
   )
   given io.circe.Codec[Workspace] = deriveCodec
   given io.circe.Codec[Merger] = deriveCodec
@@ -332,7 +392,16 @@ object WorkspaceLedger:
       mergers <- c.get[List[Merger]]("mergers")
       baselines <- c.get[Option[Map[String, String]]]("baselines")
       requests <- c.get[Option[List[MergeRequest]]]("requests")
-    yield State(workspaces, mergers, baselines.getOrElse(Map.empty), requests.getOrElse(Nil))
+      cleanups <- c.get[Option[Map[String, CleanupClaim]]]("cleanups")
+      revision <- c.get[Option[Long]]("revision")
+    yield State(
+      workspaces,
+      mergers,
+      baselines.getOrElse(Map.empty),
+      requests.getOrElse(Nil),
+      cleanups.getOrElse(Map.empty),
+      revision.getOrElse(0L)
+    )
   }
 
   def resolveBaseline(workspace: os.Path, ledger: WorkspaceLedger = default): (String, String) =

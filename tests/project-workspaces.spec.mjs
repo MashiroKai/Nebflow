@@ -18,7 +18,7 @@ try {
     } else if (route.request().method() === 'PUT') {
       saved = route.request().postDataJSON();
       await route.fulfill({ json: { baseline: saved.branch } });
-    } else await route.fulfill({ json: { baseline: 'main', workspaces: [{
+    } else await route.fulfill({ json: { baseline: saved?.branch || 'main', workspaces: [{
       id: 'reserved-task', branch: 'delegate/task', lifecycle: 'reserved', activity: 'idle', owner: 'owner-1',
       baseBranch: 'main', baseCommit: 'abc123',
     }, { id: 'idle-task', branch: 'delegate/idle', lifecycle: 'open', activity: 'idle', owner: 'owner-2', baseBranch: 'main', baseCommit: 'abc123' }], mergeRequests: [{ id: 'existing-request', status: 'processing', items: [{ workspaceId: 'reserved-task', phase: 'merged-cleanup-pending', mergeCommit: 'actual-merge' }] }], merger: { delegateId: 'merger-1' } } });

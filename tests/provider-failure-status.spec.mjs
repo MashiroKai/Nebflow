@@ -38,6 +38,39 @@ try {
   assert.equal(result.restored, 1);
   assert(result.cleared);
   console.log('PASS provider status: update, session isolation, safe text, task navigation, history reload, recovery removal');
+  const digest = {
+    type: 'delegateFreezeDigest', nodeSessionId: 'delegate-provider-cached',
+    items: [{ sessionId: 'delegate-provider-cached', parentSessionId: 'cached-parent', title: 'Cached failure' }],
+    providerGroups: [{ provider: 'provider', reason: 'Authentication failed', sessionIds: ['delegate-provider-cached'] }],
+  };
+  await session.frame(digest);
+  const cached = await session.page.evaluate(async () => {
+    const { chatViews } = await import('/js/chatView.js');
+    const { openStepPopup } = await import('/js/bgAgentPopup.js');
+    const main = chatViews.primary;
+    const before = main.dom.chat.querySelectorAll('aside[role=status]').length;
+    main.setSession('cached-parent');
+    const afterSwitch = main.dom.chat.querySelector('aside[role=status]')?.textContent;
+    openStepPopup('delegate-provider-cached', 'Nebula', 'cached task');
+    const popup = chatViews['bgagent-delegate-provider-cached'];
+    return { before, afterSwitch, popup: popup.dom.chat.querySelector('aside[role=status]')?.textContent,
+      activeSession: main.sessionId };
+  });
+  assert.equal(cached.before, 0, 'unrelated active conversation stays isolated');
+  assert(cached.afterSwitch?.includes('Cached failure'), 'switching session renders cached digest immediately');
+  assert(cached.popup?.includes('Cached failure'), 'new popup renders cached digest immediately');
+  assert.equal(cached.activeSession, 'cached-parent');
+  await session.frame({ ...digest, items: digest.items.map(item => ({ ...item, title: 'Renamed failure' })) });
+  await session.page.waitForFunction(async () => {
+    const { chatViews } = await import('/js/chatView.js');
+    return chatViews.primary.dom.chat.querySelector('aside[role=status]')?.textContent.includes('Renamed failure');
+  });
+  await session.frame({ type: 'delegateFreezeDigest', items: [], providerGroups: [] });
+  await session.page.waitForFunction(async () => {
+    const { chatViews } = await import('/js/chatView.js');
+    return !Object.values(chatViews).some(view => view.dom.chat?.querySelector('aside[role=status]'));
+  });
+  console.log('PASS cached provider digest: session switch, new popup, global frame routing, changed titles, empty reconnect snapshot');
   await session.close();
 } finally {
   await browser.close();

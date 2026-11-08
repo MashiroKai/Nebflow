@@ -1066,3 +1066,28 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   font-variant-numeric: tabular-nums;
   color: rgb(var(--sapphire));
 }
+
+/* Workspace controls keep their DOM while ledger snapshots update. */
+.project-workspaces {
+  padding: var(--ds-space-3);
+  border-top: var(--ds-border-width) solid var(--ds-border-hairline);
+  color: var(--ds-text);
+  font-size: var(--ds-fs-hint);
+  overflow-wrap: anywhere;
+}
+.project-workspaces > summary { cursor: pointer; }
+.project-workspaces-baseline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--ds-space-2);
+  margin-block: var(--ds-space-3);
+}
+.project-workspaces-baseline label { display: grid; gap: var(--ds-space-1); min-width: 0; flex: 1; }
+.project-workspaces-baseline input { min-width: 0; width: 100%; box-sizing: border-box; color: inherit; font-family: inherit; }
+.project-workspaces-list { list-style: none; padding: 0; margin: 0; }
+.project-workspaces-row { padding-block: var(--ds-space-2); border-bottom: var(--ds-border-width) solid var(--ds-border-hairline); }
+.project-workspaces-row > label { display: flex; align-items: center; gap: var(--ds-space-2); }
+.project-workspaces-meta { color: var(--ds-text-muted); margin-block: var(--ds-space-2); }
+.project-workspaces-message { white-space: pre-wrap; }
+.project-workspaces-requests { margin-top: var(--ds-space-3); }

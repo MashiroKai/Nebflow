@@ -43,6 +43,40 @@ private[gateway] object ProjectsRoutes:
       // 未挂载/不存在 → 404 {error}; 需 auth（withAuth）。
       // 注意：routes 挂载在 Router("/api" -> ...) 下，路径必须写相对段
       // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
+      case req @ GET -> Root / "projects" / name / "workspaces" / id / "cleanup" =>
+        withAuth(req) {
+          nebflow.core.delegate.ProjectWorkspaceCleanup.run(name, id, sharedResources, None).flatMap {
+            case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+            case Right(preview) => Ok(preview)
+          }
+        }
+
+      case req @ POST -> Root / "projects" / name / "workspaces" / id / "cleanup" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            body.hcursor.get[String]("previewToken") match
+              case Left(_) => BadRequest(Json.obj("error" -> "Inspect the workspace before confirming cleanup".asJson))
+              case Right(token) =>
+                nebflow.core.delegate.ProjectWorkspaceCleanup
+                  .run(
+                    name,
+                    id,
+                    sharedResources,
+                    Some(
+                      (
+                        token,
+                        body.hcursor.get[Boolean]("confirmUnmerged").getOrElse(false),
+                        body.hcursor.get[Boolean]("discardUncommitted").getOrElse(false)
+                      )
+                    )
+                  )
+                  .flatMap {
+                    case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+                    case Right(workspace) => Ok(Json.obj("workspace" -> workspace, "branchRetained" -> true.asJson))
+                  }
+          }
+        }
+
       case req @ GET -> Root / "projects" / name / "workspaces" =>
         withAuth(req) {
           ProjectStore.load(name).flatMap {
@@ -56,7 +90,11 @@ private[gateway] object ProjectsRoutes:
                 val repository = nebflow.core.delegate.WorkspaceLedger.repositoryKey(ws)
                 val snapshot = ledger.snapshot
                 Json.obj(
+                  "revision" -> snapshot.revision.asJson,
                   "baseline" -> ledger.baseline(repository).asJson,
+                  "cleanups" -> snapshot.cleanups.filter { case (id, _) =>
+                    snapshot.workspaces.exists(w => w.id == id && w.repository == repository)
+                  }.asJson,
                   "workspaces" -> snapshot.workspaces.filter(_.repository == repository).asJson,
                   "mergeRequests" -> snapshot.requests.filter(_.repository == repository).asJson,
                   "merger" -> snapshot.mergers.find(_.repository == repository).asJson

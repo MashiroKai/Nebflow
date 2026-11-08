@@ -28,7 +28,7 @@ export function renderProviderFailureStatus(view, digest, openTask) {
   const groups = (digest?.providerGroups || []).map(group => ({
     ...group, sessionIds: (group.sessionIds || []).filter(id => ids.has(id)),
   })).filter(group => group.sessionIds.length);
-  const signature = JSON.stringify([view.sessionId, groups]);
+  const signature = JSON.stringify([view.sessionId, groups, items.map(item => [item.sessionId, item.title])]);
   if (signature !== surface.signature) {
     surface.signature = signature;
     node.replaceChildren(...groups.map(group => h('details', {}, [

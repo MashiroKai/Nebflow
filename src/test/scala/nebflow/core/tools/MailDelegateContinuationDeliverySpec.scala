@@ -50,12 +50,11 @@ import scala.concurrent.duration.*
  *     拿到原父会话（registry 记录 `parentSessionId`）的**活引用**（回传链锚点不变）；
  *  2. **矩阵腿**：续命回合无 delegate_report 申报收尾 ⇒ complete×idle = 提醒腿
  *     （NudgeIdle）——绝不自动 completed 投父、绝不假终态（与 boot 复活 V1 同矩阵，
- *     2026-11-01 状态矩阵批口径）；结果在模型申报 finish/merge 时照常回传；
+ *     2026-11-01 状态矩阵批口径）；结果在模型申报 finish 时照常回传；
  *  3. **父不 live 面**：父会话不在注册表 ⇒ 原位续照常进行（不阻断），但 Mail 回执
  *     **当场说破**（可见 NOTE）；
- *  4. **监督者兜底（绝静默面）**（既有，逐字不动）：`parentRef = None` 的终态发出
- *     `delegateResultUndelivered` 显式终态帧；正向对照 = `parentRef = Some` 时父收到
- *     ExternalEvent 且**无**兜底帧。
+ *  4. 父会话无论是否 live，完成结果只入持久 SessionMailbox 一次，不叠 raw actor event。
+ *  5. 开放工作区本轮完成保留身份；显式关闭后不再复活，意外退出须手动恢复。
  *
  * Harness = BackoffSupervisorCancelSpec（SharedResources 装配）＋ MailTerminalReviveSpec
  * （temp dataRoot / StubLlm）同款拼装。
@@ -439,6 +438,62 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     yield ()
     end for
 
+  test("managed merger crash freezes its recorded identity without automatic respawn"):
+    val system = ActorSystem("managed-merger-crash")
+    val id = "delegate-managed-merger-crash"
+    for
+      resources <- mkResources(system, hang = true)
+      _ <- seedDeadDelegate(id, "managed-parent")
+      _ <- IO.blocking {
+        DelegateRegistry.put(DelegateRegistry.find(id).get.copy(mode = Some("merger")))
+        nebflow.core.delegate.WorkspaceLedger.default.merger("project", "managed-crash-repository", id)
+      }
+      attempts <- Ref.of[IO, Int](0)
+      child <- system.spawn(sinkBehavior, "managed-child")
+      supervisor <- system.spawn(
+        nebflow.agent.BackoffSupervisor(
+          childRef = child,
+          childSpawnFn = (_, _) => attempts.update(_ + 1) *> IO.raiseError(new Exception("unexpected respawn")),
+          childName = id,
+          parentRef = None,
+          description = "managed merger",
+          agentName = "nebflow",
+          subagentId = id,
+          parentSessionId = "managed-parent",
+          resources = resources,
+          initialPrompt = "task",
+          source = "delegate"
+        ),
+        "managed-supervisor"
+      )
+      _ <- nebflow.core.node.NodeRunner.registerAgent(
+        resources,
+        id,
+        child,
+        AgentKind.Delegate,
+        "managed-parent",
+        supervisorRef = Some(supervisor)
+      )
+      _ <- system.stop(child)
+      _ <- waitUntil(5.seconds)(IO(DelegateRegistry.isFrozen(id)))
+      _ <- waitUntil(5.seconds)(system.isAlive(supervisor.path).map(!_))
+      count <- attempts.get
+      _ = assertEquals(count, 0)
+      _ = assertEquals(
+        DelegateRegistry.find(id).flatMap(_.frozenReason),
+        Some(nebflow.core.delegate.DelegateFreeze.wireValue(nebflow.core.delegate.DelegateFreeze.Reason.EngineFault))
+      )
+      _ = assertEquals(
+        nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergers
+          .find(_.repository == "managed-crash-repository")
+          .map(_.delegateId),
+        Some(id)
+      )
+      _ <- system.stopAll
+    yield ()
+
+    end for
+
   test("completed workspace round reports once, retains the same live owner, and accepts another Mail round"):
     val system = ActorSystem("workspace-round-retention")
     val id = "delegate-workspace-round"
@@ -534,6 +589,19 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
         transcript :+ Message(MessageRole.Assistant, Left("round two complete"))
       )
       _ <- waitUntil(5.seconds)(SessionMailbox.scanPending(parent).map(_.size == 2))
+      _ <- waitUntil(5.seconds)(
+        IO(nebflow.core.delegate.WorkspaceLedger.default.owned(id).exists(_.activity == "idle"))
+      )
+      _ <- IO.blocking {
+        val ledger = nebflow.core.delegate.WorkspaceLedger.default
+        val workspace = ledger.owned(id).get
+        assert(ledger.claimCleanup(workspace.id, workspace.revision, "closure-test").isRight)
+        assert(ledger.finishCleanup(workspace.id, "closure-test", integrated = false, error = None).isRight)
+      }
+      _ <- system.stop(child)
+      _ <- waitUntil(5.seconds)(system.isAlive(supervisor.path).map(!_))
+      registry <- resources.agentRegistry.get
+      _ = assert(!registry.contains(id))
       _ <- system.stopAll
     yield ()
     end for
