@@ -49,7 +49,8 @@ object ProjectCrashRecovery:
    */
   def recoverAll(
     concurrency: Int = Defaults.CrashRecoveryConcurrency,
-    trigger: Option[String => IO[Unit]] = None
+    trigger: Option[String => IO[Unit]] = None,
+    manual: Boolean = false
   ): IO[Int] =
     ProjectRuntimeRegistry.all.flatMap { rts =>
       // 排除表（exclusivity 批 2026-10-15，双活根治一）：热读一次、逐项目精确匹配——
@@ -66,7 +67,7 @@ object ProjectCrashRecovery:
               )
               .as(0)
           else
-            recoverProject(rt, concurrency, trigger)
+            recoverProject(rt, concurrency, trigger, manual)
               .handleErrorWith(e =>
                 logger
                   .error(
@@ -148,7 +149,16 @@ object ProjectCrashRecovery:
   def recoverProject(
     rt: ProjectRuntime,
     concurrency: Int = Defaults.CrashRecoveryConcurrency,
-    trigger: Option[String => IO[Unit]] = None
+    trigger: Option[String => IO[Unit]] = None,
+    manual: Boolean = false
+  ): IO[Int] =
+    if manual then rt.engine.holdForManualRecovery()
+    else recoverProjectAutomatically(rt, concurrency, trigger)
+
+  private def recoverProjectAutomatically(
+    rt: ProjectRuntime,
+    concurrency: Int,
+    trigger: Option[String => IO[Unit]]
   ): IO[Int] =
     val notify = trigger.getOrElse(DispatchNotify.defaultTrigger(rt.project.name, rt.engine.rootSessionId))
     for
@@ -233,7 +243,7 @@ object ProjectCrashRecovery:
 
     end for
 
-  end recoverProject
+  end recoverProjectAutomatically
 
   // ── delegate 作用域腿（N1 刀1 · 设计 v3 §6/A2）────────────────────────────
   //
@@ -297,14 +307,15 @@ object ProjectCrashRecovery:
      * 无人管」的缺口随 recorder 落地关闭。本参数职责自此收窄为 **live 广播面**
      * （流帧 live + emitScopeEvent 作用域事件）；录制不再依赖任何腿自带录制 send。
      */
-    wsSend: Option[Json => IO[Unit]] = None
+    wsSend: Option[Json => IO[Unit]] = None,
+    manual: Boolean = false
   ): IO[Int] =
     DelegateFlowHosts.sweepRoots.flatMap { roots =>
       roots
         .traverse { ws =>
           DelegateFlowHosts.scopeDirs(ws).flatMap { dirs =>
             dirs.traverse { dir =>
-              recoverDelegateScope(ws, dir.last, concurrency, reportGateHold, rootNotifyQuietMs, wsSend)
+              recoverDelegateScope(ws, dir.last, concurrency, reportGateHold, rootNotifyQuietMs, wsSend, manual)
                 .handleErrorWith(e =>
                   logger
                     .error(
@@ -325,7 +336,8 @@ object ProjectCrashRecovery:
     concurrency: Int,
     reportGateHold: Option[Boolean],
     rootNotifyQuietMs: Option[Long],
-    wsSend: Option[Json => IO[Unit]]
+    wsSend: Option[Json => IO[Unit]],
+    manual: Boolean
   ): IO[Int] =
     DelegateRegistry.find(scope) match
       case None =>
@@ -349,7 +361,8 @@ object ProjectCrashRecovery:
           concurrency,
           reportGateHold,
           rootNotifyQuietMs,
-          wsSend
+          wsSend,
+          manual
         )
 
   /**
@@ -464,7 +477,8 @@ object ProjectCrashRecovery:
     concurrency: Int,
     reportGateHold: Option[Boolean],
     rootNotifyQuietMs: Option[Long],
-    wsSend: Option[Json => IO[Unit]]
+    wsSend: Option[Json => IO[Unit]],
+    manual: Boolean = false
   ): IO[Int] =
     // system/resources 载体：启动挂载后的任一项目 runtime（boot 链序 = startupMount 先行；
     // 零项目挂载 = 无 ActorSystem 载体 → WARN 跳过，宿主扫描器 +30s 兜底重试面不存在
@@ -496,6 +510,7 @@ object ProjectCrashRecovery:
           )
           .flatMap {
             case None => IO.pure(0) // 挂载失败（fail-soft 已 WARN）
+            case Some(h) if manual => h.engine.holdForManualRecovery()
             case Some(h) =>
               for
                 snap <- h.store.snapshot

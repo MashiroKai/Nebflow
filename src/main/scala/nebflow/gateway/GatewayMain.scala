@@ -1052,7 +1052,7 @@ object GatewayMain extends IOApp:
                                   // 阻塞 boot（残余 Running 由 watchdog +30s 兜底收敛 failed）。
                                   val projectCrashSweep: IO[Unit] =
                                     if nebflow.shared.Defaults.CrashRecoveryEnabled then
-                                      nebflow.core.project.ProjectCrashRecovery.recoverAll().flatMap { projects =>
+                                      nebflow.core.project.ProjectCrashRecovery.recoverAll(manual = nebflow.shared.Defaults.RestartRecoveryManual).flatMap { projects =>
                                         if projects > 0 then
                                           logger.info(
                                             s"Boot crash-recovery sweep: $projects project(s) had crashed nodes claimed (rehydrate/failed)"
@@ -1086,7 +1086,8 @@ object GatewayMain extends IOApp:
                                     if nebflow.shared.Defaults.CrashRecoveryEnabled then
                                       nebflow.core.project.ProjectCrashRecovery
                                         .recoverDelegateScopes(
-                                          wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                          wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json)),
+                                          manual = nebflow.shared.Defaults.RestartRecoveryManual
                                         )
                                         .flatMap { scopes =>
                                           if scopes > 0 then

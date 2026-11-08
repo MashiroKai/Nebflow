@@ -2639,7 +2639,7 @@ object NodeEditTool extends Tool:
                                                             if appliedTask.exists(_.trim.nonEmpty) && fresh.in.isEmpty
                                                             then NodeLifecycle.Pending
                                                             else NodeLifecycle.Wiring
-                                                          s.copy(nodes =
+                                                          s.copy(manualRecoveryNodes = s.manualRecoveryNodes - node.id, nodes =
                                                             s.nodes.updated(
                                                               node.id,
                                                               fresh.copy(

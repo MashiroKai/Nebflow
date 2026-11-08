@@ -1518,7 +1518,9 @@ case class FlowMapState(
   v: Int = 1,
   project: String,
   updatedAt: Long,
-  nodes: Map[String, NodeDef] = Map.empty
+  nodes: Map[String, NodeDef] = Map.empty,
+  /** Persisted execution hold after a restart; cleared only by explicit recovery. */
+  manualRecoveryNodes: Set[String] = Set.empty
 )
 
 object FlowMapState:

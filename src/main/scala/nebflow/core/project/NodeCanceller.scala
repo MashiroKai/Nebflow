@@ -145,12 +145,16 @@ private[project] trait NodeCanceller:
    * 文本混入停等告警，且让「paused 链零派发」的红验断言无法机械判定。
    */
   private[project] def chainGateOf(nodeId: String): IO[Option[String]] =
-    store.combinedNodes.flatMap { combined =>
-      val chains = FlowMapStore.topologicalChains(combined.values)
-      FlowMapStore.chainIdIn(combined, chains, nodeId) match
-        case None => IO.pure(None)
-        case Some(cid) =>
-          store.chainLedgerStore.snapshot.map(st => if ChainLedger.blocksDispatch(st, cid) then Some(cid) else None)
+    store.snapshot.flatMap { snap =>
+      if snap.manualRecoveryNodes.contains(nodeId) then IO.pure(Some(s"manual-recovery:$nodeId"))
+      else
+        store.combinedNodes.flatMap { combined =>
+          val chains = FlowMapStore.topologicalChains(combined.values)
+          FlowMapStore.chainIdIn(combined, chains, nodeId) match
+            case None => IO.pure(None)
+            case Some(cid) =>
+              store.chainLedgerStore.snapshot.map(st => if ChainLedger.blocksDispatch(st, cid) then Some(cid) else None)
+        }
     }
 
   /**
@@ -166,12 +170,12 @@ private[project] trait NodeCanceller:
    * 门槛（声明恒带 / 派生分量 ≥2 成员）+ [[ChainLedger.blocksDispatch]]。
    */
   private[project] def chainGateNodeIds(combined: Map[String, NodeDef]): IO[Set[String]] =
-    store.chainLedgerStore.snapshot.map { st =>
+    (store.snapshot, store.chainLedgerStore.snapshot).mapN { (snap, st) =>
       FlowMapStore
         .topologicalChains(combined.values)
         .filter(c => FlowMapStore.chainVisible(combined, c) && ChainLedger.blocksDispatch(st, c.id))
         .flatMap(_.memberIds)
-        .toSet
+        .toSet ++ snap.manualRecoveryNodes
     }
 
   /**
@@ -216,8 +220,10 @@ private[project] trait NodeCanceller:
         store.chainMembersOf(chainId).flatMap {
           case None => IO.pure(Left(ChainCancelErrors.notFound(chainId)))
           case Some(cm) if cm.info.memberIds.size < 2 => IO.pure(Left(ChainCancelErrors.singleMember(chainId)))
-          case Some(_) =>
-            store.chainLedgerStore.setChainControl(chainId, ChainLedger.StatusActive, now).map(Right(_))
+          case Some(cm) =>
+            store.chainLedgerStore.setChainControl(chainId, ChainLedger.StatusActive, now).flatMap { control =>
+              resumeSavedNodes(cm.info.memberIds.toSet).as(Right(control))
+            }
         }
     }
 
