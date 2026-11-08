@@ -328,6 +328,7 @@ private[agent] object AgentProcessing:
               )
               .withNextLoopTurn
             for
+              _ <- InputLanding.checkpointProducerInputs(resources, state.sessionId, updatedState.messages, immInputs.flatMap(_.clientMessageId).toSet)
               // F2: disk snapshot in sync after the drain (queue emptied).
               _ <- persistQueues(state.sessionId, updatedState.execution)
               _ <- state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
@@ -949,6 +950,7 @@ private[agent] object AgentProcessing:
             // enterFrozen(Loop) 待人工（用户唤醒 / Manager·Nebula AgentControl
             // restart / cancel 终态；resumeAt=1 年，语义「永不自动续跑」）。
             for
+              _ <- InputLanding.checkpointProducerInputs(resources, state.sessionId, updatedState.messages, immInputs.flatMap(_.clientMessageId).toSet)
               _ <- persistIfSession(resources, updatedState)
                 .handleErrorWith(e =>
                   NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
@@ -1006,6 +1008,7 @@ private[agent] object AgentProcessing:
             yield result
           case None =>
             for
+              _ <- InputLanding.checkpointProducerInputs(resources, state.sessionId, updatedState.messages, immInputs.flatMap(_.clientMessageId).toSet)
               _ <- ctx.forkTurn(
                 persistIfSession(resources, updatedState)
                   .handleErrorWith(e =>

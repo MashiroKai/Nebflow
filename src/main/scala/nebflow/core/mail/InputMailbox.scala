@@ -156,6 +156,21 @@ object InputMailbox:
           .as(InputMailResult.Failed(Option(t.getMessage).getOrElse("unknown")))
       )
 
+  /** On a fresh actor, restore producer-owned intake left pending or taken by its predecessor. */
+  def replayProducerInputs(sid: String): IO[List[InputEntry]] = IO.blocking {
+    lock.synchronized {
+      val pending = scanDir(pendingDir(sid))
+      val taken = scanDir(takenDir(sid)).filter(_.producer == ProducerInput.Producer)
+      val delivered = deliveredContainsSync(sid, taken.map(_.identity).toSet)
+      taken.filterNot(e => delivered.contains(e.identity)).foreach { e =>
+        if !pending.exists(_.identity == e.identity) then
+          os.makeDir.all(pendingDir(sid))
+          os.move(takenFileOf(sid, e), pendingFileOf(sid, e))
+      }
+      scanDir(pendingDir(sid)).filter(_.producer == ProducerInput.Producer)
+    }
+  }
+
   /** 下一个 seq：`pending-input ∪ taken-input` 名字序 max+1（taken 占序防重用）。 */
   private def nextSeq(sid: String): Long =
     val pend = listNames(pendingDir(sid)).flatMap(parseSeq)

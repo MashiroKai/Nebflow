@@ -396,7 +396,10 @@ final class DispatchNotify(
             // Failed delivery stays unacknowledged and eligible for redelivery.
             val send: IO[Boolean] = deliveryTarget match
               case Some(t) =>
-                t.deliver(mergedText(entries.map(_._2))).handleErrorWith { e =>
+                val text = mergedText(entries.map(_._2))
+                val versions = nodes.sortBy(_.id).map(n => s"${n.id}:${n.gen}:${n.blockCount}:${n.completedAt}").mkString("|")
+                val identity = nebflow.core.mail.ProducerInput.identity(projectName, key, versions, text)
+                t.deliverIdentified.fold(t.deliver(text))(f => f(text, identity)).handleErrorWith { e =>
                   logger
                     .warn(
                       s"dispatch-notify delivery failed (target=${t.label}, reason=${key}, batch=${entries.size}): ${e.getMessage}"
@@ -1448,7 +1451,11 @@ object DispatchNotify:
    * 在 core 内，层级门禁合法）；per-project 引擎不传（缺省 = [[defaultTrigger]] 链，
    * 项目 dispatcher 行为零变化）。
    */
-  final case class DeliveryTarget(label: String, deliver: String => IO[Boolean])
+  final case class DeliveryTarget(
+    label: String,
+    deliver: String => IO[Boolean],
+    deliverIdentified: Option[(String, String) => IO[Boolean]] = None
+  )
 
   /**
    * 默认投递目标（label = [[ProjectDispatcherLabel]]，探针 = `trigger` 后恒 true）——

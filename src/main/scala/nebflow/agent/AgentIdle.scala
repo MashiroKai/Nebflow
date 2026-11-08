@@ -135,8 +135,10 @@ private[agent] object AgentIdle:
           // a real human text that travelled the ImmediateInput leg arrives with
           // clientMessageId=None and used to be stamped source="tool" (blue TOOL
           // card + isRealUserTurn=false). 真人 ⇒ no source, never.
+          val isHumanInput = fromUser || (clientMessageId.isDefined &&
+            !nebflow.core.mail.ProducerInput.isProducerIdentity(clientMessageId))
           val injectionSource: Option[String] =
-            if clientMessageId.isDefined then None
+            if isHumanInput then None
             else injectionSourceFor(fromUser, source.orElse(inferInjectionSource(state.sessionId, replyTo)))
           val enrichedBlocks: Option[List[ContentBlock]] = blocks.filter(_.nonEmpty)
           val stateWithFlush = stateWithWidth
@@ -145,7 +147,7 @@ private[agent] object AgentIdle:
               case Some(bl) => Message(MessageRole.User, Right(bl))
               case None => Message(MessageRole.User, Left(text))
             ).copy(source = injectionSource),
-            fromUser || clientMessageId.isDefined
+            isHumanInput
           )
           // ── Held-receipt 先补注入（平台修复批 fix 1 第三腿，2026-10-21）────────
           // 有被子代理批屏障扣留的已产出回执（pendingEvents 非空）⇒ 本回合**先**
@@ -213,6 +215,9 @@ private[agent] object AgentIdle:
             flushBase = heldFlush.map(_.state).getOrElse(stateWithFlush)
             newMessages =
               flushBase.messages ++ ledgerFlush.messages ++ heldFlush.map(_.messages).getOrElse(Nil) :+ userMsg
+            _ <- landed match
+              case InputLanding.LandOutcome.Landed(_) => InputLanding.checkpointProducerInputs(resources, state.sessionId, newMessages, clientMessageId.toSet)
+              case _ => IO.unit
             _ <-
               if ledgerFlush.consumedJobIds.nonEmpty then
                 IO(
@@ -252,7 +257,7 @@ private[agent] object AgentIdle:
                   replyTo,
                   // D2：真实用户 WS 输入恒带 clientMessageId → UserWake（冻结时段也
                   // 放行，用户输入即唤醒）；系统注入（Mail/continue 等 None）→ Gated。
-                  if clientMessageId.isDefined then DispatchCause.UserWake else DispatchCause.Gated
+                  if isHumanInput then DispatchCause.UserWake else DispatchCause.Gated
                 )
             // D3 锚点：turn **成功之后**才 unlink + 写墓碑（消费成功才标记完成）
             _ <- InputLanding.consume(stateWithFlush.sessionId, landed)
@@ -787,7 +792,9 @@ private[agent] object AgentIdle:
       // 无 correlationId 的事件恒放行（身份不具唯一性，语义零回退）。
       case AgentCommand.RecoverPersistedQueues =>
         val sid = state.sessionId.getOrElse("")
-        CompactionQueueStore.load(sid).flatMap {
+        nebflow.core.mail.InputMailbox.replayProducerInputs(sid).flatMap { entries =>
+          entries.traverse_(e => nebflow.core.mail.InputPayload.toCommand(e.payload).traverse_(cmd => ctx.self ! cmd))
+        } *> CompactionQueueStore.load(sid).flatMap {
           case Some(q) if q.imms.nonEmpty || q.events.nonEmpty =>
             DeliveredReceiptLedger.filterUndelivered(sid, q.events).flatMap { (keptEvents, blocked) =>
               logAgentEvent(

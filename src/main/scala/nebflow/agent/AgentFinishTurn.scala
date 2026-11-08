@@ -709,6 +709,7 @@ private[agent] object AgentFinishTurn:
         )
         .withNextLoopTurn // Block 3：turn 末注入 = 新 turn（整批共享同一 turn）
       for
+        _ <- InputLanding.checkpointProducerInputs(resources, state.sessionId, messagesWithImmediate, immInputs.flatMap(_.clientMessageId).toSet)
         _ <- roundCompleteIO
         // F2: keep the disk snapshot in sync after the drain (injected input gone).
         _ <- persistQueues(state.sessionId, updatedState.execution)

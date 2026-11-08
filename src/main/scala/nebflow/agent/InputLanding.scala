@@ -93,9 +93,17 @@ private[agent] object InputLanding:
               case _ => LandOutcome.Landed(identity)
             }
           case InputMailbox.InputMailResult.AlreadyPresent =>
-            logger
-              .info(s"[input-landing] duplicate identity='$identity' sid='$s' — turn skipped (idempotency key)")
-              .as(LandOutcome.Duplicate)
+            // A producer may have durably accepted the input before sending the actor command.
+            InputMailbox.scanPending(s).flatMap { pending =>
+              pending.find(e => e.identity == identity && e.producer == nebflow.core.mail.ProducerInput.Producer &&
+                (e.payload == payload || (e.payload.kind == nebflow.core.mail.InputPayload.KindImmediate &&
+                  e.payload.copy(kind = payload.kind) == payload))) match
+                case Some(entry) => InputMailbox.take(s, List(entry)).map {
+                  case entries if entries.nonEmpty => LandOutcome.Landed(identity)
+                  case _ => LandOutcome.Duplicate
+                }
+                case None => IO.pure(LandOutcome.Duplicate)
+            }
           case InputMailbox.InputMailResult.Failed(cause) =>
             logger
               .warn(s"[input-landing] disk landing failed sid='$s' identity='$identity' cause=$cause — turn proceeds (mailbox is extra insurance, never a blocker)")
@@ -116,5 +124,25 @@ private[agent] object InputLanding:
       case LandOutcome.Landed(identity) =>
         sid.filter(_.trim.nonEmpty).fold(IO.unit)(s => InputMailbox.unlinkTaken(s, List(identity)))
       case _ => IO.unit
+
+  /** Commit accepted producer inputs to the transcript before removing their durable intake. */
+  def checkpointProducerInputs(
+    resources: nebflow.core.AgentRuntimePort,
+    sid: Option[String],
+    messages: List[nebflow.shared.Message],
+    identities: Set[String]
+  ): IO[Unit] =
+    val wanted = identities.filter(id => nebflow.core.mail.ProducerInput.isProducerIdentity(Some(id)))
+    if wanted.isEmpty then IO.unit
+    else sid.filter(_.nonEmpty).fold(IO.unit) { session =>
+      (InputMailbox.scanPending(session), InputMailbox.scanTaken(session)).tupled.flatMap { (pending, taken) =>
+        val owned = (pending ++ taken).filter(e => e.producer == nebflow.core.mail.ProducerInput.Producer && wanted(e.identity))
+        if owned.isEmpty then IO.unit
+        else
+          resources.sessionStore.durableSwapMessages(session, messages) *>
+            InputMailbox.take(session, pending.filter(e => owned.exists(_.identity == e.identity))) *>
+            InputMailbox.unlinkTaken(session, owned.map(_.identity))
+      }
+    }
 
 end InputLanding

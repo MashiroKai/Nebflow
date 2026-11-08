@@ -1278,6 +1278,7 @@ class NodeEngine(
           // ——把 N 件原始载荷挂在本件上，供消费侧在同一边界（同一 turn）逐件展开
           // （N 气泡 / 1 次唤醒）。`text` / `sender`（= 首件）/ `eventType` / 去重键 /
           // 记账序**逐字不变**。
+          sourceNodeIds = many.flatMap(_.nodeId),
           windowItems = Some(
             many.map(e =>
               AgentCommand.WindowItem(

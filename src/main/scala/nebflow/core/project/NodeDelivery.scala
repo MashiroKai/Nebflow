@@ -838,8 +838,9 @@ private[project] trait NodeDelivery:
     case Parked
 
   /**
-   * root 通道 offer **单点实现**（`ref ! ImmediateInput` 一行逐字未动）；[[deliverToRoot]]
-   * 与 [[flushRootNotify]] 的合并腿共用它 ⇒ 「发没发出」只有这一个判据源。
+   * Root notification acceptance: persist the full input before telling the actor or
+   * marking source delivery. A short-window suppression is safe only after durable intake.
+   * Both single and batched notifications use this boundary.
    *
    * `windowItems`（notifypack 解 b 批 · 2026-09-23）：**默认 `None`** ⇒ 既有全部调用点
    * （`deliverToRoot` 单件腿 / 两条旁路 / `deliverStaleSummary`）逐字保持改前形态
@@ -850,7 +851,8 @@ private[project] trait NodeDelivery:
     nodeName: String,
     status: String,
     nodeId: Option[String],
-    windowItems: Option[List[AgentCommand.WindowItem]] = None
+    windowItems: Option[List[AgentCommand.WindowItem]] = None,
+    sourceNodeIds: List[String] = Nil
   ): IO[RootNotifyOffer] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
@@ -858,26 +860,33 @@ private[project] trait NodeDelivery:
         // 根会话队列），仍刷新账本（账本与通知解耦：本表只压秒级抖动，V8
         // at-least-once 语义不变）。不同 status 天然独立窗口（running→completed
         // 互不挡）。
-        dedupeRootDelivery(nodeId.getOrElse(nodeName), status).flatMap {
-          case true =>
-            logger.warn(
-              s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.RootDedupWindowMs}ms, rootSession=$rootSessionId)"
-            ) *>
-              nodeId.traverse_(id => markRootDelivered(id)) *>
-              notifyRedirectAudit(nodeId, status, "suppressed") *>
-              IO.pure(RootNotifyOffer.Suppressed)
-          case false =>
-            (ref ! AgentCommand.ImmediateInput(
-              text,
-              source = Some("node"),
-              eventType = Some(status),
-              sender = Some(s"$projectName/$nodeName"),
-              fromUser = false, // ② 服务端注入（节点状态），不是真人输入
-              windowItems = windowItems
-            )) *> nodeId.traverse_(id => markRootDelivered(id)) *>
-              notifyRedirectAudit(nodeId, status, "offered") *>
-              IO.pure(RootNotifyOffer.Offered)
-        }
+        val input = AgentCommand.ImmediateInput(
+          text, source = Some("node"), eventType = Some(status),
+          sender = Some(s"$projectName/$nodeName"), fromUser = false, windowItems = windowItems
+        )
+        (nodeId.toList ++ sourceNodeIds).distinct.sorted.traverse(id => store.findNode(id).map {
+          case Some(n) => s"${n.id}:${n.gen}:${n.blockCount}:${n.completedAt}"
+          case None => id
+        }).flatMap { versions =>
+          val identity = nebflow.core.mail.ProducerInput.identity(rootSessionId, projectName, status, text, versions.mkString("|"))
+          nebflow.core.mail.ProducerInput.persist(rootSessionId, input, identity).flatMap { prepared =>
+            dedupeRootDelivery(nodeId.getOrElse(nodeName), status).flatMap {
+              case true =>
+                logger.warn(
+                  s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.RootDedupWindowMs}ms, rootSession=$rootSessionId)"
+                ) *>
+                  nodeId.traverse_(id => markRootDelivered(id)) *>
+                  notifyRedirectAudit(nodeId, status, "suppressed") *>
+                  IO.pure(RootNotifyOffer.Suppressed)
+              case false =>
+                (ref ! prepared) *> nodeId.traverse_(id => markRootDelivered(id)) *>
+                  notifyRedirectAudit(nodeId, status, "offered") *>
+                  IO.pure(RootNotifyOffer.Offered)
+            }
+          }
+        }.handleErrorWith(e =>
+          logger.warn(s"Node notification not durably accepted: ${e.getMessage}").as(RootNotifyOffer.Parked)
+        )
       case None =>
         logger.warn(
           s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)"
