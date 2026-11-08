@@ -153,7 +153,7 @@ test.describe('Sub-Agents 面板取消/终止实时刷新', () => {
     const row = page.locator(`.bg-task-row[data-node-session-id="${SID}"]`);
     await openPanel(page);
     await expect(row).toHaveCount(1);
-    await expect(row.locator('.bg-task-kind')).toHaveText('分发器');
+    await expect(row.locator('.bg-task-kind')).toHaveText('dispatcher');
     await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('1');
     // 数据侧在册（快照/管理面语义不变）
     const bucketHas = await page.evaluate(async (sid) => {
@@ -189,7 +189,7 @@ test.describe('Sub-Agents 面板取消/终止实时刷新', () => {
     await openPanel(page);
     const row = page.locator(`.bg-task-row[data-node-session-id="${SID}"]`);
     await expect(row).toHaveCount(1);
-    await expect(row.locator('.bg-task-kind')).toHaveText('节点');
+    await expect(row.locator('.bg-task-kind')).toHaveText('node');
     await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('1');
 
     await inject(page, cancelDoneFrame(SID));
@@ -222,7 +222,7 @@ test.describe('Sub-Agents 面板取消/终止实时刷新', () => {
     });
     await openPanel(page);
     await expect(page.locator(`.bg-task-row[data-node-session-id="${DISPATCHER}"]`)).toHaveCount(1);
-    await expect(page.locator(`.bg-task-row[data-node-session-id="${DISPATCHER}"] .bg-task-kind`)).toHaveText('分发器');
+    await expect(page.locator(`.bg-task-row[data-node-session-id="${DISPATCHER}"] .bg-task-kind`)).toHaveText('dispatcher');
     await expect(page.locator(`.bg-task-row[data-node-session-id="${DELEGATE}"]`)).toHaveCount(1);
     await expect(page.locator(`.bg-task-row[data-node-session-id="${DELEGATE}"] .bgagent-tool`)).toContainText('NodeEdit');
 

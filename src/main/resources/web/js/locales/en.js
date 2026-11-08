@@ -1007,6 +1007,7 @@ export default {
   // Three-generation panel batch (2026-11-06): root anchor (depth-0 tree base
   // label) + the decision-table state-② "parent absent" chip — fact words only.
   'subagents.rootAnchor': 'Root session',
+  'subagents.hierarchyLevel': 'Level {level}',
   'subagents.parentAbsent': 'Parent absent',
   'subagents.parentAbsentTip': 'Parent session not currently shown · {sid}',
   // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover

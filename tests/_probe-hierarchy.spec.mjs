@@ -145,6 +145,20 @@ test('probe B: dispatcher -> node -> node subagent', async ({ page }) => {
   const history = await dump(page);
   expect(history.filter(r => r.sid === 'subagent-deadbeef')).toHaveLength(1);
   expect(history.find(r => r.sid === 'subagent-deadbeef')).toMatchObject({ depth: '3', kindText: 'subagent', rail: '└─' });
+  // A scoped store row must expose its cancelled state and open its history.
+  await setFixture(page, {
+    rows: [],
+    children: { [NODE_SID]: [{ taskId: 'subagent-deadbeef', parentSessionId: NODE_SID, agentName: 'subagent', description: '终态侦察', status: 'cancelled', source: 'subagent' }] },
+  });
+  await page.evaluate(async () => { (await import('/js/main/bgAgents.js')).renderBgAgentDropdown(); });
+  const storedRow = page.locator('[data-child-session="subagent-deadbeef"]');
+  await expect(storedRow.locator('.bg-task-state')).toHaveText('已取消');
+  await storedRow.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#bg-dropdown')).toHaveClass(/hidden/);
+  // Close the details and reopen the panel for the remaining checks.
+  await page.click('#bgagent-close');
+  await page.click('#bgagent-indicator');
   for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.evaluate(t => document.documentElement.setAttribute('data-theme', t), theme);

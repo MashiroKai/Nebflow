@@ -1047,6 +1047,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    muted），点击区整格 14px（命中友好）；悬停提亮，点击语义（收起/展开子行树）
    由 bgAgents.js 承载，行体点击开详情不变。 */
 .bg-task-caret {
+  padding: 0;
+  border: 0;
+  background: transparent;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
