@@ -477,12 +477,14 @@ class NeblinkClient(
                 // 登录结果（凭据腿的职责仍是恢复 device session，隧道复活是它顺带的
                 // 通知义务，不是它的新前置条件）。
                 onSessionMinted
-                  .fold(IO.unit)(_.handleErrorWith(e =>
-                    logger.warn(
-                      "relay tunnel ensure after session mint failed (login result unaffected): " +
-                        e.getClass.getSimpleName
+                  .fold(IO.unit)(
+                    _.handleErrorWith(e =>
+                      logger.warn(
+                        "relay tunnel ensure after session mint failed (login result unaffected): " +
+                          e.getClass.getSimpleName
+                      )
                     )
-                  ))
+                  )
                   .as(Right(login.peers))
             case Left(err) =>
               logger
@@ -633,14 +635,38 @@ class NeblinkClient(
               .as(Left(err): Either[String, List[NeblinkPeerInfo]])
         }
 
-  /** Logout from NebLink Server. */
-  def logout: IO[Unit] =
+  /**
+   * Logout from NebLink Server. Returns TRUE only when the device logout
+   * verifiably landed (server acknowledged, or there was NO server session
+   * to end); FALSE = the notify did NOT reach the server (transport failure).
+   * 登出收尾批（logout-fin）：这个真值是上行排队点的记账依据 —— false ⇒
+   * `performLocalLogout` 第 11 步在机器层落一条账号域待发记录（设计 §3.5.2 ⑤
+   * 「离线也记账」），不再把吞掉的传输失败当成「已通知」。运输失败照旧**不抛**
+   * —— logout 永远不在网络面上失败（既有契约），改变的只是失败从「静默」变
+   * 「可见于返回值」。
+   */
+  def logout: IO[Boolean] =
     sessionToken match
-      case None => IO.unit
+      case None => IO.pure(true) // 无服务端会话 = 无可通知 ⇒ 视为已落地
       case Some(token) =>
-        sendRequest("DELETE", s"${config.url}/api/device/logout", "", Some(token))
-          .handleErrorWith(_ => IO.unit)
-          *> IO { sessionToken = None }
+        // sendRequest 的失败契约 = **内层** Left（传输异常不抛，走 Left(err)）⇒
+        // 判送达必须拆两层；attempt 只兜 sendRequest 自己都不抛的意外。
+        sendRequest("DELETE", s"${config.url}/api/device/logout", "", Some(token)).attempt
+          .flatMap {
+            case Right(Right(_)) => IO.pure(true)
+            case other =>
+              val cause = other match
+                case Right(Left(err)) => err
+                case Left(t) => Option(t.getMessage).getOrElse(t.toString)
+                case _ => "unexpected response shape"
+              logger
+                .warn(
+                  s"device logout notify did NOT reach the server (logout continues; " +
+                    s"pending uplink row will record it): ${cause.take(160)}"
+                )
+                .as(false)
+          }
+          .guarantee(IO { sessionToken = None })
 
   // ===== A2A 好友与消息 API（spec §6.1，Bearer device session token） =====
 

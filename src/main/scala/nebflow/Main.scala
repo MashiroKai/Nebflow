@@ -157,27 +157,70 @@ private object MainBoot:
     // 默认 ~/.stand（legacy-only 机器回落 ~/.nebflow + 一行提示，见
     // PathUtil.resolveDefaultDataRoot）。解析发生在任何 logger 初始化之前，
     // logback 的 FILE 路径由下面这行桥接钉到同一个根。
-    val root = homeOpt match
+    //
+    // == 三层数据根（b1-ladder 批；契约 design-api.md §8.1 启动序；分档语义见
+    //    PathUtil.resolvedLayer 文档 src/main/scala/nebflow/shared/paths.scala:272-274）==
+    // 本批起这里定的是**机器层根**（machineRoot），有效根（账号层 / 未登录层 / 平铺根）由
+    // core/root 的 RootLadder 阶梯派生（src/main/scala/nebflow/core/root/RootLadder.scala）：
+    //   1. machineRoot = --home | PathUtil.machineRoot（今日解析链原样，不引入第二套 home 解析）
+    //   2. PathUtil.setMachineRoot(machineRoot) ← 只钉机器层（生产启动序唯一调用点，
+    //      paths.scala:252；进程内二次换值即拒 = 「禁热切」，判定面 = LoginGuard.checkHotSwitch，
+    //      守卫判定逻辑只在 core/root/Guards.scala 一处）
+    //   3. PathUtil.dataRoot / RootLadder.current 定档（lazy，一次）：
+    //      account（指针⇒账号根）/ unauthenticated（layout.json+无指针⇒machineRoot/unauthenticated）
+    //      / flat（无 layout.json 的平铺根 ⇒ 有效根 == 机器根 —— 老用户启动路径**逐字节不变**）
+    //      显式 --home 平铺档钉死语义（paths.scala:272-273）不被本批破坏：--home 指向普通目录
+    //      ⇒ 平铺档；--home 同时接受账号根（阶梯第 0 档 profile.json 判别，不新增旗标）。
+    // 迁移触发点（契约 §4.1）：登录腿显式动作（NeblinkEnrollment.persistCredential ⇒
+    // establishAccountRootAfterSignIn：平铺首登先 RootLayout.migrate 再写指针，失败 rollback），
+    // **绝不在 boot 自动跑** —— 平铺根升级后第一次启动必须仍 flat + 零写盘（兼容红线）；
+    // 启动序只负责把迁移产出（layout.json + 指针）经阶梯解析成账号档。
+    val machineRoot = homeOpt match
       case Some(h) => os.Path(expandHome(h), os.pwd)
-      case None => PathUtil.dataRoot // dual-env read (Branding.env) + default resolution
+      case None => PathUtil.machineRoot // dual-env read (Branding.env) + default resolution
+    // 禁热切的自检（§0 总则 2）：定根前后各取一次 —— 阶梯绝不允许在定根过程中把机器层根换掉。
+    // 两侧取的是同一个声明值，故正常启动恒 Right；Left 只可能来自实现被改坏。
+    val declaredMachineRoot = machineRoot
+    PathUtil.setMachineRoot(machineRoot)
+    nebflow.core.root.LoginGuard.checkHotSwitch(declaredMachineRoot, PathUtil.machineRoot) match
+      case Right(_) => ()
+      case Left(refusal) =>
+        System.err.println(refusal.message)
+        throw new IllegalStateException(refusal.message)
     // 产品侧同源（2026-09-10 作者裁定）：`--home` 决定一切落盘位置，日志同属
     // 该语义范围内——不是新语义，是既有语义的补齐。logback 的 FILE appender
     // 读 `STAND_HOME` / `NEBFLOW_HOME`（src/main/resources/logback.xml），单靠
-    // setDataRoot 只能改 JVM 内的数据根，日志仍落 logback 自身默认 ⇒「数据在
+    // 换根只能改 JVM 内的数据根，日志仍落 logback 自身默认 ⇒「数据在
     // A、日志在 B」的分叉。本批起桥接**无条件**进行（含两 env 均未设的默认档）：
     // legacy-only 机器数据根回落 ~/.nebflow 时，日志必须跟着落 ~/.nebflow。
-    // 取值与 setDataRoot 完全同源（同一解析出的 `root`），不引入第二套 home 解析。
-    // 先落系统属性，再设数据根：logback 在 LoggerContext 首次解析配置时就固化
+    // 取值与本启动序定根完全同源（同一解析出的 `machineRoot`），不引入第二套 home 解析。
+    // 先落系统属性，再定档：logback 在 LoggerContext 首次解析配置时就固化
     // FILE 路径，本行必须早于任何 `LoggerFactory.getLogger` 首用——Main.run
     // 之前只有 IOApp 引导（不碰 slf4j），parseGlobalFlags 亦不触 logger，故
-    // 此处是最早点。logback 的 ${STAND_HOME:-${NEBFLOW_HOME:-…}} 解析顺序为
+    // 此处是最早点（定档可能触发的 ROOT-POINTER-DAMAGED WARN 也晚于本行）。
+    // logback 的 ${STAND_HOME:-${NEBFLOW_HOME:-…}} 解析顺序为
     // 系统属性 > 环境变量，桥接用的旧名系统属性胜出、env 作兜底（CLI --home
     // 同理钉住日志位置）。
-    sys.props("NEBFLOW_HOME") = root.toString
-    PathUtil.setDataRoot(root)
+    //
+    // ⚠️ 三层数据根批改一处（§8.1 第 5 步）：这里写**机器层根**，不是有效根 ——
+    // 账号根不可解析时必须仍能写生命周期日志；`sys.props("NEBFLOW_HOME")` 全仓只有
+    // logback 读（logback.xml:24/29），故对数据根解析零影响。
+    sys.props("NEBFLOW_HOME") = machineRoot.toString
+    // 有效根（账号层 / 未登录层 / 平铺根）—— 数据面从这里起全部走 dataRoot。
+    // 首读即定档：PathUtil.resolvedLayer 的进程级快照（RootLadder.resolve 跑一次）。
+    val root = PathUtil.dataRoot
+    val rootLayer = nebflow.core.root.RootLadder.current
+    // [b2-owner 占位] → 已落地（b1-guards 批）：ownerGate 挂在 GatewayMain.runGateway 开头
+    //   （真实 boot 面，即本占位自带的指引；全部启动臂经 bootGateway ⇒ GatewayMain.run(Nil)
+    //   汇聚到 runGateway，同一 JVM 本行已定根定档）。OwnerGuard.check(账号档 accountSub
+    //   （RootLadder.current）, OwnerIdentity.localAnchor)，拒启不静默（raise 浮出，先于一切
+    //   HTTP 面）；判定逻辑只在 core/root/Guards.scala（守卫单点铁律）。CLI 面（CliRoute
+    //   分发）不挂闸 —— stand logout / stand login 正是 owner-mismatch 的救济路径。
+    //   spec：OwnerGateBootSpec（启动闸拒启行为）+ OwnerGuardSpec（纯判定）。
     // 后台任务输出落盘（输出查看补全批 2026-10-25 作者令需求④）：数据根在此
     // 定案后一次性开启（`<dataRoot>/bg-task-logs/`）——只在真实 boot 面开启，
     // CLI 路由与 spec（不跑 Main.run）保持纯内存，零测试污染。
+    // 三层数据根批：传**有效根**（后台任务输出属账号内容，§8.1 尾条）。
     nebflow.core.tools.BgTaskOutputStore.enablePersistence(root)
     portOpt.foreach { p =>
       GatewayConfig.setPort(p)

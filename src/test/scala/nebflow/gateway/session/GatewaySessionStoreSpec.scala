@@ -90,6 +90,37 @@ class GatewaySessionStoreSpec extends CatsEffectSuite:
       _ = assert(localAlive.isDefined, "local-ticket session is the break-glass escape and survives")
     yield ()
 
+  // ── 登出收尾批（logout-fin）：按账号吊销（登出面，设计 §3.5.2 ⑥ / §8.3(c)）──
+
+  test("revokeByAccount drops ONLY the named account's rows — BOTH origins, others untouched"):
+    for
+      store <- GatewaySessionStore.create()
+      aRelay <- store.create("logto|user-A", GatewaySessionStore.OriginRelayMint, "net-1")
+      aLocal <- store.create("logto|user-A", GatewaySessionStore.OriginLocalTicket, "")
+      bRelay <- store.create("logto|user-B", GatewaySessionStore.OriginRelayMint, "net-1")
+      dropped <- store.revokeByAccount("logto|user-A")
+      _ = assertEquals(dropped, 2, "A 的两行（两 origin）都删 —— 登出的账号不保留任何控制台会话")
+      aRelayGone <- store.verifyAndTouch(aRelay.sessionId)
+      _ = assert(aRelayGone.isEmpty, "A 的 relay-mint 会话死了")
+      aLocalGone <- store.verifyAndTouch(aLocal.sessionId)
+      _ = assert(
+        aLocalGone.isEmpty,
+        "A 的 local-ticket 也死了 —— 本地 break-glass 例外属于绑定撤销（revokeRelayMinted），不属于账号离开本机"
+      )
+      bAlive <- store.verifyAndTouch(bRelay.sessionId)
+      _ = assert(bAlive.isDefined, "B 的会话不受累（按账号吊销，不是全清）")
+    yield ()
+
+  test("revokeByAccount with an empty accountSub is a no-op (never 'revoke everything')"):
+    for
+      store <- GatewaySessionStore.create()
+      _ <- store.create("u1", GatewaySessionStore.OriginRelayMint, "net")
+      dropped <- store.revokeByAccount("")
+      size <- store.size
+      _ = assertEquals(dropped, 0, "空账号键 = 无可吊销身份 ⇒ no-op")
+      _ = assertEquals(size, 1, "空账号键绝不退化成全清")
+    yield ()
+
   test("revokeByMaskedId matches by id prefix and reports the dropped count"):
     for
       store <- GatewaySessionStore.create()

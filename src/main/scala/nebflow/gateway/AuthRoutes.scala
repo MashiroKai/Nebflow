@@ -8,7 +8,9 @@ import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
 import nebflow.neblink.logto.*
-import nebflow.shared.Branding
+import nebflow.core.root.{AccountRoot, ActiveAccount}
+import nebflow.neblink.*
+import nebflow.shared.{Branding, NebflowLogger, PathUtil}
 import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.{Location, `Content-Type`}
@@ -221,8 +223,8 @@ private[gateway] object AuthRoutes:
 
   /**
    * The 8-step local teardown shared by POST /neblink/logout and the
-   * RP-initiated end-session endpoint. Always completes locally — every
-   * remote/best-effort step swallows failures.
+   * RP-initiated end-session endpoint. Security-critical local failures are
+   * reported after all teardown steps have been attempted.
    */
   private[gateway] def performLocalLogout(ms: NeblinkService)(using ctx: RestApiCtx): IO[Unit] =
     import ctx.*
@@ -231,19 +233,13 @@ private[gateway] object AuthRoutes:
       // 1. Notify the NebLink Server: DELETE /api/device/logout lets the
       //    server clear the device session + relay tunnel immediately
       //    instead of waiting for the 90s TTL purge. Best-effort — logout
-      //    must ALWAYS succeed locally, so any failure (network
-      //    unreachable, server down) is swallowed. Uses the discovery's
-      //    live client: enrollment hot-swap replaces it without updating
-      //    ms.relayClientOpt, which may hold a stale instance.
-      _ <- neblinkDiscovery.fold(IO.unit)(d =>
-        d.currentClient.flatMap {
-          case Some(client) =>
-            client.logout.handleErrorWith(e =>
-              logger.debug(s"NebLink server logout notify failed (continuing local logout): ${e.getMessage}")
-            )
-          case None => IO.unit
-        }
-      )
+      //    must ALWAYS succeed locally. Uses the discovery's live client:
+      //    enrollment hot-swap replaces it without updating ms.relayClientOpt,
+      //    which may hold a stale instance.
+      //    This acknowledgement concerns the device session only; it cannot
+      //    acknowledge the separate account-domain notification below.
+      liveClient <- neblinkDiscovery.fold(IO.pure(Option.empty[NeblinkClient]))(_.currentClient)
+      _ <- liveClient.fold(IO.pure(false))(_.logout)
       // 2. Stop the relay tunnel — drops the local WS so no reconnect
       //    loop keeps the device visible server-side after logout.
       _ <- ms.relayTunnelOpt.fold(IO.unit)(t => t.stop().handleErrorWith(_ => IO.unit))
@@ -252,28 +248,78 @@ private[gateway] object AuthRoutes:
       //    list after logout (reconnectLoop re-upserts on success).
       _ <- ms.presenceServiceOpt.fold(IO.unit)(p => p.disconnectAll().handleErrorWith(_ => IO.unit))
       // 4. Delete the device credential file (~/.nebflow/neblink/device.json)
-      _ <- DeviceCredential.clear
+      credentialResult <- DeviceCredential.clearForLogout.attempt
       // 5. Disable NebLink in config (keep neblinkServer address for next login).
       //    updateConfig refreshes the in-memory ref AND persists to disk, so
       //    /status reflects the change immediately without a restart.
-      _ <- ms.updateConfig(_.copy(enabled = false))
+      configResult <- ms.updateConfig(_.copy(enabled = false)).attempt
       // 6. Stop the NebLink client (hot-swap to None). Both client pointers are
       //    cleared: the discovery one (authoritative live client) AND the
       //    NeblinkService relay pointer, which every relay consumer reads
       //    (RemoteExecutor / DropboxService / status) —
       //    leaving it behind kept a logged-out client reachable through the
       //    relay path (2026-09-10 隧道鉴权自愈批 convergence sweep).
-      _ <- neblinkDiscovery.fold(IO.unit)(d => d.setClient(None))
-      _ <- IO(ms.setRelayClient(None))
+      discoveryResult <- neblinkDiscovery.fold(IO.unit)(d => d.setClient(None)).attempt
+      relayResult <- IO(ms.setRelayClient(None)).attempt
       // 7. Clear user info (avatar, github login) from the device identity.
-      _ <- ms.updateDeviceInfo(avatarUrl = Some(""), githubLogin = Some(""))
+      infoResult <- ms.updateDeviceInfo(avatarUrl = Some(""), githubLogin = Some("")).attempt
       // 8. Clear all discovered peers.
-      _ <- ms.clearPeers
+      peersResult <- ms.clearPeers.attempt
+      // Queue before clearing the pointer: if the disk write fails, the
+      // identity remains available for an explicit retry.
+      queueResult <- IO.blocking(AccountRoot.readPointer(PathUtil.machineRoot)).flatMap {
+        case Some(acct) => LogoutNotifyOutbox.enqueue(acct.accountSub, acct.email, LogoutNotifyOutbox.ReasonAccountTransportPending)
+        case None => IO.unit
+      }.attempt
+      // 9+10. 账号面拆除（登出收尾批 logout-fin，T3；单点 = [[clearAccountSurface]]，
+      //    两条登出路由 POST /neblink/logout 与 POST /neblink/auth/end-session 共用）：
+      //    清机器层 active-account 指针 + 按账号吊销控制台会话。账号目录一律保留
+      //    （登出 ≠ 删数据，设计 §3.5）；「Always completes locally」纪律由 seam 兜底。
+      // Retain the pointer for retry if any critical teardown failed, not
+      // only when enqueue failed. The account session is still revoked now.
+      canClearPointer = List(credentialResult, configResult, discoveryResult, relayResult, queueResult).forall(_.isRight)
+      accountResult <- clearAccountSurface(sessions, PathUtil.machineRoot, clearPointer = canClearPointer).attempt
+      failures = List(credentialResult, configResult, discoveryResult, relayResult, infoResult, peersResult, queueResult)
+        .collect { case Left(e) => e } ++ accountResult.left.toOption.toList
+      _ <- if failures.isEmpty then IO.unit
+        else IO.raiseError(new IllegalStateException("local logout incomplete; retry required", failures.head))
     yield ()
 
     end for
 
   end performLocalLogout
+
+  /**
+   * 账号面拆除单点（登出收尾批 logout-fin，T3）—— `performLocalLogout` 的
+   * 第 9+10 步，两条登出路由共用这一份实现：
+   *
+   *   1. **先读**机器层 `active-account` 指针（被吊销的身份必须在指针文件消失
+   *      **之前**读出 —— 会话吊销按这个 `accountSub` 定键）；
+   *   2. 按账号吊销并持久化控制台会话；失败则保留指针供重试；
+   *   3. 清除指针，保留账号目录。指针不可辨认时吊销全部本地会话以 fail closed。
+   *
+   * 返回被清掉的指针；持久化或删除失败向调用方报告，不冒称成功。
+   */
+  private[gateway] def clearAccountSurface(
+    sessions: GatewaySessionStore,
+    machineRoot: os.Path,
+    clearPointer: Boolean = true
+  ): IO[Option[ActiveAccount]] =
+    val log = NebflowLogger.forName("nebflow.gateway.logout")
+    IO.blocking(AccountRoot.readPointer(machineRoot)).flatMap {
+      case Some(acct) =>
+        // Keep the pointer until the revocation is durably persisted so a
+        // failed write remains retryable, including after process restart.
+        sessions.revokeByAccount(acct.accountSub) *>
+          IO.blocking(AccountRoot.clearPointer(machineRoot)).whenA(clearPointer) *>
+          log.info(s"logout account surface cleared for '${acct.accountSub}'").as(Some(acct))
+      case None =>
+        // A missing or damaged pointer does not identify a safe subset.
+        // Fail closed by revoking all local console sessions.
+        sessions.revokeAll().flatTap(_ => IO.blocking(AccountRoot.clearPointer(machineRoot)).whenA(clearPointer)).as(None)
+    }
+
+  end clearAccountSurface
 
   private def handleAuthCallback(query: Map[String, String])(using ctx: RestApiCtx): IO[org.http4s.Response[IO]] =
     import ctx.*
@@ -352,17 +398,7 @@ private[gateway] object AuthRoutes:
                         .flatMap {
                           case Right(tokens) =>
                             ms.identity.flatMap { identity =>
-                              // C2 (2026-09-01 login-chain fix): id_token picture
-                              // → device identity avatarUrl immediately (Logto
-                              // users get an avatar without waiting for the
-                              // enroll response; neblink-server avatar sync is
-                              // the C1 half, this is the client-side half).
-                              val pictureWrite = tokens.picture match
-                                case Some(pic) if pic.nonEmpty =>
-                                  ms.updateDeviceInfo(avatarUrl = Some(pic))
-                                case _ => IO.unit
-                              pictureWrite *>
-                                LogtoTransport
+                              LogtoTransport
                                   .register(LogtoTransport.jdkSend)(
                                     serverUrl,
                                     tokens.accessToken,
@@ -398,7 +434,9 @@ private[gateway] object AuthRoutes:
                                       ).attempt
                                         .flatMap {
                                           case Right(Right(_)) =>
-                                            pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
+                                            tokens.picture.filter(_.nonEmpty)
+                                              .fold(IO.unit)(pic => ms.updateDeviceInfo(avatarUrl = Some(pic))) *>
+                                              pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
                                           // 🔴 缺陷 A：`Right(Left(err))` 与 `Left(e)` 两支都改走
                                           // **分类映射**（上游 §8.2 第 4 项），`getMessage` / 自由串
                                           // 一律不进用户可见面。

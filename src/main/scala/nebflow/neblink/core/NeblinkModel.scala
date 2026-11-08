@@ -547,6 +547,25 @@ object DeviceIdentity:
     AtomicJson.write(devicePath, identity.asJson.spaces2) *>
       CredentialWriteAcl.bind(devicePath)
 
+  /** Stage identity under an explicitly supplied account root, without touching
+    * the process root. Existing identities are preserved; corrupt files fail
+    * closed rather than replacing a potentially registered identity. */
+  private[nebflow] def loadOrCreateAtAccount(machineRoot: os.Path, accountSub: String): IO[DeviceIdentity] = IO.blocking {
+    require(accountSub.trim.nonEmpty, "account identity required")
+    val root = nebflow.core.root.AccountRoot.ensureAccountDir(machineRoot, accountSub)
+    val path = root / "device.json"
+    if os.exists(path) then decode[DeviceIdentity](os.read(path)).fold(throw _, id => id)
+    else
+      val nonDefault = machineRoot.toNIO.toAbsolutePath.normalize !=
+        (os.home / Branding.homeDirName).toNIO.toAbsolutePath.normalize
+      val scope = if nonDefault then s"acct|$accountSub|iso|${machineScopeFingerprint(machineRoot)}" else s"acct|$accountSub"
+      val id = readMachineCode().map(code => deriveDeviceId(code, scope)).getOrElse(UUID.randomUUID().toString)
+      val identity = DeviceIdentity(id, mintedDeviceName(detectDeviceName, nonDefault, scope), detectPlatform,
+        UUID.randomUUID().toString + UUID.randomUUID().toString)
+      AtomicJson.writeSyncRestricted(path, identity.asJson.spaces2)
+      identity
+  }
+
   /** Minted identity plus the (log-only) provenance of its device id. */
   private case class Minted(identity: DeviceIdentity, source: String)
 
@@ -917,6 +936,16 @@ object NeblinkConfig:
    * device credentials and was measured `0755`; the write path binds owner-only
    * access to both the file and that directory (see [[CredentialWriteAcl]]).
    */
+  /** Write staged configuration to an explicit root without changing the
+    * running process's data root or activating its networking. */
+  private[nebflow] def saveAt(root: os.Path, config: NeblinkConfig): IO[Unit] =
+    IO.blocking {
+      val dir = root / "neblink"
+      os.makeDir.all(dir)
+      nebflow.core.CredentialFileAcl.restrictDirectory(dir.toNIO)
+      AtomicJson.writeSyncRestricted(dir / "config.json", config.asJson.spaces2)
+    }
+
   def save(config: NeblinkConfig): IO[Unit] =
     IO.blocking {
       os.write.over(configPath, config.asJson.spaces2, createFolders = true)

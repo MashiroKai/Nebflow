@@ -368,6 +368,16 @@ object DeviceCredential:
       else IO.unit
     }
 
+  /** Root-explicit staging seam for a future account cutover. Does not alter
+    * the process-wide root or activate the staged account. */
+  private[nebflow] def saveAt(root: os.Path, cred: DeviceCredential): IO[Unit] =
+    IO.blocking {
+      val dir = root / "neblink"
+      os.makeDir.all(dir)
+      CredentialFileAcl.restrictDirectory(dir.toNIO)
+      AtomicJson.writeSyncRestricted(dir / "device.json", cred.asJson.spaces2)
+    }
+
   def save(cred: DeviceCredential): IO[Unit] =
     save(cred, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
 
@@ -495,6 +505,13 @@ object DeviceCredential:
    * 文件被 ACL 锁死时仍常可成 ⇒「清理并重登」入口在锁定态下真的能清理）；
    * ② 都不成 ⇒ 一条带分类码的 WARN（`credential-delete-denied`），拆除继续。
    */
+  /** Security-sensitive logout requires confirmation that the credential is absent. */
+  def clearForLogout: IO[Unit] =
+    clear *> IO.blocking {
+      if os.exists(credPath, followLinks = false) then
+        throw new IllegalStateException("device credential remains after logout cleanup")
+    }
+
   def clear: IO[Unit] =
     IO.blocking {
       if os.exists(credPath) then os.remove(credPath)

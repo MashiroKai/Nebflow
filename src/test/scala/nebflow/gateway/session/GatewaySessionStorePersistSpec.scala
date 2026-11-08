@@ -3,6 +3,7 @@ package nebflow.gateway.session
 import nebflow.gateway.*
 
 import cats.effect.IO
+import cats.syntax.all.*
 import munit.CatsEffectSuite
 
 /**
@@ -91,6 +92,78 @@ class GatewaySessionStorePersistSpec extends CatsEffectSuite:
       hit <- after.verifyAndTouch(rec.sessionId)
       _ = assert(hit.isEmpty, "revocation must survive the restart bridge")
       _ = after.shutdown()
+    yield ()
+
+  test("failed account revocation is reported and retry persists even after in-memory removal"):
+    val f = tempFile
+    for
+      store <- GatewaySessionStore.create(persistenceFile = Some(f))
+      rec <- store.create("u", "relay-mint", "net")
+      tmp = f / os.up / os.RelPath(f.last + ".tmp")
+      _ <- IO(os.makeDir(tmp))
+      failed <- store.revokeByAccount("u").attempt
+      _ = assert(failed.isLeft, "snapshot failure must not claim success")
+      _ <- IO(os.remove(tmp))
+      _ <- store.revokeByAccount("u")
+      _ = store.shutdown()
+      restored <- GatewaySessionStore.create(persistenceFile = Some(f))
+      hit <- restored.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(hit, None)
+      _ = restored.shutdown()
+    yield ()
+
+  test("marker creation failure rejects revocation before mutating sessions"):
+    val f = tempFile
+    val marker = f / os.up / os.RelPath(f.last + ".revocation-pending")
+    for
+      store <- GatewaySessionStore.create(persistenceFile = Some(f))
+      rec <- store.create("u", "relay-mint", "net")
+      _ <- IO(os.makeDir(marker))
+      result <- store.revokeByAccount("u").attempt
+      hit <- store.verifyAndTouch(rec.sessionId)
+      _ = assert(result.isLeft)
+      _ = assert(hit.isDefined, "failed marker must not claim in-memory revocation")
+      _ = store.shutdown()
+      restored <- GatewaySessionStore.create(persistenceFile = Some(f))
+      restoredHit <- restored.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(restoredHit, None, "existing marker of any type blocks stale snapshot")
+      _ = restored.shutdown()
+    yield ()
+
+  test("crash after failed snapshot write fails closed on restore"):
+    val f = tempFile
+    for
+      store <- GatewaySessionStore.create(persistenceFile = Some(f))
+      rec <- store.create("u", "relay-mint", "net")
+      tmp = f / os.up / os.RelPath(f.last + ".tmp")
+      _ <- IO(os.makeDir(tmp))
+      failed <- store.revokeByAccount("u").attempt
+      _ = assert(failed.isLeft)
+      _ = store.shutdown()
+      restored <- GatewaySessionStore.create(persistenceFile = Some(f))
+      hit <- restored.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(hit, None)
+      _ <- IO(os.remove(tmp))
+      _ <- restored.revokeByAccount("u")
+      _ = restored.shutdown()
+      again <- GatewaySessionStore.create(persistenceFile = Some(f))
+      hitAgain <- again.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(hitAgain, None)
+      _ = again.shutdown()
+    yield ()
+
+  test("concurrent flush and revocation never restore revoked sessions"):
+    val f = tempFile
+    for
+      store <- GatewaySessionStore.create(persistenceFile = Some(f))
+      rec <- store.create("u", "relay-mint", "net")
+      _ <- store.verifyAndTouch(rec.sessionId)
+      _ <- (IO.blocking(store.flushIfDirtyForTest()), store.revokeByAccount("u")).parTupled
+      _ = store.shutdown()
+      restored <- GatewaySessionStore.create(persistenceFile = Some(f))
+      hit <- restored.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(hit, None)
+      _ = restored.shutdown()
     yield ()
 
   test("no persistence file (the default) keeps the pure in-memory shape"):
