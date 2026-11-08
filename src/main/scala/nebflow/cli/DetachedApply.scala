@@ -114,14 +114,15 @@ object DetachedApply:
       .getOrElse("null")
     s"""{"kind":"$kind","phase":"$phase","port":$port$tv,"cause":$cs,"ts":"$ts"}"""
 
-  /** 注册点写 registered 相（脚本随后接管推进；崩溃在注册后立刻发生也有证据）。 */
+  /** 准备注册锚点：先确保日志目录存在，再写 registered（原子）；不覆盖已在途 apply。 */
   def writeRegisteredState(plan: Plan): IO[Unit] =
-    IO.blocking(os.makeDir.all(applyDir(plan.dataRoot))) *>
-      AtomicJson.write(
-        statePath(plan.dataRoot),
-        renderStateJson(plan.kind.wire, "registered", plan.port, plan.targetVersion, None, isoNow())
-      ) *>
-      IO.blocking(os.makeDir.all(logPath(plan.dataRoot) / os.up))
+    IO.blocking {
+      os.makeDir.all(applyDir(plan.dataRoot))
+      os.makeDir.all(logPath(plan.dataRoot) / os.up)
+    } *> AtomicJson.write(
+      statePath(plan.dataRoot),
+      renderStateJson(plan.kind.wire, "registered", plan.port, plan.targetVersion, None, isoNow())
+    )
 
   private def isoNow(): String =
     java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
@@ -208,13 +209,26 @@ object DetachedApply:
     else if plan.targetVersion.exists(v => !safeToken(v)) then
       IO.pure(Left(s"invalid target version literal: ${plan.targetVersion.getOrElse("")}"))
     else
-      val isWindows = !forcePosix.getOrElse(!sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
-      writeScriptAndState(plan, isWindows).flatMap {
-        case Left(err) => IO.pure(Left(err))
-        case Right(scriptPath) =>
-          if isWindows then registerWindows(plan, scriptPath, run)
-          else registerPosix(plan, scriptPath, run)
+      existingApplyInFlight(plan.dataRoot).flatMap {
+        case Some(phase) => IO.pure(Left(s"apply already in flight (phase=$phase); preserving existing state and job"))
+        case None =>
+          val isWindows = !forcePosix.getOrElse(!sys.props.getOrElse("os.name", "").toLowerCase.contains("win"))
+          writeScriptAndState(plan, isWindows).flatMap {
+            case Left(err) => IO.pure(Left(err))
+            case Right(scriptPath) =>
+              if isWindows then registerWindows(plan, scriptPath, run)
+              else registerPosix(plan, scriptPath, run)
+          }
       }
+
+  private def existingApplyInFlight(dataRoot: os.Path): IO[Option[String]] =
+    AtomicJson.read(statePath(dataRoot)).map { raw =>
+      raw.flatMap { text =>
+        io.circe.parser.parse(text).toOption
+          .flatMap(_.hcursor.downField("phase").as[String].toOption)
+          .filter(InFlightPhases.contains)
+      }
+    }
 
   private def safePort(p: Int): Boolean = p > 0 && p < 65536
 
@@ -297,23 +311,25 @@ object DetachedApply:
       case Right(_) =>
         val create = List("schtasks", "/Create", "/F", "/TN", plan.winTask, "/XML", xmlPath.toString)
         val fire = List("schtasks", "/Run", "/TN", plan.winTask)
-        run(create).flatMap {
-          case Left(err) => IO.pure(Left(s"schtasks create failed: $err"))
-          case Right(_) =>
-            run(fire).flatMap {
-              case Left(err) =>
-                IO.pure(
-                  Left(
-                    s"schtasks run failed (task created but not fired; will auto-fire at $triggerFmt — remove manually: schtasks /Delete /TN ${plan.winTask} /F): $err"
+        writeRegisteredState(plan).flatMap { _ =>
+          run(create).flatMap {
+            case Left(err) => IO.pure(Left(s"schtasks create failed: $err"))
+            case Right(_) =>
+              run(fire).flatMap {
+                case Left(err) =>
+                  IO.pure(
+                    Left(
+                      s"schtasks run failed (task created but not fired; will auto-fire at $triggerFmt — remove manually: schtasks /Delete /TN ${plan.winTask} /F): $err"
+                    )
                   )
-                )
-              case Right(_) =>
-                writeRegisteredState(plan).as(
-                  Right(
-                    s"detached apply registered via scheduled task '${plan.winTask}' (survives any session/tree death) — log: ${logPath(plan.dataRoot)}"
+                case Right(_) =>
+                  IO.pure(
+                    Right(
+                      s"detached apply registered via scheduled task '${plan.winTask}' (survives any session/tree death) — log: ${logPath(plan.dataRoot)}"
+                    )
                   )
-                )
-            }
+              }
+          }
         }
     }
 
@@ -333,14 +349,12 @@ object DetachedApply:
               plist
             }.flatMap { plist =>
               val guiTarget = s"gui/$uid"
-              fireLaunchd(guiTarget, label, plist, run).flatMap {
+              writeRegisteredState(plan) *> fireLaunchd(guiTarget, label, plist, run).map {
                 case Right(_) =>
-                  writeRegisteredState(plan).as(
-                    Right(
-                      s"detached apply registered via launchd agent '$label' (survives any session/tree death) — log: ${logPath(plan.dataRoot)}"
-                    )
+                  Right(
+                    s"detached apply registered via launchd agent '$label' (survives any session/tree death) — log: ${logPath(plan.dataRoot)}"
                   )
-                case Left(err) => IO.pure(Left(err))
+                case Left(err) => Left(err)
               }
             }
           case other => IO.pure(Left(s"cannot resolve uid for launchctl (got '$other')"))

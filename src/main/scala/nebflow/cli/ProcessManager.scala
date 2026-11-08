@@ -47,11 +47,9 @@ object ProcessManager:
     listeningPortsOf: Long => List[Int] = StopSupport.pidListeningPorts,
     listenerAlive: Int => Boolean = port => SingleInstanceGuard.connectProbeAccepted(port),
     destroy: Long => Unit = pid => ProcessHandle.of(pid).ifPresent(_.destroy()),
-    destroyForcibly: Long => Unit = pid => ProcessHandle.of(pid).ifPresent(_.destroyForcibly()),
     isRunning: Long => Boolean = ProcessManager.isRunning,
-    graceTimeoutMs: Long = 5_000L,
-    forceTimeoutMs: Long = 5_000L,
-    drainTimeoutMs: Long = SingleInstanceGuard.MaxDrainWaitMs,
+      graceTimeoutMs: Long = 5_000L,
+      drainTimeoutMs: Long = SingleInstanceGuard.MaxDrainWaitMs,
     pollMs: Long = 100L,
     metaRead: () => Option[PidMeta.Meta] = () => PidMeta.read(),
     startInstantMs: Long => Option[Long] = ProcessManager.processStartInstantMs,
@@ -392,13 +390,13 @@ object ProcessManager:
       case Left(refusal) =>
         StopOutcome.Refused(s"refusing tree stop of pid $pid: $refusal")
       case Right((targets, declaration)) =>
+        // Restart/update safety: never escalate a graceful stop to SIGKILL.
+        // A draining child may be doing user work; preserve the running service
+        // and fail closed if it does not exit within the grace window.
         targets.foreach(deps.destroy)
         val gracefulDied = waitUntil(deps, pid, deps.graceTimeoutMs)
         if !gracefulDied then
-          targets.foreach(deps.destroyForcibly)
-          waitUntil(deps, pid, deps.forceTimeoutMs)
-
-        if deps.isRunning(pid) then return StopOutcome.Failed(s"process $pid did not exit after TERM/KILL")
+          return StopOutcome.Failed(s"process $pid did not exit after graceful stop; left running")
 
         // Piece 3: port-release confirmation from the TARGET pid's own
         // listener set. Empty after death (or lsof unavailable) = released /

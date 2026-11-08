@@ -44,7 +44,6 @@ class ProcessManagerSpec extends FunSuite:
   /** Records every signal and probe; `dead` pids flip on destroy (graceful leg). */
   private final class Recorder:
     val destroyed = ListBuffer[Long]()
-    val destroyedForcibly = ListBuffer[Long]()
     val probedPorts = ListBuffer[Int]()
     var deadPids = Set[Long]()
 
@@ -81,12 +80,8 @@ class ProcessManagerSpec extends FunSuite:
       destroy = pid =>
         rec.destroyed += pid; rec.deadPids += pid
       ,
-      destroyForcibly = pid =>
-        rec.destroyedForcibly += pid; rec.deadPids += pid
-      ,
       isRunning = isAliveOverride.getOrElse(pid => !rec.deadPids.contains(pid) && ProcessManager.isRunning(pid)),
       graceTimeoutMs = 0L,
-      forceTimeoutMs = 0L,
       drainTimeoutMs = 200L,
       pollMs = 0L,
       metaRead = metaRead,
@@ -292,7 +287,7 @@ class ProcessManagerSpec extends FunSuite:
     }
   }
 
-  test("process not dying after TERM+KILL ⇒ Failed") {
+  test("process not exiting after graceful stop ⇒ Failed and remains untouched by force escalation") {
     withTempRoot {
       val pid = selfPid()
       ProcessManager.writePid(pid)
@@ -302,7 +297,7 @@ class ProcessManagerSpec extends FunSuite:
         case ProcessManager.StopOutcome.Failed(reason) => assert(reason.contains("did not exit"), reason)
         case other => fail(s"expected Failed, got $other")
       assert(rec.destroyed.contains(pid)) // graceful leg attempted
-      assert(rec.destroyedForcibly.contains(pid)) // force leg attempted too
+      assert(rec.destroyed.contains(pid)) // graceful leg requested; no force-kill dependency exists
     }
   }
 

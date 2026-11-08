@@ -346,8 +346,12 @@ cli_stop_impl() { # $@ = 原始参数 (--force/--tree/--port 扫描)
         done
         _stop_left=$(printf '%s\n' $_stop_targets | stand_alive_pids)
         if [ -n "$_stop_left" ]; then
-            echo "  TERM ignored, sending KILL to:$_stop_left" >&2
-            kill -9 $_stop_left 2>/dev/null
+            echo "ERROR: graceful stop deadline expired; process(es) still running:$_stop_left — refusing force kill; service left running." >&2
+            return 1
+        fi
+        if [ -n "$(stand_listener_pids "$_port" | stand_alive_pids)" ]; then
+            echo "ERROR: process exited but port $_port is still held; refusing restart." >&2
+            return 1
         fi
         # pid 记账清理: 记录的 pid 已死才清 (不碰别的活实例的记账)
         if [ -n "$_stop_pf_pid" ] && ! kill -0 "$_stop_pf_pid" 2>/dev/null; then
