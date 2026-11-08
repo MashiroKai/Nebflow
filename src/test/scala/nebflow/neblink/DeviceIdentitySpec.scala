@@ -54,6 +54,24 @@ class DeviceIdentitySpec extends FunSuite:
     assertEquals(again.map(_.deviceId), Right(id.deviceId))
   }
 
+  test("account identity staging is isolated, stable and refuses corrupt identity") {
+    val machine = os.temp.dir(prefix = "account-identity-stage-")
+    val original = nebflow.shared.PathUtil.dataRoot
+    try
+      val first = DeviceIdentity.loadOrCreateAtAccount(machine, "acct-A").unsafeRunSync()
+      val second = DeviceIdentity.loadOrCreateAtAccount(machine, "acct-A").unsafeRunSync()
+      val other = DeviceIdentity.loadOrCreateAtAccount(machine, "acct-B").unsafeRunSync()
+      assertEquals(first, second)
+      assertNotEquals(first.deviceId, other.deviceId)
+      assertEquals(nebflow.shared.PathUtil.dataRoot, original)
+      assert(!os.exists(machine / "active-account"))
+      val path = nebflow.core.root.AccountRoot.accountRoot(machine, "acct-A") / "device.json"
+      os.write.over(path, "bad")
+      intercept[Exception](DeviceIdentity.loadOrCreateAtAccount(machine, "acct-A").unsafeRunSync())
+      assertEquals(os.read(path), "bad")
+    finally os.remove.all(machine)
+  }
+
   test("loadOrCreate reads the redirected dataRoot identity (no createNew)") {
     val home = os.temp.dir()
     val prev = nebflow.shared.PathUtil.dataRoot
