@@ -262,6 +262,39 @@ class LogoutAccountSurfaceSpec extends CatsEffectSuite:
       }
     }
 
+  test("持久化失败保留账号指针，重试后撤销不会在重启复活"):
+    val root = os.Path(tmpDir, os.pwd)
+    val snapshot = root / "sessions.json"
+    val temp = root / "sessions.json.tmp"
+    for
+      _ <- IO(seedSignedInAs(root, SubA, "a@example.com"))
+      sessions <- GatewaySessionStore.create(persistenceFile = Some(snapshot))
+      rec <- sessions.create(SubA, GatewaySessionStore.OriginRelayMint, "net")
+      _ <- IO(os.makeDir(temp))
+      failed <- AuthRoutes.clearAccountSurface(sessions, root).attempt
+      _ = assert(failed.isLeft)
+      _ = assert(AccountRoot.readPointer(root).isDefined)
+      _ <- IO(os.remove(temp))
+      _ <- AuthRoutes.clearAccountSurface(sessions, root)
+      _ = sessions.shutdown()
+      restored <- GatewaySessionStore.create(persistenceFile = Some(snapshot))
+      hit <- restored.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(hit, None)
+      _ = restored.shutdown()
+    yield ()
+
+  test("损坏指针不能确定账号时撤销全部本地控制台会话"):
+    val root = os.Path(tmpDir, os.pwd)
+    for
+      _ <- IO(seedSignedInAs(root, SubA, "a@example.com"))
+      _ <- IO(os.write.over(AccountRoot.pointerPath(root), "invalid"))
+      sessions <- GatewaySessionStore.create()
+      rec <- sessions.create(SubA, GatewaySessionStore.OriginRelayMint, "net")
+      _ <- AuthRoutes.clearAccountSurface(sessions, root)
+      hit <- sessions.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(hit, None)
+    yield ()
+
   // ── T5：登出后 login 不得静默回原账号（本仓本地腿） ─────────────────────
 
   test("T5: 登出后 login 不静默回原账号 —— 残留指针/活会话/本地凭据三根静默续用柱子全部消失"):

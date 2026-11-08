@@ -113,35 +113,32 @@ class GatewaySessionStore private (
 
   private def markDirty(): Unit = dirty.set(true)
 
+  // Snapshot read and write must share the lock: acquiring it after taking a
+  // snapshot permits an older flush to overwrite a completed revocation.
+  private val snapshotLock = new Object
+
   private def flushIfDirty(): Unit =
     if dirty.getAndSet(false) then
-      sessionsRef.get
-        .map(rows => writeSnapshot(rows.values))
-        .handleErrorWith(e => IO(log.warn("session snapshot flush failed", e)))
-        .unsafeRunSync()
+      try persistNow.unsafeRunSync()
+      catch
+        case scala.util.control.NonFatal(e) =>
+          dirty.set(true)
+          log.warn("session snapshot flush failed", e)
 
-  /** Snapshot the current rows to the persistence file (atomic, best-effort). */
-  private def writeSnapshot(rows: Iterable[SessionRecord]): Unit =
-    persistenceFile.foreach { f =>
-      try
-        // Temp file as a SIBLING of the target (never a child — f is the file
-        // path itself), then atomic move into place.
+  /** Structural writes report errors to the caller rather than claiming durable revocation. */
+  private def persistNow: IO[Unit] = persistenceFile match
+    case None => IO.unit
+    case Some(f) => IO.blocking {
+      snapshotLock.synchronized {
+        val rows = sessionsRef.get.unsafeRunSync()
         val tmp = f / os.up / os.RelPath(f.last + ".tmp")
-        os.write.over(tmp, io.circe.syntax.EncoderOps(rows.toVector).asJson.noSpaces, createFolders = true)
+        os.write.over(tmp, io.circe.syntax.EncoderOps(rows.values.toVector).asJson.noSpaces, createFolders = true)
         if !scala.util.Properties.isWin then
           java.nio.file.Files
             .setPosixFilePermissions(tmp.toNIO, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
         os.move(tmp, f, replaceExisting = true, atomicMove = true)
-      catch
-        case e: Throwable =>
-          log.warn("session snapshot write failed: {}", e.toString)
+      }
     }
-
-  /** Write-through after a structural mutation (create/revoke). */
-  private def persistNow: IO[Unit] =
-    persistenceFile match
-      case None => IO.unit
-      case Some(_) => sessionsRef.get.flatMap(rows => IO(writeSnapshot(rows.values)))
 
   /** Daemon lifecycle hook (tests shut their store down; assemblies live for the process). */
   def shutdown(): Unit = flusher.foreach(_.shutdownNow())
@@ -234,7 +231,7 @@ class GatewaySessionStore private (
 
   /** Revoke EVERY session (`sessions revoke --all`, the local emergency face). */
   def revokeAll(): IO[Int] =
-    sessionsRef.getAndSet(Map.empty).map(_.size).flatTap(n => persistNow.whenA(n > 0))
+    sessionsRef.getAndSet(Map.empty).map(_.size).flatTap(_ => persistNow)
 
   /**
    * Revoke only `origin == relay-mint` sessions — the binding-revocation
@@ -274,7 +271,8 @@ class GatewaySessionStore private (
           val (hit, rest) = current.partition { case (_, r) => r.accountSub == accountSub }
           (rest, hit.size)
         }
-        .flatTap(n => persistNow.whenA(n > 0))
+        // Persist even on a zero-row retry after an earlier write failure.
+        .flatTap(_ => persistNow)
 
   /** Live session count (diagnostics / tests). */
   def size: IO[Int] = sessionsRef.get.map(_.size)

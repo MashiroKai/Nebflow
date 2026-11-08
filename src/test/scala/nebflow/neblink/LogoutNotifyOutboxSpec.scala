@@ -89,14 +89,47 @@ class LogoutNotifyOutboxSpec extends CatsEffectSuite:
       assertEquals(report2.replayed.length, 1, "第二轮补投成功")
       assertEquals(empty, Nil, "补投成功才删除 —— at-least-once 的出队臂")
 
-  test("永不抛：排队目录不可写（machineRoot 占成文件）时 enqueue 照常完成，登出路径不受累"):
-    // 把机器层根占成「一个文件」⇒ dir 创建必失败 ⇒ 记账写不进盘 ——
-    // 语义要求：只 WARN、绝不冒泡（登出必须本地完成）。
+  test("并发入队唯一且序号连续，删除后新事件不重用序号"):
+    for
+      _ <- (1 to 30).toList.parTraverse_(i => LogoutNotifyOutbox.enqueue(s"u-$i", "", "test"))
+      rows <- LogoutNotifyOutbox.pending
+      _ = assertEquals(rows.size, 30)
+      _ = assertEquals(rows.map(_.id).distinct.size, 30)
+      _ = assertEquals(rows.map(_.id.take(20)), rows.map(_.id.take(20)).sorted)
+      _ <- LogoutNotifyOutbox.delivered(rows.last.id)
+      _ <- LogoutNotifyOutbox.enqueue("last", "", "test")
+      next <- LogoutNotifyOutbox.pending
+      _ = assert(next.last.id.take(20) > rows.last.id.take(20))
+    yield ()
+
+  test("发送失败阻止后续事件越序发送"):
+    for
+      _ <- LogoutNotifyOutbox.enqueue("first", "", "test")
+      _ <- LogoutNotifyOutbox.enqueue("second", "", "test")
+      called <- cats.effect.Ref.of[IO, List[String]](Nil)
+      report <- LogoutNotifyOutbox.drain(e => called.update(_ :+ e.accountSub) *> IO.raiseError(new Exception("offline")))
+      seen <- called.get
+      rows <- LogoutNotifyOutbox.pending
+      _ = assertEquals(seen, List("first"))
+      _ = assertEquals(report.kept.size, 1)
+      _ = assertEquals(rows.size, 2)
+    yield ()
+
+  test("损坏记录不会被伪报为空队列"):
+    for
+      _ <- LogoutNotifyOutbox.enqueue("first", "", "test")
+      _ <- IO(os.write.over(LogoutNotifyOutbox.dir / "bad.json", "bad"))
+      result <- LogoutNotifyOutbox.drain(_ => IO.unit).attempt
+      _ = assert(result.isLeft)
+    yield ()
+
+  test("排队目录不可写时显式报告失败"):
+    // 机器层根占成文件，入队失败必须可见。
     val fakeRoot = os.Path(tmpDir, os.pwd) / "machine-root-as-file"
     os.write.over(fakeRoot, "not a dir", createFolders = true)
     PathUtil.setMachineRoot(fakeRoot)
-    for _ <- LogoutNotifyOutbox.enqueue("logto|user-A", "a@example.com", LogoutNotifyOutbox.ReasonNoLiveClient)
-    yield () // 到达即过：enqueue 永不抛（写失败只 WARN，登出路径不受累）
+    LogoutNotifyOutbox.enqueue("logto|user-A", "a@example.com", LogoutNotifyOutbox.ReasonNoLiveClient)
+      .attempt.map(result => assert(result.isLeft))
 
   test("交叉钉：排队点目录名与 route 级 spec 的盘面读数字面同源（logout-notify-pending）"):
     // LogoutAccountSurfaceSpec 按契约字面读盘（零符号引用以承载行为红）；

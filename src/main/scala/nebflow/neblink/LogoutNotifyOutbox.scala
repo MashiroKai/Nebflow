@@ -8,7 +8,11 @@ import io.circe.syntax.*
 import nebflow.core.{AtomicJson, CredentialFileAcl}
 import nebflow.shared.{NebflowLogger, PathUtil}
 
-import java.util.concurrent.atomic.AtomicLong
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
+import java.util.UUID
+import cats.effect.std.Semaphore
+import cats.effect.unsafe.implicits.global
 
 /**
  * 「我登出了」上行通知 · stand 侧**发送接口 + 排队点**（登出收尾批 logout-fin；
@@ -40,8 +44,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * == 记账语义（与 [[PortalUplinkDeadLetter]] 同族纪律）==
  *  - **零墙钟**：无 TTL、不按时间判失败；条目只在补投成功后删除；
- *  - **永不抛**：排队写失败只 WARN，绝不阻断登出（logout must ALWAYS succeed
- *    locally —— 与 `performLocalLogout` 同一条纪律）；
+ *  - **失败可见**：排队写失败返回错误；登出仍执行本地撤销，保留指针供重试；
  *  - **有序**：id 以 20 位零填充序号开头 ⇒ 字典序 = 入队序（补投按序）；
  *  - **at-least-once**：drain 成功才出队，失败留盘 + `attempts` 计数（纯读数，
  *    不参与判死）；
@@ -101,7 +104,27 @@ object LogoutNotifyOutbox:
   /** 排队点（机器层；登出清指针后有效根降档 ⇒ 机器层是唯一活过降档的落点）。 */
   def dir: os.Path = PathUtil.machineRoot / PendingDirName
 
-  private val seq = new AtomicLong(0L)
+  private val enqueueLock = new Object
+  private val drainLock = Semaphore[IO](1).unsafeRunSync()
+
+  // The OS lock serializes producers in different processes. The sequence is
+  // persisted independently of queue entries, so deletion and restart cannot
+  // reset ordering; gaps after a crash are harmless.
+  private def withSequence[A](f: Long => A): A = enqueueLock.synchronized {
+    os.makeDir.all(dir)
+    CredentialFileAcl.restrictDirectory(dir.toNIO)
+    val channel = FileChannel.open((dir / ".lock").toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+    try
+      val lock = channel.lock()
+      try
+        val sequenceFile = dir / ".sequence"
+        val previous = if os.exists(sequenceFile) then os.read(sequenceFile).trim.toLong else 0L
+        val next = Math.addExact(previous, 1L)
+        AtomicJson.writeSyncRestricted(sequenceFile, next.toString)
+        f(next)
+      finally lock.release()
+    finally channel.close()
+  }
 
   /** id 安全（作文件名尾）：非白名单字符一律替换，防路径穿越（死信区同款）。 */
   private def safeId(s: String): String =
@@ -110,73 +133,52 @@ object LogoutNotifyOutbox:
 
   private def fileOf(e: Entry): os.Path = dir / s"${e.enqueuedAt}-${safeId(e.id)}.json"
 
-  /**
-   * 记一件（同步核心，永不抛）。**永不抛** = 记账挂掉不拖垮登出路径 —— 写失败
-   * 只给一条如实的 WARN 读数。accountSub 为空 ⇒ 没有账号域身份，直接 no-op。
-   */
+  /** 记一件；写失败向调用者报告。空账号不产生记录。 */
   def enqueueSync(accountSub: String, email: String, reason: String): Unit =
     if accountSub.trim.isEmpty then ()
     else
-      val e = Entry(
-        // seq 零填充 20 位：id/文件名字典序 == 数值序 == 入队序（死信区同一不变量）。
-        id = f"${seq.incrementAndGet()}%020d-${safeId(accountSub)}",
-        accountSub = accountSub,
-        email = email,
-        reason = reason,
-        enqueuedAt = System.currentTimeMillis()
-      )
       try
-        if !os.exists(dir) then
-          os.makeDir.all(dir)
-          CredentialFileAcl.restrictDirectory(dir.toNIO)
-        AtomicJson.writeSyncRestricted(fileOf(e), e.asJson.noSpaces)
-        logger.warnSync(
-          s"logout uplink queued: accountSub='$accountSub' reason=$reason file=${fileOf(e).last} — " +
-            "live notify did not verifiably reach the relay; pending row kept for in-order replay " +
-            "(transport face is cross-repo, link-server)"
-        )
-      catch
-        case t: Throwable =>
-          logger.warnSync(
-            s"logout uplink queue WRITE FAILED (logout continues): accountSub='$accountSub' " +
-              s"${Option(t.getMessage).getOrElse(t.getClass.getSimpleName)} — item could not be preserved"
+        withSequence { sequence =>
+          val e = Entry(
+            id = f"$sequence%020d-${UUID.randomUUID()}-${safeId(accountSub)}",
+            accountSub = accountSub,
+            email = email,
+            reason = reason,
+            enqueuedAt = System.currentTimeMillis()
           )
+          AtomicJson.writeSyncRestricted(fileOf(e), e.asJson.noSpaces)
+          logger.warnSync(s"logout uplink queued: accountSub='$accountSub' reason=$reason file=${fileOf(e).last}")
+        }
+      catch
+        case scala.util.control.NonFatal(t) =>
+          logger.warnSync(s"logout uplink queue WRITE FAILED: accountSub='$accountSub' ${t.getClass.getSimpleName}")
+          throw t
   end enqueueSync
 
-  /** IO 面（`performLocalLogout` 第 11 步的调用形态；同样永不失败）。 */
+  /** IO 入队面，失败传给调用者。 */
   def enqueue(accountSub: String, email: String, reason: String): IO[Unit] =
     IO(enqueueSync(accountSub, email, reason))
 
-  /** 全量待发件（按入队序；坏文件跳过并 WARN —— 簿记坏件不阻断其余补投）。 */
+  /** 全量待发件；坏件或扫描失败向调用者报告，不伪报空队列。 */
   def pending: IO[List[Entry]] = IO.blocking(pendingSync())
 
   private def pendingSync(): List[Entry] =
-    try
-      if !os.exists(dir) then Nil
-      else
-        os.list(dir)
-          .filter(_.ext == "json")
-          .toList
-          .flatMap { p =>
-            decode[Entry](os.read(p)) match
-              case Right(e) => Some(e)
-              case Left(err) =>
-                logger.warnSync(s"LogoutNotifyOutbox: unreadable entry ${p.last} skipped (${err.getMessage})")
-                None
-          }
-          .sortBy(e => (e.enqueuedAt, e.id))
-    catch
-      case t: Throwable =>
-        logger.warnSync(s"LogoutNotifyOutbox: pending scan failed (${t.getMessage}) — treated as empty")
-        Nil
+    if !os.exists(dir) then Nil
+    else
+      os.list(dir).filter(_.ext == "json").toList.map { p =>
+        val entry = decode[Entry](os.read(p)).fold(throw _, e => e)
+        if fileOf(entry) != p then throw new IllegalStateException(s"outbox entry filename mismatch: ${p.last}")
+        entry
+      }.sortBy(e => (if e.id.matches("[0-9]{20}-[0-9a-f-]{36}-.*") then 1 else 0,
+        if e.id.matches("[0-9]{20}-[0-9a-f-]{36}-.*") then e.id else f"${e.enqueuedAt}%020d-${e.id}"))
 
   /** 补投成功 ⇒ 删除该件（幂等：不存在即 no-op）。 */
   def delivered(id: String): IO[Unit] =
     IO.blocking {
-      pendingSync().filter(_.id == id).foreach(e => if os.exists(fileOf(e)) then os.remove(fileOf(e)))
-    }.void.handleErrorWith(e =>
-      logger.warn(s"LogoutNotifyOutbox.delivered failed for id=$id: ${e.getMessage}").void
-    )
+      val matches = pendingSync().filter(_.id == id)
+      if matches.size != 1 then throw new IllegalStateException(s"missing or duplicate outbox id: $id")
+      os.remove(fileOf(matches.head))
+    }.void
 
   /** 记一次补投尝试（纯读数：attempts 升序可见，不参与任何判死逻辑）。 */
   private def bumpAttempt(e: Entry): IO[Unit] =
@@ -192,28 +194,21 @@ object LogoutNotifyOutbox:
 
   /**
    * 按入队序补投全量待发件。`send` = **未来的传输面**注入的上行腿（跨仓对接点
-   * 就位后装配；spec 用纯桩驱动）。**任一成功即出队**；失败的留在盘上等下一次
-   * （重连 / 下一次 boot）。`send` 抛异常按失败处理（一件炸不拖垮其余）。
+   * 就位后装配；spec 用纯桩驱动）。成功并删除后才报告 replayed；
+   * 发送或删除失败时停止，保留后续记录以避免越序。
    */
-  def drain(send: Entry => IO[Unit]): IO[DrainReport] =
-    pending.flatMap { entries =>
-      entries.foldLeft(IO.pure(DrainReport())) { (acc, e) =>
-        acc.flatMap { report =>
-          send(e)
-            .attempt
-            .flatMap {
-              case Right(_) =>
-                delivered(e.id).as(report.copy(replayed = report.replayed :+ e.id))
-              case Left(t) =>
-                bumpAttempt(e).as(
-                  report.copy(kept =
-                    report.kept :+ (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName))
-                  )
-                )
-            }
+  def drain(send: Entry => IO[Unit]): IO[DrainReport] = drainLock.permit.use { _ =>
+    def replay(entries: List[Entry], report: DrainReport): IO[DrainReport] = entries match
+      case Nil => IO.pure(report)
+      case e :: rest =>
+        (send(e) *> delivered(e.id)).attempt.flatMap {
+          case Right(_) => replay(rest, report.copy(replayed = report.replayed :+ e.id))
+          case Left(t) =>
+            bumpAttempt(e).as(report.copy(kept = report.kept :+
+              (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName))))
         }
-      }
-    }
+    pending.flatMap(entries => replay(entries, DrainReport()))
+  }
 
   /** 清空（运维/spec 用；正常路径绝不调用 —— 零删除纪律）。 */
   def clear(): IO[Unit] =
