@@ -1366,47 +1366,12 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
                     .as(None)
                 )
             case WorktreeCandidates.SeatPlan.Reuse(cand, source) =>
-              DelegateWorkspace
-                .reuse(workspace, subagentId, cand, source)
-                .map(b => Some(b): Option[nebflow.core.delegate.DelegateWorkspace.Binding])
-                .handleErrorWith { e =>
-                  // fail-open 合同：绑定失败绝不拒绝派发——回落就地座位（回执标 Fallback）。
-                  logger
-                    .warn(s"DelegateWorkspace.reuse failed (falling back to an in-place seat): ${e.getMessage}") *>
-                    DelegateWorkspace
-                      .prepareInPlace(workspace, subagentId)
-                      .map(_.map(_.copy(seatSource = nebflow.core.delegate.DelegateWorkspace.SeatSource.Fallback)))
-                      .handleErrorWith(e2 =>
-                        logger
-                          .warn(s"DelegateWorkspace.prepareInPlace failed (degraded to legacy spawn): ${e2.getMessage}")
-                          .as(None)
-                      )
-                }
+              DelegateWorkspace.reuse(workspace, subagentId, cand, source).map(b => Some(b))
             case WorktreeCandidates.SeatPlan.Create(name) =>
-              DelegateWorkspace
-                .createNamed(workspace, name, subagentId)
-                .flatMap {
-                  case Right(b) => IO.pure(Some(b): Option[nebflow.core.delegate.DelegateWorkspace.Binding])
-                  case Left(err) =>
-                    logger.warn(s"DelegateWorkspace.createNamed('$name') failed ($err) — falling back IN PLACE") *>
-                      DelegateWorkspace
-                        .prepareInPlace(workspace, subagentId)
-                        .map(
-                          _.map(
-                            _.copy(
-                              seatSource = nebflow.core.delegate.DelegateWorkspace.SeatSource.Fallback,
-                              seatName = Some(name)
-                            )
-                          )
-                        )
-                        .handleErrorWith(e2 =>
-                          logger
-                            .warn(
-                              s"DelegateWorkspace.prepareInPlace failed (degraded to legacy spawn): ${e2.getMessage}"
-                            )
-                            .as(None)
-                        )
-                }
+              DelegateWorkspace.createNamed(workspace, name, subagentId).flatMap {
+                case Right(b) => IO.pure(Some(b))
+                case Left(error) => IO.raiseError(new IllegalStateException(s"Workspace creation refused: $error"))
+              }
       // 附件座位树镜像（附件传输批 2026-11-05）：座位树存在 ⇒ 稳定副本再复制一份
       // 进 `<worktree>/.nebflow/attachments/<id>/`（delegate 的 cwd 就在那棵树里）。
       // fail-soft：镜像失败只 WARN，清单退回 dataRoot 副本——稳定副本已是权威。

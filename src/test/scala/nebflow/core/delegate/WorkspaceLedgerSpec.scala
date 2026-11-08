@@ -2,11 +2,14 @@ package nebflow.core.delegate
 
 class WorkspaceLedgerSpec extends munit.FunSuite:
   import WorkspaceLedger.*
+
   private def withLedger(f: WorkspaceLedger => Unit): Unit =
     val dir = os.temp.dir(prefix = "workspace-ledger-")
     try f(new WorkspaceLedger(dir / "ledger.json"))
     finally os.remove.all(dir)
-  private def workspace(id: String) = Workspace(id, "project", "repo", s"/tmp/$id", s"delegate/$id", "main", "base", s"owner-$id", "kernel")
+
+  private def workspace(id: String) =
+    Workspace(id, "project", "repo", s"/tmp/$id", s"delegate/$id", "main", "base", s"owner-$id", "kernel")
 
   test("busy workspace rejects entire batch; reservation excludes development and persists") {
     withLedger { ledger =>
@@ -21,6 +24,7 @@ class WorkspaceLedgerSpec extends munit.FunSuite:
       assertEquals(reopened.reserve("request", List("a", "b")).toOption.get.size, 2)
     }
   }
+
   test("merger identity is shared across repository aliases") {
     withLedger { ledger =>
       val first = ledger.merger("project", "repo", "merger-1")
@@ -28,6 +32,7 @@ class WorkspaceLedgerSpec extends munit.FunSuite:
       assertEquals(new WorkspaceLedger(ledger.path).merger("project", "repo", "merger-3"), first)
     }
   }
+
   test("ownership, stale writes and corrupt state cannot bypass admission") {
     withLedger { ledger =>
       ledger.register(workspace("a"))
@@ -38,3 +43,13 @@ class WorkspaceLedgerSpec extends munit.FunSuite:
       intercept[IllegalStateException](ledger.reserve("request", List("a")))
     }
   }
+
+  test("legacy ledger gains default baseline without losing ownership") {
+    withLedger { ledger =>
+      os.write.over(ledger.path, "{\"workspaces\":[],\"mergers\":[]}", createFolders = true)
+      assertEquals(ledger.baseline("repo"), "main")
+      assert(ledger.setBaseline("repo", "release").isRight)
+      assertEquals(new WorkspaceLedger(ledger.path).baseline("repo"), "release")
+    }
+  }
+end WorkspaceLedgerSpec

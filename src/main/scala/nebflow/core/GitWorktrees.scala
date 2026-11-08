@@ -276,7 +276,10 @@ object GitWorktrees:
     val problems = scala.collection.mutable.ListBuffer[String]()
     if !os.isDir(p) then problems += s"directory does not exist: $path"
     else
-      val registered = worktreeList(ws).exists(_._1.stripSuffix("/") == path.stripSuffix("/"))
+      val expected = p.toNIO.toRealPath()
+      val registered = worktreeList(ws).exists { case (candidate, _, _) =>
+        Try(java.nio.file.Path.of(candidate).toRealPath() == expected).getOrElse(false)
+      }
       if !registered then problems += "not registered in `git worktree list` (not a worktree of this repo)"
       Try(git(p, "rev-parse", "--show-toplevel")).toOption.flatMap(_.toOption).map(_.trim) match
         case None =>
@@ -287,6 +290,7 @@ object GitWorktrees:
         case _ => ()
       if headSha(p).isEmpty then problems += "HEAD does not resolve (checkout incomplete)"
       if dirtyPaths(p).isEmpty then problems += "git status not runnable in this directory"
+    end if
     problems.toList
 
   end validateAllocation

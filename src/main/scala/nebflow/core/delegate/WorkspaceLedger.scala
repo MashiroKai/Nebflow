@@ -81,6 +81,15 @@ final class WorkspaceLedger(val path: os.Path):
       (s.copy(workspaces = s.workspaces.map(w => replacements.getOrElse(w.id, w))), Right(reserved))
   }
 
+  def baseline(repository: String): String = snapshot.baselines.getOrElse(repository, "main")
+
+  def setBaseline(repository: String, branch: String): Either[String, Unit] = transaction { s =>
+    if branch.trim.isEmpty || branch.startsWith("delegate/") ||
+      s.workspaces.exists(w => w.repository == repository && w.branch == branch && !w.lifecycle.startsWith("closed-"))
+    then (s, Left("An unmerged development branch cannot be the creation baseline"))
+    else (s.copy(baselines = s.baselines.updated(repository, branch)), Right(()))
+  }
+
   def owned(owner: String): Option[Workspace] = snapshot.workspaces.find(_.owner == owner)
 
   /** Existing running owners may receive mail without opening another execution seat. */
@@ -149,8 +158,42 @@ object WorkspaceLedger:
     revision: Long = 0L
   )
   final case class Merger(project: String, repository: String, delegateId: String)
-  final case class State(workspaces: List[Workspace] = Nil, mergers: List[Merger] = Nil)
+
+  final case class State(
+    workspaces: List[Workspace] = Nil,
+    mergers: List[Merger] = Nil,
+    baselines: Map[String, String] = Map.empty
+  )
   given io.circe.Codec[Workspace] = deriveCodec
   given io.circe.Codec[Merger] = deriveCodec
-  given io.circe.Codec[State] = deriveCodec
+  given io.circe.Encoder[State] = deriveEncoder
+
+  given io.circe.Decoder[State] = io.circe.Decoder.instance { c =>
+    for
+      workspaces <- c.get[List[Workspace]]("workspaces")
+      mergers <- c.get[List[Merger]]("mergers")
+      baselines <- c.get[Option[Map[String, String]]]("baselines")
+    yield State(workspaces, mergers, baselines.getOrElse(Map.empty))
+  }
+
+  def resolveBaseline(workspace: os.Path, ledger: WorkspaceLedger = default): (String, String) =
+    val repository = repositoryKey(workspace)
+    val branch = ledger.baseline(repository)
+    require(!branch.startsWith("delegate/"), "Development branch cannot be a creation baseline")
+    require(
+      !ledger.snapshot.workspaces.exists(w =>
+        w.repository == repository && w.branch == branch &&
+          !w.lifecycle.startsWith("closed-")
+      ),
+      "Baseline is an open development branch"
+    )
+    os.proc("git", "check-ref-format", "--branch", branch).call(cwd = workspace)
+    val commit = os
+      .proc("git", "rev-parse", "--verify", s"refs/heads/$branch^{commit}")
+      .call(cwd = workspace)
+      .out
+      .text()
+      .trim
+    (branch, commit)
+  end resolveBaseline
 end WorkspaceLedger
