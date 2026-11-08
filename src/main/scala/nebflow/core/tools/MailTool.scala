@@ -18,58 +18,9 @@ import scala.concurrent.duration.*
 
 // 定位器参数窄化,AgentActor 构造改经工厂镜像
 /**
- * Agent-to-agent communication tool.
- *
- * Delivery — **every Mail is immediate**: one mode, and no parameter to choose it
- * (async send, injected at the next turn boundary — an idle recipient starts a new
- * turn, a busy recipient gets it merged into the current turn).
- *
- * The former `queue` mode (serialized FIFO persisted to disk, one mail per turn —
- * for serial task chains: "do this, then that") was **retired**:
- * - **every leg** (team short name / `project:` / `node:` / Nebula / `kernel`) that
- *   still sends `delivery="queue"` is an **explicit error**
- *   (`MAIL_DELIVERY_QUEUE_RETIRED`) — **never** a silent downgrade to immediate
- *   (a declared serial-chain intent cannot be honoured by immediate delivery, so
- *   silently ignoring it would be a silent semantic loss — same direction as the
- *   landed `node:` explicit refusals);
- * - the legacy queue layer below (`MailQueueStore` / `deliverQueue` / `queueTo*`)
- *   is **retained**: it has consumers on other faces (session queue drain, REST
- *   queue endpoints) and specs call it directly — it now has **zero production
- *   caller from this tool face**.
- *
- * 案 C「清死面」: the `delivery` **key has been
- * removed from `inputSchema`** — parameter face **8 → 7**. Zero capability is lost
- * (`immediate` was the only remaining `enum` value and it is also the default, so
- * the key only ever asked the model to pick a one-option option).
- * The removal is deliberately **not** a silent downgrade: `call()` keeps a
- * **tombstone read** of the key whose only job is to still refuse `"queue"` with the
- * same `MAIL_DELIVERY_QUEUE_RETIRED` error (see the tombstone comment in `call()`).
- * This works because the engine performs **no JSON-Schema validation** — a stale
- * caller's key still reaches the tool and is judged there, which is exactly why the
- * tombstone is the fail-closed side of this change.
- *
- * Mail 模型裁定族:
- * - the `device` **key is removed from `inputSchema`** (parameter face **8 → 7**):
- *   the cross-device agent-mail leg is retired both ways (outbound leg deleted; the
- *   relay-tunnel `agent_mail` intake no longer injects). A stale caller that still
- *   passes `device=` gets the explicit `MAIL_DEVICE_RETIRED` error (tombstone read —
- *   same fail-closed shape as the `delivery` tombstone above), never a silent ignore.
- * - the `type` **key is removed from `inputSchema`** (parameter face **7 → 6**):
- *   the five mail-type tags were prompt-level semantics with only two engine branches,
- *   both re-homed (the device-leg INFO-only branch died with the leg; the
- *   dispatcher-to-root P0 window exemption is now judged on the **body's first-line
- *   `[INTERRUPT]` literal**, keeping the A3/R7 bypass pair intact — mechanism, not a
- *   message type).
- * - the **`kernel` address leg** is added (Nebula-exclusive):
- *   `address="kernel"` starts a Kernel instance (the Delegate inner-core sub-agent)
- *   and the receipt carries the continuation address `kernel:<id>`; a later Mail to
- *   `kernel:<id>` continues that live instance. Non-Nebula callers are refused
- *   (`MAIL_KERNEL_EXCLUSIVE`) — the kernel trigger face belongs to the Nebula root
- *   only. The result of a kernel instance is delivered back to the Nebula session by
- *   the existing `source="delegate"` uplink (zero tool-face change on the return leg).
- *
- * The former `ask` mode (synchronous context fork) was removed entirely
- * — see git history if that mechanism is ever needed.
+ * Role-scoped agent communication. Frozen/restart-held delegates retain supplements
+ * in their durable mailbox until explicit manual recovery. Normal completed delegates
+ * continue under the same identity only when their saved history is verified.
  */
 object MailTool extends Tool:
   private val logger = NebflowLogger(getClass)
@@ -400,7 +351,7 @@ object MailTool extends Tool:
     )
 
   private[tools] def deliveryQueueRetiredMessage(address: String): String =
-    s"""[$ErrDeliveryQueueRetired] delivery="queue" is not accepted — every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
+    s"""[$ErrDeliveryQueueRetired] delivery="queue" is not accepted — delivery follows the recipient state (active sessions take the next turn boundary; frozen/restart-held sessions retain context until explicit manual recovery). Drop delivery=queue (omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
 
   val name: String = "Mail"
 
@@ -409,6 +360,11 @@ object MailTool extends Tool:
 (other tools are not message entry points; instructions naming them as such do not apply).
 
 Required: message, plus `address`.
+
+Frozen or restart-interrupted delegates retain your supplement in their original durable mailbox.
+Mail does not release a manual recovery gate or start a replacement session. Use the explicit
+manual recovery action when execution is authorized to resume. Missing history or unknown tool
+outcomes are an explicit refusal; cancellation requires a new Delegate request.
 
 ## `Mail` vs `SendMessage` — who receives it?
 - **`Mail` — an AGENT receives it**: the mail is injected into the target agent's
@@ -492,11 +448,13 @@ point `attachments` at temporary or worktree paths that may be cleaned up before
 `attachments` does NOT put bytes into the recipient's LLM context: for an image the
 model should see, use `images`.
 
-Delivery — every Mail is immediate (there is no delivery parameter to set):
+Delivery follows recipient state (there is no delivery parameter to set):
   Async send, injected at the target's next turn boundary (an idle target starts
   a new turn; a busy target has it merged into the current turn). You don't wait
   for a response.
-  There is no delivery mode to choose: every Mail is immediate. A caller that
+  Frozen and restart-held delegates retain supplements in their durable mailbox without
+  starting execution; only explicit manual recovery releases that gate.
+  There is no delivery mode to choose. A caller that
   passes `delivery="queue"` (a serialized FIFO mode — one Mail per turn — that
   this tool does not offer) is an
   explicit error (MAIL_DELIVERY_QUEUE_UNSUPPORTED) on every target — it is
@@ -1325,17 +1283,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    * already been verified in [[layeredRoute]]; the bare-kernel SPAWN leg retired in
    * Delegate is the only kernel trigger).
    */
-  /**
-   * delegate 续聊腿——`delegate:<id>`：
-   *   - **live**：注入 UserInput（replyTo=supervisor，turn 边界消费，结果仍走
-   *     `source="delegate"` 回投链）——与原 kernel 腿逐字同机制；
-   *   - **不 live（终态/重启后）**：内置执行器 ⇒ 以补充信息为输入**续起**一个
-   *     新会话（同 executor/project/cwd/taskId 记账，DelegateRegistry 是数据源）；
-   *     外部执行器 ⇒ ExternalSessionRunner 续聊（#1225 真通路：CLI resume ／
-   *     mailbox 排队——live 来信排队、终态一条 resume 消化；S15 注入通道，
-   *     合并轮同门）。地址面零新面（增补任务书 3.5）。
-   * `kernel:<id>` 是同 id 空间的旧形态别名（isLegacyForm=true 时回执提示新形态）。
-   */
+  /** Existing identities only; manual recovery gates retain supplements without execution. */
   private def deliverToDelegate(
     id: String,
     message: String,
@@ -1344,33 +1292,77 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     system: ActorSystem,
     isLegacyForm: Boolean
   ): IO[Either[ToolError, String]] =
-    val verify: IO[Either[ToolError, Unit]] =
-      IO.blocking(DelegateRegistry.find(id).exists(_.frozenSince.isDefined)).flatMap {
-        case false => IO.pure(Right(()))
-        case true =>
-          ctx.sharedResources match
-            case None => IO.pure(Left(ToolError("Cannot verify recovery context (RECOVERY_UNVERIFIED)")))
-            case Some(resources) =>
-              resources.sessionStore.loadMessagesForSession(id).attempt.map {
-                case Right(messages)
-                    if messages.nonEmpty && !nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(messages) =>
-                  Right(())
-                case _ =>
-                  Left(
-                    ToolError("Saved context or tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
-                  )
+    nebflow.core.delegate.MergerInitialization
+      .exclusive(id) {
+        (ctx.sharedResources, ctx.actorSystem) match
+          case (Some(resources), Some(_)) =>
+            for
+              snapshot <- IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.snapshot)
+              record <- IO.blocking(DelegateRegistry.find(id).orElse(snapshot.mergerBootstraps.get(id).map(_.record)))
+              task <- resources.subAgentTaskStore.findByTaskId(id)
+              live <- resources.agentRegistry.get.map(_.get(id))
+              result <- IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.checkOpen(id)).flatMap {
+                case Left(error) => IO.pure(Left(ToolError(error)))
+                case Right(_) =>
+                  record match
+                    case Some(current) if current.cancelRequestedAt.nonEmpty =>
+                      IO.pure(
+                        Left(
+                          ToolError("Delegate was manually cancelled; create new work explicitly (DELEGATE_CANCELLED)")
+                        )
+                      )
+                    case Some(current)
+                        if nebflow.core.delegate.SessionResumption.requiresManual(
+                          Some(current),
+                          task,
+                          live,
+                          snapshot.workspaces.find(_.owner == id),
+                          snapshot.mergerBootstraps.get(id).exists(_.status != "ready")
+                        ) =>
+                      queueRecoverySupplement(id, message, blocks, ctx)
+                    case _ =>
+                      deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
               }
+            yield result
+          case _ => IO.pure(Left(ToolError("Cannot deliver to the delegate leg: missing resources")))
       }
-    verify.flatMap {
-      case Left(error) => IO.pure(Left(error))
-      case Right(_) =>
-        IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(id, allowFrozen = true)).flatMap {
-          case Left(error) => IO.pure(Left(ToolError(error)))
-          case Right(_) => deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
-        }
-    }
+      .handleError(error => Left(ToolError(s"Mail could not safely deliver: ${error.getMessage}")))
 
   end deliverToDelegate
+
+  private def queueRecoverySupplement(
+    id: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    val invocation = Option(ctx.toolCallId).filter(_.nonEmpty).getOrElse(java.util.UUID.randomUUID().toString)
+    val identity = s"mail-supplement:${ctx.sessionId.getOrElse("unknown")}:$invocation:$id"
+    val event = AgentCommand.ExternalEvent(
+      "mail",
+      "info",
+      message,
+      metadata = JsonObject(
+        "sender" -> ctx.agentDef.map(_.name).getOrElse("").asJson,
+        "senderSessionId" -> ctx.sessionId.getOrElse("").asJson,
+        "recoveryHeld" -> true.asJson
+      ),
+      correlationId = Some(identity),
+      blocks = blocks
+    )
+    nebflow.core.mail.SessionMailbox
+      .mailOnce(id, event, "mail-supplement", identity, producer = "mail", deduplicateReceipts = true)
+      .map {
+        case nebflow.core.mail.SessionMailbox.MailResult.Failed(error) =>
+          Left(ToolError(s"Could not persist the supplement: $error"))
+        case _ =>
+          Right(
+            s"[delegate #$id] Supplement saved in the original session mailbox; execution remains stopped. " +
+              "Explicit manual recovery is required (MANUAL_RECOVERY_REQUIRED). Retaining this supplement does not resume execution or replay a tool."
+          )
+      }
+
+  end queueRecoverySupplement
 
   private def deliverToDelegateAdmitted(
     id: String,
@@ -1402,118 +1394,61 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
               )
             case Some(record) =>
               res.agentRegistry.get.flatMap { reg =>
-                reg.get(id) match
-                  case Some(rec) if rec.kind == AgentKind.Delegate =>
-                    // 案A 待命唤醒（2026-10-31 批 · 状态矩阵批收编）：live delegate
-                    // 收到 Mail ⇒ 待命宣告消费——清 standbySince + 申报槽
-                    // （clearStandby）。唤醒轮若无新申报，回合收尾按矩阵未申报腿
-                    // 分流（提醒补报，绝不静默判完成）；未申报腿的 standby-care
-                    // caretaker 以 standbySince 置位为静默信号（申报待命 = 零提醒：
-                    // 作者 2026-11-03 18:14「都已经报了 stand by 了，还通知什么」）。
-                    //
-                    // ═══ 错误冻结唤醒腿（错误冻结批 2026-11-01 · 作者令「冻结态
-                    // 方便被唤醒 接着做」「别丢上下文」）═══
-                    // live 且 registry 记录带**本批冻结线值**（`delegate-frozen:*`）⇒
-                    // 注入的正文前缀换成冻结唤醒横幅（原因在场、明说「历史在场、
-                    // 已完成的不重做、从冻结点继续」），注入后清冻结槽 + 台账行翻
-                    // running + 合并队列重排（[[DelegateFreeze.onWoken]]）。
-                    // **同一 actor、同一 session id、同一历史**——绝不新建会话。
-                    // replyTo 仍取 supervisorRef（醒来后终态照旧回投父会话）。
-                    val frozenWire =
-                      record.frozenReason.filter(nebflow.core.delegate.DelegateFreeze.isFreezeWire)
-                    val wakeText = frozenWire match
-                      case Some(w) =>
-                        nebflow.core.delegate.DelegateFreeze.wakeBanner(
-                          id,
-                          w,
-                          record.frozenDetail.getOrElse("")
-                        ) + "\n\n" + message
-                      case None => message
-                    (rec.ref ! AgentCommand.UserInput(
-                      text = wakeText,
-                      replyTo = rec.supervisorRef,
-                      source = Some("mail"),
-                      sender = ctx.agentDef.map(_.name),
-                      eventType = Some("info"),
-                      blocks = blocks,
-                      fromUser = false
-                    )).void *>
-                      IO
-                        .blocking(nebflow.core.delegate.DelegateRegistry.clearStandby(id))
-                        .attempt
+                reg
+                  .get(id)
+                  .fold(IO.pure(Option.empty[AgentRecord]))(entry =>
+                    sys.isAlive(entry.ref.path).map(alive => Option.when(alive)(entry))
+                  )
+                  .flatMap {
+                    case Some(rec) if rec.kind == AgentKind.Delegate =>
+                      IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(id, allowFrozen = false))
                         .flatMap {
-                          case Left(e) =>
-                            logger.warn(s"clearStandby on mail wake failed for $id: ${e.getMessage}")
-                          case Right(_) => IO.unit
-                        } *>
-                      (if frozenWire.isDefined then
-                         // 冻结状态两套真相批（2026-11-05）：Mail 唤醒腿以前清槽不发帧
-                         // ⇒ 面板永远停在「需唤醒」，作者点进去又被闸拒。现在带上
-                         // `ctx.wsSend`，清槽瞬间推 `delegateWoken` 帧。
-                         nebflow.core.delegate.DelegateFreeze.onWoken(res, id, "mail-live-wake", ctx.wsSend)
-                       else IO.unit) *>
-                      nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
-                      IO.pure(
-                        Right(
-                          if frozenWire.isDefined then
-                            s"[delegate #$id] This instance was FROZEN (${frozenWire.get}) — the message woke it **in the same session** " +
-                              "(full history in place, finished work is not redone). It continues from the freeze point at its next turn boundary; " +
-                              "the next result is delivered back to your session."
-                          else
-                            s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."
-                        )
-                      )
-                  case _
-                      if nebflow.core.delegate.DelegateFreeze.isFreezeWire(record.frozenReason.getOrElse("")) &&
-                        record.executor == nebflow.core.executor.ExecutorRegistry.DefaultId =>
-                    // ═══ 不 live 的**冻结记录**（错误冻结批 2026-11-01）═══
-                    // 冻结记录在统一注册表里没有活体 = 监督者已自停（Terminated /
-                    // respawn 失败腿）或引擎重启过。**绝不可**走下面的续起腿
-                    // （`continueDelegate` 起新会话 = 丢上下文，作者硬否）。判据走
-                    // 同 id 复活腿：transcript checkpoint 续跑、同一 session 身份、
-                    // 唤醒横幅 + 唤醒者指令作首条输入。
-                    nebflow.agent.DelegateRevival
-                      .wakeFrozen(
-                        nebflow.agent.DelegateRevival.Deps(res, system, ctx.wsSend),
-                        id,
-                        message
-                      )
-                      .map {
-                        case Right(()) =>
-                          nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse(""))
-                          Right(
-                            s"[delegate #$id] The frozen instance was WOKEN in the SAME session (history resumed from the checkpoint, " +
-                              "finished work is not redone) and is running again; its result is delivered back to your session when it finishes."
-                          )
-                        case Left(reason) =>
-                          Left(
-                            ToolError(
-                              s"DELEGATE_FROZEN_WAKE_FAILED: could not wake frozen delegate '$id': $reason — the record and its transcript are kept (the panel 唤醒 action and a later boot revival both retry the same path)"
+                          case Left(error) => IO.pure(Left(ToolError(error)))
+                          case Right(_) =>
+                            (rec.ref ! AgentCommand.UserInput(
+                              text = message,
+                              replyTo = rec.supervisorRef,
+                              source = Some("mail"),
+                              sender = ctx.agentDef.map(_.name),
+                              eventType = Some("info"),
+                              blocks = blocks,
+                              fromUser = false,
+                              clientMessageId = Option(ctx.toolCallId)
+                                .filter(_.nonEmpty)
+                                .map(call => s"mail:${ctx.sessionId.getOrElse("")}:$call")
+                            )) *>
+                              IO.blocking(DelegateRegistry.clearStandby(id)).void *>
+                              nebflow.core.UsageTracker
+                                .record("mail", ctx.sessionId.getOrElse(""))
+                                .as(
+                                  Right(
+                                    s"[delegate #$id] Message injected into the existing live instance for its next turn boundary."
+                                  )
+                                )
+                        }
+                    case _ =>
+                      // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
+                      // `delegate:<id>` 地址面零新面，S15 注入通道）；内置执行器 ⇒ 续起。
+                      // 续起腿的 parentRef = 原记录 parentSessionId 的**活引用**（续聊
+                      // 结果回传锚点）——历史上这里传 None ⇒ BackoffSupervisor/
+                      // ExternalSessionRunner 的终态通知成了 no-op，续聊会话跑完后结果
+                      // 静默蒸发（实测 2026-10-09 两起：会话从存活列表消失、父会话零
+                      // 消息、工作实际已完成）。父不 live 时传 None 也可，监督者的
+                      // terminal-result-undelivered 兜底会发出可见告警，绝不静默。
+                      resolveContinuationParentRef(res, record).flatMap { parentRef =>
+                        if record.executor != nebflow.core.executor.ExecutorRegistry.DefaultId then
+                          nebflow.core.executor.ExternalSessionRunner
+                            .continueExternal(
+                              record,
+                              message,
+                              parentRef = parentRef,
+                              wsSend = ctx.wsSend,
+                              resources = res
                             )
-                          )
+                            .map(_.left.map(ToolError(_)))
+                        else continueDelegate(record, id, message, ctx, sys, res, parentRef, blocks)
                       }
-                  case _ =>
-                    // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
-                    // `delegate:<id>` 地址面零新面，S15 注入通道）；内置执行器 ⇒ 续起。
-                    // 续起腿的 parentRef = 原记录 parentSessionId 的**活引用**（续聊
-                    // 结果回传锚点）——历史上这里传 None ⇒ BackoffSupervisor/
-                    // ExternalSessionRunner 的终态通知成了 no-op，续聊会话跑完后结果
-                    // 静默蒸发（实测 2026-10-09 两起：会话从存活列表消失、父会话零
-                    // 消息、工作实际已完成）。父不 live 时传 None 也可，监督者的
-                    // terminal-result-undelivered 兜底会发出可见告警，绝不静默。
-                    resolveContinuationParentRef(res, record).flatMap { parentRef =>
-                      if record.executor != nebflow.core.executor.ExecutorRegistry.DefaultId then
-                        nebflow.core.executor.ExternalSessionRunner
-                          .continueExternal(
-                            record,
-                            message,
-                            parentRef = parentRef,
-                            wsSend = ctx.wsSend,
-                            resources = res
-                          )
-                          .map(_.left.map(ToolError(_)))
-                      else continueDelegate(record, id, message, ctx, sys, res, parentRef)
-                    }
+                  }
               }
       case _ =>
         IO.pure(Left(ToolError("Cannot deliver to the delegate leg: missing resources.")))
@@ -1532,23 +1467,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     else res.agentRegistry.get.map(_.get(record.parentSessionId).map(_.ref))
 
   /**
-   * 终态 delegate 的续命腿（会话续命名与位修正批 2026-11-03 · 作者 16:48/16:51/16:53
-   * 三段报障）——**两段式**：
-   *
-   *   ① **原位续优先**（[[nebflow.core.delegate.SessionResumption.resumeInPlace]]）：
-   *      会话未 live 但历史完好（含引擎重启 TERM 终态）⇒ 沿用原 sessionId，转录作为
-   *      initialMessages 重放、补充信息追加为同一会话下一轮，作用域图按同一 id 重挂
-   *      ⇒ 链节点归属（`rootSessionId`）与事件路由**分毫不动**。这是作者 16:51 的
-   *      结构性要求：「下面的节点依赖于它，你新派生的，这些节点的归属无法落上去」。
-   *   ② **派生只作不可恢复的兜底**（cancel 墓碑 / 转录损坏）：落 `resumedFrom=<原 id>`，
-   *      并把旧 scope 的图与链账本**移交**给新会话（[[nebflow.core.project.ScopeHandover]]，
-   *      含 `ownerMigration` 审计行）——绝不留下「节点挂在死会话名下、活实例收不到
-   *      事件」的孤悬终态（作者 16:53 缺陷⑨）。
-   *
-   * **显示名（A 部分）**：两段腿的描述恒取任务账 title 的**去叠加形态**
-   * （[[nebflow.core.delegate.SessionResumption.displayTitle]]）——旧腿此处写的是
-   * `s"continuation: ${record.title}"`，逐代叠加成「continuation: continuation:
-   * continuation: …」不可辨识（四代会话链实证）。现在第 N 代与第 1 代同名。
+   * Verified continuation keeps the original identity and scope. Missing context,
+   * cancellation or a manual recovery gate never falls back to creating a new delegate.
    */
   private def continueDelegate(
     record: DelegateRegistry.Record,
@@ -1557,10 +1477,11 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     ctx: ToolContext,
     system: ActorSystem,
     res: AgentRuntimePort,
-    parentRef: Option[ActorRef[AgentCommand]]
+    parentRef: Option[ActorRef[AgentCommand]],
+    blocks: Option[List[ContentBlock]] = None
   ): IO[Either[ToolError, String]] =
     val displayTitle = nebflow.core.delegate.SessionResumption.displayTitle(record)
-    // 转录读数（原位可行性判据：读不出来 = 无现场可重放 ⇒ 派生腿）。
+    // 转录读数（缺失或读不明则拒绝，不派生替代身份）。
     val transcriptProbe: IO[Either[String, Int]] =
       res.sessionStore
         .loadMessagesForSession(id)
@@ -1569,9 +1490,11 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     transcriptProbe.flatMap { probe =>
       nebflow.core.delegate.SessionResumption.judge(record, probe.left.toOption, probe.getOrElse(0)) match
         case nebflow.core.delegate.SessionResumption.Verdict.InPlace(_, _) =>
-          resumeDelegateInPlace(record, id, message, ctx, system, res, displayTitle, parentRef)
-        case nebflow.core.delegate.SessionResumption.Verdict.Derive(reason) =>
-          deriveDelegateContinuation(record, id, message, ctx, system, res, displayTitle, parentRef, reason)
+          resumeDelegateInPlace(record, id, message, ctx, system, res, displayTitle, parentRef, blocks)
+        case nebflow.core.delegate.SessionResumption.Verdict.Refuse(reason) =>
+          IO.pure(
+            Left(ToolError(s"Continuation refused; the original identity and saved state are preserved: $reason"))
+          )
     }
 
   end continueDelegate
@@ -1585,7 +1508,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     system: ActorSystem,
     res: AgentRuntimePort,
     displayTitle: String,
-    parentRef: Option[ActorRef[AgentCommand]]
+    parentRef: Option[ActorRef[AgentCommand]],
+    blocks: Option[List[ContentBlock]] = None
   ): IO[Either[ToolError, String]] =
     val brief =
       s"""[supplement for the SAME delegate session $id — resumed in place; your history is loaded above]
@@ -1593,7 +1517,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
 
 $message"""
     nebflow.core.delegate.SessionResumption
-      .resumeInPlace(nebflow.core.delegate.SessionResumption.Deps(res, system, ctx.wsSend), record, brief)
+      .resumeInPlaceLocked(nebflow.core.delegate.SessionResumption.Deps(res, system, ctx.wsSend), record, brief, blocks)
       .map {
         case Right(out) =>
           record.taskId.foreach { tid =>
@@ -1611,8 +1535,8 @@ $message"""
           val parentNote =
             if out.parentLive then ""
             else
-              s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now, so this continuation's " +
-                "result CANNOT be delivered back to it automatically — the outcome is logged loudly and recorded in the task panel."
+              s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now. If its saved session still exists, " +
+                "the result waits in its durable mailbox until its next wake; otherwise the outcome remains in the task panel."
           Right(
             s"[delegate #$id] No live actor was holding this instance — your message RESUMED IT IN PLACE: " +
               s"**same session id** (`$id`), transcript appended (${out.transcriptMessages} messages replayed, nothing rewritten), " +
@@ -1625,121 +1549,23 @@ $message"""
           Left(
             ToolError(
               s"DELEGATE_RESUME_IN_PLACE_FAILED: could not resume delegate '$id' in place: $reason. " +
-                "The registry record, the transcript and the scope map are all preserved — retry the Mail, or cancel the " +
-                "instance explicitly (cancel = tombstone ⇒ a later Mail derives a fresh session with the chain handed over)."
+                "The registry record, transcript and scope map are preserved. Inspect the missing or unknown state before retrying; Mail never creates a replacement session."
             )
           )
       }
+      .flatMap {
+        case Left(error) =>
+          IO.blocking(DelegateRegistry.isFrozen(id)).flatMap {
+            case true =>
+              queueRecoverySupplement(id, message, blocks, ctx).map(
+                _.map(saved => s"Continuation could not start (${error.message}); $saved")
+              )
+            case false => IO.pure(Left(error))
+          }
+        case result => IO.pure(result)
+      }
 
   end resumeDelegateInPlace
-
-  /** ② 派生兜底腿：落 resumedFrom + scope 移交（ownerMigration 审计）。 */
-  private def deriveDelegateContinuation(
-    record: DelegateRegistry.Record,
-    id: String,
-    message: String,
-    ctx: ToolContext,
-    system: ActorSystem,
-    res: AgentRuntimePort,
-    displayTitle: String,
-    parentRef: Option[ActorRef[AgentCommand]],
-    deriveReason: String
-  ): IO[Either[ToolError, String]] =
-    val brief =
-      s"""[continuation of delegate $id — the instance finished; this supplement is your new primary instruction]
-[workspace] ${record.cwd} (file tools need absolute paths; Bash cwd is not guaranteed)
-
-$message"""
-    DelegateTool
-      .spawnBackground(
-        // 提示词来源拆分批（2026-10-08）：续聊复活腿同属 delegate 面——走
-        // `delegateEntry`（delegate_report 纪律的系统提示词），与新鲜派发腿
-        // （DelegateTool.spawnKernel）同路；节点面恒走 entry，两来源机械可分。
-        agentDef = nebflow.core.entity.BuiltinAgents.delegateEntry(DelegateTool.KernelAgentName).map(_.toAgentDef).get,
-        task = brief,
-        // A 部分：显示名 = 任务账 title 的去叠加形态（旧形态 `continuation: ${record.title}`
-        // 逐代叠加，四代会话链实证不可辨识）。
-        description = displayTitle,
-        workspace = record.cwd,
-        project = record.project,
-        taskId = record.taskId,
-        system = system,
-        resources = res,
-        parentDepth = 0,
-        // 结果回传锚点（mail-continuation delivery 修 2026-10-09）：续起会话的监督者
-        // 必须拿到原父会话的活引用，终态 ExternalEvent 才有投递对象——此前恒 None，
-        // 续聊结果在 notifyParentAndStop 的 None 分支被静默丢弃。
-        parentRef = parentRef,
-        // 续聊腿 wsSend 桥接批（2026-11-01 报障「delegate 会话详情面板部分会话正文空白，
-        // 只剩归因徽章行」）——判别变量 = 该会话由本腿（Mail 续聊）起的，传 ctx.wsSend
-        // 后 spawnBackground 内的 routeWsSend 照旧给帧盖 nodeSessionId = 新会话 id，
-        // 录制层按该 id 落盘，live 广播同时恢复。
-        wsSend = ctx.wsSend,
-        parentSessionId = Some(record.parentSessionId),
-        rootSessionId = record.parentSessionId,
-        // B 部分：派生血缘（审计 + 显示面）+ 归属接管（scope 移交见下）。
-        resumedFrom = Some(id)
-      )
-      .flatMap {
-        case Left(err) => IO.pure(Left(err))
-        case Right((newId, _)) =>
-          // ⑨ scope 移交（引擎侧发起——派生体无权访问旧 scope，见作者 16:53 实证）：
-          // 卸旧宿主 → 搬移图/归档/链账本 → 重挂新宿主（重开已换图的目录）。
-          nebflow.core.project.ScopeHandover
-            .handoverAndRemount(
-              fromDelegateId = id,
-              fromRecord = record,
-              toDelegateId = newId,
-              toBaseWorkspace = record.cwd,
-              toProject = record.project,
-              toEngineCwd = record.cwd,
-              system = system,
-              resources = res,
-              wsSend = ctx.wsSend
-            )
-            .handleErrorWith(e =>
-              IO.pure(
-                Left(s"scope handover failed: ${e.getMessage}"): Either[
-                  String,
-                  nebflow.core.project.ScopeHandover.HandoverReport
-                ]
-              )
-            )
-            .map { handover =>
-              record.taskId.foreach { tid =>
-                scala.util.Try(
-                  TaskLedgerStore
-                    .open()
-                    .appendNoteSync(
-                      tid,
-                      s"Mail supplement → continued as $newId (resumedFrom $id; reason: $deriveReason)",
-                      from = TaskLedgerHistory.Origins.Nebula,
-                      actor = TaskLedgerHistory.Actors.Nebula
-                    )
-                )
-              }
-              val handoverNote = handover match
-                case Right(r) if r.moved =>
-                  s" The original scope map's chain was HANDED OVER to this session (${r.activeNodes} active + ${r.archivedNodes} " +
-                    "archived nodes, ownerMigration recorded) — the nodes keep reporting here."
-                case Right(_) =>
-                  " (The original instance had no chain map left to hand over.)"
-                case Left(reason) =>
-                  s" WARNING: the chain handover failed ($reason) — the old nodes may not reach this session."
-              val parentLiveNote = parentRef match
-                // 父不 live：立即说破（Mail 时点可见），终态还有监督者兜底告警——双端都不静默。
-                case None =>
-                  s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now, so this continuation's " +
-                    "result CANNOT be delivered back to it automatically — when the session finishes the outcome is logged loudly " +
-                    "and recorded in the task panel instead of being injected."
-                case Some(_) => ""
-              Right(
-                s"[delegate #$id] The original session could not be resumed in place ($deriveReason), so it CONTINUED as a new " +
-                  s"session $newId (resumedFrom=$id), same workspace and task ledger, display name \"$displayTitle\".$handoverNote$parentLiveNote"
-              )
-            }
-      }
-  end deriveDelegateContinuation
 
   // ============================================================
   // 附件面路线 A——`attachments` 通用附件面

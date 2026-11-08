@@ -84,6 +84,38 @@ private[agent] object MailboxDrain:
     }
     (take.toList, hold.toList)
 
+  end barrierPlan
+
+  /** Automatic notifications retain their material while execution is manually held. */
+  private[agent] def automaticInjectionAllowed(
+    resources: nebflow.core.AgentRuntimePort,
+    sessionId: Option[String]
+  ): IO[Boolean] = sessionId
+    .filter(_.nonEmpty)
+    .fold(IO.pure(true)) { sid =>
+      for
+        live <- resources.agentRegistry.get.map(_.get(sid))
+        facts <- IO.blocking {
+          val state = nebflow.core.delegate.WorkspaceLedger.default.snapshot
+          val workspace = state.workspaces
+            .find(_.owner == sid)
+            .orElse(live.flatMap(entry => state.workspaces.find(_.owner == entry.rootSessionId)))
+          val record = nebflow.core.delegate.DelegateRegistry.find(sid)
+          val initPending = state.mergerBootstraps.get(sid).exists(_.status != "ready")
+          (workspace, record, initPending)
+        }
+        (workspace, record, pending) = facts
+        task <-
+          if record.nonEmpty || live.exists(_.kind == AgentKind.Delegate) then
+            resources.subAgentTaskStore.findByTaskId(sid)
+          else IO.pure(None)
+      yield !workspace.exists(_.lifecycle != "open") &&
+        !nebflow.core.delegate.SessionResumption.requiresManual(record, task, live, workspace, pending)
+    }
+    .handleErrorWith(error =>
+      logger.warn(s"Mailbox execution held: recovery state unreadable: ${error.getMessage}").as(false)
+    )
+
   // ── 门铃（best-effort；活会话即唤醒，死会话蒸发——信已在盘上）──────────
 
   def doorbell(resources: nebflow.core.AgentRuntimePort, sessionId: String): IO[Unit] =
@@ -157,7 +189,11 @@ private[agent] object MailboxDrain:
               s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
               s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
           else ""
-        immediateEventMessage(single.payload + hint, single, visibleExternalEventSource(single.source, single.eventType).orElse(Some("external")))
+        immediateEventMessage(
+          single.payload + hint,
+          single,
+          visibleExternalEventSource(single.source, single.eventType).orElse(Some("external"))
+        )
       case many => buildEventReminder(many)
   end mailboxMessage
 
@@ -188,77 +224,88 @@ private[agent] object MailboxDrain:
           sessionProject = state.projectName,
           waitingForBatch = waitingForBatch
         )
-      case None => IO.unit
-    )
+      case None => IO.unit)
 
-  /** Presentation-only terminal digest. Original events still feed the model,
-    * barrier accounting and mailbox unlink; panel/ledger detail is never coalesced.
-    * File state (no process cache) mirrors frozen-waiting announce suppression.
-    */
+  /**
+   * Presentation-only terminal digest. Original events still feed the model,
+   * barrier accounting and mailbox unlink; panel/ledger detail is never coalesced.
+   * File state (no process cache) mirrors frozen-waiting announce suppression.
+   */
   def terminalNotifications(
     events: List[AgentCommand.ExternalEvent],
     ledger: os.Path
-  ): IO[List[AgentCommand.ExternalEvent]] = IO.blocking {
-    def terminal(e: AgentCommand.ExternalEvent): Boolean =
-      e.source == "delegate" && Set("completed", "failed", "cancelled", "crashed").contains(e.eventType)
-    def str(e: AgentCommand.ExternalEvent, key: String): Option[String] =
-      e.metadata(key).flatMap(_.asString).filter(_.nonEmpty)
-    def safeSeg(id: String): String =
-      val cleaned = id.map(c => if c.isLetterOrDigit || c == '-' || c == '.' || c == '_' then c else '_')
-      if cleaned.nonEmpty then cleaned.take(120) else "anon"
-    def family(e: AgentCommand.ExternalEvent): String = e.eventType
-    def member(e: AgentCommand.ExternalEvent): String =
-      str(e, "taskId").orElse(str(e, "failedSessionId")).orElse(e.correlationId).getOrElse(e.payload)
-    val terminals = events.filter(terminal)
-    if terminals.isEmpty then events
-    else
-      val previous: Map[String, List[String]] =
-        if !os.exists(ledger) then Map.empty
-        else
-          io.circe.parser.parse(os.read(ledger)).toOption
-            .flatMap(_.hcursor.get[Map[String, List[String]]]("families").toOption)
-            .getOrElse(Map.empty)
-      val currentMembers =
-        terminals.groupBy(family).view.mapValues(_.map(member).distinct.sorted).toMap
-      // Delta semantics: a member announces exactly once ever (one-shot fact).
-      // Crash-window replays and boot sweeps of already-announced members stay
-      // silent; the ledger accumulates announced members across restarts.
-      val delta = currentMembers.map { case (fam, ids) =>
-        fam -> ids.filterNot(previous.getOrElse(fam, Nil).contains)
-      }
-      val deltaMembers = delta.filter(_._2.nonEmpty)
-      val announce = terminals.filter(e =>
-        deltaMembers.get(family(e)).exists(_.contains(member(e))))
-      val output =
-        if announce.isEmpty then events.filterNot(terminal)
-        else
-          val unique = announce.distinctBy(e => (family(e), member(e)))
-          val merged =
-            if unique.size == 1 then unique.head
-            else
-              val counts = unique.groupBy(_.eventType).toList.sortBy(_._1)
-                .map((status, rows) => s"${status.toUpperCase}: ${rows.size}").mkString(" · ")
-              val details = unique.map(e => s"### ${e.eventType.toUpperCase} · ${member(e)}\n${e.payload}").mkString("\n\n")
-              val base = unique.find(e => Set("failed", "crashed").contains(e.eventType)).getOrElse(unique.head)
-              base.copy(
-                payload = s"Delegate terminal notifications · ${unique.size} ($counts)\n\n$details",
-                metadata = base.metadata.remove("fileChanges").add("terminalCount", unique.size.asJson),
-                correlationId = None
-              )
-          val first = events.indexWhere(terminal)
-          events.zipWithIndex.flatMap { case (e, i) =>
-            if i == first then List(merged) else if terminal(e) then Nil else List(e)
-          }
-      val nextLedger = (previous.keySet ++ currentMembers.keySet).iterator.map { fam =>
-        fam -> (previous.getOrElse(fam, Nil) ++ currentMembers.getOrElse(fam, Nil)).distinct.sorted
-      }.toMap
-      os.makeDir.all(ledger / os.up)
-      nebflow.core.AtomicJson.writeSync(ledger,
-        io.circe.Json.obj("v" -> 1.asJson, "families" -> nextLedger.asJson).noSpaces)
-      output
-  }.handleErrorWith { error =>
-    logger.warn(s"terminal notification ledger unavailable: ${error.getMessage}").as(events)
-  }
+  ): IO[List[AgentCommand.ExternalEvent]] = IO
+    .blocking {
+      def terminal(e: AgentCommand.ExternalEvent): Boolean =
+        e.source == "delegate" && Set("completed", "failed", "cancelled", "crashed").contains(e.eventType)
+      def str(e: AgentCommand.ExternalEvent, key: String): Option[String] =
+        e.metadata(key).flatMap(_.asString).filter(_.nonEmpty)
+      def safeSeg(id: String): String =
+        val cleaned = id.map(c => if c.isLetterOrDigit || c == '-' || c == '.' || c == '_' then c else '_')
+        if cleaned.nonEmpty then cleaned.take(120) else "anon"
+      def family(e: AgentCommand.ExternalEvent): String = e.eventType
+      def member(e: AgentCommand.ExternalEvent): String =
+        str(e, "taskId").orElse(str(e, "failedSessionId")).orElse(e.correlationId).getOrElse(e.payload)
+      val terminals = events.filter(terminal)
+      if terminals.isEmpty then events
+      else
+        val previous: Map[String, List[String]] =
+          if !os.exists(ledger) then Map.empty
+          else
+            io.circe.parser
+              .parse(os.read(ledger))
+              .toOption
+              .flatMap(_.hcursor.get[Map[String, List[String]]]("families").toOption)
+              .getOrElse(Map.empty)
+        val currentMembers =
+          terminals.groupBy(family).view.mapValues(_.map(member).distinct.sorted).toMap
+        // Delta semantics: a member announces exactly once ever (one-shot fact).
+        // Crash-window replays and boot sweeps of already-announced members stay
+        // silent; the ledger accumulates announced members across restarts.
+        val delta = currentMembers.map { case (fam, ids) =>
+          fam -> ids.filterNot(previous.getOrElse(fam, Nil).contains)
+        }
+        val deltaMembers = delta.filter(_._2.nonEmpty)
+        val announce = terminals.filter(e => deltaMembers.get(family(e)).exists(_.contains(member(e))))
+        val output =
+          if announce.isEmpty then events.filterNot(terminal)
+          else
+            val unique = announce.distinctBy(e => (family(e), member(e)))
+            val merged =
+              if unique.size == 1 then unique.head
+              else
+                val counts = unique
+                  .groupBy(_.eventType)
+                  .toList
+                  .sortBy(_._1)
+                  .map((status, rows) => s"${status.toUpperCase}: ${rows.size}")
+                  .mkString(" · ")
+                val details =
+                  unique.map(e => s"### ${e.eventType.toUpperCase} · ${member(e)}\n${e.payload}").mkString("\n\n")
+                val base = unique.find(e => Set("failed", "crashed").contains(e.eventType)).getOrElse(unique.head)
+                base.copy(
+                  payload = s"Delegate terminal notifications · ${unique.size} ($counts)\n\n$details",
+                  metadata = base.metadata.remove("fileChanges").add("terminalCount", unique.size.asJson),
+                  correlationId = None
+                )
+            val first = events.indexWhere(terminal)
+            events.zipWithIndex.flatMap { case (e, i) =>
+              if i == first then List(merged) else if terminal(e) then Nil else List(e)
+            }
+        val nextLedger = (previous.keySet ++ currentMembers.keySet).iterator.map { fam =>
+          fam -> (previous.getOrElse(fam, Nil) ++ currentMembers.getOrElse(fam, Nil)).distinct.sorted
+        }.toMap
+        os.makeDir.all(ledger / os.up)
+        nebflow.core.AtomicJson.writeSync(
+          ledger,
+          io.circe.Json.obj("v" -> 1.asJson, "families" -> nextLedger.asJson).noSpaces
+        )
+        output
+      end if
+    }
+    .handleErrorWith { error =>
+      logger.warn(s"terminal notification ledger unavailable: ${error.getMessage}").as(events)
+    }
 
   private def safeSessionSegment(sid: String): String =
     val cleaned = sid.map(c => if c.isLetterOrDigit || c == '-' || c == '.' || c == '_' then c else '_')
@@ -298,6 +345,21 @@ private[agent] object MailboxDrain:
   )(using ctx: ActorContext[AgentCommand]): IO[Option[Behavior[AgentCommand]]] =
     if events.isEmpty then IO.pure(None)
     else
+      automaticInjectionAllowed(resources, baseState.sessionId).flatMap {
+        case false => IO.pure(None)
+        case true => injectIdleTurnAdmitted(agentDef, resources, depth, parentRef, baseState, events)
+      }
+
+  private def injectIdleTurnAdmitted(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    baseState: AgentState,
+    events: List[AgentCommand.ExternalEvent]
+  )(using ctx: ActorContext[AgentCommand]): IO[Option[Behavior[AgentCommand]]] =
+    if events.isEmpty then IO.pure(None)
+    else
       val sid = baseState.sessionId
       val takenSub = takenSubagentSlots(events)
       val newOutstanding = math.max(0, baseState.execution.outstandingSubagentResults - takenSub)
@@ -324,25 +386,25 @@ private[agent] object MailboxDrain:
         s"events=${events.size} takenSub=$takenSub outstanding=$newOutstanding sources=${events.map(e => s"${e.source}/${e.eventType}").mkString(",").take(200)}"
       )
       continuationReplyTo.flatMap { contReplyTo =>
-          for
-            _ <- if depth == 0 then sid.fold(IO.unit)(s => emitSessionBusy(baseState.wsSend, s, busy = true)) else IO.unit
-            _ <- notifyBatch(resources, baseState, events, depth)
-            _ <- touchBarrierSnapshot(resources, sid, newOutstanding, 0)
-            _ <- unlinkConsumed(sid.getOrElse(""), events)
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              baseState
-                .withMessages(baseState.messages :+ mailboxMessage(events))
-                .withOutstandingSubagentResults(newOutstanding)
-                .withNextLoopTurn, // Block 3：邮箱注入 = 新 turn
-              contReplyTo // idle 直投腿同位：屏障依赖唤醒轮的 Completed 复检投递集
-            )
-          yield Some(result)
-        }
-  end injectIdleTurn
+        for
+          _ <- if depth == 0 then sid.fold(IO.unit)(s => emitSessionBusy(baseState.wsSend, s, busy = true)) else IO.unit
+          _ <- notifyBatch(resources, baseState, events, depth)
+          _ <- touchBarrierSnapshot(resources, sid, newOutstanding, 0)
+          _ <- unlinkConsumed(sid.getOrElse(""), events)
+          result <- pipeLlmCall(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            baseState
+              .withMessages(baseState.messages :+ mailboxMessage(events))
+              .withOutstandingSubagentResults(newOutstanding)
+              .withNextLoopTurn, // Block 3：邮箱注入 = 新 turn
+            contReplyTo // idle 直投腿同位：屏障依赖唤醒轮的 Completed 复检投递集
+          )
+        yield Some(result)
+      }
+  end injectIdleTurnAdmitted
 
   /**
    * W1 spawn/恢复扫箱：taken 残差重注 + pending 全取 → 空箱 None（逐字现状）；
@@ -356,17 +418,21 @@ private[agent] object MailboxDrain:
     baseState: AgentState
   )(using ctx: ActorContext[AgentCommand]): IO[Option[Behavior[AgentCommand]]] =
     baseState.sessionId.fold(IO.pure(Option.empty[Behavior[AgentCommand]])) { sid =>
-      for
-        replayed <- replayTakenEvents(sid)
-        drained <- drainIdleFace(sid)
-        // 同一处去重（修复批 2026-11-06）：W1 spawn 恢复面与 W4 解冻面共用判据。
-        (collapsed0, _) = nebflow.core.delegate.FreezeNotice.collapseSilentReceipts(replayed ++ drained)
-        // 同因只播一次 + 跨因合一个蓝气泡（修复批 2026-11-06 16:14 作者令）：
-        // 抑制判据见 `FreezeNotice.suppressRepeatedWaiting`——必须在注入面之前，
-        // 否则照样冒泡（作者实证：15:29→16:14 每 4 分钟重发同一组 3 行）。
-        (events, suppressedWaiting) <- nebflow.core.delegate.FreezeNotice.suppressRepeatedWaiting(collapsed0)
-        result <- injectIdleTurn(agentDef, resources, depth, parentRef, baseState, events)
-      yield result
+      automaticInjectionAllowed(resources, Some(sid)).flatMap {
+        case false => IO.pure(None)
+        case true =>
+          for
+            replayed <- replayTakenEvents(sid)
+            drained <- drainIdleFace(sid)
+            // 同一处去重（修复批 2026-11-06）：W1 spawn 恢复面与 W4 解冻面共用判据。
+            (collapsed0, _) = nebflow.core.delegate.FreezeNotice.collapseSilentReceipts(replayed ++ drained)
+            // 同因只播一次 + 跨因合一个蓝气泡（修复批 2026-11-06 16:14 作者令）：
+            // 抑制判据见 `FreezeNotice.suppressRepeatedWaiting`——必须在注入面之前，
+            // 否则照样冒泡（作者实证：15:29→16:14 每 4 分钟重发同一组 3 行）。
+            (events, suppressedWaiting) <- nebflow.core.delegate.FreezeNotice.suppressRepeatedWaiting(collapsed0)
+            result <- injectIdleTurn(agentDef, resources, depth, parentRef, baseState, events)
+          yield result
+      }
     }
 
   /**

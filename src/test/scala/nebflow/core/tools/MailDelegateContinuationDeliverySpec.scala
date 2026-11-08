@@ -134,7 +134,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     loop
 
   /** delegate 台账里的终态旧实例（Mail 续接的对象）。 */
-  private def seedDeadDelegate(id: String, parentSid: String): IO[Unit] =
+  private def seedDeadDelegate(resources: SharedResources, id: String, parentSid: String): IO[Unit] =
     IO.blocking(
       DelegateRegistry.put(
         DelegateRegistry.Record(
@@ -148,6 +148,9 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
           createdAt = System.currentTimeMillis()
         )
       )
+    ) *> resources.sessionStore.durableSwapMessages(
+      id,
+      List(Message(MessageRole.User, Left("original saved delegate task")))
     )
 
   private def rootCtx(resources: SharedResources, system: ActorSystem, sid: String): ToolContext =
@@ -193,7 +196,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       _ <- resources.agentRegistry.update(
         _ + (parentSid -> AgentRecord(parentSid, parentRef, AgentKind.Root, parentSid, None))
       )
-      _ <- seedDeadDelegate(deadId, parentSid)
+      _ <- seedDeadDelegate(resources, deadId, parentSid)
       res <- continuationMail(resources, system, parentSid, deadId)
       // 原位续：**同一个** id 复活为活体（不再派生新会话）
       _ <- waitUntil(15.seconds)(resources.agentRegistry.get.map(_.contains(deadId)))
@@ -233,7 +236,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       _ <- resources.agentRegistry.update(
         _ + (parentSid -> AgentRecord(parentSid, parentRef, AgentKind.Root, parentSid, None))
       )
-      _ <- seedDeadDelegate(deadId, parentSid)
+      _ <- seedDeadDelegate(resources, deadId, parentSid)
       res <- continuationMail(resources, system, parentSid, deadId)
       _ = assert(res.isRight, s"continuation must proceed: ${res.swap.map(_.message).getOrElse("")}")
       // 续命回合（stub 回声）自然收尾 ⇒ 无申报 ⇒ 矩阵提醒腿；先沉降。
@@ -265,7 +268,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     val system = ActorSystem("mail-cont-gone")
     for
       resources <- mkResources(system, hang = true)
-      _ <- seedDeadDelegate(deadId, parentSid)
+      _ <- seedDeadDelegate(resources, deadId, parentSid)
       res <- continuationMail(resources, system, parentSid, deadId)
       _ <- waitUntil(15.seconds)(resources.agentRegistry.get.map(_.contains(deadId)))
       recOpt <- IO.blocking(DelegateRegistry.find(deadId))
@@ -292,7 +295,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     val childSid = "delegate-nebflow-backsto1"
     for
       resources <- mkResources(system, hang = false)
-      _ <- seedDeadDelegate(childSid, parentSid)
+      _ <- seedDeadDelegate(resources, childSid, parentSid)
       _ <- resources.subAgentTaskStore.recordTask(
         SubAgentTask(
           taskId = childSid,
@@ -366,7 +369,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       resources <- mkResources(system, hang = false)
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "posctl-parent-rec")
-      _ <- seedDeadDelegate(childSid, parentSid)
+      _ <- seedDeadDelegate(resources, childSid, parentSid)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       childRef <- system.spawn(sinkBehavior, "posctl-child")
       supervisor <- system.spawn(
@@ -412,7 +415,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     val id = "delegate-workspace-reserved"
     for
       resources <- mkResources(system, hang = true)
-      _ <- seedDeadDelegate(id, "reserved-parent")
+      _ <- seedDeadDelegate(resources, id, "reserved-parent")
       _ <- IO.blocking {
         val ledger = nebflow.core.delegate.WorkspaceLedger.default
         ledger.register(
@@ -443,7 +446,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     val id = "delegate-managed-merger-crash"
     for
       resources <- mkResources(system, hang = true)
-      _ <- seedDeadDelegate(id, "managed-parent")
+      _ <- seedDeadDelegate(resources, id, "managed-parent")
       _ <- resources.sessionStore.durableSwapMessages(
         id,
         List(Message(MessageRole.User, Left("saved merger initialization")))
@@ -541,7 +544,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       }
       baseline <- IO(git("rev-parse", "main"))
       _ <- resources.sessionStore.durableSwapMessages(parent, List(Message(MessageRole.User, Left("task"))))
-      _ <- seedDeadDelegate(id, parent)
+      _ <- seedDeadDelegate(resources, id, parent)
       _ <- IO.blocking {
         val record =
           DelegateRegistry.find(id).get.copy(cwd = seat.toString, worktree = Some(seat.toString), mode = Some("kernel"))

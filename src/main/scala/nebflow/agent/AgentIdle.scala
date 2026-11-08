@@ -22,6 +22,7 @@ import nebflow.shared.{NebflowLogger, *}
  * AgentActor,经 import AgentActor.* 引用(本 object 只含 def,无顶层状态)。
  */
 private[agent] object AgentIdle:
+
   import nebflow.agent.AgentActor.*
   import nebflow.core.processor.DeliveredReceiptLedger
 
@@ -209,14 +210,19 @@ private[agent] object AgentIdle:
                 project = project
               )
             )
-            ledgerFlush <- flushPendingLedgerCompletions(stateWithFlush, Nil)
+            mailState <- landed match
+              case InputLanding.LandOutcome.Landed(_) =>
+                MailboxDrain.resumeSweep(agentDef, resources, depth, stateWithFlush)
+              case _ => IO.pure(stateWithFlush)
+            ledgerFlush <- flushPendingLedgerCompletions(mailState, Nil)
             // 账本补投不改内存状态（消费在账本侧）——held 计划仍以 stateWithFlush 为底。
-            heldFlush = heldFlushPlan(stateWithFlush)
-            flushBase = heldFlush.map(_.state).getOrElse(stateWithFlush)
+            heldFlush = heldFlushPlan(mailState)
+            flushBase = heldFlush.map(_.state).getOrElse(mailState)
             newMessages =
               flushBase.messages ++ ledgerFlush.messages ++ heldFlush.map(_.messages).getOrElse(Nil) :+ userMsg
             _ <- landed match
-              case InputLanding.LandOutcome.Landed(_) => InputLanding.checkpointProducerInputs(resources, state.sessionId, newMessages, clientMessageId.toSet)
+              case InputLanding.LandOutcome.Landed(_) =>
+                InputLanding.checkpointProducerInputs(resources, state.sessionId, newMessages, clientMessageId.toSet)
               case _ => IO.unit
             _ <-
               if ledgerFlush.consumedJobIds.nonEmpty then
@@ -451,256 +457,265 @@ private[agent] object AgentIdle:
         // correlationId ∪ delegate 终态回执归位 id）已投递（DeliveredReceiptLedger）
         // 或已在 pendingEvents ⇒ 丢弃 + 审计（与 AgentProcessing 忙面闸同判据）。
         // 无身份键事件恒放行（既有纪律零回退）。
-        def acceptedBody: IO[Behavior[AgentCommand]] = {
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "external-event",
-          s"source=$source type=$eventType"
-        )
-        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
-        val sessionBusyIO =
-          if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-          else IO.unit
-        // 任务 Q: high-value result notifications (sub-agent/flow/background/api
-        // completion) render as a visible injected-user bubble so the user can
-        // see "what result arrived" in the chat stream, not just the LLM history.
-        val visSource = visibleExternalEventSource(source, eventType)
-        // P1.4: When a retryable sub-agent failure arrives, add a structured
-        // system-reminder guiding the LLM to re-delegate — this is more
-        // effective than relying on the LLM noticing the failure text alone.
-        val retryableHint = eventType == "failed" &&
-          metadata("retryable").exists(_.asBoolean.getOrElse(false))
-        val reminderText =
-          if retryableHint then
-            val failureType = metadata("failureType").flatMap(_.asString).getOrElse("unknown")
-            val failedSession = metadata("failedSessionId").flatMap(_.asString).getOrElse("")
-            val agentName = metadata("agentName").flatMap(_.asString).getOrElse("")
-            s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
-              s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
-              s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
-              s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
-          else ""
-        val injectionText = payload + reminderText
-        // Receive-time visibility (stream event + bubble) — mirrors the
-        // processing-state path so the UI shows each result arriving even when
-        // the LLM injection is held back by the batch barrier.
-        def receiveVisibility(waiting: Boolean): IO[Unit] =
-          emitStream(
-            state.wsSend,
-            AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-            isSubagent = depth > 0,
-            state.sessionId
-          ) *> (visSource match
-            case Some(s) =>
-              val agentName = metadata("agentName").flatMap(_.asString)
-              emitInjectedUserEvent(
-                resources,
-                state.wsSend,
-                state.sessionId,
-                payload,
-                s,
-                Some(eventType),
-                agentName,
-                // file-diff → 委托结果行（bug #58 修）：idle 直投腿同源透传
-                // delegate 终态 metadata 的 diff 载荷（缺席 = 旧行为逐字）。
-                fileChanges = metadata("fileChanges"),
-                sessionProject = state.projectName,
-                waitingForBatch = waiting,
-                // 外部注入统一通道批（2026-11-05）：外部事件的呈现级去重（同一
-                // 成员同一状态的重试提示只留一条蓝泡，状态变化才追加）。
-                dedup = true
-              )
-            case None => IO.unit)
-        // ── Sub-agent result barrier (worker blocking semantics) ──────────
-        // Delegate/SubTask results arriving while more of the same parallel
-        // batch is still outstanding are HELD in pendingEvents instead of
-        // interrupting the agent one result at a time. When the batch completes
-        // (outstanding hits 0), ALL held results are injected together in a
-        // single turn. Non-subagent events keep the existing immediate path.
-        val isSubagentResult = TurnBoundaryDrains.isSubagentResult(event)
-        val outstanding = state.execution.outstandingSubagentResults
-        val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
-        val held = state.execution.pendingEvents
-        if isSubagentResult && newOutstanding > 0 then
-          // #418: an idle parent must NEVER hold a sub-agent result back —
-          // there is no in-flight turn to batch into, and holding it here
-          // parks the parent asleep until user input (delegate COMPLETED
-          // never wakes the parent — the reported bug). Inject THIS result
-          // immediately to wake the parent; the rest of the batch stays HELD
-          // in pendingEvents (injected together by the batch-complete branch
-          // when they arrive), and the counter keeps the decremented
-          // newOutstanding so the #25 nested-debt semantics hold.
-          for
-            _ <- sessionBusyIO
-            _ <- receiveVisibility(waiting = false)
-            _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size)
-            _ <- ackDelegateDelivery(event)
-            // #886：注入即标记（持久投递标记面，与 ack 同点）。不过时批：按身份键
-            // 标记（重投件的原件 id 随行——重启重放闸/intake 闸按身份命中）。
-            _ <- DeliveredReceiptLedger.markDelivered(state.sessionId.getOrElse(""), DeliveredReceiptLedger.identityKeys(event))
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state
-                .withMessages(
-                  // 媒体统一适配批（2026-10-20）：组装单点 immediateEventMessage——
-                  // 带块事件（桥媒体）⇒ Right(Text+blocks)，无块 ⇒ Left 逐字现状。
-                  state.messages :+ immediateEventMessage(
-                    injectionText,
-                    event,
-                    visSource.orElse(Some("external"))
-                  )
+        def acceptedBody: IO[Behavior[AgentCommand]] =
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "external-event",
+            s"source=$source type=$eventType"
+          )
+          val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
+          val sessionBusyIO =
+            if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+            else IO.unit
+          // 任务 Q: high-value result notifications (sub-agent/flow/background/api
+          // completion) render as a visible injected-user bubble so the user can
+          // see "what result arrived" in the chat stream, not just the LLM history.
+          val visSource = visibleExternalEventSource(source, eventType)
+          // P1.4: When a retryable sub-agent failure arrives, add a structured
+          // system-reminder guiding the LLM to re-delegate — this is more
+          // effective than relying on the LLM noticing the failure text alone.
+          val retryableHint = eventType == "failed" &&
+            metadata("retryable").exists(_.asBoolean.getOrElse(false))
+          val reminderText =
+            if retryableHint then
+              val failureType = metadata("failureType").flatMap(_.asString).getOrElse("unknown")
+              val failedSession = metadata("failedSessionId").flatMap(_.asString).getOrElse("")
+              val agentName = metadata("agentName").flatMap(_.asString).getOrElse("")
+              s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
+                s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
+                s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
+                s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
+            else ""
+          val injectionText = payload + reminderText
+          // Receive-time visibility (stream event + bubble) — mirrors the
+          // processing-state path so the UI shows each result arriving even when
+          // the LLM injection is held back by the batch barrier.
+          def receiveVisibility(waiting: Boolean): IO[Unit] =
+            emitStream(
+              state.wsSend,
+              AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
+              isSubagent = depth > 0,
+              state.sessionId
+            ) *> (visSource match
+              case Some(s) =>
+                val agentName = metadata("agentName").flatMap(_.asString)
+                emitInjectedUserEvent(
+                  resources,
+                  state.wsSend,
+                  state.sessionId,
+                  payload,
+                  s,
+                  Some(eventType),
+                  agentName,
+                  // file-diff → 委托结果行（bug #58 修）：idle 直投腿同源透传
+                  // delegate 终态 metadata 的 diff 载荷（缺席 = 旧行为逐字）。
+                  fileChanges = metadata("fileChanges"),
+                  sessionProject = state.projectName,
+                  waitingForBatch = waiting,
+                  // 外部注入统一通道批（2026-11-05）：外部事件的呈现级去重（同一
+                  // 成员同一状态的重试提示只留一条蓝泡，状态变化才追加）。
+                  dedup = true
                 )
-                .withOutstandingSubagentResults(newOutstanding)
-                .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
-              None
-            )
-          yield result
-          end for
-        else if isSubagentResult && held.nonEmpty then
-          // Batch complete: inject ALL held results (plus this one) together.
-          val batchMessage = buildEventReminder(held :+ event)
-          // F2 补漏批（2026-10-22）：汇聚腿清空队列后必须重写磁盘快照——入队面
-          // 全量快照过 held 回执（AgentProcessing:1239），此处不持久 ⇒ 已消费回执
-          // 残留 injection-queues.json ⇒ respawn 重放为幽灵回执（10-22 10:36/17:13
-          // 两次重启恢复 events=5/11 的构成面之一）。
-          val cleanedExec =
-            state.execution.copy(
-              outstandingSubagentResults = 0,
-              pendingEvents = Nil
-            )
-          for
-            _ <- sessionBusyIO
-            _ <- receiveVisibility(waiting = false)
-            _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
-            _ <- persistQueues(state.sessionId, cleanedExec)
-            // 诊断修复批 2026-10-24：批次腿同认 delegate 终态交付（任一腿注入即确认）。
-            _ <- ackDelegateDelivery(event)
-            // #886：注入即标记（批次全量——held 件 + 本件；不过时批按身份键）。
-            _ <- DeliveredReceiptLedger.markDelivered(
-              state.sessionId.getOrElse(""),
-              DeliveredReceiptLedger.identityKeysOf(held :+ event)
-            )
-            // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
-            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) => emitHeldReceiptsBadge(state, h, u))
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state
-                .copy(execution = cleanedExec)
-                .withMessages(state.messages :+ batchMessage)
-                .withNextLoopTurn, // Block 3：批次汇聚唤醒 = 新 turn
-              None
-            )
-          yield result
-          end for
-        else
-          // Single immediate result (no batch in flight) or non-subagent event.
-          // ═══ 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）═══
-          // ExternalEvent 唤醒轮此前 replyTo=None → 续跑轮 AgentEvent.Completed
-          // 无人接收——节点观察桥（完成闸单咽喉）在最后一个后台任务完成通知后
-          // 永远等不到复检事件，节点悬挂到兜底上限。修正：node- 前缀（Project
-          // 节点，kind=Flow）会话以 AgentRecord.supervisorRef（=NodeEngine 观察
-          // 桥，注册即粘性完成目标）作为本唤醒轮的 replyTo。
-          // ═══ 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）═══
-          // 原「仅 node- 启用」排除 delegate 的理由（「Completed 会让 BackoffSupervisor
-          // 停 actor」）在等待屏障（sleep-poll 禁令批 A 段，2026-10-20）落地后已
-          // 反转：屏障**依赖**唤醒轮的 Completed 复检投递集（等待集空 ⇒ 释放终判），
-          // 缺席 = 监督者永远停在 hold 私有态——任务行卡 running、父会话永不收到
-          // 结果（实案：barrier 读数 0/0 全清但无任何终态投递，静默 70+ 分钟）。
-          // 修正：delegate 会话 × background-task 完成事件同享 supervisorRef
-          // replyTo。其余事件源（mail/schedule 等）与非 delegate 会话恒 None——
-          // Completed 语义各归既有，零并线。
-          val continuationReplyTo: IO[Option[ActorRef[AgentEvent]]] =
-            state.sessionId
-              .filter(sid =>
-                wakeContinuationApplies(
-                  isFlowNode = state.isFlowNode,
-                  sessionId = Some(sid),
-                  eventSource = source,
-                  isDelegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(Some(sid))
-                )
-              )
-              .fold(IO.pure(Option.empty[ActorRef[AgentEvent]]))(sid =>
-                resources.agentRegistry.get.map(_.get(sid).flatMap(_.supervisorRef))
-              )
-          continuationReplyTo.flatMap { contReplyTo =>
-            // Held-receipt 先补注入（fix 1 第三腿）：非子代理事件（background-task /
-            // Schedule / Mail 询问等）到达且有被扣留的已产出回执 ⇒ 先随本 turn 补注
-            // 回执再注入本事件；屏障随补注归还。空队列 ⇒ flushBase = state，本腿逐字现状。
-            // ── 账本补投（修复批 2026-10-24 spec ②）：先于本事件消费账本挂起件；
-            // 本事件自身的账目经 inFlightPayloads 判重只消费不重注（直投路径的
-            // 事件本体由本分支注入）。
+              case None => IO.unit)
+          // ── Sub-agent result barrier (worker blocking semantics) ──────────
+          // Delegate/SubTask results arriving while more of the same parallel
+          // batch is still outstanding are HELD in pendingEvents instead of
+          // interrupting the agent one result at a time. When the batch completes
+          // (outstanding hits 0), ALL held results are injected together in a
+          // single turn. Non-subagent events keep the existing immediate path.
+          val isSubagentResult = TurnBoundaryDrains.isSubagentResult(event)
+          val outstanding = state.execution.outstandingSubagentResults
+          val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
+          val held = state.execution.pendingEvents
+          if isSubagentResult && newOutstanding > 0 then
+            // #418: an idle parent must NEVER hold a sub-agent result back —
+            // there is no in-flight turn to batch into, and holding it here
+            // parks the parent asleep until user input (delegate COMPLETED
+            // never wakes the parent — the reported bug). Inject THIS result
+            // immediately to wake the parent; the rest of the batch stays HELD
+            // in pendingEvents (injected together by the batch-complete branch
+            // when they arrive), and the counter keeps the decremented
+            // newOutstanding so the #25 nested-debt semantics hold.
             for
-              ledgerFlush <- flushPendingLedgerCompletions(state, List(event.payload))
-              heldFlush = heldFlushPlan(state)
-              flushBase = heldFlush.map(_.state).getOrElse(state)
-              heldMessages = heldFlush.map(_.messages).getOrElse(Nil)
-              _ <-
-                if ledgerFlush.consumedJobIds.nonEmpty then
-                  IO(
-                    logAgentEvent(
-                      agentDef,
-                      depth,
-                      state.sessionId,
-                      state.sessionName,
-                      "bg-ledger-replayed-before-event",
-                      s"consumed=${ledgerFlush.consumedJobIds.size} injected=${ledgerFlush.entries.size} inFlight=${event.eventType}"
-                    )
-                  )
-                else IO.unit
-              _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
               _ <- sessionBusyIO
               _ <- receiveVisibility(waiting = false)
-              _ <-
-                if heldFlush.isDefined then IO.unit
-                else touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
-              // 诊断修复批 2026-10-24：直投腿同认 delegate 终态交付。
+              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size)
               _ <- ackDelegateDelivery(event)
-              // #886：注入即标记（持久投递标记面，与 ack 同点）。不过时批：按身份键。
-              _ <- DeliveredReceiptLedger.markDelivered(state.sessionId.getOrElse(""), DeliveredReceiptLedger.identityKeys(event))
+              // #886：注入即标记（持久投递标记面，与 ack 同点）。不过时批：按身份键
+              // 标记（重投件的原件 id 随行——重启重放闸/intake 闸按身份命中）。
+              _ <- DeliveredReceiptLedger.markDelivered(
+                state.sessionId.getOrElse(""),
+                DeliveredReceiptLedger.identityKeys(event)
+              )
               result <- pipeLlmCall(
                 agentDef,
                 resources,
                 depth,
                 parentRef,
-                flushBase
+                state
                   .withMessages(
-                    // Reminder refactor (2026-08-20): always carry a source marker —
-                    // external-event turns are system events, not real user input
-                    // (fromUser = Message.source.isEmpty).
                     // 媒体统一适配批（2026-10-20）：组装单点 immediateEventMessage——
                     // 带块事件（桥媒体）⇒ Right(Text+blocks)，无块 ⇒ Left 逐字现状。
-                    flushBase.messages ++ ledgerFlush.messages ++ heldMessages :+ immediateEventMessage(
+                    state.messages :+ immediateEventMessage(
                       injectionText,
                       event,
                       visSource.orElse(Some("external"))
                     )
                   )
-                  // #25: apply the barrier decrement. Pre-fix this branch
-                  // computed newOutstanding and dropped it — a single-result
-                  // batch (spawn 1, receive 1, held empty) left the counter
-                  // stuck at 1 forever. Invisible while Completed fired
-                  // unconditionally at turn end; once the completion debt is
-                  // parked (#25) a stuck counter means the debt is NEVER paid
-                  // and the waiting supervisor/bridge hangs.
-                  // flush 腿（回执补注）已把 outstanding 归零（幻影槽位归还），
-                  // 不再叠加本回合事件自身的减量（减无可减）。
-                  .withOutstandingSubagentResults(if heldFlush.isDefined then 0 else newOutstanding)
+                  .withOutstandingSubagentResults(newOutstanding)
                   .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
-                contReplyTo
+                None
               )
             yield result
             end for
-          }
-        }
+          else if isSubagentResult && held.nonEmpty then
+            // Batch complete: inject ALL held results (plus this one) together.
+            val batchMessage = buildEventReminder(held :+ event)
+            // F2 补漏批（2026-10-22）：汇聚腿清空队列后必须重写磁盘快照——入队面
+            // 全量快照过 held 回执（AgentProcessing:1239），此处不持久 ⇒ 已消费回执
+            // 残留 injection-queues.json ⇒ respawn 重放为幽灵回执（10-22 10:36/17:13
+            // 两次重启恢复 events=5/11 的构成面之一）。
+            val cleanedExec =
+              state.execution.copy(
+                outstandingSubagentResults = 0,
+                pendingEvents = Nil
+              )
+            for
+              _ <- sessionBusyIO
+              _ <- receiveVisibility(waiting = false)
+              _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
+              _ <- persistQueues(state.sessionId, cleanedExec)
+              // 诊断修复批 2026-10-24：批次腿同认 delegate 终态交付（任一腿注入即确认）。
+              _ <- ackDelegateDelivery(event)
+              // #886：注入即标记（批次全量——held 件 + 本件；不过时批按身份键）。
+              _ <- DeliveredReceiptLedger.markDelivered(
+                state.sessionId.getOrElse(""),
+                DeliveredReceiptLedger.identityKeysOf(held :+ event)
+              )
+              // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
+              _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
+                emitHeldReceiptsBadge(state, h, u)
+              )
+              result <- pipeLlmCall(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                state
+                  .copy(execution = cleanedExec)
+                  .withMessages(state.messages :+ batchMessage)
+                  .withNextLoopTurn, // Block 3：批次汇聚唤醒 = 新 turn
+                None
+              )
+            yield result
+            end for
+          else
+            // Single immediate result (no batch in flight) or non-subagent event.
+            // ═══ 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）═══
+            // ExternalEvent 唤醒轮此前 replyTo=None → 续跑轮 AgentEvent.Completed
+            // 无人接收——节点观察桥（完成闸单咽喉）在最后一个后台任务完成通知后
+            // 永远等不到复检事件，节点悬挂到兜底上限。修正：node- 前缀（Project
+            // 节点，kind=Flow）会话以 AgentRecord.supervisorRef（=NodeEngine 观察
+            // 桥，注册即粘性完成目标）作为本唤醒轮的 replyTo。
+            // ═══ 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）═══
+            // 原「仅 node- 启用」排除 delegate 的理由（「Completed 会让 BackoffSupervisor
+            // 停 actor」）在等待屏障（sleep-poll 禁令批 A 段，2026-10-20）落地后已
+            // 反转：屏障**依赖**唤醒轮的 Completed 复检投递集（等待集空 ⇒ 释放终判），
+            // 缺席 = 监督者永远停在 hold 私有态——任务行卡 running、父会话永不收到
+            // 结果（实案：barrier 读数 0/0 全清但无任何终态投递，静默 70+ 分钟）。
+            // 修正：delegate 会话 × background-task 完成事件同享 supervisorRef
+            // replyTo。其余事件源（mail/schedule 等）与非 delegate 会话恒 None——
+            // Completed 语义各归既有，零并线。
+            val continuationReplyTo: IO[Option[ActorRef[AgentEvent]]] =
+              state.sessionId
+                .filter(sid =>
+                  wakeContinuationApplies(
+                    isFlowNode = state.isFlowNode,
+                    sessionId = Some(sid),
+                    eventSource = source,
+                    isDelegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(Some(sid))
+                  )
+                )
+                .fold(IO.pure(Option.empty[ActorRef[AgentEvent]]))(sid =>
+                  resources.agentRegistry.get.map(_.get(sid).flatMap(_.supervisorRef))
+                )
+            continuationReplyTo.flatMap { contReplyTo =>
+              // Held-receipt 先补注入（fix 1 第三腿）：非子代理事件（background-task /
+              // Schedule / Mail 询问等）到达且有被扣留的已产出回执 ⇒ 先随本 turn 补注
+              // 回执再注入本事件；屏障随补注归还。空队列 ⇒ flushBase = state，本腿逐字现状。
+              // ── 账本补投（修复批 2026-10-24 spec ②）：先于本事件消费账本挂起件；
+              // 本事件自身的账目经 inFlightPayloads 判重只消费不重注（直投路径的
+              // 事件本体由本分支注入）。
+              for
+                ledgerFlush <- flushPendingLedgerCompletions(state, List(event.payload))
+                heldFlush = heldFlushPlan(state)
+                flushBase = heldFlush.map(_.state).getOrElse(state)
+                heldMessages = heldFlush.map(_.messages).getOrElse(Nil)
+                _ <-
+                  if ledgerFlush.consumedJobIds.nonEmpty then
+                    IO(
+                      logAgentEvent(
+                        agentDef,
+                        depth,
+                        state.sessionId,
+                        state.sessionName,
+                        "bg-ledger-replayed-before-event",
+                        s"consumed=${ledgerFlush.consumedJobIds.size} injected=${ledgerFlush.entries.size} inFlight=${event.eventType}"
+                      )
+                    )
+                  else IO.unit
+                _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
+                _ <- sessionBusyIO
+                _ <- receiveVisibility(waiting = false)
+                _ <-
+                  if heldFlush.isDefined then IO.unit
+                  else touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
+                // 诊断修复批 2026-10-24：直投腿同认 delegate 终态交付。
+                _ <- ackDelegateDelivery(event)
+                // #886：注入即标记（持久投递标记面，与 ack 同点）。不过时批：按身份键。
+                _ <- DeliveredReceiptLedger.markDelivered(
+                  state.sessionId.getOrElse(""),
+                  DeliveredReceiptLedger.identityKeys(event)
+                )
+                result <- pipeLlmCall(
+                  agentDef,
+                  resources,
+                  depth,
+                  parentRef,
+                  flushBase
+                    .withMessages(
+                      // Reminder refactor (2026-08-20): always carry a source marker —
+                      // external-event turns are system events, not real user input
+                      // (fromUser = Message.source.isEmpty).
+                      // 媒体统一适配批（2026-10-20）：组装单点 immediateEventMessage——
+                      // 带块事件（桥媒体）⇒ Right(Text+blocks)，无块 ⇒ Left 逐字现状。
+                      flushBase.messages ++ ledgerFlush.messages ++ heldMessages :+ immediateEventMessage(
+                        injectionText,
+                        event,
+                        visSource.orElse(Some("external"))
+                      )
+                    )
+                    // #25: apply the barrier decrement. Pre-fix this branch
+                    // computed newOutstanding and dropped it — a single-result
+                    // batch (spawn 1, receive 1, held empty) left the counter
+                    // stuck at 1 forever. Invisible while Completed fired
+                    // unconditionally at turn end; once the completion debt is
+                    // parked (#25) a stuck counter means the debt is NEVER paid
+                    // and the waiting supervisor/bridge hangs.
+                    // flush 腿（回执补注）已把 outstanding 归零（幻影槽位归还），
+                    // 不再叠加本回合事件自身的减量（减无可减）。
+                    .withOutstandingSubagentResults(if heldFlush.isDefined then 0 else newOutstanding)
+                    .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
+                  contReplyTo
+                )
+              yield result
+              end for
+            }
+          end if
+        end acceptedBody
         DeliveredReceiptLedger
           .intakeAccepts(state.sessionId.getOrElse(""), state.execution.pendingEvents, event)
           .flatMap {
@@ -771,13 +786,20 @@ private[agent] object AgentIdle:
           _: AgentCommand.SetPermissionDeferred) =>
         // ── pi-logic 接线点 7（轮 A 织入）：idle 静默吞分支显式留痕（病灶 #3——
         //     现状零日志零回执；丢弃语义不变，可观测性升）。──
-        PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
-          .lateDiscarded("idle", late match
-            case AgentCommand.LlmComplete(_, _, t)  => s"llm-complete turnId=$t current=${state.execution.currentTurnId}"
-            case AgentCommand.LlmFailed(_, _, t, _) => s"llm-failed turnId=$t current=${state.execution.currentTurnId}"
-            case _: AgentCommand.ToolsComplete      => "tools-complete"
-            case _                                  => "set-permission-deferred")
+        PiLoopWiring
+          .bridge(state, state.pilogicLedger)((ev, d) =>
+            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d)
+          )
+          .lateDiscarded(
+            "idle",
+            late match
+              case AgentCommand.LlmComplete(_, _, t) =>
+                s"llm-complete turnId=$t current=${state.execution.currentTurnId}"
+              case AgentCommand.LlmFailed(_, _, t, _) =>
+                s"llm-failed turnId=$t current=${state.execution.currentTurnId}"
+              case _: AgentCommand.ToolsComplete => "tools-complete"
+              case _ => "set-permission-deferred"
+          )
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // F2 (2026-08-30): replay persisted injection queues after a crash.
@@ -813,9 +835,8 @@ private[agent] object AgentIdle:
               // 此前恢复面不同步台账 ⇒ 无 producedAt ⇒ watchdog 对重启恢复回执致盲
               // （nudge 文本整天数「1 条」而实际队列 5/11 条），只能等下一次输入触
               // 发 fix-1 腿才投递（实证 2026-10-22 10:36/17:13 两次重启恢复）。
-              syncHeldReceipts(resources, state.sessionId, exec.pendingEvents).flatMap((h, u) =>
-                emitHeldReceiptsBadge(state, h, u)
-              ) *>
+              syncHeldReceipts(resources, state.sessionId, exec.pendingEvents)
+                .flatMap((h, u) => emitHeldReceiptsBadge(state, h, u)) *>
                 // ═══ W1 邮箱扫箱（P2 邮箱化批，设计 §3.4 唤醒点①）═════════════
                 // spawn/恢复点 = taken 残差重注（取走后注入前崩/注入后清前崩的恢复
                 // 面，≤1 重复零丢失）+ pending 全取注入。空箱 = None ⇒ 逐字现状。
@@ -860,13 +881,17 @@ private[agent] object AgentIdle:
             else state.copy(execution = state.execution.copy(pendingEvents = held))
           if held.isEmpty then
             persistQueues(prunedState.sessionId, prunedState.execution) *>
-              touchBarrierSnapshot(resources, prunedState.sessionId, prunedState.execution.outstandingSubagentResults, 0) *>
+              touchBarrierSnapshot(
+                resources,
+                prunedState.sessionId,
+                prunedState.execution.outstandingSubagentResults,
+                0
+              ) *>
               IO.pure(idle(agentDef, resources, depth, parentRef, prunedState))
           else
             val batchMessage = buildEventReminder(held)
-            val cleaned = prunedState.copy(execution =
-              prunedState.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
-            )
+            val cleaned = prunedState
+              .copy(execution = prunedState.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0))
             for
               _ <- IO(
                 logAgentEvent(
@@ -890,9 +915,8 @@ private[agent] object AgentIdle:
                 DeliveredReceiptLedger.identityKeysOf(held)
               )
               _ <- held.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
-              _ <- syncHeldReceipts(resources, prunedState.sessionId, Nil).flatMap((h, u) =>
-                emitHeldReceiptsBadge(prunedState, h, u)
-              )
+              _ <- syncHeldReceipts(resources, prunedState.sessionId, Nil)
+                .flatMap((h, u) => emitHeldReceiptsBadge(prunedState, h, u))
               result <- pipeLlmCall(
                 agentDef,
                 resources,
@@ -912,10 +936,14 @@ private[agent] object AgentIdle:
       // idle 即扫即注：信早已在盘上（mailOnce），门铃只是「请扫箱」的唤醒信号。
       // 空箱（竞态迟到门铃/已被 W3 收口抢先消费）= 幂等 no-op 回 idle。
       case AgentCommand.MailboxArrived =>
-        MailboxDrain
-          .drainIdleFace(state.sessionId.getOrElse(""))
-          .flatMap(events => MailboxDrain.injectIdleTurn(agentDef, resources, depth, parentRef, state, events))
-          .map(_.getOrElse(idle(agentDef, resources, depth, parentRef, state)))
+        MailboxDrain.automaticInjectionAllowed(resources, state.sessionId).flatMap {
+          case false => IO.pure(idle(agentDef, resources, depth, parentRef, state))
+          case true =>
+            MailboxDrain
+              .drainIdleFace(state.sessionId.getOrElse(""))
+              .flatMap(events => MailboxDrain.injectIdleTurn(agentDef, resources, depth, parentRef, state, events))
+              .map(_.getOrElse(idle(agentDef, resources, depth, parentRef, state)))
+        }
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
       // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it
@@ -1191,6 +1219,7 @@ private[agent] object AgentIdle:
             .handleErrorWith(_ => IO.unit)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState.withNextLoopTurn, None)
         yield result
+        end for
 
       case _ =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))

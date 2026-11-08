@@ -282,6 +282,16 @@ final class WorkspaceLedger(val path: os.Path):
 
   def owned(owner: String): Option[Workspace] = snapshot.workspaces.find(_.owner == owner)
 
+  /** Receiving deferred context must not claim execution or reopen a reserved/closed owner. */
+  def checkOpen(owner: String): Either[String, Unit] = transaction { s =>
+    val verdict = s.workspaces.find(_.owner == owner) match
+      case Some(w) if w.lifecycle.startsWith("closed-") =>
+        Left("Workspace is closed; its branch is retained. Create a new delegate explicitly")
+      case Some(w) if w.lifecycle != "open" => Left("Workspace is reserved for merger; development cannot resume")
+      case _ => Right(())
+    (s, verdict)
+  }
+
   /** Existing running owners may receive mail without opening another execution seat. */
   def admit(owner: String, allowFrozen: Boolean): Either[String, Unit] = transaction { s =>
     s.workspaces.find(_.owner == owner) match
