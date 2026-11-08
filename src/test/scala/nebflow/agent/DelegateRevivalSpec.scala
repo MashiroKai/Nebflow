@@ -47,6 +47,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit = resetGlobals()
   override def afterEach(context: munit.AfterEach): Unit = resetGlobals()
+
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
     nebflow.core.LlmLogWriter.setEnabled(true)
@@ -66,7 +67,12 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         StreamChunk.Done(None, None)
       )
 
-  private def mkTask(id: String, parent: String, status: String = "running", revivalCount: Option[Int] = None): SubAgentTask =
+  private def mkTask(
+    id: String,
+    parent: String,
+    status: String = "running",
+    revivalCount: Option[Int] = None
+  ): SubAgentTask =
     SubAgentTask(
       taskId = id,
       parentSessionId = parent,
@@ -148,6 +154,8 @@ class DelegateRevivalSpec extends CatsEffectSuite:
       os.remove.all(tmp)
       os.remove.all(seat)
 
+  end withFx
+
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 100.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -173,7 +181,9 @@ class DelegateRevivalSpec extends CatsEffectSuite:
       taken <- SessionMailbox.scanTaken(parentId)
     yield (pending ++ taken).map(_.event)
 
-  test("V1: eligible orphan revives from transcript checkpoint; the continued turn WITHOUT a declaration is REMINDED (matrix complete×idle), never auto-completed to the parent") {
+  test(
+    "V1: eligible orphan revives from transcript checkpoint; the continued turn WITHOUT a declaration is REMINDED (matrix complete×idle), never auto-completed to the parent"
+  ) {
     withFx("v1") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -203,9 +213,11 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         // nudge 已注入转录（续跑语义——checkpoint + 续跑指令，不是重派）；
         // 注入是复活 fork 内的异步写——waitUntil 等它落盘。
         _ <- waitUntil(10.seconds) {
-          fx.sessionStore.loadMessagesForSession(child).map(transcript =>
-            transcript.exists(m => m.role == MessageRole.User && m.textContent.contains("engine process restarted"))
-          )
+          fx.sessionStore
+            .loadMessagesForSession(child)
+            .map(transcript =>
+              transcript.exists(m => m.role == MessageRole.User && m.textContent.contains("engine process restarted"))
+            )
         }
         // 矩阵腿（状态矩阵批 2026-11-01）：续跑回合（stub 回声终文，无 delegate_report
         // 申报）收尾 ⇒ complete×idle = 提醒腿（NudgeIdle）——绝不自动 completed：
@@ -301,7 +313,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
       def boot(task: SubAgentTask): IO[Unit] =
         // 模拟崩溃现场：行在飞、无活体（本 Fx 从未 spawn 过该会话的 actor——
         // registerAgent 只在复活腿内发生；此处先清 registry 再现「进程死亡」）。
-        fx.resources.agentRegistry.update(_ - task.taskId) *>
+        fx.system.stopAll *> fx.resources.agentRegistry.update(_ - task.taskId) *>
           sweepWith(fx).void *>
           // 回合沉降（矩阵批）：上一次复活所生的 actor 其回声回合是异步的——
           // 无申报收尾走 NudgeIdle 腿（行回 running）。不在 boot 间沉降会让
@@ -314,6 +326,10 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         base = mkTask(child, parent.id)
         _ <- fx.store.recordTask(base)
         _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
+        _ <- fx.sessionStore.durableSwapMessages(
+          child,
+          List(Message(MessageRole.User, Left("original persisted task")))
+        )
         // boot #2（崩溃 #1 之后）：第一次复活。
         _ <- boot(base)
         row1 <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
@@ -331,6 +347,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         live <- fx.resources.agentRegistry.get.map(_.contains(child))
         _ = assert(!live)
       yield ()
+      end for
     }
   }
 
@@ -372,7 +389,9 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     }
   }
 
-  test("V8: author's fake-interrupt scenario — salvaged row flagged interrupted folds once the ledger adjudicates completed") {
+  test(
+    "V8: author's fake-interrupt scenario — salvaged row flagged interrupted folds once the ledger adjudicates completed"
+  ) {
     withFx("v8") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -426,7 +445,9 @@ class DelegateRevivalSpec extends CatsEffectSuite:
   // 年龄 / 并发 cap）9.19 起无一收紧、本批零改动。
   // ══════════════════════════════════════════════════════════════════════════
 
-  test("V10: PURE standby (zero in-flight evidence) at engine restart → still refused, salvage settles failed — 案A semantics preserved") {
+  test(
+    "V10: PURE standby (zero in-flight evidence) at engine restart → still refused, salvage settles failed — 案A semantics preserved"
+  ) {
     withFx("v10") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -441,21 +462,31 @@ class DelegateRevivalSpec extends CatsEffectSuite:
           )
         )
         report <- sweepWith(fx)
-        _ = assertEquals(report.revived, Nil, "a PURE parked standby delegate must NOT be revived into a working session")
+        _ = assertEquals(
+          report.revived,
+          Nil,
+          "a PURE parked standby delegate must NOT be revived into a working session"
+        )
         _ = assertEquals(report.terminalized, List(child))
         _ = assert(
           report.revivalSkipped.exists((id, r) => id == child && r.contains("standby at engine restart")),
           s"standby skip reason recorded: ${report.revivalSkipped}"
         )
         row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
-        _ = assertEquals(row.status, "failed", "salvage settles the honest terminal (never a completed fake, never left running)")
+        _ = assertEquals(
+          row.status,
+          "failed",
+          "salvage settles the honest terminal (never a completed fake, never left running)"
+        )
         live <- fx.resources.agentRegistry.get.map(_.contains(child))
         _ = assert(!live, "pure standby orphan must not be spawned")
       yield ()
     }
   }
 
-  test("V11: standby WHILE its own chain is still in flight (non-terminal scope node) → auto-revived (BB1 form, author ruling 2026-11-04 11:27)") {
+  test(
+    "V11: standby WHILE its own chain is still in flight (non-terminal scope node) → auto-revived (BB1 form, author ruling 2026-11-04 11:27)"
+  ) {
     withFx("v11") { fx =>
       val child = "delegate-nebflow-v11"
       for
@@ -492,6 +523,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         _ = assertEquals(row.revivalCount, Some(1))
         _ = assert(live, "revived chain-wait standby must be registered live")
       yield ()
+      end for
     }
   }
 
@@ -522,6 +554,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         )
         _ = assertEquals(row.status, "running")
       yield ()
+      end for
     }
   }
 
@@ -533,7 +566,8 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         _ <- fx.store.recordTask(mkTask(child, parent.id))
         base <- IO(gitFixture(fx.seat))
         _ <- IO {
-          os.proc("git", "-C", fx.seat.toString, "checkout", "-q", "-b", "delegate/spec-v13").call(cwd = fx.seat, check = true)
+          os.proc("git", "-C", fx.seat.toString, "checkout", "-q", "-b", "delegate/spec-v13")
+            .call(cwd = fx.seat, check = true)
           os.write(fx.seat / "delivered.txt", "committed deliverable")
           os.proc("git", "-C", fx.seat.toString, "add", "-A").call(cwd = fx.seat, check = true)
           os.proc("git", "-C", fx.seat.toString, "commit", "-q", "-m", "deliverable").call(cwd = fx.seat, check = true)
@@ -561,10 +595,13 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         )
         _ = assertEquals(row.status, "running")
       yield ()
+      end for
     }
   }
 
-  test("V14: cancel tombstone WINS over in-flight evidence — a cancelled delegate is never revived (author: only manual cancel/close stay dead)") {
+  test(
+    "V14: cancel tombstone WINS over in-flight evidence — a cancelled delegate is never revived (author: only manual cancel/close stay dead)"
+  ) {
     withFx("v14") { fx =>
       val child = "delegate-nebflow-v14"
       for
@@ -598,6 +635,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         _ = assertEquals(row.status, "failed")
         _ = assert(!live, "no actor may be spawned for a cancelled delegate")
       yield ()
+      end for
     }
   }
 
@@ -612,11 +650,13 @@ class DelegateRevivalSpec extends CatsEffectSuite:
   test("V15: failed row carrying the restart-loss fingerprint → revivable on the next boot (no manual Mail needed)") {
     withFx("v15") { fx =>
       val child = "delegate-nebflow-v15"
-      val lost = s"${SubAgentStartupRecovery.RestartLossFingerprint} — partial result salvaged and delivered to parent (startup recovery V2)"
+      val lost =
+        s"${SubAgentStartupRecovery.RestartLossFingerprint} — partial result salvaged and delivered to parent (startup recovery V2)"
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
         _ <- fx.store.recordTask(
-          mkTask(child, parent.id, status = "failed").copy(lastError = Some(lost), completedAt = Some(System.currentTimeMillis() - 5_000L))
+          mkTask(child, parent.id, status = "failed")
+            .copy(lastError = Some(lost), completedAt = Some(System.currentTimeMillis() - 5_000L))
         )
         _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
         _ <- fx.sessionStore.saveMessagesForSession(
@@ -636,6 +676,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         _ = assertEquals(row.lastError, None, "the stale restart-loss error is cleared by the new execution window")
         _ = assert(live, "the revived failed row is spawned live")
       yield ()
+      end for
     }
   }
 
@@ -658,16 +699,22 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         _ = assertEquals(report.revived, Nil, "an honest natural failure is NOT an orphan of the restart")
         _ = assertEquals(report.terminalized, Nil, "and it is not re-terminalized either (zero action)")
         _ = assertEquals(row.status, "failed")
-        _ = assertEquals(row.lastError, Some("LLM stream error: chunked transfer encoding"), "the honest error is untouched")
+        _ = assertEquals(
+          row.lastError,
+          Some("LLM stream error: chunked transfer encoding"),
+          "the honest error is untouched"
+        )
         _ = assert(!live, "no spawn for a genuinely failed delegate")
       yield ()
+      end for
     }
   }
 
   test("V17: failed row with the fingerprint but an EXHAUSTED budget → no revival (bounded, no infinite loop)") {
     withFx("v17") { fx =>
       val child = "delegate-nebflow-v17"
-      val lost = s"${SubAgentStartupRecovery.RestartLossFingerprint} — result lost, parent notified (startup recovery V2)"
+      val lost =
+        s"${SubAgentStartupRecovery.RestartLossFingerprint} — result lost, parent notified (startup recovery V2)"
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
         _ <- fx.store.recordTask(
@@ -687,6 +734,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         _ = assertEquals(row.revivalCount, Some(2), "no extra budget consumption on the refused attempt")
         _ = assert(!live)
       yield ()
+      end for
     }
   }
 
@@ -701,7 +749,6 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     git("add", "-A")
     git("commit", "-q", "-m", "seed")
     git("rev-parse", "--abbrev-ref", "HEAD")
-
 
   test("V9: cancel tombstone on record → sweep refuses revival, salvage settles failed (R1 三路径·boot sweep 腿)") {
     withFx("v9") { fx =>

@@ -34,6 +34,7 @@ try {
   const card = session.page.locator('#workspace-live-card');
   const input = card.locator('input[required]');
   await input.waitFor();
+  assert(await card.locator('button').filter({ hasText: /恢复合并会话|Resume merger session/ }).isHidden());
   await input.fill('draft-baseline');
   await card.locator('input[type=checkbox]').check();
   await input.focus();
@@ -64,6 +65,21 @@ try {
   await session.page.waitForFunction(() => document.querySelector('#workspace-live-card').textContent.includes('目录已清理'));
   assert.deepEqual(cleanupRequest, { previewToken: 'exact-preview', confirmUnmerged: true, discardUncommitted: true });
   assert(await card.getByRole('button', { name: /清理工作区|Clean up workspace/ }).isDisabled());
-  console.log('PASS live workspaces: event refresh, focus/draft/selection preservation, stale response rejection, explicit cleanup confirmation');
+  snapshot = { ...snapshot, revision: 6,
+    mergerInitialization: { status: 'failed', error: 'saved initialization failure' } };
+  await session.frame({ type: 'workspaceLedgerUpdated', revision: 6 });
+  await session.page.waitForFunction(() => document.querySelector('#workspace-live-card').textContent.includes('saved initialization failure'));
+  await card.getByRole('button', { name: /恢复合并会话|Resume merger session/ }).click();
+  const wake = await session.page.evaluate(() => window.__wsSent.filter(frame => frame.type === 'delegateWake').at(-1));
+  assert.deepEqual(wake, { type: 'delegateWake', sessionId: 'merger', instruction: '' });
+  await session.frame({ type: 'delegateWakeResult', sessionId: 'merger', ok: false, error: 'review unknown tool outcome' });
+  await session.page.waitForFunction(() => document.querySelector('#workspace-live-card').textContent.includes('review unknown tool outcome'));
+  assert(!(await card.getByRole('button', { name: /恢复合并会话|Resume merger session/ }).isDisabled()));
+  await card.getByRole('button', { name: /打开合并会话|Open merger session/ }).click();
+  await session.page.waitForFunction(async () => {
+    const { chatViews } = await import('/js/chatView.js');
+    return chatViews['bgagent-merger']?.sessionId === 'merger';
+  });
+  console.log('PASS live workspaces: event refresh, focus/draft/selection preservation, stale response rejection, explicit cleanup confirmation, initialization failure and merger session entry');
   await session.close();
 } finally { await browser.close(); }

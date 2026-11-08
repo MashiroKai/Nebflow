@@ -1,7 +1,7 @@
 import { h } from './dom.js';
 import { t } from './i18n.js';
 import { showConfirm, canShowConfirm } from './modal.js';
-import { onMessage, onReconnect } from './ws.js';
+import { onMessage, onReconnect, sendWs } from './ws.js';
 import {
   fetchProjectWorkspaces, saveProjectBaseline, submitProjectMerge, cancelProjectMerge,
   previewProjectWorkspaceCleanup, cleanProjectWorkspace,
@@ -17,6 +17,12 @@ function refreshOpen(revision) {
 }
 onMessage('workspaceLedgerUpdated', message => refreshOpen(Number(message.revision)));
 onReconnect(() => refreshOpen());
+onMessage('delegateWakeResult', message => {
+  for (const instance of instances) {
+    if (!instance.connected()) { instances.delete(instance); continue; }
+    instance.wakeResult(message);
+  }
+});
 
 function phaseLabel(phase) {
   const basic = {
@@ -59,6 +65,18 @@ export function mountProjectWorkspaces(card, name) {
   const workspaceList = h('ul', { class: 'project-workspaces-list' }, [empty]);
   const requestList = h('div', { class: 'project-workspaces-requests' });
   const merger = h('p', { class: 'project-workspaces-meta' });
+  const openMerger = h('button', { type: 'button', class: 'project-link-btn', hidden: true,
+    'on:click': () => {
+      const id = currentData?.merger?.delegateId;
+      if (id) import('./bgAgentPopup.js').then(module => module.openStepPopup(id));
+    } }, t('project.openMerger'));
+  const resumeMerger = h('button', { type: 'button', class: 'project-link-btn', hidden: true,
+    'on:click': () => {
+      const id = currentData?.merger?.delegateId;
+      if (!id) return;
+      resumeMerger.disabled = true;
+      sendWs({ type: 'delegateWake', sessionId: id, instruction: '' });
+    } }, t('project.resumeMerger'));
   const merge = h('button', { type: 'button', class: 'project-link-btn', disabled: true, 'on:click': async () => {
     if (!selected.size || submitting) return;
     submitting = true;
@@ -76,7 +94,7 @@ export function mountProjectWorkspaces(card, name) {
   } }, t('project.mergeSelected'));
   const detail = h('details', { class: 'project-workspaces' }, [
     h('summary', {}, t('project.workspaces')), form, workspaceList,
-    h('p', { class: 'project-workspaces-meta' }, t('project.mergeScope')), merge, message, requestList, merger,
+    h('p', { class: 'project-workspaces-meta' }, t('project.mergeScope')), merge, message, requestList, merger, openMerger, resumeMerger,
   ]);
   card.appendChild(detail);
   function updateMerge() { merge.disabled = submitting || !selected.size || !currentData?.merger; }
@@ -188,6 +206,14 @@ export function mountProjectWorkspaces(card, name) {
     }
     for (const [id, row] of requests) if (!activeRequests.has(id)) { row.element.remove(); requests.delete(id); }
     merger.textContent = data.merger ? `Merger · delegate:${data.merger.delegateId}` : t('project.mergerRequired');
+    openMerger.hidden = !data.merger;
+    resumeMerger.hidden = !data.merger || data.mergerInitialization?.status !== 'failed';
+    resumeMerger.disabled = false;
+    if (data.mergerInitialization?.status === 'initializing') merger.textContent += ` · ${t('project.mergerInitializing')}`;
+    if (data.mergerInitialization?.status === 'failed') {
+      merger.textContent += ` · ${t('project.mergerRecoveryRequired')}`;
+      if (data.mergerInitialization.error) merger.textContent += ` · ${data.mergerInitialization.error}`;
+    }
     updateMerge();
   }
   async function refresh() {
@@ -197,7 +223,13 @@ export function mountProjectWorkspaces(card, name) {
       if (card.isConnected) apply(data);
     } catch (error) { if (generation === fetchGeneration) message.textContent = error.message; }
   }
-  const instance = { refresh, revision: () => revision, connected: () => card.isConnected, open: () => detail.open };
+  function wakeResult(result) {
+    if (result.sessionId !== currentData?.merger?.delegateId) return;
+    resumeMerger.disabled = false;
+    message.textContent = result.ok ? t('project.mergerRecoveryAccepted') : result.error || t('project.mergerRecoveryRequired');
+    refresh();
+  }
+  const instance = { refresh, wakeResult, revision: () => revision, connected: () => card.isConnected, open: () => detail.open };
   mounted.set(card, instance);
   instances.add(instance);
   detail.addEventListener('toggle', () => { if (detail.open) refresh(); });

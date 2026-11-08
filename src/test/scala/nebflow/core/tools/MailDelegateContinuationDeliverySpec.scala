@@ -444,6 +444,26 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     for
       resources <- mkResources(system, hang = true)
       _ <- seedDeadDelegate(id, "managed-parent")
+      _ <- resources.sessionStore.durableSwapMessages(
+        id,
+        List(Message(MessageRole.User, Left("saved merger initialization")))
+      )
+      _ <- resources.subAgentTaskStore.recordTask(
+        SubAgentTask(
+          taskId = id,
+          parentSessionId = "managed-parent",
+          agentName = "nebflow",
+          prompt = "saved merger initialization",
+          description = "managed merger",
+          status = "running",
+          retryCount = 0,
+          spawnedAt = System.currentTimeMillis(),
+          completedAt = None,
+          lastError = None,
+          source = "delegate",
+          mode = Some("merger")
+        )
+      )
       _ <- IO.blocking {
         DelegateRegistry.put(DelegateRegistry.find(id).get.copy(mode = Some("merger")))
         nebflow.core.delegate.WorkspaceLedger.default.merger("project", "managed-crash-repository", id)
@@ -489,6 +509,14 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
           .map(_.delegateId),
         Some(id)
       )
+      woke <- nebflow.agent.DelegateWakeLeg.wake(resources, None, id, "continue after the crash", "panel-wake")
+      _ = assert(woke.isRight, woke.toString)
+      newRegistry <- resources.agentRegistry.get
+      restored = newRegistry(id)
+      _ = assert(restored.ref.path != child.path)
+      alive <- system.isAlive(restored.ref.path)
+      _ = assert(alive)
+      _ = assert(!DelegateRegistry.isFrozen(id))
       _ <- system.stopAll
     yield ()
 

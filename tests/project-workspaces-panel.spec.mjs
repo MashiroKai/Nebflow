@@ -50,8 +50,20 @@ try {
     const geometry = await section.evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth,
       visible: element.getBoundingClientRect().width > 0 }));
     assert(geometry.visible && geometry.scroll <= geometry.width + 2, `overflow ${width}/${theme}: ${JSON.stringify(geometry)}`);
+    const resume = section.locator('button').filter({ hasText: '恢复合并会话' });
+    assert(await resume.isHidden(), 'ready or legacy merger does not offer initialization recovery');
     await session.page.screenshot({ path: `${out}/${width}-${theme}.png`, fullPage: true });
-    results.push({ width, theme, geometry, keyboard });
+    const open = section.getByRole('button', { name: '打开合并会话', exact: true });
+    await open.scrollIntoViewIfNeeded();
+    await open.focus();
+    const footerVisible = await open.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return hit === element || element.contains(hit);
+    });
+    assert(footerVisible, `merger entry reachable without an overlay ${width}/${theme}`);
+    await session.page.screenshot({ path: `${out}/${width}-${theme}-footer.png`, fullPage: true });
+    results.push({ width, theme, geometry, keyboard, footerVisible });
     await session.close();
   }
   writeFileSync(`${out}/results.json`, JSON.stringify(results, null, 2));

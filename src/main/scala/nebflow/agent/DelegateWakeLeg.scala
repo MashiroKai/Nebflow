@@ -56,7 +56,10 @@ object DelegateWakeLeg:
     via: String
   ): IO[Result] =
     exclusiveWake(delegateId) {
-      resources.sessionStore.loadMessagesForSession(delegateId).attempt.flatMap {
+      (nebflow.core.delegate.MergerInitialization.repair(resources, delegateId) *>
+        resources.sessionStore.loadMessagesForSession(delegateId)).attempt.flatMap {
+        case Left(_: nebflow.core.delegate.MergerInitialization.SessionBusy) =>
+          IO.pure(Left("Recovery is already in progress (RECOVERY_IN_PROGRESS)"))
         case Left(_) => IO.pure(Left("Cannot read saved context (RECOVERY_UNVERIFIED)"))
         case Right(messages) if messages.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(messages) =>
           IO.pure(Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)"))
@@ -96,38 +99,43 @@ object DelegateWakeLeg:
         )
         val body = if instruction.trim.isEmpty then banner else s"$banner\n\n$instruction"
         resources.agentRegistry.get.flatMap { reg =>
-          reg.get(delegateId) match
-            case Some(live) if live.kind == nebflow.actor.AgentKind.Delegate =>
-              // 无感恢复批 2026-11-07：唤醒载荷单点 = [[nebflow.core.ResumeHandoff]]。
-              // 冻结可能发生在工具批次中途（断点处留下无 result 的 tool_use）⇒ 模型
-              // 收到那次调用的 tool_result，接着往下走；无工具边界时才注入唤醒横幅。
-              val handoff = nebflow.core.ResumeHandoff.plan(
-                transcript,
-                nebflow.core.ResumeHandoff.Cause.Freeze,
-                instruction = instruction,
-                legacyText = body
-              )
-              IO(nebflow.core.ResumeHandoff.logPlan(delegateId, handoff, nebflow.core.ResumeHandoff.Cause.Freeze)) *>
-                (live.ref ! nebflow.core.ResumeHandoff.userInput(
-                  handoff,
-                  replyTo = live.supervisorRef,
-                  // 幂等键：同一次冻结只认一次唤醒（面板连点 / 引擎自愈撞车 ⇒ 单回合）。
-                  clientMessageId = Some(s"frozen-wake:$delegateId:$frozenSince"),
-                  sender = Some(via),
-                  eventType = Some("info")
-                )) *>
-                nebflow.core.delegate.DelegateFreeze
-                  .onWoken(resources, delegateId, via, wsSend)
-                  .handleErrorWith(e =>
-                    nebflow.shared.NebflowLogger
-                      .forName("nebflow.agent.delegate-wake")
-                      .warn(s"[delegate-wake] onWoken failed for $delegateId: ${e.getMessage}")
-                  )
-                  .as(Right("live"): Result)
-            case _ =>
-              DelegateRevival
-                .wakeFrozen(DelegateRevival.Deps(resources, resources.actorSystem, wsSend), delegateId, instruction)
-                .map(_.map(_ => "revived"))
+          val verified = reg.get(delegateId).fold(IO.pure(Option.empty[nebflow.actor.AgentRecord])) { record =>
+            resources.actorSystem.isAlive(record.ref.path).map(alive => Option.when(alive)(record))
+          }
+          verified.flatMap { current =>
+            current match
+              case Some(live) if live.kind == nebflow.actor.AgentKind.Delegate =>
+                // 无感恢复批 2026-11-07：唤醒载荷单点 = [[nebflow.core.ResumeHandoff]]。
+                // 冻结可能发生在工具批次中途（断点处留下无 result 的 tool_use）⇒ 模型
+                // 收到那次调用的 tool_result，接着往下走；无工具边界时才注入唤醒横幅。
+                val handoff = nebflow.core.ResumeHandoff.plan(
+                  transcript,
+                  nebflow.core.ResumeHandoff.Cause.Freeze,
+                  instruction = instruction,
+                  legacyText = body
+                )
+                IO(nebflow.core.ResumeHandoff.logPlan(delegateId, handoff, nebflow.core.ResumeHandoff.Cause.Freeze)) *>
+                  (live.ref ! nebflow.core.ResumeHandoff.userInput(
+                    handoff,
+                    replyTo = live.supervisorRef,
+                    // 幂等键：同一次冻结只认一次唤醒（面板连点 / 引擎自愈撞车 ⇒ 单回合）。
+                    clientMessageId = Some(s"frozen-wake:$delegateId:$frozenSince"),
+                    sender = Some(via),
+                    eventType = Some("info")
+                  )) *>
+                  nebflow.core.delegate.DelegateFreeze
+                    .onWoken(resources, delegateId, via, wsSend)
+                    .handleErrorWith(e =>
+                      nebflow.shared.NebflowLogger
+                        .forName("nebflow.agent.delegate-wake")
+                        .warn(s"[delegate-wake] onWoken failed for $delegateId: ${e.getMessage}")
+                    )
+                    .as(Right("live"): Result)
+              case _ =>
+                DelegateRevival
+                  .wakeFrozen(DelegateRevival.Deps(resources, resources.actorSystem, wsSend), delegateId, instruction)
+                  .map(_.map(_ => "revived"))
+          }
         }
     }
 

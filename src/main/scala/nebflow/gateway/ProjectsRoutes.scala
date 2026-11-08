@@ -97,7 +97,12 @@ private[gateway] object ProjectsRoutes:
                   }.asJson,
                   "workspaces" -> snapshot.workspaces.filter(_.repository == repository).asJson,
                   "mergeRequests" -> snapshot.requests.filter(_.repository == repository).asJson,
-                  "merger" -> snapshot.mergers.find(_.repository == repository).asJson
+                  "merger" -> snapshot.mergers.find(_.repository == repository).asJson,
+                  "mergerInitialization" -> snapshot.mergers
+                    .find(_.repository == repository)
+                    .flatMap(m => snapshot.mergerBootstraps.get(m.delegateId))
+                    .map(seed => Json.obj("status" -> seed.status.asJson, "error" -> seed.error.asJson))
+                    .asJson
                 )
               }.flatMap(Ok(_))
                 .handleErrorWith(e => Conflict(Json.obj("error" -> e.getMessage.asJson)))

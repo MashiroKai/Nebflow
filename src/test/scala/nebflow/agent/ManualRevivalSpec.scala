@@ -12,14 +12,7 @@ import nebflow.core.mail.SessionMailbox
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{
-  Message,
-  MessageRole,
-  PathUtil,
-  StreamChunk,
-  SubAgentTask,
-  ThinkingConfig
-}
+import nebflow.shared.{Message, MessageRole, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -66,7 +59,12 @@ class ManualRevivalSpec extends FunSuite:
         StreamChunk.Done(None, None)
       )
 
-  private def mkTask(id: String, parent: String, status: String = "running", lastError: Option[String] = None): SubAgentTask =
+  private def mkTask(
+    id: String,
+    parent: String,
+    status: String = "running",
+    lastError: Option[String] = None
+  ): SubAgentTask =
     SubAgentTask(
       taskId = id,
       parentSessionId = parent,
@@ -153,6 +151,8 @@ class ManualRevivalSpec extends FunSuite:
       os.remove.all(tmp)
       os.remove.all(seat)
 
+  end withFx
+
   /** 手动模式 boot sweep（生产装配形态：缺省 manual = true）。 */
   private def manualSweep(fx: Fx) =
     SubAgentStartupRecovery.sweep(
@@ -179,7 +179,9 @@ class ManualRevivalSpec extends FunSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  test("MR1: manual boot sweep saves state — in-flight orphan + queue-less ready-to-merge zombie → pending-recovery, zero revive, zero terminalize, zero upward notify") {
+  test(
+    "MR1: manual boot sweep saves state — in-flight orphan + queue-less ready-to-merge zombie → pending-recovery, zero revive, zero terminalize, zero upward notify"
+  ) {
     withFx("mr1") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -202,7 +204,11 @@ class ManualRevivalSpec extends FunSuite:
         assertEquals(report.revived, Nil, s"manual mode never auto-revives: ${report.summary}")
         assertEquals(report.pended.sorted, List(running, zombie).sorted, s"both rows must be pended: ${report.summary}")
         rows.foreach { r =>
-          assertEquals(r.status, SubAgentStartupRecovery.PendingRecoveryStatus, s"row ${r.taskId} must be saved as pending-recovery")
+          assertEquals(
+            r.status,
+            SubAgentStartupRecovery.PendingRecoveryStatus,
+            s"row ${r.taskId} must be saved as pending-recovery"
+          )
           assertEquals(r.completedAt, None, s"row ${r.taskId} must not be terminalized (no completedAt)")
           assert(
             !r.lastError.exists(_.startsWith(SubAgentStartupRecovery.RestartLossFingerprint)),
@@ -216,7 +222,9 @@ class ManualRevivalSpec extends FunSuite:
     }
   }
 
-  test("MR2: a second boot does not disturb pending rows (idempotent save; never auto-terminalizes behind the user's back)") {
+  test(
+    "MR2: a second boot does not disturb pending rows (idempotent save; never auto-terminalizes behind the user's back)"
+  ) {
     withFx("mr2") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -230,13 +238,19 @@ class ManualRevivalSpec extends FunSuite:
         assertEquals(first.pended, List(id), s"first boot pends: ${first.summary}")
         assertEquals(second.terminalized, Nil, "second boot must not terminalize a pending row")
         assertEquals(second.revived, Nil, "second boot must not auto-revive")
-        assertEquals(row.status, SubAgentStartupRecovery.PendingRecoveryStatus, "the saved state is stable across boots")
+        assertEquals(
+          row.status,
+          SubAgentStartupRecovery.PendingRecoveryStatus,
+          "the saved state is stable across boots"
+        )
         assertEquals(row.completedAt, None, "still not terminal after the second boot")
         assertEquals(events, Nil, "still zero upward notify")
     }
   }
 
-  test("MR3: restoreAll (panel 一键全部恢复) revives every eligible pending row in place — same id, resumed transcript, row back to running") {
+  test(
+    "MR3: restoreAll (panel 一键全部恢复) revives every eligible pending row in place — same id, resumed transcript, row back to running"
+  ) {
     withFx("mr3") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -273,7 +287,40 @@ class ManualRevivalSpec extends FunSuite:
     }
   }
 
-  test("MR4: restoreOne — unknown id and non-restorable rows are refused with panel-readable reasons (no spawn attempted)") {
+  test("manual recovery refuses missing history and unknown tool outcomes before starting or changing the task row") {
+    withFx("unverified-context") { fx =>
+      val id = "delegate-unverified-context"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(mkTask(id, parent.id, "pending-recovery"))
+        _ <- IO(DelegateRegistry.put(mkRecord(id, parent.id, fx.seat.toString)))
+        missing <- ManualRevival.restoreOne(fx.deps, fx.store, id)
+        _ = assert(missing.left.toOption.exists(_.contains("RECOVERY_UNVERIFIED")))
+        unknown = List(
+          Message(MessageRole.User, Left("saved task")),
+          Message(
+            MessageRole.Assistant,
+            Right(List(nebflow.shared.ContentBlock.ToolUse("unknown-write", "Bash", io.circe.JsonObject.empty)))
+          )
+        )
+        _ <- fx.sessionStore.durableSwapMessages(id, unknown)
+        result <- ManualRevival.restoreOne(fx.deps, fx.store, id)
+        _ = assert(result.left.toOption.exists(_.contains("RECOVERY_UNVERIFIED")))
+        row <- fx.store.findByTaskId(id)
+        _ = assertEquals(row.map(_.status), Some("pending-recovery"))
+        _ = assertEquals(row.flatMap(_.revivalCount), None)
+        live <- fx.resources.agentRegistry.get
+        _ = assert(!live.contains(id))
+        saved <- fx.sessionStore.loadMessagesForSession(id)
+        _ = assertEquals(saved, unknown)
+      yield ()
+      end for
+    }
+  }
+
+  test(
+    "MR4: restoreOne — unknown id and non-restorable rows are refused with panel-readable reasons (no spawn attempted)"
+  ) {
     // 这些分支在 deps 被解引用之前返回 ⇒ null Deps 是诚实缺省（源序：find → 状态闸）。
     val noDeps = DelegateRevival.Deps(null, null, None)
     val tmp = os.temp.dir(prefix = "manual-revival-mr4")
@@ -294,17 +341,26 @@ class ManualRevivalSpec extends FunSuite:
         done.isLeft && done.left.exists(_.contains("not restorable")),
         s"a completed row is an honest terminal state, not restart damage: $done"
       )
-      assert(running.isLeft && running.left.exists(_.contains("not restorable")), s"a running row is not in the recovery view: $running")
+      assert(
+        running.isLeft && running.left.exists(_.contains("not restorable")),
+        s"a running row is not in the recovery view: $running"
+      )
       // restoreAll 的空集快路（无 deps 解引用）：没有可恢复行 ⇒ (Nil, Nil)，绝不抛。
       assertEquals(all, (Nil, Nil), "empty recovery view is a no-op")
     finally
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+    end try
   }
 
-  test("MR5: recovery view = pending-recovery / frozen / restart-fingerprint failed rows; honest failed and completed rows stay out") {
+  test(
+    "MR5: recovery view = pending-recovery / frozen / restart-fingerprint failed rows; honest failed and completed rows stay out"
+  ) {
     val fp = SubAgentStartupRecovery.RestartLossFingerprint
-    assert(ManualRevival.isRestorableRow(mkTask("d1", "p", "pending-recovery")), "manual-mode saved state is restorable")
+    assert(
+      ManualRevival.isRestorableRow(mkTask("d1", "p", "pending-recovery")),
+      "manual-mode saved state is restorable"
+    )
     assert(ManualRevival.isRestorableRow(mkTask("d2", "p", "frozen")), "model-invalid frozen row is restorable")
     assert(
       ManualRevival.isRestorableRow(mkTask("d3", "p", "failed", Some(s"$fp — result lost"))),
@@ -319,7 +375,9 @@ class ManualRevivalSpec extends FunSuite:
     assert(!ManualRevival.isRestorableRow(mkTask("d7", "p", "pending")), "a queued row was never started")
   }
 
-  test("MR6: ManualRevivalHost is a one-slot assembly holder — install/current/reset, absent deps is a readable None (never an NPE)") {
+  test(
+    "MR6: ManualRevivalHost is a one-slot assembly holder — install/current/reset, absent deps is a readable None (never an NPE)"
+  ) {
     nebflow.gateway.ManualRevivalHost.reset()
     assertEquals(nebflow.gateway.ManualRevivalHost.current, None, "before boot assembly the holder is empty")
     val deps = DelegateRevival.Deps(null, null, None)
@@ -336,13 +394,18 @@ class ManualRevivalSpec extends FunSuite:
       try
         value match
           case Some(v) => System.setProperty(prop, v)
-          case None    => System.clearProperty(prop)
+          case None => System.clearProperty(prop)
         body
-      finally before match
-        case Some(v) => System.setProperty(prop, v)
-        case None    => System.clearProperty(prop)
-    withProp(None)(assertEquals(nebflow.shared.Defaults.RestartRecoveryManual, true, "production default = manual recovery"))
-    withProp(Some("false"))(assertEquals(nebflow.shared.Defaults.RestartRecoveryManual, false, "rollback switch off = legacy auto revival"))
+      finally
+        before match
+          case Some(v) => System.setProperty(prop, v)
+          case None => System.clearProperty(prop)
+    withProp(None)(
+      assertEquals(nebflow.shared.Defaults.RestartRecoveryManual, true, "production default = manual recovery")
+    )
+    withProp(Some("false"))(
+      assertEquals(nebflow.shared.Defaults.RestartRecoveryManual, false, "rollback switch off = legacy auto revival")
+    )
     withProp(Some("true"))(assertEquals(nebflow.shared.Defaults.RestartRecoveryManual, true))
   }
 

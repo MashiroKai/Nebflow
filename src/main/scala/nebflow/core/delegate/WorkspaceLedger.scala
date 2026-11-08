@@ -48,14 +48,38 @@ final class WorkspaceLedger(val path: os.Path):
   }
 
   /** One identity for aliases of the same repository; never silently accept a task. */
-  def merger(project: String, repository: String, candidateId: String): Merger = transaction { s =>
+  def merger(
+    project: String,
+    repository: String,
+    candidateId: String,
+    bootstrap: Option[MergerBootstrap] = None
+  ): Merger = transaction { s =>
     s.mergers.find(m => m.repository == repository || m.project == project) match
       case Some(existing) if existing.repository != repository =>
         throw new IllegalStateException("Project repository changed; merger reconciliation required")
       case Some(existing) => (s, existing)
       case None =>
         val created = Merger(project, repository, candidateId)
-        (s.copy(mergers = s.mergers :+ created), created)
+        (
+          s.copy(
+            mergers = s.mergers :+ created,
+            mergerBootstraps = s.mergerBootstraps ++ bootstrap.map(candidateId -> _)
+          ),
+          created
+        )
+  }
+
+  def markMergerInitialization(id: String, status: String, error: Option[String]): Unit = transaction { s =>
+    require(Set("initializing", "ready", "failed").contains(status), "Invalid merger initialization status")
+    val next = s.mergerBootstraps
+      .get(id)
+      .fold(s)(seed =>
+        s.copy(mergerBootstraps =
+          s.mergerBootstraps
+            .updated(id, seed.copy(status = status, error = error, everStarted = seed.everStarted || status == "ready"))
+        )
+      )
+    (next, ())
   }
 
   def claimDevelopment(id: String, owner: String, revision: Long): Either[String, Workspace] =
@@ -338,6 +362,31 @@ object WorkspaceLedger:
   )
   final case class Merger(project: String, repository: String, delegateId: String)
 
+  final case class MergerBootstrap(
+    record: DelegateRegistry.Record,
+    prompt: String,
+    status: String = "initializing",
+    error: Option[String] = None,
+    everStarted: Boolean = false
+  )
+  given io.circe.Encoder[MergerBootstrap] = deriveEncoder
+
+  given io.circe.Decoder[MergerBootstrap] = io.circe.Decoder.instance { c =>
+    for
+      record <- c.get[DelegateRegistry.Record]("record")
+      prompt <- c.get[String]("prompt")
+      status <- c.get[Option[String]]("status")
+      error <- c.get[Option[String]]("error")
+      started <- c.get[Option[Boolean]]("everStarted")
+    yield MergerBootstrap(
+      record,
+      prompt,
+      status.getOrElse("failed"),
+      error,
+      started.getOrElse(!status.contains("initializing"))
+    )
+  }
+
   final case class MergeItem(
     workspaceId: String,
     sourceCommit: String,
@@ -380,7 +429,8 @@ object WorkspaceLedger:
     baselines: Map[String, String] = Map.empty,
     requests: List[MergeRequest] = Nil,
     cleanups: Map[String, CleanupClaim] = Map.empty,
-    revision: Long = 0L
+    revision: Long = 0L,
+    mergerBootstraps: Map[String, MergerBootstrap] = Map.empty
   )
   given io.circe.Codec[Workspace] = deriveCodec
   given io.circe.Codec[Merger] = deriveCodec
@@ -394,13 +444,15 @@ object WorkspaceLedger:
       requests <- c.get[Option[List[MergeRequest]]]("requests")
       cleanups <- c.get[Option[Map[String, CleanupClaim]]]("cleanups")
       revision <- c.get[Option[Long]]("revision")
+      bootstraps <- c.get[Option[Map[String, MergerBootstrap]]]("mergerBootstraps")
     yield State(
       workspaces,
       mergers,
       baselines.getOrElse(Map.empty),
       requests.getOrElse(Nil),
       cleanups.getOrElse(Map.empty),
-      revision.getOrElse(0L)
+      revision.getOrElse(0L),
+      bootstraps.getOrElse(Map.empty)
     )
   }
 

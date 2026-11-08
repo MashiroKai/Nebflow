@@ -1091,3 +1091,5 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
 .project-workspaces-meta { color: var(--ds-text-muted); margin-block: var(--ds-space-2); }
 .project-workspaces-message { white-space: pre-wrap; }
 .project-workspaces-requests { margin-top: var(--ds-space-3); }
+
+.project-workspaces [hidden] { display: none; }

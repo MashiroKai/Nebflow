@@ -4643,7 +4643,7 @@ body.mobile-layer #usage-dashboard .ud-dim {
 /* ── 项目面：矩形「查看 / 编辑」文字链 + 两枚 40px 浮动圆钮 ───────────────
    .project-link-btn 是**行内文字链**（无内距无高度 ⇒ 58×17）：补 44 触控盒
    （本体文字形态不变，纵向内距补足）。 */
-body.mobile-layer #mobile-pages .project-link-btn {
+body.mobile-layer #mobile-pages .project-link-btn:not([hidden]) {
   display: inline-flex;
   align-items: center;
   min-height: var(--mtap);

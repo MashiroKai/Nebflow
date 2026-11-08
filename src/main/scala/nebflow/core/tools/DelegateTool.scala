@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
@@ -1213,22 +1214,58 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       else if sessionDevice.isDefined then
         IO.raiseError(new IllegalArgumentException("Create the merger on the project's device"))
       else
-        IO.blocking {
-          nebflow.core.delegate.WorkspaceLedger.default
-            .merger(
-              project.getOrElse(workspace),
-              nebflow.core.delegate.WorkspaceLedger.repositoryKey(os.Path(workspace)),
-              subagentId
+        resources.msgTokens
+          .resolveForAgent(
+            assembleBrief(
+              workspaceLine = s"[workspace] $workspace (file tools need absolute paths)",
+              bindingLine = None,
+              task = task,
+              injectedBlock = "",
+              attachmentSection = DelegateAttachments.render(attachmentPlan),
+              reportLine = nebflow.prompts.PromptCatalog.MergerRole
             )
-            .delegateId
-        }
-    mergerClaim.flatMap { existing =>
+          )
+          .flatMap { initialPrompt =>
+            IO.blocking {
+              val seed = nebflow.core.delegate.WorkspaceLedger.MergerBootstrap(
+                DelegateRegistry.Record(
+                  id = subagentId,
+                  executor = ExecutorRegistry.DefaultId,
+                  cwd = workspace,
+                  project = project,
+                  taskId = taskId,
+                  parentSessionId = parentSessionId.getOrElse(""),
+                  title = description,
+                  createdAt = System.currentTimeMillis(),
+                  name = shortName,
+                  mode = Some(DualModeConfig.ModeMerger)
+                ),
+                initialPrompt
+              )
+              nebflow.core.delegate.WorkspaceLedger.default
+                .merger(
+                  project.getOrElse(workspace),
+                  nebflow.core.delegate.WorkspaceLedger.repositoryKey(os.Path(workspace)),
+                  subagentId,
+                  Some(seed)
+                )
+                .delegateId
+            }
+          }
+    val startup = mergerClaim.flatMap { existing =>
       if existing != subagentId then
         IO.pure(
           Right(
             (
               existing,
-              s"Existing project merger: delegate:$existing; taskAccepted=false. Send follow-up work with Mail; this call did not submit a task."
+              s"Existing project merger: delegate:$existing; taskAccepted=false. This call did not submit a task. " +
+                WorkspaceLedger.default.snapshot.mergerBootstraps
+                  .get(existing)
+                  .filter(_.status != "ready")
+                  .map(seed =>
+                    s"Initialization ${seed.status}; explicit manual recovery is required. ${seed.error.getOrElse("")}"
+                  )
+                  .getOrElse("Send follow-up work with Mail.")
             )
           )
         )
@@ -1267,7 +1304,7 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
               )
             else modeAudit *> PluginInjection.allocatePreparation(subject = subagentId, taskText = task)
 
-          pluginLeg.flatMap {
+          val launch = pluginLeg.flatMap {
             case Left(err) =>
               IO.pure(Left(ToolError(s"Delegate: plugin allocation refused — $err (DELEGATE_PLUGINS_REFUSED)")))
             case Right((preparation, allocated)) =>
@@ -1316,8 +1353,36 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
                   )
               }
           }
+          if modeDecision.mode != DualModeConfig.ModeMerger then launch
+          else
+            (MergerInitialization.prepareLocked(resources, subagentId) *> launch.flatTap {
+              case Right(_) => IO.unit
+              case Left(error) => MergerInitialization.failed(resources, subagentId, error.toString)
+            }).onError { case error =>
+              MergerInitialization
+                .failed(resources, subagentId, s"Merger initialization failed: ${error.getMessage}")
+                .attempt
+                .void
+            }.onCancel(
+              MergerInitialization
+                .failed(resources, subagentId, "Merger initialization was cancelled; manual recovery required")
+                .attempt
+                .void
+            )
+          end if
         }
     }
+    if modeDecision.mode == DualModeConfig.ModeMerger then
+      MergerInitialization
+        .exclusive(subagentId)(startup)
+        .handleError(error =>
+          Left(
+            ToolError(
+              s"Merger initialization could not finish for delegate:$subagentId. Inspect its recorded initialization state before retrying; no replacement identity was created: ${error.getMessage}"
+            )
+          )
+        )
+    else startup
 
   end spawnBackground
 
@@ -1370,340 +1435,357 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
   ): IO[Either[ToolError, (String, String)]] =
     val agentName = agentDef.name
     val isDispatcher = modeDecision.mode == DualModeConfig.ModeDispatcher
-    for
-      // 座位分配腿（delegate-param-decisions 批 2026-11-04）：**参数决定一切，零模型
-      // 调用**。三态计划来自 [[WorktreeCandidates.resolveNamed]]：
-      //   - InPlace（`worktree` 缺省）⇒ 零分配，就地跑道（只读任务通道）；
-      //   - Reuse ⇒ 落既有树（精确 name 命中 / 旧口径命中）；
-      //   - Create ⇒ 按 name 建 `<基工作区>/.nebflow/worktrees/<name>`（分支
-      //     `delegate/<name>`）；建败 ⇒ WARN + 就地回落（回执标 [[SeatSource.Fallback]]）。
-      // 设备项目（sessionDevice 在场）：座位在设备盘，本机不建树 ⇒ 无绑定（
-      // 参数在场时已在 internalSpawn 显式拒——DELEGATE_WORKTREE_REMOTE）。
-      binding <-
-        if !allocateSeat || modeDecision.mode == DualModeConfig.ModeMerger then IO.pure(None)
-        else if sessionDevice.isDefined then IO.pure(None)
-        else
-          seatPlan match
-            case WorktreeCandidates.SeatPlan.InPlace =>
-              DelegateWorkspace
-                .prepareInPlace(workspace, subagentId)
-                .handleErrorWith(e =>
-                  logger
-                    .warn(s"DelegateWorkspace.prepareInPlace failed (degraded to legacy spawn): ${e.getMessage}")
-                    .as(None)
-                )
-            case WorktreeCandidates.SeatPlan.Reuse(cand, source) =>
-              DelegateWorkspace.reuse(workspace, subagentId, cand, source).map(b => Some(b))
-            case WorktreeCandidates.SeatPlan.Create(name) =>
-              DelegateWorkspace.createNamed(workspace, name, subagentId).flatMap {
-                case Right(b) => IO.pure(Some(b))
-                case Left(error) => IO.raiseError(new IllegalStateException(s"Workspace creation refused: $error"))
-              }
-      // 附件座位树镜像（附件传输批 2026-11-05）：座位树存在 ⇒ 稳定副本再复制一份
-      // 进 `<worktree>/.nebflow/attachments/<id>/`（delegate 的 cwd 就在那棵树里）。
-      // fail-soft：镜像失败只 WARN，清单退回 dataRoot 副本——稳定副本已是权威。
-      seatedAttachments <- DelegateAttachments.mirrorToSeat(attachmentPlan, binding.flatMap(_.worktree))
-      // 判是腿的 delegate 工作座 = worktree；判否/无腿 = 原 workspace。设备项目（归属
-      // 修复批）：本机引擎座位恒 = 基 workspace（brain 根）——设备 worktree 是设备
-      // 本地路径（如对端盘符），绝不能当本机 projectRoot。
-      effectiveWs =
-        if sessionDevice.isDefined then workspace
-        else binding.map(_.cwd).getOrElse(workspace)
-      // 设备项目的默认设备 cwd（会话默认设备 workspace 的生效值）：设备 git 腿 =
-      // 设备 worktree 座位（brief 申报与 Bash cwd 注入同源——模型开局即在座位内）；
-      // 无腿 = origin 盘 workspace（直用工作区形态）。本机项目恒原值（零变化）。
-      effectiveDevWs =
-        (sessionDevice, binding.flatMap(_.worktree)) match
-          case (Some(_), Some(wt)) => Some(wt)
-          case _ => sessionDeviceWorkspace
-      params = NodeRunner.SpawnParams(
-        agentDef = agentDef,
-        resources = resources,
-        sessionId = subagentId,
-        sessionName = description,
-        depth = childDepth,
-        parentRef = parentRef,
-        wsSend = childWsSend,
-        // 工作座位 = 项目 workspace 或默认 general 目录（unified-delegate 批）；
-        // 判是腿 = worktree（worktree-judge-fifo 批）。任务产物留在任务的工作目录里。
-        projectRoot = Some(effectiveWs),
-        safetyMode = safetyMode,
-        rootSessionId = resolvedRoot,
-        // 跨设备批（2026-10-25）：设备项目 delegate 的会话默认设备上下文——六件
-        // 工具未显式带 device 默认路由设备（cwd 注入 = 设备盘 workspace；归属修复批
-        // 2026-10-30：设备 git 腿改为注入 worktree 座位——见 effectiveDevWs）。
-        sessionDevice = sessionDevice,
-        sessionDeviceWorkspace = effectiveDevWs
-      )
-      // brief：工作座行 + 判定机的 working-branch 申报行（🔴 均模型可见——
-      // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字——无绑定 = 非 git
-      // 或纯读腿（合法形态，非仅失败降级））+ delegate_report
-      // 申报纪律行（[[BriefReportLine]]，来源拆分批上提为公开常量以便判据门钉住）
-      // + sleep-poll 禁令批 C 段：等待纪律铁律（Defaults.NoSleepPollRule 单点
-      // 文本——节点脚注/subagent 步同源；747cd36a 实撞：5h16m sleep 570 心跳
-      // 轮询的启动面防线）。装配单点 = [[assembleBrief]]（spec 判红锚）。
-      reportLine =
-        if modeDecision.mode == DualModeConfig.ModeMerger then nebflow.prompts.PromptCatalog.MergerRole
-        else BriefReportLine
-      // 设备项目 workspace 行（跨设备批）：真实工作区在设备本盘——行里给设备盘
-      // 路径 + 默认路由语义（本机座位 = brain 根仅是引擎侧锚点，非项目文件）。
-      // 台账 #913 ③（2026-10-26）：host 开了强制显式设备 ⇒ 行尾追加纪律句
-      // （缺省 device 的调用会被引擎直接拒绝——brief 与引擎行为同源，防模型
-      // 依赖「by default」措辞撞墙）。
-      fleetEnforceNote =
-        if nebflow.core.device.FleetConfig.enforceExplicitDevice then
-          " fleet.enforceExplicitDevice is ON on this host: pass device=\"" +
-            sessionDevice.getOrElse(
-              "local"
-            ) + "\" on EVERY Bash/Read/Write/Edit/Glob/Grep call — calls without it are refused."
-        else ""
-      deviceWorkspaceLine =
-        (sessionDevice, effectiveDevWs) match
-          case (Some(dev), Some(ws)) =>
-            s"[workspace] $ws (on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device by " +
-              "default; paths are device-local absolute paths. Pass device=\"local\" explicitly for a " +
-              s"local-engine command. This session's local engine seat is $effectiveWs — it holds only " +
-              "the flow map and ledgers, not the project files)" + fleetEnforceNote
-          case _ =>
-            s"[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)" +
-              (if nebflow.core.device.FleetConfig.enforceExplicitDevice then
-                 " fleet.enforceExplicitDevice is ON: pass device=\"<name>\" on every Bash/Read/Write/Edit/Glob/Grep call (device=\"local\" for this machine) — calls without it are refused."
-               else "")
-      // jev-plugins 批 #1226：分配集注入 = prepareNodePlugins 等价路径（注入块
-      // 追加在 brief 尾部——NodeStarter 首条消息同款位形；空分配 = 旧 brief 逐字）。
-      // 双模式批：dispatcher 腿追加编排纪律段（写域相交任务用 deps 串行化等——
-      // 设计 §5.7 三层防线的纪律层；kernel/未判定 = None，brief 逐字节不变）。
-      brief = assembleBrief(
-        workspaceLine = deviceWorkspaceLine,
-        bindingLine = binding.flatMap(_.briefLine),
-        task = task,
-        injectedBlock = preparation.injectedBlock,
-        dispatcherDiscipline = if isDispatcher then Some(DispatcherDisciplineLine) else None,
-        // 附件清单段（附件传输批）：**brief 末尾**的固定段落——与作者手写正文结构可分，
-        // 手写路径逐字保留；空计划 ⇒ 空串（旧 brief 逐字节不变）。
-        attachmentSection = DelegateAttachments.render(seatedAttachments),
-        reportLine = reportLine
-      )
-      // 回执 = ACK 三行 + **座位来源行**（作者令 2026-11-04：「命中哪条要写进派发
-      // 回执，不许静默」）+ 模式行（参数即权威的读面）+ 附件行（附件传输批：
-      // 「带了几个、叫什么、多大」，空计划 ⇒ 无此段）。
-      attachmentLine = DelegateAttachments.receiptLine(seatedAttachments)
-      ack =
-        s"""Delegate task started in the background${taskId.map(n => s" (task #$n)").getOrElse("")}.
-Executor: ${agentName}; workspace: $effectiveWs${project.map(p => s" (project '$p')").getOrElse("")}${binding
-            .map(b => s"; branch: ${b.branch}")
-            .getOrElse("")}.
-Mode: ${modeDecision.mode} (${modeDecision.leg} — ${modeDecision.reason}).
-${DelegateWorkspace.receiptLine(binding, workspace)}${
-            if attachmentLine.isEmpty then "" else "\n" + attachmentLine
-          }
-It runs in session $subagentId with no project context and no memory; the brief is its entire context.
-You will be notified when it completes via a system message. Do NOT duplicate this task — wait for the result or work on something unrelated."""
-      // 消息身份牌消解（msgtokens 批 2026-10-31）：brief 里的 {{msg:sid8-seq6}} 在
-      // 进入子会话前展开为消息全文（映射缺失 = 显式报错行注入）。装配侧单点——
-      // assembleBrief 本体（spec 判红锚）逐字节不动；initialPrompt 与首条 UserInput
-      // 同吃消解后文本。机制关 = 原样透传。
-      resolvedBrief <- resources.msgTokens.resolveForAgent(brief)
-      _ <- IO.blocking {
-        binding.filter(_.worktree.isDefined).foreach { b =>
-          val ledger = nebflow.core.delegate.WorkspaceLedger.default
-          val entry = nebflow.core.delegate.WorkspaceLedger.Workspace(
-            id = subagentId,
-            project = project.getOrElse(b.baseWs),
-            repository = nebflow.core.delegate.WorkspaceLedger.repositoryKey(os.Path(b.baseWs)),
-            path = java.nio.file.Path.of(b.worktree.get).toRealPath().toString,
-            branch = b.branch,
-            baseBranch = b.baseBranch.getOrElse("main"),
-            baseCommit = b.baseSha.getOrElse(throw new IllegalStateException("Missing workspace creation commit")),
-            owner = subagentId,
-            ownerMode = modeDecision.mode,
-            activity = "running"
-          )
-          ledger.register(entry).fold(error => throw new IllegalStateException(error), _ => ())
-        }
-      }
-      subagentRef <- NodeRunner.spawnAgentActor(system, params)
-      adapterRef <- NodeRunner.spawnSupervisedAdapter(
-        system = system,
-        params = params,
-        childRef = subagentRef,
-        childName = subagentId,
-        description = description,
-        agentName = agentName,
-        subagentId = subagentId,
-        parentSessionId = parentSessionId.getOrElse(""),
-        initialPrompt = resolvedBrief,
-        source = "delegate",
-        wsSend = Some(childWsSend)
-      )
-      _ = logger.info(
-        s"Spawned supervised delegate session: $subagentId (depth=$childDepth, workspace=$effectiveWs, project=${project.getOrElse("-")}${binding
-            .map(b => s", branch=${b.branch}${b.worktree.map(w => s", worktree=$w").getOrElse("")}")
-            .getOrElse("")}${if allocated.names.nonEmpty then s", plugins=${allocated.names.mkString(",")}" else ""})"
-      )
-      _ <- NodeRunner.registerAgent(
-        resources,
-        id = subagentId,
-        ref = subagentRef,
-        kind = AgentKind.Delegate,
-        rootSessionId = resolvedRoot,
-        parentRef = parentRef,
-        startedAt = System.currentTimeMillis(),
-        lastActivityMs = System.currentTimeMillis(),
-        supervisorRef = Some(adapterRef),
-        parentSessionId = parentSessionId.getOrElse("")
-      )
-      _ <- IO
-        .blocking(
-          DelegateRegistry.put(
-            DelegateRegistry.Record(
+    cats.effect.Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+      val attempt = for
+        // 座位分配腿（delegate-param-decisions 批 2026-11-04）：**参数决定一切，零模型
+        // 调用**。三态计划来自 [[WorktreeCandidates.resolveNamed]]：
+        //   - InPlace（`worktree` 缺省）⇒ 零分配，就地跑道（只读任务通道）；
+        //   - Reuse ⇒ 落既有树（精确 name 命中 / 旧口径命中）；
+        //   - Create ⇒ 按 name 建 `<基工作区>/.nebflow/worktrees/<name>`（分支
+        //     `delegate/<name>`）；建败 ⇒ WARN + 就地回落（回执标 [[SeatSource.Fallback]]）。
+        // 设备项目（sessionDevice 在场）：座位在设备盘，本机不建树 ⇒ 无绑定（
+        // 参数在场时已在 internalSpawn 显式拒——DELEGATE_WORKTREE_REMOTE）。
+        binding <-
+          if !allocateSeat || modeDecision.mode == DualModeConfig.ModeMerger then IO.pure(None)
+          else if sessionDevice.isDefined then IO.pure(None)
+          else
+            seatPlan match
+              case WorktreeCandidates.SeatPlan.InPlace =>
+                DelegateWorkspace
+                  .prepareInPlace(workspace, subagentId)
+                  .handleErrorWith(e =>
+                    logger
+                      .warn(s"DelegateWorkspace.prepareInPlace failed (degraded to legacy spawn): ${e.getMessage}")
+                      .as(None)
+                  )
+              case WorktreeCandidates.SeatPlan.Reuse(cand, source) =>
+                DelegateWorkspace.reuse(workspace, subagentId, cand, source).map(b => Some(b))
+              case WorktreeCandidates.SeatPlan.Create(name) =>
+                DelegateWorkspace.createNamed(workspace, name, subagentId).flatMap {
+                  case Right(b) => IO.pure(Some(b))
+                  case Left(error) => IO.raiseError(new IllegalStateException(s"Workspace creation refused: $error"))
+                }
+        // 附件座位树镜像（附件传输批 2026-11-05）：座位树存在 ⇒ 稳定副本再复制一份
+        // 进 `<worktree>/.nebflow/attachments/<id>/`（delegate 的 cwd 就在那棵树里）。
+        // fail-soft：镜像失败只 WARN，清单退回 dataRoot 副本——稳定副本已是权威。
+        seatedAttachments <- DelegateAttachments.mirrorToSeat(attachmentPlan, binding.flatMap(_.worktree))
+        // 判是腿的 delegate 工作座 = worktree；判否/无腿 = 原 workspace。设备项目（归属
+        // 修复批）：本机引擎座位恒 = 基 workspace（brain 根）——设备 worktree 是设备
+        // 本地路径（如对端盘符），绝不能当本机 projectRoot。
+        effectiveWs =
+          if sessionDevice.isDefined then workspace
+          else binding.map(_.cwd).getOrElse(workspace)
+        // 设备项目的默认设备 cwd（会话默认设备 workspace 的生效值）：设备 git 腿 =
+        // 设备 worktree 座位（brief 申报与 Bash cwd 注入同源——模型开局即在座位内）；
+        // 无腿 = origin 盘 workspace（直用工作区形态）。本机项目恒原值（零变化）。
+        effectiveDevWs =
+          (sessionDevice, binding.flatMap(_.worktree)) match
+            case (Some(_), Some(wt)) => Some(wt)
+            case _ => sessionDeviceWorkspace
+        params = NodeRunner.SpawnParams(
+          agentDef = agentDef,
+          resources = resources,
+          sessionId = subagentId,
+          sessionName = description,
+          depth = childDepth,
+          parentRef = parentRef,
+          wsSend = childWsSend,
+          // 工作座位 = 项目 workspace 或默认 general 目录（unified-delegate 批）；
+          // 判是腿 = worktree（worktree-judge-fifo 批）。任务产物留在任务的工作目录里。
+          projectRoot = Some(effectiveWs),
+          safetyMode = safetyMode,
+          rootSessionId = resolvedRoot,
+          // 跨设备批（2026-10-25）：设备项目 delegate 的会话默认设备上下文——六件
+          // 工具未显式带 device 默认路由设备（cwd 注入 = 设备盘 workspace；归属修复批
+          // 2026-10-30：设备 git 腿改为注入 worktree 座位——见 effectiveDevWs）。
+          sessionDevice = sessionDevice,
+          sessionDeviceWorkspace = effectiveDevWs
+        )
+        // brief：工作座行 + 判定机的 working-branch 申报行（🔴 均模型可见——
+        // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字——无绑定 = 非 git
+        // 或纯读腿（合法形态，非仅失败降级））+ delegate_report
+        // 申报纪律行（[[BriefReportLine]]，来源拆分批上提为公开常量以便判据门钉住）
+        // + sleep-poll 禁令批 C 段：等待纪律铁律（Defaults.NoSleepPollRule 单点
+        // 文本——节点脚注/subagent 步同源；747cd36a 实撞：5h16m sleep 570 心跳
+        // 轮询的启动面防线）。装配单点 = [[assembleBrief]]（spec 判红锚）。
+        reportLine =
+          if modeDecision.mode == DualModeConfig.ModeMerger then nebflow.prompts.PromptCatalog.MergerRole
+          else BriefReportLine
+        // 设备项目 workspace 行（跨设备批）：真实工作区在设备本盘——行里给设备盘
+        // 路径 + 默认路由语义（本机座位 = brain 根仅是引擎侧锚点，非项目文件）。
+        // 台账 #913 ③（2026-10-26）：host 开了强制显式设备 ⇒ 行尾追加纪律句
+        // （缺省 device 的调用会被引擎直接拒绝——brief 与引擎行为同源，防模型
+        // 依赖「by default」措辞撞墙）。
+        fleetEnforceNote =
+          if nebflow.core.device.FleetConfig.enforceExplicitDevice then
+            " fleet.enforceExplicitDevice is ON on this host: pass device=\"" +
+              sessionDevice.getOrElse(
+                "local"
+              ) + "\" on EVERY Bash/Read/Write/Edit/Glob/Grep call — calls without it are refused."
+          else ""
+        deviceWorkspaceLine =
+          (sessionDevice, effectiveDevWs) match
+            case (Some(dev), Some(ws)) =>
+              s"[workspace] $ws (on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device by " +
+                "default; paths are device-local absolute paths. Pass device=\"local\" explicitly for a " +
+                s"local-engine command. This session's local engine seat is $effectiveWs — it holds only " +
+                "the flow map and ledgers, not the project files)" + fleetEnforceNote
+            case _ =>
+              s"[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)" +
+                (if nebflow.core.device.FleetConfig.enforceExplicitDevice then
+                   " fleet.enforceExplicitDevice is ON: pass device=\"<name>\" on every Bash/Read/Write/Edit/Glob/Grep call (device=\"local\" for this machine) — calls without it are refused."
+                 else "")
+        // jev-plugins 批 #1226：分配集注入 = prepareNodePlugins 等价路径（注入块
+        // 追加在 brief 尾部——NodeStarter 首条消息同款位形；空分配 = 旧 brief 逐字）。
+        // 双模式批：dispatcher 腿追加编排纪律段（写域相交任务用 deps 串行化等——
+        // 设计 §5.7 三层防线的纪律层；kernel/未判定 = None，brief 逐字节不变）。
+        brief = assembleBrief(
+          workspaceLine = deviceWorkspaceLine,
+          bindingLine = binding.flatMap(_.briefLine),
+          task = task,
+          injectedBlock = preparation.injectedBlock,
+          dispatcherDiscipline = if isDispatcher then Some(DispatcherDisciplineLine) else None,
+          // 附件清单段（附件传输批）：**brief 末尾**的固定段落——与作者手写正文结构可分，
+          // 手写路径逐字保留；空计划 ⇒ 空串（旧 brief 逐字节不变）。
+          attachmentSection = DelegateAttachments.render(seatedAttachments),
+          reportLine = reportLine
+        )
+        // 回执 = ACK 三行 + **座位来源行**（作者令 2026-11-04：「命中哪条要写进派发
+        // 回执，不许静默」）+ 模式行（参数即权威的读面）+ 附件行（附件传输批：
+        // 「带了几个、叫什么、多大」，空计划 ⇒ 无此段）。
+        attachmentLine = DelegateAttachments.receiptLine(seatedAttachments)
+        ack =
+          s"""Delegate task started in the background${taskId.map(n => s" (task #$n)").getOrElse("")}.
+  Executor: ${agentName}; workspace: $effectiveWs${project.map(p => s" (project '$p')").getOrElse("")}${binding
+              .map(b => s"; branch: ${b.branch}")
+              .getOrElse("")}.
+  Mode: ${modeDecision.mode} (${modeDecision.leg} — ${modeDecision.reason}).
+  ${DelegateWorkspace.receiptLine(binding, workspace)}${
+              if attachmentLine.isEmpty then "" else "\n" + attachmentLine
+            }
+  It runs in session $subagentId with no project context and no memory; the brief is its entire context.
+  You will be notified when it completes via a system message. Do NOT duplicate this task — wait for the result or work on something unrelated."""
+        // 消息身份牌消解（msgtokens 批 2026-10-31）：brief 里的 {{msg:sid8-seq6}} 在
+        // 进入子会话前展开为消息全文（映射缺失 = 显式报错行注入）。装配侧单点——
+        // assembleBrief 本体（spec 判红锚）逐字节不动；initialPrompt 与首条 UserInput
+        // 同吃消解后文本。机制关 = 原样透传。
+        resolvedBrief <- resources.msgTokens.resolveForAgent(brief)
+        _ <- IO.blocking {
+          binding.filter(_.worktree.isDefined).foreach { b =>
+            val ledger = nebflow.core.delegate.WorkspaceLedger.default
+            val entry = nebflow.core.delegate.WorkspaceLedger.Workspace(
               id = subagentId,
-              executor = ExecutorRegistry.DefaultId,
-              cwd = effectiveWs,
-              project = project,
-              taskId = taskId,
-              parentSessionId = parentSessionId.getOrElse(""),
-              title = description,
-              createdAt = System.currentTimeMillis(),
-              // 面板命名批（2026-10-31）：批次短名落盘；None（Mail 复活腿等不经
-              // call 的腿）回读存量记录补保——复活不丢名。
-              name = shortName.orElse(DelegateRegistry.find(subagentId).flatMap(_.name)),
-              branch = binding.map(_.branch),
-              worktree = binding.flatMap(_.worktree),
-              baseBranch = binding.flatMap(_.baseBranch),
-              projectWorkspace = binding.map(_.baseWs),
-              // 分配集记账（#1226 可查面）：分配动作发生即记（空集也是显式空）；
-              // disabled/off（未发生）= None。
-              plugins = if allocated.actionRan then Some(allocated.names) else None,
-              // 判定机已删（delegate-param-decisions 批）：worktreeJudged 不再由模型
-              // 产出 ⇒ 恒 None（旧盘面记录照常解码）。
-              worktreeJudged = None,
-              // 就地腿的派发时快照（补充令第 2 条护栏的对比基线）：收尾时
-              // DelegateTerminal.inPlaceWriteAlarm 用它判「没分配树却动了工作区」。
-              seatSnapshotSha = binding.flatMap(_.snapshotSha),
-              seatSnapshotDirty = binding.flatMap(_.snapshotDirty),
-              // origin 标记（v2.1 阶段 1）：受委托腿随记录落 delegated-by。
-              delegatedBy = delegatedBy,
-              // G1 编排模式初值（delegate-ui 批 2026-10-08）：内置腿 spawn 恒 single
-              // （delegate 内首调 Subagent/Subtask/AgentFlow 后由记账点惰性升级——
-              // 写点见 DelegateRegistry.upgradeOrchestrationMode）。Mail 续聊复活腿
-              // 同点复用（本函数是唯一 spawn 记录点）⇒ 新会话同样拿到初值。
-              orchestrationMode = Some(DelegateRegistry.ModeSingle),
-              // 执行形态落记录（spawn 时终身属性；本批起参数决定 ⇒ 恒有值）。
-              mode = Some(modeDecision.mode),
-              // 续命血缘（会话续命名与位修正批 2026-11-03）：派生腿落原 delegate id
-              // （审计 + 显示面）；新鲜派发/原位续 = None（零字段，旧行字节不变）。
-              resumedFrom = resumedFrom
+              project = project.getOrElse(b.baseWs),
+              repository = nebflow.core.delegate.WorkspaceLedger.repositoryKey(os.Path(b.baseWs)),
+              path = java.nio.file.Path.of(b.worktree.get).toRealPath().toString,
+              branch = b.branch,
+              baseBranch = b.baseBranch.getOrElse("main"),
+              baseCommit = b.baseSha.getOrElse(throw new IllegalStateException("Missing workspace creation commit")),
+              owner = subagentId,
+              ownerMode = modeDecision.mode,
+              activity = "running"
+            )
+            ledger.register(entry).fold(error => throw new IllegalStateException(error), _ => ())
+          }
+        }
+        subagentRef <- NodeRunner.spawnAgentActor(system, params)
+        _ <- cleanup.update(previous => system.stop(subagentRef).attempt.void *> previous)
+        adapterRef <- NodeRunner.spawnSupervisedAdapter(
+          system = system,
+          params = params,
+          childRef = subagentRef,
+          childName = subagentId,
+          description = description,
+          agentName = agentName,
+          subagentId = subagentId,
+          parentSessionId = parentSessionId.getOrElse(""),
+          initialPrompt = resolvedBrief,
+          source = "delegate",
+          wsSend = Some(childWsSend)
+        )
+        _ <- cleanup.update(previous => system.stop(adapterRef).attempt.void *> previous)
+        _ = logger.info(
+          s"Spawned supervised delegate session: $subagentId (depth=$childDepth, workspace=$effectiveWs, project=${project.getOrElse("-")}${binding
+              .map(b => s", branch=${b.branch}${b.worktree.map(w => s", worktree=$w").getOrElse("")}")
+              .getOrElse("")}${if allocated.names.nonEmpty then s", plugins=${allocated.names.mkString(",")}" else ""})"
+        )
+        _ <- NodeRunner.registerAgent(
+          resources,
+          id = subagentId,
+          ref = subagentRef,
+          kind = AgentKind.Delegate,
+          rootSessionId = resolvedRoot,
+          parentRef = parentRef,
+          startedAt = System.currentTimeMillis(),
+          lastActivityMs = System.currentTimeMillis(),
+          supervisorRef = Some(adapterRef),
+          parentSessionId = parentSessionId.getOrElse("")
+        )
+        _ <- IO
+          .blocking(
+            DelegateRegistry.put(
+              DelegateRegistry.Record(
+                id = subagentId,
+                executor = ExecutorRegistry.DefaultId,
+                cwd = effectiveWs,
+                project = project,
+                taskId = taskId,
+                parentSessionId = parentSessionId.getOrElse(""),
+                title = description,
+                createdAt = System.currentTimeMillis(),
+                // 面板命名批（2026-10-31）：批次短名落盘；None（Mail 复活腿等不经
+                // call 的腿）回读存量记录补保——复活不丢名。
+                name = shortName.orElse(DelegateRegistry.find(subagentId).flatMap(_.name)),
+                branch = binding.map(_.branch),
+                worktree = binding.flatMap(_.worktree),
+                baseBranch = binding.flatMap(_.baseBranch),
+                projectWorkspace = binding.map(_.baseWs),
+                // 分配集记账（#1226 可查面）：分配动作发生即记（空集也是显式空）；
+                // disabled/off（未发生）= None。
+                plugins = if allocated.actionRan then Some(allocated.names) else None,
+                // 判定机已删（delegate-param-decisions 批）：worktreeJudged 不再由模型
+                // 产出 ⇒ 恒 None（旧盘面记录照常解码）。
+                worktreeJudged = None,
+                // 就地腿的派发时快照（补充令第 2 条护栏的对比基线）：收尾时
+                // DelegateTerminal.inPlaceWriteAlarm 用它判「没分配树却动了工作区」。
+                seatSnapshotSha = binding.flatMap(_.snapshotSha),
+                seatSnapshotDirty = binding.flatMap(_.snapshotDirty),
+                // origin 标记（v2.1 阶段 1）：受委托腿随记录落 delegated-by。
+                delegatedBy = delegatedBy,
+                // G1 编排模式初值（delegate-ui 批 2026-10-08）：内置腿 spawn 恒 single
+                // （delegate 内首调 Subagent/Subtask/AgentFlow 后由记账点惰性升级——
+                // 写点见 DelegateRegistry.upgradeOrchestrationMode）。Mail 续聊复活腿
+                // 同点复用（本函数是唯一 spawn 记录点）⇒ 新会话同样拿到初值。
+                orchestrationMode = Some(DelegateRegistry.ModeSingle),
+                // 执行形态落记录（spawn 时终身属性；本批起参数决定 ⇒ 恒有值）。
+                mode = Some(modeDecision.mode),
+                // 续命血缘（会话续命名与位修正批 2026-11-03）：派生腿落原 delegate id
+                // （审计 + 显示面）；新鲜派发/原位续 = None（零字段，旧行字节不变）。
+                resumedFrom = resumedFrom
+              )
             )
           )
-        )
-        .handleErrorWith(e => logger.warn(s"DelegateRegistry.put failed: ${e.getMessage}").void)
-      // 派发期基线快照（`[base-moved]` 降噪重写批 2026-11-05，作者令第三条「派发时
-      // 就该考虑并行不冲突」）：spawn 当场记下基分支 tip，后续判「这次 base 前进有
-      // 没有动到我改过的文件」用这个快照比对——不靠逐条弹通知在事后打扰人。
-      // 幂等 + fail-soft（非 git / 读不到 = 零动作，扫描拍首次见自动补基线）。
-      _ <- nebflow.core.delegate.BaseDriftWatch
-        .noteDispatch(subagentId, binding.map(_.baseWs), binding.flatMap(_.baseBranch))
-      // ⑤A 链存储：spawn 行（branch/worktree/cwd/基分支——N1 与 #1228 的数据源）；
-      // #1226 增分配摘要字段（plugins 集 + 三态模式词——结构帧可查，零新建存储）。
-      _ <- IO
-        .blocking(
-          ChainStore.appendSync(
-            ChainStore.keyFor(taskId, subagentId),
-            "delegate-spawn",
-            DelegateWorkspace
-              .spawnPayload(
-                subagentId,
-                ExecutorRegistry.DefaultId,
-                project,
-                binding,
-                plugins = if allocated.actionRan then Some(allocated.names) else None,
-                // 双模式批：dispatcher 本体零插件 = 显式 dispatcher-off 审计词
-                // （Inert 族——「模式性豁免」非故障；kernel 未判定腿保持旧规则）。
-                allocation =
-                  if allocated.actionRan then Some(allocated.mode)
-                  else if isDispatcher then Some("dispatcher-off")
-                  else None,
-                // 归属修复批（2026-10-30）：设备项目无 worktree 腿（无 git/不可达/建败）
-                // ⇒ 直用 workspace 座位落行（additive 键 workspaceSeat——执行形态面板
-                // 「直接使用工作区」标注的数据源；本机项目恒 None，旧行字节不变）。
-                workspaceSeat =
-                  if sessionDevice.isDefined && binding.isEmpty then sessionDeviceWorkspace
-                  else None
-              )
-              .deepMerge(
-                // 续命血缘（会话续命名与位修正批 2026-11-03）：派生腿落 resumedFrom 键
-                // （链账本可查「这一代派生自谁」）；新鲜派发零键（旧行字节不变）。
-                resumedFrom.map(r => io.circe.Json.obj("resumedFrom" -> r.asJson)).getOrElse(io.circe.Json.obj())
-              )
-              .deepMerge(
-                // 附件传输批（2026-11-05）：台账/面板可观测面——本 delegate 带了哪些附件
-                // （名字 + 字节数 + sha256 + 类型 + 图片旗 + 副本落点）。空计划零键
-                // （未带附件的旧行字节不变）。
-                if seatedAttachments.isEmpty then io.circe.Json.obj()
-                else io.circe.Json.obj("attachments" -> DelegateAttachments.summaryJson(seatedAttachments))
-              )
+          .handleErrorWith(e =>
+            if modeDecision.mode == DualModeConfig.ModeMerger then IO.raiseError(e)
+            else logger.warn(s"DelegateRegistry.put failed: ${e.getMessage}").void
           )
-        )
-        .handleErrorWith(e => logger.warn(s"ChainStore delegate-spawn line failed: ${e.getMessage}").void)
-      // N1 刀1（v3 §6/A3 宿主挂载腿）：spawn 成功即挂 delegate 作用域宿主——FlowMapStore
-      // openScope（`<基工作区>/.nebflow/flow-maps/<会话id>/`）＋ NodeEngine 实例（自根：
-      // rootSessionId = 会话 id，节点 out=Nebula 投 delegate 本人）。存储锚 = 基工作区
-      // （`workspace` 参数——判是腿的 worktree 只作座位不作存储根，台账寿命长于 worktree）。
-      // fail-soft：挂载失败只 WARN，绝不拖垮 delegate 本体（刀1 面 additive——工具面在刀2
-      // 接入作用域；「查无作用域图」在刀2 有显式报错形态）。
-      _ <-
-        nebflow.core.project.DelegateFlowHosts
-          .mount(
-            delegateId = subagentId,
-            project = project,
-            baseWorkspace = workspace,
-            engineCwd = effectiveWs,
-            system = system,
-            resources = resources,
-            wsSend = Some(childWsSend)
+        // 派发期基线快照（`[base-moved]` 降噪重写批 2026-11-05，作者令第三条「派发时
+        // 就该考虑并行不冲突」）：spawn 当场记下基分支 tip，后续判「这次 base 前进有
+        // 没有动到我改过的文件」用这个快照比对——不靠逐条弹通知在事后打扰人。
+        // 幂等 + fail-soft（非 git / 读不到 = 零动作，扫描拍首次见自动补基线）。
+        _ <- nebflow.core.delegate.BaseDriftWatch
+          .noteDispatch(subagentId, binding.map(_.baseWs), binding.flatMap(_.baseBranch))
+        // ⑤A 链存储：spawn 行（branch/worktree/cwd/基分支——N1 与 #1228 的数据源）；
+        // #1226 增分配摘要字段（plugins 集 + 三态模式词——结构帧可查，零新建存储）。
+        _ <- IO
+          .blocking(
+            ChainStore.appendSync(
+              ChainStore.keyFor(taskId, subagentId),
+              "delegate-spawn",
+              DelegateWorkspace
+                .spawnPayload(
+                  subagentId,
+                  ExecutorRegistry.DefaultId,
+                  project,
+                  binding,
+                  plugins = if allocated.actionRan then Some(allocated.names) else None,
+                  // 双模式批：dispatcher 本体零插件 = 显式 dispatcher-off 审计词
+                  // （Inert 族——「模式性豁免」非故障；kernel 未判定腿保持旧规则）。
+                  allocation =
+                    if allocated.actionRan then Some(allocated.mode)
+                    else if isDispatcher then Some("dispatcher-off")
+                    else None,
+                  // 归属修复批（2026-10-30）：设备项目无 worktree 腿（无 git/不可达/建败）
+                  // ⇒ 直用 workspace 座位落行（additive 键 workspaceSeat——执行形态面板
+                  // 「直接使用工作区」标注的数据源；本机项目恒 None，旧行字节不变）。
+                  workspaceSeat =
+                    if sessionDevice.isDefined && binding.isEmpty then sessionDeviceWorkspace
+                    else None
+                )
+                .deepMerge(
+                  // 续命血缘（会话续命名与位修正批 2026-11-03）：派生腿落 resumedFrom 键
+                  // （链账本可查「这一代派生自谁」）；新鲜派发零键（旧行字节不变）。
+                  resumedFrom.map(r => io.circe.Json.obj("resumedFrom" -> r.asJson)).getOrElse(io.circe.Json.obj())
+                )
+                .deepMerge(
+                  // 附件传输批（2026-11-05）：台账/面板可观测面——本 delegate 带了哪些附件
+                  // （名字 + 字节数 + sha256 + 类型 + 图片旗 + 副本落点）。空计划零键
+                  // （未带附件的旧行字节不变）。
+                  if seatedAttachments.isEmpty then io.circe.Json.obj()
+                  else io.circe.Json.obj("attachments" -> DelegateAttachments.summaryJson(seatedAttachments))
+                )
+            )
+          )
+          .handleErrorWith(e => logger.warn(s"ChainStore delegate-spawn line failed: ${e.getMessage}").void)
+        // N1 刀1（v3 §6/A3 宿主挂载腿）：spawn 成功即挂 delegate 作用域宿主——FlowMapStore
+        // openScope（`<基工作区>/.nebflow/flow-maps/<会话id>/`）＋ NodeEngine 实例（自根：
+        // rootSessionId = 会话 id，节点 out=Nebula 投 delegate 本人）。存储锚 = 基工作区
+        // （`workspace` 参数——判是腿的 worktree 只作座位不作存储根，台账寿命长于 worktree）。
+        // fail-soft：挂载失败只 WARN，绝不拖垮 delegate 本体（刀1 面 additive——工具面在刀2
+        // 接入作用域；「查无作用域图」在刀2 有显式报错形态）。
+        _ <-
+          nebflow.core.project.DelegateFlowHosts
+            .mount(
+              delegateId = subagentId,
+              project = project,
+              baseWorkspace = workspace,
+              engineCwd = effectiveWs,
+              system = system,
+              resources = resources,
+              wsSend = Some(childWsSend)
+            )
+            .handleErrorWith(e =>
+              logger
+                .warn(s"delegate flow-host mount failed (delegate continues without a scope map): ${e.getMessage}")
+                .as(None)
+            )
+        _ <- resources.subAgentTaskStore
+          .recordTask(
+            SubAgentTask(
+              taskId = subagentId,
+              parentSessionId = parentSessionId.getOrElse(""),
+              agentName = agentName,
+              prompt = task,
+              description = description,
+              status = "running",
+              retryCount = 0,
+              spawnedAt = System.currentTimeMillis(),
+              completedAt = None,
+              lastError = None,
+              source = "delegate",
+              // 执行形态随行落任务行（参数决定，恒有值）。
+              mode = Some(modeDecision.mode)
+            )
           )
           .handleErrorWith(e =>
-            logger
-              .warn(s"delegate flow-host mount failed (delegate continues without a scope map): ${e.getMessage}")
-              .as(None)
+            if modeDecision.mode == DualModeConfig.ModeMerger then IO.raiseError(e)
+            else logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")
           )
-      _ <- resources.subAgentTaskStore
-        .recordTask(
-          SubAgentTask(
-            taskId = subagentId,
-            parentSessionId = parentSessionId.getOrElse(""),
-            agentName = agentName,
-            prompt = task,
-            description = description,
-            status = "running",
-            retryCount = 0,
-            spawnedAt = System.currentTimeMillis(),
-            completedAt = None,
-            lastError = None,
-            source = "delegate",
-            // 执行形态随行落任务行（参数决定，恒有值）。
-            mode = Some(modeDecision.mode)
-          )
-        )
-        .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
-      _ <- taskId match
-        case Some(tid) =>
-          IO.blocking(
-            TaskLedgerStore
-              .open()
-              .appendNoteSync(
-                tid,
-                s"Delegate dispatched → $subagentId (executor=${ExecutorRegistry.DefaultId}, workspace=$effectiveWs${binding.map(b => s", branch=${b.branch}").getOrElse("")})",
-                from = TaskLedgerHistory.Origins.Nebula,
-                actor = TaskLedgerHistory.Actors.Nebula
-              )
-          ).attempt
-            .void
-        case None => IO.unit
-      _ <- subagentRef ! AgentCommand.UserInput(resolvedBrief, Some(adapterRef))
-    yield Right((subagentId, ack))
-    end for
+        _ <- taskId match
+          case Some(tid) =>
+            IO.blocking(
+              TaskLedgerStore
+                .open()
+                .appendNoteSync(
+                  tid,
+                  s"Delegate dispatched → $subagentId (executor=${ExecutorRegistry.DefaultId}, workspace=$effectiveWs${binding.map(b => s", branch=${b.branch}").getOrElse("")})",
+                  from = TaskLedgerHistory.Origins.Nebula,
+                  actor = TaskLedgerHistory.Actors.Nebula
+                )
+            ).attempt
+              .void
+          case None => IO.unit
+        _ <- if modeDecision.mode == DualModeConfig.ModeMerger then MergerInitialization.ready(subagentId) else IO.unit
+        _ <- subagentRef ! AgentCommand.UserInput(resolvedBrief, Some(adapterRef))
+      yield Right((subagentId, ack))
+      val stopPartial =
+        if modeDecision.mode == DualModeConfig.ModeMerger then
+          cleanup.get.flatten *> resources.agentRegistry.update(_ - subagentId) *>
+            DelegateFlowHosts.unmount(subagentId)
+        else IO.unit
+      attempt.onError { case _ => stopPartial }.onCancel(stopPartial)
+    }
+
   end spawnWithPlugins
 
 end DelegateTool

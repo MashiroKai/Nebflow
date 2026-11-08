@@ -179,9 +179,11 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
   private def spawn(
     res: SharedResources,
     task: String,
-    mode: nebflow.core.delegate.ModeDecision = nebflow.core.delegate.ModeParam.default
+    mode: nebflow.core.delegate.ModeDecision = nebflow.core.delegate.ModeParam.default,
+    failStartup: Boolean = false,
+    systemOverride: Option[ActorSystem] = None
   ): IO[(Either[ToolError, (String, String)], IO[Unit])] =
-    val system = ActorSystem(s"dpalloc-${scala.util.Random.nextInt(100000)}")
+    val system = systemOverride.getOrElse(ActorSystem(s"dpalloc-${scala.util.Random.nextInt(100000)}"))
     DelegateTool
       .spawnBackground(
         agentDef = BuiltinAgents.entry(DelegateTool.KernelAgentName).map(_.toAgentDef).get,
@@ -190,7 +192,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
         workspace = (tempRoot / "general").toString,
         project = None,
         taskId = None,
-        system = system,
+        system = if failStartup then null else system,
         resources = res,
         parentDepth = 0,
         parentRef = None,
@@ -202,6 +204,175 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       .map(r => (r, system.stopAll.attempt.void))
 
   end spawn
+
+  test("failed first merger startup preserves the identity and resumes only after explicit manual wake") {
+    val capture = TrieMap[String, LlmRequest]()
+    val repo = tempRoot / "general"
+    val recoverySystem = ActorSystem("merger-manual-recovery")
+    val exercise = for
+      base <- mkResources(new RecordingLlm(capture))
+      res = base.copy(actorSystem = recoverySystem)
+      _ <- IO.blocking {
+        os.makeDir.all(repo)
+        os.proc("git", "init", "-b", "main").call(cwd = repo, stdout = os.Pipe)
+      }
+      mode = nebflow.core.delegate.ModeDecision("merger", "explicit", "user selected merger")
+      (failed, stop) <- spawn(res, "Initialize the project merger", mode, failStartup = true)
+      _ <- stop
+      _ = assert(failed.isLeft)
+      seed = nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergerBootstraps.values.head
+      id = seed.record.id
+      _ = assertEquals(seed.status, "failed")
+      _ = assert(DelegateRegistry.isFrozen(id))
+      _ = assert(capture.isEmpty)
+      transcript <- res.sessionStore.loadMessagesForSession(id)
+      _ = assert(transcript.exists(_.textContent.contains(nebflow.prompts.PromptCatalog.MergerRole)))
+      row <- res.subAgentTaskStore.findByTaskId(id)
+      _ = assert(row.exists(_.status == "frozen"))
+      (duplicate, stopDuplicate) <- spawn(res, "A second initialization must not run", mode)
+      _ <- stopDuplicate
+      _ = assertEquals(duplicate.toOption.get._1, id)
+      _ = assert(duplicate.toOption.get._2.contains("taskAccepted=false"))
+      _ = assert(capture.isEmpty)
+      boot <- nebflow.agent.SubAgentStartupRecovery.sweep(
+        res.subAgentTaskStore,
+        res.sessionStore,
+        Some(nebflow.agent.SubAgentStartupRecovery.RevivalDeps(res, recoverySystem, None)),
+        manual = false
+      )
+      _ = assert(boot.revived.isEmpty, "initialization failure cannot be revived by an automatic boot policy")
+      _ = assert(capture.isEmpty)
+      _ <- nebflow.core.delegate.MergerInitialization.exclusive(id) {
+        nebflow.agent.DelegateWakeLeg.wake(res, None, id, "must not race startup", "panel-wake").map { result =>
+          assert(result.left.toOption.exists(_.contains("RECOVERY_IN_PROGRESS")))
+          assert(capture.isEmpty)
+        }
+      }
+      woke <- nebflow.agent.DelegateWakeLeg.wake(res, None, id, "Continue initialization", "panel-wake")
+      _ = assert(woke.isRight, woke.toString)
+      _ <- waitUntil(30.seconds)(IO(capture.nonEmpty))
+      _ = assertEquals(nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergers.map(_.delegateId), List(id))
+      _ = assertEquals(nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergerBootstraps(id).status, "ready")
+      _ = assert(DelegateRegistry.find(id).exists(_.mode.contains("merger")))
+      _ = assert(capture.values.head.messages.exists(_.textContent.contains("Initialize the project merger")))
+      live <- res.agentRegistry.get
+      _ = assert(live.contains(id))
+    yield ()
+    exercise.guarantee(recoverySystem.stopAll)
+  }
+
+  test("adapter startup failure stops the already-created child and preserves a frozen initialization record") {
+    val capture = TrieMap[String, LlmRequest]()
+    val underlying = ActorSystem("partial-merger-startup")
+    val exercise = for
+      children <- Ref.of[IO, List[nebflow.actor.ActorPath]](Nil)
+      failing = new ActorSystem:
+        def localDevice = underlying.localDevice
+        def spawn[M](
+          behavior: nebflow.actor.Behavior[M],
+          name: String,
+          ttl: Option[FiniteDuration] = None
+        ): IO[nebflow.actor.ActorRef[M]] =
+          if name.endsWith("-adapter") then
+            IO.raiseError(new IllegalStateException("simulated adapter initialization failure"))
+          else underlying.spawn(behavior, name, ttl).flatTap(ref => children.update(_ :+ ref.path))
+        def resolve[M](path: String) = underlying.resolve[M](path)
+        def stop(ref: nebflow.actor.ActorRef[?]) = underlying.stop(ref)
+        def stopAll = underlying.stopAll
+        def isAlive(path: nebflow.actor.ActorPath) = underlying.isAlive(path)
+        def watch(watcher: nebflow.actor.ActorPath, target: nebflow.actor.ActorPath) = underlying.watch(watcher, target)
+        def unwatch(watcher: nebflow.actor.ActorPath, target: nebflow.actor.ActorPath) =
+          underlying.unwatch(watcher, target)
+        def deadLetterCount = underlying.deadLetterCount
+        def replayWatches = underlying.replayWatches
+      base <- mkResources(new RecordingLlm(capture))
+      res = base.copy(actorSystem = failing)
+      _ <- IO.blocking {
+        val repo = tempRoot / "general"
+        os.makeDir.all(repo)
+        os.proc("git", "init", "-b", "main").call(cwd = repo, stdout = os.Pipe)
+      }
+      (result, _) <- spawn(
+        res,
+        "Initialize without leaving an unsupervised actor",
+        nebflow.core.delegate.ModeDecision("merger", "explicit", "selected"),
+        systemOverride = Some(failing)
+      )
+      _ = assert(result.isLeft)
+      paths <- children.get
+      _ = assertEquals(paths.size, 1)
+      alive <- paths.traverse(underlying.isAlive)
+      _ = assert(alive.forall(!_))
+      _ = assert(capture.isEmpty)
+      seed = nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergerBootstraps.values.head
+      _ = assertEquals(seed.status, "failed")
+      _ = assert(DelegateRegistry.isFrozen(seed.record.id))
+      live <- res.agentRegistry.get
+      _ = assert(live.isEmpty)
+      retry <- nebflow.agent.DelegateWakeLeg.wake(res, None, seed.record.id, "retry initialization", "panel-wake")
+      _ = assert(retry.isLeft)
+      retriedPaths <- children.get
+      _ = assertEquals(retriedPaths.size, 2)
+      retryAlive <- retriedPaths.traverse(underlying.isAlive)
+      _ = assert(retryAlive.forall(!_))
+      retryRow <- res.subAgentTaskStore.findByTaskId(seed.record.id)
+      _ = assert(retryRow.exists(_.status == "frozen"))
+      _ = assertEquals(
+        nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergerBootstraps(seed.record.id).status,
+        "failed"
+      )
+    yield ()
+    exercise.guarantee(underlying.stopAll)
+  }
+
+  test("interrupted creation repairs missing metadata without execution and never replaces ready history") {
+    val capture = TrieMap[String, LlmRequest]()
+    val id = "delegate-bootstrap-interrupted"
+    for
+      res <- mkResources(new RecordingLlm(capture))
+      _ <- IO.blocking {
+        val record = DelegateRegistry.Record(
+          id,
+          "nebflow",
+          tempRoot.toString,
+          None,
+          None,
+          "root-x",
+          "Interrupted merger initialization",
+          System.currentTimeMillis(),
+          mode = Some("merger")
+        )
+        nebflow.core.delegate.WorkspaceLedger.default.merger(
+          "project",
+          "repository",
+          id,
+          Some(nebflow.core.delegate.WorkspaceLedger.MergerBootstrap(record, "saved initialization brief"))
+        )
+      }
+      _ <- nebflow.core.delegate.MergerInitialization.repairAll(res)
+      _ = assert(capture.isEmpty)
+      _ = assert(DelegateRegistry.isFrozen(id))
+      row <- res.subAgentTaskStore.findByTaskId(id)
+      _ = assert(row.exists(_.status == "frozen"))
+      saved <- res.sessionStore.loadMessagesForSession(id)
+      _ = assertEquals(saved.map(_.textContent), List("saved initialization brief"))
+      _ <- nebflow.core.delegate.MergerInitialization.exclusive(id) {
+        nebflow.core.delegate.MergerInitialization.repair(res, id).attempt.map(result => assert(result.isLeft))
+      }
+      _ <- nebflow.core.delegate.MergerInitialization.ready(id)
+      _ <- nebflow.core.delegate.MergerInitialization.failed(res, id, "later execution failed")
+      _ = assert(nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergerBootstraps(id).everStarted)
+      _ <- res.sessionStore.durableSwapMessages(id, Nil)
+      _ <- IO.blocking(DelegateRegistry.remove(id))
+      refused <- nebflow.core.delegate.MergerInitialization.repair(res, id).attempt
+      _ = assert(refused.isLeft)
+      stillMissing <- res.sessionStore.loadMessagesForSession(id)
+      _ = assert(stillMissing.isEmpty)
+      _ = assert(DelegateRegistry.find(id).isEmpty)
+      _ = assert(capture.isEmpty)
+    yield ()
+    end for
+  }
 
   test("concurrent merger creation starts one real actor and injects its integration role without allocation") {
     val capture = TrieMap[String, LlmRequest]()
