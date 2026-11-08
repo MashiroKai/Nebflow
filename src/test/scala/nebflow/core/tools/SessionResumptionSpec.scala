@@ -42,7 +42,23 @@ class SessionResumptionSpec extends CatsEffectSuite:
   override def afterAll(): Unit =
     LlmLogWriter.setEnabled(true)
     PathUtil.setDataRoot(originalRoot)
-    os.remove.all(tempRoot)
+    // Teardown races the tail of async writers (session-store dirty flushes,
+    // flow-map host writes) that can re-create entries between removal passes,
+    // surfacing as DirectoryNotEmptyException. Retry with backoff; if the tree
+    // still cannot be fully removed, say so and move on — a leftover temp tree
+    // must not fail an otherwise green spec run.
+    val maxAttempts = 5
+    var cleanupError: Option[Throwable] = None
+    for attempt <- 1 to maxAttempts do
+      try os.remove.all(tempRoot)
+      catch
+        case e: java.io.IOException =>
+          cleanupError = Some(e)
+          if attempt < maxAttempts then Thread.sleep(200L * attempt)
+    cleanupError.foreach(e =>
+      System.err.println(s"[afterAll] temp data root cleanup incomplete after $maxAttempts attempts: $e")
+    )
+  end afterAll
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     // 作用域宿主是进程内全局 Ref——逐用例清册防跨用例串图。
