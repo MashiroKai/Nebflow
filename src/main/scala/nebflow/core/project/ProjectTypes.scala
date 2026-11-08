@@ -708,12 +708,11 @@ case class NodeDef(
    */
   deps: List[String] = Nil,
   /**
-   * 合并节点标记（merge-node 批 20260905，方案 merge-node-plan 方案件）：
-   * true = 批次产物落地收口节点——全部上游 completed 才触发（既有 in-barrier 语义）；
-   * 上游 failed 时零结算（D5 20260908 wf1cde §3：failed 不向任何下游结算），合并
-   * 节点例外转 blocked 可见终态不悬挂
-   * （MergeNodePolicy 单点语义，NodeEngine.deliverFailed 唯一挂接）。
-   * 落地收口在工作区根仓执行 → 必须不配 worktree（沙箱根=workspace，.git 可写）。
+   * 合并节点标记（merge-node 批 20260905；**存量读面**——新建合并节点已被 NodeEdit
+   * `NODE_MERGE_UNSUPPORTED` 拒，本字段只为旧 flow-map.json 的容错读与存量大图的
+   * 编辑期校验保留：true = 旧批次产物落地收口节点，全部上游 completed 才触发
+   * （既有 in-barrier 语义）；上游 failed 时零结算（D5：failed 不向任何下游结算），
+   * 停等可见性由 barrier-blocked / mount-stalled 承担。
    * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。
    */
   merge: Boolean = false,
@@ -1014,8 +1013,9 @@ object NodeDef:
  * 不带——载荷字段集对无此特征的节点零漂移）：
  *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
  *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
- *   - deps / plugins / merge：既有条件字段语义不变（merge 仅 merge 节点带 "merge":
- *     true——mount-enforce 批 payload 契约，缺失=非 merge）；
+ *   - deps / plugins / merge：既有条件字段语义不变（merge 仅存量 merge 节点带 "merge":
+ *     true——mount-enforce 批 payload 契约，缺失=非 merge；新建合并节点已被
+ *     NodeEdit NODE_MERGE_UNSUPPORTED 拒，本键只服务存量图）；
  *   - blockedFeedback：**仅 status==blocked 携带**（20260907 上下文经济学批裁定②
  *     ——非 blocked 终态的历史残留不进默认载荷；历史参照走 detail 补挂/归档）。
  *   - bgWait：**仅 bg-wait 自持的 running 节点携带**（僵尸收敛批 2026-09-06）。
@@ -1025,24 +1025,6 @@ object NodeDef:
  *   - role / lastVerdict：**role 仅非 task（= verifier）携带；lastVerdict 仅非空携带**
  *     （nrloop 一期 2026-09-12：verdict 选通态的可观测面——前端/取证据此辨校验节点
  *     及其最近判定；执行节点与无判定节点字段集字节级零漂移）。
- *   - mergeQueue：**仅 merge 节点且当下被合并窗闸挡住携带**（排队位次可见性批
- *     2026-09-14，作者 16:39 双裁 = 案 A：引擎条件键 + 前端渲染，显示 = 数字 +
- *     持有者双显；续件 = engine-defects 批 #2/#227 2026-09-15：补 rank 依据 / 临界区
- *     分区 / 未点火原因）。值 = `{ahead, inSection[], rank:{primary,tiebreaks},
- *     holders:[{id,name,status,readyAt,createdAt,inSection,notStartedReason}],
- *     sameKeyProjects?}`；
- *     纯派生量（不写 NodeDef、不进归档）。**仅快照载荷（NodeList / REST flow-map）
- *     携带**——WS 事件单一序列化点无项目全量节点视图（与 `liveness` 同款快照专有
- *     条件键），未排队节点与全部非 merge 节点字段集字节级零漂移。
- *   - mergeQueuePos：**仅 merge 节点且处于「同队竞争者 ≥2」的队列里携带**（queuepos
- *     批 2026-09-15，作者现场报「排队节点显示的前面还有几个都一样」）。值 = `{position,
- *     total, queue, arrived, readyAt, createdAt, rank:{primary,tiebreaks},
- *     sameKeyProjects?}`——**位次逐节点唯一**、与真实授予序（SEM-2 rank 升序）逐点一致。
- *     与 `mergeQueue` 的分工（🔴 互不替代）：`mergeQueue` = 闸判据「谁挡着我」（阻塞集合
- *     的势 `ahead`，含 verdict 准入过滤）；本键 = 队列序「我排第几」（**不**过准入过滤
- *     ——位次必须对全队列可读，否则未过 verdict 的节点又回到「无信息」）。两键同源真源
- *     （同一份 `all` + 同一 `rankOf`）。纯派生量、零持久字段，**仅快照载荷携带**（与
- *     `mergeQueue` 同款纪律）；未成队节点与非 merge 节点字段集字节级零漂移。
  *   - notifySentAt：**仅异常终态（failed/cancelled）且已上报携带**（归档语义批
  *     2026-09-07「送达即移」——前端链判据据此判断异常终态「已上报可归档」；与
  *     deps/plugins 同构条件字段，非命中不带 = 零字段漂移）。completed 无上报要求
@@ -1052,19 +1034,6 @@ object NodeDef:
  *     FlowMapStore.chainAttrsOf）——孤立单节点链不带，payload 字段集零膨胀；与
  *     deps/plugins 同构条件字段，非命中不带。WS 四事件经 NodeEngine.emitWithChain
  *     富化单点自动携带（帧外壳零改动）。
- *   - chainIds：**仅 merge 节点且多链归属（可达成员链数 ≥2）携带**（U1 批 · 作者裁定①；
- *     值 = **主链 id 首项 + 全量成员链 id**（主链恒首项，即 `chainIds.head == chainId`；
- *     入口可达分解，分量 entries 序），无上限无降级；派生单点
- *     FlowMapStore.mergeChainIds）——普通节点与单链 merge 节点不带（普通节点恒单值
- *     chainId，禁改成全员数组）；主链值在两键中冗余出现 = 有意形态契约（对应 §0bis.3
- *     文档元数据头 `chains: [主链, 支链…]`）。
- *   - mergeUpstreamChains：**仅 merge 节点且可达成员链数 ≥2 携带**（chainmodel 批三 ②
- *     新增键，门控与 `chainIds` 同源）——值 = **本次汇聚的上游链**（入口可达分解出的
- *     成员链，分量 entries 序；含与所属链同号的入口项），派生单点
- *     FlowMapStore.mergeUpstreamChains。与 `chainIds` 是**两个值**而非投影：旧键把
- *     同号入口项前移/去重（信息不可逆），本键保留空过滤原样 ⇒ 既有消费点
- *     （`web/js/flowMapArchive.js:443-456` 剔除首项后计数的多链判据）读旧键零降级，
- *     新键提供「哪些上游链汇聚到这里」这一旧键表达不出的面。
  *   - verifierRoute：**仅「拒绝态」的 verifier 携带**，值恒 `"lost"`（**failroute-guard
  *     批 2026-09-21 · 案 A**，判据 = [[verifierRouteInvalid]]）。**缺键 = 合法**——
  *     合法形态（有可解析 fail 选通边 / 空 out 的两相令牌形态 / `pendingOut` 里已声明
@@ -1166,23 +1135,10 @@ object NodePayload:
     node: NodeDef,
     now: Long,
     chainId: Option[String] = None,
-    chainIds: Option[List[String]] = None,
-    mergeQueue: Option[List[MergeMutexPolicy.QueueSlot]] = None,
-    mergeQueuePos: Option[MergeMutexPolicy.QueuePos] = None,
-    sameKeyProjects: List[String] = Nil,
-    // chainmodel 批三 ②：新增键（默认 None ⇒ 既有调用方字段集零漂移，
-    // 参数追加在末尾 ⇒ 既有位置调用零改动）
-    mergeUpstreamChains: Option[List[String]] = None,
-    // failroute-guard 批（2026-09-21 案 A）：**快照专有判据注入**
-    // （与 mergeQueue/mergeQueuePos 同款）——缺省 None ⇒ 既有调用方
-    // （全部 WS 事件写点）字段集**字节级零漂移**；快照面
+    // failroute-guard 批（2026-09-21 案 A）：**快照专有判据注入**——缺省 None ⇒
+    // 既有调用方（全部 WS 事件写点）字段集**字节级零漂移**；快照面
     // （NodeList 工具 / REST flow-map）传活动区节点表后按下述判据求值。
-    nodes: Option[Map[String, NodeDef]] = None,
-    // mergeverdictvis batch (2026-09-23): snapshot-only conditional key, the
-    // same discipline as mergeQueue/mergeQueuePos — appended at the end so
-    // existing positional callers stay untouched; default None keeps every
-    // existing caller (all WS event write sites) byte-level zero drift.
-    mergeVerdictGate: Option[MergeMutexPolicy.VerdictGate] = None
+    nodes: Option[Map[String, NodeDef]] = None
   ): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
@@ -1280,93 +1236,6 @@ object NodePayload:
     // 同构）：仅 merge 节点带 "merge": true——缺省/缺失 = 非 merge（前端按缺省
     // 防御，非 merge 节点 payload 字段集零变化）。
     val mergeFields = if node.merge then List("merge" -> node.merge.asJson) else Nil
-    // mergeQueue 条件序列化（**排队位次可见性批** 2026-09-14，作者 16:39 双裁 = 案 A：
-    // 引擎条件键 + 前端渲染；显示 = 数字 + 持有者双显）：**仅 merge 节点且当下被合并窗
-    // 闸挡住**才带（调用方注入 [[NodeEngine.mergeQueueHoldersBatch]] 的非空项）——未排队
-    // 的 merge 节点与全部非 merge 节点 payload 字段集**字节级零漂移**（与 merge/deps/
-    // bgWait 同构条件字段；🔴 数据**不由前端/分发器复刻**，判据持有方 = 引擎单点）。
-    //
-    // 值形状（逐字契约，前端只读不派生）：
-    //   ahead             = 前方持有者**个数**（= holders.length，含持有者、不含自己）
-    //   holders[]         = 持有者清单，按 id 升序（确定性；与 merge-queue 事件
-    //                       summary 的 ids.sorted 同序），每项 {id, name, status}
-    //   sameKeyProjects[] = **同键多项目（O-1）**时带他项目名（升序去重）；缺省不带
-    //                       ⇒ 非空 = 位次**不可信**（引擎侧持有者派生自本项目 store，
-    //                       同键他项目节点结构性不可见）⇒ 前端按降级红线只渲染裸
-    //                       「排队中」、**不渲染数字**（🔴 禁编造数字）。
-    // 🔴 本键是**纯派生量**：不写 NodeDef 持久字段、不进 flow-map.json/归档批（与
-    //    wiringGap/reportPendingSince 同纪律）。
-    val mergeQueueFields = mergeQueue.filter(_.nonEmpty).toList.map { slots =>
-      val ordered = slots.sortBy(_.node.id)
-      // engine-defects 批 #2/#227（2026-09-15）：在既有 ahead/holders 之外**只增键**——
-      //   ① holders[] 每项加 rank 依据（readyAt/createdAt；`id` 恒在场 = 第三键）与
-      //      「为何未点火」判据 `notStartedReason`；
-      //   ② `inSection[]` = **真的在临界区**的持有者 id 子集（其余仅是排在前面）；
-      //   ③ `rank` = 次序键元数据（前端只读不派生）。
-      // 🔴 既有键（ahead/holders[].{id,name,status}）逐字保留 ⇒ 既有消费方与
-      //    MergeQueueVisibilitySpec ①-⑤ 零影响；非排队节点与本批前**字节级零漂移**
-      //   （条件键仍在「非空才带」处）。
-      val inSection = ordered.filter(_.inSection).map(_.node.id)
-      val core = List(
-        "ahead" -> ordered.size.asJson,
-        "inSection" -> inSection.asJson,
-        "rank" -> Json
-          .obj("primary" -> MergeMutexPolicy.RankPrimary.asJson, "tiebreaks" -> MergeMutexPolicy.RankTiebreaks.asJson),
-        "holders" -> ordered.map { s =>
-          Json.obj(
-            "id" -> s.node.id.asJson,
-            "name" -> s.node.name.asJson,
-            "status" -> s.node.status.asJson,
-            "readyAt" -> s.rankAt.asJson,
-            "createdAt" -> s.createdAt.asJson,
-            "inSection" -> s.inSection.asJson,
-            "notStartedReason" -> s.notStartedReason.asJson
-          )
-        }.asJson
-      )
-      val foreign = if sameKeyProjects.nonEmpty then List("sameKeyProjects" -> sameKeyProjects.asJson) else Nil
-      "mergeQueue" -> Json.obj((core ++ foreign)*)
-    }
-    // mergeQueuePos 条件序列化（**queuepos 批 2026-09-15**，作者现场报「节点显示的前面
-    // 还有几个都一样 / 详情面板也没有」）：**仅 merge 节点且处于「同队竞争者 ≥2」的队列
-    // 里**才带（调用方注入 [[NodeEngine.mergeQueuePositionsBatch]] 的非空项）——非成队节点
-    // 与全部非 merge 节点 payload 字段集**字节级零漂移**（与 mergeQueue/merge/deps 同构
-    // 条件字段）；🔴 判据持有方 = 引擎单点（禁前端/分发器复刻、禁读文件票层、禁事件流回放）。
-    //
-    // 为什么与 `mergeQueue` **并存而非合并**（口径边界，逐字）：
-    //   · `mergeQueue` = **闸**判据（阻塞集合；`ahead` = 集合的势）——既有键语义**逐字冻结**
-    //     （既有消费方 + MergeQueueVisibilitySpec ①-⑤ / 零漂移断言零影响）；
-    //   · 本键 = **队列序**（位次）——`ahead` 恒等于「挡住我的节点数」，**不是**位次：
-    //     同刻只有一个 running 时全体排队者 `ahead ≡ 1`（＝作者看到的「都一样」），
-    //     且队首（无人挡它）在旧键下**完全没有显示**（＝"零显示"那一极）。
-    //   位次**只增键**、既有键不动 ⇒ 两极化同时解，且无一处旧断言被放宽。
-    // 值形状（逐字契约，前端只读不派生）：
-    //   position          = 1-based 位次（同队竞争者按 rank 升序的序数；已进入临界区者
-    //                       占首位 ⇒ 排队者最小位次可为 2）
-    //   total             = 同队竞争者总数（含已进入临界区者）
-    //   queue             = 队列名 token（[[MergeMutexPolicy.QueueName]]；前端只翻译不派生）
-    //   arrived           = 是否已到达（`in ∪ deps` 全终态；未到达者 rank 首键 = MaxValue
-    //                       ⇒ 位次天然排在队尾——位次对全队列可读，无「无信息」态）
-    //   readyAt/createdAt = rank 依据原文（另 `id` 恒在场 = 第三键）⇒ 位次**可复算**
-    //   rank              = 次序键元数据（与 mergeQueue.rank 同源单点）
-    //   sameKeyProjects[] = 同键多项目（O-1）⇒ 位次**不可信**（与 mergeQueue 同降级信号）
-    // 🔴 本键是**纯派生量**：不写 NodeDef 持久字段、不进 flow-map.json/归档批。
-    val mergeQueuePosFields = mergeQueuePos.toList.map { p =>
-      val posCore = List(
-        "position" -> p.position.asJson,
-        "total" -> p.total.asJson,
-        "queue" -> MergeMutexPolicy.QueueName.asJson,
-        "arrived" -> p.arrived.asJson,
-        "readyAt" -> p.rankAt.asJson,
-        "createdAt" -> p.createdAt.asJson,
-        "rank" -> Json.obj(
-          "primary" -> MergeMutexPolicy.RankPrimary.asJson,
-          "tiebreaks" -> MergeMutexPolicy.RankTiebreaks.asJson
-        )
-      )
-      val posForeign = if sameKeyProjects.nonEmpty then List("sameKeyProjects" -> sameKeyProjects.asJson) else Nil
-      "mergeQueuePos" -> Json.obj((posCore ++ posForeign)*)
-    }
     // loop 条件序列化（LoopNode 批 2026-09-06；与 merge 条件字段同构）：
     // 仅 loop 节点带 "loop" 配置对象 + 运行态条件字段——缺省/缺失 = 非 loop
     // （前端按缺省防御，非 loop 节点 payload 字段集零变化）。运行态字段按
@@ -1427,18 +1296,11 @@ object NodePayload:
       (if node.status == NodeLifecycle.Failed || node.status == NodeLifecycle.Cancelled then
          node.notifySentAt.toList.map(t => "notifySentAt" -> t.asJson)
        else Nil)
-    // chainId / chainIds 条件序列化（链级抽象 P0 + U1 多链归属批；与 deps/plugins
-    // 条件字段同构）：chainId 仅调用方注入（FlowMapStore.chainAttrsOf 单点判据：
+    // chainId 条件序列化（链级抽象 P0；与 deps/plugins 条件字段同构）：
+    // chainId 仅调用方注入（FlowMapStore.chainAttrsOf 单点判据：
     // 所属合并集分量成员数 ≥2）才带——孤立单节点链与未注入调用方（如归档 REST
-    // 端点）payload 字段集零变化；chainIds 仅 **merge 节点**且可达成员链数 ≥2 才带
-    // （普通节点恒不带 = 单值 chainId 语义不变，作者裁定①），值 = 主链 id 首项 +
-    // 全量成员链（无上限、无降级）。
-    // mergeUpstreamChains（chainmodel 批三 ②）：同款条件键、同一门控（仅 merge 节点
-    // 且上游链数 ≥2）——调用方注入才带，非命中节点字段集零漂移（非 merge 节点、
-    // 单链 merge 节点、未注入的调用方一律缺键）。
-    val chainFields = chainId.toList.map(c => "chainId" -> c.asJson) ++
-      chainIds.filter(_.size >= 2).toList.map(ids => "chainIds" -> ids.asJson) ++
-      mergeUpstreamChains.filter(_.nonEmpty).toList.map(ids => "mergeUpstreamChains" -> ids.asJson)
+    // 端点）payload 字段集零变化。
+    val chainFields = chainId.toList.map(c => "chainId" -> c.asJson)
     // pendingSuccession 条件序列化（取消静默死锁修复批 R4；与 deps/plugins 同构）：
     // 非空才带——无「待承接」槽位的节点 payload 字段集零变化。前端渲染面本批零
     // 改动（未知键天然忽略，仅作可见性载体）；分发器侧读 NodeList 即可见。
@@ -1461,52 +1323,11 @@ object NodePayload:
     // 🔴 禁复刻判据（前端/分发器/第二处派生）：真源单点 = 本函数。
     val verifierRouteFields =
       nodes.filter(ns => verifierRouteInvalid(node, ns)).toList.map(_ => "verifierRoute" -> VerifierRouteLost.asJson)
-    // mergeVerdictGate conditional serialization (mergeverdictvis batch 2026-09-23):
-    // carried **only by a merge node whose upstream verifiers hold it at the verdict
-    // gate** (the caller injects [[NodeEngine.mergeVerdictGateBatch]]'s non-empty entries)
-    // — an unheld merge node and every non-merge node keep a **byte-level zero-drift**
-    // field set (same conditional-field discipline as mergeQueue/mergeQueuePos/merge/deps);
-    // 🔴 the judging authority is the engine single point (never re-derived by the
-    // frontend/dispatcher).
-    //
-    // Why it cannot be merged into the two existing keys (wording boundary, verbatim):
-    //   · it cannot go into `mergeQueue` — a verdict-held position produces no
-    //     `mergeQueue` slot at all (the admission narrowing in
-    //     [[NodeEngine.mergeQueueHolders]] drops such candidates before the slot batch
-    //     iterates them), so there is no slot to merge into;
-    //   · it must not go into `mergeQueuePos` — that key is the **queue order** ("which
-    //     place am I"), which deliberately does **not** apply the verdict admission
-    //     filter; putting the gate judgement there would break the frozen split of
-    //     duties and turn a place into a mixed "place + gate" quantity.
-    // Value shape (verbatim contract; the frontend reads it, never derives it):
-    //   blocked  = `true` (this key is only carried when held ⇒ the flag is explicit for
-    //              consumers that would otherwise read a missing holder list as "free")
-    //   heldBy[] = the upstream verifiers that block this position, each
-    //              {id, name, role, lastVerdict}; `lastVerdict` is verbatim, or the
-    //              literal "none" when the upstream declared none / an empty one (same
-    //              wording as the engine's verdict-gate hold message)
-    //   reason   = "verdict-not-pass" (frozen literal; see
-    //              [[MergeMutexPolicy.VerdictGateReason]])
-    // 🔴 This key is a **pure derived quantity**: it writes no NodeDef field and enters
-    //    neither flow-map.json nor the archive batch (same discipline as
-    //    mergeQueue/mergeQueuePos/wiringGap).
-    val mergeVerdictGateFields = mergeVerdictGate.filter(_.heldBy.nonEmpty).toList.map { g =>
-      val held = g.heldBy.map { h =>
-        Json.obj(
-          "id" -> h.id.asJson,
-          "name" -> h.name.asJson,
-          "role" -> h.role.asJson,
-          "lastVerdict" -> h.lastVerdict.asJson
-        )
-      }
-      "mergeVerdictGate" -> Json.obj(
-        "blocked" -> true.asJson,
-        "heldBy" -> held.asJson,
-        "reason" -> MergeMutexPolicy.VerdictGateReason.asJson
-      )
-    }
+    // mergeVerdictGate conditional serialization was removed with the merge-node
+    // machinery (the key was carried only by merge nodes; the verdict gate itself
+    // stays on every landing position and is surfaced through `mount-stalled`).
     Json.obj(
-      (baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields ++ mergeVerdictGateFields ++ verifierRouteFields)*
+      (baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ verifierRouteFields)*
     )
 
   end buildNodeJson

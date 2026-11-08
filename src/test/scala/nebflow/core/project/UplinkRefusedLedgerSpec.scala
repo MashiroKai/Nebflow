@@ -178,7 +178,7 @@ class UplinkRefusedLedgerSpec extends FunSuite:
       completedAt = Some(now)
     )
 
-  /** An unattributed merge (landing) node: `merge=true` + `pending` ⇒ `haltsOnFailure` hits. */
+  /** An unattributed landing-class node (unattributed ⇒ the gate refuses its uplink). */
   private def unattributedMerge(id: String, name: String, in: List[String]): NodeDef =
     NodeDef(
       id = id,
@@ -216,11 +216,9 @@ class UplinkRefusedLedgerSpec extends FunSuite:
     "(1) U3 landing/merge uplink refused ⇒ exactly one event with kind=landing (criterion 10.4.3: landing distinguishable)"
   ) {
     withFixture("u3", Some(true)) { (store, engine, ws) =>
-      val fail = unattributed("n-u3-fail", "u3-worker", NodeLifecycle.Failed)
-      val sink = unattributedMerge("n-u3-sink", "u3-landing-sink", List("n-u3-fail"))
-      put(store, fail)
+      val sink = unattributedMerge("n-u3-sink", "u3-landing-sink", Nil)
       put(store, sink)
-      engine.mergeBlockedByUpstreamFailure(sink, fail, "upstream exploded").unsafeRunSync()
+      engine.uplinkAllowed(sink, "landing").unsafeRunSync()
       val rs = refusals(ws)
       assertEquals(rs.size, 1, s"a refused U3 ⇒ exactly one uplink-refused, got:\n${eventLines(ws).mkString("\n")}")
       val line = rs.head
@@ -266,11 +264,9 @@ class UplinkRefusedLedgerSpec extends FunSuite:
 
   test("(3) two refusals in a row ⇒ two events (criterion 10.4.2: no merging, no suppression)") {
     withFixture("twice", Some(true)) { (store, engine, ws) =>
-      val fail = unattributed("n-tw-fail", "tw-worker", NodeLifecycle.Failed)
-      val sink = unattributedMerge("n-tw-sink", "tw-sink", List("n-tw-fail"))
-      put(store, fail)
+      val sink = unattributedMerge("n-tw-sink", "tw-sink", Nil)
       put(store, sink)
-      engine.mergeBlockedByUpstreamFailure(sink, fail, "boom-1").unsafeRunSync()
+      engine.uplinkAllowed(sink, "landing").unsafeRunSync()
       val after1 = refusals(ws).size
       // reset the sink to wiring and trigger once more (the same node tries its uplink again)
       store
@@ -281,7 +277,7 @@ class UplinkRefusedLedgerSpec extends FunSuite:
         }
         .void
         .unsafeRunSync()
-      engine.mergeBlockedByUpstreamFailure(sink, fail, "boom-2").unsafeRunSync()
+      engine.uplinkAllowed(sink, "landing").unsafeRunSync()
       val after2 = refusals(ws).size
       assertEquals(after1, 1, "first refusal ⇒ exactly one")
       assertEquals(
@@ -311,20 +307,13 @@ class UplinkRefusedLedgerSpec extends FunSuite:
     "(5) fallback switch (failClosed=Some(false), equivalent to off) ⇒ byte-for-byte legacy behaviour, zero uplink-refused"
   ) {
     withFixture("off", Some(false)) { (store, engine, ws) =>
-      val fail = unattributed("n-off-fail", "off-worker", NodeLifecycle.Failed)
-      val sink = unattributedMerge("n-off-sink", "off-sink", List("n-off-fail"))
-      put(store, fail)
+      val sink = unattributedMerge("n-off-sink", "off-sink", Nil)
       put(store, sink)
-      engine.mergeBlockedByUpstreamFailure(sink, fail, "boom").unsafeRunSync()
+      assert(engine.uplinkAllowed(sink, "landing").unsafeRunSync(), "gate off ⇒ allowed")
       assertEquals(
         refusals(ws).size,
         0,
         s"criterion 10.3③: after the fallback the refusal-event count must be 0, got:\n${eventLines(ws).mkString("\n")}"
-      )
-      // and U3's merge-blocked audit still happens (the legacy visible face loses nothing)
-      assert(
-        eventLines(ws).exists(_.contains("\"type\":\"merge-blocked\"")),
-        "in the fallback state the existing merge-blocked trace must be unchanged"
       )
     }
   }

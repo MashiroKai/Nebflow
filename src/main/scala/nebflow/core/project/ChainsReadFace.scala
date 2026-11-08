@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.delegate.{ChainStore, DelegateRegistry, MergeQueue}
+import nebflow.core.delegate.{ChainStore, DelegateRegistry}
 import nebflow.shared.PathUtil
 
 /**
@@ -27,7 +27,7 @@ import nebflow.shared.PathUtil
  *     视图降级为三行族投影）。节点态映射 = v3 §9 逐字表（[[rowStatusOf]] 单点）：
  *     pending/wiring→pending、running/interrupted→running、completed/blocked/failed/
  *     cancelled 直映；ChainView 形（taskId/delegateId/nodes/worktree/verdict/
- *     mergeQueue/frames）不变。
+ *     frames）不变。
  *
  * == 纪律 ==
  *  - **只读**：本件零写盘（探针 open 的目录已存在性先行检查，防无目录副作用建目录；
@@ -224,10 +224,9 @@ object ChainsReadFace:
     catch case _: Throwable => path
 
   /**
-   * 单行投影：Record 原样 + live 提示 + 最新 terminal-verdict 判词（ready-to-merge 供给源）
+   * 单行投影：Record 原样 + live 提示 + 最新 terminal-verdict 判词（行状态判词供给源）
    * + G1 mode（Record 字段随 asJson 原样透出，None = null ⇒ 前端过渡启发兜底）+
-   * G5 行内排队条件键（`mergeQueue`/`mergeQueuePos`，判据单点 = [[MergeQueue.queueViewOf]]，
-   * 未排队缺键）+ #566 `taskStatus`（引擎任务行终态——行状态权威，前端终态判定的
+   * #566 `taskStatus`（引擎任务行终态——行状态权威，前端终态判定的
    * 直接读数；缺席 = 旧投影）+ 对账批 `continuedBy`（重启打断行**已被接续**的接续者
    * id——[[continuationLinks]] 推导命中才落键，未被打断/未被接续 = 键缺席）。
    */
@@ -240,52 +239,17 @@ object ChainsReadFace:
       val key = ChainStore.keyFor(rec.taskId, rec.id)
       val live = registry.get(rec.id).map(_ => Json.obj("status" -> "running".asJson))
       val verdict = latestVerdict(key)
-      val queue = MergeQueue.queueViewOf(rec.id)
       rec.asJson.asObject match
         case Some(obj) =>
           val withLive = live.fold(obj)(v => obj.add("live", v))
           val withVerdict = verdict.fold(withLive)(v => withLive.add("verdict", v))
-          // G1「合并中」一等可查询态（delegate 视图重设计实施批 2026-10-21）：
-          // 本行是合并窗持有人（账本 state = turn-granted——台账 #896 交通引导员制
-          // 的唯一持有人形态）⇒ 行 `taskStatus` 显式覆写为 "merging"。推导单点收进
-          // 引擎读面（判据本体仍是 MergeQueue 账本，零新存储、零第二权威）——前端
-          // 从「holder 派生第二权威」红线中解放，API 直接可查。非持有者行维持
-          // taskStatuses 供给（缺 = 键缺席，旧投影）。
-          val merging = queue.exists(_.state == nebflow.core.delegate.MergeQueue.State.TurnGranted)
-          val withTask = (if merging then Some("merging") else taskStatuses.get(rec.id)).fold(withVerdict) { s =>
+          val withTask = taskStatuses.get(rec.id).fold(withVerdict) { s =>
             withVerdict.add("taskStatus", s.asJson)
           }
           val withCont = continuations.get(rec.id).fold(withTask) { succ =>
             withTask.add("continuedBy", succ.asJson)
           }
-          val withQueue = queue.fold(withCont) { q =>
-            withCont
-              .add(
-                "mergeQueue",
-                Json.obj(
-                  "projectKey" -> q.projectKey.asJson,
-                  "ahead" -> q.ahead.asJson,
-                  "holder" -> q.holder.fold(Json.Null)(_.asJson),
-                  "state" -> q.state.asJson,
-                  // R1（队头不再堵死全队批 2026-11-04）：退避跳过窗与显式「请人工处理」
-                  // 降级态——面板据此标红，不再显示成「正常排队中」。
-                  "blockedRounds" -> q.blockedRounds.asJson,
-                  "skipped" -> q.skipUntilMs.exists(_ > System.currentTimeMillis()).asJson,
-                  "needsHuman" -> q.needsHuman.fold(Json.Null)(_.asJson)
-                )
-              )
-              .add(
-                "mergeQueuePos",
-                Json.obj(
-                  "position" -> q.position.asJson,
-                  "total" -> q.total.asJson,
-                  "readyAt" -> q.readyAt.asJson,
-                  "branch" -> q.branch.asJson,
-                  "baseBranch" -> q.baseBranch.asJson
-                )
-              )
-          }
-          Json.fromJsonObject(withQueue)
+          Json.fromJsonObject(withCont)
         case None => rec.asJson
       end match
     }.handleErrorWith(e =>
@@ -319,8 +283,7 @@ object ChainsReadFace:
 
   /**
    * delegates 列表投影（delegate 视图重设计实施批 2026-10-21 · 引擎 UI 最小集）：
-   * [[rowsJson]] 全量投影的加宽臂——行集完全同源（含 G1 `merging` taskStatus 覆写），
-   * 只多两个面：
+   * [[rowsJson]] 全量投影的加宽臂——行集完全同源，只多两个面：
    *   - `project` 过滤参数（`?project=`，G4 最小臂）：精确匹配 Record.project（挂载
    *     项目名）；`None` = 不过滤（全量）。
    *   - 行内 `topology` 子过程拓扑载荷（G5 批量面最小集）：编排模式为
@@ -330,7 +293,7 @@ object ChainsReadFace:
    *     零第二读取路径；失败 = 空集 fail-soft）；`steps` = agentflow 行的作用域
    *     FlowMap 活动区节点紧凑形 `{id,label,status,deps}`（状态映射复用 [[rowStatusOf]]
    *     同一单点；作用域图缺席 = 空集）。single / 旧盘（mode 缺失）行**零 topology
-   *     键**（与 mergeQueue「未排队缺键」同纪律）。
+   *     键**（条件键缺省纪律）。
    */
   def delegatesJson(
     registry: Map[String, nebflow.actor.AgentRecord],

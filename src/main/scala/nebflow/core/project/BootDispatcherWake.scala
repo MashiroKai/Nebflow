@@ -227,9 +227,11 @@ object BootDispatcherWake:
   val KindGraceful: String = "graceful"
   val KindUnclean: String = "unclean"
 
-  /** 项目 `.nebflow` 目录（与 `FlowMapStore.open` / `ProjectMemory.path` 同规解析）。
-    * 跨设备批（2026-10-25）：引擎本机存储座位——本机项目 = workspace；设备项目 =
-    * 本机 brain 根（设备路径不是本机盘路径，与挂载面存储锚同源）。 */
+  /**
+   * 项目 `.nebflow` 目录（与 `FlowMapStore.open` / `ProjectMemory.path` 同规解析）。
+   * 跨设备批（2026-10-25）：引擎本机存储座位——本机项目 = workspace；设备项目 =
+   * 本机 brain 根（设备路径不是本机盘路径，与挂载面存储锚同源）。
+   */
   def nebflowDir(pd: ProjectDef): os.Path =
     os.Path(ProjectStore.brainWorkspace(pd), PathUtil.dataRoot) / ".nebflow"
 
@@ -592,7 +594,6 @@ object BootDispatcherWake:
        |处置指引：先 NodeList(project="${inv.project}") 读现状，再按条目「建议」在**本地**决定并走既有 NodeEdit 语义——
        |承接（把新上游 append 进 in）/ 改接（替换 in 来源）/ 重激活（blocked 重跑）/ 放弃（abandon）。
        |上游缺轨（failed/blocked/cancelled）的条目**不得**直接启动下游：barrier 会以缺轨输入产出错误结论（pendingSuccession 就是为此留痕的闸）。
-       |merge 节点收口仍须走既有 MergeNodePolicy 与 .nebflow/locks/main-merge.lock 纪律。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
   end wakeText

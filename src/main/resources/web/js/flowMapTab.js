@@ -27,9 +27,6 @@ import { t } from './i18n.js';
 import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
 // 排队视图共享解析（queuepos 批 2026-09-15）：卡与详情面板同源一份解析，落叶子模块
 // （flowMapTab → flowMapArchive 单向依赖，共享件不可放 flowMapArchive；见模块头注）。
-// `mergeQueueView` 在本文件**再导出** = 既有 fixture 验证面逐字保留。
-import { mergeQueueView } from './mergeQueueView.js';
-export { mergeQueueView };
 // fm-node 卡渲染件（#1228 换源接线批拆出单源）：卡面 HTML（节点卡/链摘要卡）与卡面
 // 几何常量改从 fmNodeCard.js 单源引取——本文件只剩布局/增量 diff/交互管线，卡面
 // 渲染零本地副本（S10 per-task 链视图与主图共用同一渲染件，禁复制双权威）。
@@ -38,7 +35,7 @@ import {
   NODE_W, NODE_H, PAD, cardTopOf,
   nodeHtml, nodeFlagKeys, FM_CHAIN_BUCKETS,
 } from './fmNodeCard.js';
-export { nodeFlagKeys, flagBadgesHtml, queueBadgeHtml, queueNoteText } from './fmNodeCard.js';
+export { nodeFlagKeys, flagBadgesHtml } from './fmNodeCard.js';
 import {
   isTerminalStatus, purgeExpired,
   ingestNodes, recordNodeRemoved, dropStore,
@@ -49,7 +46,7 @@ import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 // 簇落位（FE组件化批次六 2026-09-28）：折叠态 localStorage 持久化助手 →
 // ./flowMap/collapse.js（裁定注释与文件级态 collapsedCache 整态随迁，主体只经
 // 函数面读写）。以下转发保持本文件公共导出面字节稳定，外部 import 方零改动。
-// 🔴 徽章/文案小函数族（nodeFlagKeys/flagBadgesHtml/queueBadgeHtml/queueNoteText）
+// 🔴 徽章/文案小函数族（nodeFlagKeys/flagBadgesHtml）
 // 原落 ./flowMap/badges.js；合流取 A 侧 #1228 卡面单源钉（本文件已改引 fmNodeCard.js，
 // 见上 :37-:41）——重复的 import/转发两行按「同名单源」删除（两处实现逐字相同）。
 import { collapsedChainIdsOf, persistCollapsed } from './flowMap/collapse.js';

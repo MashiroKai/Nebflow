@@ -1509,9 +1509,9 @@ object NodeEditTool extends Tool:
                       // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
                       // merge 分流：合并节点创建时 in 引用已 failed 的
                       // 上游（创建顺序翻转后的合法形态）——failed 错误文本≠产物，不作输入
-                      // 投递，走 MergeNodePolicy 转 blocked 可见终态不悬挂（与 deliverFailed
-                      // 运行期路径同语义单点 mergeBlockedByUpstreamFailure）；非 merge 下游
-                      // 的 failed 错误投递语义保持不变。
+                      // 投递；节点保持 pending（barrier 被终态上游闸死的可见面由
+                      // barrier-blocked / mount-stalled 承担）。非 merge 下游的 failed
+                      // 错误投递语义保持不变。
                       NodeTools.runDetached(rt, s"deliver retained upstream results -> $nodeId")(
                         ins.traverse_ { upId =>
                           rt.store.findNode(upId).flatMap {
@@ -1520,8 +1520,7 @@ object NodeEditTool extends Tool:
                             case Some(up)
                                 if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal
                                   .contains(up.status) =>
-                              if s.nodes(nodeId).merge && up.status == NodeLifecycle.Failed then
-                                rt.engine.mergeBlockedByUpstreamFailure(s.nodes(nodeId), up, up.result.get)
+                              if s.nodes(nodeId).merge && up.status == NodeLifecycle.Failed then IO.unit
                               else rt.engine.deliverOutTo(up, nodeId, up.result.get)
                             case _ => IO.unit
                           }

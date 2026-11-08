@@ -28,8 +28,6 @@ import { renderMarkdownWithMath, statusIcon } from './utils.js';
 import { fetchNodeResultDetail, fetchFlowMapArchive } from './nodeData.js';
 import { mountFileChangesSection } from './diffView.js';
 // 排队视图共享解析（queuepos 批 2026-09-15）：详情面板与主图卡读**同一份**解析（叶子模块，
-// 无循环依赖；见 mergeQueueView.js 头注）。详情面板此前**完全没有**排队字段（作者现场报）。
-import { mergeQueueView, queueNameLabel } from './mergeQueueView.js';
 
 // P2-4 cycle cut（同 sidebar.js → modal 先例）：静态链 modal → sidebar → taskList
 // → flowMapArchive → modal 成环（68de01d6 引入 taskList 边后闭合），showToast
@@ -106,15 +104,6 @@ function statusClass(st) {
  * @property {boolean=} notifyDispatcher 终态回流通知分发器（条件：true 才带）
  * @property {string=} chainId 所属链 id（NodePayload 条件键，链级抽象 P0 契约：
  *   后端拓扑链单源下发；可能缺失——缺失 = 孤立节点，链 UI 自然降级）
- * @property {string[]=} chainIds 多链归属集（U1 批·作者裁定① NodePayload 条件键：
- *   **仅 merge 节点且可达成员链数 ≥2 带**，值 = 主链 :: 全量成员链（主链恒首项 =
- *   chainId 逐字同值）；普通节点恒缺失。前端「多链 vs 单链合并节点」判据 =
- *   **除自身主链外的成员链数 ≥2**（见 chainHighlightIds——不是拼上主链项后的裸长度，
- *   否则「主链 + 1 条成员链」形态会被误判多链）；缺失 = 单链或非 merge，走整链语义）
- * @property {number=} notifySentAt 异常终态（failed/cancelled）上报分发器时间戳
- *   （NodePayload 条件序列化：已上报才带。P0 起归档资格判定唯一在后端，前端
- *   不再消费此键做链判据。）
- */
 
 /**
  * @typedef {Object} Chain
@@ -443,20 +432,15 @@ export function chainMembersOf(project, nodeId) {
  *    ——它同属多条成员链，「整条链」指向歧义 ⇒ 只亮自己，不牵动任何其他链节点（裁定③）。
  *  - **单链合并节点 / 普通节点** ⇒ 集合 = 该链全部成员（含链上全部合并节点——
  *    裁定④「不能漏掉合并节点」）。
- *  多链判据 = 引擎下发字段（`chainIds`，普通节点恒缺席）+ **剔除自身主链项后计数**
- *  （`chainIds` 首项恒 = `chainId`，故等价于「除自身主链外的成员链数 ≥2」）：
- *  按裸长度判会把「主链 + 1 条成员链」载荷误判为多链（该形态应按单链处理），
- *  前端零派生拓扑。
+ *  （多链归属集 `chainIds` 条件键已随合并节点机制移除——多链合并节点的高亮分叉
+ *  不再可达；集合恒 = 该链全部成员。）
  * @param {string} project @param {string} nodeId
  * @returns {{ ids: string[], multi: boolean, chainId: string | null }} */
 export function chainHighlightIds(project, nodeId) {
   const s = stores.get(project);
   const n = s ? (s.input.get(nodeId) || s.remoteMembers.get(nodeId)) : null;
   const chainId = n && n.chainId ? String(n.chainId) : null;
-  const ids = n && Array.isArray(n.chainIds) ? n.chainIds : null;
-  const otherChains = ids ? ids.filter((id) => id !== chainId).length : 0;
-  const multi = !!(n && n.merge === true && ids !== null && otherChains >= 2);
-  return { ids: multi ? [nodeId] : chainMembersOf(project, nodeId), multi, chainId };
+  return { ids: chainMembersOf(project, nodeId), multi: false, chainId };
 }
 
 /** merge 节点「收的是哪些 worktree/分支」（U1 批 · 作者裁定⑤；详情卡数据源）。
@@ -1040,23 +1024,6 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
     ]);
   }
   if (n.notifyDispatcher === true) execRows.push([t('flowmap.detail.notify'), esc(t('flowmap.detail.yes'))]);
-  // 排队位次行（**queuepos 批 2026-09-15**；作者现场报「点开的详情面板里也没有」）：
-  // 数据源 = 与主图卡**同一份** `mergeQueueView(n)`（引擎条件键 `mergeQueue` + `mergeQueuePos`，
-  // 前端只读不派生）。形态「排队中 · 第 N 位 / 共 M（队列名）」——N/M/队列名全部取载荷
-  // `mergeQueuePos`（位次逐节点唯一，真源 = SEM-2 rank 升序）。
-  // 🔴 降级红线与卡面逐字同源：位次不可计算（键缺失/形状漂移）⇒ 只写裸「排队中」；
-  //    同键多项目（O-1）⇒ 裸「排队中」+ 不可信标注（**不渲染数字**）。🔴 禁编造数字、
-  //    🔴 禁把阻塞数（`ahead`）当位次写。非 merge / 未成队（两键皆缺）⇒ 本行不占位。
-  const qv = mergeQueueView(n);
-  if (qv) {
-    const qvText = qv.untrusted
-      ? esc(t('flowmap.queue.held') + t('flowmap.queue.untrustedSuffix'))
-      : (qv.pos
-          ? esc(t('flowmap.detail.queueValue', {
-              n: String(qv.pos.position), m: String(qv.pos.total), queue: queueNameLabel(qv.pos.queue) }))
-          : esc(t('flowmap.queue.held')));
-    execRows.push([t('flowmap.detail.queue'), qvText]);
-  }
   const execHtml = execRows.length
     ? `<div class="fm-detail-sec">${esc(t('flowmap.detail.secExec'))}</div>${kvHtml(execRows)}`
     : '';

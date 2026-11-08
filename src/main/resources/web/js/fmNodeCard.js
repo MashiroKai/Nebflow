@@ -17,7 +17,6 @@ import { NODE_STATUS_CLS } from './nodeData.js';
 import { isTerminalStatus } from './flowMapArchive.js';
 // 排队视图共享解析（queuepos 批 2026-09-15）：卡与详情面板同源一份解析，落叶子模块
 // （flowMapTab → flowMapArchive 单向依赖，共享件不可放 flowMapArchive；见模块头注）。
-import { mergeQueueView, queueNameLabel } from './mergeQueueView.js';
 
 // ── 卡面几何（自 flowMapTab.js 随卡迁入 · 单源）────────────────────────────
 // NODE_W 对齐真实卡宽（FLOW_CSS .solar-node width:124px）——旧值 150 让布局数学
@@ -100,57 +99,6 @@ export function flagBadgesHtml(n) {
     }
     return `<span class="fm-flag-badge ${FM_FLAG_CLS[k]}" title="${label}">${label}</span>`;
   }).join('');
-}
-
-// ── 合并窗排队位次（排队位次可见性批 2026-09-14；作者 16:39 双裁 = 显示「数字 + 持有者
-//    双显」、路线「案 A：引擎条件键 + 前端渲染」）────────────────────────────
-//    **queuepos 批 2026-09-15 修正**（作者现场报「节点显示的前面还有几个都一样 / 详情面板
-//    里也没有」）：数字面从 `mergeQueue.ahead` 换成 `mergeQueuePos.position` ——`ahead` 是
-//    **阻塞集合的势**（「谁挡着我」）而非位次，同刻只有一个 running 时全体排队者 `ahead ≡ 1`
-//    ⇒ 看起来一模一样；而 `position` 逐节点唯一、真源 = SEM-2 rank 升序。两键分工与解析
-//    单点见 `./mergeQueueView.js` 头注；`mergeQueue`（含 `ahead`/`holders`）语义**逐字冻结**。
-// 🔴 前端**只渲染不派生**：位次数字一律取载荷 `mergeQueuePos.position`（禁本地复算 rank /
-//    持有者 / 准入过滤——判据持有方 = 引擎单点，前端复刻必静默漂移）；🔴 禁读文件票层
-//    （.nebflow/locks/main-merge.queue）、🔴 禁从事件流回放（事件流是审计面）。
-// 🔴 降级红线（草案 §4 逐字）：键缺失 / 形状漂移 / 不可计算 ⇒ **不渲染数字**（至多裸
-//    「排队中」）；🔴 禁编造数字；🔴 禁把事件流下界当真值（「读不到」≠「不在排队」）；
-//    🔴 **禁把阻塞数（ahead）当位次渲染**。同键多项目（O-1）⇒ 引擎侧持有者派生自本项目
-//    store、他项目节点结构性不可见 ⇒ 位次**不可信** ⇒ 降级为裸「排队中」（数字不渲染，
-//    持有者清单照列）。
-
-/** head 行排队胶囊（文案形态「排队中 · 第 N 位 / 共 M」——queuepos 批：位次逐节点唯一、
- *  N/M 均取载荷 `mergeQueuePos`；`mergeQueue` 的持有者清单不变，仍在脚注「被 XX 挡着」）。
- *  降级两态（红线段）：位次不可计算（键缺失/形状漂移） 或 同键多项目 ⇒ 裸「排队中」无数字。
- *  title 恒带完整信息（头部窄行不牺牲可读性）。 */
-export function queueBadgeHtml(n) {
-  const q = mergeQueueView(n);
-  if (!q) return '';
-  const names = q.holders.map((h) => h.name).join(' · ');
-  // 数字面只认 `mergeQueuePos.position`（🔴 禁由 ahead 顶替；不可信 ⇒ 不渲染数字）。
-  const numbered = !!q.pos && !q.untrusted;
-  const label = numbered
-    ? esc(t('flowmap.queue.pos', { n: String(q.pos.position), m: String(q.pos.total) }))
-    : esc(t('flowmap.queue.held'));
-  const head = q.untrusted
-    ? t('flowmap.queue.untrustedHead')
-    : (q.pos
-        ? t('flowmap.queue.posHead', {
-            queue: queueNameLabel(q.pos.queue), n: String(q.pos.position), m: String(q.pos.total) })
-        : t('flowmap.queue.heldHead'));
-  const title = names ? `${head} — ${t('flowmap.queue.blockedBy', { names })}` : head;
-  return `<span class="fm-flag-badge fm-flag-queue" title="${esc(title)}">${label}</span>`;
-}
-
-/** 等待脚注行文案（**形态「被 XX 挡着」**——作者 16:39 裁定②，XX = 持有者节点名，
- *  多持有者全部列出）。同键多项目 ⇒ 追加不可信标注（不隐藏既有持有者清单）。
- *  返回 '' = 未被挡（调用方保持既有脚注逻辑逐字不变）——注意：队首节点（无人挡它）
- *  在 `mergeQueue` 下无持有者 ⇒ 本行仍为空，它的可见面在 head 行胶囊（`mergeQueuePos`）。 */
-export function queueNoteText(n) {
-  const q = mergeQueueView(n);
-  if (!q || !q.holders.length) return '';
-  const names = q.holders.map((h) => h.name).join(' · ');
-  const base = t('flowmap.queue.blockedBy', { names });
-  return q.untrusted ? `${base}${t('flowmap.queue.untrustedSuffix')}` : base;
 }
 
 // ── 链摘要卡（折叠态，spec §3.3；复用节点卡几何 + 既有状态 glyph/色板 token）──
@@ -281,9 +229,7 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
   // 特殊节点标识（badge 批）：merge/loop/pending 徽标进 head 行（wt 徽标同区，
   // 复用该行既有 flex+gap；不新增卡内纵行——88px 卡纵向不可加行，同 node-flowmap-slim 口径）
   const flags = flagBadgesHtml(n);
-  // 排队位次胶囊（排队位次可见性批）：head 行内、flags 之后（与 merge/pending 同区，
-  // 复用该行既有 flex+gap）。未排队（键缺失）⇒ '' ⇒ head 行 DOM 与改动前**逐字一致**。
-  const queueFlag = queueBadgeHtml(n);
+  const queueFlag = '';
   // 链折叠控件（P1 · spec §3.3）：链入口成员卡 head 行右端 chevron（控件属链不属成员
   // ——仅「可见成员 ≥2 的链」的入口卡带，成员 ≤1 恒无）。点击 = 折叠该链（容器级
   // 捕获委托单点分派，见 flowMapTab bindFlowMapClicks）；title/aria 带链名与成员数，避免
@@ -327,11 +273,8 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
     ? [...(n.in || []), ...(n.deps || [])].map((id) => nameOf ? nameOf(id) : id)
     : [];
   // 合并窗排队脚注（排队位次可见性批 2026-09-14）：**同一脚注行**（不新增卡内纵行）——
-  // 排队态首段 = 「被 XX 挡着」（持有者全列，作者 16:39 裁定②）；上游等待段非空时
-  // 以 ` · ` 续接（合并窗等待与上游等待是两个独立成因，禁互相吞并）。未排队 ⇒
-  // queueNote 为空串 ⇒ 本行文案与改动前**逐字一致**（既有 emoji 清零/防溢出两条
-  // 验收口径零回归）。
-  const queueNote = queueNoteText(n);
+  // 上游等待段（合并窗排队段已随合并队列机制移除——本行只显上游等待成因）。
+  const queueNote = '';
   const waitText = queueNote
     ? (waitParts.length ? `${queueNote} · ${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}` : queueNote)
     : (waitParts.length ? `${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}` : '');

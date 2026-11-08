@@ -96,10 +96,10 @@ private[project] trait NodeGating:
   // `n-6f86d028`，该 verifier 已报 lastVerdict=fail，merge 仍被 `settleRunnableSweep`
   // 拉起并启动）。
   //
-  // **#238 泛化的理由（缝 = O-1；只读侦察 `.nebflow/reports/20260914_verdict-routing-recon.md`）**：
-  // 判词是控制信号，**「不通过」结论不得作为正向交付补投下游**。旧闸前置
-  // `MergeNodePolicy.isMerge(n)` ⇒ 非 merge 收口位（09-14 官网链 `bpm-report`，merge=false）
-  // 遇 fail 判词的 verifier 上游**照旧被拉起**（补投腿 = `settleRunnableSweep` 第 1 步孤儿
+  // **#238 泛化的理由（缝 = O-1）**：
+  // 判词是控制信号，**「不通过」结论不得作为正向交付补投下游**。旧闸曾前置「合并节点」
+  // 形态判定 ⇒ 非合并收口位（09-14 官网链 `bpm-report`）遇 fail 判词的 verifier 上游
+  // 照旧被拉起（补投腿 = `settleRunnableSweep` 第 1 步孤儿
   // barrier 自愈 → `startNode`），下游只能靠任务书里手写的人肉口径「注意上游判词」补。
   // 泛化后判据不再按节点形态分叉（唯一谓词 = [[staleVerdictUps]]），覆盖**全部收口位**：
   // merge sink / 非 merge sink / 链尾 / 一切 `startNode` 入口（barrier 结算、资格回扫、
@@ -121,23 +121,19 @@ private[project] trait NodeGating:
   //     `reloopTo` 的 `startNode(loopRework=…)` 天生不被本闸拦；
   //   · 无 verifier 上游的节点恒不挡（既有行为逐字不变）；
   //   · verifier 终态 `failed`（loop 预算耗尽）在本闸下同样挡住下游（其判词恒非 pass）；
-  //     merge 的可见终态仍走既有「上游失败 ⇒ blocked(upstream-incomplete)」
-  //     （MergeNodePolicy.haltsOnFailure）路径，零新语义；
   //   · role 经 NodeRoles.normalize（缺省/空 = task）⇒ 存量数据零回溯；
-  //   · 函数名保留 `mergeVerdictHolders*`（**历史名**，语义已泛化）：本批只改语义不改名——
-  //     调用点全部在本文件，且改名会把无关行卷进与 #239①/② 共享的写面 diff。
+  //   · 函数名保留 `mergeVerdictHolders*`（**历史名**，语义已泛化）：调用点全部在本文件
+  //     与既有共享落点，改名会把无关行卷进共享写面 diff。
 
   /**
    * 挡住本节点的 verifier 清单（IO 版；空 = 放行）。
    *
    * **O-2（mergefifo-engine 批 2026-09-13，作者 A-4 裁决并入本批）**：上游集 =
-   * **`in ∪ deps`**——设计件 §5.2 **G-1** 的 1 行级扩展（`deps` 参与 verdict 闸，
-   * 口径见设计件 §5.2「`mergeVerdictHoldersOf` 上游集改 `(n.in ++ n.deps).distinct`」）。
-   * 本仓**零存量影响**：现场扫描 16 个 merge 节点全部用 `in`、无一使用 `deps`
-   * （设计件 §5.2 实测）；G-2（verifier 接进 `in`）仍为派发纪律、不入代码；G-3（判词
-   * sha 守卫）本批不做。deps 上游解析仍走 `store.findNode`（归档兜底语义逐字保留）。
-   * **#238（2026-09-15）**：删去前置 `MergeNodePolicy.isMerge(n)` —— 闸对**全部节点**
-   * 生效（收口位 = 全部 start 入口，见上方头注）。
+   * **`in ∪ deps`**——设计件 §5.2 **G-1** 的 1 行级扩展（`deps` 参与 verdict 闸）。
+   * 本仓**零存量影响**：现场扫描 16 个 merge 节点全部用 `in`、无一使用 `deps`。
+   * deps 上游解析仍走 `store.findNode`（归档兜底语义逐字保留）。
+   * **#238（2026-09-15）**：删去「仅合并节点」前置 —— 闸对**全部节点**生效
+   * （收口位 = 全部 start 入口，见上方头注）。
    */
   private[project] def mergeVerdictHoldersOf(n: NodeDef): IO[List[NodeDef]] =
     // ③（chainmodel 批一）：`chain:<id>` 跨链引用展开为目标链成员集（判据单点，合并集口径
@@ -150,8 +146,8 @@ private[project] trait NodeGating:
 
   /**
    * 纯判据（IO 版与 mount-stalled 可见性文案共用单点）：上游中「让本节点卡住的 verifier」
-   * 清单 —— **#238 泛化后 = [[staleVerdictUps]] 的直通单点**（旧前置
-   * `MergeNodePolicy.isMerge(n)` 已删，判据对节点形态零分叉）。
+   * 清单 —— **#238 泛化后 = [[staleVerdictUps]] 的直通单点**（「仅合并节点」前置已随
+   * 合并节点机制移除，判据对节点形态零分叉）。
    */
   private[project] def mergeVerdictHolders(ups: List[NodeDef]): List[NodeDef] =
     staleVerdictUps(ups)
@@ -224,138 +220,6 @@ private[project] trait NodeGating:
         "it; a non-pass verdict never opens a downstream — the fail route is the '(fail)<target>:loop' control edge)"
     )
 
-  // ── 合并窗 FIFO 互斥闸（mergefifo-engine 批 2026-09-13，作者 A-4 裁决收窄落地）────
-  //
-  // 作者原话（逐字）：「每个项目 git 目录下，只能同时有一个合并节点在工作。」
-  //
-  // 判据：**同键（本项目 git 目录）内的 merge 节点中，若存在更高优先者（`running` 者
-  // 恒优先；开态且 rank 严格更小者按 FIFO 优先），则本 merge 不启动、原地保持
-  // pending/wiring**。持有者 = 状态派生（`merge=true ∧ status=running`），终态写点
-  // （completed/failed/cancelled/blocked）自动释放——**无锁文件、无 TTL、无孤儿、
-  // 无迁移**，与既有 verdict 闸同构（同三落点、同「零副作用」纪律）。
-  //
-  // 语义与边界（逐字口径）：
-  //   · 键 = `realpath(git rev-parse --git-common-dir)`（[[MergeMutexPolicy.keyOf]]）；
-  //     **worktree 与主仓同键**（设计件 §3.1 实测）；异键不互斥 ⇒ 跨项目并行零变化；
-  //   · FIFO 次序 = **到达序**（rank = `(readyAt, createdAt, id)` 升序）；到达 = 「in ∪ deps
-  //     全终态」；**不得从「谁先完成」反推到达序**（#438 写前固化纪律）；
-  //   · 闸只影响**启动**：barrier 结算/deliveredTo 记账照旧（与 verdict 闸同款
-  //     「零副作用——只挡 fork startNode 这一动作」）；不改任何上游/其他节点字段；
-  //   · 释放：持有者进终态即自动释放，下一个由 `settleRunnableSweep`（TtlTick 30 s）
-  //     当轮拉起 ⇒ **有界释放**（生产上界 = 一个 tick 周期 + 亚秒级启动）；
-  //   · 🔴 **不削弱既有 verdict 闸**：两闸是**合取**（先 verdict 后互斥，与设计件
-  //     §7.2 状态机同序）；verdict 闸的 marker/日志面（`start held by verdict gate`）
-  //     逐字未动（现网判据）；
-  //   · 非 merge 节点恒空（闸是 merge-only）、无竞争时**逐字零行为变化**；
-  //   · O-1 已知缺口（两项目共用同一 git 目录 ⇒ 引擎侧漏互斥）**不实现 claim/抢占**
-  //     （作者令：与「每个项目 git 目录」的字面范围外），只做**发生即告警**。
-
-  /**
-   * 挡住本 merge 启动的同键更高优先者（IO 版；空 = 放行）。非 merge 节点零开销
-   * 短路（不进 store、不碰注册表、零告警）。
-   *
-   * 两段：① [[MergeMutexPolicy.holders]] 出「同键更高优先者」（running / 开态 rank 更小）；
-   * ② **准入过滤**——候选中自身被 verdict 闸挡住的**不算持有者**（否则一个被 verdict
-   * 判 fail 的队头会永久堵死整条队列；设计与本批状态机都把 verdict 闸排在互斥闸之前，
-   * 见 [[MergeMutexPolicy]] 头注「显式收窄」）。判据复用既有 `mergeVerdictHolders`
-   * **单点**（O-2 后上游集同为 `in ∪ deps` ⇒ 两闸零口径差）。
-   * 两段合体已抽为 [[mergeQueueHolders]]（排队位次可见性批：闸与显示面共用同一判据）。
-   *
-   * 副作用（本函数是闸判定的单一入口，三落点 + 停等文案共用）：附带执行 **O-1 告警**
-   * [[alarmSameGitDirProjects]]（同键多项目 = 引擎侧漏互斥，发生即告警，单发）。
-   */
-  private[project] def mergeMutexHoldersOf(n: NodeDef): IO[List[NodeDef]] =
-    if !MergeNodePolicy.isMerge(n) then IO.pure(Nil)
-    else
-      for
-        // 🔴 Data source = the **two-zone combined map**. This gate used to read
-        // `store.snapshot` (active zone only), while `MergeMutexPolicy.upsOf` resolves the
-        // upstreams through `all.get`: once a chain-level sweep moves the upstream into the
-        // archive zone the lookup misses, `readyAt` falls back to `createdAt` (the entry-node
-        // branch) and the rank primary key stops tracking arrival order (fingerprint
-        // `readyAt == createdAt`) — i.e. a later arrival can jump the queue. The combined map
-        // makes this gate share one source with [[depsSatisfied]] (`store.combinedNodes`).
-        // 🔴 Single-predicate discipline: do NOT add a second predicate and do NOT take a
-        // second, active-zone-only snapshot inside this gate.
-        // The `all` passed to `mergeQueueHolders` below is therefore the two-zone map.
-        combined <- store.combinedNodes
-        _ <- alarmSameGitDirProjects()
-      yield mergeQueueHolders(n, combined)
-
-  /**
-   * 阻塞清单纯判据（**闸与显示面的共同单点**）：[[MergeMutexPolicy.holders]] 出「同键
-   * 更高优先者」，再滤掉自身被 verdict 闸挡住的候选（该过滤理由见 [[MergeMutexPolicy]]
-   * 头注「显式收窄」）。空 = 未被挡（放行）。
-   *
-   * 抽出的动因（**排队位次可见性批** 2026-09-14，作者 16:39 双裁 = 案 A）：显示面的
-   * 「前面还有 N 个 / 被 XX 挡着」必须与闸**同一判据**——闸 [[mergeMutexHoldersOf]]
-   * 与载荷注入 [[NodeTools.buildNodeListPayload]] 都调本函数，**禁第二判据**。
-   */
-  def mergeQueueHolders(n: NodeDef, all: Map[String, NodeDef]): List[NodeDef] =
-    MergeMutexPolicy
-      .holders(n, all)
-      .filterNot(o => mergeVerdictHolders(MergeMutexPolicy.upsOf(o, all)).nonEmpty)
-
-  /**
-   * 排队位次派生批次（**显示面单点**；纯函数、零副作用、零持久字段）：nodeId → 当下
-   * 挡住它的持有者清单，**只收非空项**（未排队的 merge 节点与全部非 merge 节点不在表内
-   * ⇒ 缺键 = 未排队，消费方据此读）。
-   *
-   * 🔴 口径纪律（逐字）：本函数是 [[mergeQueueHolders]] 的纯映射，**不得**另读文件票层
-   * （`.nebflow/locks/main-merge.queue`）、**不得**从事件流回放、**不得**在前端/分发器
-   * 复刻——事件流是审计面、文件票层是过渡期并存的旧层，两者都不是本判据的真源。
-   */
-  def mergeQueueHoldersBatch(all: Map[String, NodeDef]): Map[String, List[NodeDef]] =
-    all.valuesIterator
-      .filter(MergeNodePolicy.isMerge)
-      .flatMap { n =>
-        val hs = mergeQueueHolders(n, all)
-        if hs.isEmpty then None else Some(n.id -> hs)
-      }
-      .toMap
-
-  /**
-   * 排队位次**显示槽**批次（engine-defects 批 #2/#227，2026-09-15）：与
-   * [[mergeQueueHoldersBatch]] **同一判据**（`mergeQueueHolders` → 闸单点），只是把持有者
-   * 逐项富化成 [[MergeMutexPolicy.QueueSlot]]（rank 依据 `readyAt/createdAt` + 是否真在
-   * 临界区 + 未点火原因）。**零行为面**：不改闸、不改 FIFO、不写任何持久字段。
-   *
-   * 与准入过滤的关系：被 verdict 闸挡住的候选本就不进 holders（既有收窄），故槽里的
-   * `notStartedReason` 只可能落在 `in-critical-section / awaiting-handover /
-   * barrier-incomplete / queued` 四态。
-   */
-  def mergeQueueSlotsBatch(all: Map[String, NodeDef]): Map[String, List[MergeMutexPolicy.QueueSlot]] =
-    all.valuesIterator
-      .filter(MergeNodePolicy.isMerge)
-      .flatMap { n =>
-        val hs = mergeQueueHolders(n, all)
-        if hs.isEmpty then None else Some(n.id -> hs.map(o => MergeMutexPolicy.slotOf(o, all)))
-      }
-      .toMap
-
-  /**
-   * 排队**位次**批次（queuepos 批 2026-09-15；显示面单点；纯函数、零副作用、零持久字段）：
-   * nodeId → 位次槽 [[MergeMutexPolicy.QueuePos]]。**只收非空项** ⇒ 缺键 = 不在队列
-   * （非 merge / 在临界区 / 终态 / 竞争者不足）。
-   *
-   * 与 [[mergeQueueSlotsBatch]] 的分工（🔴 两个量互不替代，禁混用）：
-   *   · [[mergeQueueSlotsBatch]] = **闸**判据（阻塞集合 `holders`，载荷键 `mergeQueue`）
-   *     ——「谁挡着我」（含 verdict 准入过滤）；
-   *   · 本函数 = **队列序**（SEM-2 rank 位次，载荷键 `mergeQueuePos`）——「我排第几」
-   *     （**不**过 verdict 准入过滤：位次必须对全队列可读，否则未过 verdict 的节点又
-   *     回到「无信息」——正是作者现场报的 6/6 零显示态）。
-   * 两键同源真源（同一份 `all` + 同一 [[MergeMutexPolicy.rankOf]]），判据不同。
-   *
-   * 🔴 口径纪律（与 [[mergeQueueHoldersBatch]] 逐字同源）：**不得**另读文件票层
-   * （`.nebflow/locks/main-merge.queue`）、**不得**从事件流回放、**不得**在前端/分发器
-   * 复刻——事件流是审计面、文件票层是过渡期并存的旧层，两者都不是本判据的真源。
-   */
-  def mergeQueuePositionsBatch(all: Map[String, NodeDef]): Map[String, MergeMutexPolicy.QueuePos] =
-    all.valuesIterator
-      .filter(MergeNodePolicy.isMerge)
-      .flatMap(n => MergeMutexPolicy.queuePosOf(n, all).map(p => n.id -> p))
-      .toMap
-
   /**
    * **Pre-W1 name for [[mergeVerdictHoldersOf]]** (taskunify / W2b' backfill). The PR-side
    * tree carries `verdictGateHoldersOf`; the body was byte-identical to
@@ -368,160 +232,6 @@ private[project] trait NodeGating:
    */
   private def verdictGateHoldersOf(n: NodeDef): IO[List[NodeDef]] =
     mergeVerdictHoldersOf(n)
-
-  /**
-   * **Verdict-gate visibility slot batch** (mergeverdictvis batch 2026-09-23; payload face
-   * single point; pure mapping over the engine IO face, zero side effects, zero persisted
-   * fields): nodeId → [[MergeMutexPolicy.VerdictGate]], **non-empty entries only** (a
-   * non-merge node and a node whose upstream verifiers all pass are absent from the table ⇒
-   * a missing key means "not verdict-held", and the consumer reads it that way).
-   *
-   * Why this exists: a position held by the verdict gate produces **no** `mergeQueue` slot
-   * at all — [[mergeQueueHolders]] drops candidates that are themselves verdict-held (the
-   * admission narrowing of [[MergeMutexPolicy.holders]]), so its payload carries
-   * `mergeQueuePos.position = 1` with no holder listed anywhere, which reads as "first in
-   * line and nobody blocks me". The real cause is an upstream verifier that carries no pass
-   * verdict; this batch lifts that state onto the payload face.
-   *
-   * 🔴 Zero behaviour change: the gate predicate, the FIFO order, `mergeQueue` /
-   * `mergeQueuePos` and the [[MergeMutexPolicy.holders]] narrowing are byte-level untouched
-   * — this function only reads the same single point and maps it into a slot.
-   *
-   * 🔴 The judging authority is the engine (no frontend/dispatcher re-derivation, no read of
-   * the file ticket layer `.nebflow/locks/main-merge.queue`, no replay from the event stream
-   * — the same discipline as [[mergeQueueHoldersBatch]]).
-   */
-  def mergeVerdictGateBatch(all: Map[String, NodeDef]): IO[Map[String, MergeMutexPolicy.VerdictGate]] =
-    all.valuesIterator
-      .filter(MergeNodePolicy.isMerge)
-      .toList
-      .traverse { n =>
-        mergeVerdictHoldersOf(n).map { held =>
-          if held.isEmpty then None
-          else
-            Some(n.id -> MergeMutexPolicy.VerdictGate(held.map { u =>
-              MergeMutexPolicy.VerdictGateHolder(
-                u.id,
-                u.name,
-                u.role,
-                u.lastVerdict.map(_.trim).filter(_.nonEmpty).getOrElse(MergeMutexPolicy.VerdictGateNone)
-              )
-            }))
-        }
-      }
-      .map(_.flatten.toMap)
-
-  /**
-   * 闸挡启动时的留痕（三处落点共用单点文案）：`merge-queue` 事件（持有者集合变化时
-   * 单发）+ INFO 一行带持有者 id/status——供事后从事件流直接读出**FIFO 次序**（谁在
-   * 等谁、等了多久由节点 createdAt/startedAt 与事件 ts 共同给出）。
-   */
-  private[project] def logMutexHold(where: String, n: NodeDef, holders: List[NodeDef]): IO[Unit] =
-    val ids = holders.map(_.id).sorted
-    mutexHoldLogged.modify(m => (m.updated(n.id, ids), m.get(n.id).contains(ids))).flatMap {
-      case true => IO.unit // 同一持有者集合已留痕（禁每轮刷屏）
-      case false =>
-        FlowMapEventLog.append(
-          workspace,
-          projectName,
-          n.id,
-          FlowMapEventLog.MergeQueueType,
-          FlowMapEventLog.mergeQueueHoldSummary(where, ids)
-        ) *>
-          logger.info(
-            s"[$projectName] merge '${n.name}' (${n.id}) start held by merge queue at $where — " +
-              holders.map(h => s"'${h.name}'(${h.id}) status=${h.status}").mkString(", ") +
-              "; node stays pending (one merge node per project git dir — FIFO by arrival: readyAt,createdAt,id; " +
-              "the holder's terminal write releases it and the next TtlTick starts the next by rank)"
-          )
-    }
-
-  end logMutexHold
-
-  /**
-   * 🔴 **O-1 已知缺口：同键多项目 ⇒ 发生即告警**（作者 A-4「只登记缺口 + 加检测判据」）。
-   *
-   * 缺口（设计件 §3.2 登记、不隐瞒）：引擎侧持有者派生自**本项目 store** ⇒ 「两个项目
-   * 定义指向同一 git 目录」时**漏互斥**（节点侧文件键不漏）。本批**不实现 claim/抢占**
-   * （作者令：与「每个项目 git 目录」的字面范围外，要做须单列批）。
-   *
-   * 检测 = 对本项目 workspace 求键，遍历 [[ProjectRuntimeRegistry]] 全部在册（未归档）
-   * 项目逐个求键（缓存），同键且非本项目 ⇒ 单发一条 `merge-queue` 事件
-   * （`kind=same-git-dir-multi-project`，nodeId 字段承载**项目名**）+ WARN 一行（含键
-   * 原文与他项目 running merge 计数）。零新事件机制（复用既有事件通道 + WARN）。
-   * 键求值失败/非 git 目录回落工作区本体 ⇒ 只会「自等」，不制造假互斥、不误告警。
-   */
-  private def alarmSameGitDirProjects(): IO[Unit] =
-    sameKeyForeignRuntimes.flatMap { case (mine, same) =>
-      if same.isEmpty then IO.unit else emitSameKeyAlarm(mine, same)
-    }
-
-  /**
-   * 同键他项目读数的**共同单点**（告警 [[alarmSameGitDirProjects]] 与显示面
-   * [[sameKeyForeignProjectsNow]] 共用）：返回 (本项目键, [(他项目名, 键, runtime)])。
-   * 键求值经 [[MergeMutexPolicy.keyOf]] 的进程内缓存 ⇒ 稳态下零 git 调用。
-   */
-  private def sameKeyForeignRuntimes: IO[(String, List[(String, String, ProjectRuntime)])] =
-    for
-      mine <- MergeMutexPolicy.keyOf(workspace)
-      rts <- ProjectRuntimeRegistry.all
-      others = rts.filter(rt => rt.project.name != projectName && !rt.project.archived.contains(true))
-      keyed <- others.traverse(rt => MergeMutexPolicy.keyOf(rt.project.workspace).map(k => (rt.project.name, k, rt)))
-      same = keyed.filter((_, k, _) => k == mine)
-    yield (mine, same)
-
-  /**
-   * 同键多项目（O-1）**当下**读数：与本项目同键的他项目名（升序去重；空 = 无）。
-   *
-   * 用途（排队位次可见性批）：引擎侧持有者派生自**本项目 store** ⇒ 同键他项目的 merge
-   * 节点对位次计数**结构性不可见**（[[MergeMutexPolicy.sameKeyForeignProjects]] 头注：
-   * 作者 09-13 令「每个项目 git 目录下只能同时有一个合并节点」在本仓 = 只允许一个合并
-   * 节点在工作；跨项目同键 = 告警面）。故显示面据此**降级**——非空 ⇒ 不渲染位次数字
-   * （🔴 降级红线：禁编造数字；「读不到」≠「不在排队」）。
-   * 与 [[MergeMutexPolicy.sameKeyForeignProjects]] 同源（**禁二次口径**）。
-   */
-  def sameKeyForeignProjectsNow: IO[List[String]] =
-    sameKeyForeignRuntimes.map { case (mine, same) =>
-      MergeMutexPolicy.sameKeyForeignProjects(mine, same.map((name, k, _) => (name, k)))
-    }
-
-  private def emitSameKeyAlarm(
-    mine: String,
-    same: List[(String, String, ProjectRuntime)]
-  ): IO[Unit] =
-    val mark = same.map((name, _, _) => name).distinct.sorted.mkString(",")
-    sameKeyWarned.modify(m => (m + mark, m.contains(mark))).flatMap {
-      case true => IO.unit // 同一他项目集合已告警（禁 30 s 节拍刷屏）
-      case false =>
-        for
-          foreignRunning <- same
-            .traverse((_, _, rt) =>
-              rt.store.snapshot
-                .map(_.nodes.values.count(o => MergeNodePolicy.isMerge(o) && o.status == NodeLifecycle.Running))
-            )
-            .map(_.sum)
-          s <- store.snapshot
-          mineRunning = s.nodes.values.count(o => MergeNodePolicy.isMerge(o) && o.status == NodeLifecycle.Running)
-          names = same.map((name, _, _) => name).distinct.sorted
-          _ <- FlowMapEventLog.append(
-            workspace,
-            projectName,
-            projectName,
-            FlowMapEventLog.MergeQueueType,
-            FlowMapEventLog.mergeQueueSameGitDirSummary(mine, names, foreignRunning, mineRunning)
-          )
-          _ <- logger.warn(
-            s"[$projectName] merge mutex KNOWN GAP (O-1): other registered project(s) [${names.mkString(", ")}] " +
-              s"resolve to the SAME git dir '$mine' — merge holders are derived from THIS project's store only, " +
-              "so mutual exclusion is NOT enforced across projects sharing one git dir " +
-              "(no claim/preemption implemented). " +
-              s"merge-running now: mine=$mineRunning foreign=$foreignRunning. " +
-              "Mitigation: never point two projects at one git dir."
-          )
-        yield ()
-    }
-
-  end emitSameKeyAlarm
 
   /**
    * R3 终态写点**即时** barrier 检查（取消静默死锁修复批，作者裁定 R3 方案 3）：

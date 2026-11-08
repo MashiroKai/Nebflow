@@ -27,7 +27,7 @@ object NodeListTool extends Tool:
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
 
 ## Returns
-Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (stored display-only values only), liveness (running only), chainId (multi-member chain only), chainIds (merge nodes with 2+ reachable member chains only; value = main chain id first, then the full member chain list), mergeQueue (merge nodes currently held by the merge-window mutex gate only; value = {ahead, holders: [{id, name, status}], sameKeyProjects?} — `ahead` = the SIZE OF THE BLOCKING SET, i.e. who blocks me, NOT my rank in the queue), mergeQueuePos (merge nodes sitting in a merge-window queue with 2+ contenders only; value = {position, total, queue, arrived, readyAt, createdAt, rank: {primary, tiebreaks}, sameKeyProjects?} — `position` = 1-based rank, UNIQUE PER NODE and aligned with the real grant order rank=(readyAt,createdAt,id); `total` = contender count incl. the one already inside the critical section)}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
+Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (stored display-only values only), liveness (running only), chainId (multi-member chain only))}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
 With detail=<nodeId>: the same node shape + task + result (full text)."""
 
   val inputSchema = JsonObject.fromIterable(
@@ -80,19 +80,15 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
             NodeTools.resolveNodeRefIO(rt, nodeRef).flatMap {
               case Left(err) => IO.pure(Left(ToolError(err)))
               case Right(n) =>
-                // chainId / chainIds 条件键（链级抽象 P0 + U1 多链归属批）：detail
+                // chainId 条件键（链级抽象 P0）：detail
                 // 单节点记录与快照/WS 同构——判据单点 FlowMapStore.chainAttrsOf
-                // （双区可达，归档节点同样带链归属；chainIds 仅 merge 多链节点带，
-                // 值 = 主链 id 首项 + 全量成员链；chainmodel 批三 ② 起同一单点再给出
-                // mergeUpstreamChains = 本次汇聚的上游链，新增键）。
+                // （双区可达，归档节点同样带链归属）。
                 rt.store.chainAttrsOf(n.id).map { attrs =>
                   val now = System.currentTimeMillis()
                   val base = NodePayload.buildNodeJson(
                     n,
                     now,
-                    attrs.chainId,
-                    attrs.chainIds,
-                    mergeUpstreamChains = attrs.mergeUpstreamChains
+                    attrs.chainId
                   )
                   // 历史参照补挂：默认载荷仅 blocked 态
                   // 携带 blockedFeedback——detail 按需通道对非 blocked 节点补挂存储值

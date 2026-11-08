@@ -141,7 +141,7 @@ private[project] trait NodeCanceller:
    * 台账热态。无链节点（`None`）恒放行。
    *
    * 🔴 静默是**有意为之**：暂停 / 取消是用户显式意图，其可见性由 REST 响应 + WS 三态帧
-   * （`chainState`）承担；把停等写进引擎事件流（`logMutexHold` 形态）会让暂停链的装配
+   * （`chainState`）承担；把停等写进引擎事件流会让暂停链的装配
    * 文本混入停等告警，且让「paused 链零派发」的红验断言无法机械判定。
    */
   private[project] def chainGateOf(nodeId: String): IO[Option[String]] =
@@ -803,7 +803,7 @@ private[project] trait NodeCanceller:
    * 状态写点与计时字段同事务清零，持久层不残留「终态节点带待申报计时」的误导态。
    * 为什么不能只靠 [[clearReportPending]]（run fiber 收尾的 `cleanupRunTables`）：
    * 存在**不经 run fiber** 的终态写点——boot 期 `reapStaleRunning`（死会话收殓）、
-   * `autoFailDeadRunning`、`mergeBlockedByUpstreamFailure`、NodeCancel 收殓等，
+   * `autoFailDeadRunning`、NodeCancel 收殓等，
    * 它们的节点从没有 fiber 可跑 finalizer ⇒ 计时会随节点进归档（隔离实例实跑读
    * 数：reap 后归档的 cancelled 节点仍带 `reportPendingSince`/`reportReminderCount`）。
    * 值已清 ⇒ 原样返回（零漂移，不发生无谓写）。

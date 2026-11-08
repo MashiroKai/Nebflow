@@ -22,7 +22,7 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
  *     旧号进 [[AliasRow]] **永久可达**（[[resolve]] 热面单点 + 冷档兜底）。
  *
  * 🔴 **本批不做**（批界，禁越界；第 14 条）：不改 Mail 校验（`MailTool.scala:629-646`）、
- * 不改 Flow Map 载荷与 `FlowMapStore.mergeChainIds`、不动合并窗痛点③判据、不动 `deps`
+ * 不改 Flow Map 载荷、不动收口判据、不动 `deps`
  * 节点引用语义与既有闸 —— 三者归档三。本类只提供判据与数据面，**不接管任何既有消费方**。
  *
  * == 判据（机械、零启发式）==
@@ -388,6 +388,8 @@ object ChainLedger:
       if es.isEmpty && as.isEmpty then this
       else copy(entries = entries ++ es, aliases = aliases ++ as, since = if since == 0L then at else since)
 
+  end PendingOffline
+
   object PendingOffline:
     given Configuration = Configuration.default.withDefaults
     given Codec[PendingOffline] = ConfiguredCodec.derived
@@ -510,7 +512,7 @@ object ChainLedger:
 
   /**
    * **派发闸判据单点**：本链当前是否短路后续节点派发（`paused` ∨ `cancelled`）。
-   * 回调方据此跳过启动 —— 🔴 **静默跳过、零日志**（复用了 `logMutexHold` 之类的
+   * 回调方据此跳过启动 —— 🔴 **静默跳过、零日志**（与引擎既有停等闸落点同款纪律，
    * 停等留痕会把日志行混进暂停链的装配文本；「暂停」是用户显式意图，不是异常态，
    * 其可见性由 REST/WS 三态面承担，不由引擎事件流承担）。
    */
@@ -897,10 +899,12 @@ object ChainLedger:
       // 也会进候选（其 assigned 号永不落热）⇒ 别名指向一个不存在的链号。候选集限制在
       // keptEntries 后，无存活命中 ⇒ 无吸收 ⇒ 旧号走孤儿别名下沉冷档（可达性不丢）。
       val cands =
-        comps.filter(c => isLive(c) && c.memberIds.exists(touch.contains))
+        comps
+          .filter(c => isLive(c) && c.memberIds.exists(touch.contains))
           .map(c => assigned(c.id))
           .filter(keptEntries.contains)
-          .distinct.sorted
+          .distinct
+          .sorted
       if cands.isEmpty then None else Some(old -> cands.head)
     }.toMap
     // 既有别名行：canonical 尚在 ⇒ 保行（吸收则重指向）；canonical 已离场且无吸收目标
@@ -1061,13 +1065,11 @@ object ChainLedger:
     Totals(
       entries = st.entries.size + st.pendingDissolve.entries.size + st.pendingRetire.entries.size,
       aliases = st.aliases.size + st.pendingDissolve.aliases.size + st.pendingRetire.aliases.size,
-      members =
-        st.entries.values.map(_.memberCount).sum +
-          st.pendingDissolve.entries.map(_.memberCount).sum + st.pendingRetire.entries.map(_.memberCount).sum,
-      refCount =
-        st.entries.values.map(_.refCount.toLong).sum + st.aliases.values.map(_.refCount.toLong).sum +
-          st.pendingDissolve.entries.map(_.refCount.toLong).sum + st.pendingDissolve.aliases.map(_.refCount.toLong).sum +
-          st.pendingRetire.entries.map(_.refCount.toLong).sum + st.pendingRetire.aliases.map(_.refCount.toLong).sum
+      members = st.entries.values.map(_.memberCount).sum +
+        st.pendingDissolve.entries.map(_.memberCount).sum + st.pendingRetire.entries.map(_.memberCount).sum,
+      refCount = st.entries.values.map(_.refCount.toLong).sum + st.aliases.values.map(_.refCount.toLong).sum +
+        st.pendingDissolve.entries.map(_.refCount.toLong).sum + st.pendingDissolve.aliases.map(_.refCount.toLong).sum +
+        st.pendingRetire.entries.map(_.refCount.toLong).sum + st.pendingRetire.aliases.map(_.refCount.toLong).sum
     )
 
   def hotRows(st: State): Int =
