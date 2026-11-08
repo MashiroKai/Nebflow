@@ -248,7 +248,7 @@ private[gateway] object AuthRoutes:
       //    list after logout (reconnectLoop re-upserts on success).
       _ <- ms.presenceServiceOpt.fold(IO.unit)(p => p.disconnectAll().handleErrorWith(_ => IO.unit))
       // 4. Delete the device credential file (~/.nebflow/neblink/device.json)
-      credentialResult <- DeviceCredential.clear.attempt
+      credentialResult <- DeviceCredential.clearForLogout.attempt
       // 5. Disable NebLink in config (keep neblinkServer address for next login).
       //    updateConfig refreshes the in-memory ref AND persists to disk, so
       //    /status reflects the change immediately without a restart.
@@ -275,7 +275,10 @@ private[gateway] object AuthRoutes:
       //    两条登出路由 POST /neblink/logout 与 POST /neblink/auth/end-session 共用）：
       //    清机器层 active-account 指针 + 按账号吊销控制台会话。账号目录一律保留
       //    （登出 ≠ 删数据，设计 §3.5）；「Always completes locally」纪律由 seam 兜底。
-      accountResult <- clearAccountSurface(sessions, PathUtil.machineRoot, clearPointer = queueResult.isRight).attempt
+      // Retain the pointer for retry if any critical teardown failed, not
+      // only when enqueue failed. The account session is still revoked now.
+      canClearPointer = List(credentialResult, configResult, discoveryResult, relayResult, queueResult).forall(_.isRight)
+      accountResult <- clearAccountSurface(sessions, PathUtil.machineRoot, clearPointer = canClearPointer).attempt
       failures = List(credentialResult, configResult, discoveryResult, relayResult, infoResult, peersResult, queueResult)
         .collect { case Left(e) => e } ++ accountResult.left.toOption.toList
       _ <- if failures.isEmpty then IO.unit
@@ -395,17 +398,7 @@ private[gateway] object AuthRoutes:
                         .flatMap {
                           case Right(tokens) =>
                             ms.identity.flatMap { identity =>
-                              // C2 (2026-09-01 login-chain fix): id_token picture
-                              // → device identity avatarUrl immediately (Logto
-                              // users get an avatar without waiting for the
-                              // enroll response; neblink-server avatar sync is
-                              // the C1 half, this is the client-side half).
-                              val pictureWrite = tokens.picture match
-                                case Some(pic) if pic.nonEmpty =>
-                                  ms.updateDeviceInfo(avatarUrl = Some(pic))
-                                case _ => IO.unit
-                              pictureWrite *>
-                                LogtoTransport
+                              LogtoTransport
                                   .register(LogtoTransport.jdkSend)(
                                     serverUrl,
                                     tokens.accessToken,
@@ -441,7 +434,9 @@ private[gateway] object AuthRoutes:
                                       ).attempt
                                         .flatMap {
                                           case Right(Right(_)) =>
-                                            pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
+                                            tokens.picture.filter(_.nonEmpty)
+                                              .fold(IO.unit)(pic => ms.updateDeviceInfo(avatarUrl = Some(pic))) *>
+                                              pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
                                           // 🔴 缺陷 A：`Right(Left(err))` 与 `Left(e)` 两支都改走
                                           // **分类映射**（上游 §8.2 第 4 项），`getMessage` / 自由串
                                           // 一律不进用户可见面。
