@@ -920,6 +920,7 @@ export default {
   'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
   'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
   'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
+  'subagents.providerFailureGroup': '后台 {count} 个任务服务商不可用 · {provider}',
   'subagents.freezeDigestRecoverable': '{count} 条已冻结（可唤醒）',
   'subagents.freezeDigestNeedsHuman': '{count} 条冻结待你处理',
   'subagents.frozenTip': '已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行、合并队列位全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。',

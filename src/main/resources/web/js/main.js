@@ -2674,12 +2674,14 @@ onMessage('delegateFreezeDigest', (msg) => {
     needsHuman: Number(msg.needsHuman) || 0,
     windowMs: Number(msg.windowMs) || 0,
     items: Array.isArray(msg.items) ? msg.items : [],
+    providerGroups: Array.isArray(msg.providerGroups) ? msg.providerGroups : [],
   };
   // 逐项读数回灌到对应行（自动续跑次数 / 次数用尽标记）——行 tooltip 要用。
   for (const it of state.freezeDigest.items) {
     const sid = String((it && it.sessionId) || '').replace(/^team-/, '');
     if (!sid) continue;
     applyDelegateFrozen(it.parentSessionId, sid, {
+      frozenDetail: it.detail || '',
       autoResumes: Number(it.autoResumes) || 0,
       autoResumesExhausted: !!it.autoResumesExhausted,
     });

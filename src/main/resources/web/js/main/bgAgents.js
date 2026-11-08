@@ -2372,6 +2372,14 @@ export function renderBgAgentDropdown() {
     // DOM 构建器写法（component-contract R5：不裸写 innerHTML——文本全 textContent）。
     const pendingCount = countPendingRecovery(model);
     headerEl.textContent = t('subagents.header', { count: model.total }) + digestText;
+    for (const group of digest?.providerGroups || []) {
+      const line = document.createElement('div');
+      line.textContent = t('subagents.providerFailureGroup', {
+        provider: group.provider, count: group.count,
+      });
+      line.title = group.reason || '';
+      headerEl.appendChild(line);
+    }
     if (pendingCount > 0) {
       const btn = document.createElement('button');
       btn.type = 'button';

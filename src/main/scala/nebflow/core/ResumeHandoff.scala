@@ -84,6 +84,8 @@ object ResumeHandoff:
     /** 项目节点的 L3 硬恢复（挂死会话断点续跑）。 */
     case NodeRecovery
 
+  end Cause
+
   /** 原因 → 一句话（进 tool_result 正文；对模型说）。 */
   def causePhrase(c: Cause): String = c match
     case Cause.Crash => "the session crashed in the middle of this call"
@@ -99,12 +101,12 @@ object ResumeHandoff:
 
   /** 原因 → 线值（审计/日志；短横线小写）。 */
   def causeWire(c: Cause): String = c match
-    case Cause.Crash           => "crash"
-    case Cause.EngineRestart   => "engine-restart"
-    case Cause.Freeze          => "freeze"
-    case Cause.Continuation    => "continuation"
+    case Cause.Crash => "crash"
+    case Cause.EngineRestart => "engine-restart"
+    case Cause.Freeze => "freeze"
+    case Cause.Continuation => "continuation"
     case Cause.UpstreamFailure => "upstream-failure"
-    case Cause.NodeRecovery    => "node-recovery"
+    case Cause.NodeRecovery => "node-recovery"
 
   /** 一条未完成的工具调用。 */
   final case class PendingCall(toolName: String, toolUseId: String)
@@ -136,14 +138,17 @@ object ResumeHandoff:
   /** 已配对的 tool_use id 集（其后任何 user 消息里的 tool_result 都算配对）。 */
   private def answeredIds(messages: List[Message]): Set[String] =
     messages
-      .collect {
-        case Message(MessageRole.User, Right(blocks), _, _) =>
-          blocks.collect { case ContentBlock.ToolResult(id, _, _) => id }
+      .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+        blocks.collect { case ContentBlock.ToolResult(id, _, _) => id }
       }
       .flatten
       .toSet
 
-  /** 一条 assistant 消息里未配对的工具调用。 */
+  /** Recovery cannot infer whether an interrupted tool produced external effects. */
+  def hasUnresolvedToolCalls(messages: List[Message]): Boolean =
+    val answered = answeredIds(messages)
+    messages.exists(m => danglingOf(m, answered).nonEmpty)
+
   private def danglingOf(msg: Message, answered: Set[String]): List[(ContentBlock.ToolUse, String)] =
     msg match
       case Message(MessageRole.Assistant, Right(blocks), _, _) =>
@@ -235,6 +240,7 @@ object ResumeHandoff:
         fallbackReason = Some("no pending tool call — ordinary interruption, textual continuation"),
         repairedMidHistory = 0
       )
+    end if
   end plan
 
   /** 中段悬挂就地修补（紧随该 assistant 消息插一条 tool_result 消息）。 */

@@ -341,11 +341,25 @@ object FreezeNotice:
       "escalate" -> d.escalateCount.asJson,
       "oldestAgeMs" -> d.oldestAgeMs.asJson,
       "windowMs" -> d.windowMs.asJson,
+      "providerGroups" -> nebflow.shared.ProviderFailureGroups
+        .snapshot(
+          d.items.filter(_.infra).map(i => nebflow.shared.ProviderFailureGroups.Task(i.delegateId, i.detail))
+        )
+        .map { g =>
+          Json.obj(
+            "provider" -> g.provider.asJson,
+            "reason" -> g.reason.asJson,
+            "count" -> g.count.asJson,
+            "sessionIds" -> g.taskIds.asJson
+          )
+        }
+        .asJson,
       "items" -> d.items.map { i =>
         Json.obj(
           "sessionId" -> i.delegateId.asJson,
           "parentSessionId" -> i.parentSessionId.asJson,
           "reason" -> i.reason.asJson,
+          "detail" -> nebflow.shared.ProviderFailureDetail.sanitize(i.detail).asJson,
           "family" -> familyOfItem(i).asJson,
           "tier" -> tierWire(i.tier).asJson,
           "tierLabel" -> tierLabelZh(i.tier).asJson,
@@ -814,6 +828,7 @@ object FreezeNotice:
 
   /** 一条已播报台账：`members` = 播报时的**当前在冻**成员集（抑制判据的落盘态）。 */
   final case class WaitingAnnounce(family: String, members: List[String], announcedAt: Long):
+
     def json: Json =
       Json.obj(
         "family" -> Json.fromString(family),
@@ -876,7 +891,10 @@ object FreezeNotice:
     e.source == "delegate" && e.eventType == "frozen-waiting"
 
   private def rowMemberIds(e: AgentCommand.ExternalEvent): List[String] =
-    e.metadata("quietDelegateIds").flatMap(_.asArray).getOrElse(Vector.empty).toList
+    e.metadata("quietDelegateIds")
+      .flatMap(_.asArray)
+      .getOrElse(Vector.empty)
+      .toList
       .flatMap(_.asString)
       .filter(_.nonEmpty)
       .distinct
@@ -935,6 +953,7 @@ object FreezeNotice:
             }
         IO(writeWaitingAnnounces(parent, nextLedger)).as((out, suppressedCount))
       }
+    end if
 
   end suppressRepeatedWaiting
 

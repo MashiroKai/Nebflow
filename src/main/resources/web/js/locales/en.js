@@ -962,6 +962,7 @@ export default {
   'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
+  'subagents.providerFailureGroup': '{count} background tasks: provider unavailable · {provider}',
   'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
   'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
   'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes, task-ledger row and merge-queue slot are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
