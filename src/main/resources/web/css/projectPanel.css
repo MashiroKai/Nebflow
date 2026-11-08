@@ -1091,5 +1091,18 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
 .project-workspaces-meta { color: var(--ds-text-muted); margin-block: var(--ds-space-2); }
 .project-workspaces-message { white-space: pre-wrap; }
 .project-workspaces-requests { margin-top: var(--ds-space-3); }
+/* Workspace facts chips (ahead / dirty / verification / reconcile): badge scale,
+   token-only values per the design-spec rules. */
+.project-ws-chips { display: flex; flex-wrap: wrap; gap: var(--ds-space-1); margin-block: var(--ds-space-1); }
+.project-ws-chip {
+  display: inline-block; padding: 1px var(--ds-space-2);
+  border-radius: var(--ds-radius-badge); font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+}
+.project-ws-chip.is-verified { color: var(--ds-success-icon); }
+.project-ws-chip.is-unverified { color: var(--ds-text-muted); }
+.project-ws-chip.is-resumable { color: var(--ds-warn-icon); }
+.project-ws-chip.is-unknown { color: var(--ds-text-muted); }
+.project-ws-actions { display: flex; gap: var(--ds-space-2); margin-block: var(--ds-space-1); }
 
 .project-workspaces [hidden] { display: none; }

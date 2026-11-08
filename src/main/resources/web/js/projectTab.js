@@ -1413,7 +1413,7 @@ function bindEmptyCta(scroll) {
  *    故空态 CTA 行为逐字不变。「+」钮弹层提交时传入带描述的模板
  *    （`project.createPrefill`）——两者共用本函数，语义单点（§7.11 统一入口）。
  *  @returns {boolean} false ⇒ 注入目标不可得（调用方须显式报错，禁静默吞）。 */
-function prefillProjectPrompt(text) {
+export function prefillProjectPrompt(text) {
   const input = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('input'));
   if (!input) return false;
   input.value = text || t('project.emptyPrefill');

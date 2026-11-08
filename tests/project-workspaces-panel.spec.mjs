@@ -13,6 +13,13 @@ try {
       const path = new URL(route.request().url()).pathname;
       if (path.endsWith('/workspaces')) await route.fulfill({ json: {
         revision: 10, baseline: 'main', merger: { delegateId: 'delegate-merger' }, cleanups: {},
+        facts: {
+          idle: { aheadCount: 2, dirtyTracked: 1, dirtyUntracked: 3, headCommit: 'c'.repeat(40),
+            lastVerification: { status: 'passed' }, reconcile: [] },
+          busy: { aheadCount: 0, dirtyTracked: 0, dirtyUntracked: 0, headCommit: 'd'.repeat(40),
+            lastVerification: null,
+            reconcile: [{ requestId: 'request-9', phase: 'checking', reading: 'resumable', integration: null, detail: '' }] },
+        },
         workspaces: [
           { id: 'idle', branch: 'delegate/provider-recovery-workspace', lifecycle: 'open', activity: 'idle',
             owner: 'delegate-developer', baseBranch: 'main', baseCommit: 'a'.repeat(40) },
@@ -47,6 +54,14 @@ try {
     assert(await section.locator('input[required]').evaluate(element => getComputedStyle(element).color === getComputedStyle(element.closest('.project-workspaces')).color), `input text contrast ${width}/${theme}`);
     assert(await section.locator('input[type=checkbox]').nth(1).isDisabled());
     assert(await section.getByRole('button', { name: '清理工作区', exact: true }).nth(1).isDisabled());
+    // Workspace facts chips render per row (ahead / dirty / verification / reconcile).
+    const idleRow = section.locator('.project-workspaces-row', { hasText: 'provider-recovery-workspace' });
+    assert((await idleRow.textContent()).includes('+2 领先'), `ahead chip ${width}/${theme}`);
+    assert((await idleRow.textContent()).includes('1 处改动'), `dirty chip ${width}/${theme}`);
+    assert((await idleRow.textContent()).includes('验证通过'), `verification chip ${width}/${theme}`);
+    assert(await idleRow.getByRole('button', { name: '继续工作', exact: true }).isVisible(), `continue-work entry ${width}/${theme}`);
+    const busyRow = section.locator('.project-workspaces-row', { hasText: 'delegate/working' });
+    assert((await busyRow.textContent()).includes('可续处理'), `reconcile badge ${width}/${theme}`);
     const geometry = await section.evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth,
       visible: element.getBoundingClientRect().width > 0 }));
     assert(geometry.visible && geometry.scroll <= geometry.width + 2, `overflow ${width}/${theme}: ${JSON.stringify(geometry)}`);
