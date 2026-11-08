@@ -206,14 +206,15 @@ object DelegateTool extends Tool:
      * 之后）——固定段落，与作者手写的 `task` 正文**结构可分**（作者写在正文里的路径
      * 逐字保留，本段只追加不改写）。空串 = 本次未带附件 ⇒ brief 逐字节不变。
      */
-    attachmentSection: String = ""
+    attachmentSection: String = "",
+    reportLine: String = BriefReportLine
   ): String =
     val outputRuleBlock = if includeOutputRule then s"\n${Defaults.OutputBlockRule}" else ""
     val attachmentBlock = if attachmentSection.isEmpty then "" else s"\n\n$attachmentSection"
     s"""$workspaceLine${bindingLine.map(l => s"\n$l").getOrElse("")}
 ${ResetHazardLine}
 
-${BriefReportLine}
+${reportLine}
 
 ${Defaults.NoSleepPollRule}
 
@@ -1480,7 +1481,8 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
         dispatcherDiscipline = if isDispatcher then Some(DispatcherDisciplineLine) else None,
         // 附件清单段（附件传输批）：**brief 末尾**的固定段落——与作者手写正文结构可分，
         // 手写路径逐字保留；空计划 ⇒ 空串（旧 brief 逐字节不变）。
-        attachmentSection = DelegateAttachments.render(seatedAttachments)
+        attachmentSection = DelegateAttachments.render(seatedAttachments),
+        reportLine = reportLine
       )
       // 回执 = ACK 三行 + **座位来源行**（作者令 2026-11-04：「命中哪条要写进派发
       // 回执，不许静默」）+ 模式行（参数即权威的读面）+ 附件行（附件传输批：

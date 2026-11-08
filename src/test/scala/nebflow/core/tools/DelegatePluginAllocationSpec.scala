@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.syntax.all.*
 import cats.effect.unsafe.implicits.global
 import cats.effect.kernel.Ref
 import cats.effect.std.Dispatcher
@@ -54,6 +55,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
     os.remove.all(tempRoot / "chains")
     os.remove.all(tempRoot / "logs")
     os.remove.all(tempRoot / "general")
+    os.remove.all(tempRoot / "workspaces")
     os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}", createFolders = true)
     PluginAllocator.clear()
     nebflow.core.project.DelegateFlowHosts.clear
@@ -174,7 +176,11 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
    * spawnBackground 直呼（内置执行器腿单点——Mail 续聊复活腿同点复用）。返回值附
    * 带系统停机句柄（测试卫生：会话 actor 随 system.stopAll 收敛）。
    */
-  private def spawn(res: SharedResources, task: String): IO[(Either[ToolError, (String, String)], IO[Unit])] =
+  private def spawn(
+    res: SharedResources,
+    task: String,
+    mode: nebflow.core.delegate.ModeDecision = nebflow.core.delegate.ModeParam.default
+  ): IO[(Either[ToolError, (String, String)], IO[Unit])] =
     val system = ActorSystem(s"dpalloc-${scala.util.Random.nextInt(100000)}")
     DelegateTool
       .spawnBackground(
@@ -190,11 +196,47 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
         parentRef = None,
         wsSend = None,
         parentSessionId = Some("root-x"),
-        allocateSeat = false
+        allocateSeat = false,
+        modeDecision = mode
       )
       .map(r => (r, system.stopAll.attempt.void))
 
   end spawn
+
+  test("concurrent merger creation starts one real actor and injects its integration role without allocation") {
+    val capture = TrieMap[String, LlmRequest]()
+    val repo = tempRoot / "general"
+    for
+      res <- mkResources(new RecordingLlm(capture))
+      calls = installStub(List("must-not-allocate"))
+      _ <- IO.blocking {
+        os.makeDir.all(repo)
+        os.proc("git", "init", "-b", "main").call(cwd = repo, stdout = os.Pipe)
+      }
+      attempts <- List
+        .fill(12)(
+          spawn(
+            res,
+            "Inspect authorized requests",
+            nebflow.core.delegate.ModeDecision("merger", "explicit", "user selected merger")
+          )
+        )
+        .parSequence
+      _ <- waitUntil(30.seconds)(IO(capture.nonEmpty))
+      results = attempts.map(_._1.toOption.get)
+      ids = results.map(_._1).distinct
+      _ = assertEquals(ids.size, 1)
+      _ = assertEquals(results.count(!_._2.contains("taskAccepted=false")), 1)
+      _ = assertEquals(capture.size, 1)
+      _ = assert(capture.values.head.messages.head.textContent.contains(nebflow.prompts.PromptCatalog.MergerRole))
+      _ = assert(!capture.values.head.messages.head.textContent.contains(DelegateTool.BriefReportLine))
+      _ = assert(calls.isEmpty)
+      _ = assertEquals(DelegateRegistry.find(ids.head).flatMap(_.mode), Some("merger"))
+      _ = assertEquals(nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergers.map(_.delegateId), ids)
+      _ <- attempts.traverse_(_._2)
+    yield ()
+    end for
+  }
 
   test("spawn leg: the allocated set rides the brief and the grant, and lands in the queryable records") {
     writeSkillPlugin("p1", "DELEGATE-ALLOC-MARKER")
@@ -228,7 +270,26 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
     end for
   }
 
-  test("spawn leg fail-open: the allocation family failing leaves an empty injection and a normal spawn") {
+  test("spawn leg allocation failure refuses execution by default") {
+    writeSkillPlugin("p1", "UNKNOWN-CAPABILITIES")
+    val capture = TrieMap[String, LlmRequest]()
+    for
+      res <- mkResources(new RecordingLlm(capture))
+      calls = installFailingStub()
+      (result, shutdown) <- spawn(res, "must not start without known capabilities")
+      _ <- shutdown
+    yield
+      assert(result.left.toOption.exists(_.toString.contains("DELEGATE_PLUGINS_REFUSED")))
+      assert(calls.nonEmpty)
+      assert(capture.isEmpty)
+      assert(DelegateRegistry.list().isEmpty)
+  }
+
+  test("spawn leg fail-open: explicit opt-in permits an empty injection after allocation failure") {
+    os.write.over(
+      tempRoot / nebflow.shared.Branding.configFileName,
+      """{"plugins":{"failOpenOnAllocationError":true}}"""
+    )
     writeSkillPlugin("p1", "FALLOPEN-ME") // 目录非空——否则 empty-catalog 短路先于分配端口
     val capture = TrieMap[String, LlmRequest]()
     for

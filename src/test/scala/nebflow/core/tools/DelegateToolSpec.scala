@@ -123,7 +123,7 @@ class DelegateToolSpec extends CatsEffectSuite:
       .as[List[String]]
       .toOption
       .getOrElse(Nil)
-    assertEquals(modeEnum, List("kernel", "dispatcher"), "mode enum = the two words, no auto")
+    assertEquals(modeEnum, List("kernel", "dispatcher", "merger"), "mode enum includes the project merger, no auto")
     // 描述文本与代码同步（作者令：文档与代码不同步等于没改）——旧口径的两句假话
     // 必须在 schema 与工具描述两处都消失。
     val modeDesc = io.circe.Json
