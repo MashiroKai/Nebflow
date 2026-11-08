@@ -156,9 +156,7 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {string} allocation         分配模式词顶层投影（jev / llm-fallback / fail-open /
  *                                      empty-catalog；惰性态 disabled/off/auto-off 与旧行缺键 → ''）
  * @property {{verdict: string, reason: string, source: string, at: number}|null} verdict
- *                                      terminal-verdict 行投影（三判词 + reason）
- *                                      merge-queue 行投影——**FIFO 排序键 = 完成时间**
- *                                     （readyAt ↑；S11 改义：非创建时间）
+ *                                      terminal-verdict 行投影（verdict + reason）
  * @property {Array<{kind: string, at: number, payload: Object<string, any>}>} frames
  *                                      原样行时序（含 N1 候定帧——透传不解读）
  */

@@ -27,8 +27,6 @@ import { restoreDelegate, restoreAllDelegates } from '../delegateApi.js';
 // 节点子智能体可见性批（2026-11-07）：节点父的 store 子条目补拉（provider 镜像的唯一
 // 补拉口——读面仍是 delegateChainStub.listDelegateChildren 那一个）。
 import { ensureChildren } from '../delegateChainProvider.js';
-// panel-merge-status 批（2026-10-25）：候合并行队列细节（位次/重试/拒绝摘要）——
-// /api/merge-queue 只读状态面单点（叶子模块，事件驱动 + 节流退避，禁空转轮询）。
 // 来源链批（作者令 2026-11-01 19:23）：孤儿行来源角标升级为名字链——父不可见行的
 // 「挂在谁下面」标注读上层 delegate 名字（bgSourceChain 单点解析；解析不到回退
 // 既有类型词）。
