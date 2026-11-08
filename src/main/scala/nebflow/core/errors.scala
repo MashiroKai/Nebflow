@@ -68,9 +68,9 @@ object NebflowError:
       // could deliver them. `transient` still dominates the LEGACY wording below
       // (an upstream jitter / rate-limit failure must never be re-labelled as a
       // vision-capability failure when we have no name to point at).
+      else if lower.contains("auth") then "LLM 认证或权限失败，请检查凭据和模型权限"
       else if hadImage && !transient then "这条消息里的图片没能送出去：当前模型链没有一个支持看图。请改用支持看图的模型，或去掉图片后重发。"
       else if transient then "LLM 服务暂时不可用，请稍后重试"
-      else if lower.contains("auth") then "LLM 认证失败，请检查 API Key 配置"
       else s"AI request failed: $summary"
     case AuthFailed(reason) => s"Authentication failed: $reason"
     case RateLimited(source) => s"Rate limit exceeded ($source). Please wait and try again."

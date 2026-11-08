@@ -115,6 +115,11 @@ class QuotaClassificationSpec extends CatsEffectSuite:
     assertEquals(q429.quota, true)
     assertEquals(q429.permanence, ErrorPermanence.Permanent, "配额类 = 不可自愈 ⇒ 不做同 provider 退避重试")
 
+    val forbidden = Fallback.classifyError(http("permission denied", 403))
+    assertEquals(forbidden.reason, FailoverReason.Auth)
+    assertEquals(forbidden.permanence, ErrorPermanence.Permanent)
+    assertEquals(forbidden.quota, false, "a bare 403 is not proof of a quota window")
+
     val freq429 = Fallback.classifyError(http(Zhipu429Freq1302Body, 429))
     assertEquals(freq429.quota, false, "同族码 1302 = 频率类，不得并入配额分层")
 

@@ -111,8 +111,7 @@ object Fallback:
    * **不并入**本白名单：频率类的正确动作是退避等待（`OverloadBackoffMinMs`），
    * 不是换链。判据级别 = 只增「确证是额度语义」的码，禁凭形状编造。
    *
-   * 403 面不靠码识别（LLM 面唯一实证形态 = kimi 5h 额度闸，错误体
-   * `permission_error` + `5-hour usage limit`），见 [[isQuotaError]]。
+   * 403 面只识别已知的显式额度提示，不能将权限拒绝一概视为配额，见 [[isQuotaError]]。
    */
   val QuotaUpstreamCodes: Set[String] = Set("1308", "1310")
 
@@ -127,7 +126,7 @@ object Fallback:
 
   /**
    * 配额类判据（计划性额度耗尽）：
-   *   - HTTP **403**：LLM 面唯一实证形态 = 5h 额度闸（kimi 2026-09-21 16:47）；
+   *   - HTTP **403** 且消息明确包含已知的 `5-hour usage limit` 额度提示；其他 403 是权限错误；
    *   - HTTP **429** 且错误体带 [[QuotaUpstreamCodes]] 的码（zhipu 17:54 code 1308）；
    *   - 字符串路径（无结构化状态码）：只认码，不认裸数字。
    *
@@ -138,7 +137,10 @@ object Fallback:
     error match
       case e: sttp.client4.HttpError[?] =>
         val c = e.statusCode.code
-        c == 403 || (c == 429 && QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code)))
+        // A 403 alone does not prove quota: it may be an invalid credential or
+        // missing permission. Recognise only the known explicit quota shape.
+        val explicitQuota403 = c == 403 && body.toLowerCase(java.util.Locale.ROOT).contains("5-hour usage limit")
+        explicitQuota403 || (c == 429 && QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code)))
       case _ => QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code))
 
   /**
@@ -215,14 +217,12 @@ object Fallback:
   /**
    * #692 单 attempt 面：该次失败是否为「网络/链路类」——等一等可能自己好的形状。
    * 含：类型化网络不可达（[[isNetworkUnreachableThrowable]] 的分类产物）、连接
-   * 被重置、请求级超时（网络断时 zhipu 的实测形态：cats-effect 包装超时，
-   * Permanent，但**等得来**）、未知瞬态（DNS 失败等无关键词 IO 错误的兜底桶，
-   * 10-21 kimi 实测形态）。排除面见 [[isExplicitRejectionAttempt]]。
+   * 被重置、请求级超时。未知瞬态不证明是网络错误，不能据此断言可等待。
    */
   private[llm] def isNetworkClassAttempt(a: FallbackAttempt): Boolean =
     a.reason.exists(r =>
       r == FailoverReason.NetworkUnreachable || r == FailoverReason.ConnectionReset || r == FailoverReason.Timeout
-    ) || (a.reason.contains(FailoverReason.Unknown) && a.permanence.contains(ErrorPermanence.Transient))
+    )
 
   /**
    * #692 单 attempt 面：该次失败是否为**供应商明确拒绝**——等不来的形状（作者令：
@@ -237,9 +237,8 @@ object Fallback:
    * #692 核心判据（agent 层等待语义的单点来源）：本次 LLM 失败是否为**网络不可达
    * 型可等待失败**。判据（按序）：
    *   1. 类型化网络异常直抛（未进链穷尽包装的残余路径）⇒ 可等待；
-   *   2. 链穷尽（FallbackExhaustedError）：链上**存在**网络类 attempt 且**不含任何**
-   *      明确拒绝 attempt ⇒ 可等待——[zhipu Timeout(Permanent), kimi Unknown(Transient)]
-   *      正是 10-21 断网实测形态（旧语义在此终态判死）。
+   *   2. 链穷尽（FallbackExhaustedError）：所有 attempt 均有明确网络类证据；
+   *      只要存在未知或明确拒绝，就不能将整链归为网络故障。
    *
    * 混合链 [Timeout, Auth] ⇒ **不可**等待（401 等不来）；全 overload 链 ⇒ 不可等待
    * （走既有 LlmTransient 冻结恢复，语义不变）；AllProvidersDownTimeout ⇒ 不经此
@@ -248,9 +247,7 @@ object Fallback:
   def isNetworkUnreachableExhaustion(error: Throwable): Boolean =
     error match
       case e: FallbackExhaustedError =>
-        e.attempts.nonEmpty && e.attempts.exists(isNetworkClassAttempt) && !e.attempts.exists(
-          isExplicitRejectionAttempt
-        )
+        e.attempts.nonEmpty && e.attempts.forall(isNetworkClassAttempt)
       case e => isNetworkUnreachableThrowable(e)
 
   /**

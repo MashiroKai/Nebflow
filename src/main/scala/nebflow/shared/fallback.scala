@@ -47,10 +47,10 @@ case class ErrorClassification(
   evict: Boolean = true,
   /**
    * 配额类分层（作者令 2026-09-21 19:16 腿 b）：上游错误体证明这是**计划性
-   * 额度耗尽**（HTTP 403，或 429 且上游 code ∈ `Fallback.QuotaUpstreamCodes`）。
+   *   额度耗尽**（带明确额度证据的 HTTP 403，或 429 且上游 code ∈ `Fallback.QuotaUpstreamCodes`）。
    *
    * 分界判据 = 「短窗内会不会自愈」：
-   *   - `quota = true`（计划性：现读 403×1 = kimi 5h 额度闸 @16:47；429-1308×1 =
+   *   - `quota = true`（计划性：403 且明确的 kimi 5h 额度提示；429-1308×1 =
    *     zhipu 5h 使用上限 @17:54）⇒ interface 侧走**配额软回避窗**：该 candidate
    *     退出本轮候选、立即换链、不进探测集（不烧必然失败的探测），窗口到期自然
    *     回链。阻塞式等待（同 provider 退避重试 / 全灭闸 `waitForAnyUp` 等满预算）
