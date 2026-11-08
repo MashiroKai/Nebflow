@@ -2120,6 +2120,7 @@ export function initInput(view) {
         ensureDictationIdle: () => { if (voiceActive) stopVoice(); },
         // Replies for THIS session are read aloud; others are ignored.
         getSessionId: () => view.sessionId,
+        cancelResponse: () => requestTurnInterrupt(view.sessionId),
       });
     }).catch(() => {});
   }
