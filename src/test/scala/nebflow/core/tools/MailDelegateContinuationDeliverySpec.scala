@@ -358,4 +358,36 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       val undelivered = frames.filter(json => json.hcursor.get[String]("type").toOption.contains("delegateResultUndelivered"))
       assertEquals(undelivered, Nil, "the backstop must NOT fire when a parent ref exists")
 
+  test("workspace reservation rejects Mail without reviving the development owner"):
+    val system = ActorSystem("mail-workspace-reserved")
+    val id = "delegate-workspace-reserved"
+    for
+      resources <- mkResources(system, hang = true)
+      _ <- seedDeadDelegate(id, "reserved-parent")
+      _ <- IO.blocking {
+        val ledger = nebflow.core.delegate.WorkspaceLedger.default
+        ledger.register(
+          nebflow.core.delegate.WorkspaceLedger.Workspace(
+            "reserved-work",
+            "project",
+            "repo",
+            "/unused-reserved",
+            "delegate/reserved",
+            "main",
+            "base",
+            id,
+            "kernel"
+          )
+        )
+        assert(ledger.reserve("merge-request", List("reserved-work")).isRight)
+      }
+      result <- continuationMail(resources, system, "reserved-parent", id)
+      _ = assert(result.isLeft, result.toString)
+      live <- resources.agentRegistry.get
+      _ = assert(!live.contains(id))
+      _ <- system.stopAll
+    yield ()
+    end for
+
+
 end MailDelegateContinuationDeliverySpec

@@ -1509,6 +1509,24 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       // assembleBrief 本体（spec 判红锚）逐字节不动；initialPrompt 与首条 UserInput
       // 同吃消解后文本。机制关 = 原样透传。
       resolvedBrief <- resources.msgTokens.resolveForAgent(brief)
+      _ <- IO.blocking {
+        binding.filter(_.worktree.isDefined).foreach { b =>
+          val ledger = nebflow.core.delegate.WorkspaceLedger.default
+          val entry = nebflow.core.delegate.WorkspaceLedger.Workspace(
+            id = subagentId,
+            project = project.getOrElse(b.baseWs),
+            repository = nebflow.core.delegate.WorkspaceLedger.repositoryKey(os.Path(b.baseWs)),
+            path = java.nio.file.Path.of(b.worktree.get).toRealPath().toString,
+            branch = b.branch,
+            baseBranch = b.baseBranch.getOrElse("main"),
+            baseCommit = b.baseSha.getOrElse(throw new IllegalStateException("Missing workspace creation commit")),
+            owner = subagentId,
+            ownerMode = modeDecision.mode,
+            activity = "running"
+          )
+          ledger.register(entry).fold(error => throw new IllegalStateException(error), _ => ())
+        }
+      }
       subagentRef <- NodeRunner.spawnAgentActor(system, params)
       adapterRef <- NodeRunner.spawnSupervisedAdapter(
         system = system,

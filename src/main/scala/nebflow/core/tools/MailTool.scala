@@ -663,7 +663,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     // 送来的任何非空 `task=` 一律显式拒绝（fail-closed，与 `delivery` / `device` 墓碑
     // 同形态——引擎零 JSON-Schema 校验 ⇒ 旧键照样到达此处；静默忽略 = 静默语义损失：
     // 调用方会以为任务收到了这条消息）。
-    val taskTombstone = input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
+    val taskTombstone =
+      input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
 
     // Mail 模型裁定: the `device` tombstone gate — **ahead of
     // every other judgment and delivery side effect** (same order as the existing
@@ -768,6 +769,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                                       case Some(_) => IO.pure(Left(projectTriggerUnsupportedError(address)))
                                       case None => IO.pure(Left(unresolvableError(address, roleOf(ctx))))
                                     }
+                                end if
                         end match
                       }
                   }
@@ -850,11 +852,13 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     else if a.startsWith(NodePrefix) then Option(a.stripPrefix(NodePrefix).trim).filter(_.nonEmpty).map(_ => "node")
     else None
 
-
-  private def rootFace: String = "\"delegate:<id>\"/\"kernel:<id>\"（续聊）或 \"node:<节点id或名>\"（已登记 delegate 链）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
+  private def rootFace: String =
+    "\"delegate:<id>\"/\"kernel:<id>\"（续聊）或 \"node:<节点id或名>\"（已登记 delegate 链）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id或名>\""
+
   private def delegateFace: String =
     "\"node:<节点id或名>\"（你自己作用域链图内的节点）或 \"Nebula\"（向根会话汇报中间读数/阻断——续命派生实例同享此腿）"
+
   /** 普通会话（原团队成员面）在团队地址面退役后**没有**自己的 Mail 地址面。 */
   private def standaloneFace: String =
     "无 —— 只有项目分发器、delegate 会话与 Nebula root 拥有 Mail 地址面（团队地址面已于 2026-11-04 整体退役）"
@@ -1340,6 +1344,42 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     system: ActorSystem,
     isLegacyForm: Boolean
   ): IO[Either[ToolError, String]] =
+    val verify: IO[Either[ToolError, Unit]] =
+      IO.blocking(DelegateRegistry.find(id).exists(_.frozenSince.isDefined)).flatMap {
+        case false => IO.pure(Right(()))
+        case true =>
+          ctx.sharedResources match
+            case None => IO.pure(Left(ToolError("Cannot verify recovery context (RECOVERY_UNVERIFIED)")))
+            case Some(resources) =>
+              resources.sessionStore.loadMessagesForSession(id).attempt.map {
+                case Right(messages)
+                    if messages.nonEmpty && !nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(messages) =>
+                  Right(())
+                case _ =>
+                  Left(
+                    ToolError("Saved context or tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
+                  )
+              }
+      }
+    verify.flatMap {
+      case Left(error) => IO.pure(Left(error))
+      case Right(_) =>
+        IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(id, allowFrozen = true)).flatMap {
+          case Left(error) => IO.pure(Left(ToolError(error)))
+          case Right(_) => deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
+        }
+    }
+
+  end deliverToDelegate
+
+  private def deliverToDelegateAdmitted(
+    id: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    ctx: ToolContext,
+    system: ActorSystem,
+    isLegacyForm: Boolean
+  ): IO[Either[ToolError, String]] =
     (ctx.sharedResources, ctx.actorSystem) match
       case (Some(res), Some(sys)) =>
         if id.isEmpty then
@@ -1423,8 +1463,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                             s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."
                         )
                       )
-                  case _ if nebflow.core.delegate.DelegateFreeze.isFreezeWire(record.frozenReason.getOrElse("")) &&
-                      record.executor == nebflow.core.executor.ExecutorRegistry.DefaultId =>
+                  case _
+                      if nebflow.core.delegate.DelegateFreeze.isFreezeWire(record.frozenReason.getOrElse("")) &&
+                        record.executor == nebflow.core.executor.ExecutorRegistry.DefaultId =>
                     // ═══ 不 live 的**冻结记录**（错误冻结批 2026-11-01）═══
                     // 冻结记录在统一注册表里没有活体 = 监督者已自停（Terminated /
                     // respawn 失败腿）或引擎重启过。**绝不可**走下面的续起腿
@@ -1533,6 +1574,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
           deriveDelegateContinuation(record, id, message, ctx, system, res, displayTitle, parentRef, reason)
     }
 
+  end continueDelegate
+
   /** ① 原位续腿：同 id、转录追加、链归属不变（回执逐项说破）。 */
   private def resumeDelegateInPlace(
     record: DelegateRegistry.Record,
@@ -1587,6 +1630,8 @@ $message"""
             )
           )
       }
+
+  end resumeDelegateInPlace
 
   /** ② 派生兜底腿：落 resumedFrom + scope 移交（ownerMigration 审计）。 */
   private def deriveDelegateContinuation(
@@ -1653,7 +1698,12 @@ $message"""
               wsSend = ctx.wsSend
             )
             .handleErrorWith(e =>
-              IO.pure(Left(s"scope handover failed: ${e.getMessage}"): Either[String, nebflow.core.project.ScopeHandover.HandoverReport])
+              IO.pure(
+                Left(s"scope handover failed: ${e.getMessage}"): Either[
+                  String,
+                  nebflow.core.project.ScopeHandover.HandoverReport
+                ]
+              )
             )
             .map { handover =>
               record.taskId.foreach { tid =>
@@ -1674,7 +1724,8 @@ $message"""
                     "archived nodes, ownerMigration recorded) — the nodes keep reporting here."
                 case Right(_) =>
                   " (The original instance had no chain map left to hand over.)"
-                case Left(reason) => s" WARNING: the chain handover failed ($reason) — the old nodes may not reach this session."
+                case Left(reason) =>
+                  s" WARNING: the chain handover failed ($reason) — the old nodes may not reach this session."
               val parentLiveNote = parentRef match
                 // 父不 live：立即说破（Mail 时点可见），终态还有监督者兜底告警——双端都不静默。
                 case None =>
@@ -1688,6 +1739,7 @@ $message"""
               )
             }
       }
+  end deriveDelegateContinuation
 
   // ============================================================
   // 附件面路线 A——`attachments` 通用附件面

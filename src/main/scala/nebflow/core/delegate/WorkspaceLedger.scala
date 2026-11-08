@@ -4,22 +4,29 @@ import io.circe.generic.semiauto.*
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
 
-/** Shared durable authority for ownership and execution reservations. Reads fail
-  * closed on corrupt data. The file lock also covers other application processes.
-  */
+/**
+ * Shared durable authority for ownership and execution reservations. Reads fail
+ * closed on corrupt data. The file lock also covers other application processes.
+ */
 final class WorkspaceLedger(val path: os.Path):
   import WorkspaceLedger.*
 
   private def transaction[A](f: State => (State, A)): A = WorkspaceLedger.synchronized {
     os.makeDir.all(path / os.up)
-    val channel = java.nio.channels.FileChannel.open((path / os.up / s"${path.last}.lock").toNIO,
-      java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE)
+    val channel = java.nio.channels.FileChannel.open(
+      (path / os.up / s"${path.last}.lock").toNIO,
+      java.nio.file.StandardOpenOption.CREATE,
+      java.nio.file.StandardOpenOption.WRITE
+    )
     try
       val lock = channel.lock()
       try
-        val before = if os.exists(path) then io.circe.parser.decode[State](os.read(path))
-          .fold(e => throw new IllegalStateException("Workspace ledger is unreadable", e), identity)
-        else State()
+        val before =
+          if os.exists(path) then
+            io.circe.parser
+              .decode[State](os.read(path))
+              .fold(e => throw new IllegalStateException("Workspace ledger is unreadable", e), identity)
+          else State()
         val (after, result) = f(before)
         if after != before then AtomicJson.writeSync(path, after.asJson.noSpaces)
         result
@@ -68,9 +75,37 @@ final class WorkspaceLedger(val path: os.Path):
     else if selected.exists(w => w.lifecycle != "open" || w.activity != "idle") then
       (s, Left("Every selected workspace must be open and idle"))
     else
-      val reserved = selected.map(w => w.copy(lifecycle = "reserved", reservation = Some(request), revision = w.revision + 1))
+      val reserved =
+        selected.map(w => w.copy(lifecycle = "reserved", reservation = Some(request), revision = w.revision + 1))
       val replacements = reserved.map(w => w.id -> w).toMap
       (s.copy(workspaces = s.workspaces.map(w => replacements.getOrElse(w.id, w))), Right(reserved))
+  }
+
+  def owned(owner: String): Option[Workspace] = snapshot.workspaces.find(_.owner == owner)
+
+  /** Existing running owners may receive mail without opening another execution seat. */
+  def admit(owner: String, allowFrozen: Boolean): Either[String, Unit] = transaction { s =>
+    s.workspaces.find(_.owner == owner) match
+      case None => (s, Right(())) // read-only / unmanaged legacy delegate
+      case Some(w) if w.lifecycle.startsWith("closed-") =>
+        (s, Left("delegate 已终态、worktree 已关闭，请重新派发"))
+      case Some(w) if w.lifecycle != "open" =>
+        (s, Left("Workspace is reserved for merger; development cannot resume"))
+      case Some(w) if w.activity == "frozen" && !allowFrozen =>
+        (s, Left("Workspace needs explicit manual recovery"))
+      case Some(w) if w.activity == "running" => (s, Right(()))
+      case Some(w) =>
+        val next = w.copy(activity = "running", revision = w.revision + 1)
+        (s.copy(workspaces = s.workspaces.map(x => if x.id == w.id then next else x)), Right(()))
+  }
+
+  def settle(owner: String, frozen: Boolean): Unit = transaction { s =>
+    val next = s.workspaces.map { w =>
+      if w.owner == owner && w.lifecycle == "open" then
+        w.copy(activity = if frozen then "frozen" else "idle", revision = w.revision + 1)
+      else w
+    }
+    (s.copy(workspaces = next), ())
   }
 
   private def change(id: String, revision: Long)(f: Workspace => Either[String, Workspace]): Either[String, Workspace] =
@@ -78,22 +113,44 @@ final class WorkspaceLedger(val path: os.Path):
       s.workspaces.find(_.id == id) match
         case None => (s, Left("Unknown workspace"))
         case Some(w) if w.revision != revision => (s, Left("Stale workspace revision"))
-        case Some(w) => f(w) match
-          case Left(error) => (s, Left(error))
-          case Right(updated) =>
-            val next = updated.copy(revision = w.revision + 1)
-            (s.copy(workspaces = s.workspaces.map(x => if x.id == id then next else x)), Right(next))
+        case Some(w) =>
+          f(w) match
+            case Left(error) => (s, Left(error))
+            case Right(updated) =>
+              val next = updated.copy(revision = w.revision + 1)
+              (s.copy(workspaces = s.workspaces.map(x => if x.id == id then next else x)), Right(next))
     }
 
+end WorkspaceLedger
+
 object WorkspaceLedger:
+  def default: WorkspaceLedger = new WorkspaceLedger(nebflow.shared.PathUtil.dataRoot / "workspaces" / "ledger.json")
+
+  def repositoryKey(workspace: os.Path): String =
+    val common = os.proc("git", "rev-parse", "--git-common-dir").call(cwd = workspace).out.text().trim
+    java.nio.file.Path
+      .of(if java.nio.file.Path.of(common).isAbsolute then common else (workspace / os.RelPath(common)).toString)
+      .toRealPath()
+      .toString
+
   final case class Workspace(
-    id: String, project: String, repository: String, path: String,
-    branch: String, baseBranch: String, baseCommit: String, owner: String, ownerMode: String,
-    lifecycle: String = "open", activity: String = "idle",
-    reservation: Option[String] = None, revision: Long = 0L
+    id: String,
+    project: String,
+    repository: String,
+    path: String,
+    branch: String,
+    baseBranch: String,
+    baseCommit: String,
+    owner: String,
+    ownerMode: String,
+    lifecycle: String = "open",
+    activity: String = "idle",
+    reservation: Option[String] = None,
+    revision: Long = 0L
   )
   final case class Merger(project: String, repository: String, delegateId: String)
   final case class State(workspaces: List[Workspace] = Nil, mergers: List[Merger] = Nil)
   given io.circe.Codec[Workspace] = deriveCodec
   given io.circe.Codec[Merger] = deriveCodec
   given io.circe.Codec[State] = deriveCodec
+end WorkspaceLedger
