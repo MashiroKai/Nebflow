@@ -126,8 +126,8 @@ object DelegateTool extends Tool:
         ),
         "mode" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "enum" -> io.circe.Json.arr("kernel".asJson, "dispatcher".asJson),
-          "description" -> "Optional execution form — YOU pick it from the task context; no allocator and no model call decides it. \"kernel\" (the default when omitted) = minimal single-session executor (no orchestration tools); \"dispatcher\" = chain-orchestrating dispatcher (composes a per-delegate flow map via ChainWrite/NodeEdit, gets zero plugins itself, and its chain nodes work inside the dispatcher's seat and never create their own worktrees). Omit it and the mode is deterministically \"kernel\". \"auto\" is rejected explicitly — the mode allocator has been removed; pass kernel or dispatcher directly. Mode is a spawn-time lifetime property — changing it means re-dispatch.".asJson
+          "enum" -> DualModeConfig.ModeWords.asJson,
+          "description" -> "Optional execution form — YOU pick it from the task context; no allocator and no model call decides it. \"kernel\" (the default when omitted) = minimal single-session executor (no orchestration tools); \"dispatcher\" = chain-orchestrating dispatcher (composes a per-delegate flow map via ChainWrite/NodeEdit, gets zero plugins itself, and its chain nodes work inside the dispatcher's seat and never create their own worktrees). Omit it and the mode is deterministically \"kernel\". \"auto\" is rejected explicitly — the mode allocator has been removed; pass kernel or dispatcher directly. Mode is a spawn-time lifetime property — changing it means re-dispatch. merger = the persistent project integration specialist: no development worktree is allocated; repeated calls return the existing address and taskAccepted=false, so send subsequent requests using Mail. It integrates only persisted, explicitly authorized merge requests and reports through merger_report.".asJson
         ),
         "attachments" -> io.circe.Json.obj(
           "type" -> "array".asJson,
@@ -1207,89 +1207,115 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     // 只做记账与分叉，没有任何端口调用——这是「spawn 路径零模型调用」的落点。
     val decision: Option[nebflow.core.delegate.ModeDecision] = Some(modeDecision)
 
-    IO.pure(()).flatMap { _ =>
-      val modeWord = decision.map(_.mode)
-      val isDispatcher = modeWord.contains(DualModeConfig.ModeDispatcher)
-      // mode-decision 审计行（设计 §3.2）：总闸开才写（Inert 零审计行）。
-      val modeAudit: IO[Unit] =
-        decision match
-          case None => IO.unit
-          case Some(d) =>
-            IO
-              .blocking(
-                ChainStore.appendSync(
-                  ChainStore.keyFor(taskId, subagentId),
-                  "mode-decision",
-                  io.circe.Json.obj(
-                    "delegateId" -> subagentId.asJson,
-                    "mode" -> d.mode.asJson,
-                    "leg" -> d.leg.asJson,
-                    "reason" -> d.reason.asJson
-                  )
-                )
-              )
-              .handleErrorWith(e => logger.warn(s"mode-decision chain line failed: ${e.getMessage}").void)
-
-      // ── 插件腿（双模式分叉 · 设计 §4.3/§5.1）────────────────────────────
-      // kernel/未判定：spawn 时对整 brief 一次分配（现状逐字）；
-      // dispatcher：本体零插件——跳过 allocatePreparation，审计行记
-      // allocation=dispatcher-off（Inert 族新词：模式性豁免，非故障）。
-      val pluginLeg: IO[Either[String, (NodeEngine.PluginPreparation, PluginInjection.AllocatedSet)]] =
-        if isDispatcher then
-          modeAudit.as(
-            Right(NodeEngine.PluginPreparation.empty -> PluginInjection.AllocatedSet(Nil, "dispatcher-off"))
+    val mergerClaim =
+      if modeDecision.mode != DualModeConfig.ModeMerger then IO.pure(subagentId)
+      else if sessionDevice.isDefined then
+        IO.raiseError(new IllegalArgumentException("Create the merger on the project's device"))
+      else
+        IO.blocking {
+          nebflow.core.delegate.WorkspaceLedger.default
+            .merger(
+              project.getOrElse(workspace),
+              nebflow.core.delegate.WorkspaceLedger.repositoryKey(os.Path(workspace)),
+              subagentId
+            )
+            .delegateId
+        }
+    mergerClaim.flatMap { existing =>
+      if existing != subagentId then
+        IO.pure(
+          Right(
+            (
+              existing,
+              s"Existing project merger: delegate:$existing; taskAccepted=false. Send follow-up work with Mail; this call did not submit a task."
+            )
           )
-        else modeAudit *> PluginInjection.allocatePreparation(subject = subagentId, taskText = task)
+        )
+      else
+        IO.pure(()).flatMap { _ =>
+          val modeWord = decision.map(_.mode)
+          val isDispatcher = modeWord.contains(DualModeConfig.ModeDispatcher)
+          // mode-decision 审计行（设计 §3.2）：总闸开才写（Inert 零审计行）。
+          val modeAudit: IO[Unit] =
+            decision match
+              case None => IO.unit
+              case Some(d) =>
+                IO
+                  .blocking(
+                    ChainStore.appendSync(
+                      ChainStore.keyFor(taskId, subagentId),
+                      "mode-decision",
+                      io.circe.Json.obj(
+                        "delegateId" -> subagentId.asJson,
+                        "mode" -> d.mode.asJson,
+                        "leg" -> d.leg.asJson,
+                        "reason" -> d.reason.asJson
+                      )
+                    )
+                  )
+                  .handleErrorWith(e => logger.warn(s"mode-decision chain line failed: ${e.getMessage}").void)
 
-      pluginLeg.flatMap {
-        case Left(err) =>
-          IO.pure(Left(ToolError(s"Delegate: plugin allocation refused — $err (DELEGATE_PLUGINS_REFUSED)")))
-        case Right((preparation, allocated)) =>
-          val grantIo: IO[Either[String, nebflow.core.plugin.PluginMcpManager.Grant]] =
-            if preparation.mcpPlugins.isEmpty then IO.pure(Right(nebflow.core.plugin.PluginMcpManager.Grant(Nil)))
-            else resources.pluginMcp.acquire(subagentId, preparation.mcpPlugins)
-          grantIo.flatMap {
-            // pluginMcp.acquire 失败 → 本腿已启动者已被 manager 回滚停用；spawn 显式
-            // 拒（零 running 残留——NodeStarter 同款口径）。
-            case Left(err) => IO.pure(Left(ToolError(s"Delegate: plugin MCP startup failed — $err")))
-            case Right(grant) =>
-              val effectiveDef =
-                if grant.serverIds.isEmpty && preparation.builtinTools.isEmpty then agentDef
-                else agentDef.copy(pluginMcpServers = grant.serverIds, pluginTools = preparation.builtinTools)
-              spawnWithPlugins(
-                effectiveDef,
-                task,
-                description,
-                workspace,
-                project,
-                taskId,
-                system,
-                resources,
-                childDepth,
-                parentRef,
-                childWsSend,
-                parentSessionId,
-                safetyMode,
-                resolvedRoot,
-                // 座位分配腿（参数决定；dispatcher 与 kernel 同一条腿——节点层 seal
-                // 不动：节点永不建 worktree，而是落分发器的座位里干活，不是嵌套）。
-                // 终态面零新增代码：HoldForMerge/MergeQueue 全程由绑定驱动
-                // （DelegateTerminal.holdForMerge 读 rec.branch/baseBranch/worktree）。
-                allocateSeat,
-                seatPlan,
-                subagentId,
-                preparation,
-                allocated,
-                delegatedBy,
-                sessionDevice,
-                sessionDeviceWorkspace,
-                modeDecision = modeDecision,
-                shortName = shortName,
-                resumedFrom = resumedFrom,
-                attachmentPlan = attachmentPlan
+          // ── 插件腿（双模式分叉 · 设计 §4.3/§5.1）────────────────────────────
+          // kernel/未判定：spawn 时对整 brief 一次分配（现状逐字）；
+          // dispatcher：本体零插件——跳过 allocatePreparation，审计行记
+          // allocation=dispatcher-off（Inert 族新词：模式性豁免，非故障）。
+          val pluginLeg: IO[Either[String, (NodeEngine.PluginPreparation, PluginInjection.AllocatedSet)]] =
+            if isDispatcher || modeDecision.mode == DualModeConfig.ModeMerger then
+              modeAudit.as(
+                Right(NodeEngine.PluginPreparation.empty -> PluginInjection.AllocatedSet(Nil, "dispatcher-off"))
               )
+            else modeAudit *> PluginInjection.allocatePreparation(subject = subagentId, taskText = task)
+
+          pluginLeg.flatMap {
+            case Left(err) =>
+              IO.pure(Left(ToolError(s"Delegate: plugin allocation refused — $err (DELEGATE_PLUGINS_REFUSED)")))
+            case Right((preparation, allocated)) =>
+              val grantIo: IO[Either[String, nebflow.core.plugin.PluginMcpManager.Grant]] =
+                if preparation.mcpPlugins.isEmpty then IO.pure(Right(nebflow.core.plugin.PluginMcpManager.Grant(Nil)))
+                else resources.pluginMcp.acquire(subagentId, preparation.mcpPlugins)
+              grantIo.flatMap {
+                // pluginMcp.acquire 失败 → 本腿已启动者已被 manager 回滚停用；spawn 显式
+                // 拒（零 running 残留——NodeStarter 同款口径）。
+                case Left(err) => IO.pure(Left(ToolError(s"Delegate: plugin MCP startup failed — $err")))
+                case Right(grant) =>
+                  val effectiveDef =
+                    if grant.serverIds.isEmpty && preparation.builtinTools.isEmpty then agentDef
+                    else agentDef.copy(pluginMcpServers = grant.serverIds, pluginTools = preparation.builtinTools)
+                  spawnWithPlugins(
+                    effectiveDef,
+                    task,
+                    description,
+                    workspace,
+                    project,
+                    taskId,
+                    system,
+                    resources,
+                    childDepth,
+                    parentRef,
+                    childWsSend,
+                    parentSessionId,
+                    safetyMode,
+                    resolvedRoot,
+                    // 座位分配腿（参数决定；dispatcher 与 kernel 同一条腿——节点层 seal
+                    // 不动：节点永不建 worktree，而是落分发器的座位里干活，不是嵌套）。
+                    // 终态面零新增代码：HoldForMerge/MergeQueue 全程由绑定驱动
+                    // （DelegateTerminal.holdForMerge 读 rec.branch/baseBranch/worktree）。
+                    allocateSeat,
+                    seatPlan,
+                    subagentId,
+                    preparation,
+                    allocated,
+                    delegatedBy,
+                    sessionDevice,
+                    sessionDeviceWorkspace,
+                    modeDecision = modeDecision,
+                    shortName = shortName,
+                    resumedFrom = resumedFrom,
+                    attachmentPlan = attachmentPlan
+                  )
+              }
           }
-      }
+        }
     }
 
   end spawnBackground
@@ -1353,7 +1379,7 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       // 设备项目（sessionDevice 在场）：座位在设备盘，本机不建树 ⇒ 无绑定（
       // 参数在场时已在 internalSpawn 显式拒——DELEGATE_WORKTREE_REMOTE）。
       binding <-
-        if !allocateSeat then IO.pure(None)
+        if !allocateSeat || modeDecision.mode == DualModeConfig.ModeMerger then IO.pure(None)
         else if sessionDevice.isDefined then IO.pure(None)
         else
           seatPlan match
@@ -1415,7 +1441,9 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       // + sleep-poll 禁令批 C 段：等待纪律铁律（Defaults.NoSleepPollRule 单点
       // 文本——节点脚注/subagent 步同源；747cd36a 实撞：5h16m sleep 570 心跳
       // 轮询的启动面防线）。装配单点 = [[assembleBrief]]（spec 判红锚）。
-      reportLine = BriefReportLine
+      reportLine =
+        if modeDecision.mode == DualModeConfig.ModeMerger then nebflow.prompts.PromptCatalog.MergerRole
+        else BriefReportLine
       // 设备项目 workspace 行（跨设备批）：真实工作区在设备本盘——行里给设备盘
       // 路径 + 默认路由语义（本机座位 = brain 根仅是引擎侧锚点，非项目文件）。
       // 台账 #913 ③（2026-10-26）：host 开了强制显式设备 ⇒ 行尾追加纪律句

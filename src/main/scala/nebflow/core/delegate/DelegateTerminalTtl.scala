@@ -78,7 +78,9 @@ object DelegateTerminalTtl:
    * ——本函数只做盘上判读。
    */
   def verdict(rec: DelegateRegistry.Record, taskOpt: Option[SubAgentTask], nowMs: Long): Verdict =
-    if WorkspaceLedger.default.owned(rec.id).nonEmpty then return InFlight
+    val managed = WorkspaceLedger.default.snapshot
+    if managed.workspaces.exists(_.owner == rec.id) || managed.mergers.exists(_.delegateId == rec.id) then
+      return InFlight
     // Legacy worktree ownership is kept until explicitly reconciled into the ledger.
     if rec.worktree.exists(_.nonEmpty) then return InFlight
     val savedAnchor: Option[(Long, String)] =

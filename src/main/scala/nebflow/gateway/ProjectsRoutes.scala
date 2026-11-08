@@ -58,10 +58,45 @@ private[gateway] object ProjectsRoutes:
                 Json.obj(
                   "baseline" -> ledger.baseline(repository).asJson,
                   "workspaces" -> snapshot.workspaces.filter(_.repository == repository).asJson,
+                  "mergeRequests" -> snapshot.requests.filter(_.repository == repository).asJson,
                   "merger" -> snapshot.mergers.find(_.repository == repository).asJson
                 )
               }.flatMap(Ok(_))
                 .handleErrorWith(e => Conflict(Json.obj("error" -> e.getMessage.asJson)))
+          }
+        }
+
+      case req @ POST -> Root / "projects" / name / "workspaces" / "merge-requests" / id / "cancel" =>
+        withAuth(req) {
+          nebflow.core.delegate.MergeRequests.cancel(name, id, sharedResources).flatMap {
+            case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+            case Right(result) => Ok(io.circe.parser.parse(result).getOrElse(Json.obj()))
+          }
+        }
+
+      case req @ POST -> Root / "projects" / name / "workspaces" / "merge-requests" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val parsed = for
+              id <- body.hcursor.get[String]("requestId")
+              ids <- body.hcursor.get[List[String]]("workspaceIds")
+            yield (id, ids)
+            parsed match
+              case Left(_) => BadRequest(Json.obj("error" -> "requestId and workspaceIds are required".asJson))
+              case Right((id, ids)) =>
+                nebflow.core.delegate.MergeRequests
+                  .submit(
+                    name,
+                    id,
+                    ids,
+                    s"authenticated project panel selection: ${ids.mkString(",")}",
+                    sharedResources
+                  )
+                  .flatMap {
+                    case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+                    case Right(result) => Ok(io.circe.parser.parse(result).getOrElse(Json.obj()))
+                  }
+            end match
           }
         }
 

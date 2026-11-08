@@ -22,12 +22,13 @@ object DualModeConfig:
   /** 模式词值域（registry/任务行 mode 字段 + mode-decision 审计行共用）。 */
   val ModeKernel: String = "kernel"
   val ModeDispatcher: String = "dispatcher"
+  val ModeMerger: String = "merger"
 
   /** 值域校验（mode 参数/记录字段的合法词）。 */
-  def isModeWord(s: String): Boolean = s == ModeKernel || s == ModeDispatcher
+  def isModeWord(s: String): Boolean = s == ModeKernel || s == ModeDispatcher || s == ModeMerger
 
   /** 全部合法词（错误文案与 schema enum 同源）。 */
-  val ModeWords: List[String] = List(ModeKernel, ModeDispatcher)
+  val ModeWords: List[String] = List(ModeKernel, ModeDispatcher, ModeMerger)
 end DualModeConfig
 
 /**

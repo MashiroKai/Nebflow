@@ -84,9 +84,13 @@ class ModeParamSpec extends FunSuite:
   }
 
   test("P5 值域词表与 schema enum 同源（ModeWords = kernel|dispatcher，无 auto）") {
-    assertEquals(DualModeConfig.ModeWords, List("kernel", "dispatcher"))
+    assertEquals(DualModeConfig.ModeWords, List("kernel", "dispatcher", "merger"))
     assert(!DualModeConfig.ModeWords.contains("auto"), "auto must not be a legal word any more")
     assert(DualModeConfig.isModeWord("kernel") && DualModeConfig.isModeWord("dispatcher"))
     assert(!DualModeConfig.isModeWord("auto"))
+  }
+
+  test("merger is an explicit mode, never an inferred development role") {
+    assertEquals(ModeParam.resolve(Some("merger")).map(_.mode), Right(DualModeConfig.ModeMerger))
   }
 end ModeParamSpec
