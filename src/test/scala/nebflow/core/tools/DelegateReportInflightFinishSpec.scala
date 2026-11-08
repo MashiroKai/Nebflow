@@ -42,6 +42,7 @@ class DelegateReportInflightFinishSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
@@ -93,6 +94,7 @@ class DelegateReportInflightFinishSpec extends CatsEffectSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -127,7 +129,13 @@ class DelegateReportInflightFinishSpec extends CatsEffectSuite:
       )
     )
 
-  private def seedNode(h: DelegateFlowRuntime, id: String, name: String, status: String, chain: Option[String]): IO[Unit] =
+  private def seedNode(
+    h: DelegateFlowRuntime,
+    id: String,
+    name: String,
+    status: String,
+    chain: Option[String]
+  ): IO[Unit] =
     h.store
       .mutate(s =>
         s.copy(nodes =
@@ -160,7 +168,9 @@ class DelegateReportInflightFinishSpec extends CatsEffectSuite:
 
   // ── R1 + R2：在飞 ⇒ finish 被拒 + 文案三要素 ─────────────────────────────
 
-  test("R1/R2: finish is REFUSED while scope nodes are in flight — structured error + reminder naming nodes, both exits, and the completion condition") {
+  test(
+    "R1/R2: finish is REFUSED while scope nodes are in flight — structured error + reminder naming nodes, both exits, and the completion condition"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dr-inflight-", deleteOnExit = false)
     val system = ActorSystem(s"dr-inflight-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-nebflow-1367aaaa"
@@ -195,7 +205,9 @@ class DelegateReportInflightFinishSpec extends CatsEffectSuite:
     end for
   }
 
-  test("R1b: a lone non-terminal node outside any chain is in flight too — the criterion is node status, not chain membership") {
+  test(
+    "R1b: a lone non-terminal node outside any chain is in flight too — the criterion is node status, not chain membership"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dr-inflight-lone-", deleteOnExit = false)
     val system = ActorSystem(s"dr-inflight-lone-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-nebflow-1367bbbb"
@@ -216,7 +228,9 @@ class DelegateReportInflightFinishSpec extends CatsEffectSuite:
 
   // ── R3：不误伤（无宿主 / 全终态 / 非 finish 类别）────────────────────────
 
-  test("R3: no false positives — no host mounted (no chain dispatched) still finishes; all-terminal graph finishes; merge/standby untouched") {
+  test(
+    "R3: no false positives — no host mounted (no chain dispatched) still finishes; all-terminal graph finishes; merge/standby untouched"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dr-nohost-", deleteOnExit = false)
     val system = ActorSystem(s"dr-nohost-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-nebflow-1367cccc"
@@ -242,14 +256,16 @@ class DelegateReportInflightFinishSpec extends CatsEffectSuite:
       assert(noHost.isRight, s"a delegate with no scope host must finish normally, got: $noHost")
       assert(noHost.exists(_.contains("finish recorded")), s"got: $noHost")
       assert(allTerminal.isRight, s"all-terminal graph must finish normally, got: $allTerminal")
-      assert(merge.isRight, s"merge must not be gated by in-flight nodes, got: $merge")
+      assert(merge.left.exists(_.contains("merge is retired")), s"merge belongs to the project merger, got: $merge")
       assert(standby.isRight, s"standby must not be gated by in-flight nodes, got: $standby")
     end for
   }
 
   // ── R4：取消路径可用（提醒里的「要么取消」是 delegate 真能做的动作）───────
 
-  test("R4: the offered cancel exit really works — NodeCancel(chain=…) terminalizes the in-flight nodes and finish is then accepted") {
+  test(
+    "R4: the offered cancel exit really works — NodeCancel(chain=…) terminalizes the in-flight nodes and finish is then accepted"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dr-cancel-", deleteOnExit = false)
     val system = ActorSystem(s"dr-cancel-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-nebflow-1367dddd"
@@ -279,7 +295,9 @@ class DelegateReportInflightFinishSpec extends CatsEffectSuite:
     end for
   }
 
-  test("R4b: the abandon exit also works — NodeEdit(abandon=true) on a pending node clears it, and the tool face really carries both tools") {
+  test(
+    "R4b: the abandon exit also works — NodeEdit(abandon=true) on a pending node clears it, and the tool face really carries both tools"
+  ) {
     val ws = os.temp.dir(prefix = "nb-dr-abandon-", deleteOnExit = false)
     val system = ActorSystem(s"dr-abandon-${scala.util.Random.nextInt(1000000)}")
     val delegateId = "delegate-nebflow-1367eeee"

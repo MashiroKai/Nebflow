@@ -65,6 +65,9 @@ object DelegateTerminal:
     /** ready-to-merge：保活等合并轮（预算重挂由监督者执行）。 */
     case object HoldForMerge extends Outcome
 
+    /** A completed development round retains its workspace owner and session. */
+    case object WorkComplete extends Outcome
+
     /**
      * 待命挂起（案A 实施批 2026-10-31 · 作者 11:40 拍板显式待命态为主干；状态矩阵
      * 批 2026-11-01 收编为矩阵组合 **complete × standby**）：回合收尾**不终判**
@@ -108,9 +111,9 @@ object DelegateTerminal:
    * 四修②（2026-10-07 修复令「判词诚实化」）：
    *   - **确定性预检**（不依赖 LLM 判）：`sessionToolCalls = Some(0)` 且终文
    *     空/空烧 stub（[[nebflow.shared.Defaults.MaxTokensStubText]]）⇒ 判
-     *     completed＋注记（#566：原 blocked——判定机两层连问都不问，空烧形态没有
-     *     可判之物）；状态矩阵批：未申报空烧被槽位闸先行接住（提醒腿），预检在
-     *     finish/merge 申报组合与合并轮内继续承担诚实判；
+   *     completed＋注记（#566：原 blocked——判定机两层连问都不问，空烧形态没有
+   *     可判之物）；状态矩阵批：未申报空烧被槽位闸先行接住（提醒腿），预检在
+   *     finish/merge 申报组合与合并轮内继续承担诚实判；
    *   - **诚实未判**：判定机两层全败＋自申报缺失 ⇒ 仍落既有 completed 语义
    *     （fail-open 不变——矩阵批注：仅 finish/merge 组合可达），但判词行诚实标注
    *     `completed (unjudged — judge unavailable)`，ChainStore 行 source=`unjudged`
@@ -135,6 +138,23 @@ object DelegateTerminal:
     sessionToolCalls: Option[Int] = None
   ): IO[Outcome] =
     val record = DelegateRegistry.find(delegateId)
+    if record.exists(r => r.worktree.isDefined || r.mode.contains(DualModeConfig.ModeMerger)) then
+      val declared = record.flatMap(_.reportStatus)
+      return DelegateInflightGate.check(delegateId).flatMap { inflight =>
+        if declared.contains(nebflow.core.tools.DelegateReportTool.StandbyValue) then
+          parkStandbyOutcome(delegateId, record.flatMap(_.taskId), record.flatMap(_.reportDetail).getOrElse(""))
+            .flatTap(_ =>
+              if inflight.isEmpty then IO.blocking(WorkspaceLedger.default.settle(delegateId, frozen = false))
+              else IO.unit
+            )
+        else if declared.contains(nebflow.core.tools.DelegateReportTool.FinishValue) && inflight.isEmpty then
+          val clean =
+            record.flatMap(_.worktree).forall(path => nebflow.core.GitWorktrees.dirtyPaths(os.Path(path)).contains(Nil))
+          if !clean then IO.pure(Outcome.NudgeIdle(chainsInFlight = false, emptyTurn = true))
+          else IO.pure(Outcome.WorkComplete)
+        else IO.pure(Outcome.NudgeIdle(chainsInFlight = inflight.nonEmpty, emptyTurn = resultText.trim.isEmpty))
+      }
+    end if
     val taskId = record.flatMap(_.taskId)
     val branch = record.flatMap(_.branch)
     // 台账 #896：合并轮在飞判据单点 = 账本 turn-granted（放行 = 通知已送达）。
@@ -180,105 +200,105 @@ object DelegateTerminal:
     // 链由 queueFlip/ready-to-merge 强制合并义务（交付绝不静默丢失；既有状态翻转
     // 与零领先降级规则原样保留，作者令「不许静默丢失」）。
     inFlightChains.flatMap { chains0 =>
-    val chain: IO[Outcome] =
-      verdictChain(
-        resources = resources,
-        delegateId = delegateId,
-        parentSessionId = parentSessionId,
-        initialPrompt = initialPrompt,
-        resultText = resultText,
-        childRef = childRef,
-        supervisorRef = supervisorRef,
-        sessionToolCalls = sessionToolCalls,
-        record = record,
-        taskId = taskId,
-        branch = branch,
-        mergeRound = mergeRound,
-        selfReport = selfReport,
-        chains = chains0
-      )
+      val chain: IO[Outcome] =
+        verdictChain(
+          resources = resources,
+          delegateId = delegateId,
+          parentSessionId = parentSessionId,
+          initialPrompt = initialPrompt,
+          resultText = resultText,
+          childRef = childRef,
+          supervisorRef = supervisorRef,
+          sessionToolCalls = sessionToolCalls,
+          record = record,
+          taskId = taskId,
+          branch = branch,
+          mergeRound = mergeRound,
+          selfReport = selfReport,
+          chains = chains0
+        )
 
-    // 显式申报腿（矩阵组合 complete × standby）：申报槽 = standby ∧ 非合并轮
-    // （合并轮 = 引擎授命的终态执行窗，合并义务优先，不接纳待命）。
-    // detail = 模型申报的「在等什么」（等作者令、等上游、等合并窗都算）。
-    val standbyDeclared: Option[String] =
-      selfReport
-        .filter(_._1 == nebflow.core.tools.DelegateReportTool.StandbyValue)
-        .map(_._2)
-        .filterNot(_ => mergeRound)
+      // 显式申报腿（矩阵组合 complete × standby）：申报槽 = standby ∧ 非合并轮
+      // （合并轮 = 引擎授命的终态执行窗，合并义务优先，不接纳待命）。
+      // detail = 模型申报的「在等什么」（等作者令、等上游、等合并窗都算）。
+      val standbyDeclared: Option[String] =
+        selfReport
+          .filter(_._1 == nebflow.core.tools.DelegateReportTool.StandbyValue)
+          .map(_._2)
+          .filterNot(_ => mergeRound)
 
-    val standbyDecision: IO[Option[Outcome]] =
-      standbyDeclared match
-        case None => IO.pure(None)
-        case Some(detail) =>
-          // 漂移闸确证优先：保护性确定性闸不 defer——证据随注记立即交付（回落链）。
-          driftPrecheck(record, mergeRound).flatMap { earlyDrift =>
-            logDrift(delegateId, earlyDrift)
-            DriftResult.verdictOf(earlyDrift) match
-              case Some(_) => IO.pure(None)
-              case None =>
-                standbyGate(record, branch).flatMap {
-                  case false =>
-                    IO(
-                      logger.warn(
-                        s"delegate $delegateId: standby declared but " +
-                          s"${unmergedAheadOf(record, branch).getOrElse("?")} deliverable commit(s) sit unmerged — " +
-                          "standby NOT honored (merge obligations come first); falling through to the verdict chain"
-                      )
-                    ).as(None)
-                  case true => parkStandbyOutcome(delegateId, taskId, detail).map(Some(_))
-                }
+      val standbyDecision: IO[Option[Outcome]] =
+        standbyDeclared match
+          case None => IO.pure(None)
+          case Some(detail) =>
+            // 漂移闸确证优先：保护性确定性闸不 defer——证据随注记立即交付（回落链）。
+            driftPrecheck(record, mergeRound).flatMap { earlyDrift =>
+              logDrift(delegateId, earlyDrift)
+              DriftResult.verdictOf(earlyDrift) match
+                case Some(_) => IO.pure(None)
+                case None =>
+                  standbyGate(record, branch).flatMap {
+                    case false =>
+                      IO(
+                        logger.warn(
+                          s"delegate $delegateId: standby declared but " +
+                            s"${unmergedAheadOf(record, branch).getOrElse("?")} deliverable commit(s) sit unmerged — " +
+                            "standby NOT honored (merge obligations come first); falling through to the verdict chain"
+                        )
+                      ).as(None)
+                    case true => parkStandbyOutcome(delegateId, taskId, detail).map(Some(_))
+                  }
+            }
+
+      // 未申报腿（矩阵组合 complete × idle）：system reminder 提醒其调整状态
+      // （报 standby 或 finish），不终判——DelegateStandbyCare.IdleNudge 承担提醒
+      // （JeV 兜底按作者令退役）。链在飞 × 未申报也归本腿接住（S3/D1 对账：
+      // dispatcher 断供场景的引擎侧兜底）。
+      val idleDecision: IO[Option[Outcome]] =
+        if selfReport.isDefined || mergeRound then IO.pure(None)
+        else
+          standbyGate(record, branch).map {
+            case true =>
+              Some(
+                Outcome.NudgeIdle(
+                  chainsInFlight = chains0 > 0,
+                  emptyTurn = sessionToolCalls.contains(0) && !hasRealOutput(resultText)
+                )
+              )
+            case false => None
           }
 
-    // 未申报腿（矩阵组合 complete × idle）：system reminder 提醒其调整状态
-    // （报 standby 或 finish），不终判——DelegateStandbyCare.IdleNudge 承担提醒
-    // （JeV 兜底按作者令退役）。链在飞 × 未申报也归本腿接住（S3/D1 对账：
-    // dispatcher 断供场景的引擎侧兜底）。
-    val idleDecision: IO[Option[Outcome]] =
-      if selfReport.isDefined || mergeRound then IO.pure(None)
-      else
-        standbyGate(record, branch).map {
-          case true =>
-            Some(
-              Outcome.NudgeIdle(
-                chainsInFlight = chains0 > 0,
-                emptyTurn = sessionToolCalls.contains(0) && !hasRealOutput(resultText)
+      // 就地写盘护栏（补充令第 2 条）：先检后交付——命中即回执标红（Release 腿），
+      // 只读任务零误报（判据见 [[inPlaceWriteAlarm]]）。命中同时写三处：WARN 日志、
+      // ChainStore `in-place-write-alarm` 行、交付正文首行（「不许只在日志里留一行」）。
+      val inPlaceAlarm: IO[Option[String]] =
+        inPlaceWriteAlarm(record).flatTap {
+          case None => IO.unit
+          case Some(a) =>
+            IO.blocking(
+              ChainStore.appendSync(
+                ChainStore.keyFor(taskId, delegateId),
+                "in-place-write-alarm",
+                Json.obj(
+                  "delegateId" -> Json.fromString(delegateId),
+                  "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
+                  "alarm" -> Json.fromString(a)
+                )
               )
-            )
-          case false => None
+            ).handleErrorWith(e => logger.warn(s"in-place-write-alarm chain line failed: ${e.getMessage}")) *>
+              IO(logger.warn(s"delegate $delegateId: in-place write alarm — $a"))
         }
 
-    // 就地写盘护栏（补充令第 2 条）：先检后交付——命中即回执标红（Release 腿），
-    // 只读任务零误报（判据见 [[inPlaceWriteAlarm]]）。命中同时写三处：WARN 日志、
-    // ChainStore `in-place-write-alarm` 行、交付正文首行（「不许只在日志里留一行」）。
-    val inPlaceAlarm: IO[Option[String]] =
-      inPlaceWriteAlarm(record).flatTap {
-        case None => IO.unit
-        case Some(a) =>
-          IO.blocking(
-            ChainStore.appendSync(
-              ChainStore.keyFor(taskId, delegateId),
-              "in-place-write-alarm",
-              Json.obj(
-                "delegateId" -> Json.fromString(delegateId),
-                "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
-                "alarm" -> Json.fromString(a)
-              )
-            )
-          ).handleErrorWith(e => logger.warn(s"in-place-write-alarm chain line failed: ${e.getMessage}")) *>
-            IO(logger.warn(s"delegate $delegateId: in-place write alarm — $a"))
+      inPlaceAlarm.flatMap { alarm =>
+        standbyDecision.flatMap {
+          case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
+          case None =>
+            idleDecision.flatMap {
+              case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
+              case None => chain.map(o => withInPlaceAlarm(o, alarm))
+            }
+        }
       }
-
-    inPlaceAlarm.flatMap { alarm =>
-      standbyDecision.flatMap {
-        case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
-        case None =>
-          idleDecision.flatMap {
-            case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
-            case None          => chain.map(o => withInPlaceAlarm(o, alarm))
-          }
-      }
-    }
     }
   end onCompleted
 
@@ -314,7 +334,11 @@ object DelegateTerminal:
       .attempt
       .flatMap {
         case Left(e) =>
-          IO(logger.warn(s"delegate $delegateId: parkStandby failed (standby proceeds without the dock timestamp): ${e.getMessage}"))
+          IO(
+            logger.warn(
+              s"delegate $delegateId: parkStandby failed (standby proceeds without the dock timestamp): ${e.getMessage}"
+            )
+          )
         case Right(_) => IO.unit
       } *>
       IO
@@ -337,6 +361,8 @@ object DelegateTerminal:
           s"delegate standby: $delegateId (task=${taskId.getOrElse("-")}) parked — self-declared (matrix complete×standby): ${detail.take(200)}"
         )
       ).as(Outcome.Standby(detail, declared = true))
+
+  end parkStandbyOutcome
 
   /**
    * 判词链本体（案A 批拆分；状态矩阵批：仅 finish/merge 申报组合、合并轮豁免、
@@ -1005,9 +1031,15 @@ object DelegateTerminal:
               if added.isEmpty && !headMoved && !branchAhead then None
               else
                 val facts = List(
-                  Option.when(added.nonEmpty)(s"${added.size} new path(s): ${added.take(20).mkString(", ")}${if added.size > 20 then " …" else ""}"),
-                  Option.when(headMoved)(s"HEAD moved (was ${rec.seatSnapshotSha.getOrElse("?").take(9)}, now ${GitWorktrees.headSha(p).getOrElse("?").take(9)}) — commits were created"),
-                  Option.when(branchAhead)(s"branch ${rec.branch.getOrElse("?")} is ahead of ${rec.baseBranch.getOrElse("?")}")
+                  Option.when(added.nonEmpty)(s"${added.size} new path(s): ${added.take(20).mkString(", ")}${
+                      if added.size > 20 then " …" else ""
+                    }"),
+                  Option.when(headMoved)(
+                    s"HEAD moved (was ${rec.seatSnapshotSha.getOrElse("?").take(9)}, now ${GitWorktrees.headSha(p).getOrElse("?").take(9)}) — commits were created"
+                  ),
+                  Option.when(branchAhead)(
+                    s"branch ${rec.branch.getOrElse("?")} is ahead of ${rec.baseBranch.getOrElse("?")}"
+                  )
                 ).flatten
                 Some(s"$InPlaceWriteAlarmPrefix\n  - ${facts.mkString("\n  - ")}")
           }
@@ -1127,17 +1159,18 @@ object DelegateTerminal:
         //   ② 属主先前已用 `delegate_report(category="merge")` 申报过（[[MergeEnqueue]] 已落账）。
         // **判定机 / 漂移闸 / precheck / queueFlip 推断出的 ready-to-merge 不算宣告**：
         // 那时 `decl = None`，成员照样入账（面板可见、FIFO 位次留着），但放行闸不认它。
-        val declared = if ownerDeclared then
-          MergeDeclaration.write(
-            delegateId,
-            MergeDeclaration.Source.TerminalSelfReport,
-            Some(rec.branch.getOrElse(s"delegate/$delegateId")),
-            Some(resolvedBaseBranch),
-            Try(os.Path(baseWs)).toOption.flatMap(ws =>
-              GitWorktrees.resolveRef(ws, rec.branch.getOrElse(s"delegate/$delegateId"))
+        val declared =
+          if ownerDeclared then
+            MergeDeclaration.write(
+              delegateId,
+              MergeDeclaration.Source.TerminalSelfReport,
+              Some(rec.branch.getOrElse(s"delegate/$delegateId")),
+              Some(resolvedBaseBranch),
+              Try(os.Path(baseWs)).toOption.flatMap(ws =>
+                GitWorktrees.resolveRef(ws, rec.branch.getOrElse(s"delegate/$delegateId"))
+              )
             )
-          )
-        else MergeDeclaration.find(delegateId)
+          else MergeDeclaration.find(delegateId)
         val entry = MergeQueue.Member(
           delegateId = delegateId,
           branch = rec.branch.getOrElse(s"delegate/$delegateId"),

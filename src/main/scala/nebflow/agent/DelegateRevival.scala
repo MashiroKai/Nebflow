@@ -121,6 +121,8 @@ object DelegateRevival:
       s"openChainNodes=$openChainNodes mergeQueueMember=$mergeQueueMember " +
         s"dirtyWorktreePaths=$dirtyWorktreePaths unmergedCommits=$unmergedCommits"
 
+  end StandbyEvidence
+
   /** 记录座位根（作用域目录基座 = 项目工作区优先，回落 cwd；`SessionResumption` 同判）。 */
   private def scopeBaseOf(rec: DelegateRegistry.Record): String =
     rec.projectWorkspace.map(_.trim).filter(_.nonEmpty).getOrElse(rec.cwd)
@@ -340,6 +342,12 @@ object DelegateRevival:
    *                    横幅之后成为本窗口的首条指令；空 = 纯「从冻结点继续」。
    */
   private def reviveImpl(deps: Deps, task: SubAgentTask, instruction: String = ""): IO[Either[String, Unit]] =
+    IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(task.taskId, allowFrozen = true)).flatMap {
+      case Left(error) => IO.pure(Left(error))
+      case Right(_) => reviveAdmitted(deps, task, instruction)
+    }
+
+  private def reviveAdmitted(deps: Deps, task: SubAgentTask, instruction: String): IO[Either[String, Unit]] =
     IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {
       case None => IO.pure(Left("no DelegateRegistry record — cannot rebuild the seat"))
       case Some(record) =>
@@ -387,10 +395,8 @@ object DelegateRevival:
             val wakeInstr = if instruction.trim.isEmpty then "" else s"\n\n$instruction"
             ResumeHandoff.plan(
               transcript = transcript,
-              cause =
-                if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart,
-              instruction =
-                (if instruction.trim.isEmpty then "" else instruction) + ckLine,
+              cause = if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart,
+              instruction = (if instruction.trim.isEmpty then "" else instruction) + ckLine,
               legacyText =
                 if frozen.isDefined then
                   val banner =
@@ -402,7 +408,13 @@ object DelegateRevival:
                   s"[system] The engine process restarted while your task was in flight. Your work so far (${transcript.size} transcript messages) is loaded below — continue the task from where you left off.$ckLine$wakeInstr"
                 else s"${task.prompt}$wakeInstr"
             )
-          _ <- IO(ResumeHandoff.logPlan(task.taskId, handoff, if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart))
+          _ <- IO(
+            ResumeHandoff.logPlan(
+              task.taskId,
+              handoff,
+              if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart
+            )
+          )
           // ③ 父会话活引用（Mail 续聊腿 resolveContinuationParentRef 同款判读）；
           //    不 live = None ⇒ 终态走监督者 F2 队列兜底（notifyParentAndStop 的
           //    parentRef=None 分支，本批加持久投递腿）。

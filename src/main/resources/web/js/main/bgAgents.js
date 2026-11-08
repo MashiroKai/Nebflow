@@ -2100,7 +2100,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
     ? (waitingMode === 'standby'
       ? '<span class="bg-task-waiting"'
         + (info.waiting.detail ? ' title="' + escapeHtml(info.waiting.detail) + '"' : '')
-        + '>' + escapeHtml(t('subagents.status.standby')) + '</span>'
+        + '>' + escapeHtml(t(info.waiting?.roundComplete ? 'subagents.status.roundComplete' : 'subagents.status.standby')) + '</span>'
       : '<span class="bg-task-waiting"' + (waitingTip ? ' title="' + escapeHtml(waitingTip) + '"' : '') + '>'
         + escapeHtml(t('subagents.status.waitingMerge') + waitingText) + '</span>')
     : '';

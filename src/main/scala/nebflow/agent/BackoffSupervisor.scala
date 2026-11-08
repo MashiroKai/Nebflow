@@ -442,7 +442,47 @@ object BackoffSupervisor:
                         bgWaitCapFired
                       )
                     )
-                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Standby(detail, declared)) =>
+                case Right(
+                      outcome @ (nebflow.core.delegate.DelegateTerminal.Outcome.WorkComplete |
+                      nebflow.core.delegate.DelegateTerminal.Outcome.Standby(_, _))
+                    ) =>
+                  val completedRound = outcome == nebflow.core.delegate.DelegateTerminal.Outcome.WorkComplete
+                  val (detail, declared) = outcome match
+                    case nebflow.core.delegate.DelegateTerminal.Outcome.Standby(text, explicit) => (text, explicit)
+                    case _ => (text, true)
+                  val roundReport: IO[Unit] =
+                    if !completedRound then IO.unit
+                    else
+                      val fingerprint = java.security.MessageDigest
+                        .getInstance("SHA-256")
+                        .digest(messages.toString.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                        .map(b => f"${b & 0xff}%02x")
+                        .mkString
+                      MailboxProducer
+                        .deliver(
+                          resources,
+                          parentSessionId,
+                          AgentCommand.ExternalEvent(
+                            source = "delegate",
+                            eventType = "completed",
+                            payload = payload,
+                            metadata = JsonObject("delegateId" -> subagentId.asJson, "roundComplete" -> true.asJson)
+                          ),
+                          identity = s"workspace-round:$subagentId:$fingerprint",
+                          kind = "delegate-round"
+                        )
+                        .flatMap {
+                          case SessionMailbox.MailResult.Failed(cause) if cause != "parent-session-gone" =>
+                            IO.raiseError(new IllegalStateException(s"Round result is not durably delivered: $cause"))
+                          case _ =>
+                            IO.blocking {
+                              nebflow.core.delegate.DelegateRegistry
+                                .parkStandby(subagentId)
+                                .fold(error => throw new IllegalStateException(error), _ => ())
+                              nebflow.core.delegate.WorkspaceLedger.default.settle(subagentId, frozen = false)
+                            }.void
+                        }
+
                   // 待命停靠（案A 批 2026-10-31 · 状态矩阵批 2026-11-01 收编为矩阵
                   // 组合 complete×standby；**通知矩阵批 2026-11-03 · 作者 18:14 裁定
                   // 「stand by×complete 不通知」**）：回合收尾不终判——不报父、不停
@@ -468,7 +508,7 @@ object BackoffSupervisor:
                           s"BackoffSupervisor: matrix invariant drift for $subagentId — standby×complete decided '$other' " +
                             "(expected QueueSilently); the parked standby leg still sends no reminder"
                         )
-                  standbySilence
+                  roundReport *> standbySilence
                     .*>(
                       logger.info(
                         s"BackoffSupervisor: delegate $subagentId parked in standby " +
@@ -484,7 +524,7 @@ object BackoffSupervisor:
                     })
                     .*>(
                       resources.subAgentTaskStore
-                        .updateStatus(parentSessionId, subagentId, "running")
+                        .updateStatus(parentSessionId, subagentId, if completedRound then "completed" else "running")
                         .handleErrorWith(e => logger.warn(s"standby task-row reset failed: ${e.getMessage}"))
                     )
                     .*>(wsSend match
@@ -495,6 +535,7 @@ object BackoffSupervisor:
                             "sessionId" -> subagentId.asJson,
                             "rootSessionId" -> parentSessionId.asJson,
                             "mode" -> "standby".asJson,
+                            "roundComplete" -> completedRound.asJson,
                             "detail" -> detail.take(500).asJson
                           )
                         ).handleErrorWith(e =>
@@ -671,6 +712,8 @@ object BackoffSupervisor:
                   .getOrElse(wallAt)
                 math.max(1L, math.min(wallAt, idleAt) - now)
               }
+          end if
+        end capWakeDelayMs
 
         /**
          * 武装兜底计时器（**刀一：到点消息，不轮询**）。
@@ -700,7 +743,7 @@ object BackoffSupervisor:
                 }
               }
           }
-
+        end armBgWaitCap
 
         def holdForBgWait(
           waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
@@ -795,6 +838,7 @@ object BackoffSupervisor:
                           )
                         }
                   yield this
+                  end for
               }
           }
 
@@ -802,7 +846,7 @@ object BackoffSupervisor:
         def forceTerminalDelivery(
           still: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
           messages: List[Message]
-        ): IO[Unit] =          // ── 孤儿登记（修复批 2026-10-24 fix 3「两种死法统一收口」）──
+        ): IO[Unit] = // ── 孤儿登记（修复批 2026-10-24 fix 3「两种死法统一收口」）──
           // 强制终判 = 本会话终结、这些任务的完成通知将无处投递。逐条写入持久
           // 账本（含当时输出尾段快照）：会话若被复活/重派拾取，账本条目即完整
           // 证据链；completion 事件此后照常经 BashTool recordCompletion 原位升级

@@ -2521,7 +2521,7 @@ onMessage('delegateWaiting', (msg) => {
       if (entrySid !== bare) continue;
       // 案A 待命批 2026-10-31（状态矩阵批收编）：mode 扩 standby（待命≠候合并）；
       // detail = 申报的「在等什么」（徽标 tooltip）。mode 缺席缺省 'merge'（旧帧兼容）。
-      info.waiting = { mode: msg.mode || 'merge', detail: msg.detail || '' };
+      info.waiting = { mode: msg.mode || 'standby', detail: msg.detail || '', roundComplete: !!msg.roundComplete };
       updateBgAgentIndicator(rootSid);
     }
   }

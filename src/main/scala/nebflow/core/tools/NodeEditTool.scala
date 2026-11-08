@@ -370,6 +370,16 @@ object NodeEditTool extends Tool:
     if result.length > 200 then result.take(197) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val admitted =
+      if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
+        IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(ctx.sessionId.get, allowFrozen = false))
+      else IO.pure(Right(()))
+    admitted.flatMap {
+      case Left(error) => IO.pure(Left(ToolError(error)))
+      case Right(_) => callAdmitted(input, ctx)
+    }
+
+  private def callAdmitted(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val project = input("project").flatMap(_.asString)
     val nodename = input("nodename").flatMap(_.asString).getOrElse("")
     val task = input("task").flatMap(_.asString)
@@ -693,7 +703,8 @@ object NodeEditTool extends Tool:
             // 双模式批：分发器作用域判据（总闸开 ∧ 属主 delegate mode=dispatcher）——
             // 新建节点的 plugins 键改拒、引擎代行分配（§5.3）。
             val dispatcherScopeCreate =
-              nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId)
+              nebflow.core.delegate.DelegateRegistry
+                .modeFaceOf(ctx.sessionId)
                 .contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
             NodeTools.resolveRuntime(project, ctx).flatMap {
               case Left(err) => IO.pure(Left(ToolError(err)))
@@ -847,7 +858,8 @@ object NodeEditTool extends Tool:
                                         else
                                           nebflow.core.delegate.ChainStore
                                             .append(
-                                              nebflow.core.delegate.ChainStore.keyFor(None, ctx.sessionId.getOrElse("")),
+                                              nebflow.core.delegate.ChainStore
+                                                .keyFor(None, ctx.sessionId.getOrElse("")),
                                               "step-plugins",
                                               io.circe.Json.obj(
                                                 "nodeId" -> nodename.asJson,
@@ -861,7 +873,9 @@ object NodeEditTool extends Tool:
                                               IO(
                                                 nebflow.shared.NebflowLogger
                                                   .forName("nebflow.core.tools.node-edit")
-                                                  .warnSync(s"step-plugins chain line failed ($nodename): ${e.getMessage}")
+                                                  .warnSync(
+                                                    s"step-plugins chain line failed ($nodename): ${e.getMessage}"
+                                                  )
                                               )
                                       row *> dispatchFaceCheck(set.names).flatMap {
                                         case Left(err) => IO.pure(Left(ToolError(err)))
@@ -910,7 +924,7 @@ object NodeEditTool extends Tool:
 
     end if
 
-  end call
+  end callAdmitted
 
   /**
    * **闸 A** = 派发许可的**唯一**判定点（插件开关语义）。
@@ -2639,8 +2653,9 @@ object NodeEditTool extends Tool:
                                                             if appliedTask.exists(_.trim.nonEmpty) && fresh.in.isEmpty
                                                             then NodeLifecycle.Pending
                                                             else NodeLifecycle.Wiring
-                                                          s.copy(manualRecoveryNodes = s.manualRecoveryNodes - node.id, nodes =
-                                                            s.nodes.updated(
+                                                          s.copy(
+                                                            manualRecoveryNodes = s.manualRecoveryNodes - node.id,
+                                                            nodes = s.nodes.updated(
                                                               node.id,
                                                               fresh.copy(
                                                                 status = nextStatus,

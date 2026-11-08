@@ -74,14 +74,14 @@ class DelegateReportToolSpec extends CatsEffectSuite:
     seed(id)
     for
       res <- call(sessionId = Some(id))(
-        "category" -> "merge".asJson,
+        "category" -> "finish".asJson,
         "detail" -> "branch carries the docs pass".asJson,
         "suggestion" -> "none".asJson
       )
       rec = DelegateRegistry.find(id)
     yield
       assert(res.isRight, s"legal report must succeed, got: $res")
-      assertEquals(rec.map(_.reportStatus), Some(Some("merge")))
+      assertEquals(rec.map(_.reportStatus), Some(Some("finish")))
       assertEquals(rec.map(_.reportDetail), Some(Some("branch carries the docs pass")))
       assertEquals(rec.map(_.reportSuggestion), Some(Some("none")))
       // 其余字段原样保真（仅状态单写——不携汇报、不动元数据）
@@ -111,7 +111,9 @@ class DelegateReportToolSpec extends CatsEffectSuite:
     yield assert(res.left.exists(_.contains("no registry record")))
   }
 
-  test("状态矩阵批 (2026-11-01): the standby category is accepted — status slot single-write with the waiting-for detail, confirm names the parked semantics") {
+  test(
+    "状态矩阵批 (2026-11-01): the standby category is accepted — status slot single-write with the waiting-for detail, confirm names the parked semantics"
+  ) {
     val id = "delegate-nebflow-standby"
     seed(id)
     for
@@ -130,7 +132,9 @@ class DelegateReportToolSpec extends CatsEffectSuite:
     end for
   }
 
-  test("状态矩阵批: a standby declaration on a branch with unmerged commits carries the soft warning (the authoritative gate runs at turn end)") {
+  test(
+    "状态矩阵批: a standby declaration on a branch with unmerged commits carries the soft warning (the authoritative gate runs at turn end)"
+  ) {
     val id = "delegate-nebflow-standby-warn"
     seed(id)
     // 软预检读 git 面：查无分支/非 git 座位 ⇒ 无警告（此处只钉「不炸、写成功」——
@@ -161,4 +165,13 @@ class DelegateReportToolSpec extends CatsEffectSuite:
     assertEquals(rec.map(_.reportStatus), Some(None))
   }
 
+  test("retired merge declaration refuses to create a queue entry") {
+    val id = "delegate-nebflow-retired-merge"
+    seed(id)
+    call(sessionId = Some(id))("category" -> "merge".asJson, "detail" -> "ready to integrate".asJson).map { result =>
+      assert(result.left.exists(_.contains("merge is retired")))
+      assert(nebflow.core.delegate.MergeQueue.find(id).isEmpty)
+      assertEquals(DelegateRegistry.find(id).flatMap(_.reportStatus), None)
+    }
+  }
 end DelegateReportToolSpec

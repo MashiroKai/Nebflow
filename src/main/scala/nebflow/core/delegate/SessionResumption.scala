@@ -116,6 +116,8 @@ object SessionResumption:
     end while
     cur
 
+  end stripContinuationPrefix
+
   /**
    * 单点取名：任务账 title 的去叠加形态；剥空 ⇒ fallback（首条真实指令前 N 字 /
    * 批次短名 / 会话 id，由调用方给）。
@@ -148,13 +150,14 @@ object SessionResumption:
     case Derive(reason: String)
 
   object Verdict:
+
     def isInPlace(v: Verdict): Boolean = v match
       case InPlace(_, _) => true
-      case _             => false
+      case _ => false
 
     def reasonOf(v: Verdict): Option[String] = v match
       case Derive(r) => Some(r)
-      case _         => None
+      case _ => None
 
   /**
    * 判定单点（作者 16:51/16:53 裁定口径）：
@@ -218,6 +221,16 @@ object SessionResumption:
    * （派生腿再按 [[ScopeHandover]] 交接归属）。绝不静默悬挂。
    */
   def resumeInPlace(deps: Deps, record: DelegateRegistry.Record, message: String): IO[Either[String, InPlaceOutcome]] =
+    IO.blocking(WorkspaceLedger.default.admit(record.id, allowFrozen = true)).flatMap {
+      case Left(error) => IO.pure(Left(error))
+      case Right(_) => resumeAdmitted(deps, record, message)
+    }
+
+  private def resumeAdmitted(
+    deps: Deps,
+    record: DelegateRegistry.Record,
+    message: String
+  ): IO[Either[String, InPlaceOutcome]] =
     val id = record.id
     val title = displayTitle(record)
     val attempt: IO[Either[String, InPlaceOutcome]] =
@@ -235,9 +248,7 @@ object SessionResumption:
               _ <- IO.whenA(parentSid.nonEmpty)(
                 deps.resources.subAgentTaskStore
                   .updateStatus(parentSid, id, "running")
-                  .handleErrorWith(e =>
-                    logger.warn(s"[session-resume] task-row flip failed for $id: ${e.getMessage}")
-                  )
+                  .handleErrorWith(e => logger.warn(s"[session-resume] task-row flip failed for $id: ${e.getMessage}"))
               )
               // ③ 父活引用。
               parentRef <-
@@ -257,11 +268,10 @@ object SessionResumption:
                 transcript = transcript,
                 cause = ResumeHandoff.Cause.Continuation,
                 instruction = message,
-                legacyText =
-                  s"[system] A supplement arrived while no live actor was holding this session. " +
-                    s"Your full history (${transcript.size} transcript messages) is loaded above — this is the SAME session " +
-                    s"(id unchanged, the batch's chain nodes still belong to it). Treat the following as your next input; " +
-                    s"do not re-plan from scratch and do not redo finished work.\n\n$message"
+                legacyText = s"[system] A supplement arrived while no live actor was holding this session. " +
+                  s"Your full history (${transcript.size} transcript messages) is loaded above — this is the SAME session " +
+                  s"(id unchanged, the batch's chain nodes still belong to it). Treat the following as your next input; " +
+                  s"do not re-plan from scratch and do not redo finished work.\n\n$message"
               )
               childWsSend = nebflow.core.tools.DelegateTool.routeWsSendFor(id, Some(parentSid), deps.wsSend)
               params = NodeRunner.SpawnParams(
@@ -344,18 +354,18 @@ object SessionResumption:
                   logger.warn(s"[session-resume] ChainStore row failed for $id: ${e.getMessage}").void
                 )
               // ⑦b 重启打断旗摘除（恢复 = 打断结束；幂等零写）。
-              _ <- IO.blocking(DelegateRegistry.clearRestartInterrupted(id)).handleErrorWith(e =>
-                logger.warn(s"[session-resume] restart-flag clear failed for $id: ${e.getMessage}").void
-              )
+              _ <- IO
+                .blocking(DelegateRegistry.clearRestartInterrupted(id))
+                .handleErrorWith(e =>
+                  logger.warn(s"[session-resume] restart-flag clear failed for $id: ${e.getMessage}").void
+                )
               // ⑦b' 待命槽清零（案A 唤醒语义对齐）：待命停靠的记录被 Mail 续醒 =
               // 唤醒轮——申报槽与停靠槽一并清（[[DelegateRegistry.clearStandby]]，
               // 与 live 注入腿同款判据；唤醒轮无新申报走矩阵未申报腿提醒补报）。
               _ <- IO.whenA(record.standbySince.isDefined)(
                 IO
                   .blocking(DelegateRegistry.clearStandby(id))
-                  .handleErrorWith(e =>
-                    logger.warn(s"[session-resume] standby clear failed for $id: ${e.getMessage}")
-                  )
+                  .handleErrorWith(e => logger.warn(s"[session-resume] standby clear failed for $id: ${e.getMessage}"))
                   .void
               )
               // ⑦b'' 归档回流：活会话必须在在册窗可见（归档只加旗不删行——复活即摘旗，
@@ -363,9 +373,7 @@ object SessionResumption:
               _ <- IO.whenA(record.archivedAt.isDefined)(
                 IO
                   .blocking(DelegateRegistry.unarchive(id))
-                  .handleErrorWith(e =>
-                    logger.warn(s"[session-resume] unarchive failed for $id: ${e.getMessage}")
-                  )
+                  .handleErrorWith(e => logger.warn(s"[session-resume] unarchive failed for $id: ${e.getMessage}"))
                   .void
               )
               // ⑦c 输入注入：**转录在下、补充在上**——同一会话的下一轮。
@@ -388,8 +396,11 @@ object SessionResumption:
             )
       yield result
     attempt.handleErrorWith(e =>
-      logger.warn(s"[session-resume] in-place resume errored for $id: ${e.getMessage}").as(Left(s"resume error: ${e.getMessage}"))
+      logger
+        .warn(s"[session-resume] in-place resume errored for $id: ${e.getMessage}")
+        .as(Left(s"resume error: ${e.getMessage}"))
     )
+  end resumeAdmitted
 
   // ══════════════════════════════════════════════════════════════════════════
   // B''. 孤悬终点巡检（作者 16:51 ③：不得存在「节点 rootSessionId 指向终态会话
@@ -430,11 +441,13 @@ object SessionResumption:
   def hasOwnerMigration(delegateId: String, taskId: Option[String]): Boolean =
     val keys = List(ChainStore.keyFor(taskId, delegateId), delegateId).distinct
     keys.exists { k =>
-      ChainStore.readSync(k).exists(_.entries.exists { e =>
-        e.kind == "owner-migration" &&
-        (e.payload.hcursor.get[String]("to").toOption.contains(delegateId) ||
-          e.payload.hcursor.get[String]("from").toOption.contains(delegateId))
-      })
+      ChainStore
+        .readSync(k)
+        .exists(_.entries.exists { e =>
+          e.kind == "owner-migration" &&
+          (e.payload.hcursor.get[String]("to").toOption.contains(delegateId) ||
+            e.payload.hcursor.get[String]("from").toOption.contains(delegateId))
+        })
     }
 
   /**
@@ -457,8 +470,6 @@ object SessionResumption:
           List(OrphanScope(rec.id, dir.toString, open, why))
         else Nil
       }
-    }.handleErrorWith(e =>
-      logger.warn(s"[session-resume] orphan scope sweep failed: ${e.getMessage}").as(Nil)
-    )
+    }.handleErrorWith(e => logger.warn(s"[session-resume] orphan scope sweep failed: ${e.getMessage}").as(Nil))
 
 end SessionResumption
