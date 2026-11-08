@@ -263,4 +263,33 @@ class SessionMailboxSpec extends CatsEffectSuite:
       assertEquals(clue(r1), SessionMailbox.MailResult.Failed("recipient session id is empty"): SessionMailbox.MailResult)
       assertEquals(clue(r2), SessionMailbox.MailResult.Failed("entry identity is empty"): SessionMailbox.MailResult)
   }
+  test("producer retry while a message is taken does not enqueue another copy") {
+    for
+      _ <- SessionMailbox.mailOnce("taken-retry", evt("finished"), "terminal", "result-1", deduplicateReceipts = true)
+      pending <- SessionMailbox.scanPending("taken-retry")
+      _ <- SessionMailbox.take("taken-retry", pending)
+      retried <- SessionMailbox.mailOnce("taken-retry", evt("finished"), "terminal", "result-1", deduplicateReceipts = true)
+      remaining <- SessionMailbox.scanPending("taken-retry")
+      taken <- SessionMailbox.scanTaken("taken-retry")
+    yield
+      assertEquals(retried, SessionMailbox.MailResult.AlreadyPresent: SessionMailbox.MailResult)
+      assertEquals(remaining, Nil)
+      assertEquals(taken.map(_.identity), List("result-1"))
+  }
+
+  test("producer retry after consumption remains deduplicated from durable receipt") {
+    for
+      _ <- SessionMailbox.mailOnce("consumed-retry", evt("finished"), "terminal", "result-1", deduplicateReceipts = true)
+      pending <- SessionMailbox.scanPending("consumed-retry")
+      _ <- SessionMailbox.take("consumed-retry", pending)
+      _ <- SessionMailbox.unlinkTaken("consumed-retry", List("result-1"))
+      retried <- SessionMailbox.mailOnce("consumed-retry", evt("finished"), "terminal", "result-1", deduplicateReceipts = true)
+      newResult <- enqueue("consumed-retry", "result-2", "next round")
+      remaining <- SessionMailbox.scanPending("consumed-retry")
+    yield
+      assertEquals(retried, SessionMailbox.MailResult.AlreadyPresent: SessionMailbox.MailResult)
+      assert(newResult.isInstanceOf[SessionMailbox.MailResult.Enqueued])
+      assertEquals(remaining.map(_.identity), List("result-2"))
+  }
+
 end SessionMailboxSpec

@@ -22,7 +22,7 @@ import nebflow.shared.{ContentBlock, NebflowLogger, PathUtil}
  * 本件把语义反转：**磁盘邮箱是唯一真源，actor 消息只是门铃**。
  *
  *   - **入队** = `mailOnce`：每事件一个原子落盘文件（tmp+rename，写成功=必达）。
- *     同 identity 条目已在 pending ⇒ no-op（幂等键防写重，不防读重）。
+ *     同 identity 条目已在 pending ⇒ no-op；稳定事件身份可选查 taken/消费墓碑（幂等键防写重，不防读重）。
  *   - **消费** = 唤醒点 drain（见 [[nebflow.agent.MailboxDrain]]）：取走 = 原子
  *     rename 进 `taken/`，注入回合后 unlink——「已投递」= 条目已删除这一物理事实，
  *     不再是任何标记。
@@ -194,13 +194,16 @@ object SessionMailbox:
    * 落盘 = tmp + 原子 rename（AtomicJson）。返回 Failed 时条目**不在盘上**（I1
    * 不成立），调用方必须显式处置。
    */
+  // Stable event producers opt into receipt deduplication; coalesced cause notices
+  // keep their existing reusable-identity semantics after consumption.
   def mailOnce(
     recipientSid: String,
     event: AgentCommand.ExternalEvent,
     kind: String,
     identity: String,
     coalesce: Boolean = false,
-    producer: String = ""
+    producer: String = "",
+    deduplicateReceipts: Boolean = false
   ): IO[MailResult] =
     if recipientSid.trim.isEmpty then IO.pure(MailResult.Failed("recipient session id is empty"))
     else if identity.trim.isEmpty then IO.pure(MailResult.Failed("entry identity is empty"))
@@ -208,7 +211,10 @@ object SessionMailbox:
       IO.blocking {
         lock.synchronized {
           val now = System.currentTimeMillis()
-          existingPending(recipientSid, identity) match
+          val alreadyTaken = scanDir(recipientSid, takenDir(recipientSid)).exists(_._1.identity == identity)
+          if deduplicateReceipts && (alreadyTaken || deliveredContainsSync(recipientSid, Set(identity)).nonEmpty)
+          then MailResult.AlreadyPresent
+          else existingPending(recipientSid, identity) match
             case Some(e) if !coalesce => MailResult.AlreadyPresent
             case Some(e) =>
               // 原位合条：同文件名（seq 不变）重写载荷；压制计数累加。放行条目
@@ -422,15 +428,14 @@ object SessionMailbox:
   /** 墓碑查询（boot 对账面；坏形文件 = 空集）。 */
   def deliveredContains(sid: String, identities: Set[String]): IO[Set[String]] =
     if identities.isEmpty then IO.pure(Set.empty)
-    else
-      IO.blocking {
-        val f = deliveredFile(sid)
-        if !os.exists(f) then Set.empty[String]
-        else
-          decode[Delivered](os.read(f)) match
-            case Right(d) => d.ids.toSet.intersect(identities)
-            case Left(_) => Set.empty[String]
-      }.handleErrorWith(_ => IO.pure(Set.empty[String]))
+    else IO.blocking(deliveredContainsSync(sid, identities)).handleErrorWith(_ => IO.pure(Set.empty[String]))
+
+  private def deliveredContainsSync(sid: String, identities: Set[String]): Set[String] =
+    val f = deliveredFile(sid)
+    if !os.exists(f) then Set.empty[String]
+    else decode[Delivered](os.read(f)) match
+      case Right(d) => d.ids.toSet.intersect(identities)
+      case Left(_) => Set.empty[String]
 
   // ── 内部扫描（同步面）────────────────────────────────────────────────
 
