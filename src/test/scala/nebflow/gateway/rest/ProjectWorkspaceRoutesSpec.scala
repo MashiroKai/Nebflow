@@ -311,4 +311,43 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
       _ = assertEquals(state.hcursor.get[String]("baseline"), Right("main"))
     yield ()
   }
+
+  test("workspace facts report ahead/dirty/HEAD per seat and fail soft on one broken workspace") {
+    for
+      _ <- fixture
+      _ <- IO.blocking {
+        // A second ledger row whose directory does not exist: its facts must
+        // degrade to an explicit error marker while the healthy seat stays exact.
+        WorkspaceLedger.default.register(
+          WorkspaceLedger.Workspace(
+            "broken",
+            "example",
+            WorkspaceLedger.repositoryKey(root / "repo"),
+            (root / "missing-tree").toNIO.toRealPath().toString,
+            "delegate/broken",
+            "main",
+            "0" * 40,
+            "delegate-broken",
+            "kernel"
+          )
+        )
+      }
+      snapshot <- request(Method.GET, "/projects/example/workspaces").flatMap(_.as[Json])
+      facts = snapshot.hcursor.downField("facts")
+      healthy = facts.downField("task")
+      _ = assertEquals(healthy.get[Int]("aheadCount").toOption, Some(1), "one committed result commit ahead of main")
+      _ = assertEquals(healthy.get[Int]("dirtyTracked").toOption, Some(0))
+      _ = assertEquals(healthy.get[Int]("dirtyUntracked").toOption, Some(0))
+      _ = assert(healthy.get[String]("headCommit").toOption.exists(_.nonEmpty))
+      _ = assert(healthy.get[String]("error").toOption.isEmpty, "a healthy seat carries no error marker")
+      _ = assertEquals(healthy.downField("reconcile").as[List[Json]].toOption.getOrElse(Nil).length, 0)
+      broken = facts.downField("broken")
+      _ = assert(
+        broken.get[String]("error").toOption.exists(_.contains("unavailable")),
+        "the broken seat carries the failure"
+      )
+      _ = assertEquals(broken.get[Option[Int]]("aheadCount").toOption.flatten, None, "no fabricated numbers")
+      _ = assertEquals(broken.get[Option[String]]("headCommit").toOption.flatten, None)
+    yield ()
+  }
 end ProjectWorkspaceRoutesSpec

@@ -341,10 +341,23 @@ class DualModeToolFaceSpec extends FunSuite:
     val definition = AgentDef(name = "nebflow", description = "merger face")
     val merger = CoreProbe.allowedWithDelegateMode(definition, true, Some("merger"))
     assert(merger.contains("merger_report"))
+    assert(merger.contains(nebflow.core.tools.WorktreeContextTool.Name), "the merger face carries worktree_context")
     assert(!merger.contains("ChainWrite"))
     val kernel = CoreProbe.allowedWithDelegateMode(definition, true, Some("kernel"))
     assert(!kernel.contains("merger_report"))
-    val root = CoreProbe.allowedWithDelegateMode(definition, false, None)
-    assert(!root.contains("merger_report"))
+    assert(!kernel.contains(nebflow.core.tools.WorktreeContextTool.Name), "kernel delegates never see worktree_context")
+    val executor = CoreProbe.allowedWithDelegateMode(definition, false, None)
+    assert(!executor.contains("merger_report"))
+    assert(
+      !executor.contains(nebflow.core.tools.WorktreeContextTool.Name),
+      "the executor base face never sees worktree_context"
+    )
+    // The main-agent (Nebula root) face carries worktree_context via RootOrchestrationTools.
+    val root = CoreProbe.allowedWithDelegateMode(
+      AgentDef(name = nebflow.actor.RootAgentIdentity.Name, description = "root face"),
+      delegateSession = false,
+      delegateMode = None
+    )
+    assert(root.contains(nebflow.core.tools.WorktreeContextTool.Name), "the main-agent face carries worktree_context")
   }
 end DualModeToolFaceSpec

@@ -103,8 +103,8 @@ class RootSixBaseToolsSpec extends FunSuite:
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(
       AgentCore.RootOrchestrationTools.size,
-      20,
-      "RootOrchestrationTools 实测恰 20 件（原 19 件 + ConversationSearch；2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18，builtin-def 批 +Delegate = 19，pop 批 −Card = 18，unified-delegate 批 −AgentFlow = 17，task-rag 批 #1227 +TaskSearch = 18，imagegen 双层批 2026-10-24 作者令 +generate_image = 19；变异验红锚：再摘任一件即红）"
+      22,
+      "RootOrchestrationTools 实测恰 22 件（20 件合同 + ConversationSearch + worktree_context（worktree-merger 交付批 Priority D）；更早沿革：原 19 件；2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18，builtin-def 批 +Delegate = 19，pop 批 −Card = 18，unified-delegate 批 −AgentFlow = 17，task-rag 批 #1227 +TaskSearch = 18，imagegen 双层批 2026-10-24 作者令 +generate_image = 19；变异验红锚：再摘任一件即红）"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====

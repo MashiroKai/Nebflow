@@ -423,6 +423,12 @@ object AgentCore:
     // Nebula 身份声明 Delegate 仍被剥）。
     "Delegate",
     "merger_request",
+    // worktree_context (worktree-merger delivery, Priority D): read-only
+    // per-workspace context assembly (task brief, node graph, verification,
+    // commits, merge history, paginated mail). The main agent reads any managed
+    // workspace; merger-mode sessions get the same tool through the merger
+    // mount face.
+    "worktree_context",
     // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
     // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
     // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
@@ -618,8 +624,13 @@ object AgentCore:
    * 本集，本批零触碰 root 面；动的是执行 agent 机制面（NebflowFixedTools 十 → 九）、
    * 注册表（删 `"AgentFlow"` 注册项）、墓碑表（"Workflow" 指路改 ChainWrite
    * ＋"AgentFlow" 条目复活）与 orchestrationMode 的升级写点（迁入 ChainWriteTool）。
+   *
+   * **worktree-merger 交付批（Priority D）：+`worktree_context`，常量对齐实际面 22**——
+   * 工作区全景上下文只读件（主 agent 面；merger 模式会话经挂载面同享）。本增量
+   * 属「按面变更」（新增成员），非「凑数字」；ConversationSearch 批 +1 时常量
+   * 未随动，本批一并把常量钉回实测件数。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 20
+  val RootOrchestrationToolsExpectedSize: Int = 22
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。

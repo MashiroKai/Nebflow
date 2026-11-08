@@ -188,6 +188,15 @@ object ToolRegistry:
       "delegate_report" -> DelegateReportTool,
       MergerReportTool.Name -> MergerReportTool,
       MergerRequestTool.Name -> MergerRequestTool,
+      // worktree_context (worktree-merger delivery, Priority D): read-only
+      // full-context assembly for one managed workspace (summary-first sections
+      // + paginated mail, explicit missing ranges per section). Authorization =
+      // the merger tool mount face (buildAllowedToolSet tail, same slot as
+      // merger_report) + RootOrchestrationTools (main-agent face) + the in-tool
+      // identity refusal (anything that is neither merger-mode nor root is
+      // fail-closed, MergerRequestTool precedent); a recorded merger is scoped
+      // to its own repository inside the tool.
+      WorktreeContextTool.Name -> WorktreeContextTool,
       // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
       // 只读）——embedding 余弦 top-k + 词法降级 + 可选 Jev 重排。授权面 =
       // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单

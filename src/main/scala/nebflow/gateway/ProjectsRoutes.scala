@@ -89,6 +89,9 @@ private[gateway] object ProjectsRoutes:
                 val ledger = nebflow.core.delegate.WorkspaceLedger.default
                 val repository = nebflow.core.delegate.WorkspaceLedger.repositoryKey(ws)
                 val snapshot = ledger.snapshot
+                // Workspace facts (ahead/dirty/HEAD, verification, reconcile) are
+                // fail-soft per workspace: one broken seat never fails the endpoint.
+                val facts = nebflow.core.delegate.WorkspaceFacts.forRepository(repository, snapshot)
                 Json.obj(
                   "revision" -> snapshot.revision.asJson,
                   "baseline" -> ledger.baseline(repository).asJson,
@@ -96,6 +99,7 @@ private[gateway] object ProjectsRoutes:
                     snapshot.workspaces.exists(w => w.id == id && w.repository == repository)
                   }.asJson,
                   "workspaces" -> snapshot.workspaces.filter(_.repository == repository).asJson,
+                  "facts" -> facts,
                   "mergeRequests" -> snapshot.requests.filter(_.repository == repository).asJson,
                   "merger" -> snapshot.mergers.find(_.repository == repository).asJson,
                   "mergerInitialization" -> snapshot.mergers

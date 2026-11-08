@@ -273,6 +273,9 @@ class AgentConvergenceSpec extends FunSuite:
         "Schedule",
         "Delegate",
         "AgentControl",
+        // worktree-merger delivery (merger_request): Nebula-exclusive submit face,
+        // same anti-declaration-escape channel — dream never gains it either.
+        "merger_request",
         "Task",
         "TaskInfo",
         "node_report",
@@ -303,6 +306,7 @@ class AgentConvergenceSpec extends FunSuite:
         "Schedule",
         "Delegate",
         "AgentControl",
+        "merger_request", // worktree-merger delivery: Nebula-exclusive submit face, dream stripped too
         "Task",
         "TaskInfo",
         "node_report",
@@ -314,7 +318,7 @@ class AgentConvergenceSpec extends FunSuite:
         "ConversationSearch",
         "generate_image" // imagegen 双层批 2026-10-24 resume 合入适配（仅 Nebula）
       ),
-      "dream 剥十二件（原八件 + builtin-merge 批 Subagent + ChainWrite 新增 + task-rag 批 #1227 TaskSearch + taskunify 合一 Task/TaskInfo 随名 + imagegen 双层批 2026-10-24 generate_image；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow——工具退役、名字离开防逃逸集——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"
+      "dream 剥十三件（原八件 + builtin-merge 批 Subagent + ChainWrite 新增 + task-rag 批 #1227 TaskSearch + taskunify 合一 Task/TaskInfo 随名 + worktree-merger 交付批 merger_request + imagegen 双层批 2026-10-24 generate_image；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow——工具退役、名字离开防逃逸集——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"
     )
     // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）
     // 拿不到 Pop：不在 DreamAdmittedTools 豁免面内
