@@ -112,6 +112,28 @@ class GatewaySessionStorePersistSpec extends CatsEffectSuite:
       _ = restored.shutdown()
     yield ()
 
+  test("crash after failed snapshot write fails closed on restore"):
+    val f = tempFile
+    for
+      store <- GatewaySessionStore.create(persistenceFile = Some(f))
+      rec <- store.create("u", "relay-mint", "net")
+      tmp = f / os.up / os.RelPath(f.last + ".tmp")
+      _ <- IO(os.makeDir(tmp))
+      failed <- store.revokeByAccount("u").attempt
+      _ = assert(failed.isLeft)
+      _ = store.shutdown()
+      restored <- GatewaySessionStore.create(persistenceFile = Some(f))
+      hit <- restored.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(hit, None)
+      _ <- IO(os.remove(tmp))
+      _ <- restored.revokeByAccount("u")
+      _ = restored.shutdown()
+      again <- GatewaySessionStore.create(persistenceFile = Some(f))
+      hitAgain <- again.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(hitAgain, None)
+      _ = again.shutdown()
+    yield ()
+
   test("concurrent flush and revocation never restore revoked sessions"):
     val f = tempFile
     for

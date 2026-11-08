@@ -46,6 +46,16 @@ class StartupLadderSpec extends munit.FunSuite:
   private val Sub = "logto|user-42"
   private val Email = "user42@example.com"
 
+  test("account cutover fails closed before mutation until restart flow exists"):
+    val root = os.temp.dir(prefix = "cutover-guard-")
+    val account = RootLayer.Account(root, Sub, root / "accounts" / "a")
+    assertEquals(NeblinkEnrollment.accountCutoverRefusal(account, Some(Sub), true), None)
+    assert(NeblinkEnrollment.accountCutoverRefusal(account, Some("other"), true).exists(_.contains("account-switch")))
+    assert(NeblinkEnrollment.accountCutoverRefusal(RootLayer.Flat(root, root), Some(Sub), true).exists(_.contains("restart-required")))
+    assert(NeblinkEnrollment.accountCutoverRefusal(account, None, true).exists(_.contains("identity-missing")))
+    assertEquals(NeblinkEnrollment.accountCutoverRefusal(account, None, false), None)
+    os.remove.all(root)
+
   /** 样本根：派单指定的 /tmp/b1-red-*（绝不用 ~/.stand）。 */
   private def tempRoot(): os.Path = os.Path(Files.createTempDirectory("b1-red-"))
 

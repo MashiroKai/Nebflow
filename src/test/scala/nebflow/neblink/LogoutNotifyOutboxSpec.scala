@@ -115,6 +115,26 @@ class LogoutNotifyOutboxSpec extends CatsEffectSuite:
       _ = assertEquals(rows.size, 2)
     yield ()
 
+  test("外部进程持有 drain 锁时拒绝重放，释放后可恢复"):
+    for
+      _ <- LogoutNotifyOutbox.enqueue("first", "", "test")
+      lockPath = LogoutNotifyOutbox.dir / ".drain-lock"
+      process <- IO.blocking(new ProcessBuilder("python3", "-u", "-c",
+        "import fcntl,sys; f=open(sys.argv[1], 'w'); fcntl.lockf(f, fcntl.LOCK_EX); print('locked',flush=True); sys.stdin.read()",
+        lockPath.toString).start())
+      result <- (for
+        line <- IO.blocking(new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream)).readLine())
+        _ = assertEquals(line, "locked")
+        blocked <- LogoutNotifyOutbox.drain(_ => IO.unit).attempt
+        _ = assert(blocked.isLeft)
+        _ <- IO.blocking(process.getOutputStream.close())
+        exit <- IO.blocking(process.waitFor())
+        _ = assertEquals(exit, 0)
+        report <- LogoutNotifyOutbox.drain(_ => IO.unit)
+        _ = assertEquals(report.replayed.size, 1)
+      yield ()).guarantee(IO.blocking(process.getOutputStream.close()).handleErrorWith(_ => IO.unit))
+    yield result
+
   test("损坏记录不会被伪报为空队列"):
     for
       _ <- LogoutNotifyOutbox.enqueue("first", "", "test")

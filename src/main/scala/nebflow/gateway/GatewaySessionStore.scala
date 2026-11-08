@@ -4,6 +4,9 @@ import nebflow.neblink.portal.*
 
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.std.Semaphore
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
 import cats.syntax.all.*
 import nebflow.shared.Branding
 import org.http4s.{ResponseCookie, SameSite}
@@ -116,6 +119,24 @@ class GatewaySessionStore private (
   // Snapshot read and write must share the lock: acquiring it after taking a
   // snapshot permits an older flush to overwrite a completed revocation.
   private val snapshotLock = new Object
+  private val revocationLock = Semaphore[IO](1).unsafeRunSync()
+
+  // A durable intent precedes revocation. If a crash interrupts persistence,
+  // boot ignores the entire old snapshot until a new snapshot has been saved.
+  private def revokeDurably(change: IO[Int]): IO[Int] = revocationLock.permit.use { _ =>
+    val marker = persistenceFile.map(GatewaySessionStore.revocationMarker)
+    val prepare = marker.fold(IO.unit)(f => IO.blocking {
+      os.makeDir.all(f / os.up)
+      val channel = FileChannel.open(f.toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+      try channel.force(true) finally channel.close()
+      GatewaySessionStore.syncDirectory(f / os.up)
+    })
+    val complete = marker.fold(IO.unit)(f => IO.blocking {
+      os.remove(f)
+      GatewaySessionStore.syncDirectory(f / os.up)
+    })
+    prepare *> change.flatTap(_ => persistNow *> complete)
+  }
 
   private def flushIfDirty(): Unit =
     if dirty.getAndSet(false) then
@@ -136,7 +157,10 @@ class GatewaySessionStore private (
         if !scala.util.Properties.isWin then
           java.nio.file.Files
             .setPosixFilePermissions(tmp.toNIO, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+        val channel = FileChannel.open(tmp.toNIO, StandardOpenOption.WRITE)
+        try channel.force(true) finally channel.close()
         os.move(tmp, f, replaceExisting = true, atomicMove = true)
+        GatewaySessionStore.syncDirectory(f / os.up)
       }
     }
 
@@ -222,16 +246,14 @@ class GatewaySessionStore private (
   def revokeByMaskedId(prefix: String): IO[Int] =
     if prefix.isEmpty then IO.pure(0)
     else
-      sessionsRef
-        .modify { current =>
-          val (hit, rest) = current.partition { case (sid, _) => sid.startsWith(prefix) }
-          (rest, hit.size)
-        }
-        .flatTap(n => persistNow.whenA(n > 0))
+      revokeDurably(sessionsRef.modify { current =>
+        val (hit, rest) = current.partition { case (sid, _) => sid.startsWith(prefix) }
+        (rest, hit.size)
+      })
 
   /** Revoke EVERY session (`sessions revoke --all`, the local emergency face). */
   def revokeAll(): IO[Int] =
-    sessionsRef.getAndSet(Map.empty).map(_.size).flatTap(_ => persistNow)
+    revokeDurably(sessionsRef.getAndSet(Map.empty).map(_.size))
 
   /**
    * Revoke only `origin == relay-mint` sessions — the binding-revocation
@@ -242,12 +264,10 @@ class GatewaySessionStore private (
    * Bearer only), so "local survives" buys nothing to an attacker.
    */
   def revokeRelayMinted(): IO[Int] =
-    sessionsRef
-      .modify { current =>
-        val (hit, rest) = current.partition { case (_, r) => r.origin == GatewaySessionStore.OriginRelayMint }
-        (rest, hit.size)
-      }
-      .flatTap(n => persistNow.whenA(n > 0))
+    revokeDurably(sessionsRef.modify { current =>
+      val (hit, rest) = current.partition { case (_, r) => r.origin == GatewaySessionStore.OriginRelayMint }
+      (rest, hit.size)
+    })
 
   /**
    * Revoke EVERY session of ONE account — the logout face (登出收尾批
@@ -266,13 +286,10 @@ class GatewaySessionStore private (
   def revokeByAccount(accountSub: String): IO[Int] =
     if accountSub.isEmpty then IO.pure(0)
     else
-      sessionsRef
-        .modify { current =>
-          val (hit, rest) = current.partition { case (_, r) => r.accountSub == accountSub }
-          (rest, hit.size)
-        }
-        // Persist even on a zero-row retry after an earlier write failure.
-        .flatTap(_ => persistNow)
+      revokeDurably(sessionsRef.modify { current =>
+        val (hit, rest) = current.partition { case (_, r) => r.accountSub == accountSub }
+        (rest, hit.size)
+      })
 
   /** Live session count (diagnostics / tests). */
   def size: IO[Int] = sessionsRef.get.map(_.size)
@@ -283,6 +300,15 @@ class GatewaySessionStore private (
 end GatewaySessionStore
 
 object GatewaySessionStore:
+
+  private def revocationMarker(f: os.Path): os.Path = f / os.up / os.RelPath(f.last + ".revocation-pending")
+
+  private def syncDirectory(dir: os.Path): Unit =
+    // Windows does not support opening directories as FileChannels. On that
+    // platform force the files; directory metadata durability is OS-dependent.
+    if !scala.util.Properties.isWin then
+      val channel = FileChannel.open(dir.toNIO, StandardOpenOption.READ)
+      try channel.force(true) finally channel.close()
 
   /**
    * Absolute TTL: the 30d hard ceiling (session TTL batch 2026-10-21, was
@@ -394,7 +420,10 @@ object GatewaySessionStore:
    * an empty store and a WARN line, never a boot failure.
    */
   private def loadSnapshot(f: os.Path, log: org.slf4j.Logger): Map[String, SessionRecord] =
-    if !os.exists(f) then Map.empty
+    if os.exists(revocationMarker(f), followLinks = false) then
+      log.warn("pending session revocation detected; refusing to restore snapshot {}", f)
+      Map.empty
+    else if !os.exists(f) then Map.empty
     else
       try
         val parsed = io.circe.parser.decode[Vector[SessionRecord]](os.read(f))

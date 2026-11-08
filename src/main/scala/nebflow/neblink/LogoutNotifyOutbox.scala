@@ -30,8 +30,8 @@ import cats.effect.unsafe.implicits.global
  *   - **排队点** = 机器层 `<machineRoot>/[[PendingDirName]]/`，一条一件。
  *
  * 对接点（跨仓，本批**未做**）：
- *   - 消费端：link-server `src/routes.rs:892-919`（`auth_logout` 面）+ 设计 §3.5.3
- *     的中继侧待决队列；
+ *   - 消费端尚待定义：现有 relay auth_logout 有账号级设备断连等副作用，不能
+ *     作为纯 cookie 清理或账号通知端点直接复用；须新建受权、幂等的专用契约；
  *   - 补投装配：stand 侧未来的 drain 调用 = 隧道重连 / 启动对账
  *     （`PortalConnection.armLifecycle` 对 `PortalUplinkDeadLetter.drain` 的
  *     既有同位装配，`PortalUplinkBackpressure.scala` 头注）。
@@ -198,16 +198,29 @@ object LogoutNotifyOutbox:
    * 发送或删除失败时停止，保留后续记录以避免越序。
    */
   def drain(send: Entry => IO[Unit]): IO[DrainReport] = drainLock.permit.use { _ =>
-    def replay(entries: List[Entry], report: DrainReport): IO[DrainReport] = entries match
-      case Nil => IO.pure(report)
-      case e :: rest =>
-        (send(e) *> delivered(e.id)).attempt.flatMap {
-          case Right(_) => replay(rest, report.copy(replayed = report.replayed :+ e.id))
-          case Left(t) =>
-            bumpAttempt(e).as(report.copy(kept = report.kept :+
-              (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName))))
-        }
-    pending.flatMap(entries => replay(entries, DrainReport()))
+    val processLock = cats.effect.Resource.make(IO.blocking {
+      os.makeDir.all(dir)
+      CredentialFileAcl.restrictDirectory(dir.toNIO)
+      val channel = FileChannel.open((dir / ".drain-lock").toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+      try
+        val lock = channel.tryLock()
+        if lock == null then throw new IllegalStateException("outbox drain already running in another process")
+        (channel, lock)
+      catch
+        case scala.util.control.NonFatal(e) => channel.close(); throw e
+    }) { case (channel, lock) => IO.blocking { try lock.release() finally channel.close() } }
+    processLock.use { _ =>
+      def replay(entries: List[Entry], report: DrainReport): IO[DrainReport] = entries match
+        case Nil => IO.pure(report)
+        case e :: rest =>
+          (send(e) *> delivered(e.id)).attempt.flatMap {
+            case Right(_) => replay(rest, report.copy(replayed = report.replayed :+ e.id))
+            case Left(t) =>
+              bumpAttempt(e).as(report.copy(kept = report.kept :+
+                (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName))))
+          }
+      pending.flatMap(entries => replay(entries, DrainReport()))
+    }
   }
 
   /** 清空（运维/spec 用；正常路径绝不调用 —— 零删除纪律）。 */

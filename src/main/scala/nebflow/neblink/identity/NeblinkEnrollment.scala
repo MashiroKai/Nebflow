@@ -22,6 +22,14 @@ object NeblinkEnrollment:
 
   private val logger = NebflowLogger.forName("nebflow.neblink.enroll")
 
+  private[nebflow] def accountCutoverRefusal(layer: RootLayer, incomingSub: Option[String], explicit: Boolean): Option[String] =
+    incomingSub.flatMap { sub =>
+      layer match
+        case RootLayer.Account(_, owner, _) if owner == sub => None
+        case RootLayer.Account(_, _, _) => Some("account-switch-requires-logout: this engine serves a different account")
+        case _ => Some("account-root-restart-required: account root cutover is not yet available")
+    }.orElse(Option.when(explicit && incomingSub.isEmpty)("account-identity-missing: cannot safely establish account root"))
+
   /**
    * Persist the EnrollResponse fields. `logtoRefresh` carries the provider
    * refresh token (AC+PKCE / silent re-login) into device.json; `logtoIdToken`
@@ -61,7 +69,10 @@ object NeblinkEnrollment:
     logtoIdToken: Option[String] = None,
     explicitUserAction: Boolean = false
   ): IO[Either[String, String]] =
-    EnrollGuard.enrollRefusal(resolvedUrl, explicitUserAction) match
+    val incomingSub = logtoIdToken.flatMap(t =>
+      LogtoAuthCode.decodeIdTokenClaims(t, Seq("sub")).get("sub").map(_.trim).filter(_.nonEmpty))
+    val cutoverRefusal = accountCutoverRefusal(RootLadder.current, incomingSub, explicitUserAction)
+    cutoverRefusal.orElse(EnrollGuard.enrollRefusal(resolvedUrl, explicitUserAction)) match
       case Some(reason) =>
         logger.warn(s"enrollment refused by the isolation guard: $reason").as(Left(reason))
       case None =>
@@ -354,7 +365,7 @@ object NeblinkEnrollment:
    *      与 OwnerIdentity 同一解码单点）；
    *   2. 已存凭据里的 id_token（merge 后的 `logtoBlock`）。
    * 两者都拿不到 sub ⇒ 不写指针（没有任何可指的账号），打 INFO 留痕。
-   * 失败**不拦登录**（凭据已落盘，登录确实成功）：打 WARN 留痕，根层晋升留给下次登录。
+   * 指针落盘失败向调用方报告，不伪报登录成功。
    */
   private def writeActiveAccountPointer(
     incomingIdToken: Option[String],
@@ -384,13 +395,7 @@ object NeblinkEnrollment:
           logger.infoSync(
             s"[root] active-account pointer -> '$accountSub' ($dir); takes effect on next process start"
           )
-    }.handleErrorWith(e =>
-      logger.warn(
-        s"[root] could not write the active-account pointer (${e.getClass.getSimpleName}: " +
-          s"${Option(e.getMessage).getOrElse("")}) — the credential is saved; the root layer may not " +
-          "advance on next boot"
-      )
-    )
+    }
 
   /**
    * 停摆门的**证据式**解除（kaiauth 修法批 ①配套，2026-09-16）。
