@@ -32,9 +32,11 @@ class UploadsRoutesSpec extends CatsEffectSuite:
 
   /** A live session credential for the session rail. */
   private def sessionCred: IO[(String, String)] =
-    Sessions
-      .create("uploads-spec", GatewaySessionStore.OriginRelayMint, "net-1")
-      .map(rec => (GatewaySessionStore.CookieName, rec.sessionId))
+    Sessions.create("uploads-spec", GatewaySessionStore.OriginRelayMint, "net-1").flatMap { rec =>
+      val owners = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
+      owners.registerSession(rec) *> owners.createResource("attachment", "sess-1/shot.png", Credential.ViaSession(rec))
+        .as((GatewaySessionStore.CookieName, rec.sessionId))
+    }
 
   /** Isolated dataRoot with a seeded uploads/sess-1/shot.png; restored after. */
   private def withTempUploads[A](test: => IO[A]): A =
@@ -106,7 +108,28 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("serves a file via the session cookie") {
+  test("owner authorization: A reads A, B/unknown/path-forged selectors cannot read") {
+    withTempUploads {
+      for
+        a <- Sessions.create("account-A", GatewaySessionStore.OriginRelayMint, "net-1")
+        b <- Sessions.create("account-B", GatewaySessionStore.OriginRelayMint, "net-1")
+        store = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
+        _ <- store.registerSession(a)
+        _ <- store.registerSession(b)
+        _ <- store.createResource("attachment", "sess-1/shot.png", Credential.ViaSession(a))
+        aResp = get("/uploads/sess-1/shot.png", cookie = Some((GatewaySessionStore.CookieName, a.sessionId))).get
+        bResp = get("/uploads/sess-1/shot.png", cookie = Some((GatewaySessionStore.CookieName, b.sessionId))).get
+        _ = assertEquals(aResp.status, Status.Ok)
+        _ = assertEquals(bResp.status, Status.Forbidden)
+        unknown = get("/uploads/sess-1/unregistered.png", cookie = Some((GatewaySessionStore.CookieName, a.sessionId))).get
+        _ = assertEquals(unknown.status, Status.Forbidden)
+        forged = get("/uploads/other-session/shot.png", cookie = Some((GatewaySessionStore.CookieName, a.sessionId))).get
+        _ = assertEquals(forged.status, Status.Forbidden)
+      yield ()
+    }
+  }
+
+  test("serves a registered file via the session cookie") {
     withTempUploads {
       for
         cred <- sessionCred
@@ -114,6 +137,17 @@ class UploadsRoutesSpec extends CatsEffectSuite:
         _ = assertEquals(resp.status, Status.Ok)
         bytes = resp.body.compile.toVector.unsafeRunSync().toArray
         _ = assert(java.util.Arrays.equals(bytes, Array[Byte](1, 2, 3)))
+      yield ()
+    }
+  }
+
+  test("unknown historical file is denied even with a valid session") {
+    withTempUploads {
+      for
+        cred <- sessionCred
+        _ = os.write.over(PathUtil.dataRoot / "uploads" / "sess-1" / "legacy.png", Array[Byte](5))
+        resp = get("/uploads/sess-1/legacy.png", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Forbidden)
       yield ()
     }
   }

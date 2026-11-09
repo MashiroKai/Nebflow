@@ -197,37 +197,43 @@ private[gateway] object AskUserAttachmentRoutes:
     import ctx.*
     HttpRoutes.of[IO] {
       case req @ POST -> Root / "askuser" / "attachments" =>
-        withAuth(req) {
-          val requestId = req.params.getOrElse("requestId", "").trim
-          if requestId.isEmpty then
-            badRequest("ASKUSER_BAD_REQUEST", "requestId is required (the live pending asknb- id)")
-          else
-            // ② hub 闸：live pending AskUser 卡 + 非 secret 卡（fail-closed）。
-            sharedResources.interactionHubRef.get.flatMap {
-              case None => gone("ASKUSER_CARD_NOT_LIVE", "no interaction hub — card state unknown")
-              case Some(hub) =>
-                hub
-                  .?[Option[nebflow.actor.AttachGate]](reply => InteractionHubCommand.AttachGateOf(requestId, reply))
-                  .flatMap {
-                    case None =>
-                      gone(
-                        "ASKUSER_CARD_NOT_LIVE",
-                        s"no pending ask with requestId=$requestId (already answered, closed, or never existed)"
-                      )
-                    case Some(gate) if gate.hasSecret =>
-                      forbidden("ASKUSER_ATTACH_SECRET_CARD", "secret questions never accept attachments (fail-closed)")
-                    case Some(gate) =>
-                      // Content-Length 预检（流中仍有逐块闸兜底——chunked 上传无长度头）。
-                      val declared = req.contentLength.getOrElse(0L)
-                      if declared > MaxBytes then tooLarge(declared)
-                      else handleUpload(ctx, gate.rootSessionId, requestId, req)
-                  }
-            }
+        OwnerAccess.authenticate(ctx, req, GatewayAuth.Rails.ApiFull).flatMap {
+          case None => Forbidden("A valid session cookie is required")
+          case Some(access) =>
+            val requestId = req.params.getOrElse("requestId", "").trim
+            if requestId.isEmpty then
+              badRequest("ASKUSER_BAD_REQUEST", "requestId is required (the live pending asknb- id)")
+            else
+              // ② hub 闸：live pending AskUser 卡 + 非 secret 卡（fail-closed）。
+              sharedResources.interactionHubRef.get.flatMap {
+                case None => gone("ASKUSER_CARD_NOT_LIVE", "no interaction hub — card state unknown")
+                case Some(hub) =>
+                  hub
+                    .?[Option[nebflow.actor.AttachGate]](reply => InteractionHubCommand.AttachGateOf(requestId, reply))
+                    .flatMap {
+                      case None =>
+                        gone(
+                          "ASKUSER_CARD_NOT_LIVE",
+                          s"no pending ask with requestId=$requestId (already answered, closed, or never existed)"
+                        )
+                      case Some(gate) if gate.hasSecret =>
+                        forbidden("ASKUSER_ATTACH_SECRET_CARD", "secret questions never accept attachments (fail-closed)")
+                      case Some(gate) =>
+                        access.ownsSession(gate.rootSessionId).flatMap {
+                          case false => Forbidden("Ask session owner is unknown or mismatched")
+                          case true =>
+                            val declared = req.contentLength.getOrElse(0L)
+                            if declared > MaxBytes then tooLarge(declared)
+                            else handleUpload(ctx, access, gate.rootSessionId, requestId, req)
+                        }
+                    }
+              }
         }
     }
 
   private def handleUpload(
     ctx: RestApiCtx,
+    access: OwnerAccess,
     rootSessionId: String,
     requestId: String,
     req: Request[IO]
@@ -267,7 +273,7 @@ private[gateway] object AskUserAttachmentRoutes:
                     (if code == "ASKUSER_ATTACH_TOO_LARGE" then tooLarge(0)
                      else errorJson(Status.InternalServerError, code, "upload failed"))
                 case Right((size, sha)) =>
-                  settle(ctx, requestId, entrySnapshot, temp, dir, rawName, mime, size, sha)
+                  settle(ctx, access, rootSessionId, requestId, entrySnapshot, temp, dir, rawName, mime, size, sha)
               }.guarantee(
                 Store.registry.update { m =>
                   m.get(requestId) match
@@ -281,6 +287,8 @@ private[gateway] object AskUserAttachmentRoutes:
   /** 受理落位：计数闸 → sha 去重 → move 落位 → 台账推进 → 惰性清扫 → 响应。 */
   private def settle(
     ctx: RestApiCtx,
+    access: OwnerAccess,
+    rootSessionId: String,
     requestId: String,
     entrySnapshot: CardEntry,
     temp: os.Path,
@@ -295,14 +303,8 @@ private[gateway] object AskUserAttachmentRoutes:
         case Left(code) => Left(code, None)
         case Right(_) =>
           entrySnapshot.files.get(sha) match
-            case Some(existing) => Right((existing, false)) // 去重：返回既有 path，不重复落盘
-            case None =>
-              val seq = entrySnapshot.count + 1
-              val target = dir / Store.fileNameFor(seq, Store.sanitizeName(rawName))
-              os.move(temp, target, replaceExisting = true)
-              Right((Rec(target.toString, seq, size, mime, sha), true))
-    }.handleErrorWith { e =>
-      logger.warn(s"ask-attachment settle failed: ${e.getMessage}").as(Left("ASKUSER_ATTACH_IO", None))
+            case Some(existing) => Right((existing, false))
+            case None => Right((Rec("", entrySnapshot.count + 1, size, mime, sha), true))
     }.flatMap {
       case Left((code, _)) =>
         cleanup(temp) *>
@@ -310,17 +312,32 @@ private[gateway] object AskUserAttachmentRoutes:
              errorJson(Status.Conflict, code, s"at most $MaxPerCard files per card")
            else errorJson(Status.InternalServerError, code, "upload failed"))
       case Right((rec, isNew)) =>
-        Store.registry.update { m =>
-          val cur = m.getOrElse(requestId, CardEntry(0, 1, Map.empty))
-          m.updated(requestId, accept(cur, rec.sha256, rec))
-        } *>
-          // 惰性孤儿清扫（后台 fiber，best-effort——绝不拖慢响应）。
-          sweepOrphans().start.void *>
-          Ok(
-            Store.recJson(requestId, rec, rawName).deepMerge(
-              Json.obj("ok" -> true.asJson, "deduplicated" -> (!isNew).asJson)
-            )
-          )
+        val fileName = Store.fileNameFor(rec.seq, Store.sanitizeName(rawName))
+        val resourceId = s"$rootSessionId/${Store.dirName(requestId)}/$fileName"
+        if !isNew then
+          cleanup(temp) *> Store.registry.update { m =>
+            val cur = m.getOrElse(requestId, CardEntry(0, 1, Map.empty))
+            m.updated(requestId, accept(cur, rec.sha256, rec))
+          } *> Ok(Store.recJson(requestId, rec, rawName).deepMerge(Json.obj("ok" -> true.asJson, "deduplicated" -> true.asJson)))
+        else
+          ResourceKey.from(fileName) match
+            case Left(_) => cleanup(temp) *> badRequest("ASKUSER_BAD_REQUEST", "invalid attachment key")
+            case Right(key) =>
+              AttachmentCommitService.at(dir.toNIO).commit(access, key, resourceId,
+                new java.io.FileInputStream(temp.toString)
+              ).attempt.flatMap {
+                case Left(_) =>
+                  cleanup(temp) *> errorJson(Status.InternalServerError, "ASKUSER_ATTACH_IO", "owner registration or publish failed")
+                case Right(target) =>
+                  val published = rec.copy(path = target.toString)
+                  cleanup(temp) *> Store.registry.update { m =>
+                    val cur = m.getOrElse(requestId, CardEntry(0, 1, Map.empty))
+                    m.updated(requestId, accept(cur, published.sha256, published))
+                  } *> sweepOrphans().start.void *>
+                    Ok(Store.recJson(requestId, published, rawName).deepMerge(
+                      Json.obj("ok" -> true.asJson, "deduplicated" -> false.asJson)
+                    ))
+              }
     }
 
   private def cleanup(temp: os.Path): IO[Unit] =

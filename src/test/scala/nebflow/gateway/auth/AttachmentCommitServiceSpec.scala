@@ -104,5 +104,29 @@ class AttachmentCommitServiceSpec extends CatsEffectSuite:
       _ = assertEquals(count, 0L)
     yield ()
 
+  test("owner registration failure deletes the private temp and publishes nothing"):
+    for
+      dir <- IO.blocking(Files.createTempDirectory("attachment-registration-failure-"))
+      store = OwnerStore.at(dir.resolve("owners.json"))
+      sessions <- GatewaySessionStore.create()
+      record <- sessions.create("account-A", GatewaySessionStore.OriginRelayMint, "test")
+      _ <- store.registerSession(record)
+      access <- OwnerAccess.authenticate(request(record.sessionId), "unused", sessions, store, GatewayAuth.Rails.ApiFull)
+      // An existing directory at the registry path makes authoritative persistence fail closed.
+      blockedStore = OwnerStore.at(Files.createDirectory(dir.resolve("blocked-owners")))
+      blockedAccess <- OwnerAccess.authenticate(request(record.sessionId), "unused", sessions, blockedStore, GatewayAuth.Rails.ApiFull)
+      service = AttachmentCommitService.at(dir.resolve("attachments"))
+      result <- service.commit(blockedAccess.get, ResourceKey.from("not-published").toOption.get,
+        new ByteArrayInputStream("payload".getBytes(StandardCharsets.UTF_8))).attempt
+      exists <- IO.blocking(Files.exists(dir.resolve("attachments/not-published")))
+      leftovers <- IO.blocking {
+        val stream = Files.list(dir.resolve("attachments"))
+        try stream.count() finally stream.close()
+      }
+      _ = assert(result.isLeft)
+      _ = assert(!exists)
+      _ = assertEquals(leftovers, 0L)
+    yield ()
+
   test("invalid selectors cannot be created"):
     assertEquals(ResourceKey.from("bad/key"), Left("invalid resource key"))

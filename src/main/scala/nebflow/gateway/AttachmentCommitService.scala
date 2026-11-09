@@ -31,6 +31,10 @@ final class AttachmentCommitService private (
    * an opaque key, and a content stream. Existing files are never overwritten.
    */
   def commit(access: OwnerAccess, key: ResourceKey, content: InputStream): IO[Path] =
+    commit(access, key, key.value, content)
+
+  /** Publish under a filesystem key while registering a separately scoped selector identity. */
+  def commit(access: OwnerAccess, key: ResourceKey, resourceId: String, content: InputStream): IO[Path] =
     IO.blocking {
       val base = root.toAbsolutePath.normalize()
       if Files.isSymbolicLink(base) then throw new SecurityException("attachment root is a symlink")
@@ -52,7 +56,7 @@ final class AttachmentCommitService private (
           ops.delete(temp)
           throw error
     }.flatMap { case (temp, target) =>
-      access.createResource("attachment", key.value).flatMap {
+      access.createResource("attachment", resourceId).flatMap {
         case false => IO.blocking(ops.delete(temp)) *> IO.raiseError[Path](new SecurityException("unknown or conflicting owner"))
         case true =>
           IO.blocking {
