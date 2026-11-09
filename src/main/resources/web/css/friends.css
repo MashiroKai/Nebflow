@@ -706,6 +706,57 @@ button.fm-req-decline:focus-visible {
   gap: var(--ds-space-inline-gap);
 }
 
+/* 桌面好友/群/设备聊天窗头：沿用手机会话头「按钮—居中头像—按钮」的
+   视觉骨架，但不迁移手机专属返回/三点操作。桌面现有操作仍由群设置、关闭、
+   设备描述等原节点承载；身份槽居中，姓名落在头像下方。手机层有自己的
+   .mh-idhead 结构和几何，本规则仅作用于桌面。 */
+@media (min-width: 701px) {
+  body:not(.mobile-layer) .fm-modal {
+    --fm-head-h: 116px;
+    --fm-head-clear: calc(var(--fm-head-h) + var(--nf-head-gap));
+  }
+  body:not(.mobile-layer) .fm-modal-header {
+    display: block;
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-modal-avatar {
+    position: absolute;
+    top: var(--nf-head-pad-y);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1;
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-modal-title {
+    position: absolute;
+    top: calc(var(--nf-head-pad-y) + 40px + var(--ds-space-1));
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(70%, 360px);
+    justify-content: center;
+    align-items: center;
+    gap: var(--ds-space-2);
+    overflow: visible;
+    white-space: nowrap;
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-gs-open {
+    position: absolute;
+    left: var(--nf-head-pad-x);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-modal-close {
+    position: absolute;
+    right: var(--nf-head-pad-x);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-modal-select-count {
+    position: absolute;
+    right: calc(var(--nf-head-pad-x) + 32px);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+
 /* 会话窗头头像槽（40px 档；**窗头头像槽**，三类全挂（作者 2026-09-21 16:54 令
    「好友/群/设备类对话框统一显示头像」）：群窗 = 组合头像，好友（单聊）窗 =
    好友档案头像（`avatarEl`），设备窗 = 平台图标（`.fm-avatar-device`，同会话列表
