@@ -4464,6 +4464,9 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
    本钮在手机层恒离场（零占位零位移）。 */
 body.mobile-layer .canvas-pop-btn,
 body.card-window .canvas-pop-btn { display: none !important; }
+/* Canvas popout and Ask controls share the capsule's floating shadow token. */
+.canvas-pop-btn,
+.ask-fab { box-shadow: var(--ds-shadow-float); }
 
 /* ── 环卡卡头「在独立窗口打开」钮（批⑤后独立窗唯一可见卡头入口；标题头
    #canvas-pop-btn 同批退役）────────────────────────────────────────── */
