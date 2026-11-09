@@ -605,7 +605,14 @@ case class ServiceLlmConfig(
    * 零行为变化）；全字段可选，半节解码为缺省而非抛（同 `jev` 节教训）。热读：
    * 过闸点每次现读 `cfgRef`，改配置即刻生效。
    */
-  adaptiveThrottle: Option[AdaptiveThrottleConfig] = None
+  adaptiveThrottle: Option[AdaptiveThrottleConfig] = None,
+  /**
+   * Small decision call route overrides. Example:
+   * `"decisionRoutes":{"plugin-allocation":{"preferred":"provider/model"},"rerank":{"preferred":"provider/model"}}`.
+   * Missing call type inherits Nebula's current primary route. `judge.utilityModel`
+   * remains a compatible legacy override for the delegate-judge call.
+   */
+  decisionRoutes: Option[Map[String, AgentModelConfig]] = None
 )
 
 object ServiceLlmConfig:

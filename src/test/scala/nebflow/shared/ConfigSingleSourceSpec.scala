@@ -127,6 +127,15 @@ class ConfigSingleSourceSpec extends FunSuite:
     assertEquals(provider.models.head.unavailableWindows.getOrElse(Nil), Nil, "model 级已清空")
   }
 
+  test("decisionRoutes: per-call route decodes as independent primary; missing map remains unset") {
+    val json = parse("""{"llm":{"providers":{},"decisionRoutes":{"plugin-allocation":{"preferred":"p/m"},"rerank":{"preferred":"q/r"}}}}""").toOption.get
+    val cfg = Config.normalizeConfigJson(json).as[NebflowServiceConfig].toOption.get
+    assertEquals(cfg.llm.decisionRoutes.flatMap(_.get("plugin-allocation")).flatMap(_.preferred), Some("p/m"))
+    assertEquals(cfg.llm.decisionRoutes.flatMap(_.get("rerank")).flatMap(_.preferred), Some("q/r"))
+    val inherited = Config.normalizeConfigJson(parse("""{"llm":{"providers":{}}}""").toOption.get).as[NebflowServiceConfig].toOption.get
+    assertEquals(inherited.llm.decisionRoutes, None)
+  }
+
   // ── B. llm.fallback 小节的形状与校验告警（裁定①③）──────────────────────
 
   test("B1: llm.fallback 小节可解码（preferred + fallbacks，与 agent 链同形状）") {

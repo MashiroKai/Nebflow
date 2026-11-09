@@ -203,7 +203,11 @@ object LlmAllocator:
    *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
    */
   private[decision] def candidatesFrom(registry: ProviderRegistry): IO[List[ModelCandidate]] =
-    IO.blocking(nebflow.shared.Config.loadServiceConfig().judge.flatMap(_.utilityModel)).flatMap {
+    val config = nebflow.shared.Config.loadServiceConfig()
+    val explicit = config.llm.decisionRoutes.flatMap(_.get("plugin-allocation")).flatMap(_.preferred)
+      .orElse(config.judge.flatMap(_.utilityModel))
+    def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
+    explicit match {
       case Some(ref) =>
         // 时段闸（model-schedule-unavailable 批）：utility ref 当前处于不可用
         // 时段 ⇒ WARN + 落到全局链（链出口已滤，不会选到受限模型）。
@@ -214,7 +218,7 @@ object LlmAllocator:
               .warnSync(
                 s"plugin-alloc: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to the full candidate chain"
               )
-            registry.getCandidates()
+            mainRoute
           case None =>
             registry.getCandidateForRef(ref).flatMap {
               case Some(c) =>
@@ -226,10 +230,10 @@ object LlmAllocator:
                 NebflowLogger
                   .forName("nebflow.llm.plugin-alloc")
                   .warnSync(s"plugin-alloc: judge.utilityModel '$ref' unresolved — falling back to the full candidate chain")
-                registry.getCandidates()
+                mainRoute
             }
         }
-      case None => registry.getCandidates()
+      case None => mainRoute
     }
 
   /**
