@@ -181,9 +181,9 @@ export function buildFmComposer(opts) {
   sendBtn.appendChild(sendIcon);
   bar.appendChild(input);
 
-  // 附件入口（③）：三面共用同一枚纸夹（`fm-attach-btn` + `paperclip` 图标）——
-  // 面间差异全部收在宿主 `dispatchFiles`（闸位/上限/受理面三面同源），本组件只装
-  // 入口。不可用面（`canAttach === false`）不挂入口、也不做灰置假入口。
+  // 附件入口（③）：三面共用主会话 `.icon-btn` 控件类与 paperclip 字形；
+  // 面间差异全部收在宿主 `dispatchFiles`（传输协议/授权/受理面），本组件只装入口。
+  // 不可用面（`canAttach === false`）不挂入口、也不做灰置假入口。
   const attachInput = document.createElement('input');
   attachInput.type = 'file';
   attachInput.multiple = true;
@@ -192,11 +192,13 @@ export function buildFmComposer(opts) {
     if (attachInput.files && attachInput.files.length > 0) opts.onFiles(attachInput.files);
     attachInput.value = '';
   });
-  const attachBtn = el('button', 'icon-btn dropbox-attach-btn fm-attach-btn');
+  const attachBtn = el('button', 'icon-btn');
   attachBtn.type = 'button';
   attachBtn.title = t('dropbox.attachFile');
   attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
-  attachBtn.innerHTML = '<i data-lucide="paperclip"></i>';
+  const attachIcon = document.createElement('i');
+  attachIcon.setAttribute('data-lucide', 'paperclip');
+  attachBtn.appendChild(attachIcon);
   attachBtn.addEventListener('click', () => attachInput.click());
   if (opts.canAttach) {
     bar.appendChild(attachBtn);

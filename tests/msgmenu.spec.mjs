@@ -151,7 +151,10 @@ const VOICE_HARNESS = () => {
 };
 
 async function bootPage(opts = {}) {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: MM_SCHEME });
+  const viewport = process.env.MM_VIEWPORT === 'mobile'
+    ? { width: 375, height: 812 }
+    : { width: 1280, height: 800 };
+  const ctx = await browser.newContext({ viewport, colorScheme: MM_SCHEME });
   if (opts.voice) await ctx.addInitScript(VOICE_HARNESS);
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't');
@@ -528,16 +531,13 @@ async function scenarioQuote(page, pageErrors) {
     };
   }, sentId);
   put('quote.style', qStyle);
-  ok('S2 引用块视觉面（数值）：卡面/字号降一档/贴合零左侧色条（设计硬约束「无 accent bars」）',
+  ok('S2 引用块视觉面：复用主会话玻璃材质、字号档与零左侧色条',
     !!qStyle && qStyle.quoteAboveReply === true && qStyle.quoteNoLeftAccentBar === true
-    && qStyle.quote.fontSize === '12px' && qStyle.bubble.fontSize === '13px'
-    && qStyle.quote.background !== qStyle.bubble.background,
+    && qStyle.quote.fontSize === '12px' && qStyle.quote.background === 'rgba(255, 255, 255, 0.55)'
+    && qStyle.bubble.fontSize === '14.5px'
     JSON.stringify(qStyle));
-  // 🔴 **D1**（作者 2026-09-19 04:22 照案）= 引用块改**下沉面**：浮起卡面（`--color-surface`
-  //    + 卡面阴影）⇒ 比气泡底再退一档的填充 + **零阴影**；间距 4/8 → 6/10；圆角 6 → 10；
-  //    摘要 2 行封顶（内层 `.fm-quote-text`）。
-  //    断言强度：**新增**（旧断言只钉「与原气泡底不同」）⇒ 现在钉死材质三件套（背景值 /
-  //    零阴影 / 圆角·内边距）+ 夹取面；背景值随主题两档（`MM_SCHEME`）逐值钉。
+  // D1 牌面风格现复用主会话 `.msg-quote-block.nf-glass`：断言毛玻璃材质与主会话
+  // 结构/夹取，不再断言已退役的好友专属下沉面。引用牌版式目标是主会话同族。
   const d1 = await page.evaluate((id) => {
     const m = document.querySelector(`.fm-flow .fm-msg[data-message-id="${id}"]`);
     const q = m && m.querySelector('.fm-quote-block');
@@ -562,12 +562,9 @@ async function scenarioQuote(page, pageErrors) {
   ok('S2 D1 源码面：复用主会话夹取声明 = `display:-webkit-box` + `-webkit-line-clamp:2`',
     /\.msg-quote-block \.msg-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src)
     && /\.msg-quote-block \.msg-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src));
-  ok('S2 D1：引用块 = 下沉面（主题两档填充 + 零阴影 + 6/10 内边距 + 10px 圆角 + 摘要 2 行封顶）',
-    !!d1
-    && ((d1.scheme === 'light' && d1.background === 'rgba(0, 0, 0, 0.035)')
-      || (d1.scheme === 'dark' && d1.background === 'rgba(255, 255, 255, 0.055)'))
-    && d1.boxShadow === 'none' && d1.padding === '6px 10px 6px 10px'
-    && d1.radius === '10px' && d1.marginBottom === '6px'
+  ok('S2 D1：引用牌调用主会话 .nf-glass 样式，保留 6/10 内距、10px 圆角与两行夹取',
+    !!d1 && d1.background === 'rgba(255, 255, 255, 0.55)'
+    && d1.boxShadow !== 'none' && d1.padding === '6px 10px 6px 10px' && d1.radius === '10px'
     && d1.textClamp === '2' && d1.textOrient === 'vertical' && d1.textOverflow === 'hidden',
     // 🔴 `display` 的**声明值**（`-webkit-box`）由源码面单独核（`quote.d1.src`）；
     //    计算值在本引擎报 `flow-root`（Blink 把遗留 `-webkit-box` 的计算值归一化，
@@ -1132,10 +1129,12 @@ async function scenarioUiFaces(page, pageErrors) {
       wrapId: wrap ? wrap.id : null,
       orbCanvasInBtn: !!(b && b.querySelector('.orb-canvas#mic-canvas')),
       cssOrbInBtn: !!(b && b.querySelector('.css-orb#mic-css-orb')),
-      wrapNodes: document.querySelectorAll('.mic-orb-wrap').length,
-      bubbleNodes: document.querySelectorAll('.micbubble').length,
-      orbCanvasNodes: document.querySelectorAll('.orb-canvas').length,
-      orbCssNodes: document.querySelectorAll('.css-orb').length,
+      // 主语音气泡与右侧 voice-mode overlay 各有一套造型节点；计数必须限定在
+      // 产品宿主 #mic-orb-wrap，不能把 #vmo-orb-wrap 的静态装饰误报为重复挂载。
+      wrapNodes: document.querySelectorAll('#mic-orb-wrap').length,
+      bubbleNodes: document.querySelectorAll('#mic-orb-wrap > #voice-btn.micbubble').length,
+      orbCanvasNodes: document.querySelectorAll('#mic-orb-wrap #mic-canvas.orb-canvas').length,
+      orbCssNodes: document.querySelectorAll('#mic-orb-wrap #mic-css-orb.css-orb').length,
       orbRippleNodes: document.querySelectorAll('.orb-ripple').length,
       orbIds: ['mic-canvas', 'mic-css-orb', 'mic-orb-wrap'].filter(id => document.getElementById(id)),
       singleton: !!o,
