@@ -4424,6 +4424,8 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
    · 手机层：display:none（手机自有 .mobile-card-pop 卡头入口，navController 建）。 */
 .canvas-pop-btn {
   flex: none;
+  /* Match the flat Ask FAB button treatment; the capsule face retains its own --cv-shadow. */
+  box-shadow: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4460,7 +4462,11 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
 .canvas-pop-btn[hidden] { display: none !important; }
 /* 手机端隐藏（作者令「只在手机端隐藏这个按钮」）：手机卡头另有 .mobile-card-pop，
    本钮在手机层恒离场（零占位零位移）。 */
-body.mobile-layer .canvas-pop-btn { display: none !important; }
+body.mobile-layer .canvas-pop-btn,
+body.card-window .canvas-pop-btn { display: none !important; }
+/* Canvas popout and Ask controls share the capsule's floating shadow token. */
+.canvas-pop-btn,
+.ask-fab { box-shadow: var(--ds-shadow-float); }
 
 /* ── 环卡卡头「在独立窗口打开」钮（批⑤后独立窗唯一可见卡头入口；标题头
    #canvas-pop-btn 同批退役）────────────────────────────────────────── */

@@ -4661,6 +4661,8 @@ export function initCanvas() {
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
   // boot 序）置位，否则卡窗会把主窗整组标签恢复进来。
   initCardWindowMode();
+  // 主窗重载后必须尽早加入卡窗通道，接收卡窗重试的 hello 并重新收养。
+  if (!cardWindowMode) ensureCardChannel();
 
   const closeBtn = document.getElementById('canvas-close-btn');
   if (closeBtn) {
@@ -4864,6 +4866,10 @@ const cardWinWatch = new Map();
 let cardBC = null;
 /** 卡窗侧最近一次收到主窗心跳的时刻（8s 静默自守卫）。 */
 let cardLastMainBeat = 0;
+/** 卡窗启动/主窗重载时重发 hello，直到主窗恢复并确认收养。 */
+let cardHelloTimer = null;
+/** hello 到达时标签恢复尚未完成的卡窗，待 restoreTabs 完成后再收养。 */
+const pendingCardHellos = new Map();
 
 /** @param {any} m */
 function cardBcPost(m) {
@@ -4888,22 +4894,36 @@ function cardBcPost(m) {
 function cardChannelDispatch(m) {
   m = m || {};
     if (cardWindowMode) {
-      /* 卡窗侧 */
+      /* 卡窗侧：控制消息只作用于其目标卡窗。BroadcastChannel 是同源广播，
+       * 多个卡窗都会收到；不校验 tabId 会让合并/刷新一张卡误伤其它卡窗。 */
       if (m.kind === 'main-here') cardLastMainBeat = Date.now();
-      else if (m.kind === 'merge' && m.tabId) requestMergeSelf();   // 出窗动画照放（作者令 C 双向）
-      else if (m.kind === 'update' && m.tabId) cardWindowReread();
-      else if (m.kind === 'close-self' && m.tabId) window.close();
+      else if (m.kind === 'welcome' && m.tabId === currentCardTabId()) {
+        if (cardHelloTimer) { clearInterval(cardHelloTimer); cardHelloTimer = null; }
+      } else if (m.tabId && m.tabId === currentCardTabId()) {
+        if (m.kind === 'merge') requestMergeSelf();
+        else if (m.kind === 'update') cardWindowReread();
+        else if (m.kind === 'close-self') window.close();
+      }
       return;
     }
   /* 主窗侧 */
   if (m.kind === 'bye' && m.tabId) mergeCardWindow(m.tabId, { fromCard: true });
   else if (m.kind === 'hello' && m.tabId) {
+    if (!tabs.has(m.tabId) && !cardWindowMode) {
+      pendingCardHellos.set(m.tabId, { winId: String(m.winId || '') });
+      return;
+    }
     if (tabs.has(m.tabId)) {
       if (!independentWins.has(m.tabId)) {
         // 主窗刷新后由卡窗 hello 再收养（WindowProxy 不可得，看门狗交卡窗侧）。
         // 直连卡窗的 opener origin 从记账读回（PM 桥再收养腿）。
+        const winId = String(m.winId || '');
+        let adoptedWin = null;
+        // 主窗 reload 后尝试按命名窗口重新取得 WindowProxy；若浏览器不允许，
+        // 仍以 hello/welcome + BroadcastChannel 维持状态收养。
+        if (winId) { try { adoptedWin = window.open('', winId); } catch { /* BC 仍可用 */ } }
         independentWins.set(m.tabId, {
-          win: null, winId: String(m.winId || ''), pmOrigin: readCardwinPmOrigin(m.tabId),
+          win: adoptedWin, winId, pmOrigin: readCardwinPmOrigin(m.tabId),
         });
         markIndependentUI(m.tabId, true, { animate: false });
       }
@@ -5247,6 +5267,14 @@ function initCardWindowMode() {
     cardWindowBootFace(qs.get('title') || (qs.get('path') || '').split('/').pop() || '');
   ensureCardChannel();
   cardLastMainBeat = Date.now();
+  // 主窗刷新会丢失 WindowProxy 与内存 Map；卡窗重复 hello 直到新主窗
+  // welcome 确认收养，避免重载期间一次性 hello 先于新主窗通道而丢失。
+  const announceCard = () => {
+    const tabId = currentCardTabId();
+    if (tabId) cardBcPost({ kind: 'hello', tabId, winId: window.name || '' });
+  };
+  cardHelloTimer = setInterval(announceCard, 1000);
+  announceCard();
   // 主窗心跳看门狗：20s 静默（主窗已关/崩/挂起）→ 自闭，绝无僵尸镜像。
   // 阈值取心跳 3s 的 6 倍余 —— 后台窗计时器节流下也不误杀。
   setInterval(() => {
@@ -5708,6 +5736,10 @@ export function restoreTabs() {
         } else {
           // 无服务端存档（404/空）或网络失败 → 回退本地结果。
           resolve(didLocal);
+        }
+        for (const [tabId, hello] of pendingCardHellos) {
+          pendingCardHellos.delete(tabId);
+          cardChannelDispatch({ kind: 'hello', tabId, winId: hello.winId });
         }
       })
       .catch(() => resolve(didLocal));
