@@ -197,8 +197,8 @@ async function bootPage(browser, { viewport = { width: 1600, height: 1000 }, col
 }
 
 /** 移动档 boot（body.mobile-layer 自举，#activity-bar 手机层隐藏不等待）。 */
-async function bootMobilePage(browser) {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark', hasTouch: true });
+async function bootMobilePage(browser, colorScheme = 'dark') {
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, colorScheme, hasTouch: true });
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
     localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
@@ -1053,6 +1053,40 @@ try {
       ok('T9d 气泡列表面横滑零切卡（skip：列不可见）', true, 'dock 未展开——覆盖面见桌面档');
     }
     await shot(mob.page, 't9-mobile');
+
+    // Ask stream-line visual evidence at requested 375×812 viewport, dark and light.
+    const mobileSid = sidOf('/tmp/canvas-ask-fixture/记忆检索调优笔记.md');
+    const mobileAsk = async (target, suffix) => {
+      const alreadyOpen = await target.evaluate(() => !document.querySelector('.ask-dock')?.classList.contains('closed'));
+      if (!alreadyOpen) await target.click('.ask-fab');
+      await sleep(350);
+      await target.fill('.ask-dock textarea', '手机流式验收');
+      await target.press('.ask-dock textarea', 'Enter');
+      await sleep(180);
+      const question = inbound.findLast((m) => m.type === 'askQuestion');
+      wsSend({ type: 'textDelta', sessionId: question?.sessionId || mobileSid, delta: '这是一段用于验证手机端单行尾随滚动的流式文本。' });
+      await sleep(120);
+      const streaming = await target.evaluate(() => {
+        const line = document.querySelector('.ask-stream-line');
+        return line && { count: document.querySelectorAll('.ask-stream-line').length, height: line.getBoundingClientRect().height, text: line.textContent, pointer: getComputedStyle(line).pointerEvents, viewport: [innerWidth, innerHeight], scrollWidth: line.scrollWidth, clientWidth: line.clientWidth };
+      });
+      ok(`T9e ${suffix}手机375×812流式态：单行可见且不可交互`, !!streaming && streaming.count === 1 && streaming.height < 60 && streaming.text.includes('单行尾随滚动') && streaming.pointer === 'none' && streaming.viewport[0] === 375 && streaming.viewport[1] === 812, JSON.stringify(streaming));
+      await shot(target, `t9-stream-${suffix}`);
+      wsSend({ type: 'done', sessionId: question?.sessionId || mobileSid });
+      await sleep(250);
+      const lingering = await target.$('.ask-stream-line');
+      ok(`T9f ${suffix}手机终态流式行消失`, !lingering);
+    };
+    await mobileAsk(mob.page, 'dark-');
+    const lightMob = await bootMobilePage(browser, 'light');
+    await openFile(lightMob.page, '记忆检索调优笔记.md', { state: 'attached' });
+    await sleep(400);
+    await lightMob.page.click('#mobile-dock .dock-key[data-dock="canvas"]');
+    await sleep(800);
+    await lightMob.page.waitForSelector('.canvas-tab-pane[data-tab-id="file:/tmp/canvas-ask-fixture/记忆检索调优笔记.md"]', { state: 'visible', timeout: 8000 }).catch(() => {});
+    await sleep(400);
+    await mobileAsk(lightMob.page, 'light-');
+    await lightMob.ctx.close();
   } else {
     ok('T9 移动档（skip：本环境 body.mobile-layer 未激活）', true, 'bootstrap 视口判据未命中');
   }
