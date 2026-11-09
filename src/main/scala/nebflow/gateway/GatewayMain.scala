@@ -2587,6 +2587,7 @@ object GatewayMain extends IOApp:
                                                           // restarting）∧ registry 无活体 ∧ 状态超龄（默认 10min）
                                                           // ⇒ 强制诚实终态化 + F2 队列通知父（父可 re-delegate）。
                                                           // 10-21 实测「retryCount=1 卡 restarting 7.5h」不再可能。
+                                                          _ <- nebflow.core.tools.AskHostLedger.recoverPending(sharedResourcesWithDaemon)
                                                           _ <- nebflow.agent.SubAgentStartupRecovery
                                                             .run(
                                                               sharedResourcesWithDaemon,

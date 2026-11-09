@@ -199,6 +199,7 @@ object AgentCore:
    */
   val RootExclusiveTools = Set(
     "AskHostReply",
+    "AskHostClarify",
     "Schedule",
     "Delegate",
     "merger_request",
@@ -397,6 +398,7 @@ object AgentCore:
    */
   val RootOrchestrationTools = Set(
     "AskHostReply",
+    "AskHostClarify",
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
     // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 17，见
@@ -648,7 +650,7 @@ object AgentCore:
    * Tools 双集，MergerRequestTool 同槽先例）。本增量属「按面变更」（新增成员），
    * 非「凑数字」。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 23
+  val RootOrchestrationToolsExpectedSize: Int = 24
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。

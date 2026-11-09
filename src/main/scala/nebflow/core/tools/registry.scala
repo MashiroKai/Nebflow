@@ -50,6 +50,7 @@ object ToolRegistry:
       "AskUserQuestion" -> AskUserQuestionTool,
       "AskHost" -> AskHostTool,
       "AskHostReply" -> AskHostReplyTool,
+      "AskHostClarify" -> AskHostClarifyTool,
       // Perception mail (mail-perception-impl batch): draft + snapshot card;
       // the user always triggers the actual send (card/canvas).
       "EmailSend" -> PerceptionMailTool,
