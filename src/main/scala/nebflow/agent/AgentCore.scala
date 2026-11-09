@@ -198,6 +198,7 @@ object AgentCore:
    *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
   val RootExclusiveTools = Set(
+    "AskHostReply",
     "Schedule",
     "Delegate",
     "merger_request",
@@ -395,6 +396,7 @@ object AgentCore:
    * 了任何件；要找 Nebula 的工具清单，只有本集。
    */
   val RootOrchestrationTools = Set(
+    "AskHostReply",
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
     // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 17，见
@@ -804,7 +806,7 @@ object AgentCore:
   // 带 `device` 者仍恰为六件不变式零触碰。
   // 裁定一（kernel 腿补 Subagent）**本批未落**——与不变量 R-3a
   // （`core.delegate.KernelChildSpawnGate`：kernel 身份不得生子 actor）冲突，待作者裁决。
-  val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Subagent"
+  val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "AskHost" + "Subagent"
 
   /**
    * 只读侦察子面（builtin-merge 批 2026-10-03）：SubagentTool 的 spawn 目标
