@@ -361,16 +361,27 @@ Behavior:
   def rejectRetiredModeParam(input: JsonObject): Option[ToolError] =
     input("mode").map(modeParamError)
 
+  val TrustedIdentityRequiredCode = "ASKUSER_ROOT_ONLY"
+
+  def trustedIdentityError(ctx: ToolContext): Option[ToolError] =
+    Option.when(!ctx.isTrustedRootExecution)(
+      ToolError(s"AskUserQuestion is restricted to the Nebula root session ($TrustedIdentityRequiredCode).")
+    )
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    // Headless benchmark mode: fail fast at the entry — no AskUser dispatch,
-    // no wait; the error message pushes the agent to proceed on its own.
-    askGuard() match
+    // The sealed execution identity is the authority source, not tool names,
+    // schema modes, or caller-provided context. Refuse before all side effects.
+    trustedIdentityError(ctx) match
       case Some(err) => IO.pure(Left(err))
-      case None =>
-        // 面外参数闸（纯函数，先于任何副作用）。
-        rejectRetiredModeParam(input) match
-          case Some(err) => IO.pure(Left(err))
-          case None => askUser(input, ctx)
+      case None => askGuard() match
+        // Headless benchmark mode: fail fast at the entry — no AskUser dispatch,
+        // no wait; the error message pushes the agent to proceed on its own.
+        case Some(err) => IO.pure(Left(err))
+        case None =>
+          // 面外参数闸（纯函数，先于任何副作用）。
+          rejectRetiredModeParam(input) match
+            case Some(err) => IO.pure(Left(err))
+            case None => askUser(input, ctx)
 
   /** 入参校验（错误文案与历史逐字节一致）。 */
   private def parseOrError(input: JsonObject): Either[ToolError, List[AskItem]] =
