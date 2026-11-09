@@ -5392,6 +5392,17 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .row.user-media .pop-video,
 .fm-msg .fm-att-list .pop-img,
 .fm-msg .fm-att-list .pop-video { background: transparent; }
+/* Transparent PNG mat is image-only: user media otherwise inherits the green
+   bubble, and incoming/outgoing social media may inherit theme surfaces. */
+.row.user-media .pop-img,
+.fm-msg .fm-att-list .pop-img { background: #fff; }
+/* The user message's inline attachment image also composites against its bubble. */
+.bubble.user.att-bubble .att-img { background: #fff; }
+/* Agent/Pop images are the other near-black card face; keep their base and dark
+   theme surfaces for video, but give only raster images a stable light mat. */
+.pop-artifact:not(.user) .pop-img,
+.pop-artifact:not(.user) .pop-media-flat:has(.pop-img),
+.pop-artifact:not(.user) .pop-expand-view .media-layer:has(.pop-img) { background: #fff; }
 
 /* Multi-image stack: the front AND the two peeking layers carry the same bubble
    silhouette / same 本向 token. Peek transforms / drag axis / pill geometry stay

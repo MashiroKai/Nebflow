@@ -35,6 +35,9 @@
 body.nf-lightbox-open { overflow: hidden; }
 
 .nf-lightbox-img {
+  /* Transparent pixels otherwise reveal the dark modal scrim and hide dark
+     artwork. A white image-only mat preserves alpha and readability in both themes. */
+  background: #fff;
   max-width: var(--nf-lb-fit-w);
   max-height: var(--nf-lb-fit-h);
   border-radius: var(--ds-radius-input);
