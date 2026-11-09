@@ -47,8 +47,8 @@ object JevTaskSearchRerank:
 
   /**
    * 热读形态（生产注册用，`SharedResources` 安装行）：每次 rerank 现读 `jev`
-   * 配置（`JevConfigReader` / `PluginsConfig.enabled` 同款——配置改动即席生效，
-   * 无重启门槛）；未配 = `faceFor(None)` = 恒 `None`（跳过重排照常返回）。
+   * 配置。JeV provider 仍由独立 `jev` block 决定；其 LLM fallback route 由
+   * `llm.decisionRoutes.rerank` 决定，缺省继承 Nebula 主链；未配 Jev 时仍跳过。
    */
   def hotFace(configPath: Option[String] = None): TaskSearchRerank.Face =
     (query: String, candidates: List[TaskSearchRerank.Candidate]) =>
