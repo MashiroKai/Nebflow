@@ -227,7 +227,12 @@ async function bootPage(opts = {}) {
   return { ctx, page, pageErrors };
 }
 
-const openPanel = async (page) => { await page.click('#messages-btn'); await sleep(600); };
+const openPanel = async (page) => {
+  // 手机层左侧 activity bar 隐藏，按生产入口从 dock 打开消息面，不能对隐藏按钮做点击。
+  if (process.env.MM_VIEWPORT === 'mobile') await page.click('.dock-key[data-dock="messages"]');
+  else await page.click('#messages-btn');
+  await sleep(600);
+};
 const openConv = async (page, cid) => { await page.click(`#fm-conversations .fm-conv-row[data-conversation-id="${cid}"]`); await sleep(700); };
 
 /** 真指针右键某气泡 → 返回菜单项读数（文本 + role + 视口盒 + elementFromPoint 命中）。 */
@@ -405,6 +410,36 @@ async function scenarioQuote(page, pageErrors) {
     return;
   }
   await clickMenuItem(page, '引用');
+  if (MM_SHOTS) {
+    await page.evaluate(async () => {
+      // 两面共用生产引用牌 CSS；避免 fixture 调用完整 renderer（需要真实消息上下文/附件挂载）。
+      // DOM 结构及类名取自主会话 renderQuoteBlock 与好友引用块。
+      const makeQuote = (label) => {
+        const box=document.createElement('div'); box.className='msg-quote-block nf-glass';
+        const head=document.createElement('div'); head.className='msg-quote-head';
+        const icon=document.createElement('span'); icon.className='nf-qicon msg-quote-icon is-glyph';
+        icon.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2"/></svg>';
+        head.appendChild(icon); box.appendChild(head);
+        const text=document.createElement('div'); text.className='msg-quote-text'; text.textContent=label; box.appendChild(text);
+        const note=document.createElement('div'); note.className='msg-quote-note'; box.appendChild(note);
+        return box;
+      };
+      const main=makeQuote('主会话与好友窗口共用引用牌样式');
+      const friend=makeQuote('好友引用内容');
+      friend.classList.add('fm-quote-block');
+      const wrap = document.createElement('div'); wrap.id='quote-style-parallel-proof';
+      wrap.style.cssText='position:fixed;z-index:99999;left:8px;right:8px;top:8px;display:flex;gap:8px;padding:10px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:12px;';
+      [main, friend].forEach((el, i) => { const col=document.createElement('div'); col.style.cssText='flex:1;min-width:0'; const label=document.createElement('div'); label.textContent=i?'好友':'主会话'; label.style.cssText='font-size:11px;margin-bottom:6px;color:var(--color-text-muted)'; col.append(label, el); wrap.appendChild(col); });
+      document.body.appendChild(wrap);
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      const style = el => { const s=getComputedStyle(el); return {background:s.backgroundColor,shadow:s.boxShadow,padding:s.padding,radius:s.borderRadius,fontSize:s.fontSize}; };
+      window.__quoteParallelStyles={main:style(wrap.children[0].querySelector('.msg-quote-block')),friend:style(wrap.children[1].querySelector('.msg-quote-block'))};
+    });
+    await shot(page, 'quote-main-vs-friend-parallel');
+    const parity=await page.evaluate(()=>window.__quoteParallelStyles);
+    put('quote.main-vs-friend.styles',parity);
+    ok('桌面并排引用牌 computed style 一致',JSON.stringify(parity.main)===JSON.stringify(parity.friend),JSON.stringify(parity));
+  }
   const strip = await page.evaluate(() => {
     const s = document.querySelector('.fm-quote-strip');
     if (!s) return null;
@@ -527,14 +562,15 @@ async function scenarioQuote(page, pageErrors) {
       quote: { background: cs.backgroundColor, boxShadow: cs.boxShadow, fontSize: cs.fontSize, color: cs.color, borderRadius: cs.borderRadius, whiteSpace: cs.whiteSpace, lineHeight: cs.lineHeight },
       bubble: { background: bub.backgroundColor, fontSize: bub.fontSize, lineHeight: bub.lineHeight },
       quoteAboveReply: qr.bottom <= tr.top + 0.5,
-      quoteNoLeftAccentBar: cs.borderLeftWidth === '0px',
+      quoteNoAccentBar: cs.borderLeftWidth === cs.borderTopWidth && cs.borderLeftStyle === cs.borderTopStyle,
     };
   }, sentId);
   put('quote.style', qStyle);
   ok('S2 引用块视觉面：复用主会话玻璃材质、字号档与零左侧色条',
-    !!qStyle && qStyle.quoteAboveReply === true && qStyle.quoteNoLeftAccentBar === true
-    && qStyle.quote.fontSize === '12px' && qStyle.quote.background === 'rgba(255, 255, 255, 0.55)'
-    && qStyle.bubble.fontSize === '14.5px'
+    !!qStyle && qStyle.quoteAboveReply === true && qStyle.quoteNoAccentBar === true
+    && qStyle.quote.fontSize === '12px'
+    && qStyle.quote.background === (MM_SCHEME === 'dark' ? 'rgba(24, 28, 38, 0.68)' : 'rgba(255, 255, 255, 0.55)')
+    && qStyle.bubble.fontSize === (process.env.MM_VIEWPORT === 'mobile' ? '17px' : '14.5px'),
     JSON.stringify(qStyle));
   // D1 牌面风格现复用主会话 `.msg-quote-block.nf-glass`：断言毛玻璃材质与主会话
   // 结构/夹取，不再断言已退役的好友专属下沉面。引用牌版式目标是主会话同族。
@@ -562,8 +598,9 @@ async function scenarioQuote(page, pageErrors) {
   ok('S2 D1 源码面：复用主会话夹取声明 = `display:-webkit-box` + `-webkit-line-clamp:2`',
     /\.msg-quote-block \.msg-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src)
     && /\.msg-quote-block \.msg-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src));
+  const expectedGlassBg = MM_SCHEME === 'dark' ? 'rgba(24, 28, 38, 0.68)' : 'rgba(255, 255, 255, 0.55)';
   ok('S2 D1：引用牌调用主会话 .nf-glass 样式，保留 6/10 内距、10px 圆角与两行夹取',
-    !!d1 && d1.background === 'rgba(255, 255, 255, 0.55)'
+    !!d1 && d1.background === expectedGlassBg
     && d1.boxShadow !== 'none' && d1.padding === '6px 10px 6px 10px' && d1.radius === '10px'
     && d1.textClamp === '2' && d1.textOrient === 'vertical' && d1.textOverflow === 'hidden',
     // 🔴 `display` 的**声明值**（`-webkit-box`）由源码面单独核（`quote.d1.src`）；
@@ -1753,6 +1790,7 @@ try {
       await ctx.close();
     }
   }
+  if (process.env.MM_CAPTURE_ONLY !== '1') {
   // S3 单独一轮（干净的失败态起点：首投失败 ⇒ 气泡左侧红圈）
   {
     resetServer();
@@ -1838,6 +1876,7 @@ try {
     } finally {
       await ctx.close();
     }
+  }
   }
   }
 } catch (e) {
