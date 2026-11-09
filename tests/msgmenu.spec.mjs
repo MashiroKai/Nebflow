@@ -557,11 +557,11 @@ async function scenarioQuote(page, pageErrors) {
     };
   }, sentId);
   put('quote.d1', d1);
-  const d1src = await readFile(join(WEB, 'css/friends.css'), 'utf8');
-  put('quote.d1.src', { declaresWebkitBox: /\.fm-quote-block \.fm-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src), declaresClamp2: /\.fm-quote-block \.fm-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src) });
-  ok('S2 D1 源码面：夹取声明 = `display:-webkit-box` + `-webkit-line-clamp:2`（声明值可机械核）',
-    /\.fm-quote-block \.fm-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src)
-    && /\.fm-quote-block \.fm-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src));
+  const d1src = await readFile(join(WEB, 'css/chat.css'), 'utf8');
+  put('quote.d1.src', { declaresWebkitBox: /\.msg-quote-block \.msg-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src), declaresClamp2: /\.msg-quote-block \.msg-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src) });
+  ok('S2 D1 源码面：复用主会话夹取声明 = `display:-webkit-box` + `-webkit-line-clamp:2`',
+    /\.msg-quote-block \.msg-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src)
+    && /\.msg-quote-block \.msg-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src));
   ok('S2 D1：引用块 = 下沉面（主题两档填充 + 零阴影 + 6/10 内边距 + 10px 圆角 + 摘要 2 行封顶）',
     !!d1
     && ((d1.scheme === 'light' && d1.background === 'rgba(0, 0, 0, 0.035)')

@@ -1913,34 +1913,8 @@ body:not(.mobile-layer) #profile-face-overlay {
    间距 4/8 → **6/10**；圆角 6 → **10**（嵌套圆角：外 14 − 内缩 4，避免尖角贴圆角）。
    🔴 仍不加左缘指示条 / 高亮条（设计硬约束「无 accent bars」）。
    🔴 文本 2 行封顶落在内层 `.fm-quote-text`（块盒本身不夹取）。 */
-.fm-quote-block {
-  margin-bottom: var(--ds-space-1h);
-  padding: var(--ds-space-1h) var(--ds-space-inline-x);
-  border-radius: var(--ds-radius-button);
-  background: rgba(0, 0, 0, 0.035);
-  box-shadow: none;
-  font-size: var(--ds-fs-hint);
-  line-height: 1.45;
-  color: var(--color-text-muted, #888);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-width: 100%;
-}
-.fm-quote-block .fm-quote-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
-@media (prefers-color-scheme: dark) {
-  .fm-quote-block {
-    background: rgba(255, 255, 255, 0.055);
-  }
-}
-/* 译文行（「原消息不可用」降级位）：与摘要同族、再降一档不透明度 —— 不用新色值。 */
-.fm-quote-note { opacity: 0.75; }
-.fm-quote-note:empty { display: none; }
+/* 好友引用牌复用 chat.css 的 `.msg-quote-block` / `.msg-quote-text` / `.msg-quote-note`
+   与 `nf-glass`；本地不再声明引用牌视觉规则。 */
 
 /* ── ①-b 引用块**可点态**（quotejump 批 · 作者令「必须可跳」）──────────────────
    🔴 判据单点 = `data-quote-jump="ready"`（坐标可解析）。不可得 ⇒ 无指针、无按钮
