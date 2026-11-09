@@ -17,7 +17,84 @@ object DelegateWorkReport:
    * 合并提交第一亲 diff 的行数统计（`commit` = 7 位短哈希，与卡片摘要哈希段同源
    * 同值——作者看到的两个数字恒指同一提交）。
    */
-  final case class MergeDiffStat(commit: String, added: Long, removed: Long)
+  final case class FileDiffStat(path: String, added: Long, removed: Long)
+
+  final case class MergeDiffStat(commit: String, added: Long, removed: Long, oid: String = "", files: List[FileDiffStat] = Nil)
+
+  final case class ChildDiffStat(
+    delegateId: String,
+    parentSessionId: String,
+    workspace: String,
+    worktree: Option[String],
+    merge: Option[MergeDiffStat],
+    partial: Boolean
+  )
+
+  final case class AggregateDiffStat(
+    added: Long,
+    removed: Long,
+    children: List[ChildDiffStat],
+    partial: Boolean
+  )
+
+  /** Delegate and DAG-session descendants, rooted in durable ownership edges. */
+  def aggregateDiffStat(root: DelegateRegistry.Record): AggregateDiffStat =
+    val delegates = DelegateRegistry.list().map(r => r.id -> r).toMap
+    val flowEdges = FlowNodeOwnership.list().map(e => e.sessionId -> e.parentSessionId).toMap
+    val childrenByParent =
+      delegates.valuesIterator.map(r => r.id -> r.parentSessionId).toList ++ flowEdges.toList
+    val seen = scala.collection.mutable.Set(root.id)
+    var frontier = List(root.id)
+    while frontier.nonEmpty do
+      val next = childrenByParent.collect { case (child, parent) if frontier.contains(parent) && !seen(child) => child }.distinct
+      seen ++= next
+      frontier = next
+    val descendants = seen.iterator.filterNot(_ == root.id).toList.sortBy(id => (delegates.get(id).map(_.createdAt).getOrElse(Long.MaxValue), id))
+    val children = descendants.map { id =>
+      delegates.get(id) match
+        case Some(rec) =>
+          val workspace = rec.projectWorkspace.getOrElse(rec.cwd)
+          val uncommitted = Try(GitWorktrees.dirtyPaths(os.Path(workspace))).toOption.flatten
+          val merge = mergeDiffStat(rec)
+          ChildDiffStat(rec.id, rec.parentSessionId, workspace, rec.worktree, merge,
+            partial = rec.reportStatus.isEmpty || merge.isEmpty || merge.exists(_.files.isEmpty) || uncommitted.forall(_.nonEmpty))
+        case None =>
+          // DAG sessions have no persisted merge/report slot. Keep them visible and
+          // explicitly partial rather than silently omitting their unavailable stats.
+          ChildDiffStat(id, flowEdges.getOrElse(id, ""), root.projectWorkspace.getOrElse(root.cwd), None, None, partial = true)
+    }
+    aggregateChildren(children)
+
+  /**
+   * Roll up child details without changing the detail rows. First collapse repeated
+   * merge OIDs (legacy records fall back to short commit), then count each file path
+   * once across distinct commits. For multiwriter overlap, keep the largest single
+   * per-file numstat (ties: lexicographically smallest full OID/commit); this avoids
+   * summing repeated edits while making the chosen contribution deterministic.
+   * Files stay attributed to their original child rows for auditability.
+   */
+  private[delegate] def aggregateChildren(children: List[ChildDiffStat]): AggregateDiffStat =
+    val uniqueCommits = children.flatMap(_.merge)
+      .groupBy(s => if s.oid.nonEmpty then s.oid else s.commit)
+      .valuesIterator.map(_.head).toList
+    val chosenPerFile = uniqueCommits.flatMap { stat =>
+      stat.files.map(file => (file, if stat.oid.nonEmpty then stat.oid else stat.commit))
+    }.groupBy(_._1.path).valuesIterator.map(_.toList.sortBy { case (file, key) => (-(file.added + file.removed), key) }.head).toList
+    // Compatibility fallback for callers/legacy values with no file-level breakdown.
+    val withoutFileBreakdown = uniqueCommits.filter(_.files.isEmpty)
+    val (added, removed) =
+      if uniqueCommits.forall(_.files.isEmpty) then (uniqueCommits.map(_.added).sum, uniqueCommits.map(_.removed).sum)
+      else
+        (
+          chosenPerFile.map(_._1.added).sum + withoutFileBreakdown.map(_.added).sum,
+          chosenPerFile.map(_._1.removed).sum + withoutFileBreakdown.map(_.removed).sum
+        )
+    AggregateDiffStat(
+      added,
+      removed,
+      children,
+      children.exists(c => c.partial || c.merge.isEmpty) || withoutFileBreakdown.nonEmpty
+    )
 
   /**
    * 本 delegate 批次**合并**的代码量变化（+新增 −删除）。锚定序：
@@ -39,8 +116,8 @@ object DelegateWorkReport:
             declaredMergeSha(repo, rec)
               .orElse(GitWorktrees.resolveRef(repo, base).flatMap(resolveTwoParent(repo, _)))
           anchor.flatMap { case (merge, p1) =>
-            numstat(repo, p1, merge).map { case (added, removed) =>
-              MergeDiffStat(commit = merge.take(7), added = added, removed = removed)
+            numstat(repo, p1, merge).map { case (added, removed, files) =>
+              MergeDiffStat(commit = merge.take(7), added = added, removed = removed, oid = merge, files = files)
             }
           }
         case _ => None
@@ -62,21 +139,21 @@ object DelegateWorkReport:
       case ci if ci.parents.lengthCompare(2) >= 0 => (ci.sha, ci.parents.head)
     }
 
-  /** `git diff --numstat from..to` 的加删行总和（基工作区视角）。fail-soft。 */
-  private def numstat(repo: os.Path, from: String, to: String): Option[(Long, Long)] =
+  /** `git diff --numstat from..to` 的逐文件统计与总计（基工作区视角）。fail-soft。 */
+  private def numstat(repo: os.Path, from: String, to: String): Option[(Long, Long, List[FileDiffStat])] =
     Try {
       val res = os
         .proc("git", "-C", repo.toString, "diff", "--numstat", s"$from..$to")
         .call(check = false, mergeErrIntoOut = true)
       if res.exitCode != 0 then None
       else
-        val (added, removed) = res.out.trim().linesIterator.foldLeft((0L, 0L)) { case ((sa, sr), line) =>
+        val files = res.out.trim().linesIterator.flatMap { line =>
           line.split('\t').toList match
-            case adds :: dels :: _ if adds.forall(_.isDigit) && dels.forall(_.isDigit) =>
-              (sa + adds.toLong, sr + dels.toLong)
-            case _ => (sa, sr) // binary（`- -`）/ 畸形行不计
-        }
-        Some((added, removed))
+            case adds :: dels :: pathParts if pathParts.nonEmpty && adds.forall(_.isDigit) && dels.forall(_.isDigit) =>
+              Some(FileDiffStat(pathParts.mkString("\t"), adds.toLong, dels.toLong))
+            case _ => None // binary（`- -`）/ 畸形行不计
+        }.toList
+        Some((files.map(_.added).sum, files.map(_.removed).sum, files))
     }.getOrElse(None)
 
 end DelegateWorkReport
