@@ -23,8 +23,7 @@
   --color-danger: #c0392b;
   --color-success: #4caf50;
   --color-warning: #ff9800;
-  /* 我方气泡底色 —— **浅蓝档**（作者令 2026-11-07「用户输入的气泡，改回之前的
-     浅蓝色」，原话逐字；本批为 bubble-lightblue 批）。
+  /* 我方气泡底色：恢复 UI 巡检改蓝前的历史绿 #95ec69（9158a5fab）。
      · 出处不猜：这枚「浅蓝」并非新造色值，而是**仓内确有的一档历史值** ——
        sapphire 淡染（亮 #cdd9ec / 暗 #29354d），首次落地于 UI 巡检批 commit
        9158a5fab（作者 2026-11-07 11:40 令「禁止出现微信式高饱和绿…该颜色应是
@@ -40,7 +39,7 @@
        #1b1e26 落在 #cdd9ec 上 ≈ 11.7:1 ✔ / 暗档浅字 #e8eaed 落在 #29354d 上
        ≈ 10.0:1 ✔）—— 浅蓝档**两主题各自成立**，不需要为它另造压暗字色
        （绿档当年 1.21:1 的病根正是绿底亮度过高，浅蓝档没有这个病）。 */
-  --color-bubble-user: #cdd9ec;
+  --color-bubble-user: #95ec69;
   /* 我方气泡**正文色**（bubble-contrast 批 2026-11-07 14:37 立、bubble-lightblue 批
      2026-11-07 回撤暗档覆写）：绿档时代（#95ec69，L≈0.673）浅字只有 1.21:1，故当时
      给暗档另造了深墨绿字 #12240d。作者最新令把底色改回**浅蓝档**（亮 #cdd9ec /
@@ -142,13 +141,10 @@ body {
     --color-bg: #13161c;
     --color-surface: #1c1f27;
     --color-bubble-ai: #1c1f27;
-    /* 我方气泡暗档（bubble-lightblue 批 2026-11-07，作者令「改回之前的浅蓝色」）：
-       值逐字回到 UI 巡检批 9158a5fab 的暗档浅蓝 #29354d（sapphire 深染，与对方暗底
-       #1c1f27 靠明度/色相都可区分）。正文吃 --color-text #e8eaed（≈10.0:1 ✔）——
-       绿档时代那条「暗档必须压深字」的理由随底色回浅蓝而消失，见本文件上方
-       --nf-bub-ours-ink 注释。 */
-    --color-bubble-user: #29354d;
-    --nf-bub-ours-ink: var(--color-text);
+    /* 用户气泡暗档恢复绿档；暗底正文使用历史深墨绿 #12240d（a62dd7300），
+       避免浅字落在绿底上的低对比。 */
+    --color-bubble-user: #95ec69;
+    --nf-bub-ours-ink: #12240d;
     --color-text: #e8eaed;
     --color-text-muted: #7b7e88;
     --color-text-dim: #9ba0aa;

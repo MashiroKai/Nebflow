@@ -266,9 +266,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
        后台任务 / 工具注入 / 系统生成）⇒ 绿；对方（好友 / 群内他人 / 外部
        通道 / 对方 AI）⇒ 白。**不准有第三档**，也不准按「消息类型 / sender
        种类 / 是否有工具结果 / 是否系统生成」另开配色。
-     · 色相单源不变（本批**零新色值**）：--color-bubble-user = 浅蓝档
-       （亮 #cdd9ec / 暗 #29354d；作者令 2026-11-07「改回之前的浅蓝色」，
-       bubble-lightblue 批，出处与沿革见 base.css 该条注释）、
+     · 色相单源不变（本批**零新色值**）：--color-bubble-user = 绿色历史档
+       （亮暗 #95ec69；恢复自 a62dd7300，改蓝提交为 9158a5fab；值家见 base.css）、
        --color-bubble-ai = 亮 #fff / 暗 #1c1f27（暗档翻色在 base.css）。
        ⚠ 「我方 ⇒ 绿」这句 2026-11-06 的原始措辞已随底色三度改判易色为**浅蓝**；
        本块管的是**归属方两档结构**，具体色相归 --color-bubble-user 单点。
