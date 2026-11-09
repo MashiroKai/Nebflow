@@ -41,9 +41,9 @@ final class AttachmentCommitService private (
       if target.getParent != realBase || Files.isSymbolicLink(target) || Files.exists(target, LinkOption.NOFOLLOW_LINKS) then
         throw new SecurityException("unsafe or existing attachment target")
       val temp = ops.createTemp(realBase).toAbsolutePath.normalize()
-      if temp.getParent != realBase || Files.isSymbolicLink(temp) || !Files.isRegularFile(temp, LinkOption.NOFOLLOW_LINKS) then
-        throw new SecurityException("temporary file is not a private same-directory regular file")
       try
+        if temp.getParent != realBase || Files.isSymbolicLink(temp) || !Files.isRegularFile(temp, LinkOption.NOFOLLOW_LINKS) then
+          throw new SecurityException("temporary file is not a private same-directory regular file")
         ops.copy(content, temp)
         ops.ownerOnly(temp)
         (temp, target)
