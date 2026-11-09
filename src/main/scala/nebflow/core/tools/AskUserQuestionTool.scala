@@ -22,6 +22,7 @@ object AskUserQuestionTool extends Tool:
   val Name = "AskUserQuestion"
 
   val name = Name
+  override val requiresTrustedExecutionIdentity: Boolean = true
 
   /**
    * 附件引用（顶层可选参数 `attachments`）的**单件大小上限**——仅作人的可点击入口，
