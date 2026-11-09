@@ -5392,17 +5392,20 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .row.user-media .pop-video,
 .fm-msg .fm-att-list .pop-img,
 .fm-msg .fm-att-list .pop-video { background: transparent; }
-/* Transparent PNG mat is image-only: user media otherwise inherits the green
-   bubble, and incoming/outgoing social media may inherit theme surfaces. */
-.row.user-media .pop-img,
-.fm-msg .fm-att-list .pop-img { background: #fff; }
+/* Give user inline media and social attachments a white mat without painting
+   the agent Pop card (whose dark backing is an existing contract). */
+.row.user-media .pop-media:has(> .pop-img),
+.fm-msg .fm-att-list .pop-media:has(> .pop-img) { background: #fff; }
+/* Agent Pop media cards have a dark base; place their mat only under images. */
+.pop-artifact:not(.user) .pop-img { background: #fff; }
 /* The user message's inline attachment image also composites against its bubble. */
 .bubble.user.att-bubble .att-img { background: #fff; }
-/* Agent/Pop images are the other near-black card face; keep their base and dark
-   theme surfaces for video, but give only raster images a stable light mat. */
-.pop-artifact:not(.user) .pop-img,
-.pop-artifact:not(.user) .pop-media-flat:has(.pop-img),
-.pop-artifact:not(.user) .pop-expand-view .media-layer:has(.pop-img) { background: #fff; }
+@media (prefers-color-scheme: dark) {
+  .row.user-media .pop-media:has(> .pop-img),
+  .fm-msg .fm-att-list .pop-media:has(> .pop-img),
+  .pop-artifact:not(.user) .pop-media:has(> .pop-img),
+  .bubble.user.att-bubble .att-img { background: #e8eaed; }
+}
 
 /* Multi-image stack: the front AND the two peeking layers carry the same bubble
    silhouette / same 本向 token. Peek transforms / drag axis / pill geometry stay

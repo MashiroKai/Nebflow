@@ -97,6 +97,10 @@ body.nf-lightbox-open { overflow: hidden; }
 }
 .nf-lightbox-status.error { color: var(--color-error, #c94040); }
 
+@media (prefers-color-scheme: dark) {
+  .nf-lightbox-img { background: #e8eaed; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .nf-lightbox-img, .nf-lightbox-close { transition: none; }
 }
