@@ -3820,33 +3820,7 @@ body.mobile-layer .fm-context-menu button.danger:not(.mfs-back) {
 /* 注入的左上返回钮：保持 g2-fab 48px 几何（按钮行的全宽规则不得吞它）。 */
 body.mobile-layer .fm-context-menu > .mfs-back { flex: none; }
 
-/* ── C 族：词条触屏气泡 → 全屏词条卡 ────────────────────────────────────
-   paintTermTip 内联 left/top 由本块压平（仅 .touch 触屏腿；桌面 hover 泡不动）。 */
-body.mobile-layer .nf-term-tip.touch {
-  inset: 0 !important;
-  width: 100% !important;
-  max-width: none !important;
-  max-height: none !important;
-  display: flex !important;
-  flex-direction: column;
-  justify-content: center;
-  background: var(--color-bg);
-  border: none !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-  padding: calc(72px + env(safe-area-inset-top, 0px)) var(--ds-space-5) calc(24px + env(safe-area-inset-bottom, 0px));
-  z-index: 320;
-  overflow-y: auto;
-}
-body.mobile-layer .nf-term-tip.touch .tt { font-size: var(--mfs-body); }
-body.mobile-layer .nf-term-tip.touch .ts {
-  -webkit-line-clamp: unset;
-  font-size: var(--mfs-sub);
-  margin-top: var(--ds-space-2);
-}
-
+/* 词条点击提示保留为视口内小弹层；此处不得将它改回页面化全屏卡。 */
 /* ── D 族：灯箱（本就已全屏）——只补返回钮层级与触击安全。 ────────────── */
 body.mobile-layer .nf-lightbox { z-index: 320; }
 
