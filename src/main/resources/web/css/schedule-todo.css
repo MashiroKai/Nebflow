@@ -33,6 +33,14 @@
 .reminder-row {
   align-items: flex-start;
 }
+/* The detail clip collapses horizontally; constrain its closed state vertically too.
+   Otherwise its (visually clipped) facts still contribute their intrinsic height. */
+.reminder-row > .reminder-row-content > .lm-collapse-clip {
+  height: 0;
+}
+.reminder-row.is-expanded > .reminder-row-content > .lm-collapse-clip {
+  height: auto;
+}
 .reminder-row .reminder-circle {
   /* 名字基线对齐圆钮中心（行首内距 = 行内距，与两页既有读数同档）。 */
   margin-top: 2px;

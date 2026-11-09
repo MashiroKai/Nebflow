@@ -5522,7 +5522,9 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
 .mf-drawer-scrim {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--color-bg) 62%, transparent);
+  /* Create drawers remain dismissible by tapping outside, but their backdrop must not
+     tint the page. Confirmation dialogs retain their independent scrim behavior. */
+  background: transparent;
 }
 .mf-drawer-box {
   position: relative;
