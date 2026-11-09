@@ -900,6 +900,7 @@ function buildMediaStack(items, opts) {
   const setExpanded = v => {
     if (expanded === v) return;
     expanded = v;
+    area.dispatchEvent(new CustomEvent('nf-pop-expanded', { bubbles: true, detail: { expanded: v } }));
     pill.textContent = v ? t('chat.popCollapse') : t('chat.popExpand', { n: items.length });
     // 展开前把展开行宽度对到本节点的卡脸宽度（见 refitExpanded 头注）。
     if (v) refitExpanded();

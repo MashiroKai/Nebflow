@@ -258,7 +258,9 @@ export function mountQuoteFooterButton(rowEl) {
   if (!rowEl || !rowEl.__nfQuoteDesc) return;
   rowEl.querySelectorAll(':scope > .duration-badge').forEach((badge) => {
     if (badge.querySelector('.msg-quote-btn')) return;
-    badge.appendChild(createMsgQuoteButton());
+    const btn = createMsgQuoteButton();
+    btn.hidden = Array.from(rowEl.querySelectorAll('.pop-stack-area')).some(stack => stack.popExpanded?.());
+    badge.appendChild(btn);
   });
 }
 
@@ -402,6 +404,10 @@ export function attachQuoteMenu(rowEl, d) {
   // （按钮点击时读取），rAF 内收敛徽章（时序契约见「footer 引用按钮」头注）。
   rowEl.__nfQuoteDesc = d;
   scheduleQuoteButtonMount(rowEl);
+  rowEl.addEventListener('nf-pop-expanded', () => {
+    const expanded = Array.from(rowEl.querySelectorAll('.pop-stack-area')).some(stack => stack.popExpanded?.());
+    rowEl.querySelectorAll(':scope > .duration-badge > .msg-quote-btn').forEach(btn => { btn.hidden = expanded; });
+  });
   rowEl.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     // 手机端长按退役批（2026-10-31 作者令）：触屏长按不再弹引用/复制菜单——
