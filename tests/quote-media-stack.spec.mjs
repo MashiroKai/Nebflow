@@ -20,10 +20,40 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { bootChat } from './_chat-face-harness.mjs';
 
-const EVID = process.env.EVID_DIR || null;
+const EVID = process.env.EVID_DIR || join(process.cwd(), 'evidence', 'quote-thumb-chips-matrix');
 const TAG = process.env.EVID_TAG || 'after';
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const HARNESS_PATH = '/tests/fixtures/quote-message/harness.html';
+const SHOTS = path.join(REPO_ROOT, 'evidence', 'quote-thumb-chips-matrix');
+let port;
+const servers = [];
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => resolve(p)); });
+    srv.on('error', reject);
+  });
+}
+
+function startStaticServer(p, dir) {
+  return spawn('python3', ['-m', 'http.server', String(p), '--bind', '127.0.0.1', '--directory', dir], { stdio: 'ignore' });
+}
+
+async function waitUntilUp(url) {
+  for (let i = 0; i < 80; i++) {
+    try { if ((await fetch(url)).ok) return; } catch { /* not up yet */ }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error(`static server never came up at ${url}`);
+}
 
 function svgData(w, h, c1, c2) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">`
@@ -130,6 +160,90 @@ function saveReadings(name, payload) {
   mkdirSync(EVID, { recursive: true });
   writeFileSync(join(EVID, `${TAG}-${name}.json`), JSON.stringify(payload, null, 2));
 }
+
+test.describe('Pop 引用入口亮暗主题截图与文件入口验收', () => {
+  test.beforeAll(async () => {
+    fs.mkdirSync(SHOTS, { recursive: true });
+    port = await freePort();
+    servers.push(startStaticServer(port, REPO_ROOT));
+    await waitUntilUp(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+  });
+  test.afterAll(async () => { for (const server of servers) server.kill('SIGTERM'); });
+  for (const viewport of [{ width: 1280, height: 800, name: 'desktop' }, { width: 375, height: 812, name: 'mobile' }]) {
+    for (const colorScheme of ['light', 'dark']) {
+      test(`${viewport.name} ${viewport.width}×${viewport.height} ${colorScheme}: 四种引用状态`, async ({ browser }) => {
+        test.setTimeout(45000);
+        const context = await browser.newContext({
+          viewport: { width: viewport.width, height: viewport.height },
+          deviceScaleFactor: viewport.name === 'mobile' ? 2 : 1,
+          hasTouch: viewport.name === 'mobile', isMobile: viewport.name === 'mobile', colorScheme,
+        });
+        const page = await context.newPage();
+        await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+        await page.waitForFunction(() => window.__ready === true);
+        await page.evaluate(async history => window.__renderHistory(history), [
+          { type: 'user', text: '引用两图加文件', timestamp: Date.now(), quote: { refMessageId: 'fixture-target', excerpt: '示例附件', senderRole: 'user', senderName: '我', attachments: [
+            { type: 'image', name: 'quote-a.png', preview: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+PC9zdmc+' },
+            { type: 'image', name: 'quote-b.png', preview: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+PC9zdmc+' },
+            { type: 'file', name: 'quote-note.md', path: '/tmp/quote-note.md' },
+          ] } },
+        ]);
+        await page.waitForTimeout(500);
+        const rows = await page.evaluate(async () => {
+          const pop = await import('/src/main/resources/web/js/popArtifacts.js');
+          const media = (prefix) => [0, 1].map(i => ({ kind: 'image', name: `${prefix}-${i}.png`, path: `/tmp/${prefix}-${i}.png`, src: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCI+PC9zdmc+' }));
+          const add = (label, items) => {
+            const row = pop.buildPopArtifactRow({ items }, { ts: Date.now() });
+            row.dataset.testPop = label;
+            document.querySelector('#chat').appendChild(row);
+            return row.dataset.msgId;
+          };
+          return {
+            folded: add('folded', media('group')),
+            expanded: add('expanded', media('item')),
+            file: add('file', [{ kind: 'file', name: 'spec-note.md', path: '/tmp/spec-note.md' }]),
+          };
+        });
+        await page.waitForTimeout(100);
+        const row = (kind) => page.locator(`#chat .row[data-test-pop="${kind}"]`);
+        const quoteChip = page.locator('#attachment-preview .att-ref').first();
+        const capture = async (state) => {
+          await page.screenshot({ path: join(EVID, `${viewport.name}-${colorScheme}-${state}.png`), fullPage: true });
+        };
+        expect(await row('folded').locator('.pop-stack-area .pill').count()).toBe(1);
+        expect(await row('folded').locator(':scope > .duration-badge .msg-quote-btn').count()).toBe(1);
+        await capture('group-footer');
+
+        await row('expanded').locator('.pop-stack-area .pill').click();
+        await page.waitForTimeout(500);
+        expect(await row('expanded').locator('.pop-expand-view.show .msg-quote-item-btn').count()).toBe(2);
+        await row('expanded').locator('.pop-expand-view.show .msg-quote-item-btn').first().evaluate(el => el.click());
+        await page.waitForTimeout(200);
+        await expect(quoteChip).toHaveAttribute('data-ref-type', 'chat-message');
+        await capture('expanded-item-footer');
+
+        await row('file').locator('.file-card .fc-quote-btn').evaluate(el => el.click());
+        await page.waitForTimeout(200);
+        const fileRef = await page.evaluate(() => {
+          const ref = document.querySelector('#attachment-preview .att-ref');
+          return { type: ref?.dataset.refType, label: ref?.textContent || '', title: ref?.title || '' };
+        });
+        expect(fileRef.type).toBe('chat-message');
+        expect(fileRef.label + fileRef.title).toContain('spec-note.md');
+        expect(fileRef.label).toContain('[文件] spec-note.md');
+        expect(await quoteChip.locator('.att-ref-icon, .att-ref-qicon').count()).toBeGreaterThan(0);
+        await capture('file-card-quote');
+
+        const quoted = quoteBlockOf(page, '引用两图加文件');
+        expect(await quoted.locator('.msg-quote-att-media').count()).toBe(2);
+        expect(await quoted.locator('.msg-quote-att-file').count()).toBe(1);
+        expect(await quoted.locator('.pop-stack-area, .pop-expand-view, .pill, .nf-lightbox').count()).toBe(0);
+        await capture('quoted-thumbnails-files');
+        await context.close();
+      });
+    }
+  }
+});
 
 test.describe('引用牌多图叠卡', () => {
   for (const vp of [{ width: 1440, height: 900 }, { width: 375, height: 812 }]) {

@@ -72,6 +72,7 @@
     state.ws = { readyState: 1, send: () => {} };
 
     const chatMod = await import(`${WEB}/chat.js`);
+    const popMod = await import(`${WEB}/popArtifacts.js`);
     const quoteMod = await import(`${WEB}/msgQuote.js`);
     const persistMod = await import(`${WEB}/persistence.js`);
     const view = chatViews.primary;
@@ -97,6 +98,14 @@
     window.__renderToolRow = (label, summary) => {
       chatMod.renderTool(label, summary, '', false, '', view.sessionId);
       return view.dom.chat.querySelector('.row.tool:last-of-type')?.dataset.msgId || null;
+    };
+
+    /** Render an authentic Pop artifact row for file/media footer citation tests. */
+    window.__renderPopArtifact = (items, label = 'pop-fixture') => {
+      const row = popMod.buildPopArtifactRow({ items }, { ts: Date.now() });
+      row.dataset.testPop = label;
+      view.dom.chat.appendChild(row);
+      return row.dataset.msgId;
     };
 
     window.__renderInjectedRow = (text) => {
