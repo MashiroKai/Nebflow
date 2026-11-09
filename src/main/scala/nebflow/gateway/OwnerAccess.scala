@@ -32,6 +32,10 @@ final class OwnerAccess private (private val credential: Credential, private val
 
 object OwnerAccess:
 
+  /** Mint from a credential already validated by GatewayAuth at a WS handshake. */
+  private[gateway] def fromAuthenticatedCredential(credential: Credential, store: OwnerStore): OwnerAccess =
+    new OwnerAccess(credential, store)
+
   /** REST/Static/AskUser convenience: use the shared request context and production owner registry. */
   def authenticate(ctx: RestApiCtx, req: Request[IO]): IO[Option[OwnerAccess]] =
     authenticate(ctx, req, GatewayAuth.Rails.ApiFull)

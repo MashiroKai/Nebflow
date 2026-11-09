@@ -79,6 +79,7 @@ class WebSocketRoutes(
   takeover: ConsoleTakeover = ConsoleTakeover.disabled
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
+  private val attachmentOwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
 
   /**
    * #295 热更：setSttConfig 写配置后重建服务并替换此 Ref——transcribe 立即
@@ -1258,7 +1259,7 @@ class WebSocketRoutes(
                             // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
                             // 分发（两处消费点：typeless 腿 + immediateInput 腿——
                             // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
-                            else handleMessage(text, perConnJsonSend, watchSession, sessionIdentity)
+                            else handleMessage(text, perConnJsonSend, watchSession, sessionIdentity, Some(cred))
                           handled.handleErrorWith { e =>
                             logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                             IO.unit
@@ -1970,7 +1971,8 @@ class WebSocketRoutes(
     text: String,
     wsSend: io.circe.Json => IO[Unit],
     watchSession: ExplorerWatchSession,
-    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None,
+    handshakeCredential: Option[Credential] = None
   ): IO[Unit] =
     // attach-split 批（2026-10-24）：超限帧不再只留一行服务器 warn（现场事故 =
     // 22 图整帧静默丢、文字同丢、前端乐观气泡假成功、「引擎日志零痕迹」体感）。
@@ -2053,51 +2055,52 @@ class WebSocketRoutes(
 
                         // Map attachment index → saved/local path (only non-image files get entries)
                         val savedPaths = scala.collection.mutable.Map.empty[Int, String]
-                        attachments.zipWithIndex.foreach { case (att, attIdx) =>
+                        val ownerAccess = handshakeCredential.collect { case credential: Credential.ViaSession =>
+                          OwnerAccess.fromAuthenticatedCredential(credential, attachmentOwnerStore)
+                        }
+                        val uploadRoot = Config.NebflowHome.toNIO.resolve("uploads").resolve(msgSessionId)
+                        val attachmentWrites = attachments.zipWithIndex.traverse_ { case (att, attIdx) =>
                           val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
                           val data = att.hcursor.downField("data").as[String].getOrElse("")
                           val name = att.hcursor.downField("name").as[String].getOrElse("")
                           val hash = att.hcursor.downField("hash").as[String].getOrElse("")
                           val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
                           if mimeType.startsWith("image/") && data.nonEmpty then
-                            // Save image to uploads dir so it has a local path (like non-image files)
-                            val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                            try
-                              os.makeDir.all(uploadDir)
-                              val ext =
-                                if mimeType.contains("png") then "png"
-                                else if mimeType.contains("webp") then "webp"
-                                else "jpg"
-                              // Use the MIME-derived extension, not the original
-                              // filename's: the frontend re-encodes uploads to JPEG
-                              // (compressImage), so "shot.png" would otherwise be
-                              // saved with JPEG bytes under a .png name — and
-                              // ReadTool maps MIME by extension.
-                              val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "")
-                              val fileName = s"${System.nanoTime()}_$stem.$ext"
-                              val safeName = fileName.replaceAll("[/\\\\]", "_").replace("..", "_")
-                              val filePath = uploadDir / safeName
-                              val decoded = java.util.Base64.getDecoder.decode(data)
-                              os.write.over(filePath, decoded)
-                              val absPath = filePath.toString
-                              if absPath.startsWith(uploadDir.toString) then
-                                savedPaths(attIdx) = absPath
-                                // Give LLM both the image (visual) and the path (forwardable via Mail)
+                            val ext =
+                              if mimeType.contains("png") then "png"
+                              else if mimeType.contains("webp") then "webp"
+                              else "jpg"
+                            val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "").replaceAll("[^A-Za-z0-9._-]", "_")
+                            val keyResult = ResourceKey.from(s"${System.nanoTime()}_$stem.$ext")
+                            val decoded = scala.util.Try(java.util.Base64.getDecoder.decode(data)).toOption
+                            (ownerAccess, decoded, keyResult.toOption) match
+                              case (Some(access), Some(bytes), Some(key)) =>
+                                access.ownsSession(msgSessionId).flatMap {
+                                  case false =>
+                                    blocks += ContentBlock.Image(data, mimeType)
+                                    IO(logger.warn(s"Image '$name' rejected: session is not owned by handshake principal"))
+                                  case true =>
+                                    AttachmentCommitService.at(uploadRoot)
+                                      .commit(access, key, new java.io.ByteArrayInputStream(bytes))
+                                      .attempt
+                                      .map {
+                                        case Right(path) =>
+                                          savedPaths(attIdx) = path.toString
+                                          blocks += ContentBlock.Image(data, mimeType)
+                                          blocks += ContentBlock.Text(s"[用户附加图片: $path]")
+                                          logger.info(s"Saved image '$name' to $path")
+                                        case Left(error) =>
+                                          blocks += ContentBlock.Image(data, mimeType)
+                                          logger.warn(s"Image '$name' was not persisted: ${error.getMessage}")
+                                      }
+                                }
+                              case _ =>
                                 blocks += ContentBlock.Image(data, mimeType)
-                                blocks += ContentBlock.Text(s"[用户附加图片: $absPath]")
-                                logger.info(s"Saved image '$name' to $absPath (${decoded.length} bytes)")
-                              else
-                                blocks += ContentBlock.Image(data, mimeType)
-                                logger.warn(s"Image '$name' path resolved outside upload dir, only sending visual")
-                            catch
-                              case e: Exception =>
-                                logger.warn(s"Failed to save image '$name': ${e.getMessage}")
-                                // Fallback: still send the image visually even if save failed
-                                blocks += ContentBlock.Image(data, mimeType)
-                            end try
+                                IO(logger.warn(s"Image '$name' was not persisted: owner access unavailable or invalid data"))
                           else if mimeType.startsWith("image/") then
                             // Image without data — cannot process
                             blocks += ContentBlock.Text(s"[image: $name (无数据)]")
+                            IO.unit
                           else
                             // Non-image: try to find the file locally by name + size + hash
                             // Search priority: project root → common user dirs → full home → Spotlight
@@ -2123,42 +2126,41 @@ class WebSocketRoutes(
                                 spotlightSearch(name, hash, fileSize)
                               case None => None
                             spotlightPath match
-                              case Some(path) =>
+                              case Some(path) => IO {
                                 savedPaths(attIdx) = path
                                 blocks += ContentBlock.Text(s"[用户附加文件: $path]")
                                 logger.info(s"Attachment '$name' resolved to local file: $path")
+                              }
                               case None if data.nonEmpty =>
-                                // Fallback: save uploaded content to disk, send path reference to LLM
-                                val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                                try
-                                  os.makeDir.all(uploadDir)
-                                  val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
-                                  val fileName = s"${System.nanoTime()}_$safeName"
-                                  val filePath = uploadDir / fileName
-                                  val decoded = java.util.Base64.getDecoder.decode(data)
-                                  os.write.over(filePath, decoded)
-                                  val absPath = filePath.toString
-                                  if absPath.startsWith(uploadDir.toString) then
-                                    savedPaths(attIdx) = absPath
-                                    blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                                    logger.info(s"Saved attachment '$name' to $absPath (${decoded.length} bytes)")
-                                  else
-                                    logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
-                                    blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
-                                catch
-                                  case e: Exception =>
-                                    logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
-                                    blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
-                                end try
-                              case None =>
-                                // No data and not found locally — tell the LLM the file name so it can
-                                // use Read/Grep tools to locate it.
+                                val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+                                val keyResult = ResourceKey.from(s"${System.nanoTime()}_$safeName")
+                                val decoded = scala.util.Try(java.util.Base64.getDecoder.decode(data)).toOption
+                                (ownerAccess, decoded, keyResult.toOption) match
+                                  case (Some(access), Some(bytes), Some(key)) =>
+                                    access.ownsSession(msgSessionId).flatMap {
+                                      case false => IO(logger.warn(s"Attachment '$name' rejected: session is not owned by handshake principal"))
+                                      case true =>
+                                        AttachmentCommitService.at(uploadRoot)
+                                          .commit(access, key, new java.io.ByteArrayInputStream(bytes))
+                                          .attempt
+                                          .map {
+                                            case Right(path) =>
+                                              savedPaths(attIdx) = path.toString
+                                              blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                                              logger.info(s"Saved attachment '$name' to $path")
+                                            case Left(error) => logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
+                                          }
+                                    }
+                                  case _ => IO(logger.warn(s"Attachment '$name' was not persisted: owner access unavailable or invalid data"))
+                              case None => IO {
                                 logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
                                 blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
+                              }
                             end match
                           end if
                         }
 
+                        attachmentWrites *> {
                         val sessionName = metaOpt.map(_.name).getOrElse("-")
                         val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
                         logger.info(s"${logger.hl(sessionName)} User message: ${content
@@ -2249,6 +2251,7 @@ class WebSocketRoutes(
                               )
                             }
                           }
+                        }
                       }
                     } // end deviceResolved flatMap (device-provenance 批)
                   ) // end IO.uncancelable
