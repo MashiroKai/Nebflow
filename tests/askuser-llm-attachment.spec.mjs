@@ -121,11 +121,20 @@ test('AskUser question attachment cards open Canvas and gate access; legacy hist
     bubble.className = 'bubble ai';
     row.appendChild(bubble);
     document.querySelector('#chat').appendChild(row);
-    chat.renderAskUserHistory(bubble, [{ question: 'Legacy history', options: [{ label: 'OK' }] }], 'answered', 'legacy', [], [{ path: '/fixture/ordinary.md', name: 'ordinary.md' }]);
+    chat.renderAskUserHistory(
+      bubble,
+      [{ question: 'Mixed history', options: [{ label: 'OK' }] }],
+      'answered',
+      'mixed-history',
+      ['/fixture/question.md'],
+      [{ path: '/fixture/answer.txt', name: 'answer.txt' }],
+    );
   });
   const legacy = page.locator('.option-box').last();
-  expect(await legacy.locator('.ask-att-question-card').count()).toBe(0);
+  expect(await legacy.locator('.ask-att-question-card').count()).toBe(1);
   expect(await legacy.locator('.ask-att-file').count()).toBe(1);
+  expect(await legacy.locator('.ask-att-question-card').getAttribute('data-ask-att-path')).toBe('/fixture/question.md');
+  expect(await legacy.locator('.ask-att-file').first().getAttribute('data-ask-att-path')).toBe('/fixture/answer.txt');
   expect(await page.evaluate(() => window.__attention.length)).toBe(0);
   expect(entry).toMatchObject({ type: 'askUser', attachments: ['/fixture/readme.md'] });
   expect(denied.attachments).toEqual(['/fixture/private.md']);

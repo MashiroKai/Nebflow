@@ -3564,7 +3564,7 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
   // 调用 —— 🔴 经 `.option-box` 定位、插位由 `renderAskAttachments` 自身决定
   // （卡内 `.option-btn-row` 之前），本函数不新开第二套开法 / 不新增模块 / 不新增 CSS。
   // 缺席或空列表 ⇒ 函数内早退 ⇒ 历史卡形态与改前逐字节同。
-  renderAskAttachments(box, attachments, askAttOriginLabel(items, requestId), { llmQuestion: false });
+  renderAskAttachments(box, attachments, askAttOriginLabel(items, requestId), { llmQuestion: true });
   // askuser-dragdrop 批（2026-10-19，批 #551）：**作答**附件的只读面——只在确有
   // 作答（非取消 / 非「无作答记录」）时渲染：徽标（已回答 · 附 N 个文件）+
   // renderAskAttachments 同一渲染器的只读行。判据 = answerText 为真且非取消哨兵
