@@ -93,6 +93,8 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
         case Some(a) => IO.pure(a)
         case None => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
     override def getCandidates(): IO[List[ModelCandidate]] = IO.pure(chain)
+    override def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
+      IO.pure(chain)
 
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       IO.pure(forRef.getOrElse(ref, None))

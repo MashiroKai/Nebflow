@@ -203,9 +203,12 @@ object LlmAllocator:
    *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
    */
   private[decision] def candidatesFrom(registry: ProviderRegistry): IO[List[ModelCandidate]] =
-    val config = nebflow.shared.Config.loadServiceConfig()
-    val explicit = config.llm.decisionRoutes.flatMap(_.get("plugin-allocation")).flatMap(_.preferred)
-      .orElse(config.judge.flatMap(_.utilityModel))
+    registry.decisionRoute("plugin-allocation").map(_.flatMap(_.preferred)).flatMap { configuredRoute =>
+      val explicit = configuredRoute.orElse(nebflow.shared.Config.loadServiceConfig().judge.flatMap(_.utilityModel))
+      candidateChain(registry, explicit)
+    }
+
+  private[decision] def candidateChain(registry: ProviderRegistry, explicit: Option[String]): IO[List[ModelCandidate]] =
     def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
     explicit match {
       case Some(ref) =>
