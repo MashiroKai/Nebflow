@@ -808,7 +808,7 @@ object AgentCore:
   // 带 `device` 者仍恰为六件不变式零触碰。
   // 裁定一（kernel 腿补 Subagent）**本批未落**——与不变量 R-3a
   // （`core.delegate.KernelChildSpawnGate`：kernel 身份不得生子 actor）冲突，待作者裁决。
-  val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "AskHost" + "Subagent"
+  val NebflowFixedTools: Set[String] = BaseTools + "AskHost" + "Subagent"
 
   /**
    * 只读侦察子面（builtin-merge 批 2026-10-03）：SubagentTool 的 spawn 目标

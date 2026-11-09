@@ -413,8 +413,8 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       reqs <- f.requests.get
       toolResults <- IO(lastToolResults(reqs))
       _ = assert(
-        toolResults.exists(t => t.contains("requires a trusted Nebula root execution identity") && t.contains("access denied")),
-        s"后台身份未得到 root-only tool error：$toolResults"
+        toolResults.exists(_.contains("Tool not available: AskUserQuestion")),
+        s"后台面必须在工具授权层拒绝 AskUserQuestion：$toolResults"
       )
       _ <- waitFor(f.requests, _.size >= 2, "拒绝后第二轮 LLM 请求未完成/发出")
       _ <- f.releaseTurn
@@ -601,11 +601,14 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
   // 6. 请求体口径（= router JSONL 的同一对象图）：零变体
   // ============================================================
 
-  test("请求体口径: 两身份的 LlmRequest.tools 里 AskUserQuestion 段与注册表基线逐字节一致（无 schema 变体残留）") {
+  test("请求体口径: root 请求有 AskUserQuestion、后台请求无 AskUserQuestion schema") {
     def askFrom(reqs: List[LlmRequest]): nebflow.shared.ToolDefinition =
       reqs.headOption
         .flatMap(_.tools.getOrElse(Nil).find(_.name == AskUserQuestionTool.Name))
         .getOrElse(fail(s"请求体里没有 AskUserQuestion（tools=${reqs.headOption.flatMap(_.tools).map(_.map(_.name))}）"))
+
+    def hasAskUser(reqs: List[LlmRequest]): Boolean =
+      reqs.headOption.exists(_.tools.getOrElse(Nil).exists(_.name == AskUserQuestionTool.Name))
     def modeOf(td: nebflow.shared.ToolDefinition): Option[Json] =
       td.inputSchema("properties").flatMap(_.asObject).flatMap(_.apply("mode"))
 
@@ -633,27 +636,20 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       _ <- nodeFx.cleanup
       _ <- IO {
         val rootTd = askFrom(rootReqs)
-        val nodeTd = askFrom(nodeReqs)
-        // 裁②「不保留键」：两身份的 AskUserQuestion 定义都**无** mode，且与注册表基线
-        // **逐字节相同**（description + input_schema）⇒ 无变体可分。
         assert(modeOf(rootTd).isEmpty, "请求体里的 root 定义仍有 mode（裁② 不保留键未落地）")
-        assert(modeOf(nodeTd).isEmpty, "请求体里的 node 定义出现了 mode")
         assertEquals(rootTd.description, baseline.description)
         assertEquals(rootTd.inputSchema, baseline.inputSchema)
-        assertEquals(nodeTd.description, baseline.description)
-        assertEquals(nodeTd.inputSchema, baseline.inputSchema)
-        // 两身份的这一段彼此也逐字节相同（本批的核心不变量：无身份分化）。
-        assertEquals(rootTd.description, nodeTd.description)
-        assertEquals(rootTd.inputSchema, nodeTd.inputSchema)
-        // 其余**共有**工具逐字节一致（成员资格差异是既有角色面差异，与本批无关）
+        assert(hasAskUser(rootReqs), "Nebula root LLM 请求必须含 AskUserQuestion schema")
+        assert(!hasAskUser(nodeReqs), "后台执行 agent LLM 请求不得含 AskUserQuestion schema")
+        // 其余**共有**工具逐字节一致（成员资格差异是角色面差异）。
         val rootTools = rootReqs.head.tools.getOrElse(Nil)
         val nodeTools = nodeReqs.head.tools.getOrElse(Nil)
-        val shared = rootTools.map(_.name).toSet.intersect(nodeTools.map(_.name).toSet) - AskUserQuestionTool.Name
+        val shared = rootTools.map(_.name).toSet.intersect(nodeTools.map(_.name).toSet)
         assert(shared.nonEmpty, "两角色共有工具为空 —— 对照面不成立")
         shared.foreach { n =>
           val a = rootTools.find(_.name == n).get
           val b = nodeTools.find(_.name == n).get
-          assertEquals(a, b, s"共有工具 $n 的定义在两角色间发生差异（分化越界）")
+          assertEquals(a, b, s"共有工具 $n 的定义在两角色间发生差异")
         }
       }
     yield ()).unsafeRunSync()
