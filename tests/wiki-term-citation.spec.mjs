@@ -214,27 +214,6 @@ async function openSourceDoc(page) {
   }), { timeout: 10000 }).toBe(true);
 }
 
-/** 打开目标词条文档（真 readFile 腿 mock 应答）并等高亮落点 + 滚动静止。 */
-async function openGlossaryViaReadFile(page) {
-  await page.waitForFunction(() => document.querySelectorAll('.canvas-md-viewer').length >= 2, null, { timeout: 10000 });
-  await page.waitForFunction(() => {
-    const el = document.querySelector('.canvas-md-viewer .nf-jump-flash');
-    return el && (el.textContent || '').includes('GCR');
-  }, null, { timeout: 8000 });
-  // smooth scrollTo 落定（scrollHeadingToTop 走 smooth 档，落定后离顶）
-  await page.waitForTimeout(900);
-  const landed = await page.evaluate(() => {
-    const panes = [...document.querySelectorAll('.canvas-tab-pane.active .canvas-md-scroll')];
-    return panes.length ? panes[0].scrollTop : -1;
-  });
-  expect(landed, '定义段滚动定位（块锚 → 行号映射，落点后已离顶）').toBeGreaterThan(0);
-}
-
-const activeTabId = (page) => page.evaluate(() => {
-  const pane = document.querySelector('.canvas-tab-pane.active');
-  return pane ? pane.dataset.tabId : null;
-});
-
 test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
@@ -376,37 +355,37 @@ test.describe('§T6 移动端词条点击小弹层', () => {
 
   for (const scheme of ['light', 'dark']) {
     test(`${scheme} · 词条点击显示视口内小弹层，不导航、不切换手机页面`, async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser, { deviceDescriptor: iPhone, colorScheme: scheme });
-    expect(await page.evaluate(() => window.matchMedia('(hover: none)').matches), '(hover:none) 环境成立').toBe(true);
-    await openSourceDoc(page);
-    const ev0 = await page.evaluate(() => window.__openEvents.length);
-    const nav0 = await page.evaluate(() => JSON.stringify(window.__nfMobileNav?.stack || []));
-    const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
-    await link.tap();
-    const tip = page.locator('.nf-term-tip');
-    await expect(tip).toBeVisible({ timeout: 5000 });
-    expect(await tip.locator('.tt').textContent()).toBe('GCR');
-    expect(await tip.getAttribute('class')).not.toContain('touch');
-    const geom = await tip.evaluate(el => {
-      const r = el.getBoundingClientRect();
-      return { x: r.x, y: r.y, width: r.width, height: r.height, vw: innerWidth, vh: innerHeight };
-    });
-    expect(geom.width).toBeLessThan(geom.vw);
-    expect(geom.height).toBeLessThan(geom.vh);
-    expect(geom.x).toBeGreaterThanOrEqual(0);
-    expect(geom.y).toBeGreaterThanOrEqual(0);
-    expect(geom.x + geom.width).toBeLessThanOrEqual(geom.vw);
-    expect(geom.y + geom.height).toBeLessThanOrEqual(geom.vh);
-    expect(await page.evaluate(n => window.__openEvents.length, ev0), '打开弹层不导航').toBe(ev0);
-    expect(await page.evaluate(() => JSON.stringify(window.__nfMobileNav?.stack || [])), '导航栈不变').toBe(nav0);
-    await page.screenshot({ path: join(SHOTS_DIR, `term-popover-mobile-${scheme}.png`) });
-    await tip.evaluate(el => el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
-    await tip.click();
-    expect(await page.evaluate(n => window.__openEvents.length, ev0), '点弹层本身仍不导航').toBe(ev0);
+      const { context, page, pageErrors } = await boot(browser, { deviceDescriptor: iPhone, colorScheme: scheme });
+      expect(await page.evaluate(() => window.matchMedia('(hover: none)').matches), '(hover:none) 环境成立').toBe(true);
+      await openSourceDoc(page);
+      const ev0 = await page.evaluate(() => window.__openEvents.length);
+      const nav0 = await page.evaluate(() => JSON.stringify(window.__nfMobileNav?.stack || []));
+      const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
+      await link.tap();
+      const tip = page.locator('.nf-term-tip');
+      await expect(tip).toBeVisible({ timeout: 5000 });
+      expect(await tip.locator('.tt').textContent()).toBe('GCR');
+      expect(await tip.getAttribute('class')).not.toContain('touch');
+      const geom = await tip.evaluate(el => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height, vw: innerWidth, vh: innerHeight };
+      });
+      expect(geom.width).toBeLessThan(geom.vw);
+      expect(geom.height).toBeLessThan(geom.vh);
+      expect(geom.x).toBeGreaterThanOrEqual(0);
+      expect(geom.y).toBeGreaterThanOrEqual(0);
+      expect(geom.x + geom.width).toBeLessThanOrEqual(geom.vw);
+      expect(geom.y + geom.height).toBeLessThanOrEqual(geom.vh);
+      expect(await page.evaluate(n => window.__openEvents.length, ev0), '打开弹层不导航').toBe(ev0);
+      expect(await page.evaluate(() => JSON.stringify(window.__nfMobileNav?.stack || [])), '导航栈不变').toBe(nav0);
+      await page.screenshot({ path: join(SHOTS_DIR, `term-popover-mobile-${scheme}.png`) });
+      await tip.evaluate(el => el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+      await tip.click();
+      expect(await page.evaluate(n => window.__openEvents.length, ev0), '点弹层本身仍不导航').toBe(ev0);
       await page.locator('body').tap({ position: { x: 8, y: 8 } });
       await expect(tip).toBeHidden();
       expect(pageErrors).toEqual([]);
-    await context.close();
+      await context.close();
     });
   }
 
