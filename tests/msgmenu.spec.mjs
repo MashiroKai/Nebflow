@@ -527,7 +527,7 @@ async function scenarioQuote(page, pageErrors) {
       quote: { background: cs.backgroundColor, boxShadow: cs.boxShadow, fontSize: cs.fontSize, color: cs.color, borderRadius: cs.borderRadius, whiteSpace: cs.whiteSpace, lineHeight: cs.lineHeight },
       bubble: { background: bub.backgroundColor, fontSize: bub.fontSize, lineHeight: bub.lineHeight },
       quoteAboveReply: qr.bottom <= tr.top + 0.5,
-      quoteNoLeftAccentBar: cs.borderLeftWidth === '0px' && cs.borderLeftStyle === 'none',
+      quoteNoLeftAccentBar: cs.borderLeftWidth === '0px',
     };
   }, sentId);
   put('quote.style', qStyle);
