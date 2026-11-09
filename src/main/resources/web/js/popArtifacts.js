@@ -64,7 +64,7 @@ import { nfViewerUrl, nfCacheDrop, nfViewerSource } from './nfFileCache.js';
 // 摘要 = [图片]/[文件] 文件名（spec §2.5 表）。挂点在本 builder ⇒ live 发送、
 // 历史恢复（persistence.buildUserAttachmentRows）、attachmentsSaved 原位重渲
 // （patchUserMediaRow 走 replaceWith ⇒ 重建后仍带 id/菜单）三路同构。
-import { attachQuoteMenu, nextChatMsgId } from './msgQuote.js';
+import { attachQuoteMenu, nextChatMsgId, createMsgQuoteButton } from './msgQuote.js';
 // footer 信息条族（手机端长按退役批 2026-10-31 作者令）：媒体行 footer 与文本
 // 消息底部信息条同族徽章（时间 + 常用操作），durationBadges 是唯一 builder。
 import { createMsgFooterBadge } from './chat/durationBadges.js';
@@ -682,6 +682,7 @@ function buildMediaStack(items, opts) {
   const area = /** @type {HTMLDivElement & {
    *   popFaces?: Array<{item: any, index: number, els: Element[]}>,
    *   popQuoteState?: () => {index: number, total: number, desc: any},
+   *   popExpanded?: () => boolean,
    * }} */ (document.createElement('div'));
   // UI 统一批（ui-unification-20261103-canvas-overlay）：形唯一家 = design-system.css
   // ⑨ .ds-media-stack 族；旧类保留为 DOM 寻址钩子（msgQuote/messages/smartCrop/
@@ -755,6 +756,10 @@ function buildMediaStack(items, opts) {
     // 引用改由 footer 入口按 `area.popQuoteState()` 取「当前张」——手势仲裁面
     // 因此更窄：拖动翻页/双指横滑仍是折叠盒唯一的两条手势，展开列只剩整面点击
     // （= 打开该张）与 Canvas 角标。
+    // 展开后每个媒体项拥有自己的 footer 引用入口；描述符仅包含本项，
+    // 身份仍由 startItemQuote 从所属行统一解析。
+    const itemQuote = quoteDescFor ? quoteDescFor(item, i) : null;
+    if (itemQuote) layer.appendChild(createMsgQuoteButton(itemQuote));
     expandView.appendChild(layer);
     return layer;
   });
@@ -798,6 +803,8 @@ function buildMediaStack(items, opts) {
     total: items.length,
     desc: quoteDescFor ? quoteDescFor(items[front], front) : null,
   });
+  // Footer 引用粒度跟随可见形态：折叠时宿主引用整组，展开后逐行引用。
+  area.popExpanded = () => expanded;
 
   // 三修 ③ (2026-10-06 10:59 作者截图令), 复验修正 (16:47 作者核查令), 复报令
   // A-1 修 (2026-10-06 19:43 作者截图令): a click on the COLLAPSED stack opens
@@ -1068,9 +1075,14 @@ function buildFileCard(item, opts) {
   const iconEl = document.createElement('div');
   iconEl.className = 'fc-icon ' + icon.cls;
   iconEl.textContent = icon.label;
+  // 文件类每件本来就是独立文件卡，引用入口也逐卡挂在 footer（卡尾）。
+  const quoteItem = opts && opts.quoteRef;
+  const quoteBtn = quoteItem ? createMsgQuoteButton(quoteItem) : null;
+  if (quoteBtn) quoteBtn.classList.add('fc-quote-btn');
   card.append(iconEl, meta);
   if (Array.isArray(opts && opts.extras)) opts.extras.forEach(x => { if (x) card.appendChild(x); });
   if (btn) card.appendChild(btn);
+  if (quoteBtn) card.appendChild(quoteBtn);
   meta.append(name, sub);
   return card;
 }
@@ -1235,7 +1247,9 @@ export function buildUserMediaRow(attachments, opts) {
       quoteDescFor: (it, i) => stackItemQuoteDesc(it, i, media.length),
     }));
   }
-  files.forEach(f => group.appendChild(buildFileCard(f)));
+  files.forEach(f => group.appendChild(buildFileCard(f, {
+    quoteRef: { kind: 'file', fileName: f.name || (f.path || '').split('/').pop(), path: f.path || '', attachments: [{ type: 'file', name: f.name || '', path: f.path || '' }] },
+  })));
   // footer 信息条（手机端长按退役批 2026-10-31 作者令）：与文本消息底部信息条
   // 同族 .duration-badge——时间 + 下载（常用操作），触屏触达不再依赖长按；
   // 引用钮由 mountQuoteFooterButton（attachQuoteMenu 的 rAF 收敛）挂进同一徽章。
@@ -1462,7 +1476,9 @@ export function buildPopArtifactRow(payload, opts) {
       quoteDescFor: (it, i) => stackItemQuoteDesc(it, i, media.length),
     }));
   }
-  files.forEach(f => group.appendChild(buildFileCard(f)));
+  files.forEach(f => group.appendChild(buildFileCard(f, {
+    quoteRef: { kind: 'file', fileName: f.name || (f.path || '').split('/').pop(), path: f.path || '', attachments: [{ type: 'file', name: f.name || '', path: f.path || '' }] },
+  })));
 
   const failed = payload.fileRefs && Number(payload.fileRefs.failed) > 0;
   if (failed) {

@@ -220,9 +220,9 @@ export { QUOTE_SVG };
  * 缺席回落 `row.dataset.msgId` / activeView.sessionId（描述符取**点击时**的
  * `row.__nfQuoteDesc` —— round 边界二次 finishAi 刷新摘要后按钮引到新文）。
  */
-export function createMsgQuoteButton() {
+export function createMsgQuoteButton(itemDesc = null) {
   const btn = document.createElement('button');
-  btn.className = 'msg-copy msg-quote-btn';
+  btn.className = itemDesc ? 'msg-copy msg-quote-item-btn' : 'msg-copy msg-quote-btn';
   btn.title = t('messages.quote');
   btn.setAttribute('aria-label', t('messages.quote'));
   btn.innerHTML = QUOTE_SVG;
@@ -232,7 +232,11 @@ export function createMsgQuoteButton() {
     // 属性面，行引用按 any 视图读取（dataset 同视图）。
     const row = /** @type {any} */ (btn.closest('.row'));
     const d = (row && row.__nfQuoteDesc) || {};
-    startQuote(resolveQuoteDesc(row, d));
+    if (typeof itemDesc === 'function') {
+      const item = itemDesc(row);
+      if (item) startItemQuote(row, item);
+    } else if (itemDesc) startItemQuote(row, itemDesc);
+    else startQuote(resolveQuoteDesc(row, d));
   });
   return btn;
 }
@@ -486,10 +490,8 @@ export function syncQuoteJumpStates(root) {
   });
 }
 
-/** 单件媒体缩略（引用块 1 张图的原样形态，2026-10-31 附件批）：48px 方缩略，
- *  字节腿与 Pop 脸同一 hydrateMedia；点击 = openMediaItemClick 同款单点
- *  （有 path 开 Canvas，纯内联字节进灯箱）。stopPropagation —— 不触发引用块
- *  自身的跳转。 */
+/** 单件媒体缩略（引用块附件风格）：48px 方缩略，字节腿与 Pop 脸同一 hydrateMedia；
+ *  纯展示，不提供大图/展开动作。 */
 function quoteMediaCell(pop, a) {
   const item = { kind: a.type, name: a.name, src: a.preview, path: a.path || '' };
   const cell = document.createElement('div');
@@ -500,16 +502,8 @@ function quoteMediaCell(pop, a) {
   else { const img = /** @type {HTMLImageElement} */ (media); img.alt = a.name || ''; img.draggable = false; }
   pop.hydrateMedia(media, item, null);
   cell.appendChild(media);
-  if (a.path) {
-    cell.setAttribute('role', 'button');
-    cell.title = a.name || '';
-    cell.addEventListener('click', (e) => {
-      e.stopPropagation();
-      pop.openMediaItemClick(item);
-    });
-  } else {
-    cell.title = a.name || '';
-  }
+  // 引用内缩略只展示，不提供展开/大图点击；卡片外层仍负责消息引用跳转。
+  cell.title = a.name || '';
   return cell;
 }
 
@@ -535,21 +529,10 @@ function quoteFileChip(pop, a) {
   return chip;
 }
 
-/** 引用块附件缩略带（附件批 2026-10-31）：图片/视频 = 48px 缩略（字节腿与 Pop 脸
- *  同一 hydrateMedia；点击 = openMediaItemClick 同款——有 path 开 Canvas，纯内联
- *  字节进灯箱），文件 = 图标 + 文件名 chip（有 path 才挂打开，零死点击）。
+/** 引用块附件缩略带：图片/视频 = 48px 纯展示缩略，文件 = 图标 + 文件名 chip。
  *  动态 import：popArtifacts.js 静态依赖本模块（attachQuoteMenu/nextChatMsgId），
- *  本模块禁静态回指（renderQuoteStrip 动态导入 chat.js 同款先例）。缩略面点击
- *  stopPropagation —— 不触发引用块自身的跳转。
- *
- *  🔴 多图叠卡（2026-11-05 作者令逐字「引用多张图片的时候，也走叠卡」）：
- *  被引消息的媒体组 ≥2 件 ⇒ **整组走既有叠卡组件**
- *  `popArtifacts.buildMediaStack`（Pop 多图交付卡 / 用户媒体行 / 好友三窗
- *  共用的同一条实现：前卡 + 露边层、拖划·横滑翻页、「展开 N」摊平、整面点开
- *  进 Canvas/灯箱）。引用块**零第二套视觉**：只做宿主尺度收口（chat.css
- *  「引用牌 · 多图叠卡」段把卡面尺度单源 --ds-media-face-w 收一档小卡），
- *  手势/布局/开件单点全在组件内。1 件保持 48px 缩略原样（作者令「单图原样」）。
- *  高度收敛：卡面固定 ⇒ 叠卡态高度不随张数增长（展开态是用户显式动作）。 */
+ *  本模块禁静态回指（renderQuoteStrip 动态导入 chat.js 同款先例）。
+ */
 function renderQuoteAttStrip(atts) {
   const strip = document.createElement('div');
   strip.className = 'msg-quote-atts';
@@ -558,19 +541,8 @@ function renderQuoteAttStrip(atts) {
     if (!strip.isConnected) return;
     const media = list.filter(a => a && (a.type === 'image' || a.type === 'video'));
     const files = list.filter(a => a && a.type !== 'image' && a.type !== 'video');
-    if (media.length >= 2) {
-      const items = media.map(a => ({ kind: a.type, name: a.name, src: a.preview, path: a.path || '' }));
-      strip.classList.add('msg-quote-atts--stack');
-      const stack = pop.buildMediaStack(items);
-      // 引用块整块 = 跳转原消息（renderQuoteBlock 的 click/keydown 监听）——
-      // 叠卡内部自成一体：翻页/开件/展开都不许升级成「跳回原消息」。
-      const stop = (/** @type {Event} */ e) => e.stopPropagation();
-      stack.addEventListener('click', stop);
-      stack.addEventListener('keydown', stop);
-      strip.appendChild(stack);
-    } else if (media.length === 1) {
-      strip.appendChild(quoteMediaCell(pop, media[0]));
-    }
+    // 引用内容只作附件式缩略预览：无叠卡/展开/大图控件，每件独立小缩略。
+    media.forEach(a => strip.appendChild(quoteMediaCell(pop, a)));
     files.forEach((a) => strip.appendChild(quoteFileChip(pop, a)));
   }).catch(() => {});
   return strip;
