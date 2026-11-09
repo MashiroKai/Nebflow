@@ -340,6 +340,27 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
   await ctx.close();
 }
 
+/* ════════ CW8 主窗 reload 后卡窗重收养 ════════ */
+{
+  const { ctx, page } = await boot();
+  await openFile(page, ALPHA);
+  const popup = await waitPopup(ctx, () => clickHeaderPop(page));
+  await page.reload();
+  await page.waitForSelector('body.mobile-layer, #activity-bar', { timeout: 15000 });
+  await pollUntil(page, (s) => s.tabCount > 0, 6000);
+  const adopted = await pollUntil(page, (s) => s.independent.includes(`file:${ALPHA}`), 5000);
+  ok('CW8 主窗 reload 后存活卡窗 hello 重发并被新主窗收养',
+    !popup.isClosed() && adopted.independent.includes(`file:${ALPHA}`),
+    `closed=${popup.isClosed()} indep=${JSON.stringify(adopted.independent)}`);
+  await clickHeaderPop(page);
+  const merged = await pollUntil(page, (s) => s.independent.length === 0, 4000);
+  const closeDeadline = Date.now() + 3000;
+  while (!popup.isClosed() && Date.now() < closeDeadline) await sleep(50);
+  ok('CW8-2 重收养后仍可合并卡窗', popup.isClosed() && merged.independent.length === 0,
+    `closed=${popup.isClosed()} indep=${JSON.stringify(merged.independent)}`);
+  await ctx.close();
+}
+
 /* ════════ CW5 reduced-motion 直切 ════════ */
 {
   const { ctx, page } = await boot({ colorScheme: 'light', reducedMotion: true });
