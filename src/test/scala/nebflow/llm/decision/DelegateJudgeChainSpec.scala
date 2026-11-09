@@ -95,6 +95,10 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
     override def getCandidates(): IO[List[ModelCandidate]] = IO.pure(chain)
     override def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
       IO.pure(chain)
+    override private[llm] def decisionRoute(callType: String): IO[Option[nebflow.shared.AgentModelConfig]] =
+      IO.pure(None)
+    override private[nebflow] def currentConfig: IO[nebflow.shared.NebflowServiceConfig] =
+      IO(nebflow.shared.Config.loadServiceConfig())
 
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       IO.pure(forRef.getOrElse(ref, None))

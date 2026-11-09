@@ -153,37 +153,27 @@ object DelegateJudgeMachine:
    *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
    */
   private[decision] def utilityCandidates(registry: ProviderRegistry): IO[List[nebflow.llm.ModelCandidate]] =
-    val config = Config.loadServiceConfig()
-    val explicit = config.llm.decisionRoutes.flatMap(_.get("delegate-judge")).flatMap(_.preferred)
-      .orElse(config.judge.flatMap(_.utilityModel))
-    def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
-    explicit match {
-      case Some(ref) =>
-        // 时段闸（model-schedule-unavailable 批）：utility ref 当前处于不可用
-        // 时段 ⇒ WARN + 落到全局链（链出口已滤，不会选到受限模型）。
-        registry.scheduleRestrictionFor(ref).flatMap {
-          case Some(w) =>
-            IO(
-              logger.warnSync(
-                s"delegate-judge: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to the full candidate chain"
-              )
-            ) *> mainRoute
-          case None =>
-            registry.getCandidateForRef(ref).flatMap {
-              case Some(c) =>
-                registry.getCandidates().map { chain =>
-                  val rest = chain.filterNot(r => r.providerId == c.providerId && r.model == c.model)
-                  c :: rest
-                }
-              case None =>
-                IO(
-                  logger.warnSync(
-                    s"delegate-judge: judge.utilityModel '$ref' unresolved — falling back to the full candidate chain"
-                  )
-                ) *> mainRoute
-            }
-        }
-      case None => mainRoute
+    registry.currentConfig.flatMap { currentConfig =>
+      val explicitRoute = currentConfig.llm.decisionRoutes.flatMap(_.get("delegate-judge")).flatMap(_.preferred)
+        .orElse(currentConfig.judge.flatMap(_.utilityModel))
+      def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
+      val explicit = explicitRoute
+      explicit match {
+        case Some(ref) =>
+          registry.scheduleRestrictionFor(ref).flatMap {
+            case Some(_) => mainRoute
+            case None =>
+              registry.getCandidateForRef(ref).flatMap {
+                case Some(c) =>
+                  registry.getCandidates().map { chain =>
+                    val rest = chain.filterNot(r => r.providerId == c.providerId && r.model == c.model).distinctBy(r => (r.providerId, r.model))
+                    c :: rest
+                  }
+                case None => mainRoute
+              }
+          }
+        case None => mainRoute
+      }
     }
 
   private def judgeTimeoutMs: Long =

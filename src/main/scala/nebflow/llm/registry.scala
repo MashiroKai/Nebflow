@@ -52,7 +52,7 @@ class ProviderRegistry(
    * （那会成为第二份配置真相）。可见性 private[nebflow]：调用方在 nebflow.agent。
    */
   private[nebflow] def currentConfig: IO[NebflowServiceConfig] = configRef.get
-  private[decision] def decisionRoute(callType: String): IO[Option[AgentModelConfig]] =
+  private[llm] def decisionRoute(callType: String): IO[Option[AgentModelConfig]] =
     configRef.get.map(_.llm.decisionRoutes.flatMap(_.get(callType)))
 
   /**
