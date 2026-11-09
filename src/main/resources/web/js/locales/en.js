@@ -1431,6 +1431,8 @@ export default {
   // locale object is duplicate-key clean; JS keeps the LAST value, and both
   // copies were identical, so this is behaviour-preserving.)
   'settings.providers': 'Providers',
+  'settings.providersSummary': '{n} configured providers',
+  'settings.modelsSummary': '{n} session classes',
   // Provider type labels (provider-add-tabs batch, 2026-11-06): English originals
   // by the terminology-unification ruling — identical value in both locales.
   'settings.providerType.llm': 'LLM',
@@ -1461,6 +1463,7 @@ export default {
   // 精简批（作者令 2026-11-01）：标题「模型回退链」→「模型选择顺序」；说明
   // 压到一行以内（超长删繁就简，不再折行）。
   'settings.modelChainTitle': 'Model (per session class)',
+  'settings.modelChainDisclosureTitle': 'Model (per session class)',
   'settings.modelChainSectionHint': 'One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn.',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',

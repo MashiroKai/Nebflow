@@ -152,7 +152,21 @@ const shot = (page, name) => page.screenshot({ path: join(SHOTS_DIR, name), full
 
 async function openSettings(page) {
   await page.click('#settings-btn');
-  await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
+  await page.waitForSelector('#settings-content #provider-section', { timeout: 10000 });
+  const providers = page.locator('#provider-section [data-settings-disclosure="providers"]');
+  const models = page.locator('#model-chain-section [data-settings-disclosure="models"]');
+  ok('providers initially collapsed', await providers.getAttribute('aria-expanded') === 'false' &&
+    await page.locator('#provider-panel-disclosure').isHidden());
+  ok('models initially collapsed', await models.getAttribute('aria-expanded') === 'false' &&
+    await page.locator('#model-chain-disclosure').isHidden());
+  await providers.focus();
+  await page.keyboard.press('Enter');
+  ok('providers keyboard expands', await providers.getAttribute('aria-expanded') === 'true' &&
+    await page.locator('#provider-panel-disclosure').isVisible());
+  await models.click();
+  ok('models click expands', await models.getAttribute('aria-expanded') === 'true' &&
+    await page.locator('#model-chain-disclosure').isVisible());
+  await page.waitForSelector('#model-chain-section-body .mp-row', { state: 'attached', timeout: 10000 });
   await sleep(400);
 }
 
@@ -160,8 +174,9 @@ async function openSettings(page) {
 async function desktopLeg(colorScheme) {
   const { ctx, page } = await boot({ width: 1440, height: 900 }, colorScheme);
   await openSettings(page);
-  // 等统一服务商面板装配（provider-add-tabs 批：类型标签 + 列表）+ 回退链节渲染。
-  await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 10000 });
+  // 等展开后统一服务商面板装配（类型标签 + 列表）与按需挂载的模型节渲染。
+  await page.waitForSelector('#provider-panel-host .nf-provider-panel', { state: 'visible', timeout: 10000 });
+  await page.waitForSelector('#model-chain-section-body .mp-row', { state: 'visible', timeout: 10000 });
   await page.waitForFunction(() => document.querySelectorAll('#model-chain-section-body .mp-row').length === 2, null, { timeout: 5000 });
   await sleep(400);
   await shot(page, `settings-desktop-${colorScheme}.png`);
@@ -199,9 +214,12 @@ async function desktopLeg(colorScheme) {
 async function mobileLeg(colorScheme) {
   const { ctx, page } = await boot({ width: 375, height: 812 }, colorScheme, { touch: true });
   await dockTo(page, 'workbench');
-  await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
+  await page.locator('.mobile-page[data-page="workbench"] [data-hero-settings="1"]').click();
   await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="settings"]')?.classList.contains('live'));
-  await page.waitForSelector('.mobile-page[data-page="settings"] .nf-provider-panel', { timeout: 10000 });
+  await page.waitForSelector('.mobile-page[data-page="settings"] #provider-section', { timeout: 10000 });
+  await page.locator('.mobile-page[data-page="settings"] #provider-section [data-settings-disclosure="providers"]').click();
+  await page.locator('.mobile-page[data-page="settings"] #model-chain-section [data-settings-disclosure="models"]').click();
+  await page.waitForSelector('.mobile-page[data-page="settings"] .nf-provider-panel', { state: 'visible', timeout: 10000 });
   await sleep(400);
   await shot(page, `settings-mobile-${colorScheme}.png`);
 
@@ -217,16 +235,15 @@ async function mobileLeg(colorScheme) {
       return { w: Math.round(r.width), h: Math.round(r.height) };
     };
     return {
-      sub: rect('.mobile-page[data-page="settings-imagegen"]'),
+      sub: rect('.mobile-page[data-page="settings"]'),
       root: rect('.mobile-page[data-page="settings"]'),
       vw: window.innerWidth,
     };
   });
-  // 铺满屏 = 与设置根页同壳同几何（页面壳自管安全区/dock 内距——同族一致即可）。
-  ok(`imagegen sub-page mobile ${colorScheme}: 与设置根页同壳铺满`, subGeo.sub.w === subGeo.root.w && subGeo.sub.h === subGeo.root.h && subGeo.sub.w === subGeo.vw, JSON.stringify(subGeo));
-  // 页壳「<」返回 = 层级导航先例同款。
-  await page.locator('.mobile-page[data-page="settings-imagegen"] .mobile-back-btn').click();
-  await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="settings"]')?.classList.contains('live'));
+  // 现规格：服务商标签在设置单面内切换，无独立生图子页。
+  ok(`imagegen panel stays on settings page ${colorScheme}`,
+    subGeo.sub.w === subGeo.root.w && subGeo.sub.h === subGeo.root.h && subGeo.sub.w === subGeo.vw,
+    JSON.stringify(subGeo));
 
   // 回退链节：设置页内联面（滚动到位截图）。
   await page.evaluate(() => {

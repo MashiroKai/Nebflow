@@ -1386,6 +1386,8 @@ export default {
   // 2026-10-03 移除，使本地化对象不再有重复键；JS 取最后一个值，两副本完全相同，
   // 故行为不变。）
   'settings.providers': '服务商',
+  'settings.providersSummary': '{n} 个已配置服务商',
+  'settings.modelsSummary': '{n} 类会话模型',
   // 服务商类型（provider-add-tabs 批 2026-11-06）：面板顶部类型标签的词面。
   // 按「术语按英文统一」批的口径走英文原词，两语言同值（不是漏翻译）。
   'settings.providerType.llm': 'LLM',
@@ -1417,6 +1419,7 @@ export default {
   // 精简批（作者令 2026-11-01）：标题「模型回退链」→「模型选择顺序」；说明
   // 压到一行以内（超长删繁就简，不再折行）。
   'settings.modelChainTitle': '模型（按会话类别）',
+  'settings.modelChainDisclosureTitle': '模型（按会话类别）',
   'settings.modelChainSectionHint': '每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
