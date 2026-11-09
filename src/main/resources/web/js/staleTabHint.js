@@ -46,7 +46,14 @@ export function showStaleTabHint() {
     'background:#4f7cff', 'color:#fff', 'font:600 var(--ds-fs-body)/1 -apple-system,"Segoe UI",sans-serif',
     'cursor:pointer',
   ].join(';'));
-  btn.addEventListener('click', () => location.reload());
+  btn.addEventListener('click', () => {
+    // A normal reload can be fulfilled by an already-controlling service worker.
+    // Bypass that worker for this navigation so the fresh index/fingerprint is
+    // fetched from the server; the SW itself documents `nfsw` as its escape hatch.
+    const freshUrl = new URL(location.href);
+    freshUrl.searchParams.set('nfsw', '0');
+    location.assign(freshUrl.href);
+  });
 
   const close = document.createElement('button');
   close.textContent = '×';
