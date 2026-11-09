@@ -2055,8 +2055,8 @@ class WebSocketRoutes(
 
                         // Map attachment index → saved/local path (only non-image files get entries)
                         val savedPaths = scala.collection.mutable.Map.empty[Int, String]
-                        val ownerAccess = handshakeCredential.collect { case credential: Credential.ViaSession =>
-                          OwnerAccess.fromAuthenticatedCredential(credential, attachmentOwnerStore)
+                        val ownerAccess = handshakeCredential.collect { case Credential.ViaSession(record) =>
+                          OwnerAccess.fromAuthenticatedSession(record, attachmentOwnerStore)
                         }
                         val uploadRoot = Config.NebflowHome.toNIO.resolve("uploads").resolve(msgSessionId)
                         val attachmentWrites = attachments.zipWithIndex.traverse_ { case (att, attIdx) =>

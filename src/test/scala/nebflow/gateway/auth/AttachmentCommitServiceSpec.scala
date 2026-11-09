@@ -56,8 +56,14 @@ class AttachmentCommitServiceSpec extends CatsEffectSuite:
       _ <- store.registerSession(ownerB)
       accessA <- OwnerAccess.authenticate(request(ownerA.sessionId), "unused", sessions, store, GatewayAuth.Rails.ApiFull)
       accessB <- OwnerAccess.authenticate(request(ownerB.sessionId), "unused", sessions, store, GatewayAuth.Rails.ApiFull)
-      bearer = OwnerAccess.fromAuthenticatedCredential(Credential.ViaBearer(isFileToken = false), store)
-      canClaim <- bearer.createResource("attachment", "no-principal")
+      noSubject <- OwnerAccess.authenticate(Request[IO](uri = Uri.unsafeFromString("/")), "unused", sessions, store, GatewayAuth.Rails.ApiFull)
+      bearer <- OwnerAccess.authenticate(
+        Request[IO](uri = Uri.unsafeFromString("/")).putHeaders(
+          org.http4s.headers.Authorization(org.http4s.Credentials.Token(org.http4s.AuthScheme.Bearer, "file-token"))
+        ),
+        "file-token", sessions, store, GatewayAuth.Rails.ApiFull
+      )
+      canClaim <- bearer.get.createResource("attachment", "no-principal")
       forged <- accessA.get.ownsSession(ownerB.sessionId)
       allowed <- accessA.get.ownsSession(ownerA.sessionId)
       cross <- store.createResource("attachment", "cross-account", Credential.ViaSession(ownerB))
@@ -68,6 +74,7 @@ class AttachmentCommitServiceSpec extends CatsEffectSuite:
       _ = assert(cross)
       _ = assert(!ownsCross, "cross-account resource must not be visible")
       _ = assertEquals(accessA.isDefined, true)
+      _ = assert(noSubject.isEmpty, "no credential must not mint owner access")
     yield ()
 
   test("failed temp write is cleaned and never registers or publishes"):
