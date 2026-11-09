@@ -1506,7 +1506,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         // 本机项目/非项目轨 None（现状零变化）。
         sessionDevice = state.session.sessionDevice,
         sessionDeviceWorkspace = state.session.sessionDeviceWorkspace,
-        executionIdentity = Some(nebflow.core.tools.ToolExecutionIdentity.issue(effectiveDef.name, if depth == 0 then "root" else "agent")),
+        executionIdentity = Option.when(depth == 0 && effectiveDef.name == nebflow.actor.RootAgentIdentity.Name)(
+          nebflow.core.tools.ToolExecutionIdentity.issue(effectiveDef.name, "root")
+        ),
         sandbox = sandboxPolicy
       )
       freshResults <- filteredCalls.parTraverse { call =>

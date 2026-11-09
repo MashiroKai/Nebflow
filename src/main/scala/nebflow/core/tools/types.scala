@@ -15,6 +15,7 @@ final class ToolExecutionIdentity private[tools] (val agentName: String, val rol
 object ToolExecutionIdentity:
   private val seal = new Object
   private[nebflow] def issue(agentName: String, role: String): ToolExecutionIdentity =
+    require(agentName == RootAgentIdentity.Name && role == "root", "only the Nebula root may receive a root execution identity")
     new ToolExecutionIdentity(agentName, role, seal)
   private[tools] def isAuthentic(identity: ToolExecutionIdentity): Boolean = identity.seal eq seal
 
@@ -177,7 +178,10 @@ case class ToolContext(
 ):
   def hasTrustedExecutionIdentity: Boolean = executionIdentity.exists(ToolExecutionIdentity.isAuthentic)
   def isTrustedRootExecution: Boolean =
-    hasTrustedExecutionIdentity && executionIdentity.exists(i => i.agentName == RootAgentIdentity.Name && i.role == "root") && depth == 0
+    hasTrustedExecutionIdentity &&
+      executionIdentity.exists(i => i.agentName == RootAgentIdentity.Name && i.role == "root") &&
+      depth == 0 &&
+      agentDef.exists(_.name == RootAgentIdentity.Name)
   /**
    * 「Nebula 本体根会话」身份判据的**运行期求值面**——**纯委托**给单点 [[nebflow.agent.AgentCore.isRootAgent]]
    * （同一份实现的第二个求值面；第一个 = 定义期挑 schema 变体）。**禁**在此
