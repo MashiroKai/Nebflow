@@ -508,11 +508,25 @@ body.mobile-layer .note-dock .ds-resize-handle {
   background: rgb(var(--sapphire) / 0.13); border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.18);
   border-radius: var(--ds-radius-badge); padding: 0 var(--ds-space-1h); margin: var(--ds-space-1) var(--ds-space-hair) 0; line-height: 1.7;
 }
-.ask-bub.typing { display: flex; gap: var(--ds-space-1); align-items: center; padding: var(--ds-space-3) 15px; }
-.ask-bub.typing i { width: 5px; height: 5px; border-radius: var(--ds-radius-pill); background: var(--color-text-muted); animation: askTp 1.1s infinite; }
-.ask-bub.typing i:nth-child(2) { animation-delay: 0.15s; }
-.ask-bub.typing i:nth-child(3) { animation-delay: 0.3s; }
-@keyframes askTp { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+/* Transient Ask stream preview: one clipped, non-interactive line; removal is owned by
+   askDock.js on every terminal frame. No disclosure affordance or completed state. */
+.ask-stream-line {
+  align-self: flex-end;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: none;
+  pointer-events: none;
+  user-select: none;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-card-lg);
+  font-size: var(--ds-fs-row);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+.ask-stream-line::-webkit-scrollbar { display: none; }
 
 /* ── 「按龄渐隐」退役（glass-unify 批 2026-11-05）────────────────────────
    原规则：`.ask-bub[data-age] { opacity: var(--ask-age-alpha, 1); }`，JS 为每条

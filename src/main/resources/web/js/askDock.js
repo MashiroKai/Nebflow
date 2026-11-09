@@ -1599,7 +1599,7 @@ function stopAsk() {
   if (!s || !s.busy) return;
   requestTurnInterrupt(s.sid);
   settleTurn(s);
-  if (isOpen()) removeTyping();
+  if (isOpen()) { removeTyping(); render(); }
 }
 
 // 静默看门：busy 期间 180s 无任何流帧 ⇒ 本地收口（终态帧丢失形态）。帧到即续臂
@@ -1617,11 +1617,23 @@ let streamPersistAt = 0; // 流式落盘节流拍（持久批；800ms 一写，d
 function appendTyping() {
   if (!el) return;
   removeTyping();
-  const tp = h('div', { class: 'ask-bub typing' }, [h('i'), h('i'), h('i')]);
+  // One transient line reuses the existing Ask stream; it is status-only, never expandable.
+  const tp = h('div', {
+    class: 'ask-stream-line',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-label': tt('正在生成回答', 'Generating answer'),
+  }, tt('正在生成…', 'Generating…'));
   el.col.appendChild(tp);
   el.col.scrollTop = el.col.scrollHeight;
   syncAskFade();
   typingNode = tp;
+}
+function updateTypingText(text) {
+  if (!typingNode || !typingNode.isConnected || typeof text !== 'string') return;
+  typingNode.textContent = text;
+  // Keep the newest generated tail in view without making the line interactive.
+  typingNode.scrollLeft = typingNode.scrollWidth;
 }
 function removeTyping() {
   if (typingNode && typingNode.isConnected) typingNode.remove();
@@ -1693,17 +1705,18 @@ function consumeFrame(msg) {
       if (!(entry === activeSession() && isOpen())) entry.unread = true;
       armTurn(entry); // 流帧即活性（臂 + 看门续臂；他机发问现场也臂上中断态）
       const last = entry.msgs[entry.msgs.length - 1];
-      if (!last || last.role !== 'ai') {
-        entry.msgs.push({ role: 'ai', text: '' });
-        if (entry === activeSession() && isOpen()) removeTyping();
-      }
+      if (!last || last.role !== 'ai') entry.msgs.push({ role: 'ai', text: '' });
       const ai = entry.msgs[entry.msgs.length - 1];
       ai.text += msg.delta || '';
+      if (entry === activeSession() && isOpen()) {
+        updateTypingText(ai.text);
+        el.col.scrollTop = el.col.scrollHeight;
+        syncAskFade();
+      }
       // 流式落盘节流（持久批）：textDelta 高频，800ms 一拍写 localStorage；
       // 终局由 done 全量落盘兜底。
       const nowMs = Date.now();
       if (nowMs - streamPersistAt > 800) { streamPersistAt = nowMs; persistSession(entry); }
-      if (entry === activeSession()) updateStreamingBubble(entry);
       if (entry === activeSession()) syncUnreadDot();
       break;
     }

@@ -410,23 +410,29 @@ try {
   const userBub = await page.waitForSelector('.ask-dock .ask-bub.user', { timeout: 3000 });
   const userText = await userBub.textContent();
   ok('T3d user 气泡即时呈现', userText.includes('τ 为什么取 30 天？'), userText.slice(0, 40));
-  await page.waitForSelector('.ask-dock .ask-bub.typing', { timeout: 2000 }).then(() => ok('T3e typing 指示在场', true)).catch(() => ok('T3e typing 指示在场', false));
-  for (const d of ['笔记「近因加权」节：', 'τ=30 半衰期 ≈21 天。', '<cite>§近因加权</cite>']) {
+  await page.waitForSelector('.ask-dock .ask-stream-line', { timeout: 2000 }).then(() => ok('T3e 单行流式指示在场', true)).catch(() => ok('T3e 单行流式指示在场', false));
+  wsSend({ type: 'textDelta', sessionId: askedSid, delta: '笔记「近因加权」节：' });
+  await sleep(60);
+  const streamLine = await page.evaluate(() => {
+    const line = document.querySelector('.ask-dock .ask-stream-line');
+    return line ? { text: line.textContent, overflow: getComputedStyle(line).overflowX, pointerEvents: getComputedStyle(line).pointerEvents, height: line.getBoundingClientRect().height } : null;
+  });
+  ok('T3e1 流式行显示增量、单行且不可交互展开', !!streamLine && streamLine.text.includes('笔记') && streamLine.height < 60 && streamLine.pointerEvents === 'none', JSON.stringify(streamLine));
+  await shot(page, 't3-stream-line');
+  for (const d of ['τ=30 半衰期 ≈21 天。', '<cite>§近因加权</cite>']) {
     wsSend({ type: 'textDelta', sessionId: askedSid, delta: d });
     await sleep(60);
   }
-  const aiMid = await page.evaluate(() => {
-    const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
-    return nodes.length ? nodes[nodes.length - 1].textContent : '';
-  });
-  ok('T3f textDelta 增量回填同一 ai 气泡', aiMid.includes('τ=30 半衰期 ≈21 天。'), aiMid.slice(0, 50));
+  const aiMid = await page.evaluate(() => document.querySelector('.ask-dock .ask-stream-line')?.textContent || '');
+  ok('T3f textDelta 增量更新单行流式预览', aiMid.includes('τ=30 半衰期 ≈21 天。'), aiMid.slice(0, 50));
   wsSend({ type: 'done', sessionId: askedSid });
   await sleep(250);
   const aiFinal = await page.evaluate(() => {
     const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
     return nodes.length ? nodes[nodes.length - 1].textContent : '';
   });
-  ok('T3g done 定稿（文本保持 + typing 撤除）', aiFinal.includes('τ=30 半衰期 ≈21 天') && !(await page.$('.ask-dock .ask-bub.typing')), aiFinal.slice(-30));
+  const streamGone = await page.$('.ask-dock .ask-stream-line');
+  ok('T3g done 定稿（转录保留 + 流式行消失，无完成标记）', aiFinal.includes('τ=30 半衰期 ≈21 天') && !streamGone && !(await page.$('.ask-dock .ask-bub.typing')), aiFinal.slice(-30));
   const fabState = await page.evaluate(() => {
     const f = document.querySelector('.ask-fab');
     const dot = getComputedStyle(f.querySelector('.ask-sess-dot'));
@@ -453,12 +459,12 @@ try {
     user: document.querySelectorAll('.ask-dock .ask-bub.user').length,
     ai: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
     emptyAi: [...document.querySelectorAll('.ask-dock .ask-bub.ai')].filter((b) => !b.textContent.trim()).length,
-    typing: document.querySelectorAll('.ask-dock .ask-bub.typing').length,
+    streamLine: document.querySelectorAll('.ask-dock .ask-stream-line').length,
     prevAi,
   }), aiCountBefore);
   // ④双泡（作者截屏 3 = 空 ai 泡叠 typing 双泡）：等待期 ai 泡数不增长（无新空泡）、
   // typing 单件；既有 T3 答复泡不算新泡。
-  ok('F1 双泡修复：等待期零新增空 ai 泡（typing 单件）', f1.ai === f1.prevAi && f1.emptyAi === 0 && f1.typing === 1, JSON.stringify(f1));
+  ok('F1 双泡修复：等待期零新增空 ai 泡（流式单行单件）', f1.ai === f1.prevAi && f1.emptyAi === 0 && f1.streamLine === 1, JSON.stringify(f1));
   const fAskQ = inbound.find((m) => m.type === 'askQuestion');
   const fSid = fAskQ ? fAskQ.sessionId : askedSid;
   for (const d of ['## 结构\n\n', '- 甲\n- 乙\n\n', '| A | B |\n|---|---|\n| 1 | 2 |\n\n', '```js\ncode\n```']) {
@@ -466,22 +472,14 @@ try {
     await sleep(80);
   }
   await sleep(200);
-  const f2mid = await page.evaluate(() => {
-    const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
-    const b = nodes[nodes.length - 1];
-    return b ? {
-      n: nodes.length,
-      pre: !!b.querySelector('pre'),
-      code: !!b.querySelector('pre code'),
-      table: !!b.querySelector('table td'),
-      list: !!b.querySelector('ul li'),
-      h2: !!b.querySelector('h2'),
-      rawMd: b.textContent.includes('## ') || b.textContent.includes('|---|'),
-      typing: document.querySelectorAll('.ask-dock .ask-bub.typing').length,
-    } : null;
-  });
-  ok('F2 流式 markdown 渲染（主会话渲染腿复用）：h2/ul/pre+code/table 全在场、裸 md 字面量退场、typing 已换泡',
-    !!f2mid && f2mid.n === aiCountBefore + 1 && f2mid.pre && f2mid.code && f2mid.table && f2mid.list && f2mid.h2 && !f2mid.rawMd && f2mid.typing === 0,
+  const f2mid = await page.evaluate((previousCount) => ({
+    ai: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+    streamLine: document.querySelectorAll('.ask-dock .ask-stream-line').length,
+    previousCount,
+    text: document.querySelector('.ask-dock .ask-stream-line')?.textContent || '',
+  }), aiCountBefore);
+  ok('F2 生成中仅显示一行预览（答案不提前形成气泡）',
+    f2mid.ai === f2mid.previousCount && f2mid.streamLine === 1 && f2mid.text.includes('## 结构') && f2mid.text.includes('```js'),
     JSON.stringify(f2mid));
   wsSend({ type: 'done', sessionId: fSid });
   await sleep(250);
