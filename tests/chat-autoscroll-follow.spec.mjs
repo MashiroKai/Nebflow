@@ -10,7 +10,7 @@
 // Run: node tests/chat-autoscroll-follow.spec.mjs
 // 可选 env：PORT=8177、HEADLESS=0、SHOTS_DIR=<dir>
 
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,7 +127,8 @@ const ok = (name, cond, detail) => {
   if (!cond) process.exitCode = 1;
 };
 
-const browser = await chromium.launch({ headless: HEADLESS });
+const browserType = process.env.BROWSER === 'webkit' ? webkit : chromium;
+const browser = await browserType.launch({ headless: HEADLESS });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 page.on('console', (m) => { if (m.type() === 'error') console.log('[console.error]', m.text().slice(0, 300)); });
 page.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 400)));
@@ -201,6 +202,121 @@ try {
   const resized = await geo(page);
   ok('L4 composer resize keeps history position', resized.dist > 300, { before: g.dist, after: resized.dist, inputHeight: resized.inputHeight });
   ok('L4 scrolled-up: pill shows count', g.pillHidden === false && /1/.test(g.pillText || ''), { pillHidden: g.pillHidden, pillText: g.pillText });
+
+  // ── Mobile bottom-reserve acceptance: common viewport sizes, composer/attachment
+  // growth, simulated visualViewport keyboard movement, and session restoration.
+  const mobilePage = await browser.newPage({
+    viewport: { width: 375, height: 812 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  mobilePage.on('console', (m) => { if (m.type() === 'error') console.log('[mobile console.error]', m.text().slice(0, 300)); });
+  mobilePage.on('pageerror', (e) => console.log('[mobile pageerror]', String(e).slice(0, 400)));
+  await bootApp(mobilePage);
+  for (const viewport of [
+    { width: 375, height: 812 },
+    { width: 390, height: 844 },
+    { width: 414, height: 896 },
+    { width: 360, height: 800 },
+  ]) {
+    await mobilePage.setViewportSize(viewport);
+    await sleep(150);
+    const mobileGeo = await geo(mobilePage);
+    console.log(`M0 ${viewport.width}x${viewport.height}:`, JSON.stringify(mobileGeo));
+    ok(`M0 ${viewport.width}x${viewport.height} history bottom clears composer`,
+      mobileGeo.dist <= 44 && mobileGeo.lastRowBottomVsInput <= -2,
+      { dist: mobileGeo.dist, lastRowBottomVsInput: mobileGeo.lastRowBottomVsInput });
+  }
+
+  // New message send-to-bottom remains clear of the composer on narrow screens.
+  await inject(mobilePage, {
+    type: 'user', sessionId: SID, injected: true, source: 'delegate',
+    text: '手机视口下的新消息应显示在输入框上方。', timestamp: Date.now(), sender: 'Nebula/nebflow',
+  });
+  await sleep(250);
+  let mg = await geo(mobilePage);
+  ok('M1 send-to-bottom clears composer', mg.dist <= 44 && mg.lastRowBottomVsInput <= -2,
+    { dist: mg.dist, lastRowBottomVsInput: mg.lastRowBottomVsInput });
+
+  // Multiline input and attachment preview both resize the composer while pinned.
+  const mobileInput = mobilePage.locator('#input');
+  await mobileInput.fill('多行手机输入\n'.repeat(7));
+  await sleep(250);
+  mg = await geo(mobilePage);
+  ok('M2 multiline composer keeps newest row above composer', mg.dist <= 44 && mg.lastRowBottomVsInput <= -2,
+    { dist: mg.dist, lastRowBottomVsInput: mg.lastRowBottomVsInput, inputHeight: mg.inputHeight });
+  await mobilePage.evaluate(() => {
+    const preview = document.getElementById('attachment-preview');
+    preview.style.height = '112px';
+    preview.style.display = 'block';
+    preview.style.background = 'transparent';
+  });
+  await sleep(250);
+  mg = await geo(mobilePage);
+  ok('M3 attachment-height change keeps newest row above composer', mg.dist <= 44 && mg.lastRowBottomVsInput <= -2,
+    { dist: mg.dist, lastRowBottomVsInput: mg.lastRowBottomVsInput, inputHeight: mg.inputHeight });
+
+  // Simulate the keyboard moving the floating composer upward, then notify the
+  // same visualViewport listeners a mobile browser fires. Closing restores it.
+  await mobilePage.evaluate(() => {
+    const vv = window.visualViewport;
+    if (vv) {
+      Object.defineProperty(vv, 'height', { configurable: true, value: 520 });
+      Object.defineProperty(vv, 'offsetTop', { configurable: true, value: 0 });
+      vv.dispatchEvent(new Event('resize'));
+      vv.dispatchEvent(new Event('scroll'));
+    }
+    const inputArea = document.getElementById('input-area');
+    inputArea.style.bottom = '180px';
+    window.dispatchEvent(new Event('resize'));
+    vv?.dispatchEvent(new Event('resize'));
+  });
+  await sleep(180);
+  mg = await geo(mobilePage);
+  ok('M4 simulated keyboard-open viewport keeps newest row above moved composer',
+    mg.dist <= 44 && mg.lastRowBottomVsInput <= -2,
+    { dist: mg.dist, lastRowBottomVsInput: mg.lastRowBottomVsInput, inputTop: mg.inputTop });
+  await mobilePage.evaluate(() => {
+    document.getElementById('input-area').style.bottom = '';
+    window.visualViewport?.dispatchEvent(new Event('resize'));
+    window.dispatchEvent(new Event('resize'));
+  });
+  await sleep(180);
+  mg = await geo(mobilePage);
+  ok('M5 simulated keyboard-close restores pinned bottom visibility',
+    mg.dist <= 44 && mg.lastRowBottomVsInput <= -2,
+    { dist: mg.dist, lastRowBottomVsInput: mg.lastRowBottomVsInput });
+
+  // A scrolled-up history location must survive viewport/keyboard movement;
+  // reloading the same session must replay history and restore the bottom pin.
+  await mobilePage.evaluate(() => {
+    const chat = document.getElementById('chat');
+    chat.scrollTop = chat.scrollHeight - chat.clientHeight - 420;
+  });
+  await sleep(150);
+  const beforeKeyboard = await geo(mobilePage);
+  await mobilePage.evaluate(() => {
+    document.getElementById('input-area').style.bottom = '150px';
+    window.visualViewport?.dispatchEvent(new Event('resize'));
+  });
+  await sleep(180);
+  let afterKeyboard = await geo(mobilePage);
+  ok('M6 keyboard transition preserves history reading position',
+    Math.abs(afterKeyboard.scrollTop - beforeKeyboard.scrollTop) < 12,
+    { beforeScrollTop: beforeKeyboard.scrollTop, afterScrollTop: afterKeyboard.scrollTop,
+      beforeDist: beforeKeyboard.dist, afterDist: afterKeyboard.dist });
+  await mobilePage.evaluate(() => { document.getElementById('input-area').style.bottom = ''; });
+  await mobilePage.reload();
+  await mobilePage.waitForFunction(async (sid) => {
+    const s = (await import('/js/state.js')).default;
+    return s.activeSessionId === sid && s.ws && s.ws.readyState === 1;
+  }, SID, { timeout: 20000 });
+  await mobilePage.waitForTimeout(500);
+  mg = await geo(mobilePage);
+  ok('M7 restored session history pins latest message above composer',
+    mg.dist <= 44 && mg.lastRowBottomVsInput <= -2,
+    { dist: mg.dist, lastRowBottomVsInput: mg.lastRowBottomVsInput });
+  await mobilePage.close();
 
   if (SHOTS_DIR) {
     mkdirSync(SHOTS_DIR, { recursive: true });
