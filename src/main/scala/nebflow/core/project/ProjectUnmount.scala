@@ -197,8 +197,10 @@ object ProjectUnmount:
               case None =>
                 IO.pure(
                   Left(
-                    s"Project '$canonical' is not mounted — nothing to unmount " +
-                      "(unmount is a mount-face operation; an unmounted-but-untagged definition is left alone)"
+                    s"Project '$canonical' is defined but not mounted — nothing was changed. " +
+                      "Unmount only removes an active runtime; the definition and workspace were left untouched. " +
+                      "This can happen when startup recovery skipped the mount (for example, an unavailable workspace). " +
+                      "To retry mounting, use Project(action=\"remount\")."
                   )
                 )
               case Some(rt) =>

@@ -489,6 +489,35 @@ class ProjectUnmountSpec extends CatsEffectSuite:
     end for
   }
 
+  test("unmounted but untagged definition is refused without changing definition or workspace") {
+    val ws = tempRoot / "ws-defined-not-mounted"
+    val system = ActorSystem(s"um-defined-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    for
+      _ <- ProjectStore.create("p-defined-not-mounted", ws.toString, None, "")
+      _ <- seedUserFiles(ws)
+      beforeJson = projectJson("p-defined-not-mounted")
+      beforeWs = shaTree(ws)
+      beforeProjectDir = shaTree(tempRoot / "projects" / "p-defined-not-mounted")
+      result <- ProjectUnmount.unmount("p-defined-not-mounted", res.agentRegistry, _ => IO.unit)
+      afterJson = projectJson("p-defined-not-mounted")
+      afterWs = shaTree(ws)
+      afterProjectDir = shaTree(tempRoot / "projects" / "p-defined-not-mounted")
+      mounted <- ProjectRuntimeRegistry.get("p-defined-not-mounted")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(result.isLeft, "a definition without a runtime must not be reported as successfully unmounted")
+      val err = result.swap.toOption.get
+      assert(err.contains("defined but not mounted"), s"error explains the stale state: $err")
+      assert(err.contains("nothing was changed"), s"error confirms no mutation: $err")
+      assert(err.contains("remount"), s"error gives an actionable recovery route: $err")
+      assertEquals(afterJson, beforeJson, "untagged definition remains unchanged; do not invent unmounted markers")
+      assertEquals(afterWs, beforeWs, "workspace files remain byte-identical")
+      assertEquals(afterProjectDir, beforeProjectDir, "registration directory files remain unchanged")
+      assert(mounted.isEmpty, "no runtime is created")
+    end for
+  }
+
   test("create face refuses an unmounted project with the two-key pointer (single-way, archive-shape)") {
     val ws = tempRoot / "ws-refuse"
     val system = ActorSystem(s"um-refuse-${scala.util.Random.nextInt(100000)}")
