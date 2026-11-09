@@ -297,9 +297,9 @@ test.describe('§T2 hover 气泡兜底腿（词条不在载荷 → GET /api/wiki
   });
 });
 
-test.describe('§T3 点击深链跳转 + 高亮', () => {
+test.describe('§T3 点击词条显示预览', () => {
   for (const scheme of ['light', 'dark']) {
-    test(`${scheme} · 点 [[GCR]] → 开词汇表 → 滚动定位 + nf-jump-flash 落在定义段`, async ({ browser }) => {
+    test(`${scheme} · 点 [[GCR]] 显示释义，不导航`, async ({ browser }) => {
       const { context, page, pageErrors } = await boot(browser, { colorScheme: scheme });
       await openSourceDoc(page);
       // Click-preview contract: activating a term link shows its definition without navigation.
