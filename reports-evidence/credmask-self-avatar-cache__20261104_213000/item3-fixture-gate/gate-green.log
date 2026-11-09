@@ -1,3 +1,0 @@
-$ node scripts/check-fixture-secrets.mjs   # ② 现状（种植文件已删）：必须全绿
-[fixture-secrets] 740 files scanned under tests/fixtures, reports-evidence — no high-entropy long token literals  [OK]
-EXIT=0

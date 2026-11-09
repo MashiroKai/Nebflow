@@ -1,2 +1,0 @@
-2026-11-04 13:32:24 [sbt-gate] waiting for lock (timeout 900s; escape hatch SBT_GATE=off) [pid=41585 cwd=/tmp/m1/b cmd=waiting for lock (timeout 900s; escape hatch SBT_GATE=off)]
-2026-11-04 13:32:24 [sbt-gate] waiting for lock (timeout 900s; escape hatch SBT_GATE=off) [pid=41584 cwd=/tmp/m1/a cmd=waiting for lock (timeout 900s; escape hatch SBT_GATE=off)]

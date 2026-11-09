@@ -1,4 +1,0 @@
-label	idx	worktree	args	wall_s	sbtRssMB	allRssMB	gateWait_s	rc
-baseline-3wt	1	/private/tmp/sbtbench-1	compile	98.7	2145	4519	0	0
-baseline-3wt	2	/private/tmp/sbtbench-2	compile	84.0	2037	4340	0	0
-baseline-3wt	3	/private/tmp/sbtbench-3	compile	88.5	2013	4535	0	0

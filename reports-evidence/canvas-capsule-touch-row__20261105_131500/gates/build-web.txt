@@ -1,9 +1,0 @@
-build-web OK -> build/web-dist/
-  js entry : assets/app-AMPFDJTT.js
-  mobile   : assets/mobile/bootstrap-HIKTBFFK.js (bootstrap hook, #510)
-  chunks   : 246 lazy chunks (dynamic import boundaries preserved)
-  css      : assets/app-7dcbf495.css (41 files concatenated in source link order)
-  js files : 252 sources (.js/.mjs/.cjs/.ts/.tsx/.vue), all in bundle graph (orphans: 0, exemptions: 5)
-  reverse  : 250 registered outputs, 0 unregistered js under assets/
-  vendor   : copied through (2 vendor css links kept separate)
-  form     : UNSEALED (default: no release marker, friends visible)

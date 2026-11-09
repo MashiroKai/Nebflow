@@ -1,7 +1,0 @@
-checkJs: 13 errors (baseline 0, zero-gate files: 3)
-
-checkJs GATE FAILURES:
-  src/main/resources/web/js/ws.js: 2 errors — this file is a P2-3 core contract and must be checkJs-clean
-  src/main/resources/web/js/todoStore.js: new file with 11 errors — new/touched files must be checkJs-clean
-  total errors 11 > baseline 0
-EXIT=1

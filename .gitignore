@@ -50,6 +50,7 @@ test-envs.sh
 /reports/
 /evidence/
 /reports-evidence/
+/stand-evidence/
 # --- 过程产物不入库 · 续（同一裁定批，第二批）--------------------------------
 # 上一批只清了 docs/ reports/ evidence/ reports-evidence/ 四大目录；本批补三组：
 #   design/                              —— 38 个设计草稿与对照截图（过程材料）

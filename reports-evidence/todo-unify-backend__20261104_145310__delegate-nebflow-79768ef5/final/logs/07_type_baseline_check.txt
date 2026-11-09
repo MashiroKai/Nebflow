@@ -1,1 +1,0 @@
-BASELINE_DIFF_LINES=       0

@@ -24,13 +24,14 @@ import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GATEWAY_PORT = Number(process.env.NF_CFG_PORT || 8799);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
-const HOME = process.env.NF_CFG_HOME || join('/tmp', `nf-cfg-single-source-${Date.now()}`);
-const EVID = join(REPO, 'reports-evidence', 'config-single-source-e2e');
+const HOME = process.env.NF_CFG_HOME || join(tmpdir(), `nf-cfg-single-source-${Date.now()}`);
+const EVID = process.env.NF_CFG_EVIDENCE || join(tmpdir(), 'stand-evidence', 'stand', `config-single-source-${Date.now()}`, new Date().toISOString().slice(0, 10).replaceAll('-', ''));
 const JAR = (() => {
   const dir = join(REPO, 'target');
   const hits = readdirSync(dir).filter((d) => d.startsWith('scala-'));

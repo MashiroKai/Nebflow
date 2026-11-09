@@ -1,9 +1,0 @@
-# 上线后真实多会话排队样本（2026-11-04 13:43-13:47，多个 delegate worktree 各自 sbt 构建）
-2026-11-04 13:43:23 [sbt-gate] waiting for lock (timeout 900s; escape hatch SBT_GATE=off) [pid=77275 cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab cmd=waiting for lock (timeout 900s; escape hatch SBT_GATE=off)]
-2026-11-04 13:45:50 [sbt-gate] waiting for lock (timeout 900s; escape hatch SBT_GATE=off) [pid=83677 cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90 cmd=waiting for lock (timeout 900s; escape hatch SBT_GATE=off)]
-2026-11-04 13:46:00 [sbt-gate] waiting for lock (timeout 900s; escape hatch SBT_GATE=off) [pid=84506 cwd=/tmp/b1-baseline-main-1793771151 cmd=waiting for lock (timeout 900s; escape hatch SBT_GATE=off)]
-2026-11-04 13:46:20 [sbt-gate] release after 188s (rc=1) [pid=75510 cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-42b0596b cmd=release after 188s (rc=1)]
-2026-11-04 13:46:20 [sbt-gate] acquired after 177s [pid=77275 cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab cmd=acquired after 177s]
-2026-11-04 13:46:32 [sbt-gate] release after 189s (rc=0) [pid=77275 cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab cmd=release after 189s (rc=0)]
-2026-11-04 13:46:32 [sbt-gate] acquired after 42s [pid=83677 cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90 cmd=acquired after 42s]
-2026-11-04 13:46:39 [sbt-gate] waiting for lock (timeout 900s; escape hatch SBT_GATE=off) [pid=87007 cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-405e9ba4 cmd=waiting for lock (timeout 900s; escape hatch SBT_GATE=off)]

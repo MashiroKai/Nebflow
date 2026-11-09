@@ -1,9 +1,0 @@
-$ # ③ 门禁对**提交态**（HEAD=d21aa81ec，未脱敏）的回读：把 HEAD 版本导出到临时目录再扫
-$ git show HEAD:tests/fixtures/tool-card-leak-on-reload/fixture.json > /tmp/gate-repro/...
-$ node scripts/check-fixture-secrets.mjs --roots /tmp/gate-repro/tests/fixtures
-[fixture-secrets] 2 high-entropy long token literal(s) found:
-  ../../../../../../../tmp/gate-repro/tests/fixtures/tool-card-leak-on-reload/fixture-legacy.json:123  key=deviceToken  len=43  classes=4
-  ../../../../../../../tmp/gate-repro/tests/fixtures/tool-card-leak-on-reload/fixture.json:123  key=deviceToken  len=43  classes=4
-
-修复口径：夹具/证据里的凭据位换占位词（example/placeholder/redacted…）或短化到 < 32；真值只许放在 secrets store（凭据仓库），不进 git。
-EXIT=1

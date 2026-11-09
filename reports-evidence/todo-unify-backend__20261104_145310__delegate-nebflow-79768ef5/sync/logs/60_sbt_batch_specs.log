@@ -1,6 +1,0 @@
-$ cd /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5
-$ git rev-parse HEAD
-f70dccb9fcf218b35de12d1548f7b8577433ea99
-$ sbt 'Test/compile' 'testOnly <本批 scheduler/gateway spec>'
-[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
-[sbt-gate] STILL waiting ~5min. escape hatch: SBT_GATE=off sbt …

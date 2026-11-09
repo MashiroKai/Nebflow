@@ -1,5 +1,0 @@
-# J-B  Load-tool declaration judge: does ANY agent.json* declare the "Load" tool?
-$ grep -rn "\"Load\"" /Users/kaiyu/.stand/agents
-(no match — grep EXIT=1)
-$ grep -rl "\"Load\"" /Users/kaiyu/.stand/agents | wc -l
-       0

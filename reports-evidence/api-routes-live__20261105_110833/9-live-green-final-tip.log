@@ -1,4 +1,0 @@
-[live] 启动沙箱实例：home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nf-route-live-lvtLfL port=8097（隔离数据根，不碰作者 ~/.stand 与 6138）
-[live] 实例就绪（/api/health 已应答）。开始逐条探 141 条前端路径。
-✓ API route existence (live) — GREEN（运行实例上逐条探 141 条前端路径，全部非 404）
-live_EXIT=0

@@ -1,2 +1,0 @@
-(boot 日志无 console-takeover 行)
-# 隔离实例 env：STAND_CONSOLE_SINGLE_INSTANCE=off / NEBFLOW_CONSOLE_SINGLE_INSTANCE=off（跨端腿需两控制台并存）

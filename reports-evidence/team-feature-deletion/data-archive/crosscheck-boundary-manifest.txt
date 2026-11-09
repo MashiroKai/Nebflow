@@ -1,9 +1,0 @@
-### [T14] THIRD-PARTY CROSS-CHECK vs reports-evidence/team-feature-deletion/boundary/teams-manifest.json
-###       (that snapshot was written by the BOUNDARY node at 22:28, i.e. BEFORE this step copied anything)
-$ python3 - <<PY  (compare path->sha256+size)
-boundary_manifest entries: 103
-my_manifest teams/ entries: 103
-only in boundary manifest: []
-only in my manifest: []
-sha/size mismatches: 0
-VERDICT: IDENTICAL on 103 common files

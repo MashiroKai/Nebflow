@@ -1,3 +1,0 @@
-$ node scripts/check-js-types.mjs
-checkJs: 0 errors (baseline 0, zero-gate files: 3)
-checkJs PASS: no new errors above baseline.

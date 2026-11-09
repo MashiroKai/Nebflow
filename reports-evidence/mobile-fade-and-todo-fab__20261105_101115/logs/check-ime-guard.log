@@ -1,4 +1,0 @@
-NOTE: allowlist entry js/input.js 1698-1699 matched at line(s) 1702,1703 — location drifted, the frozen text still matches (binding is the text, not the slot).
-ime-guard PASS: 248 files scanned (js/imeGuard.js = definition site), no composition check outside js/imeGuard.js and the explicit allowlist.
-  allowlisted occurrence: js/input.js:1702,1703  [direct composition binding]  input.addEventListener('compositionstart', () => { view.composing = true; });
-  not counted — comment-only prose (5): js/chatSearch.js:724  [isComposing], js/dropbox.js:464  [isComposing], js/input.js:1840  [isComposing], js/keyRules.js:49  [isComposing], js/todoFace.js:144  [isComposing]
