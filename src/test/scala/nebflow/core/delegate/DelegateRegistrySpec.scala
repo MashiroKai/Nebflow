@@ -74,6 +74,96 @@ class DelegateRegistrySpec extends CatsEffectSuite:
     }.unsafeRunSync()
   }
 
+  test("aggregateDiffStat counts duplicate merge OIDs once and preserves each child detail") {
+    val first = DelegateWorkReport.MergeDiffStat("abc1234", 10, 4, "a" * 40, List(DelegateWorkReport.FileDiffStat("same.scala", 10, 4)))
+    val duplicate = first.copy(commit = "abc1234")
+    val children = List(
+      DelegateWorkReport.ChildDiffStat("child-a", "root", "/a", None, Some(first), partial = false),
+      DelegateWorkReport.ChildDiffStat("child-b", "root", "/b", None, Some(duplicate), partial = false)
+    )
+    val aggregate = DelegateWorkReport.aggregateChildren(children)
+    assertEquals((aggregate.added, aggregate.removed), (10L, 4L))
+    assertEquals(aggregate.children, children)
+    assert(!aggregate.partial)
+  }
+
+  test("aggregateDiffStat counts same file once across distinct merge commits") {
+    val a = DelegateWorkReport.MergeDiffStat("aaa1111", 8, 2, "a" * 40, List(DelegateWorkReport.FileDiffStat("shared.scala", 8, 2)))
+    val b = DelegateWorkReport.MergeDiffStat("bbb2222", 3, 7, "b" * 40, List(DelegateWorkReport.FileDiffStat("shared.scala", 3, 7)))
+    val childA = DelegateWorkReport.ChildDiffStat("writer-a", "root", "/a", None, Some(a), partial = false)
+    val childB = DelegateWorkReport.ChildDiffStat("writer-b", "root", "/b", None, Some(b), partial = false)
+    val aggregate = DelegateWorkReport.aggregateChildren(List(childA, childB))
+    // Deterministic overlap policy selects largest total line-change contribution.
+    assertEquals((aggregate.added, aggregate.removed), (8L, 2L))
+    assertEquals(aggregate.children.map(_.merge), List(Some(a), Some(b)))
+  }
+
+  test("aggregateDiffStat sums disjoint files, resolves ties deterministically, and retains opaque legacy totals") {
+    val a = DelegateWorkReport.MergeDiffStat("aaa1111", 10, 0, "a" * 40, List(
+      DelegateWorkReport.FileDiffStat("shared.scala", 5, 0),
+      DelegateWorkReport.FileDiffStat("only-a.scala", 5, 0)
+    ))
+    val b = DelegateWorkReport.MergeDiffStat("bbb2222", 10, 0, "b" * 40, List(
+      DelegateWorkReport.FileDiffStat("shared.scala", 5, 0),
+      DelegateWorkReport.FileDiffStat("only-b.scala", 5, 0)
+    ))
+    val opaque = DelegateWorkReport.MergeDiffStat("ccc3333", 2, 3, "c" * 40)
+    val rows = List(a, b, opaque).map(s => DelegateWorkReport.ChildDiffStat(s.commit, "root", "/ws", None, Some(s), partial = false))
+    val aggregate = DelegateWorkReport.aggregateChildren(rows)
+    // Tie on shared.scala uses the lexicographically smaller OID; distinct paths add.
+    assertEquals((aggregate.added, aggregate.removed), (17L, 3L))
+    assert(aggregate.partial)
+    assertEquals(aggregate.children, rows)
+  }
+
+  test("aggregateDiffStat follows nested delegate ownership and marks missing diff data partial") {
+    withTempDataRoot { tmp =>
+      IO {
+        DelegateRegistry.put(rec("root"))
+        DelegateRegistry.put(rec("child").copy(parentSessionId = "root", cwd = "/tmp/child"))
+        DelegateRegistry.put(rec("grandchild").copy(parentSessionId = "child", cwd = "/tmp/grandchild"))
+        DelegateRegistry.put(rec("independent").copy(parentSessionId = "elsewhere"))
+        val aggregate = DelegateWorkReport.aggregateDiffStat(DelegateRegistry.find("root").get)
+        assertEquals(aggregate.children.map(_.delegateId), List("child", "grandchild"))
+        assertEquals(aggregate.children.map(_.workspace), List("/tmp/child", "/tmp/grandchild"))
+        assert(aggregate.partial)
+        assertEquals((aggregate.added, aggregate.removed), (0L, 0L))
+      }
+    }.unsafeRunSync()
+  }
+
+  test("aggregateDiffStat includes DAG flow nodes and nested descendants as partial when stats are unavailable") {
+    withTempDataRoot { _ =>
+      IO {
+        DelegateRegistry.put(rec("root"))
+        FlowNodeOwnership.register("dag-root-node", "root")
+        FlowNodeOwnership.register("dag-nested-node", "dag-root-node")
+        DelegateRegistry.put(rec("delegate-under-node").copy(parentSessionId = "dag-nested-node"))
+
+        val aggregate = DelegateWorkReport.aggregateDiffStat(DelegateRegistry.find("root").get)
+        assertEquals(aggregate.children.map(_.delegateId).toSet, Set("dag-root-node", "dag-nested-node", "delegate-under-node"))
+        assertEquals(aggregate.children.map(_.parentSessionId).toSet, Set("root", "dag-root-node", "dag-nested-node"))
+        assert(aggregate.children.forall(_.partial))
+        assert(aggregate.partial)
+        assertEquals((aggregate.added, aggregate.removed), (0L, 0L))
+      }
+    }.unsafeRunSync()
+  }
+
+  test("aggregateDiffStat surfaces crashed DAG nodes from their durable ownership edge") {
+    withTempDataRoot { tmp =>
+      IO {
+        DelegateRegistry.put(rec("root"))
+        FlowNodeOwnership.register("dag-crashed", "root")
+        // No agent-registry entry, report, or delegate record remains after a crash.
+        val aggregate = DelegateWorkReport.aggregateDiffStat(DelegateRegistry.find("root").get)
+        assertEquals(aggregate.children.map(_.delegateId), List("dag-crashed"))
+        assert(aggregate.children.head.partial)
+        assert(aggregate.partial)
+      }
+    }.unsafeRunSync()
+  }
+
   test("list: newest first") {
     withTempDataRoot { tmp =>
       IO {

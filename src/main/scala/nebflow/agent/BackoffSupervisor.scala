@@ -1505,11 +1505,49 @@ object BackoffSupervisor:
        */
       private def terminalDiffMetadata(): IO[JsonObject] =
         fileChangesMetadata().flatMap { fc =>
-          mergeDiffStatJson().map {
-            case None => fc
-            case Some(stat) =>
-              val existing = fc("fileChanges").getOrElse(Json.obj())
-              fc.remove("fileChanges").add("fileChanges", existing.deepMerge(Json.obj("merge" -> stat)))
+          IO.blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId)).flatMap {
+            case None =>
+              mergeDiffStatJson().map { stat =>
+                stat.fold(fc) { s =>
+                  val existing = fc("fileChanges").getOrElse(Json.obj())
+                  fc.remove("fileChanges").add("fileChanges", existing.deepMerge(Json.obj("merge" -> s)))
+                }
+              }
+            case Some(rec) =>
+              (IO.blocking(nebflow.core.delegate.DelegateWorkReport.mergeDiffStat(rec)),
+                IO.blocking(nebflow.core.delegate.DelegateWorkReport.aggregateDiffStat(rec))).mapN { (merge, aggregate) =>
+                val withOwn = merge.fold(fc) { stat =>
+                  fc.remove("fileChanges").add("fileChanges", fc("fileChanges").getOrElse(Json.obj()).deepMerge(Json.obj("merge" -> Json.obj(
+                    "commit" -> stat.commit.asJson, "added" -> stat.added.asJson, "removed" -> stat.removed.asJson
+                  ))))
+                }
+                val children = aggregate.children.map { child =>
+                  Json.obj(
+                    "delegateId" -> child.delegateId.asJson,
+                    "parentSessionId" -> child.parentSessionId.asJson,
+                    "workspace" -> child.workspace.asJson,
+                    "worktree" -> child.worktree.getOrElse("").asJson,
+                    "partial" -> child.partial.asJson,
+                    "merge" -> child.merge.fold(Json.Null)(s => Json.obj(
+                      "commit" -> s.commit.asJson,
+                      "oid" -> s.oid.asJson,
+                      "added" -> s.added.asJson,
+                      "removed" -> s.removed.asJson,
+                      "files" -> s.files.map(f => Json.obj(
+                        "path" -> f.path.asJson, "added" -> f.added.asJson, "removed" -> f.removed.asJson
+                      )).asJson
+                    ))
+                  )
+                }
+                val rollup = Json.obj(
+                  "added" -> aggregate.added.asJson,
+                  "removed" -> aggregate.removed.asJson,
+                  "partial" -> aggregate.partial.asJson,
+                  "children" -> children.asJson
+                )
+                val existing = withOwn("fileChanges").getOrElse(Json.obj())
+                withOwn.remove("fileChanges").add("fileChanges", existing.deepMerge(Json.obj("aggregate" -> rollup)))
+              }
           }
         }
 

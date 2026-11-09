@@ -1266,6 +1266,12 @@ object FlowDagExecutor:
         parentRef = parentAgentRef,
         parentSessionId = callerSessionId
       )
+      // Persist direct ownership: AgentRegistry is in-memory and the entry is
+      // removed at node completion, while delegate diff rollups happen later.
+      _ <- IO.blocking {
+        if callerSessionId.nonEmpty then
+          nebflow.core.delegate.FlowNodeOwnership.register(sessionId, callerSessionId)
+      }.handleErrorWith(e => logger.warn(s"Flow node ownership record failed for $sessionId: ${e.getMessage}"))
       // Send input with the bridge actor as replyTo（无感恢复批：blocks 在场 = 工具边界续跑）
       _ <- (ref ! AgentCommand.UserInput(
         text = inputText,

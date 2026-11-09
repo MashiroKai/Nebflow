@@ -618,10 +618,20 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
       ? fileChanges.merge
       : null;
     const mergeSum = mg ? { a: Number(mg.added) || 0, r: Number(mg.removed) || 0 } : null;
-    const stat = mergeSum && (mergeSum.a > 0 || mergeSum.r > 0)
-      ? mergeSum
-      : (filesSum.a > 0 || filesSum.r > 0 ? filesSum : null);
-    if (stat) {
+    const aggregate = fileChanges && typeof fileChanges.aggregate === 'object' && !Array.isArray(fileChanges.aggregate)
+      ? fileChanges.aggregate
+      : (fileChanges?.fileChanges?.aggregate && typeof fileChanges.fileChanges.aggregate === 'object'
+        ? fileChanges.fileChanges.aggregate
+        : null);
+    const aggregateSum = aggregate ? { a: Number(aggregate.added) || 0, r: Number(aggregate.removed) || 0 } : null;
+    const hasAggregateChildren = Array.isArray(aggregate?.children) && aggregate.children.length > 0;
+    const stat = aggregateSum && (hasAggregateChildren || aggregate.partial)
+      ? aggregateSum
+      : (mergeSum && (mergeSum.a > 0 || mergeSum.r > 0)
+        ? mergeSum
+        : (filesSum.a > 0 || filesSum.r > 0 ? filesSum : null));
+    if (stat || aggregate?.partial) {
+      const shownStat = stat || { a: 0, r: 0 };
       const pipe = document.createElement('span');
       pipe.className = 'nf-rcpt-pipe';
       pipe.setAttribute('aria-hidden', 'true');
@@ -642,11 +652,17 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
       }
       const add = document.createElement('span');
       add.className = 'nf-rcpt-note-add';
-      add.textContent = `+${stat.a}`;
+      add.textContent = `+${shownStat.a}`;
       const del = document.createElement('span');
       del.className = 'nf-rcpt-note-del';
-      del.textContent = `−${stat.r}`;
+      del.textContent = `−${shownStat.r}`;
       note.append(add, document.createTextNode(' '), del);
+      if (aggregate?.partial) {
+        const partial = document.createElement('span');
+        partial.className = 'nf-rcpt-partial';
+        partial.textContent = ' partial';
+        note.appendChild(partial);
+      }
       head.appendChild(note);
     }
     receiptTop.appendChild(head);
@@ -665,9 +681,27 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
         hash.textContent = summary.hash;
         line.appendChild(hash);
       }
-      // 摘要行收进展开态：紧随卡头行挂（CSS [aria-expanded='true'] + 相邻兄弟
-      // 选择器驱动显隐）；折叠 display:none ⇒ 零高度贡献（卡面恒单行）。
       bubble.appendChild(line);
+    }
+    if (Array.isArray(aggregate?.children) && aggregate.children.length) {
+      const details = document.createElement('div');
+      details.className = 'nf-rcpt-aggregate-children';
+      aggregate.children.forEach((child) => {
+        const row = document.createElement('div');
+        row.className = 'nf-rcpt-aggregate-child';
+        const id = document.createElement('span');
+        id.textContent = String(child?.delegateId || 'unknown child');
+        const origin = document.createElement('span');
+        origin.textContent = `${String(child?.workspace || '')}${child?.worktree ? ` · ${String(child.worktree)}` : ''}`;
+        const childMerge = child?.merge && typeof child.merge === 'object' ? child.merge : null;
+        const counts = document.createElement('span');
+        counts.textContent = childMerge
+          ? `+${Number(childMerge.added) || 0} −${Number(childMerge.removed) || 0}`
+          : 'partial';
+        row.append(id, origin, counts);
+        details.appendChild(row);
+      });
+      bubble.appendChild(details);
     }
   } else {
     label.appendChild(document.createTextNode(renderedLabel));
