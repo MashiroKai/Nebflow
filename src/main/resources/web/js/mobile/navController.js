@@ -46,7 +46,7 @@
 // API / 桌面已渲染节点收编；桌面侧零改动。
 
 import {
-  getTabPane, setActiveTab, closeTab, deckFaceOf,
+  getTabPane, setActiveTab, closeTab, deckFaceOf, quoteActiveCardRef,
   // 堆叠视角真快照（作者令 2026-11-02 21:47 §三「让堆叠视觉能看到卡片内容」）：
   // 源解析/克隆腿**单源复用**桌面 canvas.js 的同一内核（不另造第二套截图方案），
   // 手机层只负责缓存与挂载。
@@ -1248,6 +1248,29 @@ function syncCanvasPage() {
       label.className = 'mf-strip-label';
       label.textContent = d.label;
       chip.appendChild(label);
+      const quote = document.createElement('span');
+      quote.className = 'mf-strip-quote';
+      quote.setAttribute('role', 'button');
+      quote.setAttribute('tabindex', '0');
+      quote.setAttribute('aria-label', '引用此 Canvas');
+      quote.title = '引用此 Canvas';
+      quote.textContent = '↗';
+      quote.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setActiveTab(d.id);
+        goHome();
+        quoteActiveCardRef();
+      });
+      quote.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          event.stopPropagation();
+          setActiveTab(d.id);
+          goHome();
+          quoteActiveCardRef();
+        }
+      });
+      chip.appendChild(quote);
       // 全名三处保留（对齐修正批：视觉上不再有「…」，但读屏/悬停仍拿得到全名）：
       //   ① label.textContent = 全名（读屏直接读 DOM 文本，mask 只影响绘制）；
       //   ② chip.title = 全名（桌面悬停 / 长按提示）；
