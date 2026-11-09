@@ -21,7 +21,8 @@ import nebflow.actor.InteractionHubCommand
 import nebflow.actor.{ActorPath, ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{AskUserQuestionTool, FileLockManager}
+import nebflow.core.mail.SessionMailbox
+import nebflow.core.tools.{AskHostLedger, AskHostTool, AskUserQuestionTool, FileLockManager, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{
@@ -47,18 +48,14 @@ import scala.concurrent.duration.*
  * + 真实 `AskUserQuestionTool`（脚本化 LLM 驱动工具调用，先例
  * `WaitTimeoutAskUserWiringSpec`）。五条读数：
  *
- *  1. **全链（任意身份）**：发起即返回（ack 进工具结果）+ 卡片渲染（`askUser` 帧）
- *     + hub 槽位 +1 + registry **不出现** `WaitingForUser`；答复经 hub → 桥
- *     （[[AskUserAnswerBridge]]）→ `ImmediateInput(fromUser=true)` 唤醒新 turn，
- *     模型看到答案文本；槽位 -1。
- *  2. **节点身份零拒绝**（裁①「全量非阻塞」的落地面）：general/depth=1 与 kernel
- *     会话现在**同样**走非阻塞 —— 历史上的 `ASKUSER_NONBLOCK_NOT_ROOT` 拒答面消失
- *     ⇒ 断言变为「无该码、turn 未挂起、槽位占上」。
- *  3. **无窗口不拒**（裁④「去除预检」）：root 会话窗口未注册时**不再** fail-closed；
- *     问题照常经 hub 派发/挂 pending 承接，答案不会静默丢（hub 扇出腿）。
+ *  1. **root 唯一可 dispatch**：Nebula root 身份的 AskUser 实际创建卡片/槽位，且答复
+ *     经 hub → 桥（[[AskUserAnswerBridge]]）→ `ImmediateInput(fromUser=true)` 唤醒新 turn。
+ *  2. **后台执行 agent 明确拒绝**：执行 agent 调用 AskUser 得到 root-only tool error，
+ *     不创建卡片/槽位，且拒绝后第二轮 turn 正常完成（不靠等待超时制造通过）。
+ *  3. **无窗口但仍是 root**：root 会话窗口未注册时，AskUser 仍由 hub 挂 pending。
  *  4. **`mode` 参数被显式拒绝**：真实链上带 `mode` 的调用得到可判读 `ToolError`，
  *     且**零副作用**（无槽位、无卡片、turn 未挂起）。
- *  5. **请求体口径**：两身份的 LlmRequest.tools 里 AskUserQuestion 段与注册表基线
+ *  5. **请求体口径**：root/执行身份的 LlmRequest.tools 里 AskUserQuestion 段与注册表基线
  *     **逐字节一致**（无 schema 变体残留）。
  */
 class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
@@ -311,6 +308,16 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
   private def statusOf(resources: SharedResources, sid: String): IO[AgentStatus] =
     resources.agentRegistry.get.map(_(sid).status)
 
+  private def waitForStatus(resources: SharedResources, sid: String, expected: AgentStatus): IO[Unit] =
+    def go(deadline: Long): IO[Unit] =
+      statusOf(resources, sid).flatMap {
+        case `expected` => IO.unit
+        case current if System.currentTimeMillis() >= deadline =>
+          IO.raiseError(new AssertionError(s"session $sid did not reach $expected; last status=$current"))
+        case _ => IO.sleep(50.millis) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + 20000)
+
   // ============================================================
   // 1. root 非阻塞全链
   // ============================================================
@@ -389,68 +396,110 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
   }
 
   // ============================================================
-  // 2. 任意身份全量非阻塞（裁① 的落地面）：节点会话不再被拒
+  // 2. 后台身份 root-only 拒绝：零副作用且拒绝后 turn 正常收尾
   // ============================================================
 
-  test("全量非阻塞（真实 actor）: 执行 agent（nebflow）节点 depth=1 照常提问 ⇒ 零拒绝 + 占槽位 + 无 WaitingForUser + turn 未挂起") {
+  test("后台执行 agent AskUser 被 root-only 拒绝：零卡片/槽位，第二轮 turn 正常完成") {
     val f = setup(
-      "node-nonblock",
+      "node-root-only",
       AgentDef(name = executorName, description = "", tools = Nil),
       depth = 1,
       sid = "dualmode-node",
       askInput = askInputNonBlocking
     )
     (for
-      _ <- waitFor(f.requests, _.size >= 2, "节点会话的 turn 未继续（疑似静默改走阻塞 = 挂起）")
+      _ <- waitFor(f.requests, _.size >= 2, "拒绝 AskUser 后 turn 未进入第二轮")
+      _ <- waitForStatus(f.resources, f.sid, AgentStatus.Idle)
       reqs <- f.requests.get
       toolResults <- IO(lastToolResults(reqs))
-      // 裁①：节点身份**不再**被「非阻塞仅 root」拒 —— 既无该码，也照常派发。
       _ = assert(
-        !toolResults.exists(_.contains("ASKUSER_NONBLOCK_NOT_ROOT")),
-        s"节点身份仍被 root-only 门拒绝（裁① 未落地）：$toolResults"
+        toolResults.exists(_.contains("Tool not available: AskUserQuestion")),
+        s"后台面必须在工具授权层拒绝 AskUserQuestion：$toolResults"
       )
-      _ = assert(
-        toolResults.exists(_.contains("non-blocking:")),
-        s"节点身份未拿到非阻塞 ack：$toolResults"
+      _ <- waitFor(f.requests, _.size >= 2, "拒绝后第二轮 LLM 请求未完成/发出")
+      _ <- f.releaseTurn
+      frames <- f.wsEvents.get
+      _ = assertEquals(
+        frames.count(_.hcursor.get[String]("type").toOption.contains("askUser")),
+        0,
+        s"后台身份拒绝后仍渲染 AskUser 卡片：$frames"
       )
-      // 卡片照常渲染 + 槽位 +1（= 全量非阻塞真派发，不是静默丢弃）
-      _ <- waitFor(
-        f.wsEvents,
-        _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
-        "节点会话的卡未渲染"
-      )
-      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "节点会话的卡未占槽位")
-      _ = assertEquals(pend.size, 1, s"节点会话的卡未占槽位: $pend")
+      pend <- pendingAsks(f.hub, f.sid)
+      _ = assertEquals(pend.size, 0, s"后台身份拒绝后却创建 hub 槽位：$pend")
       st <- statusOf(f.resources, f.sid)
-      _ = assert(st != AgentStatus.WaitingForUser, s"非阻塞派发后 registry 被标 WaitingForUser（$st）—— 造出永不解除的等待")
+      _ = assert(st != AgentStatus.WaitingForUser, s"拒绝的后台 turn 留在 WaitingForUser（$st）")
       _ <- f.cleanup
     yield ()).unsafeRunSync()
   }
 
-  test("全量非阻塞（真实 actor）: 执行 agent 的 plain depth=1 形态同上（非 flowNodeSession 会话不再被拒）") {
-    val f = setup(
-      "executor-nonblock",
-      AgentDef(name = executorName, description = "", tools = Nil),
-      depth = 1,
-      sid = "dualmode-executor",
-      askInput = askInputNonBlocking
-    )
-    (for
-      _ <- waitFor(f.requests, _.size >= 2, "执行 agent 会话的 turn 未继续")
-      reqs <- f.requests.get
-      toolResults <- IO(lastToolResults(reqs))
-      _ = assert(
-        toolResults.exists(_.contains("non-blocking:")),
-        s"执行 agent 身份未拿到非阻塞 ack（裁① 未覆盖）：$toolResults"
+  test("后台执行 agent 通过 AskHost 将关联请求投递到 root mailbox") {
+    val system = ActorSystem("askhost-root-route")
+    val tmp = os.temp.dir()
+    os.makeDir.all(tmp / "data")
+    val previousRoot = PathUtil.dataRoot
+    val previousLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    val check = for
+      requests <- IO.ref(List.empty[LlmRequest])
+      gate <- Deferred[IO, Unit]
+      _ <- gate.complete(()).void
+      resources <- mkResources(system, tmp, new ScriptedAskLlm(requests, askInputNonBlocking, gate))
+      rootRef <- system.spawn(Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)), "askhost-root")
+      now <- IO(System.currentTimeMillis())
+      _ <- resources.agentRegistry.update(_ + ("askhost-root-session" -> AgentRecord(
+        sessionId = "askhost-root-session", ref = rootRef, kind = AgentKind.Root,
+        rootSessionId = "askhost-root-session", parentRef = None, startedAt = now,
+        status = AgentStatus.Processing, lastActivityMs = now
+      )))
+      context = ToolContext(
+        projectRoot = tmp.toString,
+        sessionId = Some("askhost-worker-session"),
+        rootSessionId = Some("askhost-root-session"),
+        agentDef = Some(AgentDef(name = executorName, description = "", tools = Nil)),
+        depth = 1,
+        sharedResources = Some(resources)
       )
-      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "执行 agent 会话的卡未占槽位")
-      _ = assertEquals(pend.size, 1)
-      _ <- f.cleanup
-    yield ()).unsafeRunSync()
+      fiber <- AskHostTool.call(
+        JsonObject("question" -> "Choose a safe option".asJson), context
+      ).start
+      pending <- waitForMailbox("askhost-root-session")
+      entry = pending.head
+      event = entry.event
+      _ = assertEquals(event.source, "askhost")
+      _ = assertEquals(event.eventType, "request")
+      _ = assertEquals(event.metadata("workerSession").flatMap(_.asString), Some("askhost-worker-session"))
+      _ = assertEquals(event.metadata("rootSession").flatMap(_.asString), Some("askhost-root-session"))
+      _ = assertEquals(event.metadata("sourceAgent").flatMap(_.asString), Some(executorName))
+      _ = assertEquals(event.metadata("engineOwned").flatMap(_.asBoolean), Some(true))
+      correlationId = event.correlationId.getOrElse(fail(s"AskHost event lacks correlation: $event"))
+      _ = assertEquals(event.metadata("correlationId").flatMap(_.asString), Some(correlationId))
+      _ = assert(entry.identity.contains(correlationId), s"mailbox identity not correlated: $entry")
+      _ <- AskHostLedger.answer(correlationId, "Use option A")
+      result <- fiber.joinWithNever
+      _ = assertEquals(result, Right("Use option A"), s"correlated AskHost reply did not complete the worker call (correlation=$correlationId)")
+    yield ()
+    check.guarantee(IO {
+      nebflow.core.LlmLogWriter.setEnabled(previousLlmLog)
+      PathUtil.setDataRoot(previousRoot)
+      AskHostLedger.clearForTests()
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+    }).unsafeRunSync()
   }
+
+  private def waitForMailbox(sid: String): IO[List[SessionMailbox.Entry]] =
+    def go(deadline: Long): IO[List[SessionMailbox.Entry]] =
+      SessionMailbox.scanPending(sid).flatMap { entries =>
+        if entries.nonEmpty then IO.pure(entries)
+        else if System.currentTimeMillis() >= deadline then
+          IO.raiseError(new AssertionError(s"AskHost request did not reach root mailbox $sid"))
+        else IO.sleep(50.millis) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + 20000)
 
   // ============================================================
-  // 3. 裁④ 去除预检：无窗口不再 fail-closed
+  // 3. root 无窗口仍可挂 pending（无窗口不改变身份政策）
   // ============================================================
 
   test("裁④ 无预检: root 会话窗口未注册 ⇒ 不再拒绝，问题照常派发并可挂 pending 承接") {
@@ -525,28 +574,25 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
   }
 
   // ============================================================
-  // 5. 无等待态：非阻塞派发**恒不**标 WaitingForUser（现状的对照面已消失）
+  // 5. root 身份 AskUser 正常 dispatch
   // ============================================================
 
-  test("无等待态（真实 actor）: 非阻塞派发后 map 不出现 WaitingForUser，且第二轮 LLM 调用照常发生") {
+  test("Nebula root 的真实执行身份允许 AskUser dispatch") {
     val f = setup(
-      "node-blocking",
-      AgentDef(name = executorName, description = "", tools = Nil),
-      depth = 1,
-      sid = "dualmode-blocking",
+      "root-dispatch",
+      AgentDef(name = nebflow.actor.RootAgentIdentity.Name, description = "", tools = Nil),
+      depth = 0,
+      sid = "dualmode-root-dispatch",
       askInput = askInputBlocking
     )
     (for
-      _ <- waitFor(f.requests, _.size >= 2, "非阻塞派发后 turn 未继续（疑似等待态）")
-      _ <- waitFor(f.wsEvents, _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")), "未渲染卡片")
-      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "卡未占槽位")
+      _ <- waitFor(f.requests, _.size >= 2, "root AskUser 后 turn 未收到工具结果")
+      reqs <- f.requests.get
+      toolResults <- IO(lastToolResults(reqs))
+      _ = assert(toolResults.exists(_.contains("non-blocking:")), s"root identity 未能 dispatch AskUser: $toolResults")
+      _ <- waitFor(f.wsEvents, _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")), "root AskUser 卡片未渲染")
+      pend <- pendingAsksUntil(f.hub, f.sid, _.size == 1, "root AskUser 未占 hub 槽位")
       _ = assertEquals(pend.size, 1)
-      // 派发后 turn 继续（第二轮 LLM 调用已发生）⇒ 会话**不**停在等待态。
-      st <- statusOf(f.resources, f.sid)
-      _ = assert(
-        st != AgentStatus.WaitingForUser,
-        s"非阻塞派发把会话标成 WaitingForUser（$st）—— 等待态未随裁① 退场"
-      )
       _ <- f.cleanup
     yield ()).unsafeRunSync()
   }
@@ -555,11 +601,14 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
   // 6. 请求体口径（= router JSONL 的同一对象图）：零变体
   // ============================================================
 
-  test("请求体口径: 两身份的 LlmRequest.tools 里 AskUserQuestion 段与注册表基线逐字节一致（无 schema 变体残留）") {
+  test("请求体口径: root 请求有 AskUserQuestion、后台请求无 AskUserQuestion schema") {
     def askFrom(reqs: List[LlmRequest]): nebflow.shared.ToolDefinition =
       reqs.headOption
         .flatMap(_.tools.getOrElse(Nil).find(_.name == AskUserQuestionTool.Name))
         .getOrElse(fail(s"请求体里没有 AskUserQuestion（tools=${reqs.headOption.flatMap(_.tools).map(_.map(_.name))}）"))
+
+    def hasAskUser(reqs: List[LlmRequest]): Boolean =
+      reqs.headOption.exists(_.tools.getOrElse(Nil).exists(_.name == AskUserQuestionTool.Name))
     def modeOf(td: nebflow.shared.ToolDefinition): Option[Json] =
       td.inputSchema("properties").flatMap(_.asObject).flatMap(_.apply("mode"))
 
@@ -587,27 +636,20 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       _ <- nodeFx.cleanup
       _ <- IO {
         val rootTd = askFrom(rootReqs)
-        val nodeTd = askFrom(nodeReqs)
-        // 裁②「不保留键」：两身份的 AskUserQuestion 定义都**无** mode，且与注册表基线
-        // **逐字节相同**（description + input_schema）⇒ 无变体可分。
         assert(modeOf(rootTd).isEmpty, "请求体里的 root 定义仍有 mode（裁② 不保留键未落地）")
-        assert(modeOf(nodeTd).isEmpty, "请求体里的 node 定义出现了 mode")
         assertEquals(rootTd.description, baseline.description)
         assertEquals(rootTd.inputSchema, baseline.inputSchema)
-        assertEquals(nodeTd.description, baseline.description)
-        assertEquals(nodeTd.inputSchema, baseline.inputSchema)
-        // 两身份的这一段彼此也逐字节相同（本批的核心不变量：无身份分化）。
-        assertEquals(rootTd.description, nodeTd.description)
-        assertEquals(rootTd.inputSchema, nodeTd.inputSchema)
-        // 其余**共有**工具逐字节一致（成员资格差异是既有角色面差异，与本批无关）
+        assert(hasAskUser(rootReqs), "Nebula root LLM 请求必须含 AskUserQuestion schema")
+        assert(!hasAskUser(nodeReqs), "后台执行 agent LLM 请求不得含 AskUserQuestion schema")
+        // 其余**共有**工具逐字节一致（成员资格差异是角色面差异）。
         val rootTools = rootReqs.head.tools.getOrElse(Nil)
         val nodeTools = nodeReqs.head.tools.getOrElse(Nil)
-        val shared = rootTools.map(_.name).toSet.intersect(nodeTools.map(_.name).toSet) - AskUserQuestionTool.Name
+        val shared = rootTools.map(_.name).toSet.intersect(nodeTools.map(_.name).toSet)
         assert(shared.nonEmpty, "两角色共有工具为空 —— 对照面不成立")
         shared.foreach { n =>
           val a = rootTools.find(_.name == n).get
           val b = nodeTools.find(_.name == n).get
-          assertEquals(a, b, s"共有工具 $n 的定义在两角色间发生差异（分化越界）")
+          assertEquals(a, b, s"共有工具 $n 的定义在两角色间发生差异")
         }
       }
     yield ()).unsafeRunSync()

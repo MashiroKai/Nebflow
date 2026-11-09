@@ -1030,6 +1030,8 @@ private[gateway] object NeblinkRoutes:
                 case _ =>
                   val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
                   toolOpt match
+                    case Some(tool) if tool.requiresTrustedExecutionIdentity =>
+                      BadRequest(Json.obj("error" -> "Tool requires trusted engine execution identity".asJson))
                     case Some(tool) =>
                       // 跨设备批（2026-10-25）：Bash 下发的 `cwd`（设备盘 workspace，
                       // 发送侧会话默认设备上下文注入）→ 对端会话初始 cwd——「派发任务

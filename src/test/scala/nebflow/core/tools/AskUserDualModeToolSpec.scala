@@ -19,9 +19,9 @@ import scala.concurrent.duration.*
  *  - **面外参数闸**（裁②「不保留 `mode` 键」）：携带 `mode`（任何取值、任何身份）
  *    ⇒ 显式可判读 `ToolError`（不按取值分叉、不静默忽略），且闸在任何副作用之前
  *    （stub agent ref 零消息 —— 无 askUser 帧、无 hub 槽位、无等待态）；
- *  - **零拒绝面**（裁①「A 全量非阻塞」）：general/depth=1、kernel/depth=1、
- *    `agentDef=None` 三形态**都不再**有 root-only 拒绝 ⇒ 一律拿到非阻塞 ack 并派发；
- *  - **无预检**（裁④）：无 hub / 无 root 窗口**不再** fail-closed ⇒ 照常派发，
+ *  - **root-only**：只有 sealed identity + Nebula root agentDef + depth=0 可派发；
+ *    general/kernel/节点/无 agentDef 及直调均 fail-closed；
+ *  - **无预检**（裁④）：无 hub / 无 root 窗口不影响已认证 root 派发；
  *    承接面在 hub 扇出 / pending（全链读数见 `AskUserDualModeRuntimeSpec`）；
  *  - **附件判据**（裁③）：顶层可选参数，逐形态拒绝（非绝对 / `~` / `.`·`..` /
  *    不存在 / 非普通文件 / 凭据域 / 越界 / 件数 / 大小）—— 判据本体零复制
@@ -71,6 +71,9 @@ class AskUserDualModeToolSpec extends FunSuite:
     ref: Option[ActorRef[AgentCommand]],
     shared: Option[nebflow.agent.SharedResources] = None
   ): ToolContext =
+    val identity = Option.when(depth == 0 && defn.name == nebulaDef.name)(
+      ToolExecutionIdentity.issue(defn.name, "root")
+    )
     ToolContext(
       projectRoot = "",
       sessionId = Some("probe-session"),
@@ -78,7 +81,8 @@ class AskUserDualModeToolSpec extends FunSuite:
       agentDef = Some(defn),
       depth = depth,
       agentActorRef = ref,
-      sharedResources = shared
+      sharedResources = shared,
+      executionIdentity = identity
     )
 
   private val twoQuestions = JsonObject(
@@ -114,18 +118,24 @@ class AskUserDualModeToolSpec extends FunSuite:
     }
   }
 
-  test("面外参数闸: 拒绝发生在任何副作用之前（stub agent ref 零消息）+ 与身份无关") {
-    for (defn, depth) <- List((nebulaDef, 0), (generalDef, 1), (kernelDef, 1)) do
+  test("模式参数和身份错误都在任何副作用之前拒绝") {
+    val cases = List(
+      (ctxFor(nebulaDef, 0, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))), true),
+      (ctxFor(generalDef, 1, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))), false)
+    )
+    cases.foreach { case (ctx, trusted) =>
       val sink = scala.collection.mutable.ListBuffer.empty[AgentCommand]
-      val ctx = ctxFor(defn, depth, Some(recordingRef(sink)))
       val input = twoQuestions.add("mode", "non-blocking".asJson)
-      AskUserQuestionTool.call(input, ctx).unsafeRunSync() match
-        case Left(err) => assert(err.message.contains(AskUserQuestionTool.ModeParamRetiredCode), err.message)
-        case Right(ok) => fail(s"${defn.name}/depth=$depth 的带 mode 调用被放行：$ok")
-      assertEquals(sink.toList, Nil, s"${defn.name} 的拒绝之后仍有副作用（已派发 AskUser）")
+      AskUserQuestionTool.call(input, ctx.copy(agentActorRef = Some(recordingRef(sink)))).unsafeRunSync() match
+        case Left(err) =>
+          val expected = if trusted then AskUserQuestionTool.ModeParamRetiredCode else AskUserQuestionTool.TrustedIdentityRequiredCode
+          assert(err.message.contains(expected), err.message)
+        case Right(ok) => fail(s"带 mode 调用被放行：$ok")
+      assertEquals(sink.toList, Nil, "拒绝之后仍有副作用（已派发 AskUser）")
+    }
   }
 
-  test("askGuard 仍第一顺位: headless 下连带 mode 的调用也恒拒（且先于 mode 闸）") {
+  test("root 身份之后 askGuard 仍先于 mode 闸: headless 下连带 mode 恒拒") {
     val sink = scala.collection.mutable.ListBuffer.empty[AgentCommand]
     val ctx = ctxFor(nebulaDef, 0, Some(recordingRef(sink)))
     val input = twoQuestions.add("mode", "non-blocking".asJson)
@@ -144,42 +154,44 @@ class AskUserDualModeToolSpec extends FunSuite:
     assertEquals(sink.toList, Nil)
   }
 
-  test("源码级 pin: call() 的闸序 = askGuard → 面外参数闸 → askUser（且 askUser 无 mode 分叉）") {
+  test("源码级 pin: call() 的闸序 = root identity → askGuard → 面外参数闸 → askUser") {
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "AskUserQuestionTool.scala")
-    val iGuard = src.indexOf("askGuard() match")
-    val iReject = src.indexOf("rejectRetiredModeParam(input) match")
+    val iIdentity = src.indexOf("trustedIdentityError(ctx) match")
+    val iGuard = src.indexOf("askGuard() match", iIdentity)
+    val iReject = src.indexOf("rejectRetiredModeParam(input) match", iGuard)
     val iAsk = src.indexOf("case None => askUser(input, ctx)")
-    assert(iGuard > 0 && iReject > iGuard && iAsk > iReject, "call() 的闸序被改动（headless 必须最高顺位）")
+    assert(iIdentity > 0 && iGuard > iIdentity && iReject > iGuard && iAsk > iReject, "call() 的闸序被改动")
     // 退役符号零残留（工具源文件内）
     for retired <- List("parseMode", "AskMode", "rootVariant", "schemaRoot", "rootWindowReachable", "preflight")
     do assert(!src.contains(retired), s"已退役符号 `$retired` 仍在工具源文件里")
   }
 
   // ============================================================
-  // 零拒绝面（裁①）+ 无预检（裁④）：全身份派发 + 非阻塞 ack
+  // Root-only identity + 无预检（裁④）：root 派发，其他面拒绝
   // ============================================================
 
-  test("裁① 全量非阻塞: 节点/内核/无 agentDef 三形态都不再被 root-only 门拒绝") {
-    for (defn, depth, label) <- List(
-        (nebulaDef, 0, "root"),
-        (generalDef, 1, "node(depth=1)"),
-        (kernelDef, 1, "kernel(depth=1)")
-      )
-    do
+  test("只有可信 Nebula root identity 可发问；general、kernel、节点与无 identity 都拒绝") {
+    val rootSink = scala.collection.mutable.ListBuffer.empty[AgentCommand]
+    val rootCtx = ctxFor(nebulaDef, 0, Some(recordingRef(rootSink)))
+    AskUserQuestionTool.call(twoQuestions, rootCtx).unsafeRunSync() match
+      case Right(ack) => assert(ack.contains("non-blocking:"), ack)
+      case Left(err) => fail(s"root 提问被拒：${err.message}")
+    assertEquals(rootSink.toList.size, 1)
+
+    val invalidContexts = List(
+      ctxFor(generalDef, 1, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))),
+      ctxFor(kernelDef, 1, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))),
+      ctxFor(nebulaDef, 1, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))),
+      ctxFor(nebulaDef, 0, Some(recordingRef(scala.collection.mutable.ListBuffer.empty))).copy(executionIdentity = None),
+      ToolContext(projectRoot = "", agentDef = Some(nebulaDef), depth = 0)
+    )
+    invalidContexts.foreach { ctx =>
       val sink = scala.collection.mutable.ListBuffer.empty[AgentCommand]
-      val ctx = ctxFor(defn, depth, Some(recordingRef(sink)))
-      AskUserQuestionTool.call(twoQuestions, ctx).unsafeRunSync() match
-        case Right(ack) =>
-          assert(ack.contains("non-blocking:"), s"$label 未拿到非阻塞 ack：$ack")
-          assert(!ack.contains("ASKUSER_NONBLOCK_NOT_ROOT"), s"$label 仍被 root-only 门拒绝：$ack")
-        case Left(err) => fail(s"$label 的常规提问被拒：${err.message}")
-      sink.toList match
-        case List(cmd: AgentCommand.AskUser) =>
-          assertEquals(cmd.items.size, 1)
-          assertEquals(cmd.attachments, Nil, "无附件调用点派发了非空附件")
-          // 工具侧一律非阻塞 ⇒ 恒不置 awaitsAnswer
-          assertEquals(cmd.awaitsAnswer, false, "工具侧派发被标成等待答复（造出永不解除的等待）")
-        case other => fail(s"$label 期望恰好一条 AskUser 派发，实得：$other")
+      AskUserQuestionTool.call(twoQuestions, ctx.copy(agentActorRef = Some(recordingRef(sink)))).unsafeRunSync() match
+        case Left(err) => assert(err.message.contains(AskUserQuestionTool.TrustedIdentityRequiredCode), err.message)
+        case Right(ok) => fail(s"无可信 root 身份的调用被放行：$ok")
+      assertEquals(sink.toList, Nil, "身份拒绝之后仍派发 AskUser")
+    }
   }
 
   test("裁④ 无预检: sharedResources 缺席（无 hub 可查）也不再 fail-closed") {
@@ -193,11 +205,11 @@ class AskUserDualModeToolSpec extends FunSuite:
     assertEquals(sink.toList.size, 1, "问题未派发（承接面拿不到它）")
   }
 
-  test("无 agent 会话: agentActorRef=None ⇒ 显式报错（不悬挂、不静默）") {
+  test("无 agent 会话: 无引擎签发身份时 fail-closed") {
     val ctx = ToolContext(projectRoot = "", sessionId = Some("rest-call"), agentDef = Some(nebulaDef), depth = 0)
     AskUserQuestionTool.call(twoQuestions, ctx).unsafeRunSync() match
-      case Left(err) => assert(err.message.contains("requires agent actor"), err.message)
-      case Right(ok) => fail(s"无 agent 会话仍返回成功：$ok")
+      case Left(err) => assert(err.message.contains(AskUserQuestionTool.TrustedIdentityRequiredCode), err.message)
+      case Right(ok) => fail(s"无可信 root identity 的直调仍返回成功：$ok")
   }
 
   // ============================================================

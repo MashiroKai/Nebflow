@@ -769,21 +769,27 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("Task"), "R2: Task 退役，dispatcher 面零 Task")
 
   test(
-    "nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow）——BaseTools + AskUserQuestion + Subagent"
+    "nebflow fixed face includes AskHost but excludes AskUserQuestion; root face retains AskUserQuestion"
   ):
     val bare = mkDef("nebflow", Nil)
     val allowed = CoreProbe.allowed(bare, isFlowNode = true)
-    val nine = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "BgWait", "AskUserQuestion", "Subagent")
-    nine.foreach(t => assert(allowed.contains(t), s"nebflow fixed tool missing: $t"))
-    assertEquals(nine, AgentCore.NebflowFixedTools, "the nine are exactly the executor fixed face")
+    val executorFixed = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "BgWait", "AskHost", "Subagent")
+    executorFixed.foreach(t => assert(allowed.contains(t), s"nebflow fixed tool missing: $t"))
+    assert(!allowed.contains("AskUserQuestion"), "background executor face must not include AskUserQuestion")
+    assertEquals(executorFixed, AgentCore.NebflowFixedTools, "these are exactly the executor fixed face")
+    assert(
+      AgentCore.fixedToolsFor(mkDef("Nebula", Nil)).contains("AskUserQuestion"),
+      "Nebula root face retains AskUserQuestion"
+    )
     // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：AgentFlow 工具整体退役
     // ⇒ 名字不在注册表、也不在任何固定面（`agentflow` 此后只是模式名）。
     assert(!allowed.contains("AgentFlow"), "the retired AgentFlow tool must not appear on any delivered face")
     assert(!nebflow.core.tools.ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be unregistered")
-    // 钉死断言（2026-09-08 作者修订，D6 批D1 G6/G7）：general 默认面含回
-    // AskUserQuestion——直达作者方案（节点提问经 InteractionHub 直达 Nebula
-    // 窗口；分发器监督=node-ask 留痕审计）——变异验红锚
-    assert(allowed.contains("AskUserQuestion"), "general 默认面含 AskUserQuestion（2026-09-08 恢复）")
+    // Root retains AskUserQuestion, while the background executor face above excludes it.
+    assert(
+      AgentCore.fixedToolsFor(mkDef("Nebula", Nil)).contains("AskUserQuestion"),
+      "Nebula root face retains AskUserQuestion"
+    )
     // 钉死断言（2026-09-10 作者裁定）：Pop 不在 general 固定面——节点交付物沿
     // out 边交链末端/Nebula，由 Nebula 决定是否展示——变异验红锚（加回即红）
     assert(!allowed.contains("Pop"), "general 节点不得持有 Pop（2026-09-10 裁定：Pop 收归 Nebula 专属）")

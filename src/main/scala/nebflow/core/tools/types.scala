@@ -8,6 +8,16 @@ import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
 import nebflow.core.{AgentLibraryView, AgentRuntimePort, FileChangeLedger, FileChangeTracker}
 import nebflow.shared.*
+import nebflow.actor.RootAgentIdentity
+
+/** Runtime-only identity minted by AgentSessionExecution; not representable in tool input. */
+final class ToolExecutionIdentity private[tools] (val agentName: String, val role: String, private val seal: AnyRef)
+object ToolExecutionIdentity:
+  private val seal = new Object
+  private[nebflow] def issue(agentName: String, role: String): ToolExecutionIdentity =
+    require(agentName == RootAgentIdentity.Name && role == "root", "only the Nebula root may receive a root execution identity")
+    new ToolExecutionIdentity(agentName, role, seal)
+  private[tools] def isAuthentic(identity: ToolExecutionIdentity): Boolean = identity.seal eq seal
 
 // 字段类型窄化,agent 定位器类型退出 core
 case class ToolContext(
@@ -162,8 +172,16 @@ case class ToolContext(
    * 对端会话初始 cwd（「派发任务的命令 cwd 指向设备 workspace」——下发面
    * params.cwd → 对端接收面 ToolContext.sessionCwd）。None = 无注入。
    */
-  sessionDeviceWorkspace: Option[String] = None
+  sessionDeviceWorkspace: Option[String] = None,
+  /** Sealed runtime identity: only AgentSessionExecution can mint an authentic value. */
+  private[nebflow] executionIdentity: Option[ToolExecutionIdentity] = None
 ):
+  def hasTrustedExecutionIdentity: Boolean = executionIdentity.exists(ToolExecutionIdentity.isAuthentic)
+  def isTrustedRootExecution: Boolean =
+    hasTrustedExecutionIdentity &&
+      executionIdentity.exists(i => i.agentName == RootAgentIdentity.Name && i.role == "root") &&
+      depth == 0 &&
+      agentDef.exists(_.name == RootAgentIdentity.Name)
   /**
    * 「Nebula 本体根会话」身份判据的**运行期求值面**——**纯委托**给单点 [[nebflow.agent.AgentCore.isRootAgent]]
    * （同一份实现的第二个求值面；第一个 = 定义期挑 schema 变体）。**禁**在此
@@ -211,6 +229,8 @@ trait Tool:
   def description: String
   def inputSchema: JsonObject
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]]
+  /** Opt-in gate for tools whose authority must come from an engine execution, never a request. */
+  def requiresTrustedExecutionIdentity: Boolean = false
   def summarize(input: JsonObject): String
   def summarizeResult(input: JsonObject, result: String): String
   def maxResultSizeChars: Int = Defaults.DefaultMaxResultSizeChars

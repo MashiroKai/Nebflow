@@ -1506,6 +1506,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         // 本机项目/非项目轨 None（现状零变化）。
         sessionDevice = state.session.sessionDevice,
         sessionDeviceWorkspace = state.session.sessionDeviceWorkspace,
+        executionIdentity = Option.when(depth == 0 && effectiveDef.name == nebflow.actor.RootAgentIdentity.Name)(
+          nebflow.core.tools.ToolExecutionIdentity.issue(effectiveDef.name, "root")
+        ),
         sandbox = sandboxPolicy
       )
       freshResults <- filteredCalls.parTraverse { call =>
@@ -2176,6 +2179,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
 
   private def executeToolInner(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
     ToolRegistry.TOOL_MAP.get(call.name) match
+      case Some(tool) if tool.requiresTrustedExecutionIdentity && !ctx.isTrustedRootExecution =>
+        IO.pure(
+          ToolExecResult(
+            s"Tool ${tool.name} requires a trusted Nebula root execution identity; access denied.",
+            isError = true
+          )
+        )
       case Some(tool) =>
         val summary = tool.summarize(call.input)
         val logger = NebflowLogger.forName("nebflow.handlers")
