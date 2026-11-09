@@ -64,6 +64,7 @@ const browser = await chromium.launch();
 const FILE_CONTENTS = new Map([
   ['/tmp/cw-fixture/alpha.md', { content: '# alpha\n\nalpha mock body v1\n', itemType: 'markdown' }],
   ['/tmp/cw-fixture/bravo.md', { content: '# bravo\n\nbravo mock body v1\n', itemType: 'markdown' }],
+  ['/tmp/cw-fixture/charlie.md', { content: '# charlie\n\ncharlie mock body v1\n', itemType: 'markdown' }],
 ]);
 
 async function boot({ colorScheme = 'dark', viewport = { width: 1440, height: 900 }, reducedMotion = false } = {}) {
@@ -71,8 +72,8 @@ async function boot({ colorScheme = 'dark', viewport = { width: 1440, height: 90
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
     localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
-    localStorage.setItem('nebflow_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
-    localStorage.setItem('neblink_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+    if (!localStorage.getItem('stand_canvas_tabs')) localStorage.setItem('stand_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+    if (!localStorage.getItem('nebflow_canvas_tabs')) localStorage.setItem('nebflow_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
   });
   /* 上下文级路由：主窗 + 独立卡窗共享同一套 API/WS mock（同源同内容）。 */
   await ctx.route('**/api/**', (r) => r.fulfill({ status: 404, json: {} }));
@@ -184,6 +185,20 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
   ok('CW1-2 卡窗模式在挂：body.card-window + state.cardWindowMode',
     await popup.evaluate(() => document.body.classList.contains('card-window')) &&
     (await popup.evaluate(() => window.__canvasDeck.state().cardWindowMode)) === true);
+  const popControl = await popup.evaluate(() => ({
+    exists: !!document.querySelector('.canvas-pop-btn'),
+    display: getComputedStyle(document.querySelector('.canvas-pop-btn')).display,
+    mergeVisible: getComputedStyle(document.querySelector('.canvas-merge-btn')).display !== 'none',
+  }));
+  ok('CW1-2a 卡窗胶囊隐藏弹出按钮、保留合并按钮', !popControl.exists || popControl.display === 'none', JSON.stringify(popControl));
+  ok('CW1-2b Ask FAB、标题胶囊与 popout 按钮阴影一致', await page.evaluate(() => {
+    const btn = document.querySelector('.canvas-pop-btn');
+    const ask = document.querySelector('.ask-fab');
+    const capsule = document.querySelector('.canvas-header');
+    return !!btn && !!ask && !!capsule &&
+      getComputedStyle(btn).boxShadow === getComputedStyle(ask).boxShadow &&
+      getComputedStyle(btn).boxShadow === getComputedStyle(capsule).boxShadow;
+  }));
   const ptxt = await paneText(popup, BRAVO);
   ok('CW1-3 卡窗真容：readFile 通路渲染文件内容（非骨架）', ptxt.includes('bravo mock body v1'),
     ptxt.slice(0, 60));
@@ -299,6 +314,29 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
     s5.tabCount === sSnap.tabCount && s5.activeId === sSnap.activeId &&
     JSON.stringify(s5.tabs) === JSON.stringify(sSnap.tabs));
   ok('R0 主文档零 JS 错误（CW4）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+/* ════════ CW7 多卡广播隔离：同源 BroadcastChannel 必须按 tabId 定向 ════════ */
+{
+  const { ctx, page } = await boot();
+  await openFile(page, ALPHA);
+  await openFile(page, BRAVO);
+  const bravo = await waitPopup(ctx, () => clickHeaderPop(page));
+  await openFile(page, '/tmp/cw-fixture/charlie.md');
+  const charlie = await waitPopup(ctx, () => clickHeaderPop(page));
+  await sleep(500);
+  // 合并 bravo 时，广播到同源的 charlie 卡窗也会收到；它必须因 tabId 不匹配而留存。
+  await page.evaluate((p) => {
+    const entry = [...document.querySelectorAll('.canvas-tab')].find((e) => e.textContent.includes(p.split('/').pop()));
+    entry?.click();
+  }, BRAVO);
+  await sleep(200);
+  await clickHeaderPop(page);
+  await sleep(500);
+  ok('CW7-1 合并目标卡不关闭其他卡窗', bravo.isClosed() && !charlie.isClosed(),
+    `bravoClosed=${bravo.isClosed()} charlieClosed=${charlie.isClosed()}`);
+  await charlie.close();
   await ctx.close();
 }
 

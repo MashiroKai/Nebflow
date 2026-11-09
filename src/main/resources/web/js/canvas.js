@@ -4888,11 +4888,14 @@ function cardBcPost(m) {
 function cardChannelDispatch(m) {
   m = m || {};
     if (cardWindowMode) {
-      /* 卡窗侧 */
+      /* 卡窗侧：控制消息只作用于其目标卡窗。BroadcastChannel 是同源广播，
+       * 多个卡窗都会收到；不校验 tabId 会让合并/刷新一张卡误伤其它卡窗。 */
       if (m.kind === 'main-here') cardLastMainBeat = Date.now();
-      else if (m.kind === 'merge' && m.tabId) requestMergeSelf();   // 出窗动画照放（作者令 C 双向）
-      else if (m.kind === 'update' && m.tabId) cardWindowReread();
-      else if (m.kind === 'close-self' && m.tabId) window.close();
+      else if (m.tabId && m.tabId === currentCardTabId()) {
+        if (m.kind === 'merge') requestMergeSelf();
+        else if (m.kind === 'update') cardWindowReread();
+        else if (m.kind === 'close-self') window.close();
+      }
       return;
     }
   /* 主窗侧 */
