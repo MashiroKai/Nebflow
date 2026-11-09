@@ -35,9 +35,14 @@ import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 
 import scala.concurrent.duration.*
+import java.security.Security
 
 object GatewayMain extends IOApp:
   private val logger = NebflowLogger.forName("nebflow.gateway")
+
+  private[gateway] def configureDnsCacheTtl(): Unit =
+    Security.setProperty("networkaddress.cache.ttl", "30")
+    Security.setProperty("networkaddress.cache.negative.ttl", "5")
 
   // Phase 2 daemon plan §2.1: the legacy legacy-named pid file is retired —
   // the single pid authority is `<dataRoot>/.pid` (cli/ProcessManager), written
@@ -422,6 +427,7 @@ object GatewayMain extends IOApp:
    * gateway via run(Nil).
    */
   def run(args: List[String]): IO[ExitCode] =
+    configureDnsCacheTtl()
     args match
       case Nil =>
         // JDK baseline gate (2026-09-10, JDK-21 batch, B track): boot needs Java 21+.

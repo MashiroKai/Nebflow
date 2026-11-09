@@ -14,6 +14,11 @@ import munit.FunSuite
  */
 class GatewayMainArgsSpec extends FunSuite:
 
+  test("GatewayMain configures bounded positive and negative DNS cache TTLs"):
+    GatewayMain.configureDnsCacheTtl()
+    assertEquals(java.security.Security.getProperty("networkaddress.cache.ttl"), "30")
+    assertEquals(java.security.Security.getProperty("networkaddress.cache.negative.ttl"), "5")
+
   test("the incident command shape (--port 8097) fails fast with a non-zero exit"):
     val t0 = System.currentTimeMillis()
     val code = GatewayMain.run(List("--port", "8097")).unsafeRunSync()
