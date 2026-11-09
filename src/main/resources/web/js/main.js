@@ -1864,7 +1864,7 @@ onMessage('maxTokens', (msg, view) => {
 // --- AskUser / Permission ---
 onMessage('askUser', (msg, view) => {
   const sid = msg.sessionId;
-  if (sid) setSessionAttention(sid, true);
+  // AskUser is an interactive question, not an unread message arrival.
   // D6 批 F2: upsert the global pending mirror (requestId-keyed, idempotent —
   // live first-send and replayed snapshot frames both land here).
   // 附件位（本批）**刻意不进镜像**：`toEntry` 登记的字段面只服务待办条/徽标/跳转，

@@ -121,17 +121,17 @@
      *  旧行 = button.ob-compare-btn / span.ask-attachment-static；新行 =
      *  div.att-file（同源文件 chip，可点档带 .is-clickable + role=button）。
      *  读数选择器两代通吃；disabled/clickable 两代各取自己的信号源。 */
-    const ROW_SEL = '.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachment-static, .ask-attachments-wrap .ask-attachments-list > .att-file';
+    const ROW_SEL = '.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachment-static, .ask-attachments-wrap .ask-attachments-list > .att-file, .ask-attachments-wrap .ask-att-question-card';
     const rowClickable = (r) => (r.tagName === 'BUTTON')
       ? typeof r.onclick === 'function'
-      : r.classList.contains('is-clickable');
+      : (r.classList.contains('is-clickable') || r.classList.contains('ask-att-question-card'));
     const rowLocked = (r) => (r.tagName === 'BUTTON') ? !!r.disabled : r.getAttribute('aria-disabled') === 'true';
 
     window.__read = () => {
       const chat = chatElNow();
       const box = chat.querySelector('.option-box');
       const wrap = box ? box.querySelector('.ask-attachments-wrap') : null;
-      const rows = wrap ? [...wrap.querySelectorAll('.ob-compare-btn, .ask-attachment-static, .ask-attachments-list > .att-file')] : [];
+      const rows = wrap ? [...wrap.querySelectorAll('.ob-compare-btn, .ask-attachment-static, .ask-attachments-list > .att-file, .ask-att-question-card')] : [];
       const btnRow = box ? box.querySelector('.option-btn-row') : null;
       const kids = box ? [...box.children] : [];
       const qWrappers = box ? [...box.querySelectorAll('.option-q-wrapper')] : [];
@@ -199,7 +199,7 @@
      *  读数面 = window.__railCounts.nfFile（见 __pendingRestore 的轮询形态）。 */
     window.__callRowEntry = async (i) => {
       const box = chatElNow().querySelector('.option-box');
-      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-att-question-card')] : [];
       const row = rows[i];
       if (!row || typeof row.onclick !== 'function') return { dispatched: 0, detailIds: [], events: 0, reason: 'no-row-or-handler' };
       window.__events.length = 0;
@@ -227,7 +227,7 @@
       await settle();
       const readRows = () => {
         const box = chatElNow().querySelector('.option-box');
-        const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file')] : [];
+        const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file, .ask-attachments-wrap .ask-att-question-card')] : [];
         return {
           rows: rows.length,
           disabled: rows.map(rowLocked),
@@ -252,7 +252,7 @@
      *  「历史卡附件行可点」在**不改 `lockOptionBox` 本体**的前提下不可达。 */
     window.__forceEnableAndClick = async (i) => {
       const box = chatElNow().querySelector('.option-box');
-      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file')] : [];
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file, .ask-attachments-wrap .ask-att-question-card')] : [];
       const row = rows[i];
       if (!row) return { clicked: false, reason: 'no-row' };
       row.disabled = false;
@@ -296,7 +296,7 @@
         { project: last.project, nodeName: last.nodeName }, last.attachments);
       await settle();
       const box = chat.querySelector('.option-box');
-      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file')] : [];
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file, .ask-attachments-wrap .ask-att-question-card')] : [];
       const read = {
         boxes: chat.querySelectorAll('.option-box').length,
         rows: rows.length,
@@ -318,7 +318,7 @@
         }
         click = {
           dispatched: window.__railCounts.nfFile - nfBefore,
-          detailIds: [],
+          detailIds: window.__events.map(d => d && d.id),
           events: window.__events.length,
         };
       }

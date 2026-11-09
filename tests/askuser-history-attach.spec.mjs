@@ -186,13 +186,12 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(r.rows, '两件附件 ⇒ 两枚文件 chip').toBe(2);
     expect(r.wrapIsQWrapper, '承载块复用既有 .option-q-wrapper').toBe(true);
     expect(r.beforeBtnRow, '插位在 .option-btn-row 之前').toBe(true);
-    // ui-unification-20261103-askuser-attach 批：行形态换代（button 行 → 同源
-    // 文件 chip `div.att-file`，可点档 role=button）；全路径不当可见标签——
-    // 路径进 dataset.askAttPath（悬停 title = basename）。
-    expect(r.rowTags, '同源文件 chip（非假按钮）').toEqual(['DIV', 'DIV']);
+    // 本次改造：AskUser 问题附件使用 Pop 文件卡脸；全路径仍仅存于 dataset，
+    // title / 可见文件名均只显示 basename。
+    expect(r.rowTags, 'Pop file-card 卡片').toEqual(['DIV', 'DIV']);
     expect(r.rowPaths.every(t => t.startsWith('/tmp/nb-histatt-fixture/')), '全路径只进 dataset').toBe(true);
     expect(r.rowTitles.every(t => !t.includes('/')), '可见标签只给 basename').toBe(true);
-    expect(r.clickHandlerAttached, 'chip 可点档在位').toEqual([true, true]);
+    expect(r.clickHandlerAttached, 'Pop 文件卡点击入口在位').toEqual([true, true]);
     // attachment-thumb-unify 批（作者令 2026-11-05 12:57「输入框同款小图标/缩略图」）：
     // 来源标签从「每枚 chip 左上角 notch」收拢到附件区标题行一处（28px chip 装不下
     // 14px notch，且 notch 会盖住缩略帧上半 + 与下一行叠压）⇒ 件数=2 但标签=1。
@@ -216,7 +215,7 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(r.rowDisabled, '附件行豁免终态锁 ⇒ 仍可用').toEqual([false, false]);
     // 探针已从 WS pop.readFile 腿迁到票据轨（旧探针的 fileContent 应答被 explorer.js
     // 全局处理器重派 workspace-open-item 自动跳 Canvas = 作者报障机制根因）⇒ 零帧。
-    expect(r.sentFrames.filter(f => f === 'pop.readFile').length, '探针迁离 WS 轨 ⇒ 零 pop.readFile 帧').toBe(0);
+    expect(r.sentFrames.filter(f => f === 'pop.readFile').length, '权限探测与 Canvas 打开不发 pop.readFile 帧').toBe(0);
     // 探针在新轨有真实读数：两件附件 ⇒ 至少一次 nf-file 首字节探测（铸票合帧，≤1 次 mint）。
     // 探针链是异步的（模块 import + 铸票 + Range 取字节）⇒ 轮询等读数落账。
     await expect.poll(async () =>
@@ -299,7 +298,8 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(r.read.boxResolved, '交互卡未进终态锁（pending）').toBe(false);
     expect(r.read.disabled, '附件行未禁用 ⇒ 可点').toEqual([false]);
     expect(r.click.dispatched, '真点击 ⇒ 下载腿 nf-file 取回已发生（可点性实证）').toBeGreaterThanOrEqual(1);
-    expect(r.click.events, 'Canvas 面退役 ⇒ 零 workspace-open-item').toBe(0);
+    expect(r.click.events, 'Canvas 打开复用 Pop 单点，恰一次').toBe(1);
+    expect(r.click.detailIds).toEqual(['file:/tmp/nb-histatt-fixture/notes.md']);
     await context.close();
   });
 });
