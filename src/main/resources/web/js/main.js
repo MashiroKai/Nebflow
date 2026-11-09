@@ -4473,11 +4473,14 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   const chat = document.getElementById('chat');
   if (!inputArea || !chat || !window.ResizeObserver) return;
   const updateChatPadding = () => {
-    // offsetHeight covers all in-flow children (queue-bar + input-bar + the
-    // area's own 10px bottom padding). Absolutely-positioned children
-    // (voice-overlay, slash-dropdown) are excluded — they overlay the chat
-    // transiently above the bar, so they must not inflate the padding.
-    const inputHeight = inputArea.offsetHeight;
+    // Reserve the actual overlap with #chat, not the composer's full height:
+    // on mobile/keyboard viewports their bottom edges need not coincide. The
+    // rendered rect includes safe-area padding and fractional CSS pixels.
+    // Absolutely-positioned children (voice-overlay, slash-dropdown) remain
+    // excluded because they do not contribute to the composer's border box.
+    const chatRect = chat.getBoundingClientRect();
+    const inputRect = inputArea.getBoundingClientRect();
+    const inputHeight = Math.max(0, chatRect.bottom - inputRect.top);
     // Read the scroll state BEFORE the write (msgfix 批 · 作者 2026-09-19 睡前令):
     // growing the reserve pushes the whole content down by the delta, so a reading
     // taken *after* the write answers "is the user still near the bottom?" with the
@@ -4499,6 +4502,12 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   };
   const ro = new ResizeObserver(updateChatPadding);
   ro.observe(inputArea);
+  // A virtual keyboard / browser chrome can move the composer without changing
+  // its own size, so ResizeObserver alone will not refresh the scroll reserve.
+  // visualViewport also reports keyboard-driven viewport changes on mobile.
+  window.addEventListener('resize', updateChatPadding, { passive: true });
+  window.visualViewport?.addEventListener('resize', updateChatPadding, { passive: true });
+  window.visualViewport?.addEventListener('scroll', updateChatPadding, { passive: true });
   updateChatPadding();
 })();
 

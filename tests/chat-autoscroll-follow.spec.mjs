@@ -110,6 +110,10 @@ async function geo(page) {
       dist: Math.round(chat.scrollHeight - chat.scrollTop - chat.clientHeight),
       overflowY: cs.overflowY,
       lastRowBottomVsChat: last ? Math.round(last.getBoundingClientRect().bottom - chat.getBoundingClientRect().bottom) : null,
+      lastRowBottomVsInput: last ? Math.round(last.getBoundingClientRect().bottom - document.getElementById('input-area').getBoundingClientRect().top) : null,
+      inputHeight: Math.round(document.getElementById('input-area').getBoundingClientRect().height),
+      inputTop: Math.round(document.getElementById('input-area').getBoundingClientRect().top),
+      chatBottom: Math.round(chat.getBoundingClientRect().bottom),
       docScrollY: Math.round(window.scrollY),
       docScrollable: document.documentElement.scrollHeight > document.documentElement.clientHeight,
       pillHidden: pill ? pill.classList.contains('hidden') : null,
@@ -135,6 +139,7 @@ try {
   let g = await geo(page);
   console.log('R0 after history load:', JSON.stringify(g));
   ok('R0 history load pins to bottom (dist≤44)', g.dist <= 44, { dist: g.dist });
+  ok('R0 latest history row clears composer', g.lastRowBottomVsInput <= -2, { overlap: g.lastRowBottomVsInput });
 
   // ── 腿 1：live 流式（注入气泡 → thinking → textDelta 若干）──
   await inject(page, { type: 'user', sessionId: SID, injected: true, source: 'delegate', text: '委派任务：检查构建。', timestamp: Date.now(), sender: 'Nebula/nebflow', eventType: 'trigger' });
@@ -190,6 +195,11 @@ try {
   g = await geo(page);
   console.log('L4 scrolled-up leg:', JSON.stringify(g));
   ok('L4 scrolled-up: viewport NOT yanked (dist stays ~600)', g.dist > 300, { dist: g.dist });
+  // Height changes while the user reads history must not force-scroll to the bottom.
+  await page.locator('#input').fill('Long composer message\n'.repeat(8));
+  await sleep(250);
+  const resized = await geo(page);
+  ok('L4 composer resize keeps history position', resized.dist > 300, { before: g.dist, after: resized.dist, inputHeight: resized.inputHeight });
   ok('L4 scrolled-up: pill shows count', g.pillHidden === false && /1/.test(g.pillText || ''), { pillHidden: g.pillHidden, pillText: g.pillText });
 
   if (SHOTS_DIR) {
