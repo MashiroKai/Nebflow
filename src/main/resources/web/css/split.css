@@ -2910,6 +2910,8 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
    任意按下即拖动画布。光标/hand 语义随 pan-enabled 门（image.js hand 钮 /
    按住 Space 才挂类），默认态 cursor:default。 */
 .canvas-image-viewport {
+  /* A restrained light mat keeps dark line art readable without full white glare. */
+  background: #e8eaed;
   flex: 1;
   min-height: 0;
   width: 100%;

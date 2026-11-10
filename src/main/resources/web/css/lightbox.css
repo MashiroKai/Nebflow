@@ -35,6 +35,9 @@
 body.nf-lightbox-open { overflow: hidden; }
 
 .nf-lightbox-img {
+  /* Transparent pixels otherwise reveal the dark modal scrim and hide dark
+     artwork. A white image-only mat preserves alpha and readability in both themes. */
+  background: #fff;
   max-width: var(--nf-lb-fit-w);
   max-height: var(--nf-lb-fit-h);
   border-radius: var(--ds-radius-input);
@@ -93,6 +96,10 @@ body.nf-lightbox-open { overflow: hidden; }
   pointer-events: none;
 }
 .nf-lightbox-status.error { color: var(--color-error, #c94040); }
+
+@media (prefers-color-scheme: dark) {
+  .nf-lightbox-img { background: #e8eaed; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .nf-lightbox-img, .nf-lightbox-close { transition: none; }
