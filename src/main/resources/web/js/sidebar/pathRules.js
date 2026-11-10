@@ -15,7 +15,7 @@ import { mobileSheetBack } from '../mobile/popSheet.js';
 let renderSessionSidebar = null;
 function injectRenderSessionSidebar(fn) { renderSessionSidebar = fn; }
 
-/** Open rules editor modal for a folder — Nebflow standard modal. */
+/** Open rules editor modal for a folder — Stand standard modal. */
 let activeRulesFolderId = null;
 let activeRulesExists = false;
 function openRulesEditor(folderId, folderName) {

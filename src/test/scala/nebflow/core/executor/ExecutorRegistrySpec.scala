@@ -140,18 +140,23 @@ class ExecutorRegistrySpec extends CatsEffectSuite:
 
   // ── snapshot：内置面恒可用 ────────────────────────────────────────────
 
-  test("snapshot: built-in is detected+enabled+default even with hostile settings") {
-    val rows = ExecutorRegistry.snapshot(pathEnv = "", probeDirs = Nil)
-    val builtin = rows.find(_.id == "nebflow").get
-    assertEquals(builtin.detected, true)
-    assertEquals(builtin.enabled, true)
-    assertEquals(builtin.isDefault, true)
+  test("snapshot: built-in is detected+enabled+default under an unset config (hermetic temp root)") {
+    // 空配置临时根（不吃机器 nebflow.json——配置默认语义下 isDefault 跟配置走）。
+    withTempDataRoot { _ =>
+      IO {
+        val rows = ExecutorRegistry.snapshot(pathEnv = "", probeDirs = Nil)
+        val builtin = rows.find(_.id == "nebflow").get
+        assertEquals(builtin.detected, true)
+        assertEquals(builtin.enabled, true)
+        assertEquals(builtin.isDefault, true)
 
-    // 外部执行器在空 PATH 下未检测到,但 adapterReady 的仍标 enabled（可选,
-    // 派发时才因缺二进制失败——检测态与可选态是两个面）。
-    val zcode = rows.find(_.id == "zcode").get
-    assertEquals(zcode.detected, false)
-    assertEquals(zcode.enabled, true)
+        // 外部执行器在空 PATH 下未检测到,但 adapterReady 的仍标 enabled（可选,
+        // 派发时才因缺二进制失败——检测态与可选态是两个面）。
+        val zcode = rows.find(_.id == "zcode").get
+        assertEquals(zcode.detected, false)
+        assertEquals(zcode.enabled, true)
+      }
+    }
   }
 
   // ── setExecutorSection：白名单与值校验 ────────────────────────────────

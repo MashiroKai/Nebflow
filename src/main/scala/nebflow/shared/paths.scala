@@ -438,11 +438,11 @@ object PathUtil:
   end resolveDefaultDataRoot
 
   // ============================================================
-  // Config file — SINGLE ENTRY POINT (config-single-source batch, author
-  // ruling ②/③ 2026-11-05). Every reader AND writer of the config file goes
-  // through [[configJsonPath]]; no call site spells a config filename itself
-  // (a stray literal is how the file name and the runtime truth drifted apart
-  // in the first place).
+  // Config file — SINGLE ENTRY POINT (config-single-source batch). Every
+  // reader of the config file goes through [[configJsonPath]] and every
+  // writer through [[configJsonWritePath]]; no call site spells a config
+  // filename itself (a stray literal is how the file name and the runtime
+  // truth drifted apart in the first place).
   //
   // The historical name is a FACT, not a configuration — hardcoded here (same
   // rule as [[LegacyHomeDirName]]): deriving it from brand.conf would make the
@@ -452,54 +452,50 @@ object PathUtil:
   /** Historical config filename — READ-ONLY compatibility. Never written by this build. */
   val LegacyConfigFileName: String = "nebflow.json"
 
-  /** Suffix of the one-time migration backup (legacy file is renamed, not deleted). */
+  /** Suffix the doctor command uses when it backs up a corrupt config before reset. */
   val configMigrationBackupSuffix: String = ".bak"
 
-  private val configMigrateLog = NebflowLogger.forName("nebflow.config.migrate")
+  private val configCompatLog = NebflowLogger.forName("nebflow.config.migrate")
 
-  /** Serializes the one-time rename so two first-touch callers cannot migrate twice. */
-  private val configMigrateLock = new AnyRef
+  /** Gates the legacy-name notice to once per process (the read face runs on hot paths). */
+  private val legacyNoticeLogged = new java.util.concurrent.atomic.AtomicBoolean(false)
 
   /**
-   * THE config file path (`<dir>/<brand configFileName>`, i.e. `stand.json`).
+   * Config path for READS (`<dir>/<brand configFileName>`, i.e. `stand.json`).
    *
-   * Backward compatibility is mandatory (author ruling: 升级后配置静默丢失 is
-   * forbidden). Behavior:
-   *  1. canonical file exists                          → return it;
-   *  2. neither file exists                            → return the canonical
-   *     path (first-run initializers then create the NEW name);
-   *  3. only the legacy `nebflow.json` exists          → ONE-TIME migration:
-   *     byte-identical copy to the canonical name (temp file + move, so a
-   *     crash cannot leave a half-written config), legacy file renamed to
-   *     `nebflow.json.bak`, one log line. Then return the canonical path;
-   *  4. migration failed (read-only dir, disk full…)    → return the LEGACY
-   *     path and warn loudly — the engine keeps running on the old file
-   *     rather than silently starting from an empty config.
+   * Legacy-name compatibility is READ-ONLY and non-destructive:
+   *  1. the canonical `stand.json` exists  → it is the truth;
+   *  2. only the legacy `nebflow.json` exists → the legacy file is read in
+   *     place, with one info log (once per process). The engine NEVER renames,
+   *     copies, or otherwise touches the legacy file — completing the rename
+   *     is the operator's manual step;
+   *  3. neither file exists → the canonical path (first-run initializers
+   *     create the NEW name).
    *
-   * Idempotent and safe on every read/write path (the hot-read faces call it
-   * per access).
+   * Idempotent and side-effect-light on every read path (the hot faces call
+   * it per access).
    */
   def configJsonPath(dir: os.Path): os.Path =
     val canonical = dir / Branding.configFileName
-    if canonical == dir / LegacyConfigFileName then canonical // legacy brand value: nothing to rename
-    else if os.exists(canonical) then canonical
+    if canonical == dir / LegacyConfigFileName then canonical // legacy brand value: nothing to fall back from
     else
-      configMigrateLock.synchronized {
-        if os.exists(canonical) then canonical
-        else
-          resolveConfigJson(dir, Branding.configFileName) match
-            case p if p == canonical => canonical // neither file exists → first-run initializer
-            case _ => if migrateLegacyConfig(dir, canonical) then canonical else dir / LegacyConfigFileName
-      }
+      resolveConfigJson(dir, Branding.configFileName) match
+        case p if p == canonical => canonical // neither file exists → first-run initializer
+        case legacy =>
+          if legacyNoticeLogged.compareAndSet(false, true) then
+            configCompatLog.infoSync(
+              s"[config-compat] no ${canonical.last} found — reading legacy ${legacy.last} in place " +
+                s"(rename it to ${canonical.last} to complete the migration; writes already target ${canonical.last})"
+            )
+          legacy
 
   /**
-   * Pure pre-migration resolution (parameterized for the rebrand-compat spec):
+   * Pure resolution core (parameterized for the rebrand-compat spec):
    * "which file holds the truth RIGHT NOW", with no side effect.
    *
-   *  - the brand value IS the legacy name  → that file (nothing to rename);
+   *  - the brand value IS the legacy name  → that file (nothing to fall back from);
    *  - the brand-named file exists         → it;
-   *  - only the legacy file exists         → the legacy file (the caller is the
-   *    one that migrates it — see [[configJsonPath]]);
+   *  - only the legacy file exists         → the legacy file;
    *  - neither exists                      → the brand name (first-run write).
    *
    * Kept as its own function so the compat matrix stays testable without
@@ -511,46 +507,17 @@ object PathUtil:
     else if os.exists(dir / LegacyConfigFileName) then dir / LegacyConfigFileName
     else dir / fileName
 
-  /**
-   * One-time legacy→canonical rename. Returns true when the canonical file is
-   * the live config afterwards.
-   *
-   * Backup discipline: the legacy file is RENAMED to `nebflow.json.bak`
-   * (content preserved, never deleted); an existing backup is overwritten
-   * because it describes the same pre-migration state and the legacy file is
-   * the authoritative one at migration time.
-   */
-  private[shared] def migrateLegacyConfig(dir: os.Path, canonical: os.Path): Boolean =
-    val legacy = dir / LegacyConfigFileName
-    val backup = dir / (LegacyConfigFileName + configMigrationBackupSuffix)
-    try
-      val body = os.read(legacy)
-      // temp + move: an interrupted write can never truncate the new config
-      val tmp = dir / (canonical.last + ".migrating")
-      os.write.over(tmp, body, createFolders = true)
-      os.move(tmp, canonical, replaceExisting = true)
-      if os.exists(backup) then os.remove(backup)
-      os.move(legacy, backup)
-      configMigrateLog.infoSync(
-        s"[config-migration] ${legacy.last} → ${canonical.last} (backup kept as ${backup.last}; values unchanged, ${body.length} bytes)"
-      )
-      true
-    catch
-      case e: Exception =>
-        configMigrateLog.warnSync(
-          s"[config-migration] ${legacy.last} → ${canonical.last} FAILED (${e.getClass.getSimpleName}: ${e.getMessage}) — " +
-            s"continuing to serve the legacy file; fix the data root permissions and restart to complete the rename"
-        )
-        false
-
   /** Config path for READS — alias of the single entry (kept for call-site readability). */
   def configJsonReadPath(dir: os.Path): os.Path = configJsonPath(dir)
 
   /**
-   * Config path for WRITES — the same single entry. Sequential read-modify-write
-   * cycles land on the canonical file, so the rename completes on first write
-   * even when migration was deferred earlier in the process' life.
+   * Config path for WRITES — ALWAYS the canonical `stand.json`, even while
+   * reads are still served from the legacy file. A caller that reads the truth
+   * and writes the whole merged document back carries the legacy content over
+   * implicitly; a caller that writes a skeleton after an `exists` check must
+   * run that check against the READ face, never this one — a skeleton on the
+   * canonical name would shadow a live legacy config.
    */
-  def configJsonWritePath(dir: os.Path): os.Path = configJsonPath(dir)
+  def configJsonWritePath(dir: os.Path): os.Path = dir / Branding.configFileName
 
 end PathUtil

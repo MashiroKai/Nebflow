@@ -70,7 +70,7 @@ private[cli] object SecretsUsage extends CliSubcommand:
             "",
             s"The store: $storePath — one owner-only (0600) file per secret.",
             "Create: settings · secrets panel, or an AskUserQuestion secret question.",
-            "Consume: \"$(cat <location>)\" inside a sub-shell, or $VARIABLE when allowlisted (nebflow.json secrets.inject).",
+            "Consume: \"$(cat <location>)\" inside a sub-shell, or $VARIABLE when allowlisted (stand.json secrets.inject).",
             "This command never prints a value."
           )
         )

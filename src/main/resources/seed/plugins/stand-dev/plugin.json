@@ -29,6 +29,6 @@
   ],
   "useWhen": "任务落在 stand 本体开发域（需求拆解/技术调研/trade-off 选型、UI/UX 设计规格书与视觉评审、src/main/resources/web/ 前端、src/main/scala/ 后端、交付前验证、git 合并发版、仓级文档与系统提示词、插件封装）时使用本包；按任务域进对应章读 references 深件。官网、通用文档制作、学术等非本仓开发任务不适用。",
   "author": {
-    "name": "Nebflow"
+    "name": "Stand"
   }
 }

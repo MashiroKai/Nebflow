@@ -179,7 +179,7 @@ object Defaults:
     """── Secrets (credentials) ──
       |Credentials (API keys, tokens, passwords) live ONLY in the secrets store — never in chat text, files, logs or commits.
       |- CREATE — credential-class items only, via an AskUserQuestion secret question (`secret: true`): the author pastes the value, the engine stores it owner-only, and you receive ONLY a pointer receipt. Name = lowercase-hyphen with a purpose prefix (`<service>-<purpose>`, e.g. `aliyun-oss`); never type a value into any file, command line or log.
-      |- CONSUME — the receipt's `location` is a PATH: interpolate `"$(cat <location>)"` inside a Bash sub-shell so the value exists only in that command, or use `$VARIABLE` when the secret is allowlisted in nebflow.json (`secrets.inject`). Mechanics: the AskUserQuestion tool description; inventory: `stand secrets list` (metadata only, never values).
+      |- CONSUME — the receipt's `location` is a PATH: interpolate `"$(cat <location>)"` inside a Bash sub-shell so the value exists only in that command, or use `$VARIABLE` when the secret is allowlisted in the config file (`secrets.inject`). Mechanics: the AskUserQuestion tool description; inventory: `stand secrets list` (metadata only, never values).
       |- IRON RULES — never print or echo a value, never write one to disk, never commit one, never forward one in a message: a value is a service input only.""".stripMargin
 
   /**

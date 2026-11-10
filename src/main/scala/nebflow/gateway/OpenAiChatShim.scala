@@ -38,7 +38,7 @@ import nebflow.shared.{
  * point: the in-tree face REQUIRES both, OpenAI's format has neither, and the
  * shim is forbidden from inventing a placeholder identity (same-family
  * prohibition as `NodeTools.scala:3512-3521`). The conservative form is
- * implemented: both must be supplied by the caller as Nebflow extension fields
+ * implemented: both must be supplied by the caller as Stand extension fields
  * on the request body; absent/empty ⇒ explicit 400. See the batch report's
  * "sessionId/agentId disposition" section for the alternatives and their cost.
  */
@@ -149,7 +149,7 @@ object OpenAiChatShim:
   )
 
   /**
-   * `session_id` / `agent_id`: Nebflow extensions to the OpenAI body (OpenAI's
+   * `session_id` / `agent_id`: Stand extensions to the OpenAI body (OpenAI's
    * format carries no session/agent identity). Required — see the object doc.
    */
   private def readExtension(

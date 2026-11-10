@@ -93,7 +93,7 @@ object FriendMessageTool extends Tool:
       "configuration, so nothing was sent and nothing was queued. The device leg is unaffected — " +
       "use `device:<deviceName|deviceId>` to move text or files to another of the user's machines. " +
       "The friends feature is open by default — this instance was explicitly re-sealed via " +
-      "\"features\": { \"friends\": false } in nebflow.json; remove that key (or set it to true), " +
+      "\"features\": { \"friends\": false } in the config file; remove that key (or set it to true), " +
       "restart the instance, and the friend/group/local targets work again. Until then every " +
       "friend/group/local call returns this error."
 

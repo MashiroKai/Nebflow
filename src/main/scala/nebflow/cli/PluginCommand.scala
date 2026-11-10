@@ -198,7 +198,7 @@ object PluginCommand extends CliCommand:
                   else s"v$inst"
                 s"  $name  ($ver, $state)$mark  ← $src"
               }
-              if lines.isEmpty then CliResult.text("No source-managed plugins declared (nebflow.json → plugins.sources)")
+              if lines.isEmpty then CliResult.text("No source-managed plugins declared (stand.json → plugins.sources)")
               else CliResult.Text(s"Plugin sources ($updatable update(s) available):" :: lines)
           }
 

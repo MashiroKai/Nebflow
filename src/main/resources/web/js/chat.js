@@ -1,4 +1,4 @@
-// chat.js — Chat rendering module for Nebflow
+// chat.js — Chat rendering module for Stand
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';

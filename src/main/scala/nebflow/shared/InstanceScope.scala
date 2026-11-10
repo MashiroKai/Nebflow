@@ -64,7 +64,7 @@ object InstanceScope:
     envPortName: String,
     envPort: Option[String],
     configPort: Option[Int],
-    sourceName: String, // 配置文件名，仅用于文案（nebflow.json）
+    sourceName: String, // config file name, error copy only
     brandDefaultPort: Int,
     root: Path,
     overridden: Boolean

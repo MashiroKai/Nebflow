@@ -5,13 +5,14 @@ import io.circe.parser.parse
 import munit.FunSuite
 
 /**
- * config-single-source batch (author rulings ②③④ 2026-11-05) — the parts that
- * live in `nebflow.shared`: the config-file rename/migration single entry point
- * and the model-level→provider-level unavailable-window convergence.
+ * Config file single entry point (`nebflow.shared` face): the brand-named
+ * config file (`stand.json`) is the only truth reads prefer and the only name
+ * writes ever target; a legacy-named file is served IN PLACE when it is the
+ * only one present (non-destructive compat). Also pins the model-level →
+ * provider-level unavailable-window convergence.
  *
- * Assertion discipline: every assertion is mechanical and names the ruling it
- * pins. Paths are parameterized (`configJsonPath(dir)`) so the spec never reads
- * or writes the real HOME.
+ * Assertion discipline: every assertion is mechanical. Paths are parameterized
+ * (`configJsonPath(dir)`) so the spec never reads or writes the real HOME.
  */
 class ConfigSingleSourceSpec extends FunSuite:
 
@@ -25,49 +26,58 @@ class ConfigSingleSourceSpec extends FunSuite:
       |  "fleet": {"x": 1}
       |}""".stripMargin
 
-  // ── A. 文件改名 + 一次性迁移（裁定②）────────────────────────────────────
+  // ── A. Legacy-name read fallback (non-destructive; writes always canonical) ──
 
-  test("A1: 只有旧 nebflow.json ⇒ 自动生成 stand.json，值一一相等（逐字节）") {
-    val dir = tmpDir("migrate")
+  test("A1: only legacy nebflow.json -> read face serves it IN PLACE (never renamed, no .bak, no stand.json created)") {
+    val dir = tmpDir("legacy")
     os.write(dir / "nebflow.json", sampleConfig)
     val path = PathUtil.configJsonPath(dir)
-    assertEquals(path.last, Branding.configFileName, "单一入口必须返回品牌文件名")
-    assertEquals(path.last, "stand.json")
-    assert(os.exists(path), "迁移后 stand.json 必须存在")
-    assertEquals(os.read(path), sampleConfig, "迁移后配置值必须与旧文件逐字节相等（禁止静默丢失）")
-    assert(os.exists(dir / "nebflow.json.bak"), "旧文件必须留 .bak 备份，不得删除")
-    assert(!os.exists(dir / "nebflow.json"), "旧文件必须改名（否则两个真相并存）")
+    assertEquals(path, dir / "nebflow.json", "read face must resolve to the legacy file")
+    assertEquals(os.read(path), sampleConfig, "legacy file must be served byte-identical")
+    assert(os.exists(dir / "nebflow.json"), "legacy file must stay in place (never renamed or copied)")
+    assert(!os.exists(dir / "nebflow.json.bak"), "no .bak may be created")
+    assert(!os.exists(dir / Branding.configFileName), "a read must not create stand.json")
   }
 
-  test("A2: 迁移幂等 + 已存在 stand.json 时不被旧文件覆盖") {
-    val dir = tmpDir("idempotent")
-    os.write(dir / "nebflow.json", sampleConfig)
-    val first = PathUtil.configJsonPath(dir)
-    os.write.over(first, """{"llm":{"providers":{}}}""")
-    val second = PathUtil.configJsonPath(dir)
-    assertEquals(second, first)
-    assertEquals(os.read(second), """{"llm":{"providers":{}}}""", "旧 .bak 不得回灌覆盖新文件")
+  test("A2: only stand.json exists -> it is the truth") {
+    val dir = tmpDir("canonical")
+    os.write(dir / Branding.configFileName, sampleConfig)
+    val path = PathUtil.configJsonPath(dir)
+    assertEquals(path, dir / Branding.configFileName)
+    assertEquals(os.read(path), sampleConfig)
   }
 
-  test("A3: 两文件都不存在 ⇒ 返回新文件名（首次创建走新名）") {
+  test("A3: both files exist -> stand.json wins, legacy file untouched") {
+    val dir = tmpDir("both")
+    os.write(dir / "nebflow.json", """{"stale":"legacy"}""")
+    os.write(dir / Branding.configFileName, sampleConfig)
+    val path = PathUtil.configJsonPath(dir)
+    assertEquals(path, dir / Branding.configFileName, "canonical file wins when present")
+    assertEquals(os.read(dir / "nebflow.json"), """{"stale":"legacy"}""", "legacy file must not be touched")
+  }
+
+  test("A4: neither file exists -> canonical name returned, read face creates nothing") {
     val dir = tmpDir("fresh")
     val path = PathUtil.configJsonPath(dir)
     assertEquals(path.last, "stand.json")
-    assert(!os.exists(path), "读面不得凭空造文件")
+    assert(!os.exists(path), "the read face must not create files")
   }
 
-  test("A4: 读写两面是同一个路径（不许两个真相）") {
-    val dir = tmpDir("samepath2")
+  test("A5: write face is ALWAYS the canonical stand.json (legacy-only state included)") {
+    val dir = tmpDir("writeface")
     os.write(dir / "nebflow.json", sampleConfig)
     assertEquals(
       PathUtil.configJsonWritePath(dir),
-      PathUtil.configJsonReadPath(dir),
-      "写面必须落到读面（迁移后）同一文件"
+      dir / Branding.configFileName,
+      "writes must target the canonical name even while reads fall back to the legacy file"
     )
-    assertEquals(PathUtil.configJsonWritePath(dir).last, "stand.json")
+    // Intentional legacy-only asymmetry: read face = legacy file, write face =
+    // canonical; read-modify-write callers carry the legacy content over on
+    // their first write (copy-on-first-write convergence).
+    assert(PathUtil.configJsonReadPath(dir) != PathUtil.configJsonWritePath(dir))
   }
 
-  test("A5: 读旧名配置文件的调用点零改动仍读得到（向后兼容）") {
+  test("A6: legacy-only config stays readable through the read face (back-compat)") {
     val dir = tmpDir("legacyread")
     os.write(dir / "nebflow.json", sampleConfig)
     assertEquals(os.read(PathUtil.configJsonReadPath(dir)), sampleConfig)

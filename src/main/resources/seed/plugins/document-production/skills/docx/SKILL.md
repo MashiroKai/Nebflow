@@ -200,7 +200,7 @@ See `references/chart-templates.md`.
 - **defusedxml**: Secure XML parsing
 - **python-docx**: Simple comment operations
 
-## 交付与引用（Nebflow 口径）
+## 交付与引用（Stand 口径）
 
 产出件即交付件：在正文里用**绝对路径**点到每个最终文件（一处一次），不另列文件名清单，也不重复贴正文内容。
 

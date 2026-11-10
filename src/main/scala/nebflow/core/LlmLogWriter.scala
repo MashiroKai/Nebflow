@@ -722,7 +722,7 @@ object LlmLogWriter:
     catch case e: Exception => logger.warnSync(s"LlmLogWriter.appendJsonl: ${e.getMessage}")
   }
 
-  // ── Conversion: Nebflow types → Anthropic-style JSON ────────────────
+  // ── Conversion: Stand types → Anthropic-style JSON ────────────────
 
   private def messageToJson(msg: Message): Json =
     val content = msg.content match

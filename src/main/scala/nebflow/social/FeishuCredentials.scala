@@ -101,7 +101,7 @@ object FeishuCredentials:
       case None =>
         Left(
           Failure.Missing(
-            s"no Feishu credential found: neither ${root}/nebflow.json → socialChannels.channels.feishu.fields " +
+            s"no Feishu credential found: neither ${root}/${nebflow.shared.Branding.configFileName} → socialChannels.channels.feishu.fields " +
               s"nor ${legacyPath(root)} (flat appId/appSecret) is present"
           )
         )
@@ -138,14 +138,14 @@ object FeishuCredentials:
   end fromLegacyFile
 
   /**
-   * ① The in-repo schema, AUTHORITATIVE: `nebflow.json →
-   *  socialChannels.channels.feishu.fields`. `app_id` is inline, `app_secret`
+   * ① The in-repo schema, AUTHORITATIVE: the config file's
+   *  `socialChannels.channels.feishu.fields`. `app_id` is inline, `app_secret`
    *  is a `_ref` path pointing into `secrets/`. An entry whose fields carry
    *  neither `app_id` nor `app_secret_ref` returns `None` — it holds no
    *  credential information, so the legacy fallback may speak.
    */
   private def fromSocialChannelsSchema(root: os.Path): Option[Either[Failure, Credential]] =
-    val cfg = PathUtil.configJsonWritePath(root)
+    val cfg = PathUtil.configJsonReadPath(root)
     if !Files.exists(cfg.toNIO) then None
     else
       readJson(cfg) match
@@ -234,7 +234,7 @@ object FeishuCredentials:
         if v.isEmpty then None else Some(v)
       catch case _: Exception => None
     val fields = Option(
-      PathUtil.configJsonWritePath(root)
+      PathUtil.configJsonReadPath(root)
     ).filter(p => java.nio.file.Files.exists(p.toNIO)).flatMap { cfg =>
       readJson(cfg).toOption.map { j =>
         j.hcursor

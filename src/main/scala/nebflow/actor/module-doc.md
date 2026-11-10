@@ -13,7 +13,7 @@
 | 文件 | 说明 |
 |---|---|
 | [`ActorContext.scala`](ActorContext.scala) | Capabilities available to an actor during message processing. The actor uses this to: |
-| [`ActorPath.scala`](ActorPath.scala) | Address of an actor in the Nebflow actor system. Format: nebflow://device/segment1/segment2/... |
+| [`ActorPath.scala`](ActorPath.scala) | Address of an actor in the Stand actor system. Format: nebflow://device/segment1/segment2/... |
 | [`ActorRef.scala`](ActorRef.scala) | Public handle for sending messages to an actor. Two operations: |
 | [`ActorSystem.scala`](ActorSystem.scala) | The actor system — registry + message routing + death watch. spawn creates local actors (Queue + Fiber + Behav |
 | [`AgentCommand.scala`](AgentCommand.scala) | Restart level for supervisor-triggered agent restart. |

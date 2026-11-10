@@ -71,7 +71,7 @@ case class ToolContext(
    */
   requestId: Option[String] = None,
   /**
-   * True when this call originates from another Nebflow instance via remote-exec.
+   * True when this call originates from another Stand instance via remote-exec.
    * Disables BashTool's auto-background mechanism — the caller manages lifecycle.
    */
   isRemoteExec: Boolean = false,

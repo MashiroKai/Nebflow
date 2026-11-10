@@ -13,7 +13,7 @@ engineering-methods 是工程方法论包：节点获得两块「怎么想清楚
 
 ## 2. 安装与启用
 
-- **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
+- **安装**：本包属 Stand seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
 - **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（需求拆解、技术调研、方案对比、trade-off 选型、架构设计、并行调研、文献调研、事实核查等），派发时两份 SKILL.md 全文注入节点。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/engineering-methods/revoke` / `nebflow plugin revoke engineering-methods`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载；新内容对新派发即刻生效）。

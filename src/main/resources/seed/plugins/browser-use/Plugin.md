@@ -15,7 +15,7 @@ browser-use 是网页交互、持久登录会话与论文下载包：节点用�
 
 ## 2. 安装与启用
 
-- **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
+- **安装**：本包属 Stand seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
 - **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（登录态/SSO 平台操作、验证码人工配合、校园网论文下载、批量 PDF 下载、反爬拦截识别、网页/前端功能测试、复现页面 bug、截图取证、UI 验收等），派发时把各 SKILL.md 全文注入节点。
 - **运行时自备**：脚本依赖 playwright 包（不依赖其浏览器——attach 本机 Chrome，免下载 chromium）。首次使用按脚本报错提示执行一次 bootstrap（装到用户目录运行时区，不进插件包、不进仓库）。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/browser-use/revoke` / `nebflow plugin revoke browser-use`。

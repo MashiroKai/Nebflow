@@ -79,12 +79,14 @@ class RebrandCompatSpec extends FunSuite:
     assertEquals(PathUtil.resolveConfigJson(tmp, "neblink.json"), tmp / "neblink.json")
   }
 
-  test("configJsonReadPath/WritePath: config-single-source 批后品牌名 = stand.json（含迁移）") {
-    // 2026-11-05 config-single-source 批（作者裁定②）：brand.conf 的
-    // configFileName 从历史名 nebflow.json 改为 stand.json。历史名保持
-    // **只读兼容**——只有旧文件时读面经一次性迁移（内容逐字节搬运 + 旧文件
-    // 改名 .bak）后返回新名，故读写两面恒同一文件。迁移矩阵的断言在
-    // ConfigSingleSourceSpec（A1-A5），此处只钉当前品牌取值。
+  test("configJsonReadPath/WritePath: brand name = stand.json on an empty dir") {
+    // brand.conf's configFileName moved off the historical nebflow.json. The
+    // historical name stays READ-ONLY compatible: a legacy-only dir resolves
+    // the read face to the legacy file in place (never renamed; one info
+    // line), while the write face is always the canonical name — so on an
+    // empty dir both faces agree (first-run initializers create the new
+    // name). The fallback matrix assertions live in ConfigSingleSourceSpec
+    // (A1-A6); this pins the current brand value.
     val dir = os.temp.dir(prefix = "rebrand-cfg")
     assertEquals(PathUtil.configJsonReadPath(dir), dir / "stand.json")
     assertEquals(PathUtil.configJsonWritePath(dir), dir / "stand.json")

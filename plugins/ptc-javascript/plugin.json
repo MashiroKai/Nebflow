@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "PTC 模式 JavaScript 承载件——节点获得 ptc_run / ptc_run_rw：模型写 JavaScript 代码（ES2022，**无类型转译**——TS 注解会 PTC_SYNTAX）编排工具调用（node 权限模型限定 fs + 网络面 patch），tools.* 经执行器以 MCP client 转调宿主工具 server（标准 MCP）。返回 stdout、完成值、逐次调用台账、四类错误分类；写能力仅 ptc_run_rw 给。用于 ≥2 次工具调用的循环/分支编排，不适用于单次工具调用与无工具任务的问答。前置 node≥20。内含 skills：ptc-javascript（请求面、绑定形状、错误判读、排障）。",
   "author": {
-    "name": "Nebflow"
+    "name": "Stand"
   },
   "keywords": [
     "ptc",

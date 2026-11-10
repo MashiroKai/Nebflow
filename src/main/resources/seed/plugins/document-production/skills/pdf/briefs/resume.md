@@ -150,7 +150,7 @@ doc = SimpleDocTemplate(
     leftMargin=1.5*cm, rightMargin=1.5*cm,
     topMargin=1.5*cm, bottomMargin=1.5*cm,
     title='Resume - Your Name',
-    author='Nebflow', creator='Nebflow'
+    author='Stand', creator='Stand'
 )
 
 story = []

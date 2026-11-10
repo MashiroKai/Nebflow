@@ -62,12 +62,13 @@ object SecretInjection:
   val MaxInjectBytes: Int = 64 * 1024
 
   /**
-   * Load the allowlist from `nebflow.json`. Fail-safe: an absent file, an
+   * Load the allowlist from the config file (`stand.json`, legacy-name
+   * fallback applies). Fail-safe: an absent file, an
    * unparseable file, or a malformed section all read as [[empty]] — "no
    * injection".
    */
   def load(dataRoot: os.Path): Config =
-    val p = nebflow.shared.PathUtil.configJsonWritePath(dataRoot)
+    val p = nebflow.shared.PathUtil.configJsonReadPath(dataRoot)
     if !Files.exists(p.toNIO) then empty
     else
       try

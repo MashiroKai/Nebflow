@@ -551,7 +551,7 @@ These CSS properties **silently break** in Playwright's PDF renderer:
 After generating any Playwright PDF, **verify every page has content** (pypdf text extraction, check non-empty).
 
 ### PDF Metadata (all briefs)
-ALL PDFs must have: Title, Author (default "Nebflow"), Creator, Subject.
+ALL PDFs must have: Title, Author (default "Stand"), Creator, Subject.
 
 ### Delivery Summary (all briefs)
 Report to user: file path, size, page count. Academic adds word/image count. Creative adds per-page verification.
@@ -580,7 +580,7 @@ env.fix                      # Auto-install missing
 # Quality
 code.sanitize <script>       # Sanitize forbidden Unicode
 content.sanitize <file> [--apply]  # Fix content issues (CJK, encoding)
-meta.brand <pdf>             # Add Nebflow metadata
+meta.brand <pdf>             # Add Stand metadata
 font.check <pdf>             # Scan for missing glyphs
 toc.check <pdf>              # Validate TOC
 
@@ -929,7 +929,7 @@ Run `pdf_qa.py` after generating a PDF. It auto-detects: metadata completeness, 
 - [ ] **No debug output in content**: Console logs, file paths, generation timestamps, tool names, or error messages must never appear in the PDF body
 - [ ] **Clean metadata only**: PDF metadata (author, title, subject) should reflect the document content, not the generation process
 
-## 交付与引用（Nebflow 口径）
+## 交付与引用（Stand 口径）
 
 产出件即交付件：在正文里用**绝对路径**点到每个最终文件（一处一次），不另列文件名清单，也不重复贴正文内容。
 

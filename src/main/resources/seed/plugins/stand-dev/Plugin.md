@@ -17,7 +17,7 @@ stand-dev 是 **stand 本体开发统一知识包**（2026-10-31 作者令「开
 
 ## 2. 安装与启用
 
-- **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发（默认预装集成员），无需手工安装。
+- **安装**：本包属 Stand seed 官方分发，随实例 seed mirror 自动下发（默认预装集成员），无需手工安装。
 - **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（需求拆解/技术调研/方案对比、写设计规格书/视觉评审、改 stand 前端/后端、交付前验证、合并发版、写文档/提示词、封装插件等），分配时注入本文件（Plugin.md），SKILL.md 与 references 为按需查阅件。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/stand-dev/revoke` / `nebflow plugin revoke stand-dev`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载；新内容对新派发即刻生效）。

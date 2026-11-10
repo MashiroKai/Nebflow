@@ -96,7 +96,7 @@ object SleepPollGuard:
   /** 首犯回执警告（附在正常结果首部；说出错在哪 + 期望 + 修法）。 */
   def warningText(sleepSec: Long): String =
     val threshold = Defaults.SleepPollThresholdSec
-    s"""⚠ [sleep-poll guard] This command contains a foreground `sleep ${sleepSec}s` (threshold: ${threshold}s). Sleeping/polling to wait is FORBIDDEN in Nebflow: background tasks notify on completion. Correct pattern: run the long work with Bash `run_in_background: true`, then END YOUR TURN — the completion notification wakes this session with the output automatically. Executed this time; further sleep-poll commands above the threshold will be rejected.""".stripMargin
+    s"""⚠ [sleep-poll guard] This command contains a foreground `sleep ${sleepSec}s` (threshold: ${threshold}s). Sleeping/polling to wait is FORBIDDEN in Stand: background tasks notify on completion. Correct pattern: run the long work with Bash `run_in_background: true`, then END YOUR TURN — the completion notification wakes this session with the output automatically. Executed this time; further sleep-poll commands above the threshold will be rejected.""".stripMargin
 
   /** 升级拒绝文案（🔴 可描述错误：错在哪 / 期望什么 / 修法 / 实际值）。 */
   def rejectionText(count: Int, sleepSec: Long): String =

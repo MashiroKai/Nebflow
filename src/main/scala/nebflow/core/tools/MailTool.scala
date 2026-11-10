@@ -110,7 +110,7 @@ object MailTool extends Tool:
       (if nebflow.core.FriendsSeal.isSealed then
          "files for another machine go via SendMessage's `device:` target — its friend/group/local " +
            "targets (including the local this-machine copy) are sealed (FRIENDS_SEALED) until the " +
-           "feature is unsealed (remove the `\"features\": {\"friends\": false}` key from nebflow.json " +
+           "feature is unsealed (remove the `\"features\": {\"friends\": false}` key from the config file " +
            "and restart)."
        else "files for another machine's user go via SendMessage.")
 

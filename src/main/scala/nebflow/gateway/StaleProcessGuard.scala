@@ -14,7 +14,7 @@ import nebflow.shared.Branding
  *
  * This guard is the kill-side policy: a process found listening on the
  * gateway port may be destroyed ONLY when its command line verifiably marks
- * it as a Nebflow gateway (a stale instance left over from a restart).
+ * it as a Stand gateway (a stale instance left over from a restart).
  * Anything else — python/node http servers, dev tools, ANY unidentifiable
  * process — is foreign: refuse startup loudly, kill nothing.
  *
@@ -37,7 +37,7 @@ import nebflow.shared.Branding
 object StaleProcessGuard:
 
   /**
-   * Command-line fragments that identify a Nebflow gateway process. A bare
+   * Command-line fragments that identify a Stand gateway process. A bare
    * "Main" would match foreign processes (`node main.js`, `SomeMain.py`) and
    * reintroduce the kill-anything hole — only full tokens qualify.
    */
@@ -154,8 +154,8 @@ object StaleProcessGuard:
   /**
    * The kill-side verdict for the processes listening on the gateway port.
    *
-   * Right(stale)  — verified Nebflow pids (self excluded): safe to destroy.
-   * Left(foreign) — at least one listener is NOT Nebflow: refuse startup and
+   * Right(stale)  — verified Stand pids (self excluded): safe to destroy.
+   * Left(foreign) — at least one listener is NOT Stand: refuse startup and
    *                 destroy NOTHING (not even verified stale pids — mixed
    *                 occupants mean the port is contested; booting into it
    *                 half-killed is worse than failing loudly).

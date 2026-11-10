@@ -13,7 +13,7 @@ import scala.concurrent.duration.*
 /**
  * Supervises a child agent actor. On crash (fiber termination), restarts the
  * child with exponential backoff. Mirrors Pekko's BackoffSupervisor pattern
- * but built on Nebflow's self-contained Actor framework.
+ * but built on Stand's self-contained Actor framework.
  *
  * The supervisor is an enhanced adapter: it receives AgentEvent messages from
  * the child (via replyTo), forwards completion/failure to the parent, and

@@ -642,7 +642,7 @@ object DaemonPanelSchema:
       else Right((None, None))
     else if !allowWeb then
       // Default-closed: the escape hatch needs an explicit nebflow.json switch.
-      Left("kind 'web' is disabled (set daemonPanel.allowWeb=true in nebflow.json to enable)")
+      Left("kind 'web' is disabled (set daemonPanel.allowWeb=true in stand.json to enable)")
     else
       (url, htmlFile) match
         case (Some(_), Some(_)) => Left("kind 'web' requires exactly one of url or htmlFile (both given)")

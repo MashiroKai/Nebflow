@@ -18,7 +18,7 @@ import nebflow.shared.*
  *
  * 大改后的形态（作者令）：**只填 `task` 与 `project`（选填）**——
  *   - 执行器 = 主 agent 动态选择（external-executors 批 #1225，S14 运行时半）：
- *     可选 `executor` 参数为唯一显式选择输入，缺省内置 `nebflow`；可用集 =
+ *     可选 `executor` 参数为唯一显式选择输入，缺省 = 内置执行器（[[ExecutorRegistry.DefaultId]]）；可用集 =
  *     [[ExecutorRegistry]] 检测面（GET /api/executors 快照）；不可用的显式
  *     选择 = 显式报错——不静默回落。
  *   - 工作目录 = `project` 挂载项目的 workspace；缺省 = 默认工作目录
@@ -36,7 +36,7 @@ import nebflow.shared.*
 object DelegateTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
-  /** 内置执行器 spawn 的 agent 定义名（builtin-merge 批：kernel+general ⇒ nebflow）。 */
+  /** 内置执行器 spawn 的 agent 定义名（builtin-merge 批：kernel+general ⇒ [[BuiltinAgents.ExecutorName]]）。 */
   val KernelAgentName = nebflow.core.entity.BuiltinAgents.ExecutorName
 
   /** 默认工作目录名（`project` 缺省时的工作座位）。 */
@@ -71,17 +71,16 @@ object DelegateTool extends Tool:
 
   val name = "Delegate"
 
-  // 模型可见文案（executor 选择反转——S14 运行时半，external-executors 批
-  // #1225 2026-10-06）。⚠ §16 待过目：本描述段为最小改写（终稿归 N3 ⑭），
-  // 语义 = 「executor 由主 agent 动态选择；缺省 nebflow」（增补任务书 3.1）。
+  // 模型可见文案。语义 = 「executor 由主 agent 动态选择；参数缺省 ⇒
+  // `executor.default` 的配置默认（未配置 ⇒ 内置执行器）」。
   val description =
-    """Delegate a task to a background executor — the built-in Nebflow agent (default) or an external CLI agent installed on this machine. It runs in the background and its result is delivered back to your session as a system message when it finishes.
+    """Delegate a task to a background executor — the built-in internal executor (default) or an external CLI agent installed on this machine. It runs in the background and its result is delivered back to your session as a system message when it finishes.
 
 **Parameters:**
 - `task` (required): self-contained brief — goal, constraints, absolute paths, exact commands/limits, and what "done" looks like. The executor starts with a clean context; the brief is its entire world.
 - `name` (optional): a short name for this batch — at most 12 characters, summarizing it in a glance (e.g. "液体玻璃批", "ask-mode修复"). It shows at the front of the batch's row in the background-agents panel, so the user can tell batches apart at a glance. Omit it and the panel falls back to the truncated task title. Longer values are clamped to 12 characters.
 - `project` (optional): name of a mounted project — the task then runs in that project's workspace. Omit it to run in the default general workspace.
-- `executor` (optional): which executor runs the task. You pick it dynamically per task; omit it for the built-in default (`nebflow`). The available set (with detected external CLIs) is listed in your "Available executors" prompt section. An unavailable pick fails explicitly — there is no silent fallback.
+- `executor` (optional): which executor runs the task. You pick it dynamically per task; omit it to use the configured default executor (`executor.default`); when unset or unusable, the built-in internal executor is used. The available set (with detected external CLIs) is listed in your "Available executors" prompt section. An unavailable pick fails explicitly — there is no silent fallback.
 - `mode` (optional): the execution form, and YOU pick it from the task context — no allocator and no model call decides this any more. `kernel` (the default when you omit the parameter) = minimal single-session executor with no orchestration tools; `dispatcher` = chain-orchestrating dispatcher (composes a per-delegate flow map via ChainWrite/NodeEdit, gets zero plugins itself, and its chain nodes run inside the dispatcher's seat and never create their own worktrees). Pass `dispatcher` yourself whenever the task is a multi-node chain. `auto` is REJECTED explicitly (the allocator was removed) — an omitted `mode` deterministically means `kernel`. Mode is a spawn-time lifetime property: changing it means re-dispatch.
 - `attachments` (optional): an array of ABSOLUTE paths of files on this machine to hand the delegate — the channel for images/documents the author gave you, so their content never has to be re-typed into the brief. Max **9 files** per dispatch, each up to **1024 MB = 1 GiB (1,073,741,824 bytes)**; the caps are the same authored numbers as Mail/FriendMessage (`AttachContract`) and exceeding them is an EXPLICIT error, never a silent truncation. Validation happens at dispatch time — a relative path, a missing path, a non-regular file (directory/device/pipe), an unreadable file or an over-limit file FAILS THE WHOLE DISPATCH and names the offending path; nothing is spawned. Every accepted file is copied into a stable per-dispatch directory (`<worktree>/.nebflow/attachments/<taskId>/` when the delegate sits in a worktree, otherwise `<dataRoot>/delegate-attachments/<taskId>/`) with its sha256 verified against the original, so the temporary upload area being cleaned up later cannot lose it — the originals are only READ, never moved or deleted. A `[附件清单 · attachments manifest]` section is then appended to the END of the brief (a fixed paragraph, distinct from your hand-written text; the paths you typed into `task` stay verbatim) listing per file: copy path + original path + MIME/type + image flag + byte count + sha256. Attachment bytes do NOT enter the delegate's context — it must `Read` the listed copy path. Images (PNG/JPG/JPEG/GIF/WEBP/BMP) come back from `Read` as vision-ready image content, so the delegate sees them directly; a single image above the 10 MiB Read vision cap is refused explicitly by `Read`, and the manifest says so — the delegate is told to report that instead of pretending. **Cross-device (a project that executes on another device) is DELIVERED, not refused**: the files are transferred to that device in verified chunks (the receiving engine re-computes every chunk digest and the whole-file sha256, which must equal the original exactly) into `<device workspace>/.nebflow/attachments/<taskId>/`, and the manifest then lists those DEVICE-side absolute paths (the dispatching machine's path is kept only as a provenance line, because it does not exist on that device). If the device is offline, refuses the write, runs out of disk, answers with a digest mismatch or runs an engine too old for the verified chunked channel, the whole dispatch FAILS and names the file and the reason — a device-leg dispatch is all-or-nothing exactly like the local one; it never degrades to "a path in the brief that nobody can open".
 - `worktree` (optional): the NAME of the delegate worktree this task runs in. **A task that writes files MUST pass it** — the value is the worktree name: `<worktreeRoot>/<name>` is created on branch `delegate/<name>` when that name does not exist yet, and the SAME tree is reused (never a second directory) when it does. **Omit it ONLY for read-only tasks** (pure search / audit / read-only verification / a report that does not change the repo): with no name no worktree is allocated at all and the delegate runs IN PLACE in the project workspace — it then shares that checkout with you and every other live session, so a write-task that omits the name will collide (two agents, one tree; the engine flags an in-place task that writes when it finishes). Parallel work must give each delegate its own name. Legacy targets still resolve as a second chance (an owning delegate id or an absolute worktree path) and the dispatch receipt states which rule hit.
@@ -94,7 +93,7 @@ object DelegateTool extends Tool:
 - The ack is not the result.
 - Landing discipline (KG audit ①, author ruling 2026-11-03): when the task produces knowledge documents (designs, audits, research, conclusions), state in the brief that they land in the project's REGISTRATION dir vault `<dataRoot>/projects/<project>/.stand/docs/` — next to `project.json`, NOT in the project workspace repo's `docs/` (Obsidian format: frontmatter + ≥1 wikilink); `reports/` is for pure process files (batch run reports) only. Validation command for the closing report: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <project>`.
 - **Limits:** No hard concurrency limit — in-flight delegates run concurrently.
-- **Safety**: Never directly signal or kill sbt/java/nebflow processes; read-only `ps` is fine. Only with explicit user authorization, higher-priority runtime/tool permission, verified instance/port/data root and trusted script, a guarded restart may use `~/.stand/bin/stand-restart.sh --canary` with compile, isolated canary, idle/observation and final idle checks intact. Check in-flight work; idle checks are not a guarantee. Never use `--hot`, `--force`, `--no-compile` or bypass safeguards. Otherwise stop and ask the user to run it manually; existing session instructions remain binding until replaced."""
+- **Safety**: Never directly signal or kill sbt/java engine processes; read-only `ps` is fine. Only with explicit user authorization, higher-priority runtime/tool permission, verified instance/port/data root and trusted script, a guarded restart may use `~/.stand/bin/stand-restart.sh --canary` with compile, isolated canary, idle/observation and final idle checks intact. Check in-flight work; idle checks are not a guarantee. Never use `--hot`, `--force`, `--no-compile` or bypass safeguards. Otherwise stop and ask the user to run it manually; existing session instructions remain binding until replaced."""
 
   def inputSchema = JsonObject.fromIterable(
     List(
@@ -115,7 +114,7 @@ object DelegateTool extends Tool:
         ),
         "executor" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional executor id — you pick dynamically per task (see the \"Available executors\" section). Omit for the built-in default \"nebflow\". An unavailable id fails explicitly; there is no silent fallback.".asJson
+          "description" -> "Optional executor id — you pick dynamically per task (see the \"Available executors\" section). Omit for the configured default executor (`executor.default`); when unset or unusable, the built-in internal executor is used. An unavailable id fails explicitly; there is no silent fallback.".asJson
         ),
         "worktree" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -229,8 +228,7 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}$attachmentBl
    * 双模式批（设计 §5.1/§5.7）：dispatcher 模式会话的座位纪律段（brief 装配单点
    * 注入；模型可见文案）。**9.19 纯编排口径重写批（2026-11-01 · 作者令）**：
    * 9.19 版 project dispatcher（tag `2026.9.19` 树 `seed/agents/project-dispatcher/
-   * system.md`；设计 [[docs/design/20261028_213056_delegate-dual-mode-redesign
-   * __delegate-nebflow-192d10a5.zh-CN.md]] §2 考古）的编排纪律 = 拆解/派发/收拢/
+   * system.md``）的编排纪律 = 拆解/派发/收拢/
    * 推进度，分发器**零亲自动手**——对照发现旧段只讲「编排四件用法」，而两模式
    * 共享的 delegate 面系统提示词（`BuiltinAgents.NebflowDelegatePrompt`）通篇
    * executor 框架（「executor, dispatcher and manager in one」「Simple work →
@@ -553,10 +551,9 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
     attachmentPaths: List[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    // 执行器选择反转（S14 运行时半，#1225）：显式 `executor` 参数是唯一选择
-    // 输入，缺省 nebflow；nebflow.json executor 块止读（⑫）。fail-closed：
-    // 不可用的显式选择 = 显式错误，零静默回落（DELEGATE_EXECUTOR_PENDING
-    // 墓碑由本批真通路替换——R2/R11）。
+    // 执行器选择：显式 `executor` 参数是唯一选择输入，参数缺省 ⇒ 配置默认
+    // （executor.default；未配置/不可用 ⇒ 内置执行器）。
+    // fail-closed：不可用的选择 = 显式错误，零静默回落。
     ExecutorRegistry.resolveRequested(input("executor").flatMap(_.asString)) match
       case Left(err) => IO.pure(Left(ToolError(err)))
       case Right(ExecutorRegistry.ResolvedSelection.Internal) =>
@@ -632,7 +629,7 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
         resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
       case None => IO.pure("")
 
-  /** 内置执行器腿（nebflow）：actor spawn ＋ BackoffSupervisor 监督（原路径）；远端路由 = 设备投递。 */
+  /** 内置执行器腿（[[ExecutorRegistry.DefaultId]]）：actor spawn ＋ BackoffSupervisor 监督（原路径）；远端路由 = 设备投递。 */
   private def internalSpawn(
     project: Option[String],
     task: String,

@@ -7,7 +7,7 @@ status: active
 last_verified: 2026-09-03
 ---
 
-# Website Frontend — Nebflow 官网前端开发域知识
+# Website Frontend — Stand 官网前端开发域知识
 
 ## 技术标准
 

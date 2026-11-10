@@ -52,7 +52,7 @@ Option Explicit
 ' ============================================================
 ' Module: [ModuleName]
 ' Purpose: [One-line description]
-' Author: Nebflow
+' Author: Stand
 ' Date: [YYYY-MM-DD]
 ' ============================================================
 

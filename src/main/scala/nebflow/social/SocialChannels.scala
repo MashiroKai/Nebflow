@@ -170,7 +170,7 @@ object SocialChannels:
   // ─────────────────────────── read side ───────────────────────────
 
   private def configPath(root: os.Path): os.Path =
-    PathUtil.configJsonWritePath(root)
+    PathUtil.configJsonReadPath(root)
 
   private def parseConfig(root: os.Path): Json =
     val p = configPath(root)
@@ -539,7 +539,7 @@ object SocialChannels:
 
   /**
    * Surgical `socialChannels.channels.<id>` rewrite: every other key of
-   * nebflow.json survives (same shape as PluginBlockPolicy's writer).
+   * the config file survives (same shape as PluginBlockPolicy's writer).
    *
    * 🔴 This writer is the ONLY producer of the `version:1` + `updatedAt`
    * (epoch-second) entry shape, and it used to be completely SILENT — the
@@ -572,10 +572,10 @@ object SocialChannels:
           val out = Json.fromJsonObject(
             rootJson.asObject.getOrElse(JsonObject.empty).add("socialChannels", nextSocial)
           )
-          // Restricted form (keyaudit-quickfix ①): nebflow.json carries provider
+          // Restricted form (keyaudit-quickfix ①): the config file carries provider
           // apiKeys — this writer replaces the whole file, so it must land 0600
           // too, or the next channel save would re-widen the namespace.
-          AtomicJson.writeSyncRestricted(p, out.noSpaces)
+          AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(root), out.noSpaces)
           logger.infoSync(
             s"socialChannels: channel '$id' config written (enabled ${previous.map(_.toString).getOrElse("<absent>")} -> ${next.map(_.toString).getOrElse("<absent>")})"
           )

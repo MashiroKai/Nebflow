@@ -1752,7 +1752,7 @@ class WebSocketRoutes(
   private def persistThinkingConfig(tc: ThinkingConfig): IO[Unit] =
     IO.blocking {
       // Read through the dual-read path (legacy fallback), write the brand
-      // name — the first write completes the config-file rename migration.
+      // name — reads may still be served from the legacy file, writes never are.
       val existing =
         if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
         else "{}"
@@ -1761,14 +1761,14 @@ class WebSocketRoutes(
         val updated = json.mapObject { obj =>
           obj.add("thinkingConfig", tc.asJson)
         }
-        // Restricted form (keyaudit-quickfix ①): nebflow.json carries provider
+        // Restricted form (keyaudit-quickfix ①): the config file carries provider
         // apiKeys — the file lands 0600 instead of the umask default 0644.
         AtomicJson.writeSyncRestricted(path, updated.spaces2)
       }
     }
 
   /**
-   * Persist freeze schedule to nebflow.json — targeted top-level write (照抄
+   * Persist freeze schedule to the config file — targeted top-level write (照抄
    * persistThinkingConfig 的 read-merge-write 语义，merge 纯函数在
    * FreezeSchedule.mergeIntoConfig 便于 B9 测试）。JSON 键名保留 "workSchedule"（前端契约）。
    * 冻结修复（2026-08-27）：错误上浮不吞——调用方持锁调用并负责失败回执。
@@ -1787,13 +1787,13 @@ class WebSocketRoutes(
     }
 
   /**
-   * Persist MCP server enabled state to nebflow.json — targeted field update.
+   * Persist MCP server enabled state to the config file — targeted field update.
    * 冻结修复（2026-08-27）：错误上浮不吞（同族 fail-loud）。调用方持锁。
    */
   private def persistMcpServerEnabled(serverId: String, enabled: Boolean): IO[Unit] =
     IO.blocking {
       // Read through the dual-read path (legacy fallback), write the brand
-      // name — the first write completes the config-file rename migration.
+      // name — reads may still be served from the legacy file, writes never are.
       val existing =
         if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
         else "{}"

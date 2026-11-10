@@ -50,7 +50,7 @@ object GenerateImageTool extends Tool:
 - On success the image is rendered DIRECTLY in the chat as a media card (click to open in Canvas) and saved under the instance data root (imagegen/ dir, format sniffed from real bytes). The result carries the saved absolute path.
 - The image is shown to the user automatically as part of this call — do NOT call Pop on it afterwards.
 - On failure the call returns an error carrying the provider's message.
-- Configure providers in nebflow.json top-level `imagegen` section (providers: cogview / openai-images / imagen; credentials via keyRef pointers into the secrets dir, never inline).
+- Configure providers in the config file's top-level `imagegen` section (providers: cogview / openai-images / imagen; credentials via keyRef pointers into the secrets dir, never inline).
 - Use this tool when the user asks for an image, picture, diagram mock, or visual concept."""
 
   val inputSchema = JsonObject.fromIterable(

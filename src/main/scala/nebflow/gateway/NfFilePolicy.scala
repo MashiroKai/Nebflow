@@ -383,7 +383,7 @@ object NfFilePolicy extends FilePolicyPort:
    * asked about a real path WITHOUT any reach question in front of them.
    *
    * 2026-10-07 askuser-attach-align 批增补（作者 09:35/09:41 两令「凭据防线零松动」
-   * 的落实腿）：在原根无关表之后，追加**根锚定的 Nebflow 凭据种子**一问——realpath
+   * 的落实腿）：在原根无关表之后，追加**根锚定的 Stand 凭据种子**一问——realpath
    * 落在 `dataRoot` 的 `auth.json` / `nebflow.json` / `secrets` 子树 ⇒ `Credential`。
    * 出因：目录域 reach 撤除后，数据根内这三个凭据落位原本由 reach 分支逐请求兜住，
    * R2 inode 快照只是**启动时**的别名闸；不补这条实时身份问，运行期新建进

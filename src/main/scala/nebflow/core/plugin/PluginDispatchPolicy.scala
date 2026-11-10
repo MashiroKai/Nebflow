@@ -229,19 +229,20 @@ object PluginDispatchPolicy:
     }
   end clearTransition
 
-  // ── 内部：nebflow.json 手术式改写（保留全部其他键；`plugins.dispatch` 独立命名空间）
+  // ── 内部：配置文件手术式改写（保留全部其他键；`plugins.dispatch` 独立命名空间）
   // 口径与 `PluginRegistry.mutateNebflowJson` 同款（同文件、不同键族，互不覆盖）。 ──
 
   private def mutateDispatch(name: String)(transform: Json => Json): Either[String, Unit] =
-    val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+    val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    val writePath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     if !os.exists(configPath) then
       val fresh = Json.obj("plugins" -> Json.obj("dispatch" -> Json.obj(name -> transform(Json.obj()))))
-      AtomicJson.writeSyncRestricted(configPath, fresh.noSpaces)
+      AtomicJson.writeSyncRestricted(writePath, fresh.noSpaces)
       Right(())
     else
       io.circe.parser.parse(os.read(configPath)) match
         case Left(err) =>
-          Left(s"nebflow.json unparseable — refusing to rewrite for dispatch update: ${err.message}")
+          Left(s"config file unparseable — refusing to rewrite for dispatch update: ${err.message}")
         case Right(root) =>
           val plugins = root.hcursor.downField("plugins").focus.getOrElse(Json.obj())
           val dispatch = plugins.hcursor.downField("dispatch").focus.getOrElse(Json.obj())
@@ -255,7 +256,7 @@ object PluginDispatchPolicy:
           val out = Json.fromJsonObject(
             root.asObject.getOrElse(JsonObject.empty).add("plugins", newPlugins)
           )
-          AtomicJson.writeSyncRestricted(configPath, out.noSpaces)
+          AtomicJson.writeSyncRestricted(writePath, out.noSpaces)
           Right(())
 
     end if

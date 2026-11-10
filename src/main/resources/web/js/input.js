@@ -1,4 +1,4 @@
-// input.js — Input handling module for Nebflow
+// input.js — Input handling module for Stand
 // All send logic, keyboard/input events, slash commands, attachments, drag/drop, voice.
 
 import state, { LS_HISTORY_KEY } from './state.js';

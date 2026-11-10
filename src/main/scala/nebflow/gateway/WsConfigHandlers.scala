@@ -339,7 +339,7 @@ private[gateway] object WsConfigHandlers:
             val updated = json.mapObject(_.add("toolResultTtl", cfg.asJson))
             // writeSyncRestricted (not write): we are already inside IO.blocking —
             // the IO-returning variant would be built, not run. Restricted form
-            // (keyaudit-quickfix ①): nebflow.json lands 0600, not umask 0644.
+            // (keyaudit-quickfix ①): the config file lands 0600, not umask 0644.
             AtomicJson.writeSyncRestricted(path, updated.noSpaces)
           }
         }

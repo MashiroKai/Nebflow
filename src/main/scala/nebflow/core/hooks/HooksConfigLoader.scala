@@ -21,12 +21,12 @@ object HooksConfigLoader:
         val content = os.read(configPath)
         parser.parse(content) match
           case Left(err) =>
-            logger.warn(s"Failed to parse nebflow.json for hooks: ${err.getMessage}")
+            logger.warn(s"Failed to parse the config file for hooks: ${err.getMessage}")
             HooksConfig.empty
           case Right(json) =>
             json.hcursor.downField("hooks").as[Map[String, Json]] match
               case Left(err) =>
-                logger.debug(s"No hooks section in nebflow.json")
+                logger.debug(s"No hooks section in the config file")
                 HooksConfig.empty
               case Right(rawMap) =>
                 val parsed = rawMap.flatMap { case (eventName, jsonValue) =>

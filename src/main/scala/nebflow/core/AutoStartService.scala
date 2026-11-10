@@ -33,7 +33,7 @@ object AutoStartService:
 
   /**
    * Locate the running JAR, but only trust classpath entries that actually
-   * look like a Nebflow distribution: a jar whose file name carries the brand
+   * look like a Stand distribution: a jar whose file name carries the brand
    * (`Branding.lowerName`, i.e. `stand-assembly-*.jar` today; legacy
    * `nebflow-assembly-*` checkouts dual-accepted — same contract as the
    * installers' dual-glob) or any jar inside a jpackage `.app/Contents`

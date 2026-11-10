@@ -108,7 +108,7 @@ object PluginSourceCatalog:
       io.circe.parser.parse(os.read(configPath)).toOption match
         case None =>
           logger.warnSync(
-            s"nebflow.json unreadable (${configPath}) — plugin source declarations fall back to the built-in catalog"
+            s"config file unreadable (${configPath}) — plugin source declarations fall back to the built-in catalog"
           )
           (Map.empty, Set.empty)
         case Some(json) =>

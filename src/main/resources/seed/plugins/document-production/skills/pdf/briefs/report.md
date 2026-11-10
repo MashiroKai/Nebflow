@@ -484,7 +484,7 @@ def insert_cover(cover_pdf, body_pdf, output_pdf):
     # Body pages follow
     for page in PdfReader(body_pdf).pages:
         writer.add_page(normalize_page_to_a4(page))
-    writer.add_metadata({'/Title': 'Report Title', '/Author': 'Nebflow', '/Creator': 'Nebflow'})
+    writer.add_metadata({'/Title': 'Report Title', '/Author': 'Stand', '/Creator': 'Stand'})
     with open(output_pdf, 'wb') as f:
         writer.write(f)
 ```
@@ -1064,8 +1064,8 @@ doc = SimpleDocTemplate(
     pdf_filename,
     pagesize=letter,
     title=os.path.splitext(pdf_filename)[0],
-    author='Nebflow',
-    creator='Nebflow',
+    author='Stand',
+    creator='Stand',
     subject='Document purpose description'
 )
 ```
@@ -1302,7 +1302,7 @@ doc = SimpleDocTemplate(
     leftMargin=1.5*cm, rightMargin=1.5*cm,
     topMargin=1.5*cm, bottomMargin=1.5*cm,
     title='Resume - Your Name',
-    author='Nebflow', creator='Nebflow'
+    author='Stand', creator='Stand'
 )
 
 story = []
@@ -1629,7 +1629,7 @@ Before submitting code, verify:
 - [ ] **Line breaks**: Using `<br/>` not `\n`
 - [ ] **Headings**: Bold with `<b>` tags
 - [ ] **Table headers**: White bold text on dark blue (#1F4E79)
-- [ ] **Metadata**: Title matches filename, Author/Creator = "Nebflow"
+- [ ] **Metadata**: Title matches filename, Author/Creator = "Stand"
 - [ ] **Sanitization**: Code sanitized before execution
 - [ ] **Post-build metadata**: `pdf.py meta.brand` called after build
 - [ ] **Post-build blank page cleanup**: `pdf.py pages.clean` called after build

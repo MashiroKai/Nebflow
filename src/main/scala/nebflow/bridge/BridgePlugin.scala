@@ -6,11 +6,11 @@ import io.circe.{Json, JsonObject}
 import nebflow.shared.SessionMeta
 
 /**
- * A remote-bridge plugin that connects Nebflow sessions to an external platform.
+ * A remote-bridge plugin that connects Stand sessions to an external platform.
  *
  * Implementations: Telegram, Discord, etc.
  * Plugins are loaded by BridgeManager and are fully self-contained —
- * removing a plugin's code and its config file should not break Nebflow.
+ * removing a plugin's code and its config file should not break Stand.
  */
 trait BridgePlugin:
   /** Unique identifier, e.g. "telegram". */
@@ -23,7 +23,7 @@ trait BridgePlugin:
   def stop: IO[Unit]
 
   /**
-   * Called when a Nebflow agent emits an event (AI response, tool call, etc.).
+   * Called when a Stand agent emits an event (AI response, tool call, etc.).
    * The plugin should forward relevant events to the bound remote chat.
    */
   def onAgentEvent(sessionId: String, event: Json): IO[Unit]
@@ -35,7 +35,7 @@ end BridgePlugin
 
 /**
  * Core APIs that a bridge plugin can call.
- * Provided by Nebflow core; plugins must not hold hard references to
+ * Provided by Stand core; plugins must not hold hard references to
  * gateway internals beyond this trait.
  */
 trait BridgeContext:

@@ -38,15 +38,15 @@ object BashTool extends Tool:
   val description = """Executes a given bash command and returns its output.
 
 Usage:
-- The working directory persists between commands, but shell state does not persist across Nebflow restarts.
-- You may specify an optional timeout in milliseconds (max 3600000) as a foreground wait budget hint. The effective foreground wait is capped by the configured foreground wait budget (default 120s; author-adjustable via nebflow.json `bashForegroundWaitBudgetMs`). When the budget is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the budget exactly like a silent one; the main session is never blocked longer than the budget.
+- The working directory persists between commands, but shell state does not persist across Stand restarts.
+- You may specify an optional timeout in milliseconds (max 3600000) as a foreground wait budget hint. The effective foreground wait is capped by the configured foreground wait budget (default 120s; author-adjustable via the config file (`bashForegroundWaitBudgetMs`)). When the budget is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the budget exactly like a silent one; the main session is never blocked longer than the budget.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
 
 Background execution (run_in_background):
 - Use for long-running commands (builds, tests, deploys, remote SSH operations, etc.).
-- **Use `run_in_background: true`, never `&` or `nohup`.** Shell backgrounding (`&`) bypasses Nebflow's task tracking — you won't be notified when it finishes, and the frontend won't show the background indicator.
+- **Use `run_in_background: true`, never `&` or `nohup`.** Shell backgrounding (`&`) bypasses Stand's task tracking — you won't be notified when it finishes, and the frontend won't show the background indicator.
 - You will be automatically notified when the job finishes. DO NOT poll or use sleep loops.
 - After starting a background job, continue with other work or finish your turn — the completion notification arrives as a new turn.
 - Long-running background tasks in Project nodes: the node waits for all waiting-type background jobs to finish before its result is delivered, so the completion output is not lost.
