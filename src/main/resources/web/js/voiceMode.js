@@ -81,6 +81,7 @@ function sendUtterance(text, /** @type {boolean} */ allowRetry = true) {
 
 function onPlaybackStart(/** @type {Event} */ e) {
   agentSpeaking = true;
+  showStatus('speaking');
   const detail = /** @type {CustomEvent} */ (e).detail;
   showCaption(detail && detail.text ? detail.text : '');
   if (el.bubble) el.bubble.classList.add('speaking');
@@ -142,7 +143,31 @@ function onMicVolume(/** @type {number} */ v) {
   } else if (now - bargeStart >= BARGE_MS) {
     bargeStart = 0;
     window.dispatchEvent(new CustomEvent('voicebargein'));
+    // Stop the active main-session generation as well as local TTS. This is
+    // explicitly user-initiated by sustained speech, never a timeout action.
+    if (typeof cancelResponse === 'function') cancelResponse();
+    showStatus('interrupted');
   }
+}
+
+let cancelResponse = null;
+export function voiceStatusLabel(state) {
+  const keys = {
+    listening: 'voiceMode.hint',
+    thinking: 'voiceMode.thinking',
+    speaking: 'voiceMode.speaking',
+    interrupted: 'voiceMode.interrupted',
+    error: 'voiceMode.error',
+  };
+  return t(keys[state] || keys.listening);
+}
+
+export function renderVoiceStatus(element, state) {
+  if (element) element.textContent = voiceStatusLabel(state);
+}
+
+function showStatus(state) {
+  renderVoiceStatus(el.hint, state);
 }
 
 // ── Engine callbacks (conversation mode) ──────────────────────────────
@@ -157,6 +182,7 @@ function engineCallbacks() {
     onUtterance(/** @type {string} */ text) {
       const utter = (text || '').trim();
       if (!utter) return;
+      showStatus('thinking');
       if (agentSpeaking && !draining) {
         heldText = heldText ? heldText + ' ' + utter : utter;
         showTranscript(utter);
@@ -168,10 +194,11 @@ function engineCallbacks() {
     onState(st, data) {
       notifyVoiceState(st);
       if (st === 'error') {
-        // Mic problems are fatal to the mode — surface and fall back to the
-        // normal input bar (data is already classified + i18n'd upstream).
-        showToast(data || t('voiceMode.sendFailed'), 'error');
-        exitVoiceMode();
+        const message = t('voiceMode.error');
+        showStatus('error');
+        showToast(message, 'error');
+      } else if (st === 'listening' || st === 'speaking') {
+        showStatus(st);
       }
     },
   };
@@ -188,7 +215,10 @@ function engineCallbacks() {
  *     the two modes share one mic/engine session.
  *   - getSessionId(): the session the overlay was opened on — agent replies
  *     for other sessions are not read aloud.
+ *   - cancelResponse(): interrupts the active main-session generation — used
+ *     by barge-in to stop the agent turn alongside local TTS.
  * @param {{ sendText: SendTextFn, ensureDictationIdle?: () => void,
+ *           cancelResponse?: () => void,
  *           getSessionId?: () => string|null }} depsIn
  */
 export function enterVoiceMode(depsIn) {
@@ -209,6 +239,7 @@ export function enterVoiceMode(depsIn) {
   if (typeof depsIn.ensureDictationIdle === 'function') depsIn.ensureDictationIdle();
 
   sendText = depsIn.sendText;
+  cancelResponse = typeof depsIn.cancelResponse === 'function' ? depsIn.cancelResponse : null;
   modeSessionId = typeof depsIn.getSessionId === 'function' ? depsIn.getSessionId() : null;
   active = true;
   draining = false;
