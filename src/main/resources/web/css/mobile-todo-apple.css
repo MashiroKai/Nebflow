@@ -171,7 +171,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-search-input {
   height: 44px;
   box-sizing: border-box;
   padding: 0 14px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
@@ -534,7 +534,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item.is-done .ta
   top: 3px;
   width: 5px;
   height: 10px;
-  border: solid var(--ctl-send-ink, #fff);
+  border: solid var(--ctl-send-ink);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -544,7 +544,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-prio {
   flex: none;
   width: 4px;
   height: 16px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   background: var(--color-text-muted);
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item-body {
@@ -678,7 +678,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-dot {
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-prio {
   width: 4px;
   height: 12px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
 }
 /* Save = rightmost blue circular check in the top bar (g2-fab base: 48 +
    sapphire fill + always-white ink) */
@@ -693,7 +693,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save {
   pointer-events: auto;
   background: rgb(var(--sapphire));
   border-color: transparent;
-  color: var(--ctl-send-ink, #fff);
+  color: var(--ctl-send-ink);
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save:hover {
   background: rgb(var(--sapphire));
