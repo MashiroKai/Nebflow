@@ -228,6 +228,15 @@ class WorkspaceOccupancySpec extends CatsEffectSuite:
     )
     (repo, tree, owner, mergerId)
 
+  /** Poll until the request reaches a terminal status (submit wakes a per-task merger fiber). */
+  private def awaitTerminal(requestId: String, tries: Int = 300): IO[Unit] =
+    IO.blocking(WorkspaceLedger.default.snapshot.requests.find(_.id == requestId).map(_.status)).flatMap {
+      case Some(status) if WorkspaceLedger.TerminalRequestStatuses.contains(status) => IO.unit
+      case _ =>
+        assert(tries > 0, s"request $requestId never reached a terminal status")
+        IO.sleep(100.millis) *> awaitTerminal(requestId, tries - 1)
+    }
+
   private def mountHost(ws: os.Path, owner: String, system: ActorSystem, res: SharedResources): IO[DelegateFlowRuntime] =
     DelegateFlowHosts
       .mount(
@@ -322,12 +331,18 @@ class WorkspaceOccupancySpec extends CatsEffectSuite:
       _ <- mkResources(system)
       _ <- ProjectStore.create("example", repo.toString, None, "# Project instructions")
       accepted <- MergeRequests.submit("example", "req-idle", List("task"), "user authorized")
+      // The submit wake runs a per-task merger on a fiber: wait for it to land.
+      _ <- awaitTerminal("req-idle")
       state = WorkspaceLedger.default.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(accepted.isRight, s"an idle owner must pass the gate, got: $accepted")
       assertEquals(state.requests.map(_.id), List("req-idle"), "the accepted request is recorded")
-      assertEquals(state.workspaces.find(_.id == "task").get.lifecycle, "reserved", "the workspace is reserved")
+      assertEquals(
+        state.workspaces.find(_.id == "task").get.lifecycle,
+        "closed-merged",
+        "the woken per-task merger merged and closed the workspace"
+      )
     end for
   }
 

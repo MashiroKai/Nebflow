@@ -25,14 +25,14 @@ object MergeRequests:
           }.flatMap {
             case Left(error) => IO.pure(Left(error))
             case Right(request) =>
-              IO {
-                MergerWorker.nudge()
+              // Wake a per-task merger instance to process the cancellation.
+              MergerWorker.wake().as(
                 Right(
                   io.circe.Json
                     .obj("request" -> request.asJson, "cancelRequested" -> request.cancelRequested.asJson)
                     .noSpaces
                 )
-              }
+              )
           }
       }
       .handleError(e => Left(Option(e.getMessage).getOrElse("Cancellation request failed")))
@@ -138,11 +138,10 @@ object MergeRequests:
 
   end prepare
 
-  /** Queue the request for the persistent merger worker and wake it. */
+  /** Wake a per-task merger instance to consume the queued request. */
   private def deliver(request: WorkspaceLedger.MergeRequest): IO[Either[String, String]] =
-    IO {
-      MergerWorker.nudge()
-      Right(io.circe.Json.obj("request" -> request.asJson, "queued" -> true.asJson).noSpaces)
-    }
+    MergerWorker
+      .wake()
+      .as(Right(io.circe.Json.obj("request" -> request.asJson, "queued" -> true.asJson).noSpaces))
   end deliver
 end MergeRequests

@@ -7,13 +7,16 @@ import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 
 import scala.util.Try
+import scala.concurrent.duration.*
 
 /**
- * The persistent merger worker against a real repository: one pass lands one
+ * Per-task merger instances against a real repository: one pass lands one
  * request (serial claims), a claimed in-flight request recovers at boot and
  * lands on the resumed pass, an externally integrated source closes out
- * without a second merge, and the phase machine refuses skips and fails
- * cleanly when a workspace side becomes unreconcilable.
+ * without a second merge, the phase machine refuses skips and fails
+ * cleanly when a workspace side becomes unreconcilable, and a wake consumes
+ * the queued request on a freshly instantiated worker and exits on an empty
+ * queue (no resident worker between tasks).
  */
 class MergerWorkerSpec extends CatsEffectSuite:
   private val previous = PathUtil.dataRoot
@@ -90,6 +93,15 @@ class MergerWorkerSpec extends CatsEffectSuite:
 
   private def gitLines(args: String*): List[String] =
     os.proc(Seq("git") ++ args).call(stdout = os.Pipe, stderr = os.Pipe).out.text().trim.linesIterator.toList
+
+  /** Poll until the request reaches a terminal status (a wake runs on a fiber). */
+  private def awaitTerminal(ledger: WorkspaceLedger, requestId: String, tries: Int = 300): IO[Unit] =
+    IO.blocking(ledger.snapshot.requests.find(_.id == requestId).map(_.status)).flatMap {
+      case Some(status) if WorkspaceLedger.TerminalRequestStatuses.contains(status) => IO.unit
+      case _ =>
+        assert(tries > 0, s"request $requestId never reached a terminal status")
+        IO.sleep(100.millis) *> awaitTerminal(ledger, requestId, tries - 1)
+    }
 
   test("one pass claims a queued request and lands it: merge, evidence, cleanup, completed") {
     val ledger = WorkspaceLedger.default
@@ -281,6 +293,23 @@ class MergerWorkerSpec extends CatsEffectSuite:
       assertEquals(seat.lifecycle, "open", "a failed item reopens the workspace")
       assertEquals(seat.reservation, None)
     end for
+  }
+
+  test("a wake consumes the queued request on a fresh instance and exits when the queue is empty") {
+    val ledger = WorkspaceLedger.default
+    for
+      trees <- IO.blocking {
+        val (_, repository, trees, _) = fixture("wake", "task")
+        queue(ledger, "request", repository, "task")
+        trees
+      }
+      _ <- MergerWorker.wake()
+      _ <- awaitTerminal(ledger, "request")
+      drained <- MergerWorker.runOnce()
+    yield
+      assertEquals(ledger.snapshot.requests.head.status, "merged")
+      assert(!os.exists(trees("task")), "the per-task instance cleaned up the worktree")
+      assertEquals(drained, None, "an empty queue exits immediately (no resident worker)")
   }
 
 end MergerWorkerSpec

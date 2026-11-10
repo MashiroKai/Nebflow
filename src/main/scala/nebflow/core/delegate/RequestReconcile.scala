@@ -20,7 +20,7 @@ import scala.util.Try
  *   - `unknown` — workspace directory missing, branch gone, or Git unreadable.
  *
  * Reconciliation never writes the ledger and never writes Git; it produces a
- * structured reading only. The persistent merger worker consumes these
+ * structured reading only. A per-task merger instance consumes these
  * readings: an integrated item closes out with its recovered facts, a
  * resumable item is executed from the rest state, and an unknown item rests
  * until a readable state returns.

@@ -342,7 +342,6 @@ class DualModeToolFaceSpec extends FunSuite:
     val merger = CoreProbe.allowedWithDelegateMode(definition, true, Some("merger"))
     assert(merger.contains(nebflow.core.tools.WorktreeContextTool.Name), "the merger face carries WorktreeContext")
     assert(merger.contains(nebflow.core.tools.MergerRequestTool.Name), "the merger face carries the merge request tool")
-    assert(!merger.contains("merger_report"))
     assert(!merger.contains("ChainWrite"))
     val kernel = CoreProbe.allowedWithDelegateMode(definition, true, Some("kernel"))
     assert(!kernel.contains(nebflow.core.tools.WorktreeContextTool.Name), "kernel delegates never see WorktreeContext")

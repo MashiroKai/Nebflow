@@ -15,6 +15,8 @@ import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 
+import scala.concurrent.duration.*
+
 class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
   private val previous = PathUtil.dataRoot
   private var root: os.Path = os.pwd
@@ -118,6 +120,17 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
 
   end installMerger
 
+  /** Poll until the request merges (the POST wake runs its merger on a fiber). */
+  private def awaitMerged(requestId: String, tries: Int = 300): IO[Unit] =
+    IO.blocking {
+      WorkspaceLedger.default.snapshot.requests.find(_.id == requestId).map(_.status)
+    }.flatMap {
+      case Some("merged") => IO.unit
+      case _ =>
+        assert(tries > 0, s"merge request $requestId never merged")
+        IO.sleep(100.millis) *> awaitMerged(requestId, tries - 1)
+    }
+
   test("already integrated sources are refused without reserving the workspace or delivering work") {
     for
       pair <- fixture
@@ -142,7 +155,7 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
     yield ()
   }
 
-  test("HTTP request queues the merger worker, the worker merges it, and the snapshot shows the result") {
+  test("HTTP request wakes a per-task merger, the instance merges it, and the snapshot shows the result") {
     val id = "delegate-route-merger"
     val requestId = "route-request"
     val body = Json.obj("requestId" -> requestId.asJson, "workspaceIds" -> List("task").asJson)
@@ -153,10 +166,8 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
       response <- request(Method.POST, "/projects/example/workspaces/merge-requests", body)
       _ = assertEquals(response.status, Status.Ok)
       queued <- response.as[Json]
-      _ = assert(queued.hcursor.get[Boolean]("queued").toOption.contains(true), "the route queues the worker")
-      _ = assertEquals(WorkspaceLedger.default.snapshot.requests.head.status, "submitted")
-      _ = assertEquals(WorkspaceLedger.default.snapshot.workspaces.head.lifecycle, "reserved")
-      _ <- nebflow.core.delegate.MergerWorker.runOnce()
+      _ = assert(queued.hcursor.get[Boolean]("queued").toOption.contains(true), "the route wakes a per-task merger")
+      _ <- awaitMerged(requestId)
       snapshot <- request(Method.GET, "/projects/example/workspaces").flatMap(_.as[Json])
       _ = assertEquals(snapshot.hcursor.downField("mergeRequests").downArray.get[String]("status"), Right("merged"))
       _ = assertEquals(

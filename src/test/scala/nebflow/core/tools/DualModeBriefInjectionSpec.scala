@@ -72,7 +72,7 @@ class DualModeBriefInjectionSpec extends FunSuite:
     assert(!brief.contains("pure orchestration"), "the doctrine header must not appear in a kernel brief")
   }
 
-  test("merger brief replaces development reporting with the persistent integration role") {
+  test("merger brief replaces development reporting with the per-task integration role") {
     val role = nebflow.prompts.PromptCatalog.MergerRole
     val brief =
       DelegateTool.assembleBrief("[workspace] /tmp/ws", None, "Inspect authorized requests", "", reportLine = role)
