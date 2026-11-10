@@ -1,5 +1,7 @@
-// todo-mobile-edit-real.spec.mjs — 真手机入口到待办详情编辑的 Chromium 闭环。
-// 静态资源由 page.route 读取本仓真 web 树；WS 与 todoStore 使用本地夹具，不访问后端或生产数据。
+// todo-mobile-edit-real.spec.mjs — Chromium loop from the real mobile task
+// button through the Apple-face todo list into item edit and save.
+// Static assets are served by page.route from this repo's real web tree; WS and
+// todoStore run on local fixtures — no backend, no production data.
 // Run: node tests/todo-mobile-edit-real.spec.mjs
 
 import assert from 'node:assert/strict';
@@ -78,48 +80,56 @@ try {
   await boot(page);
   const taskButton = page.locator("[data-chrome='tasks']");
   await taskButton.waitFor({ state: 'visible' });
-  // 从真实手机任务圆钮进入任务页面；不点击桌面胶囊、不直接调用页面渲染。
+  // Enter the tasks page from the real mobile task button; no desktop capsule
+  // clicks and no direct render calls.
   await taskButton.click();
   const taskPage = page.locator(".mobile-page[data-page='tasks']");
   await page.waitForFunction(() => document.querySelector(".mobile-page[data-page='tasks']")?.classList.contains('live'));
-  const row = taskPage.locator(".tfl-row[data-id='edit-mobile-1']");
+  // Apple home: the seeded tag is one "My Lists" row; open its list page.
+  const row = taskPage.locator('.ta-row.ta-row-tag', { hasText: '工作' });
   await row.waitFor({ state: 'visible' });
+  await row.click();
+  const listPage = page.locator(".mobile-page[data-page='todo-apple-list']");
+  await page.waitForFunction(() => document.querySelector(".mobile-page[data-page='todo-apple-list']")?.classList.contains('live'));
+  const itemBody = listPage.locator(".ta-item[data-item-id='edit-mobile-1'] .ta-item-body");
+  await itemBody.waitFor({ state: 'visible' });
   await page.screenshot({ path: join(EVID, '01-mobile-todo-list.png') });
 
-  // 浏览详情后 Escape 退出，不改变任何字段。
-  await row.locator('.tfl-row-main').click();
-  const detail = taskPage.locator('.tfl-hit');
-  await detail.waitFor({ state: 'visible' });
-  await detail.locator('.tfl-hit-edit').waitFor({ state: 'visible' });
+  // Browse the item page, then go back without editing — no store writes.
+  await itemBody.click();
+  const itemPage = page.locator(".mobile-page[data-page='todo-apple-item']");
+  await page.waitForFunction(() => document.querySelector(".mobile-page[data-page='todo-apple-item']")?.classList.contains('live'));
+  const titleInput = itemPage.locator('.ta-title-input');
+  await titleInput.waitFor({ state: 'visible' });
+  assert.equal(await titleInput.inputValue(), '原事项名', 'item page must show the current title');
   await page.screenshot({ path: join(EVID, '02-mobile-detail.png') });
-  await page.keyboard.press('Escape');
-  await detail.waitFor({ state: 'detached' });
+  await itemPage.locator('.mobile-back-btn').click();
+  await page.waitForFunction(() => document.querySelector(".mobile-page[data-page='todo-apple-list']")?.classList.contains('live'));
   const afterExit = await page.evaluate(async () => {
     const { todoStore } = await import('/js/todoStore.js');
     const item = todoStore.visibleItems().find((x) => x.id === 'edit-mobile-1');
     return { name: item.name, detail: item.detail };
   });
-  assert.deepEqual(afterExit, { name: '原事项名', detail: '原详情' }, '退出详情不得写入待办');
+  assert.deepEqual(afterExit, { name: '原事项名', detail: '原详情' }, 'leaving the item page without saving must not write the todo');
 
-  // 在详情里选择编辑，修改两字段并通过现有 Enter 语义保存。
-  await row.locator('.tfl-row-main').click();
-  await detail.waitFor({ state: 'visible' });
-  await taskPage.locator('.tfl-hit-edit').click();
-  const editor = taskPage.locator(".tfl-row[data-id='edit-mobile-1'].tfl-row-editing .tfl-edit-panel");
-  await editor.waitFor({ state: 'visible' });
-  const name = editor.locator('.tfl-edit-name');
-  const notes = editor.locator('.tfl-edit-notes');
-  await name.fill('手机编辑后名称');
+  // Reopen the item, reveal the notes field with the info button, edit both
+  // fields and save with the item page save button.
+  await itemBody.click();
+  await page.waitForFunction(() => document.querySelector(".mobile-page[data-page='todo-apple-item']")?.classList.contains('live'));
+  await titleInput.fill('手机编辑后名称');
+  await itemPage.locator('.ta-info').click();
+  const notes = itemPage.locator('.ta-notes');
+  await notes.waitFor({ state: 'visible' });
   await notes.fill('手机编辑后详情');
   await page.waitForTimeout(500);
-  const editorState = await editor.evaluate((el) => {
+  const editorState = await itemPage.evaluate((el) => {
     const rect = (node) => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
-    return { panel: rect(el), name: rect(el.querySelector('.tfl-edit-name')), notes: rect(el.querySelector('.tfl-edit-notes')) };
+    return { panel: rect(el.querySelector('.ta-edit')), title: rect(el.querySelector('.ta-title-input')), notes: rect(el.querySelector('.ta-notes')) };
   });
-  assert.ok(editorState.name.height > 0 && editorState.notes.height > 0, `edit fields must be visibly laid out: ${JSON.stringify(editorState)}`);
+  assert.ok(editorState.title.height > 0 && editorState.notes.height > 0, `edit fields must be visibly laid out: ${JSON.stringify(editorState)}`);
   await page.screenshot({ path: join(EVID, '03-mobile-edit-before-save.png') });
-  await notes.press('Enter');
-  await editor.waitFor({ state: 'detached' });
+  await itemPage.locator('.ta-save').click();
+  await page.waitForFunction(() => document.querySelector(".mobile-page[data-page='todo-apple-list']")?.classList.contains('live'));
   const saved = await page.evaluate(async () => {
     const { todoStore } = await import('/js/todoStore.js');
     const item = todoStore.visibleItems().find((x) => x.id === 'edit-mobile-1');
@@ -127,8 +137,8 @@ try {
   });
   assert.deepEqual(saved, { name: '手机编辑后名称', detail: '手机编辑后详情', dataSource: 'fixture' });
   await page.screenshot({ path: join(EVID, '04-mobile-edit-saved.png') });
-  assert.deepEqual(errors, [], '页面不得产生未处理异常');
-  console.log('PASS 真实 mobile task-button → list → detail → edit → save; detail exit preserved fixture');
+  assert.deepEqual(errors, [], 'page must not produce unhandled exceptions');
+  console.log('PASS real mobile task-button → Apple home → list → item page → edit → save; leaving without save preserved the fixture');
   console.log(`PASS evidence: ${EVID}`);
   await context.close();
 } finally {
