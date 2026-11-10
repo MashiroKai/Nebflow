@@ -40,7 +40,7 @@ const FLICK_MS = 200;         // 快弹窗
 const SPRING_MS = 220;        // 回位时长
 const SPRING_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
 
-/** @type {{id: string, onBack: () => void, root: HTMLElement | null}[]} */
+/** @type {{id: string, onBack: (reason: string) => void, root: HTMLElement | null}[]} */
 const stack = [];
 /** 手势态。 */
 let g = null;
@@ -53,7 +53,7 @@ const reduceMotion = () => {
 };
 
 /** 登记一个可右滑返回的面板（后进先出 = 只关最上面那一个）。
- * @param {string} panelId @param {() => void} onBack
+ * @param {string} panelId @param {(reason: string) => void} onBack
  * @param {{root?: HTMLElement | null}} [opts] root = 跟手位移的对象（缺省 = 不跟手）
  * @returns {{release: () => void, id: string}} */
 export function pushBackHandler(panelId, onBack, opts = {}) {

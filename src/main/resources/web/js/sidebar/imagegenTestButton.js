@@ -18,6 +18,7 @@
 import { t } from '../i18n.js';
 import { statusIcon } from '../utils.js';
 import { authHeaders } from '../flowHelpers.js';
+import { h } from '../dom.js';
 import { paintTestingLine, paintTestResultLine } from './modelTestButton.js';
 
 /** 结果块（与 LLM 弹窗同一套 .cfg-test-results 组件族）。 */
@@ -115,8 +116,8 @@ export function bindImagegenTestButtons(root, reader) {
   let block = /** @type {HTMLElement|null} */ (root.querySelector('.imagegen-test-results'));
   if (!block) {
     const body = root.querySelector('.cfg-modal-body') || root;
-    body.insertAdjacentHTML('beforeend', imagegenTestResultsHTML());
-    block = /** @type {HTMLElement|null} */ (root.querySelector('.imagegen-test-results'));
+    block = h('div', { class: 'cfg-test-results imagegen-test-results', 'data-role': 'test-results', role: 'status', 'aria-live': 'polite' });
+    body.appendChild(block);
   }
   if (!block) return;
   const results = /** @type {HTMLElement} */ (block);
@@ -126,9 +127,12 @@ export function bindImagegenTestButtons(root, reader) {
       provider: r.getProvider(), type: r.getType(), model: r.getModel(), baseUrl: r.getBaseUrl(), apiKey: r.getApiKey(),
     };
   };
-  const probeIdle = probeBtn.innerHTML;
-  const genIdle = genBtn.innerHTML;
-  const spinnerFace = (label) => `<span class="cfg-model-test-spinner" aria-hidden="true"></span><span>${label}</span>`;
+  const probeIdle = Array.from(probeBtn.childNodes);
+  const genIdle = Array.from(genBtn.childNodes);
+  const spinnerFace = (label) => [
+    h('span', { class: 'cfg-model-test-spinner', 'aria-hidden': 'true' }),
+    h('span', { textContent: label }),
+  ];
   const setDisabled = (v) => { probeBtn.disabled = v; genBtn.disabled = v; };
 
   probeBtn.addEventListener('click', async (e) => {
@@ -139,7 +143,7 @@ export function bindImagegenTestButtons(root, reader) {
     const name = f.provider || 'imagegen';
     imagegenTestInFlight = true;
     setDisabled(true);
-    probeBtn.innerHTML = spinnerFace(t('provider.testRunning'));
+    probeBtn.replaceChildren(...spinnerFace(t('provider.testRunning')));
     paintTestingLine(results, name);
     const v = await runImagegenTest('probe', f);
     if (v.ok) {
@@ -149,7 +153,7 @@ export function bindImagegenTestButtons(root, reader) {
       paintTestResultLine(results, name, { ok: false, error: v.error });
     }
     setDisabled(false);
-    probeBtn.innerHTML = probeIdle;
+    probeBtn.replaceChildren(...probeIdle);
     imagegenTestInFlight = false;
   });
 
@@ -161,7 +165,7 @@ export function bindImagegenTestButtons(root, reader) {
     const name = f.provider || 'imagegen';
     imagegenTestInFlight = true;
     setDisabled(true);
-    genBtn.innerHTML = spinnerFace(t('settings.imagegenGenRunning'));
+    genBtn.replaceChildren(...spinnerFace(t('settings.imagegenGenRunning')));
     paintTestingLine(results, name);
     const v = await runImagegenTest('generate', f);
     if (v.ok) {
@@ -171,7 +175,7 @@ export function bindImagegenTestButtons(root, reader) {
       paintTestResultLine(results, name, { ok: false, error: v.error });
     }
     setDisabled(false);
-    genBtn.innerHTML = genIdle;
+    genBtn.replaceChildren(...genIdle);
     imagegenTestInFlight = false;
   });
 }

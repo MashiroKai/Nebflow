@@ -606,7 +606,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   renderModelBadge(); // 即使没有 agentName 或模型配置请求失败，也先建立可操作的选项表
   mobileSheetBack(popupOverlay, closeStepPopup);
 
-  const modal = popupOverlay.querySelector('.flow-agent-modal');
+  const modal = /** @type {HTMLElement} */ (popupOverlay.querySelector('.flow-agent-modal'));
 
   const footer = popupOverlay.querySelector('#bgagent-footer');
   modal.insertBefore(entry.container, footer);

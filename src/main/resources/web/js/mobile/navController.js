@@ -507,7 +507,7 @@ function buildWorkbenchMeEntry() {
     </span>`;
   // hero 内设置钮（子元素上的 click 冒泡到 entry，必须先 stopPropagation 并
   // 自己 push settings —— 两个入口语义分离，互不触发的另一个）。
-  const settingsBtn = entry.querySelector('[data-hero-settings]');
+  const settingsBtn = /** @type {HTMLElement | null} */ (entry.querySelector('[data-hero-settings]'));
   if (settingsBtn) {
     const openSettings = (e) => {
       e.stopPropagation();

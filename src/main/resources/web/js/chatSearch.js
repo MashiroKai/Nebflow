@@ -69,6 +69,7 @@ import { expandGroupContaining } from './turnGroup.js';
 // 跳转回位胶囊（作者令 2026-11-01）：样式逐字复用现役「↓ N 条新消息」胶囊
 // （.scroll-new-pill 同家族），锚点/降级/消失时机契约见 searchReturnPill.js 头注。
 import { captureReturnAnchor, armReturnPill } from './searchReturnPill.js';
+import { mountSearchSourceChips } from './searchSourceChips.js';
 
 // 检索全覆盖批（2026-11-07，作者报障「搜索为什么不是搜全部的内容，可以分段显示
 // 但是我要能查看」）：**取消「前 200 条」硬顶**。搜索模式改为「首屏一页 + 滚到底
@@ -192,6 +193,8 @@ let calView = { y: 0, m0: 0 };       // calendar grid month being displayed
 /** @type {{y:number, m0:number, d:number}|null} staged (unconfirmed) pick */
 let calStaged = null;
 let pillListboxEl = null;    // open year/month listbox element
+/** Mounted source-chip component API; lifetime follows the search modal's DOM. */
+let sourceChips = null;
 
 // ── Stream state (browse/anchor modes) ─────────────────────
 /** @type {Array<{id:string, name:string, all:any[], view:any[], entries:any[], start:number, end:number, el:HTMLElement|null, headerEl:HTMLElement|null, convSource?:boolean}>} */
@@ -270,7 +273,7 @@ export function initChatSearch() {
   // normative tab list (index.html stays untouched; the category set is code-
   // owned). Runs before every binding below reads the nodes.
   buildTabBar();
-  buildSourceChips();
+  mountSourceChips();
 
   // 媒体直开批: the keyboard-selected media card's focus ring. chat.css is
   // locked this batch (parallel media batches own it), so the one-rule ring
@@ -2508,21 +2511,26 @@ function buildTabBar() {
   ).join('');
 }
 
-/** The source chip row (dynamic — same zero-index.html-change rule). */
-function buildSourceChips() {
-  const controls = document.querySelector('#search-modal .search-controls');
-  if (!controls || document.getElementById('search-source-chips')) return;
-  const row = document.createElement('div');
-  row.id = 'search-source-chips';
-  row.setAttribute('role', 'group');
-  row.hidden = true;
-  for (const v of ['', 'user', 'agent']) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'search-source-chip';
-    b.dataset.source = v;
-    b.addEventListener('click', () => {
-      currentSource = v;
+// Lifecycle/method contract for the chat-search UI:
+//   initChatSearch() mounts one-time modal bindings; openSearchModal/closeSearchModal
+//     own modal visibility, focus trapping and cleanup of transient search state.
+//   buildTabBar() and mountSourceChips() own the controls' DOM construction;
+//     searchSourceChips owns only the source-filter row and exposes sync/unmount.
+//   chatSearch owns search data, query scheduling, result rendering, calendar
+//     staging, keyboard focus/roving navigation and result-to-chat navigation.
+//   Mobile searchFace only pins scope and contributes its role select; it calls
+//     the compatibility scheduleSearch() method rather than owning search logic.
+// Method compatibility surface: initChatSearch, openSearchModal, closeSearchModal,
+// scheduleSearch and stageConvScope remain the integration methods.
+
+/** Mount the source-chip component; query/filter behavior remains here. */
+function mountSourceChips() {
+  const controls = /** @type {HTMLElement|null} */ (document.querySelector('#search-modal .search-controls'));
+  if (!controls || sourceChips) return;
+  sourceChips = mountSearchSourceChips(controls, {
+    getSource: () => currentSource,
+    onChange: (source) => {
+      currentSource = source;
       syncSourceChips();
       // Re-filter from the already-fetched entries — no refetch.
       if (MEDIA_TABS.includes(currentTab)) {
@@ -2530,24 +2538,13 @@ function buildSourceChips() {
         const statusEl = document.getElementById('search-status');
         if (resultsEl && statusEl) { clearResults(resultsEl); renderMediaGrid(resultsEl, statusEl); }
       }
-    });
-    row.appendChild(b);
-  }
-  controls.appendChild(row);
+    },
+  });
 }
 
-/** Chip labels/visibility follow the current tab + selection. */
+/** Keep the component state synchronized without exposing its internal DOM. */
 function syncSourceChips() {
-  const row = document.getElementById('search-source-chips');
-  if (!row) return;
-  row.hidden = !MEDIA_TABS.includes(currentTab);
-  for (const b of /** @type {HTMLElement[]} */ (Array.from(row.querySelectorAll('.search-source-chip')))) {
-    const v = b.dataset.source || '';
-    const on = v === currentSource;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    b.textContent = t(v === 'user' ? 'search.sourceUser' : v === 'agent' ? 'search.sourceAgent' : 'search.sourceAll');
-  }
+  sourceChips?.sync({ visible: MEDIA_TABS.includes(currentTab) });
 }
 
 /** All index entries across the loaded sessions. */

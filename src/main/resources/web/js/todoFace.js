@@ -854,7 +854,8 @@ class TodoFace {
   }
 
   /** 菜单行（一级/二级同一构造：图标 + 主文 + 可选次文 + 右侧 ›；
-   *  二级可选态行在最左留出 ✓ 槽 —— 选中/未选中同宽，零跳动）。 */
+   *  二级可选态行在最左留出 ✓ 槽 —— 选中/未选中同宽，零跳动）。
+   * @param {{icon?: string, label: string, sub?: string, chevron?: boolean, danger?: boolean, sep?: boolean, check?: boolean, onTap: (row: HTMLElement) => void}} options */
   menuRow({ icon, label, sub, chevron, danger, sep, check, onTap }) {
     const row = el('button', 'tfl-menu-row'
       + (danger ? ' is-danger' : '') + (sep ? ' is-sep' : ''));

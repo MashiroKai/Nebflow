@@ -67,6 +67,7 @@ export function badgeFaceOfKind(kind) {
 }
 
 /** 只在成员位成立的徽标词（非成员行不得带；见 bgTaskRowHtml 的顶层摘词门）。 */
+/** @type {Set<string>} */
 const MEMBER_ONLY = new Set([BADGE_WORDS.delegate, BADGE_WORDS.subagent]);
 
 /**

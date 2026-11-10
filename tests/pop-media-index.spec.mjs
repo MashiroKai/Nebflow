@@ -240,6 +240,15 @@ test.describe('media tab — grid over the unified index', () => {
         { source: 'user', active: false, hidden: false },
         { source: 'agent', active: false, hidden: false },
       ]);
+    const chipContract = await page.evaluate(() => ({
+      row: document.getElementById('search-source-chips'),
+      group: document.getElementById('search-source-chips')?.getAttribute('role'),
+      buttonCount: document.querySelectorAll('#search-source-chips button.search-source-chip').length,
+      pressed: [...document.querySelectorAll('#search-source-chips button')].map((button) => button.getAttribute('aria-pressed')),
+    }));
+    expect(chipContract.group, 'component preserves the accessible group').toBe('group');
+    expect(chipContract.buttonCount, 'component mounts exactly the three source choices').toBe(3);
+    expect(chipContract.pressed, 'component synchronizes accessible selection state').toEqual(['true', 'false', 'false']);
     expect(pageErrors).toEqual([]);
     await context.close();
   });

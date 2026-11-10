@@ -44,6 +44,7 @@
 
 import state from '../state.js';
 import { t } from '../i18n.js';
+import { h, frag } from '../dom.js';
 import { escapeHtml, statusIcon } from '../utils.js';
 import { authHeaders } from '../flowHelpers.js';
 import { toggleHTML, setToggleState } from '../toggle.js';
@@ -488,7 +489,7 @@ function domainSpec(id) {
 }
 
 /** 整面板 HTML（类型标签 + 类型级附加行 + 统一列表 + 新增钮）。 */
-export function providerPanelHTML() {
+export function providerPanelDOM() {
   const ids = domainIds();
   const current = currentType();
   const spec = domainSpec(current);
@@ -506,36 +507,41 @@ export function providerPanelHTML() {
     metaExtra: r.metaExtra,
     active: r.active,
   })).join('');
-  const listInner = cards || `<div class="cfg-hint">${escapeHtml(t('settings.cfgCard.emptyHint'))}</div>`;
+  const cardsFragment = document.createRange().createContextualFragment(cards);
+  const listContent = sealedOff
+    ? h('div', { class: 'cfg-hint' }, t('settings.imagegenNotCompiled'))
+    : cardsFragment.childNodes.length
+      ? cardsFragment
+      : h('div', { class: 'cfg-hint' }, t('settings.cfgCard.emptyHint'));
   const drift = (typeFace && typeFace.domains || []).some((d) => !DOMAIN_SPECS[d.id]);
-  return `
-    <div class="nf-provider-panel" data-provider-panel data-type="${escapeHtml(current)}">
-      <div class="nf-ptabs" role="tablist" id="provider-type-tabs">
-        ${ids.map((id) => `<button type="button" class="nf-ptab" role="tab" data-provider-type="${escapeHtml(id)}"
-          aria-selected="${id === current ? 'true' : 'false'}">${escapeHtml(tabLabel(id))}</button>`).join('')}
-      </div>
-      ${typeFaceError ? `<div class="cfg-hint nf-provider-face-error" id="provider-face-error">${escapeHtml(t('settings.providerTypesError'))}</div>` : ''}
-      ${drift ? `<div class="cfg-hint nf-provider-face-error" id="provider-face-drift">${escapeHtml(t('settings.providerTypesDrift'))}</div>` : ''}
-      <div id="provider-type-extra">
-        ${spec && spec.enabledSwitch ? `<div class="settings-row">
-          <span class="settings-label">${escapeHtml(t(current === 'imagegen' ? 'settings.imagegenEnabled' : 'settings.jevEnabled'))}</span>
-          ${toggleHTML({ on: enabledSwitchOn(current), id: 'toggle-provider-enabled', label: t('settings.enabled') })}
-        </div>` : ''}
-        ${spec && spec.healthBadge ? `<div class="settings-row nf-provider-health-row">
-          <span class="settings-label">${escapeHtml(t('settings.jevHealthTitle'))}</span>
-          <span class="cfg-hint stt-status"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>
-        </div>` : ''}
-      </div>
-      <div id="provider-list" class="provider-card-list">${sealedOff ? `<div class="cfg-hint">${escapeHtml(t('settings.imagegenNotCompiled'))}</div>` : listInner}</div>
-      ${sealedOff ? '' : addProviderButtonHTML({ id: 'btn-add-provider', face: 'provider' })}
-    </div>`;
+  const panel = h('div', { class: 'nf-provider-panel', 'data-provider-panel': true, 'data-type': current }, [
+    h('div', { class: 'nf-ptabs', role: 'tablist', id: 'provider-type-tabs' }, ids.map((id) => h('button', {
+      type: 'button', class: 'nf-ptab', role: 'tab', 'data-provider-type': id,
+      'aria-selected': id === current ? 'true' : 'false',
+    }, tabLabel(id)))),
+    typeFaceError && h('div', { class: 'cfg-hint nf-provider-face-error', id: 'provider-face-error' }, t('settings.providerTypesError')),
+    drift && h('div', { class: 'cfg-hint nf-provider-face-error', id: 'provider-face-drift' }, t('settings.providerTypesDrift')),
+    h('div', { id: 'provider-type-extra' }, [
+      spec && spec.enabledSwitch && h('div', { class: 'settings-row' }, [
+        h('span', { class: 'settings-label' }, t(current === 'imagegen' ? 'settings.imagegenEnabled' : 'settings.jevEnabled')),
+        document.createRange().createContextualFragment(toggleHTML({ on: enabledSwitchOn(current), id: 'toggle-provider-enabled', label: t('settings.enabled') })),
+      ]),
+      spec && spec.healthBadge && h('div', { class: 'settings-row nf-provider-health-row' }, [
+        h('span', { class: 'settings-label' }, t('settings.jevHealthTitle')),
+        h('span', { class: 'cfg-hint stt-status' }, h('span', { class: 'st-badge', 'data-tone': 'mut', id: 'settings-jev-health' }, '…')),
+      ]),
+    ]),
+    h('div', { id: 'provider-list', class: 'provider-card-list' }, listContent),
+    !sealedOff && document.createRange().createContextualFragment(addProviderButtonHTML({ id: 'btn-add-provider', face: 'provider' })),
+  ]);
+  return frag(panel);
 }
 
 /** 面板重画（宿主节点内原位替换，交互全部重绑）。 */
 export function paintProviderPanel() {
   const host = document.getElementById(PROVIDER_PANEL_HOST_ID);
   if (!host) return;
-  host.innerHTML = providerPanelHTML();
+  host.replaceChildren(providerPanelDOM());
   bindPanelEvents(host);
 }
 
@@ -721,8 +727,9 @@ function paintJevHealth() {
       const fullTitle = [jevReason, llmReason].filter(Boolean).join(' | ') || word;
       slot.dataset.tone = tone;
       slot.title = fullTitle;
-      slot.innerHTML = statusIcon(icon, 10, cls) + escapeHtml(word)
-        + (reason ? `<span class="badge-reason">— ${escapeHtml(reason)}</span>` : '');
+      const iconFragment = document.createRange().createContextualFragment(statusIcon(icon, 10, cls));
+      slot.replaceChildren(iconFragment, document.createTextNode(word));
+      if (reason) slot.appendChild(h('span', { class: 'badge-reason' }, `— ${reason}`));
     })
     .catch(() => {});
 }

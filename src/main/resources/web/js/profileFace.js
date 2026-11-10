@@ -214,6 +214,7 @@ async function refreshSyncBadges() {
   } catch { /* 读失败 = 空档（不猜） */ }
   if (seq !== syncBadgeSeq) return; // 已被更新的刷新取代
   for (const badge of badges) {
+    if (!(badge instanceof HTMLElement)) continue;
     const kind = SYNC_KIND_OF_FIELD[badge.dataset.pfSyncBadge || ''] || '';
     const f = fields ? fields[kind] : null;
     const state = f && typeof f.state === 'string' ? f.state : '';
@@ -228,6 +229,7 @@ onMessage('profileDescriptionsChanged', () => { void refreshSyncBadges(); });
 window.addEventListener('locale-changed', () => {
   if (!overlay || overlay.hidden) return;
   for (const badge of overlay.querySelectorAll('[data-pf-sync-badge]')) {
+    if (!(badge instanceof HTMLElement)) continue;
     const state = badge.dataset.syncState || '';
     if (state) badge.textContent = t(`profile.sync.${syncStateKey(state)}`);
   }

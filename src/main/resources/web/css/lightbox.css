@@ -1,7 +1,7 @@
 /* lightbox.css — full-screen image preview overlay */
 
 :root {
-  --nf-lightbox-backdrop: rgba(27, 30, 38, 0.55); /* #1b1e26 ink @ 55% */
+  --nf-lightbox-backdrop: var(--ds-scrim-stack);
   /* 内容适配盒 = 「图片/框图铺满多少屏幕」，**看图与看图解同一档**（作者令
      2026-11-07「使用跟图片一样的点击打开后的查看逻辑」）。相对**浮层**取百分比，
      不是 vw/vh：浮层在手机上会被 `syncViewportPin()` 钉到**可视视口**（动态视口 /
@@ -11,10 +11,6 @@
   --nf-lb-fit-w: 92%;
   --nf-lb-fit-h: 88%;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --nf-lightbox-backdrop: rgba(0, 0, 0, 0.72); }
-}
-
 /* 浮层 = 可视屏幕（默认整屏；`syncViewportPin()` 在可视视口被内缩/平移时改写成
    内联盒，四边归位到可视区域）。`height:100dvh` 是 CSS 侧兜底：动态视口里
    100% 会跟着「最大视口」走，dvh 跟的是当前可视高度。 */
@@ -41,7 +37,7 @@ body.nf-lightbox-open { overflow: hidden; }
   max-width: var(--nf-lb-fit-w);
   max-height: var(--nf-lb-fit-h);
   border-radius: var(--ds-radius-input);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--ds-shadow-media-card);
   cursor: default;
   opacity: 0;
   transform: scale(0.96);
@@ -69,9 +65,8 @@ body.nf-lightbox-open { overflow: hidden; }
   border: none;
   border-radius: 50%;
   background: transparent;
-  /* Fixed light icon: the backdrop is a dark translucent overlay in both
-     themes, so --color-text would be unreadable in light mode. */
-  color: rgba(255, 255, 255, 0.92);
+  /* The backdrop stays dark in both themes, so use the existing inverse-ink token. */
+  color: var(--ds-ink-inverse);
   cursor: pointer;
   opacity: 0.35;
   transition: opacity 150ms ease, transform 150ms ease;
@@ -95,7 +90,7 @@ body.nf-lightbox-open { overflow: hidden; }
   font-size: var(--ds-fs-body);
   pointer-events: none;
 }
-.nf-lightbox-status.error { color: var(--color-error, #c94040); }
+.nf-lightbox-status.error { color: var(--color-error); }
 
 @media (prefers-color-scheme: dark) {
   .nf-lightbox-img { background: #e8eaed; }
@@ -172,9 +167,7 @@ img.nf-zoom-img { cursor: pointer; }
   gap: var(--ds-space-1);
   padding: var(--ds-space-1) var(--ds-space-2);
   border-radius: var(--ds-radius-pill);
-  background: var(--glass-control-bg, rgba(24, 27, 34, 0.56));
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: var(--glass-control-bg);
   z-index: 2;
 }
 /* 浮层底是深色半透明（亮暗同款）⇒ 控件用固定浅色，与关闭钮同一处置。 */
@@ -187,11 +180,11 @@ img.nf-zoom-img { cursor: pointer; }
   border: none;
   border-radius: var(--ds-radius-chip);
   background: transparent;
-  color: rgba(255, 255, 255, 0.86);
+  color: var(--ds-ink-inverse);
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease;
 }
-.nf-lightbox-ctl:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.nf-lightbox-ctl:hover { background: var(--glass-control-bg-hover); color: var(--ds-ink-inverse); }
 .nf-lightbox-ctl:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.7);
   outline-offset: 2px;
@@ -202,7 +195,7 @@ img.nf-zoom-img { cursor: pointer; }
   text-align: center;
   font-size: var(--ds-fs-meta);
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.86);
+  color: var(--ds-ink-inverse);
 }
 
 @media (prefers-reduced-motion: reduce) {
