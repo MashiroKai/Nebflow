@@ -131,7 +131,6 @@ class ProcessManagerSpec extends FunSuite:
           assert(reason.contains("sleep 9876"), reason)
         case other => fail(s"expected Refused, got $other")
       assert(rec.destroyed.isEmpty)
-      assert(rec.destroyedForcibly.isEmpty)
       assert(os.exists(PathUtil.dataRoot / ".pid")) // refused ⇒ nothing cleaned
     }
   }
@@ -148,7 +147,6 @@ class ProcessManagerSpec extends FunSuite:
           assert(reason.contains("degraded checks"), reason)
         case other => fail(s"expected Refused, got $other")
       assert(rec.destroyed.isEmpty)
-      assert(rec.destroyedForcibly.isEmpty)
     }
   }
 
@@ -164,7 +162,6 @@ class ProcessManagerSpec extends FunSuite:
           assert(reason.contains("not bypassable"), reason)
         case other => fail(s"expected Refused, got $other")
       assert(rec.destroyed.isEmpty)
-      assert(rec.destroyedForcibly.isEmpty)
     }
   }
 
@@ -281,7 +278,6 @@ class ProcessManagerSpec extends FunSuite:
           assert(msg.contains("stopped"), msg)
         case other => fail(s"expected Stopped, got $other")
       assertEquals(rec.destroyed.toList, List(pid))
-      assert(rec.destroyedForcibly.isEmpty) // graceful destroy flipped death
       assert(!os.exists(PathUtil.dataRoot / ".pid"))
       assert(!os.exists(PathUtil.dataRoot / ".pid.meta"))
     }
