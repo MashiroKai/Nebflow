@@ -175,26 +175,32 @@ class ImageGenSpec extends munit.FunSuite:
   //    交付面、非 Nebula 身份永不可得；seal=true 的构建镜像全绿在場。任何一侧
   //    红 = 门控破损。
 
-  test("seal: generate_image 在注册表 iff 编译进产物") {
-    val present = nebflow.core.tools.ToolRegistry.TOOL_MAP.contains("generate_image")
-    assertEquals(present, nebflow.core.ImageGenSeal.CompiledIn)
+  test("panel toggle gates GenerateImage registration in both states") {
+    val registry = nebflow.core.tools.ToolRegistry
+    assert(nebflow.service.ConfigService.imagegenEnabledFromConfig("""{"imagegen":{"enabled":true}}"""))
+    assert(!nebflow.service.ConfigService.imagegenEnabledFromConfig("""{"imagegen":{"enabled":false}}"""))
+    assertEquals(registry.imageGenTools(compiledIn = true, panelEnabled = true).keySet, Set("GenerateImage"))
+    assertEquals(registry.imageGenTools(compiledIn = true, panelEnabled = false).keySet, Set.empty[String])
+    assertEquals(registry.imageGenTools(compiledIn = false, panelEnabled = true).keySet, Set.empty[String])
+    val present = registry.TOOL_MAP.contains("GenerateImage")
+    assertEquals(present, nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace)
   }
 
   test("seal: Nebula 固定面交付 iff 编译进产物（静态集与件数常量不动）") {
     val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "root")
     val delivered = nebflow.agent.AgentCore.fixedToolsFor(nebulaDef)
-    assertEquals(delivered.contains("generate_image"), nebflow.core.ImageGenSeal.CompiledIn)
+    assertEquals(delivered.contains("GenerateImage"), nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace)
     // 件数常量钉死静态集大小（FriendsSealKit 同款纪律：期望值由交付快照推导）。
     val constant = nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize
     assertEquals(nebflow.agent.AgentCore.RootOrchestrationTools.size, constant)
   }
 
-  test("seal: 非 Nebula 身份永不获得 generate_image（防声明逃逸面）") {
+  test("seal: 非 Nebula 身份永不获得 GenerateImage（防声明逃逸面）") {
     val execDef = nebflow.actor.AgentDef(name = "nebflow", description = "executor")
-    assert(!nebflow.agent.AgentCore.fixedToolsFor(execDef).contains("generate_image"))
+    assert(!nebflow.agent.AgentCore.fixedToolsFor(execDef).contains("GenerateImage"))
   }
 
-  test("seal: 期望常量 = 静态集大小（23，ConversationSearch 与 workspace_summary 按面变更）") {
+  test("seal: 期望常量 = 静态集大小（23，ConversationSearch 与 WorkspaceSummary 按面变更）") {
     assertEquals(nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize, 23)
   }
 end ImageGenSpec

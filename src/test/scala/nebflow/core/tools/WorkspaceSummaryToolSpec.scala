@@ -15,7 +15,7 @@ import nebflow.shared.PathUtil
 import scala.concurrent.duration.*
 
 /**
- * workspace_summary 验收（worktree-merger delivery · Priority E）：
+ * WorkspaceSummary 验收（worktree-merger delivery · Priority E）：
  *   - 授权 = root 专属（mount face RootOrchestrationTools + 防声明逃逸
  *     RootExclusiveTools + 工具内 isRootAgent 身份闸双保险，MergerRequestTool 同款）；
  *   - 读面 = 一个仓库的协调全景：工作区事实、pending 请求与 origin、advisor 建议行
@@ -138,14 +138,14 @@ class WorkspaceSummaryToolSpec extends CatsEffectSuite:
   test("panel-submitted requests read as origin=panel; agent-submitted as origin=agent") {
     import nebflow.core.delegate.WorkspaceLedger.MergeRequest
     val panel = MergeRequest("p", "repo", "m", "authenticated project panel selection: task", Nil)
-    val agent = MergeRequest("a", "repo", "m", "user authorized via merger_request in session", Nil)
+    val agent = MergeRequest("a", "repo", "m", "user authorized via MergerRequest in session", Nil)
     assertEquals(WorkspaceSummaryTool.requestOrigin(panel), "panel")
     assertEquals(WorkspaceSummaryTool.requestOrigin(agent), "agent")
   }
 
   test("the tool name is a root-face member and blocks declaration escape") {
     import nebflow.agent.AgentCore
-    assert(AgentCore.RootOrchestrationTools.contains(WorkspaceSummaryTool.Name), "root face carries workspace_summary")
+    assert(AgentCore.RootOrchestrationTools.contains(WorkspaceSummaryTool.Name), "root face carries WorkspaceSummary")
     assert(AgentCore.RootExclusiveTools.contains(WorkspaceSummaryTool.Name), "declaration escape is blocked")
     assert(nebflow.core.tools.ToolRegistry.TOOL_MAP.contains(WorkspaceSummaryTool.Name), "the tool is registered")
   }

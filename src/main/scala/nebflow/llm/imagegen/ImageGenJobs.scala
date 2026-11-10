@@ -6,7 +6,7 @@ import scala.jdk.CollectionConverters.*
 /**
  * 生图 job 台账（imagegen 双层批 2026-10-24；交互修正批 2026-10-30 语义刷新）。
  *
- * 阻塞语义：`generate_image` 工具调用**挂起至生成完成**（回合不并发推进），
+ * 阻塞语义：`GenerateImage` 工具调用**挂起至生成完成**（回合不并发推进），
  * 台账随之退为簿记/读面——REST `/api/imagegen` 查询腿与 sidebar 状态投影仍消费
  * 它（register → complete/fail 翻转照旧），但完成回填**不再走 WS imagegenUpdate
  * 帧**（该腿已整腿退役：结果载荷走 toolEnd 的 Pop 面原位直出）。内存态 +

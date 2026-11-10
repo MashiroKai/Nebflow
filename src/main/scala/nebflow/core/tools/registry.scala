@@ -188,7 +188,7 @@ object ToolRegistry:
       "delegate_report" -> DelegateReportTool,
       MergerReportTool.Name -> MergerReportTool,
       MergerRequestTool.Name -> MergerRequestTool,
-      // worktree_context (worktree-merger delivery, Priority D): read-only
+      // WorktreeContext (worktree-merger delivery, Priority D): read-only
       // full-context assembly for one managed workspace (summary-first sections
       // + paginated mail, explicit missing ranges per section). Authorization =
       // the merger tool mount face (buildAllowedToolSet tail, same slot as
@@ -197,7 +197,7 @@ object ToolRegistry:
       // fail-closed, MergerRequestTool precedent); a recorded merger is scoped
       // to its own repository inside the tool.
       WorktreeContextTool.Name -> WorktreeContextTool,
-      // workspace_summary (worktree-merger delivery, Priority E): the main
+      // WorkspaceSummary (worktree-merger delivery, Priority E): the main
       // agent's per-project coordination picture (workspace facts, pending
       // merge requests with origins, advisor suggestions with states, merger
       // initialization) plus the dismiss-suggestion action. Authorization =
@@ -239,10 +239,15 @@ object ToolRegistry:
     // 缺省构建在场。seal 断言锚见 ImageGenSpec。授权面 = Nebula 专属
     // （RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸 + 工具内
     // isRootAgent 身份闸）。非阻塞 job 语义见 GenerateImageTool。
-    val experimental: Map[String, Tool] =
-      if nebflow.core.ImageGenSeal.CompiledIn then Map("generate_image" -> GenerateImageTool) else Map.empty
+    val experimental: Map[String, Tool] = imageGenTools(
+      nebflow.core.ImageGenSeal.CompiledIn,
+      nebflow.service.ConfigService.imagegenEnabledForToolFace
+    )
     tools.putAll((builtins ++ experimental).asJava)
   }
+
+  private[nebflow] def imageGenTools(compiledIn: Boolean, panelEnabled: Boolean): Map[String, Tool] =
+    if compiledIn && panelEnabled then Map("GenerateImage" -> GenerateImageTool) else Map.empty
 
   def TOOL_MAP: Map[String, Tool] = tools.asScala.toMap
 

@@ -1122,7 +1122,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // of the tool_result content ("Message sent...").
   const _toolName = label ? label.split('(')[0].split('\n')[0].trim() : '';
 
-  // generate_image（交互修正批 2026-10-30 起**阻塞语义**）：无特判面——调用期间
+  // GenerateImage（交互修正批 2026-10-30 起**阻塞语义**）：无特判面——调用期间
   // 由上方标准 pending 工具卡原位占位（spinner + 生图标签），完成时工具结果
   // 自带 ___POP_JSON___ 载荷，走下方 isPopPayload 通用腿原位直出单张图
   // （旧非阻塞占位卡 + WS 完成帧推送的第二渲染腿整腿退役，双渲染根因拆除；

@@ -14,7 +14,7 @@ import nebflow.shared.PathUtil
 import scala.util.Try
 
 /**
- * worktree_context (Priority D delivery): access control, summary sections with
+ * WorktreeContext (Priority D delivery): access control, summary sections with
  * explicit missing ranges, and mail-transcript pagination over a seeded fixture
  * (temp git repo + worktree + ledger + registry + mailbox + task ledger).
  */

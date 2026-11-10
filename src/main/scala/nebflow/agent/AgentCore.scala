@@ -200,7 +200,7 @@ object AgentCore:
   val RootExclusiveTools = Set(
     "Schedule",
     "Delegate",
-    "merger_request",
+    "MergerRequest",
     "AgentControl",
     "MemoryNote",
     // Task（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件合一
@@ -255,14 +255,14 @@ object AgentCore:
     "TaskSearch",
     // ConversationSearch is Nebula-root-only and read-only; block agent/plugin declaration escape.
     "ConversationSearch",
-    // workspace_summary (worktree-merger delivery, Priority E): Nebula-root-only
+    // WorkspaceSummary (worktree-merger delivery, Priority E): Nebula-root-only
     // workspace coordination picture + dismiss-suggestion; blocks declaration
     // escape for agent/plugin declarations (MergerRequestTool same-slot precedent).
-    "workspace_summary",
-    // generate_image（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
+    "WorkspaceSummary",
+    // GenerateImage（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
-    "generate_image"
+    "GenerateImage"
   )
 
   /**
@@ -426,20 +426,20 @@ object AgentCore:
     // `RootExclusiveTools` 的 "Delegate" 条目继续承担**防声明逃逸**剥离（非
     // Nebula 身份声明 Delegate 仍被剥）。
     "Delegate",
-    "merger_request",
-    // worktree_context (worktree-merger delivery, Priority D): read-only
+    "MergerRequest",
+    // WorktreeContext (worktree-merger delivery, Priority D): read-only
     // per-workspace context assembly (task brief, node graph, verification,
     // commits, merge history, paginated mail). The main agent reads any managed
     // workspace; merger-mode sessions get the same tool through the merger
     // mount face.
-    "worktree_context",
-    // workspace_summary (worktree-merger delivery, Priority E): the main
+    "WorktreeContext",
+    // WorkspaceSummary (worktree-merger delivery, Priority E): the main
     // agent's per-project coordination picture — workspaces with live Git
     // facts, pending merge requests with origins, advisor suggestions with
     // states, merger initialization — plus the dismiss-suggestion action.
     // Root-only (RootExclusiveTools blocks declaration escape); the advisor
     // itself never merges and never touches manual merge requests.
-    "workspace_summary",
+    "WorkspaceSummary",
     // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
     // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
     // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
@@ -503,11 +503,11 @@ object AgentCore:
     "Schedule",
     // 记忆（§C.2 MemoryNote）
     "MemoryNote",
-    // generate_image（imagegen 双层批 2026-10-24；交互修正批 2026-10-30 转阻塞
+    // GenerateImage（imagegen 双层批 2026-10-24；交互修正批 2026-10-30 转阻塞
     // 语义）：Nebula 面阻塞生图件——调用挂起至图成、结果走 Pop 面原位直出；
     // 编译期 seal 关时由 imageGenSealedStrip 在本消费点剥除（静态集与件数常量
     // 不动，friends seal 同款条件化口径）。
-    "generate_image"
+    "GenerateImage"
   )
 
   /**
@@ -530,14 +530,14 @@ object AgentCore:
     if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty
 
   /**
-   * imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30）：`generate_image`
+   * imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30）：`GenerateImage`
    * 的编译期 seal 剥离面——friendsSealedStrip 同款条件化口径（静态集与件数
    * 常量不动，seal 状态只在本消费点读一次）。缺省构建（seal 编入）⇒ 空剥除、
    * 工具在面；显式 `STAND_IMAGEGEN=0` 构建（seal=false，final val 常量折叠）⇒
    * 名字永不抵达 LLM——幻觉调用在 allowed-set 分区即落，与 friends seal 同机制。
    */
   def imageGenSealedStrip: Set[String] =
-    if nebflow.core.ImageGenSeal.CompiledIn then Set.empty else Set("generate_image")
+    if nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace then Set.empty else Set("GenerateImage")
 
   /**
    * 阶段 2c 收敛的 agent 定义名（§C.1 总览，本集 = 四个在册名）：其 agent.json tools
@@ -625,7 +625,7 @@ object AgentCore:
    * ⇒ 18（在飞值）**——任务语义检索（Nebula 面只读件：embedding/词法 + 可选
    * Jev 重排）。本增量属「按面变更」（新增成员），非「凑数字」。
    *
-   * **imagegen 双层批（2026-10-24）：+`generate_image` ⇒ 19（在飞值）**——Nebula
+   * **imagegen 双层批（2026-10-24）：+`GenerateImage` ⇒ 19（在飞值）**——Nebula
    * 面生图件（交互修正批 2026-10-30 起为阻塞语义；编译期 seal 门控：seal 关时经
    * [[imageGenSealedStrip]] 在本面唯一消费点剥除，静态集不动，friends seal
    * 同款条件化口径）。本增量同属「按面变更」。
@@ -636,12 +636,12 @@ object AgentCore:
    * 注册表（删 `"AgentFlow"` 注册项）、墓碑表（"Workflow" 指路改 ChainWrite
    * ＋"AgentFlow" 条目复活）与 orchestrationMode 的升级写点（迁入 ChainWriteTool）。
    *
-   * **worktree-merger 交付批（Priority D）：+`worktree_context`，常量对齐实际面 22**——
+   * **worktree-merger 交付批（Priority D）：+`WorktreeContext`，常量对齐实际面 22**——
    * 工作区全景上下文只读件（主 agent 面；merger 模式会话经挂载面同享）。本增量
    * 属「按面变更」（新增成员），非「凑数字」；ConversationSearch 批 +1 时常量
    * 未随动，本批一并把常量钉回实测件数。
    *
-   * **worktree-merger 交付批（Priority E）：+`workspace_summary` ⇒ 23**——主 agent
+   * **worktree-merger 交付批（Priority E）：+`WorkspaceSummary` ⇒ 23**——主 agent
    * 的工作区协调读面 + dismiss-suggestion（RootOrchestrationTools + RootExclusive
    * Tools 双集，MergerRequestTool 同槽先例）。本增量属「按面变更」（新增成员），
    * 非「凑数字」。
@@ -901,7 +901,7 @@ object AgentCore:
             // friendseal (2026-09-25): the static set above stays the single
             // source; the friends seal strips names at this one consumption
             // point (see friendsSealedStrip — currently ListFriends only).
-            // imagegen 双层批（2026-10-24）：generate_image 编译期 seal 同此一点剥除。
+            // imagegen 双层批（2026-10-24）：GenerateImage 编译期 seal 同此一点剥除。
             AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip -- AgentCore.imageGenSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           // 合并执行 agent（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）：

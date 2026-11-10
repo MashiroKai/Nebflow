@@ -22,7 +22,7 @@ import WorkspaceLedger.*
  * developer. It never creates merge requests, never touches reservations and
  * never merges: the suggestion is a message, and creating a real merge request
  * still requires an explicit user or agent action through the authorized
- * channels (panel selection or merger_request).
+ * channels (panel selection or MergerRequest).
  *
  * == Candidate condition set (ALL must hold; none suffices alone) ==
  *   - the developer explicitly reported this delivery complete (a persisted
@@ -388,7 +388,7 @@ final class WorkspaceAdvisor(
        |Repository: ${row.repository}
        |Commits ahead of ${row.baseBranch}: ${row.aheadCount.getOrElse("unknown")} (HEAD ${head}).
        |Tree: committed and clean. Developer finish report: recorded. $verification.
-       |This is a SUGGESTION only — no merge request was created and nothing was merged. Creating one still requires your or the user's explicit action; the user's current instructions override this suggestion. Dismiss it with workspace_summary(action="dismiss-suggestion") if it is unwanted.""".stripMargin
+       |This is a SUGGESTION only — no merge request was created and nothing was merged. Creating one still requires your or the user's explicit action; the user's current instructions override this suggestion. Dismiss it with WorkspaceSummary(action="dismiss-suggestion") if it is unwanted.""".stripMargin
 
   private def describe(error: Throwable): String =
     Option(error.getMessage).filter(_.nonEmpty).getOrElse(error.getClass.getSimpleName)

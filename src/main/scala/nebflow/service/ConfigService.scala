@@ -773,6 +773,18 @@ object ConfigService:
    * 不得再渲染「调试中」）。🔴 日志零 key：本投影不打日志，值的唯一可能位置是
    * secrets 文件本身（本函数不读值，只 stat 在位性）。
    */
+
+  /** Panel toggle decoder; missing/invalid config fails closed. */
+  private[nebflow] def imagegenEnabledFromConfig(raw: String): Boolean =
+    parse(raw).toOption
+      .flatMap(_.hcursor.downField(IMAGEGEN_SECTION).as[ImageGenConfig].toOption)
+      .exists(_.isEnabled)
+
+  /** Current panel toggle for root tool-face assembly; missing/invalid config fails closed. */
+  def imagegenEnabledForToolFace: Boolean =
+    try imagegenEnabledFromConfig(if os.exists(configPath) then os.read(configPath) else "{}")
+    catch case _: Exception => false
+
   def imagegenStatus: IO[Json] = IO.blocking {
     val raw = if os.exists(configPath) then os.read(configPath) else "{}"
     val cfg = parse(raw).toOption

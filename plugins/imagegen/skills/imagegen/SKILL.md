@@ -1,13 +1,13 @@
 ---
 name: imagegen
-description: 生图工具调用纪律——generate_image 的参数面、阻塞语义、provider 选择与失败面处置（正式产品面，功能开放批 2026-10-30）。
+description: 生图工具调用纪律——GenerateImage 的参数面、阻塞语义、provider 选择与失败面处置（正式产品面，功能开放批 2026-10-30）。
 ---
 
 # imagegen 生图纪律
 
 ## 这是什么
 
-本插件授予 `generate_image` 一件生图工具（MCP 模式）。**正式产品面**（功能开放批
+本插件授予 `GenerateImage` 一件生图工具（MCP 模式）。**正式产品面**（功能开放批
 2026-10-30，作者令「直接开放出来」）：与根会话内置件共用同一 provider 层，能力
 常态在场（引擎构建显式 `STAND_IMAGEGEN=0` 剔除的除外）。
 
@@ -15,7 +15,7 @@ description: 生图工具调用纪律——generate_image 的参数面、阻塞�
 
 - **你是下层（delegate/节点会话）→ 用本插件工具**。调用是**阻塞**的：回合停在
   工具调用上直到图片生成完，结果文本直接返回——无前端占位、无 WS 回填。
-- 根会话（Nebula）另有**非阻塞**内置 `generate_image`（提交即返回 job 句柄、
+- 根会话（Nebula）另有**非阻塞**内置 `GenerateImage`（提交即返回 job 句柄、
   前端占位动画回填）——那不是你的面，不要绕路模拟。
 
 ## 参数面

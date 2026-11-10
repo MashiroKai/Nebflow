@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import nebflow.core.delegate.MergeRequests
 
 object MergerRequestTool extends Tool:
-  val Name = "merger_request"
+  val Name = "MergerRequest"
   def name: String = Name
   def description: String = "Use action=cancel to request a safe stop via the same persistent channel as the panel; this does not undo merges. Use action=submit to submit explicitly authorized idle workspaces to the project's existing merger. Use a stable requestId and cite the user's authorization. " +
     "This reserves the exact workspace list and current source commits atomically; busy workspaces are refused. Create Delegate(mode=merger, project=...) first. " +
