@@ -600,6 +600,33 @@ function overdueCount() {
   return items.filter((it) => !it.completed && it.due != null && it.due < now).length;
 }
 
+/** 今日到期（未完成、due 落在本地日历日之内 = 今天 00:00 ≤ due < 明天 00:00）。 */
+function dueTodayCount() {
+  maybePull();
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const from = start.getTime();
+  const to = from + 24 * 3600_000;
+  return items.filter((it) => !it.completed && it.due != null && it.due >= from && it.due < to).length;
+}
+
+function completedCount() {
+  maybePull();
+  return items.filter((it) => it.completed).length;
+}
+
+/** 某标签下未完成条目数（列表卡行右侧计数）。 */
+function openCountOf(tagId) {
+  maybePull();
+  return items.filter((it) => !it.completed && it.tagId === tagId).length;
+}
+
+/** 全量条目（含已完成；只读拷贝）——已完成矩阵与冒烟探针用。 */
+function allItems() {
+  maybePull();
+  return [...items];
+}
+
 // ── 写口（乐观 + 帧 + 回执/刷新收敛；失败回滚并 console.error）──────────
 
 /** 分组 id → 后端 project 名（"" = 清空归属）。 */
@@ -951,7 +978,7 @@ export const todoStore = {
   },
   get dataSource() { return fixtureMode ? 'fixture' : 'backend'; },
   get serverSeq() { return serverSeq; },
-  visibleItems, openCount, overdueCount,
+  visibleItems, openCount, overdueCount, dueTodayCount, completedCount, openCountOf, allItems,
   /** 全部未完成行（不带分组/重要度筛选；`#` 引用补全的候选面）。 */
   openItems,
   /** 归档面（已完成行；按完成时刻降序）。需先 refresh({includeCompleted:true}) 才完整。 */

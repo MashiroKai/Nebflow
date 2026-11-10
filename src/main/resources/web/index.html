@@ -136,6 +136,12 @@
        script。层样式落 css/（/css/<file> 单段路由服务），控制器落 js/mobile/
        （jsRoutes 任意深度服务）—— 均为既有静态路由面，零引擎改动。 -->
   <link rel="stylesheet" href="css/mobileLayer.css">
+  <!-- 手机端待办页 Apple 提醒事项信息架构（实现批 · 作者令 2026-11-02 11:57）：
+       三页（tasks / todo-apple-list / todo-apple-item）专属样式，全部规则
+       挂在 body.mobile-layer + [data-page=…] 精确 selector 之下 —— 桌面与其它
+       手机页零命中。必须紧随 mobileLayer.css（它提供 token：--mchrome-* /
+       --mcap-* / --mfs-* / --mtap-*，本表只派生不重定义）。 -->
+  <link rel="stylesheet" href="css/mobile-todo-apple.css">
   <link rel="stylesheet" href="css/mobileSearchFlat.css">
   <!-- 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16「把它补回来」
        + 22:20「编辑面也采用同款的滚轮」）：全站时间/日期类输入面的唯一交互单源。

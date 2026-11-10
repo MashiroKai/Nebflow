@@ -241,9 +241,8 @@ export function activateChatChrome() {
      层级：本层 z30 高于顶缘渐隐带（25）、低于 push 页（156）与 dock（200），
      真身是「零底带 + 子件 absolute」的 .ds-chrome-band ⇒ 顶部内容滚动时从圆钮
      底下穿过（本层无背景、无拦截面，只有圆钮本体 pointer-events:auto）。
-     点击 = pushPage('tasks')：任务页（mobile/taskPanel.js 惰性建
-     #mobile-task-panel，面板体 = todoFace.mountTodoFaceInto）——与恢复前的原
-     实现逐字一致，不另造抽屉。 */
+     点击 = pushPage('tasks'): the tasks page body is the Apple-Reminders-style
+     todo face (mobile/todoAppleFace.js), mounted by navController.ensurePanelContent. */
   taskBtn = document.createElement('button');
   taskBtn.type = 'button';
   taskBtn.className = 'mh-chrome-btn g2-fab';

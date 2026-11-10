@@ -1,5 +1,11 @@
 // mobile/taskPanel.js — 任务面（dock 批改写：浮层 → 「任务」详情页面板）。
 //
+// ⛔ 【No longer mounted by navigation】Apple todo face port (2026-11-10): the
+//   'tasks' page body is now mobile/todoAppleFace.js, and navController no
+//   longer imports this module — ensureTaskPanel/closeTaskPanel are unreached
+//   from navigation. The file stays: taskBadgeCount is a live read seam for
+//   the chrome badge and for specs that import this module directly.
+//
 // ✅ 【本模块恢复现役】作者令 2026-11-05 09:28（逐字）：「手机端的待办…跟电脑端
 //   的区分开，电脑端是一个胶囊，手机端还是需要是之前那个左上角的一个悬浮的待办
 //   按钮」⇒ 入口圆钮（js/mobile/chatChrome.js 的 [data-chrome='tasks']）、导航页
