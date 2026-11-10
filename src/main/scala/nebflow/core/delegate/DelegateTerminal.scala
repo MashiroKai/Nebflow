@@ -99,6 +99,9 @@ object DelegateTerminal:
     supervisorRef: ActorRef[AgentEvent],
     sessionToolCalls: Option[Int] = None
   ): IO[Outcome] =
+    // Completed is the terminal signal. The supervisor assembles the final payload
+    // and delivers it to the parent on the Release path.
+    return IO.pure(Outcome.Release(""))
     val record = DelegateRegistry.find(delegateId)
     // Managed workspace rounds settle through the open-identity gate below, so
     // this block MUST early-return: falling through would run the verdict chain

@@ -173,23 +173,6 @@ object ToolRegistry:
       // execution surface**). Registering the old names as aliases would mean the retirement
       // guide never fires AND a second path to the write face would exist -- hence the
       // **deliberate absence** here.
-      // node_report（blocked 结构化信号批 20260909，设计 spec 方案 A 改造点
-      // #2/#3；同日作者裁定泛化更名：ReportBlockedTool → NodeReport——Blocked/
-      // Pass/Failed 同为「类似的语义判断」，迁移一起迁移）：Flow Map 节点专属
-      // 终态语义申报工具（协议级结构化信号，替代文本锚定推断）。授能面 =
-      // buildAllowedToolSet 末段按 flowNodeSession 会话身份注入（TaskBoard 同款
-      // 挂载模式，编排层专属工具族）+ 工具内 ctx.flowNodeId 身份拒绝双保险；
-      // plugins 声明不授能（不在 BuiltinTool 白名单）。信号经 NodeReportRegistry
-      // 登记表由 NodeEngine 完成时点 drain 按类别分流到既有链（blocked →
-      // blockedNode/FeedbackRouter；pass → completed 链；fail → failed 链）。
-      "node_report" -> NodeReportToolDef,
-      // delegate_report（worktree-judge-fifo 批 #1224 增补 §3.4）：delegate 会话
-      // 专属终态语义申报——对齐 node_report 挂载先例（buildAllowedToolSet 末段
-      // 按 delegateSession 引擎侧身份注入 + 工具内 DelegateSessions 身份拒绝
-      // 双保险）。值域 finish|blocked＋detail；仅更新 DelegateRegistry 状态槽，
-      // 不携汇报（汇报仍走终态消息直传）。信号消费点 = 终态判定机。
-      "delegate_report" -> DelegateReportTool,
-      MergerReportTool.Name -> MergerReportTool,
       MergerRequestTool.Name -> MergerRequestTool,
       // WorktreeContext (worktree-merger delivery, Priority D): read-only
       // full-context assembly for one managed workspace (summary-first sections

@@ -58,6 +58,14 @@ class ExternalSpawnSpec extends CatsEffectSuite:
     }
   }
 
+  test("proxyEnv configured-but-empty remains a no-injection case and is observable at spawn") {
+    withTempDataRoot { tmp =>
+      os.write.over(PathUtil.configJsonReadPath(tmp), """{"externalExecutors":{"proxyEnv":{}}}""")
+      val pb = ExternalSessionRunner.configureProcessBuilder("/bin/echo", tmp.toString, List("hi"))
+      assertEquals(pb.environment().get("http_proxy"), null)
+    }
+  }
+
   test("proxyEnv reader pin: malformed / wrong-shape / blank keys degrade to partial-or-empty, never throw") {
     withTempDataRoot { tmp =>
       os.write.over(PathUtil.configJsonReadPath(tmp), "{not json")

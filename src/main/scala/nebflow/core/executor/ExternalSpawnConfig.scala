@@ -1,6 +1,6 @@
 package nebflow.core.executor
 
-import nebflow.shared.PathUtil
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * ExternalSpawnConfig —— 外部执行器 spawn 环境配置（codex-spawn-fix 批
@@ -30,6 +30,7 @@ import nebflow.shared.PathUtil
  */
 object ExternalSpawnConfig:
 
+  private val logger = NebflowLogger.forName("nebflow.executor.external.spawn-config")
   private val Section = "externalExecutors"
   private val ProxyEnvKey = "proxyEnv"
 
@@ -57,14 +58,26 @@ object ExternalSpawnConfig:
           .getOrElse(Map.empty)
     catch case _: Throwable => Map.empty
 
+  private def proxySectionPresent(configPath: os.Path): Boolean =
+    try
+      os.exists(configPath) && io.circe.parser.parse(os.read(configPath)).toOption.exists { json =>
+        json.hcursor.downField(Section).focus.exists(_.hcursor.downField(ProxyEnvKey).succeeded)
+      }
+    catch case _: Throwable => false
+
   /**
    * 把配置点名的键值注入 ProcessBuilder 环境（在默认继承的父进程 env 上做
    * 点名加法——绝不清空既有继承，也绝不注入配置之外的键）。空映射 = no-op。
    */
   def installProxyEnv(pb: java.lang.ProcessBuilder): Unit =
-    val named = proxyEnv
+    val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    val named = proxyEnvFrom(configPath)
     if named.nonEmpty then
       val env = pb.environment()
       named.foreach { case (k, v) => env.put(k, v) }
+    else if proxySectionPresent(configPath) then
+      logger.warn(
+        s"External executor proxyEnv resolved empty from config '$configPath'; external CLI will run without configured proxy env"
+      )
 
 end ExternalSpawnConfig
