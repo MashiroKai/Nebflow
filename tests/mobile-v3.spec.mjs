@@ -256,7 +256,8 @@ test('T2 to-do entry per-end: mobile top-left tasks key opens the tasks page, ca
     return {
       tasksPage: document.querySelectorAll('.mobile-page[data-page="tasks"]').length,
       todoPage: document.querySelectorAll('.mobile-page[data-page="todo"]').length,
-      panel: document.querySelectorAll('#mobile-task-panel').length,
+      // panel = the tasks page body face (Apple-Reminders-style todo face root)
+      panel: document.querySelectorAll('.mobile-page[data-page="tasks"] .ta-root').length,
     };
   });
   expect(pushed).toMatchObject({ tasksPage: 1, todoPage: 0, panel: 1 });
