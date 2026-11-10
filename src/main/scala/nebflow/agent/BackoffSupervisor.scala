@@ -218,6 +218,8 @@ object BackoffSupervisor:
               .flatMap {
                 case nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix) =>
                   terminalDiffMetadata().flatMap(diff => notifyParentAndStop("completed", suffix + note, diff))
+                case other =>
+                  IO.raiseError(new IllegalStateException(s"completed delegate returned obsolete outcome: $other"))
               }
           else notifyParentAndStop("completed", payload, JsonObject.empty)
           end if
