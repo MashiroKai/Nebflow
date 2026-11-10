@@ -22,6 +22,7 @@
 // /返回 null，绝不崩渲染面）；mirror 首刷前 = 空行集（与 stub 默认空态同观感）。
 
 import { onMessage, onReconnect } from './ws.js';
+import { EVENTS } from './events.js';
 import { authHeaders } from './flowHelpers.js';
 import {
   setSource,
@@ -215,7 +216,7 @@ export function ensureChildren(id, ttlMs = 60000) {
     .then(() => {
       childrenInflight.delete(key);
       if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-        window.dispatchEvent(new CustomEvent('delegate-chain-mirror-updated'));
+        window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
       }
     });
 }
@@ -244,7 +245,7 @@ async function refresh() {
     for (const prev of mirror.rows) {
       const k = rowKey(prev);
       if (k && !nextKeys.has(k)) {
-        window.dispatchEvent(new CustomEvent('delegate-archived', { detail: {
+        window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_ARCHIVED, { detail: {
           delegateId: String(prev.delegateId || ''),
           taskNo: String(prev.taskNo || ''),
           title: String(prev.title || ''),
@@ -265,7 +266,7 @@ async function refresh() {
   ]);
   if (seq !== mirror.seq) return; // 刷新期间又有更新在途——广播交给最新一轮
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-    window.dispatchEvent(new CustomEvent('delegate-chain-mirror-updated'));
+    window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
   }
 }
 

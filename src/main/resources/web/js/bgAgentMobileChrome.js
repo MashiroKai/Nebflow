@@ -30,13 +30,14 @@
 // （mobileLayer.css「后台对话框手机简化批」块）。
 
 import { t } from './i18n.js';
-import { statusIcon, createIconsIn } from './utils.js';
+import { createIconsIn } from './utils.js';
 import { fmtUptime } from './managePanel.js';
 import { bgStatusVisual } from './bgRowStatus.js';
 import { badgeFaceOfKind } from './termWords.js';
 import { fetchDelegateDetail, isDelegateDomainId } from './delegateApi.js';
 import { FREEZE_KIND, freezeKindOf } from './freezeState.js';
 import { isErrorReason } from './errorRecovery.js';
+import { h } from './dom.js';
 
 const REFRESH_MS = 15000; // 与 bgAgentWorkStrip 同拍（时长/活动戳滚动节奏一致）
 
@@ -81,7 +82,7 @@ function capsuleIcon(tone) {
  * @param {{overlay: HTMLElement, modal: HTMLElement, bar: {stopBtn: HTMLButtonElement,
  *   retryBtn: HTMLButtonElement, retriesEl: HTMLElement, uptimeEl: HTMLElement},
  *   nodeSessionId: string, agentName: string}} spec
- * @returns {{sheetBody: HTMLElement, refresh: (meta: any) => void,
+ * @returns {{sheetBody: HTMLElement, sheetAnchor: HTMLElement, refresh: (meta: any) => void,
  *   autoExpandStrip: (host: HTMLElement, sid: string) => void}|null}
  */
 export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, agentName }) {
@@ -114,7 +115,7 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
   moreBtn.title = moreLabel;
   moreBtn.setAttribute('aria-label', moreLabel);
   moreBtn.setAttribute('aria-expanded', 'false');
-  moreBtn.innerHTML = '<i data-lucide="more-horizontal"></i>';
+  moreBtn.appendChild(h('i', { 'data-lucide': 'more-horizontal' }));
   overlay.appendChild(moreBtn);
   if (typeof lucide !== 'undefined') createIconsIn(moreBtn);
 
@@ -229,7 +230,8 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
     const dur = (meta && meta.startedAt && face.tone === 'active')
       ? fmtUptime(Date.now() - Number(meta.startedAt)) : '';
     pillIcon.className = `bgagent-pill-status bg-status-${face.tone}`;
-    pillIcon.innerHTML = statusIcon(capsuleIcon(face.tone), 12);
+    pillIcon.replaceChildren(h('i', { 'data-lucide': capsuleIcon(face.tone), class: 'st-ic', style: `width:12px;height:12px` }));
+    if (typeof lucide !== 'undefined') createIconsIn(pillIcon);
     pillWord.textContent = face.word;
     pillDur.textContent = dur ? `· ${dur}` : '';
     pillDur.hidden = !dur;
@@ -258,13 +260,13 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
 function autoExpandStrip(sheetBody, nodeSessionId) {
   if (!sheetBody || !(sheetBody instanceof HTMLElement)) return;
   const strip = sheetBody.querySelector(`[data-delegate-strip="${CSS.escape(nodeSessionId)}"]`);
-  if (!strip) return;
+  if (!(strip instanceof HTMLElement)) return;
   const mo = new MutationObserver(() => {
     if (strip.hidden) return;
     mo.disconnect();
     const toggle = strip.querySelector('.bgagent-strip-toggle');
     const body = strip.querySelector('.bgagent-strip-body');
-    if (toggle && body && body.hidden) toggle.click(); // 同一开合路径，非平行实现
+    if (toggle instanceof HTMLElement && body instanceof HTMLElement && body.hidden) toggle.click(); // 同一开合路径，非平行实现
   });
   mo.observe(strip, { attributes: true, attributeFilter: ['hidden'] });
 }

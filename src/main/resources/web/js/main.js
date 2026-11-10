@@ -4696,7 +4696,7 @@ initCanvas();
 // 各面板由清单自动接线（js/gesture/backSwipe.js 的 PANELS），零第二套关闭逻辑。
 initBackSwipe();
 // 只读探针（滑返批取证用：机械断言登记栈深度/栈顶面板 id，零行为副作用）。
-window.__backSwipeProbe = () => ({
+/** @type {Window & {__backSwipeProbe?: () => {has: boolean, top: string | null, depth: number}}} */ (window).__backSwipeProbe = () => ({
   has: hasBackHandler(),
   top: topBackHandler()?.id || null,
   depth: Number(document.documentElement.dataset.backSwipeDepth || 0),

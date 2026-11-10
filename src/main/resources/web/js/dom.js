@@ -76,10 +76,11 @@ function appendChildren(parent, children) {
 
 /**
  * 创建设置好属性与子节点的元素（light DOM，零 HTML 串）。
- * @param {string} tag
+ * @template {keyof HTMLElementTagNameMap} K
+ * @param {K} tag
  * @param {Record<string, any>|null} [attrs]
  * @param {Child} [children]
- * @returns {HTMLElement}
+ * @returns {HTMLElementTagNameMap[K]}
  */
 export function h(tag, attrs, children) {
   const el = document.createElement(tag);
@@ -94,7 +95,7 @@ export function h(tag, attrs, children) {
     }
   }
   appendChildren(el, children);
-  return el;
+  return /** @type {HTMLElementTagNameMap[K]} */ (el);
 }
 
 /**

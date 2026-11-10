@@ -23,6 +23,9 @@ export const EVENTS = Object.freeze({
   SESSION_ATTENTION: 'session-attention',
   // i18n 面：语言切换（content-i18n 重渲染腿）
   LOCALE_CHANGED: 'locale-changed',
+  // Delegate mirror refresh and archive notifications.
+  DELEGATE_CHAIN_MIRROR_UPDATED: 'delegate-chain-mirror-updated',
+  DELEGATE_ARCHIVED: 'delegate-archived',
   // 折叠态：本名在当日树里是**存储键**字面量（branding.js LEGACY_IRREGULAR
   // .task_collapsed），登记它是为了让折叠态通道只有一处拼写来源 —— 将来若升级成
   // 事件，收发两端不必再改名字。

@@ -285,8 +285,6 @@ export function activateChatChrome() {
   };
   window.addEventListener('locale-changed', onLocale);
   unsubs.push(() => {
-    window.removeEventListener('delegate-chain-mirror-updated', onMirror);
-    window.removeEventListener('nebflow-session-change', onMirror);
     window.removeEventListener('locale-changed', onLocale);
   });
 

@@ -2168,7 +2168,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
  *  术语分层批（2026-11-05）：徽标词走成员单词点 bgMemberKindWord（成员位不落整体词）；
  *  agentflowKey = 所属整体行定位键（归属靠结构的机器可读锚，不写解释句）。
  *  @param {any} child @param {string} [agentflowKey]
- *  @param {{depth?: number, childCount?: number, collapsed?: boolean}} [opts] */
+ *  @param {{depth?: number, childCount?: number, collapsed?: boolean, railHtml?: string}} [opts] */
 function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   const c = child && typeof child === 'object' ? child : {};
   const sid = String(c.taskId || '');
@@ -2232,7 +2232,7 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
  *  层级缩进批（2026-11-05 腿②）：opts.depth/childCount/collapsed——flow 结构投影行也走
  *  同一套深度锚与折叠锚（投影归属 = 整体行，见 bgRowTree 源④）。
  *  @param {any} node @param {string} [delegateKey] @param {string} [agentflowKey]
- *  @param {{depth?: number, childCount?: number, collapsed?: boolean}} [opts] */
+ *  @param {{depth?: number, childCount?: number, collapsed?: boolean, railHtml?: string}} [opts] */
 function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   const n = node && typeof node === 'object' ? node : {};
   const label = String(n.label || n.id || '');

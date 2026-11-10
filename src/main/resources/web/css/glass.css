@@ -203,7 +203,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
 #usage-dashboard,
 .ud-tooltip,
 .voice-toggle:hover,
-#voice-mode-overlay {
+#voice-mode-overlay,
+.nf-lightbox-bar {
   -webkit-backdrop-filter: var(--nf-glass-filter);
   backdrop-filter: var(--nf-glass-filter);
 }
