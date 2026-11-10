@@ -362,9 +362,14 @@ test('⑥ 手机层级：左上任务圆钮是唯一入口（桌面才是胶囊/
   await expect(page.locator('#task-list')).toBeHidden();
 
   // 点圆钮 ⇒ 任务页（页面即展开态）。
+  // Re-point: the tasks chrome button now pushes the Apple-style tasks page
+  // (the #mobile-task-panel carrier is retired on mobile). The page's summary
+  // cards read the same todoStore the desktop capsule reads, so the fixture
+  // reading carries over through the card counters (4 open / 1 overdue).
   await page.locator('[data-chrome="tasks"]').click();
-  await page.waitForSelector('#mobile-task-panel .tfl-row', { timeout: 10000 });
-  await expect(page.locator('#mobile-task-panel .tfl-row')).toHaveCount(4);
+  await page.waitForSelector(".mobile-page[data-page='tasks'].live .ta-root", { timeout: 10000 });
+  await expect(page.locator(".mobile-page[data-page='tasks'] .ta-card-all .ta-card-n")).toHaveText('4');
+  await expect(page.locator(".mobile-page[data-page='tasks'] .ta-card-overdue .ta-card-n")).toHaveText('1');
   await page.screenshot({ path: join(SHOT_DIR, '04-mobile-todo-panel.png') });
 
   // 返回腿：页面壳的返回钮（.mobile-back-btn）按需出现 —— 本腿只判入口常驻
