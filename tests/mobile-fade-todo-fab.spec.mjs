@@ -198,14 +198,16 @@ if (m.taskBtn) {
   const { ctx, page } = await boot({ width: 375, height: 812, colorScheme: 'dark' });
   await page.click("[data-chrome='tasks']");
   await sleep(900);
+  // The tasks page body is the Apple-Reminders-style todo face: the page goes
+  // live and its body carries the .ta-root with the 2x2 card matrix.
   const opened = await page.evaluate(() => {
-    const p = document.querySelector('#mobile-task-panel');
-    const face = document.querySelector('#mobile-task-panel .tfl-card, #mobile-task-panel .tfl-panel');
-    return { panel: !!p, hidden: p ? p.hidden : null, cls: p ? p.className : null,
-      face: !!face, pageStack: (window.__nfMobileNav && (window.__nfMobileNav.stack || window.__nfMobileNav.pages)) || null };
+    const p = document.querySelector('.mobile-page[data-page="tasks"]');
+    const face = document.querySelector('.mobile-page[data-page="tasks"] .ta-root');
+    return { panel: !!p, live: p ? p.classList.contains('live') : null, cls: p ? p.className : null,
+      face: !!face, cards: face ? face.querySelectorAll('.ta-card').length : 0 };
   });
   await page.screenshot({ path: join(SHOTS, 'todo-opened-375x812.png') });
-  ok('A3 点圆钮打开待办面', opened.panel && opened.hidden === false && opened.face,
+  ok('A3 点圆钮打开待办面', opened.panel && opened.live === true && opened.face && opened.cards === 4,
     JSON.stringify(opened));
   await ctx.close();
 }
