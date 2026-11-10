@@ -15,13 +15,15 @@ import scala.util.Try
  *     item's merge commit (`integration=merge-commit`); otherwise the source
  *     was integrated externally (cherry-pick, squash, fast-forward) and the
  *     reading is `integration=source-ancestor` with no merge commit.
- *   - `resumable` — not integrated, workspace intact: surface for a manual
- *     continue, nothing auto-runs.
+ *   - `resumable` — not integrated, workspace intact: the merger worker can
+ *     run it from the rest state.
  *   - `unknown` — workspace directory missing, branch gone, or Git unreadable.
  *
  * Reconciliation never writes the ledger and never writes Git; it produces a
- * structured reading only. Recovery stays manual: boot surfaces the reading
- * (startup log + merger_report(action=inspect)) and never auto-continues.
+ * structured reading only. The persistent merger worker consumes these
+ * readings: an integrated item closes out with its recovered facts, a
+ * resumable item is executed from the rest state, and an unknown item rests
+ * until a readable state returns.
  */
 object RequestReconcile:
 
@@ -49,11 +51,11 @@ object RequestReconcile:
       .map(i => readItem(request.repository, workspaces.find(_.id == i.workspaceId), i))
     RequestReading(request.id, request.status, items)
 
-  /** Every non-terminal request recorded for the merger with the given identity. */
+  /** Every request not yet terminal for the merger with the given identity. */
   def forMerger(mergerId: String, ledger: WorkspaceLedger = WorkspaceLedger.default): List[RequestReading] =
     val snapshot = ledger.snapshot
     snapshot.requests
-      .filter(r => r.mergerId == mergerId && r.status != "completed" && r.status != "cancelled")
+      .filter(r => r.mergerId == mergerId && !TerminalRequestStatuses.contains(r.status))
       .map(r => request(r, snapshot.workspaces))
 
   /** Read-only classification of one item; any Git or filesystem failure reads as unknown. */

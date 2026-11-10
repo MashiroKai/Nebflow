@@ -381,7 +381,7 @@ object GitWorktrees:
    * 🔴 退出码语义（实测钉死，别猜）：**0 = 干净合并，1 = 有冲突**，≥2 = 用法/仓库
    * 错误。冲突时输出仍是「首行树 oid + 冲突路径」两段，故 1 走解析腿、其余走空腿。
    */
-  def mergeTreeConflicts(ws: os.Path, ours: String, theirs: String): List[String] =
+  def mergeTree(ws: os.Path, ours: String, theirs: String): Option[(String, List[String])] =
     Try {
       val res = os
         .proc(
@@ -397,10 +397,15 @@ object GitWorktrees:
         )
         .call(cwd = ws, check = false, mergeErrIntoOut = true)
       res.exitCode match
-        case 1 =>
-          res.out.text().linesIterator.map(_.trim).filter(_.nonEmpty).toList.drop(1)
-        case _ => Nil
-    }.getOrElse(Nil)
+        case 0 | 1 =>
+          val lines = res.out.text().linesIterator.map(_.trim).filter(_.nonEmpty).toList
+          lines.headOption.map(tree => (tree, lines.drop(1)))
+        case _ => None
+    }.toOption.flatten
+
+  /** Conflict paths of a `merge-tree --write-tree` probe (empty = clean). */
+  def mergeTreeConflicts(ws: os.Path, ours: String, theirs: String): List[String] =
+    mergeTree(ws, ours, theirs).map(_._2).getOrElse(Nil)
 
   /** Merge-base of two refs (full sha)，任一 ref 不可读 = None（fail-soft 同上）。 */
   def mergeBase(ws: os.Path, a: String, b: String): Option[String] =

@@ -98,7 +98,7 @@ class RequestReconcileSpec extends munit.FunSuite:
       gitIn(repo)("worktree", "remove", tree.toString)
       val verification = proof(repo, "crash-verification.json", source, Some(merge), None)
       assert(report(MergeReport("done", 2, "task", "completed", Some(merge), Some(verification))).isRight)
-      assertEquals(ledger.snapshot.requests.head.status, "completed")
+      assertEquals(ledger.snapshot.requests.head.status, "merged")
       assertEquals(ledger.snapshot.workspaces.head.lifecycle, "closed-merged")
       // A completed request no longer appears in the startup reading.
       assertEquals(RequestReconcile.forMerger("merger", ledger), Nil)
@@ -116,8 +116,8 @@ class RequestReconcileSpec extends munit.FunSuite:
       assert(gitIn(repo)("log", "--merges", "--format=%H", "main").isEmpty, "fixture: external integration is not a merge commit")
       val reading = RequestReconcile.request(ledger.snapshot.requests.head, ledger.snapshot.workspaces)
       assertEquals(reading.items.map(i => (i.reading, i.integration, i.mergeCommit)), List(("integrated", Some("source-ancestor"), None)))
-      // Recovery stays manual: nothing auto-runs and the request is still open.
-      assertEquals(ledger.snapshot.requests.head.status, "processing")
+      // Recovery stays manual: the reading is read-only and the request stays in flight.
+      assertEquals(ledger.snapshot.requests.head.status, "verifying")
       // A fabricated merge commit on the declaration is rejected without moving the ledger.
       val before = ledger.snapshot.revision
       assert(report(MergeReport("fabricate", 1, "task", "merged-cleanup-pending", Some("f" * 40), None, Some("source-ancestor"))).isLeft)
@@ -128,7 +128,7 @@ class RequestReconcileSpec extends munit.FunSuite:
       gitIn(repo)("worktree", "remove", tree.toString)
       val verification = proof(repo, "external-verification.json", source, None, Some("source-ancestor"))
       assert(report(MergeReport("done", 2, "task", "completed", None, Some(verification))).isRight)
-      assertEquals(ledger.snapshot.requests.head.status, "completed")
+      assertEquals(ledger.snapshot.requests.head.status, "merged")
       assert(gitIn(repo)("log", "--merges", "--format=%H", "main").isEmpty, "closure must not create a merge commit")
       assertEquals(
         os.proc("git", "rev-parse", "--verify", "delegate/task^{commit}").call(cwd = repo, check = false, stdout = os.Pipe, stderr = os.Pipe).exitCode,
@@ -225,7 +225,7 @@ class RequestReconcileSpec extends munit.FunSuite:
       assert(report(MergeReport("swap-kind", 1, "a", "completed", Some("c" * 40), None, Some("merge-commit"))).isLeft)
       // Completion falls back to the item's recorded integration kind.
       assert(report(MergeReport("done-a", 1, "a", "completed")).isRight)
-      assertEquals(ledger.snapshot.requests.head.status, "completed")
+      assertEquals(ledger.snapshot.requests.head.status, "merged")
       // From awaiting-user: bare closure is illegal, declared source-ancestor closure is legal.
       val paused = new WorkspaceLedger(root / "paused.json")
       paused.merger("project", "repo", "merger")

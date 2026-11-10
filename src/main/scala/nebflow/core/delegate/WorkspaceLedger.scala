@@ -1,5 +1,6 @@
 package nebflow.core.delegate
 
+import io.circe.Json
 import io.circe.generic.semiauto.*
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
@@ -136,21 +137,21 @@ final class WorkspaceLedger(val path: os.Path):
             if ids(w.id) then w.copy(lifecycle = "reserved", reservation = Some(request.id), revision = w.revision + 1)
             else w
           )
-          val accepted = request.copy(
-            status = "accepted",
+          val created = request.copy(
+            status = "submitted",
             revision = 0L,
             cancelRequested = false,
             items = request.items.map(i => i.copy(phase = "reserved", mergeCommit = None, verification = None)),
             events = Map.empty
           )
-          (s.copy(workspaces = next, requests = s.requests :+ accepted), Right(accepted))
+          (s.copy(workspaces = next, requests = s.requests :+ created), Right(created))
         end if
   }
 
   def cancelRequest(id: String): Either[String, MergeRequest] = transaction { s =>
     s.requests.find(_.id == id) match
       case None => (s, Left("Unknown merge request"))
-      case Some(r) if r.status == "completed" || r.status == "cancelled" => (s, Right(r))
+      case Some(r) if TerminalRequestStatuses.contains(r.status) => (s, Right(r))
       case Some(r) =>
         val next = r.copy(cancelRequested = true, revision = r.revision + 1)
         (s.copy(requests = s.requests.map(x => if x.id == id then next else x)), Right(next))
@@ -169,7 +170,7 @@ final class WorkspaceLedger(val path: os.Path):
           if s.requests
             .find(x =>
               x.repository == r.repository &&
-                x.status != "completed" && x.status != "cancelled"
+                Set("claimed", "verifying", "processing", "paused").contains(x.status)
             )
             .exists(_.id != id) =>
         (s, Left("Another request must finish or pause resolution before this request can run"))
@@ -219,14 +220,11 @@ final class WorkspaceLedger(val path: os.Path):
                 phase = event.phase,
                 mergeCommit = event.mergeCommit.orElse(item.get.mergeCommit),
                 verification = event.verification.orElse(item.get.verification),
-                integration = event.integration.orElse(item.get.integration)
+                integration = event.integration.orElse(item.get.integration),
+                error = if event.phase == "completed" then None else event.note.orElse(item.get.error)
               )
               val items = r.items.map(i => if i.workspaceId == event.workspaceId then nextItem else i)
-              val status =
-                if items.forall(_.phase == "completed") then "completed"
-                else if items.forall(i => i.phase == "completed" || i.phase == "cancelled") then "cancelled"
-                else if event.phase == "failed" || event.phase == "awaiting-user" then "paused"
-                else "processing"
+              val status = deriveRequestStatus(items)
               val next = r.copy(
                 items = items,
                 status = status,
@@ -235,13 +233,16 @@ final class WorkspaceLedger(val path: os.Path):
               )
               val lifecycle = event.phase match
                 case "completed" => "closed-merged"
-                case "cancelled" => "open"
+                // Failed and cancelled items release their reservation: the
+                // workspace opens for development while its branch stays put.
+                case "cancelled" | "failed" => "open"
                 case phase => phase
               val workspaces = s.workspaces.map(w =>
                 if w.id == event.workspaceId then
                   w.copy(
                     lifecycle = lifecycle,
-                    reservation = if event.phase == "cancelled" then None else w.reservation,
+                    reservation =
+                      if event.phase == "cancelled" || event.phase == "failed" then None else w.reservation,
                     revision = w.revision + 1
                   )
                 else w
@@ -251,6 +252,205 @@ final class WorkspaceLedger(val path: os.Path):
                 Right(next)
               )
         end if
+  }
+
+  /** Worker face: claim the oldest queued request; None while another is in flight. */
+  def claimNextMerge(): Option[String] = transaction { s =>
+    val inFlight = Set("claimed", "verifying")
+    if s.requests.exists(r => inFlight.contains(r.status)) then (s, None)
+    else
+      s.requests.find(r => Set("submitted", "accepted").contains(r.status)) match
+        case None => (s, None)
+        case Some(r) =>
+          val next = r.copy(status = "claimed", revision = r.revision + 1)
+          (s.copy(requests = s.requests.map(x => if x.id == r.id then next else x)), Some(r.id))
+  }
+
+  /**
+   * Worker face: begin the first reserved item of a claimed request. Items run
+   * strictly in order and only from the rest state; every non-terminal item is
+   * either the one being begun or a later one still reserved.
+   */
+  def beginItem(id: String, caller: String, workspaceId: String): Either[String, MergeRequest] = transaction { s =>
+    s.requests.find(_.id == id) match
+      case None => (s, Left("Unknown merge request"))
+      case Some(r) if r.mergerId != caller => (s, Left("Only the recorded merger may run this request"))
+      case Some(r) if !Set("claimed", "verifying").contains(r.status) => (s, Left("Request is not being executed"))
+      case Some(r) =>
+        r.items.find(i => !TerminalItemPhases.contains(i.phase)) match
+          case None => (s, Left("Request has no open item"))
+          case Some(item) if item.workspaceId != workspaceId || item.phase != "reserved" =>
+            (s, Left("Items run strictly in order and only from the rest state"))
+          case Some(item) =>
+            val next = r.copy(
+              items = r.items.map(i => if i.workspaceId == workspaceId then item.copy(phase = "merging") else i),
+              status = "verifying",
+              revision = r.revision + 1,
+              events = r.events.updated(s"begin:$workspaceId", Json.obj("phase" -> "merging".asJson).noSpaces)
+            )
+            (s.copy(requests = s.requests.map(x => if x.id == id then next else x)), Right(next))
+  }
+
+  /**
+   * Worker face: close out everything that never integrated. Requires the
+   * request to have failed or carry a recorded cancellation. Already integrated
+   * items keep their integration (never undo); the rest are cancelled and their
+   * workspaces reopen.
+   */
+  def releaseUnfinished(id: String, caller: String, reason: String): Either[String, MergeRequest] = transaction { s =>
+    s.requests.find(_.id == id) match
+      case None => (s, Left("Unknown merge request"))
+      case Some(r) if r.mergerId != caller => (s, Left("Only the recorded merger may release this request"))
+      case Some(r) if r.status != "failed" && !r.cancelRequested => (s, Left("Nothing to release"))
+      case Some(r) =>
+        val items = r.items.map { item =>
+          if TerminalItemPhases.contains(item.phase) then item
+          else
+            val reading = RequestReconcile.readItem(r.repository, s.workspaces.find(_.id == item.workspaceId), item)
+            reading.reading match
+              case "integrated" =>
+                item.copy(
+                  phase = "merged-cleanup-pending",
+                  mergeCommit = reading.mergeCommit.orElse(item.mergeCommit),
+                  integration = reading.integration.orElse(item.integration)
+                )
+              case _ => item.copy(phase = "cancelled", error = Some(reason.take(300)))
+        }
+        val phaseById = items.map(i => i.workspaceId -> i.phase).toMap
+        val workspaces = s.workspaces.map { w =>
+          phaseById.get(w.id).flatMap {
+            case "cancelled" =>
+              if w.reservation.contains(id) || w.lifecycle != "open" then
+                Some(w.copy(lifecycle = "open", reservation = None, revision = w.revision + 1))
+              else None
+            case "merged-cleanup-pending" =>
+              if w.lifecycle != "merged-cleanup-pending" then
+                Some(w.copy(lifecycle = "merged-cleanup-pending", revision = w.revision + 1))
+              else None
+            case _ => None
+          }.getOrElse(w)
+        }
+        val next = r.copy(
+          items = items,
+          status = deriveRequestStatus(items),
+          revision = r.revision + 1,
+          events = r.events
+            .updated(s"release:${r.revision}", Json.obj("reason" -> reason.take(300).asJson).noSpaces)
+        )
+        (s.copy(workspaces = workspaces, requests = s.requests.map(x => if x.id == id then next else x)), Right(next))
+  }
+
+  /**
+   * Worker face: fail-closed valve. After an unexpected worker error, close out
+   * the request instead of wedging the serial slot: an item whose source already
+   * reached the target keeps its integration (merged-cleanup-pending, facts
+   * recovered from Git), every other unfinished item fails with the abort
+   * reason and its workspace reopens.
+   */
+  def abandonRequest(id: String, caller: String, error: String): Either[String, MergeRequest] = transaction { s =>
+    s.requests.find(_.id == id) match
+      case None => (s, Left("Unknown merge request"))
+      case Some(r) if r.mergerId != caller => (s, Left("Only the recorded merger may abandon this request"))
+      case Some(r) if TerminalRequestStatuses.contains(r.status) => (s, Right(r))
+      case Some(r) =>
+        val items = r.items.map { item =>
+          if TerminalItemPhases.contains(item.phase) then item
+          else
+            val reading = RequestReconcile.readItem(r.repository, s.workspaces.find(_.id == item.workspaceId), item)
+            reading.reading match
+              case "integrated" =>
+                item.copy(
+                  phase = "merged-cleanup-pending",
+                  mergeCommit = reading.mergeCommit.orElse(item.mergeCommit),
+                  integration = reading.integration.orElse(item.integration)
+                )
+              case _ => item.copy(phase = "failed", error = Some(error.take(300)))
+        }
+        val phaseById = items.map(i => i.workspaceId -> i.phase).toMap
+        val workspaces = s.workspaces.map { w =>
+          phaseById.get(w.id).flatMap {
+            case "failed" =>
+              if w.reservation.contains(id) || w.lifecycle != "open" then
+                Some(w.copy(lifecycle = "open", reservation = None, revision = w.revision + 1))
+              else None
+            case "merged-cleanup-pending" =>
+              if w.lifecycle != "merged-cleanup-pending" then
+                Some(w.copy(lifecycle = "merged-cleanup-pending", revision = w.revision + 1))
+              else None
+            case _ => None
+          }.getOrElse(w)
+        }
+        val next = r.copy(
+          items = items,
+          status = deriveRequestStatus(items),
+          revision = r.revision + 1,
+          events = r.events.updated(s"abandon:${r.revision}", Json.obj("error" -> error.take(300).asJson).noSpaces)
+        )
+        (s.copy(workspaces = workspaces, requests = s.requests.map(x => if x.id == id then next else x)), Right(next))
+  }
+
+  /**
+   * Boot face: normalize every in-flight request against actual Git state and
+   * re-queue what the worker can resume. Terminal requests are untouched. An
+   * integrated item keeps its recorded integration facts; a resumable item goes
+   * back to the rest state for the serial worker; anything unreadable fails
+   * with the reconcile detail (fact validation still guards every Git claim).
+   * Reads Git inside the ledger lock, following the reportMerge precedent.
+   */
+  def recoverRequests(): Unit = transaction { s =>
+    val inFlight = Set("submitted", "accepted", "claimed", "verifying", "processing", "paused")
+    val next =
+      if s.requests.exists(r => inFlight.contains(r.status)) then
+        val requests2 = s.requests.map { r =>
+          if !inFlight.contains(r.status) then r
+          else
+            val items = r.items.map { item =>
+              if TerminalItemPhases.contains(item.phase) then item
+              else
+                val reading =
+                  RequestReconcile.readItem(r.repository, s.workspaces.find(_.id == item.workspaceId), item)
+                reading.reading match
+                  case "integrated" =>
+                    item.copy(
+                      phase = "merged-cleanup-pending",
+                      mergeCommit = reading.mergeCommit.orElse(item.mergeCommit),
+                      integration = reading.integration.orElse(item.integration)
+                    )
+                  case "resumable" => item.copy(phase = "reserved", error = None)
+                  case _ => item.copy(phase = "failed", error = Some(reading.detail.take(300)))
+            }
+            val derived = deriveRequestStatus(items)
+            val status = if TerminalRequestStatuses.contains(derived) then derived else "submitted"
+            if items == r.items && status == r.status then r
+            else
+              r.copy(
+                items = items,
+                status = status,
+                revision = r.revision + 1,
+                events = r.events.updated(s"recover:${r.revision}", Json.obj("status" -> status.asJson).noSpaces)
+              )
+        }
+        val itemByWorkspace = requests2.flatMap(r => r.items.map(i => i.workspaceId -> i)).toMap
+        val workspaces2 = s.workspaces.map { w =>
+          itemByWorkspace.get(w.id).flatMap { item =>
+            item.phase match
+              case "merged-cleanup-pending" =>
+                if w.lifecycle != "merged-cleanup-pending" then
+                  Some(w.copy(lifecycle = "merged-cleanup-pending", revision = w.revision + 1))
+                else None
+              case "failed" | "cancelled" =>
+                if w.lifecycle != "open" || w.reservation.isDefined then
+                  Some(w.copy(lifecycle = "open", reservation = None, revision = w.revision + 1))
+                else None
+              case "reserved" =>
+                if w.lifecycle != "reserved" then Some(w.copy(lifecycle = "reserved", revision = w.revision + 1))
+                else None
+              case _ => None
+          }.getOrElse(w)
+        }
+        s.copy(requests = requests2, workspaces = workspaces2)
+      else s
+    (next, ())
   }
 
   def claimCleanup(id: String, revision: Long, token: String): Either[String, Workspace] = transaction { s =>
@@ -366,6 +566,12 @@ object WorkspaceLedger:
     try listener(path, revision)
     catch case scala.util.control.NonFatal(_) => () // Notifications are hints; snapshots remain authoritative.
 
+  /** Request states no worker may enter again (the old `completed` is legacy). */
+  private[delegate] val TerminalRequestStatuses = Set("merged", "failed", "cancelled", "completed")
+
+  /** Item phases a worker never touches again. */
+  private[delegate] val TerminalItemPhases = Set("completed", "cancelled", "merged-cleanup-pending", "failed")
+
   def default: WorkspaceLedger = new WorkspaceLedger(nebflow.shared.PathUtil.dataRoot / "workspaces" / "ledger.json")
 
   def repositoryKey(workspace: os.Path): String =
@@ -374,6 +580,22 @@ object WorkspaceLedger:
       .of(if java.nio.file.Path.of(common).isAbsolute then common else (workspace / os.RelPath(common)).toString)
       .toRealPath()
       .toString
+
+  /**
+   * Request status derived from item phases (the worker's single truth). Any
+   * open item keeps the request in flight — including one awaiting cleanup,
+   * whose closure legs still belong to the worker. In order of severity: a
+   * failed item marks the whole request failed until a retry or release
+   * resolves it; its merged-cleanup-pending siblings stay single-listed for the
+   * manual cleanup retry (claimCleanup accepts that lifecycle).
+   */
+  private[delegate] def deriveRequestStatus(items: List[MergeItem]): String =
+    val inFlight = Set("reserved", "checking", "merging", "validating", "awaiting-user", "merged-cleanup-pending")
+    if items.exists(i => inFlight.contains(i.phase)) then
+      if items.exists(_.phase == "failed") then "failed" else "verifying"
+    else if items.exists(_.phase == "failed") then "failed"
+    else if items.forall(_.phase == "completed") then "merged"
+    else "cancelled"
 
   final case class Workspace(
     id: String,
@@ -424,7 +646,8 @@ object WorkspaceLedger:
     phase: String = "reserved",
     mergeCommit: Option[String] = None,
     verification: Option[String] = None,
-    integration: Option[String] = None
+    integration: Option[String] = None,
+    error: Option[String] = None
   )
 
   final case class MergeRequest(
@@ -433,7 +656,7 @@ object WorkspaceLedger:
     mergerId: String,
     authorization: String,
     items: List[MergeItem],
-    status: String = "accepted",
+    status: String = "submitted",
     revision: Long = 0L,
     cancelRequested: Boolean = false,
     events: Map[String, String] = Map.empty
@@ -446,7 +669,8 @@ object WorkspaceLedger:
     phase: String,
     mergeCommit: Option[String] = None,
     verification: Option[String] = None,
-    integration: Option[String] = None
+    integration: Option[String] = None,
+    note: Option[String] = None
   )
   given io.circe.Codec[MergeItem] = deriveCodec
   given io.circe.Codec[MergeRequest] = deriveCodec
