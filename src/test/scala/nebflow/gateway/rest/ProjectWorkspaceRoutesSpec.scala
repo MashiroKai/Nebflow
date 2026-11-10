@@ -1,12 +1,9 @@
 package nebflow.gateway
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import scala.concurrent.duration.*
-import nebflow.actor.{ActorSystem, AgentCommand, AgentKind, Behavior, Behaviors}
-import nebflow.core.delegate.{DelegateRegistry, WorkspaceCleanup}
+import nebflow.core.delegate.DelegateRegistry
 import nebflow.core.mail.SessionMailbox
-import nebflow.core.tools.{MergerReportTool, ToolContext}
 import io.circe.syntax.*
 import io.circe.Json
 import munit.CatsEffectSuite
@@ -145,113 +142,41 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
     yield ()
   }
 
-  test("HTTP request reaches the merger mailbox actor and persisted reports appear in the project snapshot") {
-    val system = ActorSystem("project-merger-route")
+  test("HTTP request queues the merger worker, the worker merges it, and the snapshot shows the result") {
     val id = "delegate-route-merger"
     val requestId = "route-request"
     val body = Json.obj("requestId" -> requestId.asJson, "workspaceIds" -> List("task").asJson)
-    val exercise = for
+    for
       pair <- fixture
       (repo, tree) = pair
       _ <- IO.blocking(installMerger(repo, id))
-      completed <- Deferred[IO, Either[Throwable, Unit]]
-      calls <- Ref.of[IO, Int](0)
-      toolContext = ToolContext(projectRoot = repo.toString, sessionId = Some(id))
-      report = (phase: String, merge: Option[String], proof: Option[String]) =>
-        val revision = WorkspaceLedger.default.snapshot.requests.find(_.id == requestId).get.revision
-        MergerReportTool
-          .call(
-            Json
-              .obj(
-                "action" -> "report".asJson,
-                "requestId" -> requestId.asJson,
-                "eventId" -> phase.asJson,
-                "expectedRevision" -> revision.asJson,
-                "workspaceId" -> "task".asJson,
-                "phase" -> phase.asJson,
-                "mergeCommit" -> merge.asJson,
-                "verification" -> proof.asJson
-              )
-              .asObject
-              .get,
-            toolContext
-          )
-          .flatMap(result => IO.fromEither(result.left.map(e => new IllegalStateException(e.toString))).void)
-      process = for
-        entries <- SessionMailbox.scanPending(id).flatMap(SessionMailbox.take(id, _))
-        _ <- IO(assertEquals(entries.map(_.identity), List(s"merger-request:$requestId")))
-        _ <- calls.update(_ + 1)
-        _ <- report("checking", None, None)
-        _ <- report("merging", None, None)
-        merge <- IO.blocking {
-          os.proc("git", "merge", "--no-ff", "delegate/task", "-m", "isolated actor integration")
-            .call(cwd = repo, stdout = os.Pipe, stderr = os.Pipe)
-          os.proc("git", "rev-parse", "HEAD").call(cwd = repo).out.text().trim
-        }
-        _ <- report("validating", Some(merge), None)
-        proof <- IO.blocking {
-          os.proc("git", "diff", "--check", s"$merge^1", merge).call(cwd = repo, stdout = os.Pipe, stderr = os.Pipe)
-          val source = WorkspaceLedger.default.snapshot.requests.head.items.head.sourceCommit
-          val path = repo / ".nebflow" / "evidence" / "actor-verification.json"
-          os.makeDir.all(path / os.up)
-          os.write(
-            path,
-            Json
-              .obj(
-                "status" -> "passed".asJson,
-                "sourceCommit" -> source.asJson,
-                "mergeCommit" -> merge.asJson,
-                "command" -> "git diff --check".asJson,
-                "exitCode" -> 0.asJson,
-                "ranAt" -> "2026-11-08T00:00:00Z".asJson
-              )
-              .noSpaces
-          )
-          path.toString
-        }
-        _ <- report("merged-cleanup-pending", Some(merge), Some(proof))
-        _ <- IO.blocking {
-          val cleanup = new WorkspaceCleanup(WorkspaceLedger.default)
-          val preview = cleanup.inspect("task").toOption.get
-          assert(!preview.unmerged)
-          assert(cleanup.remove("task", preview.previewToken, false, false).isRight)
-        }
-        _ <- report("completed", Some(merge), Some(proof))
-        _ <- SessionMailbox.unlinkTaken(id, entries.map(_.identity))
-      yield ()
-      behavior =
-        def loop: Behavior[AgentCommand] = Behaviors.receiveMessage {
-          case AgentCommand.MailboxArrived =>
-            SessionMailbox.scanPending(id).flatMap { entries =>
-              if entries.isEmpty then IO.pure(loop)
-              else process.attempt.flatMap(result => completed.complete(result).as(loop))
-            }
-          case _ => IO.pure(loop)
-        }
-        loop
-      actor <- system.spawn(behavior, "merger")
-      _ <- nebflow.core.node.NodeRunner.registerAgent(resources, id, actor, AgentKind.Delegate, "root")
       response <- request(Method.POST, "/projects/example/workspaces/merge-requests", body)
       _ = assertEquals(response.status, Status.Ok)
-      _ <- completed.get.timeout(10.seconds).flatMap(IO.fromEither)
+      queued <- response.as[Json]
+      _ = assert(queued.hcursor.get[Boolean]("queued").toOption.contains(true), "the route queues the worker")
+      _ = assertEquals(WorkspaceLedger.default.snapshot.requests.head.status, "submitted")
+      _ = assertEquals(WorkspaceLedger.default.snapshot.workspaces.head.lifecycle, "reserved")
+      _ <- nebflow.core.delegate.MergerWorker.runOnce()
       snapshot <- request(Method.GET, "/projects/example/workspaces").flatMap(_.as[Json])
-      _ = assertEquals(snapshot.hcursor.downField("mergeRequests").downArray.get[String]("status"), Right("completed"))
+      _ = assertEquals(snapshot.hcursor.downField("mergeRequests").downArray.get[String]("status"), Right("merged"))
       _ = assertEquals(
         snapshot.hcursor.downField("workspaces").downArray.get[String]("lifecycle"),
         Right("closed-merged")
       )
       _ = assert(!os.exists(tree))
-      _ = assertEquals(os.read(repo / "result.txt"), "committed result")
+      // The worker merges refs via plumbing (merge-tree/commit-tree/update-ref CAS);
+      // the main checkout is not touched, so read the content from the branch ref.
+      _ = assertEquals(
+        os.proc("git", "show", "refs/heads/main:result.txt").call(cwd = repo, stdout = os.Pipe).out.text().trim,
+        "committed result",
+        "the worker's merge lands on the target branch ref"
+      )
       retried <- request(Method.POST, "/projects/example/workspaces/merge-requests", body)
       _ = assertEquals(retried.status, Status.Ok)
-      _ <- (actor ! AgentCommand.MailboxArrived)
       pending <- SessionMailbox.scanPending(id)
-      _ = assert(pending.isEmpty, "retry after consumption must not create another merge task")
-      count <- calls.get
-      _ = assertEquals(count, 1)
+      _ = assert(pending.isEmpty, "the worker consumes requests without any mailbox delivery")
       _ = assertEquals(WorkspaceLedger.default.snapshot.requests.size, 1)
     yield ()
-    exercise.guarantee(system.stopAll)
   }
 
   test("authenticated cleanup requires exact preview and unmerged confirmation, retains branch and closes owner") {
