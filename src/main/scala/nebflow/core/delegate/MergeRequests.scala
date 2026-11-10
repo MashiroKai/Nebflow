@@ -3,15 +3,12 @@ package nebflow.core.delegate
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.actor.AgentCommand
-import nebflow.core.AgentRuntimePort
-import nebflow.core.mail.SessionMailbox
 import nebflow.core.project.{ProjectDef, ProjectStore}
 import nebflow.shared.PathUtil
 
 object MergeRequests:
 
-  def cancel(project: String, requestId: String, resources: AgentRuntimePort): IO[Either[String, String]] =
+  def cancel(project: String, requestId: String): IO[Either[String, String]] =
     ProjectStore
       .load(project)
       .flatMap {
@@ -28,39 +25,14 @@ object MergeRequests:
           }.flatMap {
             case Left(error) => IO.pure(Left(error))
             case Right(request) =>
-              val event = AgentCommand.ExternalEvent(
-                "mail",
-                "info",
-                s"Cancellation requested for merge request ${request.id}. Inspect its actual state and stop at a safe boundary. " +
-                  "Report completed, integrated-but-not-cleaned and untouched workspaces separately; never undo an existing merge."
-              )
-              SessionMailbox
-                .mailOnce(
-                  request.mergerId,
-                  event,
-                  "merger-control",
-                  s"merger-cancel:${request.id}",
-                  deduplicateReceipts = true
+              IO {
+                MergerWorker.nudge()
+                Right(
+                  io.circe.Json
+                    .obj("request" -> request.asJson, "cancelRequested" -> request.cancelRequested.asJson)
+                    .noSpaces
                 )
-                .flatMap { delivery =>
-                  resources.agentRegistry.get.flatMap { live =>
-                    live.get(request.mergerId).fold(IO.unit)(r => (r.ref ! AgentCommand.MailboxArrived).attempt.void) *>
-                      IO.pure(
-                        Right(
-                          io.circe.Json
-                            .obj(
-                              "request" -> request.asJson,
-                              "delivery" -> delivery.toString.asJson,
-                              "notificationPending" -> (delivery match
-                                case _: SessionMailbox.MailResult.Failed => true
-                                case _ => false
-                              ).asJson
-                            )
-                            .noSpaces
-                        )
-                      )
-                  }
-                }
+              }
           }
       }
       .handleError(e => Left(Option(e.getMessage).getOrElse("Cancellation request failed")))
@@ -69,8 +41,7 @@ object MergeRequests:
     project: String,
     requestId: String,
     ids: List[String],
-    authorization: String,
-    resources: AgentRuntimePort
+    authorization: String
   ): IO[Either[String, String]] =
     ProjectStore
       .load(project)
@@ -82,7 +53,7 @@ object MergeRequests:
           // write so the occupancy gate can run between them.
           IO.blocking(prepare(pd, requestId, ids, authorization)).flatMap {
             case Left(error) => IO.pure(Left(error))
-            case Right(SubmitPlan.Idempotent(existing)) => deliver(existing, resources)
+            case Right(SubmitPlan.Idempotent(existing)) => deliver(existing)
             case Right(SubmitPlan.Fresh(repository, selected, request)) =>
               // Occupancy gate BEFORE any write: a workspace whose owner still has
               // non-terminal scope nodes or live background jobs (a standby
@@ -102,7 +73,7 @@ object MergeRequests:
                   case Right(_) =>
                     IO.blocking(WorkspaceLedger.default.requestMerge(request)).flatMap {
                       case Left(error) => IO.pure(Left(error))
-                      case Right(accepted) => deliver(accepted, resources)
+                      case Right(accepted) => deliver(accepted)
                     }
                 }
           }
@@ -113,7 +84,7 @@ object MergeRequests:
   private sealed trait SubmitPlan
 
   private object SubmitPlan:
-    /** The identical request is already recorded — nothing to write, delivery only. */
+    /** The identical request is already recorded — nothing to write, queueing only. */
     final case class Idempotent(existing: WorkspaceLedger.MergeRequest) extends SubmitPlan
 
     /** A fresh request: occupancy gate, then the all-or-nothing ledger reservation. */
@@ -167,42 +138,11 @@ object MergeRequests:
 
   end prepare
 
-  /** Mail the recorded request to its merger and wake it (shared by both plan faces). */
-  private def deliver(request: WorkspaceLedger.MergeRequest, resources: AgentRuntimePort): IO[Either[String, String]] =
-    val event = AgentCommand.ExternalEvent(
-      "mail",
-      "info",
-      s"Authorized merge request ${request.id}. Inspect the persisted request using merger_report(action=inspect). " +
-        "Only its recorded workspaces and source commits are authorized; pause on failure. No push, publish, tag or version changes."
-    )
-    SessionMailbox
-      .mailOnce(
-        request.mergerId,
-        event,
-        "merger-request",
-        s"merger-request:${request.id}",
-        deduplicateReceipts = true
-      )
-      .flatMap { delivery =>
-        resources.agentRegistry.get.flatMap { live =>
-          live.get(request.mergerId).fold(IO.unit)(r => (r.ref ! AgentCommand.MailboxArrived).attempt.void) *>
-            IO.pure(
-              Right(
-                io.circe.Json
-                  .obj(
-                    "request" -> request.asJson,
-                    "mergerAddress" -> s"delegate:${request.mergerId}".asJson,
-                    "mergerLive" -> live.contains(request.mergerId).asJson,
-                    "delivery" -> delivery.toString.asJson,
-                    "notificationPending" -> (delivery match
-                      case _: SessionMailbox.MailResult.Failed => true
-                      case _ => false
-                    ).asJson
-                  )
-                  .noSpaces
-              )
-            )
-        }
-      }
+  /** Queue the request for the persistent merger worker and wake it. */
+  private def deliver(request: WorkspaceLedger.MergeRequest): IO[Either[String, String]] =
+    IO {
+      MergerWorker.nudge()
+      Right(io.circe.Json.obj("request" -> request.asJson, "queued" -> true.asJson).noSpaces)
+    }
   end deliver
 end MergeRequests

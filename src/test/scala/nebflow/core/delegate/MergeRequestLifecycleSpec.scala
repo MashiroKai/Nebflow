@@ -9,7 +9,7 @@ class MergeRequestLifecycleSpec extends munit.FunSuite:
     try
       val ledger = new WorkspaceLedger(root / "ledger.json")
       ledger.merger("project", "repo", "merger")
-      List("a", "b").foreach(id =>
+      List("a", "b", "c").foreach(id =>
         ledger.register(
           Workspace(id, "project", "repo", s"/tmp/$id", s"delegate/$id", "main", "base", s"owner-$id", "kernel")
         )
@@ -36,12 +36,26 @@ class MergeRequestLifecycleSpec extends munit.FunSuite:
       assert(report(MergeReport("land-a", 2, "a", "merged-cleanup-pending", Some("c" * 40))).isRight)
       assert(report(MergeReport("merge-again", 3, "a", "merging")).isLeft)
       assert(report(MergeReport("done-a", 3, "a", "completed")).isRight)
+      // Item b rides the same chain so the whole request reaches the terminal merged state.
+      assert(report(MergeReport("b-check", 4, "b", "checking")).isRight)
+      assert(report(MergeReport("b-merge", 5, "b", "merging")).isRight)
+      assert(report(MergeReport("b-land", 6, "b", "merged-cleanup-pending", Some("d" * 40))).isRight)
+      assert(report(MergeReport("b-done", 7, "b", "completed")).isRight)
+      assertEquals(ledger.snapshot.requests.find(_.id == "request").get.status, "merged")
       assertEquals(ledger.owned("owner-a").get.lifecycle, "closed-merged")
       assert(ledger.admit("owner-a", true).isLeft)
+      // A merged request is terminal: cancellation is idempotent and cannot reopen it.
       val stopped = ledger.cancelRequest("request").toOption.get
-      assert(stopped.cancelRequested)
+      assert(!stopped.cancelRequested, "a merged request is terminal; cancellation cannot reopen it")
       assertEquals(stopped.items.head.phase, "completed")
       assertEquals(new WorkspaceLedger(ledger.path).snapshot.requests.head.items.head.phase, "completed")
+      // A queued request records the cancel flag until the worker observes it.
+      assert(
+        ledger.requestMerge(MergeRequest("stop-me", "repo", "merger", "auth", List(MergeItem("c", "c" * 40, "main")))).isRight
+      )
+      val flagged = ledger.cancelRequest("stop-me").toOption.get
+      assert(flagged.cancelRequested, "a queued request records the cancel request")
+      assertEquals(new WorkspaceLedger(ledger.path).snapshot.requests.find(_.id == "stop-me").get.cancelRequested, true)
     finally os.remove.all(root)
     end try
   }
@@ -113,7 +127,7 @@ class MergeRequestLifecycleSpec extends munit.FunSuite:
           .reportMerge("queued", "merger", MergeReport("pause-dirty", 0, "task", "awaiting-user"))(MergerFacts.validate)
           .isRight
       )
-      assertEquals(queued.snapshot.requests.head.status, "paused")
+      assertEquals(queued.snapshot.requests.head.status, "verifying")
       os.remove(tree / "uncommitted.txt")
       assert(
         queued

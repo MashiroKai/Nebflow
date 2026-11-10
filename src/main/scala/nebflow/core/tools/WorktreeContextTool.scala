@@ -26,8 +26,8 @@ import scala.util.Try
  * only: a recorded merger may read workspaces of its own repository, and the
  * main agent may read any managed workspace.
  *
- * Authorization is the twin-safeguard pattern of [[MergerReportTool]] /
- * [[MergerRequestTool]]: the mount face decides which sessions see the schema,
+ * Authorization is the twin-safeguard pattern of [[MergerRequestTool]]: the
+ * mount face decides which sessions see the schema,
  * and this identity check refuses fail-closed (a plain development delegate, an
  * ask session or a bare REST call gets `Left`).
  */

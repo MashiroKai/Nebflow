@@ -1062,52 +1062,9 @@ private[project] trait NodeStarter:
                                     ) *>
                                     resultDeferred.complete(Right(messages)).attempt.void.as(Behaviors.stopped)
                                 }
-                              // 文本锚定 BLOCKED 豁免（noderpt 批 B 段 · 作者代裁 ⑧-4 = (a)）：
-                              // 节点 `Completed` ∧ 申报槽空 ∧ **输出文本可被 `BlockedReader`
-                              // 判为 blocked** ⇒ **不走 hold、不进提醒阶梯**，照既有行为终态化
-                              // 为 blocked（`completeNode` 的文本锚定分流逐字不变）。
-                              // 理由（代裁逐字）：文本说 BLOCKED 本身就是明确的求助申报——
-                              // hold 住等于丢掉唯一求助通道（忘申报会被提醒救回，求助被 hold
-                              // 则无人知晓，风险不对称）；豁免范围**严格限定**为「能被
-                              // `BlockedReader` 判定为 blocked 的文本」，不是「任意非空文本」，
-                              // 其余静默结束一律仍走 hold + 提醒阶梯。
-                              // 文本来源 = **与终态点完完全全同一份**：`messages` 是同一个
-                              // bridge 事件载荷，`extractLastAssistantText(messages)` 与终态
-                              // 分支 `completeNode(nodeId, text = extractLastAssistantText(messages))`
-                              // 同函数同输入 ⇒ 判定输入零漂移（不引入第二个文本来源）。
-                              // 失败方向（代裁③）：判定抛错/不可判 ⇒ 保守**回落 hold**（= 今日
-                              // leg 2 行为），不因豁免判定故障放宽闸门。
-                              val anchoredBlocked: Boolean =
-                                try BlockedReader.parse(extractLastAssistantText(messages)).isDefined
-                                catch case _: Throwable => false
-                              NodeReportRegistry.peek(sessionId).flatMap {
-                                case Some(_) =>
-                                  // 已申报 ⇒ 清表（申报 ⇒ 清表，唯一清表条件）后放行；
-                                  // 消费语义仍唯一保留在终态点 drain（peek 不消费，
-                                  // 否则申报信息在 1810 处已被吃掉、只能走文本降级面）。
-                                  clearReportPending(nodeId, Some(sessionId)) *> releaseNow
-                                case None if reportGateHoldEnabled && !anchoredBlocked =>
-                                  // 未申报且**无 BLOCKED 文本锚定** ⇒ hold：**不终态化、不投递、
-                                  // 不杀会话**（节点保持 Running 等人工处置），起表后桥继续存活
-                                  // ——下一轮 Completed（提醒轮 / NodeMessage 重入 / 后台通知
-                                  // 唤醒）在此复检。
-                                  // 只置不重：提醒轮自身的 Completed 不改起点（代裁 4）。
-                                  markReportPendingIfAbsent(nodeId, sessionId).as(bridge)
-                                case None =>
-                                  // 两条出口：① 腿 2 关（封存形态）——未申报照常放行 = 本批
-                                  // 之前的文本锚定降级面行为（行为零变化）；② 腿 2 开但**文本
-                                  // 锚定 BLOCKED 命中**（代裁 ⑧-4 豁免）——放行后由终态点的
-                                  // 既有 `BlockedReader.parse` 分流成 blocked（求助上报链
-                                  // blocked → 分发器 → 人 完整保留）。
-                                  IO.whenA(reportGateHoldEnabled && anchoredBlocked)(
-                                    logger.info(
-                                      s"Node '$nodeName' ($nodeId) finished without a node_report but its final " +
-                                        "text anchors BLOCKED — leg-2 hold waived (⑧-4 exemption); finalizing via the " +
-                                        "existing blocked chain"
-                                    )
-                                  ) *>
-                                    releaseNow
-                              }
+                              // Completion is carried by the final assistant text itself;
+                              // no report-tool declaration is needed to release the node.
+                              releaseNow
                             else
                               disarmCap *> holdEmitted.set(false) *>
                                 setNodeBgWait(nodeId, Nil) *>
@@ -1284,21 +1241,9 @@ private[project] trait NodeStarter:
           eventResult match
             case Right(messages) =>
               val text = extractLastAssistantText(messages)
-              // blocked 结构化信号批（20260909 spec §5.2 #5①②；同日作者裁定泛化
-              // NodeReport 统一三语义）：会话完成时点 drain 登记表——工具申报（协议
-              // 事实）优先于文本锚定（降级面，行为零变化）。时序上必在 bg 闸之后
-              // （resultDeferred 完成即等待集已放行）；drain take-and-remove 单次消费，
-              // cancelled/failed 路径不消费（残留由 guarantee 内 cleanupRunTables 的
-              // remove 对称清理）。
-              // engine-defects 批 #239①（2026-09-15）：drain 取走即移除，而终态写有多条
-              // **拒写**路径 ⇒ 旧口径「拒写 = 申报永久丢失、零痕迹」。修法 = 消费点持
-              // 终态写的**落地判词**（landed），未落地者把申报全文补偿写回审计流
-              // （见 [[compensateUnconsumedReport]]）；take-and-remove 单次消费语义不动。
-              // #239② ⑤-(2)：改经 consumeReport 包装 ⇒ 终态写**抛异常**时同一补偿点照常触发
-              // （`landed=false` 方向），异常原样重抛（控制流零变化）。
-              NodeReportRegistry.drain(sessionId).flatMap { declared =>
-                consumeReport(nodeId, sessionId, declared)(completeNodeR(nodeId, text, declared)).void
-              }
+              // The completed node's final assistant text is the completion payload;
+              // no report-tool declaration is required to forward it.
+              completeNodeR(nodeId, text).void
             case Left(fo) =>
               if fo.message.contains("cancelled") then
                 // R2：原因文本从桥消息还原（此前只做 `contains("cancelled")` 布尔嗅探后

@@ -197,64 +197,33 @@ private[project] trait NodeCompletion:
    * 语义、分支、判据与修前逐字一致，只有返回值从 `Unit` 变为落地判词——
    * 消费点（[[compensateUnconsumedReport]]）据此决定是否需要补偿。
    */
-  private[project] def completeNodeR(
-    nodeId: String,
-    resultText: String,
-    declared: Option[BlockedFeedback] = None
-  ): IO[Boolean] =
-    declared match
-      // finish 申报（执行节点显式完成）：与无申报同链走既有完成路径（降级面+闸门原样）
-      case Some(fb) if nebflow.core.tools.NodeReportToolDef.isFinish(fb.category) =>
-        completeNodeR(nodeId, resultText)
-      // pass 申报（verifier verdict=pass）：记 lastVerdict 后走 completed 链（pass 边照投）
-      case Some(fb) if nebflow.core.tools.NodeReportToolDef.isPass(fb.category) =>
-        recordVerdict(nodeId, VerdictPass) *> completeNodeR(nodeId, resultText)
-      // fail 申报（verifier verdict=fail）：**不再 failNode**——verdict ≠ 节点状态
-      case Some(fb) if nebflow.core.tools.NodeReportToolDef.isFail(fb.category) =>
-        verifierFailR(nodeId, fb, resultText)
-      // blocked 申报（细分六类/泛值，协议事实优先）：工具申报即节点对任务可完成性
-      // 的正式判断，blocked 可重激活无损，completed 伪终态不可逆（spec §6 语义裁定）。
-      case Some(fb) => blockedNodeR(nodeId, fb, finalText = Some(resultText))
+  private[project] def completeNodeR(nodeId: String, resultText: String): IO[Boolean] =
+    // Final assistant text is the completion payload; preserve text-based BLOCKED
+    // fallback and the artifact gate, without a report-tool declaration intermediary.
+    BlockedReader.parse(resultText) match
+      case Some(feedback) => blockedNodeR(nodeId, feedback)
       case None =>
-        // blocked 分流（设计 §1.3/§2.1）：最终输出以 BLOCKED 锚定 → blockedNode；
-        // 非 BLOCKED 开头 → completeNode 原路径（产物完整性闸门 + completedNode）。
-        BlockedReader.parse(resultText) match
-          case Some(feedback) => blockedNodeR(nodeId, feedback)
-          case None =>
-            // 产物完整性闸门（audit 20260905 机制建议）：completed 出口三合法态
-            // 校验（a 已提交+b commit-ready 申报+c 零改动；脏且未申报 → Reject）。
-            // Reject → blockedNode 转 blocked（复用 BLOCKED 反馈协议：不走 out 投递、
-            // 结果不丢弃，重入协议处置）——堵「节点自报 completed 但产物滞留」静默丢失。
-            // fail-open 见 CompletionGate.check。
-            store.getNode(nodeId).flatMap {
-              case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-                CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
-                  case CompletionGate.Pass(reason) =>
-                    logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
-                    completedNodeR(nodeId, resultText)
-                  case CompletionGate.Reject(reason, diag) =>
-                    logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
-                    // U6/F 修复（2026-09-11）：闸门 Reject 转 blocked 时**必须带上原结论文本**
-                    // ——旧口径只传 feedback ⇒ `blockedNode` 把 result 写成「闸门反馈」单段，
-                    // 节点辛苦跑出来的结论文本（今日实测 24 分钟复核结论）被**整段替换且
-                    // 不可恢复**（磁盘上再无副本）。修法 = 复用 `blockedNode` 既有的
-                    // `finalText` 并列落盘能力（与 `node_report` 工具申报 BLOCKED 分支
-                    // @:1970 同一机制、同一格式：`render(feedback) + "\n\n" + finalText`）：
-                    // 闸门反馈在**前**（保住 `BlockedReader` 的裸 BLOCKED 锚定与重入 prompt
-                    // 语义，零回归），原结论文本以空行分隔并列在**后**（一条 result 字段里
-                    // 两段可各自取用，无 schema 变更、无前端改动、无新字段）。
-                    // 取回原文的具体命令（U6/F 判据，<ws> = 项目工作区，<id> = 节点 id）：
-                    //   python3 -c "import json;r=json.load(open('<ws>/.nebflow/flow-map.json'))\
-                    //     ['nodes']['<id>']['result'];print(r.split('[original-conclusion]',1)[1])"
-                    // → 打印闸门 Reject 前该节点会话产出的结论文本全文（未被闸门文本污染）。
-                    blockedNodeR(
-                      nodeId,
-                      CompletionGate.feedback(diag),
-                      finalText = Some(CompletionGate.withOriginalText(resultText))
-                    )
-                }
-              case _ => completedNodeR(nodeId, resultText)
+        // 产物完整性闸门（audit 20260905 机制建议）：completed 出口三合法态
+        // 校验（a 已提交+b commit-ready 申报+c 零改动；脏且未申报 → Reject）。
+        // Reject → blockedNode 转 blocked（复用 BLOCKED 反馈协议：不走 out 投递、
+        // 结果不丢弃，重入协议处置）——堵「节点自报 completed 但产物滞留」静默丢失。
+        // fail-open 见 CompletionGate.check。
+        store.getNode(nodeId).flatMap {
+          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+            CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
+              case CompletionGate.Pass(reason) =>
+                logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
+                completedNodeR(nodeId, resultText)
+              case CompletionGate.Reject(reason, diag) =>
+                logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
+                blockedNodeR(
+                  nodeId,
+                  CompletionGate.feedback(diag),
+                  finalText = Some(CompletionGate.withOriginalText(resultText))
+                )
             }
+          case _ => completedNodeR(nodeId, resultText)
+        }
 
   /**
    * completed 原路径：落库 completed + TTL → emitEvent nodeCompleted → deliverOut → settleDeps。

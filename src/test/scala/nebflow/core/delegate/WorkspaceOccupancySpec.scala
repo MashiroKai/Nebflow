@@ -272,7 +272,7 @@ class WorkspaceOccupancySpec extends CatsEffectSuite:
       _ <- ProjectStore.create("example", repo.toString, None, "# Project instructions")
       h <- mountHost(repo, owner, system, resources)
       _ <- seedNode(h, "gate", "batch-gate", NodeLifecycle.Running)
-      rejected <- MergeRequests.submit("example", "req-node", List("task"), "user authorized", resources)
+      rejected <- MergeRequests.submit("example", "req-node", List("task"), "user authorized")
       state = WorkspaceLedger.default.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -294,7 +294,7 @@ class WorkspaceOccupancySpec extends CatsEffectSuite:
     val (repo, _, owner, _) = fixture("job")
     val jobId = s"occupancy-job-${scala.util.Random.nextInt(100000)}"
     for
-      resources <- mkResources(system)
+      _ <- mkResources(system)
       _ <- ProjectStore.create("example", repo.toString, None, "# Project instructions")
       _ <- BgTaskRegistry.register(
         jobId,
@@ -303,7 +303,7 @@ class WorkspaceOccupancySpec extends CatsEffectSuite:
         "local",
         rootSessionId = owner
       )
-      rejected <- MergeRequests.submit("example", "req-job", List("task"), "user authorized", resources)
+      rejected <- MergeRequests.submit("example", "req-job", List("task"), "user authorized")
       state = WorkspaceLedger.default.snapshot
       _ <- BgTaskRegistry.unregister(jobId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -319,9 +319,9 @@ class WorkspaceOccupancySpec extends CatsEffectSuite:
     val system = ActorSystem(s"occupancy-idle-${scala.util.Random.nextInt(1000000)}")
     val (repo, _, _, _) = fixture("idle")
     for
-      resources <- mkResources(system)
+      _ <- mkResources(system)
       _ <- ProjectStore.create("example", repo.toString, None, "# Project instructions")
-      accepted <- MergeRequests.submit("example", "req-idle", List("task"), "user authorized", resources)
+      accepted <- MergeRequests.submit("example", "req-idle", List("task"), "user authorized")
       state = WorkspaceLedger.default.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield

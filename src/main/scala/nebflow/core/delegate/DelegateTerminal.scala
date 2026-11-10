@@ -39,28 +39,14 @@ object DelegateTerminal:
 
   object Outcome:
 
-    /** 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。 */
+    /** Completion payload is returned directly through the parent delivery path. */
     final case class Release(verdictSuffix: String) extends Outcome
 
-    /** A completed development round retains its workspace owner and session. */
+    // Kept temporarily as source compatibility for legacy specs; no production path emits these.
     case object WorkComplete extends Outcome
-
-    /**
-     * 待命挂起（状态矩阵组合 **complete × standby**）：回合收尾**不终判**
-     * ——无判词、无父投递；任务行保持 running、会话停靠 Waiting
-     * （监督者执行，UI 显「待命」），registry 落 standbySince；Mail 到达唤醒后
-     * 续跑照常走矩阵。`declared` = true 显式申报腿。
-     */
     final case class Standby(detail: String, declared: Boolean) extends Outcome
-
-    /**
-     * 未申报空等提醒（矩阵组合 complete × idle（未申报）⇒ system reminder 提醒其
-     * 调整状态（报 standby 或 finish），不终判——DelegateStandbyCare 的 IdleNudge
-     * 型承担）：零判词、零父投递、零 terminal-verdict 行、不停 actor；任务行诚实回
-     * running。`chainsInFlight`/`emptyTurn` = 提醒文案的形态锚（等上游链 / 空烧轮
-     * ——链在飞也必须申报，不许裸等）。
-     */
     final case class NudgeIdle(chainsInFlight: Boolean, emptyTurn: Boolean) extends Outcome
+
   end Outcome
 
   /**
@@ -99,178 +85,8 @@ object DelegateTerminal:
     supervisorRef: ActorRef[AgentEvent],
     sessionToolCalls: Option[Int] = None
   ): IO[Outcome] =
-    val record = DelegateRegistry.find(delegateId)
-    // Managed workspace rounds settle through the open-identity gate below, so
-    // this block MUST early-return: falling through would run the verdict chain
-    // over a round that has to keep its ledger workspace and live owner (the
-    // supervisor's WorkComplete leg reports the round, parks standby and settles
-    // the ledger; the chain only produces terminal Release). The gate is keyed
-    // on WorkspaceLedger ownership (dispatch registers every managed worktree)
-    // plus the merger identity; a delegate without a ledger workspace (external
-    // executor / legacy row) keeps the verdict-chain semantics.
-    val managedRound = WorkspaceLedger.default.owned(delegateId).isDefined ||
-      record.exists(r => r.mode.contains(DualModeConfig.ModeMerger))
-    if managedRound then
-      val declared = record.flatMap(_.reportStatus)
-      return DelegateInflightGate.check(delegateId).flatMap { inflight =>
-        if declared.contains(nebflow.core.tools.DelegateReportTool.StandbyValue) then
-          parkStandbyOutcome(delegateId, record.flatMap(_.taskId), record.flatMap(_.reportDetail).getOrElse(""))
-            .flatTap(_ =>
-              if inflight.isEmpty then IO.blocking(WorkspaceLedger.default.settle(delegateId, frozen = false))
-              else IO.unit
-            )
-        else if declared.contains(nebflow.core.tools.DelegateReportTool.FinishValue) && inflight.isEmpty then
-          val clean =
-            record.flatMap(_.worktree).forall(path => nebflow.core.GitWorktrees.dirtyPaths(os.Path(path)).contains(Nil))
-          if !clean then IO.pure(Outcome.NudgeIdle(chainsInFlight = false, emptyTurn = true))
-          else IO.pure(Outcome.WorkComplete)
-        else IO.pure(Outcome.NudgeIdle(chainsInFlight = inflight.nonEmpty, emptyTurn = resultText.trim.isEmpty))
-      }
-    end if
-    val taskId = record.flatMap(_.taskId)
-    val branch = record.flatMap(_.branch)
-    val selfReport = record.flatMap(r => r.reportStatus.map(s => (s, r.reportDetail.getOrElse(""))))
-    // N1 刀2 ⑸：在飞链计数（fail-soft 0——宿主/快照任何一步失败都不拖判词）。
-    // 判据 = 该 delegate 作用域图内「存在非终态成员」的链数（chainIdView 值集合去重
-    // 后逐链看成员终态）。兼作未申报提醒腿的文案锚（链在飞 × 未申报也被矩阵接住
-    // ——提醒补报 standby，绝不裸等）。
-    val inFlightChains: IO[Int] =
-      nebflow.core.project.DelegateFlowHosts
-        .get(delegateId)
-        .flatMap {
-          case None => IO.pure(0)
-          case Some(h) =>
-            h.store.snapshot.map { s =>
-              val byChain =
-                s.nodes.values.groupBy(n => nebflow.core.project.FlowMapStore.chainIdView(s.nodes).get(n.id))
-              byChain.collect {
-                case (Some(_), members)
-                    if members.exists(m => !nebflow.core.project.NodeLifecycle.Terminal.contains(m.status)) =>
-                  1
-              }.sum
-            }
-        }
-        .handleErrorWith(_ => IO.pure(0))
-
-    // ── 完成判定状态矩阵（作者令 · delegate 状态矩阵批）─────────────────────────
-    // 引擎侧 complete（回合结束）只是**触发判定的事件**，绝不直接等于完成——
-    // 先查 delegate_report 状态槽，按矩阵取交集分流（判定序：状态槽闸 ＞ 漂移闸 ＞
-    // 确定性预检 ＞ 判定机 ＞ 自申报 ＞ 默认 completed；「兜底 completed」只允许在
-    // finish 组合里出现）：
-    //
-    //   | complete | standby（申报） | 等待：跳过终判、保活、任务行显「待命」；Mail/续聊唤醒续跑 |
-    //   | complete | idle（未申报）  | system reminder 提醒其调整状态（报 standby 或 finish），不终判 |
-    //   | complete | finish        | **唯一允许判完成的组合**（判词链全序在此运行） |
-    //
-    // 两个活体旧病灶（作者 Mail 停手回执被判 completed / 停手回执自发触发合并轮）
-    // 分别被 standby 组与未申报组的槽位门槛挡下。集成面 = 项目 merger 的授权请求
-    // （MergeRequests/merger_report）——delegate 永不自并，未并提交不构成合并义务。
-    inFlightChains.flatMap { chains0 =>
-      val chain: IO[Outcome] =
-        verdictChain(
-          resources = resources,
-          delegateId = delegateId,
-          parentSessionId = parentSessionId,
-          initialPrompt = initialPrompt,
-          resultText = resultText,
-          childRef = childRef,
-          supervisorRef = supervisorRef,
-          sessionToolCalls = sessionToolCalls,
-          record = record,
-          taskId = taskId,
-          branch = branch,
-          selfReport = selfReport,
-          chains = chains0
-        )
-
-      // 防退化闸读数：分支领先提交数（fail-soft——无分支/缺锚/读失败 = None ⇒ 采纳）。
-      // 工作分支上有未并交付提交时，停靠/提醒两腿都不接——落判词链做诚实终判
-      // （completed ＋ unmerged-work 注记随行；集成走项目 merger 的授权请求，
-      // 交付绝不静默丢失）。
-      def unmergedAheadOf(): Option[Int] =
-        record.flatMap(rec =>
-          branch.flatMap(b =>
-            rec.baseBranch
-              .flatMap(bb => Try(os.Path(rec.cwd)).toOption.map(ws => GitWorktrees.commitsAhead(ws, bb, b)))
-          )
-        )
-
-      // 显式申报腿（矩阵组合 complete × standby）：申报槽 = standby。
-      // detail = 模型申报的「在等什么」（等作者令、等上游都算）。
-      val standbyDeclared: Option[String] =
-        selfReport
-          .filter(_._1 == nebflow.core.tools.DelegateReportTool.StandbyValue)
-          .map(_._2)
-
-      val standbyDecision: IO[Option[Outcome]] =
-        standbyDeclared match
-          case None => IO.pure(None)
-          case Some(detail) =>
-            if unmergedAheadOf().exists(_ > 0) then
-              IO(
-                logger.warn(
-                  s"delegate $delegateId: standby declared but " +
-                    s"${unmergedAheadOf().getOrElse("?")} deliverable commit(s) sit unmerged on the working branch — " +
-                    "standby NOT honored (the honest verdict settles first); falling through to the verdict chain"
-                )
-              ).as(None)
-            else
-              // 漂移闸确证优先：保护性确定性闸不 defer——证据随注记立即交付（回落链）。
-              driftPrecheck(record).flatMap { earlyDrift =>
-                logDrift(delegateId, earlyDrift)
-                DriftResult.verdictOf(earlyDrift) match
-                  case Some(_) => IO.pure(None)
-                  case None => parkStandbyOutcome(delegateId, taskId, detail).map(Some(_))
-              }
-
-      // 未申报腿（矩阵组合 complete × idle）：system reminder 提醒其调整状态
-      // （报 standby 或 finish），不终判——DelegateStandbyCare.IdleNudge 承担提醒。
-      // 链在飞 × 未申报也归本腿接住（dispatcher 断供场景的引擎侧兜底）；未申报 ×
-      // 工作分支有未并交付提交 = 防退化回落——落判词链诚实终判（交付绝不静默丢失）。
-      val idleDecision: IO[Option[Outcome]] =
-        if selfReport.isDefined || unmergedAheadOf().exists(_ > 0) then IO.pure(None)
-        else
-          IO.pure(
-            Some(
-              Outcome.NudgeIdle(
-                chainsInFlight = chains0 > 0,
-                emptyTurn = sessionToolCalls.contains(0) && !hasRealOutput(resultText)
-              )
-            )
-          )
-
-      // 就地写盘护栏（补充令第 2 条）：先检后交付——命中即回执标红（Release 腿），
-      // 只读任务零误报（判据见 [[inPlaceWriteAlarm]]）。命中同时写三处：WARN 日志、
-      // ChainStore `in-place-write-alarm` 行、交付正文首行（「不许只在日志里留一行」）。
-      val inPlaceAlarm: IO[Option[String]] =
-        inPlaceWriteAlarm(record).flatTap {
-          case None => IO.unit
-          case Some(a) =>
-            IO.blocking(
-              ChainStore.appendSync(
-                ChainStore.keyFor(taskId, delegateId),
-                "in-place-write-alarm",
-                Json.obj(
-                  "delegateId" -> Json.fromString(delegateId),
-                  "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
-                  "alarm" -> Json.fromString(a)
-                )
-              )
-            ).handleErrorWith(e => logger.warn(s"in-place-write-alarm chain line failed: ${e.getMessage}")) *>
-              IO(logger.warn(s"delegate $delegateId: in-place write alarm — $a"))
-        }
-
-      inPlaceAlarm.flatMap { alarm =>
-        standbyDecision.flatMap {
-          case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
-          case None =>
-            idleDecision.flatMap {
-              case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
-              case None => chain.map(o => withInPlaceAlarm(o, alarm))
-            }
-        }
-      }
-    }
+    val body = if resultText.trim.nonEmpty then resultText.trim else "(no text output)"
+    IO.pure(Outcome.Release(s"\"$description\":\n$body"))
   end onCompleted
 
   /**
@@ -861,49 +677,5 @@ object DelegateTerminal:
       s"delegate terminal verdict: $delegateId (task=${taskId.getOrElse("-")}) -> ${DelegateJudge.VerdictWire.encode(v)}$marker$reason"
     )
 
-  /**
-   * 待命采纳落点（standby 组）：parkStandby 落停靠时刻 → ChainStore `standby`
-   * 审计行（非终态——terminal-verdict 行只在真终态写）→ Outcome.Standby 交监督者
-   * 停靠（registry Waiting + WS「待命」帧 + caretaker 武装）。
-   */
-  private def parkStandbyOutcome(
-    delegateId: String,
-    taskId: Option[String],
-    detail: String
-  ): IO[Outcome] =
-    val now = System.currentTimeMillis()
-    IO.blocking(DelegateRegistry.parkStandby(delegateId))
-      .attempt
-      .flatMap {
-        case Left(e) =>
-          IO(
-            logger.warn(
-              s"delegate $delegateId: parkStandby failed (standby proceeds without the dock timestamp): ${e.getMessage}"
-            )
-          )
-        case Right(_) => IO.unit
-      } *>
-      IO
-        .blocking(
-          ChainStore.appendSync(
-            ChainStore.keyFor(taskId, delegateId),
-            "standby",
-            Json.obj(
-              "delegateId" -> Json.fromString(delegateId),
-              "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
-              "detail" -> Json.fromString(detail),
-              "declared" -> Json.fromBoolean(true),
-              "at" -> Json.fromLong(now)
-            )
-          )
-        )
-        .handleErrorWith(e => IO(logger.warn(s"standby chain line failed for $delegateId: ${e.getMessage}"))) *>
-      IO(
-        logger.info(
-          s"delegate standby: $delegateId (task=${taskId.getOrElse("-")}) parked — self-declared (matrix complete×standby): ${detail.take(200)}"
-        )
-      ).as(Outcome.Standby(detail, declared = true))
-
-  end parkStandbyOutcome
 
 end DelegateTerminal

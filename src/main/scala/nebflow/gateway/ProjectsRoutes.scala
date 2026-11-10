@@ -126,7 +126,7 @@ private[gateway] object ProjectsRoutes:
 
       case req @ POST -> Root / "projects" / name / "workspaces" / "merge-requests" / id / "cancel" =>
         withAuth(req) {
-          nebflow.core.delegate.MergeRequests.cancel(name, id, sharedResources).flatMap {
+          nebflow.core.delegate.MergeRequests.cancel(name, id).flatMap {
             case Left(error) => Conflict(Json.obj("error" -> error.asJson))
             case Right(result) => Ok(io.circe.parser.parse(result).getOrElse(Json.obj()))
           }
@@ -147,8 +147,7 @@ private[gateway] object ProjectsRoutes:
                     name,
                     id,
                     ids,
-                    s"authenticated project panel selection: ${ids.mkString(",")}",
-                    sharedResources
+                    s"authenticated project panel selection: ${ids.mkString(",")}"
                   )
                   .flatMap {
                     case Left(error) => Conflict(Json.obj("error" -> error.asJson))

@@ -2683,15 +2683,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // ToolRegistry 在册才解析得出 schema，而在册即意味着 "*" 声明会拿到名字——
     // 本集是唯一能把名字从非 ask 身份摘掉的面（工具内 isAskSession 闸为第二保险）。
     val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
-    // 🔴 The subtract legs only apply to delegate sessions: WorktreeContext is a
-    // RootOrchestrationTools member, so an unconditional strip would remove it from
-    // the main-agent face (merger_report is absent there, which is why the old
-    // unconditional subtraction was a no-op for root).
+    // 🔴 The subtract legs only apply to delegate sessions: WorktreeContext and
+    // MergerRequest are RootOrchestrationTools members, so an unconditional strip
+    // would remove them from the main-agent face. The merger face carries both
+    // names; in-tool identity checks stay the second safeguard.
     val mergerTools =
       if mergerFace then
-        askStripped + nebflow.core.tools.MergerReportTool.Name + nebflow.core.tools.WorktreeContextTool.Name
+        askStripped + nebflow.core.tools.MergerRequestTool.Name + nebflow.core.tools.WorktreeContextTool.Name
       else if delegateSession then
-        askStripped - nebflow.core.tools.MergerReportTool.Name - nebflow.core.tools.WorktreeContextTool.Name
+        askStripped - nebflow.core.tools.MergerRequestTool.Name - nebflow.core.tools.WorktreeContextTool.Name
       else askStripped
     if flowNodeSession then mergerTools + nebflow.core.tools.NodeReportToolDef.Name else mergerTools
 

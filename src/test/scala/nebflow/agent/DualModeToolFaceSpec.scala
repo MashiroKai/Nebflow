@@ -337,17 +337,16 @@ class DualModeToolFaceSpec extends FunSuite:
     assertEquals(decoded2.map(_.mode), Right(Some("dispatcher")))
   }
 
-  test("merger has its report tool but cannot create a development node chain") {
+  test("the merger face carries WorktreeContext but cannot create a development node chain") {
     val definition = AgentDef(name = "nebflow", description = "merger face")
     val merger = CoreProbe.allowedWithDelegateMode(definition, true, Some("merger"))
-    assert(merger.contains("merger_report"))
     assert(merger.contains(nebflow.core.tools.WorktreeContextTool.Name), "the merger face carries WorktreeContext")
+    assert(merger.contains(nebflow.core.tools.MergerRequestTool.Name), "the merger face carries the merge request tool")
+    assert(!merger.contains("merger_report"))
     assert(!merger.contains("ChainWrite"))
     val kernel = CoreProbe.allowedWithDelegateMode(definition, true, Some("kernel"))
-    assert(!kernel.contains("merger_report"))
     assert(!kernel.contains(nebflow.core.tools.WorktreeContextTool.Name), "kernel delegates never see WorktreeContext")
     val executor = CoreProbe.allowedWithDelegateMode(definition, false, None)
-    assert(!executor.contains("merger_report"))
     assert(
       !executor.contains(nebflow.core.tools.WorktreeContextTool.Name),
       "the executor base face never sees WorktreeContext"

@@ -1,10 +1,8 @@
 package nebflow.core.tools
 
-import cats.effect.IO
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
-import nebflow.core.delegate.WorkspaceLedger
 
 class MergerToolAccessSpec extends CatsEffectSuite:
   private val previous = PathUtil.dataRoot
@@ -16,20 +14,29 @@ class MergerToolAccessSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(previous)
     os.remove.all(root)
 
-  test("development delegates cannot submit merge requests or report merger state") {
+  test("only the main agent may submit or cancel merge requests") {
     val ctx = ToolContext(projectRoot = root.toString, sessionId = Some("delegate-developer"))
     for
-      request <- MergerRequestTool.call(JsonObject.empty, ctx)
-      report <- MergerReportTool.call(JsonObject.empty, ctx)
+      submit <- MergerRequestTool.call(
+        JsonObject(
+          "project" -> io.circe.Json.fromString("project"),
+          "requestId" -> io.circe.Json.fromString("request"),
+          "workspaceIds" -> io.circe.Json.arr(io.circe.Json.fromString("task")),
+          "authorization" -> io.circe.Json.fromString("user authorized")
+        ),
+        ctx
+      )
+      cancel <- MergerRequestTool.call(
+        JsonObject(
+          "action" -> io.circe.Json.fromString("cancel"),
+          "project" -> io.circe.Json.fromString("project"),
+          "requestId" -> io.circe.Json.fromString("request")
+        ),
+        ctx
+      )
     yield
-      assert(request.isLeft)
-      assert(report.isLeft)
-  }
-  test("only the recorded merger may inspect its requests") {
-    WorkspaceLedger.default.merger("project", "repo", "delegate-merger")
-    val ctx = ToolContext(projectRoot = root.toString, sessionId = Some("delegate-merger"))
-    MergerReportTool.call(JsonObject("action" -> io.circe.Json.fromString("inspect")), ctx).map { result =>
-      assert(result.isRight)
-      assert(result.toOption.get.contains("requests"))
-    }
+      assert(submit.isLeft)
+      assert(cancel.isLeft)
+      assert(submit.left.toOption.get.message.contains("Only the main agent"))
+      assert(cancel.left.toOption.get.message.contains("Only the main agent"))
   }

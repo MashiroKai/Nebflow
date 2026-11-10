@@ -8,9 +8,10 @@ import nebflow.core.delegate.MergeRequests
 object MergerRequestTool extends Tool:
   val Name = "MergerRequest"
   def name: String = Name
-  def description: String = "Use action=cancel to request a safe stop via the same persistent channel as the panel; this does not undo merges. Use action=submit to submit explicitly authorized idle workspaces to the project's existing merger. Use a stable requestId and cite the user's authorization. " +
+  def description: String = "Use action=submit to submit explicitly authorized idle workspaces for merging; the background merger worker picks them up serially, so no live merger session is required. Use a stable requestId and cite the user's authorization. " +
     "This reserves the exact workspace list and current source commits atomically; busy workspaces are refused. Create Delegate(mode=merger, project=...) first. " +
-    "Authorization includes merging, verification and worktree removal; never push, publish, tag or change versions. A non-live merger stays queued for manual resume."
+    "Use action=cancel to request a safe stop of a recorded request; this does not undo merges. " +
+    "Authorization includes merging, verification and worktree removal; never push, publish, tag or change versions."
   def inputSchema: JsonObject = JsonObject("type" -> "object".asJson,
     "properties" -> Json.obj(
       "action" -> Json.obj("type" -> "string".asJson, "enum" -> List("submit", "cancel").asJson),
@@ -25,17 +26,17 @@ object MergerRequestTool extends Tool:
     else
       val c = Json.fromJsonObject(input).hcursor
       if input("action").flatMap(_.asString).contains("cancel") then
-        (c.get[String]("project"), c.get[String]("requestId"), ctx.sharedResources) match
-          case (Right(project), Right(id), Some(resources)) =>
-            return MergeRequests.cancel(project, id, resources).map(_.left.map(ToolError(_)))
-          case _ => return IO.pure(Left(ToolError("Missing project, requestId or runtime")))
+        (c.get[String]("project"), c.get[String]("requestId")) match
+          case (Right(project), Right(id)) =>
+            return MergeRequests.cancel(project, id).map(_.left.map(ToolError(_)))
+          case _ => return IO.pure(Left(ToolError("Missing project or requestId")))
       val parsed = for
         project <- c.get[String]("project")
         id <- c.get[String]("requestId")
         ids <- c.get[List[String]]("workspaceIds")
         authorization <- c.get[String]("authorization")
       yield (project, id, ids, authorization)
-      (parsed, ctx.sharedResources) match
-        case (Right((project, id, ids, authorization)), Some(resources)) =>
-          MergeRequests.submit(project, id, ids, authorization, resources).map(_.left.map(ToolError(_)))
-        case _ => IO.pure(Left(ToolError("Missing request fields or runtime")))
+      parsed match
+        case Right((project, id, ids, authorization)) =>
+          MergeRequests.submit(project, id, ids, authorization).map(_.left.map(ToolError(_)))
+        case _ => IO.pure(Left(ToolError("Missing request fields")))

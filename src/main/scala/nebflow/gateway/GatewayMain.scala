@@ -1238,6 +1238,12 @@ object GatewayMain extends IOApp:
                                   // 自愈重试）；排除面（外部执行器/team 子代理不入库）由
                                   // stand-recall 既有分类规则单点承载，持久化路径零改动。
                                   val memoryRecallDaemon: IO[Unit] = nebflow.core.MemoryRecallDaemon.launch()
+                                  // Persistent merger worker (serial merge consumer):
+                                  // reconciles in-flight merge requests against actual Git
+                                  // state at boot, then consumes queued requests one at a
+                                  // time without any live merger session. Fail-soft at
+                                  // startup; merge facts stay guarded by the ledger.
+                                  val mergerWorkerBoot: IO[Unit] = nebflow.core.delegate.MergerWorker.launch
                                   // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                   // 在 startupMount 前就绪默认最小集（project-dispatcher /
                                   // general agents + 4 系统插件 +
@@ -1337,7 +1343,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> mergerWorkerBoot *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
