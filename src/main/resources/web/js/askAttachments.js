@@ -389,47 +389,35 @@ export function mountAnswerAttachments(box, opts) {
   else box.appendChild(zone);
   ctx.els = { zone, chips, emptyBtn, headCount };
 
-  // ---- 整卡拖拽（热区 = 整卡，设计稿 §2.2；armed 态浮层纯视觉 aria-hidden）----
-  const overlay = document.createElement('div');
-  overlay.className = 'ask-answer-drop-overlay';
-  overlay.setAttribute('aria-hidden', 'true');
-  overlay.style.cssText =
-    'position:absolute;inset:0;z-index:5;border-radius:var(--ds-radius-xl);display:none;align-items:center;justify-content:center;gap:var(--ds-space-inline-gap);' +
-    'background:color-mix(in srgb, var(--color-surface,rgba(20,22,28,0.9)) 88%, transparent);' +
-    'border:2px dashed var(--color-primary,#07c160);color:var(--color-primary,#07c160);' +
-    'font-weight:600;font-size:var(--ds-fs-subtitle);pointer-events:none;';
-  const overlayIco = document.createElement('span');
-  overlayIco.style.cssText = 'display:inline-flex;';
-  overlayIco.innerHTML = SVG_IMAGE;
-  const overlayText = document.createElement('span');
-  overlayText.textContent = t('askUser.attachDropHint');
-  overlay.append(overlayIco, overlayText);
-  box.appendChild(overlay);
-
+  // ---- 卡级拖放，附件按钮独占高亮范围（与主输入框共用 .drag-over）----
+  // 保留原卡级文件投递热区；描边只在实际选择输入按钮上显示，不再覆盖整卡。
   let dragDepth = 0;
-  // 卡级 preventDefault 对**所有**含 Files 的 drop 生效（防浏览器默认开门——静默）；
-  // armed 活卡才进附件管线；locked 卡零动作（修正②）。
   box.addEventListener('dragenter', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
     if (ctx.locked) return;
-    dragDepth++;
-    overlay.style.display = 'flex';
+    if (emptyBtn.contains(e.target)) {
+      dragDepth++;
+      emptyBtn.classList.add('drag-over');
+    }
   });
   box.addEventListener('dragover', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    if (!emptyBtn.contains(e.target)) emptyBtn.classList.remove('drag-over');
   });
-  box.addEventListener('dragleave', () => {
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) overlay.style.display = 'none';
+  box.addEventListener('dragleave', (e) => {
+    if (emptyBtn.contains(e.target)) {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) emptyBtn.classList.remove('drag-over');
+    }
   });
   box.addEventListener('drop', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
     dragDepth = 0;
-    overlay.style.display = 'none';
+    emptyBtn.classList.remove('drag-over');
     if (ctx.locked) return; // 已发送/已终结：静默零动作（修正②）
     const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
     if (files.length) enqueueFiles(ctx, files);
@@ -484,7 +472,7 @@ export function mountAnswerAttachments(box, opts) {
         ctx.els.emptyBtn.style.display = 'none';
         ctx.els.headCount.textContent = '';
       }
-      overlay.style.display = 'none';
+      ctx.els?.emptyBtn.classList.remove('drag-over');
       liveCards.delete(ctx);
     },
     destroy() {
