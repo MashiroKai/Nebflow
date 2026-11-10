@@ -36,7 +36,10 @@ class ChatRoutes(
    */
   private def checkAuth(req: org.http4s.Request[IO]): IO[Either[org.http4s.Response[IO], Unit]] =
     tokenRef.get
-      .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.OpenAiCompat))
+      // GatewayOwnership callers derive principals only from the validated server
+      // session cookie. A Bearer credential (file token or PAT) has no account
+      // owner and must not authenticate owner-scoped gateway/chat requests.
+      .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.StaticAuth))
       .map {
         case Some(_) => Right(())
         case None =>

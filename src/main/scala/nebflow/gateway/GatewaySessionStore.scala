@@ -94,7 +94,8 @@ class GatewaySessionStore private (
   sessionsRef: Ref[IO, Map[String, SessionRecord]],
   absoluteTtlSeconds: Long,
   idleTimeoutSeconds: Long,
-  persistenceFile: Option[os.Path]
+  persistenceFile: Option[os.Path],
+  ownerStore: Option[OwnerStore]
 ):
   private val log = org.slf4j.LoggerFactory.getLogger(classOf[GatewaySessionStore])
 
@@ -187,12 +188,18 @@ class GatewaySessionStore private (
         lastSeenAt = now,
         slidingExpiresAt = now + idleTimeoutSeconds * 1000L
       )
-      sessionsRef
-        .modify { current =>
-          val live = current.filter { case (_, r) => isLive(r, now) }
-          (live.updated(sid, rec), rec)
-        }
-        .flatTap(_ => persistNow)
+      // Register only the server-minted session record. Persist the owner mapping
+      // before exposing a session that resource routes may later authorize.
+      ownerStore.fold(IO.pure(true))(_.registerSession(rec)).flatMap {
+        case false => IO.raiseError(new IllegalStateException("failed to persist session owner mapping"))
+        case true =>
+          sessionsRef
+            .modify { current =>
+              val live = current.filter { case (_, r) => isLive(r, now) }
+              (live.updated(sid, rec), rec)
+            }
+            .flatTap(_ => persistNow)
+      }
     }
 
   /**
@@ -390,15 +397,17 @@ object GatewaySessionStore:
   def create(
     absoluteTtlSeconds: Long = AbsoluteTtlSeconds,
     idleTimeoutSeconds: Long = IdleTimeoutSeconds,
-    persistenceFile: Option[os.Path] = None
+    persistenceFile: Option[os.Path] = None,
+    ownerStore: Option[OwnerStore] = None
   ): IO[GatewaySessionStore] =
-    IO(unsafeCreate(absoluteTtlSeconds, idleTimeoutSeconds, persistenceFile))
+    IO(unsafeCreate(absoluteTtlSeconds, idleTimeoutSeconds, persistenceFile, ownerStore))
 
   /** Sync construction (assembly code runs outside an IO constructor; same as the ticket stores). */
   def unsafeCreate(
     absoluteTtlSeconds: Long = AbsoluteTtlSeconds,
     idleTimeoutSeconds: Long = IdleTimeoutSeconds,
-    persistenceFile: Option[os.Path] = None
+    persistenceFile: Option[os.Path] = None,
+    ownerStore: Option[OwnerStore] = None
   ): GatewaySessionStore =
     val log = org.slf4j.LoggerFactory.getLogger(classOf[GatewaySessionStore])
     val initial = persistenceFile match
@@ -408,7 +417,8 @@ object GatewaySessionStore:
       Ref.unsafe(initial),
       absoluteTtlSeconds,
       idleTimeoutSeconds,
-      persistenceFile
+      persistenceFile,
+      ownerStore
     )
 
   end unsafeCreate

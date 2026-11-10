@@ -389,6 +389,41 @@ class GatewayAuthSpec extends CatsEffectSuite:
       _ = assert(GatewayAuth.localTicketOnLeg(relay, offLan), "relay-mint is leg-exempt (LAN)")
     yield ()
 
+  // ── owner-scoped authorization primitives: unknown and bearer fail closed ──
+
+  test("ownership primitives reject forged session ids, cross-account targets, unknown rows and unowned Bearer"):
+    for
+      owner <- sessions.create("account-A", GatewaySessionStore.OriginRelayMint, "net-1")
+      other <- sessions.create("account-B", GatewaySessionStore.OriginRelayMint, "net-1")
+      unknown <- sessions.create("unknown", GatewaySessionStore.OriginRelayMint, "net-1")
+      a = Credential.ViaSession(owner)
+      b = Credential.ViaSession(other)
+      bearer = Credential.ViaBearer(isFileToken = false) // PAT carries no owner too
+      _ = assert(GatewayOwnership.owns(a, Some("account-A")))
+      _ = assert(!GatewayOwnership.owns(a, Some("account-B")), "A must not access B")
+      _ = assert(!GatewayOwnership.owns(b, Some("account-A")), "B must not access A")
+      _ = assert(!GatewayOwnership.owns(Credential.ViaSession(unknown), Some("account-A")), "unknown sessions grant no owner")
+      _ = assert(!GatewayOwnership.owns(a, None), "legacy/unknown target owner is isolated")
+      _ = assert(!GatewayOwnership.owns(bearer, Some("account-A")), "Bearer/PAT has no trusted owner mapping")
+      _ = assert(GatewayOwnership.ownsSession(a, owner.sessionId, owner))
+      _ = assert(!GatewayOwnership.ownsSession(a, other.sessionId, other), "client sid cannot substitute for target ownership")
+      _ = assert(!GatewayOwnership.ownsSession(a, "forged-session-id", owner), "forged sid is not accepted")
+    yield ()
+
+  test("revocation is immediate for owner-scoped checks: revoked cookie cannot authenticate"):
+    for
+      record <- sessions.create("account-revoke", GatewaySessionStore.OriginRelayMint, "net-1")
+      before <- auth(req(cookies = (GatewaySessionStore.CookieName, record.sessionId)), GatewayAuth.Rails.ApiFull)
+      _ = assert(before.exists {
+        case Credential.ViaSession(r) => GatewayOwnership.owns(Credential.ViaSession(r), Some("account-revoke"))
+        case _ => false
+      })
+      removed <- sessions.revokeByAccount("account-revoke")
+      after <- auth(req(cookies = (GatewaySessionStore.CookieName, record.sessionId)), GatewayAuth.Rails.ApiFull)
+      _ = assertEquals(removed, 1)
+      _ = assertEquals(after, None, "revoked session must fail on the next authentication")
+    yield ()
+
   // ── rotate linkage (criterion 7, unit face) ────────────────────────────
 
   test("rotate: the OLD file token stops authenticating; the live session keeps working"):
