@@ -650,7 +650,7 @@ object AgentCore:
    * Tools 双集，MergerRequestTool 同槽先例）。本增量属「按面变更」（新增成员），
    * 非「凑数字」。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 24
+  val RootOrchestrationToolsExpectedSize: Int = 25
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。

@@ -103,8 +103,8 @@ class RootSixBaseToolsSpec extends FunSuite:
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(
       AgentCore.RootOrchestrationTools.size,
-      23,
-      "RootOrchestrationTools 实测恰 23 件（20 件合同 + ConversationSearch + WorktreeContext（Priority D）+ WorkspaceSummary（Priority E）；更早沿革：原 19 件；2026-09-18 18:18 令 +5 = 17，agentflow 批 +AgentFlow = 18，builtin-def 批 +Delegate = 19，pop 批 −Card = 18，unified-delegate 批 −AgentFlow = 17，task-rag 批 #1227 +TaskSearch = 18，imagegen 双层批 2026-10-24 作者令 +GenerateImage = 19；变异验红锚：再摘任一件即红）"
+      25,
+      "RootOrchestrationTools 实测恰 25 件，含 AskHostReply/AskHostClarify root-only 工具；变异验红锚：再摘任一件即红"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
@@ -120,10 +120,8 @@ class RootSixBaseToolsSpec extends FunSuite:
       9,
       "nebflow 固定集恰九件（tool-face-agentflow-retire 批 2026-11-05：AgentFlow 工具整体退役 ⇒ 十 → 九；BaseTools 七件含 BgWait + AskUserQuestion + Subagent；AskUser 承继、零 Pop 承继）"
     )
-    assert(
-      AgentCore.NebflowFixedTools.contains("AskUserQuestion"),
-      "general 固定集含 AskUserQuestion（2026-09-08 作者修订恢复——变异验红锚）"
-    )
+    assert(!AgentCore.NebflowFixedTools.contains("AskUserQuestion"), "AskUserQuestion is root-only")
+    assert(AgentCore.NebflowFixedTools.contains("AskHost"), "general fixed face includes AskHost")
     assert(!AgentCore.NebflowFixedTools.contains("Pop"), "nebflow 固定集零 Pop（2026-09-10 作者裁定承继——变异验红锚：加回即红）")
     val delivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     six.foreach(t => assert(delivered.contains(t), s"general 交付面缺基础六件之一: $t"))
