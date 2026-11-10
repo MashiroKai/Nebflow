@@ -40,7 +40,9 @@ final class AttachmentCommitService private (
       if Files.isSymbolicLink(base) then throw new SecurityException("attachment root is a symlink")
       Files.createDirectories(base)
       val realBase = base.toRealPath(LinkOption.NOFOLLOW_LINKS)
-      if realBase != base.toRealPath() then throw new SecurityException("attachment root changed")
+      // NOFOLLOW may retain an intermediate symlink spelling (for example /tmp on macOS),
+      // while toRealPath() resolves it. Compare canonical identities, not path spellings.
+      if realBase.toRealPath() != base.toRealPath() then throw new SecurityException("attachment root changed")
       val target = realBase.resolve(key.value).normalize()
       if target.getParent != realBase || Files.isSymbolicLink(target) || Files.exists(target, LinkOption.NOFOLLOW_LINKS) then
         throw new SecurityException("unsafe or existing attachment target")
