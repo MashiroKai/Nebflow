@@ -396,7 +396,7 @@ export function mountAnswerAttachments(box, opts) {
     if (!hasFiles(e)) return;
     e.preventDefault();
     if (ctx.locked) return;
-    if (emptyBtn.contains(e.target)) {
+    if (e.target instanceof Node && emptyBtn.contains(e.target)) {
       dragDepth++;
       emptyBtn.classList.add('drag-over');
     }
@@ -405,10 +405,10 @@ export function mountAnswerAttachments(box, opts) {
     if (!hasFiles(e)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-    if (!emptyBtn.contains(e.target)) emptyBtn.classList.remove('drag-over');
+    if (!(e.target instanceof Node) || !emptyBtn.contains(e.target)) emptyBtn.classList.remove('drag-over');
   });
   box.addEventListener('dragleave', (e) => {
-    if (emptyBtn.contains(e.target)) {
+    if (e.target instanceof Node && emptyBtn.contains(e.target)) {
       dragDepth = Math.max(0, dragDepth - 1);
       if (dragDepth === 0) emptyBtn.classList.remove('drag-over');
     }

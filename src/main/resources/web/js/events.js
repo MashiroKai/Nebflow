@@ -26,6 +26,10 @@ export const EVENTS = Object.freeze({
   // Delegate mirror refresh and archive notifications.
   DELEGATE_CHAIN_MIRROR_UPDATED: 'delegate-chain-mirror-updated',
   DELEGATE_ARCHIVED: 'delegate-archived',
+  // popArtifacts media stack: page-flip announce (front card changed) and
+  // expand/collapse state (msgQuote.js listens on the artifact row).
+  NF_QUOTE_FRONT: 'nf-quote-front',
+  NF_POP_EXPANDED: 'nf-pop-expanded',
   // 折叠态：本名在当日树里是**存储键**字面量（branding.js LEGACY_IRREGULAR
   // .task_collapsed），登记它是为了让折叠态通道只有一处拼写来源 —— 将来若升级成
   // 事件，收发两端不必再改名字。
