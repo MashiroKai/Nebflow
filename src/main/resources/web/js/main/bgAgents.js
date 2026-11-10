@@ -502,6 +502,7 @@ function bgDelegateBadgeWord(execMode) {
  *  未知归 active 保守侧——不臆造终态）。 */
 function bgStoreChildState(status) {
   if (status === 'completed') return 'done';
+  if (status === 'cancelled') return 'cancelled';
   if (status === 'failed') return 'error';
   // 模型粒度批（作者令 2026-11-06 20:36）：重启/崩溃中断 = 待手动恢复（后端零通知、
   // 不自动恢复；`pending-recovery` 由 SubAgentStartupRecovery 标记）——不是进行中。
@@ -1590,8 +1591,13 @@ function bgAbsentParentChipHtml(parentSid) {
  */
 function bgDepthAttrs(depth) {
   const d = Math.max(0, Math.floor(Number(depth) || 0));
-  // listitem does not support aria-level; retain the machine-readable visual depth only.
   return ' data-bg-depth="' + d + '"' + (d > 0 ? ' style="--bg-row-depth:' + d + '"' : '');
+}
+
+// listitem does not support aria-level. Expose the same depth as readable text instead.
+function bgDepthText(depth) {
+  const level = Math.max(0, Math.floor(Number(depth) || 0)) + 1;
+  return '<span class="bg-row-sr bg-hierarchy-sr">' + escapeHtml(t('subagents.hierarchyLevel', { level })) + '</span>';
 }
 
 /** 是否父行的末位子行（转折角 `└` 与延续列 `│` 的判据）——直接读 bgRowTree 的兄弟表
@@ -1649,9 +1655,9 @@ function bgCollapseAttrs(childCount, collapsed) {
  */
 function bgCaretHtml(key, collapsed) {
   const word = collapsed ? t('subagents.expandGroup') : t('subagents.collapseGroup');
-  return '<span class="bg-task-caret' + (collapsed ? ' is-collapsed' : '') + '" data-bg-caret="' +
-    escapeHtml(String(key || '')) + '" role="button" aria-label="' + escapeHtml(word) + '" title="' +
-    escapeHtml(word) + '">' + statusIcon(collapsed ? 'chevron-right' : 'chevron-down', 11) + '</span>';
+  return '<button type="button" class="bg-task-caret' + (collapsed ? ' is-collapsed' : '') + '" data-bg-caret="' +
+    escapeHtml(String(key || '')) + '" aria-expanded="' + String(!collapsed) + '" aria-label="' + escapeHtml(word) + '" title="' +
+    escapeHtml(word) + '">' + statusIcon(collapsed ? 'chevron-right' : 'chevron-down', 11) + '</button>';
 }
 
 /**
@@ -1707,6 +1713,7 @@ function bgRootAnchorHtml(key, childCount, collapsed) {
   return '<div class="bg-root-anchor" data-bg-root-anchor="1" data-bg-depth="0" role="presentation"' +
     bgCollapseAttrs(childCount, collapsed) +
     ' aria-label="' + escapeHtml(word) + '">' +
+    bgDepthText(0) +
     (Number(childCount) > 0 ? bgCaretHtml(key, collapsed) : '') +
     '<span class="bg-root-anchor-name" title="' + escapeHtml(String(key || '')) + '">' +
       escapeHtml(word) + '</span>' +
@@ -2145,6 +2152,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
     ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline">' + actionPart + summaryPart + '</div>'
     : '';
   return    '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + wildAttr + absentAttr + agentflowAttr + bgDepthAttrs(Number(opts.depth) || 0) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
+    bgDepthText(opts.depth) +
     railPart +
     caretPart +
     '<div class="bg-task-info">' +
@@ -2179,6 +2187,7 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   const pendingRecovery = state === 'pending-recovery';
   const statusLabel = pendingRecovery
     ? t('delegate.pendingRecovery')
+    : state === 'cancelled' ? t('flowmap.st.cancelled')
     : t('subagents.status.' + (state === 'active' ? 'running' : state));
   const restoreChip = pendingRecovery
     ? '<button class="bg-task-wake" type="button" data-bg-restore="' + escapeHtml(sid) +
@@ -2208,13 +2217,14 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   // 字符串由 bgTreeRailHtml 一处生成，本处只消费）。
   const railPart = String(opts.railHtml || '');
   return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
+    bgDepthText(opts.depth) +
     railPart +
     caretPart +
     '<div class="bg-task-info">' +
       // 三行结构批：members 行同款（L1 名·状态图标·空 time 槽 / L2 kind+重试 / L3 摘要）。
       '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
         namePart +
-        bgStatusHtml(state === 'active' ? 'active' : state, { label: statusLabel }) +
+        bgStatusHtml(state === 'cancelled' ? 'done' : state, { label: statusLabel }) +
         restoreChip +
       '</div>' +
       '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' + kindPart + retriesPart + '</div>' +
@@ -2254,6 +2264,7 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   // 层级连接符批（2026-11-07）：flow 结构行同款导轨（产点仍唯一 = bgTreeRailHtml）。
   const railPart = String(opts.railHtml || '');
   return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-flow-delegate-key="' + escapeHtml(String(delegateKey || '')) + '" title="' + escapeHtml(label) + '">' +
+    bgDepthText(opts.depth) +
     railPart +
     caretPart +
     '<div class="bg-task-info">' +
@@ -2554,8 +2565,14 @@ export function renderBgAgentDropdown() {
       e.stopPropagation();
       const caretKey = caret.getAttribute('data-bg-caret');
       if (!caretKey) return;
+      const restoreFocus = document.activeElement === caret;
       bgCollapseSet(caretKey, !caret.classList.contains('is-collapsed'));
       renderBgAgentDropdown();
+      if (restoreFocus) {
+        const replacement = [...listEl.querySelectorAll('[data-bg-caret]')]
+          .find(el => el.getAttribute('data-bg-caret') === caretKey);
+        if (replacement) replacement.focus();
+      }
     });
   });
 
@@ -2620,6 +2637,11 @@ export function renderBgAgentDropdown() {
       if (c.type === 'store') storeChildBySid.set(c.sid, c.child);
     }
   }
+  for (const row of model.rows) {
+    if (row.storeChild && row.storeChild.taskId) {
+      storeChildBySid.set(String(row.storeChild.taskId), row.storeChild);
+    }
+  }
   listEl.querySelectorAll('[data-child-session]').forEach(row => {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2652,6 +2674,8 @@ export function renderBgAgentDropdown() {
   // ArrowUp/ArrowDown move between rows. Property assignment — idempotent
   // across re-renders (no listener accumulation).
   listEl.onkeydown = (e) => {
+    // Native controls handle their own keyboard activation; do not open the row instead.
+    if (e.target && e.target.closest && e.target.closest('button, a, input, select, textarea')) return;
     const row = e.target && e.target.closest ? e.target.closest('.bg-task-row') : null;
     if (!row) return;
     if (e.key === 'Enter' || e.key === ' ') {

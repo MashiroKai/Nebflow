@@ -68,12 +68,12 @@ function mirrorRow(over = {}) {
   };
 }
 
-async function installRoutes(page) {
-  await page.addInitScript(() => {
+async function installRoutes(page, locale = 'zh-CN') {
+  await page.addInitScript((locale) => {
     localStorage.setItem('nebflow_token', 'e2e-token');
-    localStorage.setItem('nebflow_locale', 'zh-CN');
+    localStorage.setItem('nebflow_locale', locale);
     localStorage.setItem('stand_sw', '0');
-  });
+  }, locale);
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
@@ -120,8 +120,8 @@ async function waitReady(page) {
   await page.waitForTimeout(300);
 }
 
-async function bootApp(page) {
-  await installRoutes(page);
+async function bootApp(page, locale = 'zh-CN') {
+  await installRoutes(page, locale);
   await page.goto('http://localhost:1/');
   await waitReady(page);
 }
@@ -245,6 +245,24 @@ test('G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440
   await seedThreeGen(page);
   await openPanel(page);
 
+  // Flat list rows expose the real depth to assistive technology, without invalid aria-level on listitem.
+  const dispatcher = page.locator(`.bg-task-row[data-node-session-id="${DISP_SID}"]`);
+  const node = page.locator(`.bg-task-row[data-node-session-id="${NODE_SID}"]`);
+  await expect(page.locator('.bg-root-anchor .bg-hierarchy-sr')).toHaveText('层级 1');
+  await expect(dispatcher.locator('.bg-hierarchy-sr')).toHaveText('层级 2');
+  await expect(node.locator('.bg-hierarchy-sr')).toHaveText('层级 3');
+  const caret = dispatcher.getByRole('button', { name: '收起子任务' });
+  await expect(caret).toHaveAttribute('aria-expanded', 'true');
+  await caret.focus();
+  await page.keyboard.press('Enter');
+  const expandedCaret = dispatcher.getByRole('button', { name: '展开子任务' });
+  await expect(expandedCaret).toBeFocused();
+  await expect(expandedCaret).toHaveAttribute('aria-expanded', 'false');
+  await expect(node).toHaveCount(0);
+  await page.keyboard.press('Space');
+  await expect(node).toHaveCount(1);
+  await expect(dispatcher.getByRole('button', { name: '收起子任务' })).toBeFocused();
+
   // 1440 桌面读数：公式 = --ds-space-4 + (depth-1)*--ds-space-4 ⇒ depth1=16px、depth2=32px。
   const dump1440 = await dumpPanel(page);
   const disp1440 = dump1440.rows.find((r) => r.sid === DISP_SID);
@@ -315,6 +333,16 @@ test('G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440
   expect(dump375.rows).toHaveLength(2);
   expect(dump375.rowTotal).toBe('2');
   expect(errors).toEqual([]);
+});
+
+test('Hierarchy accessibility text follows English locale', async ({ page }) => {
+  await bootApp(page, 'en');
+  await seedThreeGen(page);
+  await openPanel(page);
+  await expect(page.locator('.bg-root-anchor .bg-hierarchy-sr')).toHaveText('Level 1');
+  await expect(page.locator(`.bg-task-row[data-node-session-id="${DISP_SID}"] .bg-hierarchy-sr`)).toHaveText('Level 2');
+  await expect(page.locator(`.bg-task-row[data-node-session-id="${NODE_SID}"] .bg-hierarchy-sr`)).toHaveText('Level 3');
+  await expect(page.locator(`.bg-task-row[data-node-session-id="${DISP_SID}"]`).getByRole('button', { name: 'Collapse subtasks' })).toHaveAttribute('aria-expanded', 'true');
 });
 
 // ── G2：真实形夹具（无 parentSessionId——现网数据面形状）行一行不少、depth 不伪造 ──

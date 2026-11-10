@@ -1021,6 +1021,7 @@ export default {
   // 面板三代层级批（2026-11-06）：root 锚（树 depth 0 基座标签）+ 判定表②「父不在场」
   // 标——都是事实词（这一层是根 / 父会话当前不在面板），非解释句。
   'subagents.rootAnchor': '根会话',
+  'subagents.hierarchyLevel': '层级 {level}',
   'subagents.parentAbsent': '父不在场',
   'subagents.parentAbsentTip': '父会话当前不在面板 · {sid}',
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
