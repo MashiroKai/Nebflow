@@ -59,7 +59,7 @@ export default {
   'project.factsReconcileUnknown': '现场未知',
   'project.selectionExpired': '{count} 个所选工作区已不再处于空闲开放状态，已从选择中移除。',
   'project.mergeConfirmTitle': '确认合并请求',
-  'project.mergeConfirmEntry': '{branch} → {target}\n源提交 {commit} · {ahead} · {dirty}',
+  'project.mergeConfirmEntry': '{branch} 并入 {target}\n源提交 {commit} · {ahead} · {dirty}',
   'project.mergeConfirmConfirm': '提交合并请求',
   'project.mergeStop': '请求终止',
   'project.mergeStopRequested': '已请求终止，等待 merger 核对现场；已合并成果不会撤销。',
