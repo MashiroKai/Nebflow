@@ -59,7 +59,7 @@ export default {
   'project.factsReconcileUnknown': 'state unknown',
   'project.selectionExpired': '{count} selected workspace(s) are no longer open and idle; the selection was cleared.',
   'project.mergeConfirmTitle': 'Confirm merge request',
-  'project.mergeConfirmEntry': '{branch} → {target}\nsource {commit} · {ahead} · {dirty}',
+  'project.mergeConfirmEntry': '{branch} into {target}\nsource {commit} · {ahead} · {dirty}',
   'project.mergeConfirmConfirm': 'Submit merge request',
   'project.mergeStop': 'Request stop',
   'project.mergeStopRequested': 'Stop requested; waiting for the merger to reconcile actual progress. Existing merges remain.',

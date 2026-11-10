@@ -52,6 +52,9 @@
 // sentinel payload face.
 
 import { t } from './i18n.js';
+// Event names come from the registry (R3 single source): dispatch sites below
+// use EVENTS.* instead of string literals.
+import { EVENTS } from './events.js';
 import state from './state.js';
 import { escapeHtml, smartScroll, localizeToolLabel, localizeToolSummary } from './utils.js';
 import { ticketUrl, reMint } from './nfTicket.js';
@@ -117,7 +120,7 @@ export function parsePopPayload(content) {
  *  import chat.js (that would close chat.js → popArtifacts → chat.js). */
 export function openPopArtifact(filePath, title) {
   const fileName = filePath.split('/').pop() || filePath;
-  window.dispatchEvent(new CustomEvent('workspace-open-item', {
+  window.dispatchEvent(new CustomEvent(EVENTS.WORKSPACE_OPEN_ITEM, {
     detail: {
       id: 'file:' + filePath,
       title: title || fileName,
@@ -779,7 +782,7 @@ function buildMediaStack(items, opts) {
   // 即时更新文案（不吃缓存）。零第二套状态 —— 每次 applyLayers（= front 变更的
   // 唯一落点）都发，宿主侧幂等去重。
   const announceFront = () => {
-    area.dispatchEvent(new CustomEvent('nf-quote-front', { bubbles: true, detail: { index: front } }));
+    area.dispatchEvent(new CustomEvent(EVENTS.NF_QUOTE_FRONT, { bubbles: true, detail: { index: front } }));
   };
   const applyLayers = () => {
     layers.forEach((layer, i) => {
@@ -900,7 +903,7 @@ function buildMediaStack(items, opts) {
   const setExpanded = v => {
     if (expanded === v) return;
     expanded = v;
-    area.dispatchEvent(new CustomEvent('nf-pop-expanded', { bubbles: true, detail: { expanded: v } }));
+    area.dispatchEvent(new CustomEvent(EVENTS.NF_POP_EXPANDED, { bubbles: true, detail: { expanded: v } }));
     pill.textContent = v ? t('chat.popCollapse') : t('chat.popExpand', { n: items.length });
     // 展开前把展开行宽度对到本节点的卡脸宽度（见 refitExpanded 头注）。
     if (v) refitExpanded();
