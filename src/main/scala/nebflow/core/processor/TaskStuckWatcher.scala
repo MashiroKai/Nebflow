@@ -864,6 +864,17 @@ object TaskStuckWatcher:
             .scan(nebflow.core.delegate.BaseDriftWatch.fromResources(resources))
             .handleErrorWith(e => logger.warn(s"[base-drift] sweep failed: ${e.getMessage}").void)
             .void *>
+          // ── SCM blueprint P0-③ (2026-11-10): done-board mechanization ────────
+          // Finished delegate leftovers — a clean done tree idle for more than 24h,
+          // or a fully merged branch whose worktree is already gone — are reported
+          // to the dispatching root session. Report-only: zero git writes, no
+          // branch deletion, no worktree removal. Rides this existing scan tick
+          // (no new timer); internally throttled to one sweep per 10 min and one
+          // notice per item per 24h.
+          nebflow.core.delegate.DoneBoardWatch
+            .scan(resources)
+            .handleErrorWith(e => logger.warn(s"[done-board-watch] sweep failed: ${e.getMessage}").void)
+            .void *>
           // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
           // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
           // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交

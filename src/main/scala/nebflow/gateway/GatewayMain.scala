@@ -499,6 +499,10 @@ object GatewayMain extends IOApp:
       IO.blocking(nebflow.shared.EvidenceTemp.sweep()).flatMap { removed =>
         if removed > 0 then logger.info(s"[evidence-temp] swept $removed expired evidence batches") else IO.unit
       } *>
+      // Periodic re-arm of the same sweep: without it a long-lived gateway only
+      // enforces the evidence-temp TTL at boot, so expired inactive batches pile
+      // up until the next restart.
+      nebflow.shared.EvidenceTempSweep.launch(24.hours).start.void *>
       // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
       // resolved at boot — missing pieces must be loud up front, not discovered
       // later inside a failing tool call. No-op off Windows.
