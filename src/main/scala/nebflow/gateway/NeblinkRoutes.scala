@@ -70,7 +70,7 @@ private[gateway] object NeblinkRoutes:
     given RestApiCtx = ctx
 
     HttpRoutes.of[IO] {
-      // ===== NebLink P2P Discovery (no gateway auth — used by other Nebflow instances) =====
+      // ===== NebLink P2P Discovery (no gateway auth — used by other Stand instances) =====
       // 注（2026-09-20 加固批）：本段的**对端判据**见下方 /neblink/discover 与 /neblink/announce
       // 两条（前者本批补入 verifyPeerAccess，后者原已内联 isTrustedPeer/isKnownNetworkDevice）。
 
@@ -1059,8 +1059,8 @@ private[gateway] object NeblinkRoutes:
             }
         }
 
-      // ===== Remote Update (P2P — triggered by another Nebflow instance) =====
-      // Downloads and installs the latest JAR, then restarts Nebflow.
+      // ===== Remote Update (P2P — triggered by another Stand instance) =====
+      // Downloads and installs the latest JAR, then restarts Stand.
       // The caller must be a trusted peer (verified by IP).
       case req @ POST -> Root / "neblink" / "update" =>
         verifyPeerAccess(req).flatMap {

@@ -117,7 +117,7 @@ doc["word/document.xml"].revert_deletion(del_elem)
 ### Comments
 
 ```python
-doc = Document('unpacked', author="Nebflow", initials="Z")
+doc = Document('unpacked', author="Stand", initials="Z")
 
 # Comment on a range
 start = doc["word/document.xml"].get_node(tag="w:del", attrs={"w:id": "1"})

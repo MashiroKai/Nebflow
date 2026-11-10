@@ -50,11 +50,11 @@ object GatewayMain extends IOApp:
   // restart successors. The guard logic below is unchanged.
 
   /**
-   * Kill stale Nebflow processes before starting — but ONLY verified Nebflow
+   * Kill stale Stand processes before starting — but ONLY verified Stand
    * processes (P0 2026-09-06 host-kill hardening). Port-based detection
    * plus a per-pid identity check (JDK ProcessHandle command line, Windows
    * PowerShell CIM fallback, ps fallback): every listener's command line
-   * must carry a Nebflow marker before it may be destroyed (see
+   * must carry a Stand marker before it may be destroyed (see
    * [[StaleProcessGuard]] — restart flows still clear their stale instance).
    * A foreign occupant refuses startup loudly; it is NEVER killed.
    *
@@ -2030,7 +2030,7 @@ object GatewayMain extends IOApp:
                                               val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
                                                 daemonService = Some(daemonService)
                                               )
-                                              // JVM shutdown hook: daemons must die with Nebflow even when the JVM
+                                              // JVM shutdown hook: daemons must die with Stand even when the JVM
                                               // is killed by SIGINT/SIGTERM (Ctrl+C) — cats-effect `.guarantee`
                                               // finalizers are not guaranteed to run on abrupt termination. The
                                               // shutdown hook always runs on JVM exit. Idempotent: stopAll on an

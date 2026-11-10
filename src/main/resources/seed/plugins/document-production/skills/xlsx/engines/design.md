@@ -564,7 +564,7 @@ style_total_row(ws, row_num=total_row_num, col_start=2, col_end=last_col)
 auto_fit_columns(ws, min_width=8, max_width=28, header_row=4, data_start_row=5)
 auto_fit_row_heights(ws, header_row=4, data_start_row=5)
 
-wb.properties.creator = "Nebflow"
+wb.properties.creator = "Stand"
 wb.save("output.xlsx")
 ```
 

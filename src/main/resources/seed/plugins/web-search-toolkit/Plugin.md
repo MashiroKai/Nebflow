@@ -12,7 +12,7 @@ web-search-toolkit 是联网检索工具包：向节点授予 `WebSearch`（实�
 
 ## 2. 安装与启用
 
-- **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
+- **安装**：本包属 Stand seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
 - **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（联网检索、查官方文档、找最新版本号/发行说明、抓网页正文、核对外部事实等），派发时 SKILL.md 全文注入节点；两件工具的授予随包装载生效（无需单独开启）。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/web-search-toolkit/revoke` / `nebflow plugin revoke web-search-toolkit`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载；新内容对新派发即刻生效）。

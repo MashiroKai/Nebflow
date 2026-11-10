@@ -13,7 +13,7 @@ import nebflow.shared.NebflowLogger
 import scala.concurrent.duration.*
 
 /**
- * Discovers Nebflow peers via the NebLink Server.
+ * Discovers Stand peers via the NebLink Server.
  *
  * Each cycle logs in (or heartbeats) to the NebLink Server to get the peer list,
  * then syncs presence connections via NeblinkPresenceService.

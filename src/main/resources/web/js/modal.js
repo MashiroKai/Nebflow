@@ -184,7 +184,7 @@ let pendingAltCallback = null;
 export function canShowConfirm() { return !!state.dom?.deleteBox; }
 
 /**
- * Show a Nebflow-styled confirmation dialog.
+ * Show a Stand-styled confirmation dialog.
  * @param {string} title — dialog title
  * @param {string} message — dialog body text
  * @param {Function} onConfirm — called when user clicks Confirm
@@ -290,7 +290,7 @@ function resolveConflict(action) {
 // currentColor 继承给出，避免 st-err/st-ok 直涂覆盖类型档。
 const TOAST_ICONS = { error: 'circle-x', info: 'circle-alert', success: 'circle-check' };
 /**
- * Show a brief Nebflow-styled toast notification.
+ * Show a brief Stand-styled toast notification.
  * @param {string} message — text to display
  * @param {string} type — 'error' | 'info' | 'success'
  */

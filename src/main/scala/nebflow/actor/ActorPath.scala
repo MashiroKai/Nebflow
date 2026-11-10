@@ -1,7 +1,7 @@
 package nebflow.actor
 
 /**
- * Address of an actor in the Nebflow actor system.
+ * Address of an actor in the Stand actor system.
  *
  * Format: nebflow://device/segment1/segment2/...
  *

@@ -123,13 +123,13 @@ object SkillService:
   private def skillCreatorMd: String =
     s"""---
       |name: skill-creator
-      |description: Create and update Nebflow skills — directory structure, frontmatter fields, scripts, and best practices. Use when the user asks to create, modify, or learn about skills.
+      |description: Create and update Stand skills — directory structure, frontmatter fields, scripts, and best practices. Use when the user asks to create, modify, or learn about skills.
       |language: zh
       |---
       |
       |# Skill Creator
       |
-      |You are creating or updating a Nebflow skill. A skill is a reusable capability package that combines prompt instructions with bundled resources (scripts, references, assets).
+      |You are creating or updating a Stand skill. A skill is a reusable capability package that combines prompt instructions with bundled resources (scripts, references, assets).
       |
       |## Standard Directory Structure
       |
@@ -367,7 +367,7 @@ object SkillService:
       os.list(dir)
         .filter(sub => os.isDir(sub) && sub.baseName != "_example")
         .flatMap { subDir =>
-          // Prefer SKILL.md (Claude Code convention), fall back to skill.md (Nebflow convention)
+          // Prefer SKILL.md (Claude Code convention), fall back to skill.md (Stand convention)
           val flat = resolveSkillFile(subDir).map { f =>
             parseSkillFile(f, source, Some(subDir.baseName), relativeName = None)
           }

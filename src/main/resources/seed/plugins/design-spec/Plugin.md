@@ -12,7 +12,7 @@ design-spec 是设计规格书方法包：节点获得「只设计不实现」�
 
 ## 2. 安装与启用
 
-- **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
+- **安装**：本包属 Stand seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
 - **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（写设计规格书、UI/UX 设计、视觉评审、设计走查、视觉规范制定等），派发时把 SKILL.md 全文注入节点。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/design-spec/revoke` / `nebflow plugin revoke design-spec`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载）。

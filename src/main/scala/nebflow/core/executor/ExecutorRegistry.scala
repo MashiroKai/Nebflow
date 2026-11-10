@@ -24,7 +24,7 @@ import java.io.File
  * ==检测模式取自 RgHelper==
  * PATH 扫描 + 常用前缀探测（launchd/systemd 服务的精简 PATH 教训同款，
  * RgHelper.curatedProbeDirs 注释 2026-09-21）。外部 CLI **不做** bundled /
- * `~/.nebflow/bin` 腿——它们不是 Nebflow 安装的。
+ * `~/.nebflow/bin` 腿——它们不是 Stand 安装的。
  *
  * ==配置（配置文件顶层 `executor` 节）==
  *   "executor": { "default": "nebflow", "disabled": ["hermes"] }

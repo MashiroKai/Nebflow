@@ -16,7 +16,7 @@ document-production 是文档制作包：节点获得 Word/PDF/PPT/Excel 四类�
 
 ## 2. 安装与启用
 
-- **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
+- **安装**：本包属 Stand seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
 - **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（做 DOCX/Word 文档、产出 PDF、做 Excel 表格、做 PPT 幻灯片、文档排版、表格格式互转、成稿视觉验收等），派发时对应 SKILL.md 全文注入节点。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/document-production/revoke` / `nebflow plugin revoke document-production`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载）。
@@ -58,10 +58,10 @@ document-production/                （包根）
 
 | skill 路径（自 skills/） | 一句话括注 |
 |---|---|
-| docx/SKILL.md | DOCX 制作编辑分析：双路由器、封面配方 R1-R7、双层后检、公式图表、交付口径（Nebflow 节） |
+| docx/SKILL.md | DOCX 制作编辑分析：双路由器、封面配方 R1-R7、双层后检、公式图表、交付口径（Stand 节） |
 | pdf/SKILL.md | PDF 四产线工作台：Triage 分档、场景路由矩阵、共享资产、渲染铁律、Preflight 质检 |
 | pptx/SKILL.md | 幻灯片设计规范＋pptxgenjs 制作：配色模型、版式与图文叠放、avoid list、常见坑 |
-| xlsx/SKILL.md | 电子表格产线：意图门、场景路由、设计原则、工具链、质量门、交付口径（Nebflow 节） |
+| xlsx/SKILL.md | 电子表格产线：意图门、场景路由、设计原则、工具链、质量门、交付口径（Stand 节） |
 | visual-acceptance/SKILL.md | 成稿页级视觉验收：渲染前置、每页三项判、JSON 判据输出、打回重渲染节拍 |
 
 配套件形态（按需 Read 面，加载时机以各 SKILL 路由表为准）：
@@ -110,7 +110,7 @@ document-production/                （包根）
 
 ## 9. 维护约定
 
-- **外来源 skill 上游同步**：docx/pdf/pptx/xlsx 为带 LICENSE 的外来源 skill——上游同步时许可件随包保留，**包内增补节不得被冲掉**（docx 与 xlsx 的「交付与引用（Nebflow 口径）」节为 Nebflow 增补，同步后核对在位）。
+- **外来源 skill 上游同步**：docx/pdf/pptx/xlsx 为带 LICENSE 的外来源 skill——上游同步时许可件随包保留，**包内增补节不得被冲掉**（docx 与 xlsx 的「交付与引用（Stand 口径）」节为 Stand 增补，同步后核对在位）。
 - **路由与配套件同步**：SKILL 路由表新增/改名配套件时，同步本文件 §3/§5/§7 的件数与清单；配套件增删以各 SKILL 路由表为权威。
 - **验收口径**：visual-acceptance 的判据分类（`Spec/Content/Visual/Design/Unverified`）与 JSON 输出格式变更时，本文件 §4/§6 同步。
 - **跨包口径**：与 `slideblocks`（Slidev）、`visual-report`（单图可视化）、`qa`（代码契约审查）的分工边界若调整，两侧同步。

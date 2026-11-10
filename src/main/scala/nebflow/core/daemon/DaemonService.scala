@@ -222,7 +222,7 @@ final class DaemonService(
    *      chain so the crash-loop counter survives process replacements.
    *
    * Port pre-flight: when the configured port is already serving — a stale
-   *      process from a previous Nebflow instance that was killed outside the
+   *      process from a previous Stand instance that was killed outside the
    *      JVM shutdown hook window, or a server the user started manually — we
    *      must NOT spawn a duplicate: it dies instantly with "address already in
    *      use" (exit 1), burns the auto-restart budget, and the crash-loop
@@ -338,7 +338,7 @@ final class DaemonService(
     // Mark the stop as intentional BEFORE killing: monitorExit must see the
     // imminent exit as Stopped (never Crashed) and must not auto-restart. This
     // also covers the JVM shutdown path (stopAll -> doStop) — daemons must die
-    // with Nebflow, not be resurrected by the shutdown hook's own kill.
+    // with Stand, not be resurrected by the shutdown hook's own kill.
     entries.update(map => map.updated(id, entry.copy(stopRequested = true))) *>
       ProcessTree.killProcessTree(
         entry.process.getOrElse(throw new IllegalStateException(s"Daemon '$id' has no process"))
@@ -448,7 +448,7 @@ final class DaemonService(
    * daemons are persistent environment services (dev servers), so a crash must
    * bring them back. Never fires for an intentional stop (stopRequested), which
    * covers the JVM shutdown path: stopAll sets stopRequested before killing, so
-   * daemons are not resurrected while Nebflow is going down.
+   * daemons are not resurrected while Stand is going down.
    *
    * Backoff: exponential (restartBackoffSec doubled per attempt, capped at 60s).
    * Crash-loop protection: give up after restartMaxAttempts consecutive crashes.
@@ -470,7 +470,7 @@ final class DaemonService(
             val attempt = consecutive + 1
             if attempt > entry.config.restartMaxAttempts then
               // Crash budget exhausted: do NOT give up permanently. A daemon
-              // that crashed during the Nebflow-restart window (port still held
+              // that crashed during the Stand-restart window (port still held
               // by the previous instance's process) must self-heal once the
               // port frees — giving up left it dead until a manual restart
               // (2026-08-18: all three daemons dead after a restart raced the

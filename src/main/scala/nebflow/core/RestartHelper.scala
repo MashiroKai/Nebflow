@@ -9,7 +9,7 @@ import java.io.File
  *
  * When triggered, spawns a detached background process that:
  * 1. Waits `delaySeconds` for the current JVM to exit
- * 2. Starts a fresh Nebflow instance with the updated JAR
+ * 2. Starts a fresh Stand instance with the updated JAR
  *
  * The current JVM should call `scheduleExit()` immediately after,
  * so the old instance shuts down cleanly before the new one starts.
@@ -22,7 +22,7 @@ object RestartHelper:
   val WinTaskName = "NebflowAutoStart"
 
   /**
-   * Spawn a detached process that waits, then starts Nebflow.
+   * Spawn a detached process that waits, then starts Stand.
    * Call this BEFORE exiting the current JVM.
    *
    * @param delaySeconds how long to wait before starting (must be > shutdown time)

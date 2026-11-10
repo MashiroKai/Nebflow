@@ -28,7 +28,7 @@ import scala.concurrent.duration.*
  *     兼容，`budget` / `clock` 为惰性摆设）；
  *   - `pause` / `resume` / `release` 恒 `IO.unit`；
  *   - `activeCount` 恒 0（永无活预算通道）。
- * 生效方式 = 重启 Nebflow 实例（新二进制装配本壳后，到点强杀路径不存在）。
+ * 生效方式 = 重启 Stand 实例（新二进制装配本壳后，到点强杀路径不存在）。
  */
 object DelegateBudget:
 

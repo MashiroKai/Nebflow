@@ -12,7 +12,7 @@
 
 | 文件 | 说明 |
 |---|---|
-| [`NeblinkDiscovery.scala`](NeblinkDiscovery.scala) | Discovers Nebflow peers via the NebLink Server. Each cycle logs in (or heartbeats) to the NebLink Server to ge |
+| [`NeblinkDiscovery.scala`](NeblinkDiscovery.scala) | Discovers Stand peers via the NebLink Server. Each cycle logs in (or heartbeats) to the NebLink Server to ge |
 | [`NeblinkPresenceService.scala`](NeblinkPresenceService.scala) | Outcome of the most recent presence dial attempt against a peer (C3, 2026-09-11 P2P 直连修复批). |
 | [`NeblinkRelayTunnel.scala`](NeblinkRelayTunnel.scala) | WebSocket relay tunnel to the NebLink Server. Device B connects this tunnel to the server so that cross-networ |
 | [`RelayTunnelDiagnostics.scala`](RelayTunnelDiagnostics.scala) | Failure classification for the relay-ws upgrade (2026-09-10 隧道鉴权自愈批, report `20260910_134229_device-channel-at |

@@ -138,7 +138,7 @@ object CredentialFileAcl:
    * `FILE_WRITE_EA`. An ACE carrying only the data/attribute bits above makes
    * Windows deny that open outright, so the ACE locks the OWNER out of the
    * very file it has just written: `~/.nebflow/neblink/device.json` became
-   * unreadable AND unwritable to the Nebflow process itself, which then broke
+   * unreadable AND unwritable to the Stand process itself, which then broke
    * every [[nebflow.neblink.identity.DeviceCredential.load]] — enrollment persist,
    * silent re-login, and `GET /api/neblink/status` (HTTP 500) all failed with
    * `AccessDeniedException`. Measured on Windows 11 / JDK 21: the six rights

@@ -115,7 +115,7 @@ end FileChangeTracker
 
 object FileChangeTracker:
 
-  // .nebflow is Nebflow's own process directory (task state, evidence,
+  // .nebflow is Stand's own process directory (task state, evidence,
   // worktrees, logs) that lives inside project roots; on a real deployment it
   // can hold hundreds of thousands of files, turning every full walk below
   // into seconds of synchronous stat work on the calling thread. Process

@@ -48,4 +48,4 @@ description: 技术架构调研报告（graphviz 分层集群）；梳理架构�
 
 ## 示例
 
-- `${SKILL_DIR}/../core/references/demos/tech-architecture.md` —— Nebflow 自身架构调研 demo：graphviz 16.1.0 真实渲染总架构图 + 任务链数据流图，组件清单逐一对上源码事实（Mac 工作树只读侦查）。
+- `${SKILL_DIR}/../core/references/demos/tech-architecture.md` —— Stand 自身架构调研 demo：graphviz 16.1.0 真实渲染总架构图 + 任务链数据流图，组件清单逐一对上源码事实（Mac 工作树只读侦查）。

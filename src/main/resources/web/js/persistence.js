@@ -1,4 +1,4 @@
-// persistence.js — localStorage cache module for Nebflow
+// persistence.js — localStorage cache module for Stand
 // Backend is the source of truth. localStorage is a best-effort write-behind cache
 // for optimistic display during streaming, and a fallback when backend is unreachable.
 

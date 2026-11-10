@@ -1,13 +1,13 @@
 ---
 name: website-design
-description: Nebflow 官网视觉设计域知识——设计 tokens（Tailwind v4 @theme）复用纪律、视觉层级/间距节奏/排版（Press Start 2P 像素展示字体 + ZCOOL 站酷庆科黄油体）/动效规范（Framer Motion 组件动画 + GSAP 滚动序列，150-300ms 微交互）、Pop 目检验证流与三端响应式、硬约束（无 emoji/克制高级感/wordmark 全小写 nebflow）。Use when nebflow-website 的视觉设计任务：配色方案、动效设计、交互优化、布局调整、视觉一致性。
+description: Stand 官网视觉设计域知识——设计 tokens（Tailwind v4 @theme）复用纪律、视觉层级/间距节奏/排版（Press Start 2P 像素展示字体 + ZCOOL 站酷庆科黄油体）/动效规范（Framer Motion 组件动画 + GSAP 滚动序列，150-300ms 微交互）、Pop 目检验证流与三端响应式、硬约束（无 emoji/克制高级感/wordmark 全小写 nebflow）。Use when nebflow-website 的视觉设计任务：配色方案、动效设计、交互优化、布局调整、视觉一致性。
 when_to_use: 官网 UI/UX 设计与视觉实现（写 CSS/Tailwind、改 JSX 的视觉部分）；结构性与 API 逻辑归 website-frontend；wordmark 大小写等高主观偏好改动前先低成本对比展示。
 language: zh
 status: active
 last_verified: 2026-09-03
 ---
 
-# Website Design — Nebflow 官网视觉设计域知识
+# Website Design — Stand 官网视觉设计域知识
 
 ## 一致性优先
 

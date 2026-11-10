@@ -68,7 +68,7 @@ Every hardcoded input MUST have a source citation:
 # In cell comment
 ws['C6'].comment = Comment(
     "Source: Company 10-K, FY2024, Page 45, Revenue Growth",
-    "Nebflow"
+    "Stand"
 )
 
 # Or in adjacent cell (if end of table)

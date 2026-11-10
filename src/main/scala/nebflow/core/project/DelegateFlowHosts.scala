@@ -42,7 +42,7 @@ import scala.concurrent.duration.*
  * == 不碰面（v3 §10.2 防越界）==
  * ProjectActor 本体与分发器触发链零触碰；ProjectRuntimeRegistry 不混入 delegate 宿主
  * （项目 face 的 REST/工具解析语义不变）；外部执行器腿不建宿主（外部 CLI 不经
- * Nebflow 工具协议，无图可编辑——#1228 链视图消费的仍是其 ChainStore 行族）；协议帧
+ * Stand 工具协议，无图可编辑——#1228 链视图消费的仍是其 ChainStore 行族）；协议帧
  * 零新增（复用 node* 既有帧形，路由戳 = delegate 会话既有 routeWsSend 同款）。
  */
 

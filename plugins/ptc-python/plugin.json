@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "PTC 模式 Python 承载件——节点获得 ptc_run / ptc_run_rw：模型写 Python 代码编排工具调用（受控子进程 + 审计钩子封联网/起进程/越根 IO），tools.* 经执行器以 MCP client 转调宿主工具 server（标准 MCP）。返回 stdout、完成值、逐次调用台账、四类错误分类；写能力仅 ptc_run_rw 给。用于 ≥2 次工具调用的循环/分支编排，不适用于单次工具调用与无工具任务的问答。前置 python3≥3.9。内含 skills：ptc-python（请求面、绑定形状、错误判读、排障）。",
   "author": {
-    "name": "Nebflow"
+    "name": "Stand"
   },
   "keywords": [
     "ptc",

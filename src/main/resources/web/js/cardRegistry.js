@@ -1,4 +1,4 @@
-// cardRegistry.js — Universal HTML card renderer for Nebflow
+// cardRegistry.js — Universal HTML card renderer for Stand
 // Detects ___<AGENT>_HTML___ markers and renders HTML in sandboxed iframes.
 // Theme CSS variables are injected into iframes for dark mode support.
 

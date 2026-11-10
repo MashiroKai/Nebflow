@@ -1,8 +1,8 @@
-# Nebflow 自身架构调研 — tech-architecture 场景 demo
+# Stand 自身架构调研 — tech-architecture 场景 demo
 
 ### 结论
 
-Nebflow 是单 JVM 自托管的 AI agent 编排平台：`nebflow start` 起一个网关进程，浏览器 Web UI 经 WS/REST 接入；核心由编排引擎（DAG 节点调度 + 台账）、自研 Actor 之上的 Agent 运行时、61 文件的工具层、双协议 LLM 适配与 JSON 文件族持久化组成；设备互联（neblink）与飞书 / 微信渠道挂在网关上。Scala 3.5.2 + cats-effect / FS2 / sttp，`sbt assembly` 出单自包含 JAR。本文以 2026-10-04 Mac 工作树只读侦查为准（`/Users/kaiyu/Claude code/Nebflow`）。
+Stand 是单 JVM 自托管的 AI agent 编排平台：`nebflow start` 起一个网关进程，浏览器 Web UI 经 WS/REST 接入；核心由编排引擎（DAG 节点调度 + 台账）、自研 Actor 之上的 Agent 运行时、61 文件的工具层、双协议 LLM 适配与 JSON 文件族持久化组成；设备互联（neblink）与飞书 / 微信渠道挂在网关上。Scala 3.5.2 + cats-effect / FS2 / sttp，`sbt assembly` 出单自包含 JAR。本文以 2026-10-04 Mac 工作树只读侦查为准（`/Users/kaiyu/Claude code/Nebflow`）。
 
 图预算：2 / 3（总架构 + 数据流）。
 

@@ -12,7 +12,7 @@ computer-use 是桌面观测与操控包：节点在 macOS 本机观测桌面（
 
 ## 2. 安装与启用
 
-- **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
+- **安装**：本包属 Stand seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
 - **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（桌面自动化、操控鼠标键盘、点击与输入、程序化按键、屏幕截图、窗口与界面元素读取、剪贴板读写、本机 app 自动化、GUI 验收等），派发时把 SKILL.md 全文注入节点。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/computer-use/revoke` / `nebflow plugin revoke computer-use`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载）。

@@ -72,12 +72,12 @@ import scala.util.Try
  * identity counts as a non-member. That arm is ordered FIRST (the
  * [[FeishuBridgePlugin.intake]] ordering) so it rules the default-session arm
  * too. The official plugin v2.4.9 registers no pairing adapter, so this gate is
- * the admission control on the Nebflow side.
+ * the admission control on the Stand side.
  *
  * 🔴 Crash isolation: a peer-side `-14` (the official monitor pauses that
  * account session for one hour) never lands here as state — the seam keeps no
  * cursor, opens no socket and polls nothing, so a paused peer merely sends
- * nothing while every other Nebflow leg keeps running. The only peer material
+ * nothing while every other Stand leg keeps running. The only peer material
  * this class touches is one message at a time, and every failure on that path is
  * contained into a [[WeixinIlinkBridgePlugin.Verdict]] plus one log line: never
  * an exception, never a torn-down bridge.
@@ -411,7 +411,7 @@ final class WeixinIlinkBridgePlugin(
    * The gate + routing + injection leg. TOTAL by construction: every arm
    * answers a [[Verdict]] and a raising `injectMessage` is contained into
    * `Dropped(inject-failed)` — one inbound message can never take the seam (or
-   * any other Nebflow leg) down with it.
+   * any other Stand leg) down with it.
    */
   private[social] def intake(ctx: BridgeContext, in: Inbound): IO[Verdict] =
     val body =

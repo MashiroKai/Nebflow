@@ -31,7 +31,7 @@ HTTP/WS 网关：路由装配、鉴权、会话与连接守卫。
 | [`ExplorerWatchSession.scala`](ExplorerWatchSession.scala) | Per-connection Explorer watch subscriptions (explorer-rt · design card chain-n-1981ce87, case C hybrid — push  |
 | [`FsOps.scala`](FsOps.scala) | 伴生对象侧 logger（#159/#176 wtsurv 批，2026-09-14）：`deletePathsSafely` 是 纯核**（companion 成员，spec 直接静态调用），其**成功分支的审计留痕* |
 | [`GatewayAuth.scala`](GatewayAuth.scala) | Which rail authenticated the request (priority order = declaration order below). |
-| [`GatewayMain.scala`](GatewayMain.scala) | Kill stale Nebflow processes before starting — but ONLY verified Nebflow processes (P0 2026-09-06 host-kill ha |
+| [`GatewayMain.scala`](GatewayMain.scala) | Kill stale Stand processes before starting — but ONLY verified Stand processes (P0 2026-09-06 host-kill ha |
 | [`GatewaySessionStore.scala`](GatewaySessionStore.scala) | One console session record: the value of the HttpOnly session cookie the `?ticket=` redemption face mints (por |
 | [`GzipMiddleware.scala`](GzipMiddleware.scala) | P0 gzip middleware for the static-resource tree (esbuild-design.md 决策 3). Wraps the routes mounted at "/" so t |
 | [`HealthRoutes.scala`](HealthRoutes.scala) | 健康域(health,F 步 2026-09-24):原 RestApiRoutes.routes 巨型 match 的 /health、/health/conn、/usage/aggregate、/tts、/comma |

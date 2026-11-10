@@ -5,7 +5,7 @@ import nebflow.shared.Branding
 /**
  * NEBFLOW_HEADLESS=1 — deterministic benchmark mode, read once at JVM start.
  *
- * Benchmark containers (Terminal-Bench etc.) drive Nebflow unattended, so the
+ * Benchmark containers (Terminal-Bench etc.) drive Stand unattended, so the
  * same task must yield the same context with no interactive waits: memory
  * blocks that persist across runs, AskUser prompts that hang forever, and
  * telemetry traffic are all benchmark noise. Each touchpoint reads this flag

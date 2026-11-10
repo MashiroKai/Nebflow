@@ -248,7 +248,7 @@ echo ""
 
 # ── Step 2i: Font Installation (from CDN) ──
 echo "--- [9/10] Font Installation ---"
-# 注：以下字体源是包外静态资产源（非 Nebflow 机制）；本地字体齐备时不会触发下载。
+# 注：以下字体源是包外静态资产源（非 Stand 机制）；本地字体齐备时不会触发下载。
 # 需要完全离线时，把 FONT_CDN_BASE 指向自建镜像，或直接把字体放进 FONT_DIR。
 FONT_CDN_BASE="https://z-cdn.chatglm.cn/office-skill/fonts"
 FONT_LIST="$SCRIPT_DIR/font_list.txt"

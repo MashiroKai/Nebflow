@@ -199,7 +199,7 @@ for sub in [SKILL_DIR, os.path.join(SKILL_DIR, "templates")]:
 | **templates/base.py** | Design tokens, font resolution, style factories, utilities (single source of truth) |
 | **xlsx.py** | QA commands (see `quality/pipeline.md`) |
 
-Workbook metadata: `wb.properties.creator = "Nebflow"`
+Workbook metadata: `wb.properties.creator = "Stand"`
 
 > **All code MUST import from `templates/base.py`** for colors, fonts, and style helpers. Never hardcode hex values or font names.
 
@@ -240,7 +240,7 @@ Blueprint → Build & Self-check (per-sheet) → Inspect → Pivot (if needed) �
 | Large file handling | ✅ | scenes/advanced |
 | Data protection & locking | ✅ | scenes/advanced |
 
-## 交付与引用（Nebflow 口径）
+## 交付与引用（Stand 口径）
 
 产出件即交付件：在正文里用**绝对路径**点到每个最终文件（一处一次），不另列文件名清单，也不重复贴正文内容。
 
