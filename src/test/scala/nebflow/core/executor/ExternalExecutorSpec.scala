@@ -13,11 +13,12 @@ import scala.concurrent.duration.*
  *
  * 中心性质（增补任务书 §三/§六）：
  *   - 三适配器对各自 fixture 行逐帧回放（claude stream-json / codex --json /
- *     zcode --json 摘要＋stream-json 兼容双方言）；噪声行零帧、绝不抛；
- *   - 选择反转：显式参数是唯一输入、缺省 nebflow；nebflow.json executor 块
- *     （default/disabled）**止读**（⑫）——配置怎么写都不改选择；
- *   - fail-closed（3.4）：不在册 / 适配未就绪（hermes）/ 未检测到二进制 ⇒
- *     Left 显式错误（消息含可用集），**零静默回落 nebflow**。
+ *     zcode stream-json 事件流（主）＋ --json 摘要（兼容）双方言）；噪声行零帧、
+ *     绝不抛；ANSI 前导控制序列剥离不伤载荷；
+ *   - 选择语义：显式 `executor` 参数优先；参数缺省 ⇒ 配置默认
+ *     （nebflow.json executor.default；未配置/不可用 ⇒ 内置 nebflow）；
+ *   - fail-closed（3.4）：不在册 / 适配未就绪（hermes）/ 未检测到二进制 /
+ *     配置默认不可检测 ⇒ Left 显式错误（消息含可用集），**零静默回落 nebflow**。
  */
 class ExternalExecutorSpec extends CatsEffectSuite:
 
@@ -72,15 +73,53 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assertEquals(noise, Nil)
   }
 
-  test("claude-code launchArgs: fresh = print+stream-json+verbose; resume appends --resume") {
-    assertEquals(
-      ExternalExecutor.ClaudeCode.launchArgs("do it", None),
-      List("-p", "do it", "--output-format", "stream-json", "--verbose")
-    )
-    assertEquals(
-      ExternalExecutor.ClaudeCode.launchArgs("continue", Some("sess-9f13")),
-      List("-p", "continue", "--output-format", "stream-json", "--verbose", "--resume", "sess-9f13")
-    )
+  test("claude-code launchArgs: print+stream-json+verbose skeleton, grants from dataRoot, resume tail") {
+    withTempDataRoot { tmp =>
+      // 数据根下只建部分工作子目录——grantDirs 按 os.isDir 过滤，缺席目录不入参。
+      os.makeDir.all(tmp / "projects")
+      os.makeDir.all(tmp / "docs")
+
+      val fresh = ExternalExecutor.ClaudeCode.launchArgs("do it", None)
+      // 骨架（前 5 元）：headless print ＋ stream-json ＋ verbose。
+      assertEquals(fresh.take(5), List("-p", "do it", "--output-format", "stream-json", "--verbose"))
+      // 权限形态：工作区内编辑自动接受 ＋ 命令白名单 ＋ push 硬闸。
+      assert(fresh.containsSlice(List("--permission-mode", "acceptEdits")), fresh.mkString(" "))
+      assert(fresh.containsSlice(List("--disallowedTools", "Bash(git push:*)")), fresh.mkString(" "))
+      // allowlist 值为逗号连接的单元素（模式含空格，禁按空格切分）。
+      // git 按子命令枚举：push / remote / config 不入枚举（-C 绕行无 allow 匹配）。
+      val allowIdx = fresh.indexOf("--allowedTools")
+      val allowed = if allowIdx >= 0 then fresh(allowIdx + 1) else ""
+      assert(allowed.contains("Bash(git commit:*)"), fresh.mkString(" "))
+      assert(!allowed.contains("Bash(git:*)"), fresh.mkString(" "))
+      assert(!allowed.contains("push"), fresh.mkString(" "))
+      assert(!allowed.contains("git config") && !allowed.contains("git remote"), fresh.mkString(" "))
+      // 放行目录＝白名单子目录（存在者）＋ /tmp；逐目录点名 --add-dir。
+      val granted = fresh.sliding(2).toList.filter(_(0) == "--add-dir").map(_(1))
+      assertEquals(granted, ExternalExecutor.ClaudeCode.grantDirs(tmp))
+      assert(granted.contains((tmp / "projects").toString), granted.mkString(" "))
+      assert(granted.contains((tmp / "docs").toString), granted.mkString(" "))
+      assert(granted.contains("/tmp"), granted.mkString(" "))
+      assert(!granted.contains((tmp / "plugin-repos").toString), granted.mkString(" "))
+      // 白名单制：数据根本体与凭据件形态永不出现在 argv。
+      assert(!fresh.contains(tmp.toString), fresh.mkString(" "))
+      assert(!fresh.exists(a => a.toLowerCase.contains("secrets") || a.toLowerCase.contains("auth")), fresh.mkString(" "))
+
+      // resume：--resume 对追加在 argv 尾部。
+      val resume = ExternalExecutor.ClaudeCode.launchArgs("continue", Some("sess-9f13"))
+      assertEquals(resume.takeRight(2), List("--resume", "sess-9f13"))
+    }
+  }
+
+  test("claude-code grantDirs: only existing whitelisted subdirs + /tmp; root never granted") {
+    withTempDataRoot { tmp =>
+      os.makeDir.all(tmp / "general")
+      val granted = ExternalExecutor.ClaudeCode.grantDirs(tmp)
+      assertEquals(granted, List((tmp / "general").toString, "/tmp"))
+      // /tmp 恒在（临时件落位约定面），与数据根布局无关。
+      assert(granted.contains("/tmp"))
+      // 数据根本体（凭据件所在地）永不入名单。
+      assert(!granted.contains(tmp.toString))
+    }
   }
 
   // ── codex 适配器 fixture 回放 ───────────────────────────────────
@@ -181,9 +220,64 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assertEquals(noise, Nil)
   }
 
-  test("zcode launchArgs: fresh = -p + --json; resume = --resume 前置（晨裁①-B 旗标轮换）") {
-    assertEquals(ExternalExecutor.ZCode.launchArgs("t", None), List("-p", "t", "--json"))
-    assertEquals(ExternalExecutor.ZCode.launchArgs("t", Some("zc-1")), List("--resume", "zc-1", "-p", "t", "--json"))
+  test("zcode launchArgs: fresh = -p + stream-json（主方言）; resume = --resume 前置") {
+    assertEquals(ExternalExecutor.ZCode.launchArgs("t", None), List("-p", "t", "--output-format", "stream-json"))
+    assertEquals(
+      ExternalExecutor.ZCode.launchArgs("t", Some("zc-1")),
+      List("--resume", "zc-1", "-p", "t", "--output-format", "stream-json")
+    )
+  }
+
+  test("zcode ANSI 前导剥离: ESC 序列头的 JSON 行照常解析；字符串值内 JSON 转义 ESC 原样保留") {
+    // 真实形态：进度渲染把 raw ESC 控制序列留在行首（JSON 外），剥离后照常成帧。
+    val prefixed = ExternalExecutor.ZCode.parseLine(
+      "\u001b[2K\u001b[1G" + """{"type":"result","sessionId":"sess_ansi","response":"done","projection":{"status":"idle"}}"""
+    )
+    assertEquals(
+      prefixed,
+      List(ExternalExecutor.Frame.Start(Some("sess_ansi")), ExternalExecutor.Frame.Final("done", failed = false))
+    )
+    // JSON 字符串值内的 ESC 以 6 字符转义形态上线——剥离器只碰 raw 字节，载荷无损。
+    val wireEsc = "\\" + "u001b[31mRED" // 线上形态（无 raw ESC）；经 circe 解码 = raw ESC + "[31m" + "RED"
+    val inPayload = ExternalExecutor.ZCode.parseLine(
+      s"""{"type":"model.streaming","payload":{"kind":"text_delta","delta":"$wireEsc"}}"""
+    )
+    val decoded = "\u001b[31m" // raw ESC + "[31m"（解码后形态，与剥离器无关）
+    assertEquals(inPayload, List(ExternalExecutor.Frame.Text(decoded + "RED")))
+  }
+
+  test("zcode 真机 stream-json 采样回放: 噪声事件零帧; text_delta 分片重组 = result.response; result 行 → Start+Final") {
+    // 2026-11 实测 zcode --output-format stream-json 真机采样（PROBE-OK 探针）
+    // 逐行摘录：titleUpdated/turn.started/session.updated/model.streaming
+    // (start/reasoning_*) 均零帧；四个 text_delta 分片重组恰为终局 response。
+    val realSample = List(
+      """{"eventId":"132e99f0-2ff9-424a-aff4-f59e76e95b1f","payload":{"previousTitle":"","source":"first_input","title":"Reply with exactly PROBE-OK and nothing else."},"seq":1,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","timestamp":1794291414291,"type":"session.titleUpdated"}""",
+      """{"eventId":"574d5752-4b6a-45a5-b9b4-db099f34209d","payload":{"turnNumber":0,"input":"Reply with exactly PROBE-OK and nothing else."},"seq":2,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","timestamp":1794291414292,"type":"turn.started"}""",
+      """{"eventId":"72783931-b891-4ac4-825b-fc512a81e570","payload":{"messageCount":6,"providerId":"p","modelId":"glm","toolCount":28,"iteration":0},"seq":3,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","timestamp":1794291415145,"type":"session.updated"}""",
+      """{"eventId":"c1","payload":{"kind":"start","assistantMessageId":"msg_1"},"seq":5,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"c2","payload":{"kind":"reasoning_start"},"seq":6,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"c3","payload":{"kind":"reasoning_delta","delta":"thinking"},"seq":7,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"c4","payload":{"kind":"reasoning_end"},"seq":8,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"c5","payload":{"kind":"text_start","assistantMessageId":"msg_1"},"seq":27,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"c6","payload":{"assistantMessageId":"msg_1","delta":"PRO","done":false,"kind":"text_delta"},"seq":28,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"c7","payload":{"assistantMessageId":"msg_1","delta":"BE","done":false,"kind":"text_delta"},"seq":29,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"c8","payload":{"assistantMessageId":"msg_1","delta":"-","done":false,"kind":"text_delta"},"seq":30,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"c9","payload":{"assistantMessageId":"msg_1","delta":"OK","done":false,"kind":"text_delta"},"seq":31,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"ca","payload":{"kind":"text_end"},"seq":32,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"eventId":"cb","payload":{"kind":"finish"},"seq":34,"sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","type":"model.streaming"}""",
+      """{"type":"result","sessionId":"sess_769d2175-2590-4543-a375-1d93da2343a2","turnId":"turn_3343c6c7","response":"PROBE-OK","usage":{"inputTokens":18368,"outputTokens":24},"eventCount":35,"projection":{"status":"idle","turnCount":1,"contextWindow":200000}}"""
+    )
+    val frames = realSample.flatMap(ExternalExecutor.ZCode.parseLine)
+
+    // 全流只有一台 Start（result 行带 sessionId；session.created 本采样未发）。
+    assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s }, List(Some("sess_769d2175-2590-4543-a375-1d93da2343a2")))
+    // 分片重组 = 终局 response（PROBE-OK），证明 text_delta 通道无损。
+    assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }.mkString, "PROBE-OK")
+    assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, Nil)
+    assertEquals(
+      frames.collect { case f: ExternalExecutor.Frame.Final => f },
+      List(ExternalExecutor.Frame.Final("PROBE-OK", failed = false))
+    )
   }
 
   // ── 注册表与选择面 ──────────────────────────────────────────────
@@ -196,26 +290,56 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assert(ExecutorRegistry.defs.find(_.id == "hermes").exists(d => !d.adapterReady))
   }
 
-  test("selection: absent param resolves built-in nebflow (缺省语义)") {
-    assertEquals(ExecutorRegistry.resolveRequested(None), Right(ExecutorRegistry.ResolvedSelection.Internal))
-    assertEquals(ExecutorRegistry.resolveRequested(Some("")), Right(ExecutorRegistry.ResolvedSelection.Internal))
+  test("selection: absent param + 无配置 ⇒ 内置 nebflow（hermetic——注入空 settings，不吃机器配置）") {
+    val bare = ExecutorRegistry.Settings(None, Nil)
+    assertEquals(ExecutorRegistry.resolveRequested(None, settings = bare), Right(ExecutorRegistry.ResolvedSelection.Internal))
     assertEquals(
-      ExecutorRegistry.resolveRequested(Some("  nebflow ")),
+      ExecutorRegistry.resolveRequested(Some(""), settings = bare),
+      Right(ExecutorRegistry.ResolvedSelection.Internal)
+    )
+    assertEquals(
+      ExecutorRegistry.resolveRequested(Some("  nebflow "), settings = bare),
       Right(ExecutorRegistry.ResolvedSelection.Internal)
     )
   }
 
-  test("selection (⑫止读): executor block default/disabled are NOT consulted — config can't steer the pick") {
+  test("selection: 配置默认语义 — 缺省参数走 executor.default（不可检测 ⇒ fail-closed；disabled/缺省 ⇒ 内置兜底）") {
     withTempDataRoot { tmp =>
-      // 写一块最真实的配置：default 指向外部、disabled 掐掉另一个外部——
-      // 选择面必须当它不存在（快照/显示面语义不变，那是另一条轴）。
+      // ① 配置 default 指向外部且二进制在 ⇒ 缺省参数解析到该外部执行器。
+      os.write.over(PathUtil.configJsonReadPath(tmp), """{"executor": {"default": "claude-code"}}""")
+      withFakeBin("claude") { dir =>
+        ExecutorRegistry.resolveRequested(None, pathEnv = dir.toString, probeDirs = Nil) match
+          case Right(ExecutorRegistry.ResolvedSelection.External(defn, bin)) =>
+            assertEquals(defn.id, "claude-code")
+            assertEquals(bin, (dir / "claude").toString)
+          case other => fail(s"expected External(claude-code), got $other")
+      }
+      // ② 配置 default 指向外部但二进制不可检测 ⇒ Left 显式失败，绝不静默回落。
+      ExecutorRegistry.resolveRequested(None, pathEnv = "", probeDirs = Nil) match
+        case Left(msg) =>
+          assert(msg.contains("claude-code"), msg)
+          assert(msg.toLowerCase.contains("no silent fallback"), msg)
+        case other => fail(s"expected Left fail-closed, got $other")
+      // ③ 配置 default 指向 disabled 的执行器 ⇒ effectiveDefault 回落内置。
+      os.write.over(
+        PathUtil.configJsonReadPath(tmp),
+        """{"executor": {"default": "claude-code", "disabled": ["claude-code"]}}"""
+      )
+      assertEquals(
+        ExecutorRegistry.resolveRequested(None, pathEnv = "", probeDirs = Nil),
+        Right(ExecutorRegistry.ResolvedSelection.Internal)
+      )
+      // ④ 显式 "nebflow" 恒解析内置（显式选择优先于配置默认）。
+      os.write.over(PathUtil.configJsonReadPath(tmp), """{"executor": {"default": "claude-code"}}""")
+      assertEquals(
+        ExecutorRegistry.resolveRequested(Some("nebflow"), pathEnv = "", probeDirs = Nil),
+        Right(ExecutorRegistry.ResolvedSelection.Internal)
+      )
+      // ⑤ 显式选择不吃 disabled（disabled 只作用于配置默认；检测命中即放行）。
       os.write.over(
         PathUtil.configJsonReadPath(tmp),
         """{"executor": {"default": "claude-code", "disabled": ["zcode"]}}"""
       )
-      // 缺省参数仍 = 内置 nebflow（配置的 default 不再是选择输入）。
-      assertEquals(ExecutorRegistry.resolveRequested(None), Right(ExecutorRegistry.ResolvedSelection.Internal))
-      // disabled 的外部执行器照样可选（disabled 不再是选择输入）——检测命中即放行。
       withFakeBin("zcode") { dir =>
         ExecutorRegistry.resolveRequested(Some("zcode"), pathEnv = dir.toString, probeDirs = Nil) match
           case Right(ExecutorRegistry.ResolvedSelection.External(defn, bin)) =>
@@ -223,6 +347,12 @@ class ExternalExecutorSpec extends CatsEffectSuite:
             assertEquals(bin, (dir / "zcode").toString)
           case other => fail(s"expected External(zcode), got $other")
       }
+      // ⑥ 配置块缺省（无 executor 键）⇒ 缺省参数 = 内置 nebflow（零配置零变化）。
+      os.write.over(PathUtil.configJsonReadPath(tmp), """{"thinkingConfig": {}}""")
+      assertEquals(
+        ExecutorRegistry.resolveRequested(None, pathEnv = "", probeDirs = Nil),
+        Right(ExecutorRegistry.ResolvedSelection.Internal)
+      )
     }
   }
 

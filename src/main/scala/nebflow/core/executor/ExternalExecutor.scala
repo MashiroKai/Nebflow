@@ -2,6 +2,7 @@ package nebflow.core.executor
 
 import io.circe.Json
 import io.circe.parser.parse
+import nebflow.shared.PathUtil
 
 /**
  * ExternalExecutor —— 外部 CLI 执行器适配层（external-executors 批 #1225，
@@ -83,19 +84,102 @@ object ExternalExecutor:
 
   /**
    * claude-code：`claude -p <task> --output-format stream-json --verbose`
-   * （现读宿主 claude --help 核对：-p/--print、--output-format stream-json、
-   * --verbose、--resume <id> 均在册）。行格式（stream-json）：
+   * （-p/--print、--output-format stream-json、--verbose、--resume <id> 均在册）。
+   * 行格式（stream-json）：
    *   {"type":"system","subtype":"init","session_id":"..."}
    *   {"type":"assistant","message":{"content":[{"type":"text","text":...},
    *        {"type":"tool_use","name":"Bash",...}]}}
    *   {"type":"result","subtype":"success","result":"...","is_error":false}
+   *
+   * == 工作面放行（--add-dir ＋ headless 权限形态）==
+   * claude 缺省工作区边界 = cwd（delegate 座位树）；数据根下的工作子目录靠
+   * `--add-dir` 逐个点名（[[grantDirs]]）——**白名单制，根级凭据件
+   * （auth.json / secrets/ / *.env / device.json / nebflow.json 等）永不入参**，
+   * 越界 Read/Write 在 headless（-p）下按权限问询自动拒绝 = fail-closed。
+   *  - `--permission-mode acceptEdits`：工作区（cwd ＋ add-dir 集）内文件编辑
+   *    自动接受——headless 下问询即拒绝，不放开编辑外部执行器干不了活；
+   *    白名单外工具（含工作区外写、网络工具）依旧显式拒绝。
+   *  - `--allowedTools`：headless 工程活的常用命令白名单（构建 / 运行时 /
+   *    只读检视件 / 进程收尾；git 按子命令枚举，push 不入枚举）。
+   *    🔴 边界诚实声明（三段，均经真机实测）：① `--add-dir` 收窄**专用文件
+   *    工具**（Read/Write/Edit）——白名单外路径读取被拒；② claude 2.x 对
+   *    白名单内的文件命令件（cat / ls 等）同样施加工作区路径约束——工作区
+   *    外 cat / ls 被拒，工作区内文件操作（含 rm）自动放行；③ 通用解释件
+   *    （python3 / sed / awk 等）不受上述约束——工作区外路径访问放行。
+   *    即：凭据路径对 ①② 封闭、对 ③ 不封闭；白名单是可用性让步，不是
+   *    安全边界。
+   *  - `--disallowedTools Bash(git push:*)`：零 push 纪律在执行器边界的
+   *    显式闸（deny 优先于 allow；前缀形态匹配）。第二道 = git 子命令
+   *    枚举：`git push` 与 `git -C <path> push` 均无 allow 匹配 ⇒
+   *    自动拒绝。残余面 = 宿主 git 全局 alias 命名 push 等价形态（本闸
+   *    不覆盖，依赖宿主配置面）。
    */
   object ClaudeCode extends ExternalExecutor:
     val id = "claude-code"
     val displayName = "Claude Code"
 
+    /**
+     * 放行目录集（spec 可驱动）：数据根下非凭据工作子目录（存在才放行）＋
+     * `/tmp` 刮擦面（临时件落位约定面）。放行按**子目录点名**收窄，绝不整根
+     * 放行——根级凭据件与备份件按路径形态天然排除在名单外。
+     */
+    private[executor] def grantDirs(root: os.Path): List[String] =
+      val candidates = List("projects", "plugin-repos", "plugins", "docs", "general")
+        .map(n => (root / n).toString) :+ "/tmp"
+      candidates.filter(p => os.isDir(os.Path(p, os.root)))
+
+    /** headless 工程活的命令白名单（逗号分隔——pattern 内含空格，禁空格分隔）。
+     *  git 按**子命令枚举**（本地读写与历史面）：push / remote / config /
+     *  rebase / tag 与 `git -C` 形态不入枚举 ⇒ 无 allow 匹配，headless 下
+     *  自动拒绝（枚举同时关掉 `-C <path> push` 这类绕行；deny 闸只按命令
+     *  前缀匹配，罩不住它）。 */
+    private val allowedToolsArg: String = List(
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git stash:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git restore:*)",
+      "Bash(git init:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(sbt:*)",
+      "Bash(java:*)",
+      "Bash(make:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(python3:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(diff:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Bash(wc:*)",
+      "Bash(sort:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(touch:*)",
+      "Bash(kill:*)",
+      "Bash(rm /tmp/:*)"
+    ).mkString(",")
+
     def launchArgs(task: String, resumeSessionId: Option[String]): List[String] =
-      val base = List("-p", task, "--output-format", "stream-json", "--verbose")
+      val base = List("-p", task, "--output-format", "stream-json", "--verbose") :++
+        List("--permission-mode", "acceptEdits") :++
+        grantDirs(PathUtil.dataRoot).flatMap(d => List("--add-dir", d)) :++
+        List("--allowedTools", allowedToolsArg, "--disallowedTools", "Bash(git push:*)")
       resumeSessionId.fold(base)(sid => base :++ List("--resume", sid))
 
     def parseLine(line: String): List[Frame] =
@@ -197,36 +281,41 @@ object ExternalExecutor:
   // ── zcode 适配器 ──────────────────────────────────────────────
 
   /**
-   * zcode：headless print 模式（[[ExecutorRegistry]] 描述面口径）＝
-   * `zcode -p <task> --json`（zcode-shim 联调批晨裁①-B 2026-10-07：旗标撤旧换
-   * `--json`）。续聊＝`--resume <sid>` 前置（zcode --resume 在册旗标）。
+   * zcode：headless print 模式＝`zcode -p <task> --output-format stream-json`
+   * （逐帧 JSONL 事件流——面板逐帧可见性面）。续聊＝`--resume <sid>` 前置
+   * （zcode --resume 在册旗标）。
    *
-   * == 输出实况（zcode 0.16.9 bundle 走查＋装机 `--json` 惯例实测，2026-10-07）==
-   *  - `--json`（options.json=true，outputFormat 未定义 ⇒ wantsJsonSummary）：
-   *    turn 期间 stdout 静默，终局打印**单份 pretty JSON 摘要**（bundle `e0`＝
-   *    `formatJson`＝`JSON.stringify(x,null,2)+\n`；`plugins list --json` 装机
-   *    同格式实证）：`{sessionId, traceId, turnId?, response, usage?, eventCount,
+   * == 输出方言（解析面兼容两种）==
+   *  - stream-json（主形态，launchArgs 在用）：逐帧 JSONL 事件
+   *    （`{type:"session.created"|"model.streaming"|"tool.updated"|
+   *    "turn.failed"|…}`，payload.kind 驱动；`text_delta`→Text、
+   *    `tool_call`/`tool_input_start`/`tool.updated kind started|scheduled`→Tool）
+   *    ＋终局紧凑单行 `{type:"result",sessionId,response,…,projection{status}}`。
+   *  - `--json` 摘要（兼容形态，解析保留）：turn 期间 stdout 静默，终局打印
+   *    **单份 pretty JSON 摘要**（`JSON.stringify(x,null,2)+\n`）：
+   *    `{sessionId, traceId, turnId?, response, usage?, eventCount,
    *    projection{status,…}}`。多行文档逐行进 [[parseLine]]：键级正则提取——
-   *    JSON 字符串值转义后恒单行（raw 换行不会出现在值内），行级提取可靠；
-   *    `response` 值经 circe 再解析还原转义。失败路径不打印摘要（stderr＋
-   *    exit≠0）＝runner 既有 exit 码 fail-closed 兜底，此处零补丁。
-   *  - 兼容方言（同窗解析）：`--output-format stream-json`（**隐藏旗标**——0.16.9
-   *    help 不列，bundle parseArgs 白名单 `["text","json","stream-json"]` 在册，
-   *    wantsEventStream 语义）＝逐帧 JSONL 事件流（`{type:"session.created"|
-   *    "model.streaming"|"tool.updated"|"turn.failed"|…}`，payload.kind 驱动）
-   *    ＋终局紧凑单行 `{type:"result",sessionId,response,…}`。候裁如复审旗标
-   *    选型（stream-json 有逐帧流式进度），仅 launchArgs 一行翻转，解析面不动。
+   *    JSON 字符串值转义后恒单行，行级提取可靠；`response` 值经 circe 再解析
+   *    还原转义。失败路径不打印摘要（stderr＋exit≠0）＝runner 既有 exit 码
+   *    fail-closed 兜底。
+   *  - 行首可能残留 ANSI 控制序列（进度渲染面）：[[parseLine]] 入口统一剥离
+   *    （[[AnsiEscape]]——raw ESC 只出现在 JSON 字符串值之外，剥离不伤载荷）。
    */
   object ZCode extends ExternalExecutor:
     val id = "zcode"
     val displayName = "ZCode"
 
     def launchArgs(task: String, resumeSessionId: Option[String]): List[String] =
-      val base = List("-p", task, "--json")
+      val base = List("-p", task, "--output-format", "stream-json")
       resumeSessionId.fold(base)(sid => List("--resume", sid) :++ base)
 
+    // ANSI 清理（CSI / OSC / 双字符 ESC 形态）。raw ESC 在 JSON 行里只出现在
+    // 字符串值之外（JSON 把控制字符转义成 \u001b 字面），解析前剥离绝不伤载荷。
+    private val AnsiEscape = """\[[0-9;?]*[ -/]*[@-~]|\][^]*|[@-_]""".r
+
     def parseLine(line: String): List[Frame] =
-      val trimmed = line.trim
+      val cleaned = AnsiEscape.replaceAllIn(line, "")
+      val trimmed = cleaned.trim
       if trimmed.isEmpty then Nil
       else
         parseJson(trimmed) match
