@@ -44,10 +44,8 @@ class RestartCommandSpec extends FunSuite:
       listeningPortsOf = _ => Nil,
       listenerAlive = _ => false,
       destroy = _ => (),
-      destroyForcibly = _ => (),
-      isRunning = _ => true, // stays "alive" ⇒ destroy leg irrelevant, outcome decided earlier
+      isRunning = _ => true, // stays alive ⇒ graceful stop fails closed
       graceTimeoutMs = 0L,
-      forceTimeoutMs = 0L,
       drainTimeoutMs = 0L,
       pollMs = 0L
     )
@@ -83,10 +81,8 @@ class RestartCommandSpec extends FunSuite:
         listeningPortsOf = _ => Nil,
         listenerAlive = _ => false,
         destroy = _ => dead = true,
-        destroyForcibly = _ => dead = true,
         isRunning = _ => !dead,
         graceTimeoutMs = 0L,
-        forceTimeoutMs = 0L,
         drainTimeoutMs = 0L,
         pollMs = 0L
       )
@@ -130,10 +126,8 @@ class RestartCommandSpec extends FunSuite:
         listeningPortsOf = _ => Nil,
         listenerAlive = _ => false,
         destroy = _ => dead = true,
-        destroyForcibly = _ => dead = true,
         isRunning = _ => !dead,
         graceTimeoutMs = 0L,
-        forceTimeoutMs = 0L,
         drainTimeoutMs = 0L,
         pollMs = 0L
       )

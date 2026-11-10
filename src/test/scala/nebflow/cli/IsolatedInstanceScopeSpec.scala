@@ -54,7 +54,6 @@ class IsolatedInstanceScopeSpec extends FunSuite:
 
   private final class Rec:
     val destroyed = ListBuffer[Long]()
-    val destroyedForcibly = ListBuffer[Long]()
     val probes = ListBuffer[Int]()
 
   /** 零信号 StopDeps：一切 destroy/kill 只进记录器。 */
@@ -71,10 +70,8 @@ class IsolatedInstanceScopeSpec extends FunSuite:
         rec.probes += p; false
       ,
       destroy = p => rec.destroyed += p,
-      destroyForcibly = p => rec.destroyedForcibly += p,
-      isRunning = pid => !rec.destroyed.contains(pid) && !rec.destroyedForcibly.contains(pid),
+      isRunning = pid => !rec.destroyed.contains(pid),
       graceTimeoutMs = 0L,
-      forceTimeoutMs = 0L,
       drainTimeoutMs = 0L,
       pollMs = 0L,
       gatewayPortOverride = gatewayPortOverride,
@@ -126,7 +123,6 @@ class IsolatedInstanceScopeSpec extends FunSuite:
       assertEquals(outcome, ProcessManager.StopOutcome.NotRunning)
       // 注入探针：6138 上的任何监听进程都没有被 kill/destroy 过一次
       assertEquals(rec.destroyed.toList, Nil)
-      assertEquals(rec.destroyedForcibly.toList, Nil)
       assertEquals(rec.probes.count(_ == 6138), 0, "6138 绝不进入探测/停机目标集合")
     }
   }
@@ -160,7 +156,6 @@ class IsolatedInstanceScopeSpec extends FunSuite:
           assert(reason.contains("zero signal"), reason)
         case other => fail(s"expected Refused, got $other")
       assertEquals(rec.destroyed.toList, Nil)
-      assertEquals(rec.destroyedForcibly.toList, Nil)
     }
   }
 
@@ -208,7 +203,6 @@ class IsolatedInstanceScopeSpec extends FunSuite:
       assert(outcome.isInstanceOf[ProcessManager.StopOutcome.Stopped], outcome.toString)
       assertEquals(rec.destroyed.toList, List(CanaryPid))
       assert(!rec.destroyed.contains(ProdPid), "生产形态 pid 永不出现在信号集合里")
-      assert(!rec.destroyedForcibly.contains(ProdPid), "生产形态 pid 永不出现在强杀集合里")
     }
   }
 
