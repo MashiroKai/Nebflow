@@ -1,23 +1,13 @@
 // mobile/taskPanel.js — 任务面（dock 批改写：浮层 → 「任务」详情页面板）。
 //
-// ⛔ 【No longer mounted by navigation】Apple todo face port (2026-11-10): the
-//   'tasks' page body is now mobile/todoAppleFace.js, and navController no
-//   longer imports this module — ensureTaskPanel/closeTaskPanel are unreached
-//   from navigation. The file stays: taskBadgeCount is a live read seam for
-//   the chrome badge and for specs that import this module directly.
+// Not mounted by navigation: the 'tasks' page body is mobile/todoAppleFace.js,
+// and no runtime code path imports this module anymore — the chrome badge and
+// the desktop capsule read their counts elsewhere. The file remains importable
+// for specs that load it directly; the count node in its legacy markup is
+// `.tfl-cap-faces`.
 //
-// ✅ 【本模块恢复现役】作者令 2026-11-05 09:28（逐字）：「手机端的待办…跟电脑端
-//   的区分开，电脑端是一个胶囊，手机端还是需要是之前那个左上角的一个悬浮的待办
-//   按钮」⇒ 入口圆钮（js/mobile/chatChrome.js 的 [data-chrome='tasks']）、导航页
-//   'tasks' 与其 overlay 收编/对账（js/mobile/navController.js）、徽标读数
-//   taskBadgeCount 的调用方（chatChrome 的 syncTaskBadge）本批**全部恢复**，
-//   本模块重新有 import 方。
-//   沿革（入口收敛批 todo-unify-entry-collapse 2026-11-04 曾整模块退役：当时
-//   口径 = 待办入口收敛到顶带胶囊一处，手机端胶囊双端同现；本批按端区分反转）：
-//     · 手机端 = 左上任务圆钮 → pushPage('tasks') → 本面板（页面即展开态）；
-//     · 桌面端 = 顶带胶囊 #task-list（不受 body.mobile-layer 作用域影响，零改动）。
-//   历史留档（退役期的承载说明，仍准确）：待办数读数在手机页面态由面板头
-//   `.tp-stats` 承载，胶囊/面板双态的计数节点是 `.tfl-cap-faces`。
+// Desktop uses the top-band capsule (#task-list), served independently of
+// this file.
 //
 // ★ 任务面换血（ReminderIsland 复刻批 · 作者令 2026-11-02 20:02）：本面板体 =
 //   待办列表（todoFace.mountTodoFaceInto——手机端入口维持本文件接线的「任务」

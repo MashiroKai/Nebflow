@@ -60,7 +60,8 @@ import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 // The 'tasks' page body is the Apple-Reminders-style todo face, a three-page
 // stack (tasks / todo-apple-list / todo-apple-item). The face receives push/pop
 // by injection and never imports this module. mobile/taskPanel.js is no longer
-// mounted by navigation; the file stays for its taskBadgeCount read seam.
+// mounted by navigation; no runtime code imports it (only specs load it
+// directly).
 import { mountTodoAppleInto } from './todoAppleFace.js';
 // 层事件流水（循环门禁修复批 2026-11-04）：叶子模块，taskPanel 等打事件方直取它，
 // 本模块只写 + 在 activateNav 挂 window（见该定义处注释）。
@@ -202,8 +203,7 @@ function tt(zh, en) {
 // ── 层事件流水（QA 探针 window.__nfMobileLayerEvents，只读）──────────
 // 循环门禁修复批（2026-11-04）：流水 + logEvent 抽到叶子 navEvents.js —— 这里是
 // 它的**挂载点**（activateNav 把同一数组引用挂 window）。taskPanel/searchFace/
-// socialSearch/chatChrome 打事件时直取叶子，不再反过来 import 本模块（那是 SCC[2]
-// 的一半）。
+// socialSearch/chatChrome 打事件时直取叶子，不再反过来 import 本模块。
 
 // ── 首触标记（启动自动展开抑制的判据）────────────────────────────────
 let layerTouched = false;

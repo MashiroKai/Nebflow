@@ -600,7 +600,7 @@ function overdueCount() {
   return items.filter((it) => !it.completed && it.due != null && it.due < now).length;
 }
 
-/** 今日到期（未完成、due 落在本地日历日之内 = 今天 00:00 ≤ due < 明天 00:00）。 */
+/** Due today (open items whose due falls inside the local calendar day: today 00:00 <= due < tomorrow 00:00). */
 function dueTodayCount() {
   maybePull();
   const start = new Date();
@@ -615,13 +615,13 @@ function completedCount() {
   return items.filter((it) => it.completed).length;
 }
 
-/** 某标签下未完成条目数（列表卡行右侧计数）。 */
+/** Open item count under one tag (the count shown on the list card rows). */
 function openCountOf(tagId) {
   maybePull();
   return items.filter((it) => !it.completed && it.tagId === tagId).length;
 }
 
-/** 全量条目（含已完成；只读拷贝）——已完成矩阵与冒烟探针用。 */
+/** All items including completed ones (read-only copy; used by the completed matrix and smoke probes). */
 function allItems() {
   maybePull();
   return [...items];

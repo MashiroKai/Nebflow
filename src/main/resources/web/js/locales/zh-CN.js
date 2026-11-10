@@ -3330,7 +3330,8 @@ export default {
   'todoface.tagDeleteTitle': '删除标签',
   'todoface.tagDeleteConfirm': '删除「{name}」后，该标签下的待办不再带此标签。此操作不可撤销。',
   'todoface.colorN': '颜色 {n}',
-  // ── 手机端待办页 Apple 提醒事项信息架构（实现批 2026-11-02；三页共用词条）──
+  // -- Mobile todo pages, Apple Reminders information architecture (entries
+  // shared by the three pages) --
   'todoapple.aria': '待办',
   'todoapple.today': '今天',
   'todoapple.overdue': '逾期',
