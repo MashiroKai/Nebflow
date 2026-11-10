@@ -215,7 +215,10 @@ function engineCallbacks() {
  *     the two modes share one mic/engine session.
  *   - getSessionId(): the session the overlay was opened on — agent replies
  *     for other sessions are not read aloud.
+ *   - cancelResponse(): interrupts the active main-session generation — used
+ *     by barge-in to stop the agent turn alongside local TTS.
  * @param {{ sendText: SendTextFn, ensureDictationIdle?: () => void,
+ *           cancelResponse?: () => void,
  *           getSessionId?: () => string|null }} depsIn
  */
 export function enterVoiceMode(depsIn) {
