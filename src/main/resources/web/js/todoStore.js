@@ -49,6 +49,7 @@
 //   `todoStore.__live()` 退出夹具模式并重新拉真源（本批 spec / 面板节点可用）。
 
 import state from './state.js';
+import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
 import { projectTodoText } from './todoText.js';
 
@@ -188,6 +189,117 @@ function warnUnpersisted(field, why) {
   console.warn(`[todoStore] field "${field}" is local-only (not persisted): ${why}`);
 }
 
+// ── 标签本地叠加层（作者报障批 2026-11-07）─────────────────────────────────
+//
+// 为什么需要：真源 `ScheduledTask` 只有 `project`，**没有 tag 实体**（无颜色、
+// 无顺序、无增删帧）⇒ 分组表原先是纯内存投影，刷新后 ① 本地新建但还没有行的
+// 分组直接消失、② 用户选的色回落到 `colorForName(名)` 的哈希色。作者报障的
+// 「添加标签的窗口」正是选色的第一现场，两者都会被读成「保存了没生效」。
+//
+// 落点与边界：本机 localStorage（键走 branding 命名空间，`key()` 单源），与真源
+// 派生组**合并**而不覆盖 —— 存在性的权威仍是真源（有行 = 有组），本层只补
+// 颜色 / 顺序 / 空分组这三件后端没有的展示事实。夹具模式（`__seed`）整层不参与，
+// 既有 shots/spec 的注入面逐字不变。
+const TAG_OVERLAY_KEY = key('todo_tags_local');
+
+/** @typedef {{v:number, colors:Object<string,string>, empties:Array<{name:string,color:string}>, order:string[]}} TagOverlay */
+/** @type {TagOverlay|null} */
+let tagOverlay = null;
+
+/** 读叠加层（坏 JSON / 隐私模式一律退回空层，绝不抛）。 */
+function readTagOverlay() {
+  if (tagOverlay) return tagOverlay;
+  tagOverlay = { v: 1, colors: {}, empties: [], order: [] };
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(TAG_OVERLAY_KEY) : null;
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && typeof p === 'object') {
+        if (p.colors && typeof p.colors === 'object' && !Array.isArray(p.colors)) tagOverlay.colors = p.colors;
+        if (Array.isArray(p.empties)) {
+          tagOverlay.empties = p.empties
+            .filter((x) => x && typeof x.name === 'string' && x.name)
+            .map((x) => ({ name: x.name, color: typeof x.color === 'string' ? x.color : '' }));
+        }
+        if (Array.isArray(p.order)) tagOverlay.order = p.order.filter((x) => typeof x === 'string' && x);
+      }
+    }
+  } catch { /* localStorage 不可用 ⇒ 纯内存（行为退回本批之前） */ }
+  return tagOverlay;
+}
+
+/** 写叠加层（尽力而为；写不进去不影响本次会话）。 */
+function writeTagOverlay() {
+  if (!tagOverlay) return;
+  try {
+    localStorage.setItem(TAG_OVERLAY_KEY, JSON.stringify(tagOverlay));
+  } catch { /* quota / 隐私模式：忽略 */ }
+}
+
+/** 叠加层生效：颜色与顺序按名对齐到当前分组表（未知名自然忽略）。 */
+function applyTagOverlay() {
+  const ov = readTagOverlay();
+  for (const t of tags) {
+    const c = ov.colors[t.name];
+    if (c) t.color = c;
+  }
+  if (!ov.order.length) return;
+  const rank = new Map(ov.order.map((n, i) => [n, i]));
+  const known = tagOrder.filter((id) => {
+    const t = tags.find((x) => x.id === id);
+    return t && rank.has(t.name);
+  });
+  const rest = tagOrder.filter((id) => !known.includes(id));
+  known.sort((a, b) => {
+    const ta = tags.find((x) => x.id === a);
+    const tb = tags.find((x) => x.id === b);
+    return (rank.get(ta.name) || 0) - (rank.get(tb.name) || 0);
+  });
+  tagOrder = [...known, ...rest];
+}
+
+/** 叠加层登记：空分组（本地建、尚无行）。 */
+function overlayRememberEmpty(name, color) {
+  const ov = readTagOverlay();
+  ov.empties = ov.empties.filter((e) => e.name !== name);
+  ov.empties.push({ name, color: color || '' });
+  if (color) ov.colors[name] = color;
+  writeTagOverlay();
+}
+
+/** 叠加层登记：改名（颜色/空分组/顺序三条同迁）。 */
+function overlayRenameTag(oldName, newName) {
+  if (oldName === newName) return;
+  const ov = readTagOverlay();
+  if (ov.colors[oldName]) { ov.colors[newName] = ov.colors[oldName]; delete ov.colors[oldName]; }
+  const e = ov.empties.find((x) => x.name === oldName);
+  if (e) e.name = newName;
+  ov.order = ov.order.map((n) => (n === oldName ? newName : n));
+  writeTagOverlay();
+}
+
+/** 叠加层登记：删除分组。 */
+function overlayForgetTag(name) {
+  const ov = readTagOverlay();
+  delete ov.colors[name];
+  ov.empties = ov.empties.filter((e) => e.name !== name);
+  ov.order = ov.order.filter((n) => n !== name);
+  writeTagOverlay();
+}
+
+/** 叠加层登记：chips 顺序（按名存，跨真源/本地两种 id 语义都成立）。 */
+function overlayRememberOrder(orderIds) {
+  const ov = readTagOverlay();
+  const names = orderIds.map((id) => {
+    const t = tags.find((x) => x.id === id);
+    return t ? t.name : null;
+  }).filter(Boolean);
+  if (!names.length) return;
+  ov.order = names;
+  writeTagOverlay();
+}
+
+
 // ── 真源读：行映射 ────────────────────────────────────────────────────────
 
 /** 后端行（listTaskJson 形状）是否进人待办收件箱面。 */
@@ -223,6 +335,18 @@ function mapRow(row) {
 
 /** 分组表 ↔ 真源 project 对账：出现即建组、无行即撤组（夹具模式跳过）。 */
 function syncGroupRegistry() {
+  if (!fixtureMode) {
+    // ① 本机叠加层先落「空分组」（本地新建、尚无行）—— 真源没有 tag 实体，
+    //    不叠这一层的话新建分组刷新即消失（见上方「标签本地叠加层」）。
+    const ov = readTagOverlay();
+    for (const e of ov.empties) {
+      const id = groupId(e.name);
+      if (!tags.some((t) => t.id === id)) {
+        tags.push({ id, name: e.name, color: ov.colors[e.name] || e.color || colorForName(e.name), local: true });
+        tagOrder.push(id);
+      }
+    }
+  }
   const live = new Set();
   for (const it of items) {
     if (!it.project) continue;
@@ -240,6 +364,7 @@ function syncGroupRegistry() {
     tagOrder = tagOrder.filter((id) => ids.has(id));
     if (activeTagId != null && !ids.has(activeTagId)) activeTagId = null;
   }
+  if (!fixtureMode) applyTagOverlay();
 }
 
 // ── 真源读：拉取 ──────────────────────────────────────────────────────────
@@ -669,6 +794,7 @@ function createTag(name, color) {
   if (!tags.some((t) => t.id === id)) {
     tags.push({ id, name: trimmed, color: color || colorForName(trimmed), local: true });
     tagOrder = [...tagOrder.filter((tid) => tags.some((tg) => tg.id === tid)), id];
+    if (!fixtureMode) overlayRememberEmpty(trimmed, color);
   }
   emit();
   return id;
@@ -678,7 +804,10 @@ function createTag(name, color) {
 function updateTag(id, patch = {}) {
   const tag = tags.find((x) => x.id === id);
   if (!tag) return;
-  if (typeof patch.color === 'string') tag.color = patch.color;
+  if (typeof patch.color === 'string') {
+    tag.color = patch.color;
+    if (!fixtureMode) { readTagOverlay().colors[tag.name] = patch.color; writeTagOverlay(); }
+  }
   const renamed = typeof patch.name === 'string' && patch.name.trim() ? patch.name.trim() : '';
   if (renamed && renamed !== tag.name) {
     const oldName = tag.name;
@@ -698,6 +827,7 @@ function updateTag(id, patch = {}) {
       tag.local = true;
       tagOrder = tagOrder.map((tid) => (tid === id ? newId : tid));
       if (activeTagId === id) activeTagId = newId;
+      overlayRenameTag(oldName, renamed);
       scheduleRefresh();
     }
   }
@@ -711,6 +841,7 @@ function deleteTag(id) {
   tags = tags.filter((x) => x.id !== id);
   tagOrder = tagOrder.filter((x) => x !== id);
   if (tag && !fixtureMode) {
+    overlayForgetTag(tag.name);
     for (const it of items) {
       if (it.project !== tag.name) continue;
       it.tagId = null;
@@ -738,6 +869,7 @@ function reorderTag(dragId, targetId) {
   next.splice(from, 1);
   next.splice(to, 0, dragId);
   tagOrder = next;
+  if (!fixtureMode) overlayRememberOrder(next);
   emit();
 }
 
@@ -812,7 +944,9 @@ export const todoStore = {
       // todoText.projectTodoText 读时投影，零写零丢失。
       name: 'name', detail: 'detail', priority: 'priority', completed: 'completedAt',
       tagId: 'project', due: 'read-only:triggerAt',
-      tagColor: 'local-only', tagOrder: 'local-only',
+      // 标签色/顺序/空分组：后端无 tag 实体 ⇒ 落**本机**叠加层（localStorage，
+      // 键 tagOverlayKey；作者报障批 2026-11-07 前是纯内存，刷新即丢）。
+      tagColor: 'local-storage', tagOrder: 'local-storage',
     };
   },
   get dataSource() { return fixtureMode ? 'fixture' : 'backend'; },
