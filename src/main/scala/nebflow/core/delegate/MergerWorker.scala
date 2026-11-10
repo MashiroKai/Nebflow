@@ -12,17 +12,17 @@ import nebflow.shared.NebflowLogger
 import WorkspaceLedger.{MergeItem, MergeReport, Workspace}
 
 import java.time.Instant
-import java.util.concurrent.Semaphore
 
-import scala.concurrent.duration.*
 import scala.util.Try
 
 /**
- * Persistent merger worker: the single mechanical consumer of persisted merge
- * requests.
+ * Per-task merger instances: the mechanical consumer of persisted merge
+ * requests. No merger stays resident between tasks — every merge request is
+ * consumed by a freshly instantiated worker, and when one task has been merged
+ * the next request starts from a brand-new instance.
  *
- * The worker claims one request at a time (ledger `claimNextMerge` enforces the
- * serial rule), then executes every item without any LLM session: reconcile the
+ * One instance claims exactly one request (ledger `claimNextMerge` enforces
+ * the serial rule), then executes every item without any LLM session: reconcile the
  * item against actual Git state, merge with plumbing only (`merge-tree
  * --write-tree` -> `commit-tree` -> `update-ref` compare-and-swap, all under
  * the repository write lock), verify with ancestry facts, write evidence under
@@ -33,7 +33,13 @@ import scala.util.Try
  * merge that already landed but lost its session resumes at boot
  * (`recoverRequests`) and closes out instead of merging twice.
  *
- * The worker never pushes, never tags, and never touches versions: it moves
+ * Instantiation points: a merge request submission or cancellation, and boot
+ * recovery. A wake spawns one consumer that instantiates a fresh worker per
+ * claimable request and exits when the queue is empty; overlapping wakes are
+ * harmless because surplus instances find nothing claimable and exit
+ * immediately.
+ *
+ * A merger never pushes, never tags, and never touches versions: it moves
  * only the development branch and target branch recorded in an authorized
  * request.
  */
@@ -45,29 +51,62 @@ object MergerWorker:
   private val FallbackCommitterName = "nebflow-merger"
   private val FallbackCommitterEmail = "merger@nebflow.local"
 
-  private val permits = new Semaphore(0)
+  /** Queued request statuses a fresh instance may claim. */
+  private val Claimable = Set("submitted", "accepted")
 
-  /** Wake the worker loop; cheap and safe when nothing is queued. */
-  def nudge(): Unit = permits.release()
+  private def hasClaimable: Boolean =
+    WorkspaceLedger.default.snapshot.requests.exists(r => Claimable.contains(r.status))
+
+  private def describe(e: Throwable): String = Option(e.getMessage).getOrElse(e.toString)
 
   /**
-   * Boot face: reconcile in-flight requests against actual Git state and re-
-   * queue what can resume, then run the nudge loop forever. Recovery is fail-
-   * soft: a failed pass is logged and the loop still starts.
+   * Per-task wake: run one consumer that instantiates a fresh merger per
+   * claimable request. Redundant wakes are safe — the ledger claim keeps
+   * execution serial and surplus consumers exit immediately.
    */
-  def launch: IO[Unit] =
+  def wake(): IO[Unit] = consume.start.void
+
+  /**
+   * Boot face: reconcile in-flight requests against actual Git state, then
+   * wake per-task consumption for whatever re-queued. Recovery is fail-soft:
+   * a failed pass is logged and queued requests still wake.
+   */
+  def recoverAndWake(): IO[Unit] =
     IO.blocking(WorkspaceLedger.default.recoverRequests())
-      .handleErrorWith(e => logger.warn(s"merger recovery failed (worker loop still starts): ${describe(e)}")) *>
-      loop.start.void
+      .handleErrorWith(e => logger.warn(s"merger recovery failed (queued requests still wake): ${describe(e)}")) *>
+      wake()
 
-  private def loop: IO[Unit] =
-    IO.blocking(permits.acquire()) *>
-      IO.defer(runOnce()).handleErrorWith(e =>
-        logger.warn(s"merger worker pass failed (fiber self-heals): ${describe(e)}") *> IO.sleep(30.seconds)
-      ) *>
-      IO.defer(loop)
+  /**
+   * Direct face for tests and tools: claim and drive at most one request with
+   * a fresh instance. Returns a pass summary.
+   */
+  def runOnce(): IO[Option[String]] = new MergerWorker().runOnce()
 
-  /** One wake: claim and drive at most one request. Returns a pass summary. */
+  /** One fresh instance per claimable request; the consumer exits on an empty queue. */
+  private def consume: IO[Unit] =
+    IO.defer {
+      if !hasClaimable then IO.unit
+      else
+        runOnce()
+          .flatMap {
+            case Some(_) => consume
+            case None    => IO.unit
+          }
+          .handleErrorWith(e =>
+            logger.warn(s"merger worker pass failed (the queue wakes on the next request): ${describe(e)}")
+          )
+    }
+
+end MergerWorker
+
+/**
+ * One per-task merger instance: claims exactly one request and drives it to a
+ * resting state. Holds nothing between tasks — every fact lives in the ledger,
+ * so the next request starts from a clean instance.
+ */
+final class MergerWorker:
+
+  /** Blocking: claim and drive at most one request. Returns a pass summary. */
   def runOnce(): IO[Option[String]] = IO.blocking {
     WorkspaceLedger.default.claimNextMerge() match
       case None => None
@@ -423,8 +462,10 @@ object MergerWorker:
       os.proc("git", "-C", tree.toString, "config", key).call(stdout = os.Pipe, stderr = os.Pipe).out.text().trim
     }.getOrElse("")
     val identity =
-      (if configured("user.name").nonEmpty then Nil else Seq("-c", s"user.name=$FallbackCommitterName")) ++
-        (if configured("user.email").nonEmpty then Nil else Seq("-c", s"user.email=$FallbackCommitterEmail"))
+      (if configured("user.name").nonEmpty then Nil
+       else Seq("-c", s"user.name=${MergerWorker.FallbackCommitterName}")) ++
+        (if configured("user.email").nonEmpty then Nil
+         else Seq("-c", s"user.email=${MergerWorker.FallbackCommitterEmail}"))
     Try {
       os.proc(
         Seq("git", "-C", tree.toString) ++
@@ -494,9 +535,9 @@ object MergerWorker:
   private def guard[A](body: => Either[String, A]): Either[String, A] =
     Try(body).toEither.left.map(describe).flatMap(identity)
 
-  private def describe(e: Throwable): String = Option(e.getMessage).getOrElse(e.toString)
+  private def describe(e: Throwable): String = MergerWorker.describe(e)
 
   /** Emit a warning now; the blocking worker passes run outside the IO run. */
-  private def warn(msg: String): Unit = logger.warn(msg).unsafeRunSync()(using global)
+  private def warn(msg: String): Unit = MergerWorker.logger.warn(msg).unsafeRunSync()(using global)
 
 end MergerWorker
