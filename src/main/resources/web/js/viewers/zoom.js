@@ -110,9 +110,6 @@ export function enableViewerZoom(pane, opts) {
   const setPct = s => { if (barMounted) pct.textContent = Math.round(s * 100) + '%'; };
   const mkBarContent = () => {
     bar.innerHTML = '';
-    bar.appendChild(mkBtn('zoom-out', t('canvas.zoomOut'), () => zoomBy(1 / 1.25, null)));
-    bar.appendChild(pct);
-    bar.appendChild(mkBtn('zoom-in', t('canvas.zoomIn'), () => zoomBy(1.25, null)));
     bar.appendChild(mkBtn('maximize-2', t('canvas.zoomFit'), () => { opts.reset(); setPct(opts.getScale()); }));
   };
   if (mobileGesture) {
