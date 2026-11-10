@@ -273,6 +273,8 @@ class AgentConvergenceSpec extends FunSuite:
         "Schedule",
         "Delegate",
         "AgentControl",
+        "AskHostReply",
+        "AskHostClarify",
         // worktree-merger delivery (MergerRequest): Nebula-exclusive submit face,
         // same anti-declaration-escape channel — dream never gains it either.
         "MergerRequest",
@@ -310,6 +312,8 @@ class AgentConvergenceSpec extends FunSuite:
         "Schedule",
         "Delegate",
         "AgentControl",
+        "AskHostReply",
+        "AskHostClarify",
         "MergerRequest", // worktree-merger delivery: Nebula-exclusive submit face, dream stripped too
         "Task",
         "TaskInfo",
