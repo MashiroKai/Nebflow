@@ -177,8 +177,8 @@ object ToolRegistry:
       // WorktreeContext (worktree-merger delivery, Priority D): read-only
       // full-context assembly for one managed workspace (summary-first sections
       // + paginated mail, explicit missing ranges per section). Authorization =
-      // the merger tool mount face (buildAllowedToolSet tail, same slot as
-      // merger_report) + RootOrchestrationTools (main-agent face) + the in-tool
+      // the merger tool mount face (buildAllowedToolSet tail) +
+      // RootOrchestrationTools (main-agent face) + the in-tool
       // identity refusal (anything that is neither merger-mode nor root is
       // fail-closed, MergerRequestTool precedent); a recorded merger is scoped
       // to its own repository inside the tool.
