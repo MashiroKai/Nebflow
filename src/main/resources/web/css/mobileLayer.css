@@ -1176,6 +1176,16 @@ body.mobile-layer #fm-chat-overlay {
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
   padding-top: var(--ds-space-2);
 }
+/* mobile-page-body carries a bottom scroll clearance on every page (from the
+   mobile-top-clearance pass). The conversation page's input bar is not scroll
+   content and the page shell already ends at the dock's top edge, so that
+   generic 72px pad joins the flex free-height math and lifts the input bar
+   off the dock, leaving the large blank gap seen in screenshots. The message
+   flow keeps its own scroll margin; clear the page-body bottom pad on the
+   conversation page only so the input bar stays seated. */
+body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-body {
+  padding-bottom: 0;
+}
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-input-bar {
   margin-bottom: var(--ds-space-3);
 }
