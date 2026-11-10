@@ -39,14 +39,17 @@ import cats.effect.IO
 import cats.effect.kernel.{Deferred, Ref}
 import cats.syntax.all.*
 import nebflow.gateway.NfFilePolicy.*
+import nebflow.shared.EvidenceTemp
 import nebflow.shared.PathUtil
 import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.`Content-Type`
 
+import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.duration.*
+import scala.util.control.NonFatal
 
 object NfOfficeRoutes:
 
@@ -151,11 +154,14 @@ object NfOfficeRoutes:
     /** macOS soffice 腿：`open` 拉起（launchd GUI 会话）→ 轮询出件 → 收尸。 */
     private[gateway] def runSofficeMac(app: String, src: os.Path, outDir: os.Path): IO[os.Path] =
       IO.blocking {
-        val runDir = os.temp.dir(prefix = "nf-office-run-")
+        // Intermediates live in a registered evidence-temp batch: a crashed leg
+        // leaves an inactive, TTL-swept batch rather than an orphaned temp dir.
+        val batch = EvidenceTemp.createBatch("office-preview", "soffice-mac")
+        val runDir = os.Path(batch) / "run"
         val profile = runDir / "profile"
         os.makeDir.all(profile)
-        (runDir, profile)
-      }.flatMap { case (runDir, profile) =>
+        (batch, runDir, profile)
+      }.flatMap { case (batch, runDir, profile) =>
         val convert = IO.blocking {
           os.proc(
             "open", "-n", "-a", app, "--args",
@@ -167,7 +173,7 @@ object NfOfficeRoutes:
           ).call(check = false, mergeErrIntoOut = true, timeout = 30000L)
         }
         // 出件/超时都收尸（pkill 只杀本转换 profile 串命中的进程）。
-        convert *> pollFor(outDir, "pdf", ConvertTimeout).guarantee(reap(profile, runDir))
+        convert *> pollFor(outDir, "pdf", ConvertTimeout).guarantee(reap(batch, profile, runDir))
       }
     end runSofficeMac
 
@@ -179,18 +185,26 @@ object NfOfficeRoutes:
         catch case _: Throwable => false
       Option.when(found)(Leg("soffice", (src, outDir) =>
         IO.blocking {
-          val runDir = os.temp.dir(prefix = "nf-office-run-")
+          val batch = EvidenceTemp.createBatch("office-preview", "soffice-linux")
+          val runDir = os.Path(batch) / "run"
           val profile = runDir / "profile"
           os.makeDir.all(profile)
-          os.proc(
-            bin,
-            "--headless",
-            s"-env:UserInstallation=file://${profile}",
-            "--convert-to", "pdf",
-            "--outdir", outDir.toString,
-            src.toString
-          ).call(check = false, mergeErrIntoOut = true, timeout = ConvertTimeout.toMillis)
-          os.remove.all(runDir)
+          try
+            os.proc(
+              bin,
+              "--headless",
+              s"-env:UserInstallation=file://${profile}",
+              "--convert-to", "pdf",
+              "--outdir", outDir.toString,
+              src.toString
+            ).call(check = false, mergeErrIntoOut = true, timeout = ConvertTimeout.toMillis)
+          finally
+            // Retire the batch before teardown: full teardown leaves nothing
+            // behind, and a failed teardown leaves an inactive, TTL-sweepable
+            // batch instead of an orphaned temp dir.
+            try EvidenceTemp.finishBatch(batch)
+            catch case NonFatal(_) => ()
+            os.remove.all(os.Path(batch))
         } *> pollFor(outDir, "pdf", ConvertTimeout)
       )).toList
     end linuxLegs
@@ -226,14 +240,18 @@ object NfOfficeRoutes:
     /** `open` 拉起的 headless 实例不自退（实测持续烧 CPU）——按本次 profile 串
      *  精确收尸（`-env:UserInstallation=file://<profile>` 是唯一定位串，pkill 只
      *  杀本转换拉起的进程，绝不波及用户自己的 GUI LibreOffice）。 */
-    private def reap(profile: os.Path, runDir: os.Path): IO[Unit] =
+    private def reap(batch: Path, profile: os.Path, runDir: os.Path): IO[Unit] =
       IO.blocking {
         os.proc("pkill", "-f", s"UserInstallation=file://${profile}").call(
           check = false,
           mergeErrIntoOut = true
         )
         ()
-      }.attempt *> IO.blocking(os.remove.all(runDir)).attempt.void
+      }.attempt *>
+        // Retire first (what survives teardown stays inactive and sweep-eligible),
+        // then remove wholesale — runDir sits inside the batch.
+        IO.blocking(EvidenceTemp.finishBatch(batch)).attempt.void *>
+        IO.blocking(os.remove.all(os.Path(batch))).attempt.void
   end Legs
 
   // ──────────────────────────────────────────────────────────────────────
@@ -327,11 +345,11 @@ object NfOfficeRoutes:
         case Nil => IO.pure(Left("conversion-failed: all legs failed"))
         case leg :: rest =>
           IO.blocking {
-            val tmp = os.temp.dir(prefix = "nf-office-")
-            val outDir = tmp / "out"
+            val batch = EvidenceTemp.createBatch("office-preview", "convert")
+            val outDir = os.Path(batch) / "out"
             os.makeDir.all(outDir)
-            (tmp, outDir)
-          }.flatMap { case (tmp, outDir) =>
+            (batch, outDir)
+          }.flatMap { case (batch, outDir) =>
             leg.run(real, outDir)
               .attempt
               .flatMap {
@@ -345,7 +363,10 @@ object NfOfficeRoutes:
                   }.map(Right(_))
                 case Left(_) => IO.pure(Left("leg-failed"))
               }
-              .guarantee(IO.blocking(os.remove.all(tmp)).attempt.void)
+              .guarantee(
+                IO.blocking(EvidenceTemp.finishBatch(batch)).attempt.void *>
+                  IO.blocking(os.remove.all(os.Path(batch))).attempt.void
+              )
               .flatMap {
                 case Right(p)     => IO.pure(Right(p))
                 case Left(_)      => convertVia(rest, real, key)

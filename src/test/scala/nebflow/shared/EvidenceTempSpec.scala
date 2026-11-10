@@ -47,3 +47,29 @@ class EvidenceTempSpec extends FunSuite:
       intercept[IllegalArgumentException](EvidenceTemp.promote(batch, "manifest.json", Path.of("/tmp/evidence-invalid"), "  "))
     finally removeTree(batch.getParent.getParent)
   }
+
+  test("producer lifecycle: active batches survive sweeps, finished ones age out, promotions persist") {
+    val project = s"unit-lifecycle-${java.util.UUID.randomUUID()}"
+    val active = EvidenceTemp.createBatch(project, "still-active")
+    Files.writeString(active.resolve("draft.txt"), "in flight")
+    val finished = EvidenceTemp.createBatch(project, "retired")
+    EvidenceTemp.finishBatch(finished)
+    val promoted = EvidenceTemp.createBatch(project, "promoted")
+    Files.writeString(promoted.resolve("shot.png"), "png-bytes")
+    EvidenceTemp.finishBatch(promoted)
+    val destination = Files.createTempDirectory("evidence-lifecycle-").resolve("kept.png")
+    try
+      EvidenceTemp.promote(promoted, "shot.png", destination, "retained for incident review")
+      val removed = EvidenceTemp.sweep(System.currentTimeMillis() + 8L * 24 * 60 * 60 * 1000)
+      // An active batch (no finishBatch) is never swept — fail-closed even past TTL.
+      assert(Files.exists(active.resolve("draft.txt")))
+      // A finished batch past TTL is removed.
+      assert(!Files.exists(finished))
+      // A promotion outside the temp namespace survives its source batch's expiry.
+      assertEquals(Files.readString(destination), "png-bytes")
+      assert(Files.exists(Path.of(destination.toString + ".meta.json")))
+      assert(removed >= 2)
+    finally
+      removeTree(active.getParent.getParent)
+      removeTree(destination.getParent)
+  }

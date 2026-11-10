@@ -1,11 +1,13 @@
 package nebflow.social.outbound
 
 import cats.effect.IO
+import nebflow.shared.EvidenceTemp
 import nebflow.shared.NebflowLogger
 
 import java.nio.file.{Files, Path}
 import java.util.concurrent.TimeUnit
 import scala.jdk.CollectionConverters.*
+import scala.util.control.NonFatal
 
 /**
  * Server-side real rendering for outbound rich content (richcontent batch,
@@ -190,14 +192,18 @@ object RichRenderer:
           IO.pure(logged(RenderResult.engineUnavailable(s"$bin is not executable")))
         case Some(bin) =>
           IO.blocking {
-            val tmpHtml = Files.createTempFile("nb-outbound-render-", ".html")
+            // Intermediates (source HTML + Chrome profile) live in one registered
+            // evidence-temp batch instead of loose OS temp files: a crashed leg
+            // leaves an inactive, TTL-swept batch rather than orphaned temp files.
+            val batch = EvidenceTemp.createBatch("outbound", "rich-render")
+            val tmpHtml = batch.resolve("render.html")
             // HC-4 + D-3: Chrome insists on a profile directory, and left to its
             // own devices it would create one under the operator's real HOME. It
-            // is pinned NEXT TO the product — inside the caller-supplied
-            // temporary face — and removed in the `finally`. A render leg
-            // therefore writes nothing into the real home.
+            // is pinned inside the evidence-temp batch — never the real home —
+            // and removed in the `finally`. A render leg therefore writes
+            // nothing into the real home.
             Files.createDirectories(outPng.toNIO.getParent)
-            val profileDir = Files.createTempDirectory(outPng.toNIO.getParent, "nb-chrome-profile-")
+            val profileDir = Files.createDirectories(batch.resolve("chrome-profile"))
             var proc: Process = null
             try
               Files.writeString(tmpHtml, html)
@@ -268,8 +274,12 @@ object RichRenderer:
                 if proc.isAlive then proc.destroyForcibly()
                 try proc.waitFor(5, TimeUnit.SECONDS)
                 catch case _: InterruptedException => ()
-              Files.deleteIfExists(tmpHtml)
-              deleteRecursively(profileDir)
+              // Retire the batch first, then remove it wholesale: complete
+              // teardown leaves nothing on disk, and if teardown partially fails
+              // the leftover is inactive (manifest intact) and stays TTL-sweepable.
+              try EvidenceTemp.finishBatch(batch)
+              catch case NonFatal(_) => ()
+              deleteRecursively(batch)
             end try
           }
             // Belt for the blocking wrapper: an interruption must still surface as a
