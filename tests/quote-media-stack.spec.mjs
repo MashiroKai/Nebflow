@@ -8,18 +8,11 @@
 //   · 叠卡实现早就存在且是单点：popArtifacts.buildMediaStack（Pop 多图交付卡 /
 //     用户媒体行 / 好友三窗共用）。本批只把它接到引用牌上，零第二套视觉。
 //
-// 判据（机械）：
-//   R1 媒体 ≥2 件 ⇒ 引用块出现叠卡（.pop-stack-area + .pill「展开 N」），
-//      不再出现逐张平铺的 .msg-quote-att-media；
-//   R2 媒体 = 1 件 ⇒ 保持原样（.msg-quote-att-media 48×48，无 .pop-stack-area）；
-//   R3 高度收敛：3 张与 6 张的引用块高度相等（±2px），不随张数线性增长；
-//   R4 切图可用（桌面键盘腿）：聚焦卡脸 → ArrowRight/ArrowLeft 换前卡，
-//      front 层换人、pill 文案不变；
-//   R5 「展开 N」摊平：点 pill ⇒ .pop-expand-view.show 且每张一行（行数 = 张数）、
-//      pill 文案变「收起」；再点回叠卡；
-//   R6 点图不丢开件：点折叠卡脸 ⇒ 进灯箱（无 path 的纯内联字节腿 =
-//      .nf-lightbox--media.on），且**不**触发引用块自身的跳转（无 .quote-target-flash）；
-//   R7 文件 chip 与图片共存时两不相干（多图走叠卡，文件仍走 .msg-quote-att-file）。
+// 新验收判据（作者令：引用内容统一紧凑缩略，不可展开/大图）：
+//   R1 媒体 ≥2 件 ⇒ 每件一枚 .msg-quote-att-media 48×48，无 .pop-stack-area/.pill；
+//   R2 媒体 = 1 件 ⇒ 保持单缩略原样（48×48）；
+//   R3 多图引用块无展开交互或大图占位，缩略数量 = 附件数；
+//   R4 文件 chip 与图片共存时各自紧凑展示（文件仍走 .msg-quote-att-file）。
 //
 // Run: node node_modules/@playwright/test/cli.js test tests/quote-media-stack.spec.mjs
 //   env：CHATFACE_WEB_ROOT=<web 树> 跑改前腿（预期红）；EVID_DIR=<dir> 落读数。
@@ -27,10 +20,40 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { bootChat } from './_chat-face-harness.mjs';
 
-const EVID = process.env.EVID_DIR || null;
+const EVID = process.env.EVID_DIR || join(process.cwd(), 'evidence', 'quote-thumb-chips-matrix');
 const TAG = process.env.EVID_TAG || 'after';
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const HARNESS_PATH = '/tests/fixtures/quote-message/harness.html';
+const SHOTS = path.join(REPO_ROOT, 'evidence', 'quote-thumb-chips-matrix');
+let port;
+const servers = [];
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => resolve(p)); });
+    srv.on('error', reject);
+  });
+}
+
+function startStaticServer(p, dir) {
+  return spawn('python3', ['-m', 'http.server', String(p), '--bind', '127.0.0.1', '--directory', dir], { stdio: 'ignore' });
+}
+
+async function waitUntilUp(url) {
+  for (let i = 0; i < 80; i++) {
+    try { if ((await fetch(url)).ok) return; } catch { /* not up yet */ }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error(`static server never came up at ${url}`);
+}
 
 function svgData(w, h, c1, c2) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">`
@@ -138,11 +161,95 @@ function saveReadings(name, payload) {
   writeFileSync(join(EVID, `${TAG}-${name}.json`), JSON.stringify(payload, null, 2));
 }
 
+test.describe('Pop 引用入口亮暗主题截图与文件入口验收', () => {
+  test.beforeAll(async () => {
+    fs.mkdirSync(SHOTS, { recursive: true });
+    port = await freePort();
+    servers.push(startStaticServer(port, REPO_ROOT));
+    await waitUntilUp(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+  });
+  test.afterAll(async () => { for (const server of servers) server.kill('SIGTERM'); });
+  for (const viewport of [{ width: 1280, height: 800, name: 'desktop' }, { width: 375, height: 812, name: 'mobile' }]) {
+    for (const colorScheme of ['light', 'dark']) {
+      test(`${viewport.name} ${viewport.width}×${viewport.height} ${colorScheme}: 四种引用状态`, async ({ browser }) => {
+        test.setTimeout(45000);
+        const context = await browser.newContext({
+          viewport: { width: viewport.width, height: viewport.height },
+          deviceScaleFactor: viewport.name === 'mobile' ? 2 : 1,
+          hasTouch: viewport.name === 'mobile', isMobile: viewport.name === 'mobile', colorScheme,
+        });
+        const page = await context.newPage();
+        await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+        await page.waitForFunction(() => window.__ready === true);
+        await page.evaluate(async history => window.__renderHistory(history), [
+          { type: 'user', text: '引用两图加文件', timestamp: Date.now(), quote: { refMessageId: 'fixture-target', excerpt: '示例附件', senderRole: 'user', senderName: '我', attachments: [
+            { type: 'image', name: 'quote-a.png', preview: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+PC9zdmc+' },
+            { type: 'image', name: 'quote-b.png', preview: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+PC9zdmc+' },
+            { type: 'file', name: 'quote-note.md', path: '/tmp/quote-note.md' },
+          ] } },
+        ]);
+        await page.waitForTimeout(500);
+        const rows = await page.evaluate(async () => {
+          const pop = await import('/src/main/resources/web/js/popArtifacts.js');
+          const media = (prefix) => [0, 1].map(i => ({ kind: 'image', name: `${prefix}-${i}.png`, path: `/tmp/${prefix}-${i}.png`, src: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCI+PC9zdmc+' }));
+          const add = (label, items) => {
+            const row = pop.buildPopArtifactRow({ items }, { ts: Date.now() });
+            row.dataset.testPop = label;
+            document.querySelector('#chat').appendChild(row);
+            return row.dataset.msgId;
+          };
+          return {
+            folded: add('folded', media('group')),
+            expanded: add('expanded', media('item')),
+            file: add('file', [{ kind: 'file', name: 'spec-note.md', path: '/tmp/spec-note.md' }]),
+          };
+        });
+        await page.waitForTimeout(100);
+        const row = (kind) => page.locator(`#chat .row[data-test-pop="${kind}"]`);
+        const quoteChip = page.locator('#attachment-preview .att-ref').first();
+        const capture = async (state) => {
+          await page.screenshot({ path: join(EVID, `${viewport.name}-${colorScheme}-${state}.png`), fullPage: true });
+        };
+        expect(await row('folded').locator('.pop-stack-area .pill').count()).toBe(1);
+        expect(await row('folded').locator(':scope > .duration-badge .msg-quote-btn').count()).toBe(1);
+        await capture('group-footer');
+
+        await row('expanded').locator('.pop-stack-area .pill').click();
+        await page.waitForTimeout(500);
+        expect(await row('expanded').locator('.pop-expand-view.show .msg-quote-item-btn').count()).toBe(2);
+        await row('expanded').locator('.pop-expand-view.show .msg-quote-item-btn').first().evaluate(el => el.click());
+        await page.waitForTimeout(200);
+        await expect(quoteChip).toHaveAttribute('data-ref-type', 'chat-message');
+        await capture('expanded-item-footer');
+
+        await row('file').locator('.file-card .fc-quote-btn').evaluate(el => el.click());
+        await page.waitForTimeout(200);
+        const fileRef = await page.evaluate(() => {
+          const ref = document.querySelector('#attachment-preview .att-ref');
+          return { type: ref?.dataset.refType, label: ref?.textContent || '', title: ref?.title || '' };
+        });
+        expect(fileRef.type).toBe('chat-message');
+        expect(fileRef.label + fileRef.title).toContain('spec-note.md');
+        expect(fileRef.label).toContain('[文件] spec-note.md');
+        expect(await quoteChip.locator('.att-ref-icon, .att-ref-qicon').count()).toBeGreaterThan(0);
+        await capture('file-card-quote');
+
+        const quoted = quoteBlockOf(page, '引用两图加文件');
+        expect(await quoted.locator('.msg-quote-att-media').count()).toBe(2);
+        expect(await quoted.locator('.msg-quote-att-file').count()).toBe(1);
+        expect(await quoted.locator('.pop-stack-area, .pop-expand-view, .pill, .nf-lightbox').count()).toBe(0);
+        await capture('quoted-thumbnails-files');
+        await context.close();
+      });
+    }
+  }
+});
+
 test.describe('引用牌多图叠卡', () => {
   for (const vp of [{ width: 1440, height: 900 }, { width: 375, height: 812 }]) {
     const tag = vp.width >= 1000 ? 'desktop' : 'mobile';
 
-    test(`${tag} ${vp.width}×${vp.height}：≥2 张走叠卡 / 1 张原样 / 高度收敛 / 切换与展开 / 点图进灯箱`, async ({ browser }) => {
+    test(`${tag} ${vp.width}×${vp.height}：多媒体引用为紧凑缩略 / 单图样式不变 / 无展开和大图`, async ({ browser }) => {
       const ctx = await browser.newContext({
         viewport: vp, deviceScaleFactor: 2, hasTouch: vp.width < 1000,
       });
@@ -150,119 +257,36 @@ test.describe('引用牌多图叠卡', () => {
       await bootChat(page, { history });
       await page.waitForTimeout(700);
 
-      // ── R1：≥2 张 = 叠卡 ─────────────────────────────────────────────
       const three = await measure(page, '引用三张');
       expect(three, '三图引用块未渲染').not.toBeNull();
-      expect(three.stack, '三图引用块缺叠卡区 .pop-stack-area').not.toBeNull();
-      expect(three.face, '叠卡卡脸缺失').not.toBeNull();
-      expect(three.pillText).toContain('展开');
-      expect(three.pillText).toContain('3');
-      expect(three.thumbs, '走叠卡后不应再有逐张平铺缩略').toBe(0);
-      expect(three.layerCount).toBe(3);
-      // 前卡完整可见：卡脸 = 宿主收口尺度（96×122 ≈ 11:14 预览档），且不横向顶出引用块
-      expect(Math.round(three.face.w)).toBe(96);
-      expect(Math.round(three.face.h / three.face.w * 11)).toBe(14);
-      expect(three.face.w).toBeLessThanOrEqual(three.block.w + 0.5);
+      expect(three.thumbs, '三图应逐项缩略').toBe(3);
+      expect(three.stack, '引用块不得出现叠卡').toBeNull();
+      expect(three.pillText, '无展开控件').toBe('');
+      const threeSizes = await quoteBlockOf(page, '引用三张').locator('.msg-quote-att-media').evaluateAll(els => els.map(el => {
+        const b = el.getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height)];
+      }));
+      expect(threeSizes).toEqual([[48, 48], [48, 48], [48, 48]]);
+      expect(await quoteBlockOf(page, '引用三张').locator('.nf-lightbox, .pop-expand-view, .pill').count()).toBe(0);
 
-      // ── R3：高度收敛（3 张 vs 6 张）──────────────────────────────────
       const six = await measure(page, '引用六张');
-      expect(six.stack).not.toBeNull();
-      expect(six.thumbs).toBe(0);
-      expect(Math.abs(six.block.h - three.block.h)).toBeLessThanOrEqual(2);
+      expect(six.thumbs).toBe(6);
+      expect(six.stack).toBeNull();
 
-      // ── R2：单张保持原样 ────────────────────────────────────────────
       const one = await measure(page, '引用一张');
-      expect(one.thumbs, '单图必须保持 48px 缩略原样').toBe(1);
-      expect(one.stack, '单图不得出现叠卡').toBeNull();
+      expect(one.thumbs).toBe(1);
+      expect(one.stack).toBeNull();
       const oneThumb = await quoteBlockOf(page, '引用一张').locator('.msg-quote-att-media').first()
-        .evaluate(el => {
-          const b = el.getBoundingClientRect();
-          return { w: Math.round(b.width), h: Math.round(b.height) };
-        });
-      expect(oneThumb).toEqual({ w: 48, h: 48 });
+        .evaluate(el => { const b = el.getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height)]; });
+      expect(oneThumb).toEqual([48, 48]);
 
-      // ── R7：图 + 文件混装 ──────────────────────────────────────────
       const mix = await measure(page, '引用两图加文件');
-      expect(mix.stack, '两图 + 文件 ⇒ 图片组走叠卡').not.toBeNull();
-      expect(mix.thumbs).toBe(0);
-      expect(mix.fileChips, '文件 chip 不受叠卡影响').toBe(1);
-
+      expect(mix.thumbs).toBe(2);
+      expect(mix.stack).toBeNull();
+      expect(mix.fileChips).toBe(1);
+      expect(await quoteBlockOf(page, '引用两图加文件').locator('.nf-lightbox, .pop-expand-view, .pill').count()).toBe(0);
       saveReadings(tag, { viewport: vp, three, six, one, mix });
 
-      // ── R4：切图（键盘腿；手机档用 touch 横滑不在此 spec 做，见 R6 注释）────
-      const block3 = quoteBlockOf(page, '引用三张');
-      const view3 = block3.locator('.pop-stack-view');
-      await view3.focus();
-      const f0 = (await measure(page, '引用三张')).frontIndex;
-      await page.keyboard.press('ArrowRight');
-      await page.waitForTimeout(120);
-      const f1 = (await measure(page, '引用三张')).frontIndex;
-      expect(f1, 'ArrowRight 应把下一张顶到 front').toBe((f0 + 1) % 3);
-      await page.keyboard.press('ArrowLeft');
-      await page.waitForTimeout(120);
-      expect((await measure(page, '引用三张')).frontIndex).toBe(f0);
-      // 换前卡后 pill 文案不变（仍是「展开 N」）
-      expect((await measure(page, '引用三张')).pillText).toContain('展开');
-
-      // ── R4b：手机档真触屏横滑翻页（CDP touch → pointer 事件链）──────────
-      if (vp.width < 1000) {
-        const box = await view3.boundingBox();
-        const cx = Math.round(box.x + box.width / 2);
-        const cy = Math.round(box.y + box.height / 2);
-        const cdp = await ctx.newCDPSession(page);
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx, y: cy }] });
-        for (let i = 1; i <= 6; i++) {
-          await cdp.send('Input.dispatchTouchEvent', {
-            type: 'touchMove', touchPoints: [{ x: cx - i * 15, y: cy }],
-          });
-        }
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-        await page.waitForTimeout(200);
-        const afterSwipe = await measure(page, '引用三张');
-        expect(afterSwipe.frontIndex, '真触屏左滑应把下一张顶到 front').not.toBe(f0);
-        await cdp.detach();
-      }
-
-      // ── R5：展开 N 摊平 ────────────────────────────────────────────
-      await block3.locator('.pill').click();
-      await page.waitForTimeout(650);
-      const expanded = await measure(page, '引用三张');
-      expect(expanded.expandShown, '点「展开 N」后展开列必须上屏').toBe(true);
-      expect(expanded.expandRows, '展开态 = 一张一行').toBe(3);
-      expect(expanded.pillText).toContain('收起');
-      const distinctHeights = new Set(expanded.expandRowHeights);
-      expect(distinctHeights.size, '展开态每行按自身比例（行高不全相同）').toBeGreaterThan(1);
-      // 展开行宽 = 折叠卡脸宽（宿主尺度同源）：不横向顶出引用块 / 视口
-      for (const w of expanded.expandRowWidths) expect(w).toBeLessThanOrEqual(three.block.w + 0.5);
-      await block3.locator('.pill').click();
-      await page.waitForTimeout(650);
-      const recollapsed = await measure(page, '引用三张');
-      expect(recollapsed.expandShown).toBe(false);
-      expect(recollapsed.pillText).toContain('展开');
-
-      // ── R6：点图进灯箱 + 不误触发引用跳转 ───────────────────────────
-      await block3.locator('.pop-stack-view').click({ position: { x: 30, y: 30 } });
-      await page.waitForTimeout(400);
-      const opened = await page.evaluate(() => ({
-        lightbox: !!document.querySelector('.nf-lightbox.nf-lightbox--media.on'),
-        jumped: !!document.querySelector('.quote-target-flash'),
-      }));
-      expect(opened.lightbox, '点折叠卡脸必须仍能进灯箱看大图').toBe(true);
-      expect(opened.jumped, '开件不得升级成「跳回原消息」').toBe(false);
-      if (EVID) await page.screenshot({ path: join(EVID, `${TAG}-${vp.width}-lightbox.png`) });
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(200);
-
-      if (EVID) {
-        await page.evaluate(() => { const c = document.getElementById('chat'); if (c) c.scrollTop = 0; });
-        await page.waitForTimeout(150);
-        await page.screenshot({ path: join(EVID, `${TAG}-${vp.width}-stack.png`), fullPage: false });
-        await block3.locator('.pill').click();
-        await page.waitForTimeout(700);
-        await page.screenshot({ path: join(EVID, `${TAG}-${vp.width}-expanded.png`), fullPage: false });
-        await block3.locator('.pill').click();
-        await page.waitForTimeout(500);
-      }
+      if (EVID) await page.screenshot({ path: join(EVID, `${TAG}-${vp.width}-quote-thumbnails.png`), fullPage: false });
       await ctx.close();
     });
   }
