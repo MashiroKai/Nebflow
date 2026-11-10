@@ -163,12 +163,15 @@ async function openSettings(page, { mobile }) {
   if (mobile) {
     await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
     await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="workbench"]')?.classList.contains('live'));
-    await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
+    await page.locator('.mobile-page[data-page="workbench"] [data-hero-settings="1"]').click();
     await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="settings"]')?.classList.contains('live'));
   } else {
     await page.click('#settings-btn');
   }
-  await page.waitForSelector('#model-chain-section-body .mp-row', { timeout: 15000 });
+  const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
+  if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
+  await page.waitForSelector('#model-chain-section-body .mp-row', { state: 'attached', timeout: 15000 });
+  await page.waitForSelector('#model-chain-section-body .mp-row', { state: 'visible', timeout: 10000 });
   await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'center' }));
   await sleep(350);
 }
@@ -181,12 +184,15 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   await openSettings(page, { mobile });
 
   // ③ 标题
-  const title = (await page.locator('#model-chain-section > .settings-section-title').textContent() || '').trim();
-  ok(tag, '③ 标题 = 模型选择顺序 / Model selection order', title === TITLES[locale], `title="${title}"`);
+  const title = (await page.locator('#model-chain-section > .set-card-title').textContent() || '').trim();
+  const disclosureTitle = (await page.locator('#model-chain-section [data-settings-disclosure="models"]').textContent() || '').trim();
+  const summary = await page.locator('#model-chain-section [data-settings-disclosure="models"]').textContent();
+  ok(tag, '③ 标题 = 模型（按会话类别） / Model (per session class)', title === TITLES[locale] && disclosureTitle.startsWith(TITLES[locale]), `title="${title}" disclosure="${disclosureTitle}"`);
+  ok(tag, '④ 摘要显示可配置会话类别数量', (summary || '').includes('5'), `summary="${summary}"`);
 
   // ④ 说明一行内：高度 = 单行行高，且横向不溢出（无 ellipsis 截断）
   const hint = await page.evaluate(() => {
-    const el = document.querySelector('#model-chain-section > .cfg-hint');
+    const el = document.querySelector('#model-chain-disclosure > .set-row-hint');
     if (!el) return null;
     const cs = getComputedStyle(el);
     const range = document.createRange();
@@ -214,7 +220,7 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     return {
       refresh: q('.mp-refresh'), manualToggle: q('.mp-manual-toggle'),
       manualInput: q('.mp-manual'), clear: q('.mp-clear'),
-      buttons: [...sec.querySelectorAll('button')].map((b) => b.textContent.trim()),
+      buttons: [...sec.querySelectorAll('#model-chain-section-body button')].map((b) => b.textContent.trim()),
       addRowChildren: addRow ? [...addRow.children].map((c) => c.className) : [],
       addSelect: addRow?.querySelector('.mp-add-select')?.options?.[0]?.textContent?.trim() || '',
       addOptions: addRow?.querySelector('.mp-add-select')?.options?.length || 0,
@@ -256,12 +262,15 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     return {
       zhTitle: zh['settings.modelChainTitle'], enTitle: en['settings.modelChainTitle'],
       zhHint: zh['settings.modelChainSectionHint'], enHint: en['settings.modelChainSectionHint'],
+      zhSummary: zh['settings.modelsSummary'], enSummary: en['settings.modelsSummary'],
       zhLeak: retired.filter((k) => k in zh), enLeak: retired.filter((k) => k in en),
       zhCount: Object.keys(zh).length, enCount: Object.keys(en).length,
     };
   }, RETIRED_KEYS);
   ok(tag, 'i18n 双语标题齐', dict.zhTitle === TITLES['zh-CN'] && dict.enTitle === TITLES.en,
     `zh="${dict.zhTitle}" en="${dict.enTitle}"`);
+  ok(tag, '渐进披露摘要双语键齐', dict.zhSummary === '{n} 类会话模型' && dict.enSummary === '{n} session classes',
+    `zh="${dict.zhSummary}" en="${dict.enSummary}"`);
   ok(tag, 'i18n 双语说明齐', !!dict.zhHint && !!dict.enHint, `zh="${dict.zhHint}" en="${dict.enHint}"`);
   ok(tag, 'i18n 退役键零残留（zh/en 双向）', dict.zhLeak.length === 0 && dict.enLeak.length === 0,
     JSON.stringify({ zhLeak: dict.zhLeak, enLeak: dict.enLeak }));
@@ -293,6 +302,8 @@ async function functionalLeg(browser) {
   await openSettings(page, { mobile: false });
 
   // 删除末行：链 [kimi, cmdcode] 保留 → PUT
+  const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
+  if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
   await page.click('#model-chain-section-body .mp-row[data-idx="2"] .mp-remove');
   await page.waitForFunction(() => document.querySelectorAll('#model-chain-section-body .mp-row').length === 2, null, { timeout: 5000 });
   await page.waitForFunction(() => document.querySelector('#model-chain-section-body .mp-row[data-idx="1"] .mp-model')?.textContent?.includes('kimi-for-coding'), null, { timeout: 5000 });
