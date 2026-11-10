@@ -10,15 +10,11 @@
 //   §T2 hover 气泡兜底腿（词条不在载荷）：载荷无 terms[] 时 hover 打
 //       GET /api/wiki/term（恰 1 次，缓存后不重复）→ 同形态气泡；未注册（404
 //       面）→ 不出泡不报错；
-//   §T3 点击深链跳转：点词条引用 → 开目标文档 → applyJumpAnchor 滚动 +
-//       .nf-jump-flash 高亮落在词条定义段（复用既有腿零新机制）；
-//   §T4 返回原文档钮（左上角）：跳转后 #canvas-refback-btn 出现在左上角；
-//       单击回原页面原位置（来源页 scrollTop 保真）；来源页签关闭 ⇒ 钮隐；
-//       手动打开的页签 ⇒ 钮不出现（触发条件面）；
+//   §T3 点击预览：桌面词条点击显示定义弹层，不生成导航事件；
+//   §T4 返回按钮边界：预览不创建目标页签或引用返回按钮；
 //   §T5 非词条普通文档级 wikilink 不挂气泡（克制口径 §5.2）；
-//   §T6 移动端（(hover:none)）轻点即开气泡、再点跳转（气泡内点击 + 链接二次
-//       点击两腿）；
-//   §T7 亮暗双主题截图（气泡 / 高亮 / 返回钮，SHOTS_DIR）；
+//   §T6 iPhone 13 隔离模拟触屏下的轻点预览、视口约束、关闭/焦点、长定义滚动；
+//   §T7 亮暗主题截图（桌面与模拟触屏弹层，SHOTS_DIR）；
 //   R0 全流程 console 零错误（每个用例尾部断言）。
 
 import { test, expect, devices } from '@playwright/test';
@@ -195,7 +191,11 @@ async function openSourceDoc(page) {
       content, absPath: '/w/alpha/a.md',
     } }));
   }, FILES['/w/alpha/a.md'].content);
-  await page.waitForSelector('.canvas-md-viewer', { timeout: 10000 });
+  await page.waitForSelector('.canvas-md-viewer', { state: 'attached', timeout: 10000 });
+  if (await page.evaluate(() => window.matchMedia('(hover: none)').matches)) {
+    await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click();
+  }
+  await page.waitForSelector('.canvas-md-viewer', { state: 'visible', timeout: 10000 });
   // 词条面就绪（F3 消解 pass 完成的可观察面：术语链接带 nf-wikilink-term）
   await page.waitForSelector('a.nf-wikilink-term', { timeout: 10000 });
   // 版面落定再 hover：开页初期字体/图标仍在搬运，链接会位移——鼠标落点下的
@@ -213,27 +213,6 @@ async function openSourceDoc(page) {
     return r1 !== 'pending' && r1 === r2;
   }), { timeout: 10000 }).toBe(true);
 }
-
-/** 打开目标词条文档（真 readFile 腿 mock 应答）并等高亮落点 + 滚动静止。 */
-async function openGlossaryViaReadFile(page) {
-  await page.waitForFunction(() => document.querySelectorAll('.canvas-md-viewer').length >= 2, null, { timeout: 10000 });
-  await page.waitForFunction(() => {
-    const el = document.querySelector('.canvas-md-viewer .nf-jump-flash');
-    return el && (el.textContent || '').includes('GCR');
-  }, null, { timeout: 8000 });
-  // smooth scrollTo 落定（scrollHeadingToTop 走 smooth 档，落定后离顶）
-  await page.waitForTimeout(900);
-  const landed = await page.evaluate(() => {
-    const panes = [...document.querySelectorAll('.canvas-tab-pane.active .canvas-md-scroll')];
-    return panes.length ? panes[0].scrollTop : -1;
-  });
-  expect(landed, '定义段滚动定位（块锚 → 行号映射，落点后已离顶）').toBeGreaterThan(0);
-}
-
-const activeTabId = (page) => page.evaluate(() => {
-  const pane = document.querySelector('.canvas-tab-pane.active');
-  return pane ? pane.dataset.tabId : null;
-});
 
 test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
@@ -254,7 +233,7 @@ test.describe('§T1 hover 气泡主路径（载荷命中零请求）', () => {
     // 一个蓝色的文字，然后不需要显示文档名」——气泡的显示字符串只剩词条名 + 定义，
     // 所在文档整体下沉到正文尾部的词条索引块（markdown.js renderTermIndex）。
     expect(await tip.locator('.td').textContent(), '气泡不再显示文档名').not.toContain('词汇表');
-    expect(await tip.locator('.td').textContent(), '跳转提示').toContain('点击跳转');
+    expect(await tip.locator('.td').textContent(), '预览不显示导航提示').toBe('');
     const index = page.locator('.canvas-md-viewer .nf-term-index');
     await expect(index, '词条索引块（本文引用的词条所在文档）').toHaveCount(1);
     expect(await index.locator('summary').textContent(), 'summary = 词条索引（N）').toBe('词条索引（1）');
@@ -318,94 +297,41 @@ test.describe('§T2 hover 气泡兜底腿（词条不在载荷 → GET /api/wiki
   });
 });
 
-test.describe('§T3 点击深链跳转 + 高亮', () => {
+test.describe('§T3 点击词条显示预览', () => {
   for (const scheme of ['light', 'dark']) {
-    test(`${scheme} · 点 [[GCR]] → 开词汇表 → 滚动定位 + nf-jump-flash 落在定义段`, async ({ browser }) => {
+    test(`${scheme} · 点 [[GCR]] 显示释义，不导航`, async ({ browser }) => {
       const { context, page, pageErrors } = await boot(browser, { colorScheme: scheme });
       await openSourceDoc(page);
-      // 带锚产物在 dataset（F1 消解链）；点击腿产 anchor={kind:block,id:gcr}+refSourceTab
+      // Click-preview contract: activating a term link shows its definition without navigation.
       const openBefore = await page.evaluate(() => window.__openEvents.length);
       await page.locator('a.nf-wikilink-term', { hasText: 'GCR' }).click();
-      await page.waitForFunction((n) => window.__openEvents.length > n, openBefore, { timeout: 5000 });
-      // 取跳转载荷（带 anchor 的那一跳）——readFile 应答再派发的 open 无 anchor
-      const ev = (await page.evaluate(() => window.__openEvents)).find(e => e.absPath === '/w/alpha/glossary.md' && e.anchor);
-      expect(ev, '词条跳转载荷在场').toBeTruthy();
-      expect(ev.anchor, '词条命中落点 = 定义块锚（F2）').toEqual({ kind: 'block', id: 'gcr' });
-      expect(ev.refSourceTab, '来源页签 id（F5 记账面）').toBe('file:/w/alpha/a.md');
-      // 真渲染链：readFile mock 应答 → 查看器 → applyJumpAnchor 滚动+高亮
-      await openGlossaryViaReadFile(page);
-      await page.screenshot({ path: join(SHOTS_DIR, `term-jump-highlight-${scheme}.png`) });
+      const tip = page.locator('.nf-term-tip');
+      await expect(tip).toBeVisible();
+      expect(await tip.locator('.tt').textContent()).toBe('GCR');
+      expect(await tip.locator('.ts').textContent()).toContain('银河宇宙线');
+      expect(await page.evaluate(() => window.__openEvents.length), '点击预览不导航').toBe(openBefore);
+      expect(await page.locator('.canvas-md-viewer').count()).toBe(1);
+      await page.screenshot({ path: join(SHOTS_DIR, `term-popover-${scheme}.png`) });
       expect(pageErrors).toEqual([]);
       await context.close();
     });
   }
 });
 
-test.describe('§T4 返回原文档钮（左上角；单击回原页面原位置）', () => {
-  test('跳转后钮在左上角；单击回来源页签且 scrollTop 保真；手动打开无钮', async ({ browser }) => {
+test.describe('§T4 返回按钮不随预览出现', () => {
+  test('词条预览不创建返回按钮或目标页签', async ({ browser }) => {
     const { context, page, pageErrors } = await boot(browser);
     await openSourceDoc(page);
-    // 手动打开态（此刻无引用跳转来历）：钮不存在
-    expect(await page.locator('#canvas-refback-btn').count(), '手动打开页签不出现返回钮').toBe(0);
-    // 来源页滚出非零阅读位，但把词条链接留在视口内——若链接被滚出视口，
-    // Playwright click 的 scrollIntoViewIfNeeded 会先把滚动盒改写（真实用户
-    // 鼠标点击从不滚动；那不是产品行为），阅读位断言就失去意义。
-    const srcScroll = await page.evaluate(() => {
-      const sc = document.querySelector('.canvas-tab-pane.active .canvas-md-scroll');
-      const a = document.querySelector('a.nf-wikilink-term');
-      const delta = a.getBoundingClientRect().top - sc.getBoundingClientRect().top - sc.clientHeight / 3;
-      sc.scrollTop = Math.max(80, sc.scrollTop + delta);
-      sc.dispatchEvent(new Event('scroll'));
-      return sc.scrollTop;
-    });
-    expect(srcScroll, '非零阅读位且链接仍在视口内').toBeGreaterThan(0);
-    await expect(page.locator('a.nf-wikilink-term', { hasText: 'GCR' })).toBeVisible();
-    // 词条引用跳转（链接已在视口内，click 协议步不会改滚动盒）
+    expect(await page.locator('#canvas-refback-btn').count()).toBe(0);
+    const openBefore = await page.evaluate(() => window.__openEvents.length);
     await page.locator('a.nf-wikilink-term', { hasText: 'GCR' }).click();
-    await openGlossaryViaReadFile(page);
-    expect(await activeTabId(page), '当前页签 = 词汇表').toBe('file:/w/alpha/glossary.md');
-    const btn = page.locator('#canvas-refback-btn');
-    await expect(btn).toBeVisible();
-    expect(await btn.textContent(), '钮文案（i18n）').toContain('返回原文档');
-    // 左上角落点（作者令 2026-10-29 11:49）：钮左上角坐标在面板左上角区
-    const geom = await page.evaluate(() => {
-      const b = document.getElementById('canvas-refback-btn').getBoundingClientRect();
-      const panel = document.getElementById('canvas-panel').getBoundingClientRect();
-      return { btnTop: b.top, btnLeft: b.left, panelTop: panel.top, panelLeft: panel.left };
-    });
-    expect(geom.btnTop - geom.panelTop, '左上角：贴面板顶行').toBeLessThan(30);
-    expect(geom.btnLeft - geom.panelLeft, '左上角：贴面板左缘').toBeLessThan(30);
-    await page.screenshot({ path: join(SHOTS_DIR, 'term-back-button.png') });
-    // 单击回原页面原位置
-    await btn.click();
-    await expect.poll(async () => activeTabId(page), { timeout: 5000 })
-      .toBe('file:/w/alpha/a.md');
-    const backScroll = await page.evaluate(() =>
-      document.querySelector('.canvas-tab-pane.active .canvas-md-scroll').scrollTop);
-    expect(backScroll, '来源页 scrollTop 保真（pane 切换不销毁阅读位）').toBe(srcScroll);
-    await expect(btn, '回到来源页（无引用来历）→ 钮隐').toBeHidden();
+    await expect(page.locator('.nf-term-tip')).toBeVisible();
+    expect(await page.evaluate(() => window.__openEvents.length), '点击预览不导航').toBe(openBefore);
+    await expect(page.locator('#canvas-refback-btn')).toHaveCount(0);
     expect(pageErrors).toEqual([]);
     await context.close();
   });
 
-  test('来源页签关闭 ⇒ 钮即时隐去', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser);
-    await openSourceDoc(page);
-    await page.locator('a.nf-wikilink-term', { hasText: 'GCR' }).click();
-    await openGlossaryViaReadFile(page);
-    await expect(page.locator('#canvas-refback-btn')).toBeVisible();
-    // 关闭来源页签（a.md）
-    await page.evaluate(() => {
-      const tabs = document.querySelectorAll('#canvas-tab-bar .canvas-tab');
-      const aTab = [...tabs].find(t => t.dataset.tabId === 'file:/w/alpha/a.md');
-      aTab.querySelector('.canvas-tab-close').click();
-    });
-    await page.waitForTimeout(400);  // 关闭动画 + teardownTab finalize
-    await expect(page.locator('#canvas-refback-btn')).toBeHidden({ timeout: 5000 });
-    expect(await page.locator('#canvas-refback-btn').count(), 'DOM 已移除').toBe(0);
-    expect(pageErrors).toEqual([]);
-    await context.close();
-  });
 });
 
 test.describe('§T5 非词条普通文档级 wikilink 不挂气泡（克制口径 §5.2）', () => {
@@ -424,57 +350,62 @@ test.describe('§T5 非词条普通文档级 wikilink 不挂气泡（克制口�
   });
 });
 
-test.describe('§T6 移动端（(hover:none)）轻点即开气泡、再点跳转', () => {
+test.describe('§T6 移动端词条点击小弹层', () => {
   const iPhone = devices['iPhone 13'];
 
-  // 手机层 boot 抑制闸（layoutController watchBootAutoOpen）：首次用户交互前
-  // 出现的 canvas-open 一律收起——先做一次无净副作用的真实交互（左列键开合）
-  // 再开文档，卡片层才守得住。
-  async function touchMobileLayer(page) {
-    const head = page.locator('.mh-dd-hd').first();
-    await head.click();
-    await head.click();
+  for (const scheme of ['light', 'dark']) {
+    test(`${scheme} · 词条点击显示视口内小弹层，不导航、不切换手机页面`, async ({ browser }) => {
+      const { context, page, pageErrors } = await boot(browser, { deviceDescriptor: iPhone, colorScheme: scheme });
+      expect(await page.evaluate(() => window.matchMedia('(hover: none)').matches), '(hover:none) 环境成立').toBe(true);
+      await openSourceDoc(page);
+      const ev0 = await page.evaluate(() => window.__openEvents.length);
+      const nav0 = await page.evaluate(() => JSON.stringify(window.__nfMobileNav?.stack || []));
+      const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
+      await link.tap();
+      const tip = page.locator('.nf-term-tip');
+      await expect(tip).toBeVisible({ timeout: 5000 });
+      expect(await tip.locator('.tt').textContent()).toBe('GCR');
+      expect(await tip.getAttribute('class')).not.toContain('touch');
+      const geom = await tip.evaluate(el => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height, vw: innerWidth, vh: innerHeight };
+      });
+      expect(geom.width).toBeLessThan(geom.vw);
+      expect(geom.height).toBeLessThan(geom.vh);
+      expect(geom.x).toBeGreaterThanOrEqual(0);
+      expect(geom.y).toBeGreaterThanOrEqual(0);
+      expect(geom.x + geom.width).toBeLessThanOrEqual(geom.vw);
+      expect(geom.y + geom.height).toBeLessThanOrEqual(geom.vh);
+      expect(await page.evaluate(n => window.__openEvents.length, ev0), '打开弹层不导航').toBe(ev0);
+      expect(await page.evaluate(() => JSON.stringify(window.__nfMobileNav?.stack || [])), '导航栈不变').toBe(nav0);
+      await page.screenshot({ path: join(SHOTS_DIR, `term-popover-mobile-${scheme}.png`) });
+      await tip.evaluate(el => el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+      await tip.click();
+      expect(await page.evaluate(n => window.__openEvents.length, ev0), '点弹层本身仍不导航').toBe(ev0);
+      await page.locator('body').tap({ position: { x: 8, y: 8 } });
+      await expect(tip).toBeHidden();
+      expect(pageErrors).toEqual([]);
+      await context.close();
+    });
   }
 
-  test('首击开泡不导航；气泡内点击跳转', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser, { deviceDescriptor: iPhone });
-    await touchMobileLayer(page);
-    expect(await page.evaluate(() => window.matchMedia('(hover: none)').matches), '(hover:none) 环境成立').toBe(true);
+  test('超长定义在弹层内滚动；Escape 关闭并还焦', async ({ browser }) => {
+    const { context, page, pageErrors } = await boot(browser, { deviceDescriptor: iPhone, colorScheme: 'dark' });
     await openSourceDoc(page);
-    const ev0 = await page.evaluate(() => window.__openEvents.length);
     const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
-    // 首击：开泡、零导航
+    await link.evaluate(a => {
+      a.dataset.wikiResolved = JSON.stringify({ term: { name: 'GCR', definition: '长定义。'.repeat(500) } });
+      const style = document.createElement('style');
+      style.textContent = '.nf-term-tip { max-height: 120px !important; }';
+      document.head.appendChild(style);
+    });
     await link.tap();
     const tip = page.locator('.nf-term-tip');
     await expect(tip).toBeVisible({ timeout: 5000 });
-    expect(await tip.getAttribute('class'), '触屏面 .touch（气泡可点）').toContain('touch');
-    expect(await tip.locator('.tt').textContent()).toBe('GCR');
-    expect(await page.evaluate((n) => window.__openEvents.length, ev0), '首击不导航').toBe(ev0);
-    await page.screenshot({ path: join(SHOTS_DIR, 'term-tap-mobile.png') });
-    // 气泡内点击 = 跳转
-    await tip.click();
-    await page.waitForFunction((n) => window.__openEvents.length > n, ev0, { timeout: 5000 });
-    const ev = (await page.evaluate(() => window.__openEvents)).find(e => e.absPath === '/w/alpha/glossary.md' && e.anchor);
-    expect(ev, '词条跳转载荷在场').toBeTruthy();
-    expect(ev.anchor).toEqual({ kind: 'block', id: 'gcr' });
-    expect(pageErrors).toEqual([]);
-    await context.close();
-  });
-
-  test('链接二次点击 = 跳转（首击只开泡）', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser, { deviceDescriptor: iPhone });
-    await touchMobileLayer(page);
-    await openSourceDoc(page);
-    const ev0 = await page.evaluate(() => window.__openEvents.length);
-    const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
-    await link.tap();
-    await expect(page.locator('.nf-term-tip')).toBeVisible({ timeout: 5000 });
-    expect(await page.evaluate((n) => window.__openEvents.length, ev0), '首击仍零导航').toBe(ev0);
-    await link.tap();   // 二击：气泡已开 → 落回深链跳转腿
-    await page.waitForFunction((n) => window.__openEvents.length > n, ev0, { timeout: 5000 });
-    const ev = (await page.evaluate(() => window.__openEvents)).find(e => e.absPath === '/w/alpha/glossary.md' && e.anchor);
-    expect(ev, '词条跳转载荷在场').toBeTruthy();
-    expect(ev.anchor).toEqual({ kind: 'block', id: 'gcr' });
+    expect(await tip.evaluate(el => el.scrollHeight > el.clientHeight), '内容可在弹层内滚动').toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(tip).toBeHidden();
+    expect(await link.evaluate(el => el === document.activeElement), '焦点返回触发词条').toBe(true);
     expect(pageErrors).toEqual([]);
     await context.close();
   });

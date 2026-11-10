@@ -122,6 +122,7 @@ export function showPanel(tab) {
  */
 export function openSettingsPanel() {
   const ov = document.getElementById('settings-overlay');
+  window.__settingsDisclosure = { providers: false, models: false };
   ov?.classList.add('on');
   // B4：设置面板入层栈（本壳有 6 个打开入口：活动栏 / 命令面板 / 会话头 / 移动层，
   // 全部汇到本函数 ⇒ 单点接线）。Esc 仍由本模块既有 document keydown 收口。
@@ -134,6 +135,7 @@ export function openSettingsPanel() {
 /** Close the Settings modal and stop its periodic NebLink refresh. */
 export function closeSettingsPanel() {
   const ov = document.getElementById('settings-overlay');
+  window.__settingsDisclosure = { providers: false, models: false };
   if (ov) popLayer(ov); // B4：出栈 + 回焦
   ov?.classList.remove('on');
   scheduleDraft = null;   // #334: closing the panel discards unsaved edits
@@ -833,6 +835,11 @@ export function renderSettings() {
   // Build language selector options
   const locales = getAvailableLocales();
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
+  const llmProviders = cfg.llm?.providers || {};
+  const providerCount = Object.values(llmProviders).filter(Boolean).length
+    + Object.keys(cfg.imagegen?.providers || {}).length
+    + Object.keys(cfg.jev?.providers || {}).length;
+  const modelCount = ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].length;
   const langOpts = locales.map(code =>
     `<option value="${code}" ${code === getLocale() ? 'selected' : ''}>${localeLabels[code] || code}</option>`
   ).join('');
@@ -848,6 +855,12 @@ export function renderSettings() {
   // 点胶囊 = App 内个人资料面；点头像 = 换头像流程 / 未登录登录卡（activityBar
   // 既有委托统一承担，本文件不绑任何点击）。
   const mobileLayer = typeof document !== 'undefined' && document.body.classList.contains('mobile-layer');
+  // settings-progressive-disclosure 批：供应商与模型只在每次新开设置时折叠；
+  // renderSettings 会因 WS echo 重建 DOM，展开状态需跨同一设置会话保留。
+  const settingsDisclosure = window.__settingsDisclosure || (window.__settingsDisclosure = {
+    providers: false,
+    models: false,
+  });
   // ── settings-ios-rows 批（2026-11-06 作者令「能点击下一个面板的样式都统一成苹果的
   // 这种样式 然后 底部的重启服务去掉 并且这些可点击的按钮 布局规整一点」）──────────
   // 全页结构单点 = js/settingsRows.js（setCard / setGroup / setNavRow / setRow）；
@@ -895,22 +908,25 @@ export function renderSettings() {
       )}` })}
     ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
     ${setCard({ title: t('settings.providers'), id: 'provider-section', body: `
-      <!-- 服务商面板（provider-add-tabs 批 2026-11-06 作者令：「在『添加服务商』
-           顶部加几个标签，支持选择添加比如生图模型的服务商等…我们添加的模型都会
-           集中显示在同一个面板里（即现在的 LLM 服务商 / LLM Provider 面板）」）。
-           本节 = 全站**唯一**的服务商面：类型标签（LLM / Image generation /
-           Jev）+ 一张统一列表（每行带类型徽标）+ 一套表单骨架。LLM / JeV / 生图
-           三套旧入口整件退役，零空壳。唯一绘制点 = sidebar/providerPanel.js。 -->
-      <div id="${PROVIDER_PANEL_HOST_ID}"></div>` })}
-    <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
-    ${setCard({ title: t('settings.modelChainTitle'), id: 'model-chain-section', body: `
-      <!-- 模型回退链节（配置面风格统一批②，2026-10-31 作者令：/model 里的回退
-           顺序调整页在设置页原样再放一份，不用打 /model；两份共享同一份状态/
-           保存通道，改哪边都即时同步）。内容面 = modelPanel.js 的
-           buildNebulaChainFace 同款（seed 态 / 拖拽排序链编辑器，逐动作即存）；
-           /model 原入口保留不动（上方 model-chain-hint 照旧指路）。 -->
-      <div class="set-row-hint">${t('settings.modelChainSectionHint')}</div>
-      <div id="model-chain-section-body"></div>` })}
+      <button type="button" class="set-disclosure" data-settings-disclosure="providers"
+        aria-expanded="${settingsDisclosure.providers ? 'true' : 'false'}" aria-controls="provider-panel-disclosure">
+        <span>${t('settings.providersSummary', { n: providerCount })}</span><span class="set-disclosure-chevron" aria-hidden="true">›</span>
+      </button>
+      <div id="provider-panel-disclosure" class="set-disclosure-body"${settingsDisclosure.providers ? '' : ' hidden'}>
+        <!-- 服务商面板的类型标签、列表和表单骨架唯一归 sidebar/providerPanel.js。 -->
+        <div id="${PROVIDER_PANEL_HOST_ID}"></div>
+      </div>` })}
+    ${setCard({ title: t('settings.modelChainDisclosureTitle'), id: 'model-chain-section', body: `
+      <button type="button" class="set-disclosure" data-settings-disclosure="models"
+        aria-expanded="${settingsDisclosure.models ? 'true' : 'false'}" aria-controls="model-chain-disclosure">
+        <span>${t('settings.modelsSummary', { n: modelCount })}</span><span class="set-disclosure-chevron" aria-hidden="true">›</span>
+      </button>
+      <div id="model-chain-disclosure" class="set-disclosure-body"${settingsDisclosure.models ? '' : ' hidden'}>
+        <!-- 模型回退链节的状态与保存通道仍单点归 modelPanel.js，/model 同步不变。 -->
+        <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
+        <div class="set-row-hint">${t('settings.modelChainSectionHint')}</div>
+        <div id="model-chain-section-body"></div>
+      </div>` })}
       <!-- 🔴 provider-add-tabs 批（2026-11-06 作者令）：原 Jev 卡（setNavRow
            #jev-advance-toggle + #jev-advance-body）与生图卡（#imagegen-advance-toggle
            + #imagegen-section-wrap）两节随三入口统一整件退役——JeV/生图全部
@@ -966,20 +982,20 @@ export function renderSettings() {
     ` })}`;
 
   paintSettingsIdentity();
+  bindSettingsDisclosure(content);
   bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
-  // 服务商面板装配（provider-add-tabs 批 2026-11-06）：先按手上的配置画首帧
-  // （LLM 面即时可用），再并行拉类型枚举投影 + 生图/JeV 状态投影重画。三份投影
-  // 任一失败 ⇒ 面板顶部显式一行错误，不造假数据、不吞类型。
-  void bindProviderPanel();
+  // 服务商面板装配延至展开时：折叠状态不发投影请求；展开后沿用既有统一面板装配。
+  if (settingsDisclosure.providers) void bindProviderPanel();
   // 模型回退链节：挂载/重挂（与 /model 面板共享状态/保存通道，modelPanel.js
   // 单点；先卸上一任监听再挂，重渲不叠订阅）。
   modelChainUnmount?.();
-  modelChainUnmount = mountModelChainSection(
-    document.getElementById('model-chain-section-body'));
+  modelChainUnmount = settingsDisclosure.models
+    ? mountModelChainSection(document.getElementById('model-chain-section-body'))
+    : () => {};
   // 设置页 apikey 明文回读预取（作者令 2026-10-27「设置里配置的 apikey 直接
   // 显示」）：进页即拉已存 provider key 真值（owner 鉴权单点
   // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
@@ -1160,6 +1176,28 @@ function paintNfCacheUsage(el) {
   el.title = `local ${nfCacheFormatMb(s.buckets.local)}/${nfCacheFormatMb(s.bucketBudgets.local)}` +
     ` · device ${nfCacheFormatMb(s.buckets.device)}/${nfCacheFormatMb(s.bucketBudgets.device)}` +
     ` · server ${nfCacheFormatMb(s.buckets.server)}/${nfCacheFormatMb(s.bucketBudgets.server)}`;
+}
+
+function bindSettingsDisclosure(content) {
+  content.querySelectorAll('[data-settings-disclosure]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.settingsDisclosure;
+      if (key !== 'providers' && key !== 'models') return;
+      const expanded = button.getAttribute('aria-expanded') !== 'true';
+      window.__settingsDisclosure[key] = expanded;
+      button.setAttribute('aria-expanded', String(expanded));
+      const body = document.getElementById(button.getAttribute('aria-controls') || '');
+      if (body) body.hidden = !expanded;
+      if (key === 'providers' && expanded) void bindProviderPanel();
+      if (key === 'models' && expanded) {
+        modelChainUnmount?.();
+        modelChainUnmount = mountModelChainSection(document.getElementById('model-chain-section-body'));
+      } else if (key === 'models') {
+        modelChainUnmount?.();
+        modelChainUnmount = null;
+      }
+    });
+  });
 }
 
 function bindSettingsEvents(content, cfg) {

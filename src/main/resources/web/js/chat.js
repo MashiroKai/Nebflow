@@ -969,7 +969,7 @@ export function finishAgent(agentId) {
 // imported from here — re-export, not redefinition (single source in
 // popArtifacts.js).
 export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow, unifyUserMediaFace, fileIconStyle, extOf } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow, unifyUserMediaFace, fileIconStyle, extOf, buildFileCard, openPopArtifact } from './popArtifacts.js';
 // ui-unification-20261103-askuser-attach（作者令 2026-11-04）：AskUser 卡内附件的
 // 媒体档 = **卡语言标准组件**（叠卡 `.ds-media-stack` 族 / 平面 `.pop-media-flat`）；
 // 预览层 = 灯箱单点。禁在本文件再写第二套媒体卡 / 叠卡 / 预览实现。
@@ -2853,7 +2853,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       countLine.textContent = t('askUser.attachAnswerCount', { n: String(answerAttachments.length) });
       box.appendChild(countLine);
       mountAnsweredBadge(box, answerAttachments.length);
-      renderAskAttachments(box, answerAttachments.map(a => a.path));
+      renderAskAttachments(box, answerAttachments.map(a => a.path), '', { llmQuestion: false });
     }
     questions.forEach((qz, qi) => {
       if (qz && qz.secret === true) {
@@ -3079,7 +3079,7 @@ async function downloadAttachmentFile(path, base) {
  *  @param {HTMLElement} box 卡根（.option-box）
  *  @param {string[]|{path:string}[]} attachments 附件绝对路径清单
  *  @param {string} [originLabel] 来源标签文本（问题摘要腿；缺省回退 requestId 尾段） */
-function renderAskAttachments(box, attachments, originLabel) {
+function renderAskAttachments(box, attachments, originLabel, opts = {}) {
   const atts = Array.isArray(attachments)
     ? attachments.filter(p => typeof p === 'string' ? p.length > 0 : !!(p && p.path))
     : [];
@@ -3126,7 +3126,7 @@ function renderAskAttachments(box, attachments, originLabel) {
     path, base: askAttachmentBasename(path), index: i, kind: itemTypeForFileName(path),
   }));
   items.forEach((item, i) => {
-    const el = item.kind === 'image' ? attachThumbFace(item) : attachFileFace(item);
+    const el = opts.llmQuestion ? attachQuestionFace(item) : (item.kind === 'image' ? attachThumbFace(item) : attachFileFace(item));
     if (i >= ASK_ATTACHMENT_FOLD_AT) el.classList.add('ask-att-folded');
     item.el = el;
     list.appendChild(el);
@@ -3134,6 +3134,32 @@ function renderAskAttachments(box, attachments, originLabel) {
     // 同款文件 chip（原因档 + 重试下载键），只降级本枚。
     probeAttachmentFile(item.path).then(res => { if (res && !res.ok) degradeAskAttachment(item, res.reason); });
   });
+
+  /** LLM 提问卡附件：复用 Pop 文件卡与 Canvas 唯一打开入口。探测在位且成功后才开，
+   *  单卡动作不派下载或 lightbox；权限失败沿既有就地降级 + 重试路径。 */
+  function attachQuestionFace(item) {
+    const activate = async () => {
+      const result = await probeAttachmentFile(item.path);
+      if (!result || !result.ok) { degradeAskAttachment(item, result && result.reason || 'network'); return; }
+      openPopArtifact(item.path, item.base);
+    };
+    const card = buildFileCard({ path: item.path, name: item.base, ext: extOf(item.base) }, {
+      onOpen: activate,
+      trailing: null,
+    });
+    card.classList.add('ask-att-question-card');
+    card.dataset.askAttPath = item.path;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', item.base);
+    card.addEventListener('keydown', e => {
+      if (e.target === card && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        activate();
+      }
+    });
+    return card;
+  }
 
   /** 图片档：输入框同款小缩略图（渲染单源 = renderAttachmentFace 图片档）。
    *  点击 = 灯箱单点（`path` 在 ⇒ 灯箱内另给 Canvas 次级入口）；缩略帧字节与
@@ -3381,7 +3407,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     // 的 options 区（`showOptions` 内层）原样不动 ⇒ dirPicker 路径
     // (ProjectTool.scala，原 ProjectCreateTool.scala:425) 不受影响、免回归。
     // showOptions 同步完成 `container.appendChild(box)` ⇒ 此处 box 已在 DOM 内。
-    renderAskAttachments(bubble.querySelector('.option-box'), attachments, askAttOriginLabel(items, requestId));
+    renderAskAttachments(bubble.querySelector('.option-box'), attachments, askAttOriginLabel(items, requestId), { llmQuestion: true });
     // 感知域增强（mail-perception-impl 批）：OTP 单码片 + 感知草稿快照卡。
     // 单一可选钩子——perception.js 未装载（或未注册）时恒为 no-op，本路径与
     // 改前逐字节同行为；钩子自身零抛出（实现侧 self-contained）。答复由
@@ -3394,9 +3420,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     console.error('[askUser] render failed:', e);
     bubble.textContent = t('chat.failedRender');
   }
-  // Persisted entry carries the source-label fields (D6 批 F1) so the badge
-  // survives localStorage restore / interactive re-render (main.js:1684), plus
-  // the top-level attachment list (本批) so a replayed/re-rendered card keeps it.
+  // Persisted entry carries the question attachment list with its originating AskUser row.
   return {
     type: 'askUser', items, requestId,
     ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
@@ -3519,7 +3543,7 @@ export function closeAskUserCard(sessionId, requestId, note) {
  *  🔴 落「无作答记录」的方向 = 「未作答」而非「已作答」：宁可让一张其实已答过的卡
  *  显示待定（重放腿/作答链会纠正），也不许让一张真 pending 卡被画成已答（那正是
  *  重放腿去重判据被击穿、双开首卡恒死的成因）。 */
-export function renderAskUserHistory(bubble, items, answerText, requestId, attachments, answerAttachments) {
+export function renderAskUserHistory(bubble, items, answerText, requestId, attachments, answerAttachments, source) {
   if (!Array.isArray(items) || items.length === 0) return;
   try {
     // Ghost seat (askuser-hybrid 重皮): history-replay twin of renderAskUser —
@@ -3540,7 +3564,7 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
   // 调用 —— 🔴 经 `.option-box` 定位、插位由 `renderAskAttachments` 自身决定
   // （卡内 `.option-btn-row` 之前），本函数不新开第二套开法 / 不新增模块 / 不新增 CSS。
   // 缺席或空列表 ⇒ 函数内早退 ⇒ 历史卡形态与改前逐字节同。
-  renderAskAttachments(box, attachments, askAttOriginLabel(items, requestId));
+  renderAskAttachments(box, attachments, askAttOriginLabel(items, requestId), { llmQuestion: true });
   // askuser-dragdrop 批（2026-10-19，批 #551）：**作答**附件的只读面——只在确有
   // 作答（非取消 / 非「无作答记录」）时渲染：徽标（已回答 · 附 N 个文件）+
   // renderAskAttachments 同一渲染器的只读行。判据 = answerText 为真且非取消哨兵
@@ -3551,7 +3575,7 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
   const cancelled = answerText === '__cancelled__';
   if (answerText && !cancelled && answerAtts.length) {
     mountAnsweredBadge(box, answerAtts.length);
-    renderAskAttachments(box, answerAtts.map(a => a.path), askAttOriginLabel(items, requestId));
+    renderAskAttachments(box, answerAtts.map(a => a.path), askAttOriginLabel(items, requestId), { llmQuestion: false });
   }
   // 单一判据的形态锚（`sameAskCards` ②）：这张卡来自历史恢复，不是 live 卡。
   // 属性不进 innerHTML ⇒ 与 live 卡的逐字节 parity 断言（history-replay-cards.spec）

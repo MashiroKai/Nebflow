@@ -3928,30 +3928,28 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wg-tip.para .td { color: var(--color-frame-text-dim, var(--wg-muted)); }
 
-/* ── 词条 hover 气泡（词条引用批 batch 2, F3/F4）──────────────────────
-   文档阅读面词条引用（[[词条]] 短形）的悬停摘要卡：词条名 + 定义（≤280 字，
-   6 行截断）+ 所在文档 + 跳转提示。材质 = 全站 frosted token（--glass-bg /
-   --glass-blur saturate(1.4) / --glass-border / --frost-shadow，sapphire.css
-   单源，亮暗双主题随 prefers-color-scheme）——与 wg-tip 同族不同源（wg-tip
-   挂图谱 pane 的 --wg-* 作用域，本卡挂 body 级全局 token）。桌面
-   pointer-events:none 不挡点击（点击 = 深链跳转）；触屏面加 .touch 翻 auto
-   ——移动无 hover，「轻点即开气泡，气泡内再点跳转」（markdown.js
-   termTapExpand / 气泡 click 腿）。fixed 定位 = 跨滚动容器零漂移。 */
+/* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。 */
 .nf-term-tip {
   position: fixed;
   z-index: 900;
   display: none;
-  max-width: 340px;
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
   border-radius: var(--ds-radius-xl);
   padding: var(--ds-space-block-y) 14px;
   box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
   color: var(--color-frame-text-bright, var(--color-text));
-  pointer-events: none;
+  pointer-events: auto;
+  overflow-wrap: anywhere;
   cursor: default;
 }
-.nf-term-tip.touch { pointer-events: auto; cursor: pointer; }
+.nf-term-tip.interactive { pointer-events: auto; }
 /* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
    标题 = S 档 strong（12/600/1.45）· 正文 = H 档（12/400/1.45/muted，修前
    `line-height: 1.55` 是裸值 = 第六把行高尺，收进 --cv-hint-lh-h）·

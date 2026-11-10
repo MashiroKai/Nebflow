@@ -269,6 +269,39 @@
    内收一个 chevron 盒宽（20）即与上排 chevron 盒左缘同 x。 */
 .set-row .set-row-ctrl .set-btn { margin-right: var(--set-chevron-align-gap); }
 
+/* ── 渐进披露摘要行（供应商 / 模型；内容在原卡内展开）────────────────────── */
+.set-disclosure {
+  width: 100%;
+  min-height: var(--set-row-h);
+  padding: var(--set-row-pad-y) var(--set-row-pad-x);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  border: 0;
+  background: transparent;
+  color: var(--ds-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.set-disclosure:hover { background: color-mix(in srgb, var(--ds-text) 4%, transparent); }
+.set-disclosure:focus-visible {
+  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
+  outline-offset: -2px;
+}
+.set-disclosure-chevron {
+  flex: 0 0 auto;
+  color: var(--ds-text-muted);
+  transition: transform var(--dur-2) ease;
+}
+.set-disclosure[aria-expanded="true"] .set-disclosure-chevron { transform: rotate(90deg); }
+.set-disclosure-body { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
+.set-disclosure-body[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .set-disclosure-chevron { transition: none; }
+}
+
 /* ── 折叠体（原地展开 / 配置下钻的内容面）────────────────────────────────── */
 .set-collapse-body { display: block; padding-bottom: var(--ds-space-2); }
 .set-collapse-body[hidden] { display: none; }
@@ -300,6 +333,12 @@
   body.mobile-layer .set-nav,
   body.mobile-layer .set-row {
     /* 与 mf-hub-row 同一条热区表达式（44 触控下限，工作台行族实测 50 档）。 */
+    min-height: max(50px, var(--mrow));
+    font-size: var(--mfs-body);
+    padding-left: var(--mpad-x);
+    padding-right: var(--mpad-x);
+  }
+  body.mobile-layer .set-disclosure {
     min-height: max(50px, var(--mrow));
     font-size: var(--mfs-body);
     padding-left: var(--mpad-x);

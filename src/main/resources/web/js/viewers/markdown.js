@@ -1454,9 +1454,7 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     mdViewer.addEventListener('click', (e) => {
       const wikilink = e.target instanceof Element ? e.target.closest('a.nf-wikilink, a.nf-term') : null;
       if (wikilink) {
-        // 触屏首击开泡（词条引用批 batch 2，移动惯例）：(hover:none) 环境里
-        // 词条面的第一次轻点只展开气泡不导航，再点（链接或气泡内）才跳转。
-        // 桌面环境此腿恒 false（hover 已预览，点击 = 直接深链跳转）。
+        // 词条点击显示释义小弹层并消费点击；预览不触发文档导航。
         if (termTapExpand(/** @type {HTMLAnchorElement} */ (wikilink), mdViewer)) {
           e.preventDefault();
           e.stopPropagation();

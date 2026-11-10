@@ -1,21 +1,14 @@
-// termTip.js — term hover bubble core（词条引用批 batch 2, F3/F4 机制原样迁出
-// viewers/markdown.js，human-face 批 2026-10-30 抽为共享件）。
+// termTip.js — shared glossary-term preview popover (wiki viewer + human cards).
+// Click previews the definition on desktop and touch; preview never navigates.
 //
-// 词条引用的悬停摘要卡：词条名 + 定义（≤280 字）+ 所在文档 + 跳转提示。
+// Term content is read from the resolved graph payload, with the term API as fallback.
 // 数据面两条腿（§4.4 定案）：
 //   ① 主路径 = graph 载荷零请求 —— 消解 pass 已把注册表命中连同 definition
 //     缓存进 dataset.wikiResolved，气泡直读（docs viewer 面）；
 //   ② 兜底 = 词条不在载荷（30s TTL 内的陈旧图谱 / 服务端未重扫 / 无图谱面
 //     如聊天气泡、flow/report 卡片的 ```human 卡）⇒ hover 时打
 //     `GET /api/wiki/term?name=` 单查，命中同样出泡。
-// 材质 = 图谱 wg-tip 同族毛玻璃 token（--glass-*，亮暗双主题）。桌面
-// pointer-events:none 不挡点击（点击 = 深链跳转，由 setTermTipNav 注入的
-// 导航回调承载）；触屏面 ((hover:none)) 翻 auto —— 移动无 hover，按移动惯例
-// 「轻点即开气泡，气泡内再点跳转」（termTapExpand 在点击腿消费，首击不导航）。
-
-import { t } from './i18n.js';
-// 弹窗退场批（作者令 2026-10-31②）：手机层触屏词条泡 = 全屏词条卡 + 左上返回。
-import { mobileSheetBack } from './mobile/popSheet.js';
+// Popover is body-mounted, viewport-clamped, and has no full-screen mobile state.
 
 let termTipEl = null;
 let termTipLink = null;
@@ -41,17 +34,20 @@ function ensureTermTipEl() {
   if (termTipEl) return termTipEl;
   const el = document.createElement('div');
   el.className = 'nf-term-tip';
-  // 返回 = 收泡（仅触屏腿挂；桌面 hover 泡的 .mfs-back 由 CSS 隐藏）。
-  mobileSheetBack(el, hideTermTip);
   el.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
-  // 气泡内点击 = 跳转（移动惯例；桌面 pointer-events:none 时不可达，无害）。
-  el.addEventListener('click', (e) => {
+  // Interacting with the preview must never invoke the document link handler.
+  el.addEventListener('click', (e) => e.stopPropagation());
+  el.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
-    const link = termTipLink;
-    const host = termTipHost;
-    const nav = termTipNav;
-    hideTermTip();
-    if (link && nav) nav(link, host);
+    el.classList.add('interactive');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && termTipLink) {
+      e.preventDefault();
+      const link = termTipLink;
+      hideTermTip();
+      if (link && link.isConnected) link.focus();
+    }
   });
   document.body.appendChild(el);
   termTipEl = el;
@@ -75,7 +71,10 @@ export function hideTermTip() {
   if (termTipTimer) { clearTimeout(termTipTimer); termTipTimer = 0; }
   termTipLink = null;
   termTipHost = null;
-  if (termTipEl) termTipEl.style.display = 'none';
+  if (termTipEl) {
+    termTipEl.style.display = 'none';
+    termTipEl.classList.remove('interactive');
+  }
 }
 
 /** 气泡数据两条腿（①载荷直读 ②term API 兜底）的统一取数口。 */
@@ -109,10 +108,6 @@ async function termInfoFor(a) {
 
 function paintTermTip(a, info) {
   const el = ensureTermTipEl();
-  el.classList.toggle('touch', noHoverEnv());
-  // 弹窗退场批：触屏腿 show 时补注左上返回（幂等；非手机层不注入——
-  // ensureTermTipEl 创建期那次在非手机层是空注）。
-  if (el.classList.contains('touch')) mobileSheetBack(el, hideTermTip);
   el.querySelector('.tt').textContent = info.name || '';
   el.querySelector('.ts').textContent = info.definition || '';
   // 气泡的显示字符串 = 词条名 + 定义（term-system-v2 词条视觉面批 2026-11-05，
@@ -120,12 +115,12 @@ function paintTermTip(a, info) {
   // 正文尾部自动生成的「词条索引」块（viewers/markdown.js renderTermIndex），
   // 气泡内不再作为显示文本出现。剩下的跳转提示只在真有导航承载时给（docs
   // viewer 注入了 termTipNav；聊天气泡 / human 卡没有，那里说「点击跳转」是假话）。
-  el.querySelector('.td').textContent = termTipNav ? t('wiki.termJumpHint') : '';
+  el.querySelector('.td').textContent = '';
   el.style.display = 'block';
   // Viewport-clamped placement: above the link when there is room, else below.
   const r = a.getBoundingClientRect();
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const vw = document.documentElement.clientWidth || window.innerWidth;
+  const vh = document.documentElement.clientHeight || window.innerHeight;
   const bw = el.offsetWidth;
   const bh = el.offsetHeight;
   const x = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), Math.max(8, vw - bw - 8));
@@ -150,10 +145,9 @@ function requestTermTip(a, host, delay) {
 /** 触屏首击开泡（返回 true = 点击已消费，点击腿不再导航）。第二次点击同一
  *  链接返回 false → 落回深链跳转；「气泡内再点」由气泡自身的 click 腿消费。 */
 export function termTapExpand(a, host) {
-  if (!noHoverEnv()) return false;
   const kind = a.dataset.wikiTermKind;
-  if (!kind) { hideTermTip(); return false; }
-  if (termTipLink === a) return false;
+  if (!kind) return false;
+  if (termTipLink === a) return true;
   requestTermTip(a, host, 0);
   return true;
 }

@@ -1,16 +1,8 @@
-// model-chain-slim.spec.mjs — 模型顺序节精简批验收（作者令 2026-11-01 17:23）。
-//
-// 批令五条：
-//   ① 刷新列表 / 手动输入 / 清空链 三交互整块退役（handlers / i18n 键 / 样式
-//      零残留，不留死代码）；
-//   ② 只保留「添加模型」一个动作；
-//   ③ 面板标题「模型回退链」→「模型选择顺序」；
-//   ④ 标题下方说明压到一行以内（超长删繁就简，不再折行）；
-//   ⑤ 三行模型行的既有排版、拖拽/删除零触碰。
-//
-// 口径：双引擎（Chromium + WebKit）× 深/浅主题 × 桌面 1440×900 实拍；另加
-// 手机 390×844（Chromium × 深/浅）窄屏腿——说明文字最窄处不折行才是真判据。
-// 功能腿（排序拖拽 / 删除 / 加模型）在 Chromium 桌面暗色腿里真点真存。
+// model-chain-slim.spec.mjs — 设置页渐进披露模型选择验收。
+// 冻结意图见 .stand/docs/settings-progressive-disclosure-zh__20261107_230657__flow-453d463d.md：
+// 每类会话单选一个模型，不再把回退链当作设置页契约；摘要可展开、说明可读。
+// 当前实现仍只挂载 Nebula 面，五类设置的完整度另由冻结规格验收，不由本 spec 冒充覆盖。
+// 双引擎（Chromium + WebKit）× 深/浅主题 × 桌面 + Chromium 手机；功能腿验证单模型替换即存。
 //
 // 运行：node tests/model-chain-slim.spec.mjs                    # 双引擎
 //      ENGINE=webkit node tests/model-chain-slim.spec.mjs       # 仅 WebKit
@@ -48,13 +40,13 @@ const PROVIDERS = {
 };
 const CHAIN = {
   preferred: 'zhipu/glm-5.3-flash',
-  fallbacks: ['kimi/kimi-for-coding', 'cmdcode/deepseek/deepseek-v4.1-flash'],
+  fallbacks: [],
 };
 const RETIRED_KEYS = [
   'model.refreshList', 'model.refreshFailed', 'model.manualInput',
   'model.manualPlaceholder', 'model.clearChain', 'model.clearChainConfirm',
 ];
-const TITLES = { 'zh-CN': '模型选择顺序', en: 'Model selection order' };
+const TITLES = { 'zh-CN': '模型（按会话类别）', en: 'Model (per session class)' };
 
 /* ─────────────── 静态服务（真 web/ 树） ─────────────── */
 const MIME = {
@@ -163,12 +155,15 @@ async function openSettings(page, { mobile }) {
   if (mobile) {
     await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
     await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="workbench"]')?.classList.contains('live'));
-    await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
+    await page.locator('.mobile-page[data-page="workbench"] [data-hero-settings="1"]').click();
     await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="settings"]')?.classList.contains('live'));
   } else {
     await page.click('#settings-btn');
   }
-  await page.waitForSelector('#model-chain-section-body .mp-row', { timeout: 15000 });
+  const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
+  if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
+  await page.waitForSelector('#model-chain-section-body .mp-row', { state: 'attached', timeout: 15000 });
+  await page.waitForSelector('#model-chain-section-body .mp-row', { state: 'visible', timeout: 10000 });
   await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'center' }));
   await sleep(350);
 }
@@ -181,12 +176,15 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   await openSettings(page, { mobile });
 
   // ③ 标题
-  const title = (await page.locator('#model-chain-section > .settings-section-title').textContent() || '').trim();
-  ok(tag, '③ 标题 = 模型选择顺序 / Model selection order', title === TITLES[locale], `title="${title}"`);
+  const title = (await page.locator('#model-chain-section > .set-card-title').textContent() || '').trim();
+  const disclosureTitle = (await page.locator('#model-chain-section [data-settings-disclosure="models"]').textContent() || '').trim();
+  const summary = await page.locator('#model-chain-section [data-settings-disclosure="models"]').textContent();
+  ok(tag, '③ 标题 = 模型（按会话类别） / Model (per session class)', title === TITLES[locale] && disclosureTitle.startsWith(locale === 'zh-CN' ? '5 类会话模型' : '5 session classes'), `title="${title}" disclosure="${disclosureTitle}"`);
+  ok(tag, '④ 摘要显示可配置会话类别数量', (summary || '').includes('5'), `summary="${summary}"`);
 
   // ④ 说明一行内：高度 = 单行行高，且横向不溢出（无 ellipsis 截断）
   const hint = await page.evaluate(() => {
-    const el = document.querySelector('#model-chain-section > .cfg-hint');
+    const el = document.querySelector('#model-chain-disclosure > .set-row-hint');
     if (!el) return null;
     const cs = getComputedStyle(el);
     const range = document.createRange();
@@ -201,9 +199,10 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   });
   ok(tag, '④ 说明文字在位', !!hint && hint.text.length > 0, JSON.stringify(hint));
   if (hint) {
-    ok(tag, '④ 说明 = 单行（高度 ≤ 1 行行高）', hint.h <= hint.lh * 1.2, `h=${hint.h} lh=${hint.lh}`);
-    ok(tag, '④ 说明不折行且不被截断（自然宽 ≤ 盒宽、无横向溢出）',
-      hint.natural <= hint.box && hint.scroll <= hint.box + 1, `natural=${hint.natural} box=${hint.box} scroll=${hint.scroll}`);
+    // Frozen §4 permits wrapping labels at narrow widths; verify bounded, visible text,
+    // not the superseded one-line requirement from the earlier chain UI.
+    ok(tag, '④ 说明在布局内可见（允许按冻结规格换行）', hint.h > 0 && hint.box > 0 && hint.scroll <= hint.box + 1,
+      `h=${hint.h} box=${hint.box} scroll=${hint.scroll}`);
   }
 
   // ①② 三交互退役 + 只剩「添加模型」一个动作
@@ -214,7 +213,7 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     return {
       refresh: q('.mp-refresh'), manualToggle: q('.mp-manual-toggle'),
       manualInput: q('.mp-manual'), clear: q('.mp-clear'),
-      buttons: [...sec.querySelectorAll('button')].map((b) => b.textContent.trim()),
+      buttons: [...sec.querySelectorAll('#model-chain-section-body button')].map((b) => b.textContent.trim()),
       addRowChildren: addRow ? [...addRow.children].map((c) => c.className) : [],
       addSelect: addRow?.querySelector('.mp-add-select')?.options?.[0]?.textContent?.trim() || '',
       addOptions: addRow?.querySelector('.mp-add-select')?.options?.length || 0,
@@ -230,24 +229,18 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     JSON.stringify({ buttons: controls.buttons, addRowChildren: controls.addRowChildren, first: controls.addSelect }));
   ok(tag, '② 下拉带链外模型（可继续加链）', controls.addOptions >= 2, `options=${controls.addOptions}`);
 
-  // ⑤ 三行模型行原样：行族/手柄/删除/位次徽标
+  // 冻结 §1/§2：每类会话单选一个模型；不再要求已退役的后备链手柄、删除和位次徽标。
   const rows = await page.evaluate(() => {
     const list = [...document.querySelectorAll('#model-chain-section-body .mp-row')];
     return {
       count: list.length,
       heights: list.map((r) => Math.round(r.getBoundingClientRect().height)),
-      grips: list.filter((r) => r.querySelector('.mp-drag')).length,
-      removes: list.filter((r) => r.querySelector('.mp-remove')).length,
-      provs: list.map((r) => r.querySelector('.mp-prov')?.textContent.trim()),
       models: list.map((r) => r.querySelector('.mp-model')?.textContent.trim()),
-      pos: list.map((r) => r.querySelector('.mp-pos')?.textContent.trim()),
+      editor: document.querySelector('#model-chain-section-body .mp-add-select')?.tagName,
     };
   });
-  ok(tag, '⑤ 三行链原样：行/手柄/删除齐', rows.count === 3 && rows.grips === 3 && rows.removes === 3, JSON.stringify(rows));
-  ok(tag, '⑤ 行排版零变（三行同高）', rows.heights.length === 3 && new Set(rows.heights).size === 1, `heights=${rows.heights}`);
-  ok(tag, '⑤ 位次徽标 = 首选/备用/备用（顺序未变）',
-    JSON.stringify(rows.pos) === JSON.stringify(locale === 'zh-CN' ? ['首选', '备用', '备用'] : ['Primary', 'Fallback', 'Fallback']),
-    JSON.stringify(rows.pos));
+  ok(tag, '⑤ 当前模型行可见且仅一项单选编辑器', rows.count === 1 && !!rows.models[0] && rows.editor === 'SELECT', JSON.stringify(rows));
+  ok(tag, '⑤ 模型行尺寸有效', rows.heights.length === 1 && rows.heights[0] > 0, `heights=${rows.heights}`);
 
   // i18n 双语键：新文案在册、旧键连根拔除、两字典同长
   const dict = await page.evaluate(async (retired) => {
@@ -256,12 +249,15 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
     return {
       zhTitle: zh['settings.modelChainTitle'], enTitle: en['settings.modelChainTitle'],
       zhHint: zh['settings.modelChainSectionHint'], enHint: en['settings.modelChainSectionHint'],
+      zhSummary: zh['settings.modelsSummary'], enSummary: en['settings.modelsSummary'],
       zhLeak: retired.filter((k) => k in zh), enLeak: retired.filter((k) => k in en),
       zhCount: Object.keys(zh).length, enCount: Object.keys(en).length,
     };
   }, RETIRED_KEYS);
   ok(tag, 'i18n 双语标题齐', dict.zhTitle === TITLES['zh-CN'] && dict.enTitle === TITLES.en,
     `zh="${dict.zhTitle}" en="${dict.enTitle}"`);
+  ok(tag, '渐进披露摘要双语键齐', dict.zhSummary === '{n} 类会话模型' && dict.enSummary === '{n} session classes',
+    `zh="${dict.zhSummary}" en="${dict.enSummary}"`);
   ok(tag, 'i18n 双语说明齐', !!dict.zhHint && !!dict.enHint, `zh="${dict.zhHint}" en="${dict.enHint}"`);
   ok(tag, 'i18n 退役键零残留（zh/en 双向）', dict.zhLeak.length === 0 && dict.enLeak.length === 0,
     JSON.stringify({ zhLeak: dict.zhLeak, enLeak: dict.enLeak }));
@@ -292,42 +288,21 @@ async function functionalLeg(browser) {
   });
   await openSettings(page, { mobile: false });
 
-  // 删除末行：链 [kimi, cmdcode] 保留 → PUT
-  await page.click('#model-chain-section-body .mp-row[data-idx="2"] .mp-remove');
-  await page.waitForFunction(() => document.querySelectorAll('#model-chain-section-body .mp-row').length === 2, null, { timeout: 5000 });
-  await page.waitForFunction(() => document.querySelector('#model-chain-section-body .mp-row[data-idx="1"] .mp-model')?.textContent?.includes('kimi-for-coding'), null, { timeout: 5000 });
-  ok(tag, '⑤ 删除仍生效（末行移出链）', sim.puts.length === 1 &&
-    JSON.stringify(sim.puts[0].model) === JSON.stringify({ preferred: 'zhipu/glm-5.3-flash', fallbacks: ['kimi/kimi-for-coding'] }),
+  // 单模型选择即存；冻结规格不要求删除或重排后备链。
+  const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
+  if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
+  await page.selectOption('#model-chain-section-body .mp-add-select', 'kimi/kimi-for-coding');
+  await page.waitForFunction(() => document.querySelector('#model-chain-section-body .mp-row .mp-model')?.textContent?.includes('kimi-for-coding'), null, { timeout: 5000 });
+  ok(tag, '⑤ 单模型下拉选择即存（不提供后备链删除／排序）', sim.puts.length === 1 &&
+    JSON.stringify(sim.puts[0].model) === JSON.stringify({ preferred: 'kimi/kimi-for-coding', fallbacks: [] }),
   JSON.stringify(sim.puts[0]));
-
-  // 手柄拖拽排序：把 idx1 拖到 idx0 上方 ⇒ 新首选
-  const grip = page.locator('#model-chain-section-body .mp-row[data-idx="1"] .mp-drag');
-  const target = page.locator('#model-chain-section-body .mp-row[data-idx="0"]');
-  await target.scrollIntoViewIfNeeded();
-  const g = await grip.boundingBox();
-  const t = await target.boundingBox();
-  await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(g.x + g.width / 2, t.y + 4, { steps: 8 });
-  await page.mouse.up();
-  await page.waitForFunction(() => document.querySelector('#model-chain-section-body .mp-row[data-idx="0"] .mp-model')?.textContent?.includes('kimi-for-coding'), null, { timeout: 5000 });
-  ok(tag, '⑤ 拖拽排序仍生效（拖行成新首选）', sim.puts.length === 2 &&
-    JSON.stringify(sim.puts[1].model) === JSON.stringify({ preferred: 'kimi/kimi-for-coding', fallbacks: ['zhipu/glm-5.3-flash'] }),
-  JSON.stringify(sim.puts[1]));
-
-  // 加模型：只剩下拉一路 ⇒ 选链外模型入尾
-  await page.selectOption('#model-chain-section-body .mp-add-select', 'zhipu/glm-4.6');
-  await page.waitForFunction(() => document.querySelectorAll('#model-chain-section-body .mp-row').length === 3, null, { timeout: 5000 });
-  ok(tag, '② 添加模型走下拉即存', sim.puts.length === 3 &&
-    JSON.stringify(sim.puts[2].model) === JSON.stringify({ preferred: 'kimi/kimi-for-coding', fallbacks: ['zhipu/glm-5.3-flash', 'zhipu/glm-4.6'] }),
-  JSON.stringify(sim.puts[2]));
 
   // /model 面板同源面同样零退役控件（同一 buildNebulaChainFace）
   await page.evaluate(async () => {
     const m = await import('/js/modelPanel.js');
     await m.openModelPanel();
   });
-  await page.waitForFunction(() => document.querySelectorAll('#model-panel-overlay .mp-roleblock-nebula .mp-row').length === 3, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelectorAll('#model-panel-overlay .mp-roleblock-nebula .mp-row').length === 1, null, { timeout: 5000 });
   const panel = await page.evaluate(() => {
     const blk = document.querySelector('#model-panel-overlay .mp-roleblock-nebula');
     return {
@@ -337,7 +312,7 @@ async function functionalLeg(browser) {
     };
   });
   ok(tag, '/model 面板同源面（逐字节同款）同样零退役控件',
-    panel.retired.every((n) => n === 0) && panel.rows === 3 && panel.drags === 3, JSON.stringify(panel));
+    panel.retired.every((n) => n === 0) && panel.rows === 1 && panel.drags === 0, JSON.stringify(panel));
 
   const NOISE = /favicon|net::ERR|WebSocket|404|ResizeObserver loop/i;
   const fresh = errors.filter((e) => !NOISE.test(e));
