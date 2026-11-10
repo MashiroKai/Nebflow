@@ -384,13 +384,19 @@ try {
       await sleep(500);
       ok('对照帧：主会话行注入成功（入向 Pop 行 + 出向用户行）', !!injected && injected.ok, JSON.stringify(injected && !injected.ok ? injected : { ok: true }));
       if (injected && injected.ok) {
-        const same = (a, b) => !!a && !!b && a.radius === b.radius && a.borderStyle === b.borderStyle && a.borderWidth === b.borderWidth && a.borderColor === b.borderColor && a.shadow === b.shadow && a.bg === b.bg;
+        // 形态一致性比较卡片 chrome；背景是有意按语义分档：社交入向卡面跟随对方气泡色，
+        // 主会话 LLM Pop 卡面使用 letterbox 底色。单独断言两种背景符合各自令牌档，避免将
+        // 内容语义差异误判为边缘/卡形不一致。
+        const sameChrome = (a, b) => !!a && !!b && a.radius === b.radius && a.borderStyle === b.borderStyle && a.borderWidth === b.borderWidth && a.borderColor === b.borderColor && a.shadow === b.shadow;
         const geoSame = (a, b) => !!a && !!b && a.w === b.w && a.h === b.h;
-        ok(`[${scheme}] 边缘差异为零（入向）：fm 叠卡层 ↔ 主会话 LLM Pop 叠卡层 computed-style 全等`, same(injected.inPair.fm, injected.inPair.main), JSON.stringify({ fm: injected.inPair.fm, main: injected.inPair.main }));
+        const expectedInBg = scheme === 'dark' ? 'color(srgb 0.109804 0.121569 0.152941 / 0.97)' : 'color(srgb 1 1 1 / 0.97)';
+        const expectedLetterbox = scheme === 'dark' ? 'rgb(16, 19, 24)' : 'rgb(23, 25, 31)';
+        ok(`[${scheme}] 入向叠卡 chrome 一致（圆角/描边/阴影）`, sameChrome(injected.inPair.fm, injected.inPair.main), JSON.stringify({ fm: injected.inPair.fm, main: injected.inPair.main }));
+        ok(`[${scheme}] 入向背景语义各自符合令牌：好友气泡色 / 主会话 letterbox`, injected.inPair.fm.bg === expectedInBg && injected.inPair.main.bg === expectedLetterbox, JSON.stringify({ fm: injected.inPair.fm.bg, main: injected.inPair.main.bg }));
         ok(`[${scheme}] 叠卡盒几何全等（220×280 同一面）`, geoSame(injected.inPair.fmBox, injected.inPair.mainBox) && injected.inPair.fmBox.w === 220, JSON.stringify({ fm: injected.inPair.fmBox, main: injected.inPair.mainBox }));
         ok(`[${scheme}] 张数角标同款（「展开 3」同文）`, injected.inPair.fmPill === injected.inPair.mainPill && /3/.test(injected.inPair.fmPill), JSON.stringify({ fm: injected.inPair.fmPill, main: injected.inPair.mainPill }));
-        ok(`[${scheme}] 边缘差异为零（出向）：fm 叠卡层 ↔ 主会话用户媒体行叠卡层 computed-style 全等（气泡剪影族）`, same(injected.outPair.fm, injected.outPair.main), JSON.stringify({ fm: injected.outPair.fm, main: injected.outPair.main }));
-        ok(`[${scheme}] 边缘差异为零：fm 入向文件卡 ↔ 主会话 Pop 文件卡 computed-style 全等`, same(injected.mixedFile, injected.inPair.mainFile), JSON.stringify({ fm: injected.mixedFile, main: injected.inPair.mainFile }));
+        ok(`[${scheme}] 边缘差异为零（出向）：fm 叠卡层 ↔ 主会话用户媒体行叠卡层 computed-style 全等（气泡剪影族）`, sameChrome(injected.outPair.fm, injected.outPair.main) && injected.outPair.fm.bg === injected.outPair.main.bg, JSON.stringify({ fm: injected.outPair.fm, main: injected.outPair.main }));
+        ok(`[${scheme}] 边缘差异为零：fm 入向文件卡 ↔ 主会话 Pop 文件卡 computed-style 全等`, sameChrome(injected.mixedFile, injected.inPair.mainFile) && injected.mixedFile.bg === injected.inPair.mainFile.bg, JSON.stringify({ fm: injected.mixedFile, main: injected.inPair.mainFile }));
       }
       const overlay = await page.$('#fm-chat-overlay');
       const name = `attcard-vs-main-in-${scheme}.png`;
@@ -415,8 +421,9 @@ try {
   }
 
   // ── 手机档（375×812，亮档，好友窗，四形态同屏纵排）────────────────────────
+  for (const scheme of ['light', 'dark']) {
   {
-    const { ctx, page, consoleErrors, pageErrors } = await bootPage({ colorScheme: 'light', viewport: { width: 375, height: 812 } });
+    const { ctx, page, consoleErrors, pageErrors } = await bootPage({ colorScheme: scheme, viewport: { width: 375, height: 812 } });
     try {
       await page.waitForSelector('body.mobile-layer', { timeout: 15000 });
       await page.click('.dock-key[data-dock="messages"]');
@@ -439,12 +446,12 @@ try {
       });
       await page.evaluate(() => { const f = document.querySelector('.fm-flow'); if (f) f.scrollTop = f.scrollHeight; });
       await sleep(300);
-      const shotPath = join(OUT, 'attcard-friend-mobile-375.png');
+      const shotPath = join(OUT, `attcard-friend-mobile-375-${scheme}.png`);
       const overlay = await page.$('#fm-chat-overlay');
       if (overlay) await overlay.screenshot({ path: shotPath }).catch(async () => { await page.screenshot({ path: shotPath }); });
       else await page.screenshot({ path: shotPath });
-      console.log(`SHOT attcard-friend-mobile-375.png  cards=${JSON.stringify(cardProbe)}`);
-      ok('shot attcard-friend-mobile-375.png 手机档四形态（叠卡 220 盒 + 视频 + 混合；零横向溢出）',
+      console.log(`SHOT attcard-friend-mobile-375-${scheme}.png  cards=${JSON.stringify(cardProbe)}`);
+      ok(`shot attcard-friend-mobile-375-${scheme}.png 手机档附件条（叠卡 220 盒 + 视频 + 混合；零横向溢出）`,
         cardProbe.mobile && cardProbe.stack && cardProbe.stackW === 220 && cardProbe.video && cardProbe.mixed && !cardProbe.hOverflow,
         JSON.stringify(cardProbe));
       ok('[mobile] 零 console error', consoleErrors.length === 0, JSON.stringify(consoleErrors));
@@ -452,6 +459,7 @@ try {
     } finally {
       await ctx.close();
     }
+  }
   }
 } catch (e) {
   failures++;

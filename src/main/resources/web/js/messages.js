@@ -4185,7 +4185,7 @@ function quoteTargetExists(id, conversationId) {
 /** 引用块可用性落地（**单点**）：dataset = QA/跳转挂点，class/文案只管视觉。 */
 function paintQuoteState(box, available) {
   box.dataset.quoteState = available ? 'available' : 'unavailable';
-  const note = box.querySelector('.fm-quote-note');
+  const note = box.querySelector('.msg-quote-note');
   if (!note) return;
   note.textContent = available ? '' : t('messages.quoteUnavailable');
   note.hidden = available;
@@ -4201,7 +4201,7 @@ function paintJumpAffordance(box) {
   if (ready) {
     box.setAttribute('role', 'button');
     box.setAttribute('tabindex', '0');
-    const txt = (box.querySelector('.fm-quote-text') || /** @type {any} */ ({})).textContent || '';
+    const txt = (box.querySelector('.msg-quote-text') || /** @type {any} */ ({})).textContent || '';
     box.setAttribute('aria-label', t('messages.quoteJumpAria', { text: txt }));
   } else {
     box.removeAttribute('role');
@@ -4225,14 +4225,15 @@ function quoteJumpState(coord) {
 /** 气泡内引用块（**单点渲染器**；零新色值 —— 材质取既有 token）。
  *  🔴 不用左缘色条（设计硬约束「无 accent bars」）⇒ 既有卡面 + 发丝描边分组。 */
 function quoteBlockEl(q, coord) {
-  const box = el('div', 'fm-quote-block');
+  // 引用外观复用主会话牌面类；fm-* 留作好友跳转/可用性钩子，不承担第二套视觉声明。
+  const box = el('div', 'fm-quote-block msg-quote-block nf-glass');
   const c = coord || { messageId: q.messageId, conversationId: openConvId || '' };
   box.dataset.refMessageId = c.messageId;
   if (c.conversationId) box.dataset.refConversationId = c.conversationId;
   box.dataset.quoteJump = quoteJumpState(c);
   box.dataset.quoteJumpSource = c.source || '';
-  box.appendChild(el('div', 'fm-quote-text', q.context || t('messages.quotePlaceholder')));
-  box.appendChild(el('div', 'fm-quote-note', ''));
+  box.appendChild(el('div', 'fm-quote-text msg-quote-text', q.context || t('messages.quotePlaceholder')));
+  box.appendChild(el('div', 'fm-quote-note msg-quote-note', ''));
   paintJumpAffordance(box);
   // 一次性挂载（节点复用安全）：处理函数按当前 dataset 判活。
   box.addEventListener('click', () => { void jumpToQuote(box); });
@@ -4256,7 +4257,7 @@ function syncQuoteStates(flow) {
     const available = quoteTargetExists(id, cid);
     const jump = node.dataset.quoteJump === 'ready' ? 'ready' : 'none';
     node.dataset.quoteState = available ? 'available' : 'unavailable';
-    const box = node.querySelector('.fm-quote-block');
+    const box = node.querySelector('.msg-quote-block');
     if (!box) continue;
     box.dataset.refMessageId = id;
     if (cid) box.dataset.refConversationId = cid;
@@ -4281,7 +4282,7 @@ function syncQuoteDataset(node, m, conv) {
   node.dataset.refConversationId = coord.conversationId;
   node.dataset.quoteJump = quoteJumpState(coord);
   node.dataset.quoteState = quoteTargetExists(coord.messageId, coord.conversationId) ? 'available' : 'unavailable';
-  const box = node.querySelector('.fm-quote-block');
+  const box = node.querySelector('.msg-quote-block');
   if (box) {
     box.dataset.refMessageId = coord.messageId;
     if (coord.conversationId) box.dataset.refConversationId = coord.conversationId;
