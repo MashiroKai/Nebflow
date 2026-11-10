@@ -636,13 +636,24 @@ object StaticRoutes:
   def uploadsRoutes(tokenRef: cats.effect.Ref[IO, String], sessions: GatewaySessionStore): HttpRoutes[IO] =
     HttpRoutes.of[IO] {
       case req @ GET -> _ if req.uri.path.renderString.startsWith("/uploads/") =>
-        tokenRef.get
-          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.StaticAuth))
-          .flatMap {
-            case None => Forbidden("Invalid token")
-            case Some(_) =>
-              uploadsServe(req)
-          }
+        tokenRef.get.flatMap { token =>
+          OwnerAccess.authenticate(
+            req,
+            token,
+            sessions,
+            OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO),
+            GatewayAuth.Rails.StaticAuth
+          )
+        }.flatMap {
+          case None => Forbidden("Invalid session")
+          case Some(access) =>
+            val decoded = req.uri.path.segments.map(_.decoded()).toList.drop(1)
+            val resourceId = decoded.mkString("/")
+            access.ownsResource("attachment", resourceId).flatMap {
+              case true => uploadsServe(req)
+              case false => Forbidden("Attachment owner unknown or mismatched")
+            }
+        }
     }
 
   /**

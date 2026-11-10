@@ -622,7 +622,13 @@ object GatewayMain extends IOApp:
                     .exists(v => v == "0" || v.equalsIgnoreCase("off") || v.equalsIgnoreCase("false"))
                 then None
                 else Some(PathUtil.dataRoot / "gateway-sessions.json")
-              val gatewaySessions = GatewaySessionStore.unsafeCreate(persistenceFile = sessionSnapshotFile)
+              // Authoritative session → accountSub mapping, independent from the
+              // optional session snapshot toggle. Missing/legacy owner rows remain unknown.
+              val gatewayOwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
+              val gatewaySessions = GatewaySessionStore.unsafeCreate(
+                persistenceFile = sessionSnapshotFile,
+                ownerStore = Some(gatewayOwnerStore)
+              )
               // Global session state shared across all connections
               val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
               val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)

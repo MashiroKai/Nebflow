@@ -30,17 +30,30 @@ class UploadsRoutesSpec extends CatsEffectSuite:
   private val TokenRef = cats.effect.Ref.unsafe[IO, String](gatewayToken)
   private val Sessions = GatewaySessionStore.unsafeCreate()
 
+  /** Keep ownership records in the same isolated root used by the route under test. */
+  private var activeOwnerStore: OwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
+
   /** A live session credential for the session rail. */
   private def sessionCred: IO[(String, String)] =
-    Sessions
-      .create("uploads-spec", GatewaySessionStore.OriginRelayMint, "net-1")
-      .map(rec => (GatewaySessionStore.CookieName, rec.sessionId))
+    Sessions.create("uploads-spec", GatewaySessionStore.OriginRelayMint, "net-1").flatMap { rec =>
+      val credential = Credential.ViaSession(rec)
+      val resources = List(
+        "sess-1/shot.png",
+        "sess-1/截屏2026-10-09 07.10.22.png",
+        "sess-1/a+b.png"
+      )
+      activeOwnerStore.registerSession(rec) *>
+        resources.foldLeft(IO.unit) { (acc, id) =>
+          acc *> activeOwnerStore.createResource("attachment", id, credential).void
+        }.as((GatewaySessionStore.CookieName, rec.sessionId))
+    }
 
   /** Isolated dataRoot with a seeded uploads/sess-1/shot.png; restored after. */
   private def withTempUploads[A](test: => IO[A]): A =
     val tmp = Files.createTempDirectory("nebflow-uploads-test")
     val originalRoot = PathUtil.dataRoot
     PathUtil.setDataRoot(os.Path(tmp))
+    activeOwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
     os.write.over(
       os.Path(tmp) / "uploads" / "sess-1" / "shot.png",
       Array[Byte](1, 2, 3),
@@ -49,6 +62,7 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     try test.unsafeRunSync()
     finally
       PathUtil.setDataRoot(originalRoot)
+      activeOwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
       if Files.exists(tmp) then
         Files
           .walk(tmp)
@@ -106,7 +120,28 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("serves a file via the session cookie") {
+  test("owner authorization: A reads A, B/unknown/path-forged selectors cannot read") {
+    withTempUploads {
+      for
+        a <- Sessions.create("account-A", GatewaySessionStore.OriginRelayMint, "net-1")
+        b <- Sessions.create("account-B", GatewaySessionStore.OriginRelayMint, "net-1")
+        store = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
+        _ <- store.registerSession(a)
+        _ <- store.registerSession(b)
+        _ <- store.createResource("attachment", "sess-1/shot.png", Credential.ViaSession(a))
+        aResp = get("/uploads/sess-1/shot.png", cookie = Some((GatewaySessionStore.CookieName, a.sessionId))).get
+        bResp = get("/uploads/sess-1/shot.png", cookie = Some((GatewaySessionStore.CookieName, b.sessionId))).get
+        _ = assertEquals(aResp.status, Status.Ok)
+        _ = assertEquals(bResp.status, Status.Forbidden)
+        unknown = get("/uploads/sess-1/unregistered.png", cookie = Some((GatewaySessionStore.CookieName, a.sessionId))).get
+        _ = assertEquals(unknown.status, Status.Forbidden)
+        forged = get("/uploads/other-session/shot.png", cookie = Some((GatewaySessionStore.CookieName, a.sessionId))).get
+        _ = assertEquals(forged.status, Status.Forbidden)
+      yield ()
+    }
+  }
+
+  test("serves a registered file via the session cookie") {
     withTempUploads {
       for
         cred <- sessionCred
@@ -114,6 +149,17 @@ class UploadsRoutesSpec extends CatsEffectSuite:
         _ = assertEquals(resp.status, Status.Ok)
         bytes = resp.body.compile.toVector.unsafeRunSync().toArray
         _ = assert(java.util.Arrays.equals(bytes, Array[Byte](1, 2, 3)))
+      yield ()
+    }
+  }
+
+  test("unknown historical file is denied even with a valid session") {
+    withTempUploads {
+      for
+        cred <- sessionCred
+        _ = os.write.over(PathUtil.dataRoot / "uploads" / "sess-1" / "legacy.png", Array[Byte](5))
+        resp = get("/uploads/sess-1/legacy.png", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Forbidden)
       yield ()
     }
   }
@@ -137,7 +183,9 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("304 revalidation restates the cache policy; 404 stays uncolored") {
+  // Owner fail-closed semantics: authenticated requests without a known owned target
+  // return 403 (not 404); missing targets are no longer disclosed as a route-level oracle.
+  test("304 revalidation restates the cache policy; missing target is forbidden and uncolored") {
     withTempUploads {
       for
         cred <- sessionCred
@@ -164,37 +212,40 @@ class UploadsRoutesSpec extends CatsEffectSuite:
           )
         }
         missing = get("/uploads/sess-1/nope.png", cookie = Some(cred)).get
-        _ = assertEquals(missing.status, Status.NotFound)
+        _ = assertEquals(missing.status, Status.Forbidden)
         _ = assertEquals(missing.headers.get[org.http4s.headers.`Cache-Control`], None)
       yield ()
     }
   }
 
-  test("rejects traversal segments") {
+  // Owner fail-closed semantics: session credentials do not authorize unknown selectors.
+  test("forbids traversal selectors without a known owner") {
     withTempUploads {
       for
         cred <- sessionCred
         // Three segments — passes the shape check, must die on the ".." guard.
-        _ = assertEquals(get(s"/uploads/../shot.png", cookie = Some(cred)).get.status, Status.NotFound)
+        _ = assertEquals(get(s"/uploads/../shot.png", cookie = Some(cred)).get.status, Status.Forbidden)
       yield ()
     }
   }
 
-  test("rejects wrong path shape") {
+  // Owner fail-closed semantics: malformed or unknown target selectors are forbidden.
+  test("forbids wrong path shape without an owned target") {
     withTempUploads {
       for
         cred <- sessionCred
-        _ = assertEquals(get(s"/uploads/sess-1", cookie = Some(cred)).get.status, Status.NotFound)
-        _ = assertEquals(get(s"/uploads/a/b/c", cookie = Some(cred)).get.status, Status.NotFound)
+        _ = assertEquals(get(s"/uploads/sess-1", cookie = Some(cred)).get.status, Status.Forbidden)
+        _ = assertEquals(get(s"/uploads/a/b/c", cookie = Some(cred)).get.status, Status.Forbidden)
       yield ()
     }
   }
 
-  test("404s for a missing file") {
+  // Owner fail-closed semantics: absent resources have no known owner and return 403.
+  test("forbids access to a missing file target") {
     withTempUploads {
       for
         cred <- sessionCred
-        _ = assertEquals(get(s"/uploads/sess-1/nope.png", cookie = Some(cred)).get.status, Status.NotFound)
+        _ = assertEquals(get(s"/uploads/sess-1/nope.png", cookie = Some(cred)).get.status, Status.Forbidden)
       yield ()
     }
   }
@@ -266,7 +317,8 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("404s an encoded traversal — the decode must land INSIDE the guards") {
+  // Traversal guards still reject before lookup; owner fail-closed returns 403 for these selectors.
+  test("forbids encoded traversal selectors before lookup") {
     withTempUploads {
       for
         cred <- sessionCred
@@ -274,18 +326,18 @@ class UploadsRoutesSpec extends CatsEffectSuite:
         // literal form.
         _ = assertEquals(
           get(s"/uploads/%2E%2E/shot.png", cookie = Some(cred)).get.status,
-          Status.NotFound
+          Status.Forbidden
         )
         // %2F-decoded `..` inside a segment would otherwise re-enter the base
         // through os.RelPath up-segments (sess-1/../uploads/shot.png resolves
         // back under uploads/): the decoded `/` clause is load-bearing.
         _ = assertEquals(
           get(s"/uploads/sess-1/..%2Fuploads%2Fshot.png", cookie = Some(cred)).get.status,
-          Status.NotFound
+          Status.Forbidden
         )
         // %00 would make java.nio throw InvalidPathException (→ 500) — the
         // decoded-NUL clause keeps the old uniform 404.
-        _ = assertEquals(get(s"/uploads/sess-1/x%00.png", cookie = Some(cred)).get.status, Status.NotFound)
+        _ = assertEquals(get(s"/uploads/sess-1/x%00.png", cookie = Some(cred)).get.status, Status.Forbidden)
       yield ()
     }
   }
