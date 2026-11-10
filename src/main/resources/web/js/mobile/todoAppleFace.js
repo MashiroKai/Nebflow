@@ -1,19 +1,25 @@
-// mobile/todoAppleFace.js — 手机端待办页 Apple 提醒事项信息架构（实现批 · 作者令
-// 2026-11-02 11:57「手机端待办页完全按 Apple 提醒事项信息架构重做」）。
+// mobile/todoAppleFace.js — Mobile todo pages laid out in the Apple Reminders
+// information architecture.
 //
-// 三页（navController.PAGES 注册；页面壳/返回钮/滑入滑出全部走既有 pushPage/
-// popPage/bindEdgeBack —— 本模块只产页面体内容，导航语义零新建）：
-//   tasks      列表首页：右上白色胶囊三图标 + 2×2 彩色四卡矩阵 +
-//                    「我的列表」白色大圆角卡（todoStore.tags）+ 右下蓝色 FAB
-//   todo-apple-list  列表详情：大号彩色标题左对齐 + 空心圆勾选行 + 居中空态
-//   todo-apple-item  新建/编辑态：占位输入行 + (i) 信息钮 + 贴键盘的工具条
+// Three pages (registered in navController.PAGES; page shell, back button and
+// slide transitions all reuse the existing pushPage/popPage/bindEdgeBack —
+// this module only produces page-body content, no new navigation semantics):
+//   tasks            lists home: white three-icon capsule top-right + 2x2
+//                    colored four-card matrix + "My Lists" large-radius card
+//                    (todoStore.tags) + blue FAB bottom-right
+//   todo-apple-list  list detail: large colored title left-aligned + hollow
+//                    check-circle rows + centered empty state
+//   todo-apple-item  create/edit: placeholder input row + (i) info button +
+//                    keyboard-hugging toolbar
 //
-// 数据纪律：完成/新建/编辑一律走 todoStore（内存仓，纯前端 mock），不碰后端、
-// 不新造实体 —— 能力缺位的按钮一律不放（见批文档「取舍」表）。
+// Data discipline: complete/create/edit all go through todoStore (in-memory
+// store, pure frontend mock); the backend is never touched and no new entities
+// are invented — buttons whose backing capability is absent are simply not
+// rendered.
 //
-// 依赖方向：本模块**不静态 import navController**（那样会与其形成静态环，
-// scripts/check-circular.mjs 会红）；导航 = 注入式 nav {push, pop}（meFace.js
-// 同款惯例）。
+// Dependency direction: this module does NOT statically import navController
+// (that would form a static cycle and turn scripts/check-circular.mjs red);
+// navigation = injected nav {push, pop} (same convention as meFace.js).
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
@@ -25,12 +31,12 @@ const DAY = 86_400_000;
 /** @typedef {{ push: (pageId: string) => void, pop: () => void }} TaNav */
 /** @typedef {'today'|'overdue'|'all'|'completed'|'tag'} ListMode */
 /**
- * 条目读数（todoStore 只读投影的元素形状）。
+ * Item reading (element shape of the todoStore read-only projection).
  * @typedef {{ id: string, tagId: string, title: string, notes: string,
  *   due: number|null, priority: number, completed: boolean, createdAt: number }} TaItem
  */
 
-// ── 小件工厂 ──────────────────────────────────────────────────────────────
+// ── Small element factories ──────────────────────────────────────────────
 
 /**
  * @param {string} tag
@@ -65,7 +71,8 @@ function btnEl(cls) { return /** @type {HTMLButtonElement} */ (el('button', cls)
 function inputEl(cls) { return /** @type {HTMLInputElement} */ (el('input', cls)); }
 
 /**
- * 图标钮（lucide `<i data-lucide>`；绘制由 createIconsIn 统一收敛）。
+ * Icon button (lucide `<i data-lucide>`; drawing is consolidated by
+ * createIconsIn).
  * @param {string} cls
  * @param {string} icon
  * @param {string} label
@@ -80,14 +87,14 @@ function iconBtn(cls, icon, label) {
   return b;
 }
 
-/** 本地日界 00:00（今天到期卡与「今天」列表共用同一日界）。 */
+/** Local day boundary 00:00 (the due-today card and the "today" list share it). */
 function startOfToday() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 
-/** 今天某整点（工具条「日期」循环的锚点时刻 —— 提醒事项默认当天可提醒）。 */
+/** A given hour today (anchor time for the toolbar "date" cycle — same-day reminders). */
 /** @param {number} hour @returns {number} */
 function todayAt(hour) {
   const d = new Date();
@@ -95,7 +102,7 @@ function todayAt(hour) {
   return d.getTime();
 }
 
-/** 优先色（PRIORITY_COLORS 以数字键索引；逐档取值避开索引签名报错）。 */
+/** Priority color (PRIORITY_COLORS is number-keyed; per-step reads avoid an index-signature error). */
 /** @param {number} p @returns {string} */
 function priorityColor(p) {
   if (p === 3) return PRIORITY_COLORS[3];
@@ -104,7 +111,7 @@ function priorityColor(p) {
   return PRIORITY_COLORS[0];
 }
 
-/** 优先级文案（0 无 / 1 低 / 2 中 / 3 高；词条复用 todoface.prio*）。 */
+/** Priority label (0 none / 1 low / 2 medium / 3 high; reuses the todoface.prio* entries). */
 /** @param {number} p @returns {string} */
 function priorityLabel(p) {
   if (p === 3) return t('todoface.prioHigh');
@@ -113,7 +120,7 @@ function priorityLabel(p) {
   return t('todoapple.none');
 }
 
-/** 截止时间短文案（今天/明天/M月D日 + 时刻；13px 可读档）。 */
+/** Short due text (today / tomorrow / M/D + time; 13px readable step). */
 /** @param {number} ms @returns {string} */
 function dueText(ms) {
   const d = new Date(ms);
@@ -124,7 +131,7 @@ function dueText(ms) {
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
-// ── 模块态（列表目标 / 条目目标 / 草稿 / 首页内联态）──────────────────────
+// ── Module state (list target / item target / draft / home inline state) ──
 
 /** @type {{ mode: ListMode, tagId: string|null }} */
 let listTarget = { mode: 'all', tagId: null };
@@ -152,7 +159,7 @@ function openItem(itemId, nav) {
   nav.push('todo-apple-item');
 }
 
-/** 草稿重置（每次进入条目页重建：编辑 = 现条目读数；新建 = 列表页当前标签）。 */
+/** Draft reset (rebuilt on every item-page entry: edit = the item's current reading; create = the list page's current tag). */
 function resetDraft() {
   if (itemTarget) {
     const it = todoStore.allItems().find((x) => x.id === itemTarget) || null;
@@ -165,11 +172,14 @@ function resetDraft() {
   draft = { title: '', notes: '', due: null, priority: 0, tagId: listTarget.tagId || (first ? first.id : null) };
 }
 
-// ── 键盘避让（visualViewport 最小实现；imeGuard 只有组字判定、无键盘几何）──
-// 作者令「工具条必须贴键盘」。实现 = 监听 visualViewport 的 resize/scroll，
-// 把「窗口高 −（可视高 + 可视偏移）」写进根上的 --ta-kb；工具条 CSS 侧
-// bottom: calc(静止位 + var(--ta-kb))。无 visualViewport 的旧 WebView 降级 =
-// --ta-kb 恒 0 ⇒ 工具条落 dock 上缘（静止位），零报错零遮挡。
+// ── Keyboard avoidance (minimal visualViewport implementation; imeGuard only
+// knows composition state, not keyboard geometry) ──
+// The toolbar must hug the keyboard. Implementation: listen to visualViewport
+// resize/scroll and write "window height − (visual height + visual offset)"
+// into --ta-kb on the root; the toolbar CSS reads it in its bottom calc().
+// Legacy WebViews without visualViewport degrade to --ta-kb staying 0, so the
+// toolbar rests on the dock's top edge (resting position) with zero errors
+// and zero occlusion.
 let kbBound = false;
 function bindKeyboardAvoidance() {
   if (kbBound) return;
@@ -185,7 +195,7 @@ function bindKeyboardAvoidance() {
   apply();
 }
 
-// ── 挂载表 + 单飞重绘订阅 ────────────────────────────────────────────────
+// ── Mount table + single-flight rerender subscription ────────────────────
 /** @type {Map<string, { root: HTMLElement, render: () => void }>} */
 const mounts = new Map();
 let subscribed = false;
@@ -213,14 +223,14 @@ function ensureSubscribed() {
   bindKeyboardAvoidance();
 }
 
-/** 页壳（section）—— 悬浮 chrome（胶囊/FAB/工具条）挂这里，不随页体滚动。 */
+/** Page shell (section) — floating chrome (capsule/FAB/toolbar) hangs here so it does not scroll with the body. */
 /** @param {Element} body @returns {HTMLElement|null} */
 function sectionOf(body) {
   const s = body.closest('.mobile-page');
   return s instanceof HTMLElement ? s : null;
 }
 
-/** 清掉旧 chrome（页壳常驻，退出重进不得叠出第二套悬浮件）。 */
+/** Clear stale chrome (the page shell is persistent; leave-and-reenter must not stack a second set of floating pieces). */
 /** @param {HTMLElement} section */
 function clearChrome(section) {
   for (const sel of ['.ta-cluster', '.ta-fab-wrap', '.ta-menu', '.ta-tool']) {
@@ -229,7 +239,7 @@ function clearChrome(section) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// A · 列表首页（tasks）
+// A · Lists home page (tasks)
 // ══════════════════════════════════════════════════════════════════════
 
 /**
@@ -239,7 +249,8 @@ function clearChrome(section) {
  * @returns {{ root: HTMLElement, render: () => void }}
  */
 function buildHome(root, section, nav) {
-  // ── 四卡矩阵（2×2）：左上白线图标 / 右上大号白色计数 / 左下白色标签 ──
+  // ── Four-card matrix (2x2): white outline icon top-left / large white
+  // count top-right / white label bottom-left ──
   const grid = elIn(root, 'div', 'ta-grid');
   /**
    * @param {'today'|'overdue'|'all'|'completed'} kind
@@ -262,7 +273,8 @@ function buildHome(root, section, nav) {
   cAll.addEventListener('click', () => openList('all', null, nav));
   cDone.addEventListener('click', () => openList('completed', null, nav));
 
-  // ── 内联搜索条（胶囊搜索键展开；本地过滤 = 真实能力，无后端）──
+  // ── Inline search bar (expanded by the capsule search key; local filtering
+  // = real capability, no backend) ──
   const searchWrap = elIn(root, 'div', 'ta-searchbar');
   searchWrap.hidden = true;
   const searchInput = inputEl('ta-search-input');
@@ -273,11 +285,13 @@ function buildHome(root, section, nav) {
   searchInput.addEventListener('input', () => { searchQuery = searchInput.value; render(); });
   searchInput.addEventListener('keydown', (e) => { if (commitEnter(e, searchInput)) searchInput.blur(); });
 
-  // ── 「我的列表」区块标题（正文色粗体，不在卡里）+ 白色大圆角卡 ──
+  // ── "My Lists" section heading (bold body-colored text, not inside a card)
+  // + large-radius surface card ──
   const secLabel = elIn(root, 'div', 'ta-sec-label');
   const cardBox = elIn(root, 'div', 'ta-listcard');
   const rowsBox = elIn(cardBox, 'div', 'ta-rows');
-  // 新建列表行（胶囊「新建列表」展开；回车落库 = todoStore.createTag 真实能力）
+  // New-list row (expanded by the capsule "new list" key; Enter persists it
+  // via the real todoStore.createTag capability)
   const newRow = elIn(cardBox, 'div', 'ta-row ta-row-new');
   newRow.hidden = true;
   elIn(newRow, 'span', 'ta-dot ta-dot-new');
@@ -299,7 +313,8 @@ function buildHome(root, section, nav) {
   nlInput.addEventListener('keydown', (e) => { if (commitEnter(e, nlInput)) commitNewList(); });
   nlInput.addEventListener('blur', () => { if (newListOpen) commitNewList(); });
 
-  // ── 右上白色胶囊三图标（左端留空 = 返回钮独占；三键全部有实体能力）──
+  // ── White three-icon capsule at the top right (left end stays empty for the
+  // back button; all three keys have real backing capabilities) ──
   const cluster = elIn(section, 'div', 'ta-cluster');
   const pill = elIn(cluster, 'div', 'ta-pill');
   const bSearch = iconBtn('ta-pill-btn', 'search', t('todoapple.search'));
@@ -321,7 +336,7 @@ function buildHome(root, section, nav) {
   });
   bMore.addEventListener('click', () => { moreOpen = !moreOpen; render(); });
 
-  // 更多菜单（两项 = 真实入口：已完成视图 / 全部待办）
+  // More menu (two entries = real entries: completed view / all todos)
   const menu = elIn(section, 'div', 'ta-menu');
   menu.hidden = true;
   const mDone = btnEl('ta-menu-row');
@@ -334,9 +349,10 @@ function buildHome(root, section, nav) {
   mDone.addEventListener('click', () => { moreOpen = false; openList('completed', null, nav); });
   mAll.addEventListener('click', () => { moreOpen = false; openList('all', null, nav); });
 
-  // ── 右下蓝色 FAB（+）：新建待办（默认落首个标签）──
-  // 定位壳 = .ta-fab-wrap（absolute 落位，不进 chrome 扫描带 —— 见 CSS 注）；
-  // 钮本体 = .ta-fab.g2-fab（作者令指定的基准类 + 材质/几何/弹簧单源）。
+  // ── Blue FAB bottom-right (+): new todo (defaults to the first tag) ──
+  // Positioning shell = .ta-fab-wrap (absolute placement, kept out of the
+  // chrome scan band — see the CSS note); button body = .ta-fab.g2-fab
+  // (the spec-pinned base class: material/geometry/spring single source).
   const fabWrap = elIn(section, 'div', 'ta-fab-wrap');
   const fab = iconBtn('ta-fab g2-fab', 'plus', t('todoapple.newTodo'));
   fabWrap.appendChild(fab);
@@ -344,7 +360,8 @@ function buildHome(root, section, nav) {
 
   /** @returns {void} */
   function render() {
-    // 四卡读数：今天=今天到期未完成 / 逾期=过期未完成 / 全部=未完成总数 / 已完成=已完成数
+    // Card readings: today = due today and open / overdue = past due and open /
+    // all = total open / completed = completed count
     /** @param {HTMLButtonElement} b @param {string} label @param {number} n */
     const setCard = (b, label, n) => {
       b.classList.toggle('is-empty', n === 0);
@@ -356,7 +373,7 @@ function buildHome(root, section, nav) {
     setCard(cAll, t('todoapple.all'), todoStore.openCount());
     setCard(cDone, t('todoapple.completed'), todoStore.completedCount());
 
-    // 胶囊态
+    // Capsule state
     bSearch.classList.toggle('on', searchOpen);
     bNewList.classList.toggle('on', newListOpen);
     bMore.classList.toggle('on', moreOpen);
@@ -365,17 +382,17 @@ function buildHome(root, section, nav) {
     newRow.hidden = !newListOpen;
     nlInput.placeholder = t('todoapple.newListPh');
 
-    // 更多菜单
+    // More menu
     menu.hidden = !moreOpen;
     /** @type {HTMLElement} */ (mDone.querySelector('.ta-menu-l')).textContent = t('todoapple.completed');
     /** @type {HTMLElement} */ (mDone.querySelector('.ta-menu-n')).textContent = String(todoStore.completedCount());
     /** @type {HTMLElement} */ (mAll.querySelector('.ta-menu-l')).textContent = t('todoapple.allTodos');
     /** @type {HTMLElement} */ (mAll.querySelector('.ta-menu-n')).textContent = String(todoStore.openCount());
 
-    // 区块标题
+    // Section heading
     secLabel.textContent = searchOpen ? t('todoapple.searchResults') : t('todoapple.myLists');
 
-    // 列表卡行
+    // List card rows
     rowsBox.replaceChildren();
     if (searchOpen) {
       const q = searchQuery.trim().toLowerCase();
@@ -408,7 +425,8 @@ function buildHome(root, section, nav) {
         row.addEventListener('click', () => openList('tag', tg.id, nav));
         rowsBox.appendChild(row);
       }
-      // 末行「全部待办」灰行 = All 入口（tags 为空时本行即唯一行 = 降级形态）
+      // Last row "All todos" grey row = the All entry (with no tags it is the
+      // only row, i.e. the degraded form)
       const allRow = btnEl('ta-row ta-row-all');
       allRow.type = 'button';
       allRow.innerHTML = '<span class="ta-dot ta-dot-all"></span><span class="ta-row-label"></span>' +
@@ -426,10 +444,10 @@ function buildHome(root, section, nav) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// B · 列表详情页（todo-apple-list）
+// B · List detail page (todo-apple-list)
 // ══════════════════════════════════════════════════════════════════════
 
-/** 当前列表目标下的条目（本地只读过滤，不写 store 的筛选态）。 */
+/** Items under the current list target (local read-only filtering; the store's filter state is never written). */
 function itemsForTarget() {
   const all = todoStore.allItems();
   const now = Date.now();
@@ -456,7 +474,7 @@ function itemsForTarget() {
   });
 }
 
-/** 列表标题（文案 + 颜色）：模式页走主题 token，标签页走 tag.color（数据色）。 */
+/** List heading (text + color): mode pages take theme tokens, tag pages take tag.color (data color). */
 /** @returns {{ text: string, color: string }} */
 function listHead() {
   switch (listTarget.mode) {
@@ -483,7 +501,8 @@ function buildList(root, section, nav) {
   const itemsBox = elIn(wrap, 'div', 'ta-items');
   const empty = elIn(wrap, 'div', 'ta-empty');
 
-  // 右上白色胶囊：唯一有实体的能力 = 往本列表新建待办（createItem）
+  // White capsule top right: the only backed capability = create a todo into
+  // this list (createItem)
   const cluster = elIn(section, 'div', 'ta-cluster');
   const pill = elIn(cluster, 'div', 'ta-pill');
   const addBtn = iconBtn('ta-pill-btn', 'list-plus', t('todoapple.newTodo'));
@@ -502,7 +521,7 @@ function buildList(root, section, nav) {
       row.classList.toggle('is-done', it.completed);
       row.dataset.itemId = it.id;
 
-      // 左空心圆 checkbox：视觉 24、命中 48×48（≥44 契约）
+      // Left hollow-circle checkbox: visual 24, hit area 48x48 (>=44 contract)
       const check = btnEl('ta-check');
       check.type = 'button';
       check.setAttribute('aria-label', t('todoapple.markComplete'));
@@ -513,7 +532,7 @@ function buildList(root, section, nav) {
       });
       row.appendChild(check);
 
-      // 优先标记：priority > 0 才出现（蓝/橙/红三档数据色）
+      // Priority mark: only when priority > 0 (blue/orange/red data colors)
       if (it.priority > 0) {
         const prio = el('span', 'ta-prio');
         prio.style.background = priorityColor(it.priority);
@@ -521,7 +540,8 @@ function buildList(root, section, nav) {
         row.appendChild(prio);
       }
 
-      // 行体 = 正文按钮（点击下钻条目详情；同一 push/pop 栈 + 返回手势）
+      // Row body = text button (click drills into the item detail; same
+      // push/pop stack + back gesture)
       const bodyBtn = btnEl('ta-item-body');
       bodyBtn.type = 'button';
       elIn(bodyBtn, 'span', 'ta-item-title', it.title || '—');
@@ -541,10 +561,10 @@ function buildList(root, section, nav) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// C · 新建 / 编辑态（todo-apple-item）
+// C · Create / edit state (todo-apple-item)
 // ══════════════════════════════════════════════════════════════════════
 
-/** 工具条「日期」循环：无 → 今天 21:00 → 明天 21:00 → 无（真实 due 写口）。 */
+/** Toolbar "date" cycle: none → today 21:00 → tomorrow 21:00 → none (real due write). */
 function cycleDue() {
   if (draft.due == null) { draft.due = todayAt(21); return; }
   if (draft.due < startOfToday() + DAY) { draft.due = todayAt(21) + DAY; return; }
@@ -573,11 +593,14 @@ function buildItem(root, section, nav) {
   bindImeGuard(notes);
   const meta = elIn(wrap, 'div', 'ta-meta');
 
-  // 顶栏三件：左返回（页面壳「<」）、右胶囊、最右蓝色圆形对勾保存。
-  // 胶囊内容按实体能力取舍（作者令「没有的能力就不放按钮」）：
-  //   · 编辑态 = 「标记完成」（completeItem 写口）；
-  //   · 新建态 = 「旗标」快捷（与工具条旗标同一 draft.priority 写口，非新造实体）
-  //     —— 新建态点「完成」无对象可完成，故不出现。
+  // Top bar, three pieces: back on the left (page shell "<"), capsule on the
+  // right, blue circular check save at the far right.
+  // Capsule contents are trimmed to real capabilities (a button without a
+  // backing capability is not rendered):
+  //   · edit state = "mark complete" (the completeItem write);
+  //   · create state = "flag" shortcut (same draft.priority write as the
+  //     toolbar flag; no new entity) — in create state there is no item to
+  //     complete, so the complete key never appears.
   const cluster = elIn(section, 'div', 'ta-cluster');
   const pill = elIn(cluster, 'div', 'ta-pill');
   const doneBtn = iconBtn('ta-pill-btn', 'circle-check', t('todoapple.markComplete'));
@@ -593,7 +616,8 @@ function buildItem(root, section, nav) {
   cluster.appendChild(save);
   save.addEventListener('click', () => saveDraft(nav));
 
-  // 键盘工具条（贴键盘：bottom 走 --ta-kb；三键 = 日期 / 旗标 / 标签）
+  // Keyboard toolbar (hugs the keyboard: bottom reads --ta-kb; three keys =
+  // date / flag / tag)
   const tool = elIn(section, 'div', 'ta-tool');
   /**
    * @param {string} icon
@@ -639,7 +663,8 @@ function buildItem(root, section, nav) {
     if (document.activeElement !== notes) notes.value = draft.notes;
     notes.placeholder = t('todoapple.notes');
 
-    // 草稿摘要（日期 / 优先 / 标签三 chips；空档不显示 = 无实体不造壳）
+    // Draft summary (date / priority / tag chips; absent values are not shown
+    // = no shell without an entity)
     meta.replaceChildren();
     if (draft.due != null) elIn(meta, 'span', 'ta-chip ta-chip-due', dueText(draft.due));
     if (draft.priority > 0) {
@@ -656,11 +681,12 @@ function buildItem(root, section, nav) {
       elIn(chip, 'span', 'ta-chip-t', tg.name);
     }
 
-    // 工具条读数即当前草稿值
+    // Toolbar readings mirror the current draft values
     tDue.label.textContent = draft.due == null ? t('todoapple.noDue') : dueText(draft.due);
     tFlag.label.textContent = priorityLabel(draft.priority);
     tTag.label.textContent = tg ? tg.name : t('todoapple.toTag');
-    // 胶囊：新建态只有「旗标」有实体（无对象可完成 ⇒ 完成键不出）；编辑态两键齐
+    // Capsule: in create state only "flag" is backed (nothing to complete, so
+    // the complete key is absent); in edit state both keys show
     doneBtn.hidden = !itemTarget;
     flagBtn.classList.toggle('on', draft.priority > 0);
     if (typeof lucide !== 'undefined') createIconsIn(section);
@@ -669,7 +695,7 @@ function buildItem(root, section, nav) {
   return { root, render };
 }
 
-/** 保存（新建 = createItem / 编辑 = updateItem；空标题不落库 = 不造空实体）。 */
+/** Save (create = createItem / edit = updateItem; an empty title never persists = no empty entities). */
 /** @param {TaNav} nav */
 function saveDraft(nav) {
   const title = draft.title.trim();
@@ -689,14 +715,16 @@ function saveDraft(nav) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// 挂载入口（navController.ensurePanelContent 分派；幂等）
+// Mount entry (dispatched by navController.ensurePanelContent; idempotent)
 // ══════════════════════════════════════════════════════════════════════
 
 /**
- * 把三页之一的页面体建进 body（幂等：重复调用只重绘）。
+ * Build one of the three page bodies into `body` (idempotent: repeated calls
+ * only re-render).
  * @param {string} pageId 'tasks' | 'todo-apple-list' | 'todo-apple-item'
- * @param {Element|null} body 页面体容器
- * @param {TaNav} nav 导航注入（pushPage/popPage；避免与 navController 静态成环）
+ * @param {Element|null} body page body container
+ * @param {TaNav} nav injected navigation (pushPage/popPage; avoids a static
+ *   cycle with navController)
  * @returns {void}
  */
 export function mountTodoAppleInto(pageId, body, nav) {
@@ -704,8 +732,10 @@ export function mountTodoAppleInto(pageId, body, nav) {
   const section = sectionOf(body);
   if (!section) return;
   ensureSubscribed();
-  // 重入 = 整页重建（页壳 DOM 常驻，进/出/再进不得叠出第二套悬浮件；三页
-  // 互不共享可变 DOM，重建成本 = 一页几十行）。草稿状态在模块态里，重建不丢。
+  // Re-entry = full page rebuild (the page shell DOM is persistent; enter /
+  // leave / re-enter must not stack a second set of floating pieces; the
+  // three pages share no mutable DOM and a rebuild costs a few dozen rows).
+  // Draft state lives in module state, so a rebuild does not lose it.
   const prev = mounts.get(pageId);
   if (prev) {
     if (prev.root.parentElement === body) prev.root.remove();
@@ -729,14 +759,14 @@ export function mountTodoAppleInto(pageId, body, nav) {
   } else {
     resetDraft();
     built = buildItem(root, section, nav);
-    // 新建态 = 光标就位（作者令「新建行 = 光标 + 灰色中文占位」）
+    // Create state = caret in place (new row = caret + grey placeholder)
     const inp = /** @type {HTMLInputElement|null} */ (root.querySelector('.ta-title-input'));
-    if (inp) requestAnimationFrame(() => { try { inp.focus(); } catch { /* 焦点被拒 */ } });
+    if (inp) requestAnimationFrame(() => { try { inp.focus(); } catch { /* focus refused */ } });
   }
   mounts.set(pageId, built);
   built.render();
   if (typeof lucide !== 'undefined') createIconsIn(section);
 }
 
-/** 受控重绘（QA/后续批：外部数据面变化后不必等 store 订阅）。 */
+/** Controlled rerender (QA/follow-up batches: external data changes need not wait for the store subscription). */
 export function refreshTodoApple() { rerenderAll(); }

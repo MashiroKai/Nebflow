@@ -1,35 +1,42 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   mobile-todo-apple.css — 手机端待办页 Apple 提醒事项信息架构（实现批 · 作者令
-   2026-11-02 11:57「手机端待办页完全按 Apple 提醒事项信息架构重做」）。
+   mobile-todo-apple.css — Mobile todo pages laid out in the Apple Reminders
+   information architecture.
 
-   作用域：全部规则挂在 `body.mobile-layer` + 三页精确 selector 之下
-   （[data-page="tasks" | "todo-apple-list" | "todo-apple-item"]）——
-   桌面零命中，其它手机页零命中（`tests/mobile-*` 既有断言面不受本文件影响）。
+   Scope: every rule is anchored on `body.mobile-layer` plus one of the three
+   exact page selectors ([data-page="tasks" | "todo-apple-list" |
+   "todo-apple-item"]) — zero effect on desktop and on other mobile pages, so
+   existing `tests/mobile-*` assertion surfaces are untouched by this file.
 
-   色纪律（作者「蓝/红/深灰/灰四族走 token，暗色不得糊」）：
-     · 四卡底色 = 设计 token 家族（sapphire / --color-error / --color-text-dim /
-       --color-text-muted）经 color-mix 向深色档压一档（白字 17px 下对比度 ≥4.5）；
-     · 白字/白图标一律 = --ctl-send-ink（双主题恒 #fff 的唯一白墨 token；
-       --btn-ink-ink 在暗主题翻成深墨，不可当白字用）；
-     · 胶囊/工具条/菜单材质 = 玻璃样式包单源（--cv-bg / --cv-blur /
-       --cv-saturate / --cv-border / --cv-shadow），本文件零新材质字面量。
+   Color discipline (the four card families stay on tokens; dark theme must
+   keep the cards distinguishable):
+     · Card backgrounds derive from the design token families (sapphire /
+       --color-error / --color-text-dim / --color-text-muted), pressed one step
+       darker via color-mix so 17px white text keeps contrast >= 4.5;
+     · White text and white icons always use --ctl-send-ink (the only white-ink
+       token that stays #fff in both themes; --btn-ink-ink flips to dark ink in
+       the dark theme and must not be used as white text);
+     · Capsule / toolbar / menu materials come from the glass style pack single
+       source (--cv-bg / --cv-blur / --cv-saturate / --cv-border / --cv-shadow);
+       this file adds zero new material literals.
 
-   几何（与 mobileLayer.css token 块单源）：
-     · 顶部悬浮带 = --mchrome-top 16 + --mchrome-btn 48（钮底 64）；
-     · 页体顶让位 = --mchrome-clear 72（本页无流内大标题 ⇒ 让位责任方 = 页体）；
-     · 命中区 ≥44（--mtap），FAB = --mtap-lg 48。
+   Geometry (single source with the mobileLayer.css token block):
+     · Top floating band = --mchrome-top 16 + --mchrome-btn 48 (button bottom 64);
+     · Page body top clearance = --mchrome-clear 72 (this page has no in-flow
+       large title, so the page body owns the clearance);
+     · Hit areas >= 44 (--mtap), FAB = --mtap-lg 48.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── 页级 token（三页共用；chrome 与页体都从此读）───────────────────────── */
+/* ── Page-level tokens (shared by the three pages; chrome and body both read
+   from here) ───────────────────────────────────────────────────────────── */
 body.mobile-layer .mobile-page[data-page="tasks"],
 body.mobile-layer .mobile-page[data-page="todo-apple-list"],
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
-  /* 四卡四族（token 派生 → 压深一档保证白字对比度） */
+  /* Four card families (token-derived, pressed darker for white-text contrast) */
   --ta-c-today: color-mix(in srgb, rgb(var(--sapphire)) 84%, #0a0c10);
   --ta-c-overdue: color-mix(in srgb, var(--color-error) 78%, #140505);
   --ta-c-all: color-mix(in srgb, var(--color-text-dim) 62%, #0a0b0e);
   --ta-c-done: color-mix(in srgb, var(--color-text-muted) 72%, #0a0b0e);
-  --ta-ink: var(--ctl-send-ink, #fff); /* 双主题恒白（{: .ta-card 白字/白图标}） */
+  --ta-ink: var(--ctl-send-ink, #fff); /* stays white in both themes (card text/icons) */
   --ta-card-radius: 18px;
   --ta-card-h: 104px;
 }
@@ -37,10 +44,12 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
   body.mobile-layer .mobile-page[data-page="tasks"],
   body.mobile-layer .mobile-page[data-page="todo-apple-list"],
   body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
-    /* 暗主题：压深一档，但**两灰卡必须拉开档位**（作者「暗色不得糊」）——
-       「全部」取深灰（--color-text-dim 34%）、「已完成」取中灰（--color-text-muted
-       70%），实测底色亮度 0.21 vs 0.37（修前 0.290 / 0.297 两卡几乎同色）。
-       今日蓝 / 逾期红保持高识别度，仍显著亮于 --color-bg。#05070b 为压深基底。 */
+    /* Dark theme: pressed darker still, but the two grey cards must stay
+       clearly separated ("All" takes dark grey at --color-text-dim 34%,
+       "Completed" mid grey at --color-text-muted 70%; measured background
+       luminance 0.21 vs 0.37 — before the split both sat near 0.29 and read
+       as one card). Today blue / overdue red keep high legibility and remain
+       clearly brighter than --color-bg. #05070b is the darkening base. */
     --ta-c-today: color-mix(in srgb, rgb(var(--sapphire)) 76%, #05070b);
     --ta-c-overdue: color-mix(in srgb, var(--color-error) 62%, #0a0304);
     --ta-c-all: color-mix(in srgb, var(--color-text-dim) 34%, #05070b);
@@ -48,27 +57,32 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
   }
 }
 
-/* ── 页壳适配：两段式大标题在本页「静态隐藏」────────────────────────────
-   两段式的「静止大标题」在本页静态隐藏（作者令：本页顶部不要通栏标题带；只在
-   右上角留一颗悬浮胶囊 —— 左端留空）。display:none 而非透明度：本页首件由
-   四卡/列表标题承担信息层级，页名在页内已由区块标题/列表大标题重复表达。
-   页壳仍建该节点（buildSection 统一建法），本页在作用域内把它摘出渲染树。
-   The shell title is a single node whose sticky-capsule state is its own
-   ::before, so taking the node out of the render tree hides both states. */
+/* ── Page shell adaptation: the two-stage large title is statically hidden on
+   these pages. The shell still builds the node (buildSection builds it
+   uniformly); this scope takes it out of the render tree. Rationale: these
+   pages carry no full-width title band — the top hosts only the floating
+   capsule at the right edge, the left stays empty for the back button. The
+   page's first elements (four cards / list heading) carry the information
+   hierarchy and the page name is already restated by section headings inside
+   the page. display:none rather than opacity: the shell title is a single
+   node whose sticky-capsule state is its own ::before, so removing the node
+   from the render tree hides both states. */
 body.mobile-layer .mobile-page[data-page="tasks"] .mobile-page-title,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .mobile-page-title,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .mobile-page-title {
   display: none;
 }
-/* 页体顶让位（本页无流内大标题 ⇒ 让位责任方 = 页体）：首件起点 = 72 + safe，
-   恒在悬浮钮底缘 64 之下（mobile-chrome-clearance C1 的同一判据）。 */
+/* Page body top clearance (no in-flow large title on these pages, so the body
+   owns the clearance): first element starts at 72 + safe, always below the
+   floating button bottom edge of 64 (same criterion as mobile-chrome-clearance
+   C1). */
 body.mobile-layer .mobile-page[data-page="tasks"] .mobile-page-body,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .mobile-page-body,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .mobile-page-body {
   padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
 }
 
-/* ── 页体根（三页共用骨架）──────────────────────────────────────────────── */
+/* ── Page body root (shared skeleton of the three pages) ────────────────── */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-root,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-root,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
@@ -81,9 +95,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
   box-sizing: border-box;
 }
 
-/* ═══ A · 列表首页 ─────────────────────────────────────────────────────── */
+/* ═══ A · Lists home page ═══════════════════════════════════════════════ */
 
-/* 2×2 彩色卡矩阵 */
+/* 2x2 colored card matrix */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -109,7 +123,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-today { background: v
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-overdue { background: var(--ta-c-overdue); }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-all { background: var(--ta-c-all); }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-completed { background: var(--ta-c-done); }
-/* 左上白线图标 / 右上大号白色计数 / 左下白色标签（三件绝对定位成三角） */
+/* White outline icon top-left / large white count top-right / white label
+   bottom-left (three absolutely positioned pieces forming a triangle) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-ico {
   position: absolute;
   top: 14px;
@@ -146,7 +161,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-l {
   color: var(--ta-ink);
 }
 
-/* 内联搜索条（胶囊搜索键展开；本地过滤） */
+/* Inline search bar (expanded by the capsule search key; local filtering) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-searchbar {
   padding: 12px var(--mpad-x) 0;
 }
@@ -168,7 +183,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-search-input::placeholder 
   color: var(--color-text-muted);
 }
 
-/* 「我的列表」区块标题（正文色粗体，不在卡里） */
+/* "My Lists" section heading (bold body-colored text, not inside a card) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-sec-label {
   margin: 20px var(--mpad-x) 8px;
   font-size: 20px;
@@ -177,7 +192,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-sec-label {
   letter-spacing: -0.01em;
 }
 
-/* 白色大圆角卡（行容器） */
+/* Large-radius surface card (row container) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-listcard {
   margin: 0 var(--mpad-x);
   border-radius: var(--ta-card-radius);
@@ -187,7 +202,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-listcard {
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-rows { display: flex; flex-direction: column; }
 
-/* 行（彩圆图标 + 名称 + 右侧未完成计数 + 灰 chevron） */
+/* Row (colored round icon + name + open count on the right + grey chevron) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row {
   position: relative;
   display: flex;
@@ -206,7 +221,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-row {
   cursor: pointer;
   touch-action: manipulation;
 }
-/* 缩进细分隔线（色 = 边框 token；左缩进 16 + 24 + 12 = 52 对齐文字起线） */
+/* Inset hairline separator (color = border token; left inset 16 + 24 + 12 = 52
+   aligns with the text start line) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row::after {
   content: '';
   position: absolute;
@@ -218,7 +234,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-row::after {
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row:last-child::after { display: none; }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row:active { background: color-mix(in srgb, var(--color-text) 6%, transparent); }
-/* 行内彩圆图标（tag.color 数据色） */
+/* In-row colored round icon (tag.color data color) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot {
   flex: none;
   width: 24px;
@@ -254,9 +270,10 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-chev {
   display: block;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-chev svg { width: 18px; height: 18px; display: block; }
-/* 末行「全部待办」= 灰行（All 入口；tags 为空时本行即唯一行 = 降级形态） */
+/* Last row "All todos" = grey row (the All entry; with no tags it is the only
+   row, i.e. the degraded form) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row-all .ta-row-label { color: var(--color-text-muted); }
-/* 搜索命中行（副行 = 标签名） */
+/* Search hit row (secondary line = tag name) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row-sub {
   flex: none;
   font-size: var(--mfs-min);
@@ -267,7 +284,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-row-empty {
   font-size: var(--mfs-sub);
   color: var(--color-text-muted);
 }
-/* 新建列表行（胶囊「新建列表」展开，回车落库） */
+/* New-list row (expanded by the capsule "new list" key; Enter persists it) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row-new[hidden] { display: none; }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input {
   flex: 1 1 auto;
@@ -282,9 +299,11 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input {
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input::placeholder { color: var(--color-text-muted); }
 
-/* ── 顶部悬浮三件（右上白色胶囊三图标；左端留空给返回钮）───────────────
-   簇 = 零高带（--mchrome-top 16 + safe），胶囊绝对悬浮在带内右缘：
-   高 48 = 返回钮高、中心 40 = 返回钮中心（与页壳「<」同轴）。 */
+/* ── Top floating cluster (white three-icon capsule at the top right; the
+   left end stays empty for the back button) ─────────────────────────────
+   Cluster = zero-height band (--mchrome-top 16 + safe); the capsule floats
+   absolutely at the band's right edge: height 48 = back button height,
+   center 40 = back button center (coaxial with the shell "<"). */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-cluster,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-cluster,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-cluster {
@@ -317,8 +336,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill {
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill[hidden],
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill[hidden],
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill[hidden] { display: none; }
-/* 新建/编辑页顶栏三件同轴：胶囊让位到保存钮左侧（48 + 8 缝）——
-   左返回（页壳「<」）/ 中偏右胶囊 / 最右保存钮（下列 .ta-save 规则定位 right:0）。 */
+/* Item page top bar, coaxial three pieces: the capsule yields to the left of
+   the save button (48 + 8 gap) — back (shell "<") / capsule mid-right / save
+   button at the far right (the .ta-save rule below pins it to right:0). */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill {
   right: calc(var(--mtap-lg) + var(--mgap));
 }
@@ -352,12 +372,14 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn.on {
   background: rgb(var(--sapphire) / 0.14);
   color: rgb(var(--sapphire));
 }
-/* 无实体能力的胶囊键退场（[hidden] 必须压过上面的 flex 布局） */
+/* Capsule keys without a backing capability leave the row ([hidden] must win
+   over the flex layout above) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn[hidden],
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn[hidden],
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn[hidden] { display: none; }
 
-/* 更多菜单（胶囊「更多」展开；两项 = 真实入口：已完成 / 全部待办） */
+/* More menu (expanded by the capsule "more" key; two entries = real entries:
+   Completed / All todos) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu {
   position: absolute;
   top: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mgap) + env(safe-area-inset-top, 0px));
@@ -401,13 +423,18 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-n {
   font-variant-numeric: tabular-nums;
 }
 
-/* 右下蓝色圆形 FAB（+）——作者令指定 `.g2-fab` 基准类（材质/48 几何/弹簧
-   单源）+ `--mtap-lg` 尺寸档。**落位壳 = .ta-fab-wrap**：C1 探针
-   （tests/mobile-chrome-clearance.spec.mjs）把 `.g2-fab` 里 position:absolute|
-   fixed 的可见件计入 ctrlBottom（顶部钮带下沿），底部 FAB 若自己带那两条定位
-   属性之一进名单，首页首条正文（四卡）就永远满足不了「正文顶 ≥ ctrlBottom」。
-   解法 = 定位属性挪到无类名标记的壳上（壳不在扫描名单），钮本体保持 g2-fab
-   的材质/几何/按压全部单源。#deck-fab / .ask-fab 同因不在扫描名单。 */
+/* Bottom-right blue circular FAB (+) — built on the `.g2-fab` base class the
+   spec pins (material / 48 geometry / spring, all single-sourced) at the
+   `--mtap-lg` size step. **Placement shell = .ta-fab-wrap**: the C1 probe
+   (tests/mobile-chrome-clearance.spec.mjs) counts visible .g2-fab elements
+   that carry position:absolute|fixed into ctrlBottom (the top button band
+   bottom edge). If the bottom FAB itself carried either positioning property
+   into that roster, the first body element of the home page (the four cards)
+   could never satisfy "body top >= ctrlBottom". Fix = move the positioning
+   properties onto an unclassed wrapper (the wrapper is not in the scan
+   roster) while the button itself keeps g2-fab's material/geometry/press
+   single source. #deck-fab / .ask-fab sit out of the scan roster for the same
+   reason. */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap {
   position: absolute;
   right: var(--mpad-x);
@@ -433,7 +460,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
   display: block;
 }
 
-/* ═══ B · 列表详情页 ───────────────────────────────────────────────────── */
+/* ═══ B · List detail page ══════════════════════════════════════════════ */
 
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-detail {
   flex: 1 1 auto;
@@ -441,9 +468,10 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-detail {
   display: flex;
   flex-direction: column;
 }
-/* 大号彩色标题：左对齐（Apple 列表页语义；对齐限定在本页作用域内，
-   mobileLayer 的居中大标题规则对其它页零影响）。颜色 = 模式页走 token、
-   标签页走 tag.color（数据色，与列表行彩圆同源）。 */
+/* Large colored title, left-aligned (Apple list-page semantics; the alignment
+   override is scoped to this page only — mobileLayer's centered large-title
+   rule keeps zero effect on other pages). Color = token for the mode pages,
+   tag.color for tag pages (data color, same source as the list row icons). */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-dtitle {
   margin: 0;
   padding: 4px var(--mpad-x) 10px;
@@ -462,7 +490,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-items {
   flex-direction: column;
   padding: 0 var(--mpad-x);
 }
-/* 行：左空心圆勾选 + 优先标记 + 正文（行高宽松、无分隔线、无滑动操作） */
+/* Row: hollow check circle on the left + priority mark + body text (generous
+   row height, no separators, no swipe actions) */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item {
   display: flex;
   align-items: center;
@@ -482,7 +511,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-check {
   cursor: pointer;
   touch-action: manipulation;
 }
-/* 视觉 24（≥24 契约）/ 命中 48（≥44 契约） */
+/* Visual 24 (>=24 contract) / hit area 48 (>=44 contract) */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-check-circle {
   position: relative;
   width: 24px;
@@ -492,7 +521,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-check-circle {
   border-radius: 50%;
   transition: background-color 0.16s ease, border-color 0.16s ease;
 }
-/* 已完成：填充 + 几何对勾（零字形依赖；删除线/变灰见下） */
+/* Completed: fill + geometric check mark (zero glyph dependency; strikethrough
+   and dimming below) */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item.is-done .ta-check-circle {
   background: rgb(var(--sapphire));
   border-color: rgb(var(--sapphire));
@@ -508,7 +538,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item.is-done .ta
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-/* 优先标记（priority > 0 才出现；蓝/橙/红数据色；再正文） */
+/* Priority mark (only when priority > 0; blue/orange/red data color; body text
+   after it) */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-prio {
   flex: none;
   width: 4px;
@@ -546,7 +577,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item.is-done .ta
   color: var(--color-text-muted);
   text-decoration: line-through;
 }
-/* 空态：垂直 + 水平居中，中性灰 */
+/* Empty state: vertically + horizontally centered, neutral grey */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-empty {
   flex: 1 1 auto;
   min-height: 0;
@@ -559,7 +590,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-empty {
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-empty[hidden] { display: none; }
 
-/* ═══ C · 新建 / 编辑态 ─────────────────────────────────────────────────── */
+/* ═══ C · Create / edit state ═══════════════════════════════════════════ */
 
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit {
   flex: 1 1 auto;
@@ -568,7 +599,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit {
   flex-direction: column;
   padding: 0 var(--mpad-x);
 }
-/* 新建行：光标 + 灰色中文占位 + 右侧 (i) 信息钮 */
+/* New row: caret + grey placeholder + (i) info button on the right */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-newrow {
   display: flex;
   align-items: center;
@@ -620,7 +651,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes {
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes[hidden] { display: none; }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes::placeholder { color: var(--color-text-muted); }
-/* 草稿摘要 chips（日期 / 优先 / 标签） */
+/* Draft summary chips (date / priority / tag) */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-meta {
   display: flex;
   flex-wrap: wrap;
@@ -649,13 +680,16 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-prio {
   height: 12px;
   border-radius: 2px;
 }
-/* 保存 = 顶栏最右蓝色圆形对勾（g2-fab 基准 48 + sapphire 实底 + 恒白墨） */
+/* Save = rightmost blue circular check in the top bar (g2-fab base: 48 +
+   sapphire fill + always-white ink) */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save {
   position: absolute;
   top: 0;
   right: 0;
-  /* 簇本体 pointer-events:none（零高带不该拦事件）—— 保存钮是簇的直子，
-     必须自接事件（胶囊/胶囊内键由 .ta-pill 的 auto 承接）。 */
+  /* The cluster body is pointer-events:none (a zero-height band must not
+     intercept events) — the save button is a direct child of the cluster and
+     must re-enable events itself (capsule / in-capsule keys inherit auto from
+     .ta-pill). */
   pointer-events: auto;
   background: rgb(var(--sapphire));
   border-color: transparent;
@@ -670,9 +704,11 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save svg {
   height: 22px;
   stroke-width: 2.4;
 }
-/* 键盘工具条（三键 = 日期 / 旗标 / 标签）：贴键盘 —— bottom 取
-   「键盘高 --ta-kb（visualViewport 写入）」与「dock 让位」两者较大者。
-   无 visualViewport 的旧 WebView：--ta-kb 恒 0 ⇒ 落在 dock 上缘（静止位）。 */
+/* Keyboard toolbar (three keys = date / flag / tag): hugs the keyboard —
+   bottom takes the larger of "keyboard height --ta-kb (written by
+   visualViewport)" and the dock clearance. Legacy WebViews without
+   visualViewport keep --ta-kb at 0, so the bar rests on the dock's top edge
+   (resting position). */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
   position: fixed;
   left: var(--mpad-x);
@@ -724,8 +760,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-label {
   font-size: var(--mfs-min);
 }
 
-/* 无 blob 降级（旧 WebView/X5：backdrop-filter 不可用时的实底，与 glass.css
-   同族口径 —— 材质可退，几何与色阶不退）。 */
+/* No-backdrop fallback (legacy WebView/X5: solid surface when backdrop-filter
+   is unavailable, same family contract as glass.css — material may degrade,
+   geometry and color steps may not). */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill,
   body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
