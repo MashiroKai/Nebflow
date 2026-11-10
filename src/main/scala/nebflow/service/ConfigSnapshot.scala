@@ -50,9 +50,10 @@ object ConfigSnapshot:
    * 损坏文件。
    */
   def restoreLatest(): IO[Boolean] = IO.blocking {
-    // Write path (brand name) — restoring is a write, and completes the
-    // config-file rename migration like any other write.
-    val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+    // Corrupt check goes through the READ face (legacy-name fallback); the
+    // restore itself is a WRITE, so it always lands on the canonical name.
+    val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    val writePath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     // 当前配置是否真损坏（而非「合法 JSON、只是字段不全」）。
     val corrupt =
       try
@@ -65,7 +66,7 @@ object ConfigSnapshot:
         parse(os.read(snap)).isRight
       } match
         case Some(snap) =>
-          os.copy.over(snap, configPath, createFolders = true)
+          os.copy.over(snap, writePath, createFolders = true)
           true
         case None => false
   }

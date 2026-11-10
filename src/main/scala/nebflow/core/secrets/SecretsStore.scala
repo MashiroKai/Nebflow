@@ -609,14 +609,14 @@ class SecretsStore(
     catch case _: Throwable => None
 
   /**
-   * The `socialChannels.channels` subtree of nebflow.json, `None` when the
+   * The `socialChannels.channels` subtree of the config file, `None` when the
    * config is absent or unparseable (the reference scan then simply claims
    * nothing from stored refs; definition-layer names still apply). Reading
    * this file never touches a secret value — the stored side keeps PATHS.
    */
   private def channelConfig(): Option[Json] =
     try
-      val p = PathUtil.configJsonWritePath(dataRoot)
+      val p = PathUtil.configJsonReadPath(dataRoot)
       if !Files.exists(p.toNIO) then None
       else
         io.circe.parser

@@ -142,17 +142,18 @@ object PluginBlockPolicy:
    * 键族复用同一改写点——同文件、不同键族，互不覆盖（勿各造一份改写器）。
    */
   private[plugin] def mutatePluginsMap(table: String, name: String)(value: Option[Json]): Either[String, Unit] =
-    val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+    val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    val writePath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     if !os.exists(configPath) then
       val tableJson = value match
         case Some(v) => Json.obj(name -> v)
         case None => Json.obj()
-      AtomicJson.writeSyncRestricted(configPath, Json.obj("plugins" -> Json.obj(table -> tableJson)).noSpaces)
+      AtomicJson.writeSyncRestricted(writePath, Json.obj("plugins" -> Json.obj(table -> tableJson)).noSpaces)
       Right(())
     else
       io.circe.parser.parse(os.read(configPath)) match
         case Left(err) =>
-          Left(s"nebflow.json unparseable — refusing to rewrite for plugin block update: ${err.message}")
+          Left(s"config file unparseable — refusing to rewrite for plugin block update: ${err.message}")
         case Right(root) =>
           val plugins = root.hcursor.downField("plugins").focus.getOrElse(Json.obj())
           val current = plugins.hcursor.downField(table).focus.getOrElse(Json.obj())
@@ -165,7 +166,7 @@ object PluginBlockPolicy:
           val out = Json.fromJsonObject(
             root.asObject.getOrElse(JsonObject.empty).add("plugins", newPlugins)
           )
-          AtomicJson.writeSyncRestricted(configPath, out.noSpaces)
+          AtomicJson.writeSyncRestricted(writePath, out.noSpaces)
           Right(())
 
     end if

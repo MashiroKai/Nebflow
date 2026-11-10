@@ -565,7 +565,7 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       renderer = ctx =>
         s"""# Available executors (Delegate)
 
-`Delegate(task, project?, executor?)` runs a background worker. Pick `executor` per task; omit it for the configured default (executor.default in nebflow.json — the built-in `nebflow` when unset). Available now:
+`Delegate(task, project?, executor?)` runs a background worker. Pick `executor` per task; omit it for the configured default executor (`executor.default`); when unset or unusable, the built-in internal executor is used. Available now:
 
 ${ctx.executorsText}
 

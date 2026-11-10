@@ -612,7 +612,7 @@ object PluginSourceSync:
                 logger.warnSync(
                   s"[plugin-sync] '$name' is declared preinstall but could not be fetched ($err) — the package stays " +
                     s"absent on this home (no seed copy exists any more). Fix the source " +
-                    s"(nebflow.json plugins.sources.$name) or install manually: stand plugin add <git-url>#<tag>. " +
+                    s"(stand.json plugins.sources.$name) or install manually: stand plugin add <git-url>#<tag>. " +
                     "Other plugins are unaffected."
                 )
                 list :+ (name -> (Left(err): Either[String, String]))

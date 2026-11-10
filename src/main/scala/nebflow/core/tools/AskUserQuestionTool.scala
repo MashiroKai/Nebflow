@@ -88,7 +88,7 @@ Visual selection support (askuser-canvas direction C):
 Secret questions (secret: true):
 - Use for API keys, tokens, passwords, verification codes — anything the user must not paste as plain text. The question renders a password box instead of options.
 - The value travels exactly one path: card password box → gateway → the secrets store (owner-only 0600 file). YOU NEVER SEE THE VALUE: the answer message carries only a pointer receipt `{"stored":true,"keyRef":...,"location":...,"variableName":...}` (or `{"stored":false,"reason":...}` on failure).
-- Consume the value inside a Bash command via `$(cat <location>)` — it exists only inside that sub-shell. If the secret is allowlisted in nebflow.json (`secrets.inject`), it is also available as `$VARIABLE`. Discipline: the value is a service input only — never print it, write it to a file, or forward it.
+- Consume the value inside a Bash command via `$(cat <location>)` — it exists only inside that sub-shell. If the secret is allowlisted in the config file (`secrets.inject`), it is also available as `$VARIABLE`. Discipline: the value is a service input only — never print it, write it to a file, or forward it.
 - `ephemeral: true` marks a one-time verification code (OTP/2FA): the store keeps it at most `ttlSec` seconds (default 600, clamp 10–86400) and the FIRST read consumes it — a second read fails. Ask again for a fresh code rather than retrying.
 - `secretName` optionally names the stored file (lowercase `[a-z0-9._-]`); default `askuser-<requestId>-<questionIndex>`. Secret questions do not accept options/dirPicker/canvas (options are stripped, violating questions are skipped).
 

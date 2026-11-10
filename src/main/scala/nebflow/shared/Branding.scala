@@ -128,9 +128,9 @@ object Branding:
   val envPrefix: String = get("envPrefix")
 
   /**
-   * Config file name — L3 batch 3 dual-read: read prefers this name, falls
-   * back to the hardcoded legacy "nebflow.json"; writes always use this
-   * name (first read-modify-write completes the rename migration).
+   * Config file name — L3 batch 3 dual-read: reads prefer this name and fall
+   * back to the hardcoded legacy "nebflow.json" (read in place, never
+   * touched); writes always use this name.
    */
   val configFileName: String = get("configFileName")
 

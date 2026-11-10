@@ -1501,18 +1501,19 @@ object PluginRegistry:
       }
     }
 
-  /** nebflow.json 手术式改写：读全量 → transform → 原子写回（保留全部其他键）。 */
+  /** 配置文件（stand.json）手术式改写：读全量 → transform → 原子写回（保留全部其他键）。 */
   private def mutateNebflowJson(transform: Json => Json): Either[String, Unit] =
-    val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+    val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    val writePath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     if !os.exists(configPath) then
       // 首次写：只落 plugins.trust 骨架（不伪造其他配置键）
-      AtomicJson.writeSyncRestricted(configPath, transform(Json.obj()).noSpaces)
+      AtomicJson.writeSyncRestricted(writePath, transform(Json.obj()).noSpaces)
       Right(())
     else
       io.circe.parser.parse(os.read(configPath)) match
-        case Left(err) => Left(s"nebflow.json unparseable — refusing to rewrite for trust update: ${err.message}")
+        case Left(err) => Left(s"config file unparseable — refusing to rewrite for trust update: ${err.message}")
         case Right(root) =>
-          AtomicJson.writeSyncRestricted(configPath, transform(root).noSpaces)
+          AtomicJson.writeSyncRestricted(writePath, transform(root).noSpaces)
           Right(())
 
   // ── 装载可见性（P1 静默缩容，2026-09-10 可见性批；无审批批 2026-09-13 口径更新）───

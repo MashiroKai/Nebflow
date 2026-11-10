@@ -314,5 +314,5 @@ object SandboxRuntime:
     s"""SANDBOX_UNAVAILABLE
        |[sandbox: provider=$providerRef — $cause. Bash execution is refused (explicit failure) and was NOT silently downgraded to host execution.]
        |Root: $root
-       |Fix: set "sandbox": { "provider": "host" } in nebflow.json to run on the host explicitly (the default), or "local-process" to wrap Bash in the macOS Seatbelt profile; for provider=container/auto wait for the container batch.""".stripMargin
+       |Fix: set "sandbox": { "provider": "host" } in stand.json to run on the host explicitly (the default), or "local-process" to wrap Bash in the macOS Seatbelt profile; for provider=container/auto wait for the container batch.""".stripMargin
 end SandboxRuntime

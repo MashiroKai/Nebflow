@@ -260,7 +260,7 @@ object ConfigService:
                     IO.delay(
                       logger.warnSync(
                         s"Provider delete did NOT land for [${survived.mkString(", ")}] — " +
-                          "a concurrent nebflow.json writer restored them; the runtime will keep " +
+                          "a concurrent config writer restored them; the runtime will keep " +
                           "using them until a successful delete. Re-save the settings to retry."
                       )
                     ).attempt *> IO.pure(
@@ -531,7 +531,7 @@ object ConfigService:
           val existing = if os.exists(configPath) then os.read(configPath) else "{}"
           parse(existing) match
             case Left(err) =>
-              Left(s"nebflow.json unparseable — refusing to rewrite for jev update: ${err.message}")
+              Left(s"config file unparseable — refusing to rewrite for jev update: ${err.message}")
             case Right(parsed) =>
               val section = parsed.hcursor
                 .downField(JEV_SECTION)
@@ -602,7 +602,7 @@ object ConfigService:
           val existing = if os.exists(configPath) then os.read(configPath) else "{}"
           parse(existing) match
             case Left(err) =>
-              Left(s"nebflow.json unparseable — refusing to rewrite for embedding update: ${err.message}")
+              Left(s"config file unparseable — refusing to rewrite for embedding update: ${err.message}")
             case Right(parsed) =>
               val section = parsed.hcursor
                 .downField(EMBEDDING_SECTION)
@@ -636,7 +636,7 @@ object ConfigService:
    * 失败上浮（fail-loud）。本节不收任何凭据键。
    *
    * 值校验：`default` 必须在 [[nebflow.core.executor.ExecutorRegistry.defs]]
-   * 在册；`disabled` 不得含内置执行器 `nebflow`（内置执行器是零依赖兜底面，
+   * 在册；`disabled` 不得含内置执行器（[[nebflow.core.executor.ExecutorRegistry.DefaultId]]，零依赖兜底面，
    * 恒可用——registry 读取侧也会再挡一层）。
    */
   def setExecutorSection(values: Map[String, Json]): IO[Either[String, Unit]] =
@@ -661,7 +661,7 @@ object ConfigService:
             val existing = if os.exists(configPath) then os.read(configPath) else "{}"
             parse(existing) match
               case Left(err) =>
-                Left(s"nebflow.json unparseable — refusing to rewrite for executor update: ${err.message}")
+                Left(s"config file unparseable — refusing to rewrite for executor update: ${err.message}")
               case Right(parsed) =>
                 val section = parsed.hcursor
                   .downField(EXECUTOR_SECTION)
@@ -751,7 +751,7 @@ object ConfigService:
             val existing = if os.exists(configPath) then os.read(configPath) else "{}"
             parse(existing) match
               case Left(err) =>
-                Left(s"nebflow.json unparseable — refusing to rewrite for imagegen update: ${err.message}")
+                Left(s"config file unparseable — refusing to rewrite for imagegen update: ${err.message}")
               case Right(parsed) =>
                 // 空对象 = 整节清空（删顶层节，回到未配置态——graceful
                 // degrade 方向与删节同义）；非空 = 整节替换。

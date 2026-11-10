@@ -86,7 +86,7 @@ object FriendsSeal:
         else parseEnabled(os.read(path))
       catch
         case e: Exception =>
-          logger.warnSync(s"[friends-seal] nebflow.json unreadable (${e.getClass.getSimpleName}) — defaulting UNSEALED")
+          logger.warnSync(s"[friends-seal] config file unreadable (${e.getClass.getSimpleName}) — defaulting UNSEALED")
           true
     enabledBase = enabled
     val state = if enabled then "unsealed" else "sealed"

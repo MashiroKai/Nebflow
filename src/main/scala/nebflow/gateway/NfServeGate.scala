@@ -106,11 +106,11 @@ object NfServeGate:
       .flatMap(_.hcursor.downField(ConfigKey).downField(ConcurrencyKey).as[Int].toOption)
       .filter(_ > 0)
 
-  /** Read the configured budget from the data root's `nebflow.json` once
+  /** Read the configured budget from the data root's config file once
     * (startup path), fail-safe → [[DefaultMaxConcurrent]]. */
   def loadMaxConcurrent(): Int =
     try
-      val cfg = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+      val cfg = PathUtil.configJsonReadPath(PathUtil.dataRoot)
       if os.exists(cfg) then parseMaxConcurrent(os.read(cfg)).getOrElse(DefaultMaxConcurrent)
       else DefaultMaxConcurrent
     catch case _: Throwable => DefaultMaxConcurrent

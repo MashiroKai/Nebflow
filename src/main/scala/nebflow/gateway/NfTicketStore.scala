@@ -72,7 +72,7 @@ class NfTicketStore private (
         if now - probe.checkedAtMs < NfTicketStore.TtlProbeIntervalMs then IO.unit
         else
           IO.blocking {
-            val cfg = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+            val cfg = PathUtil.configJsonReadPath(PathUtil.dataRoot)
             val mtime = if os.exists(cfg) then os.mtime(cfg) else -1L
             val read = if mtime >= 0 then Some(os.read(cfg)) else None
             (mtime, read)
@@ -224,7 +224,7 @@ object NfTicketStore:
   /** Read the configured TTL once (startup path in GatewayMain), fail-safe. */
   def loadTtlSeconds(): Long =
     try
-      val cfg = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+      val cfg = PathUtil.configJsonReadPath(PathUtil.dataRoot)
       if os.exists(cfg) then parseTtl(os.read(cfg)).getOrElse(DefaultTtlSeconds)
       else DefaultTtlSeconds
     catch case _: Throwable => DefaultTtlSeconds

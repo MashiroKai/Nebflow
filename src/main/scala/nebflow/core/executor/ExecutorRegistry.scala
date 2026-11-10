@@ -13,10 +13,10 @@ import java.io.File
  *
  * 大改后的使用形态：Nebula 的 `Delegate(task, project?, executor?)`，执行器由
  * 主 agent 动态选择——`executor` 参数为唯一显式选择输入；参数缺省时取
- * nebflow.json `executor.default` 的配置默认（未配置或配置不可用 ⇒ 内置
+ * 配置 `executor.default` 的默认（未配置或配置不可用 ⇒ 内置
  * [[DefaultId]]）。本注册表提供：
  *
- *   - `nebflow` —— 内置执行器（BuiltinAgents 合并后的执行 agent），无需检测；
+ *   - [[DefaultId]] —— 内置执行器（BuiltinAgents 合并后的执行 agent），无需检测；
  *   - 外部 CLI 智能体 —— ZCode / Claude Code / Codex / Hermes：检测面 ＋ 真适配
  *     路径（适配器见 [[nebflow.core.executor.ExternalExecutor]]；hermes 只做
  *     检测 + 图标 + 占位，`adapterReady=false`，选择面显式拒绝）。
@@ -26,7 +26,7 @@ import java.io.File
  * RgHelper.curatedProbeDirs 注释 2026-09-21）。外部 CLI **不做** bundled /
  * `~/.nebflow/bin` 腿——它们不是 Nebflow 安装的。
  *
- * ==配置（nebflow.json 顶层 `executor` 节）==
+ * ==配置（配置文件顶层 `executor` 节）==
  *   "executor": { "default": "nebflow", "disabled": ["hermes"] }
  *
  * 热读（每次快照现读，仿 [[nebflow.core.jev.JevConfigReader]]）：只读本节
@@ -42,7 +42,7 @@ object ExecutorRegistry:
     /** 逐个探测的可执行名（Windows 自动追加 .exe/.cmd 形态）。 */
     binNames: List[String],
     description: String,
-    /** false = nebflow 内置执行器（不需要文件系统检测）。 */
+    /** false = 内置执行器（不需要文件系统检测）。 */
     external: Boolean,
     /** false = 仅检测 + 图标占位，delegate 尚不可选（适配器未落地）。 */
     adapterReady: Boolean
@@ -194,7 +194,7 @@ object ExecutorRegistry:
   // 零改动）：adapterReady ＋ detected。
   //
   // fail-closed：请求的执行器不可选（不在册 / 适配未就绪 / 未检测到二进制 /
-  // 配置默认不可检测）⇒ Left 显式错误，**绝不静默回落 nebflow**。
+  // 配置默认不可检测）⇒ Left 显式错误，**绝不静默回落内置执行器**。
 
   /** 选择解析结果：内置执行器（原 spawn 路径）或外部执行器（真适配器路径）。 */
   enum ResolvedSelection:

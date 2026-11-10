@@ -554,9 +554,10 @@ object GatewayMain extends IOApp:
               // 目录文件缺席 ⇒ 全腿 no-op。失败不阻断启动（与上两行迁移同款纪律）。
             try nebflow.core.ModelChainMigration.migrateLegacyPresetRefs()
             catch case e: Exception => logger.warn(s"preset→chain migration failed: ${e.getMessage}")
-              // config-single-source batch (author rulings ①–④, 2026-11-05) — boot face:
-              //  · the config-file rename migration (`nebflow.json` → `stand.json`) runs
-              //    inside PathUtil.configJsonPath on first touch and logs one line;
+              // config-single-source batch — boot face:
+              //  · legacy-name compat: PathUtil.configJsonPath prefers `stand.json`
+              //    and falls back to reading a legacy `nebflow.json` in place (one
+              //    info line, once per process; the legacy file is never touched);
               //  · `llm.fallback` is seeded from the CURRENT effective chain the first
               //    time, so the chain is visible/editable in the file (one truth);
               //  · unresolvable refs in that section are reported as WARNINGS (never a

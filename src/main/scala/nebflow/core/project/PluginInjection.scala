@@ -139,7 +139,7 @@ object PluginInjection:
                               "refusing to dispatch with an empty plugin set (no silent degradation). " +
                               s"Reason: $reason. " +
                               "Fix the allocator model/provider, or set plugins.failOpenOnAllocationError=true " +
-                              "in nebflow.json to restore the old empty-set behaviour."
+                              "in stand.json to restore the old empty-set behaviour."
                           )
                         )
                     }
