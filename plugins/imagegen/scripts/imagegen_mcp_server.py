@@ -3,7 +3,7 @@
 2026-10-30 起正式产品面，DEBUG 标记退役）。
 
 stdio JSON-RPC 2.0（newline-delimited，MCP 2025-06-18 子集：initialize /
-notifications/initialized / tools/list / tools/call）。单工具 generate_image：
+notifications/initialized / tools/list / tools/call）。单工具 GenerateImage：
 把调用翻译成本机引擎环回路由 POST http://127.0.0.1:<port>/api/imagegen 的**阻塞**
 HTTP 调用——路由侧走与腿①内置工具完全相同的 provider 层（配置同读 nebflow.json
 imagegen 节），返回落盘图片绝对路径。无第三方依赖（纯 stdlib）。
@@ -21,14 +21,14 @@ PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "stand-imagegen"
 SERVER_VERSION = "1.0.0"
 
-TOOL_NAME = "generate_image"
+TOOL_NAME = "GenerateImage"
 TOOL_DESCRIPTION = (
     "Generate an image from a text prompt. BLOCKING: the call "
     "waits for generation to finish and returns the saved image's absolute path. "
     "Providers/config come from the instance nebflow.json `imagegen` section "
     "(cogview / openai-images / imagen adapters; keys via the Settings → Image "
     "generation panel). Root sessions should use the built-in non-blocking "
-    "generate_image tool instead."
+    "GenerateImage tool instead."
 )
 TOOL_SCHEMA = {
     "type": "object",

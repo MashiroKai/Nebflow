@@ -27,13 +27,13 @@ object FriendsSealKit:
   /**
    * constant − (friendsSealed ? 1 : 0) − (imageGenSealed ? 1 : 0)，全部由交付
    * 快照自身推导（presence-based，零裸数字、零二次读锁——imagegen 双层批
-   * 2026-10-24 把 generate_image 的编译期 seal 剥离面并进了同一个单点推导：
+   * 2026-10-24 把 GenerateImage 的编译期 seal 剥离面并进了同一个单点推导：
    * 静态集与件数常量不动，seal 状态只在这个消费点读一次）。
    */
   def expectedNebulaSize(delivered: Set[String]): Int =
     val constant = nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize
     val friends = if delivered.contains("ListFriends") then 0 else 1
-    val imageGen = if delivered.contains("generate_image") then 0 else 1
+    val imageGen = if delivered.contains("GenerateImage") then 0 else 1
     constant - friends - imageGen
 
   /**

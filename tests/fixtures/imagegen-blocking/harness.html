@@ -2,7 +2,7 @@
 <!-- imagegen-blocking harness.html — 生图交互修正批（2026-10-30 作者令，照 Codex
      玩法定案）的静态测试 harness：
 
-       阻塞语义：generate_image 调用挂起至图成（后端保证），前端两段生命期全部
+       阻塞语义：GenerateImage 调用挂起至图成（后端保证），前端两段生命期全部
        走**生产通用腿**——
          ① 调用期间：标准 pending 工具卡原位占位（renderToolPending：spinner +
             「生图」标签，纯文本风格动效纪律，零特判面）；

@@ -2393,7 +2393,7 @@ export default {
 
   // === Tool names (label first line) ===
   'tool.Read': 'Read',
-  'tool.generate_image': 'Image gen',
+  'tool.GenerateImage': 'Image gen',
   'tool.Edit': 'Edit',
   'tool.Write': 'Write',
   'tool.Bash': 'Bash',

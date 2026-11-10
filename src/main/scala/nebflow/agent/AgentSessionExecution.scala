@@ -2683,7 +2683,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // ToolRegistry 在册才解析得出 schema，而在册即意味着 "*" 声明会拿到名字——
     // 本集是唯一能把名字从非 ask 身份摘掉的面（工具内 isAskSession 闸为第二保险）。
     val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
-    // 🔴 The subtract legs only apply to delegate sessions: worktree_context is a
+    // 🔴 The subtract legs only apply to delegate sessions: WorktreeContext is a
     // RootOrchestrationTools member, so an unconditional strip would remove it from
     // the main-agent face (merger_report is absent there, which is why the old
     // unconditional subtraction was a no-op for root).

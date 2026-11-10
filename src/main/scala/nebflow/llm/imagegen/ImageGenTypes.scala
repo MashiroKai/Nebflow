@@ -4,7 +4,7 @@ package nebflow.llm.imagegen
  * 生图能力共享层——imagegen 双层批（2026-10-24，作者裁定双层架构）的 provider 抽象。
  *
  * 两条腿共用本层：
- *  腿① 内置工具 `generate_image`（Nebula 专属，非阻塞 job，前端占位动画）；
+ *  腿① 内置工具 `GenerateImage`（Nebula 专属，非阻塞 job，前端占位动画）；
  *  腿② 插件 imagegen（MCP，阻塞返回，无前端语义）——经本机引擎
  *      `POST /api/imagegen` 路由调用同一实现。
  *

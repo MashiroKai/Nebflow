@@ -10,7 +10,7 @@ import nebflow.core.project.{DelegateFlowHosts, FlowMapState, NodeLifecycle}
 import scala.util.Try
 
 /**
- * worktree_context — read-only assembly of one managed workspace's full context
+ * WorktreeContext — read-only assembly of one managed workspace's full context
  * for the project merger and the main agent (worktree-merger architecture §六).
  *
  * Summary first, then pagination: the workspace record, the linked task brief,
@@ -32,7 +32,7 @@ import scala.util.Try
  * ask session or a bare REST call gets `Left`).
  */
 object WorktreeContextTool extends Tool:
-  val Name = "worktree_context"
+  val Name = "WorktreeContext"
   def name: String = Name
 
   def description: String =
@@ -62,7 +62,7 @@ object WorktreeContextTool extends Tool:
     ),
     "required" -> List("workspaceId").asJson
   )
-  def summarize(input: JsonObject): String = s"worktree_context(${input("workspaceId").flatMap(_.asString).getOrElse("?")})"
+  def summarize(input: JsonObject): String = s"WorktreeContext(${input("workspaceId").flatMap(_.asString).getOrElse("?")})"
   def summarizeResult(input: JsonObject, result: String): String = result.take(200)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
@@ -76,7 +76,7 @@ object WorktreeContextTool extends Tool:
             case None => IO.pure(None)
             case Some(h) => h.store.snapshot.attempt.map(_.toOption)
           graph.flatMap(nodes => IO.blocking(assemble(workspace, snapshot, offset, pageSize, requestScope, nodes)).map(Right(_)))
-        }.handleError(e => Left(ToolError(Option(e.getMessage).getOrElse("worktree_context failed"))))
+        }.handleError(e => Left(ToolError(Option(e.getMessage).getOrElse("WorktreeContext failed"))))
     }
 
   /** Authorization + parameter decoding + ledger load (blocking, single point). */
@@ -87,7 +87,7 @@ object WorktreeContextTool extends Tool:
     val caller = ctx.sessionId.getOrElse("")
     val mergerMode = DelegateRegistry.modeFaceOf(ctx.sessionId).contains(DualModeConfig.ModeMerger)
     if !ctx.isRootAgent && !mergerMode then
-      Left(ToolError("worktree_context is limited to the main agent and merger-mode sessions"))
+      Left(ToolError("WorktreeContext is limited to the main agent and merger-mode sessions"))
     else
       val c = Json.fromJsonObject(input).hcursor
       val workspaceId = c.get[String]("workspaceId").getOrElse("")

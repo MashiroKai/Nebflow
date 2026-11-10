@@ -15,7 +15,7 @@ import java.util.Base64
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong, AtomicReference}
 
 /**
- * generate_image 阻塞语义 + Pop 载荷直出（交互修正批 2026-10-30，作者令照
+ * GenerateImage 阻塞语义 + Pop 载荷直出（交互修正批 2026-10-30，作者令照
  * Codex 玩法定案）的行为钉。真 stub HTTP server（cogview b64 形态应答 + 可控
  * 延迟/失败面）+ 临时 dataRoot（nebflow.json 预置 stub provider）——`call` 全
  * 链实跑，不靠 mock 帧形状假设。
@@ -198,7 +198,7 @@ class GenerateImageToolSpec extends munit.FunSuite:
 
   test("T7 summarize / summarizeResult 面") {
     assertEquals(GenerateImageTool.summarize(input("a red apple on a wooden table, painted in oils, warm light")),
-      """generate_image("a red apple on a wooden table, painted in oils, warm light")""")
+      """GenerateImage("a red apple on a wooden table, painted in oils, warm light")""")
     assertEquals(
       GenerateImageTool.summarizeResult(input("x"), "___POP_JSON___{\"items\":[]}"),
       "image shown in chat"

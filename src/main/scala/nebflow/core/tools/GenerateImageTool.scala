@@ -39,7 +39,7 @@ import java.util.UUID
 object GenerateImageTool extends Tool:
   private val logger = NebflowLogger.forName("nebflow.imagegen.tool")
 
-  val name = "generate_image"
+  val name = "GenerateImage"
 
   /** Pop 升级批的载荷哨兵（与 [[PopTool.Sentinel]] 同字面——前端 isPopPayload 单点解析）。 */
   private val PopSentinel = "___POP_JSON___"
@@ -80,7 +80,7 @@ object GenerateImageTool extends Tool:
 
   def summarize(input: JsonObject): String =
     val prompt = input("prompt").flatMap(_.asString).getOrElse("")
-    s"""generate_image("${prompt.take(60)}${if prompt.length > 60 then "…" else ""}")"""
+    s"""GenerateImage("${prompt.take(60)}${if prompt.length > 60 then "…" else ""}")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith(PopSentinel) then "image shown in chat"
@@ -88,7 +88,7 @@ object GenerateImageTool extends Tool:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.defer {
     if !ctx.isRootAgent then
-      IO.pure(Left(ToolError("generate_image is Nebula-only (IMAGEGEN_ROOT_ONLY) — delegates use the imagegen plugin instead.")))
+      IO.pure(Left(ToolError("GenerateImage is Nebula-only (IMAGEGEN_ROOT_ONLY) — delegates use the imagegen plugin instead.")))
     else
       val prompt = input("prompt").flatMap(_.asString).map(_.trim).getOrElse("")
       if prompt.isEmpty then IO.pure(Left(ToolError("prompt must be a non-empty string (IMAGEGEN_PROMPT)")))
@@ -139,7 +139,7 @@ object GenerateImageTool extends Tool:
   private def failJob(jobId: String, ctx: ToolContext, message: String): IO[Either[ToolError, String]] =
     IO.delay(ImageGenJobs.fail(jobId, message.take(300))) *>
       logger.warn(s"imagegen job $jobId failed: ${message.take(200)}", "sessionId" -> ctx.sessionId.getOrElse("")) *>
-      IO.pure(Left(ToolError(s"generate_image failed: ${message.take(300)} (IMAGEGEN_JOB)")))
+      IO.pure(Left(ToolError(s"GenerateImage failed: ${message.take(300)} (IMAGEGEN_JOB)")))
 
   /**
    * 成功载荷：`___POP_JSON___` + Pop 升级批契约（票据腿单 image item）。
@@ -190,7 +190,7 @@ object GenerateImageTool extends Tool:
             name <- cursor.downField("items").downArray.downField("name").as[String].toOption
           yield Json
             .obj(
-              "generate_image" -> "shown".asJson,
+              "GenerateImage" -> "shown".asJson,
               "path" -> path.asJson,
               "name" -> name.asJson,
               "note" -> "The image is rendered to the user in chat as a media card (do NOT Pop it again); `path` is the saved file.".asJson

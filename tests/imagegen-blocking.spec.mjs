@@ -79,7 +79,7 @@ const POP_PAYLOAD = '___POP_JSON___' + JSON.stringify({
   notes: [],
   items: [{ kind: 'image', name: 'img-deadbeef.png', path: IMG_PATH, size: PNG.length, ext: 'png' }],
 });
-const TOOL_LABEL = 'generate_image("a red apple on a wooden table")';
+const TOOL_LABEL = 'GenerateImage("a red apple on a wooden table")';
 const TOOL_SUMMARY = 'image shown in chat';
 const TOOL_INPUT = JSON.stringify({ prompt: 'a red apple on a wooden table' });
 
@@ -234,8 +234,8 @@ test.describe('生图阻塞语义（占位 → 单图直出 → 零双渲染）'
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__igUser('给我画一张图'));
     await page.evaluate(l => window.__igCallStart(l), TOOL_LABEL);
-    await page.evaluate(([l, s, i]) => window.__igError(l, s, 'generate_image failed: provider boom (IMAGEGEN_JOB)', i),
-      [TOOL_LABEL, 'generate_image failed', TOOL_INPUT]);
+    await page.evaluate(([l, s, i]) => window.__igError(l, s, 'GenerateImage failed: provider boom (IMAGEGEN_JOB)', i),
+      [TOOL_LABEL, 'GenerateImage failed', TOOL_INPUT]);
 
     const c = await page.evaluate(() => window.__igCensus());
     expect(c.pendingCards).toBe(0);

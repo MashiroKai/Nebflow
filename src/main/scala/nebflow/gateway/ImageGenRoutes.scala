@@ -84,7 +84,7 @@ private[gateway] object ImageGenRoutes:
                 }
           }
 
-      // job 状态读面（簿记/调试面）：generate_image 阻塞语义下台账的查询腿。
+      // job 状态读面（簿记/调试面）：GenerateImage 阻塞语义下台账的查询腿。
       case req @ GET -> Root / "imagegen" / "job" / jobId =>
         if !isLoopback(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
         else

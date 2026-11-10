@@ -9,7 +9,7 @@ import nebflow.shared.PathUtil
 import scala.util.Try
 
 /**
- * workspace_summary — the main agent's per-project workspace coordination
+ * WorkspaceSummary — the main agent's per-project workspace coordination
  * picture (worktree-merger architecture §七): workspaces with their live
  * Git facts, pending merge requests with per-item phases and their origin,
  * advisor suggestions with their states, and the merger initialization
@@ -26,7 +26,7 @@ import scala.util.Try
  * plus this in-tool identity refusal (fail-closed for everyone else).
  */
 object WorkspaceSummaryTool extends Tool:
-  val Name = "workspace_summary"
+  val Name = "WorkspaceSummary"
   def name: String = Name
 
   def description: String =
@@ -61,7 +61,7 @@ object WorkspaceSummaryTool extends Tool:
     if request.authorization.startsWith("authenticated project panel selection") then "panel" else "agent"
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    if !ctx.isRootAgent then IO.pure(Left(ToolError("workspace_summary is limited to the main agent")))
+    if !ctx.isRootAgent then IO.pure(Left(ToolError("WorkspaceSummary is limited to the main agent")))
     else
       val c = Json.fromJsonObject(input).hcursor
       val project = c.get[String]("project").getOrElse("")
@@ -77,7 +77,7 @@ object WorkspaceSummaryTool extends Tool:
               val ws = os.Path(nebflow.core.project.ProjectStore.brainWorkspace(pd), PathUtil.dataRoot)
               val repository = WorkspaceLedger.repositoryKey(ws)
               summary(repository)
-            }.map(Right(_)).handleError(e => Left(ToolError(Option(e.getMessage).getOrElse("workspace_summary failed"))))
+            }.map(Right(_)).handleError(e => Left(ToolError(Option(e.getMessage).getOrElse("WorkspaceSummary failed"))))
         }
   end call
 
