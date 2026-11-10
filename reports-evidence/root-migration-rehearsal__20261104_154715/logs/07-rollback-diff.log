@@ -1,6 +1,0 @@
-[diff] before=598938 after=598939
-[diff] ignored-prefixes=['pending-claim', 'accounts', 'migration-report.json', 'layout.json', 'active-account']
-[diff] changed=0 added=0 removed=0
-[diff] layout-managed appeared=1 disappeared=0
-   (managed, ignored) e.g. ['migration-report.json']
-[diff] PASS — every non-managed object is byte-identical

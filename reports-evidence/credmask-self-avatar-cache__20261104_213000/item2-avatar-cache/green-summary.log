@@ -1,5 +1,0 @@
-$ # 件二 改后读数（green3-final-sbt.log 摘录）
-nebflow.gateway.AvatarSelfByteCacheSpec:
-  + second request to the own avatar route is served from cache (hit, zero upstream) 0.729s
-  + upstream failure is never cached: the second call still hits upstream and still 502s 0.043s
-[info] Passed: Total 114, Failed 0, Errors 0, Passed 114

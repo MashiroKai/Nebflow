@@ -1,8 +1,0 @@
-✗ legacy-domain gate FAILED — bare "nebflow.space" literal(s) outside the whitelist:
-reports-evidence/avatar-301-redirect__20261104_210000/post-commit-gates.log:6: ✓ legacy-domain gate clean: bare nebflow.space = 0 outside whitelist (24 whitelisted hit(s) in frozen/tool paths)
-
-Browser-entry URLs must point at mystand.space (brand.conf single source);
-service subdomains (*.nebflow.space) are NOT affected by this gate.
-Legacy-frozen file? Add a JUSTIFIED entry to WHITELIST in scripts/check-legacy-domain.mjs
-— do not widen it silently.
-EXIT=1

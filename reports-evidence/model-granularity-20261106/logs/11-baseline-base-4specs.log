@@ -1,5 +1,0 @@
-==> X nebflow.agent.MailBoundaryInjectionSpec.W1: Processing 中到达的 mail 件在工具边界并入续轮请求（而非干等 turn 末）  1.984s munit.FailException: src/test/scala/nebflow/agent/MailBoundaryInjectionSpec.scala:321
-==> X nebflow.gateway.ConsoleFastpathSpec.③ packedIndexHtml：stylesheet link 全部内联、media 保留、url() 重写、module/favicon 逐字保留  0.046s munit.FailException: src/test/scala/nebflow/gateway/ConsoleFastpathSpec.scala:229 relative css url() must be rewritten absolute against the asset dir
-==> X nebflow.gateway.OpenAiChatShimSpec.route: the in-tree path keeps its own semantics (no OpenAI keys added)  0.012s munit.ComparisonFailException: src/test/scala/nebflow/gateway/OpenAiChatShimSpec.scala:616
-==> X nebflow.gateway.NearPathStatsSpec./api/health payload unchanged: base keys only on a non-loopback leg; nearpath keys never leak in  0.012s munit.ComparisonFailException: src/test/scala/nebflow/gateway/NearPathStatsSpec.scala:279
-[error] Failed: Total 60, Failed 4, Errors 0, Passed 56

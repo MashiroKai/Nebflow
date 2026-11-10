@@ -1,9 +1,0 @@
-## repro: cd <worktree> && sbt -batch "testOnly nebflow.core.processor.LoopGuardSpec"
-==> X nebflow.core.processor.LoopGuardSpec.R4 (bash overhaul): the 5th identical query yields Warn naming BgWait (L0 nudge, never Terminate)  0.001s munit.FailException: src/test/scala/nebflow/core/processor/LoopGuardSpec.scala:435 expected Warn (L0 nudge) at the 5th identical query, got Pass
-434:        assert(msg.contains("BgWait"), s"the nudge must point at the wait primitive, got: $msg")
-435:      case other => fail(s"expected Warn (L0 nudge) at the 5th identical query, got $other")
-436:  }
-    at munit.Assertions.fail(Assertions.scala:274)
-    at munit.Assertions.fail$(Assertions.scala:24)
-    at munit.FunSuite.fail(FunSuite.scala:13)
-    at nebflow.core.processor.LoopGuardSpec.$init$$$anonfun$28(LoopGuardSpec.scala:435)

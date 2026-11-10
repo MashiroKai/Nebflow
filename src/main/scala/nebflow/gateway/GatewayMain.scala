@@ -496,6 +496,9 @@ object GatewayMain extends IOApp:
     // 三层数据根批（b1-guards）：owner 闸先于一切 HTTP 面（T2 拒启 —— 占位注释
     // Main.scala:189-193 的落地，真实 boot 面就是这里）。
     ownerGate(RootLadder.current, OwnerIdentity.localAnchor) *>
+      IO.blocking(nebflow.shared.EvidenceTemp.sweep()).flatMap { removed =>
+        if removed > 0 then logger.info(s"[evidence-temp] swept $removed expired evidence batches") else IO.unit
+      } *>
       // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
       // resolved at boot — missing pieces must be loud up front, not discovered
       // later inside a failing tool call. No-op off Windows.

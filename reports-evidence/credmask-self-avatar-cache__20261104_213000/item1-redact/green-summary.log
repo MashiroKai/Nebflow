@@ -1,8 +1,0 @@
-$ # 件一 改后读数（green3-final-sbt.log 摘录）
-[item1] fake-deviceToken masked: raw-visible=false masked-visible=true len 111 -> 81
-[item1] ordinary-log diff=0 chars=618
-nebflow.shared.SecretKeysSpec:
-nebflow.core.SecretMaskingCoverageSpec:
-nebflow.cli.ConfigSecretKeySpec:
-nebflow.neblink.DeviceTokenMaskingSpec:
-[info] Passed: Total 114, Failed 0, Errors 0, Passed 114

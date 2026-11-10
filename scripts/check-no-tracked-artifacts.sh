@@ -35,6 +35,7 @@ ARTIFACT_SPECS='docs|:(top)docs
 reports|:(top)reports
 evidence|:(top)evidence
 reports-evidence|:(top)reports-evidence
+stand-evidence|:(top)stand-evidence
 design|:(top)design
 scripts/data-root-migration/evidence|:(top)scripts/data-root-migration/evidence
 <仓库根>*__flow-*.md|:(top,glob)*__flow-*.md'

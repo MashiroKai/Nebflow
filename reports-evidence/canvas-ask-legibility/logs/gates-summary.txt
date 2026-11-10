@@ -1,9 +1,0 @@
-check-design-tokens EXIT=1
-check-component-contract EXIT=0
-check-js-types EXIT=0
-check-ime-guard EXIT=0
-check-circular EXIT=0
-check-self-explaining EXIT=0
-check-msgstyle-single-source EXIT=0
-check-fixture-secrets EXIT=0
-make frontend-gates EXIT=2

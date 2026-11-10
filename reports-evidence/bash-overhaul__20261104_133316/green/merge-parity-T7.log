@@ -1,1 +1,0 @@
-[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)

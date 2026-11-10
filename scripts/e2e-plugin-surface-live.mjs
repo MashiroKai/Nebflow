@@ -23,7 +23,7 @@
 //   node scripts/e2e-plugin-surface-live.mjs
 // Env：GATEWAY_PORT/MOCK_PORT/OUT(证据目录)/NEBFLOW_HOME；CLEAN=1 收尾删除隔离 home（默认保留）。
 
-import { spawn, execSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, cpSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -37,10 +37,7 @@ const GATEWAY_PORT = Number(process.env.GATEWAY_PORT || 8096);
 const MOCK_PORT = Number(process.env.MOCK_PORT || 18996);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NEBFLOW_HOME || join(tmpdir(), `nb-pluglive-e2e-${Date.now()}`);
-// 证据默认落**主仓** `.nebflow/evidence/`（worktree 内的 .nebflow 随 worktree 清理会丢；
-// git-common-dir 的父目录 = 主仓根，worktree 内运行也指向主仓）。
-const MAIN_REPO = dirname(execSync('git rev-parse --path-format=absolute --git-common-dir', { cwd: REPO }).toString().trim());
-const OUT = process.env.OUT || join(MAIN_REPO, '.nebflow', 'evidence', '20260912_pluglive-live');
+const OUT = process.env.OUT || join(tmpdir(), 'stand-evidence', 'stand', `pluglive-${Date.now()}`, new Date().toISOString().slice(0, 10).replaceAll('-', ''));
 const DISPATCHER_AGENT_SRC = process.env.DISPATCHER_AGENT_SRC || join(REPO, 'src', 'main', 'resources', 'seed', 'agents', 'project-dispatcher');
 guardFixtureHome(HOME, { label: 'e2e-plugin-surface-live' });
 mkdirSync(OUT, { recursive: true });

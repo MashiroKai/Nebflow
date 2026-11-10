@@ -1,4 +1,0 @@
-### 提交后（ddf7e3e43 树）复跑
-checkJs: 0 errors (baseline 0, zero-gate files: 3)
-checkJs PASS: no new errors above baseline.
-EXIT=0

@@ -1,9 +1,0 @@
-{
- "root": "/Volumes/rehearsal/root",
- "total": 27,
- "ok_in_root_resolvable": 8,
- "broken": 14,
- "socket": 0,
- "outside": 5,
- "stat_fail": 0
-}
