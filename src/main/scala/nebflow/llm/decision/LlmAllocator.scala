@@ -181,7 +181,8 @@ object LlmAllocator:
    * 定时器杀已拆，不留配置位）；调用完成与否由探活面与分配审计表达。
    */
   def fromRegistry(registry: ProviderRegistry): IO[Option[LlmAllocator]] =
-    candidatesFrom(registry).map { cands =>
+    if registry == null then IO.pure(None) // registry-absent（降级装配/测试夹具）⇒ 无兜底腿 = 既有行为（SharedResources.assignFallbackChain 同款守卫）
+    else candidatesFrom(registry).map { cands =>
       if cands.isEmpty then None
       else Some(new LlmAllocator(chainCall(registry, cands), IO.pure(cands.headOption)))
     }
