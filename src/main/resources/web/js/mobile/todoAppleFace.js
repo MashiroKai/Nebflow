@@ -71,6 +71,19 @@ function btnEl(cls) { return /** @type {HTMLButtonElement} */ (el('button', cls)
 function inputEl(cls) { return /** @type {HTMLInputElement} */ (el('input', cls)); }
 
 /**
+ * Lucide icon carrier (`<i data-lucide="...">`; drawing is consolidated by
+ * createIconsIn).
+ * @param {string} icon
+ * @param {string} [cls]
+ * @returns {HTMLElement}
+ */
+function icoEl(icon, cls) {
+  const i = el('i', cls);
+  i.setAttribute('data-lucide', icon);
+  return i;
+}
+
+/**
  * Icon button (lucide `<i data-lucide>`; drawing is consolidated by
  * createIconsIn).
  * @param {string} cls
@@ -83,7 +96,9 @@ function iconBtn(cls, icon, label) {
   b.type = 'button';
   b.setAttribute('aria-label', label);
   b.title = label;
-  b.innerHTML = `<i data-lucide="${icon}"></i>`;
+  // Structured build (contract R5): one icon carrier, DOM identical to the
+  // previous one-line template.
+  b.appendChild(icoEl(icon));
   return b;
 }
 
@@ -260,8 +275,9 @@ function buildHome(root, section, nav) {
   const card = (kind, icon) => {
     const b = /** @type {HTMLButtonElement} */ (elIn(grid, 'button', `ta-card ta-card-${kind}`));
     b.type = 'button';
-    b.innerHTML = `<i data-lucide="${icon}" class="ta-card-ico"></i>` +
-      '<span class="ta-card-n"></span><span class="ta-card-l"></span>';
+    // Structured build (contract R5): icon + two stat spans, DOM identical to
+    // the previous template string.
+    b.append(icoEl(icon, 'ta-card-ico'), el('span', 'ta-card-n'), el('span', 'ta-card-l'));
     return b;
   };
   const cToday = card('today', 'calendar-days');
@@ -341,10 +357,12 @@ function buildHome(root, section, nav) {
   menu.hidden = true;
   const mDone = btnEl('ta-menu-row');
   mDone.type = 'button';
-  mDone.innerHTML = '<span class="ta-menu-l"></span><span class="ta-menu-n"></span>';
+  // Structured build (contract R5): two label spans, DOM identical to the
+  // previous template string.
+  mDone.append(el('span', 'ta-menu-l'), el('span', 'ta-menu-n'));
   const mAll = btnEl('ta-menu-row');
   mAll.type = 'button';
-  mAll.innerHTML = '<span class="ta-menu-l"></span><span class="ta-menu-n"></span>';
+  mAll.append(el('span', 'ta-menu-l'), el('span', 'ta-menu-n'));
   menu.append(mDone, mAll);
   mDone.addEventListener('click', () => { moreOpen = false; openList('completed', null, nav); });
   mAll.addEventListener('click', () => { moreOpen = false; openList('all', null, nav); });
@@ -403,7 +421,9 @@ function buildHome(root, section, nav) {
         const tg = todoStore.tagById(it.tagId);
         const row = btnEl('ta-row ta-row-hit');
         row.type = 'button';
-        row.innerHTML = '<span class="ta-dot"></span><span class="ta-row-label"></span><span class="ta-row-sub"></span>';
+        // Structured build (contract R5): dot + label + sub spans, DOM
+        // identical to the previous template string.
+        row.append(el('span', 'ta-dot'), el('span', 'ta-row-label'), el('span', 'ta-row-sub'));
         const dot = /** @type {HTMLElement} */ (row.querySelector('.ta-dot'));
         dot.style.background = tg ? tg.color : 'var(--color-text-muted)';
         /** @type {HTMLElement} */ (row.querySelector('.ta-row-label')).textContent = it.title || '—';
@@ -416,8 +436,10 @@ function buildHome(root, section, nav) {
       for (const tg of todoStore.tags) {
         const row = btnEl('ta-row ta-row-tag');
         row.type = 'button';
-        row.innerHTML = '<span class="ta-dot"></span><span class="ta-row-label"></span>' +
-          '<span class="ta-row-count"></span><i data-lucide="chevron-right" class="ta-chev"></i>';
+        // Structured build (contract R5): dot + label + count + chevron, DOM
+        // identical to the previous template string.
+        row.append(el('span', 'ta-dot'), el('span', 'ta-row-label'),
+          el('span', 'ta-row-count'), icoEl('chevron-right', 'ta-chev'));
         const dot = /** @type {HTMLElement} */ (row.querySelector('.ta-dot'));
         dot.style.background = tg.color;
         /** @type {HTMLElement} */ (row.querySelector('.ta-row-label')).textContent = tg.name;
@@ -429,8 +451,10 @@ function buildHome(root, section, nav) {
       // only row, i.e. the degraded form)
       const allRow = btnEl('ta-row ta-row-all');
       allRow.type = 'button';
-      allRow.innerHTML = '<span class="ta-dot ta-dot-all"></span><span class="ta-row-label"></span>' +
-        '<span class="ta-row-count"></span><i data-lucide="chevron-right" class="ta-chev"></i>';
+      // Structured build (contract R5): same shape as the tag row (grey dot),
+      // DOM identical to the previous template string.
+      allRow.append(el('span', 'ta-dot ta-dot-all'), el('span', 'ta-row-label'),
+        el('span', 'ta-row-count'), icoEl('chevron-right', 'ta-chev'));
       /** @type {HTMLElement} */ (allRow.querySelector('.ta-row-label')).textContent = t('todoapple.allTodos');
       /** @type {HTMLElement} */ (allRow.querySelector('.ta-row-count')).textContent = String(todoStore.openCount());
       allRow.addEventListener('click', () => openList('all', null, nav));
@@ -525,7 +549,9 @@ function buildList(root, section, nav) {
       const check = btnEl('ta-check');
       check.type = 'button';
       check.setAttribute('aria-label', t('todoapple.markComplete'));
-      check.innerHTML = '<span class="ta-check-circle"></span>';
+      // Structured build (contract R5): single circle span, DOM identical to
+      // the previous template string.
+      check.appendChild(el('span', 'ta-check-circle'));
       check.addEventListener('click', (e) => {
         e.stopPropagation();
         todoStore.completeItem(it.id);
@@ -627,7 +653,9 @@ function buildItem(root, section, nav) {
   const toolBtn = (icon, label) => {
     const b = btnEl('ta-tool-btn');
     b.type = 'button';
-    b.innerHTML = `<i data-lucide="${icon}"></i><span class="ta-tool-label"></span>`;
+    // Structured build (contract R5): icon + label span, DOM identical to the
+    // previous template string.
+    b.append(icoEl(icon), el('span', 'ta-tool-label'));
     const lab = /** @type {HTMLElement} */ (b.querySelector('.ta-tool-label'));
     lab.textContent = label;
     b.setAttribute('aria-label', label);
