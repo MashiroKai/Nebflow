@@ -302,12 +302,6 @@ function ensureFigureDom() {
     b.addEventListener('click', fn);
     return b;
   };
-  pctEl = document.createElement('span');
-  pctEl.className = 'nf-lightbox-pct';
-  pctEl.textContent = '100%';
-  barEl.appendChild(mkBtn('zoom-out', t('lightbox.zoomOut'), () => figZoomAt(1 / 1.25)));
-  barEl.appendChild(pctEl);
-  barEl.appendChild(mkBtn('zoom-in', t('lightbox.zoomIn'), () => figZoomAt(1.25)));
   barEl.appendChild(mkBtn('maximize-2', t('lightbox.zoomFit'), figFit));
 
   overlayEl.append(stageEl, barEl);
