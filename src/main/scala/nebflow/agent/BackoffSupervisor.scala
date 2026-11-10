@@ -195,32 +195,12 @@ object BackoffSupervisor:
           val payload =
             if text.trim.nonEmpty then s""""$description":\n${text.trim}"""
             else s""""$description" (no text output)"""
-          // delegate 轨的 Completed 先过终态判定钩子（DelegateTerminal.onCompleted
-          // ——状态矩阵批）：finish ⇒ Release 报父（payload 携带判词行）；standby
-          // ⇒ 停靠（零报父零提醒）；未申报 ⇒ Idle 提醒不终判；WorkComplete ⇒
-          // 开放身份收口（工作轮完成、workspace/属主保留）。subtask 轨零变化。
-          // 四修②：全会话工具调用计数随行——终态确定性预检（resultText 空＋零工具
-          // ⇒ 直接判未完成）的输入。
+          // delegate 轨的 Completed 在等待屏障放行后，将最终 assistant 文本直接作为
+          // 完成载荷交给父会话；后台任务等待由下方 BgWait barrier 负责，不要求额外
+          // report 工具或终态判定中转。subtask 轨保留原通知形态。
           if source == "delegate" then
             val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
-            nebflow.core.delegate.DelegateTerminal
-              .onCompleted(
-                resources = resources,
-                delegateId = subagentId,
-                parentSessionId = parentSessionId,
-                description = description,
-                initialPrompt = initialPrompt,
-                resultText = text,
-                childRef = childRef,
-                supervisorRef = ctx.self,
-                sessionToolCalls = Some(sessionToolCalls(messages))
-              )
-              .flatMap {
-                case nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix) =>
-                  terminalDiffMetadata().flatMap(diff => notifyParentAndStop("completed", suffix + note, diff))
-                case other =>
-                  IO.raiseError(new IllegalStateException(s"completed delegate returned obsolete outcome: $other"))
-              }
+            terminalDiffMetadata().flatMap(diff => notifyParentAndStop("completed", payload + note, diff))
           else notifyParentAndStop("completed", payload, JsonObject.empty)
           end if
         end completeNormally
@@ -540,14 +520,8 @@ object BackoffSupervisor:
 
         event match
           case AgentEvent.Completed(_, messages) =>
-            // 四修①两级处置（作者令「有重启预算→自动重启续推；预算耗尽→终判
-            // blocked」）：全会话零工具调用＋（终文空 或 止于 max_tokens 空烧
-            // stub）= 空烧形态，NOT a completion。
-            //   - 预算未尽 → 走既有 respawn 链（断点续跑＋continue 注入＋
-            //     subagentRetry WS 帧＋"restarting" 库态——maxRestarts=2 在挂）；
-            //   - 预算耗尽 → delegate 轨照常过终态判定机：确定性预检
-            //     （DelegateTerminal，四修②）据「零工具＋空文」直接判 blocked，
-            //     不依赖 LLM 判；subtask 轨 failed 终态（failureType=empty-burn）。
+              // 四修①两级处置：空烧仍不是完成；重启预算未尽则续推，耗尽时
+              // delegate 正文按直接完成载荷投递，subtask 则保持诚实 failed 终态。
             if !isEmptyBurnCompletion(messages) then
               // A 段等待屏障先于终判：有未结等待型后台作业 ⇒ hold 唤醒复检；
               // cap 兜底触发 ⇒ 带注记强制终判。

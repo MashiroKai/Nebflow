@@ -176,7 +176,6 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
       parentSid = parent.id
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
-      _ <- seedDeclaredReport(childSid, parentSid)
       _ <- registerWaitingTask(childSid, jobId)
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-1")
@@ -253,7 +252,6 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
       parentSid = parent.id
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
-      _ <- seedDeclaredReport(childSid, parentSid)
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-2")
       childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
@@ -341,7 +339,6 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
       parentSid = parent.id
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
-      _ <- seedDeclaredReport(childSid, parentSid)
       _ <- registerWaitingTask(childSid, jobId)
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-4")
@@ -401,29 +398,5 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       .map(_.filter(_.kind == "delegate-terminal"))
       .handleErrorWith(_ => IO.pure(Nil))
 
-  /**
-   * 真 delegate 形态的注册表前置：记录在册 **且已申报**（`delegate_report(finish)`）。
-   *
-   * 为什么必须有：终态矩阵的「complete × **未申报**」腿（`Outcome.NudgeIdle`）按作者令
-   * 零父投递（只武装提醒）——本 spec 观测的是等待屏障行为，夹具取矩阵的
-   * `complete × 已申报` 腿（父会话照常收到终态投递）。
-   */
-  private def seedDeclaredReport(childSid: String, parentSid: String): IO[Unit] =
-    IO {
-      nebflow.core.delegate.DelegateRegistry.put(
-        nebflow.core.delegate.DelegateRegistry.Record(
-          id = childSid,
-          executor = "nebflow",
-          cwd = os.pwd.toString,
-          project = None,
-          taskId = Some("32"),
-          parentSessionId = parentSid,
-          title = s"bg-wait spec $childSid",
-          createdAt = System.currentTimeMillis()
-        )
-      )
-      nebflow.core.delegate.DelegateRegistry.updateReport(childSid, "finish", "wait barrier done", "") match
-        case Left(e)  => throw new RuntimeException(s"seed declared report failed: $e")
-        case Right(_) => ()
-    }
+
 end DelegateBgWaitHoldSpec
