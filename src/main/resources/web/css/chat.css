@@ -4955,6 +4955,69 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-expand-view .pop-media { height: auto; }
 
 .pop-media { position: relative; width: 100%; height: 100%; }
+/* Image attachments: a soft, bubble-tinted loading card replaces the browser's
+   broken-image glyph. The media box itself already owns the natural/fallback
+   ratio, so these states never add a second geometry or cause layout shift. */
+.fm-att-media .pop-media:has(.pop-img) {
+  overflow: hidden;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--color-text-muted) 10%, var(--color-bubble-user));
+}
+.fm-msg.in .fm-att-media .pop-media:has(.pop-img) {
+  background: color-mix(in srgb, var(--color-text-muted) 10%, var(--color-bubble-ai));
+}
+.fm-att-media .pop-media.is-loading:has(.pop-img)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(105deg, transparent 25%, rgb(255 255 255 / 0.22) 48%, transparent 70%);
+  background-size: 220% 100%;
+  animation: att-image-shimmer 2.1s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes att-image-shimmer { to { background-position: -220% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .fm-att-media .pop-media.is-loading:has(.pop-img)::before { animation: none; opacity: .55; }
+}
+.fm-att-media .pop-img.nf-img-failed {
+  border: 0;
+  color: transparent;
+  font-size: 0;
+  background: transparent;
+  object-fit: contain;
+}
+.fm-att-media .pop-media:has(.pop-img.nf-img-failed)::after {
+  content: "!";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+  font-size: 22px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.fm-att-media .pop-media:has(.pop-img.nf-img-failed) { background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-user)); }
+.fm-msg.in .fm-att-media .pop-media:has(.pop-img.nf-img-failed) { background: color-mix(in srgb, var(--color-text-muted) 14%, var(--color-bubble-ai)); }
+.fm-image-retry {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: var(--ds-space-3);
+  transform: translateX(-50%);
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-pill);
+  background: color-mix(in srgb, var(--color-bubble-user) 82%, transparent);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--ds-fs-hint);
+  cursor: pointer;
+}
+.fm-msg.in .fm-image-retry { background: color-mix(in srgb, var(--color-bubble-ai) 82%, transparent); }
+.fm-image-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 2px; }
 /* ── 视频内容封面（video-cover 批 2026-11-05，作者令逐字「不管是在对话框还是
    canvas，都应该有一个内容预览的一个封面」）─────────────────────────────────
    `.nf-video-cover` 由 js/videoCover.js 在抓到帧之后**插在 `<video>` 之后**（DOM

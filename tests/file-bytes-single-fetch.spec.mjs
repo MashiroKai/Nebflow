@@ -363,7 +363,8 @@ test('T6: 好图直显后内容换成坏字节（事件失效）⇒ blob 解码�
   // 批口径：媒体面整卡换成文件面卡 = `boxInDom` false；禁静默无反应，名称/大小/下载键
   // 全保留——与改前「摘槽、卡片原样」同一可见降级语义）。
   const again = await page.evaluate((pp) => window.__deviceInline(pp), imgPath());
-  expect(again.boxInDom).toBe(false); // 终态：媒体面已降级（文件面卡接管，零破图）
+  expect(again.boxInDom).toBe(true); // 终态保留原比例媒体盒，提供显式重试而非整卡消失
+  expect(await page.locator('.fm-image-retry').count()).toBe(1);
   expect(nfFileGets.length).toBeGreaterThanOrEqual(3); // 直显1 + 重取1 + 自愈票腿1
   // 坏字节不粘死账本：自愈已把该键逐出。
   const stats = await page.evaluate(() => window.__cacheStats());

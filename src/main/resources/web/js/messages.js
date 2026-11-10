@@ -2469,8 +2469,28 @@ function attachMediaBytes(card, att, kind, src, els, opts = {}) {
   const stackLayer = !!opts.stackLayer;
   const primary = els[0];
   const fail = () => {
-    if (stackLayer) els.forEach((el) => markMediaFailed(el));
-    else swapMediaCardToFileCard(card, att);
+    if (stackLayer) {
+      els.forEach((el) => markMediaFailed(el));
+      return;
+    }
+    // Preserve the media's measured/fallback box and offer an explicit retry;
+    // the old whole-card swap discarded the visual context and hid recovery.
+    markMediaFailed(primary);
+    const face = primary.closest('.pop-media');
+    if (!face || face.querySelector('.fm-image-retry')) return;
+    const retry = el('button', 'fm-image-retry', t('messages.retry'));
+    retry.type = 'button';
+    retry.addEventListener('click', (event) => {
+      event.stopPropagation();
+      retry.remove();
+      primary.classList.remove('nf-img-failed');
+      delete primary.dataset.nfMediaFailed;
+      delete primary.dataset.attSrc;
+      delete primary.dataset.attLoaded;
+      mounted = false;
+      attachMediaBytes(card, att, kind, src, els, opts);
+    });
+    face.appendChild(retry);
   };
   /** 发送侧乐观面（imgmsg 批唯一新腿）：本机字节句柄。 */
   const localFace = att.localFace || null;
@@ -2509,6 +2529,22 @@ function attachMediaBytes(card, att, kind, src, els, opts = {}) {
       if (primary.dataset.attBox) return;
       if (primary.naturalWidth > 0 && primary.naturalHeight > 0) applyInlineRatio(primary, primary.naturalWidth, primary.naturalHeight);
     }, { once: true });
+  }
+  if (!video) {
+    // The media face exists before its bytes do; keep the shell in a deliberate
+    // loading state until the browser confirms decode (not merely src assignment).
+    els.forEach((el) => {
+      if (el.tagName !== 'IMG') return;
+      el.addEventListener('load', () => {
+        el.dataset.attLoaded = '1';
+        el.closest('.pop-media')?.classList.remove('is-loading');
+      }, { once: true });
+      el.closest('.pop-media')?.classList.add('is-loading');
+      el.addEventListener('error', () => {
+        delete el.dataset.attLoaded;
+        el.closest('.pop-media')?.classList.remove('is-loading');
+      }, { once: true });
+    });
   }
   primary.addEventListener('error', () => {
     // 账本腿（blob: URL）解码失败 = 手上这份缓存字节坏了（#816 同族语义）：
