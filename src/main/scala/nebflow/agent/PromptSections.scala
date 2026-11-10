@@ -554,20 +554,18 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       condition = ctx => ctx.isRootAgent && ctx.mountedProjectsText.nonEmpty,
       renderer = ctx => s"# Mounted Projects\n\n${ctx.mountedProjectsText}"
     ),
-    // --- 可用执行器段（external-executors 批 #1225，S14 运行时半）──────────
-    // 执行器选择反转后主 agent 的选择输入：可用集 = GET /api/executors 检测面
-    // （快照语义不变；nebflow.json executor 块止读——⑫）。仅根代理注入
-    // （isRootAgent，同 Mounted Projects 判据；分发器/节点会话零面）。
-    // 模型可见文案 ⚠ §16 待过目（最小化模板；终稿归 N3 ⑭）。
-    // 注入时机 = 会话装配快照（systemStable 生命周期重建时刷新；中期变化靠
-    // Delegate 失败面的显式可用集自纠错——fail-closed，零静默回落）。
+    // --- 可用执行器段 ────────────────────────────────────────────────────
+    // 主 agent 的选择输入：可用集 = GET /api/executors 检测面（快照语义）。
+    // 仅根代理注入（isRootAgent，同 Mounted Projects 判据；分发器/节点会话
+    // 零面）。注入时机 = 会话装配快照（systemStable 生命周期重建时刷新；
+    // 中期变化靠 Delegate 失败面的显式可用集自纠错——fail-closed，零静默回落）。
     PromptSection.dynamic(
       640,
       condition = ctx => ctx.isRootAgent && ctx.executorsText.nonEmpty,
       renderer = ctx =>
         s"""# Available executors (Delegate)
 
-`Delegate(task, project?, executor?)` runs a background worker. Pick `executor` per task; omit it for the built-in default. Available now:
+`Delegate(task, project?, executor?)` runs a background worker. Pick `executor` per task; omit it for the configured default (executor.default in nebflow.json — the built-in `nebflow` when unset). Available now:
 
 ${ctx.executorsText}
 

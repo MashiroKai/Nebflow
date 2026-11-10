@@ -12,9 +12,9 @@ import java.io.File
  * 2026-10-03）。
  *
  * 大改后的使用形态：Nebula 的 `Delegate(task, project?, executor?)`，执行器由
- * 主 agent 动态选择（external-executors 批 #1225，S14 运行时半——`executor`
- * 参数为唯一显式选择输入、缺省内置 `nebflow`；nebflow.json `executor` 块
- * **止读**，⑫）。本注册表提供：
+ * 主 agent 动态选择——`executor` 参数为唯一显式选择输入；参数缺省时取
+ * nebflow.json `executor.default` 的配置默认（未配置或配置不可用 ⇒ 内置
+ * [[DefaultId]]）。本注册表提供：
  *
  *   - `nebflow` —— 内置执行器（BuiltinAgents 合并后的执行 agent），无需检测；
  *   - 外部 CLI 智能体 —— ZCode / Claude Code / Codex / Hermes：检测面 ＋ 真适配
@@ -185,16 +185,16 @@ object ExecutorRegistry:
 
   def effectiveDefault: String = effectiveDefault(readSettings)
 
-  // ── 执行器选择反转——运行时半（external-executors 批 #1225，S14＋②⑫）──────
+  // ── 执行器选择（配置默认语义）──────────────────────────────────────────
   //
-  // 选择语义反转为「主 agent 动态选择，缺省 nebflow」：Delegate 的显式
-  // `executor` 参数是唯一选择输入；nebflow.json `executor` 块的
-  // default/disabled **均不再作为选择输入**（⑫——块退役落 S14 拆除小批；
-  // 本批运行时先止读）。可用集 = GET /api/executors 检测面（快照语义不变，
-  // ConfigRoutes:143 零改动）：adapterReady ＋ detected。
+  // 选择输入：Delegate 的显式 `executor` 参数；缺省 ⇒ 配置默认
+  // `executor.default`（readSettings 热读），配置缺失或配置项不可用
+  // （不在册 / adapter 未就绪 / 已 disabled）⇒ 内置 [[DefaultId]]。
+  // 可用集 = GET /api/executors 检测面（快照语义不变，ConfigRoutes:143
+  // 零改动）：adapterReady ＋ detected。
   //
-  // fail-closed（增补条款 3.4，R2/R11）：请求外部执行器但不在册 / 适配未
-  // 就绪 / 未检测到二进制 ⇒ Left 显式错误，**绝不静默回落 nebflow**。
+  // fail-closed：请求的执行器不可选（不在册 / 适配未就绪 / 未检测到二进制 /
+  // 配置默认不可检测）⇒ Left 显式错误，**绝不静默回落 nebflow**。
 
   /** 选择解析结果：内置执行器（原 spawn 路径）或外部执行器（真适配器路径）。 */
   enum ResolvedSelection:
@@ -202,19 +202,22 @@ object ExecutorRegistry:
     case External(defn: ExecutorDef, binPath: String)
 
   /**
-   * Delegate `executor` 参数 → 选择解析。None（参数缺省）＝内置缺省
-   * [[DefaultId]]——模型可见语义「缺省 nebflow」。错误消息面向主 agent
-   * 自纠错：列出当前可用集（检测面）。
+   * Delegate `executor` 参数 → 选择解析。None（参数缺省）＝配置默认
+   * `executor.default`（[[readSettings]] 热读；配置缺失或不可用 ⇒ 内置
+   * [[DefaultId]]）。配置默认在册但二进制未检测到 ⇒ Left fail-closed——
+   * **绝不静默回落**。错误消息面向主 agent 自纠错：列出当前可用集（检测面）。
    *
    * @param executorParam Delegate 调用的 `executor` 参数（trim 后非空才生效）
    * @param pathEnv/probeDirs 检测输入（spec 可注入；生产 = 进程环境）
+   * @param settings 配置快照（spec 可注入；生产 = readSettings 热读）
    */
   def resolveRequested(
     executorParam: Option[String],
     pathEnv: String = sys.env.getOrElse("PATH", ""),
-    probeDirs: List[String] = curatedProbeDirs
+    probeDirs: List[String] = curatedProbeDirs,
+    settings: Settings = readSettings
   ): Either[String, ResolvedSelection] =
-    val requested = executorParam.map(_.trim).filter(_.nonEmpty).getOrElse(DefaultId)
+    val requested = executorParam.map(_.trim).filter(_.nonEmpty).getOrElse(effectiveDefault(settings))
     if requested == DefaultId then Right(ResolvedSelection.Internal)
     else
       find(requested) match
@@ -237,8 +240,8 @@ object ExecutorRegistry:
       .map(s => s.id)
       .mkString(", ")
     s"Delegate: executor '$requested' cannot be selected — $why. " +
-      s"Pick one of the available executors: $available, or omit the executor parameter for the built-in default. " +
-      "(No silent fallback to 'nebflow' — re-dispatch with an explicit choice.)"
+      s"Pick one of the available executors: $available. " +
+      "(No silent fallback — re-dispatch with an explicit choice.)"
 
   /** 可用集一行（主 agent prompt 可用集段数据源；检测面口径，与 resolveRequested 同）。 */
   def availableLine(pathEnv: String, probeDirs: List[String]): String =
