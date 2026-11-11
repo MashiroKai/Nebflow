@@ -2708,6 +2708,8 @@ export default {
   'search.results': '{n} results',
   'search.loadedOf': '{n}/{m} loaded',
   'search.loadMore': 'Load more ({n}/{m} loaded)',
+  // Batch open of multi-selected files in the Canvas panel (chatsearch-batch-open)
+  'search.openSelectedInCanvas': 'Open in Canvas ({n})',
   'search.jumpArchived': 'Archived before compaction — no in-place row in the replay window',
   'search.noResults': 'No matching messages',
   'search.noResultsSuggestion': 'Try a shorter keyword or clear the date/type filters',

@@ -119,6 +119,39 @@ function paintMultiClass(id, on) {
     .forEach(el => el.classList.toggle('multi-sel', on));
 }
 
+/** Return selected, Canvas-openable files in result order, de-duplicated by path. */
+function selectedFilesForCanvas() {
+  const files = [];
+  const seen = new Set();
+  for (const res of lastResults) {
+    if (!multiSelected.has(selIdOf(res))) continue;
+    let file = null;
+    if (res.type === 'file' && res.ref) file = { filePath: res.ref, title: res.name };
+    else if (!res.type) file = popArtifactFromInput(res.tool, res.input);
+    if (!file?.filePath || seen.has(file.filePath)) continue;
+    seen.add(file.filePath);
+    files.push(file);
+  }
+  return files;
+}
+
+/** Keep the action bar tied to selected Canvas-openable files, not other rows. */
+function syncMultiAction() {
+  const button = document.getElementById('search-open-selected-files');
+  if (!button) return;
+  const count = selectedFilesForCanvas().length;
+  button.hidden = count === 0;
+  button.textContent = t('search.openSelectedInCanvas', { n: count });
+}
+
+function openSelectedFilesInCanvas() {
+  const files = selectedFilesForCanvas();
+  if (!files.length) return;
+  // Open in display order; one event per unique path lets Canvas create one tab each.
+  for (const file of files) openPopArtifact(file.filePath, file.title);
+  closeSearchModal();
+}
+
 /** Cmd/Ctrl 点选：翻转入/出选择集；锚点恒更新到点中行。 */
 function multiToggleAt(idx) {
   const res = lastResults[idx];
@@ -127,6 +160,7 @@ function multiToggleAt(idx) {
   if (multiSelected.has(id)) { multiSelected.delete(id); paintMultiClass(id, false); }
   else { multiSelected.add(id); paintMultiClass(id, true); }
   multiAnchor = idx;
+  syncMultiAction();
 }
 
 /** Shift 范围选：锚点 ⇒ 点中行（含两端）并入选择集；无锚 ⇒ 退化为点选。 */
@@ -137,6 +171,7 @@ function multiRangeTo(idx) {
     const id = selIdOf(lastResults[i]);
     if (id && !multiSelected.has(id)) { multiSelected.add(id); paintMultiClass(id, true); }
   }
+  syncMultiAction();
 }
 
 /** 全选本组（Cmd/Ctrl+A）：当前结果面全部条目。 */
@@ -146,6 +181,7 @@ function multiSelectAll() {
     if (id && !multiSelected.has(id)) { multiSelected.add(id); paintMultiClass(id, true); }
   });
   multiAnchor = lastResults.length - 1;
+  syncMultiAction();
 }
 
 /** 批量打开：逐条走既有 activateMediaEntry/activateResult 单点路由
@@ -163,6 +199,7 @@ function openMultiSelected() {
 function resetMulti() {
   multiSelected = new Set();
   multiAnchor = -1;
+  syncMultiAction();
 }
 
 // v3.2: the date tab JOINS the roving enumeration (keyboard arrows now cross
@@ -301,6 +338,16 @@ export function initChatSearch() {
 
   document.getElementById('search-btn')?.addEventListener('click', openSearchModal);
   document.getElementById('search-modal-close')?.addEventListener('click', closeSearchModal);
+  let batchOpen = document.getElementById('search-open-selected-files');
+  if (!batchOpen) {
+    batchOpen = document.createElement('button');
+    batchOpen.id = 'search-open-selected-files';
+    batchOpen.type = 'button';
+    batchOpen.className = 'glass-control cfg-btn cfg-btn-sm search-batch-open';
+    batchOpen.hidden = true;
+    document.getElementById('search-results')?.before(batchOpen);
+  }
+  batchOpen.addEventListener('click', openSelectedFilesInCanvas);
   const overlay = document.getElementById('search-overlay');
   overlay?.addEventListener('click', (e) => {
     if (e.target === overlay) closeSearchModal();
@@ -555,6 +602,9 @@ function renderStaticLabels() {
   if (status) status.textContent = '';
   const results = document.getElementById('search-results');
   if (results) results.setAttribute('aria-label', t('search.title'));
+  // Batch-open button label follows the locale too (count re-derived from the
+  // live selection; hidden stays untouched while no openable file is picked).
+  syncMultiAction();
 }
 
 // ── Category tabs ──────────────────────────────────────────
