@@ -917,7 +917,22 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   )
               )
             case None => IO.unit
-          loggedReminders <- SystemReminders.logAndReturn(reminders ++ msgTokenReminder.toList)
+          // Passive task ledger reminder: only a genuine root-session user turn may
+          // consult the throttle. This is attached to the already-running input turn;
+          // no scheduler, wakeup, or background-event path exists.
+          passiveTaskReminder <-
+            if isRealUserTurn && isRootAgent && !isCompactTurn && !isAskTurn then
+              stateForLlm.sessionId match
+                case Some(sid) => IO.blocking {
+                    TaskLedgerPassiveReminder.due(
+                      sid,
+                      System.currentTimeMillis(),
+                      nebflow.core.project.TaskLedgerStore.open().passiveReminderSummary()
+                    )
+                  }.map(_.map(text => nebflow.shared.SystemReminder("task-ledger", text)))
+                case None => IO.pure(None)
+            else IO.pure(None)
+          loggedReminders <- SystemReminders.logAndReturn(reminders ++ msgTokenReminder.toList ++ passiveTaskReminder.toList)
           // Clock is attached once at explicit real-user input conversion; this
           // request/reminder assembly path never creates or injects one.
           // Plugins-live (2026-09-12): the plugin-surface reminder is PERSISTED (like

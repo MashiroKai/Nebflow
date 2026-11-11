@@ -86,7 +86,10 @@ object TaskTool:
     links: Option[List[String]] = None,
     blocks: Option[List[String]] = None,
     parentId: Option[String] = None,
-    project: Option[String] = None
+    project: Option[String] = None,
+    status: Option[String] = None,
+    limit: Int = 100,
+    offset: Int = 0
   ): Either[ToolError, String] =
     if !writableBy(ctx) then
       val who = if ctx.isDispatcher then "a dispatcher session" else "a project node session"
@@ -140,7 +143,9 @@ object TaskTool:
               )
             case Some(i) => ledger.closeSync(i)
         case "list" =>
-          ledger.listSync(status = None, assignee = assignee, project = project, nodeTerminal = nodeTerminal)
+          status.filterNot(s => Set("open", "closed", "completed").contains(s)) match
+            case Some(bad) => Left(ToolError(s"Task: invalid list status '$bad' (open|closed|completed). (${TaskLedgerStore.Codes.Param})"))
+            case None => ledger.listSync(status = status, assignee = assignee, project = project, nodeTerminal = nodeTerminal, limit = limit, offset = offset)
         case "show" =>
           id match
             case None =>
@@ -221,7 +226,7 @@ The two retired ledgers are FROZEN READ-ONLY ARCHIVES and are never written agai
 - update: edit NON-STATE fields only. Required: `id`. Optional: `title`, `assignee`, `nodeId` (empty string clears), `links` (FULL replacement, [] clears), `blocks` (FULL replacement, [] clears), `parentId` (empty string clears), `project` (empty string clears). `update` can never change the state — a state is reached with `complete` / `close` (see States).
 - complete: reach the `completed` state (achieved). Required: `id`. Legal from `open` and from `closed`; idempotent when already `completed`.
 - close: reach the `closed` state (voided / withdrawn). Required: `id`. Idempotent when already `closed`. Refused when `completed` (terminal).
-- list: render entries with state + dependencies. Optional: `assignee`, `project` (exact filters).
+- list: render paginated entries with state + dependencies. Optional exact filters: `status` (`open` | `closed` | `completed`), `assignee`, `project`; `limit` (1..500, default 100), `offset` (default 0). Output includes filtered total, open count, returned count, and next offset when truncated. Start with `status="open"` for unfinished work.
 - show: full detail for ONE entry — every field, links, dependency state + reverse lookup (who depends on me), the parent chain / direct children, and the note timeline. Required: `id`. Use it instead of reading the ledger file by hand.
 
 ## States (three, and only three)
@@ -298,6 +303,22 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
       "project" -> Json.obj(
         "type" -> "string".asJson,
         "description" -> "Free-form project tag. create: optional; update: empty string clears; list: exact-match filter. This is a tag, NOT a storage location — the ledger is a single instance-wide file.".asJson
+      ),
+      "status" -> Json.obj(
+        "type" -> "string".asJson,
+        "enum" -> Json.arr("open".asJson, "closed".asJson, "completed".asJson),
+        "description" -> "list: exact state filter; use open for unfinished tasks.".asJson
+      ),
+      "limit" -> Json.obj(
+        "type" -> "integer".asJson,
+        "minimum" -> 1.asJson,
+        "maximum" -> 500.asJson,
+        "description" -> "list: page size (default 100).".asJson
+      ),
+      "offset" -> Json.obj(
+        "type" -> "integer".asJson,
+        "minimum" -> 0.asJson,
+        "description" -> "list: zero-based offset for next page (default 0).".asJson
       )
     ),
     "required" -> Json.arr("action".asJson)
@@ -322,8 +343,11 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
       val blocks = input("blocks").flatMap(_.as[List[String]].toOption)
       val parentId = input("parentId").flatMap(_.asString)
       val project = input("project").flatMap(_.asString)
-      (action, title, id, assignee, nodeId, links, blocks, parentId, project)
-    }.map { case (action, title, id, assignee, nodeId, links, blocks, parentId, project) =>
+      val status = input("status").flatMap(_.asString)
+      val limit = input("limit").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(100)
+      val offset = input("offset").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
+      (action, title, id, assignee, nodeId, links, blocks, parentId, project, status, limit, offset)
+    }.map { case (action, title, id, assignee, nodeId, links, blocks, parentId, project, status, limit, offset) =>
       (
         TaskTool.dispatchSync(
           TaskLedgerStore.open(),
@@ -337,7 +361,10 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
           links = links,
           blocks = blocks,
           parentId = parentId,
-          project = project
+          project = project,
+          status = status,
+          limit = limit,
+          offset = offset
         ),
         action,
         id
