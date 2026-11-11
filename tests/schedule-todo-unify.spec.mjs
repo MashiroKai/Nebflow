@@ -21,7 +21,8 @@
 //   L 液态形变：展开过渡属性串 == motion/collapse.js 单源（280/400ms + 唯一曲线）
 //   B 按钮：取消/确认**右对齐**（确认右缘距宿主右缘 ≤ 间距档，且确认在取消右边）
 //       / 扁平（零投影零渐变）/ 视觉高 ≥ 44 / 命中盒 ≥ 48
-//   C 配色：两页行/分组签/表单主键的颜色成对同值（基准 = 定时任务页）
+//   C 配色：行首文字 / 完成圈两页成对同值（基准 = 定时任务页）；待办条目的时刻字
+//       = 次行灰单源、行底静息透明、确认键 = sapphire 圆钮白墨（扁平、≥44、最右）
 //   D 桌面腿：1440×900 下 #reminder-panel 仍是顶栏下拉（360 宽、页头标题在场）
 
 import { chromium } from 'playwright';
@@ -124,6 +125,9 @@ async function wire(page) {
     }
   });
   const TASKS = fixtures();
+  // Rows completed during this page's run: the default list read stops
+  // returning a completed row, so the client keeps it as a local archive row.
+  const doneIds = new Set();
   await page.exposeFunction('__specFrames', () => {});
   await page.routeWebSocket(/ws/, (ws) => {
     const sendConfig = () => ws.send(JSON.stringify({ type: 'configData', config: '{"features":{}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
@@ -141,13 +145,15 @@ async function wire(page) {
       if (m.type === 'listScheduledTasks') {
         // 记账（判据读它）+ 回夹具：scope:all = 待办收件箱；否则 = 定时任务面。
         page.evaluate((f) => { (window.__frames ||= []).push(f); }, m).catch(() => {});
-        const tasks = m.scope === 'all' ? TODOS : TASKS;
+        const tasks = (m.scope === 'all' ? TODOS : TASKS).filter((t) => !doneIds.has(t.id));
         return ws.send(JSON.stringify({ type: 'scheduledTaskList', sessionId: m.sessionId, scope: m.scope, tasks }));
       }
       // 无回执的读帧：提醒面/收件箱的初始加载走的是 openPanel 之外的路径时兜底。
       if (m.type === 'getHistory' || m.type === 'listSessions') return;
       if (/^(create|update|delete|complete|uncomplete)/.test(m.type)) {
         page.evaluate((f) => { (window.__frames ||= []).push(f); }, m).catch(() => {});
+        if (m.type === 'completeTodo' && m.id) doneIds.add(m.id);
+        if (m.type === 'uncompleteTodo' && m.id) doneIds.delete(m.id);
         return;
       }
     });
@@ -289,6 +295,26 @@ async function main() {
     JSON.stringify(rows.map((r) => r.clipVisible)));
   ok('N3 行尾展开键在场', rows.every((r) => r.expandBtn));
 
+  // Reminder-side color readings for the C pairs, captured during this first
+  // visit while the panel rows are verifiably live. The compare itself runs
+  // after the todo drill-down (same document, same light theme, same fixture
+  // rows) — a second reminder open issued from the deep apple-face stack is
+  // not usable: it leaves the item page live and the panel rowless.
+  const remPairs = await page.evaluate(() => {
+    const col = (el) => el ? getComputedStyle(el).color : null;
+    const bgc = (el) => el ? getComputedStyle(el).backgroundColor : null;
+    const remRow = document.querySelector('#reminder-panel .reminder-row');
+    // null when no completed scheduled-task row is on the page; the pair
+    // then uses the --color-info token the completed circle is painted with.
+    const doneEl = document.querySelector('#reminder-panel .reminder-circle.completed');
+    return {
+      rowText: col(remRow && remRow.querySelector('.reminder-row-text')),
+      rowTime: col(remRow && remRow.querySelector('.reminder-row-time')),
+      rowBg: bgc(remRow),
+      doneCircle: doneEl ? bgc(doneEl) : null,
+    };
+  });
+
   await page.screenshot({ path: join(OUT, `tasks-375-light.png`) });
 
   /* 展开：点第一条 → 液态形变过渡串 + 详情可见 */
@@ -378,102 +404,157 @@ async function main() {
   // 记账窗口 __frames 回读）。桩在 wire() 里对一切 C2S 帧先记账再按型分派。
   const createFrame = await page.evaluate(() => (window.__frames || []).filter((f) => f.type === 'createScheduledTask').pop() || null);
   writeFileSync(join(OUT, 'create-queue.json'), JSON.stringify({ createFrame }, null, 2));
-  if (!createFrame && (sendQueue || 0) > 0) {
-    // 发送被队列收走 = wsReady() 判否 —— 这条链路本身是「离线排队」的既有行为，
-    // 记为 INFO 不判 FAIL（两段化已在 saveInlineTask 组帧点由单元读数覆盖）。
-    ok('N5 创建帧带两段（离线队列腿：sendWs 被排队，组帧点已带 detail 字段）', true,
-      `sendQueue=${sendQueue}（离线排队路径，detail 断言改由 offline-queue 读数覆盖）`);
-  }
   writeFileSync(join(OUT, 'create-frame.json'), JSON.stringify(createFrame, null, 2));
   ok('N5 创建帧带两段：content = 首行名 + 描述，detail = description',
     !!createFrame && createFrame.content.includes('\n') && createFrame.detail === '九点巡检一次在飞批次，异常直接重跑。',
     JSON.stringify(createFrame && { content: createFrame.content, detail: createFrame.detail }));
 
-  /* ── 375 亮：待办页（同族行 + 表单按钮）────────────────────────────── */
-  await page.evaluate(async () => {
-    const nav = await import('/js/mobile/navController.js');
-    nav.backOut?.();
-  });
-  await sleep(500);
+  /* ── 375 亮：待办页（清单条目行 + 完成圈 + 确认键）──────────────────── */
+  // The mobile todo page is a three-page drill-down: home (summary cards +
+  // list rows) → list page (item rows) → item page (edit form + save key).
+  // Every hop below is the real click chain, issued as a DOM click.
   await openTasksMobile(page);
   await page.screenshot({ path: join(OUT, `todo-375-light.png`) });
+  await page.evaluate(() => document.querySelector(".mobile-page[data-page='tasks'] .ta-rows .ta-row-all")?.click());
+  await sleep(900);
+  await page.screenshot({ path: join(OUT, `todo-375-light-list.png`) });
   const todoRows = await page.evaluate(() => {
-    const rows = [...document.querySelectorAll('.mobile-page[data-page="tasks"] .tfl-row')];
-    const first = rows[0];
-    if (!first) return { n: 0 };
-    const host = document.querySelector('.mobile-page[data-page="tasks"]');
-    const hb = host.getBoundingClientRect();
-    const rb = first.getBoundingClientRect();
+    const col = (el) => el ? getComputedStyle(el).color : null;
+    const bgc = (el) => el ? getComputedStyle(el).backgroundColor : null;
+    // Resolve a token expression to its computed color through a probe node,
+    // so every expected value below is read from the live stylesheet.
+    const token = (expr) => {
+      const probe = document.createElement('i');
+      probe.style.cssText = `position:absolute;visibility:hidden;pointer-events:none;color:${expr};`;
+      document.body.appendChild(probe);
+      const v = getComputedStyle(probe).color;
+      probe.remove();
+      return v;
+    };
+    const home = document.querySelector(".mobile-page[data-page='tasks']");
+    const live = document.querySelector('.mobile-page.live');
+    const items = live && live.dataset.page === 'todo-apple-list' ? [...live.querySelectorAll('.ta-item')] : [];
+    const first = items[0];
+    const lb = live ? live.getBoundingClientRect() : null;
+    const fb = first ? first.getBoundingClientRect() : null;
+    const circle = first && first.querySelector('.ta-check-circle');
+    const ccs = circle ? getComputedStyle(circle) : null;
     return {
-      n: rows.length,
-      insetLeft: +(rb.left - hb.left).toFixed(2),
-      insetRight: +(hb.right - rb.right).toFixed(2),
+      live: live ? live.dataset.page : null,
+      listTitle: live ? (live.querySelector('.ta-dtitle')?.textContent || null) : null,
+      homeRows: home ? home.querySelectorAll('.ta-rows .ta-row').length : 0,
+      n: items.length,
+      insetLeft: lb && fb ? +(fb.left - lb.left).toFixed(2) : null,
+      insetRight: lb && fb ? +(lb.right - fb.right).toFixed(2) : null,
+      titleColor: col(first && first.querySelector('.ta-item-title')),
+      dueColor: col(first && first.querySelector('.ta-item-due')),
+      rowBg: bgc(first),
+      circleRest: ccs ? { bg: ccs.backgroundColor, border: ccs.borderTopColor, bw: ccs.borderTopWidth, w: ccs.width } : null,
+      tokens: {
+        text: token('var(--color-text)'),
+        muted: token('var(--color-text-muted)'),
+        info: token('var(--color-info)'),
+        sapphire: token('rgb(var(--sapphire))'),
+        sendInk: token('var(--ctl-send-ink)'),
+      },
     };
   });
   writeFileSync(join(OUT, 'todo-rows-readings.json'), JSON.stringify(todoRows, null, 2));
   ok('C0 待办页行在场（对照读数）', todoRows.n > 0, JSON.stringify(todoRows));
 
-  /* ── C 配色成对读数：待办页 ⇄ 定时任务页（基准 = 定时任务页）─────────────
-     两页的条目行同源 buildRow（.reminder-row 族）⇒ 行/详情/展开键的颜色由构造
-     相同；本组读数把「成对同值」钉进机检：分组签 / 行首文字 / 时间徽标 / 主键钮
-     四对，逐对读 computed color，任何一边偏离 = FAIL。 */
-  await page.evaluate(() => { document.querySelector('#reminder-btn')?.click(); });
+  // Done circle: complete the first item through the row's check key (outbound
+  // completeTodo frame + the store's debounced list refresh), then read the
+  // completed row on the Completed list, where it renders in its done state.
+  await page.evaluate(() => document.querySelector('.mobile-page.live .ta-item .ta-check')?.click());
+  await sleep(1200);
+  await page.evaluate(async () => { const nav = await import('/js/mobile/navController.js'); nav.popPage(); });
   await sleep(700);
-  await openReminderMobile(page);
-  const colorPairs = await page.evaluate(() => {
-    const col = (el) => el ? getComputedStyle(el).color : null;
-    const bgc = (el) => el ? getComputedStyle(el).backgroundColor : null;
-    const remPage = document.querySelector(".mobile-page[data-page='reminder']");
-    const todoPage = document.querySelector(".mobile-page[data-page='tasks']");
-    const remRow = remPage && remPage.querySelector('.reminder-row');
-    const todoRow = todoPage && todoPage.querySelector('.tfl-row');
+  await page.evaluate(() => document.querySelector(".mobile-page[data-page='tasks'] .ta-card-completed")?.click());
+  await sleep(900);
+  await page.screenshot({ path: join(OUT, `todo-375-light-done.png`) });
+  const doneRow = await page.evaluate(() => {
+    const live = document.querySelector('.mobile-page.live');
+    const row = live && live.dataset.page === 'todo-apple-list' ? live.querySelector('.ta-item.is-done') : null;
+    if (!row) return null;
+    const circle = row.querySelector('.ta-check-circle');
+    const ccs = circle ? getComputedStyle(circle) : null;
+    const title = row.querySelector('.ta-item-title');
+    const tcs = title ? getComputedStyle(title) : null;
     return {
-      // 角色 → 角色 的成对读数（基准 = 定时任务页；两页 DOM 族不同、令牌同源）：
-      rowText: [col(remRow && remRow.querySelector('.reminder-row-text')), col(todoRow && todoRow.querySelector('.tfl-row-title'))],
-      rowTime: [col(remRow && remRow.querySelector('.reminder-row-time')), col(todoRow && todoRow.querySelector('.tfl-row-due'))],
-      rowBg: [bgc(remRow), bgc(todoRow)],
-      // 完成圈：定时任务 completed 圆（--color-info）⇄ 待办打卡 fill（同 token）
-      doneCircle: [
-        (() => { const c = remPage && remPage.querySelector('.reminder-circle.completed'); return c ? bgc(c) : 'rgb(91, 127, 191)'; })(),
-        bgc(todoPage && todoPage.querySelector('.tfl-complete-fill')),
-      ],
-    };
-  });  // 待办页表单主键（打开待办新建抽屉读一次再收掉）：
-  // 手机层两面表单的确认键 = 抽屉头最右 .mf-drawer-done-btn（同一实现），读它。
-  await page.evaluate(() => { document.querySelector("[data-chrome='tasks']")?.click(); });
-  await sleep(700);
-  // 待办新建入口 = TodoFace 的右下加号（.tfl-fab-add，手机档挂 .g2-fab）。
-  await page.evaluate(() => { document.querySelector(".mobile-page[data-page='tasks'] .tfl-fab-add")?.click(); });
-  await sleep(500);
-  const todoFormPrimary = await page.evaluate(() => {
-    const page = document.querySelector(".mobile-page[data-page='tasks']");
-    const done = [...(page ? page.querySelectorAll('.mf-drawer-done-btn') : [])].find((b) => !b.closest('.mf-drawer').hidden);
-    const cancel = done ? [...page.querySelectorAll('.mf-drawer-cancel-btn')].find((b) => !b.closest('.mf-drawer').hidden) : null;
-    if (!done) return null;
-    const cs = getComputedStyle(done);
-    const db = done.getBoundingClientRect();
-    const cb = cancel ? cancel.getBoundingClientRect() : null;
-    return {
-      color: cs.color, bg: cs.backgroundColor, h: +db.height.toFixed(2),
-      shadow: cs.boxShadow, bgImage: cs.backgroundImage,
-      rightmost: cb ? db.left >= cb.right - 0.5 : null,
-      rightGap: cb ? +(done.closest('.mf-drawer-box').getBoundingClientRect().right - db.right).toFixed(2) : null,
+      id: row.dataset.itemId,
+      circle: ccs ? { bg: ccs.backgroundColor, border: ccs.borderTopColor } : null,
+      titleColor: tcs ? tcs.color : null,
+      strike: tcs ? tcs.textDecorationLine : null,
     };
   });
-  writeFileSync(join(OUT, 'color-pairs.json'), JSON.stringify({ colorPairs, todoFormPrimary, remFormPrimary: formInfo && formInfo.confirmStyle }, null, 2));
+
+  // Confirm key: list page "+" → item page; the save key is the round button
+  // pinned to the right end of the top-right cluster.
+  await page.evaluate(async () => { const nav = await import('/js/mobile/navController.js'); nav.popPage(); });
+  await sleep(700);
+  await page.evaluate(() => document.querySelector(".mobile-page[data-page='tasks'] .ta-rows .ta-row-all")?.click());
+  await sleep(900);
+  await page.evaluate(() => document.querySelector('.mobile-page.live .ta-pill-btn')?.click());
+  await sleep(900);
+  await page.screenshot({ path: join(OUT, `todo-375-light-item.png`) });
+  const todoFormPrimary = await page.evaluate(() => {
+    const live = document.querySelector('.mobile-page.live');
+    const pg = live && live.dataset.page === 'todo-apple-item' ? live : null;
+    const save = pg && pg.querySelector('.ta-save');
+    if (!save) return null;
+    const cs = getComputedStyle(save);
+    const sb = save.getBoundingClientRect();
+    const cluster = save.closest('.ta-cluster');
+    const cb = cluster ? cluster.getBoundingClientRect() : null;
+    return {
+      color: cs.color, bg: cs.backgroundColor, h: +sb.height.toFixed(2), w: +sb.width.toFixed(2),
+      shadow: cs.boxShadow, bgImage: cs.backgroundImage,
+      rightmost: cb ? Math.abs(cb.right - sb.right) <= 2 : null,
+      rightGap: +(pg.getBoundingClientRect().right - sb.right).toFixed(2),
+    };
+  });
+
+  /* ── C 配色读数：待办页 ⇄ 定时任务页（基准 = 定时任务页）─────────────────
+     Two roles are held as cross-page pairs (row title text, done circle); the
+     todo item row's secondary line, row surface and confirm key are held
+     against their own token sources. Every expected value is a computed
+     reading — a drift on either side is a FAIL. The reminder side was read
+     during the first visit (see remPairs above). */
+  const remDone = remPairs.doneCircle || todoRows.tokens.info;
+  const colorPairs = {
+    rowText: [remPairs.rowText, todoRows.titleColor],
+    doneCircle: [remDone, doneRow && doneRow.circle ? doneRow.circle.bg : null],
+  };
+  writeFileSync(join(OUT, 'color-pairs.json'), JSON.stringify({
+    colorPairs,
+    tokens: todoRows.tokens,
+    todoRow: { title: todoRows.titleColor, due: todoRows.dueColor, rowBg: todoRows.rowBg, circleRest: todoRows.circleRest },
+    doneRow,
+    reminderRow: remPairs,
+    todoFormPrimary,
+    remFormPrimary: formInfo && formInfo.confirmStyle,
+  }, null, 2));
   const pairEq = (pair) => pair && pair[0] != null && pair[0] === pair[1];
+  const TRANSPARENT = ['rgba(0, 0, 0, 0)', 'transparent'];
   ok('C1 两页行首文字颜色同值（基准 = 定时任务页 --color-text）', pairEq(colorPairs.rowText), JSON.stringify(colorPairs.rowText));
-  ok('C2 两页时刻字颜色同值（--color-info 定时任务蓝）', pairEq(colorPairs.rowTime), JSON.stringify(colorPairs.rowTime));
-  ok('C3 两页行底色同值（静息透明基准）', pairEq(colorPairs.rowBg), JSON.stringify(colorPairs.rowBg));
-  ok('C6 完成圈同色（--color-info：定时任务 completed 圆 ⇄ 待办打卡 fill）', pairEq(colorPairs.doneCircle), JSON.stringify(colorPairs.doneCircle));
-  ok('C5 两页确认键同规格（--color-primary 同源、扁平、≥44、done 恒最右）',
-    todoFormPrimary && formInfo && formInfo.confirmStyle
-    && todoFormPrimary.color === formInfo.confirmStyle.color
+  ok('C2 待办条目时刻字 = 次行灰单源（--color-text-muted）',
+    todoRows.dueColor != null && todoRows.dueColor === todoRows.tokens.muted,
+    JSON.stringify({ due: todoRows.dueColor, muted: todoRows.tokens.muted, reminderTime: remPairs.rowTime }));
+  ok('C3 待办条目行底静息透明（行贴清单面、无逐行着色底）',
+    todoRows.rowBg != null && TRANSPARENT.includes(todoRows.rowBg),
+    JSON.stringify({ rowBg: todoRows.rowBg, reminderRowBg: remPairs.rowBg }));
+  ok('C6 完成圈同色（定时任务 completed 圆 --color-info ⇄ 待办完成圈 sapphire，同值蓝）',
+    pairEq(colorPairs.doneCircle) && !!doneRow && !!doneRow.circle && doneRow.circle.border === doneRow.circle.bg,
+    JSON.stringify({ pair: colorPairs.doneCircle, doneRow }));
+  ok('C5 待办确认键规格（sapphire 圆钮 + 白墨、扁平、≥44、恒最右）',
+    !!todoFormPrimary
+    && todoFormPrimary.bg === todoRows.tokens.sapphire
+    && todoFormPrimary.color === todoRows.tokens.sendInk
     && todoFormPrimary.rightmost === true
     && todoFormPrimary.h >= 43.5
     && ['none',''].includes(todoFormPrimary.shadow)
     && !String(todoFormPrimary.bgImage).includes('gradient'),
-    JSON.stringify({ todo: todoFormPrimary, rem: formInfo && formInfo.confirmStyle && formInfo.confirmStyle.color }));
+    JSON.stringify({ todo: todoFormPrimary, sapphire: todoRows.tokens.sapphire, ink: todoRows.tokens.sendInk, rem: formInfo && formInfo.confirmStyle && formInfo.confirmStyle.color }));
 
   /* ── 375 暗：两页 ─────────────────────────────────────────────────── */
   await page.evaluate(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.documentElement.style.colorScheme = 'dark'; });

@@ -57,11 +57,12 @@ import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
-import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
-// 【恢复：作者令 2026-11-05 09:28】'tasks' 页随左上「任务」圆钮一并恢复 ——
-// 入口收敛批 todo-unify-entry-collapse（2026-11-04）曾把本页与圆钮一起撤除
-// （待办入口收敛到顶带胶囊一处）；作者 2026-11-05 反转该口径，要求手机端回到
-// 「左上角悬浮待办按钮」，桌面端继续用胶囊 ⇒ 本页的页面收编腿原样恢复。
+// The 'tasks' page body is the Apple-Reminders-style todo face, a three-page
+// stack (tasks / todo-apple-list / todo-apple-item). The face receives push/pop
+// by injection and never imports this module. mobile/taskPanel.js is no longer
+// mounted by navigation; no runtime code imports it (only specs load it
+// directly).
+import { mountTodoAppleInto } from './todoAppleFace.js';
 // 层事件流水（循环门禁修复批 2026-11-04）：叶子模块，taskPanel 等打事件方直取它，
 // 本模块只写 + 在 activateNav 挂 window（见该定义处注释）。
 import { logEvent, navLayerEvents } from './navEvents.js';
@@ -126,6 +127,11 @@ export const PAGES = [
   // 'tasks' 页（**恢复**：作者令 2026-11-05 09:28 —— 手机端待办入口回到左上
   // 悬浮圆钮，入口收敛批 2026-11-04 的撤除被本批反转；桌面端仍走胶囊）。
   { id: 'tasks',    tabId: null,       icon: 'list-todo',       zh: '任务',     en: 'Tasks' },
+  // Todo face sub-pages, drilled into from the 'tasks' home page. The face
+  // hides the shell title on all three pages, so zh/en only feed the section
+  // aria-label.
+  { id: 'todo-apple-list', tabId: null, icon: 'list-todo',      zh: '待办列表', en: 'To-Do List' },
+  { id: 'todo-apple-item', tabId: null, icon: 'square-pen',     zh: '待办详情', en: 'To-Do' },
   // 搜索页标题（三点入口批 2026-11-05 页名胶囊定为唯一标题；2026-11-06 作者令
   // 「不要有省略 那就用搜索两个字吧」——「搜索聊天记录」整族写法退役，页名胶囊
   // 随 search.title 同批改「搜索」）；面内部那枚重复的 `.search-modal-header`
@@ -197,8 +203,7 @@ function tt(zh, en) {
 // ── 层事件流水（QA 探针 window.__nfMobileLayerEvents，只读）──────────
 // 循环门禁修复批（2026-11-04）：流水 + logEvent 抽到叶子 navEvents.js —— 这里是
 // 它的**挂载点**（activateNav 把同一数组引用挂 window）。taskPanel/searchFace/
-// socialSearch/chatChrome 打事件时直取叶子，不再反过来 import 本模块（那是 SCC[2]
-// 的一半：本模块 → taskPanel 的页面收编是真集成，不动）。
+// socialSearch/chatChrome 打事件时直取叶子，不再反过来 import 本模块。
 
 // ── 首触标记（启动自动展开抑制的判据）────────────────────────────────
 let layerTouched = false;
@@ -660,9 +665,10 @@ const overlayFaceByPage = {
   daemon: '#daemon-panel',
   background: '#bg-dropdown',
   profile: '#memory-modal',
-  // 'tasks'（#mobile-task-panel）随左上任务圆钮一并恢复（作者令 2026-11-05 09:28）；
+  // 'tasks' is absent on purpose: its body is the Apple todo face, mounted
+  // straight into the page body by ensurePanelContent, so there is no overlay
+  // to adopt.
   // 'todo'（#todo-page）仍整面退役（本批无入口要求，见 PAGES 同批注记）。
-  tasks: '#mobile-task-panel',
   // todo: '#todo-page',
 };
 
@@ -774,11 +780,12 @@ async function ensurePanelContent(pageId) {
         if (ap.openProfilePanel) ap.openProfilePanel();
       } catch (e) { console.error('[mobile-layer] profile', e); }
       break;
-    case 'tasks':   // 恢复：作者令 2026-11-05 09:28（手机端左上任务圆钮）
-      ensureTaskPanel();
-      // 面板惰性建出 —— 建好即挂关闭对账 + 收编（X 关闭 → hidden → 弹栈）。
-      ensureOverlayReconcile('tasks', '#mobile-task-panel', (el) => !!el.hidden, ['hidden']);
-      syncOverlayFaces();
+    case 'tasks':   // Apple todo face home (entry: top-left round button)
+    case 'todo-apple-list':
+    case 'todo-apple-item':
+      // The face rebuilds the whole page body idempotently; nav is injected so
+      // the face never imports this module.
+      mountTodoAppleInto(pageId, bodyOf(pageId), { push: pushPage, pop: popPage });
       break;
     default:
       break;
@@ -2476,8 +2483,9 @@ function closePageFace(pageId) {
     case 'profile':
       import('../memory.js').then((m) => m.closeMemoryModal?.()).catch(() => { /* 未载即未开 */ });
       break;
-    case 'tasks':   // 恢复：作者令 2026-11-05 09:28
-      closeTaskPanel(true);
+    case 'tasks':   // Apple todo face pages keep no overlay: nothing to close
+    case 'todo-apple-list':
+    case 'todo-apple-item':
       break;
     case 'canvas':
       // 双页叠开修复批①（2026-10-31）：离页即归还活动文档 pane（头注既有契约

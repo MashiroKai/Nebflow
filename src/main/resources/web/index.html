@@ -136,6 +136,14 @@
        script。层样式落 css/（/css/<file> 单段路由服务），控制器落 js/mobile/
        （jsRoutes 任意深度服务）—— 均为既有静态路由面，零引擎改动。 -->
   <link rel="stylesheet" href="css/mobileLayer.css">
+  <!-- Mobile todo pages, Apple Reminders information architecture: page-scoped
+       styles for the three pages (tasks / todo-apple-list / todo-apple-item).
+       Every rule is anchored on body.mobile-layer + an exact [data-page=...]
+       selector, so desktop and the other mobile pages match nothing. Must load
+       right after mobileLayer.css (which provides the --mchrome-* / --mcap-* /
+       --mfs-* / --mtap-* tokens; this sheet only derives from them, never
+       redefines them). -->
+  <link rel="stylesheet" href="css/mobile-todo-apple.css">
   <link rel="stylesheet" href="css/mobileSearchFlat.css">
   <!-- 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16「把它补回来」
        + 22:20「编辑面也采用同款的滚轮」）：全站时间/日期类输入面的唯一交互单源。

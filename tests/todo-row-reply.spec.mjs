@@ -1,36 +1,55 @@
 #!/usr/bin/env node
-// todo-row-reply.spec.mjs — 行互动框 + 多行回复自证（impl-row-reply 批 · 2026-11-06）。
+// todo-row-reply.spec.mjs — row interaction box + multiline reply self-check.
 //
-// 作者口径（台账批任务书 + 图2/图3）：点待办行**不再跳详情/编辑页**，原位浮出一块
-// 互动框（「浮起 + 轻微上移」层级感）；点外部 / 再点同一行 / Esc 收起；回复 = 多行
-// 输入（回车只换行），发送 = 独立钮，消息体 `#<待办名> <回复>` 逐字进主会话。
+// Capability under test: tapping a todo row opens an in-place interaction box
+// (lifted + slightly translated), Esc / outside tap / re-tap on the same row
+// dismiss it; reply = multiline input (Enter inserts a newline), send = its own
+// button, and the message body `#<todo name> <reply>` reaches the main session
+// verbatim.
 //
-// 运行：node tests/todo-row-reply.spec.mjs
+// Mount context: the live tasks page now hosts the Apple-style face; the
+// row-reply face mounts through its module seam (mountTodoFaceInto — the same
+// entry the task panel wires) into the real pre-built tasks page body slot,
+// marked live. Shell-relative geometry and selectors stay identical to the
+// live page layout.
 //
-// 零后端法（与 tests/todo-create-bottom.spec.mjs 同源）：
-//   · 静态面 = page.route 从磁盘注入本仓 web 树（零端口、零 sbt、不碰 :6138）；
-//   · 数据面 = routeWebSocket 帧桩 + todoStore.__seed 夹具；
-//   · 视口   = 375×812 / deviceScaleFactor 2 / hasTouch / isMobile（body.mobile-layer）。
+// Run: node tests/todo-row-reply.spec.mjs
 //
-// 判据：
-//   A 组 开合与零位移
-//     A1 点行体 ⇒ 互动框浮出（.tfl-hit.is-open，role=dialog，挂在页面壳里）
-//     A2 起点几何 = 行盒（框 left/top/width 与行盒逐值同 ±2px）
-//     A3 零位移不变量：首条行 rect / 列表滚区 / 文档滚轴 / dock 逐值不变
-//     A4 开合过渡 = liquidMorph 单源（base 280ms / 唯一曲线；属性 ⊆ 白名单四腿）
-//     A5 单实现：全壳恰好一块 .tfl-hit；换行开框 = 旧框瞬时清场（不叠两块）
-//   B 组 多行输入 + 回复逐字
-//     B1 占位符已本地化（无裸 'todoface.replyPh' 键名）
-//     B2 回车 = 换行不发送（无 WS 用户帧；框不收；主输入框不被污染）
-//     B3 点发送 ⇒ 用户帧 content = `#<待办名> <回复>` 逐字（换行原样保留）；
-//        发送后框收、textarea 清空、主输入框清空（send() 单源出口已消费）
-//   C 组 撞门禁名字（digit-head 同源门禁）
-//     C1 数字头待办（「3d打印模型上色」）回复照发逐字（投递腿不受门禁影响）
-//     C2 展示腿门禁同源生效：正常名 ⇒ .todo-tag chip 渲染；数字头名 ⇒ 零 chip
-//        （matchTodoAt 形状门禁——任务号/色值不认作待办引用）
-//   D 组 收起路径 + 命中盒
-//     D1 Esc 收起；D2 点外部收起；D3 再点同一行收起（toggle）
-//     D4 发送钮命中盒 ≥ 48（--ds-hit-tap-min 单源）
+// Zero-backend harness (same family as tests/todo-create-bottom.spec.mjs):
+//   · static face = page.route serves the repo web tree from disk (no port,
+//     no sbt, :6138 untouched);
+//   · data face   = routeWebSocket frame stub + todoStore.__seed fixture;
+//   · viewport    = 375x812 / deviceScaleFactor 2 / hasTouch / isMobile
+//     (body.mobile-layer).
+//
+// Assertions:
+//   Group A open/close + zero displacement
+//     A1 tap row body => box floats in (.tfl-hit.is-open, role=dialog, inside
+//        the page shell)
+//     A2 start geometry = row box (box left/top/width match the row ±2px)
+//     A3 zero-displacement invariant: first-row rect / list scroller / document
+//        scroll / dock all unchanged while the box is open
+//     A4 open transition = liquidMorph single source (base 280ms / single curve;
+//        properties within the four-leg whitelist)
+//     A5 single instance: exactly one .tfl-hit per shell; opening another row
+//        swaps instantly (never two boxes stacked)
+//   Group B multiline input + verbatim reply
+//     B1 placeholder localized (no bare 'todoface.replyPh' key)
+//     B2 Enter = newline, not send (no WS user frame; box stays open; main
+//        composer unpolluted)
+//     B3 tap send => user frame content = `#<name> <reply>` verbatim (newlines
+//        preserved); after send the box closes, textarea + main composer clear
+//        (send() single exit consumed)
+//   Group C digit-head gate (same-source gate)
+//     C1 digit-head todo reply still sends verbatim (delivery leg ignores the
+//        gate)
+//     C2 display leg gate active: normal name => .todo-tag chip rendered;
+//        digit-head name => zero chips (matchTodoAt shape gate — task numbers /
+//        color values are not todo references)
+//   Group D dismissal paths + hit box
+//     D1 Esc dismisses; D2 outside tap dismisses; D3 re-tap on the same row
+//        dismisses (toggle)
+//     D4 send button hit box >= 48 (--ds-hit-tap-min single source)
 
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -142,17 +161,28 @@ async function boot(page) {
     const s = (await import('/js/state.js')).default;
     return s.activeSessionId === sid && s.ws && s.ws.readyState === 1;
   }, SID, { timeout: 20000 });
-  await page.evaluate(async ({ sid, tags, its }) => {
+  await page.evaluate(async ({ tags, its }) => {
     const store = await import('/js/todoStore.js');
     store.todoStore.__seed({ tagList: tags, itemList: its });
-    const face = await import('/js/todoFace.js');
-    face.renderTodoTaskList(sid);
-  }, { sid: SID, tags: TAGS, its: items() });
-  await page.locator("[data-chrome='tasks']").first().click();
-  await page.waitForFunction(() => {
-    const el = document.querySelector('.mobile-page[data-page="tasks"]');
-    return el && el.classList.contains('live');
-  }, null, { timeout: 10000 });
+    // Mount the row-reply face at its module seam into the real pre-built
+    // tasks page (navController pre-builds every page section inside
+    // #mobile-pages): face goes into the section's body slot and the section
+    // gets `live`, exactly the state a pushPage('tasks') produces — so the
+    // stacking context, shell-relative box geometry and every
+    // `.mobile-page[data-page='tasks']` selector below stay identical to the
+    // live page layout. A body-appended look-alike shell would sit under the
+    // chat root's stacking context and its rows would be click-intercepted.
+    const faceMod = await import('/js/todoFace.js');
+    const shell = document.querySelector("#mobile-pages .mobile-page[data-page='tasks']");
+    const slot = shell.querySelector('.mobile-page-body') || shell;
+    faceMod.mountTodoFaceInto(slot);
+    shell.classList.add('live');
+    // Inert tap target outside the face for the outside-dismiss leg (D2).
+    const pad = document.createElement('div');
+    pad.id = 'spec-outside-pad';
+    pad.style.cssText = 'position:fixed;left:8px;bottom:8px;width:64px;height:32px;z-index:9999;';
+    document.body.appendChild(pad);
+  }, { tags: TAGS, its: items() });
   await page.waitForTimeout(600);
   await page.waitForSelector(".mobile-page[data-page='tasks'] .tfl-row", { timeout: 8000 });
 }
@@ -355,11 +385,12 @@ try {
   const escGone = await page.evaluate(() => !document.querySelector('.tfl-hit'));
   ok('D1 Esc 收起', escGone, `boxGone=${escGone}`);
 
-  // D2 点外部收起（页头大标题 = 惰性 span、框与行之外；不碰坐标——页头左缘是
-  // 返回钮，坐标点击会误触 popPage）
+  // D2 outside tap dismisses: tap the inert pad boot() installed outside the
+  // face (not inside the box, not a .tfl-row — the document-capture pointerdown
+  // handler closes the box on it)
   await page.locator(ROW1).click();
   await sleep(400);
-  await page.locator(`${PAGE} .mobile-page-title`).click();
+  await page.locator('#spec-outside-pad').click();
   await sleep(400);
   const outsideGone = await page.evaluate(() => !document.querySelector('.tfl-hit'));
   ok('D2 点外部收起（框外指针一击收）', outsideGone, `boxGone=${outsideGone}`);

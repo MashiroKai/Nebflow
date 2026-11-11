@@ -1,43 +1,66 @@
 #!/usr/bin/env node
-// todo-create-bottom.spec.mjs — 「新建恢复页底弹出」自证（create-bottom-restore 批 ·
-// 作者裁定 2026-11-06 09:44，撤回批，覆盖任务书「新建从顶部」那条）。
+// todo-create-bottom.spec.mjs — mobile create-entry self-check for the two
+// create faces:
+//   · todo side = Apple face (this branch): the bottom-right FAB pushes the
+//     full-page item editor (todo-apple-item). The 2026-11-06 "create from
+//     the bottom drawer" ruling is superseded on this side by the Apple-face
+//     create flow — the drawer markup no longer exists on the todo side.
+//   · scheduled-task side = unchanged bottom drawer (.reminder-fab-add →
+//     .mf-drawer), asserted by the S legs.
 //
-// 作者原话（逐字）：「然后撤回一下 不管是定时任务还是待办 手机端的创建 还是从底部
-// 弹出吧 方便一点」。
+// Run: node tests/todo-create-bottom.spec.mjs
+//   CHATFACE_WEB_ROOT=<another web tree> points the static route at a
+//   pre-change tree (red-leg verification).
 //
-// 运行：node tests/todo-create-bottom.spec.mjs
-//   CHATFACE_WEB_ROOT=<另一份 web 树> 可指向改前树（或上一批 918846c0f 的树）跑验红腿。
+// Zero-backend technique (same family as tests/todo-mobile-edit-real.spec.mjs):
+//   · static: page.route serves the web tree from disk (no port, no sbt,
+//     never touches :6138);
+//   · data: routeWebSocket frame stubs — todos via todoStore.__seed fixtures,
+//     scheduled tasks via listScheduledTasks → scheduledTaskList frames;
+//   · viewport: 375×812 / deviceScaleFactor 2 / hasTouch / isMobile
+//     (body.mobile-layer active).
 //
-// 零后端法（与 tests/todo-mobile-topmenu.spec.mjs / tests/mobile-p3-reminder.spec.mjs 同源）：
-//   · 静态面 = page.route 从磁盘注入本仓 web 树（零端口、零 sbt、不碰 :6138）；
-//   · 数据面 = routeWebSocket 帧桩：待办走 todoStore.__seed 夹具，定时任务走
-//     listScheduledTasks → scheduledTaskList 帧；
-//   · 视口   = 375×812 / deviceScaleFactor 2 / hasTouch / isMobile（body.mobile-layer 激活）。
-//
-// 判据（逐条对应任务书五步 + 自证要求）：
-//   T 待办页（真链 chatChrome [data-chrome='tasks'] → navController pushPage）
-//     A1 点新建入口（右下加号）⇒ 抽屉贴页底（盒底 = 页壳底 ±0.5）
-//     A2 三组读数（开前 / 开时 / 关后）：列表首条 rect 位移 ≤0.5px、dock 不变、
-//        .tfl-list scrollTop/scrollHeight/clientHeight 不变、document.scrollingElement
-//        scrollTop/scrollHeight + window.scrollY 恒定
-//     A3 抽屉不撑高页面：开关前后页壳/页体/list-inner 的 scrollHeight 逐值不变
-//     A4 动效单源：开合过渡串 = liquidMorph.morphTransition(transform+opacity, slow)
-//        原文（400ms / 唯一曲线）；开时采样 transform 中间帧 = matrix 平移（位移只吃
-//        transform，不是 top/height）；收尾 transform = none + opacity 1
-//     A5 单实现：DOM 里恰好一个 .mf-drawer、无 .mf-drawer-top、无第二套新建表单源
-//        （.tfl-list 内无 .tfl-create-row）
-//     A6 ⋯ 仍在（.tfl-topmenu-btn 命中 1）且旧顶部控制仍然零命中
-//     A7 关闭路径两条都在：遮罩点击 / 「取消」（后者实测）
-//   G 标题框蓝边复核：焦点后 outlineWidth 0 / outlineStyle none / borderColor 透明
-//     （指针点入 + 键盘 Tab 两腿），亮暗两主题各一次
-//   S 定时任务页（工作台 → 定时任务）：同类断言 —— 抽屉贴页底、.mf-drawer-top 零命中、
-//     开合过渡串同为液态形变 slow 档、开合零位移
+// Old-assertion dispositions (old labels kept as prefixes so the receipts
+// line up; no coverage deleted without a stated replacement):
+//   A-leg (todo side, repointed to the Apple face)
+//     A0    repointed — tap the bottom-right .ta-fab ⇒ item editor pushed,
+//           empty create draft, save key present (the drawer form check
+//           folded into this).
+//     A1    repointed — create entry bottom-anchored: .ta-fab-wrap right =
+//           page − var(--mpad-x), bottom = page − 16px; the editor fills the
+//           shell (shell bottom = dock top, shell top = 0). Same "entry sits
+//           at the page bottom" intent, new carrier.
+//     A2a-d repointed — pushing a stacked page must not relayout the covered
+//           home page: first row / dock / list card / document scroll all
+//           unchanged while the editor is live.
+//     A3    repointed — the editor does not grow the covered page (page body
+//           and list inner scrollHeight unchanged).
+//     A4    retired with the drawer: the stacked page swap is a visibility
+//           toggle, no transition leg left to sample (mid-flight transform
+//           frames gone); replaced by a final-geometry check (shell transform
+//           none / opacity 1).
+//     A5    repointed — single create implementation: exactly one .ta-fab,
+//           zero drawer and zero legacy .tfl-* markup on the tasks page.
+//     A6    repointed — home capsule trio (search / new list / more) replaces
+//           the old top menu; old top controls all zero.
+//     A7    repointed, split in two — back button = discard path (no store
+//           write, home restored); save key = the real createItem write +
+//           pop. Both close paths still proven.
+//     A7b   repointed — the scrim retired with the drawer; the second entry
+//           (the list-page create pill) opens the same editor instead
+//           ("two entries, one editor").
+//     G0-G3 repointed to the editor title input (.ta-title-input): reading
+//           contract, pointer + keyboard legs, light and dark themes.
+//   S-leg (scheduled-task side, unchanged): S0-S5 as before — drawer opens
+//     from the fab, bottom-anchored on the page shell, single implementation,
+//     liquid-morph slow transition, zero shift, closes back to place.
 
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname, extname, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-// 期望值不从 CSS/JS 抄数：直接取液态形变单源模块的导出（改一处两处同步）。
+// Expected strings come from the liquid-morph single-source module's exports
+// (change one place, both sides stay in sync) — used by the S-leg drawer.
 import { DURATION, EASING, morphTransition } from '../src/main/resources/web/js/motion/liquidMorph.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -55,7 +78,7 @@ const MIME = {
   '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf',
 };
 
-/* ───────────── 夹具 ───────────── */
+/* ───────────── fixtures ───────────── */
 const TAGS = [
   { id: 'tag-work', name: '工作', color: 'rgb(59,130,246)' },
   { id: 'tag-life', name: '生活', color: 'rgb(16,185,129)' },
@@ -68,7 +91,7 @@ function items() {
     { id: 'f-3', tagId: 'tag-work', title: '读设计中的设计', notes: '', due: null, priority: 1, createdAt: now - 7 * 3600_000 },
   ];
 }
-/** 定时任务夹具（与 mobile-p3-reminder 同形：4 行在列）。 */
+/** Scheduled-task fixtures (same shape as mobile-p3-reminder: 4 rows listed). */
 function scheduledTasks() {
   const now = Date.now();
   return [
@@ -92,7 +115,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const near = (a, b, tol = 0.5) => a != null && b != null && Math.abs(a - b) <= tol;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-/* ───────────── 零后端 wire ───────────── */
+/* ───────────── zero-backend wire ───────────── */
 async function wire(page) {
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 'e2e-token');
@@ -157,8 +180,9 @@ async function boot(page) {
   await page.waitForTimeout(400);
 }
 
-/* ───────────── 读数脚本 ───────────── */
-/* 三组读数：首条 rect / dock / 列表滚区 / 文档滚轴 / 各层 scrollHeight（撑高判据）。 */
+/* ───────────── reading scripts ───────────── */
+/* Three readings: first-row rect / dock / list scroll region / document
+   scroll axis / per-layer scrollHeight (page-growth criterion). */
 const READ = (pageSel, listSel, rowSel) => `(() => {
   const R = (el) => { if (!el) return null; const b = el.getBoundingClientRect();
     return { x: +b.x.toFixed(2), y: +b.y.toFixed(2), w: +b.width.toFixed(2), h: +b.height.toFixed(2),
@@ -167,7 +191,7 @@ const READ = (pageSel, listSel, rowSel) => `(() => {
   const list = page && page.querySelector(${JSON.stringify(listSel)});
   const se = document.scrollingElement;
   const body = page && page.querySelector('.mobile-page-body');
-  const inner = page && page.querySelector('.tfl-list-inner, .reminder-panel-body');
+  const inner = page && page.querySelector('.ta-rows, .reminder-panel-body');
   const dock = document.querySelector('#mobile-dock');
   return {
     firstRow: R(page && page.querySelector(${JSON.stringify(rowSel)})),
@@ -209,10 +233,12 @@ const TRANSITION_OF = (sel) => `(() => {
            transform: cs.transform, opacity: cs.opacity };
 })()`;
 
-/* 期望串 = 单源模块生成的原文（不从 CSS 抄数）。 */
+/* Expected strings = the single-source module's own output (never re-typed
+   from CSS). Only the S-leg drawer still carries a transition to compare. */
 const WANT = morphTransition(['transform', 'opacity'], { duration: 'slow' });
 const WANT_CSS = (() => {
-  // getComputedStyle 口径：毫秒不带单位换算（400ms → "0.4s"）、曲线原样、逗号后带空格。
+  // getComputedStyle contract: unit-less ms normalize (400ms → "0.4s"),
+  // easing verbatim, comma followed by a space.
   const dur = `${DURATION.slow / 1000}s`;
   return { dur: `${dur}, ${dur}`, ease: `${EASING}, ${EASING}` };
 })();
@@ -224,163 +250,147 @@ function transitionIsLiquid(t) {
     && t.dur === WANT_CSS.dur && t.ease === WANT_CSS.ease;
 }
 
-/* 过渡中段的 transform 读数（开合动画「位移只吃 transform」的实证：取中间的
-   matrix 平移 y ∈ (0, boxH)，且几何（w/h）不变 ⇒ 没有触发布局）。 */
-/* ── 动画样本采集器（页内安装，先装后点）──────────────────────────────────
-   rAF 每帧读抽屉盒的 computed transform 与几何；只留「纯平移矩阵 ty>0」的帧，
-   并以**落位终态**（ty=0 的稳定帧）为基准校验截面（x / 宽）不变、y = 终态y − ty。
-   —— 采样必须由页内 rAF 循环做：若从外面发 evaluate，采样本身占满 rAF 槽，
-   400ms 的开合腿会被整段跳过（2026-11-06 实测：frames=0）。 */
-const INSTALL_SAMPLER = (sel) => `(() => {
-  const el = document.querySelector(${JSON.stringify(sel)});
-  window.__cbSamples = { frames: [], settledY: null, running: true };
-  const tick = () => {
-    if (!window.__cbSamples.running) return;
-    if (!el) { requestAnimationFrame(tick); return; }
-    const tf = getComputedStyle(el).transform;
-    const m = /^matrix\\(1, 0, 0, 1, 0, (-?[0-9.]+)\\)$/.exec(tf);
-    const b = el.getBoundingClientRect();
-    if (m) {
-      const ty = parseFloat(m[1]);
-      if (Math.abs(ty) < 0.3) window.__cbSamples.settledY = +b.y.toFixed(2);
-      else window.__cbSamples.frames.push({ ty: +ty.toFixed(2), x: +b.x.toFixed(2), y: +b.y.toFixed(2), w: +b.width.toFixed(2) });
-    }
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-  return true;
-})()`;
-
-/* ───────────── 主流程 ───────────── */
+/* ───────────── main flow ───────────── */
 const browser = await chromium.launch();
 const errors = [];
 const readings = { media: { DURATION, EASING, want: WANT } };
 
 try {
-  /* ══════ 待办页 375×812 · 亮主题 ══════ */
+  /* ══════ Todo side 375×812 · light theme ══════ */
   const ctx = await browser.newContext({
     viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true,
   });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   await boot(page);
-  await page.evaluate(async ({ sid, tags, its }) => {
+  await page.evaluate(async ({ tags, its }) => {
     const store = await import('/js/todoStore.js');
     store.todoStore.__seed({ tagList: tags, itemList: its });
-    const face = await import('/js/todoFace.js');
-    face.renderTodoTaskList(sid);
-  }, { sid: SID, tags: TAGS, its: items() });
+  }, { tags: TAGS, its: items() });
   await page.waitForTimeout(200);
 
+  // Real chain: mobile chrome task button → navController page switch.
   await page.locator("[data-chrome='tasks']").first().click();
   await page.waitForFunction(() => {
     const el = document.querySelector('.mobile-page[data-page="tasks"]');
     return el && el.classList.contains('live');
   }, null, { timeout: 10000 });
   await page.waitForTimeout(800);
-  await page.waitForSelector(".mobile-page[data-page='tasks'] .tfl-row", { timeout: 8000 });
+  await page.waitForSelector(".mobile-page[data-page='tasks'] .ta-row-all", { timeout: 8000 });
 
   const PAGE = ".mobile-page[data-page='tasks']";
-  const LIST = '.tfl-list';
-  const ROW = '.tfl-row';
-  const DRAWER = `${PAGE} .mf-drawer`;
-  const BOX = `${DRAWER} .mf-drawer-box`;
+  const ITEM = ".mobile-page[data-page='todo-apple-item']";
+  const LIST_PG = ".mobile-page[data-page='todo-apple-list']";
+  const LIST = '.ta-listcard';
+  const ROW = '.ta-row-all';
+  const FAB = `${PAGE} .ta-fab`;
+  const TITLE = `${ITEM} .ta-title-input`;
+  const waitLive = (sel) => page.waitForFunction(
+    (s) => { const el = document.querySelector(s); return !!el && el.classList.contains('live'); },
+    sel, { timeout: 8000 },
+  );
+  const storeCount = () => page.evaluate(async () => {
+    const { todoStore } = await import('/js/todoStore.js');
+    return todoStore.visibleItems().length;
+  });
 
-  /* ── A5 / A6 静态形态：单实现 + ⋯ 仍在 ── */
+  /* ── A5 / A6 static shape: single create entry + legacy remnants zero ── */
   const staticShape = {
-    drawers: await page.locator(DRAWER).count(),
+    fab: await page.locator(FAB).count(),
+    fabWrap: await page.locator(`${PAGE} .ta-fab-wrap`).count(),
+    pillBtns: await page.locator(`${PAGE} .ta-pill .ta-pill-btn`).count(),
+    drawers: await page.locator(`${PAGE} .mf-drawer`).count(),
     drawerTop: await page.locator('.mf-drawer-top').count(),
-    formInList: await page.locator(`${PAGE} .tfl-list .tfl-create-row`).count(),
-    topBtn: await page.locator(`${PAGE} .tfl-topmenu-btn`).count(),
-    oldCtrl: {
+    legacy: {
+      row: await page.locator(`${PAGE} .tfl-row`).count(),
+      fabAdd: await page.locator(`${PAGE} .tfl-fab-add`).count(),
+      createRow: await page.locator(`${PAGE} .tfl-create-row`).count(),
+      topmenu: await page.locator(`${PAGE} .tfl-topmenu-btn`).count(),
       filter: await page.locator(`${PAGE} .tfl-filter-toggle`).count(),
       collapse: await page.locator(`${PAGE} .tfl-collapse-btn`).count(),
       chips: await page.locator(`${PAGE} .tfl-chips-row`).count(),
       prio: await page.locator(`${PAGE} .tfl-prio-row`).count(),
     },
-    fab: await page.locator(`${PAGE} .tfl-fab-add`).count(),
   };
-  ok('A5 单实现：恰好一个 .mf-drawer / .mf-drawer-top 零残留 / 列表流内无第二套创建行',
-    staticShape.drawers === 1 && staticShape.drawerTop === 0 && staticShape.formInList === 0,
+  ok('A5 single create implementation: exactly one bottom-right .ta-fab; drawer and legacy .tfl-* markup all zero on the tasks page',
+    staticShape.fab === 1 && staticShape.fabWrap === 1 && staticShape.drawers === 0
+    && staticShape.drawerTop === 0 && Object.values(staticShape.legacy).every((n) => n === 0),
     JSON.stringify(staticShape));
-  ok('A6 ⋯ 钮仍在（顶部菜单未受影响）且旧顶部控制仍零命中',
-    staticShape.topBtn === 1 && Object.values(staticShape.oldCtrl).every((n) => n === 0),
-    JSON.stringify({ topBtn: staticShape.topBtn, oldCtrl: staticShape.oldCtrl }));
+  ok('A6 home capsule trio present (search / new list / more) — the old top control row is fully gone',
+    staticShape.pillBtns === 3, `pillBtns=${staticShape.pillBtns}`);
 
-  /* ── 开前读数 ── */
+  const countBefore = await storeCount();
+
+  /* ── Readings before the push ── */
   const before = await page.evaluate(READ(PAGE, LIST, ROW));
 
-  /* 点新建入口（右下加号 = 手机页面唯一新建入口）；先装采集器再点。 */
-  await page.evaluate(INSTALL_SAMPLER(`${PAGE} .mf-drawer-box`));
-  await page.locator(`${PAGE} .tfl-fab-add`).click();
-  await page.waitForSelector(`${DRAWER}:not([hidden])`, { timeout: 5000 });
-  await page.waitForTimeout(700); // 400ms slow 档 + 60ms 聚焦延时
-  // 开合动画中段采样（位移只吃 transform）
-  const midFrames = await page.evaluate(() => { window.__cbSamples.running = false; return window.__cbSamples; });
+  /* A0: the bottom-right FAB is the single create entry; it pushes the
+     full-page item editor (the drawer form is retired). */
+  await page.locator(FAB).click();
+  await waitLive(ITEM);
+  await page.waitForSelector(TITLE, { timeout: 5000 });
+  await page.waitForTimeout(150);
+  const openState = await page.evaluate(VISIBLE(TITLE));
+  const titleVal = await page.locator(TITLE).inputValue();
+  const saveVisible = await page.evaluate(VISIBLE(`${ITEM} .ta-save`));
+  ok('A0 tapping the bottom-right FAB pushes the item editor: empty create draft + save key present',
+    openState === true && titleVal === '' && saveVisible === true,
+    `visible=${openState} title='${titleVal}' save=${saveVisible}`);
 
-  const openState = await page.evaluate(VISIBLE(DRAWER));
-  const during = await page.evaluate(READ(PAGE, LIST, ROW));
-  const boxOpen = await page.evaluate(RECT_OF(BOX));
+  /* A1 bottom anchor: the FAB wrap sits at right = page − var(--mpad-x) /
+     bottom = page − 16px inside the page shell; the editor page fills the
+     shell down to the dock. Values read from CSS vars at runtime, never
+     re-typed here. */
+  const fabRect = await page.evaluate(RECT_OF(`${PAGE} .ta-fab-wrap`));
   const pageRect = await page.evaluate(RECT_OF(PAGE));
-  const trOpen = await page.evaluate(TRANSITION_OF(BOX));
+  const itemRect = await page.evaluate(RECT_OF(ITEM));
+  const dockRect = await page.evaluate(RECT_OF('#mobile-dock'));
+  const padX = await page.evaluate((sel) => {
+    const pageEl = document.querySelector(sel);
+    return parseFloat(getComputedStyle(pageEl).getPropertyValue('--mpad-x')) || 0;
+  }, PAGE);
+  const fabRight = fabRect ? fabRect.x + fabRect.w : null;
+  const pageRight = pageRect ? pageRect.x + pageRect.w : null;
+  ok('A1 create entry is bottom-anchored (FAB wrap right = page − var(--mpad-x), bottom = page − 16px) and the editor fills the shell (bottom = dock top, top = 0)',
+    near(fabRight, pageRight - padX, 1) && near(fabRect?.bottom, pageRect?.bottom - 16, 1)
+    && near(itemRect?.bottom, dockRect?.top, 1.5) && near(itemRect?.top, 0, 1),
+    `fab=${JSON.stringify(fabRect)} padX=${padX} item=${JSON.stringify(itemRect)} dock=${JSON.stringify(dockRect)}`);
 
-  ok('A0 点右下加号 ⇒ 底部抽屉开（表单在抽屉体内）',
-    openState === true
-    && (await page.locator(`${DRAWER} .mf-drawer-body .tfl-create-row`).count()) === 1,
-    `visible=${openState}`);
-
-  ok('A1 抽屉贴页底（盒底 = 页壳底 ≤0.5px；盒顶在页壳内）',
-    near(boxOpen?.bottom, pageRect?.bottom) && (boxOpen?.top ?? 0) > (pageRect?.top ?? 0),
-    `box=${JSON.stringify(boxOpen)} page=${JSON.stringify(pageRect)}`);
-
-  ok('A2a 列表首条零位移（开前 → 开时，≤0.5px）',
+  /* A2/A3: pushing a stacked page must not relayout the covered home page. */
+  const during = await page.evaluate(READ(PAGE, LIST, ROW));
+  ok('A2a home first row zero shift (before → editor open, ≤0.5px)',
     near(before.firstRow?.x, during.firstRow?.x) && near(before.firstRow?.y, during.firstRow?.y)
     && near(before.firstRow?.w, during.firstRow?.w) && near(before.firstRow?.h, during.firstRow?.h),
     `before=${JSON.stringify(before.firstRow)} open=${JSON.stringify(during.firstRow)}`);
 
-  ok('A2b dock（#mobile-dock）位置不变',
+  ok('A2b dock (#mobile-dock) position unchanged',
     same(before.dock, during.dock), `${JSON.stringify(before.dock)} → ${JSON.stringify(during.dock)}`);
 
-  ok('A2c 列表 scrollTop/scrollHeight/clientHeight 不变',
+  ok('A2c list card scrollTop/scrollHeight/clientHeight unchanged',
     before.list && during.list && before.list.top === during.list.top
     && before.list.sh === during.list.sh && before.list.ch === during.list.ch,
     `${JSON.stringify(before.list)} → ${JSON.stringify(during.list)}`);
 
-  ok('A2d document.scrollingElement scrollTop/scrollHeight 恒定 + window.scrollY 0',
+  ok('A2d document.scrollingElement scrollTop/scrollHeight constant + window.scrollY 0',
     before.doc && during.doc && before.doc.top === during.doc.top && before.doc.sh === during.doc.sh
     && before.winY === during.winY,
     `${JSON.stringify(before.doc)} → ${JSON.stringify(during.doc)} / winY ${before.winY}→${during.winY}`);
 
-  ok('A3 抽屉不撑高页面（页体与列表内层 scrollHeight 逐值不变）',
+  ok('A3 the editor does not grow the covered page (page body and list inner scrollHeight unchanged)',
     same(before.heights, during.heights), `${JSON.stringify(before.heights)} → ${JSON.stringify(during.heights)}`);
 
-  ok('A4a 开合过渡串 = 液态形变单源（morphTransition(transform+opacity, slow) 原文）',
-    transitionIsLiquid(trOpen) && WANT.includes(`${DURATION.slow}ms`) && WANT.includes(EASING),
-    JSON.stringify({ got: trOpen, want: WANT }));
+  /* A4 (repointed): the stacked page swap is a visibility toggle — the editor
+     presents at final geometry. The drawer-style transition legs (slow
+     liquid-morph string, mid-flight transform sampling) are retired with the
+     drawer; this final-geometry check is the replacement. */
+  const trItem = await page.evaluate(TRANSITION_OF(ITEM));
+  ok('A4 editor presents at final geometry: shell transform none / opacity 1 (page swap has no transition leg)',
+    trItem && (trItem.transform === 'none' || trItem.transform === 'matrix(1, 0, 0, 1, 0, 0)') && trItem.opacity === '1',
+    JSON.stringify({ tf: trItem?.transform, op: trItem?.opacity }));
 
-  const allFrames = (midFrames && midFrames.frames) || [];
-  const settledY = midFrames ? midFrames.settledY : null;
-  // 只取「落位终态之后」的平移段：首个 ty<0.3 的稳定帧之后（此前 = 内容刚挂进 DOM
-  // 的一次性布局落位，非位移腿）。
-  let anchorIdx = allFrames.findIndex((f) => f.ty < 0.3);
-  if (anchorIdx < 0) anchorIdx = allFrames.findIndex((f) => f.ty < 2);
-  const midMoved = anchorIdx >= 0 ? allFrames.slice(anchorIdx) : [];
-  // 位移由 transform 承担：该段盒**截面**（x / 宽）逐帧 = 终态，且 y 与 ty 咬合
-  // （y = 终态 y − ty）⇒ 位移不走 top/height/margin（那些会触发布局）。
-  const shapeStable = midMoved.length >= 3 && settledY != null
-    && midMoved.every((f) => near(f.x, boxOpen?.x, 0.6) && near(f.w, boxOpen?.w, 0.6)
-      && (f.ty < 2 || near(f.y, settledY - f.ty, 1.5)));
-  ok('A4b 开合中位移只吃 transform（中间帧 = 纯平移矩阵 ty>0，盒 x/宽 = 终态，y = 终态y − ty）',
-    shapeStable,
-    `frames=${allFrames.length} (settled-leg ${midMoved.length}) settledY=${settledY} sections=${[...new Set(midMoved.map((f) => `${f.x}/${f.w}`))].join(' ')} ty=${midMoved.map((f) => f.ty).join('→')} yErr=${Math.max(0, ...midMoved.filter((f) => f.ty >= 2).map((f) => Math.abs(f.y - (settledY - f.ty)))).toFixed(2)}`);
-
-  ok('A4c 落位终态：transform=none / opacity=1',
-    trOpen && (trOpen.transform === 'none' || trOpen.transform === 'matrix(1, 0, 0, 1, 0, 0)')
-    && trOpen.opacity === '1',
-    JSON.stringify({ tf: trOpen?.transform, op: trOpen?.opacity }));
-
-  /* ── G 蓝边复核（指针点入 + 键盘 Tab；亮主题）── */
-  const titleSel = `${DRAWER} .tfl-row-title-input`;
+  /* ── G focus-ring checks (pointer + keyboard; light theme) on the editor
+     title input ── */
+  const titleSel = TITLE;
   await page.locator(titleSel).click();
   await page.waitForTimeout(200);
   const focusPointer = await page.evaluate((sel) => {
@@ -396,29 +406,35 @@ try {
       boxShadow: cs.boxShadow,
     };
   }, titleSel);
-  // 判据口径（不靠「恰好是 0px」这种易被引擎归一化骗过去的读数）：
-  //   · 蓝边 = 作者样式画出的 outline ⇒ `outlineStyle` 只能是 `none`（无）或 `auto`
-  //     （浏览器 UA 默认态、作者未写任何 outline）；出现 solid/dashed/… = 有人画环 = 红。
-  //   · 边界 = 四条长写边色（`borderColor` 是**首边别名**，在 border-style:none 的
-  //     输入件上读到的是 UA 的 currentColor，不是作者值 ⇒ 不作判据）。
+  // Judging contract (not fooled by engine-normalized "exactly 0px" readings):
+  //   · ring = author-drawn outline ⇒ `outlineStyle` may only be `none` (no
+  //     outline) or `auto` (browser UA default, author wrote nothing); any
+  //     solid/dashed/… means someone drew a ring = red.
+  //   · border = the four longhand colors (`borderColor` is a first-edge
+  //     alias; on a border-style:none input it reads the UA currentColor, not
+  //     an author value ⇒ not usable as a criterion).
   const noRing = (s) => !!s && (s.outlineStyle === 'none' || s.outlineStyle === 'auto');
   const noVisibleBorder = (s) => !!s && s.borderWidths.every((w) => parseFloat(w) === 0 || /rgba\(0, 0, 0, 0\)|transparent/.test(s.borderColors[0]));
   const blueish = (s) => !!s && /rgb\((\d+), (\d+), (\d+)\)/.test(s.outlineColor || '')
     && (() => { const m = /rgb\((\d+), (\d+), (\d+)\)/.exec(s.outlineColor); return +m[3] > +m[1] + 40 && +m[3] > +m[2] + 20; })();
-  ok('G0 读数口径校验：UA 默认焦点环 ≠ 蓝（蓝 = 作者环；本面 outlineStyle 只能 none/auto）',
+  ok('G0 reading contract: UA default focus ring is not blue (blue = author ring; outlineStyle may only be none/auto)',
     focusPointer ? !(focusPointer.outlineStyle === 'auto' && blueish(focusPointer)) : false,
     JSON.stringify({ style: focusPointer?.outlineStyle, color: focusPointer?.outlineColor }));
-  ok('G1 标题框蓝边 0 条（指针点入：作者 outline = none / 四边宽 0 / 非蓝）',
+  ok('G1 title input has zero blue ring (pointer path: author outline none / four widths 0 / not blue)',
     noRing(focusPointer) && noVisibleBorder(focusPointer) && !blueish(focusPointer) && focusPointer.active,
     JSON.stringify(focusPointer));
 
-  // 键盘腿：先 blur，再用 Tab 进入（focusModality 把模态切到 keyboard）
+  /* Screenshot (evidence): editor open, light theme. */
+  await page.screenshot({ path: join(OUT, 'create-bottom-todo.png') });
+  const geoShot = await page.evaluate(RECT_OF(ITEM));
+
+  // Keyboard leg: blur first, then Tab in (focusModality flips to keyboard).
   await page.evaluate(() => document.activeElement && document.activeElement.blur());
   await sleep(80);
   await page.keyboard.press('Tab');
   await sleep(120);
-  const focusKeyboard = await page.evaluate(() => {
-    const el = document.querySelector('.mf-drawer .tfl-row-title-input');
+  const focusKeyboard = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
     const cs = el ? getComputedStyle(el) : null;
     return cs ? {
       active: document.activeElement === el,
@@ -428,62 +444,83 @@ try {
       borderWidths: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth],
       borderColors: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor],
     } : null;
-  });
-  ok('G2 键盘 Tab 腿：环来自 inputSurface 令牌体系（≤2px 内缩压灰环）或零环 —— 不是旧「整圈蓝框」',
+  }, titleSel);
+  ok('G2 keyboard Tab leg: ring comes from the inputSurface token family (≤2px inset grey ring) or zero ring — never the old full blue circle',
     !!focusKeyboard && (
       (focusKeyboard.active && parseFloat(focusKeyboard.outlineWidth) <= 2)
       || (!focusKeyboard.active && noRing(focusKeyboard))
     ) && !(focusKeyboard?.active && blueish(focusKeyboard) && parseFloat(focusKeyboard.outlineWidth) > 2),
     JSON.stringify(focusKeyboard));
 
-  /* ── A7 关闭（「取消」键）→ 关后读数 ── */
-  const trBeforeClose = await page.evaluate(TRANSITION_OF(BOX));
-  await page.locator(`${DRAWER} .mf-drawer-cancel-btn`).click();
-  await page.waitForTimeout(700);
+  /* ── A7 discard path: back button pops without a store write ── */
+  await page.locator(`${ITEM} .mobile-back-btn`).click();
+  await waitLive(PAGE);
+  await page.waitForTimeout(400);
+  const countAfterBack = await storeCount();
   const after = await page.evaluate(READ(PAGE, LIST, ROW));
-  const closed = await page.evaluate(VISIBLE(DRAWER));
-  ok('A7 「取消」键 ⇒ 抽屉收起（hidden）', closed === false, `visible=${closed}`);
+  ok('A7 back button closes the editor without writing (create discarded; tasks page live again)',
+    countAfterBack === countBefore, `store count ${countBefore} → ${countAfterBack}`);
 
-  ok('A2e 列表首条关后仍在原位（开前 → 关后，≤0.5px）',
+  ok('A2e home first row back at its place (before → after close, ≤0.5px)',
     near(before.firstRow?.x, after.firstRow?.x) && near(before.firstRow?.y, after.firstRow?.y)
     && near(before.firstRow?.w, after.firstRow?.w) && near(before.firstRow?.h, after.firstRow?.h),
     `before=${JSON.stringify(before.firstRow)} closed=${JSON.stringify(after.firstRow)}`);
 
-  ok('A2f dock / 列表滚区 / 文档滚轴关后与开前逐值相同',
+  ok('A2f dock / list card / document scroll all identical to before (values + heights)',
     same(before.dock, after.dock) && same(before.list, after.list) && same(before.doc, after.doc)
     && before.winY === after.winY && same(before.heights, after.heights),
     `dock ${JSON.stringify(after.dock)} list ${JSON.stringify(after.list)} doc ${JSON.stringify(after.doc)} h ${JSON.stringify(after.heights)}`);
 
-  /* ── A7' 遮罩关闭（第二条关闭路径）── */
-  await page.locator(`${PAGE} .tfl-fab-add`).click();
-  await page.waitForSelector(`${DRAWER}:not([hidden])`, { timeout: 5000 });
-  await sleep(600);
-  await page.locator(`${DRAWER} .mf-drawer-scrim`).click({ position: { x: 8, y: 8 } });
-  await sleep(700);
-  ok('A7b 遮罩点击 ⇒ 抽屉收起（两条关闭路径都在）',
-    (await page.evaluate(VISIBLE(DRAWER))) === false);
+  /* ── A7 save path: the save key is the real createItem write ── */
+  await page.locator(FAB).click();
+  await waitLive(ITEM);
+  await page.waitForSelector(TITLE, { timeout: 5000 });
+  await page.locator(TITLE).fill('底部创建回归');
+  await page.locator(`${ITEM} .ta-save`).click();
+  await waitLive(PAGE);
+  await page.waitForTimeout(300);
+  const saved = await page.evaluate(async () => {
+    const { todoStore } = await import('/js/todoStore.js');
+    const it = todoStore.visibleItems().find((x) => x.name === '底部创建回归');
+    return it ? { name: it.name, priority: it.priority, completed: it.completed } : null;
+  });
+  const countAfterSave = await storeCount();
+  ok('A7-save save key writes the draft through createItem and pops back',
+    saved !== null && countAfterSave === countBefore + 1,
+    `saved=${JSON.stringify(saved)} count ${countBefore} → ${countAfterSave}`);
 
-  /* 截图（证据面）：打开态 */
-  await page.locator(`${PAGE} .tfl-fab-add`).click();
-  await page.waitForSelector(`${DRAWER}:not([hidden])`, { timeout: 5000 });
-  await sleep(700);
-  await page.screenshot({ path: join(OUT, 'create-bottom-todo.png') });
-  const geoShot = await page.evaluate(RECT_OF(BOX));
-  await page.locator(`${DRAWER} .mf-drawer-cancel-btn`).click();
-  await sleep(600);
+  /* ── A7b (repointed) second entry: the list-page create pill reaches the
+     same editor (single editor, two entries; the scrim is retired) ── */
+  await page.locator(`${PAGE} ${ROW}`).click();
+  await waitLive(LIST_PG);
+  await page.waitForSelector(`${LIST_PG} .ta-item`, { timeout: 5000 });
+  const pillCount = await page.locator(`${LIST_PG} .ta-pill-btn`).count();
+  await page.locator(`${LIST_PG} .ta-pill-btn`).click();
+  await waitLive(ITEM);
+  await page.waitForSelector(TITLE, { timeout: 5000 });
+  const secondEntry = await page.evaluate(VISIBLE(TITLE));
+  ok('A7b the list-page create pill opens the same editor (single editor, two entries)',
+    pillCount === 1 && secondEntry === true, `pill=${pillCount} editorVisible=${secondEntry}`);
+  await page.locator(`${ITEM} .mobile-back-btn`).click();
+  await waitLive(LIST_PG);
+  await page.locator(`${LIST_PG} .mobile-back-btn`).click();
+  await waitLive(PAGE);
+  await page.waitForTimeout(300);
 
   readings.todo = {
-    before, during, after, boxOpen, pageRect, trOpen: trBeforeClose, midFrames,
-    focusPointer, focusKeyboard, staticShape, geoShot,
+    before, during, after, fabRect, pageRect, itemRect, dockRect, padX,
+    focusPointer, focusKeyboard, staticShape, geoShot, saved,
+    counts: { before: countBefore, afterBack: countAfterBack, afterSave: countAfterSave },
   };
 
-  /* ── 暗主题复核 G1（亮暗两档蓝边都必须是 0）── */
+  /* ── G3 dark theme recheck (both themes must read zero blue ring) ── */
   await page.emulateMedia({ colorScheme: 'dark' });
   await sleep(150);
-  await page.locator(`${PAGE} .tfl-fab-add`).click();
-  await page.waitForSelector(`${DRAWER}:not([hidden])`, { timeout: 5000 });
-  await sleep(600);
-  await page.locator(titleSel).click();
+  await page.locator(FAB).click();
+  await waitLive(ITEM);
+  await page.waitForSelector(TITLE, { timeout: 5000 });
+  await sleep(200);
+  await page.locator(TITLE).click();
   await sleep(200);
   const focusDark = await page.evaluate((sel) => {
     const el = document.querySelector(sel);
@@ -495,16 +532,16 @@ try {
       borderColors: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor],
     };
   }, titleSel);
-  ok('G3 暗主题：标题框蓝边同为 0 条',
+  ok('G3 dark theme: title input blue ring likewise zero',
     noRing(focusDark) && noVisibleBorder(focusDark) && !blueish(focusDark), JSON.stringify(focusDark));
   readings.todo.focusDark = focusDark;
-  await page.locator(`${DRAWER} .mf-drawer-cancel-btn`).click();
-  await sleep(600);
+  await page.locator(`${ITEM} .mobile-back-btn`).click();
+  await sleep(400);
   await page.emulateMedia({ colorScheme: 'light' });
 
   await ctx.close();
 
-  /* ══════ 定时任务页 375×812（同类断言）══════ */
+  /* ══════ Scheduled-task page 375×812 (same-family assertions) ══════ */
   const sctx = await browser.newContext({
     viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true,
   });
@@ -525,7 +562,8 @@ try {
   await sp.waitForTimeout(600);
 
   const SPAGE = ".mobile-page[data-page='reminder']";
-  // 抽屉挂在页面壳（.mobile-page）上 —— 与待办页同包含块；页面体内只剩加号。
+  // The drawer hangs on the page shell (.mobile-page) — same containing
+  // block family as the todo side; only the plus button lives in the page body.
   const SDRAWER = '.mf-drawer';
   const SBOX = `${SDRAWER} .mf-drawer-box`;
   const SLIST = '.reminder-panel-body';
@@ -544,7 +582,7 @@ try {
       isPageShell: !!(d.parentElement && d.parentElement.classList.contains('mobile-page')),
     })),
   }));
-  ok('S0 定时任务页点加号 ⇒ 抽屉开（可见），且挂在页面壳上（与待办页同一包含块）',
+  ok('S0 scheduled page: plus opens the drawer (visible), hosted on the page shell',
     sOpen === true && sDiag.drawers === 1 && sDiag.hosts.every((h) => h.isPageShell),
     JSON.stringify(sDiag));
   const sDuring = await sp.evaluate(READ(SPAGE, SLIST, SROW));
@@ -559,14 +597,14 @@ try {
     hidden: await sp.locator(SDRAWER).evaluate((el) => el.hidden),
   };
 
-  ok('S1 定时任务页：新建抽屉贴页底（盒底 = 页壳底 ≤0.5px）且表单在抽屉体内',
+  ok('S1 scheduled page: drawer hugs the page bottom (box bottom = shell bottom ≤0.5px) with the form in the drawer body',
     near(sBox?.bottom, sPage?.bottom) && sShape.body + sShape.inlineRows >= 1,
     `box=${JSON.stringify(sBox)} page=${JSON.stringify(sPage)} shape=${JSON.stringify(sShape)}`);
-  ok('S2 定时任务页：.mf-drawer-top 零残留（与待办页同一套底抽屉）',
+  ok('S2 scheduled page: .mf-drawer-top zero remnants (one shared bottom drawer)',
     sShape.drawerTop === 0 && sShape.drawers === 1, JSON.stringify(sShape));
-  ok('S3 定时任务页：开合过渡串同为液态形变 slow 档（transform+opacity / 唯一曲线）',
+  ok('S3 scheduled page: open/close transition string is the same liquid-morph slow preset (transform+opacity / single easing)',
     transitionIsLiquid(sTr), JSON.stringify({ got: sTr, want: WANT }));
-  ok('S4 定时任务页：开合零位移（首行 rect / dock / 列表滚区 / 文档滚轴 / 各层 scrollHeight 不变）',
+  ok('S4 scheduled page: zero shift on open (first row rect / dock / list scroll region / document scroll axis / per-layer scrollHeight unchanged)',
     near(sBefore.firstRow?.x, sDuring.firstRow?.x) && near(sBefore.firstRow?.y, sDuring.firstRow?.y)
     && same(sBefore.dock, sDuring.dock) && same(sBefore.list, sDuring.list) && same(sBefore.doc, sDuring.doc)
     && same(sBefore.heights, sDuring.heights),
@@ -576,7 +614,7 @@ try {
   await sp.locator(`${SDRAWER} .mf-drawer-cancel-btn`).click();
   await sp.waitForTimeout(700);
   const sAfter = await sp.evaluate(READ(SPAGE, SLIST, SROW));
-  ok('S5 定时任务页：关后首行 / dock 仍原位、抽屉 hidden',
+  ok('S5 scheduled page: after close the first row / dock are back in place and the drawer is hidden',
     near(sBefore.firstRow?.y, sAfter.firstRow?.y) && same(sBefore.dock, sAfter.dock)
     && (await sp.evaluate(VISIBLE(SDRAWER))) === false,
     `row ${JSON.stringify(sAfter.firstRow)} dock ${JSON.stringify(sAfter.dock)}`);

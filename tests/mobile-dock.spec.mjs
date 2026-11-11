@@ -434,7 +434,8 @@ test('D7 to-do entry is per-end (作者令 2026-11-05 09:28): mobile = top-left 
     return {
       tasksPage: document.querySelectorAll('.mobile-page[data-page="tasks"]').length,
       todoPages: document.querySelectorAll('.mobile-page[data-page="todo"]').length,
-      panel: document.querySelectorAll('#mobile-task-panel').length,
+      // panel = the tasks page body face (Apple-Reminders-style todo face root)
+      panel: document.querySelectorAll('.mobile-page[data-page="tasks"] .ta-root').length,
     };
   });
   expect(nav).toMatchObject({ tasksPage: 1, todoPages: 0, panel: 1 });
