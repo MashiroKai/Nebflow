@@ -515,14 +515,14 @@ class ChainCascadeSpec extends CatsEffectSuite:
     // ②b 判据统计语义（防极性写反——2026-09-17 实测踩到过一次：写成「允许级联即抛」会让
     //     **全部非 L3 取消路径**静默失败，节点滞留 running，零终态；Z1 的
     //     NodeSessionDeathFinalizeSpec D2 是这条的机械哨兵）
-    // 2026-09-25 B 步重钉:cancelNodeGuarded/setNodeBgWait 随取消/销毁窗簇自 NodeEngine 迁至
+    // 2026-09-25 B 步重钉:cancelNodeGuarded/setNodeBackgroundWait 随取消/销毁窗簇自 NodeEngine 迁至
     // NodeCanceller(self-type trait,行为保持重构)——守卫窗口改读新文件,锚文本同步加宽为
     // private[project](trait 经 self 引用类构造期状态所需)。判据语义不变。
     val cancelSrc =
       codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeCanceller.scala"))
     val guard = cancelSrc.substring(
       cancelSrc.indexOf("private[project] def cancelNodeGuarded"),
-      cancelSrc.indexOf("private[project] def setNodeBgWait")
+      cancelSrc.indexOf("private[project] def setNodeBackgroundWait")
     )
     assert(
       guard.contains("cascadeRequested && l3Intermediate"),

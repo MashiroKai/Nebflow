@@ -23,22 +23,22 @@ import scala.concurrent.duration.*
  * 通知链**（不用替身）：
  *  - **E2E-1 短预算长命令**（`foregroundWaitBudgetMs = 2000` + `sleep 8`）：
  *    回执在预算点（~2s）转后台、`isError=false`、进程**没被杀**、
- *    `BgWait(deadline=30000)` 拿到真结果（`DONE-<uuid>` + exit 0）。
+ *    `Bash bounded wait(deadline=30000)` 拿到真结果（`DONE-<uuid>` + exit 0）。
  *  - **E2E-2 作者原文场景**（预算 2000ms + `sleep 90`）：~2s 转后台，
- *    `BgWait(deadline=100000)` 在 ~90s 内拿到 `LONG-DONE-<uuid>`，全程无
+ *    `Bash bounded wait(deadline=100000)` 在 ~90s 内拿到 `LONG-DONE-<uuid>`，全程无
  *    `loop-detected`（并把 agent 实际发的两次调用喂真实 `LoopGuard.evaluate`）。
  *  - **E2E-3 会话存活**：对同一 jobId 造 **20 次同参真实查询**（参数与 Bash
  *    查询腿逐字同形），每次结果都喂真实 `LoopGuard.evaluate`：全程
- *    **无 Terminate/Freeze**（第 5 拍一条 L0 nudge 指向 BgWait）；查询之后
- *    `BgWait` 仍能拿到结果。同文件带**旧面对照臂**：10 次同参 Bash **工作**
+ *    **无 Terminate/Freeze**（第 5 拍一条 L0 nudge 指向 Bash bounded wait）；查询之后
+ *    `Bash bounded wait` 仍能拿到结果。同文件带**旧面对照臂**：10 次同参 Bash **工作**
  *    调用仍在第 10 拍 Terminate（= 改前判据，未被放松）。
  *  - **E2E-4 结果送达（推送腿）**：真实 `makeNotifyCallback` 完成链——
  *    账本行**先落**（投递瞬间在目标 actor 里读 `BgTaskLedger` 已能读到），
  *    在有 agent 上下文时完成通知**被送达**（`ExternalEvent` 含输出尾段）；
  *    被 `markAwaited` 标记过的任务**不重复推送**（账本行与输出留存照做）。
  *
- * 单上限说明（不改生产契约，只改**测量口径**）：`BgWait` 的阻塞上限**恒等于**
- * `ctx.bashConfig.foregroundWaitBudgetMs`（T1 单源契约，`BgWaitTool.clampDeadline`）。
+ * 单上限说明（不改生产契约，只改**测量口径**）：`Bash bounded wait` 的阻塞上限**恒等于**
+ * `ctx.bashConfig.foregroundWaitBudgetMs`（T1 单源契约，`Bash bounded waitTool.clampDeadline`）。
  * 故「预算 2000ms 的 agent 想在 turn 内等 90s 拿到结果」在**同一 ctx** 下只能拿到
  * `[still running]` + 结束回合等通知。本 spec 因此用两个 ctx：转后台腿 = 2s 预算
  * （精确复现作者场景的转后台触发点），等待腿 = 与所请求 deadline 相同的预算
@@ -99,22 +99,20 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
       case Left(e) => fail(s"background query failed: ${e.message}")
     }
 
-  /**
-   * 真实等待腿：`BgWait(jobIds=[id], deadline=D)`。阻塞上限 = ctx 预算（T1 单源），
-   * 故等待腿的 ctx 预算 = 所请求的 deadline（见类注释的「单上限说明」）。
-   */
-  private def bgWait(jobId: String, sid: String, deadlineMs: Long): IO[String] =
-    BgWaitTool
-      .call(JsonObject("jobIds" -> List(jobId).asJson, "deadline" -> deadlineMs.asJson), ctxOf(sid, deadlineMs))
-      .map {
-        case Right(out) => out
-        case Left(e) => fail(s"BgWait must be a normal receipt (isError=false), got: ${e.message}")
-      }
+  /** Bounded wait leg through the unified Bash job-id mode. */
+  private def bgWait(jobId: String, sid: String, timeoutMs: Long): IO[String] =
+    BashTool.call(
+      JsonObject("background_job_id" -> jobId.asJson, "timeout" -> timeoutMs.asJson),
+      ctxOf(sid, timeoutMs)
+    ).map {
+      case Right(out) => out
+      case Left(e) => fail(s"Bash bounded wait must be a normal receipt (isError=false), got: ${e.message}")
+    }
 
   // ══ E2E-1 ═══════════════════════════════════════════════════════════
 
   test(
-    "E2E-1 short budget (2000ms) + 8s command: auto-background at ~2s (isError=false, job id, NOT killed), BgWait delivers DONE-<uuid> with exit 0"
+    "E2E-1 short budget (2000ms) + 8s command: auto-background at ~2s (isError=false, job id, NOT killed), Bash bounded wait delivers DONE-<uuid> with exit 0"
   ) {
     val sid = uniq("e2e1")
     val marker = uniq("DONE")
@@ -140,7 +138,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
           assert(receipt.contains("[Background job started]"), s"receipt head: $receipt")
           assert(receipt.contains("Job ID:"), s"receipt must carry the job id: $receipt")
           assert(receipt.contains("NOT killed"), s"receipt must state no-kill: $receipt")
-          assert(receipt.contains("BgWait"), s"receipt must point at the bounded wait: $receipt")
+          assert(receipt.contains("background_job_id") && receipt.contains("timeout"), s"receipt must point at the bounded Bash wait: $receipt")
           assert(receiptMs < 8000, s"the tool must return AT the budget (~2000ms), took ${receiptMs}ms")
           assert(receiptMs >= 1200, s"it must return AT the budget, not before (took ${receiptMs}ms)")
         }
@@ -159,7 +157,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         waitMs = tWait1 - tWait0
         totalMs = tWait1 - t0
         _ <- IO {
-          assert(out.contains("[completed]"), s"BgWait must deliver the terminal block: $out")
+          assert(out.contains("[completed]"), s"Bash bounded wait must deliver the terminal block: $out")
           assert(out.contains(jobId), s"the completed block must name the job: $out")
           assert(out.contains("exit 0"), s"the completed block must carry exit 0: $out")
           assert(out.contains(marker), s"the real output must ride the completed block: $out")
@@ -170,7 +168,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
           "E2E-1",
           s"budgetMs=2000 jobRuns=8s receiptMs=${receiptMs}ms receiptIsError=false alive=${alive.contains("alive: true")} " +
             s"bgwaitMs=${waitMs}ms bgwaitCalls=1 resultDelivered=${out.contains(marker)} exit0=${out.contains("exit 0")} " +
-            s"e2eTotalMs=${totalMs}ms toolCalls=3 (1 Bash fg + 1 Bash query + 1 BgWait)"
+            s"e2eTotalMs=${totalMs}ms toolCalls=3 (1 Bash fg + 1 Bash query + 1 Bash bounded wait)"
         )
       yield ()
     }
@@ -179,7 +177,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
   // ══ E2E-2 ═══════════════════════════════════════════════════════════
 
   test(
-    "E2E-2 the author's own scenario (90s command under a 2000ms budget): converted at ~2s, BgWait(100000) gets LONG-DONE-<uuid> in ~90s, no loop-detected anywhere"
+    "E2E-2 the author's own scenario (90s command under a 2000ms budget): converted at ~2s, Bash bounded wait(100000) gets LONG-DONE-<uuid> in ~90s, no loop-detected anywhere"
   ) {
     val sid = uniq("e2e2")
     val marker = uniq("LONG-DONE")
@@ -230,8 +228,8 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
             permissionDenied = false
           )
           val waitEvent = LoopGuard.RoundEvent(
-            "BgWait",
-            JsonObject("jobIds" -> List(jobId).asJson, "deadline" -> 100000.asJson).asJson,
+            "Bash",
+            JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 100000.asJson).asJson,
             isError = false,
             errorText = "",
             permissionDenied = false
@@ -255,7 +253,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         _ <- ev(
           "E2E-2",
           s"budgetMs=2000 command=sleep90 receiptMs=${receiptMs}ms bgwaitMs=${waitMs}ms e2eTotalMs=${totalMs}ms " +
-            s"resultDelivered=${out.contains(marker)} loopDetected=false toolCalls=2 (1 Bash + 1 BgWait)"
+            s"resultDelivered=${out.contains(marker)} loopDetected=false toolCalls=2 (1 Bash + 1 Bash bounded wait)"
         )
       yield ()
     }
@@ -264,7 +262,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
   // ══ E2E-3 ═══════════════════════════════════════════════════════════
 
   test(
-    "E2E-3 session survival: 20 identical real query calls on the same jobId → LoopGuard yields no Terminate/Freeze (one L0 nudge at the 5th), and BgWait still delivers afterwards"
+    "E2E-3 session survival: 20 identical real query calls on the same jobId → LoopGuard yields no Terminate/Freeze (one L0 nudge at the 5th), and Bash bounded wait still delivers afterwards"
   ) {
     val sid = uniq("e2e3")
     val marker = uniq("QUERY-SURVIVOR")
@@ -313,7 +311,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
           assert(terminal.isEmpty, s"20 identical QUERY calls must never terminate/freeze the session — got: ${terminal.mkString(" | ")}")
           val nudges = vs.collect { case (i, w: LoopGuard.Verdict.Warn) => (i, w.msg) }
           assertEquals(nudges.map(_._1), List(5), s"exactly one L0 nudge, at the 5th identical query — got: ${nudges.map(_._1)}")
-          assert(nudges.head._2.contains("BgWait"), s"the nudge must point at the bounded wait: ${nudges.head._2}")
+          assert(nudges.head._2.contains("background_job_id"), s"the nudge must point at the bounded wait: ${nudges.head._2}")
         }
         // 会话仍活 + 结果仍可拿到（这才是「会话存活」的可观测判据）。
         tWait0 <- IO(System.currentTimeMillis())
@@ -472,7 +470,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
   }
 
   test(
-    "E2E-4b awaited dedupe: a task already collected by BgWait (markAwaited) is NOT pushed again — the ledger row and output retention are still written"
+    "E2E-4b awaited dedupe: a task already collected by Bash bounded wait (markAwaited) is NOT pushed again — the ledger row and output retention are still written"
   ) {
     val sid = uniq("e2e4-awaited")
     val jobId = uniq("job-awaited")
@@ -481,7 +479,7 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
       rec <- Ref.of[IO, List[(Long, AgentCommand.ExternalEvent)]](Nil)
       ledgerAtDelivery <- Ref.of[IO, Set[String]](Set.empty)
       target <- recordingTarget(system, uniq("e2e4-awaited-target"), rec, ledgerAtDelivery, sid)
-      // 生产形态：起后台任务即注册行 + 建输出缓冲；随后等待者（BgWait）把结果当面收走。
+      // 生产形态：起后台任务即注册行 + 建输出缓冲；随后等待者（Bash bounded wait）把结果当面收走。
       _ <- BgTaskRegistry.register(jobId, sid, "e2e4-awaited", "local", sid, persistent = false)
       _ <- BgTaskOutputStore.open(jobId, None)
       _ <- BgTaskRegistry.markAwaited(jobId)

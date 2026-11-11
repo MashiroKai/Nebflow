@@ -21,7 +21,7 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  *      时事件挂起（pending），会话下一次被唤醒时由 agent 侧补投腿
  *      （AgentActor.flushPendingLedgerCompletions，挂在 idle 三个唤醒点）**
  *      先补投未消费的完成事件**——永不蒸发。
- *   2. **bg-wait cap 强制终判的孤儿登记**（BackoffSupervisor armBgWaitCap 到点
+ *   2. **completion wait cap 强制终判的孤儿登记**（BackoffSupervisor armCompletionCap 到点
  *      腿）：等待期超限强制交付时仍有未结任务 ⇒ 逐任务写 orphan 条目（含当时
  *      输出尾段快照）——续会话（复活/重派）拾取有据，不再直接丢。
  *

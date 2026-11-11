@@ -22,7 +22,7 @@ import scala.concurrent.duration.*
  *     （BgNotifyPayloadSpec）：设备腿与本地腿同一组装单点
  *     （RemoteExecutor.notifyRemoteBgResult 同点消费），本 spec 不重复钉。
  *   - ③持久账本（先落账再投递/idle 补投/bg-wait cap 孤儿登记）…… #824 批
- *     （BgTaskLedgerSpec/BgLedgerRedeliverySpec/BgWaitCapLedgerSpec）：设备腿
+ *     （BgTaskLedgerSpec/BgLedgerRedeliverySpec/BackgroundCompletionCapLedgerSpec）：设备腿
  *     同点消费 recordCompletion，本 spec 不重复钉。
  *   - ④persistent 豁免 …… 本 spec：等待集三消费面（waitingFor/waitingTasks/
  *     waitingBySession）过滤断言 + HTTP 等待豁免判据（bgHttpWaitTimeout）。

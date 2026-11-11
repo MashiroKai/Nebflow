@@ -33,11 +33,11 @@ import scala.concurrent.duration.*
  * 修复批 2026-10-24 fix 3「两种死法统一收口」spec：bg-wait cap 兜底触发时，
  * 未结任务的「完成事件+输出尾段」写入持久账本供续会话拾取（旧行为 = 直接丢）。
  *
- * A-4（DelegateBgWaitHoldSpec）钉的是诚实注记交付；本 spec 钉的是**账本面**：
+ * A-4（DelegateBackgroundHoldSpec）钉的是诚实注记交付；本 spec 钉的是**账本面**：
  * cap 触发 ⇒ 每个仍未结任务一条 orphan 条目（含 BgTaskOutputStore 尾段快照）；
  * 此后真实完成事件经 recordCompletion 原位升级（kind 不降级、payload 落账）。
  */
-class BgWaitCapLedgerSpec extends CatsEffectSuite:
+class BackgroundCompletionCapLedgerSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 60.seconds
 
@@ -191,7 +191,7 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "task with a never-finishing bg job",
           source = "delegate",
-          bgWaitCapMs = 300.millis.toMillis
+          backgroundWaitCapMs = 300.millis.toMillis
         ),
         "supervisor-capledger-1"
       )
@@ -246,4 +246,4 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(prevRoot)
     os.remove.all(tmpRoot)
     os.remove.all(tmp)
-end BgWaitCapLedgerSpec
+end BackgroundCompletionCapLedgerSpec

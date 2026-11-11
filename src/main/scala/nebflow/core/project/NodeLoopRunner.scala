@@ -28,7 +28,7 @@ private[project] trait NodeLoopRunner:
       def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
         event match
           // 刀一等待态计时消息：本桥不接（恒等行为——绝不用停桥/完成 round 消化它）。
-          case _: AgentEvent.BgWaitCapTick => IO.pure(Behaviors.ignore)
+          case _: AgentEvent.BgCompletionCapTick => IO.pure(Behaviors.ignore)
           case AgentEvent.Completed(_, messages) =>
             round.get.flatMap(_.complete(Right(messages)).attempt.void).as(loopBridge(round, sessionId, sessionName))
           case AgentEvent.Failed(_, err) =>

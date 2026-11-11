@@ -195,7 +195,7 @@ class BashOverhaulNotifySpec extends CatsEffectSuite:
     for
       received <- Ref.of[IO, List[AgentCommand]](Nil)
       target <- mkRecordingRef(system, "t2-awaited-target", received)
-      // 等待型任务行先注册，再由「等待者」把它标成 awaited（BgWait 收走结果）。
+      // 等待型任务行先注册，再由「等待者」把它标成 awaited（Bash wait mode 收走结果）。
       _ <- BgTaskRegistry.register(jobId, sid, "awaited task", "local", sid, persistent = false)
       _ <- BgTaskOutputStore.open(jobId, None) // 生产面：起后台任务即建缓冲
       _ <- BgTaskRegistry.markAwaited(jobId)

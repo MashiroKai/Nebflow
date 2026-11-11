@@ -43,29 +43,17 @@ class RemoteableDeviceParamSpec extends FunSuite:
 
   // ══════════ 1. 正控：keep 面 = 真远端六件 ══════════
 
-  test("正控：remoteableTools 逐字 = 文件/壳六件（bash overhaul T1 起 BaseTools 七件，device 注入面仍恰六件）"):
-    // bash overhaul T1（作者令 2026-11-04）：`AgentCore.BaseTools` 新增 `BgWait`
-    // （后台任务的唯一等待原语）⇒ BaseTools 七件。`BgWait` **刻意不入**远端注入面
-    // （等待 = 本机语义：任务图在本地会话里，跨设备腿走注册表探测），故本 spec 的
-    // 不变式「带 device 者恰为六件」不变，只是**判据面从 BaseTools 全量收窄到
-    // remoteableTools 本身**（字面六件照旧逐字钉死；BgWait 另有反向钉）。
+  test("正控：remoteableTools 逐字 = Bash 可远端执行的文件/壳六件"):
     assertEquals(
       RemoteExecutor.remoteableTools,
       Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
-      "六件名单逐字钉死（摘除批不得顺手动它）"
+      "六件远端名单逐字钉死"
     )
     assert(
       RemoteExecutor.remoteableTools.subsetOf(AgentCore.BaseTools),
       s"device 面必须仍是 BaseTools 的子集（T1 起 BaseTools={} 七件），got: ${AgentCore.BaseTools.toList.sorted}"
     )
-    assert(
-      AgentCore.BaseTools.contains("BgWait"),
-      "bash overhaul T1：BgWait 在 BaseTools（执行面授能）——但不在 device 面（下一行反向钉）"
-    )
-    assert(
-      !RemoteExecutor.remoteableTools.contains("BgWait"),
-      "BgWait 不进远端注入面（等待是本机语义；跨设备任务走注册表探测腿）"
-    )
+
 
   test("正控：六件**逐件**带 device —— augmentSchema 直调面"):
     RemoteExecutor.remoteableTools.toList.sorted.foreach { name =>
@@ -128,24 +116,9 @@ class RemoteableDeviceParamSpec extends FunSuite:
       s"AskUserQuestion must not receive device, got: ${props(augmented)}"
     )
 
-  test("边界：内核面 = 九件（文件/壳六件带 device + BgWait/AskUserQuestion/Subagent 不带）"):
-    // tool-face-agentflow-retire 批（2026-11-05）：AgentFlow 工具整体退役 ⇒ NebflowFixedTools
-    // 十 → 九。件数变更是**机制面变更的直接结果**（不是为过测放宽）：带 device 者
-    // 仍恰为六件（下一断言即该不变式的正向钉）。
-    assertEquals(AgentCore.NebflowFixedTools.size, 9)
-    assert(
-      !AgentCore.NebflowFixedTools.contains("AgentFlow"),
-      "the retired AgentFlow tool must be gone from the executor fixed face"
-    )
+  test("边界：执行固定面 = 八件（六件 BaseTools + AskHost + Subagent）"):
+    assertEquals(AgentCore.NebflowFixedTools.size, 8)
     val withDevice = AgentCore.BaseTools.filter(n => deviceProp(funnelSchema(n)).isDefined)
-    assertEquals(
-      withDevice,
-      RemoteExecutor.remoteableTools,
-      s"内核面带 device 者必须**恰为**六件（多一件少一件都是回归），got: ${withDevice.toList.sorted}"
-    )
-    assert(
-      !deviceProp(funnelSchema("BgWait")).isDefined,
-      "BgWait 的 LLM 面 schema 零 device（本机语义——跨设备任务由注册表探测承接）"
-    )
+    assertEquals(withDevice, RemoteExecutor.remoteableTools)
 
 end RemoteableDeviceParamSpec
