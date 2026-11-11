@@ -93,13 +93,13 @@ Git safety:
             "type" -> "number".asJson,
             "description" -> "For a command: optional foreground wait in milliseconds (max 3600000); when reached the command is auto-backgrounded, never killed. For background_job_id: maximum wait for completion; if still running, return current status without cancelling. May be supplied with background_job_id unless cancelling.".asJson
           ),
+        "run_in_background" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "Immediately start the command in the background. Mutually exclusive with timeout and background_job_id.".asJson
+        ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Clear, concise description of what this command does".asJson
-        ),
-        "run_in_background" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you. Blocked on it inside this turn? Wait with Bash(background_job_id: \"<jobId>\", timeout: <milliseconds>).".asJson
         ),
         "persistent" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
@@ -588,21 +588,22 @@ Git safety:
     // (askuser-secret 批：执行面前先经 otpFace 拒绝闸——引用已消费/过期的一次性
     // 验证码的命令在此显式失败，不执行、不部分消费。)
     val invalidMode =
-      (bgJobId.isDefined && command.nonEmpty) ||
+      (command.nonEmpty && bgJobId.isDefined) ||
         (bgJobId.isDefined && cancelBg && explicitTimeoutMs.isDefined) ||
         (bgJobId.isEmpty && cancelBg) ||
         (bgJobId.isDefined && (background || persistent)) ||
         (bgJobId.isEmpty && persistent && !background) ||
-        (bgJobId.isEmpty && background && explicitTimeoutMs.isDefined)
+        (background && explicitTimeoutMs.isDefined) ||
+        (command.isEmpty && bgJobId.isEmpty)
     val runPlan =
-      if invalidMode then IO.pure(Left(ToolError("Bash modes are exclusive: provide command, or background_job_id with optional timeout to wait, or background_job_id with cancel_background_job=true to cancel.")))
+      if invalidMode then IO.pure(Left(ToolError("Bash modes are exclusive: command (optional timeout), background_job_id with optional timeout to wait, or background_job_id with cancel_background_job=true to cancel.")))
       else bgJobId match
-      case Some(jobId) =>
-        // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
-        // sessionId, so a query that created the session first would otherwise
-        // hand the later execute path a session created without injection.
-        // askuser-secret 批：`++ otpEnv` = 本条命令消费的一次性验证码（otpEnv 为空
-        // ⇒ 与改前逐字节同参）。
+        case Some(jobId) =>
+          // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
+          // sessionId, so a query that created the session first would otherwise
+          // hand the later execute path a session created without injection.
+          // askuser-secret 批：`++ otpEnv` = 本条命令消费的一次性验证码（otpEnv 为空
+          // ⇒ 与改前逐字节同参）。
         ShellSession
           .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt, secretEnv = secretEnv ++ otpEnv)
           .flatMap { shell =>
@@ -630,33 +631,33 @@ Git safety:
               val waitMs = explicitTimeoutMs.getOrElse(math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs))
               shell.waitBackgroundResults(Seq(jobId), waitMs).void *>
                 shell.getBackgroundResult(jobId).flatMap {
-                case None =>
-                  // Job still running — fetch health info for the agent
-                  shell.getBackgroundJobHealth(jobId).map {
-                    case Some(h) =>
-                      val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
-                      val isStuck = h.idleMs > stuckThreshold
-                      val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
-                      val stuckWarning =
-                        if isStuck then
-                          s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
-                        else ""
-                      Right(
-                        s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
-                      )
-                    case None =>
-                      Right(s"[Background job pending] Job ID: $jobId")
-                  }
-                case Some(Left(e)) =>
-                  val errMsg = e match
-                    case _: TimeoutException => "[Command timed out]"
-                    case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                  IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
-                case Some(Right(result)) =>
-                  val out = cleanOutput(sanitizeCardOutput(result.stdout))
-                  val cleanedErr = cleanOutput(result.stderr)
-                  val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
-                  IO.pure(Right(s"[Background job completed] Job ID: $jobId\n$out$errLine"))
+                  case None =>
+                    // Job still running — fetch health info for the agent
+                    shell.getBackgroundJobHealth(jobId).map {
+                      case Some(h) =>
+                        val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
+                        val isStuck = h.idleMs > stuckThreshold
+                        val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
+                        val stuckWarning =
+                          if isStuck then
+                            s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
+                          else ""
+                        Right(
+                          s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
+                        )
+                      case None =>
+                        Right(s"[Background job pending] Job ID: $jobId")
+                    }
+                  case Some(Left(e)) =>
+                    val errMsg = e match
+                      case _: TimeoutException => "[Command timed out]"
+                      case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                    IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
+                  case Some(Right(result)) =>
+                    val out = cleanOutput(sanitizeCardOutput(result.stdout))
+                    val cleanedErr = cleanOutput(result.stderr)
+                    val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
+                    IO.pure(Right(s"[Background job completed] Job ID: $jobId\n$out$errLine"))
               }
           }
       case None =>

@@ -1973,7 +1973,6 @@ export default {
   'bg.cancelling': '取消中...',
   'bg.running': '运行中',
   'bg.persistent': '服务型',
-  'bg.persistent': '服务型',
   'bg.ended': '进程已结束',
   'bg.stuck': '超过 10 分钟无输出',
   'bg.lines': '{count}行',

@@ -869,9 +869,9 @@ private[project] trait NodeStarter:
                       ) *>
                       waitCapFiber.set(None) *>
                       // ⑤ 残留字段收口（noderpt 批 B 段实测缺陷：`n-0931699e` status=completed
-                      // 而 `backgroundWait` 非空）：本出口此前只 complete deferred、**不写
-                      // `setNodeBackgroundWait(Nil)`** ⇒ 首个 hold 期置位的 backgroundWait 随节点进终态/归档
-                      // 永久残留（与 `setNodeBackgroundWait` 头注「flow-map.json 不残留过期 backgroundWait」
+                      // 而 `bgWait` 非空）：本出口此前只 complete deferred、**不写
+                      // `setNodeBackgroundWait(Nil)`** ⇒ 首个 hold 期置位的 bgWait 随节点进终态/归档
+                      // 永久残留（与 `setNodeBackgroundWait` 头注「flow-map.json 不残留过期 bgWait」
                       // 的契约相悖，也让前端把终态节点误标「等待后台任务」）。此处补写——
                       // fresh 守卫要求 status==Running，此刻节点仍 Running（挂起后仍是
                       // Running，语义更强），故写点有效；幂等（值未变不写不 event）。
@@ -899,12 +899,12 @@ private[project] trait NodeStarter:
               // 零复活）。复用 `StuckRecoveryCooldownMs`（20 min）作冷却闸的算术，
               // **不新增 prop**（最小候选纪律）。
               //
-              // 判据（幂等、不依赖 `backgroundWait`）：冷却点到时
+              // 判据（幂等、不依赖 `bgWait`）：冷却点到时
               //   ① 节点仍 `Running`（已终态/已归档/已重激活 ⇒ no-op），且
               //   ② 该节点名下有活会话（`nodeSessions` 映射 ∨ `agentRegistry` 记录）
               //      ⇒ 已被 `hardResumeNode` 复活、恢复链在跑 ⇒ **no-op**（交出控制权）。
-              //      🔴 判据 ② 不能写成「`backgroundWait` 仍非空」：本出口的 `setNodeBackgroundWait(nodeId, Nil)`
-              //      是**前置步骤**（防前端误标，见上），挂起时 `backgroundWait` 恒空 ⇒ 该写法恒
+              //      🔴 判据 ② 不能写成「`bgWait` 仍非空」：本出口的 `setNodeBackgroundWait(nodeId, Nil)`
+              //      是**前置步骤**（防前端误标，见上），挂起时 `bgWait` 恒空 ⇒ 该写法恒
               //      no-op（死判据）。同理 `BgTaskRegistry.waitingFor` 也不可用：挂起腿的
               //      既有语义是**即时收殓**该会话的后台表（`runWithAgent` 的 `isSuspendOutcome`
               //      分支），到点时恒空。
@@ -1034,7 +1034,7 @@ private[project] trait NodeStarter:
                                       "task(s) still running — holding completion until they finish"
                                   ) *>
                                   // bg-wait 标注写点（僵尸收敛批）：首个 hold 期置位
-                                  // backgroundWait——NodePayload 条件字段随之带，前端可标
+                                  // bgWait——NodePayload 条件字段随之带，前端可标
                                   // 「等待后台任务」（与真僵尸区分，作者首要缺口）。
                                   setNodeBackgroundWait(nodeId, waiting)
                               ) *>

@@ -502,12 +502,12 @@ private[project] trait NodeCanceller:
     store
       .mutate { st =>
         st.nodes.get(nodeId) match
-          case Some(fresh) if fresh.status == NodeLifecycle.Running && fresh.backgroundWait != desc =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(backgroundWait = desc)))
+          case Some(fresh) if fresh.status == NodeLifecycle.Running && fresh.bgWait != desc =>
+            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(bgWait = desc)))
           case _ => st
       }
       .flatMap { s =>
-        s.nodes.get(nodeId).filter(_.backgroundWait == desc).traverse_(emitUpdated)
+        s.nodes.get(nodeId).filter(_.bgWait == desc).traverse_(emitUpdated)
       }
 
   /**
