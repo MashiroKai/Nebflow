@@ -68,8 +68,10 @@ const FACE_ANCHORS = new Set(['bubble', 'ask-bub', 'dropbox-msg-bubble', 'fm-msg
 const EXEMPT = new Map([
   ['__ask-bub', {
     reason: 'canvas ask 气泡 = 毛玻璃面（作者 2026-11-05 16:50「这三处全部吃唯一毛玻璃标准」）；'
-      + '无色相、全部代表本机账号，故不吃绿/白两档，材质单点 = --glass-bg',
-    allow: new Set(['var(--glass-bg)', 'transparent', 'none']),
+      + '无色相、全部代表本机账号，故不吃绿/白两档。材质单点 = 输入基准件配方档'
+      + ' --nf-glass-input-*（ask 面三修② 2026-11-11 作者令「毛玻璃一律不透底」，'
+      + '与主会话 #input-bar 逐项同档；ask-glass-drag G1 钉）',
+    allow: new Set(['var(--glass-bg)', 'var(--nf-glass-input-bg)', 'transparent', 'none']),
   }],
   ['__card-seat', {
     reason: '承卡泡：卡**整体取代**气泡面（`.bubble.ai.ob-ghost-seat` 剥面承 ask 卡；'
