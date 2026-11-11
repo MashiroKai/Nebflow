@@ -233,7 +233,9 @@ class NodeBlockedRetiredSpec extends CatsEffectSuite:
     val ws = tempRoot / "ws-legacy-reactivate"
     os.makeDir.all(ws)
     val system = ActorSystem(s"blk-legacy-${scala.util.Random.nextInt(100000)}")
-    val llm = FuncLlm(text => if text.contains("legacy-task") then IO.pure("legacy-ok-final") else IO.pure("ok"))
+      // 桩以**重跑输入携带的新任务书**（migrated-task）为判别锚：重激活后的 rerun
+      // prompt 带编辑后 task，首轮上游（late-result-C）不含它 ⇒ 应答可区分两腿。
+      val llm = FuncLlm(text => if text.contains("migrated-task") then IO.pure("legacy-ok-final") else IO.pure("ok"))
     for
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-legacy-react", ws, system, res)

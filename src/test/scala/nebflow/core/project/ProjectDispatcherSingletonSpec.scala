@@ -53,9 +53,14 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
 
   /**
-   * 门控 LLM：所有 turn（分发器/节点）等 gate 后回 "ok"。inputs 记录全部分发器输入。
-   * （blocked 终态退役：旧「will-block-S 立回 BLOCKED 文本」分支已随之删除——
-   * BLOCKED 文本不再驱动任何终态。）
+   * 门控 LLM：**分发器 turn** 等 gate 后回 "ok"，inputs 只记分发器输入（断言按
+   * 分发器 turn 计数）。（blocked 终态退役：旧「will-block-S 立回 BLOCKED 文本」
+   * 分支已随之删除——BLOCKED 文本不再驱动任何终态。）
+   *
+   * 节点 turn（任务文本含 "整理归档任务说明"，即 ws-reentry 用例建的 ans-node）
+   * 立即回 "ok"：**不占 gate、不记 inputs**。否则节点会话会排进 gate 队列头部、
+   * 抢走为分发器 turn 2 准备的 gate ⇒ turn 2 饿死。与退役前旧桩 will-block-S
+   * 的「不占 gate」旁路同位同义——旁路本身不可删，删的只是 BLOCKED 语义。
    */
   private class GatedLlm(gates: Queue[IO, Deferred[IO, Unit]]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
@@ -68,10 +73,14 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
         onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
-        Stream
-          .eval(inputs.update(_ :+ text))
-          .flatMap(_ => Stream.eval(gates.take.flatMap(_.get)))
-          .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
+        if text.contains("整理归档任务说明") then
+          // 节点 turn 旁路（见类注释）：gate 队列只服务分发器 turn。
+          Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+        else
+          Stream
+            .eval(inputs.update(_ :+ text))
+            .flatMap(_ => Stream.eval(gates.take.flatMap(_.get)))
+            .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
 
   end GatedLlm
 
@@ -164,14 +173,6 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       ("project" -> Json
         .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
     )
-
-  private def waitStatus(rt: ProjectRuntime, name: String, statuses: Set[String]): IO[Unit] =
-    waitUntil(20.seconds) {
-      rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
-        case Some(n) => IO.pure(statuses.contains(n.status))
-        case None => IO.pure(false)
-      }
-    }
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
@@ -314,7 +315,9 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
         ),
         ctx
       )
-      _ <- waitStatus(rt, "ans-node", Set(NodeLifecycle.Wiring))
+      // 不等状态：Wiring→running 是瞬态（节点立即可跑、stub 对节点 turn 立回），
+      // 轮询必然竞态漏看（实测 20s 超时挂死）；重入 handler 只需 store 有该节点行
+      // （nodeId），无状态前置——nodeEdit 落库同步返回后直读快照即可。
       ansNodeId <- rt.store.snapshot.map(_.nodes.values.find(_.name == "ans-node").map(_.id))
       _ <- (actorRef ! ProjectActor.ProjectCommand
         .AskAnswerReentry(ansNodeId.getOrElse(sys.error("ans-node must exist")), "req-1", "答复文本X")).void

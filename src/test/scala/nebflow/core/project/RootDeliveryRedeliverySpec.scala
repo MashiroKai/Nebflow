@@ -463,7 +463,7 @@ class RootDeliveryRedeliverySpec extends FunSuite:
     }
   }
 
-  test("failed terminalization is written only by the running-to-failed transition winner") {
+  test("failed terminalization re-land is idempotent: duplicate failNodeR keeps one failed record, no blockCount side effects") {
     withFixture("failed-duplicate") { (store, engine, _, _, _, _, _) =>
       val node = completedNode("n-fail", NodeLifecycle.Running, "")
       val io = for
@@ -474,8 +474,13 @@ class RootDeliveryRedeliverySpec extends FunSuite:
       yield (first, duplicate, saved)
       val (first, duplicate, saved) = io.unsafeRunSync()
       assert(first)
-      assert(!duplicate)
+      // failNodeR 无 transition-winner 拒写支（既有契约：失败面重复写 = 幂等重落同一条
+      // failed 记录；重复通知的抑制在 DispatchNotify notifySentAt 层承担，不在写点）——
+      // 两次调用都回报 landed=true，终态恒 failed，blockCount（blocked 时代的轮次账）
+      // 在失败路径零触碰。
+      assert(duplicate)
       assertEquals(saved.map(_.status), Some(NodeLifecycle.Failed))
+      assertEquals(saved.map(_.blockCount), Some(0))
     }
   }
 
