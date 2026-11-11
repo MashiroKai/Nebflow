@@ -314,6 +314,19 @@ object FreezeDisplay:
     "cancelled-by-quota" -> "配额耗尽取消"
   )
 
+  /**
+   * 同一张表的**英文镜像**（与 `DelegateFreeze.reasonLabelEn` 同词，同一分层纪律）。
+   * `ofWire` 的 EN 面不得复用中文表——面板 EN 标签混入中文短名是补详批实测钉出的
+   * 缺陷（"Frozen — 引擎侧故障 (needs a wake)"），EN/ZH 各走各的镜像。
+   */
+  private val DelegateReasonLabelsEn: Map[String, String] = Map(
+    "llm-failure" -> "LLM-layer failure",
+    "model-unavailable" -> "model unavailable (config error)",
+    "tool-failure" -> "tool-layer failure",
+    "engine-fault" -> "engine fault",
+    "cancelled-by-quota" -> "quota-exhausted cancel"
+  )
+
   private def auto(
     reasonWire: String,
     labelZh: String,
@@ -415,8 +428,13 @@ object FreezeDisplay:
   def ofWire(wire: String, resumeAt: Option[Long] = None, now: Long = System.currentTimeMillis()): FreezeDisplay =
     val w = Option(wire).getOrElse("").trim
     if w.startsWith("delegate-frozen") then
-      val code = w.stripPrefix("delegate-frozen").stripPrefix(":")
+      // 诊断后缀（`engine-fault[trigger=…; errorType=…; …]`，补详批写入）只归审计面：
+      // 码词与族判定一律读 `[` 之前的**裸原因码**，短名标签不得被诊断正文污染；
+      // `reasonWire` 保持完整线值（诊断随线值流转，面板/日志仍可读）。
+      val code = w.stripPrefix("delegate-frozen").stripPrefix(":").takeWhile(_ != '[')
       val label = DelegateReasonLabels.getOrElse(code, if code.isEmpty then "原因未记录" else code)
+      // EN 面走英文镜像（EN 标签不得复用中文短名——双语面各走各表）。
+      val labelEn = DelegateReasonLabelsEn.getOrElse(code, if code.isEmpty then "reason not recorded" else code)
       // 配置失效族（model-404-freeze 批 2026-11-07）：**先于** provider 故障族判定——
       // 两族互斥，且这一族的判词必须直说「重试不会好、去改配置」，不许承诺自动恢复。
       if isConfigInvalidReasonCode(code) then
@@ -426,7 +444,7 @@ object FreezeDisplay:
           needsHuman = true,
           autoRecoverable = false,
           s"已冻结 · $label（需改配置 · 重试不会自己好）",
-          s"Frozen — $label (fix the config; retrying will not help)",
+          s"Frozen — $labelEn (fix the config; retrying will not help)",
           ConfigHintZh,
           ConfigHintEn
         )
@@ -442,7 +460,7 @@ object FreezeDisplay:
           needsHuman = true,
           autoRecoverable = true,
           s"已冻结 · $label（待你处理 · 供应商恢复后自动续跑）",
-          s"Frozen — $label (waiting for you · auto-resumes when a provider is back)",
+          s"Frozen — $labelEn (waiting for you · auto-resumes when a provider is back)",
           InfraHintZh,
           InfraHintEn
         )
@@ -453,7 +471,7 @@ object FreezeDisplay:
           needsHuman = true,
           autoRecoverable = false,
           s"已冻结 · $label（需唤醒）",
-          s"Frozen — $label (needs a wake)",
+          s"Frozen — $labelEn (needs a wake)",
           ManualHintZh,
           ManualHintEn
         )

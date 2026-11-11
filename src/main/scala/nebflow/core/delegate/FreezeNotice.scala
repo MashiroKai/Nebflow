@@ -116,7 +116,9 @@ object FreezeNotice:
   def familyOfItem(i: Item): String =
     if i.tier == Tier.Escalate then DeterministicFamily
     else
-      ProviderFault.familyOf(i.detail) match
+      // 判据表读**剥掉诊断前缀**的正文（`errorType=Timeout` 自带的 "timeout" 字样
+      // 不得替正文选族——第二波补详批的防串档闸）。
+      ProviderFault.familyOf(DelegateFreeze.stripTriggerDiagnosis(i.detail)) match
         case Some(f) => ProviderFault.familyWire(f)
         case None =>
           if i.reason == DelegateFreeze.wireValue(DelegateFreeze.Reason.CancelledByQuota) then
@@ -160,14 +162,15 @@ object FreezeNotice:
     if head.isEmpty then None
     else DelegateFreeze.All.find(r => head.contains(s"**${DelegateFreeze.reasonLabelEn(r)}**"))
 
-  /** 回执正文里 `WHY:` 之后的摘要（族判定读真实故障形状，不只读原因码）。 */
+  /** 回执正文里 `WHY:` 之后的摘要（族判定读真实故障形状，不只读原因码；诊断前缀剥除
+    * 后判——`trigger=` / `errorType=` 字样不得替正文选族）。 */
   private def receiptWhy(payload: String): String =
     Option(payload).toList.flatMap(_.split('\n')).find(_.startsWith("WHY:")).getOrElse("").take(400)
 
   /** 回执 payload → 错误类型族（与合并窗口同一个归并键；非回执 ⇒ None）。 */
   def receiptFamilyOf(payload: String): Option[String] =
     receiptReasonOf(payload).map { r =>
-      val d = receiptWhy(payload)
+      val d = DelegateFreeze.stripTriggerDiagnosis(receiptWhy(payload))
       ProviderFault.familyOf(d) match
         case Some(f) => ProviderFault.familyWire(f)
         case None =>
@@ -299,7 +302,8 @@ object FreezeNotice:
             reason = wire,
             detail = detail,
             tier = tierOfReason(reason, detail),
-            infra = FreezeDisplay.isInfraReasonCode(wire) || infraFault(detail),
+            // 基础设施判据读剥掉诊断前缀的正文（前缀字样不得替正文选族）。
+            infra = FreezeDisplay.isInfraReasonCode(wire) || infraFault(DelegateFreeze.stripTriggerDiagnosis(detail)),
             frozenSince = since,
             ageMs = math.max(0L, now - since),
             workspace = Option(r.worktree.getOrElse(r.cwd)).getOrElse(""),
@@ -731,7 +735,11 @@ object FreezeNotice:
       .map { case ((reason, tier), items) =>
         val ids = items.map(_.delegateId).mkString(", ")
         val sample = items.headOption.map(_.detail).getOrElse("")
+        // 触发源具体化（第二波补详）：告警行点名触发源（哪条腿/哪个事件/哪个看门狗），
+        // 与正文详情里的 `trigger=` 诊断同源——宁可一行多点名，不许笼统「frozen」。
+        val triggers = items.flatMap(i => DelegateFreeze.triggerOf(i.detail)).distinct.take(3).mkString(" / ")
         s"- ${tierWire(tier)} `${reason}` ×${items.size} ($ids)" +
+          s"${if triggers.nonEmpty then s" [trigger: $triggers]" else ""}" +
           s"${if sample.nonEmpty then s": ${DelegateFreeze.compactDetail(sample, 160)}" else ""}"
       }
       .mkString("\n")
@@ -769,6 +777,7 @@ object FreezeNotice:
         "autoResumeExhausted" -> alert.items.count(_.autoResumesExhausted).asJson,
         "delegateIds" -> alert.ids.asJson,
         "reasons" -> alert.items.map(_.reason).distinct.asJson,
+        "triggers" -> alert.items.flatMap(i => DelegateFreeze.triggerOf(i.detail)).distinct.asJson,
         "wakeAddresses" -> alert.ids.map(id => s"delegate:$id").asJson
       ),
       correlationId = Some(s"freeze-alert-${alert.family}-${alert.ids.mkString("-")}")

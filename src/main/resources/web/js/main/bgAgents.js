@@ -1806,7 +1806,7 @@ function bgAddrPart(info) {
     + escapeHtml(addr) + '</span>';
 }
 
-function bgTaskRowHtml(id, info, opts = {}) {
+export function bgTaskRowHtml(id, info, opts = {}) {
   const rawState = bgRowState(info);
   // 延续态覆写只对终态基座行生效（进行中 delegate 行的链子行走普通两级呈现）。
   const chainContinued = !!(opts.chainContinued && (rawState === 'done' || rawState === 'error'));
@@ -1971,15 +1971,20 @@ function bgTaskRowHtml(id, info, opts = {}) {
   // backend performed (halt / hard-abort / restart / failed) — "auto-
   // restarting" only ever shows when an actual restart was triggered.
   const stuckPart = (rowState === 'stuck' && info.stuck)
-    ? '<span class="bg-task-stuck" role="alert">' + statusIcon('timer-off', 11, 'st-err') + escapeHtml(
-        info.stuck.action === 'restart'
-          ? t('manage.stuckAutoRestart')
-          : info.stuck.action === 'hard-abort'
-            ? t('manage.stuckHardAbort')
-            : info.stuck.action === 'failed'
-              ? t('manage.stuckFailed')
-              : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
-      ) + '</span>'
+    ? (() => {
+      const stuckLabel = info.stuck.action === 'restart'
+        ? t('manage.stuckAutoRestart')
+        : info.stuck.action === 'hard-abort'
+          ? t('manage.stuckHardAbort')
+          : info.stuck.action === 'failed'
+            ? t('manage.stuckFailed')
+            : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' });
+      const stuckDetail = String(info.frozenDetail || info.stuck.reason || '');
+      return '<span class="bg-task-stuck" role="alert"' + (stuckDetail ? ' title="' + escapeHtml(stuckDetail) + '"' : '') + '>'
+        + statusIcon('timer-off', 11, 'st-err')
+        + escapeHtml(stuckLabel + (stuckDetail ? ' · ' + stuckDetail : ''))
+        + '</span>';
+    })()
     : '';
   // Waiting（held-receipt 投递可靠性批 2026-10-21 fix 4）：显式停靠标签——
   // 「等合并轮」的 delegate 行显示等待词，不再貌似 Idle 完成。
@@ -2033,14 +2038,17 @@ function bgTaskRowHtml(id, info, opts = {}) {
         if (tries > 0) tip.push(t('subagents.frozenAutoResumes', { n: String(tries) }));
         if (info.autoResumesExhausted) tip.push(t('subagents.frozenAutoResumesSpent'));
         if (hours > 0) tip.push(t('subagents.frozenDormantTip', { hours: String(hours) }));
+        const diagnostic = detail ? ' · ' + detail : '';
         const label = infra
           ? (why ? t('subagents.freezeRecoveringReason', { reason: why }) : t('subagents.freezeRecovering'))
           : (why
             ? t('subagents.frozenAwaitingYou', { reason: why })
             : t('subagents.frozenAwaitingYouNoReason'));
+        // Diagnostic text is appended to the existing status label; no style or layout changes.
+        const labelWithDetail = label + diagnostic;
         return '<span class="bg-task-frozen" role="status" title="' + escapeHtml(tip.join('\n')) + '">'
           + statusIcon('snowflake', 11, 'st-warn')
-          + escapeHtml(label)
+          + escapeHtml(labelWithDetail)
           + '</span>'
           + '<button class="bg-task-wake" type="button" data-bg-wake="'
           + escapeHtml(String((info && info.sessionId) || '').replace(/^team-/, ''))

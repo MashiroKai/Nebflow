@@ -130,6 +130,10 @@ object FreezeAlertSweep:
   /**
    * Only known temporary failures may consume the bounded automatic budget.
    * Unknown and configuration failures remain available for manual recovery.
+   * The family is matched on the detail **with the diagnostic prefix stripped**
+   * (`errorType=Timeout` carries the literal "timeout" — it must never nominate
+   * the family on the message's behalf, or an engine-fault freeze would be
+   * auto-resumed as if it were a transient connect timeout).
    */
   private[agent] def automaticRecoveryAllowed(detail: String, attempts: Int): Boolean =
     import nebflow.core.delegate.ProviderFault
@@ -139,7 +143,7 @@ object FreezeAlertSweep:
       ProviderFault.Family.RateLimited
     )
     attempts < Defaults.DelegateFreezeAutoResumeMax &&
-    ProviderFault.familyOf(detail).exists(temporary.contains)
+    ProviderFault.familyOf(DelegateFreeze.stripTriggerDiagnosis(detail)).exists(temporary.contains)
 
   def autoResumeTick(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]]): IO[Unit] =
     if !Defaults.DelegateFreezeEnabled || !Defaults.DelegateFreezeAutoResume then IO.unit

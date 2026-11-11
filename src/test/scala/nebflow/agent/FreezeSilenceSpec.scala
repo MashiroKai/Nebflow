@@ -219,6 +219,18 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         s"sup-$childSid"
       )
       _ <- IO(DelegateRegistry.put(mkRecord(childSid, parentSid)))
+      // 冻结夹具必须带 child 的**已存转录**（纯文本、无未决 tool_use）：恢复完整性闸
+      // （RECOVERY_UNVERIFIED）只放行「存档可验证」的唤醒——真实世界里冻住的 delegate
+      // 一定跑过真轮次、有转录；旧夹具缺这一腿，唤醒腿按设计正确拒醒（这正是两条
+      // 移交红的根因：sweep 出手了、wake 腿拒了）。空转录拒醒是产品语义，不是缺陷。
+      _ <- resources.sessionStore.getOrCreateSession(childSid, s"$childSid work", agentName = Some("Worker"))
+      _ <- resources.sessionStore.saveMessagesForSession(
+        childSid,
+        List(
+          Message(MessageRole.User, Left("go")),
+          Message(MessageRole.Assistant, Left("ack — partial work recorded before the freeze"))
+        )
+      )
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       _ <- resources.agentRegistry.update(
         _ + (childSid -> AgentRecord(childSid, child, AgentKind.Delegate, parentSid, Some(parentActor)))
@@ -391,6 +403,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
     val tmp = os.temp.dir(prefix = "nb-fsz4-")
     val parentSid = "fsz-parent-4"
     val childSid = "delegate-fsz-auto-1"
+    val configChildSid = "delegate-fsz-auto-2"
     sys.props("nebflow.delegate.freeze.autoResumeAfterMs") = "0"
     for
       resources <- mkResources(system, tmp)
@@ -403,12 +416,30 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         parentSid,
         childSid,
         AgentErrorType.LlmFailed,
-        "provider kimi/k3: 403 no subscription",
+        // 载体详情必须是**自动续跑预算内**的临时族（upstream-5xx）：预算闸
+        // （`automaticRecoveryAllowed`，bounded-recovery 批）只放行临时族，
+        // 配置失效族（403 无订阅）要人处理、永不自动续跑——该半边契约由下方
+        // config 控制行 + `ProviderRecoveryBudgetSpec` 钉死。本用例钉的是
+        // **机制**（不抢跑 → 恢复 → 同会话 UserInput 续跑），载体换族语义不变。
+        "provider kimi/k3: 529 upstream overloaded",
         childCmds,
         parentRef
       )
+      // 控制行：配置失效族（403 无订阅）同环境冻结——供应商恢复后它**必须**仍冻着
+      //（改订阅要人，自动续跑一个必然再失败的会话只会烧唤醒次数）。
+      configCmds <- Ref.of[IO, List[AgentCommand]](Nil)
+      _ <- freezeDelegate(
+        resources,
+        system,
+        parentSid,
+        configChildSid,
+        AgentErrorType.LlmFailed,
+        "provider kimi/k3: 403 no subscription",
+        configCmds,
+        parentRef
+      )
       // 供应商仍不可用 ⇒ 不抢跑。
-      _ <- resources.healthMonitor.markDown("kimi", "k3", "403 no subscription")
+      _ <- resources.healthMonitor.markDown("kimi", "k3", "529 upstream overloaded")
       _ <- FreezeAlertSweep.autoResumeTick(resources, None)
       cmdsWhileDown <- childCmds.get
       // 唤醒键要在唤醒前取（唤醒后冻结槽被 onWoken 清空 ⇒ frozenSince 归 None）。
@@ -417,6 +448,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
       _ <- resources.healthMonitor.markUp("kimi", "k3")
       _ <- FreezeAlertSweep.autoResumeTick(resources, None)
       cmdsAfterUp <- childCmds.get
+      configStillFrozen <- IO(DelegateRegistry.find(configChildSid).flatMap(_.frozenSince).isDefined)
       events <- mailboxEvents(parentSid)
       _ <- system.stopAll
     yield
@@ -426,6 +458,12 @@ class FreezeSilenceSpec extends CatsEffectSuite:
       )
       val wakes = cmdsAfterUp.collect { case u: AgentCommand.UserInput => u }
       assertEquals(wakes.size, 1, s"exactly one auto-resume wake, got ${cmdsAfterUp.map(_.getClass.getSimpleName)}")
+      // 预算闸的另一面（bounded-recovery 批契约在集成面的钉子）：配置失效族控制行
+      // 在供应商已恢复的一拍里零唤醒、仍冻着——自动续跑只属临时族。
+      assert(
+        configStillFrozen,
+        "the config-family control freeze must stay frozen — configuration failures need manual recovery"
+      )
       val w = wakes.head
       assert(w.text.contains("[frozen-wake]"), s"the wake carries the frozen-wake banner: ${w.text.take(200)}")
       assertEquals(
@@ -689,12 +727,16 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         parentSid,
         childSid,
         AgentErrorType.LlmFailed,
-        "kimi/k3: 403 no subscription (all candidates exhausted)",
+        // 载体详情用临时族（upstream-5xx）：本用例钉的是「健康表只延迟、不否决」的
+        // fallback 语义，而自动续跑预算闸只放行临时族（配置失效族在
+        // auto-resume 用例的控制行 + ProviderRecoveryBudgetSpec 单独钉）——
+        // 载体换族后本用例才走到它要验的续跑腿。
+        "kimi/k3: 529 upstream overloaded (all candidates exhausted)",
         childCmds,
         parentRef
       )
       // 真实盘面：只有 kimi 被判过死；cmdcode 从未被探过（健康表里根本没有它的条目）。
-      _ <- resources.healthMonitor.markDown("kimi", "k3", "403 no subscription")
+      _ <- resources.healthMonitor.markDown("kimi", "k3", "529 upstream overloaded")
       serving <- FreezeAlertSweep.providerServing(resources)
       // 判据函数本身（纯函数，缺省容忍窗 10 分钟）：窗内延迟、窗外放行。
       deferredInsideWindow = !FreezeAlertSweep.shouldAttemptResume(serving = false, episodeAgeMs = 60_000L)
@@ -751,10 +793,17 @@ class FreezeSilenceSpec extends CatsEffectSuite:
       events <- mailboxEvents(parentSid)
       _ <- system.stopAll
     yield
+      // 补详批（第二波）：engine-fault 线值携带诊断后缀
+      // `engine-fault[trigger=…; errorType=…; <正文>]`——裸码仍是 engine-fault
+      // （判等读 `[` 前），后缀逐字保住原始 errorType 与正文。断言比旧等值更强：
+      // 裸码等值 + 后缀在场 + 原始 errorType 逐字 + parse 读回 EngineFault。
+      assert(reason.startsWith("delegate-frozen:engine-fault["), s"engine-fault wire + diagnostic suffix, got: $reason")
+      assert(reason.contains("errorType=Unknown"), s"the raw errorType survives verbatim, got: $reason")
+      assert(reason.contains("AssertionError"), s"the defect text rides the audit suffix, got: $reason")
       assertEquals(
-        reason,
-        "delegate-frozen:engine-fault",
-        "a deterministic defect must NOT be filed under the provider-fault code"
+        DelegateFreeze.parse(reason),
+        Some(DelegateFreeze.Reason.EngineFault),
+        "a deterministic defect must NOT be filed under the provider-fault code (suffix is audit-only)"
       )
       val alerts = events.filter(_.eventType == "freeze-alert")
       assertEquals(alerts.size, 1, s"a real failure still notifies (one alert), got ${events.map(_.eventType)}")
