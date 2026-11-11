@@ -40,7 +40,7 @@ const ok = (name, cond, extra = '') => {
 
 async function makePage(browser, colorScheme, narrow) {
   const page = await (await browser.newContext({
-    viewport: narrow ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+    viewport: narrow ? { width: 375, height: 812 } : { width: 1280, height: 800 },
     colorScheme, deviceScaleFactor: 2,
   })).newPage();
   await page.addInitScript(() => {
@@ -86,6 +86,9 @@ async function makePage(browser, colorScheme, narrow) {
       children: {
         'delegate-lexicon-a1b2c3d4': [
           { taskId: 'subagent-store-1', parentSessionId: 'delegate-lexicon-a1b2c3d4', agentName: 'subagent', prompt: '', description: '只读侦察：盘点词条回退链的既有消费点', status: 'running', retryCount: 0, spawnedAt: t0, completedAt: null, lastError: '', source: 'subagent' },
+        ],
+        'delegate-nested-9c8d7e6f': [
+          { taskId: 'node-nested-store-2', parentSessionId: 'delegate-nested-9c8d7e6f', agentName: 'Node', prompt: '', description: '嵌套节点后代应保留在父delegate树内', status: 'running', retryCount: 0, spawnedAt: t0, completedAt: null, lastError: '', source: 'node' },
         ],
         'delegate-plugin-e5f6a7b8': [],
       },
@@ -137,6 +140,8 @@ async function shoot(colorScheme, narrow) {
       const head = rows.find((r) => r.classList.contains('bg-task-row-head'));
       const child = rows.find((r) => r.classList.contains('bg-task-row-child'));
       const orphan = rows.find((r) => r.querySelector('.bg-task-orphan'));
+      const nestedDelegate = rows.find((r) => r.textContent.includes('delegate-nested-9c8d7e6f'));
+      const nestedDescendant = rows.find((r) => r.textContent.includes('嵌套节点后代应保留'));
       return {
         sections: document.querySelectorAll('#bg-dropdown > .bg-section').length,
         headIndent: head ? parseFloat(getComputedStyle(head).paddingLeft) : -1,
@@ -144,6 +149,9 @@ async function shoot(colorScheme, narrow) {
         childGuide: child ? getComputedStyle(child).borderLeftWidth : '0px',
         orphanChip: orphan ? orphan.querySelector('.bg-task-orphan')?.textContent || '' : '',
         hollow: rows.some((r) => name(r) === 'subagent'),
+        nestedDelegateDepth: nestedDelegate ? Number(nestedDelegate.getAttribute('data-bg-depth')) : -1,
+        nestedDescendantDepth: nestedDescendant ? Number(nestedDescendant.getAttribute('data-bg-depth')) : -1,
+        nestedDescendantOwner: nestedDescendant?.getAttribute('data-bg-agentflow') || '',
         names: rows.map(name).slice(0, 8),
       };
     });
@@ -152,6 +160,8 @@ async function shoot(colorScheme, narrow) {
     ok(`child guide line (${tag})`, parseFloat(audit.childGuide) >= 2, audit.childGuide);
     ok(`orphan source chip (${tag})`, audit.orphanChip.includes('AgentFlow'), audit.orphanChip);
     ok(`no hollow "subagent" (${tag})`, !audit.hollow, audit.names.join(' | '));
+    ok(`nested delegate is retained (${tag})`, audit.nestedDelegateDepth >= 1, `depth=${audit.nestedDelegateDepth}`);
+    ok(`nested descendant is recursively retained (${tag})`, audit.nestedDescendantDepth > audit.nestedDelegateDepth && audit.nestedDescendantOwner, `depth=${audit.nestedDescendantDepth}, owner=${audit.nestedDescendantOwner}`);
   }
   await page.close();
 }
