@@ -19,11 +19,14 @@ import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil, SubAgentTas
 import scala.concurrent.duration.*
 
 /**
- * 空壳通知回归测试（message-truncation-report.md 方案 A ＋ 四修① 2026-10-07 更订）：
+ * 空壳通知回归测试（message-truncation-report.md 方案 A ＋ 四修① 2026-10-07 更订
+ * ＋ P5 静默完成治理第二波更新）：
  *
  *  - 四修①后，「纯空白尾＋全会话零工具调用」= 空烧形态 → 不再是干净完成：
- *    监督者走重启/续推预算（maxRestarts=2），预算耗尽 → delegate 轨确定性
- *    预检判 blocked——判词行随 payload 报父（诚实终态），假 completed 不复存在。
+ *    监督者走重启/续推预算（maxRestarts=2），预算耗尽 → 照常交付完成回执
+ *    （直接交付批 dcc430e42），但空回执**显式非静默**：payload 携带结构化
+ *    `[delegate-diagnostic] no-final-text; …; empty-run` 行（判定机判词行已随
+ *    直接交付批退役——引擎不伪造判词，诚实面 = 诊断行）。
  *  - trim guard 的存续面：**有工具调用**、终文纯空白 → 非空烧（真的干了活）→
  *    照常完成，payload 仍是 "(no text output)"（原方案的空壳防护不变）。
  *  - 正常文本尾 → `"描述":\n<text>` 形态（原契约不变）。
@@ -184,7 +187,7 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
   end runCompletedPayload
 
   test(
-    "四修①: whitespace-only tail + zero tools = empty burn → restart chain, then the deterministic precheck's completed+note verdict (#566: blocked retired, never a fake silent completion)"
+    "四修①: whitespace-only tail + zero tools = empty burn → restart chain, budget exhausted ⇒ completion delivered but EXPLICITLY marked: payload carries the no-final-text diagnostic with empty-run (never a fake silent completion)"
   ) {
     // Last assistant message: thinking block + whitespace-only text ("\n\n")
     val messages = List(
@@ -195,22 +198,23 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       )
     )
     val payload = runCompletedPayload("ws", messages)
-    // #566 修复批（2026-10-19，作者令逐字「delegate 是不应该有 blocked 型状态的，
-    // 直接上报就行了，blocked 是给 agentflow 用的」）：blocked 判词退役 —— 空烧
-    // 终态改落 completed＋注记形（DelegateTerminal.CompletedNote，source=precheck），
-    // 假 completed 的消除由「verdict 行 + deterministic precheck 注记行」成双承担
-    // （旧断言的 "verdict: blocked" 形态自 #566 起不再产出，本批重钉现行语义）。
+    // 空回执显式化（P5 第二波重钉现行语义）：空烧终态 = 完成回执 + 结构化诊断行
+    //（空烧 → empty-run 标记在场）；trim guard 面与 blocked 退役面保持。
     assert(
-      payload.contains("[delegate-judge] verdict: completed"),
-      s"empty burn must end completed-with-precheck-note, got: ${payload.take(200)}"
+      payload.contains("(no text output)"),
+      s"trim-guard face must survive, got: ${payload.take(200)}"
+    )
+    assert(
+      payload.contains("[delegate-diagnostic] no-final-text"),
+      s"the silent completion must carry the structured diagnostic, got: ${payload.take(300)}"
+    )
+    assert(
+      payload.contains("empty-run"),
+      s"zero-tool burn must be marked empty-run, got: ${payload.take(300)}"
     )
     assert(
       !payload.contains("[delegate-judge] verdict: blocked"),
       "blocked 判词已按 #566 退役 —— delegate 面不得再产出 blocked 终态"
-    )
-    assert(
-      payload.contains("deterministic precheck") && payload.contains("zero tool calls"),
-      s"the precheck marker must be named with the empty-burn evidence, got: ${payload.take(200)}"
     )
   }
 
@@ -232,6 +236,13 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       !payload.trim.endsWith(":"),
       s"payload must not end with bare colon (empty shell), got: ${payload.take(120)}"
     )
+    // P5 第二波：干了活没说话的完成（非空烧）诊断行随行——toolCalls 计数、
+    // 无 empty-run 标记（任意工具调用即排除空烧）。
+    assert(
+      payload.contains("[delegate-diagnostic] no-final-text") && payload.contains("toolCalls=1"),
+      s"textless-but-worked completion must carry the diagnostic, got: ${payload.take(300)}"
+    )
+    assert(!payload.contains("empty-run"), s"tool work disqualifies empty-run, got: ${payload.take(300)}")
   }
 
   test("normal text tail still produces '\"desc\":\\n<text>' form") {

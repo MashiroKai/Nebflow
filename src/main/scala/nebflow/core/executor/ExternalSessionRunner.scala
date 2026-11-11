@@ -603,6 +603,19 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               case Outcome.Cancelled => s"External delegate cancelled (executor=${ex.id})"
               case Outcome.Failed(r) => s"External delegate failed (executor=${ex.id}): $r"
           )
+          // 空回执显式化（P5 第二波 · 告警面）：completed 而终文为空 = 空回执，引擎
+          // 日志必须有一条 WARN（与内部腿 BackoffSupervisor.completeNormally 的静默
+          // 完成告警同款纪律）。判据 = 终文不可用（settle 的 text 已 trim/filter，
+          // 空 = 无可用产出，与内部腿 hasRealOutput 的「空串不可判」同义）；外部流
+          // 没有诚实可取的轮次/工具帧计数入诊断行，故此处只告警不造数
+          // （（no text output）字样已随回执显式报父，store 行不重复标注——不发明
+          // 第二套口径）。
+          _ <- IO.whenA(outcome == Outcome.Completed && text.isEmpty)(
+            logger.warn(
+              s"external delegate $sessionId completed with NO text output (empty receipt) — " +
+                s"exit=${exitCode.map(_.toString).getOrElse("-")}; the parent notification names it explicitly ((no text output))"
+            )
+          )
           // 父投递（终态直投——集成走项目 merger 的授权请求，无队列持有父回报权）。
           _ <- notifyParent(spec, sessionId, outcome, text, reasonOpt)
           // 面板终态帧（与内部 delegate 的 agentDone 同契约）。
@@ -632,18 +645,22 @@ You will be notified when it completes via a system message. Do NOT duplicate th
   /**
    * settle 的终态词汇（判词 ＋ cancelled 的 runner 内部形态）。#566：原 Blocked
    * 改名 Failed——外部腿的「做不成」= 进程/结果真失败，终态恒 failed（作者令：
-   * delegate 面无 blocked 状态，failed 保留给真失败）。
+   * delegate 面无 blocked 状态，failed 保留给真失败）。`private[executor]` =
+   * spec 装配缝（[[ExternalTerminalBackstopSpec]] 构造终态直投现场）。
    */
-  private enum Outcome:
+  private[executor] enum Outcome:
     case Completed
     case Failed(reason: String)
     case Cancelled
 
   /**
    * 父会话投递（ExternalEvent source="delegate"——与内部 delegate 同一回投链，
-   * 同一 barrier 释放语义）。
+   * 同一 barrier 释放语义）。完成必回报（P5 第二波）：parentRef=None / 直投失败
+   * 两腿都不再止步于告警日志——终态事件照常落父会话 F2 注入队（内部腿
+   * 监督链自动恢复批 2026-10-22 同款兜底），「不可投递」升级为「父会话下次
+   * 唤醒点必达」。
    */
-  private def notifyParent(
+  private[executor] def notifyParent(
     spec: SpawnSpec,
     sessionId: String,
     outcome: Outcome,
@@ -655,50 +672,99 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         // mail-continuation delivery backstop（2026-10-09，与 BackoffSupervisor 同款
         // 纪律）：parentRef=None ⇒ 终态结果无投递对象——历史分支是裸 IO.unit（静默
         // 丢）。 绝不静默：响亮 WARN（带 payload 头部）。taskStore 状态写入与
-        // agentDone 面板帧照常（上方），终态仍可查。
+        // agentDone 面板帧照常（上方），终态仍可查；F2 持久兜底（P5 第二波）保证
+        // 回执延迟可达。
         logger.warn(
           s"[terminal-result-undelivered] external delegate session '$sessionId' (${spec.executorId}) reached its terminal state " +
             s"but no parent ref exists (parent session '${spec.parentSessionId}' not live at spawn) — the result was NOT delivered to any session. " +
             s"Payload head: ${text.take(500)}"
-        )
+        ) *> f2DeliveryBackstop(spec, externalTerminalEvent(spec, sessionId, outcome, text, reasonOpt))
       case Some(parent) =>
-        val (eventType, payload, failureMetadata) = outcome match
-          case Outcome.Completed =>
-            val body = if text.nonEmpty then s""""${spec.title}":\n$text""" else s""""${spec.title}" (no text output)"""
-            ("completed", body, io.circe.JsonObject.empty)
-          case Outcome.Cancelled =>
-            (
-              "cancelled",
-              s""""${spec.title}": cancelled — ${reasonOpt.getOrElse("external CLI process terminated")}""",
-              io.circe.JsonObject(
-                "failedSessionId" -> sessionId.asJson,
-                "retryable" -> false.asJson,
-                "failureType" -> "cancelled".asJson,
-                "cancelled" -> true.asJson,
-                "reason" -> reasonOpt.getOrElse("").asJson
+        val event = externalTerminalEvent(spec, sessionId, outcome, text, reasonOpt)
+        (parent ! event).void
+          .handleErrorWith { e =>
+            logger.warn(s"External delegate parent notify failed: ${e.getMessage}") *>
+              // 完成必回报（P5 第二波）：直投抛错 ≠ 回执可丢——同落 F2 兜底队。
+              f2DeliveryBackstop(spec, event)
+          }
+
+  /**
+   * 外部腿终态事件的构造单点（直投与 F2 兜底共用同一形状——兜底入队的必须是
+   * 「本该直投的那一份」，不是重建的近似品）。
+   */
+  private def externalTerminalEvent(
+    spec: SpawnSpec,
+    sessionId: String,
+    outcome: Outcome,
+    text: String,
+    reasonOpt: Option[String]
+  ): AgentCommand.ExternalEvent =
+    val (eventType, payload, failureMetadata) = outcome match
+      case Outcome.Completed =>
+        val body = if text.nonEmpty then s""""${spec.title}":\n$text""" else s""""${spec.title}" (no text output)"""
+        ("completed", body, io.circe.JsonObject.empty)
+      case Outcome.Cancelled =>
+        (
+          "cancelled",
+          s""""${spec.title}": cancelled — ${reasonOpt.getOrElse("external CLI process terminated")}""",
+          io.circe.JsonObject(
+            "failedSessionId" -> sessionId.asJson,
+            "retryable" -> false.asJson,
+            "failureType" -> "cancelled".asJson,
+            "cancelled" -> true.asJson,
+            "reason" -> reasonOpt.getOrElse("").asJson
+          )
+        )
+      case Outcome.Failed(_) =>
+        (
+          "failed",
+          s""""${spec.title}": failed — ${reasonOpt.getOrElse("external executor failed")}""",
+          io.circe.JsonObject(
+            "failedSessionId" -> sessionId.asJson,
+            "retryable" -> false.asJson,
+            "failureType" -> "failed".asJson,
+            "reason" -> reasonOpt.getOrElse("").asJson
+          )
+        )
+    AgentCommand.ExternalEvent(
+      source = "delegate",
+      eventType = eventType,
+      payload = payload,
+      metadata = io.circe
+        .JsonObject("description" -> spec.title.asJson, "agentName" -> spec.executorId.asJson)
+        .deepMerge(failureMetadata),
+      correlationId = Some(sessionId)
+    )
+
+  /**
+   * 终态回执 F2 注入队持久兜底（P5 第二波，完成必回报；与 BackoffSupervisor 同款
+   * 机制）：parentRef=None / 直投失败时把终态 ExternalEvent append 进父会话持久
+   * 注入队（correlationId=sessionId 幂等），父会话下次 spawn 时
+   * RecoverPersistedQueues 重放。父会话已删（盘上无记录，读数故障 fail-open）=
+   * 跳过（不产生无人读的垃圾文件）。fail-soft：append 失败只 WARN。
+   */
+  private def f2DeliveryBackstop(spec: SpawnSpec, event: AgentCommand.ExternalEvent): IO[Unit] =
+    if spec.parentSessionId.isEmpty then IO.unit
+    else
+      spec.resources.sessionStore.sessionRecordExists(spec.parentSessionId).handleError(_ => true).flatMap {
+        case false => IO.unit
+        case true =>
+          nebflow.agent.CompactionQueueStore
+            .load(spec.parentSessionId)
+            .flatMap { existing =>
+              val already =
+                existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
+              if already then IO.unit
+              else
+                val q = existing.getOrElse(nebflow.agent.CompactionQueueStore.PersistedQueues())
+                nebflow.agent.CompactionQueueStore.save(spec.parentSessionId, q.copy(events = q.events :+ event))
+            }
+            .handleErrorWith(e =>
+              logger.warn(
+                s"[terminal-f2-backstop] external append failed for parent '${spec.parentSessionId}': ${e.getMessage}"
               )
             )
-          case Outcome.Failed(_) => // ⑬：经判词 failed 上报（#566：无独立 blocked 状态），无旁路上送、无 AgentFrozen 面
-            (
-              "failed",
-              s""""${spec.title}": failed — ${reasonOpt.getOrElse("external executor failed")}""",
-              io.circe.JsonObject(
-                "failedSessionId" -> sessionId.asJson,
-                "retryable" -> false.asJson,
-                "failureType" -> "failed".asJson,
-                "reason" -> reasonOpt.getOrElse("").asJson
-              )
-            )
-        (parent ! AgentCommand.ExternalEvent(
-          source = "delegate",
-          eventType = eventType,
-          payload = payload,
-          metadata = io.circe
-            .JsonObject("description" -> spec.title.asJson, "agentName" -> spec.executorId.asJson)
-            .deepMerge(failureMetadata),
-          correlationId = Some(sessionId)
-        )).void
-          .handleErrorWith(e => logger.warn(s"External delegate parent notify failed: ${e.getMessage}"))
+      }
 
   // ── WS 帧发射（routeSubagentWsSend 同契约的本地盖章面）──────────────────
 

@@ -42,6 +42,46 @@ object BackoffSupervisor:
     s"\n[delegate-diagnostic] no-final-text; turns=$turns; toolCalls=$toolCalls; commits=$commits; changedFiles=$changedFiles$marker"
 
   /**
+   * 完成必回报（P5 第二波）的最后一环：终态投递链（[[notifyParentAndStopImpl]]）上
+   * 任何未在内层兜住的意外逃逸 ⇒ 响亮 ERROR + **尽力一次终态任务行写**。
+   *
+   * 旧行为是裸 `handleErrorWith(_ => stopped)`：异常零日志、父会话零回执、任务行
+   * 滞留 running（僵尸行）。本兜底把「静默丢失」改写为「响亮留痕 + 行终态化」：
+   *   - ERROR 带 eventType（taskStatus）、子会话、父会话与 payload 头部——日志是
+   *     第一告警面；
+   *   - 行写幂等（链上 taskUpdate 已成功时同值重写无害；失败在它之前时补上终态，
+   *     面板不再挂 running）；
+   *   - 行写自身再失败 ⇒ 只再留一条 ERROR（存储面故障不阻断 actor 收停）。
+   * 纯 IO 组合，spec 直接装配（[[BackoffSupervisorEmptyBurnSpec]] 断言面）。
+   */
+  private[agent] def terminalChainFallback(
+    store: SubAgentTaskStore,
+    parentSessionId: String,
+    subagentId: String,
+    taskStatus: String,
+    payload: String,
+    cause: Throwable
+  ): IO[Unit] =
+    logger
+      .error(
+        s"[terminal-notify-escape] '$subagentId' terminal '$taskStatus' delivery chain failed: " +
+          s"${Option(cause.getMessage).getOrElse(cause.getClass.getSimpleName)} — the parent receipt may be " +
+          s"MISSING for this terminal; best-effort terminal row write follows. " +
+          s"(parent=$parentSessionId payload head: ${payload.take(300)})"
+      ) *>
+      store
+        .updateStatus(
+          parentSessionId,
+          subagentId,
+          taskStatus,
+          completedAt = Some(System.currentTimeMillis()),
+          lastError = if taskStatus != "completed" then Some(payload) else None
+        )
+        .handleErrorWith(e =>
+          logger.error(s"[terminal-notify-escape] fallback row write also failed for '$subagentId': ${e.getMessage}")
+        )
+
+  /**
    * @param childRef    the pre-spawned child actor (initial spawn done by caller)
    * @param childSpawnFn used to re-spawn the child on restart; receives the
    *                     recovered messages (if any) so the child can resume
@@ -213,6 +253,16 @@ object BackoffSupervisor:
             val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
             for
               diagnostic <- completionDiagnostic(messages, hasText)
+              // 空回执显式化（P5 第二波 · 告警面）：静默完成（干了活但终文不可用）
+              // 在引擎日志必须有一条 WARN——面板 diagnostic 行只服务事后查证，操作面
+              // 的第一现场是这条日志。空烧（empty-run）腿在其上游已有专属 WARN（重启
+              // 预算耗尽），此处对「有工具产出、只是没写终文」的形态补齐告警。
+              _ <- IO.whenA(!hasText)(
+                logger.warn(
+                  s"BackoffSupervisor: delegate $subagentId completed with NO final text (silent completion) — " +
+                    s"explicit diagnostic rides the parent receipt:${diagnostic.trim}"
+                )
+              )
               diff <- terminalDiffMetadata()
               result <- notifyParentAndStop(
                 "completed",
@@ -1494,7 +1544,16 @@ object BackoffSupervisor:
           resources.agentRegistry.update(_ - subagentId) *>
           (childRef ! AgentCommand.Stop(s"$source-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
-          .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+          // 完成必回报（P5 第二波）：终态链上任何意外逃逸（邮箱写入抛错 / registry
+          // / Stop 腿意外）绝不静默吞掉——旧行为 `handleErrorWith(_ => stopped)` 零
+          // 日志零留痕，父会话收不到任何东西、任务行可能滞留 running（僵尸行）。
+          // 兜底 = 响亮 ERROR + **尽力一次终态行写**（幂等：链上 taskUpdate 已成功
+          // 时同值重写无害），宁可响亮失败、绝不无声丢失。
+          .handleErrorWith(e =>
+            BackoffSupervisor
+              .terminalChainFallback(resources.subAgentTaskStore, parentSessionId, subagentId, taskStatus, payload, e)
+              .as(Behaviors.stopped[AgentEvent])
+          )
 
       end notifyParentAndStopImpl
 
@@ -1515,9 +1574,14 @@ object BackoffSupervisor:
                 existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
               if already then IO.unit
               else
-                resources.sessionStore.listSessions.flatMap { sessions =>
-                  if !sessions.exists(_.id == parentSessionId) then IO.unit
-                  else
+                // 完成必回报（P5 第二波）：在场判据改 [[SessionLiveness.recordAlive]]
+                // （索引 ∪ 盘上记录，读数故障 fail-open）。旧 `listSessions` 只读会话
+                // 索引——delegate 收件方从不进索引（OWNER-GONE 误判修复批 2026-11-06
+                // 点名的同一假否），子 delegate 委派孙 delegate 的形态下兜底恒被跳过，
+                // 终态回执静默蒸发。盘上记录在 = 父会话下次 spawn 必消费，兜底可达。
+                SessionLiveness.recordAlive(resources.sessionStore, parentSessionId).flatMap {
+                  case false => IO.unit
+                  case true =>
                     val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
                     CompactionQueueStore.save(parentSessionId, q.copy(events = q.events :+ event))
                 }
