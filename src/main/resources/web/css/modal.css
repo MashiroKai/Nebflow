@@ -1324,6 +1324,10 @@
 /* 设置页回退链节（modelPanel.js mountModelChainSection 内容面）：编辑器行
    满宽铺开，节内顶距归 0（节自带 hint 间距）。 */
 .chain-section-face .mp-editor { margin-top: var(--ds-space-2); }
+.mp-settings-role-tabs { display: flex; flex-wrap: wrap; gap: var(--ds-space-2); margin: var(--ds-space-2) 0; }
+.mp-settings-role-tab[aria-selected="true"] { color: var(--color-frame-text-bright); border-color: var(--glass-border); }
+.mp-settings-role-panel { display: grid; gap: var(--ds-space-2); }
+.mp-settings-role-model { width: 100%; }
 #model-chain-section-body .chain-section-error { padding: var(--ds-space-6) var(--ds-space-3); }
 #model-chain-section-body:empty { display: none; }
 .mp-roleblock {

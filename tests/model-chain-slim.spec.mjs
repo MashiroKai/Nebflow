@@ -20,7 +20,7 @@ const WEB_DIR = resolve(ROOT, 'src/main/resources/web');
 const PORT = Number(process.env.PORT || 8334);
 const BASE = `http://127.0.0.1:${PORT}`;
 const SHOTS_DIR = process.env.SHOTS_DIR ||
-  join(ROOT, 'evidence', '20261101_model-chain-slim');
+  join(ROOT, 'reports-evidence', '20261111_model-granularity');
 const ENGINES = (process.env.ENGINE || 'chromium+webkit').split('+');
 const SID = 'mcs-root-session';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -80,7 +80,7 @@ await new Promise((r) => webServer.listen(PORT, '127.0.0.1', r));
 /* ─────────────── 引导（mock API + mock WS + 真 web 壳） ─────────────── */
 async function boot(browser, { viewport, colorScheme, locale = 'zh-CN', touch = false }) {
   const ctx = await browser.newContext({ viewport, colorScheme, deviceScaleFactor: 2, hasTouch: touch });
-  const sim = { chain: CHAIN, puts: [] };
+  const sim = { chains: Object.fromEntries(['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].map((r) => [r, r === 'Nebula' ? CHAIN : null])), puts: [] };
   await ctx.addInitScript((l) => {
     localStorage.setItem('nebflow_token', 't');
     localStorage.setItem('neblink_token', 't');
@@ -103,16 +103,18 @@ async function boot(browser, { viewport, colorScheme, locale = 'zh-CN', touch = 
       return r.fulfill({ json: { messages: [], total: 0, sessionId: SID } });
     }
     if (/\/api\/agents\/[^/]+\/model$/.test(p)) {
+      const role = decodeURIComponent(p.split('/')[3]);
       if (r.request().method() === 'PUT') {
         const body = r.request().postDataJSON();
-        sim.puts.push(body);
-        sim.chain = body && body.model ? body.model : null;
+        sim.puts.push({ role, ...body });
+        sim.chains[role] = body && body.model ? body.model : null;
       }
-      const effective = sim.chain || { preferred: 'seed/seed-model', fallbacks: [] };
+      const own = sim.chains[role];
+      const effective = own || sim.chains.Nebula || { preferred: 'seed/seed-model', fallbacks: [] };
       return r.fulfill({
         json: {
-          mode: sim.chain ? 'explicit' : 'follow',
-          chain: sim.chain,
+          mode: own ? 'explicit' : 'follow',
+          chain: own,
           effectiveChain: effective,
           resolvedFrom: sim.chain ? 'own-chain' : 'seed',
           current: effective.preferred,
@@ -162,8 +164,8 @@ async function openSettings(page, { mobile }) {
   }
   const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
   if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
-  await page.waitForSelector('#model-chain-section-body .mp-row', { state: 'attached', timeout: 15000 });
-  await page.waitForSelector('#model-chain-section-body .mp-row', { state: 'visible', timeout: 10000 });
+  await page.waitForSelector('#model-chain-section-body .mp-settings-role-tab', { state: 'visible', timeout: 15000 });
+  await page.waitForSelector('#model-chain-section-body .mp-settings-role-model', { state: 'visible', timeout: 10000 });
   await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'center' }));
   await sleep(350);
 }
@@ -171,7 +173,7 @@ async function openSettings(page, { mobile }) {
 /* ─────────────── 单腿：断言 + 实拍 ─────────────── */
 async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = false }) {
   const tag = `${engineName}/${mobile ? 'mobile' : 'desktop'}/${theme}/${locale}`;
-  const viewport = mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 };
+  const viewport = mobile ? { width: 375, height: 812 } : { width: 1280, height: 800 };
   const { ctx, page, errors, sim } = await boot(browser, { viewport, colorScheme: theme, locale, touch: mobile });
   await openSettings(page, { mobile });
 
@@ -205,42 +207,15 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
       `h=${hint.h} box=${hint.box} scroll=${hint.scroll}`);
   }
 
-  // ①② 三交互退役 + 只剩「添加模型」一个动作
-  const controls = await page.evaluate(() => {
-    const sec = document.getElementById('model-chain-section');
-    const q = (s) => sec.querySelectorAll(s).length;
-    const addRow = sec.querySelector('.mp-addrow');
-    return {
-      refresh: q('.mp-refresh'), manualToggle: q('.mp-manual-toggle'),
-      manualInput: q('.mp-manual'), clear: q('.mp-clear'),
-      buttons: [...sec.querySelectorAll('#model-chain-section-body button')].map((b) => b.textContent.trim()),
-      addRowChildren: addRow ? [...addRow.children].map((c) => c.className) : [],
-      addSelect: addRow?.querySelector('.mp-add-select')?.options?.[0]?.textContent?.trim() || '',
-      addOptions: addRow?.querySelector('.mp-add-select')?.options?.length || 0,
-    };
-  });
-  ok(tag, '① 刷新列表/手动输入/清空链三交互零残留（DOM）',
-    controls.refresh === 0 && controls.manualToggle === 0 && controls.manualInput === 0 && controls.clear === 0,
-    JSON.stringify(controls));
-  ok(tag, '② 动作只剩「添加模型」下拉（节内零按钮）',
-    controls.buttons.length === 0 && controls.addRowChildren.length === 1 &&
-    controls.addRowChildren[0] === 'mp-add-select' &&
-    (locale === 'zh-CN' ? controls.addSelect === '添加模型' : controls.addSelect === 'Add model'),
-    JSON.stringify({ buttons: controls.buttons, addRowChildren: controls.addRowChildren, first: controls.addSelect }));
-  ok(tag, '② 下拉带链外模型（可继续加链）', controls.addOptions >= 2, `options=${controls.addOptions}`);
-
-  // 冻结 §1/§2：每类会话单选一个模型；不再要求已退役的后备链手柄、删除和位次徽标。
-  const rows = await page.evaluate(() => {
-    const list = [...document.querySelectorAll('#model-chain-section-body .mp-row')];
-    return {
-      count: list.length,
-      heights: list.map((r) => Math.round(r.getBoundingClientRect().height)),
-      models: list.map((r) => r.querySelector('.mp-model')?.textContent.trim()),
-      editor: document.querySelector('#model-chain-section-body .mp-add-select')?.tagName,
-    };
-  });
-  ok(tag, '⑤ 当前模型行可见且仅一项单选编辑器', rows.count === 1 && !!rows.models[0] && rows.editor === 'SELECT', JSON.stringify(rows));
-  ok(tag, '⑤ 模型行尺寸有效', rows.heights.length === 1 && rows.heights[0] > 0, `heights=${rows.heights}`);
+  // 五类独立可切换；每个类别展示同一单模型下拉，不显示后备链编辑器。
+  const roles = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('#model-chain-section-body [role="tab"]')].map((e) => e.textContent.trim()),
+    selected: document.querySelector('#model-chain-section-body [role="tab"][aria-selected="true"]')?.textContent.trim(),
+    select: document.querySelector('#model-chain-section-body .mp-settings-role-model')?.tagName,
+    options: document.querySelector('#model-chain-section-body .mp-settings-role-model')?.options.length || 0,
+  }));
+  ok(tag, '五类角色独立切换器齐全', roles.tabs.length === 5, JSON.stringify(roles));
+  ok(tag, '当前类别单模型选择器带可用模型', roles.selected && roles.select === 'SELECT' && roles.options >= 2, JSON.stringify(roles));
 
   // i18n 双语键：新文案在册、旧键连根拔除、两字典同长
   const dict = await page.evaluate(async (retired) => {
@@ -266,10 +241,16 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   ok(tag, 'i18n 删键对称（差值 = 存量基线 7）', dict.zhCount - dict.enCount === 7,
     `zh=${dict.zhCount} en=${dict.enCount} Δ=${dict.zhCount - dict.enCount}`);
 
-  // 实拍
+  // 实拍：五类别各自截取当前编辑视图，确保不是仅有默认摘要基线。
+  const roleKeys = ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'];
+  for (let i = 0; i < roleKeys.length; i++) {
+    await page.locator('#model-chain-section-body [role="tab"]').nth(i).click();
+    const roleShot = join(SHOTS_DIR, `role-${roleKeys[i]}-${engineName}-${mobile ? 'mobile' : 'desktop'}-${theme}${locale === 'en' ? '-en' : ''}.png`);
+    await page.locator('#model-chain-section').screenshot({ path: roleShot });
+  }
   const shot = join(SHOTS_DIR, `chain-${engineName}-${mobile ? 'mobile' : 'desktop'}-${theme}${locale === 'en' ? '-en' : ''}.png`);
   await page.locator('#model-chain-section').screenshot({ path: shot });
-  ok(tag, '实拍落盘', true, shot);
+  ok(tag, '五类别视图截图落盘', true, `${SHOTS_DIR}/role-<role>-${engineName}-${mobile ? 'mobile' : 'desktop'}-${theme}.png`);
 
   // 零 console error
   const NOISE = /favicon|net::ERR|WebSocket|404|ResizeObserver loop/i;
@@ -288,14 +269,21 @@ async function functionalLeg(browser) {
   });
   await openSettings(page, { mobile: false });
 
-  // 单模型选择即存；冻结规格不要求删除或重排后备链。
-  const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
-  if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
-  await page.selectOption('#model-chain-section-body .mp-add-select', 'kimi/kimi-for-coding');
-  await page.waitForFunction(() => document.querySelector('#model-chain-section-body .mp-row .mp-model')?.textContent?.includes('kimi-for-coding'), null, { timeout: 5000 });
-  ok(tag, '⑤ 单模型下拉选择即存（不提供后备链删除／排序）', sim.puts.length === 1 &&
-    JSON.stringify(sim.puts[0].model) === JSON.stringify({ preferred: 'kimi/kimi-for-coding', fallbacks: [] }),
-  JSON.stringify(sim.puts[0]));
+  // Each category writes through the existing role endpoint and reads back independently.
+  for (const role of ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent']) {
+    const tab = page.locator(`#model-chain-section-body [role="tab"]`).nth(['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].indexOf(role));
+    await tab.click();
+    const saved = page.waitForResponse((response) => response.request().method() === 'PUT' &&
+      new URL(response.url()).pathname.endsWith(`/agents/${encodeURIComponent(role)}/model`));
+    await page.selectOption('#model-chain-section-body .mp-settings-role-model', 'kimi/kimi-for-coding');
+    await saved;
+    await page.waitForResponse((response) => response.request().method() === 'GET' &&
+      new URL(response.url()).pathname.endsWith(`/agents/${encodeURIComponent(role)}/model`));
+  }
+  ok(tag, '五类逐一选择、PUT并读回对应槽链', sim.puts.length === 5 &&
+    sim.puts.every((put, i) => put.role === ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'][i] &&
+      JSON.stringify(put.model) === JSON.stringify({ preferred: 'kimi/kimi-for-coding', fallbacks: [] })) &&
+    Object.values(sim.chains).every((chain) => chain?.preferred === 'kimi/kimi-for-coding'), JSON.stringify(sim.puts));
 
   // /model 面板同源面同样零退役控件（同一 buildNebulaChainFace）
   await page.evaluate(async () => {

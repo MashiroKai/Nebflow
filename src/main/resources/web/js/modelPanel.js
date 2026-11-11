@@ -569,40 +569,79 @@ function buildFollowerBlock(container, role, commit) {
  * 追加（两面各自读过，失败即隐藏自己那组）。
  * @param {HTMLElement} container #model-chain-section-body
  */
+let settingsActiveRole = 'Nebula';
+
+function renderSettingsRoleSelector(container) {
+  const tabs = document.createElement('div');
+  tabs.className = 'mp-settings-role-tabs';
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', t('settings.modelRoleTabs'));
+  for (const role of ROLES) {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'cfg-btn cfg-btn-sm mp-settings-role-tab';
+    tab.textContent = roleLabel(role);
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', role === settingsActiveRole ? 'true' : 'false');
+    tab.addEventListener('click', () => {
+      settingsActiveRole = role;
+      renderChainSectionBody(container);
+    });
+    tabs.appendChild(tab);
+  }
+  container.appendChild(tabs);
+
+  const role = settingsActiveRole;
+  const st = roleState.get(role);
+  const panel = document.createElement('div');
+  panel.className = 'mp-settings-role-panel';
+  panel.setAttribute('role', 'tabpanel');
+  if (!st?.data) {
+    panel.textContent = t('model.loadFailed');
+  } else {
+    const effective = chainRefs(st.data.effectiveChain)[0] || '';
+    const status = document.createElement('div');
+    status.className = 'mp-note';
+    status.textContent = role === 'Nebula'
+      ? t('model.mainChain', rootNameParams())
+      : st.data.mode === 'explicit' ? t('model.independent') : t('model.followsNebula', rootNameParams());
+    panel.appendChild(status);
+    const select = document.createElement('select');
+    select.className = 'mp-add-select mp-settings-role-model';
+    select.setAttribute('aria-label', `${roleLabel(role)} — ${t('model.addModel')}`);
+    const refs = getAllModelRefs();
+    if (role !== 'Nebula') {
+      const inherit = document.createElement('option');
+      inherit.value = '';
+      inherit.textContent = t('model.followsNebula', rootNameParams());
+      select.appendChild(inherit);
+    }
+    for (const ref of refs) {
+      const option = document.createElement('option');
+      option.value = ref;
+      option.textContent = ref;
+      if (ref === effective && (role === 'Nebula' || st.data.mode === 'explicit')) option.selected = true;
+      select.appendChild(option);
+    }
+    if (!effective && role === 'Nebula') {
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = t('model.seedNote');
+      placeholder.selected = true;
+      select.insertBefore(placeholder, select.firstChild);
+    }
+    select.addEventListener('change', () => {
+      void putChain(role, select.value ? [select.value] : null);
+    });
+    panel.appendChild(select);
+  }
+  container.appendChild(panel);
+}
+
 function renderChainSectionBody(container) {
   container.replaceChildren();
-  const st = roleState.get('Nebula');
-  if (!st?.data) {
-    const face = document.createElement('div');
-    face.className = 'mp-load-error chain-section-error';
-    face.setAttribute('role', 'alert');
-    const icon = document.createElement('div');
-    icon.className = 'mp-load-error-icon';
-    icon.innerHTML = statusIcon('circle-alert', 20, 'st-err');
-    const title = document.createElement('div');
-    title.className = 'mp-load-error-title';
-    title.textContent = t('model.loadFailed');
-    const hint = document.createElement('div');
-    hint.className = 'mp-load-error-hint';
-    hint.textContent = t('model.loadFailedHint');
-    const retry = document.createElement('button');
-    retry.type = 'button';
-    retry.className = 'cfg-btn cfg-btn-sm mp-load-error-retry';
-    retry.textContent = t('model.retry');
-    retry.addEventListener('click', () => {
-      retry.disabled = true;
-      void refreshChainSection(container);
-    });
-    face.append(icon, title, hint, retry);
-    container.appendChild(face);
-  } else {
-    const wrap = document.createElement('div');
-    wrap.className = 'chain-section-face';
-    buildNebulaChainFace(wrap, saveChain);
-    container.appendChild(wrap);
-  }
-  // Jev / 生图 两组（与 /model 面板同一次产出）——此路取**折叠形态**（方案 B：
-  // contract §I-1；折叠控件 = 原生 <details>/<summary>，故本节 <button> 数仍为 0）。
+  renderSettingsRoleSelector(container);
+  // Jev / image generation remain separate provider selectors, not conversation roles.
   const list = document.createElement('div');
   list.className = 'mp-group-list';
   container.appendChild(list);
@@ -612,12 +651,8 @@ function renderChainSectionBody(container) {
 /** 拉取 Nebula 最新读数 + 两面状态投影 → 重绘节内容（seq 守卫丢弃陈旧响应）。 */
 async function refreshChainSection(container) {
   const seq = ++chainSectionSeq;
-  const [, data] = await Promise.all([fetchFaceStatuses(), fetchModelOf('Nebula')]);
+  await Promise.all([fetchFaceStatuses(), fetchAllRoles()]);
   if (seq !== chainSectionSeq) return;
-  const st = roleState.get('Nebula') || { chain: null, expanded: false };
-  st.data = data;
-  st.chain = data && data.mode === 'explicit' ? chainRefs(data.chain) : null;
-  roleState.set('Nebula', st);
   if (container.isConnected) renderChainSectionBody(container);
 }
 
