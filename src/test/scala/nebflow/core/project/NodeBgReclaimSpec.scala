@@ -444,7 +444,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         s"the hold period must have set bgWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})"
       )
       // ⑤ 残留字段回归断言（实测 n-0931699e：status=completed 而 bgWait 非空）——保留：
-      // 挂起出口的 `setNodeBgWait(nodeId, Nil)` 仍最前执行（顺序零改动）
+      // 挂起出口的 `setNodeBackgroundWait(nodeId, Nil)` 仍最前执行（顺序零改动）
       assertEquals(
         afterSweep.bgWait,
         None,
