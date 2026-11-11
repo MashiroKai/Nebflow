@@ -140,7 +140,6 @@ class UplinkRefusedLedgerSpec extends FunSuite:
           ws.toString,
           rootSid,
           s"uplinkref-$name",
-          FeedbackRouter.ModeAuto,
           (_, _, _) => IO.unit,
           taskLedgerUplinkFailClosed = failClosed
         )

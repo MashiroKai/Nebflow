@@ -19,16 +19,16 @@ import scala.concurrent.duration.*
 /**
  * 产物完整性闸门回归（CompletionGate，worktree 审计 20260905 机制建议落地）。
  *
- * 覆盖（作者验收口径 a/b/c 三合法态 + 滞留转 blocked + 变异验红）：
+ * 覆盖（作者验收口径 a/b/c 三合法态 + 滞留转显式失败 + 变异验红）：
  *  - 单元级：态 a（ahead≥1+干净）/ 态 b（脏+commit-ready 标记，含「宿主落地命令」
  *    不作为充分标记的负控）/ 态 c（零改动）/ 滞留 Reject 诊断 / fail-open（runner
  *    抛错与 git 失败）/ 跳过面（无 worktree / 目录缺失 / 损坏值回退 workspace）/
- *    kill-switch / feedback 文案（产物滞留未申报+诊断四要素）；
+ *    kill-switch；
  *  - 真 git 集成（best effort，git 可用时）：临时 git init fixture 走 defaultRunner；
- *  - 引擎级（stub runner 注入，NodeBlockedReentrySpec 同款 harness）：①态 a →
- *    completed 正常投递 ②态 b → completed ③④滞留 → blocked + blockedFeedback
- *    「产物滞留未申报」+ 不投递 out（④即变异验红用例）⑤blocked 优先于 gate
- *    ⑧引擎级 kill-switch。
+ *  - 引擎级（stub runner 注入的同款 harness）：①态 a → completed 正常投递
+ *    ②态 b → completed ③④滞留 → 显式失败 failed + result 携带拒绝原因与
+ *    [original-conclusion] 原文并列段 + 不投递 out（④即变异验红用例）
+ *    ⑤BLOCKED 文本不再短路闸门（blocked 已退役，闸门裁决照常）⑧引擎级 kill-switch。
  */
 class CompletionGateSpec extends CatsEffectSuite:
 
@@ -272,15 +272,13 @@ class CompletionGateSpec extends CatsEffectSuite:
         d.statusSample.head.contains("untracked-1"),
         s"sample carries porcelain lines, got: ${d.statusSample.head}"
       )
-      val fb = CompletionGate.feedback(d)
-      assertEquals(fb.category, "artifact-residue")
-      assert(fb.detail.contains("产物滞留未申报"), s"detail must carry 滞留标注, got: ${fb.detail}")
-      assert(fb.detail.contains("领先 main 2 commit"), s"detail must carry ahead, got: ${fb.detail}")
-      assert(fb.detail.contains("12 个未提交改动"), s"detail must carry dirty count, got: ${fb.detail}")
-      assert(fb.detail.contains("markerHit=false"), s"detail must carry marker detection, got: ${fb.detail}")
+      // Reject 携带全部诊断（消费方据此构造失败文本——闸门自身不再构造 feedback 体，
+      // blocked 反馈协议已随 blocked 终态退役删除）
+      assertEquals(d.aheadFailed, false)
+      assert(d.worktree == "wt", s"diagnostic must carry the worktree name, got: ${d.worktree}")
       assert(
-        fb.suggestion.contains("commit-ready"),
-        s"suggestion must teach the marker contract, got: ${fb.suggestion}"
+        d.statusSample.forall(_.nonEmpty),
+        "sample lines must be non-empty porcelain rows"
       )
     end for
   }
@@ -515,14 +513,14 @@ class CompletionGateSpec extends CatsEffectSuite:
       assert(inputs.exists(_.contains("=== Node gate-a ===")), "declared node must still deliver")
   }
 
-  test("engine ③④: 滞留（脏 + 未申报）→ blocked + blockedFeedback「产物滞留未申报」+ 不投递 out 目标（变异验红用例）") {
+  test("engine ③④: 滞留（脏 + 未申报）→ 显式失败（failed）+ result 携带拒绝原因与原文并列段 + 不投递 out 目标") {
     val llm = new FuncLlm(text => if text.contains("gate-scenario") then IO.pure("ok-done") else IO.pure("ok-b"))
     for
       state <- Ref.of[IO, StubGit](StubGit(status = List("M EngineSpec.scala", "?? new-note.md"), ahead = 1))
       (rt, events, system) <- engineScenario("eng-reject", llm, stubRunner(state))
       _ <- waitUntil(20.seconds) {
         rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).flatMap {
-          case Some(n) => IO.pure(n.status == NodeLifecycle.Blocked || n.status == NodeLifecycle.Completed)
+          case Some(n) => IO.pure(n.status == NodeLifecycle.Failed || n.status == NodeLifecycle.Completed)
           case None => IO.pure(false)
         }
       }
@@ -530,8 +528,8 @@ class CompletionGateSpec extends CatsEffectSuite:
         case Some(n) =>
           assertEquals(
             n.status,
-            NodeLifecycle.Blocked,
-            s"dirty undeclared must block, not complete (gate mutation red = here; feedback=${n.blockedFeedback}, result=${n.result.map(_.take(80))})"
+            NodeLifecycle.Failed,
+            s"dirty undeclared must fail, not complete (gate mutation red = here; result=${n.result.map(_.take(120))})"
           )
         case None => fail("A must exist")
       }
@@ -541,36 +539,17 @@ class CompletionGateSpec extends CatsEffectSuite:
       b <- rt.store.snapshot.map(_.nodes.get("n-down-b")).map(_.getOrElse(fail("B must exist")))
       inputs <- llm.inputs.get
       evs <- events.get
-      audit <- readAuditTypes(tempRoot / "ws-eng-reject")
       _ <- stop(system)
     yield
-      // 终态形态：blocked（复用 BLOCKED 反馈协议）
-      assertEquals(a.status, NodeLifecycle.Blocked, "dirty undeclared must block, not complete")
-      assertEquals(a.blockedFeedback.map(_.category), Some("artifact-residue"))
+      // 终态形态：显式失败（blocked 已退役——闸门 Reject 不再产 blocked）
+      assertEquals(a.status, NodeLifecycle.Failed, "dirty undeclared must fail, not complete")
+      assertEquals(a.blockedFeedback, None, "no blocked feedback may be stored (retired)")
       assert(
-        a.blockedFeedback.exists(_.detail.contains("产物滞留未申报")),
-        s"feedback must carry 滞留标注, got: ${a.blockedFeedback}"
+        a.result.exists(_.contains("Completion gate rejected node output")),
+        s"result must carry the rejection head, got: ${a.result.map(_.take(200))}"
       )
-      assert(
-        a.blockedFeedback.exists(_.detail.contains("2 个未提交改动")),
-        s"feedback must carry dirty count, got: ${a.blockedFeedback}"
-      )
-      assert(
-        a.blockedFeedback.exists(_.detail.contains("领先 main 1 commit")),
-        s"feedback must carry ahead, got: ${a.blockedFeedback}"
-      )
-      assert(
-        a.blockedFeedback.exists(_.suggestion.contains("commit-ready")),
-        s"suggestion must teach marker contract, got: ${a.blockedFeedback}"
-      )
-      assert(
-        a.result.exists(_.startsWith("[blocked:artifact-residue]")),
-        s"result is rendered feedback string, got: ${a.result}"
-      )
-      // U6/F（2026-09-11，数据丢失类）：闸门 Reject 不得吃掉节点结论文本——旧口径
-      // `blockedNode(nodeId, feedback(diag))` 整段替换（今日实测 24 分钟复核结论
-      // 不可恢复）。改为并列落盘：反馈在前（保 BLOCKED 锚定），原结论文本以
-      // [original-conclusion] 标记并列在后。
+      // U6/F（2026-09-11，数据丢失类）：闸门 Reject 不得吃掉节点结论文本——原结论文本以
+      // [original-conclusion] 标记并列在失败文本之后。
       assert(
         a.result.exists(_.contains(CompletionGate.OriginalTextMarker)),
         s"U6/F red: the gate Reject must keep the node's conclusion under the marker, got: ${a.result.map(_.take(400))}"
@@ -582,24 +561,22 @@ class CompletionGateSpec extends CatsEffectSuite:
         },
         s"U6/F red: the original conclusion text must survive the Reject (retrieval = everything after the marker), got: ${a.result.map(_.take(400))}"
       )
-      // 不走 out 投递、结果不丢弃（作者规格）
-      assertEquals(b.status, NodeLifecycle.Wiring, "downstream must NOT be settled by gate-blocked")
+      // D5 零结算：失败不走 out 投递、下游停等可见（wedge 监督面承担）
+      assertEquals(b.status, NodeLifecycle.Wiring, "downstream must NOT be settled by gate-failed")
       assertEquals(b.deliveredTo, Nil, "no delivery to out target")
       assert(!inputs.exists(_.contains("=== Node gate-a ===")), "result string must never be delivered downstream")
-      // WS：nodeUpdated（无新事件类型），无 nodeCompleted
-      assert(!evs.exists((t, id, _) => t == "nodeCompleted" && id == aId), "gate-blocked must NOT emit nodeCompleted")
+      // WS：nodeUpdated failed（无新事件类型），无 nodeCompleted
+      assert(!evs.exists((t, id, _) => t == "nodeCompleted" && id == aId), "gate-failed must NOT emit nodeCompleted")
       assert(
         evs.exists((t, id, p) =>
-          t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)
+          t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Failed)
         ),
-        s"gate-blocked must emit nodeUpdated, got: ${evs.map((t, id, _) => (t, id))}"
+        s"gate-failed must emit nodeUpdated, got: ${evs.map((t, id, _) => (t, id))}"
       )
-      // 审计
-      assert(audit.exists((t, id) => t == "blocked" && id == aId), s"blocked audit line must exist, got: $audit")
     end for
   }
 
-  test("engine ⑤: 自报 BLOCKED 优先于 gate（脏 worktree + BLOCKED 输出 → agent 的 category，非 artifact-residue）") {
+  test("engine ⑤ (retired): BLOCKED-anchored output no longer short-circuits the gate — dirty worktree rejects to failed") {
     val llm = new FuncLlm(text =>
       if text.contains("gate-scenario") then IO.pure("""BLOCKED: 无法继续
 {"category":"task-underspecified","detail":"任务缺验收标准","suggestion":"补验收"}""")
@@ -608,14 +585,14 @@ class CompletionGateSpec extends CatsEffectSuite:
     for
       state <- Ref.of[IO, StubGit](StubGit(status = List("M x.scala"), ahead = 0))
       (rt, events, system) <- engineScenario("eng-blk-first", llm, stubRunner(state))
-      _ <- waitStatus(rt, "gate-a", Set(NodeLifecycle.Blocked))
+      _ <- waitStatus(rt, "gate-a", Set(NodeLifecycle.Failed))
       aId <- idOf(rt, "gate-a")
       a <- nodeById(rt, aId)
       _ <- stop(system)
     yield assertEquals(
-      a.blockedFeedback.map(_.category),
-      Some("task-underspecified"),
-      "agent-declared blocked must win over gate (gate 后置)"
+      a.status,
+      NodeLifecycle.Failed,
+      "BLOCKED text is plain result text now — the gate owns the dirty-worktree verdict (failed, not blocked)"
     )
   }
 

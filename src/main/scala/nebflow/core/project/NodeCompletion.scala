@@ -21,14 +21,14 @@ private[project] trait NodeCompletion:
   // 节点已不在活动区（被移除）→ 拒写拒投（陈旧写回会把它复活成垃圾行）。
 
   /**
-   * blocked 结构化信号批（20260909 spec §5.3；同日作者裁定泛化 NodeReport
-   * 统一三语义）：declared = 节点会话经 node_report 工具申报的结构化反馈
-   * （NodeEngine 终态分流处 drain 登记表所得）；默认 None 向后兼容全部既有
-   * 调用点。分流顺序【结构化信号优先，**按角色 × 类别分流**（nrloop 一期 2026-09-12
-   * 语义轴分离：执行状态 vs 内容判定），全部锚定既有链零新链】：
+   * 节点终态分流（node_report 结构化申报消费单点）：declared = 节点会话经
+   * node_report 工具申报的结构化反馈（NodeEngine 终态分流处 drain 登记表所得）；
+   * 默认 None 向后兼容全部既有调用点。分流顺序【结构化信号优先，**按角色 × 类别
+   * 分流**（nrloop 一期 2026-09-12 语义轴分离：执行状态 vs 内容判定），全部锚定
+   * 既有链零新链】：
    *
    *   - `finish`（执行节点显式完成）→ 既有 completed 语义链（回落 declared=None
-   *     原路径：BlockedReader 降级面 → CompletionGate 闸门 → completedNode——闸门
+   *     原路径：CompletionGate 闸门 → completedNode——闸门
    *     是完成链的产物完整性 owner，finish 申报不绕闸、零放宽）；
    *   - `pass`（verifier verdict）→ 记 `lastVerdict=pass` + completed 链（pass 边
    *     照常投递，verdict 感知的 deliverOut 只看 fail）；
@@ -36,10 +36,7 @@ private[project] trait NodeCompletion:
    *     误判 failed 的机制根因）：记 `lastVerdict=fail` + completed 链 + 沿
    *     `(fail)<目标>:loop` 控制边选通（`verifierFail`）；预算耗尽则熔断
    *     （`circuitBreakLoop`，verifier 终态化 failed + 计量数字）；无 fail 边
-   *     （存量/畸形数据）⇒ 只记 verdict + 照常 completed，不误杀；
-   *   - blocked（细分六类/泛值，两个角色共有，协议事实优先）→ 既有 blockedNode/
-   *     FeedbackRouter 链（工具申报即节点对任务可完成性的正式判断，blocked 可重激活
-   *     无损，completed 伪终态不可逆）。
+   *     （存量/畸形数据）⇒ 只记 verdict + 照常 completed，不误杀。
    *
    * 纪律（设计 §3.1 三条，工具 description 同文）：**执行失败没有申报通道**——执行
    * 真的挂了仍由引擎 `failNode` 判（LLM 错误/会话死亡/LoopGuard L1），不由 agent 申报。
@@ -55,7 +52,7 @@ private[project] trait NodeCompletion:
    * 事件流里、内存里都没有副本。
    *
    * **修法（选 (B)，理由见报告 §2）**：终态写族回报「是否真的落地」（`completeNodeR` /
-   * `blockedNodeR` / `failNodeR` / `completedNodeR` / `verifierFailR` / `circuitBreakLoopR`
+   * `failNodeR` / `completedNodeR` / `verifierFailR` / `circuitBreakLoopR`
    * 的 `IO[Boolean]`——它们内部**本来就**在 fresh-read 之后分「写成功 / 拒写」两支，本批只把
    * 这个既有判词向上回报，零新逻辑），消费点据此二分：
    *   · `landed = true` ⇒ 申报已由一次**真实终态写**消费（语义生效）——本函数零动作；
@@ -85,13 +82,13 @@ private[project] trait NodeCompletion:
    */
   /**
    * 调用点（#239② 后）：全部 5 处申报消费点经 [[consumeReport]] 触发本函数——桥完成点、
-   * Loop verify 的 pass/blocked 支、Loop worker 的 fail/blocked 支；Loop verify 的 fail 支
+   * Loop verify 的 pass 支、Loop worker 的 fail 支；Loop verify 的 fail 支
    * 与 Loop worker 的 forward 支按各自语义走落地判词 / 审计行。
    */
   private def compensateUnconsumedReport(
     nodeId: String,
     sessionId: String,
-    declared: Option[BlockedFeedback],
+    declared: Option[NodeReportFeedback],
     landed: Boolean
   ): IO[Unit] =
     declared match
@@ -126,7 +123,7 @@ private[project] trait NodeCompletion:
    *
    * `write` 用 by-name：调用点照写 `completeNodeR(...)` 原样表达式，语义零改写。
    */
-  private[project] def consumeReport(nodeId: String, sessionId: String, declared: Option[BlockedFeedback])(
+  private[project] def consumeReport(nodeId: String, sessionId: String, declared: Option[NodeReportFeedback])(
     write: => IO[Boolean]
   ): IO[Boolean] =
     write.attempt.flatMap {
@@ -168,7 +165,7 @@ private[project] trait NodeCompletion:
   private[project] def noteNonTerminalConsumption(
     nodeId: String,
     sessionId: String,
-    declared: Option[BlockedFeedback],
+    declared: Option[NodeReportFeedback],
     branch: String
   ): IO[Unit] =
     declared match
@@ -198,32 +195,18 @@ private[project] trait NodeCompletion:
    * 消费点（[[compensateUnconsumedReport]]）据此决定是否需要补偿。
    */
   private[project] def completeNodeR(nodeId: String, resultText: String): IO[Boolean] =
-    // Final assistant text is the completion payload; preserve text-based BLOCKED
-    // fallback and the artifact gate, without a report-tool declaration intermediary.
-    BlockedReader.parse(resultText) match
-      case Some(feedback) => blockedNodeR(nodeId, feedback)
-      case None =>
-        // 产物完整性闸门（audit 20260905 机制建议）：completed 出口三合法态
-        // 校验（a 已提交+b commit-ready 申报+c 零改动；脏且未申报 → Reject）。
-        // Reject → blockedNode 转 blocked（复用 BLOCKED 反馈协议：不走 out 投递、
-        // 结果不丢弃，重入协议处置）——堵「节点自报 completed 但产物滞留」静默丢失。
-        // fail-open 见 CompletionGate.check。
-        store.getNode(nodeId).flatMap {
-          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
-              case CompletionGate.Pass(reason) =>
-                logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
-                completedNodeR(nodeId, resultText)
-              case CompletionGate.Reject(reason, diag) =>
-                logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
-                blockedNodeR(
-                  nodeId,
-                  CompletionGate.feedback(diag),
-                  finalText = Some(CompletionGate.withOriginalText(resultText))
-                )
-            }
-          case _ => completedNodeR(nodeId, resultText)
+    store.getNode(nodeId).flatMap {
+      case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+        CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
+          case CompletionGate.Pass(reason) =>
+            logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
+            completedNodeR(nodeId, resultText)
+          case CompletionGate.Reject(reason, _) =>
+            logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
+            failNodeR(nodeId, s"Completion gate rejected node output: $reason\n${CompletionGate.withOriginalText(resultText)}")
         }
+      case _ => completedNodeR(nodeId, resultText)
+    }
 
   /**
    * completed 原路径：落库 completed + TTL → emitEvent nodeCompleted → deliverOut → settleDeps。
@@ -274,9 +257,8 @@ private[project] trait NodeCompletion:
             ) *>
             deliverOut(completed, resultText) *>
             // deps 反向结算（deps 设计 §1.3）：与 deliverOut 同一完成 fiber 顺序推进
-            // （现状 deliverOut 同款语义）。blocked 分流在 completeNode 入口已与
-            // completed 分叉，deps 结算只挂 completed 分支尾部——blocked ∉ completed
-            // 不触发；failed（failNode）/cancelled（cancelNode）不挂 settleDeps，
+            // （现状 deliverOut 同款语义）。deps 结算只挂 completed 分支尾部；
+            // failed（failNode）/cancelled（cancelNode）不挂 settleDeps，
             // 下游保持 pending 可见（裁定③差异语义，NodeDepsSpec T5 锁定）。
             settleDeps(completed) *>
             // dispatch-notify（2026-09-05 批）：终态落库+投递+结算完成后，回流通知
@@ -521,7 +503,7 @@ private[project] trait NodeCompletion:
   /**
    * 挂载停滞判定（mount-enforce 批 §3）：Some(reason)=已过可触发点 60s 仍未触发。
    * 可触发点口径：入口节点（无 in 无 deps）自 createdAt 起；barrier 节点自全部上游
-   * （in ∪ deps）到达终态起（四终态 completed/blocked/failed/cancelled 写点均落
+   * （in ∪ deps）到达终态起（终态 completed/failed/cancelled 写点均落
    * completedAt——已核实）。barrier 感知（合法等待不判停滞）：
    *   - 任一上游 running/wiring = 被真实上游正确闸住（作者明示合法形态）；
    *   - 上游引用悬空（校验生效前遗留数据）= 保守不判。
@@ -550,7 +532,7 @@ private[project] trait NodeCompletion:
       else
         // 判据 D（死链；案 b 文案分支）：链号**可解析**但成员集含不可挽回成员（`cancelled`）
         // ⇒ 闸**构造性不可满足**、**永不结算**。既有文案只把成员列成 `'name'(id):status`
-        // （数据在列、**结论不在**，且 `blocked` 与 `cancelled` 在文案上同形）⇒ 读者必须自行
+        // （数据在列、**结论不在**，各状态在文案上同形）⇒ 读者必须自行
         // 推断「这是死链」。本分支**纯追加子串**：既有前缀逐字保留，只在尾部补一句可判读结论
         // （结论词 `constructively unsatisfiable` + 点名成员 id/状态 + 可行动指引）。判据源 =
         // 同一解析单点（零第二解析器）；只认 `cancelled`（`failed` 可重激活 ⇒ 不构成死链）。
@@ -580,7 +562,9 @@ private[project] trait NodeCompletion:
       if ups.exists(_.isEmpty) then IO.pure(None)
       else
         val us = ups.flatten
-        val allTerminal = us.forall(u => NodeLifecycle.Terminal.contains(u.status))
+        // Legacy-stock leg: blocked rows written before the blocked-terminal retirement
+        // count as terminal here too (they never deliver; the stall must stay visible).
+        val allTerminal = us.forall(u => NodeLifecycle.Terminal.contains(u.status) || u.status == NodeLifecycle.Blocked)
         if !allTerminal then IO.pure(None)
         else
           // 入口节点（无上游）可触发点 = createdAt；barrier 节点 = 最晚上游终态时刻
@@ -623,86 +607,6 @@ private[project] trait NodeCompletion:
           end if
         end if
     }
-
-  /**
-   * blocked 终态化（设计 §2.1 四条动作序列，与 completeNode 同构）：
-   * ① 事务内现读 fresh（R2 纪律）→ status=Blocked / result=渲染串 / blockedFeedback /
-   *    blockCount+1 / completedAt=now / ttlExpireAt=None（永不过期=待办语义 §1.4）；
-   *    节点已消失/状态已变（NodeEdit 重激活竞态）→ 拒写。
-   * ② emitEvent nodeUpdated（复用现有 WS 类型 + NodePayload 同构载荷，不加新事件类型）。
-   * ③ 不结算下游（out=节点不做 barrier 占位投递——传播停止是特性；下游 pending
-   *    由重入分发器 NodeList 可见并处置）。
-   * ④ 调 FeedbackRouter（重入 / 升级 / 频率保护决策）。
-   *
-   * finalText（blocked 结构化信号批 20260909 spec §5.2 #6）：工具申报通道传入
-   * 节点最终全文——result 落库 = 渲染串头部 + 全文拼接；内存 Ref/投递链持有
-   * 全文，落盘时 FlowMapStore persist 拆分（results/<nodeId>.md 全文 + JSON
-   * ≤500 字符摘要，头部恰为渲染串）观测面信息不丢。文本锚定路径不传
-   * （申报即全文，渲染串落库现状维持）。
-   */
-  /**
-   * blocked 终态化「落地判词」版（#239①）：返回 `true` = 本次**真的**写下了 blocked
-   * （fresh-read 守卫通过 + 落库可见）；`false` = 走了两条拒写支之一（节点已消失 /
-   * 状态已变）。判据本身是既有代码（下方 mutate 的 `case _ => st` 守卫 + fresh-read
-   * 复核支），本批只把既有判词向上回报，零新判据。
-   */
-  private[project] def blockedNodeR(
-    nodeId: String,
-    feedback: BlockedFeedback,
-    finalText: Option[String] = None
-  ): IO[Boolean] =
-    for
-      now <- IO(System.currentTimeMillis())
-      transition <- store.mutateWithResult { st =>
-        st.nodes.get(nodeId) match
-          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            val updated = st.copy(nodes =
-              st.nodes.updated(
-                nodeId,
-                withoutReportPending(
-                  fresh.copy(
-                    status = NodeLifecycle.Blocked,
-                    result = Some(BlockedReader.render(feedback) + finalText.fold("")("\n\n" + _)),
-                    blockedFeedback = Some(feedback),
-                    blockCount = fresh.blockCount + 1,
-                    completedAt = Some(now),
-                    ttlExpireAt = None
-                  )
-                )
-              )
-            )
-            (updated, updated.nodes.get(nodeId))
-          case _ => (st, None) // Only the transition winner may emit feedback.
-      }
-      landed <- transition._2 match
-        case Some(bn) =>
-          val summary = s"round ${bn.blockCount}: [${feedback.category}] ${feedback.detail.take(160)}"
-          emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(bn, now)) *>
-            logger.warn(s"Node '${bn.name}' blocked — $summary") *>
-            FlowMapEventLog.append(workspace, projectName, nodeId, "blocked", summary) *>
-            // ③ blocked 出口的销毁窗口登记（noderpt 批 B 段：与桥终态四出口**口径一致**
-            // ——终态时刻只登记、到点由 `sweepDestroyWindows` 收殓；blocked 节点在窗口内
-            // 仍可被 reactivate，届时 `withdrawDestroyWindow` / 翻转点清零撤销窗口）。
-            scheduleDestroy(bn.id, destroyTargetSessions(bn), "blocked") *>
-            feedbackRouter.route(bn, feedback) *>
-            IO.pure(true)
-        case None =>
-          logger.info(
-            s"Node '$nodeId' did not transition from running to blocked — duplicate/stale feedback refused"
-          ) *>
-            IO.pure(false)
-    yield landed
-
-  /**
-   * `IO[Unit]` 门面（#239①）：文本锚定等**无申报消费**的既有调用点零改动。
-   * 申报消费点一律直接用 [[blockedNodeR]] 的落地判词。
-   */
-  private[project] def blockedNode(
-    nodeId: String,
-    feedback: BlockedFeedback,
-    finalText: Option[String] = None
-  ): IO[Unit] =
-    blockedNodeR(nodeId, feedback, finalText).void
 
   /**
    * `IO[Unit]` 门面（#239①）：`failNode` 的既有 ~20 处调用点（boot sweep / 启动失败 /
@@ -768,7 +672,7 @@ private[project] trait NodeCompletion:
             emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
               logger.warn(s"Node '${failed.name}' failed: ${err.take(200)}") *>
               // 失败投递（§2.7 + D5 零结算）：out=Nebula → failed 消息；out=节点 →
-              // 下游停等零结算（merge 例外转 blocked），停等等待者经尾部通知告知分发器。
+              // 下游停等零结算（merge 例外转 wedge 告警），停等等待者经尾部通知告知分发器。
               deliverFailed(failed, err) *>
               // R3（取消静默死锁修复批）：failed 侧**唯一**新增行为 = 终态写点同步的
               // barrier 即时告警（作者硬约束：failed 一栏只多 R3 的 barrier 检查，无摘除/
@@ -837,9 +741,7 @@ private[project] trait NodeCompletion:
    * result — a node whose session had already persisted a result lost it.
    * Here the reason stays the prefix (hard contract: `CancelSource.fromResult`
    * parses it with `startsWith`, and `DispatchNotify` / `BootWakeInventory`
-   * read the same prefix) and the preserved value follows after a blank line —
-   * the same shape the blocked path has always used
-   * (`BlockedReader.render(...) + "\n\n" + finalText`, see `blockedNode`).
+   * read the same prefix) and the preserved value follows after a blank line.
    *
    * A preserved value that is ALREADY a cancel rendering is NOT re-appended:
    * a second cancel on the same node must stay idempotent (one reason, one

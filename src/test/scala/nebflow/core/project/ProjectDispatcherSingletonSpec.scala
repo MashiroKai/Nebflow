@@ -27,8 +27,8 @@ import scala.concurrent.duration.*
  * 2. 并发到达不双 spawn：三条任务几乎同时触发 → 只 spawn 一个会话，三条全进
  *    同一会话按 turn 串行消费。
  * 3. 终态后 spawn 新实例：会话终态清理后第一个新任务 spawn 全新 sessionId。
- * 4. 重入优先投递（§2.2 修订）：blocked 重入请求在有活跃会话时注入现有会话，
- *    不并行 spawn 重入会话。
+ * 4. 重入优先投递：AskAnswerReentry（blocked 终态退役后的重入族）在有活跃会话时
+ *    注入现有会话，不并行 spawn 重入会话。
  */
 class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
 
@@ -52,13 +52,10 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  private def blockedText(category: String, detail: String, suggestion: String): String =
-    s"""BLOCKED: 无法继续
-       |{"category":"$category","detail":"$detail","suggestion":"$suggestion"}""".stripMargin
-
   /**
-   * 门控 LLM：分发器 turn（非 will-block-S 输入）等 gate 后回 "ok"；节点 turn
-   * （will-block-S 任务）立即回 BLOCKED 文本（不占 gate）。inputs 记录全部分发器输入。
+   * 门控 LLM：所有 turn（分发器/节点）等 gate 后回 "ok"。inputs 记录全部分发器输入。
+   * （blocked 终态退役：旧「will-block-S 立回 BLOCKED 文本」分支已随之删除——
+   * BLOCKED 文本不再驱动任何终态。）
    */
   private class GatedLlm(gates: Queue[IO, Deferred[IO, Unit]]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
@@ -71,18 +68,10 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
         onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
-        if text.contains("will-block-S") then
-          Stream(
-            StreamChunk.TextDelta(blockedText("task-underspecified", "任务缺少交付物定义", "补充验收标准")),
-            StreamChunk.Done(None, None)
-          )
-        else
-          Stream
-            .eval(inputs.update(_ :+ text))
-            .flatMap(_ => Stream.eval(gates.take.flatMap(_.get)))
-            .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
-
-      end sendStream
+        Stream
+          .eval(inputs.update(_ :+ text))
+          .flatMap(_ => Stream.eval(gates.take.flatMap(_.get)))
+          .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
 
   end GatedLlm
 
@@ -299,9 +288,9 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
     end for
   }
 
-  // ── 4. 重入优先投递活跃会话（§2.2 修订）──────────────────────────
+  // ── 4. 重入优先投递活跃会话（AskAnswerReentry——blocked 退役后的重入族）──────
 
-  test("重入优先投递：blocked 重入在有活跃分发器时注入现有会话，不并行 spawn 重入会话") {
+  test("重入优先投递：AskAnswerReentry 在有活跃分发器时注入现有会话，不并行 spawn 重入会话") {
     val ws = tempRoot / "ws-reentry"
     os.makeDir.all(ws)
     val system = ActorSystem(s"singleton-reentry-${scala.util.Random.nextInt(100000)}")
@@ -314,19 +303,22 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
       _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("任务甲", "nebula-root")).void
       _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty)) // turn 1 gated 在飞
-      // blocked 节点 → FeedbackRouter(auto) → ReenterDispatcher → 活跃会话 → 注入排队
+      // 建节点（普通任务；blocked 终态已退役，重入族 = AskAnswerReentry）
       _ <- nodeEdit(
         nodeInput(
           "singleton-reentry",
-          "blk-node",
+          "ans-node",
           "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("will-block-S"),
+          "task" -> Json.fromString("整理归档任务说明"),
           "out" -> Json.fromString("Nebula")
         ),
         ctx
       )
-      _ <- waitStatus(rt, "blk-node", Set(NodeLifecycle.Blocked))
-      _ <- IO.sleep(1.second) // ProjectActor 处理完 ReenterDispatcher 注入
+      _ <- waitStatus(rt, "ans-node", Set(NodeLifecycle.Wiring))
+      ansNodeId <- rt.store.snapshot.map(_.nodes.values.find(_.name == "ans-node").map(_.id))
+      _ <- (actorRef ! ProjectActor.ProjectCommand
+        .AskAnswerReentry(ansNodeId.getOrElse(sys.error("ans-node must exist")), "req-1", "答复文本X")).void
+      _ <- IO.sleep(1.second) // ProjectActor 处理完答案重入注入
       _ <- g1.complete(()).void // turn 1 完成 → 延迟拆除 → 边界消费重入注入
       g2 <- llm.offerGate
       _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.size >= 2))
@@ -338,8 +330,9 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
     yield
       assertEquals(during.size, 1, "重入必须注入现有会话——不得并行 spawn 第二个会话")
       assertEquals(ins.size, 2, "全程恰好 2 个分发器 turn")
-      assert(ins(1).contains("Node-feedback re-entry"), s"第二个 turn 必须是重入注入形态，got: ${ins(1).take(120)}")
-      assert(ins(1).contains("blk-node"), "重入注入必须携带 blocked 节点名")
+      assert(ins(1).contains("AskUser answer re-entry"), s"第二个 turn 必须是答案重入注入形态，got: ${ins(1).take(120)}")
+      assert(ins(1).contains("ans-node"), "重入注入必须携带目标节点名")
+      assert(ins(1).contains("答复文本X"), "重入注入必须携带用户答复文本")
     end for
   }
 

@@ -94,14 +94,16 @@ class PromptFaceSplitSpec extends FunSuite:
     assert(text.contains("delivers it downstream along the out edges"), "引擎沿 out 边投递在位")
     assert(text.contains("Hand off along the out edges"), "out 边交接段在位")
 
-  test("flow 节点面系统提示词 = node_report 申报义务 + 未申报不终态 + verifier 值域分化"):
+  test("flow 节点面系统提示词 = node_report 申报义务 + 未申报不终态 + verifier 值域分化（blocked 终态退役后值域）"):
     val text = nodePrompt
     assert(text.contains("Call `node_report` before wrapping up"), "申报义务句在位")
     assert(text.contains("never terminalizes"), "未申报不终态语义在位")
-    assert(text.contains("`task` (default): `finish` / `blocked`"), "task 角色值域在位")
+    assert(text.contains("`task` (default): `finish`"), "task 角色值域在位（显式完成，可选）")
     assert(text.contains("`pass` / `fail` (a verdict on the object under review)"), "verifier 角色值域在位")
     assert(text.contains("(fail)<target>:loop"), "verifier 回边路由语义在位")
     assert(text.contains("Report first, then write your wrap-up text"), "报告先行句在位")
+    // blocked 终态退役：节点面值域行零 blocked（无停等申报出口）
+    assert(!text.contains("`blocked`"), s"blocked 值域形态零出现:\n${text.linesIterator.filter(_.contains("node_report")).mkString("\n")}")
 
   test("两来源机械分离：entry 路径 ≠ delegateEntry 路径，各持各面（非一处模板双面引用）"):
     assert(nodePrompt != delegatePrompt, "两路径产出必须互不等（两个独立常量）")

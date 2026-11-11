@@ -433,7 +433,6 @@ class FailedNotifySuppressionSpec extends FunSuite:
           ws.toString,
           rootSid,
           s"ftproj-$name",
-          FeedbackRouter.ModeAuto,
           (_, _, _) => IO.unit,
           notifyTriggerOverride = Some((text: String) => triggered.update(_ :+ text))
         )

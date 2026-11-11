@@ -138,7 +138,6 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
           ws.toString,
           rootSid,
           "ddproj",
-          FeedbackRouter.ModeAuto,
           (_, _, _) => IO.unit,
           notifyTriggerOverride = notifySeam.map(ref => (text: String) => ref.update(_ :+ text))
         )

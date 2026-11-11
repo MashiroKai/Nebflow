@@ -15,10 +15,12 @@ import nebflow.core.tools.NodeTools
 
 /**
  * 节点生命周期（§2.1）：pending/running/completed/failed/cancelled + wiring 扩展。
- * blocked（20260902 反馈重入设计 §1.1）：turn 正常结束但节点声明无法继续——
- * 停止传播 + 触发重入的终态；永不过期（ttlExpireAt=None，待办语义 §1.4）。
  * hold 机制已于 2026-09-06 提案 A 彻底移除（作者拍板）：节点完成一律走
- * blocked→gate→completed 原路径——「完成即投递 + 事后回看」，不设人工闸门。
+ * gate→completed 原路径——「完成即投递 + 事后回看」，不设人工闸门。
+ *
+ * `blocked` = **退役 token**（no-blocked-semantics 一期：blocked 终态整体退役，
+ * 引擎侧零写点、`node_report` 入参即拒；块值仅为迁移 legacy 存量行保留——
+ * 行为面 = 重激活/abandon 可用、不自动归档不自动取消，可见性按 legacy 行处理）。
  *
  * interrupted（中断恢复语义批 2026-09-13，spec
  * `20260908_interrupt-recovery-semantics.md` §2.2，作者裁定采纳方案 A）：
@@ -36,34 +38,32 @@ object NodeLifecycle:
   val Completed = "completed"
   val Failed = "failed"
   val Cancelled = "cancelled"
+  /** Retired token used only while migrating legacy stored rows. */
   val Blocked = "blocked"
 
   /** 优雅关机中断（非终态，「休眠」——见 object 头注）。 */
   val Interrupted = "interrupted"
 
-  val Terminal: Set[String] = Set(Completed, Failed, Cancelled, Blocked)
+  val Terminal: Set[String] = Set(Completed, Failed, Cancelled)
 
   /**
    * **链级取消 / 级联取消的取消集**（作者三答 2，2026-09-17 —— 逐字落地）。
    *
-   * 🔴 **禁用 `Terminal` 谓词当取消集判据**：`Terminal`（上一行）**含 `blocked`**，
-   * 用它做「非终态」判据会**误排除 `blocked`**（blocked 是准终态——永不自动归档、
-   * 可重激活，作者裁定与本批范围均要求**纳入**取消集）。⇒ 取消集**必须显式枚举**：
+   * 取消集**显式枚举**（机械判据纪律保留——虽然退役后 `All − Terminal` 恰等于本集，
+   * 仍禁消费点临时改用集合算术推导）：
    *
-   *   - 纳入：`running`（含 stale）/ `pending` / `wiring` / `blocked` / `interrupted`
+   *   - 纳入：`running`（含 stale）/ `pending` / `wiring` / `interrupted`
    *   - 零触碰：`completed` / `failed` / `cancelled`（结果保留，报告 `preserved` 逐条列出）
-   *
-   * 依据（作者三答 2 原文口径）：非终态集 = running（含 stale）/ pending / wiring /
-   * blocked / interrupted；`interrupted` 经作者裁定为**非终态「休眠」**（见 object 头注
-   * §2.2），故机械上纳入。
+   *   - 零触碰：legacy `blocked` 行（no-blocked-semantics 一期：退役 token，仅存量
+   *     迁移保留——分发器持有的现场，引擎不擅自取消；terminal-boundary preserved）
    *
    * 消费单点：`NodeEngine.cancelNodes`（链级腿 + 节点级腿）与 `ChainCascadeSpec` 的
-   * 判据共用本常量——**禁**任何调用点改用 `Terminal` 取反。
+   * 判据共用本常量。
    */
-  val ChainCancelScope: Set[String] = Set(Running, Pending, Wiring, Blocked, Interrupted)
+  val ChainCancelScope: Set[String] = Set(Running, Pending, Wiring, Interrupted)
 
   /** 全部合法生命周期值（NodeList status 过滤枚举校验单点，裁定⑤a 20260907）。 */
-  val All: Set[String] = Set(Wiring, Pending, Running, Interrupted, Completed, Failed, Cancelled, Blocked)
+  val All: Set[String] = Set(Wiring, Pending, Running, Interrupted, Completed, Failed, Cancelled)
 
 end NodeLifecycle
 
@@ -73,9 +73,9 @@ end NodeLifecycle
  * §3.2 + 附 C1-1 / C2-R3：作者裁定「Loop 的校验节点 = 独立节点」）。
  *
  * 语义 = **节点在拓扑中的职责**，决定 `node_report` 的值域与可选路由：
- *   - `Task`（缺省）：执行节点——申报域 `finish | blocked(+六类细分)`；完成 = 默认行为
- *     （`finish` 为可选显式申报，附 C 代裁 R10），**不**参与 verdict 选通。
- *   - `Verifier`：校验节点——申报域 `pass | fail` + `blocked(+六类细分)`；`fail` 是
+ *   - `Task`（缺省）：执行节点——申报域 `finish`（可选显式完成，完成 = 默认行为），
+ *     **不**参与 verdict 选通。
+ *   - `Verifier`：校验节点——申报域 `pass | fail`；`fail` 是
  *     **verdict**（被判定对象不合格），恒伴随节点自身 `completed`（永不 `failed`），
  *     并经 `(fail)<目标>:loop` 控制边驱动重跑。
  *
@@ -206,16 +206,20 @@ object CancelSource:
 
 end CancelSource
 
-/** 结构化 blocked 反馈（设计 §1.3 JSON 体）：BlockedReader 从节点最终输出解析。 */
-case class BlockedFeedback(
-  category: String, // upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other
+/** Structured node_report declaration (category / detail / suggestion) — the payload the
+  * node_report registry stores and terminal chains consume. Formerly `BlockedFeedback`
+  * (the blocked terminal retired: blocked is no longer a reachable node state; the shape
+  * is unchanged so legacy journal/JSONL rows keep decoding).
+  */
+case class NodeReportFeedback(
+  category: String, // finish | pass | fail (role-gated at the node_report tool layer)
   detail: String,
   suggestion: String
 )
 
-object BlockedFeedback:
+object NodeReportFeedback:
   given Configuration = Configuration.default
-  given Codec[BlockedFeedback] = ConfiguredCodec.derived
+  given Codec[NodeReportFeedback] = ConfiguredCodec.derived
 
 /**
  * LoopNode 配置（LoopNode 批 2026-09-06，主设计 20260902_flowmap-engine-evolution-design.md §2）。
@@ -558,7 +562,7 @@ object NotifyPolicy:
 
   // ── M4：`notify.quietMs` 配置键（对外冻结命名，2026-09-13）────────────────
   //
-  // 键路径 = `notify.quietMs`（嵌套在 `notify` 对象下，形态仿先例 `feedbackMode`）。
+  // 键路径 = `notify.quietMs`（嵌套在 `notify` 对象下的项目级可选键）。
   // **本键名为对外冻结命名**（作者裁定 M4：「键名一经使用不宜改名」）——一经发布
   // 不再更名；若要调整语义，只能新增键 + 保留本键读取。
   // 缺键 = 缺省 [[NotifyQuietMsDefaultMs]]（不是 0、不是禁用）；上界 [[NotifyQuietMsMaxMs]]。
@@ -725,8 +729,9 @@ case class NodeDef(
    * pending（等 in barrier + deps 闸门）与普通节点无差别——闸门全在 startNode
    * 内，deps/hold/merge 均可与 loop 共存（deps 启动前把关、hold 在 verify PASS
    * 完成时经 completeNode 生效、merge 语义在 loop 完成后照常）；worker/verify
-   * 会话输出 BLOCKED 锚定 → Loop 级 blockedNode（终态，重激活从第 1 轮重跑，
-   * 旧会话已随终态销毁）。enabled=false → 本字段保留但节点按普通节点单次执行。
+   * 会话输出经 verify 裁决：PASS → completed 交付链；FAIL → 打回 worker 重跑（同
+   * 会话注入返工意见），达 maxRounds(K) 仍未 PASS → failNode 显式失败终态（旧
+   * 会话已随终态销毁）。enabled=false → 本字段保留但节点按普通节点单次执行。
    * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）= 旧行为。
    */
   loop: Option[LoopConfig] = None,
@@ -825,7 +830,13 @@ case class NodeDef(
    * 历史参照走 detail 按需通道补挂与归档留痕；FeedbackRouter 重入协议消费
    * 当下反馈（store 直读，不经载荷），零影响。
    */
-  blockedFeedback: Option[BlockedFeedback] = None,
+  /**
+   * Legacy-stock display field: structured report feedback of rows written while the
+   * blocked terminal existed. No engine write point remains (blocked is not producible);
+   * the field survives so stored legacy rows keep decoding and the detail/archive views
+   * can still render them.
+   */
+  blockedFeedback: Option[NodeReportFeedback] = None,
   createdAt: Long,
   startedAt: Option[Long] = None,
   completedAt: Option[Long] = None,
@@ -1016,8 +1027,8 @@ object NodeDef:
  *   - deps / plugins / merge：既有条件字段语义不变（merge 仅存量 merge 节点带 "merge":
  *     true——mount-enforce 批 payload 契约，缺失=非 merge；新建合并节点已被
  *     NodeEdit NODE_MERGE_UNSUPPORTED 拒，本键只服务存量图）；
- *   - blockedFeedback：**仅 status==blocked 携带**（20260907 上下文经济学批裁定②
- *     ——非 blocked 终态的历史残留不进默认载荷；历史参照走 detail 补挂/归档）。
+ *   - blockedFeedback：**仅 status==blocked 携带**（blocked 终态已退役——引擎不再
+ *     产生该状态，本键只服务存量图的 legacy 行展示；历史参照走 detail 补挂/归档）。
  *   - bgWait：**仅 bg-wait 自持的 running 节点携带**（僵尸收敛批 2026-09-06）。
  *   - reportPendingSince / reportReminderCount：**仅 status==running 且未申报计时
  *     已置携带**（noderpt 批 A 段 2026-09-11：已交棒但未 node_report 的节点——
@@ -1151,7 +1162,8 @@ object NodePayload:
       "in" -> node.in.asJson,
       "hasWorktree" -> node.worktree.isDefined.asJson,
       "worktree" -> node.worktree.asJson,
-      // blocked 反馈重入（设计 §4.1）：blockCount 恒带；blockedFeedback 仅 blocked 态才有结构化体
+      // blockCount 恒带（legacy 行仍持有轮次历史）；blockedFeedback 仅 legacy
+      // blocked 行才有结构化体
       "blockCount" -> node.blockCount.asJson,
       "createdAt" -> node.createdAt.asJson,
       "completedAt" -> node.completedAt.asJson,
@@ -1201,12 +1213,9 @@ object NodePayload:
             List("taskPreview" -> preview.asJson)
           }
           .getOrElse(Nil)
-    // blockedFeedback 条件序列化（观测面上下文经济学批 20260907 裁定②）：
-    // **仅 status==blocked 携带**——completed/failed/cancelled 的历史残留不进
-    // 默认载荷（NodeList/REST/WS 单一序列化点同源瘦身，实测 9 个非 blocked
-    // 节点曾泄漏 11.6KB，审计 §3.5）。历史参照：NodeList(detail=) 补挂 + 归档
-    // 留痕；FeedbackRouter 重入协议消费当下反馈（store 直读不经载荷），零影响。
-    // 入库侧封顶（detail 300 / suggestion 150）在 BlockedReader 单点。
+    // blockedFeedback 条件序列化（legacy 行展示面）：**仅 status==blocked 携带**——
+    // blocked 终态已退役，引擎不再产生该状态；本键只服务存量图 legacy 行的
+    // NodeList/REST/WS 展示。历史参照：NodeList(detail=) 补挂 + 归档留痕。
     val feedbackFields =
       if node.status == NodeLifecycle.Blocked then
         node.blockedFeedback.toList.map { bf =>
@@ -1530,11 +1539,6 @@ case class ProjectDef(
   description: Option[String] = None,
   workspace: String,
   agentFile: String,
-  /**
-   * blocked 反馈档位（设计 §7.1）：auto（默认，自动重入）| escalate-only（blocked 直接升级 Nebula）。
-   * 可选字段——存量 project.json 无此字段时反序列化默认 None → 挂载时取 auto。
-   */
-  feedbackMode: Option[String] = None,
   /**
    * 通知路由配置块（M4，b64 批 2026-09-13）：目前仅 `notify.quietMs`（静默/去抖窗口，
    * 缺省 5s、上界 60s，键名为对外冻结命名）。可选字段——存量 project.json 无此键时

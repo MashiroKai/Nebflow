@@ -13,7 +13,7 @@ import java.nio.file.Files
  *  - BoardCaller.fromContext 引擎侧身份派生（isDispatcher 优先 > flowNodeId > Other）；
  *  - §1d 权限矩阵逐格：
  *      分发器列：create 全量 / update 全板含结构字段 / close 全板 / list 全板；
- *      节点列：create ❌（FORBIDDEN+needs-split 出路）/ update 仅自己名下且仅
+ *      节点列：create ❌（FORBIDDEN+收尾报告拆活出路）/ update 仅自己名下且仅
  *      status+note（结构字段 title/assignee/nodeId/blocks 任一出现即拒）/
  *      close 仅自己名下 / list 全板只读；
  *      其他身份：四动作全拒（含 list——挂载面 + 工具内双保险的第二道）；
@@ -162,13 +162,14 @@ class TaskBoardToolSpec extends FunSuite:
 
   // ===== §1d 矩阵·节点列（受限）=====
 
-  test("node create 拒：TBOARD_FORBIDDEN + needs-split 出路指引（决策 b）"):
+  test("node create 拒：TBOARD_FORBIDDEN + 收尾报告拆活指引（决策 b；blocked 出口退役后出路 = 报告声明）"):
     resetFile()
     val r = n("n-a")("create", title = Some("偷建任务"))
     assert(r.isLeft)
     val msg = code(r).getOrElse("")
     assert(msg.contains(TaskBoardStore.Codes.Forbidden), msg)
-    assert(msg.contains("needs-split"), s"must point to the BLOCKED/needs-split escape hatch: $msg")
+    assert(msg.contains("needs splitting"), s"must point to the report-face split escape hatch: $msg")
+    assert(!msg.contains("BLOCKED"), s"BLOCKED 出口已退役，指引不得再指向它: $msg")
     assertEquals(store.entriesSync().size, 0)
 
   test("node update: 他人任务拒（FORBIDDEN）/ 自己任务 status+note 过"):

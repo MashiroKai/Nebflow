@@ -31,9 +31,6 @@ import scala.concurrent.duration.*
  *    out=null → 结果保留（接线后从活动/归档自动投递）；failed →
  *    ImmediateInput("[Node '<name>' failed]\n<err>")
  * 4. NodeCancel：运行中节点 → cancel 信号 → 停 agent + status=cancelled（不投递）
- * 5. blocked 终态（20260902 反馈重入设计 §1/§2）：completeNode 入口经 BlockedReader
- *    解析——最终输出以 BLOCKED 锚定 + JSON 体 → status=blocked（不结算下游）+
- *    FeedbackRouter 重入/升级路由；非 BLOCKED 开头 → completed 原路径无损降级
  *
  * 硬约束：不设运行超时（TaskStuckWatcher 10min 零活动兜底）；节点无 Mail 身份。
  */
@@ -46,8 +43,6 @@ class NodeEngine(
   val rootSessionId: String,
   /** 项目名：Node 完成通知蓝气泡 header 第二段（NODE · <项目名> · <节点名> · <状态>）。 */
   val projectName: String,
-  /** blocked 反馈档位（设计 §7.1）：auto（默认）| escalate-only。挂载时读 project.json。 */
-  val feedbackMode: String = FeedbackRouter.ModeAuto,
   /** WS 事件推送（type → payload 载体）。 */
   private[project] val emitEvent: (String, String, Json) => IO[Unit],
   /**
@@ -257,8 +252,8 @@ class NodeEngine(
    * suppression, no merging** ("two in a row ⇒ two events" is a hard criterion; this is
    * **deliberately different** from `enqueueRootNotify`'s merging semantics).
    *
-   * `kind` = the uplink class (`failed` / `completed` / `landing` / `reentry` / `escalate` /
-   * `cancelled` / `redelivery`). 🔴 **The landing/merge class must carry `landing`** (the
+   * `kind` = the uplink class (`failed` / `completed` / `landing` / `redelivery`).
+   * 🔴 **The landing/merge class must carry `landing`** (the
    * core of criterion 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`).
    *
    * 🔴 **U8 (`node_report`) is unaffected**: this gate only intercepts the **engine-side
@@ -295,23 +290,6 @@ class NodeEngine(
          else logger.warn(text)) *>
         IO.pure(false)
 
-  /**
-   * Name-resolving wrapper for the U5 uplink gate (implplan §10.4 U5 "the three escalate
-   * channels"): those three escalate seams only have the signature `(text, nodeName)` (the
-   * injection face of `FeedbackRouter` / `DispatchNotify`) ⇒ resolve the node by name first,
-   * then go through [[uplinkAllowed]] (**the same single-point gate**, no second criterion).
-   * Unresolvable (the node was pruned or renamed) ⇒ **allowed**: this gate targets "a node
-   * exists but has no attribution", not "the node cannot be found" (the latter is the
-   * existing chain's own alert face, which this gate does not take over).
-   */
-  private[project] def uplinkAllowedByName(nodeName: String, kind: String): IO[Boolean] =
-    if !uplinkFailClosedEnabled then IO.pure(true)
-    else
-      store.snapshot.map(_.nodes.values.find(_.name == nodeName)).flatMap {
-        case Some(n) => uplinkAllowed(n, kind)
-        case None => IO.pure(true)
-      }
-
   /** 完成门腿 1 生效值（每次判定现读；无在线翻转路由 ⇒ 生产侧改 prop 需重启宿主）。 */
   private[project] def bgGateHoldEnabled: Boolean =
     bgGateCompletionHold.getOrElse(nebflow.shared.Defaults.BgGateCompletionHold)
@@ -325,22 +303,16 @@ class NodeEngine(
     destroyWindowMs.getOrElse(nebflow.shared.Defaults.NodeDestroyWindowMs)
 
   /**
-   * blocked 反馈路由器（§2.2/§2.3）：档位决策 + 项目级频率保护 + 重入/升级执行。
-   * escalate 通道 = 本引擎的 [[enqueueRootNotify]]（eventType="blocked"，前端 label 自动 BLOCKED）；
-   * escalateFailed 通道 = 同型 [[enqueueRootNotify]]（eventType="failed"）——P2 RetryCap
-   * 升级专用（spec §2.3 G12：failed 终态真实显示，不冒充 BLOCKED）。
-   * ⚠ notifybatch 批（2026-09-18）：两条通道改走**打包入口**（决策②「异常类一并合并、
+   * Retry-cap escalation router（P2 RetryCap）：failed 节点自动回跳预算耗尽时的
+   * 升级通道。escalateFailed = 本引擎的 [[enqueueRootNotify]]（eventType="failed"）。
+   * ⚠ notifybatch 批（2026-09-18）：通道走**打包入口**（决策②「异常类一并合并、
    * 不单列」）——`nodeId=None`（fire-and-forget，不记账）语义逐字未变，只是投递节拍
    * 由 root 通道打包窗统一（单件场景文本逐字不变）。
    */
   private[project] val feedbackRouter: FeedbackRouter = new FeedbackRouter(
     projectName = projectName,
     workspace = workspace,
-    // Scoped chains report blockers to their owning delegate via the root channel.
-    // Legacy project reentry resolves a different dispatcher and must not be used here.
-    feedbackMode = if delegateScope then FeedbackRouter.ModeEscalateOnly else feedbackMode,
-    escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Blocked),
-    escalateFailed = Some((text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed))
+    escalateFailed = (text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed)
   )
 
   /**
@@ -356,7 +328,7 @@ class NodeEngine(
     workspace,
     projectName,
     rootSessionId,
-    // notice 语义（非 blocked）：预算耗尽时节点保持 completed，前端不可标 BLOCKED。
+    // notice 语义（监督通报，非终态改判）：预算耗尽时节点保持 completed。
     // notifybatch 批（2026-09-18）：改走 root 打包入口（异常/监督通报同窗打包，决策②）。
     escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, DispatchNotify.NoticeEventType),
     emitUpdated = emitUpdated,
@@ -701,7 +673,7 @@ class NodeEngine(
   //
   // LoopNode 语义（作者 13 条红线，主设计 §2）：
   //  - worker/verify 双会话**贯穿节点存续期**（裁定 B 2026-09-03 00:59）：首轮 spawn、
-  //    跨轮同会话注入续跑、终态（PASS 投递 /failed/cancelled/blocked）双会话一并销毁。
+  //    跨轮同会话注入续跑、终态（PASS 投递 /failed/cancelled）双会话一并销毁。
   //  - worker 会话生产 → verify 会话校验：PASS → completeNode（投递 worker 最终产出
   //    原文，§2.2 裁定建议）。FAIL → 打回 worker（输入恒定，同会话注入返工模板二）
   //    重跑；达 maxRounds(K) 仍未 PASS → 终态（failNode，§2.5 轮级兜底）。
@@ -710,8 +682,6 @@ class NodeEngine(
   //  - LoopGuard（turn 级，会话内既有防线）与 maxRounds（轮级）两轴独立：worker/verify
   //    会话内部 LoopGuard R-text 精确重复 → 会话 L1 终止 → 以执行层 failed 形态上浮 →
   //    整 Loop failed；轮级由 runLoopNode 的 maxRounds 兜底（本方法）。
-  //  - blocked 分流：worker/verify 产出命中 BlockedReader 锚定 → Loop 级 blockedNode
-  //    （§2.7：FAIL=产出质量问题内部迭代消化；BLOCKED=任务/拓扑问题传播停止+重入）。
   //
   // 关键：本方法只编排**已 spawn 的** worker/verify 双会话（spawnAndRunLoop 负责
   // 翻转+spawn+插件/MCP）；终态会话销毁在 spawnAndRunLoop 的 guarantee 内。
@@ -990,7 +960,7 @@ class NodeEngine(
    *    failed 重激活同字段族）；R2 纪律——事务内现读 fresh 仍 failed 才写。
    * ② retry.upstream 重激活（仅终态上游——wiring/pending/running 的上游已有在途
    *    重跑，不干预不双跑）。
-   * ③ 本节点其余 in 上游（终态有结果、非 blocked）重投（NodeEdit 重激活补投同款，
+   * ③ 本节点其余 in 上游（终态有结果）重投（NodeEdit 重激活补投同款，
    *    deliverOutTo dedup 幂等）——否则清账后 barrier 永不归零。
    * ④ fork：上游补投+启动（入口上游直接启动）——上游重跑完成经 pass 边重投本节点
    *    （settleTo 记账归零 barrier → 启动），deps 邻居场景经 settleDeps 触达 →
@@ -1043,10 +1013,9 @@ class NodeEngine(
             } *>
             b.in.filterNot(_ == policy.upstream).traverse_ { upId =>
               store.findNode(upId).flatMap {
-                case Some(up)
-                    if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(
-                      up.status
-                    ) =>
+                // Terminal（completed/failed/cancelled）有结果即重投；blocked 已退役，
+                // 不在 Terminal 集（legacy blocked 行天然不命中）。
+                case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
                   deliverOutTo(up, b.id, up.result.get)
                 case _ => IO.unit
               }
@@ -1071,7 +1040,7 @@ class NodeEngine(
    * **R4 输入域（cancelsem 批 1）**：本方法的唯一生产调用方 = [[retryReactivate]] 的
    * retry.upstream 腿，而「**用户主动取消**」的上游已在 [[retryOrNotify]] 被整腿抑制
    * ⇒ 本方法的输入域**不含** user-cancel 节点（判据单点 [[CancelSource.isUserCancelled]]）；
-   * 引擎发起取消（Cancelled ∧ source=engine/不可判定）与 completed/failed/blocked 照旧
+   * 引擎发起取消（Cancelled ∧ source=engine/不可判定）与 completed/failed 照旧
    * 入域——「某轨是否可以重新武装」的裁决点只有一个（retryOrNotify），本方法只做写。
    */
   private def reactivateForRetry(up: NodeDef, now: Long): IO[Unit] =
@@ -1111,16 +1080,15 @@ class NodeEngine(
 
   /**
    * 重激活补投递 + 启动（NodeTools 重激活链同款骨架，引擎内单点）：全部 in 上游
-   * 「终态有结果、非 blocked」重投（deliverOutTo dedup 幂等）→ barrier 归零启动；
+   * 「终态有结果」重投（deliverOutTo dedup 幂等）→ barrier 归零启动；
    * 入口节点（无 in、Pending）直接启动。
    */
   private def redeliverInAndStart(n: NodeDef): IO[Unit] =
     n.in.traverse_ { upId =>
       store.findNode(upId).flatMap {
-        case Some(up)
-            if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(
-              up.status
-            ) =>
+        // Terminal（completed/failed/cancelled）有结果即重投；blocked 已退役，
+        // 不在 Terminal 集（legacy blocked 行天然不命中）。
+        case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
           deliverOutTo(up, n.id, up.result.get)
         case _ => IO.unit
       }
@@ -1629,8 +1597,6 @@ object NodeEngine:
   def stuckResumeNote(anchor: Option[RecoveryAnchor]): String = NodeEngineContract.stuckResumeNote(anchor)
 
   private[project] def a3UnavailableNote(dir: String): String = NodeEngineContract.a3UnavailableNote(dir)
-
-  val MaxBlockRoundsPerNode: Int = NodeEngineContract.MaxBlockRoundsPerNode
 
   val ProtocolFootnote: String = NodeEngineContract.ProtocolFootnote
 

@@ -188,9 +188,10 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
       _ <- seedStatuses(rt)
       ctx = mkCtx(res, system, ws.toString)
       single <- listCall("nsf-f2", ctx, "status" -> Json.fromString("completed"))
-      csv <- listCall("nsf-f2", ctx, "status" -> Json.fromString("failed,blocked"))
+      csv <- listCall("nsf-f2", ctx, "status" -> Json.fromString("completed,failed"))
       arr <- listCall("nsf-f2", ctx, "status" -> Json.arr(Json.fromString("wiring"), Json.fromString("pending")))
       none <- listCall("nsf-f2", ctx, "status" -> Json.fromString("running"))
+      retired <- listCall("nsf-f2", ctx, "status" -> Json.fromString("blocked"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(
@@ -200,11 +201,16 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
       )
       assertEquals(
         statusOf(parseOk(csv)).toSet,
-        Set(NodeLifecycle.Failed, NodeLifecycle.Blocked),
+        Set(NodeLifecycle.Completed, NodeLifecycle.Failed),
         "comma-separated multi-filter"
       )
       assertEquals(statusOf(parseOk(arr)).toSet, Set(NodeLifecycle.Wiring, NodeLifecycle.Pending), "array multi-filter")
       assertEquals(statusOf(parseOk(none)), Nil, "no matching status → empty nodes array (still valid payload)")
+      // blocked 终态退役：retired token 不再是合法过滤值（legacy 行仅经无过滤全量可见）
+      assert(
+        retired.isLeft && retired.left.toOption.exists(_.message.contains("blocked")),
+        "retired blocked token must be rejected as a filter value"
+      )
       // meta 与 worktrees 仍在（载荷骨架不因过滤缺席）
       assertEquals(parseOk(none).hcursor.downField("meta").get[String]("project").toOption, Some("nsf-f2"))
     end for
@@ -228,9 +234,10 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
       assert(bad.isLeft, "unknown status must be rejected")
       val msg = bad.left.toOption.map(_.message).getOrElse("")
       assert(
-        msg.contains("done") && msg.contains(NodeLifecycle.Blocked) && msg.contains(NodeLifecycle.Pending),
+        msg.contains("done") && msg.contains(NodeLifecycle.Pending),
         s"error must name the bad value + list valid enums, got: $msg"
       )
+      assert(!msg.contains(NodeLifecycle.Blocked), "retired token must not appear in the legal-enum listing")
       assert(badArr.isLeft, "array containing an invalid value must be rejected wholesale")
       // 空串/null → 宽容归一为全量（不炸、不空列表）
       assertEquals(statusOf(parseOk(blank)).size, 6, "blank string degrades to full listing")

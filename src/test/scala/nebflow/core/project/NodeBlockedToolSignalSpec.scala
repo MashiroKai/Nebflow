@@ -27,16 +27,13 @@ import nebflow.shared.{
 import scala.concurrent.duration.*
 
 /**
- * blocked 结构化信号（node_report 工具）集成回归（20260909 spec §9.2/§9.3，
- * 真实引擎路径驱动，NodeBlockedReentrySpec 同款基建；同日作者裁定泛化 NodeReport
- * 统一三语义——blocked 重放全保留 + pass/fail 主动申报集成例）：
- * - 工具申报 → 会话完成时点 drain → blockedNode 终态化（结构化信号优先）：
- *   status/blockedFeedback/blockCount=1/ttlExpireAt=None + result=渲染串头部+全文
- *   拼接 + 不结算下游 + nodeUpdated/blocked 审计（FeedbackRouter 消费面不变）
+ * node_report 结构化申报集成回归（真实引擎路径驱动；blocked 终态退役后的语义面）：
+ * - **blocked 申报在工具入参层即拒**（NODE_REPORT_CATEGORY），登记表零残留——
+ *   引擎侧不存在 blocked 终态写点，申报不可能驱动 blocked 终态；
  * - pass 申报 → 既有 completed 链（blockedFeedback 零落库、result 原文、下游结算）
- * - fail 申报 → 既有 failed 链（result=渲染串、零 deliverOut 结算）
- * - 误判回归：正文恰含 BLOCKED 字样、未调工具 → completed 不变（结构性免疫，
- *   spec §6 第一行）
+ * - fail 申报 → 既有 completed 链 + fail 边选通（verdict ≠ 节点状态）
+ * - finish 申报 → 既有 completed 链
+ * - 误判回归：正文恰含 BLOCKED 字样、未调工具 → completed 不变
  * - 收尾报告后申报残留：cancelled 路径不消费（cleanupRunTables remove 对称清理，
  *   幂等不残留）
  */
@@ -96,9 +93,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       // verdict 面（pass/fail）与 finish 面的回执改为 `[OK] verdict recorded (<cat>)`
       // / `[OK] node report (finish) recorded`。回执文本变了 ⇒ 本探测串同步（否则
       // stub 认不出申报已被登记 ⇒ 重发同一工具调用 ⇒ LoopGuard 8 连击冻结会话）。
-      if nebflow.core.tools.NodeReportToolDef.isBlockedSemantics(category)
-      then "[OK] blocked declaration recorded"
-      else if nebflow.core.tools.NodeReportToolDef.isFinish(category)
+      if nebflow.core.tools.NodeReportToolDef.isFinish(category)
       then s"[OK] node report ($category) recorded"
       else s"[OK] verdict recorded ($category)"
 
@@ -243,104 +238,33 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  // ── 工具申报 → blocked 终态（spec §9.2 核心重放面：6 例申报形态被工具通道归一）──
+  // ── blocked 申报入参层即拒：登记表零残留（引擎无 blocked 终态写点）──
 
   test(
-    "tool declaration: node_report call drives blocked terminal (feedback/count/ttl/result head+full text), no text anchor needed, downstream NOT settled"
+    "blocked declaration is rejected at the tool layer (NODE_REPORT_CATEGORY) and never reaches the registry"
   ) {
-    val ws = tempRoot / "ws-tool-blocked"
+    val ws = tempRoot / "ws-tool-blocked-rejected"
     os.makeDir.all(ws)
-    val system = ActorSystem(s"bts-tool-${scala.util.Random.nextInt(100000)}")
-    val closing = "合作方接口不可用，已按协议申报受阻。本节点收尾。"
-    val llm = new ToolCallLlm(
-      category = "external-dependency",
-      detail = "等待外部 API 恢复",
-      suggestion = "API 恢复后重派",
-      closing = closing
+    val ctx = ToolContext(
+      projectRoot = ws.toString,
+      sessionId = Some("node-blk-sid"),
+      flowNodeId = Some("n-blk"),
+      rootSessionId = Some("nebula-root")
     )
     for
-      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
-      (rt, events) <- mountEngineOnly("bts-tool", ws, system, res)
-      ctx = mkCtx(res, system, ws.toString)
-      // 下游 wiring（blocked 零结算断言面；store 直种——20260903 out 规范下
-      // wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s =>
-        s.copy(nodes =
-          s.nodes ++ Map(
-            "n-down-d" -> NodeDef(
-              id = "n-down-d",
-              name = "down-d",
-              agent = "test-agent",
-              status = NodeLifecycle.Wiring,
-              out = List(OutEdge.root),
-              createdAt = System.currentTimeMillis()
-            )
-          )
-        )
-      )
-      _ <- nodeEdit(
-        nodeInput(
-          "bts-tool",
-          "tool-blocked-a",
-          "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("will-block-tool-A"),
-          "out" -> Json.fromString("Nebula")
+      r <- nebflow.core.tools.NodeReportToolDef.call(
+        JsonObject(
+          "category" -> Json.fromString("blocked"),
+          "detail" -> Json.fromString("上游未完成"),
+          "suggestion" -> Json.fromString("等上游")
         ),
         ctx
       )
-      _ <- waitStatus(rt, "tool-blocked-a", Set(NodeLifecycle.Blocked))
-      aId <- idOf(rt, "tool-blocked-a")
-      a <- nodeById(rt, aId)
-      // 同步点（S1 组负载敏红修复 · round 2 同族收口）：WS 事件与审计行都**晚于** store
-      // 终态落盘 —— 原形态是「先读一次、settle 落在读之后」，同步点为 0（负载下读到空集：
-      // 实测红 `blocked must emit nodeUpdated`，见 round 1 判词 D-2）。改为**有界等它到**；
-      // 下面三条断言本体逐字不变（等不到 ⇒ 仍然红，不掩盖）。
-      // 等待条件必须与断言**逐字同形**（含 status=blocked 判据）：节点生命周期会先后发多条
-      // nodeUpdated（Running → Blocked），只等「任一 nodeUpdated」会在 Running 那条上立即返回
-      // ⇒ 读到的快照仍缺 Blocked 那条（实测红：:293 断言）。等它到 ⇒ 断言本体逐字不变。
-      _ <- waitUntil(10.seconds)(
-        events.get.map(
-          _.exists((t, id, p) =>
-            t == "nodeUpdated" && id == aId &&
-              p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)
-          )
-        )
-      )
-      evs <- events.get
-      _ <- waitUntil(10.seconds)(
-        readAuditTypes(ws).map(_.exists((t, id) => t == "blocked" && id == aId))
-      )
-      audit <- readAuditTypes(ws)
-      _ <- IO.sleep(300.millis)
-      dAfter <- rt.store.snapshot.map(_.nodes.values.find(_.name == "down-d")).map(_.getOrElse(fail("D must exist")))
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      drained <- NodeReportRegistry.drain("node-blk-sid")
     yield
-      // 终态形态（blockedNode 四动作不变，spec §9.2）
-      assertEquals(a.status, NodeLifecycle.Blocked, "tool declaration must terminalize blocked")
-      assertEquals(a.blockedFeedback, Some(BlockedFeedback("external-dependency", "等待外部 API 恢复", "API 恢复后重派")))
-      assertEquals(a.blockCount, 1)
-      assertEquals(a.ttlExpireAt, None, "blocked never expires (待办语义)")
-      // result = 渲染串头部 + 收尾全文拼接（spec §5.2 #6）
-      assert(
-        a.result.exists(_.startsWith("[blocked:external-dependency]")),
-        s"result head must be render string, got: ${a.result}"
-      )
-      assert(a.result.exists(_.contains(closing)), s"result must carry the full closing report, got: ${a.result}")
-      // 收尾文本不含裸 BLOCKED 锚定 → 文本降级面未参与，blocked 纯由工具驱动
-      assert(!closing.trim.startsWith("BLOCKED"), "closing text must NOT carry the text anchor (tool-driven proof)")
-      // 不结算下游
-      assertEquals(dAfter.status, NodeLifecycle.Wiring, "downstream must NOT be settled by blocked")
-      assertEquals(dAfter.deliveredTo, Nil)
-      // WS + 审计（既有消费面不变）
-      assert(
-        evs.exists((t, id, p) =>
-          t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)
-        ),
-        "blocked must emit nodeUpdated"
-      )
-      assert(!evs.exists((t, id, _) => t == "nodeCompleted" && id == aId), "blocked must NOT emit nodeCompleted")
-      assert(audit.exists((t, id) => t == "blocked" && id == aId), s"blocked audit line must exist, got: $audit")
-    end for
+      assert(r.isLeft, s"blocked must not be a reportable category, got: $r")
+      assert(r.left.exists(_.message.contains("NODE_REPORT_CATEGORY")), s"error must carry the code, got: $r")
+      assertEquals(drained, None, "a rejected declaration must never be registered (no blocked write point downstream)")
   }
 
   // ── 误判回归（spec §9.3 第一行）：正文含 BLOCKED 字样、未调工具 → completed ──
@@ -387,7 +311,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     for
       // #239② 面①：register 增加持久化归属（workspace/project/nodeId）——本用例的语义
       // 断言（remove → drain=None）逐字不变，只是登记点现在同步落一份日志（同一 ws）。
-      _ <- NodeReportRegistry.register(ws.toString, "spec", "n-sweep", sid, BlockedFeedback("other", "残留申报", ""))
+      _ <- NodeReportRegistry.register(ws.toString, "spec", "n-sweep", sid, NodeReportFeedback("other", "残留申报", ""))
       _ <- NodeReportRegistry.remove(sid)
       drained <- NodeReportRegistry.drain(sid)
       _ <- NodeReportRegistry.remove(sid) // 幂等二次

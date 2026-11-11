@@ -137,7 +137,6 @@ class RootDeliveryRedeliverySpec extends FunSuite:
           ws.toString,
           rootSid,
           "v8proj",
-          FeedbackRouter.ModeAuto,
           (_, _, _) => IO.unit,
           // 打包窗口在**源头**关闭：注入 trigger 接缝 ⇒ `DispatchNotify.forEngine` 令
           // `windowMs = 0`（同步逐条 flush；不再派生 `IO.sleep(windowMs) *> flushBatch`
@@ -464,20 +463,19 @@ class RootDeliveryRedeliverySpec extends FunSuite:
     }
   }
 
-  test("blocked feedback is emitted only by the running-to-blocked transition winner") {
-    withFixture("blocked-duplicate") { (store, engine, _, _, _, _, _) =>
-      val node = completedNode("n-block", NodeLifecycle.Running, "")
-      val feedback = BlockedFeedback("other", "needs input", "ask dispatcher")
+  test("failed terminalization is written only by the running-to-failed transition winner") {
+    withFixture("failed-duplicate") { (store, engine, _, _, _, _, _) =>
+      val node = completedNode("n-fail", NodeLifecycle.Running, "")
       val io = for
         _ <- store.mutate(s => s.copy(nodes = Map(node.id -> node)))
-        first <- engine.blockedNodeR(node.id, feedback)
-        duplicate <- engine.blockedNodeR(node.id, feedback)
+        first <- engine.failNodeR(node.id, "needs input (single-writer probe)")
+        duplicate <- engine.failNodeR(node.id, "needs input (single-writer probe)")
         saved <- store.getNode(node.id)
       yield (first, duplicate, saved)
       val (first, duplicate, saved) = io.unsafeRunSync()
       assert(first)
       assert(!duplicate)
-      assertEquals(saved.map(_.blockCount), Some(1))
+      assertEquals(saved.map(_.status), Some(NodeLifecycle.Failed))
     }
   }
 
@@ -502,24 +500,21 @@ class RootDeliveryRedeliverySpec extends FunSuite:
     }
   }
 
-  test("scoped blocked feedback returns to the owning delegate instead of project dispatcher reentry") {
-    withFixture("scoped-blocked", delegateScope = true) { (store, engine, resources, _, recorded, rootSid, rootRef) =>
-      val node = completedNode("n-scoped-block", NodeLifecycle.Running, "")
-      val feedback = BlockedFeedback("other", "scope-specific blocker", "owner must handle")
+  test("scoped failed notification returns to the owning delegate's root channel") {
+    withFixture("scoped-failed", delegateScope = true) { (store, engine, resources, _, recorded, rootSid, rootRef) =>
+      val node = completedNode("n-scoped-fail", NodeLifecycle.Running, "")
       val io = for
         _ <- registerRoot(resources, rootSid, rootRef)
         _ <- store.mutate(s => s.copy(nodes = Map(node.id -> node)))
-        first <- engine.blockedNodeR(node.id, feedback)
-        duplicate <- engine.blockedNodeR(node.id, feedback)
+        first <- engine.failNodeR(node.id, "scope-specific failure")
         _ <- engine.flushRootNotify()
         msgs <- awaitImms(recorded, min = 1)
-      yield (first, duplicate, msgs)
-      val (first, duplicate, msgs) = io.unsafeRunSync()
+      yield (first, msgs)
+      val (first, msgs) = io.unsafeRunSync()
       assert(first)
-      assert(!duplicate)
       val imms = msgs.collect { case m: AgentCommand.ImmediateInput => m }
       assertEquals(imms.size, 1)
-      assert(imms.head.text.contains("scope-specific blocker"))
+      assert(imms.head.text.contains("scope-specific failure"))
     }
   }
 

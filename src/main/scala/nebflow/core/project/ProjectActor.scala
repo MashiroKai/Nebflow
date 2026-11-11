@@ -20,7 +20,7 @@ import scala.concurrent.duration.*
  * 1. TriggerDispatcher → 分发器单例化（2026-09-02 作者裁定）：项目已有活跃
  *    分发器会话 → 任务文本注入现有会话（turn 边界串行消费）；无 → spawn 新
  *    分发器会话（单次会话 agent，fresh session：任务文本注入；无回报——拓扑/
- *    状态已落 Flow Map）。ReenterDispatcher（blocked 重入）同规。
+ *    状态已落 Flow Map）。AskAnswerReentry（答案重入）同规。
  *    观测面上下文经济学批（20260907 裁定①方向 B）：spawn/重入 prompt 不再嵌
  *    Flow Map 水合快照（旧实现首条消息直灌 snapshot.asJson，nebflow 规模
  *    ≈1,055KB → spawn 即超压缩阈值）——拓扑由分发器首轮 NodeList 按需拉取
@@ -31,7 +31,7 @@ import scala.concurrent.duration.*
  *
  * 无 Mail 身份（自身不是 agent）；Mail(→project) 触发路由已拆除
  * （project-trigger 拆除批 2026-10-18：Mail = 纯通信原语，对本 actor 零触发面；
- * 现存触发方 = DispatchNotify 回流 / boot 崩溃恢复与唤醒 / blocked 重入）。
+ * 现存触发方 = DispatchNotify 回流 / boot 崩溃恢复与唤醒 / AskUser 答案重入）。
  */
 
 /** Project 运行时（工具/REST 层直接操作 store/engine 的入口）。 */
@@ -232,8 +232,6 @@ object ProjectRuntimeRegistry:
           workspace,
           rootSessionId,
           project.name,
-          // blocked 反馈档位（§7.1）：project.json 可选字段 feedbackMode，缺省 auto
-          project.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
           emitNodeEvent(project.name, wsSend),
           // TaskBoard 批 2（§3a）：节点 buildInput 头部板块数据源——板 store
           // + 项目目标行（ProjectDef.description，None 则目标行省略）。
@@ -504,20 +502,12 @@ object ProjectActor:
     )
 
     /**
-     * blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
-     * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。
-     */
-    case ReenterDispatcher(nodeId: String, feedback: BlockedFeedback, blockCount: Int)
-
-    /**
      * AskUser 社交腿答案重入（answer-landing 实施批 2026-10-21）——
-     * `AskAnswerLanding` 臂1（会话亡＋归因在＋项目宿主在）的引擎入口，
-     * **ReenterDispatcher 同族管线**：按节点所属任务槽注入活跃分发器 / spawn 新
-     * 分发器会话，答案文本作为「对该节点问题的直接回答」随重入 prompt 交付，
-     * 由分发器把答案折进节点任务后 NodeEdit 重激活（开放问题 #5 采纳 5b）。
-     * 与 ReenterDispatcher 的差别只在 prompt 语义（用户答复 ≠ blocked 反馈）；
-     * 槽位路由/活性前置校验/并发帽闸逐字同构。审计在发送侧
-     * （AskAnswerLanding `answer-retry`）。
+     * `AskAnswerLanding` 臂1（会话亡＋归因在＋项目宿主在）的引擎入口：
+     * 按节点所属任务槽注入活跃分发器 / spawn 新分发器会话，答案文本作为
+     * 「对该节点问题的直接回答」随重入 prompt 交付，由分发器把答案折进节点任务
+     * 后 NodeEdit 重激活（开放问题 #5 采纳 5b）。槽位路由/活性前置校验/并发帽闸
+     * 与新任务派发逐字同构。审计在发送侧（AskAnswerLanding `answer-retry`）。
      */
     case AskAnswerReentry(nodeId: String, requestId: String, answerText: String)
 
@@ -594,7 +584,7 @@ object ProjectActor:
      * 空闲的墙钟时刻（ms）」。`None` = 有件在飞（`pendingInjected > 0`，不必计）。
      * 置位点 = 桥 `Completed` 分支裁决 `remaining == 0` 的那一瞬（**计时起点 =
      * 上一次派发的 turn 终态**，非会话创建）；清零点 = `dispatchTask` /
-     * `dispatchReentry` 的注入命中分支（新任务到达 ⇒ 重置计时）。到期扫描
+     * `dispatchAnswerReentry` 的注入命中分支（新任务到达 ⇒ 重置计时）。到期扫描
      * [[ProjectActor.sweepIdleDispatchers]] 挂在既有 30 s `TtlTick` 上。
      * 不持久化（设计 R6-(a)）：宿主重启后与今天一致（新 spawn）。
      */
@@ -629,7 +619,7 @@ object ProjectActor:
     ttlCheckIntervalSec: Int = 30,
     /**
      * 项目任务板（TaskBoard 批 2 §3a）：分发器 spawn 注入（newTaskPrompt/
-     * reentryPrompt）数据源；None = 无板（注入整块省略）。mount 构造时传入。
+     * answerReentryPrompt）数据源；None = 无板（注入整块省略）。mount 构造时传入。
      */
     board: Option[TaskBoardStore] = None,
     /**
@@ -676,7 +666,7 @@ object ProjectActor:
   def apply(cfg: ProjectConfig): Behavior[ProjectCommand] =
     // 单例化裁定（2026-09-02）：每项目同时至多一个活跃分发器会话。会话登记在
     // activeRef（spawn 置位、观察桥终态清除）；TriggerDispatcher /
-    // ReenterDispatcher 到达时经 active.modify 原子 check-and-inject——有活跃
+    // AskAnswerReentry 到达时经 active.modify 原子 check-and-inject——有活跃
     // 会话 → 注入排队（turn 边界消费），无 → spawn。check-then-spawn 在本单
     // actor 内串行化（LocalActorRef 逐条处理，上一条 handler IO 跑完才取下一
     // 条）+ modify 原子占位，双 spawn 竞态关闭。
@@ -704,13 +694,6 @@ object ProjectActor:
                   dispatchTask(cfg, active, behavior, taskText, rootSessionId, source, attribution, taskId, revive)
                 case Left(reason) =>
                   logger.warn(s"[hot-restart] dispatcher trigger refused during draining: $reason").as(behavior)
-              }
-            case ProjectCommand.ReenterDispatcher(nodeId, feedback, blockCount) =>
-              nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
-                case Right(()) =>
-                  dispatchReentry(cfg, active, behavior, nodeId, feedback, blockCount, cfg.rootSessionId)
-                case Left(reason) =>
-                  logger.warn(s"[hot-restart] dispatcher reentry refused during draining: $reason").as(behavior)
               }
             case ProjectCommand.AskAnswerReentry(nodeId, requestId, answerText) =>
               nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
@@ -1029,8 +1012,8 @@ object ProjectActor:
    * 头部+统计（三态渲染单点在 ProjectMemory.injectionBlock）。文件缺失/空 →
    * ""（调用方不注空段）。
    * 注入语义=「派发项目任务 → 该项目记忆自动注入」：只挂 spawn 形态两 prompt
-   * （newTaskPrompt/reentryPrompt）；注入活跃会话形态（taskInjectionText/
-   * reentryInjectionText）不重复注入——会话 spawn 时已带当次记忆快照，turn
+   * （newTaskPrompt/answerReentryPrompt）；注入活跃会话形态（taskInjectionText/
+   * answerReentryInjectionText）不重复注入——会话 spawn 时已带当次记忆快照，turn
    * 边界间的增量由 NodeList 现读与节点 out 结果承接（最小改动纪律）。
    * 全局注入（ContextRefresher）不含项目记忆——瘦身边界（§3 默认注入只含全局）。
    *
@@ -1101,45 +1084,17 @@ object ProjectActor:
        |Read the Flow Map first (NodeList — topology and node status on demand), then create / wire / rewire nodes with NodeEdit as needed. Every Node tool call carries project=${project.name}. No report needed — topology and status live in the Flow Map.""".stripMargin
 
   /**
-   * 重入协议四动作块（reentryPrompt 与 reentryInjectionText 共用，单点维护；
-   * 设计 §2.2 原文照抄——四动作选择/abandon 说明/「无需回报」）。
+   * 重入协议四动作块（answerReentryPrompt 与 answerReentryInjectionText 共用，
+   * 单点维护；四动作选择/abandon 说明/「无需回报」）。
    */
   private def reentryActions(project: ProjectDef): String =
-    s"""Read the current state first (NodeList — focus on blocked nodes and their pending downstreams),
+    s"""Read the current state first (NodeList — focus on stuck nodes and their pending downstreams),
        |then pick and execute one action (NodeEdit / NodeCancel):
        |1. Task fixable → NodeEdit the node (task/agent/in/out) to reactivate it (blockCount +1 automatically);
        |2. Task should be split → create a replacement subgraph, mark the old node with NodeEdit abandon=true;
        |3. Agent mismatch → rebuild with a different agent;
        |4. External condition needed / no materially different adjustment available → abandon and do not re-dispatch (avoid a futile loop).
        |Every Node tool call carries project=${project.name}. No report needed — topology and status live in the Flow Map.""".stripMargin
-
-  /**
-   * 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
-   * 含节点名/id/blockCount/反馈三字段/四动作选择/abandon 说明/「无需回报」）。
-   * 裁定①（20260907 方向 B）：快照注入移除，同 newTaskPrompt——四动作块自带
-   * 「先 NodeList 读现状」。private[project] 供 spec 固化断言。
-   * TaskBoard 批 2（§3a）：taskBoard 注入块同 newTaskPrompt——拼装在项目记忆
-   * 之后、四动作块之前（任务板在任务文本之前语义的重入对应位）。
-   */
-  private[project] def reentryPrompt(
-    project: ProjectDef,
-    node: NodeDef,
-    feedback: BlockedFeedback,
-    blockCount: Int,
-    pluginCatalog: String,
-    projectMemory: String,
-    taskBoard: String = ""
-  ): String =
-    s"""You are the task dispatcher for project "${project.name}" — this round is a [node-feedback re-entry], not a new task.
-       |
-       |Node ${node.name} (${node.id}) reported blocked (round $blockCount):
-       |  category: ${feedback.category}
-       |  detail: ${feedback.detail}
-       |  topology suggestion: ${feedback.suggestion}
-       |
-       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${
-        if projectMemory.nonEmpty then projectMemory + "\n" else ""
-      }${if taskBoard.nonEmpty then taskBoard + "\n" else ""}${reentryActions(project)}""".stripMargin
 
   /**
    * 注入现有会话的新任务文本（单例化裁定：标注「新任务到达」来源；与进行中
@@ -1150,29 +1105,13 @@ object ProjectActor:
        |
        |$taskText""".stripMargin
 
-  /** 注入现有会话的重入调整文本（单例化裁定 × §2.2 修订：重入优先投活跃会话）。 */
-  private def reentryInjectionText(
-    project: ProjectDef,
-    node: NodeDef,
-    feedback: BlockedFeedback,
-    blockCount: Int
-  ): String =
-    s"""── Node-feedback re-entry (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──
-       |
-       |Node ${node.name} (${node.id}) reported blocked (round $blockCount):
-       |  category: ${feedback.category}
-       |  detail: ${feedback.detail}
-       |  topology suggestion: ${feedback.suggestion}
-       |
-       |${reentryActions(project)}""".stripMargin
-
   // ─────── answer-landing 实施批（2026-10-21）：AskUser 答案重入形态 ───────
-  // 与 blocked 重入同族不同语义：载荷是「用户对该节点问题的直接答复」（社交腿
-  // 回注），交付动作 = 分发器把答案折进节点任务后 NodeEdit 重激活（开放问题 #5
-  // 采纳 5b——答案随 task 重读进入节点，归因最清晰）。文案纪律：动作块复用
-  // [[reentryActions]]（四动作选择同源），仅问题陈述段换为答案语义。
+  // 载荷 = 「用户对该节点问题的直接答复」（社交腿回注），交付动作 = 分发器把
+  // 答案折进节点任务后 NodeEdit 重激活（开放问题 #5 采纳 5b——答案随 task 重读
+  // 进入节点，归因最清晰）。文案纪律：动作块复用 [[reentryActions]]（四动作
+  // 选择同源），仅问题陈述段换为答案语义。
 
-  /** 答案重入 spawn prompt（与 [[reentryPrompt]] 同形态：目录/记忆/板块 + 答案段 + 四动作块）。 */
+  /** 答案重入 spawn prompt（目录/记忆/板块 + 答案段 + 四动作块）。 */
   private[project] def answerReentryPrompt(
     project: ProjectDef,
     node: NodeDef,
@@ -1195,7 +1134,7 @@ object ProjectActor:
         if projectMemory.nonEmpty then projectMemory + "\n" else ""
       }${if taskBoard.nonEmpty then taskBoard + "\n" else ""}${reentryActions(project)}""".stripMargin
 
-  /** 答案重入注入现有会话的文本（与 [[reentryInjectionText]] 同形态）。 */
+  /** 答案重入注入现有会话的文本。 */
   private def answerReentryInjectionText(
     project: ProjectDef,
     node: NodeDef,
@@ -1214,8 +1153,8 @@ object ProjectActor:
        |${reentryActions(project)}""".stripMargin
 
   /**
-   * 答案重入的 pendingTaskTexts 全文（桥拆除裁决队列的记账面；与
-   * [[reentryTaskText]] 同位——摘要投递已随 R7-b 删除，本队列仅用于拆除裁决）。
+   * 答案重入的 pendingTaskTexts 全文（桥拆除裁决队列的记账面——摘要投递已随
+   * R7-b 删除，本队列仅用于拆除裁决）。
    */
   private def answerReentryTaskText(node: NodeDef, requestId: String, answerText: String): String =
     s"[ask-answer re-entry] node ${node.name} (${node.id}) requestId=$requestId — fold the user's answer into the node task and reactivate:\n${answerText.take(400)}"
@@ -1534,107 +1473,13 @@ object ProjectActor:
 
   end dispatchTask
 
-  private def dispatchReentry(
-    cfg: ProjectConfig,
-    active: Ref[IO, Map[String, ActiveDispatcher]],
-    same: Behavior[ProjectCommand],
-    nodeId: String,
-    feedback: BlockedFeedback,
-    blockCount: Int,
-    rootSessionId: String
-  ): IO[Behavior[ProjectCommand]] =
-    cfg.engine.store.getNode(nodeId).flatMap {
-      case None =>
-        logger.warn(s"Project '${cfg.project.name}' reentry skipped — node '$nodeId' not found").as(same)
-      case Some(node) =>
-        // 裁定①（20260907 方向 B）：重入 spawn 同样不嵌快照（reentryActions 自带先 NodeList）
-        // mailmodel batch (2026-09-25): the reentry target slot = the slot of the task
-        // the node belongs to (`node.taskId` -> [[slotKey]]) - in the multi-task model,
-        // task A's blocked reentry is never injected into task B's session. A node with
-        // no fingerprint (legacy stock) lands in the transition's None slot (semantics =
-        // the old singleton's "inject if present" narrowed to the unnumbered slot; if
-        // absent, spawn an unnumbered session, same as the old spawn leg).
-        def spawnFresh: IO[Behavior[ProjectCommand]] =
-          // Concurrency cap gate (taskunify merge batch · design §4d): same single point as dispatchTask.
-          underConcurrencyCap(cfg).flatMap {
-            case false => refuseSpawnOnCap(cfg, s"reentry spawn (node ${node.id}, round $blockCount)").as(same)
-            case true =>
-              pluginCatalogText().flatMap { catalog =>
-                projectMemoryText(cfg.project).flatMap { memory =>
-                  dispatcherBoardText(cfg, node.taskId).flatMap { boardText =>
-                    spawnDispatcher(
-                      cfg,
-                      active,
-                      same,
-                      reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText),
-                      rootSessionId,
-                      s" (reentry round $blockCount: ${node.name})",
-                      reentryTaskText(node, feedback, blockCount),
-                      taskId = node.taskId
-                    )
-                  }
-                }
-              }
-          }
-        // singleton ruling x feedback protocol (section 2.2 rev) -> per-slot under the
-        // mailmodel batch: a reentry adjustment request goes FIRST to the owning task's
-        // live dispatcher session (never a parallel reentry spawn); the spawn path runs
-        // only when that task's session is no longer active.
-        // 令 3：重入同属「新任务到达」⇒ 重置空闲计时（`idleSince = None`，
-        // 设计 §2.1 重置条件逐类结论表：blocked 升级/反馈重入 = **是**）。
-        active
-          .modify { m =>
-            val key = slotKey(node.taskId)
-            m.get(key) match
-              case Some(a) =>
-                (
-                  m.updated(
-                    key,
-                    a.copy(
-                      pendingInjected = a.pendingInjected + 1,
-                      pendingTaskTexts = a.pendingTaskTexts :+ reentryTaskText(node, feedback, blockCount),
-                      idleSince = None
-                    )
-                  ),
-                  Some(a)
-                )
-              case None => (m, None)
-          }
-          .flatMap {
-            case Some(a) =>
-              // R7-(c) 同款前置校验（与 dispatchTask 单点一致）。
-              liveRegistration(cfg, a.sessionId).flatMap {
-                case true =>
-                  (a.agentRef ! AgentCommand.UserInput(
-                    text = reentryInjectionText(cfg.project, node, feedback, blockCount),
-                    replyTo = Some(a.bridgeRef),
-                    // 重入是 task 形态入口（FeedbackRouter 独占 blocked 重入，非 DispatchNotify
-                    // 回流）——来源标签与 Task 入口同值（Q2-B2 三分之外的既有语义，保持不变）。
-                    source = Some(SourceTask)
-                  )).void *>
-                    logger
-                      .info(
-                        s"Project '${cfg.project.name}' reentry (round $blockCount: ${node.name}) injected into active dispatcher ${a.sessionId}"
-                      )
-                      .as(same)
-                case false =>
-                  logger.warn(
-                    s"Project '${cfg.project.name}' stale dispatcher registration ${a.sessionId} (no registry entry) — discarded, spawning a fresh session for reentry"
-                  ) *>
-                    dropStale(cfg, active, a.sessionId) *> spawnFresh
-              }
-            case None => spawnFresh
-          }
-    }
-
   /**
-   * AskUser 社交腿答案重入（answer-landing 实施批 2026-10-21）——与
-   * [[dispatchReentry]] 同族管线（per-slot claim → 活跃分发器注入 / 残影逐出后
-   * spawn 新绑定会话），差别只在交付语义：载荷不是 blocked 反馈而是**用户对
-   * 该节点问题的直接答复**（[[answerReentryInjectionText]] /
-   * [[answerReentryPrompt]]，开放问题 #5 采纳 5b——分发器把答案折进节点任务后
-   * NodeEdit 重激活，答案随 task 重读进入节点）。审计在发送侧
-   * （AskAnswerLanding `answer-retry`），本面只留 INFO。
+   * AskUser 社交腿答案重入（answer-landing 实施批 2026-10-21）——per-slot claim →
+   * 活跃分发器注入 / 残影逐出后 spawn 新绑定会话；载荷是**用户对该节点问题的
+   * 直接答复**（[[answerReentryInjectionText]] / [[answerReentryPrompt]]，
+   * 开放问题 #5 采纳 5b——分发器把答案折进节点任务后 NodeEdit 重激活，答案随
+   * task 重读进入节点）。审计在发送侧（AskAnswerLanding `answer-retry`），
+   * 本面只留 INFO。
    */
   private def dispatchAnswerReentry(
     cfg: ProjectConfig,
@@ -1657,7 +1502,7 @@ object ProjectActor:
           .as(same)
       case Some(node) =>
         def spawnFresh: IO[Behavior[ProjectCommand]] =
-          // Concurrency cap gate：与 dispatchTask/dispatchReentry 同一单点。
+          // Concurrency cap gate：与 dispatchTask 同一单点。
           underConcurrencyCap(cfg).flatMap {
             case false =>
               refuseSpawnOnCap(cfg, s"ask-answer reentry spawn (node ${node.id}, requestId=$requestId)").as(same)
@@ -1700,13 +1545,13 @@ object ProjectActor:
           }
           .flatMap {
             case Some(a) =>
-              // R7-(c) 同款前置校验（与 dispatchTask/dispatchReentry 单点一致）。
+              // R7-(c) 同款前置校验（与 dispatchTask 单点一致）。
               liveRegistration(cfg, a.sessionId).flatMap {
                 case true =>
                   (a.agentRef ! AgentCommand.UserInput(
                     text = answerReentryInjectionText(cfg.project, node, requestId, answerText),
                     replyTo = Some(a.bridgeRef),
-                    // 答案重入与 blocked 重入同为 task 形态入口——来源标签同值
+                    // 答案重入是 task 形态入口——来源标签与 Task 入口同值
                     // （Q2-B2 既有语义，保持不变）。
                     source = Some(SourceTask)
                   )).void *>
@@ -2152,9 +1997,6 @@ object ProjectActor:
   private def pendingFor(active: Ref[IO, Map[String, ActiveDispatcher]], sessionId: String): IO[List[String]] =
     active.get.map(_.values.find(_.sessionId == sessionId).map(_.pendingTaskTexts).getOrElse(Nil))
 
-  private def reentryTaskText(node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =
-    s"[reentry] 节点 ${node.name} blocked 第 $blockCount 轮（${feedback.category}）"
-
   private def spawnDispatcher(
     cfg: ProjectConfig,
     active: Ref[IO, Map[String, ActiveDispatcher]],
@@ -2305,7 +2147,7 @@ object ProjectActor:
           // mailmodel batch (2026-09-25) registration (the ordering iron law unchanged):
           // claim the slot BEFORE sending the first prompt - the claim completes inside
           // this actor's handler IO, so any same-numbered TriggerDispatcher /
-          // ReenterDispatcher arriving afterwards injects into this session; there is no
+          // AskAnswerReentry arriving afterwards injects into this session; there is no
           // spawn-race window.
           // pendingTaskTexts 初始化为 [firstTaskText]：首 turn（spawn prompt）
           // 终态时投递标注用（2026-09-05 接线）。

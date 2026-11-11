@@ -8,11 +8,10 @@
 
 **入口建议**：先读 [`ProjectActor.scala`](ProjectActor.scala)（本模块最大文件）。
 
-## 文件（47）
+## 文件（46）
 
 | 文件 | 说明 |
 |---|---|
-| [`BlockedReader.scala`](BlockedReader.scala) | blocked 声明解析器（设计 §1.3 文法）。独立 object 便于单测。 - 锚定：trim 后以 BLOCKED 开头（后跟 `:` 或换行/空白/串尾）——只查开头，正文含词不误判。 |
 | [`BootDispatcherWake.scala`](BootDispatcherWake.scala) | BootDispatcherWake —— 宿主启动「自动重入」腿（方案件选项 A 档 A1「控制面唤醒腿」）。 设计正本（只读引用）： |
 | [`BootWakeInventory.scala`](BootWakeInventory.scala) | BootWakeInventory —— 宿主启动自动重入的「落盘事实清单」构建器（选项 A 档的输入面， 采用方案件 B 档格式）。 |
 | [`ChainLedger.scala`](ChainLedger.scala) | ChainLedger —— **链号台账**（chainmodel 批二：链号台账 + 链号不变 + 退出机制三轴）。 设计正本（只读引用）：`~/.nebflow/docs/Nebflow/20260919_1218 |
@@ -23,15 +22,15 @@
 | [`DeviceProjectMount.scala`](DeviceProjectMount.scala) | 设备项目挂载编排（跨设备项目挂载批 2026-10-25）。 语义（作者令：项目挂载到设备 KAI 验证跨设备项目功能）：项目 workspace 本体在 |
 | [`DispatchNotify.scala`](DispatchNotify.scala) | dispatch-notify —— 节点终态结果回流任务分发器的单一通知通道。 目标语义：显式开启 notifyDispatcher 标志的节点 |
 | [`DocIndexConsumer.scala`](DocIndexConsumer.scala) | 文档索引维护消费者（P3 引擎侧归档联动批 2026-09-10，spec `20260910_process-doc-chain-attribution-spec.md` §6.2/§6.3/§9.2 项 9）。 |
-| [`FeedbackRouter.scala`](FeedbackRouter.scala) | FeedbackRouter 的路由裁决（设计 §2.2/§2.3/§3）。 |
+| [`FeedbackRouter.scala`](FeedbackRouter.scala) | Retry-cap escalation router (P2 retry budget, spec §2.3 gate G12): when a failed node has exhausted its automatic bounce-back retries, a single escalation notice |
 | [`FileChangeReport.scala`](FileChangeReport.scala) | Per-node file-change report: the durable artifact behind the frontend diff view for completed nodes. |
-| [`FlowMapEventLog.scala`](FlowMapEventLog.scala) | Flow Map 调整事件审计日志（blocked 反馈重入设计 §4.4）。 `<workspace>/.nebflow/flow-map-events.jsonl` 追加式 JSONL，每行一事件： |
+| [`FlowMapEventLog.scala`](FlowMapEventLog.scala) | Flow Map 调整事件审计日志。 `<workspace>/.nebflow/flow-map-events.jsonl` 追加式 JSONL，每行一事件： |
 | [`FlowMapStore.scala`](FlowMapStore.scala) | FlowMapStore —— Flow Map 存储（#28 阶段 0，方案 §2.6；**N1 刀1 作用域化**：per-project 旧面（[[open]]）＋ per-delegate 作用域面（[[open |
 | [`LoopBudget.scala`](LoopBudget.scala) | loop 预算判定单点（nrloop 一期 2026-09-12；设计 §3.6「轮次帽 + 时间帽」维）。 纯函数（无 IO / 无状态）：引擎两条调用腿共用同一判据—— |
 | [`MergeMutexPolicy.scala`](MergeMutexPolicy.scala) | 合并窗 FIFO 互斥策略（**mergefifo-engine 批** 2026-09-13，作者 A-4 裁决收窄落地）。 真源（设计与规格的关系，逐字沿设计件 §11 A-8）： |
 | [`MergeNodePolicy.scala`](MergeNodePolicy.scala) | 合并节点策略（merge-node 批 20260905，方案 merge-node-plan 方案件）。 背景：任务节点各自在 worktree/分支产出，completed 后产物滞留——落地全靠宿主 |
 | [`NodeCanceller.scala`](NodeCanceller.scala) | 节点是否正在运行（ProjectActor 状态查询用）。 |
-| [`NodeCompletion.scala`](NodeCompletion.scala) | blocked 结构化信号批（20260909 spec §5.3；同日作者裁定泛化 NodeReport 统一三语义）：declared = 节点会话经 node_report 工具申报的结构化反馈 |
+| [`NodeCompletion.scala`](NodeCompletion.scala) | 节点终态分流（node_report 结构化申报消费单点）：declared = 节点会话经 node_report 工具申报的结构化反馈 |
 | [`NodeDelivery.scala`](NodeDelivery.scala) | U3/B 兜底腿（2026-09-11 作者拍板）：L3 resume 失败且**活动区查无**该会话归属节点 时的收口——把「找不到节点归属」从静默死路改成有账的迟到摘除。 |
 | [`NodeEngine.scala`](NodeEngine.scala) | NodeEngine —— 节点执行内核（#28 阶段 0，方案 §2.7 + §3.1）。 职责： |
 | [`NodeEngineContract.scala`](NodeEngineContract.scala) | `cascadeCancelledIds` 的 FIFO 上界：见该 Ref 头注—— 只为防长跑进程无界增长；超限丢最旧，最坏后果 = 已取消下游被补一条 `pendingSuccession` |
@@ -57,7 +56,7 @@
 | [`TaskLedgerHistory.scala`](TaskLedgerHistory.scala) | TaskLedgerHistory -- the change history of the unified ledger (taskunify batch, 2026-09-24). |
 | [`TaskLedgerRenderer.scala`](TaskLedgerRenderer.scala) | TaskLedgerRenderer -- the single rendering point of the unified ledger (taskunify batch, 2026-09-24). |
 | [`TaskLedgerStore.scala`](TaskLedgerStore.scala) | A unified-ledger entry (wire schema, three states). 🔴 **No `note` field**: the note timeline is **not on the e |
-| [`VerdictReader.scala`](VerdictReader.scala) | verify 判定文法解析器（LoopNode 批 2026-09-06，主设计 20260902_flowmap-engine-evolution-design.md §2.3； 与 BlockedReader :17 |
+| [`VerdictReader.scala`](VerdictReader.scala) | verify 判定文法解析器（LoopNode 批 2026-09-06，主设计 20260902_flowmap-engine-evolution-design.md §2.3； 独立 object |
 | [`WakeSensor.scala`](WakeSensor.scala) | 宿主睡眠/唤醒感知器（hostresume 批 2026-09-22，设计卡 `~/.nebflow/docs/Nebflow/20260921_235342_host-interrupt-resume-design__ |
 
 ## 依赖的兄弟模块
