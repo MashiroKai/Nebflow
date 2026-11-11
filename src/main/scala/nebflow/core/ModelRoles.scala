@@ -124,6 +124,10 @@ object ModelRoles:
         else if lower.startsWith("dispatcher-") then DispatcherWire
         else if lower.startsWith("dag-") then NodeWire
         else if lower.startsWith("node-") then NodeWire
+        // Ask 会话是主会话的独立 UI/历史身份，不是一个独立模型类别；
+        // 它应继承 main/Nebula 模型槽。若遗漏此路由，ask- 会落到 None，
+        // 下游只能使用会话钉链/AgentDef 空链，迁移后的主链配置不可达。
+        else if lower.startsWith(nebflow.core.ask.AskSessions.Prefix) then MainWire
         else if lower.startsWith("kernel-") then KernelWire
         else ""
       }
@@ -141,7 +145,16 @@ object ModelRoles:
    * （provider-concurrency 批的缓存键稳定面）；本函数只回答「槽链有没有」。
    */
   def slotChainOf(sessionId: Option[String]): Option[AgentModelConfig] =
-    slotOfSessionId(sessionId).flatMap(ownChainOfSlot)
+    slotOfSessionId(sessionId).flatMap { slot =>
+      ownChainOfSlot(slot).orElse {
+        // Ask sessions have an ephemeral AgentDef with no model/pin. When the
+        // main sidecar is absent/empty, resolve through the same configured
+        // main fallback used by SchemePolicy rather than returning no chain.
+        Option.when(nebflow.core.ask.AskSessions.isAskSession(sessionId))(
+          SchemePolicy.resolveModel(SchemePolicy.NebulaName, None)._1
+        )
+      }
+    }
 
   /**
    * 组合面（语义同 `slotChainOf(sid).orElse(base)`）：槽已配置 ⇒ 槽链（类粒度切换

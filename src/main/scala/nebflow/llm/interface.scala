@@ -662,6 +662,15 @@ object LlmInterface extends LlmRuntime:
                   healthSkips.map { case (c, cause) => s"${c.providerId}/${c.model}" -> cause }
                 )
                 _ <- logCandidateLedger(req, expected, candidates.map(c => s"${c.providerId}/${c.model}"), allSkips)
+                // Empty/unresolvable per-session chains must be visible as a distinct
+                // configuration failure, not merely as an exhausted-provider symptom.
+                _ <- if candidates.isEmpty then
+                  logger.error(
+                    s"MODEL-CHAIN-EMPTY session=${req.sessionId} agent=${req.agentId}: " +
+                      s"configured refs=[${req.agentModel.toList.flatMap(c => c.preferred.toList ++ c.fallbacks).mkString(", ")}] " +
+                      s"resolved candidates=0; check session category/agent model configuration"
+                  )
+                else IO.unit
                 _ <- IO.raiseWhen(up.isEmpty)(
                   new FallbackExhaustedError(
                     Nil,

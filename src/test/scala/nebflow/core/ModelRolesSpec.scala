@@ -72,6 +72,7 @@ class ModelRolesSpec extends FunSuite:
     assertEquals(ModelRoles.slotOfSessionId(Some("dispatcher-1a2b3c4d")), Some("project-dispatcher"), "分发器会话 → 槽目录 project-dispatcher")
     assertEquals(ModelRoles.slotOfSessionId(Some("dag-node-1-2")), Some("node"), "FlowDagExecutor 节点会话 id 形状")
     assertEquals(ModelRoles.slotOfSessionId(Some("node-proj-1")), Some("node"), "项目节点会话族")
+    assertEquals(ModelRoles.slotOfSessionId(Some("ask-a0d6ad6e")), Some("Nebula"), "Ask 会话继承 main/Nebula 模型槽，避免迁移后链配置不可达")
     // 🔴 判据顺序：kernel 会话 id 本身以 delegate- 开头，前缀顺序颠倒会被错归 subagent。
     assertEquals(ModelRoles.slotOfSessionId(Some("delegate-kernel-9f8e7d6c")), Some("kernel"), "kernel 会话不得被 delegate- 抢先归到 subagent")
     assertEquals(ModelRoles.slotOfSessionId(Some("kernel-xyz")), Some("kernel"), "裸 kernel- 前缀同样归 kernel 槽")
@@ -88,6 +89,27 @@ class ModelRolesSpec extends FunSuite:
         assert(ModelRoles.Slots.exists(_._3 == s), s"$id 归槽 $s 必须是 Slots 表里的槽目录名")
       }
     }
+  }
+
+  test("迁移后 ask 类别链读取 main/Nebula sidecar；全未配置引用可被判空而不静默") {
+    val original = nebflow.shared.PathUtil.dataRoot
+    val tmp = os.temp.dir(prefix = "nb-ask-model-role-")
+    try
+      nebflow.shared.PathUtil.setDataRoot(tmp)
+      os.write.over(
+        tmp / "agents" / "Nebula" / "agent.json",
+        """{"model":{"preferred":"zhipu/glm-5.3-flash"}}""",
+        createFolders = true
+      )
+      val chain = ModelRoles.slotChainOf(Some("ask-a0d6ad6e"))
+      assertEquals(chain.flatMap(_.preferred), Some("zhipu/glm-5.3-flash"))
+      val refs = chain.toList.flatMap(c => c.preferred.toList ++ c.fallbacks)
+      assertEquals(refs, List("zhipu/glm-5.3-flash"), "Ask 链必须非空且保留已配置 provider ref")
+      val allUnknown = List("missing/model")
+      assert(allUnknown.nonEmpty && !allUnknown.exists(_.startsWith("zhipu/")), "全未配置链仍可识别为无可用候选，接口会记录 MODEL-CHAIN-EMPTY")
+    finally
+      nebflow.shared.PathUtil.setDataRoot(original)
+      os.remove.all(tmp)
   }
 
   test("effectiveModel：槽未命中 ⇒ base 原样透传（不改写、不造候选；槽已配置腿依赖真实 dataRoot，运行时单点见头注）") {
