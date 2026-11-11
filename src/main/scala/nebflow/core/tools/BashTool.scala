@@ -1701,6 +1701,7 @@ Git safety:
           "origin" -> origin.asJson,
           "originLabel" -> originLabel.asJson,
           "ownerMode" -> ownerMode.asJson,
+          "persistent" -> persistent.asJson,
           "ownerName" -> ownerName.asJson
         )
         logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>
