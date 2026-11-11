@@ -369,7 +369,7 @@ final class ShellSession private (
    *
    * 业界依据（调研件 §0-1/§4）：DeepSeek Harness 的 `job_output(wait: true,
    * timeout_ms)`——有界等待，等超时不杀 job，直接回「仍在跑」，由完成通知接管。
-   * 本方法即那条语义在会话任务图上的执行面（工具面 = `BgWaitTool`）。
+   * 本方法即那条语义在会话任务图上的执行面（工具面 = `BashTool` wait mode）。
    *
    * 两条腿（id 的归属决定走哪条）：
    *  ① **本会话任务图内**（显式 run_in_background / 前台转后台收编）：逐任务
@@ -382,7 +382,7 @@ final class ShellSession private (
    *    行消失 = 终态已由别处记账（终态回调注销）⇒ 从 `BgTaskOutputStore` 取终态
    *    读数与尾段折算回报。
    *
-   * 🔴 预算纪律：`deadlineMs` 由调用方（`BgWaitTool`）按 `ctx.bashConfig
+   * 🔴 预算纪律：`deadlineMs` 由调用方（`BashTool` wait mode）按 `ctx.bashConfig
    * .foregroundWaitBudgetMs` 钳好传进来——**本方法不收第二个上限、也不自造**。
    * 🔴 读面纪律：不 `checkAlive`、不取 `lifecycleMutex`、不 `touch`——长等待绝不许
    * 攥住会话锁（否则 cancel/execute 被阻塞）；会话已销毁时任务图读面照常返回空。
@@ -955,7 +955,7 @@ final class ShellSession private (
       // the window, so long builds and test suites run to completion
       // (#319 preserved).
       // main-agent-nonblocking 批（2026-10-21 作者裁定）语义收缩：默认前台预算
-      // （ForegroundWaitBudgetMs = 120s）< 本 ceiling（600s）⇒ 缺省面本 ceiling
+      // （ForegroundWaitBudgetMs = 300s）< 本 ceiling（600s）⇒ 缺省面本 ceiling
       // 结构性不可达（预算到点先转后台）；剩余管辖 = 前台阶段真挂死兜底（仅当
       // 作者把预算调大于 600s）+ 收编即退役（adoptedAsBackground 旗，见下）。
       def foregroundNoProgressWatch: IO[Unit] =
@@ -969,7 +969,7 @@ final class ShellSession private (
             // main-agent-nonblocking 批（2026-10-21 作者裁定「主 agent 一点不能
             // 阻塞」）：本前台执行已被收编为后台任务 ⇒ ceiling **立即退役**（下一
             // 采样窗静默退出，不再杀树）。语义收缩后本 ceiling 的剩余管辖面 = 仅
-            // 前台阶段（默认预算 120s < 本 ceiling 600s ⇒ 缺省面结构性不可达，
+            // 前台阶段（默认预算 300s < 本 ceiling 600s ⇒ 缺省面结构性不可达，
             // 自然消亡；作者把预算调大于 600s 时作为前台真挂死兜底保留）。后台
             // 任务的停滞面归 B1（只提醒）/ B2（已被 NoHardTimeout 哨兵豁免）。
             if h.adoptedAsBackground.get() then
@@ -1141,7 +1141,7 @@ final class ShellSession private (
 
   /**
    * Auto-background policy ("no hard cap; auto-background at the foreground
-   * wait budget — main-agent-nonblocking 批：默认 120s，作者可调，见
+   * wait budget — main-agent-nonblocking 批：默认 300s，作者可调，见
    * Defaults.ForegroundWaitBudgetMs; backgrounded commands have no limit"):
    * adopt an ALREADY-RUNNING
    * foreground execution as a background job. Isomorphic to the registration

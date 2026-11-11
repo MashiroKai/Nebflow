@@ -2036,6 +2036,7 @@ export default {
   'bg.cancelTip': 'Cancel this background task (the process is killed; not reversible)',
   'bg.cancelling': 'Cancelling...',
   'bg.running': 'Running',
+  'bg.persistent': 'Service',
   'bg.ended': 'Process ended',
   'bg.stuck': 'No output for 10+ min',
   'bg.lines': '{count} lines',

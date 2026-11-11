@@ -199,23 +199,21 @@ class AgentConvergenceSpec extends FunSuite:
     // R2 细则：节点会话**零 Mail 入口**（工具面结构性摘除）
     assert(!CoreProbe.toolList(mkDef(executorName), isFlowNode = true).toSet.contains("Mail"), "节点面零 Mail（R2 细则）")
 
-  // ===== 执行 agent 固定 9 件（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）=====
+  // ===== 执行 agent 固定工具面 =====
 
   test(
-    "执行 agent LLM tool list == NebflowFixedTools 9 件（isFlowNode 节点形态；2026-09-08 恢复 AskUser；2026-09-10 摘 Pop；builtin-merge 批 +Subagent；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow）"
+    "执行 agent LLM tool list == NebflowFixedTools（isFlowNode 节点形态）"
   ):
     // P1-3 归因修正（2026-10-03）：原断言用手搓 "general" 名造节点身份——该名已
     // 非内置名（builtin-merge 批收敛名集 = {Nebula, project-dispatcher, nebflow,
     // subagent}），落 legacyFixedTools catch-all ⇒ 实测 6 件 BaseTools 全族假红。
     // 生产路径按 BuiltinAgents.ExecutorName 落名（NodeEditTool createNode），判据
-    // 源对齐执行名 = 修根因不是放宽断言。9 件 = BaseTools 7（含 BgWait）+ AskUserQuestion
-    // （2026-09-08 恢复）+ Subagent（builtin-merge 批机制面）。tool-face-agentflow-retire
-    // 批（2026-11-05）：AgentFlow 工具整体退役，本面十 → 九。
+    // 交付集合由注册表过滤后的固定工具集直接定义。
     val delivered = CoreProbe.toolList(mkDef(executorName), isFlowNode = true).toSet
     assertEquals(
       delivered,
       AgentCore.NebflowFixedTools.filter(ToolRegistry.TOOL_MAP.contains),
-      "执行 agent 交付面 = NebflowFixedTools 注册表实收（BaseTools 七件含 BgWait + AskUserQuestion + Subagent）"
+      "执行 agent 交付面与注册表过滤后的 NebflowFixedTools 一致"
     )
 
   // ===== ToolRegistry 面变化 =====

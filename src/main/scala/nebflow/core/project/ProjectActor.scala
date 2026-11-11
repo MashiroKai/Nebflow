@@ -1262,7 +1262,7 @@ object ProjectActor:
     Behaviors.receive[AgentEvent] { (_, event) =>
       event match
         // 刀一等待态计时消息：本 actor 不接（恒等行为）。
-        case _: AgentEvent.BgWaitCapTick => IO.pure(Behaviors.ignore)
+        case _: AgentEvent.BgCompletionCapTick => IO.pure(Behaviors.ignore)
         case AgentEvent.Completed(_, messages) =>
           // 原子裁决（Q3-a 扩展，2026-09-11 收件规则批）：本 turn 消费了几件 =
           // 会话历史里带注入来源标签（task/dispatch）的消息**增量**——mid-turn 直投

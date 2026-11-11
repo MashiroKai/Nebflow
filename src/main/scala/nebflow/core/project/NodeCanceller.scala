@@ -488,14 +488,14 @@ private[project] trait NodeCanceller:
 
   /**
    * bg-wait 标注写点（僵尸收敛批 2026-09-06，作者「首要缺口 = 补显示」）：节点完成
-   * 闸（bgtask-completion-gate 批）在持留等待后台任务时把 node `bgWait` 置为在途
+   * 闸（bgtask-completion-gate 批）在持留等待后台任务时把 node `backgroundWait` 置为在途
    * 等待型任务快照、全部清空/终态化时清 None——NodePayload 条件字段随之带/不带，
    * 前端据此标「等待后台任务」徽标（与真僵尸区分，避免把设计内等待误判成
    * dead-session running）。仅对 running 节点写（fresh 守卫）；状态已变 → 拒写
-   * （R2 竞态纪律），flow-map.json 不残留过期 bgWait。值未变 → 不写不 event
+   * （R2 竞态纪律），flow-map.json 不残留过期 backgroundWait。值未变 → 不写不 event
    * （幂等：终态化清 None 时若原本就 None，不重复发 nodeUpdated）。
    */
-  private[project] def setNodeBgWait(nodeId: String, waiting: List[BgTaskRegistry.ActiveTask]): IO[Unit] =
+  private[project] def setNodeBackgroundWait(nodeId: String, waiting: List[BgTaskRegistry.ActiveTask]): IO[Unit] =
     val desc =
       if waiting.isEmpty then None
       else Some(s"${waiting.size} background task(s): " + waiting.map(t => s"'${t.description}'").mkString(", "))

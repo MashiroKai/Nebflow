@@ -749,40 +749,13 @@ object AgentCore:
    * retired with CheckIssues (2026-09-04 终裁: 报 issue 走 gh cli 由节点代劳) —
    * no agent has it; NebulaExclusiveTools no longer lists it either.
    *
-   * bash overhaul T1（作者令 2026-11-04「用业界成熟做法完整实现」）：+`BgWait`
-   * ——后台任务的**唯一等待原语**（有界等待，到期不杀任务）。本批之后本集合 = **七件**
-   * （文件/壳六件 + BgWait），依据 = 缺陷 D3（提示词禁止轮询、工具回执邀请轮询、
-   * 而当时**没有任何等待原语** ⇒ 轮询是被逼出来的唯一解）。
-   *
-   * 🔴 与设备面（`RemoteExecutor.remoteableTools` / `FleetConfig.RemoteableToolNames`，
-   * 恒**六件**）的解耦：`BgWait` **不**进远端注入面——等待是本机语义（任务图在
-   * 本地会话里，跨设备腿由注册表探测承接），因此「携带 `device` 参数者恰为六件」
-   * 这一不变式仍成立，只是不再等于 `BaseTools` 全量。见 `RemoteableDeviceParamSpec`
-   * （该 spec 的 device 面字面量已随本批重锚，计数断言 9 → 10）。
+   * Bash 通过 command / wait / cancel 三模式统一管理前台命令与后台任务；等待
+   * 使用 `background_job_id` + 可选 `timeout`，不另立工具。
    */
-  val BaseTools = Set(
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "Bash",
-    // bash overhaul T1（2026-11-04）：唯一等待原语——与 Bash 强绑定，故随 BaseTools
-    // 注入全体执行面；超时/轮询的合法替代（`BgWait` 由 LoopGuard.CallKind 归 Wait
-    // 类：重复等待不推进 R-call 计数）。
-    "BgWait"
-  )
+  val BaseTools = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
 
   /**
-   * 极简内核（Delegate 内核）固定工具面（2026-09-11 恢复批，R2-c 裁定）：
-   * 恰八件 = BaseTools 七件 + AskUserQuestion（bash overhaul T1 2026-11-04 起
-   * BaseTools 为七件：文件/壳六件 + BgWait）。
-   *
-   * - 六件 = `BaseTools` 的**文件/壳六件** = `RemoteExecutor.remoteableTools`
-   *   同集合 ⇒ `device` 参数由 registry.scala 逐件 augmentSchema 自动注入，
-   *   零改动拿到跨设备路径。第七件 `BgWait` **刻意不入**远端注入面（等待 = 本机
-   *   语义；跨设备任务走注册表探测腿），故「带 device 者恰为六件」不变式保持。
-   *   沿革（史实）：本集此前恰七件 = BaseTools 六件 + AskUserQuestion。
+   * 极简内核（Delegate 内核）固定工具面：BaseTools 六件 + AskUserQuestion。
    * - +AskUserQuestion（R2-c，作者 2026-09-11 拍板采纳）：内核遇「必须用户拍板
    *   才能继续」的信息（凭据/目标/口径）可直接提问，卡片渲染在派发方窗口，
    *   来源标注 `subagent · <任务摘要>`（U3）。
@@ -797,15 +770,7 @@ object AgentCore:
   // N1 复名批（v2 ①，2026-10-06）：Workflow→AgentFlow（同参数 steps =
   // [{id, task, deps}], description）——NebflowFixedTools 随名；本集 RootExclusiveTools
   // 成员随名（防声明逃逸面不变）。
-  // bash overhaul T1（2026-11-04）：执行 agent 固定面随 BaseTools 变 **十件**
-  // （文件/壳六件 + BgWait + AskUserQuestion + Subagent + AgentFlow）。件数断言同步：
-  // RemoteableDeviceParamSpec / RootSixBaseToolsSpec 的 9 → 10（依据 = 本批确实改了
-  // 机制面；非为过测放宽——带 device 者仍恰为六件）。
-  // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 工具整体
-  // 退役（`agentflow` 此后**只是** dispatcher 的编排形态名／`orchestrationMode` 值）
-  // ⇒ 本面 **十 → 九**：文件/壳六件 + BgWait + AskUserQuestion + Subagent。件数断言
-  // 同步回 **9**（RemoteableDeviceParamSpec / RootSixBaseToolsSpec / DelegateToolSpec）；
-  // 带 `device` 者仍恰为六件不变式零触碰。
+  // 执行 agent 固定面 = BaseTools 六件 + AskUserQuestion + Subagent。
   // 裁定一（kernel 腿补 Subagent）**本批未落**——与不变量 R-3a
   // （`core.delegate.KernelChildSpawnGate`：kernel 身份不得生子 actor）冲突，待作者裁决。
   val NebflowFixedTools: Set[String] = BaseTools + "AskHost" + "Subagent"
@@ -909,7 +874,7 @@ object AgentCore:
             AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip -- AgentCore.imageGenSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           // 合并执行 agent（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）：
-          // 基础七件（bash overhaul T1 2026-11-04 +BgWait；此前六件）+ AskUserQuestion
+          // 基础六件 + AskUserQuestion
           // + Subagent（只读侦察）。tool-face-agentflow-retire 批（2026-11-05）：
           // AgentFlow 件随工具退役摘除（九件）。
           // 机制固定单点，不经 legacyFixedTools 的 catch-all。

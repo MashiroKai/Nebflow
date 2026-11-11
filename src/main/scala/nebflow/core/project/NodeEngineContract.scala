@@ -249,7 +249,7 @@ private[project] object NodeEngineContract:
   val NodeReportMissingEventType: String = "node-report-missing"
 
   /** 死会话 bg-wait 豁免留痕事件类型（代裁 6：把「不算死」的节点标进事件供人监督）。 */
-  val DeadSessionBgWaitEventType: String = "dead-session-bg-wait"
+  val DeadSessionBgCompletionEventType: String = "dead-session-bg-task"
 
   /**
    * 提醒轮注入的 ExternalEvent source 标签（agent 侧 `<system-reminder>` 头内标识；

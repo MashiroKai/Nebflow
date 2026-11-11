@@ -50,16 +50,7 @@ class RootSixBaseToolsSpec extends FunSuite:
 
   test("① 文件面六件 ⊆ Nebula 机制集（静态集+交付面双层，2026-09-18 18:18 令恢复）∧ NodeList 不在 ∧ Task 在——再摘文件面任一件或摘掉 Task、计数漂移即红"):
     val six = AgentCore.BaseTools
-    // bash overhaul T1（作者令 2026-11-04）：BaseTools 六 → 七（+BgWait，后台任务的
-    // 唯一等待原语）。本断言重锚为「文件面六件一字不变 ∧ 第七件**恰为** BgWait」
-    // ——防两种漂移：摘掉/改名任一件文件面件即红；再多塞进第八件也即红。
-    assertEquals(
-      six - "BgWait",
-      Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
-      "前置：BaseTools 的文件面六件（全体默认不变）——2026-09-18 令只动 root 面，本行即反向钉"
-    )
-    assert(six.contains("BgWait"), "bash overhaul T1：BaseTools 的第七件恰为 BgWait（唯一等待原语）")
-    assertEquals(six.size, 7, "BaseTools 恰七件 = 文件/壳六件 + BgWait")
+    assertEquals(six, Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"), "BaseTools is the six standard file/shell tools")
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     // 钉死断言（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）：
     // root 面**在场**恢复 Bash/Edit/Write/Glob/Grep + 既有 Read ⇒ 文件面六件——取代
@@ -104,7 +95,7 @@ class RootSixBaseToolsSpec extends FunSuite:
     assertEquals(
       AgentCore.RootOrchestrationTools.size,
       25,
-      "RootOrchestrationTools 实测恰 25 件，含 AskHostReply/AskHostClarify root-only 工具；变异验红锚：再摘任一件即红"
+      "RootOrchestrationTools remains at 25 items; this assertion guards unrelated root-only tools"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
@@ -117,8 +108,8 @@ class RootSixBaseToolsSpec extends FunSuite:
     )
     assertEquals(
       AgentCore.NebflowFixedTools.size,
-      9,
-      "nebflow 固定集恰九件（tool-face-agentflow-retire 批 2026-11-05：AgentFlow 工具整体退役 ⇒ 十 → 九；BaseTools 七件含 BgWait + AskUserQuestion + Subagent；AskUser 承继、零 Pop 承继）"
+      8,
+      "nebflow 固定集恰八件（BaseTools 六件 + AskHost + Subagent）"
     )
     assert(!AgentCore.NebflowFixedTools.contains("AskUserQuestion"), "AskUserQuestion is root-only")
     assert(AgentCore.NebflowFixedTools.contains("AskHost"), "general fixed face includes AskHost")

@@ -60,7 +60,7 @@ class NodeEngine(
    * 此值 → 节点 failed+注明（防通知链断裂永久悬挂）。默认 Defaults.BgGateWaitTimeoutMs
    * （system prop nebflow.bgtask.gate.timeoutMs 可调）；spec 注小值验红。
    */
-  private[project] val bgWaitCapMs: Long = nebflow.shared.Defaults.BgGateWaitTimeoutMs,
+  private[project] val backgroundWaitCapMs: Long = nebflow.shared.Defaults.BgGateWaitTimeoutMs,
   /**
    * 项目任务板 store（TaskBoard 批 2 §3a）：节点 buildInput 头部板块数据源；
    * None = 该项目无板（节点注入整块省略）。mount 时传入。
@@ -457,7 +457,7 @@ class NodeEngine(
    *
    * noderpt 批 A 段（2026-09-11 代裁 6）：判据**原样保留**（bg 等待不算死），只补
    * 「在事件里标出该态节点供人监督」——命中该豁免时单发一条
-   * [[NodeEngine.DeadSessionBgWaitEventType]] 事件（进程内每节点一条，防 30s 节拍刷屏）。
+   * [[NodeEngine.DeadSessionBgCompletionEventType]] 事件（进程内每节点一条，防 30s 节拍刷屏）。
    */
   def settleStaleRunningNodes(): IO[Unit] =
     store.snapshot.flatMap { s =>
@@ -483,7 +483,7 @@ class NodeEngine(
                 case Some(sid) =>
                   BgTaskRegistry.waitingFor(sid).flatMap {
                     case waiting if waiting.nonEmpty =>
-                      markDeadSessionBgWaitExemption(n, sid, waiting).as(false)
+                      markDeadSessionBgCompletionExemption(n, sid, waiting).as(false)
                     case _ => IO.pure(true)
                   }
                 case None => IO.pure(true)
@@ -513,8 +513,8 @@ class NodeEngine(
   private val quiescentNotified: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
 
-  /** 死会话 bg-wait 豁免留痕单发记账（nodeId 集合，进程内一次）。 */
-  private val bgWaitExemptNotified: Ref[IO, Set[String]] = Ref.unsafe[IO, Set[String]](Set.empty)
+  /** 死会话 background-task 豁免留痕单发记账（nodeId 集合，进程内一次）。 */
+  private val bgCompletionExemptNotified: Ref[IO, Set[String]] = Ref.unsafe[IO, Set[String]](Set.empty)
 
   /**
    * 释放唤醒单发记账（nodeId → 已唤醒的 `reportPendingSince` 值，进程内）：同一**未申报
@@ -534,25 +534,25 @@ class NodeEngine(
    * 代裁 6「在事件里标出该态节点供人监督」：`settleStaleRunningNodes` 命中
    * 「死会话 + 仍在途后台任务」豁免时单发一条留痕（判据本身原样保留——bg 等待不算死）。
    */
-  private def markDeadSessionBgWaitExemption(
+  private def markDeadSessionBgCompletionExemption(
     node: NodeDef,
     sessionId: String,
     waiting: List[BgTaskRegistry.ActiveTask]
   ): IO[Unit] =
-    bgWaitExemptNotified.modify(s => if s.contains(node.id) then (s, false) else (s + node.id, true)).flatMap {
+    bgCompletionExemptNotified.modify(s => if s.contains(node.id) then (s, false) else (s + node.id, true)).flatMap {
       case false => IO.unit
       case true =>
         FlowMapEventLog.append(
           workspace,
           projectName,
           node.id,
-          NodeEngine.DeadSessionBgWaitEventType,
-          s"dead-session node kept Running (bg-wait exemption): ${waiting.size} background task(s) still " +
+          NodeEngine.DeadSessionBgCompletionEventType,
+          s"dead-session node kept Running (background-task exemption): ${waiting.size} background task(s) still " +
             s"in flight (${waiting.map(t => s"'${t.description}'").mkString(", ")}) — not reaped, needs human supervision"
         ) *>
           logger.warn(
             s"Node '${node.name}' (${node.id}) session '$sessionId' looks dead but still owns ${waiting.size} " +
-              "in-flight background task(s) — kept Running for human supervision (bg-wait exemption, no auto-convergence)"
+              "in-flight background task(s) — kept Running for human supervision (background-task exemption, no auto-convergence)"
           )
     }
 
@@ -1543,7 +1543,7 @@ object NodeEngine:
 
   val NodeReportMissingEventType: String = NodeEngineContract.NodeReportMissingEventType
 
-  val DeadSessionBgWaitEventType: String = NodeEngineContract.DeadSessionBgWaitEventType
+  val DeadSessionBgCompletionEventType: String = NodeEngineContract.DeadSessionBgCompletionEventType
 
   val NodeReportReminderSource: String = NodeEngineContract.NodeReportReminderSource
 

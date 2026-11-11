@@ -18,8 +18,8 @@ import scala.concurrent.duration.*
  * **杀**树，主会话每次硬冻结 10 分钟。
  *
  * 裁定语义（本 spec 逐条验收）：
- *  - N-1 取值面：前台预算 = Defaults.ForegroundWaitBudgetMs（默认 120s，
- *    作者裁定「默认建议 60-120s 量级，可调」），三档配置面等价
+ *  - N-1 取值面：前台预算 = Defaults.ForegroundWaitBudgetMs（默认 300s，
+ *    2026-11-10 作者令上调；旧裁定「默认建议 60-120s 量级，可调」），三档配置面等价
  *    （nebflow.json `bashForegroundWaitBudgetMs` / system prop /
  *    BashResilienceConfig 注入）；BashMaxTimeoutMs（60min）退为入参钳 +
  *    remote-exec 面，缺省值不变。
@@ -32,8 +32,8 @@ import scala.concurrent.duration.*
  *    说明 + **如何查询**（background_job_id / cancel_background_job）。
  *  - N-5 收编即退役：转后台后的任务不再被前台 no-progress ceiling 杀
  *    （JobHealth.adoptedAsBackground → watch 下一窗退出）。
- *  - N-6 显式 `timeout` 入参被配置预算钳制（min）——agent 不能越过作者的
- *    零阻塞裁定。
+ *  - N-6 显式 `timeout` 入参即等待上限（2026-11-10 作者令：可超配置预算，
+ *    不再 min 钳制；到点仍只转后台不杀）——配置预算 = 无显式入参时的缺省面。
  *  - N-7 引擎既有命令族回归：短命令（echo）在预算内照常前台返回真实输出。
  */
 class BashForegroundBudgetSpec extends CatsEffectSuite:
@@ -55,7 +55,10 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
 
   /** Query a job through the tool face (same face the model uses). */
   private def query(jobId: String): IO[String] =
-    BashTool.call(JsonObject("background_job_id" -> jobId.asJson), ToolContext(projectRoot = "/tmp")).map {
+    BashTool.call(
+      JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
+      ToolContext(projectRoot = "/tmp")
+    ).map {
       case Right(out) => out
       case Left(e) => fail(s"background query failed: ${e.message}")
     }
@@ -74,15 +77,15 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
     bashConfig = nebflow.shared.BashResilienceConfig(foregroundWaitBudgetMs = 2000)
   )
 
-  test("N-1 default face: budget default = 120s, prop-compressible, config default carries it; MAX_TIMEOUT unchanged") {
+  test("N-1 default face: budget default = 300s, prop-compressible, config default carries it; MAX_TIMEOUT unchanged") {
     withProps(BudgetProp -> "12345") {
       IO(assert(nebflow.shared.Defaults.ForegroundWaitBudgetMs == 12345L, "prop must be read per call"))
     } *> IO {
-      // 缺省面（prop 已清）：120s（作者裁定「默认建议 60-120s 量级」）。
-      assert(nebflow.shared.Defaults.ForegroundWaitBudgetMs == 120000L, "default must be 120s")
+      // 缺省面（prop 已清）：300s（2026-11-10 作者令上调；旧裁定「默认建议 60-120s 量级」）。
+      assert(nebflow.shared.Defaults.ForegroundWaitBudgetMs == 300000L, "default must be 300s")
       // 配置面缺省 = Defaults 值（GatewayMain 键注入的落点）。
       assert(
-        nebflow.shared.BashResilienceConfig().foregroundWaitBudgetMs == 120000L,
+        nebflow.shared.BashResilienceConfig().foregroundWaitBudgetMs == 300000L,
         "BashResilienceConfig default must carry the budget"
       )
       // MAX_TIMEOUT（入参钳 + remote-exec 面）缺省不变：60min。
@@ -131,7 +134,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
   }
 
   test("N-3 OLD-face control (对照): same silent command with NO budget hits the 600s-class ceiling kill — the incident path") {
-    // 压缩 ceiling（4000ms 判死 / 1s 采样），预算保持缺省（120s 未到）⇒
+    // 压缩 ceiling（4000ms 判死 / 1s 采样），预算保持缺省（300s 未到）⇒
     // 旧面行为 = 前台阶段被 ceiling 杀。这就是当日事故的精确复现形态
     // （预算从未到点、停滞阈值先到、结果 = 杀）。
     withProps(CeilingProp -> "4000", SampleProp -> "1000") {
@@ -208,29 +211,23 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
     yield ())
   }
 
-  test("N-6 explicit timeout hint is clamped to the configured budget (author's zero-blocking ruling wins)") {
+  test("N-6 explicit timeout is honored as-is and may exceed the configured budget (foreground completion past the budget; auto-background still the only deadline outcome)") {
+    // 预算 2s + 显式 timeout 60min + 4s 命令 ⇒ 不再被 min 钳到 2s：前台等满
+    // ~4s 真结果返回（绝无 [Background job started]）。
     val input = JsonObject(
-      "command" -> "sleep 8 && echo clamped-done".asJson,
-      "description" -> "hint-clamped".asJson,
-      "timeout" -> 3600000.asJson // agent 想等 60min —— 必须被 2s 预算钳住
+      "command" -> "sleep 4 && echo honored-done".asJson,
+      "description" -> "hint-honored".asJson,
+      "timeout" -> 3600000.asJson // 显式上限 60min —— 必须原样生效，不被 2s 预算钳制
     )
     val start = System.currentTimeMillis()
-    (for
-      result <- BashTool.call(input, budget2sCtx)
-      receipt <- IO {
+    BashTool.call(input, budget2sCtx).map {
+      case Right(out) =>
         val elapsed = System.currentTimeMillis() - start
-        result match
-          case Right(out) =>
-            assert(out.contains("[Background job started]"), s"clamped at budget: $out")
-            assert(elapsed < 8000, s"hint must be clamped to ~2s, took ${elapsed}ms")
-            out
-          case Left(e) => fail(s"got error: ${e.message}")
-      }
-      jobId = jobIdOf(receipt)
-      _ <- pollUntil(jobId, "[Background job completed]", 30.seconds)
-        .map(out => assert(out.contains("clamped-done"), s"result delivered: $out"))
-        .guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+        assert(out.contains("honored-done"), s"foreground real output past the budget: $out")
+        assert(!out.contains("[Background job started]"), s"explicit timeout must NOT clamp to budget: $out")
+        assert(elapsed >= 3500, s"must wait the full command duration (~4s), took ${elapsed}ms")
+      case Left(e) => fail(s"got error: ${e.message}")
+    }
   }
 
   test("N-7 engine short-command family regression: fast commands stay foreground with real output (default config)") {

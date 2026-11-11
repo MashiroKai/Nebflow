@@ -15,7 +15,7 @@ import nebflow.core.tools.{BgHealth, BgTaskRegistry}
  * 随行）——作者病历「状态面报本会话无后台任务，而账目其实在别处丢了」的可见性
  * 收口：状态面读数与账本一致、且无需前端从数组长度反推。
  */
-class BgWaitingCountSpec extends FunSuite:
+class BackgroundWaitingCountSpec extends FunSuite:
 
   // activeAgentEntryJson never touches the actor ref — null is safe here
   // (same pattern as ActiveAgentsEntrySpec).
@@ -96,4 +96,4 @@ class BgWaitingCountSpec extends FunSuite:
     finally BgTaskRegistry.unregisterSession(Some(sessionId)).unsafeRunSync()
 
     end try
-end BgWaitingCountSpec
+end BackgroundWaitingCountSpec

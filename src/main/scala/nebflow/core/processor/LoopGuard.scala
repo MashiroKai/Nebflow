@@ -27,10 +27,10 @@ import nebflow.shared.Counters
  *    打断文本计数）；exemptTools（轮询类）与权限拒绝不计（轮询等待与 #12
  *    劝停独立治理的既有豁免语义延续）。**T3 调用类别（2026-11-04）**：
  *    R-call 只针对 Work 类调用——Query（`Bash(background_job_id=…)` 无 command
- *    的查询态采样）/ Wait（`BgWait` 有界等待）不推进也不清零 R-call 连续计数
+ *    的查询态采样）/ Wait（`Bash(background_job_id, timeout)` 有界等待）不推进也不清零 R-call 连续计数
  *    （同参定时采样不是循环信号；现场 A/B：10 次成功的同参查询被误杀），但
  *    **失败仍计 S1/S3**；另设只提醒的正向指标 queryWarnAfter(5)——同参非 Work
- *    连续恰达 5 ⇒ 一次 L0 nudge（指向 BgWait），**永不** Terminate/Freeze。
+ *    连续恰达 5 ⇒ 一次 L0 nudge（指向 Bash 的有界等待），**永不** Terminate/Freeze。
  *  - S3 跨轮同调用：同 fp 在 ≥K(3) 个不同 turn 都失败且无一次成功 → L2 冻结。
  *    L1 终止后同 fp 在后续 turn 立即复发 → 直接 L2（不再给第三次 L1）。
  *
@@ -121,7 +121,7 @@ object LoopGuard:
     exemptTools: Set[String] = Set("TaskQuery", "TaskList", "TeamTaskList"),
     /**
      * T3（bash overhaul，作者令 2026-11-04）：同 fp 的 Query/Wait 类调用**连续**
-     * 达此次数 → 仅一次 L0 nudge（指向 `BgWait` 有界等待），**永不**
+     * 达此次数 → 仅一次 L0 nudge（指向 `Bash(background_job_id, timeout)` 有界等待），**永不**
      * Terminate/Freeze。热读键 `supervision.loopGuard.queryWarnAfter`；缺键走
      * 本缺省（不因此把整段 loopGuard 配置打回 Default）。
      */
@@ -203,7 +203,7 @@ object LoopGuard:
    *  - 但**失败仍计 S1/S3**——失败查询连发同一错误 8 次照样 Terminate（豁免只
    *    针对「同参次数」这一维，不放过真正的死循环失败）；
    *  - 补偿一条**只提醒**的正向指标 `queryWarnAfter`：同参非 Work 连续达该次数
-   *    ⇒ 一次 L0 nudge（指向 `BgWait` 有界等待），**永不** Terminate/Freeze。
+   *    ⇒ 一次 L0 nudge（指向 `Bash(background_job_id, timeout)` 有界等待），**永不** Terminate/Freeze。
    *
    * 判据是纯函数、只看 `toolName` + `args`（不改 RoundEvent 形状、不引入第二套
    * 指纹——非 Work 连续计数复用同一 `fingerprint`）。
@@ -220,19 +220,15 @@ object LoopGuard:
      */
     case object Query extends CallKind
 
-    /** 有界等待原语：`BgWait`（自带 deadline；重复调用等价于阻塞等待）。 */
+    /** 有界等待原语：`Bash(background_job_id, timeout)`（自带 deadline；重复调用等价于阻塞等待）。 */
     case object Wait extends CallKind
 
     /**
-     * 判类口径（逐字）：
-     *  - `toolName == "BgWait"` ⇒ `Wait`；
-     *  - `toolName == "Bash"` 且 `args.background_job_id` 非空 且 `command` 缺失/空 ⇒ `Query`；
-     *  - 否则 ⇒ `Work`。
+     * Classify a Bash wait/cancel request as non-work; normal command execution remains Work.
      */
     def classify(toolName: String, args: Json): CallKind =
-      if toolName == "BgWait" then CallKind.Wait
-      else if toolName == "Bash" && nonEmpty(args, "background_job_id") && !nonEmpty(args, "command") then
-        CallKind.Query
+      if toolName == "Bash" && nonEmpty(args, "background_job_id") then
+        if nonEmpty(args, "cancel_background_job") then CallKind.Work else CallKind.Wait
       else CallKind.Work
 
     /** 字段存在且为非空白字符串（非字符串/缺失一律 false）。 */
@@ -580,7 +576,7 @@ object LoopGuard:
                   // T3：只提醒、不处置——查询/等待类重复不是循环信号（业界无
                   // 「同参 N 次即终止会话」的做法）；指向有界等待原语或回合结束。
                   Verdict.Warn(
-                    s"the same query/wait call has now been issued ${withText.lastNonWorkCount} times in a row with identical arguments — polling the same handle cannot make progress by itself. Use `BgWait` for a bounded wait, or end your turn and wait for the completion notification instead of re-polling."
+                    s"the same query/wait call has now been issued ${withText.lastNonWorkCount} times in a row with identical arguments — polling the same handle cannot make progress by itself. Use Bash with background_job_id and timeout for a bounded wait, or end your turn and wait for the completion notification instead of re-polling."
                   )
                 else Verdict.Pass
 

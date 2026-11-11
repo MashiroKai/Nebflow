@@ -113,10 +113,10 @@ object BgTaskRegistry:
      * 不变）。
      *
      * 语义（业界依据：dsh「结算通知推会话 + 忙时 next-step inbox + awaited 去重」）：
-     * 终态结果**已被等待者直接收走**（[[BgWaitTool]] 把 `[completed]/[failed]` 结果
+     * 终态结果**已被等待者直接收走**（BashTool wait 把 `[completed]/[failed]` 结果
      * 当面交付给 agent）⇒ 完成回调不再把同一 jobId 推第二遍——但账本行与输出留存
      * **照做**（durable-then-push 的两条腿不因去重而缺席）。写缝 = [[markAwaited]]
-     * （唯一生产写点 BgWaitTool.call），读点 = 完成回调在注销时取回的行
+     * （唯一生产写点 BashTool wait mode），读点 = 完成回调在注销时取回的行
      * （[[unregisterReturning]] 的原子读数，禁第二事实源）。
      */
     awaited: Boolean = false
@@ -363,7 +363,7 @@ object BgTaskRegistry:
 
   /**
    * awaited 去重的**写缝**（bash overhaul T2 契约；唯一生产调用点 =
-   * [[BgWaitTool.call]] 终态交付之后）。语义：本 jobId 的终态结果已由等待者
+   * BashTool wait mode 终态交付之后）。语义：本 jobId 的终态结果已由等待者
    * **当面收走**，完成回调（BashTool.makeNotifyCallback）投递前读到该标记即
    * **只跳过 agent 推送**，账本行与输出留存照做。
    *
@@ -683,6 +683,7 @@ object BgTaskRegistry:
             // 任务模式标注批（2026-10-30）：delegate 会话生效执行形态随快照下发
             // （kernel/dispatcher；空 = 无徽标——旧行/非 delegate 恒空，零渲染）。
             "ownerMode" -> t.ownerMode.asJson,
+            "persistent" -> t.persistent.asJson,
             // 后台任务归属批（2026-10-31）：行归属短名随快照下发（delegate 批次
             // 短名；空 = 非 delegate/无名 ⇒ 前端回退既有来源显示，零渲染）。
             "ownerName" -> t.ownerName.asJson,

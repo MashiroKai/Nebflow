@@ -155,7 +155,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     system: ActorSystem,
     res: SharedResources,
     wsFrames: Ref[IO, List[Json]],
-    bgWaitCapMs: Long = 3_600_000L,
+    backgroundWaitCapMs: Long = 3_600_000L,
     // noderpt 批 B 段：终态延迟销毁窗口压到 0 ⇒ `destroyAt <= now`，扫描腿可即时执行
     // （生产默认 30min 由 Defaults 现读；spec 走构造入参避开全局 prop）。
     destroyWindowMs: Long = 0L,
@@ -175,7 +175,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        bgWaitCapMs = bgWaitCapMs,
+        backgroundWaitCapMs = backgroundWaitCapMs,
         // noderpt 批 A 段：本 spec 主题 = bg 等待家族（腿 1）⇒ 显式置回旧行为；
         // 腿 2（生产默认开）不在本 spec 主题内，显式关（默认开行为由
         // NodeReportReminderSpec 覆盖）。
@@ -394,7 +394,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
-      rt <- mountProject("bg-r2", ws, system, res, wsFrames, bgWaitCapMs = 1200L)
+      rt <- mountProject("bg-r2", ws, system, res, wsFrames, backgroundWaitCapMs = 1200L)
       // bgWait 是**瞬时字段**：hold 期置位（= 首轮收尾时刻，**早于** `waitNodeIdle` 返回）
       // → cap 到点即清零。改前的「点对点 `waitUntil(bgWait.isDefined)`」与 1.2s caps
       // 窗口竞速：只要 `waitNodeIdle` + 前序 wait 链耗时 > 1.2s（JIT/负载/GC 抖动即可，
@@ -444,7 +444,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         s"the hold period must have set bgWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})"
       )
       // ⑤ 残留字段回归断言（实测 n-0931699e：status=completed 而 bgWait 非空）——保留：
-      // 挂起出口的 `setNodeBgWait(nodeId, Nil)` 仍最前执行（顺序零改动）
+      // 挂起出口的 `setNodeBackgroundWait(nodeId, Nil)` 仍最前执行（顺序零改动）
       assertEquals(
         afterSweep.bgWait,
         None,

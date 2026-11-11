@@ -224,11 +224,11 @@ object Defaults:
   /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
    * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
-   * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.bgWaitHold.enabled`
+   * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.completionHold.enabled`
    * 可关（回退开关——关闭即恢复旧「Completed 即终判」行为）。
    */
-  def DelegateBgWaitHoldEnabled: Boolean =
-    sys.props.getOrElse("nebflow.delegate.bgWaitHold.enabled", "true").toBoolean
+  def DelegateCompletionHoldEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.completionHold.enabled", "true").toBoolean
 
   /**
    * 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）：delegate 终态
@@ -355,11 +355,11 @@ object Defaults:
    *
    * main-agent-nonblocking 批（2026-10-21 作者裁定重申「主 agent 一点不能阻塞」）
    * 语义收缩：本值不再是**前台预算的取值点**——前台预算迁往
-   * [[ForegroundWaitBudgetMs]]（默认 120s，短预算量级，作者裁定「默认建议 60-120s」）。
+   * [[ForegroundWaitBudgetMs]]（默认 300s，短预算量级）。
    * 本值剩两个消费面：
    *   1. BashTool 解析显式 `timeout` 入参时的上限钳（schema 契约 "max 3600000"
-   *      保持不变——钳的是入参字面，前台实际等待再经 [[ForegroundWaitBudgetMs]]
-   *      二次钳制）；
+   *      保持不变——钳的是入参字面；2026-11-10 起前台实际等待 = 显式入参本身，
+   *      不再经 [[ForegroundWaitBudgetMs]] 二次钳制）；
    *   2. remote-exec 同步面的超时上限（该面按协议等远端真结果，不适用短预算）。
    *
    * bashautobg batch (2026-09-25 author order: "the hard cap should not exist;
@@ -372,21 +372,23 @@ object Defaults:
     sys.props.getOrElse("nebflow.bash.maxTimeoutMs", "3600000").toLong
 
   /**
-   * Bash 前台等待预算（ms，默认 120000 = 120s）——**主 agent 前台零阻塞**的取值点。
+   * Bash 前台等待预算（ms，默认 300000 = 300s）——**主 agent 前台零阻塞**的取值点。
    *
    * main-agent-nonblocking 批（2026-10-21 作者裁定重申）：作者当日两次实撞——前台
    * 克隆 1GB+ 大仓无输出运行，60min 前台预算（旧 BashMaxTimeoutMs 缺省）从未到点，
    * 600s 无输出停滞阈值（ForegroundNoProgressTimeoutMs）先触发把进程**杀**掉，
    * 主会话每次硬冻结 10 分钟。裁定：前台命令运行超过**短预算**（作者可调，建议
    * 60-120s 量级）即自动转后台（拿后台 job id 回执继续跑，完成照旧通知；不杀进程）。
+   * 2026-11-10 作者令：缺省值上调 120s → 300s（键名与转后台不杀语义不变）。
    *
    * 语义要点：
    *   - 判据 = **时间**，与输出活性无关——有输出的长命令同样在预算到点转后台，
    *     不因「还在吐进度」占着主会话（实现 = exec fiber 与预算 sleep 的 racePair，
    *     天然只看时间）；
-   *   - 显式 `timeout` 入参**收窄**到本值（min），不能越过作者的零阻塞裁定；
+   *   - 显式 `timeout` 入参即等待上限（2026-11-10 作者令：可超本值，不再 min
+   *     钳制；解析面仍钳 BashMaxTimeoutMs）——本值 = 无显式入参时的缺省面；
    *   - 预算到点 → adoptAsBackgroundJob（回执含 job id + 查询方式），进程不杀；
-   *   - 语义收缩的连带：默认 120s < ForegroundNoProgressTimeoutMs（600s）⇒ 前台
+   *   - 语义收缩的连带：默认 300s < ForegroundNoProgressTimeoutMs（600s）⇒ 前台
    *     no-progress ceiling 在缺省面**结构性不可达**（自然消亡）；仅当作者把预算
    *     调大于 600s 时，ceiling 作为前台真挂死兜底保留。转后台后的任务豁免
    *     ceiling（JobHealth.adoptedAsBackground）。
@@ -399,7 +401,7 @@ object Defaults:
    *   3. BashResilienceConfig.foregroundWaitBudgetMs 缺省 = 本值（测试注入同款）。
    */
   def ForegroundWaitBudgetMs: Long =
-    sys.props.getOrElse("nebflow.bash.foregroundWaitBudgetMs", "120000").toLong
+    sys.props.getOrElse("nebflow.bash.foregroundWaitBudgetMs", "300000").toLong
 
   /** Curl tool max timeout in seconds. */
   val CurlMaxTimeoutSec: Int = 120
@@ -603,7 +605,7 @@ object Defaults:
   /**
    * 完成门腿 1 开关（`nebflow.bgGate.completionHold`，默认 `true` = **默认保结果**）：
    * true = 桥观察 `Completed` 时查 `BgTaskRegistry.waitingFor` 并 hold（含 armCap 兜底
-   * 计时器），名下等待型后台任务全部完成后自动续（配合 `BgWait`：有界等待原语，
+   * 计时器），名下等待型后台任务全部完成后自动续（配合 Bash 的 `background_job_id` + `timeout` 有界等待，
    * 「结束回合 → 后台任务完成 → 自动续」即默认路径）；false = 跳过等待集检查直接走
    * 放行分支（不再因「后台任务还在跑」拦节点）——**丢弃结果必须显式声明**：
    * `-Dnebflow.bgGate.completionHold=false` 或 `nebflow.json` 同名键（后者须经启动面
@@ -1480,8 +1482,8 @@ object Defaults:
    *
    * 🔴 I2 零消费点（消费点 = I6 死会话收敛腿）。
    */
-  def DeadSessionBgWaitGraceMs: Long =
-    sys.props.getOrElse("nebflow.noderpt.deadSessionBgWaitGraceMs", "1800000").toLong
+  def DeadSessionBgCompletionGraceMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.deadSessionBgCompletionGraceMs", "1800000").toLong
 
   /**
    * **I2 新参**（设计 §4.4.2 **G2** `demand-report`）：G1 标记可疑后仍持续本值（s）⇒
@@ -2186,7 +2188,7 @@ end Defaults
  * 只服务显式 run_in_background 后台任务。nebflow.json 顶层键可覆盖。
  *
  * main-agent-nonblocking 批（2026-10-21 作者裁定）新增 `foregroundWaitBudgetMs`：
- * 前台等待预算（默认 120s，作者可调）——前台命令超预算即自动转后台（不杀），
+ * 前台等待预算（默认 300s，作者可调）——前台命令超预算即自动转后台（不杀），
  * 主 agent 前台零阻塞的取值点。实例级一份（SharedResources.bashResilience →
  * 全部会话共用：主 agent / 子 agent / 节点同纪律，无 per-agent 差异化面）。
  */
@@ -2194,6 +2196,6 @@ case class BashResilienceConfig(
   hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
   stuckWindowSec: Int = Defaults.BashStuckWindowSec,
   healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
-  /** 前台等待预算 ms（缺省 = Defaults.ForegroundWaitBudgetMs = 120s）。 */
+  /** 前台等待预算 ms（缺省 = Defaults.ForegroundWaitBudgetMs = 300s）。 */
   foregroundWaitBudgetMs: Long = Defaults.ForegroundWaitBudgetMs
 )

@@ -19,16 +19,17 @@ object BashTool extends Tool:
 
   /**
    * Auto-background: the former "max timeout / kill
-   * line" is now the foreground auto-background threshold — a foreground command
-   * still running when this value (or an explicit, clamped `timeout`) is reached
-   * is adopted into the background registry, never killed by time. `def` (not
+   * line" is now the parse clamp for the explicit `timeout` face — a foreground
+   * command still running when the effective wait (the explicit `timeout`
+   * as-is, or the configured budget when absent) is reached is adopted into
+   * the background registry, never killed by time. `def` (not
    * `val`) so the spec prop compression of Defaults.BashMaxTimeoutMs takes
    * effect at every call.
    *
    * main-agent-nonblocking 批（2026-10-21 作者裁定「主 agent 一点不能阻塞」）
    * 语义收缩：本值退为**入参钳 + remote-exec 面**（见 Defaults.BashMaxTimeoutMs
    * 注释）；前台实际等待预算 = ctx.bashConfig.foregroundWaitBudgetMs
-   * （缺省 Defaults.ForegroundWaitBudgetMs = 120s，作者经 nebflow.json
+   * （缺省 Defaults.ForegroundWaitBudgetMs = 300s，作者经 nebflow.json
    * `bashForegroundWaitBudgetMs` 可调）。`def` 保留（spec 压缩面不变）。
    */
   def MAX_TIMEOUT: Long = Defaults.BashMaxTimeoutMs
@@ -39,7 +40,7 @@ object BashTool extends Tool:
 
 Usage:
 - The working directory persists between commands, but shell state does not persist across Stand restarts.
-- You may specify an optional timeout in milliseconds (max 3600000) as a foreground wait budget hint. The effective foreground wait is capped by the configured foreground wait budget (default 120s; author-adjustable via the config file (`bashForegroundWaitBudgetMs`)). When the budget is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the budget exactly like a silent one; the main session is never blocked longer than the budget.
+- You may specify an optional timeout in milliseconds (max 3600000) as the foreground wait: an explicit timeout is honored as-is and may exceed the configured default; without it the configured foreground wait budget applies (default 300s; author-adjustable via the config file (`bashForegroundWaitBudgetMs`)). When the wait is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the deadline exactly like a silent one; without an explicit timeout the session is never blocked longer than the budget.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -56,9 +57,9 @@ Service-type background jobs (persistent):
 - Waiting-type (default): the system waits for it to complete and you are notified. No time limit — background jobs run to completion (the idle/stuck sensor only alerts; use cancel_background_job: true to kill).
 - persistent jobs are EXEMPT from the idle/hard-timeout/stall guards — a server that sits idle is healthy. They run until you cancel them (cancel_background_job: true) or the session ends. You own their lifecycle; the frontend indicator stays visible.
 
-Waiting on background jobs (BgWait):
-- `BgWait` is the ONLY sanctioned way to wait on a background job inside a turn: it blocks (bounded) until the jobIds you list are terminal or its deadline is reached, and it NEVER kills a job. Its deadline defaults to — and is capped at — the same foreground wait budget as Bash.
-- Do NOT repeat `background_job_id` status queries. `background_job_id` now has exactly two uses: cancelling (`cancel_background_job: true`), and checking a job's state after a stuck notification.
+Waiting on background jobs:
+- Use `background_job_id` with `timeout` for a bounded wait. If the deadline expires, Bash returns the current job status without killing or cancelling it; you can wait again with a larger timeout or end your turn for the completion notification.
+- Do not repeatedly query without a timeout. Use `background_job_id` alone only for an immediate status check, or pair it with `cancel_background_job: true` to cancel.
 
 Do not use Bash when a dedicated tool exists:
 | Task | Use | Not Bash |
@@ -85,20 +86,20 @@ Git safety:
       "properties" -> io.circe.Json.obj(
         "command" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "The bash command to run. Required unless background_job_id is provided.".asJson
+          "description" -> "Bash command to run. Select exactly one mode: command; background_job_id with optional timeout to wait/check; or background_job_id with cancel_background_job=true to cancel. Do not combine command with job-id modes.".asJson
         ),
         "timeout" -> io.circe.Json
           .obj(
             "type" -> "number".asJson,
-            "description" -> "Optional foreground wait hint in milliseconds (max 3600000). Effective wait = min(hint, configured foreground budget, default 120s). When reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
+            "description" -> "For a command: optional foreground wait in milliseconds (max 3600000); when reached the command is auto-backgrounded, never killed. For background_job_id: maximum wait for completion; if still running, return current status without cancelling. May be supplied with background_job_id unless cancelling.".asJson
           ),
+        "run_in_background" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "Immediately start the command in the background. Mutually exclusive with timeout and background_job_id.".asJson
+        ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Clear, concise description of what this command does".asJson
-        ),
-        "run_in_background" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you. Blocked on it inside this turn? Wait with BgWait (jobIds: [\"<jobId>\"]).".asJson
         ),
         "persistent" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
@@ -106,11 +107,11 @@ Git safety:
         ),
         "background_job_id" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Job ID to query or cancel. When provided, command is not required.".asJson
+          "description" -> "Job ID to wait for or cancel. When provided, command is not required; add timeout in milliseconds for a bounded wait that returns current status if still running.".asJson
         ),
         "cancel_background_job" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "If true with background_job_id, cancel the background job.".asJson
+          "description" -> "If true with background_job_id, cancel the background job (mutually exclusive with timeout).".asJson
         )
       ),
       "required" -> io.circe.Json.arr() // command is conditionally required: required when background_job_id is absent
@@ -586,91 +587,98 @@ Git safety:
     // If background_job_id is provided, enter query/cancel mode
     // (askuser-secret 批：执行面前先经 otpFace 拒绝闸——引用已消费/过期的一次性
     // 验证码的命令在此显式失败，不执行、不部分消费。)
-    val runPlan = bgJobId match
-      case Some(jobId) =>
-        // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
-        // sessionId, so a query that created the session first would otherwise
-        // hand the later execute path a session created without injection.
-        // askuser-secret 批：`++ otpEnv` = 本条命令消费的一次性验证码（otpEnv 为空
-        // ⇒ 与改前逐字节同参）。
-        ShellSession
-          .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt, secretEnv = secretEnv ++ otpEnv)
-          .flatMap { shell =>
-            if cancelBg then
-              shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
-                // #1193 收口腿：显式取消同样是终态——**取走 registry 行** +
-                // 输出留存区翻转。原实现只出会话任务图、不取行：行残留 →
-                // death-watch 下一拍以「owner lost: not owned by session」
-                // 二次收割，账本/通知留下「引擎埋任务」假证（10-31 实证
-                // f25b9f1f/8641d0d5：模型显式取消 5s 后 owner-lost 收割到）。
-                // first-terminal-wins：真完成竞态已先取走行 ⇒ no-op 幂等。
-                val takeRow =
-                  if cancelled then
-                    BgTaskRegistry.unregisterReturning(jobId).void *>
-                      BgTaskOutputStore
-                        .finalizeTask(jobId, "cancelled", None, Some("Cancelled by agent (tool call)"))
-                        .handleErrorWith(_ => IO.unit)
-                  else IO.unit
-                takeRow.as {
-                  if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
-                  else Right(s"[Background job not found] Job ID: $jobId")
-                }
-              }
-            else
-              shell.getBackgroundResult(jobId).flatMap {
-                case None =>
-                  // Job still running — fetch health info for the agent
-                  shell.getBackgroundJobHealth(jobId).map {
-                    case Some(h) =>
-                      val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
-                      val isStuck = h.idleMs > stuckThreshold
-                      val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
-                      val stuckWarning =
-                        if isStuck then
-                          s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
-                        else ""
-                      Right(
-                        s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
-                      )
-                    case None =>
-                      Right(s"[Background job pending] Job ID: $jobId")
+    val invalidMode =
+      (command.nonEmpty && bgJobId.isDefined) ||
+        (bgJobId.isDefined && cancelBg && explicitTimeoutMs.isDefined) ||
+        (bgJobId.isEmpty && cancelBg) ||
+        (bgJobId.isDefined && (background || persistent)) ||
+        (bgJobId.isEmpty && persistent && !background) ||
+        (background && explicitTimeoutMs.isDefined) ||
+        (command.isEmpty && bgJobId.isEmpty)
+    val runPlan =
+      if invalidMode then IO.pure(Left(ToolError("Bash modes are exclusive: command (optional timeout), background_job_id with optional timeout to wait, or background_job_id with cancel_background_job=true to cancel.")))
+      else bgJobId match
+        case Some(jobId) =>
+          // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
+          // sessionId, so a query that created the session first would otherwise
+          // hand the later execute path a session created without injection.
+          // askuser-secret 批：`++ otpEnv` = 本条命令消费的一次性验证码（otpEnv 为空
+          // ⇒ 与改前逐字节同参）。
+          ShellSession
+            .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt, secretEnv = secretEnv ++ otpEnv)
+            .flatMap { shell =>
+              if cancelBg then
+                shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
+                  val takeRow =
+                    if cancelled then
+                      BgTaskRegistry.unregisterReturning(jobId).void *>
+                        BgTaskOutputStore
+                          .finalizeTask(jobId, "cancelled", None, Some("Cancelled by agent (tool call)"))
+                          .handleErrorWith(_ => IO.unit)
+                    else IO.unit
+                  takeRow.as {
+                    if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
+                    else Right(s"[Background job not found] Job ID: $jobId")
                   }
-                case Some(Left(e)) =>
-                  val errMsg = e match
-                    case _: TimeoutException => "[Command timed out]"
-                    case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                  IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
-                case Some(Right(result)) =>
-                  val out = cleanOutput(sanitizeCardOutput(result.stdout))
-                  val cleanedErr = cleanOutput(result.stderr)
-                  val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
-                  IO.pure(Right(s"[Background job completed] Job ID: $jobId\n$out$errLine"))
-              }
-          }
-      case None =>
-        if command.isEmpty then IO.pure(Right("[Empty command]"))
-        else
-          val interactiveWarning = checkInteractive(command)
-          if interactiveWarning.isDefined then
-            IO.pure(
-              Left(
-                ToolError(
-                  s"[Interactive command] ${interactiveWarning.get}\nThis command cannot run in the agent environment (no terminal available). Please execute it manually in your terminal."
+                }
+              else
+                val waitMs = explicitTimeoutMs.getOrElse(math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs))
+                shell.waitBackgroundResults(Seq(jobId), waitMs).void *>
+                  shell.getBackgroundResult(jobId).flatMap {
+                    case None =>
+                      shell.getBackgroundJobHealth(jobId).map {
+                        case Some(h) =>
+                          val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
+                          val isStuck = h.idleMs > stuckThreshold
+                          val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
+                          val stuckWarning =
+                            if isStuck then
+                              s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
+                            else ""
+                          Right(
+                            s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
+                          )
+                        case None => Right(s"[Background job pending] Job ID: $jobId")
+                      }
+                    case Some(Left(e)) =>
+                      val errMsg = e match
+                        case _: TimeoutException => "[Command timed out]"
+                        case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                      IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
+                    case Some(Right(result)) =>
+                      BgTaskRegistry.markAwaited(jobId).attempt.void *>
+                        IO {
+                          val out = cleanOutput(sanitizeCardOutput(result.stdout))
+                          val cleanedErr = cleanOutput(result.stderr)
+                          val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
+                          Right(s"[Background job completed] Job ID: $jobId\n$out$errLine")
+                        }
+                  }
+            }
+        case None =>
+          if command.isEmpty then IO.pure(Right("[Empty command]"))
+          else
+            val interactiveWarning = checkInteractive(command)
+            if interactiveWarning.isDefined then
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"[Interactive command] ${interactiveWarning.get}\nThis command cannot run in the agent environment (no terminal available). Please execute it manually in your terminal."
+                  )
                 )
               )
-            )
-          else
-            // D12-b（delegate reset 零闸治理，作者裁定 2026-10-23）：reset 系命令
-            // 审计事件——auto-all 顶档下危险命令清单是死信（ToolReversibility
-            // AutoAll ⇒ true），就地腿 delegate 与他方共享检出区，一次 reset 即
-            // 清掉他方未持久化的进行中工作且无痕。此处（权限闸之后、进程起跑之前）
-            // 落至少一行审计（谁/何时/命令/受波及的 live delegate 及其当时状态/任务）。
-            // best-effort：审计失败只 WARN，绝不影响命令执行（RelayExecAudit 同款
-            // 失败语义）；零超时设计——非 reset 命令零开销透传（一组正则判别）。
-            val resetAuditIo =
-              if ResetAudit.isResetCommand(command) then ResetAudit.record(command, ctx, ctx.sharedResources)
-              else IO.unit
-            resetAuditIo *> ShellSession
+            else
+              // D12-b（delegate reset 零闸治理，作者裁定 2026-10-23）：reset 系命令
+              // 审计事件——auto-all 顶档下危险命令清单是死信（ToolReversibility
+              // AutoAll ⇒ true），就地腿 delegate 与他方共享检出区，一次 reset 即
+              // 清掉他方未持久化的进行中工作且无痕。此处（权限闸之后、进程起跑之前）
+              // 落至少一行审计（谁/何时/命令/受波及的 live delegate 及其当时状态/任务）。
+              // best-effort：审计失败只 WARN，绝不影响命令执行（RelayExecAudit 同款
+              // 失败语义）；零超时设计——非 reset 命令零开销透传（一组正则判别）。
+              val resetAuditIo =
+                if ResetAudit.isResetCommand(command) then ResetAudit.record(command, ctx, ctx.sharedResources)
+                else IO.unit
+              resetAuditIo *> ShellSession
               .forSession(
                 sessionId,
                 initialDir = sessionInitialDir,
@@ -750,7 +758,7 @@ Git safety:
                           _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                         yield Right(
                           s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn. " +
-                            s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
+                            s"""Wait with Bash(background_job_id: "$jobId", timeout: <milliseconds>) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
                         )
                         end for
                     }
@@ -776,9 +784,10 @@ Git safety:
                   // streak，8 次就 L1 杀会话）。而本地腿早在 main-agent-nonblocking 批
                   // 就把「到点」从**杀**改成了**收编为后台**。
                   //
-                  // 改后（本块）：唯一上限 = min(显式 timeout, 前台等待预算
-                  // `ctx.bashConfig.foregroundWaitBudgetMs`）——与 [[executeForeground]]
-                  // **同源单点**，禁第二个上限（尤其禁 30s 兜底）。竞速（racePair，落败
+                  // 改后（本块）：唯一上限 = 显式 timeout（解析面钳 60min；缺省 =
+                  // 前台等待预算 `ctx.bashConfig.foregroundWaitBudgetMs`。2026-11-10
+                  // 作者令：显式 timeout 可超预算，不再 min 钳制）——与
+                  // [[executeForeground]] **同源单点**，禁第二个上限（尤其禁 30s 兜底）。竞速（racePair，落败
                   // 侧不取消）：
                   //   - 预算内完成 ⇒ 既有 [[formatOutcome]]（成功/停滞/真错误三态照旧）；
                   //   - 到点未完成 ⇒ **收编为后台任务**：进程不杀，按 host 下发的
@@ -786,7 +795,7 @@ Git safety:
                   //     `BgTaskRegistry`（`kind="remote"`，命令来自对端）并把仍在跑的执行
                   //     fiber 挂进会话任务图，回**与本地 auto-background 逐字同形**的回执
                   //     （同一构造点 [[RemoteExecutor.autoBackgroundReceipt]]），
-                  //     `isError=false`，可被 BgWait 等、可被 BgTaskCancel 按同一 id 取消。
+                  //     `isError=false`，可由 Bash(background_job_id, timeout) 等待、可由 cancel 按同一 id 取消。
                   // 本侧无 PeerInfo，故「远端后台机制」在本侧的同构体 =
                   // `shell.adoptAsBackgroundJob` + `BgTaskRegistry.register`（= host 侧
                   // `executeRemoteBackground`/`startRemoteBgFiber` 的等价面）。
@@ -794,7 +803,7 @@ Git safety:
                   // [[formatOutcome]]，绝不被吞成后台回执。
                   // `run_in_background: true` 的显式后台语义不经过本块（上方 background 腿）。
                   val deviceBudgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
-                  val waitBudgetMs = explicitTimeoutMs.fold(deviceBudgetMs)(_.min(deviceBudgetMs))
+                  val waitBudgetMs = explicitTimeoutMs.getOrElse(deviceBudgetMs)
                   // P2 单任务取消远端腿：host 随下发参数带 bgJobId ⇒ 对端把本进程
                   // 登记进 RemoteExecCancelRegistry（execKey），bg-cancel 按它精确杀树；
                   // 同一 id 也是收编行的 jobId（登记行与回执同一 id，不铸第二个）。
@@ -874,9 +883,10 @@ Git safety:
    * main-agent-nonblocking 批（2026-10-21 作者裁定重申「主 agent 一点不能阻塞，
    * 之前的设计是不杀但自动转后台」）：前台等待预算收缩为**短预算**——
    * ctx.bashConfig.foregroundWaitBudgetMs（缺省 Defaults.ForegroundWaitBudgetMs
-   * = 120s，作者经 nebflow.json `bashForegroundWaitBudgetMs` 可调）。显式
-   * `timeout` 入参收窄到该预算（min）——agent 不能越过作者的零阻塞裁定。预算
-   * 判据 = **时间**（exec fiber 与预算 sleep 的 racePair），与输出活性无关：
+   * = 300s，作者经 nebflow.json `bashForegroundWaitBudgetMs` 可调）。显式
+   * `timeout` 入参即等待上限（2026-11-10 作者令：可超预算，不再 min 钳制；
+   * 解析面仍钳 BashMaxTimeoutMs）。预算判据 = **时间**（exec fiber 与预算 sleep 的 racePair），
+   * 与输出活性无关：
    * 有输出的长命令同样在到点转后台，不因「还在吐进度」占着主会话。到点 →
    * autoBackground 收编（回执含 job id + 查询方式），进程不杀，完成照旧经
    * makeNotifyCallback 通知。
@@ -884,14 +894,14 @@ Git safety:
    * 本次裁定之前的旧事故面（为何收缩）：旧缺省预算 = BashMaxTimeoutMs（60min）
    * ——前台克隆 1GB+ 大仓无输出运行时预算从未到点，600s 无输出停滞阈值
    * （shell.scala foregroundNoProgressWatch）先触发**杀**树，主会话每次硬冻结
-   * 10 分钟。收缩后默认 120s < 600s：停滞阈值在缺省面结构性不可达（自然消亡），
+   * 10 分钟。收缩后默认 300s < 600s：停滞阈值在缺省面结构性不可达（自然消亡），
    * 仅作者把预算调大于 600s 时作为前台真挂死兜底保留；转后台后的任务豁免
    * （JobHealth.adoptedAsBackground → ceiling 退役）。
    *
    * 卡死兜底保持（收缩后的剩余管辖面）：
    * - 前台阶段 no-progress ceiling（shell.scala）：仅当配置预算 > 600s 时可达。
    * - TaskStuckWatcher（turn 级换轴）：判据 = agent 侧事件停滞 ∪ 单个工具调用
-   *   持续超 10min（工具相位）——预算 120s ⇒ 工具相位轴对 Bash 结构性不可达。
+   *   持续超 10min（工具相位）——预算 300s ⇒ 工具相位轴对 Bash 结构性不可达。
    *
    * 活动桥接（#319）保持：有进展（输出/CPU≥阈值/sleep-like）刷新
    * **processActivityMs**（进程侧字段）——该戳与 agent 侧活动分家。
@@ -915,22 +925,26 @@ Git safety:
      */
     mergerRepo: Option[String] = None
   ): IO[Either[ToolError, String]] =
-    // Policy "no hard cap; auto-background at the foreground wait budget
-    // (main-agent-nonblocking: default 120s, author-adjustable); backgrounded
-    // commands have no limit"): an explicit `timeout` is a budget HINT clamped
-    // to the configured budget (min) — the author's zero-blocking ruling wins
-    // over any agent-requested long foreground wait. When the budget elapses
-    // and the command is still running, it is adopted into the session's
-    // background registry (adoptAsBackgroundJob) and the tool returns a
-    // background receipt immediately (same face as an explicit
-    // run_in_background); the process keeps running to completion and the
-    // completion notification rides the existing background callback chain
+    // Policy "no hard cap; auto-background at the deadline, never kill":
+    // the wait deadline is the explicit `timeout` hint when provided (the
+    // parser already clamps the literal to BashMaxTimeoutMs = 60min), otherwise
+    // the configured foreground wait budget (main-agent-nonblocking: default
+    // 300s, author-adjustable). 2026-11-10 author order: an explicit timeout
+    // may now EXCEED the configured budget and is honored as-is (the old
+    // min-clamp is retired); the configured budget is the default face only.
+    // When the deadline elapses and the command is still running, it is
+    // adopted into the session's background registry (adoptAsBackgroundJob)
+    // and the tool returns a background receipt immediately (same face as an
+    // explicit run_in_background); the process keeps running to completion and
+    // the completion notification rides the existing background callback chain
     // (makeNotifyCallback). The process-level time kill is retired as a class
     // (runProcess always gets 365.days now — it is never shortened). The only
     // retained foreground kill is the no-progress ceiling (the stall watchdog —
-    // not a time limit; structurally unreachable while budget < 600s).
+    // not a time limit; unreachable while the effective deadline < 600s, but
+    // reachable again when an explicit timeout > 600s runs a silent command —
+    // the true-hang backstop by design).
     val budgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
-    val waitBudgetMs = explicitTimeoutMs.fold(budgetMs)(_.min(budgetMs))
+    val waitBudgetMs = explicitTimeoutMs.getOrElse(budgetMs)
     val health = new JobHealth()
     // A running Bash is INVISIBLE — the completion log only
     // fires when it returns, so a long/hung command reads as "turn went
@@ -1132,12 +1146,12 @@ Git safety:
     // 回执契约（main-agent-nonblocking 批，裁定原文「转后台时给主 agent 的
     // 回执要含：已转后台 + job 标识 + 如何查询」）：① [Background job started]
     // 头 + ② Job ID + ③ 已转后台说明（Auto-backgrounded after … NOT killed）
-    // + ④ 完成通知承诺 + ⑤ 等待方式（BgWait 唯一有界等待原语）/取消方式
+    // + ④ 完成通知承诺 + ⑤ 等待方式（Bash background_job_id + timeout）/取消方式
     // （background_job_id + cancel_background_job）。
     // 🔴 bash overhaul T1（作者令 2026-11-04）：原回执里「随时查询进度」式的
     // `background_job_id` 邀请是**受逼轮询**的来源（缺陷 D3——提示词禁止轮询，回执却
     // 邀请轮询，而当时没有任何等待原语）。现回执只给两条合法出路：真被阻塞 ⇒
-    // BgWait 一次有界等待；否则结束回合等通知。
+    // Bash background_job_id + timeout 一次有界等待；否则结束回合等通知。
     // 🔴 T7（作者令 2026-11-04）：回执正文的唯一构造点移到
     // [[RemoteExecutor.autoBackgroundReceipt]] —— 本地腿与设备腿**逐字同形**由
     // 同一个函数保证（不是两处字符串「看起来一样」）。调用方加的前缀（如 sleep-poll
@@ -1151,7 +1165,7 @@ Git safety:
    * 与本地 [[autoBackground]] 的差异只有三处，全部是「这是对端发起的一条命令」的
    * 必然结果：
    *  1. jobId = host 下发的 `bgJobId`（对端发起侧铸的 id）——两侧同一 id，使
-   *     `BgWait`/`BgTaskCancel`/对端 `bg-cancel` 全按同一个 id 工作（禁在本侧铸第二
+   *     Bash wait/cancel/对端 `bg-cancel` 全按同一个 id 工作（禁在本侧铸第二
    *     个 id 让登记行与回执发散）；
    *  2. 台账 `kind="remote"`（命令不在本实例的会话里发起）；
    *  3. 该 kind 的死亡看护只读 `RemoteExecutor` 的等待句柄图（[[BgTaskLiveness]]
@@ -1391,7 +1405,7 @@ Git safety:
    *     [[BgNotifyDelivery.deliverAgentEvent]] 的 `None` 门（持久补投腿），
    *     事件照样有落点，绝不 IO.unit 蒸发。
    *  4. `awaited` 去重（[[BgTaskRegistry.markAwaited]] 的反面消费）：注销行带
-   *     `awaited=true`（终态结果已被 BgWait 当面收走）⇒ **只跳过 agent 推送**
+   *     `awaited=true`（终态结果已被 Bash wait 当面收走）⇒ **只跳过 agent 推送**
    *     （审计 `bg-notify-awaited-skip`），账本行与输出留存照做。
    *  5. 忙时下一站 = 既有 next-step 收件口：目标会话在 Processing 时事件入
    *     `pendingEvents`、回合边界统一 drain（`AgentProcessing.scala:1360-1441`），
@@ -1505,12 +1519,12 @@ Git safety:
         // T2 契约 1/3：`targetRef` 传 **ctx 原值**（可能是 None）——
         //   - None ⇒ deliverAgentEvent 的 None 门（有目标会话 = 持久补投腿；连会话
         //     都没有 = 响亮 WARN + 审计），事件绝不蒸发；
-        //   - awaited（终态结果已被 BgWait 当面交付）⇒ 跳过推送这一整段
+        //   - awaited（终态结果已被 Bash wait 当面交付）⇒ 跳过推送这一整段
         //     （账本与输出留存已在上面无条件落完），审计 `bg-notify-awaited-skip`。
         val notifyAgent =
           if awaited then
             logger.info(
-              s"[bg-notify-awaited-skip] background job $jobId ($eventType): terminal result was already delivered by an awaiting caller (BgWait) — agent push skipped; ledger row + output retention kept",
+              s"[bg-notify-awaited-skip] background job $jobId ($eventType): terminal result was already delivered by an awaiting caller (Bash wait) — agent push skipped; ledger row + output retention kept",
               "sessionId" -> ctx.sessionId.getOrElse("")
             )
           else
@@ -1684,6 +1698,7 @@ Git safety:
           "origin" -> origin.asJson,
           "originLabel" -> originLabel.asJson,
           "ownerMode" -> ownerMode.asJson,
+          "persistent" -> persistent.asJson,
           "ownerName" -> ownerName.asJson
         )
         logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>

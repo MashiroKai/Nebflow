@@ -399,7 +399,7 @@ class DelegateToolSpec extends CatsEffectSuite:
     assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent")
     // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 工具整体退役
     // ⇒ 本面九 → **十件回落为九件**（本批确实改了机制面，非为过测放宽）：带 `device` 者
-    // 仍恰为六件（`RemoteExecutor.remoteableTools` 未动，`BgWait` 刻意不入远端注入面），
+    // 仍恰为六件（`RemoteExecutor.remoteableTools` 未动，wait mode is on Bash and does not change the remote-executable set），
     // 该不变式由 `RemoteableDeviceParamSpec` 逐件钉死。
     assertEquals(face.size, 9)
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件

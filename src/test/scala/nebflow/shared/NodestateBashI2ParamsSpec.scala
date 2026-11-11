@@ -32,7 +32,7 @@ class NodestateBashI2ParamsSpec extends FunSuite:
     "nebflow.shell.autoBackgroundMs", // 新参 ForegroundAutoBackgroundMs
     "nebflow.shell.sleepExemptBudgetMs", // 新参 ForegroundSleepExemptBudgetMs
     "nebflow.noderpt.reportFreezeGraceMs", // 新参 ReportFreezeGraceMs
-    "nebflow.noderpt.deadSessionBgWaitGraceMs", // 新参 DeadSessionBgWaitGraceMs（T8）
+    "nebflow.noderpt.deadSessionBgCompletionGraceMs", // 新参 DeadSessionBgCompletionGraceMs（T8）
     "nebflow.stuck.suspectTickSec", // 新参 StuckSuspectTickSec（G2）
     "nebflow.stuck.demandTickSec", // 新参 StuckDemandTickSec（G3）
     "nebflow.stuck.thresholdMs", // T3 prop 面（I2 新加）
@@ -91,10 +91,10 @@ class NodestateBashI2ParamsSpec extends FunSuite:
     )
   }
 
-  test("DeadSessionBgWaitGraceMs（设计 §4.4.1 T8）：默认 1800000 = 30min，prop 现读") {
+  test("DeadSessionBgCompletionGraceMs（设计 §4.4.1 T8）：默认 1800000 = 30min，prop 现读") {
     longFace(
-      "nebflow.noderpt.deadSessionBgWaitGraceMs",
-      () => Defaults.DeadSessionBgWaitGraceMs,
+      "nebflow.noderpt.deadSessionBgCompletionGraceMs",
+      () => Defaults.DeadSessionBgCompletionGraceMs,
       1_800_000L,
       4_567L
     )

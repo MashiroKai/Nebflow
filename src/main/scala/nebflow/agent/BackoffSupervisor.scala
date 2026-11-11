@@ -122,9 +122,9 @@ object BackoffSupervisor:
     withinTimeRange: FiniteDuration = 5.minutes,
     /**
      * A 段等待屏罩兜底计时上限（spec 注入缝——测试 JVM 下 sys.props 不可靠，
-     * NodeEngine.bgWaitCapMs 同款构造器缝先例）。
+     * NodeEngine.completionCapMs 同款构造器缝先例）。
      */
-    bgWaitCapMs: Long = Defaults.BgGateWaitTimeoutMs,
+    completionCapMs: Long = Defaults.BgGateWaitTimeoutMs,
     /**
      * **R5（bg-turn-end barrier idle 上限放行批 2026-11-04）**：等待屏罩的**空闲**
      * 上限（ms）——等待集里每个后台作业都「一段时间没有新输出」且已达此上限 ⇒
@@ -152,9 +152,9 @@ object BackoffSupervisor:
       // sleep-poll 禁令批 A 段（等待屏障）：hold 期状态——首 hold 单发标记 +
       // 兜底计时器句柄（每等待期重臂，NodeStarter 桥 bg-wait 同款形态）+ cap
       // 触发闩（到点强制终判的复检回合路由）。
-      val bgWaitHeld = Ref.unsafe[IO, Boolean](false)
-      val bgWaitCapArm = Ref.unsafe[IO, Long](0L)
-      val bgWaitCapFired = Ref.unsafe[IO, Boolean](false)
+      val backgroundHeld = Ref.unsafe[IO, Boolean](false)
+      val completionCapArm = Ref.unsafe[IO, Long](0L)
+      val completionCapFired = Ref.unsafe[IO, Boolean](false)
       budgetArmedIO *> ctx.watch(childRef) *>
         logger
           .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")
@@ -179,11 +179,11 @@ object BackoffSupervisor:
               maxBackoff,
               maxRestarts,
               withinTimeRange,
-              bgWaitCapMs,
+              completionCapMs,
               bgIdleCapMs,
-              bgWaitHeld,
-              bgWaitCapArm,
-              bgWaitCapFired
+              backgroundHeld,
+              completionCapArm,
+              completionCapFired
             )
           )
     }
@@ -228,17 +228,17 @@ object BackoffSupervisor:
     maxBackoff: FiniteDuration,
     maxRestarts: Int,
     withinTimeRange: FiniteDuration,
-    bgWaitCapMs: Long,
+    completionCapMs: Long,
     bgIdleCapMs: Long,
-    bgWaitHeld: Ref[IO, Boolean],
-    bgWaitCapArm: Ref[IO, Long],
-    bgWaitCapFired: Ref[IO, Boolean]
+    backgroundHeld: Ref[IO, Boolean],
+    completionCapArm: Ref[IO, Long],
+    completionCapFired: Ref[IO, Boolean]
   ): Behavior[AgentEvent] =
     new Behavior[AgentEvent]:
       def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
         // 四修①（2026-10-07 修复令「空轮≠完成」）的正常完成体（空轮判据不中时
         // 原样走——逐字保持既有行为）。
-        def completeNormally(messages: List[Message], bgWaitNote: Option[String] = None): IO[Behavior[AgentEvent]] =
+        def completeNormally(messages: List[Message], backgroundWaitNote: Option[String] = None): IO[Behavior[AgentEvent]] =
           val text = extractLastAssistantText(messages)
           val hasText = text.trim.nonEmpty && text.trim != Defaults.MaxTokensStubText
           // trim guard: a whitespace-only tail ("\n\n") is NOT a real output —
@@ -247,10 +247,10 @@ object BackoffSupervisor:
             if hasText then s""""$description":\n${text.trim}"""
             else s""""$description" (no text output)"""
           // delegate 轨的 Completed 在等待屏障放行后，将最终 assistant 文本直接作为
-          // 完成载荷交给父会话；后台任务等待由下方 BgWait barrier 负责，不要求额外
+          // 完成载荷交给父会话；后台任务等待由下方 completion barrier 负责，不要求额外
           // report 工具或终态判定中转。subtask 轨保留原通知形态。
           if source == "delegate" then
-            val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
+            val note = backgroundWaitNote.fold("")(n => s"\n[delegate-background-wait] $n")
             for
               diagnostic <- completionDiagnostic(messages, hasText)
               // 空回执显式化（P5 第二波 · 告警面）：静默完成（干了活但终文不可用）
@@ -311,18 +311,18 @@ object BackoffSupervisor:
         // persistent 服务型不在等待集）。会话终结只由显式终判（等待集清空后的
         // 判定机/自申报）或作者侧取消（AgentControl/Cancelled 链）触发。
         // 兜底面（后台任务不能把 delegate 悬挂成僵尸）：每个等待期武装
-        // bgWaitCapMs 兜底计时器（NodeStarter 桥同款「每等待期重臂」）；到点仍
+        // completionCapMs 兜底计时器（NodeStarter 桥同款「每等待期重臂」）；到点仍
         // 非空 ⇒ 置 capFired 闩并重发 Completed——复检回合不再 hold，带诚实注记
         // 强制终判（fail-open 交付，绝不静默丢失；注记说明未结任务及其通知将随
-        // 会话终结丢失）。默认 bgWaitCapMs = BgGateWaitTimeoutMs（2h，与节点闸
+        // 会话终结丢失）。默认 completionCapMs = BgGateWaitTimeoutMs（2h，与节点闸
         // 同值）。
-        def bgWaitCapNote(waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask]): String =
+        def completionCapNote(waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask]): String =
           s"background wait cap hit: completion delivered while ${waiting.size} background task(s) still pending " +
             s"(${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — their completion " +
             "notifications will be lost with this session (honest forced delivery; re-dispatch or re-attach if the work matters)"
 
         // R5（bg-turn-end barrier idle 上限放行批 2026-11-04 · 停顿审计 §4-R5）：
-        // 墙钟总额兜底（bgWaitCapMs，2h）之外再加一条**空闲**上限（bgIdleCapMs，
+        // 墙钟总额兜底（completionCapMs，2h）之外再加一条**空闲**上限（bgIdleCapMs，
         // 默认 15min）——等待集里每个作业都「长时间没有任何新输出」时，回合不再被
         // 一个永不结束的作业吊着（实证：79c40e17 被 `Find stand-website dir`
         // 吊了 1h49m，未到 2h 总额 ⇒ 回合不收尾 ⇒ 无 Completed ⇒ 无 leg ⇒ 合并队
@@ -334,7 +334,7 @@ object BackoffSupervisor:
             s"(${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — their completion " +
             "notifications will be lost with this session (honest forced delivery; re-dispatch or re-attach if the work matters)"
 
-        def disarmBgWaitCap: IO[Unit] = bgWaitCapArm.update(_ + 1L)
+        def disarmCompletionCap: IO[Unit] = completionCapArm.update(_ + 1L)
 
         /**
          * 下一次**真实截止时刻**的毫秒延迟 = min(墙钟腿剩余, idle 腿最早剩余)，
@@ -346,7 +346,7 @@ object BackoffSupervisor:
           waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
           now: Long
         ): IO[Long] =
-          val wallAt = heldSinceMs + bgWaitCapMs
+          val wallAt = heldSinceMs + completionCapMs
           if bgIdleCapMs <= 0L then IO.pure(math.max(1L, wallAt - now))
           else
             waiting
@@ -372,63 +372,63 @@ object BackoffSupervisor:
          * 武装兜底计时器（**刀一：到点消息，不轮询**）。
          *
          * 一次武装 = 臂号 +1 + 一条 `scheduleOnce` 自投的
-         * [[nebflow.actor.AgentEvent.BgWaitCapTick]]。臂号唯一的用途是**作废旧
+         * [[nebflow.actor.AgentEvent.BgCompletionCapTick]]。臂号唯一的用途是**作废旧
          * Tick**（`scheduleOnce` 无法撤销）：等待期结束、重臂、强制终判都会让旧
          * Tick 到点时臂号不符而被丢弃——因此「多臂并存」永远是安全的。
          *
          * 等待集已空 ⇒ 直接不武装（竞态：唤醒轮在飞，它的 Completed 会走干净
          * 放行腿）。
          */
-        def armBgWaitCap(messages: List[Message]): IO[Unit] =
+        def armCompletionCap(messages: List[Message]): IO[Unit] =
           val heldSince = System.currentTimeMillis()
           nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap { waiting =>
-            if waiting.isEmpty then disarmBgWaitCap
+            if waiting.isEmpty then disarmCompletionCap
             else
               capWakeDelayMs(heldSince, waiting, heldSince).flatMap { delayMs =>
-                bgWaitCapArm.updateAndGet(_ + 1L).flatMap { arm =>
+                completionCapArm.updateAndGet(_ + 1L).flatMap { arm =>
                   logger.info(
                     s"BackoffSupervisor: delegate $subagentId bg-wait cap armed as a TIMED MESSAGE (arm=$arm, " +
                       s"wake in ${delayMs}ms, ${waiting.size} task(s) pending) — no polling loop"
                   ) *> ctx.scheduleOnce(
                     delayMs.millis,
-                    AgentEvent.BgWaitCapTick(subagentId, heldSince, arm, messages)
+                    AgentEvent.BgCompletionCapTick(subagentId, heldSince, arm, messages)
                   )
                 }
               }
           }
-        end armBgWaitCap
+        end armCompletionCap
 
-        def holdForBgWait(
+        def holdForBackgroundJobs(
           waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
           messages: List[Message]
         ): IO[Unit] =
-          bgWaitHeld.get.flatMap { already =>
+          backgroundHeld.get.flatMap { already =>
             val emitOnce =
               IO.whenA(!already) {
                 logger.info(
                   s"BackoffSupervisor: delegate $subagentId turn completed with ${waiting.size} background " +
                     "task(s) still running — holding completion until they finish (wait barrier, sleep-poll fix batch A)"
                 ) *>
-                  bgWaitHeld.set(true) *>
+                  backgroundHeld.set(true) *>
                   (wsSend match
                     case Some(send) =>
                       send(
                         Json.obj(
-                          "type" -> "delegateBgWait".asJson,
+                          "type" -> "delegateCompletion".asJson,
                           "sessionId" -> subagentId.asJson,
                           "rootSessionId" -> parentSessionId.asJson,
                           "waitingCount" -> waiting.size.asJson,
                           "waiting" -> waiting.map(t => s"${t.description} (${t.jobId})").asJson
                         )
-                      ).handleErrorWith(e => logger.warn(s"delegateBgWait WS frame failed: ${e.getMessage}"))
+                      ).handleErrorWith(e => logger.warn(s"delegateCompletion WS frame failed: ${e.getMessage}"))
                     case None => IO.unit)
               }
-            emitOnce *> armBgWaitCap(messages)
+            emitOnce *> armCompletionCap(messages)
           }
 
         /**
          * 兜底计时器（每等待期重臂）。两条放行腿，判据都是**事件事实**而非猜测：
-         *   - 墙钟总额：等待期 ≥ [[bgWaitCapMs]]（既有 2h 腿，零行为变化）；
+         *   - 墙钟总额：等待期 ≥ [[completionCapMs]]（既有 2h 腿，零行为变化）；
          *   - **空闲上限（R5）**：等待集里每个作业的最近活动（max(启动时刻, 最近
          *     输出行时刻)）距今都 ≥ [[bgIdleCapMs]] ⇒ 没有哪个作业还在产出，等它
          *     也等不出东西（`bgIdleCapMs <= 0` = 关闭本腿，回到旧行为）。
@@ -443,18 +443,18 @@ object BackoffSupervisor:
          *   - 都未到点（新输出把 idle 截止时刻推后了）⇒ 按**新的真实截止时刻**
          *     重臂（同一臂号延续本等待期——墙钟腿的 `heldSinceMs` 不变）。
          */
-        def onBgWaitCapTick(heldSinceMs: Long, arm: Long, snapshot: List[Message]): IO[Behavior[AgentEvent]] =
-          bgWaitCapArm.get.flatMap { cur =>
+        def onBgCompletionCapTick(heldSinceMs: Long, arm: Long, snapshot: List[Message]): IO[Behavior[AgentEvent]] =
+          completionCapArm.get.flatMap { cur =>
             if cur != arm then
               logger
                 .info(s"BackoffSupervisor: stale bg-wait cap tick for $subagentId (arm $arm vs current $cur) — dropped")
                 .as(this)
             else
               nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
-                case Nil => disarmBgWaitCap.as(this) // 竞态：唤醒轮在飞，其 Completed 会正常放行
+                case Nil => disarmCompletionCap.as(this) // 竞态：唤醒轮在飞，其 Completed 会正常放行
                 case still =>
                   val now = System.currentTimeMillis()
-                  val wallHit = now - heldSinceMs >= bgWaitCapMs
+                  val wallHit = now - heldSinceMs >= completionCapMs
                   for
                     idleHit <-
                       if wallHit || bgIdleCapMs <= 0L then IO.pure(false)
@@ -470,7 +470,7 @@ object BackoffSupervisor:
                     _ <-
                       if wallHit then
                         logger.warn(
-                          s"BackoffSupervisor: delegate $subagentId bg-wait cap (${bgWaitCapMs}ms) hit with " +
+                          s"BackoffSupervisor: delegate $subagentId bg-wait cap (${completionCapMs}ms) hit with " +
                             s"${still.size} task(s) pending — forcing honest terminal delivery (timed message, arm=$arm)"
                         ) *> forceTerminalDelivery(still, snapshot)
                       else if idleHit then
@@ -487,7 +487,7 @@ object BackoffSupervisor:
                               s"deadline moved, next wake in ${delayMs}ms"
                           ) *> ctx.scheduleOnce(
                             delayMs.millis,
-                            AgentEvent.BgWaitCapTick(subagentId, heldSinceMs, arm, snapshot)
+                            AgentEvent.BgCompletionCapTick(subagentId, heldSinceMs, arm, snapshot)
                           )
                         }
                   yield this
@@ -513,11 +513,11 @@ object BackoffSupervisor:
                 .map(tail => (t.jobId, t.description, tail))
             }
             .flatMap(rows => nebflow.core.tools.BgTaskLedger.markOrphaned(subagentId, rows)) *>
-            bgWaitCapFired.set(true) *>
-            bgWaitHeld.set(false) *>
+            completionCapFired.set(true) *>
+            backgroundHeld.set(false) *>
             // **刀一**：定时器已改为「到点消息」，撤不掉在途 Tick —— 用臂号让它在
             // 到点时自认陈旧（处理器臂号不符即丢弃），因此这里只推进臂号。
-            disarmBgWaitCap *>
+            disarmCompletionCap *>
             // 诊断修复批 2026-10-24：cap 触发时**重载会话最新 transcript**——
             // hold 时武装捕获的 messages 是旧轮快照（hold 期唤醒轮的新产出
             // 不在其中），直接强投会把过期 payload 交付父会话；重载失败/
@@ -547,25 +547,25 @@ object BackoffSupervisor:
          *   - Proceed ⇒ 正常进终判（从未 hold / 等待集已清空的释放腿——干净放行）；
          *   - ForceWithNote ⇒ cap 兜底触发的强制终判，注记并入交付 payload。
          */
-        sealed trait BgWaitDecision
-        case object BgWaitHeld extends BgWaitDecision
-        case object BgWaitProceed extends BgWaitDecision
-        final case class BgWaitForce(note: String) extends BgWaitDecision
+        sealed trait CompletionDecision
+        case object CompletionHeld extends CompletionDecision
+        case object CompletionProceed extends CompletionDecision
+        final case class CompletionForce(note: String) extends CompletionDecision
 
-        def delegateBgWaitGate(messages: List[Message]): IO[BgWaitDecision] =
-          if source != "delegate" || !Defaults.DelegateBgWaitHoldEnabled then IO.pure(BgWaitProceed)
+        def delegateCompletionGate(messages: List[Message]): IO[CompletionDecision] =
+          if source != "delegate" || !Defaults.DelegateCompletionHoldEnabled then IO.pure(CompletionProceed)
           else
-            bgWaitCapFired.get.flatMap { fired =>
+            completionCapFired.get.flatMap { fired =>
               if fired then
                 // cap 触发后的复检回合：不再 hold，带注记强制终判（fail-open 交付）。
-                bgWaitCapFired.set(false) *> bgWaitHeld.set(false) *>
+                completionCapFired.set(false) *> backgroundHeld.set(false) *>
                   nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
-                    case Nil => IO.pure(BgWaitProceed: BgWaitDecision) // 兜底触发与唤醒轮竞态：实际已清空 ⇒ 干净放行
+                    case Nil => IO.pure(CompletionProceed: CompletionDecision) // 兜底触发与唤醒轮竞态：实际已清空 ⇒ 干净放行
                     case still =>
                       // R5：「注记指哪条腿」按当下事实判——等待集整体空闲（无新输出）
                       // 已达 idle 上限 ⇒ idle 注记（说明等的是「不动的作业」）；否则
                       // 走既有墙钟总额注记。两注记都是诚实面（任务/描述/jobId 全带）。
-                      if bgIdleCapMs <= 0L then IO.pure(BgWaitForce(bgWaitCapNote(still)): BgWaitDecision)
+                      if bgIdleCapMs <= 0L then IO.pure(CompletionForce(completionCapNote(still)): CompletionDecision)
                       else
                         still
                           .traverse(t =>
@@ -578,8 +578,8 @@ object BackoffSupervisor:
                             val now = System.currentTimeMillis()
                             val note =
                               if bgIdleCapReached(activities, now, bgIdleCapMs) then bgIdleCapNote(still, bgIdleCapMs)
-                              else bgWaitCapNote(still)
-                            BgWaitForce(note): BgWaitDecision
+                              else completionCapNote(still)
+                            CompletionForce(note): CompletionDecision
                           }
                   }
               else
@@ -601,16 +601,16 @@ object BackoffSupervisor:
                   } *>
                   nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
                     case Nil =>
-                      bgWaitHeld.get.flatMap { held =>
-                        (disarmBgWaitCap *>
+                      backgroundHeld.get.flatMap { held =>
+                        (disarmCompletionCap *>
                           IO.whenA(held) {
-                            bgWaitHeld.set(false) *>
+                            backgroundHeld.set(false) *>
                               logger.info(
                                 s"BackoffSupervisor: delegate $subagentId background task(s) all finished — releasing held completion"
                               )
-                          }).as(BgWaitProceed)
+                          }).as(CompletionProceed)
                       }
-                    case waiting => holdForBgWait(waiting, messages).as(BgWaitHeld)
+                    case waiting => holdForBackgroundJobs(waiting, messages).as(CompletionHeld)
                   }
             }
 
@@ -621,8 +621,8 @@ object BackoffSupervisor:
             if !isEmptyBurnCompletion(messages) then
               // A 段等待屏障先于终判：有未结等待型后台作业 ⇒ hold 唤醒复检；
               // cap 兜底触发 ⇒ 带注记强制终判。
-              delegateBgWaitGate(messages).flatMap {
-                case BgWaitHeld =>
+              delegateCompletionGate(messages).flatMap {
+                case CompletionHeld =>
                   IO.pure(
                     active(
                       childRef,
@@ -644,15 +644,15 @@ object BackoffSupervisor:
                       maxBackoff,
                       maxRestarts,
                       withinTimeRange,
-                      bgWaitCapMs,
+                      completionCapMs,
                       bgIdleCapMs,
-                      bgWaitHeld,
-                      bgWaitCapArm,
-                      bgWaitCapFired
+                      backgroundHeld,
+                      completionCapArm,
+                      completionCapFired
                     )
                   )
-                case BgWaitProceed => completeNormally(messages)
-                case BgWaitForce(note) => completeNormally(messages, Some(note))
+                case CompletionProceed => completeNormally(messages)
+                case CompletionForce(note) => completeNormally(messages, Some(note))
               }
             else
               val now = System.currentTimeMillis()
@@ -733,10 +733,10 @@ object BackoffSupervisor:
 
           // 刀一：等待屏障兜底计时器的**到点消息**（`ctx.scheduleOnce` 自投）。
           // 凡不是本子会话的 Tick 一律不认（错投防护）。
-          case tick: AgentEvent.BgWaitCapTick if tick.sessionId == subagentId =>
-            onBgWaitCapTick(tick.heldSinceMs, tick.arm, tick.snapshot)
+          case tick: AgentEvent.BgCompletionCapTick if tick.sessionId == subagentId =>
+            onBgCompletionCapTick(tick.heldSinceMs, tick.arm, tick.snapshot)
 
-          case _: AgentEvent.BgWaitCapTick =>
+          case _: AgentEvent.BgCompletionCapTick =>
             IO.pure(this) // 别家子会话的 Tick（本监督者是 per-child 实例，正常到不了这里）
 
           case AgentEvent.Cancelled(_, reason) =>
@@ -1021,11 +1021,11 @@ object BackoffSupervisor:
                   maxBackoff,
                   maxRestarts,
                   withinTimeRange,
-                  bgWaitCapMs,
+                  completionCapMs,
                   bgIdleCapMs,
-                  bgWaitHeld,
-                  bgWaitCapArm,
-                  bgWaitCapFired
+                  backgroundHeld,
+                  completionCapArm,
+                  completionCapFired
                 )
             )
       end freezeAndHold
@@ -1187,7 +1187,7 @@ object BackoffSupervisor:
           // A 段等待屏障：respawn 后旧 hold 期作废（兜底计时器持有的 messages
           // 是崩溃前旧轮快照）——撤计时器与 hold 状态，续跑轮的 Completed 重新
           // 评估等待集。（刀一：在途 Tick 靠臂号作废，不能 cancel。）
-          _ <- bgWaitCapArm.update(_ + 1L) *> bgWaitHeld.set(false) *> bgWaitCapFired.set(false)
+          _ <- completionCapArm.update(_ + 1L) *> backgroundHeld.set(false) *> completionCapFired.set(false)
           _ <- notifyIO
           _ <- resources.subAgentTaskStore
             .updateStatus(
@@ -1311,11 +1311,11 @@ object BackoffSupervisor:
           maxBackoff,
           maxRestarts,
           withinTimeRange,
-          bgWaitCapMs,
+          completionCapMs,
           bgIdleCapMs,
-          bgWaitHeld,
-          bgWaitCapArm,
-          bgWaitCapFired
+          backgroundHeld,
+          completionCapArm,
+          completionCapFired
         )
         end for
       end respawnBody

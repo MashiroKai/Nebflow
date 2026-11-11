@@ -12,12 +12,12 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * BgTaskReaper —— death-watch 收割器（后台任务生命周 P2 · 设计稿 20261030 §4.2
- * 「属主失联 ⇒ 代行终态记账 + 沿 bg-wait 链注入终态通知」+ 10-30 新病灶
+ * 「属主失联 ⇒ 代行终态记账 + 沿后台任务完成链注入终态通知」+ 10-30 新病灶
  * 「进程已死 + 行残留 ⇒ 合并闸/会话闸永久不放行」的统一执行面）。
  *
  * == 病灶收口（实证：delegate-nebflow-e0478867 合并队列卡 3 小时）==
  *
- * delegate 回合尾 bg-wait 闸（BackoffSupervisor.delegateBgWaitGate）与节点完成闸
+ * delegate 回合尾 completion 闸（BackoffSupervisor.delegateCompletionGate）与节点完成闸
  * （NodeStarter 桥）都只认「registry 等待集非空 ⇒ hold」。任务进程已死而行残留
  * （会话收殓杀了进程树、完成回调随 fiber 取消绝路）时，等待集**永不清空**——
  * 合并轮的 Completed 被 hold，机械验收永不到账，队列干等 2h cap。本件给两处闸
@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicReference
  * == 调用点 ==
  *
  *  - `BgLifecycleReconciler.scan`（每拍，全表巡检——设计稿 death-watch 本家）；
- *  - `BackoffSupervisor.delegateBgWaitGate`（hold 前复检——新病灶直接收口）；
+ *  - `BackoffSupervisor.delegateCompletionGate`（hold 前复检——新病灶直接收口）；
  *  - `NodeStarter` 桥 Completed 分支（hold 前复检——节点闸同病灶同收口）。
  *
  * 全部 best-effort：单腿失败只 WARN，绝不拖垮主流程（簿记面纪律）。

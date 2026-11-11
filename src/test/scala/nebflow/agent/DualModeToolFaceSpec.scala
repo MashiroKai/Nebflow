@@ -65,9 +65,7 @@ class DualModeToolFaceSpec extends FunSuite:
   private val NodeFace = Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite")
 
   /**
-   * 内核腿期望面（**11 件**）= `NebflowFixedTools` 九件（文件/壳六件 + BgWait +
-   * AskUserQuestion + Subagent）+ `delegate_report` + `Mail`。tool-face-agentflow-retire
-   * 批（2026-11-05）：AgentFlow 随工具退役从固定面消失（十 → 九），kernel 按裁定一
+   * 内核腿期望面 = `NebflowFixedTools` + `delegate_report` + `Mail`。kernel 按裁定
    * **拿到** Subagent（只读侦察腿）。Node 四件与 node_report 不在本腿。
    */
   private val ExpectedKernelFace =
@@ -78,7 +76,7 @@ class DualModeToolFaceSpec extends FunSuite:
 
   // ── 挂载面 ──────────────────────────────────────────────────────────────────
 
-  test("F1 kernel 腿：**有** Subagent（只读侦察）+ 编排面退场（node 四件全摘、node_report 摘除、AgentFlow 已退役）—— 恰 11 件") {
+  test("F1 kernel 腿：有 Subagent；node 四件与 node_report 不在") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
@@ -114,11 +112,11 @@ class DualModeToolFaceSpec extends FunSuite:
     assert(set.contains("Read") && set.contains("Bash"), "kernel delegate keeps the executor base face")
     // 读数：面值恰 11 件（不照抄任务书，按本读数核）
     println(s"[FACE-KERNEL] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
-    assertEquals(set, ExpectedKernelFace, s"kernel face reading = 11 pieces, got: ${set.toList.sorted}")
-    assertEquals(set.size, 11, s"kernel face must be exactly 11 pieces, got: ${set.toList.sorted}")
+    assertEquals(set, ExpectedKernelFace, s"kernel face reading, got: ${set.toList.sorted}")
+    assertEquals(set.size, ExpectedKernelFace.size, s"kernel face size must match expected set, got: ${set.toList.sorted}")
   }
 
-  test("F2 dispatcher 腿：Subagent 摘除、**无 AgentFlow**（工具退役）、node 四件保留（编排本体）—— 恰 14 件") {
+  test("F2 dispatcher 腿：Subagent 摘除、node 四件保留") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
@@ -143,8 +141,8 @@ class DualModeToolFaceSpec extends FunSuite:
       "node_report stays flow-node-only (unchanged by this batch; the dispatcher leg does no node_report work)"
     )
     println(s"[FACE-DISPATCHER] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
-    assertEquals(set, ExpectedDispatcherFace, s"dispatcher face reading = 14 pieces, got: ${set.toList.sorted}")
-    assertEquals(set.size, 14, s"dispatcher face must be exactly 14 pieces, got: ${set.toList.sorted}")
+    assertEquals(set, ExpectedDispatcherFace, s"dispatcher face reading, got: ${set.toList.sorted}")
+    assertEquals(set.size, ExpectedDispatcherFace.size, s"dispatcher face size must match expected set, got: ${set.toList.sorted}")
   }
 
   test("F3 闸关（mode=None）⇒ 全量面逐字节：Subagent + node 四件俱在（AgentFlow 已不存在于任何面）") {

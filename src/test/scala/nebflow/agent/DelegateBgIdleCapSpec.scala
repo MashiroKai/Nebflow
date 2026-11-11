@@ -21,7 +21,7 @@ import scala.concurrent.duration.*
 /**
  * **R5 · bg-turn-end barrier 加 idle 上限放行**（停顿审计 2026-11-04 §4-R5 / §5 排序 3）。
  *
- * 病灶：delegate 回合尾的等待屏障只认**墙钟总额**（`bgWaitCapMs`，默认 2h）。一个
+ * 病灶：delegate 回合尾的等待屏障只认**墙钟总额**（`completionCapMs`，默认 2h）。一个
  * 「永不结束、也不再产出」的后台作业把回合吊在 hold（实证 `79c40e17`：14:17:34 起
  * 被 `Find stand-website dir` 吊 1h49m，未到 2h）⇒ 回合不收尾 ⇒ 无 Completed ⇒
  * 合并窗 leg 永不安装 ⇒ 队头不可投递 ⇒ 整条合并队列 2h 零放行（R1 的上游）。
@@ -246,7 +246,7 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "wait for a never-ending job",
           source = "delegate",
-          bgWaitCapMs = 60_000L, // 墙钟总额远长于本测试窗
+          completionCapMs = 60_000L, // 墙钟总额远长于本测试窗
           bgIdleCapMs = 0L // ← 本腿关闭 = 修复前的唯一兜底
         ),
         "supervisor-bgidle-red"
@@ -295,7 +295,7 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "wait for a never-ending job",
           source = "delegate",
-          bgWaitCapMs = 60_000L, // 墙钟腿绝不参与本测试
+          completionCapMs = 60_000L, // 墙钟腿绝不参与本测试
           bgIdleCapMs = 600L // ← 空闲上限（spec 注入缝）
         ),
         "supervisor-bgidle-green"
@@ -355,7 +355,7 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "wait then finish",
           source = "delegate",
-          bgWaitCapMs = 60_000L,
+          completionCapMs = 60_000L,
           bgIdleCapMs = 30_000L // 足够长：唤醒腿必须先赢
         ),
         "supervisor-bgidle-regress"
@@ -373,7 +373,7 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
       assertEquals(mails.size, 1, s"one clean terminal, got ${mails.size}")
       val payload = mails.head.event.payload
       assert(!payload.contains("IDLE cap"), s"a clean wake must not carry the forced-delivery note: $payload")
-      assert(!payload.contains("[delegate-bg-wait]"), s"nor the wall-clock cap note: $payload")
+      assert(!payload.contains("[delegate-background-wait]"), s"nor the wall-clock cap note: $payload")
       assert(payload.contains("final report"), s"the release payload is the real report: $payload")
   }
 end DelegateBgIdleCapSpec

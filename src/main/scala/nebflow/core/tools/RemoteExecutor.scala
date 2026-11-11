@@ -1183,7 +1183,7 @@ class RemoteExecutor(
    *    `RemoteExecCancelRegistry` 与它自己那份收编行用**同一个 id**），登记
    *    `BgTaskRegistry`（`kind="remote"`，origin = 设备名）、起心跳、把仍在飞的 HTTP
    *    调用挂成本侧后台任务，回与本地 auto-background **逐字同形**的回执
-   *    （[[RemoteExecutor.autoBackgroundReceipt]]，`isError=false`），可被 `BgWait`
+   *    （[[RemoteExecutor.autoBackgroundReceipt]]，`isError=false`），可由 Bash wait mode
    *    等、可被 `BgTaskCancel` 按同一 id 取消（对端 bg-cancel ⇒ 精确杀对端进程树）；
    *  - 该 HTTP fiber 的等待上限仍是 [[bgHttpWaitTimeout]]（1h 网络兜底 / persistent 豁免）；
    *    上限到点 ⇒ **先** `requestPeerCancel`（行仍在运行才发）**再**落终态
@@ -2317,7 +2317,7 @@ object RemoteExecutor:
     s"[Background job started] Job ID: $jobId\n" +
       s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
       "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn. " +
-      s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
+      s"""Wait with Bash(background_job_id: "$jobId", timeout: <milliseconds>) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
 
   /**
    * 「对端已先行收编」判据：对端实例的前台预算先到点 ⇒ 它把命令收编进它自己的后台

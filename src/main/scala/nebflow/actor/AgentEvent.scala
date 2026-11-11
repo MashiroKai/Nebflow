@@ -151,7 +151,7 @@ object AgentEvent:
    *   - `snapshot`：武装时刻的 transcript 快照（兜底强制终判时的回落 payload；
    *     到点仍会先尝试重载最新 transcript）。
    */
-  case class BgWaitCapTick(sessionId: String, heldSinceMs: Long, arm: Long, snapshot: List[Message] = Nil)
+  case class BgCompletionCapTick(sessionId: String, heldSinceMs: Long, arm: Long, snapshot: List[Message] = Nil)
       extends AgentEvent
 
 /**

@@ -835,7 +835,7 @@ private[project] trait NodeStarter:
       //   全部后台通知）。
       // 三态：无后台任务 → 立即放行（现状零变化）；等待型 → 拦截至全完；
       // persistent 服务型 → 不等待。兜底面（后台任务不能卡死节点）：
-      //   ①等待期超 bgWaitCapMs → failed 注明（TaskStuckWatcher 对等待期 Idle
+      //   ①等待期超 backgroundWaitCapMs → failed 注明（TaskStuckWatcher 对等待期 Idle
       //     节点不判卡死——Idle 是合法状态，故需自身兜底防通知链断裂悬挂）；
       //   ②bg 任务被超时/停滞看护杀 → registry 记账 → failed+注明。
       // bg 等待先于 hold/blocked 分流发生（本桥在 completeNode 之前）——hold 节点
@@ -851,33 +851,33 @@ private[project] trait NodeStarter:
                 waitCapFiber.get.flatMap(_.traverse_(_.cancel).void)
               def armCap(waiting: List[BgTaskRegistry.ActiveTask]): IO[Unit] =
                 disarmCap *> {
-                  // 兜底计时器：等待期内无任何后台完成复检达 bgWaitCapMs →
+                  // 兜底计时器：等待期内无任何后台完成复检达 backgroundWaitCapMs →
                   // 🔴 **转挂起**（killruling 批 2026-09-23 作者裁定 **#17**「转挂起」；
                   // 改前 = `complete(Left(FailOutcome(… finalizing failed)))`）。
                   // 措辞注意：completeNode 以 message.contains
                   // ("cancelled") 分流 cancelNode，本文案不得含该词。
                   val capBody: IO[Unit] =
-                    IO.sleep(bgWaitCapMs.millis) *>
+                    IO.sleep(backgroundWaitCapMs.millis) *>
                       FlowMapEventLog.append(
                         workspace,
                         projectName,
                         nodeId,
                         "bg-wait-timeout",
-                        s"background wait cap (${bgWaitCapMs / 1000}s) hit with ${waiting.size} task(s) pending — " +
+                        s"background wait cap (${backgroundWaitCapMs / 1000}s) hit with ${waiting.size} task(s) pending — " +
                           "suspending the session (node stays Running, NOT finalizing failed); " +
                           "the cooling-off gate re-evaluates once, then it needs human action"
                       ) *>
                       waitCapFiber.set(None) *>
                       // ⑤ 残留字段收口（noderpt 批 B 段实测缺陷：`n-0931699e` status=completed
                       // 而 `bgWait` 非空）：本出口此前只 complete deferred、**不写
-                      // `setNodeBgWait(Nil)`** ⇒ 首个 hold 期置位的 bgWait 随节点进终态/归档
-                      // 永久残留（与 `setNodeBgWait` 头注「flow-map.json 不残留过期 bgWait」
+                      // `setNodeBackgroundWait(Nil)`** ⇒ 首个 hold 期置位的 bgWait 随节点进终态/归档
+                      // 永久残留（与 `setNodeBackgroundWait` 头注「flow-map.json 不残留过期 bgWait」
                       // 的契约相悖，也让前端把终态节点误标「等待后台任务」）。此处补写——
                       // fresh 守卫要求 status==Running，此刻节点仍 Running（挂起后仍是
                       // Running，语义更强），故写点有效；幂等（值未变不写不 event）。
                       // 🔴 #17 转挂起后**本行必须保留在最前**（顺序零改动）——否则前端
                       // 会把「挂起中」的节点误标「等待后台任务」。
-                      setNodeBgWait(nodeId, Nil) *>
+                      setNodeBackgroundWait(nodeId, Nil) *>
                       // 🔴 #17 改判点（逐字）：`complete(Left(FailOutcome(...)))` ⇒ **删**，
                       // 改调 `suspendNode`（复用 L3 挂起腿形态：只停 actor、节点留 Running、
                       // 本代次的中断点，**不**写 status/result/ttl、不投递失败）。
@@ -888,10 +888,10 @@ private[project] trait NodeStarter:
                       // `hardResumeNode` 复活）。
                       suspendNode(
                         sessionId,
-                        s"background task wait cap exceeded (${bgWaitCapMs / 1000}s): " +
+                        s"background task wait cap exceeded (${backgroundWaitCapMs / 1000}s): " +
                           s"still waiting for ${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}"
                       ) *>
-                      armBgWaitRecheck(nodeId, sessionId, waiting)
+                      armBackgroundWaitRecheck(nodeId, sessionId, waiting)
                   capBody.start.flatMap(f => waitCapFiber.set(Some(f)))
                 }
               // 🔴 #17 二级上限最小候选（**待 root/作者核 · 本批已落码**）：转挂起后
@@ -903,14 +903,14 @@ private[project] trait NodeStarter:
               //   ① 节点仍 `Running`（已终态/已归档/已重激活 ⇒ no-op），且
               //   ② 该节点名下有活会话（`nodeSessions` 映射 ∨ `agentRegistry` 记录）
               //      ⇒ 已被 `hardResumeNode` 复活、恢复链在跑 ⇒ **no-op**（交出控制权）。
-              //      🔴 判据 ② 不能写成「`bgWait` 仍非空」：本出口的 `setNodeBgWait(nodeId, Nil)`
+              //      🔴 判据 ② 不能写成「`bgWait` 仍非空」：本出口的 `setNodeBackgroundWait(nodeId, Nil)`
               //      是**前置步骤**（防前端误标，见上），挂起时 `bgWait` 恒空 ⇒ 该写法恒
               //      no-op（死判据）。同理 `BgTaskRegistry.waitingFor` 也不可用：挂起腿的
               //      既有语义是**即时收殓**该会话的后台表（`runWithAgent` 的 `isSuspendOutcome`
               //      分支），到点时恒空。
               //   两条都不满足 ⇒ 「挂起中且无任何接手者」= #17 要显式登记的形态 ⇒
               //   写事件 + WARN 转人工（**不**再自行终态化、**不**自行复活）。
-              def armBgWaitRecheck(
+              def armBackgroundWaitRecheck(
                 nodeId: String,
                 sessionId: String,
                 waiting: List[BgTaskRegistry.ActiveTask]
@@ -951,7 +951,7 @@ private[project] trait NodeStarter:
                     .handleErrorWith(e => logger.warn(s"bg-wait cap recheck for node $nodeId failed: ${e.getMessage}"))
                     .start
                     .void
-              end armBgWaitRecheck
+              end armBackgroundWaitRecheck
               // 终局记账 → failed 注明文案（含 agent 消化失败通知后的最终输出，
               // 截断防串膨胀；杀因原文净化同上）。
               def bgFailureMessage(
@@ -974,7 +974,7 @@ private[project] trait NodeStarter:
                 def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
                   event match
                     // 刀一等待态计时消息：本桥不接（恒等行为，桥的终态只由真终态驱动）。
-                    case _: AgentEvent.BgWaitCapTick => IO.pure(Behaviors.ignore)
+                    case _: AgentEvent.BgCompletionCapTick => IO.pure(Behaviors.ignore)
                     case AgentEvent.Completed(_, messages) =>
                       // 完成门（noderpt 批 A 段 2026-09-11 作者裁定；缺省面 T4 批
                       // 2026-11-04 作者令 + 自查件 D2 翻转）——同一闸门两条腿：
@@ -1036,7 +1036,7 @@ private[project] trait NodeStarter:
                                   // bg-wait 标注写点（僵尸收敛批）：首个 hold 期置位
                                   // bgWait——NodePayload 条件字段随之带，前端可标
                                   // 「等待后台任务」（与真僵尸区分，作者首要缺口）。
-                                  setNodeBgWait(nodeId, waiting)
+                                  setNodeBackgroundWait(nodeId, waiting)
                               ) *>
                                 holdEmitted.set(true)
                             emitOnce *> armCap(waiting).as(bridge)
@@ -1058,7 +1058,7 @@ private[project] trait NodeStarter:
                                         "bg-released",
                                         "all background task(s) finished — completion released"
                                       ) *>
-                                        setNodeBgWait(nodeId, Nil)
+                                        setNodeBackgroundWait(nodeId, Nil)
                                     ) *>
                                     resultDeferred.complete(Right(messages)).attempt.void.as(Behaviors.stopped)
                                 }
@@ -1067,7 +1067,7 @@ private[project] trait NodeStarter:
                               releaseNow
                             else
                               disarmCap *> holdEmitted.set(false) *>
-                                setNodeBgWait(nodeId, Nil) *>
+                                setNodeBackgroundWait(nodeId, Nil) *>
                                 resultDeferred
                                   .complete(Left(FailOutcome(bgFailureMessage(failures, messages))))
                                   .attempt
@@ -1076,13 +1076,13 @@ private[project] trait NodeStarter:
                           }
                       }
                     case AgentEvent.Failed(_, err) =>
-                      setNodeBgWait(nodeId, Nil) *>
+                      setNodeBackgroundWait(nodeId, Nil) *>
                         resultDeferred
                           .complete(Left(FailOutcome(Option(err.message).getOrElse("unknown error"))))
                           .void
                           .as(Behaviors.stopped)
                     case AgentEvent.Cancelled(_, reason) =>
-                      setNodeBgWait(nodeId, Nil) *>
+                      setNodeBackgroundWait(nodeId, Nil) *>
                         resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason"))).void.as(Behaviors.stopped)
 
                 override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
@@ -1092,7 +1092,7 @@ private[project] trait NodeStarter:
                         s"Node '$nodeName' ($nodeId) session '$sessionId' terminated WITHOUT a terminal event " +
                           "(crashed or stopped unexpectedly) — finalizing node as failed"
                       )
-                      setNodeBgWait(nodeId, Nil) *>
+                      setNodeBackgroundWait(nodeId, Nil) *>
                         resultDeferred
                           .complete(
                             Left(

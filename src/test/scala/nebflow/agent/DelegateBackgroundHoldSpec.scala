@@ -30,7 +30,7 @@ import scala.concurrent.duration.*
  * unjudged-completed），release 腿的判词行 = unjudged 注记形态——断言只钉
  * eventType/payload 关键词，不钉判词来源。
  */
-class DelegateBgWaitHoldSpec extends CatsEffectSuite:
+class DelegateBackgroundHoldSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 60.seconds
 
@@ -194,7 +194,7 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "run tests and report",
           source = "delegate",
-          bgWaitCapMs = 60_000L // 远长于本测试窗口——cap 兜底不触发
+          completionCapMs = 60_000L // 远长于本测试窗口——cap 兜底不触发
         ),
         "supervisor-bgwait-1"
       )
@@ -329,7 +329,7 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
     end for
   }
 
-  test("A-4 cap 兜底：等待期超 bgWaitCapMs 仍非空 ⇒ 带诚实注记强制终判（绝不悬挂成僵尸）") {
+  test("A-4 cap 兜底：等待期超 completionCapMs 仍非空 ⇒ 带诚实注记强制终判（绝不悬挂成僵尸）") {
     val system = ActorSystem("bgwait-4")
     val tmp = os.temp.dir()
     val childSid = "delegate-bgwait-4"
@@ -357,14 +357,14 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "task with a never-finishing bg job",
           source = "delegate",
-          bgWaitCapMs = 300.millis.toMillis // spec 缝：短 cap 驱动兜底腿
+          completionCapMs = 300.millis.toMillis // spec 缝：短 cap 驱动兜底腿
         ),
         "supervisor-bgwait-4"
       )
       _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("turn done; bg job still running")))
-      // cap 300ms 后强制终判：父**持久邮箱**收到 completed + [delegate-bg-wait] 诚实注记
+      // cap 300ms 后强制终判：父**持久邮箱**收到 completed + [delegate-background-wait] 诚实注记
       _ <- waitUntil(15.seconds)(
-        terminalMail(parentSid).map(_.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-bg-wait]")))
+        terminalMail(parentSid).map(_.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-background-wait]")))
       )
       _ <- waitUntil(15.seconds)(
         resources.subAgentTaskStore.loadTasks(parentSid).map(_.exists(t => t.taskId == childSid && t.status == "completed"))
@@ -379,7 +379,7 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       assertEquals(mails.head.kind, "delegate-terminal")
       val payload = mails.head.event.payload
       assertEquals(mails.head.event.eventType, "completed")
-      assert(payload.contains("[delegate-bg-wait]"), s"honest note required: $payload")
+      assert(payload.contains("[delegate-background-wait]"), s"honest note required: $payload")
       assert(payload.contains(jobId), s"note must name the pending job: $payload")
       assert(payload.contains("Full test suite"), s"note must name the description: $payload")
       assert(payload.contains("turn done"), s"held turn's deliverable must ride the forced delivery: $payload")
@@ -399,4 +399,4 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       .handleErrorWith(_ => IO.pure(Nil))
 
 
-end DelegateBgWaitHoldSpec
+end DelegateBackgroundHoldSpec
