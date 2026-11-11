@@ -243,23 +243,27 @@ async function waitCardContent(popup, needle) {
   await page.waitForSelector('.canvas-tab-pane[data-tab-id="plugins"]', { timeout: 10000, state: 'attached' });
   await sleep(400);
 
-  /* 件1 回归批改写（2026-11-05 作者令「电脑端要放在胶囊的右侧」）：批⑤「pop 钮退役」
-     这条断言随入口回位作废 —— **判据本体不降**：作者令「非内容物页签取禁用态 + 提示、
-     点击不得开窗」照旧钉死，只把陈述对象从「按钮不存在」换成「按钮存在但禁用 + 提示 =
-     canvas.cardwinContentOnly」（同一批内容物收口判据的可见形态）。
-     理由：入口回到卡头后，边界必须**可见**（禁用态 + 提示）而不是靠入口缺席静默。 */
+  /* 手机端三处 UI 缺陷修复批（缺陷①，接续 canvas.js syncHeaderActions 同语义）：
+     非内容物页签的胶囊右座入口**离场**（[hidden] → display:none，不占标题座位）；
+     「边界可见」的钉面移交右键菜单禁用项 + 提示 + toast（下方 P1-3…P1-5 原样保留，
+     capsuleMenuActions 单源）。按钮 DOM 仍在挂（创建单次复用），disabled/title/
+     aria-label 残留为防御位，故一并断言防漂移。 */
   const panelEntry = await page.evaluate(() => {
     const pop = document.querySelector('#canvas-panel .canvas-header .canvas-pop-btn');
+    if (!pop) return null;
     return {
-      popIn: !!pop,
-      disabled: !!(pop && pop.disabled),
-      hint: pop ? (pop.getAttribute('title') || '') : '',
-      label: pop ? (pop.getAttribute('aria-label') || '') : '',
+      present: true,
+      hiddenAttr: pop.hidden === true,
+      offSeat: getComputedStyle(pop).display === 'none',
+      disabled: !!pop.disabled,
+      hint: pop.getAttribute('title') || '',
+      label: pop.getAttribute('aria-label') || '',
     };
   });
-  ok('P1-1 面板页签：胶囊右座 .canvas-pop-btn 在挂但**禁用** + title/aria-label = 内容物收口提示（判据不降）',
-    panelEntry.popIn === true && panelEntry.disabled === true &&
-    panelEntry.hint.length > 0 && panelEntry.hint === panelEntry.label, JSON.stringify(panelEntry));
+  ok('P1-1 面板页签：胶囊右座入口离场（[hidden] → display:none 不占标题座位）+ 残留 disabled/提示防御位',
+    !!panelEntry && panelEntry.hiddenAttr === true && panelEntry.offSeat === true &&
+    panelEntry.disabled === true && panelEntry.hint.length > 0 && panelEntry.hint === panelEntry.label,
+    JSON.stringify(panelEntry));
 
   // 环卡（deck 开）：面板环卡不建 pop 钮
   await page.click('#deck-fab');
