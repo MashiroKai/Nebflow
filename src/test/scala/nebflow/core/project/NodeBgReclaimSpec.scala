@@ -42,7 +42,7 @@ import scala.concurrent.duration.*
  *  - R1 window:GREEN cancelled-via-bridge → 终态登记窗口（destroyAt + 事件 + 禁 spawn
  *    表）、**任务仍在册**（窗口内照跑）；到点扫描 ⇒ 收殓 + WS cancelled 帧 + 字段清零，
  *    且**重复扫描幂等**（二次 no-op）
- *  - R2 window:GREEN wait-cap failed → 同上 + `backgroundWait` 字段清零（⑤ 残留缺陷回归断言）
+ *  - R2 window:GREEN wait-cap failed → 同上 + `bgWait` 字段清零（⑤ 残留缺陷回归断言）
  *  - R3 GREEN reclaimSession 直接收殓（单测）：真实进程树被杀 + registry 清空 +
  *    WS cancelled 帧（收殓原语本身零改动）
  *  - R4 窗口内禁 spawn（新会话 / 新后台任务各一次被拒读数）
@@ -381,10 +381,10 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     end for
   }
 
-  // ── R2 wait-cap failed → 窗口登记 + backgroundWait 清零（⑤）+ 到点收殓 ──────────
+  // ── R2 wait-cap failed → 窗口登记 + bgWait 清零（⑤）+ 到点收殓 ──────────
 
   test(
-    "R2 window: wait-cap SUSPENDS the node (stays Running), clears backgroundWait (⑤) and reclaims immediately (suspend leg)"
+    "R2 window: wait-cap SUSPENDS the node (stays Running), clears bgWait (⑤) and reclaims immediately (suspend leg)"
   ) {
     val ws = tempRoot / "ws-r2"
     os.makeDir.all(ws)
@@ -395,15 +395,15 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r2", ws, system, res, wsFrames, backgroundWaitCapMs = 1200L)
-      // backgroundWait 是**瞬时字段**：hold 期置位（= 首轮收尾时刻，**早于** `waitNodeIdle` 返回）
-      // → cap 到点即清零。改前的「点对点 `waitUntil(backgroundWait.isDefined)`」与 1.2s caps
+      // bgWait 是**瞬时字段**：hold 期置位（= 首轮收尾时刻，**早于** `waitNodeIdle` 返回）
+      // → cap 到点即清零。改前的「点对点 `waitUntil(bgWait.isDefined)`」与 1.2s caps
       // 窗口竞速：只要 `waitNodeIdle` + 前序 wait 链耗时 > 1.2s（JIT/负载/GC 抖动即可，
       // 本批实测 4 次运行命中 2 次）断言就整段落空——测的是**调度时延**不是契约。
       // 改为**起点先行**的后台采样（20ms 一拍，先于 createNode 启动）：断言「hold 期确实
       // 置过位」+「cap 出口清零」，判据强度不减、不再依赖调度巧合。
       samples <- Ref.of[IO, List[String]](Nil)
       sampler <- (byName(rt, "cap-a").attempt
-        .map(_.toOption.flatMap(_.backgroundWait).isDefined)
+        .map(_.toOption.flatMap(_.bgWait).isDefined)
         .flatMap(b => samples.update(_ :+ s"$b")) *> IO.sleep(20.millis)).foreverM.start
       _ <- createNode("bg-r2", ws, "cap-a", "result-CAP", res = res, system = system)
       nodeSid <- waitNodeIdle(res)
@@ -415,7 +415,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       sampleLog <- samples.get
       _ <- IO(
         println(
-          s"[R2 sample] hold-period backgroundWait observed=${sampleLog.contains("true")} " +
+          s"[R2 sample] hold-period bgWait observed=${sampleLog.contains("true")} " +
             s"(true=${sampleLog.count(_ == "true")}/${sampleLog.size} polls @20ms)"
         )
       )
@@ -441,14 +441,14 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       assertEquals(done.result, None, "the suspend exit must not write any result annotation (no terminal write)")
       assert(
         sampleLog.contains("true"),
-        s"the hold period must have set backgroundWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})"
+        s"the hold period must have set bgWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})"
       )
-      // ⑤ 残留字段回归断言（实测 n-0931699e：status=completed 而 backgroundWait 非空）——保留：
-      // 挂起出口的 `setNodeBackgroundWait(nodeId, Nil)` 仍最前执行（顺序零改动）
+      // ⑤ 残留字段回归断言（实测 n-0931699e：status=completed 而 bgWait 非空）——保留：
+      // 挂起出口的 `setNodeBgWait(nodeId, Nil)` 仍最前执行（顺序零改动）
       assertEquals(
-        afterSweep.backgroundWait,
+        afterSweep.bgWait,
         None,
-        "the bg-wait-cap suspend exit must clear backgroundWait (regression: field used to linger forever)"
+        "the bg-wait-cap suspend exit must clear bgWait (regression: field used to linger forever)"
       )
       // 原窗口断言改：挂起 = 非终态 = **无窗口**（destroyAt 不得登记）
       assertEquals(afterSweep.destroyAt, None, "the suspend leg registers NO destroy window (non-terminal)")

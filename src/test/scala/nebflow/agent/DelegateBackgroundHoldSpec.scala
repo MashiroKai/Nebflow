@@ -194,7 +194,7 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "run tests and report",
           source = "delegate",
-          backgroundWaitCapMs = 60_000L // 远长于本测试窗口——cap 兜底不触发
+          completionCapMs = 60_000L // 远长于本测试窗口——cap 兜底不触发
         ),
         "supervisor-bgwait-1"
       )
@@ -329,7 +329,7 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
     end for
   }
 
-  test("A-4 cap 兜底：等待期超 backgroundWaitCapMs 仍非空 ⇒ 带诚实注记强制终判（绝不悬挂成僵尸）") {
+  test("A-4 cap 兜底：等待期超 completionCapMs 仍非空 ⇒ 带诚实注记强制终判（绝不悬挂成僵尸）") {
     val system = ActorSystem("bgwait-4")
     val tmp = os.temp.dir()
     val childSid = "delegate-bgwait-4"
@@ -357,7 +357,7 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "task with a never-finishing bg job",
           source = "delegate",
-          backgroundWaitCapMs = 300.millis.toMillis // spec 缝：短 cap 驱动兜底腿
+          completionCapMs = 300.millis.toMillis // spec 缝：短 cap 驱动兜底腿
         ),
         "supervisor-bgwait-4"
       )

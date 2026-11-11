@@ -31,7 +31,7 @@ import scala.concurrent.duration.*
  * - G4 超时/停滞杀 → failed 注明：等待集内任务被看护杀（registry 终局记账）
  *   → 节点 Failed（非 Cancelled——杀因原文措辞净化）+ result 含杀因与 agent
  *   消化失败通知后的最终输出
- * - G5 等待总上限兜底 → **转挂起**（killruling 批裁定 #17）：等待期超 bgWaitCapMs →
+ * - G5 等待总上限兜底 → **转挂起**（killruling 批裁定 #17）：等待期超 backgroundWaitCapMs →
  *   节点**保持 Running**（挂起中，不再 failed）+ `bg-wait-timeout` 事件
  * - G6 下游 out 交互：节点（out 指向下游节点）先等后台（bg-wait 留痕）再
  *   finalize completed——bg 等待先于终态投递发生
@@ -201,7 +201,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     ws: os.Path,
     system: ActorSystem,
     res: SharedResources,
-    bgWaitCapMs: Long = 3_600_000L,
+    backgroundWaitCapMs: Long = 3_600_000L,
     // noderpt 批 A 段（2026-09-11）：完成门两条腿的显式注入。
     //  - bgGateCompletionHold = **true**：本 spec 的主题就是腿 1（后台任务存活 hold）
     //    的既有行为（G1–G8），生产默认已封存（false）⇒ 此处置回旧行为作对照；
@@ -226,7 +226,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        bgWaitCapMs = bgWaitCapMs,
+        backgroundWaitCapMs = backgroundWaitCapMs,
         bgGateCompletionHold = Some(bgGateCompletionHold),
         reportGateHold = Some(reportGateHold),
         notifyQuietMs = notifyQuietMs
@@ -250,7 +250,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
    *   - 桥**确实收到**第二个 `Completed`（nmsg=4）；
    *   - 但桥的复检 `BgTaskRegistry.waitingFor(sessionId)` **读回非空**（= 本用例刚「注销」的
    *     那个 jobId）⇒ 走 hold 分支静默重 hold（`holdEmitted` 已置位 ⇒ 无新事件、无留痕）
-   *     ⇒ 节点挂到 `bgWaitCapMs`（本 spec 注入 1h）⇒ 30s/20s 等待红。
+   *     ⇒ 节点挂到 `backgroundWaitCapMs`（本 spec 注入 1h）⇒ 30s/20s 等待红。
    *
    * 为什么等待集没排空：`AgentRecord.status` **出生即 `Idle`**（`AgentState.scala:45`，
    * re-pin 2026-09-25：随 protocol.scala 三拆迁入，字段逐字未动），而
@@ -553,7 +553,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
-      rt <- mountProject("bg-g5", ws, system, res, bgWaitCapMs = 1200L)
+      rt <- mountProject("bg-g5", ws, system, res, backgroundWaitCapMs = 1200L)
       _ <- createNode("bg-g5", ws, "cap-a", "result-CAP", res = res, system = system)
       _ <- waitIdle(res)
       jobs <- awaitJobs(llm)

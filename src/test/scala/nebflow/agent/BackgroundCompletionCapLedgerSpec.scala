@@ -191,7 +191,7 @@ class BackgroundCompletionCapLedgerSpec extends CatsEffectSuite:
           resources = resources,
           initialPrompt = "task with a never-finishing bg job",
           source = "delegate",
-          backgroundWaitCapMs = 300.millis.toMillis
+          completionCapMs = 300.millis.toMillis
         ),
         "supervisor-capledger-1"
       )
