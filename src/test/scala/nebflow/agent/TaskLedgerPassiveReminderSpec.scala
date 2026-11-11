@@ -32,13 +32,34 @@ class TaskLedgerPassiveReminderSpec extends FunSuite:
     assertEquals(TaskLedgerPassiveReminder.due("s1", 101L, "two"), None)
     assert(TaskLedgerPassiveReminder.due("s2", 101L, "other session").nonEmpty)
 
-  test("empty ledger text does not consume throttle; corrupt throttle degrades to a fresh decision"):
+  test("empty ledger text does not consume throttle; corrupt throttle is quarantined before recovery"):
     reset()
     assertEquals(TaskLedgerPassiveReminder.due("s", 1L, " "), None)
     assert(TaskLedgerPassiveReminder.due("s", 2L, "available").nonEmpty)
     reset()
-    os.write.over(home / "task-ledger-reminder-throttle.json", "{broken")
+    val throttle = home / "task-ledger-reminder-throttle.json"
+    val damaged = "{broken-preserve-these-bytes"
+    os.write.over(throttle, damaged)
     assert(TaskLedgerPassiveReminder.due("s", 3L, "degraded").nonEmpty)
+    val quarantined = os.list(home).find(_.last.startsWith("task-ledger-reminder-throttle.json.corrupt-")).get
+    assertEquals(os.read(quarantined), damaged)
+    assert(io.circe.parser.decode[io.circe.Json](os.read(throttle)).isRight)
+
+  test("failed quarantine rename leaves the corrupt throttle untouched and suppresses reminder"):
+    reset()
+    val throttle = home / "task-ledger-reminder-throttle.json"
+    val damaged = "{cannot-move"
+    os.write.over(throttle, damaged)
+    val target = os.Path(s"${throttle}.corrupt-${System.currentTimeMillis()}")
+    os.makeDir(target)
+    assertEquals(TaskLedgerPassiveReminder.due("s", 8L, "must not overwrite"), None)
+    assertEquals(os.read(throttle), damaged)
+
+  test("bounded session cache evicts oldest entries deterministically, retaining newest active sessions"):
+    reset()
+    (1 to 520).foreach(i => assert(TaskLedgerPassiveReminder.due(s"s$i", i.toLong, "x").nonEmpty))
+    assert(TaskLedgerPassiveReminder.due("s520", 521L, "x").isEmpty)
+    assert(TaskLedgerPassiveReminder.due("s1", 521L, "x").nonEmpty)
 
   test("duplicate concurrent user-input evaluations deliver at most once"):
     reset()

@@ -766,7 +766,7 @@ class TaskLedgerStore private ():
         val proj = t.project.map(p => s" [project:${truncate(p, 40)}]").getOrElse("")
         s"#${t.id} ${truncate(t.title, 80)}$proj"
       }
-      s"${open.size} unfinished task(s) in the Task ledger; showing ${shown.size}:\n" +
+      s"${open.size} unfinished task(s) in the global Task ledger; showing ${shown.size}:\n" +
         shown.mkString("\n") + "\nQuery more with Task(action=list, status=\"open\", limit=100, offset=0)."
 
 end TaskLedgerStore
