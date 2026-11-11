@@ -97,7 +97,7 @@ class ProjectStartupMountSpec extends CatsEffectSuite:
     os.makeDir.all(badDir)
     os.write(
       badDir / "project.json",
-      s"""{"name":"p-fs-bad","description":null,"workspace":"$badWorkspace","agentFile":"$badWorkspace/AGENTS.md","feedbackMode":null,"createdAt":${System
+      s"""{"name":"p-fs-bad","description":null,"workspace":"$badWorkspace","agentFile":"$badWorkspace/AGENTS.md","createdAt":${System
           .currentTimeMillis()}}"""
     )
     val system = ActorSystem(s"sm-${scala.util.Random.nextInt(100000)}")
