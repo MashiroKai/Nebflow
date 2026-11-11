@@ -358,8 +358,8 @@ object Defaults:
    * [[ForegroundWaitBudgetMs]]（默认 300s，短预算量级）。
    * 本值剩两个消费面：
    *   1. BashTool 解析显式 `timeout` 入参时的上限钳（schema 契约 "max 3600000"
-   *      保持不变——钳的是入参字面，前台实际等待再经 [[ForegroundWaitBudgetMs]]
-   *      二次钳制）；
+   *      保持不变——钳的是入参字面；2026-11-10 起前台实际等待 = 显式入参本身，
+   *      不再经 [[ForegroundWaitBudgetMs]] 二次钳制）；
    *   2. remote-exec 同步面的超时上限（该面按协议等远端真结果，不适用短预算）。
    *
    * bashautobg batch (2026-09-25 author order: "the hard cap should not exist;
@@ -385,7 +385,8 @@ object Defaults:
    *   - 判据 = **时间**，与输出活性无关——有输出的长命令同样在预算到点转后台，
    *     不因「还在吐进度」占着主会话（实现 = exec fiber 与预算 sleep 的 racePair，
    *     天然只看时间）；
-   *   - 显式 `timeout` 入参**收窄**到本值（min），不能越过作者的零阻塞裁定；
+   *   - 显式 `timeout` 入参即等待上限（2026-11-10 作者令：可超本值，不再 min
+   *     钳制；解析面仍钳 BashMaxTimeoutMs）——本值 = 无显式入参时的缺省面；
    *   - 预算到点 → adoptAsBackgroundJob（回执含 job id + 查询方式），进程不杀；
    *   - 语义收缩的连带：默认 300s < ForegroundNoProgressTimeoutMs（600s）⇒ 前台
    *     no-progress ceiling 在缺省面**结构性不可达**（自然消亡）；仅当作者把预算

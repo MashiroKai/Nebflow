@@ -23,8 +23,8 @@ import scala.concurrent.duration.*
  * → peer `NeblinkRoutes` / `NeblinkRelayTunnel` 的
  * `ToolContext(isRemoteExec = true)`）。缺陷代码就在 peer 侧这一半
  * （`BashTool.scala:691-709`），故本 spec 直接以 `isRemoteExec = true` 构造生产同形
- * 上下文，并用 `timeout` 入参压预算（与生产预算同源钳制面
- * `min(hint, ctx.bashConfig.foregroundWaitBudgetMs)`；`BashForegroundBudgetSpec`
+ * 上下文，并用 `timeout` 入参压前台等待（显式入参即等待上限，2026-11-10 起
+ * 不再经 `ctx.bashConfig.foregroundWaitBudgetMs` min 钳制；`BashForegroundBudgetSpec`
  * 同款手法，零全局配置污染）。host 侧的 HTTP 分发/等待上限分别由
  * `DeviceBgTaskSpec` / `DeviceChannelListSkewSpec` 钉，本 spec 不重复造远端 harness。
  *

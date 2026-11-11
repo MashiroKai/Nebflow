@@ -60,7 +60,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
     }
   }
 
-  test("foreground command running >30s completes in the foreground (well below the 120s default budget)") {
+  test("foreground command running >30s completes in the foreground (well below the 300s default budget)") {
     runBash("sleep 35 && echo long-done").map {
       case Right(out) =>
         assert(out.contains("long-done"), s"should complete with real output: $out")
@@ -69,7 +69,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
     }
   }
 
-  test("foreground command running >60s completes in the foreground (default budget 120s far above; no time kill)") {
+  test("foreground command running >60s completes in the foreground (default budget 300s far above; no time kill)") {
     runBash("sleep 65 && echo long-done-65").map {
       case Right(out) =>
         assert(out.contains("long-done-65"), s"should complete with real output: $out")

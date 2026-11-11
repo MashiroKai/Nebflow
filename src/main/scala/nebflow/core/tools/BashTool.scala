@@ -19,9 +19,10 @@ object BashTool extends Tool:
 
   /**
    * Auto-background: the former "max timeout / kill
-   * line" is now the foreground auto-background threshold — a foreground command
-   * still running when this value (or an explicit, clamped `timeout`) is reached
-   * is adopted into the background registry, never killed by time. `def` (not
+   * line" is now the parse clamp for the explicit `timeout` face — a foreground
+   * command still running when the effective wait (the explicit `timeout`
+   * as-is, or the configured budget when absent) is reached is adopted into
+   * the background registry, never killed by time. `def` (not
    * `val`) so the spec prop compression of Defaults.BashMaxTimeoutMs takes
    * effect at every call.
    *
@@ -39,7 +40,7 @@ object BashTool extends Tool:
 
 Usage:
 - The working directory persists between commands, but shell state does not persist across Stand restarts.
-- You may specify an optional timeout in milliseconds (max 3600000) as a foreground wait budget hint. The effective foreground wait is capped by the configured foreground wait budget (default 300s; author-adjustable via the config file (`bashForegroundWaitBudgetMs`)). When the budget is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the budget exactly like a silent one; the main session is never blocked longer than the budget.
+- You may specify an optional timeout in milliseconds (max 3600000) as the foreground wait: an explicit timeout is honored as-is and may exceed the configured default; without it the configured foreground wait budget applies (default 300s; author-adjustable via the config file (`bashForegroundWaitBudgetMs`)). When the wait is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the deadline exactly like a silent one; without an explicit timeout the session is never blocked longer than the budget.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -90,7 +91,7 @@ Git safety:
         "timeout" -> io.circe.Json
           .obj(
             "type" -> "number".asJson,
-            "description" -> "Optional foreground wait hint in milliseconds (max 3600000). Effective wait = min(hint, configured foreground budget, default 300s). When reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
+            "description" -> "Optional foreground wait in milliseconds (max 3600000). When provided it is the effective wait as-is — it may exceed the configured default budget; without it the configured foreground wait budget (default 300s) applies. When the wait is reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
           ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -776,9 +777,10 @@ Git safety:
                   // streak，8 次就 L1 杀会话）。而本地腿早在 main-agent-nonblocking 批
                   // 就把「到点」从**杀**改成了**收编为后台**。
                   //
-                  // 改后（本块）：唯一上限 = min(显式 timeout, 前台等待预算
-                  // `ctx.bashConfig.foregroundWaitBudgetMs`）——与 [[executeForeground]]
-                  // **同源单点**，禁第二个上限（尤其禁 30s 兜底）。竞速（racePair，落败
+                  // 改后（本块）：唯一上限 = 显式 timeout（解析面钳 60min；缺省 =
+                  // 前台等待预算 `ctx.bashConfig.foregroundWaitBudgetMs`。2026-11-10
+                  // 作者令：显式 timeout 可超预算，不再 min 钳制）——与
+                  // [[executeForeground]] **同源单点**，禁第二个上限（尤其禁 30s 兜底）。竞速（racePair，落败
                   // 侧不取消）：
                   //   - 预算内完成 ⇒ 既有 [[formatOutcome]]（成功/停滞/真错误三态照旧）；
                   //   - 到点未完成 ⇒ **收编为后台任务**：进程不杀，按 host 下发的
@@ -794,7 +796,7 @@ Git safety:
                   // [[formatOutcome]]，绝不被吞成后台回执。
                   // `run_in_background: true` 的显式后台语义不经过本块（上方 background 腿）。
                   val deviceBudgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
-                  val waitBudgetMs = explicitTimeoutMs.fold(deviceBudgetMs)(_.min(deviceBudgetMs))
+                  val waitBudgetMs = explicitTimeoutMs.getOrElse(deviceBudgetMs)
                   // P2 单任务取消远端腿：host 随下发参数带 bgJobId ⇒ 对端把本进程
                   // 登记进 RemoteExecCancelRegistry（execKey），bg-cancel 按它精确杀树；
                   // 同一 id 也是收编行的 jobId（登记行与回执同一 id，不铸第二个）。
@@ -875,8 +877,9 @@ Git safety:
    * 之前的设计是不杀但自动转后台」）：前台等待预算收缩为**短预算**——
    * ctx.bashConfig.foregroundWaitBudgetMs（缺省 Defaults.ForegroundWaitBudgetMs
    * = 300s，作者经 nebflow.json `bashForegroundWaitBudgetMs` 可调）。显式
-   * `timeout` 入参收窄到该预算（min）——agent 不能越过作者的零阻塞裁定。预算
-   * 判据 = **时间**（exec fiber 与预算 sleep 的 racePair），与输出活性无关：
+   * `timeout` 入参即等待上限（2026-11-10 作者令：可超预算，不再 min 钳制；
+   * 解析面仍钳 BashMaxTimeoutMs）。预算判据 = **时间**（exec fiber 与预算 sleep 的 racePair），
+   * 与输出活性无关：
    * 有输出的长命令同样在到点转后台，不因「还在吐进度」占着主会话。到点 →
    * autoBackground 收编（回执含 job id + 查询方式），进程不杀，完成照旧经
    * makeNotifyCallback 通知。
@@ -915,22 +918,26 @@ Git safety:
      */
     mergerRepo: Option[String] = None
   ): IO[Either[ToolError, String]] =
-    // Policy "no hard cap; auto-background at the foreground wait budget
-    // (main-agent-nonblocking: default 300s, author-adjustable); backgrounded
-    // commands have no limit"): an explicit `timeout` is a budget HINT clamped
-    // to the configured budget (min) — the author's zero-blocking ruling wins
-    // over any agent-requested long foreground wait. When the budget elapses
-    // and the command is still running, it is adopted into the session's
-    // background registry (adoptAsBackgroundJob) and the tool returns a
-    // background receipt immediately (same face as an explicit
-    // run_in_background); the process keeps running to completion and the
-    // completion notification rides the existing background callback chain
+    // Policy "no hard cap; auto-background at the deadline, never kill":
+    // the wait deadline is the explicit `timeout` hint when provided (the
+    // parser already clamps the literal to BashMaxTimeoutMs = 60min), otherwise
+    // the configured foreground wait budget (main-agent-nonblocking: default
+    // 300s, author-adjustable). 2026-11-10 author order: an explicit timeout
+    // may now EXCEED the configured budget and is honored as-is (the old
+    // min-clamp is retired); the configured budget is the default face only.
+    // When the deadline elapses and the command is still running, it is
+    // adopted into the session's background registry (adoptAsBackgroundJob)
+    // and the tool returns a background receipt immediately (same face as an
+    // explicit run_in_background); the process keeps running to completion and
+    // the completion notification rides the existing background callback chain
     // (makeNotifyCallback). The process-level time kill is retired as a class
     // (runProcess always gets 365.days now — it is never shortened). The only
     // retained foreground kill is the no-progress ceiling (the stall watchdog —
-    // not a time limit; structurally unreachable while budget < 600s).
+    // not a time limit; unreachable while the effective deadline < 600s, but
+    // reachable again when an explicit timeout > 600s runs a silent command —
+    // the true-hang backstop by design).
     val budgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
-    val waitBudgetMs = explicitTimeoutMs.fold(budgetMs)(_.min(budgetMs))
+    val waitBudgetMs = explicitTimeoutMs.getOrElse(budgetMs)
     val health = new JobHealth()
     // A running Bash is INVISIBLE — the completion log only
     // fires when it returns, so a long/hung command reads as "turn went

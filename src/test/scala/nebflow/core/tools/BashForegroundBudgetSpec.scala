@@ -32,8 +32,8 @@ import scala.concurrent.duration.*
  *    说明 + **如何查询**（background_job_id / cancel_background_job）。
  *  - N-5 收编即退役：转后台后的任务不再被前台 no-progress ceiling 杀
  *    （JobHealth.adoptedAsBackground → watch 下一窗退出）。
- *  - N-6 显式 `timeout` 入参被配置预算钳制（min）——agent 不能越过作者的
- *    零阻塞裁定。
+ *  - N-6 显式 `timeout` 入参即等待上限（2026-11-10 作者令：可超配置预算，
+ *    不再 min 钳制；到点仍只转后台不杀）——配置预算 = 无显式入参时的缺省面。
  *  - N-7 引擎既有命令族回归：短命令（echo）在预算内照常前台返回真实输出。
  */
 class BashForegroundBudgetSpec extends CatsEffectSuite:
@@ -208,29 +208,23 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
     yield ())
   }
 
-  test("N-6 explicit timeout hint is clamped to the configured budget (author's zero-blocking ruling wins)") {
+  test("N-6 explicit timeout is honored as-is and may exceed the configured budget (foreground completion past the budget; auto-background still the only deadline outcome)") {
+    // 预算 2s + 显式 timeout 60min + 4s 命令 ⇒ 不再被 min 钳到 2s：前台等满
+    // ~4s 真结果返回（绝无 [Background job started]）。
     val input = JsonObject(
-      "command" -> "sleep 8 && echo clamped-done".asJson,
-      "description" -> "hint-clamped".asJson,
-      "timeout" -> 3600000.asJson // agent 想等 60min —— 必须被 2s 预算钳住
+      "command" -> "sleep 4 && echo honored-done".asJson,
+      "description" -> "hint-honored".asJson,
+      "timeout" -> 3600000.asJson // 显式上限 60min —— 必须原样生效，不被 2s 预算钳制
     )
     val start = System.currentTimeMillis()
-    (for
-      result <- BashTool.call(input, budget2sCtx)
-      receipt <- IO {
+    BashTool.call(input, budget2sCtx).map {
+      case Right(out) =>
         val elapsed = System.currentTimeMillis() - start
-        result match
-          case Right(out) =>
-            assert(out.contains("[Background job started]"), s"clamped at budget: $out")
-            assert(elapsed < 8000, s"hint must be clamped to ~2s, took ${elapsed}ms")
-            out
-          case Left(e) => fail(s"got error: ${e.message}")
-      }
-      jobId = jobIdOf(receipt)
-      _ <- pollUntil(jobId, "[Background job completed]", 30.seconds)
-        .map(out => assert(out.contains("clamped-done"), s"result delivered: $out"))
-        .guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+        assert(out.contains("honored-done"), s"foreground real output past the budget: $out")
+        assert(!out.contains("[Background job started]"), s"explicit timeout must NOT clamp to budget: $out")
+        assert(elapsed >= 3500, s"must wait the full command duration (~4s), took ${elapsed}ms")
+      case Left(e) => fail(s"got error: ${e.message}")
+    }
   }
 
   test("N-7 engine short-command family regression: fast commands stay foreground with real output (default config)") {
