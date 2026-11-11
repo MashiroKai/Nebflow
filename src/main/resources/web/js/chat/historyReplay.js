@@ -215,19 +215,41 @@ export function replayHistoryPageInitialLoad(msg, view) {
 
     // Restore text bubble
     if (txtBuf) {
-      activeView.stream.aiText = txtBuf;
-      const chat = activeView.dom.chat;
-      const row = document.createElement('div');
-      row.className = 'row ai';
-      activeView.stream.currentAiBubble = document.createElement('div');
-      activeView.stream.currentAiBubble.className = 'bubble ai';
-      activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText, true, { cache: !isStillBusy }) + (isStillBusy ? '<span class="cursor"></span>' : '');
-      row.appendChild(activeView.stream.currentAiBubble);
-      chat.appendChild(row);
-      if (!isStillBusy) {
-        activeView.stream.currentAiBubble = null;
+      // 滞留流式快照闸（P14 · md 渲染失效复现批 2026-11-11）：WS 断连窗内流式帧
+      // 半途而废时（终态帧族 done/textDone/工具边界随帧清缓冲；帧丢了缓冲就无人
+      // 清），sessionTexts[sid] 会滞留一条**消息前缀**。此时后端早已把完整消息
+      // 落盘；本腿若照旧渲染这条前缀，正文截在表头/分隔行窗口内时整块 GFM 表格
+      // 退化为竖线文本（受控重放矩阵确证：trailing 块 = 无有效 delimiter 的表头
+      // ⇒ 0 <table> + 竖线段落），且 !isStillBusy 分支把它闭成永久泡 —— 正是
+      // 「发送当时渲染正常、重连重放变原始竖线」的报障链（E2E 复现见证据目录）。
+      // 判据：缓冲文本是重放历史末条带正文 Ai 的**前缀**（等长亦命中）⇒ 是已落
+      // 盘内容的滞留快照而非未落盘新内容 ⇒ 丢弃缓冲并复位视图流式指针，历史行
+      // 已承载同一内容；真未落盘的段（非前缀）照旧重建，与改前语义一致。
+      const lastPersistedAi = msg.messages
+        ? [...msg.messages].reverse().find((mm) => mm.type === 'ai' && mm.text)
+        : null;
+      const strandedSnapshot = !!(lastPersistedAi
+        && typeof lastPersistedAi.text === 'string'
+        && lastPersistedAi.text.startsWith(txtBuf));
+      if (strandedSnapshot) {
+        delete state.sessionTexts[sid];
         activeView.stream.aiText = '';
-        delete state.pendingRestore[sid];
+        activeView.stream.currentAiBubble = null;
+      } else {
+        activeView.stream.aiText = txtBuf;
+        const chat = activeView.dom.chat;
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        activeView.stream.currentAiBubble = document.createElement('div');
+        activeView.stream.currentAiBubble.className = 'bubble ai';
+        activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText, true, { cache: !isStillBusy }) + (isStillBusy ? '<span class="cursor"></span>' : '');
+        row.appendChild(activeView.stream.currentAiBubble);
+        chat.appendChild(row);
+        if (!isStillBusy) {
+          activeView.stream.currentAiBubble = null;
+          activeView.stream.aiText = '';
+          delete state.pendingRestore[sid];
+        }
       }
     }
 
