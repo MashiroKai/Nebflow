@@ -1,7 +1,7 @@
 package nebflow.core.plugin
 
 import cats.effect.IO
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.shared.{EvidenceTemp, NebflowLogger, PathUtil}
 import PluginSourceLedger.{Kind, Pin, Via}
 
 import java.security.MessageDigest
@@ -463,7 +463,11 @@ object PluginSourceInstall:
    */
   def installGitPinned(spec: PluginSourceSpec.GitSpec): IO[Either[String, String]] =
     IO.blocking {
-      val tmp = os.temp.dir(prefix = "nb-plugin-git-clone")
+      // Clone workspace lives in a registered evidence-temp batch (same shape
+      // as RichRenderer/NfOfficeRoutes): a crashed clone leaves an inactive,
+      // TTL-swept batch rather than an orphaned OS temp dir.
+      val batch = EvidenceTemp.createBatch("plugin-install", "git-clone")
+      val tmp = os.Path(batch)
       try
         val repo = tmp / "repo"
         val cloneUrl = localFileUri(spec.url).getOrElse(spec.url)
@@ -508,7 +512,11 @@ object PluginSourceInstall:
                     case Left(err) => Left(s"digest computation failed on cloned package: $err (${CodeArchiveLayout})")
                 }
         }
-      finally try os.remove.all(tmp) catch case NonFatal(_) => ()
+      finally
+        // Retire first, then remove wholesale: a partially failed teardown
+        // stays inactive with a valid manifest and remains TTL-sweepable.
+        try EvidenceTemp.finishBatch(batch) catch case NonFatal(_) => ()
+        try os.remove.all(tmp) catch case NonFatal(_) => ()
     }
   end installGitPinned
 
