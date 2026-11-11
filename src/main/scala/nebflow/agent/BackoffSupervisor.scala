@@ -157,8 +157,12 @@ object BackoffSupervisor:
       val completionCapFired = Ref.unsafe[IO, Boolean](false)
       budgetArmedIO *> ctx.watch(childRef) *>
         logger
-          .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")
-          .as(
+          .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)") *>
+        nebflow.core.mail.CompletionDebtStore.pending(subagentId).flatMap {
+          case Some(debt) if debt.ownerSessionId == subagentId =>
+            (ctx.self ! AgentEvent.Completed(subagentId, debt.messages)).void
+          case _ => IO.unit
+        }.as(
             active(
               childRef,
               childSpawnFn,
@@ -615,7 +619,9 @@ object BackoffSupervisor:
             }
 
         event match
-          case AgentEvent.Completed(_, messages) =>
+          case AgentEvent.Completed(sessionId, messages) =>
+              // Stable child-session ownership keys the durable completion debt; a replay
+              // for the same owner is safe and only the live supervisor settles it.
               // 四修①两级处置：空烧仍不是完成；重启预算未尽则续推，耗尽时
               // delegate 正文按直接完成载荷投递，subtask 则保持诚实 failed 终态。
             if !isEmptyBurnCompletion(messages) then
@@ -1522,7 +1528,7 @@ object BackoffSupervisor:
                 case SessionMailbox.MailResult.AlreadyPresent =>
                   logger.warn(
                     s"[mailbox-producer] duplicate terminal for '$subagentId' already pending in parent '$parentSessionId' — idempotent no-op (single copy on disk)"
-                  )
+                  ) *> nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId)
                 case SessionMailbox.MailResult.Failed(cause) if cause == "parent-session-gone" =>
                   // 交付腿已在生产者侧响亮留痕（不产垃圾文件）；终态三清照常。
                   IO.unit
@@ -1531,11 +1537,12 @@ object BackoffSupervisor:
                     s"[mailbox-producer] terminal for '$subagentId' NOT on disk after retries (parent='$parentSessionId' cause=$cause) — " +
                       s"boot reconcile will synthesize a replacement entry from the task ledger"
                   )
-                case _ => IO.unit // Enqueued / Coalesced：必达成立（门铃已发）
+                case _ => nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId) // durable enqueue is receiver acceptance
               }
           else
             parentRef match
-              case Some(ref) => ref ! terminalEvent
+              case Some(ref) =>
+                (ref ! terminalEvent).flatMap(_ => nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId))
               case None =>
                 // mail-continuation delivery backstop（2026-10-09）：parentRef=None ⇒
                 // 本终态结果**没有任何投递对象**——历史分支是裸 IO.unit，结果在回传
@@ -1579,7 +1586,10 @@ object BackoffSupervisor:
         // #1224：前置 delegate 清理（队列释放先行，再拆 actor）。
         // P2 邮箱化：receiptWrite 腿随迁拆除（delegate 终态零新回执——*.receipt.json
         // 对新终态零新写，验收红线②）。
-        (delegateCleanup *> notify *> taskUpdate *> diagWrite *> cleanupPendingAsks(resources, subagentId) *>
+        val clearCancelledDebt =
+          if eventType == "cancelled" then nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId)
+          else IO.unit
+        (delegateCleanup *> clearCancelledDebt *> notify *> taskUpdate *> diagWrite *> cleanupPendingAsks(resources, subagentId) *>
           DelegateBudget.release(subagentId) *>
           resources.agentRegistry.update(_ - subagentId) *>
           (childRef ! AgentCommand.Stop(s"$source-complete")) *>

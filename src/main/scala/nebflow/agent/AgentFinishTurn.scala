@@ -318,8 +318,12 @@ private[agent] object AgentFinishTurn:
       if subagentsInFlight then IO.unit
       else
         resolveSettleTargets(resources.agentRegistry, state.sessionId, completionTargets)
-          .flatMap(_.traverse_ { target =>
-            (target ! AgentEvent.Completed(state.sessionId.getOrElse(""), msgs))
+          .flatMap { targets =>
+            val persistDebt = state.sessionId.filter(_ => targets.nonEmpty).fold(IO.unit)(sid =>
+              nebflow.core.mail.CompletionDebtStore.record(sid, msgs)
+            )
+            persistDebt *> targets.traverse_ { target =>
+              (target ! AgentEvent.Completed(state.sessionId.getOrElse(""), msgs))
               .handleErrorWith(e =>
                 NebflowLogger
                   .forName("nebflow.agent")
@@ -327,7 +331,8 @@ private[agent] object AgentFinishTurn:
                     s"completion signal to the supervisor failed (${state.sessionId.getOrElse("-")}): ${e.getMessage}"
                   )
               )
-          })
+            }
+          }
 
     // #407: turn 收尾回 idle（原 else 分支提取）。queue drain 分支的 idle-gate
     // 拦截也复用此收尾——queue 延迟投递但本 turn 正常结束（Done/持久化/debt
