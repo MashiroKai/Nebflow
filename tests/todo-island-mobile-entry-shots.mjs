@@ -64,7 +64,6 @@ const read = await page.evaluate(async () => {
   const av = document.querySelector('#agent-avatar-btn');
   const search = document.querySelector("[data-chrome='search']");
   const idhead = document.querySelector('.mh-idhead');
-  const tp = await import('/js/mobile/taskPanel.js');
   const store = await import('/js/todoStore.js');
   return {
     sessionAgent: 'Spider',
@@ -87,8 +86,7 @@ const read = await page.evaluate(async () => {
     avatarCenterX: av ? +(av.getBoundingClientRect().x + av.getBoundingClientRect().width / 2).toFixed(1) : null,
     buttonCenterY: btn ? +(btn.getBoundingClientRect().y + btn.getBoundingClientRect().height / 2).toFixed(1) : null,
     avatarCenterY: av ? +(av.getBoundingClientRect().y + av.getBoundingClientRect().height / 2).toFixed(1) : null,
-    // 旧读数口 vs 真源读数（根因读数）
-    gateCount_taskBadgeCount: tp.taskBadgeCount(),
+    // 真源读数（旧读数口 taskPanel.taskBadgeCount 随模块退役移除）
     openCount_store: store.todoStore.openCount(),
   };
 });
