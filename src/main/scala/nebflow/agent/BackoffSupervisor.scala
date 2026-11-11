@@ -605,10 +605,14 @@ object BackoffSupervisor:
                 error.message
               )
               val rawType = error.errorType.toString
-              val trigger = nebflow.core.delegate.DelegateFreeze.reasonForTrigger(rawType).getOrElse("failed-event")
+              // 分类兜底（[[DelegateFreeze.classify]] 落 engine-fault 档）**永不吞掉原始
+              // errorType**：rawType 逐字进诊断前缀（触发源 + 原始错误类别），在记录
+              // （frozenDetail / frozenTrigger 槽）、回执与面板文案全部可见。
               freezeAndHold(
-                s"trigger=$trigger; errorType=$rawType; ${error.message}$sessionInfo",
-                fzReason
+                s"${error.message}$sessionInfo",
+                fzReason,
+                trigger = "failed-event",
+                errorType = rawType
               )
             else
               val retryable = error.errorType match
@@ -651,7 +655,9 @@ object BackoffSupervisor:
             then
               freezeAndHold(
                 s"cancelled by the engine: ${if reason.nonEmpty then reason else "quota/budget exhausted"}",
-                nebflow.core.delegate.DelegateFreeze.Reason.CancelledByQuota
+                nebflow.core.delegate.DelegateFreeze.Reason.CancelledByQuota,
+                trigger = "cancelled-by-quota",
+                errorType = "Cancelled"
               )
             else
               // AgentControl cancel（spec §3.2）：与自然终态同路清理——父
@@ -680,9 +686,16 @@ object BackoffSupervisor:
         lazy val workspacePolicy = scala.util.Try {
           val snapshot = nebflow.core.delegate.WorkspaceLedger.default.snapshot
           val workspace = snapshot.workspaces.find(_.owner == subagentId)
+          val merger = snapshot.mergers.find(_.delegateId == subagentId)
           (
             workspace.exists(_.lifecycle.startsWith("closed-")),
-            workspace.nonEmpty || snapshot.mergers.exists(_.delegateId == subagentId)
+            workspace.isDefined || merger.isDefined,
+            // 停止原因（engine-fault 冻结报错补详批 · 第二波）：具体到持有形态——
+            // 受管 workspace（生命周期到哪一步）还是项目 merger 槽（哪个仓）。
+            workspace
+              .map(w => s"managed workspace held (lifecycle=${w.lifecycle})")
+              .orElse(merger.map(m => s"project merger slot held (repository=${m.repository})"))
+              .getOrElse("managed workspace hold")
           )
         }
         signal match
@@ -692,11 +705,15 @@ object BackoffSupervisor:
               logger.info(s"Workspace owner $subagentId closed; supervisor will not restart it") *>
               IO.pure(Behaviors.stopped)
           case SystemSignal.Terminated(_) if workspacePolicy.isFailure || workspacePolicy.toOption.exists(_._2) =>
+            // 停止原因入记录与文案（第二波）：workspacePolicy 单读，原因 = 探测失败
+            // （带异常消息）或具体持有形态——替换笼统的 "Managed workspace execution stopped"。
+            val stopReason = BackoffSupervisor.managedWorkspaceStopReason(workspacePolicy)
             freezeAndHold(
-              s"trigger=managed-workspace-stopped; errorType=Terminated; policy=${workspacePolicy.toOption}; " +
-                "Managed workspace execution stopped; explicit manual recovery is required",
+              s"Managed workspace execution stopped ($stopReason); explicit manual recovery is required",
               nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
-              childAlive = false
+              childAlive = false,
+              trigger = "managed-workspace-stopped",
+              errorType = "Terminated"
             )
           case SystemSignal.Terminated(_) =>
             val now = System.currentTimeMillis()
@@ -719,9 +736,11 @@ object BackoffSupervisor:
                    // child 已死（Terminated 触发）⇒ 冻结后本监督者自停（registry 记录
                    // 保留 = 面板与 Mail 唤醒的地址锚）。
                    freezeAndHold(
-                     s"trigger=supervision-exhausted; errorType=Terminated; the agent crashed and could not recover after $maxRestarts restarts",
+                     s"the agent crashed and could not recover after $maxRestarts restarts",
                      nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
-                     childAlive = false
+                     childAlive = false,
+                     trigger = "supervision-exhausted",
+                     errorType = "Terminated"
                    )
                  else
                    notifyParentAndStop(
@@ -744,8 +763,8 @@ object BackoffSupervisor:
        * 语义（判词诚实铁律）：错误 = **冻结态**，不是终止态。本腿做四件事、四件都
        * 不出终态判词：
        *   ① 冻结落盘 —— [[nebflow.core.delegate.DelegateFreeze.park]]：registry 冻结槽
-       *      （frozenSince/frozenReason/frozenDetail）+ 台账行 status=frozen（不进 boot
-       *      收殓视野，见 SubAgentStartupRecovery.InFlightStatuses）；
+       *      （frozenSince/frozenReason/frozenDetail/frozenTrigger）+ 台账行 status=frozen
+       *      （不进 boot 收殓视野，见 SubAgentStartupRecovery.InFlightStatuses）；
        *   ② registry 状态 = `AgentStatus.Frozen`（面板徽标/`freezeReason` 面；与
        *      standby 的 Waiting 显式区分）+ 合并队列处置（持窗成员 requeueForLane 退回
        *      waiting、**保留 FIFO 位**）；
@@ -758,13 +777,26 @@ object BackoffSupervisor:
        *
        * @param childAlive child actor 是否仍在（Failed/Cancelled 事件 = 在；Terminated /
        *                   respawn 失败 = 不在——后者冻结后本监督者自停）
+       * @param trigger 触发源线值（engine-fault 冻结报错补详批 · 第二波）：哪条腿/哪个
+       *                事件/哪个看门狗触发本次冻结（`failed-event` / `cancelled-by-quota` /
+       *                `managed-workspace-stopped` / `supervision-exhausted` /
+       *                `respawn-failed`）——结构化前缀格式单点 = `DelegateFreeze.triggerDiagnosis`，
+       *                落 `Record.frozenTrigger` 槽 + 详情行首；空 = 不拼前缀（旧形态零变化）。
+       * @param errorType 原始错误类别**逐字**（`AgentErrorType.toString` / `Terminated` /
+       *                  异常类名）——分类兜底（classify 落 engine-fault 档）永不吞掉它。
        */
       private def freezeAndHold(
         detail: String,
         reason: nebflow.core.delegate.DelegateFreeze.Reason,
-        childAlive: Boolean = true
+        childAlive: Boolean = true,
+        trigger: String = "",
+        errorType: String = ""
       ): IO[Behavior[AgentEvent]] =
-        val d = nebflow.core.delegate.DelegateFreeze.compactDetail(detail)
+        // 诊断前缀只在触发源/错误类别在场时拼（`trigger=<t>; errorType=<e>; <正文>`）。
+        val diagnosis = nebflow.core.delegate.DelegateFreeze.triggerDiagnosis(trigger, errorType)
+        val d =
+          val c = nebflow.core.delegate.DelegateFreeze.compactDetail(detail)
+          if diagnosis.isEmpty then c else s"$diagnosis; $c"
         val workspace = nebflow.core.delegate.DelegateRegistry
           .find(subagentId)
           .map(r => r.worktree.getOrElse(r.cwd))
@@ -811,7 +843,7 @@ object BackoffSupervisor:
         )
         val persistAndAnnounce =
           nebflow.core.delegate.DelegateFreeze
-            .park(resources, subagentId, parentSessionId, reason, d)
+            .park(resources, subagentId, parentSessionId, reason, d, trigger = trigger)
             .flatMap { frozenAt =>
               nebflow.core.delegate.DelegateFreeze.markRegistryState(resources, subagentId, reason) *>
                 DelegateBudget.release(subagentId) *>
@@ -934,7 +966,9 @@ object BackoffSupervisor:
                  s"supervisor respawn failed mid-restart ($trigger): ${Option(e.getMessage)
                      .getOrElse(e.getClass.getSimpleName)}",
                  nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
-                 childAlive = false
+                 childAlive = false,
+                 trigger = "respawn-failed",
+                 errorType = e.getClass.getSimpleName
                )
              else
                notifyParentAndStop(
@@ -1551,5 +1585,20 @@ object BackoffSupervisor:
     val r = Option(reason).getOrElse("").toLowerCase
     r.contains("quota") || r.contains("额度") || r.contains("budget") || r.contains("rate limit") ||
     r.contains("insufficient_quota")
+
+  /**
+   * 「Managed workspace execution stopped」冻结腿的**停止原因**诊断（纯函数，spec 判红
+   * 锚；engine-fault 冻结报错补详批 · 第二波）：账本探测失败 ⇒ 带异常消息；账本可读 ⇒
+   * 具体到持有形态（受管 workspace 的生命周期 / 项目 merger 槽的仓库）——记录与文案
+   * 从此答得出「为什么停」，替换笼统表述。
+   */
+  private[agent] def managedWorkspaceStopReason(
+    policy: scala.util.Try[(Boolean, Boolean, String)]
+  ): String =
+    policy match
+      case scala.util.Failure(e) =>
+        s"workspace-ledger probe failed (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})"
+      case scala.util.Success((_, holds, why)) =>
+        if holds then why else "managed workspace hold in doubt (ledger raced between probe and death)"
 
 end BackoffSupervisor

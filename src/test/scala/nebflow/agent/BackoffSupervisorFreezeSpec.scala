@@ -249,6 +249,13 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
       assert(record.frozenSince.isDefined, "frozenSince persisted (survives restart)")
       assertEquals(record.frozenReason, Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)))
       assert(record.frozenDetail.exists(_.contains("529")), s"the last error context is persisted, got: ${record.frozenDetail}")
+      // 触发源诊断（engine-fault 冻结报错补详批 · 第二波）：触发源 + 原始错误类别进
+      // 详情行与结构化槽——记录答得出「什么触发了这次冻结」。
+      assert(
+        record.frozenDetail.exists(_.startsWith("trigger=failed-event; errorType=LlmFailed; ")),
+        s"the diagnostic prefix leads the persisted detail, got: ${record.frozenDetail}"
+      )
+      assertEquals(record.frozenTrigger, Some("failed-event"), "the trigger source lands in the structured slot")
       val row = tasks.find(_.taskId == childSid).get
       assertEquals(row.status, DelegateFreeze.TaskStatus)
       assert(row.lastError.exists(_.contains("llm-failure")), s"the row carries the reason, got: ${row.lastError}")
@@ -415,5 +422,105 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
         s"the subtask terminal never rides the delegate mailbox leg, got: ${events.map(_.eventType)}"
       )
       assertEquals(DelegateRegistry.find(childSid), None, "no freeze record is created for a subtask")
+  }
+  test("fallback classification keeps the raw errorType: a Timeout failure freezes as engine-fault with the raw type verbatim in record + wire + row") {
+    val system = ActorSystem(s"bsup-fz-4-${scala.util.Random.nextInt(100000)}")
+    val tmp = os.temp.dir(prefix = "nb-bsup-fz4-")
+    val parentSid = "fz-parent-4"
+    val childSid = "delegate-fz-4"
+    for
+      resources <- mkResources(system, tmp)
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "freeze spec parent", agentName = Some("Nebula"))
+      _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid, "delegate"))
+      _ <- IO(DelegateRegistry.put(mkRecord(childSid, parentSid)))
+      parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      parentRef <- system.spawn(mkParentRecorder(parentEvents), "fz-parent-rec-4")
+      childCmds <- Ref.of[IO, List[AgentCommand]](Nil)
+      firstChild <- system.spawn(mkRecordingChild(childCmds), "fz-child-4")
+      _ <- resources.agentRegistry.update(
+        _ + (childSid -> AgentRecord(childSid, firstChild, AgentKind.Delegate, parentSid, Some(parentRef)))
+      )
+      supervisor <- system.spawn(
+        BackoffSupervisor(
+          childRef = firstChild,
+          childSpawnFn = (_, _) =>
+            system.spawn(mkRecordingChild(childCmds), s"fz-child-4-${scala.util.Random.nextInt(100000)}"),
+          childName = childSid,
+          parentRef = Some(parentRef),
+          description = "wire up the image pipeline",
+          agentName = "Worker",
+          subagentId = childSid,
+          parentSessionId = parentSid,
+          resources = resources,
+          initialPrompt = "wire it up",
+          source = "delegate",
+          minBackoff = 50.millis,
+          maxBackoff = 100.millis
+        ),
+        "fz-supervisor-4"
+      )
+      // Timeout + 判据表不命中的正文 ⇒ classify 落 engine-fault **兜底档**——原始
+      // errorType 必须逐字保留（不得被兜底吞掉）。
+      _ <- supervisor ! AgentEvent.Failed(
+        childSid,
+        err(AgentErrorType.Timeout, "turn exceeded the wall clock without progress", childSid)
+      )
+      _ <- waitUntil(20.seconds)(
+        resources.subAgentTaskStore
+          .loadTasks(parentSid)
+          .map(_.find(_.taskId == childSid).exists(_.status == DelegateFreeze.TaskStatus))
+      )
+      _ <- IO.sleep(400.millis)
+      tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
+      record <- IO(DelegateRegistry.find(childSid).get)
+      reg <- resources.agentRegistry.get
+      _ <- system.stopAll
+    yield
+      // 兜底档：原因码 = engine-fault；诊断后缀与详情携带**逐字**的原始 errorType。
+      assertEquals(
+        record.frozenReason.map(_.takeWhile(_ != '[')),
+        Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.EngineFault)),
+        s"the fallback freezes as engine-fault, got: ${record.frozenReason}"
+      )
+      assert(
+        record.frozenReason.exists(_.contains("errorType=Timeout")),
+        s"the raw errorType survives in the wire suffix, got: ${record.frozenReason}"
+      )
+      assert(
+        record.frozenDetail.exists(d => d.startsWith("trigger=failed-event; errorType=Timeout; ")),
+        s"the diagnostic prefix leads the detail verbatim, got: ${record.frozenDetail}"
+      )
+      assertEquals(record.frozenTrigger, Some("failed-event"))
+      val row = tasks.find(_.taskId == childSid).get
+      assert(
+        row.lastError.exists(_.contains("errorType=Timeout")),
+        s"the task row carries the raw errorType too, got: ${row.lastError}"
+      )
+      // 内存态 registry 面仍写裸原因码线值（面板短名不吞诊断正文——诊断走详情/后缀面）。
+      assertEquals(
+        reg.get(childSid).flatMap(_.frozenReason),
+        Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.EngineFault))
+      )
+  }
+
+  test("managed-workspace stop reason: a ledger probe failure names the error; a hold names the concrete holding shape") {
+    val probeFailure =
+      BackoffSupervisor.managedWorkspaceStopReason(
+        scala.util.Failure(new IllegalStateException("Workspace ledger is unreadable"))
+      )
+    assert(probeFailure.contains("workspace-ledger probe failed"), probeFailure)
+    assert(probeFailure.contains("Workspace ledger is unreadable"), s"the probe error must be named: $probeFailure")
+    assertEquals(
+      BackoffSupervisor.managedWorkspaceStopReason(
+        scala.util.Success((false, true, "managed workspace held (lifecycle=open)"))
+      ),
+      "managed workspace held (lifecycle=open)"
+    )
+    assertEquals(
+      BackoffSupervisor.managedWorkspaceStopReason(
+        scala.util.Success((false, true, "project merger slot held (repository=stand)"))
+      ),
+      "project merger slot held (repository=stand)"
+    )
   }
 end BackoffSupervisorFreezeSpec

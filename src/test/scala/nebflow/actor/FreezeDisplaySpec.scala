@@ -120,6 +120,22 @@ class FreezeDisplaySpec extends FunSuite:
     assertEquals(FreezeDisplay.needsHumanWire("llm-transient"), false)
   }
 
+  test("诊断后缀线值（engine-fault[trigger=…; errorType=…]）：短名标签只读裸原因码，诊断正文不污染文案；reasonWire 保全诊断") {
+    val wire = "delegate-frozen:engine-fault[trigger=supervision-exhausted; errorType=Terminated; crashed after 2 restarts]"
+    val fd = FreezeDisplay.ofWire(wire, None, now)
+    assertEquals(fd.reasonWire, wire, "the full wire (diagnostics included) stays machine-readable")
+    assertEquals(fd.needsHuman, true)
+    assertEquals(fd.autoRecoverable, false)
+    assertEquals(fd.labelZh, "已冻结 · 引擎侧故障（需唤醒）", fd.labelZh)
+    assertEquals(fd.labelEn, "Frozen — engine fault (needs a wake)", fd.labelEn)
+    assert(!fd.labelZh.contains("trigger"), s"短名标签不得吞诊断正文：${fd.labelZh}")
+    assert(!fd.labelZh.contains("errorType"), s"短名标签不得吞诊断正文：${fd.labelZh}")
+    // provider 故障族的判定同样只认裸码：诊断后缀不改族。
+    val infra = FreezeDisplay.ofWire("delegate-frozen:llm-failure[trigger=failed-event; errorType=LlmFailed; 529]", None, now)
+    assert(infra.autoRecoverable, "the diagnostic suffix must not demote the provider family")
+    assert(infra.labelZh.contains("模型层故障"), infra.labelZh)
+  }
+
   test("FreezeKind 线值双向稳定（前端 freezeState.js 逐字同值）") {
     assertEquals(FreezeKind.WaitingWindow.wire, "waiting-window")
     assertEquals(FreezeKind.AutoRecovering.wire, "auto-recovering")

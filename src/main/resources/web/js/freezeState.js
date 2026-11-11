@@ -284,10 +284,11 @@ export function delegateFreezeWire(info) {
 
 /**
  * 该行是否属 provider 故障族（基础设施故障：不汇报、引擎自愈续跑、面板待你处理）。
+ * 族判定读 `[` 之前的裸原因码——诊断后缀（`…[trigger=…; errorType=…]`）不参与判等。
  * @param {any} info
  */
 export function delegateFreezeIsInfra(info) {
   const w = delegateFreezeWire(info);
   if (!w) return false;
-  return INFRA_CODES.includes(w.replace(/^delegate-frozen:?/, ''));
+  return INFRA_CODES.includes(w.replace(/^delegate-frozen:?/, '').replace(/\[.*$/, ''));
 }

@@ -113,16 +113,23 @@ object DelegateFreeze:
   /** 落 `AgentRecord.frozenReason` / `Record.frozenReason` 的完整线值。 */
   def wireValue(r: Reason): String = s"$WirePrefix:${wire(r)}"
 
-  /** 线值 → 原因（非本批前缀 / 未知词 = None——旧盘面与其它冻结族零误判）。 */
+  /** 线值 → 原因（非本批前缀 / 未知词 = None——旧盘面与其它冻结族零误判）。
+    *
+    * 线值允许携带**诊断后缀**（`detailedWireValue` 写出的
+    * `engine-fault[trigger=…; errorType=…; …]`）——判定只读 `[` 之前的裸原因码，
+    * 后缀是给人与审计面的触发源证据，绝不参与判等（对全部原因码机械生效，不特判
+    * 单一码——旧盘面无后缀时行为逐字节不变）。
+    */
   def parse(line: String): Option[Reason] =
     val s = Option(line).getOrElse("").trim
     if !s.startsWith(WirePrefix) then None
     else
-      s.stripPrefix(WirePrefix).stripPrefix(":") match
+      val code = s.stripPrefix(WirePrefix).stripPrefix(":").takeWhile(_ != '[')
+      code match
         case "llm-failure" => Some(Reason.LlmFailure)
         case "model-unavailable" => Some(Reason.ModelUnavailable)
         case "tool-failure" => Some(Reason.ToolFailure)
-        case value if value == "engine-fault" || value.startsWith("engine-fault[") => Some(Reason.EngineFault)
+        case "engine-fault" => Some(Reason.EngineFault)
         case "cancelled-by-quota" => Some(Reason.CancelledByQuota)
         case _ => None
 
@@ -210,6 +217,77 @@ object DelegateFreeze:
     val base = wireValue(r)
     if r == Reason.EngineFault && detail.trim.nonEmpty then s"$base[${compactDetail(detail, 200)}]" else base
 
+  // ── 触发源诊断（engine-fault 冻结报错补详批 · 第二波）────────────────────────
+  //
+  // 每条冻结记录都必须答得出「什么触发了这次冻结」：trigger = 哪条腿/哪个事件
+  // （`failed-event` / `cancelled-by-quota` / `managed-workspace-stopped` /
+  // `supervision-exhausted` / `respawn-failed`），errorType = 原始错误类别**逐字**
+  // （分类兜底（[[classify]] 落 `engine-fault` 档）永不吞掉它——原始值保住在记录
+  // （frozenDetail / frozenTrigger 槽）与文案（回执 / 告警 / 面板）可见面）。
+
+  /** 结构化诊断前缀的**格式单点**：`trigger=<t>; errorType=<e>`（任一缺席就只写在场的那半）。 */
+  def triggerDiagnosis(trigger: String, errorType: String): String =
+    val t = Option(trigger).getOrElse("").trim
+    val e = Option(errorType).getOrElse("").trim
+    (t, e) match
+      case ("", "") => ""
+      case ("", _) => s"errorType=$e"
+      case (_, "") => s"trigger=$t"
+      case _ => s"trigger=$t; errorType=$e"
+
+  /** 从详情行提取触发源（`trigger=<v>`；旧记录/旧腿没写 ⇒ None——零误判）。 */
+  def triggerOf(detail: String): Option[String] =
+    diagnosisFieldsOf(detail)._1
+
+  /** 从详情行提取原始错误类别（`errorType=<v>`；没写 ⇒ None——零误判）。 */
+  def errorTypeOf(detail: String): Option[String] =
+    diagnosisFieldsOf(detail)._2
+
+  /**
+   * 诊断前缀字段提取（只认**行首诊断前缀区**内的 `key=<value>` 形态；值到下一个 `;`
+   * 或行尾为止）。前缀区 = 行首起连续的 `trigger=…` / `errorType=…` 段（构建单点
+   * [[triggerDiagnosis]] 的 canonical 顺序 trigger 在前，errorType-only 形态也认）；
+   * 前缀区一旦结束（第一段非 `key=` 形态）即停——**绝不扫正文**，正文里出现
+   * "trigger=" / "errorType=" 字样不构成误判。
+   */
+  private def diagnosisFieldsOf(detail: String): (Option[String], Option[String]) =
+    val s = Option(detail).getOrElse("").trim
+    var rest = s
+    var trigger: Option[String] = None
+    var errorType: Option[String] = None
+    diagnosisFieldOf(rest, "trigger").foreach { v =>
+      trigger = Some(v)
+      rest = rest.stripPrefix(s"trigger=$v").stripPrefix(";").trim
+    }
+    if trigger.isDefined || rest.startsWith("errorType=") then
+      diagnosisFieldOf(rest, "errorType").foreach { v =>
+        errorType = Some(v)
+        rest = rest.stripPrefix(s"errorType=$v").stripPrefix(";").trim
+      }
+    (trigger, errorType)
+
+  /** 单字段行首形态（供 [[diagnosisFieldsOf]] 逐段消费）。 */
+  private def diagnosisFieldOf(detail: String, key: String): Option[String] =
+    val s = Option(detail).getOrElse("").trim
+    if !s.startsWith(s"$key=") then None
+    else
+      val v = s.stripPrefix(s"$key=").takeWhile(_ != ';').trim
+      Option.when(v.nonEmpty)(v)
+
+  /** 剥掉行首的结构化诊断前缀（`trigger=…; errorType=…; `），让判据表读到**原始错误文本**
+    * （`ProviderFault` 判据表是子串匹配——`errorType=Timeout` 自带的 "timeout" 字样
+    * 不得参与正文族判定）。无前缀 = 原样返回（旧记录零影响）。
+    */
+  def stripTriggerDiagnosis(detail: String): String =
+    val s = Option(detail).getOrElse("").trim
+    var rest = s
+    List("trigger", "errorType").foreach { key =>
+      diagnosisFieldOf(rest, key).foreach { v =>
+        rest = rest.stripPrefix(s"$key=$v").stripPrefix(";").trim
+      }
+    }
+    rest
+
   /**
    * 冻结回执正文（**四段**：谁冻了 / 为什么 / 保留了什么 / 怎么唤醒）。双语在册
    * （en 主文 + zh 摘要行）——模型任读其一，审计面两语齐备。
@@ -266,9 +344,14 @@ object DelegateFreeze:
   val TaskStatus: String = "frozen"
 
   /**
-   * 冻结单写：registry 冻结槽（`frozenSince/frozenReason/frozenDetail`）＋ 台账行
-   * `status=frozen`（lastError = 原因详情，面板可见）。返回冻结时刻（registry 无
+   * 冻结单写：registry 冻结槽（`frozenSince/frozenReason/frozenDetail/frozenTrigger`）
+   * ＋ 台账行 `status=frozen`（lastError = 原因详情，面板可见）。返回冻结时刻（registry 无
    * 记录时 None——只对真实 spawn 生效，与 `parkStandby` 同纪律）。
+   *
+   * @param trigger 触发源线值（第二波补详）：哪条腿/哪个事件/哪个看门狗触发本次冻结
+   *                （`failed-event` / `cancelled-by-quota` / `managed-workspace-stopped` /
+   *                `supervision-exhausted` / `respawn-failed`）——落 `Record.frozenTrigger`
+   *                结构化槽；空 = 不写该槽（旧调用形态零变化）。
    *
    * fail-soft：任一侧写失败只 WARN，绝不阻断监督者冻结腿的其余动作。
    */
@@ -277,11 +360,12 @@ object DelegateFreeze:
     delegateId: String,
     parentSessionId: String,
     reason: Reason,
-    detail: String
+    detail: String,
+    trigger: String = ""
   ): IO[Option[Long]] =
     val d = compactDetail(detail)
     val registryWrite = IO
-      .blocking(DelegateRegistry.parkFrozen(delegateId, detailedWireValue(reason, d), d))
+      .blocking(DelegateRegistry.parkFrozen(delegateId, detailedWireValue(reason, d), d, trigger))
       .attempt
       .flatMap {
         case Right(Right(ts)) => IO.pure(Option(ts))

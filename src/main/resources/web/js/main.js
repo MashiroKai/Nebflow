@@ -5164,7 +5164,11 @@ onMessage('activeAgents', (msg) => {
         const isErr = wire.indexOf('delegate-frozen') === 0;
         const prevErr = !!(prev && prev.delegateFrozen);
         if (!isErr && !prevErr) return { delegateFrozen: false };
-        const code = wire.indexOf('delegate-frozen:') === 0 ? wire.slice('delegate-frozen:'.length) : '';
+        // Diagnostic suffix (engine-fault freeze detail batch: `…[trigger=…; errorType=…]`)
+        // belongs to the audit face — the code lookup reads the bare code before '['.
+        const code = wire.indexOf('delegate-frozen:') === 0
+          ? wire.slice('delegate-frozen:'.length).replace(/\[.*$/, '')
+          : '';
         return {
           delegateFrozen: true,
           frozen: true,

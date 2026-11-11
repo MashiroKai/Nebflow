@@ -163,6 +163,90 @@ class DelegateFreezeSpec extends CatsEffectSuite:
     assertEquals(DelegateFreeze.reasonForTrigger("completed"), None)
   }
 
+  // ── ①' 触发源诊断（engine-fault 冻结报错补详批 · 第二波）──────────────────
+
+  test("trigger diagnosis: builder formats, extraction reads back, prefix-strip leaves the raw error text (the raw errorType is never swallowed)") {
+    assertEquals(DelegateFreeze.triggerDiagnosis("failed-event", "Timeout"), "trigger=failed-event; errorType=Timeout")
+    assertEquals(DelegateFreeze.triggerDiagnosis("managed-workspace-stopped", ""), "trigger=managed-workspace-stopped")
+    assertEquals(DelegateFreeze.triggerDiagnosis("", "Terminated"), "errorType=Terminated")
+    assertEquals(DelegateFreeze.triggerDiagnosis("", ""), "")
+    val d = "trigger=failed-event; errorType=Timeout; turn exceeded the wall clock"
+    assertEquals(DelegateFreeze.triggerOf(d), Some("failed-event"))
+    assertEquals(DelegateFreeze.errorTypeOf(d), Some("Timeout"))
+    assertEquals(DelegateFreeze.stripTriggerDiagnosis(d), "turn exceeded the wall clock")
+    // 旧记录 / 旧腿（无诊断前缀）零影响。
+    assertEquals(DelegateFreeze.triggerOf("provider 529 overloaded"), None)
+    assertEquals(DelegateFreeze.errorTypeOf("provider 529 overloaded"), None)
+    assertEquals(DelegateFreeze.stripTriggerDiagnosis("provider 529 overloaded"), "provider 529 overloaded")
+    // 兜底分类档：Timeout ⇒ engine-fault，原始 errorType 只活在诊断里，剥前缀后
+    // 判据表读到的是**原始错误文本**（"errorType=Timeout" 自带的 timeout 字样不参与族判定）。
+    assertEquals(DelegateFreeze.classify("Timeout", "turn exceeded the wall clock"), DelegateFreeze.Reason.EngineFault)
+  }
+
+  test("parse: the diagnostic wire suffix is audit-only — every reason code parses through the bracket, unknown codes still refuse") {
+    assertEquals(
+      DelegateFreeze.parse("delegate-frozen:llm-failure[trigger=failed-event; errorType=LlmFailed]"),
+      Some(DelegateFreeze.Reason.LlmFailure)
+    )
+    assertEquals(
+      DelegateFreeze.parse("delegate-frozen:tool-failure[trigger=failed-event; tool pipeline died]"),
+      Some(DelegateFreeze.Reason.ToolFailure)
+    )
+    assertEquals(
+      DelegateFreeze.parse("delegate-frozen:engine-fault[trigger=supervision-exhausted; errorType=Terminated]"),
+      Some(DelegateFreeze.Reason.EngineFault)
+    )
+    assertEquals(DelegateFreeze.parse("delegate-frozen:nonsense[trigger=x]"), None)
+    assertEquals(DelegateFreeze.parse("delegate-frozen:engine-fault["), Some(DelegateFreeze.Reason.EngineFault))
+  }
+
+  test("FreezeNotice.familyOfItem: the diagnostic prefix never nominates the family on the message's behalf") {
+    val item = FreezeNotice.Item(
+      delegateId = "delegate-diag-1",
+      parentSessionId = "parent-diag-1",
+      title = "diagnosis skew guard",
+      reason = "llm-failure",
+      detail = "trigger=failed-event; errorType=Timeout; turn exceeded the wall clock",
+      tier = FreezeNotice.Tier.Silent,
+      infra = true,
+      frozenSince = 0L,
+      ageMs = 0L,
+      workspace = "",
+      autoResumes = 0,
+      autoResumesExhausted = false
+    )
+    // 消息正文不命中判据表 ⇒ 未分类桶；前缀里的 "timeout" 字样**不得**把它带进
+    // connect-timeout 族（第二波的防串档闸——没有这道闸这条会判成 connect-timeout）。
+    assertEquals(FreezeNotice.familyOfItem(item), FreezeNotice.UnclassifiedProviderFamily)
+  }
+
+  test("FreezeNotice.alertText: the aggregated defect alert names the trigger source and carries the raw errorType") {
+    val item = FreezeNotice.Item(
+      delegateId = "delegate-diag-2",
+      parentSessionId = "parent-diag-2",
+      title = "alert trigger line",
+      reason = "engine-fault",
+      detail = "trigger=supervision-exhausted; errorType=Terminated; the agent crashed and could not recover after 2 restarts",
+      tier = FreezeNotice.Tier.Escalate,
+      infra = false,
+      frozenSince = 0L,
+      ageMs = 0L,
+      workspace = "",
+      autoResumes = 0,
+      autoResumesExhausted = false
+    )
+    val alert = FreezeNotice.Alert(
+      "parent-diag-2",
+      FreezeNotice.DeterministicFamily,
+      List(item),
+      FreezeNotice.FamilyWindow(FreezeNotice.DeterministicFamily, 0L, 0L, 0L, Map.empty, Map.empty)
+    )
+    val txt = FreezeNotice.alertText(alert)
+    assert(txt.contains("[trigger: supervision-exhausted]"), s"the alert must name the trigger, got: ${txt.take(500)}")
+    assert(txt.contains("errorType=Terminated"), "the raw errorType must survive into the alert text")
+    assert(txt.contains("delegate:delegate-diag-2"), "the wake address is still printed")
+  }
+
   // ── ② 判词诚实 + 唤醒文案 ──────────────────────────────────────────────
 
   test("compactDetail: single line, controls stripped, bounded") {
@@ -222,12 +306,13 @@ class DelegateFreezeSpec extends CatsEffectSuite:
         _ <- res.sessionStore.getOrCreateSession(parent, "freeze spec parent", agentName = Some("Nebula"))
         _ <- res.subAgentTaskStore.recordTask(mkTask(id, parent))
         _ <- IO(DelegateRegistry.put(mkRecord(id, parent, tmp.toString)))
-        ts <- DelegateFreeze.park(res, id, parent, DelegateFreeze.Reason.LlmFailure, "provider 401 unauthorized")
+        ts <- DelegateFreeze.park(res, id, parent, DelegateFreeze.Reason.LlmFailure, "provider 401 unauthorized", trigger = "failed-event")
         _ = assert(ts.isDefined, "park returns the freeze timestamp for a real record")
         rec <- IO(DelegateRegistry.find(id).get)
         _ = assertEquals(rec.frozenSince, ts)
         _ = assertEquals(rec.frozenReason, Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)))
         _ = assert(rec.frozenDetail.exists(_.contains("401")), "the last error context is persisted")
+        _ = assertEquals(rec.frozenTrigger, Some("failed-event"), "the trigger source lands in the structured slot")
         _ = assert(DelegateRegistry.isFrozen(id))
         _ = assertEquals(
           DelegateRegistry.frozenOf(id).map(_._2),
@@ -246,6 +331,20 @@ class DelegateFreezeSpec extends CatsEffectSuite:
         assertEquals(ts, None)
         assertEquals(DelegateRegistry.find("delegate-freeze-absent"), None)
       }
+    }
+  }
+
+  test("park without a trigger stays compatible with the older record shape (frozenTrigger=None)") {
+    mkResources("park-notrig").flatMap { res =>
+      val parent = "freeze-parent-notrig"
+      val id = "delegate-freeze-notrig"
+      for
+        _ <- res.sessionStore.getOrCreateSession(parent, "freeze spec parent", agentName = Some("Nebula"))
+        _ <- res.subAgentTaskStore.recordTask(mkTask(id, parent))
+        _ <- IO(DelegateRegistry.put(mkRecord(id, parent, tmp.toString)))
+        _ <- DelegateFreeze.park(res, id, parent, DelegateFreeze.Reason.EngineFault, "ledger raced")
+        rec <- IO(DelegateRegistry.find(id).get)
+      yield assertEquals(rec.frozenTrigger, None, "no trigger given ⇒ no slot write (older callers unchanged)")
     }
   }
 
@@ -274,7 +373,7 @@ class DelegateFreezeSpec extends CatsEffectSuite:
             rootSessionId = parent
           ))
         }
-        _ <- DelegateFreeze.park(res, id, parent, DelegateFreeze.Reason.ToolFailure, "tool pipeline died")
+        _ <- DelegateFreeze.park(res, id, parent, DelegateFreeze.Reason.ToolFailure, "tool pipeline died", trigger = "failed-event")
         _ <- DelegateFreeze.markRegistryState(res, id, DelegateFreeze.Reason.ToolFailure)
         frozenRec <- res.agentRegistry.get
         _ = assertEquals(
@@ -293,6 +392,7 @@ class DelegateFreezeSpec extends CatsEffectSuite:
         _ = assertEquals(rec.frozenSince, None, "frozenSince cleared")
         _ = assertEquals(rec.frozenReason, None, "frozenReason cleared")
         _ = assertEquals(rec.frozenDetail, None, "frozenDetail cleared")
+        _ = assertEquals(rec.frozenTrigger, None, "frozenTrigger cleared (four slots, one action)")
         row <- res.subAgentTaskStore.findByTaskId(id)
         _ = assertEquals(row.map(_.status), Some("running"), "the ledger row is honestly in-flight again")
       yield ()

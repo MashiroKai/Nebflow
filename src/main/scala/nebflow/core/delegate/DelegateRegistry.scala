@@ -210,6 +210,17 @@ object DelegateRegistry:
      */
     frozenDetail: Option[String] = None,
     /**
+     * 冻结**触发源**线值（engine-fault 冻结报错补详批 · 第二波）：哪条腿/哪个事件/
+     * 哪个看门狗触发本次冻结——`failed-event`（回合级 AgentEvent.Failed）|
+     * `cancelled-by-quota`（配额类 Cancelled）| `managed-workspace-stopped`
+     * （Terminated 时仍持有受管 workspace/merger 槽）| `supervision-exhausted`
+     * （Terminated 且重启预算耗尽）| `respawn-failed`（respawn 链中途失败）。
+     * 与 [[frozenDetail]] 行首的 `trigger=` 诊断前缀同源同值（文本面 + 结构化槽
+     * 双承载——面板详情卡与审计面读槽、人读详情行）。None = 非冻结 / 旧盘面记录
+     * （缺省 None：旧记录照常解码，零迁移）。
+     */
+    frozenTrigger: Option[String] = None,
+    /**
      * **续命血缘**（会话续命名与位修正批 2026-11-03 · 作者 16:48/16:51 报障）：
      * 本会话是**派生**出来的时（原位续不可恢复：cancel 墓碑 / 转录损坏），值 =
      * 被继承的原 delegate 会话 id。原位续（同 sessionId）恒 None——同一身份不需要
@@ -412,13 +423,14 @@ object DelegateRegistry:
   // ── 错误冻结槽（错误冻结批 2026-11-01）────────────────────────────────────
 
   /**
-   * 冻结单写（错误冻结批 2026-11-01）：`frozenSince = now` + 原因词表值 + 详情。
-   * 「冻结即停」——本槽只记事实，不做任何处置；不知原因的重复冻结（同一波故障反复
-   * 冻结）刷新时刻与详情，但**保留首个原因**（`frozenReason` 已存在时零改——
-   * 根因比症状重要）。查无记录 = `Left`（只对真实 spawn 生效，parkStandby 同纪律）。
+   * 冻结单写（错误冻结批 2026-11-01）：`frozenSince = now` + 原因词表值 + 详情
+   * （+ 触发源槽，第二波补详）。「冻结即停」——本槽只记事实，不做任何处置；不知原因
+   * 的重复冻结（同一波故障反复冻结）刷新时刻与详情，但**保留首个原因与首个触发源**
+   * （`frozenReason` / `frozenTrigger` 已存在时零改——根因比症状重要）。
+   * 查无记录 = `Left`（只对真实 spawn 生效，parkStandby 同纪律）。
    * 写锁同缝串行。
    */
-  def parkFrozen(id: String, reason: String, detail: String): Either[String, Long] =
+  def parkFrozen(id: String, reason: String, detail: String, trigger: String = ""): Either[String, Long] =
     if !validId(id) then Left(s"parkFrozen: invalid session id '$id'")
     else
       writeLock.synchronized {
@@ -426,12 +438,14 @@ object DelegateRegistry:
           case None => Left(s"parkFrozen: no registry record for '$id'")
           case Some(rec) =>
             val ts = System.currentTimeMillis()
+            val trig = Option(trigger).map(_.trim).filter(_.nonEmpty)
             try
               put(
                 rec.copy(
                   frozenSince = Some(ts),
                   frozenReason = rec.frozenReason.orElse(Some(reason)),
-                  frozenDetail = if detail.trim.nonEmpty then Some(detail) else rec.frozenDetail
+                  frozenDetail = if detail.trim.nonEmpty then Some(detail) else rec.frozenDetail,
+                  frozenTrigger = rec.frozenTrigger.orElse(trig)
                 )
               )
               WorkspaceLedger.default.settle(id, frozen = true)
@@ -441,7 +455,8 @@ object DelegateRegistry:
 
   /**
    * 冻结槽唤醒单写（错误冻结批 2026-11-01）：Mail 唤醒 / 面板唤醒 / boot 原地复活
-   * 三腿调用——三槽一并清空（`frozenSince` / `frozenReason` / `frozenDetail`）。
+   * 三腿调用——四槽一并清空（`frozenSince` / `frozenReason` / `frozenDetail` /
+   * `frozenTrigger`）。
    * **不动** standby 槽与 workReport 槽（正交面）。幂等：非冻结 = `Right` 零写。
    * 查无记录 = `Left`。
    */
@@ -452,10 +467,11 @@ object DelegateRegistry:
         find(id) match
           case None => Left(s"clearFrozen: no registry record for '$id'")
           case Some(rec) =>
-            if rec.frozenSince.isEmpty && rec.frozenReason.isEmpty && rec.frozenDetail.isEmpty then Right(())
+            if rec.frozenSince.isEmpty && rec.frozenReason.isEmpty && rec.frozenDetail.isEmpty && rec.frozenTrigger.isEmpty
+            then Right(())
             else
               try
-                put(rec.copy(frozenSince = None, frozenReason = None, frozenDetail = None))
+                put(rec.copy(frozenSince = None, frozenReason = None, frozenDetail = None, frozenTrigger = None))
                 Right(())
               catch case e: Throwable => Left(s"clearFrozen: write failed: ${e.getMessage}")
       }
@@ -686,6 +702,7 @@ object DelegateRegistry:
       frozenSince <- c.get[Option[Long]]("frozenSince")
       frozenReason <- c.get[Option[String]]("frozenReason")
       frozenDetail <- c.get[Option[String]]("frozenDetail")
+      frozenTrigger <- c.get[Option[String]]("frozenTrigger")
       resumedFrom <- c.get[Option[String]]("resumedFrom")
       seatSnapshotSha <- c.get[Option[String]]("seatSnapshotSha")
       seatSnapshotDirty <- c.get[Option[List[String]]]("seatSnapshotDirty")
@@ -721,6 +738,7 @@ object DelegateRegistry:
       frozenSince,
       frozenReason,
       frozenDetail,
+      frozenTrigger,
       resumedFrom,
       seatSnapshotSha,
       seatSnapshotDirty
