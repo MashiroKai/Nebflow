@@ -231,7 +231,7 @@ export function freezeBadgeKey(kind) {
 export function freezeReasonLabelKey(wire) {
   const w = String(wire || '');
   if (w.startsWith('delegate-frozen')) {
-    const code = w.replace(/^delegate-frozen:?/, '');
+    const code = w.replace(/^delegate-frozen:?/, '').replace(/\[.*$/, '');
     if (code === 'llm-failure') return 'subagents.frozenReasonLlm';
     if (code === 'tool-failure') return 'subagents.frozenReasonTool';
     if (code === 'engine-fault') return 'subagents.frozenReasonEngine';

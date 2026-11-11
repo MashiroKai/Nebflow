@@ -604,7 +604,12 @@ object BackoffSupervisor:
                 error.errorType.toString,
                 error.message
               )
-              freezeAndHold(s"${error.message}$sessionInfo", fzReason)
+              val rawType = error.errorType.toString
+              val trigger = nebflow.core.delegate.DelegateFreeze.reasonForTrigger(rawType).getOrElse("failed-event")
+              freezeAndHold(
+                s"trigger=$trigger; errorType=$rawType; ${error.message}$sessionInfo",
+                fzReason
+              )
             else
               val retryable = error.errorType match
                 case AgentErrorType.LlmFailed => true
@@ -688,7 +693,8 @@ object BackoffSupervisor:
               IO.pure(Behaviors.stopped)
           case SystemSignal.Terminated(_) if workspacePolicy.isFailure || workspacePolicy.toOption.exists(_._2) =>
             freezeAndHold(
-              "Managed workspace execution stopped; explicit manual recovery is required",
+              s"trigger=managed-workspace-stopped; errorType=Terminated; policy=${workspacePolicy.toOption}; " +
+                "Managed workspace execution stopped; explicit manual recovery is required",
               nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
               childAlive = false
             )
@@ -713,7 +719,7 @@ object BackoffSupervisor:
                    // child 已死（Terminated 触发）⇒ 冻结后本监督者自停（registry 记录
                    // 保留 = 面板与 Mail 唤醒的地址锚）。
                    freezeAndHold(
-                     s"the agent crashed and could not recover after $maxRestarts restarts",
+                     s"trigger=supervision-exhausted; errorType=Terminated; the agent crashed and could not recover after $maxRestarts restarts",
                      nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
                      childAlive = false
                    )

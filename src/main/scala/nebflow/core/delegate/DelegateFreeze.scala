@@ -122,7 +122,7 @@ object DelegateFreeze:
         case "llm-failure" => Some(Reason.LlmFailure)
         case "model-unavailable" => Some(Reason.ModelUnavailable)
         case "tool-failure" => Some(Reason.ToolFailure)
-        case "engine-fault" => Some(Reason.EngineFault)
+        case value if value == "engine-fault" || value.startsWith("engine-fault[") => Some(Reason.EngineFault)
         case "cancelled-by-quota" => Some(Reason.CancelledByQuota)
         case _ => None
 
@@ -199,8 +199,16 @@ object DelegateFreeze:
 
   /** 详情压缩（单行、去控制字符、截断——落盘与回执共用单点）。 */
   def compactDetail(raw: String, max: Int = 400): String =
-    val cleaned = Option(raw).getOrElse("").replaceAll("[\\r\\n\\t]+", " ").trim
+    // Keep the first diagnostic line only: exception stack traces commonly follow it and
+    // must not crowd out the triggering error. Normalize controls without flattening stacks.
+    val firstLine = Option(raw).getOrElse("").linesIterator.take(1).mkString.trim
+    val cleaned = firstLine.replaceAll("[\\r\\t]+", " ").trim
     if cleaned.length <= max then cleaned else cleaned.take(max) + "…"
+
+  /** Preserve older `engine-fault` records while allowing a diagnostic suffix in new ones. */
+  def detailedWireValue(r: Reason, detail: String): String =
+    val base = wireValue(r)
+    if r == Reason.EngineFault && detail.trim.nonEmpty then s"$base[${compactDetail(detail, 200)}]" else base
 
   /**
    * 冻结回执正文（**四段**：谁冻了 / 为什么 / 保留了什么 / 怎么唤醒）。双语在册
@@ -273,7 +281,7 @@ object DelegateFreeze:
   ): IO[Option[Long]] =
     val d = compactDetail(detail)
     val registryWrite = IO
-      .blocking(DelegateRegistry.parkFrozen(delegateId, wireValue(reason), d))
+      .blocking(DelegateRegistry.parkFrozen(delegateId, detailedWireValue(reason, d), d))
       .attempt
       .flatMap {
         case Right(Right(ts)) => IO.pure(Option(ts))

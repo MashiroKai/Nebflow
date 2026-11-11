@@ -167,7 +167,15 @@ class DelegateFreezeSpec extends CatsEffectSuite:
 
   test("compactDetail: single line, controls stripped, bounded") {
     val d = DelegateFreeze.compactDetail("a\nb\tc\r\nd", max = 400)
-    assertEquals(d, "a b c d")
+    assertEquals(d, "a")
+    assertEquals(
+      DelegateFreeze.detailedWireValue(DelegateFreeze.Reason.EngineFault, "errorType=Timeout; turn stalled"),
+      "delegate-frozen:engine-fault[errorType=Timeout; turn stalled]"
+    )
+    assertEquals(
+      DelegateFreeze.parse("delegate-frozen:engine-fault[errorType=Timeout]"),
+      Some(DelegateFreeze.Reason.EngineFault)
+    )
     val long = DelegateFreeze.compactDetail("x" * 500, max = 20)
     assertEquals(long.length, 21) // 20 + ellipsis
     assert(long.endsWith("…"))
