@@ -184,6 +184,7 @@ object ToolRegistry:
       // precedent). The advisor itself never merges; this is a read face with
       // one dismissal write into the advisor's own store.
       WorkspaceSummaryTool.Name -> WorkspaceSummaryTool,
+      WorkspaceReconcileTool.Name -> WorkspaceReconcileTool,
       // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
       // 只读）——embedding 余弦 top-k + 词法降级 + 可选 Jev 重排。授权面 =
       // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单
