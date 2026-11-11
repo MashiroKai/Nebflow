@@ -882,6 +882,11 @@
   flex-shrink: 0;
 }
 #search-status:empty { padding: 0; }
+.search-batch-open {
+  align-self: flex-start;
+  margin: 0 var(--ds-space-4) var(--ds-space-2);
+}
+.search-batch-open[hidden] { display: none; }
 #search-results {
   flex: 1;
   min-height: 0;
