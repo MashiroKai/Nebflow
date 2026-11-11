@@ -5,10 +5,19 @@
 //     G1 材质单源：.ask-bub（ai/user）计算样式与主对话 #input-bar 逐项相等
 //        （bg / backdropFilter / borderColor / boxShadow）—— 桌面 1440 暗/亮 + 手机 375 暗。
 //     G2 真模糊像素证：气泡元素实拍 A；JS 摘 backdrop-filter 实拍 B；
-//        mean|Δlum|(A,B) ≥ 4 ⇒ 模糊真实采样到画布内容。
-//        改前（.ask-col mask-image = backdrop root，采样被架空）实测 0.25 = 红；
-//        改后实测 ≈11.9 = 绿。阈值 4 居中（0.25 与 11.86 之间留 16 倍裕度）。
-//     G3 非 dock 兜底（glass.css `.ask-bub`）同源：computed backdropFilter 非 none。
+//        mean|Δlum|(A,B) ≥ 阈值 ⇒ 模糊真实采样到画布内容。
+//        两代标定（阈值随材质换代重定标）：
+//        · 旧材质 --glass-bg α .68 + blur 40：活态 11.9 / 死态（mask 架空）0.25
+//          ⇒ 阈值 4 居中（16 倍裕度），三修② 前在用；
+//        · 现材质 --nf-glass-input-bg α .94 + blur 24（三修② 2026-11-11，作者令
+//          「毛玻璃一律不透底」）：活态实测 2.02（透出率 6% + 半径 24 的物理衰减，
+//          非采样失效）；死态（mask 架空 / 摘 blur）仍 ≈0.25-0 ⇒ 阈值 1.0 居中
+//          （对死态 4× 裕度、对活态 2× 裕度）。
+//     G3 非 dock 兜底（glass.css `.ask-bub`）同源：backdrop-filter = 基准件配方
+//        var(--nf-glass-input-filter)（ask 面三修② 2026-11-11：三处与 #input-bar 同档）。
+//     G1e #input-bar 主规则在 CSSOM 存活（glass.css 该块注释里曾出现字面 `*/`
+//        （`--nf-glass-*/--glass-bg`），提前闭合注释 ⇒ 残文被当选择器垃圾，整条
+//        规则被浏览器丢弃、border/浮影消失 = G1 家族伴生红。措辞已修，此钉防复活。
 //   D 拉动腿（缺陷②：列盒底钉在输入条中线，最新气泡底部恒被输入条上半盖住）
 //     D1 拉动净空：.ask-col padding-bottom = --ask-under + --ds-space-1h；
 //        滚动尽头（拉动到底）最新气泡底边 ≤ 输入条顶边（交叠 = 0）；
@@ -167,6 +176,14 @@ const probe = `(() => {
   ok('G1a ai 泡材质 = #input-bar 逐项相等（bg/blur/描边/浮影，玻璃单源）', eq(mat.ai), JSON.stringify({ ai: mat.ai, bar: mat.bar }));
   ok('G1b user 泡材质 = #input-bar 逐项相等（问/答同材质，bubble-side 批后无第二色相）', eq(mat.user), JSON.stringify(mat.user || {}));
 
+  /* G1e #input-bar 主规则 CSSOM 存活（注释内字面「星杠」序列吞规则的防复活钉） */
+  const barAlive = await page.evaluate(() => {
+    const c = getComputedStyle(document.getElementById('input-bar'));
+    return { btw: c.borderTopWidth, bts: c.borderTopStyle, shadow: c.boxShadow, bg: c.backgroundColor };
+  });
+  ok('G1e #input-bar 主规则在 CSSOM 存活（border 1px solid + 浮影在场；glass.css 注释内字面 `*/` 曾把整条规则吞掉）',
+    barAlive.btw === '1px' && barAlive.bts === 'solid' && barAlive.shadow !== 'none', JSON.stringify(barAlive));
+
   /* G2 真模糊像素证：同几何双态实拍 diff */
   const bub = page.locator('.ask-bub').nth(1);
   const A = await bub.screenshot({ animations: 'disabled' });
@@ -189,7 +206,7 @@ const probe = `(() => {
     }
     return +(s / n).toFixed(2);
   }, { a: 'data:image/png;base64,' + A.toString('base64'), b: 'data:image/png;base64,' + B.toString('base64') });
-  ok(`G2 真模糊像素证：摘 blur 前后气泡实拍 mean|Δlum| = ${meanDiff}（≥4 = 模糊真实生效；改前 0.25 = 红）`, meanDiff >= 4, `diff=${meanDiff}`);
+  ok(`G2 真模糊像素证：摘 blur 前后气泡实拍 mean|Δlum| = ${meanDiff}（≥1 = 模糊真实生效；旧材质活态 11.9、现基准件材质活态 2.02、死态 0.25，阈值随三修② 材质换代重定标 4→1）`, meanDiff >= 1, `diff=${meanDiff}`);
 
   /* D1 拉动净空（滚动尽头） */
   await page.evaluate(() => { const c = document.querySelector('.ask-col'); c.scrollTop = c.scrollHeight; });
@@ -277,7 +294,7 @@ const probe = `(() => {
 {
   const fs = readFileSync(join(WEB_DIR, 'css/glass.css'), 'utf8');
   const m = fs.match(/\.ask-bub \{[^}]*\}/);
-  ok('G3 glass.css `.ask-bub` 非 dock 兜底带 backdrop-filter（禁半透明洗色兜底）', !!m && /backdrop-filter:\s*var\(--nf-glass-filter\)/.test(m[0]), m ? m[0].slice(0, 160) : 'rule not found');
+  ok('G3 glass.css `.ask-bub` 非 dock 兜底吃基准件配方 backdrop-filter（禁半透明洗色兜底；三修② 与 #input-bar 同档）', !!m && /backdrop-filter:\s*var\(--nf-glass-input-filter\)/.test(m[0]), m ? m[0].slice(0, 160) : 'rule not found');
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

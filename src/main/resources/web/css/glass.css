@@ -335,18 +335,20 @@ html[data-theme="light"] {
 .fm-msg .fm-att-list .pop-stack-view .media-layer { background: var(--nf-bub-ours-bg); }
 .fm-msg.in .fm-att-list .pop-stack-view .media-layer { background: var(--nf-bub-theirs-bg); }
 /* canvas ask 气泡 = **毛玻璃面**（作者 2026-11-05 16:50 令「这三处全部吃唯一
-   毛玻璃标准」），无色相 ⇒ 不属于绿/白两档的第三种「色」，材质单点是
-   --glass-bg（下方 .ask-dock 块给完整材质；这里给非 dock 兜底同一底）。
-   毛玻璃批（2026-11-06）：兜底补齐 backdrop-filter —— 兜底只有 α 底没有模糊
+   毛玻璃标准」），无色相 ⇒ 不属于绿/白两档的第三种「色」，材质单点 = 输入基准件
+   原配方档 --nf-glass-input-*（ask 面三修② 2026-11-11，作者令「毛玻璃一律不透底」：
+   旧 --glass-bg 半透档 α .55/.68 就是「消息半透明」投诉的直接成因，ask 气泡回归与
+   #input-bar 逐项同档的基准件配方；下方 .ask-dock 块给完整材质，这里给非 dock
+   兜底同一底）。毛玻璃批（2026-11-06）：兜底补齐 backdrop-filter —— 兜底只有 α 底没有模糊
    就还是「半透明洗色」反模式（G7a/G7b 判死形态）；同 token 单源，非第二配方。
    成因注：气泡曾长期「挂了 blur 却看不到霜」——其容器 .ask-col 的 mask-image
    是 backdrop root，架空了子气泡的 backdrop-filter；该 mask 已随本批退役
    （css/ask.css .ask-col 块注），上方豁免条目的「它真的是毛玻璃」前提随之恢复
    成立，豁免口径无需收紧。防复活钉：tests/ask-glass-drag.spec.mjs G2/G3。 */
 .ask-bub {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
 }
 
 /* ── ② 面级浮件档（材质三件套 + 顶缘折射线）──────────────────────────── */
@@ -384,7 +386,12 @@ html[data-theme="light"] {
    过渡留在 input.css，frozen/disconnected/voice 高特异态不受影响）
    2026-11-06 20:12 作者令「主会话输入框的样式也变了，之前的就很好了」⇒ 基准件
    回归 recalibrate 前原配方（--nf-glass-input-*，stand-tokens.css 单源）；全局
-   玻璃档（--nf-glass-*/--glass-bg）不动 —— 基准件是参照物本身，不随全局档走。 */
+   玻璃档（--nf-glass-* 一族与 --glass-bg）不动 —— 基准件是参照物本身，不随全局档走。
+   🔴 措辞钉（ask 面三修② 2026-11-11 实测修复）：本块注释正文里禁把「星号紧跟
+   斜杠」的字面序列写进任何形如 `--x-*` 的 token 名后（旧稿在 `--nf-glass-*` 后
+   直书该序列，注释在其后提前闭合，残文被当选择器垃圾 ⇒ 浏览器把整条 #input-bar
+   规则连声明一起丢弃 = CSSOM 缺失、border/浮影消失）。防复活钉：tests/ask-glass-drag
+   G1e。 */
 #input-bar {
   background: var(--nf-glass-input-bg);
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
@@ -478,18 +485,21 @@ html[data-theme="light"] {
   box-shadow: var(--cv-shadow);
 }
 
-/* canvas ask 气泡：材质与上面的输入条**逐项同档**（含顶缘折射线）。09:32 那版
-   为「看不清」单开的 α=1 档随本轮统一退役；用户侧气泡保留 sapphire 18% tint
-   复合层（tint 比例不变，只换底）。
-   特异性 = .ask-dock .ask-bub（2 类）：glass.css 后载的同性度规则不会把它冲掉，
-   而 ask.css 已把这一块材质整段移交本文件（那里只留几何/年龄渐隐）。 */
+/* canvas ask 气泡：材质 = 输入基准件原配方档（ask 面三修② 2026-11-11，作者令
+   「毛玻璃一律不透底」）—— 与主会话 #input-bar 逐项同档（bg / blur / 描边 / 浮影，
+   tests/ask-glass-drag G1 逐项相等 + G1e 防复活）。09:32 那版为「看不清」单开的
+   α=1 档随 recalibrate 统一退役；用户侧无 tint 复合层（bubble-side-color 批
+   2026-11-06 摘除，两向同材质，识别靠贴靠侧）。
+   特异性 = .ask-dock .ask-bub（2 类）：压过同页挂的 .nf-glass 工具类（1 类），
+   glass.css 后载的同性度规则不会把它冲掉，而 ask.css 已把这一块材质整段移交
+   本文件（那里只留几何/年龄渐隐）。 */
 .ask-dock .ask-bub {
   /* position:relative 只为承载 ::before 折射线（气泡内无绝对定位子件，
      改前改后几何逐像素不变）。 */
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
@@ -498,7 +508,7 @@ html[data-theme="light"] {
    「消息类型」另开配色（作者令禁）。两向同材质；左右识别改由气泡自身几何
    （.ask-bub.user 的右侧贴靠，见 askDock.js）承担。 */
 .ask-dock .ask-bub.user {
-  background: var(--glass-bg);
+  background: var(--nf-glass-input-bg);
   border-color: var(--cv-border, var(--glass-border));
 }
 /* 顶缘折射线（面级浮件的第三件）：几何与 #input-bar::before 逐值相同

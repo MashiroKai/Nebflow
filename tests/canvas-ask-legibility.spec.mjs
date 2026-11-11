@@ -237,6 +237,7 @@ const read = (page) => page.evaluate(() => {
     })(),
     matBubAi: mat(aiBub), matBubUser: mat(userBub), matInput: mat(input),
     header: mat(document.getElementById('header')),
+    inputBar: mat(document.getElementById('input-bar')),
     glassBg, paper, composite, opaqueTok, cvOpaque,
     // 缓存变量残留（件四 L6c）
     legacy: dcs ? {
@@ -431,16 +432,16 @@ try {
     const m = String(s || '').match(/blur\(([\d.]+)px\)/);
     return m ? parseFloat(m[1]) : null;
   };
-  ok('L1c 「Header 同款」逐项：blur 参数与 #header 相等 + 描边同 token + 顶缘折射线层同 token 在场',
-    !!d.header && blurNum(d.matBubAi.blur) === blurNum(d.header.blur)
-    && d.matBubAi.border === d.header.border
-    && /gradient/.test(d.header.bgImage)
+  ok('L1c 「同款配方」逐项：blur 参数与 #input-bar 相等（ask 面三修② 2026-11-11：气泡回归基准件配方，参照物从 #header 换挡）+ 描边同 token + 顶缘折射线层在场',
+    !!d.inputBar && blurNum(d.matBubAi.blur) === blurNum(d.inputBar.blur)
+    && d.matBubAi.border === d.inputBar.border
+    && /gradient/.test(d.inputBar.refractionBefore)
     && /gradient/.test(d.matBubAi.refractionBefore) && /gradient/.test(d.matInput.refractionBefore)
     && d.matBubAi.refractionHeight === '1px' && d.matInput.refractionHeight === '1px',
     JSON.stringify({
-      bubBlur: d.matBubAi.blur, inputBlur: d.matInput.blur, headerBlur: d.header.blur,
-      bubBorder: d.matBubAi.border, headerBorder: d.header.border,
-      headerRefraction: String(d.header.bgImage).slice(0, 60),
+      bubBlur: d.matBubAi.blur, inputBlur: d.matInput.blur, barBlur: d.inputBar && d.inputBar.blur,
+      bubBorder: d.matBubAi.border, barBorder: d.inputBar && d.inputBar.border,
+      barRefraction: String(d.inputBar && d.inputBar.refractionBefore).slice(0, 60),
       bubRefraction: String(d.matBubAi.refractionBefore).slice(0, 60),
       inputRefractionH: d.matInput.refractionHeight,
     }));

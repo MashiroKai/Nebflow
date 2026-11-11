@@ -103,6 +103,10 @@ import { isAskableFile } from './mdHtmlGate.js';
 // 统一实现（主会话同源）——组字期 Enter 只确认候选不发送、组字结束后才发送、
 // Shift+Enter 换行；生成中发送钮转中断钮（与主会话 send/stop 同律）。
 import { bindComposerKeys, createTurnToggle, requestTurnInterrupt, isImeComposing } from './input/composer.js';
+// 斜杠命令先审（ask 面三修③ 2026-11-11）：dock 发送此前把一切文本当 askQuestion
+// 发送，`/model` 被误发成提问（叠加 dock 自动抢焦点 = 「/model 无反应」的成因链）。
+// handleSlash = 主会话 send 同一单源（input.js 同构位调用它）。
+import { handleSlash } from './input/slashCommands.js';
 // 组件化范式试点批（ask-paradigm-a）：DOM 构形走 dom.js 的 h()/frag()（零 HTML 串），
 // 元素注册与生命周期走 component.js 的 define()（light DOM，禁开阴影根）。
 import { h, frag } from './dom.js';
@@ -1551,6 +1555,18 @@ function askOpen(s) {
 }
 
 async function submit() {
+  // 斜杠先审（ask 面三修③ 2026-11-11）：白名单命中（现仅 UI-only 的 /model）
+  // ⇒ 本地开面板、清输入、零 WS 零气泡；未命中 ⇒ '/' 仍是纯文本（封存面语义
+  // 不扩，SLASH_ALLOWED 未被本调用面放大），原样走 ask 链 —— 主会话 send 的
+  // handleSlash 先审同律。
+  if (el) {
+    const slashText = el.input.value.trim();
+    if (slashText && handleSlash(slashText)) {
+      el.input.value = '';
+      el.input.style.height = 'auto'; // 多行草稿清空后回落单行（下方发送同式）
+      return;
+    }
+  }
   if (!el || !currentFile || !isAskableFile(currentFile)) return; // 硬闸复核（冗余守卫；批⑩ 判据 = md/html + 电子书并集）
   const s = await ensureActiveSession();
   if (!s) return;

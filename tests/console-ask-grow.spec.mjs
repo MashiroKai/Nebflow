@@ -7,7 +7,8 @@
 //   C1 底钮向顶钮看齐：Ask 输入条两钮（send/stop）的 box 与顶部两钮
 //      （#canvas-head-close / #deck-fab）逐项相等：宽/高/内距/圆角/图标边长；
 //   C2 毛玻璃同源：三者的 backdrop-filter 解析值、背景/描边 token 解析值一致；
-//   C3 Ask 气泡吃同一套毛玻璃：.ask-bub 的 backdrop-filter 与顶钮一致（非 none）；
+//   C3 Ask 气泡吃同一套毛玻璃：.ask-bub 的 backdrop-filter = #input-bar 基准件
+//      配方且非 none（ask 面三修② 2026-11-11 起气泡与主会话输入框同档）；
 //   C4 文字穿过底缘 + 中线截断：--ask-trunc-h = 面板高 × 50%（±2px），列内
 //      最新气泡的 rect.bottom > 面板 bottom（真的画到边界之外）；
 //   C5 无可见遮罩条：截断带内不存在带底色/backdrop 的独立元素（零 veil 残留）；
@@ -174,11 +175,13 @@ for (const scheme of ['light', 'dark']) {
     (dock || document.body).appendChild(probeRow);
     const rowCs = getComputedStyle(probeRow);
     const row = probeRow;
+    const inputBar = document.getElementById('input-bar');
     return {
       top1: box(top1), top2: box(top2), top1Mat: cs(top1), top2Mat: cs(top2),
       send: box(send), stop: box(stop), sendMat: cs(send), sendIcon: ic ? ic.getBoundingClientRect().width : null,
       topIcon: icTop ? icTop.getBoundingClientRect().width : null,
       bubMat: cs(bub),
+      barMat: inputBar ? cs(inputBar) : null,
       dock: dr ? { h: +dr.height.toFixed(1), bottom: +dr.bottom.toFixed(1) } : null,
       trunc: trunc, truncPx: parseFloat(trunc) || 0,
       colMask: cols ? (getComputedStyle(cols).maskImage || getComputedStyle(cols).webkitMaskImage) : null,
@@ -231,9 +234,9 @@ for (const scheme of ['light', 'dark']) {
     ok('C2 毛玻璃同源（底钮/顶钮的 backdrop-filter + 背景 + 描边解析值一致）',
       !!m.sendMat && m.sendMat.bf === m.top1Mat.bf && m.sendMat.bg === m.top1Mat.bg && m.sendMat.border === m.top1Mat.border,
       JSON.stringify({ send: m.sendMat, top: m.top1Mat }));
-    ok('C3 Ask 气泡吃同一套毛玻璃（backdrop-filter 与顶钮一致且非 none）',
-      !!m.bubMat && m.bubMat.bf === m.top1Mat.bf && m.bubMat.bf !== 'none',
-      JSON.stringify({ bub: m.bubMat && m.bubMat.bf, top: m.top1Mat && m.top1Mat.bf }));
+    ok('C3 Ask 气泡吃同一套毛玻璃（backdrop-filter = #input-bar 基准件配方且非 none；ask 面三修② 2026-11-11 起参照物从顶钮换挡到输入基准件）',
+      !!m.bubMat && m.bubMat.bf !== 'none' && !!m.barMat && m.bubMat.bf === m.barMat.bf,
+      JSON.stringify({ bub: m.bubMat && m.bubMat.bf, bar: m.barMat && m.barMat.bf, top: m.top1Mat && m.top1Mat.bf }));
     const lastStop = (m.maskStops || []).slice(-1)[0];
     // C4 改判（作者令 2026-11-05 09:32「调整窗口大小会导致对话框和内容直接有一大段
     // 空白」）：12:52 令的「中线截断（--ask-trunc-h = 面板高 × 50%）」退役——那条线
