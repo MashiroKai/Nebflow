@@ -1,0 +1,407 @@
+// media-click-unify.spec.mjs — 媒体点击行为统一（P16 批 2026-11-11 作者令逐字：
+// 「电脑端的媒体统一都是canvas打开，手机端的媒体统一都是直接打开，但是要注意好
+// 交互和居中」）的 A 规范验收。
+//
+// 四组合矩阵（截图 + 逐入口程序断言）：
+//   · 桌面 × Canvas 面：Pop 媒体卡（带 path）/ markdown 气泡图（nf-file src）
+//     → workspace-open-item → Canvas 页签（居中几何读数 + 关闭返回读数），灯箱不占位；
+//   · 桌面 × 兜底灯箱面：pathless Pop 媒体（live 内联 data: 字节）→ 既有灯箱
+//     （#491 主题三裁定保留；ESC 关闭读数）；
+//   · 手机 × 直开面：Pop 媒体卡 / markdown 图 / 帧消息图（_nfImagePreview）
+//     → 预约式 window.open → 铸票 URL 系统预览（无 Canvas、无灯箱、无页签）。
+//
+// 证据：SHOTS_DIR=<dir> 时写四组合截图（默认不写）。
+// Run: node node_modules/@playwright/test/cli.js test tests/media-click-unify.spec.mjs
+
+import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { join, dirname, extname, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
+const SHOTS_DIR = process.env.SHOTS_DIR || '';
+const SID = 'p16-unify-session';
+const IMG_PATH = 'docs/pic.png';
+
+// 1×1 真解码 PNG（img onload 面，与既有族同款夹具字节）。
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+const MIME = {
+  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
+  '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+};
+
+async function bootApp(page, { viewportMobile = false } = {}) {
+  await page.addInitScript(() => {
+    localStorage.setItem('nebflow_token', 'e2e-token');
+    localStorage.setItem('nebflow_locale', 'zh-CN');
+    // P16 断言面：被动记录 workspace-open-item 派发载荷（只观察）。
+    window.__nfOpenItems = [];
+    window.addEventListener('workspace-open-item', (e) => {
+      const d = e && e.detail ? e.detail : null;
+      window.__nfOpenItems.push(d ? { id: d.id, absPath: d.absPath, itemType: d.itemType, title: d.title, error: d.error || '' } : null);
+    });
+    window.__nfOpenCalls = [];
+    const origOpen = window.open.bind(window);
+    window.open = (...args) => { window.__nfOpenCalls.push(args.map(String)); return origOpen(...args); };
+  });
+  // context 级路由：手机直开的预约页是同 context 的 popup——page.route 不覆盖
+  // popup，导航会落到 chrome-error 页（实测）。
+  await page.context().route('**/*', (route) => {
+    const url = new URL(route.request().url());
+    let p = decodeURIComponent(url.pathname);
+    if (p === '/') p = '/index.html';
+    if (p.startsWith('/api/')) {
+      if (p === '/api/sessions') {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }], activeId: SID }) });
+      }
+      if (p === '/api/nf-ticket') {
+        let body = '{}';
+        try {
+          const req = route.request();
+          const post = req.postDataBuffer();
+          if (post) {
+            const j = JSON.parse(post.toString('utf8'));
+            const tickets = {};
+            for (const k of Object.keys(j && j.paths ? j.paths : {})) tickets[k] = { t: 'e2e-ticket', exp: Date.now() + 1800000, size: PNG.length };
+            body = JSON.stringify({ tickets });
+          }
+        } catch { /* fall through to '{}' */ }
+        return route.fulfill({ status: 200, contentType: 'application/json', body });
+      }
+      if (p === '/api/nf-file') {
+        return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    }
+    const file = normalize(join(WEB, p));
+    if (!file.startsWith(WEB)) return route.fulfill({ status: 403, body: 'forbidden' });
+    try {
+      return route.fulfill({ status: 200, contentType: MIME[extname(file)] || 'application/octet-stream', body: readFileSync(file) });
+    } catch {
+      return route.fulfill({ status: 404, body: 'not found' });
+    }
+  });
+  await page.routeWebSocket(/\/ws/, (ws) => {
+    const sendConfig = () => ws.send(JSON.stringify({
+      type: 'configData', config: '{}', configured: true, onboarding: 'done',
+    }));
+    const sendSessions = () => ws.send(JSON.stringify({
+      type: 'sessionList',
+      sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }],
+      folders: [], activeId: SID,
+    }));
+    sendConfig();
+    sendSessions();
+    ws.onMessage((raw) => {
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch { return; }
+      if (parsed.type === 'getConfig') sendConfig();
+      else if (parsed.type === 'getSessions' || parsed.type === 'listSessions') sendSessions();
+      else if (parsed.type === 'getHistory') {
+        ws.send(JSON.stringify({ type: 'historyPage', sessionId: parsed.sessionId, messages: [], hasMore: false, offset: 0 }));
+      } else if (parsed.type === 'pop.readFile') {
+            ws.send(JSON.stringify({
+          type: 'fileContent',
+          path: parsed.path,
+          absPath: '/tmp/' + parsed.path,
+          fileName: parsed.path.split('/').pop(),
+          itemType: 'image',
+          content: '',
+          size: PNG.length,
+        }));
+      }
+    });
+  });
+  await page.goto('http://localhost:1/');
+  await page.waitForFunction(async (rootSid) => {
+    const s = (await import('/js/state.js')).default;
+    return s.activeSessionId === rootSid && s.ws && s.ws.readyState === 1;
+  }, SID, { timeout: 15000 });
+}
+
+/** 生产构建器：buildUserMediaRow 渲染用户媒体行（作者「我发的图片」同面；
+ *  live 发送 / attachmentsSaved 重渲 / 历史恢复三路同一构建器；att 形态 =
+ *  {type:'image', name, path?, preview?(data:)}）。 */
+async function renderRealPopRow(page, att) {
+  return page.evaluate(async (a) => {
+    const { buildUserMediaRow } = await import('/js/popArtifacts.js');
+    const row = buildUserMediaRow([a], { ts: Date.now() });
+    if (!row) return false;
+    row.dataset.testid = 'pop-artifact-row';
+    document.getElementById('chat')?.appendChild(row);
+    return true;
+  }, att);
+}
+
+test.describe('P16 media click unify matrix', () => {
+  test.describe.configure({ mode: 'serial' });
+
+  test('D1: desktop Pop media card (path) → Canvas tab, centered, no lightbox', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e.message || e)));
+    await bootApp(page);
+    await renderRealPopRow(page, { type: 'image', name: 'pic.png', path: IMG_PATH });
+    // 面内媒体面上半段点击（footer 信息条下载键与卡面几何相邻，中心点会被它截获）。
+    // JS 派发（card-image-zoom 同法）：夹具视口里 footer 下载键悬浮在卡面中心，
+    // 真实指针坐标会落进角标；整面点击处理器在 .pop-media-flat 上，派发点击
+    // 即完整生产链（openMediaItemClick → routeMediaClick）。
+    await page.evaluate(() => {
+      const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
+      face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    // Canvas 打开面：页签在场、面板可见、灯箱未占位（readFile 往返后出查看器面）。
+    await page.waitForFunction(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length >= 1, null, { timeout: 10000 });
+    await page.waitForSelector('.canvas-image-viewport', { timeout: 10000 });
+    const st = await page.evaluate(() => ({
+      canvasVisible: document.body.classList.contains('canvas-open'),
+      tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
+      lightboxOn: !!document.querySelector('.nf-lightbox.on'),
+      viewport: !!document.querySelector('.canvas-image-viewport'),
+      paneHtml: (document.querySelector('.canvas-tab-pane') || {}).innerHTML ? document.querySelector('.canvas-tab-pane').innerHTML.slice(0, 300) : '',
+      openItems: (window.__nfOpenItems || []).slice(-3),
+    }));
+
+    expect(st.canvasVisible).toBe(true);
+    expect(st.tabs).toBeGreaterThanOrEqual(1);
+    expect(st.lightboxOn).toBe(false);
+    expect(st.viewport).toBe(true);
+    // 居中几何读数：查看器视口中心 == 激活页签 pane 中心（±2px；作者令「注意好居中」）。
+    await page.waitForFunction(() => {
+      const img = document.querySelector('.canvas-image-viewport img');
+      return img && img.complete && (img.naturalWidth || 0) > 0;
+    }, null, { timeout: 10000 });
+    const geo = await page.evaluate(() => {
+      const pane = [...document.querySelectorAll('.canvas-tab-pane')].find((p) => p.offsetParent !== null);
+      const vp = document.querySelector('.canvas-image-viewport');
+      const pr = pane.getBoundingClientRect();
+      const vr = vp.getBoundingClientRect();
+      // 居中基准 = 查看器**内容区**：查看器根盒减去视口以外的 chrome 兄弟
+      // （顶部内衬/底部控制条）——作者令「注意好居中」指的是可视内容区居中。
+      const wrap = document.querySelector('.canvas-image-viewer');
+      const wr = wrap ? wrap.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+      const cs = wrap ? getComputedStyle(wrap) : { paddingTop: '0', paddingBottom: '0' };
+      const padT = parseFloat(cs.paddingTop) || 0;
+      const padB = parseFloat(cs.paddingBottom) || 0;
+      let above = padT, below = padB;
+      if (wrap) {
+        for (const child of wrap.children) {
+          if (child === /** @type {Element} */ (vp)) continue;
+          const cr = child.getBoundingClientRect();
+          if (cr.bottom <= vr.top + 1) above += cr.height;
+          else if (cr.top >= vr.bottom - 1) below += cr.height;
+        }
+      }
+      const contentTop = wr.top + above;
+      const contentH = Math.max(1, wr.height - above - below);
+      return {
+        dx: Math.abs((vr.left + vr.width / 2) - (pr.left + pr.width / 2)),
+        dyContent: Math.abs((vr.top + vr.height / 2) - (contentTop + contentH / 2)),
+        paneW: pr.width, paneH: pr.height,
+        above, below,
+      };
+    });
+    // 水平 = pane 内容区居中；垂直 = 查看器内容区（扣除控制条 chrome）居中。
+    expect(geo.dx).toBeLessThanOrEqual(2);
+    expect(geo.dyContent).toBeLessThanOrEqual(2);
+    // 关闭返回读数：卡头 ✕（#canvas-head-close，桌面标签行退役后的可见关闭座）
+    // → 页签消失（视图回到会话）。
+    const before = await page.evaluate(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length);
+    await page.evaluate(() => {
+      const btn = document.getElementById('canvas-head-close');
+      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await page.waitForFunction((n) => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length < n, before, { timeout: 5000 });
+    expect(errors).toEqual([]);
+    if (SHOTS_DIR) {
+      await renderRealPopRow(page, { type: 'image', name: 'pic.png', path: IMG_PATH });
+      // JS 派发（card-image-zoom 同法）：夹具视口里 footer 下载键悬浮在卡面中心，
+    // 真实指针坐标会落进角标；整面点击处理器在 .pop-media-flat 上，派发点击
+    // 即完整生产链（openMediaItemClick → routeMediaClick）。
+    await page.evaluate(() => {
+      const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
+      face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+      await page.waitForSelector('.canvas-image-viewport', { timeout: 10000 });
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: join(SHOTS_DIR, 'combo1-desktop-canvas-open.png') });
+    }
+  });
+
+  test('D2: desktop markdown bubble image (nf-file src) → Canvas tab', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e.message || e)));
+    await bootApp(page);
+    await page.evaluate((p) => {
+      const img = document.createElement('img');
+      img.className = 'nf-zoom-img';
+      img.src = '/api/nf-file?path=' + encodeURIComponent(p);
+      img.alt = 'md-pic.png';
+      document.getElementById('chat')?.appendChild(img);
+    }, IMG_PATH);
+    await page.locator('img.nf-zoom-img').click();
+    await page.waitForFunction(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length >= 1, null, { timeout: 10000 });
+    const st = await page.evaluate(() => ({
+      lightboxOn: !!document.querySelector('.nf-lightbox.on'),
+      tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
+    }));
+    expect(st.lightboxOn).toBe(false);
+    expect(st.tabs).toBeGreaterThanOrEqual(1);
+    expect(errors).toEqual([]);
+  });
+
+  // ── 桌面 × 兜底灯箱面（pathless 内联字节） ───────────────────────────────
+  test('D3: desktop pathless Pop media (inline data URI) → lightbox fallback, ESC closes', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e.message || e)));
+    await bootApp(page);
+    const dataUri = 'data:image/png;base64,' + PNG.toString('base64');
+    await renderRealPopRow(page, { type: 'image', name: 'live.png', preview: dataUri });
+    // JS 派发（card-image-zoom 同法）：夹具视口里 footer 下载键悬浮在卡面中心，
+    // 真实指针坐标会落进角标；整面点击处理器在 .pop-media-flat 上，派发点击
+    // 即完整生产链（openMediaItemClick → routeMediaClick）。
+    const tabsBefore = await page.evaluate(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length);
+    await page.evaluate(() => {
+      const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
+      face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    await page.waitForSelector('.nf-lightbox.nf-lightbox--media.on', { timeout: 8000 });
+    // pathless 桌面腿：灯箱兜底（无页签被无谓开出——页签数不变）。
+    const st = await page.evaluate((n) => ({
+      tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
+    }), tabsBefore);
+    expect(st.tabs).toBe(tabsBefore);
+    if (SHOTS_DIR) await page.screenshot({ path: join(SHOTS_DIR, 'combo2-desktop-lightbox-fallback.png') });
+    // ESC 关闭读数（灯箱层自己的开合词法）。
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.nf-lightbox--media.on'), null, { timeout: 5000 });
+    expect(errors).toEqual([]);
+  });
+
+  // ── 手机 × 直开面 ───────────────────────────────────────────────────────
+  test.describe('mobile face', () => {
+    test.use({ viewport: { width: 375, height: 812 }, hasTouch: true });
+
+  test('M1: mobile Pop media card tap → system direct-open (no canvas, no lightbox)', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e.message || e)));
+    await bootApp(page);
+    await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 15000 });
+    await renderRealPopRow(page, { type: 'image', name: 'pic.png', path: IMG_PATH });
+    const popupPromise = page.waitForEvent('popup');
+    // JS 派发同上（夹具里角标悬浮卡面）。
+    await page.evaluate(() => {
+      const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
+      face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    const popup = await popupPromise;
+    // 直开 URL = 铸票 nf-file 形态（系统预览面）。手动轮询 + 诊断（expect.poll
+    // 对「临时空白后关闭/导航」的 popup 读数不友好）。
+    let navOk = false;
+    for (let i = 0; i < 40 && !navOk; i++) {
+      await page.waitForTimeout(200);
+      const u = popup.url();
+      if (u.includes('/api/nf-file?path=')) navOk = true;
+    }
+    expect(navOk).toBe(true);
+    // 手机读数：body.canvas-open 在手机端由 boot 恢复腿永久置真（既有行为，
+    // mobile-pop-canvas-open M4 头注可溯）——直开断言 = 灯箱未开 + canvas 页未
+    // 被 dockTo 顶到栈顶 + 无页内卡片 chip + 页签数零增量。
+    const tabsBefore = await page.evaluate(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length);
+    const st = await page.evaluate(() => ({
+      lightboxOn: !!document.querySelector('.nf-lightbox.on, .nf-lightbox--media.on'),
+      tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
+      top: window.__nfMobileNav?.top,
+      chips: document.querySelectorAll('.mf-strip-chip.on').length,
+    }));
+    expect(st.lightboxOn).toBe(false);
+    expect(st.tabs).toBe(tabsBefore);
+    expect(st.top).not.toBe('canvas');
+    expect(st.chips).toBe(0);
+    expect(errors).toEqual([]);
+    if (SHOTS_DIR) {
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(SHOTS_DIR, 'combo3-mobile-direct-open-chat.png') });
+    }
+  });
+
+    test('M2: mobile markdown bubble image tap → direct-open ticket URL', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e.message || e)));
+    await bootApp(page);
+    await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 15000 });
+    await page.evaluate((p) => {
+      const img = document.createElement('img');
+      img.className = 'nf-zoom-img';
+      img.src = '/api/nf-file?path=' + encodeURIComponent(p);
+      img.alt = 'md-pic.png';
+      document.getElementById('chat')?.appendChild(img);
+    }, IMG_PATH);
+    const tabsBeforeM = await page.evaluate(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length);
+    const popupPromise = page.waitForEvent('popup');
+    await page.locator('img.nf-zoom-img').tap();
+    const popup = await popupPromise;
+    await expect.poll(() => popup.url(), { timeout: 8000 }).toContain('/api/nf-file?path=');
+    const st = await page.evaluate(() => ({
+      lightboxOn: !!document.querySelector('.nf-lightbox.on'),
+      tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
+    }));
+    expect(st.lightboxOn).toBe(false);
+    expect(st.tabs).toBe(tabsBeforeM);
+    expect(errors).toEqual([]);
+    if (SHOTS_DIR) await page.screenshot({ path: join(SHOTS_DIR, 'combo3-mobile-direct-open-md.png') });
+  });
+
+    test('M3: mobile frame image (_nfImagePreview from a rendered card) → direct-open', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e.message || e)));
+    await bootApp(page);
+    await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 15000 });
+    // 真实帧形态：一枚本应用渲染的 Card iframe（isAppFrameSource 白名单按
+    // contentWindow 判），内部 img 点击走 imgClickScript 桥 postMessage。
+    await page.evaluate(async (p) => new Promise((resolve) => {
+      // 真实帧形态：srcdoc 注入 viewers/shared.js imgClickScript 桥（Card/Canvas
+      // html 渲染腿同一脚本，裸 srcdoc 没有桥——注入它才与生产帧同构）。
+      import('/js/viewers/shared.js').then(({ imgClickScript }) => {
+        const f = document.createElement('iframe');
+        f.setAttribute('data-nf-card-id', 'card-e2e');
+        // imgClickScript() 自带完整 <script> 块（模板字面量直出）——原样拼入。
+        f.srcdoc = '<img id="k" src="/api/nf-file?path=' + encodeURIComponent(p) + '" alt="k.png" width="80">'
+          + imgClickScript();
+        f.style.width = '120px';
+        f.style.height = '60px';
+        document.body.appendChild(f);
+        f.addEventListener('load', () => resolve(true));
+        setTimeout(() => resolve(true), 1500);
+      });
+    }), IMG_PATH);
+    await page.waitForFunction(() => {
+      const f = document.querySelector('iframe[data-nf-card-id]');
+      const doc = f && f.contentDocument;
+      return doc && doc.querySelector('img');
+    }, null, { timeout: 8000 });
+    const tabsBeforeM3 = await page.evaluate(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length);
+    const popupPromise = page.waitForEvent('popup');
+    await page.evaluate((p) => {
+      const f = document.querySelector('iframe[data-nf-card-id]');
+      const doc = f.contentDocument;
+      const img = doc.querySelector('#k');
+      img.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: doc.defaultView }));
+    }, IMG_PATH);
+    const popup = await popupPromise;
+    await expect.poll(() => popup.url(), { timeout: 8000 }).toContain('/api/nf-file?path=');
+    const st = await page.evaluate(() => ({
+      lightboxOn: !!document.querySelector('.nf-lightbox.on'),
+      tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
+    }));
+    expect(st.lightboxOn).toBe(false);
+    expect(st.tabs).toBe(tabsBeforeM3);
+    expect(errors).toEqual([]);
+  });
+  });
+});

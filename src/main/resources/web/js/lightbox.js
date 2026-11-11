@@ -3,9 +3,14 @@
 // Trigger surfaces:
 //   1. Markdown images tagged .nf-zoom-img by renderMarkdownWithMath
 //      (chat bubbles + canvas markdown viewer) — document click delegation.
+//      媒体点击统一批 P16（2026-11-11 作者令「电脑端的媒体统一都是canvas打开，
+//      手机端的媒体统一都是直接打开」）起，本类入口经 mediaOpenRoute.routeMediaClick
+//      分流：手机 = 系统直开；桌面带 path（nf-file URL / 原始本机路径）= Canvas
+//      页签；灯箱降为桌面 pathless（data:/远程图）的兜底面。
 //   2. Frames this app renders — the Canvas HTML viewer and the chat Card
 //      (both inject viewers/shared.js `imgClickScript()`) — post
 //      { _nfImagePreview: { src, path, alt } } to the parent window.
+//      同一 P16 分流（手机直开 / 桌面 path→Canvas / pathless→灯箱兜底）。
 //   3. mermaid / inline-SVG fence diagrams (mermaid-viewer-stability 批
 //      2026-11-06，作者令逐字「你气泡里渲染的 要点击能变成大图查看 canvas里的
 //      也要能支持」) — the ONE fence slot (js/fenceKit.js) marks itself
@@ -32,6 +37,10 @@ import { pushLayer, popLayer } from './focusTrap.js';
 import { createIconsIn } from './utils.js';
 import { reMint, decodePathParam } from './nfTicket.js';
 import { figureSize } from './fenceKit.js';
+// 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，手机端
+// 的媒体统一都是直接打开」）：markdown 气泡图与帧消息图片两类入口的分流单点。
+// 灯箱本体降为兜底面（桌面 pathless / 手机直开链尽空），不再是这两类入口的一级行为。
+import { routeMediaClick } from './mediaOpenRoute.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：本地路径的字节改经 **nfFileCache 账本
 // 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
 // 账本票据链取数 + 入账（恰一次）。失败回落既有 reMint 直取腿（下方逐字保留）。
@@ -675,17 +684,50 @@ export function closeLightbox() {
   lastFocus = null;
 }
 
+/** 桌面 Canvas 单点的懒包装（媒体点击统一批 P16）：lightbox.js 是轻叶子，禁静态
+ *  回指 popArtifacts（其静态闭包含 msgQuote/smartCrop 等重组件）——点击时动态
+ *  import，与 utils.js:1798 工具卡图片引用件同款先例。 */
+function openCanvasLazy(path, name) {
+  import('./popArtifacts.js')
+    .then((m) => m.openPopArtifact(path, name))
+    .catch(() => { /* 打开失败已由模块自身可见面兜底 */ });
+}
+
+/** 媒体项的 path 导出（媒体点击统一批 P16）：帧消息显式 path > nf-file URL 内嵌
+ *  path > 原始本机路径（md 图片可携带 /abs/path 形态的 src——Canvas readFile
+ *  直接可开，比灯箱直挂相对路径更可用）。data:/blob:/http(s) ⇒ ''（pathless）。 */
+function mediaPathOf(src, explicitPath) {
+  if (typeof explicitPath === 'string' && explicitPath) return explicitPath;
+  const s = typeof src === 'string' ? src : '';
+  if (!s) return '';
+  const viaTicket = nfPathOf(s);
+  if (viaTicket) return viaTicket;
+  if (s.startsWith('/') && !s.startsWith('//')) return s;
+  return '';
+}
+
 export function initLightbox() {
   // 幂等（把「重复绑定」变成结构上不可能）：本函数是全局委托的安装点，重复调用
   // （模块重入、宿主重初始化）不得叠第二份监听——叠了就会一次点击开两次。
   if (initDone) return;
   initDone = true;
-  // 1. Delegated click on tagged markdown images (chat + canvas md viewer)
+  // 1. Delegated click on tagged markdown images (chat + canvas md viewer).
+  //    媒体点击统一批 P16：分流单点——手机 = 系统直开；桌面带 path（nf-file /
+  //    原始本机路径）= Canvas；桌面 pathless（data:/远程）= 灯箱（既 Face）。
   document.addEventListener('click', (e) => {
     const img = /** @type {HTMLImageElement|null} */ ((/** @type {Element} */ (e.target)).closest('img.nf-zoom-img'));
     if (!img) return;
     e.preventDefault();
-    openLightbox(img.currentSrc || img.src, img.alt);
+    const src = img.currentSrc || img.src;
+    // Canvas 文档腿的图在 hydration 后常为 blob: src（账本命中零抓取）——真实
+    // 本机路径在 data-nf-md-path（markdown viewer 改写腿写入），优先取它。
+    const dsPath = (img.dataset && img.dataset.nfMdPath) || '';
+    const path = mediaPathOf(src, dsPath);
+    routeMediaClick(
+      { kind: 'image', name: img.alt || path.split('/').pop(), src, path },
+      openCanvasLazy,
+      () => openLightbox(src, img.alt)
+    );
   });
 
   // 1b. 框图（mermaid / 内联 SVG 围栏）→ 看大图。**一处接线覆盖气泡与 Canvas
@@ -736,6 +778,8 @@ export function initLightbox() {
 
   // 2. Image clicks forwarded from the frames this app renders: the Canvas HTML
   //    viewer and (card-image-zoom batch, 2026-09-28) the chat Card.
+  //    媒体点击统一批 P16：同一分流单点——手机 = 系统直开；桌面带 path = Canvas；
+  //    桌面 pathless（data:/远程）= 灯箱。
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (!d || !d._nfImagePreview || typeof d._nfImagePreview.src !== 'string') return;
@@ -749,7 +793,12 @@ export function initLightbox() {
     // Path gate: a path-bearing payload must name a reference that sender
     // frame actually renders — never an arbitrary path passed in from outside.
     if (!senderRendersPath(/** @type {Window} */ (e.source))(d._nfImagePreview)) return;
-    openLightbox(d._nfImagePreview.src, d._nfImagePreview.alt, d._nfImagePreview.path);
+    const payload = d._nfImagePreview;
+    routeMediaClick(
+      { kind: 'image', name: payload.alt || '', src: payload.src, path: payload.path },
+      openCanvasLazy,
+      () => openLightbox(payload.src, payload.alt, payload.path)
+    );
   });
 
   // 3. ESC closes — capture phase so canvas/sidebar ESC handlers don't

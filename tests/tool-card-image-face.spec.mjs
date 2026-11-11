@@ -3,7 +3,10 @@
 //
 // 语义裁定（本批执行单③定语义）：工具卡 = 摘要面 —— 命令/参数 + 行数 + 状态。
 // 图片（及任何媒体）**不许**在卡内内嵌渲染；折叠态预览与展开态全文都一样。
-// 卡内图片一律折叠为「🖼 图片 ×N」引用（.tool-img-ref），点击走灯箱单点。
+// 卡内图片一律折叠为「🖼 图片 ×N」引用（.tool-img-ref）。点击出口（媒体点击
+// 统一批 P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开」起分流）：
+// 本机路径引用 → workspace-open-item（Canvas 单点）；pathless（data:/远程）→
+// 灯箱兜底。
 //
 // 泄露面 = 真实会话的 44 条 `![…](/Users|file:|data:image…)` 工具结果（Read md
 // 返图 / Bash cat md / Write 落 md 再回读，全量扫描 2026-11-04）。改前红：这些
@@ -182,7 +185,7 @@ test.describe('工具卡图片引用面', () => {
     await page.context().close();
   });
 
-  test('③ 引用点击 = 灯箱单点（不导航、不内嵌展开）', async ({ browser }) => {
+  test('③ 引用点击 = 本机路径 Canvas 单点（P16 矩阵；不导航、不内嵌展开）', async ({ browser }) => {
     const { page } = await newPage(browser);
     const content = '![一张图](/tmp/one.png)\n\n正文。';
     await page.evaluate(async ([label, content]) => {
@@ -201,14 +204,27 @@ test.describe('工具卡图片引用面', () => {
     await page.evaluate(() => { const c = document.querySelector('.tool-card'); if (c) c.click(); });
     const hasRef = await page.evaluate(() => !!document.querySelector('.tool-img-ref'));
     expect(hasRef, `引用件必须在场（读数 ${JSON.stringify(pre)}）`).toBe(true);
+    // 媒体点击统一批 P16（2026-11-11 作者令）：本机路径引用的唯一出口 = Canvas
+    // 单点（workspace-open-item 派发，path 原样穿越）；灯箱不再占位。被动记录
+    // 派发载荷（只观察）。
+    await page.evaluate(() => {
+      window.__nfOpenItems = [];
+      window.addEventListener('workspace-open-item', (e) => {
+        const d = e && e.detail ? e.detail : null;
+        window.__nfOpenItems.push(d ? { id: d.id, absPath: d.absPath, title: d.title } : null);
+      });
+    });
     await page.evaluate(() => document.querySelector('.tool-img-ref').click());
-    await page.waitForTimeout(250);
+    await page.waitForFunction(() => (window.__nfOpenItems || []).length >= 1, null, { timeout: 5000 });
     const c = await page.evaluate(() => window.__imgCensus());
-    await shot(page, '3-lightbox');
-    pinNewFace(c.lightbox === true, '灯箱开（图片唯一出口 = 灯箱单点）');
+    await shot(page, '3-canvas-route');
+    const opened = await page.evaluate(() => (window.__nfOpenItems || []).slice());
+    pinNewFace(opened[opened.length - 1].absPath === '/tmp/one.png', 'workspace-open-item 派发且 path 原样（Canvas 单点）');
+    pinNewFace(opened[opened.length - 1].title === '一张图', `alt 作页签标题源（title=${opened[opened.length - 1].title}）`);
+    pinNewFace(c.lightbox === false, '灯箱不开（本机路径引用不再走灯箱单点，P16 矩阵）');
     pinGuard(page.url() === before, '零导航');
-    // 灯箱是图片的唯一渲染面（作者可见面）：卡内 0 个 <img>，灯箱内恰 1 个。
-    pinNewFace(c.imgs === 0 && c.overlayImgs === 1, `卡内零 <img>、灯箱内恰 1（imgs=${c.imgs} overlay=${c.overlayImgs}）`);
+    // 卡内零 <img>、灯箱零占用：卡仍是摘要面，图片字节只在 Canvas 出。
+    pinNewFace(c.imgs === 0 && c.overlayImgs === 0, `卡内零 <img>、灯箱零占用（imgs=${c.imgs} overlay=${c.overlayImgs}）`);
     await page.context().close();
   });
 
@@ -223,6 +239,16 @@ test.describe('工具卡图片引用面', () => {
     const c = await previewCensus(page);
     pinGuard(c.imgs === 0 || RED, `data URI 图零内嵌（读数 ${c.imgs}）`);
     pinNewFace(c.imgRefs === 1 && !c.refImgs, `data URI 图折叠为引用件（refs=${c.imgRefs}）`);
+    // 媒体点击统一批 P16：pathless（data:）引用的桌面出口 = 灯箱兜底腿（与 ③ 的
+    // Canvas 腿互补，构成完整分流矩阵）。红腿基线树无引用件，同 ③ 提前返回。
+    if (!RED) {
+      await page.evaluate(() => { const card = document.querySelector('.tool-card'); if (card) card.click(); });
+      await page.evaluate(() => document.querySelector('.tool-img-ref').click());
+      await page.waitForSelector('.nf-lightbox.on', { timeout: 5000 });
+      const lc = await page.evaluate(() => window.__imgCensus());
+      pinNewFace(lc.lightbox === true && lc.overlayImgs === 1, `pathless 引用点击 = 灯箱兜底（lightbox=${lc.lightbox} overlay=${lc.overlayImgs}）`);
+      await page.evaluate(() => { const ov = document.querySelector('.nf-lightbox'); if (ov) ov.remove(); });
+    }
     expect(pageErrors, '零页面错误').toEqual([]);
     await page.context().close();
   });

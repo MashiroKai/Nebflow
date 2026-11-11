@@ -38,6 +38,8 @@ import { showPopupMenu, isPopupMenuOpen } from './contextMenu.js';
 // 见身份头常显批 2026-11-04）。桌面零感知：本模块只在手机层分支调用它，桌面窗头行
 // 逐字不变。
 import { createSessionIdentityHead } from './mobile/sessionHead.js';
+// 媒体点击统一批 P16（2026-11-11）：三窗媒体附件卡手机层 = 系统直开——层判定单点。
+import { isMobileLayer } from './mobile/popSheet.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
@@ -2228,9 +2230,39 @@ function buildFileAttachmentCard(att, kind, name, src) {
   return card;
 }
 
+/** 手机直开腿（媒体点击统一批 P16 · 作者令「手机端的媒体统一都是直接打开」）：
+ *  三窗媒体附件卡在手机层的点击 = 系统预览直开（新标签页原生显示）。字节腿与桌面
+ *  预览**同源**（本机句柄 / 票据路径 / 鉴权路由整件），只是渲染出口从 Canvas 页签
+ *  换成系统预览；取数/开页经 mediaOpenRoute 单点（预约式开页，桌面零变化）。
+ *  返回约定与桌面腿一致：true = 需要调用方给 attachPreviewFailed 可见降级。 */
+async function previewMediaDirectOf(att, kind, src) {
+  const s = src || { kind: 'none' };
+  const name = (att && att.name) || '';
+  const mr = await import('./mediaOpenRoute.js');
+  // ① 设备·发送侧本机句柄（blob）：字节已在手，零取数。
+  if (kind === 'device' && s.kind === 'blob' && s.file) {
+    return !(await mr.openMediaDirect({ blob: s.file, name }));
+  }
+  // ② 设备·本机落盘件（path）：铸票直开（系统播放器/查看器自带 Range 流式语义）。
+  if (kind === 'device' && s.kind === 'path' && s.path) {
+    return !(await mr.openMediaDirect({ path: s.path, name }));
+  }
+  // ③ 好友/群（鉴权 id 路由）：整件取回（与桌面 previewWithProgress 同一取数口）。
+  if (att && att.id) {
+    try {
+      const { blob } = await api.downloadAttachment(att.id);
+      if (blob && blob.size > 0) return !(await mr.openMediaDirect({ blob, name }));
+    } catch (e) { /* 取数败 ⇒ 落下方可见降级 */ }
+  }
+  return true;
+}
+
 /** 点击 ⇒ Canvas 预览（既有腿，判据与改前逐字同表）：好友/群 = `previewFriendAttachment`
- *  （鉴权路由流式开）；设备 = `previewDeviceSavedAttachment`（blob/票据双腿）。 */
+ *  （鉴权路由流式开）；设备 = `previewDeviceSavedAttachment`（blob/票据双腿）。
+ *  媒体点击统一批 P16：手机层改走 `previewMediaDirectOf`（系统直开，桌面逐字保留）。
+ *  层判定 = isMobileLayer 单点（mobile/popSheet，面板按钮去重批判面纪律）。 */
 function previewAttachmentOf(att, card, kind, src) {
+  if (isMobileLayer()) return previewMediaDirectOf(att, kind, src);
   return kind === 'device'
     ? previewDeviceSavedAttachment(att, card, src)
     : previewFriendAttachment(att, card);

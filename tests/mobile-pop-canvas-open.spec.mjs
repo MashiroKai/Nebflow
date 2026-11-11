@@ -28,18 +28,33 @@ const MIME = {
 const SID = 'pop-canvas-session';
 const IMG_PATH = 'docs/pic.png';
 
-async function bootApp(page, { noPopReply = false } = {}) {
+async function bootApp(page, { noPopReply = false, spyWindowOpen = false } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 'e2e-token');
     localStorage.setItem('nebflow_locale', 'zh-CN');
   });
-  await page.route('**/*', (route) => {
+  if (spyWindowOpen) {
+    // 媒体点击统一批（P16 · 2026-11-11 作者令「手机端的媒体统一都是直接打开」）：
+    // 手机层媒体点击 = 系统直开（预约式 window.open）——记录调用序供断言。
+    await page.addInitScript(() => {
+      window.__nfOpenCalls = [];
+      const orig = window.open.bind(window);
+      window.open = (...args) => { window.__nfOpenCalls.push(args.map(String)); return orig(...args); };
+    });
+  }
+  // context 级路由（P16 直开腿的预约页 = 同 context popup，page.route 不覆盖
+  // popup——直开导航会落到 chrome-error 页）。
+  await page.context().route('**/*', (route) => {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
     if (p.startsWith('/api/')) {
       if (p === '/api/sessions') {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }], activeId: SID }) });
+      }
+      if (p === '/api/nf-ticket') {
+        // P16 直开腿的铸票端点：给目标 path 一枚票（真实端点契约 = tickets 映射）。
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tickets: { 'docs/pic.png': { t: 'e2e-ticket', exp: Date.now() + 1800000, size: 3 } } }) });
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     }
@@ -144,24 +159,27 @@ test.describe('mobile pop image click auto-opens canvas page', () => {
     expect(errors).toEqual([]);
   });
 
-  test('M2: real UI tap on the Pop image row → canvas page auto-opens', async ({ page }) => {
+  test('M2: real UI tap on the Pop image row → system direct-open (P16 matrix)', async ({ page }) => {
+    // 媒体点击统一批（P16 · 2026-11-11 作者令「手机端的媒体统一都是直接打开」）：
+    // 手机层媒体点击从「canvas 页自动弹出」改为**系统直开**（预约式 window.open，
+    // 铸票 URL 交给系统预览）——旧断言（canvas 页 live + 页内卡片 chip）随作者
+    // 新令退役；桌面腿与文件单点（M1/M3/M4 走 openPopArtifact）不受影响。
     const errors = [];
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    await bootApp(page);
+    await bootApp(page, { noPopReply: true, spyWindowOpen: true });
     await page.waitForFunction(() => window.__nfMobileLayer?.active === true, null, { timeout: 15000 });
     await page.waitForTimeout(3300);
 
     expect(await renderRealPopRow(page)).toBe(true);
-    // 真实触屏轻点（走完整 pointer/click 合成序，非 element.click() 捷径）。
+    // 真实触屏轻点（走完整 pointer/click 合成序）。直开 = 预约式：手势栈内同步
+    // 开空白页（popup 事件），ticketUrl 铸票后导航该页 → 轮询 URL 到 nf-file 形态。
+    const popupPromise = page.waitForEvent('popup');
     await page.locator('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat').tap();
-
-    await expect(page.locator('.mobile-page[data-page="canvas"]')).toHaveClass(/live/, { timeout: 5000 });
-    await settlePage(page, 'canvas');
-    const nav = await page.evaluate(() => window.__nfMobileNav?.top);
-    expect(nav).toBe('canvas');
-    // 页内卡片 chip 条出现且选中该图片卡（内容臂收编生效）。
-    await expect(page.locator('.mf-strip-chip.on')).toHaveCount(1, { timeout: 5000 });
-    expect(await page.locator('.mf-strip-chip.on').textContent()).toContain('pic.png');
+    const popup = await popupPromise;
+    await expect.poll(() => popup.url(), { timeout: 8000 }).toContain('/api/nf-file?path=');
+    // 旧面不再出现：canvas 页不自动弹、无页内卡片 chip。
+    expect(await page.evaluate(() => window.__nfMobileNav?.top)).not.toBe('canvas');
+    await expect(page.locator('.mf-strip-chip.on')).toHaveCount(0);
     expect(errors).toEqual([]);
   });
 
