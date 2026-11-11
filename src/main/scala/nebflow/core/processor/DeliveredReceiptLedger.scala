@@ -143,7 +143,7 @@ object DeliveredReceiptLedger:
    * 实证：原件在忙父队列滞留未注入，sweep 按 10min grace 重投改写 correlationId
    * → 两件同入回合）。无身份键恒 false（永放行）。
    */
-  private[processor] def isDuplicateIdentity(
+  private[nebflow] def isDuplicateIdentity(
     delivered: Set[String],
     pending: List[AgentCommand.ExternalEvent],
     e: AgentCommand.ExternalEvent
