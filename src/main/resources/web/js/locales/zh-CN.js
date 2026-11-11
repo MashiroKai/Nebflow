@@ -2628,6 +2628,8 @@ export default {
   'search.results': '{n} 条结果',
   'search.loadedOf': '已加载 {n}/{m} 条',
   'search.loadMore': '加载更多（已加载 {n}/{m} 条）',
+  // 多选文件批量在 Canvas 打开（chatsearch-batch-open 批）
+  'search.openSelectedInCanvas': '在 Canvas 打开 ({n})',
   'search.jumpArchived': '该消息在压缩前归档里，回放窗口内无原位',
   'search.noResults': '无匹配结果',
   'search.noResultsSuggestion': '试试缩短关键词或清除日期/类型筛选',

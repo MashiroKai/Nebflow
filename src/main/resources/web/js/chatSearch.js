@@ -141,7 +141,7 @@ function syncMultiAction() {
   if (!button) return;
   const count = selectedFilesForCanvas().length;
   button.hidden = count === 0;
-  button.textContent = `在 Canvas 打开 (${count})`;
+  button.textContent = t('search.openSelectedInCanvas', { n: count });
 }
 
 function openSelectedFilesInCanvas() {
@@ -602,6 +602,9 @@ function renderStaticLabels() {
   if (status) status.textContent = '';
   const results = document.getElementById('search-results');
   if (results) results.setAttribute('aria-label', t('search.title'));
+  // Batch-open button label follows the locale too (count re-derived from the
+  // live selection; hidden stays untouched while no openable file is picked).
+  syncMultiAction();
 }
 
 // ── Category tabs ──────────────────────────────────────────
