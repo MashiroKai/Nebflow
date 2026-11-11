@@ -717,10 +717,11 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
     withBridge(echoApp, nfRevocations = nfRevocations) { (bridge, fake, deps) =>
       val observed = new ConcurrentLinkedQueue[Integer]()
       deps.faces.bindSessionRevocation(IO(observed.add(1)).as(2))
+      deps.faces.bindNfTicketRevocation(IO(nfRevocations.add(1)).as(1))
       bridge.enqueueFrame(BindingControl("revoked", None, None))
       for
         ok <- waitUntil(5.seconds)(IO(observed.size() == 1 && nfRevocations.size() == 1))
-        _ = assert(ok, s"both revocation ports must fire; observed=$observed nf=$nfRevocations")
+        _ = assert(ok, s"session and bound nf-ticket revocation ports must each fire once; observed=$observed nf=$nfRevocations")
       yield ()
     }
 
@@ -736,6 +737,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         nfRevocations = new ConcurrentLinkedQueue[Integer]()
         deps = mkDeps(faces, nfRevocations)
         _ = faces.bindSessionRevocation(store.revokeRelayMinted())
+        _ = faces.bindNfTicketRevocation(IO(nfRevocations.add(1)).as(0))
         fake = new FakeWebSocket
         bridge = new PortalTunnelBridge(deps, new RelayFrameSender(fake))
         fiber <- bridge.run.start

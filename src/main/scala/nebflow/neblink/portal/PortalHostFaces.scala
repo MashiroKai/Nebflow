@@ -35,6 +35,7 @@ final class PortalHostFaces(val gatewayPort: Int):
   private val tunnelGuardRef = new AtomicReference[Option[PortalHostFaces.TunnelGuard]](None)
   private val consoleTicketFaceRef = new AtomicReference[Option[PortalHostFaces.ConsoleTicketFace]](None)
   private val sessionRevocationRef = new AtomicReference[Option[IO[Int]]](None)
+  private val nfTicketRevocationRef = new AtomicReference[Option[IO[Int]]](None)
 
   /** Bind the lifted HTTP slice (GatewayMain, inside withHttpWebSocketApp). */
   def bindHttpApp(app: HttpApp[IO]): Unit =
@@ -58,6 +59,10 @@ final class PortalHostFaces(val gatewayPort: Int):
   def bindSessionRevocation(revoke: IO[Int]): Unit =
     sessionRevocationRef.set(Some(revoke))
 
+  /** Bind immediate invalidation of path-bound attachment/read tickets. */
+  def bindNfTicketRevocation(revoke: IO[Int]): Unit =
+    nfTicketRevocationRef.set(Some(revoke))
+
   /** The lifted HTTP slice, once bound. */
   def httpApp: Option[HttpApp[IO]] = httpAppRef.get
 
@@ -69,6 +74,9 @@ final class PortalHostFaces(val gatewayPort: Int):
 
   /** The session-revocation action, once bound (consumed by the two binding-dead signals). */
   def sessionRevocation: Option[IO[Int]] = sessionRevocationRef.get
+
+  /** The path-ticket revocation action, once bound. */
+  def nfTicketRevocation: Option[IO[Int]] = nfTicketRevocationRef.get
 
 end PortalHostFaces
 

@@ -278,7 +278,12 @@ private[gateway] object AuthRoutes:
       // Retain the pointer for retry if any critical teardown failed, not
       // only when enqueue failed. The account session is still revoked now.
       canClearPointer = List(credentialResult, configResult, discoveryResult, relayResult, queueResult).forall(_.isRight)
-      accountResult <- clearAccountSurface(sessions, PathUtil.machineRoot, clearPointer = canClearPointer).attempt
+      accountResult <- clearAccountSurface(
+        sessions,
+        PathUtil.machineRoot,
+        clearPointer = canClearPointer,
+        revokeTickets = faces.nfTicketRevocation.getOrElse(IO.pure(0))
+      ).attempt
       failures = List(credentialResult, configResult, discoveryResult, relayResult, infoResult, peersResult, queueResult)
         .collect { case Left(e) => e } ++ accountResult.left.toOption.toList
       _ <- if failures.isEmpty then IO.unit
@@ -303,7 +308,8 @@ private[gateway] object AuthRoutes:
   private[gateway] def clearAccountSurface(
     sessions: GatewaySessionStore,
     machineRoot: os.Path,
-    clearPointer: Boolean = true
+    clearPointer: Boolean = true,
+    revokeTickets: IO[Int] = IO.pure(0)
   ): IO[Option[ActiveAccount]] =
     val log = NebflowLogger.forName("nebflow.gateway.logout")
     IO.blocking(AccountRoot.readPointer(machineRoot)).flatMap {
@@ -311,12 +317,15 @@ private[gateway] object AuthRoutes:
         // Keep the pointer until the revocation is durably persisted so a
         // failed write remains retryable, including after process restart.
         sessions.revokeByAccount(acct.accountSub) *>
+          revokeTickets.void *>
           IO.blocking(AccountRoot.clearPointer(machineRoot)).whenA(clearPointer) *>
           log.info(s"logout account surface cleared for '${acct.accountSub}'").as(Some(acct))
       case None =>
         // A missing or damaged pointer does not identify a safe subset.
         // Fail closed by revoking all local console sessions.
-        sessions.revokeAll().flatTap(_ => IO.blocking(AccountRoot.clearPointer(machineRoot)).whenA(clearPointer)).as(None)
+        sessions.revokeAll() *>
+          revokeTickets *>
+          IO.blocking(AccountRoot.clearPointer(machineRoot)).whenA(clearPointer).as(None)
     }
 
   end clearAccountSurface
