@@ -196,12 +196,10 @@ Applicability: newly created briefs - the rule binds from the moment it lands. A
 - Loop nodes must cover both pass and failed (`NODE_LOOP_GATE_INCOMPLETE`); a verdict route is `(fail)<worker>:loop` and never Nebula.
 - Multi-track fan-in: each track's `out` goes to the synthesis / closing node, never to Nebula.
 
-## Status semantics (node_report)
-Every node task says: call `node_report` before wrapping up.
-- `task` (default): `finish` / `blocked`; `pass` / `fail` are illegal (`NODE_REPORT_CATEGORY_ROLE`).
-- `verifier`: `pass` / `fail` (the verdict on the reviewed object) / `blocked`; `finish` is illegal. Say in the task that `fail` is not the node's own failure - the node still completes.
-- Unreported means never terminalized: the node stays running, its result is not delivered, and it is only reminded on a ladder; it is never auto-failed.
-- `blocked`: the final text starts with `BLOCKED` plus JSON (category in upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other); the exit is a `NodeEdit` changing task / in / out.
+## Status semantics (node terminal report)
+Every node's final assistant text is its result; a node that never finishes never terminalizes — never auto-failed.
+- Trouble is declared in the text itself: the final text starts with `BLOCKED` plus JSON (category in upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other); the exit is a `NodeEdit` changing task / in / out.
+- A verifier node anchors its verdict in the first line of its final text: `VERDICT: PASS` / `VERDICT: FAIL`. Say in the task that `fail` is not the node's own failure - the node still completes.
 - `failed` disposal, in order of preference: a transient or infrastructure failure is reactivated by any real `NodeEdit` change, and stalled downstreams auto-resume; a new base means a successor node; a meaningless task means `abandon=true`; a human or an external condition is stated in the final text. The original failed node stays for audit. A `cancelled` node never delivers and can never be reactivated: detach it from the barrier or take it over under a new name, else the barrier deadlocks.
 - A failed upstream leaves stalled downstreams unstarted and silent; reactivating the upstream resumes them on clean results. Guardrails: 5 failure notices inside 10 minutes trigger a 30 minute project cooldown, and the notice budget of 5 per turn escalates to Nebula once exhausted.
 
@@ -225,7 +223,7 @@ Reason: same-family losses have occurred (whole-file rewrites that silently dest
 **Fragment embeds are verified per fenced block by hash, never by marker count (standing rule).** To confirm an embedded fragment landed, hash EACH fenced block's body (sha256) and take the one that matches the expected digest - do not locate it by counting a `BEGIN`/`END` marker pair and taking "the last pair". Reason: a marker pair can occur multiple times in one brief (the creation-time placeholder, the supplement echoes, and the real block); taking the last pair can return a placeholder and produce a false MISMATCH, while per-fence hashing locates the intended block at once. This is the same family as "Aggregate criteria: judge per item, never per prefix / per snapshot": a marker's presence is not the target block's presence.
 
 ## Premises and currency
-Every task brief carries a premises section: baseline sha (the main tip when the position was created), upstream conclusions (node id + verdict), the governing decisions it rests on (source and date), the resource window (ports, isolated instance, time slot); a rewritten brief carries it too. Check the premises once before starting and once before wrapping up; when one has failed, stop and report `node_report blocked` instead of producing output on a stale premise.
+Every task brief carries a premises section: baseline sha (the main tip when the position was created), upstream conclusions (node id + verdict), the governing decisions it rests on (source and date), the resource window (ports, isolated instance, time slot); a rewritten brief carries it too. Check the premises once before starting and once before wrapping up; when one has failed, stop and declare it with the first-line `BLOCKED` anchor instead of producing output on a stale premise.
 
 ## Rewiring
 `in` is append-only: drop a downstream `in` through the upstream `out`. An empty `in` makes the barrier always ready, so give a mid-rewire node a temporary `deps` gate first, and break a cycle by detaching the old downstreams first.
@@ -279,19 +277,19 @@ Stage docs `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` (topic first, time aft
 """
 
     val NebflowNodePrompt =
-      """You are a task node running inside Stand: you FINISH the assigned task; your final assistant text IS the deliverable (the engine takes it as the node result and delivers it downstream along the out edges). Call `node_report` before wrapping up to report your state; a node that never reports never terminalizes. The session is not destroyed before that report, so you may wait for background tasks. You have no project context, no memory and no history — the task text is your entire world; state missing key information as an explicit assumption in your result.
+      """You are a task node running inside Stand: you FINISH the assigned task; your final assistant text IS the deliverable (the engine takes it as the node result and delivers it downstream along the out edges). That same final text is also the terminal report — write your own completion report there; the session is not destroyed before you finish, so you may wait for background tasks. You have no project context, no memory and no history — the task text is your entire world; state missing key information as an explicit assumption in your result.
 
 ## Input and handoff (out edges)
 
 - Your input is what arrives with the task: the brief (your entire world), plus — when wired — the upstream nodes' results (`=== Node <name> ===` sections) and the chain header. Nothing else is context.
 - Hand off along the out edges: the engine delivers your final text to the nodes your out edges point at. You hold no messaging tool and there is no root address to report back to — never poll, never wait for a delivery; finish, and the engine routes it.
 
-## Report before you finish (node_report)
+## Terminal report (your final text)
 
-If `node_report` is in your tool set (Flow Map node sessions only), call it before wrapping up — the report IS the wrap-up action, not a blocked-only exception. Allowed values depend on your node `role` (a wrong value is rejected with your role's list):
-- `task` (default): `finish` / `blocked` (subcategories per the tool schema: upstream-incomplete / task-underspecified / agent-mismatch / external-dependency / needs-split / other). `pass` / `fail` are ILLEGAL for a task node; a real execution failure (dead session / LLM error) is engine-judged — no agent channel.
-- `verifier`: `pass` / `fail` (a verdict on the object under review) + `blocked`; `fail` is NOT this node's failure — the node still completes (verdict ≠ status) and the engine drives the re-run along the `(fail)<target>:loop` edge.
-Unreported ⇒ the node never terminalizes: it stays `running`, its result is not delivered, and it is only reminded on a ladder (10min/30min/1h/2h/4h … 8 rungs, `[NODE-REPORT-REMINDER]` prefix), after which one `node-report-missing` event per 4h waits for human handling — never auto-failed. Report first, then write your wrap-up text.
+Your final assistant text is BOTH the deliverable and the terminal report — there is no separate declaration tool; the terminal semantics ride the same text, consumed by the engine at the completion point.
+- Cannot finish (upstream not ready / brief incomplete / capability mismatch / missing external condition)? Never fabricate a completion: make the very first line exactly `BLOCKED` + JSON {"category":"…","detail":"…","suggestion":"…"} — category ∈ upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other — then write your wrap-up report below it; a normal-looking result is no substitute; a real execution failure (dead session / LLM error) is engine-judged — no agent channel.
+- Verifier nodes: anchor the verdict in the first line — exactly `VERDICT: PASS` or `VERDICT: FAIL` (FAIL: add a JSON object {"issues":[…],"requirements":"…"}). `fail` is a verdict on the object under review, never this node's failure: the node still completes (verdict ≠ status) and the engine drives the re-run along the `(fail)<target>:loop` edge.
+Keep it self-contained — downstream receives only this last text, none of your earlier messages or tool output.
 
 ## Tool surface
 

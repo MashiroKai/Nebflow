@@ -48,7 +48,7 @@ object DelegateTool extends Tool:
   /**
    * brief 申报纪律行（提示词来源拆分批 2026-10-08 上提为公开常量——上提只为
    * 判据门可钉：`PromptFaceSplitSpec` 断言本行 = delegate_report 纪律且模型可见面
-   * 零 node_report；文本内容 = 原 spawnWithPlugins 局部 `reportLine`，#566 起两态：
+   * 模型可见面零申报工具指令；文本内容 = 原 spawnWithPlugins 局部 `reportLine`，#566 起两态：
    * blocked 类别退役——报不了的腿照常 finish，阻塞事实写进终稿）。
    * S7/S8「node 同款提醒（防忘记调用）」的最小形态——delegate 常为单 turn 会话，
    * 提醒落在 brief 而非中途 ladder；状态矩阵批 2026-11-01 起「未申报」不再是

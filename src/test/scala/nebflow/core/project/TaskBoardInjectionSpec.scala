@@ -71,23 +71,25 @@ class TaskBoardInjectionSpec extends FunSuite:
     // blocked 协议本体不动（既有断言锚）
     assert(NodeEngine.ProtocolFootnote.contains("needs-split"))
 
-  test("ProtocolFootnote 措辞（blocked 结构化信号批 20260909，spec §5.2 #7；泛化批更名 node_report 统一三语义）：工具优先 + 文本备用通道裸形态强调"):
+  test("ProtocolFootnote 措辞（终态申报工具通道退役批）：纯文本锚定协议——完成报文即交付物 + blocked 裸形态强调"):
     val fn = NodeEngine.ProtocolFootnote
-    assert(fn.contains("node_report"), s"第一优先=工具申报:\n$fn")
-    assert(fn.contains("pass"), s"pass/fail 语义同走结构化申报（泛化面）:\n$fn")
-    assert(fn.contains("still write your wrap-up report"), s"申报后照常收尾（申报≠终止输出）:\n$fn")
-    assert(fn.contains("No tool ⇒ first line exactly `BLOCKED`"), s"文本通道降级定位:\n$fn")
-    assert(fn.contains("first line exactly `BLOCKED`"), s"裸形态强调（6 例 markdown 形态侵蚀实证）:\n$fn")
+    // 完成通道：末条 assistant 文本即终态申报本体（交付物即报文，无须先行申报）
+    assert(fn.contains("Your final assistant text IS the terminal report"), s"完成报文 = 文本本体:\n$fn")
+    assert(fn.contains("still write your wrap-up report"), s"受阻申报后照常收尾（受阻 ≠ 终止输出）:\n$fn")
+    // blocked 文法：首行裸形态硬要求（6 例 markdown 形态侵蚀实证）
+    assert(fn.contains("first line exactly `BLOCKED`"), s"裸形态强调:\n$fn")
+    // 申报工具段零残留（防「顺手写回」——旧工具申报段的段头/义务句不得回归）
+    assert(!fn.contains("Report before you finish"), s"旧工具申报段头不得回归:\n$fn")
+    assert(!fn.contains("call it before wrapping up"), s"旧工具申报义务句不得回归:\n$fn")
 
-  // node-output contract（2026-09-24）：末条输出 = 自身完成汇报、结果自包含（禁指代收尾）
-  // 两条要求是**新钉**（非既有断言措辞同步——本批未触发 §五 的同步条件：末行全等钉与
-  // `still write your wrap-up report` / `No tool ⇒ first line exactly \`BLOCKED\`` 等子串
-  // 全部逐字保持，无需改写任何既有断言字面量）。
-  test("ProtocolFootnote 输出契约（node-output contract）：末条输出 = 自身完成汇报（申报 ≠ 汇报）、结果自包含（禁 see above 指代）"):
+  // node-output contract（2026-09-24）：末条输出 = 自身完成汇报、结果自包含（禁指代收尾）。
+  // 终态申报工具通道退役批：申报 = 末条文本本体（「writing it IS the wrap-up action」
+  // 承接旧「申报 ≠ 汇报」的分工语义——没有第二件申报物了，文本本身就是申报+汇报一体）。
+  test("ProtocolFootnote 输出契约（node-output contract）：末条输出 = 自身完成汇报（= 终态申报本体）、结果自包含（禁 see above 指代）"):
     val fn = NodeEngine.ProtocolFootnote
     assert(fn.contains("Your last output is the deliverable"), s"末条输出 = 交付物（引擎取最后一条 assistant 文本）:\n$fn")
     assert(fn.contains("completion report for this node"), s"内容 = 自身完成汇报:\n$fn")
-    assert(fn.contains("terminal declaration, not that report"), s"申报（node_report）≠ 汇报，两者是两件事:\n$fn")
+    assert(fn.contains("writing it IS the wrap-up action"), s"写报文 = 收尾动作本体（申报与汇报一体）:\n$fn")
     assert(fn.contains("Keep it self-contained"), s"要求 2 的抬头句:\n$fn")
     assert(fn.contains("\"see above\""), s"指代收尾必须点名禁用:\n$fn")
     assert(

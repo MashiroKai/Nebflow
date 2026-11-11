@@ -146,7 +146,9 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     assert(iVariant > 0, "schemaVariantFor 定义未找到")
     val body = src.substring(iVariant, math.min(src.length, iVariant + 1200))
     assert(!body.contains("AskUserQuestionTool"), "schemaVariantFor 仍在特判 AskUserQuestion（裁② 未落地）")
-    assert(body.contains("NodeReportToolDef.roleVariant"), "node_report 变体面被误删")
+    // 终态申报工具退役批：按角色分叉分支（roleVariant）已随该工具整体删除——
+    // 变体机制的现役面只剩 Mail 地址面（防两方向「顺手写回」）。
+    assert(!body.contains("roleVariant"), "schemaVariantFor 仍特判按角色分叉（申报工具退役批未落地）")
     assert(body.contains("MailTool.addressFaceVariant"), "Mail 变体面被误删")
   }
 

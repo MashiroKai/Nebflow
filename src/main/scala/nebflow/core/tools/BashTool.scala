@@ -1602,7 +1602,7 @@ Git safety:
    * 在本模块内对项目面**零新增依赖**——`FlowMapEventLog` 是 project 包内的事件写入器，
    * 而本模块已有的 layer 边界只禁 `core.project`→`core.tools` 的反向。为守住「不新增
    * 跨层 import」，本腿经 `ToolContext` 已注入的**引擎侧身份**（`projectName` /
-   * `flowNodeId`）+ `ProjectRuntimeRegistry` 解析 workspace——与 `NodeReportTool`
+   * `flowNodeId`）+ `ProjectRuntimeRegistry` 解析 workspace——与编排工具族
    * 的 `ctx.projectName → ProjectRuntimeRegistry → workspace` 单点同款（判据不猜：
    * 解析不到 ⇒ 静默 no-op，只留 `logger.warn`；猜错 = 把事件写进别人的日志更糟）。
    */

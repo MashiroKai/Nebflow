@@ -65,20 +65,20 @@ class DualModeToolFaceSpec extends FunSuite:
   private val NodeFace = Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite")
 
   /**
-   * 内核腿期望面（**11 件**）= `NebflowFixedTools` 九件（文件/壳六件 + BgWait +
-   * AskUserQuestion + Subagent）+ `delegate_report` + `Mail`。tool-face-agentflow-retire
+   * 内核腿期望面（**10 件**）= `NebflowFixedTools` 九件（文件/壳六件 + BgWait +
+   * AskUserQuestion + Subagent）+ `Mail`。tool-face-agentflow-retire
    * 批（2026-11-05）：AgentFlow 随工具退役从固定面消失（十 → 九），kernel 按裁定一
-   * **拿到** Subagent（只读侦察腿）。Node 四件与 node_report 不在本腿。
+   * **拿到** Subagent（只读侦察腿）。Node 四件不在本腿。终态申报工具（T2 批退役）
+   * 不在本腿——申报通道退役后内核腿不再持任何 report 系工具。
    */
-  private val ExpectedKernelFace =
-    nebflow.agent.AgentCore.NebflowFixedTools + nebflow.core.tools.DelegateReportTool.Name + "Mail"
+  private val ExpectedKernelFace = nebflow.agent.AgentCore.NebflowFixedTools + "Mail"
 
-  /** 分发器腿期望面（**14 件**）= 内核腿 − Subagent ＋ node 四件。 */
+  /** 分发器腿期望面（**13 件**）= 内核腿 − Subagent ＋ node 四件。 */
   private val ExpectedDispatcherFace: Set[String] = (ExpectedKernelFace - "Subagent") ++ NodeFace
 
   // ── 挂载面 ──────────────────────────────────────────────────────────────────
 
-  test("F1 kernel 腿：**有** Subagent（只读侦察）+ 编排面退场（node 四件全摘、node_report 摘除、AgentFlow 已退役）—— 恰 11 件") {
+  test("F1 kernel 腿：**有** Subagent（只读侦察）+ 编排面退场（node 四件全摘、AgentFlow 已退役）—— 恰 10 件") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
@@ -96,13 +96,6 @@ class DualModeToolFaceSpec extends FunSuite:
       set.contains("Subagent"),
       s"kernel face MUST carry Subagent (read-only recon leg, author ruling 2026-11-05; got: ${set.toList.sorted})"
     )
-    // node_report 摘除（作者裁定 2026-10-29：「那不是agentflow的节点使用的工具吗」）
-    // ——现状事实源：RootExclusiveTools 防声明逃逸剥离 + flowNodeSession 尾段专属
-    // 挂载，本就不达 delegate 面；kernel 腿的显式减法是未来挂载面变动下的保险销。
-    assert(
-      !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
-      "kernel face must not carry node_report (flow-node-only tool — dual insurance: mount face + in-tool identity rejection)"
-    )
     // 🔴 裁定二：AgentFlow 工具整体退役 ⇒ 任何固定面都不许再出现这个名字。
     assert(
       !set.contains("AgentFlow"),
@@ -110,15 +103,14 @@ class DualModeToolFaceSpec extends FunSuite:
     )
     assert(!nebflow.core.tools.ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be unregistered")
     assert(set.contains("Mail"), "kernel delegate keeps Mail (node:<id> continuation leg)")
-    assert(set.contains(nebflow.core.tools.DelegateReportTool.Name), "kernel delegate keeps delegate_report")
     assert(set.contains("Read") && set.contains("Bash"), "kernel delegate keeps the executor base face")
-    // 读数：面值恰 11 件（不照抄任务书，按本读数核）
+    // 读数：面值恰 10 件（不照抄任务书，按本读数核）
     println(s"[FACE-KERNEL] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
-    assertEquals(set, ExpectedKernelFace, s"kernel face reading = 11 pieces, got: ${set.toList.sorted}")
-    assertEquals(set.size, 11, s"kernel face must be exactly 11 pieces, got: ${set.toList.sorted}")
+    assertEquals(set, ExpectedKernelFace, s"kernel face reading = 10 pieces, got: ${set.toList.sorted}")
+    assertEquals(set.size, 10, s"kernel face must be exactly 10 pieces, got: ${set.toList.sorted}")
   }
 
-  test("F2 dispatcher 腿：Subagent 摘除、**无 AgentFlow**（工具退役）、node 四件保留（编排本体）—— 恰 14 件") {
+  test("F2 dispatcher 腿：Subagent 摘除、**无 AgentFlow**（工具退役）、node 四件保留（编排本体）—— 恰 13 件") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
@@ -136,15 +128,9 @@ class DualModeToolFaceSpec extends FunSuite:
     NodeFace.foreach { t =>
       assert(set.contains(t), s"dispatcher keeps the node face: $t (got: ${set.toList.sorted})")
     }
-    // 事实钉（2026-10-29 裁定②「dispatcher 保留」= 本腿不做 node_report 摘除动作；
-    // 现状该工具本就 flow 节点会话专属——本断言钉的是「本批不引入变化」）。
-    assert(
-      !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
-      "node_report stays flow-node-only (unchanged by this batch; the dispatcher leg does no node_report work)"
-    )
     println(s"[FACE-DISPATCHER] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
-    assertEquals(set, ExpectedDispatcherFace, s"dispatcher face reading = 14 pieces, got: ${set.toList.sorted}")
-    assertEquals(set.size, 14, s"dispatcher face must be exactly 14 pieces, got: ${set.toList.sorted}")
+    assertEquals(set, ExpectedDispatcherFace, s"dispatcher face reading = 13 pieces, got: ${set.toList.sorted}")
+    assertEquals(set.size, 13, s"dispatcher face must be exactly 13 pieces, got: ${set.toList.sorted}")
   }
 
   test("F3 闸关（mode=None）⇒ 全量面逐字节：Subagent + node 四件俱在（AgentFlow 已不存在于任何面）") {

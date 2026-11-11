@@ -74,7 +74,7 @@ object NodeTools:
    * REST 直调）→ 既有 `resolveProject` per-project 路径**逐字节不变**。
    *
    * 三个工具调用点（NodeEdit/NodeList/NodeCancel）统一改走本方法——第二保险与
-   * 挂载面（delegateSession 尾段）构成双保险（TaskBoard/node_report 同款纪律）。
+   * 挂载面（delegateSession 尾段）构成双保险（TaskBoard 同款纪律）。
    *
    * @param project **显式** project 参数（调用方不再自行 orElse ctx.projectName——
    *                delegate 面上 ctx.projectName 是派发上下文残留，**禁**参与作用域

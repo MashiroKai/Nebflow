@@ -756,14 +756,6 @@ object ProjectActor:
                 cfg.engine
                   .settleStaleRunningNodes()
                   .handleErrorWith(e => logger.warn(s"dead-session settle failed: ${e.getMessage}")) *>
-                // 未申报提醒阶梯（noderpt 批 A 段 2026-09-11 作者裁定）：完成门腿 2
-                // （未申报不终态化）的配套兜底——对「已交棒但未 node_report」的 Running
-                // 节点按阶梯注入提醒轮 + 写 node-report-missing 事件，阶梯耗尽转 quiescent
-                // 档（只留痕不注入）。**永不判 failed、永不杀会话**：本扫描腿零终态化动作。
-                // best-effort 同款（失败不影响后续 sweep）。
-                cfg.engine
-                  .remindUnreportedNodes()
-                  .handleErrorWith(e => logger.warn(s"node-report reminder sweep failed: ${e.getMessage}")) *>
                 // 终态销毁窗口扫描（noderpt 批 B 段 2026-09-11 作者裁定「一律存活 30 分钟
                 // 再销毁」）：对 `destroyAt` 到点的终态节点执行对称收殓（`reclaimSession`：
                 // 杀进程树 + 注销 registry + 逐条 finalizeTask + 释放 ShellSession 条目 +

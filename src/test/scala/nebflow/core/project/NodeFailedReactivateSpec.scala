@@ -152,15 +152,14 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
    * 同款**自有挂载夹具**（同一 `reportGateHold` 起因）。
    *
    * 为什么不能走 `ProjectRuntimeRegistry.mount`：该入口不注入 `reportGateHold`
-   * ⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold` = true）判「本会话未申报
-   * node_report ⇒ 不终态化」⇒ 本 spec 的 mock-LLM 节点重跑 turn 交棒后停在 Running，
+   * ⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold` = true）走终态 hold 腿 ⇒
+   * 本 spec 的 mock-LLM 节点重跑 turn 交棒后停在 Running，
    * 故 FR1/FR6 的 `waitStatus(..., Completed)` 恒超时，其后的 `result` / 重连 `out` /
    * `reactivated` 审计断言**恒不可达**。
    *
    * 显式注入 `reportGateHold = Some(false)` = 本批之前的文本锚定降级面（**仅测试面、
    * 零生产改动**）：本 spec 主题是「failed 重激活」语义（重激活生效 → 重跑至完成 →
-   * 轮次历史复位）；「未申报 `node_report` 不终态化」的完成门口径由
-   * `NodeReportReminderSpec` 承担验证。
+   * 轮次历史复位），与终态 hold 腿正交（旋钮随申报通道退役休眠，测试面保留）。
    *
    * 其余装配与 `ProjectRuntimeRegistry.mount` 逐项同构（store/board 打开 + ProjectActor
    * spawn + 注册）；mount 另跑的两个动作——僵尸 running 收殓 + Nebula 欠账补投扫描——

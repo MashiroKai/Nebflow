@@ -54,7 +54,7 @@ object AgentCore:
    *   - `isDispatcher` ⟵ `AgentState/session.isDispatcher`（`ProjectActor` spawn 置位）；
    *   - `nodeRole` ⟵ `SessionContext.flowNodeRole`，经 `NodeRoles` **归一 + 白名单校验**；
    *     **缺省 / 非法 / 未登记 ⇒ `None`**（= 基础面，fail-closed）——定义层**不**
-   *     替运行期做「缺省就是 task」的身份推断：那是 `NodeReportTool.enumFor` 的
+   *     替运行期做「缺省就是 task」的身份推断：申报值域判据（已退役）曾以本字段
    *     运行期口径，定义层据此分化会让「无身份的旁支会话」静默落到 task 变体。
    */
   private[agent] final case class ToolFaceIdentity(
@@ -103,8 +103,9 @@ object AgentCore:
     // AskUserQuestion 的 schema 变体分支已随「非阻塞-only」裁定整体删除：该工具一律
     // 以非阻塞方式提问，参数面不再有 `mode` 键 ⇒ root 面与基础面 schema 逐字节相等，
     // 无变体可分（`ToolFaceVariantSchemaSpec` 的 AskUser 豁免同步收紧为 Set.empty）。
-    if NodeReportToolDef.Name == td.name then NodeReportToolDef.roleVariant(td, identity.nodeRole)
-    else if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
+    // 终态申报工具的按角色 schema 分化分支已随该工具整体退役删除（文本锚定协议
+    // 无 schema 维度）。
+    if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
     else td
 
   /**
@@ -223,12 +224,6 @@ object AgentCore:
     // 插件白名单摘除；真实授能 = NebulaOrchestrationTools 单点）。执行面另有
     // PopTool 分发层身份闸（POP_NEBULA_ONLY）——定义层与分发层两层收口。
     "Pop",
-    // node_report（20260909 NodeReport 泛化批）：flow 节点会话专属终态语义申报
-    // 工具，与 TaskBoard 同享防声明逃逸通道——"*"/显式声明对一切非节点会话身份
-    // 不授能（真实授能 = 末段 flowNodeSession 按身份追加）。v1 report_blocked
-    // 未入本集（通配声明者 allowedSet 带 schema 泄漏面，执行侧由工具内身份拒绝
-    // 兜底），泛化批补齐同款隔离；剥离与授能两点不相干扰（同 TaskBoard 注）。
-    nebflow.core.tools.NodeReportToolDef.Name,
     // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 #5 推荐路线，
     // 2026-09-12）：Nebula 专属只读好友名册——全 agent 面披露的是**全量社交图谱**
     // （一次性给出「你是谁的好友」全集），与 TaskList/MemoryNote 同域隔离纪律一致；
@@ -248,7 +243,7 @@ object AgentCore:
     // ChainWrite（N1 刀2，v3 §5 S4）：delegate 会话专属整链登记件——同享本集
     // 【防声明逃逸】通道：插件/agent.json 声明（含 "*"）对非 delegate 会话身份
     // 不授能（真实授能 = buildAllowedToolSet 尾段 delegateSession 腿单点）；
-    // 工具内 DelegateSessions 身份拒绝双保险（TaskBoard/node_report 同款纪律，
+    // 工具内 DelegateSessions 身份拒绝双保险（TaskBoard 同款纪律，
     // 剥离与授能两点不相干扰）。
     "ChainWrite",
     // TaskSearch（task-rag 批 #1227 / §Batch 7）：Nebula 专属只读检索件——
@@ -725,7 +720,7 @@ object AgentCore:
     "NodeCancel",
     // agentflow 批 2026-10-02：−`Mail` +`AskUserQuestion`（件数 9 → 9）。挂载点在
     // `buildAllowedToolSet` 末段按引擎侧身份 `isDispatcher` 追加（TaskBoard/
-    // node_report 同款「挂载面 + 工具内身份拒绝」双保险）。
+    // TaskBoard 同款「挂载面 + 工具内身份拒绝」双保险）。
     "AskUserQuestion",
     "Read",
     "Glob",
@@ -788,7 +783,7 @@ object AgentCore:
    *   来源标注 `subagent · <任务摘要>`（U3）。
    * - 显式**不含**：Delegate/SubTask/Task（叶子纪律——内核不再派生）、Mail
    *   （已退役）、AgentControl/Card/Pop（管控与用户面归 Nebula）、TaskBoard/
-   *   node_report/Node 系工具/TaskList/MemoryNote/Schedule（项目与编排面）、
+   *   Node 系工具/TaskList/MemoryNote/Schedule（项目与编排面）、
    *   plugin 与 MCP 工具（极简 = 机制固定、零配置面，裁定 11）。
    *
    * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的

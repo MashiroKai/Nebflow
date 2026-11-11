@@ -3089,7 +3089,7 @@ export default {
   'agentManager.faceDelegate': 'Delegate target',
   'agentManager.faceNode': 'Node (flow node)',
   'agentManager.faceDelegateHint': 'System prompt carried by delegate sessions (delegate_report discipline).',
-  'agentManager.faceNodeHint': 'System prompt carried by flow-node sessions (node_report discipline).',
+  'agentManager.faceNodeHint': 'System prompt carried by flow-node sessions (node terminal-report discipline).',
   'explorer.newFile': 'New File',
   'explorer.newFolder': 'New Folder',
   // === ui-device-faces batch (2026-10-10): face B — remote directories in the file browser ===

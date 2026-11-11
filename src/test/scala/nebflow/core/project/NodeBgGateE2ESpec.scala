@@ -163,8 +163,7 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
         // noderpt 批 A 段：本 fixture 主题 = 完成门腿 1（后台任务存活拦终态化）的
         // 真实 E2E ⇒ 必须显式开腿 1（生产默认 **false = 封存**，见
         // Defaults#BgGateCompletionHold；封存态行为由 NodeBgCompletionGateSpec#G9 覆盖）；
-        // 腿 2（node_report 未申报 hold）与本 fixture 主题正交 ⇒ 显式关
-        // （生产默认开；默认开行为由 NodeReportReminderSpec 覆盖）。
+        // 终态 hold 腿（未申报挂起——通道已退役、旋钮休眠）与本 fixture 主题正交 ⇒ 显式关。
         reportGateHold = Some(false),
         bgGateCompletionHold = Some(true)
       )

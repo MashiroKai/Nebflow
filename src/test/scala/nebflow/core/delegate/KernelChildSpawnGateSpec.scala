@@ -220,7 +220,7 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
         )
         _ <- IO(assertEquals(face.size, 5, "exactly five pieces"))
         _ <- IO(
-          Set("Write", "Edit", "Bash", "Mail", "Subagent", "delegate_report", "node_report").foreach { t =>
+          Set("Write", "Edit", "Bash", "Mail", "Subagent", "delegate_report").foreach { t =>
             assert(!face.contains(t), s"the recon leg must have no $t — read-only by mechanism, not by prompt")
           }
         )

@@ -43,7 +43,7 @@ object TaskTool:
   private def noAttachment(session: String): ToolError = ToolError(
     s"TaskInfo: this session has no task attachment — no origin task is recorded for session '$session'. " +
       s"It never falls back to the whole ledger and never shows another task's data. " +
-      s"Report the missing attachment through your normal report channel (node_report / your final text) instead. " +
+      s"Report the missing attachment through your normal report channel (your final text) instead. " +
       s"(${TaskLedgerStore.Codes.NoAttachment})"
   )
 
@@ -385,7 +385,7 @@ object TaskInfoToolDef extends Tool:
   override def description: String =
     """TaskInfo — read-only view of the ONE task you are attached to, and of its note timeline. It has NO parameters: your attachment is resolved from your SESSION IDENTITY on the engine side (a dispatcher resolves to the task it was created for; a project node resolves to the task recorded as its origin), never from a client argument. You cannot name another task, and you cannot see any other task.
 
-You cannot write here. Creation, state changes and any field edit belong to Nebula and go through the `Task` tool. The note timeline you read is written by the engine whenever Nebula Mails this task's dispatcher; your own progress reaches the task the same way it always did — through your report channel (`node_report`) and your final text, not by editing the task.
+You cannot write here. Creation, state changes and any field edit belong to Nebula and go through the `Task` tool. The note timeline you read is written by the engine whenever Nebula Mails this task's dispatcher; your own progress reaches the task the same way it always did — through your final text and the engine's report channel, not by editing the task.
 
 What it returns: the task's id, title, state (`open` / `closed` / `completed`), assignee, the linked Flow Map node if any, dependency state, links, and the note timeline (most recent entries first, each carrying its origin and time). Long timelines are windowed — the count of entries that did not fit is stated explicitly, never silently dropped.
 

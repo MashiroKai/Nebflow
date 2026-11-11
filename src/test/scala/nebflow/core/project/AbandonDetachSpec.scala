@@ -83,7 +83,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
           frames.update(
             _ :+ payload.deepMerge(Json.obj("type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))
           ),
-        // 本 spec 主题非 node_report 语义 ⇒ 显式关腿 2（同 CancelDeadlockFixSpec 口径）
+        // 本 spec 主题与终态 hold 腿正交 ⇒ 显式关（同 CancelDeadlockFixSpec 口径）
         reportGateHold = Some(false)
       )
       pd = ProjectDef(

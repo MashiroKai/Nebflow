@@ -1002,7 +1002,7 @@ object AgentActor extends AgentCore with AgentSession:
     /**
      * 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：NodeDef.role 随
      * spawn 注入（NodeEngine 节点/loop 会话），经 AgentCore 透传
-     * ToolContext.flowNodeRole——node_report 值域分化 + ProtocolFootnote 角色分支
+     * ToolContext.flowNodeRole——终态协议角色分支（ProtocolFootnote）
      * 的来源。默认 None = 非项目会话/旧路径（判据回落 NodeRoles.Task）。
      */
     flowNodeRole: Option[String] = None,

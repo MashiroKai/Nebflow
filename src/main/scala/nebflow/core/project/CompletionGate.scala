@@ -76,7 +76,7 @@ object CompletionGate:
    *
    * 取舍（二选一：并列落盘 vs 另存独立字段）→ 取 **并列落盘**：单 `result` 字段里
    * 两段并存（`blockedNode` 既有渲染 = `render(feedback) + "\n\n" + finalText`，
-   * 与 `node_report` 申报 BLOCKED 分支**同一机制同一格式**）。理由：① 零 schema
+   * 与节点末文 BLOCKED 锚定分支**同一机制同一格式**）。理由：① 零 schema
    * 变更、零前端改动、零新字段迁移；② 闸门反馈仍在**最前**，`BlockedReader` 的裸
    * BLOCKED 锚定与 FeedbackRouter 重入 prompt 语义**零回归**；③ 节点 result 本就是
    * 「分发器/前端读到的权威文本」单点，两段同处一地最不易被后续流程拆散。

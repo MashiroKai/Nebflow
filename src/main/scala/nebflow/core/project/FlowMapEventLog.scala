@@ -74,7 +74,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   (V-0) member ⇒ the conclusion is carried out on this line, and the summary spells
  *   out both manual exits verbatim. Same family as `chain-archived`, DIFFERENT fact —
  *   the two must never be merged into one line; see [[ChainArchiveHeldType]]）/
- *   node-report-unconsumed（**engine-defects 批 #239①** 2026-09-15：`node_report` 申报
+ *   node-report-unconsumed（**engine-defects 批 #239①** 2026-09-15：终态申报（历史口径，
  *   已被 `drain` take-and-remove 取走、而终态写按 R2 fresh-read 纪律**拒写**（节点已
  *   消失 / 状态已变 / 关机期 draining 抑制）时的**补偿写回**——summary 含 sessionId +
  *   category + detail + suggestion 全文（不截断），写点 =
@@ -725,7 +725,7 @@ object FlowMapEventLog:
    * carrying ① the **node id** (`node=<id>`) ② the **refusal reason**
    * (`reason=no-attribution` — the reason face is "no attribution fingerprint" / "not
    * registered in the ledger") ③ the **way out** (`way=<...>` — `register-attribution` /
-   * `node_report` / `Flow Map` / `manual`). `kind` is the uplink class, and the
+   * `Flow Map` / `manual`). `kind` is the uplink class, and the
    * **landing/merge class must be distinguishable** (`kind=landing`, the core of criterion
    * 10.4.3).
    */

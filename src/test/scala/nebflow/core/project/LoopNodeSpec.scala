@@ -63,8 +63,7 @@ class LoopNodeSpec extends CatsEffectSuite:
   private class LoopLlm(
     respond: String => String,
     delayOf: String => FiniteDuration = _ => 0.millis,
-    // noderpt 批 B 段 ④：每轮副作用钩子（本轮注入文本 → IO）——用于在某一轮注入
-    // `node_report` 残留申报等探针（default no-op ⇒ 既有用例零影响）。
+    // 每轮副作用钩子（本轮注入文本 → IO；default no-op ⇒ 既有用例零影响）。
     onTurn: String => IO[Unit] = _ => IO.unit
   ):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil) // 全请求文本
@@ -139,8 +138,6 @@ class LoopNodeSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
-        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。Loop 节点本就不在腿 2 判定面。
         reportGateHold = Some(false),
         destroyWindowMs = Some(destroyWindowMs)
       )
@@ -378,46 +375,22 @@ class LoopNodeSpec extends CatsEffectSuite:
   // ── ⑦ 终态销毁窗口（noderpt 批 B 段 ④：Loop 双会话同批修）────
 
   test(
-    "⑦ destroy window: loop terminal registers BOTH sessions, clears the declaration slots and the sweep reclaims both"
+    "⑦ destroy window: loop terminal registers BOTH sessions and the sweep reclaims both"
   ) {
     val ws = tempRoot / "ws-loop-window"
     os.makeDir.all(ws)
     val system = ActorSystem(s"loop-win-${scala.util.Random.nextInt(100000)}")
     val K = 2
-    @volatile var resRef: SharedResources = null
-    // 在**每个 verify 轮**给 worker 会话留一条 node_report 残留申报：worker 的 drain
-    // 只发生在其自身轮次结束点（本 Loop 末轮 worker 之后直接进 verify ⇒ 该申报留到终态）
-    // ⇒ 只有 `destroyLoopSessions` 的 `NodeReportRegistry.remove` 能清（④ 直接证据）。
-    val llm = new LoopLlm(
-      t =>
-        if t.contains("[LoopNode verification") then
-          "VERDICT: FAIL\n{\"issues\":[\"never passes\"],\"requirements\":\"n/a\"}"
-        else "ok",
-      onTurn = last =>
-        IO(Option(resRef)).flatMap {
-          case None => IO.unit
-          case Some(r) =>
-            if !last.contains("[LoopNode verification") then IO.unit
-            else
-              r.agentRegistry.get.flatMap { reg =>
-                reg.values.find(_.displayName.exists(_ == "l-win")).map(_.sessionId) match
-                  case Some(sid) =>
-                    // category="pass"（而非 blocked 类）：worker 的 drain 对它走「pass 与无
-                    // 申报同链」，不改变 Loop 裁决路径（本用例主题是窗口收殓，不是分流）。
-                    NodeReportRegistry.register(
-                      (tempRoot / "ws-loop-registry").toString,
-                      "loop-spec",
-                      "l-win",
-                      sid,
-                      BlockedFeedback("pass", "residue before loop terminal", "")
-                    )
-                  case None => IO.unit
-              }
-        }
+    // 在**每个 verify 轮**给 worker 会话留一条文本残留申报已不可行（申报工具通道退役
+    // ——注册表已删）⇒ 本用例只钉窗口收殓腿：Loop 终态把双会话登记进禁 spawn 表 +
+    // destroyAt 落库，到点扫描腿双会话同批收殓（bg 任务注销 + WS 帧 + 事件）。
+    val llm = new LoopLlm(t =>
+      if t.contains("[LoopNode verification") then
+        "VERDICT: FAIL\n{\"issues\":[\"never passes\"],\"requirements\":\"n/a\"}"
+      else "ok"
     )
     for
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
-      _ <- IO { resRef = res }
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("loop-window", ws, system, res, wsFrames = Some(frames))
       ctx = mkCtx(res, system, ws.toString)
@@ -428,8 +401,6 @@ class LoopNodeSpec extends CatsEffectSuite:
       n <- nodeById(rt, id).map(_.getOrElse(fail("l-win must exist")))
       wSid = n.sessionRef.getOrElse(fail(s"worker sessionRef must be persisted: $n"))
       vSid = n.sessionRefVerify.getOrElse(fail(s"verify sessionRef must be persisted: $n"))
-      residueW <- NodeReportRegistry.peek(wSid)
-      residueV <- NodeReportRegistry.peek(vSid)
       banW <- BgTaskRegistry.finalizedAt(wSid)
       banV <- BgTaskRegistry.finalizedAt(vSid)
       eventsScheduled <- readEvents(ws)
@@ -450,10 +421,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       _ <- BgTaskRegistry.unregisterSession(Some(vSid)).attempt.void
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      // ④ 申报槽清理（此前 Loop 双会话终态不 remove）
-      assertEquals(residueW, None, "the worker declaration slot must be cleared by destroyLoopSessions (④)")
-      assertEquals(residueV, None, "the verify declaration slot must be cleared (④)")
-      // ③/④ 窗口登记（双会话都在禁 spawn 表 + destroyAt 落库）
+      // 窗口登记（双会话都在禁 spawn 表 + destroyAt 落库）
       assert(n.destroyAt.isDefined, "the loop terminal must register a destroy window")
       assert(banW.isDefined, "the worker session must be in the spawn-ban ledger")
       assert(banV.isDefined, "the verify session must be in the spawn-ban ledger")

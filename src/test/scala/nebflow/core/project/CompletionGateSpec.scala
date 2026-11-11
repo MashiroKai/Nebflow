@@ -155,8 +155,7 @@ class CompletionGateSpec extends CatsEffectSuite:
         projectName = name,
         emitEvent = (t, id, payload) => events.update((t, id, payload) :: _),
         gateRunner = runner,
-        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
-        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。本 spec 断言产物闸门的
+        // 显式关终态 hold 腿（休眠旋钮；本 fixture 主题与之正交）。
         // pass/reject 分流，必须照常走到终态化。
         reportGateHold = Some(false)
       )

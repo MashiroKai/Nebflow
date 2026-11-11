@@ -120,8 +120,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (t, id, payload) => events.update((t, id, payload) :: _),
-        // noderpt 批 A 段：本 fixture 主题 = blocked 重入协议（文本锚定/tool 申报两路）
-        // ⇒ 显式关腿 2（生产默认开；腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
+        // 本 fixture 主题 = blocked 重入协议（文本锚定）⇒ 显式关终态 hold 腿（休眠旋钮）。
         reportGateHold = Some(false)
       )
       pd = ProjectDef(
@@ -201,12 +200,11 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       )
       .handleError(_ => Nil)
 
-  // noderpt 批 A 段（2026-09-11）：本 fixture 主题 = blocked/重入协议（文本锚定 +
-  // tool 申报两路），与 node_report 申报语义正交。生产默认腿 2 **开**（桥收到
-  // Completed 且申报槽空 ⇒ hold，改由提醒阶梯兜底）——那会让「输出 BLOCKED 文本
-  // 但不调 node_report」的节点不再终态化为 blocked（本 fixture 的 reentry/loop-cap
-  // 两条走真实 `ProjectRuntimeRegistry.mount`，其引擎无构造入参可注 ⇒ 只能经全局
-  // prop 显式关腿 2）。腿 2 默认开的行为由 NodeReportReminderSpec 覆盖。
+  // noderpt 批 A 段（2026-09-11）：本 fixture 主题 = blocked/重入协议（文本锚定），
+  // 与终态 hold 腿正交。生产默认腿 **开**（桥收到 Completed 且 hold 判据命中 ⇒ 挂起，
+  // 改由看门狗兜底）——那会让「输出 BLOCKED 文本」的节点不再即时终态化为 blocked
+  // （本 fixture 的 reentry/loop-cap 两条走真实 `ProjectRuntimeRegistry.mount`，其引擎
+  // 无构造入参可注 ⇒ 只能经全局 prop 显式关腿；旋钮随申报通道退役休眠，测试面保留）。
   private val ReportHoldProp = "nebflow.noderpt.completionHold"
 
   override def beforeEach(context: munit.BeforeEach): Unit =

@@ -118,13 +118,13 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
    *
    * **批 A 回改（B1 掩蔽处置，2026-09-12）**：此前本夹具走
    * `ProjectRuntimeRegistry.mount`——该入口不注入 `reportGateHold` ⇒ 引擎按生产默认
-   * （`Defaults.NodeReportCompletionHold` = true）判「未申报 node_report 不终态化」⇒
+   * （`Defaults.NodeReportCompletionHold` = true）走终态 hold 腿 ⇒
    * 本 spec 的 mock-LLM 节点永不 completed，`waitStatus(..., Completed)` 20s 先超时，
    * ①②⑥ 的投递/通知断言**恒不可达**（与范围外既有红同因 ⇒ 被掩蔽）。
    *
    * 改为**自有挂载夹具**（NodeAcceptanceSpec / OutNullableDeliverySpec 同款先例）：
    * 显式注入 `reportGateHold = Some(false)`——**仅测试面、零生产改动**；本 spec 主题是
-   * 「通知/投递」语义，未申报提醒阶梯语义由 NodeReportReminderSpec 覆盖。
+   * 「通知/投递」语义，与终态 hold 腿正交。
    *
    * 其余装配与 `ProjectRuntimeRegistry.mount` 逐项同构（store/board 打开 + ProjectActor
    * spawn + 注册）；mount 另跑的两个动作——僵尸 running 收殓 + Nebula 欠账补投扫描——
