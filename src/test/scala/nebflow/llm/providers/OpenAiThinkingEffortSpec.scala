@@ -40,11 +40,16 @@ class OpenAiThinkingEffortSpec extends FunSuite:
   test("O1b: medium maps to high client-side (three-tier face; GLM/DeepSeek official mapping, Kimi author ruling)") {
     val b = body("deepseek/deepseek-v4.1-flash", thinkingEnabled,
       Some(ResolvedThinking(ThinkingKind.EffortAnthropic, enabled = true, Some(ThinkingEffort.Medium))))
-    assertEquals(b.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"))
+    assertEquals(b.hcursor.downField("reasoning_effort").as[String].toOption, Some("medium"))
     assertEquals(EffortWire.threeTier(ThinkingEffort.Medium), "high")
     assertEquals(EffortWire.threeTier(ThinkingEffort.Max), "max")
     assertEquals(EffortWire.threeTier(ThinkingEffort.Low), "low")
     assertEquals(EffortWire.threeTier(ThinkingEffort.High), "high")
+    assertEquals(EffortWire.threeTier(ThinkingEffort.Minimal), "low")
+    assertEquals(EffortWire.openAi(ThinkingEffort.Minimal), "minimal")
+    assertEquals(EffortWire.openAi(ThinkingEffort.Medium), "medium")
+    assertEquals(EffortWire.openAi(ThinkingEffort.High), "high")
+    assertEquals(EffortWire.openAi(ThinkingEffort.Max), "max")
   }
 
   test("O2: no effort configured → legacy budget conversion unchanged (budgetToEffort boundaries)") {

@@ -26,21 +26,23 @@ import io.circe.{Decoder, HCursor, Json}
  * 语义出现两个可互相矛盾的表示）。
  */
 enum ThinkingEffort:
-  case Low, Medium, High, Max
+  case Minimal, Low, Medium, High, Max
 
   /** wire 名（reasoning_effort / output_config.effort 的档位拼写）。 */
   def wireName: String = this match
+    case Minimal => "minimal"
     case Low => "low"
     case Medium => "medium"
     case High => "high"
     case Max => "max"
 
   /**
-   * 三档面（GLM / DeepSeek / Kimi K3 官方仅收 low/high/max）的映射：
-   * medium→high（DeepSeek 官方映射表；GLM Coding Plan 同型；Kimi 三档面
-   * medium→high 为作者已裁定的推荐取）。low/high/max 直通。
+   * 三档面（GLM / DeepSeek / Kimi K3 只收 low/high/max）：minimal→low
+   * （三档面没有更轻档位，故取 low）；medium→high（DeepSeek 官方映射表、
+   * GLM Coding Plan 同型；Kimi 三档面按作者裁定取 high）。low/high/max 直通。
    */
   def toThreeTier: ThinkingEffort = this match
+    case Minimal => Low
     case Medium => High
     case other => other
 
@@ -49,18 +51,25 @@ end ThinkingEffort
 object ThinkingEffort:
 
   given Decoder[ThinkingEffort] = Decoder.decodeString.emap {
+    case "minimal" => Right(Minimal)
     case "low" => Right(Low)
     case "medium" => Right(Medium)
     case "high" => Right(High)
     case "max" => Right(Max)
-    case other => Left(s"Unknown thinking effort: $other (low|medium|high|max)")
+    case other => Left(s"Unknown thinking effort: $other (minimal|low|medium|high|max)")
   }
 
   given Encoder[ThinkingEffort] = Encoder.encodeString.contramap(_.wireName)
 
 /** 把产品档位映射到某个能力类的 wire 档位（单点；spec 钉）。 */
 object EffortWire:
-  /** 三档面（DeepSeek output_config / Kimi K3 顶层 / GLM 顶层）：medium→high。 */
+  /** OpenAI protocol face supports the product levels as-is. */
+  def openAi(effort: ThinkingEffort): String = effort.wireName
+
+  /** Anthropic Budget family: preserve legacy budget semantics; effort has no wire mapping. */
+  def anthropicBudget(effort: ThinkingEffort): Option[String] = None
+
+  /** Three-tier faces: GLM / DeepSeek / Kimi K3 map minimal→low, medium→high. */
   def threeTier(effort: ThinkingEffort): String = effort.toThreeTier.wireName
 
 /**

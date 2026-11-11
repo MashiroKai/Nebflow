@@ -109,7 +109,7 @@ class OpenAiAdapter(
           Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
         else
           resolved.flatMap(_.effort) match
-            case Some(effort) => Json.obj("reasoning_effort" -> EffortWire.threeTier(effort).asJson)
+            case Some(effort) => Json.obj("reasoning_effort" -> EffortWire.openAi(effort).asJson)
             case None =>
               val budget = t.hcursor.get[Int]("budget_tokens").getOrElse(32000)
               Json.obj("reasoning_effort" -> budgetToEffort(budget).asJson)

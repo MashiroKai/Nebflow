@@ -67,7 +67,7 @@ test('G4. 全局唯一配置点在位且写路是全局键', () => {
   for (const f of ['js/locales/zh-CN.js', 'js/locales/en.js']) {
     const loc = read(f);
     expect(loc).toContain("'settings.thinkingMode'");
-    for (const lvl of ['off', 'low', 'medium', 'high']) {
+    for (const lvl of ['off', 'minimal', 'low', 'medium', 'high', 'max']) {
       expect(loc).toContain(`'settings.thinkingEffort.${lvl}'`);
     }
   }

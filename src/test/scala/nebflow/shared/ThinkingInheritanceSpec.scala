@@ -79,6 +79,16 @@ class ThinkingInheritanceSpec extends FunSuite:
     assertEquals(tc.asJson.noSpaces, """{"enabled":false,"budgetTokens":8192}""")
   }
 
+  test("I3c-effort: all five effort wire values decode/encode; unknown values fail with the full vocabulary") {
+    val values = List("minimal", "low", "medium", "high", "max")
+    values.foreach { value =>
+      val decoded = io.circe.parser.decode[ThinkingEffort](s"\"$value\"").toOption
+      assertEquals(decoded.map(_.wireName), Some(value))
+    }
+    val unknown = io.circe.parser.decode[ThinkingEffort]("\"ultra\"").left.toOption.map(_.getMessage)
+    assert(unknown.exists(_.contains("minimal|low|medium|high|max")))
+  }
+
   test("I3c: new fields decode when present and encode only-when-set") {
     val node = parse("""{"enabled":true,"budgetTokens":4096,"effort":"max","clearThinking":false}""")
       .toOption.getOrElse(fail("parse"))
