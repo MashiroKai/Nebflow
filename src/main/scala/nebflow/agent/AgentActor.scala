@@ -624,7 +624,11 @@ object AgentActor extends AgentCore with AgentSession:
       case Some(sid) =>
         CompactionQueueStore.save(
           sid,
-          CompactionQueueStore.PersistedQueues(exec.pendingImmediateInputs, exec.pendingEvents)
+          CompactionQueueStore.PersistedQueues(
+            exec.pendingImmediateInputs,
+            exec.pendingEvents,
+            exec.outstandingSubagentResults
+          )
         )
       case None => IO.unit
 
