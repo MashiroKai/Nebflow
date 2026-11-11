@@ -74,6 +74,41 @@ class DelegateRegistrySpec extends CatsEffectSuite:
     }.unsafeRunSync()
   }
 
+  test("mergeDiffStat does not attribute the base branch's latest merge to an unmerged delegate") {
+    val repo = os.temp.dir(prefix = "nb-merge-diff-stat-")
+    def git(args: String*): String =
+      os.proc("git", "-C", repo.toString, args).call().out.trim()
+    try
+      os.proc("git", "init", "-b", "main", repo.toString).call()
+      git("config", "user.name", "Diff Stat Spec")
+      git("config", "user.email", "diff-stat-spec@example.invalid")
+      os.write.over(repo / "base.txt", "base\n")
+      git("add", "base.txt")
+      git("commit", "-m", "base")
+      git("checkout", "-b", "other-batch")
+      os.write.over(repo / "other.txt", (1 to 45).map(i => s"line $i").mkString("\n") + "\n")
+      git("add", "other.txt")
+      git("commit", "-m", "other batch")
+      git("checkout", "main")
+      git("merge", "--no-ff", "other-batch", "-m", "other batch merge")
+
+      val rec = DelegateRegistry.Record(
+        id = "not-yet-merged",
+        executor = "nebflow",
+        cwd = repo.toString,
+        project = None,
+        taskId = None,
+        parentSessionId = "root",
+        title = "unmerged batch",
+        createdAt = 1L,
+        baseBranch = Some("main"),
+        projectWorkspace = Some(repo.toString),
+        reportDetail = Some("work completed without a merge sha")
+      )
+      assertEquals(DelegateWorkReport.mergeDiffStat(rec), None)
+    finally os.remove.all(repo)
+  }
+
   test("aggregateDiffStat counts duplicate merge OIDs once and preserves each child detail") {
     val first = DelegateWorkReport.MergeDiffStat("abc1234", 10, 4, "a" * 40, List(DelegateWorkReport.FileDiffStat("same.scala", 10, 4)))
     val duplicate = first.copy(commit = "abc1234")

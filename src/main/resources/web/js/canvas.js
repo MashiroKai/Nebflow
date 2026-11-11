@@ -2245,10 +2245,10 @@ function syncHeaderActions() {
    *      §件1 块 + 既有 justify-content:space-between / title flex:1 承担，零手工落位）。
    *   ③ 行为入口单源 = toggleCardWindow(activeTabId)（与环卡 .deck-card-pop / 右键菜单
    *      同一条腿）；图标复用 CARD_POP_SVG（.pop-ic-pop ↔ .pop-ic-merge 换形）。
-   *   ④ 内容物收口判据**不推翻**（delegate-nebflow-3a877cec 批）：非内容物页签
-   *      （无 absPath）= disabled + title/aria-label = 既有键 canvas.cardwinContentOnly
-   *      提示（判据单源 cardCanPop / capsuleMenuActions 同款语义），点击零开窗；
-   *      本件只恢复入口与其位置，不动「哪些内容允许独立窗」的判定。 */
+   *   ④ 内容物收口判定不动（判据单源 cardCanPop）：非内容物页签（无 absPath）⇒
+   *      胶囊右座入口**离场**（hidden，不占标题座位）；「哪些内容允许独立窗」的
+   *      可见边界收在右键菜单禁用项 + 既有键 canvas.cardwinContentOnly 提示
+   *      （capsuleMenuActions 同款语义，点击零开窗）。 */
   let popBtn = /** @type {HTMLButtonElement|null} */ (hdr.querySelector('.canvas-pop-btn'));
   if (!popBtn) {
     popBtn = document.createElement('button');
@@ -2282,9 +2282,10 @@ function syncHeaderActions() {
     const canPop = !!act && cardCanPop(activeTabId);
     const indep = !!act && isCardIndependent(activeTabId);
     const popLabel = indep ? '合并回主窗' : '独立窗口打开';
-    // 无活动页签 ⇒ 离场（此时 --cr-popw 由 syncCenterInset 同步落 0，文字盒两侧同源）
-    popBtn.hidden = !act;
-    popBtn.disabled = !canPop;
+    // 无活动页签或不可独立的内容物外卡片 ⇒ 入口离场，不占标题座位；手机端
+    // 由 split.css 全局隐藏（本端没有独立窗口能力）。独立中卡片仍显示合并入口。
+    popBtn.hidden = !act || (!canPop && !indep);
+    popBtn.disabled = !canPop && !indep;
     popBtn.classList.toggle('is-independent', indep);
     popBtn.title = canPop ? popLabel : t('canvas.cardwinContentOnly');
     popBtn.setAttribute('aria-label', canPop ? popLabel : t('canvas.cardwinContentOnly'));
