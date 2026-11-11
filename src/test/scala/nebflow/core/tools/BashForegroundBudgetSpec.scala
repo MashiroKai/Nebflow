@@ -18,8 +18,8 @@ import scala.concurrent.duration.*
  * **杀**树，主会话每次硬冻结 10 分钟。
  *
  * 裁定语义（本 spec 逐条验收）：
- *  - N-1 取值面：前台预算 = Defaults.ForegroundWaitBudgetMs（默认 120s，
- *    作者裁定「默认建议 60-120s 量级，可调」），三档配置面等价
+ *  - N-1 取值面：前台预算 = Defaults.ForegroundWaitBudgetMs（默认 300s，
+ *    2026-11-10 作者令上调；旧裁定「默认建议 60-120s 量级，可调」），三档配置面等价
  *    （nebflow.json `bashForegroundWaitBudgetMs` / system prop /
  *    BashResilienceConfig 注入）；BashMaxTimeoutMs（60min）退为入参钳 +
  *    remote-exec 面，缺省值不变。
@@ -74,15 +74,15 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
     bashConfig = nebflow.shared.BashResilienceConfig(foregroundWaitBudgetMs = 2000)
   )
 
-  test("N-1 default face: budget default = 120s, prop-compressible, config default carries it; MAX_TIMEOUT unchanged") {
+  test("N-1 default face: budget default = 300s, prop-compressible, config default carries it; MAX_TIMEOUT unchanged") {
     withProps(BudgetProp -> "12345") {
       IO(assert(nebflow.shared.Defaults.ForegroundWaitBudgetMs == 12345L, "prop must be read per call"))
     } *> IO {
-      // 缺省面（prop 已清）：120s（作者裁定「默认建议 60-120s 量级」）。
-      assert(nebflow.shared.Defaults.ForegroundWaitBudgetMs == 120000L, "default must be 120s")
+      // 缺省面（prop 已清）：300s（2026-11-10 作者令上调；旧裁定「默认建议 60-120s 量级」）。
+      assert(nebflow.shared.Defaults.ForegroundWaitBudgetMs == 300000L, "default must be 300s")
       // 配置面缺省 = Defaults 值（GatewayMain 键注入的落点）。
       assert(
-        nebflow.shared.BashResilienceConfig().foregroundWaitBudgetMs == 120000L,
+        nebflow.shared.BashResilienceConfig().foregroundWaitBudgetMs == 300000L,
         "BashResilienceConfig default must carry the budget"
       )
       // MAX_TIMEOUT（入参钳 + remote-exec 面）缺省不变：60min。
@@ -131,7 +131,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
   }
 
   test("N-3 OLD-face control (对照): same silent command with NO budget hits the 600s-class ceiling kill — the incident path") {
-    // 压缩 ceiling（4000ms 判死 / 1s 采样），预算保持缺省（120s 未到）⇒
+    // 压缩 ceiling（4000ms 判死 / 1s 采样），预算保持缺省（300s 未到）⇒
     // 旧面行为 = 前台阶段被 ceiling 杀。这就是当日事故的精确复现形态
     // （预算从未到点、停滞阈值先到、结果 = 杀）。
     withProps(CeilingProp -> "4000", SampleProp -> "1000") {

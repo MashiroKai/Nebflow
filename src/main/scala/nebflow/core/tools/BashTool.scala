@@ -28,7 +28,7 @@ object BashTool extends Tool:
    * main-agent-nonblocking 批（2026-10-21 作者裁定「主 agent 一点不能阻塞」）
    * 语义收缩：本值退为**入参钳 + remote-exec 面**（见 Defaults.BashMaxTimeoutMs
    * 注释）；前台实际等待预算 = ctx.bashConfig.foregroundWaitBudgetMs
-   * （缺省 Defaults.ForegroundWaitBudgetMs = 120s，作者经 nebflow.json
+   * （缺省 Defaults.ForegroundWaitBudgetMs = 300s，作者经 nebflow.json
    * `bashForegroundWaitBudgetMs` 可调）。`def` 保留（spec 压缩面不变）。
    */
   def MAX_TIMEOUT: Long = Defaults.BashMaxTimeoutMs
@@ -39,7 +39,7 @@ object BashTool extends Tool:
 
 Usage:
 - The working directory persists between commands, but shell state does not persist across Stand restarts.
-- You may specify an optional timeout in milliseconds (max 3600000) as a foreground wait budget hint. The effective foreground wait is capped by the configured foreground wait budget (default 120s; author-adjustable via the config file (`bashForegroundWaitBudgetMs`)). When the budget is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the budget exactly like a silent one; the main session is never blocked longer than the budget.
+- You may specify an optional timeout in milliseconds (max 3600000) as a foreground wait budget hint. The effective foreground wait is capped by the configured foreground wait budget (default 300s; author-adjustable via the config file (`bashForegroundWaitBudgetMs`)). When the budget is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the budget exactly like a silent one; the main session is never blocked longer than the budget.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -90,7 +90,7 @@ Git safety:
         "timeout" -> io.circe.Json
           .obj(
             "type" -> "number".asJson,
-            "description" -> "Optional foreground wait hint in milliseconds (max 3600000). Effective wait = min(hint, configured foreground budget, default 120s). When reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
+            "description" -> "Optional foreground wait hint in milliseconds (max 3600000). Effective wait = min(hint, configured foreground budget, default 300s). When reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
           ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -874,7 +874,7 @@ Git safety:
    * main-agent-nonblocking 批（2026-10-21 作者裁定重申「主 agent 一点不能阻塞，
    * 之前的设计是不杀但自动转后台」）：前台等待预算收缩为**短预算**——
    * ctx.bashConfig.foregroundWaitBudgetMs（缺省 Defaults.ForegroundWaitBudgetMs
-   * = 120s，作者经 nebflow.json `bashForegroundWaitBudgetMs` 可调）。显式
+   * = 300s，作者经 nebflow.json `bashForegroundWaitBudgetMs` 可调）。显式
    * `timeout` 入参收窄到该预算（min）——agent 不能越过作者的零阻塞裁定。预算
    * 判据 = **时间**（exec fiber 与预算 sleep 的 racePair），与输出活性无关：
    * 有输出的长命令同样在到点转后台，不因「还在吐进度」占着主会话。到点 →
@@ -884,14 +884,14 @@ Git safety:
    * 本次裁定之前的旧事故面（为何收缩）：旧缺省预算 = BashMaxTimeoutMs（60min）
    * ——前台克隆 1GB+ 大仓无输出运行时预算从未到点，600s 无输出停滞阈值
    * （shell.scala foregroundNoProgressWatch）先触发**杀**树，主会话每次硬冻结
-   * 10 分钟。收缩后默认 120s < 600s：停滞阈值在缺省面结构性不可达（自然消亡），
+   * 10 分钟。收缩后默认 300s < 600s：停滞阈值在缺省面结构性不可达（自然消亡），
    * 仅作者把预算调大于 600s 时作为前台真挂死兜底保留；转后台后的任务豁免
    * （JobHealth.adoptedAsBackground → ceiling 退役）。
    *
    * 卡死兜底保持（收缩后的剩余管辖面）：
    * - 前台阶段 no-progress ceiling（shell.scala）：仅当配置预算 > 600s 时可达。
    * - TaskStuckWatcher（turn 级换轴）：判据 = agent 侧事件停滞 ∪ 单个工具调用
-   *   持续超 10min（工具相位）——预算 120s ⇒ 工具相位轴对 Bash 结构性不可达。
+   *   持续超 10min（工具相位）——预算 300s ⇒ 工具相位轴对 Bash 结构性不可达。
    *
    * 活动桥接（#319）保持：有进展（输出/CPU≥阈值/sleep-like）刷新
    * **processActivityMs**（进程侧字段）——该戳与 agent 侧活动分家。
@@ -916,7 +916,7 @@ Git safety:
     mergerRepo: Option[String] = None
   ): IO[Either[ToolError, String]] =
     // Policy "no hard cap; auto-background at the foreground wait budget
-    // (main-agent-nonblocking: default 120s, author-adjustable); backgrounded
+    // (main-agent-nonblocking: default 300s, author-adjustable); backgrounded
     // commands have no limit"): an explicit `timeout` is a budget HINT clamped
     // to the configured budget (min) — the author's zero-blocking ruling wins
     // over any agent-requested long foreground wait. When the budget elapses

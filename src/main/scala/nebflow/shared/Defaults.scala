@@ -355,7 +355,7 @@ object Defaults:
    *
    * main-agent-nonblocking 批（2026-10-21 作者裁定重申「主 agent 一点不能阻塞」）
    * 语义收缩：本值不再是**前台预算的取值点**——前台预算迁往
-   * [[ForegroundWaitBudgetMs]]（默认 120s，短预算量级，作者裁定「默认建议 60-120s」）。
+   * [[ForegroundWaitBudgetMs]]（默认 300s，短预算量级）。
    * 本值剩两个消费面：
    *   1. BashTool 解析显式 `timeout` 入参时的上限钳（schema 契约 "max 3600000"
    *      保持不变——钳的是入参字面，前台实际等待再经 [[ForegroundWaitBudgetMs]]
@@ -372,13 +372,14 @@ object Defaults:
     sys.props.getOrElse("nebflow.bash.maxTimeoutMs", "3600000").toLong
 
   /**
-   * Bash 前台等待预算（ms，默认 120000 = 120s）——**主 agent 前台零阻塞**的取值点。
+   * Bash 前台等待预算（ms，默认 300000 = 300s）——**主 agent 前台零阻塞**的取值点。
    *
    * main-agent-nonblocking 批（2026-10-21 作者裁定重申）：作者当日两次实撞——前台
    * 克隆 1GB+ 大仓无输出运行，60min 前台预算（旧 BashMaxTimeoutMs 缺省）从未到点，
    * 600s 无输出停滞阈值（ForegroundNoProgressTimeoutMs）先触发把进程**杀**掉，
    * 主会话每次硬冻结 10 分钟。裁定：前台命令运行超过**短预算**（作者可调，建议
    * 60-120s 量级）即自动转后台（拿后台 job id 回执继续跑，完成照旧通知；不杀进程）。
+   * 2026-11-10 作者令：缺省值上调 120s → 300s（键名与转后台不杀语义不变）。
    *
    * 语义要点：
    *   - 判据 = **时间**，与输出活性无关——有输出的长命令同样在预算到点转后台，
@@ -386,7 +387,7 @@ object Defaults:
    *     天然只看时间）；
    *   - 显式 `timeout` 入参**收窄**到本值（min），不能越过作者的零阻塞裁定；
    *   - 预算到点 → adoptAsBackgroundJob（回执含 job id + 查询方式），进程不杀；
-   *   - 语义收缩的连带：默认 120s < ForegroundNoProgressTimeoutMs（600s）⇒ 前台
+   *   - 语义收缩的连带：默认 300s < ForegroundNoProgressTimeoutMs（600s）⇒ 前台
    *     no-progress ceiling 在缺省面**结构性不可达**（自然消亡）；仅当作者把预算
    *     调大于 600s 时，ceiling 作为前台真挂死兜底保留。转后台后的任务豁免
    *     ceiling（JobHealth.adoptedAsBackground）。
@@ -399,7 +400,7 @@ object Defaults:
    *   3. BashResilienceConfig.foregroundWaitBudgetMs 缺省 = 本值（测试注入同款）。
    */
   def ForegroundWaitBudgetMs: Long =
-    sys.props.getOrElse("nebflow.bash.foregroundWaitBudgetMs", "120000").toLong
+    sys.props.getOrElse("nebflow.bash.foregroundWaitBudgetMs", "300000").toLong
 
   /** Curl tool max timeout in seconds. */
   val CurlMaxTimeoutSec: Int = 120
@@ -2186,7 +2187,7 @@ end Defaults
  * 只服务显式 run_in_background 后台任务。nebflow.json 顶层键可覆盖。
  *
  * main-agent-nonblocking 批（2026-10-21 作者裁定）新增 `foregroundWaitBudgetMs`：
- * 前台等待预算（默认 120s，作者可调）——前台命令超预算即自动转后台（不杀），
+ * 前台等待预算（默认 300s，作者可调）——前台命令超预算即自动转后台（不杀），
  * 主 agent 前台零阻塞的取值点。实例级一份（SharedResources.bashResilience →
  * 全部会话共用：主 agent / 子 agent / 节点同纪律，无 per-agent 差异化面）。
  */
@@ -2194,6 +2195,6 @@ case class BashResilienceConfig(
   hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
   stuckWindowSec: Int = Defaults.BashStuckWindowSec,
   healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
-  /** 前台等待预算 ms（缺省 = Defaults.ForegroundWaitBudgetMs = 120s）。 */
+  /** 前台等待预算 ms（缺省 = Defaults.ForegroundWaitBudgetMs = 300s）。 */
   foregroundWaitBudgetMs: Long = Defaults.ForegroundWaitBudgetMs
 )

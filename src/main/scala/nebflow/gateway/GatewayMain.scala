@@ -827,7 +827,7 @@ object GatewayMain extends IOApp:
                                       healthCheckIntervalSec = config.bashHealthCheckIntervalSec
                                         .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec),
                                       // main-agent-nonblocking（2026-10-21 作者裁定）：前台等待预算
-                                      // （默认 120s，作者可调）——超预算自动转后台，不杀。
+                                      // （默认 300s，作者可调）——超预算自动转后台，不杀。
                                       foregroundWaitBudgetMs = config.bashForegroundWaitBudgetMs
                                         .getOrElse(nebflow.shared.Defaults.ForegroundWaitBudgetMs)
                                     ),
