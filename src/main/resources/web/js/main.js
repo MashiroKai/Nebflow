@@ -3658,6 +3658,9 @@ function renderBgDropdown() {
       ? '<span class="bg-task-mode bg-mode-' + task.ownerMode + '" title="' +
         escapeHtml(t('bg.modeTitle', { mode: modeWord })) + '">' + escapeHtml(modeWord) + '</span>'
       : '';
+    const persistentPart = task.persistent === true
+      ? '<span class="bg-task-mode bg-mode-service" title="' + escapeHtml(t('bg.persistent')) + '">' + escapeHtml(t('bg.persistent')) + '</span>'
+      : '';
     // 健康色点（P0 面板投影批 · 设计稿 §3.4）：快照帧行内 health 字段派生——
     // 绿=healthy / 黄=suspect / 红=escalated；bgHealthNorm 双端容错（脏值回落
     // healthy、空值（旧后端）零渲染不膨胀行高）。与智能体行 bgWaiting[].health
@@ -3719,7 +3722,7 @@ function renderBgDropdown() {
     //   · L2 `.bg-task-meta`（badges）：设备 / 来源链 / 执行模式 —— 独立成行、可换行。
     // 既有锚（.bg-task-name-line / .bg-task-meta / .bg-task-lines / .bg-task-state）
     // 全部保留：回归套件按类取数，本批只改**归行**，不改读点。
-    const badgeParts = devicePart + originPart + modePart;
+    const badgeParts = devicePart + originPart + modePart + persistentPart;
     return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + extraCls + '" role="listitem" tabindex="0" data-task-id="' + escapeHtml(task.taskId) + '">' +
       '<div class="bg-task-info">' +
         '<div class="bg-task-line bg-task-name-line bg-task-row-line1">' +

@@ -91,7 +91,7 @@ Git safety:
         "timeout" -> io.circe.Json
           .obj(
             "type" -> "number".asJson,
-            "description" -> "Optional foreground wait in milliseconds (max 3600000). When provided it is the effective wait as-is — it may exceed the configured default budget; without it the configured foreground wait budget (default 300s) applies. When the wait is reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
+            "description" -> "For a command: optional foreground wait in milliseconds (max 3600000); when reached the command is auto-backgrounded, never killed. For background_job_id: maximum wait for completion; if still running, return current status without cancelling. May be supplied with background_job_id unless cancelling.".asJson
           ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -107,11 +107,11 @@ Git safety:
         ),
         "background_job_id" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Job ID to query or cancel. When provided, command is not required.".asJson
+          "description" -> "Job ID to wait for or cancel. When provided, command is not required; add timeout in milliseconds for a bounded wait that returns current status if still running.".asJson
         ),
         "cancel_background_job" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "If true with background_job_id, cancel the background job.".asJson
+          "description" -> "If true with background_job_id, cancel the background job (mutually exclusive with timeout).".asJson
         )
       ),
       "required" -> io.circe.Json.arr() // command is conditionally required: required when background_job_id is absent
@@ -587,7 +587,15 @@ Git safety:
     // If background_job_id is provided, enter query/cancel mode
     // (askuser-secret 批：执行面前先经 otpFace 拒绝闸——引用已消费/过期的一次性
     // 验证码的命令在此显式失败，不执行、不部分消费。)
-    val runPlan = bgJobId match
+    val invalidMode =
+      (bgJobId.isDefined && command.nonEmpty) ||
+        (bgJobId.isDefined && cancelBg && explicitTimeoutMs.isDefined) ||
+        (bgJobId.isEmpty && cancelBg) ||
+        (bgJobId.isDefined && (background || persistent)) ||
+        (bgJobId.isEmpty && persistent && !background)
+    val runPlan =
+      if invalidMode then IO.pure(Left(ToolError("Bash modes are exclusive: provide command, or background_job_id with optional timeout to wait, or background_job_id with cancel_background_job=true to cancel.")))
+      else bgJobId match
       case Some(jobId) =>
         // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
         // sessionId, so a query that created the session first would otherwise
@@ -618,7 +626,9 @@ Git safety:
                 }
               }
             else
-              shell.getBackgroundResult(jobId).flatMap {
+              val waitMs = explicitTimeoutMs.getOrElse(math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs))
+              shell.waitBackgroundResults(Seq(jobId), waitMs).void *>
+                shell.getBackgroundResult(jobId).flatMap {
                 case None =>
                   // Job still running — fetch health info for the agent
                   shell.getBackgroundJobHealth(jobId).map {

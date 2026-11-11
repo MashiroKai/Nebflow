@@ -683,6 +683,7 @@ object BgTaskRegistry:
             // 任务模式标注批（2026-10-30）：delegate 会话生效执行形态随快照下发
             // （kernel/dispatcher；空 = 无徽标——旧行/非 delegate 恒空，零渲染）。
             "ownerMode" -> t.ownerMode.asJson,
+            "persistent" -> t.persistent.asJson,
             // 后台任务归属批（2026-10-31）：行归属短名随快照下发（delegate 批次
             // 短名；空 = 非 delegate/无名 ⇒ 前端回退既有来源显示，零渲染）。
             "ownerName" -> t.ownerName.asJson,
