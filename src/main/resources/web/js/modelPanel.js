@@ -569,73 +569,64 @@ function buildFollowerBlock(container, role, commit) {
  * 追加（两面各自读过，失败即隐藏自己那组）。
  * @param {HTMLElement} container #model-chain-section-body
  */
-let settingsActiveRole = 'Nebula';
-
 function renderSettingsRoleSelector(container) {
-  const tabs = document.createElement('div');
-  tabs.className = 'mp-settings-role-tabs';
-  tabs.setAttribute('role', 'tablist');
-  tabs.setAttribute('aria-label', t('settings.modelRoleTabs'));
   for (const role of ROLES) {
-    const tab = document.createElement('button');
-    tab.type = 'button';
-    tab.className = 'cfg-btn cfg-btn-sm mp-settings-role-tab';
-    tab.textContent = roleLabel(role);
-    tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-selected', role === settingsActiveRole ? 'true' : 'false');
-    tab.addEventListener('click', () => {
-      settingsActiveRole = role;
-      renderChainSectionBody(container);
-    });
-    tabs.appendChild(tab);
-  }
-  container.appendChild(tabs);
+    const st = roleState.get(role);
+    const row = document.createElement('div');
+    row.className = 'mp-settings-role-panel';
+    row.dataset.role = role;
+    const label = document.createElement('label');
+    label.className = 'mp-settings-role-label';
+    label.htmlFor = `model-role-select-${role}`;
+    label.textContent = roleLabel(role);
+    row.appendChild(label);
 
-  const role = settingsActiveRole;
-  const st = roleState.get(role);
-  const panel = document.createElement('div');
-  panel.className = 'mp-settings-role-panel';
-  panel.setAttribute('role', 'tabpanel');
-  if (!st?.data) {
-    panel.textContent = t('model.loadFailed');
-  } else {
-    const effective = chainRefs(st.data.effectiveChain)[0] || '';
-    const status = document.createElement('div');
-    status.className = 'mp-note';
-    status.textContent = role === 'Nebula'
-      ? t('model.mainChain', rootNameParams())
-      : st.data.mode === 'explicit' ? t('model.independent') : t('model.followsNebula', rootNameParams());
-    panel.appendChild(status);
-    const select = document.createElement('select');
-    select.className = 'mp-add-select mp-settings-role-model';
-    select.setAttribute('aria-label', `${roleLabel(role)} — ${t('model.addModel')}`);
-    const refs = getAllModelRefs();
-    if (role !== 'Nebula') {
-      const inherit = document.createElement('option');
-      inherit.value = '';
-      inherit.textContent = t('model.followsNebula', rootNameParams());
-      select.appendChild(inherit);
+    if (!st?.data) {
+      const status = document.createElement('div');
+      status.className = 'mp-note';
+      status.setAttribute('role', 'status');
+      status.textContent = t('model.loadFailed');
+      row.appendChild(status);
+    } else {
+      const effective = chainRefs(st.data.effectiveChain)[0] || '';
+      const status = document.createElement('div');
+      status.className = 'mp-note';
+      status.textContent = role === 'Nebula'
+        ? t('model.mainChain', rootNameParams())
+        : st.data.mode === 'explicit' ? t('model.independent') : t('model.followsNebula', rootNameParams());
+      row.appendChild(status);
+      const select = document.createElement('select');
+      select.id = `model-role-select-${role}`;
+      select.className = 'mp-add-select mp-settings-role-model';
+      select.setAttribute('aria-label', `${roleLabel(role)} — ${t('model.addModel')}`);
+      const refs = getAllModelRefs();
+      if (role !== 'Nebula') {
+        const inherit = document.createElement('option');
+        inherit.value = '';
+        inherit.textContent = t('model.followsNebula', rootNameParams());
+        select.appendChild(inherit);
+      }
+      for (const ref of refs) {
+        const option = document.createElement('option');
+        option.value = ref;
+        option.textContent = ref;
+        if (ref === effective && (role === 'Nebula' || st.data.mode === 'explicit')) option.selected = true;
+        select.appendChild(option);
+      }
+      if (!effective && role === 'Nebula') {
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = t('model.seedNote');
+        placeholder.selected = true;
+        select.insertBefore(placeholder, select.firstChild);
+      }
+      select.addEventListener('change', () => {
+        void putChain(role, select.value ? [select.value] : null);
+      });
+      row.appendChild(select);
     }
-    for (const ref of refs) {
-      const option = document.createElement('option');
-      option.value = ref;
-      option.textContent = ref;
-      if (ref === effective && (role === 'Nebula' || st.data.mode === 'explicit')) option.selected = true;
-      select.appendChild(option);
-    }
-    if (!effective && role === 'Nebula') {
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = t('model.seedNote');
-      placeholder.selected = true;
-      select.insertBefore(placeholder, select.firstChild);
-    }
-    select.addEventListener('change', () => {
-      void putChain(role, select.value ? [select.value] : null);
-    });
-    panel.appendChild(select);
+    container.appendChild(row);
   }
-  container.appendChild(panel);
 }
 
 function renderChainSectionBody(container) {
