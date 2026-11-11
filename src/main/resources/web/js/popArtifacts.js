@@ -58,6 +58,12 @@ import { EVENTS } from './events.js';
 import state from './state.js';
 import { escapeHtml, smartScroll, localizeToolLabel, localizeToolSummary } from './utils.js';
 import { ticketUrl, reMint } from './nfTicket.js';
+// 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，手机端
+// 的媒体统一都是直接打开」）：媒体点击分流单点（手机系统直开 / 桌面 Canvas / 灯箱兜底）。
+import { routeMediaClick } from './mediaOpenRoute.js';
+// 手机层兜底面返回键（弹窗退场批同款注入器）：openMediaLightbox 成为手机层
+// 「直开链全尽空」的罕见兜底面后，同样不吃「桌面弹层原样弹出」的例外。
+import { mobileSheetBack } from './mobile/popSheet.js';
 // imgdoor 二次加载批（2026-10-24）：图片脸字节进 nfFileCache 账本——预览取数即入账，
 // Canvas 打开账本命中零取数（预览 + 打开 = 恰一次网络抓取）。账本模块只 import
 // state/branding，本边不成环。nfViewerSource = 取字节单点（手机端长按退役批的
@@ -569,6 +575,10 @@ export function openMediaLightbox(item) {
   };
   window.addEventListener('keydown', _lightboxKey, true);
   document.body.appendChild(overlay);
+  // 手机层兜底面（媒体点击统一批 P16）：直开链尽空才会落到本层——补左上返回
+  // （弹窗退场批 2026-10-31②「手机端不再有任何形式的弹窗界面」同纪律；桌面零变化，
+  // 注入器对非手机层直接不注）。
+  mobileSheetBack(overlay, closeMediaLightbox);
   _lightboxEl = overlay;
   // Same byte legs as the inline faces: inline src wins, then the item's own
   // resolver (uploads route for user attachments), then the ticket leg.
@@ -600,11 +610,14 @@ function canvasCornerButton(item) {
  *  item without an absolute path (a live user attachment whose bytes ride
  *  inline — Canvas cannot open a pathless file) keeps the #491 主题三 lightbox
  *  zoom: same face that case had before this ruling, no bogus open dispatch.
+ *  媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，
+ *  手机端的媒体统一都是直接打开」）：分流上收 mediaOpenRoute.routeMediaClick
+ *  单点——手机层一切媒体点击 = 系统直开（桌面行为逐字保留；pathless 桌面腿
+ *  仍灯箱，理由见 mediaOpenRoute 头注）。
  *  （导出：附件批 2026-10-31 —— msgQuote 引用块缩略点击同款单点，动态 import
  *    复用；静态 import 会成环。） */
 export function openMediaItemClick(item) {
-  if (item && item.path) openPopArtifact(item.path, item.name);
-  else openMediaLightbox(item);
+  routeMediaClick(item, openPopArtifact, () => openMediaLightbox(item));
 }
 
 /* ── 触控板横滑翻页（2026-10-22 作者令「除了长按左右拖动来切换，mac的双指

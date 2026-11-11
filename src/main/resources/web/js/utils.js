@@ -1795,9 +1795,19 @@ function toolImgRefEl(paths, alts) {
   ref.dataset.imgCount = String(paths.length);
   ref.addEventListener('click', (e) => {
     e.stopPropagation(); // 不触发卡片折叠状态机（整卡可点）
-    // 动态 import：utils 是叶子模块，lightbox 依赖链（nfFileCache/popSheet）
-    // 都回指 utils——静态 import 会成环。
-    import('./lightbox.js').then((lb) => lb.openLightbox(paths[0], alts[0] || ''));
+    // 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，
+    // 手机端的媒体统一都是直接打开」）：同一分流单点——手机 = 系统直开（铸票/
+    // objectURL 链见 mediaOpenRoute）；桌面 = 本机路径直接 Canvas 开件（md 源里
+    // 的 /abs/path 形态，readFile 原生可开）；data:/远程 src 桌面维持灯箱。
+    // 动态 import：utils 是叶子模块（mediaOpenRoute→popSheet→utils 静态会成环；
+    // lightbox/popArtifacts 同理由，与上方灯箱腿同款先例）。
+    const raw = paths[0] || '';
+    const localPath = /^\/(?!\/)/.test(raw) ? raw : '';
+    import('./mediaOpenRoute.js').then((mr) => mr.routeMediaClick(
+      { kind: 'image', name: alts[0] || raw.split('/').pop(), src: raw, path: localPath },
+      (p, n) => import('./popArtifacts.js').then((m) => m.openPopArtifact(p, n)).catch(() => {}),
+      () => import('./lightbox.js').then((lb) => lb.openLightbox(raw, alts[0] || '')).catch(() => {})
+    ));
   });
   return ref;
 }

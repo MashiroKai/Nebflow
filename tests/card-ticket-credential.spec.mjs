@@ -107,6 +107,11 @@ async function bootPage(browser, opts = {}) {
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+      // P16：路由后的 Canvas 打开走 pop.readFile（空 content + absPath）⇒ 应答
+      // fileContent（image 腿）让页签完成出图（与 card-image-zoom mock 同形）。
+      if (m.type === 'pop.readFile') {
+        ws.send(JSON.stringify({ type: 'fileContent', path: m.path, absPath: m.path, fileName: String(m.path || '').split('/').pop(), itemType: 'image', content: '', size: 3 }));
+      }
     });
     ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
@@ -317,7 +322,7 @@ const browser = await chromium.launch();
   await ctx.close();
 }
 
-// ── C4 lightbox 父文档不落票 + 取新票（自纠⑧） ─────────────────────────
+// ── C4 父文档不落票 + 取新票（自纠⑧；P16 起开件面 = Canvas 页签） ─────────
 {
   const { ctx, page, mint, pageErrors } = await bootPage(browser);
   await page.evaluate(() => {
@@ -343,19 +348,34 @@ const browser = await chromium.launch();
     });
   }
   ok('C4 canvas iframe image clicked', clicked === true);
-  let lightboxSrc = '';
-  for (let i = 0; i < 40; i++) {
+  // P16（2026-11-11 作者令「电脑端的媒体统一都是canvas打开」）：带 path 帧图点击
+  // 改派 workspace-open-item → Canvas 图片页签。凭据性质**不放松**且更强：跨界
+  // 的只有 absPath（零 URL 过桥），页签内查看器自铸新票取字节。
+  let paneSrc = '';
+  for (let i = 0; i < 40 && !paneSrc; i++) {
     await sleep(200);
-    lightboxSrc = await page.evaluate(() => document.querySelector('.nf-lightbox-img')?.getAttribute('src') || '');
-    if (lightboxSrc) break;
+    paneSrc = await page.evaluate(() => {
+      const pane = [...document.querySelectorAll('.canvas-tab-pane')].pop();
+      const img = pane && pane.querySelector('.canvas-image-viewport img, img.nf-canvas-image');
+      return img ? (img.getAttribute('src') || '') : '';
+    });
   }
-  ok('C4 lightbox opened with an image', !!lightboxSrc, lightboxSrc.slice(0, 80));
-  ok('C4 parent img.src carries NO credential (blob: preview)', !CRED_RE.test(lightboxSrc), lightboxSrc.slice(0, 120));
-  ok('C4 lightbox fetched through its OWN mint round', mint.count() >= 2, String(mint.count()));
+  const tabCount = await page.evaluate(() => document.querySelectorAll('.canvas-tab').length);
+  ok('C4 routed canvas tab opened for the frame image', tabCount >= 2, String(tabCount));
+  ok('C4 routed viewer shows the image (own mint leg)', !!paneSrc, paneSrc.slice(0, 80));
+  ok('C4 viewer src carries NO credential (fresh mint, never the frame URL)',
+    !CRED_RE.test(paneSrc), paneSrc.slice(0, 120));
+  // 自纠⑧ 的性质 = 父文档绝不复用帧的陈旧票 URL（载荷过桥只有 absPath，上方
+  // 两条已钉）；查看器取字节经同一 nfTicket 缓存（同 path TTL 内复用 = 应用对
+  // 同件重复打开的**正常**语义，非 C2-20 所禁的「跨域贴票」）⇒ 此处钉「该 path
+  // 的铸票轮次在场」而非「第二轮新铸」。
+  ok('C4 the routed leg served by a mint round for its path', mint.count() >= 1, String(mint.count()));
   const rounds = mint.calls.map((paths) => paths.join(','));
-  ok('C4 the lightbox round asked for the lightbox path',
+  ok('C4 a mint round asked for the image path',
     mint.calls.some((paths) => paths.includes('/tmp/nfc2/k.png')),
     JSON.stringify(rounds));
+  const lbOn = await page.evaluate(() => !!document.querySelector('.nf-lightbox.on'));
+  ok('C4 lightbox not the open face for a path frame (canvas matrix)', !lbOn, String(lbOn));
   ok('C4 no pageerror', pageErrors.length === 0, pageErrors.join(' | '));
   await ctx.close();
 }

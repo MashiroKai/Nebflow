@@ -115,6 +115,16 @@ async function bootPage(browser, opts = {}) {
       const keys = Object.keys(d).filter((k) => k.startsWith('_nf'));
       if (keys.length) window.__nfMsgs.push(keys.join('+'));
     });
+    // 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开」）：
+    // 带 path 的帧图片点击改派 workspace-open-item（Canvas 打开）——被动记录派发
+    // 载荷供断言（只观察，不拦截）。
+    window.__nfOpenItems = [];
+    window.addEventListener('workspace-open-item', (e) => {
+      const d = e && e.detail ? e.detail : null;
+      window.__nfOpenItems.push(d ? {
+        id: d.id, absPath: d.absPath, title: d.title, itemType: d.itemType, pinned: d.pinned,
+      } : null);
+    });
   });
   const page = await ctx.newPage();
   const pageErrors = [];
@@ -135,6 +145,11 @@ async function bootPage(browser, opts = {}) {
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+      // P16：路由后的 Canvas 打开走 pop.readFile（空 content + absPath）⇒ 应答
+      // fileContent（image 腿）让页签完成出图（与 mobile-pop-canvas-open mock 同形）。
+      if (m.type === 'pop.readFile') {
+        ws.send(JSON.stringify({ type: 'fileContent', path: m.path, absPath: m.path, fileName: String(m.path || '').split('/').pop(), itemType: 'image', content: '', size: PNG.length }));
+      }
     });
     ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
@@ -257,11 +272,24 @@ const browser = await chromium.launch();
 
   const clicked = await clickFrameImg(page, 0);
   ok('Z1 frame image clicked', clicked === true);
+  // P16（2026-11-11 作者令「电脑端的媒体统一都是canvas打开」）：带 path 的帧图片
+  // 点击改派 workspace-open-item（Canvas 打开，居中 + 关闭返回）；灯箱不再是
+  // path 帧的一级面。三条正向判据：派发载荷（path 原样穿越桥）/ Canvas 页签 /
+  // 灯箱不占位。凭据纪律不放松：Canvas 图片查看器自铸新票（下方 mint 断言）。
   const st = await waitLightbox(page);
-  ok('Z1 lightbox opened on the card image click', st.on, JSON.stringify(st));
-  ok('Z1 lightbox shows a blob: preview (no credential in parent DOM)',
-    st.src.startsWith('blob:'), st.src.slice(0, 80));
-  ok('Z1 alt text forwarded', st.alt === 'photo.png', st.alt);
+  ok('Z1 lightbox NOT opened on a path frame click (canvas matrix)', !st.on, JSON.stringify(st));
+  await sleep(400);
+  const opened = await page.evaluate(() => (window.__nfOpenItems || []).slice());
+  ok('Z1 workspace-open-item dispatched with the frame path intact',
+    opened.length >= 1 && opened[opened.length - 1].absPath === '/tmp/cz/photo.png',
+    JSON.stringify(opened));
+  ok('Z1 canvas tab opened for the frame image', await page.evaluate(() =>
+    document.body.classList.contains('canvas-open')
+      && !!document.getElementById('canvas-panel')
+      && document.querySelectorAll('#canvas-tab-bar .canvas-tab').length >= 1
+  ), '');
+  ok('Z1 alt text forwarded as the tab title source', (opened[opened.length - 1] || {}).title === 'photo.png',
+    JSON.stringify((opened[opened.length - 1] || {})));
   // The path the viewer resolved == the image src's path (this batch's core
   // criterion): the in-frame img's path and the path asked for in the re-mint
   // round must be byte-identical — after re-mint the same file comes back.
@@ -274,17 +302,17 @@ const browser = await chromium.launch();
     return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
   });
   // Three criteria in one: the in-frame img's path is right (guards against
-  // fixture drift) ∧ the viewer is OPEN on that path (st.on carries the
-  // discriminating power — a "card rendered, a re-mint round happened" reading
-  // also exists on the pre-change tree, so asserting on mint alone would go
-  // falsely green) ∧ that path is exactly the one the viewer's re-mint round
-  // asked for.
-  ok('Z1 viewer path == the image src path (same file after re-mint)',
-    st.on && framePath === '/tmp/cz/photo.png' && mint.calls.some((p) => p.includes(framePath)),
+  // fixture drift) ∧ the routed Canvas viewer asked its OWN mint round for that
+  // exact path (the P16 matrix's credential leg: the parent never trusts the
+  // frame URL — the Canvas tab re-mints fresh) ∧ the open face is Canvas (a
+  // "mint round happened" reading also exists on the pre-change tree via the
+  // old lightbox, so asserting on mint alone would go falsely green).
+  ok('Z1 routed canvas viewer mints the image src path (same file, fresh ticket)',
+    !st.on && framePath === '/tmp/cz/photo.png' && mint.calls.some((p) => p.includes(framePath)),
     JSON.stringify({ on: st.on, framePath, rounds }));
   ok('Z1 no pageerror', pageErrors.length === 0, pageErrors.join(' | '));
   if (SHOTS_DIR) {
-    await page.screenshot({ path: join(SHOTS_DIR, 'z1-after-click-lightbox.png') });
+    await page.screenshot({ path: join(SHOTS_DIR, 'z1-after-click-canvas.png') });
   }
   await ctx.close();
 }
@@ -340,7 +368,10 @@ const browser = await chromium.launch();
   await srcdocOf(page);
   await clickFrameImg(page, 0);
   st = await waitLightbox(page);
-  ok('Z3 (c) CONTROL: a real card image still opens (channel not disabled)', st.on, JSON.stringify(st));
+  // P16 矩阵：真卡图片（带 path）→ Canvas 面（openItems 派发 + 页签），灯箱不占位。
+  const ctrlOpened = await page.evaluate(() => (window.__nfOpenItems || []).slice());
+  ok('Z3 (c) CONTROL: a real card image still opens (canvas face)', !st.on && ctrlOpened.length >= 1,
+    JSON.stringify({ on: st.on, opened: ctrlOpened.length }));
   ok('Z3 no pageerror', pageErrors.length === 0, pageErrors.join(' | '));
   await ctx.close();
 }
@@ -370,9 +401,15 @@ const browser = await chromium.launch();
     });
   }
   ok('Z4 canvas iframe image clicked', clicked === true);
+  // P16 矩阵：Canvas html 文档内图片（带 path）点击 → 派发 workspace-open-item
+  // （同文档内页签切换，关闭返回）；灯箱不再是一级面。凭据面由 Canvas 图片查看器
+  // 自铸票腿承接（本批申报差异；链路安全性不变——发送方白名单与 path 门未动）。
   const st = await waitLightbox(page);
-  ok('Z4 Canvas leg NOT regressed (lightbox still opens)', st.on, JSON.stringify(st));
-  ok('Z4 canvas preview is a blob: (re-mint leg intact)', st.src.startsWith('blob:'), st.src.slice(0, 60));
+  ok('Z4 Canvas leg routed to canvas open (not lightbox)', !st.on, JSON.stringify(st));
+  const opened = await page.evaluate(() => (window.__nfOpenItems || []).slice());
+  ok('Z4 canvas frame image dispatched with its rendered path',
+    opened.length >= 1 && opened[opened.length - 1].absPath === '/tmp/cz/canvas.png',
+    JSON.stringify(opened));
   // Z4b: the frame itself forges a path it does NOT render ⇒ the path gate must
   // stop it. This goes red on the pre-change tree (there was no path gate), so
   // it doubles as a discriminating red anchor proving the gate exists — a guard
@@ -432,9 +469,14 @@ const browser = await chromium.launch();
       { _nfImagePreview: { src: '/api/nf-file?path=%2Ftmp%2Fcz%2Fshown.png', path: '/tmp/cz/shown.png', alt: 'shown' } }, '*');
   });
   st = await waitLightbox(page);
-  ok('Z5 the path that frame DOES render is accepted', st.on, JSON.stringify(st));
-  ok('Z5 accepted payload still goes through the re-mint leg (blob preview)',
-    st.src.startsWith('blob:'), st.src.slice(0, 60));
+  // P16 矩阵：门放行的载荷（带 path）→ Canvas 打开面（workspace-open-item 派发 +
+  // 页签在场）；灯箱不再是带 path 帧的一级面（负腿 refused 断言保持原语义）。
+  const z5Opened = await page.evaluate(() => (window.__nfOpenItems || []).slice());
+  ok('Z5 the path that frame DOES render is accepted (routed to canvas open)',
+    !st.on && z5Opened.some((d) => d && d.absPath === '/tmp/cz/shown.png'),
+    JSON.stringify({ on: st.on, opened: z5Opened }));
+  ok('Z5 accepted payload carries no credential across the bridge',
+    !/[?&](token|ticket)=/.test(JSON.stringify(z5Opened)), JSON.stringify(z5Opened));
   ok('Z5 no pageerror', pageErrors.length === 0, pageErrors.join(' | '));
   await ctx.close();
 }

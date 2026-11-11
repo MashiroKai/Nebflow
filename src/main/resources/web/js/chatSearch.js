@@ -55,6 +55,10 @@ import { escapeHtml, statusIcon } from './utils.js';
 import { popArtifactFromInput, openPopArtifact } from './chat.js';
 import { indexMedia, entryMatchesTab, entryMatchesKeyword, groupEntriesByTime } from './popMediaIndex.js';
 import { openMediaLightbox } from './popArtifacts.js';
+// 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，手机端
+// 的媒体统一都是直接打开」）：媒体命中项点击的分流单点——手机 = 系统直开；桌面带
+// path = Canvas 页签；兜底 = openMediaLightbox。
+import { routeMediaClick } from './mediaOpenRoute.js';
 import { ticketUrl } from './nfTicket.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：媒体网格的 agent 引用**图片**缩略字节
 // 改经 nfFileCache 账本单点（nfViewerSource）——命中零抓取 / 未命中取数即入账。
@@ -2768,20 +2772,30 @@ function mediaEntryCard(e) {
  *  Act-and-exit mirrors the file branch below (v2 ruling). A pathless entry
  *  (a live user attachment whose bytes ride inline — Canvas cannot open a
  *  pathless file) keeps the #491 主题三 lightbox zoom, the in-chat split.
+ *  媒体点击统一批（P16 · 2026-11-11 作者令）：媒体格的分流上收 routeMediaClick
+ *  单点——手机层 = 系统直开（与聊天流媒体同一矩阵）；桌面行为逐字保留。
  *  File → the workspace-open-item single point, link → a new tab. */
 function activateMediaEntry(e) {
   if (e.type === 'image' || e.type === 'video') {
-    if (e.ref) {
-      closeSearchModal();
-      openPopArtifact(e.ref, e.name);
-      return;
-    }
-    openMediaLightbox({
-      kind: e.type, name: e.name, src: e.thumbRef || '', path: e.ref,
-      resolver: e.source === 'user'
-        ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
-        : undefined,
-    });
+    closeSearchModal();
+    routeMediaClick(
+      {
+        kind: e.type,
+        name: e.name,
+        src: e.thumbRef || '',
+        path: e.ref || '',
+        resolver: e.source === 'user'
+          ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
+          : undefined,
+      },
+      openPopArtifact,
+      () => openMediaLightbox({
+        kind: e.type, name: e.name, src: e.thumbRef || '', path: e.ref,
+        resolver: e.source === 'user'
+          ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
+          : undefined,
+      })
+    );
   } else if (e.type === 'file') {
     // Act-and-exit, mirroring the artifact-row routing (v2 ruling): the modal
     // closes and the file opens in Canvas through the single point.

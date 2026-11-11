@@ -197,9 +197,12 @@ async function boot(browser) {
       try {
         const buf = readFileSync(abs);
         const ext = (abs.split('.').pop() || '').toLowerCase();
+        // P16：路由后的 Canvas 图片页签走 image 腿（content 空，字节由查看器自取）。
+        const IMG_EXT = { png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image' };
+        const itemType = IMG_EXT[ext] || EXT_ITEM[ext] || 'code';
         ws.send(JSON.stringify({
-          type: 'fileContent', path: rawPath, absPath: abs, itemType: EXT_ITEM[ext] || 'code',
-          fileName: abs.split('/').pop(), size: buf.length, content: buf.toString('utf8'),
+          type: 'fileContent', path: rawPath, absPath: abs, itemType,
+          fileName: abs.split('/').pop(), size: buf.length, content: itemType === 'image' ? '' : buf.toString('utf8'),
         }));
       } catch (e) {
         ws.send(JSON.stringify({ type: 'fileContent', error: String((e && e.message) || e), path: rawPath, absPath: abs }));
@@ -315,7 +318,9 @@ try {
   ok(st.imgs.every((i) => i.zoomable), 'A6c 每枚文档图片都带 .nf-zoom-img（既有 lightbox 腿可点开看原图）',
     JSON.stringify(st.imgs.map((i) => i.zoomable)));
 
-  // 真点一下：标准语法那张 → lightbox
+  // 真点一下：标准语法那张 → Canvas 页签（P16 矩阵 2026-11-11 作者令「电脑端的
+  // 媒体统一都是canvas打开」：文档图带 data-nf-md-path 真实路径 ⇒ 路由开件；
+  // 灯箱降为 pathless 兜底，不再是一级面）。断言 = 图片页签在场且激活 + 灯箱未开。
   const pt = await page.evaluate((sel) => {
     const el = document.querySelector(sel);
     if (!el) return null;
@@ -326,14 +331,17 @@ try {
   if (pt && pt.w > 0) {
     await sleep(200);
     await page.mouse.click(pt.x, pt.y);
-    await sleep(800);
-    const lb = await page.evaluate(() => !!document.querySelector('.nf-lightbox.on'));
-    ok(lb, 'A6d 点击图片 → lightbox 看原图（既有腿零改动）');
-    await page.screenshot({ path: join(SHOTS_DIR, 'after-lightbox.png') });
-    await page.keyboard.press('Escape');
-    await sleep(200);
+    await sleep(900);
+    const st2 = await page.evaluate(() => ({
+      lb: !!document.querySelector('.nf-lightbox.on'),
+      tabs: document.querySelectorAll('.canvas-tab').length,
+      active: document.querySelector('.canvas-tab.on, .canvas-tab.active') ? document.querySelector('.canvas-tab.on, .canvas-tab.active').textContent : '',
+    }));
+    ok(!st2.lb && st2.tabs >= 2, 'A6d 点击文档图片 → Canvas 图片页签（P16 矩阵；灯箱未占位）',
+      JSON.stringify(st2));
+    await page.screenshot({ path: join(SHOTS_DIR, 'after-doc-image-canvas-tab.png') });
   } else {
-    ok(false, 'A6d 点击图片 → lightbox 看原图（图片不在）');
+    ok(false, 'A6d 点击文档图片 → Canvas 图片页签（图片不在）');
   }
 
   // 截图（真图，非「路径文字变蓝」）
