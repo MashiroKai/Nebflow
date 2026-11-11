@@ -100,8 +100,8 @@ object DelegateWorkReport:
    * 本 delegate 批次**合并**的代码量变化（+新增 −删除）。锚定序：
    *   ① finish 申报（`reportDetail`）尾哈希——7-40 位 hex（可选括号包裹，与前端
    *      摘要哈希段同一提取口径），rev-parse 可解析且为**双亲提交**才认；
-   *   ② 回落 = 基分支 tip（双亲 merge 才认——归属防护：绝不把他人落在基分支上的
-   *      提交误归本 delegate）。
+   *   ② 无有效申报哈希时不回落到基分支 tip：那可能是别的 delegate 的 merge，
+   *      误锚会让未合并批继承他批统计。无本批 merge 锚点时返回 None（卡面无 merge 块）。
    * 统计 = `git diff --numstat <第一亲>..<merge>`（基工作区视角）加删行总和；
    * binary 行（`- -`）与畸形行不计。
    *
@@ -111,10 +111,11 @@ object DelegateWorkReport:
     Try {
       val ws = Try(os.Path(rec.projectWorkspace.getOrElse(rec.cwd))).toOption
       (ws, rec.baseBranch) match
-        case (Some(repo), Some(base)) if GitWorktrees.isGitRepo(repo) =>
-          val anchor =
-            declaredMergeSha(repo, rec)
-              .orElse(GitWorktrees.resolveRef(repo, base).flatMap(resolveTwoParent(repo, _)))
+        case (Some(repo), Some(_)) if GitWorktrees.isGitRepo(repo) =>
+          // Only a merge hash explicitly tied to this delegate can anchor this
+          // batch. Falling back to the base branch tip attributes someone else's
+          // latest merge to every delegate that has not merged yet.
+          val anchor = declaredMergeSha(repo, rec)
           anchor.flatMap { case (merge, p1) =>
             numstat(repo, p1, merge).map { case (added, removed, files) =>
               MergeDiffStat(commit = merge.take(7), added = added, removed = removed, oid = merge, files = files)

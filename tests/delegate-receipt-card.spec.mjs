@@ -166,6 +166,22 @@ const FRAMES = [
     expectNote: '+123 −45', expectNoteTag: 'SPAN',
   },
   {
+    // 未合并工作批没有本批 merge 锚键；不能继承 main 最近一次 merge 的 +45 −1。
+    key: 'unmerged',
+    msg: {
+      source: 'delegate', eventType: 'completed', sender: 'nebflow',
+      header: 'DELEGATE · NEBULA · NEBFLOW · COMPLETED',
+      text: '未合并工作批：仅显示本批文件统计，不应显示其他 merge 的 +45 −1。',
+      fileChanges: {
+        nodeId: 'deleg-unmerged', generatedAt: 1793515065507, root: '/tmp/worktree',
+        files: [{ path: 'own-change.txt', changeType: 'modified', added: 3, removed: 0, source: 'tool-ledger' }],
+      },
+    },
+    expectName: 'DELEGATE · INTERNAL', expectBadge: 'COMPLETED',
+    expectSummary: '未合并工作批：仅显示本批文件统计，不应显示其他 merge 的 +45 −1。', expectHash: false,
+    expectNote: '+3 −0', expectNoteTag: 'BUTTON',
+  },
+  {
     key: 'filesOnly',
     msg: {
       source: 'delegate', eventType: 'completed', sender: 'nebflow',
@@ -417,6 +433,9 @@ const TRANSPARENT = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
   ok('A2 判词徽标墨族单色（completed == failed 同色）', byKey.internal.badgeColor === byKey.failed.badgeColor,
     `completed=${byKey.internal.badgeColor} failed=${byKey.failed.badgeColor}`);
 
+  // 未合并批绝不继承其他 merge 的统计；若误显示 +45 −1（主控复现值），此断言失败。
+  ok('未合并批不显示他批统计 +45 −1', byKey.unmerged.noteText !== '+45 −1' && byKey.unmerged.noteText === '+3 −0',
+    `actual="${byKey.unmerged.noteText}"`);
   // ①③ diff 统计块：合并统计优先 / files 和回落 / merge-only span / 零载荷无块。
   for (const f of FRAMES.filter((x) => x.expectNote)) {
     const key = f.key;
@@ -471,7 +490,7 @@ const TRANSPARENT = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
 
   await page.locator('#chat').screenshot({ path: join(SHOTS, `${PHASE}-1-desktop-dark.png`) });
   await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-2-internal-dark.png`) });
-  await page.locator('.bubble.injected').nth(7).screenshot({ path: join(SHOTS, `${PHASE}-3-realtrow-nodiff-dark.png`) });
+  await page.locator('.bubble.injected').nth(8).screenshot({ path: join(SHOTS, `${PHASE}-3-realtrow-nodiff-dark.png`) });
 
   // ── B2 整条 hover 可点击感（internal 帧）───────────────────────────────
   const rest = await blockReads(page, 0);
@@ -568,7 +587,7 @@ const TRANSPARENT = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
 // ── A8 亮档对照：1440 × light，结构同构 + hover 反馈双档在场 ─────────────
 {
   const page = await boot(1440, 900, 'light');
-  for (const f of [FRAMES[0], FRAMES[1], FRAMES[7]]) await inject(page, f.msg);
+  for (const f of [FRAMES[0], FRAMES[1], FRAMES[8]]) await inject(page, f.msg);
   await raf(page);
   const m = await measureAll(page);
   readings.tiers.desktopLight = m;
@@ -604,7 +623,7 @@ const TRANSPARENT = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
 for (const [tier, width, height] of [['tablet768', 768, 1024], ['mobile390', 390, 844]]) {
   const page = await boot(width, height, 'dark');
   await inject(page, FRAMES[0].msg);
-  await inject(page, FRAMES[5].msg);
+  await inject(page, FRAMES[6].msg);
   await raf(page);
   const m = await measureAll(page);
   readings.tiers[tier] = m;
@@ -624,7 +643,7 @@ for (const [tier, width, height] of [['tablet768', 768, 1024], ['mobile390', 390
 {
   for (const [scheme, tag] of [['dark', 'webkit-dark'], ['light', 'webkit-light']]) {
     const page = await boot(1440, 900, scheme, webkit);
-    for (const f of [FRAMES[0], FRAMES[1], FRAMES[7]]) await inject(page, f.msg);
+    for (const f of [FRAMES[0], FRAMES[1], FRAMES[8]]) await inject(page, f.msg);
     await raf(page);
     const m = await measureAll(page);
     readings.tiers[tag] = m;
