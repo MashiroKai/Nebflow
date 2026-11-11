@@ -10,6 +10,10 @@ import { createIconsIn, markCopyFailed, escapeHtml, renderMarkdownWithMath, look
 import { bindMdExtGate } from './mdLinkGate.js';
 import state from './state.js';
 import { onMessage, onReconnect, onDisconnect } from './ws.js';
+// P12 阶段 1 铺垫件（会话桥）：conv ↔ ChatView 注册（fm-<kind>-<id> 进
+// chatViews 注册表，bgAgentPopup 先例模式）。出口只有 refreshConversations 的
+// 两个对账点 —— fm 三窗渲染面（fmComposer/fillBubble/发送腿）零触碰。
+import { syncFmViews } from './messages/fmChatBridge.js';
 import { getNeblinkState, onNeblinkStatus, presenceBadgeHTML, platformDisplay } from './neblink.js';
 import { setActivityBadge, openLoginModal, onStatusTick } from './activityBar.js';
 import { key } from './branding.js';
@@ -547,7 +551,7 @@ onActionableChanged(() => updateBadge());
  *   · `'force'`（首次装载 / 好友域变更 / reconnect / 未知会话）——会话 + 好友
  *     并行取（2 次往返，与今天一致）。 */
 async function refreshConversations({ friends = 'reuse' } = {}) {
-  if (!loggedIn()) { conversations = []; friendsCache = []; friendsFetchedAt = 0; renderList(); return; }
+  if (!loggedIn()) { conversations = []; friendsCache = []; friendsFetchedAt = 0; syncFmViews(conversations); renderList(); return; }
   // sessperf Phase B（2026-09-20）：面板首帧来源 = 本地层名册快照（**同步、零
   // await、零网络**）；下面的网络腿降为**增量核对**（卡 §4②「签名相同 ⇒ 零网络、
   // 零 DOM 操作」的落点见函数尾）。本地层不可用 / 无快照 ⇒ 与改前逐字同行为。
@@ -627,6 +631,10 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
   // （重建会把每行头像 `<img>` 全部销毁重造，正是「每次进面板都闪一下」的机制）。
   renderListIfChanged();
   updateBadge();
+  // P12 阶段 1（会话桥对账点）：会话列表落定后把 conv ↔ ChatView 注册面对齐
+  // （出现建视图 / 消失退役，fm-<kind>-<id>）。纯注册动作：零网络、零可见 DOM、
+  // 不改任何渲染路径 —— 未读/列表/开窗行为与改前逐字同。
+  syncFmViews(conversations);
   // ③ 名单装载后**补判一次**（msgfix 批 · 作者 2026-09-19 睡前令）：快照补齐/刷新后
   //   「不是好友」的判定可能已翻转（无证据 ⇒ 已装载且命中）。旧形态只在开窗 /
   //   `fm-friends-changed` / 重连三处重判 ⇒ 空快照下开窗的条**粘滞**到关窗重开为止
