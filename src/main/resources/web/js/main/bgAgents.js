@@ -987,11 +987,35 @@ function bgDelegateGroups(entries, bucketSid) {
   // 整组让位（全量结构走链视图下钻），桶空时结构投影照旧（既有形态零回归）。
   for (const g of groups) {
     const present = new Set(g.children.map((c) => c.sid));
-    for (const c of listDelegateChildren(g.sid)) {
-      const cid = String((c && c.taskId) || '');
-      if (cid && !present.has(cid)) {
-        g.children.push({ type: 'store', child: c, sid: cid });
-        present.add(cid);
+    // Recursively project persisted descendants as well as direct children. A
+    // nested delegate is a live child row in this group; its own SubTask/node
+    // records must remain under that row instead of disappearing when the
+    // nested delegate is no longer a top-level group. Identity and ownership
+    // come from taskId/parentSessionId, never display titles.
+    const pendingOwners = [g.sid];
+    const visitedOwners = new Set();
+    while (pendingOwners.length) {
+      const ownerSid = String(pendingOwners.shift() || '').replace(/^team-/, '');
+      if (!ownerSid || visitedOwners.has(ownerSid)) continue;
+      visitedOwners.add(ownerSid);
+      ensureChildren(ownerSid, BG_SCOPE_CHILD_TTL_MS);
+      for (const c of listDelegateChildren(ownerSid)) {
+        const cid = String((c && c.taskId) || '').replace(/^team-/, '');
+        if (!cid) continue;
+        // A live projection may already represent this child; still walk its
+        // persisted children, but never add a duplicate row.
+        if (!present.has(cid)) {
+          g.children.push({ type: 'store', child: c, sid: cid });
+          present.add(cid);
+        }
+        pendingOwners.push(cid);
+      }
+      // Live child rows can be nested delegates with their own persisted store
+      // descendants even if no parent store row exists for them.
+      for (const live of g.children) {
+        if (live.type === 'live' && String(live.info?.parentSessionId || '').replace(/^team-/, '') === ownerSid) {
+          pendingOwners.push(live.sid);
+        }
       }
     }
     for (const c of bgDelegateScopeChainRows(g.sid)) {
