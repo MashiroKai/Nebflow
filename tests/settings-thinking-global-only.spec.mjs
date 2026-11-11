@@ -36,11 +36,16 @@ test('G2. sidebar.js 零 per-model 思考接线，模型行模板无 select', ()
   expect(src).not.toContain('modelThinkingSelect');
   expect(src).not.toContain('cfg-model-thinking');
   expect(src).not.toContain('cfg-thinking-forced-badge');
-  // renderProviderCard 的模型行模板：名称 + vision 位 + 测试钮，无任何 select。
-  const rowStart = src.indexOf('const modelsHtml = (p.models || [])');
+  // provider 卡片模型行模板单源 = js/cfgProviderCard.js 的 providerCardHTML
+  // （sidebar.js 经 sidebar/providerPanel.js 消费该共用组件渲染卡片列表）：
+  // 名称 + vision 位，无任何 select。
+  const card = read(path.join('js', 'cfgProviderCard.js'));
+  expect(card).toContain('export function providerCardHTML');
+  const rowStart = card.indexOf('<div class="cfg-model-row"');
   expect(rowStart).toBeGreaterThan(-1);
-  const rowBlock = src.slice(rowStart, rowStart + 900);
-  expect(rowBlock).toContain('cfg-model-row');
+  const rowBlock = card.slice(rowStart, rowStart + 600);
+  expect(rowBlock).toContain('cfg-model-name');
+  expect(rowBlock).toContain('cfg-model-vision');
   expect(rowBlock).not.toContain('<select');
 });
 
