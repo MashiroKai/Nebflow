@@ -183,7 +183,8 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     assertEquals(thinkingKeyOf(f), None)
   }
 
-  test("W10: medium maps to high on three-tier faces (k3.1 and glm)") {
+  test("W10: three-tier faces map minimal→low and medium→high (k3.1 and glm)") {
+    assertEquals(EffortWire.threeTier(ThinkingEffort.Minimal), "low")
     val k3 = adapter().wireThinkingFragment(
       params("k3.1-pro-highspeed", budgetOn, Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.Medium))))
     )

@@ -1099,10 +1099,11 @@ export default {
   'stt.micNoDevice': 'No microphone device found',
   'stt.noAudio': 'No audio captured — hold the mic button while speaking',
   'settings.thinkingEffort.off': 'Off',
-  'settings.thinkingEffort.low': 'Low',
-  'settings.thinkingEffort.medium': 'Medium',
-  'settings.thinkingEffort.high': 'High',
-  'settings.thinkingEffort.max': 'Max',
+  'settings.thinkingEffort.minimal': 'Minimal — fastest, lightest thinking',
+  'settings.thinkingEffort.low': 'Low — light thinking',
+  'settings.thinkingEffort.medium': 'Medium — balanced',
+  'settings.thinkingEffort.high': 'High — deep thinking',
+  'settings.thinkingEffort.max': 'Max — deepest thinking',
   // thinking-config Phase 2 (2026-10-29) keys retired with the settings-panel-
   // fourfix batch ① (author: per-model thinking config must not exist) —
   // thinkingPerModel/Inherit/Effective/ForcedBadge/MediumMap removed with the

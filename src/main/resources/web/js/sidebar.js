@@ -818,6 +818,7 @@ function saveWorkSchedule(enabled, segs, opts) {
  */
 function effortFromConfig() {
   if (!state.thinkingMode?.enabled) return 'off';
+  if (state.thinkingMode.effort) return state.thinkingMode.effort;
   const b = state.thinkingMode.budgetTokens ?? 32000;
   if (b <= 2048) return 'low';
   if (b <= 8192) return 'medium';
@@ -882,7 +883,7 @@ export function renderSettings() {
         setRow({
           title: t('settings.thinkingMode'),
           control: `<select class="cfg-select set-field" id="cfg-thinking-effort" style="width:auto">
-            ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
+            ${['off','minimal','low','medium','high','max'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
           </select>`,
         })
         + setRow({
@@ -1205,12 +1206,12 @@ function bindSettingsEvents(content, cfg) {
   // value round-trips through the adapter unchanged. Legacy numeric configs
   // are displayed at their nearest level (no migration needed — saving
   // rewrites the canonical number for that level).
-  const EFFORT_BUDGETS = { low: 2048, medium: 8192, high: 32768 };
+  const EFFORT_BUDGETS = { minimal: 1024, low: 2048, medium: 8192, high: 32768, max: 65536 };
   document.getElementById('cfg-thinking-effort')?.addEventListener('change', /** @this {HTMLSelectElement} */ function() {
     if (this.value === 'off') {
       state.thinkingMode = null;
     } else {
-      state.thinkingMode = { enabled: true, budgetTokens: EFFORT_BUDGETS[this.value] };
+      state.thinkingMode = { enabled: true, effort: this.value, budgetTokens: EFFORT_BUDGETS[this.value] ?? 32768 };
     }
     sendWs({ type: 'setThinking', thinking: state.thinkingMode });
   });

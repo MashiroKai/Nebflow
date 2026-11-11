@@ -1053,10 +1053,11 @@ export default {
   'stt.micNoDevice': '未检测到可用的麦克风设备',
   'stt.noAudio': '未录到音频，请按住麦克风按钮再说话',
   'settings.thinkingEffort.off': '关闭',
-  'settings.thinkingEffort.low': '低',
-  'settings.thinkingEffort.medium': '中',
-  'settings.thinkingEffort.high': '高',
-  'settings.thinkingEffort.max': '最高',
+  'settings.thinkingEffort.minimal': '最小 — 最快最省的轻思考',
+  'settings.thinkingEffort.low': '低 — 轻思考',
+  'settings.thinkingEffort.medium': '中 — 平衡',
+  'settings.thinkingEffort.high': '高 — 深度思考',
+  'settings.thinkingEffort.max': '最高 — 最深思考',
   // thinking-config Phase 2（2026-10-29）已随 settings-panel-fourfix 批 ①件退役
   // （作者令「不要每个模型都能配置思考模式」）：thinkingPerModel/Inherit/
   // Effective/ForcedBadge/MediumMap 五键随 per-model 控件一并移除——思考档位
