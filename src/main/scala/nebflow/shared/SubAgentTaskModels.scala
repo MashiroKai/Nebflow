@@ -52,7 +52,18 @@ case class SubAgentTask(
    * ——与 DelegateRegistry.Record.mode 同源同值（spawn 点双写）。`None` = 未判定
    * （总闸关时代存量行）＝消费方按 kernel 折叠（缺省解码 kernel，存量零迁移）。
    */
-  mode: Option[String] = None
+  mode: Option[String] = None,
+  /**
+   * Silent-completion diagnostics: the structured terminal diagnostic written on
+   * the completed leg when the final assistant turn carried no usable text, e.g.
+   * "[delegate-diagnostic] no-final-text; turns=3; toolCalls=0; commits=0;
+   * changedFiles=0; empty-run" ("empty-run" suffix = completed with zero tool
+   * calls, zero commits and zero text — an empty run, not a clean completion).
+   * `None` = the final turn had real text. Lives beside `lastError` (which stays
+   * None on completed rows). Option + missing-key tolerant decode (older on-disk
+   * files lack the key = None; zero migration).
+   */
+  diagnostic: Option[String] = None
 )
 
 object SubAgentTask:
@@ -81,6 +92,7 @@ object SubAgentTask:
       revivalCount <- c.get[Option[Int]]("revivalCount")
       revivedAt <- c.get[Option[Long]]("revivedAt")
       mode <- c.get[Option[String]]("mode")
+      diagnostic <- c.get[Option[String]]("diagnostic")
     yield SubAgentTask(
       taskId,
       parentSessionId,
@@ -96,7 +108,8 @@ object SubAgentTask:
       statusAt,
       revivalCount,
       revivedAt,
-      mode
+      mode,
+      diagnostic
     )
   }
 end SubAgentTask

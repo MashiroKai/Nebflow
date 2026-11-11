@@ -31,6 +31,16 @@ object BackoffSupervisor:
 
   private val logger = NebflowLogger.forName("nebflow.agent.supervisor")
 
+  private[agent] def completionDiagnosticText(
+    turns: Int,
+    toolCalls: Int,
+    commits: String,
+    changedFiles: String,
+    emptyRun: Boolean
+  ): String =
+    val marker = if emptyRun then "; empty-run" else ""
+    s"\n[delegate-diagnostic] no-final-text; turns=$turns; toolCalls=$toolCalls; commits=$commits; changedFiles=$changedFiles$marker"
+
   /**
    * @param childRef    the pre-spawned child actor (initial spawn done by caller)
    * @param childSpawnFn used to re-spawn the child on restart; receives the
@@ -190,20 +200,56 @@ object BackoffSupervisor:
         // 原样走——逐字保持既有行为）。
         def completeNormally(messages: List[Message], bgWaitNote: Option[String] = None): IO[Behavior[AgentEvent]] =
           val text = extractLastAssistantText(messages)
+          val hasText = text.trim.nonEmpty && text.trim != Defaults.MaxTokensStubText
           // trim guard: a whitespace-only tail ("\n\n") is NOT a real output —
           // render "(no text output)" instead of an empty-shell payload
           val payload =
-            if text.trim.nonEmpty then s""""$description":\n${text.trim}"""
+            if hasText then s""""$description":\n${text.trim}"""
             else s""""$description" (no text output)"""
           // delegate 轨的 Completed 在等待屏障放行后，将最终 assistant 文本直接作为
           // 完成载荷交给父会话；后台任务等待由下方 BgWait barrier 负责，不要求额外
           // report 工具或终态判定中转。subtask 轨保留原通知形态。
           if source == "delegate" then
             val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
-            terminalDiffMetadata().flatMap(diff => notifyParentAndStop("completed", payload + note, diff))
+            for
+              diagnostic <- completionDiagnostic(messages, hasText)
+              diff <- terminalDiffMetadata()
+              result <- notifyParentAndStop(
+                "completed",
+                payload + diagnostic + note,
+                diff,
+                diagnostic = Option(diagnostic).filter(_.nonEmpty)
+              )
+            yield result
           else notifyParentAndStop("completed", payload, JsonObject.empty)
           end if
         end completeNormally
+
+        /** Diagnostic-only summary for completed delegates whose last assistant turn is silent.
+          * "" when the final turn has real text (normal completion — zero extra work). */
+        def completionDiagnostic(messages: List[Message], hasText: Boolean): IO[String] =
+          if hasText then IO.pure("")
+          else
+            val turns = messages.count(_.role == MessageRole.Assistant)
+            val tools = sessionToolCalls(messages)
+            val emptyRun = tools == 0
+            IO.blocking {
+              val rec = nebflow.core.delegate.DelegateRegistry.find(subagentId)
+              val commits = rec.flatMap { r =>
+                for
+                  base <- r.baseBranch
+                  branch <- r.branch
+                  ws <- scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
+                yield nebflow.core.GitWorktrees.commitsAhead(ws, base, branch)
+              }.getOrElse(0)
+              val changedFiles = rec.flatMap(r =>
+                scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
+                  .flatMap(nebflow.core.GitWorktrees.dirtyPaths(_))
+              ).fold(0)(_.size)
+              completionDiagnosticText(turns, tools, commits.toString, changedFiles.toString, emptyRun)
+            }.handleError(_ =>
+              completionDiagnosticText(turns, tools, "unknown", "unknown", emptyRun)
+            )
 
         // ═══ sleep-poll 禁令批 A 段：delegate 等待屏障（wait barrier）═══
         // 作者令 2026-10-20（实撞案例 delegate-nebflow-747cd36a）：delegate 会话
@@ -1297,15 +1343,17 @@ object BackoffSupervisor:
         eventType: String,
         payload: String,
         failureMetadata: JsonObject,
-        taskStatusOverride: Option[String] = None
+        taskStatusOverride: Option[String] = None,
+        diagnostic: Option[String] = None
       ): IO[Behavior[AgentEvent]] =
-        notifyParentAndStopImpl(eventType, payload, failureMetadata, taskStatusOverride)
+        notifyParentAndStopImpl(eventType, payload, failureMetadata, taskStatusOverride, diagnostic)
 
       private def notifyParentAndStopImpl(
         eventType: String,
         payload: String,
         failureMetadata: JsonObject,
-        taskStatusOverride: Option[String] = None
+        taskStatusOverride: Option[String] = None,
+        diagnostic: Option[String] = None
       ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
@@ -1336,6 +1384,15 @@ object BackoffSupervisor:
             lastError = if taskStatus != "completed" then Some(payload) else None
           )
           .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
+
+        // Silent-completion diagnostic rides its own channel (dedicated store method
+        // — a defaulted tail param on updateStatus would recreate the prefix-overload
+        // ambiguity markRevived already avoided). None = no-op write, so the normal
+        // completion path stays zero-extra-work. lastError stays None on completed
+        // rows, so the panel can tell "worked silently" from "failed" at a glance.
+        val diagWrite = resources.subAgentTaskStore
+          .setDiagnostic(parentSessionId, subagentId, diagnostic)
+          .handleErrorWith(e => logger.warn(s"subAgentTaskStore diagnostic write failed: ${e.getMessage}"))
 
         val terminalEvent = AgentCommand.ExternalEvent(
           source = source,
@@ -1432,7 +1489,7 @@ object BackoffSupervisor:
         // #1224：前置 delegate 清理（队列释放先行，再拆 actor）。
         // P2 邮箱化：receiptWrite 腿随迁拆除（delegate 终态零新回执——*.receipt.json
         // 对新终态零新写，验收红线②）。
-        (delegateCleanup *> notify *> taskUpdate *> cleanupPendingAsks(resources, subagentId) *>
+        (delegateCleanup *> notify *> taskUpdate *> diagWrite *> cleanupPendingAsks(resources, subagentId) *>
           DelegateBudget.release(subagentId) *>
           resources.agentRegistry.update(_ - subagentId) *>
           (childRef ! AgentCommand.Stop(s"$source-complete")) *>

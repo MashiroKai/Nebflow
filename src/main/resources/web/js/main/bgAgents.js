@@ -767,7 +767,23 @@ function bgScopeStoreInfo(child, parentSid) {
     done: status === 'completed' || status === 'cancelled',
     startedAt: Number(c.spawnedAt) || 0,
     retryCount: Number(c.retryCount) || 0,
+    diagnostic: String(c.diagnostic || ''),
   };
+}
+
+/** Silent-completion diagnostic (delegate empty-receipt governance): terminal
+ *  store rows carry "[delegate-diagnostic] no-final-text; turns=…; toolCalls=…;
+ *  commits=…; changedFiles=…[; empty-run]" when the final assistant turn was
+ *  silent. Shapes the L3 span (marker prefix stripped, full text in title);
+ *  the empty-run variant takes the shared warn tone — a completed card that
+ *  did nothing must not read as a clean completion. Returns '' when absent. */
+function bgTaskDiagHtml(raw) {
+  const diag = String(raw || '').replace(/^\s*\[delegate-diagnostic\]\s*/, '').trim();
+  if (!diag) return '';
+  const emptyRun = diag.indexOf('empty-run') !== -1;
+  return '<span class="bg-task-diag' + (emptyRun ? ' bg-task-diag-warn' : '')
+    + '" role="' + (emptyRun ? 'alert' : 'note')
+    + '" title="' + escapeHtml(diag) + '">' + escapeHtml(diag) + '</span>';
 }
 
 /** flow 节点状态 → 面板状态词键（ROW_STATUS 值域；既有键复用，零新键）。 */
@@ -2148,8 +2164,11 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const summaryPart = taskSummary
     ? '<span class="bg-task-sub" title="' + escapeHtml(String(info.task || '')) + '">' + escapeHtml(taskSummary) + '</span>'
     : '';
-  const line3 = (actionPart || summaryPart)
-    ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline">' + actionPart + summaryPart + '</div>'
+  // Silent-completion diagnostic: store-backed rows only (live rows never carry
+  // one — info.diagnostic is '' there, so this is a zero-diff no-op for them).
+  const diagPart = bgTaskDiagHtml(info.diagnostic);
+  const line3 = (actionPart || summaryPart || diagPart)
+    ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline">' + actionPart + summaryPart + diagPart + '</div>'
     : '';
   return    '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + wildAttr + absentAttr + agentflowAttr + bgDepthAttrs(Number(opts.depth) || 0) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
     bgDepthText(opts.depth) +
@@ -2216,6 +2235,18 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   // 层级连接符批（2026-11-07）：store 成员行同款导轨（构造器各带一行，产点仍唯一——
   // 字符串由 bgTreeRailHtml 一处生成，本处只消费）。
   const railPart = String(opts.railHtml || '');
+  // Silent-completion diagnostic: L3 slot for completed-but-silent terminal children
+  // (muted line after the summary; empty-run gets warn tone — an empty run no longer
+  // reads as a clean completion).
+  const diagPart = bgTaskDiagHtml(c.diagnostic);
+  const line3Part = (taskSummary || diagPart)
+    ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline">'
+      + (taskSummary
+        ? '<span class="bg-task-sub" title="' + escapeHtml(desc) + '">' + escapeHtml(taskSummary) + '</span>'
+        : '')
+      + diagPart
+      + '</div>'
+    : '';
   return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
     bgDepthText(opts.depth) +
     railPart +
@@ -2228,9 +2259,7 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
         restoreChip +
       '</div>' +
       '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' + kindPart + retriesPart + '</div>' +
-      (taskSummary
-        ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline"><span class="bg-task-sub" title="' + escapeHtml(desc) + '">' + escapeHtml(taskSummary) + '</span></div>'
-        : '') +
+      line3Part +
     '</div>' +
   '</div>';
 }

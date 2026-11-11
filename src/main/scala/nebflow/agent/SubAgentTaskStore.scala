@@ -161,6 +161,8 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
   /**
    * Update a task's status. #692：每次状态写入都刷新 statusAt = now——它是重启
    * 屏障 watchdog 的「当前状态已持续多久」判据输入（restarting 行超龄判读）。
+   * 🔴 签名保持端口镜像逐字一致（defaulted 尾参扩展会复发前缀重载二义性——
+   * 诊断通道走 [[setDiagnostic]] 专面，与 [[markRevived]] 同款纪律）。
    */
   def updateStatus(
     parentSessionId: String,
@@ -202,6 +204,38 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
         val note = s"parent=$parentSessionId taskId=$taskId status=$status (no row matched — write was a NO-OP)"
         IO(logger.warnSync(s"[task-status-miss] updateStatus missed: $note")) *> recordMiss(note)
     }
+
+  /**
+   * Silent-completion diagnostic channel (delegate empty-receipt governance): write
+   * the structured terminal diagnostic onto the task row when the completed leg's
+   * final assistant turn carried no usable text (`None` = no-op — the normal
+   * completion path must stay zero-extra-work). Dedicated method rather than a
+   * defaulted tail param on [[updateStatus]]: that would recreate the
+   * prefix-overload ambiguity this store already avoided via [[markRevived]].
+   * `lastError` deliberately stays None on completed rows, so the panel can tell
+   * "worked silently" from "failed" at a glance. Same hit-only discipline as
+   * [[updateStatus]]: a miss is a NO-OP write, loudly traced.
+   */
+  def setDiagnostic(parentSessionId: String, taskId: String, diagnostic: Option[String]): IO[Unit] =
+    diagnostic match
+      case None => IO.unit
+      case Some(diag) =>
+        withLock {
+          val current = readTasksSync(parentSessionId)
+          val updated = current.find(_.taskId == taskId).map { _ =>
+            current.map { t =>
+              if t.taskId == taskId then t.copy(diagnostic = Some(diag)) else t
+            }
+          }
+          updated.foreach(rows => writeTasksSync(parentSessionId, rows))
+          updated.flatMap(_.find(_.taskId == taskId))
+        }.flatMap {
+          case Some(_) => IO.unit
+          case None =>
+            val note =
+              s"parent=$parentSessionId taskId=$taskId diagnostic=${diag.take(120)} (no row matched — write was a NO-OP)"
+            IO(logger.warnSync(s"[task-status-miss] setDiagnostic missed: $note")) *> recordMiss(note)
+        }
 
   /**
    * 状态写未命中留痕（R1-B 修）：有界环形（最近 [[MissTraceCap]] 条，进程内诊断
