@@ -50,7 +50,10 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
 
   /** Query a job through the tool face (same face the model uses). */
   private def query(jobId: String): IO[String] =
-    BashTool.call(JsonObject("background_job_id" -> jobId.asJson), ToolContext(projectRoot = "/tmp")).map {
+    BashTool.call(
+      JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
+      ToolContext(projectRoot = "/tmp")
+    ).map {
       case Right(out) => out
       case Left(e) => fail(s"background query failed: ${e.message}")
     }

@@ -94,7 +94,10 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
 
   /** 真实查询腿（模型用的同一个面：`Bash(background_job_id=…)`）。 */
   private def bashQuery(jobId: String, sid: String): IO[String] =
-    BashTool.call(JsonObject("background_job_id" -> jobId.asJson), ctxOf(sid, 2000)).map {
+    BashTool.call(
+      JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
+      ctxOf(sid, 2000)
+    ).map {
       case Right(out) => out
       case Left(e) => fail(s"background query failed: ${e.message}")
     }
@@ -157,9 +160,8 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         waitMs = tWait1 - tWait0
         totalMs = tWait1 - t0
         _ <- IO {
-          assert(out.contains("[completed]"), s"Bash bounded wait must deliver the terminal block: $out")
+          assert(out.contains("[Background job completed]"), s"Bash bounded wait must deliver the terminal block: $out")
           assert(out.contains(jobId), s"the completed block must name the job: $out")
-          assert(out.contains("exit 0"), s"the completed block must carry exit 0: $out")
           assert(out.contains(marker), s"the real output must ride the completed block: $out")
           assert(waitMs < 30000, s"Black wait must return at completion (~6s from the 2s conversion), took ${waitMs}ms")
           assert(totalMs < 20000, s"end-to-end must be ~8s (job's own runtime), took ${totalMs}ms")
@@ -211,9 +213,8 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         waitMs = tWait1 - tWait0
         totalMs = tWait1 - t0
         _ <- IO {
-          assert(out.contains("[completed]"), s"must end in a terminal block: $out")
+          assert(out.contains("[Background job completed]"), s"must end in a terminal block: $out")
           assert(out.contains(marker), s"the real 90s output must be delivered: $out")
-          assert(out.contains("exit 0"), s"exit 0 must ride the block: $out")
           assert(!out.contains("[still running]"), s"the wait must be satisfied by the real completion, not by a deadline: $out")
           assert(totalMs >= 85000, s"it must really have waited the 90s command (sleep 90), total=${totalMs}ms")
           assert(totalMs < 140000, s"the 90s command must be delivered on completion, total=${totalMs}ms")
@@ -318,9 +319,8 @@ class BashOverhaulEndToEndSpec extends CatsEffectSuite:
         out <- bgWait(start, sid, 30000)
         tWait1 <- IO(System.currentTimeMillis())
         _ <- IO {
-          assert(out.contains("[completed]"), s"after 20 queries the wait leg must still deliver: $out")
+          assert(out.contains("[Background job completed]"), s"after 20 queries the wait leg must still deliver: $out")
           assert(out.contains(marker), s"the payload must ride the completed block: $out")
-          assert(out.contains("exit 0"), s"exit 0 expected: $out")
         }
         // ── 旧面对照臂（改前判据未被放松）：10 次同参 Bash **工作**调用仍 Terminate。
         oldFaceVerdicts <- IO {

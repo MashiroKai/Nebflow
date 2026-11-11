@@ -604,86 +604,81 @@ Git safety:
           // hand the later execute path a session created without injection.
           // askuser-secret 批：`++ otpEnv` = 本条命令消费的一次性验证码（otpEnv 为空
           // ⇒ 与改前逐字节同参）。
-        ShellSession
-          .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt, secretEnv = secretEnv ++ otpEnv)
-          .flatMap { shell =>
-            if cancelBg then
-              shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
-                // #1193 收口腿：显式取消同样是终态——**取走 registry 行** +
-                // 输出留存区翻转。原实现只出会话任务图、不取行：行残留 →
-                // death-watch 下一拍以「owner lost: not owned by session」
-                // 二次收割，账本/通知留下「引擎埋任务」假证（10-31 实证
-                // f25b9f1f/8641d0d5：模型显式取消 5s 后 owner-lost 收割到）。
-                // first-terminal-wins：真完成竞态已先取走行 ⇒ no-op 幂等。
-                val takeRow =
-                  if cancelled then
-                    BgTaskRegistry.unregisterReturning(jobId).void *>
-                      BgTaskOutputStore
-                        .finalizeTask(jobId, "cancelled", None, Some("Cancelled by agent (tool call)"))
-                        .handleErrorWith(_ => IO.unit)
-                  else IO.unit
-                takeRow.as {
-                  if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
-                  else Right(s"[Background job not found] Job ID: $jobId")
+          ShellSession
+            .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt, secretEnv = secretEnv ++ otpEnv)
+            .flatMap { shell =>
+              if cancelBg then
+                shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
+                  val takeRow =
+                    if cancelled then
+                      BgTaskRegistry.unregisterReturning(jobId).void *>
+                        BgTaskOutputStore
+                          .finalizeTask(jobId, "cancelled", None, Some("Cancelled by agent (tool call)"))
+                          .handleErrorWith(_ => IO.unit)
+                    else IO.unit
+                  takeRow.as {
+                    if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
+                    else Right(s"[Background job not found] Job ID: $jobId")
+                  }
                 }
-              }
-            else
-              val waitMs = explicitTimeoutMs.getOrElse(math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs))
-              shell.waitBackgroundResults(Seq(jobId), waitMs).void *>
-                shell.getBackgroundResult(jobId).flatMap {
-                  case None =>
-                    // Job still running — fetch health info for the agent
-                    shell.getBackgroundJobHealth(jobId).map {
-                      case Some(h) =>
-                        val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
-                        val isStuck = h.idleMs > stuckThreshold
-                        val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
-                        val stuckWarning =
-                          if isStuck then
-                            s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
-                          else ""
-                        Right(
-                          s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
-                        )
-                      case None =>
-                        Right(s"[Background job pending] Job ID: $jobId")
-                    }
-                  case Some(Left(e)) =>
-                    val errMsg = e match
-                      case _: TimeoutException => "[Command timed out]"
-                      case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                    IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
-                  case Some(Right(result)) =>
-                    val out = cleanOutput(sanitizeCardOutput(result.stdout))
-                    val cleanedErr = cleanOutput(result.stderr)
-                    val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
-                    IO.pure(Right(s"[Background job completed] Job ID: $jobId\n$out$errLine"))
-              }
-          }
-      case None =>
-        if command.isEmpty then IO.pure(Right("[Empty command]"))
-        else
-          val interactiveWarning = checkInteractive(command)
-          if interactiveWarning.isDefined then
-            IO.pure(
-              Left(
-                ToolError(
-                  s"[Interactive command] ${interactiveWarning.get}\nThis command cannot run in the agent environment (no terminal available). Please execute it manually in your terminal."
+              else
+                val waitMs = explicitTimeoutMs.getOrElse(math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs))
+                shell.waitBackgroundResults(Seq(jobId), waitMs).void *>
+                  shell.getBackgroundResult(jobId).flatMap {
+                    case None =>
+                      shell.getBackgroundJobHealth(jobId).map {
+                        case Some(h) =>
+                          val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
+                          val isStuck = h.idleMs > stuckThreshold
+                          val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
+                          val stuckWarning =
+                            if isStuck then
+                              s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
+                            else ""
+                          Right(
+                            s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
+                          )
+                        case None => Right(s"[Background job pending] Job ID: $jobId")
+                      }
+                    case Some(Left(e)) =>
+                      val errMsg = e match
+                        case _: TimeoutException => "[Command timed out]"
+                        case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                      IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
+                    case Some(Right(result)) =>
+                      BgTaskRegistry.markAwaited(jobId).attempt.void *>
+                        IO {
+                          val out = cleanOutput(sanitizeCardOutput(result.stdout))
+                          val cleanedErr = cleanOutput(result.stderr)
+                          val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
+                          Right(s"[Background job completed] Job ID: $jobId\n$out$errLine")
+                        }
+                  }
+            }
+        case None =>
+          if command.isEmpty then IO.pure(Right("[Empty command]"))
+          else
+            val interactiveWarning = checkInteractive(command)
+            if interactiveWarning.isDefined then
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"[Interactive command] ${interactiveWarning.get}\nThis command cannot run in the agent environment (no terminal available). Please execute it manually in your terminal."
+                  )
                 )
               )
-            )
-          else
-            // D12-b（delegate reset 零闸治理，作者裁定 2026-10-23）：reset 系命令
-            // 审计事件——auto-all 顶档下危险命令清单是死信（ToolReversibility
-            // AutoAll ⇒ true），就地腿 delegate 与他方共享检出区，一次 reset 即
-            // 清掉他方未持久化的进行中工作且无痕。此处（权限闸之后、进程起跑之前）
-            // 落至少一行审计（谁/何时/命令/受波及的 live delegate 及其当时状态/任务）。
-            // best-effort：审计失败只 WARN，绝不影响命令执行（RelayExecAudit 同款
-            // 失败语义）；零超时设计——非 reset 命令零开销透传（一组正则判别）。
-            val resetAuditIo =
-              if ResetAudit.isResetCommand(command) then ResetAudit.record(command, ctx, ctx.sharedResources)
-              else IO.unit
-            resetAuditIo *> ShellSession
+            else
+              // D12-b（delegate reset 零闸治理，作者裁定 2026-10-23）：reset 系命令
+              // 审计事件——auto-all 顶档下危险命令清单是死信（ToolReversibility
+              // AutoAll ⇒ true），就地腿 delegate 与他方共享检出区，一次 reset 即
+              // 清掉他方未持久化的进行中工作且无痕。此处（权限闸之后、进程起跑之前）
+              // 落至少一行审计（谁/何时/命令/受波及的 live delegate 及其当时状态/任务）。
+              // best-effort：审计失败只 WARN，绝不影响命令执行（RelayExecAudit 同款
+              // 失败语义）；零超时设计——非 reset 命令零开销透传（一组正则判别）。
+              val resetAuditIo =
+                if ResetAudit.isResetCommand(command) then ResetAudit.record(command, ctx, ctx.sharedResources)
+                else IO.unit
+              resetAuditIo *> ShellSession
               .forSession(
                 sessionId,
                 initialDir = sessionInitialDir,
