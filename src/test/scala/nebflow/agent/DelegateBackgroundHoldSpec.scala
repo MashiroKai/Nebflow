@@ -362,9 +362,9 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
         "supervisor-bgwait-4"
       )
       _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("turn done; bg job still running")))
-      // cap 300ms 后强制终判：父**持久邮箱**收到 completed + [delegate-bg-wait] 诚实注记
+      // cap 300ms 后强制终判：父**持久邮箱**收到 completed + [delegate-background-wait] 诚实注记
       _ <- waitUntil(15.seconds)(
-        terminalMail(parentSid).map(_.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-bg-wait]")))
+        terminalMail(parentSid).map(_.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-background-wait]")))
       )
       _ <- waitUntil(15.seconds)(
         resources.subAgentTaskStore.loadTasks(parentSid).map(_.exists(t => t.taskId == childSid && t.status == "completed"))
@@ -379,7 +379,7 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
       assertEquals(mails.head.kind, "delegate-terminal")
       val payload = mails.head.event.payload
       assertEquals(mails.head.event.eventType, "completed")
-      assert(payload.contains("[delegate-bg-wait]"), s"honest note required: $payload")
+      assert(payload.contains("[delegate-background-wait]"), s"honest note required: $payload")
       assert(payload.contains(jobId), s"note must name the pending job: $payload")
       assert(payload.contains("Full test suite"), s"note must name the description: $payload")
       assert(payload.contains("turn done"), s"held turn's deliverable must ride the forced delivery: $payload")

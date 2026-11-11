@@ -373,7 +373,7 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
       assertEquals(mails.size, 1, s"one clean terminal, got ${mails.size}")
       val payload = mails.head.event.payload
       assert(!payload.contains("IDLE cap"), s"a clean wake must not carry the forced-delivery note: $payload")
-      assert(!payload.contains("[delegate-bg-wait]"), s"nor the wall-clock cap note: $payload")
+      assert(!payload.contains("[delegate-background-wait]"), s"nor the wall-clock cap note: $payload")
       assert(payload.contains("final report"), s"the release payload is the real report: $payload")
   }
 end DelegateBgIdleCapSpec

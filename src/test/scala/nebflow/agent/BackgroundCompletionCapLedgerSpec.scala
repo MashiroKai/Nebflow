@@ -199,7 +199,7 @@ class BackgroundCompletionCapLedgerSpec extends CatsEffectSuite:
       // cap 300ms 后强制终判：诚实注记（回归面，A-4 语义零漂移）——交付面 = 父**持久邮箱**
       _ <- waitUntil(15.seconds)(
         terminalMail(parentSid).map(
-          _.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-bg-wait]"))
+          _.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-background-wait]"))
         )
       )
       // 账本面：孤儿条目 = 未结任务的完成事件+输出尾段供续会话拾取（fix 3 本体）
@@ -227,7 +227,7 @@ class BackgroundCompletionCapLedgerSpec extends CatsEffectSuite:
       assertEquals(mails.head.kind, "delegate-terminal")
       assertEquals(mails.head.event.eventType, "completed")
       assert(
-        mails.head.event.payload.contains("[delegate-bg-wait]"),
+        mails.head.event.payload.contains("[delegate-background-wait]"),
         s"honest note rides the mailbox delivery: ${mails.head.event.payload}"
       )
       val orphan = pendingNow.find(_.jobId == jobId).get
