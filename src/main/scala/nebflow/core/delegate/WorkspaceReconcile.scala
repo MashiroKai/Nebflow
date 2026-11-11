@@ -36,6 +36,9 @@ final class WorkspaceReconcile(
                   val realPath = path.toNIO.toRealPath().toString
                   if realPath != w.path then Left("Workspace path resolves differently from the registered path")
                   else if !GitWorktrees.isGitRepo(path) then Left("Registered workspace is not a Git worktree")
+                  else if os.proc("git", "-C", path.toString, "rev-parse", "--show-toplevel")
+                    .call(stdout = os.Pipe, stderr = os.Pipe).out.text().trim != realPath
+                  then Left("Registered path is not the Git worktree root")
                   else if WorkspaceLedger.repositoryKey(path) != w.repository then Left("Workspace Git repository identity does not match its ledger")
                   else
                     val porcelain = os.proc("git", "-C", path.toString, "status", "--porcelain", "--untracked-files=all")
