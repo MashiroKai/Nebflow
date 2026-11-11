@@ -340,6 +340,7 @@ const STATE_JS = (pid) => `(() => {
     lineHeight: parseFloat(cs.lineHeight),
     height: Math.round(tb.height * 100) / 100,
     width: Math.round(tb.width * 100) / 100,
+    left: Math.round(tb.left * 100) / 100,
     top: Math.round(tb.top * 100) / 100,
     bottom: Math.round(tb.bottom * 100) / 100,
     centerY: Math.round((tb.top + tb.height / 2) * 100) / 100,
@@ -526,7 +527,14 @@ async function panelLeg(page, pid, tag, shotPrefix) {
   ok(`${tag} L7d 终点全圆角 999 + 玻璃满 alpha`, parseFloat(end.radius) >= 998 && end.shellAlpha >= 0.98, `${end.radius}/${end.shellAlpha}`);
   ok(`${tag} L7e 终点宽度 = 文字宽 + 2×24 内距（${end.textW} + 48 ≈ ${end.width}）`,
     Math.abs(end.width - (end.textW + 2 * CAP_PAD)) <= 2, `w=${end.width} text=${end.textW}`);
-  ok(`${tag} L7f 终点左缘 ≥ 72（不压返回钮）`, end.width / 2 <= (end.vw / 2 - INSET) + 1, `w=${end.width} vw=${end.vw}`);
+  // L7f 改判（标题左对齐批 · §2.1.2 硬规则 2026-11-11 11:11「标题只 Canvas 才
+  // 居中，其余面页一律左对齐」）：胶囊左缘恒 = 左锚 72（返回钮右缘 64 + 缝 8），
+  // 旧「居中盒宽反推左缘」数学随居中档退役。
+  ok(`${tag} L7f 终点左锚 72（不压返回钮；标题左对齐批）`, Math.abs(end.left - INSET) <= 1, `left=${end.left} vw=${end.vw}`);
+  await setScroll(page, pid, 0);
+  const restTitle = await state(page, pid);
+  ok(`${tag} L7h 静止大标题左锚 72（非 Canvas 面禁居中；标题左对齐批）`,
+    Math.abs(restTitle.left - INSET) <= 1, `left=${restTitle.left}`);
   ok(`${tag} L7g 吸附态顶区流内占位 → 0（footprint = 高 + 负外边距）`,
     rows[rows.length - 2].paneScroll ? Math.abs(end.footprint) <= 1 : true, `footprint=${end.footprint} paneScroll=${end.paneScroll}`);
 

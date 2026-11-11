@@ -274,13 +274,32 @@ nf-ask-dock { display: contents; }
    「钮长成面板」的起手帧会比钮大一圈）。 */
 .ask-dock,
 .note-dock { --ask-seed-size: var(--ask-fab-size); }
-.ask-dock.closed .ask-input,
-.note-dock.closed .note-body {
+.ask-dock.closed .ask-input {
   width: var(--ask-seed-size);
   height: var(--ask-seed-size);
   border-radius: 50%;
   padding: 0;
   transform: translateY(calc(10px + var(--ask-seed-size)));
+}
+/* note 闭态种子 = 位置感知（P2 续批④ 作者令「位置跟随 note 按钮」）：ask 钮与
+   note 钮同排、note 在 ask 左邻一格（`.ask-fab.note-fab` margin）——纯
+   translateY 只能落 ask 钮位，note 窗的形变起手一直读作「ask 钮长出记事本」。
+   位移两轴改由 askDock.js syncNoteSeed 实测 note 钮圆心写入（--note-seed-dx/dy，
+   epub 阅读器让位抬升 / safe-area / 钮距档变化全跟随）；缺省 fallback = token
+   公式 --note-seed-x0/y0（note 钮圆心 = 种子自然位左移一格钮宽+缝、下移
+   10px + 种子直径，与 margin 同源），JS 未及写变量的首帧也落在 note 钮上。 */
+.note-dock {
+  --note-seed-x0: calc(-1 * (var(--ask-fab-size) + var(--ds-space-2)));
+  --note-seed-y0: calc(10px + var(--ask-seed-size));
+}
+.note-dock.closed .note-body {
+  width: var(--ask-seed-size);
+  height: var(--ask-seed-size);
+  border-radius: 50%;
+  padding: 0;
+  transform: translate(
+    var(--note-seed-dx, var(--note-seed-x0)),
+    var(--note-seed-dy, var(--note-seed-y0)));
 }
 
 /* ═══ 可拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄

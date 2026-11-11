@@ -289,10 +289,10 @@ function applyRoll(section, scroller) {
 /**
  * 大标题档内容宽实测（schedule-todo-unify 批 2026-11-06「顶栏标题被截成『定时任...』」
  * 修复的读数腿）：
- *  · CSS 侧大标题宽度 = calc(100% − (100% − var(--mtitle-w-still)) × 进度)，即
- *    静止档吃满两端内缩带；内容宽只能在**进度 0** 时测（进度 >0 时盒已被收窄，
- *    scrollWidth 会自己钳住 —— 那样测出来的值会随滚动变化，不是内容宽）。
- *  · 故把进度暂时打到 0、测 `scrollWidth`，再还原进度 —— 全部在同一次样式落定内
+ *  · CSS 侧大标题宽度随进度插值（左对齐批后 = 左对齐带满宽 → 贴字收紧），
+ *    即内容宽只能在**进度 0** 时测（进度 >0 时盒已被收窄，
+ *    盒宽会自己钳住 —— 那样测出来的值会随滚动变化，不是内容宽）。
+ *  · 故把进度暂时打到 0、量文字实宽（Range），再还原进度 —— 全部在同一次样式落定内
  *    完成，不产生可见帧。只在文字可能变了的时候重测（首帧 / 换页 / locale 重绘 /
  *    窗口宽度变），拖动滚动时不重测（内容宽与滚动无关，省掉每帧强制布局）。
  * @param {HTMLElement} section
@@ -304,23 +304,34 @@ function measureTitleStill(section, title) {
   const mcapPad = parseFloat(cs.getPropertyValue('--mcap-pad')) || 12;
   const prevP = section.style.getPropertyValue('--mtitle-p') || '0';
   const oldW = title.style.getPropertyValue('--mtitle-w-still');
-  // 静止档实测：进度 0 + 拔 max-width ⇒ scrollWidth = 纯文字宽（静止档水平内距
-  // 已归 0 —— 内缩由盒宽钳制承担，见 mobileLayer.css .mobile-page-title 注）。
+  // 静止档实测：进度 0 + 拔 max-width ⇒ 量**文字实宽**（Range 跨内容包围盒）。
+  // 旧 `title.scrollWidth` 在盒宽 ≥ 文字宽时恒返回**盒宽**（块级 scrollWidth =
+  // max(内容宽, 盒宽)），满宽带下量出的是带宽 ⇒ --mtitle-w-still 被写成带宽、
+  // 胶囊永不收紧反随 max-width 插值**变宽**（P2 续批③ pristine 实证：
+  // title-morph L5b「宽 246 → 342 随滚变大」/L7e 红 —— 改 Range 后胶囊重新
+  // 贴字收紧）。scrollWidth 的溢出判据（clip 翻写，:285）语义不变仍用原式。
   const oldMax = title.style.maxWidth;
   title.style.maxWidth = 'none';
   section.style.setProperty('--mtitle-p', '0');
-  const textW = title.scrollWidth;
+  const range = document.createRange();
+  range.selectNodeContents(title);
+  const textW = Math.round(range.getBoundingClientRect().width * 100) / 100;
   title.style.maxWidth = oldMax;
   section.style.setProperty('--mtitle-p', prevP);
   // 胶囊终态盒 = 文字 + 2×胶囊内距（贴字收紧）；超长页名钳到「满宽 − 2×胶囊内距」
   // （胶囊永不贴屏幕边；bodyW = 页体内容宽 = 视口 − 页体内距，实测不按页写死）。
+  // 「文字」= 胶囊档字号的文字：量到的静止档宽按字号比折到 mini 档（胶囊态文字
+  // 以 --mfs-title-mini 渲染，28 档直加内距会宽出一倍 —— P2 续批③ L7e 实证）。
   const body = title.parentElement;
   let bodyW = 0;
   if (body) {
     const bcs = getComputedStyle(body);
     bodyW = body.clientWidth - (parseFloat(bcs.paddingLeft) || 0) - (parseFloat(bcs.paddingRight) || 0);
   }
-  const still = Math.min(textW + 2 * mcapPad, Math.max(0, bodyW - 2 * mcapPad));
+  const fsTitle = parseFloat(cs.getPropertyValue('--mfs-title')) || parseFloat(cs.fontSize) || 28;
+  const fsMini = parseFloat(cs.getPropertyValue('--mfs-title-mini')) || 15;
+  const textWMini = textW * (fsMini / (fsTitle || fsMini));
+  const still = Math.min(textWMini + 2 * mcapPad, Math.max(0, bodyW - 2 * mcapPad));
   title.style.setProperty('--mtitle-w-still', `${still}px`);
   if (oldW !== `${still}px`) {
     // 文字变了才重算截断标记（同一帧内读，不额外起帧）。
@@ -1783,10 +1794,13 @@ function layoutDeck() {
     const op = ak === 0 ? 1 : ak === 1 ? 0.92 : 0.52;
     const dark = ak === 0 ? 1 : ak === 1 ? 0.62 : 0.34;
     const blur = ak === 0 ? 0 : ak === 1 ? 1.4 : 3.2;
-    // 中央卡：纵拖跟手（下坠 = 关闭预览 / 上移 = 收面预览）；
-    // 两侧卡：横拖时整列跟手（换卡跟手感），纵拖只吃 35%（视差，不跟着飞出去）。
-    const dtx = k * step + deckDragDx;
-    const dty = ak === 0 ? deckDragDy * 0.9 : deckDragDy * 0.35;
+    // 中央卡 = 前景：拖划跟手（横 = 换卡预览 / 纵 = 下坠关预览、上移收面预览）；
+    // 两侧卡零位移（P2 续批⑤ 作者令「叠卡滑动只动前景卡」）：跟手位移只属于
+    // 前景卡，背景卡恒在自身环位（--dtx = k*step / --dty = 0，机检按 DOM 数值
+    // 断言）；换卡落位仍由松手后的 transform 过渡承担（拖动中 data-dragging
+    // 关过渡，松手恢复 —— 与既有机检 mobile-canvas-sheet T3 同面）。
+    const dtx = k * step + (ak === 0 ? deckDragDx : 0);
+    const dty = ak === 0 ? deckDragDy * 0.9 : 0;
     card.style.setProperty('--dtx', `${dtx.toFixed(1)}px`);
     card.style.setProperty('--dty', `${dty.toFixed(1)}px`);
     card.style.setProperty('--dsc', scale.toFixed(3));

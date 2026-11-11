@@ -314,6 +314,13 @@ body.mobile-layer {
      由下方 --mchrome-inset 派生（= 簇顶 16 + 钮 48 + 呼吸 8 = 72），不再各写
      一份 72px 字面量（同一读数两处来源 = 后续调簇几何必漏一处）。 */
   --mtitle-inset: var(--mchrome-inset);
+  /* 标题左对齐批（P2 续批③ · §2.1.2 硬规则 2026-11-11 11:11「标题只 Canvas 才
+     居中，其余面页一律左对齐」）：左锚 = 标题带内缩单源（返回钮右缘 64 + 缝 8
+     = 72，随簇几何走）；右缘 = 屏边一档 16（--ds-space-4 单源）。Canvas 面不建
+     本元素（dock 根页无页头，看板标题 = 居中当前文档胶囊，硬规则明文允许）⇒
+     本元素全体即「非 Canvas 面」，无逐面分叉。 */
+  --mtitle-x: var(--mtitle-inset);
+  --mtitle-r: var(--ds-space-4);
   --mtitle-start: 8px;
   --mtitle-snap: 56px;
   --mcap-h: 48px;
@@ -887,7 +894,8 @@ body.mobile-layer .mobile-page-header {
       文字垂直中心恒 40 = 返回钮中心（盒顶 +12+4p、文字中心 +28−4p，和恒 40）；
       盒底缘恒 64 = 返回钮底缘；吸附态左缘 ≥ 72（不压返回钮）。
 
-   ④ 长页名：max-width = 100% − 2×72 钳宽，溢出走**右缘渐隐**（.mtitle-clip
+   ④ 长页名：max-width = 100% − 左锚 72 − 右缘 16 钳宽（标题左对齐批改前为
+      100% − 2×72），溢出走**右缘渐隐**（.mtitle-clip
       蒙版，navController.applyRoll 按 scrollWidth 翻写）—— 省略号退役。
 
    ⑤ reduced-motion：形态量二值（JS 写 p ∈ {0,1}，navController.reducedMotion）
@@ -914,15 +922,25 @@ body.mobile-layer .mobile-page-title {
        max-width 放宽到满宽 − 2×胶囊内距、水平内距 → 胶囊内距 —— 胶囊贴着
        文字收紧，超长页名钳到「不贴屏幕边」。
      width / max-width / padding-x 三个几何量都由 --mtitle-p 同步驱动（仅白名单
-     属性），两态之间连续插值。 */
-  width: calc(100% - (100% - var(--mtitle-w-still, 100%)) * var(--mtitle-p));
-  max-width: calc(100% - 2 * var(--mtitle-inset)
-    + 2 * (var(--mtitle-inset) - var(--mcap-pad)) * var(--mtitle-p));
+     属性），两态之间连续插值。
+   ── 标题左对齐批（P2 续批③ · §2.1.2 硬规则）改写：居中档（margin auto +
+     text-align:center）退役，「标题只 Canvas 才居中，其余面页一律左对齐」——
+     · 静止档 width = 左对齐带满宽（100% − 左锚 − 右缘）→ 内距 0 →
+       文字区 = 整条带（375 档 = 287px），四字/八字页名都放得下；
+     · 吸附档 width → --mtitle-w-still（= 文字 + 2×胶囊内距，navController 实测）、
+       盒贴字收紧、左锚不动 —— 胶囊超长页名钳到「不贴屏幕边」。
+     width / max-width / margin / padding-x 都由 --mtitle-p 同步驱动（仅白名单
+     属性），两态之间连续插值。标题块**恒左对齐**（§2.1.2 硬规则）：静止大标题
+     与吸附胶囊同一左锚，居中档随本批退役（改前值可 git 查）。 */
+  width: calc((100% - var(--mtitle-x, 72px) - var(--mtitle-r, 16px))
+    - ((100% - var(--mtitle-x, 72px) - var(--mtitle-r, 16px)) - var(--mtitle-w-still, 100%)) * var(--mtitle-p));
+  max-width: calc(100% - var(--mtitle-x, 72px) - var(--mtitle-r, 16px));
   /* 盒下呼吸缝由收编面自带 padding-top 承担（B 批口径不变）。上下外边距承担
      流内占位收缩：52 → 0 连续归零 —— 顶 +4p 把盒底缘钉在 64，底 −52p 把占位
-     还给页体（吸附态内容满铺到胶囊之下，与旧收高终态同布局）。 */
-  margin: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p)) auto
-    calc(var(--mtitle-h) * var(--mtitle-p) * -1);
+     还给页体（吸附态内容满铺到胶囊之下，与旧收高终态同布局）。水平 = 左锚
+     恒 72（钮右缘 64 + 缝 8，返回钮零遮挡）+ 右缘 16。 */
+  margin: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p)) var(--mtitle-r, 16px)
+    calc(var(--mtitle-h) * var(--mtitle-p) * -1) var(--mtitle-x, 72px);
   /* 水平内距：静止档 0（内缩已由盒宽钳制承担，双重计入 = 截断根因，见上）；
      吸附档 = 胶囊内距 --mcap-pad（文字到胶囊缘的呼吸缝）。 */
   padding: calc(var(--mtitle-pad-t) + (var(--mcap-vpad) - var(--mtitle-pad-t)) * var(--mtitle-p))
@@ -937,7 +955,9 @@ body.mobile-layer .mobile-page-title {
   line-height: calc(var(--mtitle-h) - var(--mtitle-pad-t) - var(--mtitle-pad-b)
     + ((var(--mcap-h) - var(--mtitle-h))
       - ((var(--mcap-vpad) - var(--mtitle-pad-t)) + (var(--mcap-vpad) - var(--mtitle-pad-b)))) * var(--mtitle-p));
-  text-align: center;
+  /* 左对齐（标题左对齐批 §2.1.2 硬规则）：文字随盒左锚起排；胶囊态文字同样
+     左对齐（Apple todo 式标题块）。改前 text-align:center 随居中档一并退役。 */
+  text-align: left;
   color: var(--color-frame-text-bright, var(--color-frame-text));
   overflow: hidden;
   /* 截断语义 = **可见省略号**（作者令 2026-11-05 09:28 撤掉右缘渐隐后落定；
@@ -3345,6 +3365,12 @@ body.mobile-layer .ask-fab {
    （桌面 --ask-fab-size），本档只改这一枚变量，零第二套几何。 */
 body.mobile-layer .ask-dock,
 body.mobile-layer .note-dock { --ask-seed-size: var(--mtap-lg, 48px); }
+/* P2 续批④（位置感知种子）手机档 fallback：手机 fab 右钉 16px（上方本档）
+   而 dock 右钉 --ask-fab-gap 12px ⇒ note 钮圆心比种子自然位再左 4px 缝差
+   （60 = 48 钮 + 8 缝 + 4 钉差）；JS syncNoteSeed 的实测值优先于这条。 */
+body.mobile-layer .note-dock {
+  --note-seed-x0: calc(-1 * (var(--ask-fab-size) + var(--ds-space-2) + (16px - var(--ask-fab-gap))));
+}
 /* ── 建群面板（统一面板批 2026-11-06）：顶栏返回圆钮 / 右下悬浮加号 = 手机 48 档 ──
    尺寸档与页面壳返回钮 `.mobile-back-btn`、手机 `.ask-fab` 同一档
    （48 = --mtap-lg / 图标 20 = --micon-sm）；桌面档 40 由 `.g2-fab` 基准承担
