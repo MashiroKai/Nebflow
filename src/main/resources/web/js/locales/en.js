@@ -1578,6 +1578,7 @@ export default {
   'provider.models': 'Models',
   'provider.remove': 'Remove',
   'provider.removeConfirm': 'Remove provider "{name}"?',
+  'provider.removeNamed': 'Remove provider {name}',
   'provider.edit': 'Edit Provider: {name}',
   'provider.add': 'Add Provider',
   'provider.id': 'Provider ID',

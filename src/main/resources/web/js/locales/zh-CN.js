@@ -1529,6 +1529,7 @@ export default {
   'provider.models': '模型',
   'provider.remove': '移除',
   'provider.removeConfirm': '确定移除服务商 "{name}"？',
+  'provider.removeNamed': '移除服务商 {name}',
   'provider.edit': '编辑服务商：{name}',
   'provider.add': '添加服务商',
   'provider.id': '服务商 ID',
