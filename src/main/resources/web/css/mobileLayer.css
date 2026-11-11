@@ -6222,3 +6222,60 @@ body.mobile-layer .bgagent-overlay .bgagent-stop-fab.readonly {
   opacity: 0.35;
   cursor: not-allowed;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   P2 手机端三处缺陷修复批（作者报障 2026-11-11：①页面底部透明截断层
+   ②搜索钮图标歪 ③看板顶栏边框回归）
+
+   ── 根因链（实测读数见 evidence/20261111_p2-diagnose/probes.json）──────
+   「手机页顶底让位」批把 `.mobile-page-nohead .mobile-page-body` 的顶距从
+   `padding-top: 0` 改写为 `calc(--mtitle-lead + safe)`、并给全部页体统一加了
+   `padding-bottom: calc(--dock-h + --dock-gap + --dock-inset-b)`（见上方
+   mobile-top-clearance 块）。该统一底垫对**页体自身滚动**的面（工作台/任务/
+   设置等）语义正确（净空在滚动流内，末行可滚到 dock 之上），但对**收编面
+   自管内滚**的面（消息/联系人/看板/用量）是截视口：内滚区被页体内容盒
+   钳短 72px，滚动视口提前在 dock 上缘 72px 处结束 ⇒ 滚到底时末行停在
+   678（页面底 750），底下露出一条 72px 无内容带 ＝ 作者报障①「透明截断层」；
+   看板页另吃顶垫 12px：`.mf-strip`（absolute top:0，包含块 = 流内
+   `.mf-canvas-page`）随页体被推到 y=12，玻璃带脱离屏顶、上缘多出一条
+   页底色缝 ＝ 作者报障③「顶栏边框回归」（方案 C 的带是贴屏顶的）。
+   ②为独立根因，修在 css/mobileSearchFlat.css（收起态输入件幽灵 padding）。
+
+   ── 修法（净空归还给真正滚动的容器，外层零截断）────────────────────
+   · 看板页：顶/底垫全撤（本页几何自管）——顶 = 方案 C 玻璃带贴屏顶 +
+     `--mf-strip-h`(92) 正文初态让位（首行恒在悬浮钮簇之下，作者令「首行
+     不钻钮下」由带承担）；底 = 「canvas 底部控件浮层带批」恒等式复位
+     （pane 底 = 页面底 = dock 上缘，控件行/点条回贴 dock 上缘 16+48，
+     三钮中线与 ask 座对齐），正文末行净空由 pane 内既有 76px 地板余量
+     （--canvas-bottom-clearance，canvas-bottom-clearance.spec 断言面）承担，
+     作者令「末行完整可见不被压」不破。
+   · 消息/联系人/用量：页体底垫撤、同值净空**内收**进各自内滚区
+     （#fm-conversations / #fm-contacts-body / #usage-dashboard）——净空随
+     内容滚动，滚到底末行仍在 dock 上缘 72px 之上，且不再有死带。
+     消息页查询态（.has-query）结果场吃余量，底垫改挂查询态 dock 上。
+   本块全部规则挂 body.mobile-layer，桌面零命中（三定律①）。 */
+/* ── ①③ 看板页：页体顶/底垫撤销（几何自管面）────────────────────────── */
+body.mobile-layer .mobile-page[data-page="canvas"] .mobile-page-body {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* ── ① 消息/联系人：页体底垫撤、净空内收进收编滚区 ───────────────────── */
+body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body,
+body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body {
+  padding-bottom: 0;
+}
+body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body > #fm-conversations,
+body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body > #fm-contacts-body {
+  padding-bottom: calc(var(--dock-h) + var(--dock-gap) + var(--dock-inset-b, 0px));
+}
+/* 消息页查询态：结果场吃页体余量，dock 自带底净空（脚注/末条不贴 dock 缘）。 */
+body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query {
+  padding-bottom: calc(var(--dock-h) + var(--dock-gap) + var(--dock-inset-b, 0px));
+}
+/* ── ① 用量页：同法内收（P11 直子形同特异性、源序在后）────────────────── */
+body.mobile-layer .mobile-page[data-page="usage"] .mobile-page-body {
+  padding-bottom: 0;
+}
+body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard {
+  padding-bottom: calc(var(--dock-h) + var(--dock-gap) + var(--dock-inset-b, 0px));
+}
