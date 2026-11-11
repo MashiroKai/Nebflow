@@ -448,6 +448,16 @@
   text-overflow: ellipsis;
   min-width: 0;
 }
+/* Silent-completion diagnostic (delegate empty-receipt governance): terminal
+   delegate cards surface "[delegate-diagnostic] no-final-text; …" in L3 when
+   the final assistant turn was silent. Same meta scale as .bg-task-sub; the
+   empty-run variant (completed with zero tool calls / commits / text) takes
+   the shared warn icon color — it must not read as a clean completion. */
+.bg-task-diag {
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+}
+.bg-task-diag-warn { color: var(--ds-warn-icon); }
 /* 孤儿来源角标（面板树批 2026-10-29 ①）：父不可见行的「来自 …」标注——复用
    .bg-task-origin chip 族（中性 muted），零新色令牌。 */
 .bg-task-orphan { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
