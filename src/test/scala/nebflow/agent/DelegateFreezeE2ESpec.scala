@@ -327,6 +327,15 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
           "panel-wake"
         )
         _ = assert(manualWake.isRight, manualWake.toString)
+        // 唤醒收口读数**先行**（确定性）：onWoken 在 wake 链内同步完成（冻结槽清空 +
+        // registry 回 Idle + 台账行回 running），而续做轮的自然完成链（text-finish ⇒
+        // completed 终态三清：拆 registry 行、行写终态、Stop child）是合法异步收尾——
+        // 旧读数排在 waitUntil 之后，与完成清理链竞速（50ms 轮询量化 vs ~40ms 链长，
+        // poll#1 一旦错过，poll#2 几乎必败 = 本件在补详批合并后稳定翻红的原因）。
+        // 唤醒一返回即读 = 契约原语义（wake ⇒ 诚实 in-flight 面），断言零增减、零竞态。
+        wokeRecord <- IO(DelegateRegistry.find(childSid))
+        wokeRow <- fx.resources.subAgentTaskStore.findByTaskId(childSid)
+        wokeReg <- fx.resources.agentRegistry.get.map(_.get(childSid))
         // ③ 续做轮：第二轮 LLM 请求必须带冻结前的 brief（上下文没丢）。
         _ <- waitUntil(30.seconds) {
           fx.requests.get.map(rs => rs.count(_.sessionId == childSid) >= 2)
@@ -334,10 +343,6 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         resumedRequests <- fx.requests.get.map(_.filter(_.sessionId == childSid))
         resumedTurn = resumedRequests.last
         wakeTranscript <- fx.resources.sessionStore.loadMessagesForSession(childSid)
-        // 唤醒收口：冻结槽清空 + registry 状态回 Idle + 台账行回 running。
-        wokeRecord <- IO(DelegateRegistry.find(childSid))
-        wokeRow <- fx.resources.subAgentTaskStore.findByTaskId(childSid)
-        wokeReg <- fx.resources.agentRegistry.get.map(_.get(childSid))
         frames <- fx.frames.get
         childEvents <- parentEvents.get
         _ <- fx.system.stopAll.attempt.void
