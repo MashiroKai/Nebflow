@@ -396,6 +396,7 @@ html[data-theme="dark"] {
   --nf-glass-input-bg: #ffffffF7;            /* 原配方亮档 α=.968（近实底白） */
   --nf-glass-input-filter: blur(24px) saturate(1.15); /* 原配方唯一模糊配方 */
   --nf-glass-bg: #ffffff8C;          /* 唯一玻璃底（亮档）α=.549 = 参照物 rgba(255,255,255,.55) */
+  --nf-glass-opaque-bg: #fbfbfc;     /* Ask 正文实底：亮主题 α≈.97，避免底层文字透入 */
   --nf-glass-bg-hover: #ffffff9E;    /* hover 升一档 α=.620（只提不透、不改形态） */
   --nf-glass-blur: 40px;                             /* 唯一模糊半径（内容残留腰斩点） */
   --nf-glass-saturate: 1.4;                          /* 唯一饱和度（色彩承接 +13% vs 参照物） */
@@ -418,6 +419,7 @@ html[data-theme="dark"] {
 html[data-theme="dark"] {
   --nf-glass-input-bg: #181c26F0;            /* 原配方暗档 α=.941（近实底深） */
   --nf-glass-bg: #181c26AD;          /* 暗档 α=.678 = 参照物 rgba(24,28,38,.68) */
+  --nf-glass-opaque-bg: #191d27;     /* Ask 正文实底：暗主题 α≈.97，避免底层文字透入 */
   --nf-glass-bg-hover: #181c26B8;    /* 暗档 hover α=.722 */
   --nf-glass-border-color: #ffffff0F;      /* 参照物暗档细边 rgba(255,255,255,.06) */
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
@@ -427,6 +429,7 @@ html[data-theme="dark"] {
   html:not([data-theme="light"]):not([data-theme="dark"]) {
     --nf-glass-input-bg: #181c26F0;
     --nf-glass-bg: #181c26AD;
+    --nf-glass-opaque-bg: #191d27;
     --nf-glass-bg-hover: #181c26B8;
     --nf-glass-border-color: #ffffff0F;
     --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
@@ -436,6 +439,7 @@ html[data-theme="dark"] {
 html[data-theme="light"] {
   --nf-glass-input-bg: #ffffffF7;
   --nf-glass-bg: #ffffff8C;
+  --nf-glass-opaque-bg: #fbfbfc;
   --nf-glass-bg-hover: #ffffff9E;
   --nf-glass-border-color: #ffffff59;
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);

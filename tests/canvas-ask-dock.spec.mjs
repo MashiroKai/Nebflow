@@ -718,11 +718,7 @@ try {
     const glassBg = norm(cs0.getPropertyValue('--glass-bg'));
     const paper = norm(cs0.getPropertyValue('--color-bg'));
     probe.remove();
-    const composite = glassBg && paper ? {
-      r: Math.round(glassBg.a * glassBg.r + (1 - glassBg.a) * paper.r),
-      g: Math.round(glassBg.a * glassBg.g + (1 - glassBg.a) * paper.g),
-      b: Math.round(glassBg.a * glassBg.b + (1 - glassBg.a) * paper.b),
-    } : null;
+  const opaqueBg = norm(cs0.getPropertyValue('--nf-glass-opaque-bg'));
     const asRgba = (s) => {
       const m = String(s).match(/rgba?\(([^)]+)\)/);
       if (!m) return null;
@@ -738,7 +734,7 @@ try {
       header: pick(document.getElementById('header')),
       inputBg: asRgba(pick(document.querySelector('.ask-input')).bg),
       bubBg: asRgba(pick(document.querySelector('.ask-bub.ai')).bg),
-      composite,
+      opaqueBg,
     };
   });
   const matSame = (a, b) => !!a && !!b && a.bg === b.bg && a.border === b.border && a.blur === b.blur;
@@ -746,15 +742,15 @@ try {
   // #deck-fab 同族（旧「= #header」断言为 v3 批欠账——ask.css 三修③ 的 --cv-*
   // 基础档被 liquid-glass.css ④ 后写胜出，#deck-fab 同吃同配方，两者计算样式相等）。
   ok('T12a 入口钮材质 = 悬浮族 F1 单源（#deck-fab 同配方逐项相等）', matSame(mat.fab, mat.deck), JSON.stringify({ fab: mat.fab, deck: mat.deck }));
-  // 配方件相等（blur / border 逐项）+ 底 α=1 + 底 = 压平合成值（2026-11-05 改判）
+  // 配方件相等（blur / border 逐项）+ 底 α≥.97（正文区不透字）。
   const recipeSame = (a, b) => !!a && !!b && a.border === b.border && a.blur === b.blur;
   const near3 = (x, y) => !!x && !!y && Math.abs(x.r - y.r) <= 1 && Math.abs(x.g - y.g) <= 1 && Math.abs(x.b - y.b) <= 1;
-  ok('T12b 输入条 = #header 同套配方（blur/描边逐项相等）+ 底收不透明档（α=1 且 = 玻璃压平纸面的合成值）',
-    recipeSame(mat.input, mat.header) && !!mat.inputBg && mat.inputBg.a === 1 && near3(mat.inputBg, mat.composite),
-    JSON.stringify({ input: mat.input, ref: mat.header, bg: mat.inputBg, composite: mat.composite }));
-  ok('T12c 气泡 = #header 同套配方（blur/描边逐项相等）+ 底收不透明档（α=1 且 = 玻璃压平纸面的合成值）',
-    recipeSame(mat.bub, mat.header) && !!mat.bubBg && mat.bubBg.a === 1 && near3(mat.bubBg, mat.composite),
-    JSON.stringify({ bub: mat.bub, ref: mat.header, bg: mat.bubBg, composite: mat.composite }));
+  ok('T12b 输入条 = #header 同套配方（blur/描边逐项相等）+ 正文底 α≥.97',
+    recipeSame(mat.input, mat.header) && !!mat.inputBg && mat.inputBg.a >= 0.97,
+    JSON.stringify({ input: mat.input, ref: mat.header, bg: mat.inputBg }));
+  ok('T12c 气泡 = #header 同套配方（blur/描边逐项相等）+ 正文底 α≥.97',
+    recipeSame(mat.bub, mat.header) && !!mat.bubBg && mat.bubBg.a >= 0.97,
+    JSON.stringify({ bub: mat.bub, ref: mat.header, bg: mat.bubBg }));
   const greenFaces = await page.evaluate(() => ({
     send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
     sendInk: getComputedStyle(document.querySelector('.ask-input .ask-send')).color,

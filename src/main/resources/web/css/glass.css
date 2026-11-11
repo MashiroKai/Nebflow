@@ -471,7 +471,7 @@ html[data-theme="light"] {
      是为了让「面板内零渐变背景」这条结构判据（tests/ask-sheet-fade-height A0d：
      不许出现任何过渡条/色块层）保持可读：1px 折射线与「渐变色块」在计算样式里
      无法区分，所以按既有先例落到伪元素。 */
-  background: var(--glass-bg);
+  background: var(--nf-glass-opaque-bg);
   -webkit-backdrop-filter: var(--nf-glass-filter);
   backdrop-filter: var(--nf-glass-filter);
   border: 1px solid var(--cv-border, var(--glass-border));
@@ -487,7 +487,7 @@ html[data-theme="light"] {
   /* position:relative 只为承载 ::before 折射线（气泡内无绝对定位子件，
      改前改后几何逐像素不变）。 */
   position: relative;
-  background: var(--glass-bg);
+  background: var(--nf-glass-opaque-bg);
   -webkit-backdrop-filter: var(--nf-glass-filter);
   backdrop-filter: var(--nf-glass-filter);
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
