@@ -2317,7 +2317,7 @@ object RemoteExecutor:
     s"[Background job started] Job ID: $jobId\n" +
       s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
       "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn. " +
-      s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
+      s"""Wait with Bash(background_job_id: "$jobId", timeout: <milliseconds>) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
 
   /**
    * 「对端已先行收编」判据：对端实例的前台预算先到点 ⇒ 它把命令收编进它自己的后台

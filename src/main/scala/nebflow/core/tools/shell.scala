@@ -369,7 +369,7 @@ final class ShellSession private (
    *
    * 业界依据（调研件 §0-1/§4）：DeepSeek Harness 的 `job_output(wait: true,
    * timeout_ms)`——有界等待，等超时不杀 job，直接回「仍在跑」，由完成通知接管。
-   * 本方法即那条语义在会话任务图上的执行面（工具面 = `BgWaitTool`）。
+   * 本方法即那条语义在会话任务图上的执行面（工具面 = `BashTool` wait mode）。
    *
    * 两条腿（id 的归属决定走哪条）：
    *  ① **本会话任务图内**（显式 run_in_background / 前台转后台收编）：逐任务
@@ -382,7 +382,7 @@ final class ShellSession private (
    *    行消失 = 终态已由别处记账（终态回调注销）⇒ 从 `BgTaskOutputStore` 取终态
    *    读数与尾段折算回报。
    *
-   * 🔴 预算纪律：`deadlineMs` 由调用方（`BgWaitTool`）按 `ctx.bashConfig
+   * 🔴 预算纪律：`deadlineMs` 由调用方（`BashTool` wait mode）按 `ctx.bashConfig
    * .foregroundWaitBudgetMs` 钳好传进来——**本方法不收第二个上限、也不自造**。
    * 🔴 读面纪律：不 `checkAlive`、不取 `lifecycleMutex`、不 `touch`——长等待绝不许
    * 攥住会话锁（否则 cancel/execute 被阻塞）；会话已销毁时任务图读面照常返回空。

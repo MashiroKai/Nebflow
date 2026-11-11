@@ -767,10 +767,7 @@ object AgentCore:
     "Glob",
     "Grep",
     "Bash",
-    // bash overhaul T1（2026-11-04）：唯一等待原语——与 Bash 强绑定，故随 BaseTools
-    // 注入全体执行面；超时/轮询的合法替代（`BgWait` 由 LoopGuard.CallKind 归 Wait
-    // 类：重复等待不推进 R-call 计数）。
-    "BgWait"
+    // Background wait/cancel is part of Bash's unified command surface.
   )
 
   /**

@@ -57,9 +57,9 @@ Service-type background jobs (persistent):
 - Waiting-type (default): the system waits for it to complete and you are notified. No time limit — background jobs run to completion (the idle/stuck sensor only alerts; use cancel_background_job: true to kill).
 - persistent jobs are EXEMPT from the idle/hard-timeout/stall guards — a server that sits idle is healthy. They run until you cancel them (cancel_background_job: true) or the session ends. You own their lifecycle; the frontend indicator stays visible.
 
-Waiting on background jobs (BgWait):
-- `BgWait` is the ONLY sanctioned way to wait on a background job inside a turn: it blocks (bounded) until the jobIds you list are terminal or its deadline is reached, and it NEVER kills a job. Its deadline defaults to — and is capped at — the same foreground wait budget as Bash.
-- Do NOT repeat `background_job_id` status queries. `background_job_id` now has exactly two uses: cancelling (`cancel_background_job: true`), and checking a job's state after a stuck notification.
+Waiting on background jobs:
+- Use `background_job_id` with `timeout` for a bounded wait. If the deadline expires, Bash returns the current job status without killing or cancelling it; you can wait again with a larger timeout or end your turn for the completion notification.
+- Do not repeatedly query without a timeout. Use `background_job_id` alone only for an immediate status check, or pair it with `cancel_background_job: true` to cancel.
 
 Do not use Bash when a dedicated tool exists:
 | Task | Use | Not Bash |
@@ -86,7 +86,7 @@ Git safety:
       "properties" -> io.circe.Json.obj(
         "command" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "The bash command to run. Required unless background_job_id is provided.".asJson
+          "description" -> "Bash command to run. Select exactly one mode: command; background_job_id with optional timeout to wait/check; or background_job_id with cancel_background_job=true to cancel. Do not combine command with job-id modes.".asJson
         ),
         "timeout" -> io.circe.Json
           .obj(
@@ -99,7 +99,7 @@ Git safety:
         ),
         "run_in_background" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you. Blocked on it inside this turn? Wait with BgWait (jobIds: [\"<jobId>\"]).".asJson
+          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you. Blocked on it inside this turn? Wait with Bash(background_job_id: \"<jobId>\", timeout: <milliseconds>).".asJson
         ),
         "persistent" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
@@ -592,7 +592,8 @@ Git safety:
         (bgJobId.isDefined && cancelBg && explicitTimeoutMs.isDefined) ||
         (bgJobId.isEmpty && cancelBg) ||
         (bgJobId.isDefined && (background || persistent)) ||
-        (bgJobId.isEmpty && persistent && !background)
+        (bgJobId.isEmpty && persistent && !background) ||
+        (bgJobId.isEmpty && background && explicitTimeoutMs.isDefined)
     val runPlan =
       if invalidMode then IO.pure(Left(ToolError("Bash modes are exclusive: provide command, or background_job_id with optional timeout to wait, or background_job_id with cancel_background_job=true to cancel.")))
       else bgJobId match
@@ -761,7 +762,7 @@ Git safety:
                           _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                         yield Right(
                           s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn. " +
-                            s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
+                            s"""Wait with Bash(background_job_id: "$jobId", timeout: <milliseconds>) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
                         )
                         end for
                     }
@@ -798,7 +799,7 @@ Git safety:
                   //     `BgTaskRegistry`（`kind="remote"`，命令来自对端）并把仍在跑的执行
                   //     fiber 挂进会话任务图，回**与本地 auto-background 逐字同形**的回执
                   //     （同一构造点 [[RemoteExecutor.autoBackgroundReceipt]]），
-                  //     `isError=false`，可被 BgWait 等、可被 BgTaskCancel 按同一 id 取消。
+                  //     `isError=false`，可由 Bash(background_job_id, timeout) 等待、可由 cancel 按同一 id 取消。
                   // 本侧无 PeerInfo，故「远端后台机制」在本侧的同构体 =
                   // `shell.adoptAsBackgroundJob` + `BgTaskRegistry.register`（= host 侧
                   // `executeRemoteBackground`/`startRemoteBgFiber` 的等价面）。
@@ -1149,12 +1150,12 @@ Git safety:
     // 回执契约（main-agent-nonblocking 批，裁定原文「转后台时给主 agent 的
     // 回执要含：已转后台 + job 标识 + 如何查询」）：① [Background job started]
     // 头 + ② Job ID + ③ 已转后台说明（Auto-backgrounded after … NOT killed）
-    // + ④ 完成通知承诺 + ⑤ 等待方式（BgWait 唯一有界等待原语）/取消方式
+    // + ④ 完成通知承诺 + ⑤ 等待方式（Bash background_job_id + timeout）/取消方式
     // （background_job_id + cancel_background_job）。
     // 🔴 bash overhaul T1（作者令 2026-11-04）：原回执里「随时查询进度」式的
     // `background_job_id` 邀请是**受逼轮询**的来源（缺陷 D3——提示词禁止轮询，回执却
     // 邀请轮询，而当时没有任何等待原语）。现回执只给两条合法出路：真被阻塞 ⇒
-    // BgWait 一次有界等待；否则结束回合等通知。
+    // Bash background_job_id + timeout 一次有界等待；否则结束回合等通知。
     // 🔴 T7（作者令 2026-11-04）：回执正文的唯一构造点移到
     // [[RemoteExecutor.autoBackgroundReceipt]] —— 本地腿与设备腿**逐字同形**由
     // 同一个函数保证（不是两处字符串「看起来一样」）。调用方加的前缀（如 sleep-poll
@@ -1168,7 +1169,7 @@ Git safety:
    * 与本地 [[autoBackground]] 的差异只有三处，全部是「这是对端发起的一条命令」的
    * 必然结果：
    *  1. jobId = host 下发的 `bgJobId`（对端发起侧铸的 id）——两侧同一 id，使
-   *     `BgWait`/`BgTaskCancel`/对端 `bg-cancel` 全按同一个 id 工作（禁在本侧铸第二
+   *     Bash wait/cancel/对端 `bg-cancel` 全按同一个 id 工作（禁在本侧铸第二
    *     个 id 让登记行与回执发散）；
    *  2. 台账 `kind="remote"`（命令不在本实例的会话里发起）；
    *  3. 该 kind 的死亡看护只读 `RemoteExecutor` 的等待句柄图（[[BgTaskLiveness]]
@@ -1408,7 +1409,7 @@ Git safety:
    *     [[BgNotifyDelivery.deliverAgentEvent]] 的 `None` 门（持久补投腿），
    *     事件照样有落点，绝不 IO.unit 蒸发。
    *  4. `awaited` 去重（[[BgTaskRegistry.markAwaited]] 的反面消费）：注销行带
-   *     `awaited=true`（终态结果已被 BgWait 当面收走）⇒ **只跳过 agent 推送**
+   *     `awaited=true`（终态结果已被 Bash wait 当面收走）⇒ **只跳过 agent 推送**
    *     （审计 `bg-notify-awaited-skip`），账本行与输出留存照做。
    *  5. 忙时下一站 = 既有 next-step 收件口：目标会话在 Processing 时事件入
    *     `pendingEvents`、回合边界统一 drain（`AgentProcessing.scala:1360-1441`），
@@ -1522,12 +1523,12 @@ Git safety:
         // T2 契约 1/3：`targetRef` 传 **ctx 原值**（可能是 None）——
         //   - None ⇒ deliverAgentEvent 的 None 门（有目标会话 = 持久补投腿；连会话
         //     都没有 = 响亮 WARN + 审计），事件绝不蒸发；
-        //   - awaited（终态结果已被 BgWait 当面交付）⇒ 跳过推送这一整段
+        //   - awaited（终态结果已被 Bash wait 当面交付）⇒ 跳过推送这一整段
         //     （账本与输出留存已在上面无条件落完），审计 `bg-notify-awaited-skip`。
         val notifyAgent =
           if awaited then
             logger.info(
-              s"[bg-notify-awaited-skip] background job $jobId ($eventType): terminal result was already delivered by an awaiting caller (BgWait) — agent push skipped; ledger row + output retention kept",
+              s"[bg-notify-awaited-skip] background job $jobId ($eventType): terminal result was already delivered by an awaiting caller (Bash wait) — agent push skipped; ledger row + output retention kept",
               "sessionId" -> ctx.sessionId.getOrElse("")
             )
           else

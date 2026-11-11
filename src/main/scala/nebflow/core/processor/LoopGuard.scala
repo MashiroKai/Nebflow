@@ -580,7 +580,7 @@ object LoopGuard:
                   // T3：只提醒、不处置——查询/等待类重复不是循环信号（业界无
                   // 「同参 N 次即终止会话」的做法）；指向有界等待原语或回合结束。
                   Verdict.Warn(
-                    s"the same query/wait call has now been issued ${withText.lastNonWorkCount} times in a row with identical arguments — polling the same handle cannot make progress by itself. Use `BgWait` for a bounded wait, or end your turn and wait for the completion notification instead of re-polling."
+                    s"the same query/wait call has now been issued ${withText.lastNonWorkCount} times in a row with identical arguments — polling the same handle cannot make progress by itself. Use Bash with background_job_id and timeout for a bounded wait, or end your turn and wait for the completion notification instead of re-polling."
                   )
                 else Verdict.Pass
 
