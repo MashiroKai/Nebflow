@@ -45,14 +45,14 @@ class TaskLedgerPassiveReminderSpec extends FunSuite:
     assertEquals(os.read(quarantined), damaged)
     assert(io.circe.parser.decode[io.circe.Json](os.read(throttle)).isRight)
 
-  test("failed quarantine rename leaves the corrupt throttle untouched and suppresses reminder"):
+  test("failed quarantine move leaves corrupt throttle byte-for-byte intact and suppresses reminder"):
     reset()
-    val throttle = home / "task-ledger-reminder-throttle.json"
+    val throttle = home / "throttle.json"
     val damaged = "{cannot-move"
     os.write.over(throttle, damaged)
-    val target = os.Path(s"${throttle}.corrupt-${System.currentTimeMillis()}")
-    os.makeDir(target)
-    assertEquals(TaskLedgerPassiveReminder.due("s", 8L, "must not overwrite"), None)
+    val deniedMove: (java.nio.file.Path, java.nio.file.Path) => Unit = (_, _) =>
+      throw new java.io.IOException("injected quarantine move failure")
+    assertEquals(TaskLedgerPassiveReminder.dueAt(throttle, "s", 8L, "must not overwrite", deniedMove), None)
     assertEquals(os.read(throttle), damaged)
 
   test("bounded session cache evicts oldest entries deterministically, retaining newest active sessions"):
