@@ -179,12 +179,19 @@ body.mobile-layer .mh-search-dock .mh-search-bar > i svg {
     width var(--mhsc-dur) var(--mhsc-ease),
     height var(--mhsc-dur) var(--mhsc-ease);
 }
-/* 输入行随形变退场（宽度收到 0 + 淡出）：占位文字与输入框同一过渡段。 */
+/* 输入行随形变退场（宽度收到 0 + 淡出）：占位文字与输入框同一过渡段。
+   padding 左右随宽度一并插值（P2 三处修复批 2026-11-11）：裸件基块
+   （css/inputSurface.css 元素级兜底）给 `.mh-search-input` 的标准内距
+   `--nf-field-pad-x`（12）在收起态若不收零，border-box 下 `max-width:0`
+   压不住 padding ⇒ 输入行仍占 24px 幽灵宽度，flex 居中把搜索图标顶偏
+   12px（实测 off.dx = −12）＝ 作者报障「搜索钮图标歪」。 */
 body.mobile-layer .mh-search-dock .mh-search-input {
   max-width: 100%;
   transition:
     opacity var(--mhsc-dur) var(--mhsc-ease),
-    max-width var(--mhsc-dur) var(--mhsc-ease);
+    max-width var(--mhsc-dur) var(--mhsc-ease),
+    padding-left var(--mhsc-dur) var(--mhsc-ease),
+    padding-right var(--mhsc-dur) var(--mhsc-ease);
 }
 
 /* ── ② 收起态：右上角圆钮（视觉整件 = .g2-fab，本块只补落位）─────────────
@@ -209,6 +216,11 @@ body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-input {
   opacity: 0;
   max-width: 0;
   min-width: 0;
+  /* 内距收零（P2 三处修复批 2026-11-11）：max-width/min-width 只钳布局宽，
+     border-box 下左右 padding（裸件档各 12）照常渲染 = 24px 幽灵占位，
+     把居中的搜索图标顶偏 12px（作者报障「图标歪」的根因）。 */
+  padding-left: 0;
+  padding-right: 0;
   pointer-events: none;
 }
 /* 收起态图标：尺寸/字色**不在这里写** —— mobileLayer 的展开档图标规则已用
