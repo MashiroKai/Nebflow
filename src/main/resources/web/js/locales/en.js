@@ -1471,6 +1471,7 @@ export default {
   'settings.modelChainTitle': 'Model (per session class)',
   'settings.modelChainDisclosureTitle': 'Model (per session class)',
   'settings.modelChainSectionHint': 'One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn.',
+  'settings.modelRoleTabs': 'Choose a conversation category',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
   'model.modeUnified': 'Unified',
