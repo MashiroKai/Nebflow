@@ -32,12 +32,34 @@ private[agent] object TaskLedgerPassiveReminder:
     finally channel.close()
 
   /** Write a complete sibling and atomically replace the state; never truncate the old state. */
-  private def atomicWrite(file: os.Path, content: String): Unit =
+  private def atomicWrite(
+      file: os.Path,
+      content: String,
+      replace: (java.nio.file.Path, java.nio.file.Path) => Unit
+  ): Unit =
     val tmp = file / os.up / s".${file.last}.tmp-${UUID.randomUUID()}.tmp"
     try
       Files.writeString(tmp.toNIO, content, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
-      Files.move(tmp.toNIO, file.toNIO, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+      replace(tmp.toNIO, file.toNIO)
     finally Files.deleteIfExists(tmp.toNIO)
+
+  private val atomicReplace: (java.nio.file.Path, java.nio.file.Path) => Unit = (from, to) =>
+    Files.move(from, to, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+
+  /** Production reminder entry: gates the due check itself, so excluded turns cannot spend quota. */
+  private[agent] def forTurn(
+      isRealUserTurn: Boolean,
+      isRootAgent: Boolean,
+      isCompactTurn: Boolean,
+      isAskTurn: Boolean,
+      sessionId: Option[String],
+      nowMs: Long,
+      summary: => String
+  ): Option[nebflow.shared.SystemReminder] =
+    if isRealUserTurn && isRootAgent && !isCompactTurn && !isAskTurn then
+      sessionId.flatMap(sid => due(sid, nowMs, summary))
+        .map(text => nebflow.shared.SystemReminder("task-ledger", text))
+    else None
 
   /** Parse a throttle record, preserving bounded recency order while tolerating old records. */
   private def readState(file: os.Path, moveAside: (java.nio.file.Path, java.nio.file.Path) => Unit): Option[State] =
@@ -65,6 +87,16 @@ private[agent] object TaskLedgerPassiveReminder:
       nowMs: Long,
       summary: => String,
       moveAside: (java.nio.file.Path, java.nio.file.Path) => Unit
+  ): Option[String] = dueAtWithReplace(file, sessionId, nowMs, summary, moveAside, atomicReplace)
+
+  /** Small production dependency seam: inject only the final replacement operation in tests. */
+  private[agent] def dueAtWithReplace(
+      file: os.Path,
+      sessionId: String,
+      nowMs: Long,
+      summary: => String,
+      moveAside: (java.nio.file.Path, java.nio.file.Path) => Unit,
+      replace: (java.nio.file.Path, java.nio.file.Path) => Unit
   ): Option[String] = lock.synchronized {
     try withFileLock(file) {
       readState(file, moveAside).flatMap { state =>
@@ -77,7 +109,7 @@ private[agent] object TaskLedgerPassiveReminder:
             val next = State((state.lastDeliveredBySession - sessionId + (sessionId -> nowMs)).toList
               .sortBy { case (sid, at) => (at, sid) }.takeRight(MaxSessionKeys).toMap)
             try
-              atomicWrite(file, next.asJson.noSpaces)
+              atomicWrite(file, next.asJson.noSpaces, replace)
               Some(s"Task ledger (fresh snapshot):\n$text")
             catch case _: Exception => None
       }
