@@ -5164,6 +5164,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .file-card .fc-quote-btn { margin-left: auto; flex: 0 0 auto; }
 .option-box .ask-att-question-card { cursor: pointer; max-width: 100%; }
 .option-box .ask-att-question-card:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+/* 问面文件卡降级态（⑤a「原因 + 动作」）：卡内可换行容纳原因档 + 重试键；
+   不可用 = 虚线描边（与缩略/chip 面同档语义）。 */
+.option-box .ask-att-question-card { box-sizing: border-box; min-width: 0; flex-wrap: wrap; }
+.option-box .ask-att-question-card .fc-meta { flex: 1 1 0; }
+.option-box .ask-att-question-card .ask-att-reason { display: block; font-size: var(--ds-fs-meta); }
+.option-box .ask-att-question-card.ask-att-unavailable { border-style: dashed; }
 .fc-icon {
   width: 38px; height: 38px; border-radius: var(--ds-radius-button); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
