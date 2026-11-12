@@ -355,13 +355,26 @@ object DelegateRegistry:
     else writeLock.synchronized {
       find(id) match
         case None => Left(s"workspace reconcile: no registry record for '$id'")
-        case Some(rec) if rec.reportDetail.contains(confirmation) && rec.reportStatus.contains("finish") => Right(())
         case Some(rec) =>
-          try
-            put(rec.copy(reportStatus = Some("finish"), reportDetail = Some(confirmation), reportSuggestion = None))
-            Right(())
-          catch case e: Throwable => Left(s"workspace reconcile registry write failed: ${e.getMessage}")
+          decideCompletionWrite(rec, confirmation) match
+            case Left(error) => Left(error)
+            case Right(updated) =>
+              try
+                put(updated)
+                Right(())
+              catch case e: Throwable => Left(s"workspace reconcile registry write failed: ${e.getMessage}")
     }
+
+  /**
+   * Pure decision for the reconciliation finish write — deterministic and disk-free so
+   * replays can never clobber a NEWER claim: an old receipt is idempotent only against
+   * itself, allowed onto an unreported slot, and refused against any later finish /
+   * standby / blocked report. `workReport` is never touched here.
+   */
+  private[delegate] def decideCompletionWrite(rec: Record, confirmation: String): Either[String, Record] =
+    if rec.reportStatus.contains("finish") && rec.reportDetail.contains(confirmation) then Right(rec) // idempotent replay
+    else if rec.reportStatus.isEmpty then Right(rec.copy(reportStatus = Some("finish"), reportDetail = Some(confirmation), reportSuggestion = None))
+    else Left("registry report slot carries a newer claim; stale reconcile receipt refused")
 
   def updateWorkResult(id: String, text: String): Either[String, Unit] =
     if !validId(id) then Left(s"updateWorkResult: invalid session id '$id'")

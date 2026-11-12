@@ -185,6 +185,42 @@ class WorkspaceReconcileSpec extends CatsEffectSuite:
     }
   }
 
+  test("late replay against a refusing registry keeps ledger completion and reports not-converged") {
+    fixture(register = root => List(standardWorkspace(root / "repo", root / "seat"))) { (_, tree, ledger, registry, service) =>
+      val op = request(tree, ledger)
+      for
+        first <- service.confirm(op)
+        replay <- { registry.failWrites = true; service.confirm(op) } // stands in for a newer-claim refusal
+      yield
+        assert(first.isRight)
+        assert(replay.isLeft, replay.toString) // honest divergence, never a silent overwrite
+        assertEquals(ledger.snapshot.completionConfirmations(op.operationId).stage, "completed")
+    }
+  }
+
+  test("completion write decision never clobbers a newer registry claim (deterministic)") {
+    val base = DelegateRegistry.Record(id = "d1", executor = "kernel", cwd = "/x", project = None, taskId = None,
+      parentSessionId = "p", title = "t", createdAt = 0L, workReport = Some("work text"))
+    val receipt = s"workspace-reconcile op1 owner=o workspace=w path=/p head=${"a" * 40} branch=b evidence=e confirmedAt=1"
+    // Unreported slot: allowed; workReport preserved; suggestion cleared.
+    val allowed = DelegateRegistry.decideCompletionWrite(base, receipt)
+    val written = allowed.getOrElse(fail(allowed.toString))
+    assertEquals(written.reportStatus, Some("finish"))
+    assertEquals(written.reportDetail, Some(receipt))
+    assertEquals(written.workReport, Some("work text"))
+    assertEquals(written.reportSuggestion, None)
+    // Idempotent against itself.
+    assertEquals(DelegateRegistry.decideCompletionWrite(written, receipt), Right(written))
+    // Any newer claim wins: refused, original record returned untouched.
+    val newerFinish = written.copy(reportStatus = Some("finish"), reportDetail = Some("newer round finish"))
+    val standby = written.copy(reportStatus = Some("standby"), reportDetail = Some("waiting"), reportSuggestion = Some("s"))
+    val blocked = written.copy(reportStatus = Some("blocked"), reportDetail = Some("why"))
+    for same <- List(newerFinish, standby, blocked) do
+      val verdict = DelegateRegistry.decideCompletionWrite(same, receipt)
+      assert(verdict.isLeft, verdict.toString)
+      assert(verdict.left.exists(_.contains("newer claim")), verdict.toString)
+  }
+
   test("registry sync failure after the ledger commit reports not-converged and replay heals without refinish") {
     fixture(register = root => List(standardWorkspace(root / "repo", root / "seat"))) { (_, tree, ledger, registry, service) =>
       val op = request(tree, ledger)
