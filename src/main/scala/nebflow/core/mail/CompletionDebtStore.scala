@@ -99,6 +99,14 @@ object CompletionDebtStore:
     val p = acceptedFile(recipient)
     if !os.exists(p) then Nil else decode[List[AcceptedTerminal]](os.read(p)).fold(err => throw new IllegalStateException(err.getMessage), identity)
 
+  /**
+   * 测试接缝（跨代结算验收批）：在 acknowledge 读债**之前**同步执行一次。
+   * 生产恒 no-op（默认值零行为变化）；spec 用它在「验收已检查、最终 ACK 未落」的
+   * 确定性窗口内换代债（BackoffSupervisor completionCapMs 构造器缝同款纪律——
+   * 测试 JVM 下 sys.props 不可靠）。非线程安全：仅单会话串行测试可置位，用毕复位。
+   */
+  var testHookBeforeAcknowledge: () => Unit = () => ()
+
   private given Encoder[AcceptedTerminal] = Encoder.forProduct5("ownerSessionId", "recipientSessionId", "eventType", "payload", "generation")(r =>
     (r.ownerSessionId, r.recipientSessionId, r.eventType, r.payload, r.generation)
   )
@@ -168,15 +176,18 @@ object CompletionDebtStore:
     .handleError(e => Left(Option(e.getMessage).getOrElse(e.getClass.getSimpleName)))
 
   /** Acknowledge only the matching delivered payload; conflict/malformed files are never cleared. */
-  def acknowledge(owner: String, recipient: String, messages: List[Message], generation: String): IO[Boolean] = IO.blocking { debtLock.synchronized {
-    read(owner) match
-      case Right(Some(debt)) if debt.phase == "cancelled" => false
-      case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages && debt.generation == generation =>
-        AtomicJson.writeSync(file(owner), debt.copy(phase = "settled").asJson.noSpaces)
-        true
-      case Right(None) => true
-      case _ => false
-  }}
+  def acknowledge(owner: String, recipient: String, messages: List[Message], generation: String): IO[Boolean] = IO.blocking {
+    testHookBeforeAcknowledge()
+    debtLock.synchronized {
+      read(owner) match
+        case Right(Some(debt)) if debt.phase == "cancelled" => false
+        case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages && debt.generation == generation =>
+          AtomicJson.writeSync(file(owner), debt.copy(phase = "settled").asJson.noSpaces)
+          true
+        case Right(None) => true
+        case _ => false
+    }
+  }
 
   /** Cancellation is a durable tombstone racing record/ack; old completion cannot overwrite it. */
   def cancel(owner: String): IO[Unit] = IO.blocking { debtLock.synchronized {
