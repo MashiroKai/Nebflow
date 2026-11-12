@@ -172,7 +172,8 @@ final class WorkspaceAdvisor(
       case Left(error)    => Left(describe(error))
     }
     (git, occupancyReading).mapN { (gitReading, occ) =>
-      val finishReported = records(workspace.owner).exists(_.reportStatus.contains(FinishReport))
+      val finishReported = records(workspace.owner).exists(_.reportStatus.contains(FinishReport)) ||
+        snapshot.completionConfirmations.valuesIterator.exists(c => c.workspaceId == workspace.id && c.owner == workspace.owner)
       val awaitingUser =
         snapshot.requests.exists(_.items.exists(i => i.workspaceId == workspace.id && i.phase == "awaiting-user"))
       val reasons = scala.collection.mutable.ListBuffer[String]()

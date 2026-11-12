@@ -348,6 +348,35 @@ object DelegateRegistry:
    * = 零写（无可保真）。查无记录 = `Left`（与 updateReport 同纪律：只对真实
    * spawn 生效）。
    */
+  /** Root workspace reconciliation's structured finish update; caller supplies only a durable confirmation receipt. */
+  def confirmWorkspaceCompletion(id: String, operationId: String, confirmation: String): Either[String, Unit] =
+    if !validId(id) then Left(s"workspace reconcile: invalid delegate id '$id'")
+    else if operationId.trim.isEmpty || confirmation.trim.isEmpty then Left("workspace reconcile: missing operation receipt")
+    else writeLock.synchronized {
+      find(id) match
+        case None => Left(s"workspace reconcile: no registry record for '$id'")
+        case Some(rec) =>
+          decideCompletionWrite(rec, confirmation) match
+            case Left(error) => Left(error)
+            case Right(updated) =>
+              try
+                put(updated)
+                Right(())
+              catch case e: Throwable => Left(s"workspace reconcile registry write failed: ${e.getMessage}")
+    }
+
+  /**
+   * Pure decision for the reconciliation finish write — deterministic and disk-free so
+   * replays can never clobber a NEWER claim: an old receipt is idempotent only against
+   * itself, allowed onto an unreported slot, and refused against any later finish /
+   * standby / blocked report. `workReport` is never touched here.
+   */
+  private[delegate] def decideCompletionWrite(rec: Record, confirmation: String): Either[String, Record] =
+    if rec.reportStatus.contains("finish") && rec.reportDetail.contains(confirmation) then Right(rec) // idempotent replay
+    else if rec.cancelRequestedAt.isDefined then Left("delegate has a cancel tombstone; completion receipt refused")
+    else if rec.reportStatus.isEmpty then Right(rec.copy(reportStatus = Some("finish"), reportDetail = Some(confirmation), reportSuggestion = None))
+    else Left("registry report slot carries a newer claim; stale reconcile receipt refused")
+
   def updateWorkResult(id: String, text: String): Either[String, Unit] =
     if !validId(id) then Left(s"updateWorkResult: invalid session id '$id'")
     else if text.trim.isEmpty then Right(())

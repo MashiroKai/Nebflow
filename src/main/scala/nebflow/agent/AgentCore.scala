@@ -261,6 +261,7 @@ object AgentCore:
     // workspace coordination picture + dismiss-suggestion; blocks declaration
     // escape for agent/plugin declarations (MergerRequestTool same-slot precedent).
     "WorkspaceSummary",
+    "WorkspaceReconcile",
     // GenerateImage（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
@@ -444,6 +445,7 @@ object AgentCore:
     // Root-only (RootExclusiveTools blocks declaration escape); the advisor
     // itself never merges and never touches manual merge requests.
     "WorkspaceSummary",
+    "WorkspaceReconcile",
     // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
     // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
     // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
@@ -650,7 +652,7 @@ object AgentCore:
    * Tools 双集，MergerRequestTool 同槽先例）。本增量属「按面变更」（新增成员），
    * 非「凑数字」。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 25
+  val RootOrchestrationToolsExpectedSize: Int = 26
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
