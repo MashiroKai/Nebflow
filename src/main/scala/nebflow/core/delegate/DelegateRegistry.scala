@@ -348,6 +348,21 @@ object DelegateRegistry:
    * = 零写（无可保真）。查无记录 = `Left`（与 updateReport 同纪律：只对真实
    * spawn 生效）。
    */
+  /** Root workspace reconciliation's structured finish update; caller supplies only a durable confirmation receipt. */
+  def confirmWorkspaceCompletion(id: String, operationId: String, confirmation: String): Either[String, Unit] =
+    if !validId(id) then Left(s"workspace reconcile: invalid delegate id '$id'")
+    else if operationId.trim.isEmpty || confirmation.trim.isEmpty then Left("workspace reconcile: missing operation receipt")
+    else writeLock.synchronized {
+      find(id) match
+        case None => Left(s"workspace reconcile: no registry record for '$id'")
+        case Some(rec) if rec.reportDetail.contains(confirmation) && rec.reportStatus.contains("finish") => Right(())
+        case Some(rec) =>
+          try
+            put(rec.copy(reportStatus = Some("finish"), reportDetail = Some(confirmation), reportSuggestion = None))
+            Right(())
+          catch case e: Throwable => Left(s"workspace reconcile registry write failed: ${e.getMessage}")
+    }
+
   def updateWorkResult(id: String, text: String): Either[String, Unit] =
     if !validId(id) then Left(s"updateWorkResult: invalid session id '$id'")
     else if text.trim.isEmpty then Right(())

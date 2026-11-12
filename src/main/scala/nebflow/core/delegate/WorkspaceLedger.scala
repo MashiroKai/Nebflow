@@ -497,10 +497,10 @@ final class WorkspaceLedger(val path: os.Path):
     validate: Workspace => Either[String, String]
   ): Either[String, CompletionConfirmation] = transaction { s =>
     s.completionConfirmations.get(operation.operationId) match
-      case Some(existing) =>
-        val same = existing.copy(actualBranch = None, recordedAt = 0L) == operation.copy(actualBranch = None, recordedAt = 0L)
+      case Some(existing) if existing.stage == "completed" =>
+        val same = existing.copy(actualBranch = None, recordedAt = 0L, stage = "") == operation.copy(actualBranch = None, recordedAt = 0L, stage = "")
         (s, if same then Right(existing) else Left("Operation id conflicts with its recorded confirmation"))
-      case None =>
+      case _ =>
         s.workspaces.find(_.id == operation.workspaceId) match
           case None => (s, Left("Unknown workspace"))
           case Some(w) if w.revision != operation.expectedRevision => (s, Left("Stale workspace revision"))
@@ -511,7 +511,7 @@ final class WorkspaceLedger(val path: os.Path):
           case Some(w) => validate(w) match
             case Left(error) => (s, Left(error))
             case Right(actualBranch) =>
-              val confirmed = operation.copy(actualBranch = Some(actualBranch))
+              val confirmed = operation.copy(actualBranch = Some(actualBranch), stage = "completed")
               val updated = w.copy(branch = actualBranch, activity = "idle", revision = w.revision + 1)
               (s.copy(workspaces = s.workspaces.map(x => if x.id == w.id then updated else x),
                 completionConfirmations = s.completionConfirmations.updated(operation.operationId, confirmed)), Right(confirmed))
@@ -715,7 +715,8 @@ object WorkspaceLedger:
     acceptanceEvidence: String,
     explicitRootConfirmation: String,
     actualBranch: Option[String] = None,
-    recordedAt: Long = 0L
+    recordedAt: Long = 0L,
+    stage: String = "completed"
   )
   given io.circe.Codec[CompletionConfirmation] = deriveCodec
 
