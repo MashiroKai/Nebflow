@@ -60,8 +60,15 @@ class MergerRecoverySpec extends CatsEffectSuite:
   private def cancelledRequest(ledger: WorkspaceLedger, workspaceId: String = "w1"): Unit =
     ledger.register(
       WorkspaceLedger.Workspace(
-        workspaceId, Project, Repository, s"/tmp/$workspaceId", s"delegate/$workspaceId", "main", "base",
-        s"owner-$workspaceId", "kernel"
+        workspaceId,
+        Project,
+        Repository,
+        s"/tmp/$workspaceId",
+        s"delegate/$workspaceId",
+        "main",
+        "base",
+        s"owner-$workspaceId",
+        "kernel"
       )
     )
     assert(
@@ -103,7 +110,13 @@ class MergerRecoverySpec extends CatsEffectSuite:
       s""""lifecycle":"$lifecycle","activity":"idle","reservation":$quoted,"revision":3}"""
 
   /** MergeRequest row with every derived-codec field (legacy / crash-residue shapes). */
-  private def requestRow(id: String, repository: String, workspaceId: String, status: String, itemPhase: String): String =
+  private def requestRow(
+    id: String,
+    repository: String,
+    workspaceId: String,
+    status: String,
+    itemPhase: String
+  ): String =
     s"""{"id":"$id","repository":"$repository","mergerId":"$MergerId","authorization":"auth",""" +
       s""""items":[{"workspaceId":"$workspaceId","sourceCommit":"${"a" * 40}","targetBranch":"main","phase":"$itemPhase",""" +
       s""""mergeCommit":null,"verification":null,"integration":null,"error":null}],""" +
@@ -134,7 +147,8 @@ class MergerRecoverySpec extends CatsEffectSuite:
       val tombstoneAt = DelegateRegistry.find(MergerId).get.cancelRequestedAt.get
       val eventId = MergerRecovery.eventIdFor(Repository, MergerId, tombstoneAt)
 
-      val release = ledger.releaseMerger(Project, Repository, MergerId, eventId, "reason").getOrElse(fail("release refused"))
+      val release =
+        ledger.releaseMerger(Project, Repository, MergerId, eventId, "reason").getOrElse(fail("release refused"))
       assertEquals(release.replayed, false)
       assertEquals(release.releasedDelegateId, MergerId)
       assertEquals(release.tombstoneAt, Some(tombstoneAt))
@@ -147,7 +161,11 @@ class MergerRecoverySpec extends CatsEffectSuite:
       assertEquals(after.workspaces.head.lifecycle, "open", "workspace record preserved")
       assertEquals(after.mergerBootstraps, Map.empty[String, WorkspaceLedger.MergerBootstrap], "no stray seeds")
       assert(after.mergerEvents.contains(eventId), "release event recorded")
-      assertEquals(DelegateRegistry.find(MergerId).get.cancelRequestedAt, Some(tombstoneAt), "registry tombstone untouched")
+      assertEquals(
+        DelegateRegistry.find(MergerId).get.cancelRequestedAt,
+        Some(tombstoneAt),
+        "registry tombstone untouched"
+      )
     finally os.remove.all(root)
     end try
   }
@@ -184,7 +202,17 @@ class MergerRecoverySpec extends CatsEffectSuite:
       val ledger = new WorkspaceLedger(root / "ledger.json")
       cancelledMerger(ledger)
       ledger.register(
-        WorkspaceLedger.Workspace("w1", Project, Repository, "/tmp/w1", "delegate/w1", "main", "base", "owner-w1", "kernel")
+        WorkspaceLedger.Workspace(
+          "w1",
+          Project,
+          Repository,
+          "/tmp/w1",
+          "delegate/w1",
+          "main",
+          "base",
+          "owner-w1",
+          "kernel"
+        )
       )
       assert(
         ledger
@@ -238,7 +266,10 @@ class MergerRecoverySpec extends CatsEffectSuite:
       DelegateRegistry.put(record("delegate-nebflow-newid"))
       val freshRelease =
         ledger.releaseMerger(Project, Repository, "delegate-nebflow-newid", "evt-new", "reason")
-      assert(freshRelease.left.toOption.get.contains("not cancelled"), "a non-cancelled replacement must not be releasable")
+      assert(
+        freshRelease.left.toOption.get.contains("not cancelled"),
+        "a non-cancelled replacement must not be releasable"
+      )
 
       // A stale caller still aiming at the old id refuses without side effects.
       val stale = ledger.releaseMerger(Project, Repository, "delegate-nebflow-oldid", "evt-stale", "reason")
@@ -275,7 +306,8 @@ class MergerRecoverySpec extends CatsEffectSuite:
       val replacement = ledger.merger(Project, Repository, "delegate-nebflow-fresh")
       assertEquals(replacement.delegateId, "delegate-nebflow-fresh")
 
-      val replay = ledger.releaseMerger(Project, Repository, MergerId, eventId, "reason").getOrElse(fail("replay refused"))
+      val replay =
+        ledger.releaseMerger(Project, Repository, MergerId, eventId, "reason").getOrElse(fail("replay refused"))
       assertEquals(replay.replayed, true)
       assertEquals(replay.releasedDelegateId, MergerId, "replay reports the original release facts")
       assertEquals(ledger.snapshot.mergers.map(_.delegateId), List("delegate-nebflow-fresh"), "replacement untouched")
@@ -315,10 +347,13 @@ class MergerRecoverySpec extends CatsEffectSuite:
       state = ledger.snapshot
       _ = assertEquals(state.mergers, Nil, "exactly one release landed")
       _ = assertEquals(state.mergerEvents.size, 1, "one event, no duplicates")
-      replay <- IO.blocking(new WorkspaceLedger(root / "ledger.json").releaseMerger(Project, Repository, MergerId, eventId, "reason"))
+      replay <- IO.blocking(
+        new WorkspaceLedger(root / "ledger.json").releaseMerger(Project, Repository, MergerId, eventId, "reason")
+      )
       _ = assert(replay.getOrElse(fail("replay after concurrency refused")).replayed)
       _ <- IO(os.remove.all(root))
     yield ()
+    end for
   }
 
   test("T10 crash recovery is verifiable from disk: a fresh process reads the release and replays it") {
@@ -461,7 +496,17 @@ class MergerRecoverySpec extends CatsEffectSuite:
       val ledger = new WorkspaceLedger(root / "ledger.json")
       cancelledMerger(ledger)
       ledger.register(
-        WorkspaceLedger.Workspace("w1", Project, Repository, "/tmp/w1", "delegate/w1", "main", "main", "owner-w1", "kernel")
+        WorkspaceLedger.Workspace(
+          "w1",
+          Project,
+          Repository,
+          "/tmp/w1",
+          "delegate/w1",
+          "main",
+          "main",
+          "owner-w1",
+          "kernel"
+        )
       )
       assert(
         ledger

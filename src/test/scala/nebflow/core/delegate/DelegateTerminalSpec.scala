@@ -169,6 +169,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       List("f1" -> v1, "f2" -> v2, "f3" -> v3, "f4" -> v4).foreach { (name, v) =>
         assertEquals(v, None, s"$name: no terminal-verdict line may be written (retired protocol)")
       }
+    end for
   }
 
   test(

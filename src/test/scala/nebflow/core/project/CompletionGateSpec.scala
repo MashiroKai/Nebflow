@@ -575,7 +575,9 @@ class CompletionGateSpec extends CatsEffectSuite:
     end for
   }
 
-  test("engine ⑤ (retired): BLOCKED-anchored output no longer short-circuits the gate — dirty worktree rejects to failed") {
+  test(
+    "engine ⑤ (retired): BLOCKED-anchored output no longer short-circuits the gate — dirty worktree rejects to failed"
+  ) {
     val llm = new FuncLlm(text =>
       if text.contains("gate-scenario") then IO.pure("""BLOCKED: 无法继续
 {"category":"task-underspecified","detail":"任务缺验收标准","suggestion":"补验收"}""")

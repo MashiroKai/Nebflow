@@ -46,9 +46,8 @@ class FeedbackRouterSpec extends CatsEffectSuite:
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
       .map(lines =>
         lines.flatMap(l =>
-          jsonParse(l).toOption.map(j =>
-            (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("summary").getOrElse(""))
-          )
+          jsonParse(l).toOption
+            .map(j => (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("summary").getOrElse("")))
         )
       )
       .handleError(_ => Nil)
@@ -76,6 +75,7 @@ class FeedbackRouterSpec extends CatsEffectSuite:
         text.contains("已停止自动回跳"),
         s"escalation must state that auto-retries stopped, got: $text"
       )
+    end for
   }
 
   test("routeRetryCap: no window/cooldown gate — repeated escalations are ALL delivered (never suppressed/merged)") {
@@ -90,9 +90,11 @@ class FeedbackRouterSpec extends CatsEffectSuite:
       events <- readAuditEvents(ws)
     yield
       assertEquals(texts.size, 5, "every retry-cap exhaustion must be delivered (no suppression, no merge)")
-      events.filter((t, _) => t == "escalated").foreach((_, summary) =>
-        assert(summary.contains("reason=RetryCap"), s"escalated audit line must carry reason=RetryCap, got: $summary")
-      )
+      events
+        .filter((t, _) => t == "escalated")
+        .foreach((_, summary) =>
+          assert(summary.contains("reason=RetryCap"), s"escalated audit line must carry reason=RetryCap, got: $summary")
+        )
       assertEquals(events.count((t, _) => t == "escalated"), 5, "one escalated audit line per escalation")
       assertEquals(events.count((t, _) => t == "cooldown-on"), 0, "no cooldown-on lines — the gate is gone")
   }

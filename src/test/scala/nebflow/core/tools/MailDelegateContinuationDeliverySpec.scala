@@ -272,7 +272,8 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       // mailed to the parent exactly once (the mailbox is the delivery channel); the parent actor
       // itself only receives the doorbell. The completion releases the resumed session; a later Mail
       // resumes it in place again.
-      val delivered = pending.filter(e => e.event.eventType == "completed" && e.event.payload.contains("continuation work done"))
+      val delivered =
+        pending.filter(e => e.event.eventType == "completed" && e.event.payload.contains("continuation work done"))
       assertEquals(
         delivered.size,
         1,

@@ -145,7 +145,9 @@ class NodeToolsSpec extends FunSuite:
     assert(NodeTools.parseOut(Some(Json.fromString(""))).isLeft)
   }
 
-  test("NodeLifecycle: Terminal = completed/failed/cancelled, excludes running/pending/wiring and the retired blocked token") {
+  test(
+    "NodeLifecycle: Terminal = completed/failed/cancelled, excludes running/pending/wiring and the retired blocked token"
+  ) {
     // blocked 终态退役（no-blocked-semantics 一期）：Terminal 集不含 blocked——
     // 该 token 仅为 legacy 存量行迁移保留，不是终态
     assertEquals(

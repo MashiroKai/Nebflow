@@ -129,7 +129,17 @@ class ReleaseCompletionCrossSpec extends CatsEffectSuite:
       val ledger = new WorkspaceLedger(root / "ledger.json")
       // Completion face writes its confirmation first.
       ledger.register(
-        WorkspaceLedger.Workspace("w1", Project, Repository, "/tmp/w1", "delegate/w1", "main", "base", "owner-w1", "kernel")
+        WorkspaceLedger.Workspace(
+          "w1",
+          Project,
+          Repository,
+          "/tmp/w1",
+          "delegate/w1",
+          "main",
+          "base",
+          "owner-w1",
+          "kernel"
+        )
       )
       val confirmed = ledger
         .reconcileCompletion(confirmation("w1"), _ => Right("delegate/w1"))
@@ -140,17 +150,32 @@ class ReleaseCompletionCrossSpec extends CatsEffectSuite:
       // Release face then runs on a cancelled merger with terminal-history residue on w2.
       cancelledMerger(ledger)
       ledger.register(
-        WorkspaceLedger.Workspace("w2", Project, Repository, "/tmp/w2", "delegate/w2", "main", "base", "owner-w2", "kernel")
+        WorkspaceLedger.Workspace(
+          "w2",
+          Project,
+          Repository,
+          "/tmp/w2",
+          "delegate/w2",
+          "main",
+          "base",
+          "owner-w2",
+          "kernel"
+        )
       )
       assert(
-        ledger.requestMerge(MergeRequest("req2", Repository, MergerId, "auth", List(MergeItem("w2", "a" * 40, "main")))).isRight
+        ledger
+          .requestMerge(MergeRequest("req2", Repository, MergerId, "auth", List(MergeItem("w2", "a" * 40, "main"))))
+          .isRight
       )
       assert(ledger.cancelRequest("req2").isRight)
       assert(ledger.releaseUnfinished("req2", MergerId, "cancelled").isRight)
 
       val tombstoneAt = DelegateRegistry.find(MergerId).get.cancelRequestedAt.get
       val eventId = MergerRecovery.eventIdFor(Repository, MergerId, tombstoneAt)
-      assert(ledger.releaseMerger(Project, Repository, MergerId, eventId, "reason").isRight, "confirmations must not block the release")
+      assert(
+        ledger.releaseMerger(Project, Repository, MergerId, eventId, "reason").isRight,
+        "confirmations must not block the release"
+      )
 
       val after = ledger.snapshot
       assertEquals(after.completionConfirmations.size, 1, "completion history preserved verbatim by the release")
@@ -158,7 +183,17 @@ class ReleaseCompletionCrossSpec extends CatsEffectSuite:
 
       // A later completion write after the release preserves the release events.
       ledger.register(
-        WorkspaceLedger.Workspace("w3", Project, Repository, "/tmp/w3", "delegate/w3", "main", "base", "owner-w3", "kernel")
+        WorkspaceLedger.Workspace(
+          "w3",
+          Project,
+          Repository,
+          "/tmp/w3",
+          "delegate/w3",
+          "main",
+          "base",
+          "owner-w3",
+          "kernel"
+        )
       )
       assert(ledger.reconcileCompletion(confirmation("w3"), _ => Right("delegate/w3")).isRight)
       assertEquals(ledger.snapshot.mergerEvents.size, 1, "completion writes never touch mergerEvents")
@@ -200,8 +235,11 @@ class ReleaseCompletionCrossSpec extends CatsEffectSuite:
           """"acceptanceEvidence":"e","explicitRootConfirmation":"c","actualBranch":null,"recordedAt":0,""" +
           """"stage":"completed","recoverRunning":false}}}"""
       )
-      val state = io.circe.parser.decode[WorkspaceLedger.State](os.read(path))
-        .getOrElse(fail(s"decode failed: ${io.circe.parser.decode[WorkspaceLedger.State](os.read(path)).left.map(_.getMessage)}"))
+      val state = io.circe.parser
+        .decode[WorkspaceLedger.State](os.read(path))
+        .getOrElse(
+          fail(s"decode failed: ${io.circe.parser.decode[WorkspaceLedger.State](os.read(path)).left.map(_.getMessage)}")
+        )
       assertEquals(state.mergerEvents.size, 1, "mergerEvents survives the decode")
       assertEquals(state.completionConfirmations.size, 1, "completionConfirmations survives the decode")
       assertEquals(state.completionConfirmations("op-1").workspaceId, "w1")

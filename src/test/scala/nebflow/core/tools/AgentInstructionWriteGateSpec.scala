@@ -6,6 +6,7 @@ import munit.FunSuite
 import nebflow.shared.ToolCall
 
 class AgentInstructionWriteGateSpec extends FunSuite:
+
   private def call(name: String, path: String): ToolCall =
     ToolCall(id = "call", name = name, input = JsonObject("file_path" -> path.asJson), rawArguments = None)
 
@@ -28,7 +29,9 @@ class AgentInstructionWriteGateSpec extends FunSuite:
       rawArguments = None
     )
     assert(!AgentInstructionWriteGate.requiresConfirmation(bash("cat AGENTS.md"), isAgent = true))
-    assert(AgentInstructionWriteGate.requiresConfirmation(bash("cat AGENTS.md; echo change >> AGENTS.md"), isAgent = true))
+    assert(
+      AgentInstructionWriteGate.requiresConfirmation(bash("cat AGENTS.md; echo change >> AGENTS.md"), isAgent = true)
+    )
     assert(AgentInstructionWriteGate.requiresConfirmation(bash("sed -i 's/a/b/' AGENTS.md"), isAgent = true))
 
   test("canonical filename recognition is case-insensitive and cross-platform"):

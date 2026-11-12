@@ -9,7 +9,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{SharedResources, SpecResources}
 import nebflow.core.tools.{NodeEditTool, ToolContext}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
@@ -233,9 +233,9 @@ class NodeBlockedRetiredSpec extends CatsEffectSuite:
     val ws = tempRoot / "ws-legacy-reactivate"
     os.makeDir.all(ws)
     val system = ActorSystem(s"blk-legacy-${scala.util.Random.nextInt(100000)}")
-      // 桩以**重跑输入携带的新任务书**（migrated-task）为判别锚：重激活后的 rerun
-      // prompt 带编辑后 task，首轮上游（late-result-C）不含它 ⇒ 应答可区分两腿。
-      val llm = FuncLlm(text => if text.contains("migrated-task") then IO.pure("legacy-ok-final") else IO.pure("ok"))
+    // 桩以**重跑输入携带的新任务书**（migrated-task）为判别锚：重激活后的 rerun
+    // prompt 带编辑后 task，首轮上游（late-result-C）不含它 ⇒ 应答可区分两腿。
+    val llm = FuncLlm(text => if text.contains("migrated-task") then IO.pure("legacy-ok-final") else IO.pure("ok"))
     for
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-legacy-react", ws, system, res)
@@ -339,7 +339,9 @@ class NodeBlockedRetiredSpec extends CatsEffectSuite:
       assert(a.ttlExpireAt.isEmpty, "abandoned row retained on map — no display TTL")
       assert(
         evs.exists((t, id, p) =>
-          t == "nodeUpdated" && id == "n-legacy-a" && p.hcursor.get[String]("status").toOption
+          t == "nodeUpdated" && id == "n-legacy-a" && p.hcursor
+            .get[String]("status")
+            .toOption
             .contains(NodeLifecycle.Cancelled)
         ),
         "abandon must emit nodeUpdated (cancelled)"

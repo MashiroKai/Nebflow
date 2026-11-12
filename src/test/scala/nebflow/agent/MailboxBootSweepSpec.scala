@@ -171,8 +171,7 @@ class MailboxBootSweepSpec extends CatsEffectSuite:
     var samples = 0
     val sweep = MailboxBootSweep.runAt(
       taskStore,
-      sessionStore,
-      {
+      sessionStore, {
         assert(!os.exists(fragment), "temporary fragments are removed before clock sampling")
         samples += 1
         firstBootMs

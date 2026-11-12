@@ -80,6 +80,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
      * （engine-defects 批 #239）时按它对照。
      */
     val closingText: String = closing
+
     val verdictText: String =
       s"""VERDICT: FAIL
          |{"issues":["artifact does not compile"],"requirements":"re-run upstream after the dependency rollback"}
@@ -105,6 +106,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
    */
   private class ReentryLlm(gate: cats.effect.Deferred[IO, Unit]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     private val verdictText: String =
       """VERDICT: FAIL
         |{"issues":["artifact does not compile"],"requirements":"re-run upstream after the dependency rollback"}

@@ -90,6 +90,8 @@ class SessionResumptionSpec extends CatsEffectSuite:
            gate.fold(Stream.empty.covaryAll[IO, StreamChunk])(g => Stream.eval(g.get).drain) ++
              Stream(StreamChunk.TextDelta("RESUMED_TURN_DONE"), StreamChunk.Done(None, None)))
 
+  end StubLlm
+
   private def mkResources(
     system: ActorSystem,
     hang: Boolean,

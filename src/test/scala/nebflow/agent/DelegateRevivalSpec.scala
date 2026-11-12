@@ -237,7 +237,9 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         delivered = events.filter(_.correlationId.contains(child))
         _ = assertEquals(delivered.size, 1, s"the continued turn's final text reaches the parent exactly once: $events")
         _ = assert(delivered.head.payload.contains("REVIVED_WORK_DONE"), delivered.head.payload)
-        _ <- waitUntil(10.seconds)(fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).exists(_.status == "completed")))
+        _ <- waitUntil(10.seconds)(
+          fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).exists(_.status == "completed"))
+        )
         stillLive <- fx.resources.agentRegistry.get.map(_.contains(child))
         _ = assert(!stillLive, "the completion releases the revived actor")
       yield ()

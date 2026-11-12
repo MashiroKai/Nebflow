@@ -3,12 +3,12 @@ package nebflow.agent
 import cats.effect.{Deferred, IO}
 import cats.syntax.all.*
 import fs2.Stream
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentCommand, AgentDef}
 import nebflow.core.mail.CompletionDebtStore
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk}
+import nebflow.shared.*
 import nebflow.shared.given
 
 import scala.concurrent.duration.*
@@ -30,7 +30,10 @@ class CompletionIdentityActorGateSpec extends CatsEffectSuite:
       entered <- Deferred[IO, Unit]
       llm = new LlmHandle[IO]:
         def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("unexpected send"))
-        def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+        def sendStream(
+          req: LlmRequest,
+          onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+        ): Stream[IO, StreamChunk] =
           Stream.eval(entered.complete(())).drain ++ Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
       resources <- SpecResources.mkResources(system, tmp, llm)
       _ <- CompletionDebtStore.record(owner, recipient, messages)
@@ -38,12 +41,20 @@ class CompletionIdentityActorGateSpec extends CatsEffectSuite:
       generation = initial.toOption.flatten.get.generation
       _ = assert(generation.nonEmpty)
       actor <- system.spawn(
-        AgentActor(AgentDef(name = "IdentityGate", description = "identity gate", tools = Nil, systemPrompt = ""),
-          resources, wsSend = (_: Json) => IO.unit, depth = 0, sessionId = Some(recipient), sessionName = Some(recipient)),
+        AgentActor(
+          AgentDef(name = "IdentityGate", description = "identity gate", tools = Nil, systemPrompt = ""),
+          resources,
+          wsSend = (_: Json) => IO.unit,
+          depth = 0,
+          sessionId = Some(recipient),
+          sessionName = Some(recipient)
+        ),
         recipient
       )
       _ <- actor ! AgentCommand.ExternalEvent(
-        source = "delegate", eventType = "completed", payload = "same report",
+        source = "delegate",
+        eventType = "completed",
+        payload = "same report",
         correlationId = Some(owner),
         metadata = JsonObject(
           "parentSessionId" -> Json.fromString(recipient),
@@ -55,6 +66,13 @@ class CompletionIdentityActorGateSpec extends CatsEffectSuite:
       after <- CompletionDebtStore.pending(owner)
     yield
       assertEquals(after.toOption.flatten.map(_.generation), Some(generation))
-      assertEquals(after.toOption.flatten.map(_.phase), Some("deliverable"), "stale generation must not acknowledge current debt")
-    program.guarantee(system.stopAll *> IO { PathUtil.setDataRoot(previousRoot); nebflow.core.LlmLogWriter.setEnabled(previousLog) })
+      assertEquals(
+        after.toOption.flatten.map(_.phase),
+        Some("deliverable"),
+        "stale generation must not acknowledge current debt"
+      )
+    program.guarantee(system.stopAll *> IO {
+      PathUtil.setDataRoot(previousRoot); nebflow.core.LlmLogWriter.setEnabled(previousLog)
+    })
   }
+end CompletionIdentityActorGateSpec

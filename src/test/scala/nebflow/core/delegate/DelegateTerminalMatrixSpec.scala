@@ -243,7 +243,10 @@ class DelegateTerminalMatrixSpec extends CatsEffectSuite:
           outcome.isInstanceOf[DelegateTerminal.Outcome.Release],
           s"the seat releases to the parent, got: $outcome"
         )
-        assert(outcome.toString.contains("committed the work but forgot to declare"), "the payload carries the final text")
+        assert(
+          outcome.toString.contains("committed the work but forgot to declare"),
+          "the payload carries the final text"
+        )
         assertEquals(noteRows, Nil, "no unmerged-work audit row (retired protocol)")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()

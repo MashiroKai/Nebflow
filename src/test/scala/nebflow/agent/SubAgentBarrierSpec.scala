@@ -62,7 +62,9 @@ class SubAgentBarrierSpec extends FunSuite:
     assert(nebflow.core.processor.DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(terminal), duplicate))
 
     val (drained, remaining) = TurnBoundaryDrains.drainBarrier(
-      List(terminal, delegate(2)), compactionPending = false, outstanding = 0
+      List(terminal, delegate(2)),
+      compactionPending = false,
+      outstanding = 0
     )
     assertEquals(drained.map(_.payload), List(terminal.payload, "delegate-result-2"))
     assertEquals(remaining, Nil)
@@ -70,7 +72,8 @@ class SubAgentBarrierSpec extends FunSuite:
 
   test("freeze receipts do not release a child-result slot; failed terminal receipts do") {
     val frozen = AgentCommand.ExternalEvent("delegate", "frozen", "parked", correlationId = Some("frozen-child"))
-    val failed = AgentCommand.ExternalEvent("subtask", "failed", "failed terminal", correlationId = Some("failed-child"))
+    val failed =
+      AgentCommand.ExternalEvent("subtask", "failed", "failed terminal", correlationId = Some("failed-child"))
     assert(!TurnBoundaryDrains.isSubagentResult(frozen))
     assert(TurnBoundaryDrains.isSubagentResult(failed))
     val (drained, remaining) = TurnBoundaryDrains.drainBarrier(List(failed), compactionPending = false, outstanding = 0)
