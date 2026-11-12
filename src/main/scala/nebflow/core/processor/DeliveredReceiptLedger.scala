@@ -124,11 +124,23 @@ object DeliveredReceiptLedger:
    * （redeliveryOf 元数据优先、`delivery-redelivery-<id>` 前缀剥离次之——重投件
    * 与原件同一身份）。无 correlationId = Nil（永放行——既有纪律：同文多次通知
    * 是合法形态，载荷摘要不具身份唯一性）。
+   *
+   * 跨代结算验收批（#2178）：携带非空 `completionGeneration` 的 delegate 终态
+   * 把身份键**绑定到代际**——全部键加 `#<gen>` 后缀（与 SessionMailbox
+   * terminalIdentity `subagentId#gen` 同约定）。bare id 跨代同键 = busy/idle
+   * 双入口的跨代误判形态：在队旧代件吞掉同 owner 新代完成（Mail 续轮）、旧代
+   * 已投标记吞掉新代重放——每轮完成是独立事件，永不合条。旧链无代际件保持
+   * 裸 id（行为零回退）；非 delegate 源/非终态事件即便带该元数据也不后缀。
    */
   def identityKeys(e: AgentCommand.ExternalEvent): List[String] =
     val raw = e.correlationId.filter(_.nonEmpty).toList
     val resolved = nebflow.core.delegate.DelegateDeliveryReceipts.ackableReceiptId(e).toList
-    (raw ++ resolved).distinct
+    val keys = (raw ++ resolved).distinct
+    val generation = e.metadata("completionGeneration").flatMap(_.asString).filter(_.nonEmpty)
+    val isGenBearingDelegateTerminal =
+      e.source == "delegate" && nebflow.core.delegate.DelegateDeliveryReceipts.TerminalEventTypes.contains(e.eventType)
+    if generation.isDefined && isGenBearingDelegateTerminal then keys.map(k => s"$k#${generation.get}")
+    else keys
 
   /**
    * 事件列的身份键展开（markDelivered 喂养面）：注入腿标记时把重投件的原件 id
