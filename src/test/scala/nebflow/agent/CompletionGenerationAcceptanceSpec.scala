@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{Deferred, IO, Outcome, Ref, Resource}
 import cats.syntax.all.*
 import fs2.Stream
 import io.circe.{Json, JsonObject}
@@ -12,7 +12,7 @@ import nebflow.core.mail.CompletionDebtStore
 import nebflow.shared.{ContentBlock, FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk}
 import nebflow.shared.given
 
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
 import scala.concurrent.duration.*
 
 /**
@@ -91,6 +91,28 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
+  /**
+   * Run-boundary barrier for sequential events against one actor. The actor emits exactly one
+   * sessionBusy{busy:false} frame when a run ends in true idle (drain turns emit none), and its
+   * loop dequeues the next message only after the handler that emitted it returns. An event sent
+   * after [[toIdle]] returns therefore reaches the idle behavior (idle acceptance leg) and is
+   * never queued behind a running turn (busy drain leg). Waiting on the LLM call counter alone
+   * gives no such guarantee: the call starts before the run ends.
+   */
+  private final class IdleBarrier:
+    private val idles = Ref.unsafe[IO, Int](0)
+
+    val wsSend: Json => IO[Unit] = frame =>
+      val c = frame.hcursor
+      if c.get[String]("type").toOption.contains("sessionBusy") && c.get[Boolean]("busy").toOption.contains(false) then
+        idles.update(_ + 1)
+      else IO.unit
+
+    /** Runs `send`, then waits until the actor has returned to idle once more. */
+    def toIdle(send: IO[Unit]): IO[Unit] =
+      idles.get.flatMap(before => send *> waitUntil(15.seconds)(idles.get.map(_ > before)))
+  end IdleBarrier
+
   /** 真实协议形 delegate 终态事件（写点契约见类头）。 */
   private def terminalEvent(
     payload: String,
@@ -115,13 +137,14 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
   private def spawnAgent(
     system: ActorSystem,
     resources: SharedResources,
-    sid: String
+    sid: String,
+    wsSend: Json => IO[Unit] = _ => IO.unit
   ): IO[ActorRef[AgentCommand]] =
     system.spawn(
       AgentActor(
         AgentDef(name = "CGA", description = "completion generation acceptance probe", tools = Nil, systemPrompt = ""),
         resources,
-        wsSend = (_: Json) => IO.unit,
+        wsSend = wsSend,
         depth = 0,
         sessionId = Some(sid),
         sessionName = Some(sid)
@@ -299,12 +322,13 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
       val owner = "cgat2-owner"
       val msgs1 = List(Message(MessageRole.Assistant, Left("t2 round one result")))
       val msgs2 = List(Message(MessageRole.Assistant, Left("t2 round two result")))
+      val barrier = new IdleBarrier
       val program = for
         _ <- startRoot(tmp)
         resources <- SpecResources.mkResources(system, tmp, llm)
         _ <- CompletionDebtStore.record(owner, sid, msgs1)
         gen1 <- debtOf(owner).map(_.generation)
-        actor <- spawnAgent(system, resources, sid)
+        actor <- spawnAgent(system, resources, sid, barrier.wsSend)
         _ <- actor ! AgentCommand.UserInput("start t2")
         _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1)) // 忙态前置读数
         // 旧代件先入队（代际早已被新一轮取代——stale 形）
@@ -313,18 +337,17 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
         // 同 owner 的**当前代**完成随后到达忙父：不得被在队旧代件的身份键判重吞掉
         _ <- actor ! terminalEvent("T2-CURRENT-ROUND", owner = Some(owner), parentSessionId = Some(sid),
           generation = Some(gen1), completionMessages = Some(msgs1.asJson))
-        _ <- gate.complete(())
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 2))
-        _ <- IO.sleep(400.millis)
+        // Releasing the gate ends run 1; the boundary drain injects both queued events in run 2,
+        // and only then does the actor return to idle.
+        _ <- barrier.toIdle(gate.complete(()).void)
         reqs <- llm.requests.get
         body2 = reqs.lift(1).map(requestText).getOrElse("")
         parked <- debtOf(owner) // 忙 drain 不结债（#25）：本轮交付义务保留
         // Mail 续轮：新完成（新内容）必须铸造新代且不被旧代已投标记吞掉
         _ <- CompletionDebtStore.record(owner, sid, msgs2)
         gen2 <- debtOf(owner).map(_.generation)
-        _ <- actor ! terminalEvent("T2-NEWGEN-ROUND", owner = Some(owner), parentSessionId = Some(sid),
-          generation = Some(gen2), completionMessages = Some(msgs2.asJson))
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 3))
+        _ <- barrier.toIdle(actor ! terminalEvent("T2-NEWGEN-ROUND", owner = Some(owner), parentSessionId = Some(sid),
+          generation = Some(gen2), completionMessages = Some(msgs2.asJson)))
         finalDebt <- debtOf(owner)
         reqsFinal <- llm.requests.get
         allBodies = reqsFinal.map(requestText).mkString("\n")
@@ -351,6 +374,7 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
       val owner = "cgat3-owner"
       val msgs1 = List(Message(MessageRole.Assistant, Left("t3 round one result")))
       val msgs2 = List(Message(MessageRole.Assistant, Left("t3 continuation result")))
+      val barrier = new IdleBarrier
       val program = for
         _ <- startRoot(tmp)
         resources <- SpecResources.mkResources(system, tmp, llm)
@@ -364,16 +388,14 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
             CompletionDebtStore.record(owner, sid, msgs2).unsafeRunSync()
         actor <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use { _ =>
           for
-            actor <- spawnAgent(system, resources, sid)
-            _ <- actor ! terminalEvent("T3-FIRST", owner = Some(owner), parentSessionId = Some(sid),
-              generation = Some(gen1), completionMessages = Some(msgs1.asJson))
-            _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1))
+            actor <- spawnAgent(system, resources, sid, barrier.wsSend)
+            _ <- barrier.toIdle(actor ! terminalEvent("T3-FIRST", owner = Some(owner), parentSessionId = Some(sid),
+              generation = Some(gen1), completionMessages = Some(msgs1.asJson)))
           yield actor
         }
         raced <- debtOf(owner)
-        _ <- actor ! terminalEvent("T3-SECOND", owner = Some(owner), parentSessionId = Some(sid),
-          generation = Some(raced.generation), completionMessages = Some(msgs2.asJson))
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 2))
+        _ <- barrier.toIdle(actor ! terminalEvent("T3-SECOND", owner = Some(owner), parentSessionId = Some(sid),
+          generation = Some(raced.generation), completionMessages = Some(msgs2.asJson)))
         finalDebt <- debtOf(owner)
       yield
         assert(raced.generation.nonEmpty && raced.generation != gen1, "接缝必须已把债换到新代（前置自检）")
@@ -395,6 +417,7 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
       val msgsB = List(Message(MessageRole.Assistant, Left("t4 phase b result")))
       val ownerC = "cgat4-owner-c"
       val msgsC = List(Message(MessageRole.Assistant, Left("t4 phase c result")))
+      val barrier = new IdleBarrier
       val program = for
         _ <- startRoot(tmp)
         resources <- SpecResources.mkResources(system, tmp, llm)
@@ -405,16 +428,14 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
         crashEvent = terminalEvent("T4-A", owner = Some(ownerA), parentSessionId = Some(sid),
           generation = Some(genA), completionMessages = Some(msgsA.asJson))
         acceptance <- CompletionDebtStore.acceptOnce(ownerA, sid, crashEvent)
-        actor <- spawnAgent(system, resources, sid)
-        _ <- actor ! crashEvent
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1))
+        actor <- spawnAgent(system, resources, sid, barrier.wsSend)
+        _ <- barrier.toIdle(actor ! crashEvent)
         afterReplay <- debtOf(ownerA)
         // Phase B：新代不被旧验收行吞（同 owner 新内容 ⇒ 新代新报）。
         _ <- CompletionDebtStore.record(ownerA, sid, msgsB)
         genB <- debtOf(ownerA).map(_.generation)
-        _ <- actor ! terminalEvent("T4-B", owner = Some(ownerA), parentSessionId = Some(sid),
-          generation = Some(genB), completionMessages = Some(msgsB.asJson))
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 2))
+        _ <- barrier.toIdle(actor ! terminalEvent("T4-B", owner = Some(ownerA), parentSessionId = Some(sid),
+          generation = Some(genB), completionMessages = Some(msgsB.asJson)))
         afterB <- debtOf(ownerA)
         // Phase C：错代件的交付回执确认只认注入（injection-scoped）——回执可 ack，
         // 债绝不被错代件结算；随后当前代照常结算。
@@ -424,14 +445,12 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
           delegateId = ownerC, parentSessionId = sid, eventType = "completed",
           payload = "T4-C-stale", metadata = JsonObject.empty, deliveredAt = System.currentTimeMillis()
         ))
-        _ <- actor ! terminalEvent("T4-C-STALE", owner = Some(ownerC), parentSessionId = Some(sid),
-          generation = Some("stale-gen-c"), completionMessages = Some(msgsC.asJson))
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 3))
+        _ <- barrier.toIdle(actor ! terminalEvent("T4-C-STALE", owner = Some(ownerC), parentSessionId = Some(sid),
+          generation = Some("stale-gen-c"), completionMessages = Some(msgsC.asJson)))
         afterStaleC <- debtOf(ownerC)
         receiptC <- IO { DelegateDeliveryReceipts.find(ownerC) }
-        _ <- actor ! terminalEvent("T4-C-CURRENT", owner = Some(ownerC), parentSessionId = Some(sid),
-          generation = Some(genC), completionMessages = Some(msgsC.asJson))
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 4))
+        _ <- barrier.toIdle(actor ! terminalEvent("T4-C-CURRENT", owner = Some(ownerC), parentSessionId = Some(sid),
+          generation = Some(genC), completionMessages = Some(msgsC.asJson)))
         afterCurrentC <- debtOf(ownerC)
       yield
         assertEquals(acceptance, CompletionDebtStore.Acceptance.New, "Phase A 前置：手工落账 = 崩溃窗口盘面")
@@ -455,6 +474,7 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
       val sid = "cgat5-parent"
       val owner = "cgat5-owner"
       val msgs = List(Message(MessageRole.Assistant, Left("same result")))
+      val barrier = new IdleBarrier
       for
         _ <- startRoot(tmp)
         resources <- SpecResources.mkResources(system, tmp, llm)
@@ -462,21 +482,20 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
         gen <- debtOf(owner).map(_.generation)
         event = terminalEvent("T5-RECOVERY", Some(owner), Some(sid), Some(gen), Some(msgs.asJson))
         accepted <- CompletionDebtStore.acceptOnce(owner, sid, event)
-        actor <- spawnAgent(system, resources, sid)
+        actor <- spawnAgent(system, resources, sid, barrier.wsSend)
         _ <- actor ! AgentCommand.UserInput("start busy")
         _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1))
         _ <- actor ! event
         _ <- waitUntil(15.seconds)(debtOf(owner).map(_.phase == "settled"))
         recovered <- debtOf(owner)
-        _ <- gate.complete(())
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 2))
+        // Releasing the gate ends run 1; the boundary drain injects the replay in run 2, then idle.
+        _ <- barrier.toIdle(gate.complete(()).void)
         reqs <- llm.requests.get
         _ <- actor ! event
-        _ <- actor ! AgentCommand.UserInput("continue legally")
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 3))
+        _ <- barrier.toIdle(actor ! AgentCommand.UserInput("continue legally"))
         _ <- CompletionDebtStore.record(owner, sid, msgs)
         next <- debtOf(owner)
-        _ <- actor ! terminalEvent("T5-NEXT", Some(owner), Some(sid), Some(next.generation), Some(msgs.asJson))
+        _ <- barrier.toIdle(actor ! terminalEvent("T5-NEXT", Some(owner), Some(sid), Some(next.generation), Some(msgs.asJson)))
         _ <- waitUntil(15.seconds)(debtOf(owner).map(_.phase == "settled"))
         _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 4))
         finalReqs <- llm.requests.get
@@ -495,6 +514,7 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
       val sid = "cgat6-parent"
       val owner = "cgat6-owner"
       val msgs = List(Message(MessageRole.Assistant, Left("identical")))
+      val barrier = new IdleBarrier
       for
         _ <- startRoot(tmp)
         resources <- SpecResources.mkResources(system, tmp, llm)
@@ -505,14 +525,13 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
           (CompletionDebtStore.acknowledge(owner, sid, msgs, gen) *> CompletionDebtStore.record(owner, sid, msgs)).unsafeRunSync(); ()
         actor <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use { _ =>
           for
-            a <- spawnAgent(system, resources, sid)
-            _ <- a ! terminalEvent("T6-OLD", Some(owner), Some(sid), Some(gen), Some(msgs.asJson))
-            _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1))
+            a <- spawnAgent(system, resources, sid, barrier.wsSend)
+            _ <- barrier.toIdle(a ! terminalEvent("T6-OLD", Some(owner), Some(sid), Some(gen), Some(msgs.asJson)))
           yield a
         }
         raced <- debtOf(owner)
         _ <- IO { assert(raced.generation != gen); assertEquals(raced.phase, "deliverable"); assertEquals(raced.messages, msgs) }
-        _ <- actor ! terminalEvent("T6-NEW", Some(owner), Some(sid), Some(raced.generation), Some(msgs.asJson))
+        _ <- barrier.toIdle(actor ! terminalEvent("T6-NEW", Some(owner), Some(sid), Some(raced.generation), Some(msgs.asJson)))
         _ <- waitUntil(15.seconds)(debtOf(owner).map(_.phase == "settled"))
         settled <- debtOf(owner)
       yield assertEquals(settled.generation, raced.generation)
@@ -529,6 +548,7 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
         val json = io.circe.parser.parse(os.read(p)).toOption.get
         os.write.over(p, json.mapObject(_.remove("generation")).noSpaces)
       }
+      val barrier = new IdleBarrier
       for
         _ <- startRoot(tmp)
         resources <- SpecResources.mkResources(system, tmp, llm)
@@ -541,22 +561,199 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
           terminalEvent("T7-OLD-EVENT", Some(owners(2)), Some(sid), None, Some(msgs.asJson))
         )
         _ <- owners.zip(events).traverse_((owner, event) => CompletionDebtStore.acceptOnce(owner, sid, event))
-        actor <- spawnAgent(system, resources, sid)
-        _ <- events.zipWithIndex.traverse_ { (event, i) =>
-          (actor ! event) *> waitUntil(15.seconds)(llm.calls.get.map(_ >= i + 1))
-        }
+        actor <- spawnAgent(system, resources, sid, barrier.wsSend)
+        _ <- events.traverse_(event => barrier.toIdle(actor ! event))
         results <- owners.traverse(debtOf)
       yield
         assertEquals(results.map(_.phase), List("settled", "deliverable", "deliverable"))
         assertEquals(results.map(_.generation), List("", "", current.generation))
     }
 
+  test("acknowledge test hook rejects a competing owner registration without replacing or removing the incumbent"):
+    withTestRoot("hook-contention") { (tmp, _) =>
+      val owner = s"hook-contention-${java.util.UUID.randomUUID()}"
+      val incumbentCalls = new AtomicInteger(0)
+      val contenderCalls = new AtomicInteger(0)
+      val incumbent = () => { incumbentCalls.incrementAndGet(); () }
+      val contender = () => { contenderCalls.incrementAndGet(); () }
+      def acknowledge: IO[Boolean] = CompletionDebtStore.acknowledge(owner, "hook-recipient", Nil, "")
+      for
+        _ <- startRoot(tmp)
+        _ <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(incumbent).use { _ =>
+          for
+            before <- acknowledge
+            rejected <- Resource.make(
+              CompletionDebtStore.beforeAcknowledgeForTest(owner)(contender).use(_ => IO.unit).attempt.start
+            )(_.cancel).use(_.joinWithNever.timeout(10.seconds))
+            _ <- IO {
+              rejected match
+                case Left(error: IllegalArgumentException) =>
+                  assertEquals(error.getMessage, s"requirement failed: ack hook already registered for $owner")
+                case other => fail(s"Expected the competing acquisition to be rejected, got $other")
+            }
+            after <- acknowledge
+          yield
+            assert(before && after, "No-debt acknowledgements must still invoke the registered hook")
+            assertEquals(incumbentCalls.get(), 2, "Failed acquisition must neither replace nor remove the incumbent")
+            assertEquals(contenderCalls.get(), 0)
+        }
+        _ <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(contender).use { _ =>
+          acknowledge.map { acked =>
+            assert(acked)
+            assertEquals(incumbentCalls.get(), 2)
+            assertEquals(contenderCalls.get(), 1, "The contender must acquire after the incumbent releases")
+          }
+        }
+        _ <- acknowledge
+      yield
+        assertEquals(incumbentCalls.get(), 2)
+        assertEquals(contenderCalls.get(), 1, "Released hooks must no longer receive acknowledgements")
+    }
+
+  test("acknowledge test hooks for two overlapping owners route and release independently"):
+    withTestRoot("hook-overlap") { (tmp, _) =>
+      val ownerA = s"hook-overlap-a-${java.util.UUID.randomUUID()}"
+      val ownerB = s"hook-overlap-b-${java.util.UUID.randomUUID()}"
+      val callsA = new AtomicInteger(0)
+      val callsB = new AtomicInteger(0)
+      val replacementCallsA = new AtomicInteger(0)
+      val hookA = () => { callsA.incrementAndGet(); () }
+      val hookB = () => { callsB.incrementAndGet(); () }
+      val replacementHookA = () => { replacementCallsA.incrementAndGet(); () }
+      def acknowledge(owner: String): IO[Boolean] = CompletionDebtStore.acknowledge(owner, "hook-recipient", Nil, "")
+      for
+        _ <- startRoot(tmp)
+        acquiredA <- Deferred[IO, Unit]
+        acquiredB <- Deferred[IO, Unit]
+        releaseA <- Deferred[IO, Unit]
+        releaseB <- Deferred[IO, Unit]
+        _ <- Resource.make(
+          CompletionDebtStore.beforeAcknowledgeForTest(ownerA)(hookA).use { _ =>
+            acquiredA.complete(()) *> releaseA.get.timeout(10.seconds)
+          }.start
+        )(_.cancel).use { holderA =>
+          Resource.make(
+            CompletionDebtStore.beforeAcknowledgeForTest(ownerB)(hookB).use { _ =>
+              acquiredB.complete(()) *> releaseB.get.timeout(10.seconds)
+            }.start
+          )(_.cancel).use { holderB =>
+            for
+              _ <- acquiredA.get.timeout(10.seconds)
+              _ <- acquiredB.get.timeout(10.seconds)
+              ackA <- acknowledge(ownerA)
+              _ <- IO {
+                assert(ackA)
+                assertEquals(callsA.get(), 1)
+                assertEquals(callsB.get(), 0, "Owner A must not invoke owner B's hook")
+              }
+              ackB <- acknowledge(ownerB)
+              _ <- IO {
+                assert(ackB)
+                assertEquals(callsA.get(), 1, "Owner B must not invoke owner A's hook")
+                assertEquals(callsB.get(), 1)
+              }
+              parallelAcks <- (acknowledge(ownerA), acknowledge(ownerB)).parTupled.timeout(10.seconds)
+              _ <- IO {
+                assertEquals(parallelAcks, (true, true))
+                assertEquals(callsA.get(), 2, "Concurrent acknowledgements must each invoke the matching owner's hook once")
+                assertEquals(callsB.get(), 2)
+              }
+              _ <- releaseA.complete(())
+              _ <- holderA.joinWithNever.timeout(10.seconds)
+              _ <- acknowledge(ownerA)
+              _ <- acknowledge(ownerB)
+              _ <- IO {
+                assertEquals(callsA.get(), 2, "Owner A's hook must be removed after release")
+                assertEquals(callsB.get(), 3, "Releasing owner A must leave owner B registered")
+              }
+              _ <- CompletionDebtStore.beforeAcknowledgeForTest(ownerA)(replacementHookA).use { _ =>
+                for
+                  ackA <- acknowledge(ownerA)
+                  _ <- IO {
+                    assert(ackA)
+                    assertEquals(callsA.get(), 2)
+                    assertEquals(replacementCallsA.get(), 1, "Owner A must route to its replacement hook")
+                    assertEquals(callsB.get(), 3, "Reacquiring owner A must not invoke owner B's hook")
+                  }
+                  ackB <- acknowledge(ownerB)
+                yield
+                  assert(ackB)
+                  assertEquals(replacementCallsA.get(), 1, "Owner B must not invoke owner A's replacement hook")
+                  assertEquals(callsB.get(), 4, "Owner B must remain registered while owner A reacquires")
+              }
+              _ <- acknowledge(ownerA)
+              _ <- acknowledge(ownerB)
+              _ <- IO {
+                assertEquals(callsA.get(), 2)
+                assertEquals(replacementCallsA.get(), 1, "Owner A's replacement hook must be removed after release")
+                assertEquals(callsB.get(), 5, "Releasing owner A's replacement must leave owner B registered")
+              }
+              _ <- releaseB.complete(())
+              _ <- holderB.joinWithNever.timeout(10.seconds)
+              _ <- acknowledge(ownerA)
+              _ <- acknowledge(ownerB)
+            yield
+              assertEquals(callsA.get(), 2)
+              assertEquals(replacementCallsA.get(), 1)
+              assertEquals(callsB.get(), 5, "Owner B's hook must also be removed after release")
+          }
+        }
+      yield ()
+    }
+
+  test("canceling an acknowledge hook holder releases its registration and permits the same owner to reacquire"):
+    withTestRoot("hook-cancellation") { (tmp, _) =>
+      val owner = s"hook-cancellation-${java.util.UUID.randomUUID()}"
+      val canceledCalls = new AtomicInteger(0)
+      val replacementCalls = new AtomicInteger(0)
+      val canceledHook = () => { canceledCalls.incrementAndGet(); () }
+      val replacementHook = () => { replacementCalls.incrementAndGet(); () }
+      def acknowledge: IO[Boolean] = CompletionDebtStore.acknowledge(owner, "hook-recipient", Nil, "")
+      for
+        _ <- startRoot(tmp)
+        acquired <- Deferred[IO, Unit]
+        release <- Deferred[IO, Unit]
+        _ <- Resource.make(
+          CompletionDebtStore.beforeAcknowledgeForTest(owner)(canceledHook).use { _ =>
+            acquired.complete(()) *> release.get.timeout(10.seconds)
+          }.start
+        )(_.cancel).use { holder =>
+          for
+            _ <- acquired.get.timeout(10.seconds)
+            _ <- acknowledge
+            _ <- IO { assertEquals(canceledCalls.get(), 1) }
+            _ <- holder.cancel.timeout(10.seconds)
+            outcome <- holder.join.timeout(10.seconds)
+            _ <- IO {
+              outcome match
+                case Outcome.Canceled() => ()
+                case other => fail(s"Expected the holder to be canceled, got $other")
+            }
+            _ <- acknowledge
+            _ <- IO { assertEquals(canceledCalls.get(), 1, "Cancellation must remove the old hook before reacquisition") }
+            _ <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(replacementHook).use { _ =>
+              acknowledge.map { acked =>
+                assert(acked)
+                assertEquals(canceledCalls.get(), 1)
+                assertEquals(replacementCalls.get(), 1, "The same owner must acquire a new hook after cancellation")
+              }
+            }
+            _ <- acknowledge
+          yield
+            assertEquals(canceledCalls.get(), 1)
+            assertEquals(replacementCalls.get(), 1, "The replacement must also release normally")
+        }
+      yield ()
+    }
+
   test("acknowledge test hook is scoped and removed after failure"):
-    val owner = "hook-cleanup-test"
+    val owner = s"hook-cleanup-${java.util.UUID.randomUUID()}"
     val hook = () => ()
+    val expected = new RuntimeException("expected hook use failure")
     for
-      failed <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use(_ => IO.raiseError[Unit](new RuntimeException("expected"))).attempt
+      failed <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use(_ => IO.raiseError[Unit](expected)).attempt
+      _ <- IO { assertEquals(failed, Left(expected)) }
       _ <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use(_ => IO.unit)
-    yield assert(failed.isLeft)
+    yield ()
 
 end CompletionGenerationAcceptanceSpec
