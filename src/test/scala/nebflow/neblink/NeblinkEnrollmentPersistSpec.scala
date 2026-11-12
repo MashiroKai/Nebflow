@@ -10,6 +10,7 @@ import cats.effect.std.Dispatcher
 import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
+import nebflow.core.root.{AccountProfile, AccountRoot, ActiveAccount}
 import nebflow.shared.PathUtil
 
 import java.nio.file.Files
@@ -267,5 +268,168 @@ class NeblinkEnrollmentPersistSpec extends FunSuite:
       }
       .unsafeRunSync()
     assertEquals(persistedCredential.logto, None)
+  }
+
+  // ── logout-login-recovery 批（2026-11-08）：平铺档「登出 → 重新登录」闭环 ──────
+  //
+  // 平铺根是兼容红线档（契约 §0 总则 1：无 layout 标记的根一切字节不变）。账号归属闸
+  // 重定形后，平铺登录 = **只落凭据**（device.json + config.json —— 阶梯前多年验证过的
+  // 稳态），根层零写（无 layout.json / accounts/ / active-account / 迁移产物）。
+  // 本组用例一律**假身份 + 临时数据根**（手工 JWT 形 id_token，零网络、零真实账号、
+  // 零真实凭据），钉四件事：
+  //   F1 平铺显式登录整链放行（Right），凭据两件落地；
+  //   F2 平铺根字节冻结：预置文件逐字节不变 + 根层零新增（「不在本批迁移真实数据」的
+  //      强断言——迁移引擎（establishAccountRootAfterSignIn 平铺分支）在本路径上不可达）；
+  //   F3 账号档同账号重登放行（登出 → 同账号回来），凭据落账号根、指针保持同账号；
+  //   F4 账号档异账号硬拒（Left 带稳定码头），既有凭据与配置零触碰。
+
+  /** 手工 JWT 形 id_token（`decodeIdTokenClaims` 只解 payload 段的 JSON 声明）。 */
+  private def fakeIdToken(sub: String, email: String): String =
+    val payload = java.util.Base64
+      .getUrlEncoder()
+      .withoutPadding()
+      .encodeToString(s"""{"sub":"$sub","email":"$email"}""".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    s"hdr.$payload.sig"
+
+  /** 把进程级机器层根钉到临时根上（账号档用例），结束恢复原值并删干净。 */
+  private def withPinnedMachineRoot[T](f: os.Path => T): T =
+    val prev = PathUtil.dataRoot
+    val root = os.Path(Files.createTempDirectory("nb-login-loop"), os.pwd)
+    try
+      PathUtil.setMachineRoot(root)
+      f(root)
+    finally
+      PathUtil.setDataRoot(prev)
+      os.remove.all(root)
+
+  private def persistOnce(ms: NeblinkService, idToken: Option[String], explicit: Boolean): IO[Either[String, String]] =
+    NeblinkEnrollment
+      .persist(
+        ms,
+        resolvedUrl = "https://neblink.example",
+        json = enrollJson("tok-loop"),
+        logtoRefresh = None,
+        discovery = None,
+        gatewayPort = 8099,
+        reloginHook = None,
+        logtoIdToken = idToken,
+        explicitUserAction = explicit
+      )
+      .attempt
+      // 🔴 裸 `identity` 不可用：`nebflow.neblink.identity` 是本文件导入的包名，
+      // 裸名解析到包上（E119）。用显式恒等 lambda（fold 的右支 `r => r`）。
+      .map(_.fold(e => Left(e.getMessage), r => r))
+
+  private def sha256(p: os.Path): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(os.read.bytes(p)).map("%02x".format(_)).mkString
+
+  /** 根层晋升产物的全集（平铺登录后一个都不许出现）。 */
+  private def rootLayerArtifacts(root: os.Path): List[String] =
+    List("layout.json", "active-account", "accounts", "migration-report.json", "pending-claim")
+      .filter(rel => os.exists(root / os.RelPath(rel)))
+
+  test("F1+F2 平铺档显式登录整链放行：凭据两件落地，根层字节冻结零新增") {
+    // beforeEach 的 setDataRoot 即平铺钉死语义（契约 §1）：机器层 == 有效根 == 临时根。
+    val root = os.Path(tmpDir, os.pwd)
+    assertEquals(nebflow.core.root.RootLadder.resolve(root).name, "flat", "前提：平铺档")
+    // 预置：平铺根已有数据（老机器形态）——字节冻结的对照面
+    val seeded = root / "sessions" / "s-1.json"
+    os.makeDir.all(seeded / os.up)
+    os.write.over(seeded, """{"id":"s-1"}""")
+    val before = sha256(seeded)
+
+    Dispatcher
+      .parallel[IO]
+      .use { dispatcher =>
+        NeblinkService.createForTest(8099, dispatcher, 15.seconds).flatMap { ms =>
+          persistOnce(ms, idToken = Some(fakeIdToken("logto|user-flat-1", "flat1@example.com")), explicit = true)
+        }
+      }
+      .unsafeRunSync() match
+      case Left(err) => fail(s"平铺显式登录必须放行（只落凭据，无换根欠账），实际拒绝: $err")
+      case Right(tok) => assertEquals(tok, "tok-loop")
+
+    // F1：凭据两件都在平铺根（有效根 == 机器根）
+    assertEquals(
+      configOnDisk.hcursor.downField("neblinkServer").downField("deviceToken").as[String].toOption,
+      Some("tok-loop"),
+      "config.json（出站权威源）必须带新 token"
+    )
+    val cred = DeviceCredential.load.unsafeRunSync().getOrElse(fail("device.json missing"))
+    assertEquals(cred.logto.flatMap(_.idToken), Some(fakeIdToken("logto|user-flat-1", "flat1@example.com")))
+
+    // F2：根层零新增（不迁移、不建账号目录、不写指针/布局/迁移产物）
+    assertEquals(
+      rootLayerArtifacts(root),
+      Nil,
+      "平铺登录绝不做根层写——迁移引擎在本路径上不可达（半迁移态的强断言）"
+    )
+    // F2：预置数据逐字节不变（兼容红线：无 layout 标记的根一切字节不变）
+    assertEquals(sha256(seeded), before, "平铺根既有数据必须逐字节不变")
+  }
+
+  test("F3 账号档同账号重登放行：凭据落账号根，指针保持同账号（登出→同账号回来）") {
+    withPinnedMachineRoot { root =>
+      val sub = "logto|user-a"
+      AccountRoot.writeLayoutMarker(root)
+      val dir = AccountRoot.ensureAccountDir(root, sub)
+      AccountRoot.writeProfile(dir, AccountProfile(sub, "a@example.com", "2026-01-01T00:00:00Z", None))
+      AccountRoot.writePointer(root, ActiveAccount(sub, "a@example.com", "2026-01-01T00:00:00Z"))
+      assertEquals(PathUtil.dataRoot, dir, "前提：账号档，有效根 = 账号根")
+
+      val outcome = Dispatcher
+        .parallel[IO]
+        .use { dispatcher =>
+          NeblinkService.createForTest(8099, dispatcher, 15.seconds).flatMap { ms =>
+            persistOnce(ms, idToken = Some(fakeIdToken(sub, "a@example.com")), explicit = true)
+          }
+        }
+        .unsafeRunSync()
+      assertEquals(outcome, Right("tok-loop"), "同账号重登必须放行")
+
+      // 凭据落**账号根**（dataRoot 已是账号目录），身份是本次登录的 sub
+      val cred = DeviceCredential.load.unsafeRunSync().getOrElse(fail("device.json missing in account root"))
+      assertEquals(cred.logto.flatMap(_.idToken), Some(fakeIdToken(sub, "a@example.com")))
+      // 指针保持同账号（账号档重登 = establishPointerAndProfile 幂等就位）
+      assertEquals(
+        AccountRoot.readPointer(root).map(_.accountSub),
+        Some(sub),
+        "同账号重登后指针必须仍指向同账号"
+      )
+    }
+  }
+
+  test("F4 账号档异账号硬拒：Left 带稳定码头，既有凭据与配置零触碰") {
+    withPinnedMachineRoot { root =>
+      val subA = "logto|user-a"
+      AccountRoot.writeLayoutMarker(root)
+      val dirA = AccountRoot.ensureAccountDir(root, subA)
+      AccountRoot.writeProfile(dirA, AccountProfile(subA, "a@example.com", "2026-01-01T00:00:00Z", None))
+      AccountRoot.writePointer(root, ActiveAccount(subA, "a@example.com", "2026-01-01T00:00:00Z"))
+      // 既有凭据（A 的身份）——在服务创建**之前**种下（createForTest 的 loadOrCreate 会
+      // 沿用它，不另铸），硬拒后必须原样。
+      val sentinel =
+        s"""{"serverUrl":"https://neblink.example","networkId":"net-123","deviceId":"dev-keep","deviceToken":"tok-a","logto":{"refreshToken":"a-refresh","updatedAt":7,"idToken":"a-id"}}"""
+      os.write.over(dirA / "neblink" / "device.json", sentinel, createFolders = true)
+      val sentinelOnDisk = os.read(dirA / "neblink" / "device.json")
+
+      val outcome = Dispatcher
+        .parallel[IO]
+        .use { dispatcher =>
+          NeblinkService.createForTest(8099, dispatcher, 15.seconds).flatMap { ms =>
+            persistOnce(ms, idToken = Some(fakeIdToken("logto|user-b", "b@example.com")), explicit = true)
+          }
+        }
+        .unsafeRunSync()
+      assert(
+        outcome.left.exists(_.startsWith("account-switch-requires-logout:")),
+        s"异账号必须带稳定码头硬拒，实际: $outcome"
+      )
+      // A 的凭据零触碰（硬拒发生在任何落盘之前）
+      assertEquals(os.read(dirA / "neblink" / "device.json"), sentinelOnDisk, "既有凭据不得被触碰")
+      // 被拒登录不得写任何配置（B 的 token 无处落地）
+      assertEquals(os.exists(dirA / "neblink" / "config.json"), false, "硬拒不得产生配置写入")
+      assertEquals(AccountRoot.readPointer(root).map(_.accountSub), Some(subA), "指针必须保持 A")
+    }
   }
 end NeblinkEnrollmentPersistSpec

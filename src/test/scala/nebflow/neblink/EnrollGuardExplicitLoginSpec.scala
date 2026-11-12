@@ -52,6 +52,20 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
   private def enrollJson(token: String): Json =
     parse(s"""{"deviceToken":"$token","networkId":"net-123","avatarUrl":null,"githubUsername":null}""").toOption.get
 
+  /**
+   * 手工 JWT 形 id_token（logout-login-recovery 批，2026-11-12）。账号归属闸
+   * （2bc597e62）之后，显式登录必须有可解码的 `sub`（`account-identity-missing`
+   * fail-closed）—— 生产显式路径（PKCE 回调 / 无头密码登录）本就恒带 id_token，
+   * 本 spec 的两条显式 persist 腿补上同一形态（修前基线这两腿是红的：
+   * commit 未随闸更新本 spec）。
+   */
+  private def fakeIdToken(sub: String, email: String): String =
+    val payload = java.util.Base64
+      .getUrlEncoder()
+      .withoutPadding()
+      .encodeToString(s"""{"sub":"$sub","email":"$email"}""".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    s"hdr.$payload.sig"
+
   // ── ① 纯判据 ────────────────────────────────────────────
 
   test("pure: explicitUserAction releases the gate; the automatic decision is byte-identical to the pre-案-C one") {
@@ -129,6 +143,8 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
             discovery = None,
             gatewayPort = 8095,
             reloginHook = None,
+            // 账号归属闸（2bc597e62）：显式登录必须携带账号身份（生产 PKCE 回调恒带）
+            logtoIdToken = Some(fakeIdToken("logto|user-explicit-c", "explicit-c@example.com")),
             explicitUserAction = true
           )
         }
@@ -241,7 +257,7 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
             )
             _ <- IO(assertEquals(auto, Right("tok-auto-2"), "non-prod host is not gated in either path"))
             _ <- IO(assert(tunnel.parkedAfterKick, "an automatic persist must NOT lift the park"))
-            // 显式路径
+            // 显式路径（账号归属闸后显式登录恒带身份）
             _ <- NeblinkEnrollment.persist(
               ms,
               resolvedUrl = localUrl,
@@ -250,6 +266,7 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
               discovery = None,
               gatewayPort = 8095,
               reloginHook = None,
+              logtoIdToken = Some(fakeIdToken("logto|user-park", "park@example.com")),
               explicitUserAction = true
             )
             _ <- IO(assertEquals(tunnel.parkedAfterKick, false, "an explicit persist must lift the park"))

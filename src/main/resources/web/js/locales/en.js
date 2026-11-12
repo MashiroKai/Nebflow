@@ -747,6 +747,14 @@ export default {
   'login.action.service-unavailable': 'restart {lowerBrand} and sign in again',
   'login.reason.logto-not-configured': 'the login service is not configured (application id missing)',
   'login.action.logto-not-configured': 'check the {lowerBrand} login settings and retry',
+  // Account ownership guard trio (logout-login-recovery batch, 2026-11-08; same code
+  // single source as the backend CredentialFailure enum).
+  'login.reason.account-switch-requires-logout': 'the account root on this machine belongs to a different account: one machine serves one account at a time',
+  'login.action.account-switch-requires-logout': 'sign out of the current account on this machine first, then sign in with the new account (signing out never deletes local account data)',
+  'login.reason.enroll-refused-no-account-root': 'this machine is in the unauthenticated layer (no account root yet): the login service was reached, but device registration cannot complete in this state',
+  'login.action.enroll-refused-no-account-root': 'local account data is unaffected; this state needs the account-root provisioning flow, which the current version does not provide yet — please do not retry repeatedly',
+  'login.reason.account-identity-missing': 'the login service did not return an account identity: this machine cannot be matched to an account safely',
+  'login.action.account-identity-missing': 'click "Retry" to sign in again; if it still fails, send us the log',
   'login.reason.login-failed': 'an unclassified error occurred during login',
   'login.action.login-failed': 'click "Retry"; if it still fails, send us the log',
   'messages.login': 'Log in',
