@@ -87,8 +87,15 @@ object DelegateFlowMapLifecycle:
    *     的「blocked 永不自动归档」同一条纪律的退役侧镜像）。
    *   - **c. 台账收敛**：`reconcileChainLedger` 收尾一拍（既有 TtlTick ⑤ 同款）——
    *     改号/退役/压缩在退役窗内走完，台账热态以自洽态随目录退役。
+   *
+   * @param cancelAuthorized 取消授权（父会话终态收口单点 2026-11-12 · 误回收修复批）：
+   *   **只有明确取消墓碑（`cancelRequestedAt` 在案）才构成对仍在飞链的 cancelled
+   *   收口授权**。自然完成/普通归档不是取消授权——在飞链不再被台账假取消（台账
+   *   改写 ≠ 底层 actor 死亡；假取消记录会切断后代的可信归属/待结算证据）。缺省
+   *   `true` = 既有调用面（孤儿收割腿——宿主已不活，收口是结算记录而非假杀）逐字节
+   *   不变；DelegateTerminal 终态收口按墓碑在案与否传值。
    */
-  def flushBeforeUnmount(delegateId: String): IO[Unit] =
+  def flushBeforeUnmount(delegateId: String, cancelAuthorized: Boolean = true): IO[Unit] =
     DelegateFlowHosts.get(delegateId).flatMap {
       case None => IO.unit
       case Some(rt) =>
@@ -121,7 +128,7 @@ object DelegateFlowMapLifecycle:
                         )
                       )
                   }
-            sweepAudit *> finalizeAbandonedChains(delegateId) *> ledgerConverge(delegateId)
+            sweepAudit *> finalizeAbandonedChains(delegateId, cancelAuthorized) *> ledgerConverge(delegateId)
           }
           .handleErrorWith(e =>
             IO(logger.warn(s"[flowmap-lifecycle] pre-unmount sweep failed for '$delegateId': ${e.getMessage}"))
@@ -131,69 +138,75 @@ object DelegateFlowMapLifecycle:
   /**
    * ①-b 在飞链收口（R3 批 2026-10-29 · 审计二 §3.4-②「4 条 active vs 0 节点」的
    * 机制根因修复）：退役图内「非终态成员仍在 ∧ 无 blocked 成员」的链，台账控制态
-   * 落 `cancelled` + `chain-cancelled` 审计事件——任何终态路径（completed/failed/
-   * cancelled）经同一条收口序列，台账不再滞留 `active`。盘面节点零触碰（复活窗
-   * 安全）；sweep 已出库的链不再入选（活动区已无其成员）。
+   * 落 `cancelled` + `chain-cancelled` 审计事件。盘面节点零触碰（复活窗安全）；
+   * sweep 已出库的链不再入选（活动区已无其成员）。
+   *
+   * 终态收口单点批（2026-11-12 · 误回收修复）：收口授权 = `cancelAuthorized`（父
+   * 会话明确取消墓碑在案）。自然完成/普通归档不是取消授权 ⇒ 在飞链零收口——台账
+   * 保持真实状态（仍在飞 = 仍 active），不写 chain-cancelled 审计（台账改写 ≠
+   * 底层 actor 死亡；假取消会切断后代的可信归属/待结算证据）。
    */
-  private[delegate] def finalizeAbandonedChains(delegateId: String): IO[Unit] =
-    DelegateFlowHosts.get(delegateId).flatMap {
-      case None => IO.unit
-      case Some(rt) =>
-        for
-          s <- rt.store.snapshot
-          a <- rt.store.archiveSnapshot
-          now = System.currentTimeMillis()
-          chains = FlowMapStore.topologicalChains(s.nodes.values ++ a.nodes.values)
-          abandoned = chains.filter { c =>
-            val activeMembers = c.memberIds.flatMap(s.nodes.get(_))
-            activeMembers.exists(m => NodeLifecycle.ChainCancelScope.contains(m.status)) &&
-            !activeMembers.exists(_.status == NodeLifecycle.Blocked) // blocked 永不自动处置
-          }
-          _ <- abandoned.traverse_ { c =>
-            val members = c.memberIds.toList.sorted
-            val openCount =
-              members.count(id => s.nodes.get(id).exists(n => NodeLifecycle.ChainCancelScope.contains(n.status)))
-            val reason =
-              "delegate terminal closure (flowmap retirement): chain still in flight when the dispatcher session ended"
-            rt.store.chainLedgerStore
-              .setChainControl(c.id, ChainLedger.StatusCancelled, now)
-              .attempt
-              .void
-              .handleErrorWith(e =>
-                IO(logger.warn(s"[flowmap-lifecycle] retire cancel-mark failed (${c.id}): ${e.getMessage}"))
-              ) *>
-              FlowMapEventLog
-                .append(
-                  rt.baseWorkspace,
-                  rt.engine.projectName,
-                  c.memberIds.headOption.getOrElse(""),
-                  FlowMapEventLog.ChainCancelledType,
-                  FlowMapEventLog.chainCancelledSummary(
-                    c.id,
-                    CancelSource.Engine,
-                    reason,
-                    cancelled = openCount,
-                    preserved = members.size - openCount,
-                    skipped = 0,
-                    memberIds = members
-                  ),
-                  Some(c.id)
-                )
+  private[delegate] def finalizeAbandonedChains(delegateId: String, cancelAuthorized: Boolean): IO[Unit] =
+    if !cancelAuthorized then IO.unit
+    else
+      DelegateFlowHosts.get(delegateId).flatMap {
+        case None => IO.unit
+        case Some(rt) =>
+          for
+            s <- rt.store.snapshot
+            a <- rt.store.archiveSnapshot
+            now = System.currentTimeMillis()
+            chains = FlowMapStore.topologicalChains(s.nodes.values ++ a.nodes.values)
+            abandoned = chains.filter { c =>
+              val activeMembers = c.memberIds.flatMap(s.nodes.get(_))
+              activeMembers.exists(m => NodeLifecycle.ChainCancelScope.contains(m.status)) &&
+              !activeMembers.exists(_.status == NodeLifecycle.Blocked) // blocked 永不自动处置
+            }
+            _ <- abandoned.traverse_ { c =>
+              val members = c.memberIds.toList.sorted
+              val openCount =
+                members.count(id => s.nodes.get(id).exists(n => NodeLifecycle.ChainCancelScope.contains(n.status)))
+              val reason =
+                "delegate terminal closure (flowmap retirement): chain still in flight when the dispatcher session ended"
+              rt.store.chainLedgerStore
+                .setChainControl(c.id, ChainLedger.StatusCancelled, now)
+                .attempt
+                .void
                 .handleErrorWith(e =>
-                  IO(logger.warn(s"[flowmap-lifecycle] chain-cancelled audit append failed (${c.id}): ${e.getMessage}"))
+                  IO(logger.warn(s"[flowmap-lifecycle] retire cancel-mark failed (${c.id}): ${e.getMessage}"))
+                ) *>
+                FlowMapEventLog
+                  .append(
+                    rt.baseWorkspace,
+                    rt.engine.projectName,
+                    c.memberIds.headOption.getOrElse(""),
+                    FlowMapEventLog.ChainCancelledType,
+                    FlowMapEventLog.chainCancelledSummary(
+                      c.id,
+                      CancelSource.Engine,
+                      reason,
+                      cancelled = openCount,
+                      preserved = members.size - openCount,
+                      skipped = 0,
+                      memberIds = members
+                    ),
+                    Some(c.id)
+                  )
+                  .handleErrorWith(e =>
+                    IO(logger.warn(s"[flowmap-lifecycle] chain-cancelled audit append failed (${c.id}): ${e.getMessage}"))
+                  )
+            }
+            _ <-
+              if abandoned.isEmpty then IO.unit
+              else
+                IO(
+                  logger.info(
+                    s"[flowmap-lifecycle] retire cancel-closure for '$delegateId': ${abandoned.size} in-flight chain(s) marked cancelled " +
+                      s"(${abandoned.map(_.id).mkString(", ")})"
+                  )
                 )
-          }
-          _ <-
-            if abandoned.isEmpty then IO.unit
-            else
-              IO(
-                logger.info(
-                  s"[flowmap-lifecycle] retire cancel-closure for '$delegateId': ${abandoned.size} in-flight chain(s) marked cancelled " +
-                    s"(${abandoned.map(_.id).mkString(", ")})"
-                )
-              )
-        yield ()
-    }
+          yield ()
+      }
 
   /** ①-c 台账收敛拍（TtlTick ⑤ 同款；退役窗内最后一拍——失败只 WARN 不回滚）。 */
   private def ledgerConverge(delegateId: String): IO[Unit] =

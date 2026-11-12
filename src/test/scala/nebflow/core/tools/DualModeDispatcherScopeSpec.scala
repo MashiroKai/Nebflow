@@ -597,6 +597,41 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
   }
 
   test(
+    "D9b: natural completion is not cancel authorization — in-flight chains keep the active ledger state, no chain-cancelled audit"
+  ) {
+    val ws = os.temp.dir(prefix = "nb-dm-d9b-", deleteOnExit = false)
+    val system = ActorSystem(s"dm-d9b-${scala.util.Random.nextInt(1000000)}")
+    val delegateId = "delegate-general-d9b8b9c0"
+    mkModeRecord(delegateId, DualModeConfig.ModeDispatcher, cwd = ws)
+    for
+      res <- mkResources(system, new ScriptLlm(_ => "unused").handle)
+      mo <- mount(ws, delegateId, system, res)
+      h = mo.getOrElse(fail("host must mount"))
+      // 在飞链：n9c1（pending）→ n9c2（pending）——父自然完成时仍在飞。
+      _ <- seedNode(h, mkNode("n9c1", nebflow.core.project.NodeLifecycle.Pending))
+      _ <- seedNode(h, mkNode("n9c2", nebflow.core.project.NodeLifecycle.Pending, in = List("n9c1")))
+      snap9b <- h.store.snapshot
+      chainId = nebflow.core.project.FlowMapStore.topologicalChains(snap9b.nodes.values).head.id
+      // 自然完成/普通归档收口（cancelAuthorized = false——无取消墓碑）。
+      _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId, cancelAuthorized = false)
+      events <- readEvents(ws)
+      controlAfter <- ledgerControlOf(h, chainId)
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(
+        controlAfter,
+        nebflow.core.project.ChainLedger.StatusActive,
+        "natural completion must NOT mark the in-flight chain cancelled (no tombstone, no authorization)"
+      )
+      assert(
+        !events.exists(e => e.contains("chain-cancelled") && e.contains(chainId)),
+        s"no chain-cancelled audit may land without cancel intent: ${events.mkString("\n")}"
+      )
+    end for
+  }
+
+  test(
     "D10: blocked is never auto-disposed at retirement — a blocked-member chain is skipped by both the sweep and the cancel closure"
   ) {
     val ws = os.temp.dir(prefix = "nb-dm-d10-", deleteOnExit = false)
