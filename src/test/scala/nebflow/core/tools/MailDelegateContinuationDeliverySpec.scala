@@ -237,10 +237,10 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       assertEquals(recVal.parentSessionId, parentSid)
     end for
 
-  // ── (2) 直通腿：续命回合收尾 ⇒ 完成交付（回执正文随 ExternalEvent 投父；活体留存到 TTL）──
+  // ── (2) Pass-through leg: the resumed turn's end is the completion delivery (final text mailed to the parent, session released) ──
 
   test(
-    "(2) resumed turn WITHOUT a declaration ⇒ completion delivery (pass-through): the final text reaches the parent exactly once; the session stays live for Mail"
+    "(2) resumed turn ending with plain text ⇒ completion delivery (pass-through): the final text reaches the parent's mailbox exactly once and the resumed session is released"
   ):
     val deadId = "delegate-nebflow-e2e00001"
     val parentSid = "e2e-parent-1"
@@ -255,7 +255,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       _ <- seedDeadDelegate(resources, deadId, parentSid)
       res <- continuationMail(resources, system, parentSid, deadId)
       _ = assert(res.isRight, s"continuation must proceed: ${res.swap.map(_.message).getOrElse("")}")
-      // 续命回合（stub 回声）自然收尾 ⇒ 无申报 ⇒ 矩阵提醒腿；先沉降。
+      // The resumed turn (stub echo) ends naturally ⇒ pass-through completion; let it settle first.
       _ <- waitUntil(30.seconds)(
         resources.sessionStore
           .loadMessagesForSession(deadId)
@@ -263,18 +263,23 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       )
       _ <- IO.sleep(800.millis)
       events <- parentEvents.get
-      stillLive <- resources.agentRegistry.get.map(_.contains(deadId))
+      pending <- SessionMailbox.scanPending(parentSid)
+      released <- waitUntil(10.seconds)(resources.agentRegistry.get.map(!_.contains(deadId))).attempt.map(_.isRight)
       _ <- DelegateBudget.release(deadId).attempt.void
       _ <- system.stopAll
     yield
-      // 直通交付：续命回合收尾 = 完成交付——终文随 ExternalEvent 投父恰好一次。
-      val delivered = events.collect { case e: AgentCommand.ExternalEvent => e }
+      // Pass-through delivery: the resumed turn's end is the completion delivery. The final text is
+      // mailed to the parent exactly once (the mailbox is the delivery channel); the parent actor
+      // itself only receives the doorbell. The completion releases the resumed session; a later Mail
+      // resumes it in place again.
+      val delivered = pending.filter(e => e.event.eventType == "completed" && e.event.payload.contains("continuation work done"))
       assertEquals(
-        delivered.count(_.payload.contains("continuation work done")),
+        delivered.size,
         1,
-        s"the resumed turn's final text must reach the parent exactly once, got: $events"
+        s"the resumed turn's final text must reach the parent's mailbox exactly once, got pending=$pending events=$events"
       )
-      assert(stillLive, "the resumed session stays live for Mail after the delivery")
+      assert(events.contains(AgentCommand.MailboxArrived), s"the parent is rung once the entry is mailed, got: $events")
+      assert(released, "the completion releases the resumed session from the registry")
     end for
 
   // ── (3) 父不 live 面：原位续照常 + 回执当场说破 ─────────────────────────

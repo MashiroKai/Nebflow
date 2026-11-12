@@ -270,9 +270,10 @@ class DelegateToolSpec extends CatsEffectSuite:
         "the plugin-assignment discipline reached the merged prompt (wording aligned 2026-10-08: the pre-split assertion string 'is your capability assignment' no longer matched HEAD's model-visible text — an existing red, realigned here to the standing wording, no assertion weakened: BLOCKED + no-HTML-comment pins stay)"
       )
       assert(
-        res.systemPrompt.contains("BLOCKED"),
-        "the capability-boundary (BLOCKED) contract reached the merged prompt"
+        res.systemPrompt.contains("a missing required capability => STOP: declare what is missing and the options in your report"),
+        "the capability-boundary contract reached the merged prompt"
       )
+      assert(!res.systemPrompt.contains("BLOCKED"), "the delegate prompt carries no BLOCKED anchor grammar")
       assert(!res.systemPrompt.startsWith("<!--"), "the code prompt carries no seed-machinery HTML comment")
 
   test("unified-delegate: default workspace is created and the call reaches spawn prerequisites"):
