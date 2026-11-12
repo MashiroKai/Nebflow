@@ -53,6 +53,26 @@ class TaskLedgerStoreSpec extends FunSuite:
 
   private def statusOf(id: String): String = store.findSync(id).map(_.status).getOrElse("(missing)")
 
+  test("list: status filters, total count, bounded pages and explicit continuation") {
+    reset()
+    val s = store
+    s.createSync("alpha", project = Some("p"), assignee = Some("author"))
+    s.createSync("beta", project = Some("p"))
+    s.createSync("gamma", project = Some("q"))
+    val ids = s.entriesSync().map(_.id)
+    s.completeSync(ids.head)
+    val first = s.listSync(status = Some("open"), project = Some("p"), limit = 1, offset = 0).toOption.get
+    assert(first.contains("total=1 (1 open)"), first)
+    assert(first.contains("#2[open @dispatcher] beta"), first)
+    assert(first.contains("End of results."), first)
+    val page = s.listSync(limit = 1, offset = 0).toOption.get
+    assert(page.contains("total=3 (2 open)"), page)
+    assert(page.contains("More results: action=list offset=1 limit=1"), page)
+    assert(s.listSync(status = Some("closed")).toOption.get.contains("total=0"))
+    assert(s.listSync(limit = 0).isLeft)
+    assert(s.listSync(offset = -1).isLeft)
+  }
+
   // ------------------------------------------------------------------
   // §2 · the three-state machine
   // ------------------------------------------------------------------
@@ -515,7 +535,7 @@ class TaskLedgerStoreSpec extends FunSuite:
     val body = out.toOption.get
     assert(body.contains("field-tagged"), body)
     assert(!body.contains("other project"), body)
-    assert(body.contains("1 entry"), body)
+    assert(body.contains("total=1"), body)
   }
 
   test("project filter: legacy title-prefix encoding (project field absent) is matched — the stand fleet gap") {

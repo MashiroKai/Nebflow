@@ -152,7 +152,7 @@ class TaskListReminderSpec extends FunSuite:
     seedTask("1", "写交付报告", "open")
     MemoryHygieneSignal.resetForTest(restartedV = true, compactedV = false)
     val block = ContextRefresher.buildMemoryBlock("Nebula")
-    assert(block.contains("Task(action=list|show)"), s"尾指引必须含 show（否则模型不知道能查变更史）: $block")
+    assert(block.contains("Task(action=list,status=open)"), s"尾指引必须明确 open 未完成查询: $block")
 
   test("变更史 / 时间线文本永不进记忆块（史只在 show 按需读取）"):
     resetTasks()

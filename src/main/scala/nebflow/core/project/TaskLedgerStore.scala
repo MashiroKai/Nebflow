@@ -608,7 +608,9 @@ class TaskLedgerStore private ():
     status: Option[String] = None,
     assignee: Option[String] = None,
     project: Option[String] = None,
-    nodeTerminal: Map[String, String] = Map.empty
+    nodeTerminal: Map[String, String] = Map.empty,
+    limit: Int = 100,
+    offset: Int = 0
   ): Either[ToolError, String] =
     val store = readViewSync()
     val projectTag = project.map(_.trim).filter(_.nonEmpty)
@@ -616,20 +618,22 @@ class TaskLedgerStore private ():
       .filter(t => status.forall(_ == t.status))
       .filter(t => assignee.forall(t.assignee.contains))
       .filter(t => projectTag.forall(matchesProjectTag(t, _)))
-    if filtered.isEmpty then
+    if limit < 1 || limit > 500 then Left(ToolError(s"Task: list `limit` must be 1..500. (${Codes.Param})"))
+    else if offset < 0 then Left(ToolError(s"Task: list `offset` must be ≥0. (${Codes.Param})"))
+    else
       val scope = List(
         status.map(s => s"status=$s"),
         assignee.map(a => s"assignee=$a"),
         projectTag.map(p => s"project=$p")
       ).flatten.mkString(" ")
-      Right(s"Task ledger — empty${
-          if scope.isEmpty then "" else s" matching $scope"
-        } (no entries). Create one with action=create.")
-    else
-      val lines = filtered.map(t => TaskLedgerRenderer.compactLine(t, store.tasks, nodeTerminal))
+      val page = filtered.slice(offset, offset + limit)
+      val lines = page.map(t => TaskLedgerRenderer.compactLine(t, store.tasks, nodeTerminal))
       val openCount = filtered.count(_.status == Status.Open)
-      Right(s"""Task ledger — ${filtered.size} entr${if filtered.size == 1 then "y" else "ies"} ($openCount open)
-           |${lines.mkString("\n")}""".stripMargin)
+      val scopeText = if scope.isEmpty then "all" else scope
+      val header = s"Task ledger — total=${filtered.size} ($openCount open), offset=$offset, limit=$limit, returned=${page.size}"
+      val tail = if offset + page.size < filtered.size then s"\nMore results: action=list offset=${offset + page.size} limit=$limit" else "\nEnd of results."
+      Right(if page.isEmpty then s"$header; no entries on this page matching $scopeText.$tail"
+        else s"$header matching $scopeText\n${lines.mkString("\n")}$tail")
 
   end listSync
 
@@ -750,8 +754,20 @@ class TaskLedgerStore private ():
         s"#${t.id}[${t.status}] ${truncate(t.title, 40)}$proj"
       }
       val more = if open.size > 5 then s" (+${open.size - 5} more)" else ""
-      val line = s"[Task] ${open.size} open task(s): ${shown.mkString(" | ")}$more — details: Task(action=list|show)"
+      val line = s"[Task] ${open.size} open task(s): ${shown.mkString(" | ")}$more — details: Task(action=list,status=open)"
       truncate(line, 600)
+
+  /** Fresh, bounded reminder sourced directly from this ledger (never prompt snapshots). */
+  def passiveReminderSummary(maxItems: Int = 5): String =
+    val open = readViewSync().tasks.filter(_.status == Status.Open)
+    if open.isEmpty then ""
+    else
+      val shown = open.take(maxItems).map { t =>
+        val proj = t.project.map(p => s" [project:${truncate(p, 40)}]").getOrElse("")
+        s"#${t.id} ${truncate(t.title, 80)}$proj"
+      }
+      s"${open.size} unfinished task(s) in the global Task ledger; showing ${shown.size}:\n" +
+        shown.mkString("\n") + "\nQuery more with Task(action=list, status=\"open\", limit=100, offset=0)."
 
 end TaskLedgerStore
 
