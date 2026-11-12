@@ -62,7 +62,7 @@ private[project] trait NodeCompletion:
                 // FAIL JSON body is issues + requirements; the fail leg consumes them as
                 // detail/suggestion (single-issue detail joined for the audit line, verbatim
                 // requirements for the rework input).
-                NodeReportFeedback(
+                NodeFeedback(
                   category = "other",
                   detail = f.issues.mkString("; "),
                   suggestion = f.requirements

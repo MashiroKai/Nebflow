@@ -31,11 +31,29 @@ import nebflow.shared.PathUtil
  */
 object DelegateRegistry:
 
+  // ── 状态槽值域常量（终态申报工具通道退役 · T2 批：原定义随工具件删除，
+  //    引擎内部承接写点（updateReport / SubAgentStartupRecovery 落「已交付」态）
+  //    与 WorkspaceAdvisor 的 finish 读数仍需同一值域 ⇒ 迁本伴生对象单点持有）。
+
+  /** 状态槽值：任务完成（引擎内部承接写点使用；模型可见面零申报工具指令）。 */
+  val FinishValue: String = "finish"
+
+  /** 状态槽值：入队等合并（历史盘面兼容值）。 */
+  val MergeValue: String = "merge"
+
+  /**
+   * 状态槽值：显式待命（案A 批 2026-10-31 · 作者 11:40 拍板「显式待命态为主干」；
+   * 状态矩阵批 2026-11-01 收编为矩阵组合 complete×standby）：回合收尾挂起待命——
+   * 不终判、不投父、任务行保持 running、会话停靠 Waiting 显「待命」，Mail 到达唤醒续跑。
+   */
+  val StandbyValue: String = "standby"
+
   /**
    * 一条持久 delegate 记录。
    *
-   * worktree-judge-fifo 批（#1224 增补 §3.4）**扩面**：末四字段 = delegate_report
-   * 的**状态槽**（仅状态单写，不携汇报——汇报仍走终态消息直传）。旧记录无此四键
+   * worktree-judge-fifo 批（#1224 增补 §3.4）**扩面**：末四字段 = 终态申报的
+   * **状态槽**（仅状态单写，不携汇报——汇报仍走终态消息直传；申报工具通道退役后
+   * 本槽由引擎内部写点持有）。旧记录无此四键
    * ⇒ 解码按缺失 = None 容忍（手工 Decoder 单点，见文件尾——deriveDecoder 不吃
    * 缺键，会让存量记录在 list 里静默消失，禁）。
    */
@@ -68,7 +86,7 @@ object DelegateRegistry:
     baseBranch: Option[String] = None,
     /** 基工作区（合并执行的 `git -C` 目标；worktree 腿 = 项目 workspace，就地腿 = cwd）。 */
     projectWorkspace: Option[String] = None,
-    /** delegate_report 状态槽：finish | blocked（未申报 = None）。 */
+    /** 终态申报状态槽：finish | blocked（未申报 = None）。 */
     reportStatus: Option[String] = None,
     /** 申报 detail（blocked 的原因承载）。 */
     reportDetail: Option[String] = None,
@@ -76,7 +94,7 @@ object DelegateRegistry:
     reportSuggestion: Option[String] = None,
     /**
      * 工作结果文本槽（delegate-finish-report 修复批 2026-10-25）：ready-to-merge
-     * 停靠（HoldForMerge）时保真的**工作轮终稿**（delegate_report merge 轮的终文
+     * 停靠（HoldForMerge）时保真的**工作轮终稿**（申报 merge 轮的终文
      * ——合并轮 finish 终文会把它顶掉，本槽 = 工作结果不随两段汇报丢失的承载面）。
      * first-write-wins（首个非空文本落槽后不再改写）；`updateReport` 覆写旧
      * detail 时此处留底（老 delegate 无停靠保真 → merge 申报 detail 回落补种）。
@@ -169,7 +187,7 @@ object DelegateRegistry:
      * 待命停靠时刻（案A 批 2026-10-31 · 作者 11:40 拍板显式待命态为主干；审计基线
      * `docs/20261031_112344_delegate-standby-semantics-audit__delegate-nebflow-c0a2b939.md`；
      * 状态矩阵批 2026-11-01 收编为矩阵组合 complete×standby）：
-     * delegate_report 申报 `standby` 且回合收尾被判定机采纳 ⇒ 停靠写时刻（epoch
+     * 显式待命申报 `standby` 且回合收尾被判定机采纳 ⇒ 停靠写时刻（epoch
      * millis）——任务行保持 running、会话置 Waiting、不终判不投父；面板/快照面
      * 据此透出「待命（等作者）」。**写点 = 回合收尾采纳点**（非申报点——同回合
      * 后续 finish/merge 覆写申报时本槽不脏）；消费三态：Some = 在待命、None =
@@ -189,7 +207,7 @@ object DelegateRegistry:
      * 重启后仍在；`frozenSince = 冻结时刻`（epoch millis）。
      *
      * 与 [[standbySince]] 的分工（两者互斥语义，不共用槽）：standby = **自愿待命**
-     * （delegate_report 申报，回合正常收尾，等作者给活）；frozen = **异常冻结**（回合
+     * （显式待命申报，回合正常收尾，等作者给活）；frozen = **异常冻结**（回合
      * 异常中断，等唤醒续做）。写点 = 监督者冻结腿（[[nebflow.core.delegate
      * .DelegateFreeze.park]]），清点 = 唤醒（Mail live 注入 / 面板唤醒 / boot 原地复活）
      * 与真正终态（[[nebflow.core.delegate.DelegateTerminal.onTerminalCleanup]]）。
@@ -297,9 +315,10 @@ object DelegateRegistry:
     s"\nContinuation address: \"delegate:$id\" — later communication about THIS instance (supplements, corrections) goes through Mail(address=\"delegate:$id\"). Its result is delivered back to your session when it finishes."
 
   /**
-   * delegate_report 状态槽单写（#1224 增补 §3.4）：读-改-写（同步整写），只动
+   * 终态申报状态槽单写（#1224 增补 §3.4）：读-改-写（同步整写），只动
    * report* 四键，其余字段原样保真。查无记录 = `Left`（不凭空造记录——申报的
-   * 身份必须来自真实 spawn）。
+   * 身份必须来自真实 spawn）。申报工具通道退役（T2 批）后本写点 = **引擎内部
+   * 承接写**（恢复腿落「已交付」态等），不再是模型可见通道。
    *
    * delegate-finish-report 修复批 2026-10-25 **preserve-before-overwrite**：本槽
    * 是单槽（新申报覆写旧申报）——merge 轮的详细工作汇报会被 finish 轮的「合并
@@ -308,11 +327,11 @@ object DelegateRegistry:
    * ——停靠保真已落槽的工作轮终稿优先级更高，绝不被申报留底顶掉）。
    */
   def updateReport(id: String, status: String, detail: String, suggestion: String): Either[String, Unit] =
-    if !validId(id) then Left(s"delegate_report: invalid session id '$id'")
+    if !validId(id) then Left(s"delegate registry: invalid session id '$id'")
     else
       writeLock.synchronized {
         find(id) match
-          case None => Left(s"delegate_report: no registry record for '$id' — report after a real Delegate spawn")
+          case None => Left(s"delegate registry: no record for '$id' — the write point only lands on a real Delegate spawn")
           case Some(rec) =>
             try
               val preservedWorkReport = rec.workReport.orElse {
@@ -323,7 +342,7 @@ object DelegateRegistry:
               // standby 是旧轮的意图——唤醒/重申报后轮收尾不再误认待命）。standby
               // 申报本身不动槽（停靠时刻由回合收尾采纳点单写，见 [[parkStandby]]）。
               val standbyCleared =
-                if status != nebflow.core.tools.DelegateReportTool.StandbyValue then None
+                if status != StandbyValue then None
                 else rec.standbySince
               // 待命期边界（应答消费批 2026-11-03）：非 standby 申报把停靠槽清掉
               // ⇒ 旧待命期结束，看护记账清零（下一轮待命 = 新期，退避序从头发）。
@@ -338,7 +357,7 @@ object DelegateRegistry:
                 )
               )
               Right(())
-            catch case e: Throwable => Left(s"delegate_report: write failed: ${e.getMessage}")
+            catch case e: Throwable => Left(s"delegate registry: report write failed: ${e.getMessage}")
       }
 
   /**

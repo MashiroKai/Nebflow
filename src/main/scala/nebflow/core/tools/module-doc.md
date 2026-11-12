@@ -30,7 +30,6 @@
 | [`BrowseGetCursor.scala`](BrowseGetCursor.scala) | BrowseGetCursor —— 浏览取件**分块拉取腿**的收端游标（M2 · 设计 v1 §7 M2-1）。 作者令「Windows 下载进度条」的正主腿：改前浏览取件 = `RemoteExecutor.tra |
 | [`ChainWriteTool.scala`](ChainWriteTool.scala) | ChainWrite —— **整链一次登记**（N1 刀2 · 设计 v3 §5/S4；⑴′ 代裁＝独立件，不塞 既有工具件）。 |
 | [`CurlTool.scala`](CurlTool.scala) | 定义: CurlTool |
-| [`DelegateReportTool.scala`](DelegateReportTool.scala) | delegate_report —— delegate 终态语义申报工具（S7/S8；worktree-judge-fifo 批 #1224 增补 §3.4）. |
 | [`DelegateTool.scala`](DelegateTool.scala) | DelegateTool —— Nebula 唯一的派发入口（unified-delegate 批 2026-10-03）。 大改后的形态（作者令）：**只填 `task` 与 `project`（选填）**—— |
 | [`DeviceProfile.scala`](DeviceProfile.scala) | 单个实测字段的值 + 探测时刻。`source` 恒为 "auto"（结构即声明，不另设键）。 |
 | [`DiffUtil.scala`](DiffUtil.scala) | Shared utilities for EditTool and WriteTool. |

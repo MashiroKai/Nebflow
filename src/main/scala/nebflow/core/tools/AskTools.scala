@@ -25,7 +25,7 @@ import scala.util.control.NonFatal
  *     对外动作），经 AskHandoffPort 注册器投递（gateway 侧 ensureAgent 主会话
  *     ! ExternalEvent(source="ask") ⇒ injected 气泡 + 来源行引擎呈现链）。
  *
- * 双保险（DelegateReportTool 挂载先例）：挂载面 = buildAllowedToolSet 早退集
+ * 双保险（终态申报工具挂载先例，该通道已退役）：挂载面 = buildAllowedToolSet 早退集
  * （ask 会话专属）；工具内侧 = ctx.sessionId 同判据拒绝（AskSessions 单点）。
  * 非会话上下文（ctx.sessionId 空 / REST 直调）一律拒绝。
  * ═══════════════════════════════════════════════════════════════════════════ */

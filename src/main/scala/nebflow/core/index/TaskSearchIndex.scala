@@ -25,12 +25,12 @@ import java.time.Instant
  * embed。触发面三类：
  *   ① Task 账本写路径后（create/update/complete/close —— update 覆盖 revive：
  *     三态账本无独立 revive 动作，closed→completed 由 complete 承担、重开由
- *     update 承担，见 TaskTool 描述）+ delegate_report 终态写后 —— fire-and-
- * forget `upkeep`（TaskTool / DelegateReportTool 尾挂，绝不阻塞结果）；
+ *     update 承担，见 TaskTool 描述）+ 终态状态槽写后 —— fire-and-
+ * forget `upkeep`（TaskTool 尾挂与终态状态槽写点，绝不阻塞结果）；
  *   ② 启动补扫 = GatewayMain 装配点一次 `upkeep`（后台 fiber，永不阻塞启动）；
  *   ③ 检索前惰性 upkeep（search 自愈——任何漏网的增/改在下次检索前补齐）。
  * 🔴 接缝纪律：#1226 面（DelegateRegistry / DelegateTool / JevAllocator）零触碰
- * —— delegate 侧增量不走 spawn 钩子，靠②③惰性补齐 + delegate_report 工具面
+ * —— delegate 侧增量不走 spawn 钩子，靠②③惰性补齐 + 终态状态槽写点
  * 尾挂（tools 层，非 #1226 触碰面）。
  *
  * ==未配 embedding ⇒ 词法降级==

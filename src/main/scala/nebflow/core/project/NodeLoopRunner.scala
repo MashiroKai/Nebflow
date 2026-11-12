@@ -601,7 +601,7 @@ private[project] trait NodeLoopRunner:
    * 的终态，若排在终态写入之前会被 `completeNode` 覆写回 completed（回边随即只跑
    * 一轮即静默冻结）。
    */
-  private[project] def verifierFailR(nodeId: String, fb: NodeReportFeedback, resultText: String): IO[Boolean] =
+  private[project] def verifierFailR(nodeId: String, fb: NodeFeedback, resultText: String): IO[Boolean] =
     IO(System.currentTimeMillis()).flatMap { now =>
       store.snapshot.flatMap { s =>
         s.nodes.get(nodeId) match

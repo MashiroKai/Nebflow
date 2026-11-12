@@ -48,7 +48,7 @@ import scala.concurrent.duration.*
  * [[SessionResumptionSpec]]）。本 spec 钉住重钉后的契约：
  *  1. **wiring**：原位续后**同一会话 id** 在统一注册表复活为 Delegate 活体，且监督者
  *     拿到原父会话（registry 记录 `parentSessionId`）的**活引用**（回传链锚点不变）；
- *  2. **矩阵腿**：续命回合无 delegate_report 申报收尾 ⇒ complete×idle = 提醒腿
+ *  2. **矩阵腿**：续命回合无终态申报收尾 ⇒ complete×idle = 提醒腿
  *     （NudgeIdle）——绝不自动 completed 投父、绝不假终态（与 boot 复活 V1 同矩阵，
  *     2026-11-01 状态矩阵批口径）；结果在模型申报 finish 时照常回传；
  *  3. **父不 live 面**：父会话不在注册表 ⇒ 原位续照常进行（不阻断），但 Mail 回执
@@ -237,10 +237,10 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       assertEquals(recVal.parentSessionId, parentSid)
     end for
 
-  // ── (2) 矩阵腿：续命回合无申报 ⇒ 提醒腿（不自动终判、不投父、活体留存）──────
+  // ── (2) 直通腿：续命回合收尾 ⇒ 完成交付（回执正文随 ExternalEvent 投父；活体留存到 TTL）──
 
   test(
-    "(2) resumed turn WITHOUT a declaration ⇒ NudgeIdle: no auto terminal, the parent is NOT notified, the session stays live"
+    "(2) resumed turn WITHOUT a declaration ⇒ completion delivery (pass-through): the final text reaches the parent exactly once; the session stays live for Mail"
   ):
     val deadId = "delegate-nebflow-e2e00001"
     val parentSid = "e2e-parent-1"
@@ -267,13 +267,14 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       _ <- DelegateBudget.release(deadId).attempt.void
       _ <- system.stopAll
     yield
-      // 零自动终判：父会话收不到 completed ExternalEvent（提醒腿不是终态）
+      // 直通交付：续命回合收尾 = 完成交付——终文随 ExternalEvent 投父恰好一次。
+      val delivered = events.collect { case e: AgentCommand.ExternalEvent => e }
       assertEquals(
-        events.count(_.isInstanceOf[AgentCommand.ExternalEvent]),
-        0,
-        s"no declaration ⇒ no auto terminal, got: $events"
+        delivered.count(_.payload.contains("continuation work done")),
+        1,
+        s"the resumed turn's final text must reach the parent exactly once, got: $events"
       )
-      assert(stillLive, "the resumed session is reminded, never terminalized (matrix idle leg)")
+      assert(stillLive, "the resumed session stays live for Mail after the delivery")
     end for
 
   // ── (3) 父不 live 面：原位续照常 + 回执当场说破 ─────────────────────────

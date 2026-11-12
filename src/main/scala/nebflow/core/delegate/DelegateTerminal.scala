@@ -24,7 +24,7 @@ import scala.util.Try
  *   - [[Outcome.NudgeIdle]] —— 未申报空等：system reminder 提醒其申报 standby 或
  *     finish，不终判。
  *
- * 判定机两层全败的回落（fail-open）：delegate_report 自申报（finish→completed）→
+ * 判定机两层全败的回落（fail-open）：终态状态槽自申报（finish→completed）→
  * 都没有 = 引擎既有完成语义（completed）。判词诚实化：自申报也缺失时，completed
  * 判词行标注 `completed (unjudged — judge unavailable)`（ChainStore 行 source=
  * `unjudged`）；确定性预检（resultText 空＋零工具调用，`sessionToolCalls =

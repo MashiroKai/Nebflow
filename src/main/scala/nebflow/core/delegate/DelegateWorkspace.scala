@@ -221,7 +221,8 @@ object DelegateWorkspace:
            else "")
     s"[working branch] $branch — your worktree is a REUSED seat on this branch. $inheritedText " +
       "Commit your deliverable commits here. When the work on this branch is complete and ready to land, " +
-      "call delegate_report(category=\"merge\", detail=…) — you will receive a merge reminder when it is your turn; " +
+      "say so in your final text and state what sits on the branch — the merge request is the requester's " +
+      "face, and you will receive a merge reminder when it is your turn; " +
       "do NOT merge on your own initiative. NEVER commit directly to the base branch."
 
   end reuseBriefLine
@@ -270,8 +271,8 @@ object DelegateWorkspace:
   ): String =
     val base = baseBranch.getOrElse("the base branch")
     val mergeDiscipline =
-      " When the work on this branch is complete and ready to land, call delegate_report(category=\"merge\", detail=…) — " +
-        "you will receive a merge reminder when it is your turn; do NOT merge on your own initiative."
+      " When the work on this branch is complete and ready to land, say so in your final text and state what sits on the branch — " +
+        "the merge request is the requester's face, and you will receive a merge reminder when it is your turn; do NOT merge on your own initiative."
     if worktree then
       val nameNote = seatName.map(n => s" (worktree name '$n')").getOrElse("")
       s"[working branch] $branch$nameNote — your worktree sits on this branch; commit your deliverable commits here. NEVER commit directly to $base.$mergeDiscipline"

@@ -222,8 +222,8 @@ object DelegateRevival:
           val evidenceIo = if standbyGate then standbyTriage(rec).map(Some(_)) else IO.pure(None)
           // failed 行复活腿（本批任务②）：「已交付收尾报告」的记录不再有未完成业务。
           val deliveredReport = rec.reportStatus.filter(s =>
-            s == nebflow.core.tools.DelegateReportTool.FinishValue ||
-              s == nebflow.core.tools.DelegateReportTool.MergeValue
+            s == nebflow.core.delegate.DelegateRegistry.FinishValue ||
+              s == nebflow.core.delegate.DelegateRegistry.MergeValue
           )
           evidenceIo.flatMap { evidenceOpt =>
             // 父会话在场判据 = [[SessionLiveness]] 记录面（索引 ∪ 盘上会话记录）。

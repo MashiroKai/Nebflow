@@ -219,7 +219,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
               transcript.exists(m => m.role == MessageRole.User && m.textContent.contains("engine process restarted"))
             )
         }
-        // 矩阵腿（状态矩阵批 2026-11-01）：续跑回合（stub 回声终文，无 delegate_report
+        // 矩阵腿（状态矩阵批 2026-11-01）：续跑回合（stub 回声终文，无终态申报
         // 申报）收尾 ⇒ complete×idle = 提醒腿（NudgeIdle）——绝不自动 completed：
         // 零终态投父（邮箱零条目）、任务行诚实回 running、actor 不停（活体仍在，
         // 等下一回合真申报 finish/merge 或 standby）。先沉降回合（复活 fork 内的

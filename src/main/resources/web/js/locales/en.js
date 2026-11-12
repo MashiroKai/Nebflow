@@ -1002,7 +1002,7 @@ export default {
   // standby rows use the standby word).
   'subagents.status.waiting': 'Docked, waiting',
   'subagents.status.waitingMerge': 'docked, waiting',
-  // Delegate explicit standby (delegate_report standby) — the row status word is
+  // Delegate explicit standby (status-slot standby) — the row status word is
   // "Standby" (tooltip = what it declared it is waiting for).
   'subagents.status.standby': 'Standby (awaiting orders)',
   'subagents.status.idle': 'Idle',
@@ -3097,7 +3097,7 @@ export default {
   // `promptFaces` field of GET /api/agents/:name (BuiltinAgents.panelPromptFaces).
   'agentManager.faceDelegate': 'Delegate target',
   'agentManager.faceNode': 'Node (flow node)',
-  'agentManager.faceDelegateHint': 'System prompt carried by delegate sessions (delegate_report discipline).',
+  'agentManager.faceDelegateHint': 'System prompt carried by delegate sessions (delegate terminal semantics).',
   'agentManager.faceNodeHint': 'System prompt carried by flow-node sessions (node terminal-report discipline).',
   'explorer.newFile': 'New File',
   'explorer.newFolder': 'New Folder',

@@ -404,7 +404,7 @@ class DelegateToolSpec extends CatsEffectSuite:
     assertEquals(face.size, 9)
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
     // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
-    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop")
+    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "ChainWrite", "AgentControl", "Mail", "Pop")
       .foreach { t =>
         assert(!face.contains(t), s"nebflow must not hold: $t")
       }

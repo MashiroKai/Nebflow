@@ -13,7 +13,7 @@ import munit.FunSuite
  * 源就是代码」——seed/agents 资源树已删，磁盘 system.md 是死信），本 spec 的判据源
  * 随之指向代码定义。**提示词来源拆分批（2026-10-08）**：`nebflow` 执行名的系统
  * 提示词按会话面拆成两个独立来源——flow 节点面（`NebflowNodePrompt`，经 `entry`
- * 解析）与 delegate 面（`NebflowDelegatePrompt`，经 `delegateEntry` 解析，delegate_report
+ * 解析）与 delegate 面（`NebflowDelegatePrompt`，经 `delegateEntry` 解析，delegate 终态语义
  * 纪律，判据门 = `nebflow.core.entity.PromptFaceSplitSpec`）。
  * 本 spec 判定的是**节点面来源**（判据源 = `entry(ExecutorName).systemPrompt`，
  * 即 `NodeStarter` → `EntityLoader.loadAgent` 的节点 spawn 实读路径）。现行钉面

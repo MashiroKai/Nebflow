@@ -331,7 +331,7 @@ for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']
 // 触发器把 delegate/external 会话自身的 turn 边界帧（nodeSessionId 前缀判据）
 // 也接进同一防抖刷——帧仍只当触发器，数据权威恒在 REST /api/chains；tool 级
 // 帧（agentToolStart/End）不接（每工具一帧太频，行状态变更已由 turn 边界覆盖：
-// spawn=agentStart、delegate_report=turn 内写盘 + 该 turn 的 agentDone 兜底）。
+// spawn=agentStart、终态状态槽=turn 内写盘 + 该 turn 的 agentDone 兜底）。
 const DELEGATE_TRIGGER_RE = /^(delegate|external)-/;
 function onDelegateLifecycle(msg) {
   const nsid = String((msg && (msg.nodeSessionId || msg.agentId)) || '');

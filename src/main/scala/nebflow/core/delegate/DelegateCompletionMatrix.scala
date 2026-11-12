@@ -44,7 +44,7 @@ object DelegateCompletionMatrix:
     /** 回合收尾**未申报**（引擎矩阵 complete×idle）：唯一会收到 system reminder 的状态。 */
     case object Idle extends SessionState
 
-    /** 已显式申报 standby（`delegate_report(category="standby")`），已停靠等事件。 */
+    /** 已显式申报 standby（状态槽 standby），已停靠等事件。 */
     case object Standby extends SessionState
 
     /** 终态（finish 申报 / 判词链放行的完成）。 */

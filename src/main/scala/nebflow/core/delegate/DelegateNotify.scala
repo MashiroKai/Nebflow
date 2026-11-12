@@ -10,7 +10,7 @@ import nebflow.shared.NebflowLogger
  *
  * 规则（本批就位）：flow 终态/状态异常的**通知投递对象＝创建者 delegate 本人**
  * （自己创建、自己管理），通道 = ImmediateInput 注入（与合并 reminder 同通道族）；
- * 状态另经 delegate_report 入 DelegateRegistry——**双通道并存**。flow 面本身的
+ * 状态另经终态状态槽入 DelegateRegistry——**双通道并存**。flow 面本身的
  * 接线在 N1（先有非阻塞 flow 才有「完成即通知」）；本批保证通道与规则两个构件：
  *
  *   - [[inject]]：对**任意活会话**的 turn 边界注入（ImmediateInput 命令直投——
@@ -36,7 +36,7 @@ object DelegateNotify:
     val Target: String = "creator-delegate"
     val Channel: String = "immediate-input"
 
-    /** 双通道并存（状态面 = delegate_report → DelegateRegistry）。 */
+    /** 双通道并存（状态面 = 终态状态槽 → DelegateRegistry）。 */
     val StatusChannel: String = "delegate-report"
   end NotifyRule
 

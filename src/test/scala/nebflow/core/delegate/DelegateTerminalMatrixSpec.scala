@@ -10,15 +10,15 @@ import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk
 import scala.concurrent.duration.*
 
 /**
- * 完成判定状态矩阵（作者令 · delegate 状态矩阵批）——引擎侧 complete
- * （回合结束）只是**触发判定的事件**，绝不直接等于完成；必须与 delegate_report
- * 状态槽取交集。本件把矩阵组合各用引擎级 spec 钉死：
+ * delegate 终态交付契约（T2 批改钉）：终态申报工具通道退役后，回合结束 = **完成
+ * 交付事件**——`onCompleted` 一律 Release 直通（末条正文本体随载荷投父），槽位
+ * （finish/standby/退役值）不再改写终局、判词行/提醒腿/unmerged-work 注记行随
+ * 通道一并退役。本件把直通契约的各形态用引擎级 spec 钉死：
  *
- *  - ② complete × idle（未申报）⇒ system reminder 提醒调整状态（NudgeIdle），
- *    不终判——含「链在飞 × 未申报」的 dispatcher 断供场景（S3/D1 对账）；
- *  - ③ complete × finish ⇒ **唯一允许判完成的组合**（Release）；
- *  - ⑤ 未申报 × 工作座位 × 分支有领先提交 ⇒ completed 交付 + unmerged-work
- *    注记行（集成走项目 merger 的授权请求，交付绝不静默丢失）。
+ *  - ② complete × 未申报（substantive 终文）⇒ Release 直通，槽位不动；
+ *  - ③ complete × finish 槽 ⇒ 同一直通（槽位不分叉结局）；
+ *  - ⑤ 未申报 × 工作座位 × 分支有领先提交 ⇒ Release 直通，零注记行
+ *    （集成走项目 merger 的授权请求，引擎自己绝不合并）。
  */
 class DelegateTerminalMatrixSpec extends CatsEffectSuite:
 
@@ -125,7 +125,7 @@ class DelegateTerminalMatrixSpec extends CatsEffectSuite:
     }
 
   test(
-    "② matrix complete×idle: an undeclared substantive turn is reminded (NudgeIdle), never judged — and the same holds with chains in flight (dispatcher-cutoff scenario)"
+    "② pass-through (substantive undeclared turn): the turn end releases to the parent — slot untouched, no verdict line, no dock badge (the reminder protocol retired with the declaration channel)"
   ) {
     val system = ActorSystem(s"dtmx-2-${scala.util.Random.nextInt(100000)}")
     try
@@ -139,7 +139,7 @@ class DelegateTerminalMatrixSpec extends CatsEffectSuite:
           "nebula-root",
           "t",
           "brief",
-          resultText = "A full substantive report that never called delegate_report.",
+          resultText = "A full substantive report that never stated its closing position.",
           child,
           sup,
           sessionToolCalls = Some(12)
@@ -148,23 +148,24 @@ class DelegateTerminalMatrixSpec extends CatsEffectSuite:
         rec = DelegateRegistry.find("delegate-mx-idle")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        outcome match
-          case DelegateTerminal.Outcome.NudgeIdle(chainsInFlight, emptyTurn) =>
-            assert(!emptyTurn, "a substantive report is NOT an empty burn (reminder names the real reason)")
-            // chainsInFlight=false：夹具未挂 flow 宿主（链在飞腿的 true 形态由
-            // 「fail-soft 0」读数面与 IdleNudge 文案锚承担——挂宿 e2e 归 S3 批）。
-            assert(!chainsInFlight, "no flow host ⇒ zero chains")
-          case other => fail(s"expected Outcome.NudgeIdle, got: $other")
-        assertEquals(verdicts, Nil, "the idle row NEVER writes a verdict line")
+        assert(
+          outcome.isInstanceOf[DelegateTerminal.Outcome.Release],
+          s"every turn end must release (pass-through), got: $outcome"
+        )
+        assert(
+          outcome.toString.contains("A full substantive report"),
+          "the release payload carries the final text"
+        )
+        assertEquals(verdicts, Nil, "no verdict line (retired protocol)")
         assertEquals(rec.flatMap(_.reportStatus), None, "slot untouched — still undeclared")
-        assertEquals(rec.flatMap(_.standbySince), None, "the standby badge is declared-only")
+        assertEquals(rec.flatMap(_.standbySince), None, "the standby badge is never engine-seeded")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
   test(
-    "③ matrix complete×finish: the ONLY combination judged complete (judge absent ⇒ self-report-backed completed, plain honest line)"
+    "③ pass-through with a finish slot (judge absent): the turn end releases; no verdict line, no unjudged marker (the self-report-backing protocol retired with the declaration channel)"
   ) {
     val system = ActorSystem(s"dtmx-4-${scala.util.Random.nextInt(100000)}")
     try
@@ -190,17 +191,16 @@ class DelegateTerminalMatrixSpec extends CatsEffectSuite:
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
         assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
-        // finish 自申报背书 ⇒ 诚实平线（不标 unjudged——申报在场即「判过」语义）。
-        assert(!outcome.toString.contains("unjudged"), s"self-report backed: $outcome")
-        assertEquals(verdicts.map(_._1), List("completed"))
-        assertEquals(verdicts.map(_._2), List("judge"), "a finish declaration backs the completion (source=judge face)")
+        assert(outcome.toString.contains("final report body"), "the release payload carries the final text")
+        assert(!outcome.toString.contains("unjudged"), s"plain line: $outcome")
+        assertEquals(verdicts, Nil, "no verdict line (retired protocol)")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
   test(
-    "⑤ undeclared × working seat × branch ahead>0 ⇒ completed release + unmerged-work audit row (integration is a separate authorized merger request)"
+    "⑤ pass-through on a working seat (undeclared × branch ahead>0): the turn end releases; no unmerged-work audit row (the note channel retired); the engine never merges anything itself"
   ) {
     val system = ActorSystem(s"dtmx-5-${scala.util.Random.nextInt(100000)}")
     try
@@ -241,10 +241,10 @@ class DelegateTerminalMatrixSpec extends CatsEffectSuite:
       yield
         assert(
           outcome.isInstanceOf[DelegateTerminal.Outcome.Release],
-          s"a judged-completed seat releases to the parent, got: $outcome"
+          s"the seat releases to the parent, got: $outcome"
         )
-        assert(outcome.toString.contains("completed"), s"got: $outcome")
-        assertEquals(noteRows.flatMap(_.toList), List(1), "the unmerged-work audit row carries the ahead count")
+        assert(outcome.toString.contains("committed the work but forgot to declare"), "the payload carries the final text")
+        assertEquals(noteRows, Nil, "no unmerged-work audit row (retired protocol)")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
