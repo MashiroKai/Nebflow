@@ -485,4 +485,39 @@ class CredentialDiagnosticsSpec extends FunSuite:
     }
   }
 
+  // ── R6 账号归属闸分类（logout-login-recovery 批，2026-11-08）────────────
+
+  /**
+   * 闸拒绝的 Left 通道稳定形态 = `"<code>: <英文原因>"`（NeblinkEnrollment.accountCutoverRefusal）。
+   * 三条原文逐字钉死（码 + 冒号 + 原因）——改任何一侧都必须两侧同改（分类按码头直查）。
+   */
+  private val GuardRefusalWires: Map[String, CredentialFailure] = Map(
+    "account-switch-requires-logout: this engine serves a different account" -> CF.AccountSwitchRequiresLogout,
+    "enroll-refused-no-account-root: the unauthenticated layer has no account root; device registration is not available in this state" -> CF.EnrollRefusedNoAccountRoot,
+    "account-identity-missing: cannot safely establish account root" -> CF.AccountIdentityMissing
+  )
+
+  test("R6a 归属闸三条 Left 通道串按稳定码头直查分类；英文原因不进可见面") {
+    GuardRefusalWires.foreach { (raw, f) =>
+      assertEquals(CD.byGuardRefusal(raw), Some(f), s"码头直查必须命中: $raw")
+      val d = CD.diagnosticOf(f, raw)
+      assertEquals(d.code, f.code)
+      assert(d.message.startsWith("登录失败："), s"($f) 三段式模板头: ${d.message}")
+      assert(d.message.contains(s"诊断码：${f.code}"), s"($f) 诊断码尾串: ${d.message}")
+      assert(!d.message.contains(raw), s"($f) 英文拒绝原文只进日志面（detail），不得进可见文案")
+      assertEquals(LogdevTestSupport.violations(d.message, root), Nil, s"($f) 可见串三条判据必须全过")
+    }
+    // 非闸串绝不误分类（网络错误 / 空串 / 护栏原文都不是归属闸拒绝）
+    assertEquals(CD.byGuardRefusal("some random network error"), None)
+    assertEquals(CD.byGuardRefusal(""), None)
+    assertEquals(CD.byGuardRefusal("refused: this instance runs on an isolated data root"), None)
+  }
+
+  test("R6b 码同源：account-switch-requires-logout 与 LoginGuard.LoginCode 逐字同源；三条码非本地文件类") {
+    assertEquals(CF.AccountSwitchRequiresLogout.code, nebflow.core.root.LoginGuard.LoginCode)
+    GuardRefusalWires.values.foreach { f =>
+      assert(!f.isLocalFile, s"($f) 归属闸拒绝不是本地文件类 —— 不得给「清理并重登」入口")
+    }
+  }
+
 end CredentialDiagnosticsSpec

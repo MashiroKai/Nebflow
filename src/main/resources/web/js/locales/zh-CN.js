@@ -740,6 +740,13 @@ export default {
   'login.action.service-unavailable': '重启 {lowerBrand} 后重新登录',
   'login.reason.logto-not-configured': '登录服务未配置（缺少应用标识）',
   'login.action.logto-not-configured': '检查 {lowerBrand} 的登录配置后重试',
+  // 账号归属闸三条（logout-login-recovery 批 2026-11-08，与后端 CredentialFailure 同码单源）。
+  'login.reason.account-switch-requires-logout': '本机的账号根属于另一个账号：同一台机器同一时间只能服务一个账号',
+  'login.action.account-switch-requires-logout': '先在本机退出当前账号，然后再登录新账号（退出登录不会删除本机账号数据）',
+  'login.reason.enroll-refused-no-account-root': '本机处于未登录层（还没有账号根）：登录服务已连通，但设备注册在这个状态下不可完成',
+  'login.action.enroll-refused-no-account-root': '本机账号数据不受影响；该状态需要账号根建立流程处理，当前版本暂未提供，请不要反复重试',
+  'login.reason.account-identity-missing': '登录服务没有返回账号身份：无法确认这台机器该归属哪个账号',
+  'login.action.account-identity-missing': '点「重试」重新登录；仍失败请附日志反馈',
   'login.reason.login-failed': '登录过程中出现未分类的错误',
   'login.action.login-failed': '点「重试」；仍失败请附日志反馈',
   'messages.login': '登录',

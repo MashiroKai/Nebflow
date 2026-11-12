@@ -46,13 +46,31 @@ class StartupLadderSpec extends munit.FunSuite:
   private val Sub = "logto|user-42"
   private val Email = "user42@example.com"
 
-  test("account cutover fails closed before mutation until restart flow exists"):
+  test("账号归属闸：同账号/平铺档放行，异账号/未登录层/无身份 fail-closed（logout-login-recovery 批重定形）"):
     val root = os.temp.dir(prefix = "cutover-guard-")
     val account = RootLayer.Account(root, Sub, root / "accounts" / "a")
+    val flat = RootLayer.Flat(root, root)
+    val unauth = RootLayer.Unauthenticated(root, root / "unauthenticated")
+    // 账号档：同账号放行（凭据落回自己的账号根）
     assertEquals(NeblinkEnrollment.accountCutoverRefusal(account, Some(Sub), true), None)
+    // 账号档：异账号硬拒（跨账号 enroll 永不盲放）
     assert(NeblinkEnrollment.accountCutoverRefusal(account, Some("other"), true).exists(_.contains("account-switch")))
-    assert(NeblinkEnrollment.accountCutoverRefusal(RootLayer.Flat(root, root), Some(Sub), true).exists(_.contains("restart-required")))
+    // 平铺档：放行（只落凭据，根层零写 —— writeActiveAccountPointer 的非账号档跳过腿同批）
+    assertEquals(NeblinkEnrollment.accountCutoverRefusal(flat, Some(Sub), true), None)
+    assertEquals(NeblinkEnrollment.accountCutoverRefusal(flat, Some(Sub), false), None)
+    assertEquals(NeblinkEnrollment.accountCutoverRefusal(flat, None, false), None)
+    // 平铺档 + 显式 + 无身份：放行（配对码腿 E6，无 Logto 令牌面；平铺根无归属可串）
+    assertEquals(NeblinkEnrollment.accountCutoverRefusal(flat, None, true), None)
+    // 未登录层：fail-closed，稳定码 = enroll-refused-no-account-root（该层不铸设备身份，契约 §6.2）
+    assert(
+      NeblinkEnrollment.accountCutoverRefusal(unauth, Some(Sub), true).exists(_.startsWith("enroll-refused-no-account-root:")),
+      "未登录层拒绝必须带稳定码头（分类面按它映射三段式）"
+    )
+    // 未登录层 + 显式无身份：同样拒（有主根收无主凭据 = 串号面）
+    assert(NeblinkEnrollment.accountCutoverRefusal(unauth, None, true).isDefined)
+    // 账号档显式登录无身份：fail-closed（有主根收无主凭据 = 串号面）
     assert(NeblinkEnrollment.accountCutoverRefusal(account, None, true).exists(_.contains("identity-missing")))
+    // 自动路径无身份：放行（静默续登/设备码遗产路径，不变）
     assertEquals(NeblinkEnrollment.accountCutoverRefusal(account, None, false), None)
     os.remove.all(root)
 

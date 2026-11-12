@@ -565,7 +565,14 @@ private[gateway] object AuthRoutes:
     nebflow.neblink.identity.EnrollGuard.enrollRefusal(serverUrl) match
       case Some(reason) if reason == err => CD.diagnosticOf(CF.EnrollRefusedIsolatedHome, err)
       case _ =>
-        CD.byVisibleMessage(err).map(f => CD.diagnosticOf(f)).getOrElse(CD.diagnosticOf(CF.Unclassified, err))
+        // 账号归属闸拒绝（logout-login-recovery 批）先于可见串反查：Left 通道的稳定
+        // 形态是 "<code>: <英文原因>"，按码头直查（映射单点 = CD.byGuardRefusal）；
+        // 英文原因只进日志面（diagnosticOf 的 detail 通道），可见面走各码的中文三段式。
+        // 可见串反查命中保持原形（不带 detail —— 与修前逐字一致）。
+        CD.byGuardRefusal(err)
+          .map(f => CD.diagnosticOf(f, err))
+          .orElse(CD.byVisibleMessage(err).map(f => CD.diagnosticOf(f)))
+          .getOrElse(CD.diagnosticOf(CF.Unclassified, err))
 
   /**
    * Static loopback login result page (success + error variants). The
