@@ -743,11 +743,15 @@ class PromptSectionsSpec extends munit.FunSuite:
         bytes <= NodeSessionAlwaysOnSectionMaxBytes,
         s"段长门：$bytes B 超 ${NodeSessionAlwaysOnSectionMaxBytes} B（本段进每次 node LLM 调用）"
       )
-      // 段内钉句：收尾即申报（wrap-up 铁律，not blocked-only）
+      // 段内钉句：收尾即申报（wrap-up 铁律；blocked-only 例外形态已随终态退役删除）
       assert(
         NodeSessionAlwaysOnSection.contains("Before wrapping up call `node_report`") &&
-          NodeSessionAlwaysOnSection.contains("reporting IS the wrap-up action, not a blocked-only exception"),
+          NodeSessionAlwaysOnSection.contains("reporting IS the wrap-up action."),
         s"wrap-up 铁律句:\n$NodeSessionAlwaysOnSection"
+      )
+      assert(
+        !NodeSessionAlwaysOnSection.contains("blocked"),
+        s"belt 行零受阻语义残留（blocked 终态退役）:\n$NodeSessionAlwaysOnSection"
       )
       // 要求 1/2 的两句契约迁入权威位（node_report description）——改钉权威面
       val authority = nebflow.core.tools.NodeReportToolDef.description

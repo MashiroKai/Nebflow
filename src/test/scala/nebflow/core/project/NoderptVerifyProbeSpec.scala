@@ -104,7 +104,7 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
                                "probe-spec",
                                "n-probe",
                                rec.sessionId,
-                               BlockedFeedback(category, s"probe declare ($category)", "")
+                               NodeReportFeedback(category, s"probe declare ($category)", "")
                              )
                            else IO.unit)
                   }

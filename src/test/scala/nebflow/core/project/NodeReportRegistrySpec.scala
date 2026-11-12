@@ -15,8 +15,8 @@ import scala.concurrent.duration.*
  */
 class NodeReportRegistrySpec extends CatsEffectSuite:
 
-  private val fbA = BlockedFeedback("upstream-incomplete", "上游 X 未完成", "需上游先完成")
-  private val fbB = BlockedFeedback("external-dependency", "等待 API key", "提供凭据后重派")
+  private val fbA = NodeReportFeedback("upstream-incomplete", "上游 X 未完成", "需上游先完成")
+  private val fbB = NodeReportFeedback("external-dependency", "等待 API key", "提供凭据后重派")
 
   /**
    * #239② 面①：register 现在带持久化归属（workspace/project/nodeId）。本 spec 的**语义

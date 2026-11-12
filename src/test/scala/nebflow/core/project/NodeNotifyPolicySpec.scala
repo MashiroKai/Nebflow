@@ -178,7 +178,6 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        feedbackMode = pd.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
         emitEvent = (_, _, _) => IO.unit,
         board = board,
         projectGoal = pd.description,

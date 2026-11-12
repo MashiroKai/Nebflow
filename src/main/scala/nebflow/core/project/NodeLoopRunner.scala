@@ -342,7 +342,7 @@ private[project] trait NodeLoopRunner:
         }
         .flatMap { case (s, opt) => s.nodes.get(nodeId).traverse_(emitUpdated).as(opt.isDefined) }
 
-    /** `IO[Unit]` 门面：无申报消费的既有调用点零改动（同 #239① 的 `failNode`/`blockedNode` 门面）。 */
+    /** `IO[Unit]` 门面：无申报消费的既有调用点零改动（同 #239① 的 `failNode` 门面）。 */
     def setVerdict(nodeId: String, summary: String): IO[Unit] =
       setVerdictR(nodeId, summary).void
 
@@ -390,7 +390,7 @@ private[project] trait NodeLoopRunner:
     def handleVerify(roundNum: Int, wText: String, vMsgs: List[Message]): IO[Unit] =
       val vText = extractLastAssistantText(vMsgs)
       val R = nebflow.core.tools.NodeReportToolDef
-      // #239①：两条**终态写**支（pass → completed / blocked → Loop 级 blocked）的申报
+      // #239①：终态写支（pass → completed；其余申报类别 → 显式失败）的申报
       // 消费挂落地判词；fail 支把申报消费进「判词 + 回边返工」（非终态写，见
       // [[compensateUnconsumedReport]] 的边界声明），text 锚定支无申报（declared=None）
       // 故无补偿面。
@@ -413,20 +413,15 @@ private[project] trait NodeLoopRunner:
             ) *>
               loopRound(roundNum + 1, Some(f))
           case Some(fb) =>
-            // verify 工具申报 blocked → Loop 级 blocked
-            consumeReport(nodeId, verify.sessionId, declared)(blockedNodeR(nodeId, fb, finalText = Some(vText))).void
+            consumeReport(nodeId, verify.sessionId, declared)(
+              failNodeR(nodeId, s"Unexpected verifier report category '${fb.category}': ${fb.detail}")
+            ).void
           case None =>
-            BlockedReader.parse(vText) match
-              case Some(fb) => blockedNode(nodeId, fb) // verify 申告任务无法验证 → Loop 级 blocked
-              case None =>
-                VerdictReader.parse(vText) match
-                  case VerdictReader.Verdict.Pass =>
-                    // PASS：投递 worker 最终产出原文（§2.2 裁定建议 a）
-                    completeNodeR(nodeId, wText).void
-                  case f: VerdictReader.Verdict.Fail =>
-                    // FAIL：打回 worker（同会话注入意见），轮 +1，至 K
-                    setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
-                      loopRound(roundNum + 1, Some(f))
+            VerdictReader.parse(vText) match
+              case VerdictReader.Verdict.Pass => completeNodeR(nodeId, wText).void
+              case f: VerdictReader.Verdict.Fail =>
+                setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
+                  loopRound(roundNum + 1, Some(f))
       }
     end handleVerify
 
@@ -463,8 +458,8 @@ private[project] trait NodeLoopRunner:
               val wText = extractLastAssistantText(wMsgs)
               // blocked 结构化信号批（20260909 spec §5.2 #8；同日作者裁定泛化
               // NodeReport 统一三语义）：worker 会话完成时点先 drain 登记表
-              // （工具申报按类别分流：blocked → Loop 级 blocked；fail → 既有
-              // failed 链；pass 与无申报同链照常进 verify 裁决。spawnLoopSession
+              // （工具申报按类别分流：fail → 既有 failed 链；pass/finish 与
+              // 无申报同链照常进 verify 裁决。spawnLoopSession
               // 会话已带 flowNodeId——工具天然可达）；未申报走文本锚定降级面
               // （行为零变化）。
               val R = nebflow.core.tools.NodeReportToolDef
@@ -475,11 +470,6 @@ private[project] trait NodeLoopRunner:
                   case Some(fb) if R.isFail(fb.category) =>
                     // worker 工具申报 fail → 既有 failed 链
                     consumeReport(nodeId, worker.sessionId, declared)(failNodeR(nodeId, R.renderFail(fb))).void
-                  case Some(fb) if R.isBlockedSemantics(fb.category) =>
-                    // worker 工具申报 blocked → Loop 级 blocked
-                    consumeReport(nodeId, worker.sessionId, declared)(
-                      blockedNodeR(nodeId, fb, finalText = Some(wText))
-                    ).void
                   case _ =>
                     // 无申报（None）或 pass/finish 申报：本轮产出照常进 verify 裁决
                     // （pass/finish = worker 正式声明本轮完成，与无申报同链零新链）。
@@ -663,7 +653,7 @@ private[project] trait NodeLoopRunner:
    * 的终态，若排在终态写入之前会被 `completeNode` 覆写回 completed（回边随即只跑
    * 一轮即静默冻结）。
    */
-  private[project] def verifierFailR(nodeId: String, fb: BlockedFeedback, resultText: String): IO[Boolean] =
+  private[project] def verifierFailR(nodeId: String, fb: NodeReportFeedback, resultText: String): IO[Boolean] =
     IO(System.currentTimeMillis()).flatMap { now =>
       store.snapshot.flatMap { s =>
         s.nodes.get(nodeId) match

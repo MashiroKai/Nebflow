@@ -19,7 +19,8 @@ import scala.concurrent.duration.*
  *
  *   - 臂0（活会话，既有不变）：答复仍按 fromUser=true 注入会话（既有臂字节回归）；
  *   - 臂1（亡会话＋归因在＋项目宿主在）：答案走 `ProjectActor.AskAnswerReentry`
- *     （ReenterDispatcher 族）+ `answer-retry` 审计事件 + 渠道**确认回执行**；
+ *     （答案重入族——blocked 重入退役后的重入管线）+ `answer-retry` 审计事件 +
+ *     渠道**确认回执行**；
  *   - 臂3（亡会话＋归因缺席 / 宿主不在）：**失败出口不静默**——渠道失败回执行
  *     「问题已作废+原因」+ 桌面 toast 帧（interactionAnswerRejected 族）+ 会话
  *     零注入。
@@ -203,7 +204,7 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
     yield
       // 目标会话零注入（会话已亡，注入无意义）
       assertEquals(inj.size, 0, s"亡会话臂不得注入目标：$inj")
-      // 重入指令到达（ReenterDispatcher 族）：nodeId/requestId/答案全文
+      // 重入指令到达（AskAnswerReentry 答案重入族）：nodeId/requestId/答案全文
       assertEquals(re, ("n1", "asknb-l1", AskUserQuestionTool.formatAnswer(items, List("yes"))))
       // 渠道确认回执（「社交腿零通知」修复面）
       assertEquals(rc.size, 1, s"确认回执恰一条：$rc")

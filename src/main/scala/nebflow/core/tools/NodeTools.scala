@@ -40,7 +40,8 @@ object NodeTools:
    *
    * failed/cancelled **不在集内**（有意）：二者是 NodeEdit 重激活闸唯一放行的两个状态
    * （`ReactivateStatuses`），把 in 追加一起拒会把「重激活时重接上游」这条恢复路径掐死
-   * ——与设计原文只列 running/blocked/completed 逐字一致。
+   * ——与设计原文只列 running/blocked/completed 逐字一致。blocked 桶仅为 legacy
+   * 存量行保留（终态已退役，新图零产生）——账本冻结口径对存量行不变。
    */
   val MergeFiredStatuses: Set[String] =
     Set(NodeLifecycle.Running, NodeLifecycle.Blocked, NodeLifecycle.Completed)
@@ -88,7 +89,7 @@ object NodeTools:
   /** delegate 会话的宿主查无（fail-closed，可行动：重挂触发点在 spawn/续聊腿）。 */
   def scopeUnavailableError(scopeId: String): String =
     s"Your scope flow map is not available (no mounted host for this delegate session) — the flow tools only operate on " +
-      "your own scope map. Retry shortly (the host remounts on session revival) or report blocked if it persists. " +
+      "your own scope map. Retry shortly (the host remounts on session revival) or state the outage plainly in your wrap-up report if it persists. " +
       "(DELEGATE_SCOPE_UNAVAILABLE)"
 
   /** delegate 会话显式指定了他人项目（作用域归属 fail-closed——只能编辑自己作用域图）。 */
@@ -996,7 +997,7 @@ object NodeTools:
           s"node '$nodeName' has role=${NodeRoles.Task} but declares a verdict route — the 'fail' gate and the ':loop' mode are " +
             "verifier-only: only a node with role=verifier produces a verdict about another node. Either declare this node " +
             "role=verifier (create-only: it must be set when the node is created) with out=\"(pass)<target>, (fail)<worker>:loop\", " +
-            "or drop the fail/:loop edge and report finish/blocked. (NODE_VERDICT_GATE_ON_TASK_NODE)"
+            "or drop the fail/:loop edge and report finish. (NODE_VERDICT_GATE_ON_TASK_NODE)"
         )
       else if isVerifier && edges.exists(_.on.contains(OutEdge.Failed)) then
         Some(
@@ -1263,8 +1264,9 @@ object NodeTools:
    * loop detect（§2.6）：同 agent + 同 task 归一化，活动区已有
    * running/completed 节点 → 疑似重复派发（TTL 窗口内 = 活动区仍显示）。
    * 返回匹配的节点（无则 None）。NodeEdit 创建入口节点时校验（0 spawn）。
-   * R1 复核（blocked 反馈重入设计 §6）：Terminal 含 blocked——blocked 节点
-   * **应**计入重复派发（防对同一任务重复派发；blocked ≠ 可重派）。
+   * 判据 = running ∪ Terminal（completed/failed/cancelled）。blocked 终态已退役
+   * （no-blocked-semantics 一期：不在 Terminal 集），legacy blocked 存量行不再计入
+   * 重复派发哨——存量行归分发器人工迁移，哨只看可存活锚。
    */
   def findDuplicateDispatch(rt: ProjectRuntime, agentName: String, task: String): IO[Option[NodeDef]] =
     val norm = normalizeTask(task)

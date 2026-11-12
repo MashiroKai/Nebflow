@@ -45,7 +45,7 @@ class NodeReportJournalSpec extends CatsEffectSuite:
     val p = os.Path(ws) / ".nebflow" / FlowMapEventLog.FileName
     if os.exists(p) then os.read(p) else ""
 
-  private val fbA = BlockedFeedback("upstream-incomplete", "上游 X 未完成（marker-J-A）", "需上游先完成")
+  private val fbA = NodeReportFeedback("upstream-incomplete", "上游 X 未完成（marker-J-A）", "需上游先完成")
 
   test("① 声明落盘 + 重启恢复：日志有 declare 行，重启仿真后 peek/drain 仍取回申报") {
     val ws = freshWs("recover")
@@ -137,7 +137,7 @@ class NodeReportJournalSpec extends CatsEffectSuite:
         case other => fail(s"corrupt/torn journal MUST degrade (conservative), got $other")
       assertEquals(
         kept,
-        Some(BlockedFeedback("blocked", "marker-J-KEEP", "")),
+        Some(NodeReportFeedback("blocked", "marker-J-KEEP", "")),
         "the readable declare line must still be recovered"
       )
       assertEquals(after, before, "the journal must be left byte-for-byte untouched (never truncated/repaired)")

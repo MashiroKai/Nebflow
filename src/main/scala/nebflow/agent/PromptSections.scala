@@ -205,15 +205,15 @@ object PromptSections:
    * 节点会话 always-on belt 行（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起形态
    * = 「一句申报义务 + 权威位指针」，不再自携值域/后果/受阻行）。公开常量 = 段长门
    * 的断言对象（本常量 UTF-8 字节数 ≤ [[NodeSessionAlwaysOnSectionMaxBytes]]）。
-   * 完整协议（角色值域、blocked JSON 文法、verifier verdict、未申报语义）的**单一
-   * 权威** = 输入面协议脚注 `NodeEngine.ProtocolFootnote`（引擎编译、随任务输入
+   * 完整协议（角色值域、无停等申报、AskHost 指引、verifier verdict、未申报语义）的
+   * **单一权威** = 输入面协议脚注 `NodeEngine.ProtocolFootnote`（引擎编译、随任务输入
    * 注入、角色分支）+ `node_report` 工具 description；本段禁复述其内容（段进每次
    * node LLM 调用，token 是经常性成本）。
    */
   val NodeSessionAlwaysOnSection: String =
     """## Node terminal report (Flow Map node sessions)
 
-Before wrapping up call `node_report` — reporting IS the wrap-up action, not a blocked-only exception. The single authoritative protocol is the `node_report` tool description plus the Node protocol footnote injected with node task input; this line is only the always-on belt."""
+Before wrapping up call `node_report` — reporting IS the wrap-up action. The single authoritative protocol is the `node_report` tool description plus the Node protocol footnote injected with node task input; this line is only the always-on belt."""
 
   /** 段长门阈值（字节）：段正文 UTF-8 字节数必须 ≤ 本值。 */
   val NodeSessionAlwaysOnSectionMaxBytes: Int = 400
@@ -363,8 +363,8 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
     // seed/运行面处于何种同步状态，节点系统提示词上恒有一句申报义务（loop verify
     // 等输入面无脚注的会话形态由此兜底）。② 它是项目面 AGENTS.md 终态申报行所指
     // 「引擎 always-on 段」的本体（该行已终态冻结，指针目标不得悬空）。
-    // 完整协议的**单一权威** = 输入面脚注 `NodeEngine.ProtocolFootnote`（blocked
-    // JSON 文法 + 角色值域 + verifier verdict 分支的唯一引擎文本）+ `node_report`
+    // 完整协议的**单一权威** = 输入面脚注 `NodeEngine.ProtocolFootnote`（角色值域
+    // + 无停等申报/AskHost 指引 + verifier verdict 分支的唯一引擎文本）+ `node_report`
     // 工具 description——本段**不复述**它们（F8 判据：引擎贡献装配面恰一份完整
     // 纪律；种子条件句自携完整规则系 promptfix 作者并存终态，不属该判据域。本段
     // 收口为短句指针）。条件判据 `PromptContext.availableTools` 含 node_report ≡

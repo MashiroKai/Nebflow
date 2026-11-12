@@ -233,7 +233,6 @@ trait StuckRecoveryFixture extends CatsEffectSuite:
             ws.toString,
             s"root-$name",
             s"ledgerwp-$name",
-            FeedbackRouter.ModeAuto,
             (_: String, _: String, _: io.circe.Json) => IO.unit,
             notifyTriggerOverride = Some((_: String) => IO.unit)
           )

@@ -590,46 +590,32 @@ private[project] object NodeEngineContract:
       "round is still present — re-check before building on it"
 
   /**
-   * 节点级 blocked 重入上限（设计 §3.1/§7.2）：blockCount 1/2 → 重入调整；
-   * count=3（> 2）→ 升级 Nebula 不再重入。
-   */
-  val MaxBlockRoundsPerNode: Int = 2
-
-  /**
    * 节点终态语义申报协议脚注（buildInput 末尾单点注入）：
-   * 末尾增一行上报指引——与终态语义协议同点注入、同生命周期；措辞自带条件
+   * 末尾增一行任务板指引——与终态语义协议同点注入、同生命周期；措辞自带条件
    * （「若…给了」），无板会话注入该行无副作用。
-   * blocked 结构化信号：第一优先 = 调用申报工具；
-   * 裁定泛化（NodeReport 统一三语义）：工具更名 node_report，blocked
-   * 细分六类之外 pass/fail 语义同走结构化申报；三语义文本锚定（首行裸 BLOCKED
-   * / VERDICT: PASS/FAIL）降级为「工具不可用时」备用通道，措辞强调首行裸形态
-   * 要求（6 例实证：markdown 标题/加粗/前置导语均锚定失败）。
-   *
-   * 值域**按节点角色分化**后，本文案
-   * 只保留角色中立表述（「按你的节点角色传对应值」+ 括号注明校验节点 = pass/fail），
-   * verifier 专属段（verdict ≠ 节点状态）由 [[protocolFootnoteFor]] 追加——避免把
-   * 两套值域并列塞进一篇脚注（R9 中性化同款纪律：解释权收归工具 description）。
-   * 本 val 逐字保持旧文本除该句外的全文（下游断言锚：末行 TaskBoard 指引行、
-   * `endsWith(ProtocolFootnote)` 身份断言）。
-   * F8 收口：本 val = 节点终态申报协议在**引擎贡献面**（引擎编译、
-   * 随系统提示词/任务输入注入的提示词文本）的单一权威文本——该面唯一完整协议，
-   * blocked JSON 文法在该面仅此处承载（工具面语义另由 `node_report` 工具
-   * description 与 `NodeReportTool` 承载，不属本断言域）。**非全局唯一**：agent
-   * 种子条件句 `seed/agents/general/system.md:7-10` 自带完整规则文本（promptfix
-   * 并存终态「规则各留一份」，唯一 seed 面防线，无指向本 val 的指针）；
-   * `PromptSections` 段序 360 = belt+指针；内置 general 项目脚手架的 AGENTS.md
-   * （**符号锚**：按角色描述该文件，不指文件路径——文件路径会随种子面增删漂移）=
-   * 一行指针（自陈「本文件不复述」）——后二者只承载指针/短句，不承载
-   * 完整协议。
-   * 文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
-   * 与 `NodeChainAttributionSpec` 的 `endsWith` 身份钉同挂本 val。
+   * 值域**按节点角色分化**（task = `finish` 显式完成；verifier = `pass`/`fail`
+   * verdict 面）：本文案只保留角色中立表述（「按你的节点角色传对应值」），
+   * verifier 专属段（verdict ≠ 节点状态）由 [[protocolFootnoteFor]] 追加——避免
+   * 两套值域并列塞进一篇脚注（解释权收归工具 description）。
+   * **无停等/受阻申报**：blocked 终态已退役——不存在「受阻申报」出口，任务/
+   * 授权/依赖不清 ⇒ AskHost 问信任的 root（与 `node_report` 工具 description
+   * 双面同文）；旧文本锚定备用通道（首行裸 `BLOCKED` + JSON）随出口一并删除
+   * ——文本形态不再驱动任何终态分流。
+   * 本 val = 节点终态申报协议在**引擎贡献面**（引擎编译、随任务输入注入的提示词
+   * 文本）的单一权威文本——工具面语义另由 `node_report` 工具 description 承载；
+   * `PromptSections` 段序 360 = belt+指针（不复述协议内容）；内置 general 项目
+   * 脚手架的 AGENTS.md = 一行指针（自陈「本文件不复述」）——后二者只承载
+   * 指针/短句，不承载完整协议。
+   * 文本逐字冻结——`TaskBoardInjectionSpec` 的末行措辞钉、
+   * `NodeChainAttributionSpec` / `SleepPollStartupRuleSpec` 的 `endsWith`
+   * 身份钉同挂本 val。
    */
   val ProtocolFootnote: String =
     """── Node protocol ──
-      |**Call `node_report` before wrapping up** — reporting IS the wrap-up action, not a blocked-only channel.
-      |Values by role: task = `finish` / `blocked`; verifier = `pass` / `fail` (verdict — evidence in `detail`) / `blocked`; a wrong value is rejected with your role's legal list.
-      |Cannot finish (upstream not ready / brief incomplete / capability mismatch / missing external condition)? Never fabricate: `blocked`, category ∈ upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other | blocked — then still write your wrap-up report; a normal result is no substitute.
-      |Unreported ⇒ stays running, result undelivered, reminders only — never auto-failed. No tool ⇒ first line exactly `BLOCKED` + JSON {"category":"…","detail":"…","suggestion":"…"}.
+      |**Call `node_report` before wrapping up** — reporting IS the wrap-up action.
+      |Values by role: task = `finish` (explicit completion — optional: not calling it still completes normally); verifier = `pass` / `fail` (verdict about the judged object — evidence in `detail`); a wrong value is rejected with your role's legal list.
+      |There is no stopped/waiting declaration: if any task detail, scope, authorization, or dependency is unclear, call AskHost and wait for the trusted root's decision — never fabricate output and never self-declare a stuck state. If you still must wrap up, state what is missing plainly in your wrap-up report; a fabricated normal result is no substitute.
+      |Unreported ⇒ stays running, result undelivered, reminders only — never auto-failed.
       |**Your last output is the deliverable** (the engine takes your last assistant text and hands it downstream): it must be your own completion report for this node — what you did, the result, where the artifacts are, what is still open. `node_report` is the terminal declaration, not that report: declare first, then write this one.
       |**Keep it self-contained — no pointing**: downstream receives only this last text, none of your earlier messages, tool output or history. Never close with "see above" / "same as above" / "as mentioned above" — restate the conclusion, the artifact paths and the numbers in full.
       |TaskBoard work order ⇒ close = done, blocked = stuck.""".stripMargin
@@ -643,7 +629,7 @@ private[project] object NodeEngineContract:
   val VerifierVerdictFootnote: String =
     """── Verifier node ──
       |`pass` / `fail` = verdict on the object under review, never this node's status: `fail` ≠ your failure (this node still completes; verdict ≠ status). The engine routes the re-run along `(fail)<target>:loop` — you never redo the work.
-      |A real execution failure (dead session / LLM error) is engine-judged — no agent channel. Stuck ⇒ `blocked`, as for a task node.""".stripMargin
+      |A real execution failure (dead session / LLM error) is engine-judged — no agent channel. Review scope or authorization unclear? Call AskHost — there is no stopped/waiting declaration.""".stripMargin
 
   /**
    * 角色分支脚注（B9 单点）：`verifier` = 基线 + [[VerifierVerdictFootnote]]
@@ -850,8 +836,10 @@ private[project] object NodeEngineContract:
           "(same judgement as the edit-time guard, which queues control edges in pendingOut) — " +
           "the wall-clock loop budget owns the terminal."
       )
-    else if NodeLifecycle.Terminal.contains(status) && status != NodeLifecycle.Completed then
-      Left(s"$status (blocked/failed/cancelled scenes are dispatcher-owned)")
+    // Legacy-stock leg: blocked rows (pre-retirement stock) stay dispatcher-owned too —
+    // the engine must not auto-reset a row the dispatcher has not migrated yet.
+    else if (NodeLifecycle.Terminal.contains(status) && status != NodeLifecycle.Completed) || status == NodeLifecycle.Blocked then
+      Left(s"$status (failed/cancelled — and legacy blocked — scenes are dispatcher-owned)")
     else Right(())
 
   /**

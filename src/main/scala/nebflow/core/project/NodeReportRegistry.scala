@@ -16,9 +16,10 @@ import java.nio.charset.StandardCharsets
  * Blocked/Pass/Failed 同为「类似的语义判断」，迁移一起迁移）。
  *
  * 节点会话内调用 node_report 工具 → register(...)；会话完成时点 NodeEngine drain
- * （take-and-remove）→ 按申报类别分流到既有链（零新链）：blocked（细分六类/泛值）→
- * blockedNode 终态化 + FeedbackRouter 重入；pass → 既有 completed 语义链；fail →
- * 既有 failed/verdict 语义链。未申报走既有文本锚定降级面（行为零变化、零放宽）。
+ * （take-and-remove）→ 按申报类别分流到既有链（零新链）：finish → 既有 completed
+ * 语义链；pass → 既有 completed 语义链；fail → 既有 failed/verdict 语义链。未申报
+ * 走既有降级面（行为零变化、零放宽）。blocked 不是合法申报类别（blocked 终态已退役
+ * ——工具层入参即拒，引擎侧无对应终态写点）。
  *
  * 形态照抄 BgTaskRegistry（nebflow.core.tools.BgTaskRegistry）的**进程内工作集**
  * 部分：Ref 单例、session 键控、consume-on-read。语义要点（spec §6 误判面）：
@@ -58,9 +59,8 @@ import java.nio.charset.StandardCharsets
  *   `grep node-report-store <ws>/.nebflow/flow-map-events.jsonl`
  *   `grep NODE-REPORT-STORE-WRITE-FAILED <gateway 日志>`
  *
- * 载荷复用 BlockedFeedback（ProjectTypes.scala）零转换：category 字段承载按角色分化的
- * 值域；仅 blocked 类申报落库 blockedFeedback 字段（pass/fail/finish 申报在 drain
- * 分流处消费，不落库为 blockedFeedback）。
+ * 载荷复用 NodeReportFeedback（ProjectTypes.scala）零转换：category 字段承载按角色分化的
+ * 值域（finish / pass / fail）；申报经 drain 分流在终态链消费，不落库为节点存储字段。
  */
 object NodeReportRegistry:
 
@@ -118,7 +118,7 @@ object NodeReportRegistry:
     nodeId: String,
     project: String,
     workspace: String,
-    feedback: BlockedFeedback,
+    feedback: NodeReportFeedback,
     /**
      * true = 本项是**从磁盘日志重放恢复**的（跨宿主重启/崩溃的申报）。保守补偿口径只对
      * 它启用（见 [[remove]]）：进程内残留的对称清理是既有行为，零回归；重放恢复项被
@@ -161,7 +161,7 @@ object NodeReportRegistry:
     project: String,
     nodeId: String,
     sessionId: String,
-    feedback: BlockedFeedback
+    feedback: NodeReportFeedback
   ): IO[Unit] =
     if workspace.trim.isEmpty then
       unboundVisible(project, nodeId, sessionId) *>
@@ -199,7 +199,7 @@ object NodeReportRegistry:
    * 完成时点消费（take-and-remove）：命中返回申报并清槽；未命中 None。消费同样落
    * 日志（consume 行）——否则重启会把已消费的申报**复活**成待消费。
    */
-  def drain(sessionId: String): IO[Option[BlockedFeedback]] =
+  def drain(sessionId: String): IO[Option[NodeReportFeedback]] =
     ensureLoadedMounted *>
       signals.modify(m => (m - sessionId, m.get(sessionId))).flatMap {
         case Some(e) => consumeLine(e, "drain").as(Some(e.feedback))
@@ -216,7 +216,7 @@ object NodeReportRegistry:
    * 看到恢复的申报（桥的 hold 腿与提醒腿据此按「已申报」放行，而不是把节点永久
    * hold 到人工处置）。
    */
-  def peek(sessionId: String): IO[Option[BlockedFeedback]] =
+  def peek(sessionId: String): IO[Option[NodeReportFeedback]] =
     ensureLoadedMounted *> signals.get.map(_.get(sessionId).map(_.feedback))
 
   /**
@@ -368,7 +368,7 @@ object NodeReportRegistry:
                           nodeId = str("node").getOrElse(""),
                           project = str("project").getOrElse(""),
                           workspace = workspace,
-                          feedback = BlockedFeedback(cat, str("detail").getOrElse(""), str("suggestion").getOrElse("")),
+                          feedback = NodeReportFeedback(cat, str("detail").getOrElse(""), str("suggestion").getOrElse("")),
                           recovered = true
                         )
                       )

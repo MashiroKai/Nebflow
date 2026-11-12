@@ -44,8 +44,18 @@ import scala.concurrent.duration.*
  *  ② 拒写 + 新码：`completeNodeR` 回报 `landed=false` ⇒ `compensateUnconsumedReport`
  *     把申报全文（category/detail/suggestion）+ 拒写事实写回审计流
  *     （type=`node-report-unconsumed`）⇒ 申报可 grep 取回，不再「永久丢失」。
- *  ③ 对照（防误报）：终态写**落地**的正常 blocked 路径**不得**出现该行——钉住「这行 = 拒写」
+ *  ③ 对照（防误报）：终态写**落地**的正常路径**不得**出现该行——钉住「这行 = 拒写」
  *     而不是「有申报就写一行」。
+ *
+ * **消费点改挂 loop verify 腿（no-blocked-semantics 一期随改）**：普通节点的桥终态点
+ * 已改为**直接投递最终文本**（main 1bfc09d4a「Forward node completion payload
+ * directly」——plain 节点完成不再需要申报，也不在终态点 drain 登记表），申报消费 +
+ * 补偿面现存唯一点 = **loop verify 腿**（`handleVerify` 的 pass 支挂 `completeNodeR`
+ * 落地判词 / fail 支挂 `setVerdictR` 落地判词）。本 spec 三臂据此改用 loop 节点驱动：
+ * worker turn 产普通文本，verify turn 先发 `node_report` 工具调用（登记申报）、见到
+ * 回执后执行一次性 hook（制造拒写条件 / 或零 hook 落地对照），再输出 verdict 锚定文本。
+ * 申报类别 = `pass` / `fail`（verifier 值域；blocked 类别已随终态退役在工具入参层即拒，
+ * 登记 zero-residual 面归 NodeBlockedToolSignalSpec）。
  *
  * 事件类型串在本 spec 内**用字面量**（不引用 `NodeEngine.ReportUnconsumedEventType`）：
  * 本文件必须能在**旧主源码**上编译（双向红绿钉的旧码臂要求）。
@@ -72,26 +82,28 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
 
   /**
-   * 拒写驱动 LLM：首 turn 发 `node_report(category)` 工具调用；见到回执后**先执行
-   * `beforeClosing` 侧效**（本 spec 用它制造终态写的拒写条件），再输出收尾文本。
-   * `beforeClosing` 存于 Ref（构造时未知 rt 之外的准备），单次执行。
+   * 拒写驱动 LLM（loop verify 腿形态）：worker turn → 普通产出文本；verify turn →
+   * 首 turn 发 `node_report(category)` 工具调用（登记申报），见到回执后**先执行
+   * 一次性 hook**（制造申报消费点的拒写条件；对照臂 hook = 零动作），再输出
+   * verdict 锚定文本。多轮 loop 下 hook 只执行一次（单发旗标）；后续 verify 轮
+   * 重新发工具调用（新会话新槽）——预算帽（maxRounds）保证有限轮收敛。
    */
-  private class RefusalLlm(
+  private class LoopRefusalLlm(
     category: String,
     detail: String,
     suggestion: String,
-    closing: String,
-    beforeClosing: Ref[IO, IO[Unit]],
+    verdictText: String,
+    hook: Ref[IO, IO[Unit]],
     hookRan: Ref[IO, Boolean]
   ):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
 
     private def ackText: String =
-      if nebflow.core.tools.NodeReportToolDef.isBlockedSemantics(category)
-      then "[OK] blocked declaration recorded"
-      else if nebflow.core.tools.NodeReportToolDef.isFinish(category)
-      then s"[OK] node report ($category) recorded"
+      if nebflow.core.tools.NodeReportToolDef.isFinish(category) then s"[OK] node report ($category) recorded"
       else s"[OK] verdict recorded ($category)"
+
+    private def isVerifyTurn(req: LlmRequest): Boolean =
+      req.messages.lastOption.exists(_.textContent.contains("[LoopNode verification"))
 
     private def sawDeclarationAck(req: LlmRequest): Boolean =
       req.messages.exists { m =>
@@ -111,19 +123,21 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
         onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
-        if sawDeclarationAck(req) then
+        if !isVerifyTurn(req) then
+          Stream.eval(inputs.update(_ :+ text)) >>
+            Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+        else if sawDeclarationAck(req) then
+          // 回执已见 ⇒ 先执行一次性 hook（拒写前置条件 / 对照零动作），再出 verdict 文本。
           Stream.eval(hookRan.modify(prev => (true, prev)).flatMap { already =>
-            val runHook =
-              if already then IO.unit
-              else beforeClosing.get.flatMap(identity).attempt.void *> hookRan.set(true)
-            inputs.update(_ :+ text) *> runHook
-          }) >> Stream(StreamChunk.TextDelta(closing), StreamChunk.Done(None, None))
+            val runHook = if already then IO.unit else hook.get.flatten.attempt.void *> hookRan.set(true)
+            runHook
+          }) >> Stream(StreamChunk.TextDelta(verdictText), StreamChunk.Done(None, None))
         else
           Stream.eval(inputs.update(_ :+ text)) >>
             Stream(
               StreamChunk.ToolCallChunk(
                 ToolCall(
-                  "rb-1",
+                  "lrc-1",
                   "node_report",
                   JsonObject(
                     "category" -> category.asJson,
@@ -135,11 +149,11 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
               StreamChunk.Done(Some("tool_use"), None)
             )
 
-        end if
-
       end sendStream
 
-  end RefusalLlm
+    end handle
+
+  end LoopRefusalLlm
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -255,9 +269,11 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
   // ══ ① 拒写支 A：终态写时**节点已消失**（store 里已无该节点）══════════════════
-  // 复现路径：工具申报已登记 → 节点在桥终态写之前从 flow-map 消失（NodeEdit 删除 /
-  // 外部重载）⇒ `blockedNodeR` 的 `case _ => st` + `case None` 拒写支。
+  // 复现路径（loop verify pass 支）：工具申报已登记 → 节点在 `handleVerify` 消费申报、
+  // 走 `completeNodeR` 之前从 flow-map 消失（NodeEdit 删除 / 外部重载）⇒
+  // `completedNodeR` 的 `case None` 拒写支 ⇒ `landed=false` ⇒ 补偿行带走申报全文。
   // 旧码：申报被 drain 取走且**全系统零副本**（无痕迹）⇒ 本 spec 红。
+  // 申报类别 = `pass`（verifier 值域合法值；blocked 类别已随终态退役在工具入参层即拒）。
 
   test(
     "refused terminal write (node vanished): the drained node_report is compensated into the audit log — never silently lost"
@@ -266,18 +282,17 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val nodeName = "vanish-a"
     val system = ActorSystem(s"nrc-vanish-${scala.util.Random.nextInt(100000)}")
-    val closing = "外部依赖不可用，已申报受阻。本节点收尾。"
-    val detail = "等待外部 API 恢复（vanish 臂）"
-    val suggestion = "API 恢复后重派（vanish 臂）"
+    val detail = "已完成约定交付（vanish 臂）"
+    val suggestion = "无需重派（vanish 臂）"
     val hook = Ref.unsafe[IO, IO[Unit]](IO.unit)
     val hookRan = Ref.unsafe[IO, Boolean](false)
     val vanishedId = Ref.unsafe[IO, Option[String]](None)
-    val llm = new RefusalLlm("external-dependency", detail, suggestion, closing, hook, hookRan)
+    val llm = new LoopRefusalLlm("pass", detail, suggestion, "VERDICT: PASS", hook, hookRan)
     for
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, _) <- mountEngineOnly("nrc-vanish", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // 拒写前置条件（在**申报已登记之后、桥终态写之前**执行）：把本节点从 flow-map 删除
+      // 拒写前置条件（在**申报已登记之后、消费点终态写之前**执行）：把本节点从 flow-map 删除
       _ <- hook.set(rt.store.snapshot.flatMap { s =>
         s.nodes.values.find(_.name == nodeName) match
           case Some(n) => vanishedId.set(Some(n.id)) *> rt.store.mutate(st => st.copy(nodes = st.nodes - n.id)).void
@@ -287,14 +302,17 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
         nodeInput(
           "nrc-vanish",
           nodeName,
-          "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("will-block-then-vanish"),
-          "out" -> Json.fromString("Nebula")
+          "description" -> Json.fromString("loop node purpose"),
+          "task" -> Json.fromString("will-report-pass-then-vanish"),
+          "loop" -> Json.fromBoolean(true),
+          "maxRounds" -> Json.fromInt(2),
+          "verify" -> Json.fromString("general"),
+          "out" -> Json.fromString("(pass,failed)Nebula")
         ),
         ctx
       )
-      _ <- waitUntil(20.seconds)(hookRan.get)
-      line <- auditLineWithin(ws, 15.seconds) { case (t, _, s) =>
+      _ <- waitUntil(30.seconds)(hookRan.get)
+      line <- auditLineWithin(ws, 20.seconds) { case (t, _, s) =>
         t == UnconsumedType && s.contains(detail)
       }
       audit <- readAudit(ws)
@@ -316,7 +334,7 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
         "the compensation line must be attributed to the very node whose terminal write refused"
       )
       assert(
-        summary.contains("category=external-dependency"),
+        summary.contains("category=pass"),
         s"payload category must be preserved verbatim, got: $summary"
       )
       assert(
@@ -331,48 +349,57 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
     end for
   }
 
-  // ══ ② 拒写支 B：终态写时**节点状态已变**（fresh-read 竞态纪律的正面）═════════════
-  // `blockedNodeR` 只在 `status == Running` 时写；状态已变 ⇒ 拒写**且不得覆盖**并发赢家。
+  // ══ ② 拒写支 B：判词写时**节点已非可写 loop 实体**（fresh-read 纪律的正面）═══════
+  // 复现路径（loop verify fail 支）：工具申报已登记 → 节点的 loop 配置被摘除（模拟
+  // 并发拓扑改写竞态）⇒ `setVerdictR` 的「非 loop 节点」no-op 拒写支 ⇒ `landed=false`
+  // ⇒ 补偿行带走申报全文，且判词**不得**落在被改写的节点上（不覆盖并发赢家）。
+  // 预算帽（maxRounds=2）保证有限轮收敛：拒写轮耗尽预算 ⇒ 引擎熔断 failed（既有
+  // LoopBudget 兜底链）。申报类别 = `fail`（verifier verdict 面）。
 
   test(
-    "refused terminal write (status changed): the drained node_report is compensated AND the concurrent state is not clobbered"
+    "refused verdict write (loop config gone): the drained node_report is compensated AND the verdict never lands on the rewritten node"
   ) {
-    val ws = tempRoot / "ws-refuse-status"
+    val ws = tempRoot / "ws-refuse-verdict"
     os.makeDir.all(ws)
-    val nodeName = "status-a"
-    val system = ActorSystem(s"nrc-status-${scala.util.Random.nextInt(100000)}")
-    val closing = "上游未交付，已申报受阻。本节点收尾。"
-    val detail = "等待上游完成（status 臂）"
-    val suggestion = "上游完成后再派（status 臂）"
+    val nodeName = "verdict-a"
+    val system = ActorSystem(s"nrc-verdict-${scala.util.Random.nextInt(100000)}")
+    val detail = "验收未过：交付物缺规格段（verdict 臂）"
+    val suggestion = "补规格段后重跑（verdict 臂）"
     val hook = Ref.unsafe[IO, IO[Unit]](IO.unit)
     val hookRan = Ref.unsafe[IO, Boolean](false)
-    val llm = new RefusalLlm("upstream-incomplete", detail, suggestion, closing, hook, hookRan)
+    val llm = new LoopRefusalLlm("fail", detail, suggestion, "VERDICT: FAIL", hook, hookRan)
     for
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
-      (rt, _) <- mountEngineOnly("nrc-status", ws, system, res)
+      (rt, _) <- mountEngineOnly("nrc-verdict", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // 拒写前置条件：把状态从 Running 改成 Cancelled（模拟并发取消 / NodeEdit 竞态）
+      // 拒写前置条件：把节点的 loop 配置摘除（loop=None ⇒ setVerdictR 判「非 loop 节点」拒写）
       _ <- hook.set(rt.store.snapshot.flatMap { s =>
         s.nodes.values.find(_.name == nodeName) match
           case Some(n) =>
             rt.store
-              .mutate(st => st.copy(nodes = st.nodes.updated(n.id, n.copy(status = NodeLifecycle.Cancelled))))
+              .mutate(st => st.copy(nodes = st.nodes.updated(n.id, n.copy(loop = None))))
               .void
           case None => IO.unit
       })
       _ <- nodeEdit(
         nodeInput(
-          "nrc-status",
+          "nrc-verdict",
           nodeName,
-          "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("will-block-then-cancel"),
-          "out" -> Json.fromString("Nebula")
+          "description" -> Json.fromString("loop node purpose"),
+          "task" -> Json.fromString("will-report-fail-verdict"),
+          "loop" -> Json.fromBoolean(true),
+          "maxRounds" -> Json.fromInt(2),
+          "verify" -> Json.fromString("general"),
+          "out" -> Json.fromString("(pass,failed)Nebula")
         ),
         ctx
       )
-      _ <- waitUntil(20.seconds)(hookRan.get)
-      line <- auditLineWithin(ws, 15.seconds) { case (t, _, s) =>
+      _ <- waitUntil(30.seconds)(hookRan.get)
+      line <- auditLineWithin(ws, 20.seconds) { case (t, _, s) =>
         t == UnconsumedType && s.contains(detail)
+      }
+      _ <- waitUntil(30.seconds) {
+        nodeByName(rt, nodeName).map(_.exists(n => NodeLifecycle.Terminal.contains(n.status)))
       }
       audit <- readAudit(ws)
       after <- nodeByName(rt, nodeName)
@@ -380,44 +407,52 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
     yield
       val n = after.getOrElse(fail("node must still exist in this arm"))
       assertEquals(
-        n.status,
-        NodeLifecycle.Cancelled,
-        "the fresh-read refusal must NOT clobber the concurrent state (R2 discipline preserved)"
+        n.loopLastVerdict,
+        None,
+        "the refused verdict write must NOT land loopLastVerdict (R2 discipline preserved — no clobber)"
       )
-      assertEquals(n.blockedFeedback, None, "a refused blocked finalize must not land a blockedFeedback")
-      assertEquals(n.blockCount, 0, "a refused blocked finalize must not bump blockCount")
+      assertEquals(n.blockedFeedback, None, "no structured feedback may land (retired face)")
+      assertEquals(n.blockCount, 0, "no blocked round counting may happen (retired face)")
       assert(
         line.isDefined,
-        s"the drained declaration MUST NOT vanish with the refused terminal write — expected a '$UnconsumedType' " +
+        s"the drained declaration MUST NOT vanish with the refused verdict write — expected a '$UnconsumedType' " +
           s"audit line carrying the payload; got audit lines: ${audit.map(l => (l._1, l._3))}"
       )
       val (_, lineNodeId, summary) = line.get
       assertEquals(lineNodeId, n.id)
-      assert(summary.contains("category=upstream-incomplete"), s"payload category must be preserved, got: $summary")
+      assert(summary.contains("category=fail"), s"payload category must be preserved, got: $summary")
       assert(summary.contains(s"detail=$detail"), s"payload detail must be preserved verbatim, got: $summary")
       assert(
         summary.contains(s"suggestion=$suggestion"),
         s"payload suggestion must be preserved verbatim, got: $summary"
+      )
+      assert(summary.contains("refused"), s"the refusal cause must be readable, got: $summary")
+      // 预算帽收敛：拒写轮耗尽预算 ⇒ 引擎熔断 failed（既有 LoopBudget 兜底链，非 blocked）
+      assertEquals(
+        n.status,
+        NodeLifecycle.Failed,
+        s"budget exhaustion must terminate via the engine's failed chain, got: ${n.status}"
       )
     end for
   }
 
   // ══ ③ 对照臂（防误报）：终态写**落地** ⇒ 零补偿行 ══════════════════════════════
   // 钉住「这行 = 拒写」，不是「有申报就写一行」——本轮修法不得给正常路径加噪音。
+  // 申报类别 = `pass`（loop verify pass 支正常落地形态；blocked 类别已随终态退役，
+  // 落地对照不再可能有 blocked 形态——PASS 即 completed 原链投递 worker 产出）。
 
   test(
-    "control: a declaration consumed by a LANDED terminal write emits no compensation line (blocked path lands normally)"
+    "control: a pass declaration consumed by a LANDED terminal write emits no compensation line"
   ) {
     val ws = tempRoot / "ws-landed"
     os.makeDir.all(ws)
     val nodeName = "landed-a"
     val system = ActorSystem(s"nrc-landed-${scala.util.Random.nextInt(100000)}")
-    val closing = "合作方接口不可用，已按协议申报受阻。本节点收尾。"
-    val detail = "等待外部 API 恢复（对照臂）"
-    val suggestion = "API 恢复后重派（对照臂）"
+    val detail = "验收通过：交付物齐备（对照臂）"
+    val suggestion = "无需重派（对照臂）"
     val hook = Ref.unsafe[IO, IO[Unit]](IO.unit)
     val hookRan = Ref.unsafe[IO, Boolean](false)
-    val llm = new RefusalLlm("external-dependency", detail, suggestion, closing, hook, hookRan)
+    val llm = new LoopRefusalLlm("pass", detail, suggestion, "VERDICT: PASS", hook, hookRan)
     for
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, _) <- mountEngineOnly("nrc-landed", ws, system, res)
@@ -426,14 +461,17 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
         nodeInput(
           "nrc-landed",
           nodeName,
-          "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("will-block-and-land"),
-          "out" -> Json.fromString("Nebula")
+          "description" -> Json.fromString("loop node purpose"),
+          "task" -> Json.fromString("will-report-pass-and-land"),
+          "loop" -> Json.fromBoolean(true),
+          "maxRounds" -> Json.fromInt(2),
+          "verify" -> Json.fromString("general"),
+          "out" -> Json.fromString("(pass,failed)Nebula")
         ),
         ctx
       )
-      _ <- waitUntil(20.seconds) {
-        nodeByName(rt, nodeName).map(_.exists(_.status == NodeLifecycle.Blocked))
+      _ <- waitUntil(30.seconds) {
+        nodeByName(rt, nodeName).map(_.exists(_.status == NodeLifecycle.Completed))
       }
       // 终态写之后再看审计流：给补偿腿（若有）充分机会出现
       _ <- IO.sleep(500.millis)
@@ -442,20 +480,20 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       val n = b.getOrElse(fail("node must exist"))
-      assertEquals(n.status, NodeLifecycle.Blocked, "the declared blocked report must land normally")
+      assertEquals(n.status, NodeLifecycle.Completed, "the declared pass verdict must land via the normal completed chain")
+      assertEquals(n.result, Some("ok"), "PASS delivers the worker's final output (loop §2.2 裁定建议 a)")
       assertEquals(
         n.blockedFeedback,
-        Some(BlockedFeedback("external-dependency", detail, suggestion)),
-        "the payload must land in the node record (no compensation expected)"
+        None,
+        "no structured feedback may land (blocked fields are legacy-stock only)"
       )
-      assert(n.result.exists(_.contains(closing)), s"result must carry the closing report, got: ${n.result}")
       assert(
         !audit.exists(l => l._1 == UnconsumedType),
         s"a LANDED terminal write must not emit a compensation line (false-positive guard); got: ${audit.filter(_._1 == UnconsumedType)}"
       )
       assert(
-        audit.exists(l => l._1 == "blocked" && l._2 == n.id),
-        s"the normal blocked audit line must be present, got: $audit"
+        !audit.exists(l => l._1 == "blocked" && l._2 == n.id),
+        s"no blocked audit line may ever be written (blocked terminal retired), got: ${audit.filter(l => l._1 == "blocked" && l._2 == n.id)}"
       )
     end for
   }

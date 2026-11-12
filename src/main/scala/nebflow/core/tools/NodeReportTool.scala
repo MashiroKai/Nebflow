@@ -7,20 +7,16 @@ import nebflow.core.project.*
 import nebflow.shared.ToolDefinition
 
 /**
- * node_report — Flow Map 节点专属终态语义申报工具（NodeReport 统一三语义迁移）。
- *
- * 裁定结论（转述）：工具按 NodeReport 命名而非 report_blocked——Blocked 之外，
- * Pass 与 Failed 也在用同型语义判断；若 Blocked 语义有问题，其余终态同样有
- * 问题，迁移必须整体进行。
+ * node_report — Flow Map 节点专属终态语义申报工具。
  *
  * 节点以工具调用申报终态语义（协议级结构化信号，非文本推断），单 category
- * 参数 = 值域**按节点角色分化**（旧「三语义状态 + blocked
- * 六类细分」的 9 值扁平白名单已由角色分化值域取代）：
- *  - `role=task`（执行节点，缺省）：`finish`（可选显式完成）+ blocked 泛值/六类细分；
- *  - `role=verifier`（校验节点）：`pass`/`fail`（verdict）+ blocked 泛值/六类细分。
+ * 参数 = 值域**按节点角色分化**：
+ *  - `role=task`（执行节点，缺省）：`finish`（可选显式完成；不申报也照常走完成链）；
+ *  - `role=verifier`（校验节点）：`pass`/`fail`（verdict 面）。
  * 三条纪律（工具 description 与 ProtocolFootnote 双面同文）：
  *  ① **执行失败没有申报通道**（引擎判 `failed`，不由 agent 申报）；
- *  ② `blocked` 保留全部既有语义（可见终态 + FeedbackRouter 重入 + blockCount）；
+ *  ② **无停等/受阻申报**：blocked 终态已退役（引擎不再产生该状态、工具入参即拒）——
+ *     任务/授权/依赖不清 ⇒ AskHost 问信任的 root，不自我申报停等态；
  *  ③ **verifier 的 `fail` 恒伴随节点 `completed`**（verdict ≠ 节点状态）。
  * detail 必填 / suggestion 可选。execute 只做两件事：
  *  1. 身份双保险之工具内侧：ctx.flowNodeId 空 → 拒绝（挂载面过滤是另一侧，
@@ -29,24 +25,20 @@ import nebflow.shared.ToolDefinition
  *  2. NodeReportRegistry.register(sessionId, feedback)（last-write-wins）。
  *
  * 申报后节点照常写收尾报告、正常结束 turn——引擎在会话完成时点 drain 登记表，
- * 按类别分流到既有语义链（零新链）：blocked → blockedNode 终态化（FeedbackRouter
- * 重入协议原样接管）；finish → 既有 completed 语义链；pass → 记 `lastVerdict=pass`
- * + completed 链 + 沿 pass 边投递；fail → 记 `lastVerdict=fail` + **completed 链**
- * （不再是 `failNode`！）+ 沿 `(fail)<目标>:loop` 控制边选通。verify 相位的既有
- * VerdictReader 打回链（旧 loop）与文本锚定降级面（首行裸 BLOCKED / VERDICT:
- * PASS / FAIL）全部保留：未调工具时行为零变化、零放宽。
+ * 按类别分流到既有语义链（零新链）：finish → 既有 completed 语义链；pass → 记
+ * `lastVerdict=pass` + completed 链 + 沿 pass 边投递；fail → 记 `lastVerdict=fail`
+ * + **completed 链**（不再是 `failNode`！）+ 沿 `(fail)<目标>:loop` 控制边选通。
+ * verify 相位的既有 VerdictReader 打回链（旧 loop）与文本锚定降级面（VERDICT:
+ * PASS / FAIL）全部保留：未调工具时行为零变化、零放宽。blocked 不是合法申报类别
+ * （blocked 终态已退役——入参层即拒，引擎侧无对应终态写点；任务不清 ⇒ AskHost）。
  */
 object NodeReportToolDef extends Tool:
 
   val Name: String = "node_report"
 
-  /** 通用 blocked 泛值（六类细分之外的兜底；两个角色值域共有）。 */
-  val BlockedValue: String = "blocked"
-
   /**
-   * **值域按角色分化**：两个正交
-   * 维度不再压进一个 `category`——
-   *   ①「本节点执行成没成」：`finish`（完成，可选显式化）| `blocked`（做不成）；
+   * **值域按角色分化**：两个正交维度不压进一个 `category`——
+   *   ①「本节点执行成没成」：`finish`（完成，可选显式化）；
    *   ②「被判定对象合格不合格」：`pass` | `fail`（**仅 verifier**，verdict 面）。
    * 执行节点拿不到 `pass`/`fail`（工具侧拒），校验节点拿不到 `finish`——分化面在
    * `enumFor(role)` 单点，引擎分流判据（`isFinish`/`isPass`/`isFail`）与之同源。
@@ -55,25 +47,11 @@ object NodeReportToolDef extends Tool:
   val PassValue: String = "pass"
   val FailValue: String = "fail"
 
-  /**
-   * blocked 泛值之外既有的六类细分（BlockedReader 现状枚举，降级面同源零漂移）。
-   * **必须定义在两个值域常量之前**（Scala object 初始化顺序 = 文本顺序；后置会让
-   * `BlockedDomain` 读到 null）。
-   */
-  val BlockedCategories: Set[String] = BlockedReader.Categories
+  /** 执行节点值域：仅显式完成；无申报时完成仍是默认行为。 */
+  val TaskCategories: Set[String] = Set(FinishValue)
 
-  /**
-   * **blocked 面完整值域**（泛值 `blocked` + 六类细分）——两个角色共有（blocked 保留全部既有语义）。单点定义以避免「泛值漏进角色值域」这类
-   * 静默收窄（旧 `EnumWhitelist` 是 9 值 = {blocked,pass,fail} ∪ 六类 ⇒ 必须
-   * 显式带上泛值才是等价面）。
-   */
-  val BlockedDomain: Set[String] = BlockedCategories + BlockedValue
-
-  /** 执行节点（`role=task`）值域：`finish` + blocked 完整面（8 值）。 */
-  val TaskCategories: Set[String] = BlockedDomain + FinishValue
-
-  /** 校验节点（`role=verifier`）值域：`pass`/`fail`（verdict）+ blocked 完整面（9 值）。 */
-  val VerifierCategories: Set[String] = BlockedDomain ++ Set(PassValue, FailValue)
+  /** 校验节点值域：verdict 面，不承载节点阻塞/停止语义。 */
+  val VerifierCategories: Set[String] = Set(PassValue, FailValue)
 
   /**
    * 全值域（schema enum 白名单所载的 **10 值** = 两角色值域并集；**schema 拿不到会话
@@ -97,9 +75,6 @@ object NodeReportToolDef extends Tool:
   /** 值域并集内的合法值（用于区分「非法值」与「角色不匹配」两类错误）。 */
   def isValidCategory(category: String): Boolean = StatusValues.contains(category)
 
-  /** drain 分流判据：申报是否走既有 blocked 链（细分六类或泛值 blocked）。 */
-  def isBlockedSemantics(category: String): Boolean = BlockedDomain.contains(category)
-
   /** `finish` = 执行节点显式申报完成（R10：可选显式化——不申报也照常走完成链）。 */
   def isFinish(category: String): Boolean = category == FinishValue
 
@@ -107,21 +82,21 @@ object NodeReportToolDef extends Tool:
   def isFail(category: String): Boolean = category == FailValue
 
   /**
-   * fail 申报落 failNode 的 result 渲染串（BlockedReader.render 同款风格：
-   * 头部标记 + detail + 可选建议——观测面单点格式）。
+   * fail 申报落 failNode 的 result 渲染串（头部标记 + detail + 可选建议——观测面
+   * 单点格式）。
    */
-  def renderFail(f: BlockedFeedback): String =
+  def renderFail(f: NodeReportFeedback): String =
     val sugg = if f.suggestion.trim.isEmpty then "" else s" — 建议: ${f.suggestion}"
     s"[node-report:fail] ${f.detail}$sugg"
 
   override def name: String = Name
 
   override def description: String =
-    """Report your node's terminal semantics as a structured signal — Flow Map node sessions only. THE VALID CATEGORIES DEPEND ON YOUR NODE ROLE (task vs verifier; your session carries it — an invalid value is rejected with the exact legal list for your role):
-(1) role=task (execution node) — (a) FINISH: declare completion explicitly (OPTIONAL: completing is the default behaviour, so a normal finish needs no report; use it when you want the completion to be explicit); (b) BLOCKED: your task CANNOT be completed (upstream deliverables not ready, underspecified task, capability mismatch, missing external condition) — pass a specific blocked category when you know it, or the generic "blocked"; the engine marks the node blocked and re-engages the dispatcher. A task node CANNOT report pass/fail ('pass' / 'fail' are illegal in this role: NODE_REPORT_CATEGORY_ROLE): an execution failure is decided by the engine, not declared by you.
-(2) role=verifier (verification node) — (a) PASS: you formally declare the target verified; (b) FAIL: you formally declare the target REJECTED — this is a VERDICT about the object you judged, NOT node failure: the engine keeps THIS node completed and routes the fail verdict along the "(fail)<target>:loop" edge (the target re-runs). (c) BLOCKED works exactly as above. 'finish' is illegal in this role (NODE_REPORT_CATEGORY_ROLE): a verifier declares a verdict about the object it judged, never its own completion.
-Either role: BLOCKED semantics (visible terminal state + dispatcher re-entry + blockCount) are unchanged. Unreported means never terminalized: the node stays running, its result is not delivered downstream, and it is only reminded on a ladder — never auto-failed. Never report "failed" — engine-side execution failure has no declaration channel.
-Pass category (the verdict + why), detail (what exactly, actionable), suggestion (what would unblock / fix). After calling, finish your report normally — the engine routes the declaration to the matching terminal chain. Calling this tool is a declaration, NOT your deliverable: your final assistant text is the node result handed downstream, so write your own completion report there — what you did, the result, artifact paths, open items — and keep it self-contained (restate the numbers and paths; never close with "see above", "same as above" or any pointer to an earlier message)."""
+    """Report node completion or verification verdict — Flow Map node sessions only.
+(1) role=task: category=finish is optional; normal completion is the default. If any task detail, scope, authorization, or dependency is unclear, call AskHost and wait for the trusted root's decision before continuing. Never self-declare a stopped/waiting state.
+(2) role=verifier: category=pass or fail declares the verdict about the judged object; fail is a verdict, not node failure. If unable to verify because information or authorization is unclear, call AskHost.
+Use detail for a concrete result/verdict and suggestion when useful. Calling this tool is a declaration, NOT your deliverable: your final assistant text is the node result handed downstream, so write your own completion report there — what you did, the result, artifact paths, open items — and keep it self-contained (restate the numbers and paths; never close with "see above", "same as above" or any pointer to an earlier message).
+After calling, finish your report normally — the engine routes the declaration to the matching terminal chain."""
 
   // ============================================================
   // **按节点角色分化 description**（定义层变体
@@ -179,25 +154,18 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
       "category" -> Json.obj(
         "type" -> "string".asJson,
         "enum" -> Json.arr(
-          "upstream-incomplete".asJson,
-          "task-underspecified".asJson,
-          "agent-mismatch".asJson,
-          "external-dependency".asJson,
-          "needs-split".asJson,
-          "other".asJson,
-          "blocked".asJson,
           "finish".asJson,
           "pass".asJson,
           "fail".asJson
         ),
         "description" -> ("Terminal semantics — THE LEGAL SET DEPENDS ON YOUR NODE ROLE (the tool rejects a mismatch with the legal list for your role). " +
-          "role=task: finish (explicit completion; optional — completing is the default) | upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other | blocked (blocked, reason unclassified). " +
-          "role=verifier: pass (the judged target is verified) | fail (the judged target is REJECTED — a verdict about the target, never node failure: this node stays completed and the fail edge routes the re-run) | plus the blocked categories above. " +
-          "blocked = your task cannot be completed (the dispatcher reads it verbatim and re-engages); \"failed\" is engine-side and cannot be declared.").asJson
+          "role=task: finish (explicit completion; optional — completing is the default). " +
+          "role=verifier: pass (the judged target is verified) | fail (the judged target is REJECTED — a verdict about the target, never node failure: this node stays completed and the fail edge routes the re-run). " +
+          "There is no stopped/waiting category; if scope, authorization, or a dependency is unclear, call AskHost instead. \"failed\" is engine-side and cannot be declared.").asJson
       ),
       "detail" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> "What exactly — concrete, actionable (blocked: the dispatcher reads this verbatim in the reentry brief; fail: what the judged target must fix). Required.".asJson
+        "description" -> "What exactly — concrete, actionable (fail: what the judged target must fix). Required.".asJson
       ),
       "suggestion" -> Json.obj(
         "type" -> "string".asJson,
@@ -236,8 +204,8 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
             )
           )
         case Some(_) if category.isEmpty || !isValidCategory(category) =>
-          // schema enum 白名单在工具层强制（入参层拒绝，比 BlockedReader 事后归一
-          // 更强——spec §4-A ①）：非法值给可修正错误，节点可重调（spec §9.3）。
+          // schema enum 白名单在工具层强制（入参层拒绝——spec §4-A ①）：非法值给
+          // 可修正错误，节点可重调（spec §9.3）。
           IO.pure(
             Left(
               ToolError(
@@ -256,10 +224,10 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
           val legal = enumFor(ctx.flowNodeRole).toList.sorted.mkString(" | ")
           val hint =
             if role == NodeRoles.Verifier then
-              "Your role is verifier: declare the VERDICT about the object you judged (pass/fail), or blocked when you cannot verify it. " +
+              "Your role is verifier: declare the VERDICT about the object you judged (pass/fail). " +
                 "'finish' is the execution node's completion marker — a verifier reports pass/fail instead."
             else
-              "Your role is task: declare completion with 'finish' (optional — completing is the default) or blocked when the task cannot be completed. " +
+              "Your role is task: declare completion with 'finish' (optional — completing is the default). " +
                 "'pass'/'fail' are the verifier's verdict gate — a task node cannot route them; engine-side execution failure has no declaration channel."
           IO.pure(
             Left(
@@ -274,21 +242,17 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
             Left(
               ToolError(
                 s"node_report: 'detail' must be non-empty — say WHAT is the verdict and why " +
-                  s"(blocked: the dispatcher reads it verbatim). (NODE_REPORT_DETAIL)"
+                  s"(the dispatcher reads it verbatim). (NODE_REPORT_DETAIL)"
               )
             )
           )
         case Some(nodeId) =>
-          val fb = BlockedFeedback(category = category, detail = detail, suggestion = suggestion)
-          // 确认文本：blocked 链沿用 v1 原文（测试/冒烟断言锚零漂移）；**verdict 面按
-          // 角色/类别分支**（「回执不误导」）——verifier 的 fail
-          // 必须说清「节点本身照常 completed、结论沿 fail 边选通」，否则 agent 会把
-          // verdict 读成「我失败了」。判断顺序：blocked ⇒ verdict ⇒ finish。
+          val fb = NodeReportFeedback(category = category, detail = detail, suggestion = suggestion)
+          // 确认文本：**verdict 面按角色/类别分支**（「回执不误导」）——verifier 的
+          // fail 必须说清「节点本身照常 completed、结论沿 fail 边选通」，否则 agent
+          // 会把 verdict 读成「我失败了」。
           val confirm =
-            if isBlockedSemantics(category) then
-              "[OK] blocked declaration recorded — finish your report normally. " +
-                "The engine will mark the node blocked and re-engage the dispatcher; do not fabricate a result."
-            else if isPass(category) then
+            if isPass(category) then
               "[OK] verdict recorded (pass) — finish your report normally. The engine completes this node and delivers " +
                 "along the pass edge(s); nothing else is required of you."
             else if isFail(category) then

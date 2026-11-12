@@ -80,9 +80,7 @@ private[project] trait NodeStarter:
         logger.warn(s"Legacy merge node ${node.id} is held; integration requires an authorized project merger request")
       case Some(node) =>
         node.status match
-          // blocked 同样幂等跳过（§1.1：重跑同样 blocked；唯一出口 = NodeEdit 重激活）
-          case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled |
-              NodeLifecycle.Blocked =>
+          case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled =>
             IO.unit // 已终态/运行中，幂等跳过
           case _ =>
             // deps 闸门（deps 设计 §1.3，单权威）：全部 deps 上游 completed 才放行。
@@ -1287,7 +1285,6 @@ private[project] trait NodeStarter:
       // 桥终态**四出口**（failed / cancelled / zombie(猝死) / completed）统一到这一个
       // **登记点**——终态写点之后只登记窗口（`destroyAt` 字段 + 禁 spawn 表 +
       // `node-destroy-scheduled` 事件），不杀进程；到点由 `sweepDestroyWindows` 收殓。
-      // blocked 出口在 `blockedNode` 内同款登记（口径一致）。
       // **两条腿不登记**（各附理由）：
       //   · 挂起腿（`suspended`）：中途换会话、非终态，进程已在上方即时收殓（③.5）；
       //   · NodeCancel 腿（`outcome = Right(_)` = cancelSig 抢先）：人为/看门狗主动取消，

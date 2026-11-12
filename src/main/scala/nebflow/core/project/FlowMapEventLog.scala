@@ -9,12 +9,12 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Flow Map 调整事件审计日志（blocked 反馈重入设计 §4.4）。
+ * Flow Map 调整事件审计日志。
  *
  * `<workspace>/.nebflow/flow-map-events.jsonl` 追加式 JSONL，每行一事件：
  * `{ts, type, project, nodeId, summary}`，
- * type ∈ blocked / reentry-triggered / reactivated / abandoned / escalated /
- *   cooldown-on / reaped / merge-blocked /
+ * type ∈ reactivated / abandoned / escalated /
+ *   reaped /
  *   settle-sweep / trigger-starved / start-aborted（trigger-chain-fix 批）/
  *   bg-wait / bg-wait-timeout / bg-released（bgtask-completion-gate 批）/
  *   mount-stalled（mount-enforce 批：可触发点后 60s 仍未触发的挂载停滞留痕，
@@ -89,10 +89,9 @@ import java.util.concurrent.atomic.AtomicLong
  * （零迁移、append-only），新行仅在链族事件带上。
  *
  * 0 schema 迁移（独立文件不碰 flow-map.json 契约）、append-only、重启保留、grep 友好。
- * 写入点：NodeEngine.blockedNode（blocked）/ mergeBlockedByUpstream
- * Failure（merge-blocked）/ runWithAgent 翻转异常中止（start-aborted）/ settleRunnable
+ * 写入点：runWithAgent 翻转异常中止（start-aborted）/ settleRunnable
  * Sweep（settle-sweep、trigger-starved、mount-stalled）/ reapStaleRunning（reaped）、
- * FeedbackRouter（reentry-triggered / escalated / cooldown-on）、NodeEditTool 重激活与
+ * RetryCap 升级（escalated）、NodeEditTool 重激活与
  * abandon 两分支（reactivated / abandoned）/ NodeEngine.compensateUnconsumedReport
  * （node-report-unconsumed，#239①）。
  */

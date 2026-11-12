@@ -557,7 +557,9 @@ object BootDispatcherWake:
    * 缺该声明，否则会被误当授权）。
    */
   def wakeText(inv: BootWakeInventory.Inventory, bootId: String): String =
-    val hist = NodeLifecycle.All.toList
+    // 直方图行 = 合法生命周期 + legacy blocked token（存量行计数；与 BootWakeInventory
+    // 的直方图枚举面同源——缺列会让带 blocked 行的项目清单对不上活动区总数）。
+    val hist = (NodeLifecycle.All + NodeLifecycle.Blocked).toList
       .map(s => s"$s=${inv.histogram.getOrElse(s, 0)}")
       .mkString(" ")
     def itemsOf(b: String): String =

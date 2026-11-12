@@ -145,14 +145,19 @@ class NodeToolsSpec extends FunSuite:
     assert(NodeTools.parseOut(Some(Json.fromString(""))).isLeft)
   }
 
-  test("NodeLifecycle: Terminal = completed/failed/cancelled/blocked, excludes running/pending/wiring") {
+  test("NodeLifecycle: Terminal = completed/failed/cancelled, excludes running/pending/wiring and the retired blocked token") {
+    // blocked 终态退役（no-blocked-semantics 一期）：Terminal 集不含 blocked——
+    // 该 token 仅为 legacy 存量行迁移保留，不是终态
     assertEquals(
       NodeLifecycle.Terminal,
-      Set(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled, NodeLifecycle.Blocked)
+      Set(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled)
     )
     assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Running))
     assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Pending))
     assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Wiring))
+    assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Blocked))
+    assert(!NodeLifecycle.All.contains(NodeLifecycle.Blocked), "retired token is not a legal lifecycle value")
+    assert(!NodeLifecycle.ChainCancelScope.contains(NodeLifecycle.Blocked), "legacy blocked rows are dispatcher-owned")
   }
 
   // ── resolveProject 报错（mountError 纯函数，项目名不匹配附可用项目列表）────

@@ -409,7 +409,7 @@ class LoopNodeSpec extends CatsEffectSuite:
                       "loop-spec",
                       "l-win",
                       sid,
-                      BlockedFeedback("pass", "residue before loop terminal", "")
+                      NodeReportFeedback("pass", "residue before loop terminal", "")
                     )
                   case None => IO.unit
               }

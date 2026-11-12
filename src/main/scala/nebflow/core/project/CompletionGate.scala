@@ -25,10 +25,10 @@ import scala.concurrent.duration.*
  *  - '''c. 零改动'''：领先 0 且 worktree 干净（纯调查/只读任务）。
  *
  * 三者皆不满足（典型：有脏文件且未申报；含 ahead≥1 但残留未申报脏文件）→
- * Reject——调用方（NodeEngine.completeNode）转 blocked（复用既有 BLOCKED 反馈
- * 协议），blockedFeedback 标注「产物滞留未申报」+ 诊断，不走 out 投递、结果不
- * 丢弃，由分发器/Nebula 按 blocked 重入协议处置。completed 转移唯一经
- * NodeEngine.completeNode（单咽喉）。
+ * Reject——调用方（NodeEngine.completeNodeR）转**显式失败**（failNode，result =
+ * 拒绝原因 + [original-conclusion] 标记锚定的原文并列段），不走 out 投递、结果不
+ * 丢弃，失败重激活/重跑协议处置。completed 转移唯一经
+ * NodeEngine.completeNodeR（单咽喉）。
  *
  * 轻量与安全边界：
  *  - git 一律 `--no-optional-locks -C <dir>`（只读不建 index.lock）；默认 runner
@@ -58,32 +58,21 @@ object CompletionGate:
    */
   val MarkerRegex = "(?i)commit[-\\s_]?ready".r
 
-  /**
-   * Reject 落 blockedFeedback 的 category（语义化新值）：前端 flowViewers.js 对
-   * fb.category 直接 esc() 透传渲染、无封闭枚举 label 映射（实读核实），新值
-   * 安全；BlockedReader.Categories 只约束 agent 自报 BLOCKED JSON 的解析归一，
-   * 闸门自构 feedback 不经该归一。
-   */
-  val CategoryArtifactResidue = "artifact-residue"
-
-  /** status 样本截取行数（诊断里最多带前 10 行，防 feedback 串膨胀）。 */
+  /** status 样本截取行数（诊断里最多带前 10 行，防 result 文本膨胀）。 */
   val StatusSampleLines = 10
 
   /**
-   * **U6/F（2026-09-11 作者拍板）**：Reject 转 blocked 时**原结论文本必须保留**——
-   * 今日实测一次 24 分钟的复核结论被闸门文本**整段替换、不可恢复**（旧口径
-   * `blockedNode(nodeId, feedback(diag))` 未带 finalText）。
+   * **U6/F（2026-09-11 作者拍板）**：Reject 转**显式失败**时**原结论文本必须保留**——
+   * 今日实测一次 24 分钟的复核结论被闸门文本**整段替换、不可恢复**。
    *
    * 取舍（二选一：并列落盘 vs 另存独立字段）→ 取 **并列落盘**：单 `result` 字段里
-   * 两段并存（`blockedNode` 既有渲染 = `render(feedback) + "\n\n" + finalText`，
-   * 与 `node_report` 申报 BLOCKED 分支**同一机制同一格式**）。理由：① 零 schema
-   * 变更、零前端改动、零新字段迁移；② 闸门反馈仍在**最前**，`BlockedReader` 的裸
-   * BLOCKED 锚定与 FeedbackRouter 重入 prompt 语义**零回归**；③ 节点 result 本就是
+   * 两段并存（拒绝原因在前，`withOriginalText` 的原文段随后）。理由：① 零 schema
+   * 变更、零前端改动、零新字段迁移；② 节点 result 本就是
    * 「分发器/前端读到的权威文本」单点，两段同处一地最不易被后续流程拆散。
    *
    * 本标记（[[withOriginalText]] 写在原文首行）是**取回原文的稳定锚**：
    *   `result.split("[original-conclusion]", 2)(1)` —— 之后全部内容即原结论文本。
-   * 具体取回命令见 NodeEngine.completeNode 的 Reject 分支注释。
+   * 具体取回命令见 NodeEngine.completeNodeR 的 Reject 分支注释。
    */
   val OriginalTextMarker = "[original-conclusion]"
 
@@ -118,7 +107,7 @@ object CompletionGate:
   final case class Reject(reason: String, diagnostic: Diagnostic) extends Verdict
 
   /**
-   * Reject 诊断集（进 blockedFeedback）：ahead 数 / 脏文件数 / status 前 10 行样本 /
+   * Reject 诊断集（进失败 result 文本）：ahead 数 / 脏文件数 / status 前 10 行样本 /
    * 标记检测结果。
    */
   final case class Diagnostic(
@@ -189,21 +178,6 @@ object CompletionGate:
       .handleErrorWith(t => failOpen(s"gate error: ${Option(t.getMessage).getOrElse(t.toString)}"))
 
   end check
-
-  /**
-   * Reject → BlockedFeedback（blockedNode 落盘 + FeedbackRouter 重入 prompt 复用
-   * 同一结构）。detail 必含「产物滞留未申报」+ 诊断（ahead 数/脏文件数/status
-   * 前 10 行样本/标记检测结果）。
-   */
-  def feedback(d: Diagnostic): BlockedFeedback =
-    val sample = if d.statusSample.isEmpty then "(空)" else d.statusSample.mkString(" | ")
-    BlockedFeedback(
-      category = CategoryArtifactResidue,
-      detail = s"产物滞留未申报：worktree '${d.worktree}'（${d.dir}）有 ${d.dirtyCount} 个未提交改动" +
-        s"（领先 main ${d.aheadCount} commit${if d.aheadFailed then "，rev-list 失败按 0 计" else ""}），" +
-        s"结果文本未命中 commit-ready 申报标记（markerHit=${d.markerHit}）。status 样本（前 ${d.statusSample.size} 行）：$sample",
-      suggestion = "提交改动（git add + git commit）后按 blocked 重入协议重入；或在节点结果文本申报 commit-ready（字面标记，闸门识别契约）后重入"
-    )
 
   // ── 内部 ─────────────────────────────────────────────────────────
 

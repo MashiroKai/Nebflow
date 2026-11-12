@@ -299,10 +299,11 @@ private[project] trait NodeGating:
    *      ⇒ 落到**创建者 delegate**。文本逐字含 `chain-wedged` / chainId / 被闸死
    *      节点名+id / 处置方向三段（承接 hand over · 改接 rewire · abandon）。
    *
-   * `status` = `"blocked"`：这是**要求上层处置的终态回执**，前端据此打 BLOCKED 标签
-   * （与既有 `feedbackRouter.escalate` 同档）；`blocked` 不在 [[isRootNotifyInterrupt]]
-   * 档内 ⇒ 进 root 打包窗，密集扇出不轰炸。`nodeId` 刻意传 `None`（理由见调用点注释：
-   * 不让 pending 节点被盖上「结果已投根」的持久账本）；重复抑制由
+   * `status` = [[DispatchNotify.NoticeEventType]]（`notice`）：这是**要求上层处置的
+   * 监督回执**——blocked 终态已退役（BLOCKED 标签不再产生），监督面告知统一走
+   * notice 档；`notice` 不在 [[isRootNotifyInterrupt]] 档内 ⇒ 进 root 打包窗，密集
+   * 扇出不轰炸。`nodeId` 刻意传 `None`（理由见调用点注释：不让 pending 节点被盖上
+   * 「结果已投根」的持久账本）；重复抑制由
    * [[NodeEngine.chainWedgedAlerted]] 的 chainId 单发承担，**不依赖** root 通道的
    * 60s 同键窗。
    *
@@ -352,14 +353,13 @@ private[project] trait NodeGating:
                   s"by terminal upstream '$wedgedBy' (${terminalId}, cause=$cause): the in-barrier can never be " +
                   s"settled and nothing downstream of this node will ever start on its own.\nReason: $reason\n$action",
                 n.name,
-                NodeLifecycle.Blocked,
+                DispatchNotify.NoticeEventType,
                 // 🔴 `nodeId = None`（刻意）：本回执是**监督面**告知，被闸死的下游自己
                 // **尚未产出任何结果**。`deliverToRoot` 拿到 nodeId 会顺手
                 // `markRootDelivered` 写 `nebulaDeliveredAt`（`NodeDelivery.scala:780,791`）
                 // ——那是「本节点结果已投根」的持久账本，写在一个 pending 节点上是伪事实，
                 // 并且会让 `deliverOutTo` 的 Nebula 腿（`NodeDelivery.scala:534` 持久去重锚）
-                // 在承接/改接后**拒投**该节点真正的结果。与既有 `feedbackRouter.escalate`
-                // 的调用形态（`enqueueRootNotify(text, nodeName, blocked)`，不传 nodeId）同款。
+                // 在承接/改接后**拒投**该节点真正的结果（监督通知不传 nodeId 的既有形态）。
                 None
               )
         }
@@ -390,8 +390,15 @@ private[project] trait NodeGating:
     if resolved.size != refs.size then None
     else
       def upstreamOf(id: String): Option[NodeDef] = nodes.get(id)
+      // Legacy-stock leg: blocked rows written before the blocked-terminal retirement
+      // never deliver either — they keep counting as permanent blockers so wedged
+      // chains stay visible instead of silently freezing (new blocked rows cannot be
+      // produced: blocked is not in Terminal any more).
       def permanentlyTerminal(id: String): Boolean =
-        upstreamOf(id).exists(u => u.status != NodeLifecycle.Completed && NodeLifecycle.Terminal.contains(u.status))
+        upstreamOf(id).exists { u =>
+          (u.status != NodeLifecycle.Completed && NodeLifecycle.Terminal.contains(u.status)) ||
+          u.status == NodeLifecycle.Blocked
+        }
       val inBlockers = refs.filter(id => n.in.contains(id) && !n.deliveredTo.contains(id) && permanentlyTerminal(id))
       val depsBlockers =
         refs.filter(id => depsResolved.contains(id) && upstreamOf(id).exists(_.status != NodeLifecycle.Completed))
