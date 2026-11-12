@@ -1557,7 +1557,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 ).as(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
                   .flatTap(r => logToolStructured(call, callCtx, r))
               else
-                permissionDecision(resources, call, sessionIdOpt.getOrElse(""))
+                permissionDecision(resources, call, sessionIdOpt.getOrElse(""), callCtx)
                   .flatMap {
                     case PermissionDecision.Allow =>
                       // 2026-09-10 卡死判据换轴：工具**开始**点——记当前工具相位
@@ -1803,9 +1803,16 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   private def permissionDecision(
     resources: SharedResources,
     call: ToolCall,
-    sessionId: String
+    sessionId: String,
+    toolContext: ToolContext
   ): IO[PermissionDecision] =
     resources.effectiveSafetyMode.flatMap { mode =>
+      // AGENTS.md is human-owned project policy: even auto-all cannot authorize
+      // an agent-originated write. Identity comes from the engine's ToolContext,
+      // never a client-supplied tool argument; console REST saves stay separate.
+      if AgentInstructionWriteGate.requiresConfirmation(call, isAgent = toolContext.agentDef.isDefined) then
+        IO.pure(PermissionDecision.Ask)
+      else
       // P0-1 / P-M1 插点（spec §2.3）：工具名命中 MCP / ScriptTool 注册面时，在
       // `ToolReversibility.isReversible` 分支**之前**改走 `McpToolGate.decide`。
       //
