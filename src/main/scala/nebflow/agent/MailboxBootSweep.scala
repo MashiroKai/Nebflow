@@ -157,8 +157,13 @@ object MailboxBootSweep:
             pending <- SessionMailbox.scanPending(t.parentSessionId)
             taken <- SessionMailbox.scanTaken(t.parentSessionId)
             tombstoned <- SessionMailbox.deliveredContains(t.parentSessionId, Set(t.taskId))
-            accounted =
-              pending.exists(_.identity == t.taskId) || taken.exists(_.identity == t.taskId) || tombstoned.nonEmpty
+            // #2178：真实终态入箱身份已带 generation 后缀（`taskId#gen`）——对账判
+            // 「任一代已入箱/已消费」必须按前缀匹配，否则已交付终态会被误判缺账
+            // 而重合成（boot 不重合成已交付终态）。
+            identityPrefix = s"${t.taskId}#"
+            genBearing = (e: SessionMailbox.Entry) => e.identity == t.taskId || e.identity.startsWith(identityPrefix)
+            tombstonedAnyGen <- SessionMailbox.deliveredContainsPrefix(t.parentSessionId, identityPrefix)
+            accounted = pending.exists(genBearing) || taken.exists(genBearing) || tombstoned.nonEmpty || tombstonedAnyGen
             result <-
               if accounted then IO.pure(None) // 条目在盘（待消费/消费中）或已消费——账信相符，零动作
               else

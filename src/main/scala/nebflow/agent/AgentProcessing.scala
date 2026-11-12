@@ -11,6 +11,7 @@ import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.llm.*
 import nebflow.shared.{NebflowLogger, *}
+import nebflow.shared.given
 
 import scala.concurrent.duration.*
 
@@ -1463,6 +1464,31 @@ private[agent] object AgentProcessing:
               // satisfies one outstanding slot of the parallel batch. The drain at the
               // turn boundary only releases subtask/delegate events once the counter
               // hits 0, so a batch completing mid-turn is still injected together.
+              val completionDebtAck =
+                if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType) then
+                  val owner = event.correlationId.getOrElse("")
+                  val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
+                  val completionEvent = event.copy(payload = payload)
+                  nebflow.core.mail.CompletionDebtStore.checkAcceptance(owner, recipient, completionEvent).flatMap {
+                    case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict =>
+                      NebflowLogger.forName("nebflow.agent").error(s"conflicting duplicate terminal '$owner' withheld from parent processing")
+                    case nebflow.core.mail.CompletionDebtStore.Acceptance.Duplicate =>
+                      IO.unit // durable acceptance record proves this identity already crossed the receiver boundary
+                    case nebflow.core.mail.CompletionDebtStore.Acceptance.New =>
+                      val consumed = state.execution.pendingEvents.exists(e =>
+                        e.source == event.source && e.eventType == event.eventType && e.correlationId == event.correlationId && e.payload == event.payload
+                      )
+                      if consumed then IO.unit
+                      else nebflow.core.mail.CompletionDebtStore.pending(owner).flatMap {
+                        case Right(Some(debt)) if recipient.nonEmpty && debt.recipientSessionId == recipient =>
+                          event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption) match
+                            case Some(messages) => IO.unit // pending/held completion is not acknowledged before injection
+                            case None => IO.unit
+                        case Right(None) => IO.unit
+                        case _ => NebflowLogger.forName("nebflow.agent").error(s"completion debt ack withheld for '$owner': recipient mismatch/unreadable")
+                      }
+                  }
+                else IO.unit
               val updatedOutstanding =
                 if TurnBoundaryDrains.isSubagentResult(event) then math.max(0, state.execution.outstandingSubagentResults - 1)
                 else state.execution.outstandingSubagentResults
@@ -1503,7 +1529,7 @@ private[agent] object AgentProcessing:
                   AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
                   isSubagent = depth > 0,
                   state.sessionId
-                ) *> persistQueues(state.sessionId, updatedExec) *>
+                ) *> persistQueues(state.sessionId, updatedExec) *> completionDebtAck *>
                 // 台账对账（平台修复批 fix 1 落账点）：回执入 held 队列即记 producedAt，
                 // HeldDeliveryWatchdog 据此起算「N 分钟未投递」催注时钟；徽标帧随行
                 // （held 计数上升面）。

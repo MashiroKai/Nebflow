@@ -10,6 +10,7 @@ import nebflow.core.*
 import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.shared.{NebflowLogger, *}
+import nebflow.shared.given
 
 /**
  * idle 域:原 object AgentActor 内 idle 行为的实现整体迁入本件(方法体逐字
@@ -49,12 +50,16 @@ private[agent] object AgentIdle:
     else Some("tool")
 
   /**
-   * ExternalEvent 唤醒轮的 replyTo 判据（纯函数，spec 判红锚）。两路合法：
+   * ExternalEvent 唤醒轮的 replyTo 判据（纯函数，spec 判红锚）。三路合法：
    *   - node- 项目节点（既有，2026-09-05 完成闸批）；
    *   - delegate 会话 × background-task 完成事件（诊断修复批 2026-10-24）——
    *     BackoffSupervisor 等待屏障依赖该唤醒轮的 Completed 复检投递集。
-   * 其余（mail/schedule 事件源、非 delegate 会话、subtask——subtask 轨无等待
-   * 屏障，Completed 语义零变化）恒 false。
+   *   - delegate 会话 × supervision-check 检查通知（#2141，作者裁定 2026-11-12
+   *     「后台有智能体时定期注入检查，10/30/60 分钟退避」）——监督者 hold 期的
+   *     可见检查注入唤醒复检轮，其 Completed 必须回流监督者复检等待集，否则
+   *     监督者永久停在 hold 私有态（与 background-task 腿同构，缺回流 = 静默
+   *     悬挂病灶再现）。其余（mail/schedule 事件源、非 delegate 会话、subtask
+   *     ——subtask 轨无等待屏障，Completed 语义零变化）恒 false。
    */
   private[agent] def wakeContinuationApplies(
     isFlowNode: Boolean,
@@ -64,7 +69,8 @@ private[agent] object AgentIdle:
   ): Boolean =
     val nodeLeg =
       sessionId.exists(sid => isFlowNode && sid.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
-    val delegateLeg = isDelegateSession && eventSource == "background-task"
+    val delegateLeg =
+      isDelegateSession && (eventSource == "background-task" || eventSource == "supervision-check")
     nodeLeg || delegateLeg
 
   /**
@@ -73,7 +79,35 @@ private[agent] object AgentIdle:
    * [[nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent]]。
    */
   private def ackDelegateDelivery(event: AgentCommand.ExternalEvent): IO[Unit] =
-    nebflow.core.delegate.DelegateDeliveryReceipts
+    val debtAck =
+      if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType) then
+        val owner = event.correlationId.getOrElse("")
+        val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
+        nebflow.core.mail.CompletionDebtStore.checkAcceptance(owner, recipient, event).flatMap {
+          case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict =>
+            NebflowLogger.forName("nebflow.agent.idle").error(s"conflicting/untrusted terminal '$owner' withheld; completion debt retained")
+          case nebflow.core.mail.CompletionDebtStore.Acceptance.Duplicate => IO.unit
+          case nebflow.core.mail.CompletionDebtStore.Acceptance.New =>
+            val acceptedMessages = event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption)
+            acceptedMessages match
+              case Some(messages) =>
+                nebflow.core.mail.CompletionDebtStore.pending(owner).flatMap {
+                  case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages =>
+                    nebflow.core.mail.CompletionDebtStore.acceptOnce(owner, recipient, event).flatMap {
+                      case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict => IO.unit
+                      case _ => nebflow.core.mail.CompletionDebtStore.acknowledge(owner, recipient, messages).flatMap { accepted =>
+                        IO.whenA(!accepted)(NebflowLogger.forName("nebflow.agent.idle")
+                          .error(s"completion debt ack mismatch for '$owner'; debt retained"))
+                      }
+                    }
+                  case Right(None) => IO.unit
+                  case _ => NebflowLogger.forName("nebflow.agent.idle")
+                    .error(s"completion debt for '$owner' is missing, corrupt, or conflicts; receipt remains unacked")
+                }
+              case None => IO.unit
+        }
+      else IO.unit
+    debtAck *> nebflow.core.delegate.DelegateDeliveryReceipts
       .ackEvent(event)
       .handleErrorWith(e =>
         NebflowLogger.forName("nebflow.agent.idle").warn(s"delegate delivery ack failed: ${e.getMessage}")

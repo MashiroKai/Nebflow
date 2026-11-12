@@ -7,6 +7,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.core.mail.SessionMailbox
 import nebflow.shared.*
+import nebflow.shared.given
 
 import scala.concurrent.duration.*
 
@@ -131,7 +132,15 @@ object BackoffSupervisor:
      * 放行回合收尾（不再等那个永不结束的作业）。0/负数 = 关闭本腿（旧行为）。
      * 默认 [[Defaults.BgTurnEndIdleCapMs]]（15min）；构造器缝 = spec 注入点。
      */
-    bgIdleCapMs: Long = Defaults.BgTurnEndIdleCapMs
+    bgIdleCapMs: Long = Defaults.BgTurnEndIdleCapMs,
+    /**
+     * **#2141 · 监督检查退避阶梯（作者裁定 2026-11-12「是分钟 不是秒」）**：
+     * hold 期向被监督会话注入可见检查通知的**相邻间隔**（ms），默认
+     * `Defaults.SupervisionCheckBackoffMs` = 10/30/60 **分钟**，末档封顶重复；
+     * Nil/全非正 = 关闭检查腿（旧行为）。构造器缝 = spec 注入毫秒级小值做
+     * 确定性验收（虚拟推进，不真实等待）。
+     */
+    checkBackoffMs: List[Long] = Defaults.SupervisionCheckBackoffMs
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       // R11 第 4 层（作者裁定 U1=C-a / U8=(ii)）：**仅 Delegate 轨**装配 3600s
@@ -155,13 +164,24 @@ object BackoffSupervisor:
       val backgroundHeld = Ref.unsafe[IO, Boolean](false)
       val completionCapArm = Ref.unsafe[IO, Long](0L)
       val completionCapFired = Ref.unsafe[IO, Boolean](false)
+      // #2141 检查退避阶梯状态（每监督 generation 单计时器，臂号闸复用）：
+      // checksDone = 本等待期已注入的检查数（阶梯游标）；lastSeenWait = 上次
+      // hold 时等待集大小（缩小 ⇒ 真实进展 ⇒ 阶梯重置回首档）；nextCheckAt =
+      // 下次检查的绝对时刻（0 = 未初始化）。
+      val checksDoneRef = Ref.unsafe[IO, Long](0L)
+      val lastSeenWaitRef = Ref.unsafe[IO, Int](0)
+      val nextCheckAtRef = Ref.unsafe[IO, Long](0L)
       budgetArmedIO *> ctx.watch(childRef) *>
         logger
           .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)") *>
         nebflow.core.mail.CompletionDebtStore.pending(subagentId).flatMap {
-          case Some(debt) if debt.ownerSessionId == subagentId =>
+          case Right(Some(debt)) if debt.phase == "cancelled" || debt.phase == "settled" => IO.unit
+          case Right(Some(debt)) if debt.ownerSessionId == subagentId && debt.recipientSessionId == parentSessionId =>
             (ctx.self ! AgentEvent.Completed(subagentId, debt.messages)).void
-          case _ => IO.unit
+          case Right(Some(debt)) =>
+            logger.error(s"completion debt recipient mismatch for '$subagentId': expected '$parentSessionId', found '${debt.recipientSessionId}'")
+          case Left(error) => logger.error(s"completion debt unavailable for '$subagentId': $error")
+          case Right(None) => IO.unit
         }.as(
             active(
               childRef,
@@ -185,9 +205,13 @@ object BackoffSupervisor:
               withinTimeRange,
               completionCapMs,
               bgIdleCapMs,
+              checkBackoffMs,
               backgroundHeld,
               completionCapArm,
-              completionCapFired
+              completionCapFired,
+              checksDoneRef,
+              lastSeenWaitRef,
+              nextCheckAtRef
             )
           )
     }
@@ -210,6 +234,16 @@ object BackoffSupervisor:
       val lastActivity = math.max(startedAtMs, lastOutputAt.getOrElse(0L))
       nowMs - lastActivity >= idleCapMs
     }
+
+  /**
+   * #2141 检查退避判据（纯函数，spec 判红锚；零 IO）：第 `checksDone` 次检查之后的
+   * 相邻间隔 = 阶梯第 `min(checksDone, 末档)` 档（末档封顶重复）。Nil/全非正 =
+   * None（检查腿关闭）。
+   */
+  private[agent] def supervisionCheckIntervalMs(rungs: List[Long], checksDone: Long): Option[Long] =
+    val ladder = rungs.filter(_ > 0L)
+    if ladder.isEmpty then None
+    else Some(ladder(math.max(0L, checksDone).toInt.min(ladder.length - 1)))
 
   /** Active state: forwards completion/failure to parent, restarts on Terminated. */
   private def active(
@@ -234,9 +268,13 @@ object BackoffSupervisor:
     withinTimeRange: FiniteDuration,
     completionCapMs: Long,
     bgIdleCapMs: Long,
+    checkBackoffMs: List[Long],
     backgroundHeld: Ref[IO, Boolean],
     completionCapArm: Ref[IO, Long],
-    completionCapFired: Ref[IO, Boolean]
+    completionCapFired: Ref[IO, Boolean],
+    checksDoneRef: Ref[IO, Long],
+    lastSeenWaitRef: Ref[IO, Int],
+    nextCheckAtRef: Ref[IO, Long]
   ): Behavior[AgentEvent] =
     new Behavior[AgentEvent]:
       def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
@@ -272,7 +310,8 @@ object BackoffSupervisor:
                 "completed",
                 payload + diagnostic + note,
                 diff,
-                diagnostic = Option(diagnostic).filter(_.nonEmpty)
+                diagnostic = Option(diagnostic).filter(_.nonEmpty),
+                completionMessages = Some(messages)
               )
             yield result
           else notifyParentAndStop("completed", payload, JsonObject.empty)
@@ -373,12 +412,33 @@ object BackoffSupervisor:
         end capWakeDelayMs
 
         /**
+         * #2141 检查锚初始化：返回本等待期「下次检查」的绝对时刻。0 = 检查腿关闭
+         * （阶梯 Nil/全非正）。陈旧锚（≤ heldSince：上一等待期残留）按当前阶梯
+         * 游标重锚到本等待期起点之后。
+         */
+        def initCheckAnchor(heldSince: Long): IO[Long] =
+          nextCheckAtRef.get.flatMap { cur =>
+            val intervalOpt = supervisionCheckIntervalMs(checkBackoffMs, 0L)
+            val stale = cur <= heldSince
+            val next =
+              intervalOpt match
+                case None => 0L
+                case Some(_) if stale => heldSince + intervalOpt.get
+                case _ => cur
+            nextCheckAtRef.set(next).as(next)
+          }
+
+        /**
          * 武装兜底计时器（**刀一：到点消息，不轮询**）。
          *
          * 一次武装 = 臂号 +1 + 一条 `scheduleOnce` 自投的
          * [[nebflow.actor.AgentEvent.BgCompletionCapTick]]。臂号唯一的用途是**作废旧
          * Tick**（`scheduleOnce` 无法撤销）：等待期结束、重臂、强制终判都会让旧
-         * Tick 到点时臂号不符而被丢弃——因此「多臂并存」永远是安全的。
+         * Tick 到点时臂号不符而被丢弃——因此「多臂并存」永远是安全的。**同一监督
+         * generation 只有一个在飞计时器**（重复武装/重建都以臂号互斥，不堆叠）。
+         *
+         * #2141：唤醒时刻 = min(兜底两腿截止, 下次检查锚)。等待集缩小 = 真实进展
+         * ⇒ 检查阶梯重置回首档（作者裁定「通知随真实进展可重置」）。
          *
          * 等待集已空 ⇒ 直接不武装（竞态：唤醒轮在飞，它的 Completed 会走干净
          * 放行腿）。
@@ -388,19 +448,92 @@ object BackoffSupervisor:
           nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap { waiting =>
             if waiting.isEmpty then disarmCompletionCap
             else
-              capWakeDelayMs(heldSince, waiting, heldSince).flatMap { delayMs =>
-                completionCapArm.updateAndGet(_ + 1L).flatMap { arm =>
-                  logger.info(
-                    s"BackoffSupervisor: delegate $subagentId bg-wait cap armed as a TIMED MESSAGE (arm=$arm, " +
-                      s"wake in ${delayMs}ms, ${waiting.size} task(s) pending) — no polling loop"
-                  ) *> ctx.scheduleOnce(
-                    delayMs.millis,
-                    AgentEvent.BgCompletionCapTick(subagentId, heldSince, arm, messages)
-                  )
+              lastSeenWaitRef.get.flatMap { lastSeen =>
+                IO.whenA(waiting.size < lastSeen)(checksDoneRef.set(0L) *> nextCheckAtRef.set(0L)) *>
+                  lastSeenWaitRef.set(waiting.size)
+              } *> initCheckAnchor(heldSince).flatMap { nextCheckAt =>
+                capWakeDelayMs(heldSince, waiting, heldSince).flatMap { capDelayMs =>
+                  val wakeAt =
+                    if nextCheckAt <= 0L then heldSince + capDelayMs
+                    else math.min(heldSince + capDelayMs, nextCheckAt)
+                  val delayMs = math.max(1L, wakeAt - heldSince)
+                  completionCapArm.updateAndGet(_ + 1L).flatMap { arm =>
+                    logger.info(
+                      s"BackoffSupervisor: delegate $subagentId bg-wait cap armed as a TIMED MESSAGE (arm=$arm, " +
+                        s"wake in ${delayMs}ms, ${waiting.size} task(s) pending" +
+                        (if nextCheckAt > 0L then s", supervision check ladder armed (#2141)" else "") +
+                        ") — no polling loop"
+                    ) *> ctx.scheduleOnce(
+                      delayMs.millis,
+                      AgentEvent.BgCompletionCapTick(subagentId, heldSince, arm, messages)
+                    )
+                  }
                 }
               }
           }
         end armCompletionCap
+
+        /**
+         * #2141 检查注入（作者裁定：后台有智能体时定期注入可见检查通知；10/30/60
+         * 分钟退避，末档封顶）。可追溯：source=supervision-check 独立成格，
+         * correlationId 带目标会话+检查序号+时刻，payload/meta 带在途任务清单、
+         * 检查档位与下一间隔（分钟）。注入即唤醒被监督会话的复检轮（idle 面
+         * wakeContinuationApplies 的 supervision-check 腿把 Completed 回流本监督者
+         * 复检等待集——不是 UI 状态帧，LLM 实收）。
+         */
+        def injectSupervisionCheck(
+          still: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
+          checksDone: Long,
+          nextIntervalMs: Long
+        ): IO[Unit] =
+          val now = System.currentTimeMillis()
+          val listing = still.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")
+          val payload =
+            s"[supervision-check] periodic background check #${checksDone + 1L}: ${still.size} background task(s) still " +
+              s"running for this session ($listing). Next automatic check in ~${nextIntervalMs / 60000L}min. " +
+              "Review their status, or end your turn normally once nothing is left to wait on."
+          val event = AgentCommand.ExternalEvent(
+            source = "supervision-check",
+            eventType = "check",
+            payload = payload,
+            metadata = JsonObject(
+              "targetSessionId" -> subagentId.asJson,
+              "rootSessionId" -> parentSessionId.asJson,
+              "checkIndex" -> checksDone.asJson,
+              "pendingCount" -> still.size.asJson,
+              "intervalMs" -> nextIntervalMs.asJson,
+              "nextCheckInMin" -> (nextIntervalMs / 60000L).asJson
+            ),
+            correlationId = Some(s"$subagentId-supervision-$checksDone-$now")
+          )
+          logger.info(
+            s"BackoffSupervisor: delegate $subagentId supervision check #${checksDone + 1L} injected " +
+              s"(${still.size} task(s) pending, next in ~${nextIntervalMs / 60000L}min — #2141 backoff ladder)"
+          ) *>
+            (childRef ! event).void.handleErrorWith(e =>
+              logger.warn(s"supervision check injection failed for '$subagentId': ${e.getMessage}")
+            )
+
+        /** 重臂（同一等待期延续）：wakeAt = min(兜底两腿截止, 可选的下次检查锚)。 */
+        def rearmCap(
+          still: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
+          heldSinceMs: Long,
+          arm: Long,
+          snapshot: List[Message],
+          now: Long,
+          checkAt: Option[Long] = None
+        ): IO[Unit] =
+          capWakeDelayMs(heldSinceMs, still, now).flatMap { capDelayMs =>
+            val wakeAt = checkAt.fold(now + capDelayMs)(c => math.min(now + capDelayMs, c))
+            val delayMs = math.max(1L, wakeAt - now)
+            logger.info(
+              s"BackoffSupervisor: delegate $subagentId bg-wait cap re-armed (arm=$arm) — " +
+                s"next wake in ${delayMs}ms"
+            ) *> ctx.scheduleOnce(
+              delayMs.millis,
+              AgentEvent.BgCompletionCapTick(subagentId, heldSinceMs, arm, snapshot)
+            )
+          }
 
         def holdForBackgroundJobs(
           waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
@@ -484,15 +617,32 @@ object BackoffSupervisor:
                             s"background job must not hold the completion forever) (timed message, arm=$arm)"
                         ) *> forceTerminalDelivery(still, snapshot)
                       else
-                        // 未到点：截止时刻被新输出推后 ⇒ 按新截止时刻**重臂**同一等待期。
-                        capWakeDelayMs(heldSinceMs, still, now).flatMap { delayMs =>
-                          logger.info(
-                            s"BackoffSupervisor: delegate $subagentId bg-wait cap re-armed (arm=$arm) — " +
-                              s"deadline moved, next wake in ${delayMs}ms"
-                          ) *> ctx.scheduleOnce(
-                            delayMs.millis,
-                            AgentEvent.BgCompletionCapTick(subagentId, heldSinceMs, arm, snapshot)
-                          )
+                        // 未到点：先判检查退避腿（#2141——到点 ⇒ 注入可见检查、推进
+                        // 阶梯游标、按下一档重锚），再按**新的真实截止时刻**重臂同一
+                        // 等待期（同一 generation 单计时器延续，臂号不变）。
+                        checksDoneRef.get.flatMap { done =>
+                          nextCheckAtRef.get.flatMap { anchor0 =>
+                            val intervalOpt = supervisionCheckIntervalMs(checkBackoffMs, done)
+                            val anchor =
+                              anchor0 match
+                                case a if a > 0L => a
+                                case _ => intervalOpt.fold(0L)(iv => now + iv)
+                            val setAnchor = if anchor0 == anchor then IO.unit else nextCheckAtRef.set(anchor)
+                            val decision: IO[Unit] = (intervalOpt, anchor) match
+                              case (Some(iv), a) if a > 0L && now >= a =>
+                                // 到点注入：下一档间隔 = interval(done+1)（阶梯推进，
+                                // 末档封顶重复——iv 只是本次到点的到达间隔）。
+                                val nextIv = supervisionCheckIntervalMs(checkBackoffMs, done + 1L).getOrElse(iv)
+                                injectSupervisionCheck(still, done, nextIv) *>
+                                  checksDoneRef.set(done + 1L) *>
+                                  nextCheckAtRef.set(now + nextIv) *>
+                                  rearmCap(still, heldSinceMs, arm, snapshot, now, checkAt = Some(now + nextIv))
+                              case (Some(_), a) if a > 0L =>
+                                rearmCap(still, heldSinceMs, arm, snapshot, now, checkAt = Some(a))
+                              case _ =>
+                                rearmCap(still, heldSinceMs, arm, snapshot, now)
+                            setAnchor *> decision
+                          }
                         }
                   yield this
                   end for
@@ -619,11 +769,11 @@ object BackoffSupervisor:
             }
 
         event match
-          case AgentEvent.Completed(sessionId, messages) =>
-              // Stable child-session ownership keys the durable completion debt; a replay
-              // for the same owner is safe and only the live supervisor settles it.
-              // 四修①两级处置：空烧仍不是完成；重启预算未尽则续推，耗尽时
-              // delegate 正文按直接完成载荷投递，subtask 则保持诚实 failed 终态。
+          case AgentEvent.Completed(sessionId, _) if sessionId.nonEmpty && sessionId != subagentId =>
+            logger.warn(s"BackoffSupervisor: ignored completion for foreign session '$sessionId' (owner=$subagentId)")
+              .as(this)
+
+          case AgentEvent.Completed(_, messages) =>
             if !isEmptyBurnCompletion(messages) then
               // A 段等待屏障先于终判：有未结等待型后台作业 ⇒ hold 唤醒复检；
               // cap 兜底触发 ⇒ 带注记强制终判。
@@ -652,9 +802,13 @@ object BackoffSupervisor:
                       withinTimeRange,
                       completionCapMs,
                       bgIdleCapMs,
+                      checkBackoffMs,
                       backgroundHeld,
                       completionCapArm,
-                      completionCapFired
+                      completionCapFired,
+                      checksDoneRef,
+                      lastSeenWaitRef,
+                      nextCheckAtRef
                     )
                   )
                 case CompletionProceed => completeNormally(messages)
@@ -1029,9 +1183,13 @@ object BackoffSupervisor:
                   withinTimeRange,
                   completionCapMs,
                   bgIdleCapMs,
+                  checkBackoffMs,
                   backgroundHeld,
                   completionCapArm,
-                  completionCapFired
+                  completionCapFired,
+                  checksDoneRef,
+                  lastSeenWaitRef,
+                  nextCheckAtRef
                 )
             )
       end freezeAndHold
@@ -1319,9 +1477,13 @@ object BackoffSupervisor:
           withinTimeRange,
           completionCapMs,
           bgIdleCapMs,
+          checkBackoffMs,
           backgroundHeld,
           completionCapArm,
-          completionCapFired
+          completionCapFired,
+          checksDoneRef,
+          lastSeenWaitRef,
+          nextCheckAtRef
         )
         end for
       end respawnBody
@@ -1440,16 +1602,18 @@ object BackoffSupervisor:
         payload: String,
         failureMetadata: JsonObject,
         taskStatusOverride: Option[String] = None,
-        diagnostic: Option[String] = None
+        diagnostic: Option[String] = None,
+        completionMessages: Option[List[Message]] = None
       ): IO[Behavior[AgentEvent]] =
-        notifyParentAndStopImpl(eventType, payload, failureMetadata, taskStatusOverride, diagnostic)
+        notifyParentAndStopImpl(eventType, payload, failureMetadata, taskStatusOverride, diagnostic, completionMessages)
 
       private def notifyParentAndStopImpl(
         eventType: String,
         payload: String,
         failureMetadata: JsonObject,
         taskStatusOverride: Option[String] = None,
-        diagnostic: Option[String] = None
+        diagnostic: Option[String] = None,
+        completionMessages: Option[List[Message]] = None
       ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
@@ -1490,13 +1654,38 @@ object BackoffSupervisor:
           .setDiagnostic(parentSessionId, subagentId, diagnostic)
           .handleErrorWith(e => logger.warn(s"subAgentTaskStore diagnostic write failed: ${e.getMessage}"))
 
+        // ═══ #2141/#2178 代际身份 ══════════════════════════════════════════
+        // 终态事件与入箱幂等键都携带**持久稳定 generation**（债上铸造、随债落盘，
+        // record 在每次真实执行/续轮完成时换新）：
+        //   - 同代崩溃重试（监督者重建→债重放→重复入箱）⇒ 同 identity ⇒ 幂等去重；
+        //   - Mail 续轮的新完成 ⇒ 新代 ⇒ 新 identity ⇒ **不再被上一代已消费墓碑
+        //     吞掉**（beed5aa 实证三轮 resume 漏报根因：裸 subagentId 身份命中
+        //     delivered.json 墓碑 ⇒ AlreadyPresent 假去重）；
+        //   - 旧格式债（无代）回落裸 subagentId 身份，升级前行为逐字兼容。
+        val completionGenerationIO: IO[String] =
+          if source == "delegate" then
+            nebflow.core.mail.CompletionDebtStore
+              .pending(subagentId)
+              .map {
+                case Right(Some(debt)) => debt.generation
+                case _                 => ""
+              }
+              .handleErrorWith(_ => IO.pure(""))
+          else IO.pure("")
+
+        val notify: IO[Unit] = completionGenerationIO.flatMap { completionGeneration =>
+        val eventMetadata = metadata
+          .add("parentSessionId", parentSessionId.asJson)
+          .add("completionMessages", completionMessages.getOrElse(Nil).asJson)
+          .add("completionGeneration", completionGeneration.asJson)
         val terminalEvent = AgentCommand.ExternalEvent(
           source = source,
           eventType = eventType,
           payload = payload,
-          metadata = metadata,
+          metadata = eventMetadata,
           correlationId = Some(subagentId)
         )
+          val terminalIdentity = if completionGeneration.isEmpty then subagentId else s"$subagentId#$completionGeneration"
         // ═══ P2 邮箱化（终态通知 actor 邮箱化批，作者 11-01 批准实施）═════════
         // delegate 轨终态（completed/failed/cancelled）改走**收件方持久邮箱**：
         // mailOnce 幂等入队（写成功=必达）+ 门铃 best-effort——磁盘邮箱是唯一真源，
@@ -1512,23 +1701,34 @@ object BackoffSupervisor:
         //      物理事实；delivered-receipts 标记面照旧只服务旧链在飞件，P3 退役）。
         // 双发红线：delegate 轨此后**不得**再走旧链（旧 push + 邮箱 = 事故）；
         // subtask 轨逐字保持旧链（P3 全通知面迁移另批）。
-        val notify: IO[Unit] =
-          if source == "delegate" then
+        // （原 `val notify` 名让位给外层代际 flatMap——本 if/else 即 lambda 尾表达式）
+        if source == "delegate" then
             MailboxProducer
               .deliver(
                 resources,
                 parentSessionId,
                 terminalEvent,
-                identity = subagentId, // 入队幂等键 = 子会话 id（每终态独立事件，永不合条）
+                identity = terminalIdentity, // 幂等键 = 子会话 id#代际（每轮独立事件，永不合条；同代重放稳定）
                 kind = "delegate-terminal",
                 coalesce = false,
                 producer = "backoff-supervisor"
               )
               .flatMap {
                 case SessionMailbox.MailResult.AlreadyPresent =>
-                  logger.warn(
-                    s"[mailbox-producer] duplicate terminal for '$subagentId' already pending in parent '$parentSessionId' — idempotent no-op (single copy on disk)"
-                  ) *> nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId)
+                  (SessionMailbox.scanPending(parentSessionId), SessionMailbox.scanTaken(parentSessionId)).mapN(_ ++ _)
+                    .map(_.find(e => e.identity == subagentId || e.identity.startsWith(s"$subagentId#")))
+                    .flatMap {
+                      case Some(entry) if entry.event.source == source && entry.event.eventType == eventType &&
+                        entry.event.correlationId.contains(subagentId) && entry.event.payload == payload &&
+                        entry.event.metadata("parentSessionId").flatMap(_.asString).contains(parentSessionId) =>
+                        nebflow.core.mail.CompletionDebtStore.pending(subagentId).flatMap {
+                          case Right(Some(debt)) if debt.recipientSessionId == parentSessionId =>
+                            nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId, parentSessionId, debt.messages)
+                              .flatMap(ok => IO.whenA(!ok)(logger.error(s"completion debt conflict while confirming existing mail for '$subagentId'")))
+                          case _ => logger.error(s"completion debt missing or invalid while confirming existing mail for '$subagentId'")
+                        }
+                      case _ => logger.error(s"conflicting existing terminal mail for '$subagentId' in '$parentSessionId'; completion debt retained")
+                    }
                 case SessionMailbox.MailResult.Failed(cause) if cause == "parent-session-gone" =>
                   // 交付腿已在生产者侧响亮留痕（不产垃圾文件）；终态三清照常。
                   IO.unit
@@ -1537,12 +1737,12 @@ object BackoffSupervisor:
                     s"[mailbox-producer] terminal for '$subagentId' NOT on disk after retries (parent='$parentSessionId' cause=$cause) — " +
                       s"boot reconcile will synthesize a replacement entry from the task ledger"
                   )
-                case _ => nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId) // durable enqueue is receiver acceptance
+                case SessionMailbox.MailResult.Enqueued(_) | SessionMailbox.MailResult.Coalesced(_) => IO.unit // keep debt until consumer ack
               }
           else
             parentRef match
               case Some(ref) =>
-                (ref ! terminalEvent).flatMap(_ => nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId))
+                ref ! terminalEvent // Actor tell is not an acceptance ack; retain debt for replay.
               case None =>
                 // mail-continuation delivery backstop（2026-10-09）：parentRef=None ⇒
                 // 本终态结果**没有任何投递对象**——历史分支是裸 IO.unit，结果在回传
@@ -1579,6 +1779,7 @@ object BackoffSupervisor:
                   // F2 持久兜底（监督链自动恢复批 2026-10-22，见上注）——WARN 之后
                   // 事件照常持久投递；append 失败只 WARN（父队列面故障不拖垮终态三清）。
                   f2DeliveryBackstop(terminalEvent)
+        } // completionGeneration 代际外包（#2141/#2178：事件与入箱身份同代）
 
         // 终态三清（R2-c §7#4 + 本设计）：① hub 槽（僵尸 ask 卡：内核已死，
         // 卡片再没人能接——全仓唯一的其它清理入口是项目引擎，触及不到内核这种
@@ -1587,7 +1788,7 @@ object BackoffSupervisor:
         // P2 邮箱化：receiptWrite 腿随迁拆除（delegate 终态零新回执——*.receipt.json
         // 对新终态零新写，验收红线②）。
         val clearCancelledDebt =
-          if eventType == "cancelled" then nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId)
+          if eventType == "cancelled" then nebflow.core.mail.CompletionDebtStore.cancel(subagentId)
           else IO.unit
         (delegateCleanup *> clearCancelledDebt *> notify *> taskUpdate *> diagWrite *> cleanupPendingAsks(resources, subagentId) *>
           DelegateBudget.release(subagentId) *>

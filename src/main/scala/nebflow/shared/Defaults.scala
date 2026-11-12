@@ -587,6 +587,27 @@ object Defaults:
   def BgTurnEndIdleCapMs: Long =
     sys.props.getOrElse("nebflow.bgtask.turnend.idleCapMs", (15 * 60 * 1000L).toString).toLong
 
+  /**
+   * **#2141 · 监督检查退避阶梯（作者裁定 2026-11-12「是分钟 不是秒」）**——
+   * delegate 等待屏障 hold 期间向被监督会话注入的**可见检查通知**的相邻间隔序列
+   * （ms）。默认 `10min → 30min → 60min`，阶梯走完后封顶按末档（60min）重复；
+   * 每个等待期（supervision generation）只有一个计时器（臂号闸复用既有
+   * BgCompletionCapTick 面），真实进展（等待集缩小）把阶梯重置回首档。
+   *
+   * 单位是**分钟**级——不设秒级默认（秒级会造成通知轰炸）。system prop
+   * `nebflow.supervision.checkBackoffMs`（逗号分隔 ms 现读，BgGateWaitTimeoutMs
+   * 同款先例；空/全非正 = 关闭检查腿，回到既有纯兜底行为）。spec 验收走
+   * `BackoffSupervisor(checkBackoffMs = …)` 构造器缝注入毫秒级小值 + 虚拟推进，
+   * 不真实等待。
+   */
+  def SupervisionCheckBackoffMs: List[Long] =
+    sys.props
+      .getOrElse("nebflow.supervision.checkBackoffMs", "600000,1800000,3600000")
+      .split(',')
+      .toList
+      .flatMap(_.trim.toLongOption)
+      .filter(_ > 0L)
+
   // ── 节点生命周期收敛批（noderpt 批 A 段，2026-09-11 作者裁定）───────────────
   //
   // 完成门的**两条腿**各自独立开关（同一闸门、两个判据）：

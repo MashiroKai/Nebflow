@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.core.*
 import nebflow.shared.{NebflowLogger, *}
+import nebflow.shared.given
 
 /**
  * turn 收尾族:原 object AgentActor 内 handleLlmCompleteBranch / finishTurn /
@@ -319,18 +320,31 @@ private[agent] object AgentFinishTurn:
       else
         resolveSettleTargets(resources.agentRegistry, state.sessionId, completionTargets)
           .flatMap { targets =>
-            val persistDebt = state.sessionId.filter(_ => targets.nonEmpty).fold(IO.unit)(sid =>
-              nebflow.core.mail.CompletionDebtStore.record(sid, msgs)
+            // 债 = 监督 Delegate 轨的**持久义务面**，尽力先记（durable-before-send
+            // 的次序不变：债落盘先于信号）；记不上（未注册会话 / 取消栅栏 / 债面
+            // 故障）**不得吞掉完成信号本身**——信号发 targets 是交付面，与债面解耦
+            // （W2 负控基线：带 replyTo 的根会话必须照常收到 Completed）。
+            val persistDebt: IO[Unit] = state.sessionId.fold(IO.unit) { sid =>
+              resources.agentRegistry.get.flatMap { registry =>
+                registry.get(sid) match
+                  case Some(rec) if rec.kind == AgentKind.Delegate && rec.parentSessionId.nonEmpty =>
+                    nebflow.core.mail.CompletionDebtStore.record(sid, rec.parentSessionId, msgs).void
+                  case Some(rec) if rec.kind == AgentKind.Delegate =>
+                    nebflow.core.mail.CompletionDebtStore.record(sid, "", msgs).void
+                  case _ => IO.unit // 非监督 Delegate / 未注册会话：无持久义务，不凭空造债
+              }
+            }.handleErrorWith(e =>
+              NebflowLogger.forName("nebflow.agent").warn(
+                s"completion debt persistence failed for ${state.sessionId.getOrElse("-")} — the completion signal still delivers (${e.getMessage})"
+              )
             )
             persistDebt *> targets.traverse_ { target =>
               (target ! AgentEvent.Completed(state.sessionId.getOrElse(""), msgs))
-              .handleErrorWith(e =>
-                NebflowLogger
-                  .forName("nebflow.agent")
-                  .warn(
+                .handleErrorWith(e =>
+                  NebflowLogger.forName("nebflow.agent").warn(
                     s"completion signal to the supervisor failed (${state.sessionId.getOrElse("-")}): ${e.getMessage}"
                   )
-              )
+                )
             }
           }
 
