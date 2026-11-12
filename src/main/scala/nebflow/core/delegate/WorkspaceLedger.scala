@@ -70,6 +70,120 @@ final class WorkspaceLedger(val path: os.Path):
         )
   }
 
+  /** Read face: the recorded merger for a project/repository (the creation predicate's twin). */
+  def recordedMerger(project: String, repository: String): Either[String, Merger] = transaction { s =>
+    s.mergers.find(m => m.project == project || m.repository == repository) match
+      case Some(existing) if existing.repository != repository =>
+        (s, Left("Project repository changed; merger reconciliation required"))
+      case Some(existing) => (s, Right(existing))
+      case None => (s, Left("No merger is recorded for this repository"))
+  }
+
+  /**
+   * Read face: the latest recorded release event for a project/repository — the replay
+   * probe that lets callers distinguish "never recorded" (honest refusal) from
+   * "already released" (idempotent replay of the recorded facts) after the identity
+   * slot itself is gone, including across a process restart.
+   */
+  def releasedMergerEvent(project: String, repository: String): Either[String, MergerRelease] = transaction { s =>
+    val latest = s.mergerEvents.values.toList
+      .flatMap(payload => io.circe.parser.decode[MergerRelease](payload).toOption)
+      .filter(r => r.project == project || r.repository == repository)
+      .sortBy(_.releasedAt)
+      .lastOption
+    (s, latest.toRight("No merger is recorded for this repository").map(_.copy(replayed = true)))
+  }
+
+  /**
+   * Release face (cancelled-merger recovery batch): the only supported way to retire
+   * a merger identity whose delegate session was cancelled — the state that otherwise
+   * wedges `Delegate(mode=merger)` forever (the dead address is returned with
+   * taskAccepted=false and no supported replacement entry existed).
+   *
+   * Every gate is re-evaluated inside the ledger transaction (fresh state under the
+   * file lock), so concurrent callers serialize and an in-flight worker pass cannot
+   * slip between the checks and the write:
+   *
+   *   1. A recorded release event with the same id replays verbatim — idempotent for
+   *      crash recovery, concurrent calls and late retries; a replacement merger
+   *      created meanwhile is never touched through this path.
+   *   2. The merger must exist for this project/repository (creation predicate twin)
+   *      and still carry the expected delegate identity (race guard: the slot moved).
+   *   3. Cancellation must be PROVEN by the delegate record's cancel tombstone,
+   *      re-read inside the lock (recoverRequests precedent: durable evidence is
+   *      validated while the state is pinned). A missing record or a missing
+   *      tombstone refuses fail-closed — frozen mergers keep their own recovery path.
+   *   4. No non-terminal merge request may exist for the repository: the mechanical
+   *      worker owns those (never re-executed, never orphaned by an identity swap).
+   *   5. No workspace may be occupied by merger activity (reserved for a request or
+   *      resting in a merger phase).
+   *
+   * The write removes only the merger identity slot; requests, workspaces, cleanup
+   * claims and the bootstrap seed (history) are preserved verbatim, and the release
+   * facts are appended to `mergerEvents` (durable audit that outlives the registry's
+   * terminal TTL). The replacement is minted afterwards through the normal creation
+   * entry — [[merger]] via `Delegate(mode=merger)` — never here.
+   */
+  def releaseMerger(
+    project: String,
+    repository: String,
+    expectedDelegateId: String,
+    eventId: String,
+    reason: String
+  ): Either[String, MergerRelease] = transaction { s =>
+    s.mergerEvents.get(eventId) match
+      case Some(payload) =>
+        io.circe.parser
+          .decode[MergerRelease](payload)
+          .fold(
+            _ => (s, Left("Recorded merger release event is unreadable; inspect the ledger")),
+            release => (s, Right(release.copy(replayed = true)))
+          )
+      case None =>
+        s.mergers.find(m => m.project == project || m.repository == repository) match
+          case Some(existing) if existing.repository != repository =>
+            (s, Left("Project repository changed; merger reconciliation required"))
+          case Some(existing) if existing.delegateId != expectedDelegateId =>
+            (s, Left("The recorded merger identity changed; inspect it again"))
+          case Some(existing) =>
+            val record = DelegateRegistry.find(existing.delegateId)
+            val tombstone = record.flatMap(_.cancelRequestedAt)
+            val refusal =
+              if record.isEmpty then
+                Some("The merger's delegate record is missing; the state is unclear (fail-closed)")
+              else if tombstone.isEmpty then
+                Some("The merger is not cancelled (no cancel tombstone); it keeps its own recovery path")
+              else if s.requests.exists(r => r.repository == repository && !TerminalRequestStatuses.contains(r.status)) then
+                Some("Integration is in flight for this repository; the merger identity stays")
+              else if s.workspaces.exists(w =>
+                w.repository == repository && (w.reservation.isDefined || MergerOccupiedLifecycles(w.lifecycle))
+              ) then
+                Some("A workspace is still occupied by merger activity; the merger identity stays")
+              else None
+            refusal match
+              case Some(message) => (s, Left(message))
+              case None =>
+                val release = MergerRelease(
+                  eventId = eventId,
+                  project = project,
+                  repository = repository,
+                  releasedDelegateId = existing.delegateId,
+                  replayed = false,
+                  tombstoneAt = tombstone,
+                  cancelledBy = record.flatMap(_.cancelRequestedBy),
+                  reason = reason.take(300),
+                  releasedAt = System.currentTimeMillis()
+                )
+                (
+                  s.copy(
+                    mergers = s.mergers.filterNot(m => m.delegateId == existing.delegateId),
+                    mergerEvents = s.mergerEvents.updated(eventId, release.asJson.noSpaces)
+                  ),
+                  Right(release)
+                )
+          case None => (s, Left("No merger is recorded for this repository"))
+  }
+
   def markMergerInitialization(id: String, status: String, error: Option[String]): Unit = transaction { s =>
     require(Set("initializing", "ready", "failed").contains(status), "Invalid merger initialization status")
     val next = s.mergerBootstraps
@@ -572,6 +686,15 @@ object WorkspaceLedger:
   /** Item phases a worker never touches again. */
   private[delegate] val TerminalItemPhases = Set("completed", "cancelled", "merged-cleanup-pending", "failed")
 
+  /**
+   * Workspace lifecycles that mean merger activity is coupled to the seat (reserved
+   * for a queued request, or resting in a merger phase). A cancelled merger identity
+   * is not releasable while any of these hold; open/closed/development states are not
+   * merger occupation.
+   */
+  private[delegate] val MergerOccupiedLifecycles =
+    Set("reserved", "checking", "merging", "validating", "awaiting-user", "merged-cleanup-pending")
+
   def default: WorkspaceLedger = new WorkspaceLedger(nebflow.shared.PathUtil.dataRoot / "workspaces" / "ledger.json")
 
   def repositoryKey(workspace: os.Path): String =
@@ -613,6 +736,26 @@ object WorkspaceLedger:
     revision: Long = 0L
   )
   final case class Merger(project: String, repository: String, delegateId: String)
+
+  /**
+   * Durable release record for a cancelled merger identity (cancelled-merger recovery
+   * batch). Stored as JSON in `State.mergerEvents` keyed by the deterministic event id
+   * (`release-merger:<repository>:<delegateId>:<tombstoneAt>`): the replay key that
+   * makes concurrent calls and crash retries idempotent, and the audit facts that
+   * outlive the delegate registry's terminal TTL.
+   */
+  final case class MergerRelease(
+    eventId: String,
+    project: String,
+    repository: String,
+    releasedDelegateId: String,
+    replayed: Boolean,
+    tombstoneAt: Option[Long],
+    cancelledBy: Option[String],
+    reason: String,
+    releasedAt: Long
+  )
+  given io.circe.Codec[MergerRelease] = deriveCodec
 
   final case class MergerBootstrap(
     record: DelegateRegistry.Record,
@@ -686,7 +829,9 @@ object WorkspaceLedger:
     requests: List[MergeRequest] = Nil,
     cleanups: Map[String, CleanupClaim] = Map.empty,
     revision: Long = 0L,
-    mergerBootstraps: Map[String, MergerBootstrap] = Map.empty
+    mergerBootstraps: Map[String, MergerBootstrap] = Map.empty,
+    /** Durable release events for cancelled merger identities (keyed by event id). */
+    mergerEvents: Map[String, String] = Map.empty
   )
   given io.circe.Codec[Workspace] = deriveCodec
   given io.circe.Codec[Merger] = deriveCodec
@@ -701,6 +846,7 @@ object WorkspaceLedger:
       cleanups <- c.get[Option[Map[String, CleanupClaim]]]("cleanups")
       revision <- c.get[Option[Long]]("revision")
       bootstraps <- c.get[Option[Map[String, MergerBootstrap]]]("mergerBootstraps")
+      mergerEvents <- c.get[Option[Map[String, String]]]("mergerEvents")
     yield State(
       workspaces,
       mergers,
@@ -708,7 +854,8 @@ object WorkspaceLedger:
       requests.getOrElse(Nil),
       cleanups.getOrElse(Map.empty),
       revision.getOrElse(0L),
-      bootstraps.getOrElse(Map.empty)
+      bootstraps.getOrElse(Map.empty),
+      mergerEvents.getOrElse(Map.empty)
     )
   }
 
