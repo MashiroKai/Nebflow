@@ -14,7 +14,8 @@ object WorkspaceReconcileTool extends Tool:
     "operationId" -> Json.obj("type" -> "string".asJson), "workspaceId" -> Json.obj("type" -> "string".asJson),
     "owner" -> Json.obj("type" -> "string".asJson), "expectedPath" -> Json.obj("type" -> "string".asJson),
     "expectedHead" -> Json.obj("type" -> "string".asJson), "expectedRevision" -> Json.obj("type" -> "integer".asJson),
-    "rootConfirmation" -> Json.obj("type" -> "string".asJson), "acceptanceEvidence" -> Json.obj("type" -> "string".asJson)
+    "rootConfirmation" -> Json.obj("type" -> "string".asJson), "acceptanceEvidence" -> Json.obj("type" -> "string".asJson),
+    "recoverRunning" -> Json.obj("type" -> "boolean".asJson, "description" -> "Root-explicit stale-running recovery: owner session truly terminal, live occupancy zero; atomically transitions the running seat to idle with the completion in one locked transaction".asJson)
   ), "required" -> List("operationId", "workspaceId", "owner", "expectedPath", "expectedHead", "expectedRevision", "rootConfirmation", "acceptanceEvidence").asJson)
   def summarize(input: JsonObject): String = s"WorkspaceReconcile(${input("workspaceId").flatMap(_.asString).getOrElse("?")})"
   def summarizeResult(input: JsonObject, result: String): String = result.take(200)
@@ -31,7 +32,8 @@ object WorkspaceReconcileTool extends Tool:
         revision <- c.get[Long]("expectedRevision")
         confirmation <- c.get[String]("rootConfirmation")
         evidence <- c.get[String]("acceptanceEvidence")
-      yield WorkspaceLedger.CompletionConfirmation(id, workspaceId, owner, path, head, revision, evidence, confirmation)
+        recoverRunning <- c.get[Option[Boolean]]("recoverRunning")
+      yield WorkspaceLedger.CompletionConfirmation(id, workspaceId, owner, path, head, revision, evidence, confirmation, recoverRunning = recoverRunning.getOrElse(false))
       parsed match
         case Left(_) => IO.pure(Left(ToolError("Missing structured reconciliation fields")))
         case Right(request) => WorkspaceReconcile.default.confirm(request).map(_.left.map(ToolError(_)).map(_.asJson.noSpaces))

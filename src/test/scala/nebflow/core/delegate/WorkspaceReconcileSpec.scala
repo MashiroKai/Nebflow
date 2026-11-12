@@ -221,6 +221,98 @@ class WorkspaceReconcileSpec extends CatsEffectSuite:
       assert(verdict.left.exists(_.contains("newer claim")), verdict.toString)
   }
 
+  test("cancel tombstone refuses a completion receipt even with an unreported slot (deterministic)") {
+    val base = DelegateRegistry.Record(id = "d2", executor = "kernel", cwd = "/x", project = None, taskId = None,
+      parentSessionId = "p", title = "t", createdAt = 0L)
+    val receipt = s"workspace-reconcile op2 owner=o workspace=w path=/p head=${"b" * 40} branch=b evidence=e confirmedAt=1"
+    // The exact reported gap: cancelRequestedAt set, reportStatus=None — must NOT receive finish.
+    val cancelledUnreported = base.copy(cancelRequestedAt = Some(123L), cancelRequestedBy = Some("root"))
+    val verdict = DelegateRegistry.decideCompletionWrite(cancelledUnreported, receipt)
+    assert(verdict.isLeft, verdict.toString)
+    assert(verdict.left.exists(_.contains("cancel tombstone")), verdict.toString)
+    // Cancelled + newer-claim slots refuse equally.
+    for cancelled <- List(
+        cancelledUnreported.copy(reportStatus = Some("standby"), reportDetail = Some("waiting")),
+        cancelledUnreported.copy(reportStatus = Some("finish"), reportDetail = Some("older finish"))) do
+      assert(DelegateRegistry.decideCompletionWrite(cancelled, receipt).isLeft)
+    // An already-recorded identical receipt stays idempotent (zero write, no new finish invented).
+    val alreadyOurs = cancelledUnreported.copy(reportStatus = Some("finish"), reportDetail = Some(receipt))
+    assertEquals(DelegateRegistry.decideCompletionWrite(alreadyOurs, receipt), Right(alreadyOurs))
+  }
+
+  test("root-explicit stale-running recovery converges the seat in one locked transaction") {
+    fixture(register = root => List(standardWorkspace(root / "repo", root / "seat").copy(activity = "running"))) { (_, tree, ledger, registry, service) =>
+      val op = request(tree, ledger).copy(recoverRunning = true)
+      for result <- service.confirm(op) yield
+        val done = result.getOrElse(fail(result.toString))
+        assertEquals(done.operationId, op.operationId)
+        val w = ledger.snapshot.workspaces.head
+        assertEquals(w.activity, "idle") // running → idle inside the same transaction as the completion
+        assertEquals(w.branch, "actual-branch")
+        assertEquals(w.revision, op.expectedRevision + 1)
+        assertEquals(ledger.snapshot.completionConfirmations(op.operationId).stage, "completed")
+        assertEquals(registry.calls.size, 1)
+        assert(registry.calls.head._3.contains(s"workspace-reconcile ${op.operationId}"))
+    }
+  }
+
+  test("stale-running recovery is fail-closed on live occupancy, dirty tree, and idle seats") {
+    fixture(register = root => List(standardWorkspace(root / "repo", root / "seat").copy(activity = "running"))) { (root, tree, ledger, registry, _) =>
+      val busyJob = nebflow.core.tools.BgTaskRegistry.ActiveTask(
+        jobId = "job-2", sessionId = "live-1", description = "busy", startedAtMs = 0L, kind = "local")
+      val busy = new WorkspaceOccupancy(_ => IO.pure(DelegateInflightGate.Reading(Nil, readable = true)), _ => IO.pure(List(busyJob)))
+      val idle = new WorkspaceOccupancy(_ => IO.pure(DelegateInflightGate.Reading(Nil, readable = true)), _ => IO.pure(Nil))
+      val service = new WorkspaceReconcile(ledger, busy, registry = StubRegistry())
+      val clean = new WorkspaceReconcile(ledger, idle, registry = StubRegistry())
+      val ledgerBefore = ledger.snapshot
+      val op = request(tree, ledger).copy(recoverRunning = true)
+      for
+        liveRefused <- service.confirm(op)
+        dirtyRefused <- { os.write(tree / "untracked", "dirty"); clean.confirm(op) }
+      yield
+        assert(liveRefused.left.exists(_.contains("live/busy")), liveRefused.toString)
+        assert(dirtyRefused.isLeft, dirtyRefused.toString)
+        assertEquals(ledger.snapshot, ledgerBefore)
+        assert(registry.calls.isEmpty)
+    }
+  }
+
+  test("recoverRunning on an idle seat and plain confirm on a running seat both refuse (gates stay directional)") {
+    fixture(register = root => List(standardWorkspace(root / "repo", root / "seat").copy(activity = "running"))) { (_, tree, ledger, registry, service) =>
+      val stub = StubRegistry()
+      val plain = new WorkspaceReconcile(ledger,
+        new WorkspaceOccupancy(_ => IO.pure(DelegateInflightGate.Reading(Nil, readable = true)), _ => IO.pure(Nil)),
+        registry = stub)
+      val op = request(tree, ledger)
+      for
+        runningRefused <- plain.confirm(op) // plain path requires idle: running seat refuses
+        recovery <- plain.confirm(request(tree, ledger, "rec-1").copy(recoverRunning = true))
+        moved = ledger.snapshot.workspaces.head
+        lateRunningGate <- plain.confirm(request(tree, ledger, "rec-2").copy(recoverRunning = true)) // seat now idle
+        staleGate <- plain.confirm(request(tree, ledger, "rec-3").copy(recoverRunning = true, expectedRevision = moved.revision - 1))
+      yield
+        assert(runningRefused.left.exists(_.contains("open, idle and unreserved")), runningRefused.toString)
+        assert(recovery.isRight, recovery.toString)
+        assert(lateRunningGate.left.exists(_.contains("requires an open, running, unreserved")), lateRunningGate.toString)
+        assert(staleGate.left.exists(_.contains("Stale workspace revision")), staleGate.toString)
+        assertEquals(stub.calls.count(_._2 == "rec-1"), 1)
+        assertEquals(stub.calls.count(call => call._2 == "rec-2" || call._2 == "rec-3"), 0)
+        assertEquals(ledger.snapshot.workspaces.head.activity, "idle")
+    }
+  }
+
+  test("concurrent stale-running recoveries on one revision admit exactly one winner") {
+    fixture(register = root => List(standardWorkspace(root / "repo", root / "seat").copy(activity = "running"))) { (_, tree, ledger, registry, service) =>
+      val a = request(tree, ledger, "rec-a").copy(recoverRunning = true)
+      val b = request(tree, ledger, "rec-b").copy(recoverRunning = true)
+      for outcomes <- List(a, b).parTraverse(service.confirm) yield
+        assertEquals(outcomes.count(_.isRight), 1)
+        assertEquals(ledger.snapshot.completionConfirmations.size, 1)
+        assertEquals(ledger.snapshot.workspaces.head.activity, "idle")
+        assertEquals(registry.calls.size, 1)
+    }
+  }
+
   test("registry sync failure after the ledger commit reports not-converged and replay heals without refinish") {
     fixture(register = root => List(standardWorkspace(root / "repo", root / "seat"))) { (_, tree, ledger, registry, service) =>
       val op = request(tree, ledger)

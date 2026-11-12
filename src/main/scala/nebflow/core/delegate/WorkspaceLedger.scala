@@ -517,6 +517,40 @@ final class WorkspaceLedger(val path: os.Path):
                 completionConfirmations = s.completionConfirmations.updated(operation.operationId, confirmed)), Right(confirmed))
   }
 
+  /**
+   * Root-explicit stale-running recovery: the SAME atomic completion as
+   * [[reconcileCompletion]] but gated on `activity == "running"` — for seats whose
+   * owner session truly ended while the ledger still says running. All identity /
+   * revision / pin-HEAD / dirty checks and the single-transaction transition
+   * (running → idle + branch correction + confirmation) are identical; a live
+   * claim can never interleave because claimDevelopment requires `idle` and the
+   * revision CAS fails after our +1.
+   */
+  def reconcileRunningCompletion(
+    operation: CompletionConfirmation,
+    validate: Workspace => Either[String, String]
+  ): Either[String, CompletionConfirmation] = transaction { s =>
+    s.completionConfirmations.get(operation.operationId) match
+      case Some(existing) if existing.stage == "completed" =>
+        val same = existing.copy(actualBranch = None, recordedAt = 0L, stage = "") == operation.copy(actualBranch = None, recordedAt = 0L, stage = "")
+        (s, if same then Right(existing) else Left("Operation id conflicts with its recorded confirmation"))
+      case _ =>
+        s.workspaces.find(_.id == operation.workspaceId) match
+          case None => (s, Left("Unknown workspace"))
+          case Some(w) if w.revision != operation.expectedRevision => (s, Left("Stale workspace revision"))
+          case Some(w) if w.owner != operation.owner || w.path != operation.expectedPath =>
+            (s, Left("Workspace owner or exact path mismatch"))
+          case Some(w) if w.lifecycle != "open" || w.activity != "running" || w.reservation.nonEmpty =>
+            (s, Left("Running recovery requires an open, running, unreserved workspace"))
+          case Some(w) => validate(w) match
+            case Left(error) => (s, Left(error))
+            case Right(actualBranch) =>
+              val confirmed = operation.copy(actualBranch = Some(actualBranch), stage = "completed")
+              val updated = w.copy(branch = actualBranch, activity = "idle", revision = w.revision + 1)
+              (s.copy(workspaces = s.workspaces.map(x => if x.id == w.id then updated else x),
+                completionConfirmations = s.completionConfirmations.updated(operation.operationId, confirmed)), Right(confirmed))
+  }
+
   def baseline(repository: String): String = snapshot.baselines.getOrElse(repository, "main")
 
   def setBaseline(repository: String, branch: String): Either[String, Unit] = transaction { s =>
@@ -716,7 +750,8 @@ object WorkspaceLedger:
     explicitRootConfirmation: String,
     actualBranch: Option[String] = None,
     recordedAt: Long = 0L,
-    stage: String = "completed"
+    stage: String = "completed",
+    recoverRunning: Boolean = false
   )
   given io.circe.Codec[CompletionConfirmation] = deriveCodec
 

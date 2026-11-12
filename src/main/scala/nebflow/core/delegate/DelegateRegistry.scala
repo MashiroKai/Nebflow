@@ -373,6 +373,7 @@ object DelegateRegistry:
    */
   private[delegate] def decideCompletionWrite(rec: Record, confirmation: String): Either[String, Record] =
     if rec.reportStatus.contains("finish") && rec.reportDetail.contains(confirmation) then Right(rec) // idempotent replay
+    else if rec.cancelRequestedAt.isDefined then Left("delegate has a cancel tombstone; completion receipt refused")
     else if rec.reportStatus.isEmpty then Right(rec.copy(reportStatus = Some("finish"), reportDetail = Some(confirmation), reportSuggestion = None))
     else Left("registry report slot carries a newer claim; stale reconcile receipt refused")
 

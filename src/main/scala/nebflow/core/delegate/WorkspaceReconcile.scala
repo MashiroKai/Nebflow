@@ -69,15 +69,26 @@ final class WorkspaceReconcile(
           case Left(error) => IO.pure(Left(error))
           case Right(()) => IO.blocking {
             val confirmed = operation.copy(actualBranch = Some(branch), recordedAt = now(), stage = "completed")
-            ledger.reconcileCompletion(confirmed, current =>
-              if current.path != realPath || current.owner != operation.owner then Left("Workspace identity changed")
-              else
-                val currentHead = git1(realPath, "rev-parse", "--verify", "HEAD^{commit}")
-                val currentStatus = git1(realPath, "status", "--porcelain", "--untracked-files=all")
-                if currentHead != pinnedHead then Left("Workspace HEAD changed during reconciliation")
-                else if currentStatus.nonEmpty then Left("Workspace became dirty during reconciliation")
-                else Right(branch)
-            ) match
+            val settled =
+              if operation.recoverRunning then ledger.reconcileRunningCompletion(confirmed, current =>
+                if current.path != realPath || current.owner != operation.owner then Left("Workspace identity changed")
+                else
+                  val currentHead = git1(realPath, "rev-parse", "--verify", "HEAD^{commit}")
+                  val currentStatus = git1(realPath, "status", "--porcelain", "--untracked-files=all")
+                  if currentHead != pinnedHead then Left("Workspace HEAD changed during reconciliation")
+                  else if currentStatus.nonEmpty then Left("Workspace became dirty during reconciliation")
+                  else Right(branch)
+              )
+              else ledger.reconcileCompletion(confirmed, current =>
+                if current.path != realPath || current.owner != operation.owner then Left("Workspace identity changed")
+                else
+                  val currentHead = git1(realPath, "rev-parse", "--verify", "HEAD^{commit}")
+                  val currentStatus = git1(realPath, "status", "--porcelain", "--untracked-files=all")
+                  if currentHead != pinnedHead then Left("Workspace HEAD changed during reconciliation")
+                  else if currentStatus.nonEmpty then Left("Workspace became dirty during reconciliation")
+                  else Right(branch)
+              )
+            settled match
               case Left(error) => Left(error)
               case Right(done) => syncRegistry(done).map(_ => done)
           }
@@ -128,7 +139,8 @@ final class WorkspaceReconcile(
   private def sameIdentity(a: CompletionConfirmation, b: CompletionConfirmation): Boolean =
     a.workspaceId == b.workspaceId && a.owner == b.owner && a.expectedPath == b.expectedPath &&
       a.expectedHead == b.expectedHead && a.expectedRevision == b.expectedRevision &&
-      a.acceptanceEvidence == b.acceptanceEvidence && a.explicitRootConfirmation == b.explicitRootConfirmation
+      a.acceptanceEvidence == b.acceptanceEvidence && a.explicitRootConfirmation == b.explicitRootConfirmation &&
+      a.recoverRunning == b.recoverRunning
 
   private def fieldsValid(operation: CompletionConfirmation): Boolean =
     operation.operationId.trim.nonEmpty && operation.operationId.length <= 200 &&
