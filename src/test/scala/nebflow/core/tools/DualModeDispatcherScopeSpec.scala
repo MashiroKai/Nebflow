@@ -597,6 +597,133 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
   }
 
   test(
+    "D9b: natural completion is not cancel authorization — in-flight chains keep the active ledger state, no chain-cancelled audit"
+  ) {
+    val ws = os.temp.dir(prefix = "nb-dm-d9b-", deleteOnExit = false)
+    val system = ActorSystem(s"dm-d9b-${scala.util.Random.nextInt(1000000)}")
+    val delegateId = "delegate-general-d9b8b9c0"
+    mkModeRecord(delegateId, DualModeConfig.ModeDispatcher, cwd = ws)
+    for
+      res <- mkResources(system, new ScriptLlm(_ => "unused").handle)
+      mo <- mount(ws, delegateId, system, res)
+      h = mo.getOrElse(fail("host must mount"))
+      // 在飞链：n9c1（pending）→ n9c2（pending）——父自然完成时仍在飞。
+      _ <- seedNode(h, mkNode("n9c1", nebflow.core.project.NodeLifecycle.Pending))
+      _ <- seedNode(h, mkNode("n9c2", nebflow.core.project.NodeLifecycle.Pending, in = List("n9c1")))
+      snap9b <- h.store.snapshot
+      chainId = nebflow.core.project.FlowMapStore.topologicalChains(snap9b.nodes.values).head.id
+      // 自然完成/普通归档收口（cancelAuthorized = false——无取消墓碑）。
+      _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId, cancelAuthorized = false)
+      events <- readEvents(ws)
+      controlAfter <- ledgerControlOf(h, chainId)
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(
+        controlAfter,
+        nebflow.core.project.ChainLedger.StatusActive,
+        "natural completion must NOT mark the in-flight chain cancelled (no tombstone, no authorization)"
+      )
+      assert(
+        !events.exists(e => e.contains("chain-cancelled") && e.contains(chainId)),
+        s"no chain-cancelled audit may land without cancel intent: ${events.mkString("\n")}"
+      )
+    end for
+  }
+
+  test(
+    "D9c (acceptance gate): onTerminalCleanup wiring — natural completion (no tombstone) leaves the in-flight chain active through the real terminal closure"
+  ) {
+    val ws = os.temp.dir(prefix = "nb-dm-d9c-", deleteOnExit = false)
+    val system = ActorSystem(s"dm-d9c-${scala.util.Random.nextInt(1000000)}")
+    val delegateId = "delegate-general-d9c8b9c0"
+    mkModeRecord(delegateId, DualModeConfig.ModeDispatcher, cwd = ws)
+    for
+      res <- mkResources(system, new ScriptLlm(_ => "unused").handle)
+      mo <- mount(ws, delegateId, system, res)
+      h = mo.getOrElse(fail("host must mount"))
+      // 在飞链：n9d1（pending）→ n9d2（pending）——收口授权判据的接线面（
+      // DelegateTerminal: record.cancelRequestedAt ⇒ cancelAuthorized）在此受测。
+      _ <- seedNode(h, mkNode("n9d1", nebflow.core.project.NodeLifecycle.Pending))
+      _ <- seedNode(h, mkNode("n9d2", nebflow.core.project.NodeLifecycle.Pending, in = List("n9d1")))
+      _ <- h.store.reconcileChainLedger(System.currentTimeMillis())
+      snap9d <- h.store.snapshot
+      chainId = nebflow.core.project.FlowMapStore.topologicalChains(snap9d.nodes.values).head.id
+      controlBefore <- ledgerControlOf(h, chainId)
+      // 生产终态收口单点全序列（摘要/台账/宿主卸载/归档/待命清算）——记录上无取消墓碑。
+      _ <- nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(res, delegateId, "parent-scope", "completed", "completed")
+      recordAfter = nebflow.core.delegate.DelegateRegistry.find(delegateId)
+      events <- readEvents(ws)
+      controlAfter <- ledgerControlOf(h, chainId)
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(controlBefore, nebflow.core.project.ChainLedger.StatusActive, "precondition: the in-flight chain reads active")
+      assertEquals(
+        recordAfter.flatMap(_.cancelRequestedAt),
+        None: Option[Long],
+        "natural terminal writes no tombstone (archive flag only)"
+      )
+      assertEquals(
+        recordAfter.flatMap(_.archivedAt).isDefined,
+        true,
+        "natural terminal auto-archives (pre-existing leg stays intact)"
+      )
+      assertEquals(
+        controlAfter,
+        nebflow.core.project.ChainLedger.StatusActive,
+        "onTerminalCleanup must NOT mark the in-flight chain cancelled without a tombstone (cancelAuthorized derives from the record)"
+      )
+      assert(
+        !events.exists(e => e.contains("chain-cancelled") && e.contains(chainId)),
+        s"no chain-cancelled audit may land for a natural terminal: ${events.mkString("\n")}"
+      )
+    end for
+  }
+
+  test(
+    "D9d (acceptance gate): onTerminalCleanup wiring — explicit cancel tombstone still authorizes the chain-cancelled closure (no bypass)"
+  ) {
+    val ws = os.temp.dir(prefix = "nb-dm-d9e-", deleteOnExit = false)
+    val system = ActorSystem(s"dm-d9d-${scala.util.Random.nextInt(1000000)}")
+    val delegateId = "delegate-general-d9d8b9c0"
+    mkModeRecord(delegateId, DualModeConfig.ModeDispatcher, cwd = ws)
+    for
+      res <- mkResources(system, new ScriptLlm(_ => "unused").handle)
+      mo <- mount(ws, delegateId, system, res)
+      h = mo.getOrElse(fail("host must mount"))
+      _ <- seedNode(h, mkNode("n9e1", nebflow.core.project.NodeLifecycle.Pending))
+      _ <- seedNode(h, mkNode("n9e2", nebflow.core.project.NodeLifecycle.Pending, in = List("n9e1")))
+      _ <- h.store.reconcileChainLedger(System.currentTimeMillis())
+      snap9e <- h.store.snapshot
+      chainId = nebflow.core.project.FlowMapStore.topologicalChains(snap9e.nodes.values).head.id
+      // 明确取消：墓碑先行（doCancel 同款单写原语——幂等单旗）。
+      _ <- IO.blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(delegateId, "acceptance-gate")).void
+      _ <- nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(res, delegateId, "parent-scope", "cancelled", "cancelled")
+      events <- readEvents(ws)
+      controlAfter <- ledgerControlOf(h, chainId)
+      nodeStates <- h.store.snapshot.map(s => s.nodes.map { case (k, v) => k -> v.status })
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(
+        controlAfter,
+        nebflow.core.project.ChainLedger.StatusCancelled,
+        "explicit tombstone authorizes the in-flight chain cancelled closure through the same terminal sequence"
+      )
+      assert(
+        events.exists(e => e.contains("chain-cancelled") && e.contains(chainId)),
+        s"chain-cancelled audit must land on the tombstone leg: ${events.mkString("\n")}"
+      )
+      assertEquals(
+        nodeStates.get("n9e1"),
+        Some(nebflow.core.project.NodeLifecycle.Pending),
+        "node states untouched on disk (revival-window safety preserved on the authorized leg)"
+      )
+    end for
+  }
+
+  test(
     "D10: blocked is never auto-disposed at retirement — a blocked-member chain is skipped by both the sweep and the cancel closure"
   ) {
     val ws = os.temp.dir(prefix = "nb-dm-d10-", deleteOnExit = false)

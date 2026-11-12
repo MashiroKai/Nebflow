@@ -520,8 +520,14 @@ object DelegateTerminal:
     // R3 批（2026-10-29 · 审计二 P3/P10）：终态屏障单点不变——completed/failed/
     // cancelled 三种终态都经本序列，取消链（NodeCancel 链级腿 / 会话终止遗留在飞链）
     // 与自然完成链收敛到同一条「摘要→台账→unmount→宽限删」路径。
+    // 终态收口单点批（2026-11-12 · 误回收修复）：在飞链的台账 cancelled 收口只在
+    // 父会话带明确取消墓碑（cancelRequestedAt 在案——doCancel 先行单写）时进行；
+    // 自然完成/普通归档不是取消授权，在飞链保持真实台账状态（不假取消）。
     val dispatcherLifecycle = DelegateFlowMapLifecycle.applies(record)
-    val summaryFlush = if dispatcherLifecycle then DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId) else IO.unit
+    val cancelAuthorized = record.flatMap(_.cancelRequestedAt).isDefined
+    val summaryFlush =
+      if dispatcherLifecycle then DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId, cancelAuthorized)
+      else IO.unit
     val hostUnmount =
       (summaryFlush *> nebflow.core.project.DelegateFlowHosts
         .unmount(delegateId))

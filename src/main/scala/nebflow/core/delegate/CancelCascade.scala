@@ -136,12 +136,15 @@ object CancelCascade:
 
   // ── 孤儿判定（缺陷七 ②；与缺陷六「孤儿链」同族：父子账本不一致） ──────────
 
-  /** 已终态的父会话 id 集：取消墓碑在案 ∪ 已归档（两者都是**在案事实**，非推断）。 */
+  /**
+   * 已明确取消的父会话 id 集。普通归档仅是保留/查询状态，不构成取消后代的授权；
+   * 只有显式 cancel tombstone 表达了递归终止意图。
+   */
   def terminalParents(delegates: List[DelegateRegistry.Record]): Set[String] =
-    delegates.filter(r => r.cancelRequestedAt.isDefined || r.archivedAt.isDefined).map(_.id).toSet
+    delegates.filter(_.cancelRequestedAt.isDefined).map(_.id).toSet
 
   /**
-   * 孤儿 = 父已终态而在册仍活（父 tombstone/archive 在案）的子会话记录。
+   * 孤儿 = 父有明确取消墓碑、在册仍活的子会话记录。普通完成后的归档不授权杀子。
    * 只看齐 `parentSessionId`（自引用除外）。
    */
   def detectOrphans(reg: Map[String, AgentRecord], terminalParentIds: Set[String]): List[Orphan] =
