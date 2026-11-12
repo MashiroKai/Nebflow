@@ -211,11 +211,27 @@ object SessionMailbox:
       IO.blocking {
         lock.synchronized {
           val now = System.currentTimeMillis()
+          // #2178（作者裁定）：AlreadyPresent 必须**说清抑制面**——pending（待消费的
+          // 在箱重）/ taken（已取走未清的残件）/ delivered 墓碑（已消费台账）三种
+          // 是不同的物理事实，不得统一谎称「盘上只有一份」。同 identity 重入被抑制
+          // ≠ 内容不该投：跨 Mail 续轮的新完成必须携带**新 generation 身份**
+          // （`taskId#gen`）才能再次入箱。
           val alreadyTaken = scanDir(recipientSid, takenDir(recipientSid)).exists(_._1.identity == identity)
-          if deduplicateReceipts && (alreadyTaken || deliveredContainsSync(recipientSid, Set(identity)).nonEmpty)
-          then MailResult.AlreadyPresent
+          val tombstoned = deliveredContainsSync(recipientSid, Set(identity))
+          if deduplicateReceipts && (alreadyTaken || tombstoned.nonEmpty) then
+            val surface = if alreadyTaken then "taken" else "delivered-tombstone"
+            logger.info(
+              s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$identity' ($surface) — " +
+                "the earlier copy was already delivered/consumed; a new round must carry a NEW generation identity, not reuse this one"
+            )
+            MailResult.AlreadyPresent
           else existingPending(recipientSid, identity) match
-            case Some(e) if !coalesce => MailResult.AlreadyPresent
+            case Some(e) if !coalesce =>
+              logger.info(
+                s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$identity' (pending) — " +
+                  "an unconsumed copy of this identity is already in the box"
+              )
+              MailResult.AlreadyPresent
             case Some(e) =>
               // 原位合条：同文件名（seq 不变）重写载荷；压制计数累加。放行条目
               // 携带「已合条 N 条」摘要（设计 §2.5/§4.5：风暴的代价被合条吸收，
@@ -436,6 +452,18 @@ object SessionMailbox:
     else decode[Delivered](os.read(f)) match
       case Right(d) => d.ids.toSet.intersect(identities)
       case Left(_) => Set.empty[String]
+
+  /**
+   * 墓碑前缀查询（#2178 generation 身份面）：真实终态入箱身份为 `taskId#gen`，
+   * boot 对账等只持裸 taskId 的判账方用它判定「该任务的任一代已消费」。
+   */
+  def deliveredContainsPrefix(sid: String, prefix: String): IO[Boolean] =
+    if prefix.trim.isEmpty then IO.pure(false)
+    else IO.blocking {
+      val f = deliveredFile(sid)
+      if !os.exists(f) then false
+      else decode[Delivered](os.read(f)).fold(_ => false, d => d.ids.exists(_.startsWith(prefix)))
+    }.handleErrorWith(_ => IO.pure(false))
 
   // ── 内部扫描（同步面）────────────────────────────────────────────────
 
