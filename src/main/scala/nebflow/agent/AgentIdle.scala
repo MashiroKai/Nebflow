@@ -79,10 +79,19 @@ private[agent] object AgentIdle:
    * [[nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent]]。
    */
   private def ackDelegateDelivery(event: AgentCommand.ExternalEvent): IO[Unit] =
+    // 完成通道修复批（2026-11-12）：无身份的 delegate 终态事件（correlationId /
+    // parentSessionId 任一为空——合成注入件、遗留重放件）**不进终端验收面**。
+    // 终端验收合同要求 owner+recipient 双非空（真实完成通道流量恒带两者，
+    // CompletionDebtStore.checkAcceptance 的 require 是对的）；无身份件没有债
+    // 身份可验，进面即 require 崩掉整个 actor、注入轮死透（ReminderWiringSpec.①
+    // 15s waitUntil 红，阶梯证据 /tmp/ladder-a73082c36.log）。作者语义（#2141 裁定
+    // 口径）：无可监督对象时完成必须照常回流，不是把唤醒轮炸死。跳过债面 = 无债
+    // 可记（record 也要求 owner 非空，空身份本就无债），交付回执确认不受影响。
+    val owner = event.correlationId.getOrElse("")
+    val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
     val debtAck =
-      if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType) then
-        val owner = event.correlationId.getOrElse("")
-        val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
+      if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType)
+        && owner.nonEmpty && recipient.nonEmpty then
         nebflow.core.mail.CompletionDebtStore.checkAcceptance(owner, recipient, event).flatMap {
           case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict =>
             NebflowLogger.forName("nebflow.agent.idle").error(s"conflicting/untrusted terminal '$owner' withheld; completion debt retained")
