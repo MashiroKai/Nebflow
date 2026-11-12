@@ -48,6 +48,8 @@ object CompletionDebtStore:
   )
   private val acceptedKey = "completion-accepted.json"
   private val terminalAcceptedLock = new Object
+  // Serialize all debt read-modify-write operations within this process.
+  private val debtLock = new Object
   /** 接收账容量（drop-oldest）：每轮一行，防多年续轮无界增长。 */
   val MaxAcceptedEntries: Int = 256
   private def acceptedFile(recipient: String): os.Path =
@@ -126,7 +128,7 @@ object CompletionDebtStore:
    *   - 读面损坏（Left）同样走新代覆写：损坏债不能永久阻断后续轮次的完成义务，
    *     原字节已在 .corrupt 保全（read 侧职责）。
    */
-  def record(ownerSessionId: String, recipientSessionId: String, messages: List[Message]): IO[Boolean] = IO.blocking {
+  def record(ownerSessionId: String, recipientSessionId: String, messages: List[Message]): IO[Boolean] = IO.blocking { debtLock.synchronized {
     require(ownerSessionId.trim.nonEmpty, "completion debt requires an owner session id")
     val p = file(ownerSessionId)
     os.makeDir.all(p / os.up)
@@ -141,7 +143,7 @@ object CompletionDebtStore:
         // 都是**新一轮完成**：一律铸造新代覆写（同代保留只在上方早退分支发生）。
         AtomicJson.writeSync(p, Debt(ownerSessionId, recipientSessionId, messages, "deliverable", java.util.UUID.randomUUID().toString).asJson.noSpaces)
         true
-  }
+  }}
 
   private def read(ownerSessionId: String): Either[String, Option[Debt]] =
     val p = file(ownerSessionId)
@@ -166,18 +168,18 @@ object CompletionDebtStore:
     .handleError(e => Left(Option(e.getMessage).getOrElse(e.getClass.getSimpleName)))
 
   /** Acknowledge only the matching delivered payload; conflict/malformed files are never cleared. */
-  def acknowledge(owner: String, recipient: String, messages: List[Message]): IO[Boolean] = IO.blocking {
+  def acknowledge(owner: String, recipient: String, messages: List[Message], generation: String): IO[Boolean] = IO.blocking { debtLock.synchronized {
     read(owner) match
       case Right(Some(debt)) if debt.phase == "cancelled" => false
-      case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages =>
+      case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages && debt.generation == generation =>
         AtomicJson.writeSync(file(owner), debt.copy(phase = "settled").asJson.noSpaces)
         true
       case Right(None) => true
       case _ => false
-  }
+  }}
 
   /** Cancellation is a durable tombstone racing record/ack; old completion cannot overwrite it. */
-  def cancel(owner: String): IO[Unit] = IO.blocking {
+  def cancel(owner: String): IO[Unit] = IO.blocking { debtLock.synchronized {
     val p = file(owner)
     os.makeDir.all(p / os.up)
     val prior = read(owner).toOption.flatten
@@ -186,6 +188,6 @@ object CompletionDebtStore:
       case Some(_) => ()
       case None =>
         val recipient = prior.map(_.recipientSessionId).filter(_.nonEmpty).getOrElse("cancelled")
-        AtomicJson.writeSync(p, Debt(owner, recipient, Nil, "cancelled", prior.map(_.generation).getOrElse("")).asJson.noSpaces)
-  }
+          AtomicJson.writeSync(p, Debt(owner, recipient, Nil, "cancelled", prior.map(_.generation).getOrElse("")).asJson.noSpaces)
+  }}
 end CompletionDebtStore

@@ -1464,10 +1464,15 @@ private[agent] object AgentProcessing:
               // satisfies one outstanding slot of the parallel batch. The drain at the
               // turn boundary only releases subtask/delegate events once the counter
               // hits 0, so a batch completing mid-turn is still injected together.
+              // 完成通道修复批（2026-11-12）：与 idle 面 ackDelegateDelivery 同判——
+              // 无身份（owner/recipient 任一为空）的 delegate 终态事件不进终端验收面
+              // （checkAcceptance 的 require 会炸掉忙面 actor，见 ReminderWiringSpec.①
+              // 阶梯证据）；无债身份可验 ⇒ 跳过债面，事件照常入队。
+              val owner = event.correlationId.getOrElse("")
+              val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
               val completionDebtAck =
-                if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType) then
-                  val owner = event.correlationId.getOrElse("")
-                  val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
+                if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType)
+                  && owner.nonEmpty && recipient.nonEmpty then
                   val completionEvent = event.copy(payload = payload)
                   nebflow.core.mail.CompletionDebtStore.checkAcceptance(owner, recipient, completionEvent).flatMap {
                     case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict =>
