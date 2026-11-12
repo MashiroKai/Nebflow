@@ -46,17 +46,16 @@ object DelegateTool extends Tool:
   val MaxDepth: Int = 5
 
   /**
-   * brief 申报纪律行（提示词来源拆分批 2026-10-08 上提为公开常量——上提只为
-   * 判据门可钉：`PromptFaceSplitSpec` 断言本行 = delegate_report 纪律且模型可见面
-   * 模型可见面零申报工具指令；文本内容 = 原 spawnWithPlugins 局部 `reportLine`，#566 起两态：
-   * blocked 类别退役——报不了的腿照常 finish，阻塞事实写进终稿）。
-   * S7/S8「node 同款提醒（防忘记调用）」的最小形态——delegate 常为单 turn 会话，
-   * 提醒落在 brief 而非中途 ladder；状态矩阵批 2026-11-01 起「未申报」不再是
-   * 静默放行——引擎以 system reminder 提醒补报（standby 或 finish），finish 是
-   * 引擎唯一可判完成的申报。
+   * brief 终态语义行（提示词来源拆分批 2026-10-08 上提为公开常量——上提只为
+   * 判据门可钉：`PromptFaceSplitSpec` 断言本行 = delegate 终态语义且模型可见面
+   * 零申报工具指令）。终态申报工具通道退役（T2 批）后本行钉的是**纯文本语义**：
+   * 回合结束 = 完成事件，交付 = 末条正文本体。
+   * S7/S8「node 同款提醒（防忘记交付）」的最小形态——delegate 常为单 turn 会话，
+   * 提醒落在 brief 而非中途 ladder；blocked 类别已随结构化通道退役——做不成
+   * 的腿照常收尾，阻塞事实写进终稿正文。
    */
   val BriefReportLine: String =
-    """[report] Before ending a round call delegate_report(category="finish"|"standby", detail=…). finish means the task work is complete: commit changes on your branch, state verification and artifacts, and write the work result as final text. Your identity and workspace remain open for Mail after this round; completion never authorizes merging or cleanup. standby means waiting for instructions or downstream work, without a completion delivery. Unmerged commits may remain in an idle workspace. Merge requests belong exclusively to the project's merger and require separate user authorization. Do not merge, push, publish or remove the worktree on your own. finish is refused while your scope still has nonterminal nodes; finish/cancel them or standby."""
+    """[report] Your final assistant text IS the deliverable: end the task by writing the work result as your final text — self-contained, the work result first, verification evidence included. Commit changes on your branch before wrapping up when the task produces them. If the task could not be completed, say the blocker plainly in the same final text — there is no separate blocked channel. Your identity and workspace remain open for Mail after this round; completion never authorizes merging or cleanup. Unmerged commits may remain in an idle workspace. Merge requests belong exclusively to the project's merger and require separate user authorization. Do not merge, push, publish or remove the worktree on your own. Wrapping up while your own scope still has nonterminal nodes is refused by the engine: finish or cancel them first."""
 
   /**
    * D12-b reset 警示行（delegate reset 零闸治理，作者裁定 2026-10-23）：就地腿
@@ -177,7 +176,7 @@ object DelegateTool extends Tool:
 
   /**
    * delegate brief 装配单点（sleep-poll 禁令批 C 段抽纯函数——spec 判红锚）。
-   * 布局：工作座行（+ 绑定行）→ reset 警示行（D12-b）→ delegate_report 纪律行
+   * 布局：工作座行（+ 绑定行）→ reset 警示行（D12-b）→ 终态语义行
    * （[[BriefReportLine]]）→ 等待纪律铁律（[[Defaults.NoSleepPollRule]]）→
    * 插件能力查询行（[[Defaults.PluginDiscoveryLine]]，stand-plugins 批）→
    * output 块纪律行（[[Defaults.OutputBlockRule]]，作者令 2026-10-31）→
@@ -1108,7 +1107,7 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     attachmentPlan: DelegateAttachments.Plan = DelegateAttachments.empty
   ): IO[Either[ToolError, String]] =
     // 提示词来源拆分批（2026-10-08）：delegate spawn 走 **delegate 面解析路径**
-    // `delegateEntry`（= delegate_report 纪律的系统提示词；节点面恒走
+    // `delegateEntry`（= delegate 终态语义的系统提示词；节点面恒走
     // `EntityLoader.loadAgent` → `entry`，两来源机械可分）。判据门 =
     // `nebflow.core.entity.PromptFaceSplitSpec`。
     IO.blocking(nebflow.core.entity.BuiltinAgents.delegateEntry(KernelAgentName).map(_.toAgentDef).get).flatMap {
@@ -1513,8 +1512,8 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
         )
         // brief：工作座行 + 判定机的 working-branch 申报行（🔴 均模型可见——
         // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字——无绑定 = 非 git
-        // 或纯读腿（合法形态，非仅失败降级））+ delegate_report
-        // 申报纪律行（[[BriefReportLine]]，来源拆分批上提为公开常量以便判据门钉住）
+        // 或纯读腿（合法形态，非仅失败降级））+ 终态语义行
+        // （[[BriefReportLine]]，来源拆分批上提为公开常量以便判据门钉住）
         // + sleep-poll 禁令批 C 段：等待纪律铁律（Defaults.NoSleepPollRule 单点
         // 文本——节点脚注/subagent 步同源；747cd36a 实撞：5h16m sleep 570 心跳
         // 轮询的启动面防线）。装配单点 = [[assembleBrief]]（spec 判红锚）。

@@ -15,7 +15,7 @@ import nebflow.shared.{Defaults, NebflowLogger}
  *
  * == 与既有三态的分工（语义分工表见本批 docs/ 的冻结态状态机文档）==
  *   - `standby`（案A 批 2026-10-31）= **自愿待命**（回合正常收尾、申报
- *     `delegate_report(category="standby")`，等作者给活）——actor 活着、状态
+ *     显式待命（状态槽 standby，等作者给活）——actor 活着、状态
  *     `Waiting`、等待合法；
  *   - `frozen`（本件）= **异常冻结**（LLM 层故障 / 工具层不可恢复错误 / 引擎侧
  *     异常 / 配额取消）——同一会话（同 id、同历史、同 worktree）就地停住，

@@ -118,8 +118,8 @@ class DelegateCompletionMatrixSpec extends CatsEffectSuite:
       idle.startsWith("<system-reminder>") && idle.trim.endsWith("</system-reminder>"),
       "reminder 注入形态保留（idle 行的唯一注入腿）"
     )
-    assert(idle.contains("delegate_report(category=\"standby\""), "催其补报 standby")
-    assert(idle.contains("finish"), "并给 finish/merge 出口")
+    assert(idle.contains("STATE YOUR POSITION NOW"), "催其正文交代（待命或终稿）")
+    assert(idle.contains("write your final report as normal text output"), "并给终稿出口（终态 = 正文本体）")
   }
 
 end DelegateCompletionMatrixSpec

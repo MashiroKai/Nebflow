@@ -51,7 +51,7 @@ class CompletionGateSpec extends CatsEffectSuite:
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  // ── harness（NodeBlockedReentrySpec 同款，mountEngineOnly 增 gateRunner 注入）──
+  // ── harness (mountEngineOnly with an injected gateRunner) ──
 
   /** stub runner 状态：status 行集 / ahead 数 / 失败注入。 */
   private final case class StubGit(
@@ -419,7 +419,7 @@ class CompletionGateSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly(name, ws, system, res, runner)
       ctx = mkCtx(res, system, ws.toString)
-      // B（wiring，无 task）种子——A 的 out 投递断言点（NodeBlockedReentrySpec 同款）
+      // B (wiring, no task) seed — the out-delivery assertion point of A
       _ <- rt.store.mutate(s =>
         s.copy(nodes =
           s.nodes ++ Map(

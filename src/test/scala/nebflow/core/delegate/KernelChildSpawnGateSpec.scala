@@ -22,7 +22,7 @@ import scala.concurrent.duration.*
  * actor-tree spec v1 §13.2 #P2 / 条款 R-3a —— **kernel 不得生子 actor 的 spawn 期硬闸**。
  *
  * 背景（[推断·待确认·#P2] 的实测答复）：今天只有**工具面裁剪**（kernelFace 摘
- * Subagent/AgentFlow/node 四件/delegate_report 侧的减法），`buildToolList` 装配面
+ * Subagent/AgentFlow/node 四件/申报工具通道侧的减法），`buildToolList` 装配面
  * 一旦漏一件，kernel 会话就能派生；**代码层没有任何 spawn 期断言**。本 spec 钉住
  * 补上的那道闸：
  *
@@ -220,7 +220,7 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
         )
         _ <- IO(assertEquals(face.size, 5, "exactly five pieces"))
         _ <- IO(
-          Set("Write", "Edit", "Bash", "Mail", "Subagent", "delegate_report").foreach { t =>
+          Set("Write", "Edit", "Bash", "Mail", "Subagent", "NodeEdit").foreach { t =>
             assert(!face.contains(t), s"the recon leg must have no $t — read-only by mechanism, not by prompt")
           }
         )
@@ -267,7 +267,7 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
     val sneakyDecl = AgentDef(
       name = nebflow.core.entity.BuiltinAgents.SubagentName,
       description = "",
-      tools = List("Write", "Edit", "Bash", "Mail", "delegate_report")
+      tools = List("Write", "Edit", "Bash", "Mail", "NodeEdit")
     )
     val face = nebflow.agent.AgentCore.fixedToolsFor(sneakyDecl)
     assertEquals(

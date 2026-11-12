@@ -953,7 +953,7 @@ export default {
   // Waiting 行同词；申报 standby 的行走 standby 词）。
   'subagents.status.waiting': '停靠等待中',
   'subagents.status.waitingMerge': '停靠等待中',
-  // delegate 显式待命态（delegate_report standby）——行状态位直显「待命」
+  // delegate 显式待命态（状态槽 standby）——行状态位直显「待命」
   // （tooltip = 申报的「在等什么」）。
   'subagents.status.standby': '待命（等作者）',
   'subagents.status.idle': '空闲',
@@ -3012,7 +3012,7 @@ export default {
   // 的 `promptFaces` 字段（判据单点 = BuiltinAgents.panelPromptFaces）。
   'agentManager.faceDelegate': 'Delegate 目标',
   'agentManager.faceNode': 'Node（flow 节点）',
-  'agentManager.faceDelegateHint': 'Delegate 会话收到的系统提示词（delegate_report 纪律）。',
+  'agentManager.faceDelegateHint': 'Delegate 会话收到的系统提示词（delegate 终态语义）。',
   'agentManager.faceNodeHint': 'flow 节点会话收到的系统提示词（节点终态申报纪律）。',
   'explorer.newFile': '新建文件',
   'explorer.newFolder': '新建文件夹',

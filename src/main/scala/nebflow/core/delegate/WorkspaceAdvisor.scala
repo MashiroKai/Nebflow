@@ -416,7 +416,7 @@ object WorkspaceAdvisor:
   val Origin: String = "advisor"
 
   /** The persisted finish-report value this advisor trusts (single source with the report tool). */
-  val FinishReport: String = nebflow.core.tools.DelegateReportTool.FinishValue
+  val FinishReport: String = nebflow.core.delegate.DelegateRegistry.FinishValue
 
   private val LifecycleOpen: String = "open"
   private val ActivityIdle: String = "idle"

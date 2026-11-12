@@ -19,7 +19,7 @@ import nebflow.core.tools.NodeTools
  * gate→completed 原路径——「完成即投递 + 事后回看」，不设人工闸门。
  *
  * `blocked` = **退役 token**（no-blocked-semantics 一期：blocked 终态整体退役，
- * 引擎侧零写点、`node_report` 入参即拒；块值仅为迁移 legacy 存量行保留——
+ * 引擎侧零写点、文本锚定也不再产生该终态；块值仅为迁移 legacy 存量行保留——
  * 行为面 = 重激活/abandon 可用、不自动归档不自动取消，可见性按 legacy 行处理）。
  *
  * interrupted（中断恢复语义批 2026-09-13，spec
@@ -206,20 +206,20 @@ object CancelSource:
 
 end CancelSource
 
-/** Structured node_report declaration (category / detail / suggestion) — the payload the
-  * node_report registry stores and terminal chains consume. Formerly `BlockedFeedback`
-  * (the blocked terminal retired: blocked is no longer a reachable node state; the shape
-  * is unchanged so legacy journal/JSONL rows keep decoding).
+/** Structured node feedback (category / detail / suggestion): a verifier FAIL verdict
+  * (issues + requirements) travels in it, and legacy blocked rows keep their stored feedback
+  * in it. Formerly `BlockedFeedback` (the blocked terminal retired: blocked is no longer a
+  * reachable node state; the shape is unchanged so legacy journal/JSONL rows keep decoding).
   */
-case class NodeReportFeedback(
-  category: String, // finish | pass | fail (role-gated at the node_report tool layer)
+case class NodeFeedback(
+  category: String, // "other" for a verifier FAIL verdict; legacy blocked rows keep their stored class
   detail: String,
   suggestion: String
 )
 
-object NodeReportFeedback:
+object NodeFeedback:
   given Configuration = Configuration.default
-  given Codec[NodeReportFeedback] = ConfiguredCodec.derived
+  given Codec[NodeFeedback] = ConfiguredCodec.derived
 
 /**
  * LoopNode 配置（LoopNode 批 2026-09-06，主设计 20260902_flowmap-engine-evolution-design.md §2）。
@@ -836,7 +836,7 @@ case class NodeDef(
    * the field survives so stored legacy rows keep decoding and the detail/archive views
    * can still render them.
    */
-  blockedFeedback: Option[NodeReportFeedback] = None,
+  blockedFeedback: Option[NodeFeedback] = None,
   createdAt: Long,
   startedAt: Option[Long] = None,
   completedAt: Option[Long] = None,

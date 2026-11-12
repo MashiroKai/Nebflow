@@ -157,7 +157,7 @@ class NodeBlockedRetiredSpec extends CatsEffectSuite:
       )
       .handleError(_ => Nil)
 
-  /** 引擎无构造入参可注 ⇒ 申报 hold 腿经全局 prop 显式关（生产默认开，由 NodeReportReminderSpec 覆盖）。 */
+  /** The report hold leg is a dormant knob without a production read point; the global property switches it off for isolation. */
   private val ReportHoldProp = "nebflow.noderpt.completionHold"
 
   override def beforeEach(context: munit.BeforeEach): Unit =
@@ -266,7 +266,7 @@ class NodeBlockedRetiredSpec extends CatsEffectSuite:
               out = List(OutEdge.root),
               status = NodeLifecycle.Blocked,
               result = Some("[blocked:other] 反馈串"),
-              blockedFeedback = Some(NodeReportFeedback("other", "反馈串", "")),
+              blockedFeedback = Some(NodeFeedback("other", "反馈串", "")),
               blockCount = 2,
               createdAt = System.currentTimeMillis() - 3_600_000
             )

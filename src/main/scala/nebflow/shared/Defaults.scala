@@ -1009,7 +1009,7 @@ object Defaults:
   def BgLifecycleNudgeMaxBackoffMs: Long =
     sys.props.getOrElse("nebflow.bglifecycle.nudgeMaxBackoffMs", (40 * 60 * 1000L).toString).toLong
 
-  // ── Delegate 待命态看护（案A 批 2026-10-31：delegate_report 扩 standby 申报 +
+  // ── Delegate 待命态看护（案A 批 2026-10-31：终态申报扩 standby 申报 +
   //    显式待命停靠；状态矩阵批 2026-11-01 收编：complete×standby 停靠看护 +
   //    complete×idle（未申报）提醒腿——作者令「system reminder 提醒它调整状态，
   //    不终判」；JeV 判断注入（案B2）作者本轮未点名，由提醒腿承担。退避档

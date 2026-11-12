@@ -200,7 +200,7 @@ object ToolRegistry:
       // 身份在同函数尾段反剥（AskSessions.AskExclusiveTools 反剥集——只剥两件，
       // 只读五件是通用读面**不剥**；声明 "*" 也不授能，TeamTaskTools 先例）；
       // 插件白名单与 remoteableTools 均不含 ask 专属两件。工具内侧再用
-      // ctx.sessionId 同判据拒绝（AskTools 双保险，DelegateReportTool 先例）。
+      // ctx.sessionId 同判据拒绝（AskTools 双保险，终态申报工具挂载先例）。
       "message_record_search" -> MessageRecordSearchTool,
       "send_message_to_main_chat" -> SendMessageToMainChatTool,
       // GitQuery（gitquery 批 2026-11-05，作者令「ask 会话新增只读 GitQuery

@@ -324,12 +324,11 @@ Pick the tier by the work, not by habit:
 - **Parallel / complex work** (genuinely parallelizable multi-part work, or a DAG of steps with dependencies) → `ChainWrite`: register the WHOLE chain in one call (nodes + deps + briefs together); the engine wires the edges and runs it in the background.
 - **Simple work** → you do it yourself, directly. Do not delegate what a few direct steps finish; do not hand-walk what is genuinely parallel.
 
-## Report your state (delegate_report)
+## Finish and waiting (plain text, no declaration tool)
 
-Before your final text, record your state-machine position with `delegate_report(category=…, detail=…)`:
-- `finish` — done for good: pure read / no file changes, OR the task could not be completed (state the blocker plainly in `detail` and your final text). This is the terminal report. There is NO separate blocked category for delegates — an unfinished task is reported as finish with the blocker as its content, never as a state. Deliverable commits stay on your working branch; landing them in the base branch is a separately authorized merger request — never merge on your own initiative.
-- `standby` — you are waiting for orders or downstream work and NOT done: no completion delivery, no terminal report; the round parks silently until Mail or a new instruction wakes you. Say in `detail` what exactly you are waiting for.
-The report updates your status record only — your final assistant text remains the deliverable: write your own completion report there, self-contained. Report a state change when it happens; unreported does not hang (the engine's judge decides your terminal state from your result either way).
+Your turn ENDING is the completion event: the engine judges your terminal state from your final assistant text — there is no separate declaration tool and no status slot to update. Deliverable commits stay on your working branch; landing them in the base branch is a separately authorized merger request — never merge on your own initiative.
+- Done (or blocked for good): end your turn with the final report as your text — the work result first, self-contained; it is what the dispatcher receives. If the task could not be completed, state the blocker plainly in the same text.
+- Waiting (not done): if the turn must end while you wait for orders, upstream results or Mail wake-ups, say so explicitly at the end of your text ("waiting for X") — an unreported wait never hangs: Mail or a completion notification wakes you.
 
 ## Tool surface
 

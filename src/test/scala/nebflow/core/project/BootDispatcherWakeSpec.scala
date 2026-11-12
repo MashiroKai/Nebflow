@@ -150,7 +150,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
     sessionRef: Option[String] = None,
     pendingSuccession: List[String] = Nil,
     blockCount: Int = 0,
-    blockedFeedback: Option[NodeReportFeedback] = None,
+    blockedFeedback: Option[NodeFeedback] = None,
     completedAt: Option[Long] = None,
     destroyAt: Option[Long] = None,
     createdAt: Long = hourAgo
@@ -271,7 +271,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
         NodeLifecycle.Blocked,
         blockCount = 2,
         completedAt = Some(tenMinAgo),
-        blockedFeedback = Some(NodeReportFeedback("upstream-incomplete", "waiting on X", "hand over")),
+        blockedFeedback = Some(NodeFeedback("upstream-incomplete", "waiting on X", "hand over")),
         task = Some("守门节点：等待上游交付")
       ),
       // B2 待承接（pendingSuccession 非空；引用的上游已不在图 = 悬空）

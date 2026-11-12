@@ -167,7 +167,7 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
       .handleErrorWith(_ => IO.pure(Nil))
 
   /**
-   * 真 delegate 形态的注册表前置：记录在册 **且已申报**（`delegate_report(finish)`）。
+   * 真 delegate 形态的注册表前置：记录在册 **且已申报**（状态槽 finish）。
    *
    * 为什么必须有：终态矩阵的「complete × **未申报**」腿（`Outcome.NudgeIdle`）按作者令
    * **零父投递**（只武装提醒）——本批边界明令不动它。本 spec 要观测的是「屏障是否放行

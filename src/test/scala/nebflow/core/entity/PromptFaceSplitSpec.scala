@@ -9,11 +9,11 @@ import munit.FunSuite
  *  ① **flow 节点面**（解析路径 = `entry`）：节点语义四要素——接收上游/分发输入
  *     （任务文本 = 全部世界）、产出交付（末条输出 = 交付物，引擎沿 out 边投递）、
  *     沿 out 边交接、受监督约束（终态文本锚定协议 + role=verifier 判词文法）；
- *  ② **delegate 面**（解析路径 = `delegateEntry`）：delegate_report 纪律（含配套
- *     指令）＋ 零节点终态申报纪律（防回流，见对应用例）；
+ *  ② **delegate 面**（解析路径 = `delegateEntry`）：delegate 终态语义（回合结束 =
+ *     完成事件、交付 = 末条正文本体）＋ 零节点终态申报纪律（防回流，见对应用例）；
  *  ③ **两来源机械分离**：两路径产出互不等（两个独立常量、两条读路，非一处模板
  *     双面引用）；非 nebflow 名无 delegate 面变体（逐字回落 entry）；
- *  ④ **brief 申报行**（`DelegateTool.BriefReportLine`）= delegate_report 纪律
+ *  ④ **brief 终态语义行**（`DelegateTool.BriefReportLine`）= delegate 终态语义
  *     （delegate brief 面与 delegate 系统提示词面同判据）。
  *
  * 面性质：本文件只读代码定义与公开常量，不写盘、不碰 `PathUtil.dataRoot`。
@@ -65,14 +65,15 @@ class PromptFaceSplitSpec extends FunSuite:
 
     end for
 
-  test("delegate 面系统提示词 = delegate_report 纪律在位（两态值域 + 配套指令；blocked 类别退役）"):
+  test("delegate 面系统提示词 = 终态语义在位（回合结束 = 完成事件；无申报工具；blocked 类别退役）"):
     val text = delegatePrompt
-    assert(text.contains("delegate_report"), "delegate_report 申报义务在位")
-    assert(text.contains("Report your state (delegate_report)"), "申报段头在位")
-    for v <- Seq("finish", "standby") do assert(text.contains(s"`$v`"), s"delegate_report 值域态在位: $v")
+    assert(text.contains("no declaration tool"), "「无申报工具」明示句在位")
+    assert(text.contains("Finish and waiting (plain text, no declaration tool)"), "终态语义段头在位")
+    assert(text.contains("- Done (or blocked for good):"), "完成腿（含 blocked 折终稿）在位")
+    assert(text.contains("- Waiting (not done):"), "等待腿在位")
     assert(!text.contains("- `blocked` —"), "blocked 类别整行退役（delegate 面无 blocked 态——作者令）")
     assert(!text.contains("`merge` —"), "merge 申报类别退役（集成 = 项目 merger 的授权任务）")
-    assert(text.contains("NO separate blocked category"), "「报不了 = finish＋阻塞写进内容」的语义在位")
+    assert(text.contains("If the task could not be completed, state the blocker plainly in the same text."), "「报不了 = 阻塞写进终稿正文」的语义在位")
     assert(text.contains("Integration discipline (hard)"), "永不自并纪律在位")
     assert(text.contains("Your roles: executor, dispatcher, manager"), "三角色段在位（delegate 语义）")
 
@@ -101,14 +102,14 @@ class PromptFaceSplitSpec extends FunSuite:
     assert(text.contains("ask (AskHost) instead of declaring a stuck state"), "AskHost guidance present")
     assert(text.contains("(fail)<target>:loop"), "verifier 回边路由语义在位")
     assert(text.contains("verdict ≠ status"), "verifier verdict is not node status")
-    assert(text.contains("a real execution failure (dead session / LLM error) is engine-judged"), "real execution failure is engine-judged")
+    assert(text.contains("real execution failure (dead session / LLM error) is engine-judged"), "real execution failure is engine-judged")
     // The blocked terminal is retired: the node face carries neither the BLOCKED grammar nor a blocked value.
     assert(!text.contains("BLOCKED") && !text.contains("`blocked`"), "node face has no blocked grammar")
 
   test("两来源机械分离：entry 路径 ≠ delegateEntry 路径，各持各面（非一处模板双面引用）"):
     assert(nodePrompt != delegatePrompt, "两路径产出必须互不等（两个独立常量）")
     assert(nodePrompt.contains("no separate declaration tool"), "节点面持终态文本锚定协议（申报 = 末条文本）")
-    assert(delegatePrompt.contains("delegate_report"), "delegate 面持 delegate_report")
+    assert(delegatePrompt.contains("no declaration tool"), "delegate 面持终态语义（无申报工具）")
 
   test("非 nebflow 名无 delegate 面变体：delegateEntry 逐字回落 entry（机械完备性）"):
     for name <- nebflow.core.entity.BuiltinAgents.Names if name != executorName do
@@ -116,13 +117,13 @@ class PromptFaceSplitSpec extends FunSuite:
       val viaDelegate = nebflow.core.entity.BuiltinAgents.delegateEntry(name).map(_.systemPrompt)
       assertEquals(viaDelegate, viaEntry, s"'$name' 无 delegate 面变体（回落 entry）")
 
-  test("brief 申报行（DelegateTool.BriefReportLine）= delegate_report 纪律、零 node_report（两态 finish|standby；merge 类别退役）"):
+  test("brief 终态语义行（DelegateTool.BriefReportLine）= 正文交付钉、零申报工具指令（blocked 折终稿；merge 类别退役）"):
     val line = nebflow.core.tools.DelegateTool.BriefReportLine
-    assert(line.contains("delegate_report(category=\"finish\"|\"standby\", detail=…)"), "brief 申报行的两态调用形态在位")
+    assert(line.contains("Your final assistant text IS the deliverable"), "brief 交付钉在位（末条正文 = 交付物）")
+    assert(!line.contains("category="), "brief 语义行零申报工具调用形态（通道退役）")
     assert(!line.contains("\"merge\""), "merge 申报类别退役（集成 = 项目 merger 的授权任务）")
-    assert(line.contains("standby means waiting for instructions or downstream work, without a completion delivery"), "standby 语义钉：待命≠完工、不终判不投父")
-    assert(!line.contains("|\"blocked\""), "brief 申报行零 blocked 类别（delegate 面无 blocked 态——作者令）")
-    assert(!line.contains("node_report"), "brief 申报行零 node_report（delegate brief 面同判据）")
+    assert(line.contains("say the blocker plainly in the same final text"), "blocked 折终稿语义在位（无独立 blocked 通道）")
+    assert(!line.contains("node_report"), "brief 语义行零 node_report（delegate brief 面同判据）")
     assert(line.contains("Do not merge, push, publish or remove the worktree on your own"), "永不自并纪律在位")
 
   // prompt-panel 面板批（2026-10-09）：面板展示面的双面投影钉——面板列表/详情
