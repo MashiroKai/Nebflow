@@ -88,6 +88,41 @@ class MergerRecoverySpec extends CatsEffectSuite:
     new WorkspaceLedger(path)
   end ledgerWithStaleReservation
 
+  /** Registry + tombstone for a handcrafted ledger file (its merger row is already on disk). */
+  private def tombstonedRegistry(id: String = MergerId): Unit =
+    DelegateRegistry.put(record(id))
+    DelegateRegistry.markCancelRequested(id, "the user panel")
+    ()
+  end tombstonedRegistry
+
+  /** Workspace row with every derived-codec field (defaults are not honored on decode). */
+  private def workspaceRow(lifecycle: String, reservation: Option[String]): String =
+    val quoted = reservation.fold("null")(r => "\"" + r + "\"")
+    s"""{"id":"w1","project":"$Project","repository":"$Repository","path":"/tmp/w1",""" +
+      s""""branch":"delegate/w1","baseBranch":"main","baseCommit":"b","owner":"owner-w1","ownerMode":"kernel",""" +
+      s""""lifecycle":"$lifecycle","activity":"idle","reservation":$quoted,"revision":3}"""
+
+  /** MergeRequest row with every derived-codec field (legacy / crash-residue shapes). */
+  private def requestRow(id: String, repository: String, workspaceId: String, status: String, itemPhase: String): String =
+    s"""{"id":"$id","repository":"$repository","mergerId":"$MergerId","authorization":"auth",""" +
+      s""""items":[{"workspaceId":"$workspaceId","sourceCommit":"${"a" * 40}","targetBranch":"main","phase":"$itemPhase",""" +
+      s""""mergeCommit":null,"verification":null,"integration":null,"error":null}],""" +
+      s""""status":"$status","revision":4,"cancelRequested":false,"events":{}}"""
+
+  /** A ledger file from raw rows; the fixture must decode (read-faces fail closed on corrupt data). */
+  private def handcraftedLedger(path: os.Path, workspace: String, request: Option[String] = None): WorkspaceLedger =
+    val requestsJson = request.map(r => s"[$r]").getOrElse("[]")
+    os.makeDir.all(path / os.up)
+    os.write(
+      path,
+      s"""{"workspaces":[$workspace],"requests":$requestsJson,""" +
+        s""""mergers":[{"project":"$Project","repository":"$Repository","delegateId":"$MergerId"}],"revision":9}"""
+    )
+    val decoded = io.circe.parser.decode[WorkspaceLedger.State](os.read(path))
+    assert(decoded.isRight, s"fixture decode failed: ${decoded.left.map(_.getMessage)}")
+    new WorkspaceLedger(path)
+  end handcraftedLedger
+
   // ── 台账面（独立 ledger 文件，零 dataRoot 依赖）──────────────────────────
 
   test("T1 release removes only the identity slot; history (requests, workspaces, seed, tombstone) is preserved") {
@@ -412,6 +447,163 @@ class MergerRecoverySpec extends CatsEffectSuite:
       noRuntime <- nebflow.core.tools.MergerRequestTool.call(releaseCall, rootCtx)
       _ = assert(noRuntime.left.toOption.get.message.contains("fail-closed"))
     yield ()
+  }
+
+  // ── 占用判定（定向修复批）：合法终态历史 reservation 不阻断，不明者仍 fail-closed ──
+
+  test("T18 closed-merged seat with its completed history never blocks release (real-ledger regression)") {
+    // Driven through the real ledger faces — requestMerge reserves, reportMerge
+    // completes the item: `closed-merged` + reservation KEPT (only cancelled/failed
+    // clear it) — the exact resting shape every real ledger carries, which the
+    // pre-fix gate (`reservation.isDefined`) refused forever.
+    val root = os.temp.dir(prefix = "mr-t18-")
+    try
+      val ledger = new WorkspaceLedger(root / "ledger.json")
+      cancelledMerger(ledger)
+      ledger.register(
+        WorkspaceLedger.Workspace("w1", Project, Repository, "/tmp/w1", "delegate/w1", "main", "main", "owner-w1", "kernel")
+      )
+      assert(
+        ledger
+          .requestMerge(MergeRequest("req", Repository, MergerId, "auth", List(MergeItem("w1", "a" * 40, "main"))))
+          .isRight
+      )
+      assert(
+        ledger
+          .reportMerge(
+            "req",
+            MergerId,
+            WorkspaceLedger.MergeReport("e1", 0, "w1", "merged-cleanup-pending", integration = Some("source-ancestor"))
+          )((_, _, _) => Right(()))
+          .isRight
+      )
+      assert(
+        ledger
+          .reportMerge("req", MergerId, WorkspaceLedger.MergeReport("e2", 1, "w1", "completed"))((_, _, _) => Right(()))
+          .isRight
+      )
+      val seat = ledger.snapshot.workspaces.head
+      assertEquals(seat.lifecycle, "closed-merged", "the resting shape of a completed integration")
+      assertEquals(seat.reservation, Some("req"), "reportMerge keeps the reservation on completion")
+      assertEquals(ledger.snapshot.requests.head.status, "merged", "the request is terminal")
+
+      val tombstoneAt = DelegateRegistry.find(MergerId).get.cancelRequestedAt.get
+      val eventId = MergerRecovery.eventIdFor(Repository, MergerId, tombstoneAt)
+      val released = ledger.releaseMerger(Project, Repository, MergerId, eventId, "reason")
+      assert(released.isRight, s"a terminal history must not block the release: $released")
+      assertEquals(ledger.snapshot.mergers, Nil, "identity released")
+      assertEquals(ledger.snapshot.workspaces.head.lifecycle, "closed-merged", "history preserved verbatim")
+      assertEquals(ledger.snapshot.requests.map(_.id), List("req"), "request history preserved")
+    finally os.remove.all(root)
+    end try
+  }
+
+  test("T19 a historical reservation on a failed terminal request does not block") {
+    val root = os.temp.dir(prefix = "mr-t19-")
+    try
+      val ledger = handcraftedLedger(
+        root / "ledger.json",
+        workspaceRow("open", Some("req-failed")),
+        Some(requestRow("req-failed", Repository, "w1", "failed", "failed"))
+      )
+      tombstonedRegistry()
+      val released = ledger.releaseMerger(Project, Repository, MergerId, "evt", "reason")
+      assert(released.isRight, s"failed-request residue must not block: $released")
+      assertEquals(ledger.snapshot.mergers, Nil)
+    finally os.remove.all(root)
+    end try
+  }
+
+  test("T20 a historical reservation on a cancelled terminal request does not block") {
+    val root = os.temp.dir(prefix = "mr-t20-")
+    try
+      val ledger = handcraftedLedger(
+        root / "ledger.json",
+        workspaceRow("open", Some("req-cancelled")),
+        Some(requestRow("req-cancelled", Repository, "w1", "cancelled", "cancelled"))
+      )
+      tombstonedRegistry()
+      val released = ledger.releaseMerger(Project, Repository, MergerId, "evt", "reason")
+      assert(released.isRight, s"cancelled-request residue must not block: $released")
+      assertEquals(ledger.snapshot.mergers, Nil)
+    finally os.remove.all(root)
+    end try
+  }
+
+  test("T21 unclear reservations still occupy: orphan on an open seat, cross-repo, item-mismatched") {
+    // Terminal status alone is not enough — the reservation must also be attributable
+    // to THIS seat (same repository, an item for this workspace) or it refuses closed.
+    val shapes = List(
+      ("orphan on an open seat", workspaceRow("open", Some("ghost-req")), None),
+      (
+        "cross-repo reservation",
+        workspaceRow("open", Some("req-other")),
+        Some(requestRow("req-other", "/other-repo", "w1", "merged", "completed"))
+      ),
+      (
+        "item-mismatched reservation",
+        workspaceRow("open", Some("req-stray")),
+        Some(requestRow("req-stray", Repository, "w2", "merged", "completed"))
+      )
+    )
+    shapes.foreach { case (label, workspace, requests) =>
+      val root = os.temp.dir(prefix = "mr-t21-")
+      try
+        val ledger = handcraftedLedger(root / "ledger.json", workspace, requests)
+        tombstonedRegistry()
+        val refused = ledger.releaseMerger(Project, Repository, MergerId, "evt", "reason")
+        assert(refused.left.toOption.get.contains("occupied"), s"$label must refuse: $refused")
+        assertEquals(ledger.snapshot.mergers.map(_.delegateId), List(MergerId), s"$label: state unchanged")
+      finally os.remove.all(root)
+      end try
+    }
+  }
+
+  test("T22 a genuinely merger-occupied lifecycle still occupies (merging seat)") {
+    val root = os.temp.dir(prefix = "mr-t22-")
+    try
+      val ledger = handcraftedLedger(root / "ledger.json", workspaceRow("merging", None))
+      tombstonedRegistry()
+      val refused = ledger.releaseMerger(Project, Repository, MergerId, "evt", "reason")
+      assert(refused.left.toOption.get.contains("occupied"), s"unexpected: $refused")
+      assertEquals(ledger.snapshot.mergers.map(_.delegateId), List(MergerId), "state unchanged")
+    finally os.remove.all(root)
+    end try
+  }
+
+  test("T23 reservation occupancy truth table (the release gate's predicate)") {
+    import WorkspaceLedger.reservationOccupies
+    val seat = WorkspaceLedger
+      .Workspace("w1", Project, Repository, "/tmp/w1", "delegate/w1", "main", "main", "o", "kernel")
+      .copy(reservation = Some("req"))
+    val req = (id: String, repo: String, status: String, ws: String) =>
+      MergeRequest(id, repo, MergerId, "auth", List(MergeItem(ws, "a" * 40, "main")), status = status)
+    assert(!reservationOccupies(seat.copy(reservation = None), Nil), "no reservation, no occupation")
+    assert(
+      !reservationOccupies(seat, List(req("req", Repository, "merged", "w1"))),
+      "attributable terminal history does not occupy"
+    )
+    assert(
+      !reservationOccupies(seat, List(req("req", Repository, "completed", "w1"))),
+      "legacy completed status is terminal too"
+    )
+    assert(
+      !reservationOccupies(seat, List(req("req", Repository, "failed", "w1"))),
+      "failed terminal history does not occupy"
+    )
+    assert(
+      reservationOccupies(seat, List(req("req", Repository, "submitted", "w1"))),
+      "a request still in flight occupies (defense in depth; the request gate refuses first)"
+    )
+    assert(reservationOccupies(seat, Nil), "an orphan reservation occupies (unclear, fail-closed)")
+    assert(
+      reservationOccupies(seat, List(req("req", "/other-repo", "merged", "w1"))),
+      "a foreign-repository request occupies"
+    )
+    assert(
+      reservationOccupies(seat, List(req("req", Repository, "merged", "w2"))),
+      "a request without this seat's item occupies"
+    )
   }
 
 end MergerRecoverySpec

@@ -115,8 +115,13 @@ final class WorkspaceLedger(val path: os.Path):
    *      tombstone refuses fail-closed — frozen mergers keep their own recovery path.
    *   4. No non-terminal merge request may exist for the repository: the mechanical
    *      worker owns those (never re-executed, never orphaned by an identity swap).
-   *   5. No workspace may be occupied by merger activity (reserved for a request or
-   *      resting in a merger phase).
+   *   5. No workspace may be occupied by merger activity: a reservation occupies
+   *      only when it cannot be attributed to this seat's own terminal history
+   *      ([[WorkspaceLedger.reservationOccupies]] — orphan record, foreign or
+   *      item-mismatched request, or a request still in flight); a terminal
+   *      request's historical reservation never blocks (`reportMerge` keeps it on
+   *      completed items — the `closed-merged` residue every real ledger carries) —
+   *      and resting in a merger-occupied lifecycle occupies.
    *
    * The write removes only the merger identity slot; requests, workspaces, cleanup
    * claims and the bootstrap seed (history) are preserved verbatim, and the release
@@ -156,7 +161,8 @@ final class WorkspaceLedger(val path: os.Path):
               else if s.requests.exists(r => r.repository == repository && !TerminalRequestStatuses.contains(r.status)) then
                 Some("Integration is in flight for this repository; the merger identity stays")
               else if s.workspaces.exists(w =>
-                w.repository == repository && (w.reservation.isDefined || MergerOccupiedLifecycles(w.lifecycle))
+                w.repository == repository &&
+                  (reservationOccupies(w, s.requests) || MergerOccupiedLifecycles(w.lifecycle))
               ) then
                 Some("A workspace is still occupied by merger activity; the merger identity stays")
               else None
@@ -690,10 +696,30 @@ object WorkspaceLedger:
    * Workspace lifecycles that mean merger activity is coupled to the seat (reserved
    * for a queued request, or resting in a merger phase). A cancelled merger identity
    * is not releasable while any of these hold; open/closed/development states are not
-   * merger occupation.
+   * merger occupation — including the historical reservations those states carry,
+   * which occupy only per [[reservationOccupies]].
    */
   private[delegate] val MergerOccupiedLifecycles =
     Set("reserved", "checking", "merging", "validating", "awaiting-user", "merged-cleanup-pending")
+
+  /**
+   * Reservation occupation verdict for the release gate. A reservation occupies only
+   * when it cannot be safely attributed to this seat's own terminal history: a missing
+   * request record (orphan — unclear, fail-closed), a foreign repository or a request
+   * without this workspace's item (mismatched — the seat cannot be attributed), or a
+   * request still in flight all occupy. An attributable TERMINAL request
+   * ([[TerminalRequestStatuses]]) is historical residue — `reportMerge` keeps the
+   * reservation when an item completes (the workspace rests in `closed-merged`), and
+   * real ledgers carry those rows — and never blocks a release.
+   */
+  private[delegate] def reservationOccupies(w: Workspace, requests: List[MergeRequest]): Boolean =
+    w.reservation.exists { requestId =>
+      requests.find(_.id == requestId) match
+        case None => true // orphan reservation: safety cannot be confirmed
+        case Some(r) =>
+          val attributable = r.repository == w.repository && r.items.exists(_.workspaceId == w.id)
+          !attributable || !TerminalRequestStatuses.contains(r.status)
+    }
 
   def default: WorkspaceLedger = new WorkspaceLedger(nebflow.shared.PathUtil.dataRoot / "workspaces" / "ledger.json")
 
