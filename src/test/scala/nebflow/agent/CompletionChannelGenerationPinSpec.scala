@@ -206,7 +206,7 @@ class CompletionChannelGenerationPinSpec extends CatsEffectSuite:
       // ── 消费腿（AgentIdle 注入同点）：take → unlink 落墓碑 → 可靠 ACK 清债 ──
       _ <- SessionMailbox.take(parentSid, round1)
       _ <- SessionMailbox.unlinkTaken(parentSid, round1.map(_.identity))
-      acked <- CompletionDebtStore.acknowledge(childSid, parentSid, msgs1)
+      acked <- CompletionDebtStore.acknowledge(childSid, parentSid, msgs1, gen1)
       _ = assert(acked, "reliable ACK settles the delivered round-1 debt")
       afterConsume <- pendingMail(parentSid)
       _ = assertEquals(afterConsume.size, 0, "consumed entry leaves the pending box")

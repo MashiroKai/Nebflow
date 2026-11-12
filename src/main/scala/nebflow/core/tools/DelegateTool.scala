@@ -1251,21 +1251,36 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
           }
     val startup = mergerClaim.flatMap { existing =>
       if existing != subagentId then
-        IO.pure(
+        IO.pure {
+          val snapshot = WorkspaceLedger.default.snapshot
+          val seedNote = snapshot.mergerBootstraps
+            .get(existing)
+            .filter(_.status != "ready")
+            .map(seed =>
+              s"Initialization ${seed.status}; explicit manual recovery is required. ${seed.error.getOrElse("")}"
+            )
+          // Cancelled-merger recovery batch: a cancelled identity can never resume
+          // (revival refuses the cancel tombstone), so the message must name the
+          // supported release/replace path instead of pointing at a dead mailbox.
+          val cancelledNote = DelegateRegistry
+            .find(existing)
+            .flatMap(rec => rec.cancelRequestedAt.map(ts => ts -> rec.cancelRequestedBy))
+            .map { (ts, by) =>
+              val projectWord = project.map(p => s"\"$p\"").getOrElse("<project>")
+              s"The recorded merger was cancelled (tombstone $ts${by.map(c => s" by $c").getOrElse("")}); " +
+                s"this address can never resume. Supported recovery: release it with MergerRequest(action=\"releaseMerger\", " +
+                s"project=$projectWord) — it refuses while a merge request is in flight or a workspace is occupied — " +
+                s"then mint the replacement with Delegate(mode=merger, project=$projectWord)."
+            }
+          val notes = List(seedNote, cancelledNote).flatten
           Right(
             (
               existing,
               s"Existing project merger: delegate:$existing; taskAccepted=false. This call did not submit a task. " +
-                WorkspaceLedger.default.snapshot.mergerBootstraps
-                  .get(existing)
-                  .filter(_.status != "ready")
-                  .map(seed =>
-                    s"Initialization ${seed.status}; explicit manual recovery is required. ${seed.error.getOrElse("")}"
-                  )
-                  .getOrElse("Send follow-up work with Mail.")
+                (if notes.isEmpty then "Send follow-up work with Mail." else notes.mkString(" "))
             )
           )
-        )
+        }
       else
         IO.pure(()).flatMap { _ =>
           val modeWord = decision.map(_.mode)
