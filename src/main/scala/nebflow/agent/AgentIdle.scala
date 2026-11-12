@@ -101,10 +101,11 @@ private[agent] object AgentIdle:
             acceptedMessages match
               case Some(messages) =>
                 nebflow.core.mail.CompletionDebtStore.pending(owner).flatMap {
-                  case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages =>
+                  case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages &&
+                    debt.generation == nebflow.core.mail.CompletionDebtStore.generationOf(event) =>
                     nebflow.core.mail.CompletionDebtStore.acceptOnce(owner, recipient, event).flatMap {
                       case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict => IO.unit
-                      case _ => nebflow.core.mail.CompletionDebtStore.acknowledge(owner, recipient, messages).flatMap { accepted =>
+                      case _ => nebflow.core.mail.CompletionDebtStore.acknowledge(owner, recipient, messages, nebflow.core.mail.CompletionDebtStore.generationOf(event)).flatMap { accepted =>
                         IO.whenA(!accepted)(NebflowLogger.forName("nebflow.agent.idle")
                           .error(s"completion debt ack mismatch for '$owner'; debt retained"))
                       }
