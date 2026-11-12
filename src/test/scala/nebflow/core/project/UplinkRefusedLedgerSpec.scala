@@ -37,7 +37,7 @@ import scala.concurrent.duration.*
  * per Q2ⓐ, and the refusal must leave a **double trace**:
  *  ① **event face** = exactly one `uplink-refused` (`<ws>/.nebflow/flow-map-events.jsonl`);
  *  ② **the three text elements** = within that line **node id** ∧ **refusal reason**
- *     (`no-attribution`) ∧ **way out** (`register-attribution` / `node_report` / `Flow Map`);
+ *     (`no-attribution`) ∧ **way out** (`register-attribution` / `Flow Map`);
  *  ③ **the landing/merge class is distinguishable** (`kind=landing`) — **U3's no-loss
  *     argument does not cover it**, hence it is listed separately;
  *  ④ **no merging, no suppression** (two in a row ⇒ two events);
@@ -229,7 +229,7 @@ class UplinkRefusedLedgerSpec extends FunSuite:
       assert(line.contains("reason=no-attribution"), s"must carry the refusal reason, got: $line")
       assert(line.contains("way="), s"must carry the way out, got: $line")
       assert(
-        line.contains("way=register-attribution") || line.contains("node_report"),
+        line.contains("way=register-attribution"),
         s"the way out must be one of the actionable ones, got: $line"
       )
     }
@@ -317,25 +317,19 @@ class UplinkRefusedLedgerSpec extends FunSuite:
     }
   }
 
-  // ── ⑥ U8 unaffected: the node_report channel does not go through this gate ──
+  // ── ⑥ 终态申报面不入本闸：节点的终态结果 = 完成点的末条 assistant 文本，
+  //    从不经 [[uplinkAllowed]]（闸只看引擎侧 uplink 电路）──
 
   test(
-    "(6) U8 (node_report) unaffected: the gate only blocks the engine-side uplink circuit, the session-level declaration face is untouched"
+    "(6) the terminal-result face bypasses this gate: the final assistant text never passes through uplinkAllowed (source-face assertion)"
   ) {
     withFixture("u8", Some(true)) { (store, engine, ws) =>
-      // an unattributed node can still declare at the session level (this spec's mechanical face
-      // = the gate's injection points live in the engine's delivery legs, NodeReportTool is not
-      // among them — asserted against the source face, i.e. "node_report still accepted with the
-      // gate on")
+      // 源码面断言：闸的文档明示「节点自身终态结果走完成点末条文本、不经本函数」
+      // （终态申报工具通道退役后该事实不变——文本锚定面与 taskId 归因面无关）。
       val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala")
       assert(
-        src.contains("U8 (`node_report`) is unaffected"),
-        "the gate's documentation face must explicitly state that U8 is unaffected (the discipline anchor of criterion 10.4.6)"
-      )
-      val reportSrc = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "NodeReportTool.scala")
-      assert(
-        !reportSrc.contains("uplinkAllowed"),
-        "the U8 implementation face must NOT call this gate (the session-level channel is unrelated to the taskId face — criterion 10.4.6)"
+        src.contains("never passes through this function"),
+        "the gate's documentation face must state that the terminal result bypasses it (the discipline anchor of criterion 10.4.6)"
       )
     }
   }

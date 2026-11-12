@@ -241,10 +241,8 @@ private[project] trait NodeLoopRunner:
    * 终态双会话销毁（裁定 B）：停 agent + 停桥 + 注销 registry。MCP release 与
    * running/nodeSessions 清理在 spawnAndRunLoop 的 guarantee 内一并做（此处只管会话）。
    *
-   * noderpt 批 B 段（2026-09-11 作者裁定 ④）**同批修**两处既有缺口：
-   *   ① **申报槽清理**：`NodeReportRegistry.remove(worker) + remove(verify)` —— 此前双会话
-   *      终态不 remove ⇒ Loop 的 `node_report` 申报残留（设计稿 §2 缺口清单第 6 条）。
-   *   ② **双会话的进程/任务收殓**：此前本函数只停 actor，**从不**调用
+   * noderpt 批 B 段（2026-09-11 作者裁定 ④）**同批修**的既有缺口：
+   *   **双会话的进程/任务收殓**：此前本函数只停 actor，**从不**调用
    *      `BgTaskRegistry.reclaimSession` ⇒ worker/verify 名下的后台进程、在册任务与输出
    *      留存区永不收殓（③ 补的对称化只覆盖普通节点）。
    *      **时点按作者裁定「Loop 终态同样走 30 分钟窗口口径（与③一致）」**——收殓动作集合
@@ -256,15 +254,13 @@ private[project] trait NodeLoopRunner:
    *        `reclaimSession`（杀进程树 + 注销 registry + 逐条 `finalizeTask` + 释放
    *        `ShellSession.sessions` 条目 + WS `backgroundTaskUpdate(status="cancelled")` 帧）。
    *      ⇒ 本函数**不**即时 reclaim：就地收殓会让窗口口径对 Loop 失效（与本段硬口径冲突），
-   *      故把「双会话收殓」落在窗口执行体上，并由 `LoopNodeSpec` ⑦（双会话 + 申报槽）与
+   *      故把「双会话收殓」落在窗口执行体上，并由 `LoopNodeSpec`（双会话）与
    *      `NodeBgReclaimSpec` R1/R7（窗口/到点/幂等）钉死。
    *      停 actor / 停桥 / 注销 registry 保持不变（会话实体拆除不随窗口变——窗口保的是
    *      进程与任务（可取证面），不是已死的 agent actor）。
    */
   private[project] def destroyLoopSessions(nodeId: String, worker: LoopSession, verify: LoopSession): IO[Unit] =
     scheduleDestroy(nodeId, List(worker.sessionId, verify.sessionId), "loop-terminal") *>
-      NodeReportRegistry.remove(worker.sessionId) *>
-      NodeReportRegistry.remove(verify.sessionId) *>
       resources.agentRegistry.update(_ - worker.sessionId - verify.sessionId) *>
       system.stop(worker.agentRef).handleErrorWith(_ => IO.unit) *>
       system.stop(worker.bridgeRef).handleErrorWith(_ => IO.unit) *>
@@ -273,7 +269,7 @@ private[project] trait NodeLoopRunner:
 
   /**
    * runLoopNode 主编排（§2.2 状态机）：worker/verify 双会话迭代。spawnAndRunLoop
-   * 已翻转+spawn+装好两会话后调用；终态（PASS/failed/cancelled/blocked/达 K）落
+   * 已翻转+spawn+装好两会话后调用；终态（PASS/failed/cancelled/达 K）落
    * 终态化后即返回，会话清理由调用方 guarantee 兜底。
    * crash-recovery 批裁定③：resume=Some 时从崩溃时持久断点（loopRound/loopPhase）
    * 续跑——phase=worker → 本轮 worker 注入换 resume prompt（transcript 已水合，
@@ -379,50 +375,23 @@ private[project] trait NodeLoopRunner:
         }
 
     /**
-     * verify 产出裁决（PASS 投递 worker 产出 / FAIL 打回 +1 / BLOCKED → Loop 级
-     * blocked）——loopRound 正常轮与 verify 相位崩溃续跑（resumeVerifyRound）共用。
-     * blocked 结构化信号批（20260909 spec §5.2 #8；同日作者裁定泛化 NodeReport
-     * 统一三语义）：verify 会话完成时点先 drain 登记表——工具申报（协议事实）
-     * 按类别分流到既有链：pass 与 VERDICT: PASS 同链（投递 worker 产出）、fail
-     * 与 VERDICT: FAIL 同链（detail=打回意见 / suggestion=通过标准，打回 worker）、
-     * blocked → Loop 级 blocked；未申报走文本锚定降级面（行为零变化）。
+     * Verify verdict (PASS delivers the worker output / FAIL sends it back, round + 1), shared by
+     * the normal loopRound and the verify-phase crash resume (resumeVerifyRound).
+     * Pure text-anchored verdict (there is no structured declaration channel): first line
+     * `VERDICT: PASS` -> deliver the worker output; first line `VERDICT: FAIL` (+ JSON
+     * issues/requirements) -> send it back to the worker ([[VerdictReader]]); no anchor line =
+     * malformed grammar, degraded to a Pass pass-through ([[VerdictReader.parse]] existing rule).
      */
     def handleVerify(roundNum: Int, wText: String, vMsgs: List[Message]): IO[Unit] =
       val vText = extractLastAssistantText(vMsgs)
-      val R = nebflow.core.tools.NodeReportToolDef
-      // #239①：终态写支（pass → completed；其余申报类别 → 显式失败）的申报
-      // 消费挂落地判词；fail 支把申报消费进「判词 + 回边返工」（非终态写，见
-      // [[compensateUnconsumedReport]] 的边界声明），text 锚定支无申报（declared=None）
-      // 故无补偿面。
-      NodeReportRegistry.drain(verify.sessionId).flatMap { declared =>
-        declared match
-          case Some(fb) if R.isPass(fb.category) =>
-            // verify 工具申报 pass → 投递 worker 产出（VERDICT: PASS 同链）
-            consumeReport(nodeId, verify.sessionId, declared)(completeNodeR(nodeId, wText)).void
-          case Some(fb) if R.isFail(fb.category) =>
-            // verify 工具申报 fail → 打回 worker（VERDICT: FAIL 同链）：
-            // detail = 打回意见（空则占位），suggestion = 通过标准。
-            // #239② ⑤-(1)：本支是**非终态**消费（消费进 `loopLastVerdict` + 回边返工）——
-            // 落地判词改由 `setVerdictR` 回报（原 `setVerdict` 的 no-op 分支：节点已消失 /
-            // 非 loop 节点 ⇒ 判词未落地 ⇒ 申报全文走同一补偿写回）；控制流零变化（补偿后
-            // 照常回边返工，与修前逐字同序）。
-            val issues = List(if fb.detail.trim.isEmpty then VerdictReader.PlaceholderIssues else fb.detail.trim)
-            val f = VerdictReader.Verdict.Fail(issues, fb.suggestion)
-            consumeReport(nodeId, verify.sessionId, declared)(
-              setVerdictR(nodeId, VerdictReader.renderFailSummary(f))
-            ) *>
-              loopRound(roundNum + 1, Some(f))
-          case Some(fb) =>
-            consumeReport(nodeId, verify.sessionId, declared)(
-              failNodeR(nodeId, s"Unexpected verifier report category '${fb.category}': ${fb.detail}")
-            ).void
-          case None =>
-            VerdictReader.parse(vText) match
-              case VerdictReader.Verdict.Pass => completeNodeR(nodeId, wText).void
-              case f: VerdictReader.Verdict.Fail =>
-                setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
-                  loopRound(roundNum + 1, Some(f))
-      }
+      VerdictReader.parse(vText) match
+        case VerdictReader.Verdict.Pass =>
+          // PASS: deliver the worker's final output verbatim (ruling 2.2 recommendation a)
+          completeNodeR(nodeId, wText).void
+        case f: VerdictReader.Verdict.Fail =>
+          // FAIL: send back to the worker (same session, opinion injected), round + 1, up to K
+          setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
+            loopRound(roundNum + 1, Some(f))
     end handleVerify
 
     /** roundNum 轮的 verify 输入构建（首轮模板三全文，N≥2 短段）。 */
@@ -456,36 +425,15 @@ private[project] trait NodeLoopRunner:
             case Left(err) => failOrCancel(nodeId, s"worker round $roundNum: $err")
             case Right(wMsgs) =>
               val wText = extractLastAssistantText(wMsgs)
-              // blocked 结构化信号批（20260909 spec §5.2 #8；同日作者裁定泛化
-              // NodeReport 统一三语义）：worker 会话完成时点先 drain 登记表
-              // （工具申报按类别分流：fail → 既有 failed 链；pass/finish 与
-              // 无申报同链照常进 verify 裁决。spawnLoopSession
-              // 会话已带 flowNodeId——工具天然可达）；未申报走文本锚定降级面
-              // （行为零变化）。
-              val R = nebflow.core.tools.NodeReportToolDef
-              // #239①：两条**终态写**支的申报消费挂落地判词——写被拒（节点已消失 /
-              // 状态已变）时把申报全文补偿写回审计流，不再静默蒸发。
-              NodeReportRegistry.drain(worker.sessionId).flatMap { declared =>
-                declared match
-                  case Some(fb) if R.isFail(fb.category) =>
-                    // worker 工具申报 fail → 既有 failed 链
-                    consumeReport(nodeId, worker.sessionId, declared)(failNodeR(nodeId, R.renderFail(fb))).void
-                  case _ =>
-                    // 无申报（None）或 pass/finish 申报：本轮产出照常进 verify 裁决
-                    // （pass/finish = worker 正式声明本轮完成，与无申报同链零新链）。
-                    // #239② ⑤-(1)：这支是**非终态**消费——`drain` 已取走申报、日志已记
-                    // consume 行，但没有任何终态写 ⇒ 留一行审计（可 grep）说明申报被谁消费
-                    // 掉了（`declared=None` 零动作）。
-                    for
-                      _ <- noteNonTerminalConsumption(nodeId, worker.sessionId, declared, "loop-worker-forward")
-                      vIn <- verifyInputFor(roundNum, wText)
-                      _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
-                      vOut <- step(verify, vIn)
-                      _ <- vOut match
-                        case Left(err) => failOrCancel(nodeId, s"verify round $roundNum: $err")
-                        case Right(vMsgs) => handleVerify(roundNum, wText, vMsgs)
-                    yield ()
-              }
+              // The worker output goes into the verify judgement as usual (text-anchored single channel).
+              for
+                vIn <- verifyInputFor(roundNum, wText)
+                _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
+                vOut <- step(verify, vIn)
+                _ <- vOut match
+                  case Left(err) => failOrCancel(nodeId, s"verify round $roundNum: $err")
+                  case Right(vMsgs) => handleVerify(roundNum, wText, vMsgs)
+              yield ()
         yield ()
         end for
 
@@ -681,7 +629,7 @@ private[project] trait NodeLoopRunner:
                   // 拒绝态留痕（卡 A4 / §2.5）：主语 = 本 verifier；「判词无处可去」这一事实
                   // 不再只落一句良性退化文案 —— 事件行 + WARN + 载荷键三级同款。
                   emitVerifierRouteLost(List(nodeId -> ""), "fail verdict with no usable route") *>
-                  completeNodeR(nodeId, resultText)
+                  gateAndComplete(nodeId, resultText)
               case Some(targetId) =>
                 store.findNode(targetId).flatMap { tOpt =>
                   val startedAt = tOpt.flatMap(_.loopStartedAt)
@@ -700,7 +648,9 @@ private[project] trait NodeLoopRunner:
                       for
                         _ <- recordVerdict(nodeId, VerdictFail, bumpRound = true)
                         _ <- stampLoopStartedAt(targetId, now)
-                        landed <- completeNodeR(nodeId, resultText)
+                        // gateAndComplete（非 completeNodeR）：判词已在本函数消费，
+                        // 再入 completeNodeR 会对同一锚定文重入判词腿（死循环）。
+                        landed <- gateAndComplete(nodeId, resultText)
                         // 执行腿（二期）：终态写入之后再复位驱动方 + 重激活目标 + 重跑
                         _ <- reloopTo(v, targetId, consumed, maxRounds, issues, fb.suggestion)
                       yield landed
@@ -745,7 +695,7 @@ private[project] trait NodeLoopRunner:
     val metering = s"rounds=$rounds/$maxRounds wallClockMaxMs=${nebflow.shared.Defaults.LoopMaxWallClockMs}"
     val msg = s"loop budget exhausted: $reason — $metering"
     // engine-defects 批 #239（2026-09-15）：**熔断不得吞掉判词全文**。旧口径只把计量串
-    // 写进 result ⇒「判词已落盘（`recordVerdict` 先跑）、`node_report` 的终止申报与结论
+    // 写进 result ⇒「判词已落盘（`recordVerdict` 先跑）、verify 的终止判定与结论
     // 全文丢失、结果被降级成 stub」。修法 = 复用**既有**原结论文本并列落盘机制
     // （[[CompletionGate.withOriginalText]] 的 `[original-conclusion]` 稳定锚，与
     // `completeNode` 的闸门 Reject 分支同一机制、同一格式、同一取回方式）：
@@ -938,8 +888,8 @@ private[project] trait NodeLoopRunner:
       }
 
   /**
-   * loop 时间帽扫描腿（`ProjectActor.TtlTick` 30s 驱动，与 `remindUnreportedNodes` /
-   * `settleStaleRunningNodes` / `sweepDestroyWindows` 同族——复用既有心跳点零新调度器）。
+   * loop 时间帽扫描腿（`ProjectActor.TtlTick` 30s 驱动，与 `settleStaleRunningNodes` /
+   * `sweepDestroyWindows` 同族——复用既有心跳点零新调度器）。
    *
    * 判据（§3.6 时间维逐字）：`status ∈ {wiring,pending,running} ∧ loopStartedAt.isDefined
    * ∧ now - loopStartedAt >= maxWallClockMs` ⇒ 熔断。命中者反查「回边驱动方」（持有

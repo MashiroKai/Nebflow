@@ -72,15 +72,15 @@ end NodeLifecycle
  * `20260911_213805_node-report-per-node-type-and-loop-routing-plan__chain-n-8fc83bbe.md`
  * §3.2 + 附 C1-1 / C2-R3：作者裁定「Loop 的校验节点 = 独立节点」）。
  *
- * 语义 = **节点在拓扑中的职责**，决定 `node_report` 的值域与可选路由：
- *   - `Task`（缺省）：执行节点——申报域 `finish`（可选显式完成，完成 = 默认行为），
- *     **不**参与 verdict 选通。
- *   - `Verifier`：校验节点——申报域 `pass | fail`；`fail` 是
+ * Semantics = the node's responsibility in the topology; it decides the terminal face and the optional routing:
+ *   - `Task` (default): an execution node — completion is the default behaviour (the final text is the
+ *     report), and it does NOT take part in verdict routing.
+ *   - `Verifier`: a verification node — it anchors `VERDICT: PASS|FAIL` in its final text; `fail` is a
  *     **verdict**（被判定对象不合格），恒伴随节点自身 `completed`（永不 `failed`），
  *     并经 `(fail)<目标>:loop` 控制边驱动重跑。
  *
  * 未标/标错的失败形态与观测面（设计 §2 R3 表）：非法申报由工具侧拒（
- * `NODE_REPORT_CATEGORY_ROLE`，可行动错误）；verifier 缺 fail 路由由创建期硬拒
+ * 可行动错误）；verifier 缺 fail 路由由创建期硬拒
  * （`NODE_VERIFIER_NEEDS_ROUTE`；nodegate 方案件 §1(i) 后判据覆盖**空 out 与镜像
  * 补边两条通道**——空 out 仅 `verifierRoutePending=true` 令牌放行）。`role`
  * **create-only**（同 `merge`，改动只能新建节点）。
@@ -888,16 +888,9 @@ case class NodeDef(
    */
   pendingSuccession: List[String] = Nil,
   /**
-   * 未申报计时起点（noderpt 批 A 段 2026-09-11 作者裁定）：节点会话交棒
-   * （观察桥收到 `AgentEvent.Completed`）时 `NodeReportRegistry` 申报槽为空 ⇒
-   * 引擎置本字段（**只置不重**——后续 Completed 不改起点，NodeMessage 重入也不重置）。
-   *
-   * 唯一清表条件 = 该会话任一 `node_report` 申报（清表后由既有 `drain` 分流终态化）；
-   * 终态/挂起出口（`NodeEngine.cleanupRunTables`）与新一轮翻转
-   * （`flipToRunning` / runWithAgent 的 CAS 翻转 = 新会话）同点清零。
-   *
-   * 落盘的理由（硬约束）：计时必须跨宿主重启存活——扫描腿在 `ProjectActor.TtlTick`
-   * （30s 节拍）上跑，禁止 per-node fiber 计时器（宿主重启即丢）。
+   * 未申报计时起点（noderpt 批 A 段 2026-09-11 作者裁定；**休眠存量字段**——起表点
+   * 已随终态申报工具通道整体退役移除，生产路径不再置位；字段保留 = 持久 schema
+   * 兼容（旧盘 flow-map.json 可能带值），终态/挂起出口的存量清扫腿照常清零）。
    * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。
    */
   reportPendingSince: Option[Long] = None,
@@ -927,7 +920,7 @@ case class NodeDef(
    * 节点角色（nrloop 一期 2026-09-12，设计 §3.2；`NodeRoles` 单点）：
    * `task`（缺省）| `verifier`。create-only（NodeEdit `role` 参数，
    * `NODE_ROLE_CREATE_ONLY`）——语义职责是拓扑身份，不能中途改（同 `merge` 先例）。
-   * 决定 `node_report` 值域（工具侧）+ verdict 选通合法性（创建期校验族）。
+   * 决定终态申报面形态 + verdict 选通合法性（创建期校验族）。
    * 旧 flow-map.json 无此键 → withDefaults 解码 `task`（零迁移 = 旧行为：执行节点，
    * 但旧数据仍可报 pass/fail —— 语义分化面的存量读路径零回溯，写路径由工具侧收口）。
    */
@@ -1031,8 +1024,8 @@ object NodeDef:
  *     产生该状态，本键只服务存量图的 legacy 行展示；历史参照走 detail 补挂/归档）。
  *   - bgWait：**仅 bg-wait 自持的 running 节点携带**（僵尸收敛批 2026-09-06）。
  *   - reportPendingSince / reportReminderCount：**仅 status==running 且未申报计时
- *     已置携带**（noderpt 批 A 段 2026-09-11：已交棒但未 node_report 的节点——
- *     取证/前端据此辨「待申报」Running 态，两键成对、绝不在终态节点泄漏）。
+ *     已置携带**（noderpt 批 A 段 2026-09-11：休眠存量字段——历史口径的「待申报」
+ *     Running 态标记，两键成对、绝不在终态节点泄漏）。
  *   - role / lastVerdict：**role 仅非 task（= verifier）携带；lastVerdict 仅非空携带**
  *     （nrloop 一期 2026-09-12：verdict 选通态的可观测面——前端/取证据此辨校验节点
  *     及其最近判定；执行节点与无判定节点字段集字节级零漂移）。

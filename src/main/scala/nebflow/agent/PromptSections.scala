@@ -201,23 +201,6 @@ object PromptSections:
   def requiresTools(names: String*): PromptContext => Boolean =
     ctx => names.forall(ctx.availableTools.contains)
 
-  /**
-   * 节点会话 always-on belt 行（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起形态
-   * = 「一句申报义务 + 权威位指针」，不再自携值域/后果/受阻行）。公开常量 = 段长门
-   * 的断言对象（本常量 UTF-8 字节数 ≤ [[NodeSessionAlwaysOnSectionMaxBytes]]）。
-   * 完整协议（角色值域、无停等申报、AskHost 指引、verifier verdict、未申报语义）的
-   * **单一权威** = 输入面协议脚注 `NodeEngine.ProtocolFootnote`（引擎编译、随任务输入
-   * 注入、角色分支）+ `node_report` 工具 description；本段禁复述其内容（段进每次
-   * node LLM 调用，token 是经常性成本）。
-   */
-  val NodeSessionAlwaysOnSection: String =
-    """## Node terminal report (Flow Map node sessions)
-
-Before wrapping up call `node_report` — reporting IS the wrap-up action. The single authoritative protocol is the `node_report` tool description plus the Node protocol footnote injected with node task input; this line is only the always-on belt."""
-
-  /** 段长门阈值（字节）：段正文 UTF-8 字节数必须 ≤ 本值。 */
-  val NodeSessionAlwaysOnSectionMaxBytes: Int = 400
-
   // ============================================================
   // Built-in section text constants
   //
@@ -355,38 +338,15 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action. The s
       body = traceSection
     ),
 
-    // --- 节点终态申报段（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起 = belt+指针，
-    // 不再自携值域/后果行）：本段存在的真实理由有二。① 系统提示词面的**存在性保证**
-    // （抗漂移）：运行时副本陈旧曾是 #304 的主因（noderept-usage-recon：39/39 node
-    // 会话实收系统提示词零命中 node_report 纪律），seed 播种（add-only）做不到
-    // 「引擎改了、运行时一定跟上」——本行由**引擎编译**注入、与盘面无关，无论
-    // seed/运行面处于何种同步状态，节点系统提示词上恒有一句申报义务（loop verify
-    // 等输入面无脚注的会话形态由此兜底）。② 它是项目面 AGENTS.md 终态申报行所指
-    // 「引擎 always-on 段」的本体（该行已终态冻结，指针目标不得悬空）。
-    // 完整协议的**单一权威** = 输入面脚注 `NodeEngine.ProtocolFootnote`（角色值域
-    // + 无停等申报/AskHost 指引 + verifier verdict 分支的唯一引擎文本）+ `node_report`
-    // 工具 description——本段**不复述**它们（F8 判据：引擎贡献装配面恰一份完整
-    // 纪律；种子条件句自携完整规则系 promptfix 作者并存终态，不属该判据域。本段
-    // 收口为短句指针）。条件判据 `PromptContext.availableTools` 含 node_report ≡
-    // flowNodeSession（唯一追加点 = `AgentCore.buildAllowedToolSet` 末段身份闸；
-    // 声明逃逸由 `NebulaExclusiveTools` 全剥），非节点会话（kernel/memory-
-    // consolidator/dispatcher/Nebula）恒不含 ⇒ 收不到本段。段长门：
-    // `NodeSessionAlwaysOnSectionMaxBytes`（≤400 B）——段进每次 node LLM 调用，
-    // token 是经常性成本。段序 360 = 落在 stable 段之后、dynamic identity 段（395）
-    // 之前，不破坏 system.md 前缀缓存锚（`assembleSystemPrompt` 契约）。
-    PromptSection(
-      360,
-      condition = ctx => ctx.availableTools.contains(nebflow.core.tools.NodeReportToolDef.Name),
-      body = NodeSessionAlwaysOnSection
-    ),
-
     // --- 根代理路由纪律（冷启动路由批 2026-09-17）：条件 isRootAgent ⇒ 唯一
     // 注入面 = 根 Nebula 会话；项目分发器 / 节点会话（isRootAgent=false）收不到
     // 本段，正合其义（分发器自己就是被路由到的落点，不需要「先路由」纪律）。
-    // 段序 370 = 落在 order-360 节点申报段之后、order-395 identity 段之前；本段
+    // 段序 370 = 落在 stable 段之后、order-395 identity 段之前；本段
     // 必须排在 system.md 之后（所有条件段的共同前提），故不追求更早槽位——与
     // 字面量里 "Recon: Read only" 的冲突靠**文本内显式声明优先**消解（判据②），
     // 不靠段序。
+    // （order-360 节点终态申报段已随申报工具整体退役删除——终态协议的引擎文本
+    // 单点 = 输入面脚注 `NodeEngine.ProtocolFootnote`，纯文本锚定。）
     PromptSection(
       370,
       condition = ctx => ctx.isRootAgent,

@@ -84,7 +84,7 @@ class ChainCancelSpec extends CatsEffectSuite:
             _ :+ payload.deepMerge(Json.obj("type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))
           ),
         notifyTriggerOverride = Some((text: String) => triggered.update(_ :+ text)),
-        // 本 spec 主题非 node_report 语义（与 CancelDeadlockFixSpec 同款显式关腿）
+        // 本 spec 主题与终态 hold 腿正交（同 CancelDeadlockFixSpec 口径显式关）
         reportGateHold = Some(false)
       )
       pd = ProjectDef(

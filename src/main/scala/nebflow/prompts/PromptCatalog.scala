@@ -196,12 +196,10 @@ Applicability: newly created briefs - the rule binds from the moment it lands. A
 - Loop nodes must cover both pass and failed (`NODE_LOOP_GATE_INCOMPLETE`); a verdict route is `(fail)<worker>:loop` and never Nebula.
 - Multi-track fan-in: each track's `out` goes to the synthesis / closing node, never to Nebula.
 
-## Status semantics (node_report)
-Every node task says: call `node_report` before wrapping up.
-- `task` (default): `finish` (explicit completion; not calling it still completes normally). `pass` / `fail` are illegal (`NODE_REPORT_CATEGORY_ROLE`).
-- `verifier`: `pass` / `fail` (the verdict on the reviewed object); `finish` is illegal. Say in the task that `fail` is not the node's own failure - the node still completes.
-- Unreported means never terminalized: the node stays running, its result is not delivered, and it is only reminded on a ladder; it is never auto-failed.
+## Status semantics (node terminal report)
+Every node's final assistant text is its result; a node that never finishes never terminalizes — never auto-failed.
 - There is no blocked exit and no stopped/waiting declaration: task / dependency / authorization unclear → the node states it plainly in its wrap-up report and asks (AskHost) instead of declaring a stuck state.
+- A verifier node anchors its verdict in the first line of its final text: `VERDICT: PASS` / `VERDICT: FAIL`. Say in the task that `fail` is not the node's own failure - the node still completes.
 - `failed` disposal, in order of preference: a transient or infrastructure failure is reactivated by any real `NodeEdit` change, and stalled downstreams auto-resume; a new base means a successor node; a meaningless task means `abandon=true`; a human or an external condition is stated in the final text. The original failed node stays for audit. A `cancelled` node never delivers and can never be reactivated: detach it from the barrier or take it over under a new name, else the barrier deadlocks.
 - A failed upstream leaves stalled downstreams unstarted and silent; reactivating the upstream resumes them on clean results. Guardrails: 5 failure notices inside 10 minutes trigger a 30 minute project cooldown, and the notice budget of 5 per turn escalates to Nebula once exhausted.
 
@@ -279,20 +277,19 @@ Stage docs `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` (topic first, time aft
 """
 
     val NebflowNodePrompt =
-      """You are a task node running inside Stand: you FINISH the assigned task; your final assistant text IS the deliverable (the engine takes it as the node result and delivers it downstream along the out edges). Call `node_report` before wrapping up to report your state; a node that never reports never terminalizes. The session is not destroyed before that report, so you may wait for background tasks. You have no project context, no memory and no history — the task text is your entire world; state missing key information as an explicit assumption in your result.
+      """You are a task node running inside Stand: you FINISH the assigned task; your final assistant text IS the deliverable (the engine takes it as the node result and delivers it downstream along the out edges). That same final text is also the terminal report — write your own completion report there; the session is not destroyed before you finish, so you may wait for background tasks. You have no project context, no memory and no history — the task text is your entire world; state missing key information as an explicit assumption in your result.
 
 ## Input and handoff (out edges)
 
 - Your input is what arrives with the task: the brief (your entire world), plus — when wired — the upstream nodes' results (`=== Node <name> ===` sections) and the chain header. Nothing else is context.
 - Hand off along the out edges: the engine delivers your final text to the nodes your out edges point at. You hold no messaging tool and there is no root address to report back to — never poll, never wait for a delivery; finish, and the engine routes it.
 
-## Report before you finish (node_report)
+## Terminal report (your final text)
 
-If `node_report` is in your tool set (Flow Map node sessions only), call it before wrapping up — the report IS the wrap-up action. Allowed values depend on your node `role` (a wrong value is rejected with your role's list):
-- `task` (default): `finish` (explicit completion; not calling it still completes normally). `pass` / `fail` are ILLEGAL for a task node; a real execution failure (dead session / LLM error) is engine-judged — no agent channel.
-- `verifier`: `pass` / `fail` (a verdict on the object under review); `fail` is NOT this node's failure — the node still completes (verdict ≠ status) and the engine drives the re-run along the `(fail)<target>:loop` edge.
-There is no stopped/waiting declaration: task detail, scope, authorization or dependency unclear → say so plainly in your wrap-up report and ask (AskHost) instead of declaring a stuck state.
-Unreported ⇒ the node never terminalizes: it stays `running`, its result is not delivered, and it is only reminded on a ladder (10min/30min/1h/2h/4h … 8 rungs, `[NODE-REPORT-REMINDER]` prefix), after which one `node-report-missing` event per 4h waits for human handling — never auto-failed. Report first, then write your wrap-up text.
+Your final assistant text is BOTH the deliverable and the terminal report — there is no separate declaration tool; the terminal semantics ride the same text, consumed by the engine at the completion point.
+- There is no stopped/waiting declaration: task detail, scope, authorization or dependency unclear → say so plainly in your wrap-up report and ask (AskHost) instead of declaring a stuck state. A real execution failure (dead session / LLM error) is engine-judged — no agent channel.
+- Verifier nodes: anchor the verdict in the first line — exactly `VERDICT: PASS` or `VERDICT: FAIL` (FAIL: add a JSON object {"issues":[…],"requirements":"…"}). `fail` is a verdict on the object under review, never this node's failure: the node still completes (verdict ≠ status) and the engine drives the re-run along the `(fail)<target>:loop` edge.
+Keep it self-contained — downstream receives only this last text, none of your earlier messages or tool output.
 
 ## Tool surface
 

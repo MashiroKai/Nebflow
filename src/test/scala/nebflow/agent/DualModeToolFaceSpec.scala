@@ -65,18 +65,18 @@ class DualModeToolFaceSpec extends FunSuite:
   private val NodeFace = Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite")
 
   /**
-   * 内核腿期望面 = `NebflowFixedTools` + `delegate_report` + `Mail`。kernel 按裁定
-   * **拿到** Subagent（只读侦察腿）。Node 四件与 node_report 不在本腿。
+   * Kernel-leg expected face = `NebflowFixedTools` (file/shell six + BgWait + AskUserQuestion + Subagent)
+   * + `Mail`. The kernel gets Subagent (read-only reconnaissance leg) by ruling. The four Node tools and
+   * the terminal report tools are not on this leg.
    */
-  private val ExpectedKernelFace =
-    nebflow.agent.AgentCore.NebflowFixedTools + nebflow.core.tools.DelegateReportTool.Name + "Mail"
+  private val ExpectedKernelFace = nebflow.agent.AgentCore.NebflowFixedTools + "Mail"
 
-  /** 分发器腿期望面（**14 件**）= 内核腿 − Subagent ＋ node 四件。 */
+  /** 分发器腿期望面（**13 件**）= 内核腿 − Subagent ＋ node 四件。 */
   private val ExpectedDispatcherFace: Set[String] = (ExpectedKernelFace - "Subagent") ++ NodeFace
 
   // ── 挂载面 ──────────────────────────────────────────────────────────────────
 
-  test("F1 kernel 腿：有 Subagent；node 四件与 node_report 不在") {
+  test("F1 kernel leg: has Subagent; the four node tools are absent") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
@@ -94,13 +94,6 @@ class DualModeToolFaceSpec extends FunSuite:
       set.contains("Subagent"),
       s"kernel face MUST carry Subagent (read-only recon leg, author ruling 2026-11-05; got: ${set.toList.sorted})"
     )
-    // node_report 摘除（作者裁定 2026-10-29：「那不是agentflow的节点使用的工具吗」）
-    // ——现状事实源：RootExclusiveTools 防声明逃逸剥离 + flowNodeSession 尾段专属
-    // 挂载，本就不达 delegate 面；kernel 腿的显式减法是未来挂载面变动下的保险销。
-    assert(
-      !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
-      "kernel face must not carry node_report (flow-node-only tool — dual insurance: mount face + in-tool identity rejection)"
-    )
     // 🔴 裁定二：AgentFlow 工具整体退役 ⇒ 任何固定面都不许再出现这个名字。
     assert(
       !set.contains("AgentFlow"),
@@ -108,9 +101,8 @@ class DualModeToolFaceSpec extends FunSuite:
     )
     assert(!nebflow.core.tools.ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be unregistered")
     assert(set.contains("Mail"), "kernel delegate keeps Mail (node:<id> continuation leg)")
-    assert(set.contains(nebflow.core.tools.DelegateReportTool.Name), "kernel delegate keeps delegate_report")
     assert(set.contains("Read") && set.contains("Bash"), "kernel delegate keeps the executor base face")
-    // 读数：面值恰 11 件（不照抄任务书，按本读数核）
+    // 读数：面值恰 10 件（不照抄任务书，按本读数核）
     println(s"[FACE-KERNEL] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
     assertEquals(set, ExpectedKernelFace, s"kernel face reading, got: ${set.toList.sorted}")
     assertEquals(set.size, ExpectedKernelFace.size, s"kernel face size must match expected set, got: ${set.toList.sorted}")
@@ -134,12 +126,6 @@ class DualModeToolFaceSpec extends FunSuite:
     NodeFace.foreach { t =>
       assert(set.contains(t), s"dispatcher keeps the node face: $t (got: ${set.toList.sorted})")
     }
-    // 事实钉（2026-10-29 裁定②「dispatcher 保留」= 本腿不做 node_report 摘除动作；
-    // 现状该工具本就 flow 节点会话专属——本断言钉的是「本批不引入变化」）。
-    assert(
-      !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
-      "node_report stays flow-node-only (unchanged by this batch; the dispatcher leg does no node_report work)"
-    )
     println(s"[FACE-DISPATCHER] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
     assertEquals(set, ExpectedDispatcherFace, s"dispatcher face reading, got: ${set.toList.sorted}")
     assertEquals(set.size, ExpectedDispatcherFace.size, s"dispatcher face size must match expected set, got: ${set.toList.sorted}")

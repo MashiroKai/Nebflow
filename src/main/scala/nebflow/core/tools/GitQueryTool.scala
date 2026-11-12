@@ -44,7 +44,7 @@ import java.nio.charset.StandardCharsets.UTF_8
  * 挂载面 = `AskSessions.AllowedTools`（经 `AskExclusiveTools` 反剥集单点，ask 会话
  * 早退集唯一来源；其余身份连名字都被摘）。工具内侧 = `ctx.sessionId` 同判据
  * （`AskSessions.isAskSession`，`ask-` 前缀单点）拒绝一切非 ask 身份调用——含
- * REST 直调与 agent.json 声明（TaskBoard / node_report / delegate_report 同款纪律，
+ * REST 直调与 agent.json 声明（TaskBoard 同款封闭面纪律，
  * **DUAL 风格显式错误** GITQUERY_FORBIDDEN）。
  *
  * ── 四、输出纪律（硬要求 4）────────────────────────────────────────────
@@ -162,7 +162,7 @@ object GitQueryTool extends Tool:
       )
     ),
     "required" -> Json.arr("subcommand".asJson),
-    // 零自由透传：未知键直接拒绝（node_report / delegate_report 同款封闭面纪律）。
+    // 零自由透传：未知键直接拒绝（编排工具族同款封闭面纪律）。
     "additionalProperties" -> false.asJson
   )
 

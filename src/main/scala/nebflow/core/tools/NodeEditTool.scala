@@ -190,7 +190,7 @@ object NodeEditTool extends Tool:
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (ready to use); a blocked (deny-listed) package is refused. Omitting the key on create is refused (NODE_PLUGINS_UNDECLARED) — use plugins=[] for 'no capability face'.
 - Not settable (refused): agent/skill/mcp (NODE_AGENT_UNSUPPORTED) ⇒ plugins; preset (NODE_PRESET_UNSUPPORTED) — no per-node scheme, dispatcher's applies; worktree/merge=true/dangling (NODE_WORKTREE_UNSUPPORTED / NODE_MERGE_UNSUPPORTED / NODE_DANGLING_UNSUPPORTED) — worktree provisioning is the delegate layer's call, dispatch Delegate tasks instead of merge nodes, an empty out is legal as-is.
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
-- role (optional, CREATE-ONLY): "task" (default; node_report: finish) | "verifier" (judges another node's output; node_report: pass | fail). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
+- role (optional, CREATE-ONLY): "task" (default; execution node) | "verifier" (judges another node's output; anchors its verdict in the final text: `VERDICT: PASS` / `VERDICT: FAIL`). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - chainId (optional, declare-on-write): EXPLICIT chain membership — the node belongs to this id verbatim (declaration beats the derived fallback; undeclared keeps the derived in/out component). Metadata only: deps NEVER decides membership, so declaring changes no start/merge/barrier behaviour. Value domain in the schema property (else NODE_CHAIN_ID_INVALID); null = withdraw. Audited as chain-membership-changed.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered). Omitted ⇒ rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
@@ -295,8 +295,8 @@ object NodeEditTool extends Tool:
         ),
         "role" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> ("Node role — CREATE-ONLY (NODE_ROLE_CREATE_ONLY; rejected on edit: a node's role decides its node_report value domain and whether it may route a verdict, so it is a topology identity, not a runtime switch). " +
-            "\"task\" (default) = execution node: reports finish; \"verifier\" = verification node: it judges another node's output and reports pass/fail, routing the reject verdict along its '(fail)<worker>:loop' edge. " +
+          "description" -> ("Node role — CREATE-ONLY (NODE_ROLE_CREATE_ONLY; rejected on edit: a node's role decides its terminal-report face and whether it may route a verdict, so it is a topology identity, not a runtime switch). " +
+            "\"task\" (default) = execution node; \"verifier\" = verification node: it judges another node's output, anchors the verdict in its final text ('VERDICT: PASS' / 'VERDICT: FAIL'), routing the reject verdict along its '(fail)<worker>:loop' edge. " +
             "A verifier MUST declare exactly one fail route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE), may not use the 'failed' gate, and may not also be a loop=true node. " +
             "Creating a verifier with NO out edge requires verifierRoutePending=true (see that property). " +
             "Use verifier only when the verification outcome must DRIVE ROUTING (a rejected artifact must trigger a re-run); a report that does not route stays a task node with the conclusion in its result text.").asJson
@@ -1838,7 +1838,7 @@ object NodeEditTool extends Tool:
   ): IO[Either[ToolError, String]] =
     // ── 动作分支 ──
     // role create-only：角色 = 拓扑身份（决定
-    // node_report 值域与 verdict 选通合法性），中途改会让已落盘的值域/路由语义与
+    // 终态申报面形态与 verdict 选通合法性），中途改会让已落盘的语义与
     // 声明面脱节 ⇒ 与 merge/worktree 同口径硬拒（可行动：新建节点替代）。放在最前
     // ——任何副作用（含 abandon）之前即拒。
     if roleFlag.provided then
@@ -1846,7 +1846,7 @@ object NodeEditTool extends Tool:
         Left(
           ToolError(
             s"'role' is a create-time parameter — node '${node.name}' already exists (role=${node.role}). " +
-              "A node's role decides its node_report value domain and whether it may route a verdict, so it cannot be changed " +
+              "A node's role decides its terminal-report face and whether it may route a verdict, so it cannot be changed " +
               "after creation: create a new node with the intended role and rewire. (NODE_ROLE_CREATE_ONLY)"
           )
         )

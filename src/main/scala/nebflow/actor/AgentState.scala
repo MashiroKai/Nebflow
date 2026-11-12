@@ -456,8 +456,8 @@ case class SessionContext(
    * 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：本节点会话所属
    * `NodeDef.role`（`task` | `verifier`，见 `NodeRoles`）。NodeEngine 节点 spawn
    * 点从 `NodeDef.role` 置位 → 经 AgentCore 透传进 `ToolContext.flowNodeRole`
-   * ——`node_report` 值域按角色分化的判据来源（错误码
-   * `NODE_REPORT_CATEGORY_ROLE`）；同时驱动 `ProtocolFootnote` 的角色分支注入。
+   * ——终态协议按角色分化的提示词面判据来源（历史上另有
+   * 按角色值域校验错误码）；同时驱动 `ProtocolFootnote` 的角色分支注入。
    * None = 非项目节点会话（分发器/Nebula/team/flow 双轨/REST）或旧会话——判据侧
    * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。
    */

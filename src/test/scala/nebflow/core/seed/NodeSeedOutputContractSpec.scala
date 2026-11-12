@@ -14,7 +14,7 @@ import munit.FunSuite
  * 随之指向代码定义。**提示词来源拆分批（2026-10-08）**：`nebflow` 执行名的系统
  * 提示词按会话面拆成两个独立来源——flow 节点面（`NebflowNodePrompt`，经 `entry`
  * 解析）与 delegate 面（`NebflowDelegatePrompt`，经 `delegateEntry` 解析，delegate_report
- * 纪律、零 node_report，判据门 = `nebflow.core.entity.PromptFaceSplitSpec`）。
+ * 纪律，判据门 = `nebflow.core.entity.PromptFaceSplitSpec`）。
  * 本 spec 判定的是**节点面来源**（判据源 = `entry(ExecutorName).systemPrompt`，
  * 即 `NodeStarter` → `EntityLoader.loadAgent` 的节点 spawn 实读路径）。现行钉面
  * （①②随 2026-10-07 N3 修订批 dual-track 体例退役翻转）：
@@ -22,7 +22,8 @@ import munit.FunSuite
  *     载；曾为 dual-track 双轨体例开头承载）；
  *  ② 结果自包含（五要素 Report 段在位）＋ dual-track 体例防复活（!Deliver in two
  *     parts；曾钉双轨强制「both parts are mandatory」，随体例退役翻转）；
- *  ③ node_report 申报义务 + 未申报不终态语义在位；
+ *  ③ 终态申报义务**不在**提示词面（终态申报工具通道退役——申报义务与未申报不终态
+ *     语义已随段删除；终态协议由引擎贡献面 `NodeEngine.ProtocolFootnote` 注入）；
  *  ④ 代码级 prompt **零 HTML 注释**（种子面的「批源注记」形态随种子退役——注释不
  *     进模型上下文，代码定义从结构上就不携带它）。
  *
@@ -34,8 +35,8 @@ import munit.FunSuite
  * 判据源随之改为「节点实际执行的 agent」，而不是放宽断言。
  *
  * 面性质：本文件只读 `BuiltinAgents` 的代码定义，不写盘、不碰 `PathUtil.dataRoot`。
- * 引擎贡献面（`NodeEngine.ProtocolFootnote` 与 `PromptSections.NodeSessionAlwaysOnSection`）
- * 不在本 spec 判定内。delegate 面来源与双面分离判据 = `PromptFaceSplitSpec`。
+ * 引擎贡献面（`NodeEngine.ProtocolFootnote`，终态文本锚定协议单点）不在本 spec
+ * 判定内。delegate 面来源与双面分离判据 = `PromptFaceSplitSpec`。
  */
 class NodeSeedOutputContractSpec extends FunSuite:
 
@@ -66,13 +67,13 @@ class NodeSeedOutputContractSpec extends FunSuite:
     // 退役体例零复活（零出现）
     assertEquals(contentLines.count(_.contains("Deliver in two parts")), 0, "dual-track 体例已退役（任何行零出现，防复活）")
 
-  test("执行 agent 代码级 prompt 输出契约语义在正文 + node_report 义务在位"):
+  test("执行 agent 代码级 prompt 输出契约语义在正文 + 申报义务不在提示词面"):
     val text = promptText
-    // node_report 申报义务 + 未申报不终态（既有机制句不得删）
-    assert(text.contains("Report before you finish"), "node_report 段头在位")
-    assert(text.contains("call it before wrapping up"), "申报义务句在位")
-    assert(text.contains("Report first, then write your wrap-up text"), "报告先行句在位")
-    assert(text.contains("never terminalizes"), "未申报语义在位")
+    // 五要素 Report 段语义行在位
+    assert(text.contains("(1) what you did"), "五要素语义行在位")
+    // 终态申报义务不在提示词面（申报工具通道退役——义务句留场即「顺手写回」形态）
+    assert(!text.contains("call it before wrapping up"), "申报工具义务句不得留在提示词面")
+    assert(!text.contains("Report first, then write your wrap-up text"), "申报先行句不得留在提示词面")
     // 节点工具面行在位（执行面陈述）
     assert(text.contains("Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion"), "节点工具面行在位")
 

@@ -6,32 +6,27 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
-import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
-import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{BgTaskOutputStore, BgTaskRegistry, FileLockManager, NodeEditTool, ShellSession, ToolContext}
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.ModelCandidate
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
+import nebflow.actor.ActorSystem
+import nebflow.agent.{SharedResources, SpecResources}
+import nebflow.core.tools.{BgTaskOutputStore, BgTaskRegistry, NodeEditTool, ShellSession, ToolContext}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 
 /**
- * 独立复核探针（noderpt-verify 节点产出，**批 F 修复后归档入库**）——每个用例钉一条
- * 复核发现的复现判据，修复前 P2/P3/P4 为红、修复后应全绿：
+ * 独立复核探针（noderpt-verify 节点产出，批 F 修复后归档入库）——每个用例钉一条
+ * 复核发现的复现判据，修复后应全绿：
  *  - P1：判据②（30 分钟窗口口径）**第四分量** —— `BgTaskOutputStore` 终态翻转
  *    （窗口内 running 且可读 → 到点翻 cancelled）。交付 spec R7 只断言了进程/registry/
  *    WS 帧三个分量。
- *  - P2（→ 复核 **D3**，批 F3 修）：`NodeEdit abandon`（NodeEditTool.scala#abandonNode）
- *    也是**不经 run fiber 的终态写点**，是否与 A 段补的 6 个写点同口径清 `reportPendingSince`。
- *  - P3（→ 复核 **D2**，批 F2 修）：负例审计「`NodeMessage` 重入是否重置计时（应『不重置』）」
- *    的**下游后果** —— 重入轮不唤醒观察桥（⑧-1 同根因）时，申报只被阶梯 `peek` 见到，
- *    节点是否被终态化 / 是否仍有提醒兜底。
- *  - P4（→ 复核 **D1**，批 F1 修）：销毁窗口被链级归档吞掉（生产盘上实测：n-future 到点前
- *    12s 被归档、永不收殓）。
+ *  - P2：`NodeEdit abandon`（NodeEditTool.scala#abandonNode）也是**不经 run fiber 的
+ *    终态写点**，与终态出口清表腿同口径清存量计时字段。
+ *  - P4：销毁窗口被链级归档吞掉（生产盘上实测：n-future 到点前 12s 被归档、永不收殓）。
  *
- * ★ 入库时的改动 = **P4 的前提断言**（P1/P2/P3 逐字未动；原始归档件在
+ * （原 P3「重入轮 + 申报登记 + 提醒兜底」用例的受考面 = 未申报提醒阶梯，该阶梯已随
+ *   终态申报工具通道整体退役——登记表与扫描腿均已删除，用例随之移除。）
+ *
+ * ★ 入库时的改动 = **P4 的前提断言**（P1/P2 逐字未动；原始归档件在
  *   `.nebflow/evidence/20260911_noderpt-verify/NoderptVerifyProbeSpec.scala`，21807 B，
  *   sha256 前 8 `e374c401` 可比对）。两次改写：
  *   - 批 F1（`6308201b`）：把原始前提（`assert(swept.nonEmpty)` + `assert(!activeIds
@@ -65,20 +60,10 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit =
     ProjectRuntimeRegistry.clear
-    System.clearProperty("nebflow.noderpt.remind.ladderMs")
-    System.clearProperty("nebflow.noderpt.remind.maxRungs")
-    System.clearProperty("nebflow.noderpt.remind.quiescentIntervalMs")
 
-  private def setLadder(ladderMs: String, maxRungs: Int, quiescentMs: String = "600000"): Unit =
-    System.setProperty("nebflow.noderpt.remind.ladderMs", ladderMs)
-    System.setProperty("nebflow.noderpt.remind.maxRungs", maxRungs.toString)
-    System.setProperty("nebflow.noderpt.remind.quiescentIntervalMs", quiescentMs)
-
-  /** 桩 LLM：turn 1 回任务首行；`declareOnTurn` 指定轮次登记一条 node_report 申报。 */
-  private class StubLlm(declareOnTurn: Int = 0, category: String = "pass"):
+  /** 桩 LLM：turn 1 回任务首行；后续轮次回 ack。 */
+  private class StubLlm:
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
-    @volatile var res: SharedResources = null
-    val declaredSids: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -87,30 +72,7 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
         onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         Stream
-          .eval {
-            for
-              turn <- turnCount.updateAndGet(_ + 1)
-              _ <- IO(Option(res)).flatMap {
-                case None => IO.unit
-                case Some(r) =>
-                  r.agentRegistry.get.flatMap { reg =>
-                    reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
-                      case None => IO.unit
-                      case Some(rec) =>
-                        declaredSids.update(s => (s :+ rec.sessionId).distinct) *>
-                          (if turn == declareOnTurn then
-                             NodeReportRegistry.register(
-                               (tempRoot / "ws-probe-registry").toString,
-                               "probe-spec",
-                               "n-probe",
-                               rec.sessionId,
-                               NodeReportFeedback(category, s"probe declare ($category)", "")
-                             )
-                           else IO.unit)
-                  }
-              }
-            yield turn
-          }
+          .eval(turnCount.updateAndGet(_ + 1))
           .flatMap { turn =>
             val text = req.messages.map(_.textContent).mkString("\n")
             val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "probe-turn-ack"
@@ -170,66 +132,17 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
         .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
     )
 
-  private def createNode(
-    project: String,
-    ws: os.Path,
-    name: String,
-    task: String,
-    res: SharedResources,
-    system: ActorSystem
-  ): IO[Unit] =
-    val ctx = ToolContext(
-      projectRoot = ws.toString,
-      sessionId = Some("spec-sid"),
-      rootSessionId = Some("nebula-root"),
-      sharedResources = Some(res),
-      actorSystem = Some(system)
-    )
-    NodeEditTool
-      .call(
-        nodeInput(
-          project,
-          name,
-          "description" -> Json.fromString("noderpt verify probe node"),
-          "task" -> Json.fromString(task),
-          "out" -> Json.fromString("Nebula")
-        ).asObject.get,
-        ctx
-      )
-      .map(_.left.map(_.message))
-      .flatMap {
-        case Left(err) => IO.raiseError(new AssertionError(s"NodeEdit failed: $err"))
-        case Right(_) => IO.unit
-      }
-
-  end createNode
-
   private def byName(rt: ProjectRuntime, name: String): IO[NodeDef] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n
       case None => fail(s"node '$name' must exist")
     }
 
-  private def waitIdle(res: SharedResources, timeout: FiniteDuration = 20.seconds): IO[String] =
-    def go(deadline: Long): IO[String] =
-      res.agentRegistry.get.flatMap { reg =>
-        reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
-          case Some(rec) if rec.status == AgentStatus.Idle => IO.pure(rec.sessionId)
-          case _ =>
-            if System.currentTimeMillis() >= deadline then
-              IO.raiseError(new AssertionError("node agent never went Idle"))
-            else IO.sleep(50.millis) >> go(deadline)
-      }
-    go(System.currentTimeMillis() + timeout.toMillis)
-
   private def readEvents(ws: os.Path): IO[List[String]] =
     IO.blocking {
       val f = ws / ".nebflow" / "flow-map-events.jsonl"
       if os.exists(f) then os.read(f).linesIterator.toList else Nil
     }
-
-  private def reminderSummaryCount(events: List[String]): Int =
-    events.count(_.contains("\"node-report-missing\""))
 
   private def deniedFrames(frames: List[Json]): Int =
     frames.count(j => j.hcursor.get[String]("type").contains("backgroundTaskUpdate"))
@@ -318,7 +231,7 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     for
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("probe-p2", ws, system, res, destroyWindowMs = 0L)
-      // 与 NodeReportReminderSpec R8 同构的种子：Running + 无活 fiber（死会话），带计时
+      // 种子：Running + 无活 fiber（死会话），带存量计时字段
       _ <- rt.store.mutate { s =>
         s.copy(nodes =
           s.nodes + ("n-p2" -> NodeDef(
@@ -358,61 +271,6 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
         node.reportReminderCount,
         0,
         s"abandon must reset the rung counter (actual=${node.reportReminderCount})"
-      )
-    end for
-  }
-
-  // ── P3：NodeMessage 重入 + 申报 ⇒ 是否被终态化 / 是否仍有提醒兜底 ──────────
-
-  test(
-    "P3: a node_report declared on a NodeMessage-driven turn (no bridge Completed) still gets finalized or reminded"
-  ) {
-    // 阶梯压到 700ms —— 关键：扫描腿只在**有档到点**时才走 peek 分支
-    // （`if !ladderStage && !quiescentStage then IO.unit`），故必须让第 1 档到点，
-    // 才能复现「peek 见申报 ⇒ 清表」这条路。本探针**手动逐拍驱动**扫描腿
-    // （spec 无 ProjectActor 节拍），故不会出现「早于申报注入的抢跑提醒」。
-    setLadder("700,3000", 2, "600000")
-    val ws = tempRoot / "ws-p3"
-    os.makeDir.all(ws)
-    val system = ActorSystem(s"probe-p3-${scala.util.Random.nextInt(100000)}")
-    val llm = StubLlm(declareOnTurn = 2)
-    for
-      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
-      _ <- IO(llm.res = res)
-      rt <- mountProject("probe-p3", ws, system, res, reportGateHold = true, destroyWindowMs = 60000L)
-      _ <- createNode("probe-p3", ws, "reentry-a", "result-REENTRY", res, system)
-      sid <- waitIdle(res)
-      _ <- waitUntil(20.seconds)(byName(rt, "reentry-a").map(_.reportPendingSince.isDefined))
-      held <- byName(rt, "reentry-a")
-      // 分发器 NodeMessage 重入（ImmediateInput，replyTo=None —— ⑧-1 同根因）
-      sent <- rt.engine.sendNodeMessage(held.id, "please continue and report")
-      _ <- waitUntil(20.seconds)(NodeReportRegistry.peek(sid).map(_.isDefined)).attempt
-      declared <- NodeReportRegistry.peek(sid)
-      _ <- waitUntil(20.seconds)( // 等重入轮跑完（该轮不产生 bridge Completed）
-        res.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Idle))
-      )
-      _ <- IO.sleep(900.millis) // 越过第 1 档阈值（700ms）
-      _ <- rt.engine.remindUnreportedNodes() // 第 1 拍：peek 见申报 ⇒ 清表（本批逻辑）
-      afterScan <- byName(rt, "reentry-a")
-      _ <- IO.sleep(300.millis)
-      _ <- rt.engine.remindUnreportedNodes() // 第 2 拍：清表后不再入选
-      finalState <- byName(rt, "reentry-a")
-      _ <- IO.sleep(300.millis)
-      _ <- rt.engine.remindUnreportedNodes()
-      settled <- byName(rt, "reentry-a")
-      events <- readEvents(ws)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assertEquals(sent.isRight, true, s"NodeMessage to a held Running node must be accepted: $sent")
-      assert(declared.isDefined, "the re-entered turn must have registered the node_report declaration")
-      // 诊断读数（无论红绿都要落进失败消息）：
-      val diag = s"status=${settled.status} pendingSince=${settled.reportPendingSince} " +
-        s"rungs=${settled.reportReminderCount} reminderEvents=${reminderSummaryCount(events)} " +
-        s"clockAfterFirstScan=${afterScan.reportPendingSince.isDefined} jobDone=${afterScan.destroyAt.isDefined}"
-      assert(
-        NodeLifecycle.Terminal.contains(settled.status) || settled.reportPendingSince.isDefined,
-        s"a declaration that the bridge cannot observe must NOT silently disarm the safety net — " +
-          s"the node must either be finalized or still be covered by the ladder; got $diag"
       )
     end for
   }

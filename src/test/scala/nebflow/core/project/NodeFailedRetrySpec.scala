@@ -140,8 +140,7 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
-        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。本 spec 的 failed 断言靠
+        // 显式关终态 hold 腿（休眠旋钮；本 fixture 主题与之正交）。
         // 文本/引擎路径产生，不得被「未申报 hold」截断。
         reportGateHold = Some(false)
       )

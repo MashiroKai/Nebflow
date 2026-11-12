@@ -193,7 +193,7 @@ private[project] trait NodeDelivery:
    * 引用**计入 `faceId`（面必须先登记在 `ChainLedger.ReferenceFaces`；未登记 ⇒ WARN，不计）。
    *
    * 与 [[mailChainIds]] 同款收口理由：工具面对工程的触点收敛到本类 ⇒ `MailTool` /
-   * `TaskBoardTool` / `NodeReportTool` **不直触** `FlowMapStore`（`FlowMapStore.chainLedgerStore`
+   * `TaskBoardTool` 等编排工具 **不直触** `FlowMapStore`（`FlowMapStore.chainLedgerStore`
    * 保持只读消费面语义，写面单点仍在此）。
    *
    * best-effort 口径（与轴(a) 归档绑定的 best-effort 同款，**但不静默**）：计数是退役判据

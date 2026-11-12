@@ -8,17 +8,16 @@ import munit.FunSuite
  *
  *  ① **flow 节点面**（解析路径 = `entry`）：节点语义四要素——接收上游/分发输入
  *     （任务文本 = 全部世界）、产出交付（末条输出 = 交付物，引擎沿 out 边投递）、
- *     沿 out 边交接、受监督约束（node_report 申报义务 + 未申报不终态 + role=verifier
- *     值域分化 pass/fail）；
+ *     沿 out 边交接、受监督约束（终态文本锚定协议 + role=verifier 判词文法）；
  *  ② **delegate 面**（解析路径 = `delegateEntry`）：delegate_report 纪律（含配套
- *     指令），**模型可见面零 node_report 指令**；
+ *     指令）＋ 零节点终态申报纪律（防回流，见对应用例）；
  *  ③ **两来源机械分离**：两路径产出互不等（两个独立常量、两条读路，非一处模板
  *     双面引用）；非 nebflow 名无 delegate 面变体（逐字回落 entry）；
- *  ④ **brief 申报行**（`DelegateTool.BriefReportLine`）= delegate_report 纪律、
- *     零 node_report（delegate brief 面与 delegate 系统提示词面同判据）。
+ *  ④ **brief 申报行**（`DelegateTool.BriefReportLine`）= delegate_report 纪律
+ *     （delegate brief 面与 delegate 系统提示词面同判据）。
  *
  * 面性质：本文件只读代码定义与公开常量，不写盘、不碰 `PathUtil.dataRoot`。
- * 引擎贡献面（`NodeEngine.ProtocolFootnote`、`PromptSections.NodeSessionAlwaysOnSection`）
+ * 引擎贡献面（`NodeEngine.ProtocolFootnote`，节点输入面终态协议单点）
  * 不在本 spec 判定内（节点输入面协议归 `NodeChainAttributionSpec` /
  * `TaskBoardInjectionSpec` 的既有身份钉）。
  */
@@ -77,12 +76,12 @@ class PromptFaceSplitSpec extends FunSuite:
     assert(text.contains("Integration discipline (hard)"), "永不自并纪律在位")
     assert(text.contains("Your roles: executor, dispatcher, manager"), "三角色段在位（delegate 语义）")
 
-  test("delegate 面系统提示词模型可见面零 node_report 指令（零出现，防回流）"):
+  test("delegate 面系统提示词模型可见面零节点申报纪律（零出现，防回流）"):
     val hits = delegatePrompt.split("\n", -1).toList.filter(_.contains("node_report"))
     assertEquals(
       hits,
       Nil,
-      s"delegate 面模型可见文本零 node_report（命中 ${hits.length} 行，首行: ${hits.headOption.getOrElse("").take(120)}）"
+      s"delegate 面模型可见文本零节点申报纪律（命中 ${hits.length} 行，首行: ${hits.headOption.getOrElse("").take(120)}）"
     )
     assert(!delegatePrompt.contains("You are a task node"), "节点身份句不得出现在 delegate 面（节点面专属开头）")
 
@@ -94,21 +93,21 @@ class PromptFaceSplitSpec extends FunSuite:
     assert(text.contains("delivers it downstream along the out edges"), "引擎沿 out 边投递在位")
     assert(text.contains("Hand off along the out edges"), "out 边交接段在位")
 
-  test("flow 节点面系统提示词 = node_report 申报义务 + 未申报不终态 + verifier 值域分化（blocked 终态退役后值域）"):
+  test("flow node face system prompt = terminal text-anchoring protocol (verifier verdict grammar + AskHost guidance, no declaration tool)"):
     val text = nodePrompt
-    assert(text.contains("Call `node_report` before wrapping up"), "申报义务句在位")
-    assert(text.contains("never terminalizes"), "未申报不终态语义在位")
-    assert(text.contains("`task` (default): `finish`"), "task 角色值域在位（显式完成，可选）")
-    assert(text.contains("`pass` / `fail` (a verdict on the object under review)"), "verifier 角色值域在位")
+    // Terminal report = the final text itself (the declaration tool channel is retired).
+    assert(text.contains("no separate declaration tool"), "explicit no-declaration-tool sentence present")
+    assert(text.contains("`VERDICT: PASS` or `VERDICT: FAIL`"), "verifier verdict grammar present")
+    assert(text.contains("ask (AskHost) instead of declaring a stuck state"), "AskHost guidance present")
     assert(text.contains("(fail)<target>:loop"), "verifier 回边路由语义在位")
-    assert(text.contains("Report first, then write your wrap-up text"), "报告先行句在位")
-    // blocked 终态退役：节点面值域行零 blocked（无停等申报出口）
-    assert(!text.contains("`blocked`"), s"blocked 值域形态零出现:\n${text.linesIterator.filter(_.contains("node_report")).mkString("\n")}")
+    assert(text.contains("verdict ≠ status"), "verifier verdict is not node status")
+    assert(text.contains("a real execution failure (dead session / LLM error) is engine-judged"), "real execution failure is engine-judged")
+    // The blocked terminal is retired: the node face carries neither the BLOCKED grammar nor a blocked value.
+    assert(!text.contains("BLOCKED") && !text.contains("`blocked`"), "node face has no blocked grammar")
 
   test("两来源机械分离：entry 路径 ≠ delegateEntry 路径，各持各面（非一处模板双面引用）"):
     assert(nodePrompt != delegatePrompt, "两路径产出必须互不等（两个独立常量）")
-    assert(nodePrompt.contains("node_report"), "节点面持 node_report 纪律")
-    assert(!delegatePrompt.contains("node_report"), "delegate 面零 node_report")
+    assert(nodePrompt.contains("no separate declaration tool"), "节点面持终态文本锚定协议（申报 = 末条文本）")
     assert(delegatePrompt.contains("delegate_report"), "delegate 面持 delegate_report")
 
   test("非 nebflow 名无 delegate 面变体：delegateEntry 逐字回落 entry（机械完备性）"):

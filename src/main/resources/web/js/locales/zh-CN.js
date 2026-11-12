@@ -3013,7 +3013,7 @@ export default {
   'agentManager.faceDelegate': 'Delegate 目标',
   'agentManager.faceNode': 'Node（flow 节点）',
   'agentManager.faceDelegateHint': 'Delegate 会话收到的系统提示词（delegate_report 纪律）。',
-  'agentManager.faceNodeHint': 'flow 节点会话收到的系统提示词（node_report 纪律）。',
+  'agentManager.faceNodeHint': 'flow 节点会话收到的系统提示词（节点终态申报纪律）。',
   'explorer.newFile': '新建文件',
   'explorer.newFolder': '新建文件夹',
   // === ui-device-faces 批（2026-10-10）：面B 文件浏览器远端目录 ===

@@ -128,7 +128,7 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
           rootSid,
           "fixproj",
           (_, _, _) => IO.unit,
-          // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开）。
+          // 显式关终态 hold 腿（休眠旋钮；本 fixture 主题与之正交）。
           reportGateHold = Some(false)
         )
       yield (store, engine, resources, recorded, rootSid, rootRef)

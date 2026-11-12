@@ -16,9 +16,9 @@ import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Stre
  *  - `sendStream`:忽略 `req`/`onAttempt`,固定回 `TextDelta("ok")` + `Done(None, None)`。
  *
  * 不并入的站点(语义真不同,留原地):
- *  - NodeReportReminderSpec / NoderptVerifyProbeSpec 的同名行为桩(turn 计数、
- *    node_report 注册副作用、绑定各自 suite 的 tempRoot);
- *  - 异名同职桩 BgStubLlm ×3 / FailReportLlm ×2。
+ *  - NoderptVerifyProbeSpec 的同名行为桩(turn 计数、绑定各自 suite 的 tempRoot);
+ *  - 异名同职桩 BgStubLlm ×3 / 判词文本锚定桩(LoopExecutionLegSpec /
+ *    VerifierRouteGuardSpec 的 FailReportLlm)。
  */
 class StubLlm:
 

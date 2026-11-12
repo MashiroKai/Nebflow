@@ -74,23 +74,26 @@ class TaskBoardInjectionSpec extends FunSuite:
     assert(!fn.contains("needs-split"), s"blocked 细分域已随终态退役删除:\n$fn")
     assert(!fn.contains("BLOCKED"), s"文本锚定备用通道已随出口一并删除:\n$fn")
 
-  test("ProtocolFootnote 措辞（blocked 终态退役后协议）：工具申报 + 角色值域 + AskHost 指引 + 无停等申报"):
+  test("ProtocolFootnote wording (text-anchored protocol): final text is the deliverable + AskHost guidance + no stopped/waiting declaration"):
     val fn = NodeEngine.ProtocolFootnote
-    assert(fn.contains("node_report"), s"第一优先=工具申报:\n$fn")
-    assert(fn.contains("task = `finish`"), s"task 角色值域在位（显式完成，可选）:\n$fn")
-    assert(fn.contains("verifier = `pass` / `fail`"), s"verifier verdict 值域在位:\n$fn")
-    assert(fn.contains("There is no stopped/waiting declaration"), s"无停等申报出口（blocked 退役语义）:\n$fn")
-    assert(fn.contains("call AskHost"), s"任务/授权/依赖不清 ⇒ AskHost（与工具 description 双面同文）:\n$fn")
-    assert(fn.contains("state what is missing plainly in your wrap-up report"), s"兜底 = 收尾报告写明缺什么:\n$fn")
+    // Completion channel: the final assistant text IS the terminal report (the deliverable is the report; no prior declaration needed)
+    assert(fn.contains("Your final assistant text IS the terminal report"), s"completion report = the text itself:\n$fn")
+    assert(fn.contains("There is no stopped/waiting declaration"), s"no stopped/waiting declaration exit:\n$fn")
+    assert(fn.contains("call AskHost"), s"unclear task/authorization/dependency => AskHost:\n$fn")
+    assert(fn.contains("state what is missing plainly in your wrap-up report"), s"fallback = the wrap-up report states what is missing:\n$fn")
+    // The declaration tool channel and the BLOCKED grammar are retired and must not come back.
+    assert(!fn.contains("node_report") && !fn.contains("BLOCKED"), s"retired channels must not return:\n$fn")
+    assert(!fn.contains("Report before you finish"), s"old tool-declaration header must not return:\n$fn")
+    assert(!fn.contains("call it before wrapping up"), s"old tool-declaration duty sentence must not return:\n$fn")
 
-  // node-output contract（2026-09-24）：末条输出 = 自身完成汇报、结果自包含（禁指代收尾）
-  // 两条要求是**新钉**（非既有断言措辞同步——本批未触发 §五 的同步条件：末行全等钉与
-  // deliverable 契约两段逐字保持，无需改写任何既有断言字面量）。
-  test("ProtocolFootnote 输出契约（node-output contract）：末条输出 = 自身完成汇报（申报 ≠ 汇报）、结果自包含（禁 see above 指代）"):
+  // node-output contract: the last output is the node's own completion report and is self-contained
+  // (no "see above" style back references). The final text is both the terminal report and the
+  // wrap-up: there is no second declaration artifact any more.
+  test("ProtocolFootnote output contract (node-output contract): the last output is the node's own completion report (= the terminal report itself) and is self-contained"):
     val fn = NodeEngine.ProtocolFootnote
     assert(fn.contains("Your last output is the deliverable"), s"末条输出 = 交付物（引擎取最后一条 assistant 文本）:\n$fn")
     assert(fn.contains("completion report for this node"), s"内容 = 自身完成汇报:\n$fn")
-    assert(fn.contains("terminal declaration, not that report"), s"申报（node_report）≠ 汇报，两者是两件事:\n$fn")
+    assert(fn.contains("writing it IS the wrap-up action"), s"写报文 = 收尾动作本体（申报与汇报一体）:\n$fn")
     assert(fn.contains("Keep it self-contained"), s"要求 2 的抬头句:\n$fn")
     assert(fn.contains("\"see above\""), s"指代收尾必须点名禁用:\n$fn")
     assert(

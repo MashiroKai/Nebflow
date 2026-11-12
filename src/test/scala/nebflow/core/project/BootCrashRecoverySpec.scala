@@ -184,8 +184,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
-        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
+        // 显式关终态 hold 腿（休眠旋钮；本 fixture 主题与之正交）。
         reportGateHold = Some(false),
         // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
         // 本 fixture 主题 = 崩溃恢复后的 transcript 续写 + 恰好一次投递（C1），其断言要求
