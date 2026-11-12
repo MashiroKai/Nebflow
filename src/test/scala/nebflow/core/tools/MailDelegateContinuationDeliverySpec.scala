@@ -48,13 +48,15 @@ import scala.concurrent.duration.*
  * [[SessionResumptionSpec]]）。本 spec 钉住重钉后的契约：
  *  1. **wiring**：原位续后**同一会话 id** 在统一注册表复活为 Delegate 活体，且监督者
  *     拿到原父会话（registry 记录 `parentSessionId`）的**活引用**（回传链锚点不变）；
- *  2. **矩阵腿**：续命回合无终态申报收尾 ⇒ complete×idle = 提醒腿
- *     （NudgeIdle）——绝不自动 completed 投父、绝不假终态（与 boot 复活 V1 同矩阵，
- *     2026-11-01 状态矩阵批口径）；结果在模型申报 finish 时照常回传；
+ *  2. **Pass-through leg**: a resumed turn that ends with plain text is the completion
+ *     delivery — the final text is mailed to the parent exactly once and the resumed
+ *     session is released;
  *  3. **父不 live 面**：父会话不在注册表 ⇒ 原位续照常进行（不阻断），但 Mail 回执
  *     **当场说破**（可见 NOTE）；
  *  4. 父会话无论是否 live，完成结果只入持久 SessionMailbox 一次，不叠 raw actor event。
- *  5. 开放工作区本轮完成保留身份；显式关闭后不再复活，意外退出须手动恢复。
+ *  5. A completed workspace round hands over its final text and releases the owner actor
+ *     without integrating; the workspace stays open and a later Mail round resumes the same
+ *     session in place. A closed workspace never resumes; an unexpected exit needs manual recovery.
  *
  * Harness = BackoffSupervisorCancelSpec（SharedResources 装配）＋ MailTerminalReviveSpec
  * （temp dataRoot / StubLlm）同款拼装。
@@ -548,7 +550,9 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
 
     end for
 
-  test("completed workspace round reports once, retains the same live owner, and accepts another Mail round"):
+  test(
+    "completed workspace round hands the final text over once, releases the owner actor, and a later Mail round resumes the same session in place"
+  ):
     val system = ActorSystem("workspace-round-retention")
     val id = "delegate-workspace-round"
     val parent = "round-parent"
@@ -586,9 +590,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
             activity = "running"
           )
         )
-        DelegateRegistry.updateReport(id, "finish", "result committed and verified", "")
       }
-      roundFrames <- Ref.of[IO, List[Json]](Nil)
       child <- system.spawn(sinkBehavior, "round-child")
       supervisor <- system.spawn(
         nebflow.agent.BackoffSupervisor(
@@ -602,8 +604,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
           parentSessionId = parent,
           resources = resources,
           initialPrompt = "task",
-          source = "delegate",
-          wsSend = Some(json => roundFrames.update(_ :+ json))
+          source = "delegate"
         ),
         "round-supervisor"
       )
@@ -617,45 +618,24 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       )
       transcript = List(Message(MessageRole.Assistant, Left("round one complete")))
       _ <- supervisor ! AgentEvent.Completed(id, transcript)
-      _ <- waitUntil(5.seconds)(
-        roundFrames.get.map(_.exists(_.hcursor.get[Boolean]("roundComplete").toOption.contains(true)))
-      )
-      _ <- supervisor ! AgentEvent.Completed(id, transcript)
-      frames <- roundFrames.get
-      _ = assert(
-        frames.exists(frame =>
-          frame.hcursor.get[Boolean]("roundComplete").toOption.contains(true) &&
-            frame.hcursor.get[String]("mode").toOption.contains("standby")
-        )
-      )
-      first <- SessionMailbox.scanPending(parent)
-      _ = assertEquals(first.size, 1)
-      alive <- system.isAlive(child.path)
-      _ = assert(alive)
+      // The round's end is the completion delivery: the final text reaches the parent mailbox
+      // exactly once and the owner actor is released.
+      _ <- waitUntil(5.seconds)(SessionMailbox.scanPending(parent).map(_.size == 1))
+      _ <- waitUntil(5.seconds)(system.isAlive(supervisor.path).map(!_))
+      pending <- SessionMailbox.scanPending(parent)
+      registryAfter <- resources.agentRegistry.get
+      _ = assertEquals(pending.size, 1)
+      _ = assert(pending.head.event.payload.contains("round one complete"), pending.toString)
+      _ = assert(!registryAfter.contains(id), "the completion releases the owner from the registry")
+      // Completion never integrates by itself, and the workspace stays open for the next round.
       _ = assertEquals(git("rev-parse", "main"), baseline)
-      _ = assertEquals(nebflow.core.delegate.WorkspaceLedger.default.owned(id).get.activity, "idle")
+      _ = assert(nebflow.core.delegate.WorkspaceLedger.default.owned(id).exists(_.lifecycle == "open"))
       mail <- continuationMail(resources, system, parent, id)
       _ = assert(mail.isRight, mail.toString)
-      _ = assert(DelegateRegistry.find(id).exists(_.standbySince.isEmpty))
-      _ <- IO.blocking(DelegateRegistry.updateReport(id, "finish", "second result", ""))
-      _ <- supervisor ! AgentEvent.Completed(
-        id,
-        transcript :+ Message(MessageRole.Assistant, Left("round two complete"))
-      )
-      _ <- waitUntil(5.seconds)(SessionMailbox.scanPending(parent).map(_.size == 2))
-      _ <- waitUntil(5.seconds)(
-        IO(nebflow.core.delegate.WorkspaceLedger.default.owned(id).exists(_.activity == "idle"))
-      )
-      _ <- IO.blocking {
-        val ledger = nebflow.core.delegate.WorkspaceLedger.default
-        val workspace = ledger.owned(id).get
-        assert(ledger.claimCleanup(workspace.id, workspace.revision, "closure-test").isRight)
-        assert(ledger.finishCleanup(workspace.id, "closure-test", integrated = false, error = None).isRight)
-      }
-      _ <- system.stop(child)
-      _ <- waitUntil(5.seconds)(system.isAlive(supervisor.path).map(!_))
-      registry <- resources.agentRegistry.get
-      _ = assert(!registry.contains(id))
+      _ <- waitUntil(15.seconds)(resources.agentRegistry.get.map(_.contains(id)))
+      resumed <- resources.agentRegistry.get.map(_.get(id))
+      _ = assertEquals(resumed.map(_.kind), Some(AgentKind.Delegate))
+      _ <- DelegateBudget.release(id).attempt.void
       _ <- system.stopAll
     yield ()
     end for
