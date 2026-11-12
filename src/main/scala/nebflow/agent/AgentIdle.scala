@@ -876,7 +876,7 @@ private[agent] object AgentIdle:
         nebflow.core.mail.InputMailbox.replayProducerInputs(sid).flatMap { entries =>
           entries.traverse_(e => nebflow.core.mail.InputPayload.toCommand(e.payload).traverse_(cmd => ctx.self ! cmd))
         } *> CompactionQueueStore.load(sid).flatMap {
-          case Some(q) if q.imms.nonEmpty || q.events.nonEmpty =>
+          case Some(q) if q.imms.nonEmpty || q.events.nonEmpty || q.outstandingSubagentResults > 0 =>
             DeliveredReceiptLedger.filterUndelivered(sid, q.events).flatMap { (keptEvents, blocked) =>
               logAgentEvent(
                 agentDef,
@@ -888,7 +888,13 @@ private[agent] object AgentIdle:
               )
               val exec = state.execution.copy(
                 pendingImmediateInputs = q.imms ++ state.execution.pendingImmediateInputs,
-                pendingEvents = keptEvents ++ state.execution.pendingEvents
+                pendingEvents = keptEvents ++ state.execution.pendingEvents,
+                // Restore the batch barrier with the persisted queue snapshot. A
+                // legacy snapshot has zero and retains the previous recovery behavior.
+                outstandingSubagentResults = math.max(
+                  state.execution.outstandingSubagentResults,
+                  q.outstandingSubagentResults
+                )
               )
               // 台账对账 + 徽标帧（fix 1 补漏批，2026-10-22）：恢复的回执必须落账——
               // 此前恢复面不同步台账 ⇒ 无 producedAt ⇒ watchdog 对重启恢复回执致盲
