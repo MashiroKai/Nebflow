@@ -4,7 +4,7 @@ import io.circe.parser
 
 /**
  * verify 判定文法解析器（LoopNode 批 2026-09-06，主设计 20260902_flowmap-engine-evolution-design.md §2.3；
- * 与 BlockedReader :1730 同构、同注释风格，独立 object 便于单测）。
+ * 独立 object 便于单测）。
  *
  * - **锚定**：verify 最终输出（extractLastAssistantText 同款提取）trim 后**首个非空行**
  *   必须整体匹配 `^VERDICT:\s*(PASS|FAIL)$`（大小写不敏感，归一化为大写；行内除
@@ -12,7 +12,7 @@ import io.circe.parser
  * - **FAIL JSON 体**：首个 `{` 到末个 `}`（jsonBody 同款），circe 解析
  *   `{ "issues": ["<问题 1>", "<问题 2>"], "requirements": "<通过标准，可空>" }`——
  *   issues 必须为非空字符串数组；requirements 可选字符串。
- * - **四态判定表**（§2.3，与 BlockedReader 的「锚定保留 + 畸形降级」对称设计）：
+ * - **四态判定表**（§2.3，锚定保留 + 畸形降级）：
  *
  *   | verify 输出形态 | 判定 | 动作 |
  *   |---|---|---|
@@ -44,32 +44,42 @@ object VerdictReader:
 
   private val VerdictRe = "(?i)^VERDICT:\\s*(PASS|FAIL)\\s*$".r
 
-  /** 解析 verify 最终输出：pass/fail 判定（§2.3 四态表）。 */
-  def parse(resultText: String): Verdict =
+  /**
+   * Anchored parse（判据单点）：`Some(verdict)` = 首行带 `VERDICT: PASS|FAIL` 锚定；
+   * `None` = 无锚定行。[[parse]] 的降级哲学（无锚定 = Pass 直通）保留在 `parse`，
+   * 需要区分「真锚定 Pass」与「无锚定降级」的消费点（普通 verifier 腿的完成点判词
+   * 承接——申报工具通道退役后判词 = 文本锚定）用本方法。
+   */
+  def anchored(resultText: String): Option[Verdict] =
     val firstLine = resultText.trim.linesIterator.find(_.trim.nonEmpty).map(_.trim).getOrElse("")
     firstLine match
-      case VerdictRe("PASS") => Verdict.Pass
-      case VerdictRe("FAIL") =>
-        jsonBody(resultText) match
-          case Some(body) =>
-            parser
-              .parse(body)
-              .toOption
-              .flatMap { json =>
-                val cursor = json.hcursor
-                val issues = cursor.get[List[String]]("issues").toOption.getOrElse(Nil)
-                if issues.nonEmpty then
-                  val requirements = cursor.get[String]("requirements").toOption.getOrElse("")
-                  Some(Verdict.Fail(issues.map(_.trim).filter(_.nonEmpty), requirements))
-                else None
-              }
-              .getOrElse(Verdict.Fail(List(PlaceholderIssues), ""))
-          case None => Verdict.Fail(List(PlaceholderIssues), "")
-      case _ => Verdict.Pass // 无锚定行 → 文法畸形降级 = Pass 直通
-    end match
-  end parse
+      case VerdictRe("PASS") => Some(Verdict.Pass)
+      case VerdictRe("FAIL") => Some(failVerdict(resultText))
+      case _                 => None
 
-  /** 首个 `{` 到末个 `}` 之间（可嵌于说明文字之后；与 BlockedReader.jsonBody 同款）。 */
+  /** 解析 verify 最终输出：pass/fail 判定（§2.3 四态表）。 */
+  def parse(resultText: String): Verdict =
+    anchored(resultText).getOrElse(Verdict.Pass) // 无锚定行 → 文法畸形降级 = Pass 直通
+
+  /** FAIL 锚定分支本体（JSON 体合法 ⇒ issues/requirements；缺失/畸形/issues 空 ⇒ 占位意见）。 */
+  private def failVerdict(resultText: String): Verdict.Fail =
+    jsonBody(resultText) match
+      case Some(body) =>
+        parser
+          .parse(body)
+          .toOption
+          .flatMap { json =>
+            val cursor = json.hcursor
+            val issues = cursor.get[List[String]]("issues").toOption.getOrElse(Nil)
+            if issues.nonEmpty then
+              val requirements = cursor.get[String]("requirements").toOption.getOrElse("")
+              Some(Verdict.Fail(issues.map(_.trim).filter(_.nonEmpty), requirements))
+            else None
+          }
+          .getOrElse(Verdict.Fail(List(PlaceholderIssues), ""))
+      case None => Verdict.Fail(List(PlaceholderIssues), "")
+
+  /** 首个 `{` 到末个 `}` 之间（可嵌于说明文字之后）。 */
   private def jsonBody(trimmed: String): Option[String] =
     val i = trimmed.indexOf('{')
     val j = trimmed.lastIndexOf('}')

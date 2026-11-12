@@ -118,13 +118,13 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
    *
    * **批 A 回改（B1 掩蔽处置，2026-09-12）**：此前本夹具走
    * `ProjectRuntimeRegistry.mount`——该入口不注入 `reportGateHold` ⇒ 引擎按生产默认
-   * （`Defaults.NodeReportCompletionHold` = true）判「未申报 node_report 不终态化」⇒
+   * （`Defaults.NodeReportCompletionHold` = true）走终态 hold 腿 ⇒
    * 本 spec 的 mock-LLM 节点永不 completed，`waitStatus(..., Completed)` 20s 先超时，
    * ①②⑥ 的投递/通知断言**恒不可达**（与范围外既有红同因 ⇒ 被掩蔽）。
    *
    * 改为**自有挂载夹具**（NodeAcceptanceSpec / OutNullableDeliverySpec 同款先例）：
    * 显式注入 `reportGateHold = Some(false)`——**仅测试面、零生产改动**；本 spec 主题是
-   * 「通知/投递」语义，未申报提醒阶梯语义由 NodeReportReminderSpec 覆盖。
+   * 「通知/投递」语义，与终态 hold 腿正交。
    *
    * 其余装配与 `ProjectRuntimeRegistry.mount` 逐项同构（store/board 打开 + ProjectActor
    * spawn + 注册）；mount 另跑的两个动作——僵尸 running 收殓 + Nebula 欠账补投扫描——
@@ -150,7 +150,6 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        feedbackMode = pd.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
         emitEvent = (_, _, _) => IO.unit,
         board = board,
         projectGoal = pd.description,
@@ -551,32 +550,32 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       assertEquals(s3After.notifySentAt.isDefined, true, "s3 marked sent")
   }
 
-  // ── ④：单一入口组合不双触发（blocked 仍预留零动作；failed 已接线、状态门控）──
+  // ── ④：单一入口状态门控（failed 已接线；blocked 原因已随终态退役移除）──
 
   test(
-    "④ single-entry reason gate: blocked stays reserved no-op; failed wired (status-gated, flag-independent, no double trigger with FeedbackRouter)"
+    "④ single-entry reason gate: no Blocked reason exists any more; failed wired (status-gated, flag-independent)"
   ) {
     for
       (store, dn, triggered, escalated, _) <- mkUnit("reasongate")
       _ <- seed(store, "n-rg", "gate-node", NodeLifecycle.Blocked, notify = true, result = Some("[blocked:other] x"))
       _ <- seed(store, "n-rgf", "gate-failed", NodeLifecycle.Failed, notify = false, result = Some("boom"))
-      blockedNode <- store.getNode("n-rg").map(_.get)
+      legacyBlockedNode <- store.getNode("n-rg").map(_.get) // legacy 存量行直种（退役后不可再产）
       failedNode <- store.getNode("n-rgf").map(_.get)
-      _ <- dn.notifyTerminal(blockedNode, NotifyReason.Blocked) // 仍预留：FeedbackRouter 独占 blocked 重入
-      _ <- dn.notifyTerminal(blockedNode, NotifyReason.Failed) // 状态不匹配（Blocked ≠ Failed）→ 零动作
+      // legacy blocked 行 + Failed 原因 = 状态不匹配 → 零动作（状态门控仍在）
+      _ <- dn.notifyTerminal(legacyBlockedNode, NotifyReason.Failed)
       _ <- dn.notifyTerminal(failedNode, NotifyReason.Failed) // failed 接线：不查 flag 也触发
       calls <- triggered.get
       esc <- escalated.get
       afterB <- store.getNode("n-rg").map(_.get)
       afterF <- store.getNode("n-rgf").map(_.get)
     yield
-      assertEquals(calls.size, 1, "only the failed node triggers (blocked reason no-op; status mismatch no-op)")
+      assertEquals(calls.size, 1, "only the failed node triggers (status mismatch no-op)")
       assert(
         calls.head.contains("gate-failed") && calls.head.contains("reason=failed"),
         s"failed trigger text, got: ${calls.headOption}"
       )
       assertEquals(esc.size, 0, "no escalation from the reason gate")
-      assertEquals(afterB.notifySentAt, None, "no marker written for blocked node")
+      assertEquals(afterB.notifySentAt, None, "no marker written for the legacy blocked row")
       assertEquals(afterF.notifySentAt.isDefined, true, "marker set for failed node")
   }
 

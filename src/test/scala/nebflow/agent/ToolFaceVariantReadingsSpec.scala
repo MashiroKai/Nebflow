@@ -2,7 +2,7 @@ package nebflow.agent
 
 import munit.FunSuite
 import nebflow.actor.{AgentDef, depth, isDispatcher}
-import nebflow.core.tools.{MailTool, NodeReportToolDef, ToolRegistry}
+import nebflow.core.tools.{MailTool, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
 /**
@@ -13,7 +13,7 @@ import nebflow.shared.ToolDefinition
  * **改前（before）的模拟口径**（逐字声明，避免误读为第二份实现）：
  *   改前面 = `ToolRegistry.ALL_TOOLS` 按该身份的 allowedSet 过滤，**只**对
  *   AskUserQuestion 施加既有 root 变体（AskUser 批已合并的历史行为），
- *   Mail / node_report 一律并集面。本模拟**只**用于生成改前后对照数字，
+ *   Mail 一律并集面。本模拟**只**用于生成改前后对照数字，
  *   不参与任何产品判据（产品路径只有 `buildToolList` 一条）。
  */
 class ToolFaceVariantReadingsSpec extends FunSuite:
@@ -126,16 +126,12 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
       p(s"PAYLOAD ${c.label}: before_bytes=$bBytes after_bytes=$aBytes delta_bytes=${aBytes - bBytes}")
       p(s"PAYLOAD-SHA256 ${c.label}: before=${sha(payload(before))} after=${sha(payload(after))}")
       p(s"SCHEMA-SHA256 ${c.label}: before=$bSchema after=$aSchema identical=${bSchema == aSchema}")
-      for t <- after if t.name == "Mail" || t.name == NodeReportToolDef.Name do
+      for t <- after if t.name == "Mail" do
         val b = before.find(_.name == t.name).getOrElse(fail("改前面丢了目标工具")).description
         val variant =
-          if t.name == "Mail" then
-            if t.description == MailTool.descriptionRoot then "Mail.descriptionNebulaRoot"
-            else if t.description == MailTool.descriptionDispatcher then "Mail.descriptionDispatcher"
-            else "Mail.descriptionBase(并集面)"
-          else if t.description == NodeReportToolDef.descriptionTask then "NodeReport.descriptionTask"
-          else if t.description == NodeReportToolDef.descriptionVerifier then "NodeReport.descriptionVerifier"
-          else "NodeReport.descriptionBase(并集面)"
+          if t.description == MailTool.descriptionRoot then "Mail.descriptionNebulaRoot"
+          else if t.description == MailTool.descriptionDispatcher then "Mail.descriptionDispatcher"
+          else "Mail.descriptionBase(并集面)"
         p(
           s"TOOL ${c.label} ${t.name}: variant=$variant " +
             s"before_desc_sha256=${sha(b)} after_desc_sha256=${sha(t.description)} " +
@@ -149,25 +145,13 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
       s"Mail.descriptionBase   sha256=${sha(MailTool.descriptionBase)} bytes=${MailTool.descriptionBase.getBytes("UTF-8").length}"
     )
     p(
-      s"NodeReport.descriptionBase sha256=${sha(NodeReportToolDef.descriptionBase)} bytes=${NodeReportToolDef.descriptionBase.getBytes("UTF-8").length}"
-    )
-    p(
       s"Mail.descriptionNebulaRoot sha256=${sha(MailTool.descriptionRoot)} bytes=${MailTool.descriptionRoot.getBytes("UTF-8").length}"
     )
     p(
       s"Mail.descriptionDispatcher sha256=${sha(MailTool.descriptionDispatcher)} bytes=${MailTool.descriptionDispatcher.getBytes("UTF-8").length}"
     )
     p(
-      s"NodeReport.descriptionTask sha256=${sha(NodeReportToolDef.descriptionTask)} bytes=${NodeReportToolDef.descriptionTask.getBytes("UTF-8").length}"
-    )
-    p(
-      s"NodeReport.descriptionVerifier sha256=${sha(NodeReportToolDef.descriptionVerifier)} bytes=${NodeReportToolDef.descriptionVerifier.getBytes("UTF-8").length}"
-    )
-    p(
       s"registry Mail desc sha256=${sha(ToolRegistry.ALL_TOOLS.find(_.name == "Mail").map(_.description).getOrElse(""))}"
-    )
-    p(
-      s"registry NodeReport desc sha256=${sha(ToolRegistry.ALL_TOOLS.find(_.name == NodeReportToolDef.Name).map(_.description).getOrElse(""))}"
     )
 
     // 结构性结论的断言（读数矩阵本身的自洽性）

@@ -237,89 +237,10 @@ private[project] object NodeEngineContract:
   /** 节点 id 前缀（sessionId = "node-<uuid>"）。 */
   val SessionPrefix = "node-"
 
-  // ── 未申报提醒阶梯常量──────────────────
-
-  /**
-   * 提醒轮注入文本的**专用前缀头**（文案首行；agent 与取证双面可识别——与
-   * `[NODE-MESSAGE]`（分发器 NodeMessage 通道）区分：本头 = 引擎未申报兜底）。
-   */
-  val NodeReportReminderPrefix: String = "[NODE-REPORT-REMINDER]"
-
-  /** 未申报留痕事件类型（FlowMapEventLog）：阶梯期每拍一条 + quiescent 档周期一条。 */
-  val NodeReportMissingEventType: String = "node-report-missing"
-
   /** 死会话 bg-wait 豁免留痕事件类型（代裁 6：把「不算死」的节点标进事件供人监督）。 */
   val DeadSessionBgCompletionEventType: String = "dead-session-bg-task"
 
-  /**
-   * 提醒轮注入的 ExternalEvent source 标签（agent 侧 `<system-reminder>` 头内标识；
-   * 不进可见气泡白名单 = 不给前端造「用户气泡」，提醒面靠事件 + transcript）。
-   */
-  val NodeReportReminderSource: String = "node-report-reminder"
-
-  /** 事件 `stage` 取值：阶梯期（有注入） / quiescent（只留痕不注入）。 */
-  val NodeReportStageActive: String = "active"
-  val NodeReportStageQuiescent: String = "quiescent"
-
-  // ── 释放唤醒常量──────────────────────
-  //
-  // 与提醒阶梯同族但**不同语义**：提醒 = 「你没申报」（注入提醒轮 + 事件）；
-  // 释放唤醒 = 「你申报了，但桥没观测到那一轮」（唤醒桥复检放行 + 事件，不提醒）。
-  // 前缀头/ source / 事件类型三者单点区分，取证侧不必猜是哪条腿。
-
-  /** 释放唤醒注入文本的专用前缀头（首行；与 `[NODE-REPORT-REMINDER]` 区分）。 */
-  val NodeReportReleaseWakePrefix: String = "[NODE-REPORT-RELEASE-WAKE]"
-
-  /** 释放唤醒注入的 ExternalEvent source 标签。 */
-  val NodeReportReleaseWakeSource: String = "node-report-release-wake"
-
-  /** 释放唤醒留痕事件类型（FlowMapEventLog）：每次唤醒一条（单发记账见 `releaseWakeSent`）。 */
-  val NodeReportReleaseWakeEventType: String = "node-report-release-wake"
-
-  /**
-   * 释放唤醒注入文案（并非「你没申报」的提醒——申报**已到**，缺的只是桥的观测）：
-   * 要求 agent 用本轮回复给出节点最终结果文本（重述即可，无需再做工作），该轮回复经桥
-   * 复检后作为节点结果投递。**不含判罚/威胁措辞**（与提醒文案同纪律：本族永不判 failed）。
-   */
-  def reportReleaseWakeText(nodeName: String): String =
-    s"""$NodeReportReleaseWakePrefix node $nodeName's node_report arrived, but the completion bridge never saw the declaring turn.
-       |Give this turn's text as the node's **final result** — restate the last conclusion, no further tools needed; it is released as the node result and delivered downstream. No failure verdict, no kill.""".stripMargin
-
-  /**
-   * 释放唤醒留痕 summary（`k=v` 单空格分隔，与 [[reportMissingSummary]] 同构，可被
-   * [[parseReportMissingSummary]] 解析）：pendingSince（未申报起点）· delivered（注入是否达）。
-   */
-  def reportReleaseWakeSummary(sessionId: String, pendingSince: Long, delivered: Boolean): String =
-    s"node_report declaration present but the completion bridge never observed the declaring turn — " +
-      s"release wake injected: stage=release-wake session=$sessionId pendingSince=$pendingSince delivered=$delivered"
-
   // ── 终态延迟销毁窗口常量（一律存活 30 分钟再销毁）──
-
-  /**
-   * **申报未消费补偿事件类型**（写点 =
-   * `NodeEngine.compensateUnconsumedReport`）：`node_report` 申报已被 `drain`
-   * take-and-remove 取走，而终态写因 R2 fresh-read 纪律**拒写**（节点已消失 /
-   * 状态已变 / 关机期 draining 抑制）时，把申报全文补偿写回本审计流。
-   * summary = `node_report NOT consumed — terminal write refused …; session=<sid>
-   * category=<c> detail=<d> suggestion=<s>`（detail/suggestion 全量、不截断），
-   * 取回即 grep 该 type：`grep node-report-unconsumed <ws>/.nebflow/flow-map-events.jsonl`。
-   *
-   * 与 `blocked` / `bg-harvest` 等既有行**分开记账**：本条回答的是「这个节点申报过，
-   * 为什么最终状态里没有它、也没人知道」——旧口径下该形态**零痕迹**（drain 取走即移除、
-   * 无补偿写回），是已闭合的那条缝在观测面上的唯一锚点。
-   */
-  val ReportUnconsumedEventType: String = "node-report-unconsumed"
-
-  /**
-   * **申报被非终态分支消费**事件类型（写点 =
-   * [[NodeEngine.noteNonTerminalConsumption]]）：Loop 的 worker 支把 `pass`/`finish`
-   * 申报消费进「本轮照常进 verify 裁决」——该支**没有**终态写，也就没有落地判词可挂，
-   * 于是申报会在内存与日志两处同时消失而无一行说明去向。本行补的是「申报被谁消费掉了」
-   * 的机械痕迹（`kind=nonterminal branch=loop-worker-forward`，含 category/detail 全量）。
-   * 与 `node-report-unconsumed` 成对：那条 = 「消费了但没落地」，本条 = 「消费了且语义
-   * 正常（非终态）」。取证：`grep node-report-consumed <ws>/.nebflow/flow-map-events.jsonl`。
-   */
-  val ReportConsumedEventType: String = "node-report-consumed"
 
   /**
    * 终态销毁登记事件（写点 = 终态时刻的 `scheduleDestroy`；窗口开启的唯一痕迹——
@@ -339,75 +260,6 @@ private[project] object NodeEngineContract:
    * 本事件只覆盖异常残留）。
    */
   val DestroyWithdrawnEventType: String = "node-destroy-withdrawn"
-
-  /** 档位人话标签（阈值 ms → "10min"/"1h"/"10s"）——提醒文案与事件共用单点。 */
-  def reportRungLabel(ms: Long): String =
-    if ms > 0 && ms % 3600000L == 0 then s"${ms / 3600000L}h"
-    else if ms > 0 && ms % 60000L == 0 then s"${ms / 60000L}min"
-    else s"${ms / 1000L}s"
-
-  /**
-   * 提醒轮注入文案（**中性化**：
-   * 文案不按角色分支、不并列值域——「合法取值以工具说明为准」一句把值域解释权收归
-   * `node_report` description（按角色单一权威），提醒只做「你还没申报」这一件事）。
-   * 适用范围 = **全部节点会话**（`remindUnreportedNodes` 本就按 Running 全扫、无角色
-   * 过滤 ⇒ 判据零改动，见该函数头注）。**不含任何判罚/威胁措辞**——本阶梯永不判
-   * failed（相对设计稿 §4.2 的核心改判），文案不得暗示「否则会失败」。
-   * 实际投递文本 = 本文案**原文**（首行前缀头 `[NODE-REPORT-REMINDER]`），经
-   * `AgentCommand.ExternalEvent(source = NodeReportReminderSource, eventType = "reminder")`
-   * 进节点会话唤醒轮——不叠 `[NODE-MESSAGE]` 头（那条是分发器 NodeMessage 通道专用，
-   * 前缀头单点区分来源；注入通道差异见 [[injectReminderTurn]]）。
-   */
-  def reportReminderText(nodeName: String, rung: Int, maxRungs: Int, rungMs: Long, elapsedMs: Long): String =
-    s"""$NodeReportReminderPrefix you handed off without calling node_report — declare this node's terminal state now (beat $rung/$maxRungs, rung ${reportRungLabel(
-        rungMs
-      )}, waited ${elapsedMs / 1000}s, node $nodeName).
-       |The node stays Running, result undelivered, until you declare: call node_report (values per its description, with detail), then write your wrap-up report. This reminder never fails the node or kills the session.""".stripMargin
-
-  /**
-   * `node-report-missing` 的结构化 summary（`k=v` 单空格分隔，含 `=` 的 token 由
-   * [[parseReportMissingSummary]] 单点解析——`FlowMapEventLog.append` 的顶层只有
-   * ts/type/project/nodeId/summary 五字段，扩展字段一律进 summary，与
-   * `FlowMapEventLog.chainArchivedSummary` 先例同构）。字段清单：
-   *   stage（active|quiescent）· rung（第几拍，形如 `3/8`）· rungMs（该拍阈值）
-   *   · elapsedMs（已等待）· pendingSince（= reportPendingSince）· reminderCount
-   *   · ladderExhausted（末拍/之后为 true）· delivered（仅阶梯期有：提醒轮是否投递达）。
-   */
-  def reportMissingSummary(
-    stage: String,
-    rung: Int,
-    maxRungs: Int,
-    rungMs: Long,
-    elapsedMs: Long,
-    pendingSince: Long,
-    reminderCount: Int,
-    ladderExhausted: Boolean,
-    delivered: Option[Boolean]
-  ): String =
-    val base = List(
-      s"stage=$stage",
-      s"rung=$rung/$maxRungs",
-      s"rungMs=$rungMs",
-      s"elapsedMs=$elapsedMs",
-      s"pendingSince=$pendingSince",
-      s"reminderCount=$reminderCount",
-      s"ladderExhausted=$ladderExhausted"
-    ) ++ delivered.map(d => s"delivered=$d").toList
-    s"node finished without a node_report declaration — ${base.mkString(" ")}"
-
-  end reportMissingSummary
-
-  /** summary 解析（结构化字段单点，消费者免手工切分；非 `k=v` token 忽略）。 */
-  def parseReportMissingSummary(summary: String): Map[String, String] =
-    summary
-      .split("\\s+")
-      .iterator
-      .filter(t => t.indexOf('=') > 0)
-      .map { t =>
-        val i = t.indexOf('=')
-        t.substring(0, i) -> t.substring(i + 1)
-      }
-      .toMap
 
   // ── P2（stuck 自动恢复）：runtime 定位键修正（硬依赖 2，正交实验已证**正**）──
   //
@@ -590,60 +442,38 @@ private[project] object NodeEngineContract:
       "round is still present — re-check before building on it"
 
   /**
-   * 节点级 blocked 重入上限（设计 §3.1/§7.2）：blockCount 1/2 → 重入调整；
-   * count=3（> 2）→ 升级 Nebula 不再重入。
-   */
-  val MaxBlockRoundsPerNode: Int = 2
-
-  /**
    * 节点终态语义申报协议脚注（buildInput 末尾单点注入）：
-   * 末尾增一行上报指引——与终态语义协议同点注入、同生命周期；措辞自带条件
+   * 末尾增一行任务板指引——与终态语义协议同点注入、同生命周期；措辞自带条件
    * （「若…给了」），无板会话注入该行无副作用。
-   * blocked 结构化信号：第一优先 = 调用申报工具；
-   * 裁定泛化（NodeReport 统一三语义）：工具更名 node_report，blocked
-   * 细分六类之外 pass/fail 语义同走结构化申报；三语义文本锚定（首行裸 BLOCKED
-   * / VERDICT: PASS/FAIL）降级为「工具不可用时」备用通道，措辞强调首行裸形态
-   * 要求（6 例实证：markdown 标题/加粗/前置导语均锚定失败）。
-   *
-   * 值域**按节点角色分化**后，本文案
-   * 只保留角色中立表述（「按你的节点角色传对应值」+ 括号注明校验节点 = pass/fail），
-   * verifier 专属段（verdict ≠ 节点状态）由 [[protocolFootnoteFor]] 追加——避免把
-   * 两套值域并列塞进一篇脚注（R9 中性化同款纪律：解释权收归工具 description）。
-   * 本 val 逐字保持旧文本除该句外的全文（下游断言锚：末行 TaskBoard 指引行、
-   * `endsWith(ProtocolFootnote)` 身份断言）。
-   * F8 收口：本 val = 节点终态申报协议在**引擎贡献面**（引擎编译、
-   * 随系统提示词/任务输入注入的提示词文本）的单一权威文本——该面唯一完整协议，
-   * blocked JSON 文法在该面仅此处承载（工具面语义另由 `node_report` 工具
-   * description 与 `NodeReportTool` 承载，不属本断言域）。**非全局唯一**：agent
-   * 种子条件句 `seed/agents/general/system.md:7-10` 自带完整规则文本（promptfix
-   * 并存终态「规则各留一份」，唯一 seed 面防线，无指向本 val 的指针）；
-   * `PromptSections` 段序 360 = belt+指针；内置 general 项目脚手架的 AGENTS.md
-   * （**符号锚**：按角色描述该文件，不指文件路径——文件路径会随种子面增删漂移）=
-   * 一行指针（自陈「本文件不复述」）——后二者只承载指针/短句，不承载
-   * 完整协议。
-   * 文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
-   * 与 `NodeChainAttributionSpec` 的 `endsWith` 身份钉同挂本 val。
+   * Text-anchored terminal protocol: the engine consumes the final assistant text at the session
+   * completion point, so the completion report is that text itself (the deliverable is the report).
+   * There is no blocked or stopped/waiting declaration: when the task, scope, authorization or
+   * dependencies are unclear, the node asks the trusted root with AskHost.
+   * The verifier-specific section (verdict is not node status + the `VERDICT:` grammar) is appended
+   * by [[protocolFootnoteFor]] so two grammars are never packed into one footnote.
+   * This val is the single authoritative text for the node terminal protocol on the
+   * engine-contributed face (the prompt text the engine compiles and injects with the task input).
+   * The text is frozen verbatim: the last-line wording pin in `TaskBoardInjectionSpec` and the
+   * `endsWith` identity pins in `NodeChainAttributionSpec` / `SleepPollStartupRuleSpec` hang on it.
    */
   val ProtocolFootnote: String =
     """── Node protocol ──
-      |**Call `node_report` before wrapping up** — reporting IS the wrap-up action, not a blocked-only channel.
-      |Values by role: task = `finish` / `blocked`; verifier = `pass` / `fail` (verdict — evidence in `detail`) / `blocked`; a wrong value is rejected with your role's legal list.
-      |Cannot finish (upstream not ready / brief incomplete / capability mismatch / missing external condition)? Never fabricate: `blocked`, category ∈ upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other | blocked — then still write your wrap-up report; a normal result is no substitute.
-      |Unreported ⇒ stays running, result undelivered, reminders only — never auto-failed. No tool ⇒ first line exactly `BLOCKED` + JSON {"category":"…","detail":"…","suggestion":"…"}.
-      |**Your last output is the deliverable** (the engine takes your last assistant text and hands it downstream): it must be your own completion report for this node — what you did, the result, where the artifacts are, what is still open. `node_report` is the terminal declaration, not that report: declare first, then write this one.
+      |**Your final assistant text IS the terminal report** — the engine takes it as this node's result and hands it downstream; writing it IS the wrap-up action, not an afterthought.
+      |There is no stopped/waiting declaration: if any task detail, scope, authorization, or dependency is unclear, call AskHost and wait for the trusted root's decision — never fabricate output and never self-declare a stuck state. If you still must wrap up, state what is missing plainly in your wrap-up report; a fabricated normal result is no substitute.
+      |**Your last output is the deliverable** (the engine takes your last assistant text and hands it downstream): it must be your own completion report for this node — what you did, the result, where the artifacts are, what is still open.
       |**Keep it self-contained — no pointing**: downstream receives only this last text, none of your earlier messages, tool output or history. Never close with "see above" / "same as above" / "as mentioned above" — restate the conclusion, the artifact paths and the numbers in full.
       |TaskBoard work order ⇒ close = done, blocked = stuck.""".stripMargin
 
   /**
    * verifier 专属附录段（B9；设计 §3.1 纪律③「verdict ≠ 节点状态」+
    * §3.2 verifier 语义）。**仅 `role=verifier` 注入**（[[protocolFootnoteFor]]），
-   * 逐字回答校验节点最容易搞错的一件事：申报 `fail` 不等于自己失败。
-   * 与 `node_report` description 该段同源同措辞（双面同文纪律，设计 §3.1）。
+   * 逐字回答校验节点最容易搞错的一件事：判 `FAIL` 不等于自己失败。
+   * 文法与 [[VerdictReader]] 单点解析同源（首行锚定 + FAIL JSON 体）。
    */
   val VerifierVerdictFootnote: String =
     """── Verifier node ──
-      |`pass` / `fail` = verdict on the object under review, never this node's status: `fail` ≠ your failure (this node still completes; verdict ≠ status). The engine routes the re-run along `(fail)<target>:loop` — you never redo the work.
-      |A real execution failure (dead session / LLM error) is engine-judged — no agent channel. Stuck ⇒ `blocked`, as for a task node.""".stripMargin
+      |Anchor your verdict on the object under review in the first line: exactly `VERDICT: PASS` or `VERDICT: FAIL`. For FAIL add a JSON object {"issues":[…],"requirements":"…"} — issues = what must change, requirements = the pass standard. `fail` is a verdict on the object, never this node's status: `fail` ≠ your failure (this node still completes; verdict ≠ status). The engine routes the re-run along `(fail)<target>:loop` — you never redo the work.
+      |A real execution failure (dead session / LLM error) is engine-judged — no agent channel. Review scope or authorization unclear? Call AskHost — there is no stopped/waiting declaration.""".stripMargin
 
   /**
    * 角色分支脚注（B9 单点）：`verifier` = 基线 + [[VerifierVerdictFootnote]]
@@ -850,8 +680,10 @@ private[project] object NodeEngineContract:
           "(same judgement as the edit-time guard, which queues control edges in pendingOut) — " +
           "the wall-clock loop budget owns the terminal."
       )
-    else if NodeLifecycle.Terminal.contains(status) && status != NodeLifecycle.Completed then
-      Left(s"$status (blocked/failed/cancelled scenes are dispatcher-owned)")
+    // Legacy-stock leg: blocked rows (pre-retirement stock) stay dispatcher-owned too —
+    // the engine must not auto-reset a row the dispatcher has not migrated yet.
+    else if (NodeLifecycle.Terminal.contains(status) && status != NodeLifecycle.Completed) || status == NodeLifecycle.Blocked then
+      Left(s"$status (failed/cancelled — and legacy blocked — scenes are dispatcher-owned)")
     else Right(())
 
   /**

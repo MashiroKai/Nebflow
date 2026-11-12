@@ -720,8 +720,8 @@ object ChainLedger:
       wired = true,
       owner = "batch3+",
       writePoint =
-        "src/main/scala/nebflow/core/tools/NodeReportTool.scala:277（call 申报登记成功后 → :293 countReportUsage；正文 = detail + suggestion）",
-      incWhen = "node_report 申报登记成功后，detail/suggestion 正文引用该链号（批三+ 接线）",
+        "(历史申报通道已退役——本计数器当前无生产写点，保留作历史审计口径占位)",
+      incWhen = "（退役口径）申报登记成功后，detail/suggestion 正文引用该链号",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     )
   )

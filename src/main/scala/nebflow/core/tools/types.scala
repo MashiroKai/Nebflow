@@ -102,11 +102,9 @@ case class ToolContext(
   /**
    * 节点角色：本节点会话所属
    * `NodeDef.role`（`task` | `verifier`，见 `NodeRoles`）。由 AgentCore 从
-   * SessionContext 透传（引擎侧身份，不信客户端参数）——`node_report` 值域判据
-   * （`NodeReportToolDef.enumFor(role)`，错误码 `NODE_REPORT_CATEGORY_ROLE`）与
-   * 提示词面角色分支（`ProtocolFootnote`）的唯一来源。
-   * None / 非项目会话 = 回落 `NodeRoles.Task`（与 `NodeDef` 解码缺省同口径）；
-   * 挂载面过滤是另一道保险（`node_report` 仅 flowNodeSession 注入）。
+   * SessionContext 透传（引擎侧身份，不信客户端参数）——提示词面角色分支
+   * （`ProtocolFootnote` 的 verifier 附录段）的唯一来源。
+   * None / 非项目会话 = 回落 `NodeRoles.Task`（与 `NodeDef` 解码缺省同口径）。
    */
   flowNodeRole: Option[String] = None,
   /**

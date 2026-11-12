@@ -107,6 +107,7 @@ export function flagBadgesHtml(n) {
 // chevron = 展开该链（容器级捕获委托分派，见 flowMapTab bindFlowMapClicks——不做节点
 // 详情入口：chainId 不是节点 id）。折叠态下成员徽标信息聚合为计数行（spec §3.3 徽标兼容）。
 /** 链摘要卡计数行分桶（顺序 = 卡面展示顺序）：终态三色 + running + blocked。
+ *  blocked 桶仅为 legacy 存量行保留（blocked 终态已退役，新图零产生）；零计数桶不渲染。
  *  pending/wiring 不设桶（未起步，链卡状态词已表达；零计数桶不渲染）。 */
 export const FM_CHAIN_BUCKETS = ['completed', 'running', 'failed', 'cancelled', 'blocked'];
 

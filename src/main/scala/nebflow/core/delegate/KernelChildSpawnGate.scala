@@ -9,7 +9,7 @@ import nebflow.actor.{ActorRef, AgentCommand, AgentRecord}
  *
  * == 为什么需要这道闸 ==
  * 本批之前，「kernel 不派生」只靠**工具面裁剪**兑现（`kernelFace` 从工具清单里摘掉
- * Subagent / AgentFlow / node 四件 / delegate_report 侧减法）。工具面是装配面的减法：
+ * Subagent / AgentFlow / node 四件 / 申报工具通道侧减法）。工具面是装配面的减法：
  * `buildToolList` 一旦漏一件、某条恢复腿绕开装配、或新增一个派生入口，kernel 会话就
  * 能派生——而**代码层没有任何断言**拦住它。R-3a 要求的是一条**spawn 期**的不变量
  * （拒绝点是 spawn 动作本身，不是「模型看不到工具」这种间接保证）。

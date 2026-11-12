@@ -65,7 +65,7 @@ class ColdRouteDisciplineSpec extends munit.FunSuite:
         PromptContext(
           isRootAgent = false,
           agentName = "general",
-          availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name)
+          availableTools = Set("NodeEdit")
         ),
         PromptContext(isRootAgent = false, agentName = "Backend", agentCategory = "team"),
         PromptContext(isRootAgent = false, agentName = "Explorer", isSubTaskWorker = true)
@@ -79,16 +79,14 @@ class ColdRouteDisciplineSpec extends munit.FunSuite:
       }
     }
 
-  test("order-370 段与 order-360 节点申报段互斥共存（条件维度不同，同上下文可各自命中）"):
+  test("order-370 段对非根身份恒不注入（节点身份不再有 360 段——申报段已随申报工具通道退役）"):
     withIsolatedDataRoot {
-      // 根身份 ⇒ 有 370；节点身份（带 node_report）⇒ 有 360。两者是不同条件
-      // 维度，本用例防「新段把 360 挤掉」这一类回归。
-      val nodeCtx = PromptContext(
-        isRootAgent = false,
-        availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name)
-      )
+      // 根身份 ⇒ 有 370；非根身份（节点/分发器等）⇒ 无 370。order-360 节点申报段已随
+      // 终态申报工具通道整体退役删除（终态协议 = 引擎贡献面单点注入），本用例防
+      // 「路由纪律段泄漏进非根面」与「申报段形态写回」两类回归。
+      val nodeCtx = PromptContext(isRootAgent = false, availableTools = Set("NodeEdit"))
       val nodeBlocks = buildConditionalBlocks(nodeCtx)
-      assert(nodeBlocks.contains("Node terminal report"), "order-360 段在节点身份下仍应注入")
+      assert(!nodeBlocks.contains("Node terminal report"), "order-360 段已退役（不得复活）")
       assert(!nodeBlocks.contains(sectionHeader), "order-370 段对节点身份仍不注入")
 
       val rootBlocks = buildConditionalBlocks(PromptContext(isRootAgent = true))

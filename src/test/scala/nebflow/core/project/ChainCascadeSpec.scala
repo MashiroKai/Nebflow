@@ -458,7 +458,7 @@ class ChainCascadeSpec extends CatsEffectSuite:
   // ── M10（级联闭包侧）──────────────────────────────────────────────
 
   test(
-    "M10: the cascade closure carries running/pending/wiring/blocked/interrupted (explicit enumeration, never the Terminal predicate)"
+    "M10: the cascade closure carries running/pending/wiring/interrupted; legacy blocked rows are NOT swept (explicit enumeration, never the Terminal predicate)"
   ) {
     withRig("m10") { rig =>
       for
@@ -478,13 +478,13 @@ class ChainCascadeSpec extends CatsEffectSuite:
       yield
         assertEquals(
           report.cancelled.map(_.nodeId).sorted,
-          List("n-a", "n-blocked", "n-intr", "n-run"),
-          "blocked + interrupted + running all carried"
+          List("n-a", "n-intr", "n-run"),
+          "interrupted + running carried; legacy blocked NOT swept (blocked is retired)"
         )
-        assertEquals(sts, List("cancelled", "cancelled", "cancelled", "cancelled", "completed"))
+        assertEquals(sts, List("cancelled", "cancelled", "blocked", "cancelled", "completed"))
         assertEquals(done, Some("kept"), "terminal boundary preserved with its result")
-        assert(NodeLifecycle.Terminal.contains(NodeLifecycle.Blocked))
-        assert(NodeLifecycle.ChainCancelScope.contains(NodeLifecycle.Blocked))
+        assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Blocked))
+        assert(!NodeLifecycle.ChainCancelScope.contains(NodeLifecycle.Blocked))
     }
   }
 

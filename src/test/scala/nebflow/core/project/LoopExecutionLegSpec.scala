@@ -4,25 +4,11 @@ import cats.effect.{IO, Ref}
 import fs2.Stream
 import io.circe.Json
 import io.circe.parser.parse as jsonParse
-import io.circe.syntax.*
-import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
-import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, ToolContext}
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.ModelCandidate
-import nebflow.shared.{
-  ContentBlock,
-  LlmHandle,
-  LlmRequest,
-  LlmResponse,
-  PathUtil,
-  StreamChunk,
-  ThinkingConfig,
-  ToolCall
-}
+import nebflow.agent.{SharedResources, SpecResources}
+import nebflow.core.tools.ToolContext
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 
@@ -56,8 +42,9 @@ import scala.concurrent.duration.*
  *     `MergeVerdictGateSpec.V1`（其前提断言 = 自愈确实跑了）⇒ 已撤除；读数见
  *     `.nebflow/evidence/20260914_stability-hotfix/rawlogs/regress-before-revert.sbt.log`。
  *
- * 驱动方式（确定性，零真实 LLM）：`ToolCallLlm` 在 verifier 会话里发 `node_report(fail)`
- * 工具调用后收尾 ⇒ 真实引擎路径 `completeNode(declared=fail)` → `verifierFail`。
+ * 驱动方式（确定性，零真实 LLM）：判词桩在 verifier 会话里直接输出锚定判词文
+ * （首行 `VERDICT: FAIL` + FAIL JSON 体）后收尾 ⇒ 真实引擎路径 `completeNode` 的
+ * 文本锚定 → `verifierFail`。
  * 目标节点一律**无 task**：`resetForLoop` 判据落 `wiring`、`startNode` 因零接线防御
  * 不 spawn ⇒ 断言面无会话竞态（本 spec 只验**派发/终态/挡投**三件事，不验目标会话本身
  * 的输入装配——那由 `startNode` 的 `loopRework` 参数单测面覆盖）。
@@ -83,29 +70,22 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
 
   /**
-   * 工具申报状态机 LLM（`NodeBlockedToolSignalSpec` 同款；本 spec 只用 fail 面）：
-   * 首 turn 发 `node_report(fail)`，见到回执后输出无锚定收尾文本 ⇒ 终态由**工具通道**
-   * 驱动，而不是文本形态（证明 `verifierFail` 是被真实引擎路径调到的）。
+   * 判词文本锚定桩（申报工具通道退役后的纯文本形态；本 spec 只用 fail 面）：
+   * 唯一 turn 直接输出锚定判词文（首行 `VERDICT: FAIL` + FAIL JSON 体 + 结论文本）
+   * ⇒ 终态由**完成点的文本锚定**驱动（证明 `verifierFail` 是被真实引擎路径调到的）。
    */
   private class FailReportLlm(closing: String):
     /**
-     * 结论文本（= 会话最后一轮 assistant 输出，落 result 的那一段）；断言「熔断不得
-     * 吞掉判词全文」（engine-defects 批 #239）时按它对照。
+     * 结论文本（= 锚定文末段，落 result 的那一段）；断言「熔断不得吞掉判词全文」
+     * （engine-defects 批 #239）时按它对照。
      */
     val closingText: String = closing
-    val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
-    private val ackText = "[OK] verdict recorded (fail)"
 
-    private def sawAck(req: LlmRequest): Boolean =
-      req.messages.exists { m =>
-        m.content match
-          case Right(blocks) =>
-            blocks.exists {
-              case ContentBlock.ToolResult(_, content, _) => content.contains(ackText)
-              case _ => false
-            }
-          case Left(t) => t.contains(ackText)
-      }
+    val verdictText: String =
+      s"""VERDICT: FAIL
+         |{"issues":["artifact does not compile"],"requirements":"re-run upstream after the dependency rollback"}
+         |$closing""".stripMargin
+    val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -113,30 +93,8 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
         req: LlmRequest,
         onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
-        val text = req.messages.map(_.textContent).mkString("\n")
-        if sawAck(req) then
-          Stream.eval(inputs.update(_ :+ text)) >>
-            Stream(StreamChunk.TextDelta(closing), StreamChunk.Done(None, None))
-        else
-          Stream.eval(inputs.update(_ :+ text)) >>
-            Stream(
-              StreamChunk.ToolCallChunk(
-                ToolCall(
-                  "rb-fail-1",
-                  "node_report",
-                  JsonObject(
-                    "category" -> "fail".asJson,
-                    "detail" -> "artifact does not compile".asJson,
-                    "suggestion" -> "re-run upstream after the dependency rollback".asJson
-                  )
-                )
-              ),
-              StreamChunk.Done(Some("tool_use"), None)
-            )
-
-        end if
-
-      end sendStream
+        Stream.eval(inputs.update(_ :+ req.messages.map(_.textContent).mkString("\n"))) >>
+          Stream(StreamChunk.TextDelta(verdictText), StreamChunk.Done(None, None))
 
   end FailReportLlm
 
@@ -144,22 +102,15 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
    * ①b 夹具：**由返工段驱动的分支**。目标重跑会话的首条输入带 `[LoopNode rework` 段 ⇒
    * 该会话走「worker 返工」分支：记下输入后被 `gate` **持有**（turn 不结束）⇒ 断言
    * 「目标 flowmap status 回 running」时无竞态（NodeEngine 先置 running 再发首轮请求）。
-   * verifier 会话（输入不含返工段）走原 fail 申报状态机；见回执后收尾。
+   * verifier 会话（输入不含返工段）直接输出锚定判词文（申报工具通道退役后的文本锚定形态）。
    */
   private class ReentryLlm(gate: cats.effect.Deferred[IO, Unit]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
-    private val ackText = "[OK] verdict recorded (fail)"
 
-    private def sawAck(req: LlmRequest): Boolean =
-      req.messages.exists { m =>
-        m.content match
-          case Right(blocks) =>
-            blocks.exists {
-              case ContentBlock.ToolResult(_, content, _) => content.contains(ackText)
-              case _ => false
-            }
-          case Left(t) => t.contains(ackText)
-      }
+    private val verdictText: String =
+      """VERDICT: FAIL
+        |{"issues":["artifact does not compile"],"requirements":"re-run upstream after the dependency rollback"}
+        |被判定对象不合格，正式给出 fail verdict。本节点收尾。""".stripMargin
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -173,27 +124,9 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
           Stream.eval(inputs.update(_ :+ text)) >>
             Stream.eval(gate.get) >>
             Stream(StreamChunk.TextDelta("worker rework round delivered"), StreamChunk.Done(None, None))
-        else if sawAck(req) then
-          Stream.eval(inputs.update(_ :+ text)) >>
-            Stream(StreamChunk.TextDelta("被判定对象不合格，正式给出 fail verdict。本节点收尾。"), StreamChunk.Done(None, None))
         else
           Stream.eval(inputs.update(_ :+ text)) >>
-            Stream(
-              StreamChunk.ToolCallChunk(
-                ToolCall(
-                  "rb-fail-1",
-                  "node_report",
-                  JsonObject(
-                    "category" -> "fail".asJson,
-                    "detail" -> "artifact does not compile".asJson,
-                    "suggestion" -> "re-run upstream after the dependency rollback".asJson
-                  )
-                )
-              ),
-              StreamChunk.Done(Some("tool_use"), None)
-            )
-
-        end if
+            Stream(StreamChunk.TextDelta(verdictText), StreamChunk.Done(None, None))
 
       end sendStream
 
@@ -543,7 +476,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
           s"a loop-budget event must be logged with the consumed round, got: $audit"
         )
         // ── engine-defects 批 #239（RED 臂）：熔断**不得吞掉判词全文** ──────────────
-        // 旧口径只把计量串写进 result ⇒「判词已落盘、node_report 的终止申报与结论全文
+        // 旧口径只把计量串写进 result ⇒「判词已落盘、终止判词与结论全文
         // 丢失、结果被降级成 stub」。修后 = 计量串在前后并列原结论文本（既有
         // `[original-conclusion]` 稳定锚，与 completeNode 闸门 Reject 分支同机制）。
         val conclusion = llm.closingText

@@ -88,9 +88,16 @@ object MailboxBootSweep:
 
   /** boot sweep 入口（GatewayMain 装配链；失败只 WARN 绝不阻塞启动）。 */
   def run(store: SubAgentTaskStore, sessionStore: nebflow.core.SessionStore): IO[Report] =
+    runAt(store, sessionStore, System.currentTimeMillis())
+
+  private[agent] def runAt(
+    store: SubAgentTaskStore,
+    sessionStore: nebflow.core.SessionStore,
+    nowMs: => Long
+  ): IO[Report] =
     for
       swept <- SessionMailbox.sweepTmpAll()
-      epoch <- rollEpoch(System.currentTimeMillis())
+      epoch <- rollEpoch(nowMs)
       rows <- terminalDelegateRows(store)
       candidates =
         if epoch.lastBootMs <= 0 || epoch.thisBootMs <= 0 then Nil // 空窗安全侧

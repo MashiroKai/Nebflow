@@ -17,7 +17,7 @@ import scala.concurrent.duration.*
  * 契约三面：
  *   ① 有 `chainId` ⇒ 恰一条 [[NodeEngine.ChainWedgedEventType]] 事件，summary 逐字含
  *      `chain=<id>` / `node=<被闸死的下游 id>` / `wedgedBy=<终态上游 id>`，顶层带
- *      `chainId` 键；**且** root 通道收到一条含 chainId 的回执（eventType=blocked）。
+ *      `chainId` 键；**且** root 通道收到一条含 chainId 的回执（eventType=notice）。
  *   ② 同一 chainId 单发（第二次终态写点不再发）。
  *   ③ 无 `chainId` ⇒ 零 chain-wedged / 零新回执，既有 `barrier-blocked` 照旧。
  */
@@ -171,10 +171,11 @@ class ChainWedgedReceiptSpec extends CatsEffectSuite:
         2,
         "barrier-blocked emission is unchanged (one per wedged downstream)"
       )
-      // 上层回执：一条 ImmediateInput 到 root 会话，eventType=blocked，文本三要素齐备
+      // 上层回执：一条 ImmediateInput 到 root 会话，eventType=notice（监督通报档——
+      // blocked 终态已退役，BLOCKED 标签不再产生），文本三要素齐备
       assertEquals(imms.size, 1, s"exactly one root receipt expected, got ${imms.map(_.eventType)}")
       val receipt = imms.head
-      assertEquals(receipt.eventType, Some(NodeLifecycle.Blocked), "receipt status must be `blocked` (BLOCKED badge)")
+      assertEquals(receipt.eventType, Some(DispatchNotify.NoticeEventType), "receipt status must be `notice` (supervision receipt)")
       assert(receipt.text.contains("chain-wedged"), s"receipt must say chain-wedged: ${receipt.text.take(300)}")
       assert(receipt.text.contains("c-77"), "receipt must carry the chainId")
       assert(receipt.text.contains("n-b") || receipt.text.contains("n-c"), "receipt must carry the wedged node id")

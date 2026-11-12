@@ -25,13 +25,13 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * 本件只剩一个判定时机（终态两态判词 [[Face.judgeTerminal]]）：delegate 终态后
  * 判 completed(+注记)（原文 Batch 4 终态 judge；输入 = 任务书＋结果＋git status
- * 摘要＋delegate_report 自申报；blocked 判词已退役——判官的「没做成」折
+ * 摘要＋终态状态槽自申报；blocked 判词已退役——判官的「没做成」折
  * completed＋注记，不是状态）。集成面 = 项目 merger 的授权请求，不再是 delegate
  * 的判词类别。
  *
  * 失败语义（fail-open，JevAllocator 同款裁定：派发与终态绝不因判定机阻塞）：
  * `IO[Option[_]]`——`None` = 判定机不可用/失败，调用方走回落（终态腿 =
- * delegate_report 自申报 → 引擎既有完成语义）。
+ * 终态状态槽自申报 → 引擎既有完成语义）。
  */
 object DelegateJudge:
 
@@ -75,7 +75,7 @@ object DelegateJudge:
     /** git status 摘要（[[nebflow.core.GitWorktrees.statusDigest]]；非 git 工作区 = ""）。 */
     gitDigest: String,
     /**
-     * delegate_report 自申报（status, detail）——值域 finish | standby；`merge` /
+     * 终态状态槽自申报（status, detail）——值域 finish | standby；`merge` /
      * `blocked` 为退役前旧申报（映射 completed＋注记，不再产生独立状态）。
      */
     selfReport: Option[(String, String)],
@@ -186,7 +186,7 @@ object DelegateJudge:
 end DelegateJudge
 
 /**
- * delegate 会话身份判据单点（包级——DelegateReportTool / AgentSessionExecution
+ * delegate 会话身份判据单点（包级——终态申报通道 / AgentSessionExecution
  * 的挂载面与工具内侧身份闸共用）：会话 id 前缀 `delegate-`（DelegateTool
  * .spawnBackground 的命名约定；AgentIdle.inferInjectionSource / AgentActor 同前缀
  * 先例）。

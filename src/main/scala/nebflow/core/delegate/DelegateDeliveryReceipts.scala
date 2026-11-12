@@ -17,7 +17,7 @@ import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
  * == 本例形态 ==
  * 终态 ExternalEvent 的 `ref !` 是 mailbox offer，**从不失败**——监督者发出即
  * 视为已交付，但父会话是否真把结果注入了自己的回合，此前零确认、零监测。
- * 52308ee4 实态：delegate_report(finish) 已落盘、终文完整、会话 Idle、barrier
+ * 52308ee4 实态：finish 申报已落盘、终文完整、会话 Idle、barrier
  * 读数 0/0——一切「正常」，父会话却永远没收到结果，静默 70+ 分钟直到作者肉眼
  * 发现。barrier/held 读数**只数子代理结果**，对终态投递失明——回执是本形态的
  * 可机检读数：回执存在且超龄未 ack 精确等于「delegate 终态已发、父未确认」。

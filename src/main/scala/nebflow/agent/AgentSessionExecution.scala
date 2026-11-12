@@ -1501,7 +1501,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         flowNodeId = state.session.flowNodeId,
         isDispatcher = state.session.isDispatcher,
         // 节点角色（nrloop 一期 2026-09-12，B1 透传链第三段）：SessionContext.flowNodeRole
-        // → ToolContext.flowNodeRole——node_report 值域分化（enumFor）与 ProtocolFootnote
+        // → ToolContext.flowNodeRole——终态协议角色分支与 ProtocolFootnote
         // 角色分支的引擎侧判据来源（不信客户端参数，与 flowNodeId 同款纪律）。
         flowNodeRole = state.session.flowNodeRole,
         projectName = state.session.projectName,
@@ -1557,7 +1557,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 ).as(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
                   .flatTap(r => logToolStructured(call, callCtx, r))
               else
-                permissionDecision(resources, call, sessionIdOpt.getOrElse(""))
+                permissionDecision(resources, call, sessionIdOpt.getOrElse(""), callCtx)
                   .flatMap {
                     case PermissionDecision.Allow =>
                       // 2026-09-10 卡死判据换轴：工具**开始**点——记当前工具相位
@@ -1803,9 +1803,16 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   private def permissionDecision(
     resources: SharedResources,
     call: ToolCall,
-    sessionId: String
+    sessionId: String,
+    toolContext: ToolContext
   ): IO[PermissionDecision] =
     resources.effectiveSafetyMode.flatMap { mode =>
+      // AGENTS.md is human-owned project policy: even auto-all cannot authorize
+      // an agent-originated write. Identity comes from the engine's ToolContext,
+      // never a client-supplied tool argument; console REST saves stay separate.
+      if AgentInstructionWriteGate.requiresConfirmation(call, isAgent = toolContext.agentDef.isDefined) then
+        IO.pure(PermissionDecision.Ask)
+      else
       // P0-1 / P-M1 插点（spec §2.3）：工具名命中 MCP / ScriptTool 注册面时，在
       // `ToolReversibility.isReversible` 分支**之前**改走 `McpToolGate.decide`。
       //
@@ -2464,8 +2471,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 白名单外一律不下发（含 bash/edit/write 等一切编辑与编排工具，作者令点名
     // 禁止）。早退在最前 ⇒ 声明面/fixed 面/plugin 面/尾段挂载全不触及；判据 =
     // 引擎侧会话身份（AskSessions 单点，`ask-` 前缀），与 delegateSession 同款
-    // 透传链。工具内侧再用 ctx.sessionId 同判据拒绝（AskTools 双保险，先例
-    // DelegateReportTool）。
+    // 透传链。工具内侧再用 ctx.sessionId 同判据拒绝（AskTools 双保险）。
     if askSession then return nebflow.core.ask.AskSessions.AllowedTools
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
@@ -2609,39 +2615,16 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 九件先被 nebulaFiltered 剥、此处按会话身份重挂，两段不冲突；双轨 flow/
     // team/Nebula 会话 flag=false 恒不挂（工具面 + 工具内身份拒绝双保险 §1d-4）。
     val withBoard = if projectBoardSession then pluginGranted + "TaskBoard" else pluginGranted
-    // node_report（blocked 结构化信号批 20260909，设计 spec §5.2 #4；同日作者
-    // 裁定泛化更名 NodeReport 统一三语义）：flow 节点会话专属挂载——编排层专属
-    // 工具族（Pop/AskUser/Schedule 同类），不进通用 agent 工具面。判据 =
-    // flowNodeSession（引擎侧 flowNodeId.isDefined），**不能用 isFlowNode**：
-    // 分发器会话 spawn 也带 isFlowNode=true（ProjectActor.scala spawn 点）但
-    // flowNodeId 恒 None——用 isFlowNode 会把工具 schema 泄漏进分发器工具面
-    // （spec §6/§9.3 明确禁止）。追加点与 TaskBoard 同段（全部角色过滤之后）：
-    // guardrails 剥离链与 NebulaExclusiveTools 均不触及；工具内身份拒绝
-    // （ctx.flowNodeId 空 → NODE_REPORT_FORBIDDEN）与挂载面过滤构成双保险
-    // （TaskBoardTool.scala:46-49 同款）；插件声明不授能（不在
-    // BuiltinToolWhitelist）。信号消费点 = NodeEngine 会话完成时点
-    // NodeReportRegistry.drain（按类别分流既有链：blocked/pass/fail；文本锚定
-    // 降级面不放宽）。
     // AskUserQuestion mount for the dispatcher session (agentflow batch
     // 2026-10-02): appended by **engine-side identity** at the same tail as
-    // TaskBoard/node_report -- after every role filter and the
+    // TaskBoard -- after every role filter and the
     // NebulaExclusiveTools strip, so the fixed face and this grant never
     // interfere. 🔴 The criterion is `isDispatcher` **alone**, NOT
     // `projectBoardSession`: that flag is `isDispatcher || flowNodeId.isDefined`
     // (a project node would be pulled in => an over-grant). The two ends
     // (mount face + the tool's own identity check) form the twin safeguard,
-    // TaskBoard/node_report precedent.
+    // TaskBoard precedent.
     val withDispatcherAsk = if isDispatcher then withBoard + "AskUserQuestion" else withBoard
-    // delegate_report（worktree-judge-fifo 批 #1224 增补 §3.4）：delegate 会话
-    // 专属终态语义申报——node_report 同款「挂载面 + 工具内身份拒绝」双保险。
-    // 判据 = delegateSession（引擎侧：DelegateSessions.isDelegateSession(sessionId)，
-    // `delegate-` 前缀单点），**不能用 agentDef.name**：nebflow def 也服务
-    // Subagent/Workflow 子会话与非 delegate 形态（over-grant）。追加点在同段
-    // 尾部（全部角色过滤与 NebulaExclusiveTools 剥离之后）；插件声明不授能
-    // （不在 BuiltinToolWhitelist）。信号消费点 = 终态判定机（DelegateJudge
-    // selfReport 输入 + 判定机失败回落）与任务列表状态面。
-    val withDelegateReport =
-      if delegateSession then withDispatcherAsk + nebflow.core.tools.DelegateReportTool.Name else withDispatcherAsk
     // ── 双模式批（2026-10-28 · 设计 §4.2/§5.1）：模式面单点分叉 ──────────────
     // delegateMode = None（总闸关/未判定）⇒ 本段全部分叉失效，现状逐字节。
     // kernel 腿（极简内核执行器）：编排面整体退场——node 四件（ChainWrite/
@@ -2652,25 +2635,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     //   kernel 现在**有** Subagent（只读五件，无写/无 shell/无消息），与之配套的是
     //   不变量 R-3a 的收窄（core.delegate.KernelChildSpawnGate 只放行
     //   def='subagent' 的子 actor 生成，其余照旧拒）。
-    //   node_report 摘除（作者裁定 2026-10-29 逐字「node_report工具对极简内核应该
-    //   不需要吧，那不是agentflow的节点使用的工具吗？」）：显式减法钉语义——现状
-    //   事实源 node_report 本就不达 delegate 面（RootExclusiveTools 防声明逃逸剥
-    //   离 + 真实授能只在 flowNodeSession 尾段挂载、工具内 flowNodeId 空即拒——
-    //   挂载面+身份拒绝双保险既有），本减法是未来挂载面变动下的保险销。
     // dispatcher 腿（分发器）：node 四件保留（编排本体）+ Subagent 摘除
-    //   （Q2 裁定：Subagent 是侦察子代理不是编排面，分发器不需要）；node_report
-    //   腿不动（同上现状事实源——flow 节点会话专属，本就零泄漏）。
+    //   （Q2 裁定：Subagent 是侦察子代理不是编排面，分发器不需要）。
     val mergerFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeMerger)
     val kernelFace =
       delegateSession && (delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel) || mergerFace)
     val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
     val modeTruncated =
-      if kernelFace then withDelegateReport - nebflow.core.tools.NodeReportToolDef.Name
-      else if dispatcherFace then withDelegateReport - "Subagent"
-      else withDelegateReport
+      if kernelFace then withDispatcherAsk
+      else if dispatcherFace then withDispatcherAsk - "Subagent"
+      else withDispatcherAsk
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
     // NodeEdit/NodeList/NodeCancel（分发器三件的作用域面）+ ChainWrite（整链登记）。
-    // TaskBoard/node_report/delegate_report 同款「挂载面 + 工具内身份拒绝」双保险：
+    // TaskBoard 同款「挂载面 + 工具内身份拒绝」双保险：
     // 判据 = delegateSession 单独（引擎侧 DelegateSessions.isDelegateSession），
     // **不能用 isFlowNode/agentDef.name**（nebflow def 也服务非 delegate 形态；
     // over-grant 防线）；插件声明不授能（ChainWrite 在 RootExclusiveTools 防声明
@@ -2684,7 +2661,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // Mail——地址面经 MailTool.layeredRoute 分层判据收窄为自己作用域的
     // `node:<id|name>` 腿（SenderRole.Delegate 单点；其余形态显式越界报错）。同段
     // 追加（全部角色过滤与 NebulaExclusiveTools 剥离之后）：挂载面授权 + 工具内
-    // 地址面分层 = 双保险（TaskBoard/node_report 同款纪律）；kernel-def 的极简内核
+    // 地址面分层 = 双保险（TaskBoard 同款纪律）；kernel-def 的极简内核
     // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
     // 不经此腿。
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
@@ -2707,7 +2684,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       else if delegateSession then
         askStripped - nebflow.core.tools.MergerRequestTool.Name - nebflow.core.tools.WorktreeContextTool.Name
       else askStripped
-    if flowNodeSession then mergerTools + nebflow.core.tools.NodeReportToolDef.Name else mergerTools
+    mergerTools
 
   end buildAllowedToolSet
 

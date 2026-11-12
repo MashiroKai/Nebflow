@@ -270,9 +270,12 @@ class DelegateToolSpec extends CatsEffectSuite:
         "the plugin-assignment discipline reached the merged prompt (wording aligned 2026-10-08: the pre-split assertion string 'is your capability assignment' no longer matched HEAD's model-visible text — an existing red, realigned here to the standing wording, no assertion weakened: BLOCKED + no-HTML-comment pins stay)"
       )
       assert(
-        res.systemPrompt.contains("BLOCKED"),
-        "the capability-boundary (BLOCKED) contract reached the merged prompt"
+        res.systemPrompt.contains(
+          "a missing required capability => STOP: declare what is missing and the options in your report"
+        ),
+        "the capability-boundary contract reached the merged prompt"
       )
+      assert(!res.systemPrompt.contains("BLOCKED"), "the delegate prompt carries no BLOCKED anchor grammar")
       assert(!res.systemPrompt.startsWith("<!--"), "the code prompt carries no seed-machinery HTML comment")
 
   test("unified-delegate: default workspace is created and the call reaches spawn prerequisites"):
@@ -404,7 +407,7 @@ class DelegateToolSpec extends CatsEffectSuite:
     assertEquals(face.size, 9)
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
     // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
-    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop")
+    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "ChainWrite", "AgentControl", "Mail", "Pop")
       .foreach { t =>
         assert(!face.contains(t), s"nebflow must not hold: $t")
       }

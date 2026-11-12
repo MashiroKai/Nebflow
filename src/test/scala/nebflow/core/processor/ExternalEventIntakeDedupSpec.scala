@@ -134,4 +134,43 @@ class ExternalEventIntakeDedupSpec extends CatsEffectSuite:
       assertEquals(acceptedNoId, true, "no-id events always pass")
   }
 
+  test("⑤ identityKeys 代际绑定：携带 completionGeneration 的 delegate 终态身份键加 #<gen> 后缀；跨代身份永不互撞 (#2178)") {
+    val genEvent = ev(
+      Some("d-gen"),
+      metadata = JsonObject("completionGeneration" -> "gen-7".asJson)
+    )
+    assertEquals(
+      DeliveredReceiptLedger.identityKeys(genEvent),
+      List("d-gen#gen-7"),
+      "携带代际的 delegate 终态把身份绑定到代际（与 SessionMailbox terminalIdentity `subagentId#gen` 同约定）"
+    )
+    // 重投件归位后仍绑代际：改写 id 与归位 id 双键同后缀——同代重投与原件同一身份
+    val genRedelivery = genEvent.copy(
+      correlationId = Some("delivery-redelivery-d-gen"),
+      metadata = JsonObject("redeliveryOf" -> "d-gen".asJson, "completionGeneration" -> "gen-7".asJson)
+    )
+    assertEquals(
+      DeliveredReceiptLedger.identityKeys(genRedelivery).toSet,
+      Set("delivery-redelivery-d-gen#gen-7", "d-gen#gen-7"),
+      "重投件的身份键保持代际绑定——同代重投与原件同身份"
+    )
+    // 跨代判据：旧代已投标记不得吞新代件（Mail 续轮）；同代照旧判重
+    assert(
+      !DeliveredReceiptLedger.isDuplicateIdentity(Set("d-gen#gen-old"), Nil, genEvent),
+      "旧代的已投标记不得吞掉新代完成（bare id 跨代同键 = busy/idle 双入口的跨代误判形态）"
+    )
+    assert(
+      DeliveredReceiptLedger.isDuplicateIdentity(Set("d-gen#gen-7"), Nil, genEvent),
+      "同代重复件照旧判重（恰一次 intake 语义不变）"
+    )
+    // 零回退面：无代际 delegate 终态 + 携代际元数据的非 delegate 源——恒裸 id
+    assertEquals(DeliveredReceiptLedger.identityKeys(ev(Some("d-legacy"))), List("d-legacy"))
+    assertEquals(
+      DeliveredReceiptLedger.identityKeys(ev(Some("bg-1"), source = "background-task", eventType = "completed",
+        metadata = JsonObject("completionGeneration" -> "gen-7".asJson))),
+      List("bg-1"),
+      "代际后缀只作用于 delegate 终态——其余源保持裸 id（行为零回退）"
+    )
+  }
+
 end ExternalEventIntakeDedupSpec

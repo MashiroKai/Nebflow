@@ -41,9 +41,9 @@ class NodePayloadSpec extends FunSuite:
   }
 
   test("buildNodeJson: blocked node carries blockedFeedback; non-blocked terminals omit the key (裁定②)") {
-    val bf = BlockedFeedback("task-underspecified", "缺交付物定义", "补充验收标准")
+    val bf = NodeFeedback("task-underspecified", "缺交付物定义", "补充验收标准")
     val base = NodeDef(id = "n-bf", name = "bf", agent = "general", createdAt = 1000L)
-    // blocked 态：键在 + 结构化三字段透传（封顶属 BlockedReader 入库单点）
+    // legacy 存量 blocked 行：键在 + 结构化三字段透传（引擎零写点，仅存量行展示面）
     val jb =
       NodePayload.buildNodeJson(base.copy(status = NodeLifecycle.Blocked, blockedFeedback = Some(bf)), now = 2000L)
     val bfCur = jb.hcursor.downField("blockedFeedback")

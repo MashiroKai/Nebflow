@@ -55,7 +55,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   // 构造期换根纪律（2026-09-18 判例 6a68914c1 同款残件，S1 组负载敏红族）：**先清树，最后换根**
   // —— 若先 setDataRoot 再 os.remove.all，此刻全局根已指向本树，前序套件收尾期仍在跑的
   // 异步写入（按 PathUtil.dataRoot 落盘）会在删树遍历中途把目录重新建出来 ⇒ 构造期
-  // DirectoryNotEmptyException / 组合跑互踩（本 spec 与 NodeBlockedToolSignalSpec 是两个残件）。
+  // DirectoryNotEmptyException / 组合跑互踩（构造期换根纪律的残件族）。
   os.remove.all(tempRoot)
   PathUtil.setDataRoot(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
@@ -205,9 +205,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     // noderpt 批 A 段（2026-09-11）：完成门两条腿的显式注入。
     //  - bgGateCompletionHold = **true**：本 spec 的主题就是腿 1（后台任务存活 hold）
     //    的既有行为（G1–G8），生产默认已封存（false）⇒ 此处置回旧行为作对照；
-    //  - reportGateHold = **false**：腿 2（未申报不终态化）不在本 spec 主题内，且其
-    //    桩 LLM 不申报 ⇒ 打开会让 G1/G2/G5/G6 全部滞留 Running（腿 2 的默认开行为由
-    //    NodeReportReminderSpec + G9 覆盖）。
+    //  - reportGateHold = **false**：终态 hold 腿不在本 spec 主题内，且其
+    //    桩 LLM 无锚定申报 ⇒ 打开会让 G1/G2/G5/G6 全部滞留 Running（G9 覆盖）。
     bgGateCompletionHold: Boolean = true,
     reportGateHold: Boolean = false,
     // 批 3（本机侧 2026-09-16）：`notify.quietMs` 去抖/打包窗**在用例内确定性关闭**

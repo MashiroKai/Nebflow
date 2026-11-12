@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -69,8 +69,12 @@ class SessionResumptionSpec extends CatsEffectSuite:
 
   // ── fixtures ────────────────────────────────────────────────────────────
 
-  /** hang=true ⇒ 回合永挂（钉活体读数）；false ⇒ 回合正常收尾（钉转录落盘）。 */
-  private class StubLlm(hang: Boolean) extends LlmHandle[IO]:
+  /**
+   * hang=true ⇒ the turn never ends (pins the live reading); false ⇒ the turn ends normally (pins the
+   * transcript write). `gate` holds every LLM call until it is completed, which keeps the resumed
+   * session in flight (live in the registry) for as long as a spec needs.
+   */
+  private class StubLlm(hang: Boolean, gate: Option[Deferred[IO, Unit]] = None) extends LlmHandle[IO]:
     val requests = new java.util.concurrent.ConcurrentLinkedQueue[LlmRequest]()
 
     def send(req: LlmRequest): IO[LlmResponse] =
@@ -82,9 +86,17 @@ class SessionResumptionSpec extends CatsEffectSuite:
     ): Stream[IO, StreamChunk] =
       Stream.eval(IO { requests.add(req); () }).drain ++
         (if hang then Stream.never[IO]
-         else Stream(StreamChunk.TextDelta("RESUMED_TURN_DONE"), StreamChunk.Done(None, None)))
+         else
+           gate.fold(Stream.empty.covaryAll[IO, StreamChunk])(g => Stream.eval(g.get).drain) ++
+             Stream(StreamChunk.TextDelta("RESUMED_TURN_DONE"), StreamChunk.Done(None, None)))
 
-  private def mkResources(system: ActorSystem, hang: Boolean): IO[SharedResources] =
+  end StubLlm
+
+  private def mkResources(
+    system: ActorSystem,
+    hang: Boolean,
+    gate: Option[Deferred[IO, Unit]] = None
+  ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
       rateLimiter <- RateLimiter.create()
@@ -94,7 +106,7 @@ class SessionResumptionSpec extends CatsEffectSuite:
       modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
       voiceMuted <- Ref.of[IO, Boolean](false)
     yield SharedResources(
-      llm = new StubLlm(hang),
+      llm = new StubLlm(hang, gate),
       dispatcher = dispatcher,
       sessionStore = SessionStore(tempRoot / "sessions", tempRoot / "tasks"),
       projectRoot = os.pwd,
@@ -500,7 +512,8 @@ class SessionResumptionSpec extends CatsEffectSuite:
     val id = "delegate-nebflow-b3inpl01"
     val ws = workspaceOf("b3")
     for
-      resources <- mkResources(system, hang = false)
+      gate <- Deferred[IO, Unit]
+      resources <- mkResources(system, hang = false, gate = Some(gate))
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecording(parentEvents), "b3-parent-rec")
       _ <- resources.agentRegistry.update(
@@ -511,13 +524,15 @@ class SessionResumptionSpec extends CatsEffectSuite:
       _ <- seedScope(ws.toString, id, List("n1"))
       res <- mailToDelegate(resources, system, parentSid, id, "resume the batch")
       _ = assert(res.isRight, s"resume must proceed: ${res.swap.map(_.message).getOrElse("")}")
-      // 第一轮收尾（矩阵未申报 = NudgeIdle，活体留存）
-      _ <- waitUntil(60.seconds)(transcriptText(resources, id).map(_.contains("RESUMED_TURN_DONE")))
-      _ <- IO.sleep(500.millis)
-      // 节点完成事件（DelegateNotify 单点 = NodeEngine 的注入通道）
+      // The resumed turn is held at the gate, so the session is live in the registry. A plain-text turn
+      // end is the completion delivery and releases the session, hence the event has to arrive while
+      // the turn is in flight.
+      _ <- waitUntil(60.seconds)(resources.agentRegistry.get.map(_.contains(id)))
+      // Node completion event (DelegateNotify = the injection channel of NodeEngine).
       reached <- DelegateNotify.inject(resources.agentRegistry, id, "NODE n1 completed: result ready")
       _ = assert(reached, "the node notification MUST reach the resumed delegate session (registry has a live actor)")
-      // 消费面：注入行与回合文本落在同一会话转录
+      _ <- gate.complete(())
+      // Consumption: the injected line and the turn text land in the same session transcript.
       _ <- waitUntil(60.seconds)(transcriptText(resources, id).map(_.contains("NODE n1 completed")))
       text <- transcriptText(resources, id)
       _ <- system.stopAll

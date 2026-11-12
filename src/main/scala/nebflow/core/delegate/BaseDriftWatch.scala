@@ -163,7 +163,7 @@ object BaseDriftWatch:
 
     /**
      * 在飞工作读数（唤醒价值判据 [[worthWaking]] 的第一项）。判据单点 =
-     * [[DelegateInflightGate.read]]（与 `delegate_report(finish)` 的在飞闸同源）；
+     * [[DelegateInflightGate.read]]（与在飞闸同源判据；申报通道退役后本读数为其唯一存活面）；
      * `None` = 读面不可用（`readable=false`）——调用方按「宁可多发一条」处理。
      */
     def inFlightWork(delegateId: String): IO[Option[Boolean]] =

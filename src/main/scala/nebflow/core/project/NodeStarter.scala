@@ -80,9 +80,7 @@ private[project] trait NodeStarter:
         logger.warn(s"Legacy merge node ${node.id} is held; integration requires an authorized project merger request")
       case Some(node) =>
         node.status match
-          // blocked 同样幂等跳过（§1.1：重跑同样 blocked；唯一出口 = NodeEdit 重激活）
-          case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled |
-              NodeLifecycle.Blocked =>
+          case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled =>
             IO.unit // 已终态/运行中，幂等跳过
           case _ =>
             // deps 闸门（deps 设计 §1.3，单权威）：全部 deps 上游 completed 才放行。
@@ -251,11 +249,11 @@ private[project] trait NodeStarter:
    * 全部节点 spawn 输入，含 loop 节点首轮）、零盘面依赖 ⇒ 抗 seed/运行面漂移。
    * 系统提示词面两处相关文本形态各异：agent 种子条件句（
    * `seed/agents/general/system.md:7-10`）自带完整规则文本（双角色值域/六类
-   * blocked/ILLEGAL/verdict≠状态/8 拍提醒阶梯/未申报不终态化），且**无**指向本
+   * blocked/ILLEGAL/verdict≠状态），且**无**指向本
    * 脚注的指针——这是 promptfix 批作者并存终态（「规则各留一份」，该条件句 =
-   * 唯一 seed 面防线，已终态冻结），非缺陷；always-on belt 行（
-   * `PromptSections.NodeSessionAlwaysOnSection`，段序 360、段长门 ≤400 B）=
-   * belt+指针，指向工具 description 与本脚注。故「单一权威」的准确口径 =
+   * 唯一 seed 面防线，已终态冻结），非缺陷；节点侧的系统提示词 always-on belt 段
+   * （原 `PromptSections` 段序 360）已随终态申报工具通道整体退役删除——终态协议
+   * 的唯一完整承载 = 本脚注。故「单一权威」的准确口径 =
    * **引擎贡献面**（引擎编译、随任务输入注入的提示词文本）唯一完整纪律，而
    * 非全局唯一——旧注释「system prompt 不含约定」的前提已被该结构取代（F8 判违：
    * 两处设计前提互相否证，本段即消解后的真实理由）。loop 侧同款：
@@ -760,7 +758,7 @@ private[project] trait NodeStarter:
           // （仅自己名下任务、仅 status+note），project 缺省解析随之生效。
           flowNodeId = Some(nodeId),
           // nrloop 一期（设计 §3.2 透传表，B1 第一段）：节点角色随 spawn 注入 →
-          // AgentCore 透传 ToolContext.flowNodeRole——node_report 值域分化
+          // AgentCore 透传 ToolContext.flowNodeRole——终态协议角色分支
           // （verifier ⇒ pass/fail；task ⇒ finish）与 ProtocolFootnote 角色分支的
           // 引擎侧判据来源。task 也显式带值（判据侧 normalize 宽容，但显式 = 可审计）。
           flowNodeRole = Some(node.role),
@@ -984,11 +982,9 @@ private[project] trait NodeStarter:
                       //     完成后自动续；要丢弃结果必须显式
                       //     `-Dnebflow.bgGate.completionHold=false`（或 nebflow.json
                       //     同名键经启动面转成 -D）⇒ 关 ⇒ 不查等待集，直接用空等待集
-                      //     走放行分支（hold/armCap 代码逐字保留，显式关即封存面）；
-                      //   腿 2「未申报 node_report」（`reportGateHoldEnabled`，默认 true）：
-                      //     放行前非消费读申报槽——空 ⇒ **不终态化**（节点保持 Running、
-                      //     会话存活）并起表（只置不重）；非空 ⇒ 清表后放行，终态点 drain
-                      //     照常分流（blocked/pass/fail 三链零改动）。
+                      //     走放行分支（hold/armCap 代码逐字保留，显式关即封存面）。
+                      //   （腿 2「未申报闸」已随终态申报工具通道整体退役移除——完成 =
+                      //   末条 assistant 文本单通道，放行前无申报槽检查。）
                       val waitingIO: IO[List[BgTaskRegistry.ActiveTask]] =
                         if bgGateHoldEnabled then
                           // P2 death-watch 活性复检（与 delegate 闸同病灶同收口）：
@@ -1046,7 +1042,8 @@ private[project] trait NodeStarter:
                             if failures.isEmpty then
                               // 放行分支（腿 1 缺省开：等待集为空——无名下任务或 hold
                               // 已全部释放/收割——时 Completed 到此；显式关 = 封存面时
-                              // Completed 直达此处）。放行前的腿 2 判定 = 未申报闸。
+                              // Completed 直达此处）。完成 = 末条 assistant 文本单通道
+                              // （申报槽闸已退役——放行前无腿 2 判定）。
                               def releaseNow: IO[Behavior[AgentEvent]] =
                                 holdEmitted.get.flatMap { held =>
                                   disarmCap *> holdEmitted.set(false) *>
@@ -1287,7 +1284,6 @@ private[project] trait NodeStarter:
       // 桥终态**四出口**（failed / cancelled / zombie(猝死) / completed）统一到这一个
       // **登记点**——终态写点之后只登记窗口（`destroyAt` 字段 + 禁 spawn 表 +
       // `node-destroy-scheduled` 事件），不杀进程；到点由 `sweepDestroyWindows` 收殓。
-      // blocked 出口在 `blockedNode` 内同款登记（口径一致）。
       // **两条腿不登记**（各附理由）：
       //   · 挂起腿（`suspended`）：中途换会话、非终态，进程已在上方即时收殓（③.5）；
       //   · NodeCancel 腿（`outcome = Right(_)` = cancelSig 抢先）：人为/看门狗主动取消，

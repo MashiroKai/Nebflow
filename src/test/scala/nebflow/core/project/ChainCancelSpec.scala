@@ -84,7 +84,7 @@ class ChainCancelSpec extends CatsEffectSuite:
             _ :+ payload.deepMerge(Json.obj("type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))
           ),
         notifyTriggerOverride = Some((text: String) => triggered.update(_ :+ text)),
-        // 本 spec 主题非 node_report 语义（与 CancelDeadlockFixSpec 同款显式关腿）
+        // 本 spec 主题与终态 hold 腿正交（同 CancelDeadlockFixSpec 口径显式关）
         reportGateHold = Some(false)
       )
       pd = ProjectDef(
@@ -326,15 +326,17 @@ class ChainCancelSpec extends CatsEffectSuite:
             n("n-cancel", NodeLifecycle.Cancelled, 8000L, in = List("n-fail"), result = Some("already gone"))
           )
         )
-        // 取消集判据的机械负例：Terminal 谓词含 blocked ⇒ 不可用作取消集判据
+        // 取消集判据的机械哨兵（blocked 退役后）：Terminal / ChainCancelScope 均不再含
+        // blocked ⇒ legacy blocked 行只走人工迁移（NodeEdit abandon/reactivate），
+        // 链级取消不自动扫它。
         _ <- IO {
           assert(
-            NodeLifecycle.Terminal.contains(NodeLifecycle.Blocked),
-            "Terminal contains blocked — hence unusable as the cancel-set judge"
+            !NodeLifecycle.Terminal.contains(NodeLifecycle.Blocked),
+            "blocked is retired — Terminal must NOT contain it"
           )
           assert(
-            NodeLifecycle.ChainCancelScope.contains(NodeLifecycle.Blocked),
-            "blocked IS in the explicit cancel scope (ChainCancelScope)"
+            !NodeLifecycle.ChainCancelScope.contains(NodeLifecycle.Blocked),
+            "chain cancel must NOT sweep legacy blocked rows (manual migration only)"
           )
         }
         right <- rig.rt.engine.cancelChain("chain-n-run", CancelSource.User, "whole track gone")
@@ -345,25 +347,30 @@ class ChainCancelSpec extends CatsEffectSuite:
         failed <- rig.rt.store.getNode("n-fail").map(_.flatMap(_.result))
         cancelledAlready <- rig.rt.store.getNode("n-cancel").map(_.flatMap(_.result))
       yield
-        assertEquals(report.cancelled.map(_.nodeId).sorted, List("n-blocked", "n-intr", "n-pend", "n-run", "n-wire"))
+        assertEquals(report.cancelled.map(_.nodeId).sorted, List("n-intr", "n-pend", "n-run", "n-wire"))
         assert(report.cancelled.forall(_.why == "cancelled"))
-        assertEquals(report.preserved.map(_.nodeId).sorted, List("n-cancel", "n-done", "n-fail"))
+        assertEquals(report.preserved.map(_.nodeId).sorted, List("n-blocked", "n-cancel", "n-done", "n-fail"))
         assert(
-          report.preserved.forall(_.why == "terminal"),
-          s"all three preserved members are terminal: ${report.preserved}"
+          report.preserved.filter(_.nodeId != "n-blocked").forall(_.why == "terminal"),
+          s"the three terminal members are preserved as terminal: ${report.preserved}"
+        )
+        assertEquals(
+          report.preserved.find(_.nodeId == "n-blocked").map(_.why),
+          Some("terminal-boundary"),
+          "legacy blocked row is NOT swept by chain cancel (manual migration domain)"
         )
         assertEquals(report.skipped, Nil)
-        // 零触碰：终态节点状态与结果逐字保留
+        // 零触碰：终态节点状态与结果逐字保留（legacy blocked 行原样保留）
         assertEquals(
           sts,
-          List("cancelled", "cancelled", "cancelled", "cancelled", "cancelled", "completed", "failed", "cancelled")
+          List("cancelled", "cancelled", "cancelled", "blocked", "cancelled", "completed", "failed", "cancelled")
         )
         assertEquals(done, Some("kept"))
         assertEquals(failed, None)
         assertEquals(cancelledAlready, Some("already gone"))
-        // blocked / interrupted 成员确实被取消（M10 的正向要求）
+        // interrupted 成员被取消；legacy blocked 成员不在取消集（M10 退役后读数）
         val picked = report.cancelled.map(e => e.nodeId -> e.status).toMap
-        assertEquals(picked.get("n-blocked"), Some(NodeLifecycle.Blocked))
+        assertEquals(picked.get("n-blocked"), None, "legacy blocked must not be chain-cancelled")
         assertEquals(picked.get("n-intr"), Some(NodeLifecycle.Interrupted))
     }
   }

@@ -55,14 +55,14 @@ const RULES = [
     literal: 'You are a task node running inside Nebflow',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
-    why: '节点面系统提示词单源（node_report 纪律的载体）。',
+    why: 'Node-face system prompt single source (carrier of the terminal text protocol).',
   },
   {
     id: 'R4 delegate 角色正文',
     literal: 'You are a Nebflow delegate — a background executor spawned by',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
-    why: 'delegate 面系统提示词单源（delegate_report 纪律的载体；与 node 面机械可分）。',
+    why: 'Delegate-face system prompt single source (carrier of the delegate terminal discipline; mechanically separable from the node face).',
   },
   {
     id: 'R5 subagent 角色正文',

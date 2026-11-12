@@ -164,7 +164,7 @@ object BuiltinAgents:
    * delegate 面解析路径（提示词来源拆分批 2026-10-08）：**与 [[entry]] 并列的第二
    * 条读路**——delegate spawn 的唯二读点（`DelegateTool.spawnKernel` 新鲜派发 +
    * `MailTool` 续聊复活腿）经本函数取条目，`nebflow` 名落 [[NebflowDelegatePrompt]]
-   * （delegate_report 纪律；模型可见面零 node_report）。非 `nebflow` 名无 delegate
+   * （delegate 终态语义；模型可见面零节点申报纪律）。非 `nebflow` 名无 delegate
    * 面变体，逐字回落 [[entry]]（今日 delegate spawn 只落 `ExecutorName` 一名，本
    * 回落是机械完备性而非第二行为面）。节点 spawn（`EntityLoader.loadAgent`）**不
    * 经本函数**——节点面恒走 [[entry]]，两来源机械可分。
@@ -274,7 +274,7 @@ object BuiltinAgents:
    * 拆成**两个独立来源**，禁止一处模板双面引用——
    *  - **flow 节点面** = [[NebflowNodePrompt]]：节点语义独立成稿——接收上游/分发
    *    输入（任务文本 = 全部世界）、产出交付（末条输出 = 交付物，引擎沿 out 边
-   *    投递）、沿 out 边交接（无消息工具、无 root 地址）、受监督约束（node_report
+   *    投递）、沿 out 边交接（无消息工具、无 root 地址）、受监督约束（终态申报工具
    *    申报义务、未申报不终态、role=verifier 值域分化 pass/fail）。解析路径 =
    *    [[entry]]（EntityLoader.loadAgent → NodeStarter 节点 spawn）。
    *    （prompt-panel 面板批 2026-10-09 更正：本行原写「面板只读显示同路」——
@@ -282,21 +282,20 @@ object BuiltinAgents:
    *    正文」的错配源头；面板只读展示现经 [[panelPromptFaces]] 双面投影，
    *    delegate 面默认页签 + node 面第二页签，标注与正文逐面对齐。）
    *  - **delegate 面** = [[NebflowDelegatePrompt]]：delegate 语义独立成稿——
-   *    executor/dispatcher/manager 三角色、分工面、delegate_report 申报纪律
-   *    （finish/standby）；**模型可见面零 node_report
-   *    指令**。解析路径 = [[delegateEntry]]（DelegateTool.spawnKernel 新鲜派发 +
+   *    executor/dispatcher/manager 三角色、分工面、终态语义（finish/standby）
+   *    沿革；**模型可见面零节点申报纪律指令**。解析路径 = [[delegateEntry]]（DelegateTool.spawnKernel 新鲜派发 +
    *    MailTool 续聊复活腿——delegate spawn 的唯二读点）。
    * 二者是两个常量 + 两条解析路径，机械可分；判据门 =
    * `nebflow.core.seed.NodeSeedOutputContractSpec`（节点面）与
    * `nebflow.core.entity.PromptFaceSplitSpec`（双面分离 + delegate 面值域）。
    *
    * 历史形态（本批拆分前）：单一 `NebflowPrompt` 共用模板 = 开头 node 面 + 中段
-   * delegate 面，delegate 会话经 `entry("nebflow")` 拿到以 node_report 开场的系统
-   * 提示词（「应该用 delegate_report，实际用的却是 node_report」即指此缺陷）。
+   * delegate 面，delegate 会话经 `entry("nebflow")` 拿到以节点面开场的系统
+   * 提示词（「应该用 delegate 语义，实际用的却是节点面申报纪律」即指此缺陷）。
    *
    * P0-1 批（2026-10-03）**节点交付契约回填**（史实）：现行契约＝单轨五要素体例：
    * 首内容行即节点身份句，末条输出＝自身交付物，文末五要素 Report 段在位；
-   * node_report 申报义务与未申报不终态语义在位（dual-track 双轨体例曾为该契约
+   * 节点终态文本锚定语义在位（dual-track 双轨体例曾为该契约
    * 载体，2026-10-07 作者令「deliver in two part 去掉」随 N3 修订批退役）。
    * 判据门 = `nebflow.core.seed.NodeSeedOutputContractSpec`。
    */
@@ -305,16 +304,17 @@ object BuiltinAgents:
   /**
    * delegate 面系统提示词（来源拆分批 2026-10-08，见 [[NebflowNodePrompt]] 头注）：
    * **独立成稿**，只承载 delegate 语义——三角色（executor/dispatcher/manager）、
-   * 分工面、delegate_report 申报（finish/standby）、
+   * 分工面、终态语义（finish/standby）、
    * delegate 实际工具面（BaseTools + Subagent/AgentFlow/ChainWrite + Node 三件
-   * 作用域面 + Mail + delegate_report；🔴 无 node_report、无 TaskBoard、无 Delegate
-   * 派发件——那三件不在此会话身份的工具面上）。**模型可见面零 node_report 指令**
+   * 作用域面 + Mail；🔴 无 TaskBoard、无 Delegate
+   * 派发件——那两件不在此会话身份的工具面上；申报工具通道已整体退役
+   * （T2 批，模型可见面零申报工具指令）。**模型可见面零节点申报纪律指令**
    * （判据门 = `PromptFaceSplitSpec` 的零命中钉）。
    */
   private val NebflowDelegatePrompt: String = PromptCatalog.Roles.NebflowDelegatePrompt
 // 🔴 上两串常量 = 提示词来源拆分批（2026-10-08 作者令）的两个独立来源——
 // 节点面（NebflowNodePrompt）/ delegate 面（NebflowDelegatePrompt），一模板双面
-// 引用的旧形态（单一 NebflowPrompt）已拆。delegate 面模型可见文本零 node_report。
+// 引用的旧形态（单一 NebflowPrompt）已拆。delegate 面模型可见文本零节点申报纪律。
 // 「Integration discipline (hard)」行钉死：delegate 永不自并——落地 = 项目 merger
 // 的授权请求。§16 待过目（模型可见文案，成稿归 N3 提示词批）。
 // 注记用 Scala 注释而非 HTML 注释：种子契约（NodeSeedOutputContractSpec）要求

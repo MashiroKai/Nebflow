@@ -56,6 +56,31 @@ class SubAgentBarrierSpec extends FunSuite:
     assert(remaining.isEmpty)
   }
 
+  test("duplicate terminal identity is recognized before it can decrement the barrier twice") {
+    val terminal = subtask(1).copy(correlationId = Some("child-1"))
+    val duplicate = terminal.copy(payload = "duplicate terminal replay")
+    assert(nebflow.core.processor.DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(terminal), duplicate))
+
+    val (drained, remaining) = TurnBoundaryDrains.drainBarrier(
+      List(terminal, delegate(2)),
+      compactionPending = false,
+      outstanding = 0
+    )
+    assertEquals(drained.map(_.payload), List(terminal.payload, "delegate-result-2"))
+    assertEquals(remaining, Nil)
+  }
+
+  test("freeze receipts do not release a child-result slot; failed terminal receipts do") {
+    val frozen = AgentCommand.ExternalEvent("delegate", "frozen", "parked", correlationId = Some("frozen-child"))
+    val failed =
+      AgentCommand.ExternalEvent("subtask", "failed", "failed terminal", correlationId = Some("failed-child"))
+    assert(!TurnBoundaryDrains.isSubagentResult(frozen))
+    assert(TurnBoundaryDrains.isSubagentResult(failed))
+    val (drained, remaining) = TurnBoundaryDrains.drainBarrier(List(failed), compactionPending = false, outstanding = 0)
+    assertEquals(drained, List(failed))
+    assertEquals(remaining, Nil)
+  }
+
   test("batch complete: non-subagent events keep the one-at-a-time drain") {
     val queue = List(subtask(1), other(2), other(3))
     val (drained, remaining) = TurnBoundaryDrains.drainBarrier(queue, compactionPending = false, outstanding = 0)

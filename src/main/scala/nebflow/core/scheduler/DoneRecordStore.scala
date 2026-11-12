@@ -14,7 +14,7 @@ import java.nio.file.{Files, Path as JPath, StandardOpenOption}
  * 打卡 done 历史（认知二期产品批·周报生成器数据源）：待办/打卡项被 done 销账时
  * 追加一条**只增不改**的 JSONL 记录。此前引擎只删行不留痕——「本周打卡 N/M」
  * 无从聚合（实施批前的实证缺口：store 只存当前态）。JSONL 选型 = 引擎侧
- * 持久写既有惯型（UsageRecordStore / NodeReportRegistry 同款）。
+ * 持久写既有惯型（UsageRecordStore 同款）。
  *
  * 文件：`~/.stand/checkin-records/done-records.jsonl`，每行一条
  * {{{

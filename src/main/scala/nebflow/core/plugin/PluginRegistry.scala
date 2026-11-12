@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
-import nebflow.shared.{McpServerConfig, NebflowLogger, PathUtil}
+import nebflow.shared.*
 
 import java.security.MessageDigest
 
@@ -1347,7 +1347,11 @@ object PluginRegistry:
     PluginSourceInstall.installFromSpecJson(specJson)
 
   private def installFromSync(source: String): Either[String, String] =
-    val tmp = os.temp.dir(prefix = "nb-plugin-install")
+    // Staging lives in a registered evidence-temp batch (same shape as
+    // RichRenderer/NfOfficeRoutes): a crashed install leaves an inactive,
+    // TTL-swept batch rather than an orphaned OS temp dir.
+    val batch = EvidenceTemp.createBatch("plugin-install", "local-source")
+    val tmp = os.Path(batch)
     try
       val staged = tmp / "repo"
       // 本地目录腿（git 腿已升级为 pin clone 流：PluginSourceInstall.installGitPinned；
@@ -1412,6 +1416,11 @@ object PluginRegistry:
         end if
       }
     finally
+      // Retire the batch first, then remove it wholesale: complete teardown
+      // leaves nothing on disk, and a partially failed teardown stays inactive
+      // with a valid manifest and remains TTL-sweepable.
+      try EvidenceTemp.finishBatch(batch)
+      catch case _: Exception => ()
       try os.remove.all(tmp)
       catch case _: Exception => ()
 

@@ -51,7 +51,11 @@ class CompactionQueueStoreSpec extends FunSuite:
   private val ev2 = AgentCommand.ExternalEvent("bridge", "user-message", "payload-2")
 
   test("save/load round-trip preserves every field (imms + events)") {
-    val q = CompactionQueueStore.PersistedQueues(imms = List(imm1, imm2), events = List(ev1, ev2))
+    val q = CompactionQueueStore.PersistedQueues(
+      imms = List(imm1, imm2),
+      events = List(ev1, ev2),
+      outstandingSubagentResults = 3
+    )
     CompactionQueueStore.save("sid-rt", q).unsafeRunSync()
     val loaded = CompactionQueueStore.load("sid-rt").unsafeRunSync()
     assert(loaded.isDefined, "load must return the persisted queues")
@@ -73,6 +77,7 @@ class CompactionQueueStoreSpec extends FunSuite:
     assertEquals(got.events.head.correlationId, Some("corr-1"))
     assertEquals(got.events(1).source, "bridge")
     assertEquals(got.events(1).payload, "payload-2")
+    assertEquals(got.outstandingSubagentResults, 3)
   }
 
   test("② human-origin bit survives 入队 ↔ 崩溃恢复 round-trip (fromUser)") {
@@ -121,7 +126,7 @@ class CompactionQueueStoreSpec extends FunSuite:
     assertEquals(CompactionQueueStore.load("").unsafeRunSync(), None)
   }
 
-  test("legacy file missing imms/events decodes with empty defaults (forward compat)") {
+  test("legacy file missing imms/events/barrier decodes with empty defaults (forward compat)") {
     val file = tmp / "data" / "sessions" / "sid-legacy" / "injection-queues.json"
     os.makeDir.all(file / os.up)
     os.write(file, """{"imms":[]}""")
@@ -129,6 +134,21 @@ class CompactionQueueStoreSpec extends FunSuite:
     assert(loaded.isDefined)
     assertEquals(loaded.get.imms, Nil)
     assertEquals(loaded.get.events, Nil)
+    assertEquals(loaded.get.outstandingSubagentResults, 0)
+  }
+
+  test("barrier-only snapshot is retained and can be cleared after settlement") {
+    val file = tmp / "data" / "sessions" / "sid-barrier" / "injection-queues.json"
+    CompactionQueueStore
+      .save("sid-barrier", CompactionQueueStore.PersistedQueues(outstandingSubagentResults = 2))
+      .unsafeRunSync()
+    assert(os.exists(file), "an in-flight batch must keep a durable recovery marker")
+    assertEquals(
+      CompactionQueueStore.load("sid-barrier").unsafeRunSync().map(_.outstandingSubagentResults),
+      Some(2)
+    )
+    CompactionQueueStore.save("sid-barrier", CompactionQueueStore.PersistedQueues()).unsafeRunSync()
+    assert(!os.exists(file), "settled empty state must clear the recovery marker")
   }
 
 end CompactionQueueStoreSpec

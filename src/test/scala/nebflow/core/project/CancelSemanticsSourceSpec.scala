@@ -135,7 +135,6 @@ class CancelSemanticsSourceSpec extends FunSuite:
           ws.toString,
           rootSid,
           s"csproj-$name",
-          FeedbackRouter.ModeAuto,
           (_, _, _) => IO.unit,
           notifyTriggerOverride = notifySeam.map(ref => (text: String) => ref.update(_ :+ text))
         )

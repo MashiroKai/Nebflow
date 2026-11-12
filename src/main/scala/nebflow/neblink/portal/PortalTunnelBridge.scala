@@ -894,7 +894,10 @@ private[neblink] final class PortalTunnelBridge(
       case "revoked" =>
         deps.bindingState.markUnbound().flatMap { transitioned =>
           deps.consoleTickets.revokeAll().flatMap { dropped =>
-            (deps.faces.sessionRevocation.getOrElse(IO.pure(0)), deps.revokeNfTickets)
+            (
+              deps.faces.sessionRevocation.getOrElse(IO.pure(0)),
+              deps.faces.nfTicketRevocation.getOrElse(deps.revokeNfTickets)
+            )
               .mapN((sessionsDropped, nfTicketsDropped) =>
                 logger.warn(
                   "BindingControl revoked: host binding is TERMINAL — console tickets invalidated " +

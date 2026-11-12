@@ -48,6 +48,28 @@ class DeletedToolGuardSpec extends FunSuite:
    */
   private val renameRetiredProjectNames = List("ProjectCreate")
 
+  /**
+   * T2 report-channel 退役集（2026-11-11）：三件结构化申报工具**同通道退役**——
+   * node_report（节点）/ delegate_report（delegate）/ merger_report（merger，更早
+   * 先例）。终态语义 = **末条 assistant 文本本体**（文本锚定协议：BLOCKED /
+   * VERDICT 文法 + delegate 交付 = 正文），不存在可指路的「后继工具」。
+   * 🔴 **有意零墓碑条目**：RetiredToolGuides 不登记这三名——指路表的存在前提是
+   * 「有现役替代入口」，本通道没有；旧会话调用落注册表通用未命中错误
+   * （"No such tool available: X"，AgentSessionExecution fallback 单点），文案已
+   * 自含「无此工具」。名字级防复活守卫 = `PromptFaceSplitSpec` 的反回流负断言
+   * （delegate 面零 node_report / brief 行零申报调用形态）。
+   */
+  private val retiredReportChannelNames = List("node_report", "delegate_report", "merger_report")
+
+  test("report-channel retired names (T2): unregistered, no tombstone entry, fallback is the generic miss error"):
+    retiredReportChannelNames.foreach { g =>
+      assert(!ToolRegistry.TOOL_MAP.contains(g), s"$g must be unregistered (the report channel is retired)")
+      assert(
+        !nebflow.agent.AgentCore.RetiredToolGuides.contains(g),
+        s"$g must NOT carry a migration guide — there is no successor tool to point at (the terminal report is the final text itself)"
+      )
+    }
+
   test("no surviving tool description references a deleted tool") {
     val offenders = ToolRegistry.TOOL_MAP.toSeq.collect {
       case (name, tool) if ghostNames.exists(g => tool.description.contains(g)) => name

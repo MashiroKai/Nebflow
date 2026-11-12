@@ -1720,10 +1720,11 @@ object BackoffSupervisor:
                     .flatMap {
                       case Some(entry) if entry.event.source == source && entry.event.eventType == eventType &&
                         entry.event.correlationId.contains(subagentId) && entry.event.payload == payload &&
-                        entry.event.metadata("parentSessionId").flatMap(_.asString).contains(parentSessionId) =>
+                        entry.event.metadata("parentSessionId").flatMap(_.asString).contains(parentSessionId) &&
+                        nebflow.core.mail.CompletionDebtStore.generationOf(entry.event) == completionGeneration =>
                         nebflow.core.mail.CompletionDebtStore.pending(subagentId).flatMap {
                           case Right(Some(debt)) if debt.recipientSessionId == parentSessionId =>
-                            nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId, parentSessionId, debt.messages)
+                            nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId, parentSessionId, debt.messages, completionGeneration)
                               .flatMap(ok => IO.whenA(!ok)(logger.error(s"completion debt conflict while confirming existing mail for '$subagentId'")))
                           case _ => logger.error(s"completion debt missing or invalid while confirming existing mail for '$subagentId'")
                         }

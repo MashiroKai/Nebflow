@@ -67,6 +67,16 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         StreamChunk.Done(None, None)
       )
 
+  /** LLM stream that never ends: the revived turn stays in flight (the row stays running). */
+  private val hangLlm = new nebflow.shared.LlmHandle[IO]:
+    def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
+      IO.raiseError(new RuntimeException("send not expected"))
+    def sendStream(
+      req: nebflow.shared.LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+    ) =
+      fs2.Stream.never[IO]
+
   private def mkTask(
     id: String,
     parent: String,
@@ -109,7 +119,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     seat: os.Path
   )
 
-  private def withFx(name: String)(body: Fx => IO[Unit]): Unit =
+  private def withFx(name: String, llm: nebflow.shared.LlmHandle[IO] = echoLlm)(body: Fx => IO[Unit]): Unit =
     val tmp = os.temp.dir(prefix = s"revival-$name")
     val seat = os.temp.dir(prefix = s"revival-seat-$name")
     PathUtil.setDataRoot(tmp / "data")
@@ -126,7 +136,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         sessionStore = SessionStore(tmp / "sessions", tmp / "tasks")
         store = new SubAgentTaskStore(tmp / "subagent-tasks")
         resources = SharedResources(
-          llm = echoLlm,
+          llm = llm,
           dispatcher = dispatcher,
           sessionStore = sessionStore,
           projectRoot = os.pwd,
@@ -182,7 +192,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     yield (pending ++ taken).map(_.event)
 
   test(
-    "V1: eligible orphan revives from transcript checkpoint; the continued turn WITHOUT a declaration is REMINDED (matrix complete×idle), never auto-completed to the parent"
+    "V1: eligible orphan revives from transcript checkpoint; the continued turn's end is the completion delivery (pass-through): the parent's mailbox gets the final text exactly once and the row completes"
   ) {
     withFx("v1") { fx =>
       for
@@ -219,22 +229,19 @@ class DelegateRevivalSpec extends CatsEffectSuite:
               transcript.exists(m => m.role == MessageRole.User && m.textContent.contains("engine process restarted"))
             )
         }
-        // 矩阵腿（状态矩阵批 2026-11-01）：续跑回合（stub 回声终文，无 delegate_report
-        // 申报）收尾 ⇒ complete×idle = 提醒腿（NudgeIdle）——绝不自动 completed：
-        // 零终态投父（邮箱零条目）、任务行诚实回 running、actor 不停（活体仍在，
-        // 等下一回合真申报 finish/merge 或 standby）。先沉降回合（复活 fork 内的
-        // spawn→回声→收尾链是异步的）。
-        _ <- IO.sleep(800.millis)
+        // Pass-through completion: the continued turn (stub echo final text) ends the delegate. Its final
+        // text is mailed to the parent exactly once, the task row completes and the actor is released.
+        // The revival fork runs the spawn -> echo -> finish chain asynchronously, so wait for the mail.
+        _ <- waitUntil(10.seconds)(mailboxEvents(fx, parent.id).map(_.exists(_.correlationId.contains(child))))
         events <- mailboxEvents(fx, parent.id)
-        _ = assertEquals(
-          events.filter(_.correlationId.contains(child)),
-          Nil,
-          "no declaration ⇒ no auto terminal — the parent is NOT notified (matrix idle leg)"
+        delivered = events.filter(_.correlationId.contains(child))
+        _ = assertEquals(delivered.size, 1, s"the continued turn's final text reaches the parent exactly once: $events")
+        _ = assert(delivered.head.payload.contains("REVIVED_WORK_DONE"), delivered.head.payload)
+        _ <- waitUntil(10.seconds)(
+          fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).exists(_.status == "completed"))
         )
-        row2 <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
-        _ = assertEquals(row2.status, "running", "the reminder leg keeps the row honestly in-flight (never completed)")
         stillLive <- fx.resources.agentRegistry.get.map(_.contains(child))
-        _ = assert(stillLive, "NudgeIdle does not stop the revived actor — it is reminded, not terminalized")
+        _ = assert(!stillLive, "the completion releases the revived actor")
       yield ()
     }
   }
@@ -309,15 +316,14 @@ class DelegateRevivalSpec extends CatsEffectSuite:
   }
 
   test("V5: revival chain across successive crashes — revive, re-revive, then budget-exhausted salvage") {
-    withFx("v5") { fx =>
+    withFx("v5", hangLlm) { fx =>
       def boot(task: SubAgentTask): IO[Unit] =
         // 模拟崩溃现场：行在飞、无活体（本 Fx 从未 spawn 过该会话的 actor——
         // registerAgent 只在复活腿内发生；此处先清 registry 再现「进程死亡」）。
         fx.system.stopAll *> fx.resources.agentRegistry.update(_ - task.taskId) *>
           sweepWith(fx).void *>
-          // 回合沉降（矩阵批）：上一次复活所生的 actor 其回声回合是异步的——
-          // 无申报收尾走 NudgeIdle 腿（行回 running）。不在 boot 间沉降会让
-          // 上一回合的提醒腿与本 boot 的收殓腿竞写任务行。
+          // Let the revival settle between boots: the revived session is registered by an
+          // asynchronous fork, and its turn never ends (hang stub), so the row stays running.
           IO.sleep(800.millis)
 
       for

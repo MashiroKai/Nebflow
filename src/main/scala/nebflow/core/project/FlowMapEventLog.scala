@@ -9,12 +9,12 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Flow Map 调整事件审计日志（blocked 反馈重入设计 §4.4）。
+ * Flow Map 调整事件审计日志。
  *
  * `<workspace>/.nebflow/flow-map-events.jsonl` 追加式 JSONL，每行一事件：
  * `{ts, type, project, nodeId, summary}`，
- * type ∈ blocked / reentry-triggered / reactivated / abandoned / escalated /
- *   cooldown-on / reaped / merge-blocked /
+ * type ∈ reactivated / abandoned / escalated /
+ *   reaped /
  *   settle-sweep / trigger-starved / start-aborted（trigger-chain-fix 批）/
  *   bg-wait / bg-wait-timeout / bg-released（bgtask-completion-gate 批）/
  *   mount-stalled（mount-enforce 批：可触发点后 60s 仍未触发的挂载停滞留痕，
@@ -74,7 +74,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   (V-0) member ⇒ the conclusion is carried out on this line, and the summary spells
  *   out both manual exits verbatim. Same family as `chain-archived`, DIFFERENT fact —
  *   the two must never be merged into one line; see [[ChainArchiveHeldType]]）/
- *   node-report-unconsumed（**engine-defects 批 #239①** 2026-09-15：`node_report` 申报
+ *   node-report-unconsumed（**engine-defects 批 #239①** 2026-09-15：终态申报（历史口径，
  *   已被 `drain` take-and-remove 取走、而终态写按 R2 fresh-read 纪律**拒写**（节点已
  *   消失 / 状态已变 / 关机期 draining 抑制）时的**补偿写回**——summary 含 sessionId +
  *   category + detail + suggestion 全文（不截断），写点 =
@@ -89,10 +89,9 @@ import java.util.concurrent.atomic.AtomicLong
  * （零迁移、append-only），新行仅在链族事件带上。
  *
  * 0 schema 迁移（独立文件不碰 flow-map.json 契约）、append-only、重启保留、grep 友好。
- * 写入点：NodeEngine.blockedNode（blocked）/ mergeBlockedByUpstream
- * Failure（merge-blocked）/ runWithAgent 翻转异常中止（start-aborted）/ settleRunnable
+ * 写入点：runWithAgent 翻转异常中止（start-aborted）/ settleRunnable
  * Sweep（settle-sweep、trigger-starved、mount-stalled）/ reapStaleRunning（reaped）、
- * FeedbackRouter（reentry-triggered / escalated / cooldown-on）、NodeEditTool 重激活与
+ * RetryCap 升级（escalated）、NodeEditTool 重激活与
  * abandon 两分支（reactivated / abandoned）/ NodeEngine.compensateUnconsumedReport
  * （node-report-unconsumed，#239①）。
  */
@@ -725,7 +724,7 @@ object FlowMapEventLog:
    * carrying ① the **node id** (`node=<id>`) ② the **refusal reason**
    * (`reason=no-attribution` — the reason face is "no attribution fingerprint" / "not
    * registered in the ledger") ③ the **way out** (`way=<...>` — `register-attribution` /
-   * `node_report` / `Flow Map` / `manual`). `kind` is the uplink class, and the
+   * `Flow Map` / `manual`). `kind` is the uplink class, and the
    * **landing/merge class must be distinguishable** (`kind=landing`, the core of criterion
    * 10.4.3).
    */

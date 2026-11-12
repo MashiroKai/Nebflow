@@ -8,6 +8,22 @@
 // usage: node scripts/verify-unified-panel.cjs [port]  (port = static serve of web/ root, default 8390)
 const { chromium } = require('playwright');
 
+// Screenshot output = EvidenceTemp batch (mirror of nebflow.shared.EvidenceTemp):
+//   <tmpdir>/stand-evidence/<project>/<task>-<uuid>/<yyyyMMdd>/ + manifest.json,
+// written inactive (no .active marker) so the gateway TTL sweep retires it —
+// loose /tmp screenshots would otherwise outlive any lifecycle.
+const { tmpdir } = require('os');
+const { randomUUID } = require('crypto');
+const { mkdirSync, writeFileSync } = require('fs');
+const joinPath = require('path').join;
+const EV_PROJECT = 'unified-panel';
+const EV_BATCH = `verify-${randomUUID()}`;
+const EV_DIR = joinPath(tmpdir(), 'stand-evidence', EV_PROJECT, EV_BATCH,
+  new Date().toISOString().slice(0, 10).replace(/-/g, ''));
+mkdirSync(EV_DIR, { recursive: true });
+writeFileSync(joinPath(EV_DIR, 'manifest.json'),
+  JSON.stringify({ createdAt: new Date().toISOString(), project: EV_PROJECT, batch: EV_BATCH }) + '\n');
+
 const PORT = process.argv[2] || '8390';
 const BASE = `http://127.0.0.1:${PORT}/index.html`;
 const results = [];
@@ -191,8 +207,8 @@ const BASELINE_ANIMS = ['bg-pulse', 'bg-status-blink', 'spin', 'task-enter', 'ta
     const focusBar = await page.evaluate(() => getComputedStyle(document.querySelector('.bg-task-row:focus')).boxShadow);
     ok(tag + ' R5 focus left-edge bar', /inset/.test(focusBar), focusBar);
 
-    // screenshot: header dual badge + three panels same frame
-    await page.screenshot({ path: `/tmp/unified-panel-${scheme}.png` });
+    // screenshot: header dual badge + three panels same frame (evidence-temp batch, not loose /tmp)
+    await page.screenshot({ path: joinPath(EV_DIR, `unified-panel-${scheme}.png`) });
     await ctx.close();
   }
 
@@ -221,6 +237,7 @@ const BASELINE_ANIMS = ['bg-pulse', 'bg-status-blink', 'spin', 'task-enter', 'ta
   await eCtx.close();
 
   await browser.close();
+  console.log('screenshots → ' + EV_DIR);
   const failed = results.filter(r => !r.pass);
   console.log('\n=== ' + (results.length - failed.length) + '/' + results.length + ' PASS ===');
   process.exit(failed.length ? 1 : 0);

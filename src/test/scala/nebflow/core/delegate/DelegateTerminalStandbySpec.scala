@@ -137,7 +137,7 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
     }
 
   test(
-    "① self-declared standby (with a real receipt as the final text — the live-incident form) ⇒ Outcome.Standby, no verdict, dock parked, zero LLM"
+    "① pass-through contract (report channel retired): a standby-slot record + turn end releases to the parent — no dock parking, no standby audit line, zero LLM (exploding judge proves the judge is not consulted)"
   ) {
     val system = ActorSystem(s"dt-sb-1-${scala.util.Random.nextInt(100000)}")
     try
@@ -162,37 +162,32 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
         lines = standbyLines("delegate-sb-declared")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        outcome match
-          case DelegateTerminal.Outcome.Standby(detail, declared) =>
-            assert(declared, "the declared leg must be marked declared=true")
-            assertEquals(detail, "等作者下一条 Mail 再续")
-          case other => fail(s"expected Outcome.Standby, got: $other")
+        // 申报通道退役（T2 批）：回合结束 = 完成交付——槽位在也直通。
+        assert(
+          outcome.isInstanceOf[DelegateTerminal.Outcome.Release],
+          s"every turn end must release (pass-through), got: $outcome"
+        )
+        assert(outcome.toString.contains("待命，等下一条 Mail 再续"), "the release payload carries the final text")
         // 不终判：零 terminal-verdict 行、判词序零 LLM（ExplodingJudge 未炸即证）。
         assertEquals(terminalVerdicts("delegate-sb-declared"), Nil)
-        // 停靠面：申报槽保真 + 停靠时刻落盘（面板/快照「待命」数据源）。
+        // 槽位面：申报槽保真（引擎内部承接写点维护）；停靠时刻不再由终态采纳点写。
         assertEquals(rec.flatMap(_.reportStatus), Some("standby"))
-        assert(rec.flatMap(_.standbySince).isDefined, "standbySince must be parked on adoption")
-        // 审计行：standby（非终态）行在场、declared=true、detail 随行。
-        assertEquals(lines.size, 1, s"exactly one standby audit line, got: $lines")
-        assertEquals(lines.head.hcursor.get[Boolean]("declared").toOption, Some(true))
-        assertEquals(
-          lines.head.hcursor.get[String]("detail").toOption,
-          Some("等作者下一条 Mail 再续")
-        )
+        assert(rec.flatMap(_.standbySince).isEmpty, "no dock parking on turn end (the adoption point retired)")
+        // 审计行退役。
+        assertEquals(lines, Nil, "no standby audit line (retired protocol)")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
   test(
-    "② anti-degradation gate: standby declared BUT the branch carries unmerged deliverable commits (real repo, ahead>0) ⇒ NOT honored — the verdict chain runs and the merge obligation settles"
+    "② pass-through on a working seat (standby slot + unmerged deliverable commits): the turn end releases the same way — the engine never merges and writes no dock/audit faces"
   ) {
     val system = ActorSystem(s"dt-sb-2-${scala.util.Random.nextInt(100000)}")
     val repo = mkRealRepo(tempRoot / "repo-sb2", "delegate/delegate-sb-blocked", ahead = 2)
     try
       for
         res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
-        // 拒绝后回落判词链 → 判定机被咨询（completed 判词形态）。
         _ = DelegateJudge.DelegateJudgePort.install(new CompletedJudge)
         (child, sup) <- noopRefs(system)
         _ = seedRecord("delegate-sb-blocked", Some("92"), repo, branch = Some("delegate/delegate-sb-blocked"))
@@ -211,19 +206,18 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
         rec = DelegateRegistry.find("delegate-sb-blocked")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        // 防退化：standby 不得用于逃避合并义务 ⇒ 回落正常判词链（Release completed）。
         assert(
           outcome.isInstanceOf[DelegateTerminal.Outcome.Release],
-          s"standby with unmerged commits must fall through to the verdict chain, got: $outcome"
+          s"every turn end must release (pass-through), got: $outcome"
         )
-        assertEquals(terminalVerdicts("delegate-sb-blocked"), List("completed"))
+        assertEquals(terminalVerdicts("delegate-sb-blocked"), Nil, "no verdict line (retired protocol)")
         assert(
           standbyLines("delegate-sb-blocked").isEmpty,
-          "a refused standby must NOT write a standby audit line"
+          "no standby audit line"
         )
         assert(
           rec.flatMap(_.standbySince).isEmpty,
-          "a refused standby must NOT park the dock timestamp"
+          "no dock timestamp on turn end"
         )
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
@@ -231,7 +225,7 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
   }
 
   test(
-    "③ wake semantics (matrix): after a parked standby, clearStandby (the Mail wake point) resets both slots ⇒ the woken turn with NO new report is REMINDED (NudgeIdle), and a finish declaration is judged normally"
+    "③ wake-slot mechanics stay live (the Mail wake point): parkStandby seeds the dock pair, clearStandby (deliverToDelegate live leg) resets both slots; onCompleted stays pass-through across the whole cycle"
   ) {
     val system = ActorSystem(s"dt-sb-3-${scala.util.Random.nextInt(100000)}")
     try
@@ -252,11 +246,13 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
           sup,
           sessionToolCalls = Some(1)
         )
-        _ = assert(parked.isInstanceOf[DelegateTerminal.Outcome.Standby])
+        // 停靠槽播种（注册表层操作：终态采纳点退役后，槽对由引擎内部面维护）。
+        _ = assert(DelegateRegistry.parkStandby("delegate-sb-wake").isRight)
+        preWake = DelegateRegistry.find("delegate-sb-wake")
         // ── Mail 唤醒（deliverToDelegate live 腿的执行点）──
         _ <- IO.blocking(DelegateRegistry.clearStandby("delegate-sb-wake"))
         cleared = DelegateRegistry.find("delegate-sb-wake")
-        // 唤醒轮：无新申报、有真实产出 → 矩阵未申报腿（提醒，绝不静默判完成）。
+        // 唤醒轮：无新申报、有真实产出 → 直通交付（通道退役）。
         wokenNoReport <- DelegateTerminal.onCompleted(
           res,
           "delegate-sb-wake",
@@ -268,9 +264,7 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
           sup,
           sessionToolCalls = Some(4)
         )
-        // 唤醒轮补报 finish → 正常终判（矩阵唯一终判组合；ExplodingJudge 会让咨询
-        // 炸——先卸载端口模拟判定机缺席，自申报背书 completed）。
-        _ = DelegateJudge.DelegateJudgePort.clear()
+        // 唤醒轮 finish 槽在 → 同样直通（槽位不改写终局）。
         _ = DelegateRegistry.updateReport("delegate-sb-wake", "finish", "干完了", "")
         wokenFinish <- DelegateTerminal.onCompleted(
           res,
@@ -286,17 +280,19 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
         rec = DelegateRegistry.find("delegate-sb-wake")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
+        assert(parked.isInstanceOf[DelegateTerminal.Outcome.Release], "turn end releases (pass-through)")
+        assert(preWake.flatMap(_.standbySince).isDefined, "parkStandby seeds the dock timestamp (registry-level)")
         assertEquals(cleared.flatMap(_.standbySince), None, "wake clears the dock timestamp")
         assertEquals(cleared.flatMap(_.reportStatus), None, "wake clears the declaration slot")
         assert(
-          wokenNoReport.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle],
-          s"the woken turn WITHOUT a declaration is reminded (matrix complete×idle), got: $wokenNoReport"
+          wokenNoReport.isInstanceOf[DelegateTerminal.Outcome.Release],
+          s"the woken turn releases (pass-through), got: $wokenNoReport"
         )
         assert(
-          wokenFinish.isInstanceOf[DelegateTerminal.Outcome.Release] && wokenFinish.toString.contains("completed"),
-          s"the woken finish-declared turn runs the normal verdict chain, got: $wokenFinish"
+          wokenFinish.isInstanceOf[DelegateTerminal.Outcome.Release] && wokenFinish.toString.contains("干完了"),
+          s"the finish-slot turn releases the same way, got: $wokenFinish"
         )
-        assertEquals(terminalVerdicts("delegate-sb-wake"), List("completed"))
+        assertEquals(terminalVerdicts("delegate-sb-wake"), Nil, "no verdict lines (retired protocol)")
         assertEquals(rec.flatMap(_.standbySince), None)
       end for
     finally DelegateJudge.DelegateJudgePort.clear()

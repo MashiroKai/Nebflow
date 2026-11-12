@@ -756,7 +756,7 @@ Delivery follows recipient state (there is no delivery parameter to set):
    * S6=C（N1 刀3 · v3 §7.2）新增 Delegate 面：delegate 会话（引擎侧
    * `DelegateSessions.isDelegateSession` 前缀判据单点）的地址面 = 自己作用域的
    * `node:<id|name>` 腿（挂载面授权在 buildAllowedToolSet 尾段，工具内本枚举
-   * 分层为第二保险——双保险同 TaskBoard/node_report 纪律）。
+   * 分层为第二保险——双保险同 TaskBoard 纪律）。
    */
   private enum SenderRole:
     case Root, Dispatcher, Delegate, Standalone

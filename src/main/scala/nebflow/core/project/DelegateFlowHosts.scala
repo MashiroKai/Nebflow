@@ -278,7 +278,6 @@ object DelegateFlowHosts:
         .void *>
       h.engine.settleRunnableSweep().handleErrorWith(e => warn("settle sweep")(e)) *>
       h.engine.settleStaleRunningNodes().handleErrorWith(e => warn("dead-session settle")(e)) *>
-      h.engine.remindUnreportedNodes().handleErrorWith(e => warn("report reminder")(e)) *>
       h.engine.sweepDestroyWindows().handleErrorWith(e => warn("destroy-window sweep")(e)) *>
       h.engine.sweepLoopBudgets().handleErrorWith(e => warn("loop budget sweep")(e)) *>
       h.engine.applyDeferredWiring().handleErrorWith(e => warn("deferred wiring")(e)) *>

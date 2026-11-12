@@ -7,7 +7,6 @@ import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.SessionStore
 import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateTerminalTtl}
-import nebflow.core.tools.DelegateReportTool
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
@@ -560,7 +559,7 @@ object SubAgentStartupRecovery:
             // overwrite 保证它不被顶掉），reportStatus=finish ⇒ 本腿一次性。
             marked <- delivered match
               case Right(_) =>
-                IO.blocking(DelegateRegistry.updateReport(t.taskId, DelegateReportTool.FinishValue, report, "")).attempt
+                IO.blocking(DelegateRegistry.updateReport(t.taskId, DelegateRegistry.FinishValue, report, "")).attempt
               case Left(_) => IO.pure(Right(()))
             _ <- IO
               .blocking(

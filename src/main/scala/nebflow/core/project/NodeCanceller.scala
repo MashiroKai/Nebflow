@@ -419,13 +419,20 @@ private[project] trait NodeCanceller:
     }
 
   /**
-   * **级联闭包（R3 传递规则，单点）**：种子上做 [[referencesOf]] BFS 到收敛，**只把
-   * 非终态节点纳入传递**（`NodeLifecycle.ChainCancelScope`）——遇到 `completed` /
-   * `failed` / `cancelled` 即**停**（防过杀：completed 的结果已投递、其下游输入已到位，
-   * 与本次取消无因果依赖；failed/cancelled 的下游已由既有 D5 零结算/停等纪律持有）。
+   * **级联闭包（R3 传递规则，单点）**：种子上做 [[referencesOf]] BFS 到收敛。
+   * 两个集合面分开（no-blocked-semantics 一期）：
+   *   - **传导面（frontier 展开）**：遇 `Terminal`（completed/failed/cancelled）即**停**
+   *     （防过杀：completed 的结果已投递、其下游输入已到位，与本次取消无因果依赖；
+   *     failed/cancelled 的下游已由既有 D5 零结算/停等纪律持有）；
+   *   - **取消面（carried）**：只把 [[NodeLifecycle.ChainCancelScope]] 成员纳入取消集。
+   *     `blocked` 已退役（不在 Terminal 也不在 ChainCancelScope）⇒ legacy blocked 行
+   *     **零触碰**（分发器持有的存量现场，引擎不擅自取消），但也**不作传导壁**——
+   *     挂在其后的 pending/wiring/interrupted 依旧被闭包承接，否则该段链在含存量
+   *     blocked 行的图上永远扫不到（M10 锁定）。
    *
-   * 环路/自引用天然收敛：`visited`（含种子）+ `referencesOf` 过滤 `id != self`；弱连通
-   * 分量本身用无向 BFS（`FlowMapStore.topologicalChains`）⇒ 回边（含 `:loop`）不会死循环。
+   * 环路/自引用天然收敛：`seen`（含种子，展开面全记）+ `referencesOf` 过滤 `id != self`；
+   * 弱连通分量本身用无向 BFS（`FlowMapStore.topologicalChains`）⇒ 回边（含 `:loop`）不会
+   * 死循环。纯 blocked 环也收敛（展开过一次即入 `seen`）。
    *
    * **跨分量禁行（M6）**：并集只沿图引用（`in`/`out`/`deps`/`pendingSuccession`）走，
    * 而四类引用都是**图的边**（`topologicalChains` 对任何边两侧都建邻接，`pendingSuccession`
@@ -442,15 +449,18 @@ private[project] trait NodeCanceller:
    * 改造前 deps 引用者必同分量、本来就在闭包里；改造后仍经 [[referencesOf]] 入闭包）。
    */
   private[project] def cascadeClosure(snapshot: FlowMapState, seed: Set[String]): Set[String] =
-    def go(frontier: Set[String], visited: Set[String]): Set[String] =
-      if frontier.isEmpty then visited
+    // seed 由调用方预过滤为 ChainCancelScope 成员 ⇒ 原样入闭包（种子恒被取消）。
+    def go(frontier: Set[String], seen: Set[String], carried: Set[String]): Set[String] =
+      if frontier.isEmpty then carried
       else
-        val next = frontier
+        val expand = frontier
           .flatMap(id => referencesOf(snapshot, id))
-          .filterNot(visited.contains)
-          .filter(id => snapshot.nodes.get(id).exists(n => NodeLifecycle.ChainCancelScope.contains(n.status)))
-        go(next, visited ++ next)
-    go(seed, seed)
+          .filterNot(seen.contains)
+          .filterNot(id => snapshot.nodes.get(id).exists(n => NodeLifecycle.Terminal.contains(n.status)))
+        val carry =
+          expand.filter(id => snapshot.nodes.get(id).exists(n => NodeLifecycle.ChainCancelScope.contains(n.status)))
+        go(expand, seen ++ expand, carried ++ carry)
+    go(seed, seed, seed)
 
   /**
    * **带级联权限守卫的终态写入口（判据 M8 的机械承担点，chaincancel 批 2026-09-17）**：
@@ -511,40 +521,11 @@ private[project] trait NodeCanceller:
       }
 
   /**
-   * 未申报计时起表（noderpt 批 A 段 2026-09-11）：**只置不重**——首次未申报在手时置
-   * `reportPendingSince`（+ 计数归零）；已置则原样保留，后续 `Completed`（含提醒轮自身
-   * 产生的 Completed）与 `NodeMessage` 重入都不改起点（代裁 4：否则计时可被无限拖延）。
-   * 会话身份守卫：只在「本 fiber 的会话仍是该节点的当前会话」时置（`sessionRef` 同值），
-   * 避免 resume/reactivate 换会话后旧 fiber 的判定落到新会话上。值真的变化才 emitUpdated
-   * （载荷条件字段随之带；未变化不刷帧）。
-   */
-  private[project] def markReportPendingIfAbsent(nodeId: String, sessionId: String): IO[Unit] =
-    IO(System.currentTimeMillis()).flatMap { now =>
-      store
-        .mutateWithResult { st =>
-          st.nodes.get(nodeId) match
-            case Some(fresh)
-                if fresh.status == NodeLifecycle.Running
-                  && fresh.sessionRef.forall(_ == sessionId)
-                  && fresh.reportPendingSince.isEmpty =>
-              (
-                st.copy(nodes =
-                  st.nodes.updated(nodeId, fresh.copy(reportPendingSince = Some(now), reportReminderCount = 0))
-                ),
-                true
-              )
-            case _ => (st, false)
-        }
-        .flatMap {
-          case (s, true) => s.nodes.get(nodeId).traverse_(emitUpdated)
-          case (_, false) => IO.unit
-        }
-    }
-
-  /**
-   * 未申报计时清表（唯一清表条件 = 该会话任一 `node_report` 申报；终态/挂起出口与新一轮
-   * 翻转同点清零，防跨轮累计）。`sessionId = Some` 时只在「本 fiber 的会话仍是该节点当前
-   * 会话」时清——resume 换会话后老 fiber 的收尾不得误清新会话的计时。
+   * 未申报计时清表（noderpt 批 A 段 2026-09-11；**存量字段清扫腿**——计时起表点已随
+   * 终态申报工具通道整体退役后，本清表保留用于：① 终态/挂起出口与新一轮翻转同点
+   * 清零既有持久字段的残留（旧盘节点可能带 `reportPendingSince`）；② 防「终态节点带
+   * 待申报计时」的误导态进归档。`sessionId = Some` 时只在「本 fiber 的会话仍是该节点
+   * 当前会话」时清——resume 换会话后老 fiber 的收尾不得误清新会话的计时。
    */
   private[project] def clearReportPending(nodeId: String, sessionId: Option[String]): IO[Unit] =
     store
@@ -694,7 +675,7 @@ private[project] trait NodeCanceller:
 
   /**
    * 终态销毁窗口扫描腿（`ProjectActor.TtlTick` 30s 驱动，与 `settleStaleRunningNodes` /
-   * `remindUnreportedNodes` 同族——复用既有心跳点零新调度器）。
+   * `sweepLoopBudgets` 同族——复用既有心跳点零新调度器）。
    *
    * 两件事：① **表项自愈**——带 `destroyAt` 的节点逐个重建禁 spawn 表（宿主重启后
    * 内存表为空，本腿一拍内恢复，禁 spawn 面不因重启长期失守）；② **到点销毁**——
@@ -838,12 +819,9 @@ private[project] trait NodeCanceller:
         if m.get(nodeId).contains(sessionId) then (m - nodeId) else m
       } *>
       resources.agentRegistry.update(_ - sessionId) *>
-      // blocked 结构化信号批（20260909 spec §5.2 #5④；同日泛化 NodeReportRegistry）：
-      // 登记表对称清理——cancelled/failed/异常退出路径未消费的申报在此兜底移除
-      // （completed 路径已 drain，此处幂等 no-op）。与 running/nodeSessions 同点清理纪律。
-      NodeReportRegistry.remove(sessionId) *>
       // 未申报计时对称清理（noderpt 批 A 段 2026-09-11）：终态/挂起出口清表不累计
       // （挂起恢复后按新会话重新起表；sessionId 守卫防误清 resume 后新会话的计时）。
+      // 起表点已随申报工具退役移除——本清表仅作存量字段清扫。
       clearReportPending(nodeId, Some(sessionId))
 
   /**

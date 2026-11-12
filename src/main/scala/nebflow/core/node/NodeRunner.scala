@@ -66,7 +66,7 @@ object NodeRunner:
      * （`task` | `verifier`）随 spawn 注入 —— NodeEngine 节点/loop 会话 spawn 点
      * 置 `Some(node.role)`；分发器与非项目轨（Delegate/SubTask/flow）保持 None。
      * 经 SessionContext → AgentCore → ToolContext.flowNodeRole 全链透传，是
-     * `node_report` 值域分化与 ProtocolFootnote 角色分支的来源。None = 判据侧
+     * 终态协议角色分支（ProtocolFootnote verifier 附录）的来源。None = 判据侧
      * 回落 `NodeRoles.Task`（缺省语义）。
      */
     flowNodeRole: Option[String] = None,

@@ -171,11 +171,11 @@ object TaskBoardTool:
         )
 
   /**
-   * 节点：受限（§1d 列 2）——create 禁止（决策 b，拆活走 BLOCKED/needs-split 闭环）；
-   * update/close/log 仅自己名下（assignee=自身节点 id）且 update 仅 status+note
-   * 两字段（title/assignee/nodeId/blocks 与升级批新增的 links 均属结构字段，只读，
-   * 任一出现即拒）；list/show 全板只读（status/assignee 过滤参数与分发器同面——
-   * 只读过滤无越权面）。
+   * 节点：受限（§1d 列 2）——create 禁止（决策 b，拆活走收尾报告声明，分发器读
+   * 结果重排）；update/close/log 仅自己名下（assignee=自身节点 id）且 update 仅
+   * status+note 两字段（title/assignee/nodeId/blocks 与升级批新增的 links 均属
+   * 结构字段，只读，任一出现即拒）；list/show 全板只读（status/assignee 过滤参数
+   * 与分发器同面——只读过滤无越权面）。
    */
   private def nodeDispatch(
     board: TaskBoardStore,
@@ -197,7 +197,7 @@ object TaskBoardTool:
         Left(
           forbidden(
             "nodes cannot create tasks (planning authority is the dispatcher). " +
-              "If the task needs splitting, end your output with a BLOCKED result (category=needs-split) instead"
+              "If the task needs splitting, say so plainly in your wrap-up report instead — the dispatcher reads your result and re-plans"
           )
         )
       case "list" =>
@@ -316,7 +316,7 @@ object TaskBoardToolDef extends Tool:
     """Project-scoped shared task board — work items for THIS project (Flow Map tracks nodes = execution units; TaskBoard tracks tasks = work items). Storage: <project workspace>/.nebflow/task-board.json (one board per project, shared by dispatcher + all project nodes); the change history lives in <project workspace>/.nebflow/task-history.jsonl (append-only, one history file per board). Same family as TaskList: four states, blocks dependency guard, idempotent close, 30-day prune.
 ## Who may do what (identity comes from the session, NOT from your arguments)
 - dispatcher: full control — create any task, update/close/log ANY task incl. structural fields (title/assignee/nodeId/blocks/links).
-- project node (you, if the board showed you a work order): update/close/log ONLY tasks whose assignee is YOUR node id, and update only `status` + `note` (structural fields are dispatcher-only); list/show the whole board read-only. Nodes NEVER create tasks — if the work needs splitting, end with a BLOCKED result (category=needs-split) instead.
+- project node (you, if the board showed you a work order): update/close/log ONLY tasks whose assignee is YOUR node id, and update only `status` + `note` (structural fields are dispatcher-only); list/show the whole board read-only. Nodes NEVER create tasks — if the work needs splitting, say so plainly in your wrap-up report instead.
 - everyone else: no access.
 ## Actions
 - create (dispatcher): required `title`; optional `assignee` (node id | "dispatcher" | "author"; default "dispatcher"), `nodeId` (optional Flow Map link), `links`, `note`, `blocks` (ids this entry DEPENDS on).

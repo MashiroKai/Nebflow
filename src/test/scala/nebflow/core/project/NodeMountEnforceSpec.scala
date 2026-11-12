@@ -120,8 +120,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
-        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
+        // 显式关终态 hold 腿（休眠旋钮；本 fixture 主题与之正交）。
         reportGateHold = Some(false),
         // engine-defects 批 #85：告警升级窗口接缝（M8 注 300ms；其余用例 None = 生产默认 10min）
         stallReNotifyMs = stallReNotifyMs

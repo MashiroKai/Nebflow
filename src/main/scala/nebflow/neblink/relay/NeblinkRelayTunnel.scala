@@ -173,6 +173,7 @@ final class NeblinkRelayTunnel(
       )
     )
     faces.bindSessionRevocation(sessionRevocation.getOrElse(IO.pure(0)))
+    faces.bindNfTicketRevocation(nfTicketRevocation.getOrElse(IO.pure(0)))
     deps
   }
 

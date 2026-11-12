@@ -79,23 +79,48 @@ private[agent] object AgentIdle:
    * [[nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent]]。
    */
   private def ackDelegateDelivery(event: AgentCommand.ExternalEvent): IO[Unit] =
+    // 完成通道修复批（2026-11-12）：无身份的 delegate 终态事件（correlationId /
+    // parentSessionId 任一为空——合成注入件、遗留重放件）**不进终端验收面**。
+    // 终端验收合同要求 owner+recipient 双非空（真实完成通道流量恒带两者，
+    // CompletionDebtStore.checkAcceptance 的 require 是对的）；无身份件没有债
+    // 身份可验，进面即 require 崩掉整个 actor、注入轮死透（ReminderWiringSpec.①
+    // 15s waitUntil 红，阶梯证据 /tmp/ladder-a73082c36.log）。作者语义（#2141 裁定
+    // 口径）：无可监督对象时完成必须照常回流，不是把唤醒轮炸死。跳过债面 = 无债
+    // 可记（record 也要求 owner 非空，空身份本就无债），交付回执确认不受影响。
+    val owner = event.correlationId.getOrElse("")
+    val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
     val debtAck =
-      if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType) then
-        val owner = event.correlationId.getOrElse("")
-        val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
+      if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType)
+        && owner.nonEmpty && recipient.nonEmpty then
         nebflow.core.mail.CompletionDebtStore.checkAcceptance(owner, recipient, event).flatMap {
           case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict =>
             NebflowLogger.forName("nebflow.agent.idle").error(s"conflicting/untrusted terminal '$owner' withheld; completion debt retained")
-          case nebflow.core.mail.CompletionDebtStore.Acceptance.Duplicate => IO.unit
+          case nebflow.core.mail.CompletionDebtStore.Acceptance.Duplicate =>
+            // 跨代结算验收批（#2178）：验收账已有同 (owner, generation) 同内容行 =
+            // 「验收已持久（acceptOnce 落账）而最终 ACK 未落」的崩溃窗口重放形——
+            // 幂等补结算（acknowledge 自身就是原子守卫：recipient+messages+generation
+            // 全匹配才落 settled，错代/已换新代为 false；无债返回 true）。改前
+            // IO.unit 会让该窗口重放的债永久悬挂（busy drain 腿不结债、重放又被
+            // intake 恰一次闸拦，再无第三个结账点）。
+            event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption) match
+              case Some(messages) =>
+                nebflow.core.mail.CompletionDebtStore
+                  .acknowledge(owner, recipient, messages, nebflow.core.mail.CompletionDebtStore.generationOf(event))
+                  .flatMap { settled =>
+                    IO.whenA(!settled)(NebflowLogger.forName("nebflow.agent.idle")
+                      .info(s"duplicate terminal '$owner' replayed against non-matching debt; debt retained"))
+                  }
+              case None => IO.unit
           case nebflow.core.mail.CompletionDebtStore.Acceptance.New =>
             val acceptedMessages = event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption)
             acceptedMessages match
               case Some(messages) =>
                 nebflow.core.mail.CompletionDebtStore.pending(owner).flatMap {
-                  case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages =>
+                  case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages &&
+                    debt.generation == nebflow.core.mail.CompletionDebtStore.generationOf(event) =>
                     nebflow.core.mail.CompletionDebtStore.acceptOnce(owner, recipient, event).flatMap {
                       case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict => IO.unit
-                      case _ => nebflow.core.mail.CompletionDebtStore.acknowledge(owner, recipient, messages).flatMap { accepted =>
+                      case _ => nebflow.core.mail.CompletionDebtStore.acknowledge(owner, recipient, messages, nebflow.core.mail.CompletionDebtStore.generationOf(event)).flatMap { accepted =>
                         IO.whenA(!accepted)(NebflowLogger.forName("nebflow.agent.idle")
                           .error(s"completion debt ack mismatch for '$owner'; debt retained"))
                       }
@@ -851,7 +876,7 @@ private[agent] object AgentIdle:
         nebflow.core.mail.InputMailbox.replayProducerInputs(sid).flatMap { entries =>
           entries.traverse_(e => nebflow.core.mail.InputPayload.toCommand(e.payload).traverse_(cmd => ctx.self ! cmd))
         } *> CompactionQueueStore.load(sid).flatMap {
-          case Some(q) if q.imms.nonEmpty || q.events.nonEmpty =>
+          case Some(q) if q.imms.nonEmpty || q.events.nonEmpty || q.outstandingSubagentResults > 0 =>
             DeliveredReceiptLedger.filterUndelivered(sid, q.events).flatMap { (keptEvents, blocked) =>
               logAgentEvent(
                 agentDef,
@@ -863,7 +888,13 @@ private[agent] object AgentIdle:
               )
               val exec = state.execution.copy(
                 pendingImmediateInputs = q.imms ++ state.execution.pendingImmediateInputs,
-                pendingEvents = keptEvents ++ state.execution.pendingEvents
+                pendingEvents = keptEvents ++ state.execution.pendingEvents,
+                // Restore the batch barrier with the persisted queue snapshot. A
+                // legacy snapshot has zero and retains the previous recovery behavior.
+                outstandingSubagentResults = math.max(
+                  state.execution.outstandingSubagentResults,
+                  q.outstandingSubagentResults
+                )
               )
               // 台账对账 + 徽标帧（fix 1 补漏批，2026-10-22）：恢复的回执必须落账——
               // 此前恢复面不同步台账 ⇒ 无 producedAt ⇒ watchdog 对重启恢复回执致盲

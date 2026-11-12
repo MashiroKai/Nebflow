@@ -74,7 +74,7 @@ class AllowedToolSetSpec extends FunSuite:
       buildToolList(defn).getOrElse(Nil).map(_.name)
 
     /**
-     * Probe the session-identity mount tail (TaskBoard / node_report 段)——
+     * Probe the session-identity mount tail (TaskBoard 段)——
      * flowNodeSession 模拟引擎侧 flowNodeId.isDefined（项目节点会话）。
      */
     def allowedWithSession(
@@ -790,7 +790,7 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("Pop"), "general 节点不得持有 Pop（2026-09-10 裁定：Pop 收归 Nebula 专属）")
     assert(!AgentCore.NebflowFixedTools.contains("Pop"), "NebflowFixedTools 零 Pop（定义层摘除；builtin-merge 批承继）")
     // 明保留（R2 细则 2026-09-12）：节点面 9 件不变、零 Mail——节点无消息工具，
-    // 结果沿 out 边投递、终态走 node_report。本条**非** R2 反转对象（原「general 无
+    // 结果沿 out 边投递、终态由完成点的文本锚定消费。本条**非** R2 反转对象（原「general 无
     // Mail」理由换成 R2「节点面不挂 Mail」细则，结论一致、理由更新）。
     assert(!allowed.contains("Mail"), "R2: general（节点面）不挂 Mail —— 节点无消息工具")
     assert(!allowed.contains("MultiEdit"), "general 无 MultiEdit（已从 ToolRegistry 删除）")
@@ -816,7 +816,7 @@ class AllowedToolSetSpec extends FunSuite:
   // N1 刀3（S6=C · v3 §7.2 ①授权面扩＝创建者 delegate）：delegateSession 尾段
   // 挂 Mail——地址面经 MailTool.layeredRoute 收窄为自己作用域的 `node:<id|name>`
   // 腿（SenderRole.Delegate 单点）；挂载面授权 + 工具内地址面分层 = 双保险
-  // （TaskBoard/node_report 同款纪律）。工具内地址面在 MailNodeSubAddressSpec
+  // （TaskBoard 同款纪律）。工具内地址面在 MailNodeSubAddressSpec
   // M1..M8 验收，本条钉挂载面（零 over-grant）。
   test(
     "N1 刀3 S6=C: the delegateSession tail carries Mail alongside the 刀2 delegate face; the default face gains nothing"
@@ -824,7 +824,7 @@ class AllowedToolSetSpec extends FunSuite:
     val probe = mkDef("nebflow", Nil)
     val withTail = CoreProbe.allowedWithDelegateSession(probe, delegateSession = true)
     val plain = CoreProbe.allowedWithDelegateSession(probe, delegateSession = false)
-    Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite", "delegate_report").foreach { t =>
+    Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite").foreach { t =>
       assert(withTail.contains(t), s"delegate face keeps the 刀2 grant: $t (got: ${withTail.toList.sorted})")
     }
     assert(withTail.contains("Mail"), "S6=C: the delegate face carries Mail (the node: sub-address authorization)")
@@ -910,62 +910,25 @@ class AllowedToolSetSpec extends FunSuite:
     val off = CoreProbe.allowed(worker, isSubTaskWorker = true, guardrailsOn = false)
     assertEquals(on, off, "flag must not alter the SubTask-worker path in any way")
 
-  // ===== node_report 挂载面（blocked 结构化信号批 20260909，spec §5.2 #4/§9.3；
-  // 同日作者裁定泛化 NodeReport 统一三语义——更名后钉住断言全保留+扩面）=====
+  // ===== 会话身份挂载尾形状（终态申报工具通道退役批收口）=====
+  // 原本块钉「flowNodeSession=true 挂申报工具 + TaskBoard 双件」；申报工具整体
+  // 退役（注册面删除 + 挂载腿删除，退役名守卫见 DeletedToolGuardSpec）后，本块
+  // 改钉**尾段形状**：flowNodeSession=true 相对 false 的增量恰为 {TaskBoard}——
+  // 任何新挂载腿回归（含把退役名重新接回尾段）都会让增量形状变大而红。分发器
+  // /Nebula/team/standalone/wildcard 的「零泄漏」断言随注册面删除而平凡为真
+  // （注册表即墙），由 DeletedToolGuardSpec 的退役名断言统一看守。
 
-  test("node_report: flow NODE session (flowNodeSession=true) carries the tool (TaskBoard-tail mount)"):
+  test("flow NODE session tail mounts exactly TaskBoard — the retired terminal-report channel leaves no extra grant"):
     val node = mkDef("general", Nil)
-    val allowed = CoreProbe.allowedWithSession(node, isFlowNode = true, flowNodeSession = true)
-    assert(allowed.contains("node_report"), s"flow node session must carry node_report, got: $allowed")
-    // 注册表有 schema（LLM 工具面真实可见——buildToolList ∩ ALL_TOOLS 非空）
-    assert(ToolRegistry.TOOL_MAP.contains("node_report"), "tool must be registered")
+    val plain = CoreProbe.allowedWithSession(node, isFlowNode = true, flowNodeSession = false)
+    val withTail = CoreProbe.allowedWithSession(node, isFlowNode = true, flowNodeSession = true)
+    assertEquals(
+      withTail -- plain,
+      Set("TaskBoard"),
+      s"the node-session identity tail must mount exactly TaskBoard, got: ${withTail -- plain}"
+    )
     assert(
       !ToolRegistry.TOOL_MAP.contains("report_blocked"),
-      "v1 report_blocked must be fully renamed (no dual registration)"
-    )
-
-  test("node_report: dispatcher session (isFlowNode=true, flowNodeId empty) does NOT see it"):
-    // 分发器 spawn 也带 isFlowNode=true（ProjectActor spawn 点）但 flowNodeId 恒
-    // None——挂载判据必须是 flowNodeSession 而非 isFlowNode，否则 schema 泄漏进
-    // 分发器工具面（spec §6/§9.3 禁止面）。变异验红锚：挂载判据改回 isFlowNode 即红。
-    val dispatcher = mkDef("project-dispatcher", Nil)
-    val face = CoreProbe.allowedWithSession(dispatcher, isFlowNode = true, flowNodeSession = false)
-    assert(!face.contains("node_report"), s"dispatcher must NOT see node_report, got: $face")
-    // 交付面（LLM schema 可见面 = allowedSet ∩ ALL_TOOLS）同样零泄漏（双保险面）
-    val faceList = CoreProbe.face(dispatcher)
-    assert(!faceList.contains("node_report"), s"dispatcher LLM face must NOT carry node_report schema, got: $faceList")
-
-  test("node_report: Nebula / team / standalone / wildcard faces clean; plugins declaration grants nothing"):
-    assert(
-      !CoreProbe
-        .allowedWithSession(mkDef("Nebula", Nil), isFlowNode = false, flowNodeSession = false)
-        .contains("node_report"),
-      "Nebula face clean"
-    )
-    assert(
-      !CoreProbe
-        .allowedWithSession(mkDef("Nebula", List("*")), isFlowNode = false, flowNodeSession = false)
-        .contains("node_report"),
-      "Nebula wildcard face clean"
-    )
-    assert(
-      !CoreProbe
-        .allowedWithSession(mkDef("backend", Nil).copy(category = "team"), isFlowNode = false, flowNodeSession = false)
-        .contains("node_report"),
-      "team face clean"
-    )
-    assert(
-      !CoreProbe
-        .allowedWithSession(mkDef("solo", Nil), isFlowNode = false, flowNodeSession = false)
-        .contains("node_report"),
-      "standalone face clean"
-    )
-    // 通配声明不逃逸："*" 展开到全部注册工具，但 node_report 只按会话身份挂载
-    val wildcard = CoreProbe.allowedWithSession(mkDef("omni", List("*")), isFlowNode = true, flowNodeSession = false)
-    assert(!wildcard.contains("node_report"), "wildcard must NOT resurrect node_report without a node session identity")
-    // plugins 声明不授能（不在 BuiltinToolWhitelist；编排类工具 §C.1 静态矩阵不可绕过）
-    assert(
-      !nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.contains("node_report"),
-      "plugin whitelist must not carry node_report"
+      "v1 report_blocked must stay unregistered (no dual registration)"
     )
 end AllowedToolSetSpec

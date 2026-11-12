@@ -124,7 +124,7 @@ class BackgroundCompletionCapLedgerSpec extends CatsEffectSuite:
       .handleErrorWith(_ => IO.pure(Nil))
 
   /**
-   * 真 delegate 形态的注册表前置：记录在册 **且已申报**（`delegate_report(finish)`）。
+   * 真 delegate 形态的注册表前置：记录在册 **且已申报**（状态槽 finish）。
    *
    * 为什么必须有：终态矩阵的「complete × 未申报」腿（`Outcome.NudgeIdle`）按作者令
    * 零父投递（只武装提醒）——本 spec 观测的是 cap 触发的诚实注记交付，夹具取矩阵的

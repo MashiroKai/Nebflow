@@ -166,7 +166,6 @@ class RootNotifyBatchSpec extends FunSuite:
           (tmp / "ws").toString,
           rootSid,
           "rootnotifyproj",
-          FeedbackRouter.ModeAuto,
           (_, _, _) => IO.unit,
           // 分发器通道打包窗在源头关闭（本 spec 主题 = root 通道；避免另一种 5s 窗口
           // fiber 干扰读数），root 通道窗由本 spec 显式注入。
