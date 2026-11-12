@@ -105,19 +105,31 @@ BODY="$BODY}"
 # --- Send ---
 ENDPOINT="${URL}/api/callbacks/inject"
 
-HTTP_CODE=$(curl -s -o /tmp/${LOWER_NAME}-inject-resp.json -w "%{http_code}" \
+# 响应文件 = EvidenceTemp 批（目录约定镜像 nebflow.shared.EvidenceTemp：
+# <tmp>/stand-evidence/<project>/<task>-<uuid>/<yyyyMMdd>/ + manifest.json）。
+# 脚本中途失败退出的残件带 manifest、无 .active ⇒ 引擎 TTL 清扫可回收，
+# 不再以裸文件散落 /tmp；成功路径整批移除。
+EV_ROOT="${TMPDIR:-/tmp}/stand-evidence"
+EV_BATCH="inject-resp-$$-${RANDOM}"
+EV_DIR="$EV_ROOT/inject/$EV_BATCH/$(date -u +%Y%m%d)"
+RESP_FILE="$EV_DIR/inject-resp.json"
+mkdir -p "$EV_DIR"
+printf '{"createdAt":"%s","project":"inject","batch":"%s"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$EV_BATCH" > "$EV_DIR/manifest.json"
+
+HTTP_CODE=$(curl -s -o "$RESP_FILE" -w "%{http_code}" \
   -X POST "$ENDPOINT" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d "$BODY" 2>/dev/null || echo "000")
 
 if [[ "$HTTP_CODE" == "200" ]]; then
-  SID=$(python3 -c "import json; print(json.load(open('/tmp/${LOWER_NAME}-inject-resp.json')).get('sessionId','?'))" 2>/dev/null || echo "?")
+  SID=$(python3 -c "import json; print(json.load(open('$RESP_FILE')).get('sessionId','?'))" 2>/dev/null || echo "?")
   echo "OK → agent=$AGENT session=$SID"
 else
-  BODY_PREVIEW=$(cat /tmp/${LOWER_NAME}-inject-resp.json 2>/dev/null | head -c 200)
+  BODY_PREVIEW=$(cat "$RESP_FILE" 2>/dev/null | head -c 200)
   echo "Error: HTTP $HTTP_CODE $BODY_PREVIEW" >&2
   exit 1
 fi
 
-rm -f /tmp/${LOWER_NAME}-inject-resp.json
+rm -rf "$EV_ROOT/inject/$EV_BATCH"
