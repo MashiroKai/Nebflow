@@ -87,7 +87,7 @@ object CompletionDebtStore:
         case None =>
           val p = acceptedFile(recipient)
           os.makeDir.all(p / os.up)
-          // 同 owner 跨代累积 ⇒ 每代一行（Mail 续轮重新有效）；容量 drop-oldest。
+          // 同 owner 新代替换旧行；其他 owner 的行按容量 drop-oldest。
           val updated = (existing.filterNot(_.ownerSessionId == owner) :+
             AcceptedTerminal(owner, recipient, event.eventType, event.payload, generationOf(event))).takeRight(MaxAcceptedEntries)
           AtomicJson.writeSync(p, updated.asJson.noSpaces)
@@ -99,13 +99,13 @@ object CompletionDebtStore:
     val p = acceptedFile(recipient)
     if !os.exists(p) then Nil else decode[List[AcceptedTerminal]](os.read(p)).fold(err => throw new IllegalStateException(err.getMessage), identity)
 
-  /**
-   * 测试接缝（跨代结算验收批）：在 acknowledge 读债**之前**同步执行一次。
-   * 生产恒 no-op（默认值零行为变化）；spec 用它在「验收已检查、最终 ACK 未落」的
-   * 确定性窗口内换代债（BackoffSupervisor completionCapMs 构造器缝同款纪律——
-   * 测试 JVM 下 sys.props 不可靠）。非线程安全：仅单会话串行测试可置位，用毕复位。
-   */
-  var testHookBeforeAcknowledge: () => Unit = () => ()
+  // Test-only, owner-scoped hooks: concurrent tests cannot replace one another's hook.
+  // Resource release removes only the registered instance, including on failure/cancellation.
+  private val beforeAckHooks = new java.util.concurrent.ConcurrentHashMap[String, () => Unit]()
+  private[nebflow] def beforeAcknowledgeForTest(owner: String)(hook: () => Unit): cats.effect.Resource[IO, Unit] =
+    cats.effect.Resource.make(IO {
+      require(beforeAckHooks.putIfAbsent(owner, hook) == null, s"ack hook already registered for $owner")
+    })(_ => IO { beforeAckHooks.remove(owner, hook); () })
 
   private given Encoder[AcceptedTerminal] = Encoder.forProduct5("ownerSessionId", "recipientSessionId", "eventType", "payload", "generation")(r =>
     (r.ownerSessionId, r.recipientSessionId, r.eventType, r.payload, r.generation)
@@ -177,7 +177,7 @@ object CompletionDebtStore:
 
   /** Acknowledge only the matching delivered payload; conflict/malformed files are never cleared. */
   def acknowledge(owner: String, recipient: String, messages: List[Message], generation: String): IO[Boolean] = IO.blocking {
-    testHookBeforeAcknowledge()
+    Option(beforeAckHooks.get(owner)).foreach(_())
     debtLock.synchronized {
       read(owner) match
         case Right(Some(debt)) if debt.phase == "cancelled" => false

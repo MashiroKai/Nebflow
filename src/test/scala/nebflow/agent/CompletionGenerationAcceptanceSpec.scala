@@ -359,17 +359,18 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
         // 接缝：acknowledge 读债之前同步换代（= 「验收已查、ACK 未落」窗口内新一轮
         // record 落盘）——一次性，只在第一次 acknowledge 触发。
         swapOnce = new AtomicBoolean(true)
-        _ <- IO {
-          CompletionDebtStore.testHookBeforeAcknowledge = () =>
-            if swapOnce.compareAndSet(true, false) then
-              CompletionDebtStore.record(owner, sid, msgs2).unsafeRunSync()
+        hook = () =>
+          if swapOnce.compareAndSet(true, false) then
+            CompletionDebtStore.record(owner, sid, msgs2).unsafeRunSync()
+        actor <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use { _ =>
+          for
+            actor <- spawnAgent(system, resources, sid)
+            _ <- actor ! terminalEvent("T3-FIRST", owner = Some(owner), parentSessionId = Some(sid),
+              generation = Some(gen1), completionMessages = Some(msgs1.asJson))
+            _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1))
+          yield actor
         }
-        actor <- spawnAgent(system, resources, sid)
-        _ <- actor ! terminalEvent("T3-FIRST", owner = Some(owner), parentSessionId = Some(sid),
-          generation = Some(gen1), completionMessages = Some(msgs1.asJson))
-        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1)) // 注入轮已跑 ⇒ 竞态窗口已确定性走完
         raced <- debtOf(owner)
-        _ <- IO { CompletionDebtStore.testHookBeforeAcknowledge = () => () } // 用毕复位
         _ <- actor ! terminalEvent("T3-SECOND", owner = Some(owner), parentSessionId = Some(sid),
           generation = Some(raced.generation), completionMessages = Some(msgs2.asJson))
         _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 2))
@@ -435,9 +436,9 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
       yield
         assertEquals(acceptance, CompletionDebtStore.Acceptance.New, "Phase A 前置：手工落账 = 崩溃窗口盘面")
         assertEquals(afterReplay.phase, "settled",
-          "Duplicate 分支必须幂等补结算（崩溃窗口重放不得让债永久悬挂）")
+          "Duplicate 分支必须幂等补结算（崩溃窗口重放须恢复债结算）")
         assert(genB.nonEmpty && genB != genA)
-        assertEquals(afterB.phase, "settled", "新代完成不被旧验收行吞（验收账按 (owner, generation) 分行）")
+        assertEquals(afterB.phase, "settled", "新代完成不被旧验收行吞（新代替换该 owner 旧行）")
         assertEquals(afterStaleC.phase, "deliverable", "错代件绝不能结算当前债")
         assertEquals(afterStaleC.generation, genC)
         assert(receiptC.exists(_.ackedAt.isDefined),
@@ -446,5 +447,116 @@ class CompletionGenerationAcceptanceSpec extends CatsEffectSuite:
         assertEquals(afterCurrentC.generation, genC)
       program
     }
+
+  test("T5: busy duplicate crash replay settles debt and drains exactly once"):
+    withTestRoot("t5") { (tmp, system) =>
+      val gate = Deferred.unsafe[IO, Unit]
+      val llm = new ScriptedLlm(Ref.unsafe[IO, List[Stream[IO, StreamChunk]]](List(Stream.eval(gate.get) >> text("first"), text("drain"))))
+      val sid = "cgat5-parent"
+      val owner = "cgat5-owner"
+      val msgs = List(Message(MessageRole.Assistant, Left("same result")))
+      for
+        _ <- startRoot(tmp)
+        resources <- SpecResources.mkResources(system, tmp, llm)
+        _ <- CompletionDebtStore.record(owner, sid, msgs)
+        gen <- debtOf(owner).map(_.generation)
+        event = terminalEvent("T5-RECOVERY", Some(owner), Some(sid), Some(gen), Some(msgs.asJson))
+        accepted <- CompletionDebtStore.acceptOnce(owner, sid, event)
+        actor <- spawnAgent(system, resources, sid)
+        _ <- actor ! AgentCommand.UserInput("start busy")
+        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1))
+        _ <- actor ! event
+        _ <- waitUntil(15.seconds)(debtOf(owner).map(_.phase == "settled"))
+        recovered <- debtOf(owner)
+        _ <- gate.complete(())
+        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 2))
+        reqs <- llm.requests.get
+        _ <- actor ! event
+        _ <- actor ! AgentCommand.UserInput("continue legally")
+        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 3))
+        _ <- CompletionDebtStore.record(owner, sid, msgs)
+        next <- debtOf(owner)
+        _ <- actor ! terminalEvent("T5-NEXT", Some(owner), Some(sid), Some(next.generation), Some(msgs.asJson))
+        _ <- waitUntil(15.seconds)(debtOf(owner).map(_.phase == "settled"))
+        _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 4))
+        finalReqs <- llm.requests.get
+      yield
+        assertEquals(accepted, CompletionDebtStore.Acceptance.New)
+        assertEquals(recovered.generation, gen)
+        assert(reqs.lift(1).exists(r => requestText(r).contains("T5-RECOVERY")))
+        assertEquals(finalReqs.lift(2).map(r => "T5-RECOVERY".r.findAllIn(requestText(r)).length), Some(1))
+        assert(finalReqs.lastOption.exists(r => requestText(r).contains("T5-NEXT")))
+        assert(next.generation != gen)
+    }
+
+  test("T6: same-content generation changes between acceptance and ACK"):
+    withTestRoot("t6") { (tmp, system) =>
+      val llm = new ScriptedLlm(Ref.unsafe[IO, List[Stream[IO, StreamChunk]]](Nil))
+      val sid = "cgat6-parent"
+      val owner = "cgat6-owner"
+      val msgs = List(Message(MessageRole.Assistant, Left("identical")))
+      for
+        _ <- startRoot(tmp)
+        resources <- SpecResources.mkResources(system, tmp, llm)
+        _ <- CompletionDebtStore.record(owner, sid, msgs)
+        gen <- debtOf(owner).map(_.generation)
+        once = new AtomicBoolean(true)
+        hook = () => if once.compareAndSet(true, false) then
+          (CompletionDebtStore.acknowledge(owner, sid, msgs, gen) *> CompletionDebtStore.record(owner, sid, msgs)).unsafeRunSync(); ()
+        actor <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use { _ =>
+          for
+            a <- spawnAgent(system, resources, sid)
+            _ <- a ! terminalEvent("T6-OLD", Some(owner), Some(sid), Some(gen), Some(msgs.asJson))
+            _ <- waitUntil(15.seconds)(llm.calls.get.map(_ >= 1))
+          yield a
+        }
+        raced <- debtOf(owner)
+        _ <- IO { assert(raced.generation != gen); assertEquals(raced.phase, "deliverable"); assertEquals(raced.messages, msgs) }
+        _ <- actor ! terminalEvent("T6-NEW", Some(owner), Some(sid), Some(raced.generation), Some(msgs.asJson))
+        _ <- waitUntil(15.seconds)(debtOf(owner).map(_.phase == "settled"))
+        settled <- debtOf(owner)
+      yield assertEquals(settled.generation, raced.generation)
+    }
+
+  test("T7: legacy missing generation matches only missing generation through actor"):
+    withTestRoot("t7") { (tmp, system) =>
+      val llm = new ScriptedLlm(Ref.unsafe[IO, List[Stream[IO, StreamChunk]]](Nil))
+      val sid = "cgat7-parent"
+      val msgs = List(Message(MessageRole.Assistant, Left("legacy")))
+      val owners = List("cgat7-empty-empty", "cgat7-new-empty", "cgat7-empty-new")
+      def makeLegacy(owner: String): IO[Unit] = IO {
+        val p = tmp / "sessions" / owner / "completion-debt.json"
+        val json = io.circe.parser.parse(os.read(p)).toOption.get
+        os.write.over(p, json.mapObject(_.remove("generation")).noSpaces)
+      }
+      for
+        _ <- startRoot(tmp)
+        resources <- SpecResources.mkResources(system, tmp, llm)
+        _ <- owners.traverse_(o => CompletionDebtStore.record(o, sid, msgs))
+        current <- debtOf(owners(2))
+        _ <- makeLegacy(owners(0)) *> makeLegacy(owners(1))
+        events = List(
+          terminalEvent("T7-LEGACY", Some(owners(0)), Some(sid), None, Some(msgs.asJson)),
+          terminalEvent("T7-NEW-EVENT", Some(owners(1)), Some(sid), Some("new-gen"), Some(msgs.asJson)),
+          terminalEvent("T7-OLD-EVENT", Some(owners(2)), Some(sid), None, Some(msgs.asJson))
+        )
+        _ <- owners.zip(events).traverse_((owner, event) => CompletionDebtStore.acceptOnce(owner, sid, event))
+        actor <- spawnAgent(system, resources, sid)
+        _ <- events.zipWithIndex.traverse_ { (event, i) =>
+          (actor ! event) *> waitUntil(15.seconds)(llm.calls.get.map(_ >= i + 1))
+        }
+        results <- owners.traverse(debtOf)
+      yield
+        assertEquals(results.map(_.phase), List("settled", "deliverable", "deliverable"))
+        assertEquals(results.map(_.generation), List("", "", current.generation))
+    }
+
+  test("acknowledge test hook is scoped and removed after failure"):
+    val owner = "hook-cleanup-test"
+    val hook = () => ()
+    for
+      failed <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use(_ => IO.raiseError[Unit](new RuntimeException("expected"))).attempt
+      _ <- CompletionDebtStore.beforeAcknowledgeForTest(owner)(hook).use(_ => IO.unit)
+    yield assert(failed.isLeft)
 
 end CompletionGenerationAcceptanceSpec

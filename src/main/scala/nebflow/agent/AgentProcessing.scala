@@ -1478,7 +1478,14 @@ private[agent] object AgentProcessing:
                     case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict =>
                       NebflowLogger.forName("nebflow.agent").error(s"conflicting duplicate terminal '$owner' withheld from parent processing")
                     case nebflow.core.mail.CompletionDebtStore.Acceptance.Duplicate =>
-                      IO.unit // durable acceptance record proves this identity already crossed the receiver boundary
+                      // Acceptance survived a crash before ACK; retain the atomic identity guard.
+                      event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption) match
+                        case Some(messages) =>
+                          nebflow.core.mail.CompletionDebtStore
+                            .acknowledge(owner, recipient, messages, nebflow.core.mail.CompletionDebtStore.generationOf(event))
+                            .flatMap(settled => IO.whenA(!settled)(NebflowLogger.forName("nebflow.agent")
+                              .info(s"duplicate terminal '$owner' replayed against non-matching debt; debt retained")))
+                        case None => IO.unit
                     case nebflow.core.mail.CompletionDebtStore.Acceptance.New =>
                       val consumed = state.execution.pendingEvents.exists(e =>
                         e.source == event.source && e.eventType == event.eventType && e.correlationId == event.correlationId && e.payload == event.payload

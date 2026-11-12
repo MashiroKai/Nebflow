@@ -99,7 +99,7 @@ private[agent] object AgentIdle:
             // 跨代结算验收批（#2178）：验收账已有同 (owner, generation) 同内容行 =
             // 「验收已持久（acceptOnce 落账）而最终 ACK 未落」的崩溃窗口重放形——
             // 幂等补结算（acknowledge 自身就是原子守卫：recipient+messages+generation
-            // 全匹配才落 settled，错代/已换新代/缺席一律 false 零副作用）。改前
+            // 全匹配才落 settled，错代/已换新代为 false；无债返回 true）。改前
             // IO.unit 会让该窗口重放的债永久悬挂（busy drain 腿不结债、重放又被
             // intake 恰一次闸拦，再无第三个结账点）。
             event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption) match
