@@ -707,13 +707,13 @@ function buildChainHeaderRow(block) {
         else expandedChains.add(block.key);
         rerenderWithNodes();
       } else {
-        // 视图重设计实施批（2026-10-21 · 入口统一 作者令⑤）：任务列表点 delegate 行
-        // = 全景视图（同一组件同一数据面，仅入参不同——项目过滤 + 行落位高亮）；
-        // 链级跳转（上方 chain-jump）与成员锚点仍走 L1 流程图。
-        import('./delegatePanoramaView.js')
-          .then(({ openDelegatePanorama }) =>
-            openDelegatePanorama(meta.project || '', { focus: meta.delegateId || '' }))
-          .catch(() => {});
+        // Terminal delegate row → the delegate's L1 chain view (per-delegate
+        // flow map); chain-level jumps (chain-jump above) and member anchors
+        // share the same single-entry funnel.
+        openL1(meta.taskNo || meta.delegateId, {
+          taskNo: meta.taskNo, delegateId: meta.delegateId, title: meta.title,
+          status: meta.status, executor: meta.executor, project: meta.project,
+        });
       }
     });
   }

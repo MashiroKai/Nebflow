@@ -81,6 +81,10 @@ function projectRow(entry) {
   const out = {
     ...row,
     taskStatus: String(src.taskStatus || ''),
+    // Ownership edge (Record.parentSessionId — spawn-persisted, survives
+    // restarts): carried as-is so hierarchy faces can resolve a registered
+    // parent without live frames. Absent key → '' (never guessed).
+    parentSessionId: String(src.parentSessionId || ''),
     branch: String(src.branch || ''),
     baseBranch: String(src.baseBranch || ''),
     worktreePath: String(src.worktree || ''),

@@ -153,27 +153,19 @@ mkdirSync(OUT, { recursive: true });
   await page.waitForTimeout(350);
   await card.screenshot({ path: join(OUT, 'after-panel-dark-expanded.png') });
 
-  // 全景审计面：打断卡灰态 + 顶徽标 + 接续关系 chip。
+  // 结构总视图审计面（S11）：打断行灰态卡 + 完成段同框。
   await page.evaluate(async () => {
-    const m = await import('/js/delegatePanoramaView.js');
-    m.openDelegatePanorama('stand', {});
+    const m = await import('/js/delegateChainView.js');
+    m.openDelegateChainStructure('stand');
   });
-  await page.waitForSelector('[data-view="delegate-panorama"] .dvp-nd', { timeout: 10000 });
+  await page.waitForSelector('.delegate-structure-tiles .fm-node', { timeout: 10000 });
   await page.waitForTimeout(500);
-  // 打断卡单体（st-stop 灰态 + 顶徽标 + continued chip）。
-  const stopCard = page.locator('[data-view="delegate-panorama"] .dvp-nd.st-stop').first();
-  await stopCard.screenshot({ path: join(OUT, 'after-panorama-card-dark.png') });
-  // 终态泳道同框：画布滚到最右再整幅截。
-  await page.evaluate(() => {
-    const pane = document.querySelector('[data-view="delegate-panorama"]');
-    const scroller = pane && (pane.querySelector('.solar-canvas') || pane.querySelector('.canvas-tab-scroll') || pane);
-    if (scroller) scroller.scrollLeft = scroller.scrollWidth;
-    const world = pane && (pane.querySelector('.dvp-canvas') || pane.firstElementChild);
-    if (world && world.scrollIntoView) world.scrollIntoView({ block: 'start', inline: 'end' });
-  });
-  await page.waitForTimeout(300);
-  const pano = page.locator('[data-view="delegate-panorama"]').first();
-  await pano.screenshot({ path: join(OUT, 'after-panorama-dark.png') });
+  // 打断行卡单体（fallback 灰态——interrupted 无终态词）。
+  const stopCard = page.locator('.delegate-structure-tiles .fm-node', { hasText: '#706' }).first();
+  await stopCard.screenshot({ path: join(OUT, 'after-structure-card-dark.png') });
+  // 结构总视图整幅（座 + 生命周期分段 + 卡）。
+  const body = page.locator('.delegate-chain-view-body.delegate-mode-structure').first();
+  await body.screenshot({ path: join(OUT, 'after-structure-dark.png') });
   await page.close();
 }
 

@@ -166,7 +166,7 @@ interface Window {
 /** 本页被 serve 时注入的服务端真实家目录绝对路径（StaticRoutes.scala 的
  *  homeScriptTag 注入 `<script>window.NF_HOME="..."</script>`，与 __BRAND__ /
  *  __WEB_FINGERPRINT__ 同点同载体）。真实存在的契约，非死代码开脱：消费面
- *  delegatePanoramaView.js 的 shortPath() 用它把工作区路径缩成 `~`。
+ *  worktree/workspace path short-display faces read it on demand.
  *  形态：该机器原生分隔符（Windows 为反斜杠）、**无尾分隔符**（服务端已剥）；
  *  缺席（旧引擎 / 静态测试树 / user.home 不可得）= 不注入，消费点原样回显。 */
 interface Window {

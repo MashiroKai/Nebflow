@@ -91,7 +91,9 @@ const PROJECTS = {
   })),
 };
 const DELEGATE_ROWS = {
-  rows: Array.from({ length: 12 }, (_, i) => ({
+  // S11 structure view replaced the panorama (taller lane cards) — the fixture
+  // needs enough rows for the structure tiles to overflow the scroll body.
+  rows: Array.from({ length: 40 }, (_, i) => ({
     id: `d${i + 1}`, taskId: String(100 + i), title: `委托任务 ${i + 1}：穿顶验收夹具行`,
     name: `批次 ${i + 1}`, executor: i % 3 === 0 ? 'claude' : 'nebflow',
     project: 'proj-0', reportStatus: '', taskStatus: i % 4 === 0 ? 'running' : 'completed',

@@ -426,6 +426,45 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Structural parent (face C · 全局后台面板层级)：registry-backed label face for a
+   delegate whose descendants are present while its live row is not (idle/terminal/
+   gone). Label-not-row discipline (same as the root anchor / orphan group head):
+   no .bg-task-row class, not counted in the panel totals. Token-only values —
+   light/dark follow the shared --ds-* slots. */
+.bg-struct-parent {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+}
+.bg-struct-parent-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--ds-fw-title);
+}
+.bg-struct-parent .bg-task-kind { flex-shrink: 0; }
+.bg-struct-parent-state { flex-shrink: 0; }
+/* DAG dependency chip (face C)：flow-step deps are execution-order edges, NOT
+   parent-child nesting — flat chip with the ⇢ glyph and a dashed underline,
+   visually distinct from the tree rails (├─/└─) that carry ownership. Mono ids,
+   meta scale, truncated with the full list in the title tooltip. */
+.bg-flow-deps {
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-dim);
+  border-bottom: var(--ds-border-width) dashed var(--ds-border-hairline);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+  min-width: 0;
+  flex-shrink: 1;
+}
 /* panel-ia 批：主名行升为行内第一读数后，meta 槽（状态词）与摘要同族 muted。 */
 .bg-task-state {
   font-size: var(--ds-fs-meta);
