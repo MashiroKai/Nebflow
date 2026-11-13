@@ -1320,6 +1320,16 @@ Delivery follows recipient state (there is no delivery parameter to set):
                           snapshot.mergerBootstraps.get(id).exists(_.status != "ready")
                         ) =>
                       queueRecoverySupplement(id, message, blocks, ctx)
+                    case Some(current) =>
+                      // Round-model decision point (inside the start-lease critical
+                      // section, naturally mutually exclusive with revival/continuation):
+                      // a settled identity with no tombstone and no busy signal gets a NEW
+                      // round (roundNo+1, fresh roundId, archivedAt cleared, diff baseline
+                      // re-anchored); anything busy (actor registered, or an in-flight /
+                      // frozen task row) stays in the CURRENT round — Mail injects, never
+                      // builds a second execution body.
+                      openNewRoundIfSettled(current, task, live) *>
+                        deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
                     case _ =>
                       deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
               }
@@ -1329,6 +1339,32 @@ Delivery follows recipient state (there is no delivery parameter to set):
       .handleError(error => Left(ToolError(s"Mail could not safely deliver: ${error.getMessage}")))
 
   end deliverToDelegate
+
+  /**
+   * Round-model opening point for Mail (thin wrapper — the decision itself is the
+   * pure single point [[nebflow.core.delegate.DelegateRoundLedger.decideMailRound]]).
+   * Called inside the start-lease critical section of [[deliverToDelegate]], so it is
+   * naturally mutually exclusive with revival/continuation starts. A failed registry
+   * write falls back to the current-round continuation (the legacy leg) — Mail never
+   * errors out of a delivery just because round bookkeeping could not land.
+   */
+  private def openNewRoundIfSettled(
+    record: DelegateRegistry.Record,
+    task: Option[SubAgentTask],
+    liveEntry: Option[AgentRecord]
+  ): IO[Unit] =
+    IO.blocking {
+      nebflow.core.delegate.DelegateRoundLedger
+        .decideMailRound(record, task.map(_.status), liveEntry.isDefined)
+    }.flatMap {
+      case nebflow.core.delegate.DelegateRoundLedger.MailRoundDecision.OpenNewRound =>
+        IO.blocking(nebflow.core.delegate.DelegateRoundLedger.openNewRound(record)).void.handleErrorWith { e =>
+          NebflowLogger
+            .forName("nebflow.core.tools.mail")
+            .warn(s"new-round opening failed for '${record.id}' (${e.getMessage}) — continuing in the current round")
+        }
+      case _ => IO.unit
+    }.handleErrorWith(_ => IO.unit)
 
   private def queueRecoverySupplement(
     id: String,

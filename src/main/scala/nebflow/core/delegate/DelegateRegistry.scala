@@ -255,7 +255,21 @@ object DelegateRegistry:
      */
     seatSnapshotSha: Option[String] = None,
     /** 就地腿的派发时快照：spawn 时 `git status --porcelain` 的路径集（同上）。 */
-    seatSnapshotDirty: Option[List[String]] = None
+    seatSnapshotDirty: Option[List[String]] = None,
+    /**
+     * 当前执行轮次号（轮次模型）：spawn = round 1；已结算后 Mail 续唤开新轮
+     * （roundNo+1）；冻结唤醒 / boot 复活 = 同轮续跑（不变）。明细（起跑、基线、
+     * 结算、判词、已计提交）在 `delegates/<id>.rounds.jsonl` append-only 台账
+     * （[[DelegateRoundLedger]]），Record 只存**当前轮指针**。缺省 None：旧盘面
+     * 记录照常解码（读面按 round 1 隐式处理，零迁移）。
+     */
+    roundNo: Option[Int] = None,
+    /**
+     * 当前轮次主键（UUID，轮次开跑时铸造；与 CompletionDebtStore 的 generation 同值
+     * ——终态邮箱幂等键 `<id>#<roundId>` 即既有代际机制）。缺省 None / ""：旧盘面
+     * 照常解码（无轮次形态，行为与升级前兼容）。
+     */
+    roundId: Option[String] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -331,7 +345,8 @@ object DelegateRegistry:
     else
       writeLock.synchronized {
         find(id) match
-          case None => Left(s"delegate registry: no record for '$id' — the write point only lands on a real Delegate spawn")
+          case None =>
+            Left(s"delegate registry: no record for '$id' — the write point only lands on a real Delegate spawn")
           case Some(rec) =>
             try
               val preservedWorkReport = rec.workReport.orElse {
@@ -370,19 +385,21 @@ object DelegateRegistry:
   /** Root workspace reconciliation's structured finish update; caller supplies only a durable confirmation receipt. */
   def confirmWorkspaceCompletion(id: String, operationId: String, confirmation: String): Either[String, Unit] =
     if !validId(id) then Left(s"workspace reconcile: invalid delegate id '$id'")
-    else if operationId.trim.isEmpty || confirmation.trim.isEmpty then Left("workspace reconcile: missing operation receipt")
-    else writeLock.synchronized {
-      find(id) match
-        case None => Left(s"workspace reconcile: no registry record for '$id'")
-        case Some(rec) =>
-          decideCompletionWrite(rec, confirmation) match
-            case Left(error) => Left(error)
-            case Right(updated) =>
-              try
-                put(updated)
-                Right(())
-              catch case e: Throwable => Left(s"workspace reconcile registry write failed: ${e.getMessage}")
-    }
+    else if operationId.trim.isEmpty || confirmation.trim.isEmpty then
+      Left("workspace reconcile: missing operation receipt")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"workspace reconcile: no registry record for '$id'")
+          case Some(rec) =>
+            decideCompletionWrite(rec, confirmation) match
+              case Left(error) => Left(error)
+              case Right(updated) =>
+                try
+                  put(updated)
+                  Right(())
+                catch case e: Throwable => Left(s"workspace reconcile registry write failed: ${e.getMessage}")
+      }
 
   /**
    * Pure decision for the reconciliation finish write — deterministic and disk-free so
@@ -391,9 +408,11 @@ object DelegateRegistry:
    * standby / blocked report. `workReport` is never touched here.
    */
   private[delegate] def decideCompletionWrite(rec: Record, confirmation: String): Either[String, Record] =
-    if rec.reportStatus.contains("finish") && rec.reportDetail.contains(confirmation) then Right(rec) // idempotent replay
+    if rec.reportStatus.contains("finish") && rec.reportDetail.contains(confirmation) then
+      Right(rec) // idempotent replay
     else if rec.cancelRequestedAt.isDefined then Left("delegate has a cancel tombstone; completion receipt refused")
-    else if rec.reportStatus.isEmpty then Right(rec.copy(reportStatus = Some("finish"), reportDetail = Some(confirmation), reportSuggestion = None))
+    else if rec.reportStatus.isEmpty then
+      Right(rec.copy(reportStatus = Some("finish"), reportDetail = Some(confirmation), reportSuggestion = None))
     else Left("registry report slot carries a newer claim; stale reconcile receipt refused")
 
   def updateWorkResult(id: String, text: String): Either[String, Unit] =
@@ -711,6 +730,34 @@ object DelegateRegistry:
     find(id).map(SessionResumption.displayTitle(_)).getOrElse(id)
 
   /**
+   * 当前轮指针单写（轮次模型）：`roundNo` / `roundId` 一并落盘；
+   * `clearArchive = true` 时同步清 `archivedAt`（开新轮 = 身份回现役窗——面板
+   * 现役窗按 archivedAt==null 过滤，清旗即回归可见）。幂等语义由调用方
+   * （[[DelegateRoundLedger.openNewRound]] / spawn 写点）持有——本函数只做
+   * 读-改-写单点。查无记录 = `Left`（轮次只对真实 spawn 生效）。
+   */
+  def startRound(id: String, roundNo: Int, roundId: String, clearArchive: Boolean): Either[String, Unit] =
+    if !validId(id) then Left(s"startRound: invalid session id '$id'")
+    else if roundNo < 1 then Left(s"startRound: roundNo must be >= 1, got $roundNo")
+    else if roundId.trim.isEmpty then Left(s"startRound: roundId must be non-empty")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"startRound: no registry record for '$id'")
+          case Some(rec) =>
+            try
+              put(
+                rec.copy(
+                  roundNo = Some(roundNo),
+                  roundId = Some(roundId),
+                  archivedAt = if clearArchive then None else rec.archivedAt
+                )
+              )
+              Right(())
+            catch case e: Throwable => Left(s"startRound: write failed: ${e.getMessage}")
+      }
+
+  /**
    * JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
    * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
    * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。
@@ -754,6 +801,8 @@ object DelegateRegistry:
       resumedFrom <- c.get[Option[String]]("resumedFrom")
       seatSnapshotSha <- c.get[Option[String]]("seatSnapshotSha")
       seatSnapshotDirty <- c.get[Option[List[String]]]("seatSnapshotDirty")
+      roundNo <- c.get[Option[Int]]("roundNo")
+      roundId <- c.get[Option[String]]("roundId")
     yield Record(
       id,
       executor,
@@ -789,7 +838,9 @@ object DelegateRegistry:
       frozenTrigger,
       resumedFrom,
       seatSnapshotSha,
-      seatSnapshotDirty
+      seatSnapshotDirty,
+      roundNo,
+      roundId
     )
 
   /**

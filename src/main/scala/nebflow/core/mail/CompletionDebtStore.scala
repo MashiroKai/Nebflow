@@ -12,20 +12,27 @@ import nebflow.shared.NebflowLogger
 
 /** Durable, identity-keyed completion debt for a session's current supervisor. */
 object CompletionDebtStore:
+
   final case class Debt(
     ownerSessionId: String,
     recipientSessionId: String,
     messages: List[Message],
     phase: String = "deliverable",
-    /** 持久稳定代际身份（#2141/#2178）：每个真实执行/续轮一枚（UUID，record 时铸造
-      * 并随债落盘）；同代崩溃重试沿债重放保持同代，Mail 续轮的新完成铸造新代。
-      * 旧格式文件解码为 ""（= 无代际，行为与升级前逐字兼容）。 */
+    /**
+     * 持久稳定代际身份（#2141/#2178）：每个真实执行/续轮一枚（UUID，record 时铸造
+     * 并随债落盘）；同代崩溃重试沿债重放保持同代，Mail 续轮的新完成铸造新代。
+     * 旧格式文件解码为 ""（= 无代际，行为与升级前逐字兼容）。
+     */
     generation: String = ""
   )
+
   object Debt:
-    given Encoder[Debt] = Encoder.forProduct5("ownerSessionId", "recipientSessionId", "messages", "phase", "generation")(d =>
-      (d.ownerSessionId, d.recipientSessionId, d.messages, d.phase, d.generation)
-    )
+
+    given Encoder[Debt] =
+      Encoder.forProduct5("ownerSessionId", "recipientSessionId", "messages", "phase", "generation")(d =>
+        (d.ownerSessionId, d.recipientSessionId, d.messages, d.phase, d.generation)
+      )
+
     given Decoder[Debt] = Decoder.instance { c =>
       for
         owner <- c.get[String]("ownerSessionId")
@@ -35,10 +42,13 @@ object CompletionDebtStore:
         generation <- c.get[Option[String]]("generation")
       yield Debt(owner, recipient.getOrElse(""), messages, phase.getOrElse("deliverable"), generation.getOrElse(""))
     }
+  end Debt
 
   private val logger = NebflowLogger.forName("nebflow.core.mail.completion-debt")
+
   enum Acceptance:
     case New, Duplicate, Conflict
+
   final case class AcceptedTerminal(
     ownerSessionId: String,
     recipientSessionId: String,
@@ -50,8 +60,10 @@ object CompletionDebtStore:
   private val terminalAcceptedLock = new Object
   // Serialize all debt read-modify-write operations within this process.
   private val debtLock = new Object
+
   /** 接收账容量（drop-oldest）：每轮一行，防多年续轮无界增长。 */
   val MaxAcceptedEntries: Int = 256
+
   private def acceptedFile(recipient: String): os.Path =
     PathUtil.dataRoot / "sessions" / SessionMailbox.safeId(recipient) / acceptedKey
 
@@ -62,54 +74,72 @@ object CompletionDebtStore:
   private def findRow(existing: List[AcceptedTerminal], owner: String, gen: String): Option[AcceptedTerminal] =
     existing.find(row => row.ownerSessionId == owner && row.generation == gen)
 
-  def checkAcceptance(owner: String, recipient: String, event: AgentCommand.ExternalEvent): IO[Acceptance] = IO.blocking {
-    require(owner.nonEmpty && recipient.nonEmpty, "terminal acceptance requires owner and recipient")
-    if scala.util.Try(nebflow.core.delegate.DelegateRegistry.find(owner).exists(_.cancelRequestedAt.nonEmpty)).getOrElse(false) then
-      Acceptance.Conflict
-    else terminalAcceptedLock.synchronized {
-      val existing = acceptedFor(recipient)
-      findRow(existing, owner, generationOf(event)) match
-        case Some(row) if row.recipientSessionId == recipient && row.eventType == event.eventType && row.payload == event.payload => Acceptance.Duplicate
-        case Some(_) => Acceptance.Conflict
-        case None => Acceptance.New
+  def checkAcceptance(owner: String, recipient: String, event: AgentCommand.ExternalEvent): IO[Acceptance] =
+    IO.blocking {
+      require(owner.nonEmpty && recipient.nonEmpty, "terminal acceptance requires owner and recipient")
+      if scala.util
+          .Try(nebflow.core.delegate.DelegateRegistry.find(owner).exists(_.cancelRequestedAt.nonEmpty))
+          .getOrElse(false)
+      then Acceptance.Conflict
+      else
+        terminalAcceptedLock.synchronized {
+          val existing = acceptedFor(recipient)
+          findRow(existing, owner, generationOf(event)) match
+            case Some(row)
+                if row.recipientSessionId == recipient && row.eventType == event.eventType && row.payload == event.payload =>
+              Acceptance.Duplicate
+            case Some(_) => Acceptance.Conflict
+            case None => Acceptance.New
+        }
     }
-  }
 
   def acceptOnce(owner: String, recipient: String, event: AgentCommand.ExternalEvent): IO[Acceptance] = IO.blocking {
     require(owner.nonEmpty && recipient.nonEmpty, "terminal acceptance requires owner and recipient")
-    if scala.util.Try(nebflow.core.delegate.DelegateRegistry.find(owner).exists(_.cancelRequestedAt.nonEmpty)).getOrElse(false) then
-      Acceptance.Conflict
-    else terminalAcceptedLock.synchronized {
-      val existing = acceptedFor(recipient)
-      findRow(existing, owner, generationOf(event)) match
-        case Some(row) if row.recipientSessionId == recipient && row.eventType == event.eventType && row.payload == event.payload => Acceptance.Duplicate
-        case Some(_) => Acceptance.Conflict
-        case None =>
-          val p = acceptedFile(recipient)
-          os.makeDir.all(p / os.up)
-          // 同 owner 新代替换旧行；其他 owner 的行按容量 drop-oldest。
-          val updated = (existing.filterNot(_.ownerSessionId == owner) :+
-            AcceptedTerminal(owner, recipient, event.eventType, event.payload, generationOf(event))).takeRight(MaxAcceptedEntries)
-          AtomicJson.writeSync(p, updated.asJson.noSpaces)
-          Acceptance.New
-    }
+    if scala.util
+        .Try(nebflow.core.delegate.DelegateRegistry.find(owner).exists(_.cancelRequestedAt.nonEmpty))
+        .getOrElse(false)
+    then Acceptance.Conflict
+    else
+      terminalAcceptedLock.synchronized {
+        val existing = acceptedFor(recipient)
+        findRow(existing, owner, generationOf(event)) match
+          case Some(row)
+              if row.recipientSessionId == recipient && row.eventType == event.eventType && row.payload == event.payload =>
+            Acceptance.Duplicate
+          case Some(_) => Acceptance.Conflict
+          case None =>
+            val p = acceptedFile(recipient)
+            os.makeDir.all(p / os.up)
+            // 同 owner 新代替换旧行；其他 owner 的行按容量 drop-oldest。
+            val updated = (existing.filterNot(_.ownerSessionId == owner) :+
+              AcceptedTerminal(owner, recipient, event.eventType, event.payload, generationOf(event)))
+              .takeRight(MaxAcceptedEntries)
+            AtomicJson.writeSync(p, updated.asJson.noSpaces)
+            Acceptance.New
+      }
+    end if
   }
 
   private def acceptedFor(recipient: String): List[AcceptedTerminal] =
     val p = acceptedFile(recipient)
-    if !os.exists(p) then Nil else decode[List[AcceptedTerminal]](os.read(p)).fold(err => throw new IllegalStateException(err.getMessage), identity)
+    if !os.exists(p) then Nil
+    else
+      decode[List[AcceptedTerminal]](os.read(p)).fold(err => throw new IllegalStateException(err.getMessage), identity)
 
   // Test-only, owner-scoped hooks: concurrent tests cannot replace one another's hook.
   // Resource release removes only the registered instance, including on failure/cancellation.
   private val beforeAckHooks = new java.util.concurrent.ConcurrentHashMap[String, () => Unit]()
+
   private[nebflow] def beforeAcknowledgeForTest(owner: String)(hook: () => Unit): cats.effect.Resource[IO, Unit] =
     cats.effect.Resource.make(IO {
       require(beforeAckHooks.putIfAbsent(owner, hook) == null, s"ack hook already registered for $owner")
     })(_ => IO { beforeAckHooks.remove(owner, hook); () })
 
-  private given Encoder[AcceptedTerminal] = Encoder.forProduct5("ownerSessionId", "recipientSessionId", "eventType", "payload", "generation")(r =>
-    (r.ownerSessionId, r.recipientSessionId, r.eventType, r.payload, r.generation)
-  )
+  private given Encoder[AcceptedTerminal] =
+    Encoder.forProduct5("ownerSessionId", "recipientSessionId", "eventType", "payload", "generation")(r =>
+      (r.ownerSessionId, r.recipientSessionId, r.eventType, r.payload, r.generation)
+    )
+
   private given Decoder[AcceptedTerminal] = Decoder.instance { c =>
     for
       owner <- c.get[String]("ownerSessionId")
@@ -122,6 +152,7 @@ object CompletionDebtStore:
 
   private def file(owner: String): os.Path =
     PathUtil.dataRoot / "sessions" / SessionMailbox.safeId(owner) / "completion-debt.json"
+
   private def quarantine(owner: String): os.Path =
     PathUtil.dataRoot / "sessions" / SessionMailbox.safeId(owner) / "completion-debt.json.corrupt"
 
@@ -136,22 +167,46 @@ object CompletionDebtStore:
    *   - 读面损坏（Left）同样走新代覆写：损坏债不能永久阻断后续轮次的完成义务，
    *     原字节已在 .corrupt 保全（read 侧职责）。
    */
-  def record(ownerSessionId: String, recipientSessionId: String, messages: List[Message]): IO[Boolean] = IO.blocking { debtLock.synchronized {
-    require(ownerSessionId.trim.nonEmpty, "completion debt requires an owner session id")
-    val p = file(ownerSessionId)
-    os.makeDir.all(p / os.up)
-    val existing = read(ownerSessionId)
-    val cancelRequested = scala.util.Try(nebflow.core.delegate.DelegateRegistry.find(ownerSessionId).exists(_.cancelRequestedAt.nonEmpty)).getOrElse(false)
-    if cancelRequested then false
-    else existing match
-      case Right(Some(debt)) if debt.phase == "cancelled" => false
-      case Right(Some(debt)) if debt.phase != "settled" && debt.recipientSessionId == recipientSessionId && debt.messages == messages => true
-      case _ =>
-        // 走到这里 = 无债 / 已结算（任一内容）/ 收件方或内容漂移 / 读面损坏——
-        // 都是**新一轮完成**：一律铸造新代覆写（同代保留只在上方早退分支发生）。
-        AtomicJson.writeSync(p, Debt(ownerSessionId, recipientSessionId, messages, "deliverable", java.util.UUID.randomUUID().toString).asJson.noSpaces)
-        true
-  }}
+  def record(ownerSessionId: String, recipientSessionId: String, messages: List[Message]): IO[Boolean] = IO.blocking {
+    debtLock.synchronized {
+      require(ownerSessionId.trim.nonEmpty, "completion debt requires an owner session id")
+      val p = file(ownerSessionId)
+      os.makeDir.all(p / os.up)
+      val existing = read(ownerSessionId)
+      val cancelRequested = scala.util
+        .Try(nebflow.core.delegate.DelegateRegistry.find(ownerSessionId).exists(_.cancelRequestedAt.nonEmpty))
+        .getOrElse(false)
+      if cancelRequested then false
+      else
+        existing match
+          case Right(Some(debt)) if debt.phase == "cancelled" => false
+          case Right(Some(debt))
+              if debt.phase != "settled" && debt.recipientSessionId == recipientSessionId && debt.messages == messages =>
+            true
+          case _ =>
+            // 走到这里 = 无债 / 已结算（任一内容）/ 收件方或内容漂移 / 读面损坏——
+            // 都是**新一轮完成**：一律铸造新代覆写（同代保留只在上方早退分支发生）。
+            // 代际与轮次模型对齐：registry 上有当前轮 roundId 且与在途债不同代 ⇒ 新代
+            // 直接取 roundId（终态邮箱幂等键 `<id>#<roundId>` 与轮次台账同键）；轮次
+            // 缺席（旧盘面 / 外部执行器腿）或同代内容漂移（同轮重完成，需独立身份）
+            // ⇒ 回落随机 UUID（升级前行为）。
+            val roundId = scala.util
+              .Try(
+                nebflow.core.delegate.DelegateRegistry.find(ownerSessionId).flatMap(_.roundId).filter(_.nonEmpty)
+              )
+              .toOption
+              .flatten
+            val minted = roundId match
+              case Some(rid) if existing.forall(_.forall(_.generation != rid)) => rid
+              case _ => java.util.UUID.randomUUID().toString
+            AtomicJson.writeSync(
+              p,
+              Debt(ownerSessionId, recipientSessionId, messages, "deliverable", minted).asJson.noSpaces
+            )
+            true
+      end if
+    }
+  }
 
   private def read(ownerSessionId: String): Either[String, Option[Debt]] =
     val p = file(ownerSessionId)
@@ -172,33 +227,43 @@ object CompletionDebtStore:
     Left(s"invalid completion debt for '$owner' (preserved at $bad): $reason")
 
   /** Missing debt is distinct from an unreadable debt; callers must not treat Left as completion. */
-  def pending(ownerSessionId: String): IO[Either[String, Option[Debt]]] = IO.blocking(read(ownerSessionId))
+  def pending(ownerSessionId: String): IO[Either[String, Option[Debt]]] = IO
+    .blocking(read(ownerSessionId))
     .handleError(e => Left(Option(e.getMessage).getOrElse(e.getClass.getSimpleName)))
 
   /** Acknowledge only the matching delivered payload; conflict/malformed files are never cleared. */
-  def acknowledge(owner: String, recipient: String, messages: List[Message], generation: String): IO[Boolean] = IO.blocking {
-    Option(beforeAckHooks.get(owner)).foreach(_())
-    debtLock.synchronized {
-      read(owner) match
-        case Right(Some(debt)) if debt.phase == "cancelled" => false
-        case Right(Some(debt)) if debt.recipientSessionId == recipient && debt.messages == messages && debt.generation == generation =>
-          AtomicJson.writeSync(file(owner), debt.copy(phase = "settled").asJson.noSpaces)
-          true
-        case Right(None) => true
-        case _ => false
+  def acknowledge(owner: String, recipient: String, messages: List[Message], generation: String): IO[Boolean] =
+    IO.blocking {
+      Option(beforeAckHooks.get(owner)).foreach(_())
+      debtLock.synchronized {
+        read(owner) match
+          case Right(Some(debt)) if debt.phase == "cancelled" => false
+          case Right(Some(debt))
+              if debt.recipientSessionId == recipient && debt.messages == messages && debt.generation == generation =>
+            AtomicJson.writeSync(file(owner), debt.copy(phase = "settled").asJson.noSpaces)
+            true
+          case Right(None) => true
+          case _ => false
+      }
     }
-  }
 
   /** Cancellation is a durable tombstone racing record/ack; old completion cannot overwrite it. */
-  def cancel(owner: String): IO[Unit] = IO.blocking { debtLock.synchronized {
-    val p = file(owner)
-    os.makeDir.all(p / os.up)
-    val prior = read(owner).toOption.flatten
-    scala.util.Try(nebflow.core.delegate.DelegateRegistry.markCancelRequested(owner, "completion-debt-terminal")).toOption
-    prior.filter(_.phase == "cancelled") match
-      case Some(_) => ()
-      case None =>
-        val recipient = prior.map(_.recipientSessionId).filter(_.nonEmpty).getOrElse("cancelled")
-          AtomicJson.writeSync(p, Debt(owner, recipient, Nil, "cancelled", prior.map(_.generation).getOrElse("")).asJson.noSpaces)
-  }}
+  def cancel(owner: String): IO[Unit] = IO.blocking {
+    debtLock.synchronized {
+      val p = file(owner)
+      os.makeDir.all(p / os.up)
+      val prior = read(owner).toOption.flatten
+      scala.util
+        .Try(nebflow.core.delegate.DelegateRegistry.markCancelRequested(owner, "completion-debt-terminal"))
+        .toOption
+      prior.filter(_.phase == "cancelled") match
+        case Some(_) => ()
+        case None =>
+          val recipient = prior.map(_.recipientSessionId).filter(_.nonEmpty).getOrElse("cancelled")
+          AtomicJson.writeSync(
+            p,
+            Debt(owner, recipient, Nil, "cancelled", prior.map(_.generation).getOrElse("")).asJson.noSpaces
+          )
+    }
+  }
 end CompletionDebtStore

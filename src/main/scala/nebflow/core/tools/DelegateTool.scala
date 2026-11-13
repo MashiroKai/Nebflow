@@ -1631,7 +1631,11 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
           parentSessionId = parentSessionId.getOrElse("")
         )
         _ <- IO
-          .blocking(
+          .blocking {
+            // Round model: spawn opens round 1 — the roundId doubles as the
+            // completion-debt generation for this round (terminal mailbox identity
+            // `<id>#<roundId>`), and the round ledger row carries the diff baseline.
+            val spawnRoundId = java.util.UUID.randomUUID().toString
             DelegateRegistry.put(
               DelegateRegistry.Record(
                 id = subagentId,
@@ -1670,10 +1674,13 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
                 mode = Some(modeDecision.mode),
                 // 续命血缘（会话续命名与位修正批 2026-11-03）：派生腿落原 delegate id
                 // （审计 + 显示面）；新鲜派发/原位续 = None（零字段，旧行字节不变）。
-                resumedFrom = resumedFrom
+                resumedFrom = resumedFrom,
+                roundNo = Some(1),
+                roundId = Some(spawnRoundId)
               )
             )
-          )
+            DelegateRoundLedger.openSpawnRound(subagentId, spawnRoundId, effectiveWs)
+          }
           .handleErrorWith(e =>
             if modeDecision.mode == DualModeConfig.ModeMerger then IO.raiseError(e)
             else logger.warn(s"DelegateRegistry.put failed: ${e.getMessage}").void
