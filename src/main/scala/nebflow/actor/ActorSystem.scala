@@ -1,7 +1,7 @@
 package nebflow.actor
 
-import cats.effect.std.Queue
-import cats.effect.{Fiber, IO, Ref}
+import cats.effect.*
+import cats.effect.std.{Dispatcher, Queue}
 import cats.syntax.all.*
 import nebflow.shared.NebflowLogger
 
@@ -21,6 +21,13 @@ trait ActorSystem:
   def resolve[Msg](path: String): IO[ActorRef[Msg]]
   def stop(ref: ActorRef[?]): IO[Unit]
   def stopAll: IO[Unit]
+
+  /** Native children require a managed runtime and are separate from local death watch. */
+  def spawnNative[Msg](
+    behavior: Dispatcher[IO] => org.apache.pekko.actor.typed.Behavior[Msg],
+    name: String
+  ): Resource[IO, NativeActorHandle[Msg]] =
+    Resource.eval(IO.raiseError(new UnsupportedOperationException("Native actors require ActorSystem.resource")))
 
   /** Compatibility path for synchronous constructors without a managed timer runtime. */
   def scheduleOnce(delay: FiniteDuration, delivery: IO[Unit]): IO[Unit] =
@@ -96,9 +103,9 @@ object ActorSystem:
   def resource(
     deviceName: String,
     watchStore: WatchStore = WatchStore.disabled
-  ): cats.effect.Resource[IO, ActorSystem] =
-    ActorTimers.resource.flatMap { timers =>
-      cats.effect.Resource.make(IO(apply(deviceName, watchStore, Some(timers))))(_.stopAll)
+  ): Resource[IO, ActorSystem] =
+    NativeActorRuntime.resource.flatMap { runtime =>
+      Resource.make(IO(new LocalActorSystem(deviceName, watchStore, Some(runtime), Some(runtime))))(_.stopAll)
     }
 
 end ActorSystem
@@ -107,8 +114,16 @@ end ActorSystem
 final class LocalActorSystem(
   val localDevice: String,
   watchStore: WatchStore = WatchStore.disabled,
-  timers: Option[ActorTimers] = None
+  timers: Option[ActorTimers] = None,
+  nativeRuntime: Option[NativeActorRuntime] = None
 ) extends ActorSystem:
+
+  override def spawnNative[Msg](
+    behavior: Dispatcher[IO] => org.apache.pekko.actor.typed.Behavior[Msg],
+    name: String
+  ): Resource[IO, NativeActorHandle[Msg]] =
+    nativeRuntime.fold(super.spawnNative(behavior, name))(_.spawnNative(behavior, name))
+
   override def scheduleOnce(delay: FiniteDuration, delivery: IO[Unit]): IO[Unit] =
     timers.fold(super.scheduleOnce(delay, delivery))(_.scheduleOnce(delay, delivery))
   private val log = NebflowLogger.forName("nebflow.actor")
@@ -173,6 +188,7 @@ final class LocalActorSystem(
       _ <- fiberPromise.complete(fiber)
       _ <- registry.update(_.updated(path.toString, RegistryEntry(ref, fiber, sysQueue)))
     yield ref
+    end for
 
   end spawn
 
@@ -268,7 +284,7 @@ final class LocalActorSystem(
         } *> persistWatches *>
         (if localEdges.size == edges.size then IO.unit
          else log.info(s"watch replay: dropped ${edges.size - localEdges.size} non-local edge(s)"))
-          *> log.info(s"watch replay: ${localEdges.size} edge(s) restored on device '$localDevice'")
+        *> log.info(s"watch replay: ${localEdges.size} edge(s) restored on device '$localDevice'")
     }
 
   /** Deliver Terminated signal to all watchers of the given path. */

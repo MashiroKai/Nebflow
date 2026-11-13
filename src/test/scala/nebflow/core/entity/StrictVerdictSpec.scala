@@ -110,9 +110,13 @@ class StrictVerdictSpec extends CatsEffectSuite:
 
   end StoreReportingLlm
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
+  private def mkResources(
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    dispatcher: Dispatcher[IO]
+  ): IO[SharedResources] =
     for
-      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
       rateLimiter <- RateLimiter.create()
       tracker <- FileChangeTracker.create(os.pwd.toString)
       fileLocks <- FileLockManager.create
@@ -143,7 +147,6 @@ class StrictVerdictSpec extends CatsEffectSuite:
   private def withFlowEnv[A](llm: LlmHandle[IO])(
     test: (SharedResources, ActorSystem) => IO[A]
   ): IO[A] =
-    val system = ActorSystem(s"strict-verdict-test-${UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
     val dataRoot = tmp / "data"
@@ -155,10 +158,13 @@ class StrictVerdictSpec extends CatsEffectSuite:
       )
       PathUtil.setDataRoot(dataRoot)
     }.bracket { _ =>
-      mkResources(system, tmp, llm).flatMap(test(_, system))
+      Dispatcher.parallel[IO].use { dispatcher =>
+        ActorSystem.resource(s"strict-verdict-test-${UUID.randomUUID().toString.take(6)}").use { system =>
+          mkResources(system, tmp, llm, dispatcher).flatMap(test(_, system))
+        }
+      }
     } { _ =>
       IO.delay(PathUtil.setDataRoot(prevRoot)) *>
-        system.stopAll.attempt.void *>
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
 

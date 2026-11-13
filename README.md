@@ -157,7 +157,7 @@ Full documentation lives at [mystand.space](https://mystand.space).
 
 ## Architecture
 
-Stand is written in **Scala 3** on **self-developed actors** (message passing and state management), with **Apache Pekko Typed** providing managed one-shot timers and **http4s / cats-effect** (HTTP, WebSocket, and side-effect orchestration), with a deliberate boundary keeping the two layers apart. Work is organized as **Projects → Nodes**: a dispatcher turns a task into a Flow Map DAG, executes each node in an isolated worktree, and collects results along the out-edges for merge. Everything ships as a single self-contained JAR you host yourself — the web UI is served from embedded resources, with no separate frontend build step.
+Stand is written in **Scala 3** on **self-developed actors** (message passing and state management), with **Apache Pekko Typed** providing managed one-shot timers and native Flow result-bridge lifecycles, and **http4s / cats-effect** (HTTP, WebSocket, and side-effect orchestration), with a deliberate boundary keeping the two layers apart. Work is organized as **Projects → Nodes**: a dispatcher turns a task into a Flow Map DAG, executes each node in an isolated worktree, and collects results along the out-edges for merge. Everything ships as a single self-contained JAR you host yourself — the web UI is served from embedded resources, with no separate frontend build step.
 
 ## Development & Contributions
 

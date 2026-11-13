@@ -2,20 +2,32 @@ package nebflow.core.entity
 
 import cats.effect.kernel.Outcome
 import cats.effect.std.Dispatcher
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref, Resource}
 import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
-import nebflow.actor.ActorSystem
-import nebflow.agent.SharedResources
+import nebflow.actor.{
+  ActorPath,
+  ActorRef,
+  ActorSystem,
+  AgentCommand,
+  Behavior,
+  InteractionHubCommand,
+  InteractionKind,
+  InteractionReply,
+  InteractionRequest,
+  NativeActorHandle
+}
+import nebflow.agent.{InteractionHub, SharedResources}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{NodeStatus, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.FileLockManager
+import nebflow.core.tools.{BgTaskRegistry, FileLockManager}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
+import org.apache.pekko.actor.typed
 
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -69,10 +81,10 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
     system: ActorSystem,
     tmp: os.Path,
     sessionsDir: os.Path,
-    llm: LlmHandle[IO]
+    llm: LlmHandle[IO],
+    dispatcher: Dispatcher[IO]
   ): IO[SharedResources] =
     for
-      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
       rateLimiter <- RateLimiter.create()
       tracker <- FileChangeTracker.create(os.pwd.toString)
       fileLocks <- FileLockManager.create
@@ -103,13 +115,12 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
 
   /**
    * Set up a temp dataRoot (with one flow agent "worker"), run the test, then
-   * restore the dataRoot, stop all actors, and delete the temp tree — even on
+   * stop all actors, release the dispatcher, restore the dataRoot, and delete the temp tree — even on
    * failure or timeout.
    */
   private def withFlowEnv[A](llm: LlmHandle[IO])(
     test: (SharedResources, ActorSystem, os.Path, Ref[IO, List[io.circe.Json]]) => IO[A]
   ): IO[A] =
-    val system = ActorSystem(s"flow-cancel-test-${UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
     val dataRoot = tmp / "data"
@@ -121,14 +132,17 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
       )
       PathUtil.setDataRoot(dataRoot)
     }.bracket { _ =>
-      IO.ref(List.empty[io.circe.Json]).flatMap { eventsRef =>
-        mkResources(system, tmp, tmp / "sessions", llm).flatMap { resources =>
-          test(resources, system, tmp / "sessions", eventsRef)
+      Dispatcher.parallel[IO].use { dispatcher =>
+        ActorSystem.resource(s"flow-cancel-test-${UUID.randomUUID().toString.take(6)}").use { system =>
+          IO.ref(List.empty[io.circe.Json]).flatMap { eventsRef =>
+            mkResources(system, tmp, tmp / "sessions", llm, dispatcher).flatMap { resources =>
+              test(resources, system, tmp / "sessions", eventsRef)
+            }
+          }
         }
       }
     } { _ =>
       IO.delay(PathUtil.setDataRoot(prevRoot)) *>
-        system.stopAll.attempt.void *>
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
 
@@ -297,6 +311,188 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         assertEquals(flowCompletedSuccess(events), Some(false))
         assertEquals(rfOpt.flatMap(_.nodes.get("n1").map(_.status)), Some(NodeStatus.Cancelled))
       end for
+    }
+  }
+
+  test("enclosing fiber cancellation stops the actor, closes pending interactions, and reclaims session tasks") {
+    Deferred[IO, String].flatMap { entered =>
+      val llm = new FakeLlm(req => Stream.eval(entered.complete(req.sessionId)).drain ++ neverAnswer)
+      withFlowEnv(llm) { (resources, system, _, eventsRef) =>
+        val instId = s"fiber-cancel-${UUID.randomUUID().toString.take(6)}"
+        val rootSessionId = s"root-$instId"
+        val requestId = s"ask-$instId"
+        val jobId = s"task-$instId"
+        for
+          hub <- system.spawn(InteractionHub(), s"hub-$instId")
+          _ <- resources.interactionHubRef.set(Some(hub))
+          _ <- hub ! InteractionHubCommand.RegisterRoot(rootSessionId, j => eventsRef.update(_ :+ j))
+          _ <- Resource
+            .make(
+              FlowDagExecutor
+                .execute(
+                  oneNodeFlow,
+                  "cancel the enclosing IO",
+                  resources,
+                  system,
+                  wsSink(eventsRef),
+                  instId,
+                  rootSessionId = rootSessionId
+                )
+                .start
+            )(_.cancel)
+            .use { fiber =>
+              for
+                sessionId <- entered.get.timeout(6.seconds)
+                record <- resources.agentRegistry.get.map(
+                  _.getOrElse(sessionId, fail("running agent must be registered"))
+                )
+                aliveBefore <- system.isAlive(record.ref.path)
+                _ = assert(aliveBefore, "the owned local actor must be alive before cancellation")
+                _ <- hub ! InteractionHubCommand.Request(
+                  InteractionRequest(
+                    requestId = requestId,
+                    kind = InteractionKind.AskUser,
+                    payload = io.circe.Json.obj(
+                      "items" -> io.circe.Json
+                        .arr(io.circe.Json.obj("question" -> io.circe.Json.fromString("Continue?")))
+                    ),
+                    reply = InteractionReply.AskUserReply(None),
+                    rootSessionId = rootSessionId,
+                    sourceAgent = "worker",
+                    sourceSession = sessionId
+                  )
+                )
+                pendingBefore <- pollFor(
+                  hub
+                    .?[List[io.circe.Json]](reply => InteractionHubCommand.ListPendingAsks(rootSessionId, reply))
+                    .map(rows => Option.when(rows.exists(_.hcursor.get[String]("requestId").contains(requestId)))(rows))
+                )
+                _ = assert(pendingBefore.isDefined, "the real hub must retain the request before cancellation")
+                // Registry-only task: no shell, process, or host resource is started.
+                _ <- BgTaskRegistry.register(jobId, sessionId, "cancellation cleanup fixture", "local", rootSessionId)
+                taskBefore <- BgTaskRegistry.find(jobId)
+                _ = assert(taskBefore.isDefined, "the session task must be registered before cancellation")
+                _ <- fiber.cancel.timeout(6.seconds)
+                outcome <- fiber.join
+                registry <- resources.agentRegistry.get
+                aliveAfter <- system.isAlive(record.ref.path)
+                closed <- pollFor(eventsRef.get.map(_.find { event =>
+                  val cursor = event.hcursor
+                  cursor.get[String]("type").contains("askUserClosed") &&
+                  cursor.get[String]("requestId").contains(requestId)
+                }))
+                pendingAfter <- hub
+                  .?[List[io.circe.Json]](reply => InteractionHubCommand.ListPendingAsks(rootSessionId, reply))
+                taskRemoved <- pollFor(BgTaskRegistry.find(jobId).map(task => Option.when(task.isEmpty)(())))
+              yield
+                assert(outcome.isCanceled, s"the enclosing fiber must end by cancellation: $outcome")
+                assert(!registry.contains(sessionId), "enclosing cancellation must remove the owned registry entry")
+                assert(!aliveAfter, "enclosing cancellation must stop the owned local actor before returning")
+                assert(closed.isDefined, "enclosing cancellation must emit askUserClosed for the pending request")
+                assertEquals(closed.flatMap(_.hcursor.get[String]("reason").toOption), Some("source-stopped"))
+                assert(
+                  !pendingAfter.exists(_.hcursor.get[String]("requestId").contains(requestId)),
+                  "enclosing cancellation must remove the request from the hub"
+                )
+                assert(taskRemoved.isDefined, "enclosing cancellation must reclaim the session task registry entry")
+            }
+            .guarantee(BgTaskRegistry.unregister(jobId))
+        yield ()
+        end for
+      }
+    }
+  }
+
+  private enum StartupFailure:
+    case Spawn, Send
+
+  /** Keep real actors and native ownership; intercept only the requested failure boundary. */
+  private class FailingActorSystem(
+    delegate: ActorSystem,
+    failure: StartupFailure,
+    spawned: Ref[IO, Option[ActorRef[?]]],
+    nativeHandles: Ref[IO, List[NativeActorHandle[?]]],
+    injected: Ref[IO, Boolean]
+  ) extends ActorSystem:
+    def localDevice: String = delegate.localDevice
+
+    def spawn[Msg](behavior: Behavior[Msg], name: String, ttl: Option[FiniteDuration] = None): IO[ActorRef[Msg]] =
+      if !name.startsWith("dagnode-") then delegate.spawn(behavior, name, ttl)
+      else if failure == StartupFailure.Spawn then
+        injected.set(true) *> IO.raiseError(new RuntimeException("injected agent startup failure"))
+      else
+        delegate.spawn(behavior, name, ttl).flatMap { ref =>
+          spawned
+            .set(Some(ref))
+            .as(new ActorRef[Msg]:
+              def path: ActorPath = ref.path
+              def !(msg: Msg): IO[Unit] = msg match
+                case _: AgentCommand.UserInput =>
+                  injected.set(true) *> IO.raiseError(new RuntimeException("injected input delivery failure"))
+                case _ => ref ! msg
+              def ?[Reply](makeMsg: ActorRef[Reply] => Msg, timeout: Option[FiniteDuration]): IO[Reply] =
+                ref.?(makeMsg, timeout))
+        }
+
+    override def spawnNative[Msg](
+      behavior: Dispatcher[IO] => typed.Behavior[Msg],
+      name: String
+    ): Resource[IO, NativeActorHandle[Msg]] =
+      delegate.spawnNative(behavior, name).evalTap(handle => nativeHandles.update(handle :: _))
+    def resolve[Msg](path: String): IO[ActorRef[Msg]] = delegate.resolve(path)
+
+    def stop(ref: ActorRef[?]): IO[Unit] =
+      spawned.get.flatMap {
+        case Some(actual) if actual.path == ref.path => delegate.stop(actual)
+        case _ => delegate.stop(ref)
+      }
+    def stopAll: IO[Unit] = delegate.stopAll
+
+    override def scheduleOnce(delay: FiniteDuration, delivery: IO[Unit]): IO[Unit] =
+      delegate.scheduleOnce(delay, delivery)
+    def isAlive(path: ActorPath): IO[Boolean] = delegate.isAlive(path)
+    def watch(watcher: ActorPath, target: ActorPath): IO[Unit] = delegate.watch(watcher, target)
+    def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit] = delegate.unwatch(watcher, target)
+    def deadLetterCount: IO[Long] = delegate.deadLetterCount
+    def replayWatches: IO[Unit] = delegate.replayWatches
+
+  end FailingActorSystem
+
+  StartupFailure.values.foreach { failure =>
+    test(s"$failure failure releases the native bridge and any owned local agent") {
+      withFlowEnv(new FakeLlm(_ => neverAnswer)) { (resources, system, _, eventsRef) =>
+        for
+          spawned <- Ref.of[IO, Option[ActorRef[?]]](None)
+          nativeHandles <- Ref.of[IO, List[NativeActorHandle[?]]](Nil)
+          injected <- Ref.of[IO, Boolean](false)
+          failingSystem = new FailingActorSystem(system, failure, spawned, nativeHandles, injected)
+          result <- FlowDagExecutor
+            .execute(
+              oneNodeFlow,
+              "fail during startup",
+              resources.copy(actorSystem = failingSystem),
+              failingSystem,
+              wsSink(eventsRef),
+              s"startup-${UUID.randomUUID().toString.take(6)}"
+            )
+            .attempt
+            .timeout(6.seconds)
+          wasInjected <- injected.get
+          registry <- resources.agentRegistry.get
+          actor <- spawned.get
+          alive <- actor.traverse(ref => system.isAlive(ref.path))
+          handles <- nativeHandles.get
+          _ <- handles.traverse_(_.terminated.timeout(3.seconds))
+        yield
+          assert(wasInjected, "the requested failure boundary must be reached")
+          assert(result.fold(_ => true, _.isLeft), s"startup failure must not succeed: $result")
+          assertEquals(registry, Map.empty, "startup failure must remove the registry association")
+          assert(handles.nonEmpty, "startup must acquire the real native result bridge")
+          failure match
+            case StartupFailure.Spawn => assertEquals(actor, None)
+            case StartupFailure.Send =>
+              assertEquals(alive, Some(false), "failed delivery must stop the real local actor")
+      }
     }
   }
 

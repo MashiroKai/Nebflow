@@ -1,16 +1,15 @@
 package nebflow.core.entity
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{IO, Ref, Resource}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.given
 import nebflow.actor.*
-import nebflow.core.AgentRuntimePort
-import nebflow.core.ResumeHandoff
 import nebflow.core.flow.{NodeStatus, VerdictFamily}
 import nebflow.core.node.NodeRunner
 import nebflow.core.tools.FlowReportStore
-import nebflow.shared.{ContentBlock, Message, MessageRole, NebflowLogger}
+import nebflow.core.{AgentRuntimePort, ResumeHandoff}
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
@@ -389,9 +388,8 @@ object FlowDagExecutor:
                           val handoff = ResumeHandoff.plan(
                             recoveredMsgs,
                             ResumeHandoff.Cause.UpstreamFailure,
-                            legacyText =
-                              "[system] Your previous turn was interrupted by an upstream failure. " +
-                                "Please continue your task from where you left off."
+                            legacyText = "[system] Your previous turn was interrupted by an upstream failure. " +
+                              "Please continue your task from where you left off."
                           )
                           val effectiveInput = if resuming then handoff.injectText else inputText0
                           val effectiveBlocks = if resuming then handoff.injectBlocks else None
@@ -1171,9 +1169,7 @@ object FlowDagExecutor:
     callerSessionId: String = ""
   ): IO[NodeResult] =
     val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
-    // Failure outcome carried through the deferred: message + retryable flag
-    // (AgentError.retryable — LLM stall / overload class).
-    final case class FailOutcome(message: String, retryable: Boolean)
+    import FlowResultBridge.Failure as FailOutcome
     // P2: flow nodes inherit the triggering agent's root session so their
     // InteractionRequests render in the Nebula window and share its policy.
     val effectiveRootSessionId = if rootSessionId.nonEmpty then rootSessionId else sessionId
@@ -1193,117 +1189,115 @@ object FlowDagExecutor:
       val isStart = json.hcursor.downField("type").as[String].toOption.exists(_.contains("agentStart"))
       val withParent =
         if !isStart || callerSessionId.isEmpty ||
-          json.hcursor.downField("parentSessionId").as[String].isRight then withNode
+          json.hcursor.downField("parentSessionId").as[String].isRight
+        then withNode
         else withNode.deepMerge(Json.obj("parentSessionId" -> callerSessionId.asJson))
       rawWsSend(withParent)
+    val reclaimSession = resources.interactionHubRef.get
+      .flatMap {
+        case Some(hub) => (hub ! InteractionHubCommand.CleanupForSession(sessionId, reason = "source-stopped")).void
+        case None => IO.unit
+      }
+      .guarantee(
+        nebflow.core.tools.BgTaskRegistry.reclaimSession(Some(sessionId), routedWsSend, effectiveRootSessionId)
+      )
     for
-      resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
-      // Bridge actor: receives AgentEvent, completes the Deferred, self-stops.
-      // The deferred MUST be completed synchronously inside the receive action:
-      // forkTurn here races with returning Behaviors.stopped — the actor loop
-      // exits and its guarantee cancels the current turn before the forked
-      // fiber runs, leaving the deferred forever incomplete and the executor
-      // hanging (the intermittent "flow freeze" this executor was blamed for).
-      // The receive IO runs to completion before the loop observes
-      // Behaviors.stopped, so a direct complete has no such window.
-      bridgeRef <- actorSystem.spawn(
-        Behaviors.receive[AgentEvent] { (_, event) =>
-          event match
-            // 刀一等待态计时消息只对武装它的那个 actor 有语义；本桥不接（恒等行为，
-            // 绝不用「停 actor / 完成 deferred」去消化一条与自己无关的 Tick）。
-            case _: AgentEvent.BgCompletionCapTick => IO.pure(Behaviors.ignore)
-            case AgentEvent.Completed(_, messages) =>
-              resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
-            case AgentEvent.Failed(_, err) =>
-              // P2: surface the retryable flag (single source
-              // AgentActor.llmFailureRetryable) so the executor's Restart
-              // path can pick checkpoint recovery over a fresh re-run.
-              resultDeferred
-                .complete(Left(FailOutcome(err.message, err.retryable.getOrElse(false))))
-                .void
-                .as(Behaviors.stopped)
-            case AgentEvent.Cancelled(_, reason) =>
-              resultDeferred
-                .complete(Left(FailOutcome(s"cancelled: $reason", retryable = false)))
-                .void
-                .as(Behaviors.stopped)
-        },
-        s"bridge-${nodeId.take(10)}-${sessionId.take(8)}"
-      )
-      ref <- NodeRunner.spawnAgentActor(
-        actorSystem,
-        NodeRunner.SpawnParams(
-          agentDef = agentDef,
-          resources = resources,
-          sessionId = sessionId,
-          sessionName = s"$flowName/$nodeId",
-          depth = 1,
-          parentRef = parentAgentRef,
-          wsSend = routedWsSend,
-          projectRoot = None, // flow 节点沿用 agent 自身 projectRoot（现状一致）
-          safetyMode = "confirm-edits",
-          rootSessionId = effectiveRootSessionId,
-          initialMessages = initialMessages,
-          isFlowNode = true,
-          expectsMail = false,
-          // 轨道二 #5: raw declaration; stripping + clause variant gate on the
-          // dedicatedAgents flag at each turn (hot-read, no respawn needed).
-          userFacingNode = userFacing,
-          actorName = s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
+      eventResult <- (for
+        bridge <- FlowResultBridge.resource(actorSystem, s"bridge-${nodeId.take(10)}-${sessionId.take(8)}")
+        cancelled <- Resource.eval(Ref.of[IO, Boolean](false))
+        ref <- Resource.makeCase(
+          NodeRunner.spawnAgentActor(
+            actorSystem,
+            NodeRunner.SpawnParams(
+              agentDef = agentDef,
+              resources = resources,
+              sessionId = sessionId,
+              sessionName = s"$flowName/$nodeId",
+              depth = 1,
+              parentRef = parentAgentRef,
+              wsSend = routedWsSend,
+              projectRoot = None, // flow 节点沿用 agent 自身 projectRoot（现状一致）
+              safetyMode = "confirm-edits",
+              rootSessionId = effectiveRootSessionId,
+              initialMessages = initialMessages,
+              isFlowNode = true,
+              expectsMail = false,
+              // 轨道二 #5: raw declaration; stripping + clause variant gate on the
+              // dedicatedAgents flag at each turn (hot-read, no respawn needed).
+              userFacingNode = userFacing,
+              actorName = s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
+            )
+          )
+        ) { (ref, exit) =>
+          val cleanup = exit match
+            case Resource.ExitCase.Succeeded => cancelled.get.ifM(reclaimSession, IO.unit)
+            case _ => reclaimSession
+          // Sending Stop alone does not confirm that its business cleanup ran.
+          actorSystem.stop(ref).guarantee(cleanup)
+        }
+        _ <- Resource.make(IO.unit)(_ =>
+          resources.agentRegistry.update { entries =>
+            entries.get(sessionId) match
+              case Some(entry) if entry.ref == ref => entries - sessionId
+              case _ => entries
+          }
         )
-      )
-      // P1: register flow node agents in the unified AgentRegistry — this was
-      // previously missing entirely, so permission answers routed to a ghost
-      // root agent and were silently dropped (D2 for dag-* sessions).
-      // 面板树批（2026-10-29 ①）：parentSessionId = 触发宿主会话——activeAgents
-      // 快照 face 的派生树认领键（agentStart 入口帧同值注入）。
-      _ <- NodeRunner.registerAgent(
-        resources,
-        id = sessionId,
-        ref = ref,
-        kind = AgentKind.Flow,
-        rootSessionId = effectiveRootSessionId,
-        parentRef = parentAgentRef,
-        parentSessionId = callerSessionId
-      )
-      // Persist direct ownership: AgentRegistry is in-memory and the entry is
-      // removed at node completion, while delegate diff rollups happen later.
-      _ <- IO.blocking {
-        if callerSessionId.nonEmpty then
-          nebflow.core.delegate.FlowNodeOwnership.register(sessionId, callerSessionId)
-      }.handleErrorWith(e => logger.warn(s"Flow node ownership record failed for $sessionId: ${e.getMessage}"))
-      // Send input with the bridge actor as replyTo（无感恢复批：blocks 在场 = 工具边界续跑）
-      _ <- (ref ! AgentCommand.UserInput(
-        text = inputText,
-        replyTo = Some(bridgeRef),
-        blocks = inputBlocks
-      )).void
-      // Wait for completion — no wall-clock timeout (see method doc). The only
-      // competing events are the user's cancel signal and the internal
-      // fail-fast signal (a sibling parallel branch failed under onFail=abort).
-      cancelSig <- nebflow.core.flow.RunningFlowRegistry.cancelSignal(instanceId)
-      abortSig <- nebflow.core.flow.RunningFlowRegistry.abortSignal(instanceId)
-      raceResult <- IO.race(resultDeferred.get, IO.race(cancelSig.get, abortSig.get))
-      // Pierce: tell the agent to abandon its in-flight turn first
-      // (Stop → cancelCurrentTurn aborts the turn fiber), then fall through
-      // to the shared cleanup below — stop(ref)'s guarantee cancels whatever
-      // remains. A cancelled node never retries: the completed signal makes
-      // any Restart retry of this node fail instantly with the same error.
-      _ <- raceResult match
-        case Right(Left(_)) =>
-          logger.info(s"Flow '$flowName' node '$nodeId' cancelled by user — stopping agent")
-          (ref ! AgentCommand.Stop("Flow cancelled by user")).void
-        case Right(Right(_)) =>
-          logger.info(s"Flow '$flowName' node '$nodeId' aborted (sibling branch failed) — stopping agent")
-          (ref ! AgentCommand.Stop(AbortSentinel)).void
-        case Left(_) => IO.unit
-      eventResult = raceResult match
-        case Left(r) => r
-        case Right(Left(_)) => Left(FailOutcome("Flow cancelled by user", retryable = false))
-        case Right(Right(_)) => Left(FailOutcome(AbortSentinel, retryable = false))
-      _ <- resources.agentRegistry.update(_ - sessionId)
-      _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
-      _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
+      yield (bridge, ref, cancelled)).use { case (bridge, ref, cancelled) =>
+        for
+          // P1: register flow node agents in the unified AgentRegistry — this was
+          // previously missing entirely, so permission answers routed to a ghost
+          // root agent and were silently dropped (D2 for dag-* sessions).
+          // 面板树批（2026-10-29 ①）：parentSessionId = 触发宿主会话——activeAgents
+          // 快照 face 的派生树认领键（agentStart 入口帧同值注入）。
+          _ <- NodeRunner.registerAgent(
+            resources,
+            id = sessionId,
+            ref = ref,
+            kind = AgentKind.Flow,
+            rootSessionId = effectiveRootSessionId,
+            parentRef = parentAgentRef,
+            parentSessionId = callerSessionId
+          )
+          // Persist direct ownership: AgentRegistry is in-memory and the entry is
+          // removed at node completion, while delegate diff rollups happen later.
+          _ <- IO
+            .blocking {
+              if callerSessionId.nonEmpty then
+                nebflow.core.delegate.FlowNodeOwnership.register(sessionId, callerSessionId)
+            }
+            .handleErrorWith(e => logger.warn(s"Flow node ownership record failed for $sessionId: ${e.getMessage}"))
+          // Send input with the bridge actor as replyTo（无感恢复批：blocks 在场 = 工具边界续跑）
+          _ <- (ref ! AgentCommand.UserInput(
+            text = inputText,
+            replyTo = Some(bridge.replyTo),
+            blocks = inputBlocks
+          )).void
+          // Wait for completion — no wall-clock timeout (see method doc). The only
+          // competing events are the user's cancel signal and the internal
+          // fail-fast signal (a sibling parallel branch failed under onFail=abort).
+          cancelSig <- nebflow.core.flow.RunningFlowRegistry.cancelSignal(instanceId)
+          abortSig <- nebflow.core.flow.RunningFlowRegistry.abortSignal(instanceId)
+          raceResult <- IO.race(bridge.result, IO.race(cancelSig.get, abortSig.get))
+          _ <- cancelled.set(raceResult.isRight)
+          // Pierce: tell the agent to abandon its in-flight turn first
+          // (Stop → cancelCurrentTurn aborts the turn fiber), then fall through
+          // to the shared cleanup below — stop(ref)'s guarantee cancels whatever
+          // remains. A cancelled node never retries: the completed signal makes
+          // any Restart retry of this node fail instantly with the same error.
+          _ <- raceResult match
+            case Right(Left(_)) =>
+              logger.info(s"Flow '$flowName' node '$nodeId' cancelled by user — stopping agent")
+              (ref ! AgentCommand.Stop("Flow cancelled by user")).void
+            case Right(Right(_)) =>
+              logger.info(s"Flow '$flowName' node '$nodeId' aborted (sibling branch failed) — stopping agent")
+              (ref ! AgentCommand.Stop(AbortSentinel)).void
+            case Left(_) => IO.unit
+          eventResult = raceResult match
+            case Left(r) => r
+            case Right(Left(_)) => Left(FailOutcome("Flow cancelled by user", retryable = false))
+            case Right(Right(_)) => Left(FailOutcome(AbortSentinel, retryable = false))
+        yield eventResult
+      }
       // ── Session retention (P1 #deck-v6: flow-run node observability) ────
       // Node dag-* sessions are PERSISTED for every terminal outcome — the
       // flow-run panel resolves a node's sessionId by scanning these files
