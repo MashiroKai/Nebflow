@@ -314,6 +314,37 @@ class DelegateStaleRoundTerminalSpec extends CatsEffectSuite:
     }
   }
 
+  test("managed new run does not replay a previous run's pending completion debt") {
+    val system = ActorSystem("managed-stale-debt")
+    val tmp = os.temp.dir()
+    val childSid = "delegate-managed-stale"
+    for
+      resources <- mkResources(system, tmp)
+      parent <- resources.sessionStore.createSession("parent", agentName = Some("Nebula"))
+      _ = mkDelegateRecord(childSid, parent.id, 2, "new-run")
+      _ = writeDebt(childSid, parent.id, "old-run", List(assistantMsg("old report")))
+      _ <- resources.subAgentTaskStore.beginRun(
+        SubAgentTask(childSid, parent.id, "Worker", "work", "test", "running", 0, 1L, None, None, "delegate"),
+        "new-run",
+        parent.id,
+        "nebflow"
+      )
+      parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent")
+      childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parent.id, childEvents)
+      _ <- IO.sleep(200.millis)
+      before <- resources.subAgentTaskStore.findByTaskId(childSid)
+      childCommands <- childEvents.get
+      mails <- terminalMail(parent.id)
+      _ <- system.stopAll
+    yield
+      assertEquals(before.flatMap(_.executionStatus), Some("starting"))
+      assertEquals(childCommands, Nil)
+      assertEquals(mails, Nil)
+    end for
+  }
+
   test("identical reports in a new round do not retain the previous round debt") {
     val childSid = "delegate-identical-report"
     val messages = List(assistantMsg("done"))

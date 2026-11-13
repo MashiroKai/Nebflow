@@ -78,7 +78,7 @@ object ToolResultTtl:
         val ttlCutoff = nowMs - cfg.ttlMinutes.toLong * 60_000L
         var changed = false
         val cleaned = messages.map {
-          case msg @ Message(MessageRole.User, Right(blocks), ts, _) =>
+          case msg @ Message(MessageRole.User, Right(blocks), ts, _, _, _) =>
             var msgChanged = false
             val newBlocks = blocks.map {
               case tr: ContentBlock.ToolResult
@@ -117,7 +117,7 @@ object ToolResultTtl:
    */
   private def compactableToolUseIds(messages: List[Message]): List[String] =
     messages.flatMap {
-      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
+      case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
         blocks.collect {
           case ContentBlock.ToolUse(id, name, _) if CompactableTools.contains(name) => id
         }

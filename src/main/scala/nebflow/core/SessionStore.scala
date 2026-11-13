@@ -7,7 +7,7 @@ import io.circe.parser
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.actor.RootAgentIdentity
+import nebflow.actor.{AgentCommand, RootAgentIdentity}
 import nebflow.core.flow.TurnStateStore
 import nebflow.core.{AtomicJson, SessionStorePort}
 import nebflow.db.format.SessionEnvelope
@@ -134,8 +134,10 @@ class SessionStore(
   tasksDir: os.Path,
   uiCacheMaxEntries: Int = Defaults.UiCacheMaxEntries,
   uiCacheMaxBytes: Long = Defaults.UiCacheMaxBytes,
-  /** db 接线第一阶（C8/D-11）：影子面注入缝（测试/隔离实例显式传句柄；缺省按
-   *  生产默认根判别自开——临时根测试构造 ⇒ 永不开生产根）。 */
+  /**
+   * db 接线第一阶（C8/D-11）：影子面注入缝（测试/隔离实例显式传句柄；缺省按
+   *  生产默认根判别自开——临时根测试构造 ⇒ 永不开生产根）。
+   */
   dbOverride: Option[DbHandle] = None
 ) extends SessionStorePort:
   private val logger = nebflow.shared.NebflowLogger.forName("nebflow.session")
@@ -163,19 +165,23 @@ class SessionStore(
   /** 坏档处置单点：隔离（.corrupt-<ts>）+ WARN；返回隔离副本路径（缺=未能动）。 */
   private def quarantineEvidence(f: os.Path, face: String, why: String): Option[os.Path] =
     try
-      Quarantine.quarantine(f.toNIO, System.currentTimeMillis())
+      Quarantine
+        .quarantine(f.toNIO, System.currentTimeMillis())
         .map { p =>
-          logger.warnSync(s"db-wiring(D-5): $face corrupted ($why) — quarantined to ${p.getFileName}, bytes preserved (坏≠无，处置见各面标签)")
+          logger.warnSync(
+            s"db-wiring(D-5): $face corrupted ($why) — quarantined to ${p.getFileName}, bytes preserved (坏≠无，处置见各面标签)"
+          )
           os.Path(p)
         }
     catch
       case e: Throwable =>
-        logger.warnSync(s"db-wiring(D-5): $face corrupted ($why) AND quarantine FAILED (${e.getMessage}) — file left in place, treated as absent")
+        logger.warnSync(
+          s"db-wiring(D-5): $face corrupted ($why) AND quarantine FAILED (${e.getMessage}) — file left in place, treated as absent"
+        )
         None
 
   /** 整档 JSON 三态读：坏 ⇒ 隔离+WARN ⇒ 调用方缺省值（派生面③起步形）。 */
-  private def readJsonDocThreeState(f: os.Path, face: String,
-    default: => Json = Json.obj()): Json =
+  private def readJsonDocThreeState(f: os.Path, face: String, default: => Json = Json.obj()): Json =
     if !os.exists(f) then default
     else
       Try(parser.parse(os.read(f))) match
@@ -188,8 +194,7 @@ class SessionStore(
           default
 
   /** JSONL 消息列表三态读：坏 ⇒ 隔离+WARN ⇒ Nil（取证面②起步形——字节已保全）。 */
-  private def readMessagesDocThreeState[A](f: os.Path, face: String)(using
-    Decoder[A]): List[A] =
+  private def readMessagesDocThreeState[A](f: os.Path, face: String)(using Decoder[A]): List[A] =
     if !os.exists(f) then Nil
     else
       Try(os.read(f)) match
@@ -208,25 +213,32 @@ class SessionStore(
   private def uiShadow(sessionId: String): IO[List[UiMessage]] =
     dbHandle match
       case Some(h) =>
-        h.readSession(sessionId, SessionEnvelope.StreamUi).map {
-          case ReadResult.Present(sr) =>
-            val frames = sr.records.flatMap(_.payload.as[UiMessage].toOption)
-            // 连续同帧折叠：跨实例（重启）影子基线是进程内的，新实例首刷可能把
-            // 已有帧重追一份——append-log 里相邻重复 = 重追工件，非新信息（已知
-            // 边界：全字段逐字相同且相邻的真实重复会被折叠，UI 语义无损）。
-            val collapsed = frames.foldLeft(List.empty[UiMessage]) { (acc, m) =>
-              if acc.lastOption.contains(m) then acc else acc :+ m
-            }
-            if frames.nonEmpty then
-              logger.warnSync(s"db-wiring(D-11): ui history for $sessionId recovered from db shadow " +
-                s"(${collapsed.size} frame(s), ${frames.size - collapsed.size} re-append artifact(s) folded)")
-            collapsed
-          case ReadResult.Corrupt(kind, ev) =>
-            logger.warnSync(s"db-wiring(D-5): db ui shadow itself corrupt ($kind @ ${ev.getFileName}) — proceeding without shadow")
-            Nil
-          case ReadResult.Absent() => Nil
-        }.handleErrorWith(e =>
-          logger.warn(s"db-wiring: ui shadow read failed for $sessionId: ${e.getMessage}").as(Nil))
+        h.readSession(sessionId, SessionEnvelope.StreamUi)
+          .map {
+            case ReadResult.Present(sr) =>
+              val frames = sr.records.flatMap(_.payload.as[UiMessage].toOption)
+              // 连续同帧折叠：跨实例（重启）影子基线是进程内的，新实例首刷可能把
+              // 已有帧重追一份——append-log 里相邻重复 = 重追工件，非新信息（已知
+              // 边界：全字段逐字相同且相邻的真实重复会被折叠，UI 语义无损）。
+              val collapsed = frames.foldLeft(List.empty[UiMessage]) { (acc, m) =>
+                if acc.lastOption.contains(m) then acc else acc :+ m
+              }
+              if frames.nonEmpty then
+                logger.warnSync(
+                  s"db-wiring(D-11): ui history for $sessionId recovered from db shadow " +
+                    s"(${collapsed.size} frame(s), ${frames.size - collapsed.size} re-append artifact(s) folded)"
+                )
+              collapsed
+            case ReadResult.Corrupt(kind, ev) =>
+              logger.warnSync(
+                s"db-wiring(D-5): db ui shadow itself corrupt ($kind @ ${ev.getFileName}) — proceeding without shadow"
+              )
+              Nil
+            case ReadResult.Absent() => Nil
+          }
+          .handleErrorWith(e =>
+            logger.warn(s"db-wiring: ui shadow read failed for $sessionId: ${e.getMessage}").as(Nil)
+          )
       case None => IO.pure(Nil)
 
   /** UI 帧写穿（C8）：只追加缓存增量（相对上次影子基线）；best-effort。 */
@@ -238,10 +250,12 @@ class SessionStore(
           val fresh = msgs.drop(n)
           if fresh.isEmpty then IO.unit
           else
-            fresh.traverse_(m =>
-              h.appendMessage(sessionId, SessionEnvelope.StreamUi, m.asJson)).void
+            fresh
+              .traverse_(m => h.appendMessage(sessionId, SessionEnvelope.StreamUi, m.asJson))
+              .void
               .handleErrorWith(e =>
-                logger.warn(s"db-wiring(C8): ui shadow append failed for $sessionId: ${e.getMessage}"))
+                logger.warn(s"db-wiring(C8): ui shadow append failed for $sessionId: ${e.getMessage}")
+              )
               *> uiShadowBaseline.set(base.updated(sessionId, msgs.size))
         }
       case None => IO.unit
@@ -418,14 +432,17 @@ class SessionStore(
     Ref.unsafe[IO, Map[String, List[Message]]](Map.empty)
   private val msgFlushDelayMs: Long = 2000L
   private val messageWriteGateRef: Ref[IO, Option[Semaphore[IO]]] = Ref.unsafe(None)
+
   private def messageWriteGate: IO[Semaphore[IO]] =
     messageWriteGateRef.get.flatMap {
       case Some(gate) => IO.pure(gate)
-      case None => Semaphore[IO](1).flatMap(fresh =>
-        messageWriteGateRef.modify {
-          case Some(existing) => (Some(existing), existing)
-          case None => (Some(fresh), fresh)
-        })
+      case None =>
+        Semaphore[IO](1).flatMap(fresh =>
+          messageWriteGateRef.modify {
+            case Some(existing) => (Some(existing), existing)
+            case None => (Some(fresh), fresh)
+          }
+        )
     }
 
   // Test-only scheduling seam, invoked while the message-write gate is held.
@@ -666,7 +683,9 @@ class SessionStore(
               // db 接线收编（D-5 实测 :513 形）：坏档不再静默取 Nil——三态读
               // （取证面②：隔离后按缺席 ⇒ "Recovered Session" 命名，字节已保全）。
               val name = readMessagesDocThreeState[Message](f, s"orphan-recovery ${f.last}")
-                .find(_.role == MessageRole.User).map(_.textContent.take(50)).getOrElse("Recovered Session")
+                .find(_.role == MessageRole.User)
+                .map(_.textContent.take(50))
+                .getOrElse("Recovered Session")
               // Restore folderId from sidecar (if it exists)
               val folderId = readMetaSidecar(id)
               // T-2/R1 = C（2026-09-12 作者裁定 + 设计 §10 #13 / A-10）：恢复路径
@@ -881,7 +900,9 @@ class SessionStore(
    * 零调用（行为零漂移）。崩溃语义见 spec §D3 崩溃窗口分析：读者见旧或见新。
    */
   def durableSwapMessages(targetId: String, msgs: List[Message]): IO[Unit] =
-    messageWriteGate.flatMap(_.permit.use { _ =>
+    messageWriteGate.flatMap(_.permit.use(_ => durableSwapMessagesLocked(targetId, msgs)))
+
+  private def durableSwapMessagesLocked(targetId: String, msgs: List[Message]): IO[Unit] =
     val now = System.currentTimeMillis()
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
       val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
@@ -900,8 +921,94 @@ class SessionStore(
           notifySessionChanged(targetId)
       }
     }
+  end durableSwapMessagesLocked
+
+  /**
+   * Durably append a message, deduplicating only a supplied messageId within its
+   * optional runId and target session. Returns false when that identity exists.
+   * Read/write failures propagate without publishing an unpersisted snapshot.
+   */
+  def appendDurableMessage(targetId: String, message: Message): IO[Boolean] =
+    messageWriteGate.flatMap(_.permit.use { _ =>
+      IO.uncancelable { _ =>
+        pendingMsgs.get.flatMap { pending =>
+          val current = pending.get(targetId) match
+            case Some(msgs) => IO.pure(msgs)
+            case None =>
+              IO.blocking {
+                val file = sessionFile(targetId)
+                if !os.exists(file) then Nil
+                else decode[List[Message]](os.read(file)).fold(throw _, identity)
+              }
+          current.flatMap { msgs =>
+            val duplicate = message.messageId.exists { id =>
+              msgs.exists(m => m.messageId.contains(id) && m.runId == message.runId)
+            }
+            if duplicate then
+              // A pending duplicate must reach disk before acknowledging it.
+              if pending.contains(targetId) then durableSwapMessagesLocked(targetId, msgs).as(false)
+              else IO.pure(false)
+            else durableSwapMessagesLocked(targetId, msgs :+ message).as(true)
+          }
+        }
+      }
     })
-  end durableSwapMessages
+  end appendDurableMessage
+
+  private def terminalEnvelopeFile(sessionId: String, runId: String): os.Path =
+    require(
+      sessionId.nonEmpty && sessionId != "." && sessionId != ".." &&
+        !sessionId.contains('/') && !sessionId.contains('\\'),
+      "Invalid terminal envelope session id"
+    )
+    require(runId.nonEmpty, "Terminal envelope run id must not be empty")
+    val safeRun = java.util.Base64.getUrlEncoder
+      .withoutPadding()
+      .encodeToString(runId.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    sessionsDir / sessionId / s"terminal-$safeRun.json"
+
+  /** Persist the exact terminal event separately from model-visible message history. */
+  def saveTerminalEnvelope(sessionId: String, runId: String, event: AgentCommand.ExternalEvent): IO[String] =
+    messageWriteGate.flatMap(_.permit.use { _ =>
+      IO.blocking {
+        val file = terminalEnvelopeFile(sessionId, runId)
+        val json = Json.obj(
+          "source" -> event.source.asJson,
+          "eventType" -> event.eventType.asJson,
+          "payload" -> event.payload.asJson,
+          "metadata" -> Json.fromJsonObject(event.metadata),
+          "correlationId" -> event.correlationId.asJson,
+          "blocks" -> event.blocks.asJson
+        )
+        if os.exists(file) then
+          val existing = parser.parse(os.read(file)).fold(throw _, identity)
+          if existing != json then
+            throw new IllegalStateException(s"Conflicting terminal envelope for session $sessionId, run $runId")
+        else
+          AtomicJson.writeSyncDurable(file, json.noSpaces)
+          AtomicJson.forceParentDir(file)
+        file.toString
+      }
+    })
+
+  /** Missing envelopes return None; unreadable or malformed envelopes fail explicitly. */
+  def loadTerminalEnvelope(sessionId: String, runId: String): IO[Option[AgentCommand.ExternalEvent]] =
+    IO.blocking {
+      val file = terminalEnvelopeFile(sessionId, runId)
+      if !os.exists(file) then None
+      else
+        val decoded = for
+          json <- parser.parse(os.read(file))
+          cursor = json.hcursor
+          source <- cursor.get[String]("source")
+          eventType <- cursor.get[String]("eventType")
+          payload <- cursor.get[String]("payload")
+          metadata <- cursor.get[io.circe.JsonObject]("metadata")
+          correlationId <- cursor.get[Option[String]]("correlationId")
+          blocks <- cursor.get[Option[List[ContentBlock]]]("blocks")
+        yield AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, blocks)
+        Some(decoded.fold(throw _, identity))
+    }
 
   def flushIndex: IO[Unit] = saveIndex
 
@@ -942,6 +1049,7 @@ class SessionStore(
             os.exists(sessionsDir / target)
           }.handleErrorWith(_ => IO.pure(false))
       }
+  end sessionRecordExists
 
   // Patterns mirror the generators: DelegateTool.scala `delegate-<agent>-<uuid8>`,
   // SubTaskTool.scala `subtask-<uuid8>`, FlowDagExecutor.scala
@@ -1237,7 +1345,8 @@ class SessionStore(
             // The persisted ACTIVE session is tried first: claiming a different
             // agentless session and then re-homing activeId (ensureActiveAgentSession)
             // used to silently strand the user on another conversation at boot.
-            sessions.find(s => s.id == activeId && s.agentName.isEmpty)
+            sessions
+              .find(s => s.id == activeId && s.agentName.isEmpty)
               .orElse(sessions.find(_.agentName.isEmpty)) match
               case Some(legacy) =>
                 val claimed = legacy.copy(agentName = Some(agentName), name = agentName)
@@ -1708,7 +1817,7 @@ class SessionStore(
                   Left(()) // Corrupt（已隔离）：走影子恢复腿
           }.flatMap {
             case Right(msgs) => IO.pure(msgs)
-            case Left(_)     => uiShadow(id)
+            case Left(_) => uiShadow(id)
           }.flatTap(msgs =>
             // 影子基线随读面回填：跨实例（重启/新 SessionStore）从盘上 Present 值
             // 续追 ⇒ 不把已影子化帧二次追加（幂等基线，非全量重写）。
@@ -1840,7 +1949,13 @@ class SessionStore(
    * 加不减）。调用面纪律：唯一传 true 的是 `WebSocketRoutes` 的 `done`/`agentDone`
    * 轮终态落盘点；其余（无）调用保持缺省 false ⇒ 形态不变。
    */
-  def updateLastAiMeta(sessionId: String, durationMs: Option[Long], model: Option[String], timestamp: Long, markTerminal: Boolean = false): IO[Unit] =
+  def updateLastAiMeta(
+    sessionId: String,
+    durationMs: Option[Long],
+    model: Option[String],
+    timestamp: Long,
+    markTerminal: Boolean = false
+  ): IO[Unit] =
     getAppendSemaphore(sessionId).flatMap { sem =>
       sem.permit.use { _ =>
         loadUiMessages(sessionId).flatMap { existing =>
@@ -2022,21 +2137,21 @@ class SessionStore(
 
   private def flushOneDirtyMsg: IO[Option[String]] =
     messageWriteGate.flatMap(_.permit.use { _ =>
-    dirtyMsgSessions
-      .modify { set =>
-        set.headOption match
-          case Some(sid) => (set - sid, Some(sid))
-          case None => (set, None)
-      }
-      .flatMap {
-        case Some(sid) =>
-          pendingMsgs.get.flatMap { msgs =>
-            (beforeDirtyMessageWrite(sid) *>
-              saveSessionMessagesLocked(sid, msgs.getOrElse(sid, Nil)).as(Some(sid)))
-              .handleErrorWith(e => dirtyMsgSessions.update(_ + sid) *> IO.raiseError(e))
-          }
-        case None => IO.pure(None)
-      }
+      dirtyMsgSessions
+        .modify { set =>
+          set.headOption match
+            case Some(sid) => (set - sid, Some(sid))
+            case None => (set, None)
+        }
+        .flatMap {
+          case Some(sid) =>
+            pendingMsgs.get.flatMap { msgs =>
+              (beforeDirtyMessageWrite(sid) *>
+                saveSessionMessagesLocked(sid, msgs.getOrElse(sid, Nil)).as(Some(sid)))
+                .handleErrorWith(e => dirtyMsgSessions.update(_ + sid) *> IO.raiseError(e))
+            }
+          case None => IO.pure(None)
+        }
     })
 
   private def drainDirtyMsgs: IO[Unit] =
@@ -2050,11 +2165,28 @@ class SessionStore(
     msgFlushFiber.set(None) *>
       drainDirtyMsgs.handleErrorWith(e => logger.warn(s"Message flush failed: ${e.getMessage}")) *>
       dirtyMsgSessions.get.flatMap { remaining =>
-      if remaining.nonEmpty then scheduleMsgFlush else IO.unit
-    }
+        if remaining.nonEmpty then scheduleMsgFlush else IO.unit
+      }
 
   /** Flush all pending message writes to disk. Call at durability points (session switch, shutdown). */
   def flushPendingMessages: IO[Unit] = drainDirtyMsgs
+
+  /** External UI history is a read-only projection of the authoritative transcript. */
+  private def loadHistoryMessages(sessionId: String): IO[List[UiMessage]] =
+    if sessionId.startsWith(nebflow.core.executor.ExternalSessionRunner.SessionPrefix) then
+      loadMessagesForSession(sessionId).map(_.map { message =>
+        message.role match
+          case MessageRole.User =>
+            UiMessage.User(
+              message.textContent,
+              injected = message.source.isDefined,
+              timestamp = message.timestamp,
+              source = message.source
+            )
+          case MessageRole.Assistant => UiMessage.Ai(message.textContent, timestamp = message.timestamp)
+          case MessageRole.System => UiMessage.System(message.textContent)
+      })
+    else loadUiMessages(sessionId)
 
   /**
    * Get a page of UI messages for a session.
@@ -2063,7 +2195,7 @@ class SessionStore(
    * For "load latest", pass offset = max(0, total - limit).
    */
   def getUiMessages(sessionId: String, offset: Int, limit: Int): IO[(List[UiMessage], Int)] =
-    loadUiMessages(sessionId).map { all =>
+    loadHistoryMessages(sessionId).map { all =>
       val total = all.size
       val start = Math.min(offset, total)
       // limit <= 0 means "no limit" — return everything from the offset.
@@ -2082,7 +2214,7 @@ class SessionStore(
     limit: Int,
     beforeIndex: Option[Int]
   ): IO[(List[UiMessage], Int, Int, Boolean)] =
-    loadUiMessages(sessionId).map { all =>
+    loadHistoryMessages(sessionId).map { all =>
       val total = all.size
       beforeIndex match
         case None =>

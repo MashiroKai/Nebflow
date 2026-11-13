@@ -949,6 +949,25 @@ private[gateway] object PresenceRoutes:
             }
         }
 
+      // Authenticated console scope, with no private content broadcast through WsHub.
+      case req @ GET -> Root / "subagent-tasks" / rootSessionId =>
+        withAuth(req) {
+          if !nebflow.core.delegate.DelegateRegistry.validId(rootSessionId) then
+            BadRequest(Json.obj("error" -> "invalid session id".asJson))
+          else
+            sharedResources.agentRegistry.get.flatMap { registry =>
+              sharedResources.subAgentTaskStore.findAllTasks().flatMap { tasks =>
+                val rows = ChainsReadFace.scopedTaskRows(rootSessionId, tasks, registry)
+                Ok(
+                  Json.obj(
+                    "rootSessionId" -> rootSessionId.asJson,
+                    "tasks" -> rows.map(ChainsReadFace.taskVisibilityJson).asJson
+                  )
+                )
+              }
+            }
+        }
+
       // Session-scoped hierarchy projection: never expose prompts or errors on this new read face.
       case req @ GET -> Root / "session-children" / id =>
         withAuth(req) {
@@ -1161,6 +1180,7 @@ private[gateway] object PresenceRoutes:
                     )
                   yield body)
             yield result
+            end for
         }
 
       // PUT /agents/:name/model — write the agent's own model chain (the /model

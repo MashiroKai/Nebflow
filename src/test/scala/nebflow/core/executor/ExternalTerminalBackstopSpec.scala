@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.AgentLibrary
-import nebflow.agent.CompactionQueueStore
+import nebflow.core.mail.SessionMailbox
 import nebflow.agent.SharedResources
 import nebflow.agent.SubAgentTaskStore
 import nebflow.core.FileChangeTracker
@@ -19,15 +19,7 @@ import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
-/**
- * 完成必回报（P5 静默完成治理第二波）· 外部腿终态兜底两钉：
- *
- *  - parentRef=None / 直投失败 ≠ 回执可丢：终态 ExternalEvent 落父会话 F2 注入队
- *    （[[CompactionQueueStore]]，correlationId=sessionId 幂等），父会话下次 spawn
- *    时 RecoverPersistedQueues 重放——「不可投递」升级为「延迟可达」（内部腿
- *    监督链自动恢复批 2026-10-22 同款机制）；
- *  - 父会话真删（盘上无记录，读数故障 fail-open）= 跳过（不产生无人读的垃圾文件）。
- */
+/** Durable external completion delivery, including parents without a live actor. */
 class ExternalTerminalBackstopSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 60.seconds
@@ -87,32 +79,50 @@ class ExternalTerminalBackstopSpec extends CatsEffectSuite:
     finally
       os.remove.all(tmp)
 
-  test("parentRef=None ⇒ completed receipt lands on the parent F2 queue (idempotent); gone parent ⇒ skipped") {
+  test("external receipts are durable and idempotent even when the parent has no live actor") {
     withTempDataRoot {
       for
         resources <- fakeResources
         parentSid = "backstop-parent"
         sid = "external-test-abc12345"
-        // 父会话在场（盘上记录在 = F2 兜底可达）
+        // A persisted parent does not require a live actor.
         _ <- resources.sessionStore.getOrCreateSession(parentSid, "backstop parent")
-        _ <- ExternalSessionRunner.notifyParent(spec(parentSid, resources), sid, ExternalSessionRunner.Outcome.Completed, "the final text", None)
-        queued1 <- CompactionQueueStore.load(parentSid)
-        // 重入幂等（correlationId 同键不重排）
-        _ <- ExternalSessionRunner.notifyParent(spec(parentSid, resources), sid, ExternalSessionRunner.Outcome.Completed, "the final text", None)
-        queued2 <- CompactionQueueStore.load(parentSid)
-        // 父会话已删（盘上无记录）= 跳过
-        _ <- ExternalSessionRunner.notifyParent(spec("gone-parent", resources), sid, ExternalSessionRunner.Outcome.Completed, "orphan text", None)
-        queuedGone <- CompactionQueueStore.load("gone-parent")
+        _ <- ExternalSessionRunner.notifyParent(
+          spec(parentSid, resources),
+          sid,
+          ExternalSessionRunner.Outcome.Completed,
+          "the final text",
+          None
+        )
+        queued1 <- SessionMailbox.scanPending(parentSid)
+        // The same stable notification is not inserted twice.
+        _ <- ExternalSessionRunner.notifyParent(
+          spec(parentSid, resources),
+          sid,
+          ExternalSessionRunner.Outcome.Completed,
+          "the final text",
+          None
+        )
+        queued2 <- SessionMailbox.scanPending(parentSid)
+        // An unavailable parent retains a claimable result.
+        _ <- ExternalSessionRunner.notifyParent(
+          spec("gone-parent", resources),
+          sid,
+          ExternalSessionRunner.Outcome.Completed,
+          "orphan text",
+          None
+        )
+        queuedGone <- SessionMailbox.scanPending("gone-parent")
         _ <- resources.actorSystem.stopAll.attempt.void
       yield
-        val events1 = queued1.map(_.events).getOrElse(Nil)
+        val events1 = queued1.map(_.event)
         assertEquals(events1.size, 1, s"exactly one queued terminal, got: ${events1.map(_.eventType)}")
         val e = events1.head
         assertEquals(e.eventType, "completed")
         assertEquals(e.correlationId, Some(sid))
         assert(e.payload.contains("the final text"), s"payload must survive verbatim, got: ${e.payload.take(120)}")
-        assertEquals(queued2.map(_.events).getOrElse(Nil).size, 1, "re-entry must stay idempotent (single copy)")
-        assertEquals(queuedGone, None, "a deleted parent session must not receive junk files")
+        assertEquals(queued2.size, 1, "re-entry must stay idempotent (single copy)")
+        assertEquals(queuedGone.size, 1, "a missing parent must not silently lose an accepted result")
     }
   }
 

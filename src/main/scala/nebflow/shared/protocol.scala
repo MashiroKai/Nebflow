@@ -55,7 +55,9 @@ case class Message(
    * None = normal user-typed message (backward compatible: old persisted
    * messages decode with source=None).
    */
-  source: Option[String] = None
+  source: Option[String] = None,
+  messageId: Option[String] = None,
+  runId: Option[String] = None
 ):
 
   def textContent: String = content match
@@ -261,7 +263,9 @@ given Encoder[Message] = Encoder.instance { msg =>
     case Left(text) => Json.obj("role" -> msg.role.name.asJson, "content" -> text.asJson)
     case Right(blocks) => Json.obj("role" -> msg.role.name.asJson, "content" -> blocks.asJson, "blocks" -> true.asJson)
   val withTs = if msg.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> msg.timestamp.asJson)) else base
-  msg.source.fold(withTs)(s => withTs.deepMerge(Json.obj("source" -> s.asJson)))
+  val withSource = msg.source.fold(withTs)(s => withTs.deepMerge(Json.obj("source" -> s.asJson)))
+  val withMessageId = msg.messageId.fold(withSource)(id => withSource.deepMerge(Json.obj("messageId" -> id.asJson)))
+  msg.runId.fold(withMessageId)(id => withMessageId.deepMerge(Json.obj("runId" -> id.asJson)))
 }
 
 given Decoder[Message] = Decoder.instance { cursor =>
@@ -276,7 +280,9 @@ given Decoder[Message] = Decoder.instance { cursor =>
       case _ => cursor.downField("content").as[String].map(Left(_))
     ts <- cursor.downField("timestamp").as[Option[Long]]
     source <- cursor.downField("source").as[Option[String]]
-  yield Message(role, content, ts.getOrElse(0L), source)
+    messageId <- cursor.downField("messageId").as[Option[String]]
+    runId <- cursor.downField("runId").as[Option[String]]
+  yield Message(role, content, ts.getOrElse(0L), source, messageId, runId)
 }
 
 // ===== UI Messages (for frontend rendering) =====

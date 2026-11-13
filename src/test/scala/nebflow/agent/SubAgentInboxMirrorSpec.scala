@@ -388,15 +388,21 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // AgentProcessing 5 = 16（16 = 15 调用 + 1 def）。本批**零调用点增删**
     // （只加了一个缺省参数 `dedup`，不改 `emitInjectedUserEvent(` 的出现面）
     // ⇒ 改前改后同为 16，纯基线重钉非放宽。
-    assertEquals(
-      "emitInjectedUserEvent\\(".r.findAllMatchIn(agentActor).size +
-        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFinishTurn).size +
-        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFrozen).size +
-        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentIdle).size +
-        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentProcessing).size,
-      16,
-      "`emitInjectedUserEvent(` occurrence-count drift (expected 15 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
+    // Pin each baseline call surface separately so additions and removals cannot cancel out.
+    val expectedOccurrences = List(
+      ("AgentActor", agentActor, 3),
+      ("AgentFinishTurn", agentFinishTurn, 2),
+      ("AgentFrozen", agentFrozen, 1),
+      ("AgentIdle", agentIdle, 4),
+      ("AgentProcessing", agentProcessing, 4)
     )
+    expectedOccurrences.foreach { case (name, source, expected) =>
+      assertEquals(
+        "emitInjectedUserEvent\\s*\\(".r.findAllMatchIn(source).size,
+        expected,
+        s"$name injection call surface drifted from the verified baseline"
+      )
+    }
     val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
     val applyStart = agentActor.indexOf("\n  def apply(", emitStart)
     assert(emitStart > 0 && applyStart > emitStart, "发射点边界定位失败")

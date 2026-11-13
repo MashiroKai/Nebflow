@@ -153,13 +153,13 @@ class AnthropicAdapter(
   private def pairToolResults(messages: List[Message]): List[Message] =
     val seen = scala.collection.mutable.HashSet.empty[String]
     messages.map {
-      case msg @ Message(MessageRole.Assistant, Right(blocks), _, _) =>
+      case msg @ Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
         blocks.foreach {
           case ContentBlock.ToolUse(id, _, _) => seen += id
           case _ => ()
         }
         msg
-      case msg @ Message(MessageRole.User, Right(blocks), _, _) =>
+      case msg @ Message(MessageRole.User, Right(blocks), _, _, _, _) =>
         val paired = blocks.filter {
           case ContentBlock.ToolResult(toolUseId, _, _) => seen.contains(toolUseId)
           case _ => true
@@ -262,11 +262,12 @@ class AnthropicAdapter(
     // 不用 `init :+ last` 模式：Scala 3 判不全该模式（E029）→ -Werror 红。
     if messages.isEmpty then Nil
     else
-      val init   = messages.init
+      val init = messages.init
       val marked = markLastCacheableBlock(messages.last)
       if marked == messages.last then messages else init :+ marked
 
-  /** Append ephemeral request context after the cached history without persisting it.
+  /**
+   * Append ephemeral request context after the cached history without persisting it.
    * Tool results must remain the first blocks in their user message.
    *
    * cache-warmup 批（2026-11-06）：临时段 = requestOnlyContext（REQUEST-ONLY 提醒）
@@ -300,7 +301,7 @@ class AnthropicAdapter(
         JsonObject.fromIterable(
           msg.asObject.map(_.toList).getOrElse(Nil).map {
             case ("content", _) => "content" -> newContent
-            case (k, v)         => k         -> v
+            case (k, v) => k -> v
           }
         )
       )
@@ -330,6 +331,7 @@ class AnthropicAdapter(
             )
           )
       case _ => msg // 无 content / 非 block 非串 ⇒ 原样返回（不构造坏 wire）
+    end match
   end markLastCacheableBlock
 
   /**
@@ -371,9 +373,9 @@ class AnthropicAdapter(
 
   private def hasAssistantWithoutThinking(messages: List[Message]): Boolean =
     messages.exists {
-      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
+      case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
         !blocks.exists(_.isInstanceOf[ContentBlock.Thinking])
-      case Message(MessageRole.Assistant, Left(_), _, _) => true
+      case Message(MessageRole.Assistant, Left(_), _, _, _, _) => true
       case _ => false
     }
 
@@ -446,7 +448,7 @@ class AnthropicAdapter(
    */
   private[providers] def stripWire(kind: ThinkingKind): Json = kind match
     case ThinkingKind.EffortAnthropic => offWire(kind)
-    case _                             => Json.obj()
+    case _ => Json.obj()
 
   private def offWire(kind: ThinkingKind): Json = kind match
     case ThinkingKind.Budget => Json.obj() // off → 省略键（旧形态 "thinking": null 由此消灭）
@@ -600,12 +602,18 @@ class AnthropicAdapter(
     // cache-warmup 批（2026-11-06）：持久/临时分界显式化——断点只钉**持久历史**
     // 尾块；REQUEST-ONLY 提醒段与 systemDynamic 作为临时尾段排在断点之后（顺序 =
     // contextMsg → branchMsg → maintenanceMsg → systemDynamic，与旧拼接序一致）。
-    val persisted      = withTailCacheBreakpoint(toAnthropicMessages(params.messages))
+    val persisted = withTailCacheBreakpoint(toAnthropicMessages(params.messages))
     val ephemeralTexts = params.requestOnlyContext.map(_.textContent) ++ params.systemDynamic.toList
-    val ephemeralWire  =
+    val ephemeralWire =
       ephemeralTexts.filter(_.nonEmpty) match
-        case Nil   => Nil
-        case texts => List(Json.obj("role" -> "user".asJson, "content" -> Json.fromValues(texts.map(t => Json.obj("type" -> "text".asJson, "text" -> t.asJson)))))
+        case Nil => Nil
+        case texts =>
+          List(
+            Json.obj(
+              "role" -> "user".asJson,
+              "content" -> Json.fromValues(texts.map(t => Json.obj("type" -> "text".asJson, "text" -> t.asJson)))
+            )
+          )
     val base = Json.obj(
       "model" -> params.model.asJson,
       // cache-hit 批（2026-11-06）：消息尾增量 cache 断点（见
@@ -632,11 +640,13 @@ class AnthropicAdapter(
         )
       case (Some(sid), _) => withThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
       case (_, Some(aid)) => withThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _              => withThinking
+      case _ => withThinking
     // 可归因观测（cache-warmup 批）：最终 wire 装配点采指纹（辅助面 sessionId=None
     // 在 observeWire 内零采集；指纹无正文，见 [[CacheAttribution]]）。
     CacheAttribution.observeWire("anthropic", params, providerId, persisted, ephemeralWire)
     body
+
+  end bodyOf
 
   /**
    * 降级重试用的参数：**显式离开思考模式**。
@@ -717,6 +727,7 @@ class AnthropicAdapter(
                   case Right(json) => IO.pure(parseNonStreamingResponse(json, p))
               }
       }
+    end attempt
 
     // 单 provider 失败不许打死整批（作者令 17:45 第 3 条）：形状可自愈的一类
     // 失败先就地降级重试一次，再谈向上层抛（届时才轮到 fallback 换腿）。
@@ -755,7 +766,10 @@ class AnthropicAdapter(
         t.contains("image") || t.contains("tool_result")
       then None
       else
-        b.hcursor.downField("text").as[String].toOption
+        b.hcursor
+          .downField("text")
+          .as[String]
+          .toOption
           .orElse(b.hcursor.downField("content").focus.filter(_.isString).flatMap(_.asString))
     }
 
@@ -808,7 +822,10 @@ class AnthropicAdapter(
     content.exists { b =>
       val t = b.hcursor.downField("type").as[String].toOption.getOrElse("")
       (t.contains("thinking") || t.contains("reasoning")) &&
-      b.hcursor.downField("thinking").as[String].toOption
+      b.hcursor
+        .downField("thinking")
+        .as[String]
+        .toOption
         .orElse(b.hcursor.downField("reasoning_content").as[String].toOption)
         .orElse(b.hcursor.downField("text").as[String].toOption)
         .exists(_.trim.nonEmpty)
@@ -855,14 +872,16 @@ class AnthropicAdapter(
     attempt(params).handleErrorWith {
       case e: sttp.client4.HttpError[?]
           if WireShape.isThinkingPassbackRejection(e.statusCode.code, Option(e.body).map(_.toString).getOrElse("")) =>
-        Stream.eval(
-          nebflow.shared.NebflowLogger
-            .forName("nebflow.llm.anthropic")
-            .warn(
-              s"thinking-passback rejection — degraded retry with thinking disabled: " +
-                WireShape.routeLine(providerId, params.model)
-            )
-        ).drain ++ attempt(thinkingOffParams(params))
+        Stream
+          .eval(
+            nebflow.shared.NebflowLogger
+              .forName("nebflow.llm.anthropic")
+              .warn(
+                s"thinking-passback rejection — degraded retry with thinking disabled: " +
+                  WireShape.routeLine(providerId, params.model)
+              )
+          )
+          .drain ++ attempt(thinkingOffParams(params))
       case other => Stream.raiseError(other)
     }
 
@@ -958,7 +977,7 @@ class AnthropicAdapter(
                   // thinking/reasoning* → ThinkingDelta，都不带才真丢（记 WARN）。
                   val delta = json.hcursor.downField("delta")
                   val degraded = WireShape.classifyBlock(delta.focus.getOrElse(Json.obj())) match
-                    case WireShape.Block.Text(t)      => List(StreamChunk.TextDelta(t))
+                    case WireShape.Block.Text(t) => List(StreamChunk.TextDelta(t))
                     case WireShape.Block.Thinking(t, _) => List(StreamChunk.ThinkingDelta(t))
                     case WireShape.Block.Opaque(_) =>
                       nebflow.shared.NebflowLogger
@@ -995,7 +1014,7 @@ class AnthropicAdapter(
                   // 未知块类型：带正文就以 TextDelta 送出（保内容），
                   // 其余跳过——**不抛错、不影响后续帧**。
                   WireShape.classifyBlock(json.hcursor.downField("content_block").focus.getOrElse(Json.obj())) match
-                    case WireShape.Block.Text(t)        => IO.pure(List(StreamChunk.TextDelta(t)))
+                    case WireShape.Block.Text(t) => IO.pure(List(StreamChunk.TextDelta(t)))
                     case WireShape.Block.Thinking(t, s) =>
                       IO.pure(StreamChunk.ThinkingDelta(t) :: s.toList.map(StreamChunk.ThinkingSignature.apply))
                     case WireShape.Block.Opaque(k) =>

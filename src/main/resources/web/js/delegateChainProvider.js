@@ -21,7 +21,9 @@
 // 纪律：本件零用户可见文案（无 locale 触碰）；读取口异常一律 fail-soft（镜像保旧值
 // /返回 null，绝不崩渲染面）；mirror 首刷前 = 空行集（与 stub 默认空态同观感）。
 
-import { onMessage, onReconnect } from './ws.js';
+import { onMessage, onReconnect, setDurableTaskFrameObserver } from './ws.js';
+import state from './state.js';
+import { observeTaskRevision, taskRevision } from './subagentRevision.js';
 import { EVENTS } from './events.js';
 import { authHeaders } from './flowHelpers.js';
 import {
@@ -49,6 +51,89 @@ function rowKey(r) {
 
 /** @type {{rows: any[], chains: Map<string, any>, seq: number}} 本地镜像（同步读）。 */
 const mirror = { rows: [], chains: new Map(), seq: 0 };
+// These are projections and observed durable watermarks, not another task registry.
+const scopedTasks = new Map();
+const observedTasks = new Map();
+const taskRequests = new Map();
+const taskListeners = new Set();
+let taskAuthEpoch = 0;
+
+export function listScopedTasks(rootSessionId) {
+  return Array.from((scopedTasks.get(String(rootSessionId || '')) || new Map()).values());
+}
+
+export function onDurableTasksChanged(listener) {
+  taskListeners.add(listener);
+  return () => taskListeners.delete(listener);
+}
+
+function notifyTasks(rows) {
+  for (const listener of taskListeners) listener(rows);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+  }
+}
+
+/** A current authenticated request is the only authority for this root's rows. */
+export async function refreshScopedTasks(rootSessionId = state.activeSessionId) {
+  const root = String(rootSessionId || '');
+  if (!root || state.consoleSuperseded) return;
+  if (taskRequests.has(root)) return taskRequests.get(root);
+  const epoch = taskAuthEpoch;
+  const request = (async () => {
+    try {
+      const response = await fetch(`/api/subagent-tasks/${encodeURIComponent(root)}`, {
+        headers: authHeaders(), credentials: 'same-origin', cache: 'no-store',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.status === 401 || response.status === 403) {
+        taskAuthEpoch++;
+        scopedTasks.clear();
+        observedTasks.clear();
+        notifyTasks([]);
+        return;
+      }
+      if (!response.ok || epoch !== taskAuthEpoch || state.consoleSuperseded) return;
+      const body = await response.json();
+      if (epoch !== taskAuthEpoch || state.consoleSuperseded || body.rootSessionId !== root || !Array.isArray(body.tasks)) return;
+      const previous = scopedTasks.get(root) || new Map();
+      const next = new Map();
+      const changed = [];
+      for (const raw of body.tasks) {
+        if (!raw?.taskId) continue;
+        const row = projectChild(raw);
+        const old = previous.get(row.taskId);
+        const observed = observedTasks.get(row.taskId);
+        if (!observeTaskRevision(observed || old, row, true).accept) {
+          if (old) next.set(row.taskId, old);
+          continue;
+        }
+        next.set(row.taskId, row);
+        observedTasks.set(row.taskId, row);
+        if (!old || old.committedRevision !== row.committedRevision || old.status !== row.status) changed.push(row);
+      }
+      scopedTasks.set(root, next);
+      notifyTasks(changed);
+    } catch (_) { /* Keep the last good projection on transient failure. */ }
+  })();
+  taskRequests.set(root, request);
+  try { await request; } finally { taskRequests.delete(root); }
+}
+
+setDurableTaskFrameObserver((msg) => {
+  if (!msg?.taskId || !msg.runId || taskRevision(msg) === null) return false;
+  const previous = observedTasks.get(msg.taskId);
+  const decision = observeTaskRevision(previous, msg);
+  if (decision.accept) {
+    observedTasks.set(msg.taskId, msg);
+    notifyTasks([{ ...msg, historyInvalidated: true }]);
+  }
+  // Even duplicate frames can announce a task that is not in the latest snapshot.
+  refreshScopedTasks(msg.rootSessionId || state.activeSessionId);
+  // Only task transcript/lifecycle events switch to committed history rendering.
+  return /^(agent|text|thinking|tool|roundComplete|done)/.test(String(msg.type || ''));
+});
+
 /** 已请求过、确认查无链的键（防 miss 键反复打点；行集刷新时清空重探）。 */
 const emptyKeys = new Set();
 /** 星型子代理镜像（G3；delegateId → children[]）。refresh 臂随行集刷新逐父拉取；
@@ -175,6 +260,17 @@ function projectChild(c) {
     completedAt: typeof src.completedAt === 'number' ? src.completedAt : null,
     lastError: String(src.lastError || ''),
     source: String(src.source || ''),
+    rootSessionId: String(src.rootSessionId || ''),
+    committedRevision: taskRevision(src),
+    runId: String(src.runId || ''),
+    executor: String(src.executor || ''),
+    executionStatus: String(src.executionStatus || ''),
+    activityAt: typeof src.activityAt === 'number' ? src.activityAt : 0,
+    activityKind: String(src.activityKind || ''),
+    activityLabel: String(src.activityLabel || ''),
+    resultRef: String(src.resultRef || ''),
+    incomplete: src.incomplete === true,
+    terminalReason: String(src.terminalReason || ''),
   };
 }
 
@@ -349,4 +445,15 @@ function onDelegateLifecycle(msg) {
 for (const evt of ['agentStart', 'agentDone', 'agentEnd']) {
   onMessage(evt, onDelegateLifecycle);
 }
-onReconnect(() => refresh().catch(() => {}));
+onReconnect(() => {
+  refresh().catch(() => {});
+  refreshScopedTasks();
+});
+if (typeof window !== 'undefined') {
+  window.addEventListener(EVENTS.SESSION_CHANGE, () => refreshScopedTasks());
+  // Bounded polling discovers accepted work even when no start event arrives.
+  const timer = setInterval(() => {
+    if (document.visibilityState !== 'hidden') refreshScopedTasks();
+  }, 5000);
+  window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
+}

@@ -370,17 +370,20 @@ object DelegateRevival:
         val frozenReason = record.frozenReason.getOrElse("")
         val frozenDetail = record.frozenDetail.getOrElse("")
         Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+          val admitted = Ref.unsafe[IO, Option[SubAgentTask]](None)
           val attempt = for
             // Re-read and verify the checkpoint before changing the task row or spawning.
             transcript <- deps.resources.sessionStore.loadMessagesForSession(task.taskId)
             _ <- IO.raiseWhen(transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript))(
               new IllegalStateException("Saved context changed or a tool outcome is unknown (RECOVERY_UNVERIFIED)")
             )
-            _ <- deps.resources.subAgentTaskStore
-              .markRevived(parentSid, task.taskId, nextCount, now)
-              .handleErrorWith(e =>
-                logger.warn(s"[delegate-revival] task-row update failed for ${task.taskId}: ${e.getMessage}")
-              )
+            _ <-
+              if task.runId.nonEmpty then
+                deps.resources.subAgentTaskStore.resumeObserved(
+                  task.copy(revivalCount = Some(nextCount), revivedAt = Some(now))
+                )
+              else deps.resources.subAgentTaskStore.markRevived(parentSid, task.taskId, nextCount, now)
+            _ <- deps.resources.subAgentTaskStore.findByTaskId(task.taskId).flatMap(admitted.set)
             // ②b 断点台账（中断恢复批 2026-11-04 · V4/审计 D6）：把「已完成到哪」写成
             //    机器可读件（转录游标 + 已完成回合/工具回合 + 步骤摘要），随 nudge 交付
             //    ⇒ 复活后模型能机械区分「已完成/待做」，不重做已完成步骤的副作用。
@@ -561,7 +564,25 @@ object DelegateRevival:
             )
           yield Right(())
 
-          attempt.onError { case _ => cleanup.get.flatten.void }.onCancel(cleanup.get.flatten.void)
+          val failed = admitted.get
+            .flatMap {
+              case Some(row) if row.runId.nonEmpty =>
+                deps.resources.subAgentTaskStore
+                  .completeRun(
+                    row.parentSessionId,
+                    row.taskId,
+                    row.runId.get,
+                    "failed",
+                    reason = Some("Revival startup failed; manual recovery required"),
+                    incomplete = true,
+                    notifyParent = false
+                  )
+                  .void
+              case _ => IO.unit
+            }
+            .attempt
+            .void *> cleanup.get.flatten.void
+          attempt.onError { case _ => failed }.onCancel(failed)
         }
 
     }

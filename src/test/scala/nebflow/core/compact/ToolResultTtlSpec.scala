@@ -79,7 +79,7 @@ class ToolResultTtlSpec extends FunSuite:
   test("old, beyond keepRecent, oversized result is replaced with a self-describing placeholder"):
     ToolResultTtl.cleanRequestMessages(history(4), Enabled, Now) match
       case Some(cleaned) =>
-        val results = cleaned.collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+        val results = cleaned.collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
           blocks.collect { case tr: ContentBlock.ToolResult => tr }
         }.flatten
         // keepRecent=2 → tu-3/tu-4 kept, tu-1/tu-2 replaced
@@ -114,7 +114,7 @@ class ToolResultTtlSpec extends FunSuite:
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now) match
       case Some(cleaned) =>
         val byId = cleaned
-          .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+          .collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
             blocks.collect { case tr: ContentBlock.ToolResult => tr }
           }
           .flatten
@@ -138,7 +138,7 @@ class ToolResultTtlSpec extends FunSuite:
     ToolResultTtl.cleanRequestMessages(history(4), aggressive, Now) match
       case Some(cleaned) =>
         val byId = cleaned
-          .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+          .collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
             blocks.collect { case tr: ContentBlock.ToolResult => tr }
           }
           .flatten
@@ -152,7 +152,7 @@ class ToolResultTtlSpec extends FunSuite:
   test("original list is not mutated (request-only purity)"):
     val h = history(4)
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now)
-    val results = h.collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+    val results = h.collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
       blocks.collect { case tr: ContentBlock.ToolResult => tr.content }
     }.flatten
     assert(results.forall(_ == "x" * 5000), "input list must stay intact")
@@ -180,7 +180,7 @@ class ToolResultTtlSpec extends FunSuite:
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now) match
       case Some(cleaned) =>
         val byId = cleaned
-          .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+          .collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
             blocks.collect { case tr: ContentBlock.ToolResult => tr }
           }
           .flatten
@@ -214,7 +214,7 @@ class ToolResultTtlSpec extends FunSuite:
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now) match
       case Some(cleaned) =>
         val byId = cleaned
-          .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+          .collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
             blocks.collect { case tr: ContentBlock.ToolResult => tr }
           }
           .flatten
@@ -246,7 +246,7 @@ class ToolResultTtlSpec extends FunSuite:
     val cleaned = ToolResultTtl.cleanRequestMessages(h, Enabled, Now)
     cleaned.foreach { c =>
       val byId = c
-        .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+        .collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
           blocks.collect { case tr: ContentBlock.ToolResult => tr }
         }
         .flatten
@@ -345,7 +345,7 @@ class ToolResultTtlSpec extends FunSuite:
       persisted <-
         // textContent skips ToolResult blocks — check block content directly.
         def hasBig(msgs: List[Message]): Boolean = msgs.exists {
-          case Message(_, Right(blocks), _, _) =>
+          case Message(_, Right(blocks), _, _, _, _) =>
             blocks.exists { case tr: ContentBlock.ToolResult => tr.content == bigContent; case _ => false }
           case _ => false
         }
@@ -368,7 +368,7 @@ class ToolResultTtlSpec extends FunSuite:
       // session-file plane: FULL content persisted
       assert(
         persisted.exists {
-          case Message(_, Right(blocks), _, _) =>
+          case Message(_, Right(blocks), _, _, _, _) =>
             blocks.exists { case tr: ContentBlock.ToolResult => tr.content == bigContent; case _ => false }
           case _ => false
         },

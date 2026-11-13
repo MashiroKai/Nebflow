@@ -138,7 +138,7 @@ object ResumeHandoff:
   /** 已配对的 tool_use id 集（其后任何 user 消息里的 tool_result 都算配对）。 */
   private def answeredIds(messages: List[Message]): Set[String] =
     messages
-      .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+      .collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
         blocks.collect { case ContentBlock.ToolResult(id, _, _) => id }
       }
       .flatten
@@ -151,7 +151,7 @@ object ResumeHandoff:
 
   private def danglingOf(msg: Message, answered: Set[String]): List[(ContentBlock.ToolUse, String)] =
     msg match
-      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
+      case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
         blocks.collect { case u @ ContentBlock.ToolUse(id, name, _) if !answered.contains(id) => (u, name) }
       case _ => Nil
 

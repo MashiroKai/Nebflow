@@ -69,6 +69,12 @@ Friends run on your **stand account** — the same sign-in that pairs your machi
   <img src="docs/assets/readme/friends-demo.gif" alt="Opening the Contacts panel from the Stand activity bar" width="720">
 </p>
 
+### Subagent history and recovery
+
+The subagent panel reads persisted task records in addition to live execution events. Reloading a page or opening it after a task started can recover the task row and its saved conversation. Execution status, recent captured activity, and result-collection errors are separate facts; a normally exited CLI does not prove that the requested work succeeded.
+
+External Claude Code and Codex messages are saved before they are published to the interface. Each execution has a separate identity, and parent results are delivered through the durable session mailbox. Recovery replays pending notifications, not the task itself. An execution whose monitoring cannot be restored is shown as interrupted and requires an explicit continuation or retry.
+
 ### And more
 
 - **Multi-provider LLM** — OpenAI- and Anthropic-compatible APIs, with health monitoring and automatic fallback chains

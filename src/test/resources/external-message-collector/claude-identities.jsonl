@@ -1,0 +1,4 @@
+{"type":"assistant","message":{"id":"message-one","content":[{"type":"text","text":"Same text."}]}}
+{"type":"assistant","message":{"id":"message-one","content":[{"type":"text","text":"Same text."}]}}
+{"type":"assistant","message":{"id":"message-two","content":[{"type":"text","text":"Same text."}]}}
+{"type":"result","uuid":"end","message_id":"message-two","subtype":"success","result":"Same text.","is_error":false}

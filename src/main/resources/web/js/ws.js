@@ -86,6 +86,10 @@ export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
 let teamMetaApplier = null;
 export function setTeamMetaApplier(fn) { teamMetaApplier = fn; }
 
+// Committed task streams use history snapshots, never uncertain delta replay.
+let durableTaskFrameObserver = null;
+export function setDurableTaskFrameObserver(fn) { durableTaskFrameObserver = fn; }
+
 // ── Ask-dock frame interceptor (registered by askDock.js) ────────────────
 // Canvas ask mode（2026-10-28 实施批）：sessionId = "ask-<hash>" 的帧（后端
 // WsAskHandlers 域 + ask 会话 AgentStream 流）路由进气泡列，与主会话视图
@@ -1538,6 +1542,8 @@ export function connect() {
       if (state.consoleSuperseded && msg.type !== 'takeover' && msg.type !== 'takeoverResult') {
         return;
       }
+
+      if (durableTaskFrameObserver?.(msg)) return;
 
       // ── BUG 6 fix: save/restore activeView ────────────────────────────
       // activeView is a module-global (chatView.js). The bg-agent/flow

@@ -58,7 +58,8 @@ object ExternalOutputStore:
     errorHint: Option[String],
     cliSessionId: Option[String],
     mailbox: Queue[String],
-    seq: Long
+    seq: Long,
+    runId: Option[String] = None
   )
 
   private val entries: Ref[IO, Map[String, Entry]] = Ref.unsafe(Map.empty)
@@ -104,6 +105,63 @@ object ExternalOutputStore:
           )
           (m + (id -> reset), true)
         case _ => (m, false)
+    }
+
+  /** Associate a buffer with one execution before attaching its process. */
+  def claimRun(id: String, runId: String): IO[Unit] =
+    entries.update(m => m.updatedWith(id)(_.map(_.copy(runId = Some(runId)))))
+
+  def appendForRun(id: String, runId: String, line: String): IO[Unit] =
+    entries.get.flatMap { current =>
+      current.get(id) match
+        case Some(entry) if entry.runId.contains(runId) => IO(entry.buffer.append(line))
+        case _ => IO.unit
+    }
+
+  /** Cleanup is restricted to the Process returned by this runner's launch. */
+  private[executor] def stopOwnedProcess(process: Process): IO[Unit] = IO.blocking {
+    require(process.pid() != ProcessHandle.current().pid(), "Cannot terminate the host process")
+    if process.isAlive then
+      process.destroy()
+      if !process.waitFor(1, java.util.concurrent.TimeUnit.SECONDS) then
+        process.destroyForcibly()
+        if !process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) then
+          throw new IllegalStateException("Owned external process did not exit")
+  }
+
+  def killRun(id: String, runId: String): IO[Boolean] =
+    entries.get.flatMap(_.get(id) match
+      case Some(entry) if entry.runId.contains(runId) && entry.status == "running" =>
+        entry.process.fold(IO.pure(false))(p => stopOwnedProcess(p).as(true))
+      case _ => IO.pure(false))
+
+  def attachProcessForRun(id: String, runId: String, process: Process): IO[Unit] =
+    entries
+      .modify { current =>
+        current.get(id) match
+          case Some(entry) if entry.runId.contains(runId) && entry.status == "running" =>
+            (current.updated(id, entry.copy(process = Some(process))), true)
+          case _ => (current, false)
+      }
+      .flatMap(attached => IO.raiseUnless(attached)(new IllegalStateException("Stale process attachment")))
+
+  def finalizeRun(id: String, runId: String, status: String, exitCode: Option[Int], reason: Option[String]): IO[Unit] =
+    entries.update { current =>
+      current.get(id) match
+        case Some(entry) if entry.runId.contains(runId) && entry.status == "running" =>
+          val updated = current.updated(
+            id,
+            entry.copy(
+              status = status,
+              exitCode = exitCode,
+              errorHint = reason.map(_.take(200)),
+              finishedAtMs = Some(System.currentTimeMillis()),
+              seq = 1L + current.values.map(_.seq).foldLeft(0L)(math.max)
+            )
+          )
+          val terminal = updated.filter(_._2.status != "running")
+          if terminal.size > MaxRetained then updated - terminal.minBy(_._2.seq)._1 else updated
+        case _ => current
     }
 
   /** attach 进程句柄（cancel 杀进程树的靶点）。 */

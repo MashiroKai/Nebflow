@@ -113,13 +113,14 @@ object DelegateFreeze:
   /** 落 `AgentRecord.frozenReason` / `Record.frozenReason` 的完整线值。 */
   def wireValue(r: Reason): String = s"$WirePrefix:${wire(r)}"
 
-  /** 线值 → 原因（非本批前缀 / 未知词 = None——旧盘面与其它冻结族零误判）。
-    *
-    * 线值允许携带**诊断后缀**（`detailedWireValue` 写出的
-    * `engine-fault[trigger=…; errorType=…; …]`）——判定只读 `[` 之前的裸原因码，
-    * 后缀是给人与审计面的触发源证据，绝不参与判等（对全部原因码机械生效，不特判
-    * 单一码——旧盘面无后缀时行为逐字节不变）。
-    */
+  /**
+   * 线值 → 原因（非本批前缀 / 未知词 = None——旧盘面与其它冻结族零误判）。
+   *
+   * 线值允许携带**诊断后缀**（`detailedWireValue` 写出的
+   * `engine-fault[trigger=…; errorType=…; …]`）——判定只读 `[` 之前的裸原因码，
+   * 后缀是给人与审计面的触发源证据，绝不参与判等（对全部原因码机械生效，不特判
+   * 单一码——旧盘面无后缀时行为逐字节不变）。
+   */
   def parse(line: String): Option[Reason] =
     val s = Option(line).getOrElse("").trim
     if !s.startsWith(WirePrefix) then None
@@ -266,6 +267,8 @@ object DelegateFreeze:
       }
     (trigger, errorType)
 
+  end diagnosisFieldsOf
+
   /** 单字段行首形态（供 [[diagnosisFieldsOf]] 逐段消费）。 */
   private def diagnosisFieldOf(detail: String, key: String): Option[String] =
     val s = Option(detail).getOrElse("").trim
@@ -274,10 +277,11 @@ object DelegateFreeze:
       val v = s.stripPrefix(s"$key=").takeWhile(_ != ';').trim
       Option.when(v.nonEmpty)(v)
 
-  /** 剥掉行首的结构化诊断前缀（`trigger=…; errorType=…; `），让判据表读到**原始错误文本**
-    * （`ProviderFault` 判据表是子串匹配——`errorType=Timeout` 自带的 "timeout" 字样
-    * 不得参与正文族判定）。无前缀 = 原样返回（旧记录零影响）。
-    */
+  /**
+   * 剥掉行首的结构化诊断前缀（`trigger=…; errorType=…; `），让判据表读到**原始错误文本**
+   * （`ProviderFault` 判据表是子串匹配——`errorType=Timeout` 自带的 "timeout" 字样
+   * 不得参与正文族判定）。无前缀 = 原样返回（旧记录零影响）。
+   */
   def stripTriggerDiagnosis(detail: String): String =
     val s = Option(detail).getOrElse("").trim
     var rest = s
@@ -361,7 +365,8 @@ object DelegateFreeze:
     parentSessionId: String,
     reason: Reason,
     detail: String,
-    trigger: String = ""
+    trigger: String = "",
+    expectedRunId: Option[String] = None
   ): IO[Option[Long]] =
     val d = compactDetail(detail)
     val registryWrite = IO
@@ -375,17 +380,25 @@ object DelegateFreeze:
     val rowWrite =
       if parentSessionId.trim.isEmpty then IO.unit
       else
-        resources.subAgentTaskStore
-          .updateStatus(
-            parentSessionId,
-            delegateId,
-            TaskStatus,
-            lastError = Some(s"[frozen:${wire(reason)}] $d")
-          )
-          .handleErrorWith(e =>
-            logger.warn(s"[delegate-freeze] task row write failed for $delegateId: ${e.getMessage}")
-          )
-    registryWrite <* rowWrite
+        (expectedRunId match
+          case Some(run) =>
+            resources.subAgentTaskStore
+              .updateRun(
+                parentSessionId,
+                delegateId,
+                run,
+                Some(TaskStatus),
+                diagnostic = Some(s"[frozen:${wire(reason)}] $d")
+              )
+              .flatMap(_.fold(error => IO.raiseError(new IllegalStateException(error)), _ => IO.unit))
+          case None =>
+            resources.subAgentTaskStore.findByTaskId(delegateId).flatMap {
+              case Some(task) =>
+                resources.subAgentTaskStore.transitionObserved(task, TaskStatus, Some(s"[frozen:${wire(reason)}] $d"))
+              case None => IO.unit
+            }
+      )
+    rowWrite *> registryWrite
 
   end park
 
@@ -437,7 +450,11 @@ object DelegateFreeze:
           if parentSid.trim.isEmpty then IO.unit
           else
             resources.subAgentTaskStore
-              .updateStatus(parentSid, delegateId, "running")
+              .findByTaskId(delegateId)
+              .flatMap {
+                case Some(task) => resources.subAgentTaskStore.transitionObserved(task, "running")
+                case None => IO.unit
+              }
               .handleErrorWith(e =>
                 logger.warn(s"[delegate-freeze] task row wake write failed for $delegateId: ${e.getMessage}")
               )
@@ -595,14 +612,18 @@ object DelegateFreeze:
                       case Right(_) => IO.unit
                       case Left(e) => logger.warn(s"[delegate-freeze] archive failed for ${rec.id}: ${e.getMessage}")
                     } *> resources.subAgentTaskStore
-                    .updateStatus(
-                      rec.parentSessionId,
-                      rec.id,
-                      TaskStatus,
-                      lastError = Some(
-                        s"[frozen:expired] frozen for ${ageD}d, no wake — registry record archived after retention; transcript/worktree kept"
-                      )
-                    )
+                    .findByTaskId(rec.id)
+                    .flatMap {
+                      case Some(task) =>
+                        resources.subAgentTaskStore.transitionObserved(
+                          task,
+                          TaskStatus,
+                          Some(
+                            s"[frozen:expired] frozen for ${ageD}d, no wake — registry record archived after retention; transcript/worktree kept"
+                          )
+                        )
+                      case None => IO.unit
+                    }
                     .handleErrorWith(_ => IO.unit)
                 else IO.unit
             end match
