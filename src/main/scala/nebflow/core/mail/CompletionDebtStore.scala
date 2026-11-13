@@ -23,14 +23,16 @@ object CompletionDebtStore:
      * 并随债落盘）；同代崩溃重试沿债重放保持同代，Mail 续轮的新完成铸造新代。
      * 旧格式文件解码为 ""（= 无代际，行为与升级前逐字兼容）。
      */
-    generation: String = ""
+    generation: String = "",
+    /** Execution round identity; independent of the report deduplication generation. */
+    roundId: Option[String] = None
   )
 
   object Debt:
 
     given Encoder[Debt] =
-      Encoder.forProduct5("ownerSessionId", "recipientSessionId", "messages", "phase", "generation")(d =>
-        (d.ownerSessionId, d.recipientSessionId, d.messages, d.phase, d.generation)
+      Encoder.forProduct6("ownerSessionId", "recipientSessionId", "messages", "phase", "generation", "roundId")(d =>
+        (d.ownerSessionId, d.recipientSessionId, d.messages, d.phase, d.generation, d.roundId)
       )
 
     given Decoder[Debt] = Decoder.instance { c =>
@@ -40,7 +42,15 @@ object CompletionDebtStore:
         messages <- c.get[List[Message]]("messages")
         phase <- c.get[Option[String]]("phase")
         generation <- c.get[Option[String]]("generation")
-      yield Debt(owner, recipient.getOrElse(""), messages, phase.getOrElse("deliverable"), generation.getOrElse(""))
+        roundId <- c.get[Option[String]]("roundId")
+      yield Debt(
+        owner,
+        recipient.getOrElse(""),
+        messages,
+        phase.getOrElse("deliverable"),
+        generation.getOrElse(""),
+        roundId
+      )
     }
   end Debt
 
@@ -173,6 +183,12 @@ object CompletionDebtStore:
       val p = file(ownerSessionId)
       os.makeDir.all(p / os.up)
       val existing = read(ownerSessionId)
+      val roundId = scala.util
+        .Try(
+          nebflow.core.delegate.DelegateRegistry.find(ownerSessionId).flatMap(_.roundId).filter(_.nonEmpty)
+        )
+        .toOption
+        .flatten
       val cancelRequested = scala.util
         .Try(nebflow.core.delegate.DelegateRegistry.find(ownerSessionId).exists(_.cancelRequestedAt.nonEmpty))
         .getOrElse(false)
@@ -181,7 +197,8 @@ object CompletionDebtStore:
         existing match
           case Right(Some(debt)) if debt.phase == "cancelled" => false
           case Right(Some(debt))
-              if debt.phase != "settled" && debt.recipientSessionId == recipientSessionId && debt.messages == messages =>
+              if debt.phase != "settled" && debt.recipientSessionId == recipientSessionId && debt.messages == messages &&
+                debt.roundId == roundId =>
             true
           case _ =>
             // 走到这里 = 无债 / 已结算（任一内容）/ 收件方或内容漂移 / 读面损坏——
@@ -190,18 +207,12 @@ object CompletionDebtStore:
             // 直接取 roundId（终态邮箱幂等键 `<id>#<roundId>` 与轮次台账同键）；轮次
             // 缺席（旧盘面 / 外部执行器腿）或同代内容漂移（同轮重完成，需独立身份）
             // ⇒ 回落随机 UUID（升级前行为）。
-            val roundId = scala.util
-              .Try(
-                nebflow.core.delegate.DelegateRegistry.find(ownerSessionId).flatMap(_.roundId).filter(_.nonEmpty)
-              )
-              .toOption
-              .flatten
             val minted = roundId match
-              case Some(rid) if existing.forall(_.forall(_.generation != rid)) => rid
+              case Some(rid) if existing.forall(_.forall(d => d.roundId != Some(rid) && d.generation != rid)) => rid
               case _ => java.util.UUID.randomUUID().toString
             AtomicJson.writeSync(
               p,
-              Debt(ownerSessionId, recipientSessionId, messages, "deliverable", minted).asJson.noSpaces
+              Debt(ownerSessionId, recipientSessionId, messages, "deliverable", minted, roundId).asJson.noSpaces
             )
             true
       end if

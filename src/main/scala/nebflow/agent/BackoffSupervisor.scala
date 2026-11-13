@@ -1991,15 +1991,19 @@ object BackoffSupervisor:
           else IO.unit
 
         // ── 轮次模型的终态记账（append-only；fail-soft 只 WARN）──────────────
-        // 旧轮次迟到事件（携带的代际 ≠ 当前轮 roundId——新轮已开后的旧代
+        // 旧轮次迟到事件（债的 roundId ≠ 当前轮 roundId——新轮已开后的旧代
         // Completed/failed）：只落轮次台账 stale-round 审计行——不投递、不重写
         // archivedAt（archive 本就幂等零重写）、不重启清理链；本监督者照常收停。
         // cancelled 不在此列：取消墓碑压过一切，属身份级意图。
         val staleRoundCheck: IO[Boolean] =
           if source != "delegate" || eventType == "cancelled" then IO.pure(false)
           else
-            completionGenerationIO
-              .flatMap { gen =>
+            nebflow.core.mail.CompletionDebtStore
+              .pending(subagentId)
+              .flatMap { debt =>
+                // Delivery generations can change within one round. Legacy debts
+                // without an explicit round cannot prove that an event is stale.
+                val gen = debt.toOption.flatten.flatMap(_.roundId).getOrElse("")
                 IO.blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId)).map { recOpt =>
                   (gen, recOpt.flatMap(_.roundId).filter(_.nonEmpty)) match
                     case (g, Some(currentRoundId)) if g.nonEmpty && g != currentRoundId =>
@@ -2053,7 +2057,11 @@ object BackoffSupervisor:
               s"BackoffSupervisor: stale-round terminal for '$subagentId' (eventType=$eventType) — audited in the " +
                 "round ledger, no delivery, no archive rewrite"
             ) *>
-              (resources.agentRegistry.update(_ - subagentId) *>
+              (resources.agentRegistry.update { registry =>
+                registry.get(subagentId) match
+                  case Some(record) if record.ref == childRef => registry - subagentId
+                  case _ => registry
+              } *>
                 (childRef ! AgentCommand.Stop(s"$source-stale-round")) *>
                 IO.pure(Behaviors.stopped[AgentEvent]))
                 .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
