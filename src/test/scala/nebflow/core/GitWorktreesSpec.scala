@@ -1,21 +1,14 @@
 package nebflow.core
 
-import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.shared.PathUtil
 
 import scala.util.Try
 
 /**
- * GitWorktrees 公用 util 判读（worktree-judge-fifo 批 #1224 增补 §3.1「抽
- * NodeEditTool.createWorktreeFor 为公用 util」）：
- *
- *  - 抽取等价：NodeEditTool 腿的派生规则（sanitize / 候选 -2..-99 / 分支同名 /
- *    HEAD 基点）在 util 上逐字可复现；
- *  - delegate 腿的差异轴：分支名（delegate/<id>）与目录名解耦；
- *  - S13 判否腿：createBranch 建分支不动共享 HEAD（currentBranch 不变）；
- *  - projectKeyOf：worktree 与主仓同键（合并竞争键语义，旧引擎 keyOf 同判据）；
- *  - statusDigest：judge 输入面（branch/base/脏文件/领先提交四节）。
+ * Read-only Git facts spec: the seat-reading faces the engine keeps (branch /
+ * HEAD readings, dirty sets, status digests, ancestry facts). Worktree/branch
+ * creation is deliberately absent from the util — delegates that need a
+ * worktree create and manage their own with `git worktree`.
  */
 class GitWorktreesSpec extends FunSuite:
 
@@ -34,108 +27,32 @@ class GitWorktreesSpec extends FunSuite:
     os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "init")
       .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
 
-  test("sanitizeRefName: git-ref illegal chars fold to '-', CJK/Unicode preserved, edges trimmed, 40-char cap") {
-    assertEquals(GitWorktrees.sanitizeRefName("  a b:c~d  "), "a-b-c-d")
-    // 折叠类 = 原 createWorktreeFor 的 `[\s~^:?*\[\\]+`（ASCII 冒号/波浪线在类内，
-    // **全角 `：` 与 `/` 不在**——逐字行为；`/` 在 ref 与目录名中均合法）。
-    assertEquals(GitWorktrees.sanitizeRefName("节点 A：主干/同步"), "节点-A：主干/同步")
-    assertEquals(GitWorktrees.sanitizeRefName("--x--"), "x")
-    assertEquals(GitWorktrees.sanitizeRefName("x" * 50).length, 40)
-    assertEquals(GitWorktrees.sanitizeRefName(""), "")
-  }
-
-  test("createWorktree: delegate leg decouples branch (delegate/<id>) from dir name; HEAD is the default base") {
-    if !gitAvailable then () // 环境无 git = 跳过（CI 侧 git 前置同既有 MergeMutexGateSpec 先例）
+  test("isGitRepo / headSha / currentBranch: a plain repo reads its checkout facts; a non-git dir reads nothing") {
+    if !gitAvailable then () // environment without git = skip
     else
-      val repo = tempRoot / "wt-repo"
+      val repo = tempRoot / "read-repo"
       mkRepo(repo)
-      val baseSha = GitWorktrees.headSha(repo)
-      val created = GitWorktrees.createWorktree(
-        repo,
-        dirBase = GitWorktrees.sanitizeRefName("delegate-nebflow-abc123"),
-        branch = "delegate/delegate-nebflow-abc123",
-        baseRef = "HEAD",
-        label = "delegate delegate-nebflow-abc123",
-        // delegate 腿的调用形态（= DelegateWorkspace.prepare）：分支固定不随目录候选
-        branchFollowsDir = false
-      )
-      assert(created.isRight, s"worktree creation must succeed: $created")
-      val c = created.toOption.get
-      assertEquals(c.path.toString, (repo / ".nebflow" / "worktrees" / "delegate-nebflow-abc123").toString)
-      assertEquals(GitWorktrees.currentBranch(c.path), Some("delegate/delegate-nebflow-abc123"))
-      assertEquals(
-        GitWorktrees.headSha(c.path),
-        baseSha,
-        "the worktree starts at the creating repo's HEAD (no main fallback)"
-      )
-      // 主仓 HEAD 不动（worktree 是旁支检出）
-      assertEquals(GitWorktrees.currentBranch(repo), Some("main"))
+      assert(GitWorktrees.isGitRepo(repo))
+      assert(GitWorktrees.currentBranch(repo).contains("main"))
+      assert(GitWorktrees.headSha(repo).nonEmpty)
+      val plain = os.temp.dir(prefix = "not-a-repo")
+      assert(!GitWorktrees.isGitRepo(plain))
+      assertEquals(GitWorktrees.currentBranch(plain), None)
+      assertEquals(GitWorktrees.headSha(plain), None)
+      assertEquals(GitWorktrees.dirtyPaths(plain), None, "fail-soft: None keeps 'unreadable' distinct from clean")
   }
 
-  test(
-    "createWorktree: NodeEditTool legacy parity — branch travels WITH the dir candidate (`-b <name>` verbatim), empty base falls back to 'node'"
-  ) {
+  test("dirtyPaths: uncommitted and untracked paths surface; a clean repo reads Some(Nil)") {
     if !gitAvailable then ()
     else
-      val repo = tempRoot / "legacy-repo"
+      val repo = tempRoot / "dirty-repo"
       mkRepo(repo)
-      val n1 = GitWorktrees.createWorktree(repo, dirBase = "节点任务", branch = "节点任务")
-      assert(n1.isRight)
-      assertEquals(n1.toOption.get.name, "节点任务")
-      assertEquals(GitWorktrees.currentBranch(n1.toOption.get.path), Some("节点任务"))
-      // 同名冲突 → -2 候选（原候选环语义；分支随候选挪位——原 `-b name` 逐字）
-      val n2 = GitWorktrees.createWorktree(repo, dirBase = "节点任务", branch = "节点任务")
-      assert(n2.isRight, s"candidate -2 must succeed: ${n2.left.toOption.get.take(200)}")
-      assertEquals(n2.toOption.get.name, "节点任务-2")
-      assertEquals(
-        GitWorktrees.currentBranch(n2.toOption.get.path),
-        Some("节点任务-2"),
-        "legacy leg: branch follows the candidate dir name"
-      )
-      // 空 base → "node" 回落（抽取前原行为）
-      val n3 = GitWorktrees.createWorktree(repo, dirBase = "", branch = "")
-      assert(n3.isRight)
-      assertEquals(n3.toOption.get.name, "node")
-  }
-
-  test("createBranch (S13 no-worktree leg): the branch ref exists while the shared HEAD stays untouched") {
-    if !gitAvailable then ()
-    else
-      val repo = tempRoot / "branch-repo"
-      mkRepo(repo)
-      val r = GitWorktrees.createBranch(repo, "delegate/delegate-nebflow-xyz", "HEAD")
-      assert(r.isRight, s"branch creation must succeed: $r")
-      assertEquals(
-        GitWorktrees.currentBranch(repo),
-        Some("main"),
-        "shared working tree HEAD must NOT move (option (b) checkout is out)"
-      )
-      assert(GitWorktrees.branchExists(repo, "delegate/delegate-nebflow-xyz"))
-      // 基点 = HEAD（与 main 同 commit）
-      val baseSha = GitWorktrees.headSha(repo)
-      val branchSha =
-        os.proc("git", "-C", repo.toString, "rev-parse", "--short", "delegate/delegate-nebflow-xyz")
-          .call(check = true, stdout = os.Pipe)
-          .out
-          .trim()
-      assertEquals(branchSha, baseSha.getOrElse(fail("base sha must resolve")))
-  }
-
-  test("projectKeyOf: a worktree and its main repo share ONE key; a non-git dir keys to itself") {
-    if !gitAvailable then ()
-    else
-      val repo = tempRoot / "key-repo"
-      mkRepo(repo)
-      val _ = GitWorktrees.createWorktree(repo, dirBase = "kwt", branch = "kwt-branch")
-      val kMain = GitWorktrees.projectKeyOf(repo)
-      val kWt = GitWorktrees.projectKeyOf(repo / ".nebflow" / "worktrees" / "kwt")
-      assertEquals(kWt, kMain, "worktree and main repo share the merge-contention key (git-common-dir)")
-      // 非 git 目录自键（须在任何仓库之外——tempRoot 处于本 worktree 仓库内会被
-      // git 向上行走捕获）
-      val plain = os.temp.dir(prefix = "key-plain")
-      val kPlain = GitWorktrees.projectKeyOf(plain)
-      assert(kPlain.nonEmpty)
-      assert(kPlain != kMain, "a non-git dir must not collide with a repo key")
+      assertEquals(GitWorktrees.dirtyPaths(repo), Some(Nil))
+      os.write.over(repo / "tracked.txt", "dirty")
+      os.write(repo / "untracked.txt", "new")
+      val dirty = GitWorktrees.dirtyPaths(repo).getOrElse(Nil)
+      assert(dirty.exists(_.contains("tracked.txt")))
+      assert(dirty.exists(_.contains("untracked.txt")))
   }
 
   test("statusDigest: judge input carries branch/base/dirty/ahead sections and survives non-git dirs") {
@@ -148,21 +65,43 @@ class GitWorktreesSpec extends FunSuite:
       assert(digest.contains("branch: main"))
       assert(digest.contains("base: main"))
       assert(digest.contains("tracked.txt"), "uncommitted paths must be visible to the judge")
-      assert(!digest.contains("commits ahead"), "HEAD == base ⇒ no ahead section")
-      // 分支检出 + 提交 ⇒ ahead 节（delegate worktree 的真实形态：自己的分支、
-      // 领先基分支——HEAD 是 symref，动 refs/heads/main 会连 HEAD 一起挪，故用
-      // checkout -b 造「领先」场景）
+      assert(!digest.contains("commits ahead"), "HEAD == base means no ahead section")
+      // a branch checkout with a commit surfaces the ahead section
       os.proc("git", "-C", repo.toString, "checkout", "-b", "wt").call(check = true, stdout = os.Pipe, stderr = os.Pipe)
       os.proc("git", "-C", repo.toString, "add", ".").call(check = true)
       os.proc("git", "-C", repo.toString, "commit", "-m", "wip").call(check = true, stdout = os.Pipe, stderr = os.Pipe)
       val digest2 = GitWorktrees.statusDigest(repo, Some("main"))
       assert(digest2.contains("branch: wt"))
-      assert(digest2.contains("commits ahead"), "a commit ahead of base must surface (ready-to-merge signal input)")
-      // 非 git 目录 = 空串化容错（不抛）。放 /tmp（tempRoot 在本 worktree 仓库内，
-      // git 会向上行走找到父 repo——「非 git」场景必须在任何仓库之外）。
+      assert(digest2.contains("commits ahead"), "a commit ahead of base must surface")
+      // non-git dir: bounded digest, never throws
       val plain = os.temp.dir(prefix = "digest-plain")
-      val d = GitWorktrees.statusDigest(plain, None)
-      assert(d.contains("branch: (detached or unknown)"))
+      val plainDigest = GitWorktrees.statusDigest(plain, Some("main"))
+      assert(plainDigest.contains("branch: (detached or unknown)"))
+      assert(!plainDigest.contains("uncommitted changes"))
+  }
+
+  test("commitsAhead / isAncestor / resolveRef / mergeBase: ancestry facts for settlement annotations") {
+    if !gitAvailable then ()
+    else
+      val repo = tempRoot / "ahead-repo"
+      mkRepo(repo)
+      os.proc("git", "-C", repo.toString, "checkout", "-b", "feat")
+        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      os.proc(
+        "git",
+        "-C",
+        repo.toString,
+        "commit",
+        "--allow-empty",
+        "-m",
+        "work"
+      ).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      assertEquals(GitWorktrees.commitsAhead(repo, "main", "feat"), 1)
+      assertEquals(GitWorktrees.commitsAhead(repo, "feat", "main"), 0)
+      assert(GitWorktrees.isAncestor(repo, "main", "feat").contains(true))
+      assert(GitWorktrees.isAncestor(repo, "feat", "main").contains(false))
+      assert(GitWorktrees.resolveRef(repo, "main").nonEmpty)
+      assert(GitWorktrees.mergeBase(repo, "main", "feat").nonEmpty)
   }
 
 end GitWorktreesSpec

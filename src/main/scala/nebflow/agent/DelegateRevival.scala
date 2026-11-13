@@ -123,22 +123,25 @@ object DelegateRevival:
   private def scopeBaseOf(rec: DelegateRegistry.Record): String =
     rec.projectWorkspace.map(_.trim).filter(_.nonEmpty).getOrElse(rec.cwd)
 
-  /** git 读数（fail-soft：非 repo / git 缺席 / 异常 = 不可判 = 零旁证）。 */
-  private def gitOf(ws: String, args: String*): Option[String] =
-    try
-      val dir = os.Path(ws)
-      val res = os
-        .proc(Seq("git", "-C", dir.toString) ++ args)
-        .call(cwd = dir, check = false, mergeErrIntoOut = true)
-      if res.exitCode == 0 then Some(res.out.trim()) else None
-    catch case _: Throwable => None
-
-  /** 分支领先基分支的提交数（未合并交付提交；不可判 = 0）。 */
+  /**
+   * Seat-unfinished reading: the seat's HEAD differs from the current round's
+   * baseline head (round ledger `baseHeadSha`) — the same mechanical fact the
+   * old branch/baseBranch pair carried, anchored on the round baseline instead
+   * of an engine-assigned branch. Unreadable baseline/seat = 0.
+   */
   private def unmergedCommitsOf(rec: DelegateRegistry.Record): Int =
-    (rec.branch.map(_.trim), rec.baseBranch.map(_.trim)) match
-      case (Some(b), Some(base)) if b.nonEmpty && base.nonEmpty =>
-        gitOf(scopeBaseOf(rec), "rev-list", "--count", s"$base..$b").flatMap(_.toIntOption).getOrElse(0)
-      case _ => 0
+    nebflow.core.delegate.DelegateRoundLedger.currentRound(rec.id).flatMap(_.baseHeadSha) match
+      case Some(baseSha) =>
+        try
+          val p = os.Path(scopeBaseOf(rec))
+          if !nebflow.core.GitWorktrees.isGitRepo(p) then 0
+          else
+            // 1 = seat HEAD moved off the round baseline (commits exist that the
+            // round has not settled); 0 = still at baseline or unreadable.
+            if nebflow.core.GitWorktrees.headSha(p).exists(_ != baseSha) then 1
+            else 0
+        catch case _: Throwable => 0
+      case None => 0
 
   /** 作用域图非终态节点数（读盘，纯同步；缺图 = 0）。 */
   private def openNodesOf(rec: DelegateRegistry.Record): Int =
@@ -334,40 +337,23 @@ object DelegateRevival:
    *                    横幅之后成为本窗口的首条指令；空 = 纯「从冻结点继续」。
    */
   private def reviveImpl(deps: Deps, task: SubAgentTask, instruction: String = ""): IO[Either[String, Unit]] =
-    nebflow.core.delegate.MergerInitialization
+    nebflow.core.delegate.SessionStartLease
       .exclusive(task.taskId) {
-        nebflow.core.delegate.MergerInitialization.repairLocked(deps.resources, task.taskId) *>
-          deps.resources.agentRegistry.get.flatMap { live =>
-            live.get(task.taskId).fold(IO.pure(false))(record => deps.system.isAlive(record.ref.path)).flatMap {
-              case true => IO.pure(Left("Session is already live; use its explicit wake or continuation entry"))
-              case false =>
-                deps.resources.sessionStore.loadMessagesForSession(task.taskId).flatMap { transcript =>
-                  if transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript) then
-                    IO.pure(
-                      Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
-                    )
-                  else
-                    IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(task.taskId, allowFrozen = true))
-                      .flatMap {
-                        case Left(error) => IO.pure(Left(error))
-                        case Right(_) =>
-                          reviveAdmitted(deps, task, instruction).flatTap {
-                            case Right(_) => IO.unit
-                            case Left(error) =>
-                              nebflow.core.delegate.MergerInitialization.failed(deps.resources, task.taskId, error)
-                          }
-                      }
-                }
-            }
+        deps.resources.agentRegistry.get.flatMap { live =>
+          live.get(task.taskId).fold(IO.pure(false))(record => deps.system.isAlive(record.ref.path)).flatMap {
+            case true => IO.pure(Left("Session is already live; use its explicit wake or continuation entry"))
+            case false =>
+              deps.resources.sessionStore.loadMessagesForSession(task.taskId).flatMap { transcript =>
+                if transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript) then
+                  IO.pure(
+                    Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
+                  )
+                else reviveAdmitted(deps, task, instruction)
+              }
           }
+        }
       }
-      .handleErrorWith(error =>
-        nebflow.core.delegate.MergerInitialization
-          .failed(deps.resources, task.taskId, s"Recovery could not safely start: ${error.getMessage}")
-          .attempt
-          .void
-          .as(Left(s"Recovery could not safely start: ${error.getMessage}"))
-      )
+      .handleErrorWith(error => IO.pure(Left(s"Recovery could not safely start: ${error.getMessage}")))
 
   private def reviveAdmitted(deps: Deps, task: SubAgentTask, instruction: String): IO[Either[String, Unit]] =
     IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {
@@ -555,7 +541,6 @@ object DelegateRevival:
             //    模型收到的是那次调用的 tool_result（无感续跑）；否则逐字回落改前的提示文案。
             //    冻结腿（frozen 在场）注完之后清冻结槽 + 合并队列重排
             //    （[[DelegateFreeze.onWoken]]）——唤醒 = 冻结生命周期的唯一出口。
-            _ <- nebflow.core.delegate.MergerInitialization.ready(task.taskId)
             _ <- subagentRef ! ResumeHandoff.userInput(handoff, replyTo = Some(adapterRef))
             _ <-
               if frozen.isDefined then
@@ -576,12 +561,7 @@ object DelegateRevival:
             )
           yield Right(())
 
-          val stopPartial =
-            if record.mode.contains("merger") then
-              cleanup.get.flatten *>
-                deps.resources.agentRegistry.update(_ - task.taskId) *> DelegateFlowHosts.unmount(task.taskId)
-            else IO.unit
-          attempt.onError { case _ => stopPartial }.onCancel(stopPartial)
+          attempt.onError { case _ => cleanup.get.flatten.void }.onCancel(cleanup.get.flatten.void)
         }
 
     }

@@ -894,8 +894,7 @@ private[gateway] object WsSessionChatHandlers:
       // `frozenReason=none`，同一时刻两个答案。本批：**判定与面板读同一份派生读数**，
       // 且每一次拒收都带回 `freeze` 块（实际状态 + 为什么 + 面板该显示什么），
       // 前端据此自纠——不再有「点了才知道自己不该点」。
-      (nebflow.core.delegate.MergerInitialization.repair(sharedResources, wid) *>
-        IO.blocking(nebflow.core.delegate.DelegateRegistry.find(wid)))
+      IO.blocking(nebflow.core.delegate.DelegateRegistry.find(wid))
         .flatMap { recordOpt =>
           sharedResources.agentRegistry.get.flatMap { reg =>
             val live = reg.get(wid)

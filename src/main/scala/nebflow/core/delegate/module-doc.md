@@ -4,9 +4,9 @@
 
 ## 功能
 
-跨会话 delegate 任务：分发、回收、合并与设备腿。
+跨会话 delegate 任务：分发、生命周期、终态结算与设备腿（引擎不托管工作树；合并由作者显式决定）。
 
-**入口建议**：先读 [`MergeQueue.scala`](MergeQueue.scala)（本模块最大文件）。
+**入口建议**：先读 [`DelegateRegistry.scala`](DelegateRegistry.scala)（持久身份的单一地址簿）。
 
 ## 文件（23）
 
@@ -22,9 +22,7 @@
 | [`DelegateRegistry.scala`](DelegateRegistry.scala) | DelegateRegistry —— 统一 delegate 的持久地址簿（unified-delegate 批 2026-10-03）。 |
 | [`DelegateTerminal.scala`](DelegateTerminal.scala) | DelegateTerminal —— delegate 终态判定钩子（R6 终态判定 + S12 合并轮；worktree -judge-fifo 批 #1224 增补 §3.1/§3.3；#566 修复批 2026- |
 | [`DelegateWorkReport.scala`](DelegateWorkReport.scala) | DelegateWorkReport —— 合并轮 finish 交付的工作结果附页（delegate-finish-report 修复批 2026-10-25 · 作者令逐字：「delegate report merg |
-| [`DelegateWorkspace.scala`](DelegateWorkspace.scala) | DelegateWorkspace —— spawn 前的判定机执行腿（R6 worktree 判定 + S13 分支纪律； worktree-judge-fifo 批 #1224 增补 §3.1；A5 步1（2026- |
 | [`DeviceDelegate.scala`](DeviceDelegate.scala) | 设备腿 delegate 通道（v2.1 阶段 1 §A.3 / §E 阶段 1「项目分布执行」）。 通道**：presence WS 结构化消息（既有数据通道单点，`sendData`）+ relay 兜底 |
-| [`DeviceGitPort.scala`](DeviceGitPort.scala) | DeviceGitPort —— 设备项目的**设备侧 git 面**（跨设备 worktree 归属修复批 2026-10-30，作者报障：设备项目 delegate 的 worktree 被建在编排机 brain 下 |
 | [`DeviceResultOutbox.scala`](DeviceResultOutbox.scala) | DeviceResultOutbox —— **跨设备完成件的持久待发区**（台账 #944 跨设备回报丢件腿）。 == 病灶（2026-10-26 实证链，KAI 侧日志 + Mac 侧日志双侧对账）== |
 | [`DualMode.scala`](DualMode.scala) | DualModeConfig —— **delegate 双模式总闸**（设计 `docs/design/20261028_213056_delegate-dual-mode-redesign__delegate-neb |
 | [`ExternalJudgeHook.scala`](ExternalJudgeHook.scala) | ExternalJudgeHook —— 外部 delegate 终态判定的**接线缝**（external-executors 批 #1225 留缝；判定机本体归 worktree-judge-fifo 批 #1224 |
@@ -33,8 +31,6 @@
 | [`MergeQueue.scala`](MergeQueue.scala) | MergeQueue —— delegate 合并队列：**交通引导员**（台账 #896 · 2026-10-26 作者裁定 「主要是你的重试和复活的逻辑写的不好……我们的合并排队系统 应该就是一个交通引导员的 |
 | [`MergeQueueCare.scala`](MergeQueueCare.scala) | MergeQueueCare —— 合并队列（交通引导员制）的**扫描拍驱动面**（台账 #896 2026-10-26 作者裁定落地批；消费点 = `TaskStuckWatcher.scan` 尾部，搭既有扫描拍 |
 | [`MergeQueueChannel.scala`](MergeQueueChannel.scala) | MergeQueueChannel —— 合并队列的**write-ahead 通道**（R5 重启丢队修复 · 报告二 §4.3 / 设计稿 §1 P5 行；报告二建议「DeviceResultOutbox 同型可搬」 |
-| [`PostMergeCleanup.scala`](PostMergeCleanup.scala) | PostMergeCleanup —— 机械验收通过的合并 Release 后的现场回收（引擎加固批 2026-10-09，上游审计 #31 结论 P2-4）. |
-| [`WorktreeRescue.scala`](WorktreeRescue.scala) | WorktreeRescue —— worktree 清理前的 reports/evidence 抢救守卫（作者令 2026-10-24「worktree 清理抢救 reports/evidence」）. |
 
 ## 依赖的兄弟模块
 

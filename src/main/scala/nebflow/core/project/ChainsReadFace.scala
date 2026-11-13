@@ -72,15 +72,7 @@ object ChainsReadFace:
     taskStatuses: Map[String, String] = Map.empty,
     taskRows: List[nebflow.shared.SubAgentTask] = Nil
   ): IO[Json] =
-    IO.blocking(
-      (
-        DelegateRegistry.list(),
-        // base 漂移状态面（`[base-moved]` 降噪重写批 2026-11-05 作者令第五条）：
-        // 「base 动了」这个**事实**放面板可见，不进消息流——消息腿只在可行动
-        // （动到我改过的文件 / base 历史被改写）时聚合发一条。
-        nebflow.core.delegate.BaseDriftWatch.statuses()
-      )
-    ).flatMap { case (records, drift) =>
+    IO.blocking(DelegateRegistry.list()).flatMap { records =>
       val continuations = continuationLinks(records, taskRows)
       val scoped = records.filter(rec => rec.archivedAt.isDefined == archived)
       val windowed: IO[List[DelegateRegistry.Record]] =
@@ -88,48 +80,8 @@ object ChainsReadFace:
         else activeWorldSeatFilter(scoped)
       windowed
         .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations)))
-        .map(rows => Json.obj("rows" -> withBaseDrift(rows, drift).asJson))
+        .map(rows => Json.obj("rows" -> rows.asJson))
     }
-
-  /**
-   * 行挂 `baseDrift` 键（`[base-moved]` 降噪重写批 2026-11-05）：只挂 `moves > 0`
-   * 的行（没动过的行不占面板，🔴 缺键纪律 = 不加空壳键）。形状
-   * `{moves, pendingMoves, pendingConflicts, pendingFiles, actionable, lastNotifyMs,
-   * baselineTip, lastSeenTip}`——`moves` = 自派发基线的 base 前进次数（面板文案
-   * 「base 已前进 N 次」的唯一供给），与是否发过通知**无关**（静默也照数）。
-   */
-  private def withBaseDrift(
-    rows: List[Json],
-    drift: Map[String, nebflow.core.delegate.BaseDriftWatch.Entry]
-  ): List[Json] =
-    if drift.isEmpty then rows
-    else
-      rows.map { row =>
-        row.hcursor
-          .get[String]("id")
-          .toOption
-          .flatMap(drift.get)
-          .filter(_.moves > 0)
-          .fold(row) { e =>
-            row.asObject
-              .map(
-                _.add(
-                  "baseDrift",
-                  Json.obj(
-                    "moves" -> e.moves.asJson,
-                    "pendingMoves" -> e.pendingMoves.asJson,
-                    "pendingConflicts" -> e.pendingConflicts.asJson,
-                    "pendingFiles" -> e.pendingFiles.asJson,
-                    "actionable" -> e.actionablePending.asJson,
-                    "lastNotifyMs" -> e.lastNotifyMs.asJson,
-                    "baselineTip" -> e.baselineTip.asJson,
-                    "lastSeenTip" -> e.lastSeenTip.asJson
-                  )
-                )
-              )
-              .fold(row)(Json.fromJsonObject)
-          }
-      }
 
   /**
    * 接续引用推导（任务列表行重启对账批 2026-10-22 · 纯函数单点）：重启打断记录

@@ -20,14 +20,12 @@ import nebflow.shared.NebflowLogger
  *     一并清理，保存态不能无限堆积）；任务行终态以 completedAt 为锚；owner-gone
  *     （无任务行）以取消墓碑/重启旗/登记时间为兜底；
  *  3. **清理动作（到期才做，语义=清理）**：
- *      a. worktree 联动回收 —— `PostMergeCleanup.run(expiredTerminal=true)`：
- *         树按 git 本体纪律移除（无 --force，脏树被拒=现场保留），分支删除仍守
- *         零领先（未落地提交绝不因 TTL 消失），reports/evidence 先抢救；
- *      b. 任务行剪行 —— `SubAgentTaskStore.removeTask`（重启丢失行自此离开复活
+ *      a. 任务行剪行 —— `SubAgentTaskStore.removeTask`（重启丢失行自此离开复活
  *         视野 = 通知源永久沉默的根除腿）；
- *      c. 登记条目移除 —— `DelegateRegistry.remove`（记录文件删除；台账历史由
- *         ChainStore `worktree-cleanup` 行与子代理记账留存承载——brief「语义=
- *         清理，不丢台账历史可接受归档」的清理腿）。
+ *      b. 登记条目移除 —— `DelegateRegistry.remove`（记录文件删除；台账历史由
+ *         ChainStore 行与子代理记账留存承载——brief「语义=清理，不丢台账历史
+ *         可接受归档」的清理腿）。工作区/分支一律不动（引擎不回收座位——需要
+ *         隔离检出时 delegate 自建自管）。
  *
  * 接线（GatewayMain boot）：跑在 subagentCrashSweep **之前**——先把名单外的
  * 远古尸体清走，随后的收殓/标记/对账腿对已清条目天然零视野（已移除条目不进
@@ -42,10 +40,6 @@ object DelegateTtlSweep:
   final case class Report(
     /** 到期条目（进了清理面的 id，按处理序）。 */
     expired: List[String] = Nil,
-    /** worktree 已回收的 delegate id。 */
-    worktreesRemoved: List[String] = Nil,
-    /** worktree 保留的 delegate id（git 拒绝 = 脏树/未领先提交在场）。 */
-    worktreesKept: List[String] = Nil,
     /** 任务行已剪行的 delegate id。 */
     taskRowsPruned: List[String] = Nil,
     /** 登记条目已移除的 delegate id。 */
@@ -60,8 +54,7 @@ object DelegateTtlSweep:
       expired.nonEmpty || inFlightKept.nonEmpty || keptOnError.nonEmpty
 
     def summary: String =
-      s"expired=${expired.size} worktreesRemoved=${worktreesRemoved.size} worktreesKept=${worktreesKept.size} " +
-        s"taskRowsPruned=${taskRowsPruned.size} recordsRemoved=${recordsRemoved.size} " +
+      s"expired=${expired.size} taskRowsPruned=${taskRowsPruned.size} recordsRemoved=${recordsRemoved.size} " +
         s"inFlightKept=${inFlightKept.size} keptOnError=${keptOnError.size}"
 
   end Report
@@ -92,12 +85,9 @@ object DelegateTtlSweep:
             case nebflow.core.delegate.DelegateTerminalTtl.InFlight => IO.unit
             case _: nebflow.core.delegate.DelegateTerminalTtl.WithinTtl => IO.unit
             case expired: nebflow.core.delegate.DelegateTerminalTtl.Expired =>
-              // ③ 清理动作（worktree 回收 → 任务行剪行 → 登记移除；fail-soft）。
+              // ③ 清理动作（任务行剪行 → 登记移除；fail-soft）。工作区/分支一律
+              // 不动（引擎不再回收座位——需要隔离检出时 delegate 自建自管）。
               for
-                wtRemoved <-
-                  nebflow.core.delegate.PostMergeCleanup
-                    .run(Some(rec))
-                    .handleError(_ => false)
                 _ <-
                   rowsById.get(rec.id).traverse_ { t =>
                     resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId)
@@ -107,15 +97,12 @@ object DelegateTtlSweep:
                   s"[delegate-ttl] '${rec.id}' expired the " +
                     s"${nebflow.core.delegate.DelegateTerminalTtl.TtlMs / 86400000L}-day terminal TTL " +
                     s"(anchor=${expired.anchorName} age=${(now - expired.anchorMs) / 86400000L}d) — " +
-                    s"worktree=${if wtRemoved then "recycled" else "kept"} " +
                     s"taskRow=${if rowsById.contains(rec.id) then "pruned" else "none"} " +
                     s"record=${rm.fold(err => s"kept($err)", _ => "removed")}"
                 )
                 _ <- ref.update { r =>
                   r.copy(
                     expired = r.expired :+ rec.id,
-                    worktreesRemoved = if wtRemoved then r.worktreesRemoved :+ rec.id else r.worktreesRemoved,
-                    worktreesKept = if !wtRemoved then r.worktreesKept :+ rec.id else r.worktreesKept,
                     taskRowsPruned = if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
                     recordsRemoved = if rm.isRight then r.recordsRemoved :+ rec.id else r.recordsRemoved,
                     keptOnError = rm.fold(err => r.keptOnError :+ (rec.id -> err.getMessage), _ => r.keptOnError)

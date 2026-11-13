@@ -43,7 +43,7 @@ mkdirSync(SHOTS_DIR, { recursive: true });
 /** index.html 的 css 加载序（设计系统纪律：sapphire.css 最后）。 */
 const CSS_ORDER = [
   'base', 'nav', 'sidebar', 'chat', 'modal', 'input', 'taskList', 'scrollUnderGlass',
-  'reminder', 'neblink', 'dropbox', 'projectPanel', 'delegatePanorama', 'flowMap',
+  'reminder', 'neblink', 'dropbox', 'projectPanel', 'flowMap',
   'friends', 'split', 'ask', 'voice', 'mermaid', 'humanFace', 'voiceMode', 'lightbox',
   'usage', 'social', 'secrets', 'stand-tokens', 'perception', 'executors', 'diffView',
   'sapphire',

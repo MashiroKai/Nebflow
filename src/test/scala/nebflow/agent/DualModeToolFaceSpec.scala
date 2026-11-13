@@ -105,7 +105,11 @@ class DualModeToolFaceSpec extends FunSuite:
     // 读数：面值恰 10 件（不照抄任务书，按本读数核）
     println(s"[FACE-KERNEL] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
     assertEquals(set, ExpectedKernelFace, s"kernel face reading, got: ${set.toList.sorted}")
-    assertEquals(set.size, ExpectedKernelFace.size, s"kernel face size must match expected set, got: ${set.toList.sorted}")
+    assertEquals(
+      set.size,
+      ExpectedKernelFace.size,
+      s"kernel face size must match expected set, got: ${set.toList.sorted}"
+    )
   }
 
   test("F2 dispatcher 腿：Subagent 摘除、node 四件保留") {
@@ -128,7 +132,11 @@ class DualModeToolFaceSpec extends FunSuite:
     }
     println(s"[FACE-DISPATCHER] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
     assertEquals(set, ExpectedDispatcherFace, s"dispatcher face reading, got: ${set.toList.sorted}")
-    assertEquals(set.size, ExpectedDispatcherFace.size, s"dispatcher face size must match expected set, got: ${set.toList.sorted}")
+    assertEquals(
+      set.size,
+      ExpectedDispatcherFace.size,
+      s"dispatcher face size must match expected set, got: ${set.toList.sorted}"
+    )
   }
 
   test("F3 闸关（mode=None）⇒ 全量面逐字节：Subagent + node 四件俱在（AgentFlow 已不存在于任何面）") {
@@ -198,8 +206,8 @@ class DualModeToolFaceSpec extends FunSuite:
       modeJ.flatMap(_.asObject).flatMap(_("enum")).flatMap(_.asArray).map(_.toList.flatMap(_.asString)).getOrElse(Nil)
     assertEquals(
       enumVals,
-      List("kernel", "dispatcher", "merger"),
-      s"mode enum must be kernel|dispatcher (the allocator is gone, so auto is no longer a legal word); mode=$modeJ"
+      List("kernel", "dispatcher"),
+      s"mode enum must be kernel|dispatcher (merger is retired with the managed workspaces); mode=$modeJ"
     )
     // delegate-param-decisions 批（2026-11-04）：判定机已删除 ⇒ schema 里不许再出现
     // 「worktree judge」；且必须写明「不填 = 确定性 kernel + 没有分配器」。
@@ -233,10 +241,11 @@ class DualModeToolFaceSpec extends FunSuite:
     )
     assert(line.contains("never assemble a chain node-by-node"), "piecemeal NodeEdit chain-building is forbidden")
     assert(line.contains("not for building it"), "NodeEdit is refinement-only")
-    // worktree 裁定（2026-10-29 18:12）：座位共享而非「无 worktree」——旧表述必须消失。
+    // 座位共享（托管树退场后）：节点全部落本会话工作区（共享非嵌套）；节点层
+    // seal 不变（节点永不建分支/worktree）。
     assert(!line.contains("no branches and no worktrees"), s"the retracted claim must be gone: $line")
     assert(
-      line.contains("inside this session's worktree seat"),
+      line.contains("THIS session's workspace"),
       "the shared-seat semantics are stated (sharing, not nesting)"
     )
     assert(line.contains("never create branches or worktrees"), "the node-layer seal is stated")
@@ -321,25 +330,22 @@ class DualModeToolFaceSpec extends FunSuite:
     assertEquals(decoded2.map(_.mode), Right(Some("dispatcher")))
   }
 
-  test("the merger face carries WorktreeContext but cannot create a development node chain") {
-    val definition = AgentDef(name = "nebflow", description = "merger face")
-    val merger = CoreProbe.allowedWithDelegateMode(definition, true, Some("merger"))
-    assert(merger.contains(nebflow.core.tools.WorktreeContextTool.Name), "the merger face carries WorktreeContext")
-    assert(merger.contains(nebflow.core.tools.MergerRequestTool.Name), "the merger face carries the merge request tool")
-    assert(!merger.contains("ChainWrite"))
+  test("the retired workspace/merger tools are on no face at all (kernel, executor, root)") {
+    val definition = AgentDef(name = "nebflow", description = "faces")
     val kernel = CoreProbe.allowedWithDelegateMode(definition, true, Some("kernel"))
-    assert(!kernel.contains(nebflow.core.tools.WorktreeContextTool.Name), "kernel delegates never see WorktreeContext")
+    val dispatcher = CoreProbe.allowedWithDelegateMode(definition, true, Some("dispatcher"))
     val executor = CoreProbe.allowedWithDelegateMode(definition, false, None)
-    assert(
-      !executor.contains(nebflow.core.tools.WorktreeContextTool.Name),
-      "the executor base face never sees WorktreeContext"
-    )
-    // The main-agent (Nebula root) face carries WorktreeContext via RootOrchestrationTools.
     val root = CoreProbe.allowedWithDelegateMode(
       AgentDef(name = nebflow.actor.RootAgentIdentity.Name, description = "root face"),
       delegateSession = false,
       delegateMode = None
     )
-    assert(root.contains(nebflow.core.tools.WorktreeContextTool.Name), "the main-agent face carries WorktreeContext")
+    for face <- List(kernel, dispatcher, executor, root) do
+      assert(!face.contains("MergerRequest"), "MergerRequest is retired and mounts on no face")
+      assert(!face.contains("WorktreeContext"), "WorktreeContext is retired and mounts on no face")
+      assert(!face.contains("WorkspaceSummary"), "WorkspaceSummary is retired and mounts on no face")
+      assert(!face.contains("WorkspaceReconcile"), "WorkspaceReconcile is retired and mounts on no face")
+    assert(!kernel.contains("ChainWrite"))
+    assert(dispatcher.contains("ChainWrite"), "the dispatcher keeps its chain tools")
   }
 end DualModeToolFaceSpec

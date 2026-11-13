@@ -306,7 +306,10 @@ test('T3 agentflow（R2/R6）：组头徽标=row.mode（dispatcher）；chain.no
   // 节点）——断言锚随术语收口 1:1 平移，行/缩进/结构语义逐字不变。
   await expect(flowRows.nth(0).locator('.bg-task-kind')).toHaveText('node');
   await expect(flowRows.nth(1).locator('.bg-task-state')).toHaveText('待处理');
-  await expect(flowRows.nth(1).locator('.bg-task-project')).toHaveText('← s1');
+  // DAG dep chip (face C): execution-order edges render on a dedicated chip
+  // (glyph + word + ids + machine anchor), visually distinct from the rails.
+  await expect(flowRows.nth(1).locator('.bg-flow-deps')).toHaveText('⇢ 依赖 s1');
+  await expect(flowRows.nth(1).locator('.bg-flow-deps')).toHaveAttribute('data-bg-deps', 's1');
   // 适配层单 delegate 回退节点（kind=delegate）不入子行层。
   await expect(page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row')).toHaveCount(3);
 

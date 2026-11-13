@@ -221,7 +221,7 @@ function attachProjectsFlowmapFab(pane) {
   btn.setAttribute('aria-label', t('delegate.projectflow.title'));
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    // 视图重设计实施批（2026-10-21）：项目流程图圆钮 = 全景视图全量（'' = 不过滤）。
+    // Project flow FAB → the S11 structure view (all projects, '' = no filter).
     import('./delegateChainView.js')
       .then(({ openDelegateChainStructure }) => openDelegateChainStructure())
       .catch(() => {});
@@ -1247,9 +1247,8 @@ function bindProjectCard(card) {
   title?.addEventListener('click', (e) => {
     e.stopPropagation();
     // 🔴 入口改指（flowmaptab-retire · #1228 两裁② 停用清单面 1）：原 per-project
-    // Flow Map 就地视图（projectsView='flow-map' 分支）停用。视图重设计实施批
-    // （2026-10-21 · 入口统一 作者令⑤）：项目卡标题点按 = 全景视图按该项目收窄
-    // （同一组件同一数据面，仅 project 参数不同；data-open-flowmap = 项目名）。
+    // Flow Map 就地视图（projectsView='flow-map' 分支）停用。项目卡标题点按 =
+    // S11 结构总视图按该项目收窄（data-open-flowmap = 项目名；'' = 全量）。
     const proj = title.getAttribute('data-open-flowmap') || '';
     import('./delegateChainView.js')
       .then(({ openDelegateChainStructure }) => openDelegateChainStructure(proj))

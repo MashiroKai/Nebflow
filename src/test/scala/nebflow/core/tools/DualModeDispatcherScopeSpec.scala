@@ -454,10 +454,11 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
   // ── R3 flowmap 退役批（2026-10-29 · 审计二 P3/P10 · 设计 §5.6）────────────────
   //
   // D8 全链时序：终态 → 摘要行（chain-archived + 台账 Archived）→ unmount → 宽限窗
-  //      内 ChainsReadFace 盘面探针只读补拉（归档区组合读）→ 宽限过期目录整删。
+  //      内 ChainsReadFace 盘面探针只读补拉（归档区组合读）→ 宽限过期迁移式退役
+  //      （迟到完成扫进 flow-map-archive/，目录保留——迁移而非删除）。
   // D9 取消链同一收口：终态时在飞链（无 blocked）→ 台账 cancelled 处置 + 事件，节点零触碰。
   // D10 blocked 永不自动处置：含 blocked 成员的链在收口与出库两腿都整链跳过。
-  // D11 复活窗不删：宽限过期点已重挂（boot sweep 认领形态）⇒ 目录保留。
+  // D11 复活窗不退役：宽限过期点已重挂（boot sweep 认领形态）⇒ 目录保留。
 
   private def seedNode(h: nebflow.core.project.DelegateFlowRuntime, n: nebflow.core.project.NodeDef): IO[Unit] =
     h.store.mutate(st => st.copy(nodes = st.nodes + (n.id -> n))).void
@@ -477,7 +478,7 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
     h.store.chainLedgerStore.chainControlOf(chainId).map(_.status)
 
   test(
-    "D8: full retirement chain — terminal sweep lands the summary rows, unmount, grace-window probe still reads, then the dir goes"
+    "D8: full retirement chain — terminal sweep lands the summary rows, unmount, grace-window probe still reads, then the dir MIGRATES (kept, never deleted)"
   ) {
     val ws = os.temp.dir(prefix = "nb-dm-d8-", deleteOnExit = false)
     val system = ActorSystem(s"dm-d8-${scala.util.Random.nextInt(1000000)}")
@@ -514,10 +515,13 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
         .flatMap(_.hcursor.downField("chain").downField("nodes").as[List[io.circe.Json]].toOption)
         .getOrElse(Nil)
       mountedFlag = probe.flatMap(_.hcursor.downField("chain").downField("mounted").as[Boolean].toOption)
-      // 宽限窗内目录仍在（删除还没跑）——存在性必须在推导体内先取值，yield 只做断言。
+      // 宽限窗内目录仍在（退役还没跑）——存在性必须在推导体内先取值，yield 只做断言。
       dirWithinGrace <- IO(os.exists(scopeDir))
       _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.scheduleScopeRemoval(delegateId)
-      goneAfterGrace <- IO(os.exists(scopeDir))
+      keptAfterGrace <- IO(os.exists(scopeDir))
+      archiveDirAfterGrace <- IO(
+        os.exists(scopeDir / "flow-map-archive") && os.list(scopeDir / "flow-map-archive").nonEmpty
+      )
       probeAfter <- nebflow.core.project.ChainsReadFace.chainJson(delegateId, Map.empty)
       chainAfter = probeAfter.flatMap(_.hcursor.downField("chain").as[Option[io.circe.Json]].toOption).flatten
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -525,7 +529,7 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
       assertEquals(
         dirWithinGrace,
         true,
-        "the scope dir must still exist during the grace window (before the removal leg runs)"
+        "the scope dir must still exist during the grace window (before the retirement leg runs)"
       )
       assertEquals(activeEmpty, true, "the terminal sweep empties the active region before the unmount")
       assert(events.exists(_.contains("chain-archived")), s"chain-archived audit must land: ${events.mkString("\n")}")
@@ -536,11 +540,16 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
         List("solo8"),
         "the grace-window probe must still fetch the swept member from the archive zone (combined read)"
       )
-      assertEquals(goneAfterGrace, false, "the scope dir must be removed once the grace window expires")
+      assertEquals(keptAfterGrace, true, "retirement MIGRATES: the scope dir must be kept after the grace window")
       assertEquals(
-        chainAfter,
-        None: Option[io.circe.Json],
-        "after removal the chain projection degrades to null (three-row-family view)"
+        archiveDirAfterGrace,
+        true,
+        "the swept batch must live on in flow-map-archive/ (migration channel, not deletion)"
+      )
+      assertEquals(
+        chainAfter.isDefined,
+        true,
+        "with the dir kept the chain projection keeps serving the archived members (audit face wins)"
       )
     end for
   }
@@ -651,14 +660,24 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
       chainId = nebflow.core.project.FlowMapStore.topologicalChains(snap9d.nodes.values).head.id
       controlBefore <- ledgerControlOf(h, chainId)
       // 生产终态收口单点全序列（摘要/台账/宿主卸载/归档/待命清算）——记录上无取消墓碑。
-      _ <- nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(res, delegateId, "parent-scope", "completed", "completed")
+      _ <- nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(
+        res,
+        delegateId,
+        "parent-scope",
+        "completed",
+        "completed"
+      )
       recordAfter = nebflow.core.delegate.DelegateRegistry.find(delegateId)
       events <- readEvents(ws)
       controlAfter <- ledgerControlOf(h, chainId)
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(controlBefore, nebflow.core.project.ChainLedger.StatusActive, "precondition: the in-flight chain reads active")
+      assertEquals(
+        controlBefore,
+        nebflow.core.project.ChainLedger.StatusActive,
+        "precondition: the in-flight chain reads active"
+      )
       assertEquals(
         recordAfter.flatMap(_.cancelRequestedAt),
         None: Option[Long],
@@ -699,7 +718,13 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
       chainId = nebflow.core.project.FlowMapStore.topologicalChains(snap9e.nodes.values).head.id
       // 明确取消：墓碑先行（doCancel 同款单写原语——幂等单旗）。
       _ <- IO.blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(delegateId, "acceptance-gate")).void
-      _ <- nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(res, delegateId, "parent-scope", "cancelled", "cancelled")
+      _ <- nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(
+        res,
+        delegateId,
+        "parent-scope",
+        "cancelled",
+        "cancelled"
+      )
       events <- readEvents(ws)
       controlAfter <- ledgerControlOf(h, chainId)
       nodeStates <- h.store.snapshot.map(s => s.nodes.map { case (k, v) => k -> v.status })

@@ -29,8 +29,13 @@ class DelegateFlowMapLifecycleSpec extends FunSuite:
     PathUtil.setDataRoot(originalRoot)
     os.remove.all(tmp)
 
-
-  private def mkRecord(id: String, mode: Option[String], cwd: os.Path, projectWs: Option[String], archived: Boolean): Unit =
+  private def mkRecord(
+    id: String,
+    mode: Option[String],
+    cwd: os.Path,
+    projectWs: Option[String],
+    archived: Boolean
+  ): Unit =
     DelegateRegistry.put(
       DelegateRegistry.Record(
         id = id,
@@ -53,9 +58,15 @@ class DelegateFlowMapLifecycleSpec extends FunSuite:
     val id = "delegate-nebflow-l1"
     mkRecord(id, Some(DualModeConfig.ModeDispatcher), tmp, None, archived = true)
     assert(DelegateFlowMapLifecycle.applies(DelegateRegistry.find(id)), "gate on × dispatcher = applies")
-    assert(!DelegateFlowMapLifecycle.applies(DelegateRegistry.find("delegate-nebflow-ghost")), "no record = no lifecycle")
+    assert(
+      !DelegateFlowMapLifecycle.applies(DelegateRegistry.find("delegate-nebflow-ghost")),
+      "no record = no lifecycle"
+    )
     mkRecord("delegate-nebflow-l1k", Some(DualModeConfig.ModeKernel), tmp, None, archived = true)
-    assert(!DelegateFlowMapLifecycle.applies(DelegateRegistry.find("delegate-nebflow-l1k")), "kernel keeps the map (no orchestration face)")
+    assert(
+      !DelegateFlowMapLifecycle.applies(DelegateRegistry.find("delegate-nebflow-l1k")),
+      "kernel keeps the map (no orchestration face)"
+    )
     mkRecord("delegate-nebflow-l1legacy", None, tmp, None, archived = true)
     assert(
       !DelegateFlowMapLifecycle.applies(DelegateRegistry.find("delegate-nebflow-l1legacy")),
@@ -73,30 +84,99 @@ class DelegateFlowMapLifecycleSpec extends FunSuite:
     assertEquals(DelegateFlowMapLifecycle.graceMs, 600_000L, "unparsable value falls back to the default")
   }
 
-  // ── L3/L4 宽限删除 ─────────────────────────────────────────────────────────
+  // ── L3/L4 宽限退役 ─────────────────────────────────────────────────────────
 
-  test("L3 宽限删除：archivedAt 在 ∧ 未重挂 ⇒ grace 后作用域目录整删") {
+  test("L3 退役=迁移而非删除：archivedAt 在 ∧ 未重挂 ∧ 盘面静默 ⇒ grace 后目录保留、迟到完成链入档") {
     val id = "delegate-nebflow-l3"
     val base = tmp / "ws"
     val scopeDir = base / ".nebflow" / "flow-maps" / id
-    os.makeDir.all(scopeDir)
-    os.write.over(scopeDir / "flow-map.json", "{}")
     mkRecord(id, Some(DualModeConfig.ModeDispatcher), base, None, archived = true)
+    // 预置一条已完成链（挂载同式开 store 直种），退役迁移应把它扫进 flow-map-archive/。
+    nebflow.core.project.FlowMapStore
+      .openScope(id, id, base.toString)
+      .flatMap { store =>
+        store.mutate(st =>
+          st.copy(nodes =
+            st.nodes + ("n1" -> nebflow.core.project.NodeDef(
+              id = "n1",
+              name = "n1",
+              agent = "nebflow",
+              description = Some("late completion"),
+              in = Nil,
+              status = nebflow.core.project.NodeLifecycle.Completed,
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+      }
+      .unsafeRunSync()
     System.setProperty(DelegateFlowMapLifecycle.SysPropGraceMs, "150")
     assert(os.exists(scopeDir), "precondition: the scope dir exists on disk")
     DelegateFlowMapLifecycle.scheduleScopeRemoval(id).unsafeRunSync()
-    assert(!os.exists(scopeDir), s"the scope dir must be removed after the grace window: $scopeDir")
+    assert(os.exists(scopeDir), "retirement MIGRATES: the scope dir must be kept (never wholesale deleted)")
+    assert(
+      os.exists(scopeDir / "flow-map-archive") && os.list(scopeDir / "flow-map-archive").nonEmpty,
+      "the late completed chain must be swept into the existing flow-map-archive/ channel"
+    )
+    // 迁移后活动区为空（迟到完成已出库）——目录成为健康退役形态（历史件原样）。
+    val active = nebflow.core.project.FlowMapStore
+      .openScope(id, id, base.toString)
+      .flatMap(_.snapshot)
+      .unsafeRunSync()
+    assertEquals(active.nodes.size, 0, "the migration sweep empties the active region")
   }
 
-  test("L4 双闸：未归档（archivedAt 缺）⇒ 永不删，目录留存") {
+  test("L4 双闸：未归档（archivedAt 缺）⇒ 永不退役，目录留存") {
     val id = "delegate-nebflow-l4"
     val base = tmp / "ws"
     val scopeDir = base / ".nebflow" / "flow-maps" / id
     os.makeDir.all(scopeDir)
+    os.write.over(scopeDir / "flow-map.json", "{}")
     mkRecord(id, Some(DualModeConfig.ModeDispatcher), base, None, archived = false)
     System.setProperty(DelegateFlowMapLifecycle.SysPropGraceMs, "100")
     DelegateFlowMapLifecycle.scheduleScopeRemoval(id).unsafeRunSync()
     assert(os.exists(scopeDir), "no archivedAt on record = the audit face wins, the dir stays")
+  }
+
+  // ── L6 终态腿盘面静默复核（迁移化批：终态腿与孤儿腿同过 scopeQuietRecheck）──
+
+  test("L6 终态腿静默复核：archivedAt 在但盘面仍有非终态节点 ⇒ 跳过迁移，目录与节点原样保留") {
+    val id = "delegate-nebflow-l6"
+    val base = tmp / "ws"
+    val scopeDir = base / ".nebflow" / "flow-maps" / id
+    mkRecord(id, Some(DualModeConfig.ModeDispatcher), base, None, archived = true)
+    // 盘面复活形态：重开 store 直种一个 RUNNING 节点——终态证据（archivedAt）在，
+    // 但盘面不静默 ⇒ 双保险拦截（复活窗/在飞优先于整洁）。
+    nebflow.core.project.FlowMapStore
+      .openScope(id, id, base.toString)
+      .flatMap { store =>
+        store.mutate(st =>
+          st.copy(nodes =
+            st.nodes + ("n6" -> nebflow.core.project.NodeDef(
+              id = "n6",
+              name = "n6",
+              agent = "nebflow",
+              description = Some("still running"),
+              in = Nil,
+              status = nebflow.core.project.NodeLifecycle.Running,
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+      }
+      .unsafeRunSync()
+    System.setProperty(DelegateFlowMapLifecycle.SysPropGraceMs, "100")
+    DelegateFlowMapLifecycle.scheduleScopeRemoval(id).unsafeRunSync()
+    assert(os.exists(scopeDir), "the terminal-leg quiet recheck must keep the dir while a node is non-terminal")
+    val active = nebflow.core.project.FlowMapStore
+      .openScope(id, id, base.toString)
+      .flatMap(_.snapshot)
+      .unsafeRunSync()
+    assertEquals(
+      active.nodes.get("n6").map(_.status),
+      Some(nebflow.core.project.NodeLifecycle.Running),
+      "the in-flight node must stay exactly as-is (revival window wins)"
+    )
   }
 
   // ── L5 存储锚推导 ──────────────────────────────────────────────────────────
@@ -107,7 +187,11 @@ class DelegateFlowMapLifecycleSpec extends FunSuite:
     val base = tmp / "project-ws"
     mkRecord(id, Some(DualModeConfig.ModeDispatcher), seat, Some(base.toString), archived = true)
     val rec = DelegateRegistry.find(id)
-    assertEquals(DelegateFlowMapLifecycle.baseWorkspaceOf(rec), Some(base.toString), "worktree leg anchors at the project workspace")
+    assertEquals(
+      DelegateFlowMapLifecycle.baseWorkspaceOf(rec),
+      Some(base.toString),
+      "worktree leg anchors at the project workspace"
+    )
     assertEquals(
       DelegateFlowMapLifecycle.scopeDirOf(base.toString, id),
       base / ".nebflow" / "flow-maps" / id,

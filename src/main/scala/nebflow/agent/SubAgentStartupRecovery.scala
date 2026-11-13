@@ -190,9 +190,7 @@ object SubAgentStartupRecovery:
       finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
         markInterruptedRecords(store).void *>
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
-    val metadata = revival.fold(IO.unit)(deps => nebflow.core.delegate.MergerInitialization.repairAll(deps.resources))
-    val tasks =
-      metadata *> inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
+    val tasks = inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
     tasks.flatMap {
       case Nil => settle().as(Report())
       case allOrphans =>
@@ -214,15 +212,10 @@ object SubAgentStartupRecovery:
             )
         // 冻结行的复活 = 可选腿（有 deps 才做）：冻结行不参与「在飞孤儿」的收殓分流，
         // 复活失败也只回原状（行仍 frozen、待作者唤醒）。
-        val automaticFrozenRows = frozenRows.filterNot(t =>
-          nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergerBootstraps
-            .get(t.taskId)
-            .exists(_.status != "ready")
-        )
         def reviveFrozen(): IO[List[String]] =
           if frozenRows.isEmpty || revival.isEmpty || !Defaults.DelegateRevivalEnabled then IO.pure(Nil)
           else
-            automaticFrozenRows
+            frozenRows
               .traverse(t =>
                 DelegateRevival
                   .eligibility(sessionStore, t)
@@ -258,7 +251,7 @@ object SubAgentStartupRecovery:
                 val head =
                   s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
                     "had reached ready-to-merge under a previous engine version; no merge round can be granted for it anymore — " +
-                    "the row is settled to interrupted (branch/worktree kept as-is; integration goes through an authorized merger request)."
+                    "the row is settled to interrupted (branch/worktree kept as-is; commits remain on the branch, landing is the author's decision)."
                 recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources))
                   .handleErrorWith { e =>
                     logger

@@ -7,9 +7,8 @@ import nebflow.shared.{Defaults, SubAgentTask}
  * 2026-11-06 · 作者令 22:39 逐字「我发现了非常久远的 delegate 任务也在里面。说明
  * 我们没有一个死 delegate 的一个清理机制。设置跟 work tree 一个 ttl，一周。」）。
  *
- * 考古结论（本批）：仓内**没有** worktree TTL 机制（merge-sink.py / PostMergeCleanup
- * / NodeEditTool.reclaimAbandonedWorktree 全是事件驱动回收，非年龄驱动）——本批
- * 立统一 TTL：`Defaults.DelegateTerminalTtlMs`（7 天，全仓唯一定义点）。
+ * 边界：本对象只判「登记条目/任务行」的年龄；工作区与分支永不因 TTL 回收
+ * （引擎不回收座位——`Defaults.DelegateTerminalTtlMs` = 7 天，全仓唯一定义点）。
  *
  * 三态判读（spec 钉死边界）：
  *  - `InFlight`     在飞会话——**绝不清理**（红线：running/restarting/ready-to-merge

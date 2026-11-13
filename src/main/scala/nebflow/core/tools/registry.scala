@@ -165,26 +165,6 @@ object ToolRegistry:
       // execution surface**). Registering the old names as aliases would mean the retirement
       // guide never fires AND a second path to the write face would exist -- hence the
       // **deliberate absence** here.
-      MergerRequestTool.Name -> MergerRequestTool,
-      // WorktreeContext (worktree-merger delivery, Priority D): read-only
-      // full-context assembly for one managed workspace (summary-first sections
-      // + paginated mail, explicit missing ranges per section). Authorization =
-      // the merger tool mount face (buildAllowedToolSet tail) +
-      // RootOrchestrationTools (main-agent face) + the in-tool
-      // identity refusal (anything that is neither merger-mode nor root is
-      // fail-closed, MergerRequestTool precedent); a recorded merger is scoped
-      // to its own repository inside the tool.
-      WorktreeContextTool.Name -> WorktreeContextTool,
-      // WorkspaceSummary (worktree-merger delivery, Priority E): the main
-      // agent's per-project coordination picture (workspace facts, pending
-      // merge requests with origins, advisor suggestions with states, merger
-      // initialization) plus the dismiss-suggestion action. Authorization =
-      // RootOrchestrationTools (mount face) + RootExclusiveTools (declaration-
-      // escape prevention) + the in-tool root identity refusal (MergerRequestTool
-      // precedent). The advisor itself never merges; this is a read face with
-      // one dismissal write into the advisor's own store.
-      WorkspaceSummaryTool.Name -> WorkspaceSummaryTool,
-      WorkspaceReconcileTool.Name -> WorkspaceReconcileTool,
       // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
       // 只读）——embedding 余弦 top-k + 词法降级 + 可选 Jev 重排。授权面 =
       // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单

@@ -142,9 +142,12 @@ function openPane(mode, taskKey, summary, opts = {}) {
   openTab('projects', t('project.title'), { type: 'projects', closable: true });
   const pane = getTabPane('projects');
   if (!pane) return null;
+  // Key semantics: task mode keys the chain, structure mode keys the project
+  // filter ('' = all) — a re-open with a different key rebuilds the pane so the
+  // dataset carries the fresh key (renderStructureBody reads it as the filter).
   const sameView = pane.dataset.projectsView === 'delegate-chain'
     && pane.dataset.delegateMode === mode
-    && (mode !== 'task' || pane.dataset.delegateKey === String(taskKey || ''));
+    && ((mode !== 'task' && mode !== 'structure') || pane.dataset.delegateKey === String(taskKey || ''));
   ensureFlowCss();
   if (!sameView) {
     // 离开旧视图的清理（先取旧值再覆写）：task 视图的引擎侧图缓存（fmByProject/
@@ -280,36 +283,31 @@ function renderTaskBody(pane, key, opts = {}) {
 // ── S11 结构总视图 ───────────────────────────────────────────────────────
 
 /**
- * 打开 delegate 结构总视图（S11 改义面）：worktree 座 ＋ 各
- * delegate 链卡。数据 = listDelegateRows × getChainByTask 投影（stub 读取口）。
- * 视图重设计实施批（2026-10-21）：S11 平铺面由**全景视图**（delegatePanoramaView）
- * 承接——本函数保留为兼容别名（既有入口零断链），渲染体 = 全景组件（入口统一：
- * 任务列表行 / 项目面板卡同路 openDelegatePanorama）。
+ * 打开 delegate 结构总视图（S11）：worktree 座 ＋ 各 delegate 链卡。数据 =
+ * listDelegateRows × getChainByTask 投影（stub 读取口）。入口 = 项目面板「项目
+ * 流程图」圆钮（全量）与项目卡标题点按（按该项目收窄）。
+ * @param {string} [projectFilter] 项目名（'' = 全量）
  */
 export function openDelegateChainStructure(projectFilter = '') {
-  import('./delegatePanoramaView.js')
-    .then(({ openDelegatePanorama }) => openDelegatePanorama(String(projectFilter || '')))
-    .catch(() => {});
-}
-
-/**
- * 全景视图 pane 脚手架（delegatePanoramaView 静态复用；openPane 保持模块私有）。
- * mode='panorama'：pane 记忆 projectsView='delegate-chain' + delegateMode 存项目
- * 过滤参数（'' = 全量）。summary = 顶栏标题。
- * @param {string} projectFilter @param {string} summary
- */
-export function openPanoramaPane(projectFilter, summary) {
-  return openPane('panorama', String(projectFilter || ''), summary);
+  const filter = String(projectFilter || '');
+  const pane = openPane('structure', filter, t('delegate.projectflow.title'));
+  if (pane) renderStructureBody(pane);
 }
 
 /** S11 视图体渲染。
+ *  项目收窄：pane.dataset.delegateKey 承载项目过滤参数（'' = 全量；openDelegate
+ *  ChainStructure 入参透传——项目卡标题点按 = 该项目收窄，圆钮 = 全量）。
  *  用户九点⑤（2026-10-09）：空态自动收起——零行不渲染空态区块（视图体留白，
  *  面板返回条仍在；重试面只留给「有行但读取失败」的真实故障态）。 */
 function renderStructureBody(pane) {
   const body = pane.querySelector(BODY_SEL);
   if (!body) return;
+  const projectFilter = String(pane.dataset.delegateKey || '');
   body.innerHTML = '';
-  const rows = listDelegateRows();
+  const allRows = listDelegateRows();
+  const rows = projectFilter
+    ? allRows.filter((r) => String((r && r.project) || '') === projectFilter)
+    : allRows;
   if (!rows.length) {
     // 用户九点⑤空态自动收起的 §F⑤ 延伸：L2 空 = 留白 + 抽屉引用（归档积累后
     // 历史仍可达——只挂归档 FAB，零空态插图）。
@@ -440,17 +438,11 @@ function renderStructureBody(pane) {
 }
 
 /** projectTab.rerenderProjectsTab 视图分流挂钩：按 pane 记忆的模式重渲当前视图
- *  （数据面 = stub 读取口现读；WS/live 增量属 N1 结构帧落地后的 provider 面）。
- *  panorama 模式 = 全景组件动态 import（静态零环——全景模块反向动态 import 本件
- *  的 L1 下钻）。 */
+ *  （数据面 = stub 读取口现读；WS/live 增量属 N1 结构帧落地后的 provider 面）。 */
 export function rerenderDelegateChainPane(pane) {
   if (!pane || pane.dataset.projectsView !== 'delegate-chain') return;
   if (pane.dataset.delegateMode === 'task') renderTaskBody(pane, String(pane.dataset.delegateKey || ''));
-  else if (pane.dataset.delegateMode === 'panorama') {
-    import('./delegatePanoramaView.js')
-      .then(({ renderPanoramaBody }) => renderPanoramaBody(pane))
-      .catch(() => {});
-  } else if (pane.dataset.delegateMode === 'structure') renderStructureBody(pane);
+  else if (pane.dataset.delegateMode === 'structure') renderStructureBody(pane);
 }
 
 // ── L2 唯一归档面（两层架构批 · 2026-10-09 §D WF-07）：FAB → 右侧抽屉 ──────────
@@ -493,7 +485,9 @@ const STRUCT_ARCHIVE_CSS = `
    graphs and is noise at one-chain scale — it does not render here. */
 .delegate-flowmap-host .flowmap-legend { display: none; }
 .delegate-archive-fab {
-  position: absolute; top: 12px; right: 14px;
+  /* Below the body-level deck FAB (40px round, anchored at the panel's top
+     right): keeps both clickable in the structure view's short body. */
+  position: absolute; top: 60px; right: 14px;
   width: 34px; height: 34px; border-radius: 50%;
   border: 1px solid var(--glass-control-border, rgba(128,128,128,0.35));
   background: var(--glass-control-bg, transparent);
@@ -519,7 +513,9 @@ const STRUCT_ARCHIVE_CSS = `
 .delegate-archive-badge.pulse { animation: delegate-archive-badge-pulse 1.1s ease-out 2; }
 /* 归档抽屉（唯一归档视图）：右侧滑出面板，清单 + 行动作两栏（流程图/恢复）。 */
 .delegate-archive-drawer {
-  position: absolute; top: 0; right: 0; bottom: 0; width: 340px; max-width: 86%;
+  /* top clears the body-level deck FAB (40px round at the panel's top right) —
+     the drawer head/close must stay clickable in the structure view. */
+  position: absolute; top: 52px; right: 0; bottom: 0; width: 340px; max-width: 86%;
   z-index: 46; overflow-y: auto; padding: var(--ds-space-3) var(--ds-space-3) var(--ds-space-4);
   background: var(--glass-bg, var(--color-surface));
   border-left: 1px solid var(--color-border);
@@ -861,11 +857,6 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
       // animates real deltas and leaves an unchanged map byte-identical (zero
       // DOM churn); the fail-soft face re-tries the read port the same way.
       renderTaskBody(pane, String(pane.dataset.delegateKey || ''));
-    } else if (pane.dataset.delegateMode === 'panorama') {
-      // 全景（视图重设计实施批）：镜像刷新 = 同缝重渲（数据权威恒在 REST 镜像）。
-      import('./delegatePanoramaView.js')
-        .then(({ renderPanoramaBody }) => renderPanoramaBody(pane))
-        .catch(() => {});
     } else if (pane.dataset.delegateMode === 'structure') {
       renderStructureBody(pane);
     }

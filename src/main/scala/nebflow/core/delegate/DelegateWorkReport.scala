@@ -19,7 +19,13 @@ object DelegateWorkReport:
    */
   final case class FileDiffStat(path: String, added: Long, removed: Long)
 
-  final case class MergeDiffStat(commit: String, added: Long, removed: Long, oid: String = "", files: List[FileDiffStat] = Nil)
+  final case class MergeDiffStat(
+    commit: String,
+    added: Long,
+    removed: Long,
+    oid: String = "",
+    files: List[FileDiffStat] = Nil
+  )
 
   final case class ChildDiffStat(
     delegateId: String,
@@ -34,11 +40,33 @@ object DelegateWorkReport:
     added: Long,
     removed: Long,
     children: List[ChildDiffStat],
-    partial: Boolean
+    partial: Boolean,
+    /**
+     * Mechanical partial annotations (annotation face, never a blocker): cross-repo
+     * seats, non-git/unreadable seats, and writes beyond the current round's baseline
+     * snapshot. Empty = no annotation.
+     */
+    partialReasons: List[String] = Nil,
+    /**
+     * Full OIDs counted into this aggregate (per unique commit) — settlement writes
+     * them to the round ledger (`countedOids`) so later rounds deduplicate across
+     * rounds.
+     */
+    countedOids: List[String] = Nil
   )
 
-  /** Delegate and DAG-session descendants, rooted in durable ownership edges. */
-  def aggregateDiffStat(root: DelegateRegistry.Record): AggregateDiffStat =
+  /**
+   * Trusted-descendant closure traversal — the single ownership truth source
+   * (DelegateRegistry `parentSessionId` edges ∪ `FlowNodeOwnership` edges); the
+   * completion-gate ②a/②b segments and this diff face share the same ownership
+   * boundary, no second traversal is built.
+   *
+   * @param excludeOids commits already counted by SETTLED rounds of this identity
+   *                    (round ledger `countedOids`) — excluded from the rollup so a
+   *                    new round never double-counts prior rounds' merges. Detail
+   *                    rows keep them visible for audit.
+   */
+  def aggregateDiffStat(root: DelegateRegistry.Record, excludeOids: Set[String] = Set.empty): AggregateDiffStat =
     val delegates = DelegateRegistry.list().map(r => r.id -> r).toMap
     val flowEdges = FlowNodeOwnership.list().map(e => e.sessionId -> e.parentSessionId).toMap
     val childrenByParent =
@@ -46,24 +74,110 @@ object DelegateWorkReport:
     val seen = scala.collection.mutable.Set(root.id)
     var frontier = List(root.id)
     while frontier.nonEmpty do
-      val next = childrenByParent.collect { case (child, parent) if frontier.contains(parent) && !seen(child) => child }.distinct
+      val next = childrenByParent.collect {
+        case (child, parent) if frontier.contains(parent) && !seen(child) => child
+      }.distinct
       seen ++= next
       frontier = next
-    val descendants = seen.iterator.filterNot(_ == root.id).toList.sortBy(id => (delegates.get(id).map(_.createdAt).getOrElse(Long.MaxValue), id))
+    val descendants = seen.iterator
+      .filterNot(_ == root.id)
+      .toList
+      .sortBy(id => (delegates.get(id).map(_.createdAt).getOrElse(Long.MaxValue), id))
     val children = descendants.map { id =>
       delegates.get(id) match
         case Some(rec) =>
           val workspace = rec.projectWorkspace.getOrElse(rec.cwd)
           val uncommitted = Try(GitWorktrees.dirtyPaths(os.Path(workspace))).toOption.flatten
           val merge = mergeDiffStat(rec)
-          ChildDiffStat(rec.id, rec.parentSessionId, workspace, rec.worktree, merge,
-            partial = rec.reportStatus.isEmpty || merge.isEmpty || merge.exists(_.files.isEmpty) || uncommitted.forall(_.nonEmpty))
+          ChildDiffStat(
+            rec.id,
+            rec.parentSessionId,
+            workspace,
+            rec.worktree,
+            merge,
+            partial = rec.reportStatus.isEmpty || merge.isEmpty || merge.exists(_.files.isEmpty) || uncommitted.forall(
+              _.nonEmpty
+            )
+          )
         case None =>
           // DAG sessions have no persisted merge/report slot. Keep them visible and
           // explicitly partial rather than silently omitting their unavailable stats.
-          ChildDiffStat(id, flowEdges.getOrElse(id, ""), root.projectWorkspace.getOrElse(root.cwd), None, None, partial = true)
+          ChildDiffStat(
+            id,
+            flowEdges.getOrElse(id, ""),
+            root.projectWorkspace.getOrElse(root.cwd),
+            None,
+            None,
+            partial = true
+          )
     }
-    aggregateChildren(children)
+    aggregateChildren(children, excludeOids)
+      .copy(partialReasons = partialReasonsOf(root, descendants.flatMap(delegates.get)))
+      .copy(countedOids = uniqueCommitKeys(children, excludeOids))
+
+  end aggregateDiffStat
+
+  /** Keys (full OID, short-commit fallback) of the commits this aggregate counts. */
+  private[delegate] def uniqueCommitKeys(children: List[ChildDiffStat], excludeOids: Set[String]): List[String] =
+    children
+      .flatMap(_.merge)
+      .map(s => if s.oid.nonEmpty then s.oid else s.commit)
+      .distinct
+      .filterNot(excludeOids.contains)
+
+  /**
+   * Mechanical partial annotations for the closure (annotation face, not truth face):
+   *   - cross-repo: closure seats span more than one git common-dir key;
+   *   - non-git/unreadable seat: a seat that exists but cannot be judged as a repo;
+   *   - beyond-baseline writes: the ROOT seat's dirty set exceeds the current round's
+   *     baseline snapshot (round ledger `baseDirty`) — new paths are listed.
+   * All fail-soft: an unreadable reading contributes no reason (never blocks).
+   */
+  private[delegate] def partialReasonsOf(
+    root: DelegateRegistry.Record,
+    descendants: List[DelegateRegistry.Record]
+  ): List[String] =
+    val seats = (root :: descendants).map(r => r.id -> r.projectWorkspace.getOrElse(r.cwd)).distinct
+    val keys = seats.flatMap { case (id, seat) => repositoryKeyOf(seat).map(k => (id, seat, k)) }
+    val crossRepo =
+      if keys.map(_._3).distinct.lengthCompare(1) > 0 then
+        Some(
+          s"cross-repo closure: ${keys.length} seat(s) span ${keys.map(_._3).distinct.size} repository keys " +
+            keys.map { case (id, _, k) => s"$id=$k" }.take(8).mkString("(", ", ", ")")
+        )
+      else None
+    val nonGit = seats.collect {
+      case (id, seat) if seatExists(seat) && !isGitRepo(seat) => s"non-git seat: $id at $seat"
+    }
+    val beyondBaseline =
+      DelegateRoundLedger.currentRound(root.id).flatMap(_.baseDirty) match
+        case Some(baseDirty) =>
+          val base = baseDirty.map(_.trim).filter(_.nonEmpty).toSet
+          Try(GitWorktrees.dirtyPaths(os.Path(root.projectWorkspace.getOrElse(root.cwd)))).toOption.flatten
+            .map(_.map(_.trim).filter(_.nonEmpty).filterNot(base.contains).distinct)
+            .filter(_.nonEmpty)
+            .map(added =>
+              s"writes beyond the round baseline: ${added.size} new path(s) on the root seat: ${added.take(20).mkString(", ")}" +
+                (if added.size > 20 then " …" else "")
+            )
+        case None => None
+    (crossRepo.toList ++ nonGit ++ beyondBaseline.toList).distinct
+
+  end partialReasonsOf
+
+  private def seatExists(seat: String): Boolean =
+    Try(java.nio.file.Files.isDirectory(java.nio.file.Path.of(seat))).getOrElse(false)
+
+  private def isGitRepo(seat: String): Boolean =
+    Try(GitWorktrees.isGitRepo(os.Path(seat))).getOrElse(false)
+
+  /** git common-dir key of a seat (None when not a repo / unreadable); key logic = [[WorkspaceLedger.repositoryKey]]. */
+  def repositoryKeyOf(seat: String): Option[String] =
+    try
+      val p = os.Path(seat)
+      if !GitWorktrees.isGitRepo(p) then None
+      else Some(WorkspaceLedger.repositoryKey(p))
+    catch case _: Throwable => None
 
   /**
    * Roll up child details without changing the detail rows. First collapse repeated
@@ -72,14 +186,29 @@ object DelegateWorkReport:
    * per-file numstat (ties: lexicographically smallest full OID/commit); this avoids
    * summing repeated edits while making the chosen contribution deterministic.
    * Files stay attributed to their original child rows for auditability.
+   * Commits already counted by settled rounds (`excludeOids`) stay in the detail rows
+   * but are excluded from the rollup sums (cross-round dedup).
    */
-  private[delegate] def aggregateChildren(children: List[ChildDiffStat]): AggregateDiffStat =
-    val uniqueCommits = children.flatMap(_.merge)
-      .groupBy(s => if s.oid.nonEmpty then s.oid else s.commit)
-      .valuesIterator.map(_.head).toList
-    val chosenPerFile = uniqueCommits.flatMap { stat =>
-      stat.files.map(file => (file, if stat.oid.nonEmpty then stat.oid else stat.commit))
-    }.groupBy(_._1.path).valuesIterator.map(_.toList.sortBy { case (file, key) => (-(file.added + file.removed), key) }.head).toList
+  private[delegate] def aggregateChildren(
+    children: List[ChildDiffStat],
+    excludeOids: Set[String] = Set.empty
+  ): AggregateDiffStat =
+    val uniqueCommits = children
+      .flatMap(_.merge)
+      .map(s => (s, if s.oid.nonEmpty then s.oid else s.commit))
+      .groupBy(_._2)
+      .valuesIterator
+      .map(_.head._1)
+      .toList
+      .filterNot(s => excludeOids.contains(if s.oid.nonEmpty then s.oid else s.commit))
+    val chosenPerFile = uniqueCommits
+      .flatMap { stat =>
+        stat.files.map(file => (file, if stat.oid.nonEmpty then stat.oid else stat.commit))
+      }
+      .groupBy(_._1.path)
+      .valuesIterator
+      .map(_.toList.sortBy { case (file, key) => (-(file.added + file.removed), key) }.head)
+      .toList
     // Compatibility fallback for callers/legacy values with no file-level breakdown.
     val withoutFileBreakdown = uniqueCommits.filter(_.files.isEmpty)
     val (added, removed) =
@@ -95,6 +224,8 @@ object DelegateWorkReport:
       children,
       children.exists(c => c.partial || c.merge.isEmpty) || withoutFileBreakdown.nonEmpty
     )
+
+  end aggregateChildren
 
   /**
    * 本 delegate 批次**合并**的代码量变化（+新增 −删除）。锚定序：
@@ -148,12 +279,17 @@ object DelegateWorkReport:
         .call(check = false, mergeErrIntoOut = true)
       if res.exitCode != 0 then None
       else
-        val files = res.out.trim().linesIterator.flatMap { line =>
-          line.split('\t').toList match
-            case adds :: dels :: pathParts if pathParts.nonEmpty && adds.forall(_.isDigit) && dels.forall(_.isDigit) =>
-              Some(FileDiffStat(pathParts.mkString("\t"), adds.toLong, dels.toLong))
-            case _ => None // binary（`- -`）/ 畸形行不计
-        }.toList
+        val files = res.out
+          .trim()
+          .linesIterator
+          .flatMap { line =>
+            line.split('\t').toList match
+              case adds :: dels :: pathParts
+                  if pathParts.nonEmpty && adds.forall(_.isDigit) && dels.forall(_.isDigit) =>
+                Some(FileDiffStat(pathParts.mkString("\t"), adds.toLong, dels.toLong))
+              case _ => None // binary（`- -`）/ 畸形行不计
+          }
+          .toList
         Some((files.map(_.added).sum, files.map(_.removed).sum, files))
     }.getOrElse(None)
 

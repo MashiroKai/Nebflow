@@ -446,6 +446,9 @@ function bgRowCollapseDefault(row) {
     if (g.chainLive) return false;
     return bgHeadDefaultCollapsed(g.info || {});
   }
+  // 结构父（face C）：默认随子树态——有活跃后代 ⇒ 展开（活跃可见），全终态 ⇒ 收起
+  // （与组头终态收起同规；用户偏好仍可覆写）。
+  if (r.level === 'struct') return !!r.structAllTerminal;
   if (r.level !== 'child') return false;
   const c = r.child || {};
   if (c.type === 'store') {
@@ -1084,10 +1087,11 @@ function bgRowTree(rows) {
     const pk = bgTreeParentKeyOf(row);
     const cand = (pk && pk !== self) ? byKey.get(pk) : null;
     if (cand && cand !== row) {
-      if (row.level === 'top') {
+      if (row.level === 'top' || row.level === 'struct') {
         // 属主边（parentSessionId 来的父子）不受同组约束限制，跨组照挂——顶层行的
         // 父锚：root 锚（锚无组）、另一条顶层行（dispatcher → node）、合成延续组头
-        // （父行在场的情形）。作者令逐字「每一层都是上一层的缩进」。
+        // （父行在场的情形）。作者令逐字「每一层都是上一层的缩进」。face C：结构父
+        // 行（level='struct'）同款跨组挂接（嵌套 delegate 的结构父可挂另一结构父下）。
         parentOf.set(row, cand);
         continue;
       }
@@ -1342,6 +1346,7 @@ export function bgOrphanRowKeys(rows, bucketSid) {
   const wild = new Set();
   for (const row of list) {
     if (!row || row.level === 'head' || row.level === 'root') continue; // 整体行 / root 锚是根，永非野
+    if (row.level === 'struct') continue;       // 结构父（face C 标签面）是基座，永非野
     if (row.level === 'child') continue;        // 成员行的父 = 所属整体行（在行集里）
     // 三代层级批：野 ⇔ 父态判定表③（判定单点 bgTopRowParentStateOf——②态「父不在场」
     // 的三代链行在此**不算野**：它们的归置面 = 父应在位置（root 锚直下），不进野组；
@@ -1461,6 +1466,75 @@ function bgRowPlan(model, bucketSid) {
     const k = bgRowSessionKey(r);
     if (k && !keptByKey.has(k)) keptByKey.set(k, r);
   }
+  // ── ⑦ 结构父合成（face C · 全局后台面板层级）────────────────────────────
+  // 活跃/在场后代（kept 顶层行）的 parentSessionId 指向**已注册** delegate（镜像行
+  // 在场）而父无 live 行 ⇒ 从注册行合成**结构节点**（level='struct'，标签面）：
+  //   · 身份单源 = 注册行镜像（name/title/mode/taskStatus——spawn 落盘，零臆造；
+  //     镜像缺席 ⇒ 不合成，后代走既有野组面 = 标未知而非猜）；
+  //   · 已完成后代保留：结构父的 store 子条目（completed/failed——终态子行集）
+  //     挂结构父下（与组头 Pass 3 同读口同窗）；镜像未到 ⇒ 下轮
+  //     delegate-chain-mirror-updated 重渲补齐（增量/重连同缝）；
+  //   · 不入计数（total 见下）——「父可 idle 且不计活跃数」；
+  //   · 嵌套：结构父自身的 parentSessionId（注册行透传）再指注册 delegate ⇒ 链式
+  //     合成（visited 防环，深度上限防御）。
+  const regBySidLocal = bgRegistryRowsBySid();
+  const structRows = [];
+  const structByKey = new Map();
+  const claimersByParent = new Map();
+  for (const r of kept) {
+    if (r.level !== 'top') continue;
+    const pk = bgTreeParentKeyOf(r);
+    if (!pk || pk === bgRowSessionKey(r) || pk === bucketKey) continue;
+    if (keptByKey.has(pk)) continue; // parent already visible as a real row
+    if (!claimersByParent.has(pk)) claimersByParent.set(pk, []);
+    claimersByParent.get(pk).push(r);
+  }
+  const pending = [...claimersByParent.keys()];
+  const seenStruct = new Set();
+  while (pending.length && structRows.length < 24) {
+    const pk = pending.shift();
+    if (!pk || seenStruct.has(pk)) continue;
+    const reg = regBySidLocal.get(pk) || null;
+    if (!reg) continue; // unregistered parent — wild face keeps the honest unknown
+    seenStruct.add(pk);
+    const structRow = {
+      level: 'struct',
+      id: 'bg-struct:' + pk,
+      identity: pk,
+      info: { sessionId: pk, parentSessionId: String(reg.parentSessionId || '') },
+      structRow: reg,
+      group: null,
+      claimers: claimersByParent.get(pk) || [],
+      storeChildren: [],
+    };
+    structRows.push(structRow);
+    structByKey.set(pk, structRow);
+    const grand = String(reg.parentSessionId || '').replace(/^team-/, '').trim();
+    if (grand && grand !== pk && grand !== bucketKey && !keptByKey.has(grand)) pending.push(grand);
+  }
+  // Store children of struct parents（已完成后代保留 + 补拉去重——present 集 = 行集
+  // 键 ∪ 结构父键，同一子行不双出）。
+  if (structRows.length) {
+    const present = new Set([...keptByKey.keys(), ...structByKey.keys()]);
+    for (const structRow of structRows) {
+      for (const child of listDelegateChildren(bgRowSessionKey(structRow))) {
+        const cid = String((child && child.taskId) || '');
+        if (!cid || present.has(cid)) continue;
+        present.add(cid);
+        const info = bgScopeStoreInfo(child, bgRowSessionKey(structRow));
+        const row = { level: 'top', id: cid, info, storeChild: child, orphan: null };
+        structRow.storeChildren.push(row);
+        kept.push(row); // participates in the tree below; not in keptByKey→placed loops above
+      }
+    }
+    // Terminal-ness for the collapse default: all claimers + store children terminal.
+    for (const structRow of structRows) {
+      structRow.structAllTerminal = [...structRow.claimers, ...structRow.storeChildren]
+        .every((r) => bgRowTerminal((r && r.info) || {}));
+    }
+    items.push(...structRows);
+    for (const s of structRows) placed.add(s);
+  }
   let anchorRow = null;
   if (bucketKey) {
     const hasRootChildren = kept.some((r) => r.level === 'top'
@@ -1504,10 +1578,13 @@ function bgRowPlan(model, bucketSid) {
       row.absentParent = { parentSid: String(bgTreeParentKeyOf(row) || '') };
     }
   }
-  // total = 行集长度，root 锚除外（锚是标签面行，不是行——「签 == 实际 .bg-task-row
-  // 行数」口径不破；锚子树里的行照常计入）。
+  // total = 行集长度，root 锚与结构父（face C 标签面行）除外——「签 == 实际
+  // .bg-task-row 行数」口径不破；锚/结构父子树里的行照常计入（idle 父不计活跃数）。
   let total = 0;
-  for (const row of tree.order) if (!row || row.level !== 'root') total += 1;
+  for (const row of tree.order) {
+    if (!row || row.level === 'root' || row.level === 'struct') continue;
+    total += 1;
+  }
   return { items: tree.order, total, tree, orphanCount: wildKeys.size };
 }
 
@@ -1733,6 +1810,57 @@ function bgRootAnchorHtml(key, childCount, collapsed) {
     (Number(childCount) > 0 ? bgCaretHtml(key, collapsed) : '') +
     '<span class="bg-root-anchor-name" title="' + escapeHtml(String(key || '')) + '">' +
       escapeHtml(word) + '</span>' +
+  '</div>';
+}
+
+// ── Registry-backed structural parent（全局后台面板层级 face C）────────────────
+// 契约：活跃后代在场而父 delegate 无 live 行（父已终态/空闲/离场）时，父必须作为
+// **结构节点**显示——不猜标题、不隐藏文案：父的身份只来自注册行镜像
+// （DelegateRegistry.Record——spawn 落盘、跨重启存活），镜像缺席 ⇒ 不合成（后代
+// 走既有野组面，标未知而非猜）。结构节点是**标签面**：不入行集计数、不占
+// data-bg-row-total、不带 .bg-task-row（「父可 idle 且不计活跃数」的机械形态——
+// 徽标/头部计数只数真实后代行）。已完成后代（store 子条目）随结构保留展示；
+// 有限历史窗 = 镜像现读（children 按父分区，一批的子集，非全局历史）。
+
+/** Registry row status → status word key (existing keys only; '' = no word). */
+function bgStructStatusWordKey(registryRow) {
+  const task = String((registryRow && registryRow.taskStatus) || '');
+  const st = task || String((registryRow && registryRow.status) || '');
+  if (st === 'completed') return 'flowmap.done';
+  if (st === 'failed') return 'flowmap.fail';
+  if (st === 'cancelled') return 'flowmap.st.cancelled';
+  if (st === 'interrupted') return 'task.nodeInterrupted';
+  if (st === 'ready-to-merge') return 'delegate.readyToMerge';
+  if (st === 'running') return 'task.inProgressShort';
+  return '';
+}
+
+/** Structural parent label face（caret + kind badge + name + muted status word）。
+ *  Machine anchors: data-bg-struct-parent="1" + data-bg-depth；sid 全文在 title。
+ *  @param {any} row 结构父行计划项（level='struct'，row.structRow = 注册行镜像）
+ *  @param {number} childCount 子行数（0 = 不带 caret 与折叠锚）
+ *  @param {boolean} collapsed @returns {string} */
+function bgStructParentHtml(row, childCount, collapsed) {
+  const reg = (row && row.structRow) || {};
+  const sid = bgRowSessionKey(row);
+  const kind = bgDelegateExecMode(reg);
+  const kindPart = kind
+    ? '<span class="bg-task-kind">' + escapeHtml(bgDelegateBadgeWord(kind)) + '</span>'
+    : '';
+  const shortName = String(reg.name || '').trim();
+  const titleLine = bgFirstLine(reg.title || '');
+  const label = shortName || titleLine || sid;
+  const tip = [shortName, titleLine, sid].filter(Boolean).join(' · ');
+  const wordKey = bgStructStatusWordKey(reg);
+  const word = wordKey ? t(wordKey) : '';
+  return '<div class="bg-struct-parent" data-bg-struct-parent="1" data-bg-depth="0" role="presentation"' +
+    bgCollapseAttrs(childCount, collapsed) +
+    ' aria-label="' + escapeHtml(label) + '">' +
+    (Number(childCount) > 0 ? bgCaretHtml(sid, collapsed) : '') +
+    '<span class="bg-struct-parent-name" title="' + escapeHtml(tip) + '">' +
+      escapeHtml(label) + '</span>' +
+    kindPart +
+    (word ? '<span class="bg-struct-parent-state">' + escapeHtml(word) + '</span>' : '') +
   '</div>';
 }
 
@@ -2292,8 +2420,14 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
     failed: 'error', cancelled: 'done', blocked: 'stuck',
   }[st] || 'idle';
   const deps = Array.isArray(n.deps) ? n.deps.map((d) => String(d || '')).filter(Boolean) : [];
+  // DAG dependency chip (face C): execution-order edges are NOT parent-child nesting —
+  // they render as a flat chip with the ⇢ glyph + dashed underline, visually distinct
+  // from the tree rails (├─/└─) that carry the ownership hierarchy. Machine anchor
+  // data-bg-deps; tooltip lists the upstream ids in full.
   const depPart = deps.length
-    ? '<span class="bg-task-project" title="deps: ' + escapeHtml(deps.join(',')) + '">← ' + escapeHtml(deps.join(',')) + '</span>'
+    ? '<span class="bg-flow-deps" data-bg-deps="' + escapeHtml(deps.join(',')) + '" title="'
+      + escapeHtml(t('subagents.dependsOnTip', { deps: deps.join(', ') })) + '">⇢ '
+      + escapeHtml(t('subagents.dependsOn')) + ' ' + escapeHtml(deps.join(', ')) + '</span>'
     : '';
   const childCount = Number(opts.childCount) || 0;
   const collapsedNow = !!(childCount > 0 && opts.collapsed);
@@ -2493,6 +2627,12 @@ export function renderBgAgentDropdown() {
     }
     if (row.level === 'root') {
       htmlParts.push(bgRootAnchorHtml(bgRowSessionKey(row), childCount, collapsed));
+      continue;
+    }
+    // 结构父（face C）：注册行合成的标签面行——活跃后代在场而父无 live 行时，父作为
+    // 结构节点显示（不入计数、不带 .bg-task-row；折叠走同一把缝，键 = 父会话 id）。
+    if (row.level === 'struct') {
+      htmlParts.push(bgStructParentHtml(row, childCount, collapsed));
       continue;
     }
     // 顶层行（未被认领的 leftover / 收敛落点）：层级随树走（判定表①②带真实深度锚）。

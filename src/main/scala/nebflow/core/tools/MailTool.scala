@@ -1292,43 +1292,85 @@ Delivery follows recipient state (there is no delivery parameter to set):
     system: ActorSystem,
     isLegacyForm: Boolean
   ): IO[Either[ToolError, String]] =
-    nebflow.core.delegate.MergerInitialization
+    nebflow.core.delegate.SessionStartLease
       .exclusive(id) {
         (ctx.sharedResources, ctx.actorSystem) match
           case (Some(resources), Some(_)) =>
             for
-              snapshot <- IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.snapshot)
-              record <- IO.blocking(DelegateRegistry.find(id).orElse(snapshot.mergerBootstraps.get(id).map(_.record)))
+              record <- IO.blocking(DelegateRegistry.find(id))
               task <- resources.subAgentTaskStore.findByTaskId(id)
               live <- resources.agentRegistry.get.map(_.get(id))
-              result <- IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.checkOpen(id)).flatMap {
-                case Left(error) => IO.pure(Left(ToolError(error)))
-                case Right(_) =>
-                  record match
-                    case Some(current) if current.cancelRequestedAt.nonEmpty =>
-                      IO.pure(
-                        Left(
-                          ToolError("Delegate was manually cancelled; create new work explicitly (DELEGATE_CANCELLED)")
-                        )
+              result <- record match
+                case Some(current) if current.cancelRequestedAt.nonEmpty =>
+                  IO.pure(
+                    Left(
+                      ToolError("Delegate was manually cancelled; create new work explicitly (DELEGATE_CANCELLED)")
+                    )
+                  )
+                case Some(current) if current.mode.contains(nebflow.core.delegate.DualModeConfig.ModeMerger) =>
+                  // Legacy merger identities are read-only history: the merger face is
+                  // retired, so the address can never resume. Any merge-request backlog
+                  // lives on the recorded workspace ledger for manual disposition.
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"Delegate '$id' is a recorded merger identity — the merger role is retired and this address " +
+                          "can never resume. Any in-flight merge requests it owned are listed on the workspace ledger " +
+                          "for manual disposition; integration is now the author's explicit decision. (DELEGATE_MERGER_RETIRED)"
                       )
-                    case Some(current)
-                        if nebflow.core.delegate.SessionResumption.requiresManual(
-                          Some(current),
-                          task,
-                          live,
-                          snapshot.workspaces.find(_.owner == id),
-                          snapshot.mergerBootstraps.get(id).exists(_.status != "ready")
-                        ) =>
-                      queueRecoverySupplement(id, message, blocks, ctx)
-                    case _ =>
-                      deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
-              }
+                    )
+                  )
+                case Some(current)
+                    if nebflow.core.delegate.SessionResumption.requiresManual(
+                      Some(current),
+                      task,
+                      live
+                    ) =>
+                  queueRecoverySupplement(id, message, blocks, ctx)
+                case Some(current) =>
+                  // Round-model decision point (inside the start-lease critical
+                  // section, naturally mutually exclusive with revival/continuation):
+                  // a settled identity with no tombstone and no busy signal gets a NEW
+                  // round (roundNo+1, fresh roundId, archivedAt cleared, diff baseline
+                  // re-anchored); anything busy (actor registered, or an in-flight /
+                  // frozen task row) stays in the CURRENT round — Mail injects, never
+                  // builds a second execution body.
+                  openNewRoundIfSettled(current, task, live) *>
+                    deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
+                case _ =>
+                  deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
             yield result
           case _ => IO.pure(Left(ToolError("Cannot deliver to the delegate leg: missing resources")))
       }
       .handleError(error => Left(ToolError(s"Mail could not safely deliver: ${error.getMessage}")))
 
   end deliverToDelegate
+
+  /**
+   * Round-model opening point for Mail (thin wrapper — the decision itself is the
+   * pure single point [[nebflow.core.delegate.DelegateRoundLedger.decideMailRound]]).
+   * Called inside the start-lease critical section of [[deliverToDelegate]], so it is
+   * naturally mutually exclusive with revival/continuation starts. A failed registry
+   * write falls back to the current-round continuation (the legacy leg) — Mail never
+   * errors out of a delivery just because round bookkeeping could not land.
+   */
+  private def openNewRoundIfSettled(
+    record: DelegateRegistry.Record,
+    task: Option[SubAgentTask],
+    liveEntry: Option[AgentRecord]
+  ): IO[Unit] =
+    IO.blocking {
+      nebflow.core.delegate.DelegateRoundLedger
+        .decideMailRound(record, task.map(_.status), liveEntry.isDefined)
+    }.flatMap {
+      case nebflow.core.delegate.DelegateRoundLedger.MailRoundDecision.OpenNewRound =>
+        IO.blocking(nebflow.core.delegate.DelegateRoundLedger.openNewRound(record)).void.handleErrorWith { e =>
+          NebflowLogger
+            .forName("nebflow.core.tools.mail")
+            .warn(s"new-round opening failed for '${record.id}' (${e.getMessage}) — continuing in the current round")
+        }
+      case _ => IO.unit
+    }.handleErrorWith(_ => IO.unit)
 
   private def queueRecoverySupplement(
     id: String,
@@ -1401,31 +1443,26 @@ Delivery follows recipient state (there is no delivery parameter to set):
                   )
                   .flatMap {
                     case Some(rec) if rec.kind == AgentKind.Delegate =>
-                      IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(id, allowFrozen = false))
-                        .flatMap {
-                          case Left(error) => IO.pure(Left(ToolError(error)))
-                          case Right(_) =>
-                            (rec.ref ! AgentCommand.UserInput(
-                              text = message,
-                              replyTo = rec.supervisorRef,
-                              source = Some("mail"),
-                              sender = ctx.agentDef.map(_.name),
-                              eventType = Some("info"),
-                              blocks = blocks,
-                              fromUser = false,
-                              clientMessageId = Option(ctx.toolCallId)
-                                .filter(_.nonEmpty)
-                                .map(call => s"mail:${ctx.sessionId.getOrElse("")}:$call")
-                            )) *>
-                              IO.blocking(DelegateRegistry.clearStandby(id)).void *>
-                              nebflow.core.UsageTracker
-                                .record("mail", ctx.sessionId.getOrElse(""))
-                                .as(
-                                  Right(
-                                    s"[delegate #$id] Message injected into the existing live instance for its next turn boundary."
-                                  )
-                                )
-                        }
+                      (rec.ref ! AgentCommand.UserInput(
+                        text = message,
+                        replyTo = rec.supervisorRef,
+                        source = Some("mail"),
+                        sender = ctx.agentDef.map(_.name),
+                        eventType = Some("info"),
+                        blocks = blocks,
+                        fromUser = false,
+                        clientMessageId = Option(ctx.toolCallId)
+                          .filter(_.nonEmpty)
+                          .map(call => s"mail:${ctx.sessionId.getOrElse("")}:$call")
+                      )) *>
+                        IO.blocking(DelegateRegistry.clearStandby(id)).void *>
+                        nebflow.core.UsageTracker
+                          .record("mail", ctx.sessionId.getOrElse(""))
+                          .as(
+                            Right(
+                              s"[delegate #$id] Message injected into the existing live instance for its next turn boundary."
+                            )
+                          )
                     case _ =>
                       // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
                       // `delegate:<id>` 地址面零新面，S15 注入通道）；内置执行器 ⇒ 续起。

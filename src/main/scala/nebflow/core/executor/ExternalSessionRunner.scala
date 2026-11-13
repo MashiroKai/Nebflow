@@ -12,7 +12,6 @@ import nebflow.core.AgentRuntimePort
 import nebflow.core.GitWorktrees
 import nebflow.core.delegate.ChainStore
 import nebflow.core.delegate.DelegateRegistry
-import nebflow.core.delegate.DelegateWorkspace
 import nebflow.core.delegate.ExternalJudgeHook
 import nebflow.core.delegate.DelegateTerminal
 import nebflow.shared.Message
@@ -44,13 +43,11 @@ import scala.util.Try
  *     回投链、同一 barrier 语义）；三态判定缝 = [[ExternalJudgeHook]]（缺省接
  *     DelegateJudgePort 判定机——引擎加固批 2026-10-09 P1-2；未接线回退进程结果
  *     直判）。
- *   - **座位纪律（P1-2，2026-10-09）**：spawn 前与内部腿走同一
- *     [[nebflow.core.delegate.DelegateWorkspace.prepare]]（git 工作区 = 分支
- *     `delegate/<id>` ＋ worktree 座位，进程 cwd = 座位；非 git = 旧形态逐字）；
- *     座位纪律与内部腿同源（[[nebflow.core.delegate.DelegateWorkspace]]）；
- *     漂移闸对外部腿 = 注记级（[[nebflow.core.delegate.DelegateTerminal]]
- *     .externalDriftNote 并入判定输入——零罚则面，保护等级注记级）。集成走
- *     项目 merger 的授权请求——外部腿不并入任何合并队列。
+ *   - **座位纪律（托管树退场）**：座位恒 = 派发 workspace（进程 cwd 同座），
+ *     与内部腿同政策——引擎不建分支/worktree，需要隔离检出时外部执行器自建
+ *     自管；漂移闸对外部腿 = 注记级（[[nebflow.core.delegate.DelegateTerminal]]
+ *     .externalDriftNote 并入判定输入——零罚则面，保护等级注记级）。集成 =
+ *     作者的显式决定——外部腿不并入任何合并队列。
  *   - 续聊（S15 通道，增补条款 3.5：地址面零新面——同一 `delegate:<id>`）：
  *     live ⇒ mailbox 排队（本 run 终态后一条 resume 消化）；终态 ⇒ CLI resume
  *     续起。
@@ -99,10 +96,9 @@ object ExternalSessionRunner:
      */
     name: Option[String] = None,
     /**
-     * 跨设备 worktree 归属修复批（2026-10-30）：设备项目（origin 绑对端）= true——
-     * 外部 CLI 是 **host 本地进程**，对设备仓跑本机 git 判定腿是归属错（worktree
-     * 会落在编排机 brain 下）；跳过 DelegateWorkspace.prepare（binding=None，旧形态
-     * spawn：座位 = 传入 workspace）。本机项目恒缺省 false（零变化）。
+     * Device-project marker（跨设备批 2026-10-30 遗留）：设备项目（origin 绑对端）
+     * = true——外部 CLI 是 host 本地进程，设备仓路径不是本机盘路径。座位政策统一
+     * 后本标记只剩归属语义（外部腿不参与设备盘 git 面）。
      */
     deviceProject: Boolean = false
   )
@@ -122,35 +118,13 @@ object ExternalSessionRunner:
             IO.pure(Left(s"Delegate: $wsErr (EXTERNAL_WORKSPACE_UNAVAILABLE)"))
           case Right(_) =>
             val sessionId = newSessionId(ex.id)
+            // 工作座政策（托管树退场）：座位恒 = 派发 workspace——外部 CLI 与
+            // 内部腿同政策；引擎不再建分支/worktree（需要隔离检出时外部执行器
+            // 自建自管）。
+            val seatWs = spec.workspace
+            val seatedSpec = spec
+            val seatedTask = spec.task
             for
-              // 引擎加固批 2026-10-09（P1-2 外部腿接纪律）：外部 CLI 与内部腿走
-              // **同一** DelegateWorkspace.prepare——git 工作区 = 判定机（jev/small
-              // 判定机已删（delegate-param-decisions 2026-11-04）：外部腿无 worktree
-              // 参数 ⇒ 零分配就地座位 + 分支 `delegate/<id>`；非 git 工作区 = None
-              // （座位 = 原 workspace）。
-              // 归属修复批（2026-10-30）：设备项目跳过本机判定腿——外部 CLI 是 host
-              // 本地进程，设备仓的 worktree/分支纪律不适用于 host 座位（在 brain 下
-              // 建 worktree = 归属错）；binding=None = 旧形态逐字。
-              binding <-
-                if spec.deviceProject then IO.pure(None)
-                else
-                  // 外部执行器腿没有 `worktree` 参数（工具面已显式拒收）⇒ 零分配：
-                  // 就地跑道（分支 `delegate/<id>` 照建，共享 HEAD 不动）。
-                  DelegateWorkspace
-                    .prepareInPlace(spec.workspace, sessionId)
-                    .handleErrorWith(e =>
-                      logger
-                        .warn(
-                          s"DelegateWorkspace.prepare failed on the external leg (degraded to legacy spawn): ${e.getMessage}"
-                        )
-                        .as(None)
-                    )
-              seatWs = binding.map(_.cwd).getOrElse(spec.workspace)
-              // 进程 cwd = 工作座位（worktree 腿）；spawn 后续 settle 的 git 读数同座。
-              seatedSpec = spec.copy(workspace = seatWs)
-              // brief 行前置（🔴 模型可见文案——workingBranchLine 同内部腿；外部零
-              // 平台注入，任务文本即全部上下文——申报行走文本前位）。
-              seatedTask = binding.flatMap(_.briefLine).map(l => s"$l\n\n${spec.task}").getOrElse(spec.task)
               _ <- ExternalOutputStore.open(sessionId)
               _ <- IO.blocking {
                 DelegateRegistry.put(
@@ -166,13 +140,6 @@ object ExternalSessionRunner:
                     // 面板命名批（2026-10-31）：批次短名落盘；续聊腿 spec.name 缺席时
                     // 回读存量记录补保（复活/续起不丢名）。
                     name = spec.name.orElse(DelegateRegistry.find(sessionId).flatMap(_.name)),
-                    // P1-2：分支纪律四键（非 git 腿 = None——解码缺键容忍不变）
-                    branch = binding.map(_.branch),
-                    worktree = binding.flatMap(_.worktree),
-                    baseBranch = binding.flatMap(_.baseBranch),
-                    projectWorkspace = binding.map(_.baseWs),
-                    // 判定机已删（delegate-param-decisions 批 2026-11-04）：恒 None。
-                    worktreeJudged = None,
                     // G1 编排模式初值（delegate-ui 批 2026-10-08）：外部执行器零平台
                     // 工具注入（无 Subagent/AgentFlow 可调）⇒ 恒 single，无升级腿。
                     orchestrationMode = Some(DelegateRegistry.ModeSingle)
@@ -196,14 +163,19 @@ object ExternalSessionRunner:
                 )
               )
               _ <- persistUserTurn(spec.resources, sessionId, spec.title, seatedTask)
-              // ⑤A 链存储：外部腿 spawn 行（P1-2 起外部腿与内部腿同账——branch/
-              // worktree/判定两键齐备；非 git 腿 binding=None，旧行字节不变）。
+              // ⑤A 链存储：外部腿 spawn 行（与内部腿同账——cwd/执行器；branch/
+              // worktree 族键为空串形态，与历史无绑定行兼容）。
               _ <- IO
                 .blocking(
                   ChainStore.appendSync(
                     ChainStore.keyFor(spec.taskId, sessionId),
                     "delegate-spawn",
-                    DelegateWorkspace.spawnPayload(sessionId, ex.id, spec.project, binding)
+                    nebflow.core.delegate.ChainStore.delegateSpawnPayload(
+                      sessionId,
+                      ex.id,
+                      spec.project,
+                      seatWs
+                    )
                   )
                 )
                 .handleErrorWith(e =>
@@ -213,8 +185,6 @@ object ExternalSessionRunner:
                 s"""Delegate task started in the background${spec.taskId.map(n => s" (task #$n)").getOrElse("")}.
 Executor: ${ex.displayName} (external CLI); workspace: $seatWs${spec.project
                     .map(p => s" (project '$p')")
-                    .getOrElse("")}${binding
-                    .map(b => s"; branch: ${b.branch}")
                     .getOrElse("")}.
 It runs in session $sessionId with no project context and no memory; the brief is its entire context. External executors receive the task text only — no platform tools or plugins are injected.
 You will be notified when it completes via a system message. Do NOT duplicate this task — wait for the result or work on something unrelated."""
@@ -228,7 +198,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               )
               _ <- launchTurn(sessionId, ex, seatedSpec, prompt = seatedTask, resumeSid = None)
               _ = logger.info(
-                s"External delegate spawned: $sessionId (executor=${ex.id}, workspace=$seatWs${binding.map(b => s", branch=${b.branch}${b.worktree.map(w => s", worktree=$w").getOrElse("")}").getOrElse("")})"
+                s"External delegate spawned: $sessionId (executor=${ex.id}, workspace=$seatWs)"
               )
             yield Right((sessionId, ack))
 
@@ -735,6 +705,8 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         .deepMerge(failureMetadata),
       correlationId = Some(sessionId)
     )
+
+  end externalTerminalEvent
 
   /**
    * 终态回执 F2 注入队持久兜底（P5 第二波，完成必回报；与 BackoffSupervisor 同款

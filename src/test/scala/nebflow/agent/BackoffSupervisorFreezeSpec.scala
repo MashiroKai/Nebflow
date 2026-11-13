@@ -179,8 +179,8 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
       supervisor <- system.spawn(
         BackoffSupervisor(
           childRef = firstChild,
-          childSpawnFn = (_, _) =>
-            system.spawn(mkRecordingChild(childCmds), s"fz-child-${scala.util.Random.nextInt(100000)}"),
+          childSpawnFn =
+            (_, _) => system.spawn(mkRecordingChild(childCmds), s"fz-child-${scala.util.Random.nextInt(100000)}"),
           childName = childSid,
           parentRef = Some(parentRef),
           description = "wire up the image pipeline",
@@ -197,7 +197,11 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
       )
       _ <- supervisor ! AgentEvent.Failed(
         childSid,
-        err(AgentErrorType.LlmFailed, "provider anthropic/claude-x: 529 overloaded - all candidates exhausted", childSid)
+        err(
+          AgentErrorType.LlmFailed,
+          "provider anthropic/claude-x: 529 overloaded - all candidates exhausted",
+          childSid
+        )
       )
       // 冻结落盘是异步链（park → registry → mailbox → WS）——等台账行落 frozen。
       _ <- waitUntil(20.seconds)(
@@ -248,7 +252,10 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
       // ③ 状态保留：registry 冻结槽 + 台账行 frozen（不进 boot 收殓视野）+ 记录在册。
       assert(record.frozenSince.isDefined, "frozenSince persisted (survives restart)")
       assertEquals(record.frozenReason, Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)))
-      assert(record.frozenDetail.exists(_.contains("529")), s"the last error context is persisted, got: ${record.frozenDetail}")
+      assert(
+        record.frozenDetail.exists(_.contains("529")),
+        s"the last error context is persisted, got: ${record.frozenDetail}"
+      )
       // 触发源诊断（engine-fault 冻结报错补详批 · 第二波）：触发源 + 原始错误类别进
       // 详情行与结构化槽——记录答得出「什么触发了这次冻结」。
       assert(
@@ -274,9 +281,12 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
         },
         "freezing must not inject a retry nudge (the wake is the retry, not the freeze)"
       )
+    end for
   }
 
-  test("quota-like Cancelled freezes with cancelled-by-quota; an explicit cancel keeps the cancelled terminal verbatim") {
+  test(
+    "quota-like Cancelled freezes with cancelled-by-quota; an explicit cancel keeps the cancelled terminal verbatim"
+  ) {
     val system = ActorSystem(s"bsup-fz-2-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-bsup-fz2-")
     val parentSid = "fz-parent-2"
@@ -369,9 +379,12 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
         events.exists(e => e.eventType == "cancelled"),
         s"the explicit cancel keeps its cancelled terminal, got: ${events.map(_.eventType)}"
       )
+    end for
   }
 
-  test("subtask track: Failed keeps the existing failed terminal (zero behavior change for cheap re-dispatchable workers)") {
+  test(
+    "subtask track: Failed keeps the existing failed terminal (zero behavior change for cheap re-dispatchable workers)"
+  ) {
     val system = ActorSystem(s"bsup-fz-3-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-bsup-fz3-")
     val parentSid = "fz-parent-3"
@@ -422,8 +435,12 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
         s"the subtask terminal never rides the delegate mailbox leg, got: ${events.map(_.eventType)}"
       )
       assertEquals(DelegateRegistry.find(childSid), None, "no freeze record is created for a subtask")
+    end for
   }
-  test("fallback classification keeps the raw errorType: a Timeout failure freezes as engine-fault with the raw type verbatim in record + wire + row") {
+
+  test(
+    "fallback classification keeps the raw errorType: a Timeout failure freezes as engine-fault with the raw type verbatim in record + wire + row"
+  ) {
     val system = ActorSystem(s"bsup-fz-4-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-bsup-fz4-")
     val parentSid = "fz-parent-4"
@@ -443,8 +460,8 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
       supervisor <- system.spawn(
         BackoffSupervisor(
           childRef = firstChild,
-          childSpawnFn = (_, _) =>
-            system.spawn(mkRecordingChild(childCmds), s"fz-child-4-${scala.util.Random.nextInt(100000)}"),
+          childSpawnFn =
+            (_, _) => system.spawn(mkRecordingChild(childCmds), s"fz-child-4-${scala.util.Random.nextInt(100000)}"),
           childName = childSid,
           parentRef = Some(parentRef),
           description = "wire up the image pipeline",
@@ -501,26 +518,7 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
         reg.get(childSid).flatMap(_.frozenReason),
         Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.EngineFault))
       )
+    end for
   }
 
-  test("managed-workspace stop reason: a ledger probe failure names the error; a hold names the concrete holding shape") {
-    val probeFailure =
-      BackoffSupervisor.managedWorkspaceStopReason(
-        scala.util.Failure(new IllegalStateException("Workspace ledger is unreadable"))
-      )
-    assert(probeFailure.contains("workspace-ledger probe failed"), probeFailure)
-    assert(probeFailure.contains("Workspace ledger is unreadable"), s"the probe error must be named: $probeFailure")
-    assertEquals(
-      BackoffSupervisor.managedWorkspaceStopReason(
-        scala.util.Success((false, true, "managed workspace held (lifecycle=open)"))
-      ),
-      "managed workspace held (lifecycle=open)"
-    )
-    assertEquals(
-      BackoffSupervisor.managedWorkspaceStopReason(
-        scala.util.Success((false, true, "project merger slot held (repository=stand)"))
-      ),
-      "project merger slot held (repository=stand)"
-    )
-  }
 end BackoffSupervisorFreezeSpec

@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 
-class MergerInitializationSpec extends CatsEffectSuite:
+class SessionStartLeaseSpec extends CatsEffectSuite:
   private val previous = PathUtil.dataRoot
   private var root = os.pwd
 
@@ -45,16 +45,16 @@ class MergerInitializationSpec extends CatsEffectSuite:
     }
     for
       started <- Deferred[IO, Unit]
-      holder <- MergerInitialization.exclusive(id)(started.complete(()) *> IO.never[Unit]).start
+      holder <- SessionStartLease.exclusive(id)(started.complete(()) *> IO.never[Unit]).start
       _ <- (started.get *> external.flatMap(rc => IO(assertEquals(rc, 7)))).guarantee(holder.cancel)
       released <- external
       _ = assertEquals(released, 0)
-      error <- MergerInitialization
+      error <- SessionStartLease
         .exclusive(id)(IO.raiseError[Unit](new IllegalStateException("simulated failure")))
         .attempt
       _ = assert(error.isLeft)
-      retry <- MergerInitialization.exclusive(id)(IO.pure("recovered"))
+      retry <- SessionStartLease.exclusive(id)(IO.pure("recovered"))
       _ = assertEquals(retry, "recovered")
     yield ()
   }
-end MergerInitializationSpec
+end SessionStartLeaseSpec

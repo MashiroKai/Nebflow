@@ -28,8 +28,7 @@ import nebflow.core.project.{DelegateFlowHosts, NodeLifecycle}
  *      自己再跑。
  *
  * == 消费面 ==
- *   - [[nebflow.core.delegate.BaseDriftWatch]]：冲突通知的「对端还在干活」判据；
- *   - [[nebflow.core.delegate.WorkspaceOccupancy]]：合并请求占用闸的 busy 判据
+ *   - the delegate completion gate (trusted-descendants segment)
  *     （owner 有非终态作用域节点 = busy，合并请求整批拒绝）。
  *
  * == 读面纪律 ==

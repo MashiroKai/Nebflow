@@ -272,14 +272,9 @@ object ChainWriteTool extends Tool:
       s"(${Codes.NotDelegate})"
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val admitted =
-      if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
-        IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(ctx.sessionId.get, allowFrozen = false))
-      else IO.pure(Right(()))
-    admitted.flatMap {
-      case Left(error) => IO.pure(Left(ToolError(error)))
-      case Right(_) => callAdmitted(input, ctx)
-    }
+    if !nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
+      IO.pure(Left(ToolError(notDelegateError)))
+    else callAdmitted(input, ctx)
 
   private def callAdmitted(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     if !nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
