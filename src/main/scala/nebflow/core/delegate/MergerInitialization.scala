@@ -39,6 +39,32 @@ object MergerInitialization:
       }
       .use(_ => action)
 
+  /**
+   * Start-lease occupancy probe (read-only, never blocks): true when the session's
+   * start lock is currently held by anyone (this JVM included — Java file locks are
+   * JVM-wide, so a same-process holder shows up as an overlapping-lock refusal).
+   * Consumers use it as a "session start/revival is in flight" signal (delegate
+   * completion-gate defer; busy checks). Probe failure (IO error) reads as held =
+   * conservative side.
+   */
+  def isHeld(id: String): Boolean =
+    try
+      val directory = PathUtil.dataRoot / "workspaces"
+      os.makeDir.all(directory)
+      val channel =
+        FileChannel.open((directory / s"start-$id.lock").toNIO, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+      try
+        val lock = channel.tryLock()
+        if lock == null then true
+        else
+          lock.release()
+          false
+      catch
+        case _: OverlappingFileLockException => true
+        case _: Throwable => true
+      finally channel.close()
+    catch case _: Throwable => true
+
   /** Caller holds exclusive(id). Restores only missing metadata, never overwrites a transcript. */
   def prepareLocked(resources: AgentRuntimePort, id: String): IO[Unit] =
     IO.blocking(WorkspaceLedger.default.snapshot.mergerBootstraps.get(id)).flatMap {
