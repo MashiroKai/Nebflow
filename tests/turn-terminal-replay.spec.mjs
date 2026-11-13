@@ -37,12 +37,15 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HARNESS_PATH = '/tests/fixtures/turn-terminal-replay/harness.html';
 const HARNESS_FILE = path.join(REPO_ROOT, HARNESS_PATH.replace(/^\//, ''));
-const SHOT_DIR = process.env.NB_UX_SHOT_DIR || path.join(os.homedir(), '.nebflow', 'docs', 'Nebflow');
+// Shots default to an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable) in
+// the system temp namespace — never the host data-root docs directory.
+const SHOT_DIR = process.env.NB_UX_SHOT_DIR || evidenceBatch('turn-terminal-replay', 'shots');
 
 // 被测树 = NB_UX_ROOT（红腿基线树）或本 worktree（绿腿）。
 const SERVE_ROOT = process.env.NB_UX_ROOT || REPO_ROOT;

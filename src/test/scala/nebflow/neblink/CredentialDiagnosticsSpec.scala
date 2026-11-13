@@ -20,7 +20,7 @@ import scala.jdk.CollectionConverters.*
  * 只覆盖 Windows 盘符 ⇒ **POSIX/macOS 绝对路径在当前正则下可静默通过**（判词实测：
  * 变异 A 下探针 P1 原文含 `/var/folders/…/device.json`，而正则命中 = **0**）。故在正则
  * 之外**追加**两条与平台无关的断言，并把三类读数逐条给出（[[violations]] 空 = 干净）：
- *   ① 判据正则零命中（Windows 盘符 / `java.` / `Exception` / `.nebflow`）；
+ *   ① 判据正则零命中（Windows 盘符 / `java.` / `Exception` / `.nebflow` / 当前品牌根 `.stand`）；
  *   ② 不含**本次 data-root 路径**（调用点传入，不用硬编码常量）；
  *   ③ 不含凭据文件名 `device.json`。
  */
@@ -269,6 +269,22 @@ class CredentialDiagnosticsSpec extends FunSuite:
     assert(!CD.isCleanVisibleText("java.nio.file.AccessDeniedException: C:\\x\\.nebflow\\neblink\\device.json"))
     assert(!CD.isCleanVisibleText("Failed to read /.nebflow/neblink/device.json"))
     assert(CD.isCleanVisibleText("本机凭据文件打不开（权限或占用）"))
+    // Current brand data-root path leaks must be flagged on par with the legacy
+    // root (the brand-root alternative derives from Branding.homeDirName with a
+    // boundary lookahead — words that merely contain the name stay clean).
+    val brandHome = nebflow.shared.Branding.homeDirName
+    assert(
+      !CD.isCleanVisibleText(s"Failed to read /Users/kaiyu/$brandHome/neblink/device.json"),
+      "brand-root path leak must be flagged"
+    )
+    assert(
+      !CD.isCleanVisibleText(s"cannot open ~/$brandHome/neblink/device.json"),
+      "tilde brand-root leak must be flagged"
+    )
+    assert(
+      CD.isCleanVisibleText("the .standalone widget stays visible"),
+      "boundary lookahead must not flag ordinary words"
+    )
     // D4 二重断言的正控：POSIX 绝对路径**不命中**判据正则（这正是要补这两条的理由）
     // —— 故只靠正则时它是「干净」的，必须由 data-root / 文件名两条断言拦住。
     // 平台中立化（B 侧共享文件平台修正，run owner 授权）：正则零命中探针改喂**字面

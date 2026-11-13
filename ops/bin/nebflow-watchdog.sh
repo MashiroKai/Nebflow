@@ -6,16 +6,18 @@
 #         → 仍不健康或编译失败 → 外部 agent（claude headless）诊断修复
 # 边界（刻意）: 只覆盖「实例死/HTTP 挂」——agent 层楔死但 HTTP 正常的场景归进程内机制
 #   （TaskStuckWatcher + #31 Fix A）管辖，看门狗不碰（防误杀活跃系统）。
-# 维护开关: touch ~/.nebflow/logs/watchdog-paused   → 暂停（用户手动维护实例/编辑本脚本时）
-#           rm ~/.nebflow/logs/watchdog-paused      → 恢复
-#           （旗标带 TTL：age > PAUSE_TTL_SECS ⇒ 视为 kill -9/OOM 残留，按非暂停路径继续，只记一行；
+# 维护开关: touch "$NF_HOME/logs/watchdog-paused" → 暂停（用户手动维护实例/编辑本脚本时）
+#           rm    "$NF_HOME/logs/watchdog-paused" → 恢复
+#           （旗标路径跟 NF_HOME 走：缺省 ~/.nebflow，live 部署经 plist 设 NEBFLOW_WD_NF_HOME
+#            （现为 ~/.stand）——touch 固定 ~/.nebflow 位对 live 部署无效。旗标带 TTL：
+#            age > PAUSE_TTL_SECS ⇒ 视为 kill -9/OOM 残留，按非暂停路径继续，只记一行；
 #            本脚本绝不删除/移动该旗标——创建与删除始终是 restart.sh 的职责：restart.sh 动作模式
 #            入口 touch、EXIT trap rm。故「临时停看门狗」= touch 本旗标，「恢复」= 由 restart.sh 的
 #            下一次动作或人工 rm 完成；本脚本只读它。）
 # 日志哨兵: bin/nebflow-log-sentinel.sh（只读告警腿，纳入本脚本每轮巡检；自带 30min 节流与自限；
 #           自身失败经 `|| true` 吞掉，绝不影响本脚本任何判定与退出码）
 # 限速: 每小时最多 S1_PER_HOUR 次重启；外部 agent 修复冷却 6h（防循环烧订阅额度）
-# 日志: ~/.nebflow/logs/watchdog.log
+# 日志: $NF_HOME/logs/watchdog.log（缺省 ~/.nebflow；live 部署 NF_HOME=~/.stand）
 #
 # v2（2026-09-22，R-2 批「失聪误杀」根治）——两处行为变更 + 评估项：
 #   ① Stage1 升级前鉴别「失聪 vs 真死」（本版新增，缺陷 a 的根治）：

@@ -23,7 +23,11 @@ class ImageGenProbeSpec extends munit.FunSuite:
 
   private def withStub[A](handler: com.sun.net.httpserver.HttpExchange => Unit)(f: String => A): A =
     val server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
-    server.createContext("/", (exchange) => { handler(exchange); exchange.close() })
+    server.createContext(
+      "/",
+      (exchange) =>
+        handler(exchange); exchange.close()
+    )
     server.start()
     try f(s"http://127.0.0.1:${server.getAddress.getPort}")
     finally server.stop(0)
@@ -57,8 +61,8 @@ class ImageGenProbeSpec extends munit.FunSuite:
           assert(detail.startsWith("HTTP 401"), s"状态码原样: $detail")
           assert(!detail.contains("k-live-1"), s"错误面泄漏 key: $detail")
           assert(detail.contains("***"), "key 出现处一律 ***")
-        case Verdict.Ok(_, _)                       => fail("401 must not read as Ok")
-        case Verdict.Generated(_, _, _, _, _)       => fail("lightCall never generates")
+        case Verdict.Ok(_, _) => fail("401 must not read as Ok")
+        case Verdict.Generated(_, _, _, _, _) => fail("lightCall never generates")
     }
   }
 
@@ -69,7 +73,7 @@ class ImageGenProbeSpec extends munit.FunSuite:
     }) { base =>
       lightCall(OpenAiImages, base, "k") match
         case Verdict.Ok(_, absent) => assertEquals(absent, Some(404))
-        case other                 => fail(s"expected Ok(modelsFaceAbsent), got $other")
+        case other => fail(s"expected Ok(modelsFaceAbsent), got $other")
     }
   }
 
@@ -79,18 +83,22 @@ class ImageGenProbeSpec extends munit.FunSuite:
     """{"data":[{"url":"__TEST__"}]}"""
 
   test("generateCall: 最小生成体经适配器拼装（cogview size 吸附枚举、quality 进请求面预留）") {
-    val body = CogView.buildBody("cogview-4", ImageGenRequest(prompt = "ping", size = Some("256x256"), quality = Some("low")))
+    val body =
+      CogView.buildBody("cogview-4", ImageGenRequest(prompt = "ping", size = Some("256x256"), quality = Some("low")))
     val s = body.noSpaces
     assert(s.contains("\"size\":\"256x256\""), s"cogview-4 任意分辨率原样传: $s")
     assert(s.contains("\"prompt\":\"ping\""), s"prompt 在位: $s")
-    val flash = CogView.buildBody("cogview-3-flash", ImageGenRequest(prompt = "ping", size = Some("256x256"), quality = Some("low"))).noSpaces
+    val flash = CogView
+      .buildBody("cogview-3-flash", ImageGenRequest(prompt = "ping", size = Some("256x256"), quality = Some("low")))
+      .noSpaces
     assert(flash.contains("\"size\":\"1024x1024\""), s"flash 系吸附最近枚举: $flash")
   }
 
   test("generateCall: 2xx + url 产物 = Generated（真实字节 + 临时目录落盘 + dataUrl）") {
     // 最小合法 PNG 头 8 字节，经 stub 的 /img 路径以真实 http(s) URL 伺服
     // （真实 provider 给 http url——materialize 的下载腿不吃 data: scheme）。
-    val png = Array[Byte](0x89.toByte, 'P'.toByte, 'N'.toByte, 'G'.toByte, 0x0d.toByte, 0x0a.toByte, 0x1a.toByte, 0x0a.toByte)
+    val png =
+      Array[Byte](0x89.toByte, 'P'.toByte, 'N'.toByte, 'G'.toByte, 0x0d.toByte, 0x0a.toByte, 0x1a.toByte, 0x0a.toByte)
     withStub({ ex =>
       if ex.getRequestURI.getPath == "/img" then
         ex.sendResponseHeaders(200, png.length)
@@ -107,15 +115,24 @@ class ImageGenProbeSpec extends munit.FunSuite:
           assert(latency >= 0)
           assertEquals(bytes, 8)
           assertEquals(ext, "png") // magic-bytes 嗅探（不臆造格式）
-          // 🔴 产物纪律：只落系统临时区（nebflow-imagegen-test- 前缀），不进数据根。
+          // 🔴 产物纪律：只落系统临时区 EvidenceTemp 批（nebflow-imagegen-test- 批名），
+          // 不进数据根；批带 manifest 且非活（无 .active）⇒ 引擎 7 天 TTL 清扫可回收。
           assert(tempPath.contains("nebflow-imagegen-test-"), s"产物路径在临时区: $tempPath")
+          assert(tempPath.contains("stand-evidence"), s"产物在 EvidenceTemp 命名空间: $tempPath")
           assert(!tempPath.contains("/imagegen/"), s"产物绝不进正式归档: $tempPath")
           val path = os.Path(tempPath)
           assert(os.exists(path), "产物真落了盘")
           assert(os.read.bytes(path).length == 8)
+          assert(os.exists(path / os.up / "manifest.json"), s"批必须落 manifest（sweep fail-closed 契约）: $tempPath")
+          assert(!os.exists(path / os.up / ".active"), "探活产物即写即完成，不得保持 active")
+          // Consume the batch right here: a manifested non-active leftover is
+          // sweep-eligible, and leaving one in the shared namespace makes
+          // EvidenceTempSpec's exact-count sweep assertion order-dependent
+          // across suites sharing that namespace.
+          os.remove.all(path / os.up)
           dataUrl match
             case Some(u) => assert(u.startsWith("data:image/png;base64,"), s"dataUrl 形态: $u")
-            case None    => fail("小产物必须带 dataUrl 预览")
+            case None => fail("小产物必须带 dataUrl 预览")
         case other => fail(s"expected Generated, got $other")
     }
   }
@@ -149,11 +166,11 @@ class ImageGenProbeSpec extends munit.FunSuite:
     assertEquals(ImageGenProbe.resolveToken(Some(" sk-ovr "), None, "p"), Right("sk-ovr"))
     // 存储/派生腿：keyRef 名下无 secret 件 = Left（MissingCredential 文案）。
     ImageGenProbe.resolveToken(None, Some("no-such-secret-anywhere"), "p") match
-      case Left(msg)  => assert(msg.contains("no-such-secret-anywhere"), s"文案带 keyRef 名: $msg")
+      case Left(msg) => assert(msg.contains("no-such-secret-anywhere"), s"文案带 keyRef 名: $msg")
       case Right(tok) => fail(s"absent secret must be Left, got token len=${tok.length}")
     // 派生名：存储 keyRef 缺席 → imagegen-<name>-key（前端 keyRefFor 镜像）。
     ImageGenProbe.resolveToken(None, None, "no-such-provider-either") match
-      case Left(msg)  => assert(msg.contains("imagegen-no-such-provider-either-key"), s"派生名镜像: $msg")
+      case Left(msg) => assert(msg.contains("imagegen-no-such-provider-either-key"), s"派生名镜像: $msg")
       case Right(tok) => fail(s"derived absent secret must be Left, got token len=${tok.length}")
   }
 

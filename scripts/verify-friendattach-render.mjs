@@ -29,6 +29,7 @@ import { chromium } from 'playwright';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -37,7 +38,9 @@ const argOf = (flag, dflt) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
 };
 const WEB = normalize(argOf('--web', join(HERE, '..', 'src', 'main', 'resources', 'web')));
-const OUT = normalize(argOf('--out', join(HERE, '..', '.nebflow', 'evidence', '20260914_friendattach-gate', 'render')));
+// Default output = an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable);
+// the repo-tree `.nebflow/evidence/` dir no longer receives new default writes.
+const OUT = normalize(argOf('--out', null) || evidenceBatch('friendattach', 'verify-render'));
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',

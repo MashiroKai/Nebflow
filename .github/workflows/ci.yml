@@ -449,6 +449,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Assert no process-artifact directory is tracked
         run: bash scripts/check-no-tracked-artifacts.sh
+      - name: Assert stand-evidence writers uphold the manifest contract
+        # EvidenceTemp's sweep is fail-closed: a namespace batch without a
+        # manifest.json is never reclaimed. This gate keeps every script/test
+        # that builds a stand-evidence path on the manifest-writing side.
+        run: node scripts/check-evidence-manifests.mjs
 
   lint:
     name: Lint (scalafmt + scalafix)

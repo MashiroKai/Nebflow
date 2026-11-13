@@ -17,7 +17,9 @@
 #   docs/  reports/  evidence/  reports-evidence/   —— 第一批
 #   design/                                          —— 第二批
 #   scripts/data-root-migration/evidence/            —— 第二批（嵌套路径，写全路径）
-#   仓库根 *__flow-*.md                              —— 第二批（:(top,glob) 只匹配根层）
+#   仓库根 *_flow-*.md                              —— 第二批（:(top,glob) 只匹配根层）
+#   .nebflow/                                        —— 第三批：gitignore 已忽略整个目录，
+#     但 gitignore 挡不住已跟踪文件（实测有过程日志穿透入库）——索引面必须自证零跟踪
 # 新增产物时同步本文件与 .gitignore（两处都得写，单一真源是 .gitignore，
 # 本文件是它的 CI 执法面）。
 #
@@ -53,6 +55,7 @@ reports-evidence|:(top)reports-evidence
 stand-evidence|:(top)stand-evidence
 design|:(top)design
 scripts/data-root-migration/evidence|:(top)scripts/data-root-migration/evidence
+.nebflow|:(top).nebflow
 <仓库根>*__flow-*.md|:(top,glob)*__flow-*.md'
 
 cd "$REPO_ROOT" || fail "无法进入仓库根 $REPO_ROOT"

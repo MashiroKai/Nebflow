@@ -124,8 +124,15 @@ object CredentialDiagnostics:
   /**
    * 用户可见串的**禁项正则**（§10.2 G2/G3 判据逐字同源）。
    * 命中 = 泄露了文件系统路径或 Java 异常类名 —— 只许出现在日志里。
+   * Data-root directory names are matched as path segments for BOTH brands:
+   * the hardcoded legacy `.nebflow` forms and the current brand root
+   * ([[Branding.homeDirName]], e.g. `.stand`). The brand-root alternative
+   * carries a negative lookahead so ordinary words that merely contain the
+   * name (`.standalone`, `.standard`) are not flagged.
    */
-  val ForbiddenInVisibleText: String = "(java\\.|Exception|[A-Za-z]:\\\\|/\\.nebflow/|\\.nebflow)"
+  val ForbiddenInVisibleText: String =
+    val brandRoot = java.util.regex.Pattern.quote(Branding.homeDirName)
+    s"(java\\.|Exception|[A-Za-z]:\\\\|/\\.nebflow/|\\.nebflow|$brandRoot(?![A-Za-z0-9._-]))"
 
   private val Forbidden = ForbiddenInVisibleText.r
 

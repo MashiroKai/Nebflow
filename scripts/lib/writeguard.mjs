@@ -12,10 +12,14 @@
 //        (a) `kind=repo`     —— 本支 checkout 根之下（worktree 或主区，调用方传 repoRoot）；
 //        (b) `kind=evidence` —— `<主区 checkout>/.nebflow/evidence/<NB_EVIDENCE_BATCH|20260915_e2eask>/` 之下
 //            （主区 = repoRoot 形如 `<X>/.nebflow/worktrees/<name>` 时上溯两级；`NB_MAIN_REPO` 可显式覆盖）；
-//        (c) `kind=tmp`      —— `realpath('/tmp')` 与 `realpath(os.tmpdir())` 之下的**一级 `qa-*` 目录**之下
-//            （`/tmp/qa-foo/x.png` ✓；`/tmp/other/x.png` ✗；`/tmp/qa-foo` 自身 ✗ —— 防 `rm -rf /tmp/qa-*` 类误伤面）。
-//   3. 拒绝表（**先于**允许根判定，优先级最高）：宿主数据根 `<homedir>/.nebflow/**` —— 任何写入一律拒
-//      （红线：禁写宿主 `~/.nebflow`、禁写 `~/.nebflow/docs/**`；**只读读数不受本守卫约束**，本件只管写）。
+//        (c) `kind=tmp`      —— under `realpath('/tmp')` and `realpath(os.tmpdir())`, inside a
+//            **first-level dir** that is either `qa-*` or the EvidenceTemp namespace `stand-evidence`
+//            (`/tmp/qa-foo/x.png` ✓; `/tmp/stand-evidence/<project>/<batch>/<date>/x.png` ✓;
+//            `/tmp/other/x.png` ✗; the first-level dir itself ✗ — blast-radius guard against
+//            `rm -rf /tmp/qa-*` style mistakes).
+//   3. 拒绝表（**先于**允许根判定，优先级最高）：宿主数据根 —— `<homedir>/.nebflow/**`（legacy）
+//      与 `<homedir>/<brand.conf homeDirName>/**`（当前品牌根，现 = `~/.stand`）—— 任何写入一律拒
+//      （红线：禁写宿主数据根（两个品牌根都是）、禁写其 `docs/**`；**只读读数不受本守卫约束**，本件只管写）。
 //   4. 逃逸处置与 delguard 同源（复用其 `resolveReal`）：词法归一（`.`/`..`/重复斜杠/相对路径按 cwd）→
 //      最深已存在祖先 realpath（macOS `/tmp` symlink、symlink 指向 `~/.nebflow` 一类逃逸会被揭穿）→ 比较。
 //   5. `NB_WRITE_ROOTS=<abs:abs:...>` 显式覆盖允许根集（仍受第 3 条拒绝表约束）——负控 / 上游复用入口。
@@ -26,10 +30,12 @@
 //
 // 负控（无需启动任何服务）：
 //   node scripts/lib/writeguard.mjs ~/.nebflow/docs/Nebflow/assets/x.png   # 期望 rc=3（拒绝表）
+//   node scripts/lib/writeguard.mjs ~/.stand/docs/x.png                    # 期望 rc=3（拒绝表：当前品牌根）
 //   node scripts/lib/writeguard.mjs /tmp/qa-probe/x.png                    # 期望 rc=0
+//   node scripts/lib/writeguard.mjs /tmp/stand-evidence/stand/p-1/20261113/x.png  # 期望 rc=0（EvidenceTemp 命名空间）
 //   node scripts/lib/writeguard.mjs "$(pwd)/scripts/lib/writeguard.mjs"    # 期望 rc=0（本支 repo 内）
 
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -61,8 +67,40 @@ export function mainRepoOf(repoRoot) {
 export function resolveDeniedRoots({ env = process.env } = {}) {
   const out = [];
   const host = realpathOrNull(homedir());
-  if (host) out.push({ kind: 'host-data-root', path: join(host, '.nebflow') });
+  if (host) {
+    out.push({ kind: 'host-data-root', path: join(host, '.nebflow') });
+    out.push({ kind: 'host-data-root', path: join(host, brandHomeDirName()) });
+  }
   return out;
+}
+
+/**
+ * Current brand data-root directory name, parsed from the repo-root `brand.conf`
+ * (`homeDirName = .stand`). The legacy `.nebflow` entry above stays hardcoded on
+ * purpose: it predates brand.conf and must remain denied on legacy-only machines
+ * even if the brand key changes. Parsing mirrors Branding.scala (skip `#` comment
+ * lines; a ` # ` sequence starts an inline comment). Unreadable/absent key ⇒ throw
+ * (fail-closed): a guard must never silently shrink its deny table.
+ */
+function brandHomeDirName() {
+  const confPath = join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), 'brand.conf');
+  let text;
+  try {
+    text = readFileSync(confPath, 'utf8');
+  } catch (e) {
+    throw new WriteRefused(`brand.conf unreadable — cannot build the host data-root deny table (${confPath}: ${e.message})`, { raw: confPath });
+  }
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0 || line.slice(0, eq).trim() !== 'homeDirName') continue;
+    let value = line.slice(eq + 1).trim();
+    const hash = value.indexOf(' #');
+    if (hash >= 0) value = value.slice(0, hash).trim();
+    if (value) return value;
+  }
+  throw new WriteRefused(`brand.conf has no homeDirName — cannot build the host data-root deny table (${confPath})`, { raw: confPath });
 }
 
 /**
@@ -92,11 +130,12 @@ function under(resolved, root) {
   return resolved.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
-/** tmp 根额外约束：一级目录须为 `qa-*`（任务书 ③(a) 的 `/tmp/qa-*` 逐字口径）。 */
+/** tmp 根额外约束：一级目录须为 `qa-*` 或 EvidenceTemp 命名空间 `stand-evidence`
+ *  （`/tmp/qa-*` 逐字口径 + 设计件的统一证据命名空间——批目录再深不限）。 */
 function tmpFirstSegmentOk(resolved, root) {
   const rest = resolved.slice(root.length + 1);
   const first = rest.split(sep)[0];
-  return first.startsWith('qa-');
+  return first.startsWith('qa-') || first === 'stand-evidence';
 }
 
 /**
@@ -121,7 +160,7 @@ export function assertWritePath(target, { repoRoot = process.cwd(), env = proces
     if (under(resolved, r.path)) {
       if (r.kind === 'tmp' && !tmpFirstSegmentOk(resolved, r.path)) {
         throw new WriteRefused(
-          `[${label}] tmp 根之下一级目录须为 qa-* → 拒绝 resolved=${resolved} root=${r.path}`,
+          `[${label}] tmp 根之下一级目录须为 qa-* 或 stand-evidence → 拒绝 resolved=${resolved} root=${r.path}`,
           { raw: target, resolved, reason: 'tmp-prefix' });
       }
       return resolved;

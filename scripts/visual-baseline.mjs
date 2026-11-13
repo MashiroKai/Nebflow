@@ -24,9 +24,10 @@
 //         --web-root <dir>   # 静态根覆盖（等价 NEBFLOW_WEB_ROOT，CLI 优先）
 //
 // 产物（两段式：草稿 → 评审 → 入库。2026-11-04 修「--update 直接覆盖入库基准」陷阱）：
-//   草稿（评审区）  .nebflow/visual-baseline/<platform>/baseline-draft/*.png + manifest.json
+//   草稿（评审区）  <系统tmp>/stand-evidence/visual-baseline/<platform>/baseline-draft/*.png + manifest.json
+//                   （评审区 = 跨次运行的稳定位；promote 成功后草稿被消耗删除）
 //   入库（提交）    tests/visual/baseline/<platform>/<scenario>-<theme>.png + manifest.json
-//   运行/差图       .nebflow/visual-baseline/<platform>/  （.gitignore:17-18 已忽略 .nebflow/）
+//   运行/差图       <系统tmp>/stand-evidence/visual-baseline/<platform>/（仓外，不进 git 工作树）
 //
 // 为什么拆两段：改造前 `--update` **直接写** tests/visual/baseline/，而 Makefile 与
 // CONTRIBUTING 都写着「评审 .nebflow/ 评审区后再入库」—— 那句在当时是假的：草稿
@@ -38,8 +39,9 @@
 //
 // 退出码：--check 通过 0；有超阈值差异 1；装置错误（无浏览器/无 playwright）2。
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ROOT, webRoot, setWebRoot, loadPlaywright, launchBrowser, createSession, settle, applyMasks, shoot } from './lib/visual-harness.mjs';
 import { comparePng } from './lib/png-diff.mjs';
 
@@ -498,7 +500,16 @@ async function paneReady(page, tabId) {
 
 // ── 落点 ───────────────────────────────────────────────────────────────
 const BASELINE_ROOT = join(ROOT, 'tests', 'visual', 'baseline');
-const OUT_ROOT = join(ROOT, '.nebflow', 'visual-baseline');
+// Review area: system temp, under the stand-evidence namespace, OUTSIDE the git
+// worktree (the repo tree no longer receives new process-screenshot writes; the
+// old repo-tree `.nebflow/visual-baseline` dir predates this and stays as-is on
+// existing machines). This path is deliberately STABLE, not a per-run batch: the
+// draft must survive `--update` → human review → `--promote` across invocations,
+// so it is not shaped like a sweepable EvidenceTemp batch (no manifest ⇒ the
+// engine sweep never touches cross-run review state). Bounded instead by the
+// workflow itself: `--update` overwrites the per-platform draft and a successful
+// `--promote` consumes (deletes) it.
+const OUT_ROOT = process.env.NF_VISUAL_OUT || join(tmpdir(), 'stand-evidence', 'visual-baseline');
 /** 草稿目录：--update 的唯一写入口。与入库目录**分家**是修陷阱的全部要点。 */
 const DRAFT_DIRNAME = 'baseline-draft';
 
@@ -545,7 +556,8 @@ if (MODE === 'promote') {
   manifest.promotedFrom = relative(ROOT, draftDir);
   writeFileSync(join(baseDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
   const stale = readdirSync(baseDir).filter((n) => n.endsWith('.png') && !pngs.includes(n));
-  console.log(`promote: ${pngs.length} 张 → ${relative(ROOT, baseDir)}/（manifest.json 同步）`);
+  rmSync(draftDir, { recursive: true, force: true });   // promote consumes the draft
+  console.log(`promote: ${pngs.length} 张 → ${relative(ROOT, baseDir)}/（manifest.json 同步；草稿已消耗删除）`);
   if (stale.length) console.log(`  注意：入库目录有 ${stale.length} 张本次草稿未覆盖（场景改名/删除）：${stale.join(' ')}`);
   console.log('  下一步：git add tests/visual/baseline && git commit（评审结论请写进提交信息）。');
   process.exit(0);

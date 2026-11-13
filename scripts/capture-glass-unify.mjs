@@ -21,12 +21,15 @@ import { join } from 'node:path';
 import {
   loadPlaywright, launchBrowser, createSession, settle, setWebRoot,
 } from './lib/visual-harness.mjs';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 
 const argv = process.argv.slice(2);
 const valOf = (f, d = null) => { const i = argv.indexOf(f); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
 const ROOT_DIR = valOf('--root', 'src/main/resources/web');
 const TAG = valOf('--tag', 'after');
-const OUT = valOf('--out', '/tmp/glass-shots');
+// Default output = an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable);
+// an explicit --out keeps its meaning.
+const OUT = valOf('--out', null) || evidenceBatch('glass-unify', 'capture');
 const THEMES = (valOf('--themes', 'light,dark') || '').split(',').filter(Boolean);
 
 mkdirSync(OUT, { recursive: true });

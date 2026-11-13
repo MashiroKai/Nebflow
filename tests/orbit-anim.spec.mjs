@@ -25,6 +25,10 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
+
+// Diagnostic shots live in a TTL-sweepable EvidenceTemp batch, not bare /tmp files.
+const SHOT_DIR = evidenceBatch('orbit-anim', 'visual-record');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
@@ -449,7 +453,7 @@ test('pane-scoped keys isolate identical node ids across projects', async ({ pag
 test('visual record: running vs completed screenshots', async ({ page }) => {
   await page.evaluate(() => window.__orbitTest.sync());
   await page.waitForTimeout(400);
-  await page.screenshot({ path: '/tmp/orbit-running.png' });
+  await page.screenshot({ path: join(SHOT_DIR, 'orbit-running.png') });
   await page.evaluate(`(() => {
     const n = document.getElementById('n1');
     n.classList.remove('running');
@@ -457,6 +461,6 @@ test('visual record: running vs completed screenshots', async ({ page }) => {
     window.__orbitTest.sync();
   })()`);
   await page.waitForTimeout(1800); // coast + fade done
-  await page.screenshot({ path: '/tmp/orbit-completed.png' });
+  await page.screenshot({ path: join(SHOT_DIR, 'orbit-completed.png') });
   expect(true).toBe(true);
 });

@@ -25,20 +25,28 @@
 //   A7 零 pageerror（卡与设备页都不许抛 JS 异常）
 //
 // Run（worktree 根）：
-//   NB_EVIDENCE_BATCH=20261102_fleet-unified-update node scripts/shot-fleet-update-card.mjs
-// 产物：<主区>/.nebflow/evidence/<batch>/fleet-shots/*.png
+//   node scripts/shot-fleet-update-card.mjs
+//   NB_EVIDENCE_BATCH=<batch> node scripts/shot-fleet-update-card.mjs   # 旧工作区 evidence 位
+// 产物：缺省 = EvidenceTemp 批（manifest + 非活 ⇒ TTL 可回收）；NB_EVIDENCE_BATCH 时 =
+//       <主区>/.nebflow/evidence/<batch>/fleet-shots/*.png
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadPlaywright, launchBrowser, createSession, settle, shoot, ROOT } from './lib/visual-harness.mjs';
 import { guardWrites } from './lib/writeguard.mjs';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 
 // 本脚本在 worktree 里跑（`.nebflow/worktrees/<name>/scripts/…`），产物必须落在**主区**
 // 的 evidence 目录（writeguard 的允许根就是主区 evidence）。ROOT = worktree 根
 // （visual-harness 的 `../..`），去掉 worktree 段即主区；不在 worktree 里跑时 ROOT 就是主区。
 const MAIN = ROOT.replace(/\/\.nebflow\/worktrees\/[^/]+$/, '');
-const BATCH = process.env.NB_EVIDENCE_BATCH || '20261102_fleet-unified-update';
-const OUT = join(MAIN, '.nebflow', 'evidence', BATCH, 'fleet-shots');
+// Default output = an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable).
+// Setting NB_EVIDENCE_BATCH keeps the historical workspace-evidence destination
+// (<main>/.nebflow/evidence/<batch>/fleet-shots) for runs that share evidence
+// with the main checkout.
+const OUT = process.env.NB_EVIDENCE_BATCH
+  ? join(MAIN, '.nebflow', 'evidence', process.env.NB_EVIDENCE_BATCH, 'fleet-shots')
+  : evidenceBatch('fleet', 'update-card');
 guardWrites([OUT], { repoRoot: ROOT, label: 'shot-fleet' });
 mkdirSync(OUT, { recursive: true });
 

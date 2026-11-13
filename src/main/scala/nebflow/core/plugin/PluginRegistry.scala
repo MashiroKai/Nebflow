@@ -534,7 +534,8 @@ object PluginRegistry:
       (dir :: all).map(p => p.toString -> os.mtime(p)).sortBy(_._1)
     catch case _: Exception => Nil
 
-  /** 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。
+  /**
+   * 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。
    *
    * 卸载出册过滤（2026-10-29 卸载批）：`plugins.removed` 命中者**整体消失**——
    * 不在 plugins 也不在 rejected（卸载 = 移除出册，不是拒载也不是封禁；面板/CLI/
@@ -603,7 +604,7 @@ object PluginRegistry:
 
   /** 回填覆盖设置（**仅测试**；传 None 恢复真实现）。 */
   def setProvenanceBackfillForTest(
-      f: Option[List[PluginDef] => PluginSourceLedger.BackfillReport]
+    f: Option[List[PluginDef] => PluginSourceLedger.BackfillReport]
   ): Unit = backfillOverride.set(f)
 
   /** 复位一次性闸（**仅测试**：同一进程内验证「第二次扫描不再回填」）。 */
@@ -630,7 +631,7 @@ object PluginRegistry:
         case None =>
           Left(
             s"Plugin '$name' not found in registry (scan ${all.size} plugin(s)). " +
-              "Check the directory name under ~/.nebflow/plugins/. (PLUGIN_NOT_FOUND)"
+              s"Check the directory name under ${PathUtil.dataRootRenderValue}/plugins/. (PLUGIN_NOT_FOUND)"
           )
         case Some(p) if !p.trust.trusted =>
           val reason = p.trust match
@@ -1121,8 +1122,10 @@ object PluginRegistry:
                     "${secret:…} pointer (expected exactly '${secret:<name>}' with a valid secret name, §7.2.2)"
               }
             }
-            _ <- if env.exists(_.values.exists(v => v.contains("${secret:") && !SecretEnvPointer.matches(v)))
-              then None else Some(())
+            _ <-
+              if env.exists(_.values.exists(v => v.contains("${secret:") && !SecretEnvPointer.matches(v)))
+              then None
+              else Some(())
             // cwd：须为 ./ 前缀（插件相对）或 ${PLUGIN_ROOT}/${PLUGIN_DATA} 占位
             // （官方 schema pattern）；归一为占位形式，运行期（acquire）展开为绝对路径。
             cwdRaw <- c.downField("cwd").as[Option[String]] match
@@ -1375,6 +1378,8 @@ object PluginRegistry:
             os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
             Right(())
           end if
+        end if
+      end sourced
 
       sourced.flatMap { _ =>
         // manifest name 为准（§5.5 校验复用装载规则）
@@ -1412,6 +1417,7 @@ object PluginRegistry:
                       s"Plugin '$pname' installed to $target — active on the next scan (presence = trust: no approval step). " +
                         s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'stand plugin revoke $pname'."
                     )
+                  end if
               end match
         end if
       }
@@ -1438,10 +1444,10 @@ object PluginRegistry:
    * 账本缺席的代价是该包查询面 unknown-source（诚实降级），绝不因 provenance 拒绝安装。
    */
   private def recordProvenance(
-      pname: String,
-      target: os.Path,
-      manifest: Json,
-      source: String
+    pname: String,
+    target: os.Path,
+    manifest: Json,
+    source: String
   ): Unit =
     computeDigest(target) match
       case Left(err) =>
@@ -1454,20 +1460,23 @@ object PluginRegistry:
         val url =
           try Some(os.Path(source, os.pwd).toString)
           catch case _: Exception => Some(source)
-        PluginSourceLedger.recordInstall(
-          name = pname,
-          kind = PluginSourceLedger.Kind.Local,
-          url = url,
-          pin = None,
-          version = version,
-          digest = digest,
-          via = PluginSourceLedger.Via.Local
-        ).left.foreach { err =>
-          logger.warnSync(
-            s"plugin provenance recording failed for '$pname' ($err) — the package stays installed " +
-              "(presence = trust); its source query degrades to unknown-source"
+        PluginSourceLedger
+          .recordInstall(
+            name = pname,
+            kind = PluginSourceLedger.Kind.Local,
+            url = url,
+            pin = None,
+            version = version,
+            digest = digest,
+            via = PluginSourceLedger.Via.Local
           )
-        }
+          .left
+          .foreach { err =>
+            logger.warnSync(
+              s"plugin provenance recording failed for '$pname' ($err) — the package stays installed " +
+                "(presence = trust); its source query degrades to unknown-source"
+            )
+          }
 
   /**
    * canonical 化后 `src` == cwd 自身或为 cwd 的**祖先** ⇒ true（该源一旦拷贝就是整个 cwd 树）。

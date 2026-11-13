@@ -30,19 +30,18 @@
 //
 // ── 用法（worktree 根；**不启任何端口/实例**）──────────────────────────
 //   node scripts/verify-friendmsg-badge-render.mjs [--web <dir>] [--out <dir>] [--only <substr>]
-//   🔴 证据落**工作区根绝对路径**（worktree 内没有 `.nebflow/`，且 worktree 收尾会被清）：
-//     node scripts/verify-friendmsg-badge-render.mjs \
-//       --out "/Users/kaiyu/Claude code/Nebflow/.nebflow/evidence/20260914_friendmsg-d/render"
+//   缺省产物 = EvidenceTemp 批（系统临时区，manifest + 非活 ⇒ TTL 可回收）；
+//   显式 --out 语义不变（绝对路径，或仓相对路径）
 //   前红（同一脚本指基线只读副本；`--web` 必须指向**未被本批修改**的源码树）：
 //     node scripts/verify-friendmsg-badge-render.mjs \
-//       --web <基线树>/src/main/resources/web \
-//       --out "/Users/kaiyu/Claude code/Nebflow/.nebflow/evidence/20260914_friendmsg-d/render-baseline"
+//       --web <基线树>/src/main/resources/web --out <dir>
 // 退出码：0 = 全绿；1 = 任一断言红（逐条打印失败原因）。
 
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -51,7 +50,9 @@ const argOf = (flag, dflt) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
 };
 const WEB = normalize(argOf('--web', join(HERE, '..', 'src', 'main', 'resources', 'web')));
-const OUT = normalize(argOf('--out', join(HERE, '..', '.nebflow', 'evidence', '20260914_friendmsg-d', 'render')));
+// Default output = an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable);
+// the repo-tree `.nebflow/evidence/` dir no longer receives new default writes.
+const OUT = normalize(argOf('--out', null) || evidenceBatch('friendmsg', 'verify-badge-render'));
 const ONLY = argOf('--only', '');
 
 const MIME = {
