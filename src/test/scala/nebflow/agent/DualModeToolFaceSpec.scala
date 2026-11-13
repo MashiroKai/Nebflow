@@ -270,14 +270,22 @@ class DualModeToolFaceSpec extends FunSuite:
     )
     assert(line.contains("never assemble a chain node-by-node"), "piecemeal NodeEdit chain-building is forbidden")
     assert(line.contains("not for building it"), "NodeEdit is refinement-only")
-    // 座位共享（托管树退场后）：节点全部落本会话工作区（共享非嵌套）；节点层
-    // seal 不变（节点永不建分支/worktree）。
+    // 座位共享 + 自管隔离（口径统一批）：节点默认落本会话工作区（共享非嵌套）；
+    // 需隔离位时节点自建自管 branch/worktree；main 保护 seal 与 deps 串行不变。
     assert(!line.contains("no branches and no worktrees"), s"the retracted claim must be gone: $line")
+    assert(
+      !line.contains("never create branches or worktrees"),
+      s"the retracted node-layer isolation ban must be gone: $line"
+    )
     assert(
       line.contains("THIS session's workspace"),
       "the shared-seat semantics are stated (sharing, not nesting)"
     )
-    assert(line.contains("never create branches or worktrees"), "the node-layer seal is stated")
+    assert(
+      line.contains("creates and manages its own branch/worktree"),
+      "on-demand node-level self-isolation is stated"
+    )
+    assert(line.contains("never commits straight to `main`"), "the main-protection seal is stated")
     assert(line.contains("`deps`"), "the write-scope serialization discipline stays")
   }
 
@@ -344,6 +352,28 @@ class DualModeToolFaceSpec extends FunSuite:
       "the dispatcher section never mentions the kernel mode (modes must not cross-reference)"
     )
     assert(line.contains("Dispatcher mode"), "the section is unmistakably labeled for the dispatcher mode")
+  }
+
+  test("F12 三面隔离口径统一：node/delegate/dispatcher 同句自主隔离 + main 保护；旧禁令零残留") {
+    // 自管隔离批：托管树退役后节点/delegate/dispatcher 三面统一为「按需自建自管
+    // branch/worktree + 永不直提 main」；旧「never create branches or worktrees」
+    // 全封禁句在三面均不得残留（生成节点面 = Roles.NebflowNodePrompt 经 entry 路径
+    // 实读，判据门 PromptFaceSplitSpec）。
+    val faces = List(
+      "node" -> nebflow.prompts.PromptCatalog.Roles.NebflowNodePrompt,
+      "delegate" -> nebflow.prompts.PromptCatalog.Roles.NebflowDelegatePrompt,
+      "dispatcher" -> nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
+    )
+    for (name, face) <- faces do
+      assert(
+        face.contains("own branch/worktree"),
+        s"[$name] on-demand self-isolation is stated"
+      )
+      assert(face.contains("straight to `main`"), s"[$name] the main-protection seal is stated")
+      assert(
+        !face.contains("never create branches or worktrees"),
+        s"[$name] the retired blanket isolation ban must be gone"
+      )
   }
 
   test("F8 SubAgentTask mode 字段：缺键容忍（旧盘面照读解码 None）；在键透传") {

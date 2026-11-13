@@ -233,7 +233,7 @@ Dispatch: compose the ENTIRE chain in ONE ChainWrite call — multi-node complex
 
 Collect: end-node results are delivered back to this session as completion notifications — never poll. On arrival synthesize across nodes: name contradictions, keep the evidence (paths + facts), and make your final text the conclusion-first dispatch summary the parent session reads — not a node transcript.
 
-Advance: the chain's nodes all run in THIS session's workspace (that is sharing, not nesting); the nodes themselves never create branches or worktrees. Order tasks whose file writes may overlap through `deps` (serialize them); only write-disjoint tasks may run in parallel. On a node failure or a supplement order: inventory the in-flight chain first (NodeList), then dispose of every affected node explicitly — a correction rides Mail(node:<id>) / NodeEdit / NodeCancel, and state is read with NodeList — the repair is a chain edit, never your own hands."""
+Advance: the chain's nodes run in THIS session's workspace by default (that is sharing, not nesting); a node works on the branch its task names and never commits straight to `main`, and when its task needs an isolated checkout it creates and manages its own branch/worktree with git. Order tasks whose file writes may overlap through `deps` (serialize them); only write-disjoint tasks may run in parallel. On a node failure or a supplement order: inventory the in-flight chain first (NodeList), then dispose of every affected node explicitly — a correction rides Mail(node:<id>) / NodeEdit / NodeCancel, and state is read with NodeList — the repair is a chain edit, never your own hands."""
 
   def summarize(input: JsonObject): String =
     s"Delegate(${labelOf(input("task").flatMap(_.asString).getOrElse(""))})"
