@@ -1,7 +1,7 @@
 package nebflow.actor
 
-import cats.effect.std.Queue
-import cats.effect.{Fiber, IO, Ref}
+import cats.effect.*
+import cats.effect.std.{Dispatcher, Queue}
 import cats.syntax.all.*
 import nebflow.shared.NebflowLogger
 
@@ -21,6 +21,17 @@ trait ActorSystem:
   def resolve[Msg](path: String): IO[ActorRef[Msg]]
   def stop(ref: ActorRef[?]): IO[Unit]
   def stopAll: IO[Unit]
+
+  /** Native children require a managed runtime and are separate from local death watch. */
+  def spawnNative[Msg](
+    behavior: Dispatcher[IO] => org.apache.pekko.actor.typed.Behavior[Msg],
+    name: String
+  ): Resource[IO, NativeActorHandle[Msg]] =
+    Resource.eval(IO.raiseError(new UnsupportedOperationException("Native actors require ActorSystem.resource")))
+
+  /** Compatibility path for synchronous constructors without a managed timer runtime. */
+  def scheduleOnce(delay: FiniteDuration, delivery: IO[Unit]): IO[Unit] =
+    (IO.sleep(delay.max(scala.concurrent.duration.Duration.Zero)) *> delivery).start.void
 
   /**
    * Liveness probe (#22): a cached ActorRef whose loop has exited (crash /
@@ -81,23 +92,40 @@ object ActorSystem:
    * 一致——全套测试大量构造本对象，隐式落盘会写真实数据根）。生产装配点显式传
    * `WatchStore.file(...)`（`GatewayMain`）。
    */
-  def apply(deviceName: String, watchStore: WatchStore = WatchStore.disabled): ActorSystem =
-    new LocalActorSystem(deviceName, watchStore)
+  def apply(
+    deviceName: String,
+    watchStore: WatchStore = WatchStore.disabled,
+    timers: Option[ActorTimers] = None
+  ): ActorSystem =
+    new LocalActorSystem(deviceName, watchStore, timers)
 
   /** Create an actor system from a given device name, as a Resource. */
   def resource(
     deviceName: String,
     watchStore: WatchStore = WatchStore.disabled
-  ): cats.effect.Resource[IO, ActorSystem] =
-    cats.effect.Resource.make(IO(apply(deviceName, watchStore)))(_.stopAll)
+  ): Resource[IO, ActorSystem] =
+    NativeActorRuntime.resource.flatMap { runtime =>
+      Resource.make(IO(new LocalActorSystem(deviceName, watchStore, Some(runtime), Some(runtime))))(_.stopAll)
+    }
 
 end ActorSystem
 
 /** Local-only actor system implementation. */
 final class LocalActorSystem(
   val localDevice: String,
-  watchStore: WatchStore = WatchStore.disabled
+  watchStore: WatchStore = WatchStore.disabled,
+  timers: Option[ActorTimers] = None,
+  nativeRuntime: Option[NativeActorRuntime] = None
 ) extends ActorSystem:
+
+  override def spawnNative[Msg](
+    behavior: Dispatcher[IO] => org.apache.pekko.actor.typed.Behavior[Msg],
+    name: String
+  ): Resource[IO, NativeActorHandle[Msg]] =
+    nativeRuntime.fold(super.spawnNative(behavior, name))(_.spawnNative(behavior, name))
+
+  override def scheduleOnce(delay: FiniteDuration, delivery: IO[Unit]): IO[Unit] =
+    timers.fold(super.scheduleOnce(delay, delivery))(_.scheduleOnce(delay, delivery))
   private val log = NebflowLogger.forName("nebflow.actor")
 
   private case class RegistryEntry(
@@ -160,6 +188,7 @@ final class LocalActorSystem(
       _ <- fiberPromise.complete(fiber)
       _ <- registry.update(_.updated(path.toString, RegistryEntry(ref, fiber, sysQueue)))
     yield ref
+    end for
 
   end spawn
 
@@ -255,7 +284,7 @@ final class LocalActorSystem(
         } *> persistWatches *>
         (if localEdges.size == edges.size then IO.unit
          else log.info(s"watch replay: dropped ${edges.size - localEdges.size} non-local edge(s)"))
-          *> log.info(s"watch replay: ${localEdges.size} edge(s) restored on device '$localDevice'")
+        *> log.info(s"watch replay: ${localEdges.size} edge(s) restored on device '$localDevice'")
     }
 
   /** Deliver Terminated signal to all watchers of the given path. */

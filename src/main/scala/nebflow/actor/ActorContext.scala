@@ -135,7 +135,7 @@ final class LocalActorContext[Msg](
     system.unwatch(self.path, ref.path)
 
   /**
-   * 刀一实现：一条独立 fiber 睡到点，再向 `self` 投一条消息。
+   * Schedule through the system-owned timers, independently of turn fibers.
    *
    * 三条实现纪律（与 trait 文档逐条对应）：
    *   - **不入 `activeTurnFibers`**：`cancelCurrentTurn` 只清回合 IO，定时器必须
@@ -146,8 +146,7 @@ final class LocalActorContext[Msg](
    *   - **异常只 WARN**：计时器绝不让 actor 因定时投递失败而崩（fail-soft）。
    */
   def scheduleOnce(delay: FiniteDuration, msg: Msg): IO[Unit] =
-    val wait = if delay.toMillis <= 0L then IO.unit else IO.sleep(delay)
-    (wait *> system.isAlive(self.path).flatMap { alive =>
+    system.scheduleOnce(delay, system.isAlive(self.path).flatMap { alive =>
       if alive then self ! msg else IO.unit
-    }).handleErrorWith(err => log.warn(s"scheduleOnce delivery failed: ${err.getMessage}").void).start.void
+    }.handleErrorWith(err => log.warn(s"scheduleOnce delivery failed: ${err.getMessage}").void))
 end LocalActorContext

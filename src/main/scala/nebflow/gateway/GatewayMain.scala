@@ -1,12 +1,5 @@
 package nebflow.gateway
 
-import nebflow.neblink.core.*
-import nebflow.neblink.identity.*
-import nebflow.neblink.portal.*
-import nebflow.neblink.relay.*
-import nebflow.neblink.social.*
-import nebflow.neblink.sync.*
-
 import cats.effect.*
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -17,25 +10,32 @@ import nebflow.agent.*
 import nebflow.bridge.*
 import nebflow.core.*
 import nebflow.core.boot.ProcessSeal
-import nebflow.core.root.{OwnerGuard, RootLadder, RootLayer}
 import nebflow.core.daemon.{DaemonService, DaemonStore}
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
 import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
+import nebflow.core.root.{OwnerGuard, RootLadder, RootLayer}
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.seed.SeedService
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.*
 import nebflow.llm.*
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
 import nebflow.neblink.logto.*
+import nebflow.neblink.portal.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+import nebflow.neblink.sync.*
 import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.{NebflowLogger, *}
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 
-import scala.concurrent.duration.*
 import java.security.Security
+
+import scala.concurrent.duration.*
 
 object GatewayMain extends IOApp:
   private val logger = NebflowLogger.forName("nebflow.gateway")
@@ -780,21 +780,20 @@ object GatewayMain extends IOApp:
                                  logger.info(s"Context window: $contextWindow tokens")) *>
                           RateLimiter.create().flatMap { rateLimiter =>
                             FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
-                              // Create Dispatcher for the multi-agent runtime, then start server
-                              cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
+                              // Release local actors before the native runtime and business Dispatcher.
+                              val actorRuntime = cats.effect.std.Dispatcher.parallel[IO].flatMap { dispatcher =>
+                                nebflow.actor.ActorSystem
+                                  .resource(
+                                    "local",
+                                    nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json")
+                                  )
+                                  .map(actorSystem => (dispatcher, actorSystem))
+                              }
+                              actorRuntime.use { case (dispatcher, actorSystem) =>
                                 val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
                                 nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                   val hooksConfig = HooksConfigLoader.load(os.pwd)
                                   val hookEngine = HookEngine(hooksConfig)
-                                  // 刀四·监督关系落盘化（作者裁定3「整刀落盘」，2026-11-05
-                                  // 09:38）：死亡监视边落 `<dataRoot>/actor-watches.json`，
-                                  // boot 由下方 boot 链的 `actorSystem.replayWatches` 重放。
-                                  // 落盘面只是可重放快照（真源仍是内存 watchers）；盘坏只
-                                  // WARN，绝不让 boot 挂掉。
-                                  val actorSystem = nebflow.actor.ActorSystem(
-                                    "local",
-                                    nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json")
-                                  )
                                   val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
                                   val sharedResources = SharedResources(
                                     llm = handle,

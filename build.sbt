@@ -92,6 +92,7 @@ lazy val root = (project in file("."))
       // Effect
       catsEffect,
       catsCore,
+      pekkoActorTyped,
       // JSON
       circeCore,
       circeParser,
