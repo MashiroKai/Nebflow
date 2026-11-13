@@ -781,7 +781,10 @@ object GatewayMain extends IOApp:
                           RateLimiter.create().flatMap { rateLimiter =>
                             FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
                               // Create Dispatcher for the multi-agent runtime, then start server
-                              cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
+                              val actorRuntime = cats.effect.std.Dispatcher.parallel[IO].flatMap { dispatcher =>
+                                nebflow.actor.ActorTimers.resource.map(timers => (dispatcher, timers))
+                              }
+                              actorRuntime.use { case (dispatcher, timers) =>
                                 val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
                                 nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                   val hooksConfig = HooksConfigLoader.load(os.pwd)
@@ -793,7 +796,8 @@ object GatewayMain extends IOApp:
                                   // WARN，绝不让 boot 挂掉。
                                   val actorSystem = nebflow.actor.ActorSystem(
                                     "local",
-                                    nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json")
+                                    nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json"),
+                                    timers = Some(timers)
                                   )
                                   val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
                                   val sharedResources = SharedResources(

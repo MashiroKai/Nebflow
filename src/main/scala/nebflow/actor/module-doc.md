@@ -28,3 +28,7 @@
 ## 依赖的兄弟模块
 
 [`shared/`](../shared/module-doc.md)、[`neblink/social/`](../neblink/social/module-doc.md)
+
+## Managed timers
+
+`ActorTimers.resource` owns a local Pekko Typed timer actor and a Cats Effect Dispatcher. Gateway startup and `ActorSystem.resource` use this runtime for `ActorContext.scheduleOnce`. Timer delivery remains independent of turn cancellation and checks recipient liveness before sending. Resource release stops pending timers and cancels delivery effects. Agent mailboxes, supervision, and watch persistence still use the local runtime. Synchronous `ActorSystem.apply` constructors retain the sleeping-fiber compatibility path until their callers adopt managed resources. An injected timer runtime is closed by its Resource owner, not by `stopAll`.

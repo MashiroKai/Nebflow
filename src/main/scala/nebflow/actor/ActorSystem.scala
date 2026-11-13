@@ -22,6 +22,10 @@ trait ActorSystem:
   def stop(ref: ActorRef[?]): IO[Unit]
   def stopAll: IO[Unit]
 
+  /** Compatibility path for synchronous constructors without a managed timer runtime. */
+  def scheduleOnce(delay: FiniteDuration, delivery: IO[Unit]): IO[Unit] =
+    (IO.sleep(delay.max(scala.concurrent.duration.Duration.Zero)) *> delivery).start.void
+
   /**
    * Liveness probe (#22): a cached ActorRef whose loop has exited (crash /
    * TTL / stop without watched cleanup) still offers into its queue —
@@ -81,23 +85,32 @@ object ActorSystem:
    * 一致——全套测试大量构造本对象，隐式落盘会写真实数据根）。生产装配点显式传
    * `WatchStore.file(...)`（`GatewayMain`）。
    */
-  def apply(deviceName: String, watchStore: WatchStore = WatchStore.disabled): ActorSystem =
-    new LocalActorSystem(deviceName, watchStore)
+  def apply(
+    deviceName: String,
+    watchStore: WatchStore = WatchStore.disabled,
+    timers: Option[ActorTimers] = None
+  ): ActorSystem =
+    new LocalActorSystem(deviceName, watchStore, timers)
 
   /** Create an actor system from a given device name, as a Resource. */
   def resource(
     deviceName: String,
     watchStore: WatchStore = WatchStore.disabled
   ): cats.effect.Resource[IO, ActorSystem] =
-    cats.effect.Resource.make(IO(apply(deviceName, watchStore)))(_.stopAll)
+    ActorTimers.resource.flatMap { timers =>
+      cats.effect.Resource.make(IO(apply(deviceName, watchStore, Some(timers))))(_.stopAll)
+    }
 
 end ActorSystem
 
 /** Local-only actor system implementation. */
 final class LocalActorSystem(
   val localDevice: String,
-  watchStore: WatchStore = WatchStore.disabled
+  watchStore: WatchStore = WatchStore.disabled,
+  timers: Option[ActorTimers] = None
 ) extends ActorSystem:
+  override def scheduleOnce(delay: FiniteDuration, delivery: IO[Unit]): IO[Unit] =
+    timers.fold(super.scheduleOnce(delay, delivery))(_.scheduleOnce(delay, delivery))
   private val log = NebflowLogger.forName("nebflow.actor")
 
   private case class RegistryEntry(
