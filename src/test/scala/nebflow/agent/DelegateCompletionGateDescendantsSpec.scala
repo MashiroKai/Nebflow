@@ -14,7 +14,18 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  SubAgentTask,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -230,7 +241,10 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
         )
       )
       supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parentSid)
-      _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("dispatched 8 nodes; implement is still running")))
+      _ <- supervisor ! AgentEvent.Completed(
+        childSid,
+        List(assistantMsg("dispatched 8 nodes; implement is still running"))
+      )
       _ <- IO.sleep(600.millis)
       heldTerminal <- mails(parentSid, "delegate-terminal")
       heldProgress <- mails(parentSid, "delegate-progress")
@@ -243,7 +257,10 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
       )
       _ <- supervisor ! AgentEvent.Completed(
         childSid,
-        List(assistantMsg("dispatched 8 nodes; implement is still running"), assistantMsg("all nodes done — final report"))
+        List(
+          assistantMsg("dispatched 8 nodes; implement is still running"),
+          assistantMsg("all nodes done — final report")
+        )
       )
       _ <- waitUntil(10.seconds)(mails(parentSid, "delegate-terminal").map(_.nonEmpty))
       terminal <- mails(parentSid, "delegate-terminal")
@@ -255,12 +272,21 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
       val p = heldProgress.head
       assert(p.identity.contains("gen-gate-1"), s"progress identity carries the roundId: ${p.identity}")
       assert(p.event.eventType == "progress")
-      assert(p.event.payload.contains("implement is still running"), s"payload carries the mid-run text: ${p.event.payload}")
+      assert(
+        p.event.payload.contains("implement is still running"),
+        s"payload carries the mid-run text: ${p.event.payload}"
+      )
       assertEquals(p.event.metadata("progress"), Some(true.asJson), "progress flag rides the metadata")
-      assertEquals(heldTasks.find(_.taskId == childSid).map(_.status), Some("running"),
-        "the held phase keeps the task row running (no fake completion)")
+      assertEquals(
+        heldTasks.find(_.taskId == childSid).map(_.status),
+        Some("running"),
+        "the held phase keeps the task row running (no fake completion)"
+      )
       assertEquals(terminal.size, 1, "quiet map releases: exactly one terminal")
-      assert(terminal.head.event.payload.contains("all nodes done"), s"the final text is the deliverable: ${terminal.head.event.payload}")
+      assert(
+        terminal.head.event.payload.contains("all nodes done"),
+        s"the final text is the deliverable: ${terminal.head.event.payload}"
+      )
     end for
   }
 
@@ -288,8 +314,12 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
       heldTerminal <- mails(parentSid, "delegate-terminal")
       heldProgress <- mails(parentSid, "delegate-progress")
       // the child row reaches a terminal state; the re-check settles
-      _ <- resources.subAgentTaskStore.updateStatus(childSid, "subchild-b1", "completed",
-        completedAt = Some(System.currentTimeMillis()))
+      _ <- resources.subAgentTaskStore.updateStatus(
+        childSid,
+        "subchild-b1",
+        "completed",
+        completedAt = Some(System.currentTimeMillis())
+      )
       _ <- supervisor ! AgentEvent.Completed(
         childSid,
         List(assistantMsg("spawned a helper, waiting for it"), assistantMsg("helper returned — final report"))
@@ -300,7 +330,10 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
     yield
       assertEquals(heldTerminal, Nil, "②b must hold: a running child row means the work is not done")
       assertEquals(heldProgress.size, 1, "one progress mail for the held turn")
-      assert(heldProgress.head.event.payload.contains("spawned a helper"), s"mid-run text rides the progress: ${heldProgress.head.event.payload}")
+      assert(
+        heldProgress.head.event.payload.contains("spawned a helper"),
+        s"mid-run text rides the progress: ${heldProgress.head.event.payload}"
+      )
       assertEquals(terminal.size, 1)
       assert(terminal.head.event.payload.contains("helper returned"))
     end for
@@ -321,14 +354,14 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-gc")
       supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parentSid)
       // a revival/continuation holds the start lease (②c)
-      holder <- nebflow.core.delegate.MergerInitialization.exclusive(childSid)(IO.never).start
-      _ <- waitUntil(5.seconds)(IO(nebflow.core.delegate.MergerInitialization.isHeld(childSid)))
+      holder <- nebflow.core.delegate.SessionStartLease.exclusive(childSid)(IO.never).start
+      _ <- waitUntil(5.seconds)(IO(nebflow.core.delegate.SessionStartLease.isHeld(childSid)))
       _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("turn done while being revived")))
       _ <- IO.sleep(600.millis)
       heldTerminal <- mails(parentSid, "delegate-terminal")
       heldProgress <- mails(parentSid, "delegate-progress")
       _ <- holder.cancel
-      _ <- waitUntil(5.seconds)(IO(!nebflow.core.delegate.MergerInitialization.isHeld(childSid)))
+      _ <- waitUntil(5.seconds)(IO(!nebflow.core.delegate.SessionStartLease.isHeld(childSid)))
       _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("final report after the lease released")))
       _ <- waitUntil(10.seconds)(mails(parentSid, "delegate-terminal").map(_.nonEmpty))
       terminal <- mails(parentSid, "delegate-terminal")
@@ -371,7 +404,10 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
       assertEquals(both.size, 2, "a new turn mints a new progress identity")
       val ids = both.map(_.identity).distinct
       assertEquals(ids.size, 2)
-      assert(ids.forall(_.startsWith(s"progress-$childSid-gen-gate-1-")), s"identities = progress-<id>-<roundId>-<turnSeq>: $ids")
+      assert(
+        ids.forall(_.startsWith(s"progress-$childSid-gen-gate-1-")),
+        s"identities = progress-<id>-<roundId>-<turnSeq>: $ids"
+      )
       assert(!ids.exists(_.contains("#")), "progress keys never share the terminal <id>#<gen> identity shape")
     end for
   }

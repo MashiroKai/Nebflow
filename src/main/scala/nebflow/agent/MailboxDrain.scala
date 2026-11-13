@@ -95,22 +95,12 @@ private[agent] object MailboxDrain:
     .fold(IO.pure(true)) { sid =>
       for
         live <- resources.agentRegistry.get.map(_.get(sid))
-        facts <- IO.blocking {
-          val state = nebflow.core.delegate.WorkspaceLedger.default.snapshot
-          val workspace = state.workspaces
-            .find(_.owner == sid)
-            .orElse(live.flatMap(entry => state.workspaces.find(_.owner == entry.rootSessionId)))
-          val record = nebflow.core.delegate.DelegateRegistry.find(sid)
-          val initPending = state.mergerBootstraps.get(sid).exists(_.status != "ready")
-          (workspace, record, initPending)
-        }
-        (workspace, record, pending) = facts
+        record <- IO.blocking(nebflow.core.delegate.DelegateRegistry.find(sid))
         task <-
           if record.nonEmpty || live.exists(_.kind == AgentKind.Delegate) then
             resources.subAgentTaskStore.findByTaskId(sid)
           else IO.pure(None)
-      yield !workspace.exists(_.lifecycle != "open") &&
-        !nebflow.core.delegate.SessionResumption.requiresManual(record, task, live, workspace, pending)
+      yield !nebflow.core.delegate.SessionResumption.requiresManual(record, task, live)
     }
     .handleErrorWith(error =>
       logger.warn(s"Mailbox execution held: recovery state unreadable: ${error.getMessage}").as(false)

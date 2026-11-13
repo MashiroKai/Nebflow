@@ -22,13 +22,19 @@ object DualModeConfig:
   /** 模式词值域（registry/任务行 mode 字段 + mode-decision 审计行共用）。 */
   val ModeKernel: String = "kernel"
   val ModeDispatcher: String = "dispatcher"
+
+  /**
+   * Legacy merger word: recorded identities from the retired merger face still
+   * decode with this value (read-side compat), but it is no longer a spawnable
+   * mode — Mail to such identities refuses explicitly.
+   */
   val ModeMerger: String = "merger"
 
-  /** 值域校验（mode 参数/记录字段的合法词）。 */
-  def isModeWord(s: String): Boolean = s == ModeKernel || s == ModeDispatcher || s == ModeMerger
+  /** 值域校验（mode 参数/记录字段的合法词——merger 不在可派发值域）。 */
+  def isModeWord(s: String): Boolean = s == ModeKernel || s == ModeDispatcher
 
   /** 全部合法词（错误文案与 schema enum 同源）。 */
-  val ModeWords: List[String] = List(ModeKernel, ModeDispatcher, ModeMerger)
+  val ModeWords: List[String] = List(ModeKernel, ModeDispatcher)
 end DualModeConfig
 
 /**
@@ -62,11 +68,17 @@ end ModeLeg
  */
 object ModeParam:
 
-  /** `auto` 的显式拒绝文案（含引导语——作者令：错误文案要说清出路）。 */
+  /** `auto` 的显式拒绝文案（含引导语——错误文案要说清出路）。 */
   val AutoRemoved: String =
     "Delegate: mode=\"auto\" is no longer accepted — the mode allocator has been removed, so the execution form is YOUR " +
       "decision, not a model's. Pass mode=\"kernel\" or mode=\"dispatcher\" directly. " +
       "（请直接指定 kernel 或 dispatcher，分配器已移除）(DELEGATE_MODE_AUTO_REMOVED)"
+
+  /** Legacy merger mode 的显式拒绝文案（merger 角色已退场，不静默映射）。 */
+  val MergerRemoved: String =
+    "Delegate: mode=\"merger\" is no longer accepted — the merger role has been retired and integration is the " +
+      "author's explicit decision; there is no recorded integration authority to spawn. Dispatch integration work " +
+      "as a normal kernel or dispatcher delegate, or let the author drive the merge. (DELEGATE_MODE_MERGER_RETIRED)"
 
   /** 确定性缺省（不填 `mode` 时的生效值；spawn 腿的缺省参数 = 本值）。 */
   def default: ModeDecision =
@@ -91,6 +103,7 @@ object ModeParam:
     raw.map(_.trim.toLowerCase).filter(_.nonEmpty) match
       case None => Right(default)
       case Some("auto") => Left(AutoRemoved)
+      case Some("merger") => Left(MergerRemoved)
       case Some(m) if DualModeConfig.isModeWord(m) =>
         Right(ModeDecision(m, ModeLeg.Param, "explicit mode parameter (zero model calls)"))
       case Some(bad) => Left(invalid(bad))

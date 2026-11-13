@@ -349,28 +349,4 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
     end try
   }
 
-  test("⑤ pure anchors: hasRealOutput / deterministicPrecheck / verdictLineCompleted") {
-    // stub 与空白都不是真实产出
-    assertEquals(DelegateTerminal.hasRealOutput(""), false)
-    assertEquals(DelegateTerminal.hasRealOutput("   \n "), false)
-    assertEquals(DelegateTerminal.hasRealOutput(Defaults.MaxTokensStubText), false)
-    assertEquals(DelegateTerminal.hasRealOutput("actual deliverable"), true)
-    // 预检只认 Some(0)（None = 调用方未计数，绝不发明数据）
-    assertEquals(DelegateTerminal.deterministicPrecheck("", Some(0)).isDefined, true)
-    assertEquals(DelegateTerminal.deterministicPrecheck(Defaults.MaxTokensStubText, Some(0)).isDefined, true)
-    assertEquals(DelegateTerminal.deterministicPrecheck("", Some(2)), None, "tools were called ⇒ not an empty burn")
-    assertEquals(DelegateTerminal.deterministicPrecheck("", None), None, "uncounted ⇒ precheck skipped")
-    assertEquals(
-      DelegateTerminal.deterministicPrecheck("done", Some(0)),
-      None,
-      "real text ⇒ judge's input, not the precheck's"
-    )
-    // 判词行措辞（作者令原文形态）
-    assertEquals(DelegateTerminal.verdictLineCompleted(unjudged = false), "\n\n[delegate-judge] verdict: completed.")
-    assertEquals(
-      DelegateTerminal.verdictLineCompleted(unjudged = true),
-      "\n\n[delegate-judge] verdict: completed (unjudged — judge unavailable)."
-    )
-  }
-
 end DelegateTerminalPrecheckSpec

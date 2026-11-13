@@ -1,116 +1,83 @@
 package nebflow.core.delegate
 
-import scala.concurrent.{Await, ExecutionContext, Future}
-import scala.concurrent.duration.*
+import munit.FunSuite
 
-class WorkspaceLedgerSpec extends munit.FunSuite:
-  import WorkspaceLedger.*
-  given ExecutionContext = ExecutionContext.global
+/**
+ * Compat-read spec for the retired managed-workspace ledger: the engine no
+ * longer writes `workspaces/ledger.json`, but the recorded history stays on
+ * disk and must keep decoding through the read-only face — workspaces, merger
+ * identities, merge requests (with items/events), cleanups and bootstrap
+ * seeds. A missing file decodes as an empty state.
+ */
+class WorkspaceLedgerSpec extends FunSuite:
 
-  private def withLedger(f: WorkspaceLedger => Unit): Unit =
-    val dir = os.temp.dir(prefix = "workspace-ledger-")
-    try f(new WorkspaceLedger(dir / "ledger.json"))
+  test("a missing ledger file decodes as the empty state") {
+    val dir = os.temp.dir(prefix = "workspace-ledger-missing-")
+    try
+      val ledger = new WorkspaceLedger(dir / "ledger.json")
+      assertEquals(ledger.snapshot, WorkspaceLedger.State())
+      assertEquals(WorkspaceLedger.listInFlightRequests(ledger.snapshot), Nil)
     finally os.remove.all(dir)
-
-  private def workspace(id: String) =
-    Workspace(id, "project", "repo", s"/tmp/$id", s"delegate/$id", "main", "base", s"owner-$id", "kernel")
-
-  test("busy workspace rejects entire batch; reservation excludes development and persists") {
-    withLedger { ledger =>
-      ledger.register(workspace("a")); ledger.register(workspace("b"))
-      val running = ledger.claimDevelopment("a", "owner-a", 0).toOption.get
-      assert(ledger.reserve("request", List("a", "b")).isLeft)
-      assertEquals(ledger.snapshot.workspaces.find(_.id == "b").get.lifecycle, "open")
-      ledger.releaseDevelopment("a", "owner-a", running.revision, false)
-      assert(ledger.reserve("request", List("a", "b")).isRight)
-      val reopened = new WorkspaceLedger(ledger.path)
-      assert(reopened.claimDevelopment("b", "owner-b", 1).isLeft)
-      assertEquals(reopened.reserve("request", List("a", "b")).toOption.get.size, 2)
-    }
   }
 
-  test("16 concurrent development admissions and merge reservations resolve to exactly one winner with clear losers") {
-    withLedger { ledger =>
-      ledger.register(workspace("a"))
-      ledger.merger("project", "repo", "merger")
-      val request =
-        MergeRequest("race", "repo", "merger", "user authorized the batch", List(MergeItem("a", "0" * 40, "main")))
-      val contenders = 16
-      val start = new java.util.concurrent.CountDownLatch(contenders)
-      // Dedicated pool: the barrier requires every contender to run CONCURRENTLY —
-      // the fork-join global pool would self-deadlock on blocking latch awaits.
-      val pool = java.util.concurrent.Executors.newFixedThreadPool(contenders)
-      val ec = ExecutionContext.fromExecutor(pool)
-      val outcomes =
-        (0 until contenders).map { i =>
-          Future {
-            start.countDown()
-            // Maximize contention: every contender fires at the barrier at once.
-            assert(start.await(30, java.util.concurrent.TimeUnit.SECONDS), "barrier timeout")
-            scala.util.Try {
-              val attempt =
-                if i % 2 == 0 then ledger.admit("owner-a", false).map(_ => "admit")
-                else ledger.requestMerge(request).map(_ => "merge")
-              i -> attempt
-            }
-          }(ec)
-        }
-      val results = Await.result(Future.sequence(outcomes), 60.seconds)
-      pool.shutdown()
-      val finalWorkspace = ledger.snapshot.workspaces.find(_.id == "a").get
-      // No exceptions may escape the file-locked transactions.
-      results.foreach(r => assertEquals(r.isSuccess, true, s"a contender threw: ${r.failed.map(_.getMessage)}"))
-      // Final consistency: development won (running, open) XOR merge won (reserved) — never both.
-      val developmentWon = finalWorkspace.activity == "running" && finalWorkspace.lifecycle == "open"
-      val mergeWon = finalWorkspace.lifecycle == "reserved" && finalWorkspace.reservation.contains("race")
-      assert(clue(developmentWon) != clue(mergeWon), s"exactly one side must win, got $finalWorkspace")
-      val (admits, merges) = results.map(_.toOption.get).partition(_._1 % 2 == 0)
-      if developmentWon then
-        merges.foreach { case (_, outcome) =>
-          assert(outcome.isLeft, s"a merge reservation must lose once development is running: $outcome")
-        }
-        admits.foreach { case (_, outcome) =>
-          assert(outcome.isRight, s"admission against a running development claim is a legal no-op: $outcome")
-        }
-      else
-        admits.foreach { case (_, outcome) =>
-          assert(
-            outcome.left.exists(_.contains("reserved")),
-            s"admission against a merge-reserved workspace must lose with a clear reason: $outcome"
-          )
-        }
-        merges.foreach { case (_, outcome) =>
-          assert(outcome.isRight, s"merge reservations are idempotent for the identical request: $outcome")
-        }
-      end if
-    }
+  test("a recorded legacy ledger decodes every section through the read-only face") {
+    val dir = os.temp.dir(prefix = "workspace-ledger-legacy-")
+    try
+      val legacy =
+        """{
+          |  "workspaces": [{
+          |    "id": "ws-a", "project": "stand", "repository": "repo-key",
+          |    "path": "/tmp/ws-a", "branch": "delegate/ws-a", "baseBranch": "main",
+          |    "baseCommit": "0000000000000000000000000000000000000000",
+          |    "owner": "delegate-nebflow-aaa", "ownerMode": "kernel",
+          |    "lifecycle": "reserved", "activity": "idle",
+          |    "reservation": "req-1", "revision": 3
+          |  }],
+          |  "mergers": [{"project": "stand", "repository": "repo-key", "delegateId": "delegate-nebflow-merg"}],
+          |  "baselines": {"repo-key": "main"},
+          |  "requests": [{
+          |    "id": "req-1", "repository": "repo-key", "mergerId": "delegate-nebflow-merg",
+          |    "authorization": "user authorized the batch",
+          |    "items": [{"workspaceId": "ws-a", "sourceCommit": "0000000000000000000000000000000000000000",
+          |                "targetBranch": "main", "phase": "reserved"}],
+          |    "status": "claimed", "revision": 1, "cancelRequested": false,
+          |    "events": {"worker:req-1:ws-a:merging": "{}"}
+          |  }],
+          |  "cleanups": {"ws-a": {"token": "tok", "previousLifecycle": "merged-cleanup-pending",
+          |                        "removed": false, "error": null}},
+          |  "revision": 7,
+          |  "mergerBootstraps": {},
+          |  "mergerEvents": {},
+          |  "completionConfirmations": {
+          |    "op-1": {"operationId": "op-1", "workspaceId": "ws-a", "owner": "delegate-nebflow-aaa",
+          |             "expectedPath": "/tmp/ws-a", "expectedHead": "0000", "expectedRevision": 2,
+          |             "acceptanceEvidence": "evidence", "explicitRootConfirmation": "root",
+          |             "actualBranch": "main", "recordedAt": 1, "stage": "completed", "recoverRunning": false}
+          |  }
+          |}""".stripMargin
+      os.write.over(dir / "ledger.json", legacy)
+      val snapshot = new WorkspaceLedger(dir / "ledger.json").snapshot
+      assertEquals(snapshot.revision, 7L)
+      assertEquals(snapshot.workspaces.map(_.id), List("ws-a"))
+      assertEquals(snapshot.workspaces.head.lifecycle, "reserved")
+      assertEquals(snapshot.mergers.map(_.delegateId), List("delegate-nebflow-merg"))
+      assertEquals(snapshot.baselines.get("repo-key"), Some("main"))
+      assertEquals(snapshot.requests.map(_.id), List("req-1"))
+      assertEquals(snapshot.requests.head.items.map(_.phase), List("reserved"))
+      assertEquals(snapshot.requests.head.events.keys.toList, List("worker:req-1:ws-a:merging"))
+      assert(snapshot.cleanups.contains("ws-a"))
+      assert(snapshot.completionConfirmations.contains("op-1"))
+      // Boot listing: a claimed request stays visible as in-flight backlog
+      val lines = WorkspaceLedger.listInFlightRequests(snapshot)
+      assertEquals(lines.size, 1)
+      assert(lines.head.contains("req-1"))
+      assert(lines.head.contains("ws-a:reserved"))
+      assert(lines.head.contains("status=claimed"))
+      // Terminal requests never list
+      val terminal = snapshot.copy(requests = snapshot.requests.map(r => r.copy(status = "merged")))
+      assertEquals(WorkspaceLedger.listInFlightRequests(terminal), Nil)
+    finally os.remove.all(dir)
+    end try
   }
 
-  test("merger identity is shared across repository aliases") {
-    withLedger { ledger =>
-      val first = ledger.merger("project", "repo", "merger-1")
-      assertEquals(ledger.merger("alias", "repo", "merger-2"), first)
-      assertEquals(new WorkspaceLedger(ledger.path).merger("project", "repo", "merger-3"), first)
-    }
-  }
-
-  test("ownership, stale writes and corrupt state cannot bypass admission") {
-    withLedger { ledger =>
-      ledger.register(workspace("a"))
-      assert(ledger.claimDevelopment("a", "other", 0).isLeft)
-      ledger.claimDevelopment("a", "owner-a", 0)
-      assert(ledger.releaseDevelopment("a", "owner-a", 0, false).isLeft)
-      os.write.over(ledger.path, "broken")
-      intercept[IllegalStateException](ledger.reserve("request", List("a")))
-    }
-  }
-
-  test("legacy ledger gains default baseline without losing ownership") {
-    withLedger { ledger =>
-      os.write.over(ledger.path, "{\"workspaces\":[],\"mergers\":[]}", createFolders = true)
-      assertEquals(ledger.baseline("repo"), "main")
-      assert(ledger.setBaseline("repo", "release").isRight)
-      assertEquals(new WorkspaceLedger(ledger.path).baseline("repo"), "release")
-    }
-  }
 end WorkspaceLedgerSpec

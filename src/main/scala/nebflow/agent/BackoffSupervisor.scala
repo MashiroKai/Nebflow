@@ -761,7 +761,7 @@ object BackoffSupervisor:
                           inflight.map(t => s"${t.taskId}(${t.status})").take(5).mkString(", ")
                       )
                     )
-                  else if nebflow.core.delegate.MergerInitialization.isHeld(subagentId) then
+                  else if nebflow.core.delegate.SessionStartLease.isHeld(subagentId) then
                     IO.pure(Some("session start lease held (revival/continuation in progress)"))
                   else IO.pure(None)
                 }
@@ -1085,38 +1085,7 @@ object BackoffSupervisor:
       end receive
 
       override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
-        lazy val workspacePolicy = scala.util.Try {
-          val snapshot = nebflow.core.delegate.WorkspaceLedger.default.snapshot
-          val workspace = snapshot.workspaces.find(_.owner == subagentId)
-          val merger = snapshot.mergers.find(_.delegateId == subagentId)
-          (
-            workspace.exists(_.lifecycle.startsWith("closed-")),
-            workspace.isDefined || merger.isDefined,
-            // 停止原因（engine-fault 冻结报错补详批 · 第二波）：具体到持有形态——
-            // 受管 workspace（生命周期到哪一步）还是项目 merger 槽（哪个仓）。
-            workspace
-              .map(w => s"managed workspace held (lifecycle=${w.lifecycle})")
-              .orElse(merger.map(m => s"project merger slot held (repository=${m.repository})"))
-              .getOrElse("managed workspace hold")
-          )
-        }
         signal match
-          case SystemSignal.Terminated(_) if workspacePolicy.toOption.exists(_._1) =>
-            resources.agentRegistry.update(_ - subagentId) *>
-              nebflow.core.project.DelegateFlowHosts.unmount(subagentId) *>
-              logger.info(s"Workspace owner $subagentId closed; supervisor will not restart it") *>
-              IO.pure(Behaviors.stopped)
-          case SystemSignal.Terminated(_) if workspacePolicy.isFailure || workspacePolicy.toOption.exists(_._2) =>
-            // 停止原因入记录与文案（第二波）：workspacePolicy 单读，原因 = 探测失败
-            // （带异常消息）或具体持有形态——替换笼统的 "Managed workspace execution stopped"。
-            val stopReason = BackoffSupervisor.managedWorkspaceStopReason(workspacePolicy)
-            freezeAndHold(
-              s"Managed workspace execution stopped ($stopReason); explicit manual recovery is required",
-              nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
-              childAlive = false,
-              trigger = "managed-workspace-stopped",
-              errorType = "Terminated"
-            )
           case SystemSignal.Terminated(_) =>
             val now = System.currentTimeMillis()
             val recentRestarts = restartHistory.filter(t => now - t < withinTimeRange.toMillis)
@@ -2051,7 +2020,8 @@ object BackoffSupervisor:
 
         // 结算写（非 stale 腿）：verdict 真值进轮次台账——completed/failed 各轮独立，
         // 后续轮成功不覆盖前轮失败；cancelled 把所有未结算轮标记 cancelled 终值
-        // （墓碑压过一切）。
+        // （墓碑压过一切）。completed 结算另过一遍未落地提交注记（诚实注记：座位
+        // 有领先提交 ⇒ 一行 unmerged-work，落地是作者的决定——只留痕，不动任何树）。
         val roundSettleWrite: IO[Unit] =
           if source != "delegate" then IO.unit
           else
@@ -2072,6 +2042,8 @@ object BackoffSupervisor:
                     roundCountedOids,
                     roundPartial
                   )
+                if taskStatus == "completed" then
+                  nebflow.core.delegate.DelegateTerminal.noteUnmergedWork(subagentId, Some(rec))
               }
             }.handleErrorWith(e => logger.warn(s"round settlement write failed for '$subagentId': ${e.getMessage}"))
 
@@ -2224,20 +2196,5 @@ object BackoffSupervisor:
     val r = Option(reason).getOrElse("").toLowerCase
     r.contains("quota") || r.contains("额度") || r.contains("budget") || r.contains("rate limit") ||
     r.contains("insufficient_quota")
-
-  /**
-   * 「Managed workspace execution stopped」冻结腿的**停止原因**诊断（纯函数，spec 判红
-   * 锚；engine-fault 冻结报错补详批 · 第二波）：账本探测失败 ⇒ 带异常消息；账本可读 ⇒
-   * 具体到持有形态（受管 workspace 的生命周期 / 项目 merger 槽的仓库）——记录与文案
-   * 从此答得出「为什么停」，替换笼统表述。
-   */
-  private[agent] def managedWorkspaceStopReason(
-    policy: scala.util.Try[(Boolean, Boolean, String)]
-  ): String =
-    policy match
-      case scala.util.Failure(e) =>
-        s"workspace-ledger probe failed (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})"
-      case scala.util.Success((_, holds, why)) =>
-        if holds then why else "managed workspace hold in doubt (ledger raced between probe and death)"
 
 end BackoffSupervisor

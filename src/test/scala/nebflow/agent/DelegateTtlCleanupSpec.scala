@@ -454,53 +454,6 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     os.proc("git", "-C", repo, "commit", "-m", "seed").call()
     repo
 
-  test(
-    "H · worktree 联动回收: expired-terminal leg recycles the tree; unmerged commits keep the branch (zero-ahead still guards branch deletion)"
-  ) {
-    withFx("worktree-recycle") { fx =>
-      IO.blocking {
-        // H1 干净树：树回收 + 分支删除（零领先）。
-        val repo1 = gitRepo("ttl-git-clean-")
-        val wt1 = repo1 / ".nebflow" / "worktrees" / "delegate-x"
-        os.proc("git", "-C", repo1, "worktree", "add", "-b", "delegate/x", wt1.toString, "HEAD").call()
-        val rec1 = mkRecord("delegate-nebflow-ttl-wt1", "p1", wt1.toString).copy(
-          worktree = Some(wt1.toString),
-          branch = Some("delegate/x"),
-          baseBranch = Some("main"),
-          projectWorkspace = Some(repo1.toString)
-        )
-        val removed1 = nebflow.core.delegate.PostMergeCleanup
-          .run(Some(rec1))
-          .unsafeRunSync()
-        assert(removed1, "clean tree recycled by the TTL leg")
-        assert(!os.exists(wt1), "worktree directory removed")
-        val b1 = os.proc("git", "-C", repo1, "branch", "--list", "delegate/x").call(cwd = repo1).out.text()
-        assert(b1.trim.isEmpty, "zero-ahead branch deleted alongside the tree")
-        // H2 未领先提交：树回收，分支保留（未落地提交绝不因 TTL 消失）。
-        val repo2 = gitRepo("ttl-git-ahead-")
-        val wt2 = repo2 / ".nebflow" / "worktrees" / "delegate-y"
-        os.proc("git", "-C", repo2, "worktree", "add", "-b", "delegate/y", wt2.toString, "HEAD").call()
-        os.write.over(wt2 / "work.txt", "unlanded\n")
-        os.proc("git", "-C", wt2, "add", ".").call()
-        os.proc("git", "-C", wt2, "commit", "-m", "unlanded work").call()
-        val rec2 = mkRecord("delegate-nebflow-ttl-wt2", "p2", wt2.toString).copy(
-          worktree = Some(wt2.toString),
-          branch = Some("delegate/y"),
-          baseBranch = Some("main"),
-          projectWorkspace = Some(repo2.toString)
-        )
-        val removed2 = nebflow.core.delegate.PostMergeCleanup
-          .run(Some(rec2))
-          .unsafeRunSync()
-        assert(removed2, "tree recycled even with an unmerged branch")
-        assert(!os.exists(wt2), "worktree directory removed (worktree was clean after the commit)")
-        val b2 = os.proc("git", "-C", repo2, "branch", "--list", "delegate/y").call(cwd = repo2).out.text()
-        assert(b2.trim.nonEmpty, "the unmerged branch is KEPT — unlanded commits never vanish by TTL")
-        val _ = fx.seat // touch to keep the seat alive for the fixture cleanup
-      }
-    }
-  }
-
   // ── 改后绿 I：TTL 单源对齐 ────────────────────────────────────────────
 
   test(

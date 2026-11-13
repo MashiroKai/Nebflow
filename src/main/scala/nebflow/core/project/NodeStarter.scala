@@ -77,7 +77,7 @@ private[project] trait NodeStarter:
     store.getNode(nodeId).flatMap {
       case None => IO.unit
       case Some(node) if node.merge =>
-        logger.warn(s"Legacy merge node ${node.id} is held; integration requires an authorized project merger request")
+        logger.warn(s"Legacy merge node ${node.id} is held; landing is the author's decision")
       case Some(node) =>
         node.status match
           case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled =>
@@ -135,18 +135,7 @@ private[project] trait NodeStarter:
                         val runIO =
                           if node.loop.exists(_.enabled) then spawnAndRunLoop(node, input, resume, chain)
                           else spawnAndRun(node, input, resume, chain)
-                        val admitted =
-                          if notifyTargetKind == NodeEngine.NotifyTargetKind.CreatorDelegate then
-                            IO.blocking(
-                              nebflow.core.delegate.WorkspaceLedger.default
-                                .admit(rootSessionId, allowFrozen = resume.isDefined)
-                            )
-                          else IO.pure(Right(()))
-                        admitted.flatMap {
-                          case Left(reason) =>
-                            logger.info(s"Node ${node.id} start held by workspace lifecycle: $reason")
-                          case Right(_) => runIO.handleErrorWith { case _: NodeEngine.StartRaceLost => IO.unit }
-                        }
+                        runIO.handleErrorWith { case _: NodeEngine.StartRaceLost => IO.unit }
                       }
                     }
                     // verdict 闸收口（merge-verdict-gate 批 2026-09-12）——**单权威落点**：

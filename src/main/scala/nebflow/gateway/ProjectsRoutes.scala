@@ -43,40 +43,11 @@ private[gateway] object ProjectsRoutes:
       // 未挂载/不存在 → 404 {error}; 需 auth（withAuth）。
       // 注意：routes 挂载在 Router("/api" -> ...) 下，路径必须写相对段
       // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
-      case req @ GET -> Root / "projects" / name / "workspaces" / id / "cleanup" =>
-        withAuth(req) {
-          nebflow.core.delegate.ProjectWorkspaceCleanup.run(name, id, sharedResources, None).flatMap {
-            case Left(error) => Conflict(Json.obj("error" -> error.asJson))
-            case Right(preview) => Ok(preview)
-          }
-        }
-
-      case req @ POST -> Root / "projects" / name / "workspaces" / id / "cleanup" =>
-        withAuth(req) {
-          req.as[Json].flatMap { body =>
-            body.hcursor.get[String]("previewToken") match
-              case Left(_) => BadRequest(Json.obj("error" -> "Inspect the workspace before confirming cleanup".asJson))
-              case Right(token) =>
-                nebflow.core.delegate.ProjectWorkspaceCleanup
-                  .run(
-                    name,
-                    id,
-                    sharedResources,
-                    Some(
-                      (
-                        token,
-                        body.hcursor.get[Boolean]("confirmUnmerged").getOrElse(false),
-                        body.hcursor.get[Boolean]("discardUncommitted").getOrElse(false)
-                      )
-                    )
-                  )
-                  .flatMap {
-                    case Left(error) => Conflict(Json.obj("error" -> error.asJson))
-                    case Right(workspace) => Ok(Json.obj("workspace" -> workspace, "branchRetained" -> true.asJson))
-                  }
-          }
-        }
-
+      // ── Legacy workspace ledger view (read-only) ─────────────────────────
+      // The managed-workspace mechanism is retired: no cleanup, no merge
+      // requests, no baseline writes. This endpoint stays as the read face for
+      // the recorded history the old mechanism left behind — rows render as
+      // recorded, nothing is executed, resumed or cleaned.
       case req @ GET -> Root / "projects" / name / "workspaces" =>
         withAuth(req) {
           ProjectStore.load(name).flatMap {
@@ -89,96 +60,25 @@ private[gateway] object ProjectsRoutes:
                 val ledger = nebflow.core.delegate.WorkspaceLedger.default
                 val repository = nebflow.core.delegate.WorkspaceLedger.repositoryKey(ws)
                 val snapshot = ledger.snapshot
-                // Workspace facts (ahead/dirty/HEAD, verification, reconcile) are
-                // fail-soft per workspace: one broken seat never fails the endpoint.
-                val facts = nebflow.core.delegate.WorkspaceFacts.forRepository(repository, snapshot)
-                // Priority E: advisor suggestions (durable rows with their states)
-                // ride the same snapshot; a corrupt store degrades to an empty list
-                // plus an explicit error marker instead of failing the endpoint.
-                val advisorRows = nebflow.core.delegate.WorkspaceAdvisor.default.rows()
                 Json.obj(
                   "revision" -> snapshot.revision.asJson,
-                  "baseline" -> ledger.baseline(repository).asJson,
-                  "cleanups" -> snapshot.cleanups.filter { case (id, _) =>
-                    snapshot.workspaces.exists(w => w.id == id && w.repository == repository)
-                  }.asJson,
                   "workspaces" -> snapshot.workspaces.filter(_.repository == repository).asJson,
-                  "facts" -> facts,
                   "mergeRequests" -> snapshot.requests.filter(_.repository == repository).asJson,
-                  "mergeRequestOrigins" -> snapshot.requests
-                    .filter(_.repository == repository)
-                    .map(r => r.id -> nebflow.core.tools.WorkspaceSummaryTool.requestOrigin(r))
-                    .toMap
-                    .asJson,
-                  "suggestions" -> advisorRows.fold(_ => Nil, rows => rows.filter(_.repository == repository)).asJson,
-                  "advisorError" -> advisorRows.left.toOption.asJson,
                   "merger" -> snapshot.mergers.find(_.repository == repository).asJson,
                   "mergerInitialization" -> snapshot.mergers
                     .find(_.repository == repository)
                     .flatMap(m => snapshot.mergerBootstraps.get(m.delegateId))
                     .map(seed => Json.obj("status" -> seed.status.asJson, "error" -> seed.error.asJson))
-                    .asJson
+                    .asJson,
+                  "suggestions" -> Json.arr(),
+                  "advisorError" -> Json.Null,
+                  "facts" -> Json.obj(),
+                  "cleanups" -> snapshot.cleanups.filter { case (id, _) =>
+                    snapshot.workspaces.exists(w => w.id == id && w.repository == repository)
+                  }.asJson
                 )
               }.flatMap(Ok(_))
                 .handleErrorWith(e => Conflict(Json.obj("error" -> e.getMessage.asJson)))
-          }
-        }
-
-      case req @ POST -> Root / "projects" / name / "workspaces" / "merge-requests" / id / "cancel" =>
-        withAuth(req) {
-          nebflow.core.delegate.MergeRequests.cancel(name, id).flatMap {
-            case Left(error) => Conflict(Json.obj("error" -> error.asJson))
-            case Right(result) => Ok(io.circe.parser.parse(result).getOrElse(Json.obj()))
-          }
-        }
-
-      case req @ POST -> Root / "projects" / name / "workspaces" / "merge-requests" =>
-        withAuth(req) {
-          req.as[Json].flatMap { body =>
-            val parsed = for
-              id <- body.hcursor.get[String]("requestId")
-              ids <- body.hcursor.get[List[String]]("workspaceIds")
-            yield (id, ids)
-            parsed match
-              case Left(_) => BadRequest(Json.obj("error" -> "requestId and workspaceIds are required".asJson))
-              case Right((id, ids)) =>
-                nebflow.core.delegate.MergeRequests
-                  .submit(
-                    name,
-                    id,
-                    ids,
-                    s"authenticated project panel selection: ${ids.mkString(",")}"
-                  )
-                  .flatMap {
-                    case Left(error) => Conflict(Json.obj("error" -> error.asJson))
-                    case Right(result) => Ok(io.circe.parser.parse(result).getOrElse(Json.obj()))
-                  }
-            end match
-          }
-        }
-
-      case req @ PUT -> Root / "projects" / name / "workspaces" / "baseline" =>
-        withAuth(req) {
-          ProjectStore.load(name).flatMap {
-            case None => NotFound(Json.obj("error" -> "Project not found".asJson))
-            case Some(project) if ProjectStore.effectiveDevice(project) != "self" =>
-              Conflict(Json.obj("error" -> "Configure the baseline on the project's device".asJson))
-            case Some(project) =>
-              req.as[Json].flatMap { body =>
-                body.hcursor.get[String]("branch") match
-                  case Left(_) => BadRequest(Json.obj("error" -> "branch is required".asJson))
-                  case Right(branch) =>
-                    IO.blocking {
-                      val ws = os.Path(ProjectStore.brainWorkspace(project), PathUtil.dataRoot)
-                      os.proc("git", "check-ref-format", "--branch", branch).call(cwd = ws)
-                      os.proc("git", "rev-parse", "--verify", s"refs/heads/$branch^{commit}").call(cwd = ws)
-                      val ledger = nebflow.core.delegate.WorkspaceLedger.default
-                      ledger.setBaseline(nebflow.core.delegate.WorkspaceLedger.repositoryKey(ws), branch)
-                    }.flatMap {
-                      case Left(error) => Conflict(Json.obj("error" -> error.asJson))
-                      case Right(_) => Ok(Json.obj("baseline" -> branch.asJson))
-                    }.handleErrorWith(e => Conflict(Json.obj("error" -> e.getMessage.asJson)))
-              }
           }
         }
 

@@ -450,6 +450,7 @@ object GatewayMain extends IOApp:
               "Use: nebflow.Main --home <dir> --port <port> start"
           ) *>
           IO.pure(ExitCode.Error)
+    end match
   end run
 
   /**
@@ -1243,14 +1244,21 @@ object GatewayMain extends IOApp:
                                   // 自愈重试）；排除面（外部执行器/team 子代理不入库）由
                                   // stand-recall 既有分类规则单点承载，持久化路径零改动。
                                   val memoryRecallDaemon: IO[Unit] = nebflow.core.MemoryRecallDaemon.launch()
-                                  // Per-task merger instances (serial merge consumer):
-                                  // boot reconciles in-flight merge requests against
-                                  // actual Git state, then queued requests are consumed
-                                  // by freshly instantiated merger workers — one worker
-                                  // per merge request, no worker stays resident between
-                                  // tasks. Fail-soft at startup; merge facts stay
-                                  // guarded by the ledger.
-                                  val mergerRecoveryBoot: IO[Unit] = nebflow.core.delegate.MergerWorker.recoverAndWake()
+                                  // Read-only listing of the retired managed-workspace
+                                  // ledger: in-flight merge requests the old mechanism
+                                  // left behind are logged one line each (panel/log
+                                  // visibility), never resumed or executed — disposition
+                                  // stays manual with the author. Fail-soft at startup.
+                                  val legacyLedgerReport: IO[Unit] =
+                                    IO.blocking(
+                                      nebflow.core.delegate.WorkspaceLedger.listInFlightRequests(
+                                        nebflow.core.delegate.WorkspaceLedger.default.snapshot
+                                      )
+                                    ).flatMap { lines =>
+                                      lines.traverse_(line => logger.info(s"[legacy-workspace-ledger] $line"))
+                                    }.handleErrorWith(e =>
+                                      logger.warn(s"legacy workspace ledger listing failed: ${e.getMessage}")
+                                    )
                                   // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                   // 在 startupMount 前就绪默认最小集（project-dispatcher /
                                   // general agents + 4 系统插件 +
@@ -1350,7 +1358,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> mergerRecoveryBoot *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> legacyLedgerReport *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -2533,57 +2541,6 @@ object GatewayMain extends IOApp:
                                                                 .getOrElse(nebflow.shared.Defaults.StuckThresholdMs)
                                                             )
                                                             .start
-                                                          // Publish durable workspace revisions; clients fetch scoped snapshots.
-                                                          // Priority E: the same committed-ledger seam also drives the
-                                                          // workspace advisor — one fail-soft evaluation per change that
-                                                          // may deliver a workspace-suggestion mail to the responsible
-                                                          // main session. It never throws into this broadcast path and
-                                                          // never writes the ledger.
-                                                          _ <- IO {
-                                                            val advisor =
-                                                              nebflow.core.delegate.WorkspaceAdvisor.withDoorbell(sid =>
-                                                                sharedResources.agentRegistry.get.flatMap { live =>
-                                                                  live
-                                                                    .get(sid)
-                                                                    .fold(IO.unit)(r =>
-                                                                      (r.ref ! AgentCommand.MailboxArrived).attempt.void
-                                                                    )
-                                                                }
-                                                              )
-                                                            nebflow.core.delegate.WorkspaceLedger.onChanged {
-                                                              (path, revision) =>
-                                                                if path == nebflow.shared.PathUtil.dataRoot / "workspaces" / "ledger.json"
-                                                                then
-                                                                  sharedResources.dispatcher.unsafeRunAndForget(
-                                                                    wsHub.broadcast(
-                                                                      io.circe.Json.obj(
-                                                                        "type" -> "workspaceLedgerUpdated".asJson,
-                                                                        "revision" -> revision.asJson
-                                                                      )
-                                                                    )
-                                                                  )
-                                                                  sharedResources.dispatcher.unsafeRunAndForget(
-                                                                    advisor
-                                                                      .evaluate(
-                                                                        nebflow.core.delegate.WorkspaceLedger.default
-                                                                      )
-                                                                      .attempt
-                                                                      .flatMap {
-                                                                        case Right(reading) =>
-                                                                          IO.whenA(reading.errors.nonEmpty)(
-                                                                            logger.warn(
-                                                                              s"workspace advisor evaluation carried errors (fail-closed): ${reading.errors.mkString("; ")}"
-                                                                            )
-                                                                          )
-                                                                        case Left(error) =>
-                                                                          logger.warn(
-                                                                            s"workspace advisor evaluation failed (fail-soft): ${error.getMessage}"
-                                                                          )
-                                                                      }
-                                                                      .void
-                                                                  )
-                                                            }
-                                                          }
                                                           // --- Background: FreezeScheduler (freeze-schedule) ---
                                                           // 冻结恢复扫描：周期向 Frozen 态 agent 发 CheckFreezeGate，
                                                           // 出冻结段则恢复挂起的 dispatch（仿 TaskStuckWatcher 模式：
@@ -2615,7 +2572,9 @@ object GatewayMain extends IOApp:
                                                           // restarting）∧ registry 无活体 ∧ 状态超龄（默认 10min）
                                                           // ⇒ 强制诚实终态化 + F2 队列通知父（父可 re-delegate）。
                                                           // 10-21 实测「retryCount=1 卡 restarting 7.5h」不再可能。
-                                                          _ <- nebflow.core.tools.AskHostLedger.recoverPending(sharedResourcesWithDaemon)
+                                                          _ <- nebflow.core.tools.AskHostLedger.recoverPending(
+                                                            sharedResourcesWithDaemon
+                                                          )
                                                           _ <- nebflow.agent.SubAgentStartupRecovery
                                                             .run(
                                                               sharedResourcesWithDaemon,

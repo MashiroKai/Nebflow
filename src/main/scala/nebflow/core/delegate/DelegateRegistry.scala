@@ -33,7 +33,7 @@ object DelegateRegistry:
 
   // ── 状态槽值域常量（终态申报工具通道退役 · T2 批：原定义随工具件删除，
   //    引擎内部承接写点（updateReport / SubAgentStartupRecovery 落「已交付」态）
-  //    与 WorkspaceAdvisor 的 finish 读数仍需同一值域 ⇒ 迁本伴生对象单点持有）。
+  //    的值域 ⇒ 迁本伴生对象单点持有）。
 
   /** 状态槽值：任务完成（引擎内部承接写点使用；模型可见面零申报工具指令）。 */
   val FinishValue: String = "finish"
@@ -450,7 +450,6 @@ object DelegateRegistry:
             val ts = System.currentTimeMillis()
             try
               put(rec.copy(standbySince = Some(ts)))
-              if !rec.mode.contains("dispatcher") then WorkspaceLedger.default.settle(id, frozen = false)
               Right(ts)
             catch case e: Throwable => Left(s"parkStandby: write failed: ${e.getMessage}")
       }
@@ -515,7 +514,6 @@ object DelegateRegistry:
                   frozenTrigger = rec.frozenTrigger.orElse(trig)
                 )
               )
-              WorkspaceLedger.default.settle(id, frozen = true)
               Right(ts)
             catch case e: Throwable => Left(s"parkFrozen: write failed: ${e.getMessage}")
       }

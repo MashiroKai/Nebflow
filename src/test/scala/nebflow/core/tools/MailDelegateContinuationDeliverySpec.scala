@@ -435,121 +435,6 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
 
     end for
 
-  test("workspace reservation rejects Mail without reviving the development owner"):
-    val system = ActorSystem("mail-workspace-reserved")
-    val id = "delegate-workspace-reserved"
-    for
-      resources <- mkResources(system, hang = true)
-      _ <- seedDeadDelegate(resources, id, "reserved-parent")
-      _ <- IO.blocking {
-        val ledger = nebflow.core.delegate.WorkspaceLedger.default
-        ledger.register(
-          nebflow.core.delegate.WorkspaceLedger.Workspace(
-            "reserved-work",
-            "project",
-            "repo",
-            "/unused-reserved",
-            "delegate/reserved",
-            "main",
-            "base",
-            id,
-            "kernel"
-          )
-        )
-        assert(ledger.reserve("merge-request", List("reserved-work")).isRight)
-      }
-      result <- continuationMail(resources, system, "reserved-parent", id)
-      _ = assert(result.isLeft, result.toString)
-      live <- resources.agentRegistry.get
-      _ = assert(!live.contains(id))
-      _ <- system.stopAll
-    yield ()
-    end for
-
-  test("managed merger crash freezes its recorded identity without automatic respawn"):
-    val system = ActorSystem("managed-merger-crash")
-    val id = "delegate-managed-merger-crash"
-    for
-      resources <- mkResources(system, hang = true)
-      _ <- seedDeadDelegate(resources, id, "managed-parent")
-      _ <- resources.sessionStore.durableSwapMessages(
-        id,
-        List(Message(MessageRole.User, Left("saved merger initialization")))
-      )
-      _ <- resources.subAgentTaskStore.recordTask(
-        SubAgentTask(
-          taskId = id,
-          parentSessionId = "managed-parent",
-          agentName = "nebflow",
-          prompt = "saved merger initialization",
-          description = "managed merger",
-          status = "running",
-          retryCount = 0,
-          spawnedAt = System.currentTimeMillis(),
-          completedAt = None,
-          lastError = None,
-          source = "delegate",
-          mode = Some("merger")
-        )
-      )
-      _ <- IO.blocking {
-        DelegateRegistry.put(DelegateRegistry.find(id).get.copy(mode = Some("merger")))
-        nebflow.core.delegate.WorkspaceLedger.default.merger("project", "managed-crash-repository", id)
-      }
-      attempts <- Ref.of[IO, Int](0)
-      child <- system.spawn(sinkBehavior, "managed-child")
-      supervisor <- system.spawn(
-        nebflow.agent.BackoffSupervisor(
-          childRef = child,
-          childSpawnFn = (_, _) => attempts.update(_ + 1) *> IO.raiseError(new Exception("unexpected respawn")),
-          childName = id,
-          parentRef = None,
-          description = "managed merger",
-          agentName = "nebflow",
-          subagentId = id,
-          parentSessionId = "managed-parent",
-          resources = resources,
-          initialPrompt = "task",
-          source = "delegate"
-        ),
-        "managed-supervisor"
-      )
-      _ <- nebflow.core.node.NodeRunner.registerAgent(
-        resources,
-        id,
-        child,
-        AgentKind.Delegate,
-        "managed-parent",
-        supervisorRef = Some(supervisor)
-      )
-      _ <- system.stop(child)
-      _ <- waitUntil(5.seconds)(IO(DelegateRegistry.isFrozen(id)))
-      _ <- waitUntil(5.seconds)(system.isAlive(supervisor.path).map(!_))
-      count <- attempts.get
-      _ = assertEquals(count, 0)
-      _ = assertEquals(
-        DelegateRegistry.find(id).flatMap(_.frozenReason),
-        Some(nebflow.core.delegate.DelegateFreeze.wireValue(nebflow.core.delegate.DelegateFreeze.Reason.EngineFault))
-      )
-      _ = assertEquals(
-        nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergers
-          .find(_.repository == "managed-crash-repository")
-          .map(_.delegateId),
-        Some(id)
-      )
-      woke <- nebflow.agent.DelegateWakeLeg.wake(resources, None, id, "continue after the crash", "panel-wake")
-      _ = assert(woke.isRight, woke.toString)
-      newRegistry <- resources.agentRegistry.get
-      restored = newRegistry(id)
-      _ = assert(restored.ref.path != child.path)
-      alive <- system.isAlive(restored.ref.path)
-      _ = assert(alive)
-      _ = assert(!DelegateRegistry.isFrozen(id))
-      _ <- system.stopAll
-    yield ()
-
-    end for
-
   test(
     "completed workspace round hands the final text over once, releases the owner actor, and a later Mail round resumes the same session in place"
   ):
@@ -576,20 +461,6 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
         val record =
           DelegateRegistry.find(id).get.copy(cwd = seat.toString, worktree = Some(seat.toString), mode = Some("kernel"))
         DelegateRegistry.put(record)
-        nebflow.core.delegate.WorkspaceLedger.default.register(
-          nebflow.core.delegate.WorkspaceLedger.Workspace(
-            "round-workspace",
-            "project",
-            nebflow.core.delegate.WorkspaceLedger.repositoryKey(seat),
-            seat.toString,
-            "delegate/round",
-            "main",
-            baseline,
-            id,
-            "kernel",
-            activity = "running"
-          )
-        )
       }
       child <- system.spawn(sinkBehavior, "round-child")
       supervisor <- system.spawn(
@@ -627,9 +498,8 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       _ = assertEquals(pending.size, 1)
       _ = assert(pending.head.event.payload.contains("round one complete"), pending.toString)
       _ = assert(!registryAfter.contains(id), "the completion releases the owner from the registry")
-      // Completion never integrates by itself, and the workspace stays open for the next round.
+      // Completion never integrates by itself: the base branch stays put for the next round.
       _ = assertEquals(git("rev-parse", "main"), baseline)
-      _ = assert(nebflow.core.delegate.WorkspaceLedger.default.owned(id).exists(_.lifecycle == "open"))
       mail <- continuationMail(resources, system, parent, id)
       _ = assert(mail.isRight, mail.toString)
       _ <- waitUntil(15.seconds)(resources.agentRegistry.get.map(_.contains(id)))

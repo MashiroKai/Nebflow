@@ -50,7 +50,11 @@ class RootSixBaseToolsSpec extends FunSuite:
 
   test("① 文件面六件 ⊆ Nebula 机制集（静态集+交付面双层，2026-09-18 18:18 令恢复）∧ NodeList 不在 ∧ Task 在——再摘文件面任一件或摘掉 Task、计数漂移即红"):
     val six = AgentCore.BaseTools
-    assertEquals(six, Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"), "BaseTools is the six standard file/shell tools")
+    assertEquals(
+      six,
+      Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
+      "BaseTools is the six standard file/shell tools"
+    )
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     // 钉死断言（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）：
     // root 面**在场**恢复 Bash/Edit/Write/Glob/Grep + 既有 Read ⇒ 文件面六件——取代
@@ -94,8 +98,8 @@ class RootSixBaseToolsSpec extends FunSuite:
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(
       AgentCore.RootOrchestrationTools.size,
-      25,
-      "RootOrchestrationTools remains at 25 items; this assertion guards unrelated root-only tools"
+      22,
+      "RootOrchestrationTools remains at 22 items; this assertion guards unrelated root-only tools"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====

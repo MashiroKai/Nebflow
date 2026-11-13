@@ -570,12 +570,6 @@ class SessionResumptionSpec extends CatsEffectSuite:
     val exercise = for
       resources <- mkResources(system, hang = true)
       _ <- seedRecord(id, "parent", ws, "unverified original task")
-      _ <- IO.blocking(
-        nebflow.core.delegate.WorkspaceLedger.default.register(
-          nebflow.core.delegate.WorkspaceLedger
-            .Workspace(id, "project", "repository", ws.toString, "delegate/task", "main", "baseline", id, "kernel")
-        )
-      )
       before <- IO.blocking(DelegateRegistry.list().map(_.id).toSet)
       missing <- mailToDelegate(resources, system, "parent", id, "do not replace missing history")
       unknown = List(
@@ -596,7 +590,6 @@ class SessionResumptionSpec extends CatsEffectSuite:
       assertEquals(after, before)
       assertEquals(saved, unknown)
       assert(!live.contains(id))
-      assertEquals(nebflow.core.delegate.WorkspaceLedger.default.owned(id).map(_.activity), Some("idle"))
     exercise.guarantee(system.stopAll)
   }
 

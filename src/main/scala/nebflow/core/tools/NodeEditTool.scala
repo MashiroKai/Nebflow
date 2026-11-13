@@ -370,14 +370,7 @@ object NodeEditTool extends Tool:
     if result.length > 200 then result.take(197) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val admitted =
-      if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
-        IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(ctx.sessionId.get, allowFrozen = false))
-      else IO.pure(Right(()))
-    admitted.flatMap {
-      case Left(error) => IO.pure(Left(ToolError(error)))
-      case Right(_) => callAdmitted(input, ctx)
-    }
+    callAdmitted(input, ctx)
 
   private def callAdmitted(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val project = input("project").flatMap(_.asString)
@@ -2773,7 +2766,9 @@ object NodeEditTool extends Tool:
                                                         case Some(n) =>
                                                           n.in.traverse_ { upId =>
                                                             rt.store.findNode(upId).flatMap {
-                                                              case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
+                                                              case Some(up)
+                                                                  if up.result.isDefined && NodeLifecycle.Terminal
+                                                                    .contains(up.status) =>
                                                                 rt.engine.deliverOutTo(up, n.id, up.result.get)
                                                               case _ => IO.unit
                                                             }
@@ -2856,7 +2851,9 @@ object NodeEditTool extends Tool:
                                                         case Some(nFresh) =>
                                                           nFresh.in.traverse_ { upId =>
                                                             rt.store.findNode(upId).flatMap {
-                                                              case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
+                                                              case Some(up)
+                                                                  if up.result.isDefined && NodeLifecycle.Terminal
+                                                                    .contains(up.status) =>
                                                                 rt.engine.deliverOutTo(up, node.id, up.result.get)
                                                               case _ => IO.unit
                                                             }

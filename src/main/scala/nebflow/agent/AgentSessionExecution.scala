@@ -730,21 +730,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 )
               )
             else IO.pure("")
-          // 既有 worktree 候选段（worktree-reuse-selection 批 2026-11-02）：根代理
-          // only（同 executorsText 判据）。数据源 = WorktreeCandidates.inventory
-          // （候选发现 + 活会话对账 + 状态标注），fail-soft 空串 = 段不注入。
-          // 注入时机 = systemStable 生命周期重建（同快照口径）；mid-session 变化
-          // 靠 Delegate 拒绝面的显式文案自纠错（active 拒绝时列出谁在持有）。
-          worktreesText <-
-            if isRootAgent then
-              // 枚举根 = 根会话座位工作区（挂载项目各自的 worktree 不在此列——派发
-              // 到别的项目时，`Delegate` 的续用腿按**目标项目**的 workspace 现读重
-              // 枚举，见 DelegateTool.internalSpawn；本段只是主座位的提示面）。
-              val rootWs = turnCtx.projectRoot.getOrElse((PathUtil.dataRoot / "general").toString)
-              nebflow.core.delegate.WorktreeCandidates
-                .inventory(rootWs)
-                .map(inv => nebflow.core.delegate.WorktreeCandidates.render(inv, rootWs))
-            else IO.pure("")
           // identity-sync 批（2026-10-23）：展示身份现读（displayName + 头像 sha）——
           // `## Self` 段体（order 396）与 identity 变更提醒的唯一数据源。空 = 该
           // agent 无非默认身份（未起名且无自定义头像）= 段不注入、提醒不产生 =
@@ -839,7 +824,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             isRootAgent = isRootAgent,
             mountedProjectsText = mountedProjectsText,
             executorsText = executorsText,
-            worktreesText = worktreesText,
             identitySelfText = identitySelfText
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
@@ -931,7 +915,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               summary = nebflow.core.project.TaskLedgerStore.open().passiveReminderSummary()
             )
           }
-          loggedReminders <- SystemReminders.logAndReturn(reminders ++ msgTokenReminder.toList ++ passiveTaskReminder.toList)
+          loggedReminders <- SystemReminders.logAndReturn(
+            reminders ++ msgTokenReminder.toList ++ passiveTaskReminder.toList
+          )
           // Clock is attached once at explicit real-user input conversion; this
           // request/reminder assembly path never creates or injects one.
           // Plugins-live (2026-09-12): the plugin-surface reminder is PERSISTED (like
@@ -1813,23 +1799,23 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       if AgentInstructionWriteGate.requiresConfirmation(call, isAgent = toolContext.agentDef.isDefined) then
         IO.pure(PermissionDecision.Ask)
       else
-      // P0-1 / P-M1 插点（spec §2.3）：工具名命中 MCP / ScriptTool 注册面时，在
-      // `ToolReversibility.isReversible` 分支**之前**改走 `McpToolGate.decide`。
-      //
-      // 面判定为 None（内置工具：Read/Write/Edit/Bash/Curl/Pop/…) ⇒ 走原路径**逐字不变**
-      // —— `isReversible` 函数体与调用形状零改动（验收 A1-8 零回归的机械保证）。
-      nebflow.core.McpToolGate.surfaceOf(call.name) match
-        case Some(ref) =>
-          val outcome = nebflow.core.McpToolGate.decide(ref, call.input, mode, sessionId)
-          auditMcpGate(outcome, mode, sessionId) *>
+        // P0-1 / P-M1 插点（spec §2.3）：工具名命中 MCP / ScriptTool 注册面时，在
+        // `ToolReversibility.isReversible` 分支**之前**改走 `McpToolGate.decide`。
+        //
+        // 面判定为 None（内置工具：Read/Write/Edit/Bash/Curl/Pop/…) ⇒ 走原路径**逐字不变**
+        // —— `isReversible` 函数体与调用形状零改动（验收 A1-8 零回归的机械保证）。
+        nebflow.core.McpToolGate.surfaceOf(call.name) match
+          case Some(ref) =>
+            val outcome = nebflow.core.McpToolGate.decide(ref, call.input, mode, sessionId)
+            auditMcpGate(outcome, mode, sessionId) *>
+              IO.pure(
+                if outcome.allowed then PermissionDecision.Allow else PermissionDecision.AskMcp(outcome)
+              )
+          case None =>
             IO.pure(
-              if outcome.allowed then PermissionDecision.Allow else PermissionDecision.AskMcp(outcome)
+              if ToolReversibility.isReversible(call.name, call.input, mode) then PermissionDecision.Allow
+              else PermissionDecision.Ask
             )
-        case None =>
-          IO.pure(
-            if ToolReversibility.isReversible(call.name, call.input, mode) then PermissionDecision.Allow
-            else PermissionDecision.Ask
-          )
     }
 
   /**
@@ -2637,9 +2623,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     //   def='subagent' 的子 actor 生成，其余照旧拒）。
     // dispatcher 腿（分发器）：node 四件保留（编排本体）+ Subagent 摘除
     //   （Q2 裁定：Subagent 是侦察子代理不是编排面，分发器不需要）。
-    val mergerFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeMerger)
-    val kernelFace =
-      delegateSession && (delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel) || mergerFace)
+    val kernelFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
     val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
     val modeTruncated =
       if kernelFace then withDispatcherAsk
@@ -2673,18 +2657,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 进反剥集会连主会话读面一起剥掉。GitQuery 进反剥集的理由 = 它必须在
     // ToolRegistry 在册才解析得出 schema，而在册即意味着 "*" 声明会拿到名字——
     // 本集是唯一能把名字从非 ask 身份摘掉的面（工具内 isAskSession 闸为第二保险）。
-    val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
-    // 🔴 The subtract legs only apply to delegate sessions: WorktreeContext and
-    // MergerRequest are RootOrchestrationTools members, so an unconditional strip
-    // would remove them from the main-agent face. The merger face carries both
-    // names; in-tool identity checks stay the second safeguard.
-    val mergerTools =
-      if mergerFace then
-        askStripped + nebflow.core.tools.MergerRequestTool.Name + nebflow.core.tools.WorktreeContextTool.Name
-      else if delegateSession then
-        askStripped - nebflow.core.tools.MergerRequestTool.Name - nebflow.core.tools.WorktreeContextTool.Name
-      else askStripped
-    mergerTools
+    withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
 

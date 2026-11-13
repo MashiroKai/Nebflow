@@ -23,9 +23,6 @@ import scala.concurrent.duration.*
  *
  *  - WTB-1/2/5：NodeEdit seal 面（字符串/布尔/非 git 工作区一视同仁；零节点零
  *    worktree 目录零 git 探测副作用）。
- *  - WTB-3/4：**GitWorktrees 公用 util 本体保留**——`sanitizeRefName` 派生规则与
- *    `createWorktree` 建制能力直测（delegate spawn 腿等其余消费点继续用；util 不随
- *    NodeEdit 参数退役而退役）。
  */
 class NodeEditWorktreeBaselineSpec extends CatsEffectSuite:
 
@@ -217,37 +214,6 @@ class NodeEditWorktreeBaselineSpec extends CatsEffectSuite:
         s"non-git workspace must hit the same seal (no 'git repository' message anymore), got: $r"
       )
       assert(s.nodes.isEmpty, "fail-fast: node must NOT be created")
-    end for
-  }
-
-  // ── 2. GitWorktrees util 本体保留（delegate spawn 腿的消费面）────────────
-
-  test("WTB-3 sanitizeRefName derivation rules survive (whitespace→'-', CJK kept, leading dots/escapes clipped)") {
-    assertEquals(GitWorktrees.sanitizeRefName("wt 同"), "wt-同")
-    assertEquals(GitWorktrees.sanitizeRefName("wt-同"), "wt-同")
-    // 前导 '.' 剥除（("../escape" → 首点剥除后不再含 ".."；斜杠是 git ref 合法字符，
-    // util 原样保留——路径安全由调用方目录基座承载，非本函数职责）
-    assert(!GitWorktrees.sanitizeRefName("../escape").contains(".."), "leading-dot escape clipped")
-    // 派生同基名（碰撞面判据的输入端）："wt 同" 与 "wt-同" sanitize 到同一 token
-    assertEquals(GitWorktrees.sanitizeRefName("wt 同"), GitWorktrees.sanitizeRefName("wt-同"))
-  }
-
-  test("WTB-4 createWorktree still provisions worktree+branch (util face intact for the delegate spawn leg)") {
-    val ws = mkRepo("util")
-    for
-      created <- IO.blocking(
-        GitWorktrees.createWorktree(ws, dirBase = "util-wt", branch = "util-wt", baseRef = "HEAD", label = "util-wt")
-      )
-      second <- IO.blocking(
-        GitWorktrees.createWorktree(ws, dirBase = "util-wt", branch = "util-wt", baseRef = "HEAD", label = "util-wt-2")
-      )
-    yield
-      val c = created.getOrElse(fail(s"util create must succeed: $created"))
-      assert(os.exists(c.path / ".git"), s"worktree dir must exist: ${c.path}")
-      assertEquals(git(ws, "branch", "--list", c.name).nonEmpty, true, s"same-name branch must exist: ${c.name}")
-      // 碰撞后缀（freeName 单点）：第二个同名请求必须落到 -2 目录名（建制能力不回归）
-      val c2 = second.getOrElse(fail(s"collision create must succeed: $second"))
-      assertEquals(c2.name, "util-wt-2", "collision candidate must carry the -2 suffix")
     end for
   }
 

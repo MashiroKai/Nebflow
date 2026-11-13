@@ -56,18 +56,12 @@ object DelegateWakeLeg:
     via: String
   ): IO[Result] =
     exclusiveWake(delegateId) {
-      (nebflow.core.delegate.MergerInitialization.repair(resources, delegateId) *>
-        resources.sessionStore.loadMessagesForSession(delegateId)).attempt.flatMap {
-        case Left(_: nebflow.core.delegate.MergerInitialization.SessionBusy) =>
-          IO.pure(Left("Recovery is already in progress (RECOVERY_IN_PROGRESS)"))
+      resources.sessionStore.loadMessagesForSession(delegateId).attempt.flatMap {
         case Left(_) => IO.pure(Left("Cannot read saved context (RECOVERY_UNVERIFIED)"))
         case Right(messages) if messages.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(messages) =>
           IO.pure(Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)"))
         case Right(messages) =>
-          IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(delegateId, allowFrozen = true)).flatMap {
-            case Left(error) => IO.pure(Left(error))
-            case Right(_) => wakeVerified(resources, wsSend, delegateId, instruction, via, messages)
-          }
+          wakeVerified(resources, wsSend, delegateId, instruction, via, messages)
       }
     }
 

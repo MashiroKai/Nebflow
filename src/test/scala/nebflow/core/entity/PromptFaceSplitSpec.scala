@@ -73,7 +73,10 @@ class PromptFaceSplitSpec extends FunSuite:
     assert(text.contains("- Waiting (not done):"), "等待腿在位")
     assert(!text.contains("- `blocked` —"), "blocked 类别整行退役（delegate 面无 blocked 态——作者令）")
     assert(!text.contains("`merge` —"), "merge 申报类别退役（集成 = 项目 merger 的授权任务）")
-    assert(text.contains("If the task could not be completed, state the blocker plainly in the same text."), "「报不了 = 阻塞写进终稿正文」的语义在位")
+    assert(
+      text.contains("If the task could not be completed, state the blocker plainly in the same text."),
+      "「报不了 = 阻塞写进终稿正文」的语义在位"
+    )
     assert(text.contains("Integration discipline (hard)"), "永不自并纪律在位")
     assert(text.contains("Your roles: executor, dispatcher, manager"), "三角色段在位（delegate 语义）")
 
@@ -94,7 +97,9 @@ class PromptFaceSplitSpec extends FunSuite:
     assert(text.contains("delivers it downstream along the out edges"), "引擎沿 out 边投递在位")
     assert(text.contains("Hand off along the out edges"), "out 边交接段在位")
 
-  test("flow node face system prompt = terminal text-anchoring protocol (verifier verdict grammar + AskHost guidance, no declaration tool)"):
+  test(
+    "flow node face system prompt = terminal text-anchoring protocol (verifier verdict grammar + AskHost guidance, no declaration tool)"
+  ):
     val text = nodePrompt
     // Terminal report = the final text itself (the declaration tool channel is retired).
     assert(text.contains("no separate declaration tool"), "explicit no-declaration-tool sentence present")
@@ -102,7 +107,10 @@ class PromptFaceSplitSpec extends FunSuite:
     assert(text.contains("ask (AskHost) instead of declaring a stuck state"), "AskHost guidance present")
     assert(text.contains("(fail)<target>:loop"), "verifier 回边路由语义在位")
     assert(text.contains("verdict ≠ status"), "verifier verdict is not node status")
-    assert(text.contains("real execution failure (dead session / LLM error) is engine-judged"), "real execution failure is engine-judged")
+    assert(
+      text.contains("real execution failure (dead session / LLM error) is engine-judged"),
+      "real execution failure is engine-judged"
+    )
     // The blocked terminal is retired: the node face carries neither the BLOCKED grammar nor a blocked value.
     assert(!text.contains("BLOCKED") && !text.contains("`blocked`"), "node face has no blocked grammar")
 
@@ -124,7 +132,10 @@ class PromptFaceSplitSpec extends FunSuite:
     assert(!line.contains("\"merge\""), "merge 申报类别退役（集成 = 项目 merger 的授权任务）")
     assert(line.contains("say the blocker plainly in the same final text"), "blocked 折终稿语义在位（无独立 blocked 通道）")
     assert(!line.contains("node_report"), "brief 语义行零 node_report（delegate brief 面同判据）")
-    assert(line.contains("Do not merge, push, publish or remove the worktree on your own"), "永不自并纪律在位")
+    assert(
+      line.contains("Do not merge, push, publish, tag or delete branches/worktrees on your own initiative"),
+      "永不自并纪律在位"
+    )
 
   // prompt-panel 面板批（2026-10-09）：面板展示面的双面投影钉——面板列表/详情
   // （GET /api/agents/:name 的 `promptFaces`）按 panelPromptFaces 下发两面，

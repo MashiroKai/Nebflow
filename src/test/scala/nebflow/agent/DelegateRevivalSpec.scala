@@ -564,13 +564,14 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     }
   }
 
-  test("V13: standby + branch ahead of its base (unmerged deliverable commits) → auto-revived") {
+  test("V13: standby + seat HEAD moved off the round baseline (unmerged deliverable commits) → auto-revived") {
     withFx("v13") { fx =>
       val child = "delegate-nebflow-v13"
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
         _ <- fx.store.recordTask(mkTask(child, parent.id))
-        base <- IO(gitFixture(fx.seat))
+        _ <- IO(gitFixture(fx.seat))
+        baseline = nebflow.core.GitWorktrees.headSha(fx.seat)
         _ <- IO {
           os.proc("git", "-C", fx.seat.toString, "checkout", "-q", "-b", "delegate/spec-v13")
             .call(cwd = fx.seat, check = true)
@@ -582,10 +583,20 @@ class DelegateRevivalSpec extends CatsEffectSuite:
           nebflow.core.delegate.DelegateRegistry.put(
             mkRecord(child, parent.id, fx.seat.toString).copy(
               standbySince = Some(System.currentTimeMillis()),
-              reportStatus = Some("standby"),
-              branch = Some("delegate/spec-v13"),
-              baseBranch = Some(base)
+              reportStatus = Some("standby")
             )
+          )
+        )
+        // 轮次基线 = 派发时座位 HEAD；收尾时 HEAD 离开基线 = 有未完业务（新判据，
+        // 不依赖引擎分配的分支名——branch/baseBranch 记录域已停写）。
+        _ <- IO(
+          nebflow.core.delegate.DelegateRoundLedger.openRound(
+            child,
+            1,
+            "round-v13",
+            nebflow.core.delegate.DelegateRoundLedger.CauseSpawn,
+            baseline,
+            Some(Nil)
           )
         )
         _ <- fx.sessionStore.saveMessagesForSession(

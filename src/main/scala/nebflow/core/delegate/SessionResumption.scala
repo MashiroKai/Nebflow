@@ -20,8 +20,6 @@ import nebflow.shared.{ContentBlock, NebflowLogger, SubAgentTask}
  */
 object SessionResumption:
 
-  private final class AdmissionRejected(message: String) extends IllegalStateException(message)
-
   private val logger = NebflowLogger.forName("nebflow.session-resumption")
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -196,16 +194,13 @@ object SessionResumption:
   def requiresManual(
     record: Option[DelegateRegistry.Record],
     task: Option[nebflow.shared.SubAgentTask],
-    live: Option[nebflow.actor.AgentRecord],
-    workspace: Option[WorkspaceLedger.Workspace],
-    initializationPending: Boolean = false
+    live: Option[nebflow.actor.AgentRecord]
   ): Boolean =
     record.exists(r =>
       r.frozenSince.nonEmpty || r.frozenReason.nonEmpty || r.restartInterruptedAt.nonEmpty || r.cancelRequestedAt.nonEmpty
     ) ||
       task.exists(t => Set("pending-recovery", "frozen").contains(t.status)) ||
-      live.exists(r => r.status == nebflow.actor.AgentStatus.Frozen || r.frozenReason.nonEmpty) ||
-      workspace.exists(_.activity == "frozen") || initializationPending
+      live.exists(r => r.status == nebflow.actor.AgentStatus.Frozen || r.frozenReason.nonEmpty)
 
   def resumeInPlace(
     deps: Deps,
@@ -213,7 +208,7 @@ object SessionResumption:
     message: String,
     blocks: Option[List[ContentBlock]] = None
   ): IO[Either[String, InPlaceOutcome]] =
-    MergerInitialization
+    SessionStartLease
       .exclusive(record.id)(resumeInPlaceLocked(deps, record, message, blocks))
       .handleError(e => Left(s"Continuation could not safely start: ${e.getMessage}"))
 
@@ -228,19 +223,11 @@ object SessionResumption:
       latest <- IO.blocking(DelegateRegistry.find(record.id))
       task <- deps.resources.subAgentTaskStore.findByTaskId(record.id)
       live <- deps.resources.agentRegistry.get.map(_.get(record.id))
-      ledger <- IO.blocking(WorkspaceLedger.default.snapshot)
       result <- latest match
         case None => IO.pure(Left("Delegate identity is missing; inspect the saved context"))
         case Some(current) if current.cancelRequestedAt.nonEmpty =>
           IO.pure(Left("Delegate was manually cancelled; create new work explicitly (DELEGATE_CANCELLED)"))
-        case Some(current)
-            if requiresManual(
-              Some(current),
-              task,
-              live,
-              ledger.workspaces.find(_.owner == current.id),
-              ledger.mergerBootstraps.get(current.id).exists(_.status != "ready")
-            ) =>
+        case Some(current) if requiresManual(Some(current), task, live) =>
           IO.pure(Left("Continuation is saved behind a manual recovery gate (MANUAL_RECOVERY_REQUIRED)"))
         case Some(current) =>
           live.fold(IO.pure(false))(entry => deps.system.isAlive(entry.ref.path)).flatMap {
@@ -276,9 +263,6 @@ object SessionResumption:
               IO.pure(Left("Saved history or a tool outcome is unknown (RECOVERY_UNVERIFIED)"))
             case Right(transcript) =>
               for
-                _ <- IO
-                  .blocking(WorkspaceLedger.default.admit(id, allowFrozen = false))
-                  .flatMap(_.fold(error => IO.raiseError[Unit](new AdmissionRejected(error)), _ => IO.unit))
                 // ① 行先翻 running（复活半途再崩 ⇒ 下一 boot 看到诚实的 running 行）。
                 _ <- IO.whenA(parentSid.nonEmpty)(
                   deps.resources.subAgentTaskStore
@@ -486,10 +470,9 @@ object SessionResumption:
               )
           }
           .attempt
-          .void *>
-        IO.blocking(WorkspaceLedger.default.settle(id, frozen = true))
+          .void
       attempt
-        .onError { case _: AdmissionRejected => IO.unit; case _ => failed }
+        .onError { case _ => failed }
         .onCancel(failed)
         .handleErrorWith(e =>
           logger

@@ -203,7 +203,6 @@ object AgentCore:
     "AskHostClarify",
     "Schedule",
     "Delegate",
-    "MergerRequest",
     "AgentControl",
     "MemoryNote",
     // Task（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件合一
@@ -252,11 +251,7 @@ object AgentCore:
     "TaskSearch",
     // ConversationSearch is Nebula-root-only and read-only; block agent/plugin declaration escape.
     "ConversationSearch",
-    // WorkspaceSummary (worktree-merger delivery, Priority E): Nebula-root-only
-    // workspace coordination picture + dismiss-suggestion; blocks declaration
-    // escape for agent/plugin declarations (MergerRequestTool same-slot precedent).
-    "WorkspaceSummary",
-    "WorkspaceReconcile",
+
     // GenerateImage（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
@@ -426,21 +421,6 @@ object AgentCore:
     // `RootExclusiveTools` 的 "Delegate" 条目继续承担**防声明逃逸**剥离（非
     // Nebula 身份声明 Delegate 仍被剥）。
     "Delegate",
-    "MergerRequest",
-    // WorktreeContext (worktree-merger delivery, Priority D): read-only
-    // per-workspace context assembly (task brief, node graph, verification,
-    // commits, merge history, paginated mail). The main agent reads any managed
-    // workspace; merger-mode sessions get the same tool through the merger
-    // mount face.
-    "WorktreeContext",
-    // WorkspaceSummary (worktree-merger delivery, Priority E): the main
-    // agent's per-project coordination picture — workspaces with live Git
-    // facts, pending merge requests with origins, advisor suggestions with
-    // states, merger initialization — plus the dismiss-suggestion action.
-    // Root-only (RootExclusiveTools blocks declaration escape); the advisor
-    // itself never merges and never touches manual merge requests.
-    "WorkspaceSummary",
-    "WorkspaceReconcile",
     // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
     // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
     // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
@@ -538,7 +518,8 @@ object AgentCore:
    * 名字永不抵达 LLM——幻觉调用在 allowed-set 分区即落，与 friends seal 同机制。
    */
   def imageGenSealedStrip: Set[String] =
-    if nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace then Set.empty else Set("GenerateImage")
+    if nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace then Set.empty
+    else Set("GenerateImage")
 
   /**
    * 阶段 2c 收敛的 agent 定义名（§C.1 总览，本集 = 四个在册名）：其 agent.json tools
@@ -637,17 +618,11 @@ object AgentCore:
    * 注册表（删 `"AgentFlow"` 注册项）、墓碑表（"Workflow" 指路改 ChainWrite
    * ＋"AgentFlow" 条目复活）与 orchestrationMode 的升级写点（迁入 ChainWriteTool）。
    *
-   * **worktree-merger 交付批（Priority D）：+`WorktreeContext`，常量对齐实际面 22**——
-   * 工作区全景上下文只读件（主 agent 面；merger 模式会话经挂载面同享）。本增量
-   * 属「按面变更」（新增成员），非「凑数字」；ConversationSearch 批 +1 时常量
-   * 未随动，本批一并把常量钉回实测件数。
-   *
-   * **worktree-merger 交付批（Priority E）：+`WorkspaceSummary` ⇒ 23**——主 agent
-   * 的工作区协调读面 + dismiss-suggestion（RootOrchestrationTools + RootExclusive
-   * Tools 双集，MergerRequestTool 同槽先例）。本增量属「按面变更」（新增成员），
-   * 非「凑数字」。
+   * **托管树退场批**：−`MergerRequest` / −`WorktreeContext` / −`WorkspaceSummary` /
+   * −`WorkspaceReconcile`（26 → 22）——managed workspace 与 merger 全链退役，四名
+   * 离开本集并从注册表删除（RetiredToolGuides 墓碑接管旧名调用）。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 26
+  val RootOrchestrationToolsExpectedSize: Int = 22
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
@@ -699,7 +674,15 @@ object AgentCore:
     // ChainWrite）。旧会话 / 存量提示词打这个名必须拿到「改用 ChainWrite 一次写全链」
     // 的指引——不许静默消失（B5-c 可诊断退役）。
     "AgentFlow" ->
-      """The tool is retired. `agentflow` names a MODE, not a tool: a dispatcher's node-orchestration shape (the `orchestrationMode` value written when a chain registration succeeds). To run several steps, register the WHOLE chain in ONE call: `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)` — one write for the entire chain; the engine wires the deps edges so every step receives its upstream results, and the ack carries the chain id immediately (non-blocking). For one blocking read-only recon leg use `Subagent(prompt=...)`."""
+      """The tool is retired. `agentflow` names a MODE, not a tool: a dispatcher's node-orchestration shape (the `orchestrationMode` value written when a chain registration succeeds). To run several steps, register the WHOLE chain in ONE call: `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)` — one write for the entire chain; the engine wires the deps edges so every step receives its upstream results, and the ack carries the chain id immediately (non-blocking). For one blocking read-only recon leg use `Subagent(prompt=...)`.""",
+    "MergerRequest" ->
+      """MergerRequest is not available — managed workspaces and the merger are retired. Delegates run in the dispatch workspace and manage their own git worktrees; integration into a project's main line is the author's explicit decision. To see what a delegate produced, read its final report and inspect the branch it names; to land it, the author (or a delegate under the author's explicit instruction) performs the merge.""",
+    "WorktreeContext" ->
+      """WorktreeContext is not available — the managed-workspace records it assembled are retired. A delegate's deliverable is its final report plus the commits it names; read those directly (Read/Bash on the reported branch and paths).""",
+    "WorkspaceSummary" ->
+      """WorkspaceSummary is not available — the per-project workspace coordination picture is retired. For live work, read the background-agents panel and each delegate's final report; recorded merge-request history stays on the workspace ledger file.""",
+    "WorkspaceReconcile" ->
+      """WorkspaceReconcile is not available — registered-workspace completion reconciliation is retired with the managed workspaces. A delegate's completion is its settled final report; no separate workspace confirmation exists."""
   )
 
   /**
