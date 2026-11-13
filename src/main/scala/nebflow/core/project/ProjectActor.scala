@@ -89,6 +89,15 @@ object ProjectRuntimeRegistry:
    * ——跳过挂载期僵尸收殓，崩溃残留 running 节点留给紧随 startupMount 的
    * ProjectCrashRecovery sweep 认领（rehydrate/failed，语义优于 cancelled 收殓）；
    * false（默认，运行时挂载/恢复开关关闭）= 既有收殓行为零变化。
+   *
+   * Mounting stays SERIAL on purpose (boot-latency batch, 2026-11): with a
+   * host-faithful fixture (five heavy multi-second ledgers) bounded-parallel
+   * mounting measured NO startup gain and +0.7s of disk/CPU contention
+   * (`scripts/measure-boot.mjs --profile projects`, A/B against a forced-serial
+   * run) — the long pole is each heavy ledger's own single-threaded side-volume
+   * parse, which parallel mounts cannot shrink. Per-project write domains were
+   * audited as disjoint (workspace `.nebflow/` subtree + thread-safe process
+   * registries), so parallelism remains SAFE if a future change makes it pay.
    */
   def mountAll(
     projects: List[ProjectDef],
@@ -175,7 +184,21 @@ object ProjectRuntimeRegistry:
             sessionDeviceWorkspace = ProjectStore.deviceOrigin(project).map(_.path)
           )
         }
-      case None => mountAtWorkspace(project, project.workspace, system, resources, wsSend, rootSessionId, ttlDisplayMs, ttlCheckIntervalSec, skipStaleReap, dispatcherIdleWindowMs, dispatcherLifecycleAnchorTaskTerminal, dispatcherMaxConcurrentSessions)
+      case None =>
+        mountAtWorkspace(
+          project,
+          project.workspace,
+          system,
+          resources,
+          wsSend,
+          rootSessionId,
+          ttlDisplayMs,
+          ttlCheckIntervalSec,
+          skipStaleReap,
+          dispatcherIdleWindowMs,
+          dispatcherLifecycleAnchorTaskTerminal,
+          dispatcherMaxConcurrentSessions
+        )
     }
 
   /**
@@ -700,9 +723,11 @@ object ProjectActor:
                 case Right(()) =>
                   dispatchAnswerReentry(cfg, active, behavior, nodeId, requestId, answerText, cfg.rootSessionId)
                 case Left(reason) =>
-                  logger.warn(
-                    s"[hot-restart] ask-answer reentry refused during draining (requestId=$requestId): $reason"
-                  ).as(behavior)
+                  logger
+                    .warn(
+                      s"[hot-restart] ask-answer reentry refused during draining (requestId=$requestId): $reason"
+                    )
+                    .as(behavior)
               }
             case ProjectCommand.CancelNode(nodeId) =>
               cfg.engine.cancelNodeById(nodeId).as(behavior)

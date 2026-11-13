@@ -450,6 +450,7 @@ object GatewayMain extends IOApp:
               "Use: nebflow.Main --home <dir> --port <port> start"
           ) *>
           IO.pure(ExitCode.Error)
+    end match
   end run
 
   /**
@@ -1167,6 +1168,19 @@ object GatewayMain extends IOApp:
                                           else IO.unit
                                         }
                                     else IO.unit
+                                  // Boot-latency: the delegate-scope sweep re-mounts EVERY
+                                  // scope host on disk (886 scopes on a busy home) purely as
+                                  // crash bookkeeping for delegates that died with the
+                                  // previous process — none of it gates serviceability. It
+                                  // now starts as a background fiber at its original chain
+                                  // position instead of blocking the listen path; the scope
+                                  // host scanner below structurally WAITS for this fiber
+                                  // before its first tick, so the scanner's settle/reap legs
+                                  // can never race an in-flight boot sweep. Revival traffic
+                                  // reaching a still-sweeping scope is serialized against the
+                                  // sweep by DelegateFlowHosts.mount's own gate.
+                                  val delegateScopeBootSweepFiber: IO[Fiber[IO, Throwable, Unit]] =
+                                    delegateScopeCrashSweep.start
                                   // 宿主启动自动重入（boot-wake 批 2026-09-13，方案件 A 档 A1；
                                   // 作者 09-13 裁定「重启后唤醒源 = 直接上 A」）：**独立于
                                   // crash-recovery** 的第二条 boot 扫描腿——crash-recovery 只认
@@ -1221,8 +1235,15 @@ object GatewayMain extends IOApp:
                                   // sleep 循环）——在册宿主的引擎腿周期驱动（TtlTick 引擎侧子集）
                                   // ＋孤儿收割（delegate 会话不在 ∧ 图内无非终态 ⇒ 宿主实例灭，
                                   // 盘面状态存）。无宿主 = 空转零成本。
+                                  // 启动序（boot-latency 批）：首拍前先 join 上方的 boot sweep
+                                  // fiber——扫描器的 settle/收割腿与后台挂载中的 sweep 结构性互斥
+                                  // （不再是「指望 sweep 早于 30s 首拍」的时序约定）。
                                   val delegateScopeScanner: IO[Unit] =
-                                    nebflow.core.project.DelegateFlowHosts.launchScanner(30.seconds).start.void
+                                    delegateScopeBootSweepFiber
+                                      .flatMap(_.join)
+                                      .flatMap(_ => nebflow.core.project.DelegateFlowHosts.launchScanner(30.seconds))
+                                      .start
+                                      .void
                                   // 宿主睡眠/唤醒感知（hostresume 批 2026-09-22，设计卡 §4 #3；
                                   // D-2 默认 true + kill-switch：`nebflow.wake.sense.enabled=false`
                                   // ⇒ launch 即 IO.unit，不挂载 = 逐字节现状）。15s 双钟断流纤维
@@ -1350,7 +1371,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> mergerRecoveryBoot *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeBootSweepFiber *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> mergerRecoveryBoot *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -2615,7 +2636,9 @@ object GatewayMain extends IOApp:
                                                           // restarting）∧ registry 无活体 ∧ 状态超龄（默认 10min）
                                                           // ⇒ 强制诚实终态化 + F2 队列通知父（父可 re-delegate）。
                                                           // 10-21 实测「retryCount=1 卡 restarting 7.5h」不再可能。
-                                                          _ <- nebflow.core.tools.AskHostLedger.recoverPending(sharedResourcesWithDaemon)
+                                                          _ <- nebflow.core.tools.AskHostLedger.recoverPending(
+                                                            sharedResourcesWithDaemon
+                                                          )
                                                           _ <- nebflow.agent.SubAgentStartupRecovery
                                                             .run(
                                                               sharedResourcesWithDaemon,
