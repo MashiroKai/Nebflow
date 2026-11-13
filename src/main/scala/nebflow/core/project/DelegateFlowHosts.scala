@@ -1,6 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.{IO, Ref}
+import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -103,6 +104,17 @@ object DelegateFlowHosts:
   /** 进程内在册宿主（delegateId → runtime）。挂载/卸载都在本 Ref 单点。 */
   private val hosts = Ref.unsafe[IO, Map[String, DelegateFlowRuntime]](Map.empty)
 
+  /**
+   * Mount critical-section gate. The idempotency probe (`hosts.get`) and the
+   * registry insert were previously a check-then-act pair over the Ref, which
+   * only defends against SEQUENTIAL double mounts; the boot sweep running as
+   * a background fiber can now interleave with a revival/session mount of the
+   * same scope, and two concurrent mounts would build two engines over one
+   * store. The gate serializes the probe+insert+construct window (milliseconds
+   * per mount; the boot sweep itself is serial, so it does not slow down).
+   */
+  private val mountGate = cats.effect.std.Semaphore[IO](1).unsafeRunSync()
+
   def get(delegateId: String): IO[Option[DelegateFlowRuntime]] = hosts.get.map(_.get(delegateId))
 
   def all: IO[List[DelegateFlowRuntime]] = hosts.get.map(_.values.toList)
@@ -150,62 +162,68 @@ object DelegateFlowHosts:
         )
         .as(None)
     else
-      hosts.get.flatMap { cur =>
-        cur.get(delegateId) match
-          case Some(existing) => IO.pure(Some(existing)) // 幂等（并发 spawn 双挂防御）
-          case None =>
-            val projectName = project.getOrElse(os.Path(baseWorkspace).last) // 通知头/事件归名（general 腿 = 座位名）
-            for
-              store <- FlowMapStore.openScope(delegateId, projectName, baseWorkspace)
-              engine = new NodeEngine(
-                store,
-                system,
-                resources,
-                wsSendFn = wsSend.getOrElse((_: Json) => IO.unit),
-                workspace = engineCwd,
-                rootSessionId = delegateId, // 自根作用域（见方法注）
-                projectName = projectName,
-                emitEvent = emitScopeEvent(projectName, wsSend),
-                board = None, // 项目任务板是 per-project face；作用域图零板块头
-                projectGoal = None, // 项目目标行同上
-                reportGateHold = reportGateHold,
-                rootNotifyQuietMs = rootNotifyQuietMs,
-                destroyWindowMs = destroyWindowMs,
-                // S19①（N1 刀3 · v3 §7.1 + 候裁 v3-⑨ 代裁照落）：作用域引擎的通知
-                // 目标 = 创建者 delegate 本人（root=self 刀1 已使投递落点如此；本参
-                // 把它升格为显式规则——root 通道每次 offer 落 notify-redirected 审计，
-                // 锚基工作区）。缺省目标＝创建者 delegate；显式门集 Nebula 边 =
-                // 重映射投创建者（S19① 不破例）；bare "Nebula" = 零投递标记照旧
-                // （NodeTools.parseOutSegment R1-a 分支零触碰）。
-                notifyTargetKind = NodeEngine.NotifyTargetKind.CreatorDelegate,
-                notifyAuditWorkspace = Some(baseWorkspace),
-                // P0（投递地址批 2026-11-02）：**dispatch-notify 的投递地址 = 链属主**。
-                // 此前作用域引擎的节点终态通知走 DispatchNotify.defaultTrigger →
-                // ProjectRuntimeRegistry（**项目**分发器，与「谁写了这条链」无关），
-                // 实测链主人一条都没收到。本参把投递目标显式钉成创建者 delegate 本人：
-                // 通道复用 DelegateNotify.inject（core 层合法，见 layers 门禁）；
-                // creator 不 live ⇒ 探针 false ⇒ 件**滞留**（不 markSent，留补投候选集），
-                // **绝不旁路回项目分发器**（「不进项目分发器、不串批」）。
-                notifyDeliveryTarget = Some(
-                  DispatchNotify.DeliveryTarget(
-                    DispatchNotify.delegateCreatorLabel(delegateId),
-                    text => DelegateNotify.inject(resources.agentRegistry, delegateId, text),
-                    deliverIdentified = Some((text, identity) => DelegateNotify.inject(resources.agentRegistry, delegateId, text, Some(identity)))
-                  )
-                ),
-                // jev-plugins 批 #1226（S9 扩面）：作用域引擎 = 分配触发点（链每步
-                // spawn）——节点空声明走分配面（PluginInjection.forNode）；per-project
-                // 引擎不传（缺省 false = 逐字节旧行为）。
-                delegateScope = true
-              )
-              rt = DelegateFlowRuntime(delegateId, project, baseWorkspace, engineCwd, store, engine)
-              _ <- hosts.update(_ + (delegateId -> rt))
-              _ <- logger.info(
-                s"[delegate-flow-host] mounted scope '$delegateId' (project=${project.getOrElse("-")}, " +
-                  s"map=${rt.scopeDir}, seat=$engineCwd, root=self) — one delegate one map"
-              )
-            yield Some(rt)
-            end for
+      // Gated critical section (see mountGate): probe + construct + register
+      // happen atomically with respect to other mounts of the same id.
+      mountGate.permit.use { _ =>
+        hosts.get.flatMap { cur =>
+          cur.get(delegateId) match
+            case Some(existing) => IO.pure(Some(existing)) // 幂等（并发 spawn 双挂防御）
+            case None =>
+              val projectName = project.getOrElse(os.Path(baseWorkspace).last) // 通知头/事件归名（general 腿 = 座位名）
+              for
+                store <- FlowMapStore.openScope(delegateId, projectName, baseWorkspace)
+                engine = new NodeEngine(
+                  store,
+                  system,
+                  resources,
+                  wsSendFn = wsSend.getOrElse((_: Json) => IO.unit),
+                  workspace = engineCwd,
+                  rootSessionId = delegateId, // 自根作用域（见方法注）
+                  projectName = projectName,
+                  emitEvent = emitScopeEvent(projectName, wsSend),
+                  board = None, // 项目任务板是 per-project face；作用域图零板块头
+                  projectGoal = None, // 项目目标行同上
+                  reportGateHold = reportGateHold,
+                  rootNotifyQuietMs = rootNotifyQuietMs,
+                  destroyWindowMs = destroyWindowMs,
+                  // S19①（N1 刀3 · v3 §7.1 + 候裁 v3-⑨ 代裁照落）：作用域引擎的通知
+                  // 目标 = 创建者 delegate 本人（root=self 刀1 已使投递落点如此；本参
+                  // 把它升格为显式规则——root 通道每次 offer 落 notify-redirected 审计，
+                  // 锚基工作区）。缺省目标＝创建者 delegate；显式门集 Nebula 边 =
+                  // 重映射投创建者（S19① 不破例）；bare "Nebula" = 零投递标记照旧
+                  // （NodeTools.parseOutSegment R1-a 分支零触碰）。
+                  notifyTargetKind = NodeEngine.NotifyTargetKind.CreatorDelegate,
+                  notifyAuditWorkspace = Some(baseWorkspace),
+                  // P0（投递地址批 2026-11-02）：**dispatch-notify 的投递地址 = 链属主**。
+                  // 此前作用域引擎的节点终态通知走 DispatchNotify.defaultTrigger →
+                  // ProjectRuntimeRegistry（**项目**分发器，与「谁写了这条链」无关），
+                  // 实测链主人一条都没收到。本参把投递目标显式钉成创建者 delegate 本人：
+                  // 通道复用 DelegateNotify.inject（core 层合法，见 layers 门禁）；
+                  // creator 不 live ⇒ 探针 false ⇒ 件**滞留**（不 markSent，留补投候选集），
+                  // **绝不旁路回项目分发器**（「不进项目分发器、不串批」）。
+                  notifyDeliveryTarget = Some(
+                    DispatchNotify.DeliveryTarget(
+                      DispatchNotify.delegateCreatorLabel(delegateId),
+                      text => DelegateNotify.inject(resources.agentRegistry, delegateId, text),
+                      deliverIdentified = Some((text, identity) =>
+                        DelegateNotify.inject(resources.agentRegistry, delegateId, text, Some(identity))
+                      )
+                    )
+                  ),
+                  // jev-plugins 批 #1226（S9 扩面）：作用域引擎 = 分配触发点（链每步
+                  // spawn）——节点空声明走分配面（PluginInjection.forNode）；per-project
+                  // 引擎不传（缺省 false = 逐字节旧行为）。
+                  delegateScope = true
+                )
+                rt = DelegateFlowRuntime(delegateId, project, baseWorkspace, engineCwd, store, engine)
+                _ <- hosts.update(_ + (delegateId -> rt))
+                _ <- logger.info(
+                  s"[delegate-flow-host] mounted scope '$delegateId' (project=${project.getOrElse("-")}, " +
+                    s"map=${rt.scopeDir}, seat=$engineCwd, root=self) — one delegate one map"
+                )
+              yield Some(rt)
+              end for
+        }
       }
 
   /**
