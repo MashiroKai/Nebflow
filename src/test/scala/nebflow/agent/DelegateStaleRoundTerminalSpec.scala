@@ -14,7 +14,18 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  SubAgentTask,
+  ThinkingConfig
+}
 import nebflow.shared.given
 
 import scala.concurrent.duration.*
@@ -123,7 +134,8 @@ class DelegateStaleRoundTerminalSpec extends CatsEffectSuite:
   private def writeDebt(owner: String, recipient: String, generation: String, msgs: List[Message]): Unit =
     val dir = PathUtil.dataRoot / "sessions" / nebflow.core.mail.SessionMailbox.safeId(owner)
     os.makeDir.all(dir)
-    val debt = nebflow.core.mail.CompletionDebtStore.Debt(owner, recipient, msgs, "deliverable", generation)
+    val debt =
+      nebflow.core.mail.CompletionDebtStore.Debt(owner, recipient, msgs, "deliverable", generation, Some(generation))
     os.write.over(dir / "completion-debt.json", debt.asJson.noSpaces)
 
   private def assistantMsg(text: String): Message =
@@ -192,21 +204,41 @@ class DelegateStaleRoundTerminalSpec extends CatsEffectSuite:
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-s1")
       childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parentSid, childEvents)
+      replacement <- system.spawn(mkRecordingCmd(parentEvents), "replacement-s1")
+      _ <- resources.agentRegistry.update(
+        _ + (childSid -> nebflow.actor.AgentRecord(
+          childSid,
+          replacement,
+          nebflow.actor.AgentKind.Delegate,
+          parentSid
+        ))
+      )
       _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("old round completion — late")))
       _ <- waitUntil(10.seconds)(childEvents.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
       mails <- terminalMail(parentSid)
       staleRows <- IO(
-        nebflow.core.delegate.DelegateRoundLedger.rowsOf(childSid).filter(_.kind == nebflow.core.delegate.DelegateRoundLedger.KindStaleRound)
+        nebflow.core.delegate.DelegateRoundLedger
+          .rowsOf(childSid)
+          .filter(_.kind == nebflow.core.delegate.DelegateRoundLedger.KindStaleRound)
       )
       recAfter <- IO(nebflow.core.delegate.DelegateRegistry.find(childSid))
       childCmds <- childEvents.get
+      registryAfter <- resources.agentRegistry.get
       _ <- system.stopAll
     yield
+      assertEquals(
+        registryAfter.get(childSid).map(_.ref),
+        Some(replacement),
+        "old supervisor preserves replacement registration"
+      )
       assertEquals(mails, Nil, "a stale-round terminal is NEVER delivered")
       assertEquals(staleRows.size, 1, "exactly one stale-round audit row lands")
       assertEquals(staleRows.head.roundId, "gen-round-1", "the audit row names the old generation")
       assertEquals(staleRows.head.roundNo, 2, "the audit row is anchored at the CURRENT round number")
-      assert(staleRows.head.detail.exists(_.contains("gen-round-1")), s"detail carries the audit facts: ${staleRows.head.detail}")
+      assert(
+        staleRows.head.detail.exists(_.contains("gen-round-1")),
+        s"detail carries the audit facts: ${staleRows.head.detail}"
+      )
       assert(childCmds.exists(_.isInstanceOf[AgentCommand.Stop]), "the supervisor stops the child honestly")
       assertEquals(recAfter.flatMap(_.archivedAt), None, "no archive rewrite from a stale event")
     end for
@@ -233,13 +265,80 @@ class DelegateStaleRoundTerminalSpec extends CatsEffectSuite:
       _ <- system.stopAll
     yield
       assertEquals(mails.size, 1)
-      assertEquals(mails.head.identity, s"$childSid#gen-cur-1",
-        "the terminal mailbox key is <id>#<roundId> (round-aligned generation)")
+      assertEquals(
+        mails.head.identity,
+        s"$childSid#gen-cur-1",
+        "the terminal mailbox key is <id>#<roundId> (round-aligned generation)"
+      )
       assertEquals(mails.head.event.metadata("completionGeneration"), Some(io.circe.Json.fromString("gen-cur-1")))
-      assertEquals(rounds.find(_.roundNo == 1).flatMap(_.verdict), Some("completed"),
-        "settlement writes the round verdict into the append-only ledger")
+      assertEquals(
+        rounds.find(_.roundNo == 1).flatMap(_.verdict),
+        Some("completed"),
+        "settlement writes the round verdict into the append-only ledger"
+      )
       assert(rounds.find(_.roundNo == 1).exists(_.settledAt.isDefined), "the round row carries settledAt")
     end for
+  }
+
+  List(false, true).foreach { legacy =>
+    test(s"same-round changed report delivers despite a different generation (legacy=$legacy)") {
+      val system = ActorSystem(s"same-round-$legacy")
+      val tmp = os.temp.dir()
+      val childSid = s"delegate-same-round-$legacy"
+      for
+        resources <- mkResources(system, tmp)
+        parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
+        _ = mkDelegateRecord(childSid, parent.id, 1, "execution-round")
+        _ <- nebflow.core.mail.CompletionDebtStore.record(childSid, parent.id, List(assistantMsg("progress")))
+        _ <- nebflow.core.mail.CompletionDebtStore.record(childSid, parent.id, List(assistantMsg("final")))
+        debt <- nebflow.core.mail.CompletionDebtStore.pending(childSid)
+        _ = assert(debt.toOption.flatten.exists(_.generation != "execution-round"))
+        _ = assertEquals(debt.toOption.flatten.flatMap(_.roundId), Some("execution-round"))
+        _ = if legacy then
+          val file = PathUtil.dataRoot / "sessions" / childSid / "completion-debt.json"
+          val json = io.circe.parser.parse(os.read(file)).toOption.get
+          os.write.over(file, json.mapObject(_.remove("roundId")).noSpaces)
+        parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+        parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent")
+        childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+        supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parent.id, childEvents)
+        _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("final")))
+        _ <- waitUntil(10.seconds)(terminalMail(parent.id).map(_.nonEmpty))
+        mails <- terminalMail(parent.id)
+        _ <- system.stopAll
+      yield
+        assertEquals(mails.size, 1)
+        assertEquals(mails.head.identity, s"$childSid#${debt.toOption.flatten.get.generation}")
+        assertEquals(nebflow.core.delegate.DelegateRoundLedger.rowsOf(childSid).count(_.kind == "stale-round"), 0)
+      end for
+    }
+  }
+
+  test("identical reports in a new round do not retain the previous round debt") {
+    val childSid = "delegate-identical-report"
+    val messages = List(assistantMsg("done"))
+    for
+      _ <- IO(mkDelegateRecord(childSid, "parent", 1, "round-1"))
+      _ <- nebflow.core.mail.CompletionDebtStore.record(childSid, "parent", messages)
+      _ <- IO(mkDelegateRecord(childSid, "parent", 2, "round-2"))
+      _ <- nebflow.core.mail.CompletionDebtStore.record(childSid, "parent", messages)
+      debt <- nebflow.core.mail.CompletionDebtStore.pending(childSid)
+    yield
+      assertEquals(debt.toOption.flatten.flatMap(_.roundId), Some("round-2"))
+      assertEquals(debt.toOption.flatten.map(_.generation), Some("round-2"))
+  }
+
+  test("multiple reports in the same round never reuse an earlier delivery identity") {
+    val childSid = "delegate-multiple-reports"
+    for
+      _ <- IO(mkDelegateRecord(childSid, "parent", 1, "round-1"))
+      debts <- (1 to 3).toList.traverse { n =>
+        nebflow.core.mail.CompletionDebtStore.record(childSid, "parent", List(assistantMsg(s"report-$n"))) *>
+          nebflow.core.mail.CompletionDebtStore.pending(childSid).map(_.toOption.flatten.get)
+      }
+    yield
+      assertEquals(debts.map(_.generation).distinct.size, 3)
+      assert(debts.forall(_.roundId.contains("round-1")))
   }
 
 end DelegateStaleRoundTerminalSpec
