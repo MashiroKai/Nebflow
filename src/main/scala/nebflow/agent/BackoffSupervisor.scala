@@ -32,6 +32,13 @@ object BackoffSupervisor:
 
   private val logger = NebflowLogger.forName("nebflow.agent.supervisor")
 
+  /**
+   * Completion-gate ②b child-row statuses: a spawned descendant counts as in flight
+   * while its task row is running or restarting (rows land on disk before the actor
+   * registers, so queued/starting/spawn-race windows are covered by the row).
+   */
+  private val InFlightChildStatuses = Set("running", "restarting")
+
   private[agent] def completionDiagnosticText(
     turns: Int,
     toolCalls: Int,
@@ -174,15 +181,20 @@ object BackoffSupervisor:
       budgetArmedIO *> ctx.watch(childRef) *>
         logger
           .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)") *>
-        nebflow.core.mail.CompletionDebtStore.pending(subagentId).flatMap {
-          case Right(Some(debt)) if debt.phase == "cancelled" || debt.phase == "settled" => IO.unit
-          case Right(Some(debt)) if debt.ownerSessionId == subagentId && debt.recipientSessionId == parentSessionId =>
-            (ctx.self ! AgentEvent.Completed(subagentId, debt.messages)).void
-          case Right(Some(debt)) =>
-            logger.error(s"completion debt recipient mismatch for '$subagentId': expected '$parentSessionId', found '${debt.recipientSessionId}'")
-          case Left(error) => logger.error(s"completion debt unavailable for '$subagentId': $error")
-          case Right(None) => IO.unit
-        }.as(
+        nebflow.core.mail.CompletionDebtStore
+          .pending(subagentId)
+          .flatMap {
+            case Right(Some(debt)) if debt.phase == "cancelled" || debt.phase == "settled" => IO.unit
+            case Right(Some(debt)) if debt.ownerSessionId == subagentId && debt.recipientSessionId == parentSessionId =>
+              (ctx.self ! AgentEvent.Completed(subagentId, debt.messages)).void
+            case Right(Some(debt)) =>
+              logger.error(
+                s"completion debt recipient mismatch for '$subagentId': expected '$parentSessionId', found '${debt.recipientSessionId}'"
+              )
+            case Left(error) => logger.error(s"completion debt unavailable for '$subagentId': $error")
+            case Right(None) => IO.unit
+          }
+          .as(
             active(
               childRef,
               childSpawnFn,
@@ -280,7 +292,10 @@ object BackoffSupervisor:
       def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
         // 四修①（2026-10-07 修复令「空轮≠完成」）的正常完成体（空轮判据不中时
         // 原样走——逐字保持既有行为）。
-        def completeNormally(messages: List[Message], backgroundWaitNote: Option[String] = None): IO[Behavior[AgentEvent]] =
+        def completeNormally(
+          messages: List[Message],
+          backgroundWaitNote: Option[String] = None
+        ): IO[Behavior[AgentEvent]] =
           val text = extractLastAssistantText(messages)
           val hasText = text.trim.nonEmpty && text.trim != Defaults.MaxTokensStubText
           // trim guard: a whitespace-only tail ("\n\n") is NOT a real output —
@@ -305,21 +320,26 @@ object BackoffSupervisor:
                     s"explicit diagnostic rides the parent receipt:${diagnostic.trim}"
                 )
               )
-              diff <- terminalDiffMetadata()
+              face <- settlementFace()
               result <- notifyParentAndStop(
                 "completed",
                 payload + diagnostic + note,
-                diff,
+                face._1,
                 diagnostic = Option(diagnostic).filter(_.nonEmpty),
-                completionMessages = Some(messages)
+                completionMessages = Some(messages),
+                roundCountedOids = face._2,
+                roundPartial = Some(face._3)
               )
             yield result
+            end for
           else notifyParentAndStop("completed", payload, JsonObject.empty)
           end if
         end completeNormally
 
-        /** Diagnostic-only summary for completed delegates whose last assistant turn is silent.
-          * "" when the final turn has real text (normal completion — zero extra work). */
+        /**
+         * Diagnostic-only summary for completed delegates whose last assistant turn is silent.
+         * "" when the final turn has real text (normal completion — zero extra work).
+         */
         def completionDiagnostic(messages: List[Message], hasText: Boolean): IO[String] =
           if hasText then IO.pure("")
           else
@@ -328,21 +348,25 @@ object BackoffSupervisor:
             val emptyRun = tools == 0
             IO.blocking {
               val rec = nebflow.core.delegate.DelegateRegistry.find(subagentId)
-              val commits = rec.flatMap { r =>
-                for
-                  base <- r.baseBranch
-                  branch <- r.branch
-                  ws <- scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
-                yield nebflow.core.GitWorktrees.commitsAhead(ws, base, branch)
-              }.getOrElse(0)
-              val changedFiles = rec.flatMap(r =>
-                scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
-                  .flatMap(nebflow.core.GitWorktrees.dirtyPaths(_))
-              ).fold(0)(_.size)
+              val commits = rec
+                .flatMap { r =>
+                  for
+                    base <- r.baseBranch
+                    branch <- r.branch
+                    ws <- scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
+                  yield nebflow.core.GitWorktrees.commitsAhead(ws, base, branch)
+                }
+                .getOrElse(0)
+              val changedFiles = rec
+                .flatMap(r =>
+                  scala.util
+                    .Try(os.Path(r.worktree.getOrElse(r.cwd)))
+                    .toOption
+                    .flatMap(nebflow.core.GitWorktrees.dirtyPaths(_))
+                )
+                .fold(0)(_.size)
               completionDiagnosticText(turns, tools, commits.toString, changedFiles.toString, emptyRun)
-            }.handleError(_ =>
-              completionDiagnosticText(turns, tools, "unknown", "unknown", emptyRun)
-            )
+            }.handleError(_ => completionDiagnosticText(turns, tools, "unknown", "unknown", emptyRun))
 
         // ═══ sleep-poll 禁令批 A 段：delegate 等待屏障（wait barrier）═══
         // 作者令 2026-10-20（实撞案例 delegate-nebflow-747cd36a）：delegate 会话
@@ -513,6 +537,7 @@ object BackoffSupervisor:
             (childRef ! event).void.handleErrorWith(e =>
               logger.warn(s"supervision check injection failed for '$subagentId': ${e.getMessage}")
             )
+        end injectSupervisionCheck
 
         /** 重臂（同一等待期延续）：wakeAt = min(兜底两腿截止, 可选的下次检查锚)。 */
         def rearmCap(
@@ -706,6 +731,99 @@ object BackoffSupervisor:
         case object CompletionProceed extends CompletionDecision
         final case class CompletionForce(note: String) extends CompletionDecision
 
+        /**
+         * 可信后代段（三段闸的 ②）：作用域图在飞节点 ②a（DelegateInflightGate 读数
+         * 单点——图内节点即「我派出的工作」）∪ 子代理任务行在飞 ②b（parentSessionId
+         * == 本会话、status ∈ {running, restarting}——行先于 actor 注册落盘，排队/
+         * 启动中/派生竞态天然被行覆盖）∪ 会话启动 lease 在持 ②c（revival/续起在飞 ⇒
+         * 短暂 defer，锁释放后重评）。任何一段命中 ⇒ hold：不终态化、不归档、不卸载
+         * ——中途回复按进度消息投递（[[deliverProgressMessage]]），绝不冒充完成。
+         * 本段**不设强制终态 cap**：卡死后代由 ChildOrphanWatch/BgTaskReaper 既有
+         * 看护收割；cap（completionCapMs/bgIdleCapMs）只服务后台作业段 ①。
+         */
+        def trustedDescendantHold: IO[Option[String]] =
+          nebflow.core.delegate.DelegateInflightGate.read(subagentId).flatMap { reading =>
+            if reading.inFlight then
+              IO.pure(
+                Some(
+                  s"${reading.nodes.size} in-flight chain node(s): " +
+                    reading.nodes.map(n => s"${n.name}(${n.status})").take(5).mkString(", ")
+                )
+              )
+            else
+              resources.subAgentTaskStore.findRunningTasks
+                .map(_.filter(t => t.parentSessionId == subagentId && InFlightChildStatuses.contains(t.status)))
+                .flatMap { inflight =>
+                  if inflight.nonEmpty then
+                    IO.pure(
+                      Some(
+                        s"${inflight.size} child task row(s) in flight: " +
+                          inflight.map(t => s"${t.taskId}(${t.status})").take(5).mkString(", ")
+                      )
+                    )
+                  else if nebflow.core.delegate.MergerInitialization.isHeld(subagentId) then
+                    IO.pure(Some("session start lease held (revival/continuation in progress)"))
+                  else IO.pure(None)
+                }
+          }
+
+        /**
+         * 闸 hold 时的进度消息：本轮末条 assistant 文本按 `kind="delegate-progress"`
+         * 落父会话持久邮箱（durable intake，与终态通知同链路、不同 identity 前缀 ⇒
+         * 永不互吞）。幂等键含 roundId+turnSeq：同轮同回合重放同键去重、新回合新键
+         * （turnSeq 单调，旧轮进度自然过期）。空文/空烧 stub = 零投递（无可报）。
+         * 不写判词行、不动台账、不终态化——「回复进度」不是「完成」。
+         */
+        def deliverProgressMessage(messages: List[Message], heldBy: String): IO[Unit] =
+          val text = extractLastAssistantText(messages)
+          if text.trim.isEmpty || text.trim == Defaults.MaxTokensStubText then IO.unit
+          else
+            val turnSeq = messages.count(_.role == MessageRole.Assistant)
+            IO
+              .blocking(
+                nebflow.core.delegate.DelegateRegistry
+                  .find(subagentId)
+                  .flatMap(_.roundId)
+                  .getOrElse("")
+              )
+              .handleError(_ => "")
+              .flatMap { roundId =>
+                val identity =
+                  if roundId.isEmpty then s"progress-$subagentId-$turnSeq"
+                  else s"progress-$subagentId-$roundId-$turnSeq"
+                val event = AgentCommand.ExternalEvent(
+                  source = "delegate",
+                  eventType = "progress",
+                  payload = s""""$description" (progress — waiting on: $heldBy):\n${text.trim}""",
+                  metadata = JsonObject(
+                    "description" -> description.asJson,
+                    "agentName" -> agentName.asJson,
+                    "progressDelegateId" -> subagentId.asJson,
+                    "roundId" -> roundId.asJson,
+                    "turnSeq" -> turnSeq.asJson,
+                    "heldBy" -> heldBy.asJson,
+                    "progress" -> true.asJson
+                  ).deepMerge(extraMetadata),
+                  correlationId = Some(identity)
+                )
+                MailboxProducer
+                  .deliver(
+                    resources,
+                    parentSessionId,
+                    event,
+                    identity = identity,
+                    kind = "delegate-progress",
+                    coalesce = false,
+                    producer = "backoff-supervisor"
+                  )
+                  .void
+              }
+              .handleErrorWith(e =>
+                logger.warn(s"[delegate-progress] progress delivery failed for '$subagentId': ${e.getMessage}")
+              )
+          end if
+        end deliverProgressMessage
+
         def delegateCompletionGate(messages: List[Message]): IO[CompletionDecision] =
           if source != "delegate" || !Defaults.DelegateCompletionHoldEnabled then IO.pure(CompletionProceed)
           else
@@ -755,22 +873,43 @@ object BackoffSupervisor:
                   } *>
                   nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
                     case Nil =>
-                      backgroundHeld.get.flatMap { held =>
-                        (disarmCompletionCap *>
-                          IO.whenA(held) {
-                            backgroundHeld.set(false) *>
-                              logger.info(
-                                s"BackoffSupervisor: delegate $subagentId background task(s) all finished — releasing held completion"
+                      // ① 空 ⇒ ② 可信后代段：命中 ⇒ 进度消息 + hold（无 cap）；
+                      // 全空 ⇒ 干净放行（kernel 单发腿 ②恒空，行为零变化）。
+                      trustedDescendantHold.flatMap {
+                        case Some(heldBy) =>
+                          deliverProgressMessage(messages, heldBy) *>
+                            logger
+                              .info(
+                                s"BackoffSupervisor: delegate $subagentId turn completed with trusted descendants " +
+                                  s"still in flight ($heldBy) — holding completion, last text delivered as progress"
                               )
-                          }).as(CompletionProceed)
+                              .as(CompletionHeld)
+                        case None =>
+                          backgroundHeld.get.flatMap { held =>
+                            (disarmCompletionCap *>
+                              IO.whenA(held) {
+                                backgroundHeld.set(false) *>
+                                  logger.info(
+                                    s"BackoffSupervisor: delegate $subagentId background task(s) all finished — releasing held completion"
+                                  )
+                              }).as(CompletionProceed)
+                          }
                       }
-                    case waiting => holdForBackgroundJobs(waiting, messages).as(CompletionHeld)
+                    case waiting =>
+                      // ① 后台作业段（既有）：末条文本按进度消息投递 + hold（cap 计时
+                      // 器只在本段武装）。
+                      deliverProgressMessage(
+                        messages,
+                        s"${waiting.size} background task(s) (${waiting.map(t => s"'${t.description}'").mkString(", ")})"
+                      ) *>
+                        holdForBackgroundJobs(waiting, messages).as(CompletionHeld)
                   }
             }
 
         event match
           case AgentEvent.Completed(sessionId, _) if sessionId.nonEmpty && sessionId != subagentId =>
-            logger.warn(s"BackoffSupervisor: ignored completion for foreign session '$sessionId' (owner=$subagentId)")
+            logger
+              .warn(s"BackoffSupervisor: ignored completion for foreign session '$sessionId' (owner=$subagentId)")
               .as(this)
 
           case AgentEvent.Completed(_, messages) =>
@@ -883,12 +1022,19 @@ object BackoffSupervisor:
               // file-diff → 委托结果行（同完成腿）：失败前已写入的文件同样出 diff
               // 载荷（用户预期 = 任何改了文件的委托批；失败批看「写到哪里了」同价）；
               // 合并提交统计同面随行（合并轮夭折形态下锚定多半不可读 ⇒ None = 不带键）。
-              val withFc =
-                if source == "delegate" then terminalDiffMetadata().map(_.deepMerge(failureMeta))
-                else IO.pure(failureMeta)
-              withFc.flatMap(fc =>
-                notifyParentAndStop("failed", s""""$description": ${error.message}$sessionInfo""", fc)
-              )
+              // 轮次台账照常结算（verdict=failed 真值保留——后续轮成功不覆盖前轮失败）。
+              val withFcAndFace =
+                if source == "delegate" then settlementFace().map(f => (f._1.deepMerge(failureMeta), f._2, Some(f._3)))
+                else IO.pure((failureMeta, Nil, None))
+              withFcAndFace.flatMap { case (fc, countedOids, partial) =>
+                notifyParentAndStop(
+                  "failed",
+                  s""""$description": ${error.message}$sessionInfo""",
+                  fc,
+                  roundCountedOids = countedOids,
+                  roundPartial = partial
+                )
+              }
             end if
 
           // 刀一：等待屏障兜底计时器的**到点消息**（`ctx.scheduleOnce` 自投）。
@@ -1548,53 +1694,106 @@ object BackoffSupervisor:
        * 卡面按 merge 键独立渲染「+新增 −删除」（该批合并的代码量），diff 面板入口
        * 仅在 files 面在场时保持可点。
        */
-      private def terminalDiffMetadata(): IO[JsonObject] =
-        fileChangesMetadata().flatMap { fc =>
-          IO.blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId)).flatMap {
-            case None =>
-              mergeDiffStatJson().map { stat =>
-                stat.fold(fc) { s =>
-                  val existing = fc("fileChanges").getOrElse(Json.obj())
-                  fc.remove("fileChanges").add("fileChanges", existing.deepMerge(Json.obj("merge" -> s)))
+      private def terminalDiffMetadata(): IO[JsonObject] = settlementFace().map(_._1)
+
+      /**
+       * 结算面（轮次模型的差异真值读数）：`(diff 载荷, 本次已计提交 OID 集, partial 旗)`。
+       *   - 已计 OID = 可信后代闭包本次计入 aggregate 的合并提交全集（完整 OID）——
+       *     落进轮次台账 `countedOids`，后续轮次按此去重（跨轮不重复计数）；
+       *   - partial = aggregate 注记旗（含 cross-repo / 非 git 座位 / 超轮次基线写的
+       *     机械判据，见 [[nebflow.core.delegate.DelegateWorkReport]]）——partial 是
+       *     注记不是阻断：判词与交付仍以末条 assistant 文本为准。
+       * fail-soft 同 [[terminalDiffMetadata]]：任何失败 = 空载荷 + 空 OID 集。
+       */
+      private def settlementFace(): IO[(JsonObject, List[String], Boolean)] =
+        fileChangesMetadata()
+          .flatMap { fc =>
+            IO.blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId)).flatMap {
+              case None =>
+                mergeDiffStatJson().map { stat =>
+                  val merged = stat.fold(fc) { s =>
+                    val existing = fc("fileChanges").getOrElse(Json.obj())
+                    fc.remove("fileChanges").add("fileChanges", existing.deepMerge(Json.obj("merge" -> s)))
+                  }
+                  (merged, Nil, false)
                 }
-              }
-            case Some(rec) =>
-              (IO.blocking(nebflow.core.delegate.DelegateWorkReport.mergeDiffStat(rec)),
-                IO.blocking(nebflow.core.delegate.DelegateWorkReport.aggregateDiffStat(rec))).mapN { (merge, aggregate) =>
-                val withOwn = merge.fold(fc) { stat =>
-                  fc.remove("fileChanges").add("fileChanges", fc("fileChanges").getOrElse(Json.obj()).deepMerge(Json.obj("merge" -> Json.obj(
-                    "commit" -> stat.commit.asJson, "added" -> stat.added.asJson, "removed" -> stat.removed.asJson
-                  ))))
-                }
-                val children = aggregate.children.map { child =>
-                  Json.obj(
-                    "delegateId" -> child.delegateId.asJson,
-                    "parentSessionId" -> child.parentSessionId.asJson,
-                    "workspace" -> child.workspace.asJson,
-                    "worktree" -> child.worktree.getOrElse("").asJson,
-                    "partial" -> child.partial.asJson,
-                    "merge" -> child.merge.fold(Json.Null)(s => Json.obj(
-                      "commit" -> s.commit.asJson,
-                      "oid" -> s.oid.asJson,
-                      "added" -> s.added.asJson,
-                      "removed" -> s.removed.asJson,
-                      "files" -> s.files.map(f => Json.obj(
-                        "path" -> f.path.asJson, "added" -> f.added.asJson, "removed" -> f.removed.asJson
-                      )).asJson
-                    ))
+              case Some(rec) =>
+                (
+                  IO.blocking(nebflow.core.delegate.DelegateWorkReport.mergeDiffStat(rec)),
+                  IO.blocking(
+                    nebflow.core.delegate.DelegateWorkReport.aggregateDiffStat(
+                      rec,
+                      // 跨轮提交去重：本身份已结算轮次 countedOids 中的 OID 不再计入
+                      // （轮次台账即账——append-only，旧轮真值永久保留）。
+                      nebflow.core.delegate.DelegateRoundLedger.countedOids(subagentId)
+                    )
                   )
+                ).mapN { (merge, aggregate) =>
+                  val withOwn = merge.fold(fc) { stat =>
+                    fc.remove("fileChanges")
+                      .add(
+                        "fileChanges",
+                        fc("fileChanges")
+                          .getOrElse(Json.obj())
+                          .deepMerge(
+                            Json.obj(
+                              "merge" -> Json.obj(
+                                "commit" -> stat.commit.asJson,
+                                "added" -> stat.added.asJson,
+                                "removed" -> stat.removed.asJson
+                              )
+                            )
+                          )
+                      )
+                  }
+                  val children = aggregate.children.map { child =>
+                    Json.obj(
+                      "delegateId" -> child.delegateId.asJson,
+                      "parentSessionId" -> child.parentSessionId.asJson,
+                      "workspace" -> child.workspace.asJson,
+                      "worktree" -> child.worktree.getOrElse("").asJson,
+                      "partial" -> child.partial.asJson,
+                      "merge" -> child.merge.fold(Json.Null)(s =>
+                        Json.obj(
+                          "commit" -> s.commit.asJson,
+                          "oid" -> s.oid.asJson,
+                          "added" -> s.added.asJson,
+                          "removed" -> s.removed.asJson,
+                          "files" -> s.files
+                            .map(f =>
+                              Json.obj(
+                                "path" -> f.path.asJson,
+                                "added" -> f.added.asJson,
+                                "removed" -> f.removed.asJson
+                              )
+                            )
+                            .asJson
+                        )
+                      )
+                    )
+                  }
+                  val rollupBase = Json.obj(
+                    "added" -> aggregate.added.asJson,
+                    "removed" -> aggregate.removed.asJson,
+                    "partial" -> aggregate.partial.asJson,
+                    "children" -> children.asJson
+                  )
+                  val rollup =
+                    if aggregate.partialReasons.isEmpty then rollupBase
+                    else rollupBase.deepMerge(Json.obj("partialReasons" -> aggregate.partialReasons.asJson))
+                  val existing = withOwn("fileChanges").getOrElse(Json.obj())
+                  val merged = withOwn
+                    .remove("fileChanges")
+                    .add("fileChanges", existing.deepMerge(Json.obj("aggregate" -> rollup)))
+                  (merged, aggregate.countedOids, aggregate.partial || aggregate.partialReasons.nonEmpty)
                 }
-                val rollup = Json.obj(
-                  "added" -> aggregate.added.asJson,
-                  "removed" -> aggregate.removed.asJson,
-                  "partial" -> aggregate.partial.asJson,
-                  "children" -> children.asJson
-                )
-                val existing = withOwn("fileChanges").getOrElse(Json.obj())
-                withOwn.remove("fileChanges").add("fileChanges", existing.deepMerge(Json.obj("aggregate" -> rollup)))
-              }
+            }
           }
-        }
+          .handleErrorWith(e =>
+            logger
+              .warn(s"delegate settlement face failed for $subagentId: ${e.getMessage}")
+              .as((JsonObject.empty, Nil, false))
+          )
 
       /** Notify parent via ExternalEvent, clean up registry, stop self. */
       private def notifyParentAndStop(
@@ -1603,9 +1802,20 @@ object BackoffSupervisor:
         failureMetadata: JsonObject,
         taskStatusOverride: Option[String] = None,
         diagnostic: Option[String] = None,
-        completionMessages: Option[List[Message]] = None
+        completionMessages: Option[List[Message]] = None,
+        roundCountedOids: List[String] = Nil,
+        roundPartial: Option[Boolean] = None
       ): IO[Behavior[AgentEvent]] =
-        notifyParentAndStopImpl(eventType, payload, failureMetadata, taskStatusOverride, diagnostic, completionMessages)
+        notifyParentAndStopImpl(
+          eventType,
+          payload,
+          failureMetadata,
+          taskStatusOverride,
+          diagnostic,
+          completionMessages,
+          roundCountedOids,
+          roundPartial
+        )
 
       private def notifyParentAndStopImpl(
         eventType: String,
@@ -1613,7 +1823,9 @@ object BackoffSupervisor:
         failureMetadata: JsonObject,
         taskStatusOverride: Option[String] = None,
         diagnostic: Option[String] = None,
-        completionMessages: Option[List[Message]] = None
+        completionMessages: Option[List[Message]] = None,
+        roundCountedOids: List[String] = Nil,
+        roundPartial: Option[Boolean] = None
       ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
@@ -1668,41 +1880,42 @@ object BackoffSupervisor:
               .pending(subagentId)
               .map {
                 case Right(Some(debt)) => debt.generation
-                case _                 => ""
+                case _ => ""
               }
               .handleErrorWith(_ => IO.pure(""))
           else IO.pure("")
 
         val notify: IO[Unit] = completionGenerationIO.flatMap { completionGeneration =>
-        val eventMetadata = metadata
-          .add("parentSessionId", parentSessionId.asJson)
-          .add("completionMessages", completionMessages.getOrElse(Nil).asJson)
-          .add("completionGeneration", completionGeneration.asJson)
-        val terminalEvent = AgentCommand.ExternalEvent(
-          source = source,
-          eventType = eventType,
-          payload = payload,
-          metadata = eventMetadata,
-          correlationId = Some(subagentId)
-        )
-          val terminalIdentity = if completionGeneration.isEmpty then subagentId else s"$subagentId#$completionGeneration"
-        // ═══ P2 邮箱化（终态通知 actor 邮箱化批，作者 11-01 批准实施）═════════
-        // delegate 轨终态（completed/failed/cancelled）改走**收件方持久邮箱**：
-        // mailOnce 幂等入队（写成功=必达）+ 门铃 best-effort——磁盘邮箱是唯一真源，
-        // actor 消息降为门铃。旧 push 机器三件随迁停用（本件对 delegate 轨零新写）：
-        //   ① `ref ! ExternalEvent` 直投（mailbox offer 从不失败也从不保证消费——
-        //      10-31 断链首环：父冻结/忙窗内 offer 从不失败也从不保证消费，12 次重投
-        //      0 次进门的判红现场）；
-        //   ② parentRef=None 腿的 F2 持久兜底 + delegateResultUndelivered 帧
-        //      （「终态无处投」形态随邮箱消亡——条目落在父会话盘上，父任何唤醒点
-        //      必扫出，与父此刻是否 live 无关）；
-        //   ③ DelegateDeliveryReceipts 回执（上方 receiptWrite 随迁拆除——「标记
-        //      已投/父未确认」整个状态类物理不存在，「已投递」= 条目已删除这一
-        //      物理事实；delivered-receipts 标记面照旧只服务旧链在飞件，P3 退役）。
-        // 双发红线：delegate 轨此后**不得**再走旧链（旧 push + 邮箱 = 事故）；
-        // subtask 轨逐字保持旧链（P3 全通知面迁移另批）。
-        // （原 `val notify` 名让位给外层代际 flatMap——本 if/else 即 lambda 尾表达式）
-        if source == "delegate" then
+          val eventMetadata = metadata
+            .add("parentSessionId", parentSessionId.asJson)
+            .add("completionMessages", completionMessages.getOrElse(Nil).asJson)
+            .add("completionGeneration", completionGeneration.asJson)
+          val terminalEvent = AgentCommand.ExternalEvent(
+            source = source,
+            eventType = eventType,
+            payload = payload,
+            metadata = eventMetadata,
+            correlationId = Some(subagentId)
+          )
+          val terminalIdentity =
+            if completionGeneration.isEmpty then subagentId else s"$subagentId#$completionGeneration"
+          // ═══ P2 邮箱化（终态通知 actor 邮箱化批，作者 11-01 批准实施）═════════
+          // delegate 轨终态（completed/failed/cancelled）改走**收件方持久邮箱**：
+          // mailOnce 幂等入队（写成功=必达）+ 门铃 best-effort——磁盘邮箱是唯一真源，
+          // actor 消息降为门铃。旧 push 机器三件随迁停用（本件对 delegate 轨零新写）：
+          //   ① `ref ! ExternalEvent` 直投（mailbox offer 从不失败也从不保证消费——
+          //      10-31 断链首环：父冻结/忙窗内 offer 从不失败也从不保证消费，12 次重投
+          //      0 次进门的判红现场）；
+          //   ② parentRef=None 腿的 F2 持久兜底 + delegateResultUndelivered 帧
+          //      （「终态无处投」形态随邮箱消亡——条目落在父会话盘上，父任何唤醒点
+          //      必扫出，与父此刻是否 live 无关）；
+          //   ③ DelegateDeliveryReceipts 回执（上方 receiptWrite 随迁拆除——「标记
+          //      已投/父未确认」整个状态类物理不存在，「已投递」= 条目已删除这一
+          //      物理事实；delivered-receipts 标记面照旧只服务旧链在飞件，P3 退役）。
+          // 双发红线：delegate 轨此后**不得**再走旧链（旧 push + 邮箱 = 事故）；
+          // subtask 轨逐字保持旧链（P3 全通知面迁移另批）。
+          // （原 `val notify` 名让位给外层代际 flatMap——本 if/else 即 lambda 尾表达式）
+          if source == "delegate" then
             MailboxProducer
               .deliver(
                 resources,
@@ -1715,20 +1928,34 @@ object BackoffSupervisor:
               )
               .flatMap {
                 case SessionMailbox.MailResult.AlreadyPresent =>
-                  (SessionMailbox.scanPending(parentSessionId), SessionMailbox.scanTaken(parentSessionId)).mapN(_ ++ _)
+                  (SessionMailbox.scanPending(parentSessionId), SessionMailbox.scanTaken(parentSessionId))
+                    .mapN(_ ++ _)
                     .map(_.find(e => e.identity == subagentId || e.identity.startsWith(s"$subagentId#")))
                     .flatMap {
-                      case Some(entry) if entry.event.source == source && entry.event.eventType == eventType &&
-                        entry.event.correlationId.contains(subagentId) && entry.event.payload == payload &&
-                        entry.event.metadata("parentSessionId").flatMap(_.asString).contains(parentSessionId) &&
-                        nebflow.core.mail.CompletionDebtStore.generationOf(entry.event) == completionGeneration =>
+                      case Some(entry)
+                          if entry.event.source == source && entry.event.eventType == eventType &&
+                            entry.event.correlationId.contains(subagentId) && entry.event.payload == payload &&
+                            entry.event.metadata("parentSessionId").flatMap(_.asString).contains(parentSessionId) &&
+                            nebflow.core.mail.CompletionDebtStore.generationOf(entry.event) == completionGeneration =>
                         nebflow.core.mail.CompletionDebtStore.pending(subagentId).flatMap {
                           case Right(Some(debt)) if debt.recipientSessionId == parentSessionId =>
-                            nebflow.core.mail.CompletionDebtStore.acknowledge(subagentId, parentSessionId, debt.messages, completionGeneration)
-                              .flatMap(ok => IO.whenA(!ok)(logger.error(s"completion debt conflict while confirming existing mail for '$subagentId'")))
-                          case _ => logger.error(s"completion debt missing or invalid while confirming existing mail for '$subagentId'")
+                            nebflow.core.mail.CompletionDebtStore
+                              .acknowledge(subagentId, parentSessionId, debt.messages, completionGeneration)
+                              .flatMap(ok =>
+                                IO.whenA(!ok)(
+                                  logger
+                                    .error(s"completion debt conflict while confirming existing mail for '$subagentId'")
+                                )
+                              )
+                          case _ =>
+                            logger.error(
+                              s"completion debt missing or invalid while confirming existing mail for '$subagentId'"
+                            )
                         }
-                      case _ => logger.error(s"conflicting existing terminal mail for '$subagentId' in '$parentSessionId'; completion debt retained")
+                      case _ =>
+                        logger.error(
+                          s"conflicting existing terminal mail for '$subagentId' in '$parentSessionId'; completion debt retained"
+                        )
                     }
                 case SessionMailbox.MailResult.Failed(cause) if cause == "parent-session-gone" =>
                   // 交付腿已在生产者侧响亮留痕（不产垃圾文件）；终态三清照常。
@@ -1738,7 +1965,8 @@ object BackoffSupervisor:
                     s"[mailbox-producer] terminal for '$subagentId' NOT on disk after retries (parent='$parentSessionId' cause=$cause) — " +
                       s"boot reconcile will synthesize a replacement entry from the task ledger"
                   )
-                case SessionMailbox.MailResult.Enqueued(_) | SessionMailbox.MailResult.Coalesced(_) => IO.unit // keep debt until consumer ack
+                case SessionMailbox.MailResult.Enqueued(_) | SessionMailbox.MailResult.Coalesced(_) =>
+                  IO.unit // keep debt until consumer ack
               }
           else
             parentRef match
@@ -1780,6 +2008,7 @@ object BackoffSupervisor:
                   // F2 持久兜底（监督链自动恢复批 2026-10-22，见上注）——WARN 之后
                   // 事件照常持久投递；append 失败只 WARN（父队列面故障不拖垮终态三清）。
                   f2DeliveryBackstop(terminalEvent)
+          end if
         } // completionGeneration 代际外包（#2141/#2178：事件与入箱身份同代）
 
         // 终态三清（R2-c §7#4 + 本设计）：① hub 槽（僵尸 ask 卡：内核已死，
@@ -1791,21 +2020,98 @@ object BackoffSupervisor:
         val clearCancelledDebt =
           if eventType == "cancelled" then nebflow.core.mail.CompletionDebtStore.cancel(subagentId)
           else IO.unit
-        (delegateCleanup *> clearCancelledDebt *> notify *> taskUpdate *> diagWrite *> cleanupPendingAsks(resources, subagentId) *>
-          DelegateBudget.release(subagentId) *>
-          resources.agentRegistry.update(_ - subagentId) *>
-          (childRef ! AgentCommand.Stop(s"$source-complete")) *>
-          IO.pure(Behaviors.stopped[AgentEvent]))
-          // 完成必回报（P5 第二波）：终态链上任何意外逃逸（邮箱写入抛错 / registry
-          // / Stop 腿意外）绝不静默吞掉——旧行为 `handleErrorWith(_ => stopped)` 零
-          // 日志零留痕，父会话收不到任何东西、任务行可能滞留 running（僵尸行）。
-          // 兜底 = 响亮 ERROR + **尽力一次终态行写**（幂等：链上 taskUpdate 已成功
-          // 时同值重写无害），宁可响亮失败、绝不无声丢失。
-          .handleErrorWith(e =>
-            BackoffSupervisor
-              .terminalChainFallback(resources.subAgentTaskStore, parentSessionId, subagentId, taskStatus, payload, e)
-              .as(Behaviors.stopped[AgentEvent])
-          )
+
+        // ── 轮次模型的终态记账（append-only；fail-soft 只 WARN）──────────────
+        // 旧轮次迟到事件（携带的代际 ≠ 当前轮 roundId——新轮已开后的旧代
+        // Completed/failed）：只落轮次台账 stale-round 审计行——不投递、不重写
+        // archivedAt（archive 本就幂等零重写）、不重启清理链；本监督者照常收停。
+        // cancelled 不在此列：取消墓碑压过一切，属身份级意图。
+        val staleRoundCheck: IO[Boolean] =
+          if source != "delegate" || eventType == "cancelled" then IO.pure(false)
+          else
+            completionGenerationIO
+              .flatMap { gen =>
+                IO.blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId)).map { recOpt =>
+                  (gen, recOpt.flatMap(_.roundId).filter(_.nonEmpty)) match
+                    case (g, Some(currentRoundId)) if g.nonEmpty && g != currentRoundId =>
+                      nebflow.core.delegate.DelegateRoundLedger.recordStaleRound(
+                        subagentId,
+                        recOpt.flatMap(_.roundNo).getOrElse(1),
+                        g,
+                        s"late terminal '$eventType' from round generation $g while current round is $currentRoundId" +
+                          " — not delivered, archive untouched, cleanup chain not restarted"
+                      )
+                      true
+                    case _ => false
+                }
+              }
+              .handleErrorWith(e =>
+                logger.warn(s"stale-round check failed for '$subagentId': ${e.getMessage}").as(false)
+              )
+
+        // 结算写（非 stale 腿）：verdict 真值进轮次台账——completed/failed 各轮独立，
+        // 后续轮成功不覆盖前轮失败；cancelled 把所有未结算轮标记 cancelled 终值
+        // （墓碑压过一切）。
+        val roundSettleWrite: IO[Unit] =
+          if source != "delegate" then IO.unit
+          else
+            IO.blocking {
+              nebflow.core.delegate.DelegateRegistry.find(subagentId).foreach { rec =>
+                val roundNo = rec.roundNo.getOrElse(1)
+                if taskStatus == "cancelled" then
+                  nebflow.core.delegate.DelegateRoundLedger.settleOpenRoundsCancelled(
+                    subagentId,
+                    s"cancelled terminal at ${System.currentTimeMillis()}"
+                  )
+                else
+                  nebflow.core.delegate.DelegateRoundLedger.settleRound(
+                    subagentId,
+                    roundNo,
+                    rec.roundId.getOrElse(""),
+                    taskStatus,
+                    roundCountedOids,
+                    roundPartial
+                  )
+              }
+            }.handleErrorWith(e => logger.warn(s"round settlement write failed for '$subagentId': ${e.getMessage}"))
+
+        staleRoundCheck.flatMap { stale =>
+          if stale then
+            logger.warn(
+              s"BackoffSupervisor: stale-round terminal for '$subagentId' (eventType=$eventType) — audited in the " +
+                "round ledger, no delivery, no archive rewrite"
+            ) *>
+              (resources.agentRegistry.update(_ - subagentId) *>
+                (childRef ! AgentCommand.Stop(s"$source-stale-round")) *>
+                IO.pure(Behaviors.stopped[AgentEvent]))
+                .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+          else
+            (delegateCleanup *> clearCancelledDebt *> roundSettleWrite *> notify *> taskUpdate *> diagWrite *> cleanupPendingAsks(
+              resources,
+              subagentId
+            ) *>
+              DelegateBudget.release(subagentId) *>
+              resources.agentRegistry.update(_ - subagentId) *>
+              (childRef ! AgentCommand.Stop(s"$source-complete")) *>
+              IO.pure(Behaviors.stopped[AgentEvent]))
+              // 完成必回报（P5 第二波）：终态链上任何意外逃逸（邮箱写入抛错 / registry
+              // / Stop 腿意外）绝不静默吞掉——旧行为 `handleErrorWith(_ => stopped)` 零
+              // 日志零留痕，父会话收不到任何东西、任务行可能滞留 running（僵尸行）。
+              // 兜底 = 响亮 ERROR + **尽力一次终态行写**（幂等：链上 taskUpdate 已成功
+              // 时同值重写无害），宁可响亮失败、绝不无声丢失。
+              .handleErrorWith(e =>
+                BackoffSupervisor
+                  .terminalChainFallback(
+                    resources.subAgentTaskStore,
+                    parentSessionId,
+                    subagentId,
+                    taskStatus,
+                    payload,
+                    e
+                  )
+                  .as(Behaviors.stopped[AgentEvent])
+              )
+        }
 
       end notifyParentAndStopImpl
 

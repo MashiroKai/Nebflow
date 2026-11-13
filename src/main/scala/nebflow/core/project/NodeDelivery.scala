@@ -895,8 +895,53 @@ private[project] trait NodeDelivery:
           s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)"
         ) *>
           notifyRedirectAudit(nodeId, status, "parked") *>
-          IO.pure(RootNotifyOffer.Parked)
+          parkIntoCreatorMailbox(text, nodeName, status, nodeId).as(RootNotifyOffer.Parked)
     }
+
+  /**
+   * Durable park for delegate-scope root notifications (the incident class where the
+   * creator delegate is not live): the result lands in the DELEGATE'S OWN persistent
+   * mailbox (identity = `node-result-<nodeId>-<gen>`, kind = `node-result`), so any
+   * later wake (Mail / panel / revival) drains it from disk — the in-memory 30s
+   * redelivery window is no longer the only carrier. Per-project engines (target =
+   * the live root session) keep the legacy in-memory park: no delegate mailbox exists
+   * for them. Fail-soft: a mailbox write failure only WARNs — the legacy redelivery
+   * candidates stay untouched either way (this leg never marks delivery).
+   */
+  private def parkIntoCreatorMailbox(text: String, nodeName: String, status: String, nodeId: Option[String]): IO[Unit] =
+    if notifyTargetKind != NodeEngine.NotifyTargetKind.CreatorDelegate || rootSessionId.trim.isEmpty then IO.unit
+    else
+      val nodeKey = nodeId.getOrElse(nodeName)
+      val identity =
+        s"node-result-$nodeKey-${nebflow.core.mail.ProducerInput.identity(rootSessionId, projectName, status, text, nodeKey)}"
+      val event = AgentCommand.ExternalEvent(
+        source = "node",
+        eventType = status,
+        payload = text,
+        metadata = io.circe.JsonObject(
+          "nodeName" -> nodeName.asJson,
+          "nodeId" -> nodeId.asJson,
+          "project" -> projectName.asJson,
+          "parked" -> true.asJson
+        ),
+        correlationId = Some(identity)
+      )
+      nebflow.core.mail.SessionMailbox
+        .mailOnce(rootSessionId, event, "node-result", identity, producer = "node-delivery")
+        .flatMap {
+          case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) =>
+            logger.warn(
+              s"[node-result-park] durable park failed for node '$nodeKey' into '$rootSessionId' ($cause) — " +
+                "the in-memory redelivery scan remains the carrier"
+            )
+          case _ =>
+            logger.info(
+              s"[node-result-park] node result '$nodeKey' parked into the delegate's own mailbox ($rootSessionId)"
+            )
+        }
+        .handleErrorWith(e =>
+          logger.warn(s"[node-result-park] durable park errored for node '$nodeKey': ${e.getMessage}")
+        )
 
   /**
    * **S19① 落真审计腿**（N1 刀3 · 设计 v3 §7.1「落真＝EventLog 留痕＋上报标记」；
