@@ -74,6 +74,18 @@ class MailboxDrainSpec extends CatsEffectSuite:
       )
       .map(_.asInstanceOf[SessionMailbox.MailResult.Enqueued].entry)
 
+  test("run-scoped mailbox identities unlink exactly without deleting a sibling run") {
+    val sid = "parent"
+    for
+      _ <- SessionMailbox.mailOnce(sid, evt("first", identity = "child"), "delegate-terminal", "child#run-1")
+      first <- MailboxDrain.drainIdleFace(sid)
+      _ <- SessionMailbox.mailOnce(sid, evt("second", identity = "child"), "delegate-terminal", "child#run-2")
+      _ <- MailboxDrain.drainIdleFace(sid)
+      _ <- MailboxDrain.unlinkConsumed(sid, first)
+      remaining <- SessionMailbox.scanTaken(sid)
+    yield assertEquals(remaining.map(_.identity), List("child#run-2"))
+  }
+
   // ── barrierPlan：W2 批门禁纯函数 ────────────────────────────────────────
 
   test("barrierPlan: last sub-agent member arriving (outstanding == subRemaining) releases the batch") {
@@ -138,7 +150,10 @@ class MailboxDrainSpec extends CatsEffectSuite:
       taken <- SessionMailbox.scanTaken(sid)
     yield
       assertEquals(clue(drained.map(_.correlationId)), List(Some("t1"), Some("t2")))
-      assert(clue(drained).forall(_.metadata("viaMailbox").exists(_.asBoolean.getOrElse(false))), "all stamped viaMailbox")
+      assert(
+        clue(drained).forall(_.metadata("viaMailbox").exists(_.asBoolean.getOrElse(false))),
+        "all stamped viaMailbox"
+      )
       assertEquals(clue(pend), Nil, "pending drained")
       assertEquals(clue(taken.map(_.identity)), List("t1", "t2"), "taken files are the post-take carrier")
   }
@@ -162,6 +177,7 @@ class MailboxDrainSpec extends CatsEffectSuite:
       assertEquals(clue(released._1.map(_.correlationId)), List(Some("t1"), Some("t2")))
       assertEquals(clue(released._2), 0)
       assertEquals(clue(pendAfter), Nil)
+    end for
   }
 
   test("takenSubagentSlots counts sub-agent events only — the take-time barrier accounting is exact-once") {
@@ -212,11 +228,13 @@ class MailboxDrainSpec extends CatsEffectSuite:
 
   test("mailboxMessage: retryable failure carries the re-delegation hint") {
     val failed = evt("boom", source = "delegate", eventType = "failed")
-      .copy(metadata = JsonObject(
-        "retryable" -> io.circe.Json.True,
-        "failureType" -> io.circe.Json.fromString("overloaded"),
-        "agentName" -> io.circe.Json.fromString("worker")
-      ))
+      .copy(metadata =
+        JsonObject(
+          "retryable" -> io.circe.Json.True,
+          "failureType" -> io.circe.Json.fromString("overloaded"),
+          "agentName" -> io.circe.Json.fromString("worker")
+        )
+      )
     val msg = MailboxDrain.mailboxMessage(List(failed))
     assert(clue(msg.textContent).contains("boom"))
     assert(clue(msg.textContent).contains("retryable error"), "failed+retryable ⇒ re-delegation guidance")

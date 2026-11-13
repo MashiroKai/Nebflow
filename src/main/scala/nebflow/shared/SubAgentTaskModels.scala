@@ -63,7 +63,23 @@ case class SubAgentTask(
    * None on completed rows). Option + missing-key tolerant decode (older on-disk
    * files lack the key = None; zero migration).
    */
-  diagnostic: Option[String] = None
+  diagnostic: Option[String] = None,
+  /** Execution identity, independent of report delivery generations. */
+  runId: Option[String] = None,
+  committedRevision: Option[Long] = None,
+  rootSessionId: Option[String] = None,
+  executor: Option[String] = None,
+  /** Execution completion is not a business-success assertion. */
+  executionStatus: Option[String] = None,
+  activityAt: Option[Long] = None,
+  activityKind: Option[String] = None,
+  activityLabel: Option[String] = None,
+  /** References existing session/output storage; never a second result body. */
+  resultRef: Option[String] = None,
+  terminalReason: Option[String] = None,
+  incomplete: Option[Boolean] = None,
+  notificationId: Option[String] = None,
+  notificationPending: Option[Boolean] = None
 )
 
 object SubAgentTask:
@@ -93,6 +109,19 @@ object SubAgentTask:
       revivedAt <- c.get[Option[Long]]("revivedAt")
       mode <- c.get[Option[String]]("mode")
       diagnostic <- c.get[Option[String]]("diagnostic")
+      runId <- c.get[Option[String]]("runId")
+      committedRevision <- c.get[Option[Long]]("committedRevision")
+      rootSessionId <- c.get[Option[String]]("rootSessionId")
+      executor <- c.get[Option[String]]("executor")
+      executionStatus <- c.get[Option[String]]("executionStatus")
+      activityAt <- c.get[Option[Long]]("activityAt")
+      activityKind <- c.get[Option[String]]("activityKind")
+      activityLabel <- c.get[Option[String]]("activityLabel")
+      resultRef <- c.get[Option[String]]("resultRef")
+      terminalReason <- c.get[Option[String]]("terminalReason")
+      incomplete <- c.get[Option[Boolean]]("incomplete")
+      notificationId <- c.get[Option[String]]("notificationId")
+      notificationPending <- c.get[Option[Boolean]]("notificationPending")
     yield SubAgentTask(
       taskId,
       parentSessionId,
@@ -109,7 +138,20 @@ object SubAgentTask:
       revivalCount,
       revivedAt,
       mode,
-      diagnostic
+      diagnostic,
+      runId,
+      committedRevision,
+      rootSessionId,
+      executor,
+      executionStatus,
+      activityAt,
+      activityKind,
+      activityLabel,
+      resultRef,
+      terminalReason,
+      incomplete,
+      notificationId,
+      notificationPending
     )
   }
 end SubAgentTask

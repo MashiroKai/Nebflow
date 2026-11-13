@@ -111,7 +111,7 @@ import { initMicOrb } from './micOrb.js';
 // delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
 // 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
-import './delegateChainProvider.js';
+import { refreshScopedTasks, onDurableTasksChanged } from './delegateChainProvider.js';
 // 控制台单实例批（2026-10-27）：接管独占客户端腿——模块副作用 = 注册 takeover/
 // takeoverResult 帧消费 + 接管模态按钮接线（叶子模块，只依赖 ws.js/state/i18n）。
 import './takeoverModal.js';
@@ -4971,6 +4971,7 @@ onReconnect(() => {
   // Sync background sub-agent state — agentStart events are not replayed
   // after a page refresh, so the indicator count would be lost without this
   sendWs({ type: 'getActiveAgents' });
+  refreshScopedTasks(sid);
   // composer-resync：activeAgents 不含 root session，不能拿它推断主会话闲忙。
   // 断连窗内 done/sessionBusy(false) 不重放，必须另查 AgentRegistry 权威相位；
   // 活跃会话也纳入（旧快照同步恰恰把它豁免，正是幽灵停止钮缺口）。
@@ -5041,6 +5042,16 @@ onMessage('activeBgTasks', (msg) => {
     if (v) updateBgTasksUI(v);
   }
   if (activeView) updateBgTasksUI(activeView);
+});
+
+// Committed task terminal state reconciles the child session, never its parent.
+onDurableTasksChanged((rows) => {
+  for (const row of rows) {
+    if (!['completed', 'failed', 'cancelled', 'pending-recovery'].includes(row.status)) continue;
+    clearBusy(row.taskId);
+    delete state.turnExpecting[row.taskId];
+    updateBgAgentIndicator(row.rootSessionId, { keepDropdownOpen: true });
+  }
 });
 
 // ---------- Reconnect: sync background sub-agents ----------

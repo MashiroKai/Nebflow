@@ -53,6 +53,23 @@ object ExternalExecutor:
      */
     final case class Final(text: String, failed: Boolean) extends Frame
 
+    /** A text content block at its original protocol index. */
+    final case class ContentBlock(index: Int, text: String)
+
+    /** A committed assistant message; identity is not inferred from its text. */
+    final case class MessageComplete(messageId: Option[String], blocks: List[ContentBlock]) extends Frame
+
+    /** Flush the preceding delta batch and identify the next one, if known. */
+    final case class MessageBoundary(messageId: Option[String] = None) extends Frame
+
+    /** Protocol termination, independent of the operating-system exit status. */
+    final case class ExecutionEnd(
+      failed: Boolean,
+      result: Option[String] = None,
+      messageId: Option[String] = None,
+      metadata: Json = Json.Null
+    ) extends Frame
+
   end Frame
 
   /** 单个外部执行器适配器。 */
@@ -128,11 +145,13 @@ object ExternalExecutor:
         .map(n => (root / n).toString) :+ "/tmp"
       candidates.filter(p => os.isDir(os.Path(p, os.root)))
 
-    /** headless 工程活的命令白名单（逗号分隔——pattern 内含空格，禁空格分隔）。
+    /**
+     * headless 工程活的命令白名单（逗号分隔——pattern 内含空格，禁空格分隔）。
      *  git 按**子命令枚举**（本地读写与历史面）：push / remote / config /
      *  rebase / tag 与 `git -C` 形态不入枚举 ⇒ 无 allow 匹配，headless 下
      *  自动拒绝（枚举同时关掉 `-C <path> push` 这类绕行；deny 闸只按命令
-     *  前缀匹配，罩不住它）。 */
+     *  前缀匹配，罩不住它）。
+     */
     private val allowedToolsArg: String = List(
       "Bash(git status:*)",
       "Bash(git add:*)",
@@ -188,23 +207,24 @@ object ExternalExecutor:
           case Some("system") if j.hcursor.downField("subtype").as[String].toOption.contains("init") =>
             List(Frame.Start(str(j, "session_id")))
           case Some("assistant") =>
-            val content = j.hcursor.downField("message").downField("content")
-            content
-              .as[List[Json]]
-              .toOption
-              .getOrElse(Nil)
-              .collect {
-                case block if block.hcursor.downField("type").as[String].toOption.contains("text") =>
-                  block.hcursor.downField("text").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
-                case block if block.hcursor.downField("type").as[String].toOption.contains("tool_use") =>
-                  block.hcursor.downField("name").as[String].toOption.toList.map(Frame.Tool.apply)
-              }
-              .flatten
+            val message = j.hcursor.downField("message").focus.getOrElse(Json.Null)
+            val content = message.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
+            val blocks = content.zipWithIndex.flatMap { case (block, index) =>
+              if str(block, "type").contains("text") then
+                str(block, "text").map(text => Frame.ContentBlock(index, text)).toList
+              else Nil
+            }
+            val tools = content.flatMap { block =>
+              if str(block, "type").contains("tool_use") then str(block, "name").map(Frame.Tool.apply).toList
+              else Nil
+            }
+            Frame.MessageComplete(str(message, "id"), blocks) :: tools
           case Some("result") =>
-            val text = str(j, "result").getOrElse("")
             val isErr = j.hcursor.downField("is_error").as[Boolean].toOption.getOrElse(false)
             val subtypeErr = j.hcursor.downField("subtype").as[String].toOption.exists(_.startsWith("error"))
-            List(Frame.Final(text, failed = isErr || subtypeErr))
+            // The result UUID identifies the result event, not the assistant message.
+            val messageId = str(j, "message_id").orElse(str(j, "assistant_message_id"))
+            List(Frame.ExecutionEnd(isErr || subtypeErr, str(j, "result"), messageId, j))
           case _ => Nil
       }
 
@@ -259,18 +279,16 @@ object ExternalExecutor:
               .toList
               .collect {
                 case item if item.hcursor.downField("type").as[String].toOption.contains("agent_message") =>
-                  item.hcursor.downField("text").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
+                  str(item, "text").toList.map { text =>
+                    Frame.MessageComplete(str(item, "id"), List(Frame.ContentBlock(0, text)))
+                  }
               }
               .flatten
           case Some("turn.failed") =>
-            val msg = j.hcursor
-              .downField("error")
-              .downField("message")
-              .as[String]
-              .toOption
-              .orElse(j.hcursor.downField("error").as[String].toOption)
-              .getOrElse("turn failed")
-            List(Frame.Final(msg, failed = true))
+            // Transport error envelopes are metadata, not assistant result text.
+            List(Frame.ExecutionEnd(failed = true, metadata = j))
+          case Some("turn.completed") =>
+            List(Frame.ExecutionEnd(failed = false, metadata = j))
           case _ => Nil
       }
 
@@ -329,7 +347,12 @@ object ExternalExecutor:
           // 终局紧凑行：sessionId＝续聊锚点，response＝终稿文本。
           val sid = str(j, "sessionId")
           (if sid.isDefined then List(Frame.Start(sid)) else Nil) :+
-            Frame.Final(str(j, "response").getOrElse(""), failed = summaryFailed(j))
+            Frame.ExecutionEnd(
+              failed = summaryFailed(j),
+              result = str(j, "response"),
+              messageId = str(j, "assistantMessageId"),
+              metadata = j
+            )
         case Some("session.created") =>
           str(j, "sessionId").map(sid => Frame.Start(Some(sid))).toList
         case Some("model.streaming") =>
@@ -337,9 +360,12 @@ object ExternalExecutor:
             p.hcursor.downField("kind").as[String].toOption match
               case Some("text_delta") =>
                 p.hcursor.downField("delta").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
+              case Some("start") =>
+                List(Frame.MessageBoundary(str(p, "assistantMessageId")))
+              case Some("finish") => List(Frame.MessageBoundary())
               case Some("tool_call") | Some("tool_input_start") =>
                 p.hcursor.downField("toolName").as[String].toOption.toList.map(Frame.Tool.apply)
-              case _ => Nil // reasoning_* / start / end / tool_input_delta 等零帧
+              case _ => Nil // Non-text content does not commit an assistant message.
           }
         case Some("tool.updated") =>
           j.hcursor
@@ -353,12 +379,8 @@ object ExternalExecutor:
             }
             .flatten
         case Some("turn.failed") =>
-          val payload = j.hcursor.downField("payload")
-          val msg = payload.focus
-            .flatMap(p => str(p, "message"))
-            .orElse(payload.downField("error").focus.flatMap(p => str(p, "message")))
-            .getOrElse("turn failed")
-          List(Frame.Final(msg, failed = true))
+          // Transport error envelopes are metadata, not assistant result text.
+          List(Frame.ExecutionEnd(failed = true, metadata = j))
         case _ => Nil
 
     /** 摘要 projection.status 有 error 词即带 failed（正常成功路径＝idle 等）。 */
@@ -385,7 +407,7 @@ object ExternalExecutor:
             .toOption
             .flatMap(_.asString)
             .toList
-            .map(text => Frame.Final(text, failed = false))
+            .map(text => Frame.ExecutionEnd(failed = false, result = Some(text)))
         case _ => Nil
 
     def interactiveResumeCommand(cliSessionId: Option[String]): String =

@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"session-one"}
+{"type":"assistant","message":{"id":"report","content":[{"type":"text","text":"Report summary."},{"type":"tool_use","name":"Read","id":"tool-one"},{"type":"text","text":"Report detail."}]}}
+{"type":"result","uuid":"result-report","message_id":"report","subtype":"success","result":"Report summary.\nReport detail.","is_error":false}
+{"type":"assistant","message":{"id":"trailing","content":[{"type":"text","text":"Waiting for instructions."}]}}
+{"type":"result","uuid":"result-trailing","subtype":"success","result":"Waiting for instructions.","is_error":false}
+{"type":"result","uuid":"result-report","message_id":"report","subtype":"success","result":"Report summary.\nReport detail.","is_error":false}

@@ -1341,8 +1341,31 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       // 进入子会话前展开为消息全文（映射缺失 = 显式报错行注入）。装配侧单点——
       // assembleBrief 本体（spec 判红锚）逐字节不动；initialPrompt 与首条 UserInput
       // 同吃消解后文本。机制关 = 原样透传。
+      val spawnRunId = java.util.UUID.randomUUID().toString
       val attempt = for
         resolvedBrief <- resources.msgTokens.resolveForAgent(brief)
+        _ <- resources.subAgentTaskStore
+          .beginRun(
+            SubAgentTask(
+              taskId = subagentId,
+              parentSessionId = parentSessionId.getOrElse(""),
+              agentName = agentName,
+              prompt = task,
+              description = description,
+              status = "running",
+              retryCount = 0,
+              spawnedAt = System.currentTimeMillis(),
+              completedAt = None,
+              lastError = None,
+              source = "delegate",
+              // 执行形态随行落任务行（参数决定，恒有值）。
+              mode = Some(modeDecision.mode)
+            ),
+            spawnRunId,
+            resolvedRoot,
+            ExecutorRegistry.DefaultId
+          )
+          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
         subagentRef <- NodeRunner.spawnAgentActor(system, params)
         _ <- cleanup.update(previous => system.stop(subagentRef).attempt.void *> previous)
         adapterRef <- NodeRunner.spawnSupervisedAdapter(
@@ -1381,7 +1404,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             // Round model: spawn opens round 1 — the roundId doubles as the
             // completion-debt generation for this round (terminal mailbox identity
             // `<id>#<roundId>`), and the round ledger row carries the diff baseline.
-            val spawnRoundId = java.util.UUID.randomUUID().toString
+            val spawnRoundId = spawnRunId
             DelegateRegistry.put(
               DelegateRegistry.Record(
                 id = subagentId,
@@ -1484,25 +1507,6 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                 .warn(s"delegate flow-host mount failed (delegate continues without a scope map): ${e.getMessage}")
                 .as(None)
             )
-        _ <- resources.subAgentTaskStore
-          .recordTask(
-            SubAgentTask(
-              taskId = subagentId,
-              parentSessionId = parentSessionId.getOrElse(""),
-              agentName = agentName,
-              prompt = task,
-              description = description,
-              status = "running",
-              retryCount = 0,
-              spawnedAt = System.currentTimeMillis(),
-              completedAt = None,
-              lastError = None,
-              source = "delegate",
-              // 执行形态随行落任务行（参数决定，恒有值）。
-              mode = Some(modeDecision.mode)
-            )
-          )
-          .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
         _ <- taskId match
           case Some(tid) =>
             IO.blocking(
@@ -1517,9 +1521,40 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             ).attempt
               .void
           case None => IO.unit
+        _ <- resources.subAgentTaskStore
+          .updateRun(parentSessionId.getOrElse(""), subagentId, spawnRunId, executionStatus = Some("running"))
+          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
         _ <- subagentRef ! AgentCommand.UserInput(resolvedBrief, Some(adapterRef))
       yield Right((subagentId, ack))
-      attempt.onError { case _ => cleanup.get.flatten.void }.onCancel(cleanup.get.flatten.void)
+      attempt
+        .onError { case error =>
+          resources.subAgentTaskStore
+            .completeRun(
+              parentSessionId.getOrElse(""),
+              subagentId,
+              spawnRunId,
+              "failed",
+              reason = Some(s"spawn failed: ${error.getMessage}"),
+              incomplete = true,
+              notifyParent = false
+            )
+            .attempt
+            .void *> cleanup.get.flatten.void
+        }
+        .onCancel(
+          resources.subAgentTaskStore
+            .completeRun(
+              parentSessionId.getOrElse(""),
+              subagentId,
+              spawnRunId,
+              "failed",
+              reason = Some("Spawn admission cancelled"),
+              incomplete = true,
+              notifyParent = false
+            )
+            .attempt
+            .void *> cleanup.get.flatten.void
+        )
     }
 
   end spawnWithPlugins

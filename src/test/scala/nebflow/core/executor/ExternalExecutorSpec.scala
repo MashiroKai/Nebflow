@@ -54,11 +54,14 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     ).flatMap(ExternalExecutor.ClaudeCode.parseLine)
 
     assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s }, List(Some("sess-9f13")))
-    assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }, List("Planning the move.", "Done."))
+    assertEquals(
+      frames.collect { case ExternalExecutor.Frame.MessageComplete(_, blocks) => blocks.map(_.text) }.flatten,
+      List("Planning the move.", "Done.")
+    )
     assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, List("Bash", "Read"))
     assertEquals(
-      frames.collect { case f: ExternalExecutor.Frame.Final => f },
-      List(ExternalExecutor.Frame.Final("Moved the file.", failed = false))
+      frames.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((Some("Moved the file."), false))
     )
   }
 
@@ -66,7 +69,10 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     val err = ExternalExecutor.ClaudeCode.parseLine(
       """{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}"""
     )
-    assertEquals(err, List(ExternalExecutor.Frame.Final("boom", failed = true)))
+    assertEquals(
+      err.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((Some("boom"), true))
+    )
 
     val noise = List("", "   ", "not json at all", "[1,2,3]", """{"type":"other"}""")
       .flatMap(ExternalExecutor.ClaudeCode.parseLine)
@@ -102,7 +108,10 @@ class ExternalExecutorSpec extends CatsEffectSuite:
       assert(!granted.contains((tmp / "plugin-repos").toString), granted.mkString(" "))
       // 白名单制：数据根本体与凭据件形态永不出现在 argv。
       assert(!fresh.contains(tmp.toString), fresh.mkString(" "))
-      assert(!fresh.exists(a => a.toLowerCase.contains("secrets") || a.toLowerCase.contains("auth")), fresh.mkString(" "))
+      assert(
+        !fresh.exists(a => a.toLowerCase.contains("secrets") || a.toLowerCase.contains("auth")),
+        fresh.mkString(" ")
+      )
 
       // resume：--resume 对追加在 argv 尾部。
       val resume = ExternalExecutor.ClaudeCode.launchArgs("continue", Some("sess-9f13"))
@@ -135,11 +144,20 @@ class ExternalExecutorSpec extends CatsEffectSuite:
 
     assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s }, List(Some("th-77")))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, List("cargo"))
-    assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }, List("Tests pass."))
-    assert(frames.collect { case f: ExternalExecutor.Frame.Final => f }.isEmpty)
+    assertEquals(
+      frames.collect { case ExternalExecutor.Frame.MessageComplete(_, blocks) => blocks.map(_.text) }.flatten,
+      List("Tests pass.")
+    )
+    assertEquals(
+      frames.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((None, false))
+    )
 
     val failed = ExternalExecutor.Codex.parseLine("""{"type":"turn.failed","error":{"message":"sandbox denied"}}""")
-    assertEquals(failed, List(ExternalExecutor.Frame.Final("sandbox denied", failed = true)))
+    assertEquals(
+      failed.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((None, true))
+    )
   }
 
   test("codex launchArgs: fresh = exec --json (repo check skipped); resume = exec resume") {
@@ -174,10 +192,10 @@ class ExternalExecutorSpec extends CatsEffectSuite:
       List(Some("sess_95edc895-c65b-445d-9d84-f1ec5605b5cc"))
     )
     assertEquals(
-      frames.collect { case f: ExternalExecutor.Frame.Final => f.text },
+      frames.collect { case f: ExternalExecutor.Frame.ExecutionEnd => f.result.getOrElse("") },
       List("ok — done \"quickly\"\nsecond line")
     )
-    assertEquals(frames.collect { case f: ExternalExecutor.Frame.Final => f.failed }, List(false))
+    assertEquals(frames.collect { case f: ExternalExecutor.Frame.ExecutionEnd => f.failed }, List(false))
   }
 
   test("zcode stream-json 兼容方言: 事件流 JSONL → Start/Text/Tool；紧凑 result 行 → Start+Final") {
@@ -194,8 +212,8 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }, List("Working."))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, List("Bash"))
     assertEquals(
-      frames.collect { case f: ExternalExecutor.Frame.Final => f },
-      List(ExternalExecutor.Frame.Final("All done.", failed = false))
+      frames.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((Some("All done."), false))
     )
   }
 
@@ -203,14 +221,17 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     val failed = ExternalExecutor.ZCode.parseLine(
       """{"type":"turn.failed","sessionId":"sess_x","payload":{"message":"provider unreachable"}}"""
     )
-    assertEquals(failed, List(ExternalExecutor.Frame.Final("provider unreachable", failed = true)))
+    assertEquals(
+      failed.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((None, true))
+    )
 
     val errSummary = ExternalExecutor.ZCode.parseLine(
       """{"type":"result","sessionId":"sess_x","response":"partial","projection":{"status":"error"}}"""
     )
     assertEquals(
-      errSummary,
-      List(ExternalExecutor.Frame.Start(Some("sess_x")), ExternalExecutor.Frame.Final("partial", failed = true))
+      errSummary.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((Some("partial"), true))
     )
 
     val noise =
@@ -234,8 +255,8 @@ class ExternalExecutorSpec extends CatsEffectSuite:
       "\u001b[2K\u001b[1G" + """{"type":"result","sessionId":"sess_ansi","response":"done","projection":{"status":"idle"}}"""
     )
     assertEquals(
-      prefixed,
-      List(ExternalExecutor.Frame.Start(Some("sess_ansi")), ExternalExecutor.Frame.Final("done", failed = false))
+      prefixed.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((Some("done"), false))
     )
     // JSON 字符串值内的 ESC 以 6 字符转义形态上线——剥离器只碰 raw 字节，载荷无损。
     val wireEsc = "\\" + "u001b[31mRED" // 线上形态（无 raw ESC）；经 circe 解码 = raw ESC + "[31m" + "RED"
@@ -270,13 +291,72 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     val frames = realSample.flatMap(ExternalExecutor.ZCode.parseLine)
 
     // 全流只有一台 Start（result 行带 sessionId；session.created 本采样未发）。
-    assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s }, List(Some("sess_769d2175-2590-4543-a375-1d93da2343a2")))
+    assertEquals(
+      frames.collect { case ExternalExecutor.Frame.Start(s) => s },
+      List(Some("sess_769d2175-2590-4543-a375-1d93da2343a2"))
+    )
     // 分片重组 = 终局 response（PROBE-OK），证明 text_delta 通道无损。
     assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }.mkString, "PROBE-OK")
     assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, Nil)
     assertEquals(
-      frames.collect { case f: ExternalExecutor.Frame.Final => f },
-      List(ExternalExecutor.Frame.Final("PROBE-OK", failed = false))
+      frames.collect { case f: ExternalExecutor.Frame.ExecutionEnd => (f.result, f.failed) },
+      List((Some("PROBE-OK"), false))
+    )
+  }
+
+  test("Claude adapter preserves assistant identity and original content block indexes") {
+    val frames = ExternalExecutor.ClaudeCode.parseLine(
+      """{"type":"assistant","message":{"id":"message-1","content":[{"type":"text","text":"First"},{"type":"tool_use","name":"Read"},{"type":"text","text":"Second"}]}}"""
+    )
+    assertEquals(
+      frames.collect { case frame: ExternalExecutor.Frame.MessageComplete => frame },
+      List(
+        ExternalExecutor.Frame.MessageComplete(
+          Some("message-1"),
+          List(
+            ExternalExecutor.Frame.ContentBlock(0, "First"),
+            ExternalExecutor.Frame.ContentBlock(2, "Second")
+          )
+        )
+      )
+    )
+    assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(name) => name }, List("Read"))
+  }
+
+  test("Claude result UUID is not an assistant correlation identity") {
+    val frames = ExternalExecutor.ClaudeCode.parseLine(
+      """{"type":"result","uuid":"result-event","session_id":"session","subtype":"success","result":"Done"}"""
+    )
+    val end = frames.collectFirst { case frame: ExternalExecutor.Frame.ExecutionEnd => frame }.get
+    assertEquals(end.messageId, None)
+    assertEquals(end.metadata.hcursor.get[String]("uuid").toOption, Some("result-event"))
+    assertEquals(end.result, Some("Done"))
+  }
+
+  test("Codex adapter retains stable item identity and recognizes successful turn completion") {
+    val frames = ExternalExecutor.Codex.parseLine(
+      """{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"blocked: need access"}}"""
+    ) ++ ExternalExecutor.Codex.parseLine("""{"type":"turn.completed","usage":{"input_tokens":7}}""")
+    assertEquals(
+      frames.head,
+      ExternalExecutor.Frame.MessageComplete(
+        Some("item-1"),
+        List(ExternalExecutor.Frame.ContentBlock(0, "blocked: need access"))
+      )
+    )
+    val end = frames.collectFirst { case frame: ExternalExecutor.Frame.ExecutionEnd => frame }.get
+    assert(!end.failed)
+    assertEquals(end.result, None)
+    assertEquals(end.metadata.hcursor.downField("usage").get[Int]("input_tokens").toOption, Some(7))
+  }
+
+  test("Malformed adapter lines do not poison subsequent valid input") {
+    ExternalExecutor.all.foreach { adapter =>
+      assertEquals(adapter.parseLine("{\"type\":"), Nil)
+    }
+    assertEquals(
+      ExternalExecutor.Codex.parseLine("""{"type":"thread.started","thread_id":"after-malformed"}"""),
+      List(ExternalExecutor.Frame.Start(Some("after-malformed")))
     )
   }
 
@@ -292,7 +372,10 @@ class ExternalExecutorSpec extends CatsEffectSuite:
 
   test("selection: absent param + 无配置 ⇒ 内置 nebflow（hermetic——注入空 settings，不吃机器配置）") {
     val bare = ExecutorRegistry.Settings(None, Nil)
-    assertEquals(ExecutorRegistry.resolveRequested(None, settings = bare), Right(ExecutorRegistry.ResolvedSelection.Internal))
+    assertEquals(
+      ExecutorRegistry.resolveRequested(None, settings = bare),
+      Right(ExecutorRegistry.ResolvedSelection.Internal)
+    )
     assertEquals(
       ExecutorRegistry.resolveRequested(Some(""), settings = bare),
       Right(ExecutorRegistry.ResolvedSelection.Internal)

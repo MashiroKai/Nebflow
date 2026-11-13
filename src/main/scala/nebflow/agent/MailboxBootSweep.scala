@@ -44,6 +44,7 @@ object MailboxBootSweep:
   private val logger = NebflowLogger.forName("nebflow.agent.mailbox-boot-sweep")
 
   final case class Report(tmpSwept: Int = 0, synthesized: List[String] = Nil, boxesNonEmpty: Int = 0):
+
     def summary: String =
       s"tmpSwept=$tmpSwept synthesized=${synthesized.size} (${synthesized.mkString(",")}) boxesNonEmpty=$boxesNonEmpty"
 
@@ -51,7 +52,9 @@ object MailboxBootSweep:
   // private 类会让 public given 触发泄露检查、private given 又对调用点不可见——
   // 类保持嵌套 public 即两端成立。
   final case class BootEpoch(v: Int = 1, lastBootMs: Long = 0L, thisBootMs: Long = 0L)
+
   object BootEpoch:
+
     given io.circe.Encoder[BootEpoch] = io.circe.Encoder.instance { e =>
       io.circe.Json.obj(
         "v" -> e.v.asJson,
@@ -59,6 +62,7 @@ object MailboxBootSweep:
         "thisBootMs" -> e.thisBootMs.asJson
       )
     }
+
     given io.circe.Decoder[BootEpoch] = io.circe.Decoder.instance { c =>
       for
         v <- c.get[Option[Int]]("v")
@@ -97,6 +101,7 @@ object MailboxBootSweep:
   ): IO[Report] =
     for
       swept <- SessionMailbox.sweepTmpAll()
+      _ <- nebflow.core.executor.ExternalSessionRunner.recoverPendingNotifications(store, sessionStore)
       epoch <- rollEpoch(nowMs)
       rows <- terminalDelegateRows(store)
       candidates =
@@ -137,7 +142,7 @@ object MailboxBootSweep:
             decode[List[SubAgentTask]](os.read(f)) match
               case Right(list) =>
                 list.filter(t =>
-                  t.source != "subtask" && Set("completed", "failed", "cancelled").contains(t.status)
+                  t.source != "subtask" && t.runId.isEmpty && Set("completed", "failed", "cancelled").contains(t.status)
                 )
               case Left(_) => Nil
           }
@@ -170,7 +175,8 @@ object MailboxBootSweep:
             identityPrefix = s"${t.taskId}#"
             genBearing = (e: SessionMailbox.Entry) => e.identity == t.taskId || e.identity.startsWith(identityPrefix)
             tombstonedAnyGen <- SessionMailbox.deliveredContainsPrefix(t.parentSessionId, identityPrefix)
-            accounted = pending.exists(genBearing) || taken.exists(genBearing) || tombstoned.nonEmpty || tombstonedAnyGen
+            accounted = pending
+              .exists(genBearing) || taken.exists(genBearing) || tombstoned.nonEmpty || tombstonedAnyGen
             result <-
               if accounted then IO.pure(None) // 条目在盘（待消费/消费中）或已消费——账信相符，零动作
               else

@@ -55,7 +55,14 @@ private[agent] object MailboxDrain:
 
   /** drain 产出事件的 viaMailbox 标（旧机器判别位：标记/ack 面对邮箱件零动作）。 */
   private def stamped(e: SessionMailbox.Entry): AgentCommand.ExternalEvent =
-    e.event.copy(metadata = e.event.metadata.deepMerge(JsonObject("viaMailbox" -> true.asJson)))
+    e.event.copy(metadata =
+      e.event.metadata.deepMerge(
+        JsonObject(
+          "viaMailbox" -> true.asJson,
+          "mailboxIdentity" -> e.identity.asJson
+        )
+      )
+    )
 
   /**
    * W2 批门禁（纯函数，spec 判红锚）。入参必须已按 seq 序。
@@ -157,7 +164,16 @@ private[agent] object MailboxDrain:
 
   /** 消费完成清除（装配点调用；幂等）。 */
   def unlinkConsumed(sid: String, events: List[AgentCommand.ExternalEvent]): IO[Unit] =
-    SessionMailbox.unlinkTaken(sid, events.map(_.correlationId.getOrElse("")).filter(_.nonEmpty))
+    SessionMailbox.unlinkTaken(
+      sid,
+      events.flatMap { event =>
+        event
+          .metadata("mailboxIdentity")
+          .flatMap(_.asString)
+          .filter(_.nonEmpty)
+          .orElse(event.correlationId.filter(_.nonEmpty))
+      }
+    )
 
   // ── 呈现组装（逐字保留既有注入管线形态）──────────────────────────────
 

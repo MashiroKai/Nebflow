@@ -9,7 +9,9 @@ import { renderProviderFailureStatus } from './providerFailureStatus.js';
 // The user opens the popup by clicking the bg-agent dropdown entry.
 
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
-import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
+import { sendWs, onMessage, onReconnect, setBgAgentStepInterceptor } from './ws.js';
+import { listScopedTasks, onDurableTasksChanged, refreshScopedTasks } from './delegateChainProvider.js';
+import { taskExecutionPresentation } from './subagentRevision.js';
 import { restoreFromBackendHistory } from './persistence.js';
 import { isBgAgentId, truncateMiddle, shouldFollowBottom, initScrollFollow, statusIcon } from './utils.js';
 import state from './state.js';
@@ -466,6 +468,47 @@ function resetCardWidths(container) {
 
 // ── Open popup ────────────────────────────────────────────
 
+let durableHistoryTimer = null;
+const dirtyDurableHistories = new Set();
+function refreshDurablePopupHistory() {
+  const entry = stepViews.get(currentStepId);
+  if (!entry?.view.visible) return;
+  if (entry.view.pagination.pendingInitialLoad) {
+    dirtyDurableHistories.add(currentStepId);
+    return;
+  }
+  dirtyDurableHistories.delete(currentStepId);
+  entry.view.pagination.pendingInitialLoad = true;
+  sendWs({ type: 'getHistory', sessionId: currentStepId, limit: BG_PAGE_LIMIT });
+}
+
+function applyDurableTaskMeta(entry, row) {
+  const execution = taskExecutionPresentation(row);
+  if (!execution) return;
+  entry.meta.executionStatus = row.executionStatus;
+  entry.meta.terminalReason = row.terminalReason;
+  entry.meta.incomplete = row.incomplete === true;
+  entry.meta.status = execution.state === 'pending-recovery' ? 'stopped'
+    : execution.state === 'error' ? 'failed'
+      : execution.state === 'done' ? 'done' : 'running';
+}
+
+onDurableTasksChanged((rows) => {
+  const row = rows.find(task => task.taskId === currentStepId);
+  if (!row) return;
+  const entry = stepViews.get(currentStepId);
+  if (entry && row.executionStatus) {
+    applyDurableTaskMeta(entry, row);
+    updateFooterStatus(entry);
+  }
+  if (durableHistoryTimer) return;
+  durableHistoryTimer = setTimeout(() => {
+    durableHistoryTimer = null;
+    refreshDurablePopupHistory();
+  }, 150);
+});
+onReconnect(refreshDurablePopupHistory);
+
 export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   closeStepPopup();
   currentStepId = nodeSessionId;
@@ -476,6 +519,13 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   // snapshot kind from activeAgents refines when present (backend gap: kind
   // arrives via sessionBgAgents once main.js stores it).
   entry.meta.kind = entry.meta.kind || 'Delegate';
+  const durable = listScopedTasks(state.activeSessionId).find(row => row.taskId === nodeSessionId);
+  if (durable) {
+    applyDurableTaskMeta(entry, durable);
+    entry.meta.startedAt = durable.spawnedAt;
+    entry.meta.kind = durable.source === 'external' ? 'External' : entry.meta.kind;
+  }
+  refreshScopedTasks();
   for (const byRoot of Object.values(state.sessionBgAgents || {})) {
     const row = byRoot && byRoot[nodeSessionId];
     if (row) {
@@ -904,6 +954,10 @@ export function handleBgAgentHistory(msg) {
   const isInitialLoad = view.pagination.pendingInitialLoad;
   if (isInitialLoad) {
     view.pagination.pendingInitialLoad = false;
+    if (dirtyDurableHistories.has(msg.sessionId)) {
+      dirtyDurableHistories.delete(msg.sessionId);
+      setTimeout(refreshDurablePopupHistory, 0);
+    }
     // ── Container reconciliation (rework round 1) ───────────────────────
     // This branch used to wipe the container unconditionally and rebuild it
     // from the frame alone. That is sound only when the frame can reproduce
@@ -1099,6 +1153,11 @@ function updateFooterStatus(entry) {
       taskEl.textContent = entry.meta.task || 'Session';
     }
   }
+  const durableExecution = taskExecutionPresentation(entry.meta);
+  if (taskEl && durableExecution) {
+    taskEl.title = durableExecution.reason;
+    if (durableExecution.reason) taskEl.textContent = durableExecution.reason;
+  }
   // Phase text (#343): granular activity — thinking / tool / responding.
   const phaseEl = entry.footerEl.querySelector('.fa-phase');
   if (phaseEl) {
@@ -1115,11 +1174,13 @@ function updateFooterStatus(entry) {
       stuck: 'Stuck',
       stopped: 'Stopped',
     };
-    const text = phaseMap[status] || '';
+    const execution = taskExecutionPresentation(entry.meta);
+    const text = execution?.label || phaseMap[status] || '';
     phaseEl.textContent = text;
     // Unified panel spec §7: long text → single-line ellipsis + title with
     // the full text (hover tooltip). Non-tool phases are short — no tooltip.
-    phaseEl.title = (status === 'tool' && fullLabel) ? `Using tool: ${fullLabel}` : '';
+    phaseEl.title = execution ? [execution.label, execution.reason].filter(Boolean).join(' · ')
+      : (status === 'tool' && fullLabel) ? `Using tool: ${fullLabel}` : '';
     phaseEl.style.display = text ? '' : 'none';
   }
   // Management cluster: state-linked buttons + permission matrix.

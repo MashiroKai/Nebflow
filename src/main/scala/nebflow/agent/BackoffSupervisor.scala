@@ -178,54 +178,63 @@ object BackoffSupervisor:
       val checksDoneRef = Ref.unsafe[IO, Long](0L)
       val lastSeenWaitRef = Ref.unsafe[IO, Int](0)
       val nextCheckAtRef = Ref.unsafe[IO, Long](0L)
-      budgetArmedIO *> ctx.watch(childRef) *>
-        logger
-          .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)") *>
-        nebflow.core.mail.CompletionDebtStore
-          .pending(subagentId)
-          .flatMap {
-            case Right(Some(debt)) if debt.phase == "cancelled" || debt.phase == "settled" => IO.unit
-            case Right(Some(debt)) if debt.ownerSessionId == subagentId && debt.recipientSessionId == parentSessionId =>
-              (ctx.self ! AgentEvent.Completed(subagentId, debt.messages)).void
-            case Right(Some(debt)) =>
-              logger.error(
-                s"completion debt recipient mismatch for '$subagentId': expected '$parentSessionId', found '${debt.recipientSessionId}'"
+      resources.subAgentTaskStore.findByTaskId(subagentId).flatMap { admittedTask =>
+        val runMetadata =
+          admittedTask.flatMap(_.runId).fold(extraMetadata)(id => extraMetadata.add("taskRunId", id.asJson))
+        budgetArmedIO *> ctx.watch(childRef) *>
+          logger
+            .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)") *>
+          nebflow.core.mail.CompletionDebtStore
+            .pending(subagentId)
+            .flatMap {
+              case Right(Some(debt)) if debt.phase == "cancelled" || debt.phase == "settled" => IO.unit
+              case Right(Some(debt))
+                  if admittedTask.exists(_.runId.nonEmpty) &&
+                    !debt.roundId.exists(id => admittedTask.flatMap(_.runId).contains(id)) =>
+                IO.unit
+              case Right(Some(debt))
+                  if debt.ownerSessionId == subagentId && debt.recipientSessionId == parentSessionId =>
+                (ctx.self ! AgentEvent.Completed(subagentId, debt.messages)).void
+              case Right(Some(debt)) =>
+                logger.error(
+                  s"completion debt recipient mismatch for '$subagentId': expected '$parentSessionId', found '${debt.recipientSessionId}'"
+                )
+              case Left(error) => logger.error(s"completion debt unavailable for '$subagentId': $error")
+              case Right(None) => IO.unit
+            }
+            .as(
+              active(
+                childRef,
+                childSpawnFn,
+                childName,
+                parentRef,
+                description,
+                agentName,
+                subagentId,
+                parentSessionId,
+                resources,
+                initialPrompt,
+                source,
+                runMetadata,
+                wsSend,
+                restartCount = 0,
+                restartHistory = Nil,
+                minBackoff,
+                maxBackoff,
+                maxRestarts,
+                withinTimeRange,
+                completionCapMs,
+                bgIdleCapMs,
+                checkBackoffMs,
+                backgroundHeld,
+                completionCapArm,
+                completionCapFired,
+                checksDoneRef,
+                lastSeenWaitRef,
+                nextCheckAtRef
               )
-            case Left(error) => logger.error(s"completion debt unavailable for '$subagentId': $error")
-            case Right(None) => IO.unit
-          }
-          .as(
-            active(
-              childRef,
-              childSpawnFn,
-              childName,
-              parentRef,
-              description,
-              agentName,
-              subagentId,
-              parentSessionId,
-              resources,
-              initialPrompt,
-              source,
-              extraMetadata,
-              wsSend,
-              restartCount = 0,
-              restartHistory = Nil,
-              minBackoff,
-              maxBackoff,
-              maxRestarts,
-              withinTimeRange,
-              completionCapMs,
-              bgIdleCapMs,
-              checkBackoffMs,
-              backgroundHeld,
-              completionCapArm,
-              completionCapFired,
-              checksDoneRef,
-              lastSeenWaitRef,
-              nextCheckAtRef
             )
-          )
+      }
     }
 
   /**
@@ -290,6 +299,15 @@ object BackoffSupervisor:
   ): Behavior[AgentEvent] =
     new Behavior[AgentEvent]:
       def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+        extraMetadata("taskRunId").flatMap(_.asString) match
+          case None => receiveCurrent(ctx, event)
+          case Some(run) =>
+            resources.subAgentTaskStore.findByTaskId(subagentId).flatMap {
+              case Some(task) if task.runId.contains(run) => receiveCurrent(ctx, event)
+              case _ => (childRef ! AgentCommand.Stop(s"$source-stale-run")).as(Behaviors.stopped[AgentEvent])
+            }
+
+      private def receiveCurrent(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
         // 四修①（2026-10-07 修复令「空轮≠完成」）的正常完成体（空轮判据不中时
         // 原样走——逐字保持既有行为）。
         def completeNormally(
@@ -1082,9 +1100,24 @@ object BackoffSupervisor:
               )
             end if
         end match
-      end receive
+      end receiveCurrent
+
+      private def requireCurrentRun: IO[Unit] = extraMetadata("taskRunId").flatMap(_.asString) match
+        case None => IO.unit
+        case Some(run) =>
+          resources.subAgentTaskStore
+            .updateRun(parentSessionId, subagentId, run)
+            .flatMap(
+              _.fold(reason => IO.raiseError(new IllegalStateException(s"Run no longer active: $reason")), _ => IO.unit)
+            )
 
       override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+        requireCurrentRun.attempt.flatMap {
+          case Left(_) => IO.pure(Behaviors.stopped[AgentEvent])
+          case Right(_) => onCurrentSignal(ctx, signal)
+        }
+
+      private def onCurrentSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
         signal match
           case SystemSignal.Terminated(_) =>
             val now = System.currentTimeMillis()
@@ -1125,7 +1158,7 @@ object BackoffSupervisor:
                    ))
             end if
         end match
-      end onSignal
+      end onCurrentSignal
 
       /**
        * 错误冻结腿（错误冻结批 2026-11-01 · 作者令「所有因错误状态的 delegate 应该
@@ -1214,7 +1247,15 @@ object BackoffSupervisor:
         )
         val persistAndAnnounce =
           nebflow.core.delegate.DelegateFreeze
-            .park(resources, subagentId, parentSessionId, reason, d, trigger = trigger)
+            .park(
+              resources,
+              subagentId,
+              parentSessionId,
+              reason,
+              d,
+              trigger = trigger,
+              expectedRunId = extraMetadata("taskRunId").flatMap(_.asString)
+            )
             .flatMap { frozenAt =>
               nebflow.core.delegate.DelegateFreeze.markRegistryState(resources, subagentId, reason) *>
                 DelegateBudget.release(subagentId) *>
@@ -1468,14 +1509,25 @@ object BackoffSupervisor:
           // 评估等待集。（刀一：在途 Tick 靠臂号作废，不能 cancel。）
           _ <- completionCapArm.update(_ + 1L) *> backgroundHeld.set(false) *> completionCapFired.set(false)
           _ <- notifyIO
-          _ <- resources.subAgentTaskStore
-            .updateStatus(
-              parentSessionId,
-              subagentId,
-              "restarting",
-              retryCount = Some(newRestartCount)
-            )
-            .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
+          _ <- (extraMetadata("taskRunId").flatMap(_.asString) match
+            case Some(run) =>
+              resources.subAgentTaskStore
+                .updateRun(
+                  parentSessionId,
+                  subagentId,
+                  run,
+                  executionStatus = Some("running"),
+                  diagnostic = Some(s"supervisor retry $newRestartCount")
+                )
+                .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+            case None =>
+              resources.subAgentTaskStore.updateStatus(
+                parentSessionId,
+                subagentId,
+                "restarting",
+                retryCount = Some(newRestartCount)
+              )
+          )
           _ <- IO.sleep(delay.millis)
           // Spec C2 (restart): registry 记录跨 respawn 刷新——先取崩溃前
           // 记录，spawn 后以新 ref 回写。缺了这步 respawn 的 child 会从
@@ -1484,6 +1536,7 @@ object BackoffSupervisor:
           // pending ask 卡是僵尸卡（答了也没人接），respawn 后新 child 会
           // 重新提问（新 requestId）。清理 = 移除全部 sourceSession 命中的
           // hub 槽 + 广播 askUserClosed（前端待办条行消失，重连不再重放）。
+          _ <- requireCurrentRun
           _ <- cleanupPendingAsks(resources, subagentId)
           // 预算：旧通道释放（respawn 视为一次新的执行窗口 → 重新计时）。
           _ <- DelegateBudget.release(subagentId)
@@ -1516,6 +1569,7 @@ object BackoffSupervisor:
             legacyText = nudgeText
           )
           _ <- IO(nebflow.core.ResumeHandoff.logPlan(subagentId, handoff, nebflow.core.ResumeHandoff.Cause.Crash))
+          _ <- requireCurrentRun
           newChild <- childSpawnFn(ctx.system, handoff.transcript)
           _ <- ctx.watch(newChild)
           // Spec C2: 回写 registry（新 ref + supervisor 指向自己 + 活动时
@@ -1816,24 +1870,18 @@ object BackoffSupervisor:
               .handleErrorWith(e => logger.warn(s"delegate terminal cleanup failed: ${e.getMessage}").void)
           else IO.unit
 
-        val taskUpdate = resources.subAgentTaskStore
-          .updateStatus(
-            parentSessionId,
-            subagentId,
-            taskStatus,
-            completedAt = Some(System.currentTimeMillis()),
-            lastError = if taskStatus != "completed" then Some(payload) else None
-          )
-          .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
-
+        val capturedRun = extraMetadata("taskRunId").flatMap(_.asString)
         // Silent-completion diagnostic rides its own channel (dedicated store method
         // — a defaulted tail param on updateStatus would recreate the prefix-overload
         // ambiguity markRevived already avoided). None = no-op write, so the normal
         // completion path stays zero-extra-work. lastError stays None on completed
         // rows, so the panel can tell "worked silently" from "failed" at a glance.
-        val diagWrite = resources.subAgentTaskStore
-          .setDiagnostic(parentSessionId, subagentId, diagnostic)
-          .handleErrorWith(e => logger.warn(s"subAgentTaskStore diagnostic write failed: ${e.getMessage}"))
+        val diagWrite =
+          if capturedRun.nonEmpty then IO.unit
+          else
+            resources.subAgentTaskStore
+              .setDiagnostic(parentSessionId, subagentId, diagnostic)
+              .handleErrorWith(e => logger.warn(s"subAgentTaskStore diagnostic write failed: ${e.getMessage}"))
 
         // ═══ #2141/#2178 代际身份 ══════════════════════════════════════════
         // 终态事件与入箱幂等键都携带**持久稳定 generation**（债上铸造、随债落盘，
@@ -1852,20 +1900,47 @@ object BackoffSupervisor:
                 case _ => ""
               }
               .handleErrorWith(_ => IO.pure(""))
-          else IO.pure("")
+          else IO.pure(capturedRun.getOrElse(""))
 
-        val notify: IO[Unit] = completionGenerationIO.flatMap { completionGeneration =>
+        def terminalEventFor(completionGeneration: String): AgentCommand.ExternalEvent =
           val eventMetadata = metadata
             .add("parentSessionId", parentSessionId.asJson)
             .add("completionMessages", completionMessages.getOrElse(Nil).asJson)
             .add("completionGeneration", completionGeneration.asJson)
-          val terminalEvent = AgentCommand.ExternalEvent(
-            source = source,
-            eventType = eventType,
-            payload = payload,
-            metadata = eventMetadata,
-            correlationId = Some(subagentId)
-          )
+          AgentCommand.ExternalEvent(source, eventType, payload, eventMetadata, Some(subagentId))
+
+        def taskUpdate: IO[Boolean] = capturedRun match
+          case Some(runId) =>
+            completionGenerationIO.flatMap { generation =>
+              val event = terminalEventFor(generation)
+              resources.sessionStore.saveTerminalEnvelope(subagentId, runId, event).flatMap { reference =>
+                resources.subAgentTaskStore
+                  .completeRun(
+                    parentSessionId,
+                    subagentId,
+                    runId,
+                    if taskStatus == "completed" then "finished" else taskStatus,
+                    reason = Option.when(taskStatus != "completed")(payload),
+                    resultRef = Some(reference),
+                    diagnostic = diagnostic,
+                    notificationId = Some(if generation.isEmpty then subagentId else s"$subagentId#$generation")
+                  )
+                  .map(_.isRight)
+              }
+            }
+          case None =>
+            resources.subAgentTaskStore
+              .updateStatus(
+                parentSessionId,
+                subagentId,
+                taskStatus,
+                completedAt = Some(System.currentTimeMillis()),
+                lastError = Option.when(taskStatus != "completed")(payload)
+              )
+              .as(true)
+
+        val notify: IO[Unit] = completionGenerationIO.flatMap { completionGeneration =>
+          val terminalEvent = terminalEventFor(completionGeneration)
           val terminalIdentity =
             if completionGeneration.isEmpty then subagentId else s"$subagentId#$completionGeneration"
           // ═══ P2 邮箱化（终态通知 actor 邮箱化批，作者 11-01 批准实施）═════════
@@ -1884,7 +1959,7 @@ object BackoffSupervisor:
           // 双发红线：delegate 轨此后**不得**再走旧链（旧 push + 邮箱 = 事故）；
           // subtask 轨逐字保持旧链（P3 全通知面迁移另批）。
           // （原 `val notify` 名让位给外层代际 flatMap——本 if/else 即 lambda 尾表达式）
-          if source == "delegate" then
+          if source == "delegate" || capturedRun.nonEmpty then
             MailboxProducer
               .deliver(
                 resources,
@@ -1896,6 +1971,24 @@ object BackoffSupervisor:
                 producer = "backoff-supervisor"
               )
               .flatMap {
+                case SessionMailbox.MailResult.AlreadyPresent if capturedRun.nonEmpty =>
+                  (
+                    SessionMailbox.scanPending(parentSessionId),
+                    SessionMailbox.scanTaken(parentSessionId),
+                    SessionMailbox.deliveredContains(parentSessionId, Set(terminalIdentity))
+                  ).mapN { (pending, taken, delivered) =>
+                    delivered.contains(terminalIdentity) || (pending ++ taken).exists(entry =>
+                      entry.identity == terminalIdentity && entry.event.source == source &&
+                        entry.event.eventType == eventType && entry.event.payload == payload
+                    )
+                  }.flatMap { confirmed =>
+                    if confirmed then
+                      resources.subAgentTaskStore
+                        .acknowledgeNotification(parentSessionId, subagentId, capturedRun.get, terminalIdentity)
+                        .void
+                    else
+                      logger.error(s"Conflicting terminal mailbox identity $terminalIdentity; pending result retained")
+                  }
                 case SessionMailbox.MailResult.AlreadyPresent =>
                   (SessionMailbox.scanPending(parentSessionId), SessionMailbox.scanTaken(parentSessionId))
                     .mapN(_ ++ _)
@@ -1935,7 +2028,11 @@ object BackoffSupervisor:
                       s"boot reconcile will synthesize a replacement entry from the task ledger"
                   )
                 case SessionMailbox.MailResult.Enqueued(_) | SessionMailbox.MailResult.Coalesced(_) =>
-                  IO.unit // keep debt until consumer ack
+                  capturedRun.fold(IO.unit)(run =>
+                    resources.subAgentTaskStore
+                      .acknowledgeNotification(parentSessionId, subagentId, run, terminalIdentity)
+                      .void
+                  )
               }
           else
             parentRef match
@@ -2066,14 +2163,20 @@ object BackoffSupervisor:
                 IO.pure(Behaviors.stopped[AgentEvent]))
                 .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
           else
-            (delegateCleanup *> clearCancelledDebt *> roundSettleWrite *> notify *> taskUpdate *> diagWrite *> cleanupPendingAsks(
-              resources,
-              subagentId
-            ) *>
-              DelegateBudget.release(subagentId) *>
-              resources.agentRegistry.update(_ - subagentId) *>
-              (childRef ! AgentCommand.Stop(s"$source-complete")) *>
-              IO.pure(Behaviors.stopped[AgentEvent]))
+            taskUpdate
+              .flatMap { accepted =>
+                if !accepted then (childRef ! AgentCommand.Stop(s"$source-stale-run")).as(Behaviors.stopped[AgentEvent])
+                else
+                  (delegateCleanup *> clearCancelledDebt *> roundSettleWrite *> notify *> diagWrite *> cleanupPendingAsks(
+                    resources,
+                    subagentId
+                  ) *>
+                    DelegateBudget.release(subagentId) *>
+                    resources.agentRegistry.update(_ - subagentId) *>
+                    (childRef ! AgentCommand.Stop(s"$source-complete")) *>
+                    IO.pure(Behaviors.stopped[AgentEvent])
+                )
+              }
               // 完成必回报（P5 第二波）：终态链上任何意外逃逸（邮箱写入抛错 / registry
               // / Stop 腿意外）绝不静默吞掉——旧行为 `handleErrorWith(_ => stopped)` 零
               // 日志零留痕，父会话收不到任何东西、任务行可能滞留 running（僵尸行）。

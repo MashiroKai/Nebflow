@@ -245,6 +245,7 @@ object SessionResumption:
     val id = record.id
     val title = displayTitle(record)
     cats.effect.Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+      val admitted = cats.effect.Ref.unsafe[IO, Option[SubAgentTask]](None)
       val attempt: IO[Either[String, InPlaceOutcome]] =
         for
           taskOpt <- deps.resources.subAgentTaskStore.findByTaskId(id).attempt.map(_.toOption.flatten)
@@ -264,13 +265,8 @@ object SessionResumption:
             case Right(transcript) =>
               for
                 // ① 行先翻 running（复活半途再崩 ⇒ 下一 boot 看到诚实的 running 行）。
-                _ <- IO.whenA(parentSid.nonEmpty)(
-                  deps.resources.subAgentTaskStore
-                    .updateStatus(parentSid, id, "running")
-                    .handleErrorWith(e =>
-                      logger.warn(s"[session-resume] task-row flip failed for $id: ${e.getMessage}")
-                    )
-                )
+                _ <- taskOpt.fold(IO.unit)(deps.resources.subAgentTaskStore.resumeObserved)
+                _ <- deps.resources.subAgentTaskStore.findByTaskId(id).flatMap(admitted.set)
                 // ③ 父活引用。
                 parentRef <-
                   if parentSid.isEmpty then IO.pure(None)
@@ -447,27 +443,22 @@ object SessionResumption:
         ).attempt
           .void *>
         IO.blocking(DelegateRegistry.unarchive(id)).attempt.void *>
-        deps.resources.subAgentTaskStore
-          .findByTaskId(id)
+        admitted.get
           .flatMap {
-            case Some(task) => deps.resources.subAgentTaskStore.updateStatus(task.parentSessionId, id, "frozen")
-            case None =>
-              deps.resources.subAgentTaskStore.recordTask(
-                SubAgentTask(
-                  taskId = id,
-                  parentSessionId = record.parentSessionId,
-                  agentName = record.executor,
-                  prompt = message,
-                  description = title,
-                  status = "frozen",
-                  retryCount = 0,
-                  spawnedAt = record.createdAt,
-                  completedAt = None,
-                  lastError = Some("Continuation startup failed; manual recovery required"),
-                  source = "delegate",
-                  mode = record.mode
+            case Some(task) if task.runId.nonEmpty =>
+              deps.resources.subAgentTaskStore
+                .completeRun(
+                  task.parentSessionId,
+                  id,
+                  task.runId.get,
+                  "failed",
+                  reason = Some("Continuation startup failed; manual recovery required"),
+                  incomplete = true,
+                  notifyParent = false
                 )
-              )
+                .void
+            case Some(task) => deps.resources.subAgentTaskStore.transitionObserved(task, "frozen")
+            case None => IO.unit
           }
           .attempt
           .void

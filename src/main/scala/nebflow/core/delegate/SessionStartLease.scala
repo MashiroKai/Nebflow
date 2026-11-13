@@ -15,11 +15,15 @@ import java.nio.file.StandardOpenOption
  * existing on-disk locks keep their meaning. Never starts an actor.
  */
 object SessionStartLease:
+  // A probe briefly owns the OS lock. Serialize local acquisition with that probe
+  // so an observer cannot be mistaken for a competing session starter.
+  private val probeGate = new Object
+
   final class SessionBusy extends IllegalStateException("Session initialization or recovery is already in progress")
 
   def exclusive[A](id: String)(action: IO[A]): IO[A] =
     Resource
-      .make(IO.blocking {
+      .make(IO.blocking { probeGate.synchronized {
         require(id.matches("[A-Za-z0-9._-]+"), "Invalid session identity")
         val directory = PathUtil.dataRoot / "workspaces"
         os.makeDir.all(directory)
@@ -34,7 +38,7 @@ object SessionStartLease:
             channel.close()
             throw new SessionBusy
           case error: Throwable => channel.close(); throw error
-      }) { case (channel, lock) =>
+      }}) { case (channel, lock) =>
         IO.blocking {
           try lock.release()
           finally channel.close()
@@ -50,7 +54,7 @@ object SessionStartLease:
    * completion-gate defer; busy checks). Probe failure (IO error) reads as held =
    * conservative side.
    */
-  def isHeld(id: String): Boolean =
+  def isHeld(id: String): Boolean = probeGate.synchronized {
     try
       val directory = PathUtil.dataRoot / "workspaces"
       os.makeDir.all(directory)
@@ -67,5 +71,6 @@ object SessionStartLease:
         case _: Throwable => true
       finally channel.close()
     catch case _: Throwable => true
+  }
 
 end SessionStartLease

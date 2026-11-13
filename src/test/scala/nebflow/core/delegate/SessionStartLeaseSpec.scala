@@ -17,6 +17,19 @@ class SessionStartLeaseSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(previous)
     os.remove.all(root)
 
+  test("concurrent occupancy probes cannot reject a legitimate local starter") {
+    val id = "delegate-probe-race"
+    for
+      _ <- (1 to 200).toList.traverse_ { _ =>
+        (
+          IO.blocking((1 to 25).foreach(_ => SessionStartLease.isHeld(id))),
+          SessionStartLease.exclusive(id)(IO(assert(SessionStartLease.isHeld(id))))
+        ).parTupled.void
+      }
+      _ <- IO(assert(!SessionStartLease.isHeld(id)))
+    yield ()
+  }
+
   test("the session-start lease excludes an independent process and cancellation releases it") {
     val id = "delegate-process-lock"
     val probe = root / "LockProbe.java"

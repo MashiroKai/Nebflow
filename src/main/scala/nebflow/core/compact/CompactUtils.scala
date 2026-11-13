@@ -84,7 +84,7 @@ object CompactUtils:
   /** Replace all ToolResult block content with a short placeholder. */
   private def stripToolResults(messages: List[Message]): List[Message] =
     messages.map {
-      case msg @ Message(_, Right(blocks), _, _) =>
+      case msg @ Message(_, Right(blocks), _, _, _, _) =>
         val stripped = blocks.map {
           case tr: ContentBlock.ToolResult =>
             tr.copy(content = ToolResultPlaceholder)
@@ -154,7 +154,7 @@ object CompactUtils:
   private def dropOrphanHeadToolResults(messages: List[Message]): List[Message] =
     def headIsOrphanResult(msgs: List[Message]): Boolean =
       msgs.headOption match
-        case Some(Message(MessageRole.User, Right(blocks), _, _)) =>
+        case Some(Message(MessageRole.User, Right(blocks), _, _, _, _)) =>
           blocks.nonEmpty && blocks.forall(_.isInstanceOf[ContentBlock.ToolResult])
         case _ => false
     def go(msgs: List[Message]): List[Message] =
@@ -261,7 +261,7 @@ object CompactUtils:
     maxChars: Int = Defaults.DefaultMaxResultSizeChars
   ): List[Message] =
     messages.map {
-      case msg @ Message(_, Right(blocks), _, _) =>
+      case msg @ Message(_, Right(blocks), _, _, _, _) =>
         val stripped = blocks.map {
           case tr @ ContentBlock.ToolResult(toolUseId, content, _)
               if content.length > maxChars && !content.startsWith(PersistedTag) =>

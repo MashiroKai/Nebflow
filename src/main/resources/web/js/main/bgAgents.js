@@ -26,7 +26,9 @@ import { listDelegateRows, listDelegateChildren, getChainByTask } from '../deleg
 import { restoreDelegate, restoreAllDelegates } from '../delegateApi.js';
 // 节点子智能体可见性批（2026-11-07）：节点父的 store 子条目补拉（provider 镜像的唯一
 // 补拉口——读面仍是 delegateChainStub.listDelegateChildren 那一个）。
-import { ensureChildren } from '../delegateChainProvider.js';
+import { ensureChildren, listScopedTasks, refreshScopedTasks } from '../delegateChainProvider.js';
+import { EVENTS } from '../events.js';
+import { taskExecutionPresentation } from '../subagentRevision.js';
 // 来源链批（作者令 2026-11-01 19:23）：孤儿行来源角标升级为名字链——父不可见行的
 // 「挂在谁下面」标注读上层 delegate 名字（bgSourceChain 单点解析；解析不到回退
 // 既有类型词）。
@@ -202,6 +204,8 @@ export function bgAgentKindFromSession(sessionId) {
  *  显式停靠态（引擎 Waiting 状态 / delegateWaiting 帧）——「等合并轮提醒」的显式
  *  等待，不再貌似 Idle 完成。 */
 function bgRowState(info) {
+  const execution = taskExecutionPresentation(info);
+  if (execution) return execution.state;
   if (info.done) return 'done';
   if (info.stuck) return 'stuck';
   // 错误冻结批（2026-11-01）：**错误冻结**优先于 waiting/idle——冻结 = 就地停住
@@ -766,8 +770,17 @@ function bgScopeStoreInfo(child, parentSid) {
     name: String(c.agentName || ''),
     task: String(c.description || c.prompt || ''),
     kind: String(c.source || ''),
-    status: status === 'failed' ? 'Error' : (status === 'completed' || status === 'cancelled') ? 'Idle' : 'Processing',
-    done: status === 'completed' || status === 'cancelled',
+    status: status === 'failed' || c.incomplete ? 'Error' : (status === 'completed' || status === 'cancelled') ? 'Idle' : 'Processing',
+    done: !c.incomplete && (status === 'completed' || status === 'cancelled'),
+    ...(c.executionStatus ? { frozen: false, freeze: null, waiting: null, stuck: null } : {}),
+    executionStatus: String(c.executionStatus || ''),
+    terminalReason: String(c.terminalReason || ''),
+    currentTool: c.activityLabel || c.executionStatus || null,
+    lastActivityMs: Number(c.activityAt) || 0,
+    incomplete: c.incomplete === true,
+    committedRevision: c.committedRevision,
+    runId: c.runId,
+    resultRef: c.resultRef,
     startedAt: Number(c.spawnedAt) || 0,
     retryCount: Number(c.retryCount) || 0,
     diagnostic: String(c.diagnostic || ''),
@@ -1599,7 +1612,17 @@ function bgRowPlan(model, bucketSid) {
  * @returns {{bgAgents: Object, entries: Array<[string, any]>, groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>, rows: Array<Object>, total: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
  */
 function bgPanelModel(bucketSid) {
-  const bgAgents = (bucketSid && state.sessionBgAgents[bucketSid]) || {};
+  const bgAgents = { ...((bucketSid && state.sessionBgAgents[bucketSid]) || {}) };
+  for (const child of listScopedTasks(bucketSid)) {
+    const existing = Object.keys(bgAgents).find(key =>
+      String(bgAgents[key]?.sessionId || key).replace(/^team-/, '') === child.taskId);
+    // Durable status wins; the existing key preserves management/click routing.
+    bgAgents[existing || child.taskId] = {
+      ...(existing ? bgAgents[existing] : {}),
+      ...bgScopeStoreInfo(child, child.parentSessionId),
+      durableTask: true,
+    };
+  }
   const entries = visibleBgAgentEntries(bgAgents);
   const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, bucketSid);
   // 面板三代层级批（2026-11-06）：bucketSid 随计划下传（root 锚合成 + 野判定桶根条款）。
@@ -1944,7 +1967,8 @@ export function bgTaskRowHtml(id, info, opts = {}) {
   // （时间表/退避/探测）不写「已冻结」，只在需要人时写；状态点同款分色（自动恢复族
   // 用既有的 waiting 点，需人介入保持 frozen 点）。
   const freezeKind = rowState === 'frozen' ? freezeKindOf(info) : '';
-  const statusLabel = chainContinued
+  const execution = taskExecutionPresentation(info);
+  const statusLabel = execution ? execution.label : chainContinued
     ? t('subagents.chainRunning')
     : rowState === 'frozen'
       ? t(freezeBadgeKey(freezeKind))
@@ -2313,7 +2337,7 @@ export function bgTaskRowHtml(id, info, opts = {}) {
     '<div class="bg-task-info">' +
       '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
         namePart +
-        bgStatusHtml(statusState, { label: statusLabel, title: chainTip, tone: statusTone }) +
+        bgStatusHtml(statusState, { label: statusLabel, title: execution?.reason || chainTip, tone: statusTone }) +
         uptimePart +
       '</div>' +
       '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' +
@@ -2887,6 +2911,7 @@ export function fetchActiveAgentsOnOpen() {
   if (now - lastActiveAgentsFetchAt < 1000) return;
   lastActiveAgentsFetchAt = now;
   sendWs({ type: 'getActiveAgents' });
+  refreshScopedTasks();
 }
 
 // Sub-agents panel (2026-08-25): any activity on a stuck entry clears the
@@ -2906,7 +2931,8 @@ export function clearBgStuck(msg) {
 // （帧只当触发器，零帧解读——与 delegateChainView / taskList 的同名监听同园口径）。
 // 只在合并载体开着时刷：关着不打扰（下一次打开会读到新镜像）。
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-  window.addEventListener('delegate-chain-mirror-updated', () => {
+  window.addEventListener(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED, () => {
+    updateBgAgentIndicator(null, { keepDropdownOpen: true });
     const dd = activeView && activeView.dom && activeView.dom.bgDropdownEl;
     if (dd && !dd.classList.contains('hidden')) renderBgAgentDropdown();
   });

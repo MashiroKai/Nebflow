@@ -27,7 +27,8 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
 
   private val logger = NebflowLogger.forName("nebflow.subagent-task.store")
 
-  /** 并发写锁（2026-08-18 11:08 重放实证）：多个 Delegate 并发 spawn 时
+  /**
+   * 并发写锁（2026-08-18 11:08 重放实证）：多个 Delegate 并发 spawn 时
    * recordTask/updateStatus 同时 load→modify→save 同一文件——读-改-写竞态
    * 导致任务记录互相覆盖甚至被半写状态解析失败后写空（[]）。load-modify-save
    * 必须整体持锁串行化。ReentrantLock + IO.blocking：JVM 内进程级互斥，
@@ -90,12 +91,193 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       decode[List[SubAgentTask]](os.read(f)) match
         case Right(list) => list
         case Left(err) =>
-          logger.warnSync(s"Failed to parse subagent tasks for $parentSessionId: ${err.getMessage}")
-          Nil
+          throw new IllegalStateException(s"Cannot read subagent tasks for $parentSessionId: ${err.getMessage}")
 
   private def writeTasksSync(parentSessionId: String, tasks: List[SubAgentTask]): Unit =
     ensureBaseDirSync()
-    os.write.over(sessionFile(parentSessionId), tasks.asJson.noSpaces)
+    val target = sessionFile(parentSessionId)
+    val temp = java.nio.file.Files.createTempFile(baseDir.toNIO, ".task-", ".tmp")
+    try
+      java.nio.file.Files.writeString(temp, tasks.asJson.noSpaces)
+      val channel = java.nio.channels.FileChannel.open(temp, java.nio.file.StandardOpenOption.WRITE)
+      try channel.force(true)
+      finally channel.close()
+      java.nio.file.Files.move(
+        temp,
+        target.toNIO,
+        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+      )
+      // Directory fsync is unavailable on some filesystems; atomic visibility still holds.
+      try
+        val directory = java.nio.channels.FileChannel.open(baseDir.toNIO, java.nio.file.StandardOpenOption.READ)
+        try directory.force(true)
+        finally directory.close()
+      catch case _: java.io.IOException | _: UnsupportedOperationException => ()
+    finally java.nio.file.Files.deleteIfExists(temp)
+    end try
+  end writeTasksSync
+
+  private val terminalExecutions = Set("finished", "failed", "cancelled", "interrupted")
+  private val activeExecutions = Set("starting", "running", "waiting-input", "frozen", "restarting")
+
+  private def nextRevision(task: SubAgentTask): Long =
+    Math.addExact(task.committedRevision.getOrElse(0L), 1L)
+
+  private def projectedStatus(execution: String): String = execution match
+    case "finished" => "completed"
+    case "interrupted" => "pending-recovery"
+    case "starting" | "waiting-input" => "running"
+    case other => other
+
+  /** Explicit execution admission. Replaying the same identity never restarts it. */
+  override def beginRun(
+    task: SubAgentTask,
+    runId: String,
+    rootSessionId: String,
+    executor: String
+  ): IO[Either[String, SubAgentTask]] =
+    withLock {
+      require(runId.nonEmpty && rootSessionId.nonEmpty && executor.nonEmpty, "Run ownership must be nonempty")
+      val rows = readTasksSync(task.parentSessionId)
+      val existing = rows.find(_.taskId == task.taskId)
+      existing match
+        case Some(row) if row.runId.contains(runId) => Right((row, false))
+        case Some(row) if row.notificationPending.contains(true) => Left("notification-pending")
+        case Some(row) if row.runId.nonEmpty && !row.executionStatus.exists(terminalExecutions.contains) =>
+          Left("active-run")
+        case _ =>
+          val now = System.currentTimeMillis()
+          val row = task.copy(
+            runId = Some(runId),
+            committedRevision = Some(existing.fold(1L)(nextRevision)),
+            rootSessionId = Some(rootSessionId),
+            executor = Some(executor),
+            status = "running",
+            executionStatus = Some("starting"),
+            statusAt = Some(now),
+            completedAt = None,
+            lastError = None,
+            diagnostic = None,
+            activityAt = None,
+            activityKind = None,
+            activityLabel = None,
+            resultRef = None,
+            terminalReason = None,
+            incomplete = None,
+            notificationId = None,
+            notificationPending = None
+          )
+          writeTasksSync(task.parentSessionId, rows.filterNot(_.taskId == task.taskId) :+ row)
+          upgradeParentOrchestrationMode(task.parentSessionId)
+          Right((row, true))
+      end match
+    }.flatMap(publishRunWrite)
+
+  private def publishRunWrite(result: Either[String, (SubAgentTask, Boolean)]): IO[Either[String, SubAgentTask]] =
+    result match
+      case Left(reason) => IO.pure(Left(reason))
+      case Right((row, changed)) => (if changed then fireWriteHook(row) else IO.unit).as(Right(row))
+
+  private def mutateRun(parentSessionId: String, taskId: String, runId: String)(
+    change: SubAgentTask => Either[String, SubAgentTask]
+  ): IO[Either[String, SubAgentTask]] =
+    withLock {
+      val rows = readTasksSync(parentSessionId)
+      rows.find(_.taskId == taskId) match
+        case None => Left("task-not-found")
+        case Some(row) if !row.runId.contains(runId) => Left("stale-run")
+        case Some(row) =>
+          change(row).map { updated =>
+            if updated == row then (row, false)
+            else
+              val committed = updated.copy(committedRevision = Some(nextRevision(row)))
+              writeTasksSync(parentSessionId, rows.map(t => if t.taskId == taskId then committed else t))
+              (committed, true)
+          }
+    }.flatMap(publishRunWrite)
+
+  /** Activity is a committed observation, not a synthetic liveness heartbeat. */
+  override def updateRun(
+    parentSessionId: String,
+    taskId: String,
+    runId: String,
+    executionStatus: Option[String] = None,
+    activityAt: Option[Long] = None,
+    activityKind: Option[String] = None,
+    activityLabel: Option[String] = None,
+    diagnostic: Option[String] = None
+  ): IO[Either[String, SubAgentTask]] =
+    mutateRun(parentSessionId, taskId, runId) { row =>
+      if row.executionStatus.exists(terminalExecutions.contains) then Left("terminal-run")
+      else if executionStatus.exists(s => !activeExecutions.contains(s)) then Left("invalid-active-status")
+      else if row.executionStatus.contains("running") && executionStatus.contains("starting") then
+        Left("status-regression")
+      else if activityAt.exists(at => row.activityAt.exists(_ > at)) then Left("stale-activity")
+      else
+        Right(
+          row.copy(
+            status = executionStatus.fold(row.status)(projectedStatus),
+            executionStatus = executionStatus.orElse(row.executionStatus),
+            statusAt =
+              if executionStatus.exists(s => !row.executionStatus.contains(s)) then Some(System.currentTimeMillis())
+              else row.statusAt,
+            activityAt = activityAt.orElse(row.activityAt),
+            activityKind = activityKind.orElse(row.activityKind),
+            activityLabel = activityLabel.orElse(row.activityLabel),
+            diagnostic = diagnostic.orElse(row.diagnostic)
+          )
+        )
+    }
+
+  /** First terminal commit wins; a process exit never asserts business success. */
+  override def completeRun(
+    parentSessionId: String,
+    taskId: String,
+    runId: String,
+    executionStatus: String,
+    reason: Option[String] = None,
+    resultRef: Option[String] = None,
+    incomplete: Boolean = false,
+    diagnostic: Option[String] = None,
+    notificationId: Option[String] = None,
+    notifyParent: Boolean = true
+  ): IO[Either[String, SubAgentTask]] =
+    mutateRun(parentSessionId, taskId, runId) { row =>
+      if !terminalExecutions.contains(executionStatus) then Left("invalid-terminal-status")
+      else if row.executionStatus.exists(terminalExecutions.contains) then Left("terminal-run")
+      else
+        val now = System.currentTimeMillis()
+        Right(
+          row.copy(
+            status = projectedStatus(executionStatus),
+            executionStatus = Some(executionStatus),
+            statusAt = Some(now),
+            completedAt = Some(now),
+            terminalReason = reason,
+            lastError = if executionStatus == "finished" then None else reason,
+            resultRef = resultRef,
+            incomplete = Some(incomplete),
+            diagnostic = diagnostic.orElse(row.diagnostic),
+            notificationId =
+              if executionStatus == "interrupted" || !notifyParent then None
+              else Some(notificationId.getOrElse(s"$taskId#$runId")),
+            notificationPending = Some(executionStatus != "interrupted" && notifyParent)
+          )
+        )
+    }
+
+  /** Acknowledges durable mailbox enqueue, not recipient consumption. */
+  override def acknowledgeNotification(
+    parentSessionId: String,
+    taskId: String,
+    runId: String,
+    notificationId: String
+  ): IO[Either[String, SubAgentTask]] =
+    mutateRun(parentSessionId, taskId, runId) { row =>
+      if !row.notificationId.contains(notificationId) then Left("notification-mismatch")
+      else Right(row.copy(notificationPending = Some(false)))
+    }
 
   def loadTasks(parentSessionId: String): IO[List[SubAgentTask]] =
     withLock(readTasksSync(parentSessionId))
@@ -116,7 +298,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
    * **单遍扫目录**（一次读全部父文件，不逐行 findByTaskId 全扫 N 遍——行投影
    * 每 refresh 一次，量级 = 活跃父会话文件数）。fail-soft：坏文件跳过。
    */
-  def findAllTasks(): IO[List[SubAgentTask]] =
+  override def findAllTasks(): IO[List[SubAgentTask]] =
     withLock {
       if !os.exists(baseDir) then List.empty[SubAgentTask]
       else
@@ -127,12 +309,22 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     }
 
   def saveTasks(parentSessionId: String, tasks: List[SubAgentTask]): IO[Unit] =
-    withLock(writeTasksSync(parentSessionId, tasks))
+    withLock {
+      val existing = readTasksSync(parentSessionId)
+      require(
+        !existing.exists(_.runId.nonEmpty) && !tasks.exists(_.runId.nonEmpty),
+        "Managed tasks require run-fenced writes"
+      )
+      writeTasksSync(parentSessionId, tasks)
+    }
 
   /** Record a new task at spawn time. */
   def recordTask(task: SubAgentTask): IO[Unit] =
     withLock {
-      // #692：statusAt 缺省 = spawnedAt（新行从落盘起就有 watchdog 判据输入）。
+      val existing = readTasksSync(task.parentSessionId)
+      require(task.runId.isEmpty, "Managed tasks must be admitted with beginRun")
+      require(!existing.exists(t => t.taskId == task.taskId && t.runId.nonEmpty), "Cannot replace a managed task")
+      // Initialize legacy status timing without introducing execution identity.
       writeTasksSync(
         task.parentSessionId,
         readTasksSync(task.parentSessionId) :+ task.copy(statusAt = task.statusAt.orElse(Some(task.spawnedAt)))
@@ -177,7 +369,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       val current = readTasksSync(parentSessionId)
       // R1 缝隙 B 修（2026-10-28）：命中才写——行未命中 = 零落盘（不重写父文件、
       // 父文件缺失也绝不凭空建文件/造空行，「调用方以为写了」改由 miss 留痕出声）。
-      val updated = current.find(_.taskId == taskId).map { _ =>
+      val updated = current.find(t => t.taskId == taskId && t.runId.isEmpty).map { _ =>
         current.map { t =>
           if t.taskId == taskId then
             t.copy(
@@ -185,7 +377,8 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
               retryCount = retryCount.getOrElse(t.retryCount),
               lastError = lastError.orElse(t.lastError),
               completedAt = completedAt.orElse(t.completedAt),
-              statusAt = Some(now)
+              statusAt = Some(now),
+              committedRevision = Some(nextRevision(t))
             )
           else t
         }
@@ -222,9 +415,10 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       case Some(diag) =>
         withLock {
           val current = readTasksSync(parentSessionId)
-          val updated = current.find(_.taskId == taskId).map { _ =>
+          val updated = current.find(t => t.taskId == taskId && t.runId.isEmpty).map { _ =>
             current.map { t =>
-              if t.taskId == taskId then t.copy(diagnostic = Some(diag)) else t
+              if t.taskId == taskId then t.copy(diagnostic = Some(diag), committedRevision = Some(nextRevision(t)))
+              else t
             }
           }
           updated.foreach(rows => writeTasksSync(parentSessionId, rows))
@@ -270,7 +464,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     withLock {
       val now = System.currentTimeMillis()
       val updated = readTasksSync(parentSessionId).map { t =>
-        if t.taskId == taskId then
+        if t.taskId == taskId && t.runId.isEmpty then
           t.copy(
             status = "running",
             revivalCount = Some(revivalCount),
@@ -298,7 +492,8 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     }.flatMap {
       // 台账 #929：原域剪行 = 显式墓碑外推（status="removed"）——对端据此退役该行
       // （LWW 戳 = 剪行时刻，必新于既有终态）。缺席不外推（无从构行）。
-      case Some(row) => fireWriteHook(
+      case Some(row) =>
+        fireWriteHook(
           row.copy(status = SubAgentTaskStore.StatusRemoved, statusAt = Some(System.currentTimeMillis()))
         )
       case None => IO.unit
@@ -321,11 +516,20 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       else
         val updated = existing.map { t =>
           if t.status == "running" || t.status == "restarting" then
-            t.copy(status = "cancelled", lastError = Some(reason), completedAt = Some(now))
+            t.copy(
+              status = "cancelled",
+              lastError = Some(reason),
+              completedAt = Some(now),
+              statusAt = Some(now),
+              executionStatus = t.runId.map(_ => "cancelled").orElse(t.executionStatus),
+              terminalReason = t.runId.map(_ => reason).orElse(t.terminalReason),
+              committedRevision = Some(nextRevision(t))
+            )
           else t
         }
         writeTasksSync(parentSessionId, updated)
         (inFlight.map(_.taskId), updated.filter(t => inFlight.exists(_.taskId == t.taskId)))
+      end if
     }.flatMap { case (ids, rows) =>
       // 台账 #929：级联取消的每一行都外推（终态落账的远端对称面）。
       rows.traverse_(fireWriteHook).as(ids)
@@ -338,20 +542,19 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
    * 恢复清扫（SubAgentStartupRecovery）与热重启在飞判定——两处都需要「还有没
    * 收尾的活」，restarting 理应同票。
    */
-  def findRunningTasks: IO[List[SubAgentTask]] = IO
-    .blocking {
-      if !os.exists(baseDir) then Nil
-      else
-        os.list(baseDir)
-          .flatMap { f =>
-            if f.toString.endsWith(".json") then
-              decode[List[SubAgentTask]](os.read(f)) match
-                case Right(list) => list.filter(t => t.status == "running" || t.status == "restarting")
-                case Left(_) => Nil
-            else Nil
-          }
-          .toList
-    }
+  def findRunningTasks: IO[List[SubAgentTask]] = withLock {
+    if !os.exists(baseDir) then Nil
+    else
+      os.list(baseDir)
+        .flatMap { f =>
+          if f.toString.endsWith(".json") then
+            decode[List[SubAgentTask]](os.read(f)) match
+              case Right(list) => list.filter(t => t.status == "running" || t.status == "restarting")
+              case Left(_) => Nil
+          else Nil
+        }
+        .toList
+  }
     .handleErrorWith(e => logger.warn(s"findRunningTasks failed: ${e.getMessage}").as(Nil))
 
   /**
@@ -361,20 +564,19 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
    * 文件数 = 活跃父会话数（量小），线性扫描可接受。
    */
   def findByTaskId(taskId: String): IO[Option[SubAgentTask]] =
-    IO
-      .blocking {
-        if !os.exists(baseDir) then None
-        else
-          os.list(baseDir)
-            .flatMap { f =>
-              if f.toString.endsWith(".json") then
-                decode[List[SubAgentTask]](os.read(f)) match
-                  case Right(list) => list.filter(_.taskId == taskId)
-                  case Left(_) => Nil
-              else Nil
-            }
-            .headOption
-      }
+    withLock {
+      if !os.exists(baseDir) then None
+      else
+        os.list(baseDir)
+          .flatMap { f =>
+            if f.toString.endsWith(".json") then
+              decode[List[SubAgentTask]](os.read(f)) match
+                case Right(list) => list.filter(_.taskId == taskId)
+                case Left(_) => Nil
+            else Nil
+          }
+          .headOption
+    }
       .handleErrorWith(e => logger.warn(s"findByTaskId failed: ${e.getMessage}").as(None))
 
 end SubAgentTaskStore

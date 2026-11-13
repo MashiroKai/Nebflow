@@ -187,10 +187,12 @@ object SubAgentStartupRecovery:
     def settle(): IO[Unit] =
       // 完成未报告收尾腿（本批 V5/审计 D8）先于标记/对账：干完不报的会话在
       // 「重启打断旗」落旗之前就被收尾，不会被误标成「中断」。
-      finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
+      recoverPendingInternal(store, sessionStore, revival.map(_.resources)) *>
+        finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
         markInterruptedRecords(store).void *>
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
-    val tasks = inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
+    val tasks = interruptExternalRuns(store) *>
+      inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
     tasks.flatMap {
       case Nil => settle().as(Report())
       case allOrphans =>
@@ -285,7 +287,7 @@ object SubAgentStartupRecovery:
               .as(()) *> tasks
               .traverse(t =>
                 store
-                  .updateStatus(t.parentSessionId, t.taskId, PendingRecoveryStatus)
+                  .transitionObserved(t, PendingRecoveryStatus, Some("Execution interrupted; manual recovery required"))
                   .handleErrorWith(e =>
                     logger
                       .warn(s"[startup-recovery] pending-recovery mark failed for ${t.taskId}: ${e.getMessage}")
@@ -365,6 +367,79 @@ object SubAgentStartupRecovery:
     }
 
   end sweep
+
+  /** Replay the exact saved terminal envelope; never synthesize a success report. */
+  private[agent] def recoverPendingInternal(
+    store: SubAgentTaskStore,
+    sessionStore: SessionStore,
+    resources: Option[SharedResources]
+  ): IO[Unit] = resources.fold(IO.unit) { rs =>
+    store
+      .findAllTasks()
+      .flatMap(
+        _.filter(t =>
+          t.executor.contains("nebflow") && t.runId.nonEmpty && t.notificationPending.contains(true) &&
+            t.notificationId.nonEmpty
+        ).traverse_ { task =>
+          sessionStore.loadTerminalEnvelope(task.taskId, task.runId.get).flatMap { saved =>
+            val fallback = Option.when(
+              task.executionStatus.exists(Set("failed", "cancelled").contains) &&
+                task.resultRef.isEmpty && task.terminalReason.nonEmpty
+            )(
+              AgentCommand.ExternalEvent(
+                task.source,
+                task.status,
+                task.terminalReason.get,
+                JsonObject("taskId" -> task.taskId.asJson, "runId" -> task.runId.asJson),
+                Some(task.taskId)
+              )
+            )
+            saved.orElse(fallback).fold(IO.unit) { event =>
+              val identity = task.notificationId.get
+              MailboxProducer
+                .deliver(
+                  rs,
+                  task.parentSessionId,
+                  event,
+                  identity,
+                  "delegate-terminal",
+                  coalesce = false,
+                  producer = "task-lifecycle-recovery"
+                )
+                .flatMap {
+                  case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                  case _ =>
+                    store.acknowledgeNotification(task.parentSessionId, task.taskId, task.runId.get, identity).void
+                }
+            }
+          }
+        }
+      )
+  }
+
+  /** Loss of monitoring is not proof that the external process died or failed its task. */
+  private[agent] def interruptExternalRuns(store: SubAgentTaskStore): IO[List[String]] =
+    store
+      .findAllTasks()
+      .flatMap(
+        _.filter(t =>
+          t.runId.nonEmpty && t.executor.exists(_ != "nebflow") &&
+            t.executionStatus.exists(Set("starting", "running", "waiting-input").contains)
+        ).traverseFilter { task =>
+          store
+            .completeRun(
+              task.parentSessionId,
+              task.taskId,
+              task.runId.get,
+              "interrupted",
+              reason = Some("Execution monitoring was lost during restart; the original process may still be running"),
+              resultRef = task.resultRef,
+              incomplete = true,
+              diagnostic = Some("Manual recovery required; no process identity or output attachment was verified")
+            )
+            .map(_.toOption.map(_.taskId))
+        }
+      )
 
   /**
    * 在飞任务全量（running/restarting/ready-to-merge/frozen；单遍 findAllTasks 后过滤——boot 一次性）。
@@ -723,9 +798,8 @@ object SubAgentStartupRecovery:
       // 3. Terminalize — after the notify append, so a crash anywhere leaves
       // either (task running + event queued) [retry, no duplicate] or
       // (task failed + event queued) [done]. Never a lost notification.
-      _ <- store.updateStatus(
-        task.parentSessionId,
-        task.taskId,
+      _ <- store.transitionObserved(
+        task,
         status = "failed",
         lastError = Some(
           // 文案与事实同源（D1）：`delivered` 为 Left 时必须写「投递失败」，绝不写
@@ -748,8 +822,7 @@ object SubAgentStartupRecovery:
               else
                 s"$RestartLossFingerprint — result lost" +
                   "; parent NOT notified (zero-notify by author order 2026-11-06 — sub-agent panel shows the state; restore via ManualRevival)"
-        ),
-        completedAt = Some(now)
+        )
       )
       _ <- logger.info(
         s"[startup-recovery] orphan ${task.taskId} (${task.agentName}) terminalized; " +

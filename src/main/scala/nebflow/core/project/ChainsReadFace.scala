@@ -41,6 +41,58 @@ import nebflow.shared.PathUtil
 
 object ChainsReadFace:
 
+  /** Discover durable descendants without requiring their parent to be active. */
+  def scopedTaskRows(
+    rootSessionId: String,
+    tasks: List[nebflow.shared.SubAgentTask],
+    registry: Map[String, nebflow.actor.AgentRecord]
+  ): List[nebflow.shared.SubAgentTask] =
+    val byId = tasks.map(t => t.taskId -> t).toMap
+    def belongs(id: String, visited: Set[String]): Boolean =
+      if id == rootSessionId then true
+      else if id.isEmpty || visited.contains(id) then false
+      else
+        val next = visited + id
+        byId.get(id) match
+          case Some(t) =>
+            t.rootSessionId.filter(_.nonEmpty) match
+              case Some(root) => root == rootSessionId
+              case None => belongs(t.parentSessionId, next)
+          case None =>
+            registry.get(id).exists(r => r.rootSessionId == rootSessionId || belongs(r.parentSessionId, next))
+    tasks
+      .filter(t => t.taskId != rootSessionId && belongs(t.taskId, Set.empty))
+      .sortBy(t => (t.spawnedAt, t.taskId))
+
+  end scopedTaskRows
+
+  /** Discovery metadata only: transcripts stay behind the existing history face. */
+  def taskVisibilityJson(task: nebflow.shared.SubAgentTask): Json =
+    task.asJson.mapObject(_.filter { case (key, _) =>
+      Set(
+        "taskId",
+        "parentSessionId",
+        "rootSessionId",
+        "agentName",
+        "description",
+        "source",
+        "status",
+        "spawnedAt",
+        "completedAt",
+        "retryCount",
+        "runId",
+        "committedRevision",
+        "executor",
+        "executionStatus",
+        "activityAt",
+        "activityKind",
+        "activityLabel",
+        "resultRef",
+        "terminalReason",
+        "incomplete"
+      ).contains(key)
+    })
+
   /**
    * 任务行投影（rows 臂）。`registry` = agentRegistry 快照（活性提示单源）。
    * `taskStatuses`（#566 修复批 · 行终态权威）：delegateId → 引擎任务行终态

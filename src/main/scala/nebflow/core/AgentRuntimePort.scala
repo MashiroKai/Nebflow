@@ -68,8 +68,10 @@ trait AgentRuntimePort extends AgentRegistryPort:
    */
   def msgTokens: nebflow.core.msgtokens.MsgTokenRegistry = nebflow.core.msgtokens.MsgTokenRegistry.global
 
-  /** 镜像 `SharedResources.doneRecordStore`（认知二期产品批：打卡 done 历史，周报数据源）。
-   * 默认实例（SharedResources 覆盖为同一 dataRoot 路径；匿名窄视图实现零改动）。 */
+  /**
+   * 镜像 `SharedResources.doneRecordStore`（认知二期产品批：打卡 done 历史，周报数据源）。
+   * 默认实例（SharedResources 覆盖为同一 dataRoot 路径；匿名窄视图实现零改动）。
+   */
   def doneRecordStore: nebflow.core.scheduler.DoneRecordStore =
     nebflow.core.scheduler.DoneRecordStore(nebflow.shared.PathUtil.dataRoot)
 
@@ -178,6 +180,48 @@ end AgentRuntimePort
  * agent 的 `SubAgentTaskStore` 原地 extends 本端口。
  */
 trait SubAgentTaskStorePort:
+
+  def beginRun(
+    task: SubAgentTask,
+    runId: String,
+    rootSessionId: String,
+    executor: String
+  ): IO[Either[String, SubAgentTask]] =
+    IO.pure(Left("run-lifecycle-unsupported"))
+
+  def findAllTasks(): IO[List[SubAgentTask]] = IO.pure(Nil)
+
+  def updateRun(
+    parentSessionId: String,
+    taskId: String,
+    runId: String,
+    executionStatus: Option[String] = None,
+    activityAt: Option[Long] = None,
+    activityKind: Option[String] = None,
+    activityLabel: Option[String] = None,
+    diagnostic: Option[String] = None
+  ): IO[Either[String, SubAgentTask]] = IO.pure(Left("run-lifecycle-unsupported"))
+
+  def completeRun(
+    parentSessionId: String,
+    taskId: String,
+    runId: String,
+    executionStatus: String,
+    reason: Option[String] = None,
+    resultRef: Option[String] = None,
+    incomplete: Boolean = false,
+    diagnostic: Option[String] = None,
+    notificationId: Option[String] = None,
+    notifyParent: Boolean = true
+  ): IO[Either[String, SubAgentTask]] = IO.pure(Left("run-lifecycle-unsupported"))
+
+  def acknowledgeNotification(
+    parentSessionId: String,
+    taskId: String,
+    runId: String,
+    notificationId: String
+  ): IO[Either[String, SubAgentTask]] = IO.pure(Left("run-lifecycle-unsupported"))
+
   def recordTask(task: SubAgentTask): IO[Unit]
 
   def updateStatus(
@@ -188,6 +232,76 @@ trait SubAgentTaskStorePort:
     lastError: Option[String] = None,
     completedAt: Option[Long] = None
   ): IO[Unit]
+
+  /** Explicit continuation admits a new execution without replacing an undelivered result. */
+  def resumeObserved(task: SubAgentTask): IO[Unit] =
+    val closePrevious =
+      if task.runId.nonEmpty &&
+        !task.executionStatus.exists(Set("finished", "failed", "cancelled", "interrupted").contains)
+      then
+        completeRun(
+          task.parentSessionId,
+          task.taskId,
+          task.runId.get,
+          "interrupted",
+          reason = Some("Superseded by an explicit continuation")
+        ).flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+      else IO.unit
+    val preflight = findByTaskId(task.taskId).flatMap {
+      case Some(current) if current.runId != task.runId =>
+        IO.raiseError(new IllegalStateException("stale-run"))
+      case Some(current) if current.notificationPending.contains(true) =>
+        IO.raiseError(new IllegalStateException("notification-pending"))
+      case _ => IO.unit
+    }
+    preflight *> closePrevious *> IO
+      .blocking {
+        nebflow.core.delegate.DelegateRegistry.find(task.taskId) match
+          case Some(record) if record.roundId.exists(id => !task.runId.contains(id)) => record.roundId.get
+          case Some(record) =>
+            nebflow.core.delegate.DelegateRoundLedger
+              .openNewRound(record)
+              .fold(reason => throw new IllegalStateException(reason), _.roundId)
+          case None => java.util.UUID.randomUUID().toString
+      }
+      .flatMap { runId =>
+        beginRun(task, runId, task.rootSessionId.getOrElse(task.parentSessionId), task.executor.getOrElse("nebflow"))
+          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+      }
+
+  end resumeObserved
+
+  /** Administrative transitions use an observed row and never bypass execution fencing. */
+  def transitionObserved(
+    task: SubAgentTask,
+    status: String,
+    lastError: Option[String] = None
+  ): IO[Unit] = task.runId match
+    case None =>
+      updateStatus(
+        task.parentSessionId,
+        task.taskId,
+        status,
+        lastError = lastError,
+        completedAt = Option.when(Set("completed", "failed", "cancelled").contains(status))(System.currentTimeMillis())
+      )
+    case Some(run) =>
+      val result = if Set("completed", "failed", "cancelled", "pending-recovery").contains(status) then
+        val terminal = status match
+          case "completed" => "finished"
+          case "pending-recovery" => "interrupted"
+          case other => other
+        completeRun(
+          task.parentSessionId,
+          task.taskId,
+          run,
+          terminal,
+          reason = lastError,
+          incomplete = terminal == "interrupted"
+        )
+      else updateRun(task.parentSessionId, task.taskId, run, Some(status), diagnostic = lastError)
+      result.flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+
   def findRunningTasks: IO[List[SubAgentTask]]
   def findByTaskId(taskId: String): IO[Option[SubAgentTask]]
 
