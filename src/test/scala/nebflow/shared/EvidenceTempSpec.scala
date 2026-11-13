@@ -6,6 +6,7 @@ import scala.jdk.CollectionConverters.*
 import munit.FunSuite
 
 class EvidenceTempSpec extends FunSuite:
+
   private def removeTree(path: Path): Unit =
     if Files.exists(path) then
       val walk = Files.walk(path)
@@ -40,11 +41,46 @@ class EvidenceTempSpec extends FunSuite:
     assert(!Files.exists(batch))
   }
 
+  test("sweep is fail-closed: an expired, inactive batch WITHOUT a manifest is never reclaimed") {
+    // Pins the cross-language producer contract: writing into the stand-evidence
+    // namespace without a manifest.json means the sweep can never date (let alone
+    // delete) the batch — fail-closed retention, not reclamation. This is exactly
+    // why the script-side helper (scripts/lib/evidence-batch.mjs) writes a
+    // manifest, and why a namespace writer without one is a defect.
+    val tmp = Path.of(sys.props.getOrElse("java.io.tmpdir", "/tmp")).toAbsolutePath.normalize()
+    val day =
+      java.time.LocalDate.now(java.time.ZoneOffset.UTC).format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)
+    val project = tmp.resolve("stand-evidence").resolve(s"unit-failclosed-${java.util.UUID.randomUUID()}")
+    val orphan = project.resolve("no-manifest").resolve(day)
+    val reclaimable = project.resolve("with-manifest").resolve(day)
+    try
+      Files.createDirectories(orphan)
+      Files.writeString(orphan.resolve("payload.txt"), "orphan")
+      Files.createDirectories(reclaimable)
+      Files.writeString(
+        reclaimable.resolve("manifest.json"),
+        s"""{"createdAt":"${Instant.now().toString}","project":"unit-failclosed","batch":"with-manifest"}"""
+      )
+      Files.writeString(reclaimable.resolve("payload.txt"), "reclaimable")
+      EvidenceTemp.sweep(System.currentTimeMillis() + 8L * 24 * 60 * 60 * 1000)
+      assert(
+        Files.exists(orphan.resolve("payload.txt")),
+        "manifest-less namespace dirs must be skipped (fail-closed), never deleted"
+      )
+      assert(!Files.exists(reclaimable), "contrast: the sibling with a manifest IS reclaimed past TTL")
+    finally removeTree(project)
+    end try
+  }
+
   test("rejects path traversal and missing retention reason") {
     val batch = EvidenceTemp.createBatch("unit-security", "reject")
     try
-      intercept[IllegalArgumentException](EvidenceTemp.promote(batch, "../manifest.json", Path.of("/tmp/evidence-invalid"), "reason"))
-      intercept[IllegalArgumentException](EvidenceTemp.promote(batch, "manifest.json", Path.of("/tmp/evidence-invalid"), "  "))
+      intercept[IllegalArgumentException](
+        EvidenceTemp.promote(batch, "../manifest.json", Path.of("/tmp/evidence-invalid"), "reason")
+      )
+      intercept[IllegalArgumentException](
+        EvidenceTemp.promote(batch, "manifest.json", Path.of("/tmp/evidence-invalid"), "  ")
+      )
     finally removeTree(batch.getParent.getParent)
   }
 
@@ -73,3 +109,4 @@ class EvidenceTempSpec extends FunSuite:
       removeTree(active.getParent.getParent)
       removeTree(destination.getParent)
   }
+end EvidenceTempSpec

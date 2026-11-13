@@ -23,7 +23,7 @@
 // 用法（改前 / 改后同一份脚本、同一组脸）：
 //   node scripts/capture-mobile-canvas-tabs.mjs \
 //        --root /tmp/mct-before/src/main/resources/web --tag before \
-//        --out reports-evidence/mobile-canvas-tabs-c__<stamp>
+//        --out <dir>   (default = EvidenceTemp batch)
 //   node scripts/capture-mobile-canvas-tabs.mjs \
 //        --root src/main/resources/web --tag after --out <同一个目录>
 //
@@ -39,6 +39,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, extname, normalize, isAbsolute, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 import { createRequire } from 'node:module';
 
 const argv = process.argv.slice(2);
@@ -48,8 +49,11 @@ const REPO = fileURLToPath(new URL('..', import.meta.url));
 const ROOT_ARG = valOf('--root', 'src/main/resources/web');
 const WEB = normalize(isAbsolute(ROOT_ARG) ? ROOT_ARG : join(REPO, ROOT_ARG));
 const TAG = valOf('--tag', 'after');
-const OUT_ARG = valOf('--out', 'reports-evidence/mobile-canvas-tabs-c');
-const OUT = normalize(isAbsolute(OUT_ARG) ? OUT_ARG : join(REPO, OUT_ARG));
+// Default output = an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable).
+// The repo-tree `reports-evidence/` dir is a retired legacy evidence location and
+// must not receive new default writes; an explicit --out keeps its meaning.
+const OUT_ARG = valOf('--out', null);
+const OUT = OUT_ARG ? normalize(isAbsolute(OUT_ARG) ? OUT_ARG : join(REPO, OUT_ARG)) : evidenceBatch('mobile-canvas-tabs', 'capture-c');
 const THEMES = (valOf('--themes', 'light,dark') || '').split(',').filter(Boolean);
 
 if (!existsSync(join(WEB, 'index.html'))) {

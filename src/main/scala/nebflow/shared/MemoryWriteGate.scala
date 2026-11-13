@@ -178,9 +178,12 @@ object MemoryWriteGate:
 
   private def budgetDetail(target: String, path: os.Path, bytes: Long, hard: Long, newContent: String): String =
     val pct = if hard > 0 then f"${bytes * 100.0 / hard}%.0f%%" else "?"
+    // Label renders the live data root (PathUtil.dataRootRenderValue — default home
+    // keeps the literal tilde form, isolated instances render their own home); the
+    // body already carries the real absolute $path, the label is a readable tag.
     val label = target match
-      case "user" => "~/.nebflow/User.md"
-      case "agent" => "~/.nebflow/Soul.md"
+      case "user" => s"${PathUtil.dataRootRenderValue}/User.md"
+      case "agent" => s"${PathUtil.dataRootRenderValue}/Soul.md"
       case other => path.toString
     s"""$path would reach $bytes bytes ($pct of the $hard-byte hard budget for target='$target'), so the write was refused; $label is untouched.
        |Budget is enforced on the WRITE side (injection is never truncated — an over-budget memory taxes every future session instead).
@@ -188,6 +191,8 @@ object MemoryWriteGate:
        |${MemoryBudget.topSections(newContent)}
        |Trim stale/duplicate entries in place.
        |If this write only shrinks the file, it stays exempt from the hard cap — retry as an in-place shrink (delete stale `- ` entries or rewrite the largest `## ` section down). (${Code.Budget})""".stripMargin
+
+  end budgetDetail
 
   private def warnDetail(target: String, path: os.Path, bytes: Long, soft: Long, hard: Long): String =
     s"$WarnMarker target='$target' $path is now $bytes bytes (over the 80% soft line of $soft bytes; hard budget $hard) — " +

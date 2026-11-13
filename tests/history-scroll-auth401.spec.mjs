@@ -32,6 +32,7 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** 被测树根（repo root；NB_UX_ROOT 红腿腿 = git archive HEAD 出的修前树根）。 */
@@ -39,7 +40,8 @@ const SERVE_ROOT = process.env.NB_UX_ROOT || resolve(HERE, '..');
 const WEB_DIR = resolve(SERVE_ROOT, 'src/main/resources/web');
 const PORT = Number(process.env.PORT || 8161);
 const BASE = `http://127.0.0.1:${PORT}`;
-const SHOTS_DIR = process.env.SHOTS_DIR || '/tmp/stand-1022/auth401';
+// Shots default to a TTL-sweepable EvidenceTemp batch instead of a bare /tmp dir.
+const SHOTS_DIR = process.env.SHOTS_DIR || evidenceBatch('auth401', 'history-scroll');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MIME = {

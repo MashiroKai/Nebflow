@@ -9,8 +9,9 @@
  *      给前端转译「以实跑生成为准」——不谎报鉴权已验证。
  *   b) 实跑一次最小生成：size 最小（256x256，适配器口径内吸附）、质量最低
  *      （quality=low，ImageGenRequest 自由字段——适配器今日不消费，预留），
- *      真 POST 生成端点 → 真图字节。产物落**临时目录**（os.temp.dir，系统
- *      临时区 nebflow-imagegen-test-* 前缀），绝不进 <dataRoot>/imagegen 正式归档。
+ *      真 POST 生成端点 → 真图字节。产物落 **EvidenceTemp 批**（系统临时区
+ *      stand-evidence 命名空间、manifest、非活 ⇒ 7 天 TTL 可回收），绝不进
+ *      <dataRoot>/imagegen 正式归档。
  *
  * 🔴 归一判据与 LLM 测试钮同源：2xx 且产物可用 = 可用；非 2xx = Failed 带
  * `HTTP <code>: <摘要>`（状态码原样保留）；错误文案离手前脱敏（token → ***）。
@@ -25,7 +26,7 @@ package nebflow.llm.imagegen
 
 import io.circe.parser.parse
 import nebflow.llm.imagegen.ImageGenTypes.*
-import nebflow.shared.SharedBackend
+import nebflow.shared.{EvidenceTemp, SharedBackend}
 import sttp.client4.*
 
 import java.util.Base64
@@ -43,12 +44,17 @@ object ImageGenProbe:
   val PreviewCapBytes: Int = 4 * 1024 * 1024
 
   sealed trait Verdict extends Product with Serializable
+
   object Verdict:
-    /** 轻探活可用。`modelsFaceAbsent` = models 面缺失（HTTP 404/405）时携带
-      * 该状态码——上游可达为真，鉴权未经验证为真，前端如实转译。 */
+    /**
+     * 轻探活可用。`modelsFaceAbsent` = models 面缺失（HTTP 404/405）时携带
+     * 该状态码——上游可达为真，鉴权未经验证为真，前端如实转译。
+     */
     final case class Ok(latencyMs: Long, modelsFaceAbsent: Option[Int] = None) extends Verdict
+
     /** 实跑生成可用：真实字节数 + 真实格式 + 临时目录产物路径 + 可选预览。 */
-    final case class Generated(latencyMs: Long, bytes: Int, ext: String, tempPath: String, dataUrl: Option[String]) extends Verdict
+    final case class Generated(latencyMs: Long, bytes: Int, ext: String, tempPath: String, dataUrl: Option[String])
+        extends Verdict
     final case class Failed(detail: String) extends Verdict
 
   /** 脱敏（ProviderModelProbe.sanitize 同款防回显面，gateway 包外自持一份）。 */
@@ -60,11 +66,11 @@ object ImageGenProbe:
   private def trimBase(baseUrl: String): String = baseUrl.trim.replaceAll("/+$", "")
 
   def mimeOf(ext: String): String = ext match
-    case "png"  => "image/png"
+    case "png" => "image/png"
     case "jpeg" => "image/jpeg"
     case "webp" => "image/webp"
-    case "gif"  => "image/gif"
-    case other  => s"image/$other"
+    case "gif" => "image/gif"
+    case other => s"image/$other"
 
   /**
    * a) 轻探活一击：GET {base}/models + 适配器鉴权头。detail 已脱敏；
@@ -97,12 +103,19 @@ object ImageGenProbe:
           Verdict.Failed(s"timeout after ${ProbeTimeoutMs}ms (bounded diagnosis wait)")
         else Verdict.Failed(sanitize(msg.take(300), token))
 
-  /** b) 的产物落盘（系统临时目录，一次探活一个独立子目录）——单独成函数，
-    * spec 钉「不污染归档」。 */
+    end try
+
+  end lightCall
+
+  /**
+   * b) 的产物落盘：EvidenceTemp 批（系统临时区、manifest、落盘即非活 ⇒ 7 天
+   * TTL 可回收）——单独成函数，spec 钉「不污染归档」与批契约。
+   */
   def parkTempArtifact(bytes: Array[Byte], ext: String): os.Path =
-    val dir = os.temp.dir(prefix = "nebflow-imagegen-test-")
-    val target = dir / s"probe-${bytes.length}.$ext"
+    val batch = EvidenceTemp.createBatch("imagegen-probe", "nebflow-imagegen-test")
+    val target = os.Path(batch) / s"probe-${bytes.length}.$ext"
     os.write(target, bytes)
+    EvidenceTemp.finishBatch(batch)
     target
 
   /** data URL（≤ PreviewCapBytes 才带预览——大图只报字节/格式）。 */
@@ -127,7 +140,7 @@ object ImageGenProbe:
         val keyRef = storedKeyRef.filter(_.trim.nonEmpty).orElse(Some(s"imagegen-$providerName-key"))
         ImageGenService.readSecret(keyRef) match
           case Right(token) => Right(token)
-          case Left(err)    => Left(err.message)
+          case Left(err) => Left(err.message)
 
   /**
    * b) 实跑一次最小生成：真 POST 生成端点 → 真图字节 → 临时目录落盘 →
@@ -163,8 +176,7 @@ object ImageGenProbe:
       val latency = System.currentTimeMillis() - started
       val status = resp.code.code
       val outcome: Either[String, Verdict.Generated] =
-        if !(status >= 200 && status < 300) then
-          Left(s"HTTP $status: ${resp.body.take(200)}")
+        if !(status >= 200 && status < 300) then Left(s"HTTP $status: ${resp.body.take(200)}")
         else
           parse(resp.body) match
             case Left(_) =>
@@ -180,8 +192,8 @@ object ImageGenProbe:
                       val path = parkTempArtifact(bytes, ext)
                       Right(Verdict.Generated(latency, bytes.length, ext, path.toString, dataUrlOf(bytes, ext)))
       outcome match
-        case Left(detail)  => Verdict.Failed(sanitize(detail, token))
-        case Right(gen)    => gen
+        case Left(detail) => Verdict.Failed(sanitize(detail, token))
+        case Right(gen) => gen
     catch
       case e: InterruptedException =>
         Thread.currentThread().interrupt()
@@ -189,6 +201,10 @@ object ImageGenProbe:
       case e: Exception =>
         val msg = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
         Verdict.Failed(sanitize(msg.take(300), token))
+
+    end try
+
+  end generateCall
 
   /** 单飞闸（路由侧双击防线）。 */
   final class Gate:

@@ -21,7 +21,7 @@
 //
 // Run（worktree 根）：
 //   node scripts/e2e-plugin-surface-live.mjs
-// Env：GATEWAY_PORT/MOCK_PORT/OUT(证据目录)/NEBFLOW_HOME；CLEAN=1 收尾删除隔离 home（默认保留）。
+// Env：GATEWAY_PORT/MOCK_PORT/OUT(证据目录，缺省= EvidenceTemp 批——manifest+非活，成功即删)/NEBFLOW_HOME；CLEAN=1 收尾删除隔离 home（默认保留）。
 
 import { spawn } from 'node:child_process';
 import http from 'node:http';
@@ -31,13 +31,16 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { guardFixtureHome, safeRm } from './lib/delguard.mjs';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT || 8096);
 const MOCK_PORT = Number(process.env.MOCK_PORT || 18996);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NEBFLOW_HOME || join(tmpdir(), `nb-pluglive-e2e-${Date.now()}`);
-const OUT = process.env.OUT || join(tmpdir(), 'stand-evidence', 'stand', `pluglive-${Date.now()}`, new Date().toISOString().slice(0, 10).replaceAll('-', ''));
+// Evidence = an EvidenceTemp batch (manifest.json + no .active ⇒ the engine's
+// 7-day TTL sweep can reclaim it); success runs delete the batch outright.
+const OUT = process.env.OUT || evidenceBatch('stand', 'pluglive');
 const DISPATCHER_AGENT_SRC = process.env.DISPATCHER_AGENT_SRC || join(REPO, 'src', 'main', 'resources', 'seed', 'agents', 'project-dispatcher');
 guardFixtureHome(HOME, { label: 'e2e-plugin-surface-live' });
 mkdirSync(OUT, { recursive: true });
@@ -511,6 +514,10 @@ try {
   writeFileSync(join(OUT, '00-summary.txt'),
     `${checks.map((c) => `${c.ok ? 'PASS' : 'FAIL'}  ${c.name}${c.extra ? '  — ' + c.extra : ''}`).join('\n')}\n\n${failed === 0 ? 'ALL PASS' : failed + ' CHECK(S) FAILED'}\n`);
   log(failed === 0 ? 'ALL PASS' : `${failed} CHECK(S) FAILED`);
+  // Success: retire-then-delete the evidence batch (nothing worth keeping past a
+  // green run). Failure keeps it for diagnosis — the batch is non-active with a
+  // manifest, so the TTL sweep still bounds its life to 7 days.
+  if (failed === 0) safeRm(OUT, { label: 'e2e-plugin-surface-live/out' });
   process.exit(failed === 0 ? 0 : 1);
 }
 

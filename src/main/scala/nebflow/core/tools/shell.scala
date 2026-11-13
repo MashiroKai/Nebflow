@@ -1911,12 +1911,17 @@ end ShellSession
  * **不**接入 store，避免同一输出双写双账。
  *
  * 目录取舍：溢写落 OS tmp 而非 dataRoot——文件是「本命令上下文的延伸」，进程级
- * 生命期，无跨命令价值；不设清理定时任务（OS tmp 自清，macOS/Linux/tmpreaper 均
- * 会回收；dataRoot 版 M3 曾带 24h sweep，OS 层自清后该机制退役）。
+ * 生命期，无跨命令价值。🔴 清理口径（修正）：OS tmp 对这些文件**没有任何保证的
+ * TTL/自清**（macOS/Linux 的 tmp 清理策略随版本/配置/挂载而异，不可依赖）——文件
+ * 由读取面单命令生命期覆盖；崩溃/中断残留**无引擎回收**，只受常规临时区卫生处
+ * 置（这是已登记的边界，不是「OS 会自清」的假设）。
  */
 private[tools] object OutputSpill:
 
-  /** 溢写目录单点（`java.io.tmpdir`）。OS tmp 自清 ⇒ 无清理任务。 */
+  /**
+   * 溢写目录单点（`java.io.tmpdir`）。无清理任务——文件为单命令生命期；崩溃残
+   * 留无引擎回收、亦无 OS TTL 保证（见上方清理口径）。
+   */
   def defaultDir: os.Path = os.Path(java.nio.file.Paths.get(sys.props.getOrElse("java.io.tmpdir", "/tmp")))
 
   /** 溢写文件名（含秒级时间戳 + 12 位随机段，同秒冲突靠随机段避让；随机段无 `-`）。 */

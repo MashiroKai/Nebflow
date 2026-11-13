@@ -23,6 +23,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 import {
   loadPlaywright, launchBrowser, createSession, settle, setWebRoot, webRoot,
 } from './lib/visual-harness.mjs';
@@ -35,7 +36,9 @@ const valOf = (f, d = null) => {
 
 const ROOT_DIR = valOf('--root', 'src/main/resources/web');
 const TAG = valOf('--tag', 'after');
-const OUT = valOf('--out', '/tmp/toggle-unify');
+// Default output = an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable);
+// an explicit --out keeps its meaning.
+const OUT = valOf('--out', null) || evidenceBatch('toggle-unify', 'verify');
 const THEMES = (valOf('--themes', 'light,dark') || '').split(',').filter(Boolean);
 const LEGS = (valOf('--legs', 'settings,profile,todo,daemons,perception') || '')
   .split(',').filter(Boolean);

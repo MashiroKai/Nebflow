@@ -21,6 +21,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { establishSession } from '../tests/helpers/session-rail.mjs';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -30,7 +31,9 @@ const opt = (name, dflt) => {
 
 const BASE = process.env.NEBFLOW_URL || 'http://127.0.0.1:8097';
 const HOME = process.env.NEBFLOW_HOME_DIR || `${process.env.HOME}/.nebflow`;
-const OUT = opt('--out', '/tmp/usage-dashboard-open.json');
+// Default output = an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable);
+// an explicit --out keeps its meaning.
+const OUT = opt('--out', null) || path.join(evidenceBatch('usage-dashboard', 'open'), 'usage-dashboard-open.json');
 const OPENS = Number(opt('--opens', '3'));
 const TIMEOUT_MS = Number(opt('--timeout', '300000'));
 

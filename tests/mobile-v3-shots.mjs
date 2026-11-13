@@ -7,9 +7,11 @@ import { chromium } from 'playwright-core';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
-const OUT = process.argv[2] || '/tmp/mobile-v3-shots';
+// Default output = a TTL-sweepable EvidenceTemp batch; argv[2] keeps its meaning.
+const OUT = process.argv[2] || evidenceBatch('mobile-v3', 'shots');
 mkdirSync(OUT, { recursive: true });
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 const SID = 'smoke-session-1';

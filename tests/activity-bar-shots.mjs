@@ -3,6 +3,10 @@ import { chromium } from 'playwright-core';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
+
+// Shots default to a TTL-sweepable EvidenceTemp batch instead of bare /tmp files.
+const OUT = evidenceBatch('activity-bar', 'v11-shots');
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
@@ -36,23 +40,23 @@ const clip = { x: 0, y: 0, width: 340, height: 500 };
 
 // Light theme: expanded (files active)
 let page = await makePage('light');
-await page.screenshot({ path: '/tmp/ab-v11-light-expanded.png', clip });
+await page.screenshot({ path: join(OUT, 'ab-v11-light-expanded.png'), clip });
 // hover the files button
 await page.hover('#files-btn');
 await page.waitForTimeout(250);
-await page.screenshot({ path: '/tmp/ab-v11-light-hover.png', clip });
+await page.screenshot({ path: join(OUT, 'ab-v11-light-hover.png'), clip });
 // collapsed
 await page.click('#files-btn');
 await page.waitForTimeout(500);
-await page.screenshot({ path: '/tmp/ab-v11-light-collapsed.png', clip });
+await page.screenshot({ path: join(OUT, 'ab-v11-light-collapsed.png'), clip });
 await page.close();
 
 // Dark theme: expanded + collapsed
 page = await makePage('dark');
-await page.screenshot({ path: '/tmp/ab-v11-dark-expanded.png', clip });
+await page.screenshot({ path: join(OUT, 'ab-v11-dark-expanded.png'), clip });
 await page.click('#files-btn');
 await page.waitForTimeout(500);
-await page.screenshot({ path: '/tmp/ab-v11-dark-collapsed.png', clip });
+await page.screenshot({ path: join(OUT, 'ab-v11-dark-collapsed.png'), clip });
 await page.close();
 
 await browser.close();

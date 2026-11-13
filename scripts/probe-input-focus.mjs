@@ -16,6 +16,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 
 // 装置 = 同目录 scripts/lib/visual-harness.mjs（零端口 / MockWS / 真 Chromium），路径相对本文件
 const { loadPlaywright, launchBrowser, createSession, settle, shoot, setWebRoot } = await import(new URL('./lib/visual-harness.mjs', import.meta.url));
@@ -24,7 +25,9 @@ const argv = process.argv.slice(2);
 const valOf = (f, d = null) => { const i = argv.indexOf(f); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
 const WEB_ROOT = valOf('--web-root');
 const TAG = valOf('--tag', 'after');
-const OUT = valOf('--out', '/tmp/ifr');
+// Default output = an EvidenceTemp batch (manifest + non-active ⇒ TTL-sweepable);
+// an explicit --out keeps its meaning.
+const OUT = valOf('--out', null) || evidenceBatch('input-focus', 'probe');
 const THEMES = (valOf('--themes', 'light,dark') || '').split(',').filter(Boolean);
 if (WEB_ROOT) setWebRoot(WEB_ROOT);
 mkdirSync(OUT, { recursive: true });
