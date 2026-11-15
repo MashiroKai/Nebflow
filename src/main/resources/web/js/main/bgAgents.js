@@ -2517,7 +2517,8 @@ export function renderBgAgentDropdown() {
   if (!activeView) return;
   const dropdownEl = activeView.dom.bgagentDropdownEl;
   const listEl = activeView.dom.bgagentDropdownListEl;
-  if (!listEl) return;
+  const carrier = activeView.dom.bgDropdownEl || dropdownEl;
+  if (!listEl || !carrier || carrier.classList.contains('hidden')) return;
   const sid = activeView?.sessionId;
   // Flow 会话可见性批（2026-11-01）：badge/头部计数/空态/行集全部走同一模型
   // （bgPanelModel 单点 = 主桶可见行 ∪ 作用域桶链行 ∪ 延续态组头）——计数签与

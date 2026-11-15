@@ -19,6 +19,21 @@
       "scenario": "SR-SCN-003",
       "implementation": ["src/main/resources/web/js/delegateChainProvider.js"],
       "tests": [{"path": "tests/subagent-visibility.test.mjs", "name": "unchanged historical snapshots neither notify nor replace projected rows"}]
+    },
+    {
+      "requirement": "SR-REQ-002",
+      "scenario": "SR-SCN-004",
+      "implementation": ["src/main/resources/web/js/main.js", "src/main/resources/web/js/main/bgAgents.js", "openspec/changes/repair-startup-freeze/proposal.md", "openspec/changes/repair-startup-freeze/specs/startup-responsiveness/spec.md", "openspec/changes/repair-startup-freeze/trace.json", "openspec/changes/repair-startup-freeze/tasks.md"],
+      "tests": [
+        {"path": "tests/subagent-visibility.test.mjs", "name": "initial terminal task snapshot refreshes each root indicator once"},
+        {"path": "tests/subagent-visibility.test.mjs", "name": "hidden background dropdown does not construct its task list"}
+      ]
+    },
+    {
+      "requirement": "SR-REQ-003",
+      "scenario": "SR-SCN-005",
+      "implementation": ["src/main/resources/web/js/attachStripFold.js"],
+      "tests": [{"path": "tests/attach-strip-observer.test.mjs", "name": "empty single-line attachment strip reaches an observer fixed point"}]
     }
   ]
 }

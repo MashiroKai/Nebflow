@@ -2,7 +2,7 @@
 
 ## Problem
 
-Restored folded chain cards share the `solar-node` class with animated nodes but have no orbit rings. A running-to-terminal transition can repeatedly mutate its own observed class without entering a completable coast. Large historical task snapshots also notify the UI on unchanged polls.
+Restored folded chain cards share the `solar-node` class with animated nodes but have no orbit rings. A running-to-terminal transition can repeatedly mutate its own observed class without entering a completable coast. Large historical task snapshots also notify the UI on unchanged polls. The initial changed snapshot still reconciled every terminal child by refreshing the entire root indicator and dropdown for each row, including while the dropdown was closed. A 1,070-row history therefore caused repeated full-list construction before the first user interaction. Separately, an empty single-line attachment strip repeatedly removed an absent observed class.
 
 ## Scope
 
