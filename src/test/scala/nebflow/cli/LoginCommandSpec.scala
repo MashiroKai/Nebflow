@@ -224,15 +224,15 @@ class LoginCommandSpec extends FunSuite:
   test("signInWith happy path：POST 既有登录面（账号+密码进体）→ 读状态 → H3 成功行逐字") {
     val fake = PostFake {
       case (p, _) if p == PostPath => Right(json("""{"ok":true,"networkId":"net-1"}"""))
-      case (p, _) if p == LoginFlow.StatusPath => Right(json(statusJson))
     }
     val result = LoginFlow.signInWith(
       CliContext.offline(),
       fake.post,
       IO.pure(Some("kai@example.com")),
-      IO.pure(Some(password))
+      IO.pure(Some(password)),
+      getStatus = () => IO.pure(Right(json(statusJson)))
     ).unsafeRunSync()
-    assertEquals(fake.calls.map(_._1).toList, List(PostPath, LoginFlow.StatusPath))
+    assertEquals(fake.calls.map(_._1).toList, List(PostPath))
     val body = fake.calls.head._2
     assertEquals(body.hcursor.downField("account").as[String].toOption, Some("kai@example.com"))
     assertEquals(body.hcursor.downField("password").as[String].toOption, Some(password))
@@ -241,13 +241,21 @@ class LoginCommandSpec extends FunSuite:
       case other => fail(s"expected H3 text, got $other")
   }
 
+  test("piped password preserves whitespace, Unicode and EOF") {
+    def read(input: String): Option[String] = LoginFlow.readPasswordLine(() => input)
+    assertEquals(read("  密码  "), Some("  密码  "))
+    assertEquals(read("   "), Some("   "))
+    assertEquals(read(""), Some(""))
+    assertEquals(read(null), None)
+  }
+
   test("signInWith --json 成功面：{signedIn:true,account}") {
     val fake = PostFake {
       case (p, _) if p == PostPath => Right(json("""{"ok":true}"""))
-      case (p, _) if p == LoginFlow.StatusPath => Right(json(statusJson))
     }
     val ctx = CliContext.offline().copy(json = true)
-    LoginFlow.signInWith(ctx, fake.post, IO.pure(Some("kai@example.com")), IO.pure(Some(password)))
+    LoginFlow.signInWith(ctx, fake.post, IO.pure(Some("kai@example.com")), IO.pure(Some(password)),
+      getStatus = () => IO.pure(Right(json(statusJson))))
       .unsafeRunSync() match
       case CliResult.Json(j) =>
         assertEquals(j.hcursor.downField("signedIn").as[Boolean].toOption, Some(true))

@@ -313,17 +313,19 @@ private[cli] object LoginFlow:
     Option(scala.io.StdIn.readLine()).map(_.trim)
   }
 
+  private[cli] def readPasswordLine(readLine: () => String): Option[String] = Option(readLine())
+
   val readPasswordInteractive: IO[Option[String]] = IO {
     Option(System.console()) match
       case Some(c) =>
         val chars = c.readPassword("%s", LoginCopy.PromptPassword)
         val s = if chars == null then None else Some(new String(chars))
         if chars != null then java.util.Arrays.fill(chars, ' ') // 用后清零
-        s.map(_.trim) // 空串语义（未输入）留给调用面判 NoInput
+        s // 空串语义（未输入）留给调用面判 NoInput
       case None =>
         Console.err.println(LoginCopy.PromptNonInteractiveWarning)
         Console.err.print(LoginCopy.PromptPassword)
-        Option(scala.io.StdIn.readLine()).map(_.trim)
+        readPasswordLine(() => scala.io.StdIn.readLine())
   }
 
   // ── IO 面：三命令 ────────────────────────────────────────────────────────
@@ -336,7 +338,13 @@ private[cli] object LoginFlow:
     ctx.client match
       case None => IO.pure(CliResult.Error(LoginCopy.GatewayRequired, 1))
       case Some(client) =>
-        signInWith(ctx, (p, b) => client.post(p, b).attempt, readAccountInteractive, readPasswordInteractive)
+        signInWith(
+          ctx,
+          (p, b) => client.post(p, b).attempt,
+          readAccountInteractive,
+          readPasswordInteractive,
+          getStatus = () => client.get(StatusPath).attempt
+        )
 
   /**
    * 注入面（spec 直测）：`post` = 出站腿（路径 + 体 → 结果或异常）；
@@ -362,7 +370,8 @@ private[cli] object LoginFlow:
     post: (String, Json) => IO[Either[Throwable, Json]],
     readAccount: IO[Option[String]],
     readPassword: IO[Option[String]],
-    loginGate: String => IO[Either[Refusal, Unit]] = LoginGuard.checkLoginAllowed
+    loginGate: String => IO[Either[Refusal, Unit]] = LoginGuard.checkLoginAllowed,
+    getStatus: () => IO[Either[Throwable, Json]] = () => IO.pure(Left(new RuntimeException("status unavailable")))
   ): IO[CliResult] =
     readAccount.flatMap {
       case None => IO.pure(signInFailure(ctx, SignInFailure.NoInput))
@@ -379,7 +388,7 @@ private[cli] object LoginFlow:
               case Right(_) =>
                 // post 已是 IO[Either[Throwable, Json]]（attempt 由生产装配/注入面决定）。
                 post(LoginPath, Json.obj("account" -> account.asJson, "password" -> pw.asJson)).flatMap {
-                  case Right(json) if !json.hcursor.downField("error").succeeded => signInSuccess(ctx, post)
+                  case Right(json) if !json.hcursor.downField("error").succeeded => signInSuccess(ctx, getStatus)
                   case Right(json) =>
                     // 2xx 但带 error 字段 = 防御性出口（旧 pollStep 同口径）。
                     val detail =
@@ -397,8 +406,8 @@ private[cli] object LoginFlow:
    * 状态读不到时**不降级为失败**（凭据已落盘，登录确实成功了）⇒ 账号位填
    * [[LoginCopy.UnknownValue]]，仍是 H3 模板逐字（不新造句式）。
    */
-  private def signInSuccess(ctx: CliContext, post: (String, Json) => IO[Either[Throwable, Json]]): IO[CliResult] =
-    readStatusVia(post).map {
+  private def signInSuccess(ctx: CliContext, getStatus: () => IO[Either[Throwable, Json]]): IO[CliResult] =
+    readStatusVia(getStatus).map {
       case Right(st) =>
         if ctx.json then CliResult.Json(Json.obj("signedIn" -> true.asJson, "account" -> accountLabel(st).asJson))
         else CliResult.Text(List(LoginCopy.signedInLine(accountLabel(st))))
@@ -412,9 +421,9 @@ private[cli] object LoginFlow:
     else CliResult.Error(LoginCopy.signInFailedLine(f.reason, f.code), 1)
 
   private def readStatusVia(
-    post: (String, Json) => IO[Either[Throwable, Json]]
+    getStatus: () => IO[Either[Throwable, Json]]
   ): IO[Either[SignInFailure.Failure, AccountStatus]] =
-    post(StatusPath, Json.obj()).flatMap {
+    getStatus().flatMap {
       case Right(json) => IO.pure(parseStatus(json))
       case Left(e) => IO.pure(Left(failureOfMessage(Option(e.getMessage), SignInFailure.StatusUnreadable)))
     }
