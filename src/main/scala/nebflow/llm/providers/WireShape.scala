@@ -87,7 +87,8 @@ object WireShape:
       // 无 type 字段但带文本的形状（部分兼容端点的 content 数组元素）
       hc.downField("text").as[String].toOption.map(_ => "text")
     }
-    def str(f: String): Option[String] = hc.downField(f).as[String].toOption.filter(_.trim.nonEmpty)
+    // A block can be one streaming fragment: blank text still carries separators.
+    def str(f: String): Option[String] = hc.downField(f).as[String].toOption.filter(_.nonEmpty)
     kind match
       case Some("tool_use") | Some("tool_result") | Some("image") | Some("image_url") =>
         Block.Opaque(kind.getOrElse("?"))
@@ -103,7 +104,7 @@ object WireShape:
         str("text")
           .map(Block.Text.apply)
           .orElse {
-            hc.downField("content").focus.filter(_.isString).flatMap(_.asString).filter(_.trim.nonEmpty)
+            hc.downField("content").focus.filter(_.isString).flatMap(_.asString).filter(_.nonEmpty)
               .map(Block.Text.apply)
           }
           .orElse(

@@ -1200,6 +1200,13 @@ object LlmInterface extends LlmRuntime:
                                       )
                                       .evalTap { chunk =>
                                         chunk match
+                                          // Preserve blank fragments without letting a blank OpenAI response win.
+                                          case StreamChunk.TextDelta(delta)
+                                              if candidate.provider.protocol == LlmProtocol.OpenAI && delta.trim.isEmpty =>
+                                            IO.unit
+                                          case StreamChunk.ThinkingDelta(delta)
+                                              if candidate.provider.protocol == LlmProtocol.OpenAI && delta.trim.isEmpty =>
+                                            IO.unit
                                           case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) |
                                               StreamChunk.ThinkingDelta(_) =>
                                             // 修 2026-10-21 「恢复不回绿」腿②：调用成功即清除。

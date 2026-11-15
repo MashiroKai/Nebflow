@@ -751,6 +751,7 @@ class OpenAiAdapter(
               // 正文归一化（protocol-compat 批）：`content` 规范上是字符串，但
               // 兼容端点会发数组（[{type:text,text:..}]）或 null。旧实现只认
               // 字符串 ⇒ 数组形态的正文整段丢失。统一走 WireShape 降级。
+              // Whitespace-only deltas carry Markdown boundaries and must survive streaming.
               val textChunks =
                 d.hcursor.downField("content").as[String].toOption
                   .orElse {
@@ -765,7 +766,7 @@ class OpenAiAdapter(
                           case WireShape.Block.Opaque(_)  => None
                       ).mkString(""))
                   }
-                  .filter(_.trim.nonEmpty)
+                  .filter(_.nonEmpty)
                   .toList
               val textDeltas = textChunks.map(StreamChunk.TextDelta.apply)
               // Some OpenAI-compatible providers (GLM, DeepSeek, etc.) return reasoning/thinking
@@ -778,7 +779,7 @@ class OpenAiAdapter(
                 .toOption
                 .orElse(d.hcursor.downField("thinking").as[String].toOption)
                 .orElse(d.hcursor.downField("reasoning").as[String].toOption)
-                .filter(_.trim.nonEmpty)
+                .filter(_.nonEmpty)
               val thinkingDeltas = thinkText.map(t => List(StreamChunk.ThinkingDelta(t))).getOrElse(Nil)
               val allTextDeltas = thinkingDeltas ++ textDeltas
 
