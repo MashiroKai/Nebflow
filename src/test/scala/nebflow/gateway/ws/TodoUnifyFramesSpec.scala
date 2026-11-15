@@ -168,6 +168,63 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
     }
   }
 
+  test("FDC-SCN-006 same-name user creates append independent records") {
+    withRig { (c, res) =>
+      val frame = """{"type":"createScheduledTask","sessionId":"s1","kind":"todo","name":"same","content":"first"}"""
+      for
+        first <- send(c, "createScheduledTask", frame)
+        second <- send(c, "createScheduledTask", frame.replace("first", "second"))
+        rows <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(rows.length, 2)
+        assertEquals(rows.map(_.id).distinct.length, 2)
+        assertEquals(rows.map(_.content).toSet, Set("first", "second"))
+        assert(rows.forall(_.source.contains("user")))
+        assertEquals(types(first), List("scheduledTaskCreated"))
+        assertEquals(types(second), List("scheduledTaskCreated"))
+    }
+  }
+
+  test("FTI-SCN-007 correlated create retry returns same durable row and rejects identity collision") {
+    withRig { (c, res) =>
+      val id = "b642c22a-e761-48c2-9f29-4237263bc973"
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","name":"same","content":"first","requestId":"$id"}"""
+      for
+        first <- send(c, "createScheduledTask", frame)
+        second <- send(c, "createScheduledTask", frame)
+        conflict <- send(c, "createScheduledTask", frame.replace("first", "different"))
+        rows <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(first), List("scheduledTaskCreated"))
+        assertEquals(types(second), List("scheduledTaskCreated"))
+        assertEquals(types(conflict), List("error"))
+        assertEquals(rows.size, 1)
+        assertEquals(rows.head.content, "first")
+        assertEquals(rowOf(first).hcursor.get[String]("id").toOption, Some(id))
+        assertEquals(rowOf(second).hcursor.get[String]("id").toOption, Some(id))
+        assertEquals(conflict.head.hcursor.get[String]("requestId").toOption, Some(id))
+    }
+  }
+
+  test("FDC-SCN-026 a retry after completion reports the stored completed state") {
+    withRig { (c, res) =>
+      val id = "c9d1e2f3-a4b5-4c6d-8e7f-1029384756ab"
+      val frame = s"""{"type":"createScheduledTask","sessionId":"s1","kind":"todo","name":"same","content":"first","requestId":"$id"}"""
+      for
+        _ <- send(c, "createScheduledTask", frame)
+        _ <- res.scheduledTaskStore.updateTask("s1", id)(_.copy(completedAt = Some(1234L)))
+        retry <- send(c, "createScheduledTask", frame)
+        rows <- res.scheduledTaskStore.loadTasks("s1")
+      yield
+        assertEquals(types(retry), List("scheduledTaskCreated"))
+        val task = rowOf(retry)
+        assertEquals(task.hcursor.get[String]("id").toOption, Some(id))
+        assertEquals(task.hcursor.get[Boolean]("completed").toOption, Some(true), "the receipt must not replay the request's initial completed=false")
+        assertEquals(task.hcursor.get[Long]("completedAt").toOption, Some(1234L))
+        assertEquals(rows.head.completedAt, Some(1234L), "the durable row is unchanged by the retry")
+    }
+  }
+
   // ==================================================================
   // ② list scope:all：字段 / 排序 / 已完成过滤 / includeCompleted opt-in
   // ==================================================================

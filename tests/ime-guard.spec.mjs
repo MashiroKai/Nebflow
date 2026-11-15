@@ -515,8 +515,11 @@ try {
       //   view.composing 弃用绑定对随漂至 1698-1699（旧 1442-1443）；
       //   工具按锚文本定位并回显活行号 —— spec 钉活行号即可，判据语义不变。）
       const al = runSentinel(buildFixture(null));
-      ok('G4-3 允许清单承载 input.js:1698-1699（view.composing 弃用绑定对）⇒ exit 0 且输出可见豁免条目',
-        al.code === 0 && al.out.includes('allowlisted occurrence: js/input.js:1698,1699'),
+      // The live line numbers of the deprecated binding pair follow the file; locate them by their text.
+      const bindAt = readFileSync(join(WEB, 'js', 'input.js'), 'utf8').split('\n')
+        .findIndex((l) => l.includes("input.addEventListener('compositionstart', () => { view.composing = true; });")) + 1;
+      ok('G4-3 允许清单承载 input.js 的 view.composing 弃用绑定对 ⇒ exit 0 且输出可见豁免条目（活行号）',
+        bindAt > 0 && al.code === 0 && al.out.includes(`allowlisted occurrence: js/input.js:${bindAt},${bindAt + 1}`),
         `exit=${al.code} ${(al.out.split('\n').find(l => l.includes('allowlisted occurrence')) || '').trim()}`);
 
       // G4-4 反掩蔽：允许清单锚定的是**文本**——同两行被换成真代码（行号不变）⇒ 必红

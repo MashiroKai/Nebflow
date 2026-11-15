@@ -337,23 +337,26 @@ object DelegateRevival:
    *                    横幅之后成为本窗口的首条指令；空 = 纯「从冻结点继续」。
    */
   private def reviveImpl(deps: Deps, task: SubAgentTask, instruction: String = ""): IO[Either[String, Unit]] =
-    nebflow.core.delegate.SessionStartLease
-      .exclusive(task.taskId) {
-        deps.resources.agentRegistry.get.flatMap { live =>
-          live.get(task.taskId).fold(IO.pure(false))(record => deps.system.isAlive(record.ref.path)).flatMap {
-            case true => IO.pure(Left("Session is already live; use its explicit wake or continuation entry"))
-            case false =>
-              deps.resources.sessionStore.loadMessagesForSession(task.taskId).flatMap { transcript =>
-                if transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript) then
-                  IO.pure(
-                    Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
-                  )
-                else reviveAdmitted(deps, task, instruction)
-              }
+    deps.resources.executionProtection(task.taskId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected => nebflow.core.delegate.SessionStartLease
+        .exclusive(task.taskId) {
+          deps.resources.agentRegistry.get.flatMap { live =>
+            live.get(task.taskId).fold(IO.pure(false))(record => deps.system.isAlive(record.ref.path)).flatMap {
+              case true => IO.pure(Left("Session is already live; use its explicit wake or continuation entry"))
+              case false =>
+                deps.resources.sessionStore.loadMessagesForSession(task.taskId).flatMap { transcript =>
+                  if transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript) then
+                    IO.pure(
+                      Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
+                    )
+                  else reviveAdmitted(deps, task, instruction)
+                }
+            }
           }
         }
-      }
-      .handleErrorWith(error => IO.pure(Left(s"Recovery could not safely start: ${error.getMessage}")))
+        .handleErrorWith(error => IO.pure(Left(s"Recovery could not safely start: ${error.getMessage}")))
+      case _ => IO.pure(Left("Protected or unknown execution requires exact-ref recovery; legacy revival is unavailable"))
+    }
 
   private def reviveAdmitted(deps: Deps, task: SubAgentTask, instruction: String): IO[Either[String, Unit]] =
     IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {

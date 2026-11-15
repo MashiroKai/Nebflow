@@ -509,7 +509,7 @@ project's OWN registration dir, not in this workspace:
           val pd =
             if remote then
               // 跨设备批（2026-10-25）：设备项目的 `workspace` 字段存**设备本盘原样
-              // 路径**（= origin.path），绝不经本机 os.Path 解析——`C:\Users\Kai\stand`
+              // 路径**（= origin.path），绝不经本机 os.Path 解析——`C:\Users\name\stand`
               // 在 Mac 上经 `os.Path(_, dataRoot)` 会得到数据根下的假名路径（现场
               // 事故原形）。引擎本机读写面走 [[brainWorkspace]]；展示面与文件浏览器
               // 设备腿用本值 + origin.device 经设备通道。

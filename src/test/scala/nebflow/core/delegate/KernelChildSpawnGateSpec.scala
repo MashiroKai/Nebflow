@@ -64,6 +64,7 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
 
   /** 本 spec 从不驱动回合：LLM 只是在 spawn 期必须存在（永不调用）。 */
   private object NullLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("KernelChildSpawnGateSpec: send not expected"))
 
@@ -112,6 +113,8 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
     try io.unsafeRunSync()
     finally
       system.stopAll.attempt.void.unsafeRunSync()
+
+  end withFx
 
   private def mkParent(record: Ref[IO, List[AgentCommand]]): Behavior[AgentCommand] =
     def loop: Behavior[AgentCommand] = Behaviors.receiveMessage(cmd => record.update(_ :+ cmd).as(loop))
@@ -175,7 +178,7 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
       .attempt
       .map {
         case Right(ref) => Right(ref.path.name)
-        case Left(e)    => Left(Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getName))
+        case Left(e) => Left(Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getName))
       }
 
   // ── K1（tool-face-agentflow-retire 批 2026-11-05 反转）：kernel 父的两条 spawn 判据 ──
@@ -183,14 +186,18 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
   // `def == subagent` 的子 actor 生成，其余任何 def 一律照旧拒绝。两条断言成对
   // 在场（只改一半 = 放行面失控）。
 
-  test("K1a kernel-mode delegate MAY spawn the read-only recon child (def=subagent) — and its face is the fixed read-only five") {
+  test("K1a kernel-mode delegate MAY spawn the recon child (def=subagent) — its fixed six tools include Bash") {
     withFx("kernel-recon") { fx =>
       val kernelSid = "delegate-nebflow-k1a2b3c4"
       for
         pref <- parentRefOf(fx, kernelSid)
         _ <- putRecord(kernelSid, fx.tmp.toString, Some(DualModeConfig.ModeKernel))
         out <- spawnOutcome(fx, childParams(fx, Some(pref), "subagent-c0ffee01"))
-        _ <- IO(println(s"[K1a] kernel -> read-only subagent spawn outcome => ${out.fold(m => s"REFUSED: $m", _ => "SPAWNED")}"))
+        _ <- IO(
+          println(
+            s"[K1a] kernel -> read-only subagent spawn outcome => ${out.fold(m => s"REFUSED: $m", _ => "SPAWNED")}"
+          )
+        )
         _ <- IO(
           assert(
             out.isRight,
@@ -215,16 +222,17 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
           assertEquals(
             face,
             nebflow.agent.AgentCore.SubagentFixedTools,
-            "the recon child's face is the mechanism-fixed read-only five"
+            "the recon child's face is the mechanism-fixed six tools"
           )
         )
-        _ <- IO(assertEquals(face.size, 5, "exactly five pieces"))
+        _ <- IO(assertEquals(face, Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")))
         _ <- IO(
-          Set("Write", "Edit", "Bash", "Mail", "Subagent", "NodeEdit").foreach { t =>
-            assert(!face.contains(t), s"the recon leg must have no $t — read-only by mechanism, not by prompt")
+          Set("Write", "Edit", "Mail", "Subagent", "NodeEdit").foreach { t =>
+            assert(!face.contains(t), s"the recon leg must not expose $t")
           }
         )
       yield ()
+      end for
     }
   }
 
@@ -238,7 +246,11 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
           fx,
           childParams(fx, Some(pref), "node-0f0f0f0f", defName = nebflow.core.entity.BuiltinAgents.ExecutorName)
         )
-        _ <- IO(println(s"[K1b] kernel -> executor-def spawn outcome => ${fanOut.fold(m => s"REFUSED: $m", _ => "SPAWNED (gate hole!)")}"))
+        _ <- IO(
+          println(
+            s"[K1b] kernel -> executor-def spawn outcome => ${fanOut.fold(m => s"REFUSED: $m", _ => "SPAWNED (gate hole!)")}"
+          )
+        )
         _ <- IO(
           assert(
             fanOut.isLeft,
@@ -256,6 +268,7 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
         custom <- spawnOutcome(fx, childParams(fx, Some(pref), "node-1a1a1a1a", defName = "my-own-agent"))
         _ <- IO(assert(custom.isLeft, s"an arbitrary custom def must be refused too: $custom"))
       yield ()
+      end for
     }
   }
 
@@ -275,11 +288,15 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
       nebflow.agent.AgentCore.SubagentFixedTools,
       s"a declaration on the recon def grants nothing (converged name): got ${face.toList.sorted}"
     )
-    assert(face.subsetOf(nebflow.agent.AgentCore.SubagentFixedTools), "the recon face is exactly the fixed read-only five")
+    assert(face.subsetOf(nebflow.agent.AgentCore.SubagentFixedTools), "the recon face is exactly the fixed six tools")
     // ② def 不可由调用方指定：SubagentTool 的 schema 只声明 prompt/description，
     //    且其实现**不传** defName（BlockingSubagent.run 的缺省 = BuiltinAgents.SubagentName）
     //    ——源扫描断言（同仓既有 producer-pin 手法）。
-    val schemaKeys = nebflow.core.tools.SubagentTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+    val schemaKeys = nebflow.core.tools.SubagentTool
+      .inputSchema("properties")
+      .flatMap(_.asObject)
+      .map(_.keys.toSet)
+      .getOrElse(Set.empty)
     assertEquals(schemaKeys, Set("prompt", "description"), s"Subagent declares no def/tools parameter: $schemaKeys")
     val src = os.read(
       os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "SubagentTool.scala"
@@ -289,7 +306,10 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
       "SubagentTool must never forward a caller-supplied defName — the spawn target is the builtin `subagent` def, full stop"
     )
     // ③ 闸的放行判据单点 = 那一个名字（改名换不出第二个放行面）
-    assert(KernelChildSpawnGate.readOnlyReconExempt(nebflow.core.entity.BuiltinAgents.SubagentName), "the recon def passes")
+    assert(
+      KernelChildSpawnGate.readOnlyReconExempt(nebflow.core.entity.BuiltinAgents.SubagentName),
+      "the recon def passes"
+    )
     List(" nebflow", "subagent ", "Subagent", "subagent-x", "", "nebflow").foreach { n =>
       assert(!KernelChildSpawnGate.readOnlyReconExempt(n), s"'$n' must NOT be exempt (only the exact builtin name is)")
     }
@@ -329,10 +349,20 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
           fx,
           childParams(fx, Some(pref), "node-0c0c0c0c", defName = nebflow.core.entity.BuiltinAgents.ExecutorName)
         )
-        _ <- IO(println(s"[K4] legacy kernel -> executor-def spawn outcome => ${fanOut.fold(m => s"REFUSED: $m", _ => "SPAWNED (gate hole!)")}"))
-        _ <- IO(assert(fanOut.isLeft, s"legacy kernel session '$legacySid' spawned a non-recon child actor — gap in the gate"))
+        _ <- IO(
+          println(
+            s"[K4] legacy kernel -> executor-def spawn outcome => ${fanOut.fold(m => s"REFUSED: $m", _ => "SPAWNED (gate hole!)")}"
+          )
+        )
+        _ <- IO(
+          assert(fanOut.isLeft, s"legacy kernel session '$legacySid' spawned a non-recon child actor — gap in the gate")
+        )
         recon <- spawnOutcome(fx, childParams(fx, Some(pref), "subagent-c0ffee02"))
-        _ <- IO(println(s"[K4] legacy kernel -> read-only recon spawn outcome => ${recon.fold(m => s"REFUSED: $m", _ => "SPAWNED")}"))
+        _ <- IO(
+          println(
+            s"[K4] legacy kernel -> read-only recon spawn outcome => ${recon.fold(m => s"REFUSED: $m", _ => "SPAWNED")}"
+          )
+        )
         _ <- IO(
           assert(
             recon.isRight,
@@ -340,6 +370,7 @@ class KernelChildSpawnGateSpec extends CatsEffectSuite:
           )
         )
       yield ()
+      end for
     }
   }
 

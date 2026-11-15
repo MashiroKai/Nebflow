@@ -443,21 +443,22 @@ function matchTodoAt(text, at, todos) {
   if (TODO_DIGIT_HEAD_RE.test(after)) return null;
   const token = after.split(/[\s，。！？；：、,.!?;:)/\]】」』]/)[0];
   if (token && TODO_HEX_SHAPE_RE.test(token)) return null;
-  /** @type {MentionTodo | null} */
-  let best = null;
-  let bestLen = 0;
+  /** @type {Array<{todo: MentionTodo, len: number}>} */
+  const matches = [];
   for (const todo of todos) {
     const name = todo && typeof todo.name === 'string' ? todo.name : '';
-    if (!name || after.length < name.length) continue;
-    if (after.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue;
+    if (!name || after.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue;
     const tail = after.slice(name.length);
-    if (tail && TODO_WORD_CONT_RE.test(tail[0])) continue;
-    if (name.length > bestLen) {
-      bestLen = name.length;
-      best = todo;
+    const suffix = todo.id ? '·' + todo.id : '';
+    if (suffix && tail.startsWith(suffix) && !TODO_WORD_CONT_RE.test(tail.slice(suffix.length, suffix.length + 1))) {
+      matches.push({ todo, len: name.length + suffix.length });
+    } else if (!tail.startsWith('·') && (!tail || !TODO_WORD_CONT_RE.test(tail[0]))) {
+      matches.push({ todo, len: name.length });
     }
   }
-  return best ? { todo: best, len: bestLen } : null;
+  const longest = Math.max(0, ...matches.map(match => match.len));
+  const winners = matches.filter(match => match.len === longest);
+  return winners.length === 1 ? winners[0] : null;
 }
 
 /**

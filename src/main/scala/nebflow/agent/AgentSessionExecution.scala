@@ -564,7 +564,22 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     // 刀一④：maybeAutoCompact 现为 IO[Option[IO]]（门状态热读上提）——None 仍
     // 逐字落回本派发体（FastMicroCompact/ContextRefresher 等零漂移）。
-    maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing).flatMap {
+    val protectedHandle = state.sessionId.flatMap(resources.protectedExecutions.get)
+    val admission = protectedHandle.traverse_ { handle =>
+      ProtectedAgentExecution.validate(handle) *>
+        IO.raiseWhen(!state.sessionId.exists(resources.protectedRunners.contains))(
+          new IllegalStateException("protected-runner-unavailable")
+        ) *> IO.raiseWhen(state.pendingCompaction.nonEmpty || state.askMode.nonEmpty ||
+        state.session.sessionDevice.nonEmpty || state.isDispatcher || state.isFlowNode || state.isSubTaskWorker)(
+        new IllegalStateException("unsupported-execution-boundary")
+      )
+    }
+    val compact = maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing).flatMap {
+      case Some(_) if protectedHandle.nonEmpty =>
+        IO.raiseError(new IllegalStateException("unsupported-compaction-boundary"))
+      case result => IO.pure(result)
+    }
+    (admission *> compact).flatMap {
       case Some(ioBehavior) => ioBehavior
       case None =>
         // Phase-aware compaction: Compact turn disables tools (existing behavior).
@@ -622,7 +637,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         // runs prepareCompactionInput) — the compact input carries overview +
         // persisted-path references, not the giant bodies, so this skip no
         // longer risks a provider rejection on multi-MB histories.
-        val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
+        val microResult = if isCompactTurn || isAskTurn || protectedHandle.nonEmpty then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
           case Some(compacted) =>
             logAgentEvent(
@@ -1126,7 +1141,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
             // must never leak into summarization loops.
-            searchAllowed = !(isCompactTurn || isAskTurn),
+            searchAllowed = !(isCompactTurn || isAskTurn || sessionIdOpt.exists(resources.protectedExecutions.contains)),
             requestId = Some(llmRequestId)
           )
         yield (turnCtx, request, stateWithCache)
@@ -1164,6 +1179,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               val sseEncoder = new nebflow.core.LlmLogWriter.StreamEventEncoder(llmRequestId, request.agentId)
               // Synchronously update gitBranch in state — no async message
               val stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
+              def runModel(work: IO[ConsumeResult]): IO[ConsumeResult] =
+                sessionIdOpt.flatMap(resources.protectedExecutions.get) match
+                  case None => work
+                  case Some(handle) =>
+                    sessionIdOpt.flatMap(resources.protectedRunners.get) match
+                      case Some(runner) => ProtectedAgentExecution.modelRound(handle, runner, request,
+                        math.max(0, nebflow.llm.Fallback.MaxTurnLlmCalls - stateForLlm.execution.llmCallsThisTurn))(work)
+                      case None => IO.raiseError(new IllegalStateException("protected-runner-unavailable"))
               ctx
                 .forkTurn(
                   // ── Token 止损（2026-08-18 事故，方案 C）：per-turn LLM 重试预算 ──
@@ -1185,7 +1208,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                     LlmLogWriter.logRequest(request, llmRequestId, isSubagent, isCompactTurn) *>
                     // pi-logic 接线点 1：LLM 流起点审计行（MessageStarted——纯增日志）。
                     IO(piBridge.messageStart(turnId)) *>
-                    resources.llm
+                    runModel(resources.llm
                       .sendStream(request, onAttempt = Some(onAttemptCb))
                       // B2（RC-2，2026-10-04）：携带本轮 LLM 轮次标识 (round, block)。
                       // round 取 dispatch 序号 stateForLlm.currentTurnId——它恰好是
@@ -1244,7 +1267,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                             resultUsage = cr.usage,
                             resultModel = cr.model
                           ) *> IO.pure(cr.copy(requestId = Some(llmRequestId)))
-                      }
+                      })
                       .attempt
                       .flatMap {
                         // pi-logic 接线点 4（PiLoopTranslator 影子面）：完成腿事件——
@@ -1252,7 +1275,16 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                         // 六分支/ToolsComplete（影子事件序随主链真实序）。
                         case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
                         case Left(e) =>
-                          IO(piBridge.llmFailedTurnEnd(turnId)) *> (ctx.self ! LlmFailed(e, replyTo, turnId))
+                          (sessionIdOpt.flatMap(resources.protectedExecutions.get),
+                            sessionIdOpt.flatMap(resources.protectedRunners.get)) match
+                            case (Some(handle), Some(runner)) =>
+                              ProtectedAgentExecution.suspendModel(handle, runner) *>
+                                NebflowLogger.forName("nebflow.agent").warn(
+                                  s"Protected model boundary requires review: ${e.getMessage}"
+                                )
+                            case (Some(_), None) =>
+                              NebflowLogger.forName("nebflow.agent").warn("Protected model runner unavailable; review required")
+                            case _ => IO(piBridge.llmFailedTurnEnd(turnId)) *> (ctx.self ! LlmFailed(e, replyTo, turnId))
                       }
                       .handleErrorWith { e =>
                         NebflowLogger
@@ -1260,8 +1292,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                           .warn(s"pipeLlmCall failed: ${e.getMessage}")
                           // pi-logic 接线期四件 ④（崩溃兜底）：synthesizeTruncatedEvents
                           // 合成终态对经桥 audit 面——「循环崩溃对下游仍呈现为一次正常收尾」。
-                          .flatMap(_ => PiLoopWiring.crashTailIO(piBridge, turnId))
-                          .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
+                          .flatMap { _ =>
+                            (sessionIdOpt.flatMap(resources.protectedExecutions.get),
+                              sessionIdOpt.flatMap(resources.protectedRunners.get)) match
+                              case (Some(handle), Some(runner)) => ProtectedAgentExecution.suspendModel(handle, runner)
+                              case (Some(_), None) => IO.raiseError(new IllegalStateException("protected-runner-unavailable", e))
+                              case _ => PiLoopWiring.crashTailIO(piBridge, turnId) *> (ctx.self ! LlmFailed(e, replyTo, turnId))
+                          }
                       }
                 )
                 .map { _ =>
@@ -1506,12 +1543,44 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         // 本机项目/非项目轨 None（现状零变化）。
         sessionDevice = state.session.sessionDevice,
         sessionDeviceWorkspace = state.session.sessionDeviceWorkspace,
+        protectedExecutionRoots =
+          if sessionIdOpt.exists(resources.protectedExecutions.contains) then
+            val sessions = resources.sessionStore.executionAuthorityRoot
+            List(sessions, sessions.getParent.resolve("subagent-tasks"))
+          else Nil,
         executionIdentity = Option.when(depth == 0 && effectiveDef.name == nebflow.actor.RootAgentIdentity.Name)(
           nebflow.core.tools.ToolExecutionIdentity.issue(effectiveDef.name, "root")
         ),
         sandbox = sandboxPolicy
       )
-      freshResults <- filteredCalls.parTraverse { call =>
+      _ <- sessionIdOpt.filter(resources.protectedExecutions.contains).traverse_ { sid =>
+        val execution = resources.protectedExecutions(sid)
+        execution.authority.observeChain(sid, execution.admission.executionId).flatMap {
+          case nebflow.shared.ExecutionChainObservation.Verified(chain)
+              if chain.attemptId == execution.admission.attemptId &&
+                chain.incarnationId == execution.admission.incarnationId && chain.phase == "decided" =>
+            val expected = result.toolCalls.map { call =>
+              chain.intents.values.find(i => i.modelCallId == call.id && i.tool == call.name &&
+                i.arguments == Json.fromJsonObject(call.input))
+            }
+            val allPrepared = expected.forall(_.exists(i => Set("prepared", "outcome").contains(
+              chain.operations.getOrElse(i.operationId, "")))) &&
+              expected.flatten.map(_.operationId).distinct.size == chain.intents.size
+            val supported = result.toolCalls.forall { call =>
+              val path = call.input("file_path").flatMap(_.asString).getOrElse("")
+              val extension = path.split('.').lastOption.getOrElse("").toLowerCase
+              call.name == "Read" && path.nonEmpty &&
+                !Set("png", "jpg", "jpeg", "gif", "webp", "bmp").contains(extension) &&
+                call.input("device").isEmpty
+            }
+            if droppedCalls.nonEmpty || expected.size != chain.intents.size || !allPrepared || !supported ||
+                toolCtx.sessionDevice.nonEmpty || (toolCtx.hookEngine ne nebflow.core.hooks.HookEngine.noop) then
+              IO.raiseError(new IllegalStateException("unsupported-or-unprepared-tool-batch"))
+            else IO.unit
+          case _ => IO.raiseError(new IllegalStateException("execution-review-required"))
+        }
+      }
+      runTool = (call: ToolCall) =>
         val skipStreaming = call.name == "AskUserQuestion"
         val callCtx = toolCtx.copy(toolCallId = call.id)
         // pi-logic 接线点 9：单调用起点审计行（与 ToolStart 帧位同步——纯增日志）。
@@ -1531,7 +1600,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               // round). Pure echo, zero side effects — bypasses the permission
               // system (an Ask here would deadlock the round-trip on a
               // synthetic tool the user never configured).
-              if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
+              if sessionIdOpt.exists(resources.protectedExecutions.contains) then
+                protectedRead(call, callCtx, resources, sessionIdOpt.get)
+              else if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
                 IO.delay(
                   NebflowLogger
                     .forName("nebflow.agent")
@@ -1587,6 +1658,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               .attempt
               .flatMap {
                 case Right(pair) => IO.pure(pair)
+                case Left(e) if sessionIdOpt.exists(resources.protectedExecutions.contains) => IO.raiseError(e)
                 case Left(e) =>
                   val r = ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)
                   logToolStructured(call, callCtx, r).as((call, r))
@@ -1612,10 +1684,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                    else IO.unit)
               }
               .flatMap { (call, r) =>
-                ToolResultGuard.guardResult(call, r, state.sessionId.getOrElse("default")).map(r => (call, r))
+                if sessionIdOpt.exists(resources.protectedExecutions.contains) then IO.pure((call, r))
+                else ToolResultGuard.guardResult(call, r, state.sessionId.getOrElse("default")).map(r => (call, r))
               })
-      }
-      guardedBatch <- ToolResultGuard.guardBatch(freshResults, state.sessionId.getOrElse("default"))
+      freshResults <-
+        if sessionIdOpt.exists(resources.protectedExecutions.contains) then filteredCalls.traverse(runTool)
+        else filteredCalls.parTraverse(runTool)
+      guardedBatch <-
+        if sessionIdOpt.exists(resources.protectedExecutions.contains) then IO.pure(freshResults)
+        else ToolResultGuard.guardBatch(freshResults, state.sessionId.getOrElse("default"))
       droppedResults <- droppedCalls.traverse { call =>
         val r = ToolExecResult(s"Tool not available: ${call.name}", isError = true)
         logToolStructured(call, toolCtx, r).as((call, r))
@@ -1744,14 +1821,29 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
 
     for _ <- ctx.forkTurn(io.handleErrorWith { e =>
         val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-        NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg") *>
-          // pi-logic 四件 ④（崩溃兜底）：工具管线失败 = 轮崩溃——合成终态对（审计面）。
-          PiLoopWiring.crashTailIO(piBridge, state.execution.currentTurnId) *>
-          (ctx.self ! LlmFailed(
-            ToolPipelineError(s"Tool execution pipeline failed: $msg"),
-            replyTo,
-            state.currentTurnId
-          ))
+        state.sessionId.flatMap(resources.protectedExecutions.get) match
+          case Some(execution) =>
+            val admission = execution.admission
+            execution.authority.observeChain(admission.sessionId, admission.executionId).flatMap {
+              case nebflow.shared.ExecutionChainObservation.Verified(current) =>
+                val id = java.util.UUID.randomUUID().toString
+                execution.authority.transition(nebflow.shared.ExecutionTransition(
+                  admission.sessionId, admission.executionId, id, id, current.ref,
+                  admission.attemptId, admission.incarnationId,
+                  nebflow.shared.ExecutionEvent.Suspended("tool-pipeline-review-required")
+                )).flatMap(result =>
+                  NebflowLogger.forName("nebflow.agent").warn(s"Protected tool pipeline suspended: $msg; commit=$result")
+                )
+              case _ => NebflowLogger.forName("nebflow.agent").warn(s"Protected tool pipeline requires review: $msg")
+            }
+          case None =>
+            NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg") *>
+              PiLoopWiring.crashTailIO(piBridge, state.execution.currentTurnId) *>
+              (ctx.self ! LlmFailed(
+                ToolPipelineError(s"Tool execution pipeline failed: $msg"),
+                replyTo,
+                state.currentTurnId
+              ))
       })
     yield
       // loopCounters 不在此写回——它在 forkTurn 的异步 IO 内计算，行为返回时
@@ -1777,6 +1869,98 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
    * P0-1 / P-M1（2026-09-20）插点：**MCP / ScriptTool 面**在 `isReversible` 之前改走
    * `McpToolGate.decide`（面判定为 None 的内置工具 ⇒ 上述原路径逐字不变）。
    */
+  /** Protected dispatch currently supports only local text Read with an empty hook engine. */
+  private[agent] def protectedRead(
+    call: ToolCall,
+    toolCtx: ToolContext,
+    resources: SharedResources,
+    sessionId: String,
+    read: (JsonObject, ToolContext) => IO[Either[ToolError, String]] = ReadTool.call
+  ): IO[ToolExecResult] =
+    val handle = resources.protectedExecutions.get(sessionId)
+    val runner = resources.protectedRunners.get(sessionId)
+    val path = call.input("file_path").flatMap(_.asString).getOrElse("")
+    val image = Set("png", "jpg", "jpeg", "gif", "webp", "bmp").contains(path.split('.').lastOption.getOrElse("").toLowerCase)
+    if call.name != "Read" || image || path.isEmpty || toolCtx.sessionDevice.nonEmpty ||
+        call.input("device").nonEmpty || (toolCtx.hookEngine ne nebflow.core.hooks.HookEngine.noop) then
+      IO.raiseError(new IllegalStateException("unsupported-boundary"))
+    else (handle, runner) match
+      case (Some(execution), Some(owner)) =>
+        execution.authority.observeChain(sessionId, execution.admission.executionId).flatMap {
+          case nebflow.shared.ExecutionChainObservation.Verified(state)
+              if state.attemptId == execution.admission.attemptId && state.incarnationId == execution.admission.incarnationId &&
+                state.phase == "decided" =>
+            val previous = state.intents.values.find(i => i.modelCallId == call.id && i.tool == call.name &&
+              i.arguments == Json.fromJsonObject(call.input)).flatMap(i => state.outcomes.get(i.operationId))
+            previous match
+              case Some(value) =>
+                (value.hcursor.get[String]("content"), value.hcursor.get[Boolean]("isError"),
+                  value.hcursor.get[Option[String]]("frontendContent")) match
+                  case (Right(content), Right(isError), Right(frontend)) if value.hcursor.downField("imageBlocks").focus.contains(Json.Null) =>
+                    IO.pure(ToolExecResult(content, isError = isError, frontendContent = frontend))
+                  case _ => IO.raiseError(new IllegalStateException("stored-tool-outcome-invalid"))
+              case None => protectedReadFresh(call, toolCtx, resources, sessionId, execution, owner, read)
+          case _ => IO.raiseError(new IllegalStateException("execution-review-required"))
+        }
+      case _ => IO.raiseError(new IllegalStateException("runner-unavailable"))
+
+  private def protectedReadFresh(
+    call: ToolCall,
+    toolCtx: ToolContext,
+    resources: SharedResources,
+    sessionId: String,
+    execution: nebflow.core.ProtectedExecutionHandle,
+    owner: ExecutionCommitStore#RunnerHandle,
+    read: (JsonObject, ToolContext) => IO[Either[ToolError, String]]
+  ): IO[ToolExecResult] =
+        permissionDecision(resources, call, sessionId, toolCtx).flatMap {
+          case PermissionDecision.Allow =>
+            val admission = execution.admission
+            def command(ref: nebflow.shared.ExecutionCommitRef, event: nebflow.shared.ExecutionEvent) =
+              val id = java.util.UUID.randomUUID().toString
+              nebflow.shared.ExecutionTransition(sessionId, admission.executionId, id, id, ref,
+                admission.attemptId, admission.incarnationId, event)
+            for
+              observed <- execution.authority.observeChain(sessionId, admission.executionId)
+              current <- observed match
+                case nebflow.shared.ExecutionChainObservation.Verified(value) => IO.pure(value)
+                case _ => IO.raiseError(new IllegalStateException("execution-review-required"))
+              intent <- current.intents.values.find(i => i.modelCallId == call.id && i.tool == call.name &&
+                i.arguments == Json.fromJsonObject(call.input)) match
+                case Some(value) => IO.pure(value)
+                case None => IO.raiseError(new IllegalStateException("intent-mismatch"))
+              value <- cats.effect.Deferred[IO, ToolExecResult]
+              permission <- permissionDecision(resources, call, sessionId, toolCtx)
+              _ <- permission match
+                case PermissionDecision.Allow => IO.unit
+                case _ => IO.raiseError(new IllegalStateException("permission-boundary-unsupported"))
+              started <- owner.dispatch(command(current.ref, nebflow.shared.ExecutionEvent.ToolStarted(intent.operationId)), intent) {
+                read(call.input, toolCtx).flatMap {
+                  case Right(content) => value.complete(ToolExecResult(content)).void
+                  case Left(error) => value.complete(ToolExecResult(error.message, isError = true)).void
+                }
+              }
+              receipt <- started match
+                case Right((_, receipt)) => IO.pure(receipt)
+                case Left(result) => IO.raiseError(new IllegalStateException(s"dispatch-unconfirmed: $result"))
+              completed <- receipt.await
+              result <- completed match
+                case cats.effect.kernel.Outcome.Succeeded(_) => value.get
+                case _ => IO.raiseError(new IllegalStateException("tool-outcome-unknown"))
+              beforeOutcome <- execution.authority.observeChain(sessionId, admission.executionId)
+              outcomeRef <- beforeOutcome match
+                case nebflow.shared.ExecutionChainObservation.Verified(state) => IO.pure(state.ref)
+                case _ => IO.raiseError(new IllegalStateException("execution-review-required"))
+              installed <- owner.outcome(command(outcomeRef, nebflow.shared.ExecutionEvent.ToolOutcome(intent.operationId,
+                Json.obj("content" -> result.content.asJson, "isError" -> result.isError.asJson,
+                  "frontendContent" -> result.frontendContent.asJson, "imageBlocks" -> Json.Null))), receipt)
+              _ <- installed match
+                case _: nebflow.shared.ExecutionCommitResult.Committed => IO.unit
+                case _ => IO.raiseError(new IllegalStateException(s"outcome-unconfirmed: $installed"))
+            yield result
+          case _ => IO.raiseError(new IllegalStateException("permission-boundary-unsupported"))
+        }
+
   private enum PermissionDecision:
     case Allow, Ask
 
@@ -2170,7 +2354,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // native $web_search before the permission gate; if one ever reaches here
     // (e.g. via the deferred-approval path), echo instead of failing it
     // through the malformed/registry checks below.
-    if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
+    if ctx.sharedResources.exists(resources => ctx.sessionId.exists(resources.isProtectedExecution)) then
+      IO.raiseError(new IllegalStateException("protected-tool-dispatch-not-integrated"))
+    else if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
       IO.pure(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
     else
       // Issue #18: adapters mark tool calls whose arguments JSON could not be
@@ -2451,13 +2637,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
-    // Canvas ask mode（2026-10-28 实施批，机制稿 §5；2026-11-02 换装批）：白名单
-    // **封闭枚举**早退——ask 会话工具面 = AskSessions.AllowedTools（ask 专属两件
-    // + 只读五件 Read/Glob/Grep/WebSearch/WebFetch，后者与 Subagent 侦察面同源），
-    // 白名单外一律不下发（含 bash/edit/write 等一切编辑与编排工具，作者令点名
-    // 禁止）。早退在最前 ⇒ 声明面/fixed 面/plugin 面/尾段挂载全不触及；判据 =
-    // 引擎侧会话身份（AskSessions 单点，`ask-` 前缀），与 delegateSession 同款
-    // 透传链。工具内侧再用 ctx.sessionId 同判据拒绝（AskTools 双保险）。
+    // Ask has an independent eight-tool face, including normal Bash. Return before
+    // definition, fixed-role, plugin or delegate grants can widen that face.
     if askSession then return nebflow.core.ask.AskSessions.AllowedTools
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
@@ -2611,24 +2792,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // (mount face + the tool's own identity check) form the twin safeguard,
     // TaskBoard precedent.
     val withDispatcherAsk = if isDispatcher then withBoard + "AskUserQuestion" else withBoard
-    // ── 双模式批（2026-10-28 · 设计 §4.2/§5.1）：模式面单点分叉 ──────────────
-    // delegateMode = None（总闸关/未判定）⇒ 本段全部分叉失效，现状逐字节。
-    // kernel 腿（极简内核执行器）：编排面整体退场——node 四件（ChainWrite/
-    //   NodeEdit/NodeList/NodeCancel）在追加前截断。
-    //   tool-face-agentflow-retire 批（2026-11-05）：`- "AgentFlow"` 减法**删除**——
-    //   该名已不在任何固定面里（工具整体退役、注册表无此名），Set 减法恒为空操作。
-    //   `- "Subagent"` 减法**同时删除**（作者裁定一：kernel 腿补只读侦察件）——
-    //   kernel 现在**有** Subagent（只读五件，无写/无 shell/无消息），与之配套的是
-    //   不变量 R-3a 的收窄（core.delegate.KernelChildSpawnGate 只放行
-    //   def='subagent' 的子 actor 生成，其余照旧拒）。
-    // dispatcher 腿（分发器）：node 四件保留（编排本体）+ Subagent 摘除
-    //   （Q2 裁定：Subagent 是侦察子代理不是编排面，分发器不需要）。
+    // Both delegate modes retain the fixed reconnaissance Subagent tool. Only kernel
+    // mode suppresses the node orchestration face; its child-spawn restrictions
+    // remain enforced independently by KernelChildSpawnGate.
     val kernelFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
-    val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
-    val modeTruncated =
-      if kernelFace then withDispatcherAsk
-      else if dispatcherFace then withDispatcherAsk - "Subagent"
-      else withDispatcherAsk
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
     // NodeEdit/NodeList/NodeCancel（分发器三件的作用域面）+ ChainWrite（整链登记）。
     // TaskBoard 同款「挂载面 + 工具内身份拒绝」双保险：
@@ -2639,8 +2806,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 单点）——挂载面只放行名字，不看参数。
     // [双模式批] kernel 腿在追加前截断（极简内核无编排诉求——Q2 延伸裁定）。
     val withDelegateFace =
-      if delegateSession && !kernelFace then modeTruncated ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
-      else modeTruncated
+      if delegateSession && !kernelFace then withDispatcherAsk ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
+      else withDispatcherAsk
     // S6=C（N1 刀3 · v3 §7.2 ①授权面扩＝创建者 delegate＋root）：delegate 会话挂
     // Mail——地址面经 MailTool.layeredRoute 分层判据收窄为自己作用域的
     // `node:<id|name>` 腿（SenderRole.Delegate 单点；其余形态显式越界报错）。同段
@@ -2649,14 +2816,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
     // 不经此腿。
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
-    // ask 工具反剥（ask 早退的对偶防线）：ask 专属三件（message_record_search /
-    // send_message_to_main_chat / GitQuery，gitquery 批 2026-11-05 增第三件）只对
-    // ask 会话授能——其余身份即便 agent.json 声明 "*" 也不得获得（the tool name
-    // IS the permission boundary，TeamTaskTools 剥离先例）。**反剥集 =
-    // AskExclusiveTools（只这三件）**：AllowedTools 里的只读五件是全员注册工具，
-    // 进反剥集会连主会话读面一起剥掉。GitQuery 进反剥集的理由 = 它必须在
-    // ToolRegistry 在册才解析得出 schema，而在册即意味着 "*" 声明会拿到名字——
-    // 本集是唯一能把名字从非 ask 身份摘掉的面（工具内 isAskSession 闸为第二保险）。
+    // Strip only the two Ask-exclusive message/history tools from other roles.
+    // Shared lookup tools and Bash retain their existing role permissions.
     withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet

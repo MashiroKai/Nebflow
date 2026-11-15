@@ -4,7 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.actor.AgentCommand
 import nebflow.core.mail.{InputMailbox, InputPayload}
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{ExecutionChainObservation, ExecutionCommitResult, ExecutionEvent, ExecutionTransition, NebflowLogger}
+import io.circe.syntax.*
 
 /**
  * InputLanding —— **idle 直达腿的落盘门**（P3 磁盘邮箱批 · 节点 3 最小闭环）。
@@ -38,6 +39,55 @@ import nebflow.shared.NebflowLogger
 private[agent] object InputLanding:
 
   private val logger = NebflowLogger.forName("nebflow.agent.input-landing")
+
+  /** Protected intake is durable and never falls through to the legacy mailbox. */
+  def acceptProtected(
+    handle: nebflow.core.ProtectedExecutionHandle,
+    payload: InputPayload,
+    identity: String
+  ): IO[Either[String, Boolean]] =
+    val admission = handle.admission
+    handle.authority.observeChain(admission.sessionId, admission.executionId).flatMap {
+      case ExecutionChainObservation.Verified(state)
+          if state.attemptId == admission.attemptId && state.incarnationId == admission.incarnationId =>
+        val id = java.util.UUID.randomUUID().toString
+        val command = ExecutionTransition(
+          admission.sessionId, admission.executionId, id, id, state.ref,
+          state.attemptId, state.incarnationId, ExecutionEvent.InputAccepted(identity, payload.asJson)
+        )
+        handle.authority.acceptInput(command).map {
+          case ExecutionCommitResult.Committed(_) => Right(true)
+          case ExecutionCommitResult.Duplicate(_) | ExecutionCommitResult.DuplicateInput(_, _) => Right(false)
+          case ExecutionCommitResult.Rejected(reason) => Left(reason)
+          case ExecutionCommitResult.CommitUnknown(_, _) => Left("commit-unknown")
+        }
+      case _ => IO.pure(Left("execution-review-required"))
+    }
+
+  final case class ProtectedInputReceipt(identity: String, accepted: Boolean)
+
+  def protectedUserReceipt(
+    handle: nebflow.core.ProtectedExecutionHandle,
+    msg: AgentCommand.UserInput
+  ): IO[Either[String, ProtectedInputReceipt]] =
+    if msg.replyTo.nonEmpty then IO.pure(Left("reply-target-unsupported"))
+    else
+      val identity = msg.clientMessageId.getOrElse(java.util.UUID.randomUUID().toString)
+      acceptProtected(handle, InputPayload.ofUser(msg), identity).map(_.map(ProtectedInputReceipt(identity, _)))
+
+  def protectedImmediateReceipt(
+    handle: nebflow.core.ProtectedExecutionHandle,
+    msg: AgentCommand.ImmediateInput
+  ): IO[Either[String, ProtectedInputReceipt]] =
+    val identity = msg.clientMessageId.getOrElse(java.util.UUID.randomUUID().toString)
+    acceptProtected(handle, InputPayload.ofImmediate(msg), identity).map(_.map(ProtectedInputReceipt(identity, _)))
+
+  def protectedUser(handle: nebflow.core.ProtectedExecutionHandle, msg: AgentCommand.UserInput): IO[Either[String, Boolean]] =
+    protectedUserReceipt(handle, msg).map(_.map(_.accepted))
+
+  def protectedImmediate(handle: nebflow.core.ProtectedExecutionHandle, msg: AgentCommand.ImmediateInput): IO[Either[String, Boolean]] =
+    protectedImmediateReceipt(handle, msg).map(_.map(_.accepted))
+
 
   /** 刚落地/命中的身份（`None` = 无会话身份 or 落盘失败 ⇒ turn 照旧执行）。 */
   type Landed = Option[String]

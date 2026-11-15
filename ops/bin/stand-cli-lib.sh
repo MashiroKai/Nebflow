@@ -201,49 +201,7 @@ stand_brand_of_pid() { # <pid> -> stand|nebflow|(空=认不出) —— 只认 ja
 }
 # <<< BRAND-MAP <<<
 
-# >>> BRAND-BANNER (仅 stand; nebflow 面无横幅 — 9.19 自有根 launcher 契约) >>>
-# 仅 start 且守卫放行(真的要起 daemon)时打印; already-running / 拒启 / stop 不印。
-# 分寸: 非 TTY / NO_COLOR / TERM=dumb → 单行纯文本。宽窄: cols>=80 款A, <80 款B;
-# STAND_BANNER=A|B|C 强制, STAND_BANNER_COLS 覆写探测宽。
-stand_banner_print() {
-    local _cols _cand
-    if [ -n "${STAND_BANNER_COLS:-}" ]; then
-        _cols="$STAND_BANNER_COLS"
-    else
-        _cols="$(tput cols 2>/dev/null)"
-        _cols="${_cols:-80}"
-    fi
-    case "$_cols" in ''|*[!0-9]*) _cols=80 ;; esac
-    if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = "dumb" ]; then
-        printf 'stand — One entry, Every agent.\n'
-        return 0
-    fi
-    local _w=$'\033[97m' _k=$'\033[40m' _b=$'\033[1m' _r=$'\033[0m'
-    _cand="${STAND_BANNER:-}"
-    if [ -z "$_cand" ]; then
-        if [ "$_cols" -ge 80 ]; then _cand="A"; else _cand="B"; fi
-    fi
-    case "$_cand" in
-        A)  # 徽标款: 黑底白 S 方块(favicon 同构) + 标语
-            printf '%s\n' \
-"$_k ${_w}███████${_r}$_k       ${_r}" \
-"$_k ${_w}█${_r}$_k        ${_r}" \
-"$_k ${_w}███████${_r}$_k   $_r$_b${_w} One entry, Every agent.$_r" \
-"$_k ${_w}      █${_r}$_k   ${_r}" \
-"$_k ${_w}███████${_r}$_k       ${_r}"
-            ;;
-        B)  # 双行紧凑款: 窄终端 / 择优
-            printf '%s\n' \
-"$_k ${_w}▐█▌${_r}$_k ${_r}  $_b${_w}One entry,$_r" \
-"$_k ${_w}▐█▌${_r}$_k ${_r}  $_b${_w}Every agent.$_r"
-            ;;
-        C)  # 单行字标款
-            printf '%s\n' "$_b${_w}stand$_r — $_b${_w}One entry, Every agent.$_r"
-            ;;
-        *)  printf 'stand — One entry, Every agent.\n' ;;
-    esac
-}
-# <<< BRAND-BANNER <<<
+# Runtime artwork is rendered by the JAR after its startup guard admits launch.
 
 # >>> STOP-IMPL (stop 面核心; 与 2026-10-25 修复批语义逐字一致, exit→return 化) >>>
 # rc: 0 = stopped / not-running(幂等); 1 = 身份门拒绝; 2 = --tree 透传给应用侧
@@ -823,11 +781,8 @@ stand_cli_main() {
     esac
 }
 
-cli_boot() { # $@ = 原样透传给 jar; banner 仅 stand + start
+cli_boot() { # Forward arguments unchanged; the JAR owns terminal branding.
     local JAVA_BIN JAR
     cli_boot_prep JAVA_BIN JAR || exit 11
-    if [ "$BRAND" = "stand" ] && [ "${1:-}" = "start" ]; then
-        stand_banner_print
-    fi
     exec "$JAVA_BIN" --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" "$@"
 }

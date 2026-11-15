@@ -7,7 +7,11 @@
 对照：同边数 Erdős–Rényi 随机图（seed=42），量化「高聚类 + 短路径」的小世界特征。
 """
 import os
-os.environ.setdefault('MPLCONFIGDIR', r'C:\Users\Kai\.nebflow\tools\mplconfig')
+import tempfile
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
+os.environ.setdefault('MPLCONFIGDIR', os.path.join(DATA_ROOT, "tools", "mplconfig"))
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -31,8 +35,9 @@ plt.rcParams.update({
 })
 NEUTRAL, ACCENT = '#8a8f98', '#5e6ad2'
 PAL = ['#5e6ad2', '#2e9e5b', '#e08c3a', '#c94f7c', '#3a9bbf']  # 中亮度，亮暗两底可读
-OUT = r'C:\Users\Kai\.nebflow\plots\vrs2-netfin'
-TMP = r'C:\Users\Kai\.nebflow\projects\general\.nebflow\tmp'
+OUT = os.path.join(DATA_ROOT, 'plots', 'vrs2-netfin')
+os.makedirs(OUT, exist_ok=True)
+TMP = tempfile.mkdtemp(prefix="stand-visual-report-")
 os.makedirs(OUT, exist_ok=True)
 STAMP = '20261004_231500'
 SVG_NAME = f'{STAMP}_net_smallworld_static.svg'

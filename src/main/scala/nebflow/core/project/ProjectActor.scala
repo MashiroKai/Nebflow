@@ -153,7 +153,7 @@ object ProjectRuntimeRegistry:
   ): IO[ProjectRuntime] =
     get(project.name).flatMap {
       case Some(rt) => IO.pure(rt)
-      // 跨设备项目挂载批（2026-10-25 · 作者令「把 stand 项目挂载到设备 KAI」）：
+      // 跨设备项目挂载批（2026-10-25 · 作者令「把 stand 项目挂载到 Windows 设备」）：
       // 设备项目（origin.device 绑对端）**在本引擎挂载**——大脑在本机，账本一本。
       // 挂载序见 [[DeviceProjectMount]]：①通道在场 ②名册解析（离线显式失败列
       // 在线设备）③设备通道 stat（存在且是目录才准挂——铁律，绝不静默造骨架）

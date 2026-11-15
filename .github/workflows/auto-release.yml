@@ -34,8 +34,54 @@ env:
   COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
+  static:
+    name: Static quality gates
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install locked tooling
+        run: npm ci
+      - name: Checkout-only static registry
+        run: npm run check:static
+      - name: Official OpenSpec validation
+        if: ${{ !cancelled() }}
+        run: npm run check:openspec -- --download
+      - name: Explicit-base SDD coverage
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            [[ "$PR_BASE" =~ ^[0-9a-f]{40}$ && ! "$PR_BASE" =~ ^0+$ ]]
+            base="$PR_BASE"
+          else
+            base="${PUSH_BEFORE:-}"
+          fi
+          if [[ "$base" =~ ^[0-9a-f]{40}$ && ! "$base" =~ ^0+$ ]]; then
+            git cat-file -e "$base^{commit}" 2>/dev/null || git fetch --no-tags origin "$base"
+          else
+            test -n "$DEFAULT_BRANCH"
+            git fetch --no-tags origin "$DEFAULT_BRANCH"
+            base=$(git merge-base HEAD FETCH_HEAD)
+          fi
+          git cat-file -e "$base^{commit}"
+          npm run check:sdd-changed -- --base "$base"
+
   build-jar:
     name: Build & Test (jar)
+    needs: static
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}

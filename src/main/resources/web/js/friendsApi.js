@@ -17,6 +17,10 @@
 //     outgoing, conversations, messages} — see normalizeSeed() for shapes.
 //   WITHOUT the flag the real path is always used. Mock 按同一契约实现
 //   （新端点/新字段/六态 relation_status），与直连共享同一 public API 面。
+//   Optional timing and failure knobs, read on every request:
+//   localStorage 'fm_api_mock_delay' = milliseconds every mock request takes;
+//   localStorage 'fm_api_mock_send_error' = '<code>' makes every friend and group text send answer 403 with
+//     {error: '<code>'}, so the failure legs of a send can be driven without a server.
 //
 // Error surface (P3): 401/403 → window 'fm-auth-required' event (login
 // guidance); network failure → 'fm-network-error' (toast). Callers still get
@@ -431,6 +435,17 @@ function mockError(message, status) {
 }
 
 const delay = () => new Promise(r => setTimeout(r, Number((() => { try { return localStorage.getItem('fm_api_mock_delay'); } catch { return null; } })()) || 30));
+
+/** The refusal the mock answers a text send with while `fm_api_mock_send_error` is set; null otherwise. */
+function mockSendRefusal() {
+  let code = null;
+  try { code = localStorage.getItem('fm_api_mock_send_error'); } catch { /* storage unavailable */ }
+  if (!code) return null;
+  const e = /** @type {Error & {status?: number, data?: {error: string}}} */ (new Error(code));
+  e.status = 403;
+  e.data = { error: code };
+  return e;
+}
 
 // ── Public API (same surface in both modes) ─────────────
 
@@ -873,6 +888,8 @@ export async function sendFriendMessage(friendUserId, body, attachments, clientM
   const payload = sendPayload(body, attachments, clientMsgId, replyToMessageId);
   if (!MOCK) return req('POST', `/api/friends/${encodeURIComponent(friendUserId)}/messages`, payload);
   await delay();
+  const refusal = mockSendRefusal();
+  if (refusal) throw refusal;
   const m = mockStore();
   const friend = m.friends.find(f => f.userId === friendUserId);
   if (!friend) throw mockError('not a friend', 403);
@@ -1520,6 +1537,8 @@ export async function sendGroupMessage(groupId, body, attachments, clientMsgId) 
   const payload = sendPayload(body, attachments, clientMsgId);
   if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/messages`, payload);
   await delay();
+  const refusal = mockSendRefusal();
+  if (refusal) throw refusal;
   const m = mockStore();
   const conv = m.groups.find(g => g.groupId === groupId);
   if (!conv) throw mockError('group not found', 404);

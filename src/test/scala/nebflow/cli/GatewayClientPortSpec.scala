@@ -2,18 +2,9 @@ package nebflow.cli
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.shared.{Defaults, PathUtil}
+import nebflow.shared.{PathUtil, PortRefusal}
 
-/**
- * CLI 侧端口解析兜底钉（端口对调落地批 2026-10-25；链换代为双生分家批 2026-10-31）：
- * `GatewayClient.readPort` 的解析链 = 显式 `--port` override ＞ `GATEWAY_PORT` env ＞
- * config `port` 键 ＞ 品牌缺省口（`Defaults.brandDefaultPort` = stand 构建 6138）——
- * 与引擎绑定面 `GatewayConfig.resolvePort` 同链同序。旧默认 8080 的分叉（ops 守卫探
- * 6138、裸起引擎落 8080，微信入站全断的 2026-10-25 事故面）不允许在 CLI 侧复活。
- *
- * config 腿读**真实数据根**的配置文件，故本 spec 全程把 dataRoot 换到临时空目录，
- * 保证「兜底档」前提（env/config 均沉默）可复现，不依赖宿主机的 ~/.stand 内容。
- */
+/** Port resolution must respect explicit configuration and refuse unconfigured isolated roots. */
 class GatewayClientPortSpec extends FunSuite:
 
   private def envSilent: Boolean =
@@ -30,11 +21,11 @@ class GatewayClientPortSpec extends FunSuite:
       PathUtil.setDataRoot(saved)
       os.remove.all(tmp)
 
-  test("readPort falls back to the brand default when --port / env / config all stay silent"):
+  test("readPort refuses the brand default for an unconfigured isolated root"):
     assume(envSilent, "GATEWAY_PORT env is set in this environment — default leg unreachable")
     withTempRoot(None) {
       GatewayClient.resetPort()
-      assertEquals(GatewayClient.readPort.unsafeRunSync(), Defaults.brandDefaultPort)
+      intercept[PortRefusal](GatewayClient.readPort.unsafeRunSync())
     }
 
   test("readPort honours the config 'port' key below --port and above the brand default"):

@@ -12,7 +12,7 @@
 | `rc_charge_scene.js` | `20261004_edu_rc_charge_3d.html`（形态②，自包含） | `cd <套件>\motion-toolkit\scripts\three-template && <venv>\python.exe build_three_html.py --scene <本文件绝对路径> --out <产物路径> --title "RC 电路充电 · 3D 分步引导（R=1 kΩ，C=1 µF，τ=RC=1 ms · 教学示例值）"` |
 | `RcChargeSteps.tsx` | `20261004_edu_rc_charge_steps.mp4`（形态③，1280×720 / h264 / 30fps / 400 帧 / 13.33 s） | 副本已注册进 `motion-toolkit\scripts\remotion-scaffold\src\`（Root.tsx 挂 `RcChargeSteps`，原理图在 `remotion-scaffold\public\rc_schematic_dark.png`），渲染：`cd <套件>\motion-toolkit\scripts && node render-remotion.mjs remotion-scaffold RcChargeSteps <产物路径>` |
 
-`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。通路验证截图（headless Chrome 实拍亮/暗两态、MP4 抽帧）在 `~/.nebflow/plots/education-motion/_verify/`。
+`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`。通路验证截图（headless Chrome 实拍亮/暗两态、MP4 抽帧）在 `~/.nebflow/plots/education-motion/_verify/`。
 
 ## 数值纪律
 

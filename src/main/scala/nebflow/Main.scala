@@ -242,6 +242,7 @@ private object MainBoot:
 
     // Phase 2: Command dispatching (stop migrated back into CliRouter —
     // its --json/--quiet and exit-code faces are the router's own).
+    val showBanner = !remaining.exists(a => a == "--json" || a == "--quiet")
     val cmdArgs = remaining.filterNot(a => a == "--json" || a == "--quiet")
 
     MainDispatch.decide(cmdArgs, succeedOpt, daemonChild, foreground, DaemonSpawn.classPathSpawnable) match
@@ -254,7 +255,7 @@ private object MainBoot:
       case Dispatch.StrictChild =>
         strictBoot()
       case Dispatch.ForegroundLegacy =>
-        startGatewayLegacy(foregroundStartedBy)
+        startGatewayLegacy(foregroundStartedBy, showBanner)
       case Dispatch.ForegroundNoSpawn =>
         // R2-4: jpackage/bundled forms have an empty java.class.path — the
         // child JVM could not be spawned. Degrade to today's foreground form
@@ -263,9 +264,9 @@ private object MainBoot:
           System.err.println(
             "daemon spawn unavailable (empty java.class.path — jpackage/bundled form); running in foreground"
           )
-        ) *> startGatewayLegacy(PidMeta.StartedByLauncher)
+        ) *> startGatewayLegacy(PidMeta.StartedByLauncher, showBanner)
       case Dispatch.Daemon =>
-        startGatewayDaemon()
+        startGatewayDaemon(showBanner)
 
     end match
 
@@ -462,17 +463,21 @@ private object MainBoot:
    * The listening port is authoritative. A PID copied from another device
    * can refer to an unrelated live process, and must never suppress startup.
    */
-  private def startGatewayLegacy(metaStartedBy: String): IO[ExitCode] =
-    ensureFirstRunConfig() *>
-      portGateThen(bootGateway(metaStartedBy, PidMeta.ModeForeground))
-
-  /** Product start uses the same port gate before spawning its daemon. */
-  private def startGatewayDaemon(): IO[ExitCode] =
+  private def startGatewayLegacy(metaStartedBy: String, showBanner: Boolean): IO[ExitCode] =
     ensureFirstRunConfig() *>
       portGateThen(
-        nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
-          DaemonSpawn.launch(PathUtil.dataRoot, cfg.port.value, GatewayConfig.noBrowser)
-        }
+        IO.whenA(showBanner)(IO(nebflow.cli.Splash.printBanner())) *>
+          bootGateway(metaStartedBy, PidMeta.ModeForeground)
+      )
+
+  /** Product start uses the same port gate before spawning its daemon. */
+  private def startGatewayDaemon(showBanner: Boolean): IO[ExitCode] =
+    ensureFirstRunConfig() *>
+      portGateThen(
+        IO.whenA(showBanner)(IO(nebflow.cli.Splash.printBanner())) *>
+          nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
+            DaemonSpawn.launch(PathUtil.dataRoot, cfg.port.value, GatewayConfig.noBrowser)
+          }
       )
 
   /**

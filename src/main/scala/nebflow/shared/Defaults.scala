@@ -2113,7 +2113,7 @@ object Defaults:
    * 「同机双产品必须各自独立启动……给 nebflow 独立默认端口，如 6140 之类」；
    * 取代双实例并存批 2026-10-30 的 8080 选择）。
    *
-   * 事故链（2026-10-31，KAI）：KAI 的 nebflow 产品是 10-25 后构建
+   * 事故链（2026-10-31，Windows 实机）：实机上的 nebflow 产品是 10-25 后构建
    * （`nebflow-assembly-2026.10.26-beta.1.jar`），引擎代码默认口只有一个
    * [[GatewayPort]]（6138）——两个品牌的产品裸启动都落 6138，stand 先占口后
    * `nebflow` 的守卫把 stand 实例当自己人 focus（或经弃用 shim nebflow.cmd→

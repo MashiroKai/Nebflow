@@ -987,6 +987,24 @@ body.mobile-layer .mobile-page-title::before {
 }
 /* 吸附成立（布尔判据，spec/兼容读者用）：标题胶囊不拦交互（返回钮始终可点）。 */
 body.mobile-layer .mobile-page.rolled .mobile-page-title { pointer-events: none; }
+/* Ordinary pages retain a focusable screen-reader title, not a visual capsule. */
+body.mobile-layer .mobile-page .mobile-page-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  max-width: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+body.mobile-layer .mobile-page .mobile-page-title::before { content: none; }
+body.mobile-layer .mobile-page:not(.mobile-page-nohead) .mobile-page-body {
+  padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
+}
 /* 悬浮「<」返回钮：48px g2-fab 液体玻璃（基准规格材质；JS 挂 .g2-fab 类），
    悬浮位 = 左 16 / top 16+safe，与聊天根任务键同几何。
    z 序（B 批补）：带 4 < 小字 5 < 本钮 6 —— 渐隐带承底不蒙返回钮。 */
@@ -2084,10 +2102,13 @@ body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
    ⇒ 375 下 max-width 202.6、渲染恰 231px、跨 72…303，两端各余 8px 气隙；
    `260px` 上限（渲染 296px）只在窄屏且 scale 更小时兜底。仍居中、仍同一水平线、
    仍零省略号（超宽继续走 label 的 mask 渐隐，而不是「…」）。
+   展开预算**加回引用钮的 44px**（canvas 引用钮批 0f2b45d62 起，展开档签内含
+   「引用此看板」≥44px 触控热区；不给回去 label 就被挤窄一档，作者令 §二.3
+   「点击展开全名」的合同被穿底 —— 实测 375 label 147.4 < 常态收束 160.5）。
    2600ms 自动收，换签即收 —— JS 侧定时。 */
 body.mobile-layer .mf-strip-chip.is-expanded {
   z-index: 3;
-  max-width: min(calc((100vw - 2 * var(--mchrome-inset)) / var(--rsc, 1)), 260px);
+  max-width: min(calc((100vw - 2 * var(--mchrome-inset) + 44px) / var(--rsc, 1)), calc(260px + 44px));
   opacity: 1;
   filter: none;
 }
@@ -2723,7 +2744,7 @@ body.mobile-layer .mf-me-meta {
   padding-bottom: 2px;
 }
 body.mobile-layer .mf-me-name {
-  font-size: 22px;
+  font-size: var(--ds-fs-display);
   font-weight: 600;
   line-height: 1.25;
   color: var(--color-frame-text-bright);
@@ -2737,12 +2758,6 @@ body.mobile-layer .mf-me-sub {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-body.mobile-layer .mf-me-tagline {
-  margin-top: 2px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--color-text-muted) 78%, transparent);
 }
 /* hero 内设置入口（唯一设置入口；独立可点，不与整块点击冲突）。 */
 body.mobile-layer .mf-me-actions { flex: none; display: flex; align-items: center; }

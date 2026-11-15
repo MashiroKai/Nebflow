@@ -105,6 +105,7 @@ async function bootPage(page, opts = {}) {
     localStorage.setItem('neblink_token', 't');
     localStorage.setItem('nebflow_locale', l);
     localStorage.setItem('neblink_locale', l);
+    localStorage.setItem('stand_sw', '0');
   }, locale);
 
   // Disk-truth sim: tests mutate this to fold a save into the readback face.
@@ -138,6 +139,8 @@ async function bootPage(page, opts = {}) {
       let m; try { m = JSON.parse(raw); } catch { return; }
       wsFrames.push(m);
       if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+      // The gateway answers a save with the id of that very request; the provider form closes only on it.
+      if (m.type === 'updateConfig') ws.send(JSON.stringify({ type: 'configUpdated', success: true, requestId: m.requestId }));
     });
     ws.send(JSON.stringify({
       type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {},
@@ -158,6 +161,11 @@ async function bootPage(page, opts = {}) {
 async function openSettings(page) {
   await page.click('#settings-btn');
   await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
+  // Providers is a progressive-disclosure section: the cards exist only once the user expands it.
+  await page.evaluate(() => {
+    const toggle = document.querySelector('[data-settings-disclosure="providers"]');
+    if (toggle && toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+  });
 }
 /** kimi 编辑弹窗打开（卡点点击自带回读兜底 ⇒ 弹窗出现即回读已落地）。 */
 async function openKimiModal(page) {
@@ -187,6 +195,8 @@ test('T1 jev key face (unified form): stored value NEVER echoes; eye masks typed
   // 统一面板：Jev 标签 → 既有 provider 卡 → 表单。
   await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
   await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
+  // The rows arrive with the projection refresh that follows the first paint; an evaluate-click is a silent no-op before.
+  await page.waitForSelector('#provider-list .cfg-card .cfg-card-title', { timeout: 5000 });
   await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
   await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 5000 });
 
@@ -277,6 +287,8 @@ test('T4 unconfigured faces show the EMPTY state, not a mask: keyless provider �
     document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click();
   });
   await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
+  // The rows arrive with the projection refresh that follows the first paint; an evaluate-click is a silent no-op before.
+  await page.waitForSelector('#provider-list .cfg-card .cfg-card-title', { timeout: 5000 });
   await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
   await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 5000 });
   const jev = await keyFieldState(page);

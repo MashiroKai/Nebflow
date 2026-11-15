@@ -6,6 +6,7 @@ import nebflow.neblink.social.*
 
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
+import cats.syntax.all.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.bridge.BridgeManager
@@ -24,6 +25,14 @@ import nebflow.neblink.attachment.AttachUploadRegistry
 import nebflow.neblink.social.FriendService
 import nebflow.neblink.core.NeblinkService
 import nebflow.shared.{FileHistory, ReadTracker, *}
+
+/** A recovered protected attempt whose runner Resource is retained by this runtime. */
+private[agent] final case class ActiveProtectedRecovery(
+  handle: nebflow.core.ProtectedExecutionHandle,
+  runner: ExecutionCommitStore#RunnerHandle,
+  release: IO[Unit],
+  result: nebflow.shared.ProtectedRecoveryResult
+)
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-A/R-C):本类原地混入 core 窄视图 AgentRuntimePort
 // (AgentRegistryPort 经其继承;签名镜像,行为保持)。extends 子句形状与改前一致。
@@ -242,9 +251,98 @@ case class SharedResources(
    * （`Ref.unsafe` 先例，同 agentRegistry）⇒ 既有测试构造零改动。
    */
   providerConcurrency: Ref[IO, nebflow.llm.ProviderConcurrency.Counts] =
-    Ref.unsafe[IO, nebflow.llm.ProviderConcurrency.Counts](nebflow.llm.ProviderConcurrency.empty)
+    Ref.unsafe[IO, nebflow.llm.ProviderConcurrency.Counts](nebflow.llm.ProviderConcurrency.empty),
+  override val executionCommitPort: ExecutionCommitPort = ExecutionCommitPort.unsupported,
+  override val delegateRecoveryMode: Option[String] = Option(System.getProperty("nebflow.delegate.recovery")),
+  protectedExecutions: Map[String, ProtectedExecutionHandle] = Map.empty,
+  protectedRunners: Map[String, ExecutionCommitStore#RunnerHandle] = Map.empty,
+  /**
+   * Recovery-spawned attempts registered after construction. The runner Resource
+   * allocation is held here rather than around the returned live actor.
+   */
+  protectedRecoveries: Ref[IO, Map[String, ActiveProtectedRecovery]] =
+    Ref.unsafe[IO, Map[String, ActiveProtectedRecovery]](Map.empty)
 ) extends AgentRuntimePort,
       SubAgentTaskPort:
+
+  override def isProtectedExecution(sessionId: String): Boolean = protectedExecutions.contains(sessionId)
+
+  private[agent] def activeProtectedRecovery(sessionId: String): IO[Option[ActiveProtectedRecovery]] =
+    protectedRecoveries.get.map(_.get(sessionId))
+
+  /** The attempt's live handle and runner, whether admitted directly or recovered. */
+  def activeProtectedAttempt(sessionId: String): IO[Option[
+    (nebflow.core.ProtectedExecutionHandle, ExecutionCommitStore#RunnerHandle)]] =
+    protectedRecoveries.get.map(_.get(sessionId).map(binding => (binding.handle, binding.runner))).map {
+      case Some(pair) => Some(pair)
+      case None => protectedExecutions.get(sessionId).flatMap(handle =>
+        protectedRunners.get(sessionId).map(runner => (handle, runner)))
+    }
+
+  /** Retain an admitted attempt's runner and its release action for the session lifetime. */
+  def retainProtectedExecution(
+    handle: nebflow.core.ProtectedExecutionHandle,
+    runner: ExecutionCommitStore#RunnerHandle,
+    release: IO[Unit],
+    result: nebflow.shared.ProtectedRecoveryResult
+  ): IO[Unit] =
+    protectedRecoveries.update(_.updated(handle.admission.sessionId,
+      ActiveProtectedRecovery(handle, runner, release, result)))
+
+  /** Release every retained recovery runner at test/runtime teardown. */
+  def releaseProtectedRecoveries(): IO[Unit] =
+    protectedRecoveries.getAndSet(Map.empty).flatMap(values =>
+      values.values.foldLeft(IO.unit)((acc, binding) => acc.flatMap(_ => binding.release)))
+
+  override def executionProtection(sessionId: String): IO[nebflow.shared.ExecutionProtection] =
+    protectedRecoveries.get.flatMap { recovered =>
+      val liveHandle = protectedExecutions.get(sessionId).orElse(recovered.get(sessionId).map(_.handle))
+      executionCommitPort.protection(sessionId).map {
+        case nebflow.shared.ExecutionProtection.Unprotected if liveHandle.nonEmpty =>
+          nebflow.shared.ExecutionProtection.Unknown("live-protected-handle-without-authority")
+        case nebflow.shared.ExecutionProtection.Protected(ids) if liveHandle.exists(handle =>
+            !ids.contains(handle.admission.executionId)) =>
+          nebflow.shared.ExecutionProtection.Unknown("live-protected-handle-mismatch")
+        case result => result
+      }
+    }.handleError(e => nebflow.shared.ExecutionProtection.Unknown(s"authority-unavailable: ${e.getClass.getSimpleName}"))
+
+  override def cancelProtectedExecution(sessionId: String, reason: String): IO[Either[String, String]] =
+    activeProtectedRecovery(sessionId).flatMap { recovered =>
+    (protectedExecutions.get(sessionId).orElse(recovered.map(_.handle)),
+      protectedRunners.get(sessionId).orElse(recovered.map(_.runner))) match
+      case (Some(execution), Some(runner)) =>
+        val admission = execution.admission
+        executionProtection(sessionId).flatMap {
+          case nebflow.shared.ExecutionProtection.Protected(ids) if ids == List(admission.executionId) =>
+            executionCommitPort.observeChain(sessionId, admission.executionId)
+          case _ => IO.pure(nebflow.shared.ExecutionChainObservation.ReviewRequired(None, "ambiguous-or-unavailable-execution"))
+        }.flatMap {
+          case nebflow.shared.ExecutionChainObservation.Verified(state)
+              if state.attemptId == admission.attemptId && state.incarnationId == admission.incarnationId =>
+            val id = java.util.UUID.randomUUID().toString
+            val command = nebflow.shared.ExecutionTransition(sessionId, admission.executionId, id, id, state.ref,
+              state.attemptId, state.incarnationId,
+              nebflow.shared.ExecutionEvent.CancelRequested(Option(reason).filter(_.nonEmpty).getOrElse("operator")))
+            runner.cancel(command).flatMap {
+              case _: nebflow.shared.ExecutionCommitResult.Committed | _: nebflow.shared.ExecutionCommitResult.Duplicate =>
+                runner.awaitStopped(scala.concurrent.duration.FiniteDuration(1, java.util.concurrent.TimeUnit.SECONDS)).map { stopped =>
+                  Right(if stopped then "Cancellation committed; owned runner stopped."
+                        else "Cancellation committed; owned runner stop unconfirmed.")
+                }
+              case result => IO.pure(Left(s"Cancellation not confirmed: $result"))
+            }
+          case _ => IO.pure(Left("Protected execution requires review; cancellation not committed"))
+        }
+      case (None, None) =>
+        executionCommitPort.cancelUnownedSession(sessionId, Option(reason).filter(_.nonEmpty).getOrElse("operator"))
+          .map {
+            case _: nebflow.shared.ExecutionCommitResult.Committed | _: nebflow.shared.ExecutionCommitResult.Duplicate =>
+              Right("Cancellation committed; prior runner stop unconfirmed.")
+            case result => Left(s"Cancellation not confirmed: $result")
+          }
+      case _ => IO.pure(Left("Protected runner binding incomplete; cancellation not committed"))
+    }
 
   /**
    * **唯一解析入口**（permshield S1 / 2026-09-13 作者重裁「候选 B」）：有效档位
@@ -384,19 +482,253 @@ case class SharedResources(
           json <- nebflow.llm.ProviderConcurrency.snapshot(providerConcurrency, cfg)
         yield json
 
+  /**
+   * Bind an exact observed commit and continue the existing leaf Delegate run in
+   * the real Agent loop. The previous attempt's runner, when still present, must
+   * be quiescent; after process death the authority lock itself proves no old
+   * in-memory runner survives.
+   */
+  override def resumeProtectedExecution(
+      request: nebflow.shared.ProtectedRecoveryRequest
+  ): IO[Either[String, nebflow.shared.ProtectedRecoveryResult]] =
+    val requestedAttempt = s"${request.requestId}-attempt"
+    val requestedIncarnation = s"${request.requestId}-incarnation"
+    executionProtection(request.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Protected(List(executionId)) if executionId == request.executionId =>
+        activeProtectedRecovery(request.sessionId).flatMap {
+          case Some(binding) if binding.result.attemptId == requestedAttempt =>
+            IO.pure(Right(binding.result.copy(duplicate = true)))
+          case Some(_) =>
+            IO.pure(Left("conflicting-recovery-attempt-active"))
+          case None =>
+            resumeWithAuthority(request, requestedAttempt, requestedIncarnation)
+        }
+      case nebflow.shared.ExecutionProtection.Protected(ids) if ids.contains(request.executionId) =>
+        IO.pure(Left("ambiguous-protected-execution"))
+      case nebflow.shared.ExecutionProtection.Protected(_) =>
+        IO.pure(Left("observed-execution-not-protected"))
+      case nebflow.shared.ExecutionProtection.Unprotected => IO.pure(Left("unprotected-execution"))
+      case nebflow.shared.ExecutionProtection.Unknown(reason) => IO.pure(Left(s"recovery-classification-unavailable: $reason"))
+    }
+
+  private def resumeWithAuthority(
+      request: nebflow.shared.ProtectedRecoveryRequest,
+      requestedAttempt: String,
+      requestedIncarnation: String
+  ): IO[Either[String, nebflow.shared.ProtectedRecoveryResult]] =
+    subAgentTaskStore.findByTaskId(request.sessionId).flatMap { taskOpt =>
+      val agentName = taskOpt.map(_.agentName).getOrElse(nebflow.core.entity.BuiltinAgents.ExecutorName)
+      val definition: IO[Option[AgentDef]] =
+        if agentLibrary == null then IO.pure(None) else agentLibrary.get(agentName)
+      definition.flatMap {
+        case None => IO.pure(Left("agent-definition-unavailable"))
+        case Some(agentDef) =>
+          val configBinding = ProtectedAgentExecution.configBinding(agentDef)
+          val runnerOpt = protectedRunners.get(request.sessionId)
+          val storeOpt = executionCommitPort match
+            case store: ExecutionCommitStore => Some(store)
+            case _ => None
+          val committed = runnerOpt match
+            case Some(runner) => resumeWithLiveRunner(runner, request, configBinding,
+              requestedAttempt, requestedIncarnation)
+            case None => storeOpt match
+              case Some(store) => store.resumeInterrupted(request, configBinding)
+              case None => IO.pure(Left("runner-authority-unavailable"))
+          committed.flatMap {
+            case Left(reason) => IO.pure(Left(reason))
+            case Right(result) =>
+              storeOpt match
+                case None => IO.pure(Left("runner-authority-unavailable"))
+                case Some(store) =>
+                  executionCommitPort.observeChain(request.sessionId, request.executionId).flatMap {
+                    case nebflow.shared.ExecutionChainObservation.Verified(state)
+                        if result.duplicate && (state.terminalPayload.nonEmpty || state.terminalResultRef.nonEmpty) =>
+                      IO.pure(Right(result.copy(duplicate = true)))
+                    case _ => spawnRecoveredActor(store, request, result, agentDef, taskOpt)
+                  }
+          }
+      }
+    }
+
+  private def resumeWithLiveRunner(
+      runner: ExecutionCommitStore#RunnerHandle,
+      request: nebflow.shared.ProtectedRecoveryRequest,
+      configBinding: String,
+      requestedAttempt: String,
+      requestedIncarnation: String
+  ): IO[Either[String, nebflow.shared.ProtectedRecoveryResult]] =
+    executionCommitPort.observeChain(request.sessionId, request.executionId).flatMap {
+      case nebflow.shared.ExecutionChainObservation.Verified(state) =>
+        val command = nebflow.shared.ExecutionTransition(
+          request.sessionId, request.executionId, request.requestId, request.requestId, state.ref,
+          state.attemptId, state.incarnationId,
+          nebflow.shared.ExecutionEvent.ResumeAuthorized(requestedAttempt, requestedIncarnation, request.principal)
+        )
+        runner.authorizeResume(command, configBinding,
+          scala.concurrent.duration.FiniteDuration(5, java.util.concurrent.TimeUnit.SECONDS)).flatMap {
+          case nebflow.shared.ExecutionCommitResult.Committed(ref) =>
+            startRecoveredAttempt(request, ref, requestedAttempt, requestedIncarnation)
+          case nebflow.shared.ExecutionCommitResult.Duplicate(ref) =>
+            startRecoveredAttempt(request, ref, requestedAttempt, requestedIncarnation)
+          case nebflow.shared.ExecutionCommitResult.Rejected(reason) => IO.pure(Left(reason))
+          case nebflow.shared.ExecutionCommitResult.CommitUnknown(_, phase) => IO.pure(Left(s"commit-unknown: $phase"))
+          case other => IO.pure(Left(s"resume-unconfirmed: $other"))
+        }
+      case nebflow.shared.ExecutionChainObservation.ReviewRequired(_, reason) =>
+        IO.pure(Left(s"review-required: $reason"))
+    }
+
+  private def startRecoveredAttempt(
+      request: nebflow.shared.ProtectedRecoveryRequest,
+      ref: nebflow.shared.ExecutionCommitRef,
+      requestedAttempt: String,
+      requestedIncarnation: String
+  ): IO[Either[String, nebflow.shared.ProtectedRecoveryResult]] =
+    val start = nebflow.shared.ExecutionTransition(
+      request.sessionId, request.executionId, s"${request.requestId}-start", s"${request.requestId}-start",
+      ref, requestedAttempt, requestedIncarnation, nebflow.shared.ExecutionEvent.AttemptStarted
+    )
+    executionCommitPort.transition(start).map {
+      case nebflow.shared.ExecutionCommitResult.Committed(next) =>
+        Right(nebflow.shared.ProtectedRecoveryResult(request.sessionId, request.executionId, requestedAttempt,
+          requestedIncarnation, next, duplicate = false))
+      case nebflow.shared.ExecutionCommitResult.Duplicate(next) =>
+        Right(nebflow.shared.ProtectedRecoveryResult(request.sessionId, request.executionId, requestedAttempt,
+          requestedIncarnation, next, duplicate = false))
+      case nebflow.shared.ExecutionCommitResult.Rejected(reason) => Left(reason)
+      case nebflow.shared.ExecutionCommitResult.CommitUnknown(_, phase) => Left(s"commit-unknown: $phase")
+      case other => Left(s"attempt-start-unconfirmed: $other")
+    }
+
+  private def spawnRecoveredActor(
+      store: ExecutionCommitStore,
+      request: nebflow.shared.ProtectedRecoveryRequest,
+      result: nebflow.shared.ProtectedRecoveryResult,
+      agentDef: AgentDef,
+      taskOpt: Option[SubAgentTask]
+  ): IO[Either[String, nebflow.shared.ProtectedRecoveryResult]] =
+    val projection = taskOpt match
+      case Some(row) =>
+        subAgentTaskStore.resumeRun(row.parentSessionId, request.sessionId, request.executionId,
+          row.rootSessionId.getOrElse(if row.parentSessionId.nonEmpty then row.parentSessionId else request.sessionId),
+          row.executor.getOrElse(nebflow.core.executor.ExecutorRegistry.DefaultId))
+      case None =>
+        subAgentTaskStore.beginRun(
+          SubAgentTask(request.sessionId, "", agentDef.name, "", request.sessionId, "running", 0,
+            System.currentTimeMillis(), None, None, "delegate"),
+          request.executionId, request.sessionId, nebflow.core.executor.ExecutorRegistry.DefaultId
+        )
+    projection.flatMap {
+      case Left(reason) => IO.pure(Left(s"task-projection-failed: $reason"))
+      case Right(_) =>
+        store.registerRunner(
+          ExecutionRunner.Attempt(request.sessionId, request.executionId, result.attemptId, result.incarnationId)
+        ).allocated.flatMap {
+          case (Left(reason), release) => release *> IO.pure(Left(s"runner-registration-failed: $reason"))
+          case (Right(runner), release) =>
+            executionCommitPort.observe(request.sessionId, request.executionId).flatMap {
+              case nebflow.shared.ExecutionAdmissionObservation.Verified(record, input) =>
+                val inputId = input.hcursor.get[String]("inputId").toOption.getOrElse(record.requestId)
+                val inputContent = input.hcursor.get[Json]("content").getOrElse(Json.Null)
+                val admission = nebflow.shared.ExecutionAdmission(
+                  request.sessionId, request.executionId, record.commitId, request.requestId,
+                  result.attemptId, result.incarnationId, record.ownerBinding, record.businessBinding,
+                  record.modelAuditBinding, inputContent, inputId
+                )
+                ExecutionCommitPort.bindRecovered(executionCommitPort, admission, result.ref).flatMap {
+                  case Left(reason) => release *> IO.pure(Left(reason))
+                  case Right(handle) =>
+                    val withRuntime = copy(
+                      protectedExecutions = protectedExecutions.updated(request.sessionId, handle),
+                      protectedRunners = protectedRunners.updated(request.sessionId, runner)
+                    )
+                    restoredState(handle, result).flatMap {
+                      case Left(reason) => release *> IO.pure(Left(reason))
+                      case Right(initial) =>
+                        val cwd = nebflow.core.delegate.DelegateRegistry.find(request.sessionId).map(_.cwd)
+                          .getOrElse(projectRoot.toString)
+                        val params = NodeRunner.SpawnParams(
+                          agentDef = agentDef,
+                          resources = withRuntime,
+                          sessionId = request.sessionId,
+                          sessionName = taskOpt.map(_.description).filter(_.nonEmpty).getOrElse(request.sessionId),
+                          depth = 1,
+                          parentRef = None,
+                          wsSend = _ => IO.unit,
+                          projectRoot = Some(cwd),
+                          safetyMode = "confirm-edits",
+                          rootSessionId = taskOpt.flatMap(_.rootSessionId).getOrElse(request.sessionId),
+                          isSubTaskWorker = false,
+                          initialState = Some(initial),
+                          continueOnSpawn = true,
+                          protectedExecution = Some(handle)
+                        )
+                        withRuntime.spawnAgentActor(actorSystem, params).flatMap { actor =>
+                          NodeRunner.registerAgent(
+                            resources = withRuntime,
+                            id = request.sessionId,
+                            ref = actor,
+                            kind = AgentKind.Delegate,
+                            rootSessionId = params.rootSessionId,
+                            parentRef = None,
+                            startedAt = System.currentTimeMillis(),
+                            lastActivityMs = System.currentTimeMillis(),
+                            parentSessionId = taskOpt.map(_.parentSessionId).getOrElse("")
+                          ).flatMap { _ =>
+                            protectedRecoveries.update(_.updated(request.sessionId,
+                              ActiveProtectedRecovery(handle, runner, release, result))) *>
+                              IO.pure(Right(result))
+                          }.handleErrorWith { error =>
+                            release *> IO.pure(Left(s"registry-projection-failed: ${error.getMessage}"))
+                          }
+                        }.handleErrorWith { error =>
+                          release *> IO.pure(Left(s"actor-spawn-failed: ${error.getMessage}"))
+                        }
+                    }
+                }
+              case nebflow.shared.ExecutionAdmissionObservation.ReviewRequired(reason) =>
+                release *> IO.pure(Left(s"admission-review-required: $reason"))
+              case nebflow.shared.ExecutionAdmissionObservation.Missing =>
+                release *> IO.pure(Left("admission-missing"))
+            }
+        }
+    }
+
+  private def restoredState(
+      handle: nebflow.core.ProtectedExecutionHandle,
+      result: nebflow.shared.ProtectedRecoveryResult
+  ): IO[Either[String, AgentState]] =
+    executionCommitPort.observeChain(result.sessionId, result.executionId).map {
+      case nebflow.shared.ExecutionChainObservation.Verified(state)
+          if state.attemptId == result.attemptId && state.incarnationId == result.incarnationId &&
+            state.checkpoint.nonEmpty =>
+        ProtectedAgentExecution.restore(AgentState(), state.checkpoint.get).map { restored =>
+          def contentText(value: Json): String =
+            value.hcursor.get[String]("text").toOption.getOrElse(value.noSpaces)
+          val pending = state.pendingInputs.flatMap(id => state.inputs.get(id).map(value =>
+            Message(MessageRole.User, Left(contentText(value)), messageId = Some(id))))
+          restored.copy(execution = restored.execution.copy(messages = restored.execution.messages ++ pending))
+        }
+      case _ => Left("recovery-checkpoint-unavailable")
+    }
+
   /** 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn(NodeRunner 原体)。 */
   def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
+    if p.protectedExecution.nonEmpty || protectedExecutions.contains(p.sessionId) then spawnActor(system, p)
+    else executionCommitPort.withUnprotectedSession(p.sessionId)(spawnActor(system, p))
+
+  private def spawnActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
     val actorName = if p.actorName.nonEmpty then p.actorName else p.sessionId
     for
+      _ <- IO.unit
       // ── R-3a spawn 期硬闸（actor-tree spec v1 §13.2 #P2）────────────────────────
       // 闸位 = **spawn 动作本身**（这是全仓 spawn 的唯一实现；NodeRunner 及其
       // Delegate/SubTask/flow/node/dispatcher/恢复六路调用方全部经此）。判据 =
       // `parentRef → registry → 父会话身份` 的 kernel 双重证据（mode 记录 ∪
       // `delegate-kernel-` 前缀），见 core.delegate.KernelChildSpawnGate。
       // 零行为变化：无父/未解析/非 kernel 身份一律放行（dispatcher 是本闸之后
-      // 唯一被允许派生的 delegate 形态）；kernel 身份下**唯一**放行面 = 只读侦察腿
-      // （子 agent def = `subagent`，tool-face-agentflow-retire 批 2026-11-05 作者
-      // 裁定「改 R-3a，只放行只读 subagent」），第三个实参即该判据的输入。
+      // 唯一被允许派生的 delegate 形态）。
+      // The sole kernel exemption is the exact builtin subagent name, passed below.
       _ <- nebflow.core.delegate.KernelChildSpawnGate.check(
         agentRegistry,
         p.parentRef,
@@ -442,7 +774,9 @@ case class SharedResources(
           projectSession = p.projectSession,
           sessionDevice = p.sessionDevice,
           sessionDeviceWorkspace = p.sessionDeviceWorkspace,
-          providerChainPin = providerChainPin
+          providerChainPin = providerChainPin,
+          initialState = p.initialState,
+          continueOnSpawn = p.continueOnSpawn
         ),
         actorName
       )
@@ -450,7 +784,7 @@ case class SharedResources(
 
     end for
 
-  end spawnAgentActor
+  end spawnActor
 
   /** 共享 BackoffSupervisor adapter spawn(NodeRunner 原体;delegate/subtask 共用)。 */
   def spawnSupervisedAdapter(

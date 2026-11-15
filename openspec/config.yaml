@@ -1,0 +1,26 @@
+schema: spec-driven
+
+context: |
+  Stand is a Scala 3 backend and vanilla JavaScript web application.
+  Use the independently versioned Stand dev plugin for engineering rules.
+  Start at its SKILL.md and load only task-relevant references.
+  AGENTS.md is human-owned; agent edits require a specific explicit user request for that file. Initialization tools must not alter it.
+  Current accepted behavior lives in openspec/specs; proposed changes live in openspec/changes.
+  Keep original intent and decision history in Git. Do not invent missing historical intent.
+  Keep changes proportional and remove unnecessary code and process before optimizing.
+  Record links to implementation and acceptance tests; links do not prove tests passed.
+  Do not merge, push, install plugins, or restart live services without separate authorization.
+
+rules:
+  proposal:
+    - State the user problem, intended behavior, scope, and non-goals.
+    - Question requirements and identify unnecessary behavior before adding machinery.
+  design:
+    - Explain meaningful trade-offs and preserve safety and compatibility constraints.
+    - Omit boilerplate; small changes need only a small design explanation.
+  specs:
+    - Specify observable behavior and failure cases rather than incidental implementation details.
+    - Give requirements and scenarios stable identifiers and explicit acceptance outcomes.
+  tasks:
+    - Link acceptance scenarios to implementation and named tests in trace.json.
+    - Keep unexecuted or failed acceptance work visibly incomplete.

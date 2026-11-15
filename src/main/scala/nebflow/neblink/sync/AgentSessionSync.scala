@@ -15,7 +15,7 @@ import nebflow.shared.{NebflowLogger, SubAgentTask, TransportLog}
  * 作者令：「多设备设计的核心就是透明，跑在哪个设备上，那我们的显示都应该都能看到。
  * 不应该说只显示Mac引擎自带的子智能体」）。
  *
- * 现状断点：delegate 会话原生跑在远端设备（如 KAI）时，其引擎自己的后台子智能体
+ * 现状断点：delegate 会话原生跑在远端设备（如 Windows 实机）时，其引擎自己的后台子智能体
  * 面板有行（SubAgentTaskStore 权威），但**对端引擎**（如 Mac）对这批会话零感知——
  * 可见性断在设备边界。本对象把「远端 delegate 会话的状态摘要」经既有配对通道投影
  * 过去，对端把远端行**并入后台子智能体注册表面板**（标设备角标）。

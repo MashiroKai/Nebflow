@@ -90,39 +90,46 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tmp / "data")
     val system = ActorSystem(s"ir-leg-$name-${java.util.UUID.randomUUID().toString.take(6)}")
     val llm = new RecordingLlm
+    os.makeDir.all(tmp / "sessions") // ExecutionCommitStore 要求目录先在（resource 门槛）
     val io =
-      for
-        dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
-        rateLimiter <- RateLimiter.create()
-        tracker <- FileChangeTracker.create(os.pwd.toString)
-        fileLocks <- FileLockManager.create
-        thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-        modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-        voiceMuted <- Ref.of[IO, Boolean](false)
-        sessionStore = SessionStore(tmp / "sessions", tmp / "tasks")
-        store = new SubAgentTaskStore(tmp / "subagent-tasks")
-        resources = SharedResources(
-          llm = llm.handle,
-          dispatcher = dispatcher,
-          sessionStore = sessionStore,
-          projectRoot = os.pwd,
-          thinkingConfigRef = thinkingRef,
-          rateLimiter = rateLimiter,
-          fileChangeTracker = tracker,
-          contextWindow = 100_000,
-          agentLibrary = new nebflow.agent.AgentLibrary(tmp / "agents"),
-          taskStore = FileTaskStore,
-          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
-          fileLockManager = fileLocks,
-          sessionModelOverrides = modelOverrides,
-          providerRegistry = null,
-          healthMonitor = ProviderHealthMonitor(null),
-          actorSystem = system,
-          subAgentTaskStore = store,
-          voiceMutedRef = voiceMuted
-        )
-        _ <- body(Fx(store, sessionStore, resources, system, tmp, seat, llm))
-      yield ()
+      // B1 执行恢复批起，sweep 的 legacy 腿前置问 authority（candidates=unsupported
+      // ⇒ 整体 defer）。夹具与生产同形：挂真实 ExecutionCommitStore，令无记录会话
+      // 判 Unprotected，复活机器照常接线（InternalRunAdmissionSpec 同款）。
+      nebflow.agent.ExecutionCommitStore.resource((tmp / "sessions").toNIO).use { authority =>
+        for
+          dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+          rateLimiter <- RateLimiter.create()
+          tracker <- FileChangeTracker.create(os.pwd.toString)
+          fileLocks <- FileLockManager.create
+          thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
+          modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+          voiceMuted <- Ref.of[IO, Boolean](false)
+          sessionStore = SessionStore(tmp / "sessions", tmp / "tasks")
+          store = new SubAgentTaskStore(tmp / "subagent-tasks")
+          resources = SharedResources(
+            llm = llm.handle,
+            dispatcher = dispatcher,
+            sessionStore = sessionStore,
+            projectRoot = os.pwd,
+            thinkingConfigRef = thinkingRef,
+            rateLimiter = rateLimiter,
+            fileChangeTracker = tracker,
+            contextWindow = 100_000,
+            agentLibrary = new nebflow.agent.AgentLibrary(tmp / "agents"),
+            taskStore = FileTaskStore,
+            historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+            fileLockManager = fileLocks,
+            sessionModelOverrides = modelOverrides,
+            providerRegistry = null,
+            healthMonitor = ProviderHealthMonitor(null),
+            actorSystem = system,
+            subAgentTaskStore = store,
+            voiceMutedRef = voiceMuted,
+            executionCommitPort = authority
+          )
+          _ <- body(Fx(store, sessionStore, resources, system, tmp, seat, llm))
+        yield ()
+      }
     try io.unsafeRunSync()
     finally
       system.stopAll.attempt.void.unsafeRunSync()

@@ -5,7 +5,11 @@
 输出：SVG → ~/.nebflow/plots/，PNG 副本 → 本工作区 .nebflow/tmp/（目检用）
 """
 import os
-os.environ.setdefault('MPLCONFIGDIR', r'C:\Users\Kai\.nebflow\tools\mplconfig')
+import tempfile
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
+os.environ.setdefault('MPLCONFIGDIR', os.path.join(DATA_ROOT, "tools", "mplconfig"))
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -23,8 +27,9 @@ plt.rcParams['axes.spines.right'] = False
 NEUTRAL = '#8a8f98'
 ACCENT = '#5e6ad2'
 ACCENT_LIGHT = '#a0a8e8'
-OUT = r'C:\Users\Kai\.nebflow\plots'
-TMP = r'C:\Users\Kai\.nebflow\projects\general\.nebflow\tmp'
+OUT = os.path.join(DATA_ROOT, 'plots')
+os.makedirs(OUT, exist_ok=True)
+TMP = tempfile.mkdtemp(prefix="stand-visual-report-")
 
 print('===== DEMO-VALUES（以下字符串逐字用于 demo 文档与图内标注） =====')
 

@@ -191,7 +191,45 @@ private[agent] object AgentFinishTurn:
       if sendText then
         emitStream(state.wsSend, AgentStreamEvent.TextDelta(text), isSubagent = isSubagent, state.sessionId)
       else IO.unit
-    for
+    if state.sessionId.exists(resources.protectedExecutions.contains) then
+      val handle = resources.protectedExecutions(state.sessionId.get)
+      val sid = handle.admission.sessionId
+      for
+        task <- resources.subAgentTaskStore.findByTaskId(sid).flatMap(row =>
+          IO.fromOption(row.filter(_.runId.contains(handle.admission.executionId)))(
+            new IllegalStateException("terminal-task-binding-unavailable")))
+        runner <- IO.fromOption(resources.protectedRunners.get(sid))(new IllegalStateException("terminal-runner-unavailable"))
+        trimmed = text.trim
+        hasText = trimmed.nonEmpty && trimmed != Defaults.MaxTokensStubText
+        diagnostic <- BackoffSupervisor.protectedCompletionDiagnostic(sid, newMessages, hasText)
+        payload = (if hasText then s"\"${task.description}\":\n$trimmed" else s"\"${task.description}\" (no text output)") + diagnostic
+        envelope = Json.obj(
+          "source" -> "delegate".asJson,
+          "eventType" -> "completed".asJson,
+          "payload" -> payload.asJson,
+          "metadata" -> Json.obj(
+            "description" -> task.description.asJson, "agentName" -> task.agentName.asJson,
+            "taskRunId" -> handle.admission.executionId.asJson,
+            "parentSessionId" -> task.parentSessionId.asJson,
+            "completionMessages" -> newMessages.asJson,
+            "completionGeneration" -> handle.admission.executionId.asJson
+          ),
+          "correlationId" -> Option(sid).asJson,
+          "blocks" -> Option.empty[List[ContentBlock]].asJson
+        )
+        _ <- ProtectedAgentExecution.commitTranscriptRound(handle, normalizedState.withMessages(newMessages))
+        resultRef <- ProtectedAgentExecution.installTerminal(handle, runner, envelope)
+        projected <- runner.projectTerminal(resources.subAgentTaskStore, resultRef)
+        _ <- IO.fromEither(projected.left.map(new IllegalStateException(_)))
+        _ <- compactionCleanup
+        _ <- sendTextIO
+        _ <- emitStreamIO(state.wsSend, AgentStreamEvent.Done(model.orElse(state.lastModel),
+          finalText = Option(text).map(_.trim).filter(_.nonEmpty)), isSubagent = isSubagent, state.sessionId)
+        targets <- resolveSettleTargets(resources.agentRegistry, state.sessionId,
+          (replyTo.toList ++ state.execution.owedCompletion).distinct)
+        _ <- targets.traverse_(_ ! AgentEvent.Completed(sid, newMessages))
+      yield idle(agentDef, resources, depth, parentRef, normalizedState.withMessages(newMessages))
+    else for
       _ <- compactionCleanup
       _ <- sendTextIO
       result <- finishTurnCont(
@@ -210,8 +248,6 @@ private[agent] object AgentFinishTurn:
         isSubagent
       )
     yield result
-
-    end for
 
   end finishTurn
 

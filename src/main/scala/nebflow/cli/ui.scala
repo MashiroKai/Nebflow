@@ -22,8 +22,7 @@ class NebflowUI(store: UiStore):
     .build()
 
   def runInteractive(modelRef: String, onInput: String => IO[Unit]): IO[Unit] =
-    // Print splash
-    Splash.lines.foreach(println)
+    Splash.printBanner()
     println(s"  model: $modelRef")
     println()
 

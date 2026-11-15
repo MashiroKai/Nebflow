@@ -59,7 +59,7 @@ description: 数学讲解（过程动画+误差定量+manim）；函数、收敛
 | LaTeX（manim 公式排版依赖） | MathTex/Tex 必需 | MSYS：`command -v latex pdflatex xelatex` → 均无；MiKTeX 常见路径不存在；`python -m manim render`（MathTex 场景）实测 `FileNotFoundError: [WinError 2]` | https://miktex.org/ | 未装，不适用 | **现状即降级**：manim 公式一律 `Text`/`MarkupText`（已实测出片）；装 LaTeX 后方可启用 MathTex |
 | motion-toolkit | 动画渲染封装层（备选动画栈） | `ls ${SKILL_DIR}/../motion-toolkit/scripts/mpl_anim.py` → 在盘（2026-10-04） | —（插件内模块） | 见 `${SKILL_DIR}/../motion-toolkit/SKILL.md` §2 外部链接验证表 | 封装缺失 ⇒ 按上行动画降级链，不复制其环境说明 |
 
-全工具链接验证表见插件 README 与 `${SKILL_DIR}/../motion-toolkit/SKILL.md`，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
+全工具链接验证表见插件 README 与 `${SKILL_DIR}/../motion-toolkit/SKILL.md`，直接引用不复制。`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
 
 ### 数值复算规范（本场景第一红线）
 

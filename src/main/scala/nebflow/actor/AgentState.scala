@@ -411,7 +411,7 @@ case class SessionContext(
    */
   sessionDevice: Option[String] = None,
   /**
-   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\Kai\stand`）：Bash
+   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\name\stand`）：Bash
    * 经设备通道下发时注入为对端会话初始 cwd——「派发任务的命令 cwd 指向设备
    * workspace」（对端接收面 params.cwd → ToolContext.sessionCwd → ShellSession
    * 初 cwd）。同时是节点首条消息 `[device workspace]` 行与 AGENTS.md 镜像语义的

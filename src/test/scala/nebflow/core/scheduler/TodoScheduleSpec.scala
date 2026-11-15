@@ -144,30 +144,32 @@ class TodoScheduleSpec extends CatsEffectSuite:
   test("upsert is kind-scoped: a named todo never clobbers a same-name scheduled task"):
     for
       _ <- reset()
-      task <- IO(ScheduledTask.create("s1", "morning routine", future, None, Some("daily"), Some("review")))
+      task <- IO(ScheduledTask.create("s1", "morning routine", future, None, Some("daily"), Some("review")).copy(source = Some("tool")))
       todo1 <- IO(
-        ScheduledTask.create("s1", "todo v1", future, None, None, Some("review"), Some(ScheduledTask.KindTodo))
+        ScheduledTask.create("s1", "todo v1", future, None, None, Some("review"), Some(ScheduledTask.KindTodo)).copy(source = Some("tool"))
       )
       _ <- taskStore.addTask(task)
       _ <- taskStore.upsertTaskByName(todo1)
       todo2 <- IO(
-        ScheduledTask.create("s2", "todo v2", future + 1, None, None, Some("review"), Some(ScheduledTask.KindTodo))
+        ScheduledTask.create("s1", "todo v2", future + 1, None, None, Some("review"), Some(ScheduledTask.KindTodo)).copy(source = Some("tool"))
       )
-      removed <- taskStore.upsertTaskByName(todo2)
+      rearmTodo <- taskStore.upsertTaskByName(todo2)
       pending <- taskStore.getAllPendingTasks
       // 反向同理：定时任务同名 upsert 不吃待办
-      task3 <- IO(ScheduledTask.create("s3", "task v3", future + 2, None, None, Some("review")))
-      removed2 <- taskStore.upsertTaskByName(task3)
+      task3 <- IO(ScheduledTask.create("s1", "task v3", future + 2, None, None, Some("review")).copy(source = Some("tool")))
+      rearmTask <- taskStore.upsertTaskByName(task3)
       finalPending <- taskStore.getAllPendingTasks
     yield
-      assertEquals(removed.map(_.id), List(todo1.id), "todo upsert replaces only the same-kind same-name todo")
+      assertEquals(rearmTodo.replaced.map(_.id), List(todo1.id), "todo upsert replaces only the same-kind same-name todo")
+      assertEquals(rearmTodo.saved.id, todo1.id, "rearm keeps the todo's own id")
       assertEquals(
         pending.map(_.id).sorted,
-        List(task.id, todo2.id).sorted,
+        List(task.id, todo1.id).sorted,
         "the scheduled task must survive untouched"
       )
-      assertEquals(removed2.map(_.id), List(task.id))
-      assertEquals(finalPending.map(_.id).sorted, List(task3.id, todo2.id).sorted)
+      assertEquals(rearmTask.replaced.map(_.id), List(task.id))
+      assertEquals(rearmTask.saved.id, task.id, "rearm keeps the scheduled task's own id")
+      assertEquals(finalPending.map(_.id).sorted, List(task.id, todo1.id).sorted)
 
   // ==================================================================
   // 断言 2 + 3 + 4（service 面）：digest 浮出 / 销账 / 定时任务回归

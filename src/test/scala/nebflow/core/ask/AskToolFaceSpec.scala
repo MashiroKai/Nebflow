@@ -1,84 +1,67 @@
 package nebflow.core.ask
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * ask 换装批工具面 spec（2026-10-31 作者 12:25 裁定：askmode 窗口工具面 =
- * glob/grep/read/websearch/webfetch 只读五件 + 思考低档；取代上午批
- * read_file_content 单件路线——设计 docs/design/20261031_124045_ask-readonly-
- * five-tool-redesign__delegate-nebflow-6cf27f86.zh-CN.md）。
- *
- * 覆盖面：
- *   F1  AllowedTools 封闭枚举逐字钉死 = ask 专属三件 + Subagent 只读五件
- *   F2  read_file_content 退役：白名单/注册面双缺席
- *   F3  AskExclusiveTools 反剥集 ≠ AllowedTools：只含 ask 专属三件，不碰
- *       通用只读五件（防「反剥连坐主会话读面」回归）
- *   F4  只读五件全员注册（ToolRegistry 在册，ask 早退集可解析成 schema）
- *   F5  promptFor：工具面描述与绑定文件绝对路径注入（Read 的锚）
- *
- * gitquery 批（2026-11-05）增补：第三件 = `GitQuery`（只读 git 查询），本 spec 的
- * F1/F3 逐字期望同批更新；该工具的调用面/逃逸面/截断面在
- * `nebflow.core.ask.GitQuerySpec`（T1–T7）。
- * ═══════════════════════════════════════════════════════════════════════════ */
-
+/** Ask's independent tool face, shared-tool permissions and prompt contract. */
 final class AskToolFaceSpec extends munit.FunSuite:
 
-  test("F1 AllowedTools = ask 专属三件 + SubagentFixedTools 只读五件（封闭枚举逐字）") {
-    assertEquals(
-      AskSessions.AllowedTools,
-      Set("message_record_search", "send_message_to_main_chat", "GitQuery")
-        ++ nebflow.agent.AgentCore.SubagentFixedTools
-    )
+  test("F1 Ask has exactly eight tools") {
     assertEquals(
       AskSessions.AllowedTools,
       Set(
         "message_record_search",
         "send_message_to_main_chat",
-        "GitQuery",
         "Read",
         "Glob",
         "Grep",
         "WebSearch",
-        "WebFetch"
+        "WebFetch",
+        "Bash"
       )
     )
   }
 
-  test("F2 read_file_content 退役：白名单缺席 + 注册面缺席") {
-    assert(!AskSessions.AllowedTools.contains("read_file_content"), clue(AskSessions.AllowedTools))
-    assert(
-      !nebflow.core.tools.ToolRegistry.ALL_TOOLS.exists(_.name == "read_file_content"),
-      "注册表不得残留 read_file_content（工具对象已删）"
-    )
-  }
-
-  test("F3 AskExclusiveTools 反剥集只含 ask 专属三件（不碰通用只读五件）") {
-    assertEquals(
-      AskSessions.AskExclusiveTools,
-      Set("message_record_search", "send_message_to_main_chat", "GitQuery")
-    )
-    assert(AskSessions.AskExclusiveTools.subsetOf(AskSessions.AllowedTools))
-    // 反剥集与通用只读面零交集——进了反剥集会连主会话读面一起剥掉。
-    val genericReadOnly = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch")
-    assert(
-      AskSessions.AskExclusiveTools.intersect(genericReadOnly).isEmpty,
-      clue(AskSessions.AskExclusiveTools)
-    )
-  }
-
-  test("F4 只读五件在 ToolRegistry 全员在册（ask 早退集可解析）") {
+  test("F2 retired file and git tools are absent from the allowlist and registry") {
     val registered = nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name).toSet
-    Set("Read", "Glob", "Grep", "WebSearch", "WebFetch").foreach { n =>
-      assert(registered.contains(n), clue(n))
+    Set("read_file_content", "GitQuery").foreach { name =>
+      assert(!AskSessions.AllowedTools.contains(name), clue(name))
+      assert(!registered.contains(name), clue(name))
+      assert(!nebflow.core.tools.ToolRegistry.TOOL_MAP.contains(name), clue(name))
     }
   }
 
-  test("F5 promptFor：工具面描述五件 + GitQuery + 绑定文件绝对路径注入") {
-    val p = AskContextAssembler.promptFor("笔记.md", "/vault/笔记.md", "【问答上下文】")
-    assert(p.contains("Read / Glob / Grep"), clue(p.take(200)))
-    assert(p.contains("WebSearch / WebFetch"), clue(p))
-    assert(p.contains("message_record_search"), clue(p))
-    assert(p.contains("send_message_to_main_chat"), clue(p))
-    assert(p.contains("GitQuery"), "gitquery 批：分身必须知道有只读 git 查询面")
-    assert(p.contains("/vault/笔记.md"), "绑定文件绝对路径必须进提示词（Read 锚）")
-    assert(!p.contains("read_file_content"), "退役工具名不得残留提示词")
+  test("F3 Ask-exclusive stripping leaves shared lookup and Bash tools") {
+    assertEquals(
+      AskSessions.AskExclusiveTools,
+      Set("message_record_search", "send_message_to_main_chat")
+    )
+    assert(AskSessions.AskExclusiveTools.subsetOf(AskSessions.AllowedTools))
+    val sharedTools = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
+    assert(AskSessions.AskExclusiveTools.intersect(sharedTools).isEmpty)
+  }
+
+  test("F4 all eight Ask tools are registered") {
+    val registered = nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name).toSet
+    AskSessions.AllowedTools.foreach { name =>
+      assert(registered.contains(name), clue(name))
+    }
+  }
+
+  test("F5 Ask prompt advertises normal Bash without read-only execution guarantees") {
+    val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "context")
+    assert(prompt.contains("Read / Glob / Grep"))
+    assert(prompt.contains("WebSearch / WebFetch"))
+    assert(prompt.contains("message_record_search"))
+    assert(prompt.contains("send_message_to_main_chat"))
+    assert(prompt.contains("Bash: run normal shell commands for file and git investigation"))
+    assert(prompt.contains("Shell access is not a read-only"))
+    assert(prompt.contains("existing execution and permission checks still apply"))
+    assert(prompt.contains("only\n  when the user explicitly requests"))
+    assert(prompt.contains("/vault/notes.md"))
+    assert(!prompt.contains("GitQuery"))
+    assert(!prompt.contains("read_file_content"))
+    assert(!prompt.contains("没有任何写/执行/编排工具"))
+    val handoff = nebflow.core.tools.SendMessageToMainChatTool.description
+    assert(handoff.contains("message channel to the main session"))
+    assert(handoff.contains("ONLY when the user explicitly asks"))
+    assert(!handoff.contains("only outbound action"))
   }
 end AskToolFaceSpec

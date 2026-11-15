@@ -2301,7 +2301,7 @@ body:not(.mobile-layer) #profile-face-overlay {
   color: var(--color-text-muted, #888);
   cursor: pointer;
 }
-.fm-gs-open:hover { background: var(--glass-control-bg-hover); color: var(--color-text, #000); }
+.fm-gs-open:hover { color: var(--color-text, #000); }
 .fm-gs-open svg { width: 16px; height: 16px; }
 
 /* 群设置抽屉（窗头下方、消息区上方；可滚动） */
@@ -2763,4 +2763,97 @@ body:not(.mobile-layer) #profile-face-overlay {
 }
 .fm-msg-device-receipt[data-receipt-state='read'] {
   color: rgb(var(--sapphire));
+}
+
+/* ══ Desktop: friend, group and device conversations in the main chat area (FCC-REQ-007) ════════════════════════════
+   The conversation window is the same element tree as ever; on desktop it is hosted inside #main instead of a dialog
+   (js/messages/mainHost.js). The Agent view stays in the DOM, hidden and inert. The conversation's identity lives in
+   #header, which keeps its own left and right controls. Mobile keeps the dialog shell its page controller adopts. */
+#fm-chat-overlay.fm-chat-host {
+  position: absolute;
+  inset: 0;
+  z-index: 15;               /* above the hidden Agent view, below the header (30) */
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;      /* the window itself takes the events; the header above stays reachable */
+}
+/* Panels the window raises over itself (the forward window) float centred above it and take events. */
+#fm-chat-overlay.fm-chat-host > .fm-fwd-modal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  pointer-events: auto;
+}
+#fm-chat-overlay.fm-chat-host > .fm-modal-main {
+  pointer-events: auto;
+  flex: 1;
+  min-height: 0;
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  border-radius: 0;
+}
+/* The window's input bar follows the Agent input bar: same edge slot, bottom flush with the main column. */
+.fm-modal-main > .fm-input-bar { margin: 0 var(--ds-main-col-edge-x) 0; }
+.fm-modal-main > .fm-modal-toast { top: calc(var(--fm-head-h) + var(--ds-space-2)); }
+/* The group drawer opens at the top of the window, below the header. */
+.fm-modal-main > .fm-group-settings { margin-top: var(--fm-head-clear); }
+.fm-modal-main:has(> .fm-group-settings) > .fm-flow { padding-top: var(--nf-head-gap); }
+
+/* Header identity: one compact row in the centre of #header, same size language as the Agent name it replaces. */
+#header .fm-main-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+#header .fm-main-head > .fm-modal-avatar { zoom: 0.7; }   /* the 40px identity avatar becomes the header's 28px icon */
+#header .fm-main-head > .fm-modal-title { flex: 0 1 auto; align-items: center; min-width: 0; }
+#header .fm-main-head .fm-modal-id { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Going back to the Agent is the flipped avatar in the activity bar; one way back, not two. */
+#header .fm-main-head > .fm-modal-close { display: none; }
+
+/* The Agent-only header controls rest while a conversation is shown. They are addressed through .header-right (a
+   class that exists only in #header), not through #header itself: the glass gate reads a #header ancestor as "this
+   surface sits in the top band" and would then judge those controls' own translucent fills. */
+#main.fm-social-main .header-center > :not(.fm-main-head) { display: none; }
+#main.fm-social-main .header-right > #bypass-dropdown,
+#main.fm-social-main .header-right > #voice-toggle-btn,
+#main.fm-social-main .header-right > #bg-indicator,
+#main.fm-social-main .header-right > #pending-asks-indicator,
+#main.fm-social-main .header-right > #held-receipts-indicator,
+#main.fm-social-main .header-right > #bgagent-indicator { display: none; }
+/* The Agent view is not shown, and nothing that belongs to it (its return pill, its top band) shows through. */
+#main.fm-social-main > #chat,
+#main.fm-social-main > #input-area,
+#main.fm-social-main > #top-overlays,
+#main.fm-social-main > #g2-edge-fade,
+#main.fm-social-main > .scroll-new-pill { visibility: hidden; }
+
+/* Activity-bar avatar: the account face flips to the Agent face while a conversation is shown. */
+#activity-avatar .activity-avatar-agent {
+  display: none;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+}
+#activity-avatar[data-face='agent'] .activity-avatar-agent { display: flex; }
+#activity-avatar[data-face='agent'] > picture,
+#activity-avatar[data-face='agent'] > .activity-avatar-photo,
+#activity-avatar[data-face='agent'] > .activity-avatar-letter { display: none; }
+.activity-avatar-agent-photo { width: 100%; height: 100%; object-fit: cover; }
+.activity-avatar-agent-logo { width: 24px; height: 24px; object-fit: contain; }
+/* The flip lasts as long as FLIP_MS in js/activityBar.js, which changes the face at half time and then removes the class. */
+#activity-avatar.is-flipping { animation: nf-avatar-flip 0.28s ease-in-out; }
+@keyframes nf-avatar-flip { 0% { transform: rotateY(0); } 50% { transform: rotateY(90deg); } 100% { transform: rotateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  #activity-avatar.is-flipping { animation: none; }
 }

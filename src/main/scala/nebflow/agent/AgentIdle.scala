@@ -151,6 +151,40 @@ private[agent] object AgentIdle:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
+      case AgentCommand.ContinueProtectedRun if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        pipeLlmCall(agentDef, resources, depth, parentRef, state, None, DispatchCause.UserWake)
+
+      case AgentCommand.ContinueProtectedRun =>
+        IO.pure(idle(agentDef, resources, depth, parentRef, state))
+
+      case msg: AgentCommand.UserInput if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        InputLanding.protectedUserReceipt(handle, msg).flatMap {
+          case Right(receipt) if receipt.accepted =>
+            val content = msg.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(msg.text))(Right(_))
+            val message = Message(MessageRole.User, content, source = msg.source, messageId = Some(receipt.identity))
+            pipeLlmCall(agentDef, resources, depth, parentRef, state.withMessages(state.messages :+ message), msg.replyTo)
+          case Right(_) =>
+            emitDuplicateReceipt(state.wsSend, state.sessionId, msg.clientMessageId) *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, state))
+          case Left(reason) =>
+            logger.warn(s"Protected input admission failed: $reason") *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        }
+
+      case msg: AgentCommand.ImmediateInput if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        InputLanding.protectedImmediateReceipt(handle, msg).flatMap {
+          case Right(receipt) if receipt.accepted =>
+            val content = msg.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(msg.text))(Right(_))
+            val message = Message(MessageRole.User, content, source = msg.source, messageId = Some(receipt.identity))
+            pipeLlmCall(agentDef, resources, depth, parentRef, state.withMessages(state.messages :+ message), None)
+          case Right(_) => IO.pure(idle(agentDef, resources, depth, parentRef, state))
+          case Left(reason) =>
+            logger.warn(s"Protected immediate input admission failed: $reason") *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        }
+
       case AgentCommand.UserInput(
             text,
             replyTo,

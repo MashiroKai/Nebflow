@@ -6,10 +6,13 @@
 用 matplotlib patches 以等轴测近似投影（u=(x−y)cos30°, v=z+(x+y)sin30°）绘制，
 墙面/山墙按深度排序后绘屋面（painter's algorithm）——three.js 不可用时的静态替代通路。
 
-输出: C:/Users/Kai/.nebflow/plots/vrs2-archart/20261004_arch_axono.png
+输出: C:/Users/name/.nebflow/plots/vrs2-archart/20261004_arch_axono.png
 """
 import os
-os.environ.setdefault("MPLCONFIGDIR", r"C:\Users\Kai\.nebflow\tools\mplconfig")
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(DATA_ROOT, "tools", "mplconfig"))
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -18,7 +21,8 @@ from matplotlib.patches import Polygon
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
 plt.rcParams["axes.unicode_minus"] = False
 
-OUT = r"C:\Users\Kai\.nebflow\plots\vrs2-archart\20261004_arch_axono.png"
+OUT = os.path.join(DATA_ROOT, 'plots', 'vrs2-archart', '20261004_arch_axono.png')
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
 C30, S30 = 0.8660254, 0.5
 INK, MUT = "#2a2e38", "#6b7078"
 

@@ -38,7 +38,7 @@ const RULES = [
   // ── 角色正文（PromptCatalog.Roles）──
   {
     id: 'R1 Nebula 角色正文',
-    literal: 'You are {{agent_display_name}}, the Nebflow orchestrator',
+    literal: 'You are {{agent_display_name}}, the Stand orchestrator',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
     why: 'root 系统提示词只准有这一份正文；改它 = 改模型可见字节，须在 catalog 内改。',
@@ -52,24 +52,24 @@ const RULES = [
   },
   {
     id: 'R3 node 角色正文',
-    literal: 'You are a task node running inside Nebflow',
+    literal: 'You are a task node running inside Stand',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
     why: 'Node-face system prompt single source (carrier of the terminal text protocol).',
   },
   {
     id: 'R4 delegate 角色正文',
-    literal: 'You are a Nebflow delegate — a background executor spawned by',
+    literal: 'You are a Stand delegate — a background executor spawned by',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
     why: 'Delegate-face system prompt single source (carrier of the delegate terminal discipline; mechanically separable from the node face).',
   },
   {
     id: 'R5 subagent 角色正文',
-    literal: 'You are Subagent, a read-only recon specialist',
+    literal: 'You are Subagent, a reconnaissance specialist',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
-    why: '只读侦察子 agent 正文单源。',
+    why: 'Reconnaissance subagent prompt has one authoritative source.',
   },
 
   // ── 共享片段（PromptCatalog.Shared；Defaults 侧只剩转派 val）──
@@ -103,7 +103,7 @@ const RULES = [
   },
   {
     id: 'S5 KG 落地纪律（去重后）',
-    literal: 'Knowledge-graph landing discipline (KG audit ①, 2026-10-28)',
+    literal: 'Knowledge-graph landing discipline (KG audit ①, 2026-10-28; location ruling 2026-11-03)',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
     why: '本批去重项：原在 BuiltinAgents 出现两次（逐字相同），现在只剩 catalog 一处。',
@@ -168,13 +168,6 @@ const RULES = [
     allowOther: [],
     why: 'JeV 分配器前导单源；⚠ 与 K2 是同一问题的两套措辞（已分叉），裁定待作者。',
   },
-  {
-    id: 'K2 mode 判定前导',
-    literal: 'You are auditing task dispatch in an agent-orchestration platform. Below is one dispatched task brief,',
-    expectIn: { [CATALOG]: 1 },
-    allowOther: [],
-    why: 'mode 判定前导单源；⚠ 与 K1 已分叉，本批不改措辞。',
-  },
 ];
 
 function walkScala(dir) {
@@ -206,6 +199,27 @@ function lineNumbers(src, literal) {
 
 const files = walkScala(SRC);
 const violations = [];
+
+// Old role and location bodies must not survive as a second prompt source.
+const OLD_BODIES = [
+  'You are {{agent_display_name}}, the Nebflow orchestrator',
+  'You are a task node running inside Nebflow',
+  'You are a Nebflow delegate — a background executor spawned by',
+  'Knowledge-graph landing discipline (KG audit ①, 2026-10-28)',
+];
+
+// The mode classifier has no production definition or caller; its body must not return.
+for (const file of files) {
+  const source = readFileSync(file, 'utf8');
+  for (const literal of OLD_BODIES) {
+    if (source.includes(literal)) violations.push(`Obsolete prompt body returned: ${relative(SRC, file)}: ${literal}`);
+  }
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  if (/\b(?:ModeStatePreamble|DelegateModeMachine|DelegateModeAllocator)\b/.test(code)
+      || source.includes('You are auditing task dispatch in an agent-orchestration platform. Below is one dispatched task brief,')) {
+    violations.push(`K2 removed mode classifier returned: ${relative(SRC, file)}`);
+  }
+}
 
 for (const rule of RULES) {
   const allowed = new Set([...Object.keys(rule.expectIn), ...rule.allowOther]);

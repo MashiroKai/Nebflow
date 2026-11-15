@@ -232,14 +232,15 @@ test('D1 桌面端：设备段行规格 + 会话窗单窗一进一出', async ({
   // 桌面单窗：进 KAI → 关 → 进 DESKTOP ⇒ 每次 overlay 内恰一窗
   await rows.nth(1).click();
   await expect(page.locator('#fm-chat-overlay .fm-modal')).toHaveCount(1, { timeout: 5000 });
-  await expect(page.locator('#fm-chat-overlay .fm-modal .fm-modal-name')).toHaveText('KAI');
-  await page.locator('#fm-chat-overlay .fm-modal-close').click();
+  // FCC-REQ-007: on desktop the conversation name is in #header and the way out is the flipped avatar.
+  await expect(page.locator('#header .fm-main-head .fm-modal-name')).toHaveText('KAI');
+  await page.locator('#activity-avatar').click();
   await expect(page.locator('#fm-chat-overlay')).toHaveCount(0);
 
   await rows.nth(2).click();
   await expect(page.locator('#fm-chat-overlay .fm-modal')).toHaveCount(1, { timeout: 5000 });
-  await expect(page.locator('#fm-chat-overlay .fm-modal .fm-modal-name')).toHaveText('DESKTOP-IJBBEOT');
-  await page.locator('#fm-chat-overlay .fm-modal-close').click();
+  await expect(page.locator('#header .fm-main-head .fm-modal-name')).toHaveText('DESKTOP-IJBBEOT');
+  await page.locator('#activity-avatar').click();
   await expect(page.locator('#fm-chat-overlay')).toHaveCount(0);
   await shot(page, 'd1-desktop-chat-closed-clean');
 });

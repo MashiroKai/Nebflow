@@ -158,7 +158,8 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
       stripTop: Math.round(document.querySelector('.mf-strip').getBoundingClientRect().top),
       chips: pg.querySelectorAll('.mf-strip-chip').length,
       chipOn: pg.querySelectorAll('.mf-strip-chip.on').length,
-      chipLabel: pg.querySelector('.mf-strip-chip.on')?.textContent || '',
+      // 标签读 .mf-strip-label（0f2b45d62 起签内含「引用此看板」↗ 钮，整签 textContent 已混入装饰符）
+      chipLabel: pg.querySelector('.mf-strip-chip.on .mf-strip-label')?.textContent || '',
       count: pg.querySelector('.mf-cv-count').textContent,
       // 标签栏重做批（2026-11-02 §一）：两颗悬浮钮图标必须真的渲染成 svg ——
       // 修前 toolbar 挂 section 根而图标替换只跑 wrap 子树 ⇒ 两钮永远是空圆
@@ -335,10 +336,10 @@ test('T3b 堆叠卡视图（作者令 2026-11-02 §四；21:47 §三 iOS app swi
   for (const s of sides) expect(s.h).toBeLessThan(center.h);
   expect(sides.some((s) => s.x < 0 || s.x + s.w > deck.stageW)).toBe(true);
   expect(deck.cardRadius).toBe('20px');                // 卡族圆角（iOS 卡面档）
-  // 背景重度模糊 = **全站唯一毛玻璃配方**（--nf-glass-filter：blur 40px / saturate 1.4）。
-  // 旧档 26px 是 glass 统一批（2026-11-05/06）之前的面私拟值，已随 `--nf-glass-*` 收敛退役；
-  // 本条断言在基线上就是红的（存量红），此处随之改正到统一配方，避免旧档把配方带回 26px。
-  expect(deck.viewBlur).toContain('blur(40px)');
+  // 背景重度模糊 = **全站唯一毛玻璃配方**（--nf-glass-input-filter：blur 24px / saturate 1.15，
+  // 单一材质批 2026-11-15 作者令「只允许存在一种毛玻璃质感」，= 主输入框配方逐值）。
+  // 旧 40px/1.4 通透档（recalibrate）已随该裁决退役，本断言钉住唯一配方防回潮。
+  expect(deck.viewBlur).toContain('blur(24px)');
   // 点「邻卡露出的那一段」（app switcher 读感）= 换入中央，卡叠不退出。
   // 取 |k|=1 的邻卡（本环序活动=丙 ⇒ 乙在左邻；甲已绕到 |k|=2 = .is-far 零命中）。
   // 邻卡中心在屏幕外（app switcher 的必然：只露一截）⇒ 点**露出的那条边**。

@@ -1,7 +1,5 @@
 package nebflow.core.tools
 
-import nebflow.neblink.social.*
-
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*

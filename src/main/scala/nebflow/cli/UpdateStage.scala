@@ -75,7 +75,7 @@ object UpdateStage:
 
   /**
    * Phase1 主入口：校验 → 落位（幂等）→ 返回 Staged。全程不写指针、不触引擎。
-   * `installDir` = launcher 所在目录（Mac: ~/.stand/bin；KAI: %LOCALAPPDATA%\stand）。
+   * `installDir` = launcher 所在目录（Mac: ~/.stand/bin；Windows: %LOCALAPPDATA%\stand）。
    */
   def stage(jarPath: os.Path, installDir: os.Path, layout: DetachedApply.Layout): IO[Either[String, Staged]] =
     if !os.exists(jarPath) then IO.pure(Left(s"jar not found: $jarPath"))

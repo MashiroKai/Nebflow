@@ -1,0 +1,355 @@
+{
+  "version": 1,
+  "change": "frontend-chat-composer-repairs",
+  "mappings": [
+    {
+      "requirement": "FCC-REQ-001",
+      "scenario": "FCC-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/input.js",
+        "src/main/resources/web/js/input/historyStore.js",
+        "src/main/resources/web/js/input/historyLedger.js",
+        "src/main/resources/web/js/queueVault.js",
+        "src/main/resources/web/js/chatView.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-001 recall restores text and attachments, re-sends the same bytes and removes only what it added"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-001 recall survives a reload: the payload comes back from the browser store"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-001 attachment metadata drops the payload and keeps what is needed to send the attachment again"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-001 attachments are rebuilt in the shape the composer and the send path use"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-001 only the newest entries keep attachments once a cap is crossed"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-001 a reference with a long text keeps the text with the payloads and a short one keeps it in the ledger"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-001 the sweep keeps the payloads of an entry that was recorded while the key listing was in flight"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-001",
+      "scenario": "FCC-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/input.js",
+        "src/main/resources/web/js/input/historyStore.js",
+        "src/main/resources/web/js/input/historyLedger.js",
+        "src/main/resources/web/js/locales/zh-CN.js",
+        "src/main/resources/web/js/locales/en.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-002 legacy text-only history and lost payloads are reported and never sent hollow"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-002 a ledger that matches the text list from the tail keeps its attachments"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-002 a text appended by an older build breaks the match: older entries come back text-only, never mispaired"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-002 legacy history without any ledger yields one text-only slot per entry"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-002 text signatures separate different texts and are stable"
+        },
+        {
+          "path": "tests/chat-composer-repair.test.mjs",
+          "name": "FCC-SCN-002 trimming the text list from the front keeps the newest entries paired"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-002",
+      "scenario": "FCC-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/messages.js",
+        "src/main/resources/web/js/popArtifacts.js",
+        "src/main/resources/web/css/chat.css"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-003 a failed stacked layer retries on its own and leaves its siblings and the message alone"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-003 the collapsed front layer retries on a real pointer click and both faces of a layer recover together"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-003 the Pop stack retries on a real pointer click on its collapsed front layer instead of opening the item"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-002",
+      "scenario": "FCC-SCN-004",
+      "implementation": [
+        "src/main/resources/web/js/popArtifacts.js",
+        "src/main/resources/web/js/chat.js",
+        "src/main/resources/web/css/chat.css",
+        "src/main/resources/web/css/input.css"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-004 a failed conversation card image and a failed input thumbnail each offer a retry for that item"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-003",
+      "scenario": "FCC-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/askAttachments.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-005 reply attachment chips open their preview; remove and retry do not, and a secret question offers no entry"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-004",
+      "scenario": "FCC-SCN-006",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js",
+        "src/main/resources/web/css/ask.css"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-006 light: an Ask history bubble crossing the column top keeps opacity 1 and the dock stays operable"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-006 dark: an Ask history bubble crossing the column top keeps opacity 1 and the dock stays operable"
+        },
+        {
+          "path": "tests/ask-glass-drag.spec.mjs",
+          "name": "D2① 列滚动顶带内"
+        },
+        {
+          "path": "tests/ask-sheet-fade-height.spec.mjs",
+          "name": "A3 带顶探针保持全实"
+        },
+        {
+          "path": "tests/canvas-ask-dock.spec.mjs",
+          "name": "F3 顶缘无渐隐"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-005",
+      "scenario": "FCC-SCN-007",
+      "implementation": [
+        "src/main/resources/web/js/imeGuard.js",
+        "src/main/resources/web/js/input/composer.js",
+        "src/main/resources/web/js/messages/fmComposer.js",
+        "src/main/resources/web/js/messages.js",
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-007 main composer and Ask dock: the Enter that confirms an input-method candidate sends nothing, the next Enter sends once"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-007 friend, group and device composers: the Enter that confirms an input-method candidate sends nothing, the next Enter sends once"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-006",
+      "scenario": "FCC-SCN-008",
+      "implementation": [
+        "src/main/resources/web/js/scrollPill.js",
+        "src/main/resources/web/js/utils.js",
+        "src/main/resources/web/js/messages.js",
+        "src/main/resources/web/css/friends.css"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-008 main conversation: scrolling away, new messages and returning keep a single return entry"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-008 conversation: the conversation and the Agent never show a return entry at the same time"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-007",
+      "scenario": "FCC-SCN-009",
+      "implementation": [
+        "src/main/resources/web/js/messages/mainHost.js",
+        "src/main/resources/web/js/messages.js",
+        "src/main/resources/web/js/chatSearch.js",
+        "src/main/resources/web/css/friends.css",
+        "src/main/resources/web/js/locales/zh-CN.js",
+        "src/main/resources/web/js/locales/en.js",
+        "src/main/resources/web/js/activityBar.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-009 friend: the conversation opens in the main chat area, the header follows it and the flipped avatar returns to the Agent"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-009 group: the conversation opens in the main chat area, the header follows it and the flipped avatar returns to the Agent"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-009 device: the conversation opens in the main chat area, the header follows it and the flipped avatar returns to the Agent"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-007",
+      "scenario": "FCC-SCN-010",
+      "implementation": [
+        "src/main/resources/web/js/messages/mainHost.js",
+        "src/main/resources/web/js/messages.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-010 the Agent and each conversation keep their own draft, attachments and scroll position"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-010 a late response for a conversation that is no longer shown is not painted into the current one"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-010 leaving a conversation while it is still syncing never stores another conversation under it"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-010 a send that outlives its window never stores the other conversation under the first"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-010 a send that is refused after its window was left gives the text back to its own conversation and touches nothing else"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-010 a group send that is refused for good after its window was left does not close the conversation that is shown"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-010 two conversations that do not exist yet keep separate drafts"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-010 closing a conversation and opening another while the first is still syncing never stores the second under the first"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-007",
+      "scenario": "FCC-SCN-011",
+      "implementation": [
+        "src/main/resources/web/js/messages/mainHost.js",
+        "src/main/resources/web/css/friends.css"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The desktop conversation host is a large visual change that the user has asked to confirm on a real screen before it is merged; no automated test can stand in for that confirmation.",
+        "steps": "Start an isolated instance, open a friend, a group and a device conversation on desktop in light and dark themes at 1280, 1440 and 1920 widths, switch between them and the Agent, then repeat the mobile conversation flows at 390 width.",
+        "expected": "Each conversation fills the main chat area with the header and flipped avatar described by FCC-SCN-009, drafts and positions per FCC-SCN-010, no overlap or overflow, and mobile navigation unchanged; the user records approval before any merge."
+      }
+    },
+    {
+      "requirement": "FCC-REQ-001",
+      "scenario": "FCC-SCN-014",
+      "implementation": [
+        "src/main/resources/web/js/chat.js",
+        "src/main/resources/web/js/input/historyStore.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-014 the retry of a lost connection resends the last text even when the newest history entry has attachments only"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-007",
+      "scenario": "FCC-SCN-012",
+      "implementation": [
+        "src/main/resources/web/js/messages.js",
+        "src/main/resources/web/js/sidebar.js",
+        "src/main/resources/web/js/events.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-012 selecting or creating an Agent session while a conversation is shown brings the Agent view back"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-007",
+      "scenario": "FCC-SCN-013",
+      "implementation": [
+        "src/main/resources/web/js/activityBar.js",
+        "src/main/resources/web/css/friends.css"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-013 the avatar flip runs to its end and the Agent tooltip survives the periodic status refresh"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-013 returning to the Agent inside the flip puts the account tooltip back"
+        }
+      ]
+    },
+    {
+      "requirement": "FCC-REQ-008",
+      "scenario": "FCC-SCN-015",
+      "implementation": [
+        "src/main/resources/web/js/messages.js",
+        "src/main/resources/web/js/input.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-015 the Escape that closes another layer does not also leave the conversation"
+        },
+        {
+          "path": "tests/chat-composer-consumers.spec.mjs",
+          "name": "FCC-SCN-015 an image pasted into a conversation input never lands in the hidden Agent composer"
+        }
+      ]
+    }
+  ]
+}

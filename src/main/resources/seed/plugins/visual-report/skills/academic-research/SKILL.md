@@ -69,16 +69,16 @@ description: 学术调研报告与论文原图图集（pymupdf 两遍法裁图�
 
 ```bash
 # 第一遍·整页定界（实测输出：page 4/17: 612.0 x 792.0 pt / wrote page_full.png: 1530x1980 px [width OK >=1500]）
-MSYS2_ARG_CONV_EXCL='*' 'C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe' \
-  'C:\Users\Kai\.nebflow\skills\visual-report-suite\academic-research\crop_paper_figure.py' \
-  'C:\Users\Kai\.nebflow\projects\Sipm\papers\2023_Salvi_PDOZ_personal_dosimeter_SiPM.pdf' \
+MSYS2_ARG_CONV_EXCL='*' 'C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe' \
+  'C:\Users\name\.nebflow\skills\visual-report-suite\academic-research\crop_paper_figure.py' \
+  'C:\Users\name\.nebflow\projects\Sipm\papers\2023_Salvi_PDOZ_personal_dosimeter_SiPM.pdf' \
   4 2.5 page_full.png
 
 # 第二遍·区域裁切（Read 整页图定界 ≈305,443–1145,1045 px ÷2.5 → clip 122,177–458,418 pt；
 #   实测输出：wrote C-06_detector_01.png: 1512x1085 px [width OK >=1500]）
-MSYS2_ARG_CONV_EXCL='*' 'C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe' \
-  'C:\Users\Kai\.nebflow\skills\visual-report-suite\academic-research\crop_paper_figure.py' \
-  'C:\Users\Kai\.nebflow\projects\Sipm\papers\2023_Salvi_PDOZ_personal_dosimeter_SiPM.pdf' \
+MSYS2_ARG_CONV_EXCL='*' 'C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe' \
+  'C:\Users\name\.nebflow\skills\visual-report-suite\academic-research\crop_paper_figure.py' \
+  'C:\Users\name\.nebflow\projects\Sipm\papers\2023_Salvi_PDOZ_personal_dosimeter_SiPM.pdf' \
   4 4.5 C-06_detector_01.png 122,177,458,418
 ```
 
@@ -89,7 +89,7 @@ MSYS2_ARG_CONV_EXCL='*' 'C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe
 | 工具 | 用途 | 本机检测命令（实测） | 官方下载链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
 | pymupdf | PDF 解析 + 区域高清裁图（主力） | `<venv>\python.exe -m pip show pymupdf` → 1.28.2 | https://pypi.org/project/PyMuPDF/ · https://pymupdf.readthedocs.io/en/latest/ | 200 · 200（2026-10-04，README 表） | pip 装回 viz-venv（core §5，清华镜像加速）；或切 render.mjs 管线 |
-| graphviz (dot) | 自绘汇总图（方案谱系 / 读出链框图，须标「自绘」） | `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` → 16.1.0 | https://graphviz.org/download/ | 200（2026-10-04，README 表） | mermaid-cli（npx 直调，未装）或文字层级列表 |
+| graphviz (dot) | 自绘汇总图（方案谱系 / 读出链框图，须标「自绘」） | `C:\Users\name\.nebflow\tools\graphviz\bin\dot.exe -V` → 16.1.0 | https://graphviz.org/download/ | 200（2026-10-04，README 表） | mermaid-cli（npx 直调，未装）或文字层级列表 |
 | matplotlib | 自绘数据图（仅当数值逐字可抄录时） | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2 | https://matplotlib.org/ · https://matplotlib.org/stable/users/installing/index.html | 200 · 200（2026-10-04，README 表） | plotly（已装）或文字表格 |
 
 ### 3.3 降级策略（不得空转）

@@ -49,13 +49,13 @@ $f(n) = 440 \times 2^{n/12}$
 
 | 产件 | 绝对路径 | 说明 |
 |---|---|---|
-| wav 音频 | `C:\Users\Kai\.nebflow\plots\vrs2-music\amaj_arpeggio_44k16.wav` | 211,724 bytes，44,100 Hz，16-bit PCM 单声道，2.40 s，峰值 0.85 FS（归一前合成峰 3.6653） |
-| 频谱图 | `C:\Users\Kai\.nebflow\plots\vrs2-music\20261004_music_demo_spectrum.svg` | 图 1，亮/暗双主题 |
-| 钢琴卷帘 | `C:\Users\Kai\.nebflow\plots\vrs2-music\20261004_music_demo_pianoroll.svg` | 图 2，亮/暗双主题 |
-| 语谱图 | `C:\Users\Kai\.nebflow\plots\vrs2-music\20261004_music_demo_spectrogram.svg` | 图 3，亮/暗双主题 |
-| 交互页（自包含） | `C:\Users\Kai\.nebflow\plots\vrs2-music\amaj_interactive.html` | 359,760 bytes；点按琴键/乐句发声 + 实时示波器 + 页内离线自检按钮；Tone.js 15.1.22 已内联，**断网可用** |
-| 合成与出图脚本 | `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\music_demo_gen.py` | wav + 3 图唯一来源，所有数值由它打印 |
-| 交互页模板 | `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\music_interactive_template.html` | 组装：读模板，将 `/*__TONE_INLINE__*/` 占位替换为 `Tone.min.js` 内容（剔除 `//# sourceMappingURL=` 尾行）后写盘 |
+| wav 音频 | `C:\Users\name\.nebflow\plots\vrs2-music\amaj_arpeggio_44k16.wav` | 211,724 bytes，44,100 Hz，16-bit PCM 单声道，2.40 s，峰值 0.85 FS（归一前合成峰 3.6653） |
+| 频谱图 | `C:\Users\name\.nebflow\plots\vrs2-music\20261004_music_demo_spectrum.svg` | 图 1，亮/暗双主题 |
+| 钢琴卷帘 | `C:\Users\name\.nebflow\plots\vrs2-music\20261004_music_demo_pianoroll.svg` | 图 2，亮/暗双主题 |
+| 语谱图 | `C:\Users\name\.nebflow\plots\vrs2-music\20261004_music_demo_spectrogram.svg` | 图 3，亮/暗双主题 |
+| 交互页（自包含） | `C:\Users\name\.nebflow\plots\vrs2-music\amaj_interactive.html` | 359,760 bytes；点按琴键/乐句发声 + 实时示波器 + 页内离线自检按钮；Tone.js 15.1.22 已内联，**断网可用** |
+| 合成与出图脚本 | `C:\Users\name\.nebflow\skills\visual-report-suite\demos\music_demo_gen.py` | wav + 3 图唯一来源，所有数值由它打印 |
+| 交互页模板 | `C:\Users\name\.nebflow\skills\visual-report-suite\demos\music_interactive_template.html` | 组装：读模板，将 `/*__TONE_INLINE__*/` 占位替换为 `Tone.min.js` 内容（剔除 `//# sourceMappingURL=` 尾行）后写盘 |
 
 浏览器实测（headless Chrome + puppeteer-core，2026-10-04）：页面零报错；真实点击 A4 键后 AudioContext 进入 `running`（点按可发声）；示波器捕获到实时波形；页内自检（OfflineAudioContext 离线渲染同一配方 + JS FFT 复算）输出：A4 439.99 Hz（−0.03 音分）、C♯5 554.36 Hz（−0.03 音分）、E5 659.24 Hz（−0.04 音分）、A5 879.99 Hz（−0.03 音分）。在线合成为同一配方，但电平留有实时播放安全余量，**不逐样本等于 wav 的 0.85 FS 归一**，听感一致、幅度口径不同。
 

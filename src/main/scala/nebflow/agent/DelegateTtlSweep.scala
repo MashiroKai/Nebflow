@@ -78,37 +78,48 @@ object DelegateTtlSweep:
       ref <- Ref.of[IO, Report](Report())
       _ <- records.traverse_ { rec =>
         // ① 在飞守卫（红线）：活体 actor ⇒ 零触碰。
-        if live.contains(rec.id) then ref.update(r => r.copy(inFlightKept = r.inFlightKept :+ rec.id))
-        else
-          // ② 到期判读（单源）。
-          nebflow.core.delegate.DelegateTerminalTtl.verdict(rec, rowsById.get(rec.id), now) match
-            case nebflow.core.delegate.DelegateTerminalTtl.InFlight => IO.unit
-            case _: nebflow.core.delegate.DelegateTerminalTtl.WithinTtl => IO.unit
-            case expired: nebflow.core.delegate.DelegateTerminalTtl.Expired =>
-              // ③ 清理动作（任务行剪行 → 登记移除；fail-soft）。工作区/分支一律
-              // 不动（引擎不再回收座位——需要隔离检出时 delegate 自建自管）。
-              for
-                _ <-
-                  rowsById.get(rec.id).traverse_ { t =>
-                    resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId)
-                  }
-                rm <- IO(nebflow.core.delegate.DelegateRegistry.remove(rec.id)).attempt
-                _ = logger.info(
-                  s"[delegate-ttl] '${rec.id}' expired the " +
-                    s"${nebflow.core.delegate.DelegateTerminalTtl.TtlMs / 86400000L}-day terminal TTL " +
-                    s"(anchor=${expired.anchorName} age=${(now - expired.anchorMs) / 86400000L}d) — " +
-                    s"taskRow=${if rowsById.contains(rec.id) then "pruned" else "none"} " +
-                    s"record=${rm.fold(err => s"kept($err)", _ => "removed")}"
+        resources.executionProtection(rec.id).flatMap {
+          case nebflow.shared.ExecutionProtection.Protected(_) =>
+            ref.update(r => r.copy(keptOnError = r.keptOnError :+ (rec.id -> "protected-execution")))
+          case nebflow.shared.ExecutionProtection.Unknown(reason) =>
+            ref.update(r => r.copy(keptOnError = r.keptOnError :+ (rec.id -> s"protection-unknown: $reason")))
+          case nebflow.shared.ExecutionProtection.Unprotected if live.contains(rec.id) =>
+            ref.update(r => r.copy(inFlightKept = r.inFlightKept :+ rec.id))
+          case nebflow.shared.ExecutionProtection.Unprotected =>
+            // ② 到期判读（单源）。
+            nebflow.core.delegate.DelegateTerminalTtl.verdict(rec, rowsById.get(rec.id), now) match
+              case nebflow.core.delegate.DelegateTerminalTtl.InFlight => IO.unit
+              case _: nebflow.core.delegate.DelegateTerminalTtl.WithinTtl => IO.unit
+              case expired: nebflow.core.delegate.DelegateTerminalTtl.Expired =>
+                // ③ 清理动作（任务行剪行 → 登记移除；fail-soft）。工作区/分支一律
+                // 不动（引擎不再回收座位——需要隔离检出时 delegate 自建自管）。
+                resources.executionCommitPort.withUnprotectedSession(rec.id) {
+                  for
+                    _ <- rowsById.get(rec.id).traverse_ { t =>
+                      resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId)
+                    }
+                    rm <- IO(nebflow.core.delegate.DelegateRegistry.remove(rec.id)).attempt
+                    _ = logger.info(
+                      s"[delegate-ttl] '${rec.id}' expired the " +
+                        s"${nebflow.core.delegate.DelegateTerminalTtl.TtlMs / 86400000L}-day terminal TTL " +
+                        s"(anchor=${expired.anchorName} age=${(now - expired.anchorMs) / 86400000L}d) — " +
+                        s"taskRow=${if rowsById.contains(rec.id) then "pruned" else "none"} " +
+                        s"record=${rm.fold(err => s"kept($err)", _ => "removed")}"
+                    )
+                    _ <- ref.update { r =>
+                      r.copy(
+                        expired = r.expired :+ rec.id,
+                        taskRowsPruned = if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
+                        recordsRemoved = if rm.isRight then r.recordsRemoved :+ rec.id else r.recordsRemoved,
+                        keptOnError = rm.fold(err => r.keptOnError :+ (rec.id -> err.getMessage), _ => r.keptOnError)
+                      )
+                    }
+                  yield ()
+                }.handleErrorWith(e =>
+                  ref.update(r => r.copy(keptOnError = r.keptOnError :+ (rec.id ->
+                    s"cleanup-unconfirmed: ${e.getClass.getSimpleName}")))
                 )
-                _ <- ref.update { r =>
-                  r.copy(
-                    expired = r.expired :+ rec.id,
-                    taskRowsPruned = if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
-                    recordsRemoved = if rm.isRight then r.recordsRemoved :+ rec.id else r.recordsRemoved,
-                    keptOnError = rm.fold(err => r.keptOnError :+ (rec.id -> err.getMessage), _ => r.keptOnError)
-                  )
-                }
-              yield ()
+        }
       }
       report <- ref.get
       _ <-

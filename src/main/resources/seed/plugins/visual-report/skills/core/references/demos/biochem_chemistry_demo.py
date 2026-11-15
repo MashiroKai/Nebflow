@@ -10,12 +10,16 @@
   （node --check 语法验证通过；与本脚本生成的 HTML 内联，产物自包含、断网可用）
 
 运行（viz-venv）：
-  C:\\Users\\Kai\\.nebflow\\tools\\viz-venv\\Scripts\\python.exe 本文件
+  C:\\Users\\name\\.nebflow\\tools\\viz-venv\\Scripts\\python.exe 本文件
 输出：
   20261004_chem_rxn_aspirin.svg    反应式（rdkit DrawReaction）
   20261004_chem_species_grid.svg   四物种 2D 结构网格
   20261004_chem_aspirin_3dmol.html 自包含可旋转 3D 交互件（3Dmol.js 内联）
 """
+import os
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
 import json
 import math
 import re
@@ -27,7 +31,8 @@ from rdkit.Chem.Draw import rdMolDraw2D
 
 RDLogger.DisableLog('rdApp.*')
 
-OUTDIR = 'C:/Users/Kai/.nebflow/plots/vrs2-biochem'
+OUTDIR = os.path.join(DATA_ROOT, 'plots', 'vrs2-biochem')
+os.makedirs(OUTDIR, exist_ok=True)
 STAMP = date.today().strftime('%Y%m%d')
 LIB = f'{OUTDIR}/3Dmol-min.js'
 

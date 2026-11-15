@@ -231,6 +231,12 @@ class MailBoundaryInjectionSpec extends CatsEffectSuite:
     val gate = ws / "release-gate"
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
     nebflow.core.LlmLogWriter.setEnabled(false)
+    // 数据根属本夹具独占（target/test-mail-boundary-injection/data）——启动时整体
+    // 清空，防上一次运行的 InputMailbox 墓碑（delivered-inputs.json 的
+    // clientMessageId，如 hum-1）跨运行存活：墓碑在则 head-forward 重投被
+    // InputLanding 判 Duplicate 静默丢弃，W1 的第三次调用消失（I-IDEM 合同本身
+    // 正确，错的是夹具没把自己的数据根当一次性现场）。
+    os.remove.all(tempRoot / "data")
     PathUtil.setDataRoot(tempRoot / "data")
     val system = ActorSystem(s"mail-boundary-$name")
     val streams = Ref.unsafe[IO, List[Stream[IO, StreamChunk]]](
@@ -359,6 +365,8 @@ class MailBoundaryInjectionSpec extends CatsEffectSuite:
     List(dir / s"$sid.json", dir / s"$sid.ui.json").foreach(f => if os.exists(f) then os.remove(f))
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
     nebflow.core.LlmLogWriter.setEnabled(false)
+    // 同上：夹具独占数据根，启动即清空（防跨运行墓碑；见 withTurnInFlight 内注）。
+    os.remove.all(tempRoot / "data")
     PathUtil.setDataRoot(tempRoot / "data")
     val system = ActorSystem("mail-boundary-w3")
     val llm = new ScriptedLlm(Ref.unsafe[IO, List[Stream[IO, StreamChunk]]](List(text("idle answer"))))

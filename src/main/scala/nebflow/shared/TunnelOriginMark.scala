@@ -1,7 +1,5 @@
 package nebflow.shared
 
-import nebflow.neblink.portal.*
-
 import org.http4s.Request
 
 import java.security.SecureRandom

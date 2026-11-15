@@ -18,6 +18,8 @@
 // 样式全部 inline（本批不动任何 CSS 文件——renderAskAttachments 先例同一纪律）。
 
 import { t } from './i18n.js';
+import { isMobileLayer } from './mobile/popSheet.js';
+import { openMediaDirect } from './mediaOpenRoute.js';
 
 const MAX_FILES = 9;
 const MAX_BYTES = 100 * 1024 * 1024; // 100MB（与后端 MaxAttachmentBytes 同值口径）
@@ -91,6 +93,33 @@ const SVG_FILE =
 const SVG_CHECK =
   '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
 
+/**
+ * Open the preview of one reply attachment through the shared attachment routes: the system viewer on the
+ * mobile layer, a Canvas tab on desktop. The bytes are the File the user picked, which is still in memory
+ * whether or not the upload has finished. A type nothing can render is reported, never ignored.
+ * @param {{requestId: string}} c
+ * @param {{name: string, size: number, file: File}} item
+ */
+function openReplyAttachment(c, item) {
+  const failed = () => toast(t('messages.attachPreviewFailed'));
+  if (isMobileLayer()) {
+    void openMediaDirect({ blob: item.file, name: item.name }).then((ok) => { if (!ok) failed(); }, failed);
+    return;
+  }
+  void import('./attachmentPreview.js')
+    .then((preview) => preview.previewBlob({
+      id: 'askreply:' + c.requestId + ':' + item.name + ':' + item.size,
+      title: item.name,
+      blob: item.file,
+      fileName: item.name,
+    }))
+    .then((outcome) => {
+      if (outcome === 'unsupported') toast(t('messages.attachPreviewUnsupported', { name: item.name }));
+      else if (outcome !== 'ok') failed();
+    })
+    .catch(failed);
+}
+
 // ---- chip 管线（多文件：逐件独立入队——修正③）----
 // 模块级（2026-10-19 W1-W3 修复）：原嵌在 mountAnswerAttachments 闭包内，
 // document 级 paste 监听引用不到 ⇒ 运行时 ReferenceError（checkJs TS2304 同根因）。
@@ -133,19 +162,34 @@ function addChip(c, file) {
   };
   c.items.push(item);
 
+  // The preview control is the button around the thumbnail; the chip itself is only a group. The remove and retry
+  // controls therefore do not sit inside another interactive element (the children of a button are presentational for
+  // assistive technology, so controls nested in one would be lost to it).
+  const thumb = document.createElement('button');
+  thumb.type = 'button';
+  thumb.className = 'ask-answer-attach-open';
+  thumb.setAttribute('aria-label', t('askUser.attachmentPreview', { name: file.name }));
   const chip = document.createElement('div');
   chip.className = 'ask-answer-attach-chip';
-  chip.tabIndex = 0;
+  // Not a tab stop of its own: the preview button is the control for the chip's action, and a focusable group that
+  // does nothing on Enter would be a dead stop in front of it.
+  chip.setAttribute('role', 'group');
+  chip.setAttribute('aria-label', file.name);
+  // A click anywhere on the chip opens the attachment, except on its own remove and retry controls.
+  chip.addEventListener('click', (e) => {
+    const control = e.target instanceof Element ? e.target.closest('button') : null;
+    if (control && control !== thumb) return;
+    openReplyAttachment(c, item);
+  });
   chip.style.cssText =
-    'position:relative;display:flex;align-items:center;gap:var(--ds-space-2);padding:var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-1h) var(--ds-space-1h);border-radius:var(--ds-radius-button);' +
+    'position:relative;display:flex;align-items:center;gap:var(--ds-space-2);padding:var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-1h) var(--ds-space-1h);border-radius:var(--ds-radius-button);cursor:pointer;' +
     'overflow:hidden;max-width:260px;border:1px solid var(--color-border,rgba(128,128,128,0.35));' +
     'background:var(--color-surface-2,rgba(127,127,127,0.08));';
   const isImage = (item.mime || '').startsWith('image/');
-  const thumb = document.createElement('span');
   thumb.style.cssText =
-    'flex:none;width:38px;height:38px;border-radius:var(--ds-radius-input);display:flex;align-items:center;justify-content:center;' +
+    'flex:none;width:38px;height:38px;padding:0;border-radius:var(--ds-radius-input);display:flex;align-items:center;justify-content:center;' +
     'background:var(--color-surface,rgba(20,22,28,0.5));border:1px solid var(--color-border,rgba(128,128,128,0.35));' +
-    'color:var(--color-text-dim,#9ba0aa);overflow:hidden;';
+    'color:var(--color-text-dim,#9ba0aa);overflow:hidden;cursor:pointer;';
   if (isImage) {
     const img = document.createElement('img');
     img.alt = '';

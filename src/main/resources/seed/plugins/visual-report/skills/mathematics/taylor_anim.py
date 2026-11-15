@@ -1,8 +1,8 @@
 # 泰勒级数逐阶逼近 sin/cos 过程动画 —— motion-toolkit 备选动画栈用户脚本
 # 渲染一律经封装（禁止绕开自起炉灶）：
-#   cd C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
+#   cd C:/Users/name/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
 #   <venv>/python.exe mpl_anim.py --script <本文件> \
-#       --out C:/Users/Kai/.nebflow/plots/vrs2-math/taylor_sin_cos_approx.mp4 \
+#       --out C:/Users/name/.nebflow/plots/vrs2-math/taylor_sin_cos_approx.mp4 \
 #       --fps 20 --figsize 12,4.6
 # 契约：build(fig, ax) -> (update, n_frames)；环境（MPLCONFIGDIR/ffmpeg exe）由封装固化。
 # 教学参数（与 demo md、静态误差图一致）：中心点 a=0，x∈[-π, π]，评估点 x0=π/2，

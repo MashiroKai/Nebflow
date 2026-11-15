@@ -196,7 +196,7 @@ try {
 
   // 会话窗头（第三处）
   await page.click(`#fm-conversations .fm-conv-row[data-conversation-id="${CID}"]`);
-  await page.waitForSelector('.fm-modal-header', { timeout: 10000 });
+  await page.waitForSelector('#header .fm-main-head', { timeout: 10000 });
   await sleep(600);
   const head0 = await page.evaluate(() => document.querySelector('.fm-modal-name')?.textContent ?? null);
   ok('R4-4 messages 会话窗头标题面：备注 > 显示名', head0 === REMARK0, `header=${JSON.stringify(head0)}`);
@@ -214,7 +214,7 @@ try {
   ok('R1-2 对照：既有菜单项仍在（删除/拉黑）',
     menuLabels.includes('删除好友') && menuLabels.includes('加入黑名单'), JSON.stringify(menuLabels));
   ok('R1-3 会话窗头无第二入口（窗头内无备注编辑件）',
-    await page.locator('.fm-modal-header .fm-remark-edit, .fm-modal-header [data-remark]').count() === 0);
+    await page.locator('#header .fm-main-head .fm-remark-edit, #header .fm-main-head [data-remark]').count() === 0);
   await page.keyboard.press('Escape'); // 收起右键菜单
   await sleep(200);
 
@@ -222,7 +222,7 @@ try {
   //    行内编辑器可见可交互；窗开着时提交/清除 ⇒ 窗头标题面就地重打）──
   {
     await page.locator(friendRow(REMARK0)).first().click();
-    await page.waitForSelector('.fm-modal-header', { timeout: 10000 });
+    await page.waitForSelector('#header .fm-main-head', { timeout: 10000 });
     await sleep(500);
     await openRemarkEditor(page, REMARK0, { dispatch: true });
     await setEditorValue(page, '实时备注');

@@ -47,7 +47,7 @@
 | [`TokenCommand.scala`](TokenCommand.scala) | Phase 3b console-credential commands (plan §6.4): - `stand token` / `stand token print` — break-glass: mint a  |
 | [`UpdateStage.scala`](UpdateStage.scala) | two-phase update — Phase1：download-verify-stage**（台账 #916，2026-10-26 作者令）。把「取包 → 校验 → 落 staging」与「换装+重启（Phase2 |
 | [`markdownRenderer.scala`](markdownRenderer.scala) | 定义: MarkdownRenderer |
-| [`splash.scala`](splash.scala) | Terminal brand mark: the STAND "S" symbol (stand-symbol.svg rendered as ANSI-shadow block art — no font file d |
+| [`splash.scala`](splash.scala) | Renders the installer's official horizontal Stand lockup from a shared generated properties resource; startup calls follow the port gate. Interactive terminals only; CI/pipes are silent and widths below 74 columns show plain Stand. Supports STAND_BANNER_IMAGE, STAND_BANNER_THEME and STAND_UI_LEVEL with NEBFLOW aliases. |
 | [`ui.scala`](ui.scala) | 定义: NebflowUI |
 | [`uiStore.scala`](uiStore.scala) | 定义: Phase, HistoryEntry, CompletedRound, UiState |
 

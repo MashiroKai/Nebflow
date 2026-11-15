@@ -333,6 +333,65 @@ class JevProvidersAlignmentSpec extends FunSuite:
   private def bodyJson(r: Response[IO]): Json =
     parser.parse(r.bodyText.compile.string.unsafeRunSync()).getOrElse(Json.Null)
 
+  test("POST /api/jev/test: adapter id, form model and unsaved key reach the upstream; an instance name is refused") {
+    var seenBodies: List[String] = Nil
+    var seenAuth: List[String] = Nil
+    val server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    server.createContext(
+      "/",
+      (ex) =>
+        seenBodies = seenBodies :+ new String(ex.getRequestBody.readAllBytes())
+        seenAuth = seenAuth :+ Option(ex.getRequestHeaders.getFirst("Authorization")).getOrElse("")
+        val b = """{"model":"jev-1.13.0","answers":{"q1":{"type":"noul","noul":0.9}}}""".getBytes
+        ex.sendResponseHeaders(200, b.length)
+        ex.getResponseBody.write(b)
+        ex.close()
+    )
+    server.start()
+    try
+      withDataRoot { _ =>
+        val routes = mkRoutes()
+        val url = s"http://127.0.0.1:${server.getAddress.getPort}/v1/systemone"
+        def post(body: Json): Response[IO] =
+          routes(authed(Method.POST, "/jev/test", Some(body))).value
+            .unsafeRunSync()
+            .getOrElse(fail("POST /jev/test fell through"))
+        def upstreamModel: Either[io.circe.DecodingFailure, String] =
+          parser.parse(seenBodies.last).toOption.get.hcursor.downField("model").as[String]
+
+        val form = post(
+          Json.obj(
+            "provider" -> DecisionProvider.TypesafeJev.asJson,
+            "endpoint" -> url.asJson,
+            "model" -> "form-model".asJson,
+            "apiKey" -> "test-key-not-real".asJson
+          )
+        )
+        assertEquals(form.status, Status.Ok)
+        assertEquals(bodyJson(form).hcursor.downField("ok").as[Boolean].toOption, Some(true))
+        assertEquals(upstreamModel, Right("form-model"), "the model typed in the form is the one probed")
+        assertEquals(seenAuth.last, "Bearer test-key-not-real", "the unsaved key is the one used")
+
+        // Callers that omit `model` keep the stored/default resolution.
+        val omitted = post(
+          Json.obj(
+            "provider" -> DecisionProvider.TypesafeJev.asJson,
+            "endpoint" -> url.asJson,
+            "apiKey" -> "test-key-not-real".asJson
+          )
+        )
+        assertEquals(bodyJson(omitted).hcursor.downField("ok").as[Boolean].toOption, Some(true))
+        assertEquals(upstreamModel, Right(DecisionProvider.DefaultModel))
+
+        // A provider-instance name is not an adapter id: refused before any upstream call.
+        val refused = post(Json.obj("provider" -> "my-instance".asJson, "endpoint" -> url.asJson))
+        assertEquals(refused.status, Status.BadRequest)
+        assertEquals(seenBodies.length, 2, "a refused probe never reaches the upstream")
+      }
+    finally server.stop(0)
+    end try
+  }
+
   test("GET /api/config/jev：新投影端点在位（与 imagegen 同 withAuth 门槛），无令牌 403") {
     withDataRoot { root =>
       seedJevConfig(root)

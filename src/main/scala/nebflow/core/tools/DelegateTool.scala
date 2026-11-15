@@ -216,42 +216,20 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}$attachmentBl
   end assembleBrief
 
   /**
-   * 双模式批（设计 §5.1/§5.7）：dispatcher 模式会话的座位纪律段（brief 装配单点
-   * 注入；模型可见文案）。**9.19 纯编排口径重写批（2026-11-01 · 作者令）**：
-   * 9.19 版 project dispatcher（tag `2026.9.19` 树 `seed/agents/project-dispatcher/
-   * system.md``）的编排纪律 = 拆解/派发/收拢/
-   * 推进度，分发器**零亲自动手**——对照发现旧段只讲「编排四件用法」，而两模式
-   * 共享的 delegate 面系统提示词（`BuiltinAgents.NebflowDelegatePrompt`）通篇
-   * executor 框架（「executor, dispatcher and manager in one」「Simple work →
-   * you do it yourself」）在 dispatcher 腿无任何覆盖句 → 框架冲突时基线框架赢
-   * （亲自动手怂恿面）。本段重写为五段纯编排纪律，**开场覆盖句显式废黜共享面
-   * 的 executor 层**（kernel=自己干 / dispatcher=只编排 的提示词语义分界——
-   * 两模式共享同一 system prompt，分界只能由本段单点承载）：
-   *  ① 覆盖句 + 零亲自动手（任务性 Write/Edit/Bash = 模式违例；自己的调用只读
-   *     图谱/文件/git 事实；「简单活自己干」在本模式读作「简单活=单节点链」）。
-   *  ② 拆解（9.19 纪律原文）：一 node = 一个会话能完成的最小单元；task 三要素
-   *     （goal+constraints+acceptance）自足；拓扑定量（只读=1 节点；微改=1 节点
-   *     实现+自验+落位；多件=并行腿+verify）。
-   *  ③ 派发（2026-10-29 作者补令三段逐字保留）：subagent-via-nodes 用法指导
-   *     （作者逐字「分发器的Subagent虽然摘除了，但是agentflow是完全可以实现
-   *     Subagent的能力的」）；整链一次编写（作者逐字「整链一次编写应该不是
-   *     单node的编写吧」——ChainWrite 一次给全链，NodeEdit 只精修）；worktree
-   *     精确化（作者裁定 2026-10-29 18:12——本体照走判定机，链节点共享座位）。
-   *  ④ 收拢：结果沿 out 边完成通知回流（禁轮询）；到达即跨节点综合（矛盾点名、
-   *     证据留路径）；终稿 = 结论先行的 dispatch summary，非节点转录。
-   *  ⑤ 推进度：写域相交任务 `deps` 串行（§5.7 纪律层）；失败/补充令 = 先盘点
-   *     在飞链（NodeList）再逐点显式处置（9.19 接令纪律）——修链不修活（修理
-   *     = 链编辑，绝不亲自上手）。
-   * F9/F10 旧钉短语（Subagent gone by design / SELF-CONTAINED / ONE ChainWrite
-   * call / verifier+loop / 座位共享 / deps）逐字保留——spec 锚不破。
+   * Dispatcher-only brief section overriding the shared executor framing.
+   * Blocking reconnaissance with foreground shell lookups uses Subagent; task execution still uses
+   * chain nodes. The section also defines chain composition, result collection
+   * and shared-workspace ordering without changing the legacy project dispatcher.
    */
   val DispatcherDisciplineLine: String =
-    """── Dispatcher mode: pure orchestration (this section overrides the executor framing of your seat) ──
+    """Dispatcher mode: pure orchestration (this section overrides the executor framing of your seat)
 You orchestrate a chain; you never execute it yourself. In this mode the executor tier of your seat is OFF: the seat prompt's "simple work → you do it yourself" reads as "simple work → a one-node chain" here, and any Write/Edit/Bash call that performs task work is a mode violation, not a shortcut — your own calls only read the map, the files and git facts.
 
-Decompose: one node = the smallest unit one agent can finish in one session; every node task is SELF-CONTAINED (goal + constraints + acceptance — a node sees only its own task text, none of your context). Size the topology to the work: read-only / analysis = one node; a micro change = one node that implements, self-verifies and lands; multi-part work = parallel legs feeding a verify step before anything lands.
+Reconnaissance: use Subagent for blocking lookups and analysis, including foreground shell-backed reconnaissance, that inform your orchestration. Give it a self-contained question; it has only Read/Glob/Grep/WebSearch/WebFetch/Bash, and its findings return as this tool call's result. Bash uses the normal execution and permission pipeline, not a read-only sandbox. Reconnaissance is role policy; no separate Write/Edit, messaging or recursive agent tools are granted. It must finish shell work and include its result before answering, without starting background work. Use chain nodes for task execution, not Subagent.
 
-Dispatch: compose the ENTIRE chain in ONE ChainWrite call — multi-node complex chains included; never assemble a chain node-by-node through repeated NodeEdit calls (NodeEdit is for refining an existing chain's edges and parameters, not for building it). Never name plugins and never pass a plugins key: node plugins are allocated automatically per-node from each node's task at chain registration, so the [plugin discovery] line above is query-only for you — you never declare plugins. Your Subagent tool is gone by design: recon/subtask capacity comes through the chain — a single lookup or subtask is a one-node chain (or a node in the chain you are composing). Judgment is verdict-driven: a step needing judgment gets a verifier node with a (fail)<worker>:loop back edge — never re-run blind, and never rule "done" yourself (no self-declared-goal loops).
+Decompose: one node = the smallest unit one agent can finish in one session; every node task is SELF-CONTAINED (goal + constraints + acceptance — a node sees only its own task text, none of your context). Size the topology to the work: reconnaissance may use Subagent; implementation and other task execution use chain nodes; a micro change = one node that implements, self-verifies and lands; multi-part work = parallel legs feeding a verify step before anything lands.
+
+Dispatch: compose the ENTIRE chain in ONE ChainWrite call — multi-node complex chains included; never assemble a chain node-by-node through repeated NodeEdit calls (NodeEdit is for refining an existing chain's edges and parameters, not for building it). Never name plugins and never pass a plugins key: node plugins are allocated automatically per-node from each node's task at chain registration, so the [plugin discovery] line above is query-only for you — you never declare plugins. Judgment is verdict-driven: a step needing judgment gets a verifier node with a (fail)<worker>:loop back edge — never re-run blind, and never rule "done" yourself (no self-declared-goal loops).
 
 Collect: end-node results are delivered back to this session as completion notifications — never poll. On arrival synthesize across nodes: name contradictions, keep the evidence (paths + facts), and make your final text the conclusion-first dispatch summary the parent session reads — not a node transcript.
 
@@ -493,7 +471,31 @@ Advance: the chain's nodes all run in THIS session's workspace (that is sharing,
     end match
   end routeRemote
 
+  private[tools] def admitProtectedCandidate(
+    params: NodeRunner.SpawnParams,
+    admission: nebflow.shared.ExecutionAdmission
+  ): IO[Either[String, NodeRunner.SpawnParams]] =
+    NodeRunner.admitProtected(params, admission)
+
+  private lazy val recoveryMode = Option(System.getProperty("nebflow.delegate.recovery"))
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    callWithRecoveryMode(input, ctx, ctx.sharedResources.fold(recoveryMode)(_.delegateRecoveryMode))
+
+  private[tools] def callWithRecoveryMode(
+    input: JsonObject,
+    ctx: ToolContext,
+    mode: Option[String]
+  ): IO[Either[ToolError, String]] =
+    mode match
+      case None | Some("") | Some("off") => callLegacy(input, ctx)
+      case Some("local-leaf-b1")
+          if !ctx.sharedResources.exists(_.executionCommitPort.supportsProtectedExecution) =>
+        IO.pure(Left(ToolError("Delegate recovery B1 is unavailable; admission is disabled (unsupported-boundary).")))
+      case Some("local-leaf-b1") => callLegacy(input, ctx)
+      case Some(_) => IO.pure(Left(ToolError("Invalid Delegate recovery mode; admission is disabled.")))
+
+  private def callLegacy(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val task = input("task").flatMap(_.asString).getOrElse("")
     val project = input("project").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val description = labelOf(task)
@@ -537,7 +539,7 @@ Advance: the chain's nodes all run in THIS session's workspace (that is sharing,
               dispatchLeg(input, task, project, description, shortName, attachmentPaths, ctx)
           }
     end if
-  end call
+  end callLegacy
 
   /** 执行器腿分叉（附件判据之后；`attachmentPaths` 已通过全部投递前判据）。 */
   private def dispatchLeg(
@@ -1255,7 +1257,7 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
   ): IO[Either[ToolError, (String, String)]] =
     val agentName = agentDef.name
     val isDispatcher = modeDecision.mode == DualModeConfig.ModeDispatcher
-    cats.effect.Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+    cats.effect.Ref.of[IO, IO[Unit]](resources.pluginMcp.release(subagentId)).flatMap { cleanup =>
       // 工作座政策（托管树退场）：座位恒 = 派发 workspace（设备项目 = 设备盘
       // workspace 的会话默认设备上下文），引擎不再建/续 delegate worktree——
       // 需要隔离检出时 delegate 自建自管。附件稳定副本恒在 dataRoot 副本面
@@ -1342,9 +1344,74 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       // assembleBrief 本体（spec 判红锚）逐字节不动；initialPrompt 与首条 UserInput
       // 同吃消解后文本。机制关 = 原样透传。
       val spawnRunId = java.util.UUID.randomUUID().toString
+      val protectedMode = resources.delegateRecoveryMode.contains("local-leaf-b1")
+      final case class PreparedSpawn(
+        params: NodeRunner.SpawnParams,
+        initialMessages: List[Message],
+        continueOnSpawn: Boolean
+      )
       val attempt = for
         resolvedBrief <- resources.msgTokens.resolveForAgent(brief)
-        _ <- resources.subAgentTaskStore
+        prepared <- if !protectedMode then IO.pure(PreparedSpawn(params, Nil, continueOnSpawn = false))
+          else
+            val admission = nebflow.shared.ExecutionAdmission(
+              subagentId, spawnRunId, java.util.UUID.randomUUID().toString, java.util.UUID.randomUUID().toString,
+              java.util.UUID.randomUUID().toString, java.util.UUID.randomUUID().toString,
+              parentSessionId.getOrElse(resolvedRoot), spawnRunId,
+              ProtectedAgentExecution.configBinding(agentDef),
+              Json.obj("text" -> resolvedBrief.asJson), java.util.UUID.randomUUID().toString
+            )
+            admitProtectedCandidate(params, admission).flatMap {
+              case Left(reason) => IO.raiseError[PreparedSpawn](new IllegalStateException(reason))
+              case Right(bound) =>
+                val handle = bound.protectedExecution.getOrElse(
+                  throw new IllegalStateException("protected-handle-unavailable"))
+                val startCommand = nebflow.shared.ExecutionTransition(admission.sessionId, admission.executionId,
+                  java.util.UUID.randomUUID().toString, java.util.UUID.randomUUID().toString,
+                  handle.ref, admission.attemptId, admission.incarnationId,
+                  nebflow.shared.ExecutionEvent.AttemptStarted)
+                for
+                  shared <- resources match
+                    case value: SharedResources => IO.pure(value)
+                    case _ => IO.raiseError[SharedResources](
+                      new IllegalStateException("protected-execution-requires-shared-resources"))
+                  started <- handle.authority.transition(startCommand)
+                  startRef <- started match
+                    case nebflow.shared.ExecutionCommitResult.Committed(ref) => IO.pure(ref)
+                    case nebflow.shared.ExecutionCommitResult.Duplicate(ref) => IO.pure(ref)
+                    case other => IO.raiseError[nebflow.shared.ExecutionCommitRef](
+                      new IllegalStateException(s"attempt-start-unconfirmed: $other"))
+                  registered <- resources.executionCommitPort match
+                    case store: ExecutionCommitStore =>
+                      store.registerRunner(ExecutionRunner.Attempt(admission.sessionId,
+                        admission.executionId, admission.attemptId, admission.incarnationId)).allocated
+                    case _ => IO.raiseError[(Either[String, ExecutionCommitStore#RunnerHandle], IO[Unit])](
+                      new IllegalStateException("protected-authority-unavailable"))
+                  (runnerResult, release) = registered
+                  runner <- runnerResult match
+                    case Right(value) => IO.pure(value)
+                    case Left(reason) => release *> IO.raiseError[ExecutionCommitStore#RunnerHandle](
+                      new IllegalStateException(s"runner-registration-failed: $reason"))
+                  runtime = shared.copy(
+                    protectedExecutions = shared.protectedExecutions.updated(subagentId, handle),
+                    protectedRunners = shared.protectedRunners.updated(subagentId, runner))
+                  _ <- runtime.retainProtectedExecution(handle, runner, release,
+                    nebflow.shared.ProtectedRecoveryResult(admission.sessionId, admission.executionId,
+                      admission.attemptId, admission.incarnationId, startRef, duplicate = false))
+                  _ <- cleanup.update(previous => release *> previous)
+                  taskRow = SubAgentTask(
+                    taskId = subagentId, parentSessionId = parentSessionId.getOrElse(""), agentName = agentName,
+                    prompt = task, description = description, status = "running", retryCount = 0,
+                    spawnedAt = System.currentTimeMillis(), completedAt = None, lastError = None,
+                    source = "delegate", mode = Some(modeDecision.mode))
+                  _ <- resources.subAgentTaskStore
+                    .beginRun(taskRow, spawnRunId, resolvedRoot, ExecutorRegistry.DefaultId)
+                    .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), IO.pure))
+                yield PreparedSpawn(bound.copy(resources = runtime),
+                  List(Message(MessageRole.User, Left(resolvedBrief), messageId = Some(admission.initialInputId))),
+                  continueOnSpawn = true)
+            }
+        _ <- if protectedMode then IO.unit else resources.subAgentTaskStore
           .beginRun(
             SubAgentTask(
               taskId = subagentId,
@@ -1366,11 +1433,13 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             ExecutorRegistry.DefaultId
           )
           .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
-        subagentRef <- NodeRunner.spawnAgentActor(system, params)
+        subagentRef <- NodeRunner.spawnAgentActor(system, prepared.params.copy(
+          initialMessages = prepared.initialMessages,
+          continueOnSpawn = prepared.continueOnSpawn))
         _ <- cleanup.update(previous => system.stop(subagentRef).attempt.void *> previous)
         adapterRef <- NodeRunner.spawnSupervisedAdapter(
           system = system,
-          params = params,
+          params = prepared.params,
           childRef = subagentRef,
           childName = subagentId,
           description = description,
@@ -1521,14 +1590,30 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             ).attempt
               .void
           case None => IO.unit
-        _ <- resources.subAgentTaskStore
-          .updateRun(parentSessionId.getOrElse(""), subagentId, spawnRunId, executionStatus = Some("running"))
-          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
-        _ <- subagentRef ! AgentCommand.UserInput(resolvedBrief, Some(adapterRef))
+        _ <- if protectedMode then IO.unit
+          else resources.subAgentTaskStore
+            .updateRun(parentSessionId.getOrElse(""), subagentId, spawnRunId, executionStatus = Some("running"))
+            .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+        _ <- if protectedMode then IO.unit
+          else subagentRef ! AgentCommand.UserInput(resolvedBrief, Some(adapterRef))
       yield Right((subagentId, ack))
       attempt
         .onError { case error =>
-          resources.subAgentTaskStore
+          val protectedFailure =
+            if !protectedMode then IO.unit
+            else resources match
+              case shared: SharedResources =>
+                val reason = s"spawn failed: ${Option(error.getMessage).getOrElse(error.getClass.getSimpleName)}"
+                shared.activeProtectedAttempt(subagentId).flatMap {
+                  case Some((handle, runner)) =>
+                    ProtectedAgentExecution.suspendOwned(handle, runner, reason).attempt *>
+                      shared.subAgentTaskStore.projectProtectedInterrupted(
+                        parentSessionId.getOrElse(""), subagentId, spawnRunId, reason).attempt.void
+                  case None => IO.unit
+                }
+              case _ => IO.unit
+          (if protectedMode then protectedFailure
+           else resources.subAgentTaskStore
             .completeRun(
               parentSessionId.getOrElse(""),
               subagentId,
@@ -1539,10 +1624,11 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               notifyParent = false
             )
             .attempt
-            .void *> cleanup.get.flatten.void
+            .void) *> cleanup.get.flatten.void
         }
         .onCancel(
-          resources.subAgentTaskStore
+          (if protectedMode then IO.unit
+           else resources.subAgentTaskStore
             .completeRun(
               parentSessionId.getOrElse(""),
               subagentId,
@@ -1553,7 +1639,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               notifyParent = false
             )
             .attempt
-            .void *> cleanup.get.flatten.void
+            .void) *> cleanup.get.flatten.void
         )
     }
 

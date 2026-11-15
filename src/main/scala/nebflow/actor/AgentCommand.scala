@@ -1,8 +1,6 @@
 /* 从 protocol.scala 迁出(行为保持重构,2026-09-25)。 */
 package nebflow.actor
 
-import nebflow.neblink.social.*
-
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
@@ -466,6 +464,9 @@ object AgentCommand:
    * window; replay restores them so the next turn injects them.
    */
   case object RecoverPersistedQueues extends AgentCommand
+
+  /** Explicit protected recovery only: continue from the restored durable checkpoint. */
+  case object ContinueProtectedRun extends AgentCommand
 
   case class TriggerCompaction(
     mode: String,

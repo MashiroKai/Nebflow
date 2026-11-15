@@ -7,22 +7,29 @@
   输出级：Q2(NPN) 射极跟随器 + RE 偏置 → Cc 输出耦合 → OUT
 
 运行（viz-venv，schemdraw 真实渲染，禁手画 SVG）：
-  C:\\Users\\Kai\\.nebflow\\tools\\viz-venv\\Scripts\\python.exe 本文件
+  C:\\Users\\name\\.nebflow\\tools\\viz-venv\\Scripts\\python.exe 本文件
 输出（出图默认落 ~/.nebflow/plots/，core/SKILL.md §7）：
-  C:\\Users\\Kai\\.nebflow\\plots\\<YYYYMMDD>_eda_cspa_light.png  亮色主题
-  C:\\Users\\Kai\\.nebflow\\plots\\<YYYYMMDD>_eda_cspa_dark.png   暗色主题
+  C:\\Users\\name\\.nebflow\\plots\\<YYYYMMDD>_eda_cspa_light.png  亮色主题
+  C:\\Users\\name\\.nebflow\\plots\\<YYYYMMDD>_eda_cspa_dark.png   暗色主题
 """
+import os
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
 from datetime import date
 
 import matplotlib
 matplotlib.use('Agg')
-matplotlib.rc_file('C:/Users/Kai/.nebflow/tools/mplconfig/matplotlibrc')  # YaHei 全局配置（README 迁移资产）
+MPL_RC = os.path.join(os.environ.get("MPLCONFIGDIR", os.path.join(DATA_ROOT, "tools", "mplconfig")), "matplotlibrc")
+if os.path.isfile(MPL_RC):
+    matplotlib.rc_file(MPL_RC)  # YaHei 全局配置（README 迁移资产）
 matplotlib.rcParams['axes.unicode_minus'] = False
 
 import schemdraw
 import schemdraw.elements as elm
 
-OUTDIR = 'C:/Users/Kai/.nebflow/plots'
+OUTDIR = os.path.join(DATA_ROOT, 'plots')
+os.makedirs(OUTDIR, exist_ok=True)
 STAMP = date.today().strftime('%Y%m%d')
 VDD = getattr(elm, 'Vdd', None)  # 0.23 具备；留 getattr 兜底旧版本
 

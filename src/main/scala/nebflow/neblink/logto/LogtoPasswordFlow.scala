@@ -40,7 +40,7 @@ import LogtoTransport.Request
  *      browser-path parser).
  *
  * DIALECT PINNED TO THE DEPLOYED TENANT (shape probes 2026-10-26, zero
- * credentials, reports-kai see 台账 #924): this tenant runs the
+ * credentials — see 台账 #924): this tenant runs the
  * Experience-API v1-beta shape — `PUT /api/experience` takes
  * `interactionEvent` (the GA `POST /api/experience {method}` returns 405
  * here) and the identifier is `{"type","value"}` (not `{"username"}`).
@@ -106,7 +106,7 @@ object LogtoPasswordFlow:
 
   // ── pure: identifier derivation + cookie merge + redirect parsing ────────
 
-  /** `kai@x.com` → `email`, anything else → `username` (phone not offered). */
+  /** `user@x.com` → `email`, anything else → `username` (phone not offered). */
   def identifierTypeOf(account: String): String =
     if account.contains('@') then "email" else "username"
 
@@ -361,10 +361,12 @@ object LogtoPasswordFlow:
                             parseSubmit(r5.body) match
                               case Left(f) => IO.pure(Left(f))
                               case Right(redirectTo) =>
+                                // Submit can rotate the session; resume must use the updated cookies.
+                                val jar5 = mergeCookies(jar4, r5.setCookies)
                                 // ── leg 6: follow redirectTo, take code+state ──
                                 send(
                                   Request(redirectTo, contentType = "application/x-www-form-urlencoded", body = "", method = "GET"),
-                                  jar4
+                                  jar5
                                 ).flatMap { r6 =>
                                   r6.location match
                                     case None =>

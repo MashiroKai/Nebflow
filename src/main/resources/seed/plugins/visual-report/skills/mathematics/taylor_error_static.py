@@ -2,6 +2,10 @@
 # 参数（教学声明）：中心点 a=0（Maclaurin），评估点 x0=π/2，
 #   sin 取奇数阶 n=1,3,5,7,9；cos 取偶数阶 n=0,2,4,6,8。
 # 数值逐字红线：图内标注 = stdout 表格 = demo md 表格，同一 fmt 函数生成。
+import os
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
 import math
 from pathlib import Path
 
@@ -10,7 +14,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-OUT = Path(r"C:\Users\Kai\.nebflow\plots\vrs2-math")
+OUT = Path(os.path.join(DATA_ROOT, 'plots', 'vrs2-math'))
+os.makedirs(OUT, exist_ok=True)
 OUT.mkdir(parents=True, exist_ok=True)
 X0 = math.pi / 2
 ACCENT = "#5e6ad2"      # core §3 强调色

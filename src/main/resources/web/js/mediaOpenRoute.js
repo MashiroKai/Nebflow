@@ -10,10 +10,10 @@
 //   · 手机层（body.mobile-layer）——**一切**媒体点击 = `openMediaDirect`：铸 URL
 //     交给系统预览（新标签页原生显示，捏合缩放/关闭都归系统），应用内不再弹面板
 //     也不再叠灯箱；
-//   · 桌面层——带 path 的媒体 = Canvas 打开（既有 openPopArtifact / workspace-open-item
-//     单点，注入传入，本模块零第二套派发形状）；pathless 维持灯箱（#491 主题三
-//     既有裁定原文「Canvas cannot open a pathless file」仍然成立——内联预览字节是
-//     缩略档，开成 Canvas 页签反而是低清面，落盘回传 path 后即自动并入 Canvas 腿）。
+//   · Desktop media with a path uses the injected openPopArtifact /
+//     workspace-open-item entry point. Pathless media keeps the lightbox:
+//     Canvas requires a file path (issue 491). Inline bytes may be thumbnails;
+//     once a saved path is available, the same item can use Canvas.
 //
 // URL 链（openMediaDirect 的取数纪律——禁第三条取字节路，全部是应用既有出口）：
 //   ① resolver（uploads 路由，用户附件面）——社交通道/用户媒体的指针登记路；
@@ -89,7 +89,7 @@ export async function mediaDirectUrl(item) {
  * window.open 会被弹窗拦截器吃掉），URL 到手后导航该页；全链尽空 ⇒ 关掉占位页
  * 返回 false（调用方落灯箱兜底）。导航目标永不为 data:（内联字节先转 objectURL，
  * 顶帧 data: 导航被现代浏览器禁止；blob:/同源 http(s) 均可导航）。
- * @param {{path?: string, src?: string, resolver?: (path: string) => string}} item
+ * @param {{path?: string, src?: string, blob?: Blob, name?: string, resolver?: (path: string) => string}} item
  * @returns {Promise<boolean>}
  */
 export async function openMediaDirect(item) {

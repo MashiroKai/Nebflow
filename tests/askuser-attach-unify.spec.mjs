@@ -46,7 +46,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..');
 const WEB = process.env.ASKATT_WEB || join(REPO, 'src', 'main', 'resources', 'web');
 const EVIDENCE_ROOT = process.env.ASKATT_EVIDENCE_DIR
-  || '/Users/kaiyu/.stand/evidence/ui-unification-20261103/askuser-attach';
+  || join(REPO, 'test-results', 'askuser-attach');
 const OUT = join(EVIDENCE_ROOT, process.env.ASKATT_PHASE || 'after');
 mkdirSync(OUT, { recursive: true });
 

@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -110,7 +110,7 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     seat: os.Path
   )
 
-  private def withFx(name: String)(body: Fx => IO[Unit]): Unit =
+  private def withFx(name: String, verifiedLegacy: Boolean = false)(body: Fx => IO[Unit]): Unit =
     val tmp = os.temp.dir(prefix = s"ttl-$name")
     val seat = os.temp.dir(prefix = s"ttl-seat-$name")
     PathUtil.setDataRoot(tmp / "data")
@@ -146,7 +146,12 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
           subAgentTaskStore = store,
           voiceMutedRef = voiceMuted
         )
-        _ <- body(Fx(store, sessionStore, resources, system, tmp, seat))
+        _ <- if verifiedLegacy then
+          IO.blocking(os.makeDir.all(tmp / "sessions")) *>
+            ExecutionCommitStore.resource((tmp / "sessions").toNIO).use { authority =>
+              body(Fx(store, sessionStore, resources.copy(executionCommitPort = authority), system, tmp, seat))
+            }
+        else body(Fx(store, sessionStore, resources, system, tmp, seat))
       yield ()
     try io.unsafeRunSync()
     finally
@@ -350,7 +355,7 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
   test(
     "F · 清理面: expired dead entries are cleaned (row pruned + record removed), fresh ones and in-flight sessions are never touched"
   ) {
-    withFx("sweep-e2e") { fx =>
+    withFx("sweep-e2e", verifiedLegacy = true) { fx =>
       val parent = "ttl-parent-f"
       val deadId = "delegate-nebflow-ttl-dead"
       val freshId = "delegate-nebflow-ttl-fresh"
@@ -402,10 +407,132 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
     }
   }
 
+  test("session cascade refuses an offline protected child without changing its task") {
+    withFx("protected-cascade") { fx =>
+      val id = "delegate-protected-cascade"
+      val parent = "cascade-parent"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("initial"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(fx.tmp / "sessions"))
+        _ <- fx.store.recordTask(mkTask(id, parent, "running", NineDaysAgo))
+        _ <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use(_.admit(admission))
+        stopped <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use { authority =>
+          SessionChildCascade.stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), parent).attempt
+        }
+        row <- fx.store.findByTaskId(id)
+      yield
+        assert(stopped.isLeft)
+        assertEquals(row.map(_.status), Some("running"))
+    }
+  }
+
+  test("cascade refuses a discoverable admission without a task or registry projection") {
+    withFx("orphan-candidate-cascade") { fx =>
+      val id = "delegate-orphan-candidate"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "parent", "business", "audit",
+        io.circe.Json.fromString("initial"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(fx.tmp / "sessions"))
+        _ <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use(_.admit(admission))
+        stopped <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use { authority =>
+          SessionChildCascade.stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), "parent").attempt
+        }
+        row <- fx.store.findByTaskId(id)
+      yield
+        assert(stopped.isLeft)
+        assertEquals(row, None)
+    }
+  }
+
+  test("cascade does not reject an unrelated protected candidate") {
+    withFx("unrelated-candidate-cascade") { fx =>
+      val admission = nebflow.shared.ExecutionAdmission(
+        "delegate-unrelated", "run", "commit", "request", "attempt", "incarnation", "other-parent", "business", "audit",
+        io.circe.Json.fromString("initial"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(fx.tmp / "sessions"))
+        _ <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use(_.admit(admission))
+        stopped <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use { authority =>
+          SessionChildCascade.stopChildDelegateActors(fx.resources.copy(executionCommitPort = authority), "parent").attempt
+        }
+      yield assertEquals(stopped, Right(Nil))
+    }
+  }
+
+  test("TTL keeps an expired protected run when recovery carrier is off") {
+    withFx("protected") { fx =>
+      val id = "delegate-ttl-protected"
+      val parent = "ttl-parent-protected"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("initial"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(fx.tmp / "sessions"))
+        _ <- fx.store.recordTask(mkTask(id, parent, "failed", NineDaysAgo))
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(id, parent, fx.seat.toString)))
+        _ <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use(_.admit(admission))
+        report <- ExecutionCommitStore.resource(fx.sessionStore.executionAuthorityRoot).use { authority =>
+          DelegateTtlSweep.run(fx.resources.copy(executionCommitPort = authority, delegateRecoveryMode = Some("off")))
+        }
+        row <- fx.store.findByTaskId(id)
+        record <- IO(nebflow.core.delegate.DelegateRegistry.find(id))
+      yield
+        assert(report.keptOnError.contains(id -> "protected-execution"))
+        assert(row.nonEmpty)
+        assert(record.nonEmpty)
+    }
+  }
+
+  test("TTL rechecks protection at the serialized removal boundary") {
+    withFx("admission-race", verifiedLegacy = true) { fx =>
+      val id = "delegate-ttl-race"
+      val parent = "ttl-race-parent"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("initial"), "input"
+      )
+      val authority = fx.resources.executionCommitPort
+      for
+        reached <- Deferred[IO, Unit]
+        release <- Deferred[IO, Unit]
+        _ <- fx.store.recordTask(mkTask(id, parent, "failed", NineDaysAgo))
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(id, parent, fx.seat.toString)))
+        port = new nebflow.core.ExecutionCommitPort:
+          def admit(a: nebflow.shared.ExecutionAdmission) = authority.admit(a)
+          def observe(s: String, r: String) = authority.observe(s, r)
+          def reconcileAdmission(a: nebflow.shared.ExecutionAdmission) = authority.reconcileAdmission(a)
+          def transition(c: nebflow.shared.ExecutionTransition) = authority.transition(c)
+          def reconcileTransition(c: nebflow.shared.ExecutionTransition) = authority.reconcileTransition(c)
+          def observeChain(s: String, r: String) = authority.observeChain(s, r)
+          override def protection(s: String) = authority.protection(s)
+          override def withUnprotectedSession[A](s: String)(effect: IO[A]) =
+            reached.complete(()).void *> release.get *> authority.withUnprotectedSession(s)(effect)
+        sweep <- DelegateTtlSweep.run(fx.resources.copy(executionCommitPort = port)).start
+        _ <- reached.get.timeout(5.seconds)
+        admitted <- authority.admit(admission)
+        _ = assert(admitted.isInstanceOf[nebflow.shared.ExecutionCommitResult.Committed])
+        _ <- release.complete(())
+        report <- sweep.joinWithNever.timeout(5.seconds)
+        row <- fx.store.findByTaskId(id)
+        record <- IO(nebflow.core.delegate.DelegateRegistry.find(id))
+      yield
+        assert(report.keptOnError.exists(_._1 == id))
+        assert(row.nonEmpty)
+        assert(record.nonEmpty)
+    }
+  }
+
   // ── 改后绿 G：保存态超期清理（作者 20:36 新规——保存态不能无限堆积）────
 
   test("G · 保存态清理: a frozen delegate parked 8d ago is swept at the record level; a fresh parked one is kept") {
-    withFx("saved-state") { fx =>
+    withFx("saved-state", verifiedLegacy = true) { fx =>
       val parent = "ttl-parent-g"
       val oldFrozenId = "delegate-nebflow-ttl-frozen-old"
       val freshStandbyId = "delegate-nebflow-ttl-standby"

@@ -26,6 +26,11 @@ import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
 class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
 
   private val logger = NebflowLogger.forName("nebflow.subagent-task.store")
+  def installExecutionAuthority(authority: nebflow.core.ExecutionCommitPort): Unit =
+    SubAgentTaskStore.installAuthority(baseDir, authority)
+
+  def releaseExecutionAuthority(authority: nebflow.core.ExecutionCommitPort): Unit =
+    SubAgentTaskStore.releaseAuthority(baseDir, authority)
 
   /**
    * 并发写锁（2026-08-18 11:08 重放实证）：多个 Delegate 并发 spawn 时
@@ -230,6 +235,86 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
         )
     }
 
+  /**
+   * Re-open the existing run row after explicit protected recovery. The run id
+   * stays unchanged; only the task projection revision advances.
+   */
+  def resumeRun(
+    parentSessionId: String,
+    taskId: String,
+    runId: String,
+    rootSessionId: String,
+    executor: String
+  ): IO[Either[String, SubAgentTask]] = withLock {
+    require(runId.nonEmpty && rootSessionId.nonEmpty && executor.nonEmpty, "Run ownership must be nonempty")
+    val rows = readTasksSync(parentSessionId)
+    rows.find(_.taskId == taskId) match
+      case None => Left("task-not-found")
+      case Some(row) if !row.runId.contains(runId) => Left("stale-run")
+      case Some(row) if Set("finished", "failed", "cancelled").contains(row.executionStatus.getOrElse("")) =>
+        Left("terminal-run")
+      case Some(row) if row.notificationPending.contains(true) => Left("notification-pending")
+      case Some(row) =>
+        val now = System.currentTimeMillis()
+        val updated = row.copy(
+          status = "running",
+          executionStatus = Some("starting"),
+          statusAt = Some(now),
+          completedAt = None,
+          terminalReason = None,
+          lastError = None,
+          incomplete = None,
+          diagnostic = None,
+          resultRef = None,
+          notificationId = None,
+          notificationPending = None,
+          rootSessionId = Some(rootSessionId),
+          executor = Some(executor),
+          committedRevision = Some(nextRevision(row))
+        )
+        writeTasksSync(parentSessionId, rows.filterNot(_.taskId == taskId) :+ updated)
+        Right(updated)
+  }.flatMap {
+    case Left(reason) => IO.pure(Left(reason))
+    case Right(row) => fireWriteHook(row).as(Right(row))
+  }
+
+  /** A failed protected start retains its admission and shows recovery-required, never legacy failed. */
+  def projectProtectedInterrupted(
+    parentSessionId: String,
+    taskId: String,
+    runId: String,
+    reason: String
+  ): IO[Either[String, SubAgentTask]] = withLock {
+    val rows = readTasksSync(parentSessionId)
+    rows.find(_.taskId == taskId) match
+      case None => Left("task-not-found")
+      case Some(row) if !row.runId.contains(runId) => Left("stale-run")
+      case Some(row) if row.executionStatus.contains("interrupted") => Right(row)
+      case Some(row) if Set("finished", "failed", "cancelled").contains(row.executionStatus.getOrElse("")) =>
+        Left("terminal-run")
+      case Some(row) =>
+        val now = System.currentTimeMillis()
+        val updated = row.copy(
+          status = "pending-recovery",
+          executionStatus = Some("interrupted"),
+          statusAt = Some(now),
+          completedAt = None,
+          terminalReason = Some(reason),
+          lastError = None,
+          incomplete = Some(true),
+          resultRef = None,
+          notificationId = None,
+          notificationPending = Some(false),
+          committedRevision = Some(nextRevision(row))
+        )
+        writeTasksSync(parentSessionId, rows.map(t => if t.taskId == taskId then updated else t))
+        Right(updated)
+  }.flatMap {
+    case Left(reason) => IO.pure(Left(reason))
+    case Right(row) => fireWriteHook(row).as(Right(row))
+  }
+
   /** First terminal commit wins; a process exit never asserts business success. */
   override def completeRun(
     parentSessionId: String,
@@ -243,7 +328,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     notificationId: Option[String] = None,
     notifyParent: Boolean = true
   ): IO[Either[String, SubAgentTask]] =
-    mutateRun(parentSessionId, taskId, runId) { row =>
+    val mutation = mutateRun(parentSessionId, taskId, runId) { row =>
       if !terminalExecutions.contains(executionStatus) then Left("invalid-terminal-status")
       else if row.executionStatus.exists(terminalExecutions.contains) then Left("terminal-run")
       else
@@ -266,6 +351,46 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
           )
         )
     }
+    IO(SubAgentTaskStore.authority(baseDir)).flatMap {
+      case Some(authority) => authority.withUnprotectedSession(taskId)(mutation)
+      case None if SubAgentTaskStore.retired(baseDir) =>
+        IO.raiseError(new IllegalStateException("execution-authority-unavailable"))
+      case None =>
+        val executions = baseDir / os.up / "sessions" / taskId / "executions"
+        IO.blocking(java.nio.file.Files.notExists(executions.toNIO, java.nio.file.LinkOption.NOFOLLOW_LINKS)).flatMap {
+          case true => mutation
+          case false => IO.raiseError(new IllegalStateException("execution-authority-unavailable"))
+        }
+    }
+
+  private[agent] def projectProtectedTerminalSync(parent: String, taskId: String, runId: String,
+    resultRef: String): Either[String, SubAgentTask] =
+    lock.lock()
+    try
+      val rows = readTasksSync(parent)
+      rows.find(_.taskId == taskId) match
+        case None => Left("task-not-found")
+        case Some(row) if !row.runId.contains(runId) => Left("stale-run")
+        case Some(row) =>
+          val notification = s"$taskId#$runId"
+          val compatible = row.executionStatus.contains("finished") && row.resultRef.contains(resultRef) &&
+            row.notificationId.contains(notification)
+          if row.executionStatus.exists(terminalExecutions.contains) && !compatible then Left("terminal-run-conflict")
+          else
+            val now = System.currentTimeMillis()
+            val updated = if compatible then row else row.copy(status = "completed", executionStatus = Some("finished"),
+              statusAt = Some(now), completedAt = Some(now), terminalReason = None, lastError = None,
+              resultRef = Some(resultRef), incomplete = Some(false), notificationId = Some(notification),
+              notificationPending = Some(true), committedRevision = Some(nextRevision(row)))
+            if !compatible then writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
+            val file = java.nio.channels.FileChannel.open(sessionFile(parent).toNIO, java.nio.file.StandardOpenOption.READ)
+            try file.force(true)
+            finally file.close()
+            val dir = java.nio.channels.FileChannel.open(baseDir.toNIO, java.nio.file.StandardOpenOption.READ)
+            try dir.force(true)
+            finally dir.close()
+            Right(updated)
+    finally lock.unlock()
 
   /** Acknowledges durable mailbox enqueue, not recipient consumption. */
   override def acknowledgeNotification(
@@ -582,6 +707,26 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
 end SubAgentTaskStore
 
 object SubAgentTaskStore:
+  private var authorities = Map.empty[os.Path, nebflow.core.ExecutionCommitPort]
+  private var retiredAuthorities = Set.empty[os.Path]
+
+  private def installAuthority(base: os.Path, port: nebflow.core.ExecutionCommitPort): Unit = synchronized {
+    require(!authorities.contains(base), "task authority already installed")
+    authorities += base -> port
+    retiredAuthorities -= base
+  }
+
+  private def releaseAuthority(base: os.Path, port: nebflow.core.ExecutionCommitPort): Unit = synchronized {
+    require(authorities.get(base).contains(port), "task authority mismatch")
+    authorities -= base
+    retiredAuthorities += base
+  }
+
+  private def retired(base: os.Path): Boolean = synchronized { retiredAuthorities.contains(base) }
+
+  private def authority(base: os.Path): Option[nebflow.core.ExecutionCommitPort] = synchronized {
+    authorities.get(base)
+  }
 
   /** 剪行墓碑状态（#929：removeTask 外推专用值——对端退役行判据；不落盘）。 */
   val StatusRemoved: String = "removed"

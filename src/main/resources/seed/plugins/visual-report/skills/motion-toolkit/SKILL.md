@@ -19,7 +19,7 @@ visual-report 的共享动效层，三个栈集中一处：
 
 ## 2. 环境说明（全部实测 2026-10-04；禁止凭记忆改写）
 
-来源：chain-n-cdc177a5 环境实测节点（`C:\Users\Kai\.nebflow\projects\general\env_test_results_20261004.md`）+ 本模块当日冒烟复跑。
+来源：chain-n-cdc177a5 环境实测节点（`C:\Users\name\.nebflow\projects\general\env_test_results_20261004.md`）+ 本模块当日冒烟复跑。
 
 | 组件 | 实测版本 | 绝对路径 / 端点 | 实测结论 |
 |---|---|---|---|
@@ -28,9 +28,9 @@ visual-report 的共享动效层，三个栈集中一处：
 | Remotion + CLI | 4.0.532（react 19.0.0） | `scripts\remotion-scaffold\`（node_modules 已装） | 60 帧 1280×720 渲染全程 16s，exit 0，h264 30fps ✓ |
 | 渲染浏览器 | Chrome 154.0.8037.93 | `C:\Program Files\Google\Chrome\Application\chrome.exe` | 必须 `--browser-executable` 指本机 Chrome；`browser ensure` 自动下载走 storage.googleapis.com 仅 ~17KB/s **不可用**。Edge `msedge.exe` 为后备（同标准路径） |
 | three | 0.186.1 | `scripts\three-template\node_modules\three\` | npmmirror 3s 装完；**双文件构建**（module→core 相对导入），自包含内联需递归改写（封装已处理） |
-| Python | 3.12.9 | `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe` | 插件唯一 Python 环境（core §5/§7），只装进 venv |
-| matplotlib | 3.11.2 | viz-venv 内 | 中文需 MPLCONFIGDIR 接线：`C:\Users\Kai\.nebflow\tools\mplconfig\`（mpl_anim.py 已固化；节点 shell 实测该环境变量为空） |
-| ffmpeg | 7.1（imageio_ffmpeg 0.6.0 自带） | `C:\Users\Kai\.nebflow\tools\viz-venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe` | **PATH 无 ffmpeg**；引用一律用此 exe 绝对路径（封装已固化） |
+| Python | 3.12.9 | `C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe` | 插件唯一 Python 环境（core §5/§7），只装进 venv |
+| matplotlib | 3.11.2 | viz-venv 内 | 中文需 MPLCONFIGDIR 接线：`C:\Users\name\.nebflow\tools\mplconfig\`（mpl_anim.py 已固化；节点 shell 实测该环境变量为空） |
+| ffmpeg | 7.1（imageio_ffmpeg 0.6.0 自带） | `C:\Users\name\.nebflow\tools\viz-venv\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe` | **PATH 无 ffmpeg**；引用一律用此 exe 绝对路径（封装已固化） |
 | Pillow / numpy | 12.3.0 / 2.5.3 | viz-venv 内 | GIF 走 PillowWriter，不触碰 ffmpeg |
 | manim（未封装） | 0.21.0 | viz-venv 内 | 上游实测 `-ql` 渲染 exit 0（854×480）。venv 里现成可用，本模块未做封装；要更高表现力可直接 `python -m manim`，用前自行跑一次冒烟 |
 
@@ -47,7 +47,7 @@ visual-report 的共享动效层，三个栈集中一处：
 
 > 引用前超 30 天须复测（README 规则）。CDN 仅作 three 的备选引用；**默认走 npm 本地化内联**（持续吞吐实测不可靠，本地最稳）。
 
-## 3. 渲染封装（scripts，一节一例；`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`）
+## 3. 渲染封装（scripts，一节一例；`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`）
 
 ### 3.1 Remotion → MP4（主栈）
 
@@ -55,37 +55,37 @@ visual-report 的共享动效层，三个栈集中一处：
 
 ```bash
 # 渲染（封装自动带 --browser-executable 本机 Chrome + --log=error）
-cd C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
-node render-remotion.mjs remotion-scaffold MotionSmoke C:/Users/Kai/.nebflow/plots/motion-toolkit-smoke/out.mp4
+cd C:/Users/name/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
+node render-remotion.mjs remotion-scaffold MotionSmoke C:/Users/name/.nebflow/plots/motion-toolkit-smoke/out.mp4
 
 # 带参数（复杂 props 写 json 文件传路径，别走命令行内联 JSON——Windows 引号转义深）
 node render-remotion.mjs remotion-scaffold MotionSmoke out.mp4 --props=C:/abs/path/props.json
 # 换浏览器：REMOTION_BROWSER_EXECUTABLE="C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
 ```
 
-冒烟样张：`C:\Users\Kai\.nebflow\plots\motion-toolkit-smoke\remotion_smoke.mp4`（2.00s / 1280×720 / h264 30fps / 53,933 B，exit 0）。
+冒烟样张：`C:\Users\name\.nebflow\plots\motion-toolkit-smoke\remotion_smoke.mp4`（2.00s / 1280×720 / h264 30fps / 53,933 B，exit 0）。
 
 ### 3.2 three.js → 自包含交互 HTML（交互栈）
 
 ```bash
-cd C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts/three-template
+cd C:/Users/name/.nebflow/skills/visual-report-suite/motion-toolkit/scripts/three-template
 # 新机器先: setup.cmd   （three 0.186.1 已装）
-<venv>/python.exe build_three_html.py --scene scene_default.js --out C:/Users/Kai/.nebflow/plots/motion-toolkit-smoke/out.html --title 标题
+<venv>/python.exe build_three_html.py --scene scene_default.js --out C:/Users/name/.nebflow/plots/motion-toolkit-smoke/out.html --title 标题
 # 网络可靠时的备选：加 --cdn（importmap 指 jsdelivr，不内联）
 ```
 
 场景 = 复制 `scene_default.js` 改几何/交互（`import * as THREE from "three"` 不变，构建器负责内联）。产物单文件、双击即开、离线可用（默认场景：扭矩结 + 拖拽旋转，配色 #5e6ad2）。
 
-冒烟样张：`C:\Users\Kai\.nebflow\plots\motion-toolkit-smoke\three_smoke.html`（5.9MB 自包含）+ headless Chrome 实拍 `three_smoke_headless.png`（WebGL 正常出图、无报错）。
+冒烟样张：`C:\Users\name\.nebflow\plots\motion-toolkit-smoke\three_smoke.html`（5.9MB 自包含）+ headless Chrome 实拍 `three_smoke_headless.png`（WebGL 正常出图、无报错）。
 
 ### 3.3 matplotlib → MP4 / GIF（降级栈）
 
 用户脚本只需定义 `build(fig, ax) -> (update, n_frames)`（范例 `scripts\mpl_examples\demo_sine.py`）：
 
 ```bash
-cd C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
-<venv>/python.exe mpl_anim.py --script mpl_examples/demo_sine.py --out C:/Users/Kai/.nebflow/plots/motion-toolkit-smoke/out.mp4 --fps 30
-<venv>/python.exe mpl_anim.py --script mpl_examples/demo_sine.py --out C:/Users/Kai/.nebflow/plots/motion-toolkit-smoke/out.gif --fps 15
+cd C:/Users/name/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
+<venv>/python.exe mpl_anim.py --script mpl_examples/demo_sine.py --out C:/Users/name/.nebflow/plots/motion-toolkit-smoke/out.mp4 --fps 30
+<venv>/python.exe mpl_anim.py --script mpl_examples/demo_sine.py --out C:/Users/name/.nebflow/plots/motion-toolkit-smoke/out.gif --fps 15
 ```
 
 封装已固化：MPLCONFIGDIR 接线（中文可读）、ffmpeg 指 imageio-ffmpeg 自带 exe、yuv420p 偶数尺寸裁剪。
@@ -118,7 +118,7 @@ cd C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts
 | three.js | 5.9 MB 自包含 HTML 全文件 0 外链（0 `<script src>`，仅内联 data: import）；headless 实拍首帧后 CDP 真实输入：拖拽旋转+滚轮缩放截图像素差 = 静置基线 **38 倍**（mean 10.28 vs 0.27，17.2% 像素变化），点选「下一步」①→② DOM 状态推进且字幕数值逐字同源（0.632 V·63.2%·0.368 mA）；WebGL 2.0 真实上下文（本机 headless=new 直接硬件加速 ANGLE/D3D11，非 SwiftShader）；0 致命错误（86× Chromium 纹理拷贝 warning + 1× THREE.Clock 弃用提示，均非致命、渲染正常） | 交互 HTML 通路**可用** |
 | 备选动画栈 | 本轮未单测（无独立产件）；其 MP4 播放面与 Remotion 栈同容器同编码族（Remotion 行已验证同一播放面）；GIF（PillowWriter）未单测 | 维持初判，下次出件时顺带复核 |
 
-证据：`~/.nebflow/plots/education-motion/_verify/pathway_*`（3D 四态截图 ×4、video 播放/seek 截图 ×2、ffmpeg 抽帧 ×1）＋驱动脚本与结果 JSON：`C:\Users\Kai\.nebflow\projects\general\edu_pathway_scratch\`（result_3d / result_video / result_pixdiff / result_static .json）。
+证据：`~/.nebflow/plots/education-motion/_verify/pathway_*`（3D 四态截图 ×4、video 播放/seek 截图 ×2、ffmpeg 抽帧 ×1）＋驱动脚本与结果 JSON：`C:\Users\name\.nebflow\projects\general\edu_pathway_scratch\`（result_3d / result_video / result_pixdiff / result_static .json）。
 
 仍需 Nebula Pop / 实机复核（本机 headless 覆盖不到）：① 前端白名单服务面直开交互件与 MP4 点播（文件级已验证，前端通路未测）；② 实机 `prefers-color-scheme` 暗色切换（headless 已拍亮/暗，上游 `_verify_3d_dark_step5.png`）；③ remotion.dev 链接（当日 23:16 与 23:59 两次复测均 000，本地渲染不依赖）；④ Pop 只挂静态图源约定执行（对照页交互件/视频件均为路径交付）。
 

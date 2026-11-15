@@ -127,18 +127,18 @@ async function openFriendMenu(page) {
 /** 打开好友会话弹窗 → 返回窗头槽计数 / 窗头在位 / 输入框当前值。 */
 async function openChat(page) {
   if (await page.locator('.fm-context-menu').count()) await page.keyboard.press('Escape');
-  if (!(await page.locator('.fm-modal-header').count())) {
+  if (!(await page.locator('#header .fm-main-head').count())) {
     if (!(await page.locator('#panel-messages.active').count())) {
       await page.click('#messages-btn');
       await sleep(600);
     }
     await page.click(`#fm-conversations .fm-conv-row[data-conversation-id="${CID}"]`);
-    await page.waitForSelector('.fm-modal-header', { timeout: 10000 });
+    await page.waitForSelector('#header .fm-main-head', { timeout: 10000 });
     await sleep(500);
   }
   return {
-    slots: await page.locator('.fm-modal-header .fm-trust-slot').count(),
-    headerOk: await page.locator('.fm-modal-header .fm-modal-name').count() === 1,
+    slots: await page.locator('#header .fm-main-head .fm-trust-slot').count(),
+    headerOk: await page.locator('#header .fm-main-head .fm-modal-name').count() === 1,
     input: await page.inputValue('.fm-input').catch(() => null),
   };
 }

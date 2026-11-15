@@ -40,6 +40,16 @@ import java.util.concurrent.atomic.AtomicReference
  */
 trait AgentRuntimePort extends AgentRegistryPort:
 
+  def executionCommitPort: ExecutionCommitPort = ExecutionCommitPort.unsupported
+  def delegateRecoveryMode: Option[String] = None
+  def isProtectedExecution(sessionId: String): Boolean = false
+  def executionProtection(sessionId: String): IO[ExecutionProtection] = executionCommitPort.protection(sessionId)
+  def cancelProtectedExecution(sessionId: String, reason: String): IO[Either[String, String]] =
+    IO.pure(Left("Protected runner unavailable; cancellation not committed"))
+  /** Bind an exact observed commit, install a new attempt and continue the real Agent. */
+  def resumeProtectedExecution(request: ProtectedRecoveryRequest): IO[Either[String, ProtectedRecoveryResult]] =
+    IO.pure(Left("protected-recovery-unsupported"))
+
   /** 镜像 `SharedResources.sessionStore`(core.SessionStore,a315825 已下沉 core)。 */
   def sessionStore: SessionStore
 

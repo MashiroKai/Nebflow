@@ -1,9 +1,9 @@
 # motion-toolkit 踩坑记录（实测 2026-10-04）
 
 上游环境实测节点（chain-n-cdc177a5）探针工程：
-- Remotion 探针：`C:\Users\Kai\.nebflow\tmp\remotion-probe\`（Composition "Probe"，60 帧 @30fps，1280×720，out/probe.mp4 渲染 16s exit 0）
-- manim 探针：`C:\Users\Kai\.nebflow\tmp\manim-probe\`（-ql 渲染 exit 0，854×480 h264 15fps）
-- 实测结论文本：`C:\Users\Kai\.nebflow\projects\general\env_test_results_20261004.md`
+- Remotion 探针：`C:\Users\name\.nebflow\tmp\remotion-probe\`（Composition "Probe"，60 帧 @30fps，1280×720，out/probe.mp4 渲染 16s exit 0）
+- manim 探针：`C:\Users\name\.nebflow\tmp\manim-probe\`（-ql 渲染 exit 0，854×480 h264 15fps）
+- 实测结论文本：`C:\Users\name\.nebflow\projects\general\env_test_results_20261004.md`
 
 本模块搭建/冒烟过程实测踩坑（均为当次真实报错，非推测）：
 
@@ -22,7 +22,7 @@
 
 ## matplotlib 降级栈
 8. **FFMpegWriter 默认找 PATH 的 `ffmpeg`** → 本机无 → `FileNotFoundError: [WinError 2]`。修法=先把 `imageio_ffmpeg.get_ffmpeg_exe()` 写进 `matplotlib.rcParams["animation.ffmpeg_path"]`（mpl_anim.py 已固化）。
-9. **MPLCONFIGDIR 在节点 shell 里常为空**（实测本会话为空）→ 套件全局 YaHei 配置（`C:\Users\Kai\.nebflow\tools\mplconfig\matplotlibrc`）不接线，中文标签出豆腐块。修法=import matplotlib 前 `os.environ.setdefault("MPLCONFIGDIR", ...)`（mpl_anim.py 已固化）。
+9. **MPLCONFIGDIR 在节点 shell 里常为空**（实测本会话为空）→ 套件全局 YaHei 配置（`C:\Users\name\.nebflow\tools\mplconfig\matplotlibrc`）不接线，中文标签出豆腐块。修法=import matplotlib 前 `os.environ.setdefault("MPLCONFIGDIR", ...)`（mpl_anim.py 已固化）。
 10. **yuv420p 要求偶数宽高**：8×4.5in @110dpi = 880×495，495 奇数会使 x264 报错；封装统一加 `-vf scale=trunc(iw/2)*2:trunc(ih/2)*2`（产物 880×494）。
 
 ## 通用

@@ -220,7 +220,7 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   ok('T3d 无重复 + 视口未跳底', !state.dup && !state.atBottom, `atBottom=${state.atBottom}`);
   // 短会话无按钮（种子 = 数字大 id 9001..9003，走生产同形判据路径：探针一路空窗
   // → 「不自证不显示」→ 无按钮，且不会先亮后灭）
-  await page.click('.fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
   await page.click('#fm-conversations .fm-conv-row[data-conversation-id="c-few"]');
   await sleep(600);
@@ -228,7 +228,7 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   ok('T3e 短会话（3 条，数字大 id）无加载按钮', !fewBtn);
 
   // ── T4 转发链：引用块入框 → 发送 → chip ────────────────
-  await page.click('.fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
   await page.click('#fm-conversations .fm-conv-row[data-conversation-id="c-a"]');
   await sleep(700);
@@ -254,7 +254,7 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
 
   // ── T5 NL 号设置区已移除（2026-09-05 10:54 裁定：NL 号 = 官网 Username，
   // 客户端不提供修改入口；friend-search-contract §4.7 契约切换非回归）────
-  await page.click('.fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
   await page.click('#settings-btn');
   await sleep(700);
@@ -307,7 +307,7 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   await sleep(800);
   const enBtn = await page.$eval('.fm-load-more', e => e.textContent).catch(() => '');
   ok('T7a en 加载按钮文案', enBtn === 'Load earlier messages', enBtn);
-  await page.click('.fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
   await page.click('#settings-btn');
   await sleep(700);
@@ -332,7 +332,7 @@ async function shots(colorScheme, tag) {
   await page.click('#fm-conversations .fm-conv-row[data-conversation-id="c-p"]');
   await sleep(800);
   await page.screenshot({ path: `${SHOTS}/friend-chain-chat-${tag}.png` });
-  await page.click('.fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
   // 联系人：申请展开
   await page.click('#contacts-btn');

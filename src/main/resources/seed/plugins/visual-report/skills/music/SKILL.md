@@ -54,7 +54,7 @@ description: 乐理讲解（频谱/卷帘/语谱图+可听化）；音频分析�
 | WebAudio | 交互页音频引擎（基线/降级） | 页内 `typeof (window.AudioContext\|\|window.webkitAudioContext)`；本机 Chrome headless 实测通过 | https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API | HTTP 200（2026-10-04 实测） | 无 WebAudio 的环境不承载可听交付，明示降级为 wav 静态交付 |
 | node | 交互页语法/冒烟验证 | `node --version` → v24.14.0（README 基线复测一致） | https://nodejs.org/ | 2026-10-04 在位实测（npm 11.9.0） | 仅浏览器无 node 时跳过 `node --check`，以 headless 冒烟为准 |
 
-全工具链接验证表（六基础 + 各场景补充行）见插件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
+全工具链接验证表（六基础 + 各场景补充行）见插件 README，直接引用不复制。`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
 
 ### 交互页验证协议（「点按可发声」的实证）
 

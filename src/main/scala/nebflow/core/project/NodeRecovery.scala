@@ -4,6 +4,7 @@ package nebflow.core.project
 import cats.effect.*
 import cats.syntax.all.*
 import nebflow.actor.*
+import nebflow.core.delegate.ProviderFault
 import nebflow.shared.PathUtil
 
 private[project] trait NodeRecovery:
@@ -1013,11 +1014,7 @@ private[project] trait NodeRecovery:
         case Some(n) =>
           // 失败原因 = sessionId + 「L3 hard-recovery resume failed」语义 + 恢复指引
           // （节点 result 是分发器/前端读到的权威文本，必须自解释）。
-          val err =
-            s"L3 hard-recovery resume failed (session=$sessionId) — the engine could not revive this node from " +
-              "the on-disk transcript breakpoint (no readable transcript / resume CAS rejected); " +
-              "node re-judged as failed by the L3 hard-recovery chain. Downstream keeps waiting (D5 zero-settlement): " +
-              "reactivate the upstream (NodeEdit) or rewire the graph to recover."
+          val err = NodeRecovery.hardResumeFailureText(sessionId)
           val keptTargets = n.out.map(_.to).filterNot(_ == OutEdge.RootTarget)
           dispatchNotify.releaseTerminalNotify(n.id) *>
             FlowMapEventLog.append(
@@ -1031,4 +1028,15 @@ private[project] trait NodeRecovery:
             ) *>
             failNode(n.id, err)
     }
+end NodeRecovery
+
+private[project] object NodeRecovery:
+
+  /** Preserve the dispatcher-visible failure text while sharing its classifier marker. */
+  def hardResumeFailureText(sessionId: String): String =
+    s"${ProviderFault.EngineRecoveryFailureLead} (session=$sessionId) — the engine could not revive this node from " +
+      "the on-disk transcript breakpoint (no readable transcript / resume CAS rejected); " +
+      "node re-judged as failed by the L3 hard-recovery chain. Downstream keeps waiting (D5 zero-settlement): " +
+      "reactivate the upstream (NodeEdit) or rewire the graph to recover."
+
 end NodeRecovery

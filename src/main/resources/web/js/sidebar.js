@@ -15,6 +15,7 @@ import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTodoTaskList } from './todoFace.js';
 import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
+import { emit } from './events.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
@@ -156,6 +157,9 @@ export function isSettingsPanelActive() {
 /** Switch the main panel to display a different session. */
 export function switchToSession(sessionId) {
   if (!sessionId) return;
+  // Selecting an Agent session, the current one included, is a request to see the Agent: a conversation shown in the
+  // main area gives way.
+  emit(window, 'AGENT_VIEW_REQUESTED', { sessionId });
 
   // Same-session: just clear unread and scroll to bottom
   if (sessionId === state.activeSessionId) {
@@ -1703,6 +1707,7 @@ function renderSessionSidebarInner(sessionData, activeId) {
   }
   // If active session changed (new session, agent session, delete active), reset chat area
   if (activeId && activeId !== prevActiveId) {
+    emit(window, 'AGENT_VIEW_REQUESTED', { sessionId: activeId });
     setActiveView(chatViews.primary);
     saveInputDraft(prevActiveId);
     resetChatForActiveSession();

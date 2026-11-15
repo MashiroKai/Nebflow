@@ -456,7 +456,7 @@ function createdHandler(msg) {
   if (!row || !isTodoRow(row)) return;
   const mapped = mapRow(row);
   // 乐观行对账：同 content 的在飞临时行就地换 id（保留本地 notes/due 展示位）。
-  const pendingIdx = items.findIndex((x) => String(x.id).startsWith('tmp') && x.title === mapped.title);
+  const pendingIdx = msg.requestId ? -1 : items.findIndex((x) => String(x.id).startsWith('tmp') && x.title === mapped.title);
   if (pendingIdx >= 0) items.splice(pendingIdx, 1);
   if (!items.some((x) => x.id === mapped.id)) items.push(mapped);
   syncGroupRegistry();
@@ -504,6 +504,8 @@ function errorHandler(msg) {
   if (!msg || !msg.msgType) return;
   const ourFrames = [FRAME.create, FRAME.update, FRAME.complete, FRAME.uncomplete, FRAME.remove];
   if (!ourFrames.includes(msg.msgType)) return;
+  // Correlated creates are handled by their owning sheet, not the legacy optimistic queue.
+  if (msg.msgType === FRAME.create && msg.requestId) return;
   console.error(`[todoStore] server rejected ${msg.msgType}: ${msg.message || 'unknown reason'}`);
   // 创建被拒：撤掉在飞乐观行（旧口径 temp- 前缀，本文件用 tmp 前缀）。
   if (msg.msgType === FRAME.create) {
@@ -646,10 +648,44 @@ function projectNameOf(tagId) {
  * 优先。`content`（后端必填、注入/摘要用）= detail || name，所以**只传旧字段的
  * 调用方行为逐字不变**。
  *
- * @param {{tagId?: string|null, name?: string, detail?: string, title?: string, notes?: string,
- *   due?: number|null, priority?: number}} [input]
- * @returns {string | null} 本地乐观行 id
  */
+/** @param {{tagId:string|null, title:string, notes:string, priority:number, requestId:string, sessionId:string}} input
+ * @returns {Promise<boolean>} */
+async function createItemConfirmed({ tagId = null, title = '', notes = '', priority = 0, requestId, sessionId }) {
+  if (fixtureMode) return !!createItem({ tagId, title, notes, priority });
+  const sid = sessionId;
+  if (sid !== currentSessionId()) return false;
+  if (!sid || !state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+  const socket = state.ws;
+  const frame = { type: FRAME.create, kind: 'todo', sessionId: sid, requestId,
+    name: title.trim(), content: notes.trim() || title.trim(), detail: notes.trim(), priority,
+    project: projectNameOf(tagId) || undefined };
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      offCreated(); offError();
+      socket.removeEventListener('close', onClose);
+      resolve(ok);
+    };
+    const offCreated = onMessage('scheduledTaskCreated', (msg) => {
+      if (msg.requestId === requestId && msg.sessionId === sid && msg.task?.id === requestId) finish(true);
+    });
+    const offError = onMessage('error', (msg) => {
+      if (msg.msgType === FRAME.create && msg.requestId === requestId) finish(false);
+    });
+    const onClose = () => finish(false);
+    socket.addEventListener('close', onClose, { once: true });
+    timer = setTimeout(() => finish(false), 15000);
+    try { socket.send(JSON.stringify(frame)); } catch { finish(false); }
+  });
+}
+
+/** @param {{tagId?: string|null, name?: string, detail?: string, title?: string, notes?: string, due?: number|null, priority?: number}} [input]
+ * @returns {string|null} */
 function createItem({ tagId = null, name = '', detail = '', title = '', notes = '', due = null, priority = 0 } = {}) {
   const resolvedName = String(name || title || '').trim();
   const resolvedDetail = String(detail || notes || '').trim();
@@ -990,7 +1026,7 @@ export const todoStore = {
   /** 显式拉取/刷新（渲染层挂载点可调用；不调用也已惰性自动首拉）。 */
   init: maybePull,
   refresh,
-  createItem, updateItem, completeItem, uncompleteItem, removeItem,
+  createItem, createItemConfirmed, updateItem, completeItem, uncompleteItem, removeItem,
   createTag, updateTag, deleteTag, reorderTag,
   subscribe,
   /** 测试缝：确定性夹具（shots 几何 spec 用；__ 前缀 = 非产品路径）。 */

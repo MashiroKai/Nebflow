@@ -1,7 +1,6 @@
 package nebflow.core.delegate
 
 import nebflow.neblink.core.*
-import nebflow.neblink.social.*
 
 import cats.effect.IO
 import cats.syntax.all.*
@@ -611,7 +610,7 @@ $task"""
             "pointers" -> pointers.asJson
           )
           // 台账 #944：完成件**先落盘再发**（sendDurable）——改前是纯 fire-and-forget，
-          // 主机不可达 / 进程死在本行之前 / 隧道不在，结果就无声蒸发（KAI 14:39 重启
+          // 主机不可达 / 进程死在本行之前 / 隧道不在，结果就无声蒸发（Windows 实机 14:39 重启
           // 那一批 6 件的实证形态）。落盘后即使发送失败，relay 重连或下一次 boot 会
           // 按序补投（at-least-once；宿主侧按 spawnId 判重，不会二次唤醒父会话）。
           sendDurable(resources, hostDeviceId, ChannelName, result, spawnId)

@@ -16,16 +16,19 @@ PillowWriter（全程不碰 ffmpeg，最终降级位）。一律用 viz-venv pyt
   <venv>/python.exe mpl_anim.py --script mpl_examples/demo_sine.py --out out.mp4  --fps 30 --dpi 110
   <venv>/python.exe mpl_anim.py --script my_anim.py --out out.mp4 --figsize 8,4.5
 """
+import os
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
 import argparse
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
 # 套件全局 matplotlibrc（YaHei 中文字体）只在 MPLCONFIGDIR 指向它时生效；
 # 节点 shell 常不带该环境变量（2026-10-04 实测为空）→ 在 import matplotlib 前补接线。
 # setdefault：外部已设 MPLCONFIGDIR 时尊重外部值。
-_SUITE_MPLCONFIG = Path(r"C:\Users\Kai\.nebflow\tools\mplconfig")
+_SUITE_MPLCONFIG = Path(os.path.join(DATA_ROOT, 'tools', 'mplconfig'))
 if (_SUITE_MPLCONFIG / "matplotlibrc").exists():
     os.environ.setdefault("MPLCONFIGDIR", str(_SUITE_MPLCONFIG))
 

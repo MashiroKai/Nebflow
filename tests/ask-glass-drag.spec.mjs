@@ -25,7 +25,7 @@
 //     D1s 静态净空：单问单答（无滚动）最新气泡底边与输入条顶边间距 = --ds-space-1h（6px）
 //        —— 不滚动也不被盖（改前 = 气泡底边扎进输入条 17px = 红）。
 //     D2 极值三读数（拖动边界夹取）：① 列滚动最上（scrollTop=0）：顶泡在列内、
-//        alpha < 1（渐隐仍在）；② 列滚动尽头（最下）：D1 读数；③ 面板贴边（把手
+//        alpha = 1（历史气泡不渐隐，FCC-REQ-004）；② 列滚动尽头（最下）：D1 读数；③ 面板贴边（把手
 //        连按 ↑ 到夹取上限）：panel rect ⊆ #canvas-panel ∩ 视口、把手 rect ⊆ 视口
 //        （夹取逻辑 = askDock.js resizeLimits/applySize 既有单源，本批零改动只钉行为）。
 //     D4 层级钉（不写任何新 z-index，现状即方案）：桌面 dock z=24（< 顶行 30）；
@@ -230,7 +230,8 @@ const probe = `(() => {
   await page.evaluate((s) => { document.querySelector('.ask-col').scrollTop = s; }, Math.min(10, Math.max(0, sc.max - 1)));
   await sleep(300);
   const gTop = await page.evaluate(probe);
-  ok(`D2① 列滚动顶带内：顶泡 alpha=${gTop.topOpacity} < 1（渐隐仍在，opacity 载体）`, parseFloat(gTop.topOpacity) < 1, `topOpacity=${gTop.topOpacity} scrollMax=${sc.max}`);
+  // FCC-REQ-004: a bubble that scrolls into the top band is clipped by the column, never dimmed.
+  ok(`D2① 列滚动顶带内：顶泡 alpha=${gTop.topOpacity} = 1（历史气泡可读，不再逐泡渐隐）`, parseFloat(gTop.topOpacity) === 1, `topOpacity=${gTop.topOpacity} scrollMax=${sc.max}`);
   ok('D2② 列滚动尽头（最下）= D1 同读数（已测）', true);
   // 面板贴边：把手连按 ↑（键盘同源状态机）到夹取上限
   await page.evaluate(() => { const c = document.querySelector('.ask-col'); c.scrollTop = c.scrollHeight; });

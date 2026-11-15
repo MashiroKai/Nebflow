@@ -133,6 +133,24 @@ object ModelRoles:
       }
       .filter(_.nonEmpty)
     wire.flatMap(w => Slots.find(_._1 == w).map(_._3))
+  end slotOfSessionId
+
+  /**
+   * Slot whose chain edit governs a session's explicit model pin; `None` means the pin
+   * cannot be attributed to a category, so no category edit may clear it.
+   *
+   * The five request-time families come from [[slotOfSessionId]]. An ordinary main
+   * conversation (any id outside the background families, see
+   * [[nebflow.shared.SessionScope.isMainSession]]) belongs to the main slot: the Nebula
+   * chain is its base chain, even though [[slotOfSessionId]] leaves it unclassified on
+   * purpose for request resolution. Background families without a slot (`subtask-`,
+   * `subagent-`, `workflow-`, `external-`) and blank ids stay `None`.
+   */
+  def pinOwnerSlot(sessionId: String): Option[String] =
+    val id = sessionId.trim
+    slotOfSessionId(Some(id)).orElse(
+      Option.when(nebflow.shared.SessionScope.isMainSession(id))(SchemePolicy.NebulaName)
+    )
 
   /** 类别槽自身的链（槽 sidecar 现读；空/未配置 = None ⇒ 回落）。 */
   def ownChainOfSlot(slot: String): Option[AgentModelConfig] =

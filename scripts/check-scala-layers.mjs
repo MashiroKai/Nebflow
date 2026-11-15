@@ -44,6 +44,8 @@ const LAYER_ORDER = [
               // 它被 shared/core/agent/llm 各层引用,自己一个包都不准引;
               // 放在 shared 之下 = 任何反向边都判违规。专项从严闸见
               // scripts/check-prompt-catalog-imports.mjs。
+  'db',       // Independent persistence primitives; no application dependencies.
+  'pilogic',  // Independent loop contracts; providers are injected by callers.
   'shared',   // 底层:纯支撑面(日志等),零上层依赖
   'actor',    // 底层:actor 原语
   'core',     // 引擎核心:只准依赖底下两层(C/D 步倒置 core→agent/core→gateway 后成形)
@@ -51,6 +53,7 @@ const LAYER_ORDER = [
   'bridge',
   'dropbox',
   'neblink',
+  'perception', // Mail perception consumes shared/core and neblink engine legs.
   'social',
   'agent',
   'service',

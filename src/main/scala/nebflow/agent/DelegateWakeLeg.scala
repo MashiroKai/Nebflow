@@ -56,12 +56,16 @@ object DelegateWakeLeg:
     via: String
   ): IO[Result] =
     exclusiveWake(delegateId) {
-      resources.sessionStore.loadMessagesForSession(delegateId).attempt.flatMap {
-        case Left(_) => IO.pure(Left("Cannot read saved context (RECOVERY_UNVERIFIED)"))
-        case Right(messages) if messages.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(messages) =>
-          IO.pure(Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)"))
-        case Right(messages) =>
-          wakeVerified(resources, wsSend, delegateId, instruction, via, messages)
+      resources.executionProtection(delegateId).flatMap {
+        case nebflow.shared.ExecutionProtection.Unprotected =>
+          resources.sessionStore.loadMessagesForSession(delegateId).attempt.flatMap {
+            case Left(_) => IO.pure(Left("Cannot read saved context (RECOVERY_UNVERIFIED)"))
+            case Right(messages) if messages.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(messages) =>
+              IO.pure(Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)"))
+            case Right(messages) =>
+              wakeVerified(resources, wsSend, delegateId, instruction, via, messages)
+          }
+        case _ => IO.pure(Left("Protected or unknown execution requires exact-ref recovery (RECOVERY_UNVERIFIED)"))
       }
     }
 

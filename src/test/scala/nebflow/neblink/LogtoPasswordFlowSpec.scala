@@ -176,6 +176,137 @@ class LogtoPasswordFlowSpec extends CatsEffectSuite:
     assert(urls.exists(_.endsWith("/oidc/token")), urls.toString)
   }
 
+  // Exercise submit cookies through signIn, including the state check and token exchange.
+  private final class SubmitCookieFlow(
+    submitCookies: List[String],
+    expectedResumeJar: String,
+    submitStatus: Int = 200,
+    submitBody: String = """{"redirectTo":"https://auth.example/oidc/auth/resume?x=1"}""",
+    callback: String => Option[String] = state => Some(s"$redirectUri?code=cookie-code&state=$state")
+  ):
+    val requests = ListBuffer.empty[(LogtoTransport.Request, String)]
+    private var state = ""
+    private val initialJar = "_logto=L1; _interaction=I1"
+
+    val send: LogtoPasswordFlow.Send = (req, jar) =>
+      IO.delay {
+        requests += ((req, jar))
+        if req.url.startsWith(s"$endpoint/oidc/auth?") then
+          assertEquals(req.method, "GET")
+          assertEquals(jar, "")
+          state = req.url.split("state=")(1).takeWhile(_ != '&')
+          LogtoPasswordFlow.Resp(303, List("_logto=L1; Path=/", "_interaction=I1; Path=/; HttpOnly"), Some("/sign-in"), "")
+        else if req.url == s"$endpoint/api/experience" then
+          assertEquals(req.method, "PUT")
+          assertEquals(jar, initialJar)
+          LogtoPasswordFlow.Resp(204, Nil, None, "")
+        else if req.url == s"$endpoint/api/experience/verification/password" then
+          assertEquals(req.method, "POST")
+          assertEquals(jar, initialJar)
+          assert(req.body.contains(password))
+          LogtoPasswordFlow.Resp(200, Nil, None, """{"verificationId":"v-cookie"}""")
+        else if req.url == s"$endpoint/api/experience/identification" then
+          assertEquals(req.method, "POST")
+          assertEquals(jar, initialJar)
+          assertEquals(req.body, """{"verificationId":"v-cookie"}""")
+          LogtoPasswordFlow.Resp(200, Nil, None, "")
+        else if req.url == s"$endpoint/api/experience/submit" then
+          assertEquals(req.method, "POST")
+          assertEquals(jar, initialJar)
+          LogtoPasswordFlow.Resp(submitStatus, submitCookies, None, submitBody)
+        else if req.url == s"$endpoint/oidc/auth/resume?x=1" then
+          assertEquals(req.method, "GET")
+          assertEquals(req.body, "")
+          // A stale, duplicated or missing cookie must not reach the token endpoint.
+          if jar == expectedResumeJar then LogtoPasswordFlow.Resp(303, Nil, callback(state), "")
+          else LogtoPasswordFlow.Resp(200, Nil, None, "")
+        else if req.url == s"$endpoint/oidc/token" then
+          assertEquals(req.method, "POST")
+          assertEquals(jar, "")
+          assert(req.body.contains("grant_type=authorization_code"))
+          assert(req.body.contains("code=cookie-code"))
+          assert(req.body.contains("code_verifier="))
+          LogtoPasswordFlow.Resp(200, Nil, None, """{"access_token":"at-cookie","token_type":"Bearer"}""")
+        else fail(s"unexpected request: ${req.method} ${req.url}")
+      }
+
+    def run(): IO[Either[LogtoPasswordFlow.Failure, LogtoAuthCode.TokenResult]] =
+      LogtoPasswordFlow.signIn(send)(endpoint, clientId, redirectUri, "email", account, password)
+
+    def assertRequests(includeResume: Boolean, includeToken: Boolean): Unit =
+      val expected = List(
+        "/oidc/auth", "/api/experience", "/api/experience/verification/password",
+        "/api/experience/identification", "/api/experience/submit"
+      ) ++ (if includeResume then List("/oidc/auth/resume") else Nil) ++
+        (if includeToken then List("/oidc/token") else Nil)
+      assertEquals(requests.toList.map(_._1.url.stripPrefix(endpoint).takeWhile(_ != '?')), expected)
+      requests.foreach { case (req, jar) =>
+        if !req.url.endsWith("/verification/password") then assert(!req.body.contains(password))
+        assert(!req.url.contains(password))
+        assert(!jar.contains(password))
+      }
+      if includeResume then
+        assertEquals(requests.find(_._1.url.contains("/oidc/auth/resume")).map(_._2), Some(expectedResumeJar))
+
+  private val submitCookieCases = List(
+    ("same-name rotation", List("_interaction=I2; Path=/; HttpOnly"), "_logto=L1; _interaction=I2"),
+    ("new cookie", List("_csrf=tok; Path=/; Secure"), "_logto=L1; _interaction=I1; _csrf=tok"),
+    ("multiple cookies and last-write wins", List("_interaction=I2; Path=/", "_csrf=tok; Path=/", "_interaction=I3; HttpOnly"), "_logto=L1; _csrf=tok; _interaction=I3"),
+    ("empty-value deletion", List("_interaction=; Max-Age=0; Path=/"), "_logto=L1"),
+    ("no Set-Cookie preserves the jar", Nil, "_logto=L1; _interaction=I1")
+  )
+
+  submitCookieCases.foreach { case (name, cookies, expectedJar) =>
+    test(s"signIn: submit cookies reach resume and token exchange: $name") {
+      val flow = new SubmitCookieFlow(cookies, expectedJar)
+      flow.run().map { result =>
+        result match
+          case Right(tokens) => assertEquals(tokens.accessToken, "at-cookie")
+          case Left(failure) => fail(s"expected token exchange, got $failure")
+        flow.assertRequests(includeResume = true, includeToken = true)
+      }
+    }
+  }
+
+  test("signIn: rotated cookies do not bypass state or malformed callback checks; no token request") {
+    val callbacks: List[(String => Option[String], String)] = List(
+      ((_: String) => Some(s"$redirectUri?code=cookie-code&state=WRONG"), "state mismatch"),
+      ((state: String) => Some(s"$redirectUri?state=$state"), "no code"),
+      ((_: String) => Some(s"$redirectUri?code=cookie-code"), "no state"),
+      ((_: String) => None, "without Location")
+    )
+    callbacks.foldLeft(IO.unit) { case (previous, (callback, expectedMessage)) =>
+      previous.flatMap { _ =>
+        val flow = new SubmitCookieFlow(List("_interaction=I2; Path=/"), "_logto=L1; _interaction=I2", callback = callback)
+        flow.run().map { result =>
+          result match
+            case Left(LogtoPasswordFlow.Failure.Protocol("redirect", _, message)) =>
+              assert(message.contains(expectedMessage), message)
+              assert(!message.contains(password))
+            case other => fail(s"expected redirect failure, got $other")
+          flow.assertRequests(includeResume = true, includeToken = false)
+        }
+      }
+    }
+  }
+
+  test("signIn: failed or malformed submit stops before resume and token exchange despite Set-Cookie") {
+    val responses: List[(Int, String, LogtoPasswordFlow.Failure)] = List(
+      (422, """{"code":"session.invalid_credentials"}""", LogtoPasswordFlow.Failure.InvalidCredentials),
+      (200, """{"redirectTo":""}""", LogtoPasswordFlow.Failure.Protocol("submit", "", "missing redirectTo"))
+    )
+    responses.foldLeft(IO.unit) { case (previous, (status, body, failure)) =>
+      previous.flatMap { _ =>
+        val flow = new SubmitCookieFlow(List("_interaction=I2; Path=/"), "_logto=L1; _interaction=I2", submitStatus = status, submitBody = body)
+        flow.run().map { result =>
+          assertEquals(result, Left(failure))
+          assert(!result.toString.contains(password))
+          flow.assertRequests(includeResume = false, includeToken = false)
+        }
+      }
+    }
+  }
+
   // ── D. 失败链路 ────────────────────────────────────────────────────────
 
   test("signIn: 密码错 ⇒ InvalidCredentials；任何 Failure 载荷零回显（不含密码）") {

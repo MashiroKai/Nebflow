@@ -49,6 +49,25 @@ object BackoffSupervisor:
     val marker = if emptyRun then "; empty-run" else ""
     s"\n[delegate-diagnostic] no-final-text; turns=$turns; toolCalls=$toolCalls; commits=$commits; changedFiles=$changedFiles$marker"
 
+  private[agent] def protectedCompletionDiagnostic(sessionId: String, messages: List[Message], hasText: Boolean): IO[String] =
+    if hasText then IO.pure("")
+    else
+      val turns = messages.count(_.role == MessageRole.Assistant)
+      val tools = sessionToolCalls(messages)
+      IO.blocking {
+        val rec = nebflow.core.delegate.DelegateRegistry.find(sessionId)
+        val commits = rec.flatMap { r =>
+          for
+            base <- r.baseBranch
+            branch <- r.branch
+            ws <- scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
+          yield nebflow.core.GitWorktrees.commitsAhead(ws, base, branch)
+        }.getOrElse(0)
+        val changed = rec.flatMap(r => scala.util.Try(os.Path(r.worktree.getOrElse(r.cwd))).toOption
+          .flatMap(nebflow.core.GitWorktrees.dirtyPaths(_))).fold(0)(_.size)
+        completionDiagnosticText(turns, tools, commits.toString, changed.toString, tools == 0)
+      }.handleError(_ => completionDiagnosticText(turns, tools, "unknown", "unknown", tools == 0))
+
   /**
    * 完成必回报（P5 第二波）的最后一环：终态投递链（[[notifyParentAndStopImpl]]）上
    * 任何未在内层兜住的意外逃逸 ⇒ 响亮 ERROR + **尽力一次终态任务行写**。
@@ -299,13 +318,59 @@ object BackoffSupervisor:
   ): Behavior[AgentEvent] =
     new Behavior[AgentEvent]:
       def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-        extraMetadata("taskRunId").flatMap(_.asString) match
-          case None => receiveCurrent(ctx, event)
-          case Some(run) =>
-            resources.subAgentTaskStore.findByTaskId(subagentId).flatMap {
-              case Some(task) if task.runId.contains(run) => receiveCurrent(ctx, event)
-              case _ => (childRef ! AgentCommand.Stop(s"$source-stale-run")).as(Behaviors.stopped[AgentEvent])
+        resources.executionProtection(subagentId).flatMap {
+          case nebflow.shared.ExecutionProtection.Unprotected =>
+            extraMetadata("taskRunId").flatMap(_.asString) match
+              case None => receiveCurrent(ctx, event)
+              case Some(run) =>
+                resources.subAgentTaskStore.findByTaskId(subagentId).flatMap {
+                  case Some(task) if task.runId.contains(run) => receiveCurrent(ctx, event)
+                  case _ => (childRef ! AgentCommand.Stop(s"$source-stale-run")).as(Behaviors.stopped[AgentEvent])
+                }
+          case nebflow.shared.ExecutionProtection.Protected(List(run)) if event.isInstanceOf[AgentEvent.Completed] =>
+            resources.executionCommitPort.committedTerminal(subagentId, run).flatMap {
+              case Right(confirmed) => resources.subAgentTaskStore.findByTaskId(subagentId).flatMap {
+                case Some(task) if task.runId.contains(run) && task.executionStatus.contains("finished") &&
+                    task.resultRef.contains(resources.sessionStore.executionAuthorityRoot.toAbsolutePath.normalize()
+                      .resolve(subagentId).resolve(s"terminal-${java.util.Base64.getUrlEncoder.withoutPadding()
+                        .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))}.json").toString) &&
+                    task.notificationId.contains(s"$subagentId#$run") =>
+                  resources.sessionStore.loadTerminalEnvelope(subagentId, run).flatMap {
+                    case Some(saved) if Json.obj("source" -> saved.source.asJson, "eventType" -> saved.eventType.asJson,
+                        "payload" -> saved.payload.asJson, "metadata" -> Json.fromJsonObject(saved.metadata),
+                        "correlationId" -> saved.correlationId.asJson, "blocks" -> saved.blocks.asJson) == confirmed =>
+                      (nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(resources, subagentId,
+                        task.parentSessionId, "completed", "completed") *>
+                        MailboxProducer.deliver(resources, task.parentSessionId, saved,
+                          task.notificationId.get, "delegate-terminal", coalesce = false, producer = "task-lifecycle-recovery"))
+                      .flatMap {
+                        case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                        case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
+                          val identity = task.notificationId.get
+                          (nebflow.core.mail.SessionMailbox.scanPending(task.parentSessionId),
+                            nebflow.core.mail.SessionMailbox.scanTaken(task.parentSessionId),
+                            nebflow.core.mail.SessionMailbox.deliveredContains(task.parentSessionId, Set(identity))).tupled.flatMap {
+                            case (pending, taken, delivered) =>
+                              val entries = (pending ++ taken).filter(_.identity == identity)
+                              if entries.exists(_.event != saved) then
+                                logger.warn(s"Protected terminal mailbox identity conflicts for $subagentId")
+                              else if entries.nonEmpty || delivered.contains(identity) then
+                                resources.subAgentTaskStore.acknowledgeNotification(task.parentSessionId, subagentId, run, identity).void
+                              else logger.warn(s"Protected terminal mailbox receipt unavailable for $subagentId")
+                          }
+                        case _ => resources.subAgentTaskStore.acknowledgeNotification(task.parentSessionId,
+                          subagentId, run, task.notificationId.get).void
+                      }.as(Behaviors.stopped[AgentEvent])
+                    case _ => IO.pure(Behaviors.stopped[AgentEvent])
+                  }
+                case _ => IO.pure(Behaviors.stopped[AgentEvent])
+              }
+              case Left(_) => IO.pure(Behaviors.stopped[AgentEvent])
             }
+          case _ =>
+            logger.warn(s"BackoffSupervisor: protected or unknown execution $subagentId requires review; event not projected")
+              .as(Behaviors.stopped[AgentEvent])
+        }
 
       private def receiveCurrent(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
         // 四修①（2026-10-07 修复令「空轮≠完成」）的正常完成体（空轮判据不中时
@@ -1112,9 +1177,26 @@ object BackoffSupervisor:
             )
 
       override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
-        requireCurrentRun.attempt.flatMap {
-          case Left(_) => IO.pure(Behaviors.stopped[AgentEvent])
-          case Right(_) => onCurrentSignal(ctx, signal)
+        resources.executionProtection(subagentId).flatMap {
+          case nebflow.shared.ExecutionProtection.Unprotected =>
+            requireCurrentRun.attempt.flatMap {
+              case Left(_) => IO.pure(Behaviors.stopped[AgentEvent])
+              case Right(_) => onCurrentSignal(ctx, signal)
+            }
+          case nebflow.shared.ExecutionProtection.Protected(List(run)) =>
+            signal match
+              case SystemSignal.Terminated(ref) if ref.path == childRef.path =>
+                (resources.protectedExecutions.get(subagentId), resources.protectedRunners.get(subagentId)) match
+                  case (Some(handle), Some(runner)) if handle.admission.executionId == run =>
+                    ProtectedAgentExecution.suspendOwned(handle, runner, "actor-terminated-review-required")
+                      .handleErrorWith(e => logger.warn(s"Protected interruption requires review for $subagentId: ${e.getClass.getSimpleName}")) *>
+                      IO.pure(Behaviors.stopped[AgentEvent])
+                  case _ => logger.warn(s"Protected runner unavailable for $subagentId; review required")
+                    .as(Behaviors.stopped[AgentEvent])
+              case _ => IO.pure(this)
+          case _ =>
+            logger.warn(s"BackoffSupervisor: protected or unknown execution $subagentId interrupted; automatic restart deferred")
+              .as(Behaviors.stopped[AgentEvent])
         }
 
       private def onCurrentSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =

@@ -182,6 +182,9 @@ import { fileIconStyle, extOf } from './fileIcon.js';
 
 const FWD_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.2 5.1c0-.86 1.02-1.3 1.65-.73l7.06 6.4c.44.4.44 1.08 0 1.48l-7.06 6.4c-.63.57-1.65.13-1.65-.73v-2.9c-4.3.14-7.02 1.42-9.06 4.06-.5.65-1.55.2-1.4-.6.9-4.7 3.9-8.5 10.46-8.9V5.1z"/></svg>';
 
+/** Error handlers installed by the last `hydrateMedia` run per element (see the retry note inside). */
+const hydrationHandlers = new WeakMap();
+
 /** Hydrate one media element's bytes. `src` (data URI) wins; otherwise the
  *  path rides an /api/nf-file ticket, re-minted once on a load error. On the
  *  TERMINAL failure the element is marked (`nf-img-failed` +
@@ -212,6 +215,13 @@ export function hydrateMedia(el, item, onFail) {
   // load 事件照常驱动 `natural` 上报（fitLayer 出真比）。主会话链路零命中本分支。
   if (item.dry) return;
   const path = item.path;
+  // A retry runs this function again for the same element: drop the listeners of the previous run so
+  // handlers never stack (a stacked error handler would re-mint twice per failure).
+  for (const [type, handler] of hydrationHandlers.get(el) || []) el.removeEventListener(type, handler);
+  /** @type {Array<[string, EventListener]>} */
+  const handlers = [];
+  hydrationHandlers.set(el, handlers);
+  const listen = (type, handler) => { handlers.push([type, handler]); el.addEventListener(type, handler); };
   const fail = () => {
     // 终态闩：双腿各有一次出场机会，fail 只落一次（appendFailureNote 已有
     // 幂等守卫，这里是 class/dataset 面的同款保险）。
@@ -237,7 +247,7 @@ export function hydrateMedia(el, item, onFail) {
         el.removeEventListener('error', onResolverError);
         startTicketLeg();
       };
-      el.addEventListener('error', onResolverError);
+      listen('error', onResolverError);
       el.src = url;
       return;
     }
@@ -248,7 +258,7 @@ export function hydrateMedia(el, item, onFail) {
     // No `once` on the error listener: the FIRST error arms the re-mint, and a
     // second error (re-mint also failed, or the re-minted URL 404s) must reach
     // the terminal branch — with `once` that case left the element blank.
-    el.addEventListener('error', () => {
+    listen('error', () => {
       if (el.dataset.nfReminted === '1') { fail(); return; }
       el.dataset.nfReminted = '1';
       // imgdoor 二次加载批（2026-10-24）：账本腿（blob: URL）解码失败 = 手上这份
@@ -298,16 +308,55 @@ export function hydrateMedia(el, item, onFail) {
  *  row had NO visible failure sign at all before (缺陷 D), and a subagent
  *  (static) window shows no animation chrome to hint with — the note is pure
  *  text, so it reads identically in both window roles (UI-C family). */
-function appendFailureNote(face, el) {
+function appendFailureNote(face, el, retry) {
   if (!face || face.querySelector('.nf-media-failed-note')) return;
+  const name = (el && (el.alt || el.dataset.nfName)) || '';
+  noteMediaFailure(el, face, t('chat.popMediaFailed'), name, retry);
+}
+
+/** What is shown, per failed element, besides the failed state itself: the note line and the retry
+ *  control. Kept so that `clearMediaFailure` can take both away again. */
+const failureParts = new WeakMap();
+
+/** Append the plain-text note and, when `retry` is given, a retry button as a SIBLING of the note (the
+ *  note's own text stays exactly the sentence, so what reads it keeps reading the same thing). */
+function noteMediaFailure(el, host, label, name, retry) {
   const note = document.createElement('div');
   note.className = 'nf-media-failed-note';
-  const name = (el && (el.alt || el.dataset.nfName)) || '';
-  const label = t('chat.popMediaFailed');
   // The name is appended here (not interpolated) so the locale string stays a
   // plain sentence and an item with no name shows no dangling separator.
   note.textContent = name ? label + ' — ' + name : label;
-  face.appendChild(note);
+  host.appendChild(note);
+  const parts = /** @type {HTMLElement[]} */ ([note]);
+  if (typeof retry === 'function') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'nf-media-retry';
+    button.textContent = t('messages.retry');
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearMediaFailure(el);
+      retry();
+    });
+    host.appendChild(button);
+    parts.push(button);
+  }
+  failureParts.set(el, parts);
+}
+
+/** Take the failed state of one media element away (class, flags, note, retry control) so that the item
+ *  can be loaded again. Only this element is touched. */
+export function clearMediaFailure(el) {
+  if (!el) return;
+  el.classList.remove('nf-img-failed');
+  if (el.dataset) {
+    delete el.dataset.nfMediaFailed;
+    delete el.dataset.nfReminted;
+    delete el.dataset.nfBlobRetried;
+  }
+  for (const part of failureParts.get(el) || []) part.remove();
+  failureParts.delete(el);
 }
 
 /** 失败面单点（fm-att-component-lib 批 2026-11-02 导出）：字节终态失败的媒体元素
@@ -316,21 +365,15 @@ function appendFailureNote(face, el) {
  *  `noteHost` = 注记行宿主（叠卡层 = `.media-layer`；缺省 = 元素父节点）；
  *  `noteText` = 注记文案覆写（缺省 = 既有「加载失败」键——如叠卡成员 410 过期传
  *  「附件已过期」，同一结构、准确语义）。 */
-export function markMediaFailed(el, noteHost, noteText) {
+export function markMediaFailed(el, noteHost, noteText, retry) {
   if (!el) return;
   if (el.dataset && el.dataset.nfMediaFailed === '1') return;
   el.classList.add('nf-img-failed');
   if (el.dataset) el.dataset.nfMediaFailed = '1';
   const host = noteHost || el.parentElement;
   if (!host || host.querySelector('.nf-media-failed-note')) return;
-  const note = document.createElement('div');
-  note.className = 'nf-media-failed-note';
   const name = (el && (el.alt || el.dataset.nfName)) || '';
-  const label = noteText || t('chat.popMediaFailed');
-  // The name is appended here (not interpolated) so the locale string stays a
-  // plain sentence and an item with no name shows no dangling separator.
-  note.textContent = name ? label + ' — ' + name : label;
-  host.appendChild(note);
+  noteMediaFailure(el, host, noteText || t('chat.popMediaFailed'), name, retry);
 }
 
 /** One media card face for `item`: <img>/<video>/<audio> + the video overlay face.
@@ -370,7 +413,8 @@ function mediaFace(item, interactive, natural) {
     audio.addEventListener('click', e => e.stopPropagation());
     // Same two legs as img/video: `src` wins, else the /api/nf-file ticket,
     // re-minted once on a load error, terminal failure → note line (缺陷 D).
-    hydrateMedia(audio, item, el => appendFailureNote(wrap, el));
+    const failedAudio = (el) => appendFailureNote(wrap, el, () => hydrateMedia(audio, item, failedAudio));
+    hydrateMedia(audio, item, failedAudio);
     wrap.appendChild(audio);
   } else if (item.kind === 'video') {
     const expandedFace = interactive === 'expanded';
@@ -384,7 +428,8 @@ function mediaFace(item, interactive, natural) {
     video.controls = expandedFace;
     // The note is appended through the callback (the face must already be in
     // the DOM — `wrap` is by the time the async failure resolves).
-    hydrateMedia(video, item, el => appendFailureNote(wrap, el));
+    const failedVideo = (el) => appendFailureNote(wrap, el, () => hydrateMedia(video, item, failedVideo));
+    hydrateMedia(video, item, failedVideo);
     const ring = document.createElement('div');
     ring.className = 'play-ring';
     const chip = document.createElement('div');
@@ -439,7 +484,8 @@ function mediaFace(item, interactive, natural) {
     img.loading = 'lazy';
     img.draggable = false;
     img.addEventListener('load', () => report(img.naturalWidth, img.naturalHeight));
-    hydrateMedia(img, item, el => appendFailureNote(wrap, el));
+    const failedImage = (el) => appendFailureNote(wrap, el, () => hydrateMedia(img, item, failedImage));
+    hydrateMedia(img, item, failedImage);
     wrap.appendChild(img);
   }
   return wrap;
@@ -945,6 +991,10 @@ function buildMediaStack(items, opts) {
   const stack = { suppressClick: false };
   let sx = null, dx = 0;
   view.addEventListener('pointerdown', e => {
+    // A press that starts on a control inside the face (the retry button of a failed layer) belongs to that control:
+    // capturing the pointer would send its click to the face, which opens the item instead.
+    const control = e.target instanceof Element ? e.target.closest('button') : null;
+    if (control && view.contains(control)) return;
     sx = e.clientX; dx = 0;
     view.classList.add('dragging');
     try { view.setPointerCapture(e.pointerId); } catch { /* detached */ }

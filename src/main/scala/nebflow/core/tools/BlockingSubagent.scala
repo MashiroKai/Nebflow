@@ -13,10 +13,10 @@ import nebflow.shared.{Defaults, NebflowLogger, SubAgentTask}
 import scala.concurrent.duration.*
 
 /**
- * BlockingSubagent —— 阻塞式只读侦察子会话的单一 spawn 点。
+ * BlockingSubagent — single spawn point for blocking reconnaissance sessions.
  *
  * Explore 同型（外部 CLI agent 的 explore 型子代理）：spawn 一个 `subagent`
- * 内置会话（只读工具面，机制固定 = `AgentCore.SubagentFixedTools`），**阻塞**
+ * 内置会话（固定工具面 = `AgentCore.SubagentFixedTools`），**阻塞**
  * 到它完成，把最终文本作为工具结果返回。
  *
  * ==完成桥（wsSend 间谍）==
@@ -64,7 +64,7 @@ object BlockingSubagent:
   /**
    * 阻塞运行一次子会话。返回子会话最终文本。
    *
-   * @param defName spawn 目标的内置定义名：`subagent`（只读侦察面，默认）或
+   * @param defName spawn 目标的内置定义名：`subagent`（侦察面，默认）或
    *   `nebflow`（执行面——WorkflowTool 的步骤用这套，步骤要写要执行）。
    */
   def run(
@@ -105,6 +105,7 @@ object BlockingSubagent:
               parentRef = ctx.agentActorRef,
               wsSend = childWsSend,
               projectRoot = Some(ctx.projectRoot),
+              sessionCwd = ctx.sessionCwd.orElse(Some(ctx.projectRoot)),
               rootSessionId = rootOf(ctx)
             )
             ref <- NodeRunner.spawnAgentActor(system, params)
@@ -138,9 +139,8 @@ object BlockingSubagent:
               .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
             // sleep-poll 禁令批 C 段：步/子会话首条消息注入等待纪律铁律
             // （Defaults.NoSleepPollRule 单点——delegate brief / 节点脚注同源）。
-            // 只读侦察面无 Bash，规则是纯提示成本（~60 token）；workflow 步
-            // （defName=nebflow，有执行面）是本注入的主对象。包装单点 =
-            // [[promptWithRule]]（spec 判红锚）。
+            // Subagent role policy overrides shared background advice: its shell
+            // reconnaissance must finish in the foreground before the final answer.
             _ <- ref ! AgentCommand.UserInput(promptWithRule(resolvedPrompt), None)
             // ── 缺口① 两段等待（2026-10-25）——实现单点 [[awaitResult]]（spec 判红锚）
             result <- awaitResult(
@@ -292,8 +292,7 @@ object BlockingSubagent:
   private[tools] def startSpy(
     started: Deferred[IO, Unit],
     base: io.circe.Json => IO[Unit]
-  ): io.circe.Json => IO[Unit] = json =>
-    started.complete(()).attempt.void *> base(json)
+  ): io.circe.Json => IO[Unit] = json => started.complete(()).attempt.void *> base(json)
 
   /** wsSend 间谍：agentDone/agentEnd 且 nodeSessionId 命中 ⇒ 完成桥。 */
   private[tools] def spy(

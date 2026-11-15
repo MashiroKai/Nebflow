@@ -32,7 +32,7 @@ description: 技术架构调研报告（graphviz 分层集群）；梳理架构�
 
 | 工具 | 用途 | 本机检测命令（实测） | 官方下载链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
-| graphviz (dot) | 总架构图 / 数据流图 | `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` → `dot - graphviz version 16.1.0 (20260904.0139)`（不在 PATH，须全路径） | https://graphviz.org/download/ | HTTP 200（2026-10-04，详见 README 验证表） | 改用 mermaid-cli；两者皆缺 → 纯文本缩进框线 |
+| graphviz (dot) | 总架构图 / 数据流图 | `C:\Users\name\.nebflow\tools\graphviz\bin\dot.exe -V` → `dot - graphviz version 16.1.0 (20260904.0139)`（不在 PATH，须全路径） | https://graphviz.org/download/ | HTTP 200（2026-10-04，详见 README 验证表） | 改用 mermaid-cli；两者皆缺 → 纯文本缩进框线 |
 | mermaid-cli | 流程 / 状态 / 时序 | `mmdc --version` → 未装（command not found，实测）；端点验活 `npm view @mermaid-js/mermaid-cli version` → `12.0.0` | https://mermaid.js.org/ · https://github.com/mermaid-js/mermaid-cli | 200 · ✗（github 超时；npm 官方 registry 端点与 npmmirror 镜像 200，详见 README 验证表） | node 已在位，可 `npx -y @mermaid-js/mermaid-cli` 直调；失败 → graphviz；再失败 → 纯文本缩进框线 |
 
 - **降级链（不得空转，core §5）**：mermaid-cli → graphviz(dot) → 纯文本缩进框线（`├─` / `└─` 层级清单表达层次，禁止 ASCII 画箭头、禁止猜坐标）。

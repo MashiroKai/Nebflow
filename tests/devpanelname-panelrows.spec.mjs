@@ -179,9 +179,11 @@ async function openForwardAndRead(page, deviceId, shotsFor) {
   await sleep(500);
   const head = await page.evaluate(() => {
     const modal = document.querySelector('.fm-modal');
+    // FCC-REQ-007: on desktop the conversation header lives in #header, not inside the window.
+    const head = document.querySelector('#header .fm-main-head') || modal;
     return {
-      name: (modal.querySelector('.fm-modal-name') || {}).textContent || null,
-      headerText: (modal.querySelector('.fm-modal-header') || {}).textContent || null,
+      name: (head.querySelector('.fm-modal-name') || {}).textContent || null,
+      headerText: head.matches('.fm-modal-header, .fm-main-head') ? head.textContent : ((modal.querySelector('.fm-modal-header') || {}).textContent || null),
       aria: modal.getAttribute('aria-label'),
     };
   });

@@ -1377,7 +1377,7 @@ object FlowMapStore:
       def row(n: NodeDef, i: Int): String =
         val desc = n.description.map(d => s"${d.take(ChainSummaryDescriptionChars)}｜").getOrElse("")
         // 空串结果的 linesIterator 为空迭代器——`next()` 每拍 NoSuchElementException
-        // 刷 WARN（台账 #943 顺带④：KAI stand.log 每 30s 一条）。先判空再取首行。
+        // 刷 WARN（台账 #943 顺带④：Windows 实机 stand.log 每 30s 一条）。先判空再取首行。
         def firstLine(s: String): String = s.linesIterator.nextOption().getOrElse("")
         if n.status == NodeLifecycle.Failed then
           s"$i. [failed] ${n.name} (${n.id}) — $desc${n.result.map(firstLine).map(_.take(ChainSummaryPerNodeChars)).filter(_.nonEmpty).getOrElse("failed")}（已回分发器处置；详情见 NodeList(detail=\"${n.id}\")）"

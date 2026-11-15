@@ -1,9 +1,6 @@
 /* 严格DAG第⑥步第二批:DeviceMailAck 的 await 用面倒置为注册器(行为保持,2026-09-27)。 */
 package nebflow.core
 
-import nebflow.neblink.core.*
-import nebflow.neblink.social.*
-
 import cats.effect.IO
 
 import java.util.concurrent.atomic.AtomicReference

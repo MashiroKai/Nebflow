@@ -558,7 +558,15 @@ async function scenarioQuote(page, pageErrors) {
     const bub = getComputedStyle(m.querySelector('.fm-msg-bubble'));
     const tr = m.querySelector('.fm-msg-text').getBoundingClientRect();
     const qr = q.getBoundingClientRect();
+    // FCC-REQ-007: on desktop the window sits in the main area, so the reference material is the glass of the main
+    // column (a probe inside #main), not the dialog context the old constants were measured in.
+    const probe = document.createElement('div');
+    probe.className = 'nf-glass';
+    document.getElementById('main').appendChild(probe);
+    const mainGlass = getComputedStyle(probe).backgroundColor;
+    probe.remove();
     return {
+      mainGlass,
       quote: { background: cs.backgroundColor, boxShadow: cs.boxShadow, fontSize: cs.fontSize, color: cs.color, borderRadius: cs.borderRadius, whiteSpace: cs.whiteSpace, lineHeight: cs.lineHeight },
       bubble: { background: bub.backgroundColor, fontSize: bub.fontSize, lineHeight: bub.lineHeight },
       quoteAboveReply: qr.bottom <= tr.top + 0.5,
@@ -569,7 +577,9 @@ async function scenarioQuote(page, pageErrors) {
   ok('S2 引用块视觉面：复用主会话玻璃材质、字号档与零左侧色条',
     !!qStyle && qStyle.quoteAboveReply === true && qStyle.quoteNoAccentBar === true
     && qStyle.quote.fontSize === '12px'
-    && qStyle.quote.background === (MM_SCHEME === 'dark' ? 'rgba(24, 28, 38, 0.68)' : 'rgba(255, 255, 255, 0.55)')
+    && (process.env.MM_VIEWPORT === 'mobile'
+      ? qStyle.quote.background === (MM_SCHEME === 'dark' ? 'rgba(24, 28, 38, 0.68)' : 'rgba(255, 255, 255, 0.55)')
+      : qStyle.quote.background === qStyle.mainGlass)
     && qStyle.bubble.fontSize === (process.env.MM_VIEWPORT === 'mobile' ? '17px' : '14.5px'),
     JSON.stringify(qStyle));
   // D1 牌面风格现复用主会话 `.msg-quote-block.nf-glass`：断言毛玻璃材质与主会话
@@ -598,7 +608,10 @@ async function scenarioQuote(page, pageErrors) {
   ok('S2 D1 源码面：复用主会话夹取声明 = `display:-webkit-box` + `-webkit-line-clamp:2`',
     /\.msg-quote-block \.msg-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src)
     && /\.msg-quote-block \.msg-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src));
-  const expectedGlassBg = MM_SCHEME === 'dark' ? 'rgba(24, 28, 38, 0.68)' : 'rgba(255, 255, 255, 0.55)';
+  // FCC-REQ-007: desktop reference = the glass of the main column (see the S2 probe above); mobile keeps its constants.
+  const expectedGlassBg = process.env.MM_VIEWPORT === 'mobile'
+    ? (MM_SCHEME === 'dark' ? 'rgba(24, 28, 38, 0.68)' : 'rgba(255, 255, 255, 0.55)')
+    : qStyle.mainGlass;
   ok('S2 D1：引用牌调用主会话 .nf-glass 样式，保留 6/10 内距、10px 圆角与两行夹取',
     !!d1 && d1.background === expectedGlassBg
     && d1.boxShadow !== 'none' && d1.padding === '6px 10px 6px 10px' && d1.radius === '10px'
@@ -873,7 +886,8 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
   await clickMenuItem(page, '多选转发');
   await page.click('.fm-flow .fm-msg[data-message-id="102"] .fm-msg-check');
   await sleep(120);
-  await page.click('#fm-chat-overlay .fm-modal-header');
+  // FCC-REQ-007: the header is no longer part of the window; blank space inside the window is the padding of the flow.
+  await page.click('#fm-chat-overlay .fm-flow', { position: { x: 3, y: 120 } });
   await sleep(250);
   const outside = await page.evaluate(() => ({
     barHidden: document.querySelector('.fm-select-bar').hidden,
@@ -928,7 +942,7 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
   await clickMenuItem(page, '多选转发');
   await page.click('.fm-flow .fm-msg[data-message-id="102"] .fm-msg-check');
   await sleep(150);
-  await page.click('.fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
   await openConv(page, 'cA');
   const reopened = await barRead(page);
@@ -938,7 +952,7 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
     JSON.stringify(reopened));
   // 多选期间不误触 `.fm-retry` 的读数在进入选择态时已取（见上方 select.retry）。
   // 落点回执（真渲染）：打开**目标会话**窗口，断言实收 N 条且顺序 = 转发序。
-  await page.click('#fm-chat-overlay .fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
   await openConv(page, 'cC');
   const received = await page.$$eval('.fm-flow .fm-msg .fm-msg-text', els => els.map(e => e.textContent));
@@ -1073,7 +1087,7 @@ async function scenarioForwardWindow(page, pageErrors) {
   // 窗内空白一击（面板在场）⇒ 先收面板（多选态保留）
   await page.click('.fm-select-forward');
   await sleep(250);
-  await page.click('#fm-chat-overlay .fm-modal-header');
+  await page.click('#fm-chat-overlay .fm-flow', { position: { x: 3, y: 120 } }); // FCC-REQ-007: blank space of the window itself (the header is no longer part of it)
   await sleep(250);
   const p4 = await page.evaluate(() => ({
     panel: !!document.querySelector('.fm-fwd-modal'),
@@ -1084,7 +1098,7 @@ async function scenarioForwardWindow(page, pageErrors) {
   ok('S4 D7 窗内空白一击：面板在场 ⇒ 只收面板（多选态保留，可原地重开）',
     p4.panel === false && p4.barHidden === false && p4.checks >= 3, JSON.stringify(p4));
   // 再一击（面板不在场）⇒ 既有「点外退出多选」
-  await page.click('#fm-chat-overlay .fm-modal-header');
+  await page.click('#fm-chat-overlay .fm-flow', { position: { x: 3, y: 120 } }); // FCC-REQ-007: blank space of the window itself (the header is no longer part of it)
   await sleep(250);
   const p5 = await page.evaluate(() => ({
     barHidden: document.querySelector('.fm-select-bar').hidden,
@@ -1438,7 +1452,7 @@ async function scenarioFmMicLeg(page, pageErrors) {
     && proc.ariaPressed === 'false',
     JSON.stringify(proc));
   // 关窗收敛（`closeChat` 全路径漏斗调 `modalEls.stopVoice`）
-  await page.click('#fm-chat-overlay .fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
   const closed = await page.evaluate(() => ({
     modal: !!document.querySelector('#fm-chat-overlay'),
@@ -1552,7 +1566,7 @@ async function scenarioJump(page, pageErrors, baseline = false) {
     !!p2 && !p2.keys.includes('replyToMessageId') && !p2.body.startsWith('> [引用'), JSON.stringify(p2 && p2.keys));
 
   // ── B. 群腿：**禁塞**结构化键 + D-1 署名（引用态条 / 出站信封）──────────
-  await page.click('#fm-chat-overlay .fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(350);
   await openConv(page, GCONV);
   await rightClickBubble(page, 601);
@@ -1608,7 +1622,7 @@ async function scenarioJump(page, pageErrors, baseline = false) {
     !!gBlock && gBlock.hasQuote && /甲先生/.test(String(gBlock.quoteText)), JSON.stringify(gBlock && gBlock.quoteText));
 
   // ── C. 坐标双读（帧面结构化键在场 / 缺席两态）──────────────────────────
-  await page.click('#fm-chat-overlay .fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(350);
   await openConv(page, 'cA');
   const sendFrameTo = (cid, payload) => {
@@ -1639,7 +1653,7 @@ async function scenarioJump(page, pageErrors, baseline = false) {
     JSON.stringify(coordRead.envelope));
 
   // ── D. 真跳路径（窗户内滚动 + 高亮 / 键盘 / 回退拉取 / 降级 / 跨会话）──
-  await page.click('#fm-chat-overlay .fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(350);
   await openConv(page, JCONV);
   await sleep(900);
@@ -1726,7 +1740,7 @@ async function scenarioJump(page, pageErrors, baseline = false) {
   ok('S5 降级后**零假跳**：再点该块无任何位移（入口已撤除）', secondClick === true);
 
   // 跨会话坐标 ⇒ 切到目标会话再定位
-  await page.click('#fm-chat-overlay .fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(350);
   await openConv(page, 'cC');
   sendFrameTo('cC', { messageId: 754, senderId: 'u-q', kind: 'text', body: '> [引用 #102] 分页君 · 2026-09-18 10:03 · 明天九点开会\n\n跨会话引用腿', replyToMessageId: 102, replyToConversationId: 'cA' });

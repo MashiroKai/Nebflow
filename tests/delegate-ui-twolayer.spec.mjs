@@ -250,11 +250,9 @@ test('T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）
   await expect(storeChild.locator('.bg-task-kind')).toHaveText('delegate');
   await expect(storeChild.locator('.bg-task-state')).toHaveText('已完成');
 
-  // 徽标计数（行集收敛批 2026-11-02 改口径）：total = 收敛后行集长度（渲染半边
-  // 同源）= 组头 + live 子 + store 子 + dispatcher + node = 5。旧口径
-  // `entries.length + chainChildren` 是独立的一套账（store 子不计 → 签 4 vs 行 5，
-  // 正是「计数与行集不同源」的既有症状面——本批把它并入行集账本，此断言随之 4→5）。
-  await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('5');
+  // Badge (active-count semantics): the list keeps all 5 rows (head + live child + store child + dispatcher + node),
+  // while the badge counts ACTIVE rows only. The completed store child stays visible but is not counted: 4.
+  await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('4');
   expect(pageErrors).toEqual([]);
 });
 

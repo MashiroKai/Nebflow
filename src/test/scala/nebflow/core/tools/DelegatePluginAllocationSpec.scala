@@ -9,7 +9,9 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentCommand}
-import nebflow.agent.SharedResources
+import nebflow.agent.{ExecutionCommitStore, SharedResources}
+import nebflow.core.node.NodeRunner
+import nebflow.shared.{ExecutionAdmission, ExecutionAdmissionObservation}
 import nebflow.core.RateLimiter
 import nebflow.core.delegate.{ChainStore, DelegateRegistry}
 import nebflow.core.entity.BuiltinAgents
@@ -98,9 +100,9 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       val put = IO(capture.update(req.sessionId, req)).void
       fs2.Stream.eval(put).drain ++ fs2.Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
-  private def mkResources(llm: LlmHandle[IO]): IO[SharedResources] =
+  private def mkResources(llm: LlmHandle[IO], ownedDispatcher: Option[Dispatcher[IO]] = None): IO[SharedResources] =
     for
-      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+      dispatcher <- ownedDispatcher.fold(Dispatcher.parallel[IO].allocated.map(_._1))(IO.pure)
       rateLimiter <- RateLimiter.create()
       tracker <- FileChangeTracker.create(os.pwd.toString)
       fileLocks <- FileLockManager.create
@@ -126,6 +128,126 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       actorSystem = null,
       voiceMutedRef = voiceMuted
     )
+
+  test("public protected Delegate admits a local leaf and delivers its terminal result") {
+    val capture = TrieMap.empty[String, LlmRequest]
+    val system = ActorSystem("protected-public-delegate")
+    (Dispatcher.parallel[IO],
+      cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "sessions"))) *>
+        ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)).tupled.use { (dispatcher, authority) =>
+      (for
+        base <- mkResources(new RecordingLlm(capture), Some(dispatcher))
+        resources = base.copy(executionCommitPort = authority, delegateRecoveryMode = Some("local-leaf-b1"),
+          actorSystem = system)
+        before <- resources.subAgentTaskStore.findAllTasks()
+        context = ToolContext(projectRoot = (tempRoot / "general").toString, sessionId = Some("root-x"),
+          actorSystem = Some(system), sharedResources = Some(resources))
+        result <- DelegateTool.call(io.circe.JsonObject("task" -> "Complete this local read-only task".asJson,
+          "mode" -> "kernel".asJson), context)
+        _ = assert(result.isRight, s"supported protected Delegate must be admitted: $result")
+        _ <- waitUntil(30.seconds)(resources.subAgentTaskStore.findAllTasks().map(_.exists(row =>
+          !before.exists(_.taskId == row.taskId) && row.executionStatus.contains("finished"))))
+        after <- resources.subAgentTaskStore.findAllTasks()
+        fresh = after.filterNot(row => before.exists(_.taskId == row.taskId))
+        _ = assertEquals(fresh.size, 1)
+        row = fresh.head
+        run = row.runId.getOrElse(fail("protected Delegate did not retain a task run"))
+        chain <- authority.observeChain(row.taskId, run)
+        envelope <- resources.sessionStore.loadTerminalEnvelope(row.taskId, run)
+      yield
+        assert(capture.contains(row.taskId), "the admitted Agent must call the provider")
+        val terminal = chain match
+          case nebflow.shared.ExecutionChainObservation.Verified(state) => state.phase == "terminal"
+          case _ => false
+        assert(terminal, s"expected committed terminal, got $chain")
+        assert(row.resultRef.nonEmpty, "terminal result must be projected to the existing task run")
+        assert(envelope.exists(_.payload.contains("ok")), "terminal envelope must contain the provider response")
+      ).guarantee(system.stopAll)
+    }
+  }
+
+  test("protected Delegate admission binds the durable candidate and refuses unintegrated spawn") {
+    val admission = ExecutionAdmission(
+      "candidate", "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+      Json.obj("text" -> "initial".asJson), "input"
+    )
+    val capture = TrieMap.empty[String, LlmRequest]
+    (Dispatcher.parallel[IO],
+      cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "protected-sessions"))) *>
+        ExecutionCommitStore.resource((tempRoot / "protected-sessions").toNIO)).tupled.use {
+      (dispatcher, authority) =>
+      for
+        base <- mkResources(new RecordingLlm(capture), Some(dispatcher))
+        resources = base.copy(executionCommitPort = authority, delegateRecoveryMode = Some("local-leaf-b1"))
+        params = NodeRunner.SpawnParams(
+          agentDef = BuiltinAgents.entry(DelegateTool.KernelAgentName).map(_.toAgentDef).get,
+          resources = resources,
+          sessionId = admission.sessionId,
+          sessionName = "candidate",
+          depth = 1,
+          parentRef = None,
+          wsSend = _ => IO.unit
+        )
+        unsupported <- DelegateTool.admitProtectedCandidate(params.copy(isDispatcher = true), admission)
+        before <- authority.observe(admission.sessionId, admission.executionId)
+        bound <- DelegateTool.admitProtectedCandidate(params, admission)
+        observed <- authority.observe(admission.sessionId, admission.executionId)
+        spawned <- bound.fold(reason => IO.raiseError(new IllegalStateException(reason)), p =>
+          NodeRunner.spawnAgentActor(null, p).attempt
+        )
+        carrierOff = resources.copy(delegateRecoveryMode = Some("off"))
+        protection <- carrierOff.executionProtection(admission.sessionId)
+        direct <- carrierOff.spawnAgentActor(null, params.copy(resources = carrierOff)).attempt
+        unknown = base.copy(delegateRecoveryMode = Some("off"))
+        unavailable <- unknown.spawnAgentActor(null, params.copy(resources = unknown)).attempt
+      yield
+        assertEquals(unsupported, Left("unsupported-boundary"))
+        assertEquals(before, ExecutionAdmissionObservation.Missing)
+        assert(bound.isRight)
+        assert(observed.isInstanceOf[ExecutionAdmissionObservation.Verified])
+        assertEquals(protection, nebflow.shared.ExecutionProtection.Protected(List(admission.executionId)))
+        assert(spawned.isLeft)
+        assert(direct.isLeft)
+        assert(unavailable.isLeft)
+        assertEquals(capture.size, 0)
+    }
+  }
+
+  test("protected Delegate spawn records the admitted run as interrupted without executing") {
+    val capture = TrieMap.empty[String, LlmRequest]
+    (Dispatcher.parallel[IO],
+      cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "candidate-sessions"))) *>
+        ExecutionCommitStore.resource((tempRoot / "candidate-sessions").toNIO)).tupled.use { (dispatcher, authority) =>
+      val system = ActorSystem("protected-delegate-preparation")
+      (for
+        base <- mkResources(new RecordingLlm(capture), Some(dispatcher))
+        resources = base.copy(executionCommitPort = authority, delegateRecoveryMode = Some("local-leaf-b1"))
+        before <- resources.subAgentTaskStore.findAllTasks()
+        result <- spawn(resources, "protected preparation", failStartup = true, systemOverride = Some(system)).attempt
+        after <- resources.subAgentTaskStore.findAllTasks()
+        fresh = after.filterNot(row => before.exists(_.taskId == row.taskId))
+        candidates <- authority.candidates
+        binding <- fresh match
+          case row :: Nil => authority.observe(row.taskId, row.runId.get)
+          case _ => IO.pure(ExecutionAdmissionObservation.Missing)
+      yield
+        assert(result.isLeft)
+        assertEquals(fresh.size, 1)
+        val row = fresh.head
+        assertEquals(row.status, "pending-recovery")
+        assertEquals(row.executionStatus, Some("interrupted"))
+        assertEquals(row.notificationPending, Some(false))
+        assertEquals(candidates.toOption.get.map(_.sessionId), List(row.taskId))
+        assertEquals(candidates.toOption.get.head.protection,
+          nebflow.shared.ExecutionProtection.Protected(List(row.runId.get)))
+        val record = binding.asInstanceOf[ExecutionAdmissionObservation.Verified].record
+        assertEquals(record.sessionId, row.taskId)
+        assertEquals(record.executionId, row.runId.get)
+        assertEquals(record.ownerBinding, "root-x")
+        assertEquals(record.businessBinding, row.runId.get)
+        assertEquals(capture.size, 0)).guarantee(system.stopAll)
+    }
+  }
 
   /**
    * 分配桩面：固定集合 + 调用记录。⚠️ 必须在 `mkResources` **之后**调用——
@@ -207,8 +329,11 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
   test("spawn leg: the allocated set rides the brief and the grant, and lands in the queryable records") {
     writeSkillPlugin("p1", "DELEGATE-ALLOC-MARKER")
     val capture = TrieMap[String, LlmRequest]()
+    (cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "sessions"))) *>
+      ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)).use { authority =>
     for
-      res <- mkResources(new RecordingLlm(capture))
+      base <- mkResources(new RecordingLlm(capture))
+      res = base.copy(executionCommitPort = authority)
       // 桩装在 mkResources 之后（生产 face 构造即装配，先装会被覆盖——见 installStub 注）。
       calls = installStub(List("p1"))
       (spawned, shutdown) <- spawn(res, "ship the report")
@@ -234,6 +359,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       assertEquals(holds.get(sid), None, "a skills-only package holds no MCP server")
       assert(ack.contains(sid), "the ack carries the continuation address payload")
     end for
+    }
   }
 
   test("spawn leg allocation failure refuses execution by default") {
@@ -258,8 +384,11 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
     )
     writeSkillPlugin("p1", "FALLOPEN-ME") // 目录非空——否则 empty-catalog 短路先于分配端口
     val capture = TrieMap[String, LlmRequest]()
+    (cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "sessions"))) *>
+      ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)).use { authority =>
     for
-      res <- mkResources(new RecordingLlm(capture))
+      base <- mkResources(new RecordingLlm(capture))
+      res = base.copy(executionCommitPort = authority)
       // 全败桩（显式模拟两臂全败：Jev 腿败 + LLM 兜底败 → 端口 Failure fail-open）。
       // 不能靠「端口未注册」模拟——mkResources 已装生产 face，桩必须在其后覆盖。
       calls = installFailingStub()
@@ -275,13 +404,17 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       assert(!first.contains("<injected-plugins>"), "an empty allocation ⇒ byte-identical legacy brief")
       assertEquals(rec.flatMap(_.plugins), Some(Nil), "fail-open is an explicit empty allocation (Some(Nil), not None)")
     end for
+    }
   }
 
   test("spawn leg off: the allocator absent (port unregistered) records no set — None, not Some(Nil)") {
     writeSkillPlugin("p1", "OFF-ME") // 目录非空——分配面被咨询且以 Off 回落（非 empty-catalog）
     val capture = TrieMap[String, LlmRequest]()
+    (cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "sessions"))) *>
+      ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)).use { authority =>
     for
-      res <- mkResources(new RecordingLlm(capture))
+      base <- mkResources(new RecordingLlm(capture))
+      res = base.copy(executionCommitPort = authority)
       // mkResources 之后 clear：拆走生产 face = 端口未注册 = Off（分配动作未发生）。
       _ = PluginAllocator.clear()
       (spawned, shutdown) <- spawn(res, "plain task")
@@ -294,6 +427,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       val first = capture.values.head.messages.head.textContent
       assert(!first.contains("<injected-plugins>"), "Off ⇒ byte-identical legacy brief")
       assertEquals(rec.flatMap(_.plugins), None, "an allocation that never ran records no set (None)")
+    }
   }
 
   test("spawn leg refuses explicitly when a chosen package fails resolution (分配失败是节点级失败，不静默降级)") {

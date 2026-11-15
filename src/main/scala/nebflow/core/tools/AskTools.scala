@@ -16,13 +16,13 @@ import scala.util.control.NonFatal
 /* ═══════════════════════════════════════════════════════════════════════════
  * Canvas ask mode 工具面（机制稿 §5/§7，实施批 2026-10-28；2026-10-31 换装批：
  * 上午批的 read_file_content 单件路线退役——只读五件 Read/Glob/Grep/WebSearch/
- * WebFetch 取代之（AgentCore.SubagentFixedTools 同源，见 AskSessions.AllowedTools
+ * WebFetch 取代之（独立白名单，见 AskSessions.AllowedTools
  * 注），本文件不再承载任何只读文件工具）
  *
  * ask 专属两件（AskSessions.AskExclusiveTools 单点；通用只读五件在各自工具文件）：
  *   - message_record_search —— 消息检索 CLI 封装（tools/stand-recall，只读）；
- *   - send_message_to_main_chat —— 单向信使（§7 ask_handoff；ask 会话唯一的
- *     对外动作），经 AskHandoffPort 注册器投递（gateway 侧 ensureAgent 主会话
+ *   - send_message_to_main_chat: Ask's message channel to the main session,
+ *     delivered through AskHandoffPort (gateway ensureAgent main session
  *     ! ExternalEvent(source="ask") ⇒ injected 气泡 + 来源行引擎呈现链）。
  *
  * 双保险（终态申报工具挂载先例，该通道已退役）：挂载面 = buildAllowedToolSet 早退集
@@ -60,7 +60,7 @@ object SendMessageToMainChatTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Send a handoff request to the MAIN session (the only outbound action an ask session has). Use it ONLY when the user explicitly asks to have the main session handle/follow up/execute something. After sending, tell the user it was sent and that the main session can ask back — then stay in this window and keep serving. Payload becomes an injected message in the main session tagged with this file's ask source."""
+    """Send a handoff request to the MAIN session (the ask session's message channel to the main session). Use it ONLY when the user explicitly asks to have the main session handle/follow up/execute something. After sending, tell the user it was sent and that the main session can ask back — then stay in this window and keep serving. Payload becomes an injected message in the main session tagged with this file's ask source."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -253,4 +253,3 @@ object MessageRecordSearchTool extends Tool:
     end if
   end call
 end MessageRecordSearchTool
-

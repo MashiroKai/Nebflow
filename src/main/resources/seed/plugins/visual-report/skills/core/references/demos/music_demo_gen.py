@@ -7,7 +7,11 @@
 输出：wav + 3 张 SVG → ~/.nebflow/plots/vrs2-music/；PNG 副本 → 本工作区 .nebflow/tmp/（目检用）。
 """
 import os
-os.environ.setdefault('MPLCONFIGDIR', r'C:\Users\Kai\.nebflow\tools\mplconfig')
+import tempfile
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
+os.environ.setdefault('MPLCONFIGDIR', os.path.join(DATA_ROOT, "tools", "mplconfig"))
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -35,8 +39,9 @@ ACCENT = '#5e6ad2'      # 亮色主题数据色（SVG 暗色块覆写为 #a0a8e8
 NEUTRAL = '#6f7480'     # 次级线条/文字（暗色覆写 #7a8194）
 GRID = '#8a8f98'
 
-OUT = r'C:\Users\Kai\.nebflow\plots\vrs2-music'
-TMP = r'C:\Users\Kai\.nebflow\projects\general\.nebflow\tmp'
+OUT = os.path.join(DATA_ROOT, 'plots', 'vrs2-music')
+os.makedirs(OUT, exist_ok=True)
+TMP = tempfile.mkdtemp(prefix="stand-visual-report-")
 os.makedirs(OUT, exist_ok=True)
 os.makedirs(TMP, exist_ok=True)
 

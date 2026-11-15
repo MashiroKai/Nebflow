@@ -44,7 +44,7 @@ description: 生物/药物分子报告（rdkit 结构与描述符）；分子结
 
 ## 3. 工具链与自检
 
-rdkit 是本场景主引擎：SMILES 解析、2D 排版（MolDraw2DSVG）、3D 坐标（ETKDGv3 + MMFF94s）、描述符（Descriptors / Crippen / Lipinski）全链路；matplotlib 只做性质谱的绘图层。**2026-10-04 实测**（viz-venv = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`，Python 3.12.9）：
+rdkit 是本场景主引擎：SMILES 解析、2D 排版（MolDraw2DSVG）、3D 坐标（ETKDGv3 + MMFF94s）、描述符（Descriptors / Crippen / Lipinski）全链路；matplotlib 只做性质谱的绘图层。**2026-10-04 实测**（viz-venv = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`，Python 3.12.9）：
 
 | 工具 | 用途 | 本机检测命令（实测 2026-10-04） | 官方链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|

@@ -121,6 +121,8 @@ async function openSettings(page) {
     (await import('/js/sidebar.js')).openSettingsPanel();
     document.getElementById('settings-overlay')?.classList.add('on');
   });
+  // Providers is a progressive-disclosure section: the unified panel mounts only once the user expands it.
+  await page.evaluate(() => document.querySelector('[data-settings-disclosure="providers"]')?.click());
   await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 10000 });
 }
 

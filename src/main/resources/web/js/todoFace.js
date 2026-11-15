@@ -1302,7 +1302,14 @@ class TodoFace {
     if (this.selectedId && !nextIds.has(this.selectedId)) this.selectedId = null;
     if (this.editingId && !nextIds.has(this.editingId)) this.editingId = null;
 
-    // 行内创建行在场时：只重画创建行之前的行（创建行 DOM 保输入态）
+    // Keep the live draft node across unrelated store updates. Only a row that is already in
+    // editing state is reusable: startEditing sets editingId first, so the plain row found at
+    // that moment must be rebuilt into the edit form instead of being kept.
+    const createRow = this.creating ? (this.mobile && this.sheetBody ? this.sheetBody : this.listInner).querySelector('.tfl-create-row') : null;
+    const editRow = this.editingId ? this.listInner.querySelector(`.tfl-row.tfl-row-editing[data-id="${CSS.escape(this.editingId)}"]`) : null;
+    const draftNode = createRow || editRow;
+    const focused = /** @type {HTMLInputElement|HTMLTextAreaElement|null} */ (draftNode && draftNode.contains(document.activeElement) ? document.activeElement : null);
+    const selection = focused ? [focused.selectionStart, focused.selectionEnd] : null;
     this.listInner.textContent = '';
     // 抽屉宿主（手机腿）同拍清场：表单只在一处，绝不同屏两份
     if (this.mobile && this.sheetBody) this.sheetBody.textContent = '';
@@ -1312,7 +1319,7 @@ class TodoFace {
         this.listInner.appendChild(this.completingEls.get(item.id));
         continue;
       }
-      const row = this.buildRow(item, item.id === this.editingId);
+      const row = item.id === this.editingId && editRow ? editRow : this.buildRow(item, item.id === this.editingId);
       if (!REDUCED_MOTION && !this.enteredIds.has(item.id) && !this.expandedJustRendered) {
         row.classList.add('tfl-row-enter');
       }
@@ -1322,7 +1329,11 @@ class TodoFace {
     this.expandedJustRendered = false;
     // 创建行宿主：手机页面态 = 底部抽屉（列表不再被常驻表单挤成一条）；桌面 = 流内
     if (this.creating) {
-      (this.mobile && this.sheetBody ? this.sheetBody : this.listInner).appendChild(this.buildCreateRow());
+      (this.mobile && this.sheetBody ? this.sheetBody : this.listInner).appendChild(createRow || this.buildCreateRow());
+    }
+    if (focused) {
+      focused.focus({ preventScroll: true });
+      if (selection && selection[0] != null && selection[1] != null) focused.setSelectionRange(selection[0], selection[1]);
     }
     if (!items.length && !this.creating) this.listInner.appendChild(this.buildEmpty());
     if (typeof createIconsIn === 'function') {
@@ -1682,26 +1693,15 @@ class TodoFace {
     const text = ta.value;
     if (!text.trim()) return;
     // 逐字形态：井号 + 待办名 + 一个空格 + 回复正文（多行原样保留换行）
-    const body = `#${item.name} ${text}`;
-    let send;
-    let composer;
+    const body = `#${item.name}·${item.id} ${text}`;
+    let sent = false;
     try {
-      const mod = await import('./input.js');
-      send = mod.send;
-      const view = await import('./chatView.js');
-      composer = (view.activeView && view.activeView.dom && view.activeView.dom.input)
-        || document.getElementById('input');
+      const { sendPrimaryTodoReply } = await import('./input.js');
+      sent = sendPrimaryTodoReply(body);
     } catch (err) {
       console.error('[todoFace] reply 出口不可得:', err);
-      return;
     }
-    if (typeof send !== 'function' || !composer) return;
-    composer.value = body;
-    // 冒泡 input 事件 = 输入模块既有监听（auto-grow / 活动视图锚定）的入口
-    composer.dispatchEvent(new Event('input', { bubbles: true }));
-    send();
-    // send() 消费了输入框 = 已派发或已入队（它自己清空）；否则保留输入内容
-    if (composer.value === '') {
+    if (sent) {
       ta.value = '';
       this.closeItemBox();
     }

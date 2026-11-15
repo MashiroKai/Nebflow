@@ -71,9 +71,10 @@
   /* 记事本批（2026-11-05）：记事本窗高（拖拽状态机写这条 —— 与 --ask-col-maxh
    * 同档位、同一份 resizeLimits；默认高取「一页便签」量级，不遮挡文档主体）。 */
   --note-h: 240px;
-  /* 顶缘渐隐衰减区高（毛玻璃批 2026-11-06 起载体 = askDock.js syncAskFade 逐泡
-   * opacity：泡顶到列顶的距离在 --ask-fade-h 内线性落 alpha；mask 载体已退役
-   * —— mask 是 backdrop root，会架空子气泡的 backdrop-filter）。
+  /* Height of the clearance band at the top of the bubble column. No per-bubble
+   * opacity or mask carries a fade here any more (a mask makes the column a backdrop
+   * root and defeats the bubbles' blur; a whole-bubble opacity washes the history out):
+   * the band is plain padding, so a bubble crossing the top edge is clipped, never dimmed.
    * ── 短渐隐批（作者令 2026-11-05 09:32「顶部的渐隐效果要非常端距离完成」）──
    * 值 64px（手机 56px）→ **12px**。理由与选值：
    *   · 64px ≈ 3 行正文（行高 1.6 × 13.5px = 21.6px），衰减区比一行字还高两倍，
@@ -282,6 +283,9 @@ nf-ask-dock { display: contents; }
   padding: 0;
   transform: translateY(calc(10px + var(--ask-seed-size)));
 }
+.note-dock.closed .note-body {
+  transform: translateX(calc(-1 * (var(--ask-fab-size) + var(--ds-space-2)))) translateY(calc(10px + var(--ask-seed-size)));
+}
 
 /* ═══ 可拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄
  *     可见、热区 ≥44px，按 Apple HIG）」）════════════════════════════════
@@ -402,13 +406,13 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * mask 载体再退役：mask 使 .ask-col 成为 **backdrop root**，子气泡的
  * backdrop-filter 只能采样本子树（= 透明）⇒ 真模糊被架空，气泡只剩 α 洗色
  * （作者指认的「半透明效果」；改前像素实证：气泡元素实拍摘 blur 前后
- * mean|Δlum| = 0.22 ≈ 0）。渐隐载体改 **askDock.js syncAskFade 逐泡 opacity**
- * ——「降低透明度到 0 的过程」语义逐字保留（2026-11-04 令不撤，只换载体），
- * 且 opacity 是「内容本体透明度」的最后一种无 backdrop-root 形态。
- *   · 顶缘 --ask-fade-h 衰减档不变：泡顶到列顶的距离线性落 alpha；
- *   · 交互不受影响（opacity 不参与 hit-test）；输入条在列外不受影响；
- *   · 防复活钉：tests/ask-glass-drag.spec.mjs G2（像素）+ ask-sheet-fade-height
- *     A0b/D3（源码面：.ask-col 零 mask、syncAskFade 单实现）。
+ * mean|Δlum| = 0.22 ≈ 0）。渐隐载体曾改为逐泡 opacity，该载体已退役（FCC-REQ-004）：
+ * 整泡 opacity 让可见历史的正文整体发虚，与「历史气泡可读、不透底」冲突。现状：
+ * 顶缘不再有任何透明度渐变，滚出列顶的气泡由列容器裁切，可见部分恒不透明。
+ *   · --ask-fade-h 仅保留为列顶净空（padding），不再驱动 alpha；
+ *   · 防复活钉：tests/chat-composer-consumers.spec.mjs FCC-SCN-006（任意滚动位的
+ *     气泡计算 opacity 恒为 1）+ ask-glass-drag G2（像素）+ ask-sheet-fade-height A0b/D3
+ *     （源码面：.ask-col 零 mask、askDock.js 零 opacity 写入）。
  * 本文件零 veil 材质残留（--ds-fade-veil / backdrop-filter 一概不引）；主对话窗
  * #g2-edge-fade 的遮罩条手法照旧（爆炸半径不扩大）。
  *
@@ -451,12 +455,10 @@ body.mobile-layer .note-dock .ds-resize-handle {
    * mask 使本元素成为 backdrop root，子气泡的 backdrop-filter 只能采样本子树
    * （= 透明），模糊被架空 ⇒ 气泡只剩 α 洗色 = 作者指认的「半透明效果」。
    * 改前实证（dec-maskOn vs dec-blurOff 元素实拍）：mean|Δlum| = 0.22 ≈ 0（模糊
-   * 死）；摘 mask 后 11.9（模糊活）。顶缘渐隐改由 askDock.js syncAskFade 逐泡
-   * opacity 承担（同一 12px 衰减档，内容本体透明度渐到 0 —— ask-fade-content-
-   * opacity 批 2026-11-04 的语义不变，只换实现载体）；底缘不再渐隐：气泡滑入
-   * 输入条带时由输入条自身的玻璃模糊软化（「穿过玻璃」的正确形态）。
-   * 防复活钉：tests/ask-glass-drag.spec.mjs G2（像素）+ ask-sheet-fade-height
-   * A0b（源码面）。 */
+   * 死）；摘 mask 后 11.9（模糊活）。顶缘不再做任何透明度渐变（FCC-REQ-004）：
+   * 底缘同样不渐隐，气泡滑入输入条带时由输入条自身的玻璃模糊软化（「穿过玻璃」
+   * 的正确形态）。防复活钉：tests/ask-glass-drag.spec.mjs G2（像素）+
+   * ask-sheet-fade-height A0b（源码面）。 */
   /* 底缘净空（作者令同日②「让 ask 的聊天 可以拉动到聊天框之上 现在被聊天框
    * 挡住了一部分」）：padding-bottom = 输入条半高 + 列缝。列盒底被穿入批钉在
    * 输入条垂直中线（上方 colwrap 的负 margin，几何不动），旧档内容可直达中线
@@ -534,11 +536,8 @@ body.mobile-layer .note-dock .ds-resize-handle {
    其他前面的消息又是半透明的了」的**根因就是这一条**：α 直接压在本体 opacity 上，
    毛玻璃底随之一起变透，底下的文档正文透上来。
    与「毛玻璃一律不透底」（作者 2026-11-05 16:46 令）正面冲突 ⇒ 整条规则删除，
-   气泡本体的 opacity 恒为 1（毛玻璃批 2026-11-06 后的窄例外：顶缘 12px 位置
-   渐隐由 syncAskFade 写 opacity —— 只作用于滚出列顶的内容）。**顶缘 12px 位置
-   渐隐保留**（作者 2026-11-04
-   09:22 明令要的「消息自身 alpha 渐到 0」，是位置渐隐、只作用于滚出列顶的内容），
-   两者不是一回事：前者让整条历史消息发虚且可读性塌，后者只在滚出边界处淡出。 */
+   气泡本体的 opacity 恒为 1：既不按年龄、也不按滚动位置（FCC-REQ-004；此前的
+   顶缘逐泡 opacity 渐隐一并退役——滚出列顶的内容由列容器裁切）。 */
 
 /* 输入框（作者令②：点击入口弹出的就是它；v2.1 减法 = 输入 + 右侧唯一发送钮）
  * 三修③：条材质 = canvas 查找条 .nf-findbar 同款（--cv-* 单源 + --cv-radius-bar）；
@@ -692,6 +691,8 @@ body.mobile-layer .ask-fab {
 }
 body.mobile-layer .ask-dock,
 body.mobile-layer .note-dock {
+  --ask-fab-gap: 12px;
+  --ask-fab-size: 48px;
   --ask-dock-w: calc(100% - 24px);
   /* 消息区加高（作者令 2026-11-03 ②「把 Ask 对话窗口里消息区域的高度再调高一点，
    * 让它能有更多空间显示内容」）：250 → clamp(320, 46vh, 420)。

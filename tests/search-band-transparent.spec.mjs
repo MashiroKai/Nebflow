@@ -306,8 +306,11 @@ test.describe('手机搜索透明顶带', () => {
         expect(Math.round(rest.band.top), `① ${pageId} 带贴页顶`).toBe(0);
         expect(Math.round(rest.band.height), `① ${pageId} 带高 = ${BAND_H}`).toBe(BAND_H);
 
-        // ── ② 结构：滚区顶边 = 页顶；让位内距在滚区内部（可滚走）──────────
-        expect(Math.round(rest.scroller.rect.top), `② ${pageId} 滚区顶边 = 页顶 0`).toBe(0);
+        // ── ② 结构：滚区顶边 = 页体盒顶；让位内距在滚区内部（可滚走）────────
+        // 「手机页顶底让位」批起 nohead 页体顶留白 = --mtitle-lead 12+safe ——
+        // 滚区顶边不再是 0，而是页体的 12px 顶留白；带仍浮于页顶、内容经滚区
+        // 内距穿过（① 判据不变）。
+        expect(Math.round(rest.scroller.rect.top), `② ${pageId} 滚区顶边 = 页体顶留白 12`).toBe(12);
         expect(rest.scroller.paddingTop, `② ${pageId} 让位内距 = 带高 + 4（住在滚区内部）`).toBe(`${BAND_H + 4}px`);
         expect(rest.scroller.overflowY, `② ${pageId} 滚区仍是自滚容器`).toBe('auto');
         expect(Math.round(rest.firstRow.top), `② ${pageId} 静止时首行仍在带下（不让内容顶到圆钮脸上）`)
@@ -317,7 +320,10 @@ test.describe('手机搜索透明顶带', () => {
         // 判别性判据 = 滚区顶边（0 ⇒ 内容画得到带区）+ 带内 elementFromPoint；
         // straddle 是「此刻确有行跨在带底线上」的描述性读数（配套截图主镜头）。
         expect(str.bar.collapsed, `③ ${pageId} 上滚后已收成圆钮`).toBe(true);
-        expect(Math.round(str.scroller.rect.top), `③ ${pageId} 收起态滚区顶边仍 = 0`).toBe(0);
+        // 「手机页顶底让位」批起 nohead 页体顶留白 = --mtitle-lead 12+safe ——
+        // 收起态滚区顶边 = 页体顶留白 12（不再是 0）；判别性不变量 = 内容仍画得进
+        // 带区（顶边 ≪ 带底，straddle 腿继续钉）。
+        expect(Math.round(str.scroller.rect.top), `③ ${pageId} 收起态滚区顶边 = 页体顶留白 12`).toBe(12);
         expect(str.straddle, `③ ${pageId} 存在「跨带底沿」的行（内容穿进带内）`).not.toBeNull();
         expect(str.straddle.top, `③ ${pageId} 跨带行顶 < 带底（不被切平）`).toBeLessThan(str.band.bottom);
         expect(Math.round(str.straddle.bottom), `③ ${pageId} 跨带行底 > 带底（行体确实跨过裁切线）`)
@@ -333,8 +339,8 @@ test.describe('手机搜索透明顶带', () => {
         // 内容从带内穿行是作者 17:34 的原令），但**条本体必须走唯一毛玻璃标准**
         // （作者本批原令「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果 比如消息和
         // 联系人的手机端的搜索框」）。旧的「长条仍无毛玻璃」断言随之换代。
-        expect(rest.bar.backdropFilter, `④ ${pageId} 长条吃毛玻璃配方（-nf-glass-filter）`)
-          .toMatch(/blur\(40px\)\s+saturate\(1\.4\)/);
+        expect(rest.bar.backdropFilter, `④ ${pageId} 长条吃毛玻璃配方（唯一材质 blur 24px / saturate 1.15）`)
+          .toMatch(/blur\(24px\)\s+saturate\(1\.15\)/);
 
         // ── ③′ 滚回顶部 ⇒ 还原长条（既有语义不受扰）────────────────────
         await page.evaluate((pid) => {

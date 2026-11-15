@@ -1,4 +1,4 @@
-// search-batch-open-canvas.spec.mjs — 搜索多选文件 ⇒ 一键批量在 Canvas 打开
+// search-batch-open-canvas.spec.mjs — 搜索多选文件 ⇒ 一键批量打开所选文件
 // （chatsearch-batch-open 批验收。wave-1 = 82b0c42bc：选中面收集
 // selectedFilesForCanvas + 动作钮 #search-open-selected-files + 逐件走
 // openPopArtifact 单点；wave-2 补 locale 键面 + 本 spec。）
@@ -14,7 +14,7 @@
 //   B4  Files 栏目腿：typed 条目卡（type='file'）同样入选可计数；Cmd/Ctrl+A
 //       全选 3 卡（含同路径复件）⇒ 计数仍 2（去重在收集面，不在选择集）。
 //   B5  重渲染复位：重开模态（面重建）⇒ 选择态清零、钮回隐。
-//   B6  locale：zh 字面「在 Canvas 打开 (N)」/ en 字面 'Open in Canvas (N)'；
+//   B6  locale：zh 字面「打开所选文件 (N)」/ en 字面 'Open selected files (N)'；
 //       模态开着切 locale ⇒ 钮文案随换（renderStaticLabels 腿）。
 //   B7  keyword 检索腿诚实缺席：命中全是不可开行（服务端剥 tool 片的同构夹具）
 //       ⇒ 全选后计数 0 ⇒ 钮保持隐藏。
@@ -322,7 +322,7 @@ async function localeLeg(browser, ENGINE, { tag = 'locale-en' }) {
   await cmdClick(page, ART_ROWS, 1);
   await page.waitForTimeout(150);
   let st = await btnState(page);
-  check('B6 en 字面 = Open in Canvas (2)', st.text === 'Open in Canvas (2)', JSON.stringify(st));
+  check('B6 en 字面 = Open selected files (2)', st.text === 'Open selected files (2)', JSON.stringify(st));
   await page.screenshot({ path: shot });
 
   // 模态开着切 zh ⇒ locale-changed ⇒ renderStaticLabels 腿换文案。
@@ -333,11 +333,11 @@ async function localeLeg(browser, ENGINE, { tag = 'locale-en' }) {
   await page.waitForTimeout(300);
   st = await btnState(page);
   check('B6 模态开着切 locale ⇒ 钮文案随换 zh 键面（重绘清选择态 = C5 既有语义）',
-    st.text.startsWith('在 Canvas 打开 ('), JSON.stringify(st));
+    st.text.startsWith('打开所选文件 ('), JSON.stringify(st));
   await cmdClick(page, ART_ROWS, 0);
   await page.waitForTimeout(150);
   st = await btnState(page);
-  check('B6 换肤后重选 ⇒ zh 字面插值「在 Canvas 打开 (1)」', st.text === '在 Canvas 打开 (1)',
+  check('B6 换肤后重选 ⇒ zh 字面插值「打开所选文件 (1)」', st.text === '打开所选文件 (1)',
     JSON.stringify(st));
 
   check('locale 腿零 console error', consoleErrors.length === 0, consoleErrors.join(' | '));

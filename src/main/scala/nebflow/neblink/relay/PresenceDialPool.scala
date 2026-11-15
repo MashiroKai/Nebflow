@@ -16,7 +16,7 @@ import java.util.concurrent.{
 /**
  * presence 拨号专用阻塞池（presence-dial-overhaul 批 2026-11-04，作者 13:05 批「可以派」）。
  *
- * == 病灶（KAI 批实测，本批 P2 的直接依据） ==
+ * == 病灶（Windows 实机批实测，本批 P2 的直接依据） ==
  *
  * 改前 `dialCandidates` 用 `IO.blocking(openConnection(...))` 拨候选。**`IO.blocking` 在
  * cats-effect 3.6 的 WSTP 上并不换线程**——`WorkerThread.canExecuteBlockingCodeOn(pool)`
@@ -24,7 +24,7 @@ import java.util.concurrent.{
  * `pool eq 自己的池`），于是阻塞体**就地跑在 `io-compute-N` 工作线程上**，只把该 worker
  * 标成 blocking（`prepareForBlocking`）并让 `io-compute-blocker` 接手它的队列。
  *
- * 后果（KAI 场景实测）：一次 presence 拨号轮 = 两个候选串行各付满预算 = **4500ms**，
+ * 后果（Windows 实机场景实测）：一次 presence 拨号轮 = 两个候选串行各付满预算 = **4500ms**，
  * 期间**一条 compute 工作线程整段被占**；多设备并发拨号时 blocker 池被占满，
  * 12:52 那条 **11.3s 冷开离群**正是它造成的（`20261104_113647_kai-probe-tax.md` §5）。
  *

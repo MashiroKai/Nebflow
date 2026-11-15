@@ -33,6 +33,7 @@ const PANEL_ELEM_ID = 'panel-' + PANEL_ID;
 /** 当前面板承载的批次（openDiffBatch 记录；chip 激活态与 toggle 判据）。
  *  @type {string | null} */
 let currentBatchKey = null;
+let batchGeneration = 0;
 /** 当前批次的载荷（行点击 → canvas 聚焦用）。
  *  @type {any} */
 let currentPayload = null;
@@ -204,9 +205,11 @@ function renderBatch(payload) {
   files.forEach((f, i) => {
     const row = buildFileRow(f, i);
     const open = () => {
+      const generation = batchGeneration;
       syncActiveRow(i);
       list.querySelectorAll('.nf-fc-openfail').forEach((el) => el.classList.remove('nf-fc-openfail'));
       import('./diffCanvas.js').then(({ openFileChangesCanvas }) => {
+        if (generation !== batchGeneration) return;
         const entry = openFileChangesCanvas(payload, { focusIndex: i });
         if (!entry) setMetaError(row); // canvas 容器不在（openTab null）——可见失败，禁静默
         else setMetaTotals(); // 成功 = 失败面清除（错误态不残留）
@@ -229,6 +232,19 @@ export function initDiffPanel() {
   if (initialized) return;
   initialized = true;
   ensurePanelDom();
+  document.addEventListener('canvas-tab-closed', async (event) => {
+    const closedKey = currentBatchKey;
+    if (closedKey === null || (/** @type {CustomEvent} */ (event)).detail?.id !== `filechanges:${currentBatchKey}`) return;
+    const closeGeneration = ++batchGeneration;
+    currentBatchKey = null;
+    currentPayload = null;
+    syncChipActive(null);
+    try {
+      const bar = await import('./activityBar.js');
+      if (currentBatchKey !== null || closeGeneration !== batchGeneration) return;
+      if (document.getElementById(PANEL_ELEM_ID)?.classList.contains('active')) bar.setSideBarCollapsed(true);
+    } catch { /* sidebar unavailable */ }
+  });
   import('./activityBar.js').then(({ registerSidePanel }) => {
     // 无 Activity Bar 按钮（buttonId 落空）——面板只由交付消息上的摘要条唤起；
     // registerSidePanel 对缺失按钮安全（map 先登记、btn 判空后置）。
@@ -244,6 +260,7 @@ export function initDiffPanel() {
  */
 export async function openDiffBatch(payload, opts = {}) {
   const key = batchKeyOf(payload);
+  const generation = ++batchGeneration;
   currentBatchKey = key;
   currentPayload = payload;
   ensurePanelDom();
@@ -260,10 +277,12 @@ export async function openDiffBatch(payload, opts = {}) {
   syncActiveRow(Number(opts.focusIndex) || 0);
   try {
     const bar = await import('./activityBar.js');
+    if (generation !== batchGeneration) return;
     bar.showSidePanel(PANEL_ID);
   } catch { /* 注册表不可达——面板类已切，可见性交给既有面板族样式 */ }
   try {
     const { openFileChangesCanvas } = await import('./diffCanvas.js');
+    if (generation !== batchGeneration) return;
     const entry = openFileChangesCanvas(payload, { focusIndex: Number(opts.focusIndex) || 0 });
     if (!entry) {
       // 二次加载清剿批：canvas 通道不可用（容器不在）不再静默——meta 槽可见失败

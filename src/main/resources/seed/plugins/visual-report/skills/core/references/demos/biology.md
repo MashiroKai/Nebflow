@@ -53,5 +53,5 @@ rdkit 2026.03.6 计算（viz-venv 实跑逐字输出；阈值列 Lipinski Ro5 �
 - SMILES / 分子式 / PubChem MW：PubChem PUG REST（CID 2244 / 2519，2026-10-04 逐字取得）；
 - 描述符 / 3D 坐标 / 能量：rdkit 2026.03.6（viz-venv，Python 3.12.9）；
 - 一键复算（stdout 逐字重印上表数值并重新出图，seed 固定故能量与坐标逐位复现）：
-  `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\biochem_biology_demo.py`
+  `C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe C:\Users\name\.nebflow\skills\visual-report-suite\demos\biochem_biology_demo.py`
 - 源脚本：`./biochem_biology_demo.py`（demos 目录内）；出图落 `~/.nebflow/plots/vrs2-biochem/`。

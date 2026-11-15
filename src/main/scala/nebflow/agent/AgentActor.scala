@@ -1074,7 +1074,11 @@ object AgentActor extends AgentCore with AgentSession:
      */
     sessionDeviceWorkspace: Option[String] = None,
     /** 派发时刻钉定的模型链快照（provider-concurrency 批）。None = 不钉（既有行为）。唯一写入点 = SharedResources.spawnAgentActor。 */
-    providerChainPin: Option[nebflow.llm.PinnedChain] = None
+    providerChainPin: Option[nebflow.llm.PinnedChain] = None,
+    /** Explicit protected recovery restores the verified checkpoint execution state. */
+    initialState: Option[AgentState] = None,
+    /** Explicit protected recovery continues at the next legal turn boundary. */
+    continueOnSpawn: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -1094,12 +1098,16 @@ object AgentActor extends AgentCore with AgentSession:
       // NOTE: `ctx.self !` returns IO[Unit] — a bare statement would be
       // built-not-run (2026-08-30 probe: setup-time self-send silently
       // dropped), so it MUST be sequenced into the factory's IO.
-      (ctx.self ! AgentCommand.RecoverPersistedQueues) *>
+      (if sessionId.exists(resources.protectedExecutions.contains) then IO.unit
+       else ctx.self ! AgentCommand.RecoverPersistedQueues) *>
         // 乒乓压缩重启恢复自投（主会话无感上下文压缩一期，2026-10-09 spec §E-7/8）：
         // phase=compacting → 作废重触发；phase=s-ready → S 续用换入（幂等闸防重换）。
         // 仅根会话非 no-op（recoverAtIdle 内含 RootAgentIdentity 谓词闸，此处
         // 同谓词预筛避免无谓 IO）；邮箱序保证先于任何外部投递处理。
         (if RootAgentIdentity.isRootAgent(Some(agentDef), depth) then ctx.self ! AgentCommand.PingpongRecover
+         else IO.unit) *>
+        (if continueOnSpawn && sessionId.exists(resources.protectedExecutions.contains) then
+           ctx.self ! AgentCommand.ContinueProtectedRun
          else IO.unit) *>
         IO.pure(
           idle(
@@ -1107,48 +1115,62 @@ object AgentActor extends AgentCore with AgentSession:
             resources,
             depth,
             parentRef,
-            AgentState(
-              messages = initialMessages,
-              status = AgentStatus.Idle,
-              depth = depth,
-              sessionId = sessionId,
-              sessionName = sessionName,
-              pendingCompaction = None,
-              latestUsage = None,
-              pendingAskUser = None,
-              pendingPermission = None,
-              wsSend = wsSend,
-              readTracker = readTracker,
-              fileHistory = fileHistory,
-              contextWindow = contextWindow,
-              projectRoot = projectRoot,
-              rulesMd = rulesMd,
-              agentsMd = agentsMd,
-              folderId = folderId,
-              safetyMode = safetyMode,
-              gitBranch = gitBranch,
-              expectsMail = expectsMail,
-              rootSessionId = effectiveRootSessionId,
-              isSubTaskWorker = isSubTaskWorker,
-              freezeExempt = freezeExempt,
-              isFlowNode = isFlowNode,
-              userFacingNode = userFacingNode,
-              flowNodeId = flowNodeId,
-              isDispatcher = isDispatcher,
-              flowNodeRole = flowNodeRole,
-              projectName = projectName,
-              taskId = taskId,
-              flowNodeName = flowNodeName,
-              flowChainId = flowChainId,
-              sandboxEnabled = sandboxEnabled,
-              sandboxRoot = sandboxRoot,
-              sessionCwd = sessionCwd,
-              projectSession = projectSession,
-              compactThresholdRatio = compactThresholdRatio,
-              sessionDevice = sessionDevice,
-              sessionDeviceWorkspace = sessionDeviceWorkspace,
-              providerChainPin = providerChainPin
-            )
+            {
+              val base = AgentState(
+                messages = initialMessages,
+                status = AgentStatus.Idle,
+                depth = depth,
+                sessionId = sessionId,
+                sessionName = sessionName,
+                pendingCompaction = None,
+                latestUsage = None,
+                pendingAskUser = None,
+                pendingPermission = None,
+                wsSend = wsSend,
+                readTracker = readTracker,
+                fileHistory = fileHistory,
+                contextWindow = contextWindow,
+                projectRoot = projectRoot,
+                rulesMd = rulesMd,
+                agentsMd = agentsMd,
+                folderId = folderId,
+                safetyMode = safetyMode,
+                gitBranch = gitBranch,
+                expectsMail = expectsMail,
+                rootSessionId = effectiveRootSessionId,
+                isSubTaskWorker = isSubTaskWorker,
+                freezeExempt = freezeExempt,
+                isFlowNode = isFlowNode,
+                userFacingNode = userFacingNode,
+                flowNodeId = flowNodeId,
+                isDispatcher = isDispatcher,
+                flowNodeRole = flowNodeRole,
+                projectName = projectName,
+                taskId = taskId,
+                flowNodeName = flowNodeName,
+                flowChainId = flowChainId,
+                sandboxEnabled = sandboxEnabled,
+                sandboxRoot = sandboxRoot,
+                sessionCwd = sessionCwd,
+                projectSession = projectSession,
+                compactThresholdRatio = compactThresholdRatio,
+                sessionDevice = sessionDevice,
+                sessionDeviceWorkspace = sessionDeviceWorkspace,
+                providerChainPin = providerChainPin
+              )
+              initialState match
+                case Some(restored) =>
+                  base.copy(
+                    execution = restored.execution,
+                    loopTurnKey = restored.loopTurnKey,
+                    loopCounters = restored.loopCounters,
+                    pingpong = restored.pingpong,
+                    pilogicLedger = restored.pilogicLedger,
+                    cachedSystemStable = None,
+                    stableSnapshot = None
+                  )
+                case None => base
+            }
           )(using ctx)
         )
     }

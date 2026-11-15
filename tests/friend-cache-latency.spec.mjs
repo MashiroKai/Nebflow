@@ -145,7 +145,7 @@ async function openConv(page, cid) {
   await sleep(700);
 }
 async function closeConv(page) {
-  await page.click('.fm-modal-close');
+  await page.click('#activity-avatar');
   await sleep(400);
 }
 async function domIds(page) {

@@ -1,9 +1,6 @@
 /* 严格DAG第⑥步第二批裁定(2026-09-27):本文件为 shared 承载件——R9 自 nebflow/neblink/NeblinkModel.scala 剪出下沉的 PeerInfo(含伴生 codec)/FriendSummary/FriendRequestSummary/OutgoingRequestSummary/FriendListResponse/GroupSummary(整块逐字,含伴生与字段注释);R6 的 Protocol.DeviceHeader 与 R7 的 DefaultRelayTimeout、R8 的 RelayMailResult 亦并落本文件(各自剪出点留裁定注释)。斩断 core→neblink / core→dropbox / dropbox→neblink 边;neblink/dropbox/core 内引用改指本包。 */
 package nebflow.shared
 
-import nebflow.neblink.core.*
-import nebflow.neblink.social.*
-
 import io.circe.*
 import io.circe.generic.semiauto.*
 

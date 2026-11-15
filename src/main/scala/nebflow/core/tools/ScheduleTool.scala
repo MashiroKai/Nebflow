@@ -642,17 +642,19 @@ Your context does NOT show the current date/time — never invent an absolute da
             input("condition").flatMap(_.asString),
             input("project").flatMap(_.asString)
           )
+          val ownedTask = task.copy(source = Some("tool"))
           for
-            removed <- taskName match
-              case Some(n) => taskStore.upsertTaskByName(task)
-              case None => taskStore.addTask(task).as(Nil)
+            rearm <- taskName match
+              case Some(n) => taskStore.upsertTaskByName(ownedTask, ScheduledTaskStore.toolOwnsLegacyNamedTask)
+              case None => taskStore.addTask(ownedTask).as(ScheduledTaskStore.Rearm(ownedTask, Nil))
+            saved = rearm.saved
             _ <- taskService match
               case Some(svc) => svc.notifyTaskChange()
               case None => IO.unit
-            // Broadcast removed (possibly cross-session) so other panels drop them
+            // Broadcast replaced/dropped copies (possibly cross-session) so panels drop them
             _ <- ctx.wsSend match
               case Some(send) =>
-                removed.traverse_(old =>
+                rearm.replaced.traverse_(old =>
                   send(
                     Json.obj(
                       "type" -> "scheduledTaskDeleted".asJson,
@@ -668,28 +670,28 @@ Your context does NOT show the current date/time — never invent an absolute da
                 send(
                   Json.obj(
                     "type" -> "scheduledTaskCreated".asJson,
-                    "sessionId" -> sessionId.asJson,
+                    "sessionId" -> saved.sessionId.asJson,
                     "task" -> Json.obj(
-                      "id" -> task.id.asJson,
-                      "content" -> task.content.asJson,
-                      "triggerAt" -> task.triggerAt.asJson,
-                      "createdAt" -> task.createdAt.asJson,
+                      "id" -> saved.id.asJson,
+                      "content" -> saved.content.asJson,
+                      "triggerAt" -> saved.triggerAt.asJson,
+                      "createdAt" -> saved.createdAt.asJson,
                       "referencePath" -> Json.Null,
-                      "repeat" -> task.repeat.asJson,
-                      "name" -> task.name.asJson,
-                      "kind" -> task.kind.asJson
+                      "repeat" -> saved.repeat.asJson,
+                      "name" -> saved.name.asJson,
+                      "kind" -> saved.kind.asJson
                     )
                   )
                 )
               case None => IO.unit
           yield
-            val replacedNote = removed match
+            val replacedNote = rearm.replaced match
               case Nil => ""
               case olds =>
                 s" — replaced ${olds.size} existing task(s) with the same name (${olds.map(o => s"${o.id} @ ${formatTime(o.triggerAt)}").mkString(", ")})"
             val nameNote = taskName.map(n => s" [name: $n]").getOrElse("")
             Right(
-              s"Scheduled task ${task.id} for ${formatTime(triggerAt)}" +
+              s"Scheduled task ${saved.id} for ${formatTime(saved.triggerAt)}" +
                 repeat.map(r => s" (recurring: $r)").getOrElse("") +
                 s"$nameNote: ${content.take(80)}$replacedNote"
             )
@@ -732,17 +734,19 @@ Your context does NOT show the current date/time — never invent an absolute da
         Some(ScheduledTask.KindTodo), None, project,
         0, todoDetail
       )
+      val ownedTodo = todo.copy(source = Some("tool"))
       for
-        removed <- taskName match
-          case Some(n) => taskStore.upsertTaskByName(todo)
-          case None => taskStore.addTask(todo).as(Nil)
+        rearm <- taskName match
+          case Some(n) => taskStore.upsertTaskByName(ownedTodo, ScheduledTaskStore.toolOwnsLegacyNamedTask)
+          case None => taskStore.addTask(ownedTodo).as(ScheduledTaskStore.Rearm(ownedTodo, Nil))
+        saved = rearm.saved
         _ <- taskService match
           case Some(svc) => svc.notifyTaskChange()
           case None => IO.unit
-        // Broadcast removed (possibly cross-session) so other panels drop them
+        // Broadcast replaced/dropped copies (possibly cross-session) so panels drop them
         _ <- ctx.wsSend match
           case Some(send) =>
-            removed.traverse_(old =>
+            rearm.replaced.traverse_(old =>
               send(
                 Json.obj(
                   "type" -> "scheduledTaskDeleted".asJson,
@@ -757,30 +761,30 @@ Your context does NOT show the current date/time — never invent an absolute da
             send(
               Json.obj(
                 "type" -> "scheduledTaskCreated".asJson,
-                "sessionId" -> sessionId.asJson,
+                "sessionId" -> saved.sessionId.asJson,
                 "task" -> Json.obj(
-                  "id" -> todo.id.asJson,
-                  "content" -> todo.content.asJson,
-                  "triggerAt" -> todo.triggerAt.asJson,
-                  "createdAt" -> todo.createdAt.asJson,
+                  "id" -> saved.id.asJson,
+                  "content" -> saved.content.asJson,
+                  "triggerAt" -> saved.triggerAt.asJson,
+                  "createdAt" -> saved.createdAt.asJson,
                   "referencePath" -> Json.Null,
                   "repeat" -> Json.Null,
-                  "name" -> todo.name.asJson,
-                  "detail" -> todo.detail.asJson,
+                  "name" -> saved.name.asJson,
+                  "detail" -> saved.detail.asJson,
                   "kind" -> ScheduledTask.KindTodo.asJson,
-                  "project" -> todo.project.asJson
+                  "project" -> saved.project.asJson
                 )
               )
             )
           case None => IO.unit
       yield
-        val replacedNote = removed match
+        val replacedNote = rearm.replaced match
           case Nil => ""
           case olds =>
             s" — replaced ${olds.size} existing todo(s) with the same name (${olds.map(_.id).mkString(", ")})"
         val nameNote = taskName.map(n => s" [name: $n]").getOrElse("")
         Right(
-          s"Todo ${todo.id} registered (surfaces daily at ${formatTime(surfaceAt).takeRight(5)} until done/cancelled)" +
+          s"Todo ${saved.id} registered (surfaces daily at ${formatTime(saved.triggerAt).takeRight(5)} until done/cancelled)" +
             s"$nameNote: ${content.take(80)}$replacedNote"
         )
       end for
