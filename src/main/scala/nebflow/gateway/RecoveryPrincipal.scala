@@ -11,7 +11,10 @@ private[gateway] object RecoveryPrincipal:
     case Credential.ViaBearer(false) => None
     case Credential.ViaSession(record) =>
       val fields = List(record.accountSub, record.origin, record.boundNetworkId)
-      if fields.exists(_.isEmpty) then None
+      // Local break-glass sessions remain valid without network enrollment; the
+      // authenticated origin keeps their identity separate from relay sessions.
+      val missingNetwork = record.boundNetworkId.isEmpty && record.origin != GatewaySessionStore.OriginLocalTicket
+      if record.accountSub.isEmpty || record.origin.isEmpty || missingNetwork then None
       else
         val digest = MessageDigest.getInstance("SHA-256")
         digest.update("stand-recovery-principal-v1".getBytes(UTF_8))

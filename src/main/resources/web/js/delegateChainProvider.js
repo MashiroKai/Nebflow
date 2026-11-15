@@ -108,10 +108,19 @@ export async function refreshScopedTasks(rootSessionId = state.activeSessionId) 
           if (old) next.set(row.taskId, old);
           continue;
         }
+        // Compare projected fields, not only revisions: legacy rows have no cursor,
+        // and a complete snapshot can fill fields absent from a live invalidation.
+        if (old && Object.keys(row).every(key => old[key] === row[key])) {
+          next.set(row.taskId, old);
+          continue;
+        }
         next.set(row.taskId, row);
         observedTasks.set(row.taskId, row);
-        if (!old || old.committedRevision !== row.committedRevision || old.status !== row.status) changed.push(row);
+        changed.push(row);
       }
+      // Empty changes alone do not mean no change: an authoritative snapshot can
+      // remove rows. Keep those invalidations while silencing unchanged polls.
+      if (!changed.length && next.size === previous.size) return;
       scopedTasks.set(root, next);
       notifyTasks(changed);
     } catch (_) { /* Keep the last good projection on transient failure. */ }

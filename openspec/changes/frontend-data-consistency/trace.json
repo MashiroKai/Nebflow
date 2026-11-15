@@ -361,12 +361,21 @@
       "requirement": "FDC-REQ-005",
       "scenario": "FDC-SCN-025",
       "implementation": [
-        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala"
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala",
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskModel.scala"
       ],
       "tests": [
         {
           "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
           "name": "FDC-SCN-025 cancel and completion cover a duplicate copy left by a partial move"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
+          "name": "FDC-SCN-025 a future rearm wins before due filtering on every read face after restart"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskStoreDbSpec.scala",
+          "name": "C6 revision update preserves rows recovered from a corrupt session file"
         }
       ]
     },

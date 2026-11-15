@@ -1083,7 +1083,9 @@ object GatewayMain extends IOApp:
                                   // 产物 `bootRoot`（唯一真源），不再现查索引 + `getOrElse("")`。
                                   // 空 ⇒ 跳过本次 mountAll + ERROR + 事件（命名根因 = **开机
                                   // 补建未产出会话**），🔴 绝不把空串当 rootSessionId 挂载。
-                                  val startupMount: IO[Unit] =
+                                  // Local projects keep their early boot order. Device projects must
+                                  // wait for both the executor and the network resource wiring.
+                                  def mountStartupProjects(resources: SharedResources, remote: Boolean): IO[Unit] =
                                     if bootRoot.id.isEmpty then
                                       logger.error(
                                         "Startup mount SKIPPED: 开机补建未产出会话 " +
@@ -1104,10 +1106,10 @@ object GatewayMain extends IOApp:
                                       for
                                         projects <- ProjectStore.list()
                                         mounted <- ProjectRuntimeRegistry.mountAll(
-                                          projects,
+                                          projects.filter(pd => ProjectStore.deviceOrigin(pd).isDefined == remote),
                                           bootRoot.id,
                                           actorSystem,
-                                          sharedResources,
+                                          resources,
                                           // #28 可观测接线：启动挂载传入真实广播 wsSend——
                                           // engine 的节点/分发器事件经 wsHub 到达前端 subagent
                                           // 面板（此前 None → no-op，事件静默丢失）。
@@ -1121,6 +1123,7 @@ object GatewayMain extends IOApp:
                                             )
                                           else IO.unit
                                       yield ()
+                                  val startupMount: IO[Unit] = mountStartupProjects(sharedResources, remote = false)
                                   // boot-time 崩溃断点恢复（crash-recovery 批 2026-09-07）：
                                   // 挂载后、TtlTick 首拍前同步跑快段（分类+认领，秒级——被认领
                                   // 节点翻 Pending 即刻脱离 watchdog 判死口径，竞速由挂载顺序
@@ -1218,12 +1221,33 @@ object GatewayMain extends IOApp:
                                   // 早于 server listen）；普通会话启动/工具调用/TtlTick 扫描腿均无
                                   // 本入口。开关 nebflow.boot.dispatcherWake（默认 true）——false 时
                                   // 本步空转，完全回到本批前现状。
-                                  val projectBootWake: IO[Unit] =
+                                  def startupProjectWake(remote: Boolean): IO[Unit] =
                                     if nebflow.shared.Defaults.BootDispatcherWakeEnabled then
-                                      nebflow.core.project.BootDispatcherWake.wakeAll().flatMap { r =>
-                                        // 无条件汇总行（含零命中）：使「零唤醒 boot」也可审计——
-                                        // 本批前该形态在日志里零痕迹，缺陷只能靠人肉发现。
-                                        logger.info(s"Boot dispatcher wake: ${r.summary}")
+                                      ProjectStore.list().flatMap { projects =>
+                                        nebflow.core.project.BootDispatcherWake
+                                          .wakeAll(projects = Some(projects.filter(pd => ProjectStore.deviceOrigin(pd).isDefined == remote)))
+                                          .flatMap(r => logger.info(s"Boot dispatcher wake: ${r.summary}"))
+                                      }
+                                    else IO.unit
+                                  val projectBootWake: IO[Unit] = startupProjectWake(remote = false)
+                                  // The early sweep has already handled local runtimes. Recover only
+                                  // newly mounted device runtimes, preserving the same exclusion and
+                                  // fail-soft boundaries as recoverAll before their first boot wake.
+                                  val startupRemoteRecovery: IO[Unit] =
+                                    if nebflow.shared.Defaults.CrashRecoveryEnabled then
+                                      ProjectRuntimeRegistry.all.flatMap { runtimes =>
+                                        val excluded = nebflow.shared.Defaults.SweepExcludeProjects
+                                        runtimes.filter(rt => ProjectStore.deviceOrigin(rt.project).isDefined).traverse_ { rt =>
+                                          if excluded.contains(rt.project.name) then
+                                            logger.info(s"[boot-recovery] project '${rt.project.name}' skipped: excluded-by-config")
+                                          else
+                                            nebflow.core.project.ProjectCrashRecovery
+                                              .recoverProject(rt, manual = nebflow.shared.Defaults.RestartRecoveryManual)
+                                              .void
+                                              .handleErrorWith(e =>
+                                                logger.error(s"[boot-recovery] project '${rt.project.name}' sweep failed: ${Option(e.getMessage).getOrElse(e.toString)} — residual running nodes left to the dead-session watchdog")
+                                              )
+                                        }
                                       }
                                     else IO.unit
                                   // 台账 #896（交通引导员制 2026-10-26）：合并队列
@@ -1406,7 +1430,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeBootSweep *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> legacyLedgerReport *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeBootSweep *> projectBootWake *> msgTokensBootReconcile *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> legacyLedgerReport *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -2191,7 +2215,14 @@ object GatewayMain extends IOApp:
                                                     )
                                               )
 
-                                              TtsService.create().flatMap { ttsService =>
+                                              // Device mounts retain preflight/path checks and run once,
+                                              // with the same wired resources used by live device tools.
+                                              val startupRemoteMount =
+                                                mountStartupProjects(sharedResourcesWithBridge, remote = true) *>
+                                                  startupRemoteRecovery *> startupProjectWake(remote = true)
+                                              // Start the periodic scanner only after both mount/recovery
+                                              // phases, so it cannot settle remote crash residues first.
+                                              startupRemoteMount *> projectTtlScanner *> TtsService.create().flatMap { ttsService =>
                                                 SttService.create().flatMap { sttService =>
                                                   // R-1b conn-guard（2026-09-22）：per-IP WS 看护 + 摄取超时
                                                   // 显式化 + 连接面快照/预警 + /health/conn（设计件 §C④，

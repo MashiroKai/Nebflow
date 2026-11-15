@@ -183,7 +183,7 @@ class ChainLedgerStore private (
       .map("%02x".format(_))
       .mkString
 
-  /** 冷档目录里的可读文件清单（新旧四种形态全收；名字升序 —— 消费方均按轮号重排，序不敏感）。 */
+  /** Payload inventory in all four formats; manifest side volumes are not RoundFile bundles. */
   private def coldFiles: List[os.Path] =
     if !os.exists(archiveDir) then Nil
     else
@@ -191,7 +191,8 @@ class ChainLedgerStore private (
         .toList
         .filter(f =>
           val n = f.last
-          n.endsWith(".json") || n.endsWith(".json.gz") || n.endsWith(".jsonl") || n.endsWith(".jsonl.gz")
+          n != RoundsSideVolumeFile && n != s"$RoundsSideVolumeFile.gz" &&
+          (n.endsWith(".json") || n.endsWith(".json.gz") || n.endsWith(".jsonl") || n.endsWith(".jsonl.gz"))
         )
         .sortBy(_.last)
 
@@ -834,7 +835,7 @@ class ChainLedgerStore private (
    * bounded prefix — the returned value is a LOWER BOUND of the true size
    * whenever the budget was crossed, which [[selfCheck]] words as "at least".
    */
-  private def coldArchiveBytes: Long =
+  private[project] def coldArchiveBytes: Long =
     if !os.exists(archiveDir) then 0L
     else
       val files = coldFiles.iterator

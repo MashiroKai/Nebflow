@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "change": "repair-startup-freeze",
+  "mappings": [
+    {
+      "requirement": "SR-REQ-001",
+      "scenario": "SR-SCN-001",
+      "implementation": ["src/main/resources/web/js/flowAnim.js"],
+      "tests": [{"path": "tests/orbit-observer.test.mjs", "name": "orbit-less folded chain running ->"}]
+    },
+    {
+      "requirement": "SR-REQ-001",
+      "scenario": "SR-SCN-002",
+      "implementation": ["src/main/resources/web/js/flowAnim.js"],
+      "tests": [{"path": "tests/orbit-observer.test.mjs", "name": "losing an orbit during a coast drops stale phase state without observer feedback"}]
+    },
+    {
+      "requirement": "SR-REQ-002",
+      "scenario": "SR-SCN-003",
+      "implementation": ["src/main/resources/web/js/delegateChainProvider.js"],
+      "tests": [{"path": "tests/subagent-visibility.test.mjs", "name": "unchanged historical snapshots neither notify nor replace projected rows"}]
+    }
+  ]
+}

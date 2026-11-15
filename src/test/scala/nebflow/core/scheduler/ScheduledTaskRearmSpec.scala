@@ -194,10 +194,143 @@ class ScheduledTaskRearmSpec extends FunSuite:
       assertEquals(result._3, Nil)
       assertEquals(result._4, Nil, "cancel removes the duplicate copy too")
       assert(result._5)
-      assertEquals(result._6.map(_.completedAt), List(Some(1L)))
-      assertEquals(result._7.map(_.completedAt), List(Some(1L)), "completion marks every copy")
+      assertEquals((result._6 ++ result._7).map(_.completedAt), List(Some(1L)), "completion converges copies to one current row")
       assertEquals(result._8, Nil, "no copy keeps surfacing")
-      assert(result._9.head.triggered && result._10.head.triggered, "a fired mark covers every copy")
+      assertEquals((result._9 ++ result._10).map(_.triggered), List(true), "a fired mark covers the surviving authority")
+    finally os.remove.all(root)
+  }
+
+  // Restore the exact source bytes after target-first rearm, as if source cleanup failed.
+  private def partialMove(root: os.Path, ledger: ScheduledTaskStore, old: ScheduledTask,
+                          requested: ScheduledTask): ScheduledTask =
+    ledger.addTask(old).unsafeRunSync()
+    val before = os.read(root / s"${old.sessionId}.json")
+    val saved = ledger.upsertTaskByName(requested).unsafeRunSync().saved
+    os.write.over(root / s"${old.sessionId}.json", before)
+    saved
+
+  test("FDC-SCN-025 a future rearm wins before due filtering on every read face after restart") {
+    val (root, ledger) = tempStore()
+    try
+      val old = toolTask("stable-id", "old-session", "stale due payload", "routine").copy(triggerAt = 1L)
+      val saved = partialMove(root, ledger, old, toolTask("request", "new-session", "future payload", "routine"))
+      val restarted = new ScheduledTaskStore(root)
+      assertEquals(restarted.getAllDueTasks.unsafeRunSync(), Nil, "the stale due row must not fire and delete the future row")
+      assertEquals(restarted.getAllPendingTasks.unsafeRunSync(), List(saved))
+      assertEquals(restarted.findTaskById(old.id).unsafeRunSync(), Some(saved))
+      assertEquals(restarted.loadTasks("old-session").unsafeRunSync(), Nil)
+      assertEquals(restarted.loadTasks("new-session").unsafeRunSync(), List(saved))
+      assertEquals(restarted.getPendingCount("old-session").unsafeRunSync(), 0)
+      assertEquals(restarted.getPendingCount("new-session").unsafeRunSync(), 1)
+      assertEquals(saved.id, old.id)
+      assertEquals(saved.createdAt, old.createdAt)
+      assertEquals(saved.source, old.source)
+      assert(saved.revision > old.revision, "authority is persisted independently of trigger time")
+      restarted.deleteTask("old-session", old.id).unsafeRunSync()
+      assertEquals(decodeRows(root / "old-session.json"), Nil)
+      assertEquals(decodeRows(root / "new-session.json"), Nil)
+    finally os.remove.all(root)
+  }
+
+  test("FDC-SCN-025 an earlier rearm is authoritative, not the greatest trigger time") {
+    val (root, ledger) = tempStore()
+    try
+      val old = toolTask("stable-id", "z-old", "future stale payload", "routine")
+      val saved = partialMove(root, ledger, old, toolTask("request", "a-new", "due current payload", "routine").copy(triggerAt = 1L))
+      val restarted = new ScheduledTaskStore(root)
+      assertEquals(restarted.getAllDueTasks.unsafeRunSync(), List(saved))
+      assertEquals(restarted.getAllPendingTasks.unsafeRunSync(), List(saved))
+      assertEquals(restarted.findTaskById(old.id).unsafeRunSync(), Some(saved))
+    finally os.remove.all(root)
+  }
+
+  test("FDC-SCN-025 todo filters and updates use the current payload, not stale copy state") {
+    val (root, ledger) = tempStore()
+    try
+      val old = toolTask("stable-id", "old-session", "stale todo", "routine")
+        .copy(kind = Some(ScheduledTask.KindTodo), triggerAt = 1L, enabled = false, missCount = 4)
+      val current = partialMove(root, ledger, old, old.copy(id = "request", sessionId = "new-session",
+        content = "current todo", triggerAt = future, enabled = true, missCount = 10, completedAt = Some(2L)))
+      val restarted = new ScheduledTaskStore(root)
+      assertEquals(restarted.getAllTodos.unsafeRunSync(), Nil)
+      assertEquals(restarted.getAllDueTodos.unsafeRunSync(), Nil)
+      assertEquals(restarted.getAllPendingTasks.unsafeRunSync(), Nil)
+      assertEquals(restarted.getAllTodosIncludingCompleted.unsafeRunSync(), List(current))
+      assertEquals(restarted.toggleTask("old-session", old.id).unsafeRunSync(), false)
+      val toggled = restarted.findTaskById(old.id).unsafeRunSync().get
+      assertEquals(toggled.content, current.content)
+      assertEquals(toggled.enabled, false, "toggle must apply to current enabled=true exactly once")
+      restarted.toggleTask("old-session", old.id).unsafeRunSync()
+      var calls = 0
+      restarted.updateTask("old-session", old.id) { task =>
+        calls += 1
+        task.copy(completedAt = None, missCount = task.missCount + 1)
+      }.unsafeRunSync()
+      assertEquals(calls, 1, "an id-scoped update transforms only the authoritative payload")
+      val updated = restarted.findTaskById(old.id).unsafeRunSync().get
+      assertEquals(updated.missCount, 11)
+      assertEquals(updated.content, current.content)
+      assertEquals(restarted.getAllTodos.unsafeRunSync(), List(updated))
+      assertEquals(restarted.getAllDueTodos.unsafeRunSync(), Nil)
+      restarted.rescheduleTask("old-session", old.id, 1L).unsafeRunSync()
+      assertEquals(restarted.getAllDueTodos.unsafeRunSync().map(_.content), List(current.content))
+      restarted.markTriggered("old-session", old.id).unsafeRunSync()
+      assertEquals(restarted.getAllPendingTasks.unsafeRunSync(), Nil)
+      assertEquals(restarted.getAllTodosIncludingCompleted.unsafeRunSync(), Nil)
+    finally os.remove.all(root)
+  }
+
+  test("FDC-SCN-025 stale enabled todo never bypasses completion or trigger filters") {
+    val (root, ledger) = tempStore()
+    try
+      val old = toolTask("stable-id", "old-session", "stale due todo", "routine")
+        .copy(kind = Some(ScheduledTask.KindTodo), triggerAt = 1L)
+      val current = partialMove(root, ledger, old, old.copy(id = "request", sessionId = "new-session",
+        content = "completed current todo", triggerAt = future, completedAt = Some(2L)))
+      val restarted = new ScheduledTaskStore(root)
+      assertEquals(restarted.getAllTodos.unsafeRunSync(), Nil)
+      assertEquals(restarted.getAllDueTodos.unsafeRunSync(), Nil)
+      assertEquals(restarted.getAllTodosIncludingCompleted.unsafeRunSync(), List(current))
+      assertEquals(restarted.getPendingCount("old-session").unsafeRunSync(), 0)
+      restarted.markTriggered("old-session", old.id).unsafeRunSync()
+      assertEquals(restarted.getAllTodosIncludingCompleted.unsafeRunSync(), Nil)
+      assertEquals(restarted.findTaskById(old.id).unsafeRunSync().map(_.content), Some(current.content))
+    finally os.remove.all(root)
+  }
+
+  test("FDC-SCN-025 conflicting unversioned copies never guess authority and remain cancellable") {
+    val (root, ledger) = tempStore()
+    try
+      val old = toolTask("stable-id", "old-session", "due old", "routine").copy(triggerAt = 1L)
+      ledger.addTask(old).unsafeRunSync()
+      ledger.addTask(old.copy(sessionId = "new-session", content = "future new", triggerAt = future)).unsafeRunSync()
+      assertEquals(ledger.getAllDueTasks.unsafeRunSync(), Nil)
+      assertEquals(ledger.getAllPendingTasks.unsafeRunSync(), Nil)
+      assertEquals(ledger.findTaskById(old.id).unsafeRunSync(), None)
+      assertEquals(ledger.loadTasks("old-session").unsafeRunSync(), Nil)
+      val before = os.read(root / "old-session.json")
+      assert(ledger.updateTask("old-session", old.id)(_.copy(enabled = false)).attempt.unsafeRunSync().isLeft)
+      assertEquals(os.read(root / "old-session.json"), before)
+      ledger.deleteTask("new-session", old.id).unsafeRunSync()
+      assertEquals(decodeRows(root / "old-session.json"), Nil)
+      assertEquals(decodeRows(root / "new-session.json"), Nil)
+    finally os.remove.all(root)
+  }
+
+  test("FDC-SCN-025 legacy revision defaults and ambiguous copies recover through explicit rearm") {
+    val (root, ledger) = tempStore()
+    try
+      val legacy = """{"id":"stable-id","sessionId":"old-session","content":"old","triggerAt":1,"createdAt":2,"name":"routine","source":"tool"}"""
+      val decoded = io.circe.parser.decode[ScheduledTask](legacy).toOption.get
+      assertEquals(decoded.revision, 0L)
+      ledger.addTask(decoded).unsafeRunSync()
+      ledger.addTask(decoded.copy(sessionId = "new-session", content = "other", triggerAt = future)).unsafeRunSync()
+      val recovered = ledger.upsertTaskByName(toolTask("request", "new-session", "chosen", "routine")).unsafeRunSync()
+      assertEquals(recovered.saved.id, decoded.id)
+      assertEquals(recovered.saved.createdAt, decoded.createdAt)
+      assertEquals(recovered.saved.revision, 1L)
+      assertEquals(ledger.getAllPendingTasks.unsafeRunSync(), List(recovered.saved))
+      assertEquals(decodeRows(root / "old-session.json"), Nil)
     finally os.remove.all(root)
   }
 

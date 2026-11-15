@@ -120,7 +120,9 @@ case class ScheduledTask(
    * 存量文件无此键 → None（withDefaults 零迁移）。
    */
   completedAt: Option[Long] = None,
-  source: Option[String] = None
+  source: Option[String] = None,
+  /** Store-owned monotonic version; legacy rows start at zero. Never ordered by trigger time. */
+  revision: Long = 0L
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)

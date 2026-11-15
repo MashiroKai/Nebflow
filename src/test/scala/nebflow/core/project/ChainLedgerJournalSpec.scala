@@ -88,6 +88,53 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
       )
     } { _ => IO.delay(lbLogger.detachAppender(appender)) }
 
+  test("cold payload inventory excludes manifest side volumes without hiding payload formats or corruption") {
+    val d = dir("payload-inventory")
+    val path = d / ChainLedger.FileName
+    val arch = d / ChainLedger.ArchiveDirName
+    val project = "payload-inventory"
+    def payload(n: Int): ChainLedger.RoundFile =
+      ChainLedger.RoundFile(
+        round = n,
+        at = t0,
+        kind = ChainLedger.RoundRetire,
+        thresholds = ChainLedger.ThresholdsNow,
+        hotBefore = ChainLedger.Totals(entries = 1, members = 1),
+        hotAfter = ChainLedger.Totals(),
+        entries = List(ChainLedger.Entry(s"chain-$n", s"node-$n", t0, List(s"node-$n"), 1))
+      )
+    val payloadNames = List("round-1.json", "round-2.json.gz", "bundle.jsonl", "bundle.jsonl.gz", "chain-ledger-rounds-copy.jsonl")
+    def write(name: String, text: String): Unit =
+      val file = arch / name
+      if name.endsWith(".gz") then
+        val out = new java.util.zip.GZIPOutputStream(new java.io.FileOutputStream(file.toIO))
+        try out.write(text.getBytes("UTF-8"))
+        finally out.close()
+      else os.write(file, text)
+    val run = for
+      _ <- IO.blocking {
+        os.makeDir.all(arch)
+        payloadNames.zipWithIndex.foreach { (name, i) => write(name, payload(i + 1).asJson.noSpaces + "\n") }
+        write(ChainLedger.RoundsSideVolumeFile, round(1).asJson.noSpaces + "\n")
+        // A compressed side-volume name is reserved too; it must never become a payload bundle.
+        write(ChainLedger.RoundsSideVolumeFile + ".gz", round(1).asJson.noSpaces + "\n")
+        write("damaged.json", "not-json")
+      }
+      store <- ChainLedgerStore.open(project, path, arch, coldReadBudgetBytes = Long.MaxValue)
+      result <- withWarnAppender(store.readRounds)
+      (rounds, warnings) = result
+      bytes <- IO.blocking(store.coldArchiveBytes)
+      expectedBytes <- IO.blocking((payloadNames :+ "damaged.json").map(name => os.size(arch / name)).sum)
+      resolved <- store.resolveDeep("chain-4")
+    yield
+      assertEquals(rounds.map(_.round), List(1, 2, 3, 4, 5), "all payload formats and non-reserved names remain visible")
+      assertEquals(bytes, expectedBytes, "only payload files consume the cold-read budget")
+      assertEquals(resolved, Some("chain-4"), "deep resolution still reads compressed payload bundles")
+      assert(!warnings.exists(_.contains("cold bundle chain-ledger-rounds.jsonl")), "manifest rows are not corrupt payloads")
+      assert(warnings.exists(_.contains("cold file corrupt: damaged.json")), "genuine corrupt payloads still warn")
+    run.guarantee(IO.blocking(os.remove.all(d)))
+  }
+
   // ── ① 残尾：无终结换行的半条 append 必须被丢弃 ──────────────────────
 
   test("把 `\\n` 定帧改成「按行即记录」⇒ 本测试必红") {

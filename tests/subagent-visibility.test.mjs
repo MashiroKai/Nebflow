@@ -13,8 +13,14 @@ function fixture() {
   let observer;
   const calls = [];
   const intervals = [];
+  const events = [];
+  const notifications = [];
+  let pendingResponse;
   const context = vm.createContext({
     console, Map, Set, Date, AbortSignal,
+    window: { addEventListener: () => {}, dispatchEvent: event => { events.push(event.type); } },
+    document: { visibilityState: 'visible' },
+    CustomEvent: class { constructor(type) { this.type = type; } },
     state: { activeSessionId: 'root-a', sessionBgAgents: {} },
     authHeaders: () => ({}),
     EVENTS: { DELEGATE_CHAIN_MIRROR_UPDATED: 'mirror', SESSION_CHANGE: 'session' },
@@ -27,6 +33,7 @@ function fixture() {
     fetch: async (url, options) => {
       calls.push({ url, options });
       if (!url.startsWith('/api/subagent-tasks/')) return { ok: true, json: async () => ({ rows: [] }) };
+      if (pendingResponse) await pendingResponse;
       return { status, ok: status === 200, json: async () => snapshot };
     },
   });
@@ -35,8 +42,16 @@ function fixture() {
     .replace(/import \{[\s\S]*?\} from '\.\/delegateChainStub.js';/, '')
     .replace(/export /g, '');
   vm.runInContext(`${revisionSource}\n${provider}`, context);
+  context.collectTasks = rows => { notifications.push(rows); };
+  vm.runInContext('onDurableTasksChanged(collectTasks)', context);
   return {
-    context, calls, intervals,
+    context, calls, intervals, events, notifications,
+    resetNotifications: () => { events.length = 0; notifications.length = 0; },
+    deferResponse: () => {
+      let release;
+      pendingResponse = new Promise(resolve => { release = resolve; });
+      return () => { pendingResponse = null; release(); };
+    },
     snapshot: rows => { snapshot = { rootSessionId: 'root-a', tasks: rows }; },
     body: body => { snapshot = body; },
     status: value => { status = value; },
@@ -64,6 +79,120 @@ test('durable discovery does not require a live parent or agentStart and retains
   assert.equal(f.rows()[0].status, 'completed');
   assert.equal(f.rows()[0].resultRef, 'history:external-child');
   assert.equal(f.calls.at(-1).options.credentials, 'same-origin');
+});
+
+test('unchanged historical snapshots neither notify nor replace projected rows', async () => {
+  const f = fixture();
+  const history = Array.from({ length: 1070 }, (_, index) => row(index + 1, {
+    taskId: `historical-${index}`, status: 'completed', executionStatus: 'finished',
+    prompt: 'historical prompt '.repeat(20), resultRef: `history:${index}`,
+  }));
+  f.snapshot(history);
+  await f.refresh();
+  const before = f.rows();
+  f.resetNotifications();
+  f.snapshot(history.map(task => ({ ...task })));
+  await f.refresh();
+  assert.equal(f.notifications.length, 0);
+  assert.equal(f.events.length, 0);
+  const after = f.rows();
+  assert.equal(after.length, 1070);
+  after.forEach((task, index) => {
+    assert.equal(task, before[index]);
+    assert.equal(task.status, 'completed');
+    assert.equal(task.resultRef, `history:${index}`);
+  });
+});
+
+test('empty polls are silent but removal and auth clearing still notify', async () => {
+  const f = fixture();
+  // The unrelated delegate-list boot refresh has its own mirror notification.
+  await new Promise(setImmediate);
+  f.resetNotifications();
+  await f.refresh();
+  await f.refresh();
+  assert.equal(f.notifications.length, 0);
+  assert.equal(f.events.length, 0);
+  f.snapshot([row(1)]);
+  await f.refresh();
+  f.resetNotifications();
+  f.snapshot([]);
+  await f.refresh();
+  assert.equal(f.rows().length, 0);
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.events.length, 1);
+  await f.refresh();
+  assert.equal(f.notifications.length, 1);
+  f.snapshot([row(2)]);
+  await f.refresh();
+  f.resetNotifications();
+  f.status(403);
+  await f.refresh();
+  assert.equal(f.rows().length, 0);
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.events.length, 1);
+});
+
+test('same-revision snapshot field changes and legacy rows remain observable', async () => {
+  const f = fixture();
+  f.snapshot([row(1)]);
+  await f.refresh();
+  f.resetNotifications();
+  f.snapshot([row(1, { executionStatus: 'running', activityLabel: 'Tool activity' })]);
+  await f.refresh();
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.rows()[0].activityLabel, 'Tool activity');
+  f.snapshot([row(null, { taskId: 'legacy', status: 'completed' })]);
+  await f.refresh();
+  f.resetNotifications();
+  const before = f.rows()[0];
+  await f.refresh();
+  assert.equal(f.notifications.length, 0);
+  assert.equal(f.rows()[0], before);
+  f.snapshot([row(null, { taskId: 'legacy', status: 'completed', description: 'Updated legacy' })]);
+  await f.refresh();
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.rows()[0].description, 'Updated legacy');
+});
+
+test('new revisions and live invalidations still notify while stale snapshots stay silent', async () => {
+  const f = fixture();
+  f.snapshot([row(1)]);
+  await f.refresh();
+  f.resetNotifications();
+  f.snapshot([row(2)]);
+  await f.refresh();
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.notifications[0][0].committedRevision, 2);
+  assert.equal(f.events.length, 1);
+  f.resetNotifications();
+  assert.equal(f.observe({ ...row(4), type: 'agentTextDelta' }), true);
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.notifications[0][0].historyInvalidated, true);
+  await f.refresh();
+  assert.equal(f.rows()[0].committedRevision, 2);
+  assert.equal(f.notifications.length, 1);
+  assert.equal(f.events.length, 1);
+  f.snapshot([row(4)]);
+  await f.refresh();
+  assert.equal(f.rows()[0].committedRevision, 4);
+  assert.equal(f.notifications.length, 2);
+});
+
+test('overlapping scoped refreshes use one request and release the gate after failure', async () => {
+  const f = fixture();
+  const release = f.deferResponse();
+  f.status(503);
+  const first = f.refresh();
+  const second = f.refresh();
+  assert.equal(f.calls.filter(call => call.url.startsWith('/api/subagent-tasks/')).length, 1);
+  release();
+  await Promise.all([first, second]);
+  f.status(200);
+  f.snapshot([row(1)]);
+  await f.refresh();
+  assert.equal(f.calls.filter(call => call.url.startsWith('/api/subagent-tasks/')).length, 2);
+  assert.equal(f.rows().length, 1);
 });
 
 test('out-of-order snapshots cannot overwrite a newer observed durable revision', async () => {
