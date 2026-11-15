@@ -143,9 +143,24 @@ const frameOf = (frames, pred) => frames.find(pred);
   ok('S1d /model 零回归 = true；白名单外 /ask /onboarding /fork /plan skill 命令 /未知 /裸"/" 全 false',
     res.model === true && res.ask === false && res.onboarding === false && res.fork === false
     && res.plan === false && res.skillish === false && res.unknown === false && res.bare === false, JSON.stringify(res));
+  await page.fill('#input', '/model');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#model-panel-overlay', { state: 'visible', timeout: 5000 });
+  ok('S1g 真键盘输入 /model 打开模型面板（桌面入口）', await page.locator('#model-panel-overlay').isVisible());
   ok('S1e 摘除后零出站命令帧（/clear /compact 都派发不了 command 帧）',
     frames.filter((f) => f.type === 'command').length === 0, JSON.stringify(frames.filter((f) => f.type === 'command')));
   ok('S1f 零 page error', pageErrors.length === 0, pageErrors.join('; '));
+  await ctx.close();
+}
+
+// Same real input/dispatch route in the 375×812 mobile viewport.
+{
+  const { ctx, page } = await boot({ width: 375, height: 812 });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.fill('#input', '/model');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#model-panel-overlay', { state: 'visible', timeout: 5000 });
+  ok('S1h 真键盘输入 /model 在手机 375×812 打开模型面板', await page.locator('#model-panel-overlay').isVisible());
   await ctx.close();
 }
 

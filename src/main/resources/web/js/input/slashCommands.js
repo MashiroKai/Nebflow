@@ -69,13 +69,18 @@ export function registerCommand({ name, desc, uiOnly, run }) {
 // /model — UI-only: opens the model-chain panel, never injects a message
 // (whitelisted alone since 2026-10-09: /clear /compact were removed from the
 // command face by user instruction). The panel module is
-// loaded on first use; a load failure stays silent (the input simply clears).
+// loaded on first use; failures are surfaced so /model never silently disappears.
 registerCommand({
   name: '/model',
   desc: () => t('slash.model'),
   uiOnly: true,
   run: () => {
-    import('../modelPanel.js').then(m => m.openModelPanel()).catch(() => {});
+    import('../modelPanel.js')
+      .then(m => m.openModelPanel())
+      .catch((error) => {
+        console.error('[slash /model] Failed to open model panel:', error);
+        window.__showToast?.(`Could not open model panel: ${String(error?.message || error)}`, 'error');
+      });
   },
 });
 
