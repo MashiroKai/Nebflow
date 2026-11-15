@@ -15,16 +15,14 @@
 //       · 环带脸上任何元素键（`.mf-strip*` 的宿主与伪元素）解析出的底色 α ∈
 //         (0, .90) —— 即「这一面会透出底下的东西」—— 而该键**没有有效模糊**
 //         （css/glass.css 成员表供给的 backdrop-filter，或 .nf-glass）⇒ 红。
-//       · 两个登记面必须**在场**且走玻璃：玻璃带层 `.mf-strip::before`
-//         （方案 C 的 64px 玻璃底）与主胶囊 `.mf-strip-chip.on::after`
-//         （作者令「主胶囊要采用毛玻璃底」）。缺一 ⇒ 红。
+//       · 选中主胶囊 `.mf-strip-chip.on::after` 必须在场且走玻璃。
+//         整宽伪元素已退役，不再登记为玻璃成员。
 //  S2 禁止水平渐隐 mask（出现即红）
 //       · 环带脸上任何 `mask-image`（含 -webkit-）值为**水平**渐变
 //         （90deg / 270deg / to left / to right）⇒ 红；任何 non-none 的 mask
 //         只要落在 label 上 ⇒ 红（文字两侧连纵向淡出也不许有）。
 //       · JS 侧：`navController.js` 给环带写 `mask-image` 或 `--rfade` ⇒ 红。
-//       · 判据口径 = 作者原话「文字两边不要渐隐」：全脸只允许一条**纵向**渐隐
-//         （下缘 28px，由 S4 钉厚度），水平方向零渐隐。
+//       · 保留水平方向零渐隐禁令；整宽纵向渐隐也由 S4 退役。
 //  S3 背景的文字不使用胶囊（出现即红）
 //       · 3a 签视觉层 `.mf-strip-chip::after` 的**基础档**必须是零材质
 //         （底 none / 零描边 / 零投影）—— 胶囊材质只许出现在 `.on` 档
@@ -32,13 +30,8 @@
 //       · 3b 正文宿主（滚过带下的那几层：`.canvas-md-scroll` / `.mf-cv-host` /
 //         `.mf-cv-host > .canvas-tab-pane`）不得有底（α > 0）也不得是 pill 圆角
 //         —— 正文/标题不加胶囊包层、不套任何 pill/气泡/背景块。
-//  S4 下边缘渐隐厚度 = 28px（作者口径 ④）
-//       · `.mf-strip::after` 必须在场、`background` = `var(--ds-fade-veil)`（纵向
-//         渐层）、`height` 的令牌算术必须**恰好 28px**、`top` 必须等于玻璃带高
-//         （`--mchrome-clear` 72 − `--ds-space-2` 8 = 64）。
-//       · 令牌算术在本脚本里真算（--ds-space-6 24 + --ds-space-1 4），不认字面量
-//         28 —— 字面量写死 28 但令牌改档 ⇒ 红（作者要的是「28 这个厚度」跟着
-//         设计刻度走，不是又一个裸值）。
+//  S4 透明悬浮：整宽 ::before / ::after 均 content:none。
+//       新授权取代旧整宽玻璃带及下缘渐隐；材质仅属于独立按钮和选中胶囊。
 //
 // 判据的**规范侧**（为什么这么定、方案 C 原稿、偏离说明）在
 //   <dataRoot>/projects/stand/.stand/docs/mobile-canvas-tabs-c__<stamp>.md
@@ -63,17 +56,10 @@ const CSS_DIR = join(WEB, 'css');
 const INDEX_HTML = join(WEB, 'index.html');
 const GLASS = join(CSS_DIR, 'glass.css');
 const MOBILE_LAYER = join(CSS_DIR, 'mobileLayer.css');
-const DESIGN_SYSTEM = join(CSS_DIR, 'design-system.css');
-const TOKENS = join(CSS_DIR, 'stand-tokens.css');
 const NAV = join(WEB, 'js', 'mobile', 'navController.js');
 
-/** 环带脸的选择器前缀（宿主 + 伪元素都在内）。 */
-const FACE = /^\.mf-strip(-chip|-label)?$/;
 /** 正文宿主（滚过带下的那几层）：不得有底、不得是 pill。 */
 const CONTENT_FACES = new Set(['.canvas-md-scroll', '.mf-cv-host', '.canvas-tab-pane']);
-
-/** 方案 C 的两条几何口径（作者口径 ④）。 */
-const FADE_H_PX = 28;
 
 const rel = (p) => relative(ROOT, p);
 
@@ -252,82 +238,6 @@ function deref(v, depth = 0) {
   }
   return s;
 }
-/** 极简 px 算术求值：var() 递归展开（含 fallback 与嵌套 calc）→ 四则运算。 */
-function evalPx(expr, depth = 0) {
-  if (depth > 12) return null;
-  const expand = (s, d = 0) => {
-    if (d > 12) return s;
-    let out = '';
-    let i = 0;
-    while (i < s.length) {
-      const idx = s.toLowerCase().indexOf('var(', i);
-      if (idx < 0) { out += s.slice(i); break; }
-      out += s.slice(i, idx);
-      let j = idx + 4;
-      let depthP = 1;
-      while (j < s.length && depthP > 0) {
-        if (s[j] === '(') depthP++;
-        else if (s[j] === ')') depthP--;
-        j++;
-      }
-      const inner = s.slice(idx + 4, j - 1);
-      let cut = -1; let p = 0;
-      for (let k = 0; k < inner.length; k++) {
-        if (inner[k] === '(') p++;
-        else if (inner[k] === ')') p--;
-        else if (inner[k] === ',' && p === 0) { cut = k; break; }
-      }
-      const name = (cut < 0 ? inner : inner.slice(0, cut)).trim();
-      const fb = cut < 0 ? '' : inner.slice(cut + 1).trim();
-      let val = tokenDefs.get(name);
-      if (val === undefined) val = fb;
-      out += `(${val === undefined || val === '' ? '0px' : expand(val, d + 1)})`;
-      i = j;
-    }
-    return out;
-  };
-  let s = expand(String(expr)).trim();
-  for (let g = 0; g < 10; g++) {
-    const m = s.match(/^calc\(([\s\S]*)\)$/i);
-    if (m) { s = m[1].trim(); continue; }
-    break;
-  }
-  const tokens = s.match(/-?\d+(?:\.\d+)?(?:px)?|\(|\)|\+|-|\*|\//g) || [];
-  if (!tokens.length) return null;
-  let i2 = 0;
-  const peek = () => tokens[i2];
-  const eat = () => tokens[i2++];
-  const num = (t) => (t === undefined ? null : parseFloat(t));
-  function primary() {
-    const t = eat();
-    if (t === '(') { const v = sum(); if (peek() === ')') eat(); return v; }
-    if (t === '+' || t === '-') { const v = primary(); return v === null ? null : (t === '-' ? -v : v); }
-    return num(t);
-  }
-  function term() {
-    let v = primary();
-    while (peek() === '*' || peek() === '/') {
-      const op = eat();
-      const r = primary();
-      if (v === null || r === null) return null;
-      v = op === '*' ? v * r : v / r;
-    }
-    return v;
-  }
-  function sum() {
-    let v = term();
-    while (peek() === '+' || peek() === '-') {
-      const op = eat();
-      const r = term();
-      if (v === null || r === null) return null;
-      v = op === '+' ? v + r : v - r;
-    }
-    return v;
-  }
-  const out = sum();
-  return Number.isFinite(out) ? out : null;
-}
-
 /** 颜色 → α（#rrggbbaa / rgba() / rgb(a b / a) / 关键字）。无法判定 → null。 */
 function alphaOf(value) {
   const v = deref(value);
@@ -403,16 +313,14 @@ for (const [key, e] of faceDecls) {
     why: '环带可透出面必须走唯一毛玻璃标准（成员表 / .nf-glass）：半透明 + 零模糊 = 底下的正文直接穿上来',
   });
 }
-// 两个登记面必须在场且走玻璃
-for (const must of ['.mf-strip::before', '.mf-strip-chip.on::after']) {
+// 选中主胶囊必须在场且走玻璃
+for (const must of ['.mf-strip-chip.on::after']) {
   const e = faceDecls.get(must);
   if (!e) {
     add({
       rule: 'S1', file: rel(MOBILE_LAYER), line: 0, selector: must,
       detail: '方案 C 的登记面缺席',
-      why: must === '.mf-strip::before'
-        ? '玻璃带层（64px）缺失：方案 C 的「正文滚进带里只剩色块」没有载体'
-        : '主胶囊玻璃层缺失：作者令「主胶囊要采用毛玻璃底」没有载体',
+      why: '主胶囊玻璃层缺失：作者令「主胶囊要采用毛玻璃底」没有载体',
     });
     continue;
   }
@@ -436,7 +344,7 @@ for (const [key, e] of faceDecls) {
         rule: 'S2', file: relPath(join(CSS_DIR, m.file)), line: m.line, selector: key,
         detail: `${m.prop}: ${m.value.slice(0, 90)}`,
         why: horiz
-          ? '水平渐隐禁令：作者令「文字两边不要渐隐」—— 全脸只允许纵向（下缘 28px）渐隐'
+          ? '水平渐隐禁令：作者令「文字两边不要渐隐」—— 水平方向零渐隐'
           : '文字层 mask 禁令：label 上任何非 none 的 mask 都会把文字端点化开',
       });
     }
@@ -507,81 +415,16 @@ if (existsSync(NAV)) {
   }
 }
 
-// ── S4 下边缘渐隐厚度 = 28px ──────────────────────────────────────────────
-{
-  const fadeKey = '.mf-strip::after';
-  const e = faceDecls.get(fadeKey);
-  const rules = [];
-  for (const f of order) {
-    for (const r of rulesOf.get(f) || []) {
-      for (const cx of splitTop(r.selector, /,/)) {
-        if (keyOf(cx) === fadeKey) rules.push({ file: f, rule: r });
-      }
-    }
-  }
-  const declOf = (prop) => {
-    let hit = null;
-    for (const { file, rule } of rules) {
-      for (const d of rule.decls) if (d.prop === prop) hit = { ...d, file, line: rule.line };
-    }
-    return hit;
-  };
-  const glassH = evalPx('var(--mchrome-clear) - var(--ds-space-2)');
-  const fadeH = evalPx('var(--ds-space-6) + var(--ds-space-1)');
-  if (!e && !rules.length) {
-    add({
-      rule: 'S4', file: rel(MOBILE_LAYER), line: 0, selector: fadeKey,
-      detail: '下边缘渐隐带缺席',
-      why: `方案 C 的 28px 下缘渐隐（作者口径 ④）：没有它，顶栏就又变回一条硬边`,
-    });
-  } else {
-    const heightD = declOf('height');
-    const bgD = declOf('background');
-    const topD = declOf('top');
-    const gotH = heightD ? evalPx(heightD.value) : null;
-    if (gotH === null) {
-      add({
-        rule: 'S4', file: relPath(join(CSS_DIR, heightD ? heightD.file : 'mobileLayer.css')), line: heightD ? heightD.line : 0,
-        selector: fadeKey, detail: `height: ${heightD ? heightD.value : '(缺)'}`,
-        why: '渐隐带厚度必须由令牌算术给出（--ds-space-6 + --ds-space-1），字面量/缺声明均红',
-      });
-    } else if (Math.abs(gotH - FADE_H_PX) > 0.01) {
-      add({
-        rule: 'S4', file: relPath(join(CSS_DIR, heightD.file)), line: heightD.line, selector: fadeKey,
-        detail: `height 解析 = ${gotH}px（应为 ${FADE_H_PX}px）`,
-        why: '下边缘渐隐厚度 = 28px 是作者口径 ④ 的硬数字',
-      });
-    }
-    if (fadeH !== null && Math.abs(fadeH - FADE_H_PX) > 0.01) {
-      add({
-        rule: 'S4', file: rel(join(CSS_DIR, 'design-system.css')), line: 0, selector: '--ds-space-6 / --ds-space-1',
-        detail: `令牌算术解析 = ${fadeH}px（应为 ${FADE_H_PX}px）`,
-        why: '令牌刻度被改档：渐隐厚度必须跟着刻度走，不许偷偷变成别的 28',
-      });
-    }
-    if (!bgD || !/var\(\s*--ds-fade-veil\s*\)/.test(bgD.value)) {
-      add({
-        rule: 'S4', file: rel(MOBILE_LAYER), line: bgD ? bgD.line : 0, selector: fadeKey,
-        detail: `background: ${bgD ? bgD.value : '(缺)'}`,
-        why: '渐隐带必须是页面底色族的洗层（--ds-fade-veil，与主对话窗顶缘渐隐同枚令牌），不是自拟色带',
-      });
-    }
-    const gotTop = topD ? evalPx(topD.value) : null;
-    if (gotTop === null || glassH === null || Math.abs(gotTop - glassH) > 0.01) {
-      add({
-        rule: 'S4', file: rel(MOBILE_LAYER), line: topD ? topD.line : 0, selector: fadeKey,
-        detail: `top: ${topD ? topD.value : '(缺)'} ⇒ ${gotTop}px（玻璃带高应为 ${glassH}px）`,
-        why: '渐隐带必须紧接玻璃带下沿（64px = --mchrome-clear 72 − --ds-space-2 8），中间不许留缝、不许叠压',
-      });
-    }
-  }
-  if (glassH === null) {
-    add({
-      rule: 'S4', file: rel(MOBILE_LAYER), line: 0, selector: '--mchrome-clear',
-      detail: '簇净空令牌无法解析（--mchrome-clear / --ds-space-2）',
-      why: '玻璃带高必须由令牌算术给出，无法解析即无法机检厚度',
-    });
-  }
+// ── S4 Zero-paint floating band: no full-width glass or fade carrier. ──────
+for (const pseudo of ['::before', '::after']) {
+  const key = `.mf-strip${pseudo}`;
+  const rules = [...(rulesOf.get('mobileLayer.css') || [])].filter(r => splitTop(r.selector, /,/).some(cx => keyOf(cx) === key));
+  const contents = rules.flatMap(r => r.decls.filter(d => d.prop === 'content'));
+  if (contents.at(-1)?.value !== 'none') add({
+    rule: 'S4', file: rel(MOBILE_LAYER), line: rules.at(-1)?.line || 0, selector: key,
+    detail: 'Full-width strip pseudo-element is not retired',
+    why: 'The band must be transparent; only individual controls own glass.',
+  });
 }
 
 // ── 输出 ──────────────────────────────────────────────────────────────────
@@ -592,7 +435,7 @@ if (argv.has('--json')) {
     root: ROOT,
     faceKeys: [...faceDecls.keys()].sort(),
     glassMembers: [...glassMemberKeys].filter(isFaceKey).sort(),
-    fadeHeightPx: FADE_H_PX,
+    floatingBand: true,
     violations,
   }, null, 2));
   process.exit(violations.length ? 1 : 0);
@@ -608,12 +451,12 @@ if (violations.length) {
   }
   console.error('\n处置：环带（.mf-strip / .mf-strip-chip / .mf-strip-label）四条判据 =');
   console.error('      S1 可透出面走 css/glass.css 成员表；S2 水平方向零 mask；');
-  console.error('      S3 胶囊只许 .on 档有材质、正文宿主零底；S4 下缘渐隐恒 28px（令牌算术）。');
+  console.error('      S3 胶囊只许 .on 档有材质、正文宿主零底；S4 整宽玻璃及渐隐伪元素零画。');
   process.exit(1);
 }
 
 console.log(
   `✓ mobile-canvas-strip gate passed — 环带面键 ${faceDecls.size} 个（玻璃成员 ${[...glassMemberKeys].filter(isFaceKey).length}）· `
-  + `水平 mask 0 处 · 非主胶囊材质 0 处 · 下缘渐隐 ${FADE_H_PX}px（玻璃带 ${evalPx('var(--mchrome-clear) - var(--ds-space-2)')}px）`,
+  + '水平 mask 0 处 · 非主胶囊材质 0 处 · transparent floating band',
 );
 process.exit(0);

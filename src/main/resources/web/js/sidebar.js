@@ -18,7 +18,7 @@ import { chatViews, setActiveView, activeView } from './chatView.js';
 import { emit } from './events.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
+import { fetchNeblinkStatus, neblinkSettingsHTML, accountCardHTML, bindNeblinkEvents } from './neblink.js';
 // 件四 · 设置页身份卡本地化（作者令 2026-11-02）：头像在上 + 用户名/邮箱单行胶囊，
 // 点胶囊 = App 内个人资料面（不再跳官网）。卡片结构/绘制/资料面全在该叶子模块，
 // 本文件只调两个入口（settingsIdentityCardHTML 出结构，paintSettingsIdentity 出读数）。
@@ -834,7 +834,16 @@ function effortFromConfig() {
 // 7 个 i18n 键一并移除；`PUT /api/safety/mode` 的前端调用点随之归零（REST 端点
 // 由后端保留，供外部/脚本使用）。档位的**唯一 UI 入口 = 顶栏盾牌**
 // （`web/js/main.js` `initSafetyToggle`，写的是同一条全局持久路径）。
+let settingsLayerObserver = null;
 export function renderSettings() {
+  if (!settingsLayerObserver) {
+    settingsLayerObserver = new MutationObserver(() => {
+      const content = document.getElementById('settings-content');
+      const layer = String(document.body.classList.contains('mobile-layer'));
+      if (content?.hasChildNodes() && content.dataset.mobileAccountLayer !== layer) renderSettings();
+    });
+    settingsLayerObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  }
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
   // Build language selector options
@@ -860,6 +869,7 @@ export function renderSettings() {
   // 点胶囊 = App 内个人资料面；点头像 = 换头像流程 / 未登录登录卡（activityBar
   // 既有委托统一承担，本文件不绑任何点击）。
   const mobileLayer = typeof document !== 'undefined' && document.body.classList.contains('mobile-layer');
+  content.dataset.mobileAccountLayer = String(mobileLayer);
   // settings-progressive-disclosure 批：供应商与模型只在每次新开设置时折叠；
   // renderSettings 会因 WS echo 重建 DOM，展开状态需跨同一设置会话保留。
   const settingsDisclosure = window.__settingsDisclosure || (window.__settingsDisclosure = {
@@ -873,15 +883,7 @@ export function renderSettings() {
   // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
   // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
-    ${setCard({ title: t('settings.account'), body: `
-      ${/* account-hero-dedupe 批（2026-11-07 作者令逐字「手机端工作台上面的账户 做出
-           hero 那种感觉 并且去重 把设置的统一到这里」）：设置页**不再重复身份信息**
-           —— 头像 / 用户名 / 邮箱 / 退出登录的权威展示只有一处 = 工作台顶部 hero
-           （.mf-me-entry）。这里保留账号段的**功能分项**（连接/服务/退出等），
-           只留一行指路，不复述身份读数。 */ ''}
-      <div class="set-row-hint" data-acct-dedup-hint>身份与头像在工作台顶部</div>
-      ${neblinkSettingsHTML()}
-      ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}` })}
+    ${mobileLayer ? '' : accountCardHTML()}
     ${setCard({ title: t('settings.runtime'), body: `
       ${setGroup(
         setRow({
@@ -989,7 +991,7 @@ export function renderSettings() {
   paintSettingsIdentity();
   bindSettingsDisclosure(content);
   bindSettingsEvents(content, cfg);
-  bindNeblinkEvents(() => renderSettings());
+  if (!mobileLayer) bindNeblinkEvents(() => renderSettings());
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
@@ -1044,7 +1046,7 @@ export function renderSettings() {
         const wrapper = document.createElement('div');
         wrapper.innerHTML = neblinkSettingsHTML();
         neblinkDiv.replaceWith(wrapper.firstElementChild);
-        bindNeblinkEvents(() => renderSettings());
+        if (!mobileLayer) bindNeblinkEvents(() => renderSettings());
       }
       // Keep the avatar section in lockstep with login/avatar changes.
       paintSettingsIdentity();

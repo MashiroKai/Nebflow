@@ -1194,7 +1194,8 @@ body.mobile-layer #fm-chat-overlay {
         左右 12（与 dock 胶囊同轴）+ 底 12（页面壳已让 safe-area 与 dock 足迹），
         宽度不溢出 375。材质与圆角**不在这里重写**（禁第二套读数）。 */
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
-  padding-top: var(--ds-space-2);
+  /* Clearance belongs to scroll content, not a permanently clipped page body. */
+  padding-top: calc(104px + env(safe-area-inset-top, 0px));
 }
 /* mobile-page-body carries a bottom scroll clearance on every page (from the
    mobile-top-clearance pass). The conversation page's input bar is not scroll
@@ -1757,33 +1758,24 @@ body.mobile-layer .mf-canvas-page {
         滚动面不再叠一份 env(safe-area-inset-top)（会双计）。
    z 序：签组 z 20 压过 pane 内容（旧形态靠流内位置天然在上，离流后必须显式）；
    工具条（节根 z 20，DOM 在后）压过签组；堆叠视角 .mf-stack-view z 40 全盖。
-   桌面零触碰：全部 body.mobile-layer 限定。 */
+   桌面零触碰：全部 body.mobile-layer 限定。
    ══ 方案 C 落地批（mobile-canvas-tabs-c 2026-11-06；作者 08:33 逐字
    「采用方案c 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端
    hover 上下选项的那种模糊效果 文字两边不要渐隐」）════════════════════════
-   本批把环带从「72px 零底带 + 双侧水平羽化」换成方案 C 的**无下边缘**形态：
-     ① **玻璃带 64px**（`::before`，材质 = `--nf-glass-*` 单源、成员登记表在册）——
-        正文滚到带里只剩色块，读作「化掉」的第一档；
-     ② **下边缘渐隐带 28px**（`::after`，`--ds-fade-veil` 渐层、零 backdrop）——
-        64..92 这一段正文从「半洗」回到「清晰」，**没有一条硬边**；
+   后续透明悬浮授权取代整宽 64px 玻璃与 28px 渐隐，两个伪元素均零画。
+   以下选中胶囊及邻签材质保留：
      ③ **水平方向零渐隐**：`.fade` 的双侧 14px 羽化、邻签 `::after` 的方向 mask、
         label 的 9px 两端淡化**整族退役**（作者令「文字两边不要渐隐」）—— 全脸
-        只剩一条纵向（下缘）渐隐，横向 mask 一个不留；
+        横向 mask 一个不留；整宽纵向渐隐亦按后续授权退役；
      ④ **主胶囊真毛玻璃**：`.mf-strip-chip.on::after` 吃成员表 blur（`--nf-glass-filter`），
         两侧签**不再带胶囊包层**（作者令「背景的文字不使用胶囊」——方案 C 的扁平签
         原样保留，视觉只给环位姿），它们的「糊感」改由**环邻位深度令牌**
         `--ds-ring-blur` / `--ds-ring-saturate` 承担（与桌面 hover 上下选项同源）。
-   几何单源仍是 navController.js 的 RING_*（签心恒 y=40，仍在 64px 玻璃带内）；
-   `--mf-strip-*` 三枚局部量由 `.mf-canvas-page` 出生（带上量 + 正文初态让位共用
-   一把尺），禁各写裸值。 */
+   几何单源仍是 navController.js 的 RING_*；正文初态让位统一使用
+   --mchrome-clear，并随内容滚走。 */
 body.mobile-layer .mf-canvas-page {
-  /* 玻璃带高 = 簇净空（--mchrome-clear 72）收一档气隙（--ds-space-2 8）= 64 */
-  --mf-strip-glass-h: calc(var(--mchrome-clear) - var(--ds-space-2));
-  /* 下缘渐隐 = 一档留白（--ds-space-6 24）+ 一档缝（--ds-space-1 4）= **28px**
-     （作者口径 ④「下边缘渐隐厚度 = 28px」；本行是唯一出生地） */
-  --mf-strip-fade-h: calc(var(--ds-space-6) + var(--ds-space-1));
-  /* 带总高 = 64 + 28 = 92（正文初态让位 = 同值，见下方 canvas 正文块） */
-  --mf-strip-h: calc(var(--mf-strip-glass-h) + var(--mf-strip-fade-h));
+  /* Only the controls float; initial clearance scrolls away with the content. */
+  --mf-strip-h: var(--mchrome-clear);
 }
 body.mobile-layer .mf-strip {
   position: absolute;
@@ -1800,44 +1792,14 @@ body.mobile-layer .mf-strip {
      近缘只放大约 1.01 倍，不啃两边浮钮的净空）。 */
   perspective: 1200px;
 }
-/* ── 玻璃带层（0..64）：整条顶栏一枚玻璃面 ─────────────────────────────────
-   材质逐项取 `--nf-glass-*`（底 + 顶缘折射线 + 顶缘细边）；**下缘不画细边、
-   不投影**——外投影会在 64px 处画出一条硬边，正是本方案要消灭的东西。
-   blur 由 css/glass.css 成员登记表供给（G2：值只准 `var(--nf-glass-filter)`）。
-   成员 = 带本体（z-index:-1 负层）：带本体零视觉（G7b 登记为「零画」），画的是本层。 */
-body.mobile-layer .mf-strip::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  z-index: -1;
-  height: var(--mf-strip-glass-h, calc(var(--mchrome-clear) - var(--ds-space-2)));
-  background:
-    var(--nf-glass-refraction) center top / 80% var(--ds-space-hair) no-repeat,
-    var(--nf-glass-bg);
-  border-top: var(--nf-glass-border);
-  pointer-events: none;
-}
-/* ── 下边缘渐隐层（64..92，28px）：零 backdrop ─────────────────────────────
-   与玻璃层**分家**：mask/渐层 × backdrop-filter 落在同一元素上会被合成器架空
-   （本仓实证注释见 `.ds-edge-fade` 已知坑①，也是旧邻签没有 blur 的根因）。
-   故本层只铺页面底色族的洗层（`--ds-fade-veil`，与主对话窗顶缘渐隐同一枚
-   令牌），把「滚走的行」从半洗洗到清晰 —— 语义 = 继续化开，不是盖一条色带。 */
+/* No full-width glass/veil: material belongs to each floating control. */
+body.mobile-layer .mf-strip::before,
 body.mobile-layer .mf-strip::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: var(--mf-strip-glass-h, calc(var(--mchrome-clear) - var(--ds-space-2)));
-  z-index: -1;
-  height: var(--mf-strip-fade-h, calc(var(--ds-space-6) + var(--ds-space-1)));
-  background: var(--ds-fade-veil);
-  pointer-events: none;
+  content: none;
 }
 /* 签本体接回点击/手势（带 pointer-events:none 不下传 —— 上方透传悬浮批②）。 */
 body.mobile-layer .mf-strip-chip { pointer-events: auto; }
-/* ── canvas 正文初态让位 = 带总高（92）────────────────────────────────────
+/* ── canvas 正文初态让位 = 悬浮控制净空────────────────────────────────────
    旧值 = `--cv-safe-top`（= --mchrome-clear 72，语义「首条内容落在按钮/胶囊正下方」）。
    方案 C 落地后带子长到 92（玻璃 64 + 渐隐 28），若仍让 72，首行正好落在**渐隐带
    里**（64..92 的第 8px 处，veil α ≈ .55）—— 一进页面就被洗掉半行，读作「内容
@@ -2703,7 +2665,8 @@ body.mobile-layer .mf-hub-chev svg { width: 16px; height: 16px; }
 body.mobile-layer .mf-me-entry {
   position: relative;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: center;
   gap: var(--ds-space-4);
   margin: var(--ds-space-5) var(--mpad-x) 0;
   min-height: 148px;
@@ -2718,7 +2681,7 @@ body.mobile-layer .mf-me-entry {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
   color: var(--color-text);
   font-size: var(--mfs-body);
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   touch-action: manipulation;
   overflow: hidden;
@@ -2761,24 +2724,6 @@ body.mobile-layer .mf-me-sub {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* hero 内设置入口（唯一设置入口；独立可点，不与整块点击冲突）。 */
-body.mobile-layer .mf-me-actions { flex: none; display: flex; align-items: center; }
-body.mobile-layer .mf-me-settings {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 var(--ds-space-3);
-  border-radius: var(--ds-radius-pill, 999px);
-  background: color-mix(in srgb, var(--color-text) 8%, transparent);
-  color: var(--color-text);
-  font-size: var(--mfs-min);
-  cursor: pointer;
-}
-body.mobile-layer .mf-me-settings:hover {
-  background: color-mix(in srgb, var(--color-text) 12%, transparent);
-}
-body.mobile-layer .mf-me-settings-ic { width: 16px; height: 16px; }
 /* 圆形头像框（登录态照片 / 未登录品牌标双态；几何 = 设置页头像框同族缩档）。 */
 body.mobile-layer .mf-me-avatar-frame {
   position: relative;
@@ -2817,28 +2762,17 @@ body.mobile-layer .mf-me-avatar-photo {
   object-fit: cover;
   pointer-events: none;
 }
-body.mobile-layer .mf-me-meta {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-half);
+body.mobile-layer .mf-me-entry .mf-me-meta {
+  flex: none;
+  align-items: center;
+  width: 100%;
 }
-body.mobile-layer .mf-me-name {
-  font-size: var(--mfs-body);
-  font-weight: 500;
-  color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-body.mobile-layer .mf-me-sub {
-  font-size: var(--mfs-min);
-  color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+body.mobile-layer .mf-me-entry :is(.mf-me-name, .mf-me-sub) { max-width: 100%; }
+body.mobile-layer .mf-account-card { margin: var(--ds-space-6) var(--ds-space-4); }
+body.mobile-layer .mf-account-card .neblink-account-actions { padding: var(--ds-space-4); }
+body.mobile-layer .mf-account-card .neblink-logout-btn { width: 100%; border-radius: var(--ds-radius-input); }
+/* The adopted settings panel ends above the dock: no desktop glass skirt. */
+body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal::after { content: none; }
 /* 个人主页（me）：资料卡。 */
 body.mobile-layer .mf-me-card {
   display: flex;
@@ -4896,7 +4830,7 @@ body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-title {
    **104**）⇒ 本节取 104，四种会话「身份头底缘 → 首条内容」的间距逐像素一致
    （读数见批文档断言表）。 */
 body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-body {
-  padding-top: calc(104px + env(safe-area-inset-top, 0px));
+  padding-top: 0;
 }
 /* ⑤ 右上三点键（48px g2-fab 圆钮；材质/按压 = .g2-fab 共享档）。落位与主对话
    搜索键同一几何（top 16+safe / right 16）。包含块 = .mobile-page（.fm-modal
@@ -4927,12 +4861,16 @@ body.mobile-layer .mh-sess-more svg {
    不拦事件 —— 桌面形态与既有断言面逐字不动）。多选计数/信任槽在窗头行内随之
    退场；设备描述键/群设置图标钮同批退役（入口已进右上三点菜单，禁三处入口）。 */
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal-header {
-  height: 1px;
+  height: 0;
   min-height: 0;
   padding: 0;
   gap: 0;
   overflow: hidden;
   border: none;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   pointer-events: none;
 }
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal-header > * {
@@ -5039,27 +4977,27 @@ body.mobile-layer .mf-dots {
    transform 属性（上方既有档 scale(1.24) 原样保留），故本批用
    left/right:0 + width:max-content + margin-inline:auto 实现居中，
    transform 面上两个意图（居中 / 放大）永不相撞。 */
-/* ── 存量红修（-legacy 提交 ui-unification-20261103-canvas-overlay-legacy）──
-   canvas-chrome-size-align ⑥ 手机两腿 2 红（main 存量）：2026-11-02 19:18
-   「底部控件浮层带批」把小点指示器从流内末件改成**浮层**、与底部 48 圆钮行共
-   中线后 —— html 页文档工具簇（source 16 / ref 72 / find 128，三颗 48 圆钮占
-   16..176）与小点（375 宽下居中 ≈142..233）落在同一条带上相交，第三颗钮
-   （find，128..176）被压（本轮 HEAD 复现：手机-dark / 手机-light 两腿各 1 红）。
-   修法：**簇在场的页面**把小点浮层收进「簇右缘 ↔ ask 钮左缘」之间的净带
-   （左 = 首钮座 16 + 3×48 + 2×槽缝 8 + 让位缝 8 = 184；右 = ask 座 16 + 钮宽
-   48 + 让位缝 8 = 72），中线 / 形态 / 手势面全不变；无簇页（md / monaco：
-   source+find 两钮 16..120，居中小点本就零相交；图 / pdf 无簇）维持既有居中。
-   判据用 `.canvas-ref-select`（= 引用选取钮，**只 html 查看器有** —— shared.js
-   addElementRefToggle 的唯一调用方是 viewers/html.js:714）⇒ 只有真会被压的
-   html 页让位，不牵连 md 面。:has() 不支持时整条规则回落 = 改前行为（与既有
-   mobileLayer :has 让位块同法）。 */
-body.mobile-layer .mf-canvas-page:has(.canvas-ref-select) .mf-dots {
-  /* 左 = 16 首钮座 + 3×48 钮宽 + 3×8 缝（2 槽缝 + 1 让位缝） */
-  left: calc(16px + var(--mtap-lg, 48px) * 3 + 8px * 3);
-  /* 右 = 16 ask 座 + 48 钮宽 + 8 让位缝 */
-  right: calc(16px + var(--mtap-lg, 48px) + 8px);
-  margin-inline: auto;   /* 净带内仍居中（原居中意图保留） */
+/* Keep pagination centered in the safe rectangle, independent of tool count.
+   Five 48px controls plus dots cannot fit a 320px row. Put document tools and
+   note on the preceding row instead of moving pagination or shrinking targets. */
+body.mobile-layer .mf-dots {
+  left: env(safe-area-inset-left, 0px);
+  right: env(safe-area-inset-right, 0px);
 }
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-source-toggle,
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-ref-select,
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
+  bottom: calc(var(--ds-space-4) + var(--mtap-lg) + var(--ds-space-2));
+}
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane:has(.canvas-source-toggle) .canvas-zoom-bar {
+  bottom: calc(var(--ds-space-4) + 2 * (var(--mtap-lg) + var(--ds-space-2)));
+}
+body.mobile-layer:has(.mobile-page[data-page="canvas"].live) .ask-fab.note-fab {
+  margin-right: 0;
+  /* translate preserves the reader-specific inline bottom set by askDock. */
+  translate: 0 calc(-1 * (var(--mtap-lg) + var(--ds-space-2)));
+}
+
 /* 底部可滚余量（md / 纯文本 / epub 三面同尺）：末行滚到控件行之上。
    值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。
    canvas 正文底部遮挡修复批（2026-11-05，桌面档补同一让位）：桌面侧改由 JS 实测

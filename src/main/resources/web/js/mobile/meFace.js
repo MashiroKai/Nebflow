@@ -17,12 +17,13 @@
 // 禁第二份取数、禁新端点。头像绘制与设置页/Activity Bar 同池（avatarViewState
 // 双态 + paintAvatarSlot 就绪门，永不空环；失败 URL 进共享 latch）。
 
-import { getNeblinkState, avatarViewState, paintAvatarSlot, noteAvatarFailure, onNeblinkStatus } from '../neblink.js';
+import { getNeblinkState, avatarViewState, paintAvatarSlot, noteAvatarFailure, onNeblinkStatus, accountCardHTML, bindNeblinkEvents, fetchNeblinkStatus } from '../neblink.js';
 import { brand } from '../brand.js';
 import { createIconsIn } from '../utils.js';
 import { showLoginModal } from '../activityBar.js';
 import { getIdentityReadout, openProfileFace, openSettingsAvatarPicker } from '../settingsIdentity.js';
 import { t } from '../i18n.js';
+import { h } from '../dom.js';
 
 function tt(zh, en) {
   let lang = '';
@@ -33,7 +34,8 @@ function tt(zh, en) {
 
 /** 状态拍 → 全部个人主页面重绘（登录/登出/头像变更；页不在 DOM 时零成本跳过）。 */
 const paintCbs = new Set();
-let statusSubscribed = false;
+const accountTeardowns = new WeakMap();
+let unsubscribeStatus = null;
 
 /** @param {HTMLElement} body */
 function el(body, cls, tag = 'div') {
@@ -67,9 +69,9 @@ function navRow(card, icon, label, onClick, pageId, valueText = '') {
   row.type = 'button';
   row.className = 'mf-hub-row';
   row.dataset.mePage = pageId; // QA 断言面：层级行机械定位
-  row.innerHTML = `<i data-lucide="${icon}"></i><span class="mf-hub-row-label"></span>` +
-    (valueText ? '<span class="mf-hub-row-val"></span>' : '') +
-    '<i data-lucide="chevron-right" class="mf-hub-chev"></i>';
+  row.append(h('i', { 'data-lucide': icon }), h('span', { class: 'mf-hub-row-label' }));
+  if (valueText) row.append(h('span', { class: 'mf-hub-row-val' }));
+  row.append(h('i', { 'data-lucide': 'chevron-right', class: 'mf-hub-chev' }));
   /** @type {HTMLElement|null} */ (row.querySelector('.mf-hub-row-label')).textContent = label;
   if (valueText) /** @type {HTMLElement|null} */ (row.querySelector('.mf-hub-row-val')).textContent = valueText;
   row.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
@@ -118,6 +120,18 @@ function buildMeHome(body, push) {
     login.addEventListener('click', (e) => { e.stopPropagation(); showLoginModal(); });
     card.appendChild(login);
   }
+  // Reuse the entire settings account card and its existing logout flow.
+  const account = el(body, 'mf-account-card');
+  let releaseAccount = () => {};
+  const paintAccount = () => {
+    if (!account.isConnected) return;
+    releaseAccount();
+    account.innerHTML = accountCardHTML({ mobile: true });
+    releaseAccount = bindNeblinkEvents(paintAccount, account);
+  };
+  accountTeardowns.set(body, () => releaseAccount());
+  paintAccount();
+  paintCbs.add(paintAccount);
   // 账号分组（苹果层级入口；全部为 App 内页面）。
   el(body, 'mf-hub-label mf-me-grouplabel').textContent = tt('账号', 'Account');
   const rows = el(body, 'mf-hub-rows');
@@ -239,13 +253,21 @@ const BUILDERS = {
 export function buildMeFace(pageId, body, nav) {
   const build = BUILDERS[pageId];
   if (!build) return () => {};
+  const existingCbs = new Set(paintCbs);
   if (pageId === 'me') build(body, nav.push);
   else build(body);
+  const ownCbs = [...paintCbs].filter(cb => !existingCbs.has(cb));
+  for (const cb of ownCbs) cb();
+  if (pageId === 'me') void fetchNeblinkStatus();
   if (typeof lucide !== 'undefined') createIconsIn(body);
   // 状态订阅（模块级单飞）：一拍重绘全部四个页面在场元素。
-  if (!statusSubscribed) {
-    statusSubscribed = true;
-    onNeblinkStatus(() => { for (const cb of [...paintCbs]) { try { cb(); } catch { /* 单页重绘异常不阻断其余 */ } } });
+  if (!unsubscribeStatus) {
+    unsubscribeStatus = onNeblinkStatus(() => { for (const cb of [...paintCbs]) { try { cb(); } catch { /* One face must not block the others. */ } } });
   }
-  return () => { /* 元素随页面壳销毁；paintCbs 回调对缺席元素零成本 */ };
+  return () => {
+    accountTeardowns.get(body)?.();
+    accountTeardowns.delete(body);
+    for (const cb of ownCbs) paintCbs.delete(cb);
+    if (!paintCbs.size) { unsubscribeStatus?.(); unsubscribeStatus = null; }
+  };
 }
