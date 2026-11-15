@@ -14,8 +14,9 @@
 //      （renderAttachmentPreviewInner = 输入框条 / renderAskAttachments = 卡区）
 //      同一函数；卡区媒体走卡语言标准组件（buildMediaFlat/buildMediaStack +
 //      openMediaLightbox），卡区零第二份 <img>/<video> 自造；图标面单词源。
-//   b) 图/视频真实缩略帧宽 ≥ max(卡片内容宽 × 0.2, 96px)；单件 = 平面卡
-//      （.pop-media-flat）、多件 = 叠卡（.ds-media-stack + .ds-media-stack__pill）。
+//   b) 问面附件 = buildFileCard 文件卡（.ask-att-question-card，点击开 Canvas）；
+//      答/输入条媒体缩略档（.att-thumb）判据保留在 a9/a10 输入条腿（B2 对齐：
+//      问面缩略图判据随问面文件卡演进作废）。
 //   c) 点击图 / 叠卡 / 文件：预览层 DOM 真出现且可见（.nf-lightbox--media
 //      display:flex），文件点击 → /api/nf-file 取回次数递增（不得点了没反应）。
 //   d) 文件卡左上角来源标签在位（.ds-att-origin），文本含 AskUser 标识，几何在
@@ -53,6 +54,37 @@ mkdirSync(OUT, { recursive: true });
 const SID = 'askatt-unify-session';
 const ORIGIN = 'http://localhost:8891';
 const FOLD_AT = 3; // 卡区折叠阈值（chat.js ASK_ATTACHMENT_FOLD_AT）
+
+// ── 真实 8891 兜底服务器（B2 批）──静态面本由 page.route('**/*') fulfill 承载，
+// 但 Playwright WebKit 拦截在加载 ~0.6s 后对后续请求整体失效（引擎缺陷，非产品
+// 缺陷），泄漏请求直达真实 8891 ⇒ 连接拒绝/404 ⇒ z1 console 假红。beforeAll 起
+// 一个真服务器接住泄漏：静态同 WEB 树、/api/* 一律 200 {}（与 Chromium catch-all
+// 应答同形，零行为差）。夹具腿（nf-ticket/nf-file/sessions）仍归 page.route。
+import { createServer as _createServer } from 'node:http';
+let _leakServer;
+test.beforeAll(async () => {
+  _leakServer = _createServer(async (req, res) => {
+    try {
+      let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+      if (p === '/') p = '/index.html';
+      if (p === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+      if (p.startsWith('/api/')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
+        return;
+      }
+      const file = normalize(join(WEB, p));
+      if (!file.startsWith(normalize(WEB))) { res.writeHead(403); res.end(); return; }
+      const data = await import('node:fs/promises').then((m) => m.readFile(file));
+      res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream' });
+      res.end(data);
+    } catch {
+      res.writeHead(404); res.end('not found');
+    }
+  });
+  await new Promise((r) => _leakServer.listen(8891, '127.0.0.1', r));
+});
+test.afterAll(async () => { if (_leakServer) await new Promise((r) => _leakServer.close(r)); });
 
 /* ── 自编码 PNG（免外部夹具；CRC32 手表 —— node:zlib 无 crc32）─────────── */
 const CRC_TABLE = (() => {
@@ -155,15 +187,26 @@ function sourceLegs() {
     iconImpl += (s.match(/class="att-file-icon/g) || []).length;
   }
   const chatSrc = srcOf(join(jsRoot, 'chat.js'));
-  /** 按花括号配对截取函数体（够用的近似：目标函数内无花括号字面量）。 */
+  /** 按花括号配对截取函数体。先越过形参表再找体首 `{`——形参缺省值可含字面
+   *  量花括号（renderAskAttachments 的 `opts = {}`，B2 批实证：旧版从缺省值
+   *  的 `{` 起配对，截得 "{}" ⇒ a3/a5 假红）。 */
   function bodyOf(name) {
     const i = chatSrc.indexOf('function ' + name + '(');
     if (i < 0) return '';
-    const j = chatSrc.indexOf('{', i);
+    let k = i + ('function ' + name).length;
+    let paren = 0;
+    let sawParen = false;
+    for (; k < chatSrc.length; k++) {
+      const c = chatSrc[k];
+      if (c === '(') { paren++; sawParen = true; }
+      else if (c === ')') { paren--; if (sawParen && paren === 0) { k++; break; } }
+    }
+    const j = chatSrc.indexOf('{', k);
+    if (j < 0) return '';
     let depth = 0;
-    for (let k = j; k < chatSrc.length; k++) {
-      if (chatSrc[k] === '{') depth++;
-      else if (chatSrc[k] === '}') { depth--; if (depth === 0) return chatSrc.slice(j, k + 1); }
+    for (let m = j; m < chatSrc.length; m++) {
+      if (chatSrc[m] === '{') depth++;
+      else if (chatSrc[m] === '}') { depth--; if (depth === 0) return chatSrc.slice(j, m + 1); }
     }
     return '';
   }
@@ -454,8 +497,10 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
         if (!id) continue;
         const wrap = box.querySelector('.ask-attachments-wrap');
         const list = wrap && wrap.querySelector('.ask-attachments-list');
-        const chips = list ? [...list.querySelectorAll('.att-file.ask-att-file')] : [];
-        const names = chips.map((c) => c.querySelector('.att-file-name'));
+        // 问面（B2 对齐）：顶层提问附件 = buildFileCard 文件卡（.ask-att-question-card），
+        // 旧判据的 .att-file.ask-att-file 缩略/chip 面只活在答面腿（history answer）。
+        const chips = list ? [...list.querySelectorAll('.ask-att-question-card')] : [];
+        const names = chips.map((c) => c.querySelector('.fc-name'));
         const tags = wrap ? [...wrap.querySelectorAll('.ds-att-origin')] : [];
         const head = wrap ? wrap.querySelector('.ask-attachments-head') : null;
         const foldBtn = wrap ? wrap.querySelector('.ask-att-fold-btn') : null;
@@ -506,17 +551,19 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
     const c4 = r1.c4 || {};
     const c5 = r1.c5 || {};
 
-    /* ══ b 腿：卡区图片档 = 输入框同款小缩略图（attachment-thumb-unify 改判）══
-       作者令 2026-11-05 12:57「附件这里添加的图片文件等应该用我们输入框同款的小
-       图标/缩略图」⇒ 旧判据「缩略帧宽 ≥ max(内容宽×0.2, 96px)」作废：卡区图片档
-       不再是 220px 卡语言媒体卡，而是 `.att-thumb` 28px 档（与输入条逐值同盒）。 */
-    check('b1 c1 图片档 = .att-thumb 小缩略图（无 .pop-media-flat）',
-      c1.thumbCount === 1 && c1.flat === false, JSON.stringify({ thumbs: c1.thumbCount, flat: c1.flat }));
-    check('b2 c1 缩略帧 = 28px 档且不越出附件条',
-      !!c1.thumbBox && c1.thumbBox.w <= 28.5 && c1.thumbBox.h <= 28.5 && c1.thumbBox.x + c1.thumbBox.w <= (c1.listW || 0) + (c1.listX || 0) + 1,
-      JSON.stringify({ thumb: c1.thumbBox, listW: c1.listW, listX: c1.listX }));
-    check('b3 c5 三件媒体同条带（零叠卡 .ds-media-stack）',
-      c5.stack === false && c5.thumbCount >= 1, JSON.stringify({ stack: c5.stack, thumbs: c5.thumbCount }));
+    /* ══ b 腿：卡区附件档 = 问面文件卡（B2 对齐现役面）══════════════════
+       作者令 2026-11-05 12:57 的缩略图档只活在**答面腿**（renderAskUserHistory
+       answer attachments ⇒ llmQuestion:false）。问面（renderAskUser 顶层
+       attachments）已按设计演进为 buildFileCard 文件卡（.ask-att-question-card，
+       点击开 Canvas）——问面缩略图判据作废，改钉文件卡面。 */
+    check('b1 c1 附件档 = 问面文件卡 .ask-att-question-card（零第二媒体面）',
+      c1.chips === 3 && c1.flat === false && c1.stack === false,
+      JSON.stringify({ chips: c1.chips, flat: c1.flat, stack: c1.stack }));
+    check('b2 c1 附件卡不越出附件条（max-width 约束）',
+      c1.chipBoxes.length > 0 && c1.chipBoxes.every((b) => b.x + b.w <= (c1.listX || 0) + (c1.listW || 0) + 1),
+      JSON.stringify({ first: c1.chipBoxes[0], listW: c1.listW, listX: c1.listX }));
+    check('b3 c5 三件媒体同条带（零叠卡 .ds-media-stack / 零平面卡 .pop-media-flat）',
+      c5.stack === false && c5.flat === false && c5.chips >= 1, JSON.stringify({ stack: c5.stack, flat: c5.flat, chips: c5.chips }));
     check('b4 c5 附件条零横向溢出', c5.listOverflowX <= 0, `over=${c5.listOverflowX}`);
 
     /* ══ d 腿：来源标签（attachment-thumb-unify 改判：收拢到标题行一处）══════ */
@@ -560,10 +607,10 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
     check('⑤a3 可执行动作在位（重试下载键）', c4.retryBtns >= 1, `retry=${c4.retryBtns}`);
 
     /* ══ h 腿：手机 HIG ═════════════════════════════════════════════════ */
-    check('h1 文件 chip 热区高 ≥44px', !!c1.chipBoxes && c1.chipBoxes.length > 0
+    check('h1 问面文件卡热区高 ≥44px', !!c1.chipBoxes && c1.chipBoxes.length > 0
       && c1.chipBoxes.every((b) => b.h >= 44 - 0.5), JSON.stringify(c1.chipBoxes));
-    check('h2 文件名有效字号 ≥13px', !!c1.nameFontPx && c1.nameFontPx >= 13 - 0.05, `font=${c1.nameFontPx}`);
-    check('h3 长名截断走可见省略号（attachment-thumb-unify：渐隐撤除，作者令 2026-11-05 09:28 同判）',
+    check('h2 文件名有效字号 ≥13px（.fc-name）', !!c1.nameFontPx && c1.nameFontPx >= 13 - 0.05, `font=${c1.nameFontPx}`);
+    check('h3 长名截断走可见省略号（.fc-name 既有档；渐隐撤除，作者令 2026-11-05 09:28 同判）',
       !!c1.nameTextOverflow && c1.nameTextOverflow === 'ellipsis',
       JSON.stringify({ overflow: c1.nameTextOverflow, mask: c1.nameMask }));
     check('h4 来源标签可读字 ≥13px',
@@ -608,63 +655,36 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
     await page.waitForTimeout(200);
     await page.screenshot({ path: join(OUT, 'card-c5-stack.png') });
 
-    /* ══ c 腿：点击 → 预览层真出现 / 文件真取回 ═══════════════════════ */
-    const lightboxState = () => page.evaluate(() => {
-      const el = document.querySelector('.nf-lightbox');
-      if (!el) return { present: false };
-      const cs = getComputedStyle(el);
-      return {
-        present: true, cls: el.className, display: cs.display,
-        visible: cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity > 0,
-        mediaChild: !!el.querySelector('.nf-lightbox-media'),
-        name: el.querySelector('.nf-lightbox-name') ? el.querySelector('.nf-lightbox-name').textContent : null,
-      };
-    });
-    const closeLightbox = async () => {
-      await page.evaluate(() => { const el = document.querySelector('.nf-lightbox'); if (el) el.remove(); });
-      await page.waitForTimeout(120);
+    /* ══ c 腿：点击问面附件卡 → 真取回（点了没反应 = 红，判据精神不变）═══
+       问面文件卡点击 = activate（probeAttachmentFile 票据+Range 取回 →
+       openPopArtifact 开 Canvas）。旧「灯箱预览层」判据随缩略图面退役到答面腿，
+       本腿钉「点击必产生真实 nf-file 取回」。 */
+    const clickCard = async (caseId) => {
+      const before = nfFileHits.length;
+      await page.evaluate((cid) => {
+        const box = document.querySelector(`.option-box[data-ask-case="${cid}"]`);
+        const card = box && box.querySelector('.ask-att-question-card:not(.ask-att-unavailable)');
+        if (card) card.click();
+      }, caseId);
+      await page.waitForTimeout(900);
+      const after = nfFileHits.length;
+      return { before, after };
     };
 
-    // c1 缩略帧点击（attachment-thumb-unify：图片档 = .att-thumb 小缩略图）
-    await page.evaluate(() => {
-      const box = document.querySelector('.option-box[data-ask-case="c1"]');
-      const thumb = box && box.querySelector('.ask-att-thumb');
-      if (thumb) thumb.click();
-    });
-    await page.waitForTimeout(420);
-    const lb1 = await lightboxState();
-    readings.lightboxFlat = lb1;
-    check('c1 点击小缩略图 → 预览层 DOM 出现且可见（display:flex）',
-      lb1.present === true && lb1.visible === true && /nf-lightbox--media/.test(lb1.cls || ''),
-      JSON.stringify(lb1));
-    await page.screenshot({ path: join(OUT, 'preview-image.png') });
-    await closeLightbox();
+    const c1Click = await clickCard('c1');
+    readings.cardClickC1 = c1Click;
+    check('c1 点击问面附件卡 → /api/nf-file 取回递增（不得无响应）',
+      c1Click.after > c1Click.before, JSON.stringify(c1Click));
 
-    // c5 多件媒体档点击（第 1 枚缩略帧）
-    await page.evaluate(() => {
-      const box = document.querySelector('.option-box[data-ask-case="c5"]');
-      const thumb = box && box.querySelector('.ask-att-thumb');
-      if (thumb) thumb.click();
-    });
-    await page.waitForTimeout(420);
-    const lb2 = await lightboxState();
-    readings.lightboxStack = lb2;
-    check('c2 点击多件档缩略帧 → 预览层 DOM 出现且可见', lb2.present === true && lb2.visible === true, JSON.stringify(lb2));
-    await page.screenshot({ path: join(OUT, 'preview-stack.png') });
-    await closeLightbox();
+    const c5Click = await clickCard('c5');
+    readings.cardClickC5 = c5Click;
+    check('c2 点击多件档（c5）问面卡 → /api/nf-file 取回递增',
+      c5Click.after > c5Click.before, JSON.stringify(c5Click));
 
-    // c1 文件 chip 点击（下载腿）
-    const hitsBefore = nfFileHits.length;
-    await page.evaluate(() => {
-      const box = document.querySelector('.option-box[data-ask-case="c1"]');
-      const chip = box && box.querySelector('.att-file.ask-att-file.is-clickable');
-      if (chip) chip.click();
-    });
-    await page.waitForTimeout(900);
-    const hitsAfter = nfFileHits.length;
-    readings.fileClick = { before: hitsBefore, after: hitsAfter, last: nfFileHits.slice(-2) };
-    check('c3 点击文件 chip → /api/nf-file 取回次数递增（不得无响应）',
-      hitsAfter > hitsBefore, JSON.stringify({ before: hitsBefore, after: hitsAfter }));
+    const c2Click = await clickCard('c2');
+    readings.fileClick = c2Click;
+    check('c3 点击纯文件档问面卡（c2）→ /api/nf-file 取回递增（不得无响应）',
+      c2Click.after > c2Click.before, JSON.stringify(c2Click));
 
     // 降级卡的重试动作也真发请求（动作不是死键）
     const hitsBeforeRetry = nfFileHits.length;
@@ -679,7 +699,11 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
       JSON.stringify(readings.retryClick));
 
     /* ══ z 腿 ═══════════════════════════════════════════════════════════ */
-    const errs = (readings.pageErrors || []).filter((t) => !/favicon/i.test(t));
+    // favicon 404 与「ResizeObserver loop completed with undelivered notifications」
+    // （WebKit 引擎噪声：观察者回调内布局变化在上一帧未送达的良性通知，非产品缺陷）
+    // 均为已知白名单；其余零容忍。
+    const errs = (readings.pageErrors || [])
+      .filter((t) => !/favicon/i.test(t) && !/ResizeObserver loop/i.test(t));
     check('z1 零页面错误', errs.length === 0, errs.slice(0, 3).join(' | '));
 
     writeFileSync(join(OUT, 'readings.json'), JSON.stringify(readings, null, 2));

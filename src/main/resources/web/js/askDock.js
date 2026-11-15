@@ -1037,6 +1037,7 @@ function syncGate() {
   // 零残留；`.ask-fab.gate-off` / `.ask-dock|.note-dock.gate-off` 三条既有规则覆盖）。
   el.noteFab.classList.toggle('gate-off', off);
   el.noteDock.classList.toggle('gate-off', off);
+  if (!off) syncNoteSeed(); // P2 续批④：入场可见拍重测种子落点（gate 摘后 rect 才有效）
 }
 
 // ── 阅读器面板让位（阅读器 P1 批，设计稿 §2.2：阅读菜单/TOC 抽屉开时 ──────
@@ -1094,6 +1095,28 @@ function onTabClosed() {
 //    仍需让位的只剩通栏底栏 = 电子书阅读器 nav（fab 抬其上，输入条联动同距）。
 //    移动端让位切换条同口径。）
 
+/** 记事本种子落点对账（P2 续批④ 位置感知液态形变）：闭态种子的落点 = **note
+ *  入口钮圆心**（apple-design-language §5.2「起点取被操作真实控件的 rect 中心」；
+ *  改前种子恒 `translateY(…)` 只落 dock 右下角正下方 = ask 钮位——note 钮在
+ *  ask 钮左邻一格，形变起手读作「ask 钮长出记事本」）。两条位移以**实测 rect**
+ *  派生写进 --note-seed-dx/--note-seed-dy（座位 fixed/absolute、epub 阅读器
+ *  让位抬升、safe-area 档、钮距档变化全部跟随）；CSS 闭态 transform 消费这两
+ *  条变量（缺省 fallback = token 公式，见 ask.css 同批注）。钮不可见（gate-off
+ *  /display:none）读数退化，跳过不写（保留上一次有效值或 fallback）；deck 整
+ *  面板缩放属瞬态舞台态，不在对账集。 */
+function syncNoteSeed() {
+  if (!el) return;
+  const fabR = el.noteFab.getBoundingClientRect();
+  const dockR = el.noteDock.getBoundingClientRect();
+  if (!(fabR.width > 0 && fabR.height > 0) || !(dockR.width > 0 && dockR.height > 0)) return;
+  const seed = parseFloat(getComputedStyle(el.noteDock).getPropertyValue('--ask-seed-size'));
+  const half = (Number.isFinite(seed) && seed > 0 ? seed : 48) / 2;
+  const dx = (fabR.left + fabR.width / 2) - (dockR.right - half);
+  const dy = (fabR.top + fabR.height / 2) - (dockR.bottom - half);
+  el.noteDock.style.setProperty('--note-seed-dx', dx.toFixed(1) + 'px');
+  el.noteDock.style.setProperty('--note-seed-dy', dy.toFixed(1) + 'px');
+}
+
 function syncSeat() {
   if (!el) return;
   const mobile = document.body.classList.contains('mobile-layer');
@@ -1115,6 +1138,7 @@ function syncSeat() {
         // 让位值一份，跟着 fab/dock 一起抬（不是第二套座位计算）。
         el.noteFab.style.bottom = fabBottom + 'px';
         el.noteDock.style.bottom = (fabBottom + 48 + 10) + 'px';
+        syncNoteSeed(); // P2 续批④：座位抬了，种子落点跟着重测
         return;
       }
     }
@@ -1124,6 +1148,7 @@ function syncSeat() {
     el.dock.style.bottom = '';
     el.noteFab.style.bottom = '';
     el.noteDock.style.bottom = '';
+    syncNoteSeed(); // P2 续批④：座位回 CSS 钉位，种子落点重测
     return;
   }
   const panel = document.getElementById('canvas-panel');
@@ -1155,6 +1180,7 @@ function syncSeat() {
   });
   bottomPx = occupied > 0 ? occupied + 12 : FAB_BOTTOM_BASE;
   panel.style.setProperty('--ask-fab-bottom', bottomPx + 'px');
+  syncNoteSeed(); // P2 续批④：桌面座位重算后种子落点跟着重测
 }
 
 // ── 开合（作者令⑧：transform-origin 锚定按钮圆心，开合同一曲线）───────────
@@ -1443,6 +1469,7 @@ async function openNote() {
   if (entry.held) showNoteConflict(sid); else setNoteStatus(noteLocalOk ? '' : 'mirror-off');
   requestNote(sid); // ② 引擎侧真源对账（回包 = consumeFrame 的 askNoteState）
   restoreSize(el.noteSurface); // ③ 尺寸偏好（与 ask 同一条恢复腿）
+  syncNoteSeed(); // P2 续批④：形变起手前最后一测（落点 = 此刻 note 钮圆心）
   el.noteDock.classList.remove('closed');
   el.noteFab.setAttribute('aria-pressed', 'true');
   syncSeat();
@@ -1455,6 +1482,7 @@ async function openNote() {
 function closeNote() {
   if (!el) return;
   flushNote();
+  syncNoteSeed(); // P2 续批④：回落种子对准此刻 note 钮（开窗期间座位可能变过）
   el.noteDock.classList.add('closed');
   el.noteFab.setAttribute('aria-pressed', 'false');
 }

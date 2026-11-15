@@ -149,13 +149,13 @@ function clearCoast(el, key) {
  *  origin, so this works even though the .running gate has already removed the live
  *  animation — the dots never snap back to the resting phase in between. */
 function startCoast(el, st, now) {
+  const spins = spinsOf(el);
+  if (spins.length !== RING_DIR.length) return;
   // 🔴 MUST run before any style read below (getComputedStyle/getAnimations force a
   // style flush): it has to be in effect in the SAME style computation that dropped
   // .running, otherwise the animation is cancelled first and the coast would be
   // re-anchored from a brand-new animation at phase 0.
   el.classList.add(COAST_CLASS);
-  const spins = spinsOf(el);
-  if (spins.length !== RING_DIR.length) return;
   const periods = periodsMs(spins[0]);
   const pending = new Set();
   for (let i = 0; i < spins.length; i++) {
@@ -216,6 +216,14 @@ function reconcile(now) {
   // the HTMLElement helpers below keep their typing.
   /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.solar-node')).forEach((el) => {
     const key = keyOf(el);
+    // Folded chain summaries are solar-node cards too, but have no orbit. Never
+    // enter the phase machine for them: a terminal coast with no rings cannot
+    // finish, and repeatedly adding its class self-notifies this observer forever.
+    // A rebuilt card may also have lost its rings; release its old phase once.
+    if (spinsOf(el).length !== RING_DIR.length) {
+      if (phases.has(key) || coasting.has(el)) clearCoast(el, key);
+      return;
+    }
     seen.add(key);
     let st = phases.get(key);
     if (isRunning(el) && !isTerminal(el)) {

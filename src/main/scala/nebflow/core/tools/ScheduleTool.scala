@@ -373,8 +373,8 @@ Your context does NOT show the current date/time — never invent an absolute da
           Left(ToolError("cancel requires id — call Schedule {action:\"list\"} first, then pass the entry's id."))
         )
       case Some(id) =>
-        taskStore.findTaskById(id).flatMap {
-          case None =>
+        taskStore.cancelTask(id).flatMap {
+          case Nil =>
             taskStore.getAllPendingTasks.map { pending =>
               val ids = if pending.isEmpty then "(none)" else pending.map(_.id).mkString(", ")
               Left(
@@ -383,33 +383,36 @@ Your context does NOT show the current date/time — never invent an absolute da
                 )
               )
             }
-          case Some(t) =>
+          case removed =>
             for
-              _ <- taskStore.deleteTask(t.sessionId, id)
               _ <- taskService match
                 case Some(svc) => svc.notifyTaskChange()
                 case None => IO.unit
-              // Broadcast so the frontend reminder panel updates in real-time
+              // Notify each stored session without treating any conflicting copy as authority.
               _ <- ctx.wsSend match
                 case Some(send) =>
-                  send(
-                    Json.obj(
-                      "type" -> "scheduledTaskDeleted".asJson,
-                      "id" -> id.asJson,
-                      "sessionId" -> t.sessionId.asJson
+                  removed.map(_.sessionId).distinct.traverse_ { sessionId =>
+                    send(
+                      Json.obj(
+                        "type" -> "scheduledTaskDeleted".asJson,
+                        "id" -> id.asJson,
+                        "sessionId" -> sessionId.asJson
+                      )
                     )
-                  )
+                  }
                 case None => IO.unit
             yield
-              // 双面化：定时任务保留逐字旧句式（"Cancelled task … will not fire"）；
-              // 待办用同构句式（"Cancelled todo … will not surface again"）。
-              val kindWord = if t.isTodo then "todo" else "task"
-              val wasWhat = if t.isTodo then "todo" else formatTime(t.triggerAt)
-              val willNote = if t.isTodo then "it will not surface again" else "it will not fire"
-              Right(
-                s"Cancelled $kindWord $id (was $wasWhat${t.repeat.map(r => s", $r").getOrElse("")}): " +
-                  s"${t.content.take(60)} — $willNote."
-              )
+              removed match
+                case t :: Nil =>
+                  val kindWord = if t.isTodo then "todo" else "task"
+                  val wasWhat = if t.isTodo then "todo" else formatTime(t.triggerAt)
+                  val willNote = if t.isTodo then "it will not surface again" else "it will not fire"
+                  Right(
+                    s"Cancelled $kindWord $id (was $wasWhat${t.repeat.map(r => s", $r").getOrElse("")}): " +
+                      s"${t.content.take(60)} — $willNote."
+                  )
+                case _ =>
+                  Right(s"Cancelled entry $id and all stored copies — it will not fire or surface again.")
         }
     end match
   end cancelAction

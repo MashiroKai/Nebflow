@@ -116,6 +116,7 @@ datetime-local/month/week、`textarea`、`select`）。新增一个 `<textarea>`
 | 选择器片段 | 判据号 | 理由 |
 |---|---|---|
 | `.canvas-ref-select` ⇢ css/split.css | I2 | 它是 `<select>` 但形态是 canvas 右下 48px 悬浮圆钮（音色/参照物选择），材质归 `css/glass.css` 圆钮级浮件档、圆角 50% 是钮的身份；把它改成输入件盒式等于把钮改成框 —— 不是输入面，故登记豁免。 |
+| `.ask-dock.closed .ask-input` ⇢ css/ask.css | I2 | 收起态 ask 面的「种子」= 48px 正圆钮（`--ask-seed-size` = fab 同尺寸），border-radius 50% 是钮的身份而非输入面造型（与 `.canvas-ref-select` 同性质）；开放态造型不在本规则（closed 档仅形变种子）。 |
 
 ## 7. 落点索引
 

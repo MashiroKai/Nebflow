@@ -4,8 +4,8 @@
 // understand. The ledger is a parallel list with one slot per string; a slot carries the
 // attachment metadata of that message. Because another writer (an older build, another tab)
 // can append strings without a slot, the two lists are matched from the tail by a text
-// signature: the newest run of entries that provably belong together keeps its attachments,
-// everything older degrades to text only instead of being paired with the wrong attachments.
+// signature. Only a matching run that occurs once in each list keeps its attachments;
+// unmatched or ambiguous entries degrade to text only instead of borrowing attachments.
 
 /**
  * @typedef {object} LedgerAtt
@@ -62,9 +62,24 @@ export function alignLedger(texts, saved) {
   while (textIndex >= 0 && savedIndex >= 0) {
     const entry = stored[savedIndex];
     if (!entry || typeof entry.s !== 'string' || entry.s !== out[textIndex].s) break;
-    out[textIndex] = entry;
     textIndex -= 1;
     savedIndex -= 1;
+  }
+  const matched = list.length - textIndex - 1;
+  if (matched === 0) return out;
+  const suffix = out.slice(textIndex + 1);
+  // A duplicate append can look exactly like a prepend or front trim. Require the whole
+  // matched run to be unique on both sides, not merely a matching newest signature.
+  /** @param {LedgerEntry[]} entries */
+  const hasEarlierMatch = (entries) => {
+    for (let start = 0; start < entries.length - matched; start += 1) {
+      if (suffix.every((entry, offset) => entries[start + offset]?.s === entry.s)) return true;
+    }
+    return false;
+  };
+  if (hasEarlierMatch(out) || hasEarlierMatch(stored)) return out;
+  for (let offset = 1; offset <= matched; offset += 1) {
+    out[textIndex + offset] = stored[savedIndex + offset];
   }
   return out;
 }

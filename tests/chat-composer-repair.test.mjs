@@ -36,6 +36,36 @@ test('FCC-SCN-002 a text appended by an older build breaks the match: older entr
   assert.deepEqual(aligned.map((entry) => entry.s), texts.map(signatureOf));
 });
 
+for (const { name, savedTexts, texts } of [
+  { name: 'a legacy duplicate append', savedTexts: ['same'], texts: ['same', 'same'] },
+  { name: 'a duplicate appended after an anchor', savedTexts: ['anchor', 'same'], texts: ['anchor', 'same', 'same'] },
+  { name: 'a repeated run appended by a legacy writer', savedTexts: ['a', 'b'], texts: ['a', 'b', 'a', 'b'] },
+  { name: 'an ambiguous front truncation', savedTexts: ['same', 'same'], texts: ['same'] },
+  { name: 'a front truncation and duplicate append at the history cap', savedTexts: ['old', 'same'], texts: ['same', 'same'] },
+  { name: 'a repeated saved run after truncation', savedTexts: ['a', 'b', 'a', 'b'], texts: ['a', 'b'] },
+]) {
+  test(`FCC-SCN-002 ${name} never transfers attachments to an ambiguous match`, () => {
+    const saved = savedTexts.map((text, i) => slot(text, { id: `h${i}`, atts: [{ type: 'image', bytes: true }] }));
+    assert.deepEqual(alignLedger(texts, saved), texts.map((text) => slot(text)));
+  });
+}
+
+test('FCC-SCN-002 fully aligned duplicate texts keep their distinct attachments', () => {
+  const saved = ['same', 'same'].map((text, i) => slot(text, { id: `h${i}`, atts: [{ type: 'image', name: `${i}.png` }] }));
+  assert.deepEqual(alignLedger(['same', 'same'], saved), saved);
+});
+
+test('FCC-SCN-002 a unique suffix preserves contextual duplicate texts after prepending or truncation', () => {
+  const saved = ['same', 'same', 'end'].map((text, i) => slot(text, { id: `h${i}`, atts: [{ type: 'image', bytes: true }] }));
+  assert.deepEqual(alignLedger(['older', 'same', 'same', 'end'], saved), [slot('older'), ...saved]);
+  assert.deepEqual(alignLedger(['same', 'end'], saved), saved.slice(1));
+});
+
+test('FCC-SCN-002 a unique newest run survives mismatched legacy entries', () => {
+  const saved = [slot('old'), slot('same', { id: 'h1', atts: [{ type: 'image', bytes: true }] }), slot('end')];
+  assert.deepEqual(alignLedger(['legacy', 'same', 'end'], saved), [slot('legacy'), ...saved.slice(1)]);
+});
+
 test('FCC-SCN-002 legacy history without any ledger yields one text-only slot per entry', () => {
   const aligned = alignLedger(['one', 'two'], undefined);
   assert.deepEqual(aligned, [slot('one'), slot('two')]);

@@ -12,7 +12,7 @@ import nebflow.agent.{ExecutionCommitStore, ExecutionRunner, ProtectedAgentExecu
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{ExecutionCommitPort, FileChangeTracker, RateLimiter, SessionStore}
-import nebflow.gateway.{GatewaySessionStore, RestApiRoutes}
+import nebflow.gateway.{GatewaySessionStore, RestApiRoutes, SpecRequests}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.*
 import org.http4s.*
@@ -30,6 +30,14 @@ class ProtectedRecoveryRoutesSpec extends CatsEffectSuite:
   private val RequestId = "route-resume-request"
 
   test("protected resume requires authenticated exact ref and stable request identity") {
+    checkRecovery(useLocalSession = false)
+  }
+
+  test("local tickets without network enrollment can observe and resume only on loopback") {
+    checkRecovery(useLocalSession = true)
+  }
+
+  private def checkRecovery(useLocalSession: Boolean): IO[Unit] =
     for
       root <- IO.blocking(os.temp.dir(prefix = "protected-routes-"))
       _ <- (IO.blocking(os.makeDir.all(root / "sessions")) *>
@@ -65,8 +73,14 @@ class ProtectedRecoveryRoutesSpec extends CatsEffectSuite:
                   sessionModelOverrides = overrides, providerRegistry = null, healthMonitor = null,
                   actorSystem = system, voiceMutedRef = muted, executionCommitPort = store,
                   subAgentTaskStore = taskStore)
+                sessions <- GatewaySessionStore.create()
+                local <- sessions.create("local", GatewaySessionStore.OriginLocalTicket, "")
+                renewed <- sessions.create("local", GatewaySessionStore.OriginLocalTicket, "")
+                relayWithoutNetwork <- sessions.create("account", GatewaySessionStore.OriginRelayMint, "")
                 tokenRef = Ref.unsafe[IO, String](Token)
-                routes = new RestApiRoutes(tokenRef = tokenRef,
+                authenticated = (req: Request[IO]) =>
+                  if useLocalSession then localAuthed(req, local.sessionId) else authed(req)
+                routes = new RestApiRoutes(tokenRef = tokenRef, sessions = sessions,
                   configRef = Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(
                     llm = ServiceLlmConfig(providers = Map.empty))),
                   sharedResources = resources, sessionStore = sessionStore, wsRoutes = null)
@@ -78,24 +92,42 @@ class ProtectedRecoveryRoutesSpec extends CatsEffectSuite:
                 unauthorized <- runRoute(presence,
                   Request[IO](Method.POST, uri()).withHeaders(Headers(
                     "If-Match" -> observedHash, "Idempotency-Key" -> RequestId)))
-                stale <- runRoute(presence, authed(
+                invalidBearer <- runRoute(presence, Request[IO](Method.POST, uri())
+                  .putHeaders(Header.Raw(CIString("Authorization"), "Bearer invalid-token")))
+                invalidCookie <- runRoute(presence, localAuthed(Request[IO](Method.POST, uri()), "invalid-session"))
+                offLeg <- runRoute(presence, Request[IO](Method.POST, uri())
+                  .addCookie(GatewaySessionStore.CookieName, local.sessionId))
+                lan <- runRoute(presence, SpecRequests.withRemote(Request[IO](Method.POST, uri())
+                  .addCookie(GatewaySessionStore.CookieName, local.sessionId), Some(SpecRequests.Lan)))
+                missingNetwork <- runRoute(presence, localAuthed(Request[IO](Method.POST, uri()), relayWithoutNetwork.sessionId))
+                recovery <- runRoute(presence, authenticated(Request[IO](Method.GET,
+                  Uri.unsafeFromString(s"/delegates/$Session/recovery"))))
+                stale <- runRoute(presence, authenticated(
                   Request[IO](Method.POST, uri()).withHeaders(Headers(
                     "If-Match" -> ("0" * 64), "Idempotency-Key" -> RequestId))))
                 afterStale <- store.observeChain(Session, Run)
-                accepted <- runRoute(presence, authed(
+                accepted <- runRoute(presence, authenticated(
                   Request[IO](Method.POST, uri()).withHeaders(Headers(
                     "If-Match" -> observedHash, "Idempotency-Key" -> RequestId))))
                 acceptedJson <- accepted.as[Json]
                 acceptedAttempt = acceptedJson.hcursor.get[String]("attemptId").toOption.getOrElse("")
-                duplicate <- runRoute(presence, authed(
-                  Request[IO](Method.POST, uri()).withHeaders(Headers(
-                    "If-Match" -> observedHash, "Idempotency-Key" -> RequestId))))
+                duplicateRequest = Request[IO](Method.POST, uri()).withHeaders(Headers(
+                  "If-Match" -> observedHash, "Idempotency-Key" -> RequestId))
+                duplicate <- runRoute(presence,
+                  if useLocalSession then localAuthed(duplicateRequest, renewed.sessionId)
+                  else authed(duplicateRequest))
                 duplicateJson <- duplicate.as[Json]
                 _ <- IO.sleep(50.millis)
                 _ <- resources.releaseProtectedRecoveries().handleErrorWith(_ => IO.unit)
                 _ <- system.stopAll
               yield
                 assertEquals(unauthorized.status, Status.Forbidden)
+                assertEquals(invalidBearer.status, Status.Forbidden)
+                assertEquals(invalidCookie.status, Status.Forbidden)
+                assertEquals(offLeg.status, Status.Forbidden)
+                assertEquals(lan.status, Status.Forbidden)
+                assertEquals(missingNetwork.status, Status.Forbidden)
+                assertEquals(recovery.status, Status.Ok)
                 assertEquals(stale.status, Status.PreconditionFailed)
                 assertEquals(afterStale.asInstanceOf[ExecutionChainObservation.Verified].state.attemptId, "attempt")
                 assertEquals(accepted.status, Status.Ok, acceptedJson.noSpaces)
@@ -110,13 +142,15 @@ class ProtectedRecoveryRoutesSpec extends CatsEffectSuite:
           yield ()
         }).guarantee(IO.blocking(os.remove.all(root)))
     yield ()
-  }
 
   private def runRoute(routes: HttpRoutes[IO], req: Request[IO]): IO[Response[IO]] =
     routes(req).value.map(_.getOrElse(fail("route fell through")))
 
   private def authed(req: Request[IO]): Request[IO] =
     req.putHeaders(Header.Raw(CIString("Authorization"), s"Bearer $Token"))
+
+  private def localAuthed(req: Request[IO], sessionId: String): Request[IO] =
+    SpecRequests.withRemote(req.addCookie(GatewaySessionStore.CookieName, sessionId), Some(SpecRequests.LoopbackV4))
 
   private def uri(): Uri = Uri.unsafeFromString(s"/delegates/$Session/recovery/resume")
 

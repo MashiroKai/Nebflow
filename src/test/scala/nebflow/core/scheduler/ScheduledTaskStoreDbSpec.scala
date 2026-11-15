@@ -97,6 +97,25 @@ class ScheduledTaskStoreDbSpec extends FunSuite:
       yield ()
     }
 
+  test("C6 revision update preserves rows recovered from a corrupt session file"):
+    withDataRoot { root =>
+      val db = DbHost.openBestEffort(root.toNIO)
+      val dir = root / "scheduled-tasks"
+      val store = new ScheduledTaskStore(dir, db)
+      for
+        _ <- store.addTask(task("target", "s1", 1000L))
+        _ <- store.addTask(task("unrelated", "s1", 2000L))
+        _ <- IO.blocking(os.write.over(dir / "s1.json", "{ torn"))
+        changed <- store.updateTask("s1", "target")(_.copy(content = "recovered update"))
+        rows <- new ScheduledTaskStore(dir, db).loadTasks("s1")
+        _ = assert(changed)
+        _ = assertEquals(rows.map(_.id).toSet, Set("target", "unrelated"))
+        _ = assertEquals(rows.find(_.id == "target").map(_.content), Some("recovered update"))
+        _ = assertEquals(rows.find(_.id == "target").map(_.revision), Some(1L))
+        _ = assertEquals(live(db.get, "s1").find(_.id == "target").map(_.content), Some("recovered update"))
+      yield ()
+    }
+
   test("C6-3 best-effort：句柄关闭后主链照常（写成功、影子腿不抛）"):
     withDataRoot { root =>
       val db = DbHost.openBestEffort(root.toNIO)

@@ -153,29 +153,30 @@ class ScheduledTaskStore(
     else os.list(baseDir).filter(_.last.endsWith(".json")).map(_.last.stripSuffix(".json")).toList
   }
 
-  /**
-   * Apply `f` to **every stored copy** of `taskId` and return the first updated row.
-   *
-   * Policy: an id is globally unique; a recoverable cross-session move can leave a duplicate
-   * copy, and id-scoped mutations (complete, cancel, toggle, fired) must cover all copies or
-   * the survivor keeps surfacing/firing. Callers hold the store lock. Cost is one directory
-   * listing plus one read per session file — the same order as `findTaskById`/`getAllDueTasks`,
-   * paid on mutations rather than reads.
-   */
+  /** Transform the authoritative payload once, then retire stale copies only after it lands. */
   private def updateByIdUnlocked(taskId: String)(f: ScheduledTask => ScheduledTask): IO[Option[ScheduledTask]] =
-    sessionIdsUnlocked.flatMap { sids =>
-      sids.foldLeft(IO.pure(Option.empty[ScheduledTask])) { (acc, sid) =>
-        acc.flatMap { seen =>
-          loadUnlocked(sid).flatMap { rows =>
-            if !rows.exists(_.id == taskId) then IO.pure(seen)
-            else
-              val updated = rows.map(t => if t.id == taskId then f(t) else t)
-              val first = updated.find(_.id == taskId)
-              if updated == rows then IO.pure(seen.orElse(first))
-              else saveUnlocked(sid, updated).as(seen.orElse(first))
-          }
-        }
-      }
+    sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
+      val copies = sessions.flatMap(_._2).filter(_.id == taskId)
+      distinctById(copies).headOption match
+        case None if copies.nonEmpty =>
+          IO.raiseError(new IllegalStateException(s"scheduled task $taskId has conflicting revisions; update refused"))
+        case None => IO.pure(None)
+        case Some(current) =>
+          val changed = f(current).copy(
+            id = current.id, sessionId = current.sessionId, createdAt = current.createdAt, source = current.source,
+            revision = current.revision
+          )
+          val updated =
+            if changed == current then current
+            else changed.copy(revision = Math.addExact(current.revision, 1L))
+          val rows = sessions.find(_._1 == current.sessionId).get._2
+          val target = rows.map(t => if t.id == taskId then updated else t)
+          (if target == rows then IO.unit else saveUnlocked(current.sessionId, target)) *>
+            sessions.filter { case (sid, stored) => sid != current.sessionId && stored.exists(_.id == taskId) }
+              .traverse_ { case (sid, stored) =>
+                saveUnlocked(sid, stored.filterNot(_.id == taskId))
+                  .handleErrorWith(e => logger.warn(s"task update left a stale copy in $sid (id=$taskId): ${e.getMessage}"))
+              }.as(Some(updated))
     }
 
   private def addUnlocked(task: ScheduledTask): IO[Unit] =
@@ -255,7 +256,13 @@ class ScheduledTaskStore(
   // ------------------------------------------------------------------
 
   def loadTasks(sessionId: String): IO[List[ScheduledTask]] =
-    storeLock.lock.surround(loadUnlocked(sessionId))
+    storeLock.lock.surround {
+      // Keep this read's quarantine/DB recovery, but do not expose a stale session copy.
+      loadUnlocked(sessionId).flatMap { local =>
+        scanUnlocked(_.sessionId != sessionId, sort = false)
+          .map(other => distinctById(local ++ other).filter(_.sessionId == sessionId))
+      }
+    }
 
   def saveTasks(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
     storeLock.lock.surround(saveUnlocked(sessionId, tasks))
@@ -289,14 +296,20 @@ class ScheduledTaskStore(
    * The `sessionId` argument stays for API compatibility; the id is the authority.
    */
   def deleteTask(sessionId: String, taskId: String): IO[Unit] =
+    cancelTask(taskId).void
+
+  /** Explicit cancellation needs no authoritative payload. Return all removed copies so
+   * callers can distinguish absence and notify every affected session without guessing.
+   */
+  def cancelTask(taskId: String): IO[List[ScheduledTask]] =
     storeLock.lock.surround {
-      sessionIdsUnlocked.flatMap { sids =>
-        sids.foldLeft(IO.unit) { (acc, sid) =>
-          acc *> loadUnlocked(sid).flatMap { rows =>
-            val kept = rows.filterNot(_.id == taskId)
-            if kept.length == rows.length then IO.unit else saveUnlocked(sid, kept)
-          }
-        }
+      sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
+        val copies = sessions.flatMap(_._2).filter(_.id == taskId)
+        // Remove stale rows first. A failed cleanup must not leave only an obsolete due row.
+        sessions.filter(_._2.exists(_.id == taskId))
+          .sortBy { case (sid, rows) => (rows.filter(_.id == taskId).map(_.revision).max, sid) }
+          .traverse_ { case (sid, rows) => saveUnlocked(sid, rows.filterNot(_.id == taskId)) }
+          .as(copies)
       }
     }
 
@@ -309,15 +322,30 @@ class ScheduledTaskStore(
   def rescheduleTask(sessionId: String, taskId: String, nextTriggerAt: Long): IO[Unit] =
     updateTask(sessionId, taskId)(_.copy(triggered = false, triggeredAt = None, triggerAt = nextTriggerAt)).void
 
-  /**
-   * Read faces collapse a recoverable duplicate (the same id left in two session files by a
-   * failed cross-session move) to one row, so it cannot fire/surface twice before the next
-   * rearm converges it. `scanUnlocked` itself stays raw: rearm must see every copy to repair.
+  /** Resolve authority BEFORE any state/time predicate; rearm may move the time either way.
+   * Equal-version replicas may differ only in location. Conflicting legacy payloads have no
+   * provable ordering: preserve them, warn, and refuse to fire until cancelled or rearmed.
+   * Raw scans remain available to rearm/cleanup so no stored copy is hidden from repair.
    */
   private def distinctById(rows: List[ScheduledTask]): List[ScheduledTask] =
-    rows.foldLeft((Set.empty[String], List.empty[ScheduledTask])) { case ((seen, out), row) =>
-      if seen.contains(row.id) then (seen, out) else (seen + row.id, row :: out)
-    }._2.reverse
+    val byId = rows.groupBy(_.id)
+    rows.map(_.id).distinct.flatMap { id =>
+      val copies = byId(id)
+      val revision = copies.map(_.revision).max
+      val newest = copies.filter(_.revision == revision)
+      if newest.map(_.copy(sessionId = "")).distinct.size == 1 then
+        newest.sortBy(_.sessionId).headOption
+      else
+        logger.warnSync(s"scheduled task authority conflict: id=$id revision=${newest.head.revision} " +
+          s"sessions=${newest.map(_.sessionId).sorted.mkString(",")}; reads suppressed until cancel or rearm")
+        None
+    }
+
+  private def readUnlocked(filter: ScheduledTask => Boolean, sort: Boolean): IO[List[ScheduledTask]] =
+    scanUnlocked(_ => true, sort = false).map { rows =>
+      val selected = distinctById(rows).filter(filter)
+      if sort then selected.sortBy(_.triggerAt) else selected
+    }
 
   /**
    * Get all due (untriggered, past triggerAt) tasks across all sessions.
@@ -327,7 +355,7 @@ class ScheduledTaskStore(
   def getAllDueTasks: IO[List[ScheduledTask]] =
     storeLock.lock.surround {
       val now = System.currentTimeMillis()
-      scanUnlocked(t => !t.triggered && t.triggerAt <= now && t.enabled && !t.isTodo, sort = true).map(distinctById)
+      readUnlocked(t => !t.triggered && t.triggerAt <= now && t.enabled && !t.isTodo, sort = true)
     }
 
   /**
@@ -338,12 +366,12 @@ class ScheduledTaskStore(
    * 行留在库里，但「下一次浮出」与 list 面都不许再看到它。
    */
   def getAllPendingTasks: IO[List[ScheduledTask]] =
-    storeLock.lock.surround(scanUnlocked(t => !t.triggered && !t.isCompleted, sort = false).map(distinctById))
+    storeLock.lock.surround(readUnlocked(t => !t.triggered && !t.isCompleted, sort = false))
 
   private def todosUnlocked(includeCompleted: Boolean): IO[List[ScheduledTask]] =
     storeLock.lock.surround {
-      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled && (includeCompleted || !t.isCompleted), sort = false)
-        .map(rows => distinctById(rows).sortBy(t => (t.triggerAt, t.createdAt)))
+      readUnlocked(t => t.isTodo && !t.triggered && t.enabled && (includeCompleted || !t.isCompleted), sort = false)
+        .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
     }
 
   /**
@@ -373,8 +401,8 @@ class ScheduledTaskStore(
   def getAllDueTodos: IO[List[ScheduledTask]] =
     storeLock.lock.surround {
       val now = System.currentTimeMillis()
-      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled && !t.isCompleted && t.triggerAt <= now, sort = false)
-        .map(rows => distinctById(rows).sortBy(t => (t.triggerAt, t.createdAt)))
+      readUnlocked(t => t.isTodo && !t.triggered && t.enabled && !t.isCompleted && t.triggerAt <= now, sort = false)
+        .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
     }
 
   /** Get pending (untriggered, not-completed) task count for a session. */
@@ -408,7 +436,7 @@ class ScheduledTaskStore(
    */
   def findTaskById(taskId: String): IO[Option[ScheduledTask]] =
     storeLock.lock.surround {
-      scanUnlocked(_.id == taskId, sort = false).map(_.headOption)
+      readUnlocked(_.id == taskId, sort = false).map(_.headOption)
     }
 
   /**
@@ -485,7 +513,8 @@ class ScheduledTaskStore(
                   // Stable identity: keep the id and creation time the record already has;
                   // the request only supplies the new fields and the destination session.
                   val persisted =
-                    task.copy(id = old.id, sessionId = task.sessionId, createdAt = old.createdAt, source = owner)
+                    task.copy(id = old.id, sessionId = task.sessionId, createdAt = old.createdAt, source = owner,
+                      revision = Math.addExact(owned.map(_.revision).max, 1L))
                   loadUnlocked(task.sessionId).flatMap { targetRows =>
                     val sameSessionIds = owned.filter(_.sessionId == task.sessionId).map(_.id).toSet
                     val target = targetRows.filterNot(t => t.id == persisted.id || sameSessionIds.contains(t.id)) :+ persisted

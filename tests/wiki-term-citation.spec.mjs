@@ -94,6 +94,18 @@ const FILES = {
   '/w/alpha/glossary.md': { content: GLOSSARY_MD, fileName: 'glossary.md' },
 };
 
+// —— WebKit 兜底（B2 词条弹层批 2026-11-11）——
+// Playwright WebKit 的 route 拦截在页面加载 ~0.6s 后对**后续请求整体失效**
+// （PUT /api/canvas-tabs 持久化腿、/api/plugins 6s 轮询、hover 期的
+// /api/wiki/term 兜底腿均实测穿透拦截直达静态服务器；Chromium 全程拦截。
+// 重挂 route / context.route 均无效 —— 引擎层缺陷，非产品代码缺陷；历史
+// 「WebKit 6 项败」同根因）。对策：泄漏到服务器的 /api/* 请求由静态服务器
+// 按与 page.route **同一夹具**应答（graph/term 用 mockApi 镜像态，其余一律
+// 200 {} —— 与 Chromium 拦截后收到的 catch-all 应答逐字节同形），泄漏不再产
+// 生 404 console error，双引擎行为收敛。计数面：term 命中数 = route 命中 +
+// 服务器泄漏命中（getTermApiHits 求和），两引擎同一断言语义。
+const mockApi = { graphJson: null, termFound: true, termHits: 0 };
+
 function startServer() {
   return new Promise((resolveDone) => {
     const server = createServer(async (req, res) => {
@@ -101,6 +113,24 @@ function startServer() {
         let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
         if (p === '/') p = '/index.html';
         if (p === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+        if (p === '/api/wiki/term') {
+          mockApi.termHits += 1;
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(mockApi.termFound
+            ? { found: true, resolved: true, term: TERM_GCR }
+            : { found: false, resolved: false, name: 'X' }));
+          return;
+        }
+        if (p === '/api/wiki/graph' && mockApi.graphJson) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(mockApi.graphJson));
+          return;
+        }
+        if (p.startsWith('/api/')) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('{}');
+          return;
+        }
         const file = resolve(join(WEB, p));
         if (!file.startsWith(WEB)) { res.writeHead(403); res.end(); return; }
         const data = await readFile(file);
@@ -134,6 +164,10 @@ async function boot(browser, {
   const page = await context.newPage();
   const pageErrors = [];
   let termApiHits = 0;
+  // 服务器镜像态与泄漏计数随 boot 重置（workers=1 串行 ⇒ 共享态安全）
+  mockApi.graphJson = WIKI_GRAPH(graphTerms);
+  mockApi.termFound = termApi;
+  mockApi.termHits = 0;
   page.on('pageerror', (e) => pageErrors.push(String(e && e.message || e)));
   page.on('console', (m) => { if (m.type() === 'error') pageErrors.push(m.text()); });
   if (viewport && !deviceDescriptor) await page.setViewportSize(viewport);
@@ -179,7 +213,7 @@ async function boot(browser, {
     });
   });
   await page.goto(base);
-  return { context, page, pageErrors, getTermApiHits: () => termApiHits };
+  return { context, page, pageErrors, getTermApiHits: () => termApiHits + mockApi.termHits };
 }
 
 /** 直接以带内容 payload 打开真页签（readFile 往返旁路——§P8 同法），

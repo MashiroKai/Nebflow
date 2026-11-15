@@ -113,7 +113,7 @@ A named rearm MUST keep the stored record ID and creation time; legacy ownership
 
 #### Scenario: [FDC-SCN-025] Duplicate copy after a partial move
 - **WHEN** a partial cross-session move left the same ID in two session files
-- **THEN** cancel, completion and fired marks cover every copy instead of only one
+- **THEN** reads select the highest revision before filtering, mutations persist one authoritative update before removing stale copies, and cancellation removes every copy; conflicting payloads at the same revision are reported and excluded from automatic firing rather than guessed
 
 #### Scenario: [FDC-SCN-026] Retry receipt after completion
 - **WHEN** a correlated todo create is retried after the durable row was completed

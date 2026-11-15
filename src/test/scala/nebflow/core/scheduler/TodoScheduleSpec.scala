@@ -459,6 +459,39 @@ class TodoScheduleSpec extends CatsEffectSuite:
       assert(text.contains("will not surface again"), text)
       assertEquals(pending, Nil)
 
+  test("FDC-SCN-025 tool cancel removes conflicting copies without selecting an authority"):
+    for
+      _ <- reset()
+      old = ScheduledTask.create("old-session", "stale due payload", 1L).copy(id = "conflicted")
+      other = old.copy(sessionId = "new-session", content = "future payload", triggerAt = future)
+      unrelated = ScheduledTask.create("old-session", "keep me", future).copy(id = "unrelated")
+      _ <- taskStore.addTask(old)
+      _ <- taskStore.addTask(other)
+      _ <- taskStore.addTask(unrelated)
+      visible <- taskStore.findTaskById(old.id)
+      due <- taskStore.getAllDueTasks
+      ctx = mkCtx()
+      result <- IO(callTool(Json.obj("action" -> "cancel".asJson, "id" -> old.id.asJson), ctx))
+      broadcasts = wsSent.toList
+      oldRows <- taskStore.loadTasks("old-session")
+      newRows <- taskStore.loadTasks("new-session")
+      storedOld <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(tempRoot / "scheduled-tasks" / "old-session.json")).toOption.get)
+      storedNew <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(tempRoot / "scheduled-tasks" / "new-session.json")).toOption.get)
+      missing <- IO(callTool(Json.obj("action" -> "cancel".asJson, "id" -> "missing".asJson), ctx))
+    yield
+      assertEquals(visible, None, "automatic reads must not guess conflicting authority")
+      assertEquals(due, Nil)
+      assert(result.isRight, result.toString)
+      assert(!result.toOption.get.contains("stale due payload") && !result.toOption.get.contains("future payload"))
+      assertEquals(oldRows.map(_.id), List("unrelated"))
+      assertEquals(newRows, Nil)
+      assertEquals(storedOld.map(_.id), List("unrelated"), "all conflicting copies are physically removed")
+      assertEquals(storedNew, Nil)
+      val deletedSessions = broadcasts.filter(_.hcursor.downField("type").as[String].toOption.contains("scheduledTaskDeleted"))
+        .flatMap(_.hcursor.downField("sessionId").as[String].toOption).toSet
+      assertEquals(deletedSessions, Set("old-session", "new-session"))
+      assert(missing.isLeft, "cancelling an absent ID must not claim success")
+
   test("tool todo upsert by name converges to a single copy"):
     for
       _ <- reset()

@@ -3222,8 +3222,11 @@ function renderAskAttachments(box, attachments, originLabel, opts = {}) {
     if (!note) {
       note = document.createElement('span');
       note.className = 'ask-att-reason';
-      const name = chip.querySelector('.att-file-name');
+      // 两档名字类：缩略/chip 面 = .att-file-name；问面文件卡（buildFileCard）= .fc-name。
+      // 都不命中（结构兜底）⇒ 直接挂卡尾——原因档不得因名字类换脸而消失（⑤a「原因+动作」）。
+      const name = chip.querySelector('.att-file-name, .fc-name');
       if (name) name.after(note);
+      else chip.appendChild(note);
     }
     const why = t('askUser.attUnavailable_' + (reason || 'network'));
     note.textContent = why + ' · ' + t('askUser.attCanDownload');
