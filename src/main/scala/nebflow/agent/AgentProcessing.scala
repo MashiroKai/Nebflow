@@ -135,6 +135,11 @@ private[agent] object AgentProcessing:
           )
         end if
 
+      case _: LlmFailed if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        ProtectedAgentExecution.suspend(handle, "failed-round-review-required") *>
+          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+
       case LlmFailed(error, replyTo, turnId, msg) =>
         // pi-logic 接线点 2（轮 A 织入）：stale 判定经 TurnNumber 类型化（数值语义不变）。
         if PiLoopWiring.isStaleTurn(turnId, state.currentTurnId) then
@@ -577,6 +582,11 @@ private[agent] object AgentProcessing:
         end if
 
       // --- Tools completed ---
+      case _: ToolsComplete if state.execution.stopDeferred && state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        ProtectedAgentExecution.suspend(handle, "deferred-stop-review-required") *>
+          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+
       case tc: ToolsComplete if state.execution.stopDeferred =>
         // eng-deferred-cancel batch (2026-10-02) — K-1 observer + K-2 artifact
         // preservation, both landing here because a transcript is only
@@ -656,6 +666,35 @@ private[agent] object AgentProcessing:
 
       // Normal batch continuation. The deferred variant above never falls
       // through here — it stops the actor.
+
+      case tc: ToolsComplete if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        val nextState = state.withMessages(batchMessages(tc, state.messages))
+          .copy(loopCounters = tc.loopCounters.getOrElse(state.loopCounters))
+        if tc.compactedMessages.nonEmpty || tc.freezeAfter.nonEmpty || tc.loopReminder.nonEmpty then
+          ProtectedAgentExecution.suspend(handle, "unsupported-tool-boundary") *>
+            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        else
+          val immediate = nextState.execution.pendingImmediateInputs
+          val queued = nextState.execution.pendingUserInputs
+          val cleanState = nextState.copy(execution = nextState.execution.copy(
+            pendingImmediateInputs = Nil, pendingUserInputs = Nil))
+          val users = queued.collect { case input: UserInput => input }
+          val selectedImmediate = immediate.map { input =>
+            val content = input.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(input.text))(Right(_))
+            Message(MessageRole.User, content, source = input.source, messageId = input.clientMessageId)
+          }
+          val selectedUsers = users.map { input =>
+            val content = input.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(input.text))(Right(_))
+            Message(MessageRole.User, content, source = input.source, messageId = input.clientMessageId)
+          }
+          if users.size != queued.size || users.size > 1 || (immediate.nonEmpty && queued.nonEmpty) then
+            ProtectedAgentExecution.suspend(handle, "unsupported-input-order") *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          else
+            ProtectedAgentExecution.commitTranscriptRound(handle, cleanState) *>
+              pipeLlmCall(agentDef, resources, depth, parentRef,
+                cleanState.withMessages(cleanState.messages ++ selectedImmediate ++ selectedUsers), tc.replyTo)
 
       case tc: ToolsComplete =>
         // ── pi-logic 接线点 6（轮 A 织入）：tool.BatchSettled 位点 + 工具轮收束审计行
@@ -1707,6 +1746,20 @@ private[agent] object AgentProcessing:
       // 🔴 查而不记：这里**不能**注册 id —— 排队项在 turn 边界会原样转发给自己
       // （head-to-self drain），真正的注册点 = idle 直投的 checkDuplicate；若在入队
       // 时注册，转发到 idle 的队头会被自己的注册误判成重复 ⇒ 排队消息永远不派发。
+      case msg: AgentCommand.UserInput if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        InputLanding.protectedUserReceipt(handle, msg).flatMap {
+          case Right(receipt) if receipt.accepted =>
+            val queued = msg.copy(clientMessageId = Some(receipt.identity))
+            val execution = state.execution.copy(pendingUserInputs = state.execution.pendingUserInputs :+ queued)
+            IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = execution), pending))
+          case Right(_) =>
+            emitDuplicateReceipt(state.wsSend, state.sessionId, msg.clientMessageId) *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          case Left(reason) =>
+            logger.warn(s"Protected input admission failed: $reason") *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        }
       case msg: AgentCommand.UserInput =>
         val isDuplicate = msg.clientMessageId.exists(state.recentMessageIds.contains)
         if isDuplicate then
@@ -1754,6 +1807,18 @@ private[agent] object AgentProcessing:
           pendingUserInputs = state.execution.pendingUserInputs :+ msg
         )
         IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
+      case msg: AgentCommand.ImmediateInput if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        InputLanding.protectedImmediateReceipt(handle, msg).flatMap {
+          case Right(receipt) if receipt.accepted =>
+            val queued = msg.copy(clientMessageId = Some(receipt.identity))
+            val execution = state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+ queued)
+            IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = execution), pending))
+          case Right(_) => IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          case Left(reason) =>
+            logger.warn(s"Protected immediate input admission failed: $reason") *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        }
       case msg: AgentCommand.ImmediateInput =>
         logAgentEvent(
           agentDef,

@@ -813,6 +813,88 @@ private[gateway] object PresenceRoutes:
             }
         }
 
+      case req @ GET -> Root / "delegates" / id / "recovery" =>
+        withRecoveryPrincipal(req) { _ =>
+          sharedResources.executionProtection(id).flatMap {
+            case nebflow.shared.ExecutionProtection.Protected(List(run)) =>
+              sharedResources.executionCommitPort.observeChain(id, run).flatMap {
+                case nebflow.shared.ExecutionChainObservation.Verified(state) =>
+                  Ok(Json.obj("sessionId" -> id.asJson, "runId" -> run.asJson,
+                    "revision" -> state.ref.revision.asJson, "recordHash" -> state.ref.recordHash.asJson,
+                    "phase" -> state.phase.asJson, "runnerStopped" -> state.runnerStopped.asJson))
+                case nebflow.shared.ExecutionChainObservation.ReviewRequired(_, reason) =>
+                  Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
+              }
+            case nebflow.shared.ExecutionProtection.Unprotected => NotFound()
+            case _ => Conflict(Json.obj("error" -> "recovery-classification-unavailable".asJson))
+          }
+        }
+
+      // POST /delegates/:id/recovery/resume — explicit protected same-run resume.
+      // If-Match carries the exact observed record hash; Idempotency-Key carries the
+      // stable request identity. No body identity is trusted.
+      case req @ POST -> Root / "delegates" / id / "recovery" / "resume" =>
+        withRecoveryPrincipal(req) { principal =>
+          val observedHash =
+            req.headers.get(CIString("If-Match")).map(_.head.value.trim).getOrElse("")
+              .stripPrefix("W/").stripPrefix("\"").stripSuffix("\"")
+          val requestId = req.headers.get(CIString("Idempotency-Key")).map(_.head.value.trim).getOrElse("")
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
+            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
+          else if !observedHash.matches("[0-9a-f]{64}") then
+            BadRequest(Json.obj("error" -> "If-Match must carry the observed record hash".asJson))
+          else if requestId.isEmpty || !requestId.forall(c => c.isLetterOrDigit || c == '-' || c == '_') then
+            BadRequest(Json.obj("error" -> "Idempotency-Key must be a stable request id".asJson))
+          else
+            req.bodyText.compile.string.flatMap { raw =>
+              val parsed = if raw.trim.isEmpty then Right(Json.obj()) else parser.parse(raw)
+              parsed match
+                case Left(_) => BadRequest(Json.obj("error" -> "invalid recovery body".asJson))
+                case Right(body) =>
+                  val inputField = body.hcursor.get[Json]("input").toOption
+                  val input = inputField.flatMap(_.asString)
+                  if inputField.nonEmpty && input.isEmpty then
+                    BadRequest(Json.obj("error" -> "input must be a string".asJson))
+                  else
+                    sharedResources.executionProtection(id).flatMap {
+                      case nebflow.shared.ExecutionProtection.Protected(List(run)) =>
+                        sharedResources.executionCommitPort.observeChain(id, run).flatMap {
+                          case nebflow.shared.ExecutionChainObservation.Verified(state) =>
+                            sharedResources.resumeProtectedExecution(
+                              nebflow.shared.ProtectedRecoveryRequest(id, run,
+                                nebflow.shared.ExecutionCommitRef(state.ref.revision, observedHash),
+                                requestId, principal, input)
+                            ).flatMap {
+                              case Right(result) =>
+                                Ok(Json.obj(
+                                  "sessionId" -> result.sessionId.asJson, "runId" -> result.executionId.asJson,
+                                  "attemptId" -> result.attemptId.asJson,
+                                  "incarnationId" -> result.incarnationId.asJson,
+                                  "revision" -> result.ref.revision.asJson,
+                                  "recordHash" -> result.ref.recordHash.asJson,
+                                  "duplicate" -> result.duplicate.asJson
+                                ))
+                              case Left("stale-observed-ref") =>
+                                PreconditionFailed(Json.obj("error" -> "stale-observed-ref".asJson))
+                              case Left("unresolved-operation-review-required") =>
+                                Conflict(Json.obj("error" -> "review-required".asJson,
+                                  "reason" -> "unresolved-operation-review-required".asJson))
+                              case Left(reason) if reason.startsWith("review-required") =>
+                                Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
+                              case Left(reason) =>
+                                Conflict(Json.obj("error" -> "recovery-rejected".asJson, "reason" -> reason.asJson))
+                            }
+                          case nebflow.shared.ExecutionChainObservation.ReviewRequired(_, reason) =>
+                            Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
+                        }
+                      case nebflow.shared.ExecutionProtection.Protected(_) =>
+                        Conflict(Json.obj("error" -> "ambiguous-protected-execution".asJson))
+                      case nebflow.shared.ExecutionProtection.Unprotected => NotFound()
+                      case _ => Conflict(Json.obj("error" -> "recovery-classification-unavailable".asJson))
+                    }
+            }
+        }
+
       // POST /delegates/restore — 手动恢复单个子代理会话（重启手动恢复批，作者令
       // 2026-11-06 20:36「由用户手动恢复，粒度可以是逐个点击」）：body
       // `{"taskId": "<delegate-id>"}` → [[nebflow.agent.ManualRevival.restoreOne]]
@@ -1267,24 +1349,35 @@ private[gateway] object PresenceRoutes:
                           case true =>
                             val (effective, resolvedFrom) = nebflow.core.SchemePolicy.resolveModel(slotName, own)
                             val mode = if own.isDefined then "explicit" else "follow"
-                            // 模型链热应用（2026-10-31 作者报障②「fallback 链加了新模型
-                            // 不立即生效」）：链面保存后清掉**链外**的会话驻留旧链引用。
-                            // 驻留两面 = in-memory sessionModelOverrides（composer 会话级
-                            // pin，请求路径 overrides 前插 + 同 (provider,model) 链成员
-                            // 剔除 ⇒ 链改了 pin 恒赢）+ 盘上 SessionMeta.modelRef（重启
-                            // 后由 meta 恢复的同一 pin）。两面同步清（#33/#311 reloadConfig
-                            // 先例同形：内存腿 + 持久腿一致）。判据 = **新生效链成员资格**：
-                            // pin 的模型仍在链上 ⇒ 保留（选择器显式意图）；已不在链上 ⇒
-                            // 清除，该会话下一请求即吃新链。spec 守卫：部分 route spec 臂以
-                            // sessionStore=null 组装（ModelChainRoutesSpec.mkResources），
-                            // 持久腿 null 下跳过，内存腿恒跑。
-                            // fallback 废除批：链成员资格 = preferred 一根（fallbacks
-                            // 不再进请求链，驻留 pin 对着死数据判断成员会误清/误留）。
+                            // Hot-apply: after a chain save, clear the explicit model pins of THIS
+                            // category that no longer match the effective chain, so those
+                            // sessions' next request uses the new chain. A pin lives on two
+                            // surfaces that are cleared together: the in-memory
+                            // sessionModelOverrides (the composer pin, which wins on the request
+                            // path) and the persisted SessionMeta.modelRef (the same pin restored
+                            // after a restart).
+                            //
+                            // Scope: only pins owned by `slotName` (ModelRoles.pinOwnerSlot) are
+                            // candidates. Pins of other categories, and pins that cannot be
+                            // attributed to a category, are never touched: editing the kernel
+                            // chain must not reset a subagent or main-conversation choice.
+                            // Priority inside the category: the saved chain wins at save time (a
+                            // differing pin is cleared, a pin equal to the new preferred model
+                            // survives); a session choice made afterwards wins again until the
+                            // next edit of this category.
+                            //
+                            // Membership is the preferred model only (fallbacks are not part of
+                            // the request chain). Some route specs assemble with
+                            // sessionStore = null: the persisted leg is skipped there and the
+                            // in-memory leg always runs.
                             val chainRefs = effective.preferred.toList.toSet
                             sharedResources.sessionModelOverrides
                               .modify { overrides =>
                                 val (keep, drop) =
-                                  overrides.partition((_, c) => chainRefs.contains(s"${c.providerId}/${c.model}"))
+                                  overrides.partition { (id, c) =>
+                                    !nebflow.core.ModelRoles.pinOwnerSlot(id).contains(slotName) ||
+                                    chainRefs.contains(s"${c.providerId}/${c.model}")
+                                  }
                                 (keep, drop.keys.toList)
                               }
                               .flatMap { droppedIds =>
@@ -2255,6 +2348,7 @@ private[gateway] object PresenceRoutes:
             val endpointOv = body.hcursor.downField("endpoint").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             val keyRefOv = body.hcursor.downField("keyRef").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             val apiKeyOv = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val modelOv = body.hcursor.downField("model").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             if providerOv.exists(p => !DecisionProvider.AllIds.contains(p)) then
               BadRequest(Json.obj("error" -> s"unknown jev provider '${providerOv.get}'".asJson))
             else
@@ -2271,10 +2365,8 @@ private[gateway] object PresenceRoutes:
                     if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
                     else DecisionProvider.DefaultTypesafeEndpoint
                   )
-                val model = entry
-                  .flatMap(_.model)
-                  .map(_.trim)
-                  .filter(_.nonEmpty)
+                val model = modelOv
+                  .orElse(entry.flatMap(_.model).map(_.trim).filter(_.nonEmpty))
                   .orElse(stored.flatMap(_.model))
                   .getOrElse(DecisionProvider.DefaultModel)
                 val keyRef = keyRefOv

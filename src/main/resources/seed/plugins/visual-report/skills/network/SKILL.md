@@ -49,7 +49,7 @@ description: 网络分析报告（networkx 度量+pyvis 交互）；图网络与
 | pyvis | 交互网络 HTML | `<venv>\python.exe -c "import pyvis; print(pyvis.__version__)"` → 0.3.2 | https://pyvis.readthedocs.io/en/latest/ · https://pypi.org/project/pyvis/ | HTTP 200 · 200（2026-10-04 实测） | **networkx + matplotlib 静态布局图顶交互版**（交互段改为静态读图指南并声明交互版不可用） |
 | matplotlib | 静态布局渲染器 | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2 | https://matplotlib.org/ | HTTP 200（2026-10-04 实测，README 链接验证表同） | plotly（viz-venv 已装）；再缺 ⇒ 邻接矩阵表 + 文字结构描述，不得手画（core §1.1） |
 
-numpy（2.5.3）/ pandas（3.0.5）为插件共用基线，实测记录见插件 README 链接验证表，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5），pyvis 0.3.2 的枚举值是 `cdn_resources='in_line'`（带下划线，`'inlined'` 会 assert 失败）。
+numpy（2.5.3）/ pandas（3.0.5）为插件共用基线，实测记录见插件 README 链接验证表，直接引用不复制。`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5），pyvis 0.3.2 的枚举值是 `cdn_resources='in_line'`（带下划线，`'inlined'` 会 assert 失败）。
 
 ### 场景规范（本场景红线细则）
 

@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "change": "frontend-forms-repairs",
+  "mappings": [
+    {
+      "requirement": "FRM-REQ-001",
+      "scenario": "FRM-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/sidebar/providersUi.js",
+        "src/main/resources/web/js/sidebar/providerPanel.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-001 validation failure keeps the form open without sending anything"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-001 a JeV save that fails on the network says so and keeps the draft"
+        },
+        {
+          "path": "tests/forms-provider-consumer.spec.mjs",
+          "name": "FRM-SCN-001 actual provider form keeps values after failed confirmation and closes on retry"
+        },
+        {
+          "path": "tests/settings-imagegen-two-forms.spec.mjs",
+          "name": "B5. 既有 provider 重录：POST 409 → PUT 覆写 → 已配置态 + 表单关闭"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-001",
+      "scenario": "FRM-SCN-008",
+      "implementation": [
+        "src/main/resources/web/js/sidebar/providersUi.js",
+        "src/main/resources/web/js/sidebar/providerPanel.js",
+        "src/main/scala/nebflow/gateway/WsConfigHandlers.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-008 LLM provider form closes only on its own acknowledgement and keeps the draft otherwise"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-008 LLM provider save without any answer keeps the draft after the timeout"
+        },
+        {
+          "path": "src/test/scala/nebflow/gateway/ws/WsUpdateConfigRequestIdSpec.scala",
+          "name": "a saved config is acknowledged with the request id of that save"
+        },
+        {
+          "path": "tests/time-wheel-picker.spec.mjs",
+          "name": "L2 保存：provider 表单发出一条带 requestId 的 updateConfig 并等到回执才关闭"
+        },
+        {
+          "path": "tests/settings-key-reveal.spec.mjs",
+          "name": "T3 save a rotated key, reload the settings page, the field shows the stored value in plaintext"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-001",
+      "scenario": "FRM-SCN-012",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/WsConfigHandlers.scala",
+        "src/main/resources/web/js/main.js",
+        "src/main/resources/web/js/sidebar/providersUi.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-008 a refused provider save is reported on the form and leaves the running turn and the conversation alone"
+        },
+        {
+          "path": "src/test/scala/nebflow/gateway/ws/WsUpdateConfigRequestIdSpec.scala",
+          "name": "a rejected config is answered with an error that carries the request id and names the request"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-002",
+      "scenario": "FRM-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/mobile/todoAppleFace.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-002 mobile todo edit puts an empty project on the wire when the tag is cleared and sends nothing when it is untouched"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-002 mobile todo edit submits a null tag when the tag is cleared and keeps it otherwise"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-002",
+      "scenario": "FRM-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/scheduled-task.js",
+        "src/main/resources/web/js/todoFace.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-003 desktop todo edit and create drafts survive unrelated store updates"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-003 desktop scheduled-task draft survives a refresh and is rebuilt for another target"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-003 mobile todo bottom-sheet draft survives unrelated store updates"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-002",
+      "scenario": "FRM-SCN-009",
+      "implementation": [
+        "src/main/resources/web/js/scheduled-task.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-009 mobile scheduled drawer keeps its draft across a refresh and rebuilds it for a reopened or different target"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-003 desktop scheduled-task draft survives a refresh and is rebuilt for another target"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-003",
+      "scenario": "FRM-SCN-004",
+      "implementation": [
+        "src/main/resources/web/js/sidebar/providerPanel.js",
+        "src/main/resources/web/js/sidebar/jevTestButton.js",
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-004 JeV probe from the real provider form sends the adapter id, form endpoint/model and the unsaved key"
+        },
+        {
+          "path": "src/test/scala/nebflow/gateway/infra/JevProvidersAlignmentSpec.scala",
+          "name": "POST /api/jev/test: adapter id, form model and unsaved key reach the upstream; an instance name is refused"
+        },
+        {
+          "path": "tests/forms-provider-consumer.spec.mjs",
+          "name": "FRM-SCN-004 JeV probe sends current model and unsaved key"
+        },
+        {
+          "path": "tests/jev-imagegen-test-buttons.spec.mjs",
+          "name": "J5. 请求形状（表单覆写腿）"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-003",
+      "scenario": "FRM-SCN-013",
+      "implementation": [
+        "src/main/resources/web/js/sidebar/jevTestButton.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-004 JeV probe without an adapter sends nothing and asks for one"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-004",
+      "scenario": "FRM-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/main/bgAgents.js",
+        "src/main/resources/web/js/freezeState.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-005 a frozen delegate offers wake only when the authoritative block says it is wakeable"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-005 wakeableOf follows the authoritative block"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-004",
+      "scenario": "FRM-SCN-014",
+      "implementation": [
+        "src/main/resources/web/js/freezeState.js",
+        "src/main/resources/web/js/main/bgAgents.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-005 a delegate-frozen row shows or hides wake the same way for a live frame and a snapshot block"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-005 a delegate-frozen reason is wakeable whichever frame described the row"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-005 families that recover on their own stay without a wake action when no block is present"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-005",
+      "scenario": "FRM-SCN-006",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala",
+        "src/main/scala/nebflow/core/ModelRoles.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
+          "name": "PUT kernel chain clears only differing kernel pins; main, other-category and unknown-category pins are kept"
+        },
+        {
+          "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
+          "name": "PUT category chain clears the persisted pin only for that category's sessions"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-005",
+      "scenario": "FRM-SCN-010",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala",
+        "src/main/scala/nebflow/core/ModelRoles.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
+          "name": "PUT hot-applies: class change retains matching pins, purges out-of-chain pins; fallback is not a member"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ModelRolesSpec.scala",
+          "name": "pinOwnerSlot owns slot families and main conversations, not slotless background families or blank ids"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-005",
+      "scenario": "FRM-SCN-016",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala",
+        "src/main/scala/nebflow/core/ModelRoles.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
+          "name": "a session choice made after a category update survives until that category is edited again"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-006",
+      "scenario": "FRM-SCN-007",
+      "implementation": [
+        "src/main/resources/web/js/main/bgAgents.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-007 the background badge counts active rows while retained rows keep the entry available"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-007 active count excludes retained history and structural parent"
+        },
+        {
+          "path": "tests/bg-flow-chain-visibility.spec.mjs",
+          "name": "T3 延续态（live 行已离场）：主桶空 + 注册行镜像 → 快照恢复链行合成延续组头「链运行中」，徽标计数 > 0"
+        },
+        {
+          "path": "tests/bg-panel-row-dedup.spec.mjs",
+          "name": "H3 计数同源：面板头 total == 实际渲染行数（五种通路组合）"
+        },
+        {
+          "path": "tests/bg-panel-struct-parent.spec.mjs",
+          "name": "①②⑦ 活跃后代 ⇒ 结构父显示（注册行身份/零计数）；已完成后代保留；全终态父默认收起"
+        },
+        {
+          "path": "tests/delegate-ui-twolayer.spec.mjs",
+          "name": "T2 面板两级化（C2/R6）"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-006",
+      "scenario": "FRM-SCN-015",
+      "implementation": [
+        "src/main/resources/web/js/main/bgAgents.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-007 running and restarting archived children count as active while completed ones stay listed without counting"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-007 a running flow step counts as active while a pending step stays listed without counting"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-007 active count excludes retained history and structural parent"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-007",
+      "scenario": "FRM-SCN-011",
+      "implementation": [
+        "src/main/resources/web/js/bgAgentMobileChrome.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-011 mobile background conversation keeps the status capsule, one details control and one stop control"
+        }
+      ]
+    }
+  ]
+}

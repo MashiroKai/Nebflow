@@ -81,12 +81,20 @@ export function mergeFreeze(info, block) {
 
 /**
  * 该行是否显示「唤醒/恢复」按钮：权威块在场 ⇒ 只认 `wakeable`；
- * 旧后端（无块）⇒ 退回分类表（同一张表的退化副本）。
+ * 无块 ⇒ delegate 冻结族一律可唤醒，其余退回分类表（同一张表的退化副本）。
+ *
+ * Why the delegate family is answered before the presentation table: a live `delegateFrozen`
+ * frame carries flat fields only (no `freeze` block), while snapshot rows carry the block, and the
+ * gateway marks every delegate-frozen reason as wakeable (`FreezeDisplay.ofWire` →
+ * `FreezeTruth.wakeable`), including the provider-failure reasons the engine also retries by itself.
+ * The presentation table hides the button for that self-healing family, so asking it first would
+ * show the button on a snapshot row and hide it on a live-frame row for the same session.
  * @param {any} info
  */
 export function wakeableOf(info) {
   const b = freezeBlockOf(info);
   if (b) return b.frozen && b.wakeable;
+  if (delegateFreezeWire(info)) return true;
   return showsRecoveryAction(freezeKindOf(info));
 }
 

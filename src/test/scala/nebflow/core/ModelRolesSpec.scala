@@ -91,6 +91,33 @@ class ModelRolesSpec extends FunSuite:
     }
   }
 
+  test("pinOwnerSlot owns slot families and main conversations, not slotless background families or blank ids") {
+    assertEquals(ModelRoles.pinOwnerSlot("delegate-kernel-9f8e7d6c"), Some("kernel"))
+    assertEquals(ModelRoles.pinOwnerSlot("delegate-abc123"), Some("subagent"))
+    assertEquals(ModelRoles.pinOwnerSlot("dispatcher-1a2b3c4d"), Some("project-dispatcher"))
+    assertEquals(ModelRoles.pinOwnerSlot("dag-node-1-2"), Some("node"))
+    assertEquals(ModelRoles.pinOwnerSlot("ask-a0d6ad6e"), Some(SchemePolicy.NebulaName))
+    // A main conversation is deliberately unclassified for request resolution,
+    // but a main-chain edit must still reach its pin.
+    val mainId = "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff"
+    assertEquals(ModelRoles.slotOfSessionId(Some(mainId)), None)
+    assertEquals(ModelRoles.pinOwnerSlot(mainId), Some(SchemePolicy.NebulaName))
+    assertEquals(ModelRoles.pinOwnerSlot("  sess-0001 "), Some(SchemePolicy.NebulaName))
+    // Background families without a model slot, and blank ids, cannot be attributed: no category edit may clear them.
+    val unowned = List("subtask-1a2b3c4d", "subagent-1a2b3c4d", "workflow-1a2b3c4d", "external-codex-7cf3", "", "   ")
+    unowned.foreach { id =>
+      assertEquals(ModelRoles.pinOwnerSlot(id), None, s"'$id' must not be attributed to a category")
+    }
+    // Drift gate: a new background family must never silently become owned by the main slot.
+    nebflow.shared.SessionScope.BackgroundAgentPrefixes.foreach { prefix =>
+      assertNotEquals(
+        ModelRoles.pinOwnerSlot(s"${prefix}1a2b3c4d"),
+        Some(SchemePolicy.NebulaName),
+        s"background family '$prefix' must not be owned by the main slot"
+      )
+    }
+  }
+
   test("迁移后 ask 类别链读取 main/Nebula sidecar；全未配置引用可被判空而不静默") {
     val original = nebflow.shared.PathUtil.dataRoot
     val tmp = os.temp.dir(prefix = "nb-ask-model-role-")

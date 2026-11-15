@@ -5,7 +5,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 
 /**
- * SubagentTool —— 只读侦察子代理入口（builtin-merge 批 2026-10-03，Explore
+ * SubagentTool — reconnaissance sub-agent entry (Explore
  * 同型）。挂载面 = 合并执行 agent `nebflow`（[[nebflow.agent.AgentCore]]
  * .NebflowFixedTools）；阻塞运行，结果即返回值（不经后台回投链）。
  */
@@ -13,9 +13,9 @@ object SubagentTool extends Tool:
   val name = "Subagent"
 
   val description =
-    """Run a read-only recon sub-agent to completion and get its findings as THIS tool's result. The sub-agent has Read/Glob/Grep/WebSearch/WebFetch only (by mechanism — it cannot write, execute or message anything).
+    """Run a recon sub-agent to completion and get its findings as THIS tool's result. The fixed tools are Read/Glob/Grep/WebSearch/WebFetch/Bash. Bash uses the normal execution and permission pipeline, not a read-only sandbox. Reconnaissance is role policy; no separate Write/Edit, messaging or recursive agent tools are granted.
 
-**When to use:** lookups, codebase surveys, documentation digs, any read-only legwork whose raw material would flood your context. Do NOT use it for work that writes, executes, or needs your judgment on intermediate state — do those yourself.
+**When to use:** lookups, codebase surveys, documentation digs and foreground shell-backed reconnaissance whose raw material would flood your context. The sub-agent must finish shell work and include its result before answering; it must not start background work. Do NOT use it for implementation or work needing your judgment on intermediate state. Follow your role's execution rules for that work; dispatchers must use chain nodes instead of executing it themselves.
 
 **Parameters:**
 - `prompt` (required): the question to answer — make it self-contained (paths to start from, what counts as an answer). The sub-agent has none of your context.
@@ -49,28 +49,9 @@ object SubagentTool extends Tool:
     if result.length > 200 then result.take(197) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    // 双模式批（2026-10-28 · 设计 §4.2/§5.1 · 双保险第二险）＋ tool-face-agentflow-
-    // retire 批（2026-11-05，作者裁定一「给 kernel 腿补 Subagent（用只读版）」）：
-    // **只有 dispatcher 腿**的 delegate 会话没有 Subagent（挂载面已摘——
-    // buildAllowedToolSet 尾段分叉）。kernel 腿现在**有**本件（只读五件，无写/无
-    // shell/无消息），与不变量 R-3a 的收窄配套（KernelChildSpawnGate 只放行
-    // def='subagent' 的子 actor）。本闸仍是防逃逸的第二保险：挂载面防线被绕过
-    // （schema 注入/显式调用）的形态 = 显式错误，绝不静默执行。总闸关
-    // （modeFaceOf=None）恒放行（现状逐字节）。
-    ctx.sessionId.flatMap(sid => nebflow.core.delegate.DelegateRegistry.modeFaceOf(Some(sid))) match
-      case Some(m) if m == nebflow.core.delegate.DualModeConfig.ModeDispatcher =>
-        IO.pure(
-          Left(
-            ToolError(
-              s"Subagent is not available in '$m'-mode delegate sessions (the dispatcher orchestrates through " +
-                "ChainWrite/NodeEdit — recon is a node's job, not the orchestrator's). (DUAL_MODE_FACE_REMOVED)"
-            )
-          )
-        )
-      case _ =>
-        val prompt = input("prompt").flatMap(_.asString).getOrElse("")
-        val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).getOrElse("recon")
-        if prompt.trim.isEmpty then
-          IO.pure(Left(ToolError("Missing required parameter: prompt — give the sub-agent a self-contained question.")))
-        else BlockingSubagent.run(prompt, description, ctx)
+    val prompt = input("prompt").flatMap(_.asString).getOrElse("")
+    val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).getOrElse("recon")
+    if prompt.trim.isEmpty then
+      IO.pure(Left(ToolError("Missing required parameter: prompt — give the sub-agent a self-contained question.")))
+    else BlockingSubagent.run(prompt, description, ctx)
 end SubagentTool

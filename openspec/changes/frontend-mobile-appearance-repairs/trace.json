@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "change": "frontend-mobile-appearance-repairs",
+  "mappings": [
+    {
+      "requirement": "FMA-REQ-001", "scenario": "FMA-SCN-001",
+      "implementation": ["src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/css/mobileLayer.css"],
+      "tests": [
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-001 ordinary page keeps accessible name without title capsule"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-001 project list scrolls without a title capsule"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-001 canvas document retains its interactive tab capsule"}
+      ]
+    },
+    {
+      "requirement": "FMA-REQ-002", "scenario": "FMA-SCN-002",
+      "implementation": ["src/main/resources/web/css/mobileSearchFlat.css", "src/main/resources/web/css/mobileLayer.css"],
+      "tests": [
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-002 collapsed search and back icons center in their controls"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-002 narrow search and back remain centered light"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-002 narrow search and back remain centered dark"}
+      ]
+    },
+    {
+      "requirement": "FMA-REQ-004", "scenario": "FMA-SCN-004",
+      "implementation": ["src/main/resources/web/js/mobile/navController.js"],
+      "tests": [
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-004 mobile layer removes its document touchmove listener"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-004 reduced motion cancelled edge returns immediately"}
+      ]
+    },
+    {
+      "requirement": "FMA-REQ-003",
+      "scenario": "FMA-SCN-003",
+      "implementation": [
+        "src/main/resources/web/css/glass.css",
+        "src/main/resources/web/css/mobileSearchFlat.css",
+        "openspec/changes/frontend-mobile-appearance-repairs/proposal.md",
+        "openspec/changes/frontend-mobile-appearance-repairs/design.md",
+        "openspec/changes/frontend-mobile-appearance-repairs/tasks.md",
+        "openspec/changes/frontend-mobile-appearance-repairs/specs/mobile-appearance/spec.md",
+        "openspec/changes/frontend-mobile-appearance-repairs/trace.json"
+      ],
+      "tests": [
+        {
+          "path": "tests/mobile-search-flat.spec.mjs",
+          "name": "FMA-SCN-003 search uses actual composer material"
+        },
+        {
+          "path": "tests/mobile-search-flat.spec.mjs",
+          "name": "FMA-SCN-003 todo surfaces use shared components"
+        },
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-003 todo glass hover and no-backdrop light"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-003 todo glass hover and no-backdrop dark"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-003 unsupported-backdrop fallback applies to actual todo pill"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-001 canvas document retains its interactive tab capsule"}
+      ]
+    }
+  ]
+}

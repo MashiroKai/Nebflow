@@ -509,7 +509,7 @@ final case class RoutePlan(
   /**
    * 一行结构化日志（本批可观测面的唯一形态）。
    *
-   * 形态：`[route] device=KAI via=relay reasons=tailscale-stopped,p2p-not-implemented
+   * 形态：`[route] device=<win> via=relay reasons=tailscale-stopped,p2p-not-implemented
    * probeMs=0ms cached=true candidates=1 kept=0 tiers=tailscale:skip(tailscale-stopped,0ms)
    * self-p2p:skip(p2p-not-implemented,0ms) relay:select(relay-always-available,0ms)`
    */

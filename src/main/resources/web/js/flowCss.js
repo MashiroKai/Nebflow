@@ -38,8 +38,9 @@ export const FLOW_CSS = `
 .team-card-title {
   font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  cursor: pointer; transition: color 0.15s;
+  transition: color 0.15s;
 }
+.team-card-title[data-act="def"] { cursor: pointer; }
 .team-card-title[data-act="def"]:hover { color: var(--color-primary, #07c160); }
 .team-card-actions { display: flex; gap: var(--ds-space-1); flex-shrink: 0; }
 .team-act-btn {

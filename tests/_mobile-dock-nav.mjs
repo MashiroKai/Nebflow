@@ -31,7 +31,13 @@ export async function dockTo(page, id) {
 /** 工作台根页分组行 → 详情页（定时/心跳/后台/项目/图谱/插件/用量/设置）。 */
 export async function openHubPage(page, face) {
   await dockTo(page, 'workbench');
-  await page.locator(`.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="${face}"]`).click();
+  // account-hero 批（2026-11-07 作者令「把设置的统一到这里」）：设置不再是工作台
+  // 列表的一员，升到 hero 独立入口 [data-hero-settings] —— 走 hero 键，其余面照旧
+  // 走分组行。
+  const target = face === 'settings'
+    ? page.locator('.mobile-page[data-page="workbench"] [data-hero-settings]')
+    : page.locator(`.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="${face}"]`);
+  await target.click();
   await expect(page.locator(`.mobile-page[data-page="${face}"]`)).toHaveClass(/live/);
   await settlePage(page, face);
 }

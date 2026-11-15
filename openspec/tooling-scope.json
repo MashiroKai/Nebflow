@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "paths": [
+    "openspec/",
+    "scripts/check-sdd.mjs",
+    "scripts/check-js-types.mjs",
+    "scripts/run-checks.mjs",
+    "scripts/tests/",
+    "eslint.config.mjs",
+    "package.json",
+    "package-lock.json",
+    "Makefile",
+    ".github/workflows/ci.yml",
+    ".github/workflows/auto-release.yml",
+    ".gitlab-ci.yml",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.zh-CN.md",
+    "scripts/check-openspec.mjs",
+    "src/main/resources/seed/plugins/stand-dev/Plugin.md",
+    "src/main/resources/seed/plugins/stand-dev/plugin.json",
+    "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/SKILL.md",
+    "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/backend/nebflow-backend.md"
+  ]
+}

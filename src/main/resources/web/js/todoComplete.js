@@ -43,7 +43,7 @@ function loadTodos() {
     .map((r) => ({
       name: r.name,
       // 副标题 = detail 的首行摘要（长文本收在折叠区里，不在这里铺开）
-      subtitle: String(r.detail || '').replace(/\s+/g, ' ').slice(0, 60),
+      subtitle: [r.project, r.id, String(r.detail || '').replace(/\s+/g, ' ').slice(0, 60)].filter(Boolean).join(' · '),
       detail: String(r.detail || ''),
       createdAt: Number.isFinite(r.createdAt) ? Number(r.createdAt) : 0,
       ref: r,
@@ -61,7 +61,7 @@ registerProvider({
   load: () => Promise.resolve(loadTodos()),
   rank: (items, query) => rankCandidates(items, query),
   // 全名逐字插入（`#` 由引擎前的 insertText 提供，尾随空格由引擎补）。
-  insertText: (item) => '#' + item.name,
+  insertText: (item) => '#' + item.name + (item.ref && item.ref.id ? '·' + item.ref.id : ''),
 });
 
 // ── 点击→待办面板 委托 ───────────────────────────────────────────────────

@@ -5,7 +5,6 @@ import nebflow.llm.ModelCandidate
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.project.ProjectStore
 import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -61,71 +60,36 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
     wsRoutes = null
   ).routes
 
-  private def request(method: Method, path: String, body: Json = Json.obj(), auth: Boolean = true): IO[Response[IO]] =
+  private def requestOpt(
+    method: Method,
+    path: String,
+    body: Json = Json.obj(),
+    auth: Boolean = true
+  ): IO[Option[Response[IO]]] =
     val req = Request[IO](method, Uri.unsafeFromString(path)).withEntity(body)
     val authenticated =
       if auth then req.putHeaders(Header.Raw(org.typelevel.ci.CIString("Authorization"), "Bearer workspace-test"))
       else req
-    routes(authenticated).value.map(_.getOrElse(fail("route not found")))
+    routes(authenticated).value
 
-  private def fixture: IO[os.Path] =
-    val repo = root / "repo"
-    ProjectStore
-      .create("example", repo.toString, None, "# Project instructions")
-      .flatMap { created => IO(assert(created.isRight)).as(repo) }
-
-  test("the workspaces view renders the recorded legacy ledger rows read-only") {
+  test("the managed-workspace faces are gone from the route table end to end (view, cleanup, merge requests, baseline)") {
+    // 3007e48da（2026-11-13 退役托管工作区机制）：托管工作区/merger/清理/基线整族
+    // 机制 end to end 摘除（提交语「Remove the managed-workspace mechanism end to
+    // end」），路由**壳**也随之消失。改前本 spec 钉的是「视图渲染台账 + 变更面
+    // 404」——两者的世界都已退役：现行「gone」正钉 = 路由表 fall-through（None），
+    // 读视图腿随其世界删除（removed-mechanism spec 同删纪律）。
     for
-      repo <- fixture
-      _ <- IO.blocking {
-        os.makeDir.all(PathUtil.dataRoot / "workspaces")
-        os.write.over(
-          PathUtil.dataRoot / "workspaces" / "ledger.json",
-          """{
-            |  "workspaces": [{
-            |    "id": "task", "project": "example", "repository": "legacy-repo-key",
-            |    "path": "/tmp/task", "branch": "delegate/task", "baseBranch": "main",
-            |    "baseCommit": "0000000000000000000000000000000000000000",
-            |    "owner": "delegate-owner", "ownerMode": "kernel",
-            |    "lifecycle": "merged-cleanup-pending", "activity": "idle", "revision": 4
-            |  }],
-            |  "mergers": [],
-            |  "baselines": {},
-            |  "requests": [{
-            |    "id": "req-old", "repository": "legacy-repo-key", "mergerId": "delegate-merger",
-            |    "authorization": "recorded", "items": [], "status": "claimed",
-            |    "revision": 1, "cancelRequested": false, "events": {}
-            |  }],
-            |  "cleanups": {}, "revision": 9, "mergerBootstraps": {}, "mergerEvents": {},
-            |  "completionConfirmations": {}
-            |}""".stripMargin
-        )
-      }
-      response <- request(Method.GET, "/api/projects/example/workspaces")
-      body <- response.as[Json]
-      rows = body.hcursor.downField("workspaces").as[List[Json]].getOrElse(Nil)
-      reqs = body.hcursor.downField("mergeRequests").as[List[Json]].getOrElse(Nil)
+      view <- requestOpt(Method.GET, "/api/projects/example/workspaces")
+      cleanup <- requestOpt(Method.GET, "/api/projects/example/workspaces/task/cleanup")
+      submit <- requestOpt(Method.POST, "/api/projects/example/workspaces/merge-requests")
+      cancel <- requestOpt(Method.POST, "/api/projects/example/workspaces/merge-requests/req-1/cancel")
+      baseline <- requestOpt(Method.PUT, "/api/projects/example/workspaces/baseline")
     yield
-      assertEquals(response.status, Status.Ok)
-      assertEquals(rows.map(_.hcursor.get[String]("id").toOption), List(Some("task")))
-      assertEquals(rows.head.hcursor.get[String]("lifecycle").toOption, Some("merged-cleanup-pending"))
-      assertEquals(reqs.map(_.hcursor.get[String]("id").toOption), List(Some("req-old")))
-      // The advisor/facts faces are retired: degraded keys, not errors.
-      assertEquals(body.hcursor.downField("suggestions").as[List[Json]].getOrElse(Nil), Nil)
-  }
-
-  test("the mutating workspace faces are gone from the route table (cleanup, merge requests, baseline)") {
-    for
-      repo <- fixture
-      cleanup <- request(Method.GET, "/api/projects/example/workspaces/task/cleanup")
-      submit <- request(Method.POST, "/api/projects/example/workspaces/merge-requests")
-      cancel <- request(Method.POST, "/api/projects/example/workspaces/merge-requests/req-1/cancel")
-      baseline <- request(Method.PUT, "/api/projects/example/workspaces/baseline")
-    yield
-      assertEquals(cleanup.status, Status.NotFound)
-      assertEquals(submit.status, Status.NotFound)
-      assertEquals(cancel.status, Status.NotFound)
-      assertEquals(baseline.status, Status.NotFound)
+      assertEquals(view, None)
+      assertEquals(cleanup, None)
+      assertEquals(submit, None)
+      assertEquals(cancel, None)
+      assertEquals(baseline, None)
   }
 
 end ProjectWorkspaceRoutesSpec

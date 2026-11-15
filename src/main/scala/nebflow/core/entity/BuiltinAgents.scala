@@ -206,12 +206,13 @@ object BuiltinAgents:
 
   private val NebflowDescription =
     "Built-in executor agent (the Delegate target): kernel base tools + Subagent " +
-      "(read-only recon) + Workflow (DAG of subagent steps); no project context, no memory. " +
+      "(reconnaissance with foreground shell access) + ChainWrite (DAG of task nodes); no project context, no memory. " +
       "Definition is mechanism-fixed in code."
 
   private val SubagentDescription =
-    "Read-only recon sub-agent (the Subagent tool's target): Read/Glob/Grep/WebSearch/WebFetch, " +
-      "blocking one-shot runs; the final text IS the answer. Definition is mechanism-fixed in code."
+    "Recon sub-agent (the Subagent tool's target): Read/Glob/Grep/WebSearch/WebFetch/Bash, " +
+      "blocking one-shot runs; finish foreground shell work before returning findings. " +
+      "Reconnaissance is role policy, not a read-only shell sandbox; no separate Write/Edit, messaging or recursive agent tools."
 
   /**
    * Nebula system prompt —— 原 seed/agents/Nebula/system.md 全文随本批上收进代码；

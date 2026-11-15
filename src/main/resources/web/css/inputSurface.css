@@ -84,6 +84,9 @@
 .reminder-inline-desc,
 .reminder-inline-project input,
 .tfl-row-title-input,
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
 .bgagent-model-switch {
   background: var(--nf-field-bare-bg);
   border: none;

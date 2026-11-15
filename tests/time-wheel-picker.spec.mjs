@@ -47,6 +47,8 @@ const MIME = {
   '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf',
 };
 const SID = 'tw-root';
+/** Every `updateConfig` frame the page sent (the harness answers each one with a matching `configUpdated`). */
+const updateConfigFrames = [];
 // 8899：WebKit bad-port 封禁表外（同族 spec 实证）
 const ORIGIN = 'http://localhost:8899';
 
@@ -208,6 +210,11 @@ async function boot({ viewport = { width: 1280, height: 900 }, hasTouch = false 
       else if (m.type === 'getSessions' || m.type === 'listSessions') sendSessions();
       else if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0, total: 0 }));
       else if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
+      else if (m.type === 'updateConfig') {
+        // The provider form closes only on the gateway's acknowledgement of its own save: answer like the gateway does.
+        updateConfigFrames.push(m);
+        ws.send(JSON.stringify({ type: 'configUpdated', success: true, requestId: m.requestId }));
+      }
     });
   });
   await page.goto(`${ORIGIN}/`);
@@ -224,13 +231,19 @@ async function openSettings(page) {
   const alreadyOpen = await page.evaluate(() =>
     document.getElementById('settings-overlay')?.classList.contains('on') === true);
   if (!alreadyOpen) await page.click('#settings-btn');
-  await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
+  // The settings body is a stack of `.set-card` sections (the former `.settings-section` markup is gone).
+  await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
   await page.waitForTimeout(200);
 }
 
 /** 打开 provider 编辑弹窗（L2 provider 级 / L3 per-model）。 */
 async function openProviderModal(page) {
   await openSettings(page);
+  // Providers are a progressive-disclosure section: the provider panel mounts only once it is expanded.
+  await page.evaluate(() => {
+    const toggle = document.querySelector('[data-settings-disclosure="providers"]');
+    if (toggle && toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+  });
   await page.waitForSelector('#provider-list .cfg-card[data-provider="kimi"]', { timeout: 10000 });
   await page.click('#provider-list .cfg-card[data-provider="kimi"]');
   await page.waitForSelector('#cfg-modal [data-field="unavailableWindows"]', { timeout: 10000 });
@@ -433,18 +446,19 @@ async function main() {
   await page.waitForTimeout(240);
 
   // 保存路径：provider 级空列表 ⇒ 清空语义；per-model DOM 为真相
-  const saveOut = await page.evaluate(async () => {
-    let captured = null;
-    const ids = [...document.querySelectorAll('#cfg-modal .cfg-model-row .cfg-model-id')].map((i) => i.value);
-    // 直接点保存，捕获 onSave 载荷（不改任何窗，验「读面 = DOM」）
-    const btn = document.getElementById('cfg-modal-save');
-    const nav = await import('/js/sidebar.js');
-    btn.click();
-    await new Promise((r) => setTimeout(r, 60));
+  const ids = await page.evaluate(() => [...document.querySelectorAll('#cfg-modal .cfg-model-row .cfg-model-id')].map((i) => i.value));
+  updateConfigFrames.length = 0;
+  // 直接点保存（不改任何窗，验「读面 = DOM」）。表单只在网关确认**这一次**保存后才关闭、才更新本地快照，
+  // 所以先等表单摘除，再读快照。
+  await page.evaluate(() => document.getElementById('cfg-modal-save').click());
+  await page.waitForSelector('#cfg-modal', { state: 'detached', timeout: 10000 });
+  const saveOut = await page.evaluate(async (modelIds) => {
     const cfg = (await import('/js/state.js')).default.parsedConfig;
-    captured = JSON.parse(JSON.stringify(cfg.llm.providers.kimi));
-    return { ids, captured };
-  });
+    return { ids: modelIds, captured: JSON.parse(JSON.stringify(cfg.llm.providers.kimi)) };
+  }, ids);
+  ok('L2 保存：provider 表单发出一条带 requestId 的 updateConfig 并等到回执才关闭',
+    updateConfigFrames.length === 1 && /^provider-/.test(String(updateConfigFrames[0].requestId || '')),
+    JSON.stringify(updateConfigFrames.map((f) => f.requestId)));
   const savedProv = saveOut.captured;
   ok('L2 保存：provider 级两段逐字落盘（含 days = [1,2,3,4,5]）',
     Array.isArray(savedProv.unavailableWindows) && savedProv.unavailableWindows.length === 2

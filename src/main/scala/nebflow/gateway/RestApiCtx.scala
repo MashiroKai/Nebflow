@@ -91,6 +91,13 @@ final class RestApiCtx(
   def gate(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     checkAuth(req).flatMap(ok => if ok then f else authRejected)
 
+  private[gateway] def withRecoveryPrincipal(req: Request[IO])(f: String => IO[Response[IO]]): IO[Response[IO]] =
+    tokenRef.get.flatMap(token => GatewayAuth.authenticate(req, token, sessions, GatewayAuth.Rails.ApiFull))
+      .flatMap {
+        case Some(credential) => RecoveryPrincipal.fromCredential(credential).fold(authRejected)(f)
+        case None => authRejected
+      }
+
   // ── 引导腿门（bootstrap-leg gate，2026-10-22 新设备引导修复批·作者令）──────
   //
   // 登录发起面（POST /neblink/auth/start）与其结果轮询（GET

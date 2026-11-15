@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref, Resource}
 import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import fs2.Stream
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecord, Behaviors}
@@ -13,7 +13,7 @@ import nebflow.core.mail.SessionMailbox
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, SubTaskTool, ToolContext}
 import nebflow.llm.ModelCandidate
-import nebflow.shared.{Branding, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig}
+import nebflow.shared.{Branding, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig, *}
 
 import scala.concurrent.duration.*
 
@@ -122,6 +122,61 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         assert(task.terminalReason.exists(_.contains("R-3a")), "The spawn failure must remain inspectable")
         assert(!registry.contains(task.taskId), "The rejected child must not remain registered")
         assertEquals(llmCalls, 0)
+    }
+  }
+
+  test("startup reconfirms an acknowledged protected terminal with missing mailbox evidence") {
+    fixture.use { case (base, system, calls, root) =>
+      for
+        _ <- IO.blocking(os.makeDir.all(root / "sessions"))
+        parent <- base.sessionStore.createSession("recovery-parent", agentName = Some("worker"))
+        _ <- ExecutionCommitStore.resource((root / "sessions").toNIO).use { authority =>
+          val admission = ExecutionAdmission("protected-child", "run", "admission", "request", "attempt", "incarnation",
+            parent.id, "business", "audit", Json.fromString("initial"), "input")
+          val task = SubAgentTask(admission.sessionId, parent.id, "worker", "initial", "test", "running", 0,
+            System.currentTimeMillis(), None, None, "delegate")
+          def cmd(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) = ExecutionTransition(admission.sessionId,
+            admission.executionId, id, id, ref, admission.attemptId, admission.incarnationId, event)
+          def ref(result: ExecutionCommitResult) = result.asInstanceOf[ExecutionCommitResult.Committed].ref
+          val envelope = Json.obj("source" -> "delegate".asJson, "eventType" -> "completed".asJson,
+            "payload" -> "done".asJson, "metadata" -> Json.obj(), "correlationId" -> admission.sessionId.asJson,
+            "blocks" -> Json.Null)
+          val resources = base.copy(executionCommitPort = authority)
+          for
+            _ <- base.subAgentTaskStore.beginRun(task, "run", parent.id, "nebflow")
+            admitted <- authority.admit(admission)
+            started <- authority.transition(cmd(ref(admitted), "start", ExecutionEvent.AttemptStarted))
+            _ <- authority.registerRunner(ExecutionRunner.Attempt(admission.sessionId, "run", "attempt", "incarnation")).use { registered =>
+              val runner = registered.toOption.get
+              for
+                model <- runner.startModel(cmd(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))(IO.unit)
+                (modelRef, receipt) = model.toOption.get
+                decision <- runner.modelDecision(cmd(modelRef, "decision", ExecutionEvent.ModelDecided(
+                  ExecutionModelDecision(Json.Null, Nil))), receipt)
+                checkpoint <- authority.commitRound(cmd(ref(decision), "round", ExecutionEvent.RoundCommitted(List("input"), Json.obj())))
+                terminal <- runner.installTerminal(cmd(ref(checkpoint), "terminal", ExecutionEvent.TerminalInstallPrepared("", envelope)), envelope)
+                _ = assert(terminal.isInstanceOf[ExecutionCommitResult.Committed])
+                chain <- authority.observeChain(admission.sessionId, "run")
+                resultRef = chain.asInstanceOf[ExecutionChainObservation.Verified].state.terminalResultRef.get
+                projection <- runner.projectTerminal(base.subAgentTaskStore, resultRef)
+                _ = assert(projection.isRight)
+                _ <- base.subAgentTaskStore.acknowledgeNotification(parent.id, admission.sessionId, "run", s"${admission.sessionId}#run")
+              yield ()
+            }
+            before <- base.subAgentTaskStore.findByTaskId(admission.sessionId)
+            _ = assertEquals(before.flatMap(_.notificationPending), Some(false))
+            _ <- SubAgentStartupRecovery.sweep(base.subAgentTaskStore, base.sessionStore,
+              Some(SubAgentStartupRecovery.RevivalDeps(resources, system, None)), manual = true)
+            _ <- SubAgentStartupRecovery.sweep(base.subAgentTaskStore, base.sessionStore,
+              Some(SubAgentStartupRecovery.RevivalDeps(resources, system, None)), manual = true)
+            pending <- SessionMailbox.scanPending(parent.id)
+            taken <- SessionMailbox.scanTaken(parent.id)
+            count <- calls.get
+          yield
+            assertEquals((pending ++ taken).count(_.identity == s"${admission.sessionId}#run"), 1)
+            assertEquals(count, 0)
+        }
+      yield ()
     }
   }
 

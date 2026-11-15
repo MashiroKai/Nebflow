@@ -83,14 +83,23 @@ class ModeParamSpec extends FunSuite:
     assertEquals(ModeParam.resolve(Some("dispatcher")).map(_.mode), Right(DualModeConfig.ModeDispatcher))
   }
 
-  test("P5 值域词表与 schema enum 同源（ModeWords = kernel|dispatcher，无 auto）") {
-    assertEquals(DualModeConfig.ModeWords, List("kernel", "dispatcher", "merger"))
+  test("P5 值域词表与 schema enum 同源（ModeWords = kernel|dispatcher，无 auto/merger）") {
+    // 过时测试修复（2026-11-15）：随基线 3007e48da（专职合并器退役）补齐漏改
+    // 断言——merger 退出值域词表，ModeWords = 恰二值（DelegateTool schema enum
+    // 同源钉见 DelegateToolSpec.schema）。
+    assertEquals(DualModeConfig.ModeWords, List("kernel", "dispatcher"))
     assert(!DualModeConfig.ModeWords.contains("auto"), "auto must not be a legal word any more")
+    assert(!DualModeConfig.ModeWords.contains("merger"), "merger retired with the dedicated merger")
     assert(DualModeConfig.isModeWord("kernel") && DualModeConfig.isModeWord("dispatcher"))
     assert(!DualModeConfig.isModeWord("auto"))
+    assert(!DualModeConfig.isModeWord("merger"))
   }
 
-  test("merger is an explicit mode, never an inferred development role") {
-    assertEquals(ModeParam.resolve(Some("merger")).map(_.mode), Right(DualModeConfig.ModeMerger))
+  test("merger is retired from the mode vocabulary (never inferred, never accepted)") {
+    // 3007e48da 后 merger 不再是合法 mode 词——resolve 必须显式拒绝（分配器
+    // 退役同款口径：不静默映射、不按旧词表分叉）。
+    val resolved = ModeParam.resolve(Some("merger"))
+    assert(resolved.isLeft || resolved.map(_.mode) != Right(DualModeConfig.ModeMerger),
+      s"merger must not resolve to a legal mode any more: $resolved")
   }
 end ModeParamSpec

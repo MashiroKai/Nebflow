@@ -1475,7 +1475,7 @@ final class ShellSession private (
 
   /**
    * Probe the first bytes of a stream to detect UTF-8 vs system ANSI code page,
-   * WITHOUT blocking (2026-10-25 非阻塞化改造——KAI Windows 全量 test5 挂死根因修复).
+   * WITHOUT blocking (2026-10-25 非阻塞化改造——Windows 全量 test5 挂死根因修复).
    * Returns the stream (rewound via PushbackInputStream) and the detected charset.
    *
    * 旧实现（已废）：第一行 `pushback.read(probe)` 是**裸阻塞读**——等满 4096 字节
@@ -1622,7 +1622,7 @@ object ShellSession:
    * `None` = 跟随真实平台（`isWindows`，生产行为不变）；`Some(true/false)` =
    * 强制开/关探测门。`probeCharset` 的旧实现第一行是裸阻塞读（等满 4096 字节
    * 或管道 EOF），Windows 上「输出总量 < 4096 ∧ 进程长活」的会话把 stdout/stderr
-   * 两条读线程永久埋死（KAI 全量 test5 挂死根因，jstack 实锤
+   * 两条读线程永久埋死（Windows 全量 test5 挂死根因，jstack 实锤
    * `probeCharset(shell.scala:1230) → pushback.read(probe)`）——该路径被 `isWindows`
    * 门挡住，Mac 上四天零暴露，spec 无法在 Mac 复现。接缝的含义：spec 注入
    * `Some(true)` 即可在 Mac 上跑真探测逻辑（永不出字流 / 慢速出字流断言）。

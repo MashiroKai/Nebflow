@@ -588,8 +588,16 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       remountLines = eventLines(ws)
       framesGot <- frames.get
       listNow <- ProjectStore.list()
-      // 再自动挂载一遍（等价 startupMount 对 list() 的消费）= 幂等零新增
-      mountedAgain <- ProjectRuntimeRegistry.mountAll(listNow, "root-unmount", system, res)
+      // 再自动挂载一遍（等价 startupMount 对 list() 的消费）= 幂等零新增。
+      // 只消费本测试的项目：共享 store 里还留着 4927f60a9 的 stale-definition
+      // 夹具（p-defined-not-mounted，故意不注册），它被 startupMount 挂载是正当行为，
+      // 不属于本断言要钉的「remount 已挂载 → 自动挂载零新增」。
+      mountedAgain <- ProjectRuntimeRegistry.mountAll(
+        listNow.filter(_.name == "p-remount"),
+        "root-unmount",
+        system,
+        res
+      )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       val r = report.getOrElse(throw new AssertionError(s"unmount must succeed: $report"))

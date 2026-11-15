@@ -600,7 +600,7 @@ Author order 2026-11-05 12:09: *"对产出的学术类的图谱，要采用我�
 
 ### Baseline — the DOSTEL figures this clause is measured against
 
-Repo `DOSTEL` (`/Users/kaiyu/Claude code/DOSTEL`), batch written 2026-11-03 (the
+Repo `DOSTEL` (`~/Claude code/DOSTEL`), batch written 2026-11-03 (the
 most recently produced academic figures):
 
 | Role | Path (repo-relative) |

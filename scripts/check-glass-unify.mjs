@@ -17,30 +17,32 @@
 //     -webkit-backdrop-filter ⇒ 红。`none` 放行：那不是第二套毛玻璃，是**摘除**
 //     毛玻璃（降级档 @supports / 无 backdrop 引擎回落实底），性质相反不算违规。
 //  G2 配方走样：glass.css 内部，每条非 none 的 backdrop-filter 值必须是
-//     `var(--nf-glass-filter)`（幕布类 .nf-glass-scrim 允许 `var(--nf-glass-scrim-blur)`）
+//     `var(--nf-glass-input-filter)`（幕布类 .nf-glass-scrim 允许 `var(--nf-glass-scrim-blur)`）
 //     ⇒ 否则红。数字重新长回文件里 = 配方又开始分裂。
-//  G3 标准跑出区间（**glass-recalibrate 批 2026-11-05 18:13 重写**）：玻璃底
-//     `--nf-glass-bg` / `-hover` 解析出的 **α 必须落在 [0.45, 0.75] 区间内**，
-//     亮/暗/媒体查询三档全查。这条判据现在是**双边闸**，两端都是死路：
-//       · α > 0.75 ⇒ 死白（作者 18:13 否掉的正是 α .973：实测红底色度只剩 6.9，
-//         背景颜色进不来 = 「毛玻璃效果还是不是我想要的那种」的读数）；
-//       · α < 0.45 ⇒ 内容透底（底下的正文大字看得出来 = 作者说的「脏」）。
-//     上一版这里钉的是「α ≥ 0.90 单边下限」，把死白写成了合格线 —— 判据本身
-//     就是错的，本批连判据一起重定标。
+//     （单一质感批 2026-11-15：作者令逐字「我们只允许存在一种毛玻璃质感。你看看
+//      主输入框用的是哪种，然后统一为规则和检查，只准使用这一种。」—— 唯一材质
+//      = 主输入框 #input-bar 配方，recalibrate 的 40px 通透档退役，基准件
+//      carve-out 一并撤销：没有「某些面可以用另一种」，只有一种。）
+//  G3 标准跑出区间（**单一质感批 2026-11-15 重写**）：唯一玻璃底
+//     `--nf-glass-input-bg` 解析出的 **α 必须落在 [0.90, 1.0] 区间内**，
+//     亮/暗/媒体查询三档全查（作者 11-11 令「毛玻璃一律不透底」；唯一材质 =
+//     近实底 α .968/.941）。同时出生地钉死：旧档名 --nf-glass-bg / -filter
+//     必须仍是指向唯一值的别名，--nf-glass-blur 必须是 24px、
+//     --nf-glass-saturate 必须是 1.15 —— 第二份字面值 = 第二种材质，红。
+//     --nf-glass-bg-hover 单列 G3-H：它是唯一材质上的「hover 升一档」交互
+//     层级（扁平六态批 2026-11-05 作者令），亮 #ffffff / 暗 #181c26fa 钉死；
+//     写成同底（var(--nf-glass-input-bg)）或其它字面值同样红。
 //  G4 令牌双源：`--nf-glass-*` 只许在 css/stand-tokens.css 里**定义**（`x: 字面量`）；
 //     其它文件出现 `--nf-glass-*: <字面量>` ⇒ 红（引用 `var(--nf-glass-*)` 不限）。
 //  G5 绕过工具类：canvas ask 的气泡与输入条必须挂 `.nf-glass`
 //     （作者令 2026-11-05 16:50「这三处全部吃唯一毛玻璃标准，不许为 ask 气泡
 //      另造一套等效样式」）⇒ js/askDock.js 里造这两个节点时缺类即红。
-//  G6 配方被降档（本批新增）：`--nf-glass-blur` ≥ 32px 且 `--nf-glass-saturate`
-//     ≥ 1.3，且 `--nf-glass-filter` 必须同时含 `blur(` 与 `saturate(`。理由 =
-//     参数网格实测的两条定律（蓝本见 stand-tokens.css 玻璃段注）：
-//       · 色彩承接 C_out ≈ (1−α)·saturate·C_bg —— 只有 α 与 saturate 能救它；
-//       · 内容残留 sd_out ≈ (1−α)·g(blur) —— **只有 blur 能救它，且 blur 不花色彩**。
-//     把 blur 从 40 调回 24 是「用色彩换不到任何东西」的白丢：α .55 时正文墙的
-//     亮度标准差 1.43→2.81（内容回来一倍），而红底色度 90.4→90.4（一格没变）。
-//     故 blur 半径与 saturate 是标准本体的一部分，必须进闸 —— 只钉 α 挡不住
-//     「α 对、半径退回去」这种看起来合规的降档。
+//  G6 配方被降档（单一质感批 2026-11-15 重写）：唯一模糊配方
+//     `--nf-glass-input-filter` 必须**逐值**等于 `blur(24px) saturate(1.15)`
+//     （= 主输入框配方，参照物逐值）。理由 = 唯一材质的定义本身就是这组值：
+//     近实底（α .968/.941）下内容残留 ≈ (1−α)·g(blur) ≈ 3%，blur/饱和度不再
+//     承担通透档时代的权重，任何偏离 = 偷偷换了一种质感。只钉 α 挡不住
+//     「α 对、半径退回去」这种看起来合规的降档，故逐值进闸。
 //
 //  G7 顶部悬浮面 = 毛玻璃（**glass-top-overlays 批 2026-11-06 新增**）。作者令
 //     逐字：「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果 比如消息和联系人的
@@ -102,20 +104,36 @@ const SPEC = join(
   'skills', 'design-language', 'references', 'glass-spec.md',
 );
 
-/** 唯一合法配方值（G2 白名单）。 */
+/** 唯一合法配方值（G2 白名单）：全站只有主输入框一种毛玻璃质感；
+ *  幕布（scrim）不是毛玻璃面，借自己的 8px 单源 token。 */
 const ALLOWED_FILTER_VALUES = new Set([
-  'var(--nf-glass-filter)',
+  'var(--nf-glass-input-filter)',
   'var(--nf-glass-scrim-blur)',
 ]);
 
-/** G3：玻璃底不透明度的**合格区间**（双边）。低于下限 = 内容透底；
- *  高于上限 = 死白（背景颜色进不来，作者 2026-11-05 18:13 否掉的那一端）。 */
-const GLASS_ALPHA_MIN = 0.45;
-const GLASS_ALPHA_MAX = 0.75;
+/** G3：唯一玻璃底不透明度的**合格区间**。低于下限 = 内容透底
+ *  （作者 2026-11-11 令「毛玻璃一律不透底」）；唯一材质近实底
+ *  （亮 .968 / 暗 .941），故上限为 1。 */
+const GLASS_ALPHA_MIN = 0.90;
+const GLASS_ALPHA_MAX = 1.0;
 
-/** G6：模糊半径与饱和度下限（见文件头「内容残留/色彩承接」两条定律）。 */
-const MIN_GLASS_BLUR_PX = 32;
-const MIN_GLASS_SATURATE = 1.3;
+/** G3 出生地钉死：旧档名必须仍指向唯一值；第二份字面值 = 第二种材质。
+ *  --nf-glass-bg-hover 例外（同函数下方 G3-H 检查）：它是唯一材质上的
+ *  「hover 升一档」交互层级（扁平六态批 2026-11-05 作者令），不是第二种
+ *  质感 —— 按 G3-H 钉死亮/暗两档值。 */
+const PINNED_TOKEN_ALIASES = {
+  '--nf-glass-bg': 'var(--nf-glass-input-bg)',
+  '--nf-glass-filter': 'var(--nf-glass-input-filter)',
+};
+/** G3-H：hover 层级钉死（唯一材质上只提不透一档；Δα ≥ §9-⑤ 门槛 8/255）。
+ *  亮 .968 → 1.0（Δ 8.16/255）；暗 .941 → .980（Δ 10/255）。 */
+const PINNED_BG_HOVER_LIGHT = '#ffffff';
+const PINNED_BG_HOVER_DARK = '#181c26fa';
+const PINNED_GLASS_BLUR = '24px';
+const PINNED_GLASS_SATURATE = '1.15';
+
+/** G6：唯一模糊配方逐值（= 主输入框配方，参照物逐值）。 */
+const PINNED_INPUT_FILTER = 'blur(24px) saturate(1.15)';
 
 const rel = (p) => relative(ROOT, p);
 
@@ -257,24 +275,14 @@ for (const f of readdirSync(CSS_DIR).filter((x) => x.endsWith('.css')).sort()) {
         continue;
       }
       if (!ALLOWED_FILTER_VALUES.has(value)) {
-        // 基准件 carve（作者 2026-11-06 20:12 令「主会话输入框…之前的就很好了」）：
-        // #input-bar / #queue-bar.visible 消费 recalibrate 前原配方
-        // var(--nf-glass-input-filter)（blur 24px / saturate 1.15，stand-tokens.css
-        // 单源定义）。ask 面三修②（2026-11-11 作者令「毛玻璃一律不透底」）起
-        // .ask-bub 三处（含非 dock 兜底）同吃基准件配方，与 #input-bar 逐项同档
-        // （tests/ask-glass-drag G1 逐项相等钉）。仅此三选择器族合法；其他面
-        // 出现即仍按 G2 判红。
-        const composerFace = /#input-bar|#queue-bar|\.ask-bub/.test(rule.selector);
-        if (!(composerFace && value === 'var(--nf-glass-input-filter)')) {
-          add({
-            rule: 'G2',
-            file: rel(path),
-            line: d.line,
-            selector: rule.selector,
-            detail: `${d.prop}: ${value}`,
-            why: '配方走样：唯一合法值是 var(--nf-glass-filter)（基准件与 ask 气泡可用原配方 var(--nf-glass-input-filter)）',
-          });
-        }
+        add({
+          rule: 'G2',
+          file: rel(path),
+          line: d.line,
+          selector: rule.selector,
+          detail: `${d.prop}: ${value}`,
+          why: '配方走样：唯一合法值是 var(--nf-glass-input-filter)（幕布类 .nf-glass-scrim 允许 var(--nf-glass-scrim-blur)）；全站只准一种毛玻璃质感（作者 2026-11-15 令）',
+        });
       }
     }
   }
@@ -316,36 +324,36 @@ for (const dir of [JS_DIR, WEB]) {
   }
 }
 
-// G3 —— 标准本体不许跑出区间（双边：低了内容透底，高了死白）
+// G3 —— 唯一玻璃底不许跑出区间 + 旧档出生地必须仍指向唯一值（单一材质批 2026-11-15）
 const tokenSrc = readFileSync(TOKENS, 'utf8');
-const bgDecls = [];
+const inputBgDecls = [];
+const aliasDecls = [];
 const blurDecls = [];
 const satDecls = [];
-const filterDecls = [];
+const inputFilterDecls = [];
 for (const rule of walkRules(tokenSrc)) {
   for (const d of rule.decls) {
-    if (d.prop === '--nf-glass-bg' || d.prop === '--nf-glass-bg-hover') {
-      const value = d.value.trim();
-      if (/^var\(/.test(value)) continue; // 别名（同一个值，非第二份定义）
-      bgDecls.push({ prop: d.prop, value, line: d.line, atStack: rule.atStack, selector: rule.selector });
+    const value = d.value.trim();
+    if (d.prop === '--nf-glass-input-bg') {
+      inputBgDecls.push({ prop: d.prop, value, line: d.line, atStack: rule.atStack, selector: rule.selector });
     }
-    if (d.prop === '--nf-glass-blur') blurDecls.push({ value: d.value.trim(), line: d.line, selector: rule.selector });
-    if (d.prop === '--nf-glass-saturate') satDecls.push({ value: d.value.trim(), line: d.line, selector: rule.selector });
-    if (d.prop === '--nf-glass-filter') filterDecls.push({ value: d.value.trim(), line: d.line, selector: rule.selector });
+    if (PINNED_TOKEN_ALIASES[d.prop]) aliasDecls.push({ prop: d.prop, value, line: d.line, selector: rule.selector });
+    if (d.prop === '--nf-glass-blur') blurDecls.push({ value, line: d.line, selector: rule.selector });
+    if (d.prop === '--nf-glass-saturate') satDecls.push({ value, line: d.line, selector: rule.selector });
+    if (d.prop === '--nf-glass-input-filter') inputFilterDecls.push({ value, line: d.line, selector: rule.selector });
   }
 }
-const glassBg = bgDecls.filter((d) => d.prop === '--nf-glass-bg');
-if (!glassBg.length) {
+if (!inputBgDecls.length) {
   add({
     rule: 'G3',
     file: rel(TOKENS),
     line: 0,
     selector: ':root',
-    detail: '--nf-glass-bg 未定义',
-    why: '毛玻璃标准本体缺失：设计令牌单一源里找不到 --nf-glass-bg',
+    detail: '--nf-glass-input-bg 未定义',
+    why: '毛玻璃标准本体缺失：设计令牌单一源里找不到唯一玻璃底 --nf-glass-input-bg',
   });
 }
-for (const d of bgDecls) {
+for (const d of inputBgDecls) {
   const a = alphaOf(d.value);
   if (a === null) {
     add({
@@ -359,8 +367,8 @@ for (const d of bgDecls) {
     continue;
   }
   if (a < GLASS_ALPHA_MIN || a > GLASS_ALPHA_MAX) {
-    const which = a > GLASS_ALPHA_MAX ? '高于上限（死白：背景颜色一点透不上来 = 作者 18:13 否掉的形态）'
-      : '低于下限（内容透底：底下的字看得出来 = 作者说的「脏」）';
+    const which = a > GLASS_ALPHA_MAX ? '高于上限（α > 1 不是合法颜色值）'
+      : '低于下限（内容透底：底下的字看得出来 = 作者说的「脏」；11-11 令「毛玻璃一律不透底」）';
     add({
       rule: 'G3',
       file: rel(TOKENS),
@@ -371,47 +379,84 @@ for (const d of bgDecls) {
     });
   }
 }
-
-// G6 —— 配方不许被降档（blur/saturate 是标准本体，不只是 α）
-for (const d of blurDecls) {
-  const m = d.value.match(/^([\d.]+)px$/i);
-  if (!m) {
-    add({ rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector, detail: `--nf-glass-blur: ${d.value}`, why: '无法解析半径（请用 <n>px 字面量）' });
-    continue;
-  }
-  if (parseFloat(m[1]) < MIN_GLASS_BLUR_PX) {
+for (const d of aliasDecls) {
+  if (d.value !== PINNED_TOKEN_ALIASES[d.prop]) {
     add({
-      rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector,
-      detail: `--nf-glass-blur: ${d.value} < ${MIN_GLASS_BLUR_PX}px`,
-      why: '内容残留回来了：blur 是唯一不花色彩的降内容手段，半径退回 = 用色彩换了个寂寞',
+      rule: 'G3',
+      file: rel(TOKENS),
+      line: d.line,
+      selector: d.selector,
+      detail: `${d.prop}: ${d.value}  ⇒ 应为 ${PINNED_TOKEN_ALIASES[d.prop]}`,
+      why: '第二份字面值 = 第二种材质：旧档名只准是指向唯一值的别名（作者 2026-11-15 令「只准使用这一种」）',
+    });
+  }
+}
+// G3-H —— hover 层级钉死（单一材质批 2026-11-15 补正）：bg-hover 是唯一材质上
+// 的交互底色阶，亮/暗各钉一档值；写成 var(--nf-glass-input-bg)（同底）或任何
+// 其它字面值都红 —— 同底会把扁平六态批的 hover 层静默抹平（§9-⑤ Δα 归零实测）。
+const hoverDecls = [];
+for (const rule of walkRules(tokenSrc)) {
+  for (const d of rule.decls) {
+    if (d.prop === '--nf-glass-bg-hover') {
+      hoverDecls.push({ value: d.value.trim(), line: d.line, selector: rule.selector, atStack: rule.atStack });
+    }
+  }
+}
+if (!hoverDecls.length) {
+  add({
+    rule: 'G3-H', file: rel(TOKENS), line: 0, selector: ':root',
+    detail: '--nf-glass-bg-hover 未定义',
+    why: 'hover 升一档层级缺失：扁平六态批（2026-11-05 作者令「不管 hover 还是点击」）的底色阶断链',
+  });
+}
+for (const d of hoverDecls) {
+  const sel = d.selector || '';
+  const inDark = sel.includes('data-theme="dark"')
+    || (d.atStack.some((a) => /prefers-color-scheme:\s*dark/i.test(a))
+      && !sel.includes('data-theme="light"'));
+  const want = inDark ? PINNED_BG_HOVER_DARK : PINNED_BG_HOVER_LIGHT;
+  if (d.value.toLowerCase() !== want) {
+    add({
+      rule: 'G3-H', file: rel(TOKENS), line: d.line, selector: d.selector,
+      detail: `--nf-glass-bg-hover: ${d.value}  ⇒ ${inDark ? '暗档' : '亮档'}应为 ${want}`,
+      why: 'hover 升一档（唯一材质只提不透）：同底 = 层级被抹平（扁平六态批作者令），其它字面值 = 第二种材质（单一材质批 2026-11-15）',
+    });
+  }
+}
+for (const d of blurDecls) {
+  if (d.value !== PINNED_GLASS_BLUR) {
+    add({
+      rule: 'G3', file: rel(TOKENS), line: d.line, selector: d.selector,
+      detail: `--nf-glass-blur: ${d.value}  ⇒ 应为 ${PINNED_GLASS_BLUR}`,
+      why: '唯一材质的模糊半径是基准件原值；偏离 = 偷偷换质感（单一材质批 2026-11-15）',
     });
   }
 }
 for (const d of satDecls) {
-  const v = parseFloat(d.value);
-  if (!Number.isFinite(v)) {
-    add({ rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector, detail: `--nf-glass-saturate: ${d.value}`, why: '无法解析饱和度' });
-    continue;
-  }
-  if (v < MIN_GLASS_SATURATE) {
+  if (d.value !== PINNED_GLASS_SATURATE) {
     add({
-      rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector,
-      detail: `--nf-glass-saturate: ${d.value} < ${MIN_GLASS_SATURATE}`,
-      why: '色彩承接被稀释：C_out ≈ (1−α)·saturate·C_bg，压饱和度等于把背景颜色调灰',
+      rule: 'G3', file: rel(TOKENS), line: d.line, selector: d.selector,
+      detail: `--nf-glass-saturate: ${d.value}  ⇒ 应为 ${PINNED_GLASS_SATURATE}`,
+      why: '唯一材质的饱和度是基准件原值；偏离 = 偷偷换质感（单一材质批 2026-11-15）',
     });
   }
 }
 if (!blurDecls.length || !satDecls.length) {
-  add({ rule: 'G6', file: rel(TOKENS), line: 0, selector: ':root', detail: '--nf-glass-blur / --nf-glass-saturate 缺失', why: '标准本体缺失：配方无法机检' });
+  add({ rule: 'G3', file: rel(TOKENS), line: 0, selector: ':root', detail: '--nf-glass-blur / --nf-glass-saturate 缺失', why: '标准本体缺失：配方无法机检' });
 }
-for (const d of filterDecls) {
-  if (!/blur\(/.test(d.value) || !/saturate\(/.test(d.value)) {
+
+// G6 —— 唯一模糊配方逐值（= 主输入框配方；只钉 α 挡不住「α 对、半径退回去」）
+for (const d of inputFilterDecls) {
+  if (d.value.replace(/\s+/g, '') !== PINNED_INPUT_FILTER.replace(/\s+/g, '')) {
     add({
       rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector,
-      detail: `--nf-glass-filter: ${d.value}`,
-      why: '配方链不完整：必须是 blur(...) + saturate(...) 两件',
+      detail: `--nf-glass-input-filter: ${d.value}`,
+      why: `唯一模糊配方被改动：必须逐值等于 ${PINNED_INPUT_FILTER}（= 主输入框配方，作者 2026-11-15 令）`,
     });
   }
+}
+if (!inputFilterDecls.length) {
+  add({ rule: 'G6', file: rel(TOKENS), line: 0, selector: ':root', detail: '--nf-glass-input-filter 缺失', why: '标准本体缺失：唯一配方无法机检' });
 }
 
 // G4 —— 令牌只许有一处出生地
@@ -824,8 +869,7 @@ if (argv.has('--json')) {
     singleSource: rel(SINGLE_SOURCE),
     tokenSource: rel(TOKENS),
     glassAlphaBand: [GLASS_ALPHA_MIN, GLASS_ALPHA_MAX],
-    minGlassBlurPx: MIN_GLASS_BLUR_PX,
-    minGlassSaturate: MIN_GLASS_SATURATE,
+    pinnedInputFilter: PINNED_INPUT_FILTER,
     blocksWithBackdrop: stats.blocks,
     noneOptOuts: stats.noneOptOuts,
     ruleBlocksInSingleSource: members,
@@ -876,8 +920,8 @@ if (violations.length) {
     console.error(`      ${v.why}`);
   }
   console.error('\n处置：把这一面改成 .nf-glass（或加进 css/glass.css 的成员登记表）、');
-  console.error(`        配方值只准 var(--nf-glass-filter)、玻璃底 α 落进 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX}]、`);
-  console.error(`        blur ≥ ${MIN_GLASS_BLUR_PX}px、saturate ≥ ${MIN_GLASS_SATURATE}。`);
+  console.error(`        配方值只准 var(--nf-glass-input-filter)、唯一玻璃底 α 落进 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX}]、`);
+  console.error(`        唯一模糊配方逐值 = ${PINNED_INPUT_FILTER}（幕布类允许 var(--nf-glass-scrim-blur)）。`);
   console.error('        顶部悬浮可透出面（G7）：不是挂 .nf-glass / 进成员表，就是进规范的');
   console.error('        例外清单写明理由 —— 不许半透明洗色底 + 零模糊悄悄留着。');
   console.error('        规范条文与例外登记：design-language/references/glass-spec.md');
@@ -886,8 +930,8 @@ if (violations.length) {
 
 console.log(
   `✓ glass-unify gate passed — 配方块 ${stats.blocks} 全部在单一源（${members} 条规则）、` +
-  `none 摘除档 ${stats.noneOptOuts}、玻璃底 α ∈ [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX}]、` +
-  `blur ≥ ${MIN_GLASS_BLUR_PX}px、saturate ≥ ${MIN_GLASS_SATURATE}、ask 面走 .nf-glass、` +
+  `none 摘除档 ${stats.noneOptOuts}、唯一玻璃底 α ∈ [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX}]、` +
+  `唯一配方 ${PINNED_INPUT_FILTER}（主输入框质感，全站只此一种）、ask 面走 .nf-glass、` +
   `顶部悬浮面 ${g7.registry.length} 条全绿（违规 ${g7.hits.length} / 具名例外命中 ${g7.exemptHits.length}）`,
 );
 process.exit(0);

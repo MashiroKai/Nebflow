@@ -441,7 +441,12 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
         ),
         "supervisor-supchk-d4-rebuild"
       )
-      _ <- IO.sleep(600.millis) // 重放窗口
+      // 重放窗口：managed-timer 批（5900fee71）后重建重放的结算腿是异步的——
+      // 固定 600ms 点读会抢在结算落账前读盘（D4 首轮即此形态）。改轮询至
+      // 「债已 settled」再断言（确定性窗口，不弱化任何断言本体）。
+      _ <- waitUntil(15.seconds)(
+        CompletionDebtStore.pending(childSid).map(_.toOption.flatten.exists(_.phase == "settled"))
+      )
       mailsAfterRebuild <- terminalMail(parentSid)
       debt <- CompletionDebtStore.pending(childSid)
       records <- childRec.get

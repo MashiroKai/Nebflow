@@ -2,7 +2,7 @@
 
 ### 结论
 
-Stand 是单 JVM 自托管的 AI agent 编排平台：`nebflow start` 起一个网关进程，浏览器 Web UI 经 WS/REST 接入；核心由编排引擎（DAG 节点调度 + 台账）、自研 Actor 之上的 Agent 运行时、61 文件的工具层、双协议 LLM 适配与 JSON 文件族持久化组成；设备互联（neblink）与飞书 / 微信渠道挂在网关上。Scala 3.5.2 + cats-effect / FS2 / sttp，`sbt assembly` 出单自包含 JAR。本文以 2026-10-04 Mac 工作树只读侦查为准（`/Users/kaiyu/Claude code/Nebflow`）。
+Stand 是单 JVM 自托管的 AI agent 编排平台：`nebflow start` 起一个网关进程，浏览器 Web UI 经 WS/REST 接入；核心由编排引擎（DAG 节点调度 + 台账）、自研 Actor 之上的 Agent 运行时、61 文件的工具层、双协议 LLM 适配与 JSON 文件族持久化组成；设备互联（neblink）与飞书 / 微信渠道挂在网关上。Scala 3.5.2 + cats-effect / FS2 / sttp，`sbt assembly` 出单自包含 JAR。本文以 2026-10-04 Mac 工作树只读侦查为准（`~/Claude code/Nebflow`）。
 
 图预算：2 / 3（总架构 + 数据流）。
 
@@ -56,7 +56,7 @@ Stand 是单 JVM 自托管的 AI agent 编排平台：`nebflow start` 起一个�
 
 ## 附录
 
-- 侦查记录：源码树 `/Users/kaiyu/Claude code/Nebflow`（Mac 设备 Mashiros-MacBook-Pro，只读 Read/Glob/Grep/Bash，2026-10-04 21:00–21:10 +08:00）；包规模实测：core 236 / gateway 49 / agent 32 / neblink 33 / cli 29 / tools 61（.scala 文件数）。
-- 渲染记录：graphviz dot 16.1.0（本机 `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` 实测），`dot -Tpng` 真实渲染；dot 源 `C:\Users\Kai\.nebflow\projects\general\.nebflow\tmp\nebflow_arch.dot`、`nebflow_dataflow.dot`；输出 `~/.nebflow/plots/20261004_nebflow_architecture.png`（3372px 宽）、`20261004_nebflow_dataflow.png`（3640px 宽）。PNG 为浅色实底（core §3：PNG 无主题适配，浅底深字按亮色底校验对比度）。
+- 侦查记录：源码树 `~/Claude code/Nebflow`（Mac 设备 Mac 实机，只读 Read/Glob/Grep/Bash，2026-10-04 21:00–21:10 +08:00）；包规模实测：core 236 / gateway 49 / agent 32 / neblink 33 / cli 29 / tools 61（.scala 文件数）。
+- 渲染记录：graphviz dot 16.1.0（本机 `C:\Users\name\.nebflow\tools\graphviz\bin\dot.exe -V` 实测），`dot -Tpng` 真实渲染；dot 源 `C:\Users\name\.nebflow\projects\general\.nebflow\tmp\nebflow_arch.dot`、`nebflow_dataflow.dot`；输出 `~/.nebflow/plots/20261004_nebflow_architecture.png`（3372px 宽）、`20261004_nebflow_dataflow.png`（3640px 宽）。PNG 为浅色实底（core §3：PNG 无主题适配，浅底深字按亮色底校验对比度）。
 - 工具自检对照：mmdc 本机与 Mac 侧均未装（`mmdc --version` 实测 command not found）；npm registry 端点验活 `@mermaid-js/mermaid-cli` → 12.0.0；Mac 侧 `dot -V` → 14.1.5。
 - 遗留：桌面语音悬浮球的进程形态未入图（`packaging/` 仅见 dmg/msi/linux 安装脚本，orb 源码位置未查证）；seed 12 插件逐个职责未展开（本 demo 聚焦平台分层）；前端 js 模块群只列代表文件未逐个归类。

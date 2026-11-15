@@ -381,7 +381,7 @@ function buildSection(def) {
   //  安全区顶距改由页面壳自管（mobileLayer.css .mobile-page-nohead =
   //  env(safe-area-inset-top)，真机不留刘海侵入、桌面视口零高）。
   //  面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」，样张
-  //  /Users/kaiyu/.stand/design-explore/panel-label-variants/）：详情页顶部
+  //  ~/.stand/design-explore/panel-label-variants/）：详情页顶部
   //  旧 glass-control 胶囊退役，换两态大标题 —— 展开态 = 大标题在页体流内
   //  （随滚走；.mobile-page-title 类名不变，locale 重绘/ push 聚焦两个既有
   //  查询点零改）；收缩态 = 小字居中 + 顶缘渐隐带承底（几何/材质在
@@ -502,7 +502,6 @@ function buildWorkbenchMeEntry() {
     <span class="mf-me-meta">
       <span class="mf-me-name"></span>
       <span class="mf-me-sub"></span>
-      <span class="mf-me-tagline">我的空间 · 账号与设置</span>
     </span>
     <span class="mf-me-actions">
       <span class="mf-me-settings" role="button" tabindex="0" data-hero-settings="1">
@@ -611,6 +610,7 @@ function ensureContainer() {
       // 标题单元素化批（2026-11-02）：页名只有 .mobile-page-title 一个节点
       // （装饰副本已退役），locale 重绘单点。
       const t = s.querySelector('.mobile-page-title');
+      s.setAttribute('aria-label', tt(def.zh, def.en));
       if (t) t.textContent = tt(def.zh, def.en);
       const b = /** @type {HTMLElement|null} */ (s.querySelector('.mobile-back-btn'));
       if (b) { b.title = backLabel(); b.setAttribute('aria-label', backLabel()); }
@@ -1177,10 +1177,21 @@ function chipInnerWidth(chip) {
      `transitionend` 自校补齐。 */
   const cs = getComputedStyle(chip);
   const cap = parseFloat(cs.maxWidth);
-  return Number.isFinite(cap)
-    ? cap - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
-      - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0)
-    : 0;
+  if (!Number.isFinite(cap)) return 0;
+  let inner = cap - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+    - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0);
+  // 引用钮批 0f2b45d62：展开档签内含 44px「引用此看板」热区（flex 0 0 44px）——
+  // 它占的是同一份内容宽。收束预算不扣除的话，label 的内联 max-width 会大于真实
+  // 可用盒：渲染宽 < max-width × --rsc，「不硬裁」合同失真（T13 实测差 45px）。
+  const quote = chip.querySelector('.mf-strip-quote');
+  if (quote) {
+    const qcs = getComputedStyle(quote);
+    if (qcs.display !== 'none') {
+      const rsc = parseFloat((/** @type {HTMLElement} */ (chip)).style.getPropertyValue('--rsc')) || 1;
+      inner -= quote.getBoundingClientRect().width / rsc;
+    }
+  }
+  return inner;
 }
 
 /** 把某枚签的 label 收到整字边界（幂等：先回原始态再量，收束只压绘制宽）。 */
@@ -1259,8 +1270,8 @@ function syncCanvasPage() {
       quote.className = 'mf-strip-quote';
       quote.setAttribute('role', 'button');
       quote.setAttribute('tabindex', '0');
-      quote.setAttribute('aria-label', '引用此 Canvas');
-      quote.title = '引用此 Canvas';
+      quote.setAttribute('aria-label', tt('引用此看板', 'Quote this Canvas'));
+      quote.title = tt('引用此看板', 'Quote this Canvas');
       quote.textContent = '↗';
       quote.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -2297,6 +2308,10 @@ function bindEdgeBack(root) {
       logEvent('edge-back', { page: stack[stack.length - 1], dx: Math.round(dx) });
       if (page) { page.style.transition = ''; page.style.transform = ''; delete page.dataset.edgeSpring; }
       backOut();   // 详情 pop 一层（栈语义与「<」同源；根页永不进来）
+    } else if (page && page.isConnected && reducedMotion()) {
+      delete page.dataset.edgeSpring;
+      page.style.transition = '';
+      page.style.transform = '';
     } else if (page && page.isConnected) {
       // 弹簧回位（复用切卡手势回位曲线；token 防新认领后清理定时器误擦跟手位）。
       page.dataset.edgeSpring = '1';
@@ -2318,14 +2333,20 @@ function bindEdgeBack(root) {
   // 流 → 返回手势死（settings 等无滚页面不复现，T3b 只红在滚动面）。横意图
   // 才拦 —— 带内纵滑照旧让位原生滚动（JS 判横先于浏览器滚动接管竞速，
   // touchmove preventDefault 是唯一可靠截流点）。鼠标腿零影响（无 touch 事件）。
-  document.addEventListener('touchmove', (e) => {
+  const onEdgeTouchMove = (e) => {
     if (!edgeBack) return;
     const t = e.changedTouches && e.changedTouches[0];
     if (!t) return;
     const dx = t.clientX - edgeBack.x0;
     const dy = t.clientY - edgeBack.y0;
     if (Math.abs(dx) > Math.abs(dy) && dx > 0) e.preventDefault();
-  }, { passive: false, capture: true });
+  };
+  document.addEventListener('touchmove', onEdgeTouchMove, { passive: false, capture: true });
+  unsubs.push(() => {
+    document.removeEventListener('touchmove', onEdgeTouchMove, true);
+    edgeBack = null;
+    swipeSuppressed = false;
+  });
 }
 
 /** 认领：压住切卡手势 + 收走内容面指针（合成 pointercancel = 浏览器同款契约）。

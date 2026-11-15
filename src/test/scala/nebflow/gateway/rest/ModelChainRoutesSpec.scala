@@ -110,18 +110,24 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
 
   end mkResources
 
-  private def mkRoutes(res: nebflow.agent.SharedResources = mkResources()): HttpRoutes[IO] =
+  /** `store` = a real SessionStore when a spec needs the persisted pin leg; absent ⇒ the leg is skipped. */
+  private def mkRoutes(
+    res: nebflow.agent.SharedResources = mkResources(),
+    store: Option[nebflow.core.SessionStore] = None
+  ): HttpRoutes[IO] =
     val inner = new RestApiRoutes(
       tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),
       sharedResources = res,
-      sessionStore = null,
+      sessionStore = store.orNull,
       wsRoutes = null
     )
     val wsb = null.asInstanceOf[WebSocketBuilder2[IO]]
     inner.routes <+> inner.presenceWsRoutes(wsb)
+
+  end mkRoutes
 
   private def getJson(path: String): IO[Response[IO]] =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
@@ -217,42 +223,185 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         )
     }
 
+  // A chain whose preferred model is zhipu/GLM-5.3-Flash. Its fallback is not a member of the request chain.
+  private val hotApplyChain = io.circe.Json.obj(
+    "model" -> io.circe.Json.obj(
+      "preferred" -> "zhipu/GLM-5.3-Flash".asJson,
+      "fallbacks" -> List("kimi/kimi-k3").asJson
+    )
+  )
+
+  private def putChain(routes: HttpRoutes[IO], slot: String, body: io.circe.Json): IO[Response[IO]] =
+    val req = Request[IO](Method.PUT, Uri.unsafeFromString(s"/agents/$slot/model"))
+      .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+      .withEntity(body)
+    routes(req).value.map(_.getOrElse(fail(s"PUT /agents/$slot/model fell through")))
+
   test("PUT hot-applies: class change retains matching pins, purges out-of-chain pins; fallback is not a member"):
-    // 模型粒度批：slot PUT 是类级更新。链内 pin 判据只接受 preferred（fallback 已废除），
-    // 因而同类所有 session 的 matching pins 保留，链外 pin 清除。
+    // Main-chain edit. Ordinary main conversations (uuid ids) and ask- sessions own their pins through the main
+    // slot, so a pin outside the new chain is cleared there, and a fallback-only ref counts as outside the chain.
+    // Pins of every other category and of slotless background families are not part of this edit.
     withFixture { () =>
-      // null provider cast：清除判据只读 (providerId, model)——与 NullBackend 同款
-      // spec-only 形态，provider 对象永不解引用。
+      // null provider cast: the purge predicate reads (providerId, model) only, like NullBackend above.
       val nul = null.asInstanceOf[ProviderConfig]
+      val mainMatching = "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff"
+      val mainFallbackOnly = "9a1b2c3d-0000-4000-8000-000000000001"
       val seeded = Map(
+        mainMatching -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
+        mainFallbackOnly -> ModelCandidate("kimi", nul, "kimi-k3"),
+        "session-unrelated" -> ModelCandidate("anon", nul, "anon-gone"),
+        "ask-verify-001" -> ModelCandidate("anon", nul, "anon-gone"),
         "delegate-a" -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
-        "delegate-b" -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
         "delegate-c" -> ModelCandidate("kimi", nul, "kimi-k3"),
-        "session-unrelated" -> ModelCandidate("anon", nul, "anon-gone")
+        "delegate-kernel-one" -> ModelCandidate("anon", nul, "anon-gone"),
+        "dispatcher-1a2b3c4d" -> ModelCandidate("anon", nul, "anon-gone"),
+        "subtask-1a2b3c4d" -> ModelCandidate("anon", nul, "anon-gone")
       )
       val resources = mkResources(seeded)
       val routes = mkRoutes(resources)
-      def put(body: io.circe.Json): IO[Response[IO]] =
-        val req = Request[IO](Method.PUT, Uri.unsafeFromString("/agents/Nebula/model"))
-          .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
-          .withEntity(body)
-        routes(req).value.map(_.getOrElse(fail("PUT fell through")))
-      val newChain = io.circe.Json.obj(
-        "model" -> io.circe.Json.obj(
-          "preferred" -> "zhipu/GLM-5.3-Flash".asJson,
-          "fallbacks" -> List("kimi/kimi-k3").asJson
-        )
-      )
       for
-        resp <- put(newChain)
+        resp <- putChain(routes, "Nebula", hotApplyChain)
         _ = assertEquals(resp.status, Status.Ok)
         overrides <- resources.sessionModelOverrides.get
       yield
-        assert(!overrides.contains("session-unrelated"), s"out-of-chain pin must be purged: ${overrides.keys}")
-        assert(overrides.contains("delegate-a"), s"matching pin on one class session survives: ${overrides.keys}")
-        assert(overrides.contains("delegate-b"), s"matching pin on another class session survives: ${overrides.keys}")
-        assert(!overrides.contains("delegate-c"), s"fallback-only ref is outside preferred-only chain: ${overrides.keys}")
+        assert(overrides.contains(mainMatching), s"main pin matching the new chain survives: ${overrides.keys}")
+        assert(!overrides.contains(mainFallbackOnly), s"fallback-only ref is not a member: ${overrides.keys}")
+        assert(!overrides.contains("session-unrelated"), s"main-category out-of-chain pin is purged: ${overrides.keys}")
+        assert(!overrides.contains("ask-verify-001"), s"ask sessions follow the main slot: ${overrides.keys}")
+        assert(overrides.contains("delegate-a"), s"subagent category is not part of a main edit: ${overrides.keys}")
+        assert(overrides.contains("delegate-c"), s"subagent out-of-chain pin survives a main edit: ${overrides.keys}")
+        assert(overrides.contains("delegate-kernel-one"), s"kernel pin survives a main edit: ${overrides.keys}")
+        assert(overrides.contains("dispatcher-1a2b3c4d"), s"dispatcher pin survives a main edit: ${overrides.keys}")
+        assert(overrides.contains("subtask-1a2b3c4d"), s"slotless family is not attributed: ${overrides.keys}")
       end for
+    }
+
+  test("PUT kernel chain clears only differing kernel pins; main, other-category and unknown-category pins are kept"):
+    withFixture { () =>
+      val nul = null.asInstanceOf[ProviderConfig]
+      val mainOutOfChain = "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff"
+      val seeded = Map(
+        "delegate-kernel-one" -> ModelCandidate("anon", nul, "anon-gone"),
+        "delegate-kernel-matching" -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
+        mainOutOfChain -> ModelCandidate("anon", nul, "anon-gone"),
+        "session-unrelated" -> ModelCandidate("anon", nul, "anon-gone"),
+        "delegate-a" -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
+        "delegate-b" -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
+        "delegate-c" -> ModelCandidate("kimi", nul, "kimi-k3"),
+        "dispatcher-1a2b3c4d" -> ModelCandidate("anon", nul, "anon-gone"),
+        "dag-orders-1-123456" -> ModelCandidate("anon", nul, "anon-gone"),
+        "subtask-1a2b3c4d" -> ModelCandidate("anon", nul, "anon-gone")
+      )
+      val resources = mkResources(seeded)
+      val routes = mkRoutes(resources)
+      for
+        resp <- putChain(routes, "kernel", hotApplyChain)
+        _ = assertEquals(resp.status, Status.Ok)
+        overrides <- resources.sessionModelOverrides.get
+      yield
+        assert(!overrides.contains("delegate-kernel-one"), s"differing same-category pin is cleared: ${overrides.keys}")
+        assert(overrides.contains("delegate-kernel-matching"), s"matching kernel pin survives: ${overrides.keys}")
+        val others = seeded.keySet - "delegate-kernel-one"
+        assertEquals(overrides.keySet, others, "every other category and every unknown category keeps its pin")
+      end for
+    }
+
+  test("PUT category chain clears the persisted pin only for that category's sessions"):
+    // Persisted leg: SessionMeta.modelRef of index-registered (main) sessions. The kernel edit must not reach it;
+    // the main edit clears the out-of-chain one and keeps the matching one.
+    withFixture { () =>
+      val home = os.temp.dir(prefix = "nb-modelchain-store")
+      val store = nebflow.core.SessionStore(home / "sessions", home / "tasks")
+      val nul = null.asInstanceOf[ProviderConfig]
+      val program =
+        for
+          stale <- store.createSession("stale pin")
+          keeper <- store.createSession("matching pin")
+          _ <- store.updateSessionModel(stale.id, Some("anon/anon-gone"))
+          _ <- store.updateSessionModel(keeper.id, Some("zhipu/GLM-5.3-Flash"))
+          resources = mkResources(
+            Map(
+              stale.id -> ModelCandidate("anon", nul, "anon-gone"),
+              keeper.id -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
+              "delegate-kernel-one" -> ModelCandidate("anon", nul, "anon-gone")
+            )
+          )
+          routes = mkRoutes(resources, Some(store))
+          kernelResp <- putChain(routes, "kernel", hotApplyChain)
+          afterKernelMemory <- resources.sessionModelOverrides.get
+          staleAfterKernel <- store.getSessionMeta(stale.id)
+          nebulaResp <- putChain(routes, "Nebula", hotApplyChain)
+          afterNebulaMemory <- resources.sessionModelOverrides.get
+          staleAfterNebula <- store.getSessionMeta(stale.id)
+          keeperAfterNebula <- store.getSessionMeta(keeper.id)
+        yield
+          assertEquals(kernelResp.status, Status.Ok)
+          assert(!afterKernelMemory.contains("delegate-kernel-one"), "kernel edit clears the differing kernel pin")
+          assert(afterKernelMemory.contains(stale.id), "kernel edit keeps a main-category pin in memory")
+          assertEquals(
+            staleAfterKernel.flatMap(_.modelRef),
+            Some("anon/anon-gone"),
+            "kernel edit keeps the persisted main pin"
+          )
+          assertEquals(nebulaResp.status, Status.Ok)
+          assert(!afterNebulaMemory.contains(stale.id), "main edit clears the out-of-chain main pin in memory")
+          assert(afterNebulaMemory.contains(keeper.id), "main edit keeps the matching main pin in memory")
+          assertEquals(staleAfterNebula.flatMap(_.modelRef), None, "main edit clears the persisted stale pin")
+          assertEquals(
+            keeperAfterNebula.flatMap(_.modelRef),
+            Some("zhipu/GLM-5.3-Flash"),
+            "main edit keeps the matching persisted pin"
+          )
+      program.guarantee(IO.blocking(os.remove.all(home)))
+    }
+
+  test("a session choice made after a category update survives until that category is edited again"):
+    // An update applies once, at edit time. A model a session chooses afterwards is not rewritten by it: edits of
+    // other categories leave it alone, and only the next edit of the owning category applies the rule again.
+    withFixture { () =>
+      val home = os.temp.dir(prefix = "nb-modelchain-store")
+      val store = nebflow.core.SessionStore(home / "sessions", home / "tasks")
+      val nul = null.asInstanceOf[ProviderConfig]
+      val chosenLater = "kimi/kimi-k3" // a fallback-only ref of hotApplyChain, i.e. outside its preferred model
+      val program =
+        for
+          session <- store.createSession("chooses after the update")
+          _ <- store.updateSessionModel(session.id, Some("anon/anon-gone"))
+          resources = mkResources(Map(session.id -> ModelCandidate("anon", nul, "anon-gone")))
+          routes = mkRoutes(resources, Some(store))
+          // 1. The category update clears the stale pin, in memory and as the persisted session model.
+          firstResp <- putChain(routes, "Nebula", hotApplyChain)
+          afterUpdate <- resources.sessionModelOverrides.get
+          metaAfterUpdate <- store.getSessionMeta(session.id)
+          // 2. The session then chooses a model of its own (the pin and the persisted session model a switch writes).
+          _ <- resources.sessionModelOverrides.update(_ + (session.id -> ModelCandidate("kimi", nul, "kimi-k3")))
+          _ <- store.updateSessionModel(session.id, Some(chosenLater))
+          // 3. Editing another category does not touch the choice.
+          kernelResp <- putChain(routes, "kernel", hotApplyChain)
+          afterOtherCategory <- resources.sessionModelOverrides.get
+          metaAfterOtherCategory <- store.getSessionMeta(session.id)
+          // 4. Editing the owning category again applies the rule again: the choice is outside the new preferred model.
+          secondResp <- putChain(routes, "Nebula", hotApplyChain)
+          afterSecondUpdate <- resources.sessionModelOverrides.get
+          metaAfterSecondUpdate <- store.getSessionMeta(session.id)
+        yield
+          assertEquals(firstResp.status, Status.Ok)
+          assert(!afterUpdate.contains(session.id), "the update clears the differing pin in memory")
+          assertEquals(metaAfterUpdate.flatMap(_.modelRef), None, "the update clears the persisted session model")
+          assertEquals(kernelResp.status, Status.Ok)
+          assert(
+            afterOtherCategory.contains(session.id),
+            "an edit of another category keeps the later choice in memory"
+          )
+          assertEquals(
+            metaAfterOtherCategory.flatMap(_.modelRef),
+            Some(chosenLater),
+            "an edit of another category keeps the later choice as the persisted session model"
+          )
+          assertEquals(secondResp.status, Status.Ok)
+          assert(!afterSecondUpdate.contains(session.id), "the next edit of the owning category clears it in memory")
+          assertEquals(metaAfterSecondUpdate.flatMap(_.modelRef), None, "and as the persisted session model")
+      program.guarantee(IO.blocking(os.remove.all(home)))
     }
 
   test("all five class slots are writable and a class-chain update is visible to every session in that slot"):

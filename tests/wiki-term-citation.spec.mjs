@@ -217,13 +217,13 @@ async function openSourceDoc(page) {
 test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
-test.describe('§T1 hover 气泡主路径（载荷命中零请求）', () => {
+test.describe('§T1 点击预览主路径（载荷命中零请求）', () => {
   test('terms[] 直读出泡：词条名+定义+跳转提示（文档名下沉到词条索引块）；/api/wiki/term 请求数=0', async ({ browser }) => {
     const { context, page, pageErrors, getTermApiHits } = await boot(browser);
     await openSourceDoc(page);
     const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
     await expect(link).toHaveClass(/nf-wikilink-resolved/);
-    await link.hover();
+    await link.click();
     const tip = page.locator('.nf-term-tip');
     await expect(tip).toBeVisible({ timeout: 5000 });
     expect(await tip.locator('.tt').textContent(), '词条名').toBe('GCR');
@@ -263,22 +263,22 @@ test.describe('§T1 hover 气泡主路径（载荷命中零请求）', () => {
   });
 });
 
-test.describe('§T2 hover 气泡兜底腿（词条不在载荷 → GET /api/wiki/term）', () => {
-  test('载荷 terms[] 缺席：hover 恰打 1 次 term API → 同形态气泡；二次 hover 走缓存不重复打', async ({ browser }) => {
+test.describe('§T2 点击预览兜底腿（词条不在载荷 → GET /api/wiki/term）', () => {
+  test('载荷 terms[] 缺席：点击恰打 1 次 term API；再次打开走缓存不重复请求', async ({ browser }) => {
     const { context, page, pageErrors, getTermApiHits } = await boot(browser, { graphTerms: null });
     await openSourceDoc(page);
     const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
     await expect(link).toHaveClass(/nf-wikilink-unresolved/);   // 文档三腿未命中 → 现状 unresolved 态
-    await link.hover();
+    await link.click();
     const tip = page.locator('.nf-term-tip');
     await expect(tip).toBeVisible({ timeout: 5000 });
     expect(await tip.locator('.tt').textContent(), '兜底腿同名词条').toBe('GCR');
     expect(await tip.locator('.ts').textContent()).toContain('银河宇宙线');
     await expect.poll(() => getTermApiHits(), { timeout: 5000 }).toBe(1);
-    // 移出再回：缓存腿（零新请求）
-    await page.mouse.move(30, 30);
+    // 关闭再开复用缓存，不再依赖 hover 隐藏。
+    await link.click();
     await expect(tip).toBeHidden();
-    await link.hover();
+    await link.click();
     await expect(tip).toBeVisible({ timeout: 5000 });
     expect(getTermApiHits(), 'termApiCache 命中 → 恰 1 次').toBe(1);
     expect(pageErrors).toEqual([]);
@@ -289,7 +289,7 @@ test.describe('§T2 hover 气泡兜底腿（词条不在载荷 → GET /api/wiki
     const { context, page, pageErrors } = await boot(browser, { graphTerms: null, termApi: false });
     await openSourceDoc(page);
     const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
-    await link.hover();
+    await link.click();
     await page.waitForTimeout(500);
     await expect(page.locator('.nf-term-tip')).toBeHidden();
     expect(pageErrors).toEqual([]);

@@ -42,4 +42,4 @@ astronomy 场景小样：skyfield + 本机缓存星历（DE421 + Hipparcos）真
 - 未计大气折射与光行差细节（skyfield `altaz()` 口径），量级精度为角分级，观星指位足够、不作测量用途；
 - 计算时域在 DE421 覆盖（1900–2053）内；星名（天狼星/织女一等）为 Hipparcos 编号 ↔ 通用星名的引用口径映射；
 - 数据来源：DE421 星历（JPL）+ Hipparcos 星表（ESA），均本机缓存命中；**生成时刻 2026-10-04 23:08 UTC+8**（图内脚注同款标注）；
-- 产件：`C:\Users\Kai\.nebflow\plots\vrs2-geoastro\skyfield_skydome_beijing_20260321.png`（131,041 B）；复现脚本 `C:\Users\Kai\.nebflow\tmp\geoastro-probe\demo_skyfield.py`（viz-venv 直跑可复现）。
+- 产件：`C:\Users\name\.nebflow\plots\vrs2-geoastro\skyfield_skydome_beijing_20260321.png`（131,041 B）；复现脚本 `C:\Users\name\.nebflow\tmp\geoastro-probe\demo_skyfield.py`（viz-venv 直跑可复现）。

@@ -15,7 +15,7 @@ A self-hosted AI agent orchestration platform — bring all your work to one ent
   <img src="docs/assets/readme/hero-flow-map.png" alt="Stand Flow Map — a task chain executing live" width="960">
 </p>
 
-**[Website](https://mystand.space)** · **[Releases](https://git.ustc.edu.cn/kaiyu/nebflow/-/releases)**
+**[Website](https://mystand.space)** · **[Releases](https://github.com/MashiroKai/nebflow/releases)**
 
 </div>
 
@@ -106,7 +106,7 @@ Then start the workspace:
 stand start    # serves the web UI at http://localhost:6138
 ```
 
-Releases on [the USTC releases page](https://git.ustc.edu.cn/kaiyu/nebflow/-/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.
+Releases on [the GitHub releases page](https://github.com/MashiroKai/nebflow/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.
 
 To build from source (Java 21+, sbt):
 
@@ -161,7 +161,7 @@ Stand is written in **Scala 3** on **self-developed actors** (message passing an
 
 ## Development & Contributions
 
-Development happens on an internal USTC Git instance ([git.ustc.edu.cn/kaiyu/nebflow](https://git.ustc.edu.cn/kaiyu/nebflow)); external pull requests are not accepted. The GitHub repository stays frozen as a read-only archive of the project's history. Internal workflow and conventions are described in [CONTRIBUTING.md](CONTRIBUTING.md).
+Development happens on GitHub ([github.com/MashiroKai/nebflow](https://github.com/MashiroKai/nebflow)); external pull requests are not accepted. Internal workflow and conventions are described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

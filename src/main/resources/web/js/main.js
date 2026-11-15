@@ -1654,6 +1654,11 @@ onMessage('error', (msg, view) => {
   // 本批实测（隔离实例真浏览器）：不拦的话，卡上一次失败的保存会顺手把正在跑的
   // 回合标成失败、并在消息流里多冒一条与卡内错误重复的红行。
   if (msg.msgType === 'updateScheduledTask' || msg.msgType === 'deleteScheduledTask') return;
+  // A provider-form save that the gateway refused is answered with msgType 'updateConfig' and
+  // the save's own requestId. It belongs to that form (sidebar/providersUi.js keeps its draft open
+  // and reports the failure there), so it must neither end the running turn nor paint an error row
+  // into the conversation. A refusal without a requestId keeps the generic handling below.
+  if (msg.msgType === 'updateConfig' && msg.requestId) return;
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
@@ -3459,7 +3464,7 @@ function bgTaskRowState(task) {
  *  authoritative; fall back to the registering session-id prefix (old
  *  backend / REST-invoked tools carry no origin).
  *  多设备后台任务可见批（2026-10-25）：cat="device" = 设备通道后台任务
- *  （Bash device=KAI + run_in_background）——chip 回答「跑在哪台设备」，
+ *  （Bash device=<win> + run_in_background）——chip 回答「跑在哪台设备」，
  *  与 nebula/dispatcher/node（谁开启）并列可辨。旧后端快照回退（origin 字段
  *  缺席）：设备任务描述恒带 `[<设备>] ` 前缀（RemoteExecutor 形态）且
  *  kind=remote —— 前缀识别优先于会话前缀启发（后者只分得出「谁开启」），

@@ -852,17 +852,6 @@ object TaskStuckWatcher:
             .scan(resources)
             .handleErrorWith(e => logger.warn(s"[child-orphan-watch] sweep failed: ${e.getMessage}").void)
             .void *>
-          // ── SCM blueprint P0-③ (2026-11-10): done-board mechanization ────────
-          // Finished delegate leftovers — a clean done tree idle for more than 24h,
-          // or a fully merged branch whose worktree is already gone — are reported
-          // to the dispatching root session. Report-only: zero git writes, no
-          // branch deletion, no worktree removal. Rides this existing scan tick
-          // (no new timer); internally throttled to one sweep per 10 min and one
-          // notice per item per 24h.
-          nebflow.core.delegate.DoneBoardWatch
-            .scan(resources)
-            .handleErrorWith(e => logger.warn(s"[done-board-watch] sweep failed: ${e.getMessage}").void)
-            .void *>
           // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
           // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
           // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交
@@ -899,27 +888,31 @@ object TaskStuckWatcher:
       // `DelegateFreeze.dormantSweep`（提示/超期归档），不归本看护。
       .filterNot(_.frozenReason.exists(nebflow.core.delegate.DelegateFreeze.isFreezeWire))
       .traverse_ { rec =>
-        resources.actorSystem.isAlive(rec.ref.path).flatMap {
-          case true => IO.unit
-          case false =>
-            val detail =
-              s"waiting dock orphaned: session '${rec.sessionId}' is docked in standby but its actor has exited"
-            logger.warn(s"[waiting-dock-care] $detail") *>
-              IO
-                .whenA(rec.parentSessionId.trim.nonEmpty)(
-                  resources.subAgentTaskStore
-                    .updateStatus(
-                      rec.parentSessionId,
-                      rec.sessionId,
-                      "failed",
-                      completedAt = Some(now),
-                      lastError = Some(detail)
+        resources.executionProtection(rec.sessionId).flatMap {
+          case nebflow.shared.ExecutionProtection.Unprotected =>
+            resources.actorSystem.isAlive(rec.ref.path).flatMap {
+              case true => IO.unit
+              case false =>
+                val detail =
+                  s"waiting dock orphaned: session '${rec.sessionId}' is docked in standby but its actor has exited"
+                logger.warn(s"[waiting-dock-care] $detail") *>
+                  IO
+                    .whenA(rec.parentSessionId.trim.nonEmpty)(
+                      resources.subAgentTaskStore
+                        .updateStatus(
+                          rec.parentSessionId,
+                          rec.sessionId,
+                          "failed",
+                          completedAt = Some(now),
+                          lastError = Some(detail)
+                        )
+                        .handleErrorWith(e => logger.warn(s"[waiting-dock-care] task store write failed: ${e.getMessage}"))
                     )
-                    .handleErrorWith(e => logger.warn(s"[waiting-dock-care] task store write failed: ${e.getMessage}"))
-                )
-                .void *>
-              broadcastStuck(wsHub, rec, idleSecs = 0L, action = "waiting-dock-dead", reason = detail) *>
-              escalateDockDeath(resources, rec, detail)
+                    .void *>
+                  broadcastStuck(wsHub, rec, idleSecs = 0L, action = "waiting-dock-dead", reason = detail) *>
+                  escalateDockDeath(resources, rec, detail)
+            }
+          case _ => logger.warn(s"TaskStuckWatcher: protected or unknown waiting session ${rec.sessionId}; automatic settlement deferred")
         }
       }
 
@@ -1013,6 +1006,24 @@ object TaskStuckWatcher:
     /** 分级链口径注入缝（见 [[scan]] 同名参数）：`None` = 生产默认。 */
     hardRecovery: Option[Boolean] = None
   ): IO[Unit] =
+    resources.executionProtection(rec.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected =>
+        recoverLegacy(resources, wsHub, rec, assessment, cls, stopCounts, pendingL3, l3VerifyDelayMs, ledger, hardRecovery)
+      case _ => logger.warn(s"TaskStuckWatcher: protected or unknown execution ${rec.sessionId}; automatic recovery deferred")
+    }
+
+  private def recoverLegacy(
+    resources: AgentRuntimePort,
+    wsHub: EventSink,
+    rec: AgentRecord,
+    assessment: StuckAssessment,
+    cls: StuckClassification,
+    stopCounts: cats.effect.Ref[IO, Map[String, Int]],
+    pendingL3: cats.effect.Ref[IO, List[PendingL3]],
+    l3VerifyDelayMs: Long,
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]],
+    hardRecovery: Option[Boolean]
+  ): IO[Unit] =
     val now = System.currentTimeMillis()
     ledger.modify(m => (m, m.getOrElse(rec.sessionId, RecoveryLedger()))).flatMap { led0 =>
       // 互斥点 2 先判（它把账本置为 chainHalted，从而在 [[recoveryGate]] 里生效）。
@@ -1047,7 +1058,7 @@ object TaskStuckWatcher:
           gateActions(wsHub, rec, assessment, cls, led, gate, stopCounts, ledger))
     }
 
-  end recover
+  end recoverLegacy
 
   /**
    * §3.4 判定序命中时的**零动作**出口（唯一例外 = `gate.report` 时的「一次上报」）。
@@ -2064,6 +2075,21 @@ object TaskStuckWatcher:
     attempts: Int,
     ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
   ): IO[Unit] =
+    resources.executionProtection(rec.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected =>
+        runRecoveryLegLegacy(resources, wsHub, rec, assessment, cls, attempts, ledger)
+      case _ => logger.warn(s"TaskStuckWatcher: protected or unknown execution ${rec.sessionId}; recovery leg deferred")
+    }
+
+  private def runRecoveryLegLegacy(
+    resources: AgentRuntimePort,
+    wsHub: EventSink,
+    rec: AgentRecord,
+    assessment: StuckAssessment,
+    cls: StuckClassification,
+    attempts: Int,
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
+  ): IO[Unit] =
     val now = System.currentTimeMillis()
     // ── P3（R-2）：预算闸门 + 尝试消费 ───────────────────────────────────────
     // 预算在**尝试**时消费（不是成功后）——否则失败路径会无限重试，与
@@ -2096,7 +2122,7 @@ object TaskStuckWatcher:
       end if
     }
 
-  end runRecoveryLeg
+  end runRecoveryLegLegacy
 
   private def runRecoveryLegInner(
     resources: AgentRuntimePort,

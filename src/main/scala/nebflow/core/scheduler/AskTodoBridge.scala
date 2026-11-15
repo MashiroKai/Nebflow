@@ -65,6 +65,15 @@ final class AskTodoBridge(
       permContent(payload, sourceAgent), payloadProject(payload), "attach-perm"
     )
 
+  /**
+   * Provenance of a legacy (pre-`source`) engine mirror: the reserved `ask-` / `perm-`
+   * prefixes are assigned only by this bridge (`nameOf` / `permNameOf`), so a record
+   * carrying one of them can be adopted/retired without guessing. Any other unnamed-origin
+   * record is kept (see `ScheduledTaskStore.upsertTaskByName`).
+   */
+  private def engineLegacy(t: ScheduledTask): Boolean =
+    t.name.exists(n => n.startsWith(NamePrefix) || n.startsWith(PermNamePrefix))
+
   private def upsert(
     rootSessionId: String,
     requestId: String,
@@ -87,10 +96,11 @@ final class AskTodoBridge(
         project
       )
       (for
-        removed <- store.upsertTaskByName(todo)
+        rearm <- store.upsertTaskByName(todo.copy(source = Some("engine")), engineLegacy)
+        saved = rearm.saved
         _ <- service.traverse_(_.notifyTaskChange())
-        // 同名替换掉的旧行先行广播删除（跨会话安全，ScheduleTool 先例），再广播创建。
-        _ <- removed.traverse_(old =>
+        // 同名替换掉的旧行先行广播删除（跨会话/迁移后仍存在的重复副本），再广播创建。
+        _ <- rearm.replaced.traverse_(old =>
           broadcast(
             Json.obj(
               "type" -> "scheduledTaskDeleted".asJson,
@@ -102,17 +112,17 @@ final class AskTodoBridge(
         _ <- broadcast(
           Json.obj(
             "type" -> "scheduledTaskCreated".asJson,
-            "sessionId" -> rootSessionId.asJson,
+            "sessionId" -> saved.sessionId.asJson,
             "task" -> Json.obj(
-              "id" -> todo.id.asJson,
-              "content" -> todo.content.asJson,
-              "triggerAt" -> todo.triggerAt.asJson,
-              "createdAt" -> todo.createdAt.asJson,
+              "id" -> saved.id.asJson,
+              "content" -> saved.content.asJson,
+              "triggerAt" -> saved.triggerAt.asJson,
+              "createdAt" -> saved.createdAt.asJson,
               "referencePath" -> Json.Null,
               "repeat" -> Json.Null,
-              "name" -> todo.name.asJson,
+              "name" -> saved.name.asJson,
               "kind" -> ScheduledTask.KindTodo.asJson,
-              "project" -> todo.project.asJson
+              "project" -> saved.project.asJson
             )
           )
         )
@@ -129,8 +139,8 @@ final class AskTodoBridge(
     if requestId.isEmpty then IO.unit
     else
       (for
-        removedAsk <- store.removeByName(nameOf(requestId), Some(ScheduledTask.KindTodo))
-        removedPerm <- store.removeByName(permNameOf(requestId), Some(ScheduledTask.KindTodo))
+        removedAsk <- store.removeByName(nameOf(requestId), Some(ScheduledTask.KindTodo), engineLegacy)
+        removedPerm <- store.removeByName(permNameOf(requestId), Some(ScheduledTask.KindTodo), engineLegacy)
         removed = removedAsk ++ removedPerm
         _ <- service.traverse_(_.notifyTaskChange())
         _ <- removed.traverse_(old =>

@@ -46,12 +46,12 @@ description: 概念讲义与课件（静态+动效三形态）；讲解、教学
 | matplotlib | 主渲染器：函数图像/分步示意/幅频曲线 | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2 | https://matplotlib.org/ | HTTP 200（2026-10-04，README 链接验证表） | plotly（viz-venv 已装）或纯文字+公式推演 |
 | numpy | 数值生成（指数曲线/频率轴/采样） | `<venv>\python.exe -c "import numpy; print(numpy.__version__)"` → 2.5.3 | https://pypi.org/project/numpy/ | HTTP 200（2026-10-04 实测） | 纯 Python `math` 模块替代（采样点手工生成） |
 | scipy | 特殊函数/信号处理（按需） | `<venv>\python.exe -c "import scipy; print(scipy.__version__)"` → 1.18.1 | https://pypi.org/project/scipy/ | HTTP 200（2026-10-04 实测） | matplotlib + numpy 已覆盖讲义级需求 |
-| graphviz | 概念关系/流程图（备用） | `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0 | https://graphviz.org/download/ | HTTP 200（2026-10-04，README 链接验证表） | mermaid-cli（npx 直调）或文字层级列表 |
+| graphviz | 概念关系/流程图（备用） | `C:\Users\name\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0 | https://graphviz.org/download/ | HTTP 200（2026-10-04，README 链接验证表） | mermaid-cli（npx 直调）或文字层级列表 |
 | Remotion | 分步讲解视频（React→Chrome→MP4，教育动效主力） | `cd ${SKILL_DIR}/../motion-toolkit/scripts/remotion-scaffold && node -e "console.log(require('./node_modules/remotion/package.json').version)"` → 4.0.532 | https://www.remotion.dev/docs/ | HTTP 200（2026-10-04 motion-toolkit 实测）；同日 23:16 本场景复测 HEAD/GET 均 000×4（域名暂不可达，渲染走本机 Chrome 不受影响）→ 待通路验证复核 | matplotlib FuncAnimation + imageio-ffmpeg 出 MP4（motion-toolkit §4 降级链） |
 | three.js | 可交互 3D 引导场景（自包含 HTML，双击可开、离线可用） | `cd ${SKILL_DIR}/../motion-toolkit/scripts/three-template && node -e "console.log(require('./node_modules/three/package.json').version)"` → 0.186.1 | https://threejs.org/ | HTTP 200（2026-10-04 本场景 `curl -sIL` 实测） | `--cdn` 版（需联网）⇒ matplotlib 静态分步图 |
 | imageio-ffmpeg | MP4 编码后端（本机 PATH 无 ffmpeg，引用自带 exe 绝对路径） | `<venv>\python.exe -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_version())"` → 7.1-essentials_build-www.gyan.dev | https://pypi.org/project/imageio-ffmpeg/ | HTTP 200（2026-10-04 本场景 `curl -sIL` 实测） | PillowWriter 出 GIF ⇒ 静态多帧 PNG |
 
-全工具链接验证表（六基础 + numpy/scipy 场景补充）见插件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
+全工具链接验证表（六基础 + numpy/scipy 场景补充）见插件 README，直接引用不复制。`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。
 
 ### 类比规范（本场景第一红线）
 

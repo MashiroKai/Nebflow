@@ -781,15 +781,24 @@ object GatewayMain extends IOApp:
                           RateLimiter.create().flatMap { rateLimiter =>
                             FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
                               // Release local actors before the native runtime and business Dispatcher.
-                              val actorRuntime = cats.effect.std.Dispatcher.parallel[IO].flatMap { dispatcher =>
-                                nebflow.actor.ActorSystem
-                                  .resource(
-                                    "local",
-                                    nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json")
-                                  )
-                                  .map(actorSystem => (dispatcher, actorSystem))
-                              }
-                              actorRuntime.use { case (dispatcher, actorSystem) =>
+                              val protectedTaskStore = new nebflow.agent.SubAgentTaskStore(PathUtil.dataRoot / "subagent-tasks")
+                              val actorRuntime = nebflow.agent.ExecutionCommitStore
+                                .resource(sessionStore.executionAuthorityRoot)
+                                .flatMap { executionAuthority =>
+                                  cats.effect.Resource.make(IO(sessionStore.installExecutionAuthority(executionAuthority)))(
+                                    _ => IO(sessionStore.releaseExecutionAuthority(executionAuthority))
+                                  ) *> cats.effect.Resource.make(IO(protectedTaskStore.installExecutionAuthority(executionAuthority)))(
+                                    _ => IO(protectedTaskStore.releaseExecutionAuthority(executionAuthority))
+                                  ) *> cats.effect.std.Dispatcher.parallel[IO].flatMap { dispatcher =>
+                                    nebflow.actor.ActorSystem
+                                      .resource(
+                                        "local",
+                                        nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json")
+                                      )
+                                      .map(actorSystem => (executionAuthority, dispatcher, actorSystem))
+                                  }
+                                }
+                              actorRuntime.use { case (executionAuthority, dispatcher, actorSystem) =>
                                 val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
                                 nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                   val hooksConfig = HooksConfigLoader.load(os.pwd)
@@ -831,7 +840,9 @@ object GatewayMain extends IOApp:
                                       foregroundWaitBudgetMs = config.bashForegroundWaitBudgetMs
                                         .getOrElse(nebflow.shared.Defaults.ForegroundWaitBudgetMs)
                                     ),
-                                    sandboxConfig = sandboxCfg
+                                    sandboxConfig = sandboxCfg,
+                                    executionCommitPort = executionAuthority,
+                                    subAgentTaskStore = protectedTaskStore
                                   )
                                   // ── provider 并发占坑装配（provider-concurrency 批，2026-11-06）──
                                   // ① 终态释放钩子：actor 退出的唯一收尸点 = actorLoop.guarantee

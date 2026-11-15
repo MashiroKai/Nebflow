@@ -1,0 +1,3 @@
+# Mobile todo creation sheet
+
+Proposed, not accepted. The authorized requirements call for mobile todo creation from the bottom without dimming or displacing the page (`.zcode/frontend-repair/staged/todo-identity/report.md`). This change covers only the proposed creation carrier. It is not currently wired: the existing store's name-based upsert may replace a same-name item. Existing entry behavior is preserved, including that known risk. Safe activation depends on independently reviewed server-side identity and recovery work. Todo identity, idempotency, stable references, reply and deadline remain separate unresolved work.

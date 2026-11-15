@@ -9,7 +9,7 @@ import nebflow.shared.PeerInfo
 /**
  * 设备项目挂载编排（跨设备项目挂载批 2026-10-25）。
  *
- * 语义（作者令：项目挂载到设备 KAI 验证跨设备项目功能）：项目 workspace 本体在
+ * 语义（作者令：项目挂载到 Windows 设备验证跨设备项目功能）：项目 workspace 本体在
  * **对端设备本盘**，引擎（大脑）在本机——挂载预检/骨架/AGENTS.md 镜像经**设备
  * 通道**落在目标设备真实路径，FlowMap/TaskBoard/台账等全部引擎存储锚在本机
  * [[ProjectStore.brainWorkspace]]（大脑在 Mac，账本一本）。

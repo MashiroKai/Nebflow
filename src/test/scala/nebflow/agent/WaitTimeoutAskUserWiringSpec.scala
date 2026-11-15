@@ -210,8 +210,14 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       hub <- system.spawn(InteractionHub(), s"hub-$name")
       _ <- resources.interactionHubRef.set(Some(hub))
       _ <- hub ! InteractionHubCommand.RegisterRoot("r2-wiring-sid", (j: Json) => wsEvents.update(_ :+ j))
+      // 过时测试修复（2026-11-15）：随基线 c6329920e 限根裁定补齐漏改夹具——
+      // AskUserQuestion 自身份闸（ASKUSER_ROOT_ONLY）以 AgentSessionExecution 铸造的
+      // sealed execution identity 为准（depth==0 ∧ Nebula ∧ role=root）；Worker@1
+      // 直启夹具再也调不动该工具（卡自然不渲染，R2-nb 假红）。夹具改 Nebula@0
+      // ⇒ 走真实铸造路径（AgentSessionExecution:1509 同判据），R2-nb/面板腿的
+      // 断言本体零改。
       def_ = AgentDef(
-        name = "Worker",
+        name = "Nebula",
         description = "r2 wiring fixture",
         tools = List(tool),
         systemPrompt = ""
@@ -223,7 +229,7 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
           agentDef = def_,
           resources = resources,
           wsSend = j => wsEvents.update(_ :+ j),
-          depth = 1,
+          depth = 0,
           parentRef = Some(parentRef),
           sessionId = Some("r2-wiring-sid"),
           sessionName = Some(s"fixture-$name"),

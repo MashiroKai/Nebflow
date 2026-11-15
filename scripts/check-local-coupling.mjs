@@ -554,6 +554,49 @@ const warnings = [];
 let suppressed = 0;
 let controlComparisons = 0;
 const controlMismatches = [];
+let lexicalSpans = 0;
+
+// Mask only recognized data spans for the corresponding STRICT rule. Other
+// identities on the same line and every runtime-derived arm remain visible.
+function lexicalText(line, rel, arm) {
+  if (arm.kind !== 'STRICT') return line;
+  let out = line;
+  const mask = (pattern) => {
+    out = out.replace(pattern, (text) => {
+      lexicalSpans += 1;
+      return '\u0000'.repeat(text.length);
+    });
+  };
+  if (arm.pattern === 'ustc') {
+    mask(/\badjustCap\b/g);
+  } else if (arm.pattern === '\\b107\\b') {
+    const number = String.raw`[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?`;
+    // RGB components are numeric data, not gateway identifiers.
+    mask(new RegExp(String.raw`\brgba?\(\s*${number}\s*,\s*${number}\s*,\s*${number}(?:\s*,\s*${number})?\s*\)`, 'g'));
+    mask(new RegExp(String.raw`(?:--accent-rgb:\s*|\baccent:\s*\[)${number}\s*,\s*${number}\s*,\s*${number}(?=\s*[;\]])`, 'g'));
+    // A path attribute must contain only SVG commands and numeric operands.
+    mask(/\bd\s*=\s*["'][Mm][MmZzLlHhVvCcSsQqTtAa0-9eE+.,\s-]*["']/g);
+    if (rel.endsWith('.min.js')) {
+      mask(/\b107(?=:\[function\()/g);
+      mask(/"\.\.\/internals\/[\w-]+":107\b/g);
+      mask(/(?:-107<=\w+|\w+<=107|\w+\.length<\d+\?107)(?![\w.])/g);
+    }
+    mask(/\b[\w-]+\.(?:css|js|mjs|py|scala):107\b/g);
+    mask(/[\u0028\uff08]107(?= \u884c[\u0029\uff09])/g);
+  } else if (arm.pattern === '\\bkai\\b') {
+    const pdf = 'src/main/resources/seed/plugins/document-production/skills/pdf/';
+    if (rel === `${pdf}scripts/cover_render.py` || rel === `${pdf}typesetting/cover.md`) {
+      mask(/\b(?:picks|F)\[("kai"|'kai')\]|\bpicks\.get\(("kai"|'kai')\)|ct\.get\("style"\) == "kai"|^[ \t]*"kai"(?=:\s*\[)/g);
+      if (rel.endsWith('/typesetting/cover.md')) mask(/`kai`|"kai"(?=`)|\(or kai\)/g);
+      mask(/\(kai\)|\bkai(?= optional)|\(or kai\)|\bserif family: use kai\b/g);
+      mask(/\{sans, serif, kai, latin\}/g);
+      if (/KaiTi \/ SimKai/.test(line)) mask(/\*\*kai\*\*/g);
+    }
+    if (rel === `${pdf}env_setup/env_check.sh`) mask(/\\\|kai(?=["'])/g);
+    if (rel === 'src/main/resources/web/js/pinyinTable.js') mask(/^kai(?=:[\u3400-\u9fff])/g);
+  }
+  return out;
+}
 
 function scan(files, sink) {
   for (const rel of files) {
@@ -568,8 +611,9 @@ function scan(files, sink) {
         continue;
       }
       for (const arm of arms) {
-        const nativeHit = arm.native.test(scrubbed);
-        const portableHit = arm.portable.test(scrubbed);
+        const tested = lexicalText(scrubbed, rel, arm);
+        const nativeHit = arm.native.test(tested);
+        const portableHit = arm.portable.test(tested);
         // S2 control assertion — EVERY arm (STRICT and DERIVED alike): the native
         // `\b` form and the portable form must agree; a divergence is RED, never a
         // silent pass.
@@ -584,7 +628,7 @@ function scan(files, sink) {
             arm: arm.id,
             kind: arm.kind,
             pattern: arm.pattern,
-            excerpt: redact(scrubbed, arm),
+            excerpt: redact(tested, arm).replace(/\u0000/g, ' '),
           });
           if (sup > 0) suppressed += sup;
           break;
@@ -621,6 +665,7 @@ const summary = {
   testFilesWarned: warned.length,
   vendorExemptFiles: vendorSkipped,
   suppressedLines: suppressed,
+  lexicalSpans,
   probeFailures,
   controlComparisons,
   controlMismatches: controlMismatches.length,
@@ -650,6 +695,7 @@ if (flags.json) {
   L.push(`[probe] ${arms.length - probeFailures}/${arms.length} arms hit their generated witness (a matcher that hits nothing is vacuous, not green)`);
   L.push(`[ctl ] native \\b form vs portable form: ${controlComparisons} comparisons, ${controlMismatches.length} divergences`);
   if (suppressed > 0) L.push(`[skip] ${suppressed} token(s) blanked by the S6 exclusion table (W1/W2/W5/W6/W8/W9)`);
+  if (lexicalSpans > 0) L.push(`[lex ] ${lexicalSpans} recognized data span(s); other tokens and runtime identity arms remain checked`);
   for (const h of hits) L.push(`MATCH ${h.path}:${h.line}  [${h.arm}]  ${h.excerpt}`);
   for (const c of controlMismatches.slice(0, 20)) L.push(`CTL-DIVERGENCE ${c.path}:${c.line} arm=${c.arm}`);
   if (warnings.length) {

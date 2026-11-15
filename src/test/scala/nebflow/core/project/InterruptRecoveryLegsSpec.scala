@@ -90,39 +90,46 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tmp / "data")
     val system = ActorSystem(s"ir-leg-$name-${java.util.UUID.randomUUID().toString.take(6)}")
     val llm = new RecordingLlm
+    os.makeDir.all(tmp / "sessions") // ExecutionCommitStore 要求目录先在（resource 门槛）
     val io =
-      for
-        dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
-        rateLimiter <- RateLimiter.create()
-        tracker <- FileChangeTracker.create(os.pwd.toString)
-        fileLocks <- FileLockManager.create
-        thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-        modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-        voiceMuted <- Ref.of[IO, Boolean](false)
-        sessionStore = SessionStore(tmp / "sessions", tmp / "tasks")
-        store = new SubAgentTaskStore(tmp / "subagent-tasks")
-        resources = SharedResources(
-          llm = llm.handle,
-          dispatcher = dispatcher,
-          sessionStore = sessionStore,
-          projectRoot = os.pwd,
-          thinkingConfigRef = thinkingRef,
-          rateLimiter = rateLimiter,
-          fileChangeTracker = tracker,
-          contextWindow = 100_000,
-          agentLibrary = new nebflow.agent.AgentLibrary(tmp / "agents"),
-          taskStore = FileTaskStore,
-          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
-          fileLockManager = fileLocks,
-          sessionModelOverrides = modelOverrides,
-          providerRegistry = null,
-          healthMonitor = ProviderHealthMonitor(null),
-          actorSystem = system,
-          subAgentTaskStore = store,
-          voiceMutedRef = voiceMuted
-        )
-        _ <- body(Fx(store, sessionStore, resources, system, tmp, seat, llm))
-      yield ()
+      // B1 执行恢复批起，sweep 的 legacy 腿前置问 authority（candidates=unsupported
+      // ⇒ 整体 defer）。夹具与生产同形：挂真实 ExecutionCommitStore，令无记录会话
+      // 判 Unprotected，复活机器照常接线（InternalRunAdmissionSpec 同款）。
+      nebflow.agent.ExecutionCommitStore.resource((tmp / "sessions").toNIO).use { authority =>
+        for
+          dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+          rateLimiter <- RateLimiter.create()
+          tracker <- FileChangeTracker.create(os.pwd.toString)
+          fileLocks <- FileLockManager.create
+          thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
+          modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+          voiceMuted <- Ref.of[IO, Boolean](false)
+          sessionStore = SessionStore(tmp / "sessions", tmp / "tasks")
+          store = new SubAgentTaskStore(tmp / "subagent-tasks")
+          resources = SharedResources(
+            llm = llm.handle,
+            dispatcher = dispatcher,
+            sessionStore = sessionStore,
+            projectRoot = os.pwd,
+            thinkingConfigRef = thinkingRef,
+            rateLimiter = rateLimiter,
+            fileChangeTracker = tracker,
+            contextWindow = 100_000,
+            agentLibrary = new nebflow.agent.AgentLibrary(tmp / "agents"),
+            taskStore = FileTaskStore,
+            historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+            fileLockManager = fileLocks,
+            sessionModelOverrides = modelOverrides,
+            providerRegistry = null,
+            healthMonitor = ProviderHealthMonitor(null),
+            actorSystem = system,
+            subAgentTaskStore = store,
+            voiceMutedRef = voiceMuted,
+            executionCommitPort = authority
+          )
+          _ <- body(Fx(store, sessionStore, resources, system, tmp, seat, llm))
+        yield ()
+      }
     try io.unsafeRunSync()
     finally
       system.stopAll.attempt.void.unsafeRunSync()
@@ -368,10 +375,15 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         _ = assertEquals(row.status, "failed", "V2: salvage settles the honest terminal (never left running)")
         _ = assert(!live && !live2, "V2: no live actor may exist for a cancelled delegate")
         _ = assertEquals(turns.size, 0, "V2: no turn may be started for a cancelled delegate")
+        // 零向上通知（重启手动恢复批，作者令 2026-11-06 20:36 逐字）：收殓链不再构造
+        // 任何父可见事件（device-outbox/持久邮箱/F2 注入队/提醒账四腿全摘，
+        // SubAgentStartupRecovery 零通知段在案）——损失呈现面 = 任务行 failed +
+        // ChainStore delegate-terminal-delivery 台账行 + 子面板 lastError
+        // （ManualRevival 手动复活）。本钉从「恰一次通知」翻转为「两次 boot 父邮箱
+        // 恒零事件」——零是正钉，不是缺席。
         _ = assert(
-          events1.count(_.correlationId.contains(child)) == 1 &&
-            events2.count(_.correlationId.contains(child)) == 1,
-          s"V2: exactly one honest loss notice across two boots (idempotent): ${events1.size}/${events2.size}"
+          events1.isEmpty && events2.isEmpty,
+          s"V2 (zero-notify author order 2026-11-06): no parent mailbox event may be produced across two boots — got ${events1.size}/${events2.size}"
         )
         _ = assert(
           !nebflow.core.delegate.SessionResumption.Verdict.isInPlace(verdict),

@@ -26,6 +26,33 @@ class SessionStoreMessageIdentitySpec extends CatsEffectSuite:
   private def disk(root: os.Path, id: String): IO[List[Message]] =
     IO.blocking(decode[List[Message]](os.read(root / "sessions" / s"$id.json")).fold(throw _, identity))
 
+  test("first switch does not write an empty session and failed outgoing writes preserve the active session") {
+    fixture.use { case (root, store) =>
+      for
+        first <- store.createSession("first")
+        second <- store.createSession("second")
+        _ <- store.switchSession(first.id)
+        initial <- store.getActiveId
+        emptyFile <- IO.blocking(os.exists(root / "sessions" / ".json"))
+        before <- store.getActiveMessages
+        _ <- IO.blocking(os.makeDir.all(root / "sessions" / first.id / "executions"))
+        failed <- store.switchSession(second.id).attempt
+        after <- store.getActiveId
+        messages <- store.getActiveMessages
+        _ <- IO.blocking(os.remove.all(root / "sessions" / first.id / "executions"))
+        switched <- store.switchSession(second.id)
+        finalId <- store.getActiveId
+      yield
+        assertEquals(initial, first.id)
+        assert(!emptyFile)
+        assert(failed.isLeft)
+        assertEquals(after, first.id)
+        assertEquals(messages, before)
+        assertEquals(switched, Nil)
+        assertEquals(finalId, second.id)
+    }
+  }
+
   test("new messages are durable before publication and disk duplicates survive a fresh store") {
     fixture.use { case (root, store) =>
       for

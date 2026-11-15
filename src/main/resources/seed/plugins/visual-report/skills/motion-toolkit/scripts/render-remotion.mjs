@@ -5,7 +5,7 @@
  * 用法（在本文件所在目录或任意 cwd 均可）:
  *   node render-remotion.mjs <projectDir> <compositionId> <out.mp4|png|gif> [remotion 附加参数...]
  * 例:
- *   node render-remotion.mjs remotion-scaffold MotionSmoke C:/Users/Kai/.nebflow/plots/motion-toolkit-smoke/remotion_smoke.mp4
+ *   node render-remotion.mjs remotion-scaffold MotionSmoke C:/Users/name/.nebflow/plots/motion-toolkit-smoke/remotion_smoke.mp4
  *   node render-remotion.mjs remotion-scaffold MotionSmoke out.mp4 --props="--title=另一标题"  (props JSON 见 Remotion 文档)
  *
  * 固化行为（来自 2026-10-04 环境实测，勿凭记忆改）:

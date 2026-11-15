@@ -25,7 +25,7 @@ description: 全场景公共规范（铁律/嵌入路径/暗色/渲染器兼容/
 > 一件产物两用时的正解：出图落白名单 → 同批把图拷进 vault（`attachments/` 或
 > `assets/`）→ 文档里引用 vault 内副本。两节不合并、不改写。
 
-- 一律使用 `~/...` 形式的绝对路径（`~` = `C:\Users\Kai`）嵌入：`![信号对比](~/.stand/plots/20261004_chart.svg)`。禁止相对路径、裸文件名、`file://`。
+- 一律使用 `~/...` 形式的绝对路径（`~` = `C:\Users\name`）嵌入：`![信号对比](~/.stand/plots/20261004_chart.svg)`。禁止相对路径、裸文件名、`file://`。
 - **出图落位 = 数据根下 `plots/`**：命名空间固定是 `plots`，**根随实例走**——默认数据根 = `~/.stand`（2026-10-20 数据根迁移后的口径，运行时解析点 `PathUtil.dataRoot`，见 `src/main/scala/nebflow/shared/paths.scala`）；隔离实例（`--home` / `STAND_HOME`）换根时前缀随之替换。`~/.nebflow/plots/` 是迁移前的旧根，只在老机器未迁移时才是数据根。
 - 可服务面白名单（出图落这些位置，前端才能加载）——与引擎侧 `FileRefs.DataRootServedNamespaces`（`src/main/scala/nebflow/core/tools/FileRefs.scala:135`）和 `NfFilePolicy.NfDataRootAllowlist`（`src/main/scala/nebflow/gateway/NfFilePolicy.scala:152`）是同一张清单，三处不许各写一份：
   - `~/.stand/plots/**`（默认出图位）
@@ -95,7 +95,7 @@ body { background: var(--color-bg); color: var(--color-text); }
 
 - 优先级：换已有工具 > 纯文本降级；禁止因缺工具空转。
 - 常用替换：流程/架构图 mermaid-cli → graphviz(16.1.0 已装)；时序图 wavedrom → matplotlib 阶梯线或文本时序表；电路图 schemdraw → 文字网表/引脚表（**不得因此手画 SVG**）。
-- Python 包只允许装进 viz-venv：`C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe -m pip install <pkg>`（网络慢加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`）；禁止动系统 Python，禁止重复安装已有包。
+- Python 包只允许装进 viz-venv：`C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe -m pip install <pkg>`（网络慢加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`）；禁止动系统 Python，禁止重复安装已有包。
 - node 系工具经 `npx -y <pkg>` 直调，无需全局安装。
 
 ## 6. 工具自检小节模板（场景 skill 必含）
@@ -107,15 +107,15 @@ body { background: var(--color-bg); color: var(--color-text); }
 
 | 工具 | 用途 | 本机检测命令（实测） | 官方下载链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
-| graphviz | 流程/架构图 | `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0 | https://graphviz.org/download/ | HTTP 200（2026-10-04） | 改用 mermaid-cli 或文字层级列表 |
+| graphviz | 流程/架构图 | `C:\Users\name\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0 | https://graphviz.org/download/ | HTTP 200（2026-10-04） | 改用 mermaid-cli 或文字层级列表 |
 ```
 
 基础工具的完整实测记录见 `${SKILL_DIR}/../README.md` 链接验证表（含场景补充行），场景 skill 直接引用，不复制。
 
 ## 7. 本机基线速查（Windows / MSYS）
 
-- Python（唯一绘图环境）：`C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe`（3.12.9；numpy/scipy/matplotlib/pandas/plotly/pymupdf 已装；CairoSVG 装而不可用——缺原生 cairo DLL，PNG 目检走渲染器原生 PNG 输出）
-- dot：`C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe`（16.1.0，**不在 PATH**，必须全路径调用）
-- matplotlib 全局配置：`C:\Users\Kai\.nebflow\tools\mplconfig\matplotlibrc`（YaHei 已配，中文默认可读）
+- Python（唯一绘图环境）：`C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe`（3.12.9；numpy/scipy/matplotlib/pandas/plotly/pymupdf 已装；CairoSVG 装而不可用——缺原生 cairo DLL，PNG 目检走渲染器原生 PNG 输出）
+- dot：`C:\Users\name\.nebflow\tools\graphviz\bin\dot.exe`（16.1.0，**不在 PATH**，必须全路径调用）
+- matplotlib 全局配置：`C:\Users\name\.nebflow\tools\mplconfig\matplotlibrc`（YaHei 已配，中文默认可读）
 - MSYS 传 Windows 路径参数：命令前加 `MSYS2_ARG_CONV_EXCL='*'`
 - 出图默认落 `~/.stand/plots/`（= 数据根下 `plots/`；隔离实例换根时前缀随之替换，口径见 §2）

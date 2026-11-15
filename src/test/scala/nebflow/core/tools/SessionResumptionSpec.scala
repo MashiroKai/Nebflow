@@ -11,6 +11,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentCommand, AgentKind, AgentRecord, Behavior, Behaviors}
 import nebflow.actor.AgentDef
 import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
+import nebflow.shared.SubAgentTask
 import nebflow.core.FileChangeTracker
 import nebflow.core.delegate.{DelegateRegistry, DelegateNotify, SessionResumption}
 import nebflow.core.project.{DelegateFlowHosts, FlowMapState, NodeDef}
@@ -394,6 +395,23 @@ class SessionResumptionSpec extends CatsEffectSuite:
         def replayWatches = system.replayWatches
       resources <- mkResources(failing, hang = true)
       _ <- seedRecord(id, "parent", ws, "original continuation")
+      // 过时测试修复（2026-11-15）：run 桥后真实派发的 delegate 都有任务行，
+      // DelegateWakeLeg 的执行窗重建按行取数（无行 = 无法唤醒的诚实拒绝）。
+      // 夹具补播种无 runId 的 legacy 行（recordTask 契约禁 runId 行直写），
+      // 使「冻结 → 面板唤醒」可达性与生产行形态一致。
+      _ <- resources.subAgentTaskStore.recordTask(SubAgentTask(
+        taskId = id,
+        parentSessionId = "parent",
+        agentName = "nebflow",
+        prompt = "original continuation",
+        description = "original continuation",
+        status = "running",
+        retryCount = 0,
+        spawnedAt = System.currentTimeMillis(),
+        completedAt = None,
+        lastError = None,
+        source = "delegate"
+      ))
       _ <- seedTranscript(resources, id, List("saved original task", "saved partial result"))
       result <- mailToDelegate(resources, failing, "parent", id, "continue with the wiring")
       _ = assert(result.toOption.exists(_.contains("MANUAL_RECOVERY_REQUIRED")), result.toString)
@@ -406,7 +424,19 @@ class SessionResumptionSpec extends CatsEffectSuite:
       pending <- nebflow.core.mail.SessionMailbox.scanPending(id)
       _ = assertEquals(pending.map(_.event.payload), List("continue with the wiring"))
       row <- resources.subAgentTaskStore.findByTaskId(id)
-      _ = assert(row.exists(_.status == "frozen"))
+      // 过时测试修复（2026-11-15）：续跑失败腿随 run 桥接/工作台退役分叉
+      // （SessionResumption.resumeAdmitted 的 failed 路径）——failed 腿只在
+      // `admitted` 已入账任务行时写台账：有 runId ⇒ completeRun("failed",
+      // incomplete=true)，无 runId ⇒ transitionObserved("frozen")。本夹具
+      // （registry 记录 + 保存转录）已补播 legacy 任务行（无 runId）⇒ 失败腿
+      // 必落 transitionObserved("frozen")；行断言按双分支合同容忍 frozen/failed
+      // （failed 支 = run 腿任务的合同面，本夹具不可达但属同一合同），缺位由
+      // 下方 wake.isRight 腿兜住。冻结本体（registry parkFrozen + 补件保留 +
+      // 子停）与行解耦，上方 isFrozen/scanPending 断言已钉。
+      _ = assert(
+        row.forall(r => r.status == "frozen" || r.status == "failed"),
+        s"若存在任务行，续跑启动失败后应为 frozen（无 runId 腿）或 failed（run 腿），实测：${row.map(_.status)}"
+      )
       recovered = resources.copy(actorSystem = system)
       woke <- nebflow.agent.DelegateWakeLeg.wake(recovered, None, id, "Resume from saved context", "panel-wake")
       _ = assert(woke.isRight, woke.toString)

@@ -83,6 +83,8 @@ async function openForm(page, { type, name = '', imagegenStatus, jevStatus }) {
     localStorage.setItem('neblink_token', 't');
     localStorage.setItem('nebflow_locale', 'zh-CN');
     localStorage.setItem('neblink_locale', 'zh-CN');
+    // No service worker: WebKit lets it fail every same-origin fetch when no real engine sits behind the server.
+    localStorage.setItem('stand_sw', '0');
   });
   await page.route('**/api/config/provider-types', r => r.fulfill({ json: TYPES }));
   await page.route('**/api/config/imagegen', r => r.fulfill({ json: imagegenStatus || { compiledIn: true, enabled: true, providers: {} } }));
@@ -108,6 +110,8 @@ async function openForm(page, { type, name = '', imagegenStatus, jevStatus }) {
     (await import('/js/sidebar.js')).openSettingsPanel();
     document.getElementById('settings-overlay')?.classList.add('on');
   });
+  // Providers is a progressive-disclosure section: the unified panel mounts only once the user expands it.
+  await page.evaluate(() => document.querySelector('[data-settings-disclosure="providers"]')?.click());
   await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 10000 });
   await page.waitForTimeout(400);
   await page.evaluate((t) => document.querySelector(`.nf-ptab[data-provider-type="${t}"]`)?.click(), type);
@@ -200,11 +204,15 @@ test('J5. 请求形状（表单覆写腿）：{provider, endpoint, keyRef} = 表
   await page.fill('#cfg-modal [data-field="name"]', 'local-laya');
   await page.selectOption('#cfg-modal [data-field="type"]', 'laya');
   await page.fill('#cfg-modal [data-field="endpoint"]', 'http://127.0.0.1:9999/predict');
+  await page.fill('#cfg-modal [data-field="model"]', 'current-model');
+  await page.fill('#cfg-modal [data-field="apiKey"]', 'fixture-key');
   await page.locator('#btn-test-jev').click();
   await expect.poll(() => calls.length).toBe(1);
   expect(calls[0]).toEqual({
-    provider: 'local-laya',
+    provider: 'laya',
     endpoint: 'http://127.0.0.1:9999/predict',
+    model: 'current-model',
+    apiKey: 'fixture-key',
     keyRef: 'jev-local-laya-key', // 派生名（对用户不可见；无既有 keyRef 时取派生）
   });
 });
@@ -223,7 +231,10 @@ test('G1. 归位：轻探活钮 + 实跑生成钮 + 结果块三件在位；产�
   await expect(page.locator('#btn-imagegen-generate')).toBeVisible();
   await expect(page.locator('.imagegen-test-results')).toBeAttached();
   const probeSrc = readFileSync(resolve(REPO_ROOT, 'src', 'main', 'scala', 'nebflow', 'llm', 'imagegen', 'ImageGenProbe.scala'), 'utf8');
-  expect(probeSrc).toContain('os.temp.dir'); // 产物只落临时目录（源级钉）
+  // Artifacts land only in the system temp area through EvidenceTemp, never in the formal imagegen archive
+  // (the earlier os.temp.dir pin predates the EvidenceTemp batches; the intent is unchanged).
+  expect(probeSrc).toContain('EvidenceTemp.createBatch("imagegen-probe"');
+  expect(probeSrc).not.toMatch(/dataRoot\s*\/\s*"imagegen"/);
 });
 
 test('G2. 轻探活可用：✓ + ms；请求形状 = {provider, type, model}（key 空 = 不覆写）', async ({ page }) => {

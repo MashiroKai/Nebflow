@@ -276,7 +276,8 @@ test('H3 计数同源：面板头 total == 实际渲染行数（五种通路组�
     ],
   });
   await openPanel(page);
-  combos.push({ name: '仅作用域桶', rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
+  // Active: the two Processing nodes (the synthesized head has no state).
+  combos.push({ name: '仅作用域桶', active: 2, rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
 
   // 组合②：仅快照（主桶两行，无链）。
   await bootApp(page);
@@ -289,7 +290,7 @@ test('H3 计数同源：面板头 total == 实际渲染行数（五种通路组�
     ],
   });
   await openPanel(page);
-  combos.push({ name: '仅快照', rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
+  combos.push({ name: '仅快照', active: 2, rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
 
   // 组合③：两者同时（H1 探针形态——去重是计数的前提）。
   await bootApp(page);
@@ -301,7 +302,7 @@ test('H3 计数同源：面板头 total == 实际渲染行数（五种通路组�
     agents: [{ sessionId: NODE_SID, agentId: NODE_SID, agentName: 'stand', rootSessionId: ROOT_SID, kind: 'Flow', status: 'Processing', startedAt: T0 - 22 * 60_000, project: 'Nebflow', parentSessionId: '' }],
   });
   await openPanel(page);
-  combos.push({ name: '两者同时', rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
+  combos.push({ name: '两者同时', active: 2, rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
 
   // 组合④：含链子行（live 组头 + 三条链行）。
   await bootApp(page);
@@ -311,7 +312,7 @@ test('H3 计数同源：面板头 total == 实际渲染行数（五种通路组�
   await inject(page, chainStart(NODE_SID, { status: 'Processing' }));
   await inject(page, chainStart('node-eb2a5aa3', { status: 'Processing' }));
   await openPanel(page);
-  combos.push({ name: '含链子行', rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
+  combos.push({ name: '含链子行', active: 4, rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
 
   // 组合⑤：含合成组头（主桶空 + 注册行镜像 + 作用域桶链行）。
   await bootApp(page);
@@ -321,7 +322,8 @@ test('H3 计数同源：面板头 total == 实际渲染行数（五种通路组�
     agents: [{ sessionId: NODE_SID, agentId: NODE_SID, agentName: 'stand', rootSessionId: DELEGATE_SID, kind: 'Flow', status: 'Processing', startedAt: T0 - 9 * 60_000, project: 'Nebflow', parentSessionId: '' }],
   });
   await openPanel(page);
-  combos.push({ name: '含合成组头', rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
+  // Active: the one Processing node (the synthesized head has no state).
+  combos.push({ name: '含合成组头', active: 1, rows: (await dumpRows(page)).length, counts: await panelCounts(page) });
 
   console.log('[H3 combos] ' + JSON.stringify(combos));
 
@@ -329,8 +331,9 @@ test('H3 计数同源：面板头 total == 实际渲染行数（五种通路组�
     const headTotal = Number(String(c.counts.header).replace(/[^0-9]/g, ''));
     // 头 total == 实际渲染行数（五种组合全成立）。
     expect(headTotal).toBe(c.rows);
-    // 徽标 / 节签 / 模型写出值三面同源同数。
-    expect(String(c.counts.badge).trim()).toBe(String(c.rows));
+    // The badge counts ACTIVE rows (fixture-defined per combo); the section label and the model row-total keep
+    // the visible row count — three readings of one row set, two deliberately different quantities.
+    expect(String(c.counts.badge).trim()).toBe(String(c.active));
     expect(String(c.counts.section)).toContain('· ' + c.rows);
     expect(String(c.counts.rowTotal)).toBe(String(c.rows));
   }

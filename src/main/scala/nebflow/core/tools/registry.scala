@@ -1,8 +1,5 @@
 package nebflow.core.tools
 
-import nebflow.neblink.core.*
-import nebflow.neblink.misc.*
-
 import nebflow.shared.ToolDefinition
 
 import java.util.concurrent.ConcurrentHashMap
@@ -70,7 +67,7 @@ object ToolRegistry:
       // Sub-agent delegation → 内置极简内核（2026-09-11 恢复批）：Nebula 专属
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
-      // builtin-merge 批（2026-10-03）：Subagent = 只读侦察子入口（阻塞，结果即
+      // builtin-merge 批（2026-10-03）：Subagent = 侦察子入口（阻塞，结果即
       // 返回值）。授权面 = AgentCore.NebflowFixedTools（执行 agent 机制面）；
       // RootExclusiveTools 防声明逃逸。
       // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 名
@@ -172,25 +169,10 @@ object ToolRegistry:
       "TaskSearch" -> TaskSearchTool,
       // Nebula-root-only on-demand history lookup; no plugin or remoteable authorization.
       "ConversationSearch" -> ConversationSearchTool,
-      // ── Canvas ask mode（2026-10-28 实施批，机制稿 §5；2026-10-31 换装批）───
-      // ask 会话白名单封闭枚举（AskSessions.AllowedTools = ask 专属两件 + 只读
-      // 五件 Read/Glob/Grep/WebSearch/WebFetch——后者即 SubagentFixedTools 同源，
-      // 全员注册工具，本表前列在册）：授能唯一来源 = buildAllowedToolSet 的
-      // askSession 早退集（引擎侧会话身份，机制固定零配置）；ask 专属两件对其余
-      // 身份在同函数尾段反剥（AskSessions.AskExclusiveTools 反剥集——只剥两件，
-      // 只读五件是通用读面**不剥**；声明 "*" 也不授能，TeamTaskTools 先例）；
-      // 插件白名单与 remoteableTools 均不含 ask 专属两件。工具内侧再用
-      // ctx.sessionId 同判据拒绝（AskTools 双保险，终态申报工具挂载先例）。
+      // Ask-only tools are stripped from other roles, including wildcard definitions.
+      // Shared lookup tools and Bash are registered above and are not Ask-exclusive.
       "message_record_search" -> MessageRecordSearchTool,
-      "send_message_to_main_chat" -> SendMessageToMainChatTool,
-      // GitQuery（gitquery 批 2026-11-05，作者令「ask 会话新增只读 GitQuery
-      // 工具」）：ask 会话的**只读 git 查询**面（log / show / diff / merge-base
-      // 四件，零自由 argv），动因 = 分身对账审计文末的提交号/可复跑命令时只能
-      // 转述文件里写死的值。授权面同 ask 专属两件——AskSessions.AskExclusiveTools
-      // 反剥集单点（非 ask 身份即便声明 "*" 也不得挂名，the tool name IS the
-      // permission boundary）+ 工具内 ctx.sessionId 身份拒绝（GITQUERY_FORBIDDEN）
-      // 双保险；插件白名单与 remoteableTools 均不含本件（v1 只跑本机）。
-      "GitQuery" -> GitQueryTool
+      "send_message_to_main_chat" -> SendMessageToMainChatTool
     )
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`

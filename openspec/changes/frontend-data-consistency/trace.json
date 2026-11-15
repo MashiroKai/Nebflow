@@ -1,0 +1,452 @@
+{
+  "version": 1,
+  "change": "frontend-data-consistency",
+  "mappings": [
+    {
+      "requirement": "FDC-REQ-001",
+      "scenario": "FDC-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-001 pending writes belong to their files"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-001",
+      "scenario": "FDC-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-002 late other-file receipt cannot change current status"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-001",
+      "scenario": "FDC-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-013 read error retains draft and blocks a put"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-002",
+      "scenario": "FDC-SCN-004",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskNotes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskNoteStoreSpec.scala",
+          "name": "FDC-SCN-004 a write based on an older version is refused and the stored note is unchanged"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-002",
+      "scenario": "FDC-SCN-005",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskNotes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskNoteStoreSpec.scala",
+          "name": "FDC-SCN-005 a clear keeps a version: a stale write over it is a conflict and a write based on it succeeds"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-003",
+      "scenario": "FDC-SCN-006",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/WsTasksWorkspaceHandlers.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/ws/TodoUnifyFramesSpec.scala",
+          "name": "FDC-SCN-006 same-name user creates append independent records"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-003",
+      "scenario": "FDC-SCN-007",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/TodoPriorityCompletionSpec.scala",
+          "name": "FDC-SCN-007 tool rearm keeps user and unknown-origin todos"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-004",
+      "scenario": "FDC-SCN-008",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "initial edit before first read holds unseen server text"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-004",
+      "scenario": "FDC-SCN-009",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "empty offline draft persists with base across reload"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-004",
+      "scenario": "FDC-SCN-010",
+      "implementation": [
+        "src/main/resources/web/js/utils.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-todo-reference.test.mjs",
+          "name": "duplicate names do not resolve by order and id references choose exactly one"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-004",
+      "scenario": "FDC-SCN-011",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/TodoPriorityCompletionSpec.scala",
+          "name": "FDC-SCN-011 cross-session rearm moves the owned record with its id and no loss"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/tools/ScheduleActionsSpec.scala",
+          "name": "upsert by name removes same-name tasks across ALL sessions — converges to single"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-012",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/WsAskHandlers.scala",
+        "src/main/scala/nebflow/core/ask/AskNotes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/ws/WsAskNoteFramesSpec.scala",
+          "name": "FDC-SCN-012 an unreadable note is a read-failed error frame without text, for a read and for a write"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-013",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-013 read error retains draft and blocks a put"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-014",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
+          "name": "FDC-SCN-014 rearm keeps the stored id and a repeated call converges to one record"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-015",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala",
+        "src/main/scala/nebflow/core/AtomicJson.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
+          "name": "FDC-SCN-015 a failing low-level write leaves the stored record unchanged and a retry keeps its id"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-016",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
+          "name": "FDC-SCN-016 a partial cross-session move converges on the next rearm without losing the record"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-017",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala",
+        "src/main/scala/nebflow/core/tools/ScheduleTool.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
+          "name": "FDC-SCN-017 a legacy named scheduled task is adopted as tool-owned without changing its id"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-018",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala",
+        "src/main/scala/nebflow/core/tools/ScheduleTool.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
+          "name": "FDC-SCN-018 a legacy named todo is not attributable: kept, and the rearm writes nothing"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-019",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/AskTodoBridge.scala",
+        "src/main/scala/nebflow/core/scheduler/WeeklyReport.scala",
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
+          "name": "FDC-SCN-019 engine mirrors are adopted by reserved prefix and retired without touching other rows"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-020",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-020 a late conflict receipt for text that already equals the draft adopts the base"
+        },
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-020 a late receipt for an earlier write cannot clear the current flight"
+        },
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-020 a late ack after a reconnect read cannot roll the known base back"
+        },
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-020 a stale server read cannot lower the known base"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-021",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-021 explicit choice of the server version adopts it without sending"
+        },
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-021 an unrecognised conflict choice keeps both versions for a later choice"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-022",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-022 a version-required receipt whose stored text equals the draft adopts the base"
+        },
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-022 unknown base blocks the first put until a matching server read arrives"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-023",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-023 an explicit clear is sent with its base and stays empty across reload"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-024",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/WsAskHandlers.scala",
+        "src/main/scala/nebflow/core/ask/AskNotes.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/note-protocol-live.mjs",
+          "name": "N1 baseline read is a complete state"
+        },
+        {
+          "path": "tests/note-protocol-live.mjs",
+          "name": "N2 unknown base is refused as version-required with the stored state"
+        },
+        {
+          "path": "tests/note-protocol-live.mjs",
+          "name": "N6 clear stores a versioned tombstone"
+        },
+        {
+          "path": "tests/note-protocol-live.mjs",
+          "name": "N7 a reconnect reads the same base and clear state"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-025",
+      "implementation": [
+        "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/scheduler/ScheduledTaskRearmSpec.scala",
+          "name": "FDC-SCN-025 cancel and completion cover a duplicate copy left by a partial move"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-026",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/WsTasksWorkspaceHandlers.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/ws/TodoUnifyFramesSpec.scala",
+          "name": "FDC-SCN-026 a retry after completion reports the stored completed state"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-027",
+      "implementation": [
+        "src/main/resources/web/js/askDock.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-027 the input handler marks the draft dirty, persists it and pushes it"
+        },
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-027 reconnect clears the flight and re-reads a dirty draft"
+        },
+        {
+          "path": "tests/data-note-queue.test.mjs",
+          "name": "FDC-SCN-027 flush writes the current text to the draft and schedules the push"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-028",
+      "implementation": [
+        "src/main/resources/web/js/mobile/todoAppleFace.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/todo-create-sheet.spec.mjs",
+          "name": "FTI-SCN-009 parked retry has an explicit discard path"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-029",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskNotes.scala",
+        "src/main/scala/nebflow/gateway/WsAskHandlers.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskNoteStoreSpec.scala",
+          "name": "FDC-SCN-029 the size limit is 256 KiB of UTF-8 bytes: exact accepted, one more refused, for ASCII, Chinese and emoji"
+        },
+        {
+          "path": "src/test/scala/nebflow/gateway/ws/WsAskNoteFramesSpec.scala",
+          "name": "FDC-SCN-029 an oversized text and a bad session id are refused with their own errors"
+        }
+      ]
+    },
+    {
+      "requirement": "FDC-REQ-005",
+      "scenario": "FDC-SCN-030",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskNotes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskNoteStoreSpec.scala",
+          "name": "FDC-SCN-030 a note written before versioning reads with its modification time and migrates on the first accepted write"
+        }
+      ]
+    }
+  ]
+}

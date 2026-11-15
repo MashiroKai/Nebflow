@@ -34,8 +34,10 @@
 // 相等」，改后端枚举而忘了前端行为绑定 = 红）。
 //
 // ── 取数与保存腿（各自的既有通道，零新协议）─────────────────────────────────
-//   llm      : 读 state.parsedConfig.llm.providers；写 = saveNewProvider → WS
-//              updateConfig（providersUi.js 单点，与 onboarding 同一条腿）；
+//   llm      : reads state.parsedConfig.llm.providers; writes = saveProviderWithAck → WS
+//              updateConfig (single point in providersUi.js). The request carries a
+//              requestId and only the reply to that very save confirms it; a failure, a
+//              timeout or a closed socket keeps the form open with its draft;
 //   imagegen : 读 GET /api/config/imagegen；写 = PUT /api/config/imagegen
 //              整节替换 + secrets 面写 key（原名 imagegen-<name>-key）；
 //   jev      : 读 GET /api/config/jev；写 = PUT /api/config/jev 整块 + secrets
@@ -49,7 +51,7 @@ import { escapeHtml, statusIcon } from '../utils.js';
 import { authHeaders } from '../flowHelpers.js';
 import { toggleHTML, setToggleState } from '../toggle.js';
 import { providerCardHTML, addProviderButtonHTML, bindCardRemove, bindCardSelect } from '../cfgProviderCard.js';
-import { showProviderForm, showProviderModal, protocolFormLabel, saveNewProvider, flushConfigToServer, revealProviderApiKeys } from './providersUi.js';
+import { showProviderForm, showProviderModal, protocolFormLabel, saveProviderWithAck, flushConfigToServer, revealProviderApiKeys } from './providersUi.js';
 import { jevTestButtonHTML, jevTestResultsHTML, bindJevTestButton } from './jevTestButton.js';
 import { imagegenTestButtonHTML, imagegenTestResultsHTML, bindImagegenTestButtons } from './imagegenTestButton.js';
 
@@ -119,11 +121,7 @@ const DOMAIN_SPECS = {
     bindExtra: () => {},
     async persist(values, ctx) {
       // ctx = {name, isEdit, existingName, data}（由 showProviderModal 自己算好）
-      if (ctx.existingName && ctx.name !== ctx.existingName) {
-        state.parsedConfig.llm.providers[ctx.existingName] = null;
-      }
-      saveNewProvider(ctx.name, ctx.data);
-      return true;
+      return saveProviderWithAck(ctx.name, ctx.data, ctx.existingName);
     },
     async remove(name) {
       state.parsedConfig.llm.providers[name] = null;
@@ -259,8 +257,10 @@ const DOMAIN_SPECS = {
       }
       bindJevTestButton(overlay, {
         getForm: () => ({
-          provider: fieldValue(overlay, 'name'),
+          provider: fieldValue(overlay, 'type'),
           endpoint: fieldValue(overlay, 'endpoint'),
+          model: fieldValue(overlay, 'model'),
+          apiKey: fieldValue(overlay, 'apiKey'),
           keyRef: keyRefFor('jev', ctx.existingName, fieldValue(overlay, 'name')),
         }),
       });
@@ -394,6 +394,8 @@ async function putSection(domain, body) {
     }
     return true;
   } catch {
+    // Network failure: the form stays open, so the user must be told why nothing was saved.
+    window.__showToast?.(t('settings.saveFailed'), 'error');
     return false;
   }
 }
@@ -562,8 +564,14 @@ function openProviderForm(name) {
     const providers = /** @type {Record<string, any>} */ (state.parsedConfig && state.parsedConfig.llm && state.parsedConfig.llm.providers) || {};
     const existing = name ? providers[name] : null;
     Promise.resolve(revealProviderApiKeys()).catch(() => {}).then(() => {
-      showProviderModal(name || null, existing || null, (newName, data) => {
-        void spec.persist({}, { name: newName, existingName: name || '', data }).then(() => paintProviderPanel());
+      showProviderModal(name || null, existing || null, async (newName, data) => {
+        const ok = await spec.persist({}, { name: newName, existingName: name || '', data });
+        if (!ok) {
+          window.__showToast?.(t('settings.saveFailed'), 'error');
+          return false;
+        }
+        paintProviderPanel();
+        return true;
       });
     });
     return;
@@ -578,19 +586,18 @@ function openProviderForm(name) {
     fields: spec.fields(of, ctx),
     extraActionsHTML: spec.extraActionsHTML(),
     bindExtra: (overlay) => spec.bindExtra(overlay, ctx),
-    onConfirm: (values) => {
+    onConfirm: async (values) => {
       const verdict = validateProviderValues(type, values, ctx);
       if (!verdict.ok) {
         window.__showToast?.(t(verdict.key, verdict.params), 'error');
         return;
       }
-      void spec.persist(values, ctx).then(async (ok) => {
-        if (ok) {
-          await refreshProjections();
-          paintProviderPanel();
-          window.__showToast?.(t('settings.cfgCard.saved'), 'success');
-        }
-      });
+      const ok = await spec.persist(values, ctx);
+      if (!ok) return false;
+      await refreshProjections();
+      paintProviderPanel();
+      window.__showToast?.(t('settings.cfgCard.saved'), 'success');
+      return true;
     },
   });
 }

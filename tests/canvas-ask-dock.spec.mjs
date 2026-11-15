@@ -517,10 +517,12 @@ try {
     };
   });
   const askDockSrc = readFileSync(join(WEB_DIR, 'js', 'askDock.js'), 'utf8');
-  ok('F3 顶缘渐隐 = 逐泡 opacity（面板内零遮罩条元素；.ask-col 零 mask（backdrop root 摘除）'
-    + '+ askDock.js syncAskFade 载体在场；--ask-fade-h 衰减档保留）',
-    f3.fadeLayers === 0 && f3.colMask === 'none' && f3.fadeH > 0 && /syncAskFade/.test(askDockSrc),
-    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH, syncAskFade: /syncAskFade/.test(askDockSrc) }));
+  // FCC-REQ-004: history bubbles are never dimmed any more, so the per-bubble opacity carrier is gone;
+  // the clearance band (--ask-fade-h) stays as plain padding.
+  ok('F3 顶缘无渐隐（面板内零遮罩条元素；.ask-col 零 mask（backdrop root 摘除）'
+    + '+ askDock.js 无逐泡 opacity 载体；--ask-fade-h 净空档保留）',
+    f3.fadeLayers === 0 && f3.colMask === 'none' && f3.fadeH > 0 && !/syncAskFade/.test(askDockSrc) && !/\.style\.opacity\s*=/.test(askDockSrc),
+    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH, syncAskFade: /syncAskFade/.test(askDockSrc), opacityWrite: /\.style\.opacity\s*=/.test(askDockSrc) }));
   ok('F3-b 整体透明无边框（dock 零背景/零边框/零浮影/零 backdrop-filter；外框零 mask）',
     f3.dockBg === 'rgba(0, 0, 0, 0)' && parseFloat(f3.dockBorder) === 0 && f3.dockShadow === 'none'
       && /^none$/.test(String(f3.dockFilter)) && f3.colwrapMask === 'none' && /^none$/.test(String(f3.colwrapMask)),

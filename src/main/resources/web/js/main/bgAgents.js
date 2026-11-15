@@ -1,5 +1,5 @@
 // main.js 抽取(FE组件化批次七 2026-09-28):后台代理下拉族 模块(行为保持)。
-// USTC 合并移植（2026-10-10）：面板体更新为本地 delegate-ui 两级化批（C2/R6 ·
+// 内网仓合并移植（2026-10-10）：面板体更新为本地 delegate-ui 两级化批（C2/R6 ·
 // 定稿蓝本 §1.2/§2）与「修订批（用户九点②/⑤ · 2026-10-09）」语义——远端拆分时
 // 携带的旧快照面板体由本地新版整体替换（SubTask→Delegate 显示词归一、C1 过渡
 // 过滤、两级组头/子行、空态自动收起），本文件骨架（indicator/uptime/fetch/stuck
@@ -111,8 +111,9 @@ export function updateBgAgentIndicator(targetSid, opts) {
   // dispatcher inside its keep-alive window counts zero). Same predicate as the
   // list (visibleBgAgentEntries) — the two must never disagree (see the view
   // resolution note above: count>0 with an empty dropdown was a real defect).
-  const count = bgPanelModel(sid).total;
-  if (count > 0) {
+  const model = bgPanelModel(sid);
+  const count = model.activeCount;
+  if (model.total > 0) {
     el.classList.remove('hidden');
     el.querySelector('.bgagent-count').textContent = count;
   } else {
@@ -802,6 +803,13 @@ function bgTaskDiagHtml(raw) {
     + '" title="' + escapeHtml(diag) + '">' + escapeHtml(diag) + '</span>';
 }
 
+/** flow-step node status → panel row state. One table for the row renderer and the active count (a dirty value
+ *  falls back to the conservative idle). */
+const BG_FLOW_NODE_STATE = {
+  pending: 'idle', running: 'active', completed: 'done',
+  failed: 'error', cancelled: 'done', blocked: 'stuck',
+};
+
 /** flow 节点状态 → 面板状态词键（ROW_STATUS 值域；既有键复用，零新键）。 */
 const BG_FLOW_WORD_KEY = {
   pending: 'task.nodePending',
@@ -1372,6 +1380,21 @@ export function bgOrphanRowKeys(rows, bucketSid) {
 }
 
 /**
+ * Panel state of a planned row, for the active count. A row that carries an info record uses the shared row state.
+ * Group children built from a store entry or a flow-step node carry their source object instead, so they use the
+ * state tables their own renderers use: the badge and the list never disagree about what is running.
+ * @param {any} row
+ * @returns {string} '' when the row has no state source
+ */
+function bgPlanRowState(row) {
+  if (row.info) return bgRowState(row.info);
+  const c = row.child;
+  if (c && c.type === 'store') return bgStoreChildState(String((c.child && c.child.status) || ''));
+  if (c && c.type === 'flow') return BG_FLOW_NODE_STATE[String((c.node && c.node.status) || 'pending')] || 'idle';
+  return '';
+}
+
+/**
  * 跨通路行集组装（收敛批第一律 + 第三律）：把二级结构的对位行与顶层 leftover
  * 合成一个**有序、按 sessionId 唯一**的渲染计划。渲染面与计数面只读本函数产出——
  * 「签与列表永不打架」自此是结构事实，而不是两次独立计算碰巧相等。
@@ -1389,7 +1412,7 @@ export function bgOrphanRowKeys(rows, bucketSid) {
  *
  * @param {{groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>}} model
  * @param {string} [bucketSid] 桶根会话 id（root 锚合成判据 + 野判定桶根条款）
- * @returns {{items: Array<Object>, total: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
+ * @returns {{items: Array<Object>, total: number, activeCount: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
  */
 function bgRowPlan(model, bucketSid) {
   const groups = (model && model.groups) || [];
@@ -1594,11 +1617,13 @@ function bgRowPlan(model, bucketSid) {
   // total = 行集长度，root 锚与结构父（face C 标签面行）除外——「签 == 实际
   // .bg-task-row 行数」口径不破；锚/结构父子树里的行照常计入（idle 父不计活跃数）。
   let total = 0;
+  let activeCount = 0;
   for (const row of tree.order) {
     if (!row || row.level === 'root' || row.level === 'struct') continue;
     total += 1;
+    if (bgPlanRowState(row) === 'active') activeCount += 1;
   }
-  return { items: tree.order, total, tree, orphanCount: wildKeys.size };
+  return { items: tree.order, total, activeCount, tree, orphanCount: wildKeys.size };
 }
 
 /**
@@ -1609,7 +1634,7 @@ function bgRowPlan(model, bucketSid) {
  * 层级缩进批（2026-11-05 腿②）：`rows` 已是树序、`tree` 带深度/子树（折叠剪枝用）。
  *
  * @param {string} bucketSid 主会话桶 id（视图 sessionId）
- * @returns {{bgAgents: Object, entries: Array<[string, any]>, groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>, rows: Array<Object>, total: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
+ * @returns {{bgAgents: Object, entries: Array<[string, any]>, groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>, rows: Array<Object>, total: number, activeCount: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
  */
 function bgPanelModel(bucketSid) {
   const bgAgents = { ...((bucketSid && state.sessionBgAgents[bucketSid]) || {}) };
@@ -1631,6 +1656,7 @@ function bgPanelModel(bucketSid) {
     bgAgents, entries, groups, leftovers, orphanBy,
     rows: plan.items,
     total: plan.total,
+    activeCount: plan.activeCount,
     tree: plan.tree,
     // 野节点归置批（2026-11-05 腿③）：归置分组的行数（判定式单点结论的计数读口——
     // 渲染面据此决定要不要出组头，回归 dump 与报告读数也读它）。
@@ -2202,10 +2228,10 @@ export function bgTaskRowHtml(id, info, opts = {}) {
           + statusIcon('snowflake', 11, 'st-warn')
           + escapeHtml(labelWithDetail)
           + '</span>'
-          + '<button class="bg-task-wake" type="button" data-bg-wake="'
+          + (wakeableOf(info) ? '<button class="bg-task-wake" type="button" data-bg-wake="'
           + escapeHtml(String((info && info.sessionId) || '').replace(/^team-/, ''))
           + '" title="' + escapeHtml(t('subagents.wakeTip')) + '">'
-          + escapeHtml(t('subagents.wake')) + '</button>';
+          + escapeHtml(t('subagents.wake')) + '</button>' : '');
       }
       const kind = freezeKindOf(info);
       const whyKey = freezeReasonLabelKey(freezeReasonWire(info));
@@ -2439,10 +2465,7 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   const wordKey = BG_FLOW_WORD_KEY[st] || '';
   const kindWord = bgMemberKindWord({ info: { kind: String(n.kind || 'flow-step') }, sessionId: String(n.id || '') });
   // flow 投影态 → bgRowStatus 状态键（单表；脏值回落 pending/idle 保守档）。
-  const flowState = {
-    pending: 'idle', running: 'active', completed: 'done',
-    failed: 'error', cancelled: 'done', blocked: 'stuck',
-  }[st] || 'idle';
+  const flowState = BG_FLOW_NODE_STATE[st] || 'idle';
   const deps = Array.isArray(n.deps) ? n.deps.map((d) => String(d || '')).filter(Boolean) : [];
   // DAG dependency chip (face C): execution-order edges are NOT parent-child nesting —
   // they render as a flat chip with the ⇢ glyph + dashed underline, visually distinct

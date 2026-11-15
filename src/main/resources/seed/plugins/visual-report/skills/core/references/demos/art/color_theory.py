@@ -7,11 +7,14 @@
 - 明度阶：固定色相（套件强调色 #5e6ad2，HLS 色 H≈0.618）与固定饱和度，仅步进 HSL 亮度 L
 
 输出:
-  C:/Users/Kai/.nebflow/plots/vrs2-archart/20261004_art_color_wheel.png   (色轮+互补)
-  C:/Users/Kai/.nebflow/plots/vrs2-archart/20261004_art_color_value.png   (明度阶)
+  C:/Users/name/.nebflow/plots/vrs2-archart/20261004_art_color_wheel.png   (色轮+互补)
+  C:/Users/name/.nebflow/plots/vrs2-archart/20261004_art_color_value.png   (明度阶)
 """
 import os
-os.environ.setdefault("MPLCONFIGDIR", r"C:\Users\Kai\.nebflow\tools\mplconfig")
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(DATA_ROOT, "tools", "mplconfig"))
 import colorsys
 import matplotlib
 matplotlib.use("Agg")
@@ -21,8 +24,10 @@ from matplotlib.patches import Wedge, Rectangle
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
 plt.rcParams["axes.unicode_minus"] = False
 
-OUT_WHEEL = r"C:\Users\Kai\.nebflow\plots\vrs2-archart\20261004_art_color_wheel.png"
-OUT_VALUE = r"C:\Users\Kai\.nebflow\plots\vrs2-archart\20261004_art_color_value.png"
+OUT_WHEEL = os.path.join(DATA_ROOT, 'plots', 'vrs2-archart', '20261004_art_color_wheel.png')
+os.makedirs(os.path.dirname(OUT_WHEEL), exist_ok=True)
+OUT_VALUE = os.path.join(DATA_ROOT, 'plots', 'vrs2-archart', '20261004_art_color_value.png')
+os.makedirs(os.path.dirname(OUT_VALUE), exist_ok=True)
 
 INK, MUT, PAPER = "#2a2e38", "#6b7078", "#fdfcfa"
 

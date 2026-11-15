@@ -48,11 +48,11 @@ description: 天文报告（skyfield 星历真算）；星图、星历、天象�
 | 工具 | 用途 | 本机检测命令（实测） | 官方下载链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
 | skyfield | 星历计算/坐标变换 | `<venv>\python.exe -c "import skyfield; print(skyfield.__version__)"` → 1.55 | https://rhodesmill.org/skyfield/ · https://pypi.org/project/skyfield/ | 200 · 200（2026-10-04 实测） | **天文数值不允许降级手算**：改引权威来源数值并标注「未本地复算」，或文字描述既有结论 |
-| de421.bsp | 日月行星历表（1900–2053） | `ls C:\Users\Kai\.nebflow\tools\skyfield-cache\de421.bsp` → 16,788,480 B；`load('de421.bsp')` 命中 | https://ssd.jpl.nasa.gov/ftp/eph/planets/bsp/de421.bsp | HEAD 超时（2026-10-04；缓存命中无需下载，恢复后复测） | 超出 1900–2053 或需更高精度 ⇒ 需 de440s（下载受限则拒绝该时域计算并如实声明） |
-| Hipparcos 星表 | 亮星位置底图 | `ls C:\Users\Kai\.nebflow\tools\skyfield-cache\hip_main.dat` → 53,316,318 B；`hipparcos.load_dataframe` 命中 118,218 颗 | skyfield `hipparcos.URL`（cdn.jsdelivr.net 分发） | 200（2026-10-04 下载成功入缓存） | 星图降级为仅日月行星并注明 |
+| de421.bsp | 日月行星历表（1900–2053） | `ls C:\Users\name\.nebflow\tools\skyfield-cache\de421.bsp` → 16,788,480 B；`load('de421.bsp')` 命中 | https://ssd.jpl.nasa.gov/ftp/eph/planets/bsp/de421.bsp | HEAD 超时（2026-10-04；缓存命中无需下载，恢复后复测） | 超出 1900–2053 或需更高精度 ⇒ 需 de440s（下载受限则拒绝该时域计算并如实声明） |
+| Hipparcos 星表 | 亮星位置底图 | `ls C:\Users\name\.nebflow\tools\skyfield-cache\hip_main.dat` → 53,316,318 B；`hipparcos.load_dataframe` 命中 118,218 颗 | skyfield `hipparcos.URL`（cdn.jsdelivr.net 分发） | 200（2026-10-04 下载成功入缓存） | 星图降级为仅日月行星并注明 |
 | matplotlib | 星图/曲线渲染 | 已装 3.11.2 | 见插件 README 链接验证表 | 200（2026-10-04，README 表） | plotly（已装）或数值表格 |
 
-本机数据缓存现状（实测 2026-10-04）：`C:\Users\Kai\.nebflow\tools\skyfield-cache\` 下 de421.bsp（16,788,480 B）与 hip_main.dat（53,316,318 B）均在盘、加载验证通过；skyfield `Loader` 指向该目录即缓存命中，不重复下载。
+本机数据缓存现状（实测 2026-10-04）：`C:\Users\name\.nebflow\tools\skyfield-cache\` 下 de421.bsp（16,788,480 B）与 hip_main.dat（53,316,318 B）均在盘、加载验证通过；skyfield `Loader` 指向该目录即缓存命中，不重复下载。
 
 ### 降级链
 

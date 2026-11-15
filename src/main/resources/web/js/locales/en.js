@@ -434,6 +434,7 @@ export default {
   // fact only — the retry control carries the next step.
   'messages.listLoadFailed': "Couldn't load conversations",
   'messages.retry': 'Retry',
+  'messages.backToAgent': 'Back to the agent conversation',
   // 🔴 `systemNowFriends` belongs to the **friend-acceptance** context (its only
   // legal consumer = the `friend_accepted` branch of `onFriendEvent` in
   // messages.js) ⇒ the two group keys below are the **key split** product
@@ -523,6 +524,7 @@ export default {
   // 说清**为什么**（页面刷新把载荷剥离了——localStorage 放不下）与**怎么办**
   // （重新添加）。修前该情形只有 console.warn，对用户是**静默消失**。
   'messages.queueAttachUnrecoverable': '{n} attachment(s) could not be restored because the page was refreshed — please add them again',
+  'input.historyAttachLost': '{n} attachment(s) from this history entry are no longer stored on this device — please add them again',
   // attach-split batch (2026-10-24 incident fix): user-visible copy for the server's
   // loud rejection receipt (messageTooLarge) — {size}/{limit} = measured frame MB / server cap MB.
   'send.messageTooLarge': 'This message (~{size} MB) exceeds the {limit} MB delivery limit and was NOT sent — remove some attachments and retry',
@@ -2632,7 +2634,9 @@ export default {
   'search.loadedOf': '{n}/{m} loaded',
   'search.loadMore': 'Load more ({n}/{m} loaded)',
   // Batch open of multi-selected files in the Canvas panel (chatsearch-batch-open)
-  'search.openSelectedInCanvas': 'Open in Canvas ({n})',
+  'search.openSelectedInCanvas': 'Open selected files ({n})',
+  'search.selectFiles': 'Select files',
+  'search.cancelSelection': 'Cancel selection',
   'search.jumpArchived': 'Archived before compaction — no in-place row in the replay window',
   'search.noResults': 'No matching messages',
   'search.noResultsSuggestion': 'Try a shorter keyword or clear the date/type filters',
@@ -3366,6 +3370,9 @@ export default {
   'todoapple.newListPh': 'New list',
   'todoapple.more': 'More',
   'todoapple.newTodo': 'New to-do',
+  'todoapple.createUnconfirmed': 'Save not confirmed. Check your connection and retry in the original session to avoid duplicates.',
+  'todoapple.discardPending': 'Discard retry',
+  'todoapple.replyFailed': 'Reply not sent. Check the primary session and connection, then retry.',
   'todoapple.notes': 'Notes (optional)',
   'todoapple.save': 'Save',
   'todoapple.markComplete': 'Mark complete',

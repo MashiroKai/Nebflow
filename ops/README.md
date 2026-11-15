@@ -191,18 +191,32 @@ not running —— pid 记账失配）：
   not-running 面零 JVM 依赖——java 全坏也能 `stop` 真停、也能识别已启动，
   这些面也不再先吃 JDK WARN 噪声。
 
-**品牌横幅**（作者追加 2026-10-25 13:10:「One entry, Every agent.」）：
+**Brand banner**:
 
-- 仅 `stand start` 且守卫放行（真的要起 daemon）时打印；already-running /
-  拒启 / stop 不印。URL/pid 行紧随其后（应用侧输出），保持终端最后一行 = 最显眼。
-- 候选三款（待作者定稿，实截见
-  `reports/20261025_132822_stand-cli-lifecycle/shots/`）：
-  - `STAND_BANNER=A` 徽标款——黑底白 S 方块（favicon 同构）+ 标语（宽终端 ≥80 列缺省）
-  - `STAND_BANNER=B` 双行紧凑款（窄终端 <80 列缺省）
-  - `STAND_BANNER=C` 单行字标款
-- `STAND_BANNER_COLS` 覆写宽度探测（测试/ops 旋钮）。
-- 分寸：非 TTY / `NO_COLOR` / `TERM=dumb` → 单行纯文本
-  `stand — One entry, Every agent.`，autostart / 重定向日志不刷艺术字。
+- All CLI logos use the installer's official `stand-horizontal` lockup (symbol +
+  wordmark), not a standalone S. `scripts/render-install-banner.py` generates the
+  installer artwork and the shared JVM resource
+  `src/main/resources/brand/stand-terminal-banner.properties` from the same vector
+  assets. There are no A/B/C variants; `STAND_BANNER` and `STAND_BANNER_COLS` are
+  ignored.
+- The shell launcher prints no banner. Runtime `Splash.printBanner()` renders it
+  after the startup port gate allows daemon or foreground startup; already-running,
+  refused-start and stop paths do not print it. The interactive CLI uses the same
+  renderer. URL/PID output follows the startup banner.
+- Rendering requires terminal stdout. Non-TTY/pipe output, `--quiet`, `--json`, and
+  any nonempty `CI` value suppress the startup banner. `COLUMNS` overrides detected
+  terminal width (fallback 80); below 74 columns the runtime prints plain `Stand`
+  instead of artwork.
+- `STAND_BANNER_IMAGE` selects `auto` (default), `osc`/`iterm`, `sixel`/`wt`, or
+  `off`/`0`/`no`. `auto` detects supported image terminals, otherwise using text
+  artwork; `yes`/`1`/`on` also select auto. Disabling images preserves text artwork.
+- `STAND_BANNER_THEME=dark|light` overrides automatic theme detection from
+  `COLORFGBG` (default dark). `STAND_UI_LEVEL=0|1|2|3` selects plain ASCII, ANSI,
+  256-color, or truecolor text artwork; otherwise the level follows `TERM` and
+  `COLORTERM`. Nonempty `NO_COLOR` or `TERM=dumb` forces uncolored ASCII artwork
+  and disables images, without suppressing an interactive banner.
+- `NEBFLOW_BANNER_IMAGE`, `NEBFLOW_BANNER_THEME`, and `NEBFLOW_UI_LEVEL` are runtime
+  aliases; the corresponding `STAND_*` setting takes precedence.
 
 **病2 · pinned JDK 缺失路径**（合同：作者令 2026-09-21「缺了不得静默降级」）：
 

@@ -1025,6 +1025,21 @@ When to use:
     by: String = "the user panel",
     notifyWs: Option[io.circe.Json => IO[Unit]] = None
   ): IO[Either[ToolError, String]] =
+    resources.executionProtection(rec.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected => doCancelLegacy(resources, rec, reason, by, notifyWs)
+      case _: nebflow.shared.ExecutionProtection.Protected =>
+        resources.cancelProtectedExecution(rec.sessionId, reason).map(_.leftMap(ToolError(_)))
+      case _: nebflow.shared.ExecutionProtection.Unknown =>
+        IO.pure(Left(ToolError("Protected or unknown execution requires authority-routed cancellation.")))
+    }
+
+  private def doCancelLegacy(
+    resources: AgentRuntimePort,
+    rec: AgentRecord,
+    reason: String,
+    by: String,
+    notifyWs: Option[io.circe.Json => IO[Unit]]
+  ): IO[Either[ToolError, String]] =
     // ── 缺陷七 · cancel 级联（引擎会话治理专项，作者 2026-11-03 15:09 报障逐字
     // 「你杀掉父会话，子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话
     // 变成孤儿」）：级联**后序**编队（先孙后子、父最后结算），在两条成功腿的文案
@@ -1202,7 +1217,7 @@ When to use:
       end match
     }
 
-  end doCancel
+  end doCancelLegacy
 
   /**
    * 项目域级联种子（缺陷七 · cancel 级联的项目腿）：`dispatcher-*` / `node-*` 会话在
@@ -1245,6 +1260,17 @@ When to use:
    * 本方法的入口判定因之直接落到 supervisor 分支（Delegate/SubTask 重启腿逐字未动）。
    */
   def doRestart(
+    resources: AgentRuntimePort,
+    ctx: ToolContext,
+    rec: AgentRecord,
+    reason: String
+  ): IO[Either[ToolError, String]] =
+    resources.executionProtection(rec.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected => doRestartLegacy(resources, ctx, rec, reason)
+      case _ => IO.pure(Left(ToolError("Protected or unknown execution requires exact-ref recovery.")))
+    }
+
+  private def doRestartLegacy(
     resources: AgentRuntimePort,
     ctx: ToolContext,
     rec: AgentRecord,

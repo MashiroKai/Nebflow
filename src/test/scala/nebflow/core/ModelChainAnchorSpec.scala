@@ -106,7 +106,7 @@ class ModelChainAnchorSpec extends FunSuite:
   private def candidateRefs(reg: ProviderRegistry, chain: AgentModelConfig): List[String] =
     reg.getCandidatesForAgent(Some(chain)).unsafeRunSync().map(c => s"${c.providerId}/${c.model}")
 
-  test("builtin executor: a /model Nebula write is the fallback anchor, ahead of config/dispatcher defaults") {
+  test("builtin executor: a /model Nebula write is the chain anchor (single-root), ahead of config/dispatcher defaults") {
     withRoot("builtin-executor") { root =>
       writeFixture(root)
 
@@ -118,17 +118,20 @@ class ModelChainAnchorSpec extends FunSuite:
         "executor runtime AgentDef.model must be the /model Nebula chain (the fallback anchor)"
       )
 
+      // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：链 =
+      // preferred 单根（registry.scala getCandidatesForAgentUnfiltered 在案），
+      // AgentModelConfig.fallbacks 退役为死数据不进请求链——恰一候选即正钉。
       val refs = candidateRefs(registry(root), agentDef.model.get)
       assertEquals(
-        refs.take(2),
-        List("zhipu/glm-primary", "kimi/k3-fallback"),
-        s"fallback candidates must start with the /model chain; actual prefix chain = $refs"
+        refs,
+        List("zhipu/glm-primary"),
+        s"the /model chain must be the single-root candidate chain (fallbacks retired); actual chain = $refs"
       )
-      assert(!refs.take(2).contains("dispatcher/private"), "a hidden dispatcher own chain must not hijack the executor anchor")
+      assert(!refs.contains("dispatcher/private"), "a hidden dispatcher own chain must not hijack the executor anchor")
     }
   }
 
-  test("per-turn reload: changing /model re-anchors the fallback chain without restart") {
+  test("per-turn reload: changing /model re-anchors the candidate chain without restart") {
     withRoot("live-reanchor") { root =>
       writeFixture(root)
       val before = BuiltinAgents.entry(executorName).getOrElse(fail("builtin entry missing")).toAgentDef
@@ -143,10 +146,11 @@ class ModelChainAnchorSpec extends FunSuite:
         Some(updatedModelChain),
         "a fresh AgentEntry read after the /model write must see the new fallback anchor"
       )
+      // 重锚 + 链深恒 1：新 preferred 即整链；退役 fallback 不回流。
       assertEquals(
-        candidateRefs(registry(root), after.model.get).take(2),
-        List("kimi/k3-primary", "zhipu/glm-fallback"),
-        "the runtime candidate chain must follow the updated /model order"
+        candidateRefs(registry(root), after.model.get),
+        List("kimi/k3-primary"),
+        "the runtime candidate chain must follow the updated /model anchor (single-root, no fallback revival)"
       )
     }
   }
@@ -170,8 +174,9 @@ class ModelChainAnchorSpec extends FunSuite:
         "a non-settable custom agent must follow the /model Nebula chain; its stored model is audit-only"
       )
       assertEquals(
-        candidateRefs(registry(root), custom.model.get).take(2),
-        List("zhipu/glm-primary", "kimi/k3-fallback")
+        candidateRefs(registry(root), custom.model.get),
+        List("zhipu/glm-primary"),
+        "the custom agent follows the /model anchor as a single-root chain"
       )
     }
   }

@@ -8,7 +8,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentCommand, AgentKind, AgentRecord, Behaviors}
 import nebflow.agent.SharedResources
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.core.delegate.DelegateNotify
+import nebflow.core.delegate.{DelegateNotify, DelegateRegistry}
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig}
@@ -147,6 +147,25 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       Behaviors.receiveMessage[AgentCommand](msg => recorded.update(_ :+ msg).as(b))
     b
 
+  /** cb18b8ec6 孤儿链暂停腿（2026-11-03）：sweep 先查 DelegateRegistry——查无记录
+    * 即判孤儿链（暂停推进、零认领零续跑）。本 spec 的作用域是有主链，夹具须在册
+    * （cwd=基工作区，parentSessionId 仅为孤儿通知语义备用）。 */
+  private def seedDelegateRecord(id: String, ws: os.Path): IO[Unit] =
+    IO.blocking(
+      DelegateRegistry.put(
+        DelegateRegistry.Record(
+          id = id,
+          executor = nebflow.core.executor.ExecutorRegistry.DefaultId,
+          cwd = ws.toString,
+          project = None,
+          taskId = None,
+          parentSessionId = "nebula-root",
+          title = "redirect-probe",
+          createdAt = System.currentTimeMillis()
+        )
+      )
+    )
+
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
     cond: IO[Boolean]
   ): IO[Unit] =
@@ -256,6 +275,7 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       res <- mkResources(system, llm.handle)
       _ <- mountCarrier("dnr-carrier-r1", ws, system, res)
       recorded <- registerRecorder(res, system, delegateId, AgentKind.Delegate)
+      _ <- seedDelegateRecord(delegateId, ws)
       _ <- seedRunningNode(ws, delegateId, "n-r1", Some(sid), out = List(OutEdge.root), system, res)
       h <- rehydrateViaSweep(ws, delegateId, "n-r1", sid)
       // 存量红清欠批 2026-10-30：终态翻转后投递腿（offerRootNotify → ImmediateInput
@@ -310,6 +330,7 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       res <- mkResources(system, llm.handle)
       _ <- mountCarrier("dnr-carrier-r2", ws, system, res)
       recorded <- registerRecorder(res, system, delegateId, AgentKind.Delegate)
+      _ <- seedDelegateRecord(delegateId, ws)
       // bare "Nebula" 形态 = parseOutSegment 隐式门分支的产物：on={pass} + mode=signal。
       _ <- seedRunningNode(
         ws,
@@ -352,6 +373,7 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       _ <- mountCarrier("dnr-carrier-r3", ws, system, res)
       // 旁观者 = 顶层 root 会话：改向的世界里它必须一事不知（零旁路）。
       bystander <- registerRecorder(res, system, "nebula-root", AgentKind.Root)
+      _ <- seedDelegateRecord(delegateId, ws)
       _ <- seedRunningNode(ws, delegateId, "n-r3", Some(sid), out = List(OutEdge.root), system, res)
       h <- rehydrateViaSweep(ws, delegateId, "n-r3", sid)
       a <- hostNode(h, "n-r3")

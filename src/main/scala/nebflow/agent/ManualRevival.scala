@@ -54,7 +54,10 @@ object ManualRevival:
         )
       case Some(t) =>
         val sessionStore = deps.resources.sessionStore
-        DelegateRevival.eligibility(sessionStore, t).flatMap {
+        deps.resources.executionProtection(t.taskId).flatMap {
+          case nebflow.shared.ExecutionProtection.Unprotected => DelegateRevival.eligibility(sessionStore, t)
+          case _ => IO.pure(Some("Protected or unknown execution requires exact-ref recovery; legacy restore is unavailable"))
+        }.flatMap {
           case Some(reason) => IO.pure(Left(s"task $taskId not eligible: $reason"))
           case None =>
             logger.info(s"[manual-revival] restoring $taskId (status=${t.status})").as(()) *>
@@ -91,7 +94,10 @@ object ManualRevival:
           .as(()) *>
           rows
             .traverse { t =>
-              DelegateRevival.eligibility(sessionStore, t).map(reason => (t, reason))
+              deps.resources.executionProtection(t.taskId).flatMap {
+                case nebflow.shared.ExecutionProtection.Unprotected => DelegateRevival.eligibility(sessionStore, t)
+                case _ => IO.pure(Some("Protected or unknown execution requires exact-ref recovery; legacy restore is unavailable"))
+              }.map(reason => (t, reason))
             }
             .flatMap { judged =>
               val eligible = judged.collect { case (t, None) => t }.sortBy(-_.spawnedAt)

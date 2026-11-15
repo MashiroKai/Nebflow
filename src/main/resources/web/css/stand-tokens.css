@@ -380,27 +380,39 @@ html[data-theme="dark"] {
  *      **不许**自己写 backdrop-filter。
  *   ③ 机检点 = scripts/check-glass-unify.mjs（现状门禁成员）。它做五件事：
  *      · 除 glass.css 外任何文件出现非 none 的 backdrop-filter ⇒ 红；
- *      · glass.css 里任何非 `var(--nf-glass-filter)` 的 backdrop-filter 值 ⇒ 红；
- *      · 本段 `--nf-glass-bg*` 解析出的 α 跑出 [0.45, 0.75] 区间 ⇒ 红
- *        （高了 = 死白，低了 = 内容透底；两端都要挡）；
- *      · `--nf-glass-blur` < 32px 或 `--nf-glass-saturate` < 1.3 ⇒ 红
- *        （内容残留/色彩承接两个方向同时被稀释）。
+ *      · glass.css 里任何非 `var(--nf-glass-input-filter)`（幕布类允许
+ *        `var(--nf-glass-scrim-blur)`）的 backdrop-filter 值 ⇒ 红；
+ *      · `--nf-glass-input-bg` 解析出的 α 跑出 [0.90, 1.0] 区间 ⇒ 红
+ *        （唯一材质近实底，「毛玻璃一律不透底」，两端都要挡）；
+ *      · 旧档出生地必须仍是指向唯一配方的别名/同值
+ *        （--nf-glass-bg/-hover → input-bg；--nf-glass-filter → input-filter；
+ *        blur 24px / saturate 1.15），出现第二份字面值 ⇒ 红。
  * ══════════════════════════════════════════════════════════════════════════ */
 :root {
-  /* ── 输入基准件（主会话 #input-bar / #queue-bar）专属配方 ─────────────────
-     作者 2026-11-06 20:12 令「主会话输入框的样式也变了，之前的就很好了」：
-     recalibrate（11-05 19:33）把全局玻璃重定标为 40px/1.4 时，作为参照物的
-     基准件自身也被换档（#ffffffF7 → #ffffff8C、blur 24 → 40、saturate 1.15 → 1.4）。
-     本组 = recalibrate 前基准件原配方逐值恢复，只服务输入基准件两块
-     （glass.css #input-bar / #queue-bar.visible），全局 --nf-glass-* 档不动。 */
-  --nf-glass-input-bg: #ffffffF7;            /* 原配方亮档 α=.968（近实底白） */
-  --nf-glass-input-filter: blur(24px) saturate(1.15); /* 原配方唯一模糊配方 */
-  --nf-glass-bg: #ffffff8C;          /* 唯一玻璃底（亮档）α=.549 = 参照物 rgba(255,255,255,.55) */
-  --nf-glass-bg-hover: #ffffff9E;    /* hover 升一档 α=.620（只提不透、不改形态） */
-  --nf-glass-blur: 40px;                             /* 唯一模糊半径（内容残留腰斩点） */
-  --nf-glass-saturate: 1.4;                          /* 唯一饱和度（色彩承接 +13% vs 参照物） */
-  /* 唯一模糊配方：glass.css 之外**任何** backdrop-filter 都必须是这个值 */
-  --nf-glass-filter: blur(var(--nf-glass-blur)) saturate(var(--nf-glass-saturate));
+  /* ── 唯一毛玻璃材质（单一质感批 2026-11-15）─────────────────────────────
+     作者令逐字：「我们只允许存在一种毛玻璃质感。你看看主输入框用的是哪种，
+     然后统一为规则和检查，只准使用这一种。」主输入框 #input-bar 的配方 =
+     input-bg（近实底 α .968/.941）+ input-filter（blur 24px / saturate 1.15）。
+     沿革：recalibrate（11-05 19:33）曾把全局玻璃重定标为 40px/1.4 通透档、
+     把基准件挤成 carve-out（11-06 20:12「主会话输入框…之前的就很好了」）；
+     11-11「毛玻璃一律不透底」；本批把全站唯一材质定回基准件配方，旧档名
+     （--nf-glass-bg/-hover/-filter/-blur/-saturate）全部降为指向本组的别名
+     ——存量消费链（sapphire.css --glass-* / --cv-*）不改名即换材质。 */
+  --nf-glass-input-bg: #ffffffF7;            /* 唯一玻璃底（亮档）α=.968（近实底白） */
+  --nf-glass-input-filter: blur(24px) saturate(1.15); /* 唯一模糊配方 */
+  --nf-glass-bg: var(--nf-glass-input-bg);   /* 别名：唯一底（旧消费链随材质） */
+  /* hover 升一档（唯一材质上的交互层级，单一材质批 2026-11-15 补正）：质感 =
+     blur/描边配方不动，层级 = 底色α 只提不透。旧批（单一材质首版）曾把本槽
+     压成与常档同值 ⇒ 扁平六态批（2026-11-05 作者报障「扁平化要落实到各处
+     不管是 hover 还是点击」）的 hover 底色阶被静默抹平（§9-⑤ Δα 判据实测
+     归零）。α .968 → 1.0：Δ = 8.16/255 ≥ §9-⑤ 门槛 8/255，不弱化检查。
+     经此槽派生的整条 hover/按下链（--glass-control-bg-hover / --cv-hover-bg /
+     --st-control-bg-hover / --btn-press-bg color-mix）一并恢复。 */
+  --nf-glass-bg-hover: #ffffff;
+  --nf-glass-blur: 24px;                             /* 唯一模糊半径 = 基准件原值 */
+  --nf-glass-saturate: 1.15;                         /* 唯一饱和度 = 基准件原值 */
+  /* 唯一模糊配方别名：glass.css 内全部 backdrop-filter 只准消费 input-filter */
+  --nf-glass-filter: var(--nf-glass-input-filter);
   --nf-glass-border-color: #ffffff59;      /* 细边 = 参照物白光细边 rgba(255,255,255,.35) */
   --nf-glass-border: 1px solid var(--nf-glass-border-color);
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
@@ -416,9 +428,10 @@ html[data-theme="dark"] {
 }
 
 html[data-theme="dark"] {
-  --nf-glass-input-bg: #181c26F0;            /* 原配方暗档 α=.941（近实底深） */
-  --nf-glass-bg: #181c26AD;          /* 暗档 α=.678 = 参照物 rgba(24,28,38,.68) */
-  --nf-glass-bg-hover: #181c26B8;    /* 暗档 hover α=.722 */
+  --nf-glass-input-bg: #181c26F0;            /* 唯一玻璃底（暗档）α=.941（近实底深） */
+  --nf-glass-bg: var(--nf-glass-input-bg);   /* 别名：唯一底 */
+  /* hover 升一档：α .941 → .980（Δ = 10/255 ≥ 8/255；亮档同款层级语义） */
+  --nf-glass-bg-hover: #181c26fa;
   --nf-glass-border-color: #ffffff0F;      /* 参照物暗档细边 rgba(255,255,255,.06) */
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
   --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
@@ -426,8 +439,8 @@ html[data-theme="dark"] {
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]):not([data-theme="dark"]) {
     --nf-glass-input-bg: #181c26F0;
-    --nf-glass-bg: #181c26AD;
-    --nf-glass-bg-hover: #181c26B8;
+    --nf-glass-bg: var(--nf-glass-input-bg);
+    --nf-glass-bg-hover: #181c26fa;
     --nf-glass-border-color: #ffffff0F;
     --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
     --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
@@ -435,8 +448,8 @@ html[data-theme="dark"] {
 }
 html[data-theme="light"] {
   --nf-glass-input-bg: #ffffffF7;
-  --nf-glass-bg: #ffffff8C;
-  --nf-glass-bg-hover: #ffffff9E;
+  --nf-glass-bg: var(--nf-glass-input-bg);
+  --nf-glass-bg-hover: #ffffff;
   --nf-glass-border-color: #ffffff59;
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
   /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」

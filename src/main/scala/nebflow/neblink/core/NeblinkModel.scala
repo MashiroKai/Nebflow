@@ -599,7 +599,7 @@ object DeviceIdentity:
    *
    * 为什么只改 name、不动 id：id 早已是 `UUIDv5(machineCode|scope)`（见上），隔离实例与
    * 作者主客户端**不撞身份**；事故的真形态是「同账号 + **同名**第二条设备行」——
-   * 对端列表 / 联系人面板里两个 `Mashiros-MacBook-Pro` 无从分辨
+   * 对端列表 / 联系人面板里两个 `<真机名>` 无从分辨
    * （核查卡 `20260920_214729_seedpath-card` §2 环 1 / §4.2 补强②）。后缀让隔离实例在
    * 出网显示面（presence query 的 `deviceName`）一眼可辨。
    *

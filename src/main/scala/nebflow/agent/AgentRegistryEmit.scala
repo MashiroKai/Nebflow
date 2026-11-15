@@ -49,6 +49,8 @@ private[agent] trait AgentRegistryEmit:
   // protected 对包内非子类不可见 ⇒ 放宽为 private[agent](trait 仅包内可见,外延不变)。
   private[agent] def persistIfSession(resources: SharedResources, state: AgentState): IO[Unit] =
     state.sessionId match
+      case Some(sid) if resources.protectedExecutions.contains(sid) =>
+        IO.raiseError(new IllegalStateException("protected-transcript-projection-not-authorized"))
       case Some(sid) => resources.sessionStore.saveMessagesForSession(sid, state.messages)
       case None => IO.unit
 

@@ -194,11 +194,17 @@ async function seedBase(page) {
   await inject(page, rootStart(WILD_CHILD, { status: 'Processing', name: '野后代', taskDescription: '父未注册', parentSessionId: 'node-gone-77770000' }));
   // Terminal live claimer: the agentDone handler writes done:true (then reaps the
   // row after 2s) — seeding that state directly emulates the post-done window.
-  await page.evaluate(async ({ sid, aid }) => {
+  // The agent's row is terminal in every bucket that carries it (its own scope bucket included). Seeding
+  // mutates state without an event, so the badge is recomputed explicitly, as the refresh that follows a
+  // terminal state does in production; otherwise it keeps the count from the last agentStart (3) until some
+  // unrelated async refresh happens to run.
+  await page.evaluate(async ({ aid, rootSid }) => {
     const s = (await import('/js/state.js')).default;
-    const row = s.sessionBgAgents[sid] && s.sessionBgAgents[sid][aid];
-    if (row) { row.done = true; row.status = 'Completed'; }
-  }, { sid: ROOT_SID, aid: DONE_LIVE });
+    for (const bucket of Object.values(s.sessionBgAgents)) {
+      if (bucket[aid]) { bucket[aid].done = true; bucket[aid].status = 'Completed'; }
+    }
+    (await import('/js/main/bgAgents.js')).updateBgAgentIndicator(rootSid);
+  }, { aid: DONE_LIVE, rootSid: ROOT_SID });
 }
 
 // ── ①②⑦ 结构父合成 + 终态保留 + 计数不含标签面 + 折叠默认 ────────────────────
@@ -243,12 +249,14 @@ test('①②⑦ 活跃后代 ⇒ 结构父显示（注册行身份/零计数）�
   expect(live.rail.trim().length).toBeGreaterThan(0); // tree rail (parent-child edge)
   expect(live.orphan).toBe(null);                     // parent visible → not orphan-faced
 
-  // ① counts: 4 real rows counted (LIVE + DONE + DONE_LIVE + WILD); labels excluded.
+  // ① counts: 4 real rows are retained (LIVE + DONE + DONE_LIVE + WILD); labels excluded.
   //    Rendered = 3 — DONE_LIVE sits under the collapsed all-terminal struct
-  //    (collapse prunes DOM, never the totals: badge/header/row-total keep 4).
+  //    (collapse prunes DOM, never the totals: header/row-total keep 4).
+  //    The badge counts ACTIVE rows only: LIVE + WILD = 2. The completed store child and the terminal
+  //    claimer stay visible without being counted, and the structural labels never count.
   expect(dump.rows).toHaveLength(3);
   expect(dump.listTotal).toBe('4');
-  expect(String(counts.badge).trim()).toBe('4');
+  expect(String(counts.badge).trim()).toBe('2');
   expect(String(counts.section)).toContain('· 3'); // section label counts rendered rows
   expect(errors).toEqual([]);
 });

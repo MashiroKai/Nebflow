@@ -9,12 +9,16 @@
   20261004_edu_rc_charge_schematic_dark.png  —— 暗色透明底（Remotion 视频内嵌用）
 """
 import os
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
 from pathlib import Path
 
 # 套件全局 matplotlibrc（YaHei 中文字体）接线，必须在 import matplotlib 前（2026-10-04 实测节点 shell 该变量为空）
-os.environ.setdefault("MPLCONFIGDIR", r"C:\Users\Kai\.nebflow\tools\mplconfig")
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(DATA_ROOT, "tools", "mplconfig"))
 
-OUT_DIR = Path(r"C:\Users\Kai\.nebflow\plots\education-motion")
+OUT_DIR = Path(os.path.join(DATA_ROOT, 'plots', 'education-motion'))
+os.makedirs(OUT_DIR, exist_ok=True)
 
 DARK_RULES = """  text { fill: #e8eaed !important; }
   path, line, circle, ellipse, polygon, rect { stroke: #e8eaed !important; fill: none !important; }"""

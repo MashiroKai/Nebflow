@@ -436,6 +436,7 @@ export default {
   // 动作由重试键本身承载，不写「请检查网络连接」这类排查教学。
   'messages.listLoadFailed': '会话列表加载失败',
   'messages.retry': '重试',
+  'messages.backToAgent': '返回智能体对话',
   // 🔴 `systemNowFriends` = **好友接受流程**的语境（唯一合法消费点 =
   // messages.js `onFriendEvent` 的 `friend_accepted` 分支）⇒ 下条群语境键是
   // **拆键**产物（2026-09-16 作者令「入群提示还是：你们已成为好友，这不对」：
@@ -524,6 +525,7 @@ export default {
   'messages.forwardPartial': '已转发 {n} 条，{f} 条失败',
   // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
   'messages.queueAttachUnrecoverable': '{n} 个附件因页面刷新无法恢复，请重新添加',
+  'input.historyAttachLost': '历史记录里有 {n} 个附件的内容已不在本机，请重新添加',
   // attach-split 批（2026-10-24 现场事故修复）：服务端超限帧有声拒绝（messageTooLarge
   // 回执）的用户可见文案 —— {size}/{limit} = 实测帧 MB / 服务端上限 MB。
   'send.messageTooLarge': '这条消息（约 {size} MB）超过投递上限 {limit} MB，未被发送——请减少附件数量后重发',
@@ -1749,7 +1751,7 @@ export default {
   'chat.errorTileWaiting': '等恢复',
   'chat.typeAnswer': '输入你的回答...',
   'chat.failedRender': '选项渲染失败，请重试。',
-  'askUser.viewCompare': '在 Canvas 查看',
+  'askUser.viewCompare': '在看板查看',
   // AskUser 附件行批（chain-askuser-enhance-impl，2026-10-02）—— 顶层 `attachments`
   // 渲染为整次提问层的可点击附件行。🔴 草案：候作者逐字过目（§16 冻结闸）后才生效；
   // 生效候重启窗（静态资源服务自 jar 内资源）。
@@ -2550,7 +2552,9 @@ export default {
   'search.loadedOf': '已加载 {n}/{m} 条',
   'search.loadMore': '加载更多（已加载 {n}/{m} 条）',
   // 多选文件批量在 Canvas 打开（chatsearch-batch-open 批）
-  'search.openSelectedInCanvas': '在 Canvas 打开 ({n})',
+  'search.openSelectedInCanvas': '打开所选文件 ({n})',
+  'search.selectFiles': '选择文件',
+  'search.cancelSelection': '取消选择',
   'search.jumpArchived': '该消息在压缩前归档里，回放窗口内无原位',
   'search.noResults': '无匹配结果',
   'search.noResultsSuggestion': '试试缩短关键词或清除日期/类型筛选',
@@ -3270,6 +3274,9 @@ export default {
   'todoapple.newListPh': '新建列表',
   'todoapple.more': '更多',
   'todoapple.newTodo': '新待办',
+  'todoapple.createUnconfirmed': '尚未确认保存，请检查连接并重试。为避免重复，请回到原会话重试。',
+  'todoapple.discardPending': '放弃重试',
+  'todoapple.replyFailed': '回复未发送，请检查主会话状态和连接后重试。',
   'todoapple.notes': '备注（可选）',
   'todoapple.save': '保存',
   'todoapple.markComplete': '标记完成',

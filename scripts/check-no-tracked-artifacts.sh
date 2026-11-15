@@ -59,7 +59,7 @@ scripts/data-root-migration/evidence|:(top)scripts/data-root-migration/evidence
 <仓库根>*__flow-*.md|:(top,glob)*__flow-*.md'
 
 cd "$REPO_ROOT" || fail "无法进入仓库根 $REPO_ROOT"
-git rev-parse --is-inside-work-tree > /dev/null 2>&1 || fail "不是 git 工作树：$REPO_ROOT（本门禁依赖索引，纯导出目录无法判定）"
+git rev-parse --is-inside-work-tree > /dev/null 2>&1 || fail "不是 git 工作树：${REPO_ROOT}（本门禁依赖索引，纯导出目录无法判定）"
 
 # -- B 面：探针先行，证明 git ls-files 面可信 ---------------------------------
 # src/ 是本仓的核心源码面，任何真实 checkout 都不可能为空。它为空 = git 面

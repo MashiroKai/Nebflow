@@ -1,127 +1,232 @@
 package nebflow.core.ask
 
 import cats.effect.IO
+import io.circe.Json
+import io.circe.syntax.*
+import nebflow.core.AtomicJson
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 import scala.util.control.NonFatal
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Canvas 记事本（note）持久层 —— 引擎侧真源（持久化缺陷批 2026-11-05）
+ * Canvas Note store: the authoritative, versioned copy of each file's note.
  *
- * 报障（作者 2026-11-05）：「Canvas Note 记录的内容会丢」。改前实测（见批报告
- * 复现表）：内容只写浏览器 localStorage（`<brand>_note:<sid>`），**引擎侧零写点**
- * ⇒ 换浏览器/换设备/换 origin（localhost ↔ 127.0.0.1、换端口、手机层另一台设备）
- * 一律读不到；清站点数据即彻底丢失。localStorage 是「按 origin × 设备」的私有
- * 易失层，做不了「随文件」的语义。
+ * Identity: `sid = ask-<8 hex of sha256(absPath)>` (AskSessions.sessionIdFor), so the same
+ * file has the same note on every device and browser.
  *
- * 本件的定位 = 记事本内容的**权威落点**，与 ask 会话同一套文件身份：
- *   sid = `ask-<sha256(absPath) 前 8 hex>`（AskSessions.sessionIdFor，单点同源）
- *   ⇒ 同一文件在任何设备/任何浏览器上派生同一个 sid ⇒ 读到同一份记事本。
- * 落盘：`<dataRoot>/ask/notes/<sid>.md`
- *   · 与 ask 绑定表同目录族（`<dataRoot>/ask/index.json`），一起属于用户数据；
- *   · 原子写（AtomicJson.writeSync：临时件 + ATOMIC_MOVE），进程被杀不留半截；
- *   · 内容 = 纯文本原文（.md 后缀只表达「这是文档类速记」，不做任何格式解析）。
+ * Record: `<dataRoot>/ask/notes/<sid>.json`, `{"v":1,"version":<ms>,"text":"…","cleared":<bool>}`,
+ * replaced with `AtomicJson.writeSync` (temp file plus atomic rename), so a reader sees either
+ * the complete old or the complete new record.
+ *   · The version is assigned here and strictly increases per note (`max(now, previous + 1)`).
+ *     Version 0 means "no record". A clear is a record with `cleared:true` and an empty text:
+ *     a writer that last saw an older version can tell it from a note that never existed.
+ *   · A note written before versioning (`<sid>.md`) reads with its modification time as the
+ *     version. The first accepted write creates the envelope and then removes the `.md` file.
+ *     While an envelope exists it is the only authority: a corrupt envelope is a read error and
+ *     the `.md` file is never used in its place (it could be stale).
  *
- * 容量与清理策略（明确口径，不静默）：
- *   · 单件上限 MaxBytes = 256 KiB（UTF-8 字节）—— 记事本是「随手记」，超限即拒写
- *     并回执 too-large（前端显示可读状态行，不静默截断用户文本）；
- *   · 总量 = 单件上限 × 文件数，无全局强制淘汰：**用户内容不自动删**（记事本正文
- *     删掉就找不回来，比占盘严重得多）。真要回收 = 用户自己清空该文件的记事本
- *     （空文本 ⇒ 本件删除文件，不留空壳）。
+ * Writes are conditional (see [[AskNoteStore.put]]): a write names the version it is based on and
+ * is applied only while that version is current. Anything that cannot be read is reported as a
+ * read error, never as an empty note, and is never overwritten.
  *
- * 并发口径（多标签页/多设备）：**最后写者胜**——本件只返回 supersededTs 供上层
- * 判断「本次覆盖了别人更新的版本」，不加锁（单机单进程下 os 写是原子的；跨设备
- * 并发与 ask 转录「服务端为权威」同律，前端负责打开面板即重读、失焦/切回即对账）。
+ * Size: at most `MaxBytes` (256 KiB) of UTF-8 bytes of text. User content is never deleted
+ * automatically; clearing a note is the only way its text goes away.
+ *
+ * Consistency: every read and write of one note runs under one lock that is shared by all
+ * `AskNoteStore` instances (the gateway builds an instance per call), so a conditional write is a
+ * single read-compare-write step and a reader never sees the migration half done.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/** 一次读盘结果。`ts` = 文件 mtime（毫秒，0 = 不存在）；`exists` 显式给前端做判据。 */
-final case class AskNoteSnapshot(text: String, ts: Long, exists: Boolean):
-  def isEmpty: Boolean = !exists || text.isEmpty
+/**
+ * One read of a note. `ts` is the record version (0 = no record); for a clear `exists` is false,
+ * `cleared` is true and `ts` is the version of the clear. `error` is set when the note could not
+ * be read: such a snapshot is NOT an empty note and must not be treated as one.
+ */
+final case class AskNoteSnapshot(
+  text: String,
+  ts: Long,
+  exists: Boolean,
+  cleared: Boolean = false,
+  error: Option[String] = None
+):
+  def version: Long = ts
+  def isEmpty: Boolean = error.isEmpty && (!exists || text.isEmpty)
 
-/** 写结果（sealed：调用方必须逐支处理，禁「顺手当成功」）。 */
+/** Result of a write. Sealed: callers must handle every branch. */
 enum AskNoteWrite:
-  /** 已落盘。supersededTs > 0 ⇒ 本次覆盖了盘上 mtime = 该值的旧版本（并发写信号）。 */
+  /** Applied (or already saved) at version `ts`; `supersededTs` is the version it replaced (0 = none). */
   case Ok(ts: Long, supersededTs: Long)
 
-  /** 超出单件上限（字节）。**未写盘**（盘上旧值原样保留）。 */
+  /** Over the size limit (UTF-8 bytes). Nothing written. */
   case TooLarge(bytes: Int, limit: Int)
 
-  /** 会话 id 形态非法（防路径穿越 / 防任意文件名）。**未写盘**。 */
+  /** Malformed session id (path traversal guard). Nothing written. */
   case BadSessionId(id: String)
 
-  /** 落盘失败（磁盘满 / 权限 / 目录不可建）。**未写盘**。 */
+  /** The write itself failed (disk full, permissions). The stored record is unchanged. */
   case Failed(message: String)
 
-/**
- * 记事本落盘单点。无内存缓存（每次读盘）：记事本写入频率是「人手打字」，性能
- * 面完全不敏感，而**不缓存**换来「多设备/多进程写立刻互相可见」这个正确性。
- */
+  /** The base version is not the current one. Nothing written; `current` is the stored state. */
+  case Conflict(current: AskNoteSnapshot)
+
+  /** The write named no base version. Nothing written; `current` is the stored state. */
+  case VersionRequired(current: AskNoteSnapshot)
+
+  /** The stored record cannot be read, so it must not be overwritten. Nothing written. */
+  case ReadFailed(message: String)
+
 final class AskNoteStore(dataRoot: os.Path):
+  import AskNoteStore.*
+
   private val logger = NebflowLogger.forName("nebflow.ask.notes")
 
-  /** 单件上限（字节，UTF-8）。见文件头「容量与清理策略」。 */
+  /** Size limit in UTF-8 bytes of the text. */
   val MaxBytes: Int = 256 * 1024
 
-  /** 落点目录：`<dataRoot>/ask/notes`（与 ask/index.json 同族）。 */
+  /** Directory of the records: `<dataRoot>/ask/notes`. */
   val dir: os.Path = dataRoot / "ask" / "notes"
 
-  /** sid 硬闸：`ask-` + 8 hex（AskSessions.sessionIdFor 的产物形态）才允许落盘——
-   *  这条同时是路径穿越防线（`../`、绝对路径、盘符一律不匹配）。 */
+  /** `ask-` plus 8 hex only: this is also the path-traversal guard (`../`, absolute paths, drive letters never match). */
   private val SidPattern = "^ask-[0-9a-f]{8}$".r
 
   def isValidSid(sid: String): Boolean =
     sid != null && SidPattern.matches(sid)
 
-  /** sid → 记事本文件路径（调用前必须已过 [[isValidSid]]）。 */
+  /** Path of the legacy plain-text record (read, then migrated by the first accepted write). */
   def pathFor(sid: String): os.Path = dir / s"$sid.md"
 
-  /** 读某文件记事本。缺件/bad sid/读失败 ⇒ 空快照（exists=false），不抛。 */
+  /** Path of the versioned record. */
+  def recordPathFor(sid: String): os.Path = dir / s"$sid.json"
+
+  private def lockOf(sid: String): AnyRef = locks.computeIfAbsent(recordPathFor(sid).toString, _ => new Object)
+
+  private def readStored(sid: String): Stored =
+    val record = recordPathFor(sid)
+    val legacy = pathFor(sid)
+    try
+      if os.exists(record) then
+        decodeRecord(os.read(record)) match
+          case Right(stored) => stored
+          case Left(why) => Stored.Unreadable(s"corrupt note record: $why")
+      else if os.exists(legacy) then
+        val text = os.read(legacy)
+        if text.isEmpty then Stored.Cleared(os.mtime(legacy)) else Stored.Live(text, os.mtime(legacy))
+      else Stored.Absent
+    catch
+      case NonFatal(e) =>
+        logger.warn(s"ask note read failed: $sid: ${e.getMessage}")
+        Stored.Unreadable(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
+
+  /** Read one note. A missing note is an empty snapshot; an unreadable one carries `error` and no text. */
   def read(sid: String): IO[AskNoteSnapshot] =
     IO.blocking {
       if !isValidSid(sid) then AskNoteSnapshot("", 0L, false)
-      else
-        val p = pathFor(sid)
-        try
-          if !os.exists(p) then AskNoteSnapshot("", 0L, false)
-          else AskNoteSnapshot(os.read(p), os.mtime(p), true)
-        catch
-          case NonFatal(e) =>
-            logger.warn(s"ask note read failed (non-fatal, treated as empty): $sid: ${e.getMessage}")
-            AskNoteSnapshot("", 0L, false)
+      else lockOf(sid).synchronized(snapshotOf(readStored(sid)))
     }
 
   /**
-   * 写某文件记事本。空文本 ⇒ 删件（不留空壳，与前端「空 = 删键」同律）。
-   * 逐支结果见 [[AskNoteWrite]]；本方法**不抛**（失败走 Failed）。
+   * Conditional write: the only write the gateway performs.
+   *   · unreadable record → `ReadFailed`, nothing written;
+   *   · no base version → `VersionRequired`, nothing written (an old caller cannot tell a note that
+   *     never existed from one cleared before clears were versioned);
+   *   · text equal to the stored text → `Ok` at the stored version, nothing written (a retry after
+   *     a lost receipt, or two writers that agree);
+   *   · base version differs from the stored version → `Conflict`, nothing written;
+   *   · otherwise the text is stored with a new version; empty text stores a clear.
+   * `baseVersion = Some(0)` means "I saw no note".
    */
-  def write(sid: String, text: String): IO[AskNoteWrite] =
+  def put(sid: String, text: String, baseVersion: Option[Long]): IO[AskNoteWrite] =
+    writeNote(sid, text, conditional = true, baseVersion)
+
+  /** Unconditional write for the store's own tests and maintenance; the gateway never calls it. */
+  private[ask] def write(sid: String, text: String): IO[AskNoteWrite] =
+    writeNote(sid, text, conditional = false, None)
+
+  private def writeNote(sid: String, text: String, conditional: Boolean, baseVersion: Option[Long]): IO[AskNoteWrite] =
     IO.blocking {
       if !isValidSid(sid) then AskNoteWrite.BadSessionId(String.valueOf(sid))
       else
-        val p = pathFor(sid)
         val body = if text == null then "" else text
         val bytes = body.getBytes(StandardCharsets.UTF_8).length
         if bytes > MaxBytes then AskNoteWrite.TooLarge(bytes, MaxBytes)
-        else
-          try
-            val previousTs = if os.exists(p) then os.mtime(p) else 0L
-            if body.isEmpty then
-              if previousTs > 0L then os.remove(p)
-              AskNoteWrite.Ok(System.currentTimeMillis(), previousTs)
-            else
-              nebflow.core.AtomicJson.writeSync(p, body)
-              AskNoteWrite.Ok(os.mtime(p), previousTs)
-          catch
-            case NonFatal(e) =>
-              logger.warn(s"ask note write failed: $sid: ${e.getMessage}")
-              AskNoteWrite.Failed(e.getMessage)
+        else lockOf(sid).synchronized(commit(sid, body, conditional, baseVersion))
     }
+
+  /** The read-compare-write step. Callers hold the note's lock. */
+  private def commit(sid: String, body: String, conditional: Boolean, baseVersion: Option[Long]): AskNoteWrite =
+    readStored(sid) match
+      case Stored.Unreadable(why) => AskNoteWrite.ReadFailed(why)
+      case stored =>
+        val current = snapshotOf(stored)
+        if conditional && baseVersion.isEmpty then AskNoteWrite.VersionRequired(current)
+        else if body == current.text then AskNoteWrite.Ok(current.version, current.version)
+        else if conditional && !baseVersion.contains(current.version) then AskNoteWrite.Conflict(current)
+        else store(sid, body, current.version)
+
+  /** Replace the record atomically, then drop the legacy file. A failed write leaves the stored record unchanged. */
+  private def store(sid: String, body: String, previousVersion: Long): AskNoteWrite =
+    val version = math.max(System.currentTimeMillis(), previousVersion + 1)
+    try
+      AtomicJson.writeSync(recordPathFor(sid), encodeRecord(version, body))
+      val legacy = pathFor(sid)
+      try os.remove(legacy, checkExists = false)
+      catch
+        case NonFatal(e) =>
+          // The envelope is authoritative, so a leftover legacy file is only clutter.
+          logger.warn(s"ask note legacy file not removed: $sid: ${e.getMessage}")
+      AskNoteWrite.Ok(version, previousVersion)
+    catch
+      case NonFatal(e) =>
+        logger.warn(s"ask note write failed: $sid: ${e.getMessage}")
+        AskNoteWrite.Failed(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
 end AskNoteStore
 
 object AskNoteStore:
 
-  /** 现读 dataRoot 构造（PathUtil.dataRoot 是 live def：隔离实例/--home/测试换根后
-   *  下一次调用自动指向新根——与 auth.scala tokenPath 同律，不缓存实例）。 */
+  /** One lock per note, shared by every instance. */
+  private val locks = new ConcurrentHashMap[String, AnyRef]()
+
+  /** What is on disk for one note. */
+  private enum Stored:
+    case Absent
+    case Live(text: String, version: Long)
+    case Cleared(version: Long)
+    case Unreadable(message: String)
+
+  private def snapshotOf(stored: Stored): AskNoteSnapshot = stored match
+    case Stored.Absent => AskNoteSnapshot("", 0L, false)
+    case Stored.Live(text, version) => AskNoteSnapshot(text, version, true)
+    case Stored.Cleared(version) => AskNoteSnapshot("", version, false, cleared = true)
+    case Stored.Unreadable(why) => AskNoteSnapshot("", 0L, false, error = Some(why))
+
+  private def encodeRecord(version: Long, text: String): String =
+    Json
+      .obj(
+        "v" -> 1.asJson,
+        "version" -> version.asJson,
+        "text" -> text.asJson,
+        "cleared" -> text.isEmpty.asJson
+      )
+      .printWith(io.circe.Printer.noSpaces.copy(escapeNonAscii = true))
+
+  /** Parse an envelope. A record that contradicts itself is corrupt, not "empty". */
+  private def decodeRecord(raw: String): Either[String, Stored] =
+    io.circe.parser.parse(raw).left.map(_.getMessage).flatMap { json =>
+      val cursor = json.hcursor
+      for
+        version <- cursor.get[Long]("version").left.map(_.getMessage)
+        text <- cursor.get[String]("text").left.map(_.getMessage)
+        cleared <- cursor.getOrElse[Boolean]("cleared")(text.isEmpty).left.map(_.getMessage)
+        stored <-
+          if version <= 0L then Left("version must be positive")
+          else if cleared && text.nonEmpty then Left("cleared record carries text")
+          else if cleared || text.isEmpty then Right(Stored.Cleared(version))
+          else Right(Stored.Live(text, version))
+      yield stored
+    }
+
+  /** Built from the data root on every call (`PathUtil.dataRoot` is live, so an isolated root takes effect at once). */
   def current: AskNoteStore = new AskNoteStore(PathUtil.dataRoot)
 end AskNoteStore

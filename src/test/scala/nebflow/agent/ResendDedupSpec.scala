@@ -153,9 +153,16 @@ class ResendDedupSpec extends CatsEffectSuite:
    *  跳过 reminders 注入的 `<system-reminder>…` User 行（时间注入会排在实义消息
    *  之后 —— 实测把「最后一条 user」位占掉）。 */
   private def lastUserIs(req: LlmRequest, text: String): Boolean =
+    // 时钟简化批（2eb988a4f）：真人 user 消息 = reminder 壳钟头 + 真换行 + 正文
+    // （withUserClock: s"$clock\n$text"，时钟头与正文**同件**）。旧形 `filterNot(startsWith("<system-reminder>"))` 会把
+    // 真人件整条滤掉（正文永不匹配 ⇒ RD2 的 queuedTurns/heldTurns 双 0）。改滤
+    // 「纯提醒件」（首尾都是 reminder 壳），真人件保留参与匹配。
     req.messages
       .filter(_.role == nebflow.shared.MessageRole.User)
-      .filterNot(_.textContent.startsWith("<system-reminder>"))
+      .filterNot { m =>
+        val t = m.textContent.trim
+        t.startsWith("<system-reminder>") && t.endsWith("</system-reminder>")
+      }
       .lastOption
       .exists(_.textContent.contains(text))
 

@@ -23,7 +23,7 @@
 | [`DelegateTerminal.scala`](DelegateTerminal.scala) | DelegateTerminal —— delegate 终态判定钩子（R6 终态判定 + S12 合并轮；worktree -judge-fifo 批 #1224 增补 §3.1/§3.3；#566 修复批 2026- |
 | [`DelegateWorkReport.scala`](DelegateWorkReport.scala) | DelegateWorkReport —— 合并轮 finish 交付的工作结果附页（delegate-finish-report 修复批 2026-10-25 · 作者令逐字：「delegate report merg |
 | [`DeviceDelegate.scala`](DeviceDelegate.scala) | 设备腿 delegate 通道（v2.1 阶段 1 §A.3 / §E 阶段 1「项目分布执行」）。 通道**：presence WS 结构化消息（既有数据通道单点，`sendData`）+ relay 兜底 |
-| [`DeviceResultOutbox.scala`](DeviceResultOutbox.scala) | DeviceResultOutbox —— **跨设备完成件的持久待发区**（台账 #944 跨设备回报丢件腿）。 == 病灶（2026-10-26 实证链，KAI 侧日志 + Mac 侧日志双侧对账）== |
+| [`DeviceResultOutbox.scala`](DeviceResultOutbox.scala) | DeviceResultOutbox —— **跨设备完成件的持久待发区**（台账 #944 跨设备回报丢件腿）。 == 病灶（2026-10-26 实证链，Windows 侧日志 + Mac 侧日志双侧对账）== |
 | [`DualMode.scala`](DualMode.scala) | DualModeConfig —— **delegate 双模式总闸**（设计 `docs/design/20261028_213056_delegate-dual-mode-redesign__delegate-neb |
 | [`ExternalJudgeHook.scala`](ExternalJudgeHook.scala) | ExternalJudgeHook —— 外部 delegate 终态判定的**接线缝**（external-executors 批 #1225 留缝；判定机本体归 worktree-judge-fifo 批 #1224 |
 | [`MergeAcceptance.scala`](MergeAcceptance.scala) | MergeAcceptance —— 合并轮终态的**机械验收闸**（引擎加固批 2026-10-09，上游审计 #31 结论 P1-1①）. |

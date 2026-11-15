@@ -72,4 +72,25 @@ class DualModeBriefInjectionSpec extends FunSuite:
     assert(!brief.contains("pure orchestration"), "the doctrine header must not appear in a kernel brief")
   }
 
+  test("I4 dispatcher brief permits blocking reconnaissance but keeps task execution on chains") {
+    val brief = DelegateTool.assembleBrief(
+      workspaceLine = "[workspace] /tmp/ws",
+      bindingLine = None,
+      task = "Inspect the code, then delegate the implementation.",
+      injectedBlock = "",
+      dispatcherDiscipline = Some(line),
+      includeOutputRule = false
+    )
+    assert(brief.contains("use Subagent for blocking lookups and analysis"))
+    assert(brief.contains("Read/Glob/Grep/WebSearch/WebFetch/Bash"))
+    assert(brief.contains("foreground shell-backed reconnaissance"))
+    assert(brief.contains("without starting background work"))
+    assert(brief.contains("findings return as this tool call's result"))
+    assert(brief.contains("Use chain nodes for task execution, not Subagent"))
+    assert(brief.contains("ONE ChainWrite call"))
+    assert(brief.contains("mode violation, not a shortcut"))
+    assert(!brief.contains("Subagent tool is gone"))
+    assert(!brief.contains("read-only / analysis = one node"))
+  }
+
 end DualModeBriefInjectionSpec

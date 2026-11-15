@@ -122,6 +122,10 @@ export class ChatView {
     // ── Input history navigation (per-view) ──
     this.historyIndex = -1;
     this.historyDraft = '';
+    /** Attachment objects the history recall added to `pendingAttachments` (replaced on the next recall). */
+    this.historyRecalledAtts = [];
+    /** Bumped on every recall so a slow payload read never lands on a newer position. */
+    this.historyRecallTicket = 0;
 
     // ── Voice recognition ──
     this.recognition = null;
@@ -214,6 +218,8 @@ export class ChatView {
     this.slashSelectedIndex = -1;
     this.historyIndex = -1;
     this.historyDraft = '';
+    this.historyRecalledAtts = [];
+    this.historyRecallTicket += 1;
   }
 
   /** Switch this view to display a different session. */

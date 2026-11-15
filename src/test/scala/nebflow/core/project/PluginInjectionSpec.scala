@@ -83,10 +83,12 @@ class PluginInjectionSpec extends CatsEffectSuite:
       createFolders = true
     )
 
-  /** 缺陷①（2026-11-02）：失败语义回退位（plugins.failOpenOnAllocationError）。 */
+  /** 缺陷①（2026-11-02）：失败语义回退位（plugins.failOpenOnAllocationError）。
+    * 读面 = PathUtil.configJsonReadPath（品牌规范名；eee82de42 改名批口径）——
+    * 写裸旧名 nebflow.json 时开关恒缺省 false，fail-open 测试炸 None.get。 */
   private def setFailOpenOnAllocationError(on: Boolean): Unit =
     os.write.over(
-      tempRoot / "nebflow.json",
+      tempRoot / nebflow.shared.Branding.configFileName,
       s"""{"plugins":{"enabled":true,"failOpenOnAllocationError":$on}}""",
       createFolders = true
     )

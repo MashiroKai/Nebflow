@@ -42,7 +42,7 @@ schemdraw 是本场景主渲染器（电路原理图的唯一合规生成方式�
 
 | 工具 | 用途 | 本机检测命令（实测） | 官方链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
-| schemdraw | 电路原理图（真实渲染 PNG/SVG） | `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe -m pip show schemdraw` → schemdraw 0.23 | https://schemdraw.readthedocs.io/en/latest/ · https://pypi.org/project/schemdraw/ | README 全工具链接验证表：200 · 200（2026-10-04） | 纯文字网表 / 引脚表 / 参数表格描述；不得手画 SVG，不得空转 |
+| schemdraw | 电路原理图（真实渲染 PNG/SVG） | `C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe -m pip show schemdraw` → schemdraw 0.23 | https://schemdraw.readthedocs.io/en/latest/ · https://pypi.org/project/schemdraw/ | README 全工具链接验证表：200 · 200（2026-10-04） | 纯文字网表 / 引脚表 / 参数表格描述；不得手画 SVG，不得空转 |
 
 配套（本机已有，状态与 Mac 差异见 README 表）：matplotlib 3.11.2（波特图 / 频响 / 噪声谱）；graphviz 16.1.0（系统框图 / 信号链拓扑，`tools\graphviz\bin\dot.exe` 全路径调用）。Python 包只装进 viz-venv（core §5）；MSYS 传 Windows 路径参数加 `MSYS2_ARG_CONV_EXCL='*'`。
 

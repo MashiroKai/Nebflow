@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-"""check-logo-matrix.py -- anti-drift gate for the installer banner artwork.
+"""check-logo-matrix.py -- anti-drift gate for CLI banner artwork.
 
-Single source of truth (official-logo batch, author mandate 2026-10-22): the
-Illustrator-kit vector assets vendored at
-  src/main/resources/web/brand/stand/illustrator/svg/
-(byte-identical to the website's public/brand/stand/ set -- the sha256-verified
-publication of the 2026-10-19 official-logo batch). The banner art is the
-stand-horizontal lockup (symbol + wordmark), auto-sampled by
-scripts/render-install-banner.py into a 1-bit half-block payload
-(BANNER_ART / $BannerArt) plus the two ink variants' true fill values
-(BANNER_INK_DARK / BANNER_INK_LIGHT). The retired 2026-10-20 4x3 green-pixel
-"S" mask (pixil-era BANNER_MASK / $BannerMask, design/stand-mark.pixil) is
-GONE from the installers; this gate fails if any of it ever comes back.
+The official stand-horizontal SVG lockup is the artwork source of truth.
+The generated JVM resource and both installers must carry identical art,
+ink colors, PNGs and SIXEL bodies. Shell wrappers delegate artwork to the
+runtime, and the Scala renderer loads the generated resource rather than
+embedding standalone symbol artwork.
 
 The gate:
   1. (stdlib) parses the embedded payloads out of BOTH release/install.sh
@@ -30,11 +24,15 @@ The gate:
      constants and the sampler drifting together;
   5. (stdlib) asserts scripts/preview-brand-ui.sh still extracts the
      BRAND-UI block from install.sh and defines NO art payload of its own
-     (single-source chain).
+     (single-source chain);
+  6. (stdlib) checks the runtime Properties resource against both installers,
+     and rejects independent shell/Scala artwork implementations.
 
 Exit 0 = all green, 1 = drift detected (prints what moved), 2 = missing file.
 """
+import importlib.util
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -46,6 +44,9 @@ PREVIEW_SH = os.path.join(ROOT, "scripts", "preview-brand-ui.sh")
 SVG_DIR = os.path.join(
     ROOT, "src", "main", "resources", "web", "brand", "stand", "illustrator", "svg")
 SAMPLER = os.path.join(ROOT, "scripts", "render-install-banner.py")
+BANNER_RESOURCE = os.path.join(
+    ROOT, "src", "main", "resources", "brand", "stand-terminal-banner.properties")
+SPLASH = os.path.join(ROOT, "src", "main", "scala", "nebflow", "cli", "splash.scala")
 
 BLACK_SVG = os.path.join(SVG_DIR, "stand-horizontal-black.svg")
 WHITE_SVG = os.path.join(SVG_DIR, "stand-horizontal-white.svg")
@@ -98,6 +99,48 @@ def parse_ps1(text):
          "BannerSixelDark", "BannerSixelLight"))}
 
 
+def parse_runtime(text):
+    spec = importlib.util.spec_from_file_location("stand_banner_sampler", SAMPLER)
+    sampler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sampler)
+    return sampler.parse_properties(text)
+
+
+def independent_artwork(text, shell=False):
+    """Detect executable artwork rather than matching documentation prose."""
+    code = "\n".join(line for line in text.splitlines()
+                     if not line.lstrip().startswith("#" if shell else "//"))
+    problems = []
+    if shell and re.search(r"\bstand_banner_print\b", code):
+        problems.append("shell-owned banner renderer")
+    # Runs of block glyphs include the standalone S and compact shell variants,
+    # but not individual glyphs used to decode the generated half-block payload.
+    if re.search(r"[\u2580-\u259f]{2,}", code):
+        problems.append("inline block artwork")
+    if shell and re.search(r"(?:BANNER_ART|BANNER_MASK|BannerArt|BannerMask)\s*=", code):
+        problems.append("independent shell artwork payload")
+    return problems
+
+
+def check_runtime_sources(root=ROOT):
+    problems = []
+    ops = Path(root) / "ops"
+    # Production wrappers only: lifecycle tests may quote forbidden examples.
+    paths = list(ops.glob("*.sh")) + list((ops / "bin").glob("*"))
+    for path in sorted(paths):
+        if path.is_file() and (path.suffix in ("", ".sh", ".ps1", ".cmd", ".bat")):
+            for problem in independent_artwork(read(path), shell=True):
+                problems.append(f"[{path.relative_to(root)}] {problem}")
+    cli = Path(root) / "src/main/scala/nebflow/cli"
+    for path in sorted(cli.glob("*.scala")):
+        for problem in independent_artwork(read(path)):
+            problems.append(f"[{path.relative_to(root)}] {problem}")
+    splash = Path(root) / "src/main/scala/nebflow/cli/splash.scala"
+    if not splash.is_file() or "brand/stand-terminal-banner.properties" not in read(splash):
+        problems.append("[splash.scala] renderer must load the shared banner resource")
+    return problems
+
+
 def svg_fill(path):
     m = re.search(r'fill="#([0-9A-Fa-f]{6})"', read(path))
     if not m:
@@ -107,7 +150,8 @@ def svg_fill(path):
 
 
 def main():
-    if not all(os.path.exists(p) for p in (INSTALL_SH, INSTALL_PS1, PREVIEW_SH)):
+    if not all(os.path.exists(p) for p in (
+            INSTALL_SH, INSTALL_PS1, PREVIEW_SH, BANNER_RESOURCE, SPLASH)):
         print("gate input file missing", file=sys.stderr)
         return 2
     failures = []
@@ -141,6 +185,32 @@ def main():
             failures.append(f"[cross] sh vs ps1 payload drift: {drifted}")
         else:
             print("[cross] all 7 payloads byte-identical sh == ps1  [OK]")
+
+    # The resource must remain ASCII for Properties.load(InputStream).
+    try:
+        with open(BANNER_RESOURCE, "r", encoding="ascii") as f:
+            runtime = parse_runtime(f.read())
+        expected_keys = set(PAYLOAD_KEYS) | {"columns", "rows"}
+        if set(runtime) != expected_keys:
+            failures.append("[runtime] unexpected or missing property keys")
+        if (runtime.get("columns"), runtime.get("rows")) != ("72", "9"):
+            failures.append("[runtime] dimensions must be 72 columns by 9 rows")
+        embedded["runtime"] = {key: runtime.get(key) for key in PAYLOAD_KEYS}
+        drifted = [key for key in PAYLOAD_KEYS
+                   if runtime.get(key) is None or any(
+                       runtime.get(key) != embedded[label][key]
+                       for label in ("install.sh", "install.ps1"))]
+        if drifted:
+            failures.append(f"[runtime] payload drift vs installers: {drifted}")
+        else:
+            print("[runtime] all 7 payloads byte-identical to both installers  [OK]")
+    except (UnicodeError, ValueError, OSError) as e:
+        failures.append(f"[runtime] invalid Properties resource: {e}")
+
+    source_problems = check_runtime_sources()
+    failures.extend(source_problems)
+    if not source_problems:
+        print("[sources] shell delegation and shared Scala artwork  [OK]")
 
     # ---- leg 2: ink constants == kit SVG fills (stdlib) --------------------
     try:
@@ -179,14 +249,18 @@ def main():
             capture_output=True, text=True, timeout=120)
     except FileNotFoundError:
         proc = None
+    except subprocess.TimeoutExpired:
+        proc = subprocess.CompletedProcess(
+            args=[sys.executable, SAMPLER], returncode=1,
+            stdout="", stderr="sampler exceeded the 120-second timeout")
     if proc is None:
         print("[regen] python unavailable - skipped")
     elif proc.returncode != 0:
         # rsvg-convert missing -> the sampler exits 2 with a clear message;
         # degrade to a skip (the same policy as the retired pixil leg), never
         # a false red.
-        if "rsvg-convert" in proc.stderr:
-            print("[regen] rsvg-convert not available - re-derivation skipped")
+        if "rsvg-convert not on PATH" in proc.stderr or "No module named 'PIL'" in proc.stderr:
+            print("[regen] rsvg-convert or PIL not available - re-derivation skipped")
         else:
             failures.append(f"[regen] sampler failed: {proc.stderr.strip()}")
     else:
@@ -216,7 +290,7 @@ def main():
                                 " (rerun 'python3 scripts/render-install-banner.py"
                                 " --update' and review the diff)")
             else:
-                print("[regen] all 7 payloads re-derived from kit SVGs == TRUTH == both installers  [OK]")
+                print("[regen] all 7 payloads re-derived from kit SVGs == TRUTH == installers and runtime  [OK]")
 
     # ---- leg 5: preview script single-source -------------------------------
     prev = read(PREVIEW_SH)

@@ -1,7 +1,5 @@
 package nebflow.agent
 
-import nebflow.neblink.social.*
-
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
@@ -756,11 +754,11 @@ object AgentCore:
   val NebflowFixedTools: Set[String] = BaseTools + "AskHost" + "Subagent"
 
   /**
-   * 只读侦察子面（builtin-merge 批 2026-10-03）：SubagentTool 的 spawn 目标
-   * `subagent` 的机制固定工具面——恰五件只读（Read/Glob/Grep/WebSearch/
-   * WebFetch），**无写、无 shell、无消息**（只读由机制保证，不由提示词保证）。
+   * Fixed reconnaissance face for the builtin Subagent target. Bash uses the normal
+   * execution pipeline; reconnaissance is role policy, not a read-only shell sandbox.
+   * No separate Write/Edit, messaging or recursive agent tools are granted.
    */
-  val SubagentFixedTools: Set[String] = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch")
+  val SubagentFixedTools: Set[String] = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
 
   /**
    * 通用模版固定工具集（§C.1/§C.5）：沿革「恰七件 = BaseTools 六件 + AskUserQuestion」；
@@ -859,7 +857,7 @@ object AgentCore:
           // AgentFlow 件随工具退役摘除（九件）。
           // 机制固定单点，不经 legacyFixedTools 的 catch-all。
           case "nebflow" => AgentCore.NebflowFixedTools
-          // 只读侦察子（SubagentTool 的 spawn 目标）：机制固定只读五件。
+          // SubagentTool target: fixed six-tool reconnaissance face, including Bash.
           case "subagent" => AgentCore.SubagentFixedTools
           // E5 batch 2026-10-01: the former fifth member's by-name branch is deleted
           // together with that name -- the agent retired on 2026-09-25 (`aa371d68f`)

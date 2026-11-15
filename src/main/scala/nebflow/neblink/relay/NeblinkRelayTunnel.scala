@@ -94,7 +94,7 @@ final class NeblinkRelayTunnel(
    * 台账 #944（跨设备回报丢件腿）：**relay（重）连成功后的补投腿**。
    *
    * 病灶：device-delegate 的完成件原为 fire-and-forget——宿主暂不可达 / 隧道不在 /
-   * 进程死在发送前，件无声蒸发（实证：KAI 14:39 重启把 6 个在飞会话连回投代理一起
+   * 进程死在发送前，件无声蒸发（实证：Windows 实机 14:39 重启把 6 个在飞会话连回投代理一起
    * 杀掉，6 件从未离机）。修法 = 完成件先落盘（[[nebflow.core.delegate.DeviceResultOutbox]]），
    * 隧道重连成功即按入队序补投——断连窗口里攒下的件在连上的第一刻全部出去。
    *

@@ -184,10 +184,13 @@ NF_HOME="${STAND_HOME:-$HOME/.stand}"   # 2026-10-23 对齐现役数据根（原
                                         # 缺省不变——沙箱化测试由此把四信号读数指进隔离 home）
 LOG="$NF_HOME/logs/nebflow.log"
 NEBFLOW_DIR="$HOME/Claude code/Stand"   # 2026-10-23 仓目录更名对齐（旧 Nebflow 目录仍在，不修会从旧树编译起实例）
-SBT_OUT="/tmp/nebflow-sbt-restart.log"
-CANARY_OUT="/tmp/nebflow-canary.log"
-WATCH_LOG="/tmp/stand-restart-watch.log"
-REPORT="/tmp/stand-restart-last-run.txt"
+# Isolated fixtures override only the output root; production paths stay unchanged.
+RESTART_TMPDIR="${NEBFLOW_RESTART_TMPDIR:-/tmp}"
+SBT_OUT="$RESTART_TMPDIR/nebflow-sbt-restart.log"
+CANARY_OUT="$RESTART_TMPDIR/nebflow-canary.log"
+WATCH_LOG="$RESTART_TMPDIR/stand-restart-watch.log"
+REPORT="$RESTART_TMPDIR/stand-restart-last-run.txt"
+PREFLIGHT_OUT="$RESTART_TMPDIR/nebflow-preflight-compile.log"
 PAUSE_FLAG="$NF_HOME/logs/watchdog-paused"   # R5: watchdog 维护暂停标志（机制已存在于 nebflow-watchdog.sh）
 
 # v4.2 A: helper 解析去 $0 单点依赖。BIN_DIR 由 $0 派生——source/eval 下 $0=shell 名，
@@ -447,13 +450,13 @@ observe_idle() {
 preflight_compile() {
   stage "[preflight] 开始: sbt compile（编译不过绝不重启）"
   cd "$NEBFLOW_DIR" || { stage "[preflight] ✗ 目录不存在: ${NEBFLOW_DIR}"; exit 1; }
-  if "$SBT_BIN" -batch compile > /tmp/nebflow-preflight-compile.log 2>&1; then
+  if "$SBT_BIN" -batch compile > "$PREFLIGHT_OUT" 2>&1; then
     stage "[preflight] ✓ 编译通过"
   else
     stage "[preflight] ✗ 编译失败 —— 保留旧实例，放弃重启"
-    stage "[preflight] 日志: /tmp/nebflow-preflight-compile.log，尾 5 行:"
-    tail -5 /tmp/nebflow-preflight-compile.log 2>/dev/null | while IFS= read -r l; do stage "[preflight]   | ${l}"; done
-    stage "终态: 失败（编译预检未过——失败原因见上方日志尾行与 ${DETACH_LOG:-/tmp/nebflow-preflight-compile.log}）"
+    stage "[preflight] 日志: ${PREFLIGHT_OUT}，尾 5 行:"
+    tail -5 "$PREFLIGHT_OUT" 2>/dev/null | while IFS= read -r l; do stage "[preflight]   | ${l}"; done
+    stage "终态: 失败（编译预检未过——失败原因见上方日志尾行与 ${DETACH_LOG:-$PREFLIGHT_OUT}）"
     exit 1
   fi
 }
@@ -474,6 +477,7 @@ kill_canary_daemons() {
   for pass in TERM KILL; do
     while read -r pid; do
       [[ -n "$pid" ]] || continue
+      [[ "$pid" == "$SELF_PID" ]] && continue   # marker 脏行自保:绝不把信号发给脚本自身
       if [[ "$pass" == "TERM" ]]; then kill "$pid" 2>/dev/null; else kill -KILL "$pid" 2>/dev/null; fi
     done < <(python3 - "$mf" <<'PYEOF'
 import json, sys
@@ -489,6 +493,22 @@ PYEOF
     [[ "$pass" == "TERM" ]] && sleep 2
   done
   rm -f "$mf"
+}
+
+# canary 残留回收(2026-11-15 信号闭包批):不再按名字 pgrep/pkill 批量信号
+# (「不仅凭进程名操作」纪律),只对本轮 canary 端口的监听者逐 PID 做 ps 命令行
+# 身份核验(须含本轮 canary 端口或 canary home 字样),TERM→KILL 两段式;
+# 身份对不上的一律不碰 = 无残留就不发任何信号。
+canary_identity_kill() {
+  local pass p cmd
+  for pass in TERM KILL; do
+    for p in $(lsof -nP -tiTCP:"$CANARY_PORT" -sTCP:LISTEN 2>/dev/null); do
+      cmd=$(ps -p "$p" -o command= 2>/dev/null) || continue
+      [[ "$cmd" == *"--port $CANARY_PORT"* || "$cmd" == *"$CANARY_HOME"* ]] || continue
+      if [[ "$pass" == "TERM" ]]; then kill "$p" 2>/dev/null; else kill -KILL "$p" 2>/dev/null; fi
+    done
+    [[ "$pass" == "TERM" ]] && sleep 2
+  done
 }
 
 preflight_canary() {
@@ -510,8 +530,7 @@ preflight_canary() {
       if [[ "$code" =~ ^(200|401|403)$ ]]; then
         stage "[canary] 验: ✓ 新代码可正常启动（${cpid}，$(( $(now_ts) - started ))s，API=${code}）—— 允许重启主实例"
         kill "$cpid" 2>/dev/null; sleep 3
-        pgrep -f "\-\-port $CANARY_PORT" | xargs kill -KILL 2>/dev/null
-        pgrep -f "nebflow-canary" >/dev/null 2>&1 && pkill -f "nebflow-canary" 2>/dev/null
+        canary_identity_kill
         kill_canary_daemons
         stage "[canary] 停: canary 已回收"
         return 0
@@ -521,7 +540,7 @@ preflight_canary() {
   done
   stage "[canary] ✗ canary 300s 未就绪 —— 新代码启动有问题，保留旧实例，放弃重启（canary 日志 ${CANARY_OUT}）"
   tail -5 "$CANARY_OUT" 2>/dev/null | while IFS= read -r l; do stage "[canary]   | ${l}"; done
-  pgrep -f "\-\-port $CANARY_PORT" | xargs kill -KILL 2>/dev/null
+  canary_identity_kill
   kill_canary_daemons
   stage "终态: 失败（canary 300s 未就绪——失败原因见上方 canary 日志尾行与 ${CANARY_OUT}）"
   exit 1
@@ -554,7 +573,10 @@ kill_tree_kill() {
 # ---------- R6: 本项目范围内的 sbt 附带击杀（替代旧版 pgrep -f sbt-launch 全机器扫杀） ----------
 # 只返回命令行是 sbt/scala/java 且 cwd 在 $NEBFLOW_DIR 的进程（含 fork 出的无父链 JVM）。
 # 其他项目的 sbt 会话一律不碰（旧版误杀样本：15455/16666）。
+narrow_sweep_disabled() { [[ "${NEBFLOW_RESTART_NO_NARROW_SBT:-0}" == "1" ]]; }
+
 pids_of_cwd() {
+  narrow_sweep_disabled && return 0
   python3 - "$NEBFLOW_DIR" "$SELF_PID" <<'PYEOF'
 import subprocess, sys
 target = sys.argv[1].rstrip('/')   # lsof 输出的路径不带尾斜杠——等值比或「目录/」前缀比
@@ -598,6 +620,7 @@ PYEOF
 }
 
 kill_narrow_sbt() {
+  narrow_sweep_disabled && return 0
   local sig="$1" p
   for p in $(pids_of_cwd); do
     ps_alive "$p" || continue
@@ -931,7 +954,9 @@ do_restart() {
     else
       stage "[dry-run]   将杀进程树 root=${pid}：TERM → 进程表验证全灭（≤${PROC_WAIT_SECS}s）→ 必要时 KILL 升级"
     fi
-    stage "[dry-run]   R6 窄域清扫候选（cwd=$NEBFLOW_DIR 的 sbt/scala/java）: $(pids_of_cwd | tr '\n' ' ')"
+    if ! narrow_sweep_disabled; then
+      stage "[dry-run]   R6 窄域清扫候选（cwd=$NEBFLOW_DIR 的 sbt/scala/java）: $(pids_of_cwd | tr '\n' ' ')"
+    fi
     stage "[dry-run]   spawn 前将做 TIME_WAIT 排空探测（严格 bind，≤${TW_WAIT_SECS}s）"
     stage "[dry-run]   spawn 后自适应就绪等待：sbt 死即失败 / 编译活跃续期（硬上限 ${READY_HARD_CAP}s）/ 放弃即清扫"
     stage "[dry-run]   杀前将快照在册 delegate 会话（成功通知与报告附带清单，可逐个原位恢复）"
@@ -947,7 +972,10 @@ do_restart() {
   if [[ -z "$pid" ]]; then
     stage "[restart] 杀旧腿: 端口 $KILL_PORT 无监听进程"
     # R6: 无监听也可能有本项目残留（半死实例/上次重启的孤儿编译）——窄域清扫，范围限本项目目录
-    local stray; stray=$(pids_of_cwd)
+    local stray=""
+    if ! narrow_sweep_disabled; then
+      stray=$(pids_of_cwd)
+    fi
     if [[ -n "$stray" ]]; then
       stage "[restart] 发现本项目目录残留进程: $(echo "$stray" | tr '\n' ' ')——TERM"
       local p; for p in $stray; do kill "$p" 2>/dev/null; done
@@ -968,12 +996,12 @@ do_restart() {
     stage "[restart] 杀旧腿: TERM 进程树 root=$pid"
     kill_tree_term "$pid"
     # v4.1: NEBFLOW_RESTART_NO_NARROW_SBT=1 为隔离验证测试开关（宿主 cwd 也在项目目录；默认行为不变）
-    [[ "${NEBFLOW_RESTART_NO_NARROW_SBT:-0}" == "1" ]] || kill_narrow_sbt TERM
+    narrow_sweep_disabled || kill_narrow_sbt TERM
     # R2: 进程表验证——「端口释放 ≠ 实例死亡」（半死 JVM 监听已关、进程活着，旧版被骗 7 分钟）
     if ! tree_live=$(wait_tree_dead "$pid" $PROC_WAIT_SECS); then
       stage "[restart] TERM ${PROC_WAIT_SECS}s 后仍有存活:${tree_live} —— KILL 升级（含半死实例与 TERM-ignoring daemon）"
       kill_tree_kill "$pid"
-      [[ "${NEBFLOW_RESTART_NO_NARROW_SBT:-0}" == "1" ]] || kill_narrow_sbt KILL
+      narrow_sweep_disabled || kill_narrow_sbt KILL
       local p; for p in $tree_live; do kill -KILL "$p" 2>/dev/null; done
       sleep 2
       if ! tree_live=$(wait_tree_dead "$pid" 10); then

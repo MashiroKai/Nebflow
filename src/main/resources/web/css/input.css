@@ -358,6 +358,25 @@
   max-width: 100%;
   min-width: 0;
 }
+/* A thumbnail that failed to load stays in the strip as a failed item (dashed, muted); its retry control
+   fills the thumbnail box and loads that one thumbnail again. */
+.att-thumb-wrap.is-failed {
+  width: 28px; height: 28px;
+  box-sizing: border-box;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--ds-radius-input);
+}
+.att-thumb-retry {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.att-thumb-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 1px; }
 .att-file {
   height: 28px;
   box-sizing: border-box;

@@ -284,18 +284,26 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
       !tools.contains("Pop"),
       s"executor node must NOT receive Pop (2026-09-10 作者裁定：Pop 收归 Nebula 专属), got keys: ${tools.keys.toList.sorted}"
     )
-    // 2026-09-08 作者修订恢复 AskUser（D6 批D1）：节点 wire 层重新
-    // 收到该工具（2026-09-06 摘除断言反向）；order-400 指南仍随工具 description
-    // 自包含生效（删段不退化判据恢复钉死）
-    val ask =
-      tools.getOrElse("AskUserQuestion", fail("executor node must receive AskUserQuestion (2026-09-08 restored)"))
+    // 过时测试修复（2026-11-15）：随基线 c6329920e「Restrict AskUserQuestion to root
+    // tool face」补齐漏改面——执行面提问件 = AskHost；问用户卡在 wire 层同样限根
+    // （与定义层 AllowedToolSetSpec / AskUserDualModeSchemaSpec 同一批裁定）。
     assert(
-      ask.contains("When NOT to use"),
-      "AskUserQuestion description carries the order-400 guidance at the wire level"
+      !tools.contains("AskUserQuestion"),
+      s"executor node must NOT receive AskUserQuestion (c6329920e 限根裁定), got keys: ${tools.keys.toList.sorted}"
+    )
+    assert(tools.contains("AskHost"), "executor node receives AskHost (correlated request ask-root face)")
+    // order-400 指南仍随 AskUserQuestion 基线 description 自包含生效（删段不退化
+    // 判据保留，探针移到注册表基线——工具描述与身份无关，任何面拿到的都是这一份）
+    val baselineAsk = nebflow.core.tools.ToolRegistry.ALL_TOOLS
+      .find(_.name == nebflow.core.tools.AskUserQuestionTool.Name)
+      .getOrElse(fail("AskUserQuestion missing from the registry"))
+    assert(
+      baselineAsk.description.contains("When NOT to use"),
+      "AskUserQuestion baseline description carries the order-400 guidance (删段不退化)"
     )
     assert(
-      ask.contains("node-ask trace event") && ask.contains("project · node"),
-      "AskUserQuestion description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)"
+      baselineAsk.description.contains("node-ask trace event") && baselineAsk.description.contains("project · node"),
+      "AskUserQuestion baseline description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)"
     )
 
 end Phase2dSkillCatalogSpec

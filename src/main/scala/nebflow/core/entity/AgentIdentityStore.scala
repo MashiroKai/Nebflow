@@ -1,7 +1,5 @@
 package nebflow.core.entity
 
-import nebflow.neblink.sync.*
-
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*

@@ -59,12 +59,20 @@ class SchemePolicySpec extends FunSuite:
 
   // ── write gate ────────────────────────────────────────────
 
-  test("SettableAgents is exactly the three current roles; the retired spellings stay resolvable") {
-    assertEquals(SchemePolicy.SettableAgents, Set("Nebula", "project-dispatcher", executorName))
+  test("SettableAgents = the three roles + the model-slot wire names (f12de863c); retired spellings stay resolvable") {
+    // f12de863c（roles 收敛批 P1-1/P1-2/P1-3）：写闸并入 ModelRoles.Slots 的槽
+    // wire 名（REST GET/PUT /agents/:name/model 的合法槽面），三角色照旧。
+    // 恰集 = 角色 ∪ 槽 wire 名——写闸必须严格跟随槽注册表，不得有额外临时名。
+    assertEquals(
+      SchemePolicy.SettableAgents,
+      Set("Nebula", "project-dispatcher", executorName) ++ ModelRoles.Slots.map(_._1),
+      "the write gate must be exactly roles + slot wire names (no ad-hoc additions)"
+    )
     // P0-1/P1-2 old-data face: a stored retired-name sidecar keeps the pre-merge
     // settability (resolveRetired single-point table) — the convergence does NOT
     // silently move those chains onto the Nebula primary chain.
-    assert(SchemePolicy.isSettable("kernel"), "retired name kernel keeps settability via the rename table")
+    // （kernel 兼有槽 wire 名身份；general 走退役改名表。）
+    assert(SchemePolicy.isSettable("kernel"), "kernel keeps settability (slot wire name + rename table)")
     assert(SchemePolicy.isSettable("general"), "retired name general keeps settability via the rename table")
     assert(!SchemePolicy.isSettable("some-custom"), "custom names are not settable")
   }

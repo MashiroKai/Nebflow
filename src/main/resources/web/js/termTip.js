@@ -6,7 +6,7 @@
 //   ① 主路径 = graph 载荷零请求 —— 消解 pass 已把注册表命中连同 definition
 //     缓存进 dataset.wikiResolved，气泡直读（docs viewer 面）；
 //   ② 兜底 = 词条不在载荷（30s TTL 内的陈旧图谱 / 服务端未重扫 / 无图谱面
-//     如聊天气泡、flow/report 卡片的 ```human 卡）⇒ hover 时打
+//     如聊天气泡、flow/report 卡片的 ```human 卡）⇒ 点击时打
 //     `GET /api/wiki/term?name=` 单查，命中同样出泡。
 // Popover is body-mounted, viewport-clamped, and has no full-screen mobile state.
 
@@ -15,25 +15,23 @@ let termTipLink = null;
 let termTipHost = null;
 let termTipTimer = 0;
 let termTipDocBound = false;
+let termTipGeneration = 0;
 /** 深链导航回调（docs viewer 注入 onWikilinkClick；无导航面留空 = 收泡即止）。 */
 let termTipNav = null;
-const TERM_TIP_DELAY = 150; // hover 防抖（§5.2：+150ms 才出泡）
-/** @type {Map<string, any>} term-API 兜底腿的结果缓存（含 miss=null，hover 不重复打） */
+/** @type {Map<string, any>} term-API fallback cache, including misses. */
 const termApiCache = new Map();
+const termApiVersions = new Map();
 
 /** 注入气泡内点击的深链导航（docs viewer = onWikilinkClick；chat 等面不注入）。 */
 export function setTermTipNav(fn) {
   termTipNav = fn;
 }
 
-function noHoverEnv() {
-  return !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
-}
-
 function ensureTermTipEl() {
   if (termTipEl) return termTipEl;
   const el = document.createElement('div');
   el.className = 'nf-term-tip';
+  el.style.display = 'none';
   el.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
   // Interacting with the preview must never invoke the document link handler.
   el.addEventListener('click', (e) => e.stopPropagation());
@@ -55,7 +53,7 @@ function ensureTermTipEl() {
     termTipDocBound = true;
     // 点击别处收泡（触屏首击开泡后的第二次交互面）。
     document.addEventListener('pointerdown', (e) => {
-      if (!termTipEl || termTipEl.style.display === 'none') return;
+      if (!termTipLink) return;
       const t = /** @type {Node|null} */ (e.target);
       if (t && termTipEl.contains(t)) return;
       if (termTipLink && termTipLink.contains(/** @type {Node|null} */ (t))) return;
@@ -68,6 +66,7 @@ function ensureTermTipEl() {
 }
 
 export function hideTermTip() {
+  termTipGeneration++;
   if (termTipTimer) { clearTimeout(termTipTimer); termTipTimer = 0; }
   termTipLink = null;
   termTipHost = null;
@@ -91,6 +90,8 @@ async function termInfoFor(a) {
   if (!name) return null;
   const key = name.toLowerCase();
   if (termApiCache.has(key)) return termApiCache.get(key);
+  const version = (termApiVersions.get(key) || 0) + 1;
+  termApiVersions.set(key, version);
   let info = null;
   try {
     const { authHeaders } = await import('./flowHelpers.js');
@@ -102,7 +103,7 @@ async function termInfoFor(a) {
       }
     }
   } catch (e) { info = null; }
-  termApiCache.set(key, info);
+  if (termApiVersions.get(key) === version) termApiCache.set(key, info);
   return info;
 }
 
@@ -132,35 +133,31 @@ function paintTermTip(a, info) {
 
 function requestTermTip(a, host, delay) {
   hideTermTip();
+  ensureTermTipEl(); // bind outside-click cancellation before the request starts
   termTipLink = a;
   termTipHost = host || null;
+  const generation = termTipGeneration;
   termTipTimer = setTimeout(async () => {
     const info = await termInfoFor(a);
-    if (termTipLink !== a) return;   // superseded/hidden while fetching
+    if (generation !== termTipGeneration || termTipLink !== a) return;   // superseded/hidden while fetching
     if (!info) return;               // not a term after all — stay closed
     paintTermTip(a, info);
   }, delay);
 }
 
-/** 触屏首击开泡（返回 true = 点击已消费，点击腿不再导航）。第二次点击同一
- *  链接返回 false → 落回深链跳转；「气泡内再点」由气泡自身的 click 腿消费。 */
+/** Click toggles the preview on both desktop and touch, without navigation. */
 export function termTapExpand(a, host) {
   const kind = a.dataset.wikiTermKind;
   if (!kind) return false;
-  if (termTipLink === a) return true;
+  if (termTipLink === a) { hideTermTip(); return true; }
   requestTermTip(a, host, 0);
   return true;
 }
 
-/** 挂词条面（F3）：词条命中链接挂 hover 出泡（+150ms 防抖）；载荷未收录的
- *  短形 unresolved 链接挂兜底腿（hover 打 term API）。非词条普通链接不挂
- *  （§5.2 克制口径）。触屏不挂 mouseenter —— 移动走点击腿 termTapExpand。 */
+/** Mark existing term and fallback links for the shared click handler. */
 export function attachTermFace(a, host, opts) {
   a.classList.add('nf-wikilink-term');
   if (opts && opts.term) a.dataset.wikiTermKind = 'term';
   else a.dataset.wikiTermKind = 'fallback';
   if (opts && !opts.term && opts.fallbackName) a.dataset.wikiTermFallback = opts.fallbackName;
-  if (noHoverEnv()) return;
-  a.addEventListener('mouseenter', () => requestTermTip(a, host, TERM_TIP_DELAY));
-  a.addEventListener('mouseleave', () => { if (termTipLink === a) hideTermTip(); });
 }

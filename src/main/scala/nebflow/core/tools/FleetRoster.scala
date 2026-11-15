@@ -1,7 +1,5 @@
 package nebflow.core.tools
 
-import nebflow.neblink.core.*
-
 import io.circe.syntax.*
 import nebflow.core.device.{DeviceEntry, DeviceRegistry}
 import nebflow.shared.PeerInfo
@@ -18,7 +16,7 @@ import nebflow.shared.PeerInfo
  *
  * 行格式（一行一台，**无列表符号**——devicesDelta 差量解析按 `[;\n]` 切行，
  * 条目行保持 `+<entry>` / `-<entry>` 净形；紧凑，不撑上下文）：
- *   - `KAI (40742cd4) [online · v2026.10.26-beta.1 · windows] - 描述 · caps: node,git,java`
+ *   - `<win> (40742cd4) [online · v2026.10.26-beta.1 · windows] - 描述 · caps: node,git,java`
  *   - `Mac (dd8cfd22) [online · macos] - 描述 · caps: … [cwd=… | os=Darwin …]`
  *   - `OldBox (abcd1234) [offline · linux]`（登记表/画像在册但 presence 不在）
  *

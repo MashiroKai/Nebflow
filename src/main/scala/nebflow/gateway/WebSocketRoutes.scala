@@ -116,23 +116,23 @@ class WebSocketRoutes(
           IO.raiseError(new RuntimeException(s"ask session $sessionId: ask services unavailable"))
     else
       metaOpt.flatMap(_.agentName) match
-      case Some(agentName) =>
-        sharedResources.agentLibrary.get(agentName).flatMap {
-          case Some(defn) => IO.pure(defn)
-          case None =>
-            metaOpt.flatMap(_.flowName) match
-              case Some(fn) =>
-                nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
-                  case Some(entry) => IO.pure(entry.toAgentDef)
-                  case None => rootFallback(agentName)
-                }
-              case None => rootFallback(agentName)
-        }
-      case None =>
-        sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
-          case Some(d) => IO.pure(d)
-          case None => IO.raiseError(new RuntimeException("No default agent available"))
-        }
+        case Some(agentName) =>
+          sharedResources.agentLibrary.get(agentName).flatMap {
+            case Some(defn) => IO.pure(defn)
+            case None =>
+              metaOpt.flatMap(_.flowName) match
+                case Some(fn) =>
+                  nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
+                    case Some(entry) => IO.pure(entry.toAgentDef)
+                    case None => rootFallback(agentName)
+                  }
+                case None => rootFallback(agentName)
+          }
+        case None =>
+          sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
+            case Some(d) => IO.pure(d)
+            case None => IO.raiseError(new RuntimeException("No default agent available"))
+          }
 
   private def rootFallback(agentName: String): IO[AgentDef] =
     sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
@@ -186,6 +186,10 @@ class WebSocketRoutes(
       history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
       metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
       agentDef <- resolveAgentDef(sessionId, metaOpt, sharedResources)
+      sessionCwd <- nebflow.core.ask.AskSessions.sessionCwd(
+        sessionId,
+        nebflow.core.ask.AskGatewayServices.instance.map(_.registry)
+      )
       readTracker <- nebflow.shared.ReadTracker.create
       fileHistory <- nebflow.shared.FileHistory.create()
       modelOverrides <- sharedResources.sessionModelOverrides.get
@@ -241,6 +245,7 @@ class WebSocketRoutes(
           fileHistory = Some(fileHistory),
           contextWindow = contextWindow,
           projectRoot = effectiveProjectRoot,
+          sessionCwd = sessionCwd,
           rulesMd = resolvedRules,
           folderId = folderId,
           safetyMode = nebflow.core.SafetyMode.toString(effectiveMode),
@@ -1031,621 +1036,621 @@ class WebSocketRoutes(
       .nfAuthcheckRoutes(
         tokenRef,
         sessions
-      ) <+> NfOfficeRoutes.officeRoutes(nfTicketStore, nfPathPolicy) <+> NfFileRoutes.nfReachRoutes <+> HttpRoutes.of[IO] {
-      case req @ GET -> Root / "ws" =>
-        // Phase 3b: the unified GatewayAuth criterion under WsAuth — session
-        // cookie first, then Bearer (file token; a WsAuth registration note:
-        // browsers cannot send Authorization on a WS handshake, so this leg
-        // only ever fires for non-browser clients such as CLI/script callers).
-        // Stage D retired the two file-token-in-request-target rails (the
-        // legacy `nebflow_token` cookie and the token query param) — the
-        // handshake is session-cookie driven; a presented-but-invalid high
-        // rail still falls through instead of rejecting (see GatewayAuth).
-        tokenRef.get
-          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
-          .flatMap {
-            case None =>
-              logger.warn(
-                s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
-              ) *>
-                Forbidden("Invalid token")
-            case Some(cred) =>
-              // 控制台单实例批（2026-10-27）：实例身份 = 门户会话。仅 session-rail
-              // 连接参与接管注册表；Bearer rail（CLI/脚本/headless）不注册、不被
-              // 通知、不参与竞选——非浏览器客户端没有「实例」语义，零触碰零漂移。
-              val takeoverSession: Option[String] = cred match
-                case Credential.ViaSession(record) => Some(record.sessionId)
-                case _ => None
-              // 接管误报根修批（2026-11-02）：浏览器稳定身份（`deviceIdentity.js` 的
-              // localStorage clientId，随 `/ws?clientId=` 带上）。会话 id 会变（过期/
-              // 重座/换浏览器），clientId 不会——接管身份必须以 clientId 为准，会话只
-              // 作退路（老缓存页不带参时的既有行为）。无鉴权含义：鉴权仍由上面
-              // GatewayAuth 的会话 cookie 决定，伪造 clientId 最坏只是不弹提示。
-              val takeoverClient: Option[String] =
-                req.params.get("clientId").map(_.trim).filter(id => id.nonEmpty && id.length <= 128)
-              // 同端判据批（2026-11-07 作者报障「手机端反复弹已被其他位置打开」）：接管的
-              // 实例身份除 clientId 外还带**端指纹素材**（握手 UA）+ 来源 IP——
-              // clientId 是 per-origin/per-profile 的随机 UUID（设备清存储、换入口、
-              // 每次 Playwright 临时 profile 都会重新生成），单凭它判「另一处」必然误报。
-              // UA 只做端指纹与日志证据位，不参与鉴权（安全边界同 clientId 声明）。
-              val wsUa: Option[String] =
-                req.headers.get(CIString("User-Agent")).map(_.head.value.take(256)).filter(_.nonEmpty)
-              // 门户身份透传批（方案 A1，2026-10-28）：会话身份快照——session 轨
-              // 连接把 SessionRecord 投影（accountSub/origin/sessionId）随接管入账
-              // 一起穿进收流管（下方 receivePipe 同一闭包作用域）；Bearer 轨连接恒
-              // None ⇒ 消息面行为逐字节不变（takeover 先例同点，同一信任锚：
-              // 会话记录 ← 票链 ← link-server AT 验证 + owner 核对）。
-              val sessionIdentity: Option[nebflow.bridge.SessionIdentity] = cred match
-                case Credential.ViaSession(record) =>
-                  Some(nebflow.bridge.SessionIdentity(record.accountSub, record.origin, record.sessionId))
-                case _ => None
-              // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
-              // 环回恒放行）。入账延后到收流管起跑（下方 guardedReceive 会话
-              // scope bracket——升级会话未起跑即未发生，零幽灵计数），回减同
-              // scope 配对（releaseWs 凭据 + close/EOF/异常/判死四途同归）。
-              // 括号包裹 = 保持原 for 缩进不动（大段受理体零改排）。
-              val wsIp = ConnGuard.normalizeIp(req.remoteAddr)
-              connGuard.checkWs(wsIp).flatMap {
-                case Some(reason) =>
-                  logger.warn(
-                    s"conn-guard: WS upgrade rejected ip=$wsIp reason=$reason caps=${connGuard.config.wsPerIpCap}/${connGuard.config.wsTotalCap}"
-                  ) *>
-                    TooManyRequests(
-                      s"Connection guard: WebSocket limit reached ($reason); retry later or contact the operator"
-                    )
-                case None => (
-                  for
-                    // R-960（僵尸会话回收批 · #954 presence 同款平移）：共享装配核
-                    // [[WsZombieGuard]]——入站活跃钟 + 10s 判死拍 + deadSig 双侧直达。
-                    // console 口径（[[WsZombieGuard.ConsoleLiveness]]）：deadAfter=90s
-                    // = 3 × 客户端自 ping 间隔（ws.js HB_INTERVAL_MS=30s，服务端 pong
-                    // 应答在 WsSystemHandlers.handlePing）——容忍两拍丢失；后台标签页
-                    // 静默回收由 ws.js 唤醒腿（forceReconnect/wake-probe）接住。
-                    zombie <- WsZombieGuard.open(WsZombieGuard.ConsoleLiveness)
-                    // ── A2 (perf-481): bounded outbound queue ────────────────────
-                    // Was `Queue.unbounded`: a slow/stalled subscriber never
-                    // applied backpressure, so its queue grew without bound while
-                    // the event loop kept paying "serialize + offer" for it.
-                    //
-                    // Overflow policy (plan OD-1, per-frame class):
-                    //  · streaming increment (textDelta/thinkingDelta/…): drop the
-                    //    OLDEST frame and enqueue the new one. A stream increment is
-                    //    superseded by later ones, so losing the middle of a stream
-                    //    costs at most a few rendered characters — never final state.
-                    //  · control/status frame: do NOT drop. A dropped control frame
-                    //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
-                    //    showing "saved"); a throttled one delays it. So the
-                    //    connection is torn down instead: the client reconnects and
-                    //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
-                    //    resync leg), which is a visible, recoverable failure rather
-                    //    than a silent one.
-                    // The class is computed once per event inside WsHub (see there).
-                    outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
-                    outboundOverflowClosed <- Deferred[IO, Unit]
-                    // console-reconnect-stability（2026-10-28）：pong 旁路队列——
-                    // 大帧阵发时心跳应答不再排在本连接 bulk FIFO 之后（机制见
-                    // [[ConsolePongLane]]）。有界 16；道满回落既有 FIFO。
-                    pongLane <- Queue.bounded[IO, WebSocketFrame](ConsolePongLane.Capacity)
-
-                    perConnWsSend = (text: String, isStream: Boolean) =>
-                      outbound
-                        .tryOffer(WebSocketFrame.Text(text))
-                        .flatMap {
-                          case true => IO.unit
-                          case false if isStream =>
-                            // Full queue + droppable frame ⇒ evict oldest, then take
-                            // the slot this frame just vacated. `tryTake` returning
-                            // None (a reader drained it concurrently) is fine — the
-                            // retry below either succeeds or is counted, never loops.
-                            outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
-                              IO(wsHub.noteOverflowDrop())
-                          case false =>
-                            // Full queue + control frame ⇒ tear this connection down.
-                            // The teardown rides the queue's own stream (see
-                            // `sendStream`), so there is no process-wide state and no
-                            // cross-connection leak.
-                            IO(wsHub.noteOverflowClose()) *>
-                              logger.warn(
-                                "WebSocket outbound queue full on a non-stream frame — closing " +
-                                  s"this connection (capacity $OutboundQueueCapacity)"
-                              ) *>
-                              outboundOverflowClosed.complete(()).void
-                        }
-                    // 在带身份声明（握手 query 不可靠批 2026-11-03）：本连接的实例
-                    // 键读数——初值 = 握手腿（query 可用时已是身份键；隧道脸无 query
-                    // = 会话退路键）。identify 帧到达后经 onIdentify 迁移并写回，
-                    // 内容闸随读数换轨（None = Bearer 轨/总闸关，直通）。
-                    takeoverHolderRef = new java.util.concurrent.atomic.AtomicReference[Option[String]](
-                                          takeoverSession.map(sid => ConsoleTakeover.holderOf(sid, takeoverClient))
-                                        )
-                    // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
-                    // 内容帧闸——ConsoleTakeover.gateFrame 按**实例**裁决（owner 非本
-                    // 实例 ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧
-                    // 断喂）。误报根修批（2026-11-02）：闸键与入账键同为 holder
-                    // （clientId 优先），否则同浏览器换会话后自己的新连接会被自己掐死。
-                    // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
-                    // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
-                    // 在带声明批：闸键改读本连接实例键（握手腿初值 / identify 换轨）。
-                    gatedWsSend = (text: String, isStream: Boolean) =>
-                      takeoverHolderRef.get match
-                        case None => perConnWsSend(text, isStream)
-                        case Some(holder) =>
-                          takeover.gateFrame(holder, text).flatMap {
-                            case true  => perConnWsSend(text, isStream)
-                            case false => IO.unit
-                          }
-                    hubConnId <- wsHub.register(gatedWsSend)
-
-                    // A1: the hub now hands connections pre-serialized text. The
-                    // handlers below (message dispatch, session list, the explorer
-                    // watch table) still reason in Json, so they get an adapter that
-                    // serializes on the way in — the point of A1 is that the *fan-out*
-                    // no longer re-serializes per connection, not that Json is banned.
-                    perConnJsonSend = (json: io.circe.Json) =>
-                      // pong 走旁路（[[ConsolePongLane]]）：道满才回落既有 FIFO
-                      // （overflow 政策同其余控制帧），其余帧路径逐字不变。
-                      if ConsolePongLane.isPong(json) then
-                        pongLane.tryOffer(WebSocketFrame.Text(json.noSpaces)).flatMap {
-                          case true => IO.unit
-                          case false => perConnWsSend(json.noSpaces, false)
-                        }
-                      else perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
-
-                    // 可见活动闸（同端判据批 B）：本连接的最近入站时刻（最密 5s 一次写，
-                    // 节流在客户端侧同款纪律）——「被顶的端是不是真的还在看」只认这个证据，
-                    // 不认「连接还挂在账上」（僵尸连接不算在看）。
-                    lastNoteMs = new java.util.concurrent.atomic.AtomicLong(0L)
-                    noteConsoleActivity: IO[Unit] =
-                      if takeoverSession.isEmpty then IO.unit
-                      else
-                        IO {
-                          val now = System.currentTimeMillis()
-                          if now - lastNoteMs.get() >= 5000L then
-                            lastNoteMs.set(now)
-                            true
-                          else false
-                        }.flatMap(fire => if fire then takeover.noteActivity(hubConnId) else IO.unit)
-
-                    // explorer-rt (chain-n-1981ce87): one watch-subscription table per
-                    // connection. Chained into the finalizer below — a dropped
-                    // connection releases every WatchService it registered.
-                    watchSession = new ExplorerWatchSession(perConnJsonSend, logger)
-
-                    // R-960：收流管装配走共享核 guardedReceive——acquire 进会话 fs2
-                    // scope（收流管起跑 = 升级会话起跑才计槽，R-1b 升级期幽灵洞结构
-                    // 封死；入账时点从「build 前」后移到「会话起跑」，与 #954 presence
-                    // 同款）；release 同 scope 配对恰好一次；任何入站帧（含 ping/pong
-                    // 与未知帧型）先触碰活跃钟再进协议分发。面内保留：消息分发与
-                    // unregister/watchSession.close finalizer。
-                    receivePipe: Pipe[IO, WebSocketFrame, Unit] = zombie.guardedReceive(
-                      connGuard.acquireWs(wsIp),
-                      connGuard.releaseWs
-                    )(
-                      _.evalMap {
-                        case WebSocketFrame.Text(text, _) =>
-                          // 控制台在用判据（2026-11-05）：页面上有任何交互流量 ⇒ 作者
-                          // 此刻就在用控制台（比「连接还在」更硬——僵尸连接不算在用）。
-                          // 节流写（最密 5s 一次），绝不失败、绝不拦帧。
-                          ConsoleActivity.touch("ws-frame") *> noteConsoleActivity *>
-                          {
-                          // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
-                          // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
-                          // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
-                          // takeover.enabled 判：关闭 ⇒ 帧走既有未知类型回退（零漂移）。
-                          // 在带身份声明（握手 query 不可靠批 2026-11-03）：握手腿与
-                          // 声明腿同键（holderOf）⇒ 闭包三态经下方识别后归还本管、
-                          // 后续帧照常进常规分派（takeoverIdentify 不是常规帧型）。
-                          val handled =
-                            if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
-                              takeover.handleRetake(hubConnId, perConnJsonSend)
-                            else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
-                              (ConsoleTakeover.declaredClientId(text), takeoverSession) match
-                                case (Some(cid), Some(sid)) =>
-                                  // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
-                                  // 再把本连接实例键写回闸读数（闸随之换轨）。
-                                  // 同端判据批：身份帧同时带自动化声明（webdriver）与握手 UA/
-                                  // 来源 IP——无它们则「同端」与「谁顶了谁」都判不出。
-                                  val meta = ConsoleTakeover.ClientMeta(
-                                    clientId = Some(cid),
-                                    ua = wsUa,
-                                    ip = Some(wsIp),
-                                    automatedDeclared = ConsoleTakeover.declaredAutomated(text)
-                                  )
-                                  takeover.onIdentifyDeclared(sid, hubConnId, Some(meta)).flatMap { h =>
-                                    IO(takeoverHolderRef.set(h))
-                                  }
-                                // 坏体/无身份/Bearer 轨 ⇒ 静默空转（声明是加速面，不是语义面）。
-                                case _ => IO.unit
-                            // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
-                            // 分发（两处消费点：typeless 腿 + immediateInput 腿——
-                            // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
-                            else handleMessage(text, perConnJsonSend, watchSession, sessionIdentity, Some(cred))
-                          handled.handleErrorWith { e =>
-                            logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
-                            IO.unit
-                          }
-                          }
-                        case _ => IO.unit
-                      }.onFinalize(
-                        wsHub.unregister(hubConnId) *> watchSession.close() *>
-                          // 控制台单实例批：连接出账（只摘连接账——掉线 ≠ 让位，owner
-                          // 不动、零出帧；#960 判死回收经本 finalizer 同样不触发提示）。
-                          takeover.onDisconnect(hubConnId)
+      ) <+> NfOfficeRoutes.officeRoutes(nfTicketStore, nfPathPolicy) <+> NfFileRoutes.nfReachRoutes <+> HttpRoutes
+      .of[IO] {
+        case req @ GET -> Root / "ws" =>
+          // Phase 3b: the unified GatewayAuth criterion under WsAuth — session
+          // cookie first, then Bearer (file token; a WsAuth registration note:
+          // browsers cannot send Authorization on a WS handshake, so this leg
+          // only ever fires for non-browser clients such as CLI/script callers).
+          // Stage D retired the two file-token-in-request-target rails (the
+          // legacy `nebflow_token` cookie and the token query param) — the
+          // handshake is session-cookie driven; a presented-but-invalid high
+          // rail still falls through instead of rejecting (see GatewayAuth).
+          tokenRef.get
+            .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+            .flatMap {
+              case None =>
+                logger.warn(
+                  s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
+                ) *>
+                  Forbidden("Invalid token")
+              case Some(cred) =>
+                // 控制台单实例批（2026-10-27）：实例身份 = 门户会话。仅 session-rail
+                // 连接参与接管注册表；Bearer rail（CLI/脚本/headless）不注册、不被
+                // 通知、不参与竞选——非浏览器客户端没有「实例」语义，零触碰零漂移。
+                val takeoverSession: Option[String] = cred match
+                  case Credential.ViaSession(record) => Some(record.sessionId)
+                  case _ => None
+                // 接管误报根修批（2026-11-02）：浏览器稳定身份（`deviceIdentity.js` 的
+                // localStorage clientId，随 `/ws?clientId=` 带上）。会话 id 会变（过期/
+                // 重座/换浏览器），clientId 不会——接管身份必须以 clientId 为准，会话只
+                // 作退路（老缓存页不带参时的既有行为）。无鉴权含义：鉴权仍由上面
+                // GatewayAuth 的会话 cookie 决定，伪造 clientId 最坏只是不弹提示。
+                val takeoverClient: Option[String] =
+                  req.params.get("clientId").map(_.trim).filter(id => id.nonEmpty && id.length <= 128)
+                // 同端判据批（2026-11-07 作者报障「手机端反复弹已被其他位置打开」）：接管的
+                // 实例身份除 clientId 外还带**端指纹素材**（握手 UA）+ 来源 IP——
+                // clientId 是 per-origin/per-profile 的随机 UUID（设备清存储、换入口、
+                // 每次 Playwright 临时 profile 都会重新生成），单凭它判「另一处」必然误报。
+                // UA 只做端指纹与日志证据位，不参与鉴权（安全边界同 clientId 声明）。
+                val wsUa: Option[String] =
+                  req.headers.get(CIString("User-Agent")).map(_.head.value.take(256)).filter(_.nonEmpty)
+                // 门户身份透传批（方案 A1，2026-10-28）：会话身份快照——session 轨
+                // 连接把 SessionRecord 投影（accountSub/origin/sessionId）随接管入账
+                // 一起穿进收流管（下方 receivePipe 同一闭包作用域）；Bearer 轨连接恒
+                // None ⇒ 消息面行为逐字节不变（takeover 先例同点，同一信任锚：
+                // 会话记录 ← 票链 ← link-server AT 验证 + owner 核对）。
+                val sessionIdentity: Option[nebflow.bridge.SessionIdentity] = cred match
+                  case Credential.ViaSession(record) =>
+                    Some(nebflow.bridge.SessionIdentity(record.accountSub, record.origin, record.sessionId))
+                  case _ => None
+                // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
+                // 环回恒放行）。入账延后到收流管起跑（下方 guardedReceive 会话
+                // scope bracket——升级会话未起跑即未发生，零幽灵计数），回减同
+                // scope 配对（releaseWs 凭据 + close/EOF/异常/判死四途同归）。
+                // 括号包裹 = 保持原 for 缩进不动（大段受理体零改排）。
+                val wsIp = ConnGuard.normalizeIp(req.remoteAddr)
+                connGuard.checkWs(wsIp).flatMap {
+                  case Some(reason) =>
+                    logger.warn(
+                      s"conn-guard: WS upgrade rejected ip=$wsIp reason=$reason caps=${connGuard.config.wsPerIpCap}/${connGuard.config.wsTotalCap}"
+                    ) *>
+                      TooManyRequests(
+                        s"Connection guard: WebSocket limit reached ($reason); retry later or contact the operator"
                       )
-                    )
+                  case None => (
+                    for
+                      // R-960（僵尸会话回收批 · #954 presence 同款平移）：共享装配核
+                      // [[WsZombieGuard]]——入站活跃钟 + 10s 判死拍 + deadSig 双侧直达。
+                      // console 口径（[[WsZombieGuard.ConsoleLiveness]]）：deadAfter=90s
+                      // = 3 × 客户端自 ping 间隔（ws.js HB_INTERVAL_MS=30s，服务端 pong
+                      // 应答在 WsSystemHandlers.handlePing）——容忍两拍丢失；后台标签页
+                      // 静默回收由 ws.js 唤醒腿（forceReconnect/wake-probe）接住。
+                      zombie <- WsZombieGuard.open(WsZombieGuard.ConsoleLiveness)
+                      // ── A2 (perf-481): bounded outbound queue ────────────────────
+                      // Was `Queue.unbounded`: a slow/stalled subscriber never
+                      // applied backpressure, so its queue grew without bound while
+                      // the event loop kept paying "serialize + offer" for it.
+                      //
+                      // Overflow policy (plan OD-1, per-frame class):
+                      //  · streaming increment (textDelta/thinkingDelta/…): drop the
+                      //    OLDEST frame and enqueue the new one. A stream increment is
+                      //    superseded by later ones, so losing the middle of a stream
+                      //    costs at most a few rendered characters — never final state.
+                      //  · control/status frame: do NOT drop. A dropped control frame
+                      //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
+                      //    showing "saved"); a throttled one delays it. So the
+                      //    connection is torn down instead: the client reconnects and
+                      //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
+                      //    resync leg), which is a visible, recoverable failure rather
+                      //    than a silent one.
+                      // The class is computed once per event inside WsHub (see there).
+                      outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
+                      outboundOverflowClosed <- Deferred[IO, Unit]
+                      // console-reconnect-stability（2026-10-28）：pong 旁路队列——
+                      // 大帧阵发时心跳应答不再排在本连接 bulk FIFO 之后（机制见
+                      // [[ConsolePongLane]]）。有界 16；道满回落既有 FIFO。
+                      pongLane <- Queue.bounded[IO, WebSocketFrame](ConsolePongLane.Capacity)
 
-                    // sendStream: read from outbound queue, send via WebSocket.
-                    // Client disconnects are expected (browser tab close, network change) and
-                    // produce IOException during write. Catch and swallow gracefully.
-                    //
-                    // A2: the stream races the queue against the overflow signal, so a
-                    // control frame hitting a full queue actually ENDS the stream
-                    // (the socket closes and the client reconnects + resyncs) instead
-                    // of the frame being silently discarded. `interruptWhen` cancels
-                    // the queue side on completion, and the server's own WebSocket
-                    // close handling runs the receive pipe's finalizer.
-                    //
-                    // R-960：拆线道收敛至共享核 guardedSend——既有 overflow 中断之上
-                    // 叠判死中断（send 侧直达 ⇒ ember 写 close 帧）并把 10s 判死腿挂
-                    // 同一会话作用域（连接在则拍在，连接亡则拍亡）。
-                    sendStream = zombie.guardedSend(
-                      ConsolePongLane.prioritized(
-                        data = Stream
-                          .fromQueueUnterminated(outbound)
-                          .handleErrorWith { e =>
-                            Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
-                          },
-                        control = Stream.fromQueueUnterminated(pongLane)
-                      ),
-                      outboundOverflowClosed
-                    )(onDead =
-                      silentMs =>
-                        // 与 presence 面同格式审计行（conn-guard: … recycled … slot released）。
-                        logger.warn(
-                          s"conn-guard: console zombie recycled ip=$wsIp silentMs=$silentMs — " +
-                            s"slot released (heartbeat dead-detection)"
-                        )
-                    )
-                    _ <- logger.info("WebSocket client connected")
-                    // 控制台在用判据（工作过程中开新标签页批 2026-11-05）：连接建立
-                    // = 「控制台真的在用」的服务端事实之一，落一笔标记件（节流写，
-                    // 绝不失败）——boot/focus 两条开门腿据此抑制自动开门。
-                    _ <- ConsoleActivity.touch("ws-connect")
-                    thinkingCfg <- sharedResources.thinkingConfigRef.get
-                    workScheduleCfg <- sharedResources.freezeScheduleRef.get
-                    skipUntil <- sharedResources.freezeSkipUntilRef.get
-                    sttSvc <- sttServiceRef.get
-                    // 统一更新收敛闭环（M3 ③④）：连接初始态即携带更新状态快照
-                    // （自报版本/构建/通道 + 最近挂账与决策）——面板更新卡纯订阅 +
-                    // 快照，零轮询。未装配 ⇒ 空对象，帧形零变化。
-                    updateSnapshot <- sharedResources.updateConvergence
-                      .traverse(_.stateJson)
-                      .map(_.flatten)
-                    // 全设备统一更新（fleet 批 2026-11-01）：连接初始态并「fleetUpdate」
-                    // 快照——状态卡纯订阅 + 快照，刷新/重连/换设备后自动接续，零轮询。
-                    // 未装配 ⇒ 空对象，帧形零变化（与上面 updateSnapshot 同纪律）。
-                    fleetSnapshot <- sharedResources.fleetUpdate
-                      .traverse(_.snapshot)
-                      .map(_.getOrElse(io.circe.Json.obj()))
-                    mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
-                      io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
-                    })
-                    sttNode <- SttService.serverConfigNode(sttSvc)
-                    _ <- outbound.offer(
-                      WebSocketFrame.Text(
-                        io.circe.Json
-                          .obj(
-                            "type" -> "serverConfig".asJson,
-                            "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
-                            "version" -> nebflow.Version.string.asJson,
-                            // 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28）：前端
-                            // 资源指纹随连接初始态/广播帧下行；ws/main 面与本页被
-                            // serve 时注入的 window.__WEB_FINGERPRINT__ 比对，不等
-                            // ⇒ 顶栏提示刷新（治 B1 陈旧标签页续命——B3 双轨标记与
-                            // 页内自升级都依赖新版前端半边在跑）。空串 = 计算失败
-                            // （客户端真值守卫静默跳过）。
-                            "webFingerprint" -> StaticRoutes.webFingerprint.asJson,
-                            "thinking" -> thinkingCfg.asJson,
-                            "workSchedule" -> workScheduleCfg.asJson,
-                            // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
-                            // 页面加载时若已在冻结窗口（且无活跃 agent 产生 frozen 事件），
-                            // 前端输入栏禁用状态机必须能直接读到当前冻结态。
-                            "freezeState" -> nebflow.core.schedule.FreezeSchedule
-                              .freezeStateNode(
-                                workScheduleCfg,
-                                skipUntil,
-                                System.currentTimeMillis()
-                              )
-                              .asJson,
-                            "stt" -> sttNode,
-                            // A4: the tool list is served on demand (`getToolsList`),
-                            // not on every connect + config broadcast — see the note
-                            // above `toolsListJson`.
-                            "mcpServers" -> mcpServers.asJson
-                          )
-                          // M3 ④：update 快照 additive 挂载（未装配 = 空对象 = 不出现键）
-                          // fleet 批：fleetUpdate 快照同款 additive 挂载（`fleetUpdate`
-                          // 键——状态卡刷新/重连后一帧接续）。
-                          .deepMerge(
-                            updateSnapshot.map(u => io.circe.Json.obj("update" -> u)).getOrElse(io.circe.Json.obj())
-                          )
-                          .deepMerge(
-                            if fleetSnapshot.isObject && fleetSnapshot.asObject.exists(!_.isEmpty) then
-                              io.circe.Json.obj("fleetUpdate" -> fleetSnapshot)
-                            else io.circe.Json.obj()
-                          )
-                          .noSpaces
+                      perConnWsSend = (text: String, isStream: Boolean) =>
+                        outbound
+                          .tryOffer(WebSocketFrame.Text(text))
+                          .flatMap {
+                            case true => IO.unit
+                            case false if isStream =>
+                              // Full queue + droppable frame ⇒ evict oldest, then take
+                              // the slot this frame just vacated. `tryTake` returning
+                              // None (a reader drained it concurrently) is fine — the
+                              // retry below either succeeds or is counted, never loops.
+                              outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
+                                IO(wsHub.noteOverflowDrop())
+                            case false =>
+                              // Full queue + control frame ⇒ tear this connection down.
+                              // The teardown rides the queue's own stream (see
+                              // `sendStream`), so there is no process-wide state and no
+                              // cross-connection leak.
+                              IO(wsHub.noteOverflowClose()) *>
+                                logger.warn(
+                                  "WebSocket outbound queue full on a non-stream frame — closing " +
+                                    s"this connection (capacity $OutboundQueueCapacity)"
+                                ) *>
+                                outboundOverflowClosed.complete(()).void
+                          }
+                      // 在带身份声明（握手 query 不可靠批 2026-11-03）：本连接的实例
+                      // 键读数——初值 = 握手腿（query 可用时已是身份键；隧道脸无 query
+                      // = 会话退路键）。identify 帧到达后经 onIdentify 迁移并写回，
+                      // 内容闸随读数换轨（None = Bearer 轨/总闸关，直通）。
+                      takeoverHolderRef = new java.util.concurrent.atomic.AtomicReference[Option[String]](
+                        takeoverSession.map(sid => ConsoleTakeover.holderOf(sid, takeoverClient))
                       )
-                    )
-                    activeMeta <- sessionStore.getActiveMeta
-                    agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
-                    // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
-                    // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
-                    // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
-                    // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
-                    // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
-                    // reports-evidence/team-feature-deletion/stage1/README.md §4；
-                    // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
-                    _ <- activeMeta.traverse_(meta =>
-                      ensureRootAgent(meta.id).void.handleErrorWith(e =>
-                        logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
-                      )
-                    )
-                    _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
-                    // 控制台单实例批（2026-10-27）：接管注册表入账 + claim 裁决——
-                    // hubConnId 已注册（推往旧主的帧走 wsHub；推往本连接的 superseded
-                    // 通知经 outbound 队列缓冲，随 serverConfig 同批送达）。Bearer 连接
-                    // takeoverSession=None 直通。事件面只有 fresh-claim 翻位与旧主回连
-                    // superseded 通知；断线/判死回收路径（onFinalize ⇒ onDisconnect）
-                    // 零出帧——掉线 ≠ 让位（设计稿 §7 边界）。
-                    _ <- takeoverSession.traverse_(sid =>
-                      takeover.onConnect(
-                        sid,
-                        hubConnId,
-                        ConsoleTakeover.ClientMeta(
-                          clientId = takeoverClient,
-                          ua = wsUa,
-                          ip = Some(wsIp),
-                          // 握手腿无法自带 webdriver（那是页面事实，见在带声明腿）；
-                          // 这里只有 UA 兜底判据（headless UA）。
-                          automatedDeclared = false
+                      // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
+                      // 内容帧闸——ConsoleTakeover.gateFrame 按**实例**裁决（owner 非本
+                      // 实例 ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧
+                      // 断喂）。误报根修批（2026-11-02）：闸键与入账键同为 holder
+                      // （clientId 优先），否则同浏览器换会话后自己的新连接会被自己掐死。
+                      // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
+                      // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
+                      // 在带声明批：闸键改读本连接实例键（握手腿初值 / identify 换轨）。
+                      gatedWsSend = (text: String, isStream: Boolean) =>
+                        takeoverHolderRef.get match
+                          case None => perConnWsSend(text, isStream)
+                          case Some(holder) =>
+                            takeover.gateFrame(holder, text).flatMap {
+                              case true => perConnWsSend(text, isStream)
+                              case false => IO.unit
+                            }
+                      hubConnId <- wsHub.register(gatedWsSend)
+
+                      // A1: the hub now hands connections pre-serialized text. The
+                      // handlers below (message dispatch, session list, the explorer
+                      // watch table) still reason in Json, so they get an adapter that
+                      // serializes on the way in — the point of A1 is that the *fan-out*
+                      // no longer re-serializes per connection, not that Json is banned.
+                      perConnJsonSend = (json: io.circe.Json) =>
+                        // pong 走旁路（[[ConsolePongLane]]）：道满才回落既有 FIFO
+                        // （overflow 政策同其余控制帧），其余帧路径逐字不变。
+                        if ConsolePongLane.isPong(json) then
+                          pongLane.tryOffer(WebSocketFrame.Text(json.noSpaces)).flatMap {
+                            case true => IO.unit
+                            case false => perConnWsSend(json.noSpaces, false)
+                          }
+                        else perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
+
+                      // 可见活动闸（同端判据批 B）：本连接的最近入站时刻（最密 5s 一次写，
+                      // 节流在客户端侧同款纪律）——「被顶的端是不是真的还在看」只认这个证据，
+                      // 不认「连接还挂在账上」（僵尸连接不算在看）。
+                      lastNoteMs = new java.util.concurrent.atomic.AtomicLong(0L)
+                      noteConsoleActivity: IO[Unit] =
+                        if takeoverSession.isEmpty then IO.unit
+                        else
+                          IO {
+                            val now = System.currentTimeMillis()
+                            if now - lastNoteMs.get() >= 5000L then
+                              lastNoteMs.set(now)
+                              true
+                            else false
+                          }.flatMap(fire => if fire then takeover.noteActivity(hubConnId) else IO.unit)
+
+                      // explorer-rt (chain-n-1981ce87): one watch-subscription table per
+                      // connection. Chained into the finalizer below — a dropped
+                      // connection releases every WatchService it registered.
+                      watchSession = new ExplorerWatchSession(perConnJsonSend, logger)
+
+                      // R-960：收流管装配走共享核 guardedReceive——acquire 进会话 fs2
+                      // scope（收流管起跑 = 升级会话起跑才计槽，R-1b 升级期幽灵洞结构
+                      // 封死；入账时点从「build 前」后移到「会话起跑」，与 #954 presence
+                      // 同款）；release 同 scope 配对恰好一次；任何入站帧（含 ping/pong
+                      // 与未知帧型）先触碰活跃钟再进协议分发。面内保留：消息分发与
+                      // unregister/watchSession.close finalizer。
+                      receivePipe: Pipe[IO, WebSocketFrame, Unit] = zombie.guardedReceive(
+                        connGuard.acquireWs(wsIp),
+                        connGuard.releaseWs
+                      )(
+                        _.evalMap {
+                          case WebSocketFrame.Text(text, _) =>
+                            // 控制台在用判据（2026-11-05）：页面上有任何交互流量 ⇒ 作者
+                            // 此刻就在用控制台（比「连接还在」更硬——僵尸连接不算在用）。
+                            // 节流写（最密 5s 一次），绝不失败、绝不拦帧。
+                            ConsoleActivity.touch("ws-frame") *> noteConsoleActivity *> {
+                              // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
+                              // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
+                              // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
+                              // takeover.enabled 判：关闭 ⇒ 帧走既有未知类型回退（零漂移）。
+                              // 在带身份声明（握手 query 不可靠批 2026-11-03）：握手腿与
+                              // 声明腿同键（holderOf）⇒ 闭包三态经下方识别后归还本管、
+                              // 后续帧照常进常规分派（takeoverIdentify 不是常规帧型）。
+                              val handled =
+                                if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
+                                  takeover.handleRetake(hubConnId, perConnJsonSend)
+                                else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
+                                  (ConsoleTakeover.declaredClientId(text), takeoverSession) match
+                                    case (Some(cid), Some(sid)) =>
+                                      // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
+                                      // 再把本连接实例键写回闸读数（闸随之换轨）。
+                                      // 同端判据批：身份帧同时带自动化声明（webdriver）与握手 UA/
+                                      // 来源 IP——无它们则「同端」与「谁顶了谁」都判不出。
+                                      val meta = ConsoleTakeover.ClientMeta(
+                                        clientId = Some(cid),
+                                        ua = wsUa,
+                                        ip = Some(wsIp),
+                                        automatedDeclared = ConsoleTakeover.declaredAutomated(text)
+                                      )
+                                      takeover.onIdentifyDeclared(sid, hubConnId, Some(meta)).flatMap { h =>
+                                        IO(takeoverHolderRef.set(h))
+                                      }
+                                    // 坏体/无身份/Bearer 轨 ⇒ 静默空转（声明是加速面，不是语义面）。
+                                    case _ => IO.unit
+                                // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
+                                // 分发（两处消费点：typeless 腿 + immediateInput 腿——
+                                // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
+                                else handleMessage(text, perConnJsonSend, watchSession, sessionIdentity, Some(cred))
+                              handled.handleErrorWith { e =>
+                                logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
+                                IO.unit
+                              }
+                            }
+                          case _ => IO.unit
+                        }.onFinalize(
+                          wsHub.unregister(hubConnId) *> watchSession.close() *>
+                            // 控制台单实例批：连接出账（只摘连接账——掉线 ≠ 让位，owner
+                            // 不动、零出帧；#960 判死回收经本 finalizer 同样不触发提示）。
+                            takeover.onDisconnect(hubConnId)
                         )
                       )
-                    )
-                    // R-960：入账/回减已移入收流管会话 scope（上方 guardedReceive）——
-                    // build 前不再预占槽位；升级会话未起跑 ⇒ 计数未发生（幽灵洞封死）。
-                    ws <- wsb.build(sendStream, receivePipe)
-                  yield ws
-                )
-              }
-          }
 
-      // --- Callback endpoint (外→内) ---
-      // POST /api/callbacks/inject — agent-centric, authenticated through the
-      // unified GatewayAuth criterion (WsAuth: session cookie > Bearer).
-      case req @ POST -> Root / "api" / "callbacks" / "inject" =>
-        tokenRef.get
-          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
-          .flatMap {
-            case None => Forbidden("Invalid token")
-            case Some(_) => handleInject(req)
-          }
+                      // sendStream: read from outbound queue, send via WebSocket.
+                      // Client disconnects are expected (browser tab close, network change) and
+                      // produce IOException during write. Catch and swallow gracefully.
+                      //
+                      // A2: the stream races the queue against the overflow signal, so a
+                      // control frame hitting a full queue actually ENDS the stream
+                      // (the socket closes and the client reconnects + resyncs) instead
+                      // of the frame being silently discarded. `interruptWhen` cancels
+                      // the queue side on completion, and the server's own WebSocket
+                      // close handling runs the receive pipe's finalizer.
+                      //
+                      // R-960：拆线道收敛至共享核 guardedSend——既有 overflow 中断之上
+                      // 叠判死中断（send 侧直达 ⇒ ember 写 close 帧）并把 10s 判死腿挂
+                      // 同一会话作用域（连接在则拍在，连接亡则拍亡）。
+                      sendStream = zombie.guardedSend(
+                        ConsolePongLane.prioritized(
+                          data = Stream
+                            .fromQueueUnterminated(outbound)
+                            .handleErrorWith { e =>
+                              Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
+                            },
+                          control = Stream.fromQueueUnterminated(pongLane)
+                        ),
+                        outboundOverflowClosed
+                      )(onDead =
+                        silentMs =>
+                          // 与 presence 面同格式审计行（conn-guard: … recycled … slot released）。
+                          logger.warn(
+                            s"conn-guard: console zombie recycled ip=$wsIp silentMs=$silentMs — " +
+                              s"slot released (heartbeat dead-detection)"
+                          )
+                      )
+                      _ <- logger.info("WebSocket client connected")
+                      // 控制台在用判据（工作过程中开新标签页批 2026-11-05）：连接建立
+                      // = 「控制台真的在用」的服务端事实之一，落一笔标记件（节流写，
+                      // 绝不失败）——boot/focus 两条开门腿据此抑制自动开门。
+                      _ <- ConsoleActivity.touch("ws-connect")
+                      thinkingCfg <- sharedResources.thinkingConfigRef.get
+                      workScheduleCfg <- sharedResources.freezeScheduleRef.get
+                      skipUntil <- sharedResources.freezeSkipUntilRef.get
+                      sttSvc <- sttServiceRef.get
+                      // 统一更新收敛闭环（M3 ③④）：连接初始态即携带更新状态快照
+                      // （自报版本/构建/通道 + 最近挂账与决策）——面板更新卡纯订阅 +
+                      // 快照，零轮询。未装配 ⇒ 空对象，帧形零变化。
+                      updateSnapshot <- sharedResources.updateConvergence
+                        .traverse(_.stateJson)
+                        .map(_.flatten)
+                      // 全设备统一更新（fleet 批 2026-11-01）：连接初始态并「fleetUpdate」
+                      // 快照——状态卡纯订阅 + 快照，刷新/重连/换设备后自动接续，零轮询。
+                      // 未装配 ⇒ 空对象，帧形零变化（与上面 updateSnapshot 同纪律）。
+                      fleetSnapshot <- sharedResources.fleetUpdate
+                        .traverse(_.snapshot)
+                        .map(_.getOrElse(io.circe.Json.obj()))
+                      mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
+                        io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+                      })
+                      sttNode <- SttService.serverConfigNode(sttSvc)
+                      _ <- outbound.offer(
+                        WebSocketFrame.Text(
+                          io.circe.Json
+                            .obj(
+                              "type" -> "serverConfig".asJson,
+                              "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
+                              "version" -> nebflow.Version.string.asJson,
+                              // 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28）：前端
+                              // 资源指纹随连接初始态/广播帧下行；ws/main 面与本页被
+                              // serve 时注入的 window.__WEB_FINGERPRINT__ 比对，不等
+                              // ⇒ 顶栏提示刷新（治 B1 陈旧标签页续命——B3 双轨标记与
+                              // 页内自升级都依赖新版前端半边在跑）。空串 = 计算失败
+                              // （客户端真值守卫静默跳过）。
+                              "webFingerprint" -> StaticRoutes.webFingerprint.asJson,
+                              "thinking" -> thinkingCfg.asJson,
+                              "workSchedule" -> workScheduleCfg.asJson,
+                              // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
+                              // 页面加载时若已在冻结窗口（且无活跃 agent 产生 frozen 事件），
+                              // 前端输入栏禁用状态机必须能直接读到当前冻结态。
+                              "freezeState" -> nebflow.core.schedule.FreezeSchedule
+                                .freezeStateNode(
+                                  workScheduleCfg,
+                                  skipUntil,
+                                  System.currentTimeMillis()
+                                )
+                                .asJson,
+                              "stt" -> sttNode,
+                              // A4: the tool list is served on demand (`getToolsList`),
+                              // not on every connect + config broadcast — see the note
+                              // above `toolsListJson`.
+                              "mcpServers" -> mcpServers.asJson
+                            )
+                            // M3 ④：update 快照 additive 挂载（未装配 = 空对象 = 不出现键）
+                            // fleet 批：fleetUpdate 快照同款 additive 挂载（`fleetUpdate`
+                            // 键——状态卡刷新/重连后一帧接续）。
+                            .deepMerge(
+                              updateSnapshot.map(u => io.circe.Json.obj("update" -> u)).getOrElse(io.circe.Json.obj())
+                            )
+                            .deepMerge(
+                              if fleetSnapshot.isObject && fleetSnapshot.asObject.exists(!_.isEmpty) then
+                                io.circe.Json.obj("fleetUpdate" -> fleetSnapshot)
+                              else io.circe.Json.obj()
+                            )
+                            .noSpaces
+                        )
+                      )
+                      activeMeta <- sessionStore.getActiveMeta
+                      agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
+                      // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
+                      // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
+                      // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
+                      // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
+                      // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
+                      // reports-evidence/team-feature-deletion/stage1/README.md §4；
+                      // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
+                      _ <- activeMeta.traverse_(meta =>
+                        ensureRootAgent(meta.id).void.handleErrorWith(e =>
+                          logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
+                        )
+                      )
+                      _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
+                      // 控制台单实例批（2026-10-27）：接管注册表入账 + claim 裁决——
+                      // hubConnId 已注册（推往旧主的帧走 wsHub；推往本连接的 superseded
+                      // 通知经 outbound 队列缓冲，随 serverConfig 同批送达）。Bearer 连接
+                      // takeoverSession=None 直通。事件面只有 fresh-claim 翻位与旧主回连
+                      // superseded 通知；断线/判死回收路径（onFinalize ⇒ onDisconnect）
+                      // 零出帧——掉线 ≠ 让位（设计稿 §7 边界）。
+                      _ <- takeoverSession.traverse_(sid =>
+                        takeover.onConnect(
+                          sid,
+                          hubConnId,
+                          ConsoleTakeover.ClientMeta(
+                            clientId = takeoverClient,
+                            ua = wsUa,
+                            ip = Some(wsIp),
+                            // 握手腿无法自带 webdriver（那是页面事实，见在带声明腿）；
+                            // 这里只有 UA 兜底判据（headless UA）。
+                            automatedDeclared = false
+                          )
+                        )
+                      )
+                      // R-960：入账/回减已移入收流管会话 scope（上方 guardedReceive）——
+                      // build 前不再预占槽位；升级会话未起跑 ⇒ 计数未发生（幽灵洞封死）。
+                      ws <- wsb.build(sendStream, receivePipe)
+                    yield ws
+                  )
+                }
+            }
 
-      // GET /api/nf-file — local file serving for card iframes moved to the
-      // companion as nfFileRoutes(token) (standalone, unit-testable, same
-      // pattern as uploadsRoutes/jsRoutes); mounted ahead of this match above.
-      // 2026-09-03 Canvas interactive-HTML fix: the whitelist (NfFileAllowedExt)
-      // now also covers the text asset types (js/css/json) a multi-file HTML
-      // deliverable references from the Canvas HTML viewer.
-      case req @ GET -> Root =>
-        // W1 single switch point (mobile-quickwins 2026-10-20; supersedes the
-        // P1 classpath-only probe): the entry dispatches on
-        // StaticRoutes.staticSource — bundled classpath dist (jar), FRESH
-        // disk dist (build/web-dist under the engine working dir; the
-        // freshness fence is what keeps `sbt run` hot-edit serving the dev
-        // tree the moment a web/ source is newer than the dist), or the dev
-        // source tree. Everything else the dist index references is either
-        // under /assets (assetsRoutes) or a byte-identical passthrough
-        // (vendor, fonts, icons) served by the existing web/ routes — no
-        // fallback logic, the entry and its hashed deps come from one
-        // atomic build-web.mjs run.
-        //
-        // L1 rebrand: every branch goes through the brand injection before
-        // the closing head tag. The served body therefore differs from the
-        // source bytes, which is why this route does not use StaticFile's
-        // conditional-request handling (a jar-entry Last-Modified must not
-        // vouch for content we mutated) — the response stays no-cache with
-        // no validators.
-        // console-fastpath 批 2026-10-23·腿②：隧道脸（TunnelOriginMark）分发到
-        // 首开内联打包面（[[StaticRoutes.indexResponseFor]]），直连脸逐字原应答。
-        StaticRoutes.indexResponseFor(req)
+        // --- Callback endpoint (外→内) ---
+        // POST /api/callbacks/inject — agent-centric, authenticated through the
+        // unified GatewayAuth criterion (WsAuth: session cookie > Bearer).
+        case req @ POST -> Root / "api" / "callbacks" / "inject" =>
+          tokenRef.get
+            .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+            .flatMap {
+              case None => Forbidden("Invalid token")
+              case Some(_) => handleInject(req)
+            }
 
-      case req @ HEAD -> Root =>
-        // Headers-only parity with the pre-rebrand StaticFile route (curl -I,
-        // health/link checkers). The GET case above does not match HEAD
-        // requests, and the body-stripped variant must go through the same
-        // content generation so validators never diverge between the verbs.
-        StaticRoutes.indexResponseFor(req).map(_.withBodyStream(Stream.empty))
+        // GET /api/nf-file — local file serving for card iframes moved to the
+        // companion as nfFileRoutes(token) (standalone, unit-testable, same
+        // pattern as uploadsRoutes/jsRoutes); mounted ahead of this match above.
+        // 2026-09-03 Canvas interactive-HTML fix: the whitelist (NfFileAllowedExt)
+        // now also covers the text asset types (js/css/json) a multi-file HTML
+        // deliverable references from the Canvas HTML viewer.
+        case req @ GET -> Root =>
+          // W1 single switch point (mobile-quickwins 2026-10-20; supersedes the
+          // P1 classpath-only probe): the entry dispatches on
+          // StaticRoutes.staticSource — bundled classpath dist (jar), FRESH
+          // disk dist (build/web-dist under the engine working dir; the
+          // freshness fence is what keeps `sbt run` hot-edit serving the dev
+          // tree the moment a web/ source is newer than the dist), or the dev
+          // source tree. Everything else the dist index references is either
+          // under /assets (assetsRoutes) or a byte-identical passthrough
+          // (vendor, fonts, icons) served by the existing web/ routes — no
+          // fallback logic, the entry and its hashed deps come from one
+          // atomic build-web.mjs run.
+          //
+          // L1 rebrand: every branch goes through the brand injection before
+          // the closing head tag. The served body therefore differs from the
+          // source bytes, which is why this route does not use StaticFile's
+          // conditional-request handling (a jar-entry Last-Modified must not
+          // vouch for content we mutated) — the response stays no-cache with
+          // no validators.
+          // console-fastpath 批 2026-10-23·腿②：隧道脸（TunnelOriginMark）分发到
+          // 首开内联打包面（[[StaticRoutes.indexResponseFor]]），直连脸逐字原应答。
+          StaticRoutes.indexResponseFor(req)
 
-      // 卡窗白屏修复批（2026-10-22）：/index.html 入口别名 —— 与 `/` 同一
-      // brand 注入应答。独立卡窗（UI 批⑧）曾以 `/index.html?card-window=1`
-      // 开窗：本路由只派 `/`，该 URL 落根文件白名单（sw.js/favicon 族）之外
-      // ⇒ 404 空 Content-Length 体 ⇒ 独立窗整页空白（作者实测根因）。别名让
-      // 一切历史/深链入口落在真应用而非空白体；现役打开链已改 `/`
-      // （canvas.js popoutCardWindow），别名是兜底面。query 原样保留
-      // （http4s 只按 path 匹配），card-window 参数不丢。
-      case req @ GET -> Root / "index.html" =>
-        StaticRoutes.indexResponseFor(req)
+        case req @ HEAD -> Root =>
+          // Headers-only parity with the pre-rebrand StaticFile route (curl -I,
+          // health/link checkers). The GET case above does not match HEAD
+          // requests, and the body-stripped variant must go through the same
+          // content generation so validators never diverge between the verbs.
+          StaticRoutes.indexResponseFor(req).map(_.withBodyStream(Stream.empty))
 
-      case req @ HEAD -> Root / "index.html" =>
-        StaticRoutes.indexResponseFor(req).map(_.withBodyStream(Stream.empty))
+        // 卡窗白屏修复批（2026-10-22）：/index.html 入口别名 —— 与 `/` 同一
+        // brand 注入应答。独立卡窗（UI 批⑧）曾以 `/index.html?card-window=1`
+        // 开窗：本路由只派 `/`，该 URL 落根文件白名单（sw.js/favicon 族）之外
+        // ⇒ 404 空 Content-Length 体 ⇒ 独立窗整页空白（作者实测根因）。别名让
+        // 一切历史/深链入口落在真应用而非空白体；现役打开链已改 `/`
+        // （canvas.js popoutCardWindow），别名是兜底面。query 原样保留
+        // （http4s 只按 path 匹配），card-window 参数不丢。
+        case req @ GET -> Root / "index.html" =>
+          StaticRoutes.indexResponseFor(req)
 
-      case req @ GET -> Root / "css" / file =>
-        StaticFile
-          .fromResource(s"web/css/$file", Some(req))
-          .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
-          .getOrElseF(NotFound())
+        case req @ HEAD -> Root / "index.html" =>
+          StaticRoutes.indexResponseFor(req).map(_.withBodyStream(Stream.empty))
 
-      // /js/** (any depth) is served by StaticRoutes.jsRoutes — see its
-      // scaladoc for why the DSL single-segment routes (and the
-      // per-directory cases they grew over time) were replaced.
-
-      case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/monaco/") =>
-        // Serve monaco editor files from bundled resources (supports nested paths).
-        // Uses manual path parsing because http4s DSL only matches single path segments.
-        val segs = req.uri.path.segments.map(_.encoded).toList
-        if segs.sizeIs < 3 then NotFound()
-        else
-          val relParts = segs.drop(2) // drop "vendor" and "monaco"
-          // Block path traversal
-          if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-          else
-            val path = relParts.mkString("/")
-            StaticFile
-              .fromResource(s"web/vendor/monaco/$path", Some(req))
-              .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
-              .getOrElseF(NotFound())
-        end if
-
-      case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/pdfjs/") =>
-        // Serve pdfjs viewer files (pdf.min.js / pdf.worker.min.js) from bundled
-        // resources. The single-segment vendor case below cannot match this
-        // two-level path (/vendor/pdfjs/pdf.min.js), and the fonts/monaco cases
-        // are directory-specific — without this case every pdfjs file 404s and
-        // the PDF viewer fails to boot (pdfjsLib undefined). Same guard pattern
-        // as the monaco case above (manual path parsing, traversal blocked).
-        val segs = req.uri.path.segments.map(_.encoded).toList
-        if segs.sizeIs < 3 then NotFound()
-        else
-          val relParts = segs.drop(2) // drop "vendor" and "pdfjs"
-          // Block path traversal
-          if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-          else
-            val path = relParts.mkString("/")
-            StaticFile
-              .fromResource(s"web/vendor/pdfjs/$path", Some(req))
-              .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
-              .getOrElseF(NotFound())
-        end if
-
-      case req @ GET -> Root / "vendor" / file =>
-        // 缓存击穿批 2026-10-25：单段 vendor 此前**无任何 Cache-Control**（浏览器
-        // 按启发式新鲜度缓存，旧 vendor 库可滞留数日）——统一走 assetCacheControl：
-        // 版本化请求 immutable 长效，裸请求显式 no-cache（杀启发式滞留）。
-        StaticFile
-          .fromResource(s"web/vendor/$file", Some(req))
-          .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
-          .getOrElseF(NotFound())
-
-      case req @ GET -> Root / "vendor" / "fonts" / file =>
-        StaticFile
-          .fromResource(s"web/vendor/fonts/$file", Some(req))
-          .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
-          .getOrElseF(NotFound())
-
-      case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/") =>
-        // Vendor SUBTREE passthrough (canvas-office-render-fix batch,
-        // 2026-10-06): the depth ≥ 2 shapes the monaco/pdfjs/fonts and
-        // single-segment cases above cannot match — the pptx-preview MVP's
-        // vendored /vendor/pptx-renderer/* answered 404 here and the renderer
-        // never loaded (real-instance reading). Third occurrence of the
-        // per-directory outage class on /vendor (monaco → pdfjs →
-        // pptx-renderer) — the jsRoutes lesson applied to the vendor tree:
-        // served by the standalone gap-filler, unit-pinned by
-        // VendorSubtreeRoutesSpec (see StaticRoutes.vendorSubtree scaladoc).
-        // This case sits AFTER the directory-specific cases, so their
-        // behavior is byte-identical; this only fills the 404ing gap.
-        StaticRoutes.vendorSubtree(req)
-
-      case req @ GET -> _ if req.uri.path.renderString.startsWith("/brand/") =>
-        // Brand asset subtree (stand-logo-slotting batch, 2026-10-15): serves
-        // web/brand/** at any depth so the optional __BRAND__ logoUrl /
-        // logoDarkUrl reference slots can point at the slotted stand kit
-        // (/brand/stand/…) on switch day without moving the incumbent
-        // /css/logo-* files. Same gap-filler shape as the /vendor/ subtree
-        // case above — /brand/* was previously unrouted (404) and nothing
-        // referenced it, so default behavior is byte-identical; guards are
-        // the vendorSubtree precedent, pinned by BrandSubtreeRoutesSpec.
-        StaticRoutes.brandSubtree(req)
-
-      case req @ GET -> Root / fileName =>
-        val allowed =
-          Set(
-            "style.css",
-            "app.js",
-            "sw.js", // console-load-perf 批 2026-10-21: 温访问秒开 SW（根 scope 注册要求根路径脚本；no-cache 保证 SW 更新即时可见）
-            "favicon-32.png",
-            "favicon-16.png",
-            "favicon.svg",
-            "favicon.ico",
-            "favicon-180.png",
-            "favicon-192.png",
-            "favicon-512.png"
-          )
-        if allowed.contains(fileName) then
+        case req @ GET -> Root / "css" / file =>
           StaticFile
-            .fromResource(s"web/$fileName", Some(req))
-            // 缓存击穿批 2026-10-25：favicon 族引用自带内容 digest（?v=…，换 logo
-            // 即变）⇒ 版本化请求 immutable 长效；sw.js 等根文件引用不带 v ⇒ 仍
-            // no-cache（SW 更新即时可见语义不动）。
+            .fromResource(s"web/css/$file", Some(req))
             .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
             .getOrElseF(NotFound())
-        else NotFound()
 
-      case req @ GET -> Root / "agents" / "manifest.json" =>
-        sharedResources.agentLibrary.loadAll().flatMap { agents =>
-          val json = io.circe.Json.obj(
-            "agents" -> agents.values.toList.map { a =>
-              io.circe.Json.obj(
-                "name" -> a.name.asJson,
-                "description" -> a.description.asJson,
-                "displayName" -> a.displayName.getOrElse(a.name).asJson,
-                "avatar" -> a.avatar.asJson
-              )
-            }.asJson
-          )
-          Ok(json.noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
-        }
+        // /js/** (any depth) is served by StaticRoutes.jsRoutes — see its
+        // scaladoc for why the DSL single-segment routes (and the
+        // per-directory cases they grew over time) were replaced.
 
-      case req @ GET -> _ if req.uri.path.renderString.startsWith("/agents/") =>
-        // Serve static files under agent directory (supports nested paths)
-        // Uses manual path parsing because http4s DSL only matches single path segments
-        val segs = req.uri.path.segments.map(_.encoded).toList
-        if segs.sizeIs < 3 then NotFound()
-        else
-          val agentName = segs(1)
-          // Block path traversal: agentName must be a simple name (no .., /, \)
-          if agentName.contains("..") || agentName.contains("/") || agentName.contains("\\") then NotFound()
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/monaco/") =>
+          // Serve monaco editor files from bundled resources (supports nested paths).
+          // Uses manual path parsing because http4s DSL only matches single path segments.
+          val segs = req.uri.path.segments.map(_.encoded).toList
+          if segs.sizeIs < 3 then NotFound()
           else
-            val agentDir = AgentLibrary.defaultDir / agentName
-            val relParts = segs.drop(2)
-            // Block path traversal in relative parts
-            val safeRel = relParts.filter(s => s != ".." && !s.contains("\\"))
-            if safeRel.length != relParts.length then NotFound()
+            val relParts = segs.drop(2) // drop "vendor" and "monaco"
+            // Block path traversal
+            if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
             else
-              val filePath = agentDir / os.RelPath(safeRel.mkString("/"))
-              // Final defense: resolve and verify the path stays under agentDir
-              if filePath.startsWith(agentDir) && os.exists(filePath) && os.isFile(filePath) then
+              val path = relParts.mkString("/")
+              StaticFile
+                .fromResource(s"web/vendor/monaco/$path", Some(req))
+                .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+                .getOrElseF(NotFound())
+          end if
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/pdfjs/") =>
+          // Serve pdfjs viewer files (pdf.min.js / pdf.worker.min.js) from bundled
+          // resources. The single-segment vendor case below cannot match this
+          // two-level path (/vendor/pdfjs/pdf.min.js), and the fonts/monaco cases
+          // are directory-specific — without this case every pdfjs file 404s and
+          // the PDF viewer fails to boot (pdfjsLib undefined). Same guard pattern
+          // as the monaco case above (manual path parsing, traversal blocked).
+          val segs = req.uri.path.segments.map(_.encoded).toList
+          if segs.sizeIs < 3 then NotFound()
+          else
+            val relParts = segs.drop(2) // drop "vendor" and "pdfjs"
+            // Block path traversal
+            if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+            else
+              val path = relParts.mkString("/")
+              StaticFile
+                .fromResource(s"web/vendor/pdfjs/$path", Some(req))
+                .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+                .getOrElseF(NotFound())
+          end if
+
+        case req @ GET -> Root / "vendor" / file =>
+          // 缓存击穿批 2026-10-25：单段 vendor 此前**无任何 Cache-Control**（浏览器
+          // 按启发式新鲜度缓存，旧 vendor 库可滞留数日）——统一走 assetCacheControl：
+          // 版本化请求 immutable 长效，裸请求显式 no-cache（杀启发式滞留）。
+          StaticFile
+            .fromResource(s"web/vendor/$file", Some(req))
+            .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+            .getOrElseF(NotFound())
+
+        case req @ GET -> Root / "vendor" / "fonts" / file =>
+          StaticFile
+            .fromResource(s"web/vendor/fonts/$file", Some(req))
+            .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+            .getOrElseF(NotFound())
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/") =>
+          // Vendor SUBTREE passthrough (canvas-office-render-fix batch,
+          // 2026-10-06): the depth ≥ 2 shapes the monaco/pdfjs/fonts and
+          // single-segment cases above cannot match — the pptx-preview MVP's
+          // vendored /vendor/pptx-renderer/* answered 404 here and the renderer
+          // never loaded (real-instance reading). Third occurrence of the
+          // per-directory outage class on /vendor (monaco → pdfjs →
+          // pptx-renderer) — the jsRoutes lesson applied to the vendor tree:
+          // served by the standalone gap-filler, unit-pinned by
+          // VendorSubtreeRoutesSpec (see StaticRoutes.vendorSubtree scaladoc).
+          // This case sits AFTER the directory-specific cases, so their
+          // behavior is byte-identical; this only fills the 404ing gap.
+          StaticRoutes.vendorSubtree(req)
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/brand/") =>
+          // Brand asset subtree (stand-logo-slotting batch, 2026-10-15): serves
+          // web/brand/** at any depth so the optional __BRAND__ logoUrl /
+          // logoDarkUrl reference slots can point at the slotted stand kit
+          // (/brand/stand/…) on switch day without moving the incumbent
+          // /css/logo-* files. Same gap-filler shape as the /vendor/ subtree
+          // case above — /brand/* was previously unrouted (404) and nothing
+          // referenced it, so default behavior is byte-identical; guards are
+          // the vendorSubtree precedent, pinned by BrandSubtreeRoutesSpec.
+          StaticRoutes.brandSubtree(req)
+
+        case req @ GET -> Root / fileName =>
+          val allowed =
+            Set(
+              "style.css",
+              "app.js",
+              "sw.js", // console-load-perf 批 2026-10-21: 温访问秒开 SW（根 scope 注册要求根路径脚本；no-cache 保证 SW 更新即时可见）
+              "favicon-32.png",
+              "favicon-16.png",
+              "favicon.svg",
+              "favicon.ico",
+              "favicon-180.png",
+              "favicon-192.png",
+              "favicon-512.png"
+            )
+          if allowed.contains(fileName) then
+            StaticFile
+              .fromResource(s"web/$fileName", Some(req))
+              // 缓存击穿批 2026-10-25：favicon 族引用自带内容 digest（?v=…，换 logo
+              // 即变）⇒ 版本化请求 immutable 长效；sw.js 等根文件引用不带 v ⇒ 仍
+              // no-cache（SW 更新即时可见语义不动）。
+              .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+              .getOrElseF(NotFound())
+          else NotFound()
+
+        case req @ GET -> Root / "agents" / "manifest.json" =>
+          sharedResources.agentLibrary.loadAll().flatMap { agents =>
+            val json = io.circe.Json.obj(
+              "agents" -> agents.values.toList.map { a =>
+                io.circe.Json.obj(
+                  "name" -> a.name.asJson,
+                  "description" -> a.description.asJson,
+                  "displayName" -> a.displayName.getOrElse(a.name).asJson,
+                  "avatar" -> a.avatar.asJson
+                )
+              }.asJson
+            )
+            Ok(json.noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+          }
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/agents/") =>
+          // Serve static files under agent directory (supports nested paths)
+          // Uses manual path parsing because http4s DSL only matches single path segments
+          val segs = req.uri.path.segments.map(_.encoded).toList
+          if segs.sizeIs < 3 then NotFound()
+          else
+            val agentName = segs(1)
+            // Block path traversal: agentName must be a simple name (no .., /, \)
+            if agentName.contains("..") || agentName.contains("/") || agentName.contains("\\") then NotFound()
+            else
+              val agentDir = AgentLibrary.defaultDir / agentName
+              val relParts = segs.drop(2)
+              // Block path traversal in relative parts
+              val safeRel = relParts.filter(s => s != ".." && !s.contains("\\"))
+              if safeRel.length != relParts.length then NotFound()
+              else
+                val filePath = agentDir / os.RelPath(safeRel.mkString("/"))
+                // Final defense: resolve and verify the path stays under agentDir
+                if filePath.startsWith(agentDir) && os.exists(filePath) && os.isFile(filePath) then
+                  StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+                else NotFound()
+          end if
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/voice-models/") =>
+          // Serve pre-downloaded voice model files from ~/.nebflow/voice-models/
+          // Allows offline Whisper inference without CDN dependency.
+          val segs = req.uri.path.segments.map(_.encoded).toList
+          if segs.sizeIs < 2 then NotFound()
+          else
+            val relParts = segs.drop(1) // drop "voice-models"
+            // Block path traversal
+            if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+            else
+              val modelBase = PathUtil.dataRoot / "voice-models"
+              val filePath = modelBase / os.RelPath(relParts.mkString("/"))
+              if filePath.startsWith(modelBase) && os.exists(filePath) && os.isFile(filePath) then
                 StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
               else NotFound()
-        end if
-
-      case req @ GET -> _ if req.uri.path.renderString.startsWith("/voice-models/") =>
-        // Serve pre-downloaded voice model files from ~/.nebflow/voice-models/
-        // Allows offline Whisper inference without CDN dependency.
-        val segs = req.uri.path.segments.map(_.encoded).toList
-        if segs.sizeIs < 2 then NotFound()
-        else
-          val relParts = segs.drop(1) // drop "voice-models"
-          // Block path traversal
-          if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-          else
-            val modelBase = PathUtil.dataRoot / "voice-models"
-            val filePath = modelBase / os.RelPath(relParts.mkString("/"))
-            if filePath.startsWith(modelBase) && os.exists(filePath) && os.isFile(filePath) then
-              StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
-            else NotFound()
-    }
+      }
 
   private val inputHistoryPath = PathUtil.dataRoot / "input_history.jsonl"
 
@@ -2078,9 +2083,13 @@ class WebSocketRoutes(
                                 access.ownsSession(msgSessionId).flatMap {
                                   case false =>
                                     blocks += ContentBlock.Image(data, mimeType)
-                                    IO(logger.warn(s"Image '$name' rejected: session is not owned by handshake principal"))
+                                    IO(
+                                      logger
+                                        .warn(s"Image '$name' rejected: session is not owned by handshake principal")
+                                    )
                                   case true =>
-                                    AttachmentCommitService.at(uploadRoot)
+                                    AttachmentCommitService
+                                      .at(uploadRoot)
                                       .commit(access, key, new java.io.ByteArrayInputStream(bytes))
                                       .attempt
                                       .map {
@@ -2096,7 +2105,11 @@ class WebSocketRoutes(
                                 }
                               case _ =>
                                 blocks += ContentBlock.Image(data, mimeType)
-                                IO(logger.warn(s"Image '$name' was not persisted: owner access unavailable or invalid data"))
+                                IO(
+                                  logger
+                                    .warn(s"Image '$name' was not persisted: owner access unavailable or invalid data")
+                                )
+                            end match
                           else if mimeType.startsWith("image/") then
                             // Image without data — cannot process
                             blocks += ContentBlock.Text(s"[image: $name (无数据)]")
@@ -2126,11 +2139,12 @@ class WebSocketRoutes(
                                 spotlightSearch(name, hash, fileSize)
                               case None => None
                             spotlightPath match
-                              case Some(path) => IO {
-                                savedPaths(attIdx) = path
-                                blocks += ContentBlock.Text(s"[用户附加文件: $path]")
-                                logger.info(s"Attachment '$name' resolved to local file: $path")
-                              }
+                              case Some(path) =>
+                                IO {
+                                  savedPaths(attIdx) = path
+                                  blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                                  logger.info(s"Attachment '$name' resolved to local file: $path")
+                                }
                               case None if data.nonEmpty =>
                                 val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
                                 val keyResult = ResourceKey.from(s"${System.nanoTime()}_$safeName")
@@ -2138,9 +2152,15 @@ class WebSocketRoutes(
                                 (ownerAccess, decoded, keyResult.toOption) match
                                   case (Some(access), Some(bytes), Some(key)) =>
                                     access.ownsSession(msgSessionId).flatMap {
-                                      case false => IO(logger.warn(s"Attachment '$name' rejected: session is not owned by handshake principal"))
+                                      case false =>
+                                        IO(
+                                          logger.warn(
+                                            s"Attachment '$name' rejected: session is not owned by handshake principal"
+                                          )
+                                        )
                                       case true =>
-                                        AttachmentCommitService.at(uploadRoot)
+                                        AttachmentCommitService
+                                          .at(uploadRoot)
                                           .commit(access, key, new java.io.ByteArrayInputStream(bytes))
                                           .attempt
                                           .map {
@@ -2148,109 +2168,119 @@ class WebSocketRoutes(
                                               savedPaths(attIdx) = path.toString
                                               blocks += ContentBlock.Text(s"[用户附加文件: $path]")
                                               logger.info(s"Saved attachment '$name' to $path")
-                                            case Left(error) => logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
+                                            case Left(error) =>
+                                              logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
                                           }
                                     }
-                                  case _ => IO(logger.warn(s"Attachment '$name' was not persisted: owner access unavailable or invalid data"))
-                              case None => IO {
-                                logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
-                                blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
-                              }
+                                  case _ =>
+                                    IO(
+                                      logger.warn(
+                                        s"Attachment '$name' was not persisted: owner access unavailable or invalid data"
+                                      )
+                                    )
+                                end match
+                              case None =>
+                                IO {
+                                  logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
+                                  blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
+                                }
                             end match
                           end if
                         }
 
                         attachmentWrites *> {
-                        val sessionName = metaOpt.map(_.name).getOrElse("-")
-                        val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
-                        logger.info(s"${logger.hl(sessionName)} User message: ${content
-                            .take(60)}${if content.length > 60 then "..." else ""}") *>
-                          logInputHistory(content, attachments, msgSessionId, sessionName, agentName) *>
-                          // Record user message as UiMessage for history
-                          (if msgSessionId.nonEmpty then
-                             val attJson = attachments.zipWithIndex.map { case (att, idx) =>
-                               val name = att.hcursor.downField("name").as[String].getOrElse("")
-                               val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                               val savedPath = savedPaths.getOrElse(idx, "")
-                               io.circe.Json.obj(
-                                 "name" -> name.asJson,
-                                 "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
-                                 "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
-                               )
-                             }
-                             // quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里
-                             // refType==='chat-message' 的**首条**转成落盘 quote 快照
-                             // （至多 1 条；与 attJson 组装同段）。缺席 ⇒ None ⇒ 编码器
-                             // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
-                             val quoteJson = quoteFromRefs(json)
-                             val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
-                             // tool-card-leak-on-reload 批（2026-11-02）：与
-                             // dispatchUserText 同一落盘判据——回合进行中送来的输入
-                             // 落 midTurn=true（回放折叠段边界的数据面依据；注入行
-                             // 由 injected 自辨，本键只对真人输入有意义）。
-                             midTurnAtPersist(msgSessionId).flatMap { midTurn =>
-                               sharedResources.sessionStore
-                                 .appendUiMessages(
-                                   msgSessionId,
-                                   List(
-                                     UiMessage.User(
-                                       content,
-                                       attJson,
-                                       injected,
-                                       timestamp = System.currentTimeMillis(),
-                                       quote = quoteJson,
-                                       midTurn = if injected then None else midTurn
-                                     )
-                                   )
+                          val sessionName = metaOpt.map(_.name).getOrElse("-")
+                          val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
+                          logger.info(s"${logger.hl(sessionName)} User message: ${content
+                              .take(60)}${if content.length > 60 then "..." else ""}") *>
+                            logInputHistory(content, attachments, msgSessionId, sessionName, agentName) *>
+                            // Record user message as UiMessage for history
+                            (if msgSessionId.nonEmpty then
+                               val attJson = attachments.zipWithIndex.map { case (att, idx) =>
+                                 val name = att.hcursor.downField("name").as[String].getOrElse("")
+                                 val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                                 val savedPath = savedPaths.getOrElse(idx, "")
+                                 io.circe.Json.obj(
+                                   "name" -> name.asJson,
+                                   "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
+                                   "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
                                  )
-                                 .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
-                             }
-                             // attachmentsSaved（用户附件点击统一批 2026-10-08）：live 渲染腿
-                             // 前端只有 data/preview、没有落盘 path —— Pop 面的点击开 Canvas
-                             // 依赖 item.path（popArtifacts.openMediaItemClick / buildFileCard
-                             // 的 `if (item.path)` 闸）。把与 ui.json 同形的 [{name,type,path}]
-                             // 回传请求方连接，前端据此原位重渲用户媒体行。纯文本帧（无附件）
-                             // 不发；旧前端未知帧类型 = handlers 无登记 = no-op，协议零破坏。
-                               *> (if attJson.nonEmpty then
-                                     wsSend(
-                                       io.circe.Json.obj(
-                                         "type" -> "attachmentsSaved".asJson,
-                                         "sessionId" -> msgSessionId.asJson,
-                                         "attachments" -> attJson.asJson
+                               }
+                               // quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里
+                               // refType==='chat-message' 的**首条**转成落盘 quote 快照
+                               // （至多 1 条；与 attJson 组装同段）。缺席 ⇒ None ⇒ 编码器
+                               // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
+                               val quoteJson = quoteFromRefs(json)
+                               val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
+                               // tool-card-leak-on-reload 批（2026-11-02）：与
+                               // dispatchUserText 同一落盘判据——回合进行中送来的输入
+                               // 落 midTurn=true（回放折叠段边界的数据面依据；注入行
+                               // 由 injected 自辨，本键只对真人输入有意义）。
+                               midTurnAtPersist(msgSessionId).flatMap { midTurn =>
+                                 sharedResources.sessionStore
+                                   .appendUiMessages(
+                                     msgSessionId,
+                                     List(
+                                       UiMessage.User(
+                                         content,
+                                         attJson,
+                                         injected,
+                                         timestamp = System.currentTimeMillis(),
+                                         quote = quoteJson,
+                                         midTurn = if injected then None else midTurn
                                        )
                                      )
-                                   else IO.unit)
-                           else IO.unit) *> {
-                            // 任务工具重做（2026-08-30）：打回语义退役——
-                            // taskRefs/refs(refType=task) 的 processTaskReturns
-                            // 路径整体移除。#303 D1: resolve non-task refs
-                            // (file/document/html-element) into [引用: …]
-                            // injection blocks; refType=task fail-open 跳过。
-                            processRefs(json, blocks).flatMap { _ =>
-                              // device-provenance 批：标记块前插为首块（正文块逐字不动；
-                              // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
-                              // 未声明设备 ⇒ 逐字节现状。
-                              val blocksList = deviceResolved.fold(blocks.toList)(
-                                nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)
-                              )
-                              // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
-                              // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
-                              // AgentCommand.UserInput（= 引入直通之前的既有通道）。
-                              // 曾以直通覆盖的「刷新后 busy 标志丢失」窗口（#43-domain）
-                              // 随之回到功能前口径：pending 卡保持 pending、须点卡作答。
-                              // ref/附件携带帧本就只走本通道，形态逐字节不变。
-                              ensureAgent(msgSessionId)(ref =>
-                                ref ! AgentCommand
-                                  .UserInput(
-                                    content,
-                                    None,
-                                    clientMessageId,
-                                    Some(blocksList).filter(_.nonEmpty),
-                                    chatWidth
-                                  )
-                              )
+                                   )
+                                   .handleErrorWith(e =>
+                                     logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")
+                                   )
+                               }
+                               // attachmentsSaved（用户附件点击统一批 2026-10-08）：live 渲染腿
+                               // 前端只有 data/preview、没有落盘 path —— Pop 面的点击开 Canvas
+                               // 依赖 item.path（popArtifacts.openMediaItemClick / buildFileCard
+                               // 的 `if (item.path)` 闸）。把与 ui.json 同形的 [{name,type,path}]
+                               // 回传请求方连接，前端据此原位重渲用户媒体行。纯文本帧（无附件）
+                               // 不发；旧前端未知帧类型 = handlers 无登记 = no-op，协议零破坏。
+                                 *> (if attJson.nonEmpty then
+                                       wsSend(
+                                         io.circe.Json.obj(
+                                           "type" -> "attachmentsSaved".asJson,
+                                           "sessionId" -> msgSessionId.asJson,
+                                           "attachments" -> attJson.asJson
+                                         )
+                                       )
+                                     else IO.unit)
+                             else IO.unit) *> {
+                              // 任务工具重做（2026-08-30）：打回语义退役——
+                              // taskRefs/refs(refType=task) 的 processTaskReturns
+                              // 路径整体移除。#303 D1: resolve non-task refs
+                              // (file/document/html-element) into [引用: …]
+                              // injection blocks; refType=task fail-open 跳过。
+                              processRefs(json, blocks).flatMap { _ =>
+                                // device-provenance 批：标记块前插为首块（正文块逐字不动；
+                                // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
+                                // 未声明设备 ⇒ 逐字节现状。
+                                val blocksList = deviceResolved.fold(blocks.toList)(
+                                  nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)
+                                )
+                                // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
+                                // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
+                                // AgentCommand.UserInput（= 引入直通之前的既有通道）。
+                                // 曾以直通覆盖的「刷新后 busy 标志丢失」窗口（#43-domain）
+                                // 随之回到功能前口径：pending 卡保持 pending、须点卡作答。
+                                // ref/附件携带帧本就只走本通道，形态逐字节不变。
+                                ensureAgent(msgSessionId)(ref =>
+                                  ref ! AgentCommand
+                                    .UserInput(
+                                      content,
+                                      None,
+                                      clientMessageId,
+                                      Some(blocksList).filter(_.nonEmpty),
+                                      chatWidth
+                                    )
+                                )
+                              }
                             }
-                          }
                         }
                       }
                     } // end deviceResolved flatMap (device-provenance 批)
@@ -2397,10 +2427,12 @@ class WebSocketRoutes(
         (deviceRosterEntries, anchorIO).flatMapN { case ((self, peers), anchor) =>
           val resolved =
             nebflow.bridge.DeviceProvenance.resolve(client, self, peers, sessionIdentity, anchor)
-          logger.info(
-            s"Device provenance: '${resolved.display}' (enrolled=${resolved.enrolled}, " +
-              s"authenticated=${resolved.sessionAuthenticated}) clientId=${client.clientId.take(8)}…"
-          ).as(Some(resolved))
+          logger
+            .info(
+              s"Device provenance: '${resolved.display}' (enrolled=${resolved.enrolled}, " +
+                s"authenticated=${resolved.sessionAuthenticated}) clientId=${client.clientId.take(8)}…"
+            )
+            .as(Some(resolved))
         }
 
   /**
@@ -2697,11 +2729,10 @@ class WebSocketRoutes(
           .getOrElse(Nil)
           .take(8)
           .flatMap { a =>
-            val tpe = a.hcursor.downField("type").as[String].getOrElse("file") match {
+            val tpe = a.hcursor.downField("type").as[String].getOrElse("file") match
               case "image" => "image"
               case "video" => "video"
-              case _       => "file"
-            }
+              case _ => "file"
             val name = RefResolver.sanitize(a.hcursor.downField("name").as[String].getOrElse("")).take(200)
             val path = RefResolver.sanitize(a.hcursor.downField("path").as[String].getOrElse("")).take(600)
             if name.isEmpty && path.isEmpty then None
@@ -2999,7 +3030,10 @@ class WebSocketRoutes(
                         // replay-terminal 批（2026-10-28，案一「A 根治」）：done =
                         // 轮终态事实本身——terminal=true 与 durationMs 同批落盘，
                         // 回放折叠不再靠渲染期徽章启发式反推（裸面 1/2/5 根治）。
-                        List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true)))
+                        List(
+                          UiMessage
+                            .Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true))
+                        )
                       )
                     else if durationMs.isDefined then
                       // No text to flush (already flushed at roundComplete/toolStart),
@@ -3369,8 +3403,10 @@ object WebSocketRoutes:
     delegateName: Option[String] = None, // 面板命名批 2026-10-31: 批次短名（DelegateRegistry.Record.name，≤12 字）——行首扫读名
     bgWaiting: List[(String, String, Long, String, String)] =
       Nil, // #752: (jobId, description, startedAtMs, health, ownerName) — the session's own waiting-type bg tasks; ownerName = 开启会话的 delegate 批次短名（归属批 2026-10-31，空 = 非 delegate/无名）
-    standbySince: Option[Long] = None, // 案A 待命批 2026-10-31（状态矩阵批收编）: delegate 待命停靠时刻（DelegateRegistry.standbySince）——快照行「待命」徽标数据源；None = 非待命（缺省，旧调用方逐字节兼容）
-    frozenSince: Option[Long] = None, // 错误冻结批 2026-11-01: 冻结时刻（DelegateRegistry.frozenSince）——快照行「已冻结」徽标数据源（与 standby 的「待命」显式区分）；None = 非冻结
+    standbySince: Option[Long] =
+      None, // 案A 待命批 2026-10-31（状态矩阵批收编）: delegate 待命停靠时刻（DelegateRegistry.standbySince）——快照行「待命」徽标数据源；None = 非待命（缺省，旧调用方逐字节兼容）
+    frozenSince: Option[Long] =
+      None, // 错误冻结批 2026-11-01: 冻结时刻（DelegateRegistry.frozenSince）——快照行「已冻结」徽标数据源（与 standby 的「待命」显式区分）；None = 非冻结
     frozenReason: Option[String] = None, // 错误冻结批 2026-11-01: 冻结原因线值（`delegate-frozen:<reason>`）——徽标 tooltip / 详情卡原因行
     wakeAddress: Option[String] = None, // 错误冻结批 2026-11-01: 唤醒地址（`delegate:<id>`）——详情卡「唤醒」按钮的动作载荷
     // name/address 批（2026-11-05）：本行的 Mail 续传地址——MailAddress 单点推导
@@ -3378,7 +3414,8 @@ object WebSocketRoutes:
     // 面板行的地址 chip 只**读**它（前端零推导：地址是「可原样粘进 Mail」的令牌，
     // 两个推导点就是两种形态的温床）。None = 本 kind 无 Mail 面 ⇒ 空串（falsy 契约）。
     mailAddress: Option[String] = None,
-    freezeTruth: Option[nebflow.actor.FreezeTruth] = None // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
+    freezeTruth: Option[nebflow.actor.FreezeTruth] =
+      None // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
   ): Json =
     // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
     // （AgentStreamEvent.Frozen）/ 工具面（AgentControl status）同判定单点
@@ -3396,7 +3433,10 @@ object WebSocketRoutes:
       freezeTruth.getOrElse(
         nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince, System.currentTimeMillis())
       )
-    val freezeOf = if truth.frozen then Some(nebflow.actor.FreezeDisplay.ofWire(truth.reasonWire, truth.since, System.currentTimeMillis())) else None
+    val freezeOf =
+      if truth.frozen then
+        Some(nebflow.actor.FreezeDisplay.ofWire(truth.reasonWire, truth.since, System.currentTimeMillis()))
+      else None
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
@@ -3520,6 +3560,7 @@ object WebSocketRoutes:
         )
       }.asJson
     )
+  end activeAgentEntryJson
 
   // ============================================================
   // picker-trunc batch (main-side 2026-09-22): the browsePath frame

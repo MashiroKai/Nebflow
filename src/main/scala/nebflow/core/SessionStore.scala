@@ -140,6 +140,49 @@ class SessionStore(
    */
   dbOverride: Option[DbHandle] = None
 ) extends SessionStorePort:
+  /** 与 ExecutionCommitStore 挂载根同型 canonical 化（macOS /var → /private/var），
+    * 否则 resultRef 与期望路径的字符串对账跨形态落空。 */
+  def executionAuthorityRoot: java.nio.file.Path =
+    val p = sessionsDir.toNIO.toAbsolutePath.normalize()
+    if java.nio.file.Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS) then p.toRealPath() else p
+
+  @volatile private var executionAuthority: Option[ExecutionCommitPort] = None
+  @volatile private var executionAuthorityRetired = false
+
+  private[nebflow] def installExecutionAuthority(port: ExecutionCommitPort): Unit =
+    executionAuthority = Some(port)
+    executionAuthorityRetired = false
+
+  private[nebflow] def releaseExecutionAuthority(port: ExecutionCommitPort): Unit =
+    if executionAuthority.contains(port) then
+      executionAuthority = None
+      executionAuthorityRetired = true
+
+  private[nebflow] def installedExecutionAuthority: Option[ExecutionCommitPort] = executionAuthority
+
+  private def withLegacyWrite[A](sessionId: String)(effect: IO[A]): IO[A] =
+    executionAuthority match
+      case Some(port) => port.withUnprotectedSession(sessionId)(effect)
+      case None if executionAuthorityRetired =>
+        IO.raiseError(new IllegalStateException("execution-authority-unavailable"))
+      case None =>
+        IO.blocking {
+          require(sessionId.nonEmpty && sessionId != "." && sessionId != ".." &&
+            !sessionId.contains('/') && !sessionId.contains('\\'), "Invalid session id")
+          val root = sessionsDir.toNIO
+          val session = root.resolve(sessionId)
+          val marker = session.resolve("executions")
+          def attributes(path: java.nio.file.Path) =
+            try Some(java.nio.file.Files.readAttributes(path, classOf[java.nio.file.attribute.BasicFileAttributes],
+              java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            catch case _: java.nio.file.NoSuchFileException => None
+          val rootAttrs = attributes(root)
+          val sessionAttrs = attributes(session)
+          if rootAttrs.exists(a => !a.isDirectory || a.isSymbolicLink) ||
+              sessionAttrs.exists(a => !a.isDirectory || a.isSymbolicLink) || attributes(marker).nonEmpty then
+            throw new IllegalStateException("protected-or-unknown-execution")
+        } *> effect
+
   private val logger = nebflow.shared.NebflowLogger.forName("nebflow.session")
 
   // ── db 接线第一阶（C4 九静默面收编 / D-5；C8 UI 面影子双读 / D-11）───────────
@@ -818,7 +861,7 @@ class SessionStore(
     }
 
   private def saveSessionMessages(id: String, msgs: List[Message]): IO[Unit] =
-    messageWriteGate.flatMap(_.permit.use(_ => saveSessionMessagesLocked(id, msgs)))
+    messageWriteGate.flatMap(_.permit.use(_ => withLegacyWrite(id)(saveSessionMessagesLocked(id, msgs))))
 
   private def saveSessionMessagesLocked(id: String, msgs: List[Message]): IO[Unit] =
     // Invalidate pending debounce entry so loadSessionMessages reads the fresh disk state.
@@ -850,10 +893,10 @@ class SessionStore(
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
       val now = System.currentTimeMillis()
       val updated = sessions.map(s => if s.id == activeId then s.copy(updatedAt = now) else s)
-      activeMessagesRef.set(msgs) *>
-        saveSessionMessages(activeId, msgs) *>
-        indexRef.set((activeId, updated, folders)) *>
-        notifySessionChanged(activeId)
+      messageWriteGate.flatMap(_.permit.use { _ =>
+        withLegacyWrite(activeId)(saveSessionMessagesLocked(activeId, msgs) *>
+          activeMessagesRef.set(msgs) *> indexRef.set((activeId, updated, folders)))
+      }) *> notifySessionChanged(activeId)
     // Don't save index on every message to reduce disk writes — save periodically or on switch
     }
 
@@ -869,7 +912,7 @@ class SessionStore(
   def saveMessagesForSession(targetId: String, msgs: List[Message]): IO[Unit] =
     val now = System.currentTimeMillis()
     messageWriteGate.flatMap(_.permit.use { _ =>
-      indexRef
+      withLegacyWrite(targetId)(indexRef
         .modify { case (activeId, sessions, folders) =>
           val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
           ((activeId, updated, folders), activeId)
@@ -879,7 +922,7 @@ class SessionStore(
           updateRef *>
             pendingMsgs.update(_.updated(targetId, msgs)) *>
             dirtyMsgSessions.update(_ + targetId)
-        }
+        })
     }) *> notifySessionChanged(targetId) *> scheduleMsgFlush
   end saveMessagesForSession
 
@@ -900,7 +943,8 @@ class SessionStore(
    * 零调用（行为零漂移）。崩溃语义见 spec §D3 崩溃窗口分析：读者见旧或见新。
    */
   def durableSwapMessages(targetId: String, msgs: List[Message]): IO[Unit] =
-    messageWriteGate.flatMap(_.permit.use(_ => durableSwapMessagesLocked(targetId, msgs)))
+    messageWriteGate.flatMap(_.permit.use(_ => withLegacyWrite(targetId)(durableSwapMessagesLocked(targetId, msgs)))) *>
+      notifySessionChanged(targetId)
 
   private def durableSwapMessagesLocked(targetId: String, msgs: List[Message]): IO[Unit] =
     val now = System.currentTimeMillis()
@@ -917,8 +961,7 @@ class SessionStore(
           updateRef *>
           dirtyMsgSessions.update(_ - targetId) *>
           pendingMsgs.update(_ - targetId) *>
-          indexRef.set((activeId, updated, folders)) *>
-          notifySessionChanged(targetId)
+          indexRef.set((activeId, updated, folders))
       }
     }
   end durableSwapMessagesLocked
@@ -930,7 +973,7 @@ class SessionStore(
    */
   def appendDurableMessage(targetId: String, message: Message): IO[Boolean] =
     messageWriteGate.flatMap(_.permit.use { _ =>
-      IO.uncancelable { _ =>
+      withLegacyWrite(targetId)(IO.uncancelable { _ =>
         pendingMsgs.get.flatMap { pending =>
           val current = pending.get(targetId) match
             case Some(msgs) => IO.pure(msgs)
@@ -946,13 +989,15 @@ class SessionStore(
             }
             if duplicate then
               // A pending duplicate must reach disk before acknowledging it.
-              if pending.contains(targetId) then durableSwapMessagesLocked(targetId, msgs).as(false)
-              else IO.pure(false)
-            else durableSwapMessagesLocked(targetId, msgs :+ message).as(true)
+              if pending.contains(targetId) then durableSwapMessagesLocked(targetId, msgs).as((false, true))
+              else IO.pure((false, false))
+            else durableSwapMessagesLocked(targetId, msgs :+ message).as((true, true))
           }
         }
-      }
-    })
+      })
+    }).flatMap { case (added, changed) =>
+      (if changed then notifySessionChanged(targetId) else IO.unit).as(added)
+    }
   end appendDurableMessage
 
   private def terminalEnvelopeFile(sessionId: String, runId: String): os.Path =
@@ -970,7 +1015,7 @@ class SessionStore(
   /** Persist the exact terminal event separately from model-visible message history. */
   def saveTerminalEnvelope(sessionId: String, runId: String, event: AgentCommand.ExternalEvent): IO[String] =
     messageWriteGate.flatMap(_.permit.use { _ =>
-      IO.blocking {
+      withLegacyWrite(sessionId)(IO.blocking {
         val file = terminalEnvelopeFile(sessionId, runId)
         val json = Json.obj(
           "source" -> event.source.asJson,
@@ -988,7 +1033,7 @@ class SessionStore(
           AtomicJson.writeSyncDurable(file, json.noSpaces)
           AtomicJson.forceParentDir(file)
         file.toString
-      }
+      })
     })
 
   /** Missing envelopes return None; unreadable or malformed envelopes fail explicitly. */
@@ -1202,35 +1247,32 @@ class SessionStore(
     }.handleErrorWith(_ => IO.pure(false))
 
   def switchSession(id: String): IO[List[Message]] =
-    // Use modify for atomic read-modify-write to prevent concurrent corruption.
-    // Returns: Right(oldId) for switch, Left(None) for same-session, Left(Some(err)) for not-found
-    indexRef
-      .modify { case (currentId, sessions, folders) =>
-        if id == currentId then ((currentId, sessions, folders), Left(Option.empty[String]))
+    // Flush before taking the message gate: flushPendingMessages takes it itself.
+    flushPendingUiWrites *> flushPendingMessages *> messageWriteGate.flatMap(_.permit.use { _ =>
+      indexRef.get.flatMap { case (currentId, sessions, _) =>
+        if id == currentId then activeMessagesRef.get
+        else if !sessions.exists(_.id == id) then IO.raiseError(new RuntimeException(s"Session $id not found"))
         else
-          sessions.find(_.id == id) match
-            case None => ((currentId, sessions, folders), Left(Some(s"Session $id not found")))
-            case Some(_) =>
-              val updated = sessions.map(s =>
-                if s.id == id then s.copy(hasUnread = false)
-                else s
-              )
-              ((id, updated, folders), Right(currentId))
-      }
-      .flatMap {
-        case Left(None) => activeMessagesRef.get
-        case Left(Some(err)) => IO.raiseError(new RuntimeException(err))
-        case Right(oldId) =>
-          activeMessagesRef.get.flatMap { currentMsgs =>
-            // Flush any debounced UI + message writes before switching, so the outgoing
-            // session's files are durable on disk.
-            flushPendingUiWrites *>
-              flushPendingMessages *>
-              saveSessionMessages(oldId, currentMsgs) *> loadSessionMessages(id).flatMap { newMsgs =>
-                activeMessagesRef.set(newMsgs) *> saveIndex *> newMsgs.pure[IO]
+          for
+            currentMsgs <- activeMessagesRef.get
+            _ <- if currentId.isEmpty then IO.unit
+                 else withLegacyWrite(currentId)(saveSessionMessagesLocked(currentId, currentMsgs))
+            newMsgs <- loadSessionMessages(id)
+            result <- IO.uncancelable { _ =>
+              indexRef.modify { case (active, currentSessions, folders) =>
+                if active != currentId || !currentSessions.exists(_.id == id) then
+                  ((active, currentSessions, folders), false)
+                else
+                  val updated = currentSessions.map(s => if s.id == id then s.copy(hasUnread = false) else s)
+                  ((id, updated, folders), true)
+              }.flatMap {
+                case false => IO.raiseError(new IllegalStateException("Session changed during switch"))
+                case true => activeMessagesRef.set(newMsgs) *> saveIndex.as(newMsgs)
               }
-          }
+            }
+          yield result
       }
+    })
 
   def createSession(
     name: String,
@@ -1417,6 +1459,9 @@ class SessionStore(
     yield meta
 
   def deleteSession(id: String): IO[Unit] =
+    withLegacyWrite(id)(deleteSessionData(id)) *> notifySessionDeleted(id)
+
+  private def deleteSessionData(id: String): IO[Unit] =
     indexRef
       .modify { case (activeId, sessions, folders) =>
         // Get the agent name of the session being deleted
@@ -1467,7 +1512,7 @@ class SessionStore(
             _ - id
           ) *> (if wasActive && newActiveId.nonEmpty then
                   loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
-                else IO.unit) *> TurnStateStore.clear(id) *> saveIndex *> notifySessionDeleted(id)
+                else IO.unit) *> TurnStateStore.clear(id) *> saveIndex
       }
 
   def markUnread(id: String): IO[Unit] =
@@ -2147,7 +2192,7 @@ class SessionStore(
           case Some(sid) =>
             pendingMsgs.get.flatMap { msgs =>
               (beforeDirtyMessageWrite(sid) *>
-                saveSessionMessagesLocked(sid, msgs.getOrElse(sid, Nil)).as(Some(sid)))
+                withLegacyWrite(sid)(saveSessionMessagesLocked(sid, msgs.getOrElse(sid, Nil))).as(Some(sid)))
                 .handleErrorWith(e => dirtyMsgSessions.update(_ + sid) *> IO.raiseError(e))
             }
           case None => IO.pure(None)

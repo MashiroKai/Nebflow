@@ -719,11 +719,11 @@
   color: var(--ds-text);
 }
 /* Device origin (多设备后台任务可见批 · 作者令 2026-10-25「多设备的后台任务
-   我们也要可见」): device-channel background tasks (Bash device=KAI +
+   我们也要可见」): device-channel background tasks (Bash device=<win> +
    run_in_background) carry the DEVICE as the origin chip — 「跑在哪台设备」,
    a different axis from nebula/dispatcher/node (谁开启). Same neutral chip
    family as dispatcher (one text notch brighter); the LABEL (device name,
-   e.g. KAI) is the differentiator. No new color tokens — existing glass /
+   e.g. <win>) is the differentiator. No new color tokens — existing glass /
    text tokens only (visual-style: reuse before inventing).
    设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：本类升格为**每行
    恒在的设备名 chip**——远端 = 对端设备名，本机 = 本机设备名（同名同类，本机不再
@@ -5136,6 +5136,19 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
 }
+/* Retry control of one failed media item (sits right after its note line). */
+.nf-media-retry {
+  margin-top: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-pill);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--ds-fs-hint);
+  cursor: pointer;
+}
+.nf-media-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 2px; }
 .play-ring {
   position: absolute; top: 50%; left: 50%;
   width: 54px; height: 54px; margin: -27px 0 0 -27px;

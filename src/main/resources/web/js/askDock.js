@@ -190,10 +190,8 @@ let noteTimer = 0;
 // 持久化缺陷批（2026-11-05）：两层持久的状态位。本地镜像可用性 / 未落服务端的
 // 脏编辑 / 最近一次推送内容（回执对账用）/ 服务端最近已知 mtime / 状态行 kind。
 let noteLocalOk = true;
-let noteDirty = false;
-let noteLastPushed = null;
-let noteServerTs = 0;
-let notePushTimer = 0;
+const noteEntries = new Map();
+let noteWriteSequence = 0;
 let noteStatus = '';
 
 // ── 每文档会话持久（2026-11-01 作者令批；头注「文档会话持久批」）────────────
@@ -851,10 +849,7 @@ function wireElements() {
   el.noteDock.addEventListener('click', (e) => e.stopPropagation());
   el.noteDock.addEventListener('pointerdown', (e) => e.stopPropagation());
   // 纯文本草稿：write-through 防抖 250ms（输入即存，切换卡/关窗/失焦都 flush）。
-  el.noteText.addEventListener('input', () => {
-    if (noteTimer) clearTimeout(noteTimer);
-    noteTimer = setTimeout(() => { noteTimer = 0; flushNote(); }, 250);
-  });
+  el.noteText.addEventListener('input', noteInputChanged);
   el.noteText.addEventListener('blur', flushNote);
   // 持久化缺陷批：同浏览器多标签页直通（另一标签写同一文件 ⇒ 本页未编辑即采纳）。
   // 浏览器原生 storage 事件只在**其它**标签页写时派发，本页自己写不回流，无回环。
@@ -879,9 +874,7 @@ function wireGlobals(ctx) {
   // 持久化缺陷批：页面关闭/隐藏前把最后一段输入同步落本地镜像（服务端推送会随
   // 连接一起走，下次打开由「本地 ts 更新 ⇒ 回推」对账补齐，不丢字）。
   ctx.on(window, 'pagehide', () => { flushNote(); });
-  ctx.on(window, 'resize', () => { syncSeat(); reclampSize(); syncAskFade(); });
-  // 毛玻璃批：列滚动即渐隐拍（opacity 逐泡重算；rAF 节流在 syncAskFade 内）。
-  el.col.addEventListener('scroll', syncAskFade, { passive: true });
+  ctx.on(window, 'resize', () => { syncSeat(); reclampSize(); });
   // 批⑨：手机层根页切换（nf:mobile-nav）重落可见性闸——离开 canvas 页即隐。
   ctx.on(document, 'nf:mobile-nav', () => syncGate());
   // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
@@ -968,7 +961,7 @@ function wireObserversOnce() {
     for (const s of sessions.values()) s.stateSent = false;
     // 持久化缺陷批：断连期间没推上去的记事本编辑在重连后补推（含「本机离线写过
     // 内容」这一常见形态——不补推就等于那个文件在引擎侧永远是空的）。
-    if (el && noteSid && noteDirty) scheduleNotePush(noteSid, el.noteText.value, 0);
+    resyncNotesAfterReconnect();
   });
 }
 
@@ -1250,6 +1243,8 @@ const NOTE_STATUS_TEXT = {
   unsaved: '引擎未连接：内容只在本机',
   'no-store': '存储不可用：关窗后内容会丢',
   'too-large': '超出单条上限（256 KB），未保存到引擎',
+  'read-failed': '读取失败，本地草稿已保留，未写入引擎',
+  conflict: '记事本存在冲突：本地草稿和引擎版本均已保留',
 };
 
 /** 读某文件的本地镜像（无/坏/私密模式 ⇒ 空；与 ask 转录持久同一降级口径）。 */
@@ -1297,93 +1292,139 @@ function requestNote(sid) {
   sendWs({ type: 'askNoteGet', sessionId: sid });
 }
 
-/** 引擎侧真源：写（防抖；sid/文本在**调用拍**捕获，切卡后不会串写到新文件）。 */
+// Draft text and its base are persisted together, including an empty unsent clear.
+const NOTE_DRAFT_PREFIX = 'note:draft:';
+function saveNoteEntry(sid, entry) {
+  try {
+    localStorage.setItem(key(NOTE_DRAFT_PREFIX + sid), JSON.stringify({ text: entry.text, version: entry.version, dirty: entry.dirty, held: entry.held, remote: entry.remote || null }));
+    return persistNoteLocal(sid, entry.text);
+  } catch { return false; }
+}
+function noteEntry(sid) {
+  if (!noteEntries.has(sid)) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(key(NOTE_DRAFT_PREFIX + sid)) || 'null'); } catch { /* unavailable mirror */ }
+    const valid = saved && typeof saved.text === 'string';
+    noteEntries.set(sid, { text: valid ? saved.text : loadNote(sid), dirty: valid ? !!saved.dirty : !!loadNote(sid), version: valid && typeof saved.version === 'number' ? saved.version : null, timer: 0, flight: null, readFailed: false, held: !!(valid && saved.held), remote: valid ? saved.remote : null });
+  }
+  return noteEntries.get(sid);
+}
+/** Input handler body（命名函数：可执行测试切片可直接驱动它，不依赖事件绑定）。 */
+function noteInputChanged() {
+  if (noteSid) { const entry = noteEntry(noteSid); entry.text = el.noteText.value; entry.dirty = true; saveNoteEntry(noteSid, entry); }
+  if (noteTimer) clearTimeout(noteTimer);
+  noteTimer = setTimeout(() => { noteTimer = 0; flushNote(); }, 250);
+}
+/** 重连后的记事本对账（命名函数：清 flight、把离线脏稿重新读一遍再补推）。 */
+function resyncNotesAfterReconnect() {
+  for (const [sid, entry] of noteEntries) { entry.flight = null; if (entry.dirty) requestNote(sid); }
+}
+function showNoteConflict(sid) {
+  if (sid !== noteSid || !el || !el.noteStatus) return;
+  const entry = noteEntry(sid);
+  setNoteStatus('conflict');
+  if (!entry.remote) return;
+  const preview = document.createElement('pre');
+  preview.textContent = entry.remote.text || tt('（服务端已清空）', '(Cleared on server)');
+  const mine = document.createElement('button');
+  mine.type = 'button'; mine.textContent = tt('保留本地', 'Keep local');
+  const theirs = document.createElement('button');
+  theirs.type = 'button'; theirs.textContent = tt('使用服务端', 'Use server');
+  mine.addEventListener('click', () => resolveNoteConflict(sid, 'local'));
+  theirs.addEventListener('click', () => resolveNoteConflict(sid, 'remote'));
+  el.noteStatus.append(preview, mine, theirs);
+}
+function resolveNoteConflict(sid, choice) {
+  const entry = noteEntry(sid);
+  if (!entry.held || !entry.remote) return;
+  const remote = entry.remote;
+  if (choice === 'remote') { entry.text = remote.text; entry.dirty = false; }
+  else if (choice === 'local') entry.dirty = true;
+  else return;
+  entry.version = remote.version; entry.held = false; entry.remote = null;
+  saveNoteEntry(sid, entry);
+  if (sid === noteSid && el) { el.noteText.value = entry.text; setNoteStatus(''); }
+  if (entry.dirty) scheduleNotePush(sid, entry.text, 0);
+}
 function scheduleNotePush(sid, text, delay) {
   if (!sid) return;
-  noteLastPushed = { sid, text };
-  if (notePushTimer) clearTimeout(notePushTimer);
-  const wait = typeof delay === 'number' ? delay : NOTE_PUSH_DELAY_MS;
-  notePushTimer = setTimeout(() => {
-    notePushTimer = 0;
-    const sent = sendWs({ type: 'askNotePut', sessionId: sid, text, baseTs: noteServerTs });
-    if (!sent) setNoteStatus(noteLocalOk ? 'unsaved' : 'no-store');
-  }, wait);
+  const entry = noteEntry(sid);
+  entry.text = text; entry.dirty = true;
+  saveNoteEntry(sid, entry);
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => {
+    entry.timer = 0;
+    if (entry.version === null || entry.readFailed || entry.held || entry.flight) return;
+    const writeId = String(++noteWriteSequence);
+    entry.flight = { writeId, text: entry.text };
+    if (!sendWs({ type: 'askNotePut', sessionId: sid, text: entry.text, baseVersion: entry.version, writeId }) && sid === noteSid) setNoteStatus('unsaved');
+  }, typeof delay === 'number' ? delay : NOTE_PUSH_DELAY_MS);
 }
-
-/** 立即落盘（防抖拍 + 收起/切卡/失焦都走这里，单点）。
- *  两层都写：本地镜像同步写（快显/离线）＋ 引擎侧防抖推送（真源）。 */
 function flushNote() {
   if (noteTimer) { clearTimeout(noteTimer); noteTimer = 0; }
   if (!el || !notePath || !noteSid) return;
-  const sid = noteSid;
-  const text = el.noteText.value;
-  noteLocalOk = persistNoteLocal(sid, text);
-  noteDirty = true;
-  scheduleNotePush(sid, text);
+  const entry = noteEntry(noteSid);
+  if (!entry.dirty) return;
+  entry.text = el.noteText.value;
+  noteLocalOk = saveNoteEntry(noteSid, entry);
+  scheduleNotePush(noteSid, entry.text);
   if (!noteLocalOk) setNoteStatus('mirror-off');
 }
-
-/** 服务端对账（askNoteState 回包）：判据见头注「冲突判据」。 */
 function applyServerNote(msg) {
-  if (!el) return;
   const sid = msg.sessionId || '';
-  if (!sid || sid !== noteSid) return; // 切卡后到达的旧回包：以当前文件为准
-  const serverText = typeof msg.text === 'string' ? msg.text : '';
-  const serverTs = typeof msg.ts === 'number' ? msg.ts : 0;
-  if (serverTs > noteServerTs) noteServerTs = serverTs;
-  const local = loadNoteLocal(sid);
-  const cur = el.noteText.value;
-  const localText = local.text || cur;
-  const localNewer = local.ts > serverTs && local.text !== serverText;
-  // 「服务端空、本地有」= 本地那份还没同步过（旧键迁移来的存量 / 离线写入 / 隐私
-  // 模式下镜像失败但 textarea 里有字）。此时**绝不能用空值清掉本地内容**——宁可
-  // 把它回推上去：记事本正文清掉就找不回来，保住内容优先于「服务端为权威」。
-  const localUnsynced = !!localText && !serverText;
-  // 「正在敲字」也算脏：防抖窗口内（输入已被本地镜像捕获但 flush 还没跑）收到对账
-  // 回包时，不能把用户正在写的这一行换掉。开窗后自动聚焦不算脏（值 === 镜像值）。
-  const editing = document.activeElement === el.noteText && cur !== local.text;
-  if (noteDirty || editing || localNewer || localUnsynced) {
-    // 本地更新/未同步 ⇒ 不覆盖本地，把本地推上去（正在写的以 textarea 为准）。
-    const pushText = noteDirty || editing ? cur : localText;
-    if (!(noteDirty || editing)) noteLocalOk = persistNoteLocal(sid, pushText, local.ts || Date.now());
-    scheduleNotePush(sid, pushText, 0);
+  if (!sid || !noteEntries.has(sid)) return;
+  const entry = noteEntry(sid);
+  if (msg.error || typeof msg.version !== 'number' || typeof msg.text !== 'string') {
+    entry.readFailed = true;
+    if (sid === noteSid) setNoteStatus('read-failed');
     return;
   }
-  // 服务端更新或本地无内容 ⇒ 采纳服务端（含「服务端为空」的清空态）。
-  noteServerTs = serverTs;
-  if (serverText !== el.noteText.value) el.noteText.value = serverText;
-  noteLocalOk = persistNoteLocal(sid, serverText, serverTs || Date.now());
-  noteDirty = false;
-  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  if (entry.version !== null && msg.version < entry.version) return;
+  entry.readFailed = false;
+  if (entry.text !== msg.text && (entry.held || (entry.dirty && (entry.version === null || entry.version !== msg.version)))) {
+    entry.held = true;
+    entry.remote = { text: msg.text, version: msg.version };
+    saveNoteEntry(sid, entry); showNoteConflict(sid); return;
+  }
+  entry.version = msg.version;
+  if (entry.dirty && entry.text !== msg.text) { saveNoteEntry(sid, entry); scheduleNotePush(sid, entry.text, 0); return; }
+  entry.dirty = false; entry.held = false; entry.remote = null; entry.text = msg.text;
+  saveNoteEntry(sid, entry);
+  if (sid === noteSid && el) { el.noteText.value = msg.text; setNoteStatus(''); }
 }
-
-/** 写回执（askNoteAck）：成功即清脏（只清「最后推的正是当前文本」那一拍）。 */
 function applyNoteAck(msg) {
-  if (!el) return;
   const sid = msg.sessionId || '';
-  if (msg.ok) {
-    if (typeof msg.ts === 'number' && msg.ts > noteServerTs) noteServerTs = msg.ts;
-    if (noteLastPushed && noteLastPushed.sid === sid && el.noteText.value === noteLastPushed.text) {
-      noteDirty = false;
+  const entry = noteEntries.get(sid);
+  if (!entry || !entry.flight || msg.writeId !== entry.flight.writeId) return;
+  const sent = entry.flight.text;
+  entry.flight = null;
+  if (msg.ok && typeof msg.version === 'number') {
+    entry.version = msg.version;
+    if (entry.text === sent) entry.dirty = false;
+    saveNoteEntry(sid, entry);
+    if (entry.dirty) scheduleNotePush(sid, entry.text, 0);
+    if (sid === noteSid) setNoteStatus('');
+  } else if ((msg.error === 'conflict' || msg.error === 'version-required') && typeof msg.version === 'number' && typeof msg.text === 'string') {
+    // 迟到/同一文本的回执：服务端已经是我们要写的文本（例：显式选了服务端副本后，
+    // 在途写的 conflict 回执才到；或未知基线的旧页面对上了同一文本）⇒ 无需再让用户
+    // 选择，直接采纳该版本。文本不同才保留两边并展示选择。
+    if (msg.text === entry.text) {
+      entry.version = msg.version; entry.dirty = false; entry.held = false; entry.remote = null;
+      saveNoteEntry(sid, entry);
+      if (sid === noteSid) setNoteStatus('');
+    } else {
+      entry.held = true; entry.remote = { text: msg.text, version: msg.version };
+      saveNoteEntry(sid, entry); showNoteConflict(sid);
     }
-    setNoteStatus(noteLocalOk ? '' : 'mirror-off');
-  } else if (msg.error === 'too-large') {
-    setNoteStatus('too-large');
-  } else if (msg.error === 'bad-session-id') {
-    setNoteStatus('no-store');
   } else {
-    setNoteStatus(noteLocalOk ? 'unsaved' : 'no-store');
+    if (msg.error === 'read-failed') entry.readFailed = true;
+    if (sid === noteSid) setNoteStatus(msg.error === 'too-large' ? 'too-large' : msg.error === 'read-failed' ? 'read-failed' : 'unsaved');
   }
 }
-
-/** 同浏览器多标签页直通（storage 事件）：本地无脏编辑即采纳对端写入。 */
 function onNoteStorage(e) {
-  if (!el || !noteSid) return;
-  if (e.key !== key(NOTE_STORE_PREFIX + noteSid) && e.key !== key(NOTE_TS_PREFIX + noteSid)) return;
-  if (noteDirty) return; // 本页有未落盘编辑：以本页为准（最后写者胜）
-  const local = loadNoteLocal(noteSid);
-  if (local.text !== el.noteText.value) el.noteText.value = local.text;
-  if (local.ts > noteServerTs) noteServerTs = local.ts;
+  if (!el || !noteSid || e.key !== key(NOTE_STORE_PREFIX + noteSid)) return;
+  const entry = noteEntry(noteSid);
+  if (!entry.dirty && !entry.flight) requestNote(noteSid);
 }
 
 function isNoteOpen() { return !!el && !el.noteDock.classList.contains('closed'); }
@@ -1397,10 +1438,9 @@ async function openNote() {
   if (!sid || currentFile !== path) return; // 派生期间切卡/关卡：让 syncNoteForFile 收口
   notePath = path;
   noteSid = sid;
-  noteDirty = false;
-  noteServerTs = 0;
-  el.noteText.value = loadNote(sid); // ① 本地镜像先上台（不等网络）
-  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  const entry = noteEntry(sid);
+  el.noteText.value = entry.text; // ① 本地镜像先上台（不等网络）
+  if (entry.held) showNoteConflict(sid); else setNoteStatus(noteLocalOk ? '' : 'mirror-off');
   requestNote(sid); // ② 引擎侧真源对账（回包 = consumeFrame 的 askNoteState）
   restoreSize(el.noteSurface); // ③ 尺寸偏好（与 ask 同一条恢复腿）
   el.noteDock.classList.remove('closed');
@@ -1445,10 +1485,9 @@ async function syncNoteForFile() {
   if (notePath && notePath !== path) flushNote();
   notePath = path;
   noteSid = sid;
-  noteDirty = false;
-  noteServerTs = 0;
-  el.noteText.value = loadNote(sid);
-  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  const entry = noteEntry(sid);
+  el.noteText.value = entry.text;
+  if (entry.held) showNoteConflict(sid); else setNoteStatus(noteLocalOk ? '' : 'mirror-off');
   requestNote(sid); // 引擎侧真源对账（每文件独立生命周期，与问答回放零同步）
 }
 
@@ -1477,54 +1516,12 @@ function render() {
     // marked+KaTeX 护栏）；业务 DOM（气泡壳、图标、拖柄、输入条）一律走 h()/frag()。
     if (m.role === 'user') b.textContent = m.text;
     else b.innerHTML = renderMarkdownWithMath(m.text);
-    // ── glass-unify 批 2026-11-05：「按龄渐隐」整条腿退役 ──────────────────
-    // 作者令（2026-11-05 16:50 逐字）：「canvas的ask现在有bug……是只有最新一条
-    // 消息能看清，其他前面的消息又是半透明的了。」
-    // 根因就在这里：原实现给**每条**历史气泡写 `--ask-age-alpha = max(0.3,
-    // 1 - 距底条数 × 0.13)`（第 1 条旧 = .87、第 3 条 = .61、第 6 条起压到 .30），
-    // CSS 侧 `.ask-bub[data-age] { opacity: var(--ask-age-alpha) }` 直接吃这个值。
-    // 于是「最新一条 α=1 清楚、前面全部半透明、底下的文档正文透上来」——这是
-    // 设计意图「弹幕感」与作者新令「毛玻璃一律不透底」的正面冲突，按**后者胜**
-    // 处理：整条年龄透明度腿删除（不写 --ask-age-alpha、不写 data-age）。
-    // 与「顶缘 12px 内容级渐隐」不冲突：那是作者 2026-11-04 09:22 明确要的
-    // 「滚到列顶时自身的 alpha 渐到 0」，毛玻璃批（2026-11-06）起作用在**逐泡
-    // opacity**（syncAskFade）且只有 12px 高，不是「每条历史消息整体降透明度」。
-    // 两者被本批区分为「位置渐隐」vs「年龄渐隐」，只保留前者。
+    // History bubbles never change opacity: not by age, not by scroll position. A bubble
+    // that crosses the column's top edge is clipped by the column, so every visible part
+    // of it stays fully legible. (FCC-REQ-004)
     el.col.appendChild(b);
   });
-  requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; syncAskFade(); });
-}
-
-// ── 顶缘渐隐（毛玻璃批 2026-11-06）─────────────────────────────────────────
-// 载体换代：列 mask 退役（css/ask.css .ask-col 块注：mask 使 .ask-col 成为
-// backdrop root，子气泡的 backdrop-filter 采样被架空 = 「半透明洗色」假毛玻璃，
-// 改前像素实证 diff(maskOn, blurOff) = 0.22 ≈ 0）。「消息 alpha 渐到 0」的
-// 2026-11-04 令语义不变，载体改**逐泡 opacity**：泡顶到列顶的距离在
-// --ask-fade-h（12px）内线性落 alpha，带外恒 1。opacity 不产生 backdrop root、
-// 不参与 hit-test，与真模糊并存。单实现（本函数是全站唯一写泡 opacity 的地方；
-// CSS 零 mask-image，防复活钉 = tests/ask-sheet-fade-height A0b/D3 +
-// tests/ask-glass-drag G2）。
-let fadeRaf = 0;
-function syncAskFade() {
-  if (!el || !el.col || !el.col.isConnected) return;
-  if (fadeRaf) return; // 一拍合一：滚动高频触发只排一帧
-  fadeRaf = requestAnimationFrame(() => {
-    fadeRaf = 0;
-    const col = el.col;
-    if (!col || !col.isConnected || col.classList.contains('closed')) return;
-    const fadeH = dsPx(el.askSurface, '--ask-fade-h', 12) || 12;
-    const colTop = col.getBoundingClientRect().top;
-    for (const bub of col.querySelectorAll('.ask-bub')) {
-      const d = bub.getBoundingClientRect().top - colTop;
-      // ask-fade-floor 批 2026-11-07（作者令逐字「ask对话框的消息会突然透明」）：
-      // 旧式 ratio = clamp(d/fadeH) ⇒ 泡顶一旦越过列顶就落 0，整条消息**完全
-      // 消失**（12px 衰减带的注释假设与真实渲染不符：泡顶越顶后 d<0 恒 0）。
-      // 现改为「边缘提示」而非「隐形」：底限 0.55，衰减带内线性升到 1。
-      // 效果 = 顶缘仍有一档柔化提示，但任何仍然可见的消息都不会突然变透明。
-      const ratio = Math.max(0, Math.min(1, d / fadeH));
-      bub.style.opacity = String(0.55 + 0.45 * ratio);
-    }
-  });
+  requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; });
 }
 
 /** 流式增量更新（不整列重渲——textDelta 高频）。 */
@@ -1540,7 +1537,6 @@ function updateStreamingBubble(s) {
   // （同一 HTML 落点：markdown 渲染腿，见 render() 的注释。）
   node.innerHTML = last ? renderMarkdownWithMath(last.text, true, { cache: false }) : '';
   el.col.scrollTop = el.col.scrollHeight;
-  syncAskFade();
 }
 
 // ── 后端 WS 域（发 + 收）───────────────────────────────────────────────────
@@ -1642,7 +1638,6 @@ function appendTyping() {
   }, tt('正在生成…', 'Generating…'));
   el.col.appendChild(tp);
   el.col.scrollTop = el.col.scrollHeight;
-  syncAskFade();
   typingNode = tp;
 }
 function updateTypingText(text) {
@@ -1727,7 +1722,6 @@ function consumeFrame(msg) {
       if (entry === activeSession() && isOpen()) {
         updateTypingText(ai.text);
         el.col.scrollTop = el.col.scrollHeight;
-        syncAskFade();
       }
       // 流式落盘节流（持久批）：textDelta 高频，800ms 一拍写 localStorage；
       // 终局由 done 全量落盘兜底。

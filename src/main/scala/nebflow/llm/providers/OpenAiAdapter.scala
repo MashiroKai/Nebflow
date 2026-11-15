@@ -466,7 +466,7 @@ class OpenAiAdapter(
 
       // 🔴 缺陷①（2026-11-02，本线保留）：非流式请求必须显式带 readTimeout——sttp
       // client4 的 60s 缺省会把插件自动分配/小判官/健康探测腿在 60.0xx s 掐断。
-      // 与流式面同口径给 LlmReadTimeoutSec（600s）；USTC 侧的结构（applyHeaders
+      // 与流式面同口径给 LlmReadTimeoutSec（600s）；既有流式侧的结构（applyHeaders
       // 统一装头 + wireError）逐字保留。
       val request = applyHeaders(
         basicRequest

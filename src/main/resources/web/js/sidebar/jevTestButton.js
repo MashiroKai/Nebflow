@@ -5,13 +5,16 @@
 // 口径与 LLM 测试钮（modelTestButton.js）逐字同源：真实探活、结果就地可见
 // （✅+耗时 ms / ❌+HTTP 状态码+错误首行）、结果块同一套 cfg-test-results 组件
 // （绘制函数直接复用 paintTestingLine/paintTestResultLine——零第二套状态面）；
-// 测的是表单当前值（provider/endpoint/keyRef，未保存也测）；单飞+测试中禁用+
-// 结果保留可重测（结果不落 localStorage、不改配置——纯诊断读数）。
+// 测的是表单当前值（适配器 / endpoint / model / 未保存的 key，未保存也测）；单飞+
+// 测试中禁用+结果保留可重测（结果不落 localStorage、不改配置——纯诊断读数）。
 //
-// 引擎面：owner-auth 端点 POST /api/jev/test {provider?, endpoint?, keyRef?}
-//（JevProbe 单点：laya 走 /health metadata 面、typesafe 走 1-noul-问题极小真实
-// 补全，20s 有界诊断超时，错误文案服务侧已脱敏；keyRef secret 缺席 = 直接
-// 「待录入」失败，不发注定 401 的击）。
+// Engine face: owner-auth endpoint POST /api/jev/test
+// {provider, endpoint?, model?, apiKey?, keyRef?}. `provider` is the ADAPTER id
+// (typesafe-jev | laya), never the provider-instance name; the engine tolerates a
+// missing one, this form never sends without it (see runJevTest). `model` and
+// `apiKey` are the form's unsaved values and are never persisted. JevProbe is the single probe
+// (laya = /health metadata, typesafe = a minimal real completion, bounded 20s,
+// server-side redacted error text; a keyRef whose secret is absent fails at once).
 //
 // 模块化落位（sidebar/ 子模块单向纪律）：JeV 表单本体在 sidebar.js 内联渲染，
 // 本模块只管钮 + 结果块 + 引擎调用的绑定面；spec 经 fixture 页驱动真实模块。
@@ -41,22 +44,27 @@ export function jevTestResultsHTML() {
 
 /**
  * The engine call. Form's CURRENT values ride the body (unsaved edits
- * testable); an absent/empty field is omitted — the engine falls back to the
- * stored config leg field-by-field. Network/HTTP failures normalize into
+ * testable); an empty endpoint/model/key is omitted — the engine falls back to the
+ * stored config leg field-by-field. The adapter is the exception: it decides which
+ * upstream the probe speaks to, so without one nothing is sent (the engine would
+ * otherwise probe its default adapter and report on something the user did not
+ * pick) and the verdict asks for an adapter. Network/HTTP failures normalize into
  * {ok:false, error} with the server-sanitized text.
- * @param {{provider: string, endpoint: string, keyRef: string}} form
+ * @param {{provider: string, endpoint: string, keyRef: string, model?: string, apiKey?: string}} form
  * @returns {Promise<{ok: boolean, latencyMs?: number, error?: string}>}
  */
 export async function runJevTest(form) {
+  const provider = (form.provider || '').trim();
+  if (!provider) return { ok: false, error: t('settings.imagegenTypeRequired') };
   try {
     /** @type {Record<string, string>} */
-    const body = {};
-    const provider = (form.provider || '').trim();
+    const body = { provider };
     const endpoint = (form.endpoint || '').trim();
     const keyRef = (form.keyRef || '').trim();
-    if (provider) body.provider = provider;
     if (endpoint) body.endpoint = endpoint;
     if (keyRef) body.keyRef = keyRef;
+    if ((form.model || '').trim()) body.model = form.model.trim();
+    if ((form.apiKey || '').trim()) body.apiKey = form.apiKey.trim();
     const resp = await fetch('/api/jev/test', {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
@@ -79,7 +87,7 @@ export async function runJevTest(form) {
  * the button disables during the test and re-enables on the verdict; the
  * result line stays until the next test (re-test = fresh line state).
  * @param {HTMLElement} root container of both the button and the results block
- * @param {{getForm: () => ({provider: string, endpoint: string, keyRef: string})}} opts
+ * @param {{getForm: () => ({provider: string, endpoint: string, keyRef: string, model?: string, apiKey?: string})}} opts
  */
 export function bindJevTestButton(root, opts) {
   const btn = /** @type {HTMLButtonElement|null} */ (root.querySelector('#btn-test-jev'));

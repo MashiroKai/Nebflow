@@ -303,19 +303,21 @@ try {
       await shot(page, theme, '05-device-dialog');
       const dlg = await page.evaluate(() => {
         const modal = document.querySelector('.fm-modal');
-        const idEl = modal.querySelector('.fm-modal-id');
+        // FCC-REQ-007: on desktop the conversation header (name, sub line, description button) lives in #header.
+        const head = document.querySelector('#header .fm-main-head') || modal;
+        const idEl = head.querySelector('.fm-modal-id');
         const descRow = modal.querySelector('.fm-device-desc');
-        const descBtn = modal.querySelector('.fm-device-desc-btn');
+        const descBtn = head.querySelector('.fm-device-desc-btn');
         return {
           modalId: idEl ? idEl.textContent : null,
-          headerText: modal.querySelector('.fm-modal-header').textContent,
+          headerText: head.matches('.fm-main-head') ? head.textContent : modal.querySelector('.fm-modal-header').textContent,
           noteCount: modal.querySelectorAll('.fm-device-note').length,
           descRowPresent: !!descRow && descRow.dataset.deviceDesc === '1',
           descBtnPresent: !!descBtn,
           descBtnExpanded: descBtn ? descBtn.getAttribute('aria-expanded') : null,
           oldInlineTextPresent: !!modal.querySelector('.fm-device-desc-text'),
           docHasRetention: document.body.innerText.includes('云端保留') || document.body.innerText.includes('Cloud keeps messages'),
-          title: (modal.querySelector('.fm-modal-name') || {}).textContent,
+          title: (head.querySelector('.fm-modal-name') || {}).textContent,
         };
       });
       ok('R5a', '对话框不显示设备码（窗头副行 = 平台文本，header 无 deviceId）',
@@ -341,9 +343,10 @@ try {
           await sleep(600);
           descRoundTrip = await page.evaluate(() => {
             const modal = document.querySelector('.fm-modal');
+            const head = document.querySelector('#header .fm-main-head') || modal;
             return {
               descText: (modal.querySelector('.fm-device-desc-text') || {}).textContent,
-              title: (modal.querySelector('.fm-modal-name') || {}).textContent,
+              title: (head.querySelector('.fm-modal-name') || {}).textContent,
               panelGone: !modal.querySelector('.fm-device-desc-panel'),
             };
           });

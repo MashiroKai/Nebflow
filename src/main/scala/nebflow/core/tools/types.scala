@@ -171,6 +171,8 @@ case class ToolContext(
    * params.cwd → 对端接收面 ToolContext.sessionCwd）。None = 无注入。
    */
   sessionDeviceWorkspace: Option[String] = None,
+  /** Protected-only engine-state roots that JVM file tools must not write. */
+  protectedExecutionRoots: List[java.nio.file.Path] = Nil,
   /** Sealed runtime identity: only AgentSessionExecution can mint an authentic value. */
   private[nebflow] executionIdentity: Option[ToolExecutionIdentity] = None
 ):

@@ -120,10 +120,10 @@
 ## 6 复现命令
 
 ```bash
-cd "/c/Users/Kai/.nebflow/projects/general/.nebflow/tmp"
+cd "/c/Users/name/.nebflow/projects/general/.nebflow/tmp"
 npx -y wavedrom-cli -i adc_conv.json -s adc_conv.svg
 npx -y wavedrom-cli -i spi_read.json -s spi_read.svg
-cp adc_conv.svg C:/Users/Kai/.nebflow/plots/20261004_timing_adc_conv.svg
-cp spi_read.svg C:/Users/Kai/.nebflow/plots/20261004_timing_spi_read.svg
-C:/Users/Kai/.nebflow/tools/viz-venv/Scripts/python.exe C:/Users/Kai/.nebflow/skills/visual-report-suite/timing/wavedrom_dark.py C:/Users/Kai/.nebflow/plots/20261004_timing_adc_conv.svg C:/Users/Kai/.nebflow/plots/20261004_timing_spi_read.svg
+cp adc_conv.svg C:/Users/name/.nebflow/plots/20261004_timing_adc_conv.svg
+cp spi_read.svg C:/Users/name/.nebflow/plots/20261004_timing_spi_read.svg
+C:/Users/name/.nebflow/tools/viz-venv/Scripts/python.exe C:/Users/name/.nebflow/skills/visual-report-suite/timing/wavedrom_dark.py C:/Users/name/.nebflow/plots/20261004_timing_adc_conv.svg C:/Users/name/.nebflow/plots/20261004_timing_spi_read.svg
 ```

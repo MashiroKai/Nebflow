@@ -10,8 +10,7 @@
 #   GitLab 对应物）与 §3.2 阶段 2。
 #
 # 触发裁定（本批）：
-#   · 分支 / MR pipeline 只跑 compile 级最小 = compile-mac + compile-windows 两腿
-#     （本批验证基准；存量内容门禁红被 rules 隔离在小面之外）。
+#   Branch and merge-request pipelines run static, compile-mac and compile-windows.
 #   · main / beta / release 分支与 tag pipeline 跑全量 job 集。
 #   · release job（release.yml beta 链 / auto-release.yml stable 链的对应物）只在
 #     beta / release 分支 pipeline 跑，needs: assembly ⇒ 等全量面（含 test）齐绿才发
@@ -51,7 +50,7 @@
 #      是宿主 ~/.npm；若实测 zip 往返开销大，可改 npm ci --cache .cache/npm 方案）。
 #
 # 原 job → 本文件 job 对照（后续文档引用）：
-#   js-types             → js-types               (tags mac)
+#   Node static gates    -> static                 (tags mac)
 #   user-knowledge-gate  → user-knowledge-gate    (tags mac)
 #   dead-logging-gate    → dead-logging-gate      (tags mac)
 #   jdk-baseline-gate    → jdk-baseline-gate      (tags mac)
@@ -85,7 +84,7 @@ stages:
 
 workflow:
   rules:
-    # MR pipeline：compile 最小面
+    # MR pipelines include the required static job and compile jobs.
     - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
     # 分支 push：pipeline 建；全量面由各 job rules 收窄到 main/beta/release
     - if: "$CI_COMMIT_BRANCH"
@@ -121,7 +120,7 @@ variables:
   PRODUCT_NAME: "stand"
 
 # ── 共用 rules：全量面（main/beta/release 分支 + tag）───────────────────────
-# 其余分支 / MR pipeline 只剩无 rules 约束的 compile 两腿 = 最小验证面。
+# Other branches and merge requests run static plus the two compile jobs.
 .rules-full: &rules_full
   rules:
     - if: "$CI_COMMIT_TAG"
@@ -174,36 +173,44 @@ variables:
 # gates —— 七个 fail-fast 静态门禁（原 ubuntu 腿 → mac 宿主，node/bash 即跑）
 # ============================================================================
 
-js-types:
+# Required on merge requests, all branches and tags; Node tooling only.
+static:
   stage: gates
   tags: [mac]
-  timeout: 10m
+  timeout: 15m
   needs: []
-  <<: *rules_full
+  allow_failure: false
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: "$CI_COMMIT_BRANCH"
+    - if: "$CI_COMMIT_TAG"
   script:
-    # 原 setup-node node20 → 宿主 node。
-    - npm install --no-save --no-package-lock typescript@5.5
-    # A1 gate: 新文件带错 / (file,code) 计数增 / 总量超 tests/type-baseline.json 即红。
-    - node scripts/check-js-types.mjs
-    # P2-4 gate: 静态 import SCC 成环即红（dynamic import() 是豁免通道）。
-    - node scripts/check-circular.mjs
-    # ⑤ gate（作者裁 2026-09-12）：web/js 下直读 isComposing / keyCode 229 /
-    # 绑 compositionstart|compositionend 而不 import imeGuard.js 即红。
-    - node scripts/check-ime-guard.mjs
-    # ③-G gate：friend chat modal 与 dropbox modal 共享的消息面值唯一字面家 =
-    # css/sapphire.css，feature CSS 重抄即红。
-    - node scripts/check-msgstyle-single-source.mjs
-    # design-scale gate（作者令 2026-11-04「把圆角 边距 文字离边缘的距离 各文字的大小
-    # 写进spec和前端开发包」）：四类刻度只在 design-language 插件 references/
-    # design-language-tokens.md 的 spec 表登记；spec 行与令牌源双向漂移即红
-    # （spec→源：变量存在且同值；源→spec：刻度族新档必须进表），另查 --dl-* 账本镜像。
-    - node scripts/check-design-spec-sync.mjs
-    # Provider model-list endpoint 必须由协议 face 声明，gateway 不得拼 baseUrl。
-    - node scripts/check-provider-modellist.mjs
-    # Gate #491：ship face 不带贡献者本机标识（运行时自推导执行机身份）。
-    - node scripts/check-local-coupling.mjs
-    # F3：release tag 无 v 前缀（扫 release 双 workflow + installer 双脚本）。
-    - node scripts/check-tag-format.mjs
+    - npm ci
+    - |
+      set -euo pipefail
+      if [[ "$CI_PIPELINE_SOURCE" == "merge_request_event" ]]; then
+        base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:?Missing merge-request diff base}"
+        [[ "$base" =~ ^[0-9a-f]{40}$ && ! "$base" =~ ^0+$ ]]
+      else
+        base="${CI_COMMIT_BEFORE_SHA:-}"
+      fi
+      if [[ "$base" =~ ^[0-9a-f]{40}$ && ! "$base" =~ ^0+$ ]]; then
+        git cat-file -e "$base^{commit}" 2>/dev/null || git fetch --no-tags origin "$base"
+      else
+        test -n "$CI_DEFAULT_BRANCH"
+        git fetch --no-tags origin "$CI_DEFAULT_BRANCH"
+        base=$(git merge-base HEAD FETCH_HEAD)
+      fi
+      git cat-file -e "$base^{commit}"
+      static_status=0
+      coverage_status=0
+      openspec_status=0
+      npm run check:static || static_status=$?
+      npm run check:openspec -- --download || openspec_status=$?
+      npm run check:sdd-changed -- --base "$base" || coverage_status=$?
+      test "$static_status" -eq 0 && test "$coverage_status" -eq 0 && test "$openspec_status" -eq 0
 
 user-knowledge-gate:
   stage: gates
@@ -289,9 +296,6 @@ lint:
   script:
     # 原 setup-java temurin 23 cache:sbt → 宿主 JDK23 + cache_sbt_mac。
     - sbt scalafmtCheckAll "scalafix --check"
-    # Phase 5 分层门禁：反向边集合 ⊆ scripts/layer-exemptions.json 基线（只减不增），
-    # 非 import 正则（FQN 裸引用面）；exit 1 = 违规未豁免。需要 node。
-    - node scripts/check-scala-layers.mjs
 
 # ============================================================================
 # compile —— matrix 两腿拆 job：mac 腿（原 ubuntu-latest）/ windows 腿（原
@@ -362,7 +366,7 @@ assembly:
   stage: assembly
   tags: [mac]
   timeout: 45m
-  needs: [compile-mac, compile-windows, test]
+  needs: [static, compile-mac, compile-windows, test]
   <<: *rules_full
   cache:
     # 原 setup-java cache:sbt + setup-node cache:npm 两面。

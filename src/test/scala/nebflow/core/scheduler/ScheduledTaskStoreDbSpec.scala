@@ -59,17 +59,18 @@ class ScheduledTaskStoreDbSpec extends FunSuite:
         a2 <- store.loadTasks("s1")
         _ = assertEquals(a2.map(_.id), List("t2"))
         _ = assertEquals(live(db.get, "s1").map(_.id), List("t2"), "tombstone 后 db 缺席")
-        // upsert 同名替换：旧 id 消失 + 新 id 落库（跨面折叠单份）。
+        // upsert 同名替换：rearm 保留既有 id（稳定身份）+ 新内容落库（跨面折叠单份）。
         reps <- store.upsertTaskByName(task("t3", "s1", 3000L, name = Some("例行")))
-        _ = assertEquals(reps.map(_.id), List("t2"), "同名旧任务被替换返回")
+        _ = assertEquals(reps.replaced.map(_.id), List("t2"), "同名旧任务被替换返回")
+        _ = assertEquals(reps.saved.id, "t2", "rearm keeps the owned record's id")
         a3 <- store.loadTasks("s1")
         d3 = live(db.get, "s1")
-        _ = assertEquals(a3.map(_.id), List("t3"))
-        _ = assertEquals(d3.map(_.id), List("t3"), "db 面同名收敛单份")
+        _ = assertEquals(a3.map(_.id), List("t2"))
+        _ = assertEquals(d3.map(_.id), List("t2"), "db 面同名收敛单份")
         // markTriggered ⇒ 变更差量（同 id 取最后行）。
-        _ <- store.markTriggered("s1", "t3")
+        _ <- store.markTriggered("s1", "t2")
         d4 = live(db.get, "s1")
-        _ = assertEquals(d4.map(_.id), List("t3"), "折叠后 t3 单行")
+        _ = assertEquals(d4.map(_.id), List("t2"), "折叠后 t2 单行")
         _ = assert(d4.head.triggered, "触发态写穿（折叠最后行带 triggered）")
       yield ()
     }

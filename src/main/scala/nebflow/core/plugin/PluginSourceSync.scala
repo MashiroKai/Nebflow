@@ -251,7 +251,7 @@ object PluginSourceSync:
    * （`List("clone", …)`），而 `os.proc` 的第一个元素就是可执行文件——漏了这层前缀，
    * 进程会去找名为 `clone` / `ls-remote` 的程序。实测踩过：boot 自愈发出一行
    * `Cannot run program "clone"`，插件静默没装（local 源的 spec 不经过这条腿，只有
-   * 真 git 源能抓到，即本批的 USTC 实测）。
+   * 真 git 源能抓到，即本批的内网仓源实测）。
    */
   private def git(gitArgs: List[String], timeoutMs: Long = 60_000L): os.CommandResult =
     os.proc(("git" :: gitArgs).map(a => a: os.Shellable)*).call(

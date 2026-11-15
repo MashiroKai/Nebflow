@@ -95,11 +95,14 @@ class RemoteableDeviceParamSpec extends FunSuite:
     // （schema:90；call 面 :288 `ExecutorRegistry.resolveRequested`）——执行器
     // 选择是已合并的意图行为，「恰两参数」钉过时。期望集随更 = task/project/
     // executor/mode；并把 executor 一并纳入「禁 device 注入面」负控对照。
+    // 过时测试修复（2026-11-15）：面板命名批（2026-10-31 `name`）与附件传输批
+    // （2026-11-05 `attachments`）之后键集再扩——现值恰六参（与
+    // DelegateToolSpec.schema 同一钉面）；worktree/force 已随 3007e48da 退役。
     val schema = funnelSchema("Delegate")
     assertEquals(
       props(schema),
-      Set("task", "project", "executor", "mode"),
-      "external-executors + 双模式批后 Delegate 的 LLM 面 schema 恰四参数（required 同）"
+      Set("task", "name", "project", "executor", "mode", "attachments"),
+      "命名/附件批后 Delegate 的 LLM 面 schema 恰六参数（required 同）"
     )
     assert(deviceProp(schema).isEmpty, "Delegate must have NO device property in the LLM-facing schema")
     // （executor 增参的注入面负控由上一用例承载：remoteableTools 不含 Delegate ∧
@@ -107,13 +110,16 @@ class RemoteableDeviceParamSpec extends FunSuite:
 
   // ══════════ 3. 边界：禁「注入多了」 ══════════
 
-  test("边界：内核七件的第 7 件 AskUserQuestion 不得被注入 device"):
-    assert(AgentCore.NebflowFixedTools.contains("AskUserQuestion"), "执行 agent 面仍含 AskUserQuestion（builtin-merge 承继）")
-    assert(!RemoteExecutor.remoteableTools.contains("AskUserQuestion"), "AskUserQuestion 不是远端工具")
-    val augmented = RemoteExecutor.augmentSchema("AskUserQuestion", funnelSchema("AskUserQuestion"))
+  test("边界：执行面提问件（AskHost）不得被注入 device"):
+    // 过时测试修复（2026-11-15）：随基线 c6329920e 限根裁定补齐——「内核七件」
+    // 随 builtin-merge/限根两批演进为 NebflowFixedTools 八件，提问件 =
+    // AskHost（correlated request 问 root）；device 注入负控对准现提问件。
+    assert(AgentCore.NebflowFixedTools.contains("AskHost"), "执行 agent 面含 AskHost（c6329920e 后的提问件）")
+    assert(!RemoteExecutor.remoteableTools.contains("AskHost"), "AskHost 不是远端工具")
+    val augmented = RemoteExecutor.augmentSchema("AskHost", funnelSchema("AskHost"))
     assert(
       !props(augmented).contains("device"),
-      s"AskUserQuestion must not receive device, got: ${props(augmented)}"
+      s"AskHost must not receive device, got: ${props(augmented)}"
     )
 
   test("边界：执行固定面 = 八件（六件 BaseTools + AskHost + Subagent）"):

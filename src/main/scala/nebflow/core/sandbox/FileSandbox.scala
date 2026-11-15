@@ -56,7 +56,27 @@ object FileSandbox:
     ToolPathUtil.resolveAgainstToolRoot(policy, rawPath) match
       case Left(err) => Left(err)
       case Right(resolved) =>
-        if policy.pathRoot.isEmpty then Right(resolved)
+        val canonical = if policy.pathRoot.isEmpty then resolved else SandboxPolicy.canonicalize(resolved)
+        if ctx.protectedExecutionRoots.nonEmpty then
+          nebflow.core.ProtectedExecutionFiles(ctx.protectedExecutionRoots).checkWrite(canonical) match
+            case Left(reason) => Left(ToolError(reason))
+            case Right(checked) =>
+              if policy.pathRoot.nonEmpty && SandboxPolicy.readDenied(checked) then
+                Left(
+                  ToolError(
+                    deniedMessage(
+                      "write",
+                      rawPath,
+                      checked,
+                      policy,
+                      reason = Some(
+                        "path matches the private-memory rule (agents/<agent>/memory.md is denied; the only exception is the audit-read-only whitelist for the root agent's own memory.md)"
+                      )
+                    )
+                  )
+                )
+              else Right(checked)
+        else if policy.pathRoot.isEmpty then Right(resolved)
         else
           // 与写根无关的独立例外（数据完整性规则）：agents 子树内非根 agent 份
           // memory.md 写拒——同一条规则原读/写双闸消费，读侧随 S2 退役，写侧保留
@@ -65,7 +85,6 @@ object FileSandbox:
           // personal-agent 批 2026-10-04：新位 `~/.nebflow/Soul.md` 在**根层**、
           // 不在 agents/ 子树内 ⇒ 天然不受本规则拦（随数据根写面放行）；旧位在
           // 双读过渡期继续按上述豁免读写（既有记忆不失联）。
-          val canonical = SandboxPolicy.canonicalize(resolved)
           if SandboxPolicy.readDenied(canonical) then
             Left(
               ToolError(

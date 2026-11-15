@@ -60,8 +60,15 @@ class OversizeFrameLoudRejectSpec extends FunSuite:
 
   test("per-attachment failure still cannot连坐 text (fallback blocks intact)") {
     // 附件级失败兜底块：单附件保存失败只降级为该附件的占位块，不动正文块。
-    assert(src.contains("Failed to save image"), "image save-failure fallback block removed")
-    assert(src.contains("Failed to save attachment"), "file save-failure fallback block removed")
+    // df7bb5334（属主附件批）：图片腿并入统一附件提交面（AttachmentCommitService）——
+    // 逐附件 attempt：单件失败只 WARN（"Failed to save attachment"），其余附件与
+    // 正文块照常；旧 image 专属字符串（"Failed to save image"）随并轨退役，
+    // 连坐防护语义原样保留。
+    assert(src.contains("Failed to save attachment"), "attachment save-failure fallback block (unified path) removed")
+    assert(
+      src.contains("was not persisted"),
+      "owner/data-missing fallback leg removed — attachment would abort the message instead of degrading"
+    )
   }
 
 end OversizeFrameLoudRejectSpec

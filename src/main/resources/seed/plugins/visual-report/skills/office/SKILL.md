@@ -58,7 +58,7 @@ visual-report 插件场景之一。铁律、图片嵌入路径、dark-mode、渲
 ## 3. 工具链与自检
 
 - **以表格为主、图表为辅**：office 数据量小（个位数任务/指标），表格即可逐字传达；仅当「对比 / 进度 / 趋势」一图胜十表时出图，且**单份报告 ≤1 张简洁单图**（core 硬上限 3 张，本场景自律收紧到 1）。
-- 需图时用 viz-venv matplotlib（唯一绘图环境）出横向条形图 / 折线图，落 `~/.nebflow/plots/`，嵌入用 `~/...` 绝对路径。出图命令**必须带** `MPLCONFIGDIR=C:\Users\Kai\.nebflow\tools\mplconfig`（不设则回退默认 rc，中文变豆腐块——2026-10-04 实测踩坑）。配色用 core §3 常量：数据色强调 `#5e6ad2`；文字/轴线用 `#3d4350`（纯黑禁用，且中性灰 `#8a8f98` 在白底仅 3.2:1 不达标）。
+- 需图时用 viz-venv matplotlib（唯一绘图环境）出横向条形图 / 折线图，落 `~/.nebflow/plots/`，嵌入用 `~/...` 绝对路径。出图命令**必须带** `MPLCONFIGDIR=C:\Users\name\.nebflow\tools\mplconfig`（不设则回退默认 rc，中文变豆腐块——2026-10-04 实测踩坑）。配色用 core §3 常量：数据色强调 `#5e6ad2`；文字/轴线用 `#3d4350`（纯黑禁用，且中性灰 `#8a8f98` 在白底仅 3.2:1 不达标）。
 - **降级策略（合法出口）**：本场景天然可**零图纯 markdown** 交付——工具缺失、图无增益或读者只要结论时，直接表格 + 文字，不空转、不因图返工、更不手画 SVG。流程/架构类配图需求不属于本场景（归 tech-architecture / engineering）。
 - 全工具全量自检与链接验证见 `${SKILL_DIR}/../README.md`「全工具链接验证表」（2026-10-04 实测：通过 19 / 失效 3 均已补验；超 30 天引用须复测）。office 场景直接使用的工具逐条实测如下。
 
@@ -66,9 +66,9 @@ visual-report 插件场景之一。铁律、图片嵌入路径、dark-mode、渲
 
 | 工具 | 用途 | 本机检测命令（实测） | 官方下载链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
-| viz-venv Python | 唯一绘图环境 | `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe -V` → Python 3.12.9（2026-10-04 实测） | https://www.python.org/downloads/ | 官网未单项复测；包经 pip 清华源装回 viz-venv | 纯 markdown 交付（本场景合法出口） |
+| viz-venv Python | 唯一绘图环境 | `C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe -V` → Python 3.12.9（2026-10-04 实测） | https://www.python.org/downloads/ | 官网未单项复测；包经 pip 清华源装回 viz-venv | 纯 markdown 交付（本场景合法出口） |
 | matplotlib | 进度/趋势简洁单图 | `...\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2（2026-10-04 实测） | https://matplotlib.org/ | HTTP 200（2026-10-04，README 表） | 纯表格 + 文字，不手画 SVG |
-| YaHei 中文字体配置 | 图内中文可读 | 出图命令前缀 `MPLCONFIGDIR=C:\Users\Kai\.nebflow\tools\mplconfig`（本机实测生效，2026-10-04） | 配置文件：`C:\Users\Kai\.nebflow\tools\mplconfig\matplotlibrc`（本机配置，无下载页） | 不适用（本地文件） | 图内改英文标注或放弃出图 |
+| YaHei 中文字体配置 | 图内中文可读 | 出图命令前缀 `MPLCONFIGDIR=C:\Users\name\.nebflow\tools\mplconfig`（本机实测生效，2026-10-04） | 配置文件：`C:\Users\name\.nebflow\tools\mplconfig\matplotlibrc`（本机配置，无下载页） | 不适用（本地文件） | 图内改英文标注或放弃出图 |
 
 独立 SVG 被 `<img>` 引用时必须内嵌暗色 media query（core §3）。matplotlib 把颜色写进内联 `style` 属性，普通 CSS 压不过，须子串选择器 + `!important`，且 fill / stroke 分开覆写（避免给文字字形强加描边）：
 

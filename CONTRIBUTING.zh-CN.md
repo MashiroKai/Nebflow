@@ -6,7 +6,7 @@
 
 | 依赖 | 版本 | 说明 |
 |---|---|---|
-| JDK | 21 | CI（`.github/workflows/ci.yml`）以 Temurin 21 构建与测试；`build.sbt` 的 JVM 参数（分代 ZGC）同样要求 21 |
+| JDK | 本地开发使用 23 | GitHub 构建/测试使用 Temurin 23；运行时最低 21，产物字节码目标 17 |
 | sbt | 1.10.10 | 钉在 `project/build.properties` |
 | Node.js | 20 | 仅 web bundle 构建、前端测试与前端检查需要 |
 
@@ -68,25 +68,39 @@ CI 以新构建的 JAR 跑 smoke 套件，因此前端改动的门槛 = 本地�
 
 - 从 `main` 拉短描述性分支名；一个分支只做一件事。
 - 按文件显式暂存（`git add <file>`）；避免 `git add -A`。
-- 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行中英文皆可，应写清原因或意图，而非仅陈述表象。合入 `main` 的 merge commit 遵循 `Merge <branch>: <summary>`。
+- 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 的 merge commit 遵循 `Merge <branch>: <summary>`。
 
 ## PR 要求
 
 - PR 目标 `main`。diff 保持最小、聚焦单一改动。
 - 开 PR 前：`sbt compile` 与受影响测试全绿。Scala 改动另跑 `make check`（scalafmt + scalafix）；前端改动跑类型/循环依赖门禁与受影响的 Playwright spec（见下）。
-- CI（`.github/workflows/ci.yml`）运行 JS 类型/循环门禁、编译 + 全量测试（Ubuntu 与 Windows）、JAR assembly、smoke + Playwright 前端套件、Docker 构建。CI 全绿即可合并。
+- `.github/workflows/ci.yml` 与 `.gitlab-ci.yml` 的静态质量任务均为阻断门禁，后者覆盖 MR 与所有分支。`.github/workflows/auto-release.yml` 在构建前要求同一入口通过。现有浏览器观察任务仍保留非阻断状态。配置仅说明预期执行方式，不表示远程 CI 已经运行或通过。
 
 ## 代码风格
 
 - **Scala 3**（3.5.2，缩进语法）。格式由 scalafmt 与 scalafix 强制——`make check` 运行 `sbt scalafmtCheckAll "scalafix --check"`。编译器开 `-Xfatal-warnings`：修掉 warning，而不是压制它。
-- **前端**是原生 JS，无 TS 构建步骤；正确性由两个静态检查门禁（CI 均会运行）：
+- **前端**是原生 JS，没有 TypeScript 构建步骤。`scripts/run-checks.mjs` 是 checkout 静态检查成员的单一注册表；先运行 `npm ci` 安装锁定工具，不会隐式下载编译器或 linter。
+
+### Checkout 静态质量门禁
 
 ```bash
-node scripts/check-js-types.mjs    # checkJs vs tests/type-baseline.json（基线只降不升）
-node scripts/check-circular.mjs    # 静态 import 循环依赖门禁
+npm ci
+npm run check:static
+npm run test:scripts
+npm run lint:tools
+npm run check:sdd
+npm run check:sdd-changed -- --base main
+npm run check:openspec -- --download        # 固定版本官方校验器，需要网络
+node scripts/run-checks.mjs --profile static --list
+make frontend-gates
+make check-static
 ```
 
-有意修复类型问题后用 `check-js-types.mjs --update` 重新生成基线。动态 `import()` 是打破真实循环依赖的正规手段；静态 import 循环会挂门禁。
+`test:scripts` 执行 `node --test scripts/tests/*.test.mjs`，`lint:tools` 仅检查本批新增/修改的工程工具。`make check-sdd`、`make test-scripts`、`make lint-tools` 对应上述 npm 命令。Node 专用目标不会探测 Maven 镜像或启动服务；`make check` 另含 Scala 编译、格式和 lint。已安装插件对账仍需单独运行 `make plugin-seed-parity`，不能当作仅有 checkout 就完成的验证。JVM、浏览器、运行实例和 live 插件检查均保持独立，需要各自环境与证据。
+
+`static` 复用既有前端/CI 静态检查，加入工具 lint、脚本单测和 SDD 验证。每个具名命令记录耗时和退出状态，并有超时与心跳；启动失败、信号终止、超时都使门禁失败。`--list`/`--dry-run` 只列命令。默认无 base 验证全部 SDD 工件，不声称检查了变更路径覆盖；可选 `sdd-changed` 必须显式给出 `--base`，无效 Git 引用直接失败。结构/引用验证不会执行被引用的测试，也不证明语义正确。
+
+类型门禁仅使用锁定的本地 TypeScript，将可识别的源码诊断与 `tests/type-baseline.json` 比较。配置错误、未知输出（含无法解释的缩进行）、失败却空输出、进程错误、信号或超时均拒绝通过。`--update` 仅在编译器输出合法后写入基线，必须用于经评审的债务减少，不能掩盖回归。静态 import 环仍会失败；确有需要时采用既有动态 `import()` 方式。
 
 ### 视觉回归基线
 

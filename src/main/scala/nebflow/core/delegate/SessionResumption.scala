@@ -223,7 +223,10 @@ object SessionResumption:
       latest <- IO.blocking(DelegateRegistry.find(record.id))
       task <- deps.resources.subAgentTaskStore.findByTaskId(record.id)
       live <- deps.resources.agentRegistry.get.map(_.get(record.id))
+      protection <- deps.resources.executionProtection(record.id)
       result <- latest match
+        case _ if protection != nebflow.shared.ExecutionProtection.Unprotected =>
+          IO.pure(Left("Protected or unknown execution requires exact-ref recovery; legacy continuation is unavailable"))
         case None => IO.pure(Left("Delegate identity is missing; inspect the saved context"))
         case Some(current) if current.cancelRequestedAt.nonEmpty =>
           IO.pure(Left("Delegate was manually cancelled; create new work explicitly (DELEGATE_CANCELLED)"))

@@ -68,6 +68,15 @@ export function queueVaultKey(sid, itemId, attIdx) {
   return `${(sid === undefined || sid === null) ? 'null' : String(sid)}:${String(itemId)}:${String(attIdx)}`;
 }
 
+/** Key prefix of the payloads that belong to the sent-input history (input/historyStore.js).
+ *  The queue's orphan sweep must leave them alone: they are not queue items. */
+export const HISTORY_VAULT_PREFIX = 'hist:';
+
+/** Sent-input history payload key: `hist:<entryId>:<attIdx>`. */
+export function historyVaultKey(entryId, attIdx) {
+  return `${HISTORY_VAULT_PREFIX}${String(entryId)}:${String(attIdx)}`;
+}
+
 function tx(db, mode) {
   return db.transaction('payloads', mode).objectStore('payloads');
 }

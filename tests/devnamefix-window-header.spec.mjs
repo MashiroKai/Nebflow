@@ -128,10 +128,12 @@ async function openDeviceWindowAndRead(page, deviceId, shotsFor) {
   await sleep(450);
   const read = await page.evaluate(() => {
     const modal = document.querySelector('.fm-modal'); // 会话窗模态（role=dialog + aria-label 都在它身上）
+    // FCC-REQ-007: on desktop the conversation header lives in #header, not inside the window.
+    const head = document.querySelector('#header .fm-main-head') || modal;
     return {
-      name: (modal.querySelector('.fm-modal-name') || {}).textContent || null,
-      headerText: (modal.querySelector('.fm-modal-header') || {}).textContent || null,
-      sub: (modal.querySelector('.fm-modal-id') || {}).textContent || null,
+      name: (head.querySelector('.fm-modal-name') || {}).textContent || null,
+      headerText: head.matches('.fm-modal-header, .fm-main-head') ? head.textContent : ((modal.querySelector('.fm-modal-header') || {}).textContent || null),
+      sub: (head.querySelector('.fm-modal-id') || {}).textContent || null,
       // ⚠ 必须取会话窗自己的那一个：文首其它模态（ctxthresh 等）也带 role=dialog。
       aria: modal.getAttribute('aria-label'),
     };

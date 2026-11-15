@@ -275,7 +275,7 @@ object BgTaskRegistry:
    * 我们也要可见」）：设备通道后台任务（remoteable 六件带 `device` + 显式
    * `run_in_background`）的 origin 恒为设备名——「跑在哪台设备」与
    * nebula/dispatcher/node（谁开启）是**不同轴**，面板 chip 直接可辨
-   * KAI / DESKTOP-…。单点构造：RemoteExecutor 注册面与 WS 发射面同源，禁第二份
+   * <win> / DESKTOP-…。单点构造：RemoteExecutor 注册面与 WS 发射面同源，禁第二份
    * 字面量；origin 类别值 = "device"（前端 chip 类 `.bg-origin-device`），
    * originLabel = 设备名原样（大小写保留）。
    */

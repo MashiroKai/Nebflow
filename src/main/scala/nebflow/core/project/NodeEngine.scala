@@ -72,7 +72,7 @@ class NodeEngine(
    */
   val sessionDevice: Option[String] = None,
   /**
-   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\Kai\stand`）：Bash
+   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\name\stand`）：Bash
    * 经设备通道下发时注入为对端会话初始 cwd（「派发任务的命令 cwd 指向设备
    * workspace」——对端接收面 params.cwd → ToolContext.sessionCwd）。节点首条消息
    * 的 `[device workspace]` 行同源本值。None = 本机项目（现状零变化）。

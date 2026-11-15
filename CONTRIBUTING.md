@@ -6,9 +6,9 @@ This guide is for developers preparing changes to this repository. It covers env
 
 | Requirement | Version | Notes |
 |---|---|---|
-| JDK | 21 | CI (`.github/workflows/ci.yml`) builds and tests on Temurin 21; the JVM flags in `build.sbt` (generational ZGC) also require 21 |
+| JDK | 23 for local development | GitHub build/test jobs use Temurin 23; the runtime floor remains 21 and artifact bytecode targets 17 |
 | sbt | 1.10.10 | Pinned in `project/build.properties` |
-| Node.js | 20 | Only needed for the web bundle build, frontend tests, and frontend checks |
+| Node.js | 20 | Web bundle, locked tooling, script tests, and checkout-only static checks |
 
 No `.jvmopts` or `.sdkmanrc` is used; toolchain versions live in `project/build.properties` and the CI workflow.
 
@@ -76,26 +76,39 @@ CI runs the smoke suite against a freshly built JAR, so a green local run plus g
 
 - Branch off `main` with a short descriptive name; keep a branch scoped to one change.
 - Stage files explicitly (`git add <file>`); avoid `git add -A`.
-- Commit subjects in practice carry an optional `type(scope):` prefix — types like `fix` / `feat` / `test` / `docs` / `refactor`, scopes like `web` / `tools` / `engine` / `project` / `gateway`. The subject may be English or Chinese and should state the cause or intent, not just the symptom. Merge commits to `main` follow `Merge <branch>: <summary>`.
+- Commit subjects in practice carry an optional `type(scope):` prefix — types like `fix` / `feat` / `test` / `docs` / `refactor`, scopes like `web` / `tools` / `engine` / `project` / `gateway`. The subject must be English and should state the cause or intent, not just the symptom. Merge commits to `main` follow `Merge <branch>: <summary>`.
 
 ## Pull requests
 
 - PRs target `main`. Keep the diff minimal and scoped to one change.
 - Before opening: `sbt compile` and the affected tests green. For Scala changes also run `make check` (scalafmt + scalafix); for frontend changes run the type/cycle gates and the affected Playwright specs (see below).
-- CI (`.github/workflows/ci.yml`) runs the JS type/cycle gates, compile + full test suite (Ubuntu and Windows), JAR assembly, smoke + Playwright frontend suite, and a Docker build. A PR is mergeable when CI is green.
+- The static quality job is blocking in both `.github/workflows/ci.yml` and `.gitlab-ci.yml`; the latter includes merge requests and every branch. `.github/workflows/auto-release.yml` also requires this same entrypoint before building. Existing advisory browser jobs remain advisory. Configuration describes intended execution, not evidence that a remote CI run has passed.
 
 ## Code style
 
 - **Scala 3** (3.5.2, significant indentation). Formatting is enforced by scalafmt and scalafix — `make check` runs `sbt scalafmtCheckAll "scalafix --check"`. The compiler runs with `-Xfatal-warnings`: fix the warning, don't suppress it.
-- **Frontend** is vanilla JS with no TS build step; correctness is gated by two static checks (both run in CI):
+- **Frontend** is vanilla JS with no TypeScript build step. The shared registry in `scripts/run-checks.mjs` owns checkout-only check membership. Install pinned tools with `npm ci`; no check downloads a compiler or linter implicitly.
+
+### Checkout-only quality gates
 
 ```bash
-node scripts/check-js-types.mjs    # checkJs vs tests/type-baseline.json (baseline only goes down)
-node scripts/check-circular.mjs    # static-import cycle gate
-node scripts/check-provider-modellist.mjs   # provider model-list endpoints stay per-face declared
+npm ci
+npm run check:static                       # shared blocking static profile
+npm run test:scripts                       # node --test scripts/tests/*.test.mjs
+npm run lint:tools                         # new/modified engineering tools only
+npm run check:sdd                          # all current/change/archive artifacts, no diff coverage claim
+npm run check:sdd-changed -- --base main    # explicit base, additional changed-path coverage
+npm run check:openspec -- --download        # pinned upstream validator; requires network
+node scripts/run-checks.mjs --profile static --list
+make frontend-gates                       # dependency-free Node source sentinels only
+make check-static                         # same as npm run check:static
 ```
 
-`check-js-types.mjs --update` regenerates the baseline after intentional type fixes. Dynamic `import()` is the sanctioned way to break a genuine cycle; static import cycles fail the gate. `check-provider-modellist.mjs` is hermetic (`--live` adds the environment/proxy, provider and gateway layers; see its header comment and the `ModelListFaces` scaladoc).
+`make check-sdd`, `make test-scripts`, and `make lint-tools` wrap the corresponding npm scripts. These Node-only targets do not probe Maven mirrors or start services. `make check` additionally runs Scala compilation/format/lint. Installed-plugin parity remains an explicit `make plugin-seed-parity` check; it is not a checkout-only success signal. JVM, browser, runtime, and live-plugin checks remain separate and need their own prerequisites and evidence.
+
+The static profile reuses the existing frontend/CI source checks plus tooling lint, script tests, and SDD validation. It reports each named command's elapsed time and exit status, with bounded execution and heartbeat output; spawn failures, signals, and timeouts fail the profile. `--list`/`--dry-run` prints commands without running them. The optional `sdd-changed` profile requires `--base` and rejects invalid Git refs; the default static profile always validates full SDD artifacts without a base. Structural trace validation does not execute referenced tests or establish semantic correctness.
+
+`check-js-types.mjs` uses locked local TypeScript and compares recognized source diagnostics against `tests/type-baseline.json`. Configuration errors, unknown output (including unexplained indented output), empty failed output, process errors, signals, and timeouts fail closed. `--update` writes a baseline only after valid compiler output; use it only to reduce reviewed type debt, never to hide a regression. Static import cycles fail the cycle gate; dynamic `import()` is the existing escape hatch where appropriate.
 
 ### Visual regression baseline
 

@@ -265,8 +265,11 @@ test('T3 延续态（live 行已离场）：主桶空 + 注册行镜像 → 快�
   await expect(kids.nth(0).locator('.bg-task-kind')).toHaveText('dispatcher');
   await expect(kids.nth(1)).toHaveAttribute('data-node-session-id', 'node-7846cc03');
   await expect(kids.nth(1).locator('.bg-task-kind')).toHaveText('node');
-  // 徽标计数 = 链行 3 + 合成组头 1 = 4（主桶 0 行——「批死了」症状的反面钉）。
-  await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('4');
+  // The list keeps every row visible: 3 chain rows + the synthesized head = 4.
+  await expect(page.locator(`${LIST} > .bg-task-row`)).toHaveCount(4);
+  // The badge counts ACTIVE rows only: the two Processing nodes. The Idle dispatcher and the synthesized head (it has
+  // no state of its own) stay listed but are not counted. Non-zero while the chain runs (the opposite pin of "dead batch").
+  await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('2');
   // 合成组头行体点击 = delegate 详情弹窗（历史恢复承载）。
   await head.click();
   await expect(page.locator('.flow-agent-overlay, .bgagent-delegate-strip').first()).toBeVisible({ timeout: 8000 });

@@ -318,9 +318,10 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     // 双面钉：运行时 .ask-col 计算样式 mask-image = none；实现载体在场 = askDock.js
     // 源含 syncAskFade（逐泡 opacity：泡顶到列顶距离在 --ask-fade-h 内线性落 alpha）。
     const askDockSrc = readFileSync(join(WEB, 'js', 'askDock.js'), 'utf8');
-    check('A0b 列零 mask（backdrop root 根因摘除，.ask-col 计算样式 mask-image = none）+ 渐隐载体在场（askDock.js syncAskFade 逐泡 opacity）',
-      String(geo.colMask || 'none') === 'none' && /syncAskFade/.test(askDockSrc),
-      JSON.stringify({ colMask: String(geo.colMask || 'none'), syncAskFadeInSrc: /syncAskFade/.test(askDockSrc) }));
+    // FCC-REQ-004: the per-bubble opacity carrier is retired — history bubbles are never dimmed.
+    check('A0b 列零 mask（backdrop root 根因摘除，.ask-col 计算样式 mask-image = none）+ 逐泡 opacity 载体已退役（askDock.js 无 syncAskFade、无 style.opacity 写入）',
+      String(geo.colMask || 'none') === 'none' && !/syncAskFade/.test(askDockSrc) && !/\.style\.opacity\s*=/.test(askDockSrc),
+      JSON.stringify({ colMask: String(geo.colMask || 'none'), syncAskFadeInSrc: /syncAskFade/.test(askDockSrc), opacityWrite: /\.style\.opacity\s*=/.test(askDockSrc) }));
     check('A0c 外框零 mask（渐隐不在容器上另垫一层）', String(geo.colwrapMask || 'none') === 'none', String(geo.colwrapMask));
 
     /* ── T 整体透明无边框（②-批：面板本体零底色/零边框/零分隔线/零内阴影）──── */
@@ -471,9 +472,13 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     // 泡级 alpha —— 单条泡在带内整条统一透明度（泡顶深度决定），不存在带内连续
     // 渐变剖面，「直线边界/接缝」在新载体里没有对应物理形态（毛玻璃批 2026-11-06）。
     readings.fade = { L_A, L_B, span, opacityA: geo2.opacityA, opacityB: geo2.opacityB };
-    check('A1 渐隐两点亮度跨度 ≥60（带顶探针近背景亮 L_A − 带外探针全实暗 L_B；渐隐真实存在必绿）', span >= 60,
+    // FCC-REQ-004 inverts the old pair: the bubble at the very top of the column is painted exactly like the
+    // one below it (no wash-out), so the luminance span is ~0 and the top probe stays dark (bubble ink ≈ 35).
+    check('A1 无渐隐：带顶探针与带外探针亮度跨度 ≤12（二者同为全实泡色；逐泡 opacity 渐隐已退役）', Math.abs(span) <= 12,
       `L_A=${L_A} L_B=${L_B} span=${span} opacityA=${geo2.opacityA} opacityB=${geo2.opacityB}`);
-    check('A3 带顶探针被洗到只剩背景（探针区亮度 ≥190 = 深色泡在带顶 alpha→0）', L_A >= 190, `L_A=${L_A}`);
+    check('A3 带顶探针保持全实（探针区亮度 ≤60 = 深色泡在列顶仍不透明）', L_A <= 60, `L_A=${L_A}`);
+    check('A3-opacity 带顶/带外探针计算 opacity 恒为 1', String(geo2.opacityA) === '1' && String(geo2.opacityB) === '1',
+      `opacityA=${geo2.opacityA} opacityB=${geo2.opacityB}`);
 
     /* ── B 渐隐不影响交互 ─────────────────────────────────────────────── */
     const hits = await page.evaluate(() => {
@@ -606,9 +611,9 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     // D3 判据换代（毛玻璃批 2026-11-06）：渐隐唯一实现 = askDock.js syncAskFade
     // 逐泡 opacity；ask.css 源（剥注释）零 mask-image —— 防「列 mask」复活（复活即
     // 重新架空气泡玻璃 = 缺陷①回归）。
-    check('D3 ask.css 源零 mask-image（列 mask 退役不复活）+ askDock.js syncAskFade 在场（渐隐唯一实现）',
-      !/mask-image/.test(askCssCode) && /syncAskFade/.test(askDockJsCode),
-      JSON.stringify({ askCssMaskImage: /mask-image/.test(askCssCode), syncAskFade: /syncAskFade/.test(askDockJsCode) }));
+    check('D3 ask.css 源零 mask-image（列 mask 退役不复活）+ askDock.js 无逐泡 opacity 写入（FCC-REQ-004：历史气泡不再渐隐）',
+      !/mask-image/.test(askCssCode) && !/syncAskFade/.test(askDockJsCode) && !/\.style\.opacity\s*=/.test(askDockJsCode),
+      JSON.stringify({ askCssMaskImage: /mask-image/.test(askCssCode), syncAskFade: /syncAskFade/.test(askDockJsCode), opacityWrite: /\.style\.opacity\s*=/.test(askDockJsCode) }));
     check('D4 glass.css #g2-edge-fade 块内零材质声明（主窗材质只在 .ds-edge-fade 一处）',
       !!g2Block && !/backdrop-filter/.test(g2Block) && !/gradient/.test(g2Block),
       g2Block.replace(/\s+/g, ' ').slice(0, 120));

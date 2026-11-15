@@ -7,7 +7,11 @@
 输出：SVG → plots/vrs2-netfin/（暗色 media query 注入）；亮/暗 PNG → tmp 目检。
 """
 import os
-os.environ.setdefault('MPLCONFIGDIR', r'C:\Users\Kai\.nebflow\tools\mplconfig')
+import tempfile
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
+os.environ.setdefault('MPLCONFIGDIR', os.path.join(DATA_ROOT, "tools", "mplconfig"))
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -19,8 +23,9 @@ import mplfinance as mpf
 SEED = 42
 N = 60
 UP, DOWN, MA_C = '#d64541', '#2e9e5b', '#5e6ad2'   # 红涨绿跌 + MA 线强调色（两底可读）
-OUT = r'C:\Users\Kai\.nebflow\plots\vrs2-netfin'
-TMP = r'C:\Users\Kai\.nebflow\projects\general\.nebflow\tmp'
+OUT = os.path.join(DATA_ROOT, 'plots', 'vrs2-netfin')
+os.makedirs(OUT, exist_ok=True)
+TMP = tempfile.mkdtemp(prefix="stand-visual-report-")
 os.makedirs(OUT, exist_ok=True)
 STAMP = '20261004_231500'
 SVG_NAME = f'{STAMP}_fin_ohlcv_ma20.svg'

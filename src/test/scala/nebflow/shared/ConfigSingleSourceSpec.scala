@@ -148,23 +148,30 @@ class ConfigSingleSourceSpec extends FunSuite:
 
   // ── B. llm.fallback 小节的形状与校验告警（裁定①③）──────────────────────
 
-  test("B1: llm.fallback 小节可解码（preferred + fallbacks，与 agent 链同形状）") {
+  test("B1: llm.fallback 小节可解码（preferred 单根；fallbacks 数组退役为死数据）") {
+    // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：链深恒 1，
+    // FallbackChain.refs = preferred 仅一（FallbackChain.scala 自注在案）——
+    // fallbacks 数组不进链、不进校验（死数据，禁回流）。
     val json = parse("""{"llm":{"providers":{},"fallback":{"preferred":"a/m1","fallbacks":["b/m2"]}}}""").toOption.get
     val cfg = Config.normalizeConfigJson(json).as[NebflowServiceConfig].toOption.get
-    assertEquals(FallbackChain.configured(cfg), List("a/m1", "b/m2"))
+    assertEquals(FallbackChain.configured(cfg), List("a/m1"), "链 = preferred 单根；退役 fallbacks 不回流")
   }
 
-  test("B2: 引用不存在的 provider ⇒ 可读告警（不静默跳过）") {
+  test("B2: preferred 引用不存在的 provider ⇒ 可读告警（不静默跳过）；退役 fallbacks 数组零告警（死数据）") {
     val json = parse(
       """{"llm":{"providers":{"a":{"baseUrl":"http://a/","apiKey":"k","protocol":"openai","models":[{"id":"m1","contextWindow":1000}]}},
-        |"fallback":{"preferred":"a/m1","fallbacks":["ghost/m1"]}}}""".stripMargin
+        |"fallback":{"preferred":"ghost/m1","fallbacks":["ghost/m2"]}}}""".stripMargin
     ).toOption.get
     val cfg = Config.normalizeConfigJson(json).as[NebflowServiceConfig].toOption.get
     val warnings = FallbackChain.validate(cfg)
-    assertEquals(warnings.size, 1)
+    assertEquals(
+      warnings.size,
+      1,
+      s"退役 fallbacks 数组不得产生告警（死数据不参与校验），实际 = $warnings"
+    )
     assert(warnings.head.contains("ghost"), s"告警须点名坏 ref，实际 = $warnings")
     assert(warnings.head.contains("not configured"), s"告警须可读，实际 = $warnings")
-    assertEquals(FallbackChain.resolvable(cfg), List(("a", "m1")), "不可解 ref 不得进可调用集")
+    assertEquals(FallbackChain.resolvable(cfg), Nil, "不可解 preferred 不得进可调用集")
   }
 
   test("B3: 引用 provider 未声明的 model ⇒ 也可读告警") {
@@ -188,8 +195,10 @@ class ConfigSingleSourceSpec extends FunSuite:
       """{"llm":{"providers":{"a":{"baseUrl":"http://a/","apiKey":"k","protocol":"openai","models":[{"id":"m1","contextWindow":1000}]}},
         |"fallback":{"preferred":"a/m1","fallbacks":["a/m1"]}}}""".stripMargin
     ).toOption.get
-    val dupCfg = Config.normalizeConfigJson(dup).as[NebflowServiceConfig].toOption.get
-    assert(FallbackChain.validate(dupCfg).exists(_.contains("duplicate")))
+    // duplicate 告警腿随其世界退役（fallback 废除批）：链深恒 1（preferred 单根），
+    // 「duplicate ref」结构性不可达——旧钉是链深>1 时代的产物，删除而非放宽。
+    assert(FallbackChain.validate(Config.normalizeConfigJson(dup).as[NebflowServiceConfig].toOption.get) == Nil,
+      "retired fallbacks array must stay dead data (no duplicate warnings from a depth-1 chain)")
   }
 
   test("B5: 无 fallback 小节 ⇒ configured 为空（零行为变化：走侧车/种子链）") {

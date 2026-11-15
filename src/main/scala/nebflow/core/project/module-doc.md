@@ -19,7 +19,7 @@
 | [`ChainsReadFace.scala`](ChainsReadFace.scala) | ChainsReadFace —— **per-task 只读读面**（N1 刀3 · 设计 v3 §3 A8 / §9；#1228 stub §四.3「per-task 读面」的唯一硬依赖落位）。两条 REST 臂（挂 |
 | [`CompletionGate.scala`](CompletionGate.scala) | 产物完整性闸门（worktree 审计 20260905 机制建议落地）——节点 completed 出口的 worktree 三合法态校验，堵「节点自报 completed 但产物滞留（沙箱 EPERM 未 commi |
 | [`DelegateFlowHosts.scala`](DelegateFlowHosts.scala) | DelegateFlowHosts —— **delegate 作用域宿主注册表与生命周期**（N1 刀1 · 设计 v3 §6/A3： 「NodeEngine 宿主从 ProjectActor 挂载链抽出 delega |
-| [`DeviceProjectMount.scala`](DeviceProjectMount.scala) | 设备项目挂载编排（跨设备项目挂载批 2026-10-25）。 语义（作者令：项目挂载到设备 KAI 验证跨设备项目功能）：项目 workspace 本体在 |
+| [`DeviceProjectMount.scala`](DeviceProjectMount.scala) | 设备项目挂载编排（跨设备项目挂载批 2026-10-25）。 语义（作者令：项目挂载到 Windows 设备验证跨设备项目功能）：项目 workspace 本体在 |
 | [`DispatchNotify.scala`](DispatchNotify.scala) | dispatch-notify —— 节点终态结果回流任务分发器的单一通知通道。 目标语义：显式开启 notifyDispatcher 标志的节点 |
 | [`DocIndexConsumer.scala`](DocIndexConsumer.scala) | 文档索引维护消费者（P3 引擎侧归档联动批 2026-09-10，spec `20260910_process-doc-chain-attribution-spec.md` §6.2/§6.3/§9.2 项 9）。 |
 | [`FeedbackRouter.scala`](FeedbackRouter.scala) | Retry-cap escalation router (P2 retry budget, spec §2.3 gate G12): when a failed node has exhausted its automatic bounce-back retries, a single escalation notice |

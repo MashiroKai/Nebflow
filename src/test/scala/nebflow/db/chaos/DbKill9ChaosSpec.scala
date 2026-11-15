@@ -69,13 +69,20 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
     Option(child.markerDir.toFile.listFiles).toList.flatten
       .map(_.getName).flatMap(n => n.stripPrefix("w").toIntOption).maxOption.getOrElse(0)
 
-  /** Windows 真杀（任务面指定形）：cmd taskkill /F /PID。 */
+  /** 真杀（OS 级 SIGKILL）：Windows = taskkill /F /PID（任务面指定形）；POSIX = kill -9。 */
   private def kill9(child: Child): Unit =
-    val out = Seq("taskkill", "/F", "/PID", child.pid.toString).!!
-    assert(out.toLowerCase.contains("成功") || out.toLowerCase.contains("success")
-      || out.toLowerCase.contains("已终止") || out.contains(child.pid.toString),
-      s"taskkill output unexpected: $out")
-    child.process.waitFor()
+    val isWindows = sys.props("os.name").toLowerCase.contains("win")
+    if isWindows then
+      val out = Seq("taskkill", "/F", "/PID", child.pid.toString).!!
+      assert(out.toLowerCase.contains("成功") || out.toLowerCase.contains("success")
+        || out.toLowerCase.contains("已终止") || out.contains(child.pid.toString),
+        s"taskkill output unexpected: $out")
+      child.process.waitFor()
+    else
+      // POSIX：kill -9 成功 = 零退出（`.!` 返回退出码，非零由 assert 拦下）；
+      // 被 SIGKILL 的 JVM 退出码不限（137/1/…），waitFor 仅作收割。
+      assert(Seq("kill", "-9", child.pid.toString).! == 0, s"kill -9 ${child.pid} failed")
+      child.process.waitFor()
 
   // ── 场景 A：kill 撕裂窗 ───────────────────────────────────────────────────
 
@@ -167,9 +174,15 @@ class DbKill9ChaosSpec extends CatsEffectSuite:
     val copy = Files.createTempDirectory("chaos-threestate-copy")
     osCopy(root, copy)
     val eventsDir = copy.resolve("db").resolve("events")
-    val shard = Files.list(eventsDir).iterator().asScala
-      .filter(_.getFileName.toString.startsWith("events.")).nextOption()
+    // 🔴 确定性选**真 shard**（events.<digits>）：Files.list 目录序无保证，旧形
+    // `startsWith("events.")` 会命中 events.idx——idx 坏 = 删了重建（读面照旧
+    // Present），坏帧就注不进事件流了（本测首修前在 darwin 上即此形态）。
+    val shardName = Files.list(eventsDir).iterator().asScala
+      .map(_.getFileName.toString)
+      .filter(_.matches("events\\.\\d+\\.jsonl"))
+      .toList.sorted.headOption
       .getOrElse(fail("events shard missing"))
+    val shard = eventsDir.resolve(shardName)
     Files.writeString(shard, Files.readString(shard) + "{\"broken\"\n")
     val h2 = Db.open(DbConfig(copy)).unsafeRunSync()
     try

@@ -62,23 +62,30 @@ class AskUserDualModeSchemaSpec extends FunSuite:
   // 无 AskUserQuestion）⇒ 本 spec 的「工具面必含 AskUserQuestion」全部假红。
   // 生产路径也不再构造这样的 def（`EntityLoader.loadAgent` 对退役名回落内建
   // 执行器条目），故对齐名集即修根因，不是放宽断言。
+  //
+  // 过时测试修复（2026-11-15，随基线 c6329920e「Restrict AskUserQuestion to root
+  // tool face」补齐漏改面）：执行 agent 面的提问件 = **AskHost**（correlated
+  // request slice，问 root），AskUserQuestion（非阻塞问用户卡）**收归 root 面**——
+  // 同提交已更新 AllowedToolSetSpec / AskUserDualModeRuntimeSpec，本 spec 的
+  // 四身份成员矩阵漏改。定义纯度断言（mode 缺席 / 基线逐字节）保留在仍持卡
+  // 的身份上，强度不降；executor 面新增「AUQ 缺席 + AskHost 在位」限根钉。
   private val executorName = nebflow.core.entity.BuiltinAgents.ExecutorName
   private val rootFace = CoreProbe.face(defNamed("Nebula"), depth = 0)
   private val executorNodeFace = CoreProbe.face(defNamed(executorName), depth = 1, flowNodeSession = true)
   private val executorPlainFace = CoreProbe.face(defNamed(executorName), depth = 1)
   private val nebulaNamedNodeFace = CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true)
+  // 仍持 AskUserQuestion 的身份横断面（root 判据 = 名 ∧ depth，按名成员资格）
+  private val askHoldingFaces = List(
+    "Nebula-root" -> rootFace,
+    "按名冒充 root 的 depth=1 节点(Nebula)" -> nebulaNamedNodeFace
+  )
 
   // ============================================================
   // ① 核心断言：全身份 mode 缺席 + 与基线逐字节相同
   // ============================================================
 
-  test("① 核心断言: 四个身份的工具定义里 mode 全缺席 + 与基线定义逐字节相同") {
-    for (name, face) <- List(
-        "Nebula-root" -> rootFace,
-        s"$executorName(depth=1, flowNodeSession)" -> executorNodeFace,
-        s"$executorName(depth=1)" -> executorPlainFace,
-        "按名冒充 root 的 depth=1 节点(Nebula)" -> nebulaNamedNodeFace
-      )
+  test("① 核心断言: 持卡身份的工具定义里 mode 全缺席 + 与基线定义逐字节相同") {
+    for (name, face) <- askHoldingFaces
     do
       val td = askOf(face)
       assert(modeOf(td).isEmpty, s"$name 的 AskUserQuestion 定义里出现了 mode（裁② 未落地）：${modeOf(td)}")
@@ -91,6 +98,23 @@ class AskUserDualModeSchemaSpec extends FunSuite:
       assertEquals(td.inputSchema, baseline.inputSchema, s"$name 的 inputSchema 漂移")
       assertEquals(td, baseline, s"$name 的 AskUserQuestion 定义不再是基线定义本身")
       assertEquals(td.description, AskUserQuestionTool.descriptionBase)
+  }
+
+  test("① 限根钉: 执行 agent 面 AskUserQuestion 缺席、AskHost 在位（c6329920e 2026-11-10）") {
+    for (name, face) <- List(
+        s"$executorName(depth=1, flowNodeSession)" -> executorNodeFace,
+        s"$executorName(depth=1)" -> executorPlainFace
+      )
+    do
+      val names = face.map(_.name)
+      assert(
+        !names.contains(AskUserQuestionTool.Name),
+        s"$name 不得持 AskUserQuestion（限根裁定：问用户卡收归 root 面），实得：${names.sorted}"
+      )
+      assert(names.contains("AskHost"), s"$name 应持 AskHost（correlated request 提问件）: ${names.sorted}")
+    end for
+    // 限根的另一面：root 判据单点照旧（ Nebula ∧ depth=0 才是 root，fail-closed）
+    assert(!RootAgentIdentity.isRootAgent(Some(defNamed(executorName)), 0), "执行名 depth=0 也不是 root")
   }
 
   test("① 附件参数: attachments 在基线 schema 内（顶层可选、array/string、maxItems=9）") {
@@ -187,7 +211,7 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     assert(!RootAgentIdentity.isRootAgent(None, 0), "agentDef=None 时判据必须 fail-closed")
   }
 
-  test("成员资格零改动: 四例的工具面组成与基线一致（无插删元素）") {
+  test("成员资格零改动: 四例的工具面组成与基线一致（无插删元素；提问件按 c6329920e 分面）") {
     val baselineNames = ToolRegistry.ALL_TOOLS.map(_.name)
     for (name, face) <- List(
         "Nebula" -> rootFace,
@@ -200,7 +224,12 @@ class AskUserDualModeSchemaSpec extends FunSuite:
       // 顺序：扁平化自 ALL_TOOLS ⇒ 必然是注册表序的子序列（逐位不变）
       assertEquals(names, baselineNames.filter(names.contains), s"$name 的工具序不再是注册表序的子序列")
       assertEquals(names.distinct.size, names.size, s"$name 的工具面出现重复元素")
-      assert(names.contains(AskUserQuestionTool.Name), s"$name 丢了 AskUserQuestion 成员资格")
+      // 成员资格按 2026-11-10 限根裁定分面：root/按名节点持问用户卡；
+      // 执行面持 AskHost（correlated request 件）
+      val expectAsk =
+        if name == s"$executorName node" || name == s"$executorName plain" then "AskHost"
+        else AskUserQuestionTool.Name
+      assert(names.contains(expectAsk), s"$name 丢了 $expectAsk 成员资格")
   }
 
   test("禁第二份表达式: 谓词字面量只许出现在单点文件内 + 消费点均为委托") {

@@ -210,7 +210,7 @@ class SeedManifestCoverageSpec extends FunSuite:
     assert(
       sourced.contains("stand-dev"),
       "stand-dev must be a source-managed builtin (it left the seed tree on 2026-11-01 — it is fetched from " +
-        "git@git.ustc.edu.cn:kaiyu/stand-dev.git, not shipped in the jar)"
+        "git@github.com:MashiroKai/stand-dev.git, not shipped in the jar)"
     )
 
 end SeedManifestCoverageSpec
