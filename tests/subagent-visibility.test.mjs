@@ -257,6 +257,49 @@ test('durable panel merge uses existing identity and flags incomplete collection
   assert.equal(result.entries[0][1].done, false);
 });
 
+test('initial terminal task snapshot refreshes each root indicator once', () => {
+  const main = source('main.js');
+  const start = main.indexOf('onDurableTasksChanged((rows) => {');
+  const end = main.indexOf('\n});', start) + 4;
+  let consume;
+  const cleared = [];
+  const refreshed = [];
+  const expecting = Object.fromEntries(Array.from({ length: 1070 }, (_, i) => [`child-${i}`, true]));
+  const context = vm.createContext({
+    onDurableTasksChanged: callback => { consume = callback; },
+    clearBusy: id => cleared.push(id),
+    state: { turnExpecting: expecting },
+    updateBgAgentIndicator: (id, opts) => refreshed.push({ id, opts }),
+  });
+  vm.runInContext(main.slice(start, end), context);
+  consume(Array.from({ length: 1070 }, (_, i) => ({
+    taskId: `child-${i}`, rootSessionId: i % 2 ? 'root-a' : 'root-b', status: 'completed',
+  })).concat([{ taskId: 'still-running', rootSessionId: 'root-c', status: 'running' }]));
+  assert.equal(cleared.length, 1070);
+  assert.equal(Object.keys(expecting).length, 0);
+  assert.deepEqual(refreshed.map(item => item.id).sort(), ['root-a', 'root-b']);
+  assert.ok(refreshed.every(item => item.opts.keepDropdownOpen));
+});
+
+test('hidden background dropdown does not construct its task list', () => {
+  const code = source('main/bgAgents.js');
+  const start = code.indexOf('export function renderBgAgentDropdown()');
+  const end = code.indexOf('\n  const model = bgPanelModel(sid);', start);
+  let modelReads = 0;
+  const context = vm.createContext({
+    activeView: { sessionId: 'root-a', dom: {
+      bgagentDropdownEl: { classList: { contains: () => true } },
+      bgDropdownEl: { classList: { contains: name => name === 'hidden' } },
+      bgagentDropdownListEl: {},
+    } },
+    bgPanelModel: () => { modelReads++; return {}; },
+  });
+  vm.runInContext(code.slice(start, end).replace('export ', '') + '\n  bgPanelModel(sid);\n}\nrenderBgAgentDropdown();', context);
+  assert.equal(modelReads, 0);
+  vm.runInContext("activeView.dom.bgDropdownEl.classList.contains = () => false; renderBgAgentDropdown();", context);
+  assert.equal(modelReads, 1, 'opening the dropdown must build the current authoritative model');
+});
+
 test('history invalidation during an in-flight load schedules another authoritative read', async () => {
   const callbacks = [];
   const sent = [];

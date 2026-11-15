@@ -84,11 +84,8 @@ function syncAttachmentStrip() {
     else if (!want && has) chips[i].classList.remove('mh-att-collapsed');
   }
   const hiddenCount = chips.length - keep;
-  if (!chips.length) {
-    // 空strip：展开态残留一并清（chip 全走后 +N 不留、expanded 不挂空行）。
-    row.classList.remove('mh-att-expanded');
-  }
-  if (expanded) {
+  if (!chips.length && expanded) row.classList.remove('mh-att-expanded');
+  if (expanded && chips.length) {
     // 展开态：+N 保留行尾作「收拢」键（点它 toggle 回折叠；文本沿用折叠计数）。
     if (more.parentElement !== row || row.lastElementChild !== more) row.appendChild(more);
     if (more.hidden) more.hidden = false;

@@ -2270,7 +2270,6 @@ Object.values(chatViews).forEach(v => {
     const opening = dropdown.classList.contains('hidden');
     if (opening) {
       fetchActiveAgentsOnOpen();
-      renderBgAgentDropdown();
       // 面板拆分批（2026-10-31 ④ · 作者追加令）：桌面端两键各开单族视图——本键
       // （智能体键）只显智能体节；手机端（mobile-layer）维持合并单面板不变，视图
       // 类由 CSS（body:not(.mobile-layer) 闸）兜住不生效。
@@ -2279,6 +2278,7 @@ Object.values(chatViews).forEach(v => {
         dropdown.classList.add('bg-view-agents');
       }
       dropdown.classList.remove('hidden');
+      renderBgAgentDropdown();
       armBgUptimeTick(v);
     } else {
       dropdown.classList.add('hidden');
@@ -5051,12 +5051,14 @@ onMessage('activeBgTasks', (msg) => {
 
 // Committed task terminal state reconciles the child session, never its parent.
 onDurableTasksChanged((rows) => {
+  const roots = new Set();
   for (const row of rows) {
     if (!['completed', 'failed', 'cancelled', 'pending-recovery'].includes(row.status)) continue;
     clearBusy(row.taskId);
     delete state.turnExpecting[row.taskId];
-    updateBgAgentIndicator(row.rootSessionId, { keepDropdownOpen: true });
+    if (row.rootSessionId) roots.add(row.rootSessionId);
   }
+  for (const root of roots) updateBgAgentIndicator(root, { keepDropdownOpen: true });
 });
 
 // ---------- Reconnect: sync background sub-agents ----------
@@ -5343,7 +5345,7 @@ onMessage('remoteAgents', (msg) => {
   }
   state.remoteBgAgents = byDevice;
   scheduleRemoteTerminalCleanup();
-  // 面板重渲（面板关着 = 写进隐藏载体节点，零可见副作用；开面板路径照常命中）。
+  // Closed panels render the current projection when opened.
   renderBgAgentDropdown();
 });
 
