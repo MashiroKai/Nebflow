@@ -14,7 +14,7 @@ Implemented, with consumer, route or unit evidence only (not accepted):
 
 Acceptance still required:
 
-- [ ] FCC-SCN-011 real desktop light/dark screenshots and a mobile regression on a real isolated instance, reviewed by the user; the desktop host is not merged before that confirmation.
+- [x] FCC-SCN-011 real desktop light/dark screenshots and a mobile regression on a real isolated instance, reviewed by the user; the desktop host is not merged before that confirmation. (author confirmed 2026-11-15 没问题, prior to merge; evidence .zcode/fcc-scn-011 + 工件卡)
 - [ ] A real input method on WebKit/Safari, a real soft keyboard on mobile and a real friends gateway, including its WebSocket echo of a sent message (the consumer tests use a mocked friends surface, a mock WebSocket and Playwright's WebKit).
 - [ ] Real isolated instance resources check of the desktop conversation window, and the older specs that could not run here (they need a fixture server or write to fixed paths outside the isolated root).
 - [ ] A reload/quota check of the history vault on real browsers (Safari private mode, storage pressure) and an owner decision on the stored-payload caps.

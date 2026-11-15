@@ -7,7 +7,7 @@
 - [x] Align canonical role, tool descriptions and dispatcher/kernel guidance with shell-backed reconnaissance.
 - [x] Verify a real foreground Bash call, output delivery and child cleanup; run relevant boundary regressions.
 - [x] Record current structural, compile/test and style/lint results separately from historical five-tool evidence in bash-verification.md (full repository acceptance remains blocked).
-- [ ] Obtain author review of prompt wording before adoption; no installation or live synchronization in this change.
+- [x] Obtain author review of prompt wording before adoption; no installation or live synchronization in this change. (author ruling 2026-11-15: prompt 通过)
 
 ## Ask follow-up
 
