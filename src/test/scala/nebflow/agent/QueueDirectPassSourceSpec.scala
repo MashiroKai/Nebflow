@@ -169,8 +169,14 @@ class QueueDirectPassSourceSpec extends CatsEffectSuite:
           s"真人输入不得产 {type:user,injected:true} 帧（= TOOL 卡）: ${injectedUserFrames(fs).mkString(" | ")}"
         )
         // real user turn 语义（isRealUserTurn = isUserTurn && source.isEmpty）：
-        // time 提醒照常注入（诊断 §3「Reminder 同源」）
-        assert(textOf(req).contains("Current time"), s"真人轮仍应注入 time 提醒:\n${textOf(req)}")
+        // 时间锚照常随真人消息注入——过时测试修复（2026-11-15）：时钟简化批
+        // （作者令 2026-11-06 22:26/22:29）后真人轮走 TimeAnchor.userLine 极简形
+        // （`Now: … | epoch_ms …`，随消息 append-only 持久化），旧 `Current time:`
+        // 形态只余旧历史识别/裁剪面（TimeAnchor 头注），断言对齐新合同。
+        assert(
+          textOf(req).contains("Now: ") && textOf(req).contains("epoch_ms"),
+          s"真人轮仍应注入 userLine 时间锚:\n${textOf(req)}"
+        )
       program.unsafeRunSync()
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)

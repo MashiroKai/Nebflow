@@ -134,9 +134,10 @@ class PluginRemoveSpec extends FunSuite:
 
   // ── ⑤ 台账联动：卸载后种子自愈不装回 ───────────────────────
   test("⑤ remove + markUserRemoved ⇒ 种子 reconcile 不装回（墓碑独立成立）"):
-    // 默认集包（nebflow-plugin-creator）：拷贝到盘上模拟在位，卸载 + 落墓碑，
-    // 下一次 ensureSeeded 必须不装回。
-    val target = "nebflow-plugin-creator"
+    // 默认集包（slideblocks；c9dff9829 六包并入 stand-dev 后默认集无保留前缀包，
+    // 旧官样 nebflow-plugin-creator 已退役）：拷贝到盘上模拟在位，卸载 + 落墓碑，
+    // 下一次 ensureSeeded 必须不装回。墓碑语义与包是否保留前缀无关。
+    val target = "slideblocks"
     val url = getClass.getClassLoader.getResource(s"seed/plugins/$target/plugin.json")
     val seedDir = os.Path(java.nio.file.Paths.get(url.toURI)) / os.up
     os.walk(seedDir).filter(os.isFile).foreach { f =>

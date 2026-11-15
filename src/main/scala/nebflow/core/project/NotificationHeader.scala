@@ -92,11 +92,17 @@ object NotificationHeader:
     "todo" -> "TODO",
     // 外部注入统一通道批（2026-11-05）：可见性判据翻成总函数后新到的五个源
     // （集合同值硬门 NotificationHeaderSpec 要求本表键集 = BackendNamedSources）。
-    "merge-queue" -> "MERGE-QUEUE",
     "bg-lifecycle" -> "BG-LIFECYCLE",
     "waiting-dock-care" -> "WAITING-DOCK-CARE",
     "chain-orphan" -> "CHAIN-ORPHAN",
-    "team" -> "TEAM"
+    "team" -> "TEAM",
+    // 过时词表对账（2026-11-15，NotificationHeaderSpec 硬门抓出）：
+    //  - `merge-queue` 标签随专职合并器退役（3007e48da）从 BackendNamedSources
+    //    移除后漏删——源已不再后端命名，标签一并退场；
+    //  - `frozen-waiting` 在 BackendNamedSources 在册（冻结播报面退役批后仍为
+    //    存量盘面已落账行的吸收形态，MailboxDrain suppressRepeatedWaiting 两腿
+    //    在位可重放）但漏登记标签——存量行到达注入行时必须有 KIND 归因。
+    "frozen-waiting" -> "FROZEN-WAITING"
   )
 
   /**

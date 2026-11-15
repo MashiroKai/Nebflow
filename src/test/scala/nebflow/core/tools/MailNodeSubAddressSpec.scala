@@ -404,7 +404,14 @@ class MailNodeSubAddressSpec extends CatsEffectSuite:
       )
       val r = mail("node:n-1", ctx).unsafeRunSync()
       assert(r.left.exists(_.message.contains("outside your address face")), s"${r.left.map(_.message)}")
-      assert(r.left.exists(_.message.contains("team/agent")), "the error names the teamish legal face")
+      // 过时测试修复（2026-11-15）：团队地址面 2026-11-04 整体退役（TeamOnlyRouting
+      // 批，MailTool.standaloneFace 单点）——「teamish 合法面」不复存在，现合同 =
+      // 越界报错必须说明该角色已无 Mail 地址面并指明退役事实（no widening 的
+      // 现行形态）。显式拒绝本体由上一断言钉死。
+      assert(
+        r.left.exists(_.message.contains("2026-11-04 整体退役")),
+        s"the error must name the retired team face (standalone has no Mail face): ${r.left.map(_.message)}"
+      )
     finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
   }
 

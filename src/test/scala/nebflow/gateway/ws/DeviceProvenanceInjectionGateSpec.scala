@@ -145,8 +145,10 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
   }
 
   test("A1b the receive pipe threads the identity into handleMessage (per-connection closure, same scope as takeover)") {
+    // df7bb5334（属主附件批）给调用追了第 5 参 Some(cred)——身份穿线语义不变，
+    // 钉随调用形更新（仍要求 sessionIdentity 在收流管闭包内随帧进分发）。
     assert(
-      wsRoutesCode.contains("handleMessage(text, perConnJsonSend, watchSession, sessionIdentity)"),
+      wsRoutesCode.contains("handleMessage(text, perConnJsonSend, watchSession, sessionIdentity, Some(cred))"),
       "收流管必须把本连接的 sessionIdentity 穿进消息分发"
     )
   }

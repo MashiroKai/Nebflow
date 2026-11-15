@@ -353,7 +353,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
   // ── M④ 合法新顺序 + payload merge 条件字段 ──────────────────
 
   test(
-    "M4: legal order (upstream first, merge with in=<id>) — merge persists, payload carries merge:true only for merge nodes, no loop key, barrier triggers"
+    "M4: legal order (upstream first, merge with in=<id>) — merge persists, payload carries merge:true only for merge nodes, no loop key, upstream completion HOLDS the merge (engine never auto-triggers landing)"
   ) {
     val ws = tempRoot / "ws-m4"
     os.makeDir.all(ws)
@@ -400,8 +400,14 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       }
       r = Right(s"seeded merge node $sinkId")
       _ <- waitStatus(rt, "slow-up", Set(NodeLifecycle.Completed))
-      _ <- waitStatus(rt, "merge-m4", Set(NodeLifecycle.Completed))
+      // 3007e48da（2026-11-13 退役 merger 批）：引擎对 legacy merge 节点只 hold 不拉起
+      // ——「landing is the author's decision」（NodeStarter.startNode 短路，WARN 在案）。
+      // barrier 等待可见面保留，触发腿 retired；静置两轮复查，钉 held 是稳定态非竞窗口
+      // （LoopExecutionLegSpec 同款手法）。
+      _ <- IO.sleep(200.millis)
       merge <- idOf(rt, "merge-m4").flatMap(id => rt.store.getNode(id)).map(_.getOrElse(fail("merge must exist")))
+      _ <- IO.sleep(200.millis)
+      mergeAgain <- idOf(rt, "merge-m4").flatMap(id => rt.store.getNode(id)).map(_.getOrElse(fail("merge must exist")))
       plain <- idOf(rt, "slow-up").flatMap(id => rt.store.getNode(id)).map(_.getOrElse(fail("up must exist")))
       now = System.currentTimeMillis()
       mergeJson = NodePayload.buildNodeJson(merge, now)
@@ -427,8 +433,14 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       )
       assertEquals(
         merge.status,
-        NodeLifecycle.Completed,
-        "merge node must trigger after upstream completion (in-barrier semantics intact under the new order)"
+        NodeLifecycle.Wiring,
+        "merger retirement (3007e48da): upstream completion must NOT auto-trigger a legacy merge — the engine holds it (landing is the author's decision)"
+      )
+      assert(merge.startedAt.isEmpty, "no session may be spawned for a held merge")
+      assertEquals(
+        mergeAgain.status,
+        NodeLifecycle.Wiring,
+        "held is a stable state: repeated settle windows keep holding (idempotent)"
       )
     end for
   }
