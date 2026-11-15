@@ -301,7 +301,6 @@ nf-ask-dock { display: contents; }
   transform: translate(
     var(--note-seed-dx, var(--note-seed-x0)),
     var(--note-seed-dy, var(--note-seed-y0)));
->>>>>>> /tmp/theirs.css
 }
 
 /* ═══ 可拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄
