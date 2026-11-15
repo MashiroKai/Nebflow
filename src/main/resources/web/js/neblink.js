@@ -17,6 +17,7 @@ import { clearDeviceMessageCache } from './fmDropboxCache.js';
 import { openLocalStore, clear as clearLocalStore } from './localStore.js';
 import { escapeHtml } from './utils.js';
 import { t, getLocale } from './i18n.js';
+import { setCard } from './settingsRows.js';
 import { onMessage, sendWs } from './ws.js';
 import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvatarProfile } from './avatarCache.js';
 // knownAccounts.js（切换账号的本地账号记忆）已随 auth-trim 批（2026-10-20 作者令）
@@ -427,6 +428,13 @@ function notifyStatusSubscribers() {
   }
 }
 
+/** One account card for desktop settings and the mobile profile detail. */
+export function accountCardHTML({ mobile = false } = {}) {
+  return setCard({ title: t('settings.account'), id: 'account-card', body: `
+    ${neblinkSettingsHTML()}
+    ${mobile ? '' : '<div id="settings-devices-slot"></div>'}` });
+}
+
 export function neblinkSettingsHTML() {
   const local = neblinkState.device || {};
   const peers = neblinkState.peers || [];
@@ -833,8 +841,12 @@ export function openEndSessionHandoff(continueToLogin = false) {
 }
 
 // ---- Bind events after HTML insert ----
-export function bindNeblinkEvents(rerender) {
-  _rerender = rerender;
+const accountBindings = new WeakSet();
+/** @param {() => void} rerender @param {Document|HTMLElement} [root] */
+export function bindNeblinkEvents(rerender, root = document) {
+  // Scoped mobile cards already subscribe through onNeblinkStatus; never steal
+  // the retained desktop Settings callback or clear it during mobile teardown.
+  if (root === document) _rerender = rerender;
 
   // 「切换账号 / 退出登录」两键及其绑定已随 auth-trim 批（2026-10-20 作者令）删除。
   // 原共用 RP-initiated logout 链（`initiateLogout`，2026-09-06 起：POST + 预约窗 →
@@ -848,8 +860,9 @@ export function bindNeblinkEvents(rerender) {
   // 本地拆除**（判据 G5）⇒ 坏件即使读不开，拆除仍执行（`DeviceCredential.clear`
   // 删不掉时再走改名留档兜底）⇒ 下一次登录从干净盘重建。跳转必须在手势栈里同步
   // 发生（popup-blocker），故直接调用。
-  const cleanupBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-cleanup-btn'));
-  if (cleanupBtn) {
+  const cleanupBtn = /** @type {HTMLButtonElement|null} */ (root.querySelector('#neblink-cleanup-btn'));
+  if (cleanupBtn && !accountBindings.has(cleanupBtn)) {
+    accountBindings.add(cleanupBtn);
     cleanupBtn.addEventListener('click', () => {
       cleanupBtn.disabled = true;
       openEndSessionHandoff(true);
@@ -862,8 +875,9 @@ export function bindNeblinkEvents(rerender) {
   // → /auth/logged-out 落地页；`false` = 不做强制登录/单窗续登（那是「清理并重登」的
   // `true` 语义）。跳转必须在手势栈里同步发生（popup-blocker），故直接调用。
   // 🔴 零新增拆除逻辑：本键与「清理并重登」共用同一条链路，只是入参不同。
-  const logoutBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-logout'));
-  if (logoutBtn) {
+  const logoutBtn = /** @type {HTMLButtonElement|null} */ (root.querySelector('#neblink-logout'));
+  if (logoutBtn && !accountBindings.has(logoutBtn)) {
+    accountBindings.add(logoutBtn);
     logoutBtn.addEventListener('click', () => {
       logoutBtn.disabled = true;
       openEndSessionHandoff(false);
@@ -885,6 +899,7 @@ export function bindNeblinkEvents(rerender) {
   // DOM 来源（`.neblink-peers-list` / `.neblink-peer`）已不存在（见上方本文件
   // `neblinkSettingsHTML` 的移除项清单），留着就是永不命中的死绑定。
   // 设备入口本体见 `contacts.js` 的「设备」点进展开（→ `openDeviceChat`，新设备会话窗）。
+  return () => { if (root === document && _rerender === rerender) _rerender = null; };
 }
 
 // ---- Switch-account modal（已退役，auth-trim 批 2026-10-20 作者令）----

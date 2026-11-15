@@ -3,6 +3,16 @@
   "change": "frontend-mobile-appearance-repairs",
   "mappings": [
     {
+      "requirement": "FMA-REQ-005", "scenario": "FMA-SCN-005",
+      "implementation": ["src/main/resources/web/css/mobileLayer.css", "src/main/resources/web/css/design-system.css", "src/main/resources/web/css/input.css", "src/main/resources/web/css/sapphire.css", "src/main/resources/web/js/viewers/html.js"],
+      "tests": [{"path": "tests/mobile-canvas-toolbar-layout.spec.mjs", "name": "transparent floating bands and independent centered pagination"}, {"path": "tests/mobile-workbench-account-chat.spec.mjs", "name": "shared contact chrome and green send face"}]
+    },
+    {
+      "requirement": "FMA-REQ-006", "scenario": "FMA-SCN-006",
+      "implementation": ["src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/js/mobile/meFace.js", "src/main/resources/web/js/neblink.js", "src/main/resources/web/js/sidebar.js", "src/main/resources/web/css/mobileLayer.css"],
+      "tests": [{"path": "tests/mobile-workbench-account-chat.spec.mjs", "name": "workbench hero settings row account detail and existing logout transport"}]
+    },
+    {
       "requirement": "FMA-REQ-001", "scenario": "FMA-SCN-001",
       "implementation": ["src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/css/mobileLayer.css"],
       "tests": [

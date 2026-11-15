@@ -104,10 +104,7 @@ const HUB_ROWS = [
   { page: 'reminder',   icon: 'alarm-clock',     zh: '定时任务',  en: 'Scheduled' },
   { page: 'daemon',     icon: 'heart-pulse',     zh: '心跳',      en: 'Daemons' },
   { page: 'background', icon: 'square-terminal', zh: '后台任务',  en: 'Background' },
-  // account-hero 批（2026-11-07）：设置**不再是**工作台列表的一员 —— 它已升到
-  // hero 的独立入口（buildWorkbenchMeEntry 的 [data-hero-settings]）。同一功能
-  // 两个入口会打架（作者令「把设置的统一到这里」），故此行删除；PAGES 里的
-  // 'settings' 页注册保留（pushPage('settings') 仍走同一详情页壳）。
+  { page: 'settings',   icon: 'settings',        zh: '设置',      en: 'Settings' },
 ];
 
 /** 页面注册表。dock: true = 底栏根页；其余 = push 详情页。route id 稳定。
@@ -513,28 +510,7 @@ function buildWorkbenchMeEntry() {
     <span class="mf-me-meta">
       <span class="mf-me-name"></span>
       <span class="mf-me-sub"></span>
-    </span>
-    <span class="mf-me-actions">
-      <span class="mf-me-settings" role="button" tabindex="0" data-hero-settings="1">
-        <i data-lucide="settings" class="mf-me-settings-ic"></i>
-        <span class="mf-me-settings-label">设置</span>
-      </span>
     </span>`;
-  // hero 内设置钮（子元素上的 click 冒泡到 entry，必须先 stopPropagation 并
-  // 自己 push settings —— 两个入口语义分离，互不触发的另一个）。
-  const settingsBtn = /** @type {HTMLElement | null} */ (entry.querySelector('[data-hero-settings]'));
-  if (settingsBtn) {
-    const openSettings = (e) => {
-      e.stopPropagation();
-      touchLayer();
-      logEvent('hub-open', { page: 'settings' });
-      pushPage('settings');
-    };
-    settingsBtn.addEventListener('click', openSettings);
-    settingsBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') openSettings(e);
-    });
-  }
   entry.addEventListener('click', (e) => {
     e.stopPropagation();
     touchLayer();
