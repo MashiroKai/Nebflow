@@ -203,7 +203,7 @@ status: active
 | T8 | 桌面网络横幅 | `#conn-banner` | 毛玻璃 | 顶部 fixed 横幅，成员表在册 |
 | T9 | 手机搜索带 | `.mh-search-dock` | 零画 | 带离流贴页顶、手势穿透，内容从带内穿行（2026-11-05 17:34 批） |
 | T10 | 手机搜索条 | `.mh-search-bar` | 毛玻璃@nf-glass | 消息/联系人两页常驻搜索条（作者点名面，2026-11-06） |
-| T11 | 手机 canvas 环带 | `.mf-strip` | 零画 | 环签定位带，本体零底（方案 C 落地批：带子里真正的玻璃是 `::before` 那层 64px，见 T21；下缘 28px 是 `::after` 渐层，零 backdrop） |
+| T11 | 手机 canvas 环带 | `.mf-strip` | 零画 | 透明悬浮定位带；整宽玻璃与渐隐已退役，仅控件自身持有毛玻璃 |
 | T12 | 手机 canvas 主胶囊 | `.mf-strip-chip.on::after` | 毛玻璃 | 三签里**唯一带材质**的那一枚（作者令 2026-11-06「主胶囊要采用毛玻璃底」），成员表在册。两侧签同批零材质（「背景的文字不使用胶囊」）⇒ 不是「半透明但没走玻璃」，而是根本没有面 |
 | T13 | 手机身份头 | `.mh-idhead` | 零画 | 「不得有横贯顶栏带」原令：头本体零底零描边，只有头像与名字胶囊接事件 |
 | T14 | 手机身份名胶囊 | `.mh-idhead-name` | 毛玻璃 | 四种会话同一枚 |
@@ -213,8 +213,8 @@ status: active
 | T18 | 手机聊天钮带 | `#mobile-fab-layer` | 零画 | `.ds-chrome-band` 族：零画 + 手势落穿 |
 | T19 | 手机 canvas 工具带 | `.mf-cv-toolbar` | 零画 | 同上，子件是 `.g2-fab` 圆钮 |
 | T20 | 手机图谱 pane 条 | `.wg-panebar` | 零画 | 同上，子件是 `.wg-search`/`.wg-chip`（成员表在册） |
-| T21 | 手机 canvas 玻璃带 | `.mf-strip::before` | 毛玻璃 | 方案 C 的 64px 顶栏玻璃面（成员表在册）：正文滚进带里只剩色块，滚出 64px 交给 28px 渐隐带化开（厚度与单源另由 `scripts/check-mobile-canvas-strip.mjs` 的 S1/S4 钉死） |
-| T22 | 会话窗顶栏（好友/群/设备） | `.fm-modal-header` | 毛玻璃 | 悬浮覆盖在滚动区之上（`position:absolute`），内容从底下穿过；材质与 `#header` **同一条共享声明**（css/glass.css「顶部悬浮头」块），令牌 = `--nf-head-*`（contact-panel-unify 收编批 2026-11-06；rebase 时原 T21 号位与手机 canvas 玻璃带撞号，两边并列保留、本条顺延 T22） |
+| T21 | 手机 canvas 原整宽底层 | `.mf-strip::before` | 零画 | content:none；无实底顶栏、无分隔线；S4 禁止恢复整宽底层 |
+| T22 | 会话窗顶栏（好友/群/设备） | `.fm-modal-header` | 毛玻璃/零画 | 桌面保留共享玻璃；手机旧头完全退场，由主会话同源 mh-idhead、ds-chrome-band 与 g2-fab 承担悬浮控件 |
 
 ### 7.3 零画带（为什么 α = 0 不算违规）
 

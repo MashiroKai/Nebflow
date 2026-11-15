@@ -263,7 +263,7 @@ export async function createSession(browser, opts = {}) {
   const frame = (f) => page.evaluate((fr) => window.__wsMock.onmessage({ data: JSON.stringify(fr) }), f);
 
   const boot = async (base = {}) => {
-    await page.goto('http://localhost:1/', { waitUntil: 'domcontentloaded' });
+    await page.goto(opts.baseURL || 'http://localhost:1/', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__wsMock, null, { timeout: 20000 });
     await page.evaluate(() => {
       window.__wsMock.readyState = 1;

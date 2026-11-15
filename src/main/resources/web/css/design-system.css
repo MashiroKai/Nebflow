@@ -779,7 +779,8 @@
 }
 .ds-turn-btn:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
 /* 发送档：微信绿实底（--ctl-send-* 一跳别名，亮暗同值） */
-.ds-turn-btn--send {
+.ds-turn-btn--send,
+.ds-turn-btn--send:disabled {
   background: var(--ds-turn-send-bg);
   color: var(--ds-turn-send-ink);
   border-color: var(--ds-turn-send-border);
