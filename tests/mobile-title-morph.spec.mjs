@@ -218,9 +218,11 @@ async function gotoWorkbench(page) {
   await page.waitForSelector('#mobile-pages .mobile-page.live[data-page="workbench"] .mf-hub-rows', { timeout: 10000 });
   await page.waitForTimeout(200);
 }
-async function openPage(page, hubPage, liveSelector) {
+async function openPage(page, hubPage, liveSelector, clickSel) {
   await gotoWorkbench(page);
-  await page.locator(`#mobile-pages .mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="${hubPage}"]`).click();
+  // account-hero 批（2026-11-07）后 settings 不在工作台 hub 列表（升到 hero 的
+  // [data-hero-settings] 独立入口）；调用方传 clickSel 走现役入口。
+  await page.locator(clickSel ?? `#mobile-pages .mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="${hubPage}"]`).click();
   await page.waitForSelector(liveSelector, { timeout: 15000 });
   await page.waitForTimeout(450);
 }
@@ -690,7 +692,7 @@ process.on('uncaughtException', (e) => { flush(); console.error(e); process.exit
     await openPage(page, 'projects', '#mobile-pages .mobile-page.live[data-page="projects"] .team-scroll');
     await panelLeg(page, 'projects', 'projects/chromium-light', 'projects-chromium-light');
     // ③ 设置（overlay 收编面，主滚轴 = #settings-content）
-    await openPage(page, 'settings', '#mobile-pages .mobile-page.live[data-page="settings"] #settings-modal');
+    await openPage(page, 'settings', '#mobile-pages .mobile-page.live[data-page="settings"] #settings-modal', '[data-hero-settings]');
     await panelLeg(page, 'settings', 'settings/chromium-light', 'settings-chromium-light');
     // ④ 待办（in-flow 页）—— ⛔ 腿退役（入口收敛批 todo-unify-entry-collapse
     // 2026-11-04）：#todo-page 整面退役、推送腿（nf:mobile-todo-entry）摘除 ⇒

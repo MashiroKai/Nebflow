@@ -1007,24 +1007,6 @@ body.mobile-layer .mobile-page-title::before {
 }
 /* 吸附成立（布尔判据，spec/兼容读者用）：标题胶囊不拦交互（返回钮始终可点）。 */
 body.mobile-layer .mobile-page.rolled .mobile-page-title { pointer-events: none; }
-/* Ordinary pages retain a focusable screen-reader title, not a visual capsule. */
-body.mobile-layer .mobile-page .mobile-page-title {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  min-width: 0;
-  max-width: 1px;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-}
-body.mobile-layer .mobile-page .mobile-page-title::before { content: none; }
-body.mobile-layer .mobile-page:not(.mobile-page-nohead) .mobile-page-body {
-  padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
-}
 /* 悬浮「<」返回钮：48px g2-fab 液体玻璃（基准规格材质；JS 挂 .g2-fab 类），
    悬浮位 = 左 16 / top 16+safe，与聊天根任务键同几何。
    z 序（B 批补）：带 4 < 小字 5 < 本钮 6 —— 渐隐带承底不蒙返回钮。 */
