@@ -22,27 +22,46 @@ for (const engine of ['chromium', 'webkit']) {
       await page.locator(dock).locator('textarea').first().dispatchEvent('pointerdown', { bubbles: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 });
       assert.equal(await closed(), false, `${engine} ${dock}: inside pointerdown`);
       await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 })));
-      await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 2, pointerType: 'mouse', isPrimary: true, button: 0, clientX: 400 })));
-      assert.equal(await closed(), true, `${engine} ${dock}: outside pointerdown`);
-      await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 2 })));
+      await page.evaluate(() => {
+        const event = { bubbles: true, pointerId: 2, pointerType: 'mouse', isPrimary: true, button: 0, clientX: 400, clientY: 200 };
+        document.body.dispatchEvent(new PointerEvent('pointerdown', event));
+        document.body.dispatchEvent(new PointerEvent('pointermove', { ...event, clientX: 420 }));
+        document.body.dispatchEvent(new PointerEvent('pointerup', { ...event, clientX: 420 }));
+      });
+      assert.equal(await closed(), false, `${engine} ${dock}: outside drag`);
+      await page.evaluate(() => {
+        const event = { bubbles: true, pointerId: 2, pointerType: 'mouse', isPrimary: true, button: 0, clientX: 400, clientY: 200 };
+        document.body.dispatchEvent(new PointerEvent('pointerdown', event));
+        document.body.dispatchEvent(new PointerEvent('pointerup', event));
+      });
+      assert.equal(await closed(), true, `${engine} ${dock}: outside click`);
       await open();
       // A second pointer while another interaction is underway must not dismiss.
       await page.evaluate(() => {
-        document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 3, pointerType: 'touch', isPrimary: true, clientX: 0 }));
-        document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 4, pointerType: 'touch', clientX: 400 }));
+        const event = { bubbles: true, pointerType: 'touch', button: 0, clientX: 400, clientY: 200 };
+        document.body.dispatchEvent(new PointerEvent('pointerdown', { ...event, pointerId: 3, isPrimary: true }));
+        document.body.dispatchEvent(new PointerEvent('pointerdown', { ...event, pointerId: 4 }));
+        document.body.dispatchEvent(new PointerEvent('pointerup', { ...event, pointerId: 4 }));
+        document.body.dispatchEvent(new PointerEvent('pointerup', { ...event, pointerId: 3, isPrimary: true }));
       });
-      assert.equal(await closed(), false, `${engine} ${dock}: gesture in progress`);
+      assert.equal(await closed(), false, `${engine} ${dock}: multi-pointer gesture`);
       await page.evaluate(() => {
-        for (const pointerId of [3, 4]) document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId }));
+        const event = { bubbles: true, pointerType: 'touch', pointerId: 3, isPrimary: true, button: 0, clientX: 400, clientY: 200 };
+        document.body.dispatchEvent(new PointerEvent('pointerdown', event));
+        document.body.dispatchEvent(new PointerEvent('pointercancel', event));
+        document.body.dispatchEvent(new PointerEvent('pointerup', event));
+        document.body.dispatchEvent(new PointerEvent('pointerdown', { ...event, clientX: 1 }));
+        document.body.dispatchEvent(new PointerEvent('pointerup', { ...event, clientX: 1 }));
       });
+      assert.equal(await closed(), false, `${engine} ${dock}: cancelled and edge gestures`);
       await page.locator(fab).click();
       assert.equal(await closed(), true, `${engine} ${dock}: button toggle`);
       await open();
       await page.evaluate(() => {
         document.querySelector('#deck-layer').classList.add('live');
         document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 5, pointerType: 'mouse', isPrimary: true, button: 0, clientX: 400 }));
+        document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 5, clientX: 400 }));
         document.querySelector('#deck-layer').classList.remove('live');
-        document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 5 }));
       });
       assert.equal(await closed(), false, `${engine} ${dock}: deck gesture surface`);
       await page.locator(fab).click();

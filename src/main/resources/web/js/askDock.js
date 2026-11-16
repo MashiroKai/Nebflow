@@ -884,10 +884,12 @@ function wireGlobals(ctx) {
   // Track all pointers, including those starting inside a panel, so a second finger
   // cannot dismiss it during a drag, selection, resize, or navigation gesture.
   const pointers = new Set();
+  let candidate = null;
   ctx.on(document, 'pointerdown', (e) => {
     const busy = pointers.size > 0 || !e.isPrimary;
     pointers.add(e.pointerId);
-    if (busy || e.button !== 0 || !el || !isCanvasVisible()) return;
+    if (busy) { candidate = null; return; }
+    if (e.button !== 0 || !el || !isCanvasVisible()) return;
     const target = e.target;
     if (!(target instanceof Node)) return;
     if ([el.dock, el.noteDock, el.fab, el.noteFab].some(node => node.contains(target))) return;
@@ -895,13 +897,23 @@ function wireGlobals(ctx) {
     const edge = e.pointerType === 'touch' ? 20 : 64;
     if (e.clientX <= edge || e.clientX >= window.innerWidth - edge ||
         document.getElementById('deck-layer')?.classList.contains('live')) return;
-    if (isOpen()) close();
-    if (isNoteOpen()) closeNote();
+    candidate = { id: e.pointerId, x: e.clientX, y: e.clientY, ask: isOpen(), note: isNoteOpen() };
   }, true);
-  const releasePointer = (e) => { pointers.delete(e.pointerId); };
-  ctx.on(document, 'pointerup', releasePointer, true);
-  ctx.on(document, 'pointercancel', releasePointer, true);
-  ctx.on(window, 'blur', () => pointers.clear());
+  const moved = (e) => candidate && candidate.id === e.pointerId &&
+    Math.hypot(e.clientX - candidate.x, e.clientY - candidate.y) > 8;
+  ctx.on(document, 'pointermove', (e) => { if (moved(e)) candidate = null; }, true);
+  ctx.on(document, 'pointerup', (e) => {
+    pointers.delete(e.pointerId);
+    if (!candidate || candidate.id !== e.pointerId) return;
+    const tap = candidate;
+    if (moved(e)) { candidate = null; return; }
+    candidate = null;
+    if (!el || !isCanvasVisible() || document.getElementById('deck-layer')?.classList.contains('live')) return;
+    if (tap.ask && isOpen()) close();
+    if (tap.note && isNoteOpen()) closeNote();
+  }, true);
+  ctx.on(document, 'pointercancel', (e) => { pointers.delete(e.pointerId); candidate = null; }, true);
+  ctx.on(window, 'blur', () => { pointers.clear(); candidate = null; });
 }
 
 // ── 一次性观察器（应用级生命周期；不问组件连接态）─────────────────────────
