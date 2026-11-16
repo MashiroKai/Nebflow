@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const WEB_DIR = resolve(ROOT, 'src/main/resources/web');
+const WEB_DIR = resolve(process.env.WEB_DIR || resolve(ROOT, 'src/main/resources/web'));
 const PORT = Number(process.env.PORT || 8334);
 const BASE = `http://127.0.0.1:${PORT}`;
 const SHOTS_DIR = process.env.SHOTS_DIR ||
@@ -157,7 +157,7 @@ async function openSettings(page, { mobile }) {
   if (mobile) {
     await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
     await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="workbench"]')?.classList.contains('live'));
-    await page.locator('.mobile-page[data-page="workbench"] [data-hero-settings="1"]').click();
+    await page.evaluate(async () => (await import('/js/mobile/navController.js')).pushPage('settings'));
     await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="settings"]')?.classList.contains('live'));
   } else {
     await page.click('#settings-btn');
@@ -177,6 +177,17 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   const { ctx, page, errors, sim } = await boot(browser, { viewport, colorScheme: theme, locale, touch: mobile });
   await openSettings(page, { mobile });
 
+  const small = page.locator('#small-llm-settings-row');
+  ok(tag, '通用小 LLM 设置行使用统一行令牌', await small.locator('.set-row').count() === 1);
+  const smallSelect = small.locator('select');
+  ok(tag, '小模型未配置提示回退主模型', (await smallSelect.locator('option').first().textContent()).includes(locale === 'zh-CN' ? '未配置（回退主模型）' : 'Not configured'));
+  await smallSelect.selectOption('kimi/kimi-for-coding');
+  await page.waitForFunction(() => document.querySelector('#small-llm-settings-row select')?.value === 'kimi/kimi-for-coding');
+  ok(tag, '小模型选择写入独立槽', sim.puts.some(p => p.role === 'small-llm' && p.model?.preferred === 'kimi/kimi-for-coding'));
+  await page.locator('#small-llm-settings-row select').selectOption('');
+  await page.waitForFunction(() => document.querySelector('#small-llm-settings-row select')?.value === '');
+  ok(tag, '清除小模型配置', sim.puts.some(p => p.role === 'small-llm' && p.model === null));
+  sim.puts.length = 0;
   // ③ 标题
   const title = (await page.locator('#model-chain-section > .set-card-title').textContent() || '').trim();
   const disclosureTitle = (await page.locator('#model-chain-section [data-settings-disclosure="models"]').textContent() || '').trim();

@@ -122,14 +122,14 @@ export function mountReader(pane, adapter) {
       <div class="epub-toc" data-epub-toc="closed" hidden>
         <div class="epub-toc-head">
           <span class="epub-toc-title" data-cv-hint="divider">${escapeHtml(t('reader.toc'))}</span>
-          <button type="button" class="epub-nav-btn epub-toc-close" aria-label="${escapeHtml(t('epub.menu.close'))}">×</button>
+          <button type="button" class="canvas-button epub-nav-btn epub-toc-close" aria-label="${escapeHtml(t('epub.menu.close'))}">×</button>
         </div>
         <div class="epub-toc-list" role="listbox"></div>
       </div>
       <div class="epub-reader-viewport canvas-viewer-safe-top"></div>
       <div class="epub-reader-nav">
-        <button type="button" class="epub-nav-btn epub-prev" title="${escapeHtml(t('epub.prev'))}" aria-label="${escapeHtml(t('epub.prev'))}">‹</button>
-        <button type="button" class="epub-nav-btn epub-next" title="${escapeHtml(t('epub.next'))}" aria-label="${escapeHtml(t('epub.next'))}">›</button>
+        <button type="button" class="canvas-button epub-nav-btn epub-prev" title="${escapeHtml(t('epub.prev'))}" aria-label="${escapeHtml(t('epub.prev'))}">‹</button>
+        <button type="button" class="canvas-button epub-nav-btn epub-next" title="${escapeHtml(t('epub.next'))}" aria-label="${escapeHtml(t('epub.next'))}">›</button>
         <div class="epub-progress">
           <div class="epub-progress-ticks" aria-hidden="true"></div>
           <input type="range" class="epub-progress-range" min="0" max="1000" step="1"
@@ -137,9 +137,9 @@ export function mountReader(pane, adapter) {
           <div class="epub-progress-tip" data-cv-hint="foot" aria-hidden="true"></div>
         </div>
         <span class="epub-nav-info"></span>
-        <button type="button" class="epub-nav-btn epub-aa" aria-label="${escapeHtml(t('reader.aria.aa'))}">Aa</button>
-        <button type="button" class="epub-nav-btn epub-toc-btn" aria-label="${escapeHtml(t('reader.aria.toc'))}">☰</button>
-        <button type="button" class="epub-nav-btn epub-more-btn" aria-label="${escapeHtml(t('reader.aria.more'))}">⋯</button>
+        <button type="button" class="canvas-button epub-nav-btn epub-aa" aria-label="${escapeHtml(t('reader.aria.aa'))}">Aa</button>
+        <button type="button" class="canvas-button epub-nav-btn epub-toc-btn" aria-label="${escapeHtml(t('reader.aria.toc'))}">☰</button>
+        <button type="button" class="canvas-button epub-nav-btn epub-more-btn" aria-label="${escapeHtml(t('reader.aria.more'))}">⋯</button>
         <div class="epub-bar-menu" hidden></div>
       </div>
     </div>`;
@@ -334,7 +334,7 @@ export function mountReader(pane, adapter) {
     if (!adapter.toc || !adapter.toc.length) return;
     const items = adapter.toc;
     tocList.innerHTML = items.map((e, i) =>
-      `<button type="button" role="option" class="epub-toc-item" data-epub-toc-item="${i}"
+      `<button type="button" role="option" class="canvas-button epub-toc-item" data-epub-toc-item="${i}"
         data-depth="${e.depth}" aria-selected="false">${escapeHtml(e.label)}</button>`
     ).join('');
     tocList.querySelectorAll('[data-epub-toc-item]').forEach((btn) => {
@@ -399,43 +399,43 @@ export function mountReader(pane, adapter) {
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.theme.label'))}">
         <span class="epub-menu-label">${escapeHtml(t('epub.theme.label'))}</span>
         ${['paper', 'light', 'dark'].map((m) =>
-          `<button type="button" class="epub-menu-btn${theme === m ? ' on' : ''}" data-epub-theme-pick="${m}">${escapeHtml(t('epub.theme.' + m))}</button>`
+          `<button type="button" class="canvas-button epub-menu-btn${theme === m ? ' on' : ''}" data-epub-theme-pick="${m}">${escapeHtml(t('epub.theme.' + m))}</button>`
         ).join('')}
       </div>
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.aa.fontSize'))}">
         <span class="epub-menu-label">${escapeHtml(t('epub.aa.fontSize'))}</span>
-        <button type="button" class="epub-menu-btn" data-epub-step="fontSize:-1">−</button>
+        <button type="button" class="canvas-button epub-menu-btn" data-epub-step="fontSize:-1">−</button>
         <span class="epub-menu-value">${prefs.fontSize}px</span>
-        <button type="button" class="epub-menu-btn" data-epub-step="fontSize:1">＋</button>
+        <button type="button" class="canvas-button epub-menu-btn" data-epub-step="fontSize:1">＋</button>
       </div>
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.aa.lineHeight'))}">
         <span class="epub-menu-label">${escapeHtml(t('epub.aa.lineHeight'))}</span>
-        <button type="button" class="epub-menu-btn" data-epub-step="lineHeight:-1">−</button>
+        <button type="button" class="canvas-button epub-menu-btn" data-epub-step="lineHeight:-1">−</button>
         <span class="epub-menu-value">${prefs.lineHeight}</span>
-        <button type="button" class="epub-menu-btn" data-epub-step="lineHeight:1">＋</button>
+        <button type="button" class="canvas-button epub-menu-btn" data-epub-step="lineHeight:1">＋</button>
       </div>
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.aa.paraSpace'))}">
         <span class="epub-menu-label">${escapeHtml(t('epub.aa.paraSpace'))}</span>
         ${Object.keys(PARA_SPACE_STEPS).map((k) =>
-          `<button type="button" class="epub-menu-btn${prefs.paraSpace === k ? ' on' : ''}" data-epub-para="${k}">${escapeHtml(t(paraKeys[k]))}</button>`
+          `<button type="button" class="canvas-button epub-menu-btn${prefs.paraSpace === k ? ' on' : ''}" data-epub-para="${k}">${escapeHtml(t(paraKeys[k]))}</button>`
         ).join('')}
       </div>
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.aa.fontFamily'))}">
         <span class="epub-menu-label">${escapeHtml(t('epub.aa.fontFamily'))}</span>
-        <button type="button" class="epub-menu-btn${prefs.fontFamily === 'serif' ? ' on' : ''}" data-epub-font="serif">${escapeHtml(t('epub.aa.serif'))}</button>
-        <button type="button" class="epub-menu-btn${prefs.fontFamily === 'sans' ? ' on' : ''}" data-epub-font="sans">${escapeHtml(t('epub.aa.sans'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn${prefs.fontFamily === 'serif' ? ' on' : ''}" data-epub-font="serif">${escapeHtml(t('epub.aa.serif'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn${prefs.fontFamily === 'sans' ? ' on' : ''}" data-epub-font="sans">${escapeHtml(t('epub.aa.sans'))}</button>
       </div>`;
     const tocRow = (!adapter.toc || !adapter.toc.length) ? '' : `
       <div class="epub-menu-row">
-        <button type="button" class="epub-menu-btn epub-menu-wide" data-reader-toc>☰ ${escapeHtml(t('reader.toc'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn epub-menu-wide" data-reader-toc>☰ ${escapeHtml(t('reader.toc'))}</button>
       </div>`;
     const annoRow = annoFace ? `
       <div class="epub-menu-row">
-        <button type="button" class="epub-menu-btn epub-menu-wide" data-reader-anno>✎ ${escapeHtml(t('reader.anno.list'))}${annoFace.count() ? `（${annoFace.count()}）` : ''}</button>
+        <button type="button" class="canvas-button epub-menu-btn epub-menu-wide" data-reader-anno>✎ ${escapeHtml(t('reader.anno.list'))}${annoFace.count() ? `（${annoFace.count()}）` : ''}</button>
       </div>` : '';
     const refreshRow = isMobileBar() ? `
       <div class="epub-menu-row">
-        <button type="button" class="epub-menu-btn epub-menu-wide" data-reader-refresh>⟳ ${escapeHtml(t('reader.refresh'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn epub-menu-wide" data-reader-refresh>⟳ ${escapeHtml(t('reader.refresh'))}</button>
       </div>` : '';
     menu.innerHTML = `
       <div class="epub-menu-title">${escapeHtml(adapter.chapterTitle(chapterIdx))}</div>
@@ -445,15 +445,15 @@ export function mountReader(pane, adapter) {
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('reader.jumpPct'))}">
         <span class="epub-menu-label">${escapeHtml(t('reader.jumpPct'))}</span>
         <input type="number" class="epub-menu-input" data-reader-jump-input min="0" max="100" step="1" value="${Math.round(position01() * 100)}">
-        <button type="button" class="epub-menu-btn" data-reader-jump>${escapeHtml(t('reader.jump'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn" data-reader-jump>${escapeHtml(t('reader.jump'))}</button>
       </div>
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('reader.mode'))}">
         <span class="epub-menu-label">${escapeHtml(t('reader.mode'))}</span>
-        <button type="button" class="epub-menu-btn${prefs.mode === 'scroll' ? ' on' : ''}" data-reader-mode="scroll">${escapeHtml(t('reader.mode.scroll'))}</button>
-        <button type="button" class="epub-menu-btn${prefs.mode === 'flip' ? ' on' : ''}" data-reader-mode="flip">${escapeHtml(t('reader.mode.flip'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn${prefs.mode === 'scroll' ? ' on' : ''}" data-reader-mode="scroll">${escapeHtml(t('reader.mode.scroll'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn${prefs.mode === 'flip' ? ' on' : ''}" data-reader-mode="flip">${escapeHtml(t('reader.mode.flip'))}</button>
       </div>
       ${refreshRow}
-      <button type="button" class="epub-menu-btn epub-menu-close" data-epub-close>${escapeHtml(t('epub.menu.close'))}</button>`;
+      <button type="button" class="canvas-button epub-menu-btn epub-menu-close" data-epub-close>${escapeHtml(t('epub.menu.close'))}</button>`;
 
     menu.querySelectorAll('[data-epub-theme-pick]').forEach((btn) => {
       btn.addEventListener('click', () => setPrefs({ theme: (/** @type {HTMLElement} */ (btn)).dataset.epubThemePick }));
@@ -512,12 +512,12 @@ export function mountReader(pane, adapter) {
 
   function renderBarMenu() {
     const refreshRow = isMobileBar() ? `
-      <button type="button" class="epub-menu-btn epub-menu-wide" data-reader-refresh>⟳ ${escapeHtml(t('reader.refresh'))}</button>` : '';
+      <button type="button" class="canvas-button epub-menu-btn epub-menu-wide" data-reader-refresh>⟳ ${escapeHtml(t('reader.refresh'))}</button>` : '';
     barMenu.innerHTML = `
       ${refreshRow}
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('reader.mode'))}">
-        <button type="button" class="epub-menu-btn${prefs.mode === 'scroll' ? ' on' : ''}" data-reader-mode="scroll">${escapeHtml(t('reader.mode.scroll'))}</button>
-        <button type="button" class="epub-menu-btn${prefs.mode === 'flip' ? ' on' : ''}" data-reader-mode="flip">${escapeHtml(t('reader.mode.flip'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn${prefs.mode === 'scroll' ? ' on' : ''}" data-reader-mode="scroll">${escapeHtml(t('reader.mode.scroll'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn${prefs.mode === 'flip' ? ' on' : ''}" data-reader-mode="flip">${escapeHtml(t('reader.mode.flip'))}</button>
       </div>`;
     const refreshBtn = barMenu.querySelector('[data-reader-refresh]');
     if (refreshBtn) refreshBtn.addEventListener('click', requestRefresh);

@@ -270,7 +270,7 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       const retry = document.createElement('button');
       retry.type = 'button';
       retry.textContent = 'Retry';
-      retry.className = 'viewer-retry-btn';
+      retry.className = 'canvas-button viewer-retry-btn';
       retry.addEventListener('click', () => {
         if (!pane.isConnected) return;
         retried = false;
@@ -397,7 +397,7 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       if (bar.querySelector('.canvas-pan-toggle')) return;
       const hand = document.createElement('button');
       hand.type = 'button';
-      hand.className = 'canvas-zoom-btn canvas-pan-toggle';
+      hand.className = 'canvas-button canvas-zoom-btn canvas-pan-toggle';
       hand.innerHTML = '<i data-lucide="hand"></i>';
       hand.title = t('canvas.pan');
       hand.setAttribute('aria-label', t('canvas.pan'));
