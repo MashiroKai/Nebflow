@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "change": "branch-governance",
+  "mappings": [
+    {
+      "requirement": "BG-REQ-001",
+      "scenario": "BG-SCN-001",
+      "implementation": ["tools/stand-branch-guard", ".gitlab-ci.yml", "openspec/changes/branch-governance/design.md", "openspec/changes/branch-governance/proposal.md", "openspec/changes/branch-governance/tasks.md", "openspec/changes/branch-governance/trace.json", "openspec/changes/branch-governance/specs/branch-governance/spec.md"],
+      "tests": [{"path": "tests/stand-branch-guard.test.sh", "name": "branch and MR fixtures"}]
+    },
+    {
+      "requirement": "BG-REQ-001",
+      "scenario": "BG-SCN-002",
+      "implementation": ["tools/stand-branch-guard"],
+      "tests": [{"path": "tests/stand-branch-guard.test.sh", "name": "push fixtures"}]
+    }
+  ]
+}
