@@ -102,6 +102,15 @@ object SchemePolicy:
         json.hcursor.downField("model").as[AgentModelConfig].toOption
       }
 
+  /** Shared model for lightweight calls; read on each invocation. */
+  def smallLlmModel(): AgentModelConfig =
+    ownChainOf(ModelRoles.SmallLlmWire).filter(hasChain).getOrElse {
+      org.slf4j.LoggerFactory
+        .getLogger("nebflow.model.small-llm")
+        .warn("Small LLM is not configured; falling back to the main model")
+      resolveModel(NebulaName, nebulaChain())._1
+    }
+
   /** Nebula's primary chain — the global default every follower inherits. */
   def nebulaChain(): Option[AgentModelConfig] = ownChainOf(NebulaName)
 

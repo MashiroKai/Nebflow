@@ -1,0 +1,9 @@
+
+> check:openspec
+> node scripts/check-openspec.mjs --download
+
+Downloading pinned OpenSpec 2.0.0: openspec-darwin-arm64.tar.gz
+OpenSpec validation is running
+OpenSpec validation is running
+OpenSpec validation is running
+OpenSpec ERROR: The operation was aborted due to timeout

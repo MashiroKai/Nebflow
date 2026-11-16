@@ -138,7 +138,7 @@ nf-ask-dock { display: contents; }
   right: var(--ask-fab-gap);
   bottom: var(--ask-fab-bottom);
   z-index: calc(var(--z-ask-dock, 24) + 1); /* 钮本身需可点，仍 < 顶行 30 */
-  width: var(--ask-fab-size); height: var(--ask-fab-size); border-radius: 50%;
+  width: var(--ask-fab-size); height: var(--ask-fab-size);
   color: var(--color-text);
   cursor: pointer; padding: 0;
   display: flex; align-items: center; justify-content: center;

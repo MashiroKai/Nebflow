@@ -62,7 +62,7 @@ async function viewXlsx(pane, { absPath, fileName, objectUrl }) {
     const sheet = wb.Sheets[sheetName];
     const html = window.XLSX.utils.sheet_to_html(sheet, { editable: false });
     const sheetTabs = wb.SheetNames.map((name, i) =>
-      `<button class="xlsx-sheet-tab ${i === 0 ? 'active' : ''}" data-sheet="${escapeHtml(name)}">${escapeHtml(name)}</button>`
+      `<button class="canvas-button xlsx-sheet-tab ${i === 0 ? 'active' : ''}" data-sheet="${escapeHtml(name)}">${escapeHtml(name)}</button>`
     ).join('');
     pane.innerHTML = `
       <div class="canvas-xlsx-viewer">

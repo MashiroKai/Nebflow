@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "change": "query-message-windows",
+  "mappings": [
+    {
+      "requirement": "MW-REQ-001",
+      "scenario": "MW-SCN-001",
+      "implementation": [
+        "tools/stand-messages",
+        "openspec/changes/query-message-windows/proposal.md",
+        "openspec/changes/query-message-windows/design.md",
+        "openspec/changes/query-message-windows/tasks.md",
+        "openspec/changes/query-message-windows/trace.json",
+        "openspec/changes/query-message-windows/specs/message-windows/spec.md"
+      ],
+      "tests": [{"path": "test/stand-messages.test.js", "name": "queries retained windows without changing the fixture"}]
+    },
+    {
+      "requirement": "MW-REQ-001",
+      "scenario": "MW-SCN-002",
+      "implementation": ["tools/stand-messages"],
+      "tests": [{"path": "test/stand-messages.test.js", "name": "queries retained windows without changing the fixture"}]
+    }
+  ]
+}

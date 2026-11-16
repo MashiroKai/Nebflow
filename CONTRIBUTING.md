@@ -131,6 +131,8 @@ After the author approves and lands verified changes on `main`, the author manua
 - **Scala 3** (3.5.2, significant indentation). Formatting is enforced by scalafmt and scalafix — `make check` runs `sbt scalafmtCheckAll "scalafix --check"`. The compiler runs with `-Xfatal-warnings`: fix the warning, don't suppress it.
 - **Frontend** is vanilla JS with no TypeScript build step. The shared registry in `scripts/run-checks.mjs` owns checkout-only check membership. Install pinned tools with `npm ci`; no check downloads a compiler or linter implicitly.
 
+Canvas control changes: add `canvas-button` to each new canvas button and register dynamic emitters in `scripts/check-canvas-buttons.mjs`; reader templates are scanned automatically. Run `npm run check:frontend` and the affected visual fixture. The current registry is not a complete DOM-wide proof, especially for embedded content.
+
 ### Checkout-only quality gates
 
 ```bash

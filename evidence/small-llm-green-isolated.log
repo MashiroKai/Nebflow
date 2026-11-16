@@ -1,0 +1,74 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap not injected: SBT_OPTS already carries -Xmx (explicit wins)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project small-llm-20261116-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand-wt/small-llm-20261116/)
+[warn] javaOptions will be ignored, fork is set to false
+10:06:54.492 Small LLM is not configured; falling back to the main model
+[32mnebflow.core.ModelRolesSpec:[0m
+[32m  + [0m[32msmall LLM slot is settable and resolves its own chain before main[0m [90m0.286s[0m
+[32m  + [0m[32m五槽 wire 名 = main/kernel/dispatcher/node/subagent；sidecar 槽名与 wire 名解耦[0m [90m0.001s[0m
+[32m  + [0m[32m虚拟槽 = kernel/node/subagent；isSlot 覆盖 wire 名与槽名双拼写，不收编陌生名[0m [90m0.001s[0m
+[32m  + [0m[32mslotOfSessionId：五类生产 id 形状逐条归槽（delegate-kernel- 压过 delegate-；返回值是槽目录名）；未命中/空/None ⇒ None[0m [90m0.004s[0m
+[32m  + [0m[32mpinOwnerSlot owns slot families and main conversations, not slotless background families or blank ids[0m [90m0.001s[0m
+[32m  + [0m[32m迁移后 ask 类别链读取 main/Nebula sidecar；全未配置引用可被判空而不静默[0m [90m0.003s[0m
+[32m  + [0m[32meffectiveModel：槽未命中 ⇒ base 原样透传（不改写、不造候选；槽已配置腿依赖真实 dataRoot，运行时单点见头注）[0m [90m0.001s[0m
+[32m  + [0m[32m写闸面：五类槽全部进入 SettableAgents（/model 与设置面板按类切的写闸判据）[0m [90m0.0s[0m
+10:06:55.043 instance lock claimed: generation=1 bootId=904615d5-2447-4257-9c92-d9fe877aa50c pid=37596
+10:06:55.065 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec13115399540130774632/15371233827628657316 (generation 1)
+10:06:55.540 instance lock claimed: generation=1 bootId=4fe2d1bc-2019-4d0d-b099-5ac0c2343bbf pid=37596
+10:06:55.550 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec10547196856453917692/10542278668214056826 (generation 1)
+10:06:55.572 instance lock claimed: generation=1 bootId=6fc655e7-ae00-4c76-8149-5465695eb204 pid=37596
+10:06:55.583 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec11420082133223943424/16117881104835273464 (generation 1)
+10:06:55.612 instance lock claimed: generation=1 bootId=225bb67e-72c8-4d29-9849-0bb348a6127a pid=37596
+10:06:55.623 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec7631203373582233337/15802558645263356566 (generation 1)
+10:06:55.639 instance lock claimed: generation=1 bootId=987e03b6-7f55-475b-84d8-1db2d531ec92 pid=37596
+10:06:55.649 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec4161263285364703169/663659640060395665 (generation 1)
+10:06:55.663 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: zhipu/GLM-5.3-Flash
+10:06:55.676 instance lock claimed: generation=1 bootId=c27f7f42-e134-4689-bae3-5b7438df79d3 pid=37596
+10:06:55.686 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec9422008920826358038/12870130753359242621 (generation 1)
+10:06:55.719 instance lock claimed: generation=1 bootId=dac9b918-69da-4a62-a6f4-41dfca3d5e83 pid=37596
+10:06:55.729 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec2631517584295921670/8938712548360382528 (generation 1)
+10:06:55.736 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: zhipu/GLM-5.3-Flash
+10:06:55.751 instance lock claimed: generation=1 bootId=8c459f44-de69-4faa-8433-d559582c9bc1 pid=37596
+10:06:55.760 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec2868426293035344366/1889139970139033916 (generation 1)
+10:06:55.763 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: zhipu/GLM-5.3-Flash
+10:06:55.769 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: zhipu/GLM-5.3-Flash
+10:06:55.782 instance lock claimed: generation=1 bootId=ee1303c8-002d-4e9f-a8aa-8f099868a013 pid=37596
+10:06:55.792 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec10195185515311762113/5833582302684486722 (generation 1)
+10:06:55.799 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: test/main-model
+10:06:55.818 instance lock claimed: generation=1 bootId=ea15569e-96c4-40ed-a3a7-6f1d7276dcbf pid=37596
+10:06:55.827 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec3689733114714358381/7117562584653334328 (generation 1)
+10:06:55.830 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: test/main-model
+10:06:55.865 instance lock claimed: generation=1 bootId=e70ac336-ed4d-4cdc-87b9-f7e526f12dd4 pid=37596
+10:06:55.884 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec664867079613161153/276548028441103724 (generation 1)
+10:06:55.932 instance lock claimed: generation=1 bootId=2075d579-980e-4460-8fb7-ff19b372c7cf pid=37596
+10:06:55.952 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec16410794957117391446/6396148346904538541 (generation 1)
+10:06:55.968 instance lock claimed: generation=1 bootId=b2fa1c33-9b75-480f-a978-aac3a071c7cb pid=37596
+10:06:55.983 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec10762417948727345211/13379505636939390465 (generation 1)
+10:06:56.030 instance lock claimed: generation=1 bootId=22f3d7cd-6dc5-4bbd-9b7c-36c713f23951 pid=37596
+10:06:56.049 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec13980005461108263416/10904781139467899459 (generation 1)
+10:06:56.059 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback removed (chain follows the sidecar/seed legs again)
+10:06:56.104 instance lock claimed: generation=1 bootId=242046b9-2cd7-40bc-9d2f-c712f26e5858 pid=37596
+10:06:56.117 db handle opened for data root /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-modelchain-spec317826670485924491/3791391283504967411 (generation 1)
+[32mnebflow.gateway.rest.ModelChainRoutesSpec:[0m
+[32m  + [0m[32mGET /agents/Nebula/model → explicit shape with the own chain and its resolution source[0m [90m0.813s[0m
+[32m  + [0m[32mGET follower (kernel) → mode=follow, chain null, effectiveChain = Nebula's chain[0m [90m0.032s[0m
+[32m  + [0m[32mPUT /agents/kernel/model → fork; a second GET reports the fork; null returns to follow[0m [90m0.042s[0m
+[32m  + [0m[32mPUT accepts a bare chain body (no model wrapper) — same write[0m [90m0.026s[0m
+[32m  + [0m[32mPUT hot-applies: class change retains matching pins, purges out-of-chain pins; fallback is not a member[0m [90m0.038s[0m
+[32m  + [0m[32mPUT kernel chain clears only differing kernel pins; main, other-category and unknown-category pins are kept[0m [90m0.025s[0m
+[32m  + [0m[32mPUT category chain clears the persisted pin only for that category's sessions[0m [90m0.048s[0m
+[32m  + [0m[32ma session choice made after a category update survives until that category is edited again[0m [90m0.033s[0m
+[32m  + [0m[32mall five class slots are writable and a class-chain update is visible to every session in that slot[0m [90m0.037s[0m
+[32m  + [0m[32mwire spellings (main / dispatcher) are normalized to the slot sidecar — a class write never lands in an unread sidecar[0m [90m0.043s[0m
+[32m  + [0m[32msession-level switch is isolated to that session; it does not mutate class slots or sibling sessions[0m [90m0.004s[0m
+[32m  + [0m[32mPUT empty chain ({preferred: null, fallbacks: []}) normalizes to follow[0m [90m0.05s[0m
+[32m  + [0m[32mwrite gate: a non-role agent is refused with 400 and its data stays untouched[0m [90m0.05s[0m
+[32m  + [0m[32mGET non-role agent → follow with the Nebula chain (stored refs are not resolution input)[0m [90m0.045s[0m
+[32m  + [0m[32mPUT unconfigured Nebula chain → follow = seed-chain degradation, never a 500[0m [90m0.072s[0m
+[32m  + [0m[32mPUT a settable name with no agent dir → in-place sidecar + 200 (builtin-def); a non-settable name → 400 gate first[0m [90m0.052s[0m
+[info] Passed: Total 24, Failed 0, Errors 0, Passed 24
+[success] Total time: 4 s, completed 2026年11月16日 10:06:56

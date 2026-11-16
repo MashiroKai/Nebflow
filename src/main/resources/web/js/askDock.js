@@ -320,7 +320,7 @@ function mountHost() {
 function buildFab() {
   return h('button', {
     type: 'button',
-    class: 'ask-fab',
+    class: 'canvas-button ask-fab',
     title: tt('问这份文件（ask mode）', 'Ask this file (ask mode)'),
     'aria-label': tt('问这份文件', 'Ask this file'),
   }, [
@@ -406,7 +406,7 @@ function buildDock() {
 function buildNoteFab() {
   return h('button', {
     type: 'button',
-    class: 'ask-fab note-fab',
+    class: 'canvas-button ask-fab note-fab',
     title: tt('记事本（记录思路）', 'Notes'),
     'aria-label': tt('记事本', 'Notes'),
     'aria-pressed': 'false',
