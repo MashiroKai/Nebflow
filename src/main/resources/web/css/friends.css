@@ -2059,6 +2059,7 @@ body:not(.mobile-layer) #profile-face-overlay {
    🔴 原 `border-top: 1px solid var(--glass-etched-border)` 与 `padding: 10/16/14`
    一并摘除 —— 那条线是「输入条有边缘」的直接成因，与本令的「无边缘+悬浮」相反。 */
 .fm-input-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);

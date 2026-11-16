@@ -205,7 +205,9 @@ html[data-nf-modality="pointer"] .nf-field:focus-visible {
    这是**唯一**一条具名例外（规范 §4 例外清单第 1 行），因为它不是「另一种
    造型」，是「不造型」。 */
 #input:focus,
-#input:focus-visible {
+#input:focus-visible,
+.fm-input:focus,
+.fm-input:focus-visible {
   outline: none;
   box-shadow: none;
 }
