@@ -530,6 +530,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
    askDock.js on every terminal frame. No disclosure affordance or completed state. */
 .ask-stream-line {
   align-self: flex-end;
+  flex: 0 0 auto;
   max-width: 100%;
   min-width: 0;
   overflow-x: auto;
@@ -540,9 +541,6 @@ body.mobile-layer .note-dock .ds-resize-handle {
   user-select: none;
   padding: var(--ds-space-2) var(--ds-space-3);
   border-radius: var(--ds-radius-card-lg);
-  font-size: var(--ds-fs-row);
-  line-height: 1.6;
-  color: var(--color-text-muted);
 }
 .ask-stream-line::-webkit-scrollbar { display: none; }
 
