@@ -46,7 +46,7 @@ object SearchIndexMigration:
       i += 1
     b.result()
 
-  def migrate(c: Connection, batchSize: Int = BatchSize, afterBatch: Int => Unit = _ => ()): Unit =
+  def migrate(c: Connection, source: Connection, batchSize: Int = BatchSize, maxRows: Int = 1000, afterBatch: Int => Unit = _ => ()): Unit =
     require(batchSize > 0)
     c.setAutoCommit(false)
     try
@@ -57,22 +57,34 @@ object SearchIndexMigration:
       if get(c, "phase").isEmpty then
         put(c, "phase", "building")
         put(c, "backfill_cursor", "0")
-        put(c, "source_generation", sourceGeneration(c))
+        put(c, "source_generation", sourceGeneration(source))
         put(c, "generation", java.util.UUID.randomUUID().toString)
         put(c, "active_generation", "legacy")
       c.commit()
       if get(c, "phase").contains("done") then return
       var cursor = get(c, "backfill_cursor").get.toLong
       var batches = 0
+      val highWater = get(c, "high_water").map(_.toLong).getOrElse {
+        val s = source.createStatement()
+        try
+          val r = s.executeQuery(s"SELECT COALESCE(MAX(rowid),0) FROM (SELECT rowid FROM docs ORDER BY rowid LIMIT $maxRows)")
+          r.next()
+          val value = r.getLong(1)
+          put(c, "high_water", value.toString)
+          c.commit()
+          value
+        finally s.close()
+      }
       var more = true
       while more do
-        if sourceGeneration(c) != get(c, "source_generation").get then
+        if sourceGeneration(source) != get(c, "source_generation").get then
           throw new IllegalStateException("source generation changed during backfill; rollback and restart")
         val rows = scala.collection.mutable.ArrayBuffer.empty[(Long, String, String, Long, String, String)]
-        val select = c.prepareStatement("SELECT rowid,sid,kind,ts,text,extra FROM docs WHERE rowid>? ORDER BY rowid LIMIT ?")
+        val select = source.prepareStatement("SELECT rowid,sid,kind,ts,text,extra FROM docs WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT ?")
         try
           select.setLong(1, cursor)
-          select.setInt(2, batchSize)
+          select.setLong(2, highWater)
+          select.setInt(3, batchSize)
           val r = select.executeQuery()
           while r.next() do rows += ((r.getLong(1), r.getString(2), r.getString(3), r.getLong(4), r.getString(5), r.getString(6)))
         finally select.close()
@@ -115,12 +127,18 @@ object SearchIndexMigration:
           batches += 1
           println(s"batch=$batches cursor=$cursor")
           afterBatch(batches)
-      if sourceGeneration(c) != get(c, "source_generation").get then
+      if sourceGeneration(source) != get(c, "source_generation").get then
         throw new IllegalStateException("source generation changed before publication; rollback and restart")
       val check = c.createStatement()
       try
-        val rs = check.executeQuery("SELECT (SELECT COUNT(*) FROM docs),(SELECT COALESCE(SUM(occurrence_count),0) FROM search_hits),(SELECT COUNT(*) FROM search_postings),(SELECT COALESCE(SUM(cnt),0) FROM gram_freq)")
-        if !rs.next() || rs.getLong(1) != rs.getLong(2) || rs.getLong(3) != rs.getLong(4) then
+        val expected = source.createStatement()
+        val expectedCount = try
+          val r = expected.executeQuery(s"SELECT COUNT(*) FROM docs WHERE rowid<=$highWater")
+          r.next()
+          r.getLong(1)
+        finally expected.close()
+        val rs = check.executeQuery("SELECT (SELECT COALESCE(SUM(occurrence_count),0) FROM search_hits),(SELECT COUNT(*) FROM search_postings),(SELECT COALESCE(SUM(cnt),0) FROM gram_freq)")
+        if !rs.next() || expectedCount != rs.getLong(1) || rs.getLong(2) != rs.getLong(3) then
           throw new IllegalStateException("backfill count validation failed")
       finally check.close()
       put(c, "active_generation", get(c, "generation").get)
@@ -145,14 +163,18 @@ object SearchIndexMigration:
       case scala.util.control.NonFatal(e) => c.rollback(); throw e
 
   def main(args: Array[String]): Unit =
-    require(args.length == 1 || (args.length == 3 && args(1) == "--stop-after"), "usage: SearchIndexMigration /tmp/<isolated-copy>.sqlite [--stop-after N]")
-    val stopAfter = if args.length == 3 then Some(args(2).toInt) else None
-    val path = Paths.get(args(0)).toRealPath()
+    require(args.length == 2, "usage: SearchIndexMigration /tmp/<output>.sqlite /path/to/source.sqlite")
     val temp = Paths.get("/tmp").toRealPath()
-    require(path.startsWith(temp) && Files.isRegularFile(path), "only existing isolated files under /tmp are permitted")
+    val path = Paths.get(args(0)).toAbsolutePath.normalize()
+    require(path.getParent.toRealPath().startsWith(temp), "output must be under /tmp")
+    val srcPath = Paths.get(args(1)).toRealPath()
+    require(path != srcPath, "source and destination must differ")
+    val source = DriverManager.getConnection(s"jdbc:sqlite:file:$srcPath?mode=ro")
     val c = DriverManager.getConnection(s"jdbc:sqlite:$path")
     val started = System.nanoTime()
     try
-      migrate(c, afterBatch = n => if stopAfter.contains(n) then throw new IllegalStateException(s"intentional interruption after batch $n"))
+      migrate(c, source, batchSize = 20)
       println(f"elapsed_seconds=${(System.nanoTime() - started) / 1e9}%.3f")
-    finally c.close()
+    finally
+      c.close()
+      source.close()
