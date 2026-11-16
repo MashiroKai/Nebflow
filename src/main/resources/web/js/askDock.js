@@ -901,6 +901,7 @@ function wireGlobals(ctx) {
   const releasePointer = (e) => { pointers.delete(e.pointerId); };
   ctx.on(document, 'pointerup', releasePointer, true);
   ctx.on(document, 'pointercancel', releasePointer, true);
+  ctx.on(window, 'blur', () => pointers.clear());
 }
 
 // ── 一次性观察器（应用级生命周期；不问组件连接态）─────────────────────────
