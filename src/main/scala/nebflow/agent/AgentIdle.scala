@@ -610,7 +610,10 @@ private[agent] object AgentIdle:
                   waitingForBatch = waiting,
                   // 外部注入统一通道批（2026-11-05）：外部事件的呈现级去重（同一
                   // 成员同一状态的重试提示只留一条蓝泡，状态变化才追加）。
-                  dedup = true
+                  dedup = true,
+                  // ask-mail 批（2026-11-16）：ask handoff 载荷的续聊地址透传
+                  //（缺席 = 非 ask 腿，旧行为逐字）。
+                  askAddress = metadata("askMailAddress").flatMap(_.asString)
                 )
               case None => IO.unit)
           // ── Sub-agent result barrier (worker blocking semantics) ──────────

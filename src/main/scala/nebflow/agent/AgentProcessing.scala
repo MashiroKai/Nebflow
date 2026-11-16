@@ -1571,7 +1571,10 @@ private[agent] object AgentProcessing:
                     fileChanges = metadata("fileChanges"),
                     sessionProject = state.projectName,
                     // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
-                    dedup = true
+                    dedup = true,
+                    // ask-mail 批（2026-11-16）：ask handoff 载荷的续聊地址透传
+                    //（缺席 = 非 ask 腿，旧行为逐字）。
+                    askAddress = metadata("askMailAddress").flatMap(_.asString)
                   )
                 case None => IO.unit
               bubbleIO *>

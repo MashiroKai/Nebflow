@@ -3153,7 +3153,10 @@ onMessage('user', (msg, view) => {
     // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷随行进缓存——缓存恢复
     // 路径读 `m.schedule`，漏落 ⇒ 重载降级成无载荷卡（header 先例）。旧帧缺该字段
     // ⇒ null（缺席即回落，逐字不变）。
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null, fileChanges: msg.fileChanges || null, schedule: msg.schedule || null }, sid);
+    // askAddress（ask-mail 批 2026-11-16）：ask 续聊地址随行进缓存（header 先例）
+    // ——两条缓存恢复读路径（persistence.js）读 `m.askAddress`，漏落这一枚 ⇒ 走缓存
+    // 的重载丢地址 chip。旧帧缺该字段 ⇒ null（缺席即回落，逐字不变）。
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null, fileChanges: msg.fileChanges || null, schedule: msg.schedule || null, askAddress: msg.askAddress || null }, sid);
   }
   // Window ownership. First disjunct = the pre-existing rule, unchanged: a frame
   // whose sessionId is the globally active session renders into the active view.
@@ -3172,7 +3175,8 @@ onMessage('user', (msg, view) => {
     // fileChanges（bug #58 修）：delegate 终态 diff 载荷同位透传（缺席 = 旧行为）。
     // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同位透传——
     // `source==='schedule'` 的帧在 builder 内走专属卡分支（缺席 = 旧行为）。
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header, msg.fileChanges, msg.schedule);
+    // askAddress（ask-mail 批 2026-11-16）：ask 续聊地址同位透传（缺席 = 旧行为）。
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header, msg.fileChanges, msg.schedule, msg.askAddress);
     smartScroll();
   }
 });

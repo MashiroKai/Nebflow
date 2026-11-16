@@ -228,7 +228,10 @@ private[agent] object MailboxDrain:
           e.metadata("agentName").flatMap(_.asString),
           fileChanges = e.metadata("fileChanges"),
           sessionProject = state.projectName,
-          waitingForBatch = waitingForBatch
+          waitingForBatch = waitingForBatch,
+          // ask-mail 批（2026-11-16）：ask 腿邮箱排干件的续聊地址透传（缺席 = 非
+          // ask 腿，旧行为逐字）。
+          askAddress = e.metadata("askMailAddress").flatMap(_.asString)
         )
       case None => IO.unit)
 

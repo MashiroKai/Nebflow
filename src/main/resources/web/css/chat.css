@@ -1437,6 +1437,31 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .delivery-immediate::before {
   content: '· ';
 }
+/* ask 会话的 Mail 续聊地址 chip（ask-mail 批 2026-11-16）：挂在注入气泡来源
+   标签尾（ASK · INJECTED 面上，编排方续聊通道的可见形态）。形态 = .bg-task-addr
+   同族（值全走 --ds-* 槽，不另起材质）；差异只沿 .delivery-badge 的内联版式
+   （来源标签是文本行不是 flex 行）：inline-block + ellipsis，**全文在 title 与
+   data-ask-addr**，复制恒给全文——截断只是版式，不是数据。 */
+.ask-mail-addr {
+  display: inline-block;
+  margin-left: var(--ds-space-1h);
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-meta);
+  line-height: 14px;
+  vertical-align: 1px;
+  background: var(--ds-control-bg);
+  border: var(--ds-border-width) solid var(--ds-control-border);
+  color: var(--ds-text-muted);
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: copy;
+  user-select: all;
+}
+.ask-mail-addr:hover { color: var(--ds-text); border-color: var(--ds-text-muted); }
+.ask-mail-addr.is-copied { color: rgb(var(--accent-agent-light)); border-color: rgb(var(--accent-agent-light) / 0.55); }
 .bubble.user.att-bubble {
   /* 底色 = 我方绿（glass.css 单点块）。bubble-side-color 批前这里是
      rgba(0,0,0,0.04) 灰 —— 同一族气泡的第二/第三种底色，按 2026-11-06

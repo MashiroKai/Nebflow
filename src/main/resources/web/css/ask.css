@@ -251,6 +251,9 @@ nf-ask-dock { display: contents; }
  * 视觉不可辨）；记事本 .note-body 的高度两端都是 px（--note-h），是全插值形变。 */
 .ask-dock.closed,
 .note-dock.closed { pointer-events: none; }
+/* ask-mail 批（2026-11-16）：`.ask-dock.closed .ask-addr` 加盟本条收起隐身名单
+   ——地址行是面板内容件（同 colwrap 律：只显隐、不参与玻璃面形变）。 */
+.ask-dock.closed .ask-addr,
 .ask-dock.closed .ask-colwrap,
 .note-dock.closed .note-status,
 .note-dock.closed .note-body > *,
@@ -490,6 +493,36 @@ body.mobile-layer .note-dock .ds-resize-handle {
   scrollbar-width: none; touch-action: pan-y; /* #988：列内纵滚原生，手势零劫持 */
 }
 .ask-col::-webkit-scrollbar { display: none; }
+
+/* ═══ 会话地址行（ask-mail 批 2026-11-16）═══════════════════════════════════
+ * ask 会话的 Mail 可达地址（`ask:<sessionId>`）常驻面板头部右贴：编排方经
+ * Mail 向该地址续聊（双向通道的门牌）。形态 = chat.css `.ask-mail-addr` /
+ * `.bg-task-addr` chip 同族（值全走 --ds-* 槽，不另起材质）：单行省略是版式
+ * 不是数据——全文在 dataset.addr 与 title，复制恒给全文。座位在 colwrap 之前
+ * （buildDock 注：穿入几何锚定「下一个兄弟」，本行不插中间）；收起态隐身随
+ * 上方 .closed 名单。hidden 属性的显式腿：本规则声明了 display ⇒ UA 的
+ * [hidden]{display:none} 会被特异压过，须自补一条（无会话时整行不占位）。 */
+.ask-dock .ask-addr {
+  align-self: flex-end;
+  max-width: 168px;
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--ds-fs-meta);
+  line-height: 14px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  background: var(--ds-control-bg);
+  border: var(--ds-border-width) solid var(--ds-control-border);
+  color: var(--ds-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: copy;
+  user-select: all;
+}
+.ask-dock .ask-addr[hidden] { display: none; }
+.ask-dock .ask-addr:hover { color: var(--ds-text); border-color: var(--ds-text-muted); }
+.ask-dock .ask-addr.is-copied { color: rgb(var(--accent-agent-light)); border-color: rgb(var(--accent-agent-light) / 0.55); }
 
 /* 玻璃气泡（三修③：材质 = canvas --cv-* 单源）。统一按钮玻璃批 2026-11-01：
  * 气泡禁独立 backdrop-filter（滚动性能纪律）⇒ 消费 glass.css 气泡半透明实底
