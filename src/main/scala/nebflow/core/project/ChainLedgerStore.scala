@@ -860,7 +860,7 @@ class ChainLedgerStore private (
    * stores is not guaranteed and never mattered (each audit is independent
    * and read-only).
    */
-  private def selfCheck(tag: String): IO[Unit] =
+  private[project] def selfCheck(tag: String, afterSnapshot: IO[Unit] = IO.unit): IO[Unit] =
     ChainLedgerStore.selfCheckGate.permit
       .use { _ =>
         IO.blocking(coldArchiveBytes).flatMap { coldBytes =>
@@ -873,7 +873,7 @@ class ChainLedgerStore private (
               )
             )
           else
-            verify.flatMap {
+            verifySnapshot(afterSnapshot).flatMap {
               case Right(()) => IO.unit
               case Left(diag) =>
                 IO(
@@ -902,13 +902,20 @@ class ChainLedgerStore private (
   // Round payloads are append-only and published before the manifest. Audit only
   // the rounds committed in the captured state, never an in-flight newer round.
   private[project] def verifySnapshot(afterSnapshot: IO[Unit]): IO[Either[String, Unit]] =
-    for
-      st <- state.get
-      _ <- afterSnapshot
-      files <- readRounds
-      committed = st.rounds.iterator.map(_.round).toSet
-      snapshotFiles = files.filter(f => committed.contains(f.round))
-    yield ChainLedger.verifyLedger(st, snapshotFiles, payloadIdsOf(snapshotFiles))
+    def readStable(hook: IO[Unit]): IO[Either[String, Unit]] =
+      for
+        st <- state.get
+        _ <- hook
+        files <- readRounds
+        current <- state.get
+        result <-
+          if !(st eq current) then readStable(IO.unit)
+          else
+            val committed = st.rounds.iterator.map(_.round).toSet
+            val snapshotFiles = files.filter(f => committed.contains(f.round))
+            IO.pure(ChainLedger.verifyLedger(st, snapshotFiles, payloadIdsOf(snapshotFiles)))
+      yield result
+    readStable(afterSnapshot)
 
   /**
    * 压缩镜像面（**取每个 id 的最晚一轮口径**）：某 id 的载荷此刻是否应在冷档 ——
