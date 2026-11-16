@@ -1329,7 +1329,6 @@ private[gateway] object PresenceRoutes:
                       )
                     )
                   yield body)
-                  end for
             yield result
             end for
         }
