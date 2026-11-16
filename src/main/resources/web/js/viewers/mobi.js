@@ -284,7 +284,7 @@ function renderDownloadOnly(pane, bytes, fileName, messageKey) {
   box.appendChild(msg);
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'viewer-retry-btn';
+  btn.className = 'canvas-button viewer-retry-btn';
   btn.textContent = t('mobi.download');
   btn.setAttribute('data-nf-download', '1');
   btn.addEventListener('click', () => {

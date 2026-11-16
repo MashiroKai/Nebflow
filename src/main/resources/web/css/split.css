@@ -4465,9 +4465,6 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
    本钮在手机层恒离场（零占位零位移）。 */
 body.mobile-layer .canvas-pop-btn,
 body.card-window .canvas-pop-btn { display: none !important; }
-/* Canvas popout remains flat inside its floating surface. */
-.canvas-pop-btn { box-shadow: none; }
-
 /* Shared canvas control face; the float shadow resolves per theme. */
 .canvas-button.canvas-button {
   border-radius: var(--ds-radius-pill);

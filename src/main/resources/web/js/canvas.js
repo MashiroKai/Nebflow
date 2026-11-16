@@ -753,7 +753,7 @@ export function openTab(id, title, opts = {}) {
      （批②三件套：✕/标题/堆叠视角钮，syncHeaderActions）+ 环卡卡头
      （.deck-card-pop）。 */
   const closeHtml = closable
-    ? `<button class="canvas-tab-close" title="${t('canvas.closeTab')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`
+    ? `<button class="canvas-tab-close canvas-button" title="${t('canvas.closeTab')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`
     : '';
   tab.innerHTML = `<span class="canvas-tab-label">${title}</span>${closeHtml}`;
 
@@ -2253,7 +2253,7 @@ function syncHeaderActions() {
   if (!popBtn) {
     popBtn = document.createElement('button');
     popBtn.type = 'button';
-    popBtn.className = 'canvas-pop-btn';
+    popBtn.className = 'canvas-pop-btn canvas-button';
     // id 沿用批⑤前旧 id（既有 spec/验收脚本以 #canvas-pop-btn 命中；类名才是契约面）
     popBtn.id = 'canvas-pop-btn';
     popBtn.appendChild(cardPopIcon('pop-ic-pop', [
@@ -2370,7 +2370,7 @@ function syncRefBackButton() {
   if (!btnEl) {
     const fresh = document.createElement('button');
     fresh.id = 'canvas-refback-btn';
-    fresh.className = 'canvas-refback-btn';
+    fresh.className = 'canvas-refback-btn canvas-button';
     fresh.type = 'button';
     fresh.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2500,7 +2500,7 @@ function deckMakeCardEl(entry, r, cls) {
     '</div>' +
     '<div class="card-thumb" data-snap="pending">' + deckThumbMock(family) + '</div>' +
     /* uifix ③e：卡右上角 × 关闭钮（作者最新口径，推翻精修③竖排提示方案） */
-    '<button class="deck-card-x" type="button" title="关闭" aria-label="关闭 ' + escapeDeckText(entry.title || entry.id) + '">' +
+    '<button class="deck-card-x canvas-button" type="button" title="关闭" aria-label="关闭 ' + escapeDeckText(entry.title || entry.id) + '">' +
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>' +
     '</button>' +
     '<div class="card-shade"></div>';
@@ -2508,7 +2508,7 @@ function deckMakeCardEl(entry, r, cls) {
   if (entry.absPath) {
     const pop = document.createElement('button');
     pop.type = 'button';
-    pop.className = 'deck-card-pop';
+    pop.className = 'deck-card-pop canvas-button';
     pop.title = '独立窗口打开';
     pop.setAttribute('aria-label', '独立窗口打开');
     pop.innerHTML = CARD_POP_SVG;
@@ -5287,7 +5287,7 @@ function initCardWindowMode() {
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (hdr && !hdr.querySelector('.canvas-merge-btn')) {
     const b = document.createElement('button');
-    b.className = 'canvas-merge-btn';
+    b.className = 'canvas-merge-btn canvas-button';
     b.id = 'canvas-merge-btn';
     b.title = '合并回主窗';
     b.setAttribute('aria-label', '合并回主窗');

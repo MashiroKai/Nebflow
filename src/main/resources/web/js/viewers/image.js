@@ -270,7 +270,7 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       const retry = document.createElement('button');
       retry.type = 'button';
       retry.textContent = 'Retry';
-      retry.className = 'viewer-retry-btn';
+      retry.className = 'canvas-button viewer-retry-btn';
       retry.addEventListener('click', () => {
         if (!pane.isConnected) return;
         retried = false;
