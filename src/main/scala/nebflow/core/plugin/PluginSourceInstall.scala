@@ -87,6 +87,7 @@ object PluginSourceInstall:
 
   sealed trait ArgClass
   object ArgClass:
+    final case class Link(raw: String)                               extends ArgClass
     final case class Git(url: String, tag: Option[String])           extends ArgClass
     final case class Local(path: String)                             extends ArgClass
     final case class Official(id: String, version: Option[String])   extends ArgClass
@@ -103,6 +104,7 @@ object PluginSourceInstall:
     val arg = raw.trim
     if arg.isEmpty then
       Left("plugin source required — pass an official plugin id (name[@version]), a git URL ('<url>#<tag>'), or a local plugin directory")
+    else if arg.startsWith("stand://") then Right(ArgClass.Link(arg))
     else
       val hash = arg.indexOf('#')
       val base = if hash >= 0 then arg.substring(0, hash).trim else arg
@@ -156,6 +158,7 @@ object PluginSourceInstall:
   def installFromArg(raw: String): IO[Either[String, String]] =
     classifyArg(raw) match
       case Left(err)                       => IO.pure(Left(err))
+      case Right(ArgClass.Link(link))       => installFromLink(link)
       case Right(ArgClass.Git(url, tag))   => installGitFromArg(url, tag)
       case Right(ArgClass.Local(path))     => PluginRegistry.installFromLocalPath(path)
       case Right(ArgClass.Official(id, v)) => installOfficial(id, v, beta = engineBeta, explicitIndex = None)
@@ -579,6 +582,39 @@ object PluginSourceInstall:
     }
   end installHttps
 
+  def installFromLink(raw: String): IO[Either[String, String]] =
+    PluginInstallLink.parse(raw) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(link) =>
+        PluginInstallLink.resolveAcrossConfigured(link, advance = true).flatMap {
+          case Left(err) => IO.pure(Left(err))
+          case Right(m) =>
+            val artifact = m.resolved.v.artifact
+            val location = try
+              val rel = java.net.URI.create(artifact)
+              if rel.isAbsolute || rel.getRawAuthority != null || rel.getRawQuery != null || rel.getRawFragment != null ||
+                  artifact.contains("%") || artifact.startsWith("/") || artifact.contains("\\") || artifact.split("/").exists(s => s == ".." || s == "." || s.isEmpty) then None
+              else if m.catalog.isDir then Some((os.Path(m.catalog.location) / os.SubPath(artifact)).toNIO.toUri.toString)
+              else Some(java.net.URI.create(m.catalog.location).resolve(rel).toString)
+            catch case NonFatal(_) => None
+            location match
+              case None => IO.pure(Left("unsafe catalog artifact location"))
+              case Some(url) => fetchBytes(url).flatMap {
+                case Left(err) => IO.pure(Left(s"artifact fetch failed: $err ($CodeUnreachable)"))
+                case Right(bytes) => IO.blocking {
+                  withStagingSync("catalog") { pkg =>
+                    verifyAndStageZip(bytes, pkg, Some(m.resolved.v.size), m.resolved.v.sha256, None).flatMap { digest =>
+                      commitStaged(pkg, digest, m.resolved.v.version, Kind.Catalog, Via.Hub, Some(url), None,
+                        s"catalog ${m.catalog.sourceId}", PluginSourceLedger.InstallMeta(
+                          distributionId = Some(m.resolved.pkg.id), publisherKeyId = Some(m.resolved.pkg.publisherKeyId),
+                          artifactSha256 = Some(m.resolved.v.sha256), validationSummary = Some("catalog-zip-sha256@1")
+                        ), m.resolved.pkg.publisherClass)
+                    }
+                  }
+                }
+              }
+        }
+
   // ── 暂存（plugins/ 之外 ⇒ 半装态零扫描面）与原子落盘 ──────────────
 
   /**
@@ -625,7 +661,8 @@ object PluginSourceInstall:
       url: Option[String],
       pin: Option[Pin],
       sourceDesc: String,
-      meta: PluginSourceLedger.InstallMeta = PluginSourceLedger.InstallMeta()
+      meta: PluginSourceLedger.InstallMeta = PluginSourceLedger.InstallMeta(),
+      publisherClass: Option[PluginDistributionTrust.PublisherClass] = None
   ): Either[String, String] =
     val manifestFile = pkg / "plugin.json"
     if !os.isFile(manifestFile) then Left(s"staged package has no plugin.json manifest — not a plugin package (${CodeArchiveLayout})")
@@ -661,7 +698,7 @@ object PluginSourceInstall:
                   PluginRegistry.invalidateCache()
                   PluginSourceLedger.recordInstall(
                     name = pname, kind = kind, url = url, pin = pin,
-                    version = version, digest = digest, via = via, meta = meta
+                    version = version, digest = digest, via = via, meta = meta, publisherClass = publisherClass
                   ) match
                     case Right(entry) =>
                       logger.infoSync(

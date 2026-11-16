@@ -1626,6 +1626,40 @@ private[gateway] object PresenceRoutes:
           yield result
         }
 
+      case req @ GET -> Root / "plugins" / "catalogs" =>
+        withAuth(req) {
+          Ok(Json.obj("catalogs" -> nebflow.core.plugin.PluginDistributionCatalog.configuredSourceIds.asJson))
+        }
+
+      case req @ GET -> Root / "plugins" / "install-link" / "resolve" =>
+        withAuth(req) {
+          import nebflow.core.plugin.PluginInstallLink
+          req.params.get("link").toRight("link is required").flatMap(PluginInstallLink.parse) match
+            case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+            case Right(link) => PluginInstallLink.resolveAcrossConfigured(link).flatMap {
+              case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+              case Right(m) =>
+                val p = m.resolved.pkg
+                val v = m.resolved.v
+                Ok(Json.obj("ok" -> true.asJson, "id" -> p.id.asJson, "version" -> v.version.asJson,
+                  "sha256" -> v.sha256.asJson, "size" -> v.size.asJson, "publisherKeyId" -> p.publisherKeyId.asJson,
+                  "publisherClass" -> p.publisherClass.map(_.label).asJson, "catalogSource" -> m.catalog.sourceId.asJson,
+                  "yanked" -> v.yanked.asJson))
+            }
+        }
+
+      case req @ POST -> Root / "plugins" / "install-link" =>
+        withAuth(req) {
+          req.as[Json].attempt.flatMap { body =>
+            body.toOption.flatMap(_.hcursor.get[String]("link").toOption) match
+              case None => BadRequest(Json.obj("ok" -> false.asJson, "error" -> "link is required".asJson))
+              case Some(link) => nebflow.core.plugin.PluginSourceInstall.installFromLink(link).flatMap {
+                case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+                case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+              }
+          }
+        }
+
       // GET /plugins/catalog — 分发器目录段同源（trusted only；前端调试/预览用）
       case req @ GET -> Root / "plugins" / "catalog" =>
         withAuth(req) {
