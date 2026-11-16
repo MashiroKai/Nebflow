@@ -61,7 +61,7 @@ class PerceptionDaemonLifecycleSpec extends FunSuite:
       token.foreach(t => b.header("X-Nf-Perception-Token", t))
       val resp = HttpClient.newHttpClient().send(b.build(), HttpResponse.BodyHandlers.ofString())
       (resp.statusCode(), resp.body())
-    catch case _: Throwable => (000, "")
+    catch case _: Throwable => (0, "")
 
   // ── 托管命令面 ─────────────────────────────────────────────────────────
 
