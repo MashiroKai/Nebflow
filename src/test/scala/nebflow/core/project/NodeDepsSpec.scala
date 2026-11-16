@@ -34,7 +34,7 @@ class NodeDepsSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 180.seconds
 
-  private val tempRoot: os.Path = os.pwd / "target" / "test-node-deps"
+  private val tempRoot: os.Path = os.pwd / "target" / s"test-node-deps-${java.util.UUID.randomUUID()}"
   private val originalRoot = PathUtil.dataRoot
 
   /**
@@ -43,8 +43,6 @@ class NodeDepsSpec extends CatsEffectSuite:
    */
   private val nebulaMarker = OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)
 
-  PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
 
   os.write.over(
@@ -60,6 +58,8 @@ class NodeDepsSpec extends CatsEffectSuite:
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
+  // Publish the process-wide root only after the unique fixture is ready.
+  PathUtil.setDataRoot(tempRoot)
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
