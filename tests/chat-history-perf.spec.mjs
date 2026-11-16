@@ -254,6 +254,7 @@ for (let i = 1; i <= 4; i++) {
   rows = await rowCount();
 }
 const manualRows = rows;
+const historyPageContainers = await page.locator('#chat > .history-page').count();
 // 末段：停在顶部 ⇒ 停顶续拉腿把剩余页自动补齐到全量收口（卡片行双计）。
 const parkT0 = Date.now();
 await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = 0; c.dispatchEvent(new Event('scroll')); });
@@ -310,6 +311,7 @@ ok('P0-b 首屏时延 < ' + FIRST_MS + 'ms（init getHistory → 行落定）',
   firstScreenMs >= 0 && firstScreenMs < FIRST_MS, `firstScreen=${firstScreenMs}ms`);
 ok('P1 手动上滑 4 页补进 + 停顶续拉收口全量（卡片行双计）',
   manualRows === ROWS_PER_PAGE * 5 && rows === FINAL_ROWS, `manual=${manualRows} final=${rows}/${FINAL_ROWS} times=${pageTimes.join(',')}ms`);
+ok('P1b 历史补页使用整页容器', historyPageContainers === 4, `containers=${historyPageContainers}`);
 ok('P2 单页落定 < ' + PAGE_MS + 'ms', maxPageMs < PAGE_MS, `maxPage=${maxPageMs}ms`);
 const longtasks = await ltSnap();
 ok('P2b 单窗 longtask 最长 < ' + LONGTASK_MS + 'ms（无渲染长阻塞）', longtasks.max < LONGTASK_MS,
