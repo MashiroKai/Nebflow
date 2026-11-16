@@ -145,6 +145,23 @@ test('contact save serializes a pending field and reads server value back', asyn
   expect(writes).toBe(1);
 });
 
+test('desktop contact close consumes canvas button dimensions', async ({ page }) => {
+  await bootApp(page);
+  await openProfile(page, 'friend');
+  const dims = await page.locator('.pf-close').evaluate(el => {
+    const box = el.getBoundingClientRect();
+    const icon = el.querySelector('svg').getBoundingClientRect();
+    const title = el.closest('.sp-panel-header').getBoundingClientRect();
+    return { w: box.width, h: box.height, iw: icon.width, ih: icon.height, top: box.top - title.top, right: title.right - box.right };
+  });
+  expect(dims.w).toBe(40);
+  expect(dims.h).toBe(40);
+  expect(dims.iw).toBe(18);
+  expect(dims.ih).toBe(18);
+  expect(dims.top).toBeGreaterThanOrEqual(0);
+  expect(dims.right).toBeGreaterThanOrEqual(0);
+});
+
 // ── W1+W2：桌面档（1440×900）─────────────────────────────────────────────
 test.describe('desktop 1440', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
