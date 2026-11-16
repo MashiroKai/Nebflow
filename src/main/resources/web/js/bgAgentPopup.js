@@ -653,7 +653,8 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   }
 
   document.body.appendChild(popupOverlay);
-  renderModelBadge(); // 即使没有 agentName 或模型配置请求失败，也先建立可操作的选项表
+  renderModelBadge();
+  if (nodeSessionId.startsWith('external-')) mountExternalModelControl(popupOverlay, nodeSessionId); // 即使没有 agentName 或模型配置请求失败，也先建立可操作的选项表
   mobileSheetBack(popupOverlay, closeStepPopup);
 
   const modal = /** @type {HTMLElement} */ (popupOverlay.querySelector('.flow-agent-modal'));
@@ -1273,6 +1274,60 @@ function renderModelBadge() {
   if (html === lastModelBadgeHtml) return; // unchanged — no DOM write
   lastModelBadgeHtml = html;
   el.innerHTML = html;
+}
+
+function mountExternalModelControl(overlay, sessionId) {
+  const executor = ['claude-code', 'codex', 'zcode'].find(id => sessionId.startsWith(`external-${id}-`));
+  if (!executor) return;
+  const select = overlay.querySelector('#bgagent-model-switch');
+  select.hidden = true;
+  const container = document.createElement('div');
+  container.className = 'bgagent-delegate-strip';
+  const label = document.createElement('label');
+  label.textContent = t('delegate.externalModelFuture');
+  const status = document.createElement('span');
+  status.setAttribute('role', 'status');
+  container.append(label, status);
+  overlay.querySelector('.flow-agent-header').after(container);
+  const token = localStorage.getItem(key('token')) || '';
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const url = `/api/executors/${encodeURIComponent(executor)}/model`;
+  fetch(url, { headers }).then(response => {
+    if (!response.ok) throw new Error('load failed');
+    return response.json();
+  }).then(config => {
+    if (!overlay.isConnected) return;
+    if (!config.supported) { status.textContent = t('delegate.externalModelUnsupported'); return; }
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = config.model || '';
+    input.placeholder = t('delegate.externalModelDefault');
+    input.setAttribute('aria-label', t('delegate.externalModelFuture'));
+    const list = document.createElement('datalist');
+    list.id = 'bgagent-external-model-suggestions';
+    input.setAttribute('list', list.id);
+    for (const suggestion of config.suggestions || []) {
+      const option = document.createElement('option');
+      option.value = suggestion;
+      list.appendChild(option);
+    }
+    label.append(input, list);
+    let saved = input.value;
+    input.addEventListener('change', async () => {
+      input.disabled = true;
+      try {
+        const response = await fetch(url, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: input.value }) });
+        if (!response.ok) throw new Error('save failed');
+        const result = await response.json();
+        saved = result.model;
+        input.value = saved;
+        status.textContent = t('delegate.externalModelSaved');
+      } catch (_) {
+        input.value = saved;
+        status.textContent = t('delegate.externalModelError');
+      } finally { input.disabled = false; }
+    });
+  }).catch(() => { if (overlay.isConnected) status.textContent = t('delegate.externalModelError'); });
 }
 
 // 模型粒度批（作者令 2026-11-06 20:36）：弹窗头**单切**下拉 = 单会话模型切换的

@@ -597,6 +597,28 @@ object ConfigService:
     end if
   end setExecutorSection
 
+  /** Update one model under the same lock as all other config writes. */
+  def setExecutorModel(id: String, model: String): IO[Either[String, Unit]] =
+    if !Set("claude-code", "codex").contains(id) then IO.pure(Left("Executor does not support headless model selection"))
+    else if model.length > 200 || model.exists(_.isControl) || model.trim.startsWith("-") then
+      IO.pure(Left("Invalid model ID"))
+    else
+      writeLocked {
+        IO.blocking {
+          val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+          parse(existing) match
+            case Left(err) => Left(s"config file unparseable — refusing executor model update: ${err.message}")
+            case Right(parsed) =>
+              val section = parsed.hcursor.downField("executor").focus.flatMap(_.asObject).getOrElse(JsonObject.empty)
+              val models = section("models").flatMap(_.asObject).getOrElse(JsonObject.empty)
+              val value = model.trim
+              val updatedModels = if value.isEmpty then models.remove(id) else models.add(id, value.asJson)
+              val updated = parsed.mapObject(_.add("executor", Json.fromJsonObject(section.add("models", Json.fromJsonObject(updatedModels)))))
+              AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+              Right(())
+        }
+      }
+
   /** 顶层节名（写侧单点，避免字符串散落）。 */
   private val EXECUTOR_SECTION = "executor"
 

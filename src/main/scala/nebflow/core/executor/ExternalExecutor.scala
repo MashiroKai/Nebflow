@@ -80,6 +80,15 @@ object ExternalExecutor:
     /** 启动 argv：首元素为可执行名（检测路径由 runner 解析后替换）。 */
     def launchArgs(task: String, resumeSessionId: Option[String]): List[String]
 
+    def launchArgsWithModel(task: String, resumeSessionId: Option[String], model: Option[String]): List[String] =
+      val args = launchArgs(task, resumeSessionId)
+      model.filter(_.nonEmpty).fold(args) { value =>
+        id match
+          case "claude-code" => args :++ List("--model", value)
+          case "codex" => args.take(1) :++ List("--model", value) :++ args.drop(1)
+          case _ => args
+      }
+
     /** 单行 stdout 解析；非本格式行（噪声/空行）→ Nil，绝不抛。 */
     def parseLine(line: String): List[Frame]
 
