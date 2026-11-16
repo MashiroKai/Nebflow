@@ -272,7 +272,7 @@ class PluginInstallLinkSpec extends FunSuite:
 
     // 落盘 + 在位即信任
     val installed = home / "plugins" / "demo-kit"
-    assert(os.isfile(installed / "plugin.json"), "plugin must land under plugins/")
+    assert(os.isFile(installed / "plugin.json"), "plugin must land under plugins/")
 
     // 账本：分发面 + §5.4 meta + publisherClass 由已验目录断言赋予
     PluginSourceLedger.query("demo-kit") match
