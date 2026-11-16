@@ -294,14 +294,14 @@ export function mountAnnotationFace(deps) {
 
   function renderBar() {
     const colors = ANNO_COLORS.map((c) =>
-      `<button type="button" class="epub-anno-swatch" data-anno-color="${c}"
+      `<button type="button" class="canvas-button epub-anno-swatch" data-anno-color="${c}"
         title="${escapeHtml(t('reader.anno.' + c))}" aria-label="${escapeHtml(t('reader.anno.' + c))}"></button>`
     ).join('');
-    const noteBtn = `<button type="button" class="epub-menu-btn" data-anno-note>✎ ${escapeHtml(t('reader.anno.note'))}</button>`;
+    const noteBtn = `<button type="button" class="canvas-button epub-menu-btn" data-anno-note>✎ ${escapeHtml(t('reader.anno.note'))}</button>`;
     const delBtn = barForAnno
-      ? `<button type="button" class="epub-menu-btn" data-anno-del>${escapeHtml(t('reader.anno.del'))}</button>` : '';
+      ? `<button type="button" class="canvas-button epub-menu-btn" data-anno-del>${escapeHtml(t('reader.anno.del'))}</button>` : '';
     bar.innerHTML = barForAnno
-      ? `${noteBtn}${delBtn}<button type="button" class="epub-menu-btn" data-anno-bar-close>×</button>`
+      ? `${noteBtn}${delBtn}<button type="button" class="canvas-button epub-menu-btn" data-anno-bar-close>×</button>`
       : `${colors}${noteBtn}`;
     bar.querySelectorAll('[data-anno-color]').forEach((rawBtn) => {
       const btn = /** @type {HTMLElement} */ (rawBtn);
@@ -399,9 +399,9 @@ export function mountAnnotationFace(deps) {
       <div class="epub-menu-title">${escapeHtml(anno.locator.quote.slice(0, 24))}</div>
       <textarea class="epub-anno-textarea" rows="4" placeholder="${escapeHtml(t('reader.anno.placeholder'))}"></textarea>
       <div class="epub-menu-row">
-        <button type="button" class="epub-menu-btn" data-anno-save>${escapeHtml(t('reader.anno.save'))}</button>
-        <button type="button" class="epub-menu-btn" data-anno-edel>${escapeHtml(t('reader.anno.del'))}</button>
-        <button type="button" class="epub-menu-btn" data-anno-eclose>${escapeHtml(t('reader.anno.close'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn" data-anno-save>${escapeHtml(t('reader.anno.save'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn" data-anno-edel>${escapeHtml(t('reader.anno.del'))}</button>
+        <button type="button" class="canvas-button epub-menu-btn" data-anno-eclose>${escapeHtml(t('reader.anno.close'))}</button>
       </div>`;
     const ta = /** @type {HTMLTextAreaElement} */ (editor.querySelector('.epub-anno-textarea'));
     ta.value = anno.note || '';
@@ -450,7 +450,7 @@ export function mountAnnotationFace(deps) {
           const snippet = (a.locator.quote || '').replace(/\s+/g, ' ').slice(0, 18);
           const noteDot = a.note ? `<span class="epub-anno-item-note">${escapeHtml(a.note.replace(/\s+/g, ' ').slice(0, 18))}</span>` : '';
           const staleBadge = stale ? `<span class="epub-anno-stale">${escapeHtml(t('reader.anno.stale'))}</span>` : '';
-          return `<button type="button" role="option" class="epub-toc-item epub-anno-item" data-anno-jump="${a.id}">
+          return `<button type="button" role="option" class="canvas-button epub-toc-item epub-anno-item" data-anno-jump="${a.id}">
             <i class="epub-anno-dot" data-c="${a.color}"></i>
             <span class="epub-anno-item-quote">${escapeHtml(snippet)}</span>${noteDot}${staleBadge}</button>`;
         }).join('');
@@ -472,7 +472,7 @@ export function mountAnnotationFace(deps) {
     drawer.innerHTML = `
       <div class="epub-toc-head">
         <span class="epub-toc-title">${escapeHtml(t('reader.anno.list'))}（${bookAnnos.length}）</span>
-        <button type="button" class="epub-nav-btn epub-toc-close" aria-label="${escapeHtml(t('epub.menu.close'))}">×</button>
+        <button type="button" class="canvas-button epub-nav-btn epub-toc-close" aria-label="${escapeHtml(t('epub.menu.close'))}">×</button>
       </div>
       <div class="epub-anno-list-body epub-toc-list" role="listbox"></div>`;
     drawer.querySelector('.epub-toc-close').addEventListener('click', closeDrawer);

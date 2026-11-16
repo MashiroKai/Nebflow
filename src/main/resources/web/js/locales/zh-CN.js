@@ -1443,6 +1443,8 @@ export default {
   // 模型槽的显示名（原 P1-2 的「零消费点」登记就此解除——kernel 以独立槽身份回归）。
   'model.roleNode': 'node（节点）',
   'model.roleSubagent': 'subagent（子代理）',
+  'model.smallLlm': '通用小 LLM',
+  'model.smallLlmFallback': '未配置（回退主模型）',
   'model.viaSlash': '用 /model 命令编辑',
   'model.currentRun': '当前运行',
   // jev-imagegen-align-llm 批（2026-11-02，契约 §D.4）：/model 里 Jev / 生图
