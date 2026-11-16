@@ -152,14 +152,17 @@ test('desktop contact close consumes canvas button dimensions', async ({ page })
     const box = el.getBoundingClientRect();
     const icon = el.querySelector('svg').getBoundingClientRect();
     const title = el.closest('.sp-panel-header').getBoundingClientRect();
-    return { w: box.width, h: box.height, iw: icon.width, ih: icon.height, top: box.top - title.top, right: title.right - box.right };
+    const content = document.querySelector('.pf-hero').getBoundingClientRect();
+    return { w: box.width, h: box.height, iw: icon.width, ih: icon.height, top: box.top - title.top, right: title.right - box.right, contentGap: content.top - box.bottom };
   });
   expect(dims.w).toBe(40);
   expect(dims.h).toBe(40);
   expect(dims.iw).toBe(18);
   expect(dims.ih).toBe(18);
-  expect(dims.top).toBeGreaterThanOrEqual(0);
-  expect(dims.right).toBeGreaterThanOrEqual(0);
+  console.log('[contact header geometry]', JSON.stringify(dims));
+  expect(dims.top).toBe(14);
+  expect(dims.right).toBe(16);
+  expect(dims.contentGap).toBe(11);
 });
 
 // ── W1+W2：桌面档（1440×900）─────────────────────────────────────────────
