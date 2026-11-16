@@ -51,7 +51,7 @@ object SearchIndexMigration:
     c.setAutoCommit(false)
     try
       exec(c, "CREATE TABLE IF NOT EXISTS search_index_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
-      exec(c, "CREATE TABLE IF NOT EXISTS search_hits(hit_row INTEGER PRIMARY KEY,stable_id TEXT NOT NULL UNIQUE,ts INTEGER NOT NULL,session_id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,extra TEXT NOT NULL,occurrence_count INTEGER NOT NULL)")
+      exec(c, "CREATE TABLE IF NOT EXISTS search_hits(hit_row INTEGER PRIMARY KEY,stable_id TEXT NOT NULL UNIQUE,ts INTEGER NOT NULL,session_id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,extra TEXT NOT NULL,occurrence_count INTEGER NOT NULL,ord INTEGER NOT NULL)")
       exec(c, "CREATE TABLE IF NOT EXISTS search_postings(gram TEXT NOT NULL,ts INTEGER NOT NULL,sid_prefix INTEGER NOT NULL,seq INTEGER NOT NULL,hit_row INTEGER NOT NULL,PRIMARY KEY(gram,ts DESC,sid_prefix ASC,seq ASC)) WITHOUT ROWID")
       exec(c, "CREATE TABLE IF NOT EXISTS gram_freq(gram TEXT PRIMARY KEY,cnt INTEGER NOT NULL) WITHOUT ROWID")
       if get(c, "phase").isEmpty then
@@ -79,26 +79,26 @@ object SearchIndexMigration:
       while more do
         if sourceGeneration(source) != get(c, "source_generation").get then
           throw new IllegalStateException("source generation changed during backfill; rollback and restart")
-        val rows = scala.collection.mutable.ArrayBuffer.empty[(Long, String, String, Long, String, String)]
-        val select = source.prepareStatement("SELECT rowid,sid,kind,ts,text,extra FROM docs WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT ?")
+        val rows = scala.collection.mutable.ArrayBuffer.empty[(Long, String, String, Long, String, String, Int)]
+        val select = source.prepareStatement("SELECT rowid,sid,kind,ts,text,extra,ord FROM docs WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT ?")
         try
           select.setLong(1, cursor)
           select.setLong(2, highWater)
           select.setInt(3, batchSize)
           val r = select.executeQuery()
-          while r.next() do rows += ((r.getLong(1), r.getString(2), r.getString(3), r.getLong(4), r.getString(5), r.getString(6)))
+          while r.next() do rows += ((r.getLong(1), r.getString(2), r.getString(3), r.getLong(4), r.getString(5), r.getString(6), r.getInt(7)))
         finally select.close()
         if rows.isEmpty then more = false
         else
-          val hit = c.prepareStatement("INSERT INTO search_hits(stable_id,ts,session_id,kind,text,extra,occurrence_count) VALUES(?,?,?,?,?,?,1) ON CONFLICT(stable_id) DO UPDATE SET occurrence_count=occurrence_count+1")
+          val hit = c.prepareStatement("INSERT INTO search_hits(stable_id,ts,session_id,kind,text,extra,occurrence_count,ord) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(stable_id) DO UPDATE SET occurrence_count=occurrence_count+1, extra=CASE WHEN (excluded.session_id,excluded.ord,excluded.extra)<(search_hits.session_id,search_hits.ord,search_hits.extra) THEN excluded.extra ELSE search_hits.extra END, ord=MIN(search_hits.ord,excluded.ord)")
           val find = c.prepareStatement("SELECT hit_row,occurrence_count FROM search_hits WHERE stable_id=?")
           val posting = c.prepareStatement("INSERT INTO search_postings(gram,ts,sid_prefix,seq,hit_row) VALUES(?,?,?,?,?)")
           val conflict = c.prepareStatement("SELECT h.stable_id FROM search_postings p JOIN search_hits h ON h.hit_row=p.hit_row WHERE p.gram=? AND p.ts=? AND p.sid_prefix=? AND p.seq=?")
           val freq = c.prepareStatement("INSERT INTO gram_freq(gram,cnt) VALUES(?,1) ON CONFLICT(gram) DO UPDATE SET cnt=cnt+1")
           try
-            rows.foreach { case (row, sid, kind, ts, text, extra) =>
+            rows.foreach { case (row, sid, kind, ts, text, extra, ord) =>
               val id = SearchIndexService.stableId(sid, kind, ts, text, extra)
-              hit.setString(1, id); hit.setLong(2, ts); hit.setString(3, sid); hit.setString(4, kind); hit.setString(5, text); hit.setString(6, extra); hit.executeUpdate()
+              hit.setString(1, id); hit.setLong(2, ts); hit.setString(3, sid); hit.setString(4, kind); hit.setString(5, text); hit.setString(6, extra); hit.setInt(7, ord); hit.executeUpdate()
               find.setString(1, id)
               val found = find.executeQuery()
               if !found.next() then throw new IllegalStateException("inserted hit missing")
@@ -176,15 +176,15 @@ object SearchIndexMigration:
     try
       exec(c, "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT)")
       exec(c, "INSERT INTO meta VALUES('index_generation','snapshot')")
-      exec(c, "CREATE TABLE docs(sid TEXT,kind TEXT,ts INTEGER,text TEXT,extra TEXT)")
-      val p = c.prepareStatement("INSERT INTO docs(sid,kind,ts,text,extra) VALUES(?,?,?,?,?)")
+      exec(c, "CREATE TABLE docs(sid TEXT,kind TEXT,ts INTEGER,text TEXT,extra TEXT,ord INTEGER)")
+      val p = c.prepareStatement("INSERT INTO docs(sid,kind,ts,text,extra,ord) VALUES(?,?,?,?,?,?)")
       var count = 0
       try selected.foreach { sid =>
         val before = adapter.sessionFingerprint(sid)
         val docs = adapter.extractSession(sid, true).getOrElse(Nil)
         require(before == adapter.sessionFingerprint(sid), "session changed during extraction")
         docs.foreach { d =>
-          p.setString(1, d.sid); p.setString(2, d.kind); p.setLong(3, d.ts); p.setString(4, d.text); p.setString(5, d.extra); p.executeUpdate()
+          p.setString(1, d.sid); p.setString(2, d.kind); p.setLong(3, d.ts); p.setString(4, d.text); p.setString(5, d.extra); p.setInt(6, d.ord); p.executeUpdate()
           count += 1
         }
         c.commit()
