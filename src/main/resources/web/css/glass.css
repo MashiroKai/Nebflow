@@ -305,6 +305,7 @@ body.mobile-layer .mh-search-bar:not(.g2-fab) {
   /* 归属方两档 = 全站唯一的两个气泡底色令牌 */
   --nf-bub-ours-bg: color-mix(in srgb, var(--color-bubble-user) 97%, transparent);
   --nf-bub-theirs-bg: color-mix(in srgb, var(--color-bubble-ai) 97%, transparent);
+  --nf-bub-injected-bg: rgb(var(--sapphire) / 0.12);
   /* 兼容别名：旧 token 名一律**指向**上面两档（禁再写第二份色值） */
   --glass-bub-user-bg: var(--nf-bub-ours-bg);
   --glass-bub-ai-bg: var(--nf-bub-theirs-bg);
@@ -344,7 +345,7 @@ html[data-theme="light"] {
    用户绿、助手白。`peer`（好友/群/设备会话窗的对方）仍 = 白，与助手同档；
    `injected` 注入行是通知面，仍走 sapphire 淡染（门禁 carve 在 R2 精确点名）。 */
 .bubble.user { background: var(--nf-bub-ours-bg); }
-.bubble.injected { background: rgb(var(--sapphire) / 0.12); }
+.bubble.injected { background: var(--nf-bub-injected-bg); }
 .bubble.ai,
 .bubble.peer { background: var(--nf-bub-theirs-bg); }
 /* dropbox 面（自有类族，未挂 .bubble）：同一判据的镜像——`.out` = 我方。 */
@@ -513,8 +514,7 @@ html[data-theme="light"] {
 /* canvas ask 气泡：材质 = 输入基准件原配方档（ask 面三修② 2026-11-11，作者令
    「毛玻璃一律不透底」）—— 与主会话 #input-bar 逐项同档（bg / blur / 描边 / 浮影，
    tests/ask-glass-drag G1 逐项相等 + G1e 防复活）。09:32 那版为「看不清」单开的
-   α=1 档随 recalibrate 统一退役；用户侧无 tint 复合层（bubble-side-color 批
-   2026-11-06 摘除，两向同材质，识别靠贴靠侧）。
+   α=1 档随 recalibrate 统一退役；用户侧底色在下方单独与注入通知共源。
    特异性 = .ask-dock .ask-bub（2 类）：压过同页挂的 .nf-glass 工具类（1 类），
    glass.css 后载的同性度规则不会把它冲掉，而 ask.css 已把这一块材质整段移交
    本文件（那里只留几何/年龄渐隐）。 */
@@ -528,12 +528,9 @@ html[data-theme="light"] {
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
-/* 用户侧气泡：bubble-side-color 批（2026-11-06）摘除 sapphire tint 复合层 ——
-   ask 面全部消息都代表本机账号（我方），再按「问/答」分两个色相即等于按
-   「消息类型」另开配色（作者令禁）。两向同材质；左右识别改由气泡自身几何
-   （.ask-bub.user 的右侧贴靠，见 askDock.js）承担。 */
+/* 用户输入与外部注入通知共用同一蓝色；助手回复保留原玻璃底。 */
 .ask-dock .ask-bub.user {
-  background: var(--nf-glass-input-bg);
+  background: var(--nf-bub-injected-bg);
   border-color: var(--cv-border, var(--glass-border));
 }
 /* 顶缘折射线（面级浮件的第三件）：几何与 #input-bar::before 逐值相同
