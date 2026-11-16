@@ -388,6 +388,19 @@ object SearchIndexService:
     bumpGeneration(conn)
     conn.commit()
 
+  /** Canonical identity for both live results and future materialized hits. */
+  private[search] def stableId(sid: String, kind: String, ts: Long, text: String, extra: String): String =
+    val role = io.circe.parser.parse(extra).toOption.flatMap(_.hcursor.downField("role").as[String].toOption).getOrElse("")
+    val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFC)
+    val semanticExtra = io.circe.parser.parse(extra).toOption.map { j =>
+      List("type", "source", "name", "ext", "ref").map(k => j.hcursor.get[String](k).getOrElse(""))
+        .map(s => s"${s.length}:$s").mkString
+    }.getOrElse("")
+    val content = if kind == "message" then normalized else normalized + "\u0000" + semanticExtra
+    val material = List(sid, role, ts.toString, kind, content).map(s => s"${s.length}:$s").mkString
+    java.security.MessageDigest.getInstance("SHA-256").digest(material.getBytes("UTF-8"))
+      .map(b => f"${b & 0xff}%02x").mkString
+
   private def bumpGeneration(conn: Connection): Unit =
     val st = conn.createStatement()
     try st.executeUpdate("INSERT OR REPLACE INTO meta(key,value) VALUES('index_generation', lower(hex(randomblob(16))))")
@@ -482,16 +495,7 @@ object SearchIndexService:
               val ts = rs.getLong(4)
               val text = rs.getString(5)
               val extra = rs.getString(6)
-              val role = io.circe.parser.parse(extra).toOption.flatMap(_.hcursor.downField("role").as[String].toOption).getOrElse("")
-              val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFC)
-              val semanticExtra = io.circe.parser.parse(extra).toOption.map { j =>
-                List("type", "source", "name", "ext", "ref").map(k => j.hcursor.get[String](k).getOrElse(""))
-                  .map(s => s"${s.length}:$s").mkString
-              }.getOrElse("")
-              val content = if kind == "message" then normalized else normalized + "\u0000" + semanticExtra
-              val material = List(sid, role, ts.toString, kind, content).map(s => s"${s.length}:$s").mkString
-              val id = java.security.MessageDigest.getInstance("SHA-256").digest(material.getBytes("UTF-8"))
-                .map(b => f"${b & 0xff}%02x").mkString
+              val id = stableId(sid, kind, ts, text, extra)
               buf += Hit(sid, rs.getInt(2), kind, ts, text.take(SnippetChars), extra, id)
             buf.toList
           finally ps.close()
