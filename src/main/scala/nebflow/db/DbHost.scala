@@ -84,6 +84,10 @@ object DbHost:
       sweepers.remove(dataRoot, f)
     val h = handles.get(dataRoot)
     if h != null then
+      // E2E 红测注入点（E2E_INJECT_DB_CLOSE_FAILURE=1）：在 close 点抛错——注销位于
+      // close 成功之后，故句柄保持登记（isOpen 仍真），退出清点如实非零、runner FAIL。
+      if sys.env.get("E2E_INJECT_DB_CLOSE_FAILURE").contains("1") then
+        throw new java.io.IOException("injected db close failure (E2E red test)")
       h.close()
       handles.remove(dataRoot, h)
   }

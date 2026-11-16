@@ -186,6 +186,9 @@ private[project] trait NodeStarter:
       else starts.values.toList.traverse_(_.get) *> awaitDetachedStarts
     }
 
+  /** 诊断面：仍在屏障登记内的 detached start 数（forkStart 登记、fiber 终态注销后的剩余）。 */
+  private[project] def detachedStartsRemaining: IO[Int] = detachedStarts.get.map(_.size)
+
   private[project] def forkStart(what: String)(io: IO[Unit]): IO[Unit] =
     IO.uncancelable { _ =>
       for
