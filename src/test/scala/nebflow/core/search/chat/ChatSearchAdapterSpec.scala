@@ -73,6 +73,21 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     assert(media.extra.contains("photo.png"))
   }
 
+  test("distinct attachments on one message retain separate searchable entries") {
+    writeUi("attachments", List(UiMessage.User(
+      text = "files", timestamp = 1000L,
+      attachments = List(
+        io.circe.Json.obj("name" -> io.circe.Json.fromString("alpha.txt"), "path" -> io.circe.Json.fromString("/tmp/alpha.txt")),
+        io.circe.Json.obj("name" -> io.circe.Json.fromString("beta.txt"), "path" -> io.circe.Json.fromString("/tmp/beta.txt"))
+      )
+    )))
+    val files = adapter.extractSession("attachments").getOrElse(Nil).filter(_.kind == "file")
+    assertEquals(files.length, 2)
+    assertEquals(files.map(_.ord).distinct, List(0))
+    assert(files.exists(_.text.contains("alpha.txt")))
+    assert(files.exists(_.text.contains("beta.txt")))
+  }
+
   test("tool 行不入索引（作者令①）：summary/input/content 不产生 kind=\"tool\" 文档；Pop 载荷媒体条目照产") {
     writeUi("s3", List(
       UiMessage.User(text = "run it", timestamp = 1000L),
