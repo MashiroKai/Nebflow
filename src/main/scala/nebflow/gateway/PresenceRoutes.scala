@@ -1661,7 +1661,26 @@ private[gateway] object PresenceRoutes:
                       .add("kind", e.kind.label.asJson)
                       .add("installedAt", e.installedAt.asJson)
                       .add("official", ((e.via == Via.Seed || e.via == Via.Official)).asJson)
-                    val withUrl = e.url.fold(base)(u => base.add("url", u.asJson))
+                    // §12.1 分发信任面（additive 分轴投影；旧 via 基 official 字段保留——通道面）：
+                    // officialBadge = 官方根键签名 ∧ publisherClass=official（A 期无目录签名 ⇒ 恒 false）；
+                    // publisherClass/预留空值族缺席 ≠ null（§12.1）。
+                    val distribution = JsonObject.empty
+                      .add("origin", e.distribution.origin.label.asJson)
+                      .add("trustLevel", e.distribution.trustLevel.label.asJson)
+                      .add("distributionOwner", e.distribution.distributionOwner.label.asJson)
+                    val distWithPublisher = e.distribution.publisherClass.fold(distribution)(p =>
+                      distribution.add("publisherClass", p.label.asJson)
+                    )
+                    val withDist = base
+                      .add("distribution", Json.fromJsonObject(distWithPublisher))
+                      .add("updatePolicy", e.updatePolicy.label.asJson)
+                      .add("pinned", e.pinned.asJson)
+                      .add(
+                        "officialBadge",
+                        nebflow.core.plugin.PluginDistributionTrust
+                          .officialBadge(signedByOfficialRootKey = false, e.distribution.publisherClass).asJson
+                      )
+                    val withUrl = e.url.fold(withDist)(u => withDist.add("url", u.asJson))
                     val withPin = e.pin.fold(withUrl)(pin => withUrl.add("pin", pin.toJson))
                     known += Json.fromJsonObject(withPin)
                   case UnknownSource(reason) =>
@@ -1710,7 +1729,7 @@ private[gateway] object PresenceRoutes:
                   Ok(
                     ApiJson.okMessage(
                       s"Plugin '$name' updated: v${r.fromVersion} → v${r.toVersion} (commit ${r.commit.take(12)}…, " +
-                        s"digest ${r.digest.take(12)}…). ${r.effective}" +
+                        s"digest ${r.digest.take(12)}…, plan ${r.planId}). ${r.effective}" +
                         r.backupDir.fold("")(b => s" Previous version backed up at $b.")
                     )
                   )

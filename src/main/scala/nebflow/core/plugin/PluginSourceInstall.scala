@@ -233,7 +233,14 @@ object PluginSourceInstall:
                                     pkg, digest, fallbackVersion = ventry.version,
                                     kind = Kind.Official, via = Via.Official,
                                     url = artifact.url, pin = None,
-                                    sourceDesc = s"official source ($id@${ventry.version})"
+                                    sourceDesc = s"official source ($id@${ventry.version})",
+                                    meta = PluginSourceLedger.InstallMeta(
+                                      // §5.4 A 期地基字段（厂方索引腿）：分发 id + 已验归档 sha256（双值校验面）；
+                                      // publisherKeyId = 签名目录键，A 期无目录 ⇒ 不赋值
+                                      distributionId = Some(id),
+                                      artifactSha256 = Option.when(expectedSha.nonEmpty)(expectedSha),
+                                      validationSummary = Some("official-zip-dualvalue@1")
+                                    )
                                   )
                                 }
                               }
@@ -507,7 +514,8 @@ object PluginSourceInstall:
                         kind = Kind.Git, via = Via.Git,
                         url = Some(spec.url),
                         pin = Some(Pin.Commit(spec.pin.tag, spec.pin.commit)),
-                        sourceDesc = s"git ${spec.url} @ ${spec.pin.commit.take(12)}…"
+                        sourceDesc = s"git ${spec.url} @ ${spec.pin.commit.take(12)}…",
+                        meta = PluginSourceLedger.InstallMeta(validationSummary = Some("git-pin-clone@1"))
                       )
                     case Left(err) => Left(s"digest computation failed on cloned package: $err (${CodeArchiveLayout})")
                 }
@@ -558,7 +566,11 @@ object PluginSourceInstall:
                 pkg, digest, fallbackVersion = "",
                 kind = Kind.Https, via = Via.Https,
                 url = Some(spec.archive), pin = None,
-                sourceDesc = s"direct archive ${spec.archive}"
+                sourceDesc = s"direct archive ${spec.archive}",
+                meta = PluginSourceLedger.InstallMeta(
+                  artifactSha256 = spec.sha256.map(_.trim.toLowerCase).filter(_.nonEmpty),
+                  validationSummary = Some("https-zip-dualvalue@1")
+                )
               )
             }
           }
@@ -600,7 +612,8 @@ object PluginSourceInstall:
    * 覆盖/备份属 P3 更新流）。步骤：staged manifest 校验（name 过 §5.5）→ 空位检查 →
    * makeDir plugins → `os.move` 原子 rename → 复职（清 removed 墓碑，卸载批语义）→
    * 缓存失效 → provenance 落账（best-effort：写失败仅 WARN 不回滚——在位即信任零变化）
-   * → 成功文案。
+   * → 统一生命周期计划（§6.3/§9 A 行：planId 进审计行与成功文案）→ 成功文案。
+   * `meta` = §5.4 A 期地基字段载荷（各腿 validator summary / 归档 sha256 / 分发 id），缺省空——既有行为面不破。
    */
   private def commitStaged(
       pkg: os.Path,
@@ -610,7 +623,8 @@ object PluginSourceInstall:
       via: Via,
       url: Option[String],
       pin: Option[Pin],
-      sourceDesc: String
+      sourceDesc: String,
+      meta: PluginSourceLedger.InstallMeta = PluginSourceLedger.InstallMeta()
   ): Either[String, String] =
     val manifestFile = pkg / "plugin.json"
     if !os.isFile(manifestFile) then Left(s"staged package has no plugin.json manifest — not a plugin package (${CodeArchiveLayout})")
@@ -646,22 +660,33 @@ object PluginSourceInstall:
                   PluginRegistry.invalidateCache()
                   PluginSourceLedger.recordInstall(
                     name = pname, kind = kind, url = url, pin = pin,
-                    version = version, digest = digest, via = via
+                    version = version, digest = digest, via = via, meta = meta
                   ) match
-                    case Right(_) =>
+                    case Right(entry) =>
                       logger.infoSync(
                         s"[plugin-sources] '$pname' installed from $sourceDesc — via=${via.label} " +
-                          s"digest=${digest.take(12)}… (presence = trust; provenance recorded)"
+                          s"digest=${digest.take(12)}… plan=${PluginLifecyclePlan.planId(
+                            PluginLifecyclePlan.forInstall(pname, version, digest, entry.updatePolicy)
+                          )} (presence = trust; provenance recorded)"
                       )
                     case Left(err) =>
                       logger.warnSync(
                         s"[plugin-sources] provenance recording failed for '$pname' ($err) — the package stays installed " +
                           "(presence = trust); its source query degrades to unknown-source"
                       )
+                  val planId = PluginLifecyclePlan.planId(
+                    PluginLifecyclePlan.forInstall(
+                      pname, version, digest,
+                      // 落账失败（best-effort 面）时策略面回落默认 check——计划身份不依赖账本写成功
+                      PluginSourceLedger.query(pname) match
+                        case PluginSourceLedger.Known(e) => e.updatePolicy
+                        case _                            => PluginDistributionTrust.UpdatePolicy.Check
+                    )
+                  )
                   Right(
                     s"Plugin '$pname'${if version.isEmpty then "" else s" (v$version)"} installed to $target from $sourceDesc — " +
                       "active on the next scan (presence = trust: no approval step). Provenance recorded " +
-                      s"(via=${via.label}, digest ${digest.take(12)}…). " +
+                      s"(via=${via.label}, digest ${digest.take(12)}…, plan $planId). " +
                       s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'stand plugin revoke $pname'."
                   )
                 }

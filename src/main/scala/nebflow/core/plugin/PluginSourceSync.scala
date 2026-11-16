@@ -90,7 +90,7 @@ object PluginSourceSync:
       detail: String
   )
 
-  /** 一次「拉取并生效」的结果。 */
+  /** 一次「拉取并生效」的结果。`planId` = §6.3 统一生命周期计划身份（对账键）。 */
   final case class UpdateResult(
       name: String,
       fromVersion: String,
@@ -98,6 +98,7 @@ object PluginSourceSync:
       commit: String,
       digest: String,
       backupDir: Option[String],
+      planId: String,
       effective: String
   )
 
@@ -414,11 +415,25 @@ object PluginSourceSync:
         .left.map(err => s"digest computation failed on the freshly pulled tree: $err (${CodeLayout})")
       (digest, _) = digestCount
       toVersion = versionOf(staged, decl)
+      // 统一生命周期计划（§6.3/§9 A 行）：swap 前锁定在位世代两面 + 作者策略
+      prior = priorFaces(name, hadDir)
+      policy = PluginSourceLedger.query(name) match
+        case PluginSourceLedger.Known(e) => e.updatePolicy
+        case _                           => PluginDistributionTrust.UpdatePolicy.Check
+      plan = PluginLifecyclePlan.Plan(
+        operation = if hadDir then PluginLifecyclePlan.Operation.Update else PluginLifecyclePlan.Operation.Install,
+        name = name,
+        candidateVersion = toVersion,
+        candidateDigest = digest,
+        currentVersion = prior._1,
+        currentDigest = prior._2,
+        policyVersion = PluginLifecyclePlan.policyVersionOf(policy)
+      )
       backup = backupInstalled(name, hadDir)
       _ <- swapIn(name, packageRoot(staged, decl))
       _ = PluginRegistry.invalidateCache()
       _ = recordProvenance(decl, name, fetched, toVersion, digest, by)
-      _ = audit(name, by, fromVersion, toVersion, fetched, digest, backup)
+      _ = audit(name, by, fromVersion, toVersion, fetched, digest, backup, PluginLifecyclePlan.planId(plan))
       _ = refreshTrustRecord(name)
     yield UpdateResult(
       name = name,
@@ -427,10 +442,20 @@ object PluginSourceSync:
       commit = fetched,
       digest = digest,
       backupDir = backup,
+      planId = PluginLifecyclePlan.planId(plan),
       effective =
         "active on the next scan (presence = trust; zero restart). New dispatches get the new content; nodes already " +
           "running keep what they were injected with."
     )
+
+  /** swap 前在位世代两面（版本/摘要；目录缺席 ⇒ None——自愈缺失装回 = install 计划面）。 */
+  private def priorFaces(name: String, hadDir: Boolean): (Option[String], Option[String]) =
+    if !hadDir then (None, None)
+    else
+      val v = installedVersion(name)
+      PluginRegistry.computeDigest(pluginsDir / name) match
+        case Right((d, _)) => (Option.when(v.nonEmpty)(v), Some(d))
+        case Left(_)       => (Option.when(v.nonEmpty)(v), None)
 
   /** 指定 commit 的拉取：完整 clone（浅克隆取不到任意 commit）+ `checkout <commit>`。 */
   private def fetchCommit(
@@ -562,7 +587,10 @@ object PluginSourceSync:
       if decl.isGit then (Kind.Git, Via.Git, Some(Pin.Commit(None, commit)))
       else (Kind.Local, Via.Local, None)
     PluginSourceLedger
-      .recordInstall(name = name, kind = kind, url = Some(decl.url), pin = pin, version = version, digest = digest, via = via)
+      .recordInstall(
+        name = name, kind = kind, url = Some(decl.url), pin = pin, version = version, digest = digest, via = via,
+        meta = PluginSourceLedger.InstallMeta(validationSummary = Some("sync-swap@1"))
+      )
       .left
       .foreach(err =>
         logger.warnSync(
@@ -655,7 +683,8 @@ object PluginSourceSync:
       toVersion: String,
       commit: String,
       digest: String,
-      backupDir: Option[String]
+      backupDir: Option[String],
+      planId: String
   ): Unit =
     appendAudit(
       Json.fromJsonObject(
@@ -668,6 +697,7 @@ object PluginSourceSync:
           .add("toVersion", toVersion.asJson)
           .add("commit", commit.asJson)
           .add("digest", digest.asJson)
+          .add("planId", planId.asJson)
           .add("backup", backupDir.getOrElse("").asJson)
       )
     )
