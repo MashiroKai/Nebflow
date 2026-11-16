@@ -195,6 +195,8 @@ private[agent] object AgentFinishTurn:
       val handle = resources.protectedExecutions(state.sessionId.get)
       val sid = handle.admission.sessionId
       for
+        manifest <- nebflow.core.ManifestGate.checkDelegate(sid)
+        _ <- IO.fromEither(manifest.left.map(new IllegalStateException(_)))
         task <- resources.subAgentTaskStore.findByTaskId(sid).flatMap(row =>
           IO.fromOption(row.filter(_.runId.contains(handle.admission.executionId)))(
             new IllegalStateException("terminal-task-binding-unavailable")))

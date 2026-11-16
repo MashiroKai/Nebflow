@@ -339,10 +339,15 @@ object BackoffSupervisor:
                     case Some(saved) if Json.obj("source" -> saved.source.asJson, "eventType" -> saved.eventType.asJson,
                         "payload" -> saved.payload.asJson, "metadata" -> Json.fromJsonObject(saved.metadata),
                         "correlationId" -> saved.correlationId.asJson, "blocks" -> saved.blocks.asJson) == confirmed =>
-                      (nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(resources, subagentId,
-                        task.parentSessionId, "completed", "completed") *>
-                        MailboxProducer.deliver(resources, task.parentSessionId, saved,
-                          task.notificationId.get, "delegate-terminal", coalesce = false, producer = "task-lifecycle-recovery"))
+                      (nebflow.core.ManifestGate.checkDelegate(subagentId).flatMap {
+                        case Right(_) => IO.pure(saved)
+                        case Left(reason) => IO.pure(saved.copy(payload = s"[$reason]\n${saved.payload}"))
+                      }.flatMap { delivery =>
+                        nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(resources, subagentId,
+                          task.parentSessionId, "completed", "completed") *>
+                          MailboxProducer.deliver(resources, task.parentSessionId, delivery,
+                            task.notificationId.get, "delegate-terminal", coalesce = false, producer = "task-lifecycle-recovery")
+                      })
                       .flatMap {
                         case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
                         case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
@@ -404,15 +409,18 @@ object BackoffSupervisor:
                 )
               )
               face <- settlementFace()
-              result <- notifyParentAndStop(
-                "completed",
-                payload + diagnostic + note,
-                face._1,
-                diagnostic = Option(diagnostic).filter(_.nonEmpty),
-                completionMessages = Some(messages),
-                roundCountedOids = face._2,
-                roundPartial = Some(face._3)
-              )
+              manifest <- nebflow.core.ManifestGate.checkDelegate(subagentId)
+              result <- manifest match
+                case Left(reason) => notifyParentAndStop("failed", reason + "\n" + payload, face._1)
+                case Right(_) => notifyParentAndStop(
+                  "completed",
+                  payload + diagnostic + note,
+                  face._1,
+                  diagnostic = Option(diagnostic).filter(_.nonEmpty),
+                  completionMessages = Some(messages),
+                  roundCountedOids = face._2,
+                  roundPartial = Some(face._3)
+                )
             yield result
             end for
           else notifyParentAndStop("completed", payload, JsonObject.empty)
