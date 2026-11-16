@@ -95,7 +95,7 @@ flowchart LR
   B --> V
   V -->|author: ff-only| M
   M -->|author chooses| RB[release/beta]
-  M -->|author chooses| RS[release/stable]
+  RB -->|author after beta verification| RS[release/stable]
   M -. archival .-> A[achieve/*]
 ```
 
@@ -103,6 +103,10 @@ For a release problem, branch `bug/*` from `main`, fix and verify it, then the a
 
 - Stage files explicitly (`git add <file>`); avoid `git add -A`.
 - Commit subjects use an optional `type(scope):` prefix; write an English subject describing the intent.
+
+### Release flow
+
+After the author approves and lands verified changes on `main`, the author manually merges `main` into `release/beta`; its pipeline publishes the beta channel. After verifying the beta, the author merges `release/beta` into `release/stable`; its pipeline publishes the stable channel. Release lines are downstream only: never merge or write them back to `main`. Release fixes start on `main` and follow the same promotion path.
 
 ### Local guard
 
@@ -114,7 +118,7 @@ For a release problem, branch `bug/*` from `main`, fix and verify it, then the a
 2. Protect `main`, `release/beta`, and `release/stable`. Set push/merge permissions to the named author only where the installed edition supports per-user rules; otherwise use the narrowest role available and restrict membership accordingly. Disable force pushes and deletion for these branches. Configure required review and successful pipelines where supported. Verify the effective permissions, including broader wildcard rules and administrative bypasses.
 3. Restrict USTC write access so non-authors cannot push directly, and have the author alone open MRs from `feat/*` or `bug/*` to `main`, merge after upstream verification using fast-forward only, and push the chosen release line. GitLab branch protection by itself may not enforce source-name restrictions or distinguish one user from others with the same role; use an instance-supported server-side push/MR rule or author-controlled permissions, and document any edition limitation rather than claiming enforcement.
 4. Set the project merge method to **Fast-forward merge** if available. Test with a non-author account and disposable branches: forbidden direct pushes and unauthorized merges must fail; allowed author workflow and source-name checks must behave as intended. Do not force-update protected refs during testing.
-5. Check the existing release automation before adopting the new release lines: `.gitlab-ci.yml` currently targets legacy `beta` / `release`, and its stable job writes `main`. It does not yet implement this policy. Keep it disabled or otherwise prevent unauthorized publication until the author explicitly approves a separate migration.
+5. On USTC, archive the legacy branches as `achieve/beta-20261116` and `achieve/release-20261116`, verify the archive refs point to the original tips, then delete the legacy branches. Adjust protection only as necessary under author control; do not delete before verification. Confirm the new release-line protections and pipelines before publication.
 
 ## Pull requests
 

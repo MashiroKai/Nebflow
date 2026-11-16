@@ -70,6 +70,12 @@ CI 以新构建的 JAR 跑 smoke 套件，因此前端改动的门槛 = 本地�
 - 按文件显式暂存（`git add <file>`）；避免 `git add -A`。
 - 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 由作者在上游核验后以 fast-forward 方式执行。
 
+### 发布流转
+
+作者批准并合入经核验的变更至 `main` 后，作者手动将 `main` 合入 `release/beta`，由管线发布 beta 版。beta 验证通过后，作者将 `release/beta` 合入 `release/stable`，由管线发布稳定版。发布线只向下游流转，永不合并或回写 `main`；发布问题从 `main` 修复，再按同一路径推进。
+
+USTC 保护与旧分支清理由作者按[保护清单](CONTRIBUTING.md#ustc-server-protection-checklist-author-only)执行：先归档为 `achieve/beta-20261116`、`achieve/release-20261116`，核对归档指向原分支尖端后再删除旧分支。
+
 ## PR 要求
 
 - USTC PR 只由作者创建，源分支仅限 `feat/*`、`bug/*`，目标 `main`；由作者核验后 ff-only 合入。diff 保持最小、聚焦单一改动。
