@@ -1895,7 +1895,7 @@ function buildCanvasPage(body) {
   toolbar.className = 'mf-cv-toolbar ds-chrome-band';
   const close = document.createElement('button');
   close.type = 'button';
-  close.className = 'mf-cv-close g2-fab';
+  close.className = 'mf-cv-close g2-fab canvas-button';
   close.title = tt('关闭文档', 'Close document');
   close.setAttribute('aria-label', tt('关闭文档', 'Close document'));
   close.innerHTML = '<i data-lucide="x"></i>';
@@ -1904,7 +1904,7 @@ function buildCanvasPage(body) {
   count.className = 'mf-cv-count';
   const stack = document.createElement('button');
   stack.type = 'button';
-  stack.className = 'mf-cv-stack g2-fab';
+  stack.className = 'mf-cv-stack g2-fab canvas-button';
   stack.title = tt('堆叠卡视图', 'Stacked cards');
   stack.setAttribute('aria-label', tt('堆叠卡视图', 'Stacked cards'));
   stack.innerHTML = '<i data-lucide="layers"></i>';

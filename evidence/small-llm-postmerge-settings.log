@@ -1,0 +1,3 @@
+settings-ios-rows：web 树 = /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/src/main/resources/web
+  R1 重启服务零痕 · R2 可点进行唯一样式+chevron · R3 行内右侧不重复数值 · R4 动作钮走令牌
+PASS: 设置行只有一套实现（setNavRow / setRow / set-btn），chevron 单点，计数只说一遍，动作钮走令牌。

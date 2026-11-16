@@ -188,7 +188,9 @@ case class ProviderConfig(
    * 缺省头（零行为变化）。
    * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
    */
-  headers: Option[Map[String, String]] = None
+  headers: Option[Map[String, String]] = None,
+  /** Exact full endpoint URL -> model ID -> allowed effort tiers; absence denies all. */
+  effortAllowlist: Option[Map[String, Map[String, List[ThinkingEffort]]]] = None
 )
 
 object ProviderConfig:
@@ -684,10 +686,12 @@ object ThinkingConfig:
    */
   def toLlmJson(tc: ThinkingConfig): io.circe.Json =
     if tc.enabled then
-      io.circe.Json.obj(
-        "type" -> "enabled".asJson,
-        "budget_tokens" -> tc.budgetTokens.asJson
-      )
+      val base = List("type" -> "enabled".asJson, "budget_tokens" -> tc.budgetTokens.asJson)
+      val extra = List(
+        tc.effort.map(e => "effort" -> e.asJson),
+        tc.clearThinking.map(c => "clearThinking" -> c.asJson)
+      ).flatten
+      io.circe.Json.obj((base ++ extra)*)
     else io.circe.Json.Null
 
   /**

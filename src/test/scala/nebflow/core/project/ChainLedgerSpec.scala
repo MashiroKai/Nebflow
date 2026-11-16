@@ -92,6 +92,103 @@ class ChainLedgerSpec extends CatsEffectSuite:
   private def changesOf(obs: ChainLedger.Observation): List[(String, Option[String], Option[String], String)] =
     obs.changes.map(c => (c.nodeId, c.from, c.to, c.reason))
 
+  test("uncommitted compact round does not contaminate a committed ledger audit") {
+    val dir = os.temp.dir(prefix = "ledger-uncommitted-", deleteOnExit = false)
+    val path = dir / ChainLedger.FileName
+    val arch = dir / ChainLedger.ArchiveDirName
+    val orphan = ChainLedger.RoundFile(
+      round = 1, at = t0, kind = ChainLedger.RoundCompact, thresholds = ChainLedger.ThresholdsNow,
+      hotBefore = ChainLedger.Totals(entries = 1), hotAfter = ChainLedger.Totals(),
+      entries = List(entry("uncommitted", "n", t0, List("n")))
+    )
+    (for
+      store <- ChainLedgerStore.open("orphan", path, arch)
+      _ <- IO.blocking { os.makeDir.all(arch); os.write(arch / "round-1.json", orphan.asJson.noSpaces) }
+      result <- store.verify
+    yield assertEquals(result, Right(()): Either[String, Unit]))
+      .guarantee(IO.blocking(os.remove.all(dir)))
+  }
+
+  test("audit snapshot excludes a cold compact round published concurrently") {
+    val dir = os.temp.dir(prefix = "ledger-snapshot-", deleteOnExit = false)
+    val arch = dir / ChainLedger.ArchiveDirName
+    val cold = ChainLedger.RoundFile(
+      round = 1, at = t0, kind = ChainLedger.RoundCompact, thresholds = ChainLedger.ThresholdsNow,
+      hotBefore = ChainLedger.Totals(entries = 1), hotAfter = ChainLedger.Totals(),
+      entries = List(entry("later", "n", t0, List("n")))
+    )
+    (for
+      store <- ChainLedgerStore.open("snapshot", dir / ChainLedger.FileName, arch)
+      captured <- cats.effect.Deferred[IO, Unit]
+      resume <- cats.effect.Deferred[IO, Unit]
+      fiber <- store.verifySnapshot(captured.complete(()) *> resume.get).start
+      _ <- captured.get
+      _ <- IO.blocking { os.makeDir.all(arch); os.write(arch / "round-1.json", cold.asJson.noSpaces) }
+      _ <- resume.complete(())
+      result <- fiber.joinWithNever
+    yield assertEquals(result, Right(()): Either[String, Unit]))
+      .guarantee(IO.blocking(os.remove.all(dir)))
+  }
+
+  test("committed missing cold payload remains a verification failure") {
+    val dir = os.temp.dir(prefix = "ledger-missing-", deleteOnExit = false)
+    val path = dir / ChainLedger.FileName
+    val arch = dir / ChainLedger.ArchiveDirName
+    (for
+      store <- ChainLedgerStore.open("missing", path, arch)
+      _ <- store.reconcile(List(proto("c", List("n"))), Set("n"), Map.empty, Set.empty, t0)
+      _ <- store.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 1000)
+      flushed <- store.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 2000 + ChainLedger.OfflineFlushAgeMs)
+      _ <- IO.blocking(os.remove(arch / flushed.state.rounds.head.file))
+      check <- store.verify
+    yield assert(check.left.toOption.exists(_.contains("cold file missing"))))
+      .guarantee(IO.blocking(os.remove.all(dir)))
+  }
+
+  test("audit retries if ledger state changes during its cold snapshot") {
+    val dir = os.temp.dir(prefix = "ledger-version-", deleteOnExit = false)
+    val arch = dir / ChainLedger.ArchiveDirName
+    (for
+      store <- ChainLedgerStore.open("version", dir / ChainLedger.FileName, arch)
+      captured <- cats.effect.Deferred[IO, Unit]
+      resume <- cats.effect.Deferred[IO, Unit]
+      fiber <- store.verifySnapshot(captured.complete(()) *> resume.get).start
+      _ <- captured.get
+      _ <- store.reconcile(List(proto("c", List("n"))), Set("n"), Map.empty, Set.empty, t0)
+      _ <- store.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 1000)
+      flushed <- store.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 2000 + ChainLedger.OfflineFlushAgeMs)
+      _ <- IO.blocking(os.remove(arch / flushed.state.rounds.head.file))
+      _ <- resume.complete(())
+      result <- fiber.joinWithNever
+    yield assert(result.left.toOption.exists(_.contains("cold file missing"))))
+      .guarantee(IO.blocking(os.remove.all(dir)))
+  }
+
+  test("selfCheck emits no false warning for concurrent committed rounds and warns for missing committed file") {
+    val dir = os.temp.dir(prefix = "ledger-warning-", deleteOnExit = false)
+    val arch = dir / ChainLedger.ArchiveDirName
+    val logger = org.slf4j.LoggerFactory.getLogger("nebflow.chain-ledger").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]()
+    import scala.jdk.CollectionConverters.*
+    (for
+      store <- ChainLedgerStore.open("warning-test", dir / ChainLedger.FileName, arch, coldReadBudgetBytes = 0L)
+      _ <- IO { appender.start(); logger.addAppender(appender) }
+      captured <- cats.effect.Deferred[IO, Unit]
+      resume <- cats.effect.Deferred[IO, Unit]
+      fiber <- store.selfCheck("concurrent", captured.complete(()) *> resume.get).start
+      _ <- captured.get
+      _ <- store.reconcile(List(proto("c", List("n"))), Set("n"), Map.empty, Set.empty, t0)
+      _ <- store.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 1000)
+      flushed <- store.reconcile(Nil, Set.empty, Map.empty, Set.empty, t0 + 2000 + ChainLedger.OfflineFlushAgeMs)
+      _ <- resume.complete(())
+      _ <- fiber.joinWithNever
+      _ = assert(!appender.list.asScala.exists(_.getFormattedMessage.contains("self-check FAILED (concurrent)")))
+      _ <- IO.blocking(os.remove(arch / flushed.state.rounds.head.file))
+      _ <- store.selfCheck("corrupt")
+    yield assert(appender.list.asScala.exists(_.getFormattedMessage.contains("self-check FAILED (corrupt)"))))
+      .guarantee(IO { logger.detachAppender(appender); os.remove.all(dir) })
+  }
+
   // ── T1 出生即定 + 承继不改号 ───────────────────────────────
 
   test("T1 出生即定 + 承继不改号：同一链成员生长，链号/锚点/出生时刻一律不动") {

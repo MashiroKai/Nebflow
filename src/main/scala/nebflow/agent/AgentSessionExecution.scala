@@ -1063,9 +1063,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // UI 客户端缺省形态）以下，防 20 分钟空烧再现（现场：鹦鹉骑自行车
           // delegate，thinking 146K 字符、textLen=0、零工具调用）。纯函数钳在
           // ThinkingConfig.cappedForSubagent（spec 判红锚）；根会话零变化。
-          workerThinking =
-            if depth > 0 then nebflow.shared.ThinkingConfig.cappedForSubagent(turnCtx.thinkingConfig)
-            else turnCtx.thinkingConfig
+          workerThinking = turnCtx.thinkingConfig
           // ask 思考低档（2026-11-02 换装批，作者令「思考强度低」）：ask 会话
           // （ask- 前缀身份，AskSessions 单点）逐请求 effort 强制 low——经
           // req.thinking 语义载体的 effort 键携带（toLlmJson 主面不变；非 ask
@@ -1115,6 +1113,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             agentId = freshDef.name,
             tools = freshTools,
             thinking = Some(askThinkingJson),
+            subagentThinkingBudgetCap = Option.when(depth > 0)(nebflow.shared.Defaults.SubagentThinkingBudgetCap),
             systemStable = Some(systemStable),
             // 时钟简化批（作者令 2026-11-06 22:26/22:29）：动态段时钟整体退役——
             // **永不主动注入**（空转/pingpong/工具往返轮被每请求时钟反复叫醒、无法

@@ -140,7 +140,9 @@ case class LlmRequest(
    */
   requestOnlyContext: List[Message] = Nil,
   /** Internal observation id; provider adapters do not serialize this field. */
-  requestId: Option[String] = None
+  requestId: Option[String] = None,
+  /** Internal post-inheritance budget ceiling for derived sessions. */
+  subagentThinkingBudgetCap: Option[Int] = None
 )
 
 case class TokenUsage(

@@ -183,14 +183,14 @@ class LargeTextView {
     this.searchEl = search;
 
     const prevBtn = document.createElement('button');
-    prevBtn.className = 'lt-btn';
+    prevBtn.className = 'canvas-button lt-btn';
     prevBtn.type = 'button';
     prevBtn.textContent = '↑';
     prevBtn.title = t('canvas.largeTextPrevHit');
     prevBtn.addEventListener('click', () => this.stepHit(-1));
 
     const nextBtn = document.createElement('button');
-    nextBtn.className = 'lt-btn';
+    nextBtn.className = 'canvas-button lt-btn';
     nextBtn.type = 'button';
     nextBtn.textContent = '↓';
     nextBtn.title = t('canvas.largeTextNextHit');
@@ -620,7 +620,7 @@ class LargeTextView {
     this.statusEl.textContent = text || '';
     if (state === 'error') {
       const retry = document.createElement('button');
-      retry.className = 'lt-btn lt-retry';
+      retry.className = 'canvas-button lt-btn lt-retry';
       retry.type = 'button';
       retry.textContent = t('canvas.largeTextRetry');
       retry.addEventListener('click', () => {

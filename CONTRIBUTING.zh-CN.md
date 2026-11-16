@@ -66,13 +66,19 @@ CI 以新构建的 JAR 跑 smoke 套件，因此前端改动的门槛 = 本地�
 
 ## 分支与提交
 
-- 从 `main` 拉短描述性分支名；一个分支只做一件事。
+- 分支模型、作者专属操作、守卫用法及 USTC 保护清单以 [Contributing](CONTRIBUTING.md#branches-and-commits) 为准。批次从 `main` 拉 `feat/*` 或 `bug/*`；既有 `fix/*` 不追溯改名。不得直接推 USTC。
 - 按文件显式暂存（`git add <file>`）；避免 `git add -A`。
-- 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 的 merge commit 遵循 `Merge <branch>: <summary>`。
+- 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 由作者在上游核验后以 fast-forward 方式执行。
+
+### 发布流转
+
+作者批准并合入经核验的变更至 `main` 后，作者手动将 `main` 合入 `release/beta`，由管线发布 beta 版。beta 验证通过后，作者将 `release/beta` 合入 `release/stable`，由管线发布稳定版。发布线只向下游流转，永不合并或回写 `main`；发布问题从 `main` 修复，再按同一路径推进。
+
+USTC 保护与旧分支清理由作者按[保护清单](CONTRIBUTING.md#ustc-server-protection-checklist-author-only)执行：先归档为 `achieve/beta-20261116`、`achieve/release-20261116`，核对归档指向原分支尖端后再删除旧分支。
 
 ## PR 要求
 
-- PR 目标 `main`。diff 保持最小、聚焦单一改动。
+- USTC PR 只由作者创建，源分支仅限 `feat/*`、`bug/*`，目标 `main`；由作者核验后 ff-only 合入。diff 保持最小、聚焦单一改动。
 - 开 PR 前：`sbt compile` 与受影响测试全绿。Scala 改动另跑 `make check`（scalafmt + scalafix）；前端改动跑类型/循环依赖门禁与受影响的 Playwright spec（见下）。
 - `.github/workflows/ci.yml` 与 `.gitlab-ci.yml` 的静态质量任务均为阻断门禁，后者覆盖 MR 与所有分支。`.github/workflows/auto-release.yml` 在构建前要求同一入口通过。现有浏览器观察任务仍保留非阻断状态。配置仅说明预期执行方式，不表示远程 CI 已经运行或通过。
 

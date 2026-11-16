@@ -66,6 +66,14 @@ class ThinkingInheritanceSpec extends FunSuite:
     assertEquals(ThinkingMode.resolveEffective(None, None, g).effort, Some(ThinkingEffort.Medium))
   }
 
+  test("global request carrier preserves configured effort and clearThinking after worker budget cap") {
+    val global = ThinkingConfig(budgetTokens = 65536, effort = Some(ThinkingEffort.Max), clearThinking = Some(false))
+    val carrier = ThinkingConfig.toLlmJson(ThinkingConfig.cappedForSubagent(global))
+    assertEquals(carrier.hcursor.get[String]("effort").toOption, Some("max"))
+    assertEquals(carrier.hcursor.get[Boolean]("clearThinking").toOption, Some(false))
+    assertEquals(carrier.hcursor.get[Int]("budget_tokens").toOption, Some(32000))
+  }
+
   // ── I3：配置面零破坏 ─────────────────────────────────────────────────────
 
   test("I3: legacy config JSON (no new fields) decodes to the legacy values") {
@@ -108,6 +116,11 @@ class ThinkingInheritanceSpec extends FunSuite:
     val mc2 = rich.as[ModelConfig].toOption.getOrElse(fail("decode"))
     assertEquals(mc2.thinking, Some(ThinkingLayerConfig(effort = Some(ThinkingEffort.High))))
     assertEquals(mc2.thinkingKind, Some(ThinkingKind.Toggle))
+  }
+
+  test("provider config decodes an explicit model and tier effort allowlist") {
+    val json = parse("""{"baseUrl":"https://example.invalid","apiKey":"test","protocol":"openai","models":[],"effortAllowlist":{"https://example.invalid/chat/completions":{"model":["high"]}}}""").toOption.get
+    assertEquals(json.as[ProviderConfig].toOption.flatMap(_.effortAllowlist), Some(Map("https://example.invalid/chat/completions" -> Map("model" -> List(ThinkingEffort.High)))))
   }
 
   // ── I4：per-model 层定点 patch ───────────────────────────────────────────

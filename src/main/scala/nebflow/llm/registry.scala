@@ -81,7 +81,8 @@ class ProviderRegistry(
           backend,
           requireThinkingPassback = passback,
           providerId = providerId,
-          providerHeaders = provider.headers
+          providerHeaders = provider.headers,
+          effortAllowlist = provider.effortAllowlist
         )
       case LlmProtocol.Anthropic =>
         AnthropicAdapter(
@@ -97,7 +98,8 @@ class ProviderRegistry(
           // 代码面根治 + live 配置显式补键 = 双保险。
           requireThinkingPassback = passback,
           providerId = providerId,
-          providerHeaders = provider.headers
+          providerHeaders = provider.headers,
+          effortAllowlist = provider.effortAllowlist
         )
 
     end match
