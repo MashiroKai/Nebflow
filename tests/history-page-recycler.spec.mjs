@@ -29,8 +29,14 @@ try {
     const afterHeight = chat.scrollHeight;
     const placeholders = chat.querySelectorAll('[data-history-placeholder]').length;
     chat.scrollTop = 650;
+    const scrollBeforeRestore = chat.scrollTop;
+    const restoreAnchor = [...chat.children].find(el => el.getBoundingClientRect().bottom > chat.getBoundingClientRect().top);
+    const restoreAnchorTop = restoreAnchor.getBoundingClientRect().top;
     const restored = recycle.restoreVisible();
+    const restoredAnchorTop = restoreAnchor.isConnected ? restoreAnchor.getBoundingClientRect().top : null;
+    const scrollAfterRestore = chat.scrollTop;
     return { before, after, originalHeight, afterHeight, detached, placeholders, restored,
+      scrollBeforeRestore, scrollAfterRestore, restoreAnchorTop, restoredAnchorTop,
       pageRestored: [...chat.children].some(el => el.textContent === 'page-3') };
   }, source);
   assert.equal(result.before, result.after, 'recycling must not move the visible anchor');
@@ -39,5 +45,7 @@ try {
   assert.equal(result.placeholders, 2);
   assert.ok(result.restored >= 1, 'scrolling down restores an approaching page');
   assert.ok(result.pageRestored);
+  assert.equal(result.scrollBeforeRestore, result.scrollAfterRestore, 'restoration keeps scroll position');
+  if (result.restoredAnchorTop !== null) assert.equal(result.restoreAnchorTop, result.restoredAnchorTop);
   console.log('PASS history page recycling preserves anchor, height and bounded restoration');
 } finally { await browser.close(); }
