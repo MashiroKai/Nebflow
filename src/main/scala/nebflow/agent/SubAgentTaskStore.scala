@@ -39,7 +39,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
    * 必须整体持锁串行化。ReentrantLock + IO.blocking：JVM 内进程级互斥，
    * 无创建点改动（SharedResources 默认参数 + 测试共用同一构造签名）。
    */
-  private val lock = new java.util.concurrent.locks.ReentrantLock()
+  private val lock = SubAgentTaskStore.processLock
 
   private def withLock[A](body: => A): IO[A] = IO.blocking {
     lock.lock()
@@ -707,6 +707,8 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
 end SubAgentTaskStore
 
 object SubAgentTaskStore:
+  // A process-wide lock also covers path aliases and stores opened before a directory exists.
+  private val processLock = new java.util.concurrent.locks.ReentrantLock()
   private var authorities = Map.empty[os.Path, nebflow.core.ExecutionCommitPort]
   private var retiredAuthorities = Set.empty[os.Path]
 
