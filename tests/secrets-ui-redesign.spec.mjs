@@ -1,12 +1,19 @@
+// 🔴 jev-retire 批（2026-11-16）换代注：R1（settings.jevHealth* i18n 键）/
+// R4（健康徽标三态）及截图腿「服务商面板 Jev 标签态」随 JeV 全量退役**整件删除**
+// ——jev 域已不在统一服务商面板（providerPanel.js DOMAIN_SPECS 只剩
+// llm/imagegen），settings-jev-health 徽标与 jevHealth* 键不复存在。承接件
+// jev-panel-threefix.spec 亦随本批删除。本文件余下测试（R6–R8 密钥面板自身）
+// 不受影响。
 // 🔴 provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
 // 单一服务商面板」）换代注：R2（Jev 卡折叠面）/ R3（keyRef 明文直显 + eye）/
 // R5（#btn-save-jev 内联保存反馈）随旧 Jev 表单**整件退役**——keyRef 不再是
 // 用户可编辑字段（统一表单 = 派生名对用户不可见，T2 fourfix「前端零 keyRef
 // 字眼」口径推广到 JeV），保存反馈 = 统一 toast。存活语义改由别件守：开关解耦
-// + 端点钉死 + 保存形状 → jev-panel-threefix.spec（R1'–R3b'）；健康徽标三态 →
-// 同件 R4*。R1/R4 改走统一面板（Jev 标签选中后断言）。本文件余下测试（R6–R8
-// 密钥面板自身）不受影响。
-// secrets-ui-redesign.spec.mjs — 密钥面板 & Jev 配置 UI 重设计验收 spec。
+// + 端点钉死 + 保存形状 → jev-panel-threefix.spec（R1'–R3b'，随 JeV 退役删除）；
+// 健康徽标三态 → 同件 R4*（随 JeV 退役删除）。R1/R4 曾改走统一面板（Jev 标签
+// 选中后断言）。本文件余下测试（R6–R8 密钥面板自身）不受影响。
+// secrets-ui-redesign.spec.mjs — 密钥面板 UI 重设计验收 spec（Jev 配置腿已随
+// JeV 退役删除——jev-retire 批 2026-11-16）。
 //
 // 设计稿：/tmp/nebflow-coldstart/general/20261008_232800_secrets-ui-redesign-proto.md
 // + proto-secrets/index.html（2026-10-08 批准方向：除创建/修改弹窗本身以外的全部项）。
@@ -14,19 +21,6 @@
 // SELF-CONTAINED（settings-cleanup.spec.mjs 同款 harness）：隔离静态服务器
 // 127.0.0.1:8187 + route mock API + routeWebSocket mock WS，零真实后端、零端口冲突。
 //
-// R1 i18n 裸键名回归 — settings.jevHealth / jevHealthUp / jevHealthDown /
-//    jevHealthUnconfigured 四键 zh/en 均存在；健康行 label 渲染「分配通道」，
-//    设置 DOM 不再出现 settings.jevHealth* 裸键名（t() 未命中回退键名的 bug）。
-// R2 Jev 卡自含标题 — 外层 .settings-section-title 无 Jev；.cfg-card-title
-//    承载标题，toggle 骑卡头；jev-panel-threefix（2026-10-09 三改①）改写：
-//    收起态=标题+开关一行（enabled 也不展开），行体点击展开，折叠不清值。
-// R3 keyRef 遮蔽 — 默认 -webkit-text-security:disc；点睛显/隐互换，
-//    aria-label/aria-pressed 随态；hint 只剩安全关键句一行。
-// R4 健康徽标三态 — up → [data-tone=ok]+activity+正常；down → err +
-//    octagon-alert+异常+reason（.badge-reason 截断，title 全文）；
-//    unconfigured → mut+circle-dashed+未配置；fetch 失败 → 「…」占位留存。
-// R5 保存内联化 — PUT 成功 → #jev-save-state 行内「已保存 ✓」（st-ok 图标），
-//    按钮文字恒为「保存」（不再换字），1.5s 后反馈清空；失败 → 「保存失败」。
 // R6 密钥入口行 — 虚线满宽 .cfg-btn-add → .secrets-entry 玻璃行卡：
 //    key 图标 +「密钥管理」+「N 个密钥」+ count pill + chevron；0 个 →
 //    「尚无密钥」+ 0；点击开独立弹窗，Esc 关闭后焦点回入口行。
@@ -79,20 +73,15 @@ const base = `http://127.0.0.1:${PORT}`;
 test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
-/** @typedef {{status: 'up'|'down'|'unconfigured', reason?: string}} HealthState */
-
 /**
  * Boot the real shell against mocks.
  * @param {import('@playwright/test').Page} page
- * @param {{locale?: string, colorScheme?: 'light'|'dark', jev?: object|null,
- *           health?: HealthState|null, healthFail?: boolean,
+ * @param {{locale?: string, colorScheme?: 'light'|'dark',
  *           secrets?: object[]|null, secretsFail?: boolean}} opts
  */
 async function bootPage(page, opts = {}) {
   const {
     locale = 'zh-CN', colorScheme = 'light',
-    jev = { enabled: true, provider: 'typesafe-jev', endpoint: 'https://api.typesafe.ai/v1/systemone', keyRef: 'typesafe-api-key' },
-    health = { status: 'unconfigured' }, healthFail = false,
     secrets = null, secretsFail = false,
   } = opts;
   await page.emulateMedia({ colorScheme });
@@ -103,10 +92,6 @@ async function bootPage(page, opts = {}) {
     localStorage.setItem('neblink_locale', l);
   }, locale);
   await page.route('**/api/**', r => r.fulfill({ json: {} })); // catch-all first (lowest priority)
-  await page.route('**/api/decision/health', r => {
-    if (healthFail) return r.fulfill({ status: 500, body: 'boom' });
-    return r.fulfill({ json: { decision: health } });
-  });
   await page.route('**/api/secrets', r => {
     if (secretsFail) return r.fulfill({ status: 500, body: 'boom' });
     // rows deliberately carry a `value` field that must NEVER render (R7).
@@ -124,7 +109,7 @@ async function bootPage(page, opts = {}) {
     });
     ws.send(JSON.stringify({
       type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {},
-      config: JSON.stringify({ jev }),
+      config: JSON.stringify({ llm: { providers: {} } }),
     }));
     ws.send(JSON.stringify({ type: 'serverConfig', version: '1.4.0', streamTimeoutMs: 600000 }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [], activeId: null, folders: [] }));
@@ -141,112 +126,22 @@ async function openSettings(page) {
   await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
 }
 
-// ══ R1 · i18n 裸键名回归 ═══════════════════════════════════
-for (const [locale, exp] of [
-  ['zh-CN', { health: '分配通道', up: '正常', down: '异常', unconf: '未配置', jevTitle: 'Jev（插件分配）' }],
-  ['en', { health: 'Allocation channel', up: 'Up', down: 'Down', unconf: 'Not configured', jevTitle: 'Jev (plugin allocation)' }],
-]) {
-  test(`R1 [${locale}] jevHealth keys resolve — bare key names never reach the DOM`, async ({ page }) => {
-    await bootPage(page, { locale, health: { status: 'down', reason: 'jev leg: 502 bad gateway' } });
-    await openSettings(page);
-    // 统一面板（provider-add-tabs 批）：徽标与标签行在 Jev 标签选中态。
-    await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
-    await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
-    // The tri-state fetch is async — wait for the badge to resolve before reading it.
-    await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').trim() !== '…', undefined, { timeout: 5000 });
-    const dump = await page.evaluate(async ([exp]) => {
-      const zh = Object.keys((await import('/js/locales/zh-CN.js')).default);
-      const en = Object.keys((await import('/js/locales/en.js')).default);
-      const keys = ['settings.jevHealth', 'settings.jevHealthUp', 'settings.jevHealthDown', 'settings.jevHealthUnconfigured'];
-      const label = [...document.querySelectorAll('#settings-content .settings-label')]
-        .find(e => e.textContent.trim() === exp.health);
-      const leaked = /settings\.jevHealth/.test(document.getElementById('settings-content').textContent);
-      return {
-        keySets: { zh: keys.every(k => zh.includes(k)), en: keys.every(k => en.includes(k)) },
-        labelThere: !!label,
-        // The label's row badge reads the down word (not the key).
-        rowText: label?.parentElement?.textContent || '',
-        leaked,
-        parity: { onlyZh: zh.filter(k => !en.includes(k)), onlyEn: en.filter(k => !zh.includes(k)) },
-      };
-    }, [exp]);
-    expect(dump.keySets.zh, 'zh table carries all four keys').toBe(true);
-    expect(dump.keySets.en, 'en table carries all four keys').toBe(true);
-    expect(dump.parity.onlyZh, 'zh/en parity holds').toEqual([]);
-    expect(dump.parity.onlyEn, 'zh/en parity holds').toEqual([]);
-    expect(dump.labelThere, `health row label renders "${exp.health}"`).toBe(true);
-    expect(dump.rowText, 'down word rendered, not the key').toContain(exp.down);
-    expect(dump.leaked, 'no settings.jevHealth* bare key name anywhere in settings DOM').toBe(false);
-  });
-}
+// （R1 已随 JeV 退役删除——jev-retire 批 2026-11-16：jev 域不在统一服务商面板，
+// settings.jevHealth* 键与 settings-jev-health 徽标不复存在；见文件头换代注。）
 
-// （R2 已随统一面板退役——见文件头 provider-add-tabs 换代注；语义承接 =
-// jev-panel-threefix.spec R1'/R2'。）
+// （R2 已随统一面板退役——见文件头 provider-add-tabs 换代注；承接件
+// jev-panel-threefix.spec 已随 JeV 退役删除。）
 
 // （R3 已随统一面板退役——keyRef 不再是用户可见字段，见文件头换代注；
 // key 字段语义 = settings-key-reveal.spec T1（统一表单版）。）
 
-// ══ R4 · 健康徽标三态 ═══════════════════════════════════════
-const HEALTH_CASES = [
-  { name: 'up', health: { status: 'up' }, tone: 'ok', word: '正常', icon: 'activity', reason: false },
-  { name: 'down', health: { status: 'down', reason: 'jev leg: 502 bad gateway' }, tone: 'err', word: '异常', icon: 'octagon-alert', reason: true },
-  { name: 'unconfigured', health: { status: 'unconfigured' }, tone: 'mut', word: '未配置', icon: 'circle-dashed', reason: false },
-];
-for (const c of HEALTH_CASES) {
-  test(`R4 health badge [${c.name}] → tone=${c.tone}, icon=${c.icon}${c.reason ? ' + truncated reason' : ''}`, async ({ page }) => {
-    await bootPage(page, { locale: 'zh-CN', health: c.health });
-    await openSettings(page);
-    // 统一面板：徽标在 Jev 标签选中态。
-    await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
-    await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
-    await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').trim() !== '…');
-    const dump = await page.evaluate(() => {
-      const b = document.getElementById('settings-jev-health');
-      const reasonEl = b.querySelector('.badge-reason');
-      return {
-        tone: b.dataset.tone,
-        text: b.textContent.trim(),
-        iconSvg: !!b.querySelector('svg.st-ic'),
-        iconClass: b.querySelector('svg.st-ic')?.classList.contains('st-ok') ? 'st-ok'
-          : b.querySelector('svg.st-ic')?.classList.contains('st-err') ? 'st-err' : '',
-        reasonText: reasonEl ? reasonEl.textContent : '',
-        title: b.title,
-        truncate: reasonEl ? getComputedStyle(reasonEl).textOverflow : '',
-      };
-    });
-    expect(dump.tone, `data-tone=${c.tone}`).toBe(c.tone);
-    expect(dump.text, `word = ${c.word}`).toContain(c.word);
-    expect(dump.iconSvg, 'a status icon renders').toBe(true);
-    if (c.icon === 'activity') expect(dump.iconClass, 'activity rides st-ok').toBe('st-ok');
-    if (c.icon === 'octagon-alert') expect(dump.iconClass, 'octagon-alert rides st-err').toBe('st-err');
-    if (c.reason) {
-      expect(dump.reasonText, 'reason rides the badge (truncation lane)').toContain('jev leg: 502 bad gateway');
-      expect(dump.title, 'title carries the full reason').toBe('jev leg: 502 bad gateway');
-      expect(dump.truncate, 'reason truncates with ellipsis').toBe('ellipsis');
-    } else {
-      expect(dump.reasonText, 'no reason tail').toBe('');
-    }
-  });
-}
-test('R4 health probe failure keeps the muted … placeholder', async ({ page }) => {
-  await bootPage(page, { locale: 'zh-CN', healthFail: true });
-  await openSettings(page);
-  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
-  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
-  await page.waitForTimeout(600);
-  const dump = await page.evaluate(() => {
-    const b = document.getElementById('settings-jev-health');
-    return { text: b.textContent.trim(), tone: b.dataset.tone };
-  });
-  expect(dump.text, 'placeholder survives the failed probe').toBe('…');
-  expect(dump.tone, 'placeholder is muted').toBe('mut');
-});
+// （R4 已随 JeV 退役删除——jev-retire 批 2026-11-16：健康徽标随 jev 域下线。）
 
 // （R5 已随统一面板退役——统一表单保存反馈 = toast『已保存』，见文件头换代注。）
 
 // ══ R6 · 密钥入口行 ══════════════════════════════════════════
 const SECRETS_THREE = [
-  { name: 'typesafe-api-key', size: 812, mtime: 1728383640000, mode: '0600', refs: ['jev.keyRef'], value: 'TOPSECRET-VALUE' },
+  { name: 'anthropic-api-key', size: 812, mtime: 1728383640000, mode: '0600', refs: ['llm.anthropic.apiKey'], value: 'TOPSECRET-VALUE' },
   { name: 'social-x-auth', size: 1248, mtime: 1728295320000, mode: '0600', refs: [], value: 'TOPSECRET-VALUE' },
   { name: 'legacy-backup-key', size: 96, mtime: 1726140180000, mode: '0644', refs: [], value: 'TOPSECRET-VALUE' },
 ];
@@ -342,14 +237,14 @@ test('R7 rows rest minimal (name + meta line, no dots); expanded detail = length
     expect(r.noActionsAtRest, `${r.name}: no buttons on the resting row`).toBe(true);
     expect(r.noFieldAtRest, `${r.name}: no edit field on the resting row`).toBe(true);
   }
-  const zhipu = dump.rows.find(r => r.name === 'typesafe-api-key');
+  const zhipu = dump.rows.find(r => r.name === 'anthropic-api-key');
   expect(zhipu, 'seeded row present').toBeTruthy();
 
   // 展开一行：长度保真占位 + 被引用行 + 右对齐 actions 在原位展开区
-  await page.click('[data-row-head="typesafe-api-key"]');
-  await page.waitForSelector('.secrets-row[data-name="typesafe-api-key"] .secrets-row-detail', { timeout: 5000 });
+  await page.click('[data-row-head="anthropic-api-key"]');
+  await page.waitForSelector('.secrets-row[data-name="anthropic-api-key"] .secrets-row-detail', { timeout: 5000 });
   const open = await page.evaluate(() => {
-    const row = document.querySelector('.secrets-row[data-name="typesafe-api-key"]');
+    const row = document.querySelector('.secrets-row[data-name="anthropic-api-key"]');
     const detail = row?.querySelector('.secrets-row-detail');
     return {
       refsText: detail?.textContent.trim() || '',
@@ -357,7 +252,7 @@ test('R7 rows rest minimal (name + meta line, no dots); expanded detail = length
       phLen: row?.querySelector('[data-edit]')?.placeholder?.length || 0,
     };
   });
-  expect(open.refsText, 'detail carries the referenced-by line').toContain('jev.keyRef');
+  expect(open.refsText, 'detail carries the referenced-by line').toContain('llm.anthropic.apiKey');
   expect(open.phLen, 'expanded mask placeholder = one dot per stored byte (三轮 长度保真)').toBe(SECRETS_THREE[0].size);
   expect(dump.leak, '🔴 the wire `value` field never reaches any render').toBe(false);
 });
@@ -379,36 +274,28 @@ test('R8 editor modal retired: no #secrets-form / #secrets-fab; resting rows car
   expect(dump.fieldsAtRest, '🔴 resting rows carry NO inline field (二轮极简)').toBe(0);
   expect(dump.addRow, 'creation is the dashed tail row').toBe(true);
 
-  await page.click('[data-row-head="typesafe-api-key"]');
-  await page.waitForSelector('.secrets-row[data-name="typesafe-api-key"] [data-edit]', { timeout: 5000 });
+  await page.click('[data-row-head="anthropic-api-key"]');
+  await page.waitForSelector('.secrets-row[data-name="anthropic-api-key"] [data-edit]', { timeout: 5000 });
   const opened = await page.evaluate(() => ({
     only: document.querySelectorAll('#secrets-list .secrets-row [data-edit]').length,
-    f: (() => { const x = document.querySelector('.secrets-row[data-name="typesafe-api-key"] [data-edit]'); return x instanceof HTMLTextAreaElement ? { masked: x.classList.contains('masked'), value: x.value } : null; })(),
+    f: (() => { const x = document.querySelector('.secrets-row[data-name="anthropic-api-key"] [data-edit]'); return x instanceof HTMLTextAreaElement ? { masked: x.classList.contains('masked'), value: x.value } : null; })(),
   }));
   expect(opened.only, 'the expanded row builds exactly one field, in place').toBe(1);
   expect(opened.f?.masked && opened.f?.value === '', 'the built field starts masked + empty').toBe(true);
 });
 
-// ══ 双主题截图（健康徽标+遮蔽卡 / 入口行 / 面板行卡）══════════
+// ══ 双主题截图（入口行 / 面板行卡）══════════
+// （jev 面板截图腿已随 JeV 退役删除——jev-retire 批 2026-11-16。）
 async function shots(colorScheme, tag) {
-  test(`shots[${tag}] jev card (masked + health down) / entry row / panel rows`, async ({ page }) => {
-    // 1) 服务商面板（provider-add-tabs 批换代：统一面板 Jev 标签态 + 健康徽标 down）
-    await bootPage(page, {
-      locale: 'zh-CN', colorScheme,
-      health: { status: 'down', reason: 'jev leg: 502 bad gateway' },
-      secrets: SECRETS_THREE,
-    });
+  test(`shots[${tag}] entry row / panel rows`, async ({ page }) => {
+    await bootPage(page, { locale: 'zh-CN', colorScheme, secrets: SECRETS_THREE });
     await openSettings(page);
-    await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
-    await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
-    await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').trim() !== '…');
     await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '3 个密钥');
-    await page.locator('#provider-panel-host').screenshot({ path: `${SHOTS}/provider-panel-jev-health-${tag}.png` });
 
-    // 2) 密钥入口行特写
+    // 1) 密钥入口行特写
     await page.locator('#btn-open-secrets').screenshot({ path: `${SHOTS}/secrets-entry-${tag}.png` });
 
-    // 3) 面板行卡（重排后）
+    // 2) 面板行卡（重排后）
     await page.click('#btn-open-secrets');
     await page.waitForSelector('#secrets-overlay.on .secrets-row', { timeout: 5000 });
     await page.locator('#secrets-modal').screenshot({ path: `${SHOTS}/secrets-panel-rows-${tag}.png` });

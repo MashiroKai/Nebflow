@@ -14,15 +14,15 @@ name: Auto Release
 
 on:
   push:
-    branches: [release]
+    branches: [release/stable]
   workflow_dispatch:
     # #437: pollution-free E2E verification of the packaging matrix — dry_run
     # (default) runs build+test+all three packagers but SKIPS tag/release/
-    # COS/version-sync. Set dry_run=false only for a real release-equivalent
+    # COS. Set dry_run=false only for a real release-equivalent
     # run on a repo where that is intended.
     inputs:
       dry_run:
-        description: 'Skip tag/release/COS/version-sync (verification only)'
+        description: 'Skip tag/release/COS (verification only)'
         type: boolean
         default: true
 
@@ -342,7 +342,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "${{ needs.build-jar.outputs.version }}"
-          git push origin release --tags
+          git push origin "refs/tags/${{ needs.build-jar.outputs.version }}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -374,21 +374,3 @@ jobs:
           echo -n "${{ needs.build-jar.outputs.version }}" > /tmp/latest-version.txt
           "$OSSUTIL" cp /tmp/latest-version.txt "oss://$COS_BUCKET/latest-version.txt" -f
           echo "  Uploaded latest-version.txt to OSS"
-
-      # --- Sync version back to main ---
-
-      - name: Sync version to main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          REPO="${{ github.repository }}"
-          NEW_VERSION="${{ needs.build-jar.outputs.version }}"
-          SHA=$(gh api "repos/$REPO/contents/VERSION?ref=main" --jq '.sha')
-          ENCODED=$(printf '%s' "$NEW_VERSION" | base64)
-          gh api "repos/$REPO/contents/VERSION" \
-            -X PUT \
-            -f message="chore: sync version to $NEW_VERSION after release" \
-            -f content="$ENCODED" \
-            -f sha="$SHA" \
-            --silent
-          echo "  Synced $NEW_VERSION back to main"

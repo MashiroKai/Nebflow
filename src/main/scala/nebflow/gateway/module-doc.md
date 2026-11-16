@@ -39,7 +39,6 @@ HTTP/WS 网关：路由装配、鉴权、会话与连接守卫。
 | [`HttpCache.scala`](HttpCache.scala) | HTTP 缓存语义小刀（M2 · 设计 v2 §3.1 清单「①取数语义补齐」的单一实现面）。 六端点（`/api/usage/aggregate`、`/api/projects/<n>/flow-map[/archiv |
 | [`ImageGenRoutes.scala`](ImageGenRoutes.scala) | 生图 REST 面（imagegen 双层批 2026-10-24；功能开放批 2026-10-30 起随 seal 缺省编入常态在场）——腿②（delegate 等下层 |
 | [`InputHistory.scala`](InputHistory.scala) | Builder for `~/.nebflow/input_history.jsonl` entries. Extracted pure so the field contract is testable: text/t |
-| [`JevProbe.scala`](JevProbe.scala) | 有界诊断超时（ProviderModelProbe.TimeoutMs 同档）。 |
 | [`LanAddresses.scala`](LanAddresses.scala) | 本机 LAN 地址枚举（console-fastpath 批 2026-10-23，作者令三腿之「设备识别 快速通道」）——给近路探测端点 `/api/neblink/nearpath` 提供「已知网关地址」 |
 | [`LocalConsoleUrl.scala`](LocalConsoleUrl.scala) | Establish a browser session using the existing local credential, without placing that long-lived credential in |
 | [`LoopbackLeg.scala`](LoopbackLeg.scala) | 「环回腿」判据（本地加速 M1 引擎侧批 ①/② 的共用传输事实）。 一个请求是否真的来自**本机**，唯一机械可信的信号 = 服务器接受的 socket |

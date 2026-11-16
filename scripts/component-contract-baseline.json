@@ -667,13 +667,6 @@
       "componentDomLeak": 0,
       "bareInnerHtml": 9
     },
-    "js/sidebar/jevTestButton.js": {
-      "attachShadow": 0,
-      "crossFaceDom": 0,
-      "eventLiteral": 0,
-      "componentDomLeak": 0,
-      "bareInnerHtml": 2
-    },
     "js/sidebar/modelTestButton.js": {
       "attachShadow": 0,
       "crossFaceDom": 0,

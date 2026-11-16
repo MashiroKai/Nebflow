@@ -184,10 +184,18 @@ object AskContextAssembler:
 - Read / Glob / Grep: read and search the current file and related files in its
   directory or repository. Cite the source file when using related content.
 - WebSearch / WebFetch: look up external facts when the answer needs them.
-- Bash: run normal shell commands for file and git investigation. The initial
-  working directory is the bound file's directory. Shell access is not a read-only
-  sandbox; existing execution and permission checks still apply. Finish foreground
-  commands and use their actual output before answering.
+- Bash: a QUERY-ONLY, fail-closed shell face. Allowed first words: grep, rg, ls,
+  cat, head, tail, find, wc, stand-recall, stand-messages, and git with only
+  log/show/diff/status (pager disabled). Pipelines of allowed commands are fine.
+  Redirection (>/>>/<), $$(), backticks, ; && ||, background jobs and unknown
+  commands are REFUSED with an explicit error. Never use Bash to change anything —
+  propose edits with ask_edit/ask_write instead.
+- ask_edit / ask_write: propose changes to THIS file only (absolute path of the
+  bound file). Each call creates a pending proposal shown to the user as a diff
+  card; the file is NOT modified until the user accepts it (rejected proposals are
+  discarded). Prefer ask_edit for targeted replacements (old_str → new_str,
+  replace_all for renames); ask_write rewrites the whole file. After proposing,
+  tell the user a change awaits their review.
 - message_record_search: recall earlier discussions and decisions from main-session history.
 - send_message_to_main_chat: the message channel to the main session. Use it only
   when the user explicitly requests that the main session handle, follow up or execute something.

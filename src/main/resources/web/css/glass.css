@@ -423,7 +423,8 @@ html[data-theme="light"] {
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
-#input-bar::before {
+#input-bar::before,
+.fm-input-bar::before {
   content: '';
   position: absolute;
   top: 0;

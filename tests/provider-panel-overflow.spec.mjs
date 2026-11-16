@@ -110,21 +110,14 @@ const IMAGEGEN = {
   },
 };
 
-const JEV = {
-  enabled: true, provider: 'typesafe-jev',
-  providers: {
-    'typesafe-jev': { type: 'typesafe-jev', endpoint: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest-extended-allocation', keyConfigured: true },
-    'laya-self-hosted-local': { type: 'laya', endpoint: 'http://127.0.0.1:8080/predict', model: 'jev-latest', keyConfigured: false },
-  },
-};
-
+// （jev-retire 批 2026-11-16：JEV 夹具与 jev 域投影随 JeV 退役摘除——面板只剩
+// llm/imagegen 两域。）
 const TYPES = {
   domains: [
     { id: 'llm', enabledSwitch: false },
     { id: 'imagegen', enabledSwitch: true },
-    { id: 'jev', enabledSwitch: true },
   ],
-  adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview', 'openai-images', 'imagen'], jev: ['typesafe-jev', 'laya'] },
+  adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview', 'openai-images', 'imagen'] },
 };
 
 async function bootApp(page, theme) {
@@ -143,7 +136,6 @@ async function bootApp(page, theme) {
     if (p.startsWith('/api/')) {
       if (p === '/api/config/provider-types') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(TYPES) });
       if (p === '/api/config/imagegen') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(IMAGEGEN) });
-      if (p === '/api/config/jev') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(JEV) });
       if (p === '/api/config/provider-keys') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"providers":{}}' });
       if (p === '/api/secrets') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"secrets":[]}' });
       if (p === '/api/decision/health') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"decision":{"status":"up","reason":""}}' });
@@ -257,10 +249,10 @@ for (const cell of MATRIX) {
     await page.waitForSelector('#provider-panel-host .nf-ptab', { timeout: 15000 });
     await page.waitForTimeout(400);
 
-    // 防空转：三张类型标签必须在场（ProviderDomains.All 投影），否则本判据
+    // 防空转：两张类型标签必须在场（ProviderDomains.All 投影），否则本判据
     // 的标签轮换腿会静默跳过 = 假绿。
     const tabCount = await page.evaluate(() => document.querySelectorAll('.nf-ptab').length);
-    expect(tabCount, '类型标签数（llm/imagegen/jev 三域投影）').toBe(3);
+    expect(tabCount, '类型标签数（llm/imagegen 两域投影）').toBe(2);
 
     // ── 态①：设置页里的服务商面板（ALL 行都在 = 一项不筛）───────────────
     const panel = await measure(page, '#settings-content');

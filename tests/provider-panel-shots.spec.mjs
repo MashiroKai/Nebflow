@@ -4,7 +4,8 @@
 // 与 provider-panel-overflow.spec.mjs 共用同一 harness 口径（自持静态服 + route
 // mock API/WS，零真实引擎；NB_WEB_ROOT 换根即为旧树读数）：
 //   · 375 亮/暗、1440 亮/暗：设置页全景（含统一服务商面板）；
-//   · 375 亮：三个类型标签各一张（LLM / Image generation / Jev 列表态）；
+//   · 375 亮：各类型标签各一张（LLM / Image generation 列表态；Jev 面已随
+//     JeV 退役删除——jev-retire 批 2026-11-16）；
 //   · 375 亮：新增表单（LLM 弹窗骨架）一张；
 //   · 全部落 captures/provider-panel/<tag>.png（对照树跑同名前缀 old-*）。
 // Run: npx playwright test tests/provider-panel-shots.spec.mjs
@@ -47,13 +48,11 @@ const IMAGEGEN = {
   compiledIn: true, enabled: true, defaultProvider: 'zhipu',
   providers: { zhipu: { type: 'cogview', model: 'cogview-4-250304-flash-preview-long', keyConfigured: true } },
 };
-const JEV = {
-  enabled: true, provider: 'typesafe-jev',
-  providers: { 'typesafe-jev': { type: 'typesafe-jev', endpoint: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest', keyConfigured: true } },
-};
+// （jev-retire 批 2026-11-16：JEV 夹具与 jev 域投影随 JeV 退役摘除——面板只剩
+// llm/imagegen 两域。）
 const TYPES = {
-  domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }, { id: 'jev', enabledSwitch: true }],
-  adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview', 'openai-images', 'imagen'], jev: ['typesafe-jev', 'laya'] },
+  domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }],
+  adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview', 'openai-images', 'imagen'] },
 };
 
 function startServer() {
@@ -88,7 +87,6 @@ async function bootApp(page, theme) {
     const p = new URL(route.request().url()).pathname;
     if (p === '/api/config/provider-types') return route.fulfill({ json: TYPES });
     if (p === '/api/config/imagegen') return route.fulfill({ json: IMAGEGEN });
-    if (p === '/api/config/jev') return route.fulfill({ json: JEV });
     if (p === '/api/config/provider-keys') return route.fulfill({ json: { providers: {} } });
     if (p === '/api/secrets') return route.fulfill({ json: { secrets: [] } });
     if (p === '/api/decision/health') return route.fulfill({ json: { decision: { status: 'up', reason: '' } } });

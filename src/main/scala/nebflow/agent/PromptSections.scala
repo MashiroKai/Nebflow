@@ -820,20 +820,21 @@ External executors receive the task text only — no platform tools or plugins a
       .filter(_.nonEmpty)
       .mkString("\n\n")
 
-  /**
-   * Assemble the final system prompt: the agent system.md FIRST, then
-   * conditional blocks.
-   *
-   * The leading stable segment is the provider prefix-cache anchor — the
-   * shared system.md base (identical across sessions of the same template)
-   * must stay at the very front or the common prefix is lost and every
-   * session's prompt cache is invalidated. Phase-2 batch A (2026-09) retired
-   * the shared system-prefix layer; the stable system.md base now serves
-   * that role. Pinned by PromptSectionsSpec.
-   */
+  /** Packaged prefix: updates require a new build, not a data-root file. */
+  private lazy val systemPrefix: String =
+    val stream = Option(getClass.getResourceAsStream("/seed/prompt-prefix.md"))
+      .getOrElse(throw new IllegalStateException("Missing classpath resource seed/prompt-prefix.md"))
+    val source = scala.io.Source.fromInputStream(stream, "UTF-8")
+    try source.mkString.trim
+    finally source.close()
+
   def assembleSystemPrompt(agentPrompt: String, conditionalBlocks: String): String =
-    val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
-    s"$agentPrompt$separator$conditionalBlocks"
+    val sections = Seq(
+      Some(s"--- SYSTEM PREFIX ---\n$systemPrefix"),
+      Some(agentPrompt),
+      Option.when(conditionalBlocks.nonEmpty)(conditionalBlocks)
+    ).flatten
+    sections.mkString("\n\n")
 
   /**
    * Remove a `## Section` block from a prompt string.

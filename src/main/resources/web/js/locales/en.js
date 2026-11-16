@@ -1294,39 +1294,9 @@ export default {
   'settings.cfgCard.keyMissing': 'Not configured',
   'settings.cfgCard.models': '{n} models',
   'settings.cfgCard.emptyHint': 'No provider yet — fill in the form below and save.',
-  'settings.jev': 'Jev (plugin allocation)',
-  'settings.jevEnabled': 'Use Jev to allocate plugins',
-  'settings.jevProvider': 'Provider',
-  'settings.jevEndpoint': 'Endpoint',
-  'settings.jevHealth': 'Allocation channel',
-  'settings.jevHealthUp': 'Up',
-  'settings.jevHealthDown': 'Down',
-  'settings.jevHealthUnconfigured': 'Not configured',
-  // jev-panel-threefix (2026-10-09 user feedback, three points): head-row
-  // toggle title / fallback badge word.
-  'settings.jevToggleDetails': 'Expand or collapse allocation settings',
-  'settings.jevHealthFallback': 'Jev unavailable → fell back to llm',
-  // jev-imagegen-align-llm batch (2026-11-02, contract §D.2): Jev config face,
-  // 20 keys — provider name / protocol adapter / model / one single key box
-  // (zero pointer wording on the UI layer).
-  'settings.jev.name': 'Provider name',
-  'settings.jev.namePlaceholder': 'e.g. typesafe-jev',
-  'settings.jev.type': 'Protocol adapter',
-  'settings.jev.typeTypesafe': 'Typesafe JeV (hosted)',
-  'settings.jev.typeLaya': 'LAYA (self-hosted)',
-  'settings.jev.model': 'Model',
-  'settings.jev.modelPlaceholder': 'Model name',
-  'settings.jev.keyEntry': 'API Key',
-  'settings.jev.keyShow': 'Show key value',
-  'settings.jev.keyHide': 'Hide key value',
-  'settings.jev.keySaved': 'Key saved',
-  'settings.jev.keySaveFailed': 'Key save failed ({code})',
-  'settings.jev.keyEmpty': 'Key value is empty',
-  'settings.jev.nameRequired': 'Enter a provider name first',
-  'settings.jev.nameInvalid': 'Provider name allows letters/digits/._- only',
-  'settings.jev.typeRequired': 'Pick a protocol adapter first',
-  'settings.jev.modelRequired': 'Model must not be empty',
-  'settings.jev.detailHint': 'Enter the API key and save; without a key the Jev leg stays closed.',
+  // (jev-retire batch 2026-11-16: the whole settings.jev* key family — enabled
+  // switch / health badge / 20-key config face / test button — was removed with
+  // the JeV retirement; the block spanned jev-panel-threefix + the D.2 face.)
   // settings-panel batch D (2026-10-28): STT master switch (absent = on —
   // existing behavior untouched; off = the whole STT face collected).
   'settings.sttEnabled': 'Enable speech-to-text',
@@ -1373,10 +1343,9 @@ export default {
   'settings.imagegenNameRequired': 'Enter a provider name first',
   'settings.imagegenNameInvalid': 'Provider name allows letters/digits/._- only',
   // settings-panel-jev-imagegen batch (2026-10-29, author order: give JeV and
-  // imagegen the same test-availability button the LLM face has). JeV = one
-  // button; imagegen = two levels (light probe + one minimal real generation).
-  'settings.jevTestBtn': 'Test availability',
-  'settings.jevTestTitle': 'Connectivity test: one minimal real call to the allocation channel (tests the current form values — unsaved edits included)',
+  // imagegen the same test-availability button the LLM face has). The JeV button
+  // left with the JeV retirement (2026-11-16); imagegen = two levels (light
+  // probe + one minimal real generation).
   'settings.imagegenTestBtn': 'Test availability',
   'settings.imagegenTestTitle': 'Light probe: key resolution + upstream reachability (models endpoint)',
   'settings.imagegenGenBtn': 'Run one minimal generation',
@@ -1410,11 +1379,8 @@ export default {
   // by the terminology-unification ruling — identical value in both locales.
   'settings.providerType.llm': 'LLM',
   'settings.providerType.imagegen': 'Image generation',
-  'settings.providerType.jev': 'Jev',
   'settings.providerTypesError': 'Could not load provider types',
   'settings.providerTypesDrift': 'A provider type is not wired into the panel',
-  'settings.jevHealthTitle': 'Allocation channel',
-  'settings.jevEndpointPinned': 'Endpoint is fixed (the typesafe-jev channel is engine-defined, not editable)',
   'settings.enabled': 'Enabled',
   'settings.cfgCard.saved': 'Saved',
   'settings.cfgCard.keyReentryPlaceholder': 'Configured — re-entering overwrites',
@@ -1490,12 +1456,13 @@ export default {
   // the P1-2 "zero consumers" registration is lifted: kernel returns as a slot.
   'model.roleNode': 'Node',
   'model.roleSubagent': 'Subagent',
+  'model.smallLlm': 'General small LLM',
+  'model.smallLlmFallback': 'Not configured (falls back to main model)',
   'model.viaSlash': 'Edit with the /model command',
   'model.currentRun': 'Running',
-  // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): two new /model
-  // groups = pointer switchers ("which provider this config section uses"),
-  // NOT agent model chains.
-  'model.groupJev': 'Jev (plugin allocation)',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): /model groups =
+  // pointer switchers ("which provider this config section uses"), NOT agent
+  // model chains. (The JeV group left with the JeV retirement, 2026-11-16.)
   'model.groupImagegen': 'Image generation',
   'model.groupSwitch': 'Switch',
   'model.groupSwitched': 'Switched to {name}',

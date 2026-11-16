@@ -1,0 +1,37 @@
+component-contract：267 个 js / 46 个 css / 面 33 个 / 命中文档 123 个 / 基线条目 130 个
+  R1 no-attach-shadow = 0
+  R2 cross-face-dom = 126
+  R3 event-literal = 108
+  R4 component-dom-leak = 0
+  R5 bare-innerhtml = 616
+  TOTAL = 850
+  ↑ js/askAttachments.js: bareInnerHtml 6 → 5（改善，建议下次 --update-baseline 收紧）
+  ↑ js/askDock.js: bareInnerHtml 5 → 2（改善，建议下次 --update-baseline 收紧）
+  ↑ js/chatSearch.js: crossFaceDom 59 → 58（改善，建议下次 --update-baseline 收紧）
+  ↑ js/flowViewers.js: eventLiteral 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ js/flowViewers.js: bareInnerHtml 19 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mermaidRenderer.js: bareInnerHtml 3 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ js/messages/fmComposer.js: bareInnerHtml 2 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mobile/navController.js: crossFaceDom 9 → 8（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mobile/searchFace.js: bareInnerHtml 2 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ js/modelPanel.js: bareInnerHtml 13 → 12（改善，建议下次 --update-baseline 收紧）
+  ↑ js/popArtifacts.js: eventLiteral 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ js/projectTab.js: bareInnerHtml 26 → 24（改善，建议下次 --update-baseline 收紧）
+  ↑ js/scheduled-task.js: crossFaceDom 14 → 13（改善，建议下次 --update-baseline 收紧）
+  ↑ js/scheduled-task.js: bareInnerHtml 11 → 10（改善，建议下次 --update-baseline 收紧）
+  ↑ js/sidebar/providersUi.js: crossFaceDom 5 → 4（改善，建议下次 --update-baseline 收紧）
+  ↑ js/sidebar.js: crossFaceDom 17 → 4（改善，建议下次 --update-baseline 收紧）
+  ↑ js/sidebar.js: bareInnerHtml 28 → 24（改善，建议下次 --update-baseline 收紧）
+  ↑ js/todoFace.js: bareInnerHtml 13 → 12（改善，建议下次 --update-baseline 收紧）
+  ↑ js/configDrill.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+  ↑ js/delegateChainProvider.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+  ↑ js/delegatePanoramaView.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mobile/socialSearch.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mobile/taskPanel.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+  ↑ js/profileFace.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+  ↑ js/sidebar/imagegenSection.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+  ↑ js/viewers/video.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+
+FAIL 2 项：
+  js/gesture/backSwipe.js:0  [new-file] 基线外新文件出现组件契约命中（crossFaceDom=1）——新文件五项计数必须全 0
+  js/gesture/backSwipe.js:290  [R2 cross-face-dom] querySelector("#mobile-pages .mobile-page[data-page="${p.key}"].live") 跨面 DOM 直查 #mobile-…（本模块属 [无面]，面 mobile 前缀来自 css/mobileLayer.css）

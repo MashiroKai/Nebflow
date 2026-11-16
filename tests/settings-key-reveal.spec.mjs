@@ -2,17 +2,16 @@
 // 10:33「设置里配置的 apikey，直接显示就行了，比如 JeV 的以及我们 llm api 的」）
 // 验收 spec。
 //
-// 钉四件事（任务 spec 钉逐条）：
-//   ① JeV 配置节 keyRef：进入设置页展开即明文（webkitTextSecurity=none），
-//      眼睛保留为可选遮蔽（首击上掩码、再击揭示，演示性切换不动值）。
+// 钉四件事（任务 spec 钉逐条；①的 JeV 半已随 JeV 退役删除——jev-retire 批
+// 2026-11-16）：
 //   ② LLM API 配置节：编辑弹窗的 API Key 字段 = 回读真值明文（owner 鉴权
 //      GET /api/config/provider-keys，进页预取 + 卡点点击兜底竞态）；保存
 //      逻辑不变——未编辑直存时 payload 里的 apiKey = 所见明文。
 //   ③ 保存 → 重载设置页 → 字段明文等于所存值（T3 闭环；存进 parsedConfig 的
 //      新值在重渲染后原样回显）。
-//   ④ 未配置 = 空态而非掩码（无 key 的 provider 弹窗字段空 + 占位符；JeV 无
-//      keyRef 同空态）；回读 403 → 弹窗退回空态（不伪造、不崩——服务端 403
-//      门的本体钉在 ConfigKeyRevealSpec.scala）。
+//   ④ 未配置 = 空态而非掩码（无 key 的 provider 弹窗字段空 + 占位符）；回读
+//      403 → 弹窗退回空态（不伪造、不崩——服务端 403 门的本体钉在
+//      ConfigKeyRevealSpec.scala）。
 //
 // SELF-CONTAINED（secrets-readback.spec.mjs 同款 harness）：隔离静态服务器
 // 127.0.0.1:8237 + route mock API + routeWebSocket mock WS，零真实后端。
@@ -29,6 +28,11 @@
 // eye + 「已配置——重新输入即覆盖」占位词（LLM 的 provider-keys 明文回读面不受
 // 影响，T2/T3/T5 原样保留）。T1 改钉新语义：值不回显、回读零调用、eye 只动
 // 表现；T4 的 JeV 半改钉统一表单空态。
+//
+// 🔴 jev-retire 批（2026-11-16）：T1（jev 统一表单 key 面）与 T4 的 JeV 半随
+// JeV 全量退役**整件删除**——jev 域已不在统一服务商面板（llm/imagegen 两域），
+// /api/config/jev 投影不复存在。T2/T3/T5（LLM provider-keys 明文回读腿）与
+// T4 的 LLM 半（无 key → 空态非掩码）原样保留。
 
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
@@ -43,12 +47,9 @@ const MIME = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html
 
 const KIMI_KEY = 'sk-real-kimi-reveal-1';
 const KIMI_KEY_ROTATED = 'sk-rotated-kimi-2026-reveal';
-const PINNED = 'https://api.typesafe.ai/v1/systemone';
-const JEV_KEYREF = 'typesafe-api-key';
-const JEV_KEY_VALUE = 'ts-real-jev-key-reveal-1';
 
 /** 静态配置底稿（configData 帧；apiKey 形态字段与引擎 getConfig 打码面同形 = "***"）。 */
-function makeCfg({ withKimiKey = true, withJevKeyRef = true } = {}) {
+function makeCfg({ withKimiKey = true } = {}) {
   /** @type {any} */
   const cfg = {
     llm: {
@@ -57,7 +58,6 @@ function makeCfg({ withKimiKey = true, withJevKeyRef = true } = {}) {
         anon: { baseUrl: 'https://anon.example/v1/', apiKey: '***', protocol: 'openai', models: [{ id: 'anon-1', contextWindow: 4096 }] },
       },
     },
-    jev: { enabled: true, provider: 'typesafe-jev', endpoint: PINNED, ...(withJevKeyRef ? { keyRef: JEV_KEYREF } : {}) },
   };
   return cfg;
 }
@@ -91,13 +91,13 @@ test.afterAll(async () => { server.close(); });
  * Boot the real shell against mocks.
  * @param {import('@playwright/test').Page} page
  * @param {{locale?: string, revealStatus?: number, revealProviders?: Record<string, string>,
- *           withKimiKey?: boolean, withJevKeyRef?: boolean}} opts
+ *           withKimiKey?: boolean}} opts
  */
 async function bootPage(page, opts = {}) {
   const {
     locale = 'zh-CN', revealStatus = 200,
     revealProviders = { kimi: KIMI_KEY },
-    withKimiKey = true, withJevKeyRef = true,
+    withKimiKey = true,
   } = opts;
   await page.emulateMedia({ colorScheme: 'light' });
   await page.addInitScript((l) => {
@@ -120,19 +120,13 @@ async function bootPage(page, opts = {}) {
     if (revealStatus !== 200) return r.fulfill({ status: revealStatus, body: 'boom' });
     return r.fulfill({ json: { providers: { ...store, ...revealProviders } } });
   });
-  // 统一服务商面板投影（provider-add-tabs 批：JeV/生图读 GET 面；secret 存量值
-  // 回读零调用于新面——T1 断言 count）。
-  const secretValue = { count: 0 };
-  await page.route('**/api/secrets/*/value', (r) => { secretValue.count += 1; return r.fulfill({ json: { value: JEV_KEY_VALUE } }); });
+  // 统一服务商面板投影（provider-add-tabs 批：生图读 GET 面；jev 域投影已随
+  // JeV 退役摘除——jev-retire 批 2026-11-16）。
   await page.route('**/api/config/provider-types', (r) => r.fulfill({ json: {
-    domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }, { id: 'jev', enabledSwitch: true }],
-    adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview'], jev: ['typesafe-jev'] },
+    domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }],
+    adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview'] },
   } }));
   await page.route('**/api/config/imagegen', (r) => r.fulfill({ json: { compiledIn: true, enabled: true, providers: {} } }));
-  await page.route('**/api/config/jev', (r) => r.fulfill({ json: {
-    enabled: true, provider: 'typesafe-jev',
-    providers: { 'typesafe-jev': { type: 'typesafe-jev', endpoint: PINNED, model: 'jev', keyConfigured: withJevKeyRef } },
-  } }));
 
   await page.routeWebSocket(/\/ws/, (ws) => {
     ws.onMessage((raw) => {
@@ -144,7 +138,7 @@ async function bootPage(page, opts = {}) {
     });
     ws.send(JSON.stringify({
       type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {},
-      config: JSON.stringify(makeCfg({ withKimiKey, withJevKeyRef })),
+      config: JSON.stringify(makeCfg({ withKimiKey })),
     }));
     ws.send(JSON.stringify({ type: 'serverConfig', version: '1.4.0', streamTimeoutMs: 600000 }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [], activeId: null, folders: [] }));
@@ -153,7 +147,7 @@ async function bootPage(page, opts = {}) {
   await page.goto(base + '/index.html');
   await page.waitForSelector('#activity-bar', { timeout: 15000 });
   return {
-    reveal, secretValue, wsFrames, store,
+    reveal, wsFrames, store,
     updateConfigFrames: () => wsFrames.filter((f) => f.type === 'updateConfig'),
   };
 }
@@ -185,38 +179,8 @@ async function keyFieldState(page) {
   });
 }
 
-// ══ T1 · JeV 配置节：进入即明文；眼睛 = 可选遮蔽（演示性切换不动值）═══════
-// 配置面风格统一批判据换代（2026-10-31）：JeV 节为层级下钻面——点入口行开
-// 浮层收编 #jev-advance-body（旧 #jev-head/#jev-detail-body 锚随 10-28 C 批
-// 重排已死，本换代一并修红）；eye 锚 = 现树 #jev-key-eye（key 值只读行）。
-test('T1 jev key face (unified form): stored value NEVER echoes; eye masks typed text only; readback stays uncalled', async ({ page }) => {
-  const h = await bootPage(page);
-  await openSettings(page);
-  // 统一面板：Jev 标签 → 既有 provider 卡 → 表单。
-  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
-  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
-  // The rows arrive with the projection refresh that follows the first paint; an evaluate-click is a silent no-op before.
-  await page.waitForSelector('#provider-list .cfg-card .cfg-card-title', { timeout: 5000 });
-  await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
-  await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 5000 });
-
-  const initial = await keyFieldState(page);
-  expect(initial.value, '🔴 存量 key 值不回显（统一骨架：值只进写入腿，永不上屏）').toBe('');
-  expect(initial.placeholder, '已配置态占位词 = 重新输入即覆盖（不伪造值）').toContain('覆盖');
-  expect(initial.security, '空态 = 明文面（非掩码假态）').toBe('none');
-  expect(h.secretValue.count, '🔴 存量值回读端点零调用（旧 /value 明文直显面已退役）').toBe(0);
-
-  // eye 只动表现：typed 值上掩码/再揭示，不动值、不发请求。
-  await page.fill('#cfg-modal [data-field="apiKey"]', 'ts-typed-value');
-  await page.click('#cfg-modal .cfg-eye-btn');
-  const masked = await keyFieldState(page);
-  expect(masked.security, 'first eye click masks (disc)').toBe('disc');
-  expect(masked.value, 'masking is presentation-only — the typed value stays').toBe('ts-typed-value');
-  await page.click('#cfg-modal .cfg-eye-btn');
-  const back = await keyFieldState(page);
-  expect(back.security, 'second eye click reveals again').toBe('none');
-  expect(h.secretValue.count, 'eye switching never touches the readback endpoint').toBe(0);
-});
+// （T1 已随 JeV 退役删除——jev-retire 批 2026-11-16：jev 统一表单 key 面随
+// jev 域下线；LLM 域的 key 回读/保存语义由 T2/T3/T5 守。）
 
 // ══ T2 · LLM API 配置节：弹窗字段 = 回读真值明文；未编辑直存 = 明文进 payload ═
 test('T2 provider edit modal prefills the REAL key in plaintext; untouched save sends it verbatim; the readback rides the auth header and fires once', async ({ page }) => {
@@ -269,8 +233,9 @@ test('T3 save a rotated key, reload the settings page, the field shows the store
 });
 
 // ══ T4 · 未配置 = 空态而非掩码 ══════════════════════════════════════════
-test('T4 unconfigured faces show the EMPTY state, not a mask: keyless provider → blank field + placeholder; missing jev keyRef → blank', async ({ page }) => {
-  await bootPage(page, { revealProviders: {} , withJevKeyRef: false });
+// （JeV 半已随 JeV 退役删除——jev-retire 批 2026-11-16。）
+test('T4 unconfigured faces show the EMPTY state, not a mask: keyless provider → blank field + placeholder', async ({ page }) => {
+  await bootPage(page, { revealProviders: {} });
   await openSettings(page);
 
   await page.click('.cfg-card[data-provider="anon"]');
@@ -280,22 +245,6 @@ test('T4 unconfigured faces show the EMPTY state, not a mask: keyless provider �
   expect(anon.placeholder, 'the placeholder carries the keep-*** hint, no fake value').toContain('***');
   expect(anon.security, 'empty state is the plaintext face').toBe('none');
   await page.evaluate(() => document.getElementById('cfg-modal')?.remove());
-
-  // JeV 侧（provider-add-tabs 批：统一表单里断言——未配置 = 空态非掩码）。
-  await page.evaluate(() => {
-    document.getElementById('cfg-modal')?.remove();
-    document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click();
-  });
-  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
-  // The rows arrive with the projection refresh that follows the first paint; an evaluate-click is a silent no-op before.
-  await page.waitForSelector('#provider-list .cfg-card .cfg-card-title', { timeout: 5000 });
-  await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
-  await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 5000 });
-  const jev = await keyFieldState(page);
-  expect(jev.value, 'missing jev key → blank (empty state, never a mask)').toBe('');
-  expect(jev.security, 'blank state is not a mask').toBe('none');
-  expect(jev.placeholder, 'placeholder carries the input hint (not a fake value)').toContain('key');
-  expect(jev.placeholder, 'unconfigured placeholder = 输入提示（非覆写提示）').not.toContain('覆盖');
 });
 
 // ══ T5 · 回读被拒（403）→ 弹窗退回空态（不伪造、不崩）════════════════════

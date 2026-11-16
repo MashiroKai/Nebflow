@@ -1,3 +1,7 @@
+// chat-ui-package 批①②（2026-11-16）：对话 UI 壳（主输入条 / 搜索壳）在
+// chatMount.js 里工厂装配 —— 必须是**首位 import**：#input-bar / #search-overlay
+// 的静态壳要在任何应用模块求值取节点之前填充完成（时序契约见 chatMount.js 头注）。
+import './chatMount.js';
 import { renderProviderFailureStatus } from './providerFailureStatus.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';

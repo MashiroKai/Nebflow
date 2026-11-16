@@ -990,27 +990,64 @@ function buildMediaStack(items, opts) {
   // swipe does not double-fire as a bring-to-front).
   const stack = { suppressClick: false };
   let sx = null, dx = 0;
+  let switching = false;
+  const reduceStackMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Only the outgoing front card moves. Fan slots change atomically afterwards,
+  // with no transitions on the lower layers and no layout reads in pointermove.
+  const switchFront = (step) => {
+    if (switching) return;
+    const layer = layers[front];
+    const finish = () => {
+      layer.style.transform = '';
+      layer.style.willChange = '';
+      front = (front + step + layers.length) % layers.length;
+      applyLayers();
+      switching = false;
+      view.classList.remove('is-switching');
+      stack.suppressClick = false;
+    };
+    if (reduceStackMotion() || !motionEnabled()) { finish(); return; }
+    switching = true;
+    stack.suppressClick = true;
+    view.classList.add('is-switching');
+    const from = layer.style.transform || 'translate3d(0,0,0) rotate(0deg) scale(1)';
+    const animation = layer.animate([
+      { transform: from },
+      { transform: `translate3d(${-step * 110}%,0,0) rotate(${-step * 12}deg) scale(.96)` },
+    ], { duration: parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200,
+      easing: getComputedStyle(view).getPropertyValue('--ds-ease-panel').trim() || 'ease-out' });
+    animation.finished.then(finish, finish);
+  };
   view.addEventListener('pointerdown', e => {
-    // A press that starts on a control inside the face (the retry button of a failed layer) belongs to that control:
-    // capturing the pointer would send its click to the face, which opens the item instead.
     const control = e.target instanceof Element ? e.target.closest('button') : null;
     if (control && view.contains(control)) return;
+    // Both screen-edge bands belong to back navigation, even over a card.
+    if (document.body.classList.contains('mobile-layer')
+        && (e.clientX <= 20 || e.clientX >= window.innerWidth - 20)) return;
+    if (switching || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
     sx = e.clientX; dx = 0;
     view.classList.add('dragging');
+    layers[front].style.willChange = 'transform';
     try { view.setPointerCapture(e.pointerId); } catch { /* detached */ }
   });
   view.addEventListener('pointermove', e => {
     if (sx === null) return;
     dx = e.clientX - sx;
-    view.style.transform = 'translateX(' + (dx * 0.35) + 'px)';
+    layers[front].style.transform = `translate3d(${dx * .65}px,0,0) rotate(${dx * .04}deg) scale(.98)`;
   });
-  const up = () => {
+  const up = (e) => {
     if (sx === null) return;
     view.classList.remove('dragging');
-    view.style.transform = '';
-    if (dx < -38) { front = (front + 1) % layers.length; applyLayers(); }
-    else if (dx > 38) { front = (front - 1 + layers.length) % layers.length; applyLayers(); }
-    if (Math.abs(dx) > 8) { stack.suppressClick = true; setTimeout(() => { stack.suppressClick = false; }, 60); }
+    const step = e.type !== 'pointercancel' && Math.abs(dx) > 38 ? (dx < 0 ? 1 : -1) : 0;
+    if (step) switchFront(step);
+    else {
+      layers[front].style.transform = '';
+      layers[front].style.willChange = '';
+    }
+    if (!step && Math.abs(dx) > 8) {
+      stack.suppressClick = true;
+      setTimeout(() => { stack.suppressClick = false; }, 60);
+    }
     sx = null; dx = 0;
   };
   view.addEventListener('pointerup', up);
@@ -1042,8 +1079,7 @@ function buildMediaStack(items, opts) {
     }
     swipeAcc += d;
     if (Math.abs(swipeAcc) >= POP_SWIPE_STEP_PX) {
-      front = (front + (swipeAcc > 0 ? 1 : -1) + layers.length) % layers.length;
-      applyLayers();
+      switchFront(swipeAcc > 0 ? 1 : -1);
       swipeArmed = false;                                      // 本次动量窗口只翻一页
     }
     swipeQuietTimer = setTimeout(swipeRearm, POP_SWIPE_QUIET_MS);

@@ -113,18 +113,22 @@ object ThinkingEffortGate:
   val glmEffort: Boolean = true
 
   /**
-   * kind × 模型 × 档位 → 本请求要 deepMerge 的 effort 片段（None = 不发）。
-   * 族判据与 [[ThinkingFamily.forModel]] 同表（glm 顶层 / K3 顶层 /
-   * deepseek output_config；kimi-for-coding 族无 effort 面，永不确定真）。
+   * Endpoint × kind × model × tier → effort fragment. The recorded probes
+   * support only the exact endpoints and high tier below; unknown tiers are
+   * omitted rather than mapped using an unproven capability.
    */
-  def effortFragment(kind: ThinkingKind, model: String, effort: Option[ThinkingEffort]): Option[Json] =
+  def effortFragment(kind: ThinkingKind, model: String, effort: Option[ThinkingEffort], endpoint: String): Option[Json] =
     val m = model.toLowerCase
+    val kimiEndpoint = endpoint == "https://api.kimi.com/coding/v1/messages"
+    val glmEndpoint = endpoint == "https://open.bigmodel.cn/api/anthropic/v1/messages"
     (kind, effort) match
       case (ThinkingKind.EffortAnthropic, Some(e)) if deepseekEffort =>
         Some(Json.obj("output_config" -> Json.obj("effort" -> EffortWire.threeTier(e).asJson)))
-      case (ThinkingKind.EffortTopLevel, Some(e)) if kimiK31Effort =>
+      case (ThinkingKind.EffortTopLevel, Some(e))
+          if kimiK31Effort && kimiEndpoint && m.contains("k3") && e == ThinkingEffort.High =>
         Some(Json.obj("reasoning_effort" -> EffortWire.threeTier(e).asJson))
-      case (ThinkingKind.Toggle, Some(e)) if glmEffort && m.contains("glm") =>
+      case (ThinkingKind.Toggle, Some(e))
+          if glmEffort && glmEndpoint && m.contains("glm") && e == ThinkingEffort.High =>
         Some(Json.obj("reasoning_effort" -> EffortWire.threeTier(e).asJson))
       case _ => None
 end ThinkingEffortGate

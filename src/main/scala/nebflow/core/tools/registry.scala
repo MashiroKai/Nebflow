@@ -172,7 +172,12 @@ object ToolRegistry:
       // Ask-only tools are stripped from other roles, including wildcard definitions.
       // Shared lookup tools and Bash are registered above and are not Ask-exclusive.
       "message_record_search" -> MessageRecordSearchTool,
-      "send_message_to_main_chat" -> SendMessageToMainChatTool
+      "send_message_to_main_chat" -> SendMessageToMainChatTool,
+      // canvas-ask-restricted-edit（CAE-REQ-001）：受限编辑两件套——提案制
+      //（零直写，前端 diff 卡 Accept/Reject）+ 仅绑定文件路径。授权面同上
+      // AskExclusiveTools（非 ask 角色剥除；工具内侧 isAskSession 双保险）。
+      "ask_edit" -> AskEditTool,
+      "ask_write" -> AskWriteTool
     )
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`

@@ -685,27 +685,13 @@ final class DispatchNotify(
   def redeliver(): IO[Int] =
     budgetUsed.set(0) *> failedBudgetUsed.set(0) *> cancelledBudgetUsed.set(0) *> store.snapshot.flatMap { s =>
       val completions = s.nodes.values
-        .filter(n =>
-          // 策略单点（R2/R3）：显式 `silent` ⇒ 不入候选；缺键 ⇒ legacy flag。
-          NotifyPolicy.completionNotifiesDispatcher(n) &&
-            n.status == NodeLifecycle.Completed &&
-            n.notifySentAt.isEmpty &&
-            n.result.isDefined
-        )
+        .filter(DispatchNotify.completionRedeliverCandidate)
         .toList
       val failures = s.nodes.values
-        .filter(n =>
-          n.status == NodeLifecycle.Failed &&
-            n.notifySentAt.isEmpty &&
-            n.result.isDefined
-        )
+        .filter(DispatchNotify.failureRedeliverCandidate)
         .toList
       val cancellations = s.nodes.values
-        .filter(n =>
-          n.status == NodeLifecycle.Cancelled &&
-            n.notifySentAt.isEmpty &&
-            n.result.isDefined
-        )
+        .filter(DispatchNotify.cancellationRedeliverCandidate)
         .toList
       (completions.traverse_(n => notifyTerminal(n, NotifyReason.Completion)) *>
         failures.traverse_(n => notifyTerminal(n, NotifyReason.Failed)) *>
@@ -1339,6 +1325,38 @@ object DispatchNotify:
   def suppressFailedNotifyForInfraFault(node: NodeDef, silenceOn: Boolean): Boolean =
     silenceOn && node.status == NodeLifecycle.Failed &&
       FreezeNotice.infraFault(node.result.getOrElse(""))
+
+  /**
+   * 补投候选判据单点族（recovery-summary 批 2026-11-16 抽取；禁复刻判据）：
+   * `redeliver()` 的三路 inline 判据逐字迁出（行为保持重构）。消费面（两处，共用本
+   * 族单点）：补投扫描本身＋恢复摘要 `RecoverySummary` 的待投递面观察（维护期只读
+   * 镜像，不改动判据本身）。
+   *
+   * 三 reason 分账（completion/failed/cancelled）各自独立预算，故判据按 reason 分列；
+   * [[redeliverCandidate]] = 三者之并（摘要面只问「有没有欠账」，不区分 reason）。
+   */
+  /** completion 候选 = notifyDispatcher ∧ completed ∧ 未标记 ∧ 有结果（策略单点 R2/R3：显式 `silent` ⇒ 不入候选；缺键 ⇒ legacy flag）。 */
+  def completionRedeliverCandidate(n: NodeDef): Boolean =
+    NotifyPolicy.completionNotifiesDispatcher(n) &&
+      n.status == NodeLifecycle.Completed &&
+      n.notifySentAt.isEmpty &&
+      n.result.isDefined
+
+  /** failed 候选 = failed ∧ 未标记 ∧ 有结果（无 flag 条件，设计 §3）。 */
+  def failureRedeliverCandidate(n: NodeDef): Boolean =
+    n.status == NodeLifecycle.Failed &&
+      n.notifySentAt.isEmpty &&
+      n.result.isDefined
+
+  /** cancelled 候选 = cancelled ∧ 未标记 ∧ 有结果（R1；R2 后 cancelled 必有 result，非空守卫保留与新语义一致）。 */
+  def cancellationRedeliverCandidate(n: NodeDef): Boolean =
+    n.status == NodeLifecycle.Cancelled &&
+      n.notifySentAt.isEmpty &&
+      n.result.isDefined
+
+  /** 三路之并（`redeliver()` 的候选总集 = 本函数；摘要面消费同一单点）。 */
+  def redeliverCandidate(n: NodeDef): Boolean =
+    completionRedeliverCandidate(n) || failureRedeliverCandidate(n) || cancellationRedeliverCandidate(n)
 
   /**
    * **R1/R4 文本契约锚**：user-cancel 变体的可判读标记

@@ -138,7 +138,7 @@ nf-ask-dock { display: contents; }
   right: var(--ask-fab-gap);
   bottom: var(--ask-fab-bottom);
   z-index: calc(var(--z-ask-dock, 24) + 1); /* 钮本身需可点，仍 < 顶行 30 */
-  width: var(--ask-fab-size); height: var(--ask-fab-size); border-radius: 50%;
+  width: var(--ask-fab-size); height: var(--ask-fab-size);
   color: var(--color-text);
   cursor: pointer; padding: 0;
   display: flex; align-items: center; justify-content: center;
@@ -530,6 +530,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
    askDock.js on every terminal frame. No disclosure affordance or completed state. */
 .ask-stream-line {
   align-self: flex-end;
+  flex: 0 0 auto;
   max-width: 100%;
   min-width: 0;
   overflow-x: auto;
@@ -540,9 +541,6 @@ body.mobile-layer .note-dock .ds-resize-handle {
   user-select: none;
   padding: var(--ds-space-2) var(--ds-space-3);
   border-radius: var(--ds-radius-card-lg);
-  font-size: var(--ds-fs-row);
-  line-height: 1.6;
-  color: var(--color-text-muted);
 }
 .ask-stream-line::-webkit-scrollbar { display: none; }
 
@@ -608,15 +606,8 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * （既有 spec 定位用，本文件零规则）。改形态改那一个组件类，两处同时生效。
  */
 
-/* ═══ 作者令 2026-11-04 12:52 ① + ②：画布底部两钮向顶部两钮看齐 ═══
-   顶部两钮（#canvas-head-close / #deck-fab）实测：40×40 / radius 50% / 图标 18 /
-   内距 0 / 材质 = glass.css 圆钮级浮件档（--glass-bg + blur(40px) saturate(1.4)
-   + --glass-border + --cv-shadow，hover 抬亮 1.05、active 按 0.96）。
-   底部两钮（本面板输入条的发送/终止）此前是主会话的实底回合钮（36 / 实心绿）⇒
-   同一面板里两套按钮语言。本批把它们切成**同一个组件类的画布 chrome 档**：
-   仍是 .ds-turn-btn（单源不变、零第二套形态），只在本面声明尺寸/材质两槽 ——
-   于是「尺寸与顶部一致」「毛玻璃与顶部同源」两条都由 token 保证，不是抄值。
-   语义色不丢：终止档保留 --color-error 字，读数在玻璃上仍可辨。 */
+/* Ask keeps its canvas-sized hit target; visual button states now come from
+   the same solid turn-button component as the main conversation. */
 .ask-dock .ds-turn-btn {
   /* 尺寸 = max(画布 chrome 档, 组件尺寸槽)：桌面 chrome 40 胜出（= 顶部两钮）；
      手机档收窄批（2026-11-04 13:52）起手机腿组件槽 = --mcv-size-circle **44**
@@ -626,31 +617,15 @@ body.mobile-layer .note-dock .ds-resize-handle {
 
   border-radius: 50%;
   padding: 0;
-  border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  color: var(--color-text);
-  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
-              transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
-              color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+  /* Button colors and state feedback come from the shared turn-button component. */
 }
 /* 图标档 = 组件图标槽（--ds-turn-btn-icon）优先、画布 chrome 图标档（--cv-icon 18）
    兜底 —— 手机档收窄批 2026-11-04 13:52：「手机端发送/终止按钮小一点」把面板底钮
    手机档收成 44 边长 / 20 图标（mobileLayer.css `body.mobile-layer .ask-dock
    .ds-turn-btn` 换供源），桌面腿组件槽 = 18 ⇒ 与旧写法逐值同（18），零漂移。 */
 .ask-dock .ds-turn-btn svg { width: var(--ds-turn-btn-icon, var(--cv-icon, 18px)); height: var(--ds-turn-btn-icon, var(--cv-icon, 18px)); stroke-width: 2; }
-@media (hover: hover) {
-  .ask-dock .ds-turn-btn:hover {
-    background: var(--cv-hover-bg, var(--glass-control-bg-hover));
-    transform: scale(var(--cv-hover-scale, 1.05));
-  }
-}
-
-.ask-dock .ds-turn-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
-/* 语义色不随材质回退：发送仍读「绿」、终止仍读「红」——只是从**实底**改成
-   玻璃上的**墨色**（作者令 12:52 ② 规定材质跟顶部两钮；此前 10:11 规定发送=
-   微信绿 --ctl-send-*，两条并存 ⇒ 材质吃玻璃 token、语义吃色 token）。 */
-.ask-dock .ds-turn-btn--send { color: var(--ctl-send-bg); }
-.ask-dock .ds-turn-btn--stop { color: var(--color-error); }
+/* Ask keeps its compact geometry, but uses the same solid send/stop colors,
+   ink, hover and active states as the primary conversation. */
 .ask-dock .ds-turn-btn:disabled { opacity: 0.35; pointer-events: none; }
 
 /* ═══ Ask 气泡材质（作者令 2026-11-04 12:52 ② → 2026-11-05 09:32 改判）═══
@@ -703,7 +678,8 @@ body.mobile-layer .ask-fab {
   position: fixed;
   right: var(--ask-fab-gap);
   bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px);
-  z-index: 260;
+  /* Closed morph seeds live in the dock below their action buttons. */
+  z-index: 261;
 }
 body.mobile-layer .ask-dock,
 body.mobile-layer .note-dock {
@@ -807,3 +783,110 @@ body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /*
 body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-width: 100%; }
 body.mobile-layer .ask-user-source-parent,
 body.mobile-layer .ask-user-source-node { max-width: 100%; flex: 1 1 auto; }
+
+/* ==========================================================================
+ * 提案 diff 卡（canvas-ask-restricted-edit ③，CAE-REQ-001，2026-11-16）
+ * ask_edit/ask_write 的待审提案卡：cursor 风格行级 diff（del/add 高亮）+ 逐卡
+ * Accept/Reject。卡是气泡列成员（.ask-col flex 列，右贴），但占满列宽——diff
+ * 的可读性靠满行（行号/±号左对齐），不靠气泡的 max-width 自然宽。
+ * 材质：卡壳 = .nf-glass 同族面级浮件（玻璃统一批纪律：本文件零本地毛玻璃值，
+ * 由 askDock.js 挂类）；行高亮 = add/del 色令牌（diffView.css 同词汇
+ * --color-success / --color-danger 的低饱和底 + 左缘 2px 实色条）。
+ * ========================================================================== */
+.ask-edit-card {
+  align-self: stretch;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2);
+  border-radius: var(--ds-radius-card-lg);
+  border: var(--ds-border-width) solid var(--glass-bub-ai-border);
+  box-shadow: var(--cv-shadow);
+  animation: askBubIn 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* 头行：文件名 + 计数（左）· 状态（右）。字档 = meta（11px，与 cite 徽标同档）。 */
+.ask-edit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  font-size: var(--ds-fs-meta);
+  line-height: 1.5;
+}
+.ask-edit-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-text-muted);
+}
+.ask-edit-status { flex: 0 0 auto; font-weight: 600; color: var(--color-text-muted); }
+.ask-edit-status[data-state="accepted"] { color: var(--color-success, #3fb950); }
+.ask-edit-status[data-state="rejected"] { color: var(--color-danger, #f85149); }
+.ask-edit-status[data-state="error"] { color: var(--color-warning, #d29922); }
+.ask-edit-status[data-state="waiting"] { color: var(--color-text-muted); }
+/* diff 体：等宽行块，横向可滚（长行不折——diff 行折行会把「一改一行」读成多行）。 */
+.ask-edit-diff {
+  min-width: 0;
+  max-height: 240px;
+  overflow: auto;
+  border-radius: var(--ds-radius-chip);
+  background: var(--color-surface);
+  border: var(--ds-border-width) solid var(--color-border, rgba(128, 128, 128, 0.25));
+  font: 400 var(--ds-fs-meta)/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.ask-edit-line {
+  padding: 0 var(--ds-space-1h) 0 var(--ds-space-2);
+  white-space: pre;
+  color: var(--color-text);
+}
+.ask-edit-line.add {
+  color: var(--color-success, #3fb950);
+  background: rgb(var(--color-success-rgb, 63 185 80) / 0.10);
+  box-shadow: inset 2px 0 0 var(--color-success, #3fb950);
+}
+.ask-edit-line.del {
+  color: var(--color-danger, #f85149);
+  background: rgb(var(--color-danger-rgb, 248 81 73) / 0.10);
+  box-shadow: inset 2px 0 0 var(--color-danger, #f85149);
+}
+.ask-edit-line.ctx { color: var(--color-text-muted); }
+/* 动作行：两钮右贴（与列的右贴同向）；钮 = 紧凑 24px 命中档（卡内次级动作，
+ * 非 dock 主发送钮——不走 ds-turn-btn 36px 档），键盘环与禁用态沿用平台面。 */
+.ask-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ds-space-1h);
+}
+.ask-edit-accept,
+.ask-edit-reject {
+  min-height: 24px;
+  padding: 0 var(--ds-space-2);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              border-color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              opacity var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.ask-edit-accept {
+  color: var(--color-primary);
+  background: rgb(var(--sapphire) / 0.13);
+  border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.25);
+}
+.ask-edit-reject {
+  color: var(--color-text-muted);
+  background: transparent;
+  border: var(--ds-border-width) solid var(--color-border, rgba(128, 128, 128, 0.25));
+}
+@media (hover: hover) {
+  .ask-edit-accept:hover { background: rgb(var(--sapphire) / 0.22); }
+  .ask-edit-reject:hover { color: var(--color-text); background: var(--color-surface); }
+}
+.ask-edit-accept:focus-visible,
+.ask-edit-reject:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.ask-edit-accept[disabled],
+.ask-edit-reject[disabled] { opacity: 0.5; cursor: not-allowed; }

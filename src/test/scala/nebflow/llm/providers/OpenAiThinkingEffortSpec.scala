@@ -31,16 +31,33 @@ class OpenAiThinkingEffortSpec extends FunSuite:
   private def body(model: String, thinking: Option[Json], resolved: Option[ResolvedThinking], search: Option[ProviderSearchKind] = None): Json =
     adapter().bodyWithSearchThinking(Json.obj(), model, thinking, search, resolved)
 
-  test("O1: effort configured → direct tier on reasoning_effort (deepseek openai face)") {
-    val b = body("deepseek/deepseek-v4.1-flash", thinkingEnabled,
-      Some(ResolvedThinking(ThinkingKind.EffortAnthropic, enabled = true, Some(ThinkingEffort.Low))))
-    assertEquals(b.hcursor.downField("reasoning_effort").as[String].toOption, Some("low"))
+  test("explicit provider model and tier allowlist enables only that effort") {
+    val adapter = OpenAiAdapter("http://localhost:0", "k", null,
+      effortAllowlist = Some(Map("http://localhost:0/chat/completions" -> Map("m" -> List(ThinkingEffort.Max)))))
+    val resolved = Some(ResolvedThinking(ThinkingKind.Budget, enabled = true, Some(ThinkingEffort.Max)))
+    assertEquals(adapter.bodyWithSearchThinking(Json.obj(), "m", thinkingEnabled, None, resolved)
+      .hcursor.get[String]("reasoning_effort").toOption, Some("max"))
+    assertEquals(adapter.bodyWithSearchThinking(Json.obj(), "other", thinkingEnabled, None, resolved)
+      .hcursor.downField("reasoning_effort").focus, None)
   }
 
-  test("O1b: medium maps to high client-side (three-tier face; GLM/DeepSeek official mapping, Kimi author ruling)") {
+  test("unknown endpoint never sends effort even with an explicit tier or legacy budget") {
+    val explicit = body("unknown-model", thinkingEnabled,
+      Some(ResolvedThinking(ThinkingKind.Budget, enabled = true, Some(ThinkingEffort.Max))))
+    assertEquals(explicit.hcursor.downField("reasoning_effort").focus, None)
+    assertEquals(body("unknown-model", thinkingEnabled, None).hcursor.downField("reasoning_effort").focus, None)
+  }
+
+  test("O1: unknown endpoint omits configured effort") {
+    val b = body("deepseek/deepseek-v4.1-flash", thinkingEnabled,
+      Some(ResolvedThinking(ThinkingKind.EffortAnthropic, enabled = true, Some(ThinkingEffort.Low))))
+    assertEquals(b.hcursor.downField("reasoning_effort").as[String].toOption, None)
+  }
+
+  test("O1b: unknown endpoint omits medium despite legacy conversion helpers") {
     val b = body("deepseek/deepseek-v4.1-flash", thinkingEnabled,
       Some(ResolvedThinking(ThinkingKind.EffortAnthropic, enabled = true, Some(ThinkingEffort.Medium))))
-    assertEquals(b.hcursor.downField("reasoning_effort").as[String].toOption, Some("medium"))
+    assertEquals(b.hcursor.downField("reasoning_effort").as[String].toOption, None)
     assertEquals(EffortWire.threeTier(ThinkingEffort.Medium), "high")
     assertEquals(EffortWire.threeTier(ThinkingEffort.Max), "max")
     assertEquals(EffortWire.threeTier(ThinkingEffort.Low), "low")
@@ -52,12 +69,12 @@ class OpenAiThinkingEffortSpec extends FunSuite:
     assertEquals(EffortWire.openAi(ThinkingEffort.Max), "max")
   }
 
-  test("O2: no effort configured → legacy budget conversion unchanged (budgetToEffort boundaries)") {
+  test("O2: unknown endpoint omits effort derived from legacy budget") {
     val high = body("deepseek/deepseek-v4.1-flash", thinkingEnabled, None)
-    assertEquals(high.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"), "32000 → high (legacy path)")
+    assertEquals(high.hcursor.downField("reasoning_effort").as[String].toOption, None, "unverified endpoint omits legacy derived effort")
     val mediumBudget = body("deepseek/deepseek-v4.1-flash",
       Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 8192.asJson)), None)
-    assertEquals(mediumBudget.hcursor.downField("reasoning_effort").as[String].toOption, Some("medium"), "8192 → medium (legacy path)")
+    assertEquals(mediumBudget.hcursor.downField("reasoning_effort").as[String].toOption, None, "unverified endpoint omits legacy derived effort")
   }
 
   test("O3: glm on the openai face keeps the native thinking shape (no reasoning_effort)") {

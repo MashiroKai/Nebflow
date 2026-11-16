@@ -16,7 +16,7 @@
 | [`ChainStore.scala`](ChainStore.scala) | ChainStore —— 新轻量 per-task 链存储（⑤A 定稿，worktree-judge-fifo 批 #1224 增补 §3.5：**本批建存储本体＋写入行**）. |
 | [`DelegateDeliveryReceipts.scala`](DelegateDeliveryReceipts.scala) | DelegateDeliveryReceipts —— delegate 终态交付回执 + 「父未确认」重投监测 （诊断修复批 2026-10-24 · delegate-nebflow-52308ee4 完成结果投递丢 |
 | [`DelegateFlowMapLifecycle.scala`](DelegateFlowMapLifecycle.scala) | DelegateFlowMapLifecycle —— **delegate 作用域图生命周期**（双模式批 2026-10-28 · 设计 §6「flowmap 生命周期」；第 4 步实施件）。 |
-| [`DelegateJudge.scala`](DelegateJudge.scala) | DelegateJudge —— delegate 判定机的 core 侧（worktree-judge-fifo 批 #1224 增补 §3.1/§3.2；⑦ 判定机两层＝Jev 优先＋SmallJudge（LLM）兜 |
+| [`DelegateJudge.scala`](DelegateJudge.scala) | DelegateJudge —— delegate 判定机的 core 侧（worktree-judge-fifo 批 #1224 增补 §3.1/§3.2；jev-retire 批 2026-11-16 起判定 = SmallJudge（LLM）单 |
 | [`DelegateLedgerReconcile.scala`](DelegateLedgerReconcile.scala) | DelegateLedgerReconcile —— **台账 ↔ delegate 面板两层状态打通**（监督链自动恢复 批增补，2026-10-22 作者补充需求；设计 |
 | [`DelegateNotify.scala`](DelegateNotify.scala) | DelegateNotify —— 通知改向通道与规则（S19①⑥ ＋ ⑬A 兜底；worktree-judge-fifo 批 #1224 增补 §3.6）. |
 | [`DelegateRegistry.scala`](DelegateRegistry.scala) | DelegateRegistry —— 统一 delegate 的持久地址簿（unified-delegate 批 2026-10-03）。 |

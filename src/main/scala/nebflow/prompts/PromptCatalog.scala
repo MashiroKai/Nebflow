@@ -10,8 +10,8 @@ package nebflow.prompts
  *  - [[PromptCatalog.Shared]]      跨面共享片段（等待纪律 / 插件查询行 / output 块 / SendMessage 边界
  *                                  / KG 落地纪律）+ 压缩提示的头部判据（ReminderSignature）
  *  - [[PromptCatalog.Compact]]     压缩提示 8 份（preamble / epilogue / 5 份 profile 正文 / 续跑）
- *  - [[PromptCatalog.Classifiers]] 分类器前导 2 份（Jev 分配器 / mode 判定——两处**已分叉**，
- *                                  本仓各存原文，分叉待作者裁定，勿在此擅自统一）
+ *  - [[PromptCatalog.Classifiers]] 分类器前导 1 份（插件分配器——jev-retire 批后唯一消费者
+ *                                  LlmAllocator；mode 判定已随 delegate-param-decisions 批移除）
  *
  * 「条件段」分区本批**留空**：`agent/PromptSections.scala` 的段体大多带 `s"..."` 插值，
  * 搬走要从 `val` 改 `def(参数)` 并改调用点，属另一批（不在「零字节变化」范围）。
@@ -699,16 +699,17 @@ Read / Glob / Grep / WebSearch / WebFetch / Bash. Bash uses the normal shell exe
   end Compact
 
   // ═══════════════════════════════════════════════════════════════════
-  // 分区四：分类器前导（1 份；消费点 llm/decision/JevAllocator.scala）
+  // 分区四：分类器前导（1 份；消费点 llm/decision/LlmAllocator.scala）
   // ═══════════════════════════════════════════════════════════════════
   //
   // 曾有 2 份（Jev 面 / mode 面，措辞已分叉）。delegate-param-decisions 批
   // （2026-11-04）删掉 mode 分配器 ⇒ `ModeStatePreamble` 零消费者，一并移除；
-  // 现存 1 份，消费点保留原名 `StatePreamble` 作转派，调用点零改动。
+  // jev-retire 批（2026-11-16）JeV 腿退役 ⇒ 前导随 LlmAllocator 单源迁至
+  // `AllocationStatePreamble`（文字逐字节不变），消费点改名。
   object Classifiers:
 
-    /** JeV 分配器前导（`JevAllocator.StatePreamble` 原文；单行拼接字面量，不得改行）。 */
-    val JevStatePreamble: String =
+    /** 插件分配器前导（`LlmAllocator.StatePreamble` 终源；单行拼接字面量，不得改行）。 */
+    val AllocationStatePreamble: String =
       "You are auditing task dispatch in an agent-orchestration platform. Below are (1) one dispatched node " +
         "task brief, verbatim, and (2) the installed plugin capability catalog. The brief may contain platform " +
         "boilerplate (default-clause templates D-1..D-6, merge-window fragments, citation paths) - ignore " +

@@ -211,8 +211,8 @@ html[data-theme="light"] {
   --ctl-neutral-bg-hover: #e0e0e4;
   --ctl-neutral-bg-active: #d2d2d8;
   --ctl-neutral-ink: #3a3a3f;
-  --ctl-send-bg: #07c160;
-  --ctl-send-bg-hover: #06ad56;
+  --ctl-send-bg: #059a4c;
+  --ctl-send-bg-hover: #059a4c;
   --ctl-send-bg-active: #059a4c;
   --ctl-send-ink: #ffffff;
   --ctl-send-border: #06ad56;

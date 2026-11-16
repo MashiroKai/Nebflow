@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-# stand-plugins — 插件目录只读查询 CLI（stand 仓 tools/）
+# 插件目录查询与本地包安装：list/search/mounts 只读；install/rollback 修改指定数据根。
+# 安装不等于给当前 agent 挂载；引擎在下一次注册表读取时检测目录变化，已有注入不变。
+# 示例: tools/stand-plugins install /path/to/package --dry-run
+#       tools/stand-plugins rollback plugin-name --root /tmp/stand-test
+# 不可信插件可能执行任意操作，安装前请审查内容。
 #
 # 用途：把「本实例已装插件的能力面」做成可检索目录——agent（delegate / 节点 /
 #       分发器 / root）派发时没被挂上足够的插件时，可自主查询有什么可用
 #       （作者令 2026-10-23：像记忆检索一样做成 cli，在各级提示词里告诉用法；
 #       除了自动分配，还能主动获取）。查询人人可用；**挂载权仍在派发侧**——
-#       本 CLI 只读零副作用，绝不提供挂载/改配置通道（delegate 不能给自己热挂）。
+
 #
 # 数据源（与引擎 PluginRegistry 一族同盘同源，全部只读）：
 #   - 注册面  <data-root>/plugins/<name>/
@@ -43,13 +47,18 @@
 # 退出码：0 = 成功（search 无命中也是成功，输出 "(no hits)"）；1 = 显式错误
 #   （如 mounts --project 指到未挂载项目）。
 #
-# 零第三方依赖：Python3 标准库（json/os/re/argparse）；只读：绝不写任何文件。
+
 
 import argparse
+import ctypes
+import datetime
+import fcntl
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import time
 
 CANONICAL_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
@@ -94,8 +103,14 @@ def read_json(path):
 
 
 def cfg_plugins(root):
-    """nebflow.json → plugins 键（缺文件/坏 JSON = 空对象，fail-open 只读）。"""
-    cfg = read_json(os.path.join(root, "nebflow.json")) or {}
+    """stand.json 优先 → nebflow.json legacy 只读回退 → plugins 键（缺文件/坏 JSON =
+    空对象，fail-open 只读）。与引擎 PathUtil.resolveConfigJson 同向（统一配置读取，
+    插件分发与生命周期协议升级草案 §9 A 行）。文件级优先：stand.json 在位即用之，
+    否则回落 nebflow.json。"""
+    cfg_path = os.path.join(root, "stand.json")
+    if not os.path.exists(cfg_path):
+        cfg_path = os.path.join(root, "nebflow.json")
+    cfg = read_json(cfg_path) or {}
     p = cfg.get("plugins")
     return p if isinstance(p, dict) else {}
 
@@ -216,20 +231,45 @@ def status_of(p, plugins_cfg):
 
 
 def scan_registry(root):
-    """→ (plugins, rejected, plugins_cfg)。plugins 已按 name 排序。"""
+    """→ (plugins, rejected, plugins_cfg)。plugins 已按 name 排序。
+    扫描器加固镜像（插件分发与生命周期协议升级草案 §9 A 行；与引擎
+    PluginRegistry.snapshot 同向）：点目录 / plugins-backups 整体隐身（备份不是
+    候选）；plugins.removed 墓碑过滤（卸载出册 = 整体消失）；重复身份（两个目录
+    同 manifest 名）全拒点名全部冲突目录。"""
     plugins_dir = os.path.join(root, "plugins")
     plugins, rejected = [], []
+    cfg = cfg_plugins(root)
+    removed = cfg.get("removed") if isinstance(cfg.get("removed"), dict) else {}
     if os.path.isdir(plugins_dir):
         for sub in sorted(os.listdir(plugins_dir)):
             d = os.path.join(plugins_dir, sub)
             if not os.path.isdir(d):
                 continue
+            if sub.startswith(".") or sub == "plugins-backups":
+                continue  # 备份/点目录整体隐身（镜像 PluginRegistry.scanExcluded）
+            if sub in removed:
+                continue  # 卸载出册（镜像 plugins.removed 过滤：出册 = 零声音）
             p, err = load_plugin(d)
             if p:
                 plugins.append(p)
             else:
                 rejected.append({"name": sub, "reason": err})
-    cfg = cfg_plugins(root)
+    # 重复身份全拒（镜像引擎 ambiguous-identity 面）：点名 manifest 名 + 全部冲突目录
+    by_name = {}
+    for p in plugins:
+        by_name.setdefault(p["name"], []).append(p["dir_name"])
+    dup_dirs = {n: dirs for n, dirs in by_name.items() if len(dirs) > 1}
+    plugins = [p for p in plugins if p["name"] not in dup_dirs]
+    for n in sorted(dup_dirs):
+        rejected.append(
+            {
+                "name": n,
+                "reason": (
+                    "duplicate identity: manifest name claimed by multiple directories [%s] — all copies rejected"
+                    % ", ".join(sorted(dup_dirs[n]))
+                ),
+            }
+        )
     for p in plugins:
         (
             p["trusted"],
@@ -438,12 +478,157 @@ def render_mounts(rows, scanned, project_label=None):
     return 0
 
 
+# ── Local package installation ────────────────────────────────────────────────
+
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+
+def validate_package(path):
+    errors = []
+    if not os.path.isdir(path) or os.path.islink(path):
+        return None, ["package must be a real directory"]
+    manifest = read_json(os.path.join(path, "plugin.json"))
+    if not isinstance(manifest, dict):
+        errors.append("plugin.json missing or invalid object")
+        manifest = {}
+    name = first_text(manifest.get("name"))
+    if not NAME_RE.fullmatch(name):
+        errors.append("plugin.json name missing or unsafe (lowercase identifier required)")
+    if manifest.get("$schema") != CANONICAL_SCHEMA:
+        errors.append("plugin.json canonical $schema missing or invalid")
+    for field in ("version", "description"):
+        if not first_text(manifest.get(field)).strip():
+            errors.append(f"plugin.json {field} missing")
+    skills = os.path.join(path, "skills")
+    found = False
+    if os.path.isdir(skills):
+        for entry in sorted(os.listdir(skills)):
+            skill_dir = os.path.join(skills, entry)
+            if not os.path.isdir(skill_dir):
+                continue
+            found = True
+            skill_file = os.path.join(skill_dir, "SKILL.md")
+            if not os.path.isfile(skill_file):
+                errors.append(f"skills/{entry}/SKILL.md missing")
+            else:
+                sname, desc = skill_meta(skill_file)
+                if not sname or not desc:
+                    errors.append(f"skills/{entry}/SKILL.md frontmatter name/description missing")
+    mcp_path = os.path.join(path, "mcp.json")
+    mcp = read_json(mcp_path)
+    servers = mcp.get("mcpServers") if isinstance(mcp, dict) else None
+    if os.path.exists(mcp_path) and (not isinstance(servers, dict) or not servers):
+        errors.append("mcp.json must contain nonempty mcpServers object")
+    if not found and not (isinstance(servers, dict) and servers):
+        errors.append("at least one skills/<name>/SKILL.md or mcp.json mcpServers required")
+    for base, dirs, files in os.walk(path, followlinks=False):
+        for entry in dirs + files:
+            p = os.path.join(base, entry)
+            if os.path.islink(p) or not (os.path.isdir(p) or os.path.isfile(p)):
+                errors.append(f"unsupported symlink or special file: {os.path.relpath(p, path)}")
+    return name, errors
+
+
+def atomic_exchange(a, b):
+    """Exchange two directories atomically; never fall back to a two-rename gap."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        fn = libc.renamex_np
+        fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        result = fn(os.fsencode(a), os.fsencode(b), 2)  # RENAME_SWAP
+    elif sys.platform.startswith("linux"):
+        fn = libc.renameat2
+        fn.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        result = fn(-100, os.fsencode(a), -100, os.fsencode(b), 2)  # RENAME_EXCHANGE
+    else:
+        raise OSError("atomic directory exchange unsupported on this platform")
+    if result:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+
+def backup_path(root, name):
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    return os.path.join(root, "plugins-backups", f".backup-{name}-{stamp}")
+
+
+def latest_backup(root, name):
+    directory = os.path.join(root, "plugins-backups")
+    if not os.path.isdir(directory):
+        return None
+    pattern = re.compile(r"^\.backup-" + re.escape(name) + r"-\d+$")
+    candidates = sorted(x for x in os.listdir(directory) if pattern.fullmatch(x)
+                        and os.path.isdir(os.path.join(directory, x)) and not os.path.islink(os.path.join(directory, x)))
+    return os.path.join(directory, candidates[-1]) if candidates else None
+
+
+def change_package(root, cmd, source, dry_run):
+    root = os.path.abspath(os.path.expanduser(root))
+    if cmd == "rollback":
+        if not NAME_RE.fullmatch(source):
+            raise ValueError("unsafe plugin name")
+        name = source
+        source = latest_backup(root, name)
+        if not source:
+            raise ValueError(f"no backup found for {name}")
+    else:
+        source = os.path.abspath(os.path.expanduser(source))
+        name = None
+    actual_name, errors = validate_package(source)
+    if cmd == "rollback" and actual_name != name:
+        errors.append("backup manifest name does not match requested plugin")
+    if errors:
+        raise ValueError("invalid package:\n  - " + "\n  - ".join(errors))
+    name = actual_name
+    dest = os.path.join(root, "plugins", name)
+    if os.path.lexists(dest) and (os.path.islink(dest) or not os.path.isdir(dest)):
+        raise ValueError("destination must be a real directory")
+    if dry_run:
+        print(f"dry-run: {cmd} {source} -> {dest}; backup existing destination if present; no writes")
+        print("rescan: engine checks tree changes on next registry read; no external forced reload")
+        return 0
+    os.makedirs(root, exist_ok=True)
+    # Serialize this CLI's writers; external writers do not participate in this lock.
+    with open(os.path.join(root, ".stand-plugins.lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if cmd == "rollback":
+            source = latest_backup(root, name)
+            if not source:
+                raise ValueError(f"no backup found for {name}")
+        os.makedirs(os.path.join(root, "plugins"), exist_ok=True)
+        stage = tempfile.mkdtemp(prefix=".stand-plugin-stage-", dir=root)
+        staged = os.path.join(stage, name)
+        try:
+            shutil.copytree(source, staged, symlinks=True)
+            staged_name, errors = validate_package(staged)
+            if errors or staged_name != name:
+                raise ValueError("staged package invalid: " + "; ".join(errors or ["name changed"]))
+            if os.path.lexists(dest):
+                if os.path.islink(dest) or not os.path.isdir(dest):
+                    raise ValueError("destination must be a real directory")
+                os.makedirs(os.path.join(root, "plugins-backups"), exist_ok=True)
+                backup = backup_path(root, name)
+                shutil.copytree(dest, backup, symlinks=True)
+                atomic_exchange(staged, dest)
+                print(f"backup: {backup}")
+            else:
+                os.rename(staged, dest)
+            print(f"{cmd}: {name} -> {dest}")
+        finally:
+            shutil.rmtree(stage)
+    print("rescan: engine checks tree changes on next registry read; no external forced reload; running agents retain their injected content")
+    return 0
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        prog="stand-plugins", description="插件目录只读查询（清单/检索/挂载面）"
+        prog="stand-plugins", description="插件查询、安装与回滚（无需项目上下文）",
+        epilog="示例: tools/stand-plugins search browser; tools/stand-plugins mounts; "
+               "tools/stand-plugins install /path/to/package --dry-run; "
+               "tools/stand-plugins rollback plugin-name --root /tmp/stand-test"
     )
     ap.add_argument("--json", action="store_true", help="机器形状输出")
     ap.add_argument("--data-root", help="数据根（默认 STAND_DATA_ROOT > STAND_HOME > ~/.stand）")
@@ -462,13 +647,27 @@ def main(argv=None):
     se.add_argument("query", nargs="+", help="关键词（多词 AND）")
     mo = sub.add_parser("mounts", parents=[common], help="各项目当前挂载（声明集 + 分配台账）")
     mo.add_argument("--project", help="只看该项目（精确名）")
+    ins = sub.add_parser("install", help="校验并安装本地插件目录；已有版本先备份")
+    ins.add_argument("package", help="插件包目录（非压缩包）")
+    rb = sub.add_parser("rollback", help="恢复指定插件最近的时间戳备份")
+    rb.add_argument("name", help="插件名")
+    for parser in (ins, rb):
+        parser.add_argument("--root", help="数据根（默认环境变量或 ~/.stand；用于沙箱隔离）")
+        parser.add_argument("--dry-run", action="store_true", help="只校验和预览，零写入")
     args = ap.parse_args(argv)
 
     if not args.cmd:
-        ap.error("需要子命令：list / search / mounts")
+        ap.error("需要子命令：list / search / mounts / install / rollback")
 
     global NOW
     NOW = time.time()
+    if args.cmd in ("install", "rollback"):
+        root = resolve_data_root(args.root or args.data_root)
+        try:
+            return change_package(root, args.cmd, args.package if args.cmd == "install" else args.name, args.dry_run)
+        except (OSError, ValueError, AttributeError) as exc:
+            print(f"stand-plugins: {exc}", file=sys.stderr)
+            return 1
     root = resolve_data_root(args.data_root)
 
     if args.cmd == "list":

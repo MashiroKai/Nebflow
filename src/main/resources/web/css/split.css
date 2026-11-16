@@ -3680,6 +3680,7 @@ body.col-resizing #canvas-panel { transition: none; }
    72 = 源码钮 16 + 48 + 8；monaco.js 16 不变 —— 源码态无簇，单钮独坐）。 */
 .canvas-find-toggle {
   position: absolute; bottom: 16px;
+  left: var(--canvas-find-left, 128px);
   width: var(--cv-size-circle-lg); height: var(--cv-size-circle-lg); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);
@@ -4464,9 +4465,17 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
    本钮在手机层恒离场（零占位零位移）。 */
 body.mobile-layer .canvas-pop-btn,
 body.card-window .canvas-pop-btn { display: none !important; }
-/* Canvas popout and Ask controls stay flat inside their floating surfaces. */
-.canvas-pop-btn,
-.ask-fab { box-shadow: none; }
+/* Shared canvas control face; the float shadow resolves per theme. */
+.canvas-button.canvas-button {
+  border-radius: var(--ds-radius-pill);
+  box-shadow: var(--ds-shadow-float);
+}
+@media (hover: hover) {
+  .canvas-button.canvas-button:hover {
+    background: var(--cv-hover-bg);
+    transform: scale(var(--cv-hover-scale));
+  }
+}
 
 /* ── 环卡卡头「在独立窗口打开」钮（批⑤后独立窗唯一可见卡头入口；标题头
    #canvas-pop-btn 同批退役）────────────────────────────────────────── */

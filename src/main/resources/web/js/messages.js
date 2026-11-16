@@ -3,6 +3,7 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
+import { chatFooter, chatFooterDivider, chatFooterTime, fmBubbleRowClass } from './chatUi.js';
 // bubble-side-color 批（2026-11-06）：气泡归属方判定/类名工厂单点（收编前本处
 // 直接拼 `bubble ${out ? 'user' : 'peer'}`，归属方语义散在模板串里）。
 import { bubbleClass, bubbleSideOfOutgoing } from './bubbleSide.js';
@@ -45,8 +46,6 @@ import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
 // 作者行动」的量（待批准 + 待销账/待处置 + 未读回执），纯未读消息不上徽标
 // （新鲜度 ≠ 可行动量，闭合相关性判据）。
-import { pendingAskCount } from './askPending.js';
-import { actionableTotal, onActionableChanged } from './actionable.js';
 // 【入口收敛批 todo-unify-entry-collapse 2026-11-04】改版批（2026-10-31）的
 // 消息列表顶部「待办事项」入口行（scheduled-task.js buildTodoEntryRow）**退役**：
 // 待办唯一入口 = 顶带 #top-overlays 内的待办胶囊（js/todoFace.js，双端同现，
@@ -527,21 +526,10 @@ function compareConversations(a, b) {
 }
 
 function updateBadge() {
-  // 徽标 = 未读真值（与会话行徽标同源）+ 可行动量（另一轴，非未读量：待答卡
-  // `pendingAskCount` + 跨面板待销账待办/未读回执 `actionableTotal`）。
-  // 🔴 未读腿**必须是 totalUnread()**：这是行徽标与图标角标唯一的同源点。
-  const on = loggedIn();
-  const unread = on ? totalUnread() : 0;
-  const actionable = on ? pendingAskCount() + actionableTotal() : 0;
-  const n = unread + actionable;
-  // aria 文案：未读腿在场按未读报（与行徽标同词），否则按可行动量报。
-  setActivityBadge('messages-btn', n, unread > 0
-    ? t('messages.ariaUnread', { n: unread })
-    : t('messages.ariaActionable', { n: actionable }));
+  // Task/agent actionability is not a message. Mirror only real unread messages.
+  const unread = loggedIn() ? totalUnread() : 0;
+  setActivityBadge('messages-btn', unread, t('messages.ariaUnread', { n: unread }));
 }
-
-// 任一可行动提供者计数变化 ⇒ 重算徽标（actionable.js 广播面）。
-onActionableChanged(() => updateBadge());
 
 // ── Conversation list (§3.2) ─────────────────────────────
 /** 会话列表刷新。
@@ -3487,7 +3475,9 @@ export function bubbleEl(m, conv) {
   // （出向=我方绿 / 入向=对方白），本处只把结论交给 bubbleClass()；底色本身由
   // css/glass.css「气泡归属方底色单点」块消费令牌，本文件零色值。
   const side = bubbleSideOfOutgoing(out);
-  const bubble = el('div', `fm-msg-bubble ${bubbleClass(out ? 'user' : 'peer', side)}`);
+  // 外壳类拼写走 chatUi.fmBubbleRowClass()（chat-ui-package 批④词表收口：
+  // `fm-msg-bubble` 不再本文件直写）；内芯（角色/归属方类）仍由 bubbleClass() 单点。
+  const bubble = el('div', fmBubbleRowClass(bubbleClass(out ? 'user' : 'peer', side)));
   bubble.dataset.bubbleSide = side;
   // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
   // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
@@ -3532,7 +3522,7 @@ export function bubbleEl(m, conv) {
   // `.duration-badge`（chat.css 单点：内距/圆角/戒指影/暗档）+ 时间 `.duration-badge-time`
   // + 分隔 `.duration-badge-divider` + 复制键 `.msg-copy`。旧 `.fm-msg-*` 类保留为
   // 宿主钩子（断言面/滚动面引用），几何与配色不再由本文件另写一份。
-  const meta = el('div', 'fm-msg-meta duration-badge');
+  const meta = chatFooter('fm-msg-meta');
   // 批 D（作者裁定 2026-09-14 20:5x「双方可见」）：徽标**两端渲染**、无抑制逻辑
   // —— 修前判据 `out && isAgentSent(m)` 让接收侧（`out === false`）**永不进入**
   // 本分支（即便 `origin` 已修复到位，对方也看不到）⇒ 与作者诉求相左。
@@ -3557,7 +3547,7 @@ export function bubbleEl(m, conv) {
   //   · `data-ts`（跳转锚）+ `data-ts-text`（时钟就地重排）两契约保留；去掉
   //     `data-ts-text-format="day"` ⇒ 12/24 切换按纯时钟重排（timeFormat 契约）；
   //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
-  const timeSpan = el('span', 'fm-msg-time duration-badge-time', timeMs ? formatHm(timeMs) : '');
+  const timeSpan = chatFooterTime('fm-msg-time', timeMs ? formatHm(timeMs) : '');
   if (timeMs) {
     timeSpan.setAttribute('data-ts', String(timeMs));
     timeSpan.setAttribute('data-ts-text', String(timeMs));
@@ -3606,7 +3596,7 @@ export function bubbleEl(m, conv) {
   // @.2 + flex-shrink:0）—— fm-footer-align 批 2026-11-02：旧形态用
   // `.fm-msg-actions::before` 伪元素（视觉等价、结构不同），现与主会话同构：真节点、
   // 同几何、同间距档（pill gap 6 + 1 + 6 = 13px，主会话实测同档）。
-  meta.appendChild(el('span', 'fm-msg-divider duration-badge-divider'));
+  meta.appendChild(chatFooterDivider('fm-msg-divider'));
   meta.appendChild(actions);
 
   wrap.appendChild(meta);
@@ -5597,7 +5587,8 @@ async function onFriendEvent(msg, retried = false) {
       const fromPeer = (conv.kind === 'group' || conv.kind === 'device')
         ? oursBySenderId(m, conv) === false
         : !!(m.senderId && conv.friend && m.senderId === conv.friend.userId);
-      if (fromPeer && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
+      if (fromPeer && !isAgentSent(m) && m.origin !== 'system' && m.kind !== 'system'
+        && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
     }
     // U-a 幂等：同 messageId 的重复到达不得二次上屏 / 二次自动转发（**渲染面**）。
     if (!markFrameMessageSeen(m.id)) return;

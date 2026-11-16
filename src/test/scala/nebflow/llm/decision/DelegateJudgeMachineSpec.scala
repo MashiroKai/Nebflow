@@ -3,30 +3,10 @@ package nebflow.llm.decision
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.core.delegate.DelegateJudge
-import nebflow.core.delegate.DelegateJudge.{TerminalInput, Verdict}
+import nebflow.core.delegate.DelegateJudge.Verdict
 
-/**
- * 判定机执行体（⑦ Jev 优先＋SmallJudge 兜底）的**纯函数面**判读——网络腿
- * （真 JeV / 真 LLM adapter）不在 spec 范围（依赖外部服务），本件钉死：
- *
- *  - SmallJudge 回文解析：裸 JSON / ```json 围栏 / 混排散文皆容；缺键/非法判词拒；
- *  - 判词值域（completed(+注记) / ready-to-merge）解析往返——#566：blocked 判词
- *    退役，模型回文的 "blocked" 答案折 CompletedNote（注记形 completed）；
- *  - Jev Choice 判词读取（verdictFromChoice）：合法 label → 判词；未知 label → None
- *    （= 兜底腿接手，非误判）；
- *  - VerdictWire 编码面：引擎永不写出 "blocked" wire 词（注记形 encode 仍 =
- *    completed，注记走 reason 通道）；engineTerminalPayload 写 failed/cancelled 真值。
- */
+/** Pure parsing and wire-contract checks for terminal judgment. */
 class DelegateJudgeMachineSpec extends FunSuite:
-
-  private def input(): TerminalInput =
-    TerminalInput(
-      delegateId = "delegate-nebflow-x",
-      taskBrief = "brief",
-      resultText = "result",
-      gitDigest = "branch: delegate/delegate-nebflow-x",
-      selfReport = None
-    )
 
   // ── SmallJudge JSON 解析 ─────────────────────────────────────────────
 
@@ -77,34 +57,6 @@ class DelegateJudgeMachineSpec extends FunSuite:
     assertEquals(j.flatMap(o => o.hcursor.downField("a").get[Int]("b").toOption), Some(1))
     assertEquals(DelegateJudgeMachine.extractJsonObject("{}").isDefined, true)
     assertEquals(DelegateJudgeMachine.extractJsonObject("nope"), None)
-  }
-
-  // ── Jev Choice 判词读取 ──────────────────────────────────────────────
-
-  private def choiceResponse(label: String): DecisionResponse =
-    DecisionResponse(
-      model = Some("jev-test"),
-      answers = Map(
-        "verdict" -> DecisionAnswer.Choice(choice = label, confidence = None, probabilities = Map(label -> 0.9))
-      ),
-      usage = None
-    )
-
-  test(
-    "verdictFromChoice: legal labels map to the verdict domain; blocked = completed+note"
-  ) {
-    assertEquals(DelegateJudgeMachine.verdictFromChoice(choiceResponse("completed"), input()), Some(Verdict.Completed))
-    // 退役 blocked 选中词 = 注记形 completed。
-    val blocked = DelegateJudgeMachine.verdictFromChoice(choiceResponse("blocked"), input())
-    assertEquals(
-      blocked,
-      Some(Verdict.CompletedNote("judge: could not complete — substance in the terminal text"))
-    )
-    assertEquals(
-      DelegateJudgeMachine.verdictFromChoice(choiceResponse("failed"), input()),
-      None,
-      "unknown label → None (fallback leg), never a guess"
-    )
   }
 
   // ── VerdictWire 往返（core 侧承重键） ────────────────────────────────

@@ -137,7 +137,6 @@ async function bootPage(page, opts = {}) {
             glm: { baseUrl: 'https://api.glm.example/v1/', apiKey: '***', protocol: 'openai', models: [{ id: 'glm-4', contextWindow: 8192 }] },
           },
         },
-        jev: { enabled: true, provider: 'typesafe-jev', endpoint: PINNED, keyRef: 'typesafe-api-key' },
       }),
     }));
     ws.send(JSON.stringify({ type: 'serverConfig', version: '1.4.0', streamTimeoutMs: 600000 }));

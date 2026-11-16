@@ -636,7 +636,7 @@ export function addSourceToggle(pane, renderFn, ctx) {
   if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
 
   const btn = document.createElement('button');
-  btn.className = 'canvas-source-toggle';
+  btn.className = 'canvas-button canvas-source-toggle';
   btn.innerHTML = CODE_ICON_SVG;
   btn.title = t('canvas.viewSource');   // canvas 中文化批（2026-10-31 作者令①）：硬编码英文入 i18n
 
@@ -756,7 +756,7 @@ export function addElementRefToggle(pane, opts) {
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'canvas-ref-select';
+  btn.className = 'canvas-button canvas-ref-select';
   btn.innerHTML = CROSSHAIR_ICON_SVG;
 
   btn.title = t('ref.selectElement');
@@ -807,10 +807,11 @@ export function addFindToggle(pane, left = 128) {
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'canvas-find-toggle';
+  btn.className = 'canvas-button canvas-find-toggle';
   btn.innerHTML = FIND_ICON_SVG;
   btn.title = t('find.openInFile');
-  btn.style.left = left + 'px';
+  // CSS owns mobile seats; desktop keeps the caller's requested offset.
+  btn.style.setProperty('--canvas-find-left', left + 'px');
   btn.addEventListener('click', () => {
     import('../fileSearch.js').then(({ openFindForPane }) => openFindForPane(pane))
       .catch(() => { /* module unavailable — no-op */ });
@@ -923,7 +924,7 @@ export function addRefreshButton(pane, opts) {
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'canvas-refresh-toggle';
+  btn.className = 'canvas-button canvas-refresh-toggle';
   btn.innerHTML = REFRESH_ICON_SVG;
   btn.title = t('canvas.refresh');
 

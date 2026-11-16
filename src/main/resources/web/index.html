@@ -953,49 +953,11 @@
            逐字「这个活动面板我不是让删掉吗，就是对话框上面这个」。本处不留挂载点；
            防复活钉：tests/turn-activity-stream.spec.mjs。 -->
       <div id="queue-bar"></div>
-      <div id="input-bar">
-        <!-- 语音输入 = micOrb 液态光球（voicefix 批，作者 2026-09-21 14:0x ③：
-             「参考我们最新的实现……把最近的有光球的回退回来」⇒ 回退源 =
-             2cba0a224 删除前的最近版（git show 2cba0a224^），非 v8.2.2 原初版；
-             设置页光球调色板维持现状不恢复）。DOM 四件照原样恢复。
-             🟢 voiceseal 纠正批（批 #513，作者澄清：「怎么语音气泡直接没了，
-             我要去掉的是hover拖动这些功能。」）：#508 的静态 `hidden` 摘除，
-             气泡回归**默认产品形态 = 可见可点**（点击听写等非全双工路径照常），
-             但为**纯静态**——`voice-static` 姿态类静态携带、JS 从不摘除：
-             hover 悬停反馈（.voice-drag-hint）被 css/voiceMode.css 静态姿态
-             覆盖规则压死，拖动/回弹手势由 input.js pointerdown 的
-             voiceEnabled() 闸（#508 原样）兜死 ⇒ 气泡固定默认位。
-             挂载门 = featureFlags.voiceOrbEnabled()（默认显示；显式
-             `features.voiceOrb:false` 才藏，与全双工正交——js/voiceSeal.js
-             双参 latch）。隐藏 ≠ 删除：子树/监听/i18n/CSS 全保留
-             （companion 规则 = css/input.css `.mic-orb-wrap[hidden]`）。 -->
-        <div class="mic-orb-wrap voice-static" id="mic-orb-wrap">
-          <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
-            <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
-            <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
-          </button>
-          <div class="voice-drag-hint" aria-hidden="true"><span></span><span></span><span></span></div>
-        </div>
-      <div id="input-wrap" style="position:relative;">
-        <div id="attachment-preview"></div>
-        <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
-        <div id="skill-indicator"><span id="skill-indicator-label">SKILL</span><span id="skill-indicator-cancel">&times;</span></div>
-        <div id="compact-indicator"><span id="compact-indicator-label">COMPACT</span><span id="compact-indicator-cancel">&times;</span></div>
-        <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
-      </div>
-      <button class="skip-freeze-btn" id="skip-freeze-btn" type="button"><i data-lucide="skip-forward"></i><span id="skip-freeze-label">跳过本次</span></button>
-      <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
-      <!-- 🔴 输入框引用图标移除（作者令 2026-11-03 10:11 ②）：#quote-item-btn
-           （2026-11-02 11:00「引用入口移入 footer」批引入的动作行引用键）整键退役，
-           不留替代按钮——作者原意是「引用消息时用图标替代长文本展示」，不是输入框
-           加引用按钮；引用消息图标化语义另行核对后再设计入口，本批只做移除。
-           装配链（msgQuote.js initQuoteItemButton / freeze.js 冻结名单 /
-           input.css frozen disabled 档）同批摘除；防复活钉 =
-           ~/.stand/evidence/ui-unification-20261103/input-fixes/
-           verify-five-fixes.mjs ② 腿（元素 0 命中）。 -->
-      <button id="send-btn" class="ds-turn-btn ds-turn-btn--send"><i data-lucide="send"></i></button>
-      <button id="stop-btn" class="ds-turn-btn ds-turn-btn--stop"><i data-lucide="square"></i></button>
-      </div>
+      <!-- chat-ui-package 批①（2026-11-16）：主输入条结构已抽为 js/chatUi.js 的
+           composer() 工厂 —— 本处只留静态壳 #input-bar，内容由 js/chatMount.js
+           （main.js 首位 import）原位渲染；DOM 类名/结构/属性与迁移前逐字节一致
+           （outerHTML 快照比对佐证；结构内历史注记随模板迁入工厂）。 -->
+      <div id="input-bar" data-chatui-mount="composer"></div>
       <!-- 待办胶囊槽位已迁出输入区（作者令 2026-11-03 10:11 ①「待办胶囊挪位：
            桌面端待办胶囊从输入框下方移到顶栏正下方」）——槽位现挂 #top-overlays，
            见上方顶带块注记。本处不留挂载点（防复活钉：
@@ -1025,7 +987,7 @@
           </span>
         </div>
         <div class="canvas-tab-bar" id="canvas-tab-bar"></div>
-        <button id="canvas-close-btn" class="canvas-close-btn" title="Close">
+        <button id="canvas-close-btn" class="canvas-close-btn canvas-button" title="Close">
           <i data-lucide="x"></i>
         </button>
       </div>
@@ -1164,36 +1126,11 @@
       <div id="settings-content"></div>
     </div>
   </div>
-  <!-- Chat History Search Modal (centered popup — no dimming backdrop, no blur) -->
-  <div id="search-overlay" class="ds-overlay">
-    <div id="search-modal" class="ds-layer">
-      <div class="search-modal-header">
-        <span id="search-modal-title">Search</span>
-        <button id="search-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
-      </div>
-      <div class="search-controls">
-        <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off"
-               role="combobox" aria-expanded="true" aria-controls="search-results">
-        <div class="search-tabs" role="tablist" aria-label="Search categories">
-          <button type="button" class="search-tab" id="search-tab-all" role="tab" aria-selected="true" data-tab="all"></button>
-          <button type="button" class="search-tab" id="search-tab-images" role="tab" aria-selected="false" data-tab="images"></button>
-          <button type="button" class="search-tab" id="search-tab-files" role="tab" aria-selected="false" data-tab="files"></button>
-          <button type="button" class="search-tab" id="search-tab-pop" role="tab" aria-selected="false" data-tab="pop"></button>
-          <button type="button" class="search-tab" id="search-tab-date" role="tab" aria-selected="false"
-                  aria-haspopup="dialog" aria-expanded="false" data-tab="date"></button>
-        </div>
-        <div class="search-filters">
-          <select id="search-scope" class="cfg-select"></select>
-          <select id="search-agent" class="cfg-select"></select>
-          <select id="search-tool" class="cfg-select"></select>
-          <button id="search-go" class="glass-control cfg-btn cfg-btn-sm">Search</button>
-        </div>
-        <div id="search-date-popover" role="dialog" hidden></div>
-      </div>
-      <div id="search-status" aria-live="polite"></div>
-      <div id="search-results" role="listbox"></div>
-    </div>
-  </div>
+  <!-- chat-ui-package 批②（2026-11-16）：搜索壳已抽为 js/chatUi.js 的 searchShell()
+       工厂 —— 主对话与消息窗口（手机层页面化收编后）共用同一实例；本处只留静态壳
+       #search-overlay，内容由 js/chatMount.js 原位渲染，DOM 与迁移前逐字节一致
+       （outerHTML 快照比对佐证）。 -->
+  <div id="search-overlay" class="ds-overlay" data-chatui-mount="search"></div>
 
   <!-- Social interface cards dialog (socpanel batch, 2026-09-19).
        Shell only — every caption is applied by js/socialPanel.js through the

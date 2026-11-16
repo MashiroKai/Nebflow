@@ -386,7 +386,12 @@ try {
   ok('T2c 通路② Esc 收起', g2.dockClosed === true);
   await page.click('.ask-fab');
   await sleep(350);
-  await page.evaluate(() => document.getElementById('canvas-content').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  await page.evaluate(() => {
+    const content = document.getElementById('canvas-content');
+    const event = { bubbles: true, pointerId: 42, pointerType: 'mouse', isPrimary: true, button: 0, clientX: window.innerWidth / 2 };
+    content.dispatchEvent(new PointerEvent('pointerdown', event));
+    content.dispatchEvent(new PointerEvent('pointerup', event));
+  });
   await sleep(350);
   g2 = await geo(page);
   ok('T2d 通路③ 画布空白点击收起', g2.dockClosed === true);
@@ -418,6 +423,36 @@ try {
     return line ? { text: line.textContent, overflow: getComputedStyle(line).overflowX, pointerEvents: getComputedStyle(line).pointerEvents, height: line.getBoundingClientRect().height } : null;
   });
   ok('T3e1 流式行显示增量、单行且不可交互展开', !!streamLine && streamLine.text.includes('笔记') && streamLine.height < 60 && streamLine.pointerEvents === 'none', JSON.stringify(streamLine));
+  const streamContract = await page.evaluate(() => {
+    const line = document.querySelector('.ask-dock .ask-stream-line');
+    const col = line.parentElement;
+    const reference = document.createElement('div');
+    reference.className = 'nf-workline nf-wl-think';
+    reference.textContent = 'Reference';
+    document.body.append(reference);
+    const props = ['fontSize', 'fontWeight', 'lineHeight', 'color', 'opacity'];
+    const actual = getComputedStyle(line), expected = getComputedStyle(reference);
+    const styles = Object.fromEntries(props.map(p => [p, [actual[p], expected[p]]]));
+    const caret = ['content', 'color', 'animationName', 'animationDuration', 'animationTimingFunction'].map(p => [p, getComputedStyle(line, '::after')[p], getComputedStyle(reference, '::after')[p]]);
+    // Constrain the actual flex column: a last flex item must not shrink below its line box.
+    const old = col.style.cssText;
+    col.style.height = '80px';
+    col.style.maxHeight = '80px';
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    const text = range.getBoundingClientRect(), box = line.getBoundingClientRect();
+    const geometry = { textTop: text.top, textBottom: text.bottom, boxTop: box.top, boxBottom: box.bottom, clientHeight: line.clientHeight, scrollHeight: line.scrollHeight };
+    col.style.cssText = old;
+    reference.remove();
+    return { styles, caret, geometry };
+  });
+  const g = streamContract.geometry;
+  ok('T3e2 拥挤列内流式文字行框完整', g.textTop >= g.boxTop - 0.5 && g.textBottom <= g.boxBottom + 0.5 && g.scrollHeight <= g.clientHeight, JSON.stringify(g));
+  ok('T3e3 主会话流式文字与光标计算样式一致', Object.values(streamContract.styles).every(([a, b]) => a === b) && streamContract.caret.every(([, a, b]) => a === b), JSON.stringify({ styles: streamContract.styles, caret: streamContract.caret }));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const reducedCaret = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-stream-line'), '::after').animationName);
+  ok('T3e4 减少动态效果时流式光标不闪烁', reducedCaret === 'none', reducedCaret);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await shot(page, 't3-stream-line');
   for (const d of ['τ=30 半衰期 ≈21 天。', '<cite>§近因加权</cite>']) {
     wsSend({ type: 'textDelta', sessionId: askedSid, delta: d });
@@ -567,6 +602,22 @@ try {
     backA.user.includes('τ 为什么取 30 天') && backA.ai.includes('近因加权'),
     JSON.stringify(backA).slice(0, 120));
   await shot(page, 't4-session-switch');
+
+  // A running must not leak its composer state into idle B, and must return on switch back.
+  wsSend({ type: 'textDelta', sessionId: askedSid, delta: 'running' });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-stop')).display !== 'none');
+  await openFile(page, 'wiki-graph-redesign-design.md');
+  const idleB = await page.evaluate(() => ({
+    stop: getComputedStyle(document.querySelector('.ask-stop')).display,
+    send: getComputedStyle(document.querySelector('.ask-send')).display,
+    indicators: document.querySelectorAll('.ask-stream-line').length,
+  }));
+  ok('running state is isolated from idle B', idleB.stop === 'none' && idleB.send !== 'none' && idleB.indicators === 0, JSON.stringify(idleB));
+  await openFile(page, '记忆检索调优笔记.md');
+  const runningA = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-stop')).display !== 'none');
+  ok('running state restored on A', runningA);
+  wsSend({ type: 'done', sessionId: askedSid });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-stop')).display === 'none');
 
   // T5 未读通知点（三修② 作者令 2026-10-29：绿点只在有未读时显示，无未读不显示）
   await page.click('.ask-fab'); // 收起（刚读完：无未读）

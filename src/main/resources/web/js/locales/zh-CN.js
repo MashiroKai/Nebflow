@@ -1252,38 +1252,8 @@ export default {
   'settings.cfgCard.keyMissing': '未配置',
   'settings.cfgCard.models': '{n} 个模型',
   'settings.cfgCard.emptyHint': '尚未配置提供方——填写下方表单并保存。',
-  'settings.jev': 'Jev（插件分配）',
-  'settings.jevEnabled': '用 Jev 分配插件',
-  'settings.jevProvider': '提供方',
-  'settings.jevEndpoint': '端点',
-  'settings.jevHealth': '分配通道',
-  'settings.jevHealthUp': '正常',
-  'settings.jevHealthDown': '异常',
-  'settings.jevHealthUnconfigured': '未配置',
-  // jev-panel-threefix（2026-10-09 用户反馈三点）：行体开合 title / 回退态徽标词
-  // （如实反映「Jev 不可用 → 已回退 llm」）。
-  'settings.jevToggleDetails': '展开或收起分配设置',
-  'settings.jevHealthFallback': 'Jev 不可用 → 已回退 llm',
-  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.2）：Jev 配置面 20 键 ——
-  // 提供方名/协议适配/模型/单一 key 框（UI 层零密钥引用字眼）。
-  'settings.jev.name': '提供方名称',
-  'settings.jev.namePlaceholder': '如 typesafe-jev',
-  'settings.jev.type': '协议适配',
-  'settings.jev.typeTypesafe': 'Typesafe JeV（官方托管）',
-  'settings.jev.typeLaya': 'LAYA（自托管）',
-  'settings.jev.model': '模型',
-  'settings.jev.modelPlaceholder': '模型名',
-  'settings.jev.keyEntry': 'API Key',
-  'settings.jev.keyShow': '显示 key 值',
-  'settings.jev.keyHide': '隐藏 key 值',
-  'settings.jev.keySaved': '密钥已保存',
-  'settings.jev.keySaveFailed': '密钥保存失败（{code}）',
-  'settings.jev.keyEmpty': 'key 值为空',
-  'settings.jev.nameRequired': '先填写提供方名称',
-  'settings.jev.nameInvalid': '提供方名称只允许字母/数字/._-',
-  'settings.jev.typeRequired': '先选择协议适配',
-  'settings.jev.modelRequired': '模型不能为空',
-  'settings.jev.detailHint': '填入 API Key 并保存即可；未配 key 时 Jev 腿自动关闭。',
+  // （jev-retire 批 2026-11-16：settings.jev* 整族键——启用开关/健康徽标/
+  // D.2 配置面 20 键——随 JeV 全量退役删除；原块横跨 jev-panel-threefix 批。）
   // settings-panel 批 D 件（2026-10-28）：STT 总开关（缺席=开，存量行为
   // 逐字不变；关=STT 整体停用，入口与快捷键全收）。
   'settings.sttEnabled': '启用语音识别',
@@ -1328,10 +1298,8 @@ export default {
   'settings.imagegenNameRequired': '先填写提供方名称',
   'settings.imagegenNameInvalid': '提供方名称只允许字母/数字/._-',
   // settings-panel-jev-imagegen 批（2026-10-29 作者令「然后 Jev/生图，也要像我们
-  // LLM 这样，有个按钮来测试可用性」）：JeV 一枚测试钮（同 LLM 测试钮口径）；
-  // 生图两级（轻探活 + 实跑一次最小生成）。
-  'settings.jevTestBtn': '测试可用性',
-  'settings.jevTestTitle': '连接性测试：向分配通道发一次最小真实调用（测当前表单值，未保存也可测）',
+  // LLM 这样，有个按钮来测试可用性」）：JeV 测试钮随 JeV 退役删除（2026-11-16）；
+  // 生图两级（轻探活 + 实跑一次最小生成）保留。
   'settings.imagegenTestBtn': '测试可用性',
   'settings.imagegenTestTitle': '轻探活：key 解析 + 上游可达（models 端点）',
   'settings.imagegenGenBtn': '实跑一次最小生成',
@@ -1364,12 +1332,9 @@ export default {
   // 按「术语按英文统一」批的口径走英文原词，两语言同值（不是漏翻译）。
   'settings.providerType.llm': 'LLM',
   'settings.providerType.imagegen': 'Image generation',
-  'settings.providerType.jev': 'Jev',
   // 类型枚举投影读取失败 / 与面板行为绑定不一致（都是失败闭合态，不指路）。
   'settings.providerTypesError': '服务商类型清单读取失败',
   'settings.providerTypesDrift': '有服务商类型未接入面板',
-  'settings.jevHealthTitle': '分配通道',
-  'settings.jevEndpointPinned': '端点固定（typesafe-jev 分配通道由引擎约定，不可编辑）',
   'settings.enabled': '启用',
   'settings.cfgCard.saved': '已保存',
   'settings.cfgCard.keyReentryPlaceholder': '已配置——重新输入即覆盖',
@@ -1443,11 +1408,13 @@ export default {
   // 模型槽的显示名（原 P1-2 的「零消费点」登记就此解除——kernel 以独立槽身份回归）。
   'model.roleNode': 'node（节点）',
   'model.roleSubagent': 'subagent（子代理）',
+  'model.smallLlm': '通用小 LLM',
+  'model.smallLlmFallback': '未配置（回退主模型）',
   'model.viaSlash': '用 /model 命令编辑',
   'model.currentRun': '当前运行',
-  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.4）：/model 里 Jev / 生图
-  // 两个新分组 = 「该配置节当前使用哪个提供方」的指针切换器（不是 agent 模型链）。
-  'model.groupJev': 'Jev（插件分配）',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.4）：/model 里的生图新分组 =
+  // 「该配置节当前使用哪个提供方」的指针切换器（不是 agent 模型链）；Jev 分组随
+  // JeV 退役删除（2026-11-16）。
   'model.groupImagegen': '生图',
   'model.groupSwitch': '切换',
   'model.groupSwitched': '已切换到 {name}',

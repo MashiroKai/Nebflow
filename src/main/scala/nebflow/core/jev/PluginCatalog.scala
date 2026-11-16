@@ -15,6 +15,32 @@ import nebflow.core.plugin.{PluginDispatchPolicy, PluginRegistry}
  * `description` 是模型读的唯一能力陈述（见 [[CatalogEntry]]）——热读注册表扫描
  * （PluginRegistry 快照缓存），目录随安装/封禁/开关即时反映。
  */
+/**
+ * One capability catalog entry as the allocation face sees it.
+ *
+ * `name` is the package name written back into `NodeDef.plugins`; `description`
+ * is what the MODEL reads — the implementation renders it into the prompt of
+ * the allocation call, so dropping it would leave the model judging packages
+ * by name alone. Both fields are therefore load-bearing inputs, not metadata:
+ * `name` keys the membership answer, `description` carries the capability
+ * statement. Deliberately a small record rather than a plugin type:
+ * `core.plugin.PluginRegistry` holds the authority for what is installed and
+ * trusted, and this is only the rendering input.
+ *
+ * 双模式批（2026-10-28 · 设计 §7 插件三层规范）增量键：`keywords`（检索词簇）
+ * 与 `useWhen`（「何时该用」一句）随 description 同为模型读判据输入——**容忍
+ * 缺席**（缺省空/None = 旧行为逐字节；带键 = 分配问对面行增量渲染）。
+ *
+ * （jev-retire 批：自 JevAllocatorPort.scala 原文迁入——JeV 端口已退役，
+ * CatalogEntry 是共享基础设施，保留。）
+ */
+final case class CatalogEntry(
+  name: String,
+  description: String,
+  keywords: List[String] = Nil,
+  useWhen: Option[String] = None
+)
+
 object PluginCatalog:
 
   /** 当前可分配目录（catalog 序 = 注册表扫描序，稳定可复现）。 */

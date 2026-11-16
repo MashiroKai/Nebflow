@@ -282,22 +282,24 @@ class PromptSectionsSpec extends munit.FunSuite:
       os.remove.all(tempRoot)
 
   // ============================================================
-  // System prompt assembly（阶段 2 批 A：systemPrefix 层退役，稳定首段 =
-  // agent system.md——provider prefix-cache 锚点）
+  // System prompt assembly uses the packaged resource, not the data root.
   // ============================================================
 
-  test("agent system.md is the first stable segment in assembled prompt"):
-    // 阶段 2 批 A 退役共享 system-prefix 层后，稳定首段 = agent system.md
-    // （同模版会话共享的基座）——provider 前缀缓存锚点，必须位于最前。
-    val prompt = assembleSystemPrompt("AGENT-MD", "CONDITIONAL")
-    assert(prompt.startsWith("AGENT-MD"), "agent system.md must be first")
-    val agentIdx = prompt.indexOf("AGENT-MD")
-    val condIdx = prompt.indexOf("CONDITIONAL")
-    assert(agentIdx < condIdx, "order must be agent.md → conditional")
-
-  test("assembleSystemPrompt omits separator when no conditional blocks"):
-    assertEquals(assembleSystemPrompt("A", ""), "A")
-    assertEquals(assembleSystemPrompt("A", "C"), "A\n\nC")
+  test("assembly prepends the classpath resource and ignores external overrides"):
+    withIsolatedDataRoot {
+      os.write(PathUtil.dataRoot / "prompt-prefix.md", "EXTERNAL OVERRIDE")
+      val stream = getClass.getResourceAsStream("/seed/prompt-prefix.md")
+      assert(stream != null, "packaged prefix resource must exist")
+      val source = scala.io.Source.fromInputStream(stream, "UTF-8")
+      val resource =
+        try source.mkString.trim
+        finally source.close()
+      val prompt = assembleSystemPrompt("AGENT-MD", "CONDITIONAL")
+      assertEquals(prompt, s"--- SYSTEM PREFIX ---\n$resource\n\nAGENT-MD\n\nCONDITIONAL")
+      assert(!prompt.contains("EXTERNAL OVERRIDE"))
+      val withoutBlocks = assembleSystemPrompt("AGENT-MD", "")
+      assertEquals(withoutBlocks, s"--- SYSTEM PREFIX ---\n$resource\n\nAGENT-MD")
+    }
 
   // ============================================================
   // Mounted projects (progressive disclosure 2026-09-07): Nebula-only

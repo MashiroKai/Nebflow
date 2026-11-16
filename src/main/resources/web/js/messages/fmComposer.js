@@ -14,20 +14,21 @@
 //   ⑤ 停止态（录音中 = 麦克风键 `recording` / 收尾转写 `processing`，再点一次即停；
 //      本面**无** agent-busy 中断键——fm 窗是消息面不是回合面，申报见批文档）
 //
-// 与主会话输入组件的关系（申报，**非同一实现**）：主会话 = `input.js` +
-// `input/composer.js` 全家桶（多行 textarea、slash/mention 菜单、输入历史、
-// busy↔idle 中断键 swap、附件条带、排队/回执面）；三面是**轻量 composer**
-// （单行 input + 四键位），只有**视觉语言与主会话同款**：输入框 `.cfg-input`、
-// 图标键 `.icon-btn` 档、发送键族（sapphire.css 发送族块 `.cfg-btn.fm-send-btn`）。
+// 与主会话输入组件的关系（申报，**结构同源、行为分层**）：结构自 chat-ui-package
+// 批（2026-11-16）起同源 —— 两面的外壳/键位结构均出自 js/chatUi.js 的 composer()
+// 工厂（主会话 variant 'main'，三面 variant 'compact'）；行为仍是两套 —— 主会话 =
+// `input.js` + `input/composer.js` 全家桶（多行 textarea、slash/mention 菜单、输入
+// 历史、busy↔idle 中断键 swap、附件条带、排队/回执面）；三面是**轻量 composer**
+// （单行 input + 四键位）。
 // 全部差异逐条列在批文档（docs/20261102_234900_fm-threeface-align__delegate-nebflow-c1142b9b.md）。
 //
-// 依赖方向：i18n / voiceEngine / imeGuard / messages/elements —— 均不回指
+// 依赖方向：i18n / chatUi / voiceEngine / imeGuard —— 均不回指
 // messages.js（无环；voiceEngine 是既有单点，本模块禁新造第二套语音机制）。
 
 import { t } from '../i18n.js';
+import { composer } from '../chatUi.js';
 import { startDictation, stopDictation, sttEnabled } from '../voiceEngine.js';
 import { bindImeGuard, isImeComposing } from '../imeGuard.js';
-import { el } from './elements.js';
 
 /**
  * 装配一条 fm 输入条（三面同款）。返回引用给宿主（messages.js）挂状态收敛。
@@ -51,24 +52,28 @@ export function buildFmComposer(opts) {
   const onTextChange = typeof opts.onTextChange === 'function' ? opts.onTextChange : () => {};
   const toast = typeof opts.toast === 'function' ? opts.toast : (() => {});
 
-  // 输入条外壳 = **悬浮毛玻璃条**（contact-panel-unify 链 · 作者令 2026-11-06
-  // 「输入框：同样采用悬浮、毛玻璃半透明、带大圆角的设计」，参照物 = 主会话
-  // `#input-bar`）：
+  // 输入条结构单源 = js/chatUi.js 的 composer() compact 变体（chat-ui-package
+  // 批③，2026-11-16）：外壳/输入件/麦克风键/纸夹键/发送键的类名、属性与子序
+  // 全部出自工厂（与主输入条同一结构源），本文件只留行为接线（语音/附件/发送/
+  // 键盘契约）。外壳仍是**悬浮毛玻璃条**（contact-panel-unify 链 · 作者令
+  // 2026-11-06「输入框：同样采用悬浮、毛玻璃半透明、带大圆角的设计」，参照物 =
+  // 主会话 `#input-bar`）：
   //   · `nf-glass` = 全站唯一毛玻璃工具类（css/glass.css 单源，玻璃底/模糊/细边/
   //     影四件套由类供，本文件与 friends.css 都**不写** backdrop-filter 与色值）；
   //   · 圆角/内距/落位 = css/friends.css 的 `.fm-input-bar`（20px 外壳档 + 6/12 内距，
-  //     与 `#input-bar` 逐值同）。
+  //     与 `#input-bar` 逐值同）；
+  //   · 内件 `.nf-field--bare`（css/inputSurface.css 显式类）：外壳已给材质，内件
+  //     只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」。
   // 禁第二个类名/第二份材质：换个名字再画一遍就是「第二种输入面」（check-input-surface
   // 的 I2 与 check-glass-unify 的 G1 都会红）。
-  const bar = el('div', 'fm-input-bar nf-glass');
-  const input = document.createElement('input');
-  // 裸件档（css/inputSurface.css 的 `.nf-field--bare` 显式类）：外壳已给材质，
-  // 内件只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」。
-  input.className = 'cfg-input fm-input nf-field--bare';
-  input.type = 'text';
-  input.placeholder = t('messages.inputPlaceholder');
-  input.maxLength = 2000;
-  input.autocomplete = 'off';
+  const { bar, input, micBtn, sendBtn, attachBtn, attachInput } = composer({
+    variant: 'compact',
+    micLabel: t('messages.voiceInput'),
+    placeholder: t('messages.inputPlaceholder'),
+    sendLabel: t('messages.send'),
+    attachLabel: t('dropbox.attachFile'),
+    canAttach: opts.canAttach === true,
+  });
 
   // ── 语音输入（②；三面同挂 —— 设备面本批补齐，令出 2026-11-02）──────────────
   //  形态 = 主窗既有 `.icon-btn` 族 + lucide `mic`（与纸夹同族）；位置 = 输入条
@@ -82,12 +87,7 @@ export function buildFmComposer(opts) {
   let voiceActive = false;
   let voiceAnchor = 0;      // 当前语音段插入锚点（字符偏移）
   let voiceInterimLen = 0;  // 当前占位 interim 文本长度
-  const micBtn = el('button', 'icon-btn fm-mic-btn');
-  micBtn.type = 'button';
-  micBtn.title = t('messages.voiceInput');
-  micBtn.setAttribute('aria-label', t('messages.voiceInput'));
-  micBtn.setAttribute('aria-pressed', 'false');
-  micBtn.innerHTML = '<i data-lucide="mic"></i>';
+  // micBtn 由工厂装配（形态/属性/字形单源在 chatUi.js）；反馈态类在此切换。
   const setMicState = (s) => {
     micBtn.classList.toggle('recording', s === 'listening' || s === 'speaking');
     micBtn.classList.toggle('processing', s === 'processing');
@@ -160,7 +160,6 @@ export function buildFmComposer(opts) {
       },
     });
   });
-  bar.appendChild(micBtn);
 
   // 发送键族统一批（作者 2026-09-15「正常绿 / 掉线灰」）：本键与全站发送键共用
   // 同一套状态色（`sapphire.css` 的发送族块）。`cfg-btn-primary` 只为**承接既有
@@ -171,40 +170,19 @@ export function buildFmComposer(opts) {
   // 文字键 52×44 / r10 —— 与主会话 48×48 / r50% 差两档，正是作者点名的不同。
   // `fm-send-btn` 保留为宿主钩子：`syncComposerSend` 的 disabled / `.disconnected`
   // 两态、`sapphire.css` 发送族与 QA 断言面都按它寻址（禁第二套状态位）。
-  const sendBtn = el('button', 'ds-turn-btn ds-turn-btn--send fm-send-btn');
-  sendBtn.type = 'button';
-  sendBtn.title = t('messages.send');
-  sendBtn.setAttribute('aria-label', t('messages.send'));
-  // 图标走节点装配（不写裸 innerHTML —— 组件契约 R5；lucide 仍是全站唯一字形源）。
-  const sendIcon = document.createElement('i');
-  sendIcon.setAttribute('data-lucide', 'send');
-  sendBtn.appendChild(sendIcon);
-  bar.appendChild(input);
+  // （sendBtn / input 的形态、属性与子序均由工厂装配，此处不重复。）
 
-  // 附件入口（③）：三面共用主会话 `.icon-btn` 控件类与 paperclip 字形；
-  // 面间差异全部收在宿主 `dispatchFiles`（传输协议/授权/受理面），本组件只装入口。
-  // 不可用面（`canAttach === false`）不挂入口、也不做灰置假入口。
-  const attachInput = document.createElement('input');
-  attachInput.type = 'file';
-  attachInput.multiple = true;
-  attachInput.style.display = 'none';
-  attachInput.addEventListener('change', () => {
-    if (attachInput.files && attachInput.files.length > 0) opts.onFiles(attachInput.files);
-    attachInput.value = '';
-  });
-  const attachBtn = el('button', 'icon-btn');
-  attachBtn.type = 'button';
-  attachBtn.title = t('dropbox.attachFile');
-  attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
-  const attachIcon = document.createElement('i');
-  attachIcon.setAttribute('data-lucide', 'paperclip');
-  attachBtn.appendChild(attachIcon);
-  attachBtn.addEventListener('click', () => attachInput.click());
-  if (opts.canAttach) {
-    bar.appendChild(attachBtn);
-    bar.appendChild(attachInput);
+  // 附件入口（③）：结构（`.icon-btn` 纸夹键 + 隐藏 file input）由工厂装配；
+  // 面间差异全部收在宿主 `dispatchFiles`（传输协议/授权/受理面），本组件只接线。
+  // 不可用面（canAttach=false）工厂即不造入口（attachBtn/attachInput = null），
+  // 也不做灰置假入口。
+  if (attachBtn && attachInput) {
+    attachInput.addEventListener('change', () => {
+      if (attachInput.files && attachInput.files.length > 0) opts.onFiles(attachInput.files);
+      attachInput.value = '';
+    });
+    attachBtn.addEventListener('click', () => attachInput.click());
   }
-  bar.appendChild(sendBtn);
 
   // ── 发送 + 键盘契约（④；三面同款）────────────────────────────────────────
   sendBtn.addEventListener('click', () => onSend());
