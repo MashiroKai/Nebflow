@@ -65,6 +65,15 @@ class PromptFaceSplitSpec extends FunSuite:
 
     end for
 
+  test("implementation delivery requires a decision-to-acceptance transition on both delegate surfaces"):
+    val brief = nebflow.core.tools.DelegateTool.BriefReportLine
+    for text <- Seq(delegatePrompt, brief) do
+      assert(text.contains("reconnaissance and a decision are intermediate steps"))
+      assert(text.contains("each acceptance criterion"))
+      assert(text.contains("authorized"))
+    assert(delegatePrompt.contains("Never invent results or bypass safety gates"))
+    assert(brief.contains("Do not merge, push, publish, tag or delete branches/worktrees on your own initiative"))
+
   test("delegate 面系统提示词 = 终态语义在位（回合结束 = 完成事件；无申报工具；blocked 类别退役）"):
     val text = delegatePrompt
     assert(text.contains("no declaration tool"), "「无申报工具」明示句在位")
