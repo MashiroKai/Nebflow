@@ -386,7 +386,12 @@ try {
   ok('T2c 通路② Esc 收起', g2.dockClosed === true);
   await page.click('.ask-fab');
   await sleep(350);
-  await page.evaluate(() => document.getElementById('canvas-content').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  await page.evaluate(() => {
+    const content = document.getElementById('canvas-content');
+    const event = { bubbles: true, pointerId: 42, pointerType: 'mouse', isPrimary: true, button: 0, clientX: window.innerWidth / 2 };
+    content.dispatchEvent(new PointerEvent('pointerdown', event));
+    content.dispatchEvent(new PointerEvent('pointerup', event));
+  });
   await sleep(350);
   g2 = await geo(page);
   ok('T2d 通路③ 画布空白点击收起', g2.dockClosed === true);

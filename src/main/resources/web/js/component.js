@@ -17,7 +17,7 @@
  * mount(el, ctx) 的第二个实参 —— 实例上下文。
  * @typedef {Object} ComponentCtx
  * @property {any} state 本实例的 state（define 的 state 是函数 ⇒ 每实例调用一次）
- * @property {(target: EventTarget, type: string, handler: (ev: any) => void) => void} on
+ * @property {(target: EventTarget, type: string, handler: (ev: any) => void, options?: boolean | AddEventListenerOptions) => void} on
  *   注册监听并登记，断开时自动 removeEventListener（组件作者不必自己记账）
  */
 
@@ -62,9 +62,9 @@ export function define({ tag, template, state, mount, unmount }) {
       /** @type {ComponentCtx} */
       const ctx = {
         state: typeof state === 'function' ? state() : state,
-        on(target, type, handler) {
-          target.addEventListener(type, handler);
-          offs.push(() => target.removeEventListener(type, handler));
+        on(target, type, handler, options) {
+          target.addEventListener(type, handler, options);
+          offs.push(() => target.removeEventListener(type, handler, options));
         },
       };
       INSTANCES.set(this, { ctx, offs });
