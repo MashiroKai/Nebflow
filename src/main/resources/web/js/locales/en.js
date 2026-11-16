@@ -2099,6 +2099,11 @@ export default {
   'delegate.restoreFailed': 'Restore failed: {error}',
   'delegate.modelSwitch': 'Switch model',
   'delegate.modelFollowSlot': 'Follow class (default)',
+  'delegate.externalModelFuture': 'Model for future dispatches with this executor (not this session)',
+  'delegate.externalModelUnsupported': 'This CLI does not provide a headless model parameter',
+  'delegate.externalModelDefault': 'Leave empty for CLI default',
+  'delegate.externalModelSaved': 'Saved',
+  'delegate.externalModelError': 'Could not load or save model setting',
   // ② S10 per-task chain view top bar back button
   'delegate.backToTasks': 'Back to tasks',
   // ③ S11 structure overview header

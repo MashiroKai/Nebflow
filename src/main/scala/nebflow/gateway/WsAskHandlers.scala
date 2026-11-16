@@ -108,6 +108,10 @@ private[gateway] object WsAskHandlers:
                   "sessionKey" -> AskSessions.displayKey(canonical).asJson,
                   "file" -> freshBinding.file.asJson,
                   "fileName" -> freshBinding.fileName.asJson,
+                  // ask-mail 批（2026-11-16）：会话的 Mail 续聊地址（单源 =
+                  // MailAddress.AskPrefix + sid）——dock 头部渲染可复制地址行，
+                  // 编排方/用户可经 Mail(ask:<会话id>) 续聊。
+                  "mailAddress" -> (nebflow.core.delegate.MailAddress.AskPrefix + sid).asJson,
                   "messages" -> encodeTranscript(msgs).asJson,
                   // canvas-ask-restricted-edit：在列提案随回放下发（重载/换端后
                   // diff 卡重建；引擎为权威——服务端重启即清零，前端本地态让位）。

@@ -2028,6 +2028,11 @@ export default {
   'delegate.restoreFailed': '恢复失败：{error}',
   'delegate.modelSwitch': '切换模型',
   'delegate.modelFollowSlot': '跟随类别（默认）',
+  'delegate.externalModelFuture': '该执行器后续新派发的模型（不影响当前会话）',
+  'delegate.externalModelUnsupported': '该 CLI 未提供 headless 模型参数',
+  'delegate.externalModelDefault': '留空使用 CLI 默认',
+  'delegate.externalModelSaved': '已保存',
+  'delegate.externalModelError': '模型设置读取或保存失败',
   // ② S10 per-task 链视图顶栏返回钮
   'delegate.backToTasks': '返回任务列表',
   // ③ S11 结构总视图头

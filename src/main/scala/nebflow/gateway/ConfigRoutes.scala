@@ -148,6 +148,32 @@ private[gateway] object ConfigRoutes:
           Ok(nebflow.core.executor.ExecutorRegistry.snapshotJson)
         }
 
+      case req @ GET -> Root / "executors" / id / "model" =>
+        withAuth(req) {
+          val supported = Set("claude-code", "codex").contains(id)
+          if !nebflow.core.executor.ExecutorRegistry.defs.exists(d => d.id == id && d.external) then
+            NotFound(Json.obj("error" -> "unknown executor".asJson))
+          else
+            Ok(Json.obj(
+              "model" -> nebflow.core.executor.ExecutorRegistry.configuredModel(id).asJson,
+              "supported" -> supported.asJson,
+              "suggestions" -> (if id == "claude-code" then List("sonnet", "opus") else if id == "codex" then List("o3") else Nil).asJson
+            ))
+        }
+
+      case req @ PUT -> Root / "executors" / id / "model" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            body.hcursor.get[String]("model") match
+              case Left(_) => BadRequest(Json.obj("error" -> "model must be a string".asJson))
+              case Right(model) =>
+                ConfigService.setExecutorModel(id, model).flatMap {
+                  case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+                  case Right(_) => Ok(Json.obj("updated" -> true.asJson, "model" -> model.trim.asJson))
+                }
+          }
+        }
+
       // PUT /api/executors/default —— 设默认执行器。body {"id": "<executorId>"};
       // 未在册 ⇒ 400 不落盘。内置执行器不可 disabled（无 disabled 臂——面板
       // 只切 default；disabled 白名单写入留给后续批）。

@@ -22,6 +22,32 @@ class NodeCompletionReplayIntegrationSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(root)
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
+  test("detached barrier waits for the finalizer after the completion event") {
+    val system = ActorSystem("detached-barrier")
+    Resource.make(IO.pure(system))(_.stopAll).use { _ =>
+      for
+        event <- Deferred[IO, Unit]
+        release <- Deferred[IO, Unit]
+        finalized <- Deferred[IO, Unit]
+        res <- SpecResources.mkResources(system, root, new LlmHandle[IO]:
+          def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unused"))
+          def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] = Stream.empty
+        )
+        store <- FlowMapStore.open("detached-barrier", root.toString)
+        engine = new NodeEngine(store, system, res, (_: Json) => IO.unit, root.toString, "root", "barrier", (_, _, _) => IO.unit)
+        _ <- engine.forkStart("held finalizer")((event.complete(()).void *> IO.unit).guarantee(release.get *> finalized.complete(()).void))
+        _ <- event.get
+        waitFiber <- engine.awaitDetachedStarts.start
+        before <- finalized.tryGet
+        _ = assertEquals(before, None)
+        _ <- release.complete(())
+        _ <- waitFiber.joinWithNever.timeout(5.seconds)
+        after <- finalized.tryGet
+        _ = assertEquals(after, Some(()))
+      yield ()
+    }
+  }
+
   test("E01: concurrent upstreams deliver once and replay preserves downstream artifact") {
     val ws = root / java.util.UUID.randomUUID().toString
     os.makeDir.all(ws)
@@ -56,6 +82,7 @@ class NodeCompletionReplayIntegrationSpec extends CatsEffectSuite:
         )))
         _ <- (engine.startNode("a"), engine.startNode("b")).parTupled.timeout(30.seconds)
         _ <- completed.get.timeout(30.seconds)
+        _ <- engine.awaitDetachedStarts.timeout(30.seconds)
         before <- store.getNode("parent")
         beforeA <- store.getNode("a")
         accepted <- engine.completeNodeR("a", "CORRUPTED REPLAY")
