@@ -125,8 +125,24 @@ object E2eFixtureMain extends IOApp:
         "known_actor_count" -> ids.distinct.size.asJson)
     )
 
+  private def armWatchdog(): IO[Unit] = IO {
+    val budget = sys.env.get("E2E_WATCHDOG_MS").flatMap(_.toLongOption)
+      .filter(ms => ms > 0 && ms <= 900000)
+      .getOrElse(throw new IllegalStateException("valid E2E_WATCHDOG_MS required"))
+    val watchdog = new Thread(() => {
+      val timer = new java.util.concurrent.CountDownLatch(1)
+      if !timer.await(budget, java.util.concurrent.TimeUnit.MILLISECONDS) then
+        System.err.println("E2E_WATCHDOG_EXPIRED")
+        System.exit(124)
+    }, "e2e-self-watchdog")
+    watchdog.setDaemon(true)
+    watchdog.start()
+  }
+
   def run(args: List[String]): IO[ExitCode] =
     val run = for
+      _ <- armWatchdog()
+      _ <- if args == List("--watchdog-self-test") then IO.never[Unit] else IO.unit
       _ <- requireFixture(args.size == 2 && args.head == "--request", "expected --request PATH")
       request <- IO.blocking(parse(os.read(os.Path(args(1)))).toOption.get)
       root <- IO.fromOption(sys.env.get("STAND_HOME"))(new IllegalStateException("private STAND_HOME required")).map(os.Path(_))
