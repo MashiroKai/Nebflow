@@ -42,6 +42,52 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     try f(dir)
     finally os.remove.all(dir)
 
+  test("maximum thinking reaches the model's highest advertised effort") {
+    val levels = List("low", "medium", "high", "xhigh", "max", "ultra")
+    val decision = ExternalReasoning.decide(nebflow.shared.ThinkingConfig(effort = Some(nebflow.shared.ThinkingEffort.Max)),
+      Some("gpt-6.1-terra"), Some(ExternalReasoning.Catalog(levels, "runtime", "stamp")))
+    for resume <- List(None, Some("thread")) do
+      val args = ExternalReasoning.argv(ExternalExecutor.Codex.launchArgsWithModel("task", resume, Some("gpt-6.1-terra")), decision)
+      assert(args.containsSlice(List("-c", "model_reasoning_effort=ultra")), args.toString)
+    assert(decision.trace.contains("requested=max actual=ultra direction=up source=runtime timestamp=stamp"))
+  }
+
+  test("advertised catalogs map both endpoints and preserve matching names") {
+    import nebflow.shared.ThinkingEffort.*
+    val tiers = List(Minimal, Low, Medium, High, Max)
+    val catalogs = List(
+      List("low", "medium", "high", "xhigh", "max", "ultra") -> List("low", "low", "medium", "high", "ultra"),
+      List("low", "medium", "high", "xhigh", "max") -> List("low", "low", "medium", "high", "max")
+    )
+    catalogs.foreach { case (levels, expected) =>
+      assertEquals(tiers.map(e => ExternalReasoning.map(e, levels).get), expected)
+    }
+    assertEquals(ExternalReasoning.map(Medium, List("a", "b", "c", "d")), Some("c"))
+    assertEquals(ExternalReasoning.map(Max, Nil), None)
+    val unset = ExternalReasoning.decide(nebflow.shared.ThinkingConfig(effort = Some(Max)), None, None)
+    assertEquals(unset.actual, None)
+    assert(unset.reason.contains("model unknown"))
+  }
+
+  test("runtime catalog protocol and fresh/resume traces from a fake CLI") {
+    val dir = os.temp.dir(prefix = "codex-catalog-test-")
+    val bin = dir / "codex"
+    os.write(bin, """#!/bin/sh
+read first
+printf '%s\n' '{"id":1,"result":{}}'
+read initialized
+read list
+printf '%s\n' '{"id":2,"result":{"data":[{"model":"m","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"ultra"}]}],"nextCursor":null}}'
+""")
+    os.perms.set(bin, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
+    val catalog = ExternalReasoning.runtime(bin.toString, "m")
+    assertEquals(catalog.map(_.levels), Some(List("low", "ultra")))
+    assertEquals(catalog.map(_.source), Some("runtime"))
+    assert(catalog.exists(_.timestamp.nonEmpty))
+    val decision = ExternalReasoning.decide(nebflow.shared.ThinkingConfig(effort = Some(nebflow.shared.ThinkingEffort.Max)), Some("m"), catalog)
+    assert(decision.trace.contains("requested=max actual=ultra direction=up source=runtime timestamp="))
+  }
+
   test("external model arguments support fresh and resumed sessions without affecting unsupported CLI") {
     for resume <- List(None, Some("session-id")) do
       val claude = ExternalExecutor.ClaudeCode.launchArgsWithModel("task", resume, Some("sonnet"))

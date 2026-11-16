@@ -265,6 +265,8 @@ case class SharedResources(
 ) extends AgentRuntimePort,
       SubAgentTaskPort:
 
+  override def externalThinkingConfig: IO[ThinkingConfig] = thinkingConfigRef.get
+
   override def isProtectedExecution(sessionId: String): Boolean = protectedExecutions.contains(sessionId)
 
   private[agent] def activeProtectedRecovery(sessionId: String): IO[Option[ActiveProtectedRecovery]] =
