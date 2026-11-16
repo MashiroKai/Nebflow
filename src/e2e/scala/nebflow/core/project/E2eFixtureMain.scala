@@ -124,8 +124,7 @@ object E2eFixtureMain extends IOApp:
     yield Json.obj(
       "scenario_id" -> "E01".asJson, "status" -> (if pass then "PASS" else "FAIL").asJson,
       "assertions" -> checks.map { case (expected, passed) => Json.obj("expected" -> expected.asJson, "passed" -> passed.asJson) }.asJson,
-      // Only known actor IDs were checked; gateway-global DB and process resources
-      // are not yet audited, so the protocol cannot assert a zero resource count.
+      // Listener and OS-handle inventories are not implemented; unknown is not zero.
       "resources_remaining" -> Json.Null,
       "telemetry" -> Json.obj("model_mode" -> "scripted-no-billing-counters".asJson,
         "e2e_latency_ms" -> (finished - started).toMillis.asJson,
