@@ -179,6 +179,51 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
         }
     yield result
 
+  test("delegate session model overrides category on the actual request") {
+    val previousRoot = PathUtil.dataRoot
+    val root = os.temp.dir(prefix = "model-wire-")
+    PathUtil.setDataRoot(root)
+    val seen = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val program = for
+      server <- IO.blocking {
+        val s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+        s.createContext("/chat/completions", (exchange: HttpExchange) => {
+          val body = new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
+          seen.add(body)
+          val payload = """{"id":"mock","model":"model-b","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
+          val bytes = payload.getBytes(StandardCharsets.UTF_8)
+          exchange.getResponseHeaders.add("Content-Type", "application/json")
+          exchange.sendResponseHeaders(200, bytes.length)
+          val out = exchange.getResponseBody; out.write(bytes); out.close(); exchange.close()
+        })
+        s.start(); s
+      }
+      _ <- (for
+        cfg <- IO.pure(NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("p" -> ProviderConfig(
+          baseUrl = s"http://127.0.0.1:${server.getAddress.getPort}", apiKey = "fixture",
+          protocol = LlmProtocol.OpenAI, models = List(ModelConfig("model-a"), ModelConfig("model-b")))))))
+        ref <- Ref.of[IO, NebflowServiceConfig](cfg)
+        overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+        _ <- LlmInterface.createLlm(overrides, None, Some(ref)).flatMap { case (handle, registry, _, release) =>
+          val req = imageRequest.copy(sessionId = "delegate-fixture", messages = List(Message(MessageRole.User, Left("hi"))),
+            agentModel = Some(AgentModelConfig(preferred = Some("p/model-a"))))
+          (for
+            selected <- registry.getCandidateForRef("p/model-b")
+            _ <- overrides.update(_ + ("delegate-fixture" -> selected.get))
+            _ <- handle.send(req)
+          yield ()).guarantee(release)
+        }
+      yield ()).guarantee(IO.blocking(server.stop(0)))
+    yield ()
+    try
+      program.unsafeRunSync()
+      val body = seen.peek()
+      assertEquals(parser.parse(body).toOption.flatMap(_.hcursor.get[String]("model").toOption), Some("model-b"), s"wire=$body")
+    finally
+      PathUtil.setDataRoot(previousRoot)
+      os.remove.all(root)
+  }
+
   test("configured effort allowlist reaches both adapters on stream and non-stream paths") {
     import scala.jdk.CollectionConverters.*
     val seen = new java.util.concurrent.ConcurrentLinkedQueue[Json]()
