@@ -124,7 +124,12 @@ const histReqs = [];           // 诊断：每次 getHistory 的 beforeIndex 轨
 const browser = await chromium.launch(process.env.NB_CHROME_PATH
   ? { executablePath: process.env.NB_CHROME_PATH }   // 本机缓存的全量 chromium（headless shell 未装时的旁路）
   : {});
-const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark' });
+const mobileNoise = process.env.NB_MOBILE_NOISE === '1';
+const ctx = await browser.newContext({
+  viewport: mobileNoise ? { width: 390, height: 844 } : { width: 1600, height: 1000 },
+  deviceScaleFactor: mobileNoise ? 2 : 1,
+  colorScheme: 'dark',
+});
 await ctx.addInitScript(() => {
   localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
   localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
@@ -179,7 +184,7 @@ const bannerUp = () => page.evaluate(() => !!document.getElementById('stand-sess
 const ltSnap = () => page.evaluate(() => ({ ...window.__lt }));
 
 await page.goto(BASE + '/index.html');
-await page.waitForSelector('#activity-bar', { timeout: 20000 });
+await page.waitForSelector('#activity-bar', { state: 'attached', timeout: 20000 });
 // P0 首屏（#923）：初载恰好一页的行数落定（卡片行双计）。等「≥ 期望行数」后
 // 立刻读数——首屏若健康则恒等；若发生双挂载会一次性越过，行数读数留给 F1 判。
 let firstRows = 0;
@@ -207,6 +212,10 @@ try {
   await browser.close(); server.close(); process.exit(1);
 }
 await sleep(600); // 初载 md 升级批落地
+if (mobileNoise) {
+  await page.evaluate(() => { document.documentElement.style.zoom = '1.25'; });
+  await sleep(600);
+}
 // Empty operation control: same row and scroll position across animation frames.
 const noise = await page.evaluate(async () => {
   const chat = document.getElementById('chat');
@@ -250,7 +259,17 @@ const navAtBoot = navigated;
 /** 上滑一页（滚到 250px —— 预取带内、停顶续拉阈值上方）并等行数落定。 */
 async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
   const t0 = Date.now();
-  await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = 250; c.dispatchEvent(new Event('scroll')); });
+  await page.evaluate(() => {
+    const c = document.getElementById('chat');
+    c.scrollTop = 250;
+    const bounds = c.getBoundingClientRect();
+    const row = [...c.querySelectorAll('.row')].find((r) => {
+      const rect = r.getBoundingClientRect();
+      return rect.bottom > bounds.top && rect.top < bounds.bottom;
+    });
+    window.__historyTestAnchor = row && { row, top: row.getBoundingClientRect().top - bounds.top };
+    c.dispatchEvent(new Event('scroll'));
+  });
   let stable = 0, last = -1;
   for (;;) {
     await sleep(60);
@@ -259,16 +278,25 @@ async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
     last = n;
     if (Date.now() - t0 > deadlineMs) break;
   }
-  return { ms: Date.now() - t0, rows: last };
+  const error = await page.evaluate(() => {
+    const c = document.getElementById('chat');
+    const a = window.__historyTestAnchor;
+    return a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null;
+  });
+  return { ms: Date.now() - t0, rows: last, error };
 }
 
 // ── P1+P2：前 4 页手动上滑（每页 60 .row：卡片行双计），逐页计时 ──────────
 const pageTimes = [];
+const anchorErrors = [];
+// 30 empty-frame samples were zero in both measured viewports; allow CSS pixel rounding.
+const ANCHOR_TOLERANCE_CSS_PX = 2;
 let rows = await rowCount();
 for (let i = 1; i <= 4; i++) {
   const expect = ROWS_PER_PAGE * (1 + i);
   const r = await scrollUpOnePage(expect);
   pageTimes.push(r.ms);
+  anchorErrors.push(r.error);
   rows = await rowCount();
 }
 const manualRows = rows;
@@ -326,6 +354,8 @@ ok('P0-a 首屏恰一页（行数 = ' + ROWS_PER_PAGE + '，init 恰一发，内
   `firstRows=${firstRows} initReqs=${bootInitCount} contentDup=${firstDup} histReqs=${JSON.stringify(bootHistReqs)}`);
 ok('P0-b 首屏时延 < ' + FIRST_MS + 'ms（init getHistory → 行落定）',
   firstScreenMs >= 0 && firstScreenMs < FIRST_MS, `firstScreen=${firstScreenMs}ms`);
+ok('A1 前插后保持同一可见行位置', anchorErrors.every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
+  `errors=${JSON.stringify(anchorErrors)} tolerance=${ANCHOR_TOLERANCE_CSS_PX} CSS px`);
 ok('P1 手动上滑 4 页补进 + 停顶续拉收口全量（卡片行双计）',
   manualRows === ROWS_PER_PAGE * 5 && rows === FINAL_ROWS, `manual=${manualRows} final=${rows}/${FINAL_ROWS} times=${pageTimes.join(',')}ms`);
 ok('P2 单页落定 < ' + PAGE_MS + 'ms', maxPageMs < PAGE_MS, `maxPage=${maxPageMs}ms`);
