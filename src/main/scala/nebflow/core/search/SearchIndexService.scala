@@ -447,7 +447,29 @@ object SearchIndexService:
         case None => IO.unit
       }
 
+  /** Do not expose an incomplete or unimplemented projection as an active search result. */
+  private def projectionReady(conn: Connection): Boolean =
+    val st = conn.createStatement()
+    try
+      val exists = st.executeQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='search_index_meta'")
+      val present = exists.next()
+      exists.close()
+      if !present then false
+      else
+        val rs = st.executeQuery("SELECT key,value FROM search_index_meta WHERE key IN ('phase','active_generation')")
+        var phase = ""
+        var active = ""
+        while rs.next() do
+          if rs.getString(1) == "phase" then phase = rs.getString(2)
+          else active = rs.getString(2)
+        phase == "done" && active.nonEmpty && active != "legacy"
+    finally st.close()
+
   private def runQuery(fs: FaceState, q: Query): Either[String, QueryResult] =
+    if projectionReady(fs.conn) then Left("inverted search projection is not yet implemented")
+    else runLegacyQuery(fs, q)
+
+  private def runLegacyQuery(fs: FaceState, q: Query): Either[String, QueryResult] =
     val hasPredicate = q.kinds.nonEmpty || q.sid.isDefined || q.since.isDefined || q.until.isDefined
     if q.text.trim.isEmpty then Left("query text must be non-empty")
     else if !hasPredicate then Left("query must carry a shard predicate (kinds/sid/since/until)")
@@ -523,7 +545,7 @@ object SearchIndexService:
           etagOf(q, hits, versionsOf(fs.conn, hits.map(_.sid).distinct), gen),
           andExpr.isEmpty, gen, next, changed))
       end if
-  end runQuery
+  end runLegacyQuery
 
   private def escapeLike(s: String): String =
     s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
