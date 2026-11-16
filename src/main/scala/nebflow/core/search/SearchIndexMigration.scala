@@ -46,7 +46,7 @@ object SearchIndexMigration:
       i += 1
     b.result()
 
-  def migrate(c: Connection, source: Connection, batchSize: Int = BatchSize, maxRows: Int = 1000, afterBatch: Int => Unit = _ => ()): Unit =
+  def migrate(c: Connection, source: Connection, batchSize: Int = BatchSize, maxRows: Int = 1000, afterBatch: Int => Unit = _ => (), beforeBatchCommit: Int => Unit = _ => ()): Unit =
     require(batchSize > 0)
     c.setAutoCommit(false)
     try
@@ -123,6 +123,7 @@ object SearchIndexMigration:
           finally
             hit.close(); find.close(); posting.close(); conflict.close(); freq.close()
           put(c, "backfill_cursor", cursor.toString)
+          beforeBatchCommit(batches + 1)
           c.commit()
           batches += 1
           println(s"batch=$batches cursor=$cursor")
@@ -197,7 +198,7 @@ object SearchIndexMigration:
     if args.length == 3 && args(0) == "--snapshot" then
       makeSessionSnapshot(args(1), args(2))
       return
-    require(args.length == 2 || (args.length == 3 && args(2) == "--halt-50"), "usage: SearchIndexMigration /tmp/<output>.sqlite /path/to/source.sqlite [--halt-50]")
+    require(args.length == 2 || (args.length == 3 && Set("--halt-50", "--halt-before-commit-50").contains(args(2))), "usage: SearchIndexMigration /tmp/<output>.sqlite /path/to/source.sqlite [--halt-50]")
     val temp = Paths.get("/tmp").toRealPath()
     val path = Paths.get(args(0)).toAbsolutePath.normalize()
     require(path.getParent.toRealPath().startsWith(temp), "output must be under /tmp")
@@ -208,7 +209,8 @@ object SearchIndexMigration:
     val started = System.nanoTime()
     try
       migrate(c, source, batchSize = 20, maxRows = Int.MaxValue,
-        afterBatch = n => if args.length == 3 && n == 50 then Runtime.getRuntime.halt(1))
+        afterBatch = n => if args.length == 3 && args(2) == "--halt-50" && n == 50 then Runtime.getRuntime.halt(1),
+        beforeBatchCommit = n => if args.length == 3 && args(2) == "--halt-before-commit-50" && n == 50 then Runtime.getRuntime.halt(1))
       println(f"elapsed_seconds=${(System.nanoTime() - started) / 1e9}%.3f")
     finally
       c.close()
