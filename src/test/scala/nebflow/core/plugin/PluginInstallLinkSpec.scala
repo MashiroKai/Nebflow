@@ -20,10 +20,10 @@ import scala.concurrent.duration.*
  * stand:// 安装链接（C 阶段 · 设计稿 §12.6）验收面：
  *  - **解析**：`stand://plugin/install?id=<publisher.name>&v=<version>&s=<sha256>`；
  *    id/v/s 缺一即拒；s 非 64-hex 拒；非专有 scheme / 非 /plugin/install 路径拒；
- *    未知参数宽容（前向兼容）。
+ *    仅接受 id/v/s，未知或重复参数拒绝。
  *  - **反钓鱼 resolve**：完整 id+版本+sha256 与**已验签目录**条目比对；版本不在目录 /
  *    sha 不一致 / yanked ⇒ 警告并阻止（链接不是信任入口——无已验目录 ⇒ 拒）；
- *    短名唯一命中可解析、多包冲突 ⇒ 要求完整身份。
+ *    短名拒绝，必须使用完整身份。
  *  - **安装腿汇流**：resolve → plan → apply 走与 official/https 同一条校验落盘路径
  *    （verifyAndStageZip + commitStaged）；账本记 via=hub / kind=catalog、分发面
  *    (hub, catalog-signed, hub)、publisherClass 由已验目录断言赋予、§5.4 meta 五字段。
@@ -167,10 +167,11 @@ class PluginInstallLinkSpec extends FunSuite:
         case Right(_)  => fail(s"$label must be rejected")
     }
 
-    // 未知参数宽容（§12.2 前向兼容）
-    PluginInstallLink.parse(s"$raw&futureFlag=1") match
-      case Right(_)  => ()
-      case Left(err) => fail(s"unknown params must be tolerated: $err")
+    List(s"$raw&futureFlag=1", s"$raw&id=evil.demo-kit").foreach { invalid =>
+      PluginInstallLink.parse(invalid) match
+        case Left(err) => assert(err.contains(PluginInstallLink.CodeLinkUnparseable))
+        case Right(_)  => fail("unknown and duplicate parameters must be rejected")
+    }
   }
 
   // ── 反钓鱼 resolve 面 ──────────────────────────────────────
@@ -212,12 +213,12 @@ class PluginInstallLinkSpec extends FunSuite:
       case Right(_)  => fail("yanked version must block")
   }
 
-  test("resolveLink: unambiguous short name resolves; conflict demands full identity") {
+  test("resolveLink: short name is rejected even when unambiguous") {
     singlePkgCatalog("solo", "acme.demo-kit", List(verJson("1.5.0", GoodSha, 1L, artifact = "artifacts/a.zip")))
     val solo = PluginDistributionCatalog.loadVerified("solo").unsafeRunSync().toOption.get
     PluginInstallLink.resolveLink(PluginInstallLink.InstallLink("demo-kit", "1.5.0", GoodSha), solo) match
-      case Right(r) => assertEquals(r.pkg.id, "acme.demo-kit")
-      case Left(err) => fail(s"unambiguous short name must resolve: $err")
+      case Left(_) => ()
+      case Right(_) => fail("short names must be rejected")
 
     // 同一目录内两个发布者都用短名 demo-kit ⇒ 冲突
     materializeCatalog("clash", List(
