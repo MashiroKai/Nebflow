@@ -65,7 +65,8 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
 
 // ── 重历史夹具：300 条，每页 50，页内 = 重工具正文 + 重 markdown + 卡片图 ──
-const TOTAL = 300;
+const benchmark20 = process.env.NB_BENCHMARK_20 === '1';
+const TOTAL = benchmark20 ? 5000 : 300;
 const LIMIT = 50;
 // ~60KB 的「文件读取」工具正文（真实形态：Read 大文件全量进 frontendContent）。
 const BIG = (seed) => {
@@ -89,12 +90,15 @@ const cardRow = (n) => ({
   }),
 });
 /** 诊断旋钮：NB_NO_CARDS=1 换小工具行（卡片 iframe 渲染是否为长任务主元的对照腿）。 */
-const WITH_CARDS = !process.env.NB_NO_CARDS;
+const WITH_CARDS = !process.env.NB_NO_CARDS && process.env.NB_SEQUENCE_FIXTURE !== '1';
 const ROWS_PER_PAGE = WITH_CARDS ? 60 : 50;   // 卡片消息产出 2 行（工具行 + card-content 行）
 const FINAL_ROWS = ROWS_PER_PAGE * (TOTAL / LIMIT);
 /** 一页 50 行：10 组 × [user 2KB, ai md 2.5KB, tool 60KB, ai 短, card 图]。
  *  idx = 会话内绝对下标（同一 idx 恒同内容 ⇒ 跨页确定性）。 */
 const rowAt = (idx) => {
+  // Every message carries an independently visible, unique sequence token in
+  // the logical-order fixture. The mixed fixture remains the performance case.
+  if (process.env.NB_SEQUENCE_FIXTURE === '1') return { type: 'user', text: `SEQ-${idx}-END`, timestamp: 1750000000000 + idx * 1000 };
   const k = idx % 5;
   if (k === 0) return { type: 'user', text: `用户消息 ${idx}：` + '这段正文提供真实行高与渲染面。'.repeat(40), timestamp: 1750000000000 + idx * 1000 };
   if (k === 1) return { type: 'ai', text: MD(idx), timestamp: 1750000000000 + idx * 1000 };
@@ -183,7 +187,7 @@ const rowCount = () => page.evaluate(() => document.querySelectorAll('#chat .row
 const bannerUp = () => page.evaluate(() => !!document.getElementById('stand-session-gate'));
 const ltSnap = () => page.evaluate(() => ({ ...window.__lt }));
 
-await page.goto(BASE + '/index.html');
+await page.goto(BASE + '/index.html' + (process.env.NB_RAPID_GESTURES === '1' ? '?rapid=1' : ''));
 await page.waitForSelector('#activity-bar', { state: 'attached', timeout: 20000 });
 // P0 首屏（#923）：初载恰好一页的行数落定（卡片行双计）。等「≥ 期望行数」后
 // 立刻读数——首屏若健康则恒等；若发生双挂载会一次性越过，行数读数留给 F1 判。
@@ -263,7 +267,13 @@ async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
     const c = document.getElementById('chat');
     // A real upward gesture cancels the initial bottom-settle window; a synthetic
     // scroll event alone does not, and can be overwritten before the response.
-    c.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -1 }));
+    // The resulting first-sample error was 9510.84375px: diagnostic frames show
+    // settleBottom moved scrollTop 250 -> 9796 before the history page mounted.
+    // This timing hazard also warrants scrutiny of older single-sample timings;
+    // it does not establish that those timings were actually affected.
+    // Five synthetic wheel events exercise intent cancellation only; they have
+    // no default scroll action and do not prove five real swipes or single-flight.
+    for (let i = 0; i < (location.search.includes('rapid=1') ? 5 : 1); i++) c.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -1 }));
     await document.fonts.ready;
     c.scrollTop = 250;
     const bounds = c.getBoundingClientRect();
@@ -307,6 +317,18 @@ async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
 }
 
 // ── P1+P2：前 4 页手动上滑（每页 60 .row：卡片行双计），逐页计时 ──────────
+// NB_BENCHMARK_20 measures the 20th prepend only, using the identical real
+// renderer and stable-row wait on either source tree. Setup pages are not samples.
+if (benchmark20) {
+  for (let i = 1; i <= 20; i++) {
+    const r = await scrollUpOnePage(ROWS_PER_PAGE * (1 + i));
+    console.log(`[benchmark-page] ${i} ${JSON.stringify(r)}`);
+    if (r.rows < ROWS_PER_PAGE * (1 + i)) throw new Error(`page ${i} timed out`);
+  }
+  await browser.close();
+  server.close();
+  process.exit(0);
+}
 const pageTimes = [];
 const anchorErrors = [];
 // 30 empty-frame samples were zero in both measured viewports; allow CSS pixel rounding.
@@ -330,10 +352,11 @@ for (;;) {
 }
 const maxPageMs = Math.max(...pageTimes);
 // Only user messages carry this fixture's unambiguous sequence marker.
-const userSequence = await page.evaluate(() => [...document.querySelectorAll('#chat .row')]
-  .map((row) => (row.textContent || '').match(/用户消息 (\d+)：/))
-  .filter(Boolean).map((match) => Number(match[1])));
-const expectedUsers = Array.from({ length: TOTAL }, (_, i) => i).filter((i) => i % 5 === 0);
+const sequenceFixture = process.env.NB_SEQUENCE_FIXTURE === '1';
+const userSequence = await page.evaluate((sequenceFixture) => [...document.querySelectorAll('#chat .row')]
+  .map((row) => (row.textContent || '').match(sequenceFixture ? /SEQ-(\d+)-END/ : /用户消息 (\d+)：/))
+  .filter(Boolean).map((match) => Number(match[1])), sequenceFixture);
+const expectedUsers = Array.from({ length: TOTAL }, (_, i) => i).filter((i) => sequenceFixture || i % 5 === 0);
 const userSequenceComplete = JSON.stringify(userSequence) === JSON.stringify(expectedUsers);
 
 // ── P4：心跳遮蔽腿 —— 持门 + 桩端压 pong 6.5s（> 5s 宽限）⇒ miss 被遮蔽 ──
@@ -382,6 +405,7 @@ ok('P0-b 首屏时延 < ' + FIRST_MS + 'ms（init getHistory → 行落定）',
   firstScreenMs >= 0 && firstScreenMs < FIRST_MS, `firstScreen=${firstScreenMs}ms`);
 ok('A1 前插后保持同一可见行位置', anchorErrors.every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
   `errors=${JSON.stringify(anchorErrors)} tolerance=${ANCHOR_TOLERANCE_CSS_PX} CSS px`);
+if (process.env.NB_RAPID_GESTURES === '1') ok('A3 五次合成 wheel 意图后锚点不跳（非真实上滑）', anchorErrors.every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX), `errors=${JSON.stringify(anchorErrors)}`);
 ok('A2 用户消息序号连续无缺口', userSequenceComplete,
   `observed=${JSON.stringify(userSequence)} expected=${JSON.stringify(expectedUsers)}`);
 ok('A4 相邻页边界补页不跳', anchorErrors.slice(1, 3).every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
