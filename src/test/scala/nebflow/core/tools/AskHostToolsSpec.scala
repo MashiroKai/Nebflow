@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
-import cats.effect.IO
+import cats.effect.{Deferred, IO}
+import cats.syntax.all.*
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.actor.AgentDef
@@ -142,6 +143,44 @@ class AskHostToolsSpec extends CatsEffectSuite:
       results = resolved.injectBlocks.toList.flatten.collect { case x: ContentBlock.ToolResult => x }
       _ = assert(safe)
       _ = assertEquals(results.map(r => (r.toolUseId, r.content, r.isError)), List(("call-a", "approved", Some(false))))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("two simultaneous calls retain separate identities and never exchange decisions") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      start <- Deferred[IO, Unit]
+      firstReady <- Deferred[IO, Unit]
+      secondReady <- Deferred[IO, Unit]
+      first <- (firstReady.complete(()) *> start.get *> AskHostLedger.beginForCall("worker", "root", "agent", "first", "call-a")).start
+      second <- (secondReady.complete(()) *> start.get *> AskHostLedger.beginForCall("worker", "root", "agent", "second", "call-b")).start
+      _ <- firstReady.get *> secondReady.get *> start.complete(())
+      (a, wa) <- first.joinWithNever
+      (b, wb) <- second.joinWithNever
+      _ <- (AskHostLedger.answer(a.correlationId, "answer-a"), AskHostLedger.answer(b.correlationId, "answer-b")).parTupled
+      pair <- (wa.get, wb.get).parTupled
+      _ = assertNotEquals(a.correlationId, b.correlationId)
+      _ = assertEquals(pair, ("answer-a", "answer-b"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("answered request closes only after matching tool result is committed") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    import nebflow.shared.{Message, MessageRole, ContentBlock}
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "q", "call-a")
+      _ <- AskHostLedger.answer(request.correlationId, "yes")
+      _ <- AskHostLedger.closeCommittedResults("worker", Nil)
+      before <- AskHostLedger.recover
+      result = Message(MessageRole.User, Right(List(ContentBlock.ToolResult("call-a", "yes", Some(false)))))
+      _ <- AskHostLedger.closeCommittedResults("worker", List(result))
+      after <- AskHostLedger.recover
+      _ = assertEquals(before.size, 1)
+      _ = assertEquals(after.size, 0)
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 

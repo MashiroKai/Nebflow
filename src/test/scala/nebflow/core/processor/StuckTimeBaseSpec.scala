@@ -44,9 +44,11 @@ class StuckTimeBaseSpec extends FunSuite:
 
   test("only a durably unanswered AskHost wait is exempt from watchdog recovery") {
     val waiting = rec(Now, Now - 910 * S, Some("AskHost"), Now - 910 * S)
-    assert(TaskStuckWatcher.waitingForAskHost(waiting, Set("s-timebase")))
-    assert(!TaskStuckWatcher.waitingForAskHost(waiting, Set.empty))
-    assert(!TaskStuckWatcher.waitingForAskHost(waiting.copy(currentToolName = Some("Bash")), Set("s-timebase")))
+    val exact = waiting.copy(currentToolCallId = Some("call-1"))
+    assert(TaskStuckWatcher.waitingForAskHost(exact, Set(("s-timebase", "call-1"))))
+    assert(!TaskStuckWatcher.waitingForAskHost(exact, Set(("s-timebase", "other"))))
+    assert(!TaskStuckWatcher.waitingForAskHost(waiting, Set(("s-timebase", "call-1"))))
+    assert(!TaskStuckWatcher.waitingForAskHost(exact.copy(currentToolName = Some("Bash")), Set(("s-timebase", "call-1"))))
   }
 
   // ── 口径 1：空窗集 ⇒ 判词与 reason 文案逐字不变 ─────────────────────────────

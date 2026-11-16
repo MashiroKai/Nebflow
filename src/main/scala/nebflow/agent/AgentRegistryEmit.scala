@@ -51,7 +51,8 @@ private[agent] trait AgentRegistryEmit:
     state.sessionId match
       case Some(sid) if resources.protectedExecutions.contains(sid) =>
         IO.raiseError(new IllegalStateException("protected-transcript-projection-not-authorized"))
-      case Some(sid) => resources.sessionStore.saveMessagesForSession(sid, state.messages)
+      case Some(sid) => resources.sessionStore.saveMessagesForSession(sid, state.messages) *>
+        nebflow.core.tools.AskHostLedger.closeCommittedResults(sid, state.messages)
       case None => IO.unit
 
   private[agent] def emitStream(
@@ -112,7 +113,8 @@ private[agent] trait AgentRegistryEmit:
      * R6（取消静默死锁修复批 2026-09-10）：本工具自己声明的授权时长（ms）——与
      * `toolStarting` 同批传入（0 = 未声明）。末尾带默认值，既有位置构造/调用零破坏。
      */
-    toolDeadlineMs: Long = 0L
+    toolDeadlineMs: Long = 0L,
+    toolCallId: Option[String] = None
   ): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       resources.agentRegistry.modify { m =>
@@ -128,15 +130,16 @@ private[agent] trait AgentRegistryEmit:
                 withTurn.copy(
                   currentToolName = Some(name),
                   currentToolStartedAt = startedAt,
-                  currentToolDeadlineMs = toolDeadlineMs
+                  currentToolDeadlineMs = toolDeadlineMs,
+                  currentToolCallId = toolCallId
                 )
               case None =>
                 if clearToolPhase then
-                  withTurn.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L)
+                  withTurn.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L, currentToolCallId = None)
                 else withTurn
             val phased =
               if status == AgentStatus.Processing then withPhase
-              else withPhase.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L)
+              else withPhase.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L, currentToolCallId = None)
             (m.updated(sid, phased.copy(status = status, lastActivityMs = now)), ())
           case None => (m, ())
       }

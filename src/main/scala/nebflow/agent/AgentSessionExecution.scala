@@ -1416,6 +1416,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         askSession = nebflow.core.ask.AskSessions.isAskSession(state.sessionId),
         delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(state.sessionId)
       )
+      // An AskHost must not become externally visible before its original tool-use
+      // boundary is durable. Mixed batches remain subject to the existing
+      // RECOVERY_UNVERIFIED gate because other tools may have side effects.
+      _ <- if result.toolCalls.exists(_.name == "AskHost") && !sessionIdOpt.exists(resources.protectedExecutions.contains) then
+        sessionIdOpt.traverse_ { sid =>
+          val blocks = result.thinking.toList.map(t => ContentBlock.Thinking(t, result.thinkingSignature)) ++
+            (if result.text.nonEmpty then List(ContentBlock.Text(result.text)) else Nil) ++
+            result.toolCalls.map(c => ContentBlock.ToolUse(c.id, c.name, c.input))
+          resources.sessionStore.saveMessagesForSession(sid, state.messages :+ Message(MessageRole.Assistant, Right(blocks)))
+        }
+      else IO.unit
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
@@ -1631,7 +1642,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                         // R6（取消静默死锁修复批 2026-09-10）：工具自己声明的授权时长
                         // （入参 `timeout`，只读声明值）随工具相位一并登记 —— 判据据此
                         // 尊重「命令被允许跑多久」，不再对带长授权的前台命令误杀。
-                        toolDeadlineMs = nebflow.shared.Defaults.declaredToolTimeoutMs(call.input)
+                        toolDeadlineMs = nebflow.shared.Defaults.declaredToolTimeoutMs(call.input),
+                        toolCallId = Some(call.id)
                       ) *>
                         // 审计 20260903 子项①：工具执行期心跳包裹（仅实际执行段——
                         // 权限 Ask/AskUserQuestion 等待由前端 askUser 处理器既有

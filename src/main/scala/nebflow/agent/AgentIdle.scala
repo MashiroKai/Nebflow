@@ -317,6 +317,12 @@ private[agent] object AgentIdle:
               case InputLanding.LandOutcome.Landed(_) =>
                 InputLanding.checkpointProducerInputs(resources, state.sessionId, newMessages, clientMessageId.toSet)
               case _ => IO.unit
+            // Resume results must be committed before the next LLM call; the
+            // ledger is closed only after this transcript write succeeds.
+            _ <- if source.contains(nebflow.core.ResumeHandoff.Source) && blocks.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult])) then
+              state.sessionId.traverse_(sid => resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
+                nebflow.core.tools.AskHostLedger.closeCommittedResults(sid, newMessages))
+            else IO.unit
             _ <-
               if ledgerFlush.consumedJobIds.nonEmpty then
                 IO(

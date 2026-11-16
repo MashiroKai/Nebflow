@@ -131,6 +131,18 @@ object AskHostLedger:
       }
     }.flatTap(accepted => if accepted then waiters.get(correlationId).traverse_(_.complete(answer).void) else IO.unit)
 
+  /** Close only after the transcript containing the original tool result is durable.
+    * Legacy rows without tool IDs stay unresolved rather than being matched by text.
+    * Cancellation must be distinguished from a crash before invalidating a request.
+    */
+  def closeCommittedResults(worker: String, messages: List[nebflow.shared.Message]): IO[Unit] =
+    val results = messages.collect { case nebflow.shared.Message(nebflow.shared.MessageRole.User, Right(blocks), _, _, _, _) =>
+      blocks.collect { case r: nebflow.shared.ContentBlock.ToolResult => r }
+    }.flatten
+    recover.flatMap(_.filter(r => r.pending.workerSession == worker && r.pending.toolCallId.nonEmpty &&
+      r.answer.exists(answer => results.exists(t => t.toolUseId == r.pending.toolCallId &&
+        t.content == answer && !t.isError.contains(true)))).traverse_(r => markDelivered(r.pending.correlationId)))
+
   def markDelivered(correlationId: String): IO[Unit] =
     append(Json.obj("correlationId" -> correlationId.asJson, "status" -> "delivered".asJson,
       "at" -> System.currentTimeMillis().asJson)) *> IO { waiters.remove(correlationId); answered.remove(correlationId); () }
