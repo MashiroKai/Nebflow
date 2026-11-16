@@ -1748,7 +1748,7 @@ body:not(.mobile-layer) #profile-face-overlay {
 }
 .pf-edit-bar.ds-chrome-band {
   top: auto;
-  bottom: env(safe-area-inset-bottom);
+  bottom: var(--sp-safe-bottom, env(safe-area-inset-bottom));
   display: flex;
   justify-content: space-between;
   padding: 0 var(--ds-space-4) var(--ds-space-4);
@@ -1757,7 +1757,7 @@ body:not(.mobile-layer) #profile-face-overlay {
 .pf-edit-bar[hidden] { display: none; }
 .pf-edit-bar > button { pointer-events: auto; }
 .pf-edit-submit { color: var(--ds-accent); }
-.pf-has-pending .pf-fields { padding-bottom: 76px; }
+.pf-has-pending .pf-fields { padding-bottom: calc(76px + var(--sp-safe-bottom, env(safe-area-inset-bottom))); }
 .pf-close {
   float: right;
   display: inline-flex;

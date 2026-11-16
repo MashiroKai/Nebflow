@@ -123,7 +123,7 @@ const fieldEdits = new WeakMap();
 function updateEditBar(row) {
   const modal = row.closest('.pf-modal');
   if (!modal) return;
-  const bar = modal.querySelector('.pf-edit-bar');
+  const bar = modal.parentElement?.querySelector('.pf-edit-bar');
   if (!bar) return;
   const dirty = [...modal.querySelectorAll('.pf-field')].some(item => fieldEdits.get(item)?.dirty());
   bar.hidden = !dirty;
@@ -426,8 +426,7 @@ function renderBody() {
     }
   });
   bar.append(cancel, saveAll);
-  modal.appendChild(bar);
-  ov.replaceChildren(modal);
+  ov.replaceChildren(modal, bar);
   return { ov, body };
 }
 

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const web = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
-async function boot(page, mobile) {
+async function boot(page, mobile, loggedIn = false) {
   await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1600, height: 1000 });
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 'test');
@@ -19,7 +19,7 @@ async function boot(page, mobile) {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
-    if (p === '/api/neblink/status') return route.fulfill({ json: { loggedIn: false, peers: [] } });
+    if (p === '/api/neblink/status') return route.fulfill({ json: { loggedIn, device: { id: 'fixture', displayName: 'Fixture User', email: 'fixture@example.test' }, peers: [] } });
     if (p.startsWith('/api/') || p.startsWith('/agents/')) return route.fulfill({ json: {} });
     const file = normalize(join(web, p));
     if (!file.startsWith(web)) return route.fulfill({ status: 403 });
@@ -40,6 +40,15 @@ async function boot(page, mobile) {
   } else await page.locator('#settings-btn').click();
   await expect(page.locator('#settings-content')).toBeVisible();
 }
+test('mobile workbench visible entry opens the profile face', async ({ page }) => {
+  await boot(page, true, true);
+  await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
+  await page.locator('.mobile-page[data-page="workbench"] .mf-me-entry').click();
+  await expect(page.locator('.mobile-page[data-page="me"]')).toHaveClass(/live/);
+  await page.locator('#me-edit-profile').click();
+  await expect(page.locator('#settings-profile-overlay')).toBeVisible();
+});
+
 for (const mobile of [false, true]) {
   test(`${mobile ? 'mobile' : 'desktop'} profile readout reopens unchanged without fake edits or external navigation`, async ({ page }) => {
     await page.addInitScript(() => { window.__opened = []; window.open = (...args) => { window.__opened.push(args); return null; }; });
