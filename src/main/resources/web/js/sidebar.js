@@ -882,7 +882,7 @@ export function renderSettings() {
   // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
   // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
-    <section class="sp-panel-group" data-panel-group="account"><h2>${t('settings.account')}</h2>${mobileLayer ? '' : accountCardHTML()}</section>
+    <section class="sp-panel-group" data-panel-group="account"><h2>${t('settings.account')}</h2>${accountCardHTML({ mobile: mobileLayer })}</section>
     <section class="sp-panel-group" data-panel-group="general"><h2>${t('settings.general')}</h2>
       ${setCard({ body: setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` })) })}
       ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
@@ -1000,7 +1000,7 @@ export function renderSettings() {
   paintSettingsIdentity();
   bindSettingsDisclosure(content);
   bindSettingsEvents(content, cfg);
-  if (!mobileLayer) bindNeblinkEvents(() => renderSettings());
+  bindNeblinkEvents(() => renderSettings(), content);
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
@@ -1055,7 +1055,7 @@ export function renderSettings() {
         const wrapper = document.createElement('div');
         wrapper.innerHTML = neblinkSettingsHTML();
         neblinkDiv.replaceWith(wrapper.firstElementChild);
-        if (!mobileLayer) bindNeblinkEvents(() => renderSettings());
+        bindNeblinkEvents(() => renderSettings(), content);
       }
       // Keep the avatar section in lockstep with login/avatar changes.
       paintSettingsIdentity();

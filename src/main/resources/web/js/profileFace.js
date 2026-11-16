@@ -160,8 +160,12 @@ function fieldRow(spec) {
   save.dataset.pfSave = spec.field;
 
   let baseline = input.value;
+  let saving = false;
   const commit = async () => {
+    if (saving) return;
+    saving = true;
     const v = input.value.trim().slice(0, spec.max);
+    input.disabled = true;
     save.disabled = true;
     try {
       await spec.onSave(v);
@@ -184,6 +188,8 @@ function fieldRow(spec) {
       window.__showToast?.(t('messages.networkError'), 'error');
       console.debug('[profileFace] save failed', spec.field, err && err.message);
     } finally {
+      saving = false;
+      input.disabled = false;
       save.disabled = false;
       updateEditBar(row);
     }
