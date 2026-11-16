@@ -406,7 +406,7 @@ class ConfigServiceSpec extends FunSuite:
       .map(_.toList.map(d => d.hcursor.downField("id").as[String].getOrElse("<unreadable>")))
       .getOrElse(fail("domains[] missing"))
     assertEquals(ids, nebflow.shared.ProviderDomains.All)
-    // 每个 domain 都声明 enabledSwitch 布尔（imagegen/jev = true，llm = false）。
+    // 每个 domain 都声明 enabledSwitch 布尔（imagegen = true，llm = false）。
     val switches = domains.values.map(_.toList.map { d =>
       val id = d.hcursor.downField("id").as[String].getOrElse("<unreadable>")
       id -> d.hcursor
@@ -427,17 +427,35 @@ class ConfigServiceSpec extends FunSuite:
       adapters.downField(key).values.map(_.toList.flatMap(_.as[String].toOption)).getOrElse(fail(s"adapters.$key missing"))
     val llm      = strs("llm")
     val imagegen = strs("imagegen")
-    val jev      = strs("jev")
     // LLM 协议 = LlmProtocol 枚举（anthropic/openai）。
     assertEquals(llm.sortBy(identity), List("anthropic", "openai").sortBy(identity))
     // 生图适配器 = ImageGenAdapters.All 的 type 投影（单源比对）。
     assertEquals(imagegen.sortBy(identity), nebflow.llm.imagegen.ImageGenAdapters.All.map(_.`type`).sortBy(identity))
-    // JeV 适配器 = DecisionProvider.AllIds 投影。
-    assertEquals(jev.sortBy(identity), nebflow.llm.decision.DecisionProvider.AllIds.sortBy(identity))
-    // 载荷零配置值、零密钥——只有枚举与布尔。
+    // 🔴 jev-retire 批（2026-11-16）：jev 域连同 adapters.jev 退役——投影**不得**
+    // 再出现 jev 键（residual-reference 回归锚）。
     val rendered = json.noSpaces
+    assert(!rendered.contains("jev"), s"the retired jev domain must not leak into providerTypes: $rendered")
+    // 载荷零配置值、零密钥——只有枚举与布尔。
     assert(!rendered.contains("apiKey"), s"payload must not carry apiKey: $rendered")
     assert(!rendered.contains("baseUrl"), s"payload must not carry config values: $rendered")
+  }
+
+  // ── 🔴 配置缺 jev 启动红绿（jev-retire 批 2026-11-16 ④）──────────────────
+  test("boot without jev config: the engine read path stays clean — zero jev residue") {
+    val cfg = s"""{"llm":{"providers":{"z3":${validProvider("z3").noSpaces}}}}"""
+    assertEquals(ConfigService.updateConfig(cfg, Map.empty).unsafeRunSync(), Right(()))
+    val written = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
+    assert(written.hcursor.downField("jev").focus.isEmpty, "a jev-free config must stay jev-free on write-back")
+    assert(!ConfigService.providerTypes.unsafeRunSync().noSpaces.contains("jev"))
+  }
+
+  test("legacy config with a residual jev block still boots (zero-migration decode compatibility)") {
+    val legacy = tmpRoot / "legacy-jev-config.json"
+    os.write.over(legacy,
+      s"""{"llm":{"providers":{"z4":${validProvider("z4").noSpaces}}},
+         |"jev":{"enabled":true,"provider":"typesafe-jev","endpoint":"https://api.typesafe.ai/v1/systemone","keyRef":"typesafe-api-key"}}""".stripMargin)
+    val loaded = nebflow.shared.Config.loadServiceConfig(Some(legacy.toString))
+    assert(loaded.llm.providers.contains("z4"), "the llm providers decode normally alongside the dead jev block")
   }
 
 end ConfigServiceSpec

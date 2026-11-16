@@ -59,7 +59,6 @@ const SECRETS = [
 const CONFIG = {
   llm: { providers: { 'openai': { apiKeyRef: 'OPENAI_API_KEY', models: ['gpt-5.2'], default: true }, 'anthropic': { apiKeyRef: 'ANTHROPIC_KEY', models: ['claude-4.6'] } } },
   safety: { defaultMode: 'confirm-edits' },
-  jev: { enabled: true, provider: 'typesafe-jev', endpoint: 'https://jev.typesafe.dev/predict', keyRef: 'typesafe-api-key' },
 };
 
 const consoleErrors = [];

@@ -103,8 +103,14 @@ def read_json(path):
 
 
 def cfg_plugins(root):
-    """nebflow.json → plugins 键（缺文件/坏 JSON = 空对象，fail-open 只读）。"""
-    cfg = read_json(os.path.join(root, "nebflow.json")) or {}
+    """stand.json 优先 → nebflow.json legacy 只读回退 → plugins 键（缺文件/坏 JSON =
+    空对象，fail-open 只读）。与引擎 PathUtil.resolveConfigJson 同向（统一配置读取，
+    插件分发与生命周期协议升级草案 §9 A 行）。文件级优先：stand.json 在位即用之，
+    否则回落 nebflow.json。"""
+    cfg_path = os.path.join(root, "stand.json")
+    if not os.path.exists(cfg_path):
+        cfg_path = os.path.join(root, "nebflow.json")
+    cfg = read_json(cfg_path) or {}
     p = cfg.get("plugins")
     return p if isinstance(p, dict) else {}
 
@@ -225,20 +231,45 @@ def status_of(p, plugins_cfg):
 
 
 def scan_registry(root):
-    """→ (plugins, rejected, plugins_cfg)。plugins 已按 name 排序。"""
+    """→ (plugins, rejected, plugins_cfg)。plugins 已按 name 排序。
+    扫描器加固镜像（插件分发与生命周期协议升级草案 §9 A 行；与引擎
+    PluginRegistry.snapshot 同向）：点目录 / plugins-backups 整体隐身（备份不是
+    候选）；plugins.removed 墓碑过滤（卸载出册 = 整体消失）；重复身份（两个目录
+    同 manifest 名）全拒点名全部冲突目录。"""
     plugins_dir = os.path.join(root, "plugins")
     plugins, rejected = [], []
+    cfg = cfg_plugins(root)
+    removed = cfg.get("removed") if isinstance(cfg.get("removed"), dict) else {}
     if os.path.isdir(plugins_dir):
         for sub in sorted(os.listdir(plugins_dir)):
             d = os.path.join(plugins_dir, sub)
             if not os.path.isdir(d):
                 continue
+            if sub.startswith(".") or sub == "plugins-backups":
+                continue  # 备份/点目录整体隐身（镜像 PluginRegistry.scanExcluded）
+            if sub in removed:
+                continue  # 卸载出册（镜像 plugins.removed 过滤：出册 = 零声音）
             p, err = load_plugin(d)
             if p:
                 plugins.append(p)
             else:
                 rejected.append({"name": sub, "reason": err})
-    cfg = cfg_plugins(root)
+    # 重复身份全拒（镜像引擎 ambiguous-identity 面）：点名 manifest 名 + 全部冲突目录
+    by_name = {}
+    for p in plugins:
+        by_name.setdefault(p["name"], []).append(p["dir_name"])
+    dup_dirs = {n: dirs for n, dirs in by_name.items() if len(dirs) > 1}
+    plugins = [p for p in plugins if p["name"] not in dup_dirs]
+    for n in sorted(dup_dirs):
+        rejected.append(
+            {
+                "name": n,
+                "reason": (
+                    "duplicate identity: manifest name claimed by multiple directories [%s] — all copies rejected"
+                    % ", ".join(sorted(dup_dirs[n]))
+                ),
+            }
+        )
     for p in plugins:
         (
             p["trusted"],

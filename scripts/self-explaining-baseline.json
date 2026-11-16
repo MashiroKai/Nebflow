@@ -3,22 +3,16 @@
   "generatedAt": "2026-11-04T07:33:55.167Z",
   "counts": {
     "behavior-teaching": 3,
-    "path-guidance": 17,
+    "path-guidance": 15,
     "capability-claim": 7
   },
-  "total": 27,
+  "total": 25,
   "allow": [
     {
       "file": "src/main/resources/web/js/locales/en.js",
       "rule": "behavior-teaching",
       "key": "settings.workScheduleOnHint",
       "text": "During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar an"
-    },
-    {
-      "file": "src/main/resources/web/js/locales/en.js",
-      "rule": "path-guidance",
-      "key": "settings.jevHealthFallback",
-      "text": "Jev unavailable → fell back to llm"
     },
     {
       "file": "src/main/resources/web/js/locales/en.js",
@@ -91,12 +85,6 @@
       "rule": "behavior-teaching",
       "key": "social.remote.safetyKey",
       "text": "Security boundary: a remote-access link is equivalent to an access credential — never forward it to anyone."
-    },
-    {
-      "file": "src/main/resources/web/js/locales/zh-CN.js",
-      "rule": "path-guidance",
-      "key": "settings.jevHealthFallback",
-      "text": "Jev 不可用 → 已回退 llm"
     },
     {
       "file": "src/main/resources/web/js/locales/zh-CN.js",

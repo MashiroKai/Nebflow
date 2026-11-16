@@ -851,8 +851,7 @@ export function renderSettings() {
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
   const llmProviders = cfg.llm?.providers || {};
   const providerCount = Object.values(llmProviders).filter(Boolean).length
-    + Object.keys(cfg.imagegen?.providers || {}).length
-    + Object.keys(cfg.jev?.providers || {}).length;
+    + Object.keys(cfg.imagegen?.providers || {}).length;
   const modelCount = ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].length;
   const langOpts = locales.map(code =>
     `<option value="${code}" ${code === getLocale() ? 'selected' : ''}>${localeLabels[code] || code}</option>`
@@ -936,9 +935,9 @@ export function renderSettings() {
       </div>` })}
       <!-- 🔴 provider-add-tabs 批（2026-11-06 作者令）：原 Jev 卡（setNavRow
            #jev-advance-toggle + #jev-advance-body）与生图卡（#imagegen-advance-toggle
-           + #imagegen-section-wrap）两节随三入口统一整件退役——JeV/生图全部
-           收进上方唯一服务商面板（sidebar/providerPanel.js 类型标签），
-           settings-jev-health 徽标由面板内 paintJevHealth 承载。 -->
+           + #imagegen-section-wrap）两节随三入口统一整件退役——生图收进上方唯一
+           服务商面板（sidebar/providerPanel.js 类型标签）；JeV 面随后于 jev-retire
+           批（2026-11-16）随 JeV 全量退役整体删除（含 settings-jev-health 徽标）。 -->
     ${setCard({ title: t('settings.secrets'), body: `
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
            2026-09-27 19:20): one row only — the list itself lives in the
