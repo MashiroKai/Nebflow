@@ -387,9 +387,10 @@ You will be notified when it completes via a system message. Do NOT duplicate th
   ): IO[Unit] =
     (for
       thinking <- spec.resources.externalThinkingConfig
-      catalog <- if ex.id == "codex" && thinking.enabled && thinking.effort.nonEmpty && spec.model.exists(_.nonEmpty) then
-        IO.blocking(ExternalReasoning.catalog(spec.binPath, spec.model.get))
-      else IO.pure(None)
+      catalog <-
+        if ex.id == "codex" && thinking.enabled && thinking.effort.nonEmpty && spec.model.exists(_.nonEmpty) then
+          IO.blocking(ExternalReasoning.catalog(spec.binPath, spec.model.get))
+        else IO.pure(None)
       decision = ExternalReasoning.decide(thinking, spec.model, catalog)
       _ <- if ex.id == "codex" then appendRaw(sessionId, run, decision.trace) else IO.unit
       process <- IO.blocking {

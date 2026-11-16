@@ -126,6 +126,7 @@ private[gateway] object WsConfigHandlers:
                 case Right(_) =>
                   sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
               }
+        end match
     end match
   end handleSetThinking
 
