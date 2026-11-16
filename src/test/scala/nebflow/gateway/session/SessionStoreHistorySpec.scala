@@ -39,6 +39,42 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
 
   private def aiText(m: UiMessage): String = m.asInstanceOf[UiMessage.Ai].text
 
+  test("measure isolated cold and warm history pagination") {
+    val tmp = Files.createTempDirectory("nebflow-history-measure")
+    val sessions = os.Path(tmp.resolve("sessions"))
+    val tasks = os.Path(tmp.resolve("tasks"))
+    try
+      val writer = SessionStore(sessions, tasks)
+      writer.load.unsafeRunSync()
+      for size <- List(1200, 5000) do
+        val sid = s"measure-$size"
+        val payload = "synthetic history message " * 20
+        val messages: List[UiMessage] = (1 to size).map(i => UiMessage.User(s"$i $payload")).toList
+        // Write the synthetic transcript directly: the ordinary append path applies
+        // the configured retention cap (normally 1600), which would skew 5000.
+        import io.circe.syntax.*
+        os.makeDir.all(sessions)
+        os.write.over(sessions / s"$sid.ui.json", messages.asJson.noSpaces, createFolders = true)
+        for sample <- 1 to 3 do
+          val reader = SessionStore(sessions, tasks)
+          reader.load.unsafeRunSync()
+          def timed(label: String): Unit =
+            val start = System.nanoTime()
+            val (page, total, offset, _) = reader.getHistoryPage(sid, 50, Some(size - 50)).unsafeRunSync()
+            val elapsed = (System.nanoTime() - start) / 1000000.0
+            assertEquals(total, size)
+            assertEquals(page.size, 50)
+            assertEquals(offset, size - 100)
+            println(f"HISTORY_MEASURE size=$size sample=$sample path=$label ms=$elapsed%.3f")
+          timed("cold")
+          timed("warm")
+    finally
+      if Files.exists(tmp) then
+        val walk = Files.walk(tmp)
+        try walk.sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
+        finally walk.close()
+  }
+
   // ===== getHistoryPage — initial load (beforeIndex = None) =====
 
   test("getHistoryPage returns latest messages when total > limit") {
