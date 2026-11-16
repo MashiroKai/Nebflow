@@ -269,6 +269,43 @@ const firstDup = await page.evaluate(() => {
 await page.evaluate(() => { window.__noReloadMarker = { at: Date.now() }; window.__lt = { n: 0, total: 0, max: 0 }; });
 const navAtBoot = navigated;
 
+// Five real upward wheel inputs. Read the same element after each actual scroll,
+// then compare after two frames; the last input crosses the prefetch threshold.
+if (process.env.NB_FIVE_WHEELS === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  await page.mouse.wheel(0, -1);
+  await chat.evaluate((c) => { c.scrollTop = 1000; });
+  await page.waitForTimeout(300);
+  const observations = [];
+  let finalAnchor = false;
+  for (let i = 0; i < 5; i++) {
+    const before = await chat.evaluate((c) => c.scrollTop);
+    await page.mouse.wheel(0, -130);
+    const sample = await chat.evaluate(async (c) => {
+      await new Promise(requestAnimationFrame);
+      const bounds = c.getBoundingClientRect();
+      const row = [...c.querySelectorAll('.row')].find((r) => { const b = r.getBoundingClientRect(); return b.bottom > bounds.top && b.top < bounds.bottom; });
+      const after = c.scrollTop;
+      const top = row?.getBoundingClientRect().top - bounds.top;
+      window.__fiveLastAnchor = row && { row, top };
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      return { after, error: row && c.contains(row) ? Math.abs(row.getBoundingClientRect().top - c.getBoundingClientRect().top - top) : null };
+    });
+    observations.push({ before, ...sample });
+  }
+  await page.waitForTimeout(700);
+  const finalError = await chat.evaluate((c) => {
+    const a = window.__fiveLastAnchor;
+    return a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null;
+  });
+  finalAnchor = finalError !== null && finalError <= 2;
+  const pass = observations.every((o) => o.after < o.before && o.error !== null && o.error <= 2) && histReqs.length > 1 && finalAnchor;
+  console.log('[five-wheels] ' + JSON.stringify({ observations, finalError, requests: histReqs, pass }));
+  await browser.close(); server.close(); process.exit(pass ? 0 : 1);
+}
+
 // Dedicated real-input pagination probe; no test scrollTop writes after input.
 if (process.env.NB_WHEEL_PAGE === '1') {
   const chat = page.locator('#chat');
