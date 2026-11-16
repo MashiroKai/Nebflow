@@ -192,10 +192,17 @@ jobs:
     env:
       # 源钉：stand-dev harness commit（2026-11-16 部署面 HEAD）。harness 批次落地
       # 后 bump 此值；clone 后 rev-parse 相等校验，漂移即红。
+      # TODO：readiness 批落地后回传新 sha（92d376e 之上，作者代推 USTC）替换。
       STAND_DEV_REF: bbd7913e4fdaf7f38c9e6c7f21e88ffbae020548
       # 门禁语义裁定点（集中一处，--list 与执行共用；两文件同步改）：
-      # --suite functional --full = 全场景；adapter 未实现的场景 NOT READY 即红。
+      # --suite functional --full = 场景目录全量枚举（E02–E10 落地自动纳入）。
       E2E_SUITE_ARGS: "--suite functional --full"
+      # 就绪感知开关（作者裁定 2026-11-16：只跑已实现场景；READY 失败=红，
+      # NOT READY=跳过+显式列出，--list 带 readiness 列）。
+      # TODO(harness readiness 批)：确切 flag 名待回传（--require-ready 形态），
+      # 回传后填入（两文件同步）。现为空 = 旧 harness 语义：--full 全量、E02 起
+      # NOT READY 即红（过渡期结构红，见 references/qa/e2e-testing.md）。
+      E2E_READINESS_FLAG: ""
       # github.com 直连不稳（ci-selfhosted 2026-10-21 实测）：checkout 走本机代理；
       # aliyun/npmmirror 腿不受影响。沙箱内子进程环境由 harness 全新构造，不继承。
       https_proxy: "http://127.0.0.1:7890"
@@ -251,7 +258,7 @@ jobs:
         #   python3 ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/run_e2e.py \
         #     --suite functional --full --list
         shell: bash
-        run: python3 "$HARNESS/scripts/run_e2e.py" $E2E_SUITE_ARGS --list
+        run: python3 "$HARNESS/scripts/run_e2e.py" $E2E_SUITE_ARGS $E2E_READINESS_FLAG --list
 
       - name: Warm dependency caches (cache-home 自举，在线)
         # Same logic locally（门禁 sbt，会话权限外 → 作者代跑）:
@@ -287,7 +294,7 @@ jobs:
         run: |
           E2E_OUT="$RUNNER_TEMP/e2e-results-$(date -u +%Y%m%dT%H%M%SZ)"
           echo "E2E_OUT=$E2E_OUT" >> "$GITHUB_ENV"
-          python3 "$HARNESS/scripts/run_e2e.py" $E2E_SUITE_ARGS \
+          python3 "$HARNESS/scripts/run_e2e.py" $E2E_SUITE_ARGS $E2E_READINESS_FLAG \
             --repo "$GITHUB_WORKSPACE" --output "$E2E_OUT" \
             --adapter "$HARNESS/scripts/isolated_harness.py"
 

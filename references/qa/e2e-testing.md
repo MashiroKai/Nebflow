@@ -48,19 +48,27 @@ runner 均不满足，且自托管分钟不计费。步骤链：
 6. 缓存自举（在线）：门禁包装器 `sbt -batch compile e2eClasspath`（全局锁
    `~/.stand/run/sbt.lock`，与作者本机 sbt 互斥安全），依赖落入 cache-home
 7. 离线 fixture 编译：`build_e2e_fixture.py`（缓存只读拷贝 + seatbelt 断网）
-8. 全场景执行：`run_e2e.py --suite functional --full --adapter isolated_harness.py`
+8. 套件执行：`run_e2e.py $E2E_SUITE_ARGS $E2E_READINESS_FLAG --adapter
+   isolated_harness.py`（语义见上节：就绪感知，TODO 待回传 flag 名）
 9. 前端门禁：`npm ci && npm install --no-save @playwright/test@1.62.0 &&
    npm run check:frontend`（25 项；playwright 仓规不入 devDependencies、由运行
    环境自带，CI 形态 = `npm install --no-save @playwright/test`，钉主仓配对
    版本，浏览器缺缓存时退回系统 Edge/Chrome）
 10. evidence 上传 artifact（3 天保留；仓内不入库）
 
-**门禁语义（`E2E_SUITE_ARGS`，管线内集中一处，裁定后只改这一行、两文件同步）**：
-现为 `--suite functional --full`（全 14 场景）。adapter 目前只实现 E01，
-E02–E10 NOT READY → fail-closed → 门禁红 → 发布阻塞，直到各场景 adapter
-逐个落地——这是「全量测试安排在发布前」的直接后果；期间发布链路验证走
-dry_run dispatch。若作者改裁定（就绪感知 / advisory），备选形态：
-`--suite functional`（quick 层）或点名 `--scenario`（仅过渡用）。
+**门禁语义（作者裁定 2026-11-16：就绪感知）**：管线只跑已实现场景——READY
+失败=红，NOT READY=跳过并在结果/计划中显式列出，E02–E10 adapter 落地即随
+场景目录自动纳入（全量枚举 + readiness 过滤执行）。管线换参点两处
+（两文件同步改）：
+
+- `E2E_SUITE_ARGS`（现 `--suite functional --full`）：套件与范围；
+- `E2E_READINESS_FLAG`（现为空，**TODO 待回传**）：readiness 开关，harness
+  批（`--require-ready` 形态：READY 失败=红、NOT READY=跳过+显式列出、
+  `--list` 带 readiness 列）落地后回填确切 flag 名。
+
+过渡期（flag 未填、源钉未换 readiness 版）：等价 `--full` 全量语义，E02 起
+NOT READY 即红——发布链路验证走 dry_run dispatch。源钉 `STAND_DEV_REF`
+同为 **TODO**：readiness 批 sha（`92d376e` 之上，作者代推 USTC）回传后替换。
 
 ## dry-run 路径
 
