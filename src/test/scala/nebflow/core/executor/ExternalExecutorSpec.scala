@@ -69,6 +69,21 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assert(unset.reason.contains("model unknown"))
   }
 
+  test("direction identifies exact and upward intermediate remapping") {
+    import nebflow.shared.{ThinkingConfig, ThinkingEffort}
+    def direction(levels: List[String], effort: ThinkingEffort) =
+      ExternalReasoning.decide(ThinkingConfig(effort = Some(effort)), Some("model"),
+        Some(ExternalReasoning.Catalog(levels, "test", "stamp"))).direction
+    val six = List("low", "medium", "high", "xhigh", "max", "ultra")
+    val five = List("low", "medium", "high", "xhigh", "max")
+    assertEquals(direction(six, ThinkingEffort.Medium), "exact")
+    assertEquals(direction(five, ThinkingEffort.High), "exact")
+    assertEquals(direction(List("a", "b", "c", "d", "e", "f"), ThinkingEffort.Medium), "up")
+    assertEquals(direction(List("a", "b", "c", "d", "e"), ThinkingEffort.Medium), "up")
+    assertEquals(ExternalReasoning.decide(ThinkingConfig(), None, None).direction, "none")
+    assertEquals(direction(List("max", "low", "high", "ultra"), ThinkingEffort.Max), "up")
+  }
+
   test("runtime catalog protocol and fresh/resume traces from a fake CLI") {
     val dir = os.temp.dir(prefix = "codex-catalog-test-")
     val bin = dir / "codex"

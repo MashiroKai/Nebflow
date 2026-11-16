@@ -37,12 +37,19 @@ private[executor] object ExternalReasoning:
       else "mapped against advertised levels" + (if catalog.exists(c => c.source == "cache" && !c.levels.contains(requested.get.wireName)) then "; catalog may be stale" else "")
     val actual = if requested.isDefined && model.exists(_.trim.nonEmpty) then catalog.flatMap(c => map(requested.get, c.levels)) else None
     val direction = (requested, actual, catalog) match
-      case (Some(req), Some(out), Some(c)) if req.wireName == out => "same"
+      case (Some(req), Some(out), Some(c)) if req.wireName == out => "exact"
       case (Some(req), Some(out), Some(c)) =>
+        // Compare against the requested name when advertised; otherwise compare
+        // normalized rank positions. This is a rank indication, not proof that
+        // differently named model levels are semantically equivalent.
         val baseline = c.levels.indexOf(req.wireName)
-        if baseline >= 0 then if c.levels.indexOf(out) > baseline then "up" else "down"
-        else if req == ThinkingEffort.Minimal then "up" else if req == ThinkingEffort.Max then "up" else "remapped"
-      case _ => "unset"
+        val actualIndex = c.levels.indexOf(out)
+        if baseline >= 0 then if actualIndex > baseline then "up" else "down"
+        else if req == ThinkingEffort.Minimal then "up"
+        else if req == ThinkingEffort.Max then "up"
+        else if actualIndex * (tiers.size - 1) >= tiers.indexOf(req) * (c.levels.size - 1) then "up"
+        else "down"
+      case _ => "none"
     Decision(requested.map(_.wireName), actual, direction, catalog.map(_.source).getOrElse("none"), catalog.map(_.timestamp).getOrElse("unknown"), reason)
 
   def argv(args: List[String], decision: Decision): List[String] =
