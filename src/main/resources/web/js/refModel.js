@@ -176,13 +176,11 @@ export function makeReference(input) {
     };
   }
 
-  // quote-message 一期（spec 20261009 §3.1）：主聊天区消息引用 —— content-bearing
-  // ref（逐字镜像上方 friend-message 形态；fullText 帽 1200 由前端组装方
-  // msgQuote.js fullTextOf 截好，此处再兜一道）。稳定 id 钉在被引消息的
-  // data-msg-id 上（用户行 = clientMessageId，与引擎帧同键）。
+  // Chat references carry a full client snapshot; row ids are UI-only and may
+  // change after remount. The gateway creates a durable handle for long bodies.
   if (rt === 'chat-message') {
     const content = input.content || {};
-    const fullText = String(content.fullText || '').slice(0, 1200);
+    const fullText = String(content.fullText || '');
     const preview = String(content.excerpt || previewOf('', fullText, 60));
     // 附件批（2026-10-31）：被引消息的附件缩略清单随 content 走（live 腿引用块
     // 渲染缩略带；后端落盘白名单化 type/name/path —— preview 只活在前端）。
@@ -199,7 +197,7 @@ export function makeReference(input) {
     const itemIndex = Number.isInteger(content.itemIndex) && content.itemIndex >= 0 ? content.itemIndex : null;
     const itemTotal = itemIndex !== null && Number.isInteger(content.itemTotal) && content.itemTotal > itemIndex
       ? content.itemTotal : null;
-    const refContent = { excerpt: preview, fullText, attachments };
+    const refContent = { excerpt: preview, fullText, fullTextComplete: content.fullTextComplete === true, attachments };
     if (itemIndex !== null) {
       refContent.itemIndex = itemIndex;
       if (itemTotal !== null) refContent.itemTotal = itemTotal;

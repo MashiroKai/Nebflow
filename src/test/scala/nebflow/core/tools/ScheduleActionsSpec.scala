@@ -266,6 +266,15 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       assert(text.contains("cancel"), "must tell the LLM how to cancel")
       assert(text.indexOf(paused.id) < text.indexOf(live.id), s"tool list must be triggerAt-sorted:\n$text")
 
+  test("quoted todo handle retrieves its complete body across sessions"):
+    for
+      _ <- reset()
+      body = "original line\n" + ("long body " * 300)
+      t <- IO(ScheduledTask.create("s1", body, future, None, None, Some("quoted title")))
+      _ <- taskStore.addTask(t)
+      result <- IO(callTool(Json.obj("action" -> "get".asJson, "id" -> t.id.asJson), mkCtx(taskStore)))
+    yield assert(result.toOption.exists(_.contains(body)), result.toString)
+
   test("tool action=list with zero tasks says so"):
     for
       _ <- reset()

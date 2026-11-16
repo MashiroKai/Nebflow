@@ -139,9 +139,10 @@ function wireAttBytes(a) {
  *     nonEmpty` 早覆盖）⇒ 附件帧对未升级服务端同样可达（落 UiMessage.User + 块注入）。
  * 返回首帧 sendWs 结果（false = 帧进 ws.js pendingSends 内存轨，离线补发腿据此留队）。
  */
-function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRefs, refs, wireAtts, chatWidth }) {
+export function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRefs, refs, wireAtts, chatWidth }) {
   const baseBytes = (content ? content.length : 0) + (sessionId ? sessionId.length : 0)
-    + (clientMessageId ? clientMessageId.length : 0) + 512;
+    + (clientMessageId ? clientMessageId.length : 0) + JSON.stringify(refs || []).length
+    + JSON.stringify(taskRefs || []).length + 512;
   const totalBytes = baseBytes + (wireAtts || []).reduce((s, a) => s + wireAttBytes(a), 0);
   const buildFrame = (attachments, cmid, withExtras) => ({
     content,
@@ -176,6 +177,8 @@ function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRe
     const cmid = (content || idx > 1) ? clientMessageId + '/a' + idx : clientMessageId;
     sendWs({
       device: deviceStamp(),
+      ...(!content && idx === 1 && taskRefs?.length ? { taskRefs } : {}),
+      ...(!content && idx === 1 && refs?.length ? { refs } : {}),
       attachments: chunk,
       clientMessageId: cmid,
       sessionId

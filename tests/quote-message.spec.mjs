@@ -231,6 +231,15 @@ test.describe('B6 — 摘要规则', () => {
     expect(excerpt.length, '长文显示摘要截到 60+…').toBe(61);
     expect(excerpt.endsWith('…')).toBe(true);
 
+    const original = '引用正文\n\t' + 'x'.repeat(2500) + '结尾';
+    const wire = await page.evaluate(async text => {
+      const q = await import('/src/main/resources/web/js/msgQuote.js');
+      const model = await import('/src/main/resources/web/js/refModel.js');
+      return model.makeReference(q.chatMessageRefInput({kind: 'text', text, senderName: '作者'}));
+    }, original);
+    expect(wire.content.fullText).toBe(original);
+    expect(wire.content.fullTextComplete).toBe(true);
+
     expect(pageErrors).toEqual([]);
     await context.close();
   });
