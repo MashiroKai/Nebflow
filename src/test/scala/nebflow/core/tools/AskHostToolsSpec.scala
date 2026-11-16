@@ -184,6 +184,47 @@ class AskHostToolsSpec extends CatsEffectSuite:
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 
+  test("cancellation wins before an answer without a second terminal transition") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "q", "cancel-first")
+      cancelled <- AskHostLedger.cancel(request.correlationId, "user cancelled")
+      accepted <- AskHostLedger.answer(request.correlationId, "late")
+      rows <- AskHostLedger.recover
+      _ = assert(cancelled && !accepted && rows.isEmpty)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("answer wins before cancellation and remains recoverable") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "q", "answer-first")
+      accepted <- AskHostLedger.answer(request.correlationId, "yes")
+      cancelled <- AskHostLedger.cancel(request.correlationId, "user cancelled")
+      rows <- AskHostLedger.recover
+      _ = assert(accepted && !cancelled)
+      _ = assertEquals(rows.flatMap(_.answer), List("yes"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("legacy requests lacking call identity are not re-created as recovery requests") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (legacy, _) <- AskHostLedger.begin("old-worker", "root", "agent", "old question")
+      (current, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "new question", "call-1")
+      _ <- AskHostLedger.expireLegacy()
+      rows <- AskHostLedger.recover
+      _ = assertEquals(rows.map(_.pending.correlationId), List(current.correlationId))
+      _ = assert(!rows.exists(_.pending.correlationId == legacy.correlationId))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
   test("AskUserQuestion remains non-blocking and keeps its existing question schema") {
     val required = AskUserQuestionTool.inputSchema("required").flatMap(_.asArray).getOrElse(Vector.empty)
     assertEquals(required.flatMap(_.asString), Vector("questions"))

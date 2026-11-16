@@ -88,14 +88,35 @@ object AskHostLedger:
       }
     }.flatMap(row => restoreWaiter(row.correlationId).tupleLeft(row))
 
-  def markUnavailable(id: String, reason: String): IO[Unit] =
-    append(Json.obj("correlationId" -> id.asJson, "status" -> "unavailable".asJson,
-      "reason" -> reason.asJson, "at" -> System.currentTimeMillis().asJson)) *>
-      IO { waiters.remove(id); answered.remove(id); () }
+  /** Explicit cancellation competes with answer under the same journal lock.
+    * A crash is not cancellation: its outstanding request remains recoverable.
+    */
+  def cancel(id: String, reason: String): IO[Boolean] = IO.blocking {
+    journalLock.synchronized {
+      recoverSync().find(_.pending.correlationId == id) match
+        case Some(row) if row.answer.isEmpty =>
+          appendSync(Json.obj("correlationId" -> id.asJson, "status" -> "unavailable".asJson,
+            "reason" -> reason.asJson, "at" -> System.currentTimeMillis().asJson))
+          waiters.remove(id)
+          answered.remove(id)
+          true
+        case _ => false
+    }
+  }
+
+  def markUnavailable(id: String, reason: String): IO[Unit] = cancel(id, reason).void
+
+  def cancelWorker(worker: String, reason: String): IO[Unit] =
+    recover.flatMap(_.filter(_.pending.workerSession == worker).traverse_(r => cancel(r.pending.correlationId, reason).void))
+
+  /** Legacy unanswered rows have no original tool identity; never guess by text. */
+  def expireLegacy(): IO[Unit] =
+    recover.flatMap(_.filter(r => r.pending.toolCallId.isEmpty && r.answer.isEmpty)
+      .traverse_(r => cancel(r.pending.correlationId, "legacy request has no recoverable tool call identity").void))
 
   /** Boot replay: durable mailbox identity makes repeated runs safe. */
   def recoverPending(resources: nebflow.core.AgentRuntimePort): IO[Int] =
-    recover.flatMap(_.traverse { row =>
+    expireLegacy() *> recover.flatMap(_.traverse { row =>
       resources.agentRegistry.get.flatMap { registry =>
         val event = AgentCommand.ExternalEvent("askhost", "request",
           s"[AskHost request ${row.pending.correlationId} from ${row.pending.sourceAgent} / ${row.pending.workerSession}]\n${row.question}",

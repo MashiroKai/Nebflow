@@ -1093,6 +1093,7 @@ private[agent] object AgentProcessing:
       case AgentCommand.Interrupt() =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user")
         for
+          _ <- state.sessionId.traverse_(sid => nebflow.core.tools.AskHostLedger.cancelWorker(sid, "user interrupted"))
           _ <- ctx.cancelCurrentTurn()
 
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
