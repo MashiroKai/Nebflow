@@ -552,8 +552,8 @@ object LlmInterface extends LlmRuntime:
            * deepMerge 的 per-request `effort` 档（ask 会话思考低档腿）——键缺席 =
            * 无低档诉求，三层继承语义不变。
            */
-          def resolveThinkingFor(req: LlmRequest, candidate: ModelCandidate): Option[ResolvedThinking] =
-            req.thinking.map { t =>
+          def prepareThinkingFor(req: LlmRequest, candidate: ModelCandidate): (Option[io.circe.Json], Option[ResolvedThinking]) =
+            val prepared = req.thinking.map { t =>
               val global = nebflow.shared.ThinkingConfig(
                 enabled = t.hcursor.get[String]("type").toOption.contains("enabled"),
                 budgetTokens = t.hcursor
@@ -574,8 +574,16 @@ object LlmInterface extends LlmRuntime:
               val kind = candidate.thinkingKind
                 .orElse(candidate.provider.thinkingKind)
                 .getOrElse(nebflow.shared.ThinkingFamily.forModel(candidate.model))
-              ResolvedThinking(kind, resolved.enabled, resolved.effort, resolved.clearThinking)
+              val cap = req.subagentThinkingBudgetCap.fold(Defaults.MaxThinkingBudget)(math.min(_, Defaults.MaxThinkingBudget))
+              val capped = math.min(resolved.budgetTokens, cap)
+              if capped != resolved.budgetTokens then
+                NebflowLogger.forName("nebflow.llm.thinking").warnSync(
+                  s"thinking budget clamped: provider=${candidate.providerId} model=${candidate.model} requested=${resolved.budgetTokens} effective=$capped"
+                )
+              val carrier = if t.isNull then t else t.deepMerge(io.circe.Json.obj("budget_tokens" -> io.circe.Json.fromInt(capped)))
+              (carrier, ResolvedThinking(kind, resolved.enabled, resolved.effort, resolved.clearThinking))
             }
+            (prepared.map(_._1), prepared.map(_._2))
 
           /**
            * 候选账本（缺陷批 2026-11-05，作者报障「fallback 队列里明明有可用模型，
@@ -682,24 +690,7 @@ object LlmInterface extends LlmRuntime:
                 result <- Fallback.tryProviderWithFallback[AdapterResponse](
                   up,
                   candidate =>
-                    val cappedThinking = req.thinking.map { t =>                      t.hcursor.downField("budget_tokens").as[Int] match
-                        // Clamp at the internal ceiling (maxcfg batch 2026-09-16): the budget
-                        // no longer follows the removed per-model `maxTokens` config — the old
-                        // `maxTokens / 2` clamp cut "high" thinking (32768) to 8192 with the
-                        // default config, which OpenAiAdapter.budgetToEffort then read as the
-                        // "medium" effort class. Defaults.MaxThinkingBudget equals the highest
-                        // budget the product can produce, so no reachable configuration is
-                        // clamped; the clamp still bounds legacy / hand-edited values (the
-                        // original reason it exists: providers such as zhipu/glm crash when
-                        // budget_tokens exceeds their limit).
-                        case Right(budget) if budget > Defaults.MaxThinkingBudget =>
-                          t.deepMerge(
-                            io.circe.Json.obj(
-                              "budget_tokens" -> io.circe.Json.fromInt(Defaults.MaxThinkingBudget)
-                            )
-                          )
-                        case _ => t
-                    }
+                    val (cappedThinking, resolvedThinking) = prepareThinkingFor(req, candidate)
                     // visionfix (甲): no pre-send rewriting. Images are sent
                     // verbatim on every candidate — whether the endpoint accepts
                     // them is decided by the provider, not by a local heuristic.
@@ -722,7 +713,7 @@ object LlmInterface extends LlmRuntime:
                           // thinking-config 批（2026-10-28）：按候选解析思考语义
                           // （model > provider > 全局逐字段就近 + 能力类显式优先），
                           // adapter 据此走 wire 翻译表。
-                          thinkingResolved = resolveThinkingFor(req, candidate),
+                          thinkingResolved = resolvedThinking,
                           // cache-warmup 批（2026-11-06）：REQUEST-ONLY 提醒段随行，
                           // 适配器排在持久历史断点之后（CachePrefixAssemblySpec 契约）。
                           requestOnlyContext = req.requestOnlyContext
@@ -1106,16 +1097,7 @@ object LlmInterface extends LlmRuntime:
                                   // still bounds legacy / hand-edited values (its original
                                   // purpose: providers such as zhipu/glm crash when budget_tokens
                                   // exceeds their limit).
-                                  val cappedThinking = req.thinking.map { t =>
-                                    t.hcursor.downField("budget_tokens").as[Int] match
-                                      case Right(budget) if budget > Defaults.MaxThinkingBudget =>
-                                        t.deepMerge(
-                                          io.circe.Json.obj(
-                                            "budget_tokens" -> io.circe.Json.fromInt(Defaults.MaxThinkingBudget)
-                                          )
-                                        )
-                                      case _ => t
-                                  }
+                                  val (cappedThinking, resolvedThinking) = prepareThinkingFor(req, candidate)
                                   // Hard-recovery P1/P6 (2026-09-07): per-attempt transport
                                   // (per-request HttpClient, 设计 D-1 方案 A) + deterministic
                                   // RecoverableAbort mapping. abortedRef flips BEFORE the client
@@ -1165,7 +1147,7 @@ object LlmInterface extends LlmRuntime:
                                               contextWindow = Some(candidate.contextWindow),
                                               // thinking-config 批（2026-10-28）：同非流面——
                                               // 按候选解析思考语义（wire 翻译表单点消费）。
-                                              thinkingResolved = resolveThinkingFor(req, candidate),
+                                              thinkingResolved = resolvedThinking,
                                               // cache-warmup 批（2026-11-06）：同非流面——
                                               // REQUEST-ONLY 提醒段随行（持久历史断点之后上线）。
                                               requestOnlyContext = req.requestOnlyContext,
