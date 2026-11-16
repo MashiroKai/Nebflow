@@ -281,4 +281,16 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     assertEquals(result.hits.head.sid, "rollback-target")
   }
 
+  test("failed deletion rolls back before another write commits") {
+    SearchIndexService.unsafeInsertDocs(face, List(doc("delete-rollback", 0, "message", 1L, "deletepreserved")))
+    SearchIndexService.unsafeExecuteForTests(face,
+      "CREATE TEMP TRIGGER reject_meta_delete BEFORE DELETE ON sessions_meta WHEN OLD.sid = 'delete-rollback' BEGIN SELECT RAISE(ABORT, 'fixture'); END")
+    try
+      SearchIndexService.removeSession(face, "delete-rollback").unsafeRunSync()
+      SearchIndexService.unsafeInsertDocs(face, List(doc("delete-other", 0, "message", 1L, "other")))
+      val result = SearchIndexService.query(face, q("deletepreserved", kinds = List("message"))).unsafeRunSync().toOption.get
+      assertEquals(result.total, 1)
+    finally SearchIndexService.unsafeExecuteForTests(face, "DROP TRIGGER reject_meta_delete")
+  }
+
 end SearchIndexServiceSpec

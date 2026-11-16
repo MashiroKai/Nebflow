@@ -155,6 +155,14 @@ object SearchIndexService:
           if rs.next() then rs.getInt(1) else -1
         finally st.close()
 
+  private[nebflow] def unsafeExecuteForTests(face: String, sql: String): Unit =
+    val conn = faceOf(face).get.conn
+    val st = conn.createStatement()
+    try
+      st.execute(sql)
+      conn.commit()
+    finally st.close()
+
   /** 测试缝：直接灌文档（绕过 adapter——纯结构测试用）。 */
   private[nebflow] def unsafeInsertDocs(face: String, docs: List[IndexDoc]): Unit =
     faceOf(face).foreach { fs =>
