@@ -112,7 +112,7 @@ import {
   showDeleteFolderModal,
   initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, mountHistoryPageChunked, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, mountHistoryPageChunked, captureHistoryAnchor, restoreHistoryAnchor, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
 // delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
@@ -2221,7 +2221,7 @@ onMessage('historyPage', (msg, view) => {
     // 遮蔽门横跨全程（门内宽限窗 miss 走 ws.js 遮蔽旁路）。`loading` 闸保持
     // 到 onDone（升级批 drain 完）才放行 —— 期间不会发出第二页请求。
     const chat = activeView.dom.chat;
-    const prevScrollHeight = chat.scrollHeight;
+    // The anchor is captured at prepend time, after any intervening user gesture.
     // 进场落底武装窗（2026-11-02 手机端进场落顶修复批）：**回看补页腿撤窗**——
     // 本腿以 `chat.prepend + scrollTop += 增量` 相对补偿把读者钉在原来读的那一行，
     // 而武装窗的每帧钉底会把这笔补偿直接抹掉（把回看的人拽回底部）。撤窗放在
@@ -2245,10 +2245,12 @@ onMessage('historyPage', (msg, view) => {
           }
           fragment.appendChild(child);
         }
+        const anchor = captureHistoryAnchor(chat);
+        const previousOverflowAnchor = chat.style.overflowAnchor;
+        chat.style.overflowAnchor = 'none';
         chat.prepend(fragment);
-        // 相对补偿：+整页新增高度（绝对值式会夺走构建切片期间用户的手势滚动）。
-        const newScrollHeight = chat.scrollHeight;
-        chat.scrollTop += (newScrollHeight - prevScrollHeight);
+        restoreHistoryAnchor(anchor);
+        chat.style.overflowAnchor = previousOverflowAnchor;
         view.pagination.offset = msg.offset;
         view.pagination.hasMore = msg.hasMore;
         if (!view.pagination.hasMore) showHistoryEnd();

@@ -207,6 +207,24 @@ try {
   await browser.close(); server.close(); process.exit(1);
 }
 await sleep(600); // 初载 md 升级批落地
+// Empty operation control: same row and scroll position across animation frames.
+const noise = await page.evaluate(async () => {
+  const chat = document.getElementById('chat');
+  const bounds = chat.getBoundingClientRect();
+  const row = [...chat.querySelectorAll('.row')].find((r) => {
+    const rect = r.getBoundingClientRect();
+    return rect.bottom > bounds.top && rect.top < bounds.bottom;
+  });
+  if (!row) return [];
+  const top = row.getBoundingClientRect().top - bounds.top;
+  const samples = [];
+  for (let i = 0; i < 30; i++) {
+    await new Promise(requestAnimationFrame);
+    samples.push(row.getBoundingClientRect().top - chat.getBoundingClientRect().top - top);
+  }
+  return samples;
+});
+console.log('[noise-css-px] ' + JSON.stringify(noise));
 const firstScreenMs = initSendAt ? firstScreenAt - initSendAt : -1;
 // P0 判据读数（首屏零双挂载/零重复请求的三件证）：
 //   ① 行数恰等一页（双挂载会一次性 ×2）——firstRows 本体；
