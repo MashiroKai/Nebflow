@@ -52,6 +52,18 @@ class ProviderRegistry(
    * （那会成为第二份配置真相）。可见性 private[nebflow]：调用方在 nebflow.agent。
    */
   private[nebflow] def currentConfig: IO[NebflowServiceConfig] = configRef.get
+
+  private[nebflow] def setGlobalModel(model: Option[AgentModelConfig]): IO[Unit] =
+    configRef.update(c => c.copy(llm = c.llm.copy(fallback = model)))
+
+  private[nebflow] def resolveDisplayedModel(
+    name: String,
+    own: Option[AgentModelConfig]
+  ): IO[(AgentModelConfig, String)] =
+    configRef.get.map(c =>
+      nebflow.core.SchemePolicy.resolveFromInputs(name, own, nebflow.core.SchemePolicy.nebulaChain(), c.llm.fallback)
+    )
+
   private[llm] def decisionRoute(callType: String): IO[Option[AgentModelConfig]] =
     configRef.get.map(_.llm.decisionRoutes.flatMap(_.get(callType)))
 
@@ -186,12 +198,9 @@ class ProviderRegistry(
       // the new order.
       val chain =
         try
-          val fromConfig = nebflow.shared.FallbackChain.configured(config)
-          if fromConfig.nonEmpty then fromConfig
-          else
-            // A missing configured fallback may inherit Nebula's explicitly stored
-            // chain, but never synthesize a model from provider inventory (seed).
-            nebflow.core.SchemePolicy.nebulaChain().toList.flatMap(am => am.preferred.toList ++ am.fallbacks)
+          val policy = nebflow.core.SchemePolicy
+          val resolved = policy.resolveFromInputs(policy.NebulaName, None, policy.nebulaChain(), config.llm.fallback)._1
+          resolved.preferred.toList.filter(_.trim.nonEmpty)
         catch case _: Exception => Nil
       val fromChain = chain.flatMap { ref =>
         // Gracefully skip invalid refs instead of throwing
@@ -255,7 +264,10 @@ class ProviderRegistry(
           if fromConfig.nonEmpty then ("llm.fallback", fromConfig)
           else
             val stored = nebflow.core.SchemePolicy.nebulaChain()
-            (if stored.isDefined then "nebula-chain" else "empty", stored.toList.flatMap(am => am.preferred.toList ++ am.fallbacks))
+            (
+              if stored.isDefined then "nebula-chain" else "empty",
+              stored.toList.flatMap(am => am.preferred.toList ++ am.fallbacks)
+            )
         def resolves(ref: String): Boolean =
           ref.split("/", 2) match
             case Array(pid, mid) =>
@@ -271,7 +283,10 @@ class ProviderRegistry(
           "chain" -> chainRefs.asJson,
           "skipped" -> chainRefs.filterNot(resolves).asJson,
           "excluded" -> excluded.asJson,
-          "exclusionReasons" -> excluded.map(ref => ref -> "not in selected chain (provider config is not authorization)").toMap.asJson,
+          "exclusionReasons" -> excluded
+            .map(ref => ref -> "not in selected chain (provider config is not authorization)")
+            .toMap
+            .asJson,
           "candidates" -> candidates.asJson,
           "warnings" -> nebflow.shared.FallbackChain.validate(config).asJson
         )
@@ -643,10 +658,11 @@ class ProviderRegistry(
       val allowedSet = allowed.toSet
       config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
         if isDisabled(provider) then Nil
-        else provider.models.sortBy(_.id).flatMap { model =>
-          val ref = s"$providerId/${model.id}"
-          Option.when(!allowedSet.contains(ref))(ref -> CandidateSkipCause.NotConfigured("not in selected chain"))
-        }
+        else
+          provider.models.sortBy(_.id).flatMap { model =>
+            val ref = s"$providerId/${model.id}"
+            Option.when(!allowedSet.contains(ref))(ref -> CandidateSkipCause.NotConfigured("not in selected chain"))
+          }
       }
     }
 

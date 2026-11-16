@@ -179,7 +179,71 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
         }
     yield result
 
+  test("unconfigured session rejects dispatch and explains the legacy candidate") {
+    import scala.jdk.CollectionConverters.*
+    val oldRoot = PathUtil.dataRoot
+    val root = os.temp.dir(prefix = "unconfigured-model-")
+    PathUtil.setDataRoot(root)
+    os.write(
+      root / Branding.configFileName,
+      """{"llm":{"providers":{"p":{"baseUrl":"http://127.0.0.1:1","apiKey":"fixture","protocol":"openai","models":[{"id":"legacy","contextWindow":8192}]}}}}"""
+    )
+    val log = org.slf4j.LoggerFactory.getLogger("nebflow.llm").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]()
+    appender.start(); log.addAppender(appender)
+    val cfg = NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "p" -> ProviderConfig(
+            baseUrl = "http://127.0.0.1:1",
+            apiKey = "fixture",
+            protocol = LlmProtocol.OpenAI,
+            models = List(ModelConfig("legacy"))
+          )
+        )
+      )
+    )
+    try
+      val outcome = (for
+        ref <- Ref.of[IO, NebflowServiceConfig](cfg)
+        overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+        result <- LlmInterface.createLlm(overrides, None, Some(ref)).flatMap { case (handle, registry, _, release) =>
+          val req = imageRequest.copy(
+            sessionId = "delegate-unconfigured",
+            agentModel = None,
+            messages = List(Message(MessageRole.User, Left("hi")))
+          )
+          (for
+            displayed <- registry.resolveDisplayedModel("subagent", None)
+            candidates <- registry.getCandidates()
+            sent <- handle.send(req).attempt
+          yield (displayed, candidates, sent)).guarantee(release)
+        }
+      yield result).unsafeRunSync()
+      assertEquals(outcome._1._1.preferred, None)
+      assertEquals(outcome._2, Nil)
+      assert(outcome._3.isLeft)
+      val logs = appender.list.asScala.toList.map(_.getFormattedMessage)
+      assert(
+        logs.exists(s =>
+          s.contains("layer=subagent") && s.contains("old behavior would select p/legacy") && s.contains(
+            "dispatch rejected"
+          )
+        ),
+        logs.toString
+      )
+    finally
+      log.detachAppender(appender); appender.stop()
+      PathUtil.setDataRoot(oldRoot); os.remove.all(root)
+    end try
+  }
+
   test("delegate session model overrides category on the actual request") {
+    import scala.jdk.CollectionConverters.*
+    val log = org.slf4j.LoggerFactory.getLogger("nebflow.llm").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]()
+    appender.start()
+    log.addAppender(appender)
     val previousRoot = PathUtil.dataRoot
     val root = os.temp.dir(prefix = "model-wire-")
     PathUtil.setDataRoot(root)
@@ -187,26 +251,43 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
     val program = for
       server <- IO.blocking {
         val s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
-        s.createContext("/chat/completions", (exchange: HttpExchange) => {
-          val body = new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
-          seen.add(body)
-          val payload = """{"id":"mock","model":"model-b","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
-          val bytes = payload.getBytes(StandardCharsets.UTF_8)
-          exchange.getResponseHeaders.add("Content-Type", "application/json")
-          exchange.sendResponseHeaders(200, bytes.length)
-          val out = exchange.getResponseBody; out.write(bytes); out.close(); exchange.close()
-        })
+        s.createContext(
+          "/chat/completions",
+          (exchange: HttpExchange) =>
+            val body = new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
+            seen.add(body)
+            val payload =
+              """{"id":"mock","model":"model-b","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
+            val bytes = payload.getBytes(StandardCharsets.UTF_8)
+            exchange.getResponseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, bytes.length)
+            val out = exchange.getResponseBody; out.write(bytes); out.close(); exchange.close()
+        )
         s.start(); s
       }
       _ <- (for
-        cfg <- IO.pure(NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("p" -> ProviderConfig(
-          baseUrl = s"http://127.0.0.1:${server.getAddress.getPort}", apiKey = "fixture",
-          protocol = LlmProtocol.OpenAI, models = List(ModelConfig("model-a"), ModelConfig("model-b")))))))
+        cfg <- IO.pure(
+          NebflowServiceConfig(llm =
+            ServiceLlmConfig(providers =
+              Map(
+                "p" -> ProviderConfig(
+                  baseUrl = s"http://127.0.0.1:${server.getAddress.getPort}",
+                  apiKey = "fixture",
+                  protocol = LlmProtocol.OpenAI,
+                  models = List(ModelConfig("model-a"), ModelConfig("model-b"))
+                )
+              )
+            )
+          )
+        )
         ref <- Ref.of[IO, NebflowServiceConfig](cfg)
         overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
         _ <- LlmInterface.createLlm(overrides, None, Some(ref)).flatMap { case (handle, registry, _, release) =>
-          val req = imageRequest.copy(sessionId = "delegate-fixture", messages = List(Message(MessageRole.User, Left("hi"))),
-            agentModel = Some(AgentModelConfig(preferred = Some("p/model-a"))))
+          val req = imageRequest.copy(
+            sessionId = "delegate-fixture",
+            messages = List(Message(MessageRole.User, Left("hi"))),
+            agentModel = Some(AgentModelConfig(preferred = Some("p/model-a")))
+          )
           (for
             selected <- registry.getCandidateForRef("p/model-b")
             _ <- overrides.update(_ + ("delegate-fixture" -> selected.get))
@@ -218,10 +299,20 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
     try
       program.unsafeRunSync()
       val body = seen.peek()
-      assertEquals(parser.parse(body).toOption.flatMap(_.hcursor.get[String]("model").toOption), Some("model-b"), s"wire=$body")
+      val wireModel = parser.parse(body).toOption.flatMap(_.hcursor.get[String]("model").toOption)
+      assertEquals(wireModel, Some("model-b"), s"wire=$body")
+      val logs = appender.list.asScala.toList.map(_.getFormattedMessage)
+      val ledger =
+        logs.find(_.contains("candidate ledger session=delegate-fixture")).getOrElse(fail(s"missing ledger: $logs"))
+      assert(ledger.contains(s"selected=p/${wireModel.get}"), ledger)
+      assert(!ledger.contains("p/model-b(not-configured)"), ledger)
+      assert(!logs.exists(_.contains("SILENT-EXCLUSION")), logs.toString)
     finally
+      log.detachAppender(appender)
+      appender.stop()
       PathUtil.setDataRoot(previousRoot)
       os.remove.all(root)
+    end try
   }
 
   test("configured effort allowlist reaches both adapters on stream and non-stream paths") {
@@ -231,47 +322,54 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
       server <- IO.blocking {
         val s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
         def handler(anthropic: Boolean)(exchange: HttpExchange): Unit =
-          val body = parser.parse(new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)).toOption.get
+          val body =
+            parser.parse(new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)).toOption.get
           seen.add(body)
           val stream = body.hcursor.get[Boolean]("stream").getOrElse(false)
-          val payload = if anthropic && stream then
-            messageStart + textDelta("OK") + okTail
-          else if anthropic then
-            """{"id":"msg","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"k3.1-test","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":2}}"""
-          else if stream then
-            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" +
-            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" + "data: [DONE]\n\n"
-          else
-            """{"id":"mock","model":"m1","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}"""
+          val payload =
+            if anthropic && stream then messageStart + textDelta("OK") + okTail
+            else if anthropic then
+              """{"id":"msg","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"k3.1-test","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":2}}"""
+            else if stream then
+              "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" +
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" + "data: [DONE]\n\n"
+            else
+              """{"id":"mock","model":"m1","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}"""
           val bytes = payload.getBytes(StandardCharsets.UTF_8)
           exchange.getResponseHeaders.add("Content-Type", if stream then "text/event-stream" else "application/json")
           exchange.sendResponseHeaders(200, bytes.length)
           val out = exchange.getResponseBody; out.write(bytes); out.close(); exchange.close()
+        end handler
         s.createContext("/v1/messages", (e: HttpExchange) => handler(true)(e))
         s.createContext("/chat/completions", (e: HttpExchange) => handler(false)(e))
         s.start(); s
       }
-      _ <- (List(("anthropic", "k3.1-test", "/v1/messages"), ("openai", "m1", "/chat/completions"))).traverse_ { (protocol, model, path) =>
-        val base = s"http://127.0.0.1:${server.getAddress.getPort}"
-        val raw = Json.obj(
-          "baseUrl" -> Json.fromString(base), "apiKey" -> Json.fromString("test"),
-          "protocol" -> Json.fromString(protocol),
-          "models" -> Json.arr(Json.obj("id" -> Json.fromString(model), "contextWindow" -> Json.fromInt(128000))),
-          "effortAllowlist" -> Json.obj((base + path) -> Json.obj(model -> Json.arr(Json.fromString("high"))))
-        )
-        val provider = raw.as[ProviderConfig].fold(throw _, identity)
-        val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("v" -> provider)))
-        for
-          ref <- Ref.of[IO, NebflowServiceConfig](cfg)
-          overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-          _ <- LlmInterface.createLlm(overrides, None, Some(ref)).flatMap { case (handle, _, _, release) =>
-            val req = imageRequest.copy(messages = List(Message(MessageRole.User, Left("hi"))),
-              thinking = Some(ThinkingConfig.toLlmJson(ThinkingConfig(effort = Some(ThinkingEffort.High)))),
-              agentModel = Some(AgentModelConfig(preferred = Some(s"v/$model"), fallbacks = Nil)))
-            (handle.sendStream(req).compile.drain *> handle.send(req).void).guarantee(release)
-          }
-        yield ()
-      }.guarantee(IO.blocking(server.stop(0)))
+      _ <- (List(("anthropic", "k3.1-test", "/v1/messages"), ("openai", "m1", "/chat/completions")))
+        .traverse_ { (protocol, model, path) =>
+          val base = s"http://127.0.0.1:${server.getAddress.getPort}"
+          val raw = Json.obj(
+            "baseUrl" -> Json.fromString(base),
+            "apiKey" -> Json.fromString("test"),
+            "protocol" -> Json.fromString(protocol),
+            "models" -> Json.arr(Json.obj("id" -> Json.fromString(model), "contextWindow" -> Json.fromInt(128000))),
+            "effortAllowlist" -> Json.obj((base + path) -> Json.obj(model -> Json.arr(Json.fromString("high"))))
+          )
+          val provider = raw.as[ProviderConfig].fold(throw _, identity)
+          val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("v" -> provider)))
+          for
+            ref <- Ref.of[IO, NebflowServiceConfig](cfg)
+            overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+            _ <- LlmInterface.createLlm(overrides, None, Some(ref)).flatMap { case (handle, _, _, release) =>
+              val req = imageRequest.copy(
+                messages = List(Message(MessageRole.User, Left("hi"))),
+                thinking = Some(ThinkingConfig.toLlmJson(ThinkingConfig(effort = Some(ThinkingEffort.High)))),
+                agentModel = Some(AgentModelConfig(preferred = Some(s"v/$model"), fallbacks = Nil))
+              )
+              (handle.sendStream(req).compile.drain *> handle.send(req).void).guarantee(release)
+            }
+          yield ()
+        }
+        .guarantee(IO.blocking(server.stop(0)))
     yield ()
     program.unsafeRunSync()
     assertEquals(seen.size(), 4)
@@ -282,28 +380,43 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
     val program = for
       server <- IO.blocking {
         val s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
-        s.createContext("/chat/completions", (exchange: HttpExchange) => {
-          val body = new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
-          val streaming = parser.parse(body).toOption.exists(_.hcursor.get[Boolean]("stream").getOrElse(false))
-          val payload = if streaming then
-            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" +
-            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
-            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n\n" +
-            "data: [DONE]\n\n"
-          else
-            "{\"id\":\"synthetic\",\"model\":\"m1\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2}}"
-          val bytes = payload.getBytes(StandardCharsets.UTF_8)
-          exchange.getResponseHeaders.add("Content-Type", if streaming then "text/event-stream" else "application/json")
-          exchange.sendResponseHeaders(200, bytes.length)
-          val out = exchange.getResponseBody
-          out.write(bytes); out.close(); exchange.close()
-        })
+        s.createContext(
+          "/chat/completions",
+          (exchange: HttpExchange) =>
+            val body = new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
+            val streaming = parser.parse(body).toOption.exists(_.hcursor.get[Boolean]("stream").getOrElse(false))
+            val payload =
+              if streaming then
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" +
+                  "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+                  "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n\n" +
+                  "data: [DONE]\n\n"
+              else
+                "{\"id\":\"synthetic\",\"model\":\"m1\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2}}"
+            val bytes = payload.getBytes(StandardCharsets.UTF_8)
+            exchange.getResponseHeaders
+              .add("Content-Type", if streaming then "text/event-stream" else "application/json")
+            exchange.sendResponseHeaders(200, bytes.length)
+            val out = exchange.getResponseBody
+            out.write(bytes); out.close(); exchange.close()
+        )
         s.start(); s
       }
       result <- (for
-        config <- IO.pure(NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("v" -> ProviderConfig(
-          baseUrl = s"http://127.0.0.1:${server.getAddress.getPort}", apiKey = "synthetic",
-          protocol = LlmProtocol.OpenAI, models = List(ModelConfig("m1")))))))
+        config <- IO.pure(
+          NebflowServiceConfig(llm =
+            ServiceLlmConfig(providers =
+              Map(
+                "v" -> ProviderConfig(
+                  baseUrl = s"http://127.0.0.1:${server.getAddress.getPort}",
+                  apiKey = "synthetic",
+                  protocol = LlmProtocol.OpenAI,
+                  models = List(ModelConfig("m1"))
+                )
+              )
+            )
+          )
+        )
         configRef <- Ref.of[IO, NebflowServiceConfig](config)
         overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
         _ <- IO(CacheAttribution.resetForTest())

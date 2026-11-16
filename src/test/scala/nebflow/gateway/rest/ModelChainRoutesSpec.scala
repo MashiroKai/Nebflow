@@ -51,7 +51,10 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
       )
       os.write(tmp / "agents" / "Nebula" / "system.md", "n")
       os.makeDir.all(tmp / "agents" / "project-dispatcher")
-      os.write(tmp / "agents" / "project-dispatcher" / "agent.json", """{"name":"project-dispatcher","description":"fixture dispatcher","model":{"preferred":"test/dispatcher-model","fallbacks":[]}}""")
+      os.write(
+        tmp / "agents" / "project-dispatcher" / "agent.json",
+        """{"name":"project-dispatcher","description":"fixture dispatcher","model":{"preferred":"test/dispatcher-model","fallbacks":[]}}"""
+      )
       os.makeDir.all(tmp / "agents" / "kernel")
       os.write(tmp / "agents" / "kernel" / "agent.json", """{"name":"kernel","description":"fixture kernel"}""")
       os.write(tmp / "agents" / "kernel" / "system.md", "k")
@@ -221,6 +224,136 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
           json.hcursor.downField("chain").downField("preferred").as[String],
           Right("deepseek/deepseek-flash")
         )
+    }
+
+  test("main PUT synchronizes runtime and displayed default"):
+    withFixture { () =>
+      val cfg = NebflowServiceConfig(llm =
+        ServiceLlmConfig(
+          providers = Map(
+            "p" -> ProviderConfig(
+              baseUrl = "http://127.0.0.1:1",
+              apiKey = "fixture",
+              protocol = nebflow.shared.LlmProtocol.OpenAI,
+              models = List(nebflow.shared.ModelConfig("old"), nebflow.shared.ModelConfig("new"))
+            )
+          ),
+          fallback = Some(nebflow.shared.AgentModelConfig(preferred = Some("p/old")))
+        )
+      )
+      val ref = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](cfg)
+      val registry = new nebflow.llm.ProviderRegistry(ref, NullBackend)
+      val routes = mkRoutes(mkResources().copy(providerRegistry = registry))
+      val body = io.circe.Json.obj(
+        "model" -> io.circe.Json.obj("preferred" -> "p/new".asJson, "fallbacks" -> List.empty[String].asJson)
+      )
+      for
+        response <- putChain(routes, "main", body)
+        _ = assertEquals(response.status, Status.Ok)
+        request = Request[IO](Method.GET, Uri.unsafeFromString("/agents/main/model"))
+          .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+        displayed <- routes(request).value.flatMap(_.get.as[io.circe.Json])
+        memory <- ref.get
+        candidates <- registry.getCandidates()
+      yield
+        assertEquals(memory.llm.fallback.flatMap(_.preferred), Some("p/new"))
+        assertEquals(displayed.hcursor.downField("effectiveChain").get[String]("preferred").toOption, Some("p/new"))
+        assertEquals(candidates.map(c => s"${c.providerId}/${c.model}"), List("p/new"))
+    }
+
+  test("category PUT reaches next streaming and non-streaming provider requests"):
+    withFixture { () =>
+      val captured = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+      val program = for
+        server <- IO.blocking {
+          val s = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+          s.createContext(
+            "/chat/completions",
+            (exchange: com.sun.net.httpserver.HttpExchange) =>
+              val body = new String(exchange.getRequestBody.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+              captured.add(body)
+              val streaming =
+                io.circe.parser.parse(body).toOption.exists(_.hcursor.get[Boolean]("stream").getOrElse(false))
+              val response =
+                if streaming then
+                  "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" +
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+                else
+                  """{"id":"mock","model":"model-x","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
+              val bytes = response.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+              exchange.getResponseHeaders
+                .add("Content-Type", if streaming then "text/event-stream" else "application/json")
+              exchange.sendResponseHeaders(200, bytes.length)
+              val out = exchange.getResponseBody; out.write(bytes); out.close(); exchange.close()
+          )
+          s.start(); s
+        }
+        _ <- (for
+          cfg <- IO.pure(
+            NebflowServiceConfig(llm =
+              ServiceLlmConfig(providers =
+                Map(
+                  "p" -> ProviderConfig(
+                    baseUrl = s"http://127.0.0.1:${server.getAddress.getPort}",
+                    apiKey = "fixture",
+                    protocol = nebflow.shared.LlmProtocol.OpenAI,
+                    models = List(nebflow.shared.ModelConfig("model-x"))
+                  )
+                )
+              )
+            )
+          )
+          configRef <- cats.effect.Ref.of[IO, NebflowServiceConfig](cfg)
+          overrides <- cats.effect.Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+          _ <- nebflow.llm.LlmInterface.createLlm(overrides, None, Some(configRef)).flatMap {
+            case (handle, registry, monitor, release) =>
+              val resources = mkResources().copy(
+                providerRegistry = registry,
+                healthMonitor = monitor,
+                sessionModelOverrides = overrides
+              )
+              val routes = mkRoutes(resources)
+              val body = io.circe.Json.obj(
+                "model" -> io.circe.Json
+                  .obj("preferred" -> "p/model-x".asJson, "fallbacks" -> List.empty[String].asJson)
+              )
+              (for
+                response <- putChain(routes, "subagent", body)
+                _ = assertEquals(response.status, Status.Ok)
+                stored <- IO.blocking(os.read(PathUtil.dataRoot / "agents" / "subagent" / "agent.json"))
+                req = nebflow.shared.LlmRequest(
+                  messages = List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("hi"))),
+                  sessionId = "delegate-fixture",
+                  agentId = "test",
+                  agentModel = nebflow.core.ModelRoles.slotChainOf(Some("delegate-fixture"))
+                )
+                _ <- handle.send(req)
+                _ <- handle.sendStream(req).compile.drain
+                _ <- IO {
+                  import scala.jdk.CollectionConverters.*
+                  val bodies = captured.asScala.toList
+                  assertEquals(bodies.size, 2)
+                  assertEquals(
+                    io.circe.parser
+                      .parse(stored)
+                      .toOption
+                      .flatMap(_.hcursor.downField("model").get[String]("preferred").toOption),
+                    Some("p/model-x")
+                  )
+                  bodies.foreach(b =>
+                    assertEquals(
+                      io.circe.parser.parse(b).toOption.flatMap(_.hcursor.get[String]("model").toOption),
+                      Some("model-x")
+                    )
+                  )
+                  println(s"CATEGORY-CONFIG $stored")
+                  bodies.foreach(b => println(s"CATEGORY-WIRE $b"))
+                }
+              yield ()).guarantee(release)
+          }
+        yield ()).guarantee(IO.blocking(server.stop(0)))
+      yield ()
+      program
     }
 
   // A chain whose preferred model is zhipu/GLM-5.3-Flash. Its fallback is not a member of the request chain.
@@ -413,14 +546,18 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         "node" -> "node-model",
         "subagent" -> "subagent-model"
       )
-      slots.traverse_ { case (slot, model) =>
-        putJson(
-          s"/agents/$slot/model",
-          io.circe.Json.obj("model" -> io.circe.Json.obj("preferred" -> s"test/$model".asJson, "fallbacks" -> io.circe.Json.arr()))
-        ).flatMap { resp =>
-          resp.as[io.circe.Json].map { json =>
-            assertEquals(resp.status, Status.Ok, s"slot $slot accepts class-level writes")
-            assertEquals(json.hcursor.downField("mode").as[String], Right("explicit"))
+      slots
+        .traverse_ { case (slot, model) =>
+          putJson(
+            s"/agents/$slot/model",
+            io.circe.Json.obj(
+              "model" -> io.circe.Json.obj("preferred" -> s"test/$model".asJson, "fallbacks" -> io.circe.Json.arr())
+            )
+          ).flatMap { resp =>
+            resp.as[io.circe.Json].map { json =>
+              assertEquals(resp.status, Status.Ok, s"slot $slot accepts class-level writes")
+              assertEquals(json.hcursor.downField("mode").as[String], Right("explicit"))
+            }
           }
         }
       }.map { _ =>
@@ -464,10 +601,11 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
               )
             }
         }
-      }
     }
 
-  test("wire spellings (main / dispatcher) are normalized to the slot sidecar — a class write never lands in an unread sidecar") {
+  test(
+    "wire spellings (main / dispatcher) are normalized to the slot sidecar — a class write never lands in an unread sidecar"
+  ) {
     // 模型粒度批回归：`ModelRoles.isSlot` 允许 wire 拼写（main/dispatcher），但只有
     // 槽目录名对应 agents/<dir>/agent.json。不归一时 `PUT /agents/main/model` 会就地
     // 建 agents/main/agent.json，而引擎只读 agents/Nebula/ ⇒ 静默空写（五类粒度
@@ -476,7 +614,9 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
       for
         wrote <- putJson(
           "/agents/main/model",
-          io.circe.Json.obj("model" -> io.circe.Json.obj("preferred" -> "test/main-model".asJson, "fallbacks" -> io.circe.Json.arr()))
+          io.circe.Json.obj(
+            "model" -> io.circe.Json.obj("preferred" -> "test/main-model".asJson, "fallbacks" -> io.circe.Json.arr())
+          )
         )
         wroteJson <- wrote.as[io.circe.Json]
         dispatcher <- getJson("/agents/dispatcher/model")
@@ -515,7 +655,11 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
       assertEquals(after.get("delegate-session-a"), Some(target))
       assertEquals(after.get("delegate-session-b"), None, "session switch does not pin a sibling")
       assertEquals(siblingBefore.model, "sibling-default")
-      assertEquals(nebflow.core.ModelRoles.slotChainOf(Some("delegate-session-b")), None, "no class sidecar is changed by a session override")
+      assertEquals(
+        nebflow.core.ModelRoles.slotChainOf(Some("delegate-session-b")),
+        None,
+        "no class sidecar is changed by a session override"
+      )
       assertEquals(slotChain.preferred, Some("class/model"))
 
   test("PUT empty chain ({preferred: null, fallbacks: []}) normalizes to follow"):
@@ -578,7 +722,9 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         assertEquals(json.hcursor.downField("resolvedFrom").as[String], Right("seed"))
     }
 
-  test("PUT a settable name with no agent dir → in-place sidecar + 200 (builtin-def); a non-settable name → 400 gate first"):
+  test(
+    "PUT a settable name with no agent dir → in-place sidecar + 200 (builtin-def); a non-settable name → 400 gate first"
+  ):
     withFixture { () =>
       // 本用例的前提是「该角色在盘上没有 agent 目录」——fixture 为五类槽用例
       // 预置了 project-dispatcher 的 sidecar（模型粒度批），这里先摘掉它还原前提
@@ -599,7 +745,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         val sidecar = io.circe.parser
           .parse(os.read(PathUtil.dataRoot / "agents" / "project-dispatcher" / "agent.json")) match
           case Right(j) => j
-          case Left(e)  => fail(s"the created sidecar must be JSON: $e")
+          case Left(e) => fail(s"the created sidecar must be JSON: $e")
         assertEquals(
           sidecar.asObject.map(_.keys.toSet),
           Some(Set("name")),
@@ -611,5 +757,6 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
           Status.BadRequest,
           "the write gate refuses non-role names before any existence check"
         )
+      end for
     }
 end ModelChainRoutesSpec
