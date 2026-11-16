@@ -19,12 +19,15 @@ object AskHostLedger:
   private def file = PathUtil.dataRoot / "askhost" / "ledger.jsonl"
   private val waiters = TrieMap.empty[String, Deferred[IO, String]]
   private val answered = TrieMap.empty[String, String]
+  private val journalLock = new Object
 
-  final case class Pending(correlationId: String, workerSession: String, rootSession: String, sourceAgent: String)
+  final case class Pending(correlationId: String, workerSession: String, rootSession: String, sourceAgent: String, toolCallId: String = "")
   final case class Recovered(pending: Pending, question: String, answer: Option[String] = None)
 
   /** Read the append-only journal as state; later transitions supersede earlier ones. */
-  def recover: IO[List[Recovered]] = IO.blocking {
+  def recover: IO[List[Recovered]] = IO.blocking(journalLock.synchronized(recoverSync()))
+
+  private def recoverSync(): List[Recovered] =
     if !os.exists(file) then Nil
     else
       val requests = scala.collection.mutable.LinkedHashMap.empty[String, Recovered]
@@ -34,13 +37,34 @@ object AskHostLedger:
           val id = str("correlationId")
           if id.nonEmpty then str("status") match
             case "pending" =>
-              requests.update(id, Recovered(Pending(id, str("workerSession"), str("rootSession"), str("sourceAgent")), str("question")))
+              requests.update(id, Recovered(Pending(id, str("workerSession"), str("rootSession"), str("sourceAgent"), str("toolCallId")), str("question")))
             case "answered" => requests.get(id).foreach(r => requests.update(id, r.copy(answer = Some(str("decision")))))
             case "delivered" | "unavailable" => requests.remove(id)
             case _ => ()
         }
       }
       requests.values.toList
+
+  /** Verify an exact duplicate against durable history, including delivered rows. */
+  def isAcceptedDuplicate(id: String, root: String, decision: String): IO[Boolean] = IO.blocking {
+    journalLock.synchronized {
+      if !os.exists(file) then false
+      else
+        var owner = ""
+        var accepted: Option[String] = None
+        var invalid = false
+        os.read.lines(file).foreach { line =>
+          io.circe.parser.parse(line).toOption.flatMap(_.asObject).foreach { row =>
+            def str(key: String) = row(key).flatMap(_.asString).getOrElse("")
+            if str("correlationId") == id then str("status") match
+              case "pending" => owner = str("rootSession")
+              case "answered" => accepted = Some(str("decision"))
+              case "unavailable" => invalid = true
+              case _ => ()
+          }
+        }
+        !invalid && owner == root && accepted.contains(decision)
+    }
   }
 
   /** Recreate in-process waiters and satisfy any request whose decision was journaled before a crash. */
@@ -48,7 +72,8 @@ object AskHostLedger:
     Deferred[IO, String].flatMap { candidate =>
       IO(waiters.putIfAbsent(id, candidate)).flatMap { existing =>
         val actual = existing.getOrElse(candidate)
-        answered.get(id).traverse_(actual.complete).as(actual)
+        recover.map(_.find(_.pending.correlationId == id).flatMap(_.answer).orElse(answered.get(id)))
+          .flatMap(_.traverse_(actual.complete)).as(actual)
       }
     }
 
@@ -66,55 +91,108 @@ object AskHostLedger:
       _ <- IO(waiters.put(id, reply))
     yield (row, reply)
 
-  def markUnavailable(id: String, reason: String): IO[Unit] =
-    append(Json.obj("correlationId" -> id.asJson, "status" -> "unavailable".asJson,
-      "reason" -> reason.asJson, "at" -> System.currentTimeMillis().asJson)) *>
-      IO { waiters.remove(id); answered.remove(id); () }
+  def beginForCall(workerSession: String, rootSession: String, sourceAgent: String, question: String, toolCallId: String): IO[(Pending, Deferred[IO, String])] =
+    require(toolCallId.nonEmpty, "AskHost requires a tool call id")
+    IO.blocking {
+      journalLock.synchronized {
+        recoverSync().find(r => r.pending.workerSession == workerSession && r.pending.toolCallId == toolCallId) match
+          case Some(row) =>
+            require(row.pending.rootSession == rootSession && row.pending.sourceAgent == sourceAgent && row.question == question,
+              "AskHost tool call identity conflicts with its persisted request")
+            row.pending
+          case None =>
+            val row = Pending(UUID.randomUUID().toString, workerSession, rootSession, sourceAgent, toolCallId)
+            appendSync(Json.obj("correlationId" -> row.correlationId.asJson, "workerSession" -> workerSession.asJson,
+              "rootSession" -> rootSession.asJson, "sourceAgent" -> sourceAgent.asJson,
+              "toolCallId" -> toolCallId.asJson, "question" -> question.asJson, "status" -> "pending".asJson,
+              "at" -> System.currentTimeMillis().asJson))
+            row
+      }
+    }.flatMap(row => restoreWaiter(row.correlationId).tupleLeft(row))
+
+  /** Explicit cancellation competes with answer under the same journal lock.
+    * A crash is not cancellation: its outstanding request remains recoverable.
+    */
+  def cancel(id: String, reason: String): IO[Boolean] = IO.blocking {
+    journalLock.synchronized {
+      recoverSync().find(_.pending.correlationId == id) match
+        case Some(row) if row.answer.isEmpty =>
+          appendSync(Json.obj("correlationId" -> id.asJson, "status" -> "unavailable".asJson,
+            "reason" -> reason.asJson, "at" -> System.currentTimeMillis().asJson))
+          waiters.remove(id)
+          answered.remove(id)
+          true
+        case _ => false
+    }
+  }
+
+  def markUnavailable(id: String, reason: String): IO[Unit] = cancel(id, reason).void
+
+  def cancelWorker(worker: String, reason: String): IO[Unit] =
+    recover.flatMap(_.filter(_.pending.workerSession == worker).traverse_(r => cancel(r.pending.correlationId, reason).void))
+
+  /** Legacy unanswered rows have no original tool identity; never guess by text. */
+  def expireLegacy(): IO[Unit] =
+    recover.flatMap(_.filter(r => r.pending.toolCallId.isEmpty && r.answer.isEmpty)
+      .traverse_(r => cancel(r.pending.correlationId, "legacy request has no recoverable tool call identity").void))
 
   /** Boot replay: durable mailbox identity makes repeated runs safe. */
   def recoverPending(resources: nebflow.core.AgentRuntimePort): IO[Int] =
-    recover.flatMap(_.traverse { row =>
+    expireLegacy() *> recover.flatMap(_.traverse { row =>
       resources.agentRegistry.get.flatMap { registry =>
         val event = AgentCommand.ExternalEvent("askhost", "request",
           s"[AskHost request ${row.pending.correlationId} from ${row.pending.sourceAgent} / ${row.pending.workerSession}]\n${row.question}",
           JsonObject("correlationId" -> row.pending.correlationId.asJson,
             "workerSession" -> row.pending.workerSession.asJson, "rootSession" -> row.pending.rootSession.asJson,
             "sourceAgent" -> row.pending.sourceAgent.asJson, "engineOwned" -> true.asJson), Some(row.pending.correlationId))
-        val rootAlive = registry.contains(row.pending.rootSession)
-        val workerLive = registry.contains(row.pending.workerSession)
-        if !workerLive then markUnavailable(row.pending.correlationId, "worker session unavailable on boot; original waiter cannot be resumed").as(false)
-        else
-          row.answer.traverse_(answer => IO(answered.put(row.pending.correlationId, answer))) *>
+        row.answer.traverse_(answer => IO(answered.put(row.pending.correlationId, answer))) *>
             restoreWaiter(row.pending.correlationId).void *>
-            (if !rootAlive && row.answer.isEmpty then markUnavailable(row.pending.correlationId, "root session unavailable on boot")
-             else if row.answer.nonEmpty then IO.unit
+            (if row.answer.nonEmpty then IO.unit
              else nebflow.core.mail.SessionMailbox.mailOnce(row.pending.rootSession, event, "askhost-request",
-               row.pending.correlationId, coalesce = false, producer = "askhost-recovery").flatMap {
-                 case nebflow.core.mail.SessionMailbox.MailResult.Enqueued(_) => IO.unit
-                 case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent => IO.unit
+               row.pending.correlationId, coalesce = false, producer = "askhost-recovery", deduplicateReceipts = true).flatMap {
+                 case nebflow.core.mail.SessionMailbox.MailResult.Enqueued(_) =>
+                   registry.get(row.pending.rootSession).traverse_(r => r.ref ! AgentCommand.MailboxArrived)
+                 case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
+                   registry.get(row.pending.rootSession).traverse_(r => r.ref ! AgentCommand.MailboxArrived)
                  case nebflow.core.mail.SessionMailbox.MailResult.Coalesced(_) => IO.unit
-                 case other => markUnavailable(row.pending.correlationId, s"replay failed: $other")
+                 case other => IO.raiseError(new IllegalStateException(s"AskHost replay failed: $other"))
                }) *> IO.pure(true)
       }
     }).map(_.count(identity))
 
   def answer(correlationId: String, answer: String): IO[Boolean] =
-    waiters.get(correlationId) match
-      case None => IO.pure(false)
-      case Some(reply) =>
-        IO(answered.putIfAbsent(correlationId, answer)).flatMap {
-          case Some(existing) => IO.pure(existing == answer)
-          case None =>
-            append(Json.obj("correlationId" -> correlationId.asJson, "decision" -> answer.asJson,
-              "status" -> "answered".asJson, "at" -> System.currentTimeMillis().asJson)) *>
-              reply.complete(answer)
-        }
+    IO.blocking {
+      journalLock.synchronized {
+        val rows = recoverSync()
+        rows.find(_.pending.correlationId == correlationId) match
+          case Some(row) if row.answer.isEmpty =>
+            appendSync(Json.obj("correlationId" -> correlationId.asJson, "decision" -> answer.asJson,
+              "status" -> "answered".asJson, "at" -> System.currentTimeMillis().asJson))
+            answered.put(correlationId, answer)
+            true
+          case _ => false
+      }
+    }.flatTap(accepted => if accepted then waiters.get(correlationId).traverse_(_.complete(answer).void) else IO.unit)
+
+  /** Close only after the transcript containing the original tool result is durable.
+    * Legacy rows without tool IDs stay unresolved rather than being matched by text.
+    * Cancellation must be distinguished from a crash before invalidating a request.
+    */
+  def closeCommittedResults(worker: String, messages: List[nebflow.shared.Message]): IO[Unit] =
+    val results = messages.collect { case nebflow.shared.Message(nebflow.shared.MessageRole.User, Right(blocks), _, _, _, _) =>
+      blocks.collect { case r: nebflow.shared.ContentBlock.ToolResult => r }
+    }.flatten
+    recover.flatMap(_.filter(r => r.pending.workerSession == worker && r.pending.toolCallId.nonEmpty &&
+      r.answer.exists(answer => results.exists(t => t.toolUseId == r.pending.toolCallId &&
+        t.content == answer && !t.isError.contains(true)))).traverse_(r => markDelivered(r.pending.correlationId)))
 
   def markDelivered(correlationId: String): IO[Unit] =
     append(Json.obj("correlationId" -> correlationId.asJson, "status" -> "delivered".asJson,
       "at" -> System.currentTimeMillis().asJson)) *> IO { waiters.remove(correlationId); answered.remove(correlationId); () }
 
-  private def append(json: Json): IO[Unit] = IO.blocking {
+  private def append(json: Json): IO[Unit] = IO.blocking(journalLock.synchronized(appendSync(json)))
+
+  private def appendSync(json: Json): Unit =
     os.makeDir.all(file / os.up)
     val line = json.noSpaces + "\n"
     val out = new java.io.FileOutputStream(file.toIO, true)
@@ -122,7 +200,6 @@ object AskHostLedger:
       out.write(line.getBytes(java.nio.charset.StandardCharsets.UTF_8))
       out.getFD.sync()
     finally out.close()
-  }
 end AskHostLedger
 
 object AskHostTool extends Tool:
@@ -143,19 +220,18 @@ object AskHostTool extends Tool:
         resources.agentRegistry.get.flatMap(_.get(root) match
           case None => IO.pure(Left(ToolError("AskHost: root session unavailable")))
           case Some(rootRecord) =>
-            AskHostLedger.begin(worker, root, agent.name, question).flatMap { case (request, _) =>
+            AskHostLedger.beginForCall(worker, root, agent.name, question, ctx.toolCallId).flatMap { case (request, _) =>
               val payload = s"[AskHost request ${request.correlationId} from ${request.sourceAgent} / ${request.workerSession}]\n$question"
               val metadata = JsonObject("correlationId" -> request.correlationId.asJson,
                 "workerSession" -> worker.asJson, "rootSession" -> root.asJson,
                 "sourceAgent" -> agent.name.asJson, "engineOwned" -> true.asJson)
               val event = AgentCommand.ExternalEvent("askhost", "request", payload, metadata, Some(request.correlationId))
               val durable = nebflow.core.mail.SessionMailbox.mailOnce(root, event, "askhost-request", request.correlationId,
-                coalesce = false, producer = "askhost")
+                coalesce = false, producer = "askhost", deduplicateReceipts = true)
               durable.flatMap {
                 case nebflow.core.mail.SessionMailbox.MailResult.Enqueued(_) | nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
-                  (rootRecord.ref ! AgentCommand.MailboxArrived) *> AskHostLedger.restoreWaiter(request.correlationId).flatMap(_.get.flatTap(_ => AskHostLedger.markDelivered(request.correlationId)).map(Right(_)))
-                case other => AskHostLedger.markUnavailable(request.correlationId, s"root request delivery failed: $other")
-                  .as(Left(ToolError(s"AskHost root delivery unavailable: $other")))
+                  (rootRecord.ref ! AgentCommand.MailboxArrived) *> AskHostLedger.restoreWaiter(request.correlationId).flatMap(_.get.map(Right(_)))
+                case other => IO.pure(Left(ToolError(s"AskHost root delivery unavailable; request ${request.correlationId} remains pending: $other")))
               }
             }
         )
@@ -201,27 +277,20 @@ object AskHostReplyTool extends Tool:
     else ctx.sharedResources match
       case None => IO.pure(Left(ToolError("AskHostReply: runtime resources unavailable")))
       case Some(resources) =>
+        val root = ctx.sessionId.getOrElse("")
+        def alreadyAccepted: IO[Either[ToolError, String]] =
+          AskHostLedger.isAcceptedDuplicate(id, root, decision).map {
+            case true => Right(s"AskHost reply already accepted for $id")
+            case false => Left(ToolError(s"AskHost request unavailable or already answered with a different decision: $id"))
+          }
         AskHostLedger.recover.flatMap(_.find(_.pending.correlationId == id) match
-          case None => IO.pure(Left(ToolError(s"AskHost request unavailable or already answered: $id")))
-          case Some(row) if row.pending.rootSession != ctx.sessionId.getOrElse("") =>
+          case None => alreadyAccepted
+          case Some(row) if row.pending.rootSession != root =>
             IO.pure(Left(ToolError("AskHostReply: request belongs to another root session")))
           case Some(row) =>
-            val event = AgentCommand.ExternalEvent("askhost", "reply",
-              s"[AskHost reply ${row.pending.correlationId}] $decision",
-              JsonObject("correlationId" -> id.asJson, "workerSession" -> row.pending.workerSession.asJson,
-                "rootSession" -> row.pending.rootSession.asJson, "decision" -> decision.asJson,
-                "engineOwned" -> true.asJson), Some(id))
-            nebflow.core.mail.SessionMailbox.mailOnce(row.pending.workerSession, event, "askhost-reply", id,
-              coalesce = false, producer = "askhost-reply").flatMap {
-              case nebflow.core.mail.SessionMailbox.MailResult.Enqueued(_) | nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
-                AskHostLedger.answer(id, decision) *> resources.agentRegistry.get.flatMap(_.get(row.pending.workerSession) match
-                  case Some(worker) => (worker.ref ! AgentCommand.MailboxArrived).as(Right(s"AskHost reply durably queued for $id"))
-                  case None =>
-                    val deferred = AskHostLedger.restoreWaiter(id)
-                    deferred.flatMap(_.get).flatTap(_ => AskHostLedger.markDelivered(id)).map(answer => Right(s"AskHost reply delivered after worker resumed for $id: $answer"))
-                )
-              case other => AskHostLedger.markUnavailable(id, s"worker reply delivery failed: $other")
-                .as(Left(ToolError(s"AskHost worker delivery unavailable: $other")))
+            AskHostLedger.answer(id, decision).flatMap {
+              case true => IO.pure(Right(s"AskHost reply durably recorded for $id"))
+              case false => alreadyAccepted
             }
         )
 end AskHostReplyTool

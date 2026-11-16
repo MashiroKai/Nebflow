@@ -345,11 +345,11 @@ object DelegateRevival:
               case true => IO.pure(Left("Session is already live; use its explicit wake or continuation entry"))
               case false =>
                 deps.resources.sessionStore.loadMessagesForSession(task.taskId).flatMap { transcript =>
-                  if transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript) then
-                    IO.pure(
-                      Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
-                    )
-                  else reviveAdmitted(deps, task, instruction)
+                  nebflow.core.ResumeHandoff.recoverableAskHostOnly(task.taskId, transcript).flatMap { safe =>
+                    if transcript.isEmpty || !safe then
+                      IO.pure(Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)"))
+                    else reviveAdmitted(deps, task, instruction)
+                  }
                 }
             }
           }
@@ -377,7 +377,8 @@ object DelegateRevival:
           val attempt = for
             // Re-read and verify the checkpoint before changing the task row or spawning.
             transcript <- deps.resources.sessionStore.loadMessagesForSession(task.taskId)
-            _ <- IO.raiseWhen(transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript))(
+            safe <- nebflow.core.ResumeHandoff.recoverableAskHostOnly(task.taskId, transcript)
+            _ <- IO.raiseWhen(transcript.isEmpty || !safe)(
               new IllegalStateException("Saved context changed or a tool outcome is unknown (RECOVERY_UNVERIFIED)")
             )
             _ <-
@@ -397,7 +398,7 @@ object DelegateRevival:
             //    单点 = [[ResumeHandoff]]，本腿不自行拼注入文案。
             //    `legacyNudge` 逐字保留改前的提示文案：仅当没有工具边界（普通中断 /
             //    旧格式会话）时才注入它，行为与改前一字不差。
-            handoff =
+            handoff0 =
               val ckLine = checkpoint
                 .map(f =>
                   s"\n\nCompleted-work checkpoint (machine-readable ledger `sessions/${task.taskId}/${RevivalCheckpoint.FileName}`): " +
@@ -419,6 +420,7 @@ object DelegateRevival:
                   s"[system] The engine process restarted while your task was in flight. Your work so far (${transcript.size} transcript messages) is loaded below — continue the task from where you left off.$ckLine$wakeInstr"
                 else s"${task.prompt}$wakeInstr"
               )
+            handoff <- ResumeHandoff.resolveAskHost(task.taskId, handoff0)
             _ <- IO(
               ResumeHandoff.logPlan(
                 task.taskId,

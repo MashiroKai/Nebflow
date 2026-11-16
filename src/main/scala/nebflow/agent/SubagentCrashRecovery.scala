@@ -144,7 +144,7 @@ object SubagentCrashRecovery:
    * watcher 拿幽灵 `currentToolStartedAt` 反复判死，掐杀恢复会话健康的续跑轮）。
    */
   def staleToolPhaseCleared(rec: nebflow.actor.AgentRecord): nebflow.actor.AgentRecord =
-    if rec.currentToolStartedAt == 0L && rec.currentToolName.isEmpty && rec.currentToolDeadlineMs == 0L then rec
-    else rec.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L)
+    if rec.currentToolStartedAt == 0L && rec.currentToolName.isEmpty && rec.currentToolDeadlineMs == 0L && rec.currentToolCallId.isEmpty then rec
+    else rec.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L, currentToolCallId = None)
 
 end SubagentCrashRecovery

@@ -119,6 +119,8 @@ case class AgentRecord(
    * Processing 清 0）。
    */
   currentToolDeadlineMs: Long = 0L,
+  /** Identity of the tool in the single diagnostic phase slot, never inferred from text. */
+  currentToolCallId: Option[String] = None,
   /**
    * AgentControl（2026-08-19 spec §3.1）：监听该 agent 终态的 adapter 引用——
    * ephemeral Delegate/SubTask = BackoffSupervisor；persistent Delegate =

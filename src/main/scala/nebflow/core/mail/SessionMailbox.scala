@@ -218,7 +218,8 @@ object SessionMailbox:
           // （`taskId#gen`）才能再次入箱。
           val alreadyTaken = scanDir(recipientSid, takenDir(recipientSid)).exists(_._1.identity == identity)
           val tombstoned = deliveredContainsSync(recipientSid, Set(identity))
-          if deduplicateReceipts && (alreadyTaken || tombstoned.nonEmpty) then
+          val askHostReceipt = kind == "askhost-request" && os.exists(askHostReceiptFile(recipientSid, identity))
+          if deduplicateReceipts && (alreadyTaken || tombstoned.nonEmpty || askHostReceipt) then
             val surface = if alreadyTaken then "taken" else "delivered-tombstone"
             logger.info(
               s"SessionMailbox: duplicate enqueue suppressed for '$recipientSid' identity '$identity' ($surface) — " +
@@ -402,10 +403,19 @@ object SessionMailbox:
     else
       IO.blocking {
         lock.synchronized {
-          scanDir(sid, takenDir(sid)).foreach { (e, path) =>
-            if clean.contains(e.identity) && os.exists(path) then os.remove(path)
+          // Persist receipts first: a crash before deletion leaves the taken entry
+          // available for replay, rather than leaving neither entry nor receipt.
+          val taken = scanDir(sid, takenDir(sid))
+          taken.foreach { (e, _) =>
+            if clean.contains(e.identity) && e.kind == "askhost-request" then
+              val receipt = askHostReceiptFile(sid, e.identity)
+              os.makeDir.all(receipt / os.up)
+              AtomicJson.writeSync(receipt, Json.obj("identity" -> e.identity.asJson).noSpaces)
           }
           markDeliveredSync(sid, clean.toList)
+          taken.foreach { (e, path) =>
+            if clean.contains(e.identity) && os.exists(path) then os.remove(path)
+          }
         }
       }.void.handleErrorWith(e =>
         logger.warn(s"SessionMailbox: unlinkTaken failed for '$sid': ${e.getMessage}").void
@@ -424,6 +434,12 @@ object SessionMailbox:
       yield Delivered(v.getOrElse(1), ids.getOrElse(Nil))
     }
   end Delivered
+
+  private def askHostReceiptFile(sid: String, identity: String): os.Path =
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+      .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      .map(b => f"${b & 0xff}%02x").mkString
+    boxDir(sid) / "askhost-receipts" / s"$digest.json"
 
   private def deliveredFile(sid: String): os.Path = boxDir(sid) / "delivered.json"
 
