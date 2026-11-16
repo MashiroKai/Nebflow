@@ -243,16 +243,34 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
     end for
   }
 
-  test("manifest-delegate-missing") {
+  private def manifestWorkspace(valid: Boolean): String =
+    import scala.sys.process.*
+    val primary = os.temp.dir(prefix = "delegate-manifest-")
+    def git(args: String*): Unit = assertEquals(Process("git" +: args, primary.toIO).!, 0)
+    git("init", "-q")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "fixture")
+    val wt = primary / "linked"
+    git("worktree", "add", "-q", "-b", "fixture", wt.toString)
+    os.makeDir.all(wt / "scripts")
+    os.copy(os.pwd / "scripts" / "check-delivery.py", wt / "scripts" / "check-delivery.py")
+    val artifacts = primary / ".stand" / "tmp" / "linked"
+    os.makeDir.all(artifacts / "delivery")
+    os.makeDir.all(artifacts / "evidence")
+    if valid then os.write(artifacts / "MANIFEST.md", "# Artifact manifest\n\n| Relative path | Bytes | mtime | Status |\n| --- | ---: | --- | --- |\n")
+    wt.toString
+
+  for valid <- List(false, true) do
+   test(if valid then "manifest-delegate-valid" else "manifest-delegate-missing") {
     val system = ActorSystem("manifest-delegate")
     val tmp = os.temp.dir()
     val childSid = "delegate-manifest-integration"
+    val workspace = manifestWorkspace(valid)
     for
       resources <- mkResources(system, tmp)
       parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
       parentSid = parent.id
       _ <- IO(nebflow.core.delegate.DelegateRegistry.put(nebflow.core.delegate.DelegateRegistry.Record(
-        id = childSid, executor = "worker", cwd = "/definitely/missing/manifest-workspace", project = None,
+        id = childSid, executor = "worker", cwd = workspace, project = None,
         taskId = None, parentSessionId = parentSid, title = "manifest", createdAt = 0L)))
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
@@ -265,8 +283,8 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
       _ <- waitUntil(10.seconds)(terminalMail(parentSid).map(_.nonEmpty))
       mails <- terminalMail(parentSid)
       _ = println("MANIFEST_DELEGATE_ACTUAL=" + mails.head.event.payload)
-      _ = assertEquals(mails.head.event.eventType, "failed")
-      _ = assert(mails.head.event.payload.contains("manifest-missing"))
+      _ = assertEquals(mails.head.event.eventType, if valid then "completed" else "failed")
+      _ = if !valid then assert(mails.head.event.payload.contains("missing") && mails.head.event.payload.contains("MANIFEST.md"))
       _ <- system.stopAll
     yield ()
   }

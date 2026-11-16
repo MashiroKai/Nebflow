@@ -90,8 +90,7 @@ class NodeCompletionReplayIntegrationSpec extends CatsEffectSuite:
     }
 
   test("E01: concurrent upstreams deliver once and replay preserves downstream artifact") {
-    val ws = root / java.util.UUID.randomUUID().toString
-    os.makeDir.all(ws)
+    val ws = os.temp.dir(prefix = "completion-replay-e01-")
     val system = ActorSystem("completion-replay-e01")
     Resource.make(IO.pure(system))(_.stopAll).use { _ =>
       for

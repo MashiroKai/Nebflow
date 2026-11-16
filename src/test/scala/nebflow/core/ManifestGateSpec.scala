@@ -31,6 +31,10 @@ class ManifestGateSpec extends CatsEffectSuite:
   test("missing checker fails closed") {
     ManifestGate.check(fixture(false, false), None).map(r => assert(r.isLeft))
   }
+  test("non-git workspace is skipped") {
+    val path = Files.createTempDirectory("manifest-nongit").toString
+    ManifestGate.check(path, None).map(r => assertEquals(r, Right("SKIP not a delivery workspace")))
+  }
   test("unknown checkout fails closed") {
     ManifestGate.check("/definitely/missing/checkout", None).map(r => assert(r.isLeft))
   }

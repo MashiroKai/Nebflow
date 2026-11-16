@@ -11,6 +11,7 @@ object ManifestGate:
   private val logger = NebflowLogger.forName("nebflow.manifest.gate")
   private val pass = "__MANIFEST_GATE_PASS__"
   private val skip = "__MANIFEST_GATE_SKIP__"
+  private val nonGit = "__MANIFEST_GATE_NOT_DELIVERY__"
   private def quote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
   def checkDelegate(id: String): IO[Either[String, String]] =
@@ -30,7 +31,15 @@ object ManifestGate:
 
   def check(path: String, device: Option[String]): IO[Either[String, String]] =
     val command = s"""cd -- ${quote(path)} || exit 31
-root=$$(git rev-parse --show-toplevel) || exit 32
+if ! root=$$(git rev-parse --show-toplevel 2>/dev/null); then
+  probe=$$PWD
+  while :; do
+    if [ -e "$$probe/.git" ] || [ -L "$$probe/.git" ]; then printf '%s\\n' "git checkout is unreadable: $$probe"; exit 32; fi
+    [ "$$probe" = / ] && break
+    probe=$$(dirname "$$probe")
+  done
+  printf '%s\\n' $nonGit; exit 0
+fi
 gitdir=$$(git rev-parse --path-format=absolute --git-dir) || exit 33
 common=$$(git rev-parse --path-format=absolute --git-common-dir) || exit 34
 if [ "$$gitdir" = "$$common" ]; then printf '%s\\n' $skip; exit 0; fi
@@ -51,6 +60,8 @@ printf '%s\\n' $pass"""
     run.timeout(40.seconds).attempt.flatMap { attempted =>
       val result = attempted.left.map(e => Option(e.getMessage).getOrElse(e.toString)).flatMap(identity)
       result match
+        case Right(out) if out.linesIterator.exists(_ == nonGit) =>
+          logger.info(s"Manifest gate SKIP not a delivery workspace: $path") *> IO.pure(Right("SKIP not a delivery workspace"))
         case Right(out) if out.linesIterator.exists(_ == skip) =>
           logger.info(s"Manifest gate SKIP primary checkout: $path") *> IO.pure(Right("SKIP primary checkout"))
         case Right(out) if out.linesIterator.exists(_ == pass) => IO.pure(Right(out))
