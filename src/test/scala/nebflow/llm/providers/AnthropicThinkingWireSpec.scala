@@ -340,7 +340,8 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
       var server: HttpServer = null
       try
         server = startCaptureMock(captured).unsafeRunSync()
-        val body = assertOkAndCapture(sendTurn("p", "m1", budgetOn, server, model,
+        val lowGlobal = Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 4096.asJson))
+        val body = assertOkAndCapture(sendTurn("p", "m1", lowGlobal, server, model,
           providerLayer = Some(ThinkingLayerConfig(budgetTokens = Some(65536))), subagentCap = Some(32000)), captured)
         assertEquals(body.hcursor.downField("thinking").get[Int]("budget_tokens").toOption, Some(32000))
       finally if server != null then server.stop(0)
