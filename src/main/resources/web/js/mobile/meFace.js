@@ -100,8 +100,8 @@ function paintAvatarFrame(frame) {
 function buildMeHome(body, push) {
   const id = getIdentityReadout();
   // 资料卡：大头像 + 名 + 邮箱（未登录态给登录键，与顶栏批登录面同源）。
-  const card = el(body, 'mf-me-card');
-  const frame = el(card, 'mf-me-avatar-frame big');
+  const card = el(body, 'mf-me-card sp-identity');
+  const frame = el(card, 'mf-me-avatar-frame huge');
   frame.innerHTML = `
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">

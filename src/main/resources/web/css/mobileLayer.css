@@ -2773,6 +2773,8 @@ body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-co
 /* 个人主页（me）：资料卡。 */
 body.mobile-layer .mf-me-card {
   display: flex;
+  flex-direction: column;
+  text-align: center;
   align-items: center;
   gap: var(--ds-space-3);
   margin: var(--ds-space-3) 14px 0;

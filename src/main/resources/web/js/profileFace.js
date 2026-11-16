@@ -118,6 +118,18 @@ async function readFieldValue(field) {
  *    在场 ⇒ head 挂三态徽标（`refreshSyncBadges` 按 `GET /api/profile/sync-status`
  *    真值回填；写死的 `hintKey` 静态文案已随 3(a) 令退役）。
  */
+const fieldEdits = new WeakMap();
+
+function updateEditBar(row) {
+  const modal = row.closest('.pf-modal');
+  if (!modal) return;
+  const bar = modal.querySelector('.pf-edit-bar');
+  if (!bar) return;
+  const dirty = [...modal.querySelectorAll('.pf-field')].some(item => fieldEdits.get(item)?.dirty());
+  bar.hidden = !dirty;
+  modal.classList.toggle('pf-has-pending', dirty);
+}
+
 function fieldRow(spec) {
   const row = el('div', 'pf-field');
   row.dataset.pfField = spec.field;
@@ -147,6 +159,7 @@ function fieldRow(spec) {
   save.type = 'button';
   save.dataset.pfSave = spec.field;
 
+  let baseline = input.value;
   const commit = async () => {
     const v = input.value.trim().slice(0, spec.max);
     save.disabled = true;
@@ -155,6 +168,7 @@ function fieldRow(spec) {
       // 回读一致：保存后**以真值回读**为准（不做乐观写）
       const fresh = await readFieldValue(spec.field);
       input.value = fresh || '';
+      baseline = input.value;
       // 列表面的**唯一刷新信号**（禁本模块自己去摸 contacts/messages 的 DOM）：
       // 好友域 ⇒ `fm-friends-changed`（contacts 重取 + messages 重取会话），
       // 群域 ⇒ `fm-groups-changed`。这正是「描述进检索」成立的前提——过滤面读的是
@@ -171,8 +185,16 @@ function fieldRow(spec) {
       console.debug('[profileFace] save failed', spec.field, err && err.message);
     } finally {
       save.disabled = false;
+      updateEditBar(row);
     }
   };
+  fieldEdits.set(row, {
+    dirty: () => input.value !== baseline,
+    cancel: () => { input.value = baseline; updateEditBar(row); },
+    commit,
+  });
+  input.addEventListener('input', () => updateEditBar(row));
+  save.hidden = true;
   save.addEventListener('click', commit);
   input.addEventListener('keydown', (e) => {
     if (isImeComposing(e, input)) return;
@@ -352,16 +374,16 @@ function renderBody() {
   // 英雄区（三点入口批 2026-11-05 扁平化）：居中列 → **左对齐单行**（头像 + 名字/
   // 副行），头像档位从无规则的 `fm-avatar-56`（尺寸随源图漂）改为既有令牌档
   // `fm-avatar-40`（40×40，friends.css 既有规则，零新尺寸字面量）。
-  const hero = el('div', 'pf-hero');
+  const hero = el('div', 'pf-hero sp-identity');
   if (current?.kind === 'group') {
-    hero.appendChild(avatarNode({ name: current.conv?.title || '' }, 40));
+    hero.appendChild(avatarNode({ name: current.conv?.title || '' }, 56));
     const idText = el('div', 'pf-hero-id');
     idText.appendChild(el('div', 'pf-hero-name', subjectTitle()));
     idText.appendChild(el('div', 'pf-hero-sub', t('messages.memberCount', { n: Number(current.conv?.memberCount) || 0 })));
     hero.appendChild(idText);
   } else {
     const f = current?.conv || {};
-    hero.appendChild(avatarNode({ name: f.name, neblinkId: f.neblinkId, avatarUrl: f.avatarUrl }, 40));
+    hero.appendChild(avatarNode({ name: f.name, neblinkId: f.neblinkId, avatarUrl: f.avatarUrl }, 56));
     const idText = el('div', 'pf-hero-id');
     idText.appendChild(el('div', 'pf-hero-name', subjectTitle()));
     idText.appendChild(el('div', 'pf-hero-sub', f.neblinkId || ''));
@@ -371,6 +393,34 @@ function renderBody() {
 
   const body = el('div', 'pf-fields');
   modal.appendChild(body);
+  const bar = el('div', 'pf-edit-bar ds-chrome-band');
+  bar.hidden = true;
+  const cancel = el('button', 'g2-fab pf-edit-cancel');
+  cancel.type = 'button';
+  cancel.setAttribute('aria-label', t('profile.cancelEdit'));
+  cancel.appendChild(h('i', { 'data-lucide': 'x' }));
+  cancel.addEventListener('click', () => {
+    for (const row of modal.querySelectorAll('.pf-field')) fieldEdits.get(row)?.cancel();
+  });
+  const saveAll = el('button', 'g2-fab pf-edit-submit');
+  saveAll.type = 'button';
+  saveAll.setAttribute('aria-label', t('profile.save'));
+  saveAll.appendChild(h('i', { 'data-lucide': 'check' }));
+  saveAll.addEventListener('click', async () => {
+    saveAll.disabled = true;
+    cancel.disabled = true;
+    try {
+      for (const row of modal.querySelectorAll('.pf-field')) {
+        const edit = fieldEdits.get(row);
+        if (edit?.dirty()) await edit.commit();
+      }
+    } finally {
+      saveAll.disabled = false;
+      cancel.disabled = false;
+    }
+  });
+  bar.append(cancel, saveAll);
+  modal.appendChild(bar);
   ov.replaceChildren(modal);
   return { ov, body };
 }

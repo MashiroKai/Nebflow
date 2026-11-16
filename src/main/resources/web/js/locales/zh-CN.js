@@ -1422,6 +1422,9 @@ export default {
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
   'settings.account': '账号',
+  'settings.general': '通用',
+  'settings.modelsAndServices': '模型与服务',
+  'profile.cancelEdit': '取消修改',
   // 件四 · 设置页身份卡本地化（作者令 2026-11-02「头像在上，下面是用户名和邮箱…
   // 点击胶囊直接进自己的 profile 设置页」）。zh/en **同键对称**新增（14 键 × 2 文件）。
   'settings.identityCardLabel': '账号资料',

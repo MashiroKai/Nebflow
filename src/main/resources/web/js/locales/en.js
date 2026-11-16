@@ -1470,6 +1470,9 @@ export default {
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
   'settings.account': 'Account',
+  'settings.general': 'General',
+  'settings.modelsAndServices': 'Models & services',
+  'profile.cancelEdit': 'Cancel changes',
   // 件四 · settings identity card localization (author ruling 2026-11-02: avatar on
   // top, one capsule below with username + email; the capsule opens the profile page).
   // zh/en added **symmetrically** (14 keys x 2 files).

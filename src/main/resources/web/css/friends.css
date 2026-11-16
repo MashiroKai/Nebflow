@@ -1746,6 +1746,18 @@ body:not(.mobile-layer) #profile-face-overlay {
   max-height: none;
   border-radius: 0;
 }
+.pf-edit-bar.ds-chrome-band {
+  top: auto;
+  bottom: env(safe-area-inset-bottom);
+  display: flex;
+  justify-content: space-between;
+  padding: 0 var(--ds-space-4) var(--ds-space-4);
+  z-index: 2;
+}
+.pf-edit-bar[hidden] { display: none; }
+.pf-edit-bar > button { pointer-events: auto; }
+.pf-edit-submit { color: var(--ds-accent); }
+.pf-has-pending .pf-fields { padding-bottom: 76px; }
 .pf-close {
   float: right;
   display: inline-flex;
@@ -1769,10 +1781,13 @@ body:not(.mobile-layer) #profile-face-overlay {
      新形态 = **左对齐单行**（40px 头像 + 名字/副行两行文本并排），无分隔线、无背景、
      无卡片盒 ⇒ 层数从「壳 > 英雄区 > 头像/名字/副行」压到「壳 > 英雄行 > 头像 + 文本列」。 */
   display: flex;
+  flex-direction: column;
   align-items: center;
+  text-align: center;
   gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-block-y) var(--ds-panel-pad-x) var(--ds-space-2);
 }
+.pf-hero .fm-avatar-56 { width: 56px; height: 56px; }
 .pf-hero-id {
   display: flex;
   flex-direction: column;
@@ -1784,7 +1799,7 @@ body:not(.mobile-layer) #profile-face-overlay {
   font-size: var(--ds-fs-title);
   font-weight: var(--ds-fw-title);
   color: var(--color-text);
-  text-align: left;
+  text-align: center;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1793,7 +1808,7 @@ body:not(.mobile-layer) #profile-face-overlay {
 .pf-hero-sub {
   font-size: var(--ds-fs-hint);
   color: var(--color-text-secondary);
-  text-align: left;
+  text-align: center;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
