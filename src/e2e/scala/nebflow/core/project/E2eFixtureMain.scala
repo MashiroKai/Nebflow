@@ -12,6 +12,7 @@ import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
+import nebflow.db.DbHost
 import nebflow.llm.ModelCandidate
 import nebflow.shared.*
 
@@ -80,6 +81,9 @@ object E2eFixtureMain extends IOApp:
           }
           _ <- (engine.startNode("a"), engine.startNode("b")).parTupled.timeout(30.seconds)
           _ <- parentCompleted.get.timeout(30.seconds)
+          // Completion event precedes node finalizers; drain detached start fibers,
+          // including run-table and MCP finalizers, before inspecting resources.
+          _ <- engine.awaitDetachedStarts.timeout(30.seconds)
           before <- observed.get
           replayAccepted <- engine.completeNodeR("a", markerA)
           after <- observed.get
@@ -107,6 +111,9 @@ object E2eFixtureMain extends IOApp:
       }
       (checks, ids) = result
       alive <- ids.distinct.traverse(id => system.isAlive(nebflow.actor.ActorPath(system.localDevice, id)))
+      dbWasOpen <- IO.blocking(DbHost.isOpen(root.toNIO))
+      _ <- IO.blocking(DbHost.release(root.toNIO))
+      dbStillOpen <- IO.blocking(DbHost.isOpen(root.toNIO))
       finished <- IO.monotonic
       _ <- requireFixture(!alive.contains(true), "fixture actor remains after release")
       pass = checks.forall(_._2)
@@ -122,7 +129,8 @@ object E2eFixtureMain extends IOApp:
         "input_tokens" -> Json.Null, "output_tokens" -> Json.Null, "cached_tokens" -> Json.Null,
         "cost_usd" -> Json.Null, "tool_calls" -> Json.Null, "tool_errors" -> Json.Null),
       "cleanup" -> Json.obj("actor_system_closed" -> true.asJson, "dispatcher_released" -> true.asJson,
-        "known_actor_count" -> ids.distinct.size.asJson)
+        "detached_starts_drained" -> true.asJson, "db_was_open" -> dbWasOpen.asJson,
+        "db_still_registered" -> dbStillOpen.asJson, "known_actor_count" -> ids.distinct.size.asJson)
     )
 
   private def armWatchdog(): IO[Unit] = IO {
