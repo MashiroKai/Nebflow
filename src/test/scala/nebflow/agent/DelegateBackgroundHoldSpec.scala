@@ -243,6 +243,34 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
     end for
   }
 
+  test("manifest-delegate-missing") {
+    val system = ActorSystem("manifest-delegate")
+    val tmp = os.temp.dir()
+    val childSid = "delegate-manifest-integration"
+    for
+      resources <- mkResources(system, tmp)
+      parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
+      parentSid = parent.id
+      _ <- IO(nebflow.core.delegate.DelegateRegistry.put(nebflow.core.delegate.DelegateRegistry.Record(
+        id = childSid, executor = "worker", cwd = "/definitely/missing/manifest-workspace", project = None,
+        taskId = None, parentSessionId = parentSid, title = "manifest", createdAt = 0L)))
+      _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
+      parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      parentRef <- system.spawn(mkRecordingCmd(parentEvents), "manifest-parent")
+      childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      childRef <- system.spawn(mkStopOnStopProbe(childEvents), "manifest-child")
+      supervisor <- system.spawn(BackoffSupervisor(childRef, (_, _) => IO.raiseError(new Exception("unexpected")),
+        childSid, Some(parentRef), "manifest task", "Worker", childSid, parentSid, resources, "task", "delegate"), "manifest-supervisor")
+      _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("final report")))
+      _ <- waitUntil(10.seconds)(terminalMail(parentSid).map(_.nonEmpty))
+      mails <- terminalMail(parentSid)
+      _ = println("MANIFEST_DELEGATE_ACTUAL=" + mails.head.event.payload)
+      _ = assertEquals(mails.head.event.eventType, "failed")
+      _ = assert(mails.head.event.payload.contains("manifest-missing"))
+      _ <- system.stopAll
+    yield ()
+  }
+
   test("A-2 回归：无未结后台作业 ⇒ Completed 立即终判（既有行为零漂移）") {
     val system = ActorSystem("bgwait-2")
     val tmp = os.temp.dir()
