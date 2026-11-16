@@ -7,9 +7,11 @@ import munit.CatsEffectSuite
 import nebflow.core.tools.{AskEditTool, AskWriteTool, ToolContext}
 import nebflow.core.ask.AskEditReviews.ResolveResult
 
-/** canvas-inline-diff-review 绿面：直接落盘 + 聚合审阅生命周期（apply →
-  * accept/reject（全部/逐块）/dismiss / stale 显式拒 / rebase）+ 路径纪律 +
-  * 工具面身份闸。 */
+/**
+ * canvas-inline-diff-review 绿面：直接落盘 + 聚合审阅生命周期（apply →
+ * accept/reject（全部/逐块）/dismiss / stale 显式拒 / rebase）+ 路径纪律 +
+ * 工具面身份闸。
+ */
 final class AskEditReviewSpec extends CatsEffectSuite:
 
   private val original = "alpha\nbeta\ngamma\n"
@@ -97,7 +99,12 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("reject-all")
     val file = os.Path(binding.file)
     val run = for
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s.replace("alpha", "ALPHA") + "delta\n"))
+      applied <- AskEditReviews.applyChange(
+        binding.id,
+        binding,
+        binding.file,
+        s => Right(s.replace("alpha", "ALPHA") + "delta\n")
+      )
       rejected <- AskEditReviews.reject(binding.id, None)
     yield (applied, rejected)
     run.map { case (applied, rejected) =>
@@ -127,7 +134,11 @@ final class AskEditReviewSpec extends CatsEffectSuite:
       accepted match
         case Right(ResolveResult.Kept(review)) =>
           assertEquals(os.read(file), twoBlockNew, "accept(hunk) performs zero disk writes")
-          assertEquals(review.baseText, "ALPHA\nbeta\ngamma\ngap1\ngap2\ngap3\n", "base advanced past the accepted block")
+          assertEquals(
+            review.baseText,
+            "ALPHA\nbeta\ngamma\ngap1\ngap2\ngap3\n",
+            "base advanced past the accepted block"
+          )
           assertEquals(review.hunks.map(_.id), List("h0"), "only the tail block remains pending")
         case other => fail(s"unexpected: $other")
     }
@@ -144,7 +155,11 @@ final class AskEditReviewSpec extends CatsEffectSuite:
       assert(applied.isRight, applied.toString)
       rejected match
         case Right(ResolveResult.Kept(review)) =>
-          assertEquals(os.read(file), "alpha\nbeta\ngamma\ngap1\ngap2\ngap3\ndelta\n", "first block reverted, tail addition kept")
+          assertEquals(
+            os.read(file),
+            "alpha\nbeta\ngamma\ngap1\ngap2\ngap3\ndelta\n",
+            "first block reverted, tail addition kept"
+          )
           assertEquals(review.currentText, "alpha\nbeta\ngamma\ngap1\ngap2\ngap3\ndelta\n")
           assertEquals(review.hunks.map(_.id), List("h0"), "the tail block remains pending")
         case other => fail(s"unexpected: $other")
@@ -301,5 +316,6 @@ final class AskEditReviewSpec extends CatsEffectSuite:
       assert(e3.left.exists(_.message.contains("old_str")), e3.toString)
       assert(e4.left.exists(_.message.contains("identical")), e4.toString)
       assert(w2.left.exists(_.message.contains("ASK_EDIT_NO_BINDING")), w2.toString)
+    end for
   }
 end AskEditReviewSpec

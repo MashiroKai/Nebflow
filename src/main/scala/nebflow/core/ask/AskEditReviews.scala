@@ -50,8 +50,10 @@ final case class AskEditChange(
   createdAt: Long
 )
 
-/** 一个可审块（0 起行号，按 base/current 各自文本切片；跨度含并块夹缝的
-  * 未变行——夹缝两侧同文，回退无害；added/removed 仅计数面）。 */
+/**
+ * 一个可审块（0 起行号，按 base/current 各自文本切片；跨度含并块夹缝的
+ * 未变行——夹缝两侧同文，回退无害；added/removed 仅计数面）。
+ */
 final case class AskEditHunk(
   id: String,
   oldStart: Int,
@@ -94,6 +96,7 @@ object AskEditReviews:
 
   /** resolve 结果：仍在审（余下态）或已了结。 */
   sealed trait ResolveResult
+
   object ResolveResult:
     final case class Kept(review: AskEditReview) extends ResolveResult
     final case class Cleared(path: String) extends ResolveResult
@@ -121,20 +124,19 @@ object AskEditReviews:
           else if !Files.isRegularFile(p) then refuse("bound file is not a regular file")
           else
             val bytes = Files.readAllBytes(p)
-            if bytes.length > MaxFileChars then
-              refuse(s"file larger than ${MaxFileChars} chars (ask edit face cap)")
+            if bytes.length > MaxFileChars then refuse(s"file larger than ${MaxFileChars} chars (ask edit face cap)")
             else if bytes.contains(0.toByte) then refuse("binary content (NUL byte) is not editable")
             else
               val decoder = StandardCharsets.UTF_8.newDecoder()
               try
                 val text = decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString
                 Right(Capture(normalized, binding.fileName, text))
-              catch
-                case NonFatal(_) => refuse("binary content (not valid UTF-8) is not editable")
+              catch case NonFatal(_) => refuse("binary content (not valid UTF-8) is not editable")
         catch
           case NonFatal(e) =>
             logger.warn(s"ask edit capture failed: ${e.getMessage}")
             refuse(s"could not read the bound file (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+      end if
     }
   end capture
 
@@ -147,16 +149,25 @@ object AskEditReviews:
   private def detectLineSep(content: String): String =
     if content.contains("\r\n") then "\r\n" else "\n"
 
-  /** tmp + 原子 rename 写盘（分隔符随基线检测——split 已吃掉 \r\n，join 用原
-    * 分隔符还原；混合退化为主导分隔符，DiffUtil.writeFile 同语义）。 */
+  /**
+   * tmp + 原子 rename 写盘（分隔符随基线检测——split 已吃掉 \r\n，join 用原
+   * 分隔符还原；混合退化为主导分隔符，DiffUtil.writeFile 同语义）。
+   */
   private def writeAtomic(path: Path, content: String, lineSep: String): Unit =
     val tmp = Files.createTempFile(path.getParent, "ask-edit-", ".tmp")
     Files.write(tmp, content.getBytes(StandardCharsets.UTF_8))
-    Files.move(tmp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+    Files.move(
+      tmp,
+      path,
+      java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+      java.nio.file.StandardCopyOption.ATOMIC_MOVE
+    )
 
-  /** 可审块表：difflib deltas → 相邻未变行 ≤ HunkMergeGap 并块。**确定性单源**
-    * ——askEditApplied 推送与 resolve 重算同一函数，同输入必同输出（id 序
-    * h0..hN 稳定，前端逐块动作的 hunkId 由此对齐）。纯函数（局部可变量）。 */
+  /**
+   * 可审块表：difflib deltas → 相邻未变行 ≤ HunkMergeGap 并块。**确定性单源**
+   * ——askEditApplied 推送与 resolve 重算同一函数，同输入必同输出（id 序
+   * h0..hN 稳定，前端逐块动作的 hunkId 由此对齐）。纯函数（局部可变量）。
+   */
   def hunksOf(base: String, current: String): List[AskEditHunk] =
     val oldLines = splitLines(base).asJava
     val newLines = splitLines(current).asJava
@@ -176,8 +187,7 @@ object AskEditReviews:
           oldCount = srcEnd - prev.oldStart,
           newCount = tgtEnd - prev.newStart
         )
-      else
-        out += AskEditHunk(s"h${out.length}", srcPos, srcEnd - srcPos, tgtPos, tgtEnd - tgtPos)
+      else out += AskEditHunk(s"h${out.length}", srcPos, srcEnd - srcPos, tgtPos, tgtEnd - tgtPos)
       prevSrcEnd = srcEnd
     }
     out.toList
@@ -236,7 +246,10 @@ object AskEditReviews:
                       Right(review)
                     catch
                       case NonFatal(e) =>
-                        Left(s"ask edit failed: could not write ${cap.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+                        Left(
+                          s"ask edit failed: could not write ${cap.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})"
+                        )
+                  end if
                 }
         }
     }
@@ -250,17 +263,20 @@ object AskEditReviews:
     try
       val disk = new String(Files.readAllBytes(Path.of(review.path)), StandardCharsets.UTF_8)
       if disk == review.currentText then None
-      else Some(
-        s"file changed since the review began (stale) — the action was NOT applied to avoid overwriting. " +
-          s"Retry once the file settles, dismiss the review to keep the on-disk state, or ask again: ${review.path}"
-      )
+      else
+        Some(
+          s"file changed since the review began (stale) — the action was NOT applied to avoid overwriting. " +
+            s"Retry once the file settles, dismiss the review to keep the on-disk state, or ask again: ${review.path}"
+        )
     catch
       case NonFatal(e) =>
         Some(s"could not read ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
 
-  /** 全部/逐块接受：hunkId=None 全收（清账零写盘）；Some(h)=该块标记已审
-    * （基线前移，零写盘）。接受前同验盘上 == current——接受动作对过期审阅
-    * 也必须显式冲突（不静默盖章一个已不成立的 diff）。 */
+  /**
+   * 全部/逐块接受：hunkId=None 全收（清账零写盘）；Some(h)=该块标记已审
+   * （基线前移，零写盘）。接受前同验盘上 == current——接受动作对过期审阅
+   * 也必须显式冲突（不静默盖章一个已不成立的 diff）。
+   */
   def accept(sid: String, hunkId: Option[String]): IO[Either[String, ResolveResult]] =
     IO.blocking {
       lockOf(sid).synchronized {
@@ -296,9 +312,11 @@ object AskEditReviews:
     }
   end accept
 
-  /** 全部/逐块拒绝：hunkId=None 整体回退（回写 baseText）；Some(h)=回写
-    * 「current 去掉该块」。写前同验盘上 == current——不等即显式 stale 拒，
-    * 绝不覆盖外部改动。 */
+  /**
+   * 全部/逐块拒绝：hunkId=None 整体回退（回写 baseText）；Some(h)=回写
+   * 「current 去掉该块」。写前同验盘上 == current——不等即显式 stale 拒，
+   * 绝不覆盖外部改动。
+   */
   def reject(sid: String, hunkId: Option[String]): IO[Either[String, ResolveResult]] =
     IO.blocking {
       lockOf(sid).synchronized {
@@ -317,7 +335,9 @@ object AskEditReviews:
                       Right(ResolveResult.Cleared(review.path))
                     catch
                       case NonFatal(e) =>
-                        Left(s"reject failed: could not write ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+                        Left(
+                          s"reject failed: could not write ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})"
+                        )
                   case Some(hid) =>
                     review.hunks.find(_.id == hid) match
                       case None => Left(s"reject failed: no such hunk '$hid' in the pending review")
@@ -340,7 +360,9 @@ object AskEditReviews:
                             Right(ResolveResult.Kept(updated))
                         catch
                           case NonFatal(e) =>
-                            Left(s"reject failed: could not write ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+                            Left(
+                              s"reject failed: could not write ${review.path} (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})"
+                            )
       }
     }
   end reject
