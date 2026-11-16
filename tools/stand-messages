@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const help = `stand-messages — read retained engine message windows (read-only)
+
+Usage: tools/stand-messages [options]
+  --window TEXT    Session ID or name substring (case-insensitive)
+  --channel NAME   Exact bound channel, e.g. feishu or weixin-ilink
+  --sender TEXT    Sender substring; defaults are user, assistant or agent ID
+  --since TIME     Inclusive lower bound: epoch milliseconds or ISO 8601 with zone
+  --until TIME     Inclusive upper bound: epoch milliseconds or ISO 8601 with zone
+  --keyword TEXT   Case-insensitive text substring
+  --limit N        Maximum results, newest first (default 100)
+  --json           JSON array instead of a human-readable table
+  --data-root PATH Data root (default STAND_DATA_ROOT, then ~/.stand)
+  --help           Show this help
+
+All agents can use this tool, for example:
+  tools/stand-messages --window Nebula --keyword planning --json
+  tools/stand-messages --channel feishu --sender user --limit 20
+
+Reads sessions/_index.json and *.ui.json only, including unindexed windows.
+Channel means session binding, NOT proven message origin. Console traffic can
+share a bound session; no console binding is inferred. Only user, ai and agent
+text rows are included; UI retention may omit older history. Missing timestamps
+are null and excluded by time filters. Sensitive-looking rows are suppressed on
+a best-effort basis, but no automated filter can guarantee secret detection;
+protect query output and never search for or disclose credentials.
+`;
+
+function parseTime(value) {
+  if (/^\d{1,15}$/.test(value)) return Number(value);
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?(?:Z|[+-]\d\d:\d\d)$/.test(value)) throw Error('time must be epoch milliseconds or ISO 8601 with timezone');
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) throw Error('invalid time');
+  return time;
+}
+function argumentsOf(argv) {
+  const opts = { limit: 100 };
+  const values = new Set(['window', 'channel', 'sender', 'since', 'until', 'keyword', 'limit', 'data-root']);
+  for (let i = 0; i < argv.length; i++) {
+    const key = argv[i].startsWith('--') ? argv[i].slice(2) : '';
+    if (key === 'help' || key === 'json') { opts[key] = true; continue; }
+    if (!values.has(key) || !argv[i + 1] || argv[i + 1].startsWith('--')) throw Error(`invalid option or missing value: ${argv[i]}`);
+    opts[key] = argv[++i];
+  }
+  if (!/^\d+$/.test(String(opts.limit)) || Number(opts.limit) < 1 || !Number.isSafeInteger(Number(opts.limit))) throw Error('--limit must be a positive integer');
+  opts.limit = Number(opts.limit);
+  if (opts.since) opts.since = parseTime(opts.since);
+  if (opts.until) opts.until = parseTime(opts.until);
+  if (opts.since !== undefined && opts.until !== undefined && opts.since > opts.until) throw Error('--since must not exceed --until');
+  return opts;
+}
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) { throw Error(`cannot read valid JSON from ${path.basename(file)}: ${error.code || 'invalid JSON'}`); }
+}
+function includes(value, query) { return String(value).toLocaleLowerCase().includes(query.toLocaleLowerCase()); }
+// Skip whole rows, not just a guessed secret value, to avoid leaking nearby material.
+const sensitive = /(?:password|passwd|credential|secret|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|bearer\s+|private[_ -]?key|密码|口令|密钥|令牌)\s*(?:[:=：]|\s)|-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{16,}/i;
+function query(opts) {
+  const root = opts['data-root'] || process.env.STAND_DATA_ROOT || path.join(os.homedir(), '.stand');
+  const dir = path.join(root, 'sessions');
+  const index = readJson(path.join(dir, '_index.json'));
+  if (!Array.isArray(index.sessions)) throw Error('invalid session index: sessions must be an array');
+  const metadata = new Map(index.sessions.filter(s => s && typeof s.id === 'string').map(s => [s.id, s]));
+  const files = fs.readdirSync(dir).filter(n => n.endsWith('.ui.json')).sort();
+  const rows = [];
+  for (const file of files) {
+    const id = file.slice(0, -8);
+    const meta = metadata.get(id) || {};
+    const name = typeof meta.name === 'string' ? meta.name : '';
+    const channels = meta.bridges && typeof meta.bridges === 'object' && !Array.isArray(meta.bridges) ? Object.keys(meta.bridges).sort() : [];
+    if (opts.window && !includes(id, opts.window) && !includes(name, opts.window)) continue;
+    if (opts.channel && !channels.some(c => c.toLowerCase() === opts.channel.toLowerCase())) continue;
+    const messages = readJson(path.join(dir, file));
+    if (!Array.isArray(messages)) throw Error(`invalid window: ${file}`);
+    for (const message of messages) {
+      if (!message || !['user', 'ai', 'agent'].includes(message.type) || typeof message.text !== 'string' || !message.text.trim()) continue;
+      const sender = message.type === 'user' ? (typeof message.sender === 'string' && message.sender || 'user') : message.type === 'ai' ? 'assistant' : (typeof message.agentId === 'string' && message.agentId || 'agent');
+      const timestamp = Number.isSafeInteger(message.timestamp) && message.timestamp > 0 ? message.timestamp : null;
+      if (sensitive.test(message.text) || sensitive.test(name) || sensitive.test(sender)) continue;
+      if (opts.sender && !includes(sender, opts.sender)) continue;
+      if (opts.keyword && !includes(message.text, opts.keyword)) continue;
+      if (opts.since !== undefined && (timestamp === null || timestamp < opts.since)) continue;
+      if (opts.until !== undefined && (timestamp === null || timestamp > opts.until)) continue;
+      rows.push({ window: id, name, channels, sender, timestamp, text: message.text });
+    }
+  }
+  rows.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  return rows.slice(0, opts.limit);
+}
+try {
+  const opts = argumentsOf(process.argv.slice(2));
+  if (opts.help) process.stdout.write(help);
+  else {
+    const rows = query(opts);
+    if (opts.json) console.log(JSON.stringify(rows, null, 2));
+    else {
+      console.log('TIME (UTC) | WINDOW | CHANNELS (binding) | SENDER | TEXT');
+      for (const row of rows) {
+        const clean = s => String(s).replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ');
+        const time = row.timestamp === null ? '-' : new Date(row.timestamp).toISOString();
+        console.log([time, clean(row.name || row.window), row.channels.map(clean).join(',') || '-', clean(row.sender), clean(row.text)].join(' | '));
+      }
+    }
+  }
+} catch (error) { console.error(`stand-messages: ${error.message}`); process.exitCode = 1; }
