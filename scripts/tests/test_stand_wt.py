@@ -29,14 +29,14 @@ class Lifecycle(unittest.TestCase):
             base = run('git', 'rev-parse', 'HEAD').strip()
             tool = str(SCRIPTS / 'stand-wt.py')
             checker = str(SCRIPTS / 'check-delivery.py')
-            run('python3', tool, 'new', 'sample', '--branch', 'feat/sample')
+            run('python3', tool, '--root', str(repo), 'new', 'sample', '--branch', 'feat/sample', cwd=repo.parent)
             wt = repo / '.stand/worktrees/sample'
             tmp = repo / '.stand/tmp/sample'
             (tmp / 'MANIFEST.md').unlink()
-            output = run('python3', checker, '--manifest-only', cwd=wt, expect=1)
+            output = run('python3', checker, '--root', str(wt), '--manifest-only', cwd=repo.parent, expect=1)
             self.assertIn('missing', output)
-            run('python3', tool, 'audit', 'sample')
-            output = run('python3', checker, '--manifest-only', cwd=wt)
+            run('python3', tool, '--project', str(wt), 'audit', 'sample', cwd=repo.parent)
+            output = run('python3', checker, '--project', str(wt), '--manifest-only', cwd=repo.parent)
             self.assertIn('Temporary delivery and manifest checked:', output)
             artifact = tmp / 'delivery/batch/changes.md'
             artifact.parent.mkdir(parents=True)

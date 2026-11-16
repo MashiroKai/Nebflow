@@ -78,9 +78,11 @@ USTC 保护与旧分支清理由作者按[保护清单](CONTRIBUTING.md#ustc-ser
 
 ## PR 要求
 
-项目 worktree 一律放 `<project>/.stand/worktrees/<wtname>/`，使用 `python3 scripts/stand-wt.py new <wtname> [--branch <branch>]` 创建。PR 交付物先放 worktree 外的 `<project>/.stand/tmp/<wtname>/delivery/<batch>/`，需入库部分提交到 `delivery/<batch>/`；同级 `evidence/` 永不提交。tmp TTL 为 7 天；`audit` 按文件生成路径、字节数、mtime、对账入库时间及 commit SHA 或「未入库」，不得手填；`list` 核查，`clean` 默认预览，`clean --apply` 默认保留未入库文件，除非显式强制。`.stand/worktrees/` 与 `.stand/tmp/` 必须忽略。
+全平台 worktree 与临时产物规则以已安装的 stand-dev 插件 `skills/stand-dev/references/engine/workspace-artifacts.md` 为权威正文。
 
-`npm run check:wt` 与默认 static 检查自动推断关联 worktree 的清单，无需 `--tmp`；主 checkout 明确输出跳过本地清单的原因。缺清单或未入库文件超过七天会失败，期限内只警告；先用 `stand-wt.py audit <wtname>` 刷新。`clean --apply` 删除前将候选清单及 manifest 写入 `.stand/tmp/worktree-audit/<timestamp>/`。
+本仓使用 `python3 scripts/stand-wt.py [--root <项目checkout>] new <wtname> [--branch <branch>]`，`list`、`audit`、`clean` 同样支持 `--root`（别名 `--project`）选择项目；`python3 scripts/check-delivery.py --root <checkout> --manifest-only` 检查指定 checkout。
+
+`npm run check:wt` 与默认 static 检查自动推断关联 worktree 的清单；用 `stand-wt.py audit <wtname>` 刷新。主 checkout 明确输出跳过本地清单的原因。
 
 - USTC PR 只由作者创建，源分支仅限 `feat/*`、`bug/*`，目标 `main`；由作者核验后 ff-only 合入。diff 保持最小、聚焦单一改动。
 - 开 PR 前：`sbt compile` 与受影响测试全绿。Scala 改动另跑 `make check`（scalafmt + scalafix）；前端改动跑类型/循环依赖门禁与受影响的 Playwright spec（见下）。

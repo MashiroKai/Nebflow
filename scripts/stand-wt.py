@@ -75,12 +75,15 @@ def audit(project, wt):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--root', '--project', type=Path, help='project checkout path (default: current working directory); resolves its primary checkout')
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('new'); p.add_argument('name', type=name); p.add_argument('--branch')
     sub.add_parser('list')
     p = sub.add_parser('audit'); p.add_argument('name', nargs='?', type=name)
     p = sub.add_parser('clean'); p.add_argument('--ttl-days', type=float, default=7); p.add_argument('--apply', action='store_true'); p.add_argument('--force', action='store_true'); p.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
+    if args.root is not None:
+        os.chdir(args.root)
     project = root(); tmp = project / '.stand' / 'tmp'
     if args.command == 'new':
         target = project / '.stand' / 'worktrees' / args.name

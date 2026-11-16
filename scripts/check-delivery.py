@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import datetime as dt
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -28,6 +29,7 @@ def infer_tmp():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--root', '--project', type=Path, help='checkout path to inspect (default: current working directory)')
     parser.add_argument('--base', help='base commit, not a revision range; required unless --manifest-only')
     parser.add_argument('--manifest-only', action='store_true', help='check temporary manifest without a commit range')
     parser.add_argument('--head', default='HEAD', help='reviewed commit (default: HEAD)')
@@ -36,6 +38,10 @@ def main():
     if not args.manifest_only and not args.base:
         parser.error('--base is required unless --manifest-only')
     try:
+        if args.tmp is not None:
+            args.tmp = args.tmp.resolve()
+        if args.root is not None:
+            os.chdir(args.root)
         directory = args.tmp if args.tmp is not None else infer_tmp()
         head = git('rev-parse', '--verify', f'{args.head}^{{commit}}').decode().strip()
         if not args.manifest_only:
@@ -46,6 +52,9 @@ def main():
                 'ls-tree', '-r', '--name-only', '-z', head).split(b'\0') if p}
     except subprocess.CalledProcessError as exc:
         print(f'Cannot inspect range: {exc.stderr.decode(errors="replace").strip()}', file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f'Cannot inspect checkout: {exc}', file=sys.stderr)
         return 2
 
     if directory is not None:
