@@ -114,6 +114,10 @@ object E2eFixtureMain extends IOApp:
       dbWasOpen <- IO.blocking(DbHost.isOpen(root.toNIO))
       dbRelease <- IO.blocking(DbHost.release(root.toNIO)).attempt
       dbStillOpen <- IO.blocking(DbHost.isOpen(root.toNIO))
+      // Evidence is outside the private data root; delete only this fixture-owned tree.
+      rootDelete <- (if dbRelease.isRight && !dbStillOpen then IO.blocking(os.remove.all(root)).attempt
+                     else IO.pure(Left(new IllegalStateException("database not safely released"))))
+      rootStillExists <- IO.blocking(os.exists(root))
       finished <- IO.monotonic
       _ <- requireFixture(!alive.contains(true), "fixture actor remains after release")
       pass = checks.forall(_._2)
@@ -131,6 +135,8 @@ object E2eFixtureMain extends IOApp:
       "cleanup" -> Json.obj("actor_system_closed" -> true.asJson, "dispatcher_released" -> true.asJson,
         "detached_starts_drained" -> true.asJson, "db_was_open" -> dbWasOpen.asJson,
         "db_still_registered" -> dbStillOpen.asJson,
+        "data_root_exists" -> rootStillExists.asJson,
+        "data_root_delete_error" -> rootDelete.swap.toOption.map(e => s"${e.getClass.getSimpleName}: ${e.getMessage}").asJson,
         "db_release_error" -> dbRelease.swap.toOption.map(e => s"${e.getClass.getSimpleName}: ${e.getMessage}").asJson,
         "known_actor_count" -> ids.distinct.size.asJson)
     )
