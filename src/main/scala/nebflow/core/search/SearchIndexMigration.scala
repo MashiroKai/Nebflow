@@ -162,7 +162,41 @@ object SearchIndexMigration:
     catch
       case scala.util.control.NonFatal(e) => c.rollback(); throw e
 
+  private def makeSessionSnapshot(output: String, sessions: String): Unit =
+    val temp = Paths.get("/tmp").toRealPath()
+    val path = Paths.get(output).toAbsolutePath.normalize()
+    require(path.getParent.toRealPath().startsWith(temp) && !Files.exists(path), "new snapshot under /tmp required")
+    val adapter = new nebflow.core.search.chat.ChatSearchAdapter(os.Path(sessions))
+    val all = adapter.sessionIdsForReconcile.get.sorted
+    val selected = all.take(200)
+    println(s"eligible_sessions=${all.size} selected_sessions=${selected.size}")
+    val c = DriverManager.getConnection(s"jdbc:sqlite:$path")
+    c.setAutoCommit(false)
+    try
+      exec(c, "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT)")
+      exec(c, "INSERT INTO meta VALUES('index_generation','snapshot')")
+      exec(c, "CREATE TABLE docs(sid TEXT,kind TEXT,ts INTEGER,text TEXT,extra TEXT)")
+      val p = c.prepareStatement("INSERT INTO docs(sid,kind,ts,text,extra) VALUES(?,?,?,?,?)")
+      var count = 0
+      try selected.foreach { sid =>
+        val before = adapter.sessionFingerprint(sid)
+        val docs = adapter.extractSession(sid, true).getOrElse(Nil)
+        require(before == adapter.sessionFingerprint(sid), "session changed during extraction")
+        docs.foreach { d =>
+          p.setString(1, d.sid); p.setString(2, d.kind); p.setLong(3, d.ts); p.setString(4, d.text); p.setString(5, d.extra); p.executeUpdate()
+          count += 1
+        }
+        c.commit()
+        if Files.size(path) > 100000000 then throw new IllegalStateException("snapshot exceeds 100 MB safety budget")
+      }
+      finally p.close()
+      println(s"snapshot_docs=$count snapshot_bytes=${Files.size(path)}")
+    finally c.close()
+
   def main(args: Array[String]): Unit =
+    if args.length == 3 && args(0) == "--snapshot" then
+      makeSessionSnapshot(args(1), args(2))
+      return
     require(args.length == 2, "usage: SearchIndexMigration /tmp/<output>.sqlite /path/to/source.sqlite")
     val temp = Paths.get("/tmp").toRealPath()
     val path = Paths.get(args(0)).toAbsolutePath.normalize()
@@ -173,7 +207,7 @@ object SearchIndexMigration:
     val c = DriverManager.getConnection(s"jdbc:sqlite:$path")
     val started = System.nanoTime()
     try
-      migrate(c, source, batchSize = 20)
+      migrate(c, source, batchSize = 20, maxRows = Int.MaxValue)
       println(f"elapsed_seconds=${(System.nanoTime() - started) / 1e9}%.3f")
     finally
       c.close()
