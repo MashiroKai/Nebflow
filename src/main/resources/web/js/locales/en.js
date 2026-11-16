@@ -1730,6 +1730,7 @@ export default {
   // F1 retargeted the upgrade to the **global persisted** mode (same path as the
   // shield) ⇒ no "this time only" semantics; state global + survives a restart.
   'chat.permShowFull': 'Show full content',
+  'chat.permRequestNotDiff': 'Requested changes, not an actual file diff',
   'chat.permUpgradeAutoEdits': 'Allow and switch to auto-edits',
   'chat.permUpgradeAutoEditsDesc': 'Global mode becomes auto-edits: applies to every session and persists across restarts',
   'chat.permUpgradeAutoAll': 'Allow and switch to auto-all',

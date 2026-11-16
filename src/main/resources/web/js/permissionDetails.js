@@ -23,7 +23,7 @@ export function permissionDetails(toolName, value) {
   } else if (toolName === 'Edit') {
     if (input.file_path) add(String(input.file_path));
     const lines = (value, prefix) => String(value ?? '').split('\n').map(line => prefix + line).join('\n');
-    add('@@\n' + lines(input.old_string, '-') + '\n' + lines(input.new_string, '+'));
+    add(t('chat.permRequestNotDiff') + '\n' + lines(input.old_string, '-') + '\n' + lines(input.new_string, '+'));
     if (input.replace_all) add('replace_all: true');
   } else if (toolName === 'Write') {
     if (input.file_path) add(String(input.file_path));

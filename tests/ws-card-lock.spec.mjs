@@ -121,6 +121,7 @@ test('permission payload is reviewable for object input', async ({ browser }) =>
   await page.evaluate(() => window.__renderPermInput('Edit', { file_path: '/tmp/sample.txt', old_string: 'before', new_string: 'after' }));
   await page.screenshot({ path: path.join(SHOT_DIR, 'permission-edit.png'), fullPage: true });
   await expect(page.locator('#chat')).toContainText('/tmp/sample.txt');
+  await expect(page.locator('#chat')).toContainText('请求载荷，非文件实际 diff');
   await expect(page.locator('#chat')).toContainText('-before');
   await expect(page.locator('#chat')).toContainText('+after');
   await page.evaluate(() => window.__renderPermInput('Bash', JSON.stringify({ command: 'printf "complete command"' })));

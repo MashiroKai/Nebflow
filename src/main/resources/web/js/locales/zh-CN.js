@@ -1670,6 +1670,7 @@ export default {
   // 递进链（作者边界一「保留递进链路」）：升级落点已由 permshield F1 改为**全局持久
   // 档位**（同盾牌一条路）⇒ 文案去掉「本次」语义，并显式说明全局 + 重启后仍生效。
   'chat.permShowFull': '展开完整内容',
+  'chat.permRequestNotDiff': '请求载荷，非文件实际 diff',
   'chat.permUpgradeAutoEdits': '允许并切换到编辑放行',
   'chat.permUpgradeAutoEditsDesc': '全局档位改为编辑放行：所有会话生效，重启后仍生效',
   'chat.permUpgradeAutoAll': '允许并切换到全部放行',
