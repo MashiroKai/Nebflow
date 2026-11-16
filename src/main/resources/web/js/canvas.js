@@ -2073,7 +2073,7 @@ function initDeck() {
   deckLayer.id = 'deck-layer';
   deckFab = document.createElement('button');
   deckFab.id = 'deck-fab';
-  deckFab.className = 'deck-fab g2-fab';   // 批②：材质升 v2 液体玻璃（liquid-glass.css 共享类）
+  deckFab.className = 'deck-fab g2-fab canvas-button';   // 批②：材质升 v2 液体玻璃（liquid-glass.css 共享类）
   deckFab.setAttribute('aria-pressed', 'false');
   deckFab.setAttribute('title', t('canvas.stackToggle'));
   deckFab.setAttribute('aria-label', '叠卡切换');
@@ -2216,7 +2216,7 @@ function syncHeaderActions() {
   if (!closeBtn) {
     closeBtn = document.createElement('button');
     closeBtn.id = 'canvas-head-close';
-    closeBtn.className = 'g2-fab';   // 左移批：材质/尺寸与堆叠钮同款（左右对称判据）
+    closeBtn.className = 'g2-fab canvas-button';   // 左移批：材质/尺寸与堆叠钮同款（左右对称判据）
     /** @type {HTMLButtonElement} */ (closeBtn).type = 'button';
     closeBtn.innerHTML = HEAD_CLOSE_SVG;
     closeBtn.setAttribute('title', t('canvas.closeTab'));
