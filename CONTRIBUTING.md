@@ -74,14 +74,52 @@ CI runs the smoke suite against a freshly built JAR, so a green local run plus g
 
 ## Branches and commits
 
-- Branch off `main` with a short descriptive name; keep a branch scoped to one change.
+The six branch classes are:
+
+| Branch | Purpose |
+|---|---|
+| `main` | Integration baseline; only the author lands verified changes. |
+| `feat/*` | Ordinary development, scoped to one change. |
+| `bug/*` | Fixes, including release issues, branched from `main`. |
+| `achieve/*` | Archives, for example a JeV preservation branch; not an MR source. |
+| `release/beta` | Author-controlled beta release line. |
+| `release/stable` | Author-controlled stable release line. |
+
+The author's `release:beta` / `release:stable` terminology maps to `release/beta` / `release/stable`: Git branch names cannot contain a colon. Existing `fix/*` branches are grandfathered, not renamed; the guard deliberately rejects them for new branch and MR checks. Batch branches use `feat/*` or `bug/*`.
+
+```mermaid
+flowchart LR
+  M[main] --> F[feat/* development]
+  M --> B[bug/* release fix]
+  F --> V[upstream verification]
+  B --> V
+  V -->|author: ff-only| M
+  M -->|author chooses| RB[release/beta]
+  M -->|author chooses| RS[release/stable]
+  M -. archival .-> A[achieve/*]
+```
+
+For a release problem, branch `bug/*` from `main`, fix and verify it, then the author lands it on `main` and chooses whether and where to propagate it. Only the author pushes release lines. Local checks are not authorization to push USTC.
+
 - Stage files explicitly (`git add <file>`); avoid `git add -A`.
-- Commit subjects in practice carry an optional `type(scope):` prefix — types like `fix` / `feat` / `test` / `docs` / `refactor`, scopes like `web` / `tools` / `engine` / `project` / `gateway`. The subject must be English and should state the cause or intent, not just the symptom. Merge commits to `main` follow `Merge <branch>: <summary>`.
+- Commit subjects use an optional `type(scope):` prefix; write an English subject describing the intent.
+
+### Local guard
+
+`tools/stand-branch-guard --help` documents exit codes and invocation. Check names with `--check-branch NAME` and MR sources with `--check-pr-source NAME`. To opt into pre-push checks, install a hook in the active worktree's hooks path (do not overwrite an existing hook); its body can call `exec /absolute/path/to/tools/stand-branch-guard --check-push "$@"`. Git supplies destination records on stdin. `--allow` is a deliberate local override, not permission to push or bypass server rules; the author alone may authorize protected pushes. Tags are not branch destinations. The guard does not enforce the separate prohibition on direct USTC pushes; server permissions and operator discipline must do so.
+
+### USTC server protection checklist (author only)
+
+1. In the project, inspect **Settings → Repository → Protected branches** (or the equivalent for the installed GitLab version); record existing rules and overlapping wildcard effects before changing them.
+2. Protect `main`, `release/beta`, and `release/stable`. Set push/merge permissions to the named author only where the installed edition supports per-user rules; otherwise use the narrowest role available and restrict membership accordingly. Disable force pushes and deletion for these branches. Configure required review and successful pipelines where supported. Verify the effective permissions, including broader wildcard rules and administrative bypasses.
+3. Restrict USTC write access so non-authors cannot push directly, and have the author alone open MRs from `feat/*` or `bug/*` to `main`, merge after upstream verification using fast-forward only, and push the chosen release line. GitLab branch protection by itself may not enforce source-name restrictions or distinguish one user from others with the same role; use an instance-supported server-side push/MR rule or author-controlled permissions, and document any edition limitation rather than claiming enforcement.
+4. Set the project merge method to **Fast-forward merge** if available. Test with a non-author account and disposable branches: forbidden direct pushes and unauthorized merges must fail; allowed author workflow and source-name checks must behave as intended. Do not force-update protected refs during testing.
+5. Check the existing release automation before adopting the new release lines: `.gitlab-ci.yml` currently targets legacy `beta` / `release`, and its stable job writes `main`. It does not yet implement this policy. Keep it disabled or otherwise prevent unauthorized publication until the author explicitly approves a separate migration.
 
 ## Pull requests
 
-- PRs target `main`. Keep the diff minimal and scoped to one change.
-- Before opening: `sbt compile` and the affected tests green. For Scala changes also run `make check` (scalafmt + scalafix); for frontend changes run the type/cycle gates and the affected Playwright specs (see below).
+- USTC PRs (merge requests) target `main`, use only `feat/*` or `bug/*` sources, and are opened by the author only. Keep the diff minimal and scoped to one change. Only the author merges after upstream verification, with fast-forward only; contributors and agents do not push directly to USTC.
+- Before opening: run the gates appropriate to the change and affected tests. For Scala changes run `sbt compile` and `make check` (scalafmt + scalafix); for frontend changes run the type/cycle gates and the affected Playwright specs (see below).
 - The static quality job is blocking in both `.github/workflows/ci.yml` and `.gitlab-ci.yml`; the latter includes merge requests and every branch. `.github/workflows/auto-release.yml` also requires this same entrypoint before building. Existing advisory browser jobs remain advisory. Configuration describes intended execution, not evidence that a remote CI run has passed.
 
 ## Code style
