@@ -2396,6 +2396,18 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 IO.pure(ToolExecResult(blockMsg, isError = true))
               else
                 val finalInput = preResult.updatedInput.getOrElse(call.input)
+                // canvas-ask-restricted-edit（CAE-REQ-002/CAE-SCN-003）：文件绑定
+                // Ask 的 Bash = 默认拒绝的只读白名单执行器——在 post-hook（上方
+                // beforeTool 已跑，hook 仍可先拦）之后、远端/本地路由之前单点短路：
+                // 拒绝在**任何执行前**显式返回；放行的命令经 argv 直执行（无 shell），
+                // 既不进远端 device 通道也不进普通 ShellSession。非 Ask 会话零路径
+                // 变化（判据单点 AskSessions.isAskSession）。
+                val askBashFace: Option[IO[ToolExecResult]] =
+                  Option.when(call.name == "Bash" && nebflow.core.ask.AskSessions.isAskSession(ctx.sessionId)) {
+                    nebflow.core.ask.AskBashFace
+                      .runAskBash(finalInput, ctx)
+                      .map { (out, isErr) => ToolExecResult(out, isError = isErr) }
+                  }
                 // S3（2026-09-14 作者裁定，工具面 `device` 摘除批的引擎面第二层）：
                 // `device` 的远端消费**收窄到 `RemoteExecutor.remoteableTools`**（六件真
                 // 远端），使代码回到 `RemoteExecutor.scala` 的自陈意图（「Only these tools
@@ -2433,7 +2445,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   Option.when(fleetEnforceOn && remoteable && explicitDeviceRaw.isEmpty) {
                     fleetDeviceRefusalIO(call.name, sessionDefaultDevice, ctx)
                   }
-                val execIO: IO[ToolExecResult] = enforceRefusal.getOrElse(remoteDeviceOpt match
+                val execIO: IO[ToolExecResult] = askBashFace.getOrElse(enforceRefusal.getOrElse(remoteDeviceOpt match
                   case Some(deviceName) if RemoteExecutor.current.isDefined =>
                     var remoteInput = finalInput.remove("device")
                     // 「命令 cwd 指向设备 workspace」（跨设备批 2026-10-25）：会话默认
@@ -2548,7 +2560,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                             imageBlocks = imageBlocks
                           )
                         }
-                    }) // close enforceRefusal.getOrElse( <remoteDeviceOpt match …> )
+                    })) // close askBashFace.getOrElse( enforceRefusal.getOrElse( <remoteDeviceOpt match …> ) )
                 execIO.handleErrorWith {
                   case _: UserAbort => IO.raiseError(new UserAbort())
                   case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
@@ -2636,7 +2648,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
-    // Ask has an independent eight-tool face, including normal Bash. Return before
+    // Ask has an independent ten-tool face (query-only Bash + proposal-based
+    // ask_edit/ask_write, canvas-ask-restricted-edit). Return before
     // definition, fixed-role, plugin or delegate grants can widen that face.
     if askSession then return nebflow.core.ask.AskSessions.AllowedTools
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）

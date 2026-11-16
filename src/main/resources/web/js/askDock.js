@@ -93,7 +93,7 @@ import { key } from './branding.js';
 import { askBubbleClass, chatComposerClass } from './chatUi.js';
 import state from './state.js';
 import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
-import { activeCanvasEntry } from './canvas.js';
+import { activeCanvasEntry, refreshFileTabByPath } from './canvas.js';
 // 修复批 2026-10-31（作者令 ①）：ai 气泡渲染复用主会话渲染腿
 // utils.renderMarkdownWithMath（代码块/表格/列表/数学全套，含 marked+KaTeX
 // 护栏与 LRU）——渲染腿零重写；user 气泡维持 textContent 纯文本面。
@@ -124,6 +124,10 @@ export const INTERNAL_CLASSES = [
   'ask-bub', 'ask-send', 'ask-stop', 'ask-sess-dot',
   // 记事本批（2026-11-05）：同一组件的第二对节点，同样只在本模块内建/查。
   'note-fab', 'note-dock', 'note-body',
+  // canvas-ask-restricted-edit ③（2026-11-16）：待审编辑提案 diff 卡一族
+  //（ask_edit/ask_write 提案 → 逐卡 Accept/Reject；见下方「提案 diff 卡」段）。
+  'ask-edit-card', 'ask-edit-head', 'ask-edit-file', 'ask-edit-status',
+  'ask-edit-diff', 'ask-edit-line', 'ask-edit-actions', 'ask-edit-accept', 'ask-edit-reject',
 ];
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
@@ -280,6 +284,9 @@ async function sessionFor(absPath, fileName) {
       sid,
       fileName: fileName || absPath.split('/').pop() || absPath,
       msgs: loadPersisted(sid) || [],
+      // canvas-ask-restricted-edit ③：待审编辑提案（内存态；askState 回放的
+      // edits 帧与服务端待审表对账，resolved 卡留在会话内至切卡）。
+      edits: [],
       stateSent: false,
       unread: false,
     };
@@ -835,6 +842,26 @@ function wireElements() {
   });
   el.send.addEventListener('click', () => submit());
   el.stop.addEventListener('click', () => stopAsk());
+  // canvas-ask-restricted-edit ③：diff 卡 Accept/Reject（委托到列容器——卡随
+  // render() 重建，直挂监听会漏；同面选择器 .ask-edit-* 见 INTERNAL_CLASSES）。
+  el.col.addEventListener('click', (e) => {
+    const s = activeSession();
+    if (!s || !Array.isArray(s.edits)) return;
+    const acceptBtn = e.target && e.target.closest ? e.target.closest('.ask-edit-accept') : null;
+    const rejectBtn = !acceptBtn && e.target && e.target.closest ? e.target.closest('.ask-edit-reject') : null;
+    const card = (acceptBtn || rejectBtn) && (acceptBtn || rejectBtn).closest('.ask-edit-card');
+    if (!card) return;
+    const proposalId = card.getAttribute('data-proposal-id') || '';
+    const edit = s.edits.find((x) => x.proposalId === proposalId);
+    if (!edit || edit.outcome || edit.waiting) return;
+    edit.waiting = true; // 防双发：等 askEditResolved 终态（error 态由服务端回执解锁）
+    renderEditsIfActive(s);
+    sendWs({
+      type: acceptBtn ? 'askEditAccept' : 'askEditReject',
+      sessionId: s.sid,
+      proposalId,
+    });
+  });
   // 多行草稿自动长高（主会话 textarea 同式：auto → scrollHeight，封顶留 dock 紧凑形态）。
   el.input.addEventListener('input', () => {
     el.input.style.height = 'auto';
@@ -1557,6 +1584,12 @@ function render() {
     // of it stays fully legible. (FCC-REQ-004)
     el.col.appendChild(b);
   });
+  // canvas-ask-restricted-edit ③：提案 diff 卡随气泡列呈现（创建序在气泡之后；
+  // updateStreamingBubble 对「列尾不是 ai 气泡」的形态自动回落全量重渲，卡在列尾
+  // 不会碰坏流式腿）。
+  (Array.isArray(s.edits) ? s.edits : []).forEach((edit) => {
+    el.col.appendChild(editCardNode(s, edit));
+  });
   requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; });
 }
 
@@ -1573,6 +1606,109 @@ function updateStreamingBubble(s) {
   // （同一 HTML 落点：markdown 渲染腿，见 render() 的注释。）
   node.innerHTML = last ? renderMarkdownWithMath(last.text, true, { cache: false }) : '';
   el.col.scrollTop = el.col.scrollHeight;
+}
+
+// ── 提案 diff 卡（canvas-ask-restricted-edit ③，CAE-REQ-001）────────────────
+// ask_edit/ask_write 的提案帧 → .ask-edit-card（cursor 风格行级 diff：del/add 行
+// 高亮）；逐卡 Accept（写盘 + 画布重载）/ Reject（丢弃零写盘）；同一会话内可多轮
+// 提案多卡并存。数据面 = session.edits[]（内存态），帧面 = askEditProposal /
+// askEditResolved（WsAskHandlers），按钮腿 = sendWs askEditAccept/askEditReject。
+
+/** 行级 diff：LCS 最长公共子序列（行等值比较）。产物只含 del/add（上下文行不进
+ *  卡——卡要的是「改了什么」的紧凑面，不是全文浏览）。防护：老/新行数乘积超
+ *  250k（≈500×500）即退化为「整删 + 整加」——DP 面不伺候巨型文档（引擎侧提案
+ *  本身有 512k chars 帽，这里是第二道保险）。 */
+function diffLines(oldText, newText) {
+  const a = String(oldText == null ? '' : oldText).split('\n');
+  const b = String(newText == null ? '' : newText).split('\n');
+  if (a.length * b.length > 250000) {
+    return a.map((t) => ({ k: 'del', t })).concat(b.map((t) => ({ k: 'add', t })));
+  }
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ k: 'del', t: a[i] }); i++; }
+    else { out.push({ k: 'add', t: b[j] }); j++; }
+  }
+  while (i < m) { out.push({ k: 'del', t: a[i] }); i++; }
+  while (j < n) { out.push({ k: 'add', t: b[j] }); j++; }
+  return out;
+}
+
+/** diff 卡渲染帽（行）：超帽截断——卡是审阅面不是文本编辑器；+N −M 计数在头部
+ *  如实呈现全量。 */
+const EDIT_DIFF_MAX_LINES = 400;
+
+/** 一张卡（h() 构形；行文本一律 textContent——oldText/newText 是文件原文，
+ *  绝不进 innerHTML）。 */
+function editCardNode(s, edit) {
+  const outcome = edit.outcome || '';
+  const hunks = diffLines(edit.oldText, edit.newText);
+  const adds = hunks.filter((l) => l.k === 'add').length;
+  const dels = hunks.length - adds;
+  const statusKey = outcome || (edit.waiting ? 'waiting' : 'pending');
+  const statusText = {
+    pending: tt('待审', 'Pending'),
+    waiting: tt('已发送…', 'Sent…'),
+    accepted: tt('已写入', 'Written'),
+    rejected: tt('已拒绝', 'Rejected'),
+    error: tt('失败', 'Failed'),
+  }[statusKey] || statusKey;
+  const head = h('div', { class: 'ask-edit-head' }, [
+    h('span', { class: 'ask-edit-file', title: edit.path || '' }, `${edit.fileName || s.fileName}  +${adds} −${dels}`),
+    h('span', { class: 'ask-edit-status', 'data-state': statusKey, title: edit.error || '' }, statusText),
+  ]);
+  const diff = h('div', { class: 'ask-edit-diff', role: 'img',
+    'aria-label': tt(`变更提案：新增 ${adds} 行，删除 ${dels} 行`, `Proposal: +${adds} −${dels} lines`) });
+  hunks.slice(0, EDIT_DIFF_MAX_LINES).forEach((l) => {
+    diff.appendChild(h('div', { class: 'ask-edit-line ' + l.k }, (l.k === 'add' ? '+' : '−') + (l.t === '' ? '' : ' ' + l.t)));
+  });
+  if (hunks.length > EDIT_DIFF_MAX_LINES) {
+    diff.appendChild(h('div', { class: 'ask-edit-line ctx' },
+      tt(`…另有 ${hunks.length - EDIT_DIFF_MAX_LINES} 行未展示`, `…${hunks.length - EDIT_DIFF_MAX_LINES} more lines`)));
+  }
+  const settled = !!outcome || !!edit.waiting;
+  const accept = h('button', {
+    type: 'button',
+    class: 'ask-edit-accept',
+    'aria-label': tt('接受并写入文件', 'Accept and write the file'),
+  }, tt('接受', 'Accept'));
+  const reject = h('button', {
+    type: 'button',
+    class: 'ask-edit-reject',
+    'aria-label': tt('拒绝（丢弃提案）', 'Reject (discard proposal)'),
+  }, tt('拒绝', 'Reject'));
+  if (settled) { accept.setAttribute('disabled', ''); reject.setAttribute('disabled', ''); }
+  return h('div', {
+    class: 'ask-edit-card nf-glass',
+    'data-proposal-id': edit.proposalId || '',
+    'data-outcome': outcome || (edit.waiting ? 'waiting' : 'pending'),
+  }, [head, diff, h('div', { class: 'ask-edit-actions' }, [accept, reject])]);
+}
+
+/** 会话内提案 upsert（帧幂等：同 proposalId 覆盖不重复挂卡）。 */
+function upsertEdit(s, edit) {
+  if (!s || !edit || !edit.proposalId) return;
+  if (!Array.isArray(s.edits)) s.edits = [];
+  const i = s.edits.findIndex((e) => e.proposalId === edit.proposalId);
+  if (i >= 0) s.edits[i] = Object.assign({}, s.edits[i], edit);
+  else s.edits.push(edit);
+}
+
+/** 卡在开着的活动会话上呈现（流式期插入由调用方处理 typing 行）。 */
+function renderEditsIfActive(s) {
+  if (!el || s !== activeSession() || !isOpen()) return;
+  removeTyping();
+  render();
+  if (s.busy) appendTyping();
 }
 
 // ── 后端 WS 域（发 + 收）───────────────────────────────────────────────────
@@ -1737,6 +1873,33 @@ function consumeFrame(msg) {
         entry.msgs = entry.msgs.concat([localLastUser]);
       }
       persistSession(entry);
+      // canvas-ask-restricted-edit ③：待审提案对账（服务端 askState.edits = 在列
+      // 待审全表，WsAskHandlers encodePendingEdits）。本地已 resolve 的卡保留
+      // （会话内多轮的已审记录）；服务端在列而本地没有的补挂；本地还 pending 而
+      // 服务端已不在列的（他机已处理）按已处理摘下——outcome 标 rejected 呈现
+      // （保守面：不假写盘成功）。waiting 位一并清零（重连对账后按钮可再点）。
+      if (Array.isArray(msg.edits)) {
+        const resolved = (Array.isArray(entry.edits) ? entry.edits : []).filter((x) => x.outcome);
+        const serverIds = new Set();
+        const seeded = msg.edits
+          .filter((x) => x && typeof x.proposalId === 'string' && x.proposalId)
+          .map((x) => {
+            serverIds.add(x.proposalId);
+            return {
+              proposalId: x.proposalId,
+              path: typeof x.path === 'string' ? x.path : '',
+              fileName: typeof x.fileName === 'string' ? x.fileName : entry.fileName,
+              oldText: typeof x.oldText === 'string' ? x.oldText : '',
+              newText: typeof x.newText === 'string' ? x.newText : '',
+              createdAt: typeof x.createdAt === 'number' ? x.createdAt : 0,
+            };
+          });
+        const localPending = (Array.isArray(entry.edits) ? entry.edits : [])
+          .filter((x) => !x.outcome && !serverIds.has(x.proposalId))
+          .map((x) => Object.assign({}, x, { outcome: 'rejected', error: 'resolved elsewhere' }));
+        entry.edits = resolved.concat(seeded, localPending);
+        if (entry === activeSession() && isOpen()) render();
+      }
       // 断线中 turn 已终了的形态（输入行为包批）：回放转录末条已是 ai 答复而本地
       // 仍臂着 busy ⇒ 服务端为权威，即刻收口（幂等；turn 真在飞时转录末条是 user 问）。
       if (entry.busy && adopted.length && adopted[adopted.length - 1].role === 'ai') settleTurn(entry);
@@ -1809,6 +1972,47 @@ function consumeFrame(msg) {
     case 'askHandoffAck': {
       // v2.1：转交回执收进不可见处——不呈现（§7 转交机制不变，ack 静默消费；
       // 主会话侧 injected 气泡承担转交可见性）。
+      break;
+    }
+    case 'askEditProposal': {
+      // canvas-ask-restricted-edit ③：ask_edit/ask_write 落案帧 → 挂卡待审。
+      // 未读律同流帧（用户不在看着 = 绿点唤回）；盘上未动——卡就是「等审」本体。
+      if (!(entry === activeSession() && isOpen())) entry.unread = true;
+      upsertEdit(entry, {
+        proposalId: typeof msg.proposalId === 'string' ? msg.proposalId : '',
+        path: typeof msg.path === 'string' ? msg.path : '',
+        fileName: typeof msg.fileName === 'string' ? msg.fileName : entry.fileName,
+        oldText: typeof msg.oldText === 'string' ? msg.oldText : '',
+        newText: typeof msg.newText === 'string' ? msg.newText : '',
+        createdAt: typeof msg.createdAt === 'number' ? msg.createdAt : Date.now(),
+      });
+      renderEditsIfActive(entry);
+      syncUnreadDot();
+      break;
+    }
+    case 'askEditResolved': {
+      // Accept/Reject 终态：accepted ⇒ 服务端已写盘 ⇒ 画布按同守卫重载
+      // （refreshFileTabByPath：脏编辑/源码模式让路）；rejected/error ⇒ 盘上未动。
+      // error（stale 等）提案保持待审——但本地 waiting 位解锁，可再点或另提。
+      const edit = (Array.isArray(entry.edits) ? entry.edits : [])
+        .find((x) => x.proposalId === msg.proposalId);
+      if (edit) {
+        edit.waiting = false;
+        if (msg.outcome === 'accepted' || msg.outcome === 'rejected') {
+          edit.outcome = msg.outcome;
+          edit.error = '';
+        } else {
+          edit.outcome = '';
+          edit.error = typeof msg.error === 'string' ? msg.error : 'resolve failed';
+        }
+      }
+      if (msg.outcome === 'accepted') {
+        const path = typeof msg.path === 'string' && msg.path ? msg.path : (edit ? edit.path : '');
+        if (path) refreshFileTabByPath(path);
+      }
+      if (!(entry === activeSession() && isOpen())) entry.unread = true;
+      renderEditsIfActive(entry);
+      syncUnreadDot();
       break;
     }
     case 'user': {
