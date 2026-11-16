@@ -206,6 +206,22 @@ const jsFiles = walk(JS_DIR, '.js').filter((f) => !f.includes(`${'vendor'}`));
   notes.push(`R1 色相令牌：${[...names].join(', ') || '（无）'}`);
 }
 
+// The notice tint and the Ask user bubble must share one explicit source.
+{
+  const src = stripComments(readFileSync(join(CSS_DIR, 'glass.css'), 'utf8'));
+  const defs = [...src.matchAll(/--nf-bub-injected-bg\s*:\s*([^;]+);/g)];
+  if (defs.length !== 1 || defs[0][1].trim() !== 'rgb(var(--sapphire) / 0.12)') {
+    violations.push('R1 注入通知底色令牌必须单点定义为原 sapphire tint');
+  }
+  const rules = parseCss(src);
+  for (const selector of [INJECTED_NOTICE_SELECTOR, '.ask-dock .ask-bub.user']) {
+    const matches = rules.filter((r) => r.selector === selector);
+    if (matches.length !== 1 || !matches[0].decls.some((d) => d.prop === 'background' && d.value === 'var(--nf-bub-injected-bg)')) {
+      violations.push(`R1 ${selector} 必须使用注入通知底色令牌`);
+    }
+  }
+}
+
 // R2 / R3 逐规则的底色取值
 let faceRules = 0;
 for (const f of cssFiles) {
@@ -221,7 +237,7 @@ for (const f of cssFiles) {
     // The pre-2026-11-06 color is intentionally restored and pinned to the exact selector.
     if (rule.selector === INJECTED_NOTICE_SELECTOR) {
       for (const d of bg) {
-        if (d.value.replace(/\s+/g, ' ').trim() !== 'rgb(var(--sapphire) / 0.12)') {
+        if (d.value.replace(/\s+/g, ' ').trim() !== 'var(--nf-bub-injected-bg)') {
           violations.push(`R2 ${rel}:${d.line} 注入通知底色偏离改前 sapphire tint：${d.value}`);
         }
       }
@@ -238,6 +254,7 @@ for (const f of cssFiles) {
       const v = d.value.replace(/\s+/g, ' ').trim();
       const ok = v === OURS || v === THEIRS;
       if (ok) continue;
+      if (rel === 'glass.css' && rule.selector === '.ask-dock .ask-bub.user' && v === 'var(--nf-bub-injected-bg)') continue;
       if (exempt && exempt.allow.has(v)) {
         notes.push(`R2 豁免 ${rel}:${d.line} \`${rule.selector}\` = ${v} —— ${exempt.reason}`);
         continue;
