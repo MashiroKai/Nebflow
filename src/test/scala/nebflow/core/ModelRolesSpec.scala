@@ -2,6 +2,7 @@ package nebflow.core
 
 import munit.FunSuite
 import nebflow.shared.AgentModelConfig
+import scala.jdk.CollectionConverters.*
 
 /**
  * 模型粒度批（作者令 2026-11-06 20:36 逐字「按主agent/ kernel /dispatcher/node/subagent
@@ -51,6 +52,32 @@ class ModelRolesSpec extends FunSuite:
       nebflow.shared.PathUtil.setDataRoot(original)
       os.remove.all(tmp)
     end try
+  }
+
+  test("small LLM fallback logs WARN while configured selection does not") {
+    val original = nebflow.shared.PathUtil.dataRoot
+    val tmp = os.temp.dir(prefix = "nb-small-llm-warn-")
+    val logger = org.slf4j.LoggerFactory.getLogger("nebflow.model.small-llm")
+      .asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    appender.start()
+    logger.addAppender(appender)
+    try
+      nebflow.shared.PathUtil.setDataRoot(tmp)
+      os.write.over(tmp / "agents" / "Nebula" / "agent.json", """{"model":{"preferred":"p/main"}}""", createFolders = true)
+      assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/main"))
+      val events = appender.list.asScala.toList
+      assertEquals(events.count(e => e.getLevel == ch.qos.logback.classic.Level.WARN &&
+        e.getFormattedMessage.contains("falling back to the main model")), 1)
+      appender.list.clear()
+      os.write.over(tmp / "agents" / "small-llm" / "agent.json", """{"model":{"preferred":"p/small"}}""", createFolders = true)
+      assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/small"))
+      assert(!appender.list.asScala.exists(_.getLevel == ch.qos.logback.classic.Level.WARN))
+    finally
+      logger.detachAppender(appender)
+      appender.stop()
+      nebflow.shared.PathUtil.setDataRoot(original)
+      os.remove.all(tmp)
   }
 
   test("五槽 wire 名 = main/kernel/dispatcher/node/subagent；sidecar 槽名与 wire 名解耦") {

@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-const WEB_DIR = resolve(ROOT, 'src/main/resources/web');
+const WEB_DIR = resolve(process.env.WEB_DIR || resolve(ROOT, 'src/main/resources/web'));
 const PORT = Number(process.env.PORT || 8334);
 const BASE = `http://127.0.0.1:${PORT}`;
 const SHOTS_DIR = process.env.SHOTS_DIR ||
