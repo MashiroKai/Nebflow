@@ -229,6 +229,19 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     }
   }
 
+  test("canonical equivalents select and count only matching raw occurrences") {
+    // Matching precedes stableId grouping: the representative is a matching occurrence,
+    // so its ord can safely identify a message that actually matched the query.
+    seed(List(doc("raw-unicode-equivalence", 0, "message", 42L, "é"),
+      doc("raw-unicode-equivalence", 1, "message", 42L, "e\u0301")))
+    val composed = SearchIndexService.stableId("raw-unicode-equivalence", "message", 42L, "é", "")
+    val decomposed = SearchIndexService.stableId("raw-unicode-equivalence", "message", 42L, "e\u0301", "")
+    assertEquals(composed, decomposed)
+    val result = SearchIndexService.query(face, q("e", sid = Some("raw-unicode-equivalence")))
+      .unsafeRunSync().toOption.get
+    assertEquals(result.hits.map(h => (h.ord, h.occurrenceCount, h.stableId)), List((1, 1, composed)))
+  }
+
   test("cursor detects changes and returns a fresh first page") {
     val ds = (0 until 101).toList.map(i => doc("cursor-race", i, "message", i + 1L, s"cursor-race-$i"))
     SearchIndexService.unsafeInsertDocs(face, ds.take(100))
