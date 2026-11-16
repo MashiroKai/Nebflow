@@ -413,7 +413,7 @@ private[project] trait NodeStarter:
                   case (Right(wGrant), Right(vGrant)) =>
                     for
                       cancelSig <- Deferred[IO, Unit]
-                      _ <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
+                      runIdentity <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
                       worker <- spawnLoopSession(
                         workerBase,
                         prepared,
@@ -466,7 +466,7 @@ private[project] trait NodeStarter:
                         sessionDevice = sessionDevice,
                         sessionDeviceWorkspace = sessionDeviceWorkspace
                       )
-                      _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
+                      _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume, runIdentity)
                         .guarantee(
                           destroyLoopSessions(nodeId, worker, verify) *>
                             resources.pluginMcp.release(workerSessionId) *>

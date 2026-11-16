@@ -181,7 +181,7 @@ private[project] trait NodeLoopRunner:
     nodeId: String,
     nodeName: String,
     verifySessionId: Option[String] = None
-  ): IO[Unit] =
+  ): IO[(Option[String], Option[Long])] =
     for
       _ <- running.modify { m => if m.contains(nodeId) then (m, ()) else (m + (nodeId -> cancelSig), ()) }
       _ <- nodeSessions.update(_ + (nodeId -> sessionId))
@@ -235,7 +235,7 @@ private[project] trait NodeLoopRunner:
             nodeSessions.update(_ - nodeId) *>
             FlowMapEventLog.append(workspace, projectName, nodeId, "start-aborted", s"start aborted: $reason") *>
             IO.raiseError(new RuntimeException(s"Node '$nodeName' ($nodeId) start aborted — $reason"))
-    yield ()
+    yield (Some(sessionId), Some(now))
 
   /**
    * 终态双会话销毁（裁定 B）：停 agent + 停桥 + 注销 registry。MCP release 与
@@ -283,7 +283,8 @@ private[project] trait NodeLoopRunner:
     verify: LoopSession,
     workerFirstInput: String,
     cancelSig: Deferred[IO, Unit],
-    resume: Option[NodeEngine.ResumeContext] = None
+    resume: Option[NodeEngine.ResumeContext],
+    runIdentity: (Option[String], Option[Long])
   ): IO[Unit] =
     val nodeId = node.id
     val loopCfg = node.loop.get
@@ -387,7 +388,7 @@ private[project] trait NodeLoopRunner:
       VerdictReader.parse(vText) match
         case VerdictReader.Verdict.Pass =>
           // PASS: deliver the worker's final output verbatim (ruling 2.2 recommendation a)
-          completeNodeR(nodeId, wText).void
+          completeNodeR(nodeId, wText, Some(runIdentity)).void
         case f: VerdictReader.Verdict.Fail =>
           // FAIL: send back to the worker (same session, opinion injected), round + 1, up to K
           setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
@@ -601,17 +602,23 @@ private[project] trait NodeLoopRunner:
    * 的终态，若排在终态写入之前会被 `completeNode` 覆写回 completed（回边随即只跑
    * 一轮即静默冻结）。
    */
-  private[project] def verifierFailR(nodeId: String, fb: NodeFeedback, resultText: String): IO[Boolean] =
+  private[project] def verifierFailR(
+    nodeId: String, fb: NodeFeedback, resultText: String,
+    expectedRun: Option[(Option[String], Option[Long])] = None
+  ): IO[Boolean] =
     IO(System.currentTimeMillis()).flatMap { now =>
       store.snapshot.flatMap { s =>
         s.nodes.get(nodeId) match
           case None =>
             logger.warn(s"Node '$nodeId' vanished before its verdict could be recorded — fail verdict dropped") *>
               IO.pure(false)
-          case Some(v) =>
+          case Some(v) if v.status == NodeLifecycle.Running &&
+              expectedRun.forall(_ == (v.sessionRef, v.startedAt)) =>
             loopRouteTargetId(v).flatMap {
               case None =>
-                recordVerdict(nodeId, VerdictFail) *>
+                gateAndCompleteFor(nodeId, v, resultText, Some((VerdictFail, false))).flatMap {
+                  case false => IO.pure(false)
+                  case true =>
                   logger.warn(
                     s"Node '${v.name}' (${nodeId}) reported a fail verdict but declares no usable '(fail)<target>:loop' edge — " +
                       "REJECTION STATE: the verdict is recorded and the node completes, but NO re-run route exists, so the " +
@@ -628,8 +635,8 @@ private[project] trait NodeLoopRunner:
                   ) *>
                   // 拒绝态留痕（卡 A4 / §2.5）：主语 = 本 verifier；「判词无处可去」这一事实
                   // 不再只落一句良性退化文案 —— 事件行 + WARN + 载荷键三级同款。
-                  emitVerifierRouteLost(List(nodeId -> ""), "fail verdict with no usable route") *>
-                  gateAndComplete(nodeId, resultText)
+                  emitVerifierRouteLost(List(nodeId -> ""), "fail verdict with no usable route").as(true)
+                }
               case Some(targetId) =>
                 store.findNode(targetId).flatMap { tOpt =>
                   val startedAt = tOpt.flatMap(_.loopStartedAt)
@@ -641,21 +648,20 @@ private[project] trait NodeLoopRunner:
                   val consumed = v.loopRound + 1
                   LoopBudget.decide(consumed, maxRounds, startedAt, now, maxWall) match
                     case Some(reason) =>
-                      circuitBreakLoopR(v, Some(targetId), reason, now, consumed, Some(resultText))
+                      circuitBreakLoopR(v, Some(targetId), reason, now, consumed, Some(resultText), Some((v.sessionRef, v.startedAt)))
                     case None =>
                       val issues =
                         List(if fb.detail.trim.isEmpty then VerdictReader.PlaceholderIssues else fb.detail.trim)
                       for
-                        _ <- recordVerdict(nodeId, VerdictFail, bumpRound = true)
-                        _ <- stampLoopStartedAt(targetId, now)
-                        // gateAndComplete（非 completeNodeR）：判词已在本函数消费，
-                        // 再入 completeNodeR 会对同一锚定文重入判词腿（死循环）。
-                        landed <- gateAndComplete(nodeId, resultText)
-                        // 执行腿（二期）：终态写入之后再复位驱动方 + 重激活目标 + 重跑
-                        _ <- reloopTo(v, targetId, consumed, maxRounds, issues, fb.suggestion)
+                        landed <- gateAndCompleteFor(nodeId, v, resultText, Some((VerdictFail, true)))
+                        _ <- if landed then
+                          stampLoopStartedAt(targetId, now) *>
+                            reloopTo(v, targetId, consumed, maxRounds, issues, fb.suggestion)
+                        else IO.unit
                       yield landed
                 }
             }
+          case _ => IO.pure(false)
       }
     }
 
@@ -689,7 +695,8 @@ private[project] trait NodeLoopRunner:
     reason: String,
     now: Long,
     rounds: Int,
-    finalText: Option[String] = None
+    finalText: Option[String] = None,
+    expectedRun: Option[(Option[String], Option[Long])] = None
   ): IO[Boolean] =
     val maxRounds = nebflow.shared.Defaults.LoopMaxRounds
     val metering = s"rounds=$rounds/$maxRounds wallClockMaxMs=${nebflow.shared.Defaults.LoopMaxWallClockMs}"
@@ -722,7 +729,16 @@ private[project] trait NodeLoopRunner:
         // ② + ④：既有 failed 链（deliverFailed → merge 兜底/停等留痕 → dispatchNotify failed）
         // #239①：落地判词随之向上回报（本腿的 `fail` 申报也走消费点）
         failNodeR(v.id, msgWithConclusion)
-    store.getNode(v.id).flatMap {
+    if expectedRun.isDefined then
+      failNodeR(v.id, msgWithConclusion, expectedRun, Some(VerdictFail)).flatMap {
+        case false => IO.pure(false)
+        case true =>
+          targetId.traverse_(clearLoopStartedAt) *>
+            FlowMapEventLog.append(workspace, projectName, v.id, LoopBudgetEventType,
+              s"$msg target=${targetId.getOrElse("<none>")} verdict=fail conclusion=retained") *>
+            IO.pure(true)
+      }
+    else store.getNode(v.id).flatMap {
       case Some(fresh) if fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Cancelled =>
         logger.info(
           s"Node '${v.name}' (${v.id}) loop circuit-break skipped — the fail-route driver is already " +

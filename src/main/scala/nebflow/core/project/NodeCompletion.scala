@@ -72,10 +72,11 @@ private[project] trait NodeCompletion:
                   detail = f.issues.mkString("; "),
                   suggestion = f.requirements
                 ),
-                resultText
+                resultText,
+                Some((fresh.sessionRef, fresh.startedAt))
               )
             case Some(VerdictReader.Verdict.Pass) =>
-              recordVerdict(nodeId, VerdictPass) *> gateAndCompleteFor(nodeId, fresh, resultText)
+              gateAndCompleteFor(nodeId, fresh, resultText, Some((VerdictPass, false)))
             case None => gateAndCompleteFor(nodeId, fresh, resultText)
         else gateAndCompleteFor(nodeId, fresh, resultText)
       case _ => IO.pure(false)
@@ -93,18 +94,20 @@ private[project] trait NodeCompletion:
       case None        => completedNodeR(nodeId, resultText)
     }
 
-  private def gateAndCompleteFor(nodeId: String, fresh: NodeDef, resultText: String): IO[Boolean] =
+  private[project] def gateAndCompleteFor(
+    nodeId: String, fresh: NodeDef, resultText: String, verdict: Option[(String, Boolean)] = None
+  ): IO[Boolean] =
     CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
       case CompletionGate.Pass(reason) =>
         logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
-        completedNodeR(nodeId, resultText, Some((fresh.sessionRef, fresh.startedAt)))
+        completedNodeR(nodeId, resultText, Some((fresh.sessionRef, fresh.startedAt)), verdict)
       case CompletionGate.Reject(reason, _) =>
         logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
         failNodeR(
           nodeId,
           s"Completion gate rejected node output: $reason\n${CompletionGate.withOriginalText(resultText)}",
           Some((fresh.sessionRef, fresh.startedAt))
-        )
+        ).map(landed => landed && !verdict.exists(_._1 == VerdictFail))
     }
 
   /**
@@ -114,7 +117,8 @@ private[project] trait NodeCompletion:
   private def completedNodeR(
     nodeId: String,
     resultText: String,
-    expectedRun: Option[(Option[String], Option[Long])] = None
+    expectedRun: Option[(Option[String], Option[Long])] = None,
+    verdict: Option[(String, Boolean)] = None
   ): IO[Boolean] =
     for
       now <- IO(System.currentTimeMillis())
@@ -126,6 +130,8 @@ private[project] trait NodeCompletion:
               fresh.copy(
                 status = NodeLifecycle.Completed,
                 result = Some(resultText),
+                lastVerdict = verdict.map(_._1).orElse(fresh.lastVerdict),
+                loopRound = if verdict.exists(_._2) then fresh.loopRound + 1 else fresh.loopRound,
                 completedAt = Some(now),
                 ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)
               )
@@ -521,7 +527,8 @@ private[project] trait NodeCompletion:
   private[project] def failNodeR(
     nodeId: String,
     err: String,
-    expectedRun: Option[(Option[String], Option[Long])] = None
+    expectedRun: Option[(Option[String], Option[Long])] = None,
+    verdict: Option[String] = None
   ): IO[Boolean] =
     // ── draining 守卫（中断恢复语义批 2026-09-13，spec §2.3-3）────────────────
     // 优雅关机窗口内，abort 钩子（GracefulInterruptHook 第 3 腿 / ShutdownAbort）
@@ -557,6 +564,7 @@ private[project] trait NodeCompletion:
                 fresh.copy(
                   status = NodeLifecycle.Failed,
                   result = Some(err),
+                  lastVerdict = verdict.orElse(fresh.lastVerdict),
                   completedAt = Some(now),
                   // failed retains the failure scene without a TTL.
                   ttlExpireAt = None

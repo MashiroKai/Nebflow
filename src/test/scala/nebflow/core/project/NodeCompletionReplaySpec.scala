@@ -25,7 +25,7 @@ class NodeCompletionReplaySpec extends CatsEffectSuite:
       Stream.raiseError[IO](new RuntimeException("unexpected LLM"))
 
   private def fixture(name: String)(run: (FlowMapStore, NodeEngine, Ref[IO, List[String]]) => IO[Unit]): IO[Unit] =
-    val ws = root / name
+    val ws = root / s"$name-${java.util.UUID.randomUUID()}"
     os.makeDir.all(ws)
     val system = ActorSystem(s"replay-$name")
     for
@@ -71,6 +71,54 @@ class NodeCompletionReplaySpec extends CatsEffectSuite:
         _ = assertEquals(results.count(identity), 1)
         _ = assertEquals(after.flatMap(_.result), Some("result"))
         _ = assertEquals(emitted.count(_ == "nodeCompleted"), 1)
+      yield ()
+    }
+  }
+
+  test("concurrent verifier PASS has one atomic verdict and completion") {
+    fixture("verifier-pass") { (store, engine, events) =>
+      val verifier = node(NodeLifecycle.Running).copy(role = NodeRoles.Verifier)
+      for
+        _ <- seed(store, verifier)
+        results <- List.fill(2)(engine.completeNodeR("n", "VERDICT: PASS")).parSequence
+        after <- store.getNode("n")
+        emitted <- events.get
+        _ = assertEquals(results.count(identity), 1)
+        _ = assertEquals(after.flatMap(_.lastVerdict), Some("pass"))
+        _ = assertEquals(emitted.count(_ == "nodeCompleted"), 1)
+        _ = assertEquals(emitted.count(_ == "nodeUpdated"), 0)
+      yield ()
+    }
+  }
+
+  test("concurrent verifier FAIL without a route records and audits once") {
+    fixture("verifier-fail") { (store, engine, events) =>
+      val verifier = node(NodeLifecycle.Running).copy(role = NodeRoles.Verifier)
+      for
+        _ <- seed(store, verifier)
+        results <- List.fill(2)(engine.completeNodeR("n", "VERDICT: FAIL\n{\"issues\":[\"bad\"],\"requirements\":\"fix\"}")).parSequence
+        after <- store.getNode("n")
+        emitted <- events.get
+        _ = assertEquals(results.count(identity), 1)
+        _ = assertEquals(after.flatMap(_.lastVerdict), Some("fail"))
+        _ = assertEquals(emitted.count(_ == "nodeCompleted"), 1)
+        audit <- IO.blocking(os.read(os.Path(store.baseWorkspace) / ".nebflow" / FlowMapEventLog.FileName))
+        _ = assertEquals(audit.linesIterator.count(line => io.circe.parser.parse(line).toOption.exists(_.hcursor.get[String]("type").contains(FlowMapEventLog.VerifierRouteLostType))), 1)
+      yield ()
+    }
+  }
+
+  test("old verifier generation cannot mutate a newer verifier verdict") {
+    fixture("verifier-generation") { (store, engine, events) =>
+      val current = node(NodeLifecycle.Running, "run-2", 2L).copy(role = NodeRoles.Verifier)
+      for
+        _ <- seed(store, current)
+        accepted <- engine.completeNodeR("n", "VERDICT: PASS", Some((Some("run-1"), Some(1L))))
+        after <- store.getNode("n")
+        emitted <- events.get
+        _ = assertEquals(accepted, false)
+        _ = assertEquals(after, Some(current))
+        _ = assertEquals(emitted, Nil)
       yield ()
     }
   }
