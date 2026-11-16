@@ -137,8 +137,11 @@ class MailAskChannelSpec extends FunSuite:
       Behaviors.receiveMessage[AgentCommand](cmd => record.update(_ :+ cmd).as(loop))
     loop
 
-  /** 建一个 ask 绑定（可问 .md 文件 + 注册表安装到服务定位）。 */
-  private def mountAskFace(docName: String = "spec-doc.md"): (AskSessionRegistry, String, os.Path) =
+  /** 建一个 ask 绑定（可问 .md 文件 + 注册表安装到服务定位）。doc 名每次唯一：
+   * sid 由绑定路径哈希派生 ⇒ 每例独立 ask 会话与邮箱目录，前例的 pending 条目
+   * 不会泄漏进后例的零残留断言（round1 红 2 根因 = 固定路径让全 suite 共享 sid）。 */
+  private def mountAskFace(): (AskSessionRegistry, String, os.Path) =
+    val docName = s"spec-doc-${java.util.UUID.randomUUID().toString.take(8)}.md"
     val doc = tempRoot / "docs" / docName
     os.write.over(doc, "# spec doc\nbody", createFolders = true)
     val registry = new AskSessionRegistry(tempRoot)
