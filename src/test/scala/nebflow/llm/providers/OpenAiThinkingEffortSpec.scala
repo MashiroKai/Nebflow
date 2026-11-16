@@ -33,7 +33,7 @@ class OpenAiThinkingEffortSpec extends FunSuite:
 
   test("explicit provider model and tier allowlist enables only that effort") {
     val adapter = OpenAiAdapter("http://localhost:0", "k", null,
-      effortAllowlist = Some(Map("m" -> List(ThinkingEffort.Max))))
+      effortAllowlist = Some(Map("http://localhost:0/chat/completions" -> Map("m" -> List(ThinkingEffort.Max)))))
     val resolved = Some(ResolvedThinking(ThinkingKind.Budget, enabled = true, Some(ThinkingEffort.Max)))
     assertEquals(adapter.bodyWithSearchThinking(Json.obj(), "m", thinkingEnabled, None, resolved)
       .hcursor.get[String]("reasoning_effort").toOption, Some("max"))

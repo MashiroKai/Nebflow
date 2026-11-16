@@ -119,8 +119,8 @@ class ThinkingInheritanceSpec extends FunSuite:
   }
 
   test("provider config decodes an explicit model and tier effort allowlist") {
-    val json = parse("""{"baseUrl":"https://example.invalid","apiKey":"test","protocol":"openai","models":[],"effortAllowlist":{"model":["high"]}}""").toOption.get
-    assertEquals(json.as[ProviderConfig].toOption.flatMap(_.effortAllowlist), Some(Map("model" -> List(ThinkingEffort.High))))
+    val json = parse("""{"baseUrl":"https://example.invalid","apiKey":"test","protocol":"openai","models":[],"effortAllowlist":{"https://example.invalid/chat/completions":{"model":["high"]}}}""").toOption.get
+    assertEquals(json.as[ProviderConfig].toOption.flatMap(_.effortAllowlist), Some(Map("https://example.invalid/chat/completions" -> Map("model" -> List(ThinkingEffort.High)))))
   }
 
   // ── I4：per-model 层定点 patch ───────────────────────────────────────────

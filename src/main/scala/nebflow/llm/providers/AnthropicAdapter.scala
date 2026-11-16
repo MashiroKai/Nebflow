@@ -41,7 +41,7 @@ class AnthropicAdapter(
    * 事故背景见 [[HttpHeaders]] 文件头（cmdcode 的 403/1010 = 无 UA 被 Cloudflare 挡）。
    */
   providerHeaders: Option[Map[String, String]] = None,
-  effortAllowlist: Option[Map[String, List[ThinkingEffort]]] = None
+  effortAllowlist: Option[Map[String, Map[String, List[ThinkingEffort]]]] = None
 ) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
@@ -458,7 +458,7 @@ class AnthropicAdapter(
 
   private def effortFragment(params: SendMessageParams, kind: ThinkingKind): Option[Json] =
     val effort = params.thinkingResolved.flatMap(_.effort)
-    val allowed = effort.filter(e => effortAllowlist.flatMap(_.get(params.model)).exists(_.contains(e)))
+    val allowed = effort.filter(e => effortAllowlist.flatMap(_.get(endpoint)).flatMap(_.get(params.model)).exists(_.contains(e)))
     val fragment = allowed.flatMap { e =>
       kind match
         case ThinkingKind.EffortAnthropic => Some(Json.obj("output_config" -> Json.obj("effort" -> e.wireName.asJson)))

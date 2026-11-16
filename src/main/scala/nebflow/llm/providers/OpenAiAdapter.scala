@@ -65,7 +65,7 @@ class OpenAiAdapter(
    * cmdcode（OpenAI 面）的 403/1010 事故就是无 UA 被 Cloudflare 边缘挡下。
    */
   providerHeaders: Option[Map[String, String]] = None,
-  effortAllowlist: Option[Map[String, List[ThinkingEffort]]] = None
+  effortAllowlist: Option[Map[String, Map[String, List[ThinkingEffort]]]] = None
 ) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
   private val logger = NebflowLogger.forName("nebflow.llm.openai")
@@ -92,7 +92,7 @@ class OpenAiAdapter(
           Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
         else
           resolved.filter(_.enabled).flatMap(_.effort)
-            .filter(e => effortAllowlist.flatMap(_.get(model)).exists(_.contains(e)))
+            .filter(e => effortAllowlist.flatMap(_.get(endpoint)).flatMap(_.get(model)).exists(_.contains(e)))
             .fold(Json.obj())(e => Json.obj("reasoning_effort" -> e.wireName.asJson))
       case _ => Json.obj()
 

@@ -62,7 +62,7 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 30.seconds
 
-  private def adapter(passback: Boolean = false, url: String = "http://localhost:0", allow: Option[Map[String, List[ThinkingEffort]]] = None): AnthropicAdapter =
+  private def adapter(passback: Boolean = false, url: String = "http://localhost:0", allow: Option[Map[String, Map[String, List[ThinkingEffort]]]] = None): AnthropicAdapter =
     AnthropicAdapter(
       url,
       "k",
@@ -197,7 +197,7 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
   // ── W9/W10/W11/W12：第二段点亮（effort 档位）────────────────────────────
 
   test("W9: k3.1 + effort high → top-level reasoning_effort:high, still NO thinking key") {
-    val f = adapter(url = "https://api.kimi.com/coding", allow = Some(Map("k3.1-pro-highspeed" -> List(ThinkingEffort.High)))).wireThinkingFragment(
+    val f = adapter(url = "https://api.kimi.com/coding", allow = Some(Map("https://api.kimi.com/coding/v1/messages" -> Map("k3.1-pro-highspeed" -> List(ThinkingEffort.High))))).wireThinkingFragment(
       params("k3.1-pro-highspeed", budgetOn, Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.High))))
     )
     assertEquals(f.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"))
