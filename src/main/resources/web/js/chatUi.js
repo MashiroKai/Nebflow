@@ -19,6 +19,12 @@ export function chatFooterTime(extraClass = '', text = '') {
   return el;
 }
 
+// Standard main-chat bubbles keep their original classes and order. Unlike the
+// message-window side factory, this does not add a side class to existing rows.
+export function mainBubbleClass(role, extra = '') {
+  return `bubble ${role}${extra ? ' ' + extra : ''}`;
+}
+
 // D1: Ask's glass bubble is intentionally distinct from the standard bubble.
 export function askBubbleClass(role) {
   return 'ask-bub nf-glass ' + (role === 'user' ? 'user' : 'ai');

@@ -2,6 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
+import { mainBubbleClass } from './chatUi.js';
 import { key } from './branding.js';
 // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：TTS
 // 输出族（<voice> 块 + VoicePlayer 播报）与全双工同 flag 封存（voiceEnabled，
@@ -554,7 +555,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
     // UI-G: main window only — a subagent / flow popup view renders the same
     // bubble with no animation class at all (its container also carries
     // `.nf-static`; this keeps the class off its DOM too).
-    bubble.className = activeView.motionEnabled() ? 'bubble user nf-pop' : 'bubble user';
+    bubble.className = mainBubbleClass('user', activeView.motionEnabled() ? 'nf-pop' : '');
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
@@ -772,7 +773,7 @@ export function appendAiText(text, mark) {
     const row = document.createElement('div');
     row.className = 'row ai';
     view.stream.currentAiBubble = document.createElement('div');
-    view.stream.currentAiBubble.className = 'bubble ai';
+    view.stream.currentAiBubble.className = mainBubbleClass('ai');
     row.appendChild(view.stream.currentAiBubble);
     appendChatRow(chat, row);
   }
@@ -909,7 +910,7 @@ export function appendAgentText(agentId, text) {
     const row = document.createElement('div');
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
-    bubble.className = 'bubble ai';
+    bubble.className = mainBubbleClass('ai');
     let badge = null;
     if (agentId && agentId !== 'default') {
       // F1（作者 2026-09-16 决策卡）：通用「Agent 代发」徽章 —— 主对话面**放弃**
@@ -4100,7 +4101,7 @@ export function appendAskAnswer(delta) {
     const row = document.createElement('div');
     row.className = 'row ai';
     view.stream.currentAskBubble = document.createElement('div');
-    view.stream.currentAskBubble.className = 'bubble ai';
+    view.stream.currentAskBubble.className = mainBubbleClass('ai');
     const label = document.createElement('div');
     label.className = 'ask-label';
     label.textContent = t('chat.askLabel');

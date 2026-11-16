@@ -1,8 +1,9 @@
 // Synthetic inputs, production renderers/CSS; no server, live account or network.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createSession, loadPlaywright, settle } from '../scripts/lib/visual-harness.mjs';
-const out = '/tmp/chat-unify-evidence';
+const out = process.env.CHAT_UI_OUT || '/tmp/chat-unify-evidence';
 mkdirSync(out, { recursive: true });
 const { mod } = loadPlaywright();
 const browser = await mod.chromium.launch({ headless: true });
@@ -12,6 +13,14 @@ try {
     const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: theme, hasTouch: device === 'mobile', reducedMotion: 'reduce' });
     const s = await createSession({ newPage: () => ctx.newPage() }, { width, height, colorScheme: theme, baseURL: 'https://stand.test/' });
     const { page } = s;
+    if (process.env.CHAT_UI_BASE) {
+      const files = execFileSync('git', ['diff', '--name-only', process.env.CHAT_UI_BASE, '--', 'src/main/resources/web/'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+      for (const file of files) {
+        const bytes = execFileSync('git', ['show', `${process.env.CHAT_UI_BASE}:${file}`]);
+        const path = '/' + file.replace('src/main/resources/web/', '');
+        await page.route(`https://stand.test${path}`, route => route.fulfill({ body: bytes, contentType: file.endsWith('.css') ? 'text/css' : 'text/javascript' }));
+      }
+    }
     const shot = async (id, variant, locator) => {
       await locator.first().waitFor({ state: 'visible', timeout: 15000 });
       const file = join(out, `${id}-${variant}-${device}-${theme}.png`);
@@ -48,8 +57,10 @@ try {
       await settle(page);
       await page.locator('.ask-fab:not(.note-fab)').first().click();
       await page.waitForSelector('.ask-dock:not(.closed)', { state: 'visible' });
+      await shot('buttons', 'ask-send', page.locator('.ask-dock .ask-send'));
       await page.locator('.ask-dock textarea').fill('Synthetic question for visual comparison.');
       await page.locator('.ask-dock .ask-send').click();
+      await shot('buttons', 'ask-stop', page.locator('.ask-dock .ask-stop'));
       await settle(page);
       await shot('D1', 'C-ask', page.locator('.ask-dock .ask-bub'));
       await shot('D2', 'C-ask', page.locator('.ask-dock .ask-input'));

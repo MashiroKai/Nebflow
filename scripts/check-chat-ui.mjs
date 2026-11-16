@@ -12,6 +12,7 @@ const requirements = [
   ['js/messages/fmComposer.js', /chatComposerClass\('messages'\)/],
   ['js/askDock.js', /chatComposerClass\('ask'\)/, /askBubbleClass\(m\.role\)/],
   ['js/main.js', /from '\.\/chatSearch\.js'/],
+  ['js/chat.js', /mainBubbleClass\('user'/, /mainBubbleClass\('ai'\)/],
   ['js/chatUi.js', /'ask-bub nf-glass '/, /'ask-input nf-glass'/, /'fm-input-bar nf-glass'/],
 ];
 const errors = [];
