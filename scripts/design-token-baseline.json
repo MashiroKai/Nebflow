@@ -344,6 +344,12 @@
       "fsSmall": 0,
       "radiusOff": 0
     },
+    "js/chatUi.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
     "js/contacts.js": {
       "color": 3,
       "transitionAll": 0,
