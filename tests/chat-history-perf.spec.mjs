@@ -269,6 +269,34 @@ const firstDup = await page.evaluate(() => {
 await page.evaluate(() => { window.__noReloadMarker = { at: Date.now() }; window.__lt = { n: 0, total: 0, max: 0 }; });
 const navAtBoot = navigated;
 
+// Dedicated real-input pagination probe; no test scrollTop writes after input.
+if (process.env.NB_WHEEL_PAGE === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  await page.mouse.wheel(0, -1);
+  await chat.evaluate((c) => { c.scrollTop = 1000; });
+  await page.waitForTimeout(300);
+  const n0 = await rowCount();
+  const before = await chat.evaluate((c) => c.scrollTop);
+  await page.mouse.wheel(0, -650);
+  const capture = await chat.evaluate(async (c) => {
+    await new Promise(requestAnimationFrame);
+    const bounds = c.getBoundingClientRect();
+    const row = [...c.querySelectorAll('.row')].find((r) => { const b = r.getBoundingClientRect(); return b.bottom > bounds.top && b.top < bounds.bottom; });
+    window.__realPageAnchor = row && { row, top: row.getBoundingClientRect().top - bounds.top };
+    return { scrollTop: c.scrollTop, anchorTop: window.__realPageAnchor?.top };
+  });
+  await page.waitForFunction((n) => document.querySelectorAll('#chat .row').length > n, n0, { timeout: 20000 });
+  await page.waitForTimeout(700);
+  const after = await chat.evaluate((c) => {
+    const a = window.__realPageAnchor;
+    return { scrollTop: c.scrollTop, error: a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null };
+  });
+  const pass = capture.scrollTop < before && after.error !== null && after.error <= 2;
+  console.log('[real-page] ' + JSON.stringify({ before, capture, after, requests: histReqs, pass }));
+  await browser.close(); server.close(); process.exit(pass ? 0 : 1);
+}
+
 // Trusted browser input: move the viewport by five upward wheel ticks, then
 // retain the visible element while the resulting pagination completes.
 let realWheelResult = null;
