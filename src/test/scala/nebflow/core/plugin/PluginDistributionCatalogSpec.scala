@@ -300,6 +300,18 @@ class PluginDistributionCatalogSpec extends FunSuite:
       case Left(err) => fail(s"newer revision must advance: $err")
   }
 
+  test("read-only verified load does not advance revision; advancing load records it") {
+    val dir = home / "cat-preview"
+    val kp = genKey()
+    writeCatalog(dir, 17L, Nil, kp, "acme-release-1")
+    configureDirSource("preview", dir, "acme-release-1", pubHex(kp))
+    val state = home / "plugin-catalog-state" / "preview.json"
+    assert(PluginDistributionCatalog.loadVerified("preview", advance = false).unsafeRunSync().isRight)
+    assert(!os.exists(state), "preview must not write revision state")
+    assert(PluginDistributionCatalog.loadVerified("preview", advance = true).unsafeRunSync().isRight)
+    assert(os.exists(state), "install load must record revision state")
+  }
+
   test("loadVerified: catalog file above the size cap is refused") {
     val dir = home / "cat-src"
     val kp  = genKey()
