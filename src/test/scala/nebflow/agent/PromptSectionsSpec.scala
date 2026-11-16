@@ -282,44 +282,24 @@ class PromptSectionsSpec extends munit.FunSuite:
       os.remove.all(tempRoot)
 
   // ============================================================
-  // System prompt assembly: optional shared prefix, agent prompt, conditional blocks.
+  // System prompt assembly uses the packaged resource, not the data root.
   // ============================================================
 
-  test("agent system.md precedes conditional blocks without a prefix"):
-    val root = os.temp.dir(prefix = "system-prefix-test-")
-    try
-      val prompt = assembleSystemPrompt("AGENT-MD", "CONDITIONAL", root)
-      assertEquals(prompt, "AGENT-MD\n\nCONDITIONAL")
-    finally os.remove.all(root)
-
-  test("assembly reads and prepends a nonempty system prefix on each assembly"):
-    val root = os.temp.dir(prefix = "system-prefix-test-")
-    try
-      os.write(root / "prompt-prefix.md", "Shared guidance\n")
-      val first = assembleSystemPrompt("AGENT-MD", "CONDITIONAL", root)
-      assertEquals(first, "--- SYSTEM PREFIX ---\nShared guidance\n\nAGENT-MD\n\nCONDITIONAL")
-      os.write.over(root / "prompt-prefix.md", "Updated guidance")
-      assert(
-        assembleSystemPrompt("AGENT-MD", "", root).startsWith("--- SYSTEM PREFIX ---\nUpdated guidance\n\nAGENT-MD")
-      )
-    finally os.remove.all(root)
-
-  test("assembly leaves no prefix or marker when file is missing or whitespace-only"):
-    val root = os.temp.dir(prefix = "system-prefix-test-")
-    try
-      assertEquals(assembleSystemPrompt("A", "C", root), "A\n\nC")
-      os.write(root / "prompt-prefix.md", " \n\t")
-      assertEquals(assembleSystemPrompt("A", "C", root), "A\n\nC")
-      os.write.over(root / "prompt-prefix.md", "")
-      assertEquals(assembleSystemPrompt("A", "", root), "A")
-    finally os.remove.all(root)
-
-  test("assembleSystemPrompt omits separator when no conditional blocks"):
-    val root = os.temp.dir(prefix = "system-prefix-test-")
-    try
-      assertEquals(assembleSystemPrompt("A", "", root), "A")
-      assertEquals(assembleSystemPrompt("A", "C", root), "A\n\nC")
-    finally os.remove.all(root)
+  test("assembly prepends the classpath resource and ignores external overrides"):
+    withIsolatedDataRoot {
+      os.write(PathUtil.dataRoot / "prompt-prefix.md", "EXTERNAL OVERRIDE")
+      val stream = getClass.getResourceAsStream("/seed/prompt-prefix.md")
+      assert(stream != null, "packaged prefix resource must exist")
+      val source = scala.io.Source.fromInputStream(stream, "UTF-8")
+      val resource =
+        try source.mkString.trim
+        finally source.close()
+      val prompt = assembleSystemPrompt("AGENT-MD", "CONDITIONAL")
+      assertEquals(prompt, s"--- SYSTEM PREFIX ---\n$resource\n\nAGENT-MD\n\nCONDITIONAL")
+      assert(!prompt.contains("EXTERNAL OVERRIDE"))
+      val withoutBlocks = assembleSystemPrompt("AGENT-MD", "")
+      assertEquals(withoutBlocks, s"--- SYSTEM PREFIX ---\n$resource\n\nAGENT-MD")
+    }
 
   // ============================================================
   // Mounted projects (progressive disclosure 2026-09-07): Nebula-only

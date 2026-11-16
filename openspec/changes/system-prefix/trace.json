@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "change": "system-prefix",
+  "mappings": [
+    {
+      "requirement": "PREFIX-REQ-001",
+      "scenario": "PREFIX-SCN-001",
+      "implementation": ["src/main/scala/nebflow/agent/PromptSections.scala", "src/main/resources/seed/prompt-prefix.md", "src/test/scala/nebflow/agent/PromptSectionsSpec.scala", "src/test/scala/nebflow/agent/Phase2dSkillCatalogSpec.scala", "openspec/changes/system-prefix/proposal.md", "openspec/changes/system-prefix/design.md", "openspec/changes/system-prefix/tasks.md", "openspec/changes/system-prefix/trace.json", "openspec/changes/system-prefix/specs/system-prefix/spec.md"],
+      "tests": [{"path": "src/test/scala/nebflow/agent/PromptSectionsSpec.scala", "name": "assembly prepends the classpath resource and ignores external overrides"}]
+    },
+    {
+      "requirement": "PREFIX-REQ-001",
+      "scenario": "PREFIX-SCN-002",
+      "implementation": ["src/main/scala/nebflow/agent/PromptSections.scala"],
+      "tests": [{"path": "src/test/scala/nebflow/agent/PromptSectionsSpec.scala", "name": "assembly prepends the classpath resource and ignores external overrides"}]
+    },
+    {
+      "requirement": "PREFIX-REQ-002",
+      "scenario": "PREFIX-SCN-003",
+      "implementation": ["src/main/resources/seed/prompt-prefix.md"],
+      "tests": [{"path": "src/test/scala/nebflow/agent/Phase2dSkillCatalogSpec.scala", "name": "D.1-12: node 会话（执行 agent 模版）首条消息不含 per-agent skill 目录（order 800 停注）"}]
+    }
+  ]
+}

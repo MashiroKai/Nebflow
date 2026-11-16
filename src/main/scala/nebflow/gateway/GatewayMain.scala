@@ -1173,13 +1173,7 @@ object GatewayMain extends IOApp:
                                           wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json)),
                                           manual = nebflow.shared.Defaults.RestartRecoveryManual
                                         )
-                                        .flatMap { scopes =>
-                                          if scopes > 0 then
-                                            logger.info(
-                                              s"Boot delegate-scope sweep: $scopes scope(s) had crashed nodes claimed (rehydrate/failed)"
-                                            )
-                                          else IO.unit
-                                        }
+                                        .flatMap(report => logger.info(report.summary))
                                     else IO.unit
                                   // Boot-latency: the delegate-scope sweep re-mounts EVERY
                                   // scope host on disk (886 scopes on a busy home) purely as

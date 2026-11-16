@@ -268,9 +268,22 @@ object ProjectCrashRecovery:
   // 零改写、零迁移，旧挂载面（ProjectActor.mount → FlowMapStore.open 旧路径）照常
   // 可开、只读留档；delegate 链自新作用域目录族起。
 
+  final case class DelegateSweepReport(claimedNodes: Int = 0, heldNodes: Int = 0, orphanScopes: Int = 0):
+
+    def +(other: DelegateSweepReport): DelegateSweepReport =
+      DelegateSweepReport(
+        claimedNodes + other.claimedNodes,
+        heldNodes + other.heldNodes,
+        orphanScopes + other.orphanScopes
+      )
+
+    def summary: String =
+      s"Boot delegate-scope sweep: $claimedNodes node(s) claimed (rehydrate/failed), " +
+        s"$heldNodes node(s) held for manual recovery, $orphanScopes orphan scope(s) paused"
+
   /**
    * GatewayMain boot 链挂接入口（projectCrashSweep 邻位，同受 CrashRecoveryEnabled 闸）：
-   * 对全部作用域目录跑快段 + fork 慢段。返回有恢复动作的作用域数（>0 时调用方记 info）。
+   * 对全部作用域目录跑快段 + fork 慢段，按节点与作用域分别汇总。
    * 作用域级 handleErrorWith——单作用域异常不拖垮其他作用域与 boot（残余 Running 由
    * 宿主扫描器的 settle 腿兜底，[[DelegateFlowHosts.launchScanner]]）。
    */
@@ -309,7 +322,7 @@ object ProjectCrashRecovery:
      */
     wsSend: Option[Json => IO[Unit]] = None,
     manual: Boolean = false
-  ): IO[Int] =
+  ): IO[DelegateSweepReport] =
     DelegateFlowHosts.sweepRoots.flatMap { roots =>
       roots
         .traverse { ws =>
@@ -321,15 +334,15 @@ object ProjectCrashRecovery:
                     .error(
                       s"[boot-recovery] delegate scope '${dir.last}' sweep failed: ${Option(e.getMessage).getOrElse(e.toString)} — residual running nodes left to the scope scanner's settle leg"
                     )
-                    .as(0)
+                    .as(DelegateSweepReport())
                 )
             }
           }
         }
-        .map(_.flatten.sum)
+        .map(_.flatten.foldLeft(DelegateSweepReport())(_ + _))
     }
 
-  /** 单作用域恢复：重挂宿主 → 快段认领（同判据）→ 慢段 rehydrate（fork）。返回动作数。 */
+  /** 单作用域恢复：重挂宿主 → 快段认领（同判据）→ 慢段 rehydrate（fork）。 */
   private def recoverDelegateScope(
     baseWorkspace: String,
     scope: String,
@@ -338,7 +351,7 @@ object ProjectCrashRecovery:
     rootNotifyQuietMs: Option[Long],
     wsSend: Option[Json => IO[Unit]],
     manual: Boolean
-  ): IO[Int] =
+  ): IO[DelegateSweepReport] =
     DelegateRegistry.find(scope) match
       case None =>
         // 孤儿链判定（引擎会话治理专项 · 缺陷六，作者令 14:52）：作用域的属主
@@ -352,6 +365,7 @@ object ProjectCrashRecovery:
         // 持久收件箱补投）。挂载动作照做（只读面/面板语义要宿主在，但**零认领
         // 零续跑**）。
         recoverOrphanScope(baseWorkspace, scope, concurrency, reportGateHold, rootNotifyQuietMs, wsSend)
+          .map(n => DelegateSweepReport(orphanScopes = n))
       case Some(rec) =>
         recoverDelegateScopeOn(
           baseWorkspace,
@@ -363,7 +377,7 @@ object ProjectCrashRecovery:
           rootNotifyQuietMs,
           wsSend,
           manual
-        )
+        ).map(n => if manual then DelegateSweepReport(heldNodes = n) else DelegateSweepReport(claimedNodes = n))
 
   /**
    * 孤儿作用域处置（缺陷六）：属主 dispatcher 不在注册表的作用域。

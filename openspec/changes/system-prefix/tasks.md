@@ -1,5 +1,6 @@
 # Tasks
 
-- [x] Add red assembly tests for present, missing, empty and updated prefix files.
-- [x] Implement the smallest assembly seam and add the reviewable CLI template.
-- [x] Run focused Scala tests and record evidence and any additional check gaps in the handoff.
+- [x] Specify the replacement of runtime data-root reads with the embedded build resource.
+- [x] Add assembly and wire assertions for the resource, ordering, five tools and external-file isolation.
+- [x] Implement classpath loading and synchronize the author-reviewed resource.
+- [x] Run focused Scala tests, SDD validation and scoped formatting comparison; report evidence and gaps in the handoff.

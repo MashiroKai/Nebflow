@@ -124,9 +124,9 @@ class PluginSourceLedgerSpec extends FunSuite:
     )
     assert(os.exists(ledgerFile(name)))
 
-    // 落账后的原始 JSON 携带 schema 版本位
+    // 落账后的原始 JSON 携带 schema 版本位（schema 2 = §12.1/§5.4 分发信任面）
     val raw = os.read(ledgerFile(name))
-    assert(raw.contains("\"schema\":1"), s"账本应携带 schema 版本位, got: $raw")
+    assert(raw.contains("\"schema\":2"), s"账本应携带 schema 版本位, got: $raw")
 
   test("安装腿(git): pin clone 落账，pin = Commit(tag, 解引用 commit)（零网络；P2 起浮动 HEAD 退役，#tag 必填）"):
     PluginRegistry.invalidateCache()
