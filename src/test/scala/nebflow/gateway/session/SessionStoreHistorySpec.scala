@@ -44,8 +44,6 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
     val sessions = os.Path(tmp.resolve("sessions"))
     val tasks = os.Path(tmp.resolve("tasks"))
     try
-      val writer = SessionStore(sessions, tasks)
-      writer.load.unsafeRunSync()
       for size <- List(1200, 5000) do
         val sid = s"measure-$size"
         val payload = "synthetic history message " * 20
@@ -56,8 +54,9 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
         os.makeDir.all(sessions)
         os.write.over(sessions / s"$sid.ui.json", messages.asJson.noSpaces, createFolders = true)
         for sample <- 1 to 3 do
+          // No load(): its asynchronous boot migration truncates oversized fixtures.
+          // getHistoryPage only needs the isolated sessions directory and fresh cache.
           val reader = SessionStore(sessions, tasks)
-          reader.load.unsafeRunSync()
           def timed(label: String): Unit =
             val start = System.nanoTime()
             val (page, total, offset, _) = reader.getHistoryPage(sid, 50, Some(size - 50)).unsafeRunSync()
