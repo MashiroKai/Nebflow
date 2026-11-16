@@ -177,6 +177,38 @@ private[project] object NodeEngineContract:
     FixtureFamilyRegex.matches(node.name) && node.task.exists(_.contains(FixtureTaskMarker))
 
   /**
+   * V8 补投候选判据单点（recovery-summary 批 2026-11-16 抽取；禁复刻判据）：
+   * 「根结果欠账」节点 = 终态（completed/failed）∧ out 存在指向 Nebula 的 Result
+   * 边 ∧（completed 腿过通知策略）∧ 有 result ∧ 未记账（nebulaDeliveredAt 空）。
+   *
+   * 消费面（两处，共用本单点）：引擎补投扫描 `redeliverUnconsumedRootResults`
+   * （行为保持重构——inline 判据逐字迁出）＋恢复摘要 `RecoverySummary` 的
+   * 待投递面观察（维护期只读镜像，不改动判据本身）。
+   *
+   * 判据注解（迁自原 inline 块，语义逐字保持）：
+   *   - 边判定（P1 spec §2.2 #5）：存在指向 Nebula 且 on 含「status 对应门」的边
+   *     （completed→pass / failed→failed）。旧 "Nebula" 双读为 {pass,failed} 双通报
+   *     边 → 两态恒命中（旧拓扑零漂移）；显式门控按声明收窄。
+   *   - mode 收窄（N3 2026-09-12 批）：本扫描的补投调用不经 nebulaDelivery/
+   *     deliverFailed 的 mode 分支（直调 deliverToNebula）⇒ 只看门集会把 mode=signal
+   *     的出口标记边当成通知声明补投。补 e.mode == Result 这一合取项。
+   *   - R5 补投感知（spec §5 行 14）：completed 腿再按通知策略裁决（显式
+   *     silent/dispatcher ⇒ 不入候选）；failed 腿不查策略（R14 不豁免：显式
+   *     `(failed)Nebula` 的失败通报根语义不变）；legacy 节点的 completed 判据退化
+   *     为同一个边的存在性判据 ⇒ 存量补投行为字节级零漂移。
+   */
+  def rootResultUndelivered(node: NodeDef): Boolean =
+    (node.status == NodeLifecycle.Completed || node.status == NodeLifecycle.Failed) &&
+      node.out.exists(e =>
+        e.to == OutEdge.RootTarget &&
+          e.mode == OutEdge.Result &&
+          e.on.contains(if node.status == NodeLifecycle.Completed then OutEdge.Pass else OutEdge.Failed)
+      ) &&
+      (node.status != NodeLifecycle.Completed || NotifyPolicy.completedRootVisible(node)) &&
+      node.result.isDefined &&
+      node.nebulaDeliveredAt.isEmpty
+
+  /**
    * 缺口4：同 (identity, status) 重复通知去重窗口（60s——秒级抖动口径：挂载
    * 扫描与周期扫描竞态、ProjectCreate 合并回报三连投实证 09-03）。进程内
    * 内存窗，与 V8 nebulaDeliveredAt 持久账本正交（账本管跨重启 at-least-once）。

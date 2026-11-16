@@ -1177,30 +1177,7 @@ class NodeEngine(
           arch <- store.archiveSnapshot
           now <- IO(System.currentTimeMillis())
           unpaid = (active.nodes.values ++ arch.nodes.values)
-            .filter(n =>
-              (n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed) &&
-                // P1（spec §2.2 #5）：按边判定——存在指向 Nebula 且 on 含「status 对应门」
-                // 的边（completed→pass / failed→failed）。旧 "Nebula" 双读为 {pass,failed}
-                // 双通报边 → 两态恒命中（旧拓扑零漂移）；显式门控按声明收窄。
-                // N3（2026-09-12 批）：**再按 mode 收窄**——本扫描的补投调用不经
-                // nebulaDelivery/deliverFailed 的 mode 分支（直调 deliverToNebula）⇒
-                // 只看门集会把 mode=signal 的**出口标记**边当成通知声明补投（bare
-                // "Nebula" 出口标记节点若在 markNebulaDelivered 之前崩溃/重启，30s 扫描
-                // 就把它投到 root，绕过「默认不升根」）。补 e.mode == Result 这一合取项。
-                n.out.exists(e =>
-                  e.to == OutEdge.RootTarget &&
-                    e.mode == OutEdge.Result &&
-                    e.on.contains(if n.status == NodeLifecycle.Completed then OutEdge.Pass else OutEdge.Failed)
-                ) &&
-                // R5 补投感知（spec §5 行 14「策略 ≠ root 的节点不得被补投扫描复活投递」）：
-                // **completed 腿**再按通知策略裁决（显式 silent/dispatcher ⇒ 不入候选）。
-                // failed 腿**不查策略**（R14 不豁免：显式 `(failed)Nebula` 的失败通报根
-                // 语义与今天逐字相同）；legacy 节点的 completed 判据退化为同一个边的
-                // 存在性判据 ⇒ 存量补投行为字节级零漂移。
-                (n.status != NodeLifecycle.Completed || NotifyPolicy.completedRootVisible(n)) &&
-                n.result.isDefined &&
-                n.nebulaDeliveredAt.isEmpty
-            )
+            .filter(NodeEngine.rootResultUndelivered)
           // 缺口3（2026-09-04 夹具信封排除）：名字命中夹具家族 ∧ 任务载荷带夹具
           // 自证标记 → 排除投递 + WARN（09-03 实证 cancel-test-* 夹具家族轰炸根
           // 会话）。排除后照常记账（nebulaDeliveredAt 置位=通知通道对该信封关闭）
@@ -1383,6 +1360,9 @@ object NodeEngine:
   val FixtureTaskMarker = NodeEngineContract.FixtureTaskMarker
 
   def isFixtureEnvelope(node: NodeDef): Boolean = NodeEngineContract.isFixtureEnvelope(node)
+
+  /** V8 补投候选判据单点（[[nebflow.core.project.NodeEngineContract.rootResultUndelivered]]）。 */
+  def rootResultUndelivered(node: NodeDef): Boolean = NodeEngineContract.rootResultUndelivered(node)
 
   val RootDedupWindowMs: Long = NodeEngineContract.RootDedupWindowMs
 
