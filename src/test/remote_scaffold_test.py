@@ -1,5 +1,7 @@
 import importlib.util
 import os
+import multiprocessing
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,6 +10,18 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('remote_scaffold', Path(__file__).parents[1] / 'main/resources/remote_scaffold.py')
 scaffold = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scaffold)
+
+
+def lock_holder(root, ready, release, results):
+    def hold():
+        ready.set()
+        if not release.wait(10):
+            raise RuntimeError('timed out waiting for test release')
+    results.put(scaffold.run(root, 'holder', hold))
+
+
+def lock_contender(root, results):
+    results.put(scaffold.run(root, 'contender'))
 
 
 class RemoteScaffoldTest(unittest.TestCase):
@@ -47,15 +61,77 @@ class RemoteScaffoldTest(unittest.TestCase):
     def test_conflict_never_overwrites(self):
         target = self.root / '.gitignore'
         target.write_bytes(b'old\n')
+        attempts = []
         def concurrent_edit():
+            before = target.read_bytes()
             with target.open('ab') as stream:
                 stream.write(b'external\n')
+            after = target.read_bytes()
+            attempts.append((before, after))
+            print('CONFLICT STEP %d: read=%r; external writer appended; before-check=%r' % (len(attempts), before, after))
         result = scaffold.run(str(self.root), 'test-device', concurrent_edit)
         print('CONFLICT:', result)
         print('CONFLICT BYTES:', repr(target.read_bytes()))
+        print('CONFLICT OBSERVED: attempts=%d; ok=%s; rules_present=%s' % (len(attempts), result['ok'], b'/.nebflow/' in target.read_bytes()))
         self.assertFalse(result['ok'])
         self.assertIn('concurrent modification', result['reason'])
         self.assertEqual(target.read_bytes(), b'old\nexternal\nexternal\nexternal\n')
+
+    def test_readback_mismatch_fails_without_overwrite(self):
+        target = self.root / '.gitignore'
+        original = b'user\r\n'
+        target.write_bytes(original)
+        real_open = open
+        reads = 0
+        def inject_readback(path, mode='r', *args, **kwargs):
+            nonlocal reads
+            if os.fspath(path) == str(target) and mode == 'rb':
+                reads += 1
+                if reads == 3:
+                    with real_open(path, mode, *args, **kwargs) as stream:
+                        actual = stream.read()
+                    return io.BytesIO(actual + b'injected-readback-mismatch')
+            return real_open(path, mode, *args, **kwargs)
+        with patch('builtins.open', side_effect=inject_readback):
+            result = scaffold.run(str(self.root), 'test-device')
+        actual = target.read_bytes()
+        print('READBACK MISMATCH:', result['reason'])
+        print('READBACK ACTUAL BYTES:', repr(actual))
+        self.assertFalse(result['ok'])
+        self.assertIn('readback sha256 mismatch', result['reason'])
+        self.assertTrue(actual.startswith(original))
+        self.assertEqual(actual, original + b'/.nebflow/\n.stand/worktrees/\n.stand/tmp/\n')
+
+    def test_cross_process_lock(self):
+        target = self.root / '.gitignore'
+        original = b'user\r\n'
+        target.write_bytes(original)
+        ctx = multiprocessing.get_context('spawn')
+        ready, release, results = ctx.Event(), ctx.Event(), ctx.Queue()
+        holder = ctx.Process(target=lock_holder, args=(str(self.root), ready, release, results))
+        contender = ctx.Process(target=lock_contender, args=(str(self.root), results))
+        holder.start()
+        try:
+            self.assertTrue(ready.wait(10), 'holder did not acquire lock')
+            contender.start()
+            contender.join(10)
+            self.assertEqual(contender.exitcode, 0)
+            blocked = results.get(timeout=5)
+            print('LOCK CONTENDER:', blocked)
+            self.assertFalse(blocked['ok'])
+            self.assertIn('lock exists', blocked['reason'])
+            self.assertEqual(target.read_bytes(), original)
+        finally:
+            release.set()
+            holder.join(10)
+        self.assertEqual(holder.exitcode, 0)
+        completed = results.get(timeout=5)
+        print('LOCK HOLDER:', completed)
+        print('LOCK FINAL BYTES:', repr(target.read_bytes()))
+        self.assertTrue(completed['ok'])
+        self.assertEqual(target.read_bytes(), original + b'/.nebflow/\n.stand/worktrees/\n.stand/tmp/\n')
+        results.close()
+        results.join_thread()
 
     def test_permission_error_report(self):
         with patch.object(scaffold.os, 'makedirs', side_effect=PermissionError('permission denied')):

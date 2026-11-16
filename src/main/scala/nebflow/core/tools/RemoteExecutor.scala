@@ -22,6 +22,12 @@ import scala.concurrent.duration.*
  * only be observed by driving a real network. Extracting them makes each rule a
  * unit-testable function (`P2pPathDecisionSpec`) instead of a claim in a report.
  */
+private[tools] object RemoteScaffoldCommand:
+  def build(encoded: String, workspace: String, device: String): String =
+    def quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+    s"if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import sys;sys.exit(sys.version_info < (3, 6))' >/dev/null 2>&1; then printf '%s\\n' 'REMOTE_SCAFFOLD_PYTHON_UNAVAILABLE: python3 >= 3.6 is required'; else python3 -c ${quote("import base64;exec(base64.b64decode('" + encoded + "'))")} ${quote(workspace)} ${quote(device)}; fi"
+end RemoteScaffoldCommand
+
 private[nebflow] object P2pPathDecision:
 
   /**
@@ -813,17 +819,18 @@ class RemoteExecutor(
 
   /** Run byte-preserving scaffold logic using the existing remote Bash channel. */
   def ensureRemoteScaffold(peer: PeerInfo, workspace: String): IO[Either[String, String]] =
-    def quote(value: String): String = "'" + value.replace("'", "'\\\"'\\\"'") + "'"
     val source = scala.io.Source.fromResource("remote_scaffold.py")
     val script = try source.mkString finally source.close()
     val encoded = java.util.Base64.getEncoder.encodeToString(script.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-    val command = s"python3 -c ${quote("import base64;exec(base64.b64decode('" + encoded + "'))")} ${quote(workspace)} ${quote(peer.deviceName)}"
+    val command = RemoteScaffoldCommand.build(encoded, workspace, peer.deviceName)
     val params = JsonObject("command" -> command.asJson, "timeout" -> 30000L.asJson, "description" -> "Prepare remote project scaffold".asJson)
     executeViaBestPath(peer, "Bash", params, 60.seconds, workspace, kind = "scaffold").map {
       case Left(err) => Left(s"device '${peer.deviceName}', path '$workspace': channel failure: ${err.message}; all items unconfirmed")
       case Right(output) =>
         val marker = "REMOTE_SCAFFOLD_RESULT="
         output.linesIterator.find(_.startsWith(marker)) match
+          case None if output.contains("REMOTE_SCAFFOLD_PYTHON_UNAVAILABLE") =>
+            Left(s"device '${peer.deviceName}', path '$workspace': python3 >= 3.6 is unavailable; remote scaffold not started")
           case None => Left(s"device '${peer.deviceName}', path '$workspace': missing scaffold result: $output; all items unconfirmed")
           case Some(line) =>
             io.circe.parser.parse(line.drop(marker.length)) match
