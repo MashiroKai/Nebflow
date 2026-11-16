@@ -1645,11 +1645,12 @@ object BackoffSupervisor:
           //    作者令「把那一轮的工具调用结果发过去」）；中段悬挂就地修补；无悬挂 ⇒
           //    逐字回落改前文案（`nudgeText`）。改写前此处手写的
           //    `terminateDanglingToolCalls` + 尾部提示注入两段。
-          handoff = nebflow.core.ResumeHandoff.plan(
+          handoff0 = nebflow.core.ResumeHandoff.plan(
             recoveredMessages,
             nebflow.core.ResumeHandoff.Cause.Crash,
             legacyText = nudgeText
           )
+          handoff <- nebflow.core.ResumeHandoff.resolveAskHost(subagentId, handoff0)
           _ <- IO(nebflow.core.ResumeHandoff.logPlan(subagentId, handoff, nebflow.core.ResumeHandoff.Cause.Crash))
           _ <- requireCurrentRun
           newChild <- childSpawnFn(ctx.system, handoff.transcript)

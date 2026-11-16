@@ -42,6 +42,13 @@ class StuckTimeBaseSpec extends FunSuite:
   private val identity: (Long, Long) => Long = (start, now) => now - start
   private val Now = 10_000_000L
 
+  test("only a durably unanswered AskHost wait is exempt from watchdog recovery") {
+    val waiting = rec(Now, Now - 910 * S, Some("AskHost"), Now - 910 * S)
+    assert(TaskStuckWatcher.waitingForAskHost(waiting, Set("s-timebase")))
+    assert(!TaskStuckWatcher.waitingForAskHost(waiting, Set.empty))
+    assert(!TaskStuckWatcher.waitingForAskHost(waiting.copy(currentToolName = Some("Bash")), Set("s-timebase")))
+  }
+
   // ── 口径 1：空窗集 ⇒ 判词与 reason 文案逐字不变 ─────────────────────────────
 
   test("C1a 空窗等价：agent-stale 分支判词逐字（identity 注入 = 现状）") {

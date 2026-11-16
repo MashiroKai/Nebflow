@@ -414,6 +414,9 @@ object TaskStuckWatcher:
    * （`#isKickCandidate`，阈值 `Defaults.SessionKickIdleSec` 150s ≠ 本函数默认 600s，
    * 且额外带 `toolInFlight` 护栏），故不存在「三消费点」同源关系。
    */
+  def waitingForAskHost(rec: AgentRecord, waitingWorkers: Set[String]): Boolean =
+    rec.currentToolName.contains("AskHost") && rec.currentToolStartedAt > 0 && waitingWorkers.contains(rec.sessionId)
+
   def assessDetailed(
     rec: AgentRecord,
     now: Long,
@@ -718,7 +721,8 @@ object TaskStuckWatcher:
     // 再扫本轮卡死候选（顺序无关，但先复查可让同轮内「复查发现失效 → 下一轮的
     // 恢复动作」时序更直观）。
     verifyL3Outcomes(resources, pendingL3, now, l3VerifyDelayMs) *>
-      resources.agentRegistry.get.flatMap { registry =>
+      (resources.agentRegistry.get, nebflow.core.tools.AskHostLedger.recover).tupled.flatMap { (registry, askHostRequests) =>
+        val waitingWorkers = askHostRequests.filter(_.answer.isEmpty).map(_.pending.workerSession).toSet
         // ── D3-④（steward 批 2026-10-23）：Waiting 停靠态的活性看护 ────────────
         // 旧整族豁免 ⇒ 停靠会话的死亡（registry 行残留、actor 已退出）永无人管，
         // 合并队列被尸体持窗整队陪站。判据 = 活性/事件（actor 注册表在否），零时间
@@ -740,6 +744,7 @@ object TaskStuckWatcher:
           // Processing with a fresh lastActivityMs — AgentActor AskUser handler
           // / AgentCore.askUserPermission), so true hangs stay reachable.
           .filter(rec => rec.status != AgentStatus.WaitingForUser)
+          .filterNot(rec => waitingForAskHost(rec, waitingWorkers))
         // 显式等待停靠态（平台修复批 fix 4，2026-10-21；steward 批 D3-④
         // 2026-10-23 改判据）：Waiting = 引擎停靠（standby 申报待命等事件）——
         // 推进者 = 下一封 Mail / 作者续聊，不是本会话进程。Waiting 仍不进

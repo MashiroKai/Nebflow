@@ -618,10 +618,10 @@ private[project] trait NodeStarter:
           legacyText = inputText
         )
       )
-    val deliveredInput: String = resumeHandoff.map(_.injectText).getOrElse(inputText)
-    val deliveredBlocks: Option[List[nebflow.shared.ContentBlock]] =
-      resumeHandoff.flatMap(_.injectBlocks)
     (for
+      resolvedHandoff <- resumeHandoff.traverse(nebflow.core.ResumeHandoff.resolveAskHost(sessionId, _))
+      deliveredInput = resolvedHandoff.map(_.injectText).getOrElse(inputText)
+      deliveredBlocks = resolvedHandoff.flatMap(_.injectBlocks)
       // 在飞登记先行（清场 c-① liveness 误杀防护 20260903）：running 表先于
       // status=Running 翻转——NodeList liveness / abandon / NodeCancel 收殓判定
       // 以「running 表含此节点」为活会话信号，若先翻转后登记，spawn 窗口内的

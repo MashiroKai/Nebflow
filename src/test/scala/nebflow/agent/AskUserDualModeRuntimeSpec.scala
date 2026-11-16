@@ -458,7 +458,8 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         rootSessionId = Some("askhost-root-session"),
         agentDef = Some(AgentDef(name = executorName, description = "", tools = Nil)),
         depth = 1,
-        sharedResources = Some(resources)
+        sharedResources = Some(resources),
+        toolCallId = "askhost-call-1"
       )
       fiber <- AskHostTool.call(
         JsonObject("question" -> "Choose a safe option".asJson), context
