@@ -53,7 +53,13 @@ object ConsoleQuoteResolver:
       val kind = RefResolver.sanitize(c.downField("type").as[String].getOrElse("file"))
       val name = RefResolver.sanitize(c.downField("name").as[String].getOrElse(""))
       val path = RefResolver.sanitize(c.downField("path").as[String].getOrElse(""))
-      s"[引用附件 · $kind · $name${if path.nonEmpty then s" · 客户端声明路径（未验证）: $path" else " · 原文件不可寻址"} · 原始媒体未随引用注入]"
+      val local = scala.util.Try(java.nio.file.Path.of(path)).toOption.filter(_.isAbsolute).flatMap { p =>
+        scala.util.Try(p.toRealPath()).toOption.filter(p => java.nio.file.Files.isRegularFile(p) && java.nio.file.Files.isReadable(p))
+      }
+      val location = local.fold("本机不可用或跨设备；请重新提供原图")(
+        p => s"本机可读绝对路径: $p（客户端声明，来源和内容未验证）"
+      )
+      s"[引用附件 · $kind · $name · $location · 原始媒体未随引用注入]"
     }.mkString("\n")
     val position = content.downField("itemIndex").as[Int].toOption.filter(_ >= 0).map { index =>
       val total = content.downField("itemTotal").as[Int].toOption.filter(_ > index).fold("")(n => s"/$n")

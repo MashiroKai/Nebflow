@@ -60,11 +60,24 @@ class ConsoleQuoteResolverSpec extends CatsEffectSuite:
       legacy <- ConsoleQuoteResolver.structured(ref("possibly truncated", false), "receiving-session", registry)
     yield
       assert(small.contains(short), small)
-      assert(small.contains("a.png") && small.contains("/tmp/a.png") && small.contains("2/3"), small)
+      assert(small.contains("a.png") && small.contains("本机不可用") && small.contains("2/3"), small)
       assert(large.contains("已折叠") && !large.contains(long), large)
       assertEquals(lookup.map(_.text), Some(long))
       assert(missing.contains("引用未能解析"), missing)
       assert(legacy.contains("引用未能解析"), legacy)
     ).guarantee(IO.blocking(os.remove.all(root)))
+  }
+  test("quoted local image path resolves to an absolute readable file") {
+    val root = os.temp.dir(prefix = "quote-image-")
+    val image = root / "sample.png"
+    os.write(image, "image-bytes")
+    val registry = new MsgTokenRegistry(root / "sessions", () => true)
+    val ref = Json.obj("source" -> Json.obj("messageId" -> "image".asJson),
+      "content" -> Json.obj("fullText" -> "image".asJson, "fullTextComplete" -> true.asJson,
+        "attachments" -> Json.arr(Json.obj("type" -> "image".asJson, "name" -> "sample.png".asJson, "path" -> image.toString.asJson))))
+    ConsoleQuoteResolver.structured(ref, "session", registry).map { out =>
+      assert(out.contains("本机可读"), out)
+      assert(out.contains(image.toString), out)
+    }.guarantee(IO.blocking(os.remove.all(root)))
   }
 end ConsoleQuoteResolverSpec
