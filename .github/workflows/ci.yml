@@ -60,6 +60,7 @@ jobs:
             base=$(git merge-base HEAD FETCH_HEAD)
           fi
           git cat-file -e "$base^{commit}"
+          npm run check:commit-attribution -- "$base..HEAD"
           npm run check:sdd-changed -- --base "$base"
 
   user-knowledge-gate:

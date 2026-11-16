@@ -4,6 +4,7 @@
   "description": "Nebflow web frontend build tooling (P1 esbuild pipeline). Runtime is vanilla JS served from src/main/resources/web; this package provides the production bundle and checkout-only quality gates. Run `npm ci` to install the locked local tools.",
   "scripts": {
     "build": "node scripts/build-web.mjs",
+    "check:commit-attribution": "python3 scripts/check-commit-attribution.py",
     "check:sdd": "node scripts/check-sdd.mjs",
     "check:openspec": "node scripts/check-openspec.mjs",
     "test:scripts": "node --test scripts/tests/*.test.mjs",

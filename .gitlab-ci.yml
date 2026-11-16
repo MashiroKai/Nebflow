@@ -209,6 +209,7 @@ static:
         base=$(git merge-base HEAD FETCH_HEAD)
       fi
       git cat-file -e "$base^{commit}"
+      npm run check:commit-attribution -- "$base..HEAD"
       static_status=0
       coverage_status=0
       openspec_status=0
