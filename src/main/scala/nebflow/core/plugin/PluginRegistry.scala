@@ -576,8 +576,8 @@ object PluginRegistry:
             val loadedPlugins = loaded.collect { case Right(p) => p }
             val ambiguousNames = loadedPlugins.groupBy(_.name).collect { case (n, ps) if ps.size > 1 => n }.toSet
             val dupRejects = loadedPlugins.filter(p => ambiguousNames.contains(p.name)).groupBy(_.name).toList.sortBy(_._1).map { (name, ps) =>
-              name -> s"duplicate identity: manifest name '$name' claimed by multiple directories " +
-                s"[${ps.map(p => os.Path(p.dir).last).sorted.mkString(", ")}] — all copies rejected (ambiguous identity, resolve to a single directory)"
+              name -> (s"duplicate identity: manifest name '$name' claimed by multiple directories " +
+                s"[${ps.map(p => os.Path(p.dir).last).sorted.mkString(", ")}] — all copies rejected (ambiguous identity, resolve to a single directory)")
             }
             val snap = Snapshot(
               plugins = loadedPlugins.filterNot(p => ambiguousNames.contains(p.name)),

@@ -568,7 +568,8 @@ object PluginSourceInstall:
                 url = Some(spec.archive), pin = None,
                 sourceDesc = s"direct archive ${spec.archive}",
                 meta = PluginSourceLedger.InstallMeta(
-                  artifactSha256 = spec.sha256.map(_.trim.toLowerCase).filter(_.nonEmpty),
+                  // HttpsSpec.sha256 是必填 String（spec 解析面已验 64-hex）——落账前归一化
+                  artifactSha256 = Some(spec.sha256.trim.toLowerCase),
                   validationSummary = Some("https-zip-dualvalue@1")
                 )
               )

@@ -242,23 +242,25 @@ object PluginSourceLedger:
       .add("pinned", e.pinned.asJson)
     val withUrl = e.url.fold(base)(u => base.add("url", u.asJson))
     val withPin = e.pin.fold(withUrl)(p => withUrl.add("pin", pinJson(p)))
-    val withOpt = withPin
-      .addStr("distributionId", e.distributionId)
-      .addStr("publisherKeyId", e.publisherKeyId)
-      .addStr("artifactSha256", e.artifactSha256)
-      .addStr("validationSummary", e.validationSummary)
-      .addStr("transactionId", e.transactionId)
-      .addStr("hubReviewId", e.distribution.hubReviewId)
-    val withPublisherClass = e.distribution.publisherClass.fold(withOpt)(p => withOpt.add("publisherClass", p.label.asJson))
-    val withSubmission = e.distribution.submissionStatus.fold(withPublisherClass)(s => withPublisherClass.add("submissionStatus", s.label.asJson))
-    val withTime = e.distribution.lastCheckedAt.fold(withSubmission)(t => withSubmission.add("lastCheckedAt", t.asJson))
+    // None ⇒ 缺席不落（缺席 ≠ null）；Some ⇒ 落字符串（§12.1 预留空值族 + §5.4 A 期地基字段）
+    val optionalStrings = List(
+      "distributionId" -> e.distributionId,
+      "publisherKeyId" -> e.publisherKeyId,
+      "artifactSha256" -> e.artifactSha256,
+      "validationSummary" -> e.validationSummary,
+      "transactionId" -> e.transactionId,
+      "hubReviewId" -> e.distribution.hubReviewId
+    )
+    val withOpt = optionalStrings.foldLeft(withPin)((o, kv) => kv._2.fold(o)(x => o.add(kv._1, x.asJson)))
+    val optionalEnums = List(
+      e.distribution.publisherClass.map(p => "publisherClass" -> p.label.asJson),
+      e.distribution.submissionStatus.map(s => "submissionStatus" -> s.label.asJson)
+    ).flatten
+    val withEnums = optionalEnums.foldLeft(withOpt)((o, kv) => o.add(kv._1, kv._2))
+    val withTime = e.distribution.lastCheckedAt.fold(withEnums)(t => withEnums.add("lastCheckedAt", t.asJson))
     Json.fromJsonObject(e.previousGeneration.fold(withTime)(g => withTime.add("previousGeneration", Json.obj(
       "version" -> g.version.asJson, "digest" -> g.digest.asJson, "switchedAt" -> g.switchedAt.asJson
     ))))
-
-  /** None ⇒ 缺席不落（缺席 ≠ null）；Some ⇒ 落字符串。 */
-  private extension (o: JsonObject) def addStr(key: String, v: Option[String]): JsonObject =
-    v.fold(o)(x => o.add(key, x.asJson))
 
   private def pinJson(p: Pin): Json = p match
     case Pin.Commit(tag, commit) =>
