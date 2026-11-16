@@ -299,7 +299,9 @@ class PromptSectionsSpec extends munit.FunSuite:
       val first = assembleSystemPrompt("AGENT-MD", "CONDITIONAL", root)
       assertEquals(first, "--- SYSTEM PREFIX ---\nShared guidance\n\nAGENT-MD\n\nCONDITIONAL")
       os.write.over(root / "prompt-prefix.md", "Updated guidance")
-      assert(assembleSystemPrompt("AGENT-MD", "", root).startsWith("--- SYSTEM PREFIX ---\nUpdated guidance\n\nAGENT-MD"))
+      assert(
+        assembleSystemPrompt("AGENT-MD", "", root).startsWith("--- SYSTEM PREFIX ---\nUpdated guidance\n\nAGENT-MD")
+      )
     finally os.remove.all(root)
 
   test("assembly leaves no prefix or marker when file is missing or whitespace-only"):

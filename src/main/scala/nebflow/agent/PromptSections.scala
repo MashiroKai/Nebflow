@@ -820,10 +820,15 @@ External executors receive the task text only — no platform tools or plugins a
       .filter(_.nonEmpty)
       .mkString("\n\n")
 
-  /** Read the optional shared prefix at assembly time, before the agent prompt.
-    * Changing it invalidates provider prefix caches on subsequent assemblies.
-    */
-  def assembleSystemPrompt(agentPrompt: String, conditionalBlocks: String, dataRoot: os.Path = PathUtil.dataRoot): String =
+  /**
+   * Read the optional shared prefix at assembly time, before the agent prompt.
+   * Changing it invalidates provider prefix caches on subsequent assemblies.
+   */
+  def assembleSystemPrompt(
+    agentPrompt: String,
+    conditionalBlocks: String,
+    dataRoot: os.Path = PathUtil.dataRoot
+  ): String =
     val file = dataRoot / "prompt-prefix.md"
     val prefix = if os.exists(file) then os.read(file).trim else ""
     val sections = Seq(
