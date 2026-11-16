@@ -179,6 +179,60 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
         }
     yield result
 
+  test("configured effort allowlist reaches both adapters on stream and non-stream paths") {
+    import scala.jdk.CollectionConverters.*
+    val seen = new java.util.concurrent.ConcurrentLinkedQueue[Json]()
+    val program = for
+      server <- IO.blocking {
+        val s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+        def handler(anthropic: Boolean)(exchange: HttpExchange): Unit =
+          val body = parser.parse(new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)).toOption.get
+          seen.add(body)
+          val stream = body.hcursor.get[Boolean]("stream").getOrElse(false)
+          val payload = if anthropic && stream then
+            messageStart + textDelta("OK") + okTail
+          else if anthropic then
+            """{"id":"msg","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"k3.1-test","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":2}}"""
+          else if stream then
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" + "data: [DONE]\n\n"
+          else
+            """{"id":"mock","model":"m1","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}"""
+          val bytes = payload.getBytes(StandardCharsets.UTF_8)
+          exchange.getResponseHeaders.add("Content-Type", if stream then "text/event-stream" else "application/json")
+          exchange.sendResponseHeaders(200, bytes.length)
+          val out = exchange.getResponseBody; out.write(bytes); out.close(); exchange.close()
+        s.createContext("/v1/messages", (e: HttpExchange) => handler(true)(e))
+        s.createContext("/chat/completions", (e: HttpExchange) => handler(false)(e))
+        s.start(); s
+      }
+      _ <- (List(("anthropic", "k3.1-test", "/v1/messages"), ("openai", "m1", "/chat/completions"))).traverse_ { (protocol, model, path) =>
+        val base = s"http://127.0.0.1:${server.getAddress.getPort}"
+        val raw = Json.obj(
+          "baseUrl" -> Json.fromString(base), "apiKey" -> Json.fromString("test"),
+          "protocol" -> Json.fromString(protocol),
+          "models" -> Json.arr(Json.obj("id" -> Json.fromString(model), "contextWindow" -> Json.fromInt(128000))),
+          "effortAllowlist" -> Json.obj((base + path) -> Json.obj(model -> Json.arr(Json.fromString("high"))))
+        )
+        val provider = raw.as[ProviderConfig].fold(throw _, identity)
+        val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("v" -> provider)))
+        for
+          ref <- Ref.of[IO, NebflowServiceConfig](cfg)
+          overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+          _ <- LlmInterface.createLlm(overrides, None, Some(ref)).flatMap { case (handle, _, _, release) =>
+            val req = imageRequest.copy(messages = List(Message(MessageRole.User, Left("hi"))),
+              thinking = Some(ThinkingConfig.toLlmJson(ThinkingConfig(effort = Some(ThinkingEffort.High)))),
+              agentModel = Some(AgentModelConfig(preferred = Some(s"v/$model"), fallbacks = Nil)))
+            (handle.sendStream(req).compile.drain *> handle.send(req).void).guarantee(release)
+          }
+        yield ()
+      }.guarantee(IO.blocking(server.stop(0)))
+    yield ()
+    program.unsafeRunSync()
+    assertEquals(seen.size(), 4)
+    seen.asScala.foreach(body => assertEquals(body.hcursor.get[String]("reasoning_effort").toOption, Some("high")))
+  }
+
   test("OpenAI-compatible real sendStream and send account synthetic usage once") {
     val program = for
       server <- IO.blocking {

@@ -357,9 +357,9 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
       server = startCaptureMock(captured).unsafeRunSync()
       val body = assertOkAndCapture(sendTurn("p", "m1", budgetOn, server,
         modelLayer = Some(ThinkingLayerConfig(budgetTokens = Some(65536)))), captured)
-      assertEquals(body.hcursor.downField("thinking").get[Int]("budget_tokens").toOption, Some(32768))
       import scala.jdk.CollectionConverters.*
       assert(appender.list.asScala.exists(e => e.getFormattedMessage.contains("requested=65536 effective=32768")))
+      assertEquals(body.hcursor.downField("thinking").get[Int]("budget_tokens").toOption, Some(32768))
     finally
       log.detachAppender(appender)
       if server != null then server.stop(0)
