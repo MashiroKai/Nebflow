@@ -710,7 +710,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     text.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     const back = document.createElement('button');
     back.type = 'button';
-    back.className = 'glass-control nf-frame-nav-back';
+    back.className = 'canvas-button glass-control nf-frame-nav-back';
     back.textContent = 'Back to document';
     back.style.cssText = 'flex:none;cursor:pointer;font-size:var(--ds-fs-hint);white-space:nowrap';
     back.addEventListener('click', () => { backToDocument(); });
