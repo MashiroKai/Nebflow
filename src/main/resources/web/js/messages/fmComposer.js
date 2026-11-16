@@ -25,6 +25,7 @@
 // messages.js（无环；voiceEngine 是既有单点，本模块禁新造第二套语音机制）。
 
 import { t } from '../i18n.js';
+import { chatComposerClass } from '../chatUi.js';
 import { startDictation, stopDictation, sttEnabled } from '../voiceEngine.js';
 import { bindImeGuard, isImeComposing } from '../imeGuard.js';
 import { el } from './elements.js';
@@ -60,7 +61,7 @@ export function buildFmComposer(opts) {
   //     与 `#input-bar` 逐值同）。
   // 禁第二个类名/第二份材质：换个名字再画一遍就是「第二种输入面」（check-input-surface
   // 的 I2 与 check-glass-unify 的 G1 都会红）。
-  const bar = el('div', 'fm-input-bar nf-glass');
+  const bar = el('div', chatComposerClass('messages'));
   const input = document.createElement('input');
   // 裸件档（css/inputSurface.css 的 `.nf-field--bare` 显式类）：外壳已给材质，
   // 内件只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」。

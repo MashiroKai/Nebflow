@@ -1134,44 +1134,8 @@ button.fm-req-decline:focus-visible {
 .fm-msg.in { align-self: flex-start; align-items: flex-start; }
 .fm-msg > .bubble { max-width: 100%; }
 
-/* ── 桌面会话面**扁平直框**（flat-thread 批 2026-11-07；作者令逐字「把电脑端好友/
-   群聊的前端 改回类似微信一样的扁平化的框，不要现在的跟主会话一样的布局了」）───────
-   判据：上面「气泡族改挂主会话」块（四会话统一批 2026-11-05，作者令「改成与主 agent
-   对话窗口一致」）把好友/群/设备三面的消息泡**直接继承主会话的浮层卡形态**（16px
-   大圆角 + whisper 描边 + `--glass-bub-ai-shadow` 柔影 + 4px 方向尾角）。本令对该
-   形态**只撤「浮层卡气质」，不撤结构与复用**：
-     · 圆角 6px 单值（`--ds-radius-chip` 档）—— 与主会话 16px 浮层卡档明确分档；
-       单值 shorthand 同时吃掉主会话那两枚「方向尾角 4px」长写（微信气泡是四角
-       同值的直框，尾角那种「说话人箭头」在这里读作浮层卡残留）。
-     · 零柔影、零 backdrop-filter —— 「扁平」的机械含义就是这两条归零：消息框
-       只是面上的一块有边界的实底，不再是从面上浮起来的玻璃片。
-     · 入向 1px 实描边（etched 档，与联系人行/输入条同一条发丝线语言）＝「框」；
-       出向不描边（实底自身成框，微信同侧无描边）—— 这条**不是**新配色：底色
-       仍由 glass.css 单点块的 --nf-bub-ours-bg / --nf-bub-theirs-bg 决定，
-       本文件继续零色值（check-bubble-side.mjs R2 只认这两枚令牌，故本块**不写
-       background**）。
-     · 范围 = `body:not(.mobile-layer)` 且选择器带 `.fm-msg` 前缀 ⇒ 主会话
-       （`.row > .bubble`）与手机层（`body.mobile-layer`，另一腿所有）零命中。
-   未纳入本令（如实登记）：窗壳/窗头/输入条的毛玻璃 = 作者 2026-09-19「弹窗面板 =
-   毛玻璃既定规矩」的既有裁定，本批不动；设备会话面（.dropbox-msg）另属 sapphire.css
-   单源，本批不动。 */
-body:not(.mobile-layer) .fm-msg > .bubble {
-  border-radius: var(--ds-radius-chip);
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-body:not(.mobile-layer) .fm-msg.in > .bubble {
-  border: 1px solid var(--glass-etched-border);
-}
-body:not(.mobile-layer) .fm-msg.out > .bubble {
-  border: none;
-}
-/* 元信息 pill 的戒指影同属「浮层卡」气质（chat.css `.duration-badge` 单源），
-   会话窗内归零；主会话那枚照旧带影（选择器只带 .fm-msg-meta 钩子）。 */
-body:not(.mobile-layer) .fm-msg-meta {
-  box-shadow: none;
-}
+/* Author selection: use the primary conversation bubble and footer styling on
+   desktop as well as mobile; retain only the FM row layout above. */
 
 /* ── 跨天居中日期行（日期行上移批 2026-11-06 作者令②）─────────────────────────
    「跨天只显示一次」：日期层从每条 footer（formatFooterTime 分层档，每条都显）
@@ -2095,6 +2059,7 @@ body:not(.mobile-layer) #profile-face-overlay {
    🔴 原 `border-top: 1px solid var(--glass-etched-border)` 与 `padding: 10/16/14`
    一并摘除 —— 那条线是「输入条有边缘」的直接成因，与本令的「无边缘+悬浮」相反。 */
 .fm-input-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);

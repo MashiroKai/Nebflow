@@ -2,6 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
+import { mainBubbleClass } from './chatUi.js';
 import { key } from './branding.js';
 // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：TTS
 // 输出族（<voice> 块 + VoicePlayer 播报）与全双工同 flag 封存（voiceEnabled，
@@ -554,7 +555,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
     // UI-G: main window only — a subagent / flow popup view renders the same
     // bubble with no animation class at all (its container also carries
     // `.nf-static`; this keeps the class off its DOM too).
-    bubble.className = activeView.motionEnabled() ? 'bubble user nf-pop' : 'bubble user';
+    bubble.className = mainBubbleClass('user', activeView.motionEnabled() ? 'nf-pop' : '');
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
@@ -577,7 +578,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
       // 循环，否则同一引用渲染两遍）。
       if (att.type === 'ref' && att.refType === 'chat-message') return;
       const bubble = document.createElement('div');
-      bubble.className = 'bubble user att-bubble';
+      bubble.className = mainBubbleClass('user', 'att-bubble');
       // #303 v1.1 + (2026-08-27 打回注入块收敛): ALL task-return references -
       // unified type:'ref' AND the legacy type:'taskRef' from old
       // history/queue restores - normalize into the same Reference and render
@@ -772,7 +773,7 @@ export function appendAiText(text, mark) {
     const row = document.createElement('div');
     row.className = 'row ai';
     view.stream.currentAiBubble = document.createElement('div');
-    view.stream.currentAiBubble.className = 'bubble ai';
+    view.stream.currentAiBubble.className = mainBubbleClass('ai');
     row.appendChild(view.stream.currentAiBubble);
     appendChatRow(chat, row);
   }
@@ -909,7 +910,7 @@ export function appendAgentText(agentId, text) {
     const row = document.createElement('div');
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
-    bubble.className = 'bubble ai';
+    bubble.className = mainBubbleClass('ai');
     let badge = null;
     if (agentId && agentId !== 'default') {
       // F1（作者 2026-09-16 决策卡）：通用「Agent 代发」徽章 —— 主对话面**放弃**
@@ -3283,7 +3284,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   // (finishAi re-attaches a preserved box under streamed markdown) keep their
   // face — the marker is deliberately an explicit class, never a blanket :has().
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai ob-ghost-seat';
+  bubble.className = mainBubbleClass('ai', 'ob-ghost-seat');
   row.appendChild(bubble);
   // Source badge. D6 批 F1 (G9): project context (project node / dispatcher ask)
   // renders "project · nodeName" so concurrent asks from several nodes stay
@@ -3688,7 +3689,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // Ghost seat (askuser-hybrid 重皮): the permission card is an option-box
   // carrier (badge/banner + box only) — the bubble de-faces, same as renderAskUser.
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai ob-ghost-seat';
+  bubble.className = mainBubbleClass('ai', 'ob-ghost-seat');
 
   // Danger level decorations
   const level = dangerLevel || 0;
@@ -4100,7 +4101,7 @@ export function appendAskAnswer(delta) {
     const row = document.createElement('div');
     row.className = 'row ai';
     view.stream.currentAskBubble = document.createElement('div');
-    view.stream.currentAskBubble.className = 'bubble ai';
+    view.stream.currentAskBubble.className = mainBubbleClass('ai');
     const label = document.createElement('div');
     label.className = 'ask-label';
     label.textContent = t('chat.askLabel');
@@ -4488,7 +4489,7 @@ export function appendThinkingDelta(delta, mark) {
     // the tool rows), so a reader can verify the round split from the DOM.
     stampRound(activeView, row);
     const bubble = document.createElement('div');
-    bubble.className = 'bubble ai thinking-bubble';
+    bubble.className = mainBubbleClass('ai', 'thinking-bubble');
     // #346 v2 stats: thinking duration for the turn header (turnGroup.js
     // computes 思考 <N>s from nfStart/nfEnd on the bubble).
     bubble.dataset.nfStart = String(Date.now());

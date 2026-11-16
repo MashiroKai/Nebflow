@@ -1130,7 +1130,7 @@ button.glass-control.fm-login-btn:disabled {
 /* ── 幽灵 — 无底 + 文字弱化（行级面 R12′：允许 rest 零区隔，但 hover ∧ active
    双态必有实测反馈）────────────────────────────────────────────────────── */
 :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .neblink-peer.fm-device-row, .fm-msg-act,
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
     .settings-avatar-entry, .settings-collapse-toggle,
     .fm-context-menu button:not(.danger)) {

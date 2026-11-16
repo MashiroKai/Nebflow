@@ -608,15 +608,8 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * （既有 spec 定位用，本文件零规则）。改形态改那一个组件类，两处同时生效。
  */
 
-/* ═══ 作者令 2026-11-04 12:52 ① + ②：画布底部两钮向顶部两钮看齐 ═══
-   顶部两钮（#canvas-head-close / #deck-fab）实测：40×40 / radius 50% / 图标 18 /
-   内距 0 / 材质 = glass.css 圆钮级浮件档（--glass-bg + blur(40px) saturate(1.4)
-   + --glass-border + --cv-shadow，hover 抬亮 1.05、active 按 0.96）。
-   底部两钮（本面板输入条的发送/终止）此前是主会话的实底回合钮（36 / 实心绿）⇒
-   同一面板里两套按钮语言。本批把它们切成**同一个组件类的画布 chrome 档**：
-   仍是 .ds-turn-btn（单源不变、零第二套形态），只在本面声明尺寸/材质两槽 ——
-   于是「尺寸与顶部一致」「毛玻璃与顶部同源」两条都由 token 保证，不是抄值。
-   语义色不丢：终止档保留 --color-error 字，读数在玻璃上仍可辨。 */
+/* Ask keeps its canvas-sized hit target; visual button states now come from
+   the same solid turn-button component as the main conversation. */
 .ask-dock .ds-turn-btn {
   /* 尺寸 = max(画布 chrome 档, 组件尺寸槽)：桌面 chrome 40 胜出（= 顶部两钮）；
      手机档收窄批（2026-11-04 13:52）起手机腿组件槽 = --mcv-size-circle **44**
@@ -626,31 +619,15 @@ body.mobile-layer .note-dock .ds-resize-handle {
 
   border-radius: 50%;
   padding: 0;
-  border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  color: var(--color-text);
-  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
-              transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
-              color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+  /* Button colors and state feedback come from the shared turn-button component. */
 }
 /* 图标档 = 组件图标槽（--ds-turn-btn-icon）优先、画布 chrome 图标档（--cv-icon 18）
    兜底 —— 手机档收窄批 2026-11-04 13:52：「手机端发送/终止按钮小一点」把面板底钮
    手机档收成 44 边长 / 20 图标（mobileLayer.css `body.mobile-layer .ask-dock
    .ds-turn-btn` 换供源），桌面腿组件槽 = 18 ⇒ 与旧写法逐值同（18），零漂移。 */
 .ask-dock .ds-turn-btn svg { width: var(--ds-turn-btn-icon, var(--cv-icon, 18px)); height: var(--ds-turn-btn-icon, var(--cv-icon, 18px)); stroke-width: 2; }
-@media (hover: hover) {
-  .ask-dock .ds-turn-btn:hover {
-    background: var(--cv-hover-bg, var(--glass-control-bg-hover));
-    transform: scale(var(--cv-hover-scale, 1.05));
-  }
-}
-
-.ask-dock .ds-turn-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
-/* 语义色不随材质回退：发送仍读「绿」、终止仍读「红」——只是从**实底**改成
-   玻璃上的**墨色**（作者令 12:52 ② 规定材质跟顶部两钮；此前 10:11 规定发送=
-   微信绿 --ctl-send-*，两条并存 ⇒ 材质吃玻璃 token、语义吃色 token）。 */
-.ask-dock .ds-turn-btn--send { color: var(--ctl-send-bg); }
-.ask-dock .ds-turn-btn--stop { color: var(--color-error); }
+/* Ask keeps its compact geometry, but uses the same solid send/stop colors,
+   ink, hover and active states as the primary conversation. */
 .ask-dock .ds-turn-btn:disabled { opacity: 0.35; pointer-events: none; }
 
 /* ═══ Ask 气泡材质（作者令 2026-11-04 12:52 ② → 2026-11-05 09:32 改判）═══

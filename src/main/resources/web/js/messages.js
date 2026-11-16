@@ -3,6 +3,7 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
+import { chatFooter, chatFooterDivider, chatFooterTime } from './chatUi.js';
 // bubble-side-color 批（2026-11-06）：气泡归属方判定/类名工厂单点（收编前本处
 // 直接拼 `bubble ${out ? 'user' : 'peer'}`，归属方语义散在模板串里）。
 import { bubbleClass, bubbleSideOfOutgoing } from './bubbleSide.js';
@@ -3519,7 +3520,7 @@ export function bubbleEl(m, conv) {
   // `.duration-badge`（chat.css 单点：内距/圆角/戒指影/暗档）+ 时间 `.duration-badge-time`
   // + 分隔 `.duration-badge-divider` + 复制键 `.msg-copy`。旧 `.fm-msg-*` 类保留为
   // 宿主钩子（断言面/滚动面引用），几何与配色不再由本文件另写一份。
-  const meta = el('div', 'fm-msg-meta duration-badge');
+  const meta = chatFooter('fm-msg-meta');
   // 批 D（作者裁定 2026-09-14 20:5x「双方可见」）：徽标**两端渲染**、无抑制逻辑
   // —— 修前判据 `out && isAgentSent(m)` 让接收侧（`out === false`）**永不进入**
   // 本分支（即便 `origin` 已修复到位，对方也看不到）⇒ 与作者诉求相左。
@@ -3544,7 +3545,7 @@ export function bubbleEl(m, conv) {
   //   · `data-ts`（跳转锚）+ `data-ts-text`（时钟就地重排）两契约保留；去掉
   //     `data-ts-text-format="day"` ⇒ 12/24 切换按纯时钟重排（timeFormat 契约）；
   //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
-  const timeSpan = el('span', 'fm-msg-time duration-badge-time', timeMs ? formatHm(timeMs) : '');
+  const timeSpan = chatFooterTime('fm-msg-time', timeMs ? formatHm(timeMs) : '');
   if (timeMs) {
     timeSpan.setAttribute('data-ts', String(timeMs));
     timeSpan.setAttribute('data-ts-text', String(timeMs));
@@ -3593,7 +3594,7 @@ export function bubbleEl(m, conv) {
   // @.2 + flex-shrink:0）—— fm-footer-align 批 2026-11-02：旧形态用
   // `.fm-msg-actions::before` 伪元素（视觉等价、结构不同），现与主会话同构：真节点、
   // 同几何、同间距档（pill gap 6 + 1 + 6 = 13px，主会话实测同档）。
-  meta.appendChild(el('span', 'fm-msg-divider duration-badge-divider'));
+  meta.appendChild(chatFooterDivider('fm-msg-divider'));
   meta.appendChild(actions);
 
   wrap.appendChild(meta);

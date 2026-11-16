@@ -492,8 +492,8 @@ if (!existsSync(ASK_DOCK)) {
 } else {
   const askSrc = readFileSync(ASK_DOCK, 'utf8');
   const checks = [
-    { re: /class:\s*'ask-bub nf-glass/, label: 'ask 气泡（ask-bub）', hint: "h('div', { class: 'ask-bub nf-glass …' })" },
-    { re: /class:\s*'ask-input nf-glass/, label: 'ask 输入条（ask-input）', hint: "h('div', { class: 'ask-input nf-glass' })" },
+    { re: /class:\s*askBubbleClass\(m\.role\)/, label: 'ask 气泡（ask-bub）', hint: 'chatUi.js askBubbleClass' },
+    { re: /class:\s*chatComposerClass\('ask'\)/, label: 'ask 输入条（ask-input）', hint: 'chatUi.js chatComposerClass' },
   ];
   for (const c of checks) {
     if (!c.re.test(askSrc)) {
