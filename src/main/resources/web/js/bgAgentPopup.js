@@ -72,6 +72,7 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
    修法：造型全部交还标准（裸件档 + 下拉档，本类已登记进
    css/inputSurface.css 的两个成员表），本块**只留几何**（flex/宽度上限/字档/
    纵向内距）——底/边/圆角/影/箭头/焦点环一处都不许在这里写（I2 判据）。 */
+.bgagent-external-model-input { color: var(--color-text); }
 .bgagent-model-switch {
   flex: 0 1 auto;
   min-width: 0; max-width: 14rem;
@@ -1300,6 +1301,7 @@ function mountExternalModelControl(overlay, sessionId) {
     if (!config.supported) { status.textContent = t('delegate.externalModelUnsupported'); return; }
     const input = document.createElement('input');
     input.type = 'text';
+    input.className = 'bgagent-external-model-input';
     input.value = config.model || '';
     input.placeholder = t('delegate.externalModelDefault');
     input.setAttribute('aria-label', t('delegate.externalModelFuture'));

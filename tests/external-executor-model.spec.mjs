@@ -25,10 +25,17 @@ try {
     popup.openStepPopup(id, 'External', 'fixture');
   }, id);
   await open('external-claude-code-12345678');
+  if (process.env.EXTERNAL_MODEL_BEFORE_SHOT) {
+    await session.page.locator('.bgagent-overlay').screenshot({ path: process.env.EXTERNAL_MODEL_BEFORE_SHOT, animations: 'disabled' });
+    console.log('Captured baseline popup; feature assertions intentionally skipped');
+  } else {
   const input = session.page.locator('.bgagent-overlay input[list="bgagent-external-model-suggestions"]');
   await input.waitFor({ timeout: 5000 });
   assert.equal(await input.inputValue(), 'sonnet');
   assert.equal(await session.page.locator('#bgagent-model-switch').isHidden(), true);
+  if (process.env.EXTERNAL_MODEL_AFTER_SHOT) {
+    await session.page.locator('.bgagent-overlay').screenshot({ path: process.env.EXTERNAL_MODEL_AFTER_SHOT, animations: 'disabled' });
+  }
   await input.fill('custom-model');
   await input.dispatchEvent('change');
   await session.page.waitForFunction(() => document.querySelector('.bgagent-delegate-strip [role=status]')?.textContent);
@@ -37,4 +44,5 @@ try {
   await session.page.waitForFunction(() => document.querySelector('.bgagent-delegate-strip [role=status]')?.textContent);
   assert.equal(await session.page.locator('.bgagent-overlay input[list="bgagent-external-model-suggestions"]').count(), 0);
   console.log('PASS external executor model popup save and unsupported state');
+  }
 } finally { await browser.close(); }
