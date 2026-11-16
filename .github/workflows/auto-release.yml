@@ -175,6 +175,144 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  e2e:
+    name: E2E release gate (full functional)
+    # 发布前全量门禁（作者裁定 2026-11-16 11:54：E2E harness 合入 main 6dc48c6d7
+    # 后接入发布线——「全量测试安排在发布前 CI/CD」）。任一红即中止发布：
+    # release job needs 本 job。日常开发不跑全量（定向跑见 references/qa/e2e-testing.md）。
+    # 拓扑：自托管 Mac（ci-selfhosted 先例）——harness fail-closed 依赖 seatbelt
+    # (sandbox-exec 正负对照)、$E2E_CACHE_HOME/.stand/bin/sbt 门禁包装器、JDK23 与
+    # 依赖缓存，GitHub 托管 runner 均不满足；自托管分钟不计费（作者令 2026-10-21）。
+    # 双文件同步维护（沿 build-jar 双份先例）：release.yml / auto-release.yml。
+    # dry_run dispatch 时本 job 照跑（验证无发布副作用）。
+    needs: build-jar
+    if: needs.build-jar.outputs.skipped == 'false'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 75
+    env:
+      # 源钉：stand-dev harness commit（2026-11-16 部署面 HEAD）。harness 批次落地
+      # 后 bump 此值；clone 后 rev-parse 相等校验，漂移即红。
+      STAND_DEV_REF: bbd7913e4fdaf7f38c9e6c7f21e88ffbae020548
+      # 门禁语义裁定点（集中一处，--list 与执行共用；两文件同步改）：
+      # --suite functional --full = 全场景；adapter 未实现的场景 NOT READY 即红。
+      E2E_SUITE_ARGS: "--suite functional --full"
+      # github.com 直连不稳（ci-selfhosted 2026-10-21 实测）：checkout 走本机代理；
+      # aliyun/npmmirror 腿不受影响。沙箱内子进程环境由 harness 全新构造，不继承。
+      https_proxy: "http://127.0.0.1:7890"
+      http_proxy: "http://127.0.0.1:7890"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # adapter 源钉 merge-base HEAD BASELINE（isolated_harness.py）与套件
+          # fingerprint 都要完整历史 —— 全量检出。
+          fetch-depth: 0
+
+      - name: Detect JDK23 (java-home 探测，不硬编码本机路径)
+        # Same logic locally: /usr/libexec/java_home -v 23
+        shell: bash
+        run: |
+          if ! E2E_JAVA_HOME="$(/usr/libexec/java_home -v 23)"; then
+            echo "::error::JDK23 not found (/usr/libexec/java_home -v 23 failed)"
+            exit 1
+          fi
+          "$E2E_JAVA_HOME/bin/java" -version 2>&1 | head -2
+          echo "E2E_JAVA_HOME=$E2E_JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Resolve cache-home (gate wrapper assert)
+        # Same logic locally: test -x "${E2E_CACHE_HOME:-$HOME}/.stand/bin/sbt"
+        shell: bash
+        run: |
+          E2E_CACHE_HOME="${E2E_CACHE_HOME:-$HOME}"
+          if [ ! -x "$E2E_CACHE_HOME/.stand/bin/sbt" ]; then
+            echo "::error::gate sbt wrapper missing: $E2E_CACHE_HOME/.stand/bin/sbt"
+            exit 1
+          fi
+          echo "E2E_CACHE_HOME=$E2E_CACHE_HOME" >> "$GITHUB_ENV"
+
+      - name: Clone pinned stand-dev harness
+        # Same logic locally:
+        #   git clone git@git.ustc.edu.cn:kaiyu/stand-dev.git /tmp/stand-dev-harness
+        #   git -C /tmp/stand-dev-harness checkout "$STAND_DEV_REF"
+        shell: bash
+        run: |
+          H="$RUNNER_TEMP/stand-dev-harness"
+          rm -rf "$H"
+          git clone --quiet git@git.ustc.edu.cn:kaiyu/stand-dev.git "$H"
+          git -C "$H" checkout --quiet "$STAND_DEV_REF"
+          if [ "$(git -C "$H" rev-parse HEAD)" != "$STAND_DEV_REF" ]; then
+            echo "::error::harness pin drift (expected $STAND_DEV_REF)"
+            exit 1
+          fi
+          test -x "$H/skills/stand-dev/scripts/isolated_harness.py"
+          echo "HARNESS=$H/skills/stand-dev" >> "$GITHUB_ENV"
+
+      - name: E2E plan (list = dry-run 原语)
+        # Same logic locally:
+        #   python3 ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/run_e2e.py \
+        #     --suite functional --full --list
+        shell: bash
+        run: python3 "$HARNESS/scripts/run_e2e.py" $E2E_SUITE_ARGS --list
+
+      - name: Warm dependency caches (cache-home 自举，在线)
+        # Same logic locally（门禁 sbt，会话权限外 → 作者代跑）:
+        #   JAVA_HOME="$(/usr/libexec/java_home -v 23)" SBT_GATE=on SBT_GATE_SERIALIZE=on \
+        #     "$HOME/.stand/bin/sbt" -batch compile e2eClasspath
+        # 门禁包装器走全局锁（~/.stand/run/sbt.lock），与作者本机 sbt 互斥安全；
+        # 在线解析依赖落入 cache-home，供下一步离线沙箱编译只读拷贝。
+        shell: bash
+        run: |
+          env JAVA_HOME="$E2E_JAVA_HOME" SBT_GATE=on SBT_GATE_SERIALIZE=on \
+            "$E2E_CACHE_HOME/.stand/bin/sbt" -batch compile e2eClasspath
+
+      - name: Build E2E fixture (offline sandboxed compile)
+        # Same logic locally（含 sbt → 作者代跑）:
+        #   python3 ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/build_e2e_fixture.py \
+        #     --repo . --output /tmp/e2e-fixture-<ts> \
+        #     --java-home "$(/usr/libexec/java_home -v 23)" --cache-home "$HOME"
+        shell: bash
+        run: |
+          E2E_FIXTURE="$RUNNER_TEMP/e2e-fixture-$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "E2E_FIXTURE=$E2E_FIXTURE" >> "$GITHUB_ENV"
+          python3 "$HARNESS/scripts/build_e2e_fixture.py" \
+            --repo "$GITHUB_WORKSPACE" --output "$E2E_FIXTURE" \
+            --java-home "$E2E_JAVA_HOME" --cache-home "$E2E_CACHE_HOME"
+
+      - name: Run full functional E2E suite (fail-closed)
+        # Same logic locally:
+        #   python3 ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/run_e2e.py \
+        #     --suite functional --full --repo . --output /tmp/e2e-results-<ts> \
+        #     --adapter ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/isolated_harness.py
+        # 任一场景 FAIL/NOT READY → 非零 → 发布中止（语义由 E2E_SUITE_ARGS 定）。
+        shell: bash
+        run: |
+          E2E_OUT="$RUNNER_TEMP/e2e-results-$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "E2E_OUT=$E2E_OUT" >> "$GITHUB_ENV"
+          python3 "$HARNESS/scripts/run_e2e.py" $E2E_SUITE_ARGS \
+            --repo "$GITHUB_WORKSPACE" --output "$E2E_OUT" \
+            --adapter "$HARNESS/scripts/isolated_harness.py"
+
+      - name: Frontend gate (check:frontend)
+        # Same logic locally:
+        #   npm ci && npm install --no-save @playwright/test@1.62.0 && npm run check:frontend
+        # playwright 不入 devDependencies（仓规「由运行环境自带」；visual-harness.mjs
+        # 解析顺序注释的 CI 形态 = npm install --no-save @playwright/test）。
+        # 1.62.0 = 运行环境配对版本（2026-11-16 实证 25/25）；浏览器缺缓存时
+        # 退回系统 Edge/Chrome（visual-harness.mjs executablePath 顺序）。
+        shell: bash
+        run: |
+          npm ci
+          npm install --no-save @playwright/test@1.62.0
+          npm run check:frontend
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence
+          path: ${{ runner.temp }}/e2e-*
+          if-no-files-found: warn
+          retention-days: 3
+
   package-macos:
     name: Package macOS (${{ matrix.label }})
     needs: build-jar
@@ -303,7 +441,9 @@ jobs:
   release:
     name: Tag, Release & Mirror
     # [FROZEN 2026-09-06] needs narrowed to build-jar (package-* jobs sealed)
-    needs: [build-jar]
+    # 2026-11-16: needs widened to [build-jar, e2e] — 发布前全量 E2E 门禁
+    # （作者裁定）阻塞 tag/release；dry_run dispatch 时跳过发布副作用。
+    needs: [build-jar, e2e]
     if: needs.build-jar.outputs.skipped == 'false' && inputs.dry_run != true
     runs-on: ubuntu-latest
     steps:
