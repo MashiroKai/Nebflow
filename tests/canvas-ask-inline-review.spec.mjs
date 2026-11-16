@@ -1,0 +1,485 @@
+#!/usr/bin/env node
+// canvas-ask-inline-review.spec.mjs — canvas-inline-diff-review web 验收
+// （Cursor 式「先应用、后审阅」：ask_edit/ask_write 直接落盘 → canvas 审阅页签
+// 原文档内联 diff 逐块/全量接受拒绝）。
+//
+// 协议面用 routeWebSocket mock 驱动（canvas-ask-edit-diff.spec.mjs 孪生骨架；
+// 旧 spec 随提案 diff 卡路径退役删除），**结构断言红绿**（不卡像素）：
+//   R0  页面零 pageerror（载入健康面）
+//   R1  askEditApplied 帧 → 审阅页签开（.canvas-tab-pane[data-type="askreview"]）：
+//       文件标签 + 全量计数、原文档全文在场（ctx 行）、就地 del/add 行、
+//       逐块钮 + 全量钮在场；长未变段折叠（>14 行露头尾）
+//   R2  逐块接受：点击 → askEditAccept {sessionId, hunkId} 外发、waiting 防双发；
+//       resolved(done, review 余块) → 该块消失、余块重渲；接受最后一块 →
+//       页签关 + 该路径 pop.readFile 重取（refreshFileTabByPath 腿）
+//   R3  全量接受（⌘Enter 快捷键路）：askEditAccept 无 hunkId 外发 → resolved
+//       (done, review 空) → 页签关 + readFile 重取
+//   R4  全量拒绝：askEditReject 无 hunkId 外发 → resolved(done) → 页签关 +
+//       readFile 重取（回写回退后重载）
+//   R5  逐块拒绝：askEditReject {hunkId} 外发 → resolved(done, review 余块)
+//   R6  冲突过期：resolved(outcome:error) → 显式冲突条（role=alert）呈现、绝不
+//       静默；重试 → askEditAccept 重发；保留现状并关闭 → askEditDismiss 外发 →
+//       resolved(done) → 页签关（dismiss 零写盘）
+//   R7  askState.review 回放播种：服务端在列审阅态 → 页签重建（重载/换端面）
+//   R8  提案卡退役：全程零 .ask-edit-* 节点（问答路径摘除，非隐藏）
+//   R9  文本红线：行文本一律 textContent——currentText 内 HTML/script 字面量
+//       不构成可执行/可成像节点
+//
+// 运行：node tests/canvas-ask-inline-review.spec.mjs
+// 可选 env：PORT（默认 8219）、ASK_SHOTS_DIR（截图目录）。
+
+import { chromium } from 'playwright';
+import { createHash } from 'node:crypto';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { installTicketMock, ticketGuard } from './nf-ticket-mock.mjs';
+
+/** 客户端/服务端同式的 ask 会话 id 派生（sha256(absPath) 前 8 hex，前缀 ask-）。 */
+const sidOf = (absPath) => 'ask-' + createHash('sha256').update(absPath, 'utf8').digest('hex').slice(0, 8);
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+// WEB_DIR 可注入（argv[2] 或 env）：红面运行 = 指向 HEAD 基线树（/tmp 搭的
+// symlink 农场），绿面缺省 = 本仓工作树。
+const WEB_DIR = process.env.WEB_DIR || process.argv[2] || resolve(HERE, '../src/main/resources/web');
+const PORT = Number(process.env.PORT || 8219);
+const BASE = `http://127.0.0.1:${PORT}`;
+const SHOTS_DIR = process.env.ASK_SHOTS_DIR || resolve(HERE, `../evidence/canvas-ask-inline-review/shots`);
+mkdirSync(SHOTS_DIR, { recursive: true });
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ── 静态服务（serve 真实 web/ 前端源码树，canvas-stack 同款）──
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
+  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf',
+};
+const server = createServer((req, res) => {
+  const url = new URL(req.url, BASE);
+  let p = decodeURIComponent(url.pathname);
+  if (p === '/') p = '/index.html';
+  const file = join(WEB_DIR, p);
+  if (!file.startsWith(WEB_DIR)) { res.writeHead(403); res.end(); return; }
+  try {
+    const body = readFileSync(file);
+    res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    res.writeHead(404); res.end('not found');
+  }
+});
+await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
+
+// ── 断言器 ──
+let pass = 0, fail = 0;
+const results = [];
+function ok(name, cond, detail = '') {
+  const line = `${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`;
+  results.push(line);
+  console.log(line);
+  if (cond) pass++; else fail++;
+}
+
+// ── ask 会话 mock 面（routeWebSocket 的 server 侧）──
+/** @type {any} */ let askWs = null;
+const inbound = [];                                  // page → server 帧留档（协议断言面）
+function wsSend(obj) { if (askWs) askWs.send(JSON.stringify(obj)); }
+
+async function bootPage(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark' });
+  await ctx.addInitScript(() => {
+    localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
+    localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
+    localStorage.setItem('nebflow_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+    localStorage.setItem('neblink_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 300)));
+  await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
+  await page.route(/\/api\/nf-file\?/, async (route) => {
+    if (await ticketGuard(route)) return;
+    const url = new URL(route.request().url());
+    const p = url.searchParams.get('path') || '';
+    return route.fulfill({ status: 200, contentType: 'text/markdown', body: `# ${p}\n\nmock body\n` });
+  });
+  await installTicketMock(page);
+  await page.routeWebSocket(/\/ws/, (ws) => {
+    askWs = ws;
+    ws.onMessage((raw) => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      inbound.push(m);
+      if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+      // pop.readFile 应答（WsFileOpsHandlers 同式）：fileContent → explorer 落
+      // workspace-open-item（background）→ settleFileRefresh（_refreshing 解锁——
+      // mock 不应答会把刷新面卡在 10s 安全窗里，重载腿判定就永远等不到）。
+      if (m.type === 'pop.readFile' && m.path) {
+        ws.send(JSON.stringify({
+          type: 'fileContent', path: m.path, absPath: m.path,
+          fileName: m.path.split('/').pop(), itemType: 'markdown',
+          content: '# notes (refreshed)\n\nmock body\n', size: 28,
+        }));
+      }
+      if (m.type === 'askOpen') {
+        const sid = sidOf((m.file && m.file.absPath) || '');
+        ws.send(JSON.stringify({
+          type: 'askState',
+          sessionId: sid,
+          sessionKey: 'ask:' + sid.slice(4, 8),
+          file: (m.file && m.file.absPath) || '',
+          fileName: (m.file && m.file.name) || 'file',
+          messages: [],
+          review: null,
+        }));
+      }
+    });
+    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
+  });
+  await page.goto(BASE + '/index.html');
+  await page.waitForSelector('#activity-bar', { timeout: 15000 });
+  await sleep(600);
+  return { ctx, page, errors };
+}
+
+async function openFile(page, name) {
+  const absPath = `/tmp/canvas-ask-fixture/${name}`;
+  await page.evaluate(({ name, absPath }) => {
+    window.dispatchEvent(new CustomEvent('workspace-open-item', {
+      detail: {
+        id: 'file:' + absPath, itemType: 'markdown', title: name,
+        content: `# ${name}\n\nmock body\n`, absPath, pinned: true,
+      },
+    }));
+  }, { name, absPath });
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="file:${absPath}"]`, { state: 'visible', timeout: 10000 });
+  await sleep(300);
+  return absPath;
+}
+
+async function shot(page, name) {
+  try { await page.screenshot({ path: join(SHOTS_DIR, name + '.png'), fullPage: false }); } catch { /* headless 沙箱截不到就算了 */ }
+}
+
+// ── 审阅面快照（结构断言面）──
+const reviewOf = (page, sid) => page.evaluate((tabId) => {
+  const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="${tabId}"]`);
+  if (!pane || !pane.isConnected) return { open: false };
+  const lineText = (sel) => [...pane.querySelectorAll(sel)].map((l) => l.textContent || '');
+  return {
+    open: true,
+    head: (pane.querySelector('.nf-ar-file') || {}).textContent || '',
+    counts: (pane.querySelector('.nf-ar-counts') || {}).textContent || '',
+    ctx: lineText('.nf-ar-line.ctx'),
+    dels: lineText('.nf-ar-line.del'),
+    adds: lineText('.nf-ar-line.add'),
+    hunks: [...pane.querySelectorAll('.nf-ar-hunk')].map((h) => ({
+      id: h.getAttribute('data-hunk-id') || '',
+      state: h.getAttribute('data-state') || '',
+      acceptDisabled: (h.querySelector('.nf-ar-hunk-accept') || {}).disabled === true,
+      rejectDisabled: (h.querySelector('.nf-ar-hunk-reject') || {}).disabled === true,
+    })),
+    acceptAllDisabled: (pane.querySelector('.nf-ar-accept-all') || {}).disabled === true,
+    rejectAllDisabled: (pane.querySelector('.nf-ar-reject-all') || {}).disabled === true,
+    conflict: !!pane.querySelector('.nf-ar-conflict[role="alert"]'),
+    folds: pane.querySelectorAll('.nf-ar-fold').length,
+    ctxVisible: [...pane.querySelectorAll('.nf-ar-line.ctx')].filter((l) => l.style.display !== 'none').length,
+  };
+}, `askreview:${sid}`);
+
+/** applied 帧构造（服务端 AskEditReviews 的 wire 形：base/current/hunks 单源）。 */
+let changeSeq = 0;
+function appliedFrame(sid, abs, fileName, baseText, currentText, hunks) {
+  changeSeq += 1;
+  return {
+    type: 'askEditApplied', sessionId: sid, changeId: 'c' + changeSeq,
+    path: abs, fileName, baseText, currentText,
+    hunks, count: 1, updatedAt: Date.now(),
+  };
+}
+
+// 两块几何（后端 AskEditReviewSpec twoBlock 同款：首行政 + 尾部追加，5 行隔离带
+// > HunkMergeGap(2) ⇒ 两独立块）。
+const TWO_BASE = 'alpha\nbeta\ngamma\ngap1\ngap2\ngap3\n';
+const TWO_CUR = 'ALPHA\nbeta\ngamma\ngap1\ngap2\ngap3\ndelta\n';
+const TWO_HUNKS = [
+  { id: 'h0', oldStart: 0, oldCount: 1, newStart: 0, newCount: 1, added: 1, removed: 1 },
+  { id: 'h1', oldStart: 6, oldCount: 1, newStart: 6, newCount: 2, added: 2, removed: 1 },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+const browser = await chromium.launch();
+try {
+  const { page, errors } = await bootPage(browser);
+  const abs = await openFile(page, 'notes.md');
+  const sid = sidOf(abs);
+  // 画布刷新冷却（FILE_REFRESH_COOLDOWN=2000；开页签渲染即 _lastRefreshAt 时戳）：
+  // 冷却窗外驱动后续 resolve，重载腿判定才确定性（scheduleFileRefresh 冷却窗内
+  // 静默 return 不重试——canvas.js 既定守卫语义）。
+  await sleep(2300);
+  await page.click('.ask-fab');                       // 开 dock（askOpen → 建会话账）
+  await sleep(500);
+
+  // R0 载入健康
+  ok('R0 页面零 pageerror', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+  // ── R1 askEditApplied → 审阅页签结构 ─────────────────────────────────────
+  // 几何 = 服务端 hunksOf 真实产物：beta → [BETA, DELTA] 一个 delta（old(1,1) →
+  // new(1,2)），前后 alpha/gamma 为 ctx。
+  const R1_BASE = 'alpha\nbeta\ngamma\n';
+  const R1_CUR = 'alpha\nBETA\nDELTA\ngamma\n';
+  wsSend(appliedFrame(sid, abs, 'notes.md', R1_BASE, R1_CUR, [
+    { id: 'h0', oldStart: 1, oldCount: 1, newStart: 1, newCount: 2, added: 2, removed: 1 },
+  ]));
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
+  await sleep(200);
+  let rv = await reviewOf(page, sid);
+  ok('R1a 审阅页签开：文件标签 notes.md + 全量计数 +2 −1 · 1 块待审',
+    rv.open && rv.head.includes('notes.md') && rv.counts.includes('+2') && rv.counts.includes('−1'),
+    JSON.stringify({ head: rv.head, counts: rv.counts }));
+  ok('R1b 原文档全文在场（ctx = alpha/gamma 基线行）',
+    rv.open && rv.ctx.includes('alpha') && rv.ctx.includes('gamma'), JSON.stringify(rv.ctx));
+  ok('R1c 就地增删：del 1（− beta）、add 2（+ BETA / + DELTA）',
+    rv.open && rv.dels.length === 1 && rv.dels[0].includes('beta')
+      && rv.adds.length === 2 && rv.adds.some((t) => t.includes('BETA')) && rv.adds.some((t) => t.includes('DELTA')),
+    JSON.stringify({ dels: rv.dels, adds: rv.adds }));
+  ok('R1d 动作面在场：逐块接受/拒绝钮 + 全量接受/拒绝钮（均可点）',
+    rv.open && rv.hunks.length === 1 && rv.hunks[0].id === 'h0' && rv.hunks[0].state === 'pending'
+      && !rv.hunks[0].acceptDisabled && !rv.hunks[0].rejectDisabled && !rv.acceptAllDisabled && !rv.rejectAllDisabled,
+    JSON.stringify(rv.hunks));
+
+  // ── R1e 长未变段折叠（原文档全文的可读性面，非硬截断）──────────────────
+  const LONG_BASE = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n') + '\n';
+  const LONG_CUR = LONG_BASE.replace('line-20\n', 'LINE-TWENTY\n');
+  wsSend(appliedFrame(sid, abs, 'notes.md', LONG_BASE, LONG_CUR, [
+    { id: 'h0', oldStart: 20, oldCount: 1, newStart: 20, newCount: 1, added: 1, removed: 1 },
+  ]));
+  await sleep(300);
+  rv = await reviewOf(page, sid);
+  ok('R1e1 长未变段折叠：头尾两段各 >14 行 → 2 条折叠带在场',
+    rv.open && rv.folds === 2, JSON.stringify(rv.folds));
+  const ctxVisibleBeforeFold = rv.ctxVisible;
+  await page.click('.nf-ar-fold');
+  await sleep(150);
+  rv = await reviewOf(page, sid);
+  ok('R1e2 点击折叠带 → 中间行展开（可见 ctx 行数增长）',
+    rv.open && rv.ctxVisible > ctxVisibleBeforeFold && rv.folds === 1, `${ctxVisibleBeforeFold} → ${rv.ctxVisible}，剩余折叠带 ${rv.folds}`);
+  await shot(page, 'r1-applied');
+
+  // ── R2 逐块接受 → 余块重渲 → 末块清账收页签 ─────────────────────────────
+  wsSend(appliedFrame(sid, abs, 'notes.md', TWO_BASE, TWO_CUR, TWO_HUNKS));
+  await sleep(300);
+  const readsOf = () => inbound.filter((m) => m.type === 'pop.readFile' && m.path === abs).length;
+  await page.click('.nf-ar-hunk[data-hunk-id="h0"] .nf-ar-hunk-accept');
+  await sleep(300);
+  const hunkAccept = inbound.find((m) => m.type === 'askEditAccept' && m.hunkId === 'h0');
+  ok('R2a 逐块接受 → askEditAccept {sessionId, hunkId:h0} 外发',
+    !!hunkAccept && hunkAccept.sessionId === sid, JSON.stringify(hunkAccept));
+  rv = await reviewOf(page, sid);
+  ok('R2b 防双发：h0 waiting 态 + 逐块钮 disabled + 全量钮 disabled',
+    rv.open && rv.hunks.find((h) => h.id === 'h0')?.state === 'waiting'
+      && rv.hunks.find((h) => h.id === 'h0')?.acceptDisabled && rv.acceptAllDisabled && rv.rejectAllDisabled,
+    JSON.stringify(rv.hunks));
+  // 服务端应答：h0 已审清出（基线前移），仅余 h1。
+  wsSend({
+    type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'done',
+    review: {
+      path: abs, fileName: 'notes.md', baseText: 'ALPHA\nbeta\ngamma\ngap1\ngap2\ngap3\n',
+      currentText: TWO_CUR,
+      hunks: [{ id: 'h1', oldStart: 6, oldCount: 1, newStart: 6, newCount: 2, added: 2, removed: 1 }],
+      count: 1, updatedAt: Date.now(),
+    },
+  });
+  await sleep(300);
+  rv = await reviewOf(page, sid);
+  ok('R2c resolved(done, 余块) → h0 消失、h1 仍待审、waiting 解锁',
+    rv.open && !rv.hunks.some((h) => h.id === 'h0') && rv.hunks.some((h) => h.id === 'h1' && h.state === 'pending')
+      && !rv.acceptAllDisabled,
+    JSON.stringify(rv.hunks));
+  await shot(page, 'r2-hunk-accepted');
+  // 接受最后一块 → 清账：页签关 + 文件页签按路径重载。
+  const readsBeforeClear = readsOf();
+  await page.click('.nf-ar-hunk[data-hunk-id="h1"] .nf-ar-hunk-accept');
+  await sleep(300);
+  wsSend({ type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'done', review: null });
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { state: 'detached', timeout: 5000 });
+  let cleared = false;
+  for (let i = 0; i < 40 && !cleared; i++) { await sleep(100); cleared = readsOf() > readsBeforeClear; }
+  ok('R2d 末块接受 → 清账收页签 + 该路径 pop.readFile 重取（refreshFileTabByPath 腿）',
+    cleared, `pop.readFile ${readsBeforeClear} → ${readsOf()}`);
+
+  // ── R3 全量接受（⌘Enter 快捷键路）──────────────────────────────────────
+  await sleep(2100); // 刷新冷却窗外（上一腿刚重载过）
+  wsSend(appliedFrame(sid, abs, 'notes.md', TWO_BASE, TWO_CUR, TWO_HUNKS));
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
+  await sleep(200);
+  const readsBeforeAll = readsOf();
+  await page.keyboard.press('Meta+Enter');
+  await sleep(300);
+  const allAccept = inbound.filter((m) => m.type === 'askEditAccept').pop();
+  ok('R3a ⌘Enter（审阅页签激活）→ askEditAccept 无 hunkId 外发（=全部接受）',
+    !!allAccept && allAccept.sessionId === sid && !('hunkId' in allAccept), JSON.stringify(allAccept));
+  rv = await reviewOf(page, sid);
+  ok('R3b waiting 面：全量钮 disabled（防双发，等 resolved 终态）',
+    rv.open && rv.acceptAllDisabled && rv.rejectAllDisabled, JSON.stringify(rv.acceptAllDisabled));
+  wsSend({ type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'done', review: null });
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { state: 'detached', timeout: 5000 });
+  let refetched3 = false;
+  for (let i = 0; i < 40 && !refetched3; i++) { await sleep(100); refetched3 = readsOf() > readsBeforeAll; }
+  ok('R3c resolved(done, review 空) → 页签关 + readFile 重取', refetched3, `pop.readFile ${readsBeforeAll} → ${readsOf()}`);
+  await shot(page, 'r3-accept-all-cleared');
+
+  // ── R4 全量拒绝 ─────────────────────────────────────────────────────────
+  await sleep(2100);
+  wsSend(appliedFrame(sid, abs, 'notes.md', TWO_BASE, TWO_CUR, TWO_HUNKS));
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
+  await sleep(200);
+  const readsBeforeRejectAll = readsOf();
+  await page.click('.nf-ar-reject-all');
+  await sleep(300);
+  const rejectAll = inbound.filter((m) => m.type === 'askEditReject').pop();
+  ok('R4a 全量拒绝 → askEditReject 无 hunkId 外发',
+    !!rejectAll && rejectAll.sessionId === sid && !('hunkId' in rejectAll), JSON.stringify(rejectAll));
+  wsSend({ type: 'askEditResolved', sessionId: sid, action: 'reject', outcome: 'done', review: null });
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { state: 'detached', timeout: 5000 });
+  let refetched4 = false;
+  for (let i = 0; i < 40 && !refetched4; i++) { await sleep(100); refetched4 = readsOf() > readsBeforeRejectAll; }
+  ok('R4b 整体回退 → 页签关 + readFile 重载（回写后重取）', refetched4, `pop.readFile ${readsBeforeRejectAll} → ${readsOf()}`);
+
+  // ── R5 逐块拒绝 ─────────────────────────────────────────────────────────
+  wsSend(appliedFrame(sid, abs, 'notes.md', TWO_BASE, TWO_CUR, TWO_HUNKS));
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
+  await sleep(200);
+  await page.click('.nf-ar-hunk[data-hunk-id="h0"] .nf-ar-hunk-reject');
+  await sleep(300);
+  const hunkReject = inbound.find((m) => m.type === 'askEditReject' && m.hunkId === 'h0');
+  ok('R5a 逐块拒绝 → askEditReject {sessionId, hunkId:h0} 外发',
+    !!hunkReject && hunkReject.sessionId === sid, JSON.stringify(hunkReject));
+  wsSend({
+    type: 'askEditResolved', sessionId: sid, action: 'reject', outcome: 'done',
+    review: {
+      path: abs, fileName: 'notes.md', baseText: TWO_BASE,
+      currentText: 'alpha\nbeta\ngamma\ngap1\ngap2\ngap3\ndelta\n',
+      hunks: [{ id: 'h1', oldStart: 6, oldCount: 1, newStart: 6, newCount: 2, added: 2, removed: 1 }],
+      count: 1, updatedAt: Date.now(),
+    },
+  });
+  await sleep(300);
+  rv = await reviewOf(page, sid);
+  ok('R5b resolved(done, 余块) → h0 消失（回退该块）、h1 仍待审',
+    rv.open && !rv.hunks.some((h) => h.id === 'h0') && rv.hunks.some((h) => h.id === 'h1' && h.state === 'pending'),
+    JSON.stringify(rv.hunks));
+  await shot(page, 'r5-hunk-rejected');
+
+  // ── R6 冲突过期（显式提示，绝不静默覆盖）─────────────────────────────────
+  await page.click('.nf-ar-accept-all');
+  await sleep(300);
+  wsSend({
+    type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'error',
+    error: 'stale: file changed during review — retry, or dismiss to keep the on-disk state',
+    review: {
+      path: abs, fileName: 'notes.md', baseText: TWO_BASE, currentText: TWO_CUR,
+      hunks: TWO_HUNKS, count: 1, updatedAt: Date.now(),
+    },
+  });
+  await sleep(300);
+  rv = await reviewOf(page, sid);
+  ok('R6a resolved(error) → 显式冲突条在场（role=alert），审阅块仍待审（不静默清账）',
+    rv.open && rv.conflict && rv.hunks.length === 2, JSON.stringify({ conflict: rv.conflict, hunks: rv.hunks.length }));
+  await shot(page, 'r6-conflict');
+  await page.click('.nf-ar-retry');
+  await sleep(300);
+  const retryFrame = inbound.filter((m) => m.type === 'askEditAccept').pop();
+  ok('R6b 重试 → askEditAccept 重发（同一动作面）',
+    !!retryFrame && retryFrame.sessionId === sid, JSON.stringify(retryFrame));
+  // 再次冲突 → 走逃生口：保留现状并关闭（dismiss 零写盘）。
+  wsSend({
+    type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'error',
+    error: 'stale: file changed during review — retry, or dismiss to keep the on-disk state',
+    review: {
+      path: abs, fileName: 'notes.md', baseText: TWO_BASE, currentText: TWO_CUR,
+      hunks: TWO_HUNKS, count: 1, updatedAt: Date.now(),
+    },
+  });
+  await sleep(300);
+  await page.click('.nf-ar-dismiss');
+  await sleep(300);
+  const dismissFrame = inbound.find((m) => m.type === 'askEditDismiss');
+  ok('R6c 保留现状并关闭 → askEditDismiss {sessionId} 外发（零写盘清账）',
+    !!dismissFrame && dismissFrame.sessionId === sid, JSON.stringify(dismissFrame));
+  wsSend({ type: 'askEditResolved', sessionId: sid, action: 'dismiss', outcome: 'done', review: null });
+  // R6d 判据 = waitForSelector detached（超时即抛 → 收口为决定性 FAIL； dismiss
+  // 零写盘，文件页签重载腿按需呈现盘上现状——不另断言读数）。
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { state: 'detached', timeout: 5000 });
+  ok('R6d dismiss 清账 → 页签关（零写盘逃生口收口）', true);
+
+  // ── R7 askState.review 回放播种 ─────────────────────────────────────────
+  wsSend({
+    type: 'askState', sessionId: sid, sessionKey: 'ask:' + sid.slice(4, 8), file: abs,
+    fileName: 'notes.md', messages: [],
+    review: {
+      path: abs, fileName: 'notes.md', baseText: R1_BASE, currentText: R1_CUR,
+      hunks: [{ id: 'h0', oldStart: 1, oldCount: 1, newStart: 1, newCount: 2, added: 2, removed: 1 }],
+      count: 1, updatedAt: Date.now(),
+    },
+  });
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
+  rv = await reviewOf(page, sid);
+  ok('R7 askState.review 播种 → 审阅页签重建（重载/换端回放面），块待审',
+    rv.open && rv.hunks.some((h) => h.id === 'h0' && h.state === 'pending'), JSON.stringify(rv.hunks && rv.hunks.length));
+  // 收尾清账（下一断言面干净）。清账腿会排一个 300ms 的文件页签刷新（防抖），
+  // 等它落地再进 R8/R9——避免刷新腿与下一个 applied 帧的页签生命周期竞态。
+  wsSend({ type: 'askEditResolved', sessionId: sid, action: 'dismiss', outcome: 'done', review: null });
+  await sleep(900);
+
+  // ── R8 提案卡退役（问答路径摘除，非隐藏）────────────────────────────────
+  const retired = await page.evaluate(() => ({
+    cards: document.querySelectorAll('.ask-edit-card').length,
+    anyAskEdit: document.querySelectorAll('[class*="ask-edit"]').length,
+    askEditCss: [...document.styleSheets].some((ss) => {
+      try { return [...ss.cssRules].some((r) => r.selectorText && r.selectorText.includes('ask-edit')); }
+      catch { return false; }
+    }),
+  }));
+  ok('R8 提案 diff 卡退役：DOM 零 .ask-edit-* 节点、样式表零 ask-edit 规则',
+    retired.cards === 0 && retired.anyAskEdit === 0 && !retired.askEditCss, JSON.stringify(retired));
+
+  // ── R9 文本红线（行文本 textContent 面）─────────────────────────────────
+  const hostile = '<img src=x onerror=window.__arXss=1><script>window.__arXss=1<\/script>';
+  wsSend(appliedFrame(sid, abs, 'notes.md', 'safe\n', hostile + '\n', [
+    { id: 'h0', oldStart: 0, oldCount: 1, newStart: 0, newCount: 1, added: 1, removed: 1 },
+  ]));
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
+  await sleep(200);
+  const safety = await page.evaluate((tabId) => {
+    const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="${tabId}"]`);
+    if (!pane) return { found: false };
+    return {
+      found: true,
+      imgs: pane.querySelectorAll('img').length,
+      scripts: pane.querySelectorAll('script').length,
+      literal: (pane.textContent || '').includes('<img src=x'),
+      fired: window.__arXss === 1,
+    };
+  }, `askreview:${sid}`);
+  ok('R9 行文本红线：HTML/script 字面量不构成节点、不执行（textContent 面）',
+    safety.found && safety.imgs === 0 && safety.scripts === 0 && safety.literal && !safety.fired,
+    JSON.stringify(safety));
+
+  await sleep(200);
+  ok('R0b 收尾零 pageerror（全程含 applied/resolved/askState 驱动 + 多次点击/键盘）',
+    errors.length === 0, errors.slice(0, 2).join(' | '));
+} catch (e) {
+  // 红面驱动中断（基线 web/ 无审阅页签实现 ⇒ waitForSelector 超时等）：记一条
+  // 决定性 FAIL 而非裸栈崩溃——红绿两态都以汇总行 + 退出码收口。
+  ok('SPEC 驱动中断（红面：applied 帧未成页签/关键元素缺失）', false, String((e && e.message) || e).slice(0, 240));
+} finally {
+  await browser.close();
+  server.close();
+}
+
+console.log(`\n${fail === 0 ? '✅' : '❌'} canvas-ask-inline-review: ${pass} passed, ${fail} failed`);
+process.exit(fail === 0 ? 0 : 1);
