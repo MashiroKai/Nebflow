@@ -69,6 +69,7 @@ object PluginSourceLedger:
     case Official extends Kind("official")
     case Git extends Kind("git")
     case Https extends Kind("https")
+    case Catalog extends Kind("catalog")
 
     /** 本地目录拷贝（开发态安装）——非三态 spec 形态：无「重取」语义。 */
     case Local extends Kind("local")
@@ -82,6 +83,7 @@ object PluginSourceLedger:
     case Git extends Via("git")
     /** 直链归档安装（P2 https 腿；additive——旧读端遇该值按闭合枚举降级 unknown-source，诚实不猜）。 */
     case Https extends Via("https")
+    case Hub extends Via("hub")
     case Local extends Via("local")
 
   object Via:
@@ -172,7 +174,8 @@ object PluginSourceLedger:
       version: String,
       digest: String,
       via: Via,
-      meta: InstallMeta = InstallMeta()
+      meta: InstallMeta = InstallMeta(),
+      publisherClass: Option[PublisherClass] = None
   ): Either[String, Entry] =
     if !PluginRegistry.validPluginName(name) then Left(s"invalid plugin name '$name' — ledger entry refused")
     else if digest.trim.isEmpty then Left(s"empty digest for '$name' — ledger entry refused")
@@ -192,7 +195,7 @@ object PluginSourceLedger:
           origin = facts.origin, // 本世代字节的安装事件事实（随事件重记）
           trustLevel = facts.trustLevel,
           distributionOwner = prior.map(_.distribution.distributionOwner).getOrElse(facts.distributionOwner),
-          publisherClass = None, // 红绿②：只能由通过验证的目录签名条目赋予；A 期无目录 ⇒ 恒 None
+          publisherClass = publisherClass,
           hubReviewId = prior.flatMap(_.distribution.hubReviewId),
           submissionStatus = prior.flatMap(_.distribution.submissionStatus),
           lastCheckedAt = prior.flatMap(_.distribution.lastCheckedAt)

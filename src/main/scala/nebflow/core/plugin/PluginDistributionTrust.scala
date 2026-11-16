@@ -131,6 +131,8 @@ object PluginDistributionTrust:
         trustLevel = TrustLevel.OfficialVerified,
         distributionOwner = DistributionOwner.Seed
       )
+    case Via.Hub =>
+      Distribution(origin = Origin.Hub, trustLevel = TrustLevel.CatalogSigned, distributionOwner = DistributionOwner.Hub)
     case Via.Git =>
       Distribution(
         origin = Origin.GitPinned,
