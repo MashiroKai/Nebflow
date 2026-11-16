@@ -259,8 +259,12 @@ const navAtBoot = navigated;
 /** 上滑一页（滚到 250px —— 预取带内、停顶续拉阈值上方）并等行数落定。 */
 async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
   const t0 = Date.now();
-  await page.evaluate(() => {
+  const before = await page.evaluate(async () => {
     const c = document.getElementById('chat');
+    // A real upward gesture cancels the initial bottom-settle window; a synthetic
+    // scroll event alone does not, and can be overwritten before the response.
+    c.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -1 }));
+    await document.fonts.ready;
     c.scrollTop = 250;
     const bounds = c.getBoundingClientRect();
     const row = [...c.querySelectorAll('.row')].find((r) => {
@@ -268,8 +272,16 @@ async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
       return rect.bottom > bounds.top && rect.top < bounds.bottom;
     });
     window.__historyTestAnchor = row && { row, top: row.getBoundingClientRect().top - bounds.top };
+    const snapshot = () => ({ scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, rect: row?.getBoundingClientRect().toJSON(), fonts: document.fonts.status });
+    const start = snapshot();
     c.dispatchEvent(new Event('scroll'));
+    await new Promise(requestAnimationFrame);
+    const frame1 = snapshot();
+    await new Promise(requestAnimationFrame);
+    const frame2 = snapshot();
+    return { ...start, twoFramesStable: frame1.scrollTop === frame2.scrollTop && frame1.scrollHeight === frame2.scrollHeight && frame1.rect?.top === frame2.rect?.top, frame1, frame2 };
   });
+  console.log('[anchor-before] ' + JSON.stringify({ first: expectRows === ROWS_PER_PAGE * 2, ...before }));
   let stable = 0, last = -1;
   for (;;) {
     await sleep(60);
@@ -278,12 +290,20 @@ async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
     last = n;
     if (Date.now() - t0 > deadlineMs) break;
   }
-  const error = await page.evaluate(() => {
+  const after = await page.evaluate(async () => {
     const c = document.getElementById('chat');
     const a = window.__historyTestAnchor;
-    return a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null;
+    const snapshot = () => ({ scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, rect: a?.row.getBoundingClientRect().toJSON(), fonts: document.fonts.status });
+    const start = snapshot();
+    await new Promise(requestAnimationFrame);
+    const frame1 = snapshot();
+    await new Promise(requestAnimationFrame);
+    const frame2 = snapshot();
+    return { ...start, twoFramesStable: frame1.scrollTop === frame2.scrollTop && frame1.scrollHeight === frame2.scrollHeight && frame1.rect?.top === frame2.rect?.top, frame1, frame2,
+      error: a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null };
   });
-  return { ms: Date.now() - t0, rows: last, error };
+  console.log('[anchor-after] ' + JSON.stringify({ first: expectRows === ROWS_PER_PAGE * 2, ...after }));
+  return { ms: Date.now() - t0, rows: last, error: after.error };
 }
 
 // ── P1+P2：前 4 页手动上滑（每页 60 .row：卡片行双计），逐页计时 ──────────
@@ -309,6 +329,12 @@ for (;;) {
   if (rows >= FINAL_ROWS || Date.now() - parkT0 > 25000) break;
 }
 const maxPageMs = Math.max(...pageTimes);
+// Only user messages carry this fixture's unambiguous sequence marker.
+const userSequence = await page.evaluate(() => [...document.querySelectorAll('#chat .row')]
+  .map((row) => (row.textContent || '').match(/用户消息 (\d+)：/))
+  .filter(Boolean).map((match) => Number(match[1])));
+const expectedUsers = Array.from({ length: TOTAL }, (_, i) => i).filter((i) => i % 5 === 0);
+const userSequenceComplete = JSON.stringify(userSequence) === JSON.stringify(expectedUsers);
 
 // ── P4：心跳遮蔽腿 —— 持门 + 桩端压 pong 6.5s（> 5s 宽限）⇒ miss 被遮蔽 ──
 // 真实 hbProbe（spec 缝 _hbTestHooks）发 ping 武装宽限；门在宽限到期时仍 busy
@@ -356,6 +382,10 @@ ok('P0-b 首屏时延 < ' + FIRST_MS + 'ms（init getHistory → 行落定）',
   firstScreenMs >= 0 && firstScreenMs < FIRST_MS, `firstScreen=${firstScreenMs}ms`);
 ok('A1 前插后保持同一可见行位置', anchorErrors.every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
   `errors=${JSON.stringify(anchorErrors)} tolerance=${ANCHOR_TOLERANCE_CSS_PX} CSS px`);
+ok('A2 用户消息序号连续无缺口', userSequenceComplete,
+  `observed=${JSON.stringify(userSequence)} expected=${JSON.stringify(expectedUsers)}`);
+ok('A4 相邻页边界补页不跳', anchorErrors.slice(1, 3).every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
+  `errors=${JSON.stringify(anchorErrors.slice(1, 3))}`);
 ok('P1 手动上滑 4 页补进 + 停顶续拉收口全量（卡片行双计）',
   manualRows === ROWS_PER_PAGE * 5 && rows === FINAL_ROWS, `manual=${manualRows} final=${rows}/${FINAL_ROWS} times=${pageTimes.join(',')}ms`);
 ok('P2 单页落定 < ' + PAGE_MS + 'ms', maxPageMs < PAGE_MS, `maxPage=${maxPageMs}ms`);
