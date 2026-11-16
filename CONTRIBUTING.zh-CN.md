@@ -78,6 +78,8 @@ USTC 保护与旧分支清理由作者按[保护清单](CONTRIBUTING.md#ustc-ser
 
 ## PR 要求
 
+项目 worktree 一律放 `<project>/.stand/worktrees/<wtname>/`，使用 `python3 scripts/stand-wt.py new <wtname> [--branch <branch>]` 创建。PR 交付物先放 worktree 外的 `<project>/.stand/tmp/<wtname>/delivery/<batch>/`，需入库部分提交到 `delivery/<batch>/`；同级 `evidence/` 永不提交。tmp TTL 为 7 天；`audit` 按文件生成路径、字节数、mtime、对账入库时间及 commit SHA 或「未入库」，不得手填；`list` 核查，`clean` 默认预览，`clean --apply` 默认保留未入库文件，除非显式强制。`.stand/worktrees/` 与 `.stand/tmp/` 必须忽略。
+
 - USTC PR 只由作者创建，源分支仅限 `feat/*`、`bug/*`，目标 `main`；由作者核验后 ff-only 合入。diff 保持最小、聚焦单一改动。
 - 开 PR 前：`sbt compile` 与受影响测试全绿。Scala 改动另跑 `make check`（scalafmt + scalafix）；前端改动跑类型/循环依赖门禁与受影响的 Playwright spec（见下）。
 - `.github/workflows/ci.yml` 与 `.gitlab-ci.yml` 的静态质量任务均为阻断门禁，后者覆盖 MR 与所有分支。`.github/workflows/auto-release.yml` 在构建前要求同一入口通过。现有浏览器观察任务仍保留非阻断状态。配置仅说明预期执行方式，不表示远程 CI 已经运行或通过。
