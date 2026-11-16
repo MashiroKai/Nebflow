@@ -910,15 +910,6 @@ case class SharedResources(
   // （@volatile 单点）；未走到本构造的进程 = 恒 None 缝（进程结果直判，原缺省）。
   nebflow.core.delegate.ExternalJudgeHook.classify = nebflow.core.delegate.ExternalJudgeHook.defaultClassify()
 
-  // task-rag 批（#1227 / §Batch 7）：TaskSearch 可选 Jev 重排注册（⑦ 家族在检索
-  // 面的同族落地——执行体在 llm.decision.JevTaskSearchRerank，core 只见
-  // TaskSearchRerank 注册器，分层纪律同 DelegateJudgePort 先例）。hotFace =
-  // 每次 rerank 现读 jev 配置（JevConfigReader 同款热读）；未配 Jev ⇒ 恒 None ⇒
-  // 跳过重排照常返回（原文「可选」的缺省路径）。
-  nebflow.core.index.TaskSearchRerank.install(
-    nebflow.llm.decision.JevTaskSearchRerank.hotFace()
-  )
-
   // jev-plugins 批（#1226）：插件分配族注册（Jev 优先＋LlmAllocator 兜底＋fail-open
   // 三态——判定机同族机制；执行体在 llm.decision.PluginAllocatorMachine，core 只见
   // core.jev.PluginAllocator 注册器，分层纪律同上）。注册点 = 本构造行（生产 boot
