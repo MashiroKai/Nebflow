@@ -4160,6 +4160,20 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-shrink: 0;
 }
 
+.permission-payload { min-width: 0; max-width: 100%; margin: var(--ds-space-2) 0; }
+.permission-payload-text {
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: var(--ds-space-2);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--sapphire-edge);
+  border-radius: var(--ds-radius-badge);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text);
+}
+
 /* Inline code for showing command/file detail in permission prompt */
 .perm-detail-code {
   display: block;

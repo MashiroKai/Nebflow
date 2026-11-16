@@ -1729,6 +1729,7 @@ export default {
   // Escalation chain (author boundary ① "keep the escalation chain"): permshield
   // F1 retargeted the upgrade to the **global persisted** mode (same path as the
   // shield) ⇒ no "this time only" semantics; state global + survives a restart.
+  'chat.permShowFull': 'Show full content',
   'chat.permUpgradeAutoEdits': 'Allow and switch to auto-edits',
   'chat.permUpgradeAutoEditsDesc': 'Global mode becomes auto-edits: applies to every session and persists across restarts',
   'chat.permUpgradeAutoAll': 'Allow and switch to auto-all',

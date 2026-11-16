@@ -2,6 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
+import { permissionInput, permissionDetails } from './permissionDetails.js';
 import { mainBubbleClass } from './chatUi.js';
 // 消息条目统一批 2026-11-18：气泡节点装配基座单点（chatItem.js）。
 import { messageBubbleNode } from './chatItem.js';
@@ -3720,13 +3721,9 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // Parse input to extract detail and check danger
   let detail = '';
   let isDangerous = level >= 2;
-  try {
-    const input = JSON.parse(inputJson || '{}');
-    if (input.command) {
-      detail = input.command;
-    } else if (input.file_path) detail = input.file_path;
-    else if (input.url) detail = input.url;
-  } catch (e) {}
+  const input = permissionInput(inputJson);
+  if (input.file_path) detail = input.file_path;
+  else if (input.url) detail = input.url;
 
   // Danger icons (shared SVG shapes, no text — text comes from i18n).
   // ui-status-redesign（S14 / 盘点 #51）：图标 = 语义档唯一载体（currentColor，
@@ -3792,6 +3789,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     bubble.appendChild(retargetBadge);
   }
 
+  bubble.appendChild(permissionDetails(toolName, inputJson));
   row.appendChild(bubble);
   appendChatRow(chat, row);
 

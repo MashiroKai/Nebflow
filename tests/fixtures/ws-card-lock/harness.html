@@ -152,6 +152,11 @@
       row.appendChild(chat.createMsgFooterBadge(Date.now(), 'askuser-copy-payload'));
       await raf();
     };
+    window.__renderPermInput = async (tool, input) => {
+      window.__reset();
+      chat.renderPermissionPrompt(tool, '', input, SID, 1, null, null, null, 'req-perm-details', 'confirm-edits');
+      await raf();
+    };
     /** 权限卡（renderPermissionPrompt 真入口；作答后整行移除）。 */
     window.__renderPerm = async (sid = SID, rid = 'req-perm-1') => {
       window.__reset();
