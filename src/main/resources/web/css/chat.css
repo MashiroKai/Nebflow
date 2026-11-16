@@ -1487,6 +1487,17 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.user.att-bubble.att-ref-bubble {
   max-width: 340px;
 }
+/* File reference cards already own their surface: do not wrap them in a
+   second, green message bubble. Other reference types keep their shell. */
+.bubble.user.att-bubble.att-ref-bubble:has(> .att-ref-card.file-lang) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.bubble.user.att-bubble.att-ref-bubble > .att-ref-card.file-lang {
+  margin-top: 0;
+}
 .bubble.user .att-ref-card {
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
