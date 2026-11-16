@@ -112,7 +112,7 @@ object E2eFixtureMain extends IOApp:
       (checks, ids) = result
       alive <- ids.distinct.traverse(id => system.isAlive(nebflow.actor.ActorPath(system.localDevice, id)))
       dbWasOpen <- IO.blocking(DbHost.isOpen(root.toNIO))
-      _ <- IO.blocking(DbHost.release(root.toNIO))
+      dbRelease <- IO.blocking(DbHost.release(root.toNIO)).attempt
       dbStillOpen <- IO.blocking(DbHost.isOpen(root.toNIO))
       finished <- IO.monotonic
       _ <- requireFixture(!alive.contains(true), "fixture actor remains after release")
@@ -130,7 +130,9 @@ object E2eFixtureMain extends IOApp:
         "cost_usd" -> Json.Null, "tool_calls" -> Json.Null, "tool_errors" -> Json.Null),
       "cleanup" -> Json.obj("actor_system_closed" -> true.asJson, "dispatcher_released" -> true.asJson,
         "detached_starts_drained" -> true.asJson, "db_was_open" -> dbWasOpen.asJson,
-        "db_still_registered" -> dbStillOpen.asJson, "known_actor_count" -> ids.distinct.size.asJson)
+        "db_still_registered" -> dbStillOpen.asJson,
+        "db_release_error" -> dbRelease.swap.toOption.map(e => s"${e.getClass.getSimpleName}: ${e.getMessage}").asJson,
+        "known_actor_count" -> ids.distinct.size.asJson)
     )
 
   private def armWatchdog(): IO[Unit] = IO {

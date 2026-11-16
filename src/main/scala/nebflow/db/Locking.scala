@@ -34,10 +34,15 @@ final class InstanceLock private (
 
   /** 放手（优雅关闭 / 模拟换代失锁）：关通道即释放 OS 锁；世代号留在盘上给下一任。 */
   def release(): Unit =
+    var failure: Option[Throwable] = None
     try if lock.isValid then lock.release()
-    catch case _: Exception => ()
+    catch case scala.util.control.NonFatal(e) => failure = Some(e)
     try channel.close()
-    catch case _: Exception => ()
+    catch case scala.util.control.NonFatal(e) =>
+      failure match
+        case Some(first) => first.addSuppressed(e)
+        case None => failure = Some(e)
+    failure.foreach(throw _)
 
 end InstanceLock
 

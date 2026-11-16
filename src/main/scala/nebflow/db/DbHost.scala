@@ -77,20 +77,24 @@ object DbHost:
   def peek(dataRoot: Path): Option[DbHandle] = Option(handles.get(dataRoot))
 
   /** 关闭并注销指定根的句柄（测试面；生产由 shutdown hook 收口）。sweep fiber 随手取消。 */
-  def release(dataRoot: Path): Unit =
-    val f = sweepers.remove(dataRoot)
+  def release(dataRoot: Path): Unit = synchronized {
+    val f = sweepers.get(dataRoot)
     if f != null then
-      try f.cancel.unsafeRunSync()
-      catch case _: Throwable => ()
-    val h = handles.remove(dataRoot)
+      f.cancel.unsafeRunSync()
+      sweepers.remove(dataRoot, f)
+    val h = handles.get(dataRoot)
     if h != null then
-      try h.close()
-      catch case _: Throwable => ()
+      h.close()
+      handles.remove(dataRoot, h)
+  }
 
   /** 关闭全部（JVM shutdown hook 单点；幂等）。 */
   def closeAll(): Unit =
     val ks = java.util.List.copyOf(handles.keySet)
-    ks.forEach(release)
+    ks.forEach(root =>
+      try release(root)
+      catch case scala.util.control.NonFatal(e) => log.error(s"DB shutdown failed for $root", e)
+    )
 
   private def installShutdownHook(): Unit =
     synchronized:
