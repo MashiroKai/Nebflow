@@ -131,6 +131,7 @@ const pageFor = (m) => {
 let wsConnections = 0;
 let initialHistorySends = 0;   // 每次（重）连接的初载 getHistory —— >1 即发生了重连
 let initSendAt = 0;            // 首屏时延锚：stub 收到**第一条** init getHistory 的时刻
+let heldHistory = null;
 let holdPongMs = 0;            // 遮蔽腿：把下一窗 pong 压住 N ms（模拟大帧占道/主线程阻塞）
 const histReqs = [];           // 诊断：每次 getHistory 的 beforeIndex 轨迹
 
@@ -183,7 +184,11 @@ await page.routeWebSocket(/\/ws/, (ws) => {
         if (!initSendAt) initSendAt = Date.now();
       }
       histReqs.push(m.beforeIndex === undefined ? 'init' : m.beforeIndex);
-      ws.send(JSON.stringify(pageFor(m)));
+      if (process.env.NB_SWITCH_RACE === '1' && m.sessionId === 'sess-1' && m.beforeIndex !== undefined) {
+        heldHistory = () => ws.send(JSON.stringify(pageFor(m)));
+      } else {
+        ws.send(JSON.stringify({ ...pageFor(m), sessionId: m.sessionId }));
+      }
     }
   });
   ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
@@ -268,6 +273,55 @@ const firstDup = await page.evaluate(() => {
 });
 await page.evaluate(() => { window.__noReloadMarker = { at: Date.now() }; window.__lt = { n: 0, total: 0, max: 0 }; });
 const navAtBoot = navigated;
+
+if (process.env.NB_BOUNDARY_POINTS === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  await page.mouse.wheel(0, -1);
+  await chat.evaluate((c) => { c.scrollTop = 1000; });
+  await page.waitForTimeout(200);
+  const anchors = await chat.evaluate((c) => {
+    const rows = [...c.querySelectorAll('.row')].filter((r) => /SEQ-\d+-END/.test(r.textContent));
+    const first = rows[0], last = rows[rows.length - 1];
+    if (!first || !last) return null;
+    const points = (r) => { const b = r.getBoundingClientRect(); return { top: b.top - c.getBoundingClientRect().top, bottom: b.bottom - c.getBoundingClientRect().top }; };
+    window.__boundary = { first, last, before: [points(first), points(last)] };
+    return { first: first.textContent.match(/SEQ-\d+-END/)[0], last: last.textContent.match(/SEQ-\d+-END/)[0] };
+  });
+  await page.mouse.wheel(0, -650);
+  await page.waitForFunction(() => document.querySelectorAll('#chat .row').length > 60, null, { timeout: 20000 });
+  await page.waitForTimeout(700);
+  const errors = await chat.evaluate((c) => {
+    const a = window.__boundary;
+    const edges = [a.first, a.last].flatMap((r, i) => { const b = r.getBoundingClientRect(), top = c.getBoundingClientRect().top; return [Math.abs(b.top - top - a.before[i].top), Math.abs(b.bottom - top - a.before[i].bottom)]; });
+    return edges;
+  });
+  const pass = errors.every((error) => error <= 2);
+  console.log('[boundary-edges] ' + JSON.stringify({ anchors, errors, pass }));
+  await browser.close(); server.close(); process.exit(pass ? 0 : 1);
+}
+
+if (process.env.NB_SWITCH_RACE === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  await page.mouse.wheel(0, -1);
+  await chat.evaluate((c) => { c.scrollTop = 1000; });
+  await page.waitForTimeout(200);
+  await page.mouse.wheel(0, -650);
+  for (let i = 0; i < 100 && !heldHistory; i++) await page.waitForTimeout(20);
+  if (!heldHistory) throw new Error('old session history request was not captured');
+  await page.evaluate(async () => (await import('/js/sidebar.js')).switchToSession('sess-2'));
+  await page.waitForTimeout(1000);
+  const before = await chat.evaluate((c) => ({ scrollTop: c.scrollTop, texts: [...c.querySelectorAll('.row')].map((r) => r.textContent) }));
+  heldHistory();
+  await page.waitForTimeout(1000);
+  const after = await chat.evaluate((c) => ({ scrollTop: c.scrollTop, texts: [...c.querySelectorAll('.row')].map((r) => r.textContent) }));
+  const sequences = after.texts.map((text) => text.match(/SEQ-(\d+)-END/)).filter(Boolean).map((match) => Number(match[1]));
+  const unique = new Set(sequences).size === sequences.length && sequences.length === LIMIT;
+  const pass = before.scrollTop === after.scrollTop && JSON.stringify(before.texts) === JSON.stringify(after.texts) && unique;
+  console.log('[switch-race] ' + JSON.stringify({ beforeTop: before.scrollTop, afterTop: after.scrollTop, beforeRows: before.texts.length, afterRows: after.texts.length, sameRows: JSON.stringify(before.texts) === JSON.stringify(after.texts), sequenceCount: sequences.length, unique, requests: histReqs, pass }));
+  await browser.close(); server.close(); process.exit(pass ? 0 : 1);
+}
 
 // Five real upward wheel inputs. Read the same element after each actual scroll,
 // then compare after two frames; the last input crosses the prefetch threshold.
