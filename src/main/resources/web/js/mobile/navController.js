@@ -378,10 +378,11 @@ function buildSection(def) {
   const section = document.createElement('section');
   section.className = 'mobile-page';
   section.dataset.page = def.id;
+  if (ME_PAGE_IDS.has(def.id)) section.classList.add('sp-panel');
   section.setAttribute('aria-label', tt(def.zh, def.en));
 
   const body = document.createElement('div');
-  body.className = 'mobile-page-body';
+  body.className = ME_PAGE_IDS.has(def.id) ? 'mobile-page-body sp-panel-body' : 'mobile-page-body';
 
   // 手机顶栏批（2026-10-31 作者令①「手机端各页顶部标题文字全去掉」，main 侧）
   //  ∪ 顶栏环形模糊批①（canvas 胶囊退役，本批）：dock 根页（消息/联系人/
@@ -401,7 +402,7 @@ function buildSection(def) {
     const head = document.createElement('div');
     // 零底带类 = design-system.css 单源（透传悬浮批 2026-11-03：与聊天根
     // #mobile-fab-layer / canvas 工具条同一族，一处定义处处引用）。
-    head.className = 'mobile-page-header ds-chrome-band';
+    head.className = ME_PAGE_IDS.has(def.id) ? 'mobile-page-header ds-chrome-band sp-panel-header' : 'mobile-page-header ds-chrome-band';
     // 标题单元素化批（2026-11-02 22:32 作者令「两个割裂的形态…一直是同一个的
     // 形式」）：吸附态装饰副本 .mobile-page-title-mini **退役**（DOM 不再建节点）。
     // 双影根因 = 两套元素同屏交接（大标题盒收高的同时胶囊元素登场，交接区间内

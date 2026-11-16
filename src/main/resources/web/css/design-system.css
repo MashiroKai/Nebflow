@@ -1512,6 +1512,10 @@
    消费面声明），也**不定 z 序**（聊天根 30 / 页头与 canvas 带 20 = 既有层带读数）。
    初态让位同族单源 = 手机层 --mchrome-clear（簇顶 16 + 钮 48 + 呼吸 8），消费点见
    split.css .canvas-viewer-safe-top 手机档与 mobileLayer.css 标题盒。 */
+.sp-panel-header { min-width: 0; }
+.sp-panel-body { min-width: 0; }
+.sp-panel-row { min-width: 0; }
+
 .sp-identity {
   display: flex;
   flex-direction: column;

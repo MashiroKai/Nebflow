@@ -131,7 +131,7 @@ function updateEditBar(row) {
 }
 
 function fieldRow(spec) {
-  const row = el('div', 'pf-field');
+  const row = el('div', 'pf-field sp-panel-row');
   row.dataset.pfField = spec.field;
   const head = el('div', 'pf-field-head');
   head.appendChild(el('span', 'pf-label', t(spec.labelKey)));
@@ -351,13 +351,13 @@ function ensureShell() {
 function renderBody() {
   const ov = ensureShell();
   const label = current?.kind === 'group' ? t('profile.groupTitle') : t('profile.friendTitle');
-  const modal = el('div', 'cfg-modal pf-modal');
+  const modal = el('div', 'cfg-modal pf-modal sp-panel sp-panel-body');
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
   modal.setAttribute('aria-label', label);
   modal.dataset.pfKind = current?.kind || '';
 
-  const titleBar = el('div', 'cfg-modal-title');
+  const titleBar = el('div', 'cfg-modal-title sp-panel-header');
   titleBar.appendChild(el('span', null, label));
   // 3(d) 按钮去重（panel-language 批 2026-11-06）：手机层返回键在（afterMount 的
   // mobileSheetBack 注入 .mfs-back）⇒ X 键**不建**（作者令逐字「已经有返回键了，
@@ -369,6 +369,7 @@ function renderBody() {
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'pf-close';
+    closeBtn.classList.add('g2-fab');
     closeBtn.id = 'profile-face-close';
     closeBtn.setAttribute('aria-label', t('profile.close'));
     closeBtn.appendChild(h('i', { 'data-lucide': 'x' }));
@@ -397,7 +398,7 @@ function renderBody() {
   }
   modal.appendChild(hero);
 
-  const body = el('div', 'pf-fields');
+  const body = el('div', 'pf-fields sp-panel-group');
   modal.appendChild(body);
   const bar = el('div', 'pf-edit-bar ds-chrome-band');
   bar.hidden = true;

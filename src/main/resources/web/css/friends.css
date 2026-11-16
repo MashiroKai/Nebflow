@@ -1758,23 +1758,7 @@ body:not(.mobile-layer) #profile-face-overlay {
 .pf-edit-bar > button { pointer-events: auto; }
 .pf-edit-submit { color: var(--ds-accent); }
 .pf-has-pending .pf-fields { padding-bottom: calc(76px + var(--sp-safe-bottom, env(safe-area-inset-bottom))); }
-.pf-close {
-  float: right;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--ds-radius-input);
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font: inherit;
-}
-.pf-close:hover { color: var(--color-text); }
-.pf-close svg { width: 16px; height: 16px; }
+.pf-close { float: right; }
 .pf-hero {
   /* 🔴 三点入口批（2026-11-05 作者令「头像小一点。布局扁平化」）：
      旧形态 = 居中列的英雄区（头像 + 名字 + 副行三行堆叠，视觉上是一张「封面卡」）；
