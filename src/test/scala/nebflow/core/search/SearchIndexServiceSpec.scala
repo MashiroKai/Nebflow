@@ -269,4 +269,16 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     assertEquals(collected.count(_.occurrenceCount == 3), 1)
   }
 
+  test("failed replacement rolls back before an unrelated successful write") {
+    val original = doc("rollback-target", 0, "message", 1L, "rollbackoriginal")
+    SearchIndexService.unsafeInsertDocs(face, List(original))
+    intercept[Exception] {
+      SearchIndexService.unsafeInsertDocs(face, List(doc("rollback-target", 0, "message", 2L, null)))
+    }
+    SearchIndexService.unsafeInsertDocs(face, List(doc("rollback-other", 0, "message", 3L, "unrelated")))
+    val result = SearchIndexService.query(face, q("rollbackoriginal", kinds = List("message"))).unsafeRunSync().toOption.get
+    assertEquals(result.total, 1)
+    assertEquals(result.hits.head.sid, "rollback-target")
+  }
+
 end SearchIndexServiceSpec

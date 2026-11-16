@@ -300,6 +300,20 @@ object SearchIndexService:
     mtime: Long,
     docsOpt: Option[List[IndexDoc]]
   ): Unit =
+    try replaceSessionDocsTransaction(fs, sid, fingerprint, mtime, docsOpt)
+    catch
+      case scala.util.control.NonFatal(e) =>
+        try fs.conn.rollback()
+        catch case scala.util.control.NonFatal(rollbackError) => e.addSuppressed(rollbackError)
+        throw e
+
+  private def replaceSessionDocsTransaction(
+    fs: FaceState,
+    sid: String,
+    fingerprint: String,
+    mtime: Long,
+    docsOpt: Option[List[IndexDoc]]
+  ): Unit =
     val conn = fs.conn
     // 1) 删旧（内容表 + FTS 影子行）
     val del = conn.prepareStatement("DELETE FROM docs WHERE sid=?")
@@ -578,6 +592,11 @@ object SearchIndexService:
             finally delm.close()
             bumpGeneration(fs.conn)
             fs.conn.commit()
+          catch
+            case scala.util.control.NonFatal(e) =>
+              try fs.conn.rollback()
+              catch case scala.util.control.NonFatal(rollbackError) => e.addSuppressed(rollbackError)
+              throw e
           finally workPermit.release()
         }.attempt.flatMap {
           case Right(_) => IO.unit
