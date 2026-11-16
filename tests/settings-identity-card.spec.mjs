@@ -41,6 +41,33 @@ async function boot(page, mobile) {
   await expect(page.locator('#settings-content')).toBeVisible();
 }
 for (const mobile of [false, true]) {
+  test(`${mobile ? 'mobile' : 'desktop'} profile readout reopens unchanged without fake edits or external navigation`, async ({ page }) => {
+    await page.addInitScript(() => { window.__opened = []; window.open = (...args) => { window.__opened.push(args); return null; }; });
+    await boot(page, mobile);
+    await page.evaluate(async () => (await import('/js/settingsIdentity.js')).openProfileFace());
+    const overlay = page.locator('#settings-profile-overlay');
+    await expect(overlay).toBeVisible();
+    const read = () => overlay.locator('.sp-value').allTextContents();
+    const first = await read();
+    expect(first.length).toBe(5);
+    await expect(overlay.locator('input, select, textarea, [contenteditable="true"], [role="switch"]')).toHaveCount(0);
+    await page.evaluate(async () => (await import('/js/settingsIdentity.js')).closeProfileFace());
+    await expect(overlay).toBeHidden();
+    await page.evaluate(async () => (await import('/js/settingsIdentity.js')).openProfileFace());
+    await expect(overlay).toBeVisible();
+    expect(await read()).toEqual(first);
+    expect(await page.evaluate(() => window.__opened)).toEqual([]);
+    expect(await overlay.locator('a[href*="mystand.space"]').count()).toBe(0);
+  });
+
+  test(`${mobile ? 'mobile' : 'desktop'} shared avatar picker opens a file chooser`, async ({ page }) => {
+    await boot(page, mobile);
+    const chooser = page.waitForEvent('filechooser');
+    await page.evaluate(async () => (await import('/js/settingsIdentity.js')).openSettingsAvatarPicker());
+    const file = await chooser;
+    expect(await file.element().getAttribute('accept')).toBe('image/*');
+    await expect(page.locator('#settings-profile-overlay')).toHaveCount(0);
+  });
   test(`${mobile ? 'mobile' : 'desktop'} settings account and six ordered groups`, async ({ page }) => {
     await boot(page, mobile);
     const groups = page.locator('#settings-content > [data-panel-group]');
