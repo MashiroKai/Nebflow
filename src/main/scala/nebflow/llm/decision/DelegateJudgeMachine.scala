@@ -10,33 +10,8 @@ import nebflow.shared.{Config, Defaults, Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 
-/**
- * DelegateJudgeMachine —— **终态**判定机执行体（worktree-judge-fifo 批 #1224 增补
- * §3.1：⑦ 判定机两层＝Jev 优先＋SmallJudge（LLM）兜底，与分配族机制同一）.
- *
- * 分层：core 只见 `DelegateJudgePort`（core 零 llm import 纪律——JevAllocatorPort
- * 同款裁定）；本件落 llm.decision，注册点 = `agent.SharedResources` 构造行
- * （`DelegateJudgePort.install(face(resources.providerRegistry))` 一行）。
- *
- * 本批删除（delegate-param-decisions 2026-11-04）：spawn 前的「会否改文件」判定
- * 腿（worktree judge）整条移除——worktree 分配改由 `Delegate.worktree` 参数
- * 决定，spawn 路径不再有任何模型调用。本件只剩终态判词一条腿。
- *
- * 两层语义：
- *   ① Jev 优先 —— `jev` 节已配置（`JevSettings.fromConfig` 非 None）⇒ 走
- *      [[DecisionProvider]] 批量问句机制（与 JevAllocator 同族：Choice 问句 +
- *      P(yes)≥0.5 判据 / 三选一判词）；
- *   ② SmallJudge 兜底 —— Jev 未配置**或 Jev 调用失败** ⇒ 单次 LLM 调用（原文
- *      Batch 4：HealthMonitor.SendMessageParams 模式；模型 = 候选链**整链遍历**
- *      ——2026-10-29 fail-open 根因修复的判定机同族刀，与主分配腿
- *      LlmAllocator.candidatesFrom/chainCall 同一模板：`judge.utilityModel`
- *      钉首位＋去重，缺省 = 全局候选链；JSON 输出）。
- *
- * 失败语义：两层全败 ⇒ `None`（fail-open——终态腿落自申报/既有完成语义；判定机
- * 绝不阻塞终态，JevAllocator 的 adjudicated #3 posture 同款）。
- *
- * 🔴 判定机的问句/状态文本是**判定模型可见文案**——本批最小成稿（§16 待过目，
- * 终稿归 N3 提示词批）。
+/** Terminal judgment using the existing utility-model candidate chain.
+ * An unavailable judgment returns None so the caller can use its self-report fallback.
  */
 object DelegateJudgeMachine:
 
@@ -59,82 +34,17 @@ object DelegateJudgeMachine:
   def face(registry: ProviderRegistry): DelegateJudgePort.Face =
     new DelegateJudgePort.Face:
       def judgeTerminal(input: TerminalInput): IO[Option[Verdict]] =
-        jevLeg
-          .flatMap {
-            case Some(p) => jevVerdict(p, judgeTimeoutMs, input)
-            case None => smallJudgeVerdict(registry, input)
-          }
+        smallJudgeVerdict(registry, input)
           .flatTap {
             case None =>
               IO(
                 logger.warnSync(
-                  s"delegate-judge: terminal verdict unavailable on both legs for ${input.delegateId} — falling back to self-report/legacy"
+                  s"delegate-judge: terminal verdict unavailable for ${input.delegateId} — falling back to self-report/legacy"
                 )
               )
             case _ => IO.unit
           }
   end face
-
-  // ── ① Jev 优先腿 ─────────────────────────────────────────────────────
-
-  /**
-   * 热读装配：未配置 = None（整腿跳过 → SmallJudge 兜底）。
-   *
-   * 判定机自带预算轴：分配链的 `jev.timeoutMs`（15s）已按 2026-10-19 作者拍板
-   * 拆除（零超时化只及分配链），本机每腿时限改挂**判定机自己的**预算
-   * （`judge.timeoutMs` → [[judgeTimeoutMs]]，缺省 30s）——判定族的 wall-clock
-   * 预算不随分配链拆除而消失，是否进一步拆除候作者逐项拍。
-   */
-  private def jevLeg: IO[Option[DecisionProvider[IO]]] =
-    IO.blocking(JevSettings.fromConfig(health = None))
-      .map(_.flatMap(DecisionProviders.build(_)))
-
-  /**
-   * 终态判词的 Jev 问句（Choice；「blocked」= 注记通道——#566：blocked 判词退役，
-   *  判官的「没做成」折 completed＋注记，不是独立状态）。
-   */
-  private def jevVerdict(p: DecisionProvider[IO], timeoutMs: Long, input: TerminalInput): IO[Option[Verdict]] =
-    val req = DecisionRequest(
-      state = terminalState(input),
-      questions = List(
-        DecisionQuestion.Choice(
-          id = "verdict",
-          instructions = terminalInstructions(input),
-          criteria = Map(
-            DelegateJudge.VerdictWire.Completed -> Some(
-              "the task is done: pure read / no file changes, or the work is complete with its deliverable commits on the working branch (unmerged commits do not create a merge obligation — landing them is a separately authorized merger request)"
-            ),
-            DelegateJudge.VerdictWire.Blocked -> Some(
-              "the task could not be completed — the terminal text states the blocker (this answer is recorded as a completed verdict with a note; there is no separate blocked state)"
-            )
-          )
-        )
-      )
-    )
-    p.predict(req).timeout(timeoutMs.millis).attempt.flatMap {
-      case Right(Right(resp)) => IO.pure(verdictFromChoice(resp, input))
-      case Right(Left(err)) =>
-        IO(logger.warnSync(s"delegate-judge: jev verdict leg failed (${err.message}) — SmallJudge fallback")) *> IO
-          .pure(None)
-      case Left(e) =>
-        IO(
-          logger
-            .warnSync(s"delegate-judge: jev verdict leg errored (${e.getClass.getSimpleName}) — SmallJudge fallback")
-        ) *> IO.pure(None)
-    }
-  end jevVerdict
-
-  /**
-   * Choice 判词读取（纯函数——spec 判红锚）：`verdict` 问句的选中之词 → 判词。
-   *  #566：blocked 选中词 = 注记形 completed（不再是独立状态）。
-   */
-  private[decision] def verdictFromChoice(resp: DecisionResponse, input: TerminalInput): Option[Verdict] =
-    resp.answers.get("verdict").collect { case c: DecisionAnswer.Choice => c.choice.trim.toLowerCase } flatMap {
-      case DelegateJudge.VerdictWire.Completed => Some(Verdict.Completed)
-      case DelegateJudge.VerdictWire.Blocked =>
-        Some(Verdict.CompletedNote(s"judge: could not complete — substance in the terminal text"))
-      case _ => None
-    }
 
   // ── ② SmallJudge 兜底腿（单次 LLM 调用 × 候选链整链遍历） ─────────────
 

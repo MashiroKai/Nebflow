@@ -81,21 +81,3 @@ object JevDeclarationDuty:
     case _ => true
 
 end JevDeclarationDuty
-
-/**
- * The pre-JeV (legacy) duty semantic, kept so the shadow can compare them.
- *
- * Kept as a named function rather than an inline condition because its whole
- * purpose is to be DIFFED against [[JevDeclarationDuty]] — an inline `if`
- * would make the comparison invisible.
- */
-object JevLegacyDeclarationDuty:
-
-  /**
-   * The legacy rule: the key must be present on create.
-   *
-   * @param keyProvided
-   *   whether the caller supplied the `plugins` key at all (a JSON null does
-   *   not count — that is the "omitted" form).
-   */
-  def isSatisfied(keyProvided: Boolean): Boolean = keyProvided

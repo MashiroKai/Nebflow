@@ -201,6 +201,11 @@ class TaskSearchIndexSpec extends CatsEffectSuite:
 
   // ── 检索 ──────────────────────────────────────────────────────────────
 
+  test("uninstalled reranker skips silently") {
+    TaskSearchRerank.clear()
+    assertEquals(TaskSearchRerank.rerank("query", List(TaskSearchRerank.Candidate("id", "text"))).unsafeRunSync(), None)
+  }
+
   test("search (embedding path): cosine top-k over fixture vectors; rerank reorders, skip keeps order") {
     withTempDataRoot { tmp =>
       IO {

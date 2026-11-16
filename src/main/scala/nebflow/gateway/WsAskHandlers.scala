@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.AskHandoffPort
-import nebflow.core.ask.{AskCooldown, AskGatewayServices, AskNoteSnapshot, AskNoteStore, AskNoteWrite, AskSessions}
+import nebflow.core.ask.{AskCooldown, AskEditProposals, AskGatewayServices, AskNoteSnapshot, AskNoteStore, AskNoteWrite, AskSessions}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Canvas ask mode · WS 域（机制稿 §2/§3.3/§4/§7，实施批 2026-10-28）
@@ -30,7 +30,10 @@ private[gateway] object WsAskHandlers:
     "askHandoff" -> handleAskHandoff,
     "askReply" -> handleAskReply,
     "askNoteGet" -> handleAskNoteGet,
-    "askNotePut" -> handleAskNotePut
+    "askNotePut" -> handleAskNotePut,
+    // canvas-ask-restricted-edit（CAE-REQ-001）：diff 卡 Accept/Reject 腿。
+    "askEditAccept" -> handleAskEditAccept,
+    "askEditReject" -> handleAskEditReject
   )
 
   private def send(wsSend: Json => IO[Unit], payload: Json): IO[Unit] = wsSend(payload)
@@ -109,7 +112,10 @@ private[gateway] object WsAskHandlers:
                   // MailAddress.AskPrefix + sid）——dock 头部渲染可复制地址行，
                   // 编排方/用户可经 Mail(ask:<会话id>) 续聊。
                   "mailAddress" -> (nebflow.core.delegate.MailAddress.AskPrefix + sid).asJson,
-                  "messages" -> encodeTranscript(msgs).asJson
+                  "messages" -> encodeTranscript(msgs).asJson,
+                  // canvas-ask-restricted-edit：在列提案随回放下发（重载/换端后
+                  // diff 卡重建；引擎为权威——服务端重启即清零，前端本地态让位）。
+                  "edits" -> encodePendingEdits(sid).asJson
                 )
               )
             yield ()
@@ -276,6 +282,74 @@ private[gateway] object WsAskHandlers:
           }
     end if
   end handleAskReply
+
+  // ── canvas-ask-restricted-edit：提案 Accept/Reject 腿（CAE-REQ-001）────────
+  //   askEditAccept {sessionId, proposalId}
+  //     → askEditResolved {sessionId, proposalId, outcome:"accepted", path}
+  //     → askEditResolved {sessionId, proposalId, outcome:"error", error}（stale/
+  //       写失败——提案保持待审，可 Reject 或重新提案）
+  //   askEditReject {sessionId, proposalId}
+  //     → askEditResolved {sessionId, proposalId, outcome:"rejected"}（零写盘）
+
+  private def encodePendingEdits(sid: String): List[Json] =
+    nebflow.core.ask.AskEditProposals.pendingFor(sid).map(p =>
+      Json.obj(
+        "proposalId" -> p.id.asJson,
+        "path" -> p.path.asJson,
+        "fileName" -> p.fileName.asJson,
+        "oldText" -> p.oldText.asJson,
+        "newText" -> p.newText.asJson,
+        "createdAt" -> p.createdAt.asJson
+      )
+    )
+
+  private def handleAskEditResolve(
+    accept: Boolean,
+    text: String,
+    wsSend: Json => IO[Unit]
+  ): IO[Unit] =
+    val raw = WsDispatch.parsedJson(text)
+    val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
+    val proposalId = raw.hcursor.downField("proposalId").as[String].getOrElse("")
+    if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askEdit: sessionId must be an ask- session")
+    else if proposalId.trim.isEmpty then askError(wsSend, sid, "askEdit: proposalId is required")
+    else
+      val outcome =
+        if accept then AskEditProposals.accept(sid, proposalId.trim)
+        else AskEditProposals.reject(sid, proposalId.trim)
+      outcome.flatMap {
+        case Right(proposal) =>
+          wsSend(Json.obj(
+            "type" -> "askEditResolved".asJson,
+            "sessionId" -> sid.asJson,
+            "proposalId" -> proposalId.asJson,
+            "outcome" -> (if accept then "accepted" else "rejected").asJson,
+            "path" -> proposal.path.asJson
+          ))
+        case Left(err) =>
+          wsSend(Json.obj(
+            "type" -> "askEditResolved".asJson,
+            "sessionId" -> sid.asJson,
+            "proposalId" -> proposalId.asJson,
+            "outcome" -> "error".asJson,
+            "error" -> err.asJson
+          ))
+      }
+  end handleAskEditResolve
+
+  private def handleAskEditAccept(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] = handleAskEditResolve(accept = true, text, wsSend)
+
+  private def handleAskEditReject(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] = handleAskEditResolve(accept = false, text, wsSend)
 
   // ── Note persistence ───────────────────────────────────────────────────
   // Two inbound frames and two outbound frames, with the same file identity as the ask session

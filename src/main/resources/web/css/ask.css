@@ -816,3 +816,110 @@ body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /*
 body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-width: 100%; }
 body.mobile-layer .ask-user-source-parent,
 body.mobile-layer .ask-user-source-node { max-width: 100%; flex: 1 1 auto; }
+
+/* ==========================================================================
+ * 提案 diff 卡（canvas-ask-restricted-edit ③，CAE-REQ-001，2026-11-16）
+ * ask_edit/ask_write 的待审提案卡：cursor 风格行级 diff（del/add 高亮）+ 逐卡
+ * Accept/Reject。卡是气泡列成员（.ask-col flex 列，右贴），但占满列宽——diff
+ * 的可读性靠满行（行号/±号左对齐），不靠气泡的 max-width 自然宽。
+ * 材质：卡壳 = .nf-glass 同族面级浮件（玻璃统一批纪律：本文件零本地毛玻璃值，
+ * 由 askDock.js 挂类）；行高亮 = add/del 色令牌（diffView.css 同词汇
+ * --color-success / --color-danger 的低饱和底 + 左缘 2px 实色条）。
+ * ========================================================================== */
+.ask-edit-card {
+  align-self: stretch;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2);
+  border-radius: var(--ds-radius-card-lg);
+  border: var(--ds-border-width) solid var(--glass-bub-ai-border);
+  box-shadow: var(--cv-shadow);
+  animation: askBubIn 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* 头行：文件名 + 计数（左）· 状态（右）。字档 = meta（11px，与 cite 徽标同档）。 */
+.ask-edit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  font-size: var(--ds-fs-meta);
+  line-height: 1.5;
+}
+.ask-edit-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-text-muted);
+}
+.ask-edit-status { flex: 0 0 auto; font-weight: 600; color: var(--color-text-muted); }
+.ask-edit-status[data-state="accepted"] { color: var(--color-success, #3fb950); }
+.ask-edit-status[data-state="rejected"] { color: var(--color-danger, #f85149); }
+.ask-edit-status[data-state="error"] { color: var(--color-warning, #d29922); }
+.ask-edit-status[data-state="waiting"] { color: var(--color-text-muted); }
+/* diff 体：等宽行块，横向可滚（长行不折——diff 行折行会把「一改一行」读成多行）。 */
+.ask-edit-diff {
+  min-width: 0;
+  max-height: 240px;
+  overflow: auto;
+  border-radius: var(--ds-radius-chip);
+  background: var(--color-surface);
+  border: var(--ds-border-width) solid var(--color-border, rgba(128, 128, 128, 0.25));
+  font: 400 var(--ds-fs-meta)/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.ask-edit-line {
+  padding: 0 var(--ds-space-1h) 0 var(--ds-space-2);
+  white-space: pre;
+  color: var(--color-text);
+}
+.ask-edit-line.add {
+  color: var(--color-success, #3fb950);
+  background: rgb(var(--color-success-rgb, 63 185 80) / 0.10);
+  box-shadow: inset 2px 0 0 var(--color-success, #3fb950);
+}
+.ask-edit-line.del {
+  color: var(--color-danger, #f85149);
+  background: rgb(var(--color-danger-rgb, 248 81 73) / 0.10);
+  box-shadow: inset 2px 0 0 var(--color-danger, #f85149);
+}
+.ask-edit-line.ctx { color: var(--color-text-muted); }
+/* 动作行：两钮右贴（与列的右贴同向）；钮 = 紧凑 24px 命中档（卡内次级动作，
+ * 非 dock 主发送钮——不走 ds-turn-btn 36px 档），键盘环与禁用态沿用平台面。 */
+.ask-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ds-space-1h);
+}
+.ask-edit-accept,
+.ask-edit-reject {
+  min-height: 24px;
+  padding: 0 var(--ds-space-2);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              border-color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              opacity var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.ask-edit-accept {
+  color: var(--color-primary);
+  background: rgb(var(--sapphire) / 0.13);
+  border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.25);
+}
+.ask-edit-reject {
+  color: var(--color-text-muted);
+  background: transparent;
+  border: var(--ds-border-width) solid var(--color-border, rgba(128, 128, 128, 0.25));
+}
+@media (hover: hover) {
+  .ask-edit-accept:hover { background: rgb(var(--sapphire) / 0.22); }
+  .ask-edit-reject:hover { color: var(--color-text); background: var(--color-surface); }
+}
+.ask-edit-accept:focus-visible,
+.ask-edit-reject:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.ask-edit-accept[disabled],
+.ask-edit-reject[disabled] { opacity: 0.5; cursor: not-allowed; }

@@ -71,7 +71,7 @@
 - [`hotrestart/`](hotrestart/module-doc.md) — 热重启编排：intent、后继门、端口让渡、安装指针。
 - [`hotupdate/`](hotupdate/module-doc.md) — 统一更新编排：更新请求、七相位执行、回滚。
 - [`index/`](index/module-doc.md) — 检索索引（任务/会话）增量维护。
-- [`jev/`](jev/module-doc.md) — JEV（jev）事件与判定。
+- [`jev/`](jev/module-doc.md) — 插件分配共享基础设施（分配端口/审计类型/能力目录）。
 - [`mail/`](mail/module-doc.md) — 会话邮箱（SessionMailbox）。
 - [`mcp/`](mcp/module-doc.md) — MCP 管理、MCP 工具门与注册。
 - [`msgtokens/`](msgtokens/module-doc.md) — 消息身份牌注册表。

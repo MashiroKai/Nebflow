@@ -176,13 +176,31 @@ private[project] trait NodeStarter:
    * 竞发由翻转守卫裁决，败方安静退出）。错误观测沿用 NodeTools.runDetached 形态
    * （handleErrorWith 留痕，含触发点上下文）。
    */
+  private val detachedStarts = Ref.unsafe[IO, Map[Long, Deferred[IO, Unit]]](Map.empty)
+  private val detachedStartIds = new java.util.concurrent.atomic.AtomicLong(0L)
+
+  /** Diagnostic barrier: call only after external admission has stopped. */
+  private[project] def awaitDetachedStarts: IO[Unit] =
+    detachedStarts.get.flatMap { starts =>
+      if starts.isEmpty then IO.unit
+      else starts.values.toList.traverse_(_.get) *> awaitDetachedStarts
+    }
+
+  /** 诊断面：仍在屏障登记内的 detached start 数（forkStart 登记、fiber 终态注销后的剩余）。 */
+  private[project] def detachedStartsRemaining: IO[Int] = detachedStarts.get.map(_.size)
+
   private[project] def forkStart(what: String)(io: IO[Unit]): IO[Unit] =
-    io
-      .handleErrorWith(e =>
-        logger.error(s"[$projectName] detached trigger '$what' failed: ${Option(e.getMessage).getOrElse(e.toString)}")
-      )
-      .start
-      .void
+    IO.uncancelable { _ =>
+      for
+        done <- Deferred[IO, Unit]
+        id <- IO(detachedStartIds.incrementAndGet())
+        _ <- detachedStarts.update(_ + (id -> done))
+        _ <- io.handleErrorWith(e =>
+          logger.error(s"[$projectName] detached trigger '$what' failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+        ).guarantee(detachedStarts.update(_ - id) *> done.complete(()).void).start
+          .onError { case _ => detachedStarts.update(_ - id) *> done.complete(()).void }
+      yield ()
+    }
 
   /**
    * 节点任务板头部块（TaskBoard 批 2 §3a）：三段式（①项目目标行 ②自己名下工单

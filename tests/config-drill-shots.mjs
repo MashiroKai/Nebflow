@@ -1,12 +1,14 @@
 // 🔴 provider-add-tabs 批（2026-11-06）换代注：JeV/生图层级下钻浮层与层级子页
 // 随统一服务商面板整件退役（configDrill.js 已删除）——本脚本的下钻截图腿改为
 // 统一面板的类型标签态截图；文件保留（回退链节 / /model 对照腿不受影响）。
+// 🔴 jev-retire 批（2026-11-16）：Jev 标签截图腿与 config jev 夹具节随 JeV
+// 全量退役删除（jev 域不在统一服务商面板）。
 // config-drill-shots.mjs — 配置面风格统一批（作者令 2026-10-31 21:40，两件）
 // 双端双主题截图取证。
 //
 // 覆盖：
-//   ① JeV/生图层级下钻新面：桌面浮层玻璃面板（亮/暗）+ 手机层级子页（亮/暗）
-//      + 设置页入口行全貌（右转 chevron affordance）。
+//   ① 生图层级下钻新面（现为统一面板 Image generation 标签态）：桌面（亮/暗）
+//      + 手机（亮/暗）+ 设置页入口行全貌（右转 chevron affordance）。
 //   ② 设置页「模型回退链」节（/model 回退链编辑器同款面）+ /model 原面板
 //      对照（原入口保留不动）。
 //
@@ -73,7 +75,6 @@ function wireUp(ws) {
           anon: { baseUrl: 'https://anon.example/v1/', apiKey: '***', protocol: 'openai', models: [{ id: 'anon-1', contextWindow: 4096 }] },
         },
       },
-      jev: { enabled: true, provider: 'typesafe-jev', endpoint: 'https://api.typesafe.ai/v1/systemone', keyRef: 'typesafe-api-key' },
     }),
   }));
   const sendSessions = () => ws.send(JSON.stringify({
@@ -170,7 +171,7 @@ async function openSettings(page) {
   await sleep(400);
 }
 
-// ══ 桌面腿（1440×900）：设置页入口行 + JeV/生图浮层 + 回退链节 + /model 对照 ══
+// ══ 桌面腿（1440×900）：设置页入口行 + 生图标签面板 + 回退链节 + /model 对照 ══
 async function desktopLeg(colorScheme) {
   const { ctx, page } = await boot({ width: 1440, height: 900 }, colorScheme);
   await openSettings(page);
@@ -181,14 +182,8 @@ async function desktopLeg(colorScheme) {
   await sleep(400);
   await shot(page, `settings-desktop-${colorScheme}.png`);
 
-  // 统一面板 Jev 标签态（原 JeV 下钻浮层腿的换代）。
-  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
-  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
-  await sleep(300);
-  await shot(page, `provider-panel-jev-desktop-${colorScheme}.png`);
-  ok(`provider panel jev tab desktop ${colorScheme}`, true);
-
   // 统一面板 Image generation 标签态（原生图下钻浮层腿的换代）。
+  // （Jev 标签截图腿已随 JeV 退役删除——jev-retire 批 2026-11-16。）
   await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());
   await page.waitForSelector('.nf-provider-panel[data-type="imagegen"]', { timeout: 5000 });
   await sleep(300);

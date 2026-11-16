@@ -213,45 +213,6 @@ private[gateway] object ConfigRoutes:
           ConfigService.providerTypes.flatMap(Ok(_))
         }
 
-      // GET /api/config/jev —— JeV 设置面状态投影（jev-imagegen-align-llm 批
-      // 2026-11-02 契约 §B.4）：与 GET /api/config/imagegen **逐字段同构**
-      // （ConfigService.jevStatus 单点：配置热读 + keyRef **在位性**，永不回传
-      // key 值）。owner 鉴权与 jev/imagegen 读写同门槛（withAuth），错误处理
-      // 形状与 imagegen 臂一致。
-      // 存在理由：设置面板今日读 `GET /api/config` 的打码串（parsedConfig.jev），
-      // 拿不到「已保存/未配置」所需的 keyConfigured。
-      case req @ GET -> Root / "config" / "jev" =>
-        withAuth(req) {
-          ConfigService.jevStatus.flatMap(Ok(_))
-        }
-
-      // PUT /api/config/jev —— JeV 配置定向写（设置页 Jev 区的写通道；键
-      // 白名单在 ConfigService.JEV_WRITABLE_KEYS 单点，越界键 400）。
-      case req @ PUT -> Root / "config" / "jev" =>
-        withAuth(req) {
-          req.as[Json].flatMap { body =>
-            body.asObject match
-              case None => BadRequest(Json.obj("error" -> "expected a JSON object body".asJson))
-              case Some(o) =>
-                val values = o.toMap.collect {
-                  case (k, v) if ConfigService.jevWritableKeys.contains(k) => k -> v
-                }
-                if values.isEmpty then
-                  BadRequest(
-                    Json.obj(
-                      "error" -> s"no writable jev keys given — writable: ${ConfigService.jevWritableKeys.mkString(", ")}".asJson
-                    )
-                  )
-                else
-                  ConfigService.setJevSection(values).flatMap {
-                    case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-                    case Right(_) =>
-                      wsHub.broadcast(Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson)) *>
-                        Ok(Json.obj("updated" -> true.asJson))
-                  }
-          }
-        }
-
       // PUT /api/config/embedding —— Embedding 配置定向写（task-rag 批 #1227 /
       // §Batch 7 检索面设置区写通道；形态照 jev 路由：键白名单在
       // ConfigService.embeddingWritableKeys 单点，越界/空体 400；keyRef 是

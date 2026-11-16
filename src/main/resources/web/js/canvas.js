@@ -969,6 +969,18 @@ function scheduleFileRefresh(entry) {
   }, FILE_REFRESH_DEBOUNCE);
 }
 
+/** canvas-ask-restricted-edit ③（diff 卡 Accept 后的画布重载腿）：按 absPath 找
+ *  文件 tab 走同一套 scheduleFileRefresh 守卫（脏编辑/源码模式/在途/冷却——ask 侧
+ *  提案写盘后由 askDock 的 askEditResolved 帧调用，守卫语义与自动刷新完全一致：
+ *  有未存编辑或编辑器在挂时宁可不动 tab，等用户自己处理）。找不到 tab（文件未开）
+ *  = 静默返回——写盘已发生，tab 下次打开自然读到新内容。 */
+export function refreshFileTabByPath(absPath) {
+  if (!absPath) return;
+  for (const entry of tabs.values()) {
+    if (entry.absPath === absPath) { scheduleFileRefresh(entry); return; }
+  }
+}
+
 /** Manual re-read for a file tab (canvas 文件刷新批, 作者令 2026-10-25): the
  *  bottom-right refresh button's action. Rides the SAME readFile round trip as
  *  scheduleFileRefresh (pop.readFile → fileContent → workspace-open-item →

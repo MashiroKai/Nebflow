@@ -77,5 +77,5 @@ test('forms structure pins: the edited lines are still in place', () => {
   assert.match(face, /const createRow =/);
   assert.match(face, /\.tfl-row\.tfl-row-editing\[data-id=/);
   assert.match(read('src/main/resources/web/js/sidebar/providerPanel.js'), /provider: fieldValue\(overlay, 'type'\)/);
-  assert.match(read('src/main/resources/web/js/sidebar/jevTestButton.js'), /body\.model =/);
+  // （jevTestButton.js 结构钉已随 JeV 退役删除——jev-retire 批 2026-11-16。）
 });

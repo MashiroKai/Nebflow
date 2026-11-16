@@ -45,7 +45,6 @@ const CONFIG = {
     model: 'claude-sonnet-4',
   },
   imagegen: { provider: 'openai', model: 'gpt-image-1', baseUrl: 'https://api.openai.com/v1/', keyConfigured: true },
-  jev: { active: 'openai', providers: { openai: { type: 'openai', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o' } } },
   features: { friends: false },
 };
 
@@ -140,7 +139,7 @@ for (const theme of THEMES) {
 
   // ② 设置页主体（键盘 Tab 能走通的那张脸）：展开「STT 高级设置」让文本/密钥输入件上屏
   await s.page.evaluate(() => {
-    for (const id of ['#stt-advance-toggle', '#ttl-advance-toggle', '#jev-advance-toggle']) {
+    for (const id of ['#stt-advance-toggle', '#ttl-advance-toggle']) {
       const b = document.querySelector(id);
       if (b) b.click();
     }

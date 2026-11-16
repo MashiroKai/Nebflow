@@ -47,7 +47,7 @@ const NAME = 'api-token-prod';
 const LIST = [
   // size = VALUE.length：遮蔽占位逐字节一颗点（三轮长度保真），占位串长度
   // 必须与揭示后的明文长度一致，断言才有牙齿。
-  { name: NAME, size: VALUE.length, mtime: 1728383640000, mode: '0600', refs: ['jev.keyRef'], value: 'DECOY-ON-THE-WIRE' },
+  { name: NAME, size: VALUE.length, mtime: 1728383640000, mode: '0600', refs: ['llm.anthropic.apiKey'], value: 'DECOY-ON-THE-WIRE' },
   { name: 'legacy-backup-key', size: 96, mtime: 1726140180000, mode: '0644', refs: [], value: 'DECOY-ON-THE-WIRE' },
 ];
 

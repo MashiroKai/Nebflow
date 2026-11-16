@@ -162,11 +162,11 @@ const RULES = [
 
   // ── 分类器前导（PromptCatalog.Classifiers；措辞已分叉，本批只搬运）──
   {
-    id: 'K1 JeV 分配器前导',
+    id: 'K1 分配器前导（原 JeV 分配器前导；jev-retire 批随类改名 AllocationStatePreamble，文字逐字节不变）',
     literal: 'You are auditing task dispatch in an agent-orchestration platform. Below are (1) one dispatched node',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
-    why: 'JeV 分配器前导单源；⚠ 与 K2 是同一问题的两套措辞（已分叉），裁定待作者。',
+    why: '分配器前导单源；⚠ 与 K2 是同一问题的两套措辞（已分叉），裁定待作者。',
   },
 ];
 

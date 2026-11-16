@@ -386,7 +386,12 @@ try {
   ok('T2c 通路② Esc 收起', g2.dockClosed === true);
   await page.click('.ask-fab');
   await sleep(350);
-  await page.evaluate(() => document.getElementById('canvas-content').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  await page.evaluate(() => {
+    const content = document.getElementById('canvas-content');
+    const event = { bubbles: true, pointerId: 42, pointerType: 'mouse', isPrimary: true, button: 0, clientX: window.innerWidth / 2 };
+    content.dispatchEvent(new PointerEvent('pointerdown', event));
+    content.dispatchEvent(new PointerEvent('pointerup', event));
+  });
   await sleep(350);
   g2 = await geo(page);
   ok('T2d 通路③ 画布空白点击收起', g2.dockClosed === true);
@@ -597,6 +602,22 @@ try {
     backA.user.includes('τ 为什么取 30 天') && backA.ai.includes('近因加权'),
     JSON.stringify(backA).slice(0, 120));
   await shot(page, 't4-session-switch');
+
+  // A running must not leak its composer state into idle B, and must return on switch back.
+  wsSend({ type: 'textDelta', sessionId: askedSid, delta: 'running' });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-stop')).display !== 'none');
+  await openFile(page, 'wiki-graph-redesign-design.md');
+  const idleB = await page.evaluate(() => ({
+    stop: getComputedStyle(document.querySelector('.ask-stop')).display,
+    send: getComputedStyle(document.querySelector('.ask-send')).display,
+    indicators: document.querySelectorAll('.ask-stream-line').length,
+  }));
+  ok('running state is isolated from idle B', idleB.stop === 'none' && idleB.send !== 'none' && idleB.indicators === 0, JSON.stringify(idleB));
+  await openFile(page, '记忆检索调优笔记.md');
+  const runningA = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-stop')).display !== 'none');
+  ok('running state restored on A', runningA);
+  wsSend({ type: 'done', sessionId: askedSid });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-stop')).display === 'none');
 
   // T5 未读通知点（三修② 作者令 2026-10-29：绿点只在有未读时显示，无未读不显示）
   await page.click('.ask-fab'); // 收起（刚读完：无未读）

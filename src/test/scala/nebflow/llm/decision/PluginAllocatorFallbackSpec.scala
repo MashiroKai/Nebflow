@@ -4,23 +4,23 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
-import nebflow.core.jev.{CatalogEntry, JevAllocation, JevGateOutcome, JevGateReason, JevGateSnapshot, PluginAllocator}
-import nebflow.llm.ModelCandidate
+import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallbackKind, PluginAllocator}
+import nebflow.llm.{ModelCandidate, SendMessageParams}
 import nebflow.shared.{LlmProtocol, PathUtil, ProviderConfig}
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.*
 
 /**
- * 插件分配**自动回退**判读（jev-panel-threefix 批，2026-10-09 用户反馈②③）——
- * stub 腿注入，网络腿不在 spec 范围：
+ * 插件分配**探活分腿记账**判读（jev-retire 批 2026-11-16 改写：分配 = 小模型
+ * 单腿——face 注入 mock registry）：
  *
- *  - Jev 腿不可用（Timeout / Auth / Transport——超时、网络、鉴权失败一视同仁）
- *    ⇒ **llm 腿自动接管，分配不丢**（via = LlmFallback，集合照产）；
- *  - 探活**分腿记账**（三改③）：jev 腿终态与通道整体终态分开记录——回退后
- *    通道 up（llm 接管）时 `getDecisionHealth` = Up 但 `legs("jev")` = Down，
- *    REST `toJson` 带 `legs` 键（设置面「Jev 不可用 → 已回退 llm」的数据源）；
- *  - 回退后 llm 腿再挂 ⇒ 通道整体 Down（双腿 reason 在案），fail-open 不丢面。
+ *  - 成功 ⇒ 通道 Up，`legs("llm")` = Up；
+ *  - 失败（无候选/链耗尽/回文不可用）⇒ 通道 Down（reason 在案），`legs("llm")`
+ *    = Down——REST `toJson` 带 `legs` 键（`GET /api/decision/health` 数据源）；
+ *  - 🔴 **jev 腿键永不出现**（退役回归锚：任何 face 产出都不造 "jev" 腿状态）；
+ *  - 既有直写腿（`recordDecisionSuccess` / `recordDecisionFailure`）三态语义
+ *    不受影响。
  *
  * 🔴 测试体纪律：断言一律落在**最外层 awaited IO** 里（CatsEffectSuite 不展平
  * 嵌套 IO——嵌套 .map 里的断言永不执行 = 空转假绿）。
@@ -36,214 +36,132 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
 
   private def withTempDataRoot[A](f: os.Path => IO[A]): IO[A] =
     val original = PathUtil.dataRoot
-    val tmp = os.temp.dir(prefix = "nb-jev-fallback-")
+    val tmp = os.temp.dir(prefix = "nb-llm-fallback-")
     PathUtil.setDataRoot(tmp)
     f(tmp).guarantee(IO(PathUtil.setDataRoot(original)) *> IO(os.remove.all(tmp)))
 
-  private def jevAnswering(names: List[String]): JevAllocator =
-    new JevAllocator(
-      new DecisionProvider[IO]:
-        def id: String = "typesafe-jev"
-        def predict(req: DecisionRequest) =
-          IO.pure(
-            Right(
-              DecisionResponse(
-                None,
-                catalog.map { e =>
-                  val yes = if names.contains(e.name) then 1.0 else 0.0
-                  val no = 1.0 - yes
-                  s"need_${e.name}" -> DecisionAnswer.Choice(
-                    if yes >= DecisionAnswer.YesThreshold then "yes" else "no",
-                    None,
-                    Map("yes" -> yes, "no" -> no)
-                  )
-                }.toMap,
-                None
-              )
-            )
-          )
-    )
+  private def cand(pid: String, model: String): ModelCandidate =
+    ModelCandidate(providerId = pid, provider = ProviderConfig("https://x", "k", LlmProtocol.OpenAI), model = model)
 
-  private def jevFailing(kind: DecisionError): JevAllocator =
-    new JevAllocator(
-      new DecisionProvider[IO]:
-        def id: String = "typesafe-jev"
-        def predict(req: DecisionRequest) = IO.pure(Left(kind))
-    )
+  /** 按 providerId 记账的脚本化 adapter：模型名命中 failOn 即抛，否则按脚本回文。 */
+  private class ScriptedAdapter(failOn: Set[String], answer: String, attempts: TrieMap[String, String])
+      extends nebflow.llm.ProviderAdapter[IO]:
+    def sendMessage(params: SendMessageParams): IO[nebflow.llm.AdapterResponse] =
+      IO {
+        attempts.update(params.model, "hit")
+        if failOn.contains(params.model) then throw new RuntimeException(s"transport down for ${params.model}")
+        nebflow.llm.AdapterResponse(reply = answer, toolCalls = Nil)
+      }
+    def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, nebflow.shared.StreamChunk] =
+      fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
 
-  private def llm(reply: Option[String], calls: TrieMap[String, String] = TrieMap.empty): LlmAllocator =
-    new LlmAllocator(
-      params => IO { calls.update(params.model, params.messages.headOption.map(_.textContent).getOrElse("")); reply },
-      candidate = IO.pure(
-        Some(
-          ModelCandidate(
-            providerId = "p",
-            provider = ProviderConfig("https://x", "k", LlmProtocol.OpenAI),
-            model = "util-1"
-          )
-        )
-      )
-    )
-
-  private def machine(
-    jev: Option[JevAllocator],
-    llmOpt: Option[LlmAllocator],
-    gate: JevGateOutcome,
-    health: Option[DecisionHealthMonitor] = None
-  ): JevPluginAllocator =
-    new JevPluginAllocator(IO.pure(jev), IO.pure(llmOpt), IO.pure(gate), health)
+  /** face 装配用 registry：adapter 表 + 候选链均脚本注入。 */
+  private class FaceRegistry(
+    adapters: Map[String, nebflow.llm.ProviderAdapter[IO]],
+    candidates: List[ModelCandidate]
+  ) extends nebflow.llm.ProviderRegistry(null, null):
+    override def getAdapter(providerId: String): IO[nebflow.llm.ProviderAdapter[IO]] =
+      adapters.get(providerId) match
+        case Some(a) => IO.pure(a)
+        case None    => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
+    override def getCandidatesForAgent(model: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
+      IO.pure(candidates)
 
   /**
-   * 跑一次分配并取回（通道终态, 分腿终态, 分配结果）——读面统一进最外层
+   * 跑一次 face 分配并取回（通道终态, 分腿终态, 分配结果）——读面统一进最外层
    * awaited IO（无嵌套空转）。
    */
   private def runAllocation(
     m: DecisionHealthMonitor,
-    gate: JevGateOutcome,
-    jev: Option[JevAllocator],
-    llmReply: Option[String],
-    llmCalls: TrieMap[String, String] = TrieMap.empty
+    registry: FaceRegistry
   ): IO[(DecisionHealth, Map[String, DecisionHealth], PluginAllocator.PluginAllocationResult)] =
-    machine(jev, Some(llm(llmReply, llmCalls)), gate, health = Some(m))
+    PluginAllocatorMachine.face(registry, health = Some(m))
       .allocatePlugins("delegate-x", "task", catalog)
       .flatMap(r => (m.getDecisionHealth, m.legs).mapN((h, l) => (h, l, r)))
 
-  private val gateOn = JevGateOutcome.Applied(
-    JevGateSnapshot(
-      configured = true,
-      enabled = true,
-      provider = "typesafe-jev",
-      choiceHighBasePolicy = ""
-    )
-  )
-  private val gateOff = JevGateOutcome.Off(JevGateReason.NotConfigured)
+  // ── 成功腿：llm Up，通道 Up ─────────────────────────────────────────────
 
-  // ── 反馈②：Jev 腿不可用 ⇒ 自动回退 llm，分配不丢 ────────────────────────
-
-  test("fallback on timeout: jev leg times out → llm leg takes over, the allocation is NOT lost") {
-    withTempDataRoot { _ =>
-      machine(
-        Some(jevFailing(DecisionError.Timeout("allocation deadline exceeded"))),
-        Some(llm(Some("""{"plugins":["backend-dev","visual-report"]}"""))),
-        gateOn
-      )
-        .allocatePlugins("delegate-x", "task", catalog)
-        .map { r =>
-          assertEquals(r.via, Some(PluginAllocator.AllocationVia.LlmFallback))
-          assertEquals(r.allocation, JevAllocation.Allocated(List("backend-dev", "visual-report")))
-        }
-    }
-  }
-
-  test("fallback on auth failure: jev leg 401s → llm leg takes over (超时/网络/鉴权一视同仁)") {
-    withTempDataRoot { _ =>
-      machine(
-        Some(jevFailing(DecisionError.Auth("401 unauthorized"))),
-        Some(llm(Some("""{"plugins":["visual-report"]}"""))),
-        gateOn
-      )
-        .allocatePlugins("delegate-x", "task", catalog)
-        .map { r =>
-          assertEquals(r.via, Some(PluginAllocator.AllocationVia.LlmFallback))
-          assertEquals(r.allocation, JevAllocation.Allocated(List("visual-report")))
-        }
-    }
-  }
-
-  // ── 反馈③：分腿记账——回退态如实可见 ────────────────────────────────────
-
-  test("leg bookkeeping: jev down + llm took over → channel Up but legs show jev Down + llm Up") {
-    withTempDataRoot { _ =>
-      DecisionHealthMonitor.create
-        .flatMap(m =>
-          runAllocation(
-            m,
-            gateOn,
-            Some(jevFailing(DecisionError.Timeout("boom"))),
-            Some("""{"plugins":["backend-dev"]}""")
-          )
-        )
-        .map { case (channel, legs, result) =>
-          assertEquals(result.via, Some(PluginAllocator.AllocationVia.LlmFallback))
-          assertEquals(channel, DecisionHealth.Up, "the channel produced an allocation (llm takeover) — overall Up")
-          legs.get("jev") match
-            case Some(DecisionHealth.Down(reason, _)) =>
-              assert(reason.contains("jev leg"), s"the jev leg state carries its own diagnostic: $reason")
-            case other => fail(s"expected a Down jev leg, got: $other")
-          assertEquals(legs.get("llm"), Some(DecisionHealth.Up), "llm leg recorded Up")
-        }
-    }
-  }
-
-  test("leg bookkeeping in toJson: the fallback story reaches the REST face (设置面「已回退 llm」数据源)") {
+  test("leg bookkeeping: llm leg allocates → channel Up, legs show llm Up (and only llm)") {
     withTempDataRoot { _ =>
       DecisionHealthMonitor.create
         .flatMap { m =>
-          machine(
-            Some(jevFailing(DecisionError.Auth("401"))),
-            Some(llm(Some("""{"plugins":["backend-dev"]}"""))),
-            gateOn,
-            health = Some(m)
-          )
+          runAllocation(m, new FaceRegistry(
+            Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev","visual-report"]}""", TrieMap.empty)),
+            List(cand("p", "util-1"))
+          ))
+        }
+        .map { case (channel, legs, result) =>
+          assertEquals(result.via, Some(PluginAllocator.AllocationVia.LlmFallback))
+          assertEquals(result.allocation, JevAllocation.Allocated(List("backend-dev", "visual-report")))
+          assertEquals(channel, DecisionHealth.Up)
+          assertEquals(legs.get("llm"), Some(DecisionHealth.Up))
+          assertEquals(legs.keySet, Set("llm"), "the retired jev leg key is never invented")
+        }
+    }
+  }
+
+  // ── 失败腿：llm Down，通道 Down（reason 在案）───────────────────────────
+
+  test("leg bookkeeping: total failure → channel Down with the classified reason; legs show llm Down") {
+    withTempDataRoot { _ =>
+      DecisionHealthMonitor.create
+        .flatMap { m =>
+          runAllocation(m, new FaceRegistry(Map("p" -> ScriptedAdapter(Set("util-1"), "", TrieMap.empty)), List(cand("p", "util-1"))))
+        }
+        .map { case (channel, legs, result) =>
+          assertEquals(result.via, None, "fail-open: no via when the leg failed")
+          channel match
+            case DecisionHealth.Down(reason, _) =>
+              assert(reason.contains("llm"), s"the effective failure names the llm leg: $reason")
+            case other => fail(s"expected channel Down after the leg failed, got: $other")
+          legs.get("llm") match
+            case Some(DecisionHealth.Down(reason, _)) =>
+              assert(reason.nonEmpty, "the llm leg state carries its own diagnostic")
+            case other => fail(s"expected a Down llm leg, got: $other")
+          assertEquals(legs.keySet, Set("llm"), "the retired jev leg key is never invented")
+        }
+    }
+  }
+
+  test("structural fail-open (no candidates) is leg-recorded too — not a silent gap") {
+    withTempDataRoot { _ =>
+      DecisionHealthMonitor.create
+        .flatMap { m => runAllocation(m, new FaceRegistry(Map.empty, Nil)) }
+        .map { case (channel, legs, result) =>
+          assertEquals(result.allocation, JevAllocation.FellBack(JevFallbackKind.Failure, "small model unavailable"))
+          channel match
+            case DecisionHealth.Down(reason, _) => assert(reason.contains("small model unavailable"))
+            case other                          => fail(s"expected Down, got: $other")
+          legs.get("llm") match
+            case Some(DecisionHealth.Down(_, _)) => ()
+            case other                           => fail(s"expected a Down llm leg, got: $other")
+        }
+    }
+  }
+
+  // ── REST 面：legs 块到达 GET /api/decision/health 的数据源 ────────────────
+
+  test("leg bookkeeping in toJson: the llm-only leg state reaches the REST face") {
+    withTempDataRoot { _ =>
+      DecisionHealthMonitor.create
+        .flatMap { m =>
+          PluginAllocatorMachine
+            .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set("util-1"), "", TrieMap.empty)), List(cand("p", "util-1"))), health = Some(m))
             .allocatePlugins("delegate-x", "task", catalog) *> m.toJson
         }
         .map { json =>
           val legs = json.hcursor.downField("legs")
-          assertEquals(legs.downField("jev").get[String]("status").toOption, Some("down"), "legs.jev.status = down")
+          assertEquals(legs.downField("llm").get[String]("status").toOption, Some("down"), "legs.llm.status = down")
           assert(
-            legs.downField("jev").get[String]("reason").toOption.exists(_.contains("auth")),
-            "legs.jev.reason names the classified failure"
+            legs.downField("llm").get[String]("reason").toOption.exists(_.contains("llm")),
+            "legs.llm.reason names the classified failure"
           )
-          assertEquals(legs.downField("llm").get[String]("status").toOption, Some("up"), "legs.llm.status = up")
+          assert(legs.downField("jev").focus.isEmpty, "the retired jev leg never appears in the REST legs block")
           assertEquals(
             json.hcursor.get[String]("status").toOption,
-            Some("up"),
-            "top-level status stays the effective channel state"
+            Some("down"),
+            "top-level status is the effective channel state"
           )
-        }
-    }
-  }
-
-  test("fallback then llm leg fails too → channel Down with the llm reason; both legs recorded down") {
-    withTempDataRoot { _ =>
-      DecisionHealthMonitor.create
-        .flatMap(m => runAllocation(m, gateOn, Some(jevFailing(DecisionError.Transport("net down"))), None))
-        .map { case (channel, legs, result) =>
-          assertEquals(result.via, None, "fail-open: no via when both legs failed")
-          channel match
-            case DecisionHealth.Down(reason, _) =>
-              assert(reason.contains("llm"), s"the effective failure names the llm leg: $reason")
-            case other => fail(s"expected channel Down after both legs failed, got: $other")
-          assert(legs.get("jev").exists(_.toString.contains("Down")), "jev leg down")
-          assert(legs.get("llm").exists(_.toString.contains("Down")), "llm leg down too")
-        }
-    }
-  }
-
-  test("gate off → only the llm leg is recorded (the jev leg never ran); the channel stays Up on llm success") {
-    withTempDataRoot { _ =>
-      DecisionHealthMonitor.create
-        .flatMap(m => runAllocation(m, gateOff, None, Some("""{"plugins":["backend-dev"]}""")))
-        .map { case (channel, legs, _) =>
-          assertEquals(legs.contains("jev"), false, "gate off = the jev leg never ran — no jev leg state invented")
-          assertEquals(legs.get("llm"), Some(DecisionHealth.Up))
-          assertEquals(channel, DecisionHealth.Up)
-        }
-    }
-  }
-
-  test("jev leg healthy → legs record jev Up only; the llm leg is never consulted") {
-    val llmCalls = TrieMap.empty[String, String]
-    withTempDataRoot { _ =>
-      DecisionHealthMonitor.create
-        .flatMap(m =>
-          runAllocation(m, gateOn, Some(jevAnswering(List("visual-report"))), Some("""{"plugins":["x"]}"""), llmCalls)
-        )
-        .map { case (channel, legs, _) =>
-          assertEquals(llmCalls.size, 0, "llm leg untouched when the jev leg allocated")
-          assertEquals(legs.get("jev"), Some(DecisionHealth.Up))
-          assertEquals(legs.contains("llm"), false, "the llm leg did not run — no llm leg state invented")
-          assertEquals(channel, DecisionHealth.Up)
         }
     }
   }

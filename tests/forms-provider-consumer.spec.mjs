@@ -28,25 +28,5 @@ test('FRM-SCN-001 actual provider form keeps values after failed confirmation an
   expect(await page.evaluate(() => window.__calls)).toBe(2);
 });
 
-test('FRM-SCN-004 JeV probe sends current model and unsaved key', async ({ page }) => {
-  let sent;
-  await page.route('**/*', route => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === '/api/jev/test') {
-      sent = route.request().postDataJSON();
-      return route.fulfill({json:{ok:true, latencyMs:10}});
-    }
-    if (path === '/') return route.fulfill({contentType:'text/html',body:'<!doctype html><body></body>'});
-    const file = normalize(join(web, path));
-    if (!file.startsWith(web + '/')) return route.abort();
-    try { return route.fulfill({contentType:mime[extname(file)] || 'text/plain',body:readFileSync(file)}); }
-    catch { return route.fulfill({status:404,body:''}); }
-  });
-  await page.goto('http://localhost:8380/');
-  const verdict = await page.evaluate(async () => {
-    const {runJevTest} = await import('/js/sidebar/jevTestButton.js');
-    return runJevTest({provider:'laya', endpoint:'https://example.invalid', keyRef:'jev-example-key', model:'current-model', apiKey:'fixture-key'});
-  });
-  expect(verdict.ok).toBe(true);
-  expect(sent).toEqual({provider:'laya',endpoint:'https://example.invalid',keyRef:'jev-example-key',model:'current-model',apiKey:'fixture-key'});
-});
+// （FRM-SCN-004 JeV probe 腿已随 JeV 全量退役删除——jev-retire 批 2026-11-16：
+// js/sidebar/jevTestButton.js 与 /api/jev/test 随 jev 域下线。）

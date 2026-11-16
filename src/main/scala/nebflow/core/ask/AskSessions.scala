@@ -31,9 +31,11 @@ object AskSessions:
   /** 会话 id 前缀单点——工具面/提示词/spawn 判据全部经本判据，禁写第二份。 */
   val Prefix = "ask-"
 
-  /** Only these tools are stripped from non-Ask roles; shared lookup tools and Bash are not exclusive. */
+  /** Only these tools are stripped from non-Ask roles; shared lookup tools and Bash are not exclusive.
+   * canvas-ask-restricted-edit（CAE-REQ-001）：ask_edit/ask_write = 提案制受限编辑
+   * （仅绑定文件；盘上零直写，前端 diff 卡 Accept/Reject）。 */
   val AskExclusiveTools: Set[String] =
-    Set("message_record_search", "send_message_to_main_chat")
+    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write")
 
   /** Closed Ask face, independent of Subagent and returned before any other role grants. */
   val AllowedTools: Set[String] =

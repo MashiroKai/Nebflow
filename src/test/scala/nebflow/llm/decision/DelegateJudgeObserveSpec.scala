@@ -8,7 +8,7 @@ import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import munit.CatsEffectSuite
 import nebflow.core.delegate.DelegateJudge
 import nebflow.llm.ProviderRegistry
-import nebflow.shared.{JevConfig, ModelConfig, NebflowServiceConfig, PathUtil, ProviderConfig, ServiceLlmConfig}
+import nebflow.shared.{ModelConfig, NebflowServiceConfig, PathUtil, ProviderConfig, ServiceLlmConfig}
 import sttp.client4.httpclient.fs2.HttpClientFs2Backend
 
 import java.net.InetSocketAddress
@@ -17,22 +17,19 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration.*
 
 /**
- * 四修③（2026-10-07 修复令「观测补洞」）判读：
+ * 四修③（2026-10-07 修复令「观测补洞」）判读（jev-retire 批 2026-11-16 起
+ * JevSettings 腿生命周期用例随 JeV 设置面退役删除，只余 SmallJudge 面）：
  *
- *  - **腿生命周期挂 secrets 在位性**：`jev.keyRef` 指向的 secret 件缺失 ⇒
- *    `JevSettings.resolve` = None（腿自动关闭，不再构造注定 403 的 provider）；
- *    补上 secret 件 ⇒ 下一次热读自动恢复（Some＋token 在位）——开/关/开全程
- *    无重启；keyRef 未配置 = 不期望凭据，腿照常开（既有语义）。
  *  - **SmallJudge 两条静默 None 路径**：候选链空（utilityCandidates=nil，无候选）
  *    与 parseVerdict 失败（回文无 JSON 判词）两条腿都 yield None——None 语义
  *    不变（兜底/回落接手，绝非误判），但不再无声（两条 WARN 位点随刀）。
  *    parse 腿走**真 adapter**（真 sttp backend ＋本地 HttpServer 回散文），
  *    断言 `hits==1` 钉死「None 出自解析失败而非调用失败」——WARN 位点被触达。
  *
- * 现场：鹦鹉骑自行车终态判定——jev.keyRef 无 secret 件 → 403 白烧一次调用；
- * SmallJudge 候选 None／回文解析失败静默 → 两腿全败 → 假 completed。
- * 全程封闭面：dataRoot 指向临时目录（jev 未配置 ⇒ Jev 腿恒关，走 SmallJudge），
- * HTTP 只打 127.0.0.1 随机端口的进程内 server——零外呼。
+ * 现场：鹦鹉骑自行车终态判定——SmallJudge 候选 None／回文解析失败静默 →
+ * 两腿全败 → 假 completed。
+ * 全程封闭面：dataRoot 指向临时目录，HTTP 只打 127.0.0.1 随机端口的进程内
+ * server——零外呼。
  */
 class DelegateJudgeObserveSpec extends CatsEffectSuite:
 
@@ -40,61 +37,9 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
 
   private def withTempDataRoot[A](f: os.Path => IO[A]): IO[A] =
     val original = PathUtil.dataRoot
-    val tmp = os.temp.dir(prefix = "nb-jev-observe-")
+    val tmp = os.temp.dir(prefix = "nb-judge-observe-")
     PathUtil.setDataRoot(tmp)
     f(tmp).guarantee(IO(PathUtil.setDataRoot(original)) *> IO(os.remove.all(tmp)))
-
-  // ── JevSettings：secrets 在位性 = 腿生命周期 ─────────────────────────────
-
-  test(
-    "keyRef names an absent secret ⇒ the jev leg is CLOSED (resolve=None); restoring the secret re-opens it on the next hot read"
-  ) {
-    withTempDataRoot { tmp =>
-      for
-        closed <- IO(
-          JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None)
-        )
-        _ <- IO {
-          os.makeDir.all(tmp / "secrets")
-          os.write(tmp / "secrets" / "obs-key", "sk-live")
-        }
-        reopened <- IO(
-          JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None)
-        )
-        _ <- IO(os.remove(tmp / "secrets" / "obs-key"))
-        reclosed <- IO(
-          JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("obs-key"))), health = None)
-        )
-      yield
-        assertEquals(closed, None, "secret absent ⇒ leg closed (no doomed provider, no 403 burn)")
-        assert(reopened.isDefined, "restoring the secret re-opens the leg (hot read, no restart)")
-        assertEquals(reopened.flatMap(_.token), Some("sk-live"), "the reopened leg carries the token")
-        assertEquals(reclosed, None, "removing the secret closes the leg again (lifecycle rides presence)")
-      end for
-    }
-  }
-
-  test(
-    "no keyRef = no credential expected: the leg stays open (existing semantics); empty/unreadable secrets also close it"
-  ) {
-    withTempDataRoot { tmp =>
-      for
-        tokenless <- IO(JevSettings.resolve(Some(JevConfig(enabled = Some(true))), health = None))
-        _ <- IO {
-          os.makeDir.all(tmp / "secrets")
-          os.write(tmp / "secrets" / "empty-key", "   ")
-        }
-        emptyClosed <- IO(
-          JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("empty-key"))), health = None)
-        )
-        blankRef <- IO(JevSettings.resolve(Some(JevConfig(enabled = Some(true), keyRef = Some("  "))), health = None))
-      yield
-        assert(tokenless.isDefined, "keyRef absent ⇒ leg open (token None is a legal tokenless shape)")
-        assertEquals(emptyClosed, None, "an empty secret file closes the leg (same presence discipline)")
-        assert(blankRef.isDefined, "a blank keyRef = unconfigured ⇒ leg open")
-      end for
-    }
-  }
 
   // ── SmallJudge 静默 None 两条腿 ─────────────────────────────────────────
 
