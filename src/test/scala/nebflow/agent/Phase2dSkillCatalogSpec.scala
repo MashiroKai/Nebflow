@@ -244,9 +244,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     assert(ContextRefresher.skillCatalogEnabledFor("Coder"), "legacy agent 保留至阶段 3")
 
   test("D.1-12: node 会话（执行 agent 模版）首条消息不含 per-agent skill 目录（order 800 停注）"):
-    // 注意：共享前缀层（system-prefix-for-all）已随阶段 2 批 A 退役——其
-    // JAR 内静态「## Skills」段一并消失，断言语义不受影响（本测试只钉
-    // order 800 per-agent 目录停注，设计 §D.1 #12）。
+    // 共享构建前缀与 order 800 per-agent skill 目录是不同的注入面。
     // per-agent 目录的特征：目录头句「Skills live at」+ 条目行「- <skill>:」。
     // P1-3 归因修正（2026-10-03）：节点执行名现为 BuiltinAgents.ExecutorName
     // （代码定义、skills = Nil）——本用例的判据面因此比磁盘夹具更强：目录段
@@ -260,6 +258,10 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
       s"executor node session must NOT carry the per-agent skill catalog (order 800 停注), got:\n${stable.take(1200)}"
     )
     assert(!stable.contains("catalog-probe"), "fixture skill must not leak into node session prompt")
+    for name <- List("stand-recall", "stand-messages", "stand-plugins", "stand-terms", "stand-profile") do
+      assert(stable.contains(s"tools/$name"), s"embedded prefix must contain $name")
+    assert(!stable.contains("stand-branch-guard"))
+    assert(stable.contains("EVERY agent on ANY project"))
 
   // 2026-09-05 agent 退役：原「legacy agent 会话保留 per-agent skill 目录（双轨期
   // 对照）」wire 级测试随 NodeEdit agent 参数一并退役——节点执行统一执行 agent

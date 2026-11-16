@@ -1,10 +1,10 @@
-# Optional System Prefix
+# Build-embedded System Prefix
 
 ## Why
-Authors need a single reviewable file for shared system-prompt guidance, including the CLI suite.
+Authors need one reviewable, product-wide source for shared system-prompt guidance without a mutable runtime prefix.
 
 ## Scope
-Read the optional data-root prefix at prompt assembly; prepend a marked nonempty prefix. Preserve the existing cached-prompt lifecycle. Ship a source template only, without deploying or changing live configuration.
+Replace the optional data-root file read with the packaged `seed/prompt-prefix.md` classpath resource. Prepend it before agent prompts and conditional blocks; retain the cached-prompt lifecycle. The external data-root file is no longer read or installed. Resource updates require a build; deployment and removal of any existing external file are outside this change.
 
 ## Acceptance
-Focused assembly tests cover nonempty, missing, and whitespace-only files and rereading on assembly. The template covers the four CLI families and their safety boundaries.
+Focused assembly and wire tests verify the packaged prefix, its ordering, the five CLI families and universality rule, and that an external file cannot override it. The existing change's specification records the semantic replacement.
