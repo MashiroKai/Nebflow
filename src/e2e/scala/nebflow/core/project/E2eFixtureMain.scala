@@ -134,6 +134,7 @@ object E2eFixtureMain extends IOApp:
       "cleanup" -> Json.obj("actor_system_closed" -> true.asJson, "dispatcher_released" -> true.asJson,
         "detached_starts_drained" -> true.asJson, "db_was_open" -> dbWasOpen.asJson,
         "db_still_registered" -> dbStillOpen.asJson,
+        "data_root_created" -> true.asJson,
         "data_root_exists" -> rootStillExists.asJson,
         "data_root_delete_error" -> rootDelete.swap.toOption.map(e => s"${e.getClass.getSimpleName}: ${e.getMessage}").asJson,
         "db_release_error" -> dbRelease.swap.toOption.map(e => s"${e.getClass.getSimpleName}: ${e.getMessage}").asJson,
