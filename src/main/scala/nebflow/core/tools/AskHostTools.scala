@@ -45,6 +45,28 @@ object AskHostLedger:
       }
       requests.values.toList
 
+  /** Verify an exact duplicate against durable history, including delivered rows. */
+  def isAcceptedDuplicate(id: String, root: String, decision: String): IO[Boolean] = IO.blocking {
+    journalLock.synchronized {
+      if !os.exists(file) then false
+      else
+        var owner = ""
+        var accepted: Option[String] = None
+        var invalid = false
+        os.read.lines(file).foreach { line =>
+          io.circe.parser.parse(line).toOption.flatMap(_.asObject).foreach { row =>
+            def str(key: String) = row(key).flatMap(_.asString).getOrElse("")
+            if str("correlationId") == id then str("status") match
+              case "pending" => owner = str("rootSession")
+              case "answered" => accepted = Some(str("decision"))
+              case "unavailable" => invalid = true
+              case _ => ()
+          }
+        }
+        !invalid && owner == root && accepted.contains(decision)
+    }
+  }
+
   /** Recreate in-process waiters and satisfy any request whose decision was journaled before a crash. */
   def restoreWaiter(id: String): IO[Deferred[IO, String]] =
     Deferred[IO, String].flatMap { candidate =>
@@ -255,14 +277,20 @@ object AskHostReplyTool extends Tool:
     else ctx.sharedResources match
       case None => IO.pure(Left(ToolError("AskHostReply: runtime resources unavailable")))
       case Some(resources) =>
+        val root = ctx.sessionId.getOrElse("")
+        def alreadyAccepted: IO[Either[ToolError, String]] =
+          AskHostLedger.isAcceptedDuplicate(id, root, decision).map {
+            case true => Right(s"AskHost reply already accepted for $id")
+            case false => Left(ToolError(s"AskHost request unavailable or already answered with a different decision: $id"))
+          }
         AskHostLedger.recover.flatMap(_.find(_.pending.correlationId == id) match
-          case None => IO.pure(Left(ToolError(s"AskHost request unavailable or already answered: $id")))
-          case Some(row) if row.pending.rootSession != ctx.sessionId.getOrElse("") =>
+          case None => alreadyAccepted
+          case Some(row) if row.pending.rootSession != root =>
             IO.pure(Left(ToolError("AskHostReply: request belongs to another root session")))
           case Some(row) =>
-            AskHostLedger.answer(id, decision).map {
-              case true => Right(s"AskHost reply durably recorded for $id")
-              case false => Left(ToolError(s"AskHost request unavailable or already answered: $id"))
+            AskHostLedger.answer(id, decision).flatMap {
+              case true => IO.pure(Right(s"AskHost reply durably recorded for $id"))
+              case false => alreadyAccepted
             }
         )
 end AskHostReplyTool
