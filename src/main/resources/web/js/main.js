@@ -2222,15 +2222,12 @@ onMessage('historyPage', (msg, view) => {
         // 中途被整替（resetPagination 换对象）⇒ 本页作废（行未挂载，整页弃置；
         // 已挂载行只会随 wipe 一起被清）。
         if (view.pagination !== paginationAtStart) return false;
-        const fragment = document.createDocumentFragment();
-        while (container.firstChild) {
-          const child = container.firstChild;
-          if (child.classList && child.classList.contains('row')) {
-            child.classList.add('prepend-skip-anim');
-          }
-          fragment.appendChild(child);
+        container.classList.add('history-page');
+        container.style.display = 'flow-root';
+        for (const child of container.children) {
+          if (child.classList.contains('row')) child.classList.add('prepend-skip-anim');
         }
-        chat.prepend(fragment);
+        chat.prepend(container);
         // 相对补偿：+整页新增高度（绝对值式会夺走构建切片期间用户的手势滚动）。
         const newScrollHeight = chat.scrollHeight;
         chat.scrollTop += (newScrollHeight - prevScrollHeight);

@@ -116,7 +116,7 @@ export function captureReturnAnchor(res) {
   const chat = chatViews.primary?.dom?.chat;
   if (!chat) return;
   const chatTop = chat.getBoundingClientRect().top;
-  for (const node of chat.children) {
+  for (const node of chat.querySelectorAll(':scope > .row, :scope > .tool-card, :scope > .history-page > .row, :scope > .history-page > .tool-card')) {
     const row = /** @type {HTMLElement} */ (node);
     if (!(row.classList.contains('row') || row.classList.contains('tool-card'))) continue;
     const rect = row.getBoundingClientRect();
