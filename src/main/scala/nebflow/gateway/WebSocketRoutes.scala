@@ -2265,6 +2265,8 @@ class WebSocketRoutes(
                               // (file/document/html-element) into [引用: …]
                               // injection blocks; refType=task fail-open 跳过。
                               processRefs(json, blocks).flatMap { _ =>
+                                ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens).flatMap { resolvedContent =>
+                                if content.nonEmpty then blocks.update(0, ContentBlock.Text(resolvedContent))
                                 // device-provenance 批：标记块前插为首块（正文块逐字不动；
                                 // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
                                 // 未声明设备 ⇒ 逐字节现状。
@@ -2287,6 +2289,7 @@ class WebSocketRoutes(
                                       chatWidth
                                     )
                                 )
+                                }
                               }
                             }
                         }
@@ -2560,14 +2563,16 @@ class WebSocketRoutes(
       maybeSessionKick(sessionId, s"userMessage:$source") *>
       // device-provenance 批：标记只进模型面（text 前缀，BridgeOrigin.compose 同序
       // ——标记块、空行、正文）；上方 UiMessage 行保持裸正文（两 face 分离原律）。
-      ensureAgent(sessionId)(ref =>
-        ref ! AgentCommand.ImmediateInput(
-          device.fold(content)(nebflow.bridge.DeviceProvenance.compose(_, content)),
-          fromUser = fromUser,
-          // P3：客户端幂等键随件到会话本体（改前在本转换处蒸发）。
-          clientMessageId = clientMessageId
+      (if fromUser then ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens)
+       else IO.pure(content)).flatMap { resolvedContent =>
+        ensureAgent(sessionId)(ref =>
+          ref ! AgentCommand.ImmediateInput(
+            device.fold(resolvedContent)(nebflow.bridge.DeviceProvenance.compose(_, resolvedContent)),
+            fromUser = fromUser,
+            clientMessageId = clientMessageId
+          )
         )
-      )
+      }
 
   /**
    * 冻结「跳过本次」唯一入口（2026-08-25 22:28 裁定）：前端冻结按钮发

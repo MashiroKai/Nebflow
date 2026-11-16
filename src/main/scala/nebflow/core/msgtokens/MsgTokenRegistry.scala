@@ -260,7 +260,17 @@ final class MsgTokenRegistry(
     val from = math.max(0, start - MsgTokenRegistry.UnresolvedMarker.length)
     text.substring(from, start).endsWith(MsgTokenRegistry.UnresolvedMarker)
 
-  private def resolveSync(text: String): String =
+  /** Console input may fold long quotes; agent-to-agent delivery keeps its full-text contract. */
+  def resolveForConsole(text: String): IO[String] =
+    if text.isEmpty || !text.contains("{{") then IO.pure(text)
+    else IO.blocking {
+      if !enabledHot() then
+        logger.warn("CONSOLE-QUOTE-DISABLED message-token resolution disabled")
+        "[引用未能解析：消息牌机制已关闭] " + text
+      else resolveSync(text, foldLong = true)
+    }
+
+  private def resolveSync(text: String, foldLong: Boolean = false): String =
     MsgTokenRegistry.BraceSpan.replaceAllIn(
       text,
       m =>
@@ -270,7 +280,7 @@ final class MsgTokenRegistry(
         else
           MsgTokenRegistry.classifyInner(inner) match
             case MsgTokenRegistry.SpanShape.Exact(sid8, seq, shortName) =>
-              expandExact(sid8, seq, shortName, written)
+              expandExact(sid8, seq, shortName, written, foldLong)
             case MsgTokenRegistry.SpanShape.Attempt(reason) =>
               malformedCount.incrementAndGet()
               logger.warn(
@@ -283,7 +293,7 @@ final class MsgTokenRegistry(
     )
 
   /** 严格牌面：查映射（带名形态与裸形态同键）。命中 ⇒ 原文块；缺失 ⇒ 显式标记。 */
-  private def expandExact(sid8: String, seq: String, shortName: Option[String], written: String): String =
+  private def expandExact(sid8: String, seq: String, shortName: Option[String], written: String, foldLong: Boolean): String =
     val token = s"{{msg:$sid8-$seq}}"
     val mappingOpt = sessionStateFor(sid8) match
       case Some((sid, st)) =>
@@ -294,6 +304,10 @@ final class MsgTokenRegistry(
         finally st.lock.unlock()
       case None => None
     mappingOpt match
+      case Some(mapping) if foldLong && mapping.text.length > 4000 =>
+        val core = s"$sid8-$seq"
+        val label = shortName.getOrElse(s"消息 $core")
+        s"[引用 · $label · 共 ${mapping.text.length} 字 · 已折叠；全文查询 GET /api/sessions/msg-token/$core]\n${mapping.text.take(500)}\n[摘要结束]"
       case Some(mapping) => MsgTokenRegistry.expansionBlock(mapping, shortName)
       case None =>
         missingCount.incrementAndGet()

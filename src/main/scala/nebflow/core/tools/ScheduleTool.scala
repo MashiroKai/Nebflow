@@ -53,6 +53,7 @@ Semantic split (two faces, one ledger):
 - **list**: show ALL pending entries across all sessions — scheduled tasks (id, trigger time,
   repeat, status active/PAUSED) AND todos (id, created date, content). Call this before
   re-arming a routine task: if it already exists, don't create a copy.
+- **get**: read the complete current entry by id, including the untruncated body, across sessions.
 - **cancel**: remove an entry by id (works across sessions, both kinds). A cancelled scheduled
   task never fires; a cancelled todo never surfaces again. It disappears from list immediately.
 - **done**: write off a TODO by id after completing it (todos only — for a scheduled task
@@ -62,7 +63,7 @@ Semantic split (two faces, one ledger):
 
 ## Fields
 
-- **action** (optional): "create" (default) | "list" | "cancel" | "done"
+- **action** (optional): "create" (default) | "list" | "get" | "cancel" | "done" | "edit"
 - **kind** (create, optional): "task" (default) | "todo". "task" = timed task, requires
   triggerAt. "todo" = no fixed time — triggerAt is ignored; the engine surfaces it in the
   daily morning digest (09:00) until done/cancelled.
@@ -169,7 +170,7 @@ Your context does NOT show the current date/time — never invent an absolute da
    *  `updateScheduledTask` 帧公开 —— 卡片内联编辑的 repeat 校验必须命中**同一份**
    *  白名单，复制一份字符串集合 = 两条校验路必然漂移。 */
   val validRepeat = Set("hourly", "daily", "weekly")
-  private val validActions = Set("create", "list", "cancel", "done", "edit")
+  private val validActions = Set("create", "list", "get", "cancel", "done", "edit")
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -177,8 +178,8 @@ Your context does NOT show the current date/time — never invent an absolute da
       "properties" -> Json.obj(
         "action" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("create".asJson, "list".asJson, "cancel".asJson, "done".asJson, "edit".asJson),
-          "description" -> "create (default) = schedule a task or register a todo; list = show all pending entries across sessions; cancel = remove an entry by id; done = write off a completed todo by id; edit = modify an existing entry by id (content/project)".asJson
+          "enum" -> Json.arr("create".asJson, "list".asJson, "get".asJson, "cancel".asJson, "done".asJson, "edit".asJson),
+          "description" -> "create (default) = schedule a task or register a todo; list = show all pending entries; get = read full entry by id across sessions; cancel = remove an entry by id; done = write off a completed todo by id; edit = modify an existing entry by id (content/project)".asJson
         ),
         "kind" -> Json.obj(
           "type" -> "string".asJson,
@@ -284,6 +285,13 @@ Your context does NOT show the current date/time — never invent an absolute da
           val taskService = sr.scheduledTaskService
           action match
             case "list" => listAction(taskStore)
+            case "get" =>
+              input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
+                case None => IO.pure(Left(ToolError("get requires id")))
+                case Some(id) => taskStore.findTaskById(id).map {
+                  case None => Left(ToolError(s"Entry not found: $id"))
+                  case Some(t) => Right(s"Entry ${t.id} · ${t.name.getOrElse("")}\n${t.detail.getOrElse(t.content)}")
+                }
             case "cancel" => cancelAction(taskStore, taskService, input, ctx)
             case "done" => doneAction(taskStore, taskService, input, ctx)
             case "edit" => editAction(taskStore, taskService, input, ctx)
