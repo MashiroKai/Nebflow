@@ -135,9 +135,9 @@ object InjectionChannel:
   /**
    * 注入帧（WS `user` 帧）：**改前 `AgentActor#emitInjectedUserEvent` 的逐 keys 同形**
    * ——键序 = type / text / injected / source / sessionId / eventType / sender /
-   * senderTeam / delivery / intake / header / fileChanges，其后接 `extra`（调用点
-   * 专属段，如定时任务卡的 `timestamp` + `schedule`）。缺席即不落键（旧帧字节形态
-   * 逐字不变；intake/header 先例同款条件编码）。
+   * senderTeam / delivery / intake / header / fileChanges / askAddress，其后接
+   * `extra`（调用点专属段，如定时任务卡的 `timestamp` + `schedule`）。缺席即不落键
+   * （旧帧字节形态逐字不变；intake/header 先例同款条件编码）。
    */
   def frame(sessionId: String, row: UiMessage.User, extra: JsonObject = JsonObject.empty): Json =
     val base = Json.obj(
@@ -154,7 +154,10 @@ object InjectionChannel:
     val withIntake = row.intake.fold(withDelivery)(i => withDelivery.deepMerge(Json.obj("intake" -> i.asJson)))
     val withHeader = row.header.fold(withIntake)(h => withIntake.deepMerge(Json.obj("header" -> h.asJson)))
     val withDiff = row.fileChanges.fold(withHeader)(fc => withHeader.deepMerge(Json.obj("fileChanges" -> fc)))
-    if extra.isEmpty then withDiff else withDiff.deepMerge(Json.fromJsonObject(extra))
+    // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址——缺席即不落键
+    // ⇒ 非 ask 帧字节形态逐字不变。
+    val withAskAddr = row.askAddress.fold(withDiff)(a => withDiff.deepMerge(Json.obj("askAddress" -> a.asJson)))
+    if extra.isEmpty then withAskAddr else withAskAddr.deepMerge(Json.fromJsonObject(extra))
 
   /** 落盘面（窄端口 ⇒ 本件可在无 gateway 的测试里用真 `SessionStore` 或假实现直测）。 */
   type Store = SessionStorePort

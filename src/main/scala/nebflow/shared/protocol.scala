@@ -408,7 +408,20 @@ object UiMessage:
      * 解码宽松回落 None）。旧行降级策略 = 纯前端时间戳蕴含推断，见
      * `turnGroup.js midTurnInferred`（零迁移、不崩、不劣化）。
      */
-    midTurn: Option[Boolean] = None
+    midTurn: Option[Boolean] = None,
+    /**
+     * **ask 会话的 Mail 续聊地址**（ask-mail 批 2026-11-16，作者令「给 ASK ·
+     * INJECTED 加上地址，使编排方可通过 Mail 续聊」）：`ask:<会话id>` 形态
+     * （单源 = `nebflow.core.delegate.MailAddress.AskPrefix` + 会话 id）。
+     *
+     * 写点 = ask handoff 注入行（`WebSocketRoutes` installAskHandoffFace 的
+     * ExternalEvent metadata `askMailAddress` → `AgentActor#emitInjectedUserEvent`
+     * 唯一发射点随行）；前端在该注入泡（ASK · INJECTED）的标签行渲染**可复制**
+     * 地址 chip（后台代理面板 bg-task-addr 先例：面板零推导，引擎字段是唯一
+     * 真源）。缺席即不落键（先例同款条件编码 ⇒ 非 ask 行与旧 `.ui.json` 行
+     * 字节形态逐字不变；解码宽松回落 None）。
+     */
+    askAddress: Option[String] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -598,7 +611,11 @@ object UiMessage:
       val withSchedule = m.schedule.fold(withAnswerAtts)(s => withAnswerAtts.deepMerge(Json.obj("schedule" -> s)))
       // tool-card-leak-on-reload 批（2026-11-02）：回合内插话标记——只在 Some(true)
       // 落键（缺席即不落键 ⇒ 普通用户行与旧字节形态逐字相同）。
-      if m.midTurn.contains(true) then withSchedule.deepMerge(Json.obj("midTurn" -> true.asJson)) else withSchedule
+      val withMidTurn =
+        if m.midTurn.contains(true) then withSchedule.deepMerge(Json.obj("midTurn" -> true.asJson)) else withSchedule
+      // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址——缺席即不落键
+      // ⇒ 非 ask 行与旧字节形态逐字相同。
+      m.askAddress.fold(withMidTurn)(a => withMidTurn.deepMerge(Json.obj("askAddress" -> a.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -683,6 +700,9 @@ object UiMessage:
           // ⇒ None；形态不合同样回落 None —— 宽松透传，新增可选键绝不改变任何
           // 既有行的可解析性）
           midTurn <- cursor.downField("midTurn").as[Option[Boolean]]
+          // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址（旧行无本键 ⇒ None，
+          // 同上兼容纪律）
+          askAddress <- cursor.downField("askAddress").as[Option[String]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -700,7 +720,8 @@ object UiMessage:
           fileChanges,
           answerAttachments,
           schedule,
-          midTurn
+          midTurn,
+          askAddress.filter(_.nonEmpty)
         )
       case "ai" =>
         for

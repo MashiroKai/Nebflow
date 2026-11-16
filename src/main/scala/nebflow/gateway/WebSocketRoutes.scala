@@ -1008,13 +1008,21 @@ class WebSocketRoutes(
           case None =>
             IO.pure(Left(nebflow.core.tools.ToolError("转交目标主会话未就绪（ASK_HANDOFF_NO_TARGET）。")))
           case Some(mainSid) =>
-            val rendered = s"来自文件问答 · ${req.fileName}\n\n${req.question}"
+            // ask-mail 批（2026-11-16）：正文尾行带「可续聊地址」——编排方（Spider）
+            // 的 LLM 上下文里必须有这个地址才能经 Mail(ask:<会话id>) 续聊该 ask
+            // 会话（正文是唯一必达面；metadata 的 askMailAddress 只供前端 chip 链，
+            // 不进模型上下文）。地址 = MailAddress.AskPrefix + 会话 id（单源，零推导）。
+            val mailAddress =
+              nebflow.core.delegate.MailAddress.AskPrefix + req.askSessionId
+            val rendered =
+              s"来自文件问答 · ${req.fileName}\n\n${req.question}\n\n（续聊该问答会话：Mail(address=\"$mailAddress\")）"
             val metadata = io.circe.JsonObject(
               "askSession" -> req.askSessionId.asJson,
               "file" -> req.file.asJson,
               "fileName" -> req.fileName.asJson,
               "leg" -> req.leg.asJson,
-              "contextRefs" -> Json.fromValues(req.contextRefs).asJson
+              "contextRefs" -> Json.fromValues(req.contextRefs).asJson,
+              "askMailAddress" -> mailAddress.asJson
             )
             handleBridgeAgentCommand(
               mainSid,

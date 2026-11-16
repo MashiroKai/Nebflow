@@ -859,7 +859,16 @@ object AgentActor extends AgentCore with AgentSession:
      * ask 等族的同文两次是两次合法投递，不得被呈现层吞掉）。只有外部事件可见化
      * 四站点（AgentIdle / AgentFinishTurn / AgentProcessing ×2）置 true。
      */
-    dedup: Boolean = false
+    dedup: Boolean = false,
+    /**
+     * **ask 会话的 Mail 续聊地址**（ask-mail 批 2026-11-16）：ask handoff 注入行
+     * （source="ask"）携带的 `ask:<会话id>` 形态字符串——随注入帧（WS
+     * `askAddress` 键）与 `.ui.json` 行**同源落盘** ⇒ live 渲染与历史恢复在该泡
+     * 标签行渲染同一枚**可复制**地址 chip（引擎字段是唯一真源，面板零推导）。
+     * 缺席即不落键 ⇒ 非 ask 行与旧行字节形态逐字不变（intake/header 先例同款
+     * 条件编码）。
+     */
+    askAddress: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       // 气泡四段式统一批（2026-09-15，作者 12:33 令）：**唯一格式化调用点**——
@@ -920,7 +929,10 @@ object AgentActor extends AgentCore with AgentSession:
         header = headerOpt,
         // file-diff → 委托结果行（bug #58 修）：与 WS 帧**同一实例**同源落盘
         // （live 与历史恢复逐字同构；缺席 ⇒ 不落键，旧行逐字不变）。
-        fileChanges = fileChanges
+        fileChanges = fileChanges,
+        // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址同源落盘
+        // （缺席 ⇒ 不落键，非 ask 行逐字不变）。
+        askAddress = askAddress
       )
       // 外部注入统一通道批（2026-11-05）：落盘 + 广播两腿改走**唯一投递入口**
       // [[InjectionChannel.deliver]]（去重闸 → 落盘 → 广播）。改前本点自带一份手写

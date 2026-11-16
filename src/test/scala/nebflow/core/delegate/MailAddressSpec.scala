@@ -102,4 +102,28 @@ class MailAddressSpec extends FunSuite:
     val addr = MailAddress.of(AgentKind.Delegate, sid).get
     assertEquals(MailAddress.parse(addr).map(_.target), Some(sid))
   }
+
+  // ── ④ ask 形态（ask-mail 批 2026-11-16）─────────────────────
+  // 身份判据 = `ask-` 会话 id 前缀（AskSessions.Prefix 单源），**不是 kind**：
+  // AgentKind 无 ask 值（ask 会话不进统一注册表的 kind 面，登记面 = AskSessionRegistry
+  // 绑定表），故 of() 的 ask 分支按 sid 前缀先判、kind 无关。
+
+  test("ask session id → ask:<sessionId> (kind-agnostic: the ask- prefix IS the identity)") {
+    val sid = "ask-1a2b3c4d"
+    assertEquals(MailAddress.of(AgentKind.SubTask, sid), Some(s"ask:$sid"))
+    assertEquals(MailAddress.of(AgentKind.Flow, sid), Some(s"ask:$sid"))
+    // ask 会话 id 短于 8hex / 空白仍不编造目标（nonEmpty 闸在 kind 分支之前）。
+    assertEquals(MailAddress.of(AgentKind.SubTask, "   "), None)
+  }
+
+  test("ask addresses pass Mail's layered-address gate and parse back (wire == addr, target verbatim)") {
+    val sid = "ask-9f8e7d6c"
+    val addr = MailAddress.of(AgentKind.SubTask, sid).get
+    assertEquals(MailTool.layeredAddressFormOf(addr), Some("ask"), s"$addr must be a Mail layered address")
+    assert(MailTool.isLayeredAddress(addr), s"$addr must be pasteable into Mail")
+    val parsed = MailAddress.parse(addr).getOrElse(fail(s"parse failed for $addr"))
+    assertEquals(parsed.form, MailAddress.Form.Ask)
+    assertEquals(parsed.wire, addr)
+    assertEquals(parsed.target, sid)
+  }
 end MailAddressSpec
