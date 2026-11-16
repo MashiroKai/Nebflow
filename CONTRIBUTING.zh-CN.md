@@ -78,6 +78,12 @@ USTC 保护与旧分支清理由作者按[保护清单](CONTRIBUTING.md#ustc-ser
 
 ## PR 要求
 
+全平台 worktree 与临时产物规则以已安装的 stand-dev 插件 `skills/stand-dev/references/engine/workspace-artifacts.md` 为权威正文。
+
+本仓使用 `python3 scripts/stand-wt.py [--root <项目checkout>] new <wtname> [--branch <branch>]`，`list`、`audit`、`clean` 同样支持 `--root`（别名 `--project`）选择项目；`python3 scripts/check-delivery.py --root <checkout> --manifest-only` 检查指定 checkout。
+
+`npm run check:wt` 与默认 static 检查自动推断关联 worktree 的清单；用 `stand-wt.py audit <wtname>` 刷新。主 checkout 明确输出跳过本地清单的原因。
+
 - USTC PR 只由作者创建，源分支仅限 `feat/*`、`bug/*`，目标 `main`；由作者核验后 ff-only 合入。diff 保持最小、聚焦单一改动。
 - 开 PR 前：`sbt compile` 与受影响测试全绿。Scala 改动另跑 `make check`（scalafmt + scalafix）；前端改动跑类型/循环依赖门禁与受影响的 Playwright spec（见下）。
 - `.github/workflows/ci.yml` 与 `.gitlab-ci.yml` 的静态质量任务均为阻断门禁，后者覆盖 MR 与所有分支。`.github/workflows/auto-release.yml` 在构建前要求同一入口通过。现有浏览器观察任务仍保留非阻断状态。配置仅说明预期执行方式，不表示远程 CI 已经运行或通过。

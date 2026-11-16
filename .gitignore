@@ -1,3 +1,7 @@
+# Project-local managed worktrees and temporary artifacts
+/.stand/worktrees/
+/.stand/tmp/
+
 # Build
 target/
 project/target/

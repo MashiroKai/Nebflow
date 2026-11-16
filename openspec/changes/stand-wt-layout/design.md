@@ -1,0 +1,5 @@
+# Design
+
+The primary checkout owns `.stand/worktrees` and `.stand/tmp`. The CLI discovers it from Git's worktree registry, inventories delivery and evidence separately, and matches delivery paths and SHA-256 content against the corresponding worktree HEAD. It records the last commit changing the matched path. Evidence cannot become committed. Cleanup recalculates status and checks age before deletion; force is an explicit exception. `check-delivery.py` infers a linked worktree's local manifest by default; `--tmp` overrides it. The static profile invokes `--manifest-only` even without a commit range. Primary checkouts explicitly skip the local-only manifest check, including ordinary CI clones; they still perform the separate committed-tree PR check. Missing manifests and uncommitted artifacts past the seven-day TTL fail; newer uncommitted artifacts warn. Cleanup writes its candidate list and manifests to the protected `worktree-audit` subtree before deletion.
+
+The manifest is a regenerated view, not a source of truth. Git and file content are authoritative. Concurrent writers must be quiescent during audit or cleanup.
