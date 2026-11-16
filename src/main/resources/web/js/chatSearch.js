@@ -1645,11 +1645,11 @@ async function loadAfterPages() {
  * @param {number} offset 已取条数（下一页起点）
  * @returns {string}
  */
-function indexPageUrl(base, offset) {
+function indexPageUrl(base, cursor) {
   const params = new URLSearchParams({
-    q: base.q, kinds: base.kinds.join(','),
-    limit: String(SEARCH_PAGE), offset: String(Math.max(0, offset)),
+    q: base.q, kinds: base.kinds.join(','), limit: String(SEARCH_PAGE),
   });
+  if (cursor) params.set('cursor', cursor);
   if (base.sid) params.set('sid', base.sid);
   return `/api/search/chat?${params.toString()}`;
 }
@@ -1684,7 +1684,7 @@ async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsE
 
     const kinds = MEDIA_TABS.includes(currentTab) ? (TAB_KINDS[currentTab] || []) : SEARCH_KINDS_ALL;
     const pages = { q: kw, kinds, sid: scope === 'current' ? (state.activeSessionId || '') : '' };
-    const url = indexPageUrl(pages, 0);
+    const url = indexPageUrl(pages, '');
 
     // C6 条件请求：缓存凭证命中 ⇒ 带 If-None-Match，304 零重发。
     const cached = searchEtagCache.get(url);
@@ -1696,8 +1696,8 @@ async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsE
       const n = Array.isArray(body.hits) ? body.hits.length : 0;
       const total = Number(body.total) || 0;
       searchPager = {
-        mode: 'index', url, offset: n, total, loaded: 0, revealed: 0,
-        pageSize: SEARCH_PAGE, loading: false, failed: false, more: n < total,
+        mode: 'index', url, offset: n, cursor: body.nextCursor || '', total, loaded: 0, revealed: 0,
+        pageSize: SEARCH_PAGE, loading: false, failed: false, more: !!body.nextCursor,
       };
       searchIndexPages = pages;
       searchNameById = sessionNameById;
@@ -1709,7 +1709,7 @@ async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsE
     const body = await resp.json();
     // 形状把关：夹具/代理误答的 200（hits/total 缺字段）不得吞掉结果——
     // 不是合法索引响应 ⇒ 回落旧全扫（与 fetchHistory 的 malformed 同律）。
-    if (!body || !Array.isArray(body.hits) || typeof body.total !== 'number') return false;
+    if (!body || !Array.isArray(body.hits) || typeof body.total !== 'number' || typeof body.indexGeneration !== 'string') return false;
     if (etag) searchEtagCache.set(url, { etag, body });
     return take(body);
   } catch (e) {
@@ -1737,7 +1737,7 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
       const extra = (h.extra && typeof h.extra === 'object') ? h.extra : {};
       const e = {
         ...extra,
-        id: extra.id || `${h.sid}:${h.ord}`,
+        id: h.stableId || extra.id || `${h.sid}:${h.ord}`,
         sessionId: h.sid,
         sessionName: nameOf(h.sid),
         msgOrd: typeof extra.msgOrd === 'number' ? extra.msgOrd : h.ord,
@@ -1967,7 +1967,7 @@ async function loadMoreSearch() {
       return;
     }
     if (!searchIndexPages) { p.more = false; return; }
-    const url = indexPageUrl(searchIndexPages, p.offset);
+    const url = indexPageUrl(searchIndexPages, p.cursor);
     const cached = searchEtagCache.get(url);
     const headers = { ...authHeaders() };
     if (cached) headers['If-None-Match'] = cached.etag;
@@ -1985,11 +1985,16 @@ async function loadMoreSearch() {
       return;
     }
     const n = body.hits.length;
-    p.offset += n;
+    p.offset = body.generationChanged ? n : p.offset + n;
+    p.cursor = body.nextCursor || '';
     p.total = body.total;
-    // n === 0 或 offset 已过 total ⇒ 收口（禁死循环）；服务端 total 变小时同收口。
-    p.more = n > 0 && p.offset < p.total;
-    applyIndexResults(body, [], new Map(), mySeq, statusEl, resultsEl, true);
+    p.more = !!body.nextCursor;
+    if (body.generationChanged) {
+      p.loaded = 0;
+      applyIndexResults(body, streamSessions, searchNameById, mySeq, statusEl, resultsEl, false);
+    } else {
+      applyIndexResults(body, [], new Map(), mySeq, statusEl, resultsEl, true);
+    }
   } catch (e) {
     if (e.name === 'AbortError') return;
     p.failed = true;

@@ -72,8 +72,12 @@ object SearchIndexService:
     kind: String,
     ts: Long,
     snippet: String,
-    extra: String
+    extra: String,
+    stableId: String = "",
+    occurrenceCount: Int = 1
   )
+
+  final case class Cursor(ts: Long, stableId: String, generation: String)
 
   /** 查询参数。谓词纪律：kinds/sid/since/until 至少一个。 */
   final case class Query(
@@ -83,14 +87,18 @@ object SearchIndexService:
     since: Option[Long] = None,
     until: Option[Long] = None,
     limit: Int = 50,
-    offset: Int = 0
+    offset: Int = 0,
+    cursor: Option[Cursor] = None
   )
 
   final case class QueryResult(
     hits: List[Hit],
     total: Int,
     etag: String,
-    degraded: Boolean = false   // true = 走了 LIKE 兜底，调用方只作读数
+    degraded: Boolean = false,
+    indexGeneration: String = "",
+    nextCursor: Option[Cursor] = None,
+    generationChanged: Boolean = false
   )
 
   // ── 常量 ────────────────────────────────────────────────────────────────
@@ -355,7 +363,20 @@ object SearchIndexService:
       up.setLong(3, mtime)
       up.executeUpdate()
     finally up.close()
+    bumpGeneration(conn)
     conn.commit()
+
+  private def bumpGeneration(conn: Connection): Unit =
+    val st = conn.createStatement()
+    try st.executeUpdate("INSERT OR REPLACE INTO meta(key,value) VALUES('index_generation', lower(hex(randomblob(16))))")
+    finally st.close()
+
+  private def generation(conn: Connection): String =
+    val st = conn.createStatement()
+    try
+      val rs = st.executeQuery("SELECT value FROM meta WHERE key='index_generation'")
+      if rs.next() then rs.getString(1) else "initial"
+    finally st.close()
 
   /** 月时间片键（会话桶）：当月 = "current"，历史 = yyyymm（§4.2）。 */
   private def monthKeyOf(a: SearchIndexAdapter, sid: String): String =
@@ -372,7 +393,10 @@ object SearchIndexService:
       case None =>
         IO.pure(Left(disabledReason.filter(_.startsWith(face)).getOrElse(s"face '$face' not registered")))
       case Some(fs) =>
-        (reconcileBeforeQuery(fs, q.sid) *> IO.blocking(runQuery(fs, q))).attempt.map {
+        (reconcileBeforeQuery(fs, q.sid) *> IO.blocking {
+          workPermit.acquire()
+          try runQuery(fs, q) finally workPermit.release()
+        }).attempt.map {
           case Right(r) => r
           case Left(e)  =>
             logger.warnSync(s"search-index query failed (${e.getClass.getSimpleName}: ${e.getMessage})")
@@ -431,53 +455,47 @@ object SearchIndexService:
             val rs = ps.executeQuery()
             val buf = scala.collection.mutable.ListBuffer.empty[Hit]
             while rs.next() do
-              buf += Hit(
-                sid     = rs.getString(1),
-                ord     = rs.getInt(2),
-                kind    = rs.getString(3),
-                ts      = rs.getLong(4),
-                snippet = rs.getString(5).take(SnippetChars),
-                extra   = rs.getString(6)
-              )
+              val sid = rs.getString(1)
+              val kind = rs.getString(3)
+              val ts = rs.getLong(4)
+              val text = rs.getString(5)
+              val extra = rs.getString(6)
+              val role = io.circe.parser.parse(extra).toOption.flatMap(_.hcursor.downField("role").as[String].toOption).getOrElse("")
+              val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFC)
+              val semanticExtra = io.circe.parser.parse(extra).toOption.map { j =>
+                List("type", "source", "name", "ext", "ref").map(k => j.hcursor.get[String](k).getOrElse(""))
+                  .map(s => s"${s.length}:$s").mkString
+              }.getOrElse("")
+              val content = if kind == "message" then normalized else normalized + "\u0000" + semanticExtra
+              val material = List(sid, role, ts.toString, kind, content).map(s => s"${s.length}:$s").mkString
+              val id = java.security.MessageDigest.getInstance("SHA-256").digest(material.getBytes("UTF-8"))
+                .map(b => f"${b & 0xff}%02x").mkString
+              buf += Hit(sid, rs.getInt(2), kind, ts, text.take(SnippetChars), extra, id)
             buf.toList
           finally ps.close()
 
-        def fetchCount(sql: String, bindExtra: PreparedStatement => Unit): Int =
-          val ps = fs.conn.prepareStatement(sql)
-          try
-            bindExtra(ps)
-            val rs = ps.executeQuery()
-            if rs.next() then rs.getInt(1) else 0
-          finally ps.close()
-
-        def execLike(pattern: String): (List[Hit], Int) =
-          // Escape literal wildcard characters before adding the substring wildcards.
-          val likeParam = "%" + escapeLike(pattern) + "%"
-          val w = s"${where} AND d.text LIKE ? ESCAPE '\\'"
-          val total = fetchCount(
-            s"SELECT COUNT(*) FROM docs d$w",
-            ps => {
-              bindBase(ps, 0)
-              ps.setString(params.size + 1, likeParam)
-            })
-          val hits = fetch(
-            s"""SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d$w
-               |ORDER BY d.ts DESC, d.sid ASC, d.ord DESC, d.rowid ASC LIMIT ? OFFSET ?""".stripMargin,
-            ps => {
-              bindBase(ps, 0)
-              ps.setString(params.size + 1, likeParam)
-              ps.setInt(params.size + 2, math.max(1, math.min(q.limit, 200)))
-              ps.setInt(params.size + 3, math.max(0, q.offset))
-            })
-          (hits, total)
-
-        val (hits, total) = execLike(q.text.trim)
-        val degraded = andExpr.isEmpty
-
-        Right(QueryResult(
-          hits, total,
-          etagOf(q, hits, versionsOf(fs.conn, hits.map(_.sid).distinct)),
-          degraded))
+        val likeParam = "%" + escapeLike(q.text.trim) + "%"
+        val w = s"${where} AND d.text LIKE ? ESCAPE '\\'"
+        val all = fetch(s"SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d$w", ps => {
+          bindBase(ps, 0)
+          ps.setString(params.size + 1, likeParam)
+        })
+        val unique = all.groupBy(_.stableId).values.map { copies =>
+          val representative = copies.minBy(h => (h.sid, h.ord, h.extra))
+          representative.copy(occurrenceCount = copies.size)
+        }.toList.sortBy(h => (-BigInt(h.ts), h.stableId))
+        val gen = generation(fs.conn)
+        val changed = q.cursor.exists(_.generation != gen)
+        val remaining = if changed then unique else q.cursor.fold(unique) { c =>
+          unique.dropWhile(h => h.ts > c.ts || (h.ts == c.ts && h.stableId <= c.stableId))
+        }
+        val window = if q.cursor.isEmpty && !changed then remaining.drop(math.max(0, q.offset)) else remaining
+        val limit = math.max(1, math.min(q.limit, 200))
+        val hits = window.take(limit)
+        val next = if window.size > limit then hits.lastOption.map(h => Cursor(h.ts, h.stableId, gen)) else None
+        Right(QueryResult(hits, unique.size,
+          etagOf(q, hits, versionsOf(fs.conn, hits.map(_.sid).distinct), gen),
+          andExpr.isEmpty, gen, next, changed))
       end if
   end runQuery
 
@@ -490,16 +508,16 @@ object SearchIndexService:
    *  零命中时退化为参数键（新数据进索引后 version 从 0→1，Σ 变化仍触发失效——
    *  由 reconcileBeforeQuery 的 meta 行保证：新会话首 sync 即建 meta）。
    */
-  private def etagOf(q: Query, hits: List[Hit], versions: List[Long]): String =
+  private def etagOf(q: Query, hits: List[Hit], versions: List[Long], generation: String): String =
     val norm =
       s"v1|${q.text.trim.toLowerCase}|${q.kinds.sorted.mkString(",")}|${q.sid.getOrElse("")}|" +
         s"${q.since.getOrElse(0L)}|${q.until.getOrElse(0L)}"
     val seed =
       if hits.nonEmpty then
-        norm + "|" + hits.map(_.sid).distinct.sorted.mkString(";") + "|" + versions.mkString(",")
-      else norm
+        norm + "|" + q.cursor.toString + "|" + q.offset + "|" + hits.map(_.stableId).mkString(";") + "|" + versions.mkString(",")
+      else norm + "|" + versions.mkString(",") + "|" + q.cursor.toString + "|" + q.offset
     val sha = java.security.MessageDigest.getInstance("SHA-256")
-      .digest(seed.getBytes("UTF-8"))
+      .digest((seed + "|" + generation).getBytes("UTF-8"))
       .map(b => f"${b & 0xff}%02x").mkString.take(32)
     "\"" + sha + "\""
 
@@ -558,6 +576,7 @@ object SearchIndexService:
               delm.setString(1, sid)
               delm.executeUpdate()
             finally delm.close()
+            bumpGeneration(fs.conn)
             fs.conn.commit()
           finally workPermit.release()
         }.attempt.flatMap {

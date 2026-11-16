@@ -1,6 +1,7 @@
 package nebflow.core.search
 
 import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 
 /**
@@ -226,6 +227,46 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     SearchIndexService.query(face, q("session", kinds = List("message"))).map { r =>
       assertEquals(r.toOption.get.total, 2)
     }
+  }
+
+  test("cursor detects changes and returns a fresh first page") {
+    val ds = (0 until 101).toList.map(i => doc("cursor-race", i, "message", i + 1L, s"cursor-race-$i"))
+    SearchIndexService.unsafeInsertDocs(face, ds.take(100))
+    def run(cursor: Option[SearchIndexService.Cursor]) =
+      SearchIndexService.query(face, SearchIndexService.Query("cursor-race", kinds = List("message"), limit = 50, cursor = cursor)).unsafeRunSync().toOption.get
+    val first = run(None)
+    assertEquals(first.hits.size, 50)
+    SearchIndexService.unsafeInsertDocs(face, ds)
+    val changed = run(first.nextCursor)
+    assert(changed.generationChanged)
+    assertEquals(changed.total, 101)
+    assertEquals(changed.hits.head.ts, 101L)
+    assertEquals(changed.hits.map(_.stableId).distinct.size, 50)
+    SearchIndexService.unsafeInsertDocs(face, ds.drop(10) ++ List(doc("cursor-race", 200, "message", 200L, "cursor-race-new")))
+    val changedAgain = run(changed.nextCursor)
+    assert(changedAgain.generationChanged)
+    assertEquals(changedAgain.total, 92)
+    assertEquals(changedAgain.hits.head.ts, 200L)
+  }
+
+  test("identical hits collapse while distinct same-row attachments remain pageable") {
+    val distinct = (0 until 15).toList.map(i => doc("attachments-page", 0, "file", 1L, s"attachment needle $i"))
+    SearchIndexService.unsafeInsertDocs(face, distinct ++ List.fill(3)(doc("attachments-page", 1, "file", 1L, "attachment repeated needle")))
+    def run(cursor: Option[SearchIndexService.Cursor]) = SearchIndexService.query(face,
+      SearchIndexService.Query("attachment", kinds = List("file"), limit = 5, cursor = cursor)).unsafeRunSync().toOption.get
+    var cursor: Option[SearchIndexService.Cursor] = None
+    var collected = List.empty[SearchIndexService.Hit]
+    var more = true
+    while more do
+      val page = run(cursor)
+      assertEquals(page.total, 16)
+      collected = collected ++ page.hits
+      cursor = page.nextCursor
+      more = cursor.nonEmpty
+    assertEquals(collected.size, 16)
+    assertEquals(collected.map(_.stableId).distinct.size, 16)
+    assertEquals(collected.map(_.occurrenceCount).sum, 18)
+    assertEquals(collected.count(_.occurrenceCount == 3), 1)
   }
 
 end SearchIndexServiceSpec
