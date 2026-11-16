@@ -75,9 +75,13 @@ final class LlmAllocator(
               case Right(Some(reply)) =>
                 parsePlugins(reply, catalog) match
                   case Right(names) =>
-                    JevFallback
-                      .recordSuccess(subject, names, Some(PluginAllocatorMachine.LlmFallbackWire))
-                      .as(JevAllocation.Allocated(names))
+                    val reason = DelegateJudgeMachine.extractJsonObject(reply)
+                      .flatMap(_.hcursor.get[String]("reason").toOption)
+                      .map(_.replaceAll("[\\r\\n]+", " ").take(240))
+                      .getOrElse("model supplied no rationale")
+                    IO(logger.infoSync(s"allocation decision subject=${subject.replaceAll("[\\r\\n]+", " ")} plugins=${names.mkString(",").replaceAll("[\\r\\n]+", " ")} reason=$reason")) *>
+                      JevFallback.recordSuccess(subject, names, Some(PluginAllocatorMachine.LlmFallbackWire))
+                        .as(JevAllocation.Allocated(names))
                   case Left(reason) =>
                     // 归因精确化批（2026-10-29）：回文不可用 = ParseFail——可恢复
                     // 错误各归各词，不再与结构性全败混记 fail-open。
@@ -116,7 +120,7 @@ ${JevAllocator.catalogText(catalog)}
 
 Choose the capability packages this task NEEDS, applying exactly the membership rule stated above: count a package as needed only when the task's primary purpose cannot be properly executed without the capability that package provides. Multiple packages may be needed; judge each package independently. If no package is needed, return an empty list.
 
-Answer with ONLY a JSON object: {"plugins": ["<package-name>", ...]}"""
+Answer with ONLY a JSON object: {"plugins": ["<package-name>", ...], "reason": "<brief rationale>"}"""
 
   // ── 纯函数解析（spec 判红锚） ─────────────────────────────────────────
 
@@ -204,11 +208,7 @@ object LlmAllocator:
    *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
    */
   private[decision] def candidatesFrom(registry: ProviderRegistry): IO[List[ModelCandidate]] =
-    for
-      routes <- registry.decisionRoute("plugin-allocation")
-      legacy <- registry.currentConfig.map(_.judge.flatMap(_.utilityModel))
-      chain <- candidateChain(registry, routes.flatMap(_.preferred).orElse(legacy))
-    yield chain
+    IO(nebflow.core.SchemePolicy.smallLlmModel()).flatMap(model => registry.getCandidatesForAgent(Some(model)))
 
   private[decision] def candidateChain(registry: ProviderRegistry, explicit: Option[String]): IO[List[ModelCandidate]] =
     def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())

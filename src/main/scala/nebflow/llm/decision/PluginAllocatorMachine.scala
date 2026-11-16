@@ -162,12 +162,31 @@ object PluginAllocatorMachine:
    * JevConfigReader 热读；探活 = 分配决策通道监控单实例。
    */
   def face(registry: ProviderRegistry, health: Option[DecisionHealthPort] = None): PluginAllocator.Face =
-    new JevPluginAllocator(
-      jevLeg = jevLeg,
-      llmLeg = LlmAllocator.fromRegistry(registry),
-      gate = JevConfigReader.outcome,
-      health = health
-    )
+    new PluginAllocator.Face:
+      def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]): IO[PluginAllocator.PluginAllocationResult] =
+        LlmAllocator.fromRegistry(registry).flatMap {
+          case Some(allocator) =>
+            allocator.allocateFor(subject, taskText, catalog).map {
+              case a @ JevAllocation.Allocated(_) =>
+                PluginAllocator.PluginAllocationResult(a, Some(PluginAllocator.AllocationVia.LlmFallback))
+              case a => PluginAllocator.PluginAllocationResult(a, None)
+            }
+          case None =>
+            IO.pure(PluginAllocator.PluginAllocationResult(
+              JevAllocation.FellBack(JevFallbackKind.Failure, "small model unavailable"), None
+            ))
+        }.flatTap { result =>
+          val audit = result.allocation match
+            case JevAllocation.Allocated(names) if catalog.isEmpty =>
+              IO(NebflowLogger.forName("nebflow.llm.plugin-alloc").infoSync(s"allocation decision subject=${subject.replaceAll("[\\r\\n]+", " ")} plugins=${names.mkString(",")} reason=empty catalog"))
+            case JevAllocation.FellBack(_, reason) =>
+              IO(NebflowLogger.forName("nebflow.llm.plugin-alloc").warnSync(s"allocation decision subject=${subject.replaceAll("[\\r\\n]+", " ")} plugins= reason=${reason.replaceAll("[\\r\\n]+", " ")}"))
+            case _ => IO.unit
+          val state = result.allocation match
+            case JevAllocation.Allocated(_) => DecisionHealth.Up
+            case JevAllocation.FellBack(_, reason) => DecisionHealth.Down(reason, System.currentTimeMillis())
+          audit *> health.fold(IO.unit)(_.recordAllocationOutcome(Map("llm" -> state), state))
+        }
 
   /**
    * Jev 腿热读装配（未配置/解不出 provider = None → 兜底腿承接）。

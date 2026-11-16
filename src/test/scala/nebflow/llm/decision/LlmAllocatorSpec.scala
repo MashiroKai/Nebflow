@@ -2,6 +2,7 @@ package nebflow.llm.decision
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.jev.{
@@ -87,6 +88,37 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     assert(a.parsePlugins("""{"plugins":"backend-dev"}""", catalog).isLeft)
     assert(a.parsePlugins("""{"plugins":[1,2]}""", catalog).isLeft)
     assert(a.parsePlugins("no json here", catalog).isLeft)
+  }
+
+  test("production candidate selection reads the small model and falls back when unconfigured") {
+    withTempDataRoot { tmp =>
+      var chosen: Option[String] = None
+      val registry = new nebflow.llm.ProviderRegistry(null, null):
+        override def getCandidatesForAgent(model: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
+          IO { chosen = model.flatMap(_.preferred); Nil }
+      IO {
+        os.write.over(tmp / "agents" / "Nebula" / "agent.json", """{"model":{"preferred":"p/main"}}""", createFolders = true)
+        os.write.over(tmp / "agents" / "small-llm" / "agent.json", """{"model":{"preferred":"p/small"}}""", createFolders = true)
+      } *> LlmAllocator.candidatesFrom(registry) *> IO(assertEquals(chosen, Some("p/small"))) *>
+        IO(os.remove(tmp / "agents" / "small-llm" / "agent.json")) *>
+        LlmAllocator.candidatesFrom(registry) *> IO(assertEquals(chosen, Some("p/main")))
+    }
+  }
+
+  test("successful allocation logs selected plugins and model rationale") {
+    val logger = org.slf4j.LoggerFactory.getLogger("nebflow.llm.plugin-alloc")
+      .asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    import scala.jdk.CollectionConverters.*
+    IO { appender.start(); logger.addAppender(appender) }.bracket { _ =>
+      withTempDataRoot { _ =>
+        llm(Some("""{"plugins":["backend-dev"],"reason":"Scala work"}"""))
+          .allocateFor("delegate-x", "task", catalog).map { _ =>
+            val lines = appender.list.asScala.toList.map(_.getFormattedMessage)
+            assert(lines.exists(s => s.contains("allocation decision") && s.contains("backend-dev") && s.contains("Scala work")))
+          }
+      }
+    }(_ => IO(logger.detachAppender(appender)).void)
   }
 
   // ── 编排三态（stub 腿注入） ─────────────────────────────────────────────
@@ -240,7 +272,7 @@ class LlmAllocatorSpec extends CatsEffectSuite:
         val prompt = calls("util-1")
         assert(prompt.contains(JevAllocator.CatalogHeader), s"catalog header present:\n$prompt")
         assert(prompt.contains("### visual-report"), "catalog entries rendered")
-        assert(prompt.contains("""{"plugins": ["<package-name>", ...]}"""), "the JSON answer shape is stated")
+        assert(prompt.contains(""""reason": "<brief rationale>""""), "the JSON answer requests a rationale")
       }
     }
   }
