@@ -188,7 +188,9 @@ case class ProviderConfig(
    * 缺省头（零行为变化）。
    * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
    */
-  headers: Option[Map[String, String]] = None
+  headers: Option[Map[String, String]] = None,
+  /** Explicit model -> allowed effort tiers for this provider's configured endpoint. */
+  effortAllowlist: Option[Map[String, List[ThinkingEffort]]] = None
 )
 
 object ProviderConfig:

@@ -62,12 +62,13 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 30.seconds
 
-  private def adapter(passback: Boolean = false, url: String = "http://localhost:0"): AnthropicAdapter =
+  private def adapter(passback: Boolean = false, url: String = "http://localhost:0", allow: Option[Map[String, List[ThinkingEffort]]] = None): AnthropicAdapter =
     AnthropicAdapter(
       url,
       "k",
       null.asInstanceOf[StreamBackend[IO, Fs2Streams[IO]]],
-      passback
+      passback,
+      effortAllowlist = allow
     )
 
   private val budgetOn: Option[Json] =
@@ -86,6 +87,12 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     fragment.hcursor.downField("thinking").focus
 
   // ── W1/W2：Budget 族（未知模型兜底）─────────────────────────────────────
+
+  test("historically documented endpoint is fail-closed without explicit allowlist") {
+    val resolved = Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.High)))
+    val fragment = adapter(url = "https://api.kimi.com/coding").wireThinkingFragment(params("k3.1-pro-highspeed", budgetOn, resolved))
+    assertEquals(fragment.hcursor.downField("reasoning_effort").focus, None)
+  }
 
   test("unknown Anthropic-compatible endpoint does not inherit another endpoint's effort capability") {
     val resolved = Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.Max)))
@@ -190,7 +197,7 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
   // ── W9/W10/W11/W12：第二段点亮（effort 档位）────────────────────────────
 
   test("W9: k3.1 + effort high → top-level reasoning_effort:high, still NO thinking key") {
-    val f = adapter(url = "https://api.kimi.com/coding").wireThinkingFragment(
+    val f = adapter(url = "https://api.kimi.com/coding", allow = Some(Map("k3.1-pro-highspeed" -> List(ThinkingEffort.High)))).wireThinkingFragment(
       params("k3.1-pro-highspeed", budgetOn, Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.High))))
     )
     assertEquals(f.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"))

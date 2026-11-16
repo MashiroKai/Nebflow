@@ -40,7 +40,8 @@ class AnthropicAdapter(
    * 装配唯一一点 = [[HttpHeaders]]：引擎缺省必带 User-Agent，本参数覆盖/追加。
    * 事故背景见 [[HttpHeaders]] 文件头（cmdcode 的 403/1010 = 无 UA 被 Cloudflare 挡）。
    */
-  providerHeaders: Option[Map[String, String]] = None
+  providerHeaders: Option[Map[String, String]] = None,
+  effortAllowlist: Option[Map[String, List[ThinkingEffort]]] = None
 ) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
@@ -457,7 +458,13 @@ class AnthropicAdapter(
 
   private def effortFragment(params: SendMessageParams, kind: ThinkingKind): Option[Json] =
     val effort = params.thinkingResolved.flatMap(_.effort)
-    val fragment = ThinkingEffortGate.effortFragment(kind, params.model, effort, endpoint)
+    val allowed = effort.filter(e => effortAllowlist.flatMap(_.get(params.model)).exists(_.contains(e)))
+    val fragment = allowed.flatMap { e =>
+      kind match
+        case ThinkingKind.EffortAnthropic => Some(Json.obj("output_config" -> Json.obj("effort" -> e.wireName.asJson)))
+        case ThinkingKind.EffortTopLevel | ThinkingKind.Toggle => Some(Json.obj("reasoning_effort" -> e.wireName.asJson))
+        case ThinkingKind.Budget => None
+    }
     for
       requested <- effort
       sent <- fragment.flatMap(_.hcursor.get[String]("reasoning_effort").toOption)

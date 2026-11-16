@@ -118,6 +118,11 @@ class ThinkingInheritanceSpec extends FunSuite:
     assertEquals(mc2.thinkingKind, Some(ThinkingKind.Toggle))
   }
 
+  test("provider config decodes an explicit model and tier effort allowlist") {
+    val json = parse("""{"baseUrl":"https://example.invalid","apiKey":"test","protocol":"openai","models":[],"effortAllowlist":{"model":["high"]}}""").toOption.get
+    assertEquals(json.as[ProviderConfig].toOption.flatMap(_.effortAllowlist), Some(Map("model" -> List(ThinkingEffort.High))))
+  }
+
   // ── I4：per-model 层定点 patch ───────────────────────────────────────────
 
   private val configFixture: Json = parse(

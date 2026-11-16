@@ -31,6 +31,16 @@ class OpenAiThinkingEffortSpec extends FunSuite:
   private def body(model: String, thinking: Option[Json], resolved: Option[ResolvedThinking], search: Option[ProviderSearchKind] = None): Json =
     adapter().bodyWithSearchThinking(Json.obj(), model, thinking, search, resolved)
 
+  test("explicit provider model and tier allowlist enables only that effort") {
+    val adapter = OpenAiAdapter("http://localhost:0", "k", null,
+      effortAllowlist = Some(Map("m" -> List(ThinkingEffort.Max))))
+    val resolved = Some(ResolvedThinking(ThinkingKind.Budget, enabled = true, Some(ThinkingEffort.Max)))
+    assertEquals(adapter.bodyWithSearchThinking(Json.obj(), "m", thinkingEnabled, None, resolved)
+      .hcursor.get[String]("reasoning_effort").toOption, Some("max"))
+    assertEquals(adapter.bodyWithSearchThinking(Json.obj(), "other", thinkingEnabled, None, resolved)
+      .hcursor.downField("reasoning_effort").focus, None)
+  }
+
   test("unknown endpoint never sends effort even with an explicit tier or legacy budget") {
     val explicit = body("unknown-model", thinkingEnabled,
       Some(ResolvedThinking(ThinkingKind.Budget, enabled = true, Some(ThinkingEffort.Max))))
