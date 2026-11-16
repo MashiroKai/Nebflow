@@ -130,6 +130,8 @@ test('permission payload is reviewable for object input', async ({ browser }) =>
   await expect(page.locator('#chat')).toContainText('1510 bytes');
   await page.locator('.permission-payload summary').click();
   await expect(page.locator('.permission-payload details')).toHaveAttribute('open', '');
+  await page.evaluate(() => window.__renderPermFallback('Bash', { command: 'printf fallback' }));
+  await expect(page.locator('.global-perm-toast')).toContainText('printf fallback');
   await page.context().close();
 });
 
