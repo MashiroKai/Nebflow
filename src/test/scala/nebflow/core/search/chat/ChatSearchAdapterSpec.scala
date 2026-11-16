@@ -222,6 +222,17 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     assert(docs.exists(_.text.contains("needleaftercap")))
   }
 
+  test("all-session search finds records written after the previous index snapshot") {
+    SearchIndexService.unsafeResetForTests()
+    SearchIndexService.unsafeRegisterInMemory(adapter)
+    for
+      before <- SearchIndexService.query("chat", SearchIndexService.Query("freshnessneedle", kinds = List("message")))
+      _ = assertEquals(before.toOption.get.total, 0)
+      _ = writeUi("freshness-new", List(UiMessage.User(text = "freshnessneedle", timestamp = 1000L)))
+      after <- SearchIndexService.query("chat", SearchIndexService.Query("freshnessneedle", kinds = List("message")))
+    yield assertEquals(after.toOption.get.total, 1)
+  }
+
   test("all-session search reconciles newly written source and exposes malformed source") {
     writeUi("freshness", List(UiMessage.User(text = "freshneedle", timestamp = 1000L)))
     SearchIndexService.unsafeResetForTests()
