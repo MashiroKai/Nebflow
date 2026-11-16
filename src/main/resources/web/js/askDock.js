@@ -1061,6 +1061,13 @@ function syncToActiveTab() {
   currentFile = file;
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
   if (!switched) { syncSeat(); return; }
+  // The composer DOM is shared, but its turn state belongs to the active file.
+  if (turnToggle) {
+    const session = activeSession();
+    if (session && session.busy) turnToggle.busy();
+    else turnToggle.idle();
+  }
+  removeTyping();
   syncNoteForFile(); // 记事本批：切卡即切记事本（每文件一份草稿；旧草稿先 flush）
   syncUnreadDot(); // 通知点随 active session 的未读态落位（绿点只在有未读时显示）
   if (isOpen()) {
