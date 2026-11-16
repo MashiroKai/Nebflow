@@ -578,7 +578,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
       // 循环，否则同一引用渲染两遍）。
       if (att.type === 'ref' && att.refType === 'chat-message') return;
       const bubble = document.createElement('div');
-      bubble.className = 'bubble user att-bubble';
+      bubble.className = mainBubbleClass('user', 'att-bubble');
       // #303 v1.1 + (2026-08-27 打回注入块收敛): ALL task-return references -
       // unified type:'ref' AND the legacy type:'taskRef' from old
       // history/queue restores - normalize into the same Reference and render
@@ -3284,7 +3284,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   // (finishAi re-attaches a preserved box under streamed markdown) keep their
   // face — the marker is deliberately an explicit class, never a blanket :has().
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai ob-ghost-seat';
+  bubble.className = mainBubbleClass('ai', 'ob-ghost-seat');
   row.appendChild(bubble);
   // Source badge. D6 批 F1 (G9): project context (project node / dispatcher ask)
   // renders "project · nodeName" so concurrent asks from several nodes stay
@@ -3689,7 +3689,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // Ghost seat (askuser-hybrid 重皮): the permission card is an option-box
   // carrier (badge/banner + box only) — the bubble de-faces, same as renderAskUser.
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai ob-ghost-seat';
+  bubble.className = mainBubbleClass('ai', 'ob-ghost-seat');
 
   // Danger level decorations
   const level = dangerLevel || 0;
@@ -4489,7 +4489,7 @@ export function appendThinkingDelta(delta, mark) {
     // the tool rows), so a reader can verify the round split from the DOM.
     stampRound(activeView, row);
     const bubble = document.createElement('div');
-    bubble.className = 'bubble ai thinking-bubble';
+    bubble.className = mainBubbleClass('ai', 'thinking-bubble');
     // #346 v2 stats: thinking duration for the turn header (turnGroup.js
     // computes 思考 <N>s from nfStart/nfEnd on the bubble).
     bubble.dataset.nfStart = String(Date.now());
