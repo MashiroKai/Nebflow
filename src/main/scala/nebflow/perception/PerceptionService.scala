@@ -1208,7 +1208,7 @@ $clipped"""
       val exists =
         try java.nio.file.Files.isRegularFile(f)
         catch case _: Throwable => false
-      val size = if exists then try java.nio.file.Files.size(f) catch case _: Throwable => 0L else 0L
+      val size = if exists then (try java.nio.file.Files.size(f) catch case _: Throwable => 0L) else 0L
       AttachmentStat(p, p.replaceAll(".*/", ""), exists, size)
     }
 
