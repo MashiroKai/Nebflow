@@ -184,7 +184,7 @@ await page.routeWebSocket(/\/ws/, (ws) => {
         if (!initSendAt) initSendAt = Date.now();
       }
       histReqs.push(m.beforeIndex === undefined ? 'init' : m.beforeIndex);
-      if (process.env.NB_SWITCH_RACE === '1' && m.sessionId === 'sess-1' && m.beforeIndex !== undefined) {
+      if ((process.env.NB_SWITCH_RACE === '1' || process.env.NB_BOUNDARY_POINTS === '1') && m.sessionId === 'sess-1' && m.beforeIndex !== undefined) {
         heldHistory = () => ws.send(JSON.stringify(pageFor(m)));
       } else {
         ws.send(JSON.stringify({ ...pageFor(m), sessionId: m.sessionId }));
@@ -280,24 +280,21 @@ if (process.env.NB_BOUNDARY_POINTS === '1') {
   await page.mouse.wheel(0, -1);
   await chat.evaluate((c) => { c.scrollTop = 1000; });
   await page.waitForTimeout(200);
+  await page.mouse.wheel(0, -650);
+  for (let i = 0; i < 100 && !heldHistory; i++) await page.waitForTimeout(20);
+  if (!heldHistory || histReqs.length < 2) throw new Error('boundary history request missing');
   const anchors = await chat.evaluate((c) => {
     const rows = [...c.querySelectorAll('.row')].filter((r) => /SEQ-\d+-END/.test(r.textContent));
     const first = rows[0], last = rows[rows.length - 1];
-    if (!first || !last) return null;
-    const points = (r) => { const b = r.getBoundingClientRect(); return { top: b.top - c.getBoundingClientRect().top, bottom: b.bottom - c.getBoundingClientRect().top }; };
-    window.__boundary = { first, last, before: [points(first), points(last)] };
-    return { first: first.textContent.match(/SEQ-\d+-END/)[0], last: last.textContent.match(/SEQ-\d+-END/)[0] };
+    if (!first || !last) throw new Error('boundary anchors missing');
+    window.__boundary = [first, last].map((row) => ({ row, id: row.textContent.match(/SEQ-\d+-END/)[0], before: row.getBoundingClientRect().top }));
+    return window.__boundary.map(({ id, before }) => ({ id, before }));
   });
-  await page.mouse.wheel(0, -650);
+  heldHistory();
   await page.waitForFunction(() => document.querySelectorAll('#chat .row').length > 60, null, { timeout: 20000 });
-  await page.waitForTimeout(700);
-  const errors = await chat.evaluate((c) => {
-    const a = window.__boundary;
-    const edges = [a.first, a.last].flatMap((r, i) => { const b = r.getBoundingClientRect(), top = c.getBoundingClientRect().top; return [Math.abs(b.top - top - a.before[i].top), Math.abs(b.bottom - top - a.before[i].bottom)]; });
-    return edges;
-  });
-  const pass = errors.every((error) => error <= 2);
-  console.log('[boundary-edges] ' + JSON.stringify({ anchors, errors, pass }));
+  const after = await chat.evaluate((c) => window.__boundary.map((a) => ({ id: a.id, same: c.contains(a.row) && a.row.textContent.includes(a.id), before: a.before, after: a.row.getBoundingClientRect().top, error: Math.abs(a.row.getBoundingClientRect().top - a.before) })));
+  const pass = after.every((a) => a.same && a.error <= 2);
+  console.log('[boundary-edges] ' + JSON.stringify({ anchors, after, requests: histReqs, pass }));
   await browser.close(); server.close(); process.exit(pass ? 0 : 1);
 }
 
