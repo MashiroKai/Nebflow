@@ -450,7 +450,7 @@ class AnthropicAdapter(
     case _ => Json.obj()
 
   private def offWire(kind: ThinkingKind): Json = kind match
-    case ThinkingKind.Budget => Json.obj() // off → 省略键（旧形态 "thinking": null 由此消灭）
+    case ThinkingKind.Budget | ThinkingKind.Adaptive => Json.obj() // off → 省略键
     case ThinkingKind.EffortAnthropic => Json.obj("thinking" -> Json.obj("type" -> "disabled".asJson))
     case ThinkingKind.Toggle =>
       Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson)) // 强制思考：off 兜底 enabled
@@ -461,7 +461,7 @@ class AnthropicAdapter(
     val allowed = effort.filter(e => effortAllowlist.flatMap(_.get(endpoint)).flatMap(_.get(params.model)).exists(_.contains(e)))
     val fragment = allowed.flatMap { e =>
       kind match
-        case ThinkingKind.EffortAnthropic => Some(Json.obj("output_config" -> Json.obj("effort" -> e.wireName.asJson)))
+        case ThinkingKind.EffortAnthropic | ThinkingKind.Adaptive => Some(Json.obj("output_config" -> Json.obj("effort" -> e.wireName.asJson)))
         case ThinkingKind.EffortTopLevel | ThinkingKind.Toggle => Some(Json.obj("reasoning_effort" -> e.wireName.asJson))
         case ThinkingKind.Budget => None
     }
@@ -478,6 +478,9 @@ class AnthropicAdapter(
       case ThinkingKind.Budget =>
         // The request carrier includes internal inheritance fields, not wire fields.
         Json.obj("thinking" -> semantic.mapObject(_.remove("effort").remove("clearThinking")))
+      case ThinkingKind.Adaptive =>
+        val base = Json.obj("thinking" -> Json.obj("type" -> "adaptive".asJson))
+        effortFragment(params, kind).fold(base)(base.deepMerge)
       case ThinkingKind.EffortAnthropic =>
         // 官方 anthropic 面：thinking 支持（budget_tokens 被忽略）→ 只发开关位。
         val base = Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
@@ -545,7 +548,8 @@ class AnthropicAdapter(
     params.maxTokensOverride match
       case Some(fixed) => fixed
       case None =>
-        val budget = params.thinking.flatMap(_.hcursor.get[Int]("budget_tokens").toOption).getOrElse(0)
+        val budget = if kindOf(params) == ThinkingKind.Adaptive then 0
+          else params.thinking.flatMap(_.hcursor.get[Int]("budget_tokens").toOption).getOrElse(0)
         val base = math.max(Defaults.MaxTokens, budget + Defaults.MaxTokens)
         val clamped = familyOutputCap(params.model) match
           case Some(family) => math.min(base, family)

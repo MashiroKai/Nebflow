@@ -141,6 +141,9 @@ enum ThinkingKind:
    */
   case Budget
 
+  /** Anthropic adaptive thinking, without a fixed token budget. */
+  case Adaptive
+
   /**
    * DeepSeek 族 anthropic 面：`thinking:{type:enabled}`——**不发 budget_tokens**
    * （官方字段支持表白纸黑字 "budget_tokens is ignored"）；off → `thinking:{type:disabled}`
@@ -166,6 +169,7 @@ object ThinkingKind:
 
   given Decoder[ThinkingKind] = Decoder.decodeString.emap {
     case "budget" => Right(Budget)
+    case "adaptive" => Right(Adaptive)
     case "effortAnthropic" => Right(EffortAnthropic)
     case "toggle" => Right(Toggle)
     case "effortTopLevel" => Right(EffortTopLevel)
@@ -188,7 +192,8 @@ object ThinkingFamily:
 
   def forModel(model: String): ThinkingKind =
     val m = model.toLowerCase
-    if m.contains("glm") then ThinkingKind.Toggle
+    if m == "claude-haiku-5-5" then ThinkingKind.Adaptive
+    else if m.contains("glm") then ThinkingKind.Toggle
     else if m.contains("deepseek") then ThinkingKind.EffortAnthropic
     else if m.contains("k3") then ThinkingKind.EffortTopLevel
     else if m.contains("kimi") then ThinkingKind.Toggle
