@@ -36,7 +36,7 @@ import { renderVisionBadge } from './modelCapabilities.js';
  *   models?: Array<string>,
  *   metaExtra?: string,
  *   active?: boolean,
- *   face: 'llm'|'jev'|'imagegen'|'provider'
+ *   face: 'llm'|'imagegen'|'provider'
  * }} spec
  * @returns {string}
  */
