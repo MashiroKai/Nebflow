@@ -29,13 +29,13 @@ object PluginLifecyclePlan:
    * `current*` = 在位世代（首装/自愈缺失 ⇒ None）；`policyVersion` 见类注释。
    */
   final case class Plan(
-      operation: Operation,
-      name: String,
-      candidateVersion: String,
-      candidateDigest: String,
-      currentVersion: Option[String],
-      currentDigest: Option[String],
-      policyVersion: String
+    operation: Operation,
+    name: String,
+    candidateVersion: String,
+    candidateDigest: String,
+    currentVersion: Option[String],
+    currentDigest: Option[String],
+    policyVersion: String
   )
 
   /** 计划身份：`plan-` + 16 hex（绑定五面；日志/审计行可读可截）。 */
@@ -49,7 +49,7 @@ object PluginLifecyclePlan:
   def render(p: Plan): String =
     val versionPair = p.currentVersion match
       case Some(cur) => s"$cur → ${p.candidateVersion}"
-      case None      => p.candidateVersion
+      case None => p.candidateVersion
     s"${planId(p)} ${p.operation.label} ${p.name} $versionPair " +
       s"(candidate ${p.candidateDigest.take(8)}…) policy ${p.policyVersion}"
 
@@ -59,10 +59,10 @@ object PluginLifecyclePlan:
 
   /** 安装腿便捷构造（首装：current 两面 None）。 */
   def forInstall(
-      name: String,
-      version: String,
-      digest: String,
-      policy: PluginDistributionTrust.UpdatePolicy
+    name: String,
+    version: String,
+    digest: String,
+    policy: PluginDistributionTrust.UpdatePolicy
   ): Plan =
     Plan(
       operation = Operation.Install,

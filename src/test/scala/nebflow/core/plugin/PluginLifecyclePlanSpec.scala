@@ -42,7 +42,8 @@ class PluginLifecyclePlanSpec extends FunSuite:
     assert(line.contains("aaaa")) // 候选摘要前缀（可读截断）
     assert(line.contains("plugin-ledger@2:check"))
     // 首装形态（无当前版本）不出现 "→" 版本对退化
-    val install = PluginLifecyclePlan.render(base.copy(operation = Operation.Install, currentVersion = None, currentDigest = None))
+    val install =
+      PluginLifecyclePlan.render(base.copy(operation = Operation.Install, currentVersion = None, currentDigest = None))
     assert(install.contains("install"))
 
 end PluginLifecyclePlanSpec

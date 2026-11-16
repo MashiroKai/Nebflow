@@ -89,13 +89,13 @@ object PluginDistributionTrust:
    * publisherClass 与预留空值族在 A 期恒 None/空。
    */
   final case class Distribution(
-      origin: Origin,
-      trustLevel: TrustLevel,
-      distributionOwner: DistributionOwner,
-      publisherClass: Option[PublisherClass] = None,
-      hubReviewId: Option[String] = None,
-      submissionStatus: Option[SubmissionStatus] = None,
-      lastCheckedAt: Option[Long] = None
+    origin: Origin,
+    trustLevel: TrustLevel,
+    distributionOwner: DistributionOwner,
+    publisherClass: Option[PublisherClass] = None,
+    hubReviewId: Option[String] = None,
+    submissionStatus: Option[SubmissionStatus] = None,
+    lastCheckedAt: Option[Long] = None
   )
 
   /**
@@ -103,8 +103,8 @@ object PluginDistributionTrust:
    * 自称不产生任何效果）；目录断言胜出（与自称冲突时以目录为准）。
    */
   def assignPublisherClass(
-      catalogAssertion: Option[VerifiedCatalogAssertion],
-      manifestSelfClaim: Option[PublisherClass]
+    catalogAssertion: Option[VerifiedCatalogAssertion],
+    manifestSelfClaim: Option[PublisherClass]
   ): Option[PublisherClass] =
     catalogAssertion.map(_.publisherClass)
 
@@ -126,10 +126,22 @@ object PluginDistributionTrust:
    */
   def factsForLegacyVia(via: Via): Distribution = via match
     case Via.Seed | Via.Official =>
-      Distribution(origin = Origin.Seed, trustLevel = TrustLevel.OfficialVerified, distributionOwner = DistributionOwner.Seed)
+      Distribution(
+        origin = Origin.Seed,
+        trustLevel = TrustLevel.OfficialVerified,
+        distributionOwner = DistributionOwner.Seed
+      )
     case Via.Git =>
-      Distribution(origin = Origin.GitPinned, trustLevel = TrustLevel.LocalImport, distributionOwner = DistributionOwner.Local)
+      Distribution(
+        origin = Origin.GitPinned,
+        trustLevel = TrustLevel.LocalImport,
+        distributionOwner = DistributionOwner.Local
+      )
     case Via.Local | Via.Https =>
-      Distribution(origin = Origin.LocalImport, trustLevel = TrustLevel.LocalImport, distributionOwner = DistributionOwner.Local)
+      Distribution(
+        origin = Origin.LocalImport,
+        trustLevel = TrustLevel.LocalImport,
+        distributionOwner = DistributionOwner.Local
+      )
 
 end PluginDistributionTrust

@@ -20,7 +20,7 @@ import java.nio.file.Files
 class PluginScanHardeningSpec extends FunSuite:
 
   private var prevRoot: os.Path = os.Path("/tmp")
-  private var home: os.Path     = os.Path("/tmp")
+  private var home: os.Path = os.Path("/tmp")
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
@@ -94,7 +94,7 @@ class PluginScanHardeningSpec extends FunSuite:
     // resolve 对被拒身份 ⇒ not found（拒载不进注册表）
     PluginRegistry.resolve("dup").unsafeRunSync() match
       case Left(err) => assert(err.contains("not found"))
-      case Right(p)  => fail(s"重复身份不得可解析, got: $p")
+      case Right(p) => fail(s"重复身份不得可解析, got: $p")
 
   // ── 打包规范正字（§9 A 行「确认打包规范」）───────────────────────
 

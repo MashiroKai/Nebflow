@@ -18,7 +18,7 @@ import java.nio.file.Files
 class PluginLedgerV2Spec extends FunSuite:
 
   private var prevRoot: os.Path = os.Path("/tmp")
-  private var home: os.Path     = os.Path("/tmp")
+  private var home: os.Path = os.Path("/tmp")
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
@@ -65,6 +65,7 @@ class PluginLedgerV2Spec extends FunSuite:
         assertEquals(e.validationSummary, None)
       case PluginSourceLedger.UnknownSource(reason) =>
         fail(s"schema 1 存量必须兼容升档（兼容升档不改判 Known）, got: $reason")
+    end match
 
     writeRaw("legacy-seed", v1Body("legacy-seed", via = "seed", kind = "official"))
     PluginSourceLedger.query("legacy-seed") match
@@ -76,7 +77,12 @@ class PluginLedgerV2Spec extends FunSuite:
 
   test("红绿①-序列化 新写账本落 schema 2 + §12.1/§5.4 字段写读往返逐字段相等"):
     val _ = PluginSourceLedger.recordInstall(
-      "fresh-v2", PluginSourceLedger.Kind.Local, Some("/src/x"), None, "1.0.0", "b" * 64,
+      "fresh-v2",
+      PluginSourceLedger.Kind.Local,
+      Some("/src/x"),
+      None,
+      "1.0.0",
+      "b" * 64,
       PluginSourceLedger.Via.Local,
       PluginSourceLedger.InstallMeta(validationSummary = Some("local-layout@1"))
     )
@@ -105,8 +111,14 @@ class PluginLedgerV2Spec extends FunSuite:
       validationSummary = Some("official-zip-dualvalue@1")
     )
     val _2 = PluginSourceLedger.recordInstall(
-      "roundtrip-v2", PluginSourceLedger.Kind.Official, Some("https://oss/x.zip"), None,
-      "1.5.0", "d" * 64, PluginSourceLedger.Via.Official, meta
+      "roundtrip-v2",
+      PluginSourceLedger.Kind.Official,
+      Some("https://oss/x.zip"),
+      None,
+      "1.5.0",
+      "d" * 64,
+      PluginSourceLedger.Via.Official,
+      meta
     )
     PluginSourceLedger.query("roundtrip-v2") match
       case PluginSourceLedger.Known(e) =>
@@ -156,15 +168,18 @@ class PluginLedgerV2Spec extends FunSuite:
     )
     // 更新腿重记（via=git——若不保留，owner 会被写成 local = 隐式转移）
     val _ = PluginSourceLedger.recordInstall(
-      "owner-keep", PluginSourceLedger.Kind.Git, Some("https://g/r.git"),
-      Some(PluginSourceLedger.Pin.Commit(None, "9" * 40)), "2.0.0", "3" * 64,
+      "owner-keep",
+      PluginSourceLedger.Kind.Git,
+      Some("https://g/r.git"),
+      Some(PluginSourceLedger.Pin.Commit(None, "9" * 40)),
+      "2.0.0",
+      "3" * 64,
       PluginSourceLedger.Via.Git,
       PluginSourceLedger.InstallMeta(validationSummary = Some("sync-swap@1"))
     )
     PluginSourceLedger.query("owner-keep") match
       case PluginSourceLedger.Known(e) =>
-        assertEquals(e.distribution.distributionOwner, DistributionOwner.Seed,
-          "§12.1：分发所有者由作者显式切换，不因更新事件隐式转移")
+        assertEquals(e.distribution.distributionOwner, DistributionOwner.Seed, "§12.1：分发所有者由作者显式切换，不因更新事件隐式转移")
         assertEquals(e.updatePolicy, UpdatePolicy.Minor, "逐包更新策略是作者选择，重记不回落默认")
         assertEquals(e.pinned, true, "版本固定不被更新腿清除")
         assertEquals(e.distribution.hubReviewId, Some("rev-1"))
@@ -194,7 +209,8 @@ class PluginLedgerV2Spec extends FunSuite:
         s""""distributionOwner":"local","updatePolicy":"whenever"}"""
     )
     PluginSourceLedger.query("bad-policy") match
-      case PluginSourceLedger.UnknownSource(reason) => assert(reason.contains("updatePolicy"), s"指名 updatePolicy, got: $reason")
+      case PluginSourceLedger.UnknownSource(reason) =>
+        assert(reason.contains("updatePolicy"), s"指名 updatePolicy, got: $reason")
       case k => fail(s"枚举外 updatePolicy 必须降级, got: $k")
 
 end PluginLedgerV2Spec
