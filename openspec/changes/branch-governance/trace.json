@@ -13,6 +13,18 @@
       "scenario": "BG-SCN-002",
       "implementation": ["tools/stand-branch-guard"],
       "tests": [{"path": "tests/stand-branch-guard.test.sh", "name": "push fixtures"}]
+    },
+    {
+      "requirement": "BG-REQ-002",
+      "scenario": "BG-SCN-003",
+      "implementation": [".gitlab-ci.yml", ".github/workflows/release.yml", ".github/workflows/auto-release.yml", "CONTRIBUTING.md", "CONTRIBUTING.zh-CN.md"],
+      "tests": [{"path": "tests/release-branch-routing.test.py", "name": "release routing and channel pointers"}]
+    },
+    {
+      "requirement": "BG-REQ-002",
+      "scenario": "BG-SCN-004",
+      "implementation": [".gitlab-ci.yml", ".github/workflows/auto-release.yml"],
+      "tests": [{"path": "tests/release-branch-routing.test.py", "name": "no main writeback"}]
     }
   ]
 }

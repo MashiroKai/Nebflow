@@ -19,7 +19,7 @@ name: Beta Release
 
 on:
   push:
-    branches: [beta]
+    branches: [release/beta]
 
 permissions:
   contents: write
@@ -290,7 +290,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "${{ needs.build-jar.outputs.version }}"
-          git push origin beta --tags
+          git push origin "refs/tags/${{ needs.build-jar.outputs.version }}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
