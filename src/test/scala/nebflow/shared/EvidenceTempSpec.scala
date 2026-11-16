@@ -24,8 +24,19 @@ class EvidenceTempSpec extends FunSuite:
     Files.writeString(foreign.resolve("manifest.json"),
       s"""{"createdAt":"${Instant.EPOCH}","project":"foreign","batch":"batch"}""")
     Files.writeString(foreign.resolve("payload"), "other process")
+    val observed = List("imagegen-probe", "office-preview", "orbit-anim", "plugin-install", "turn-terminal-replay", "unit-sweep")
+    observed.foreach { name =>
+      val other = isolatedTemp.resolve("stand-evidence").resolve(name).resolve("batch").resolve("20200101")
+      Files.createDirectories(other)
+      Files.writeString(other.resolve("manifest.json"), s"""{"createdAt":"${Instant.EPOCH}","project":"$name","batch":"batch"}""")
+      Files.writeString(other.resolve("payload"), name)
+    }
     assertEquals(EvidenceTemp.sweep(System.currentTimeMillis()), 0)
     assertEquals(Files.readString(foreign.resolve("payload")), "other process")
+    observed.foreach { name =>
+      val other = isolatedTemp.resolve("stand-evidence").resolve(name).resolve("batch").resolve("20200101")
+      assertEquals(Files.readString(other.resolve("payload")), name)
+    }
   }
 
   test("sweep refuses manifest belonging to another project or process") {
