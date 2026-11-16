@@ -810,7 +810,8 @@ export function addFindToggle(pane, left = 128) {
   btn.className = 'canvas-find-toggle';
   btn.innerHTML = FIND_ICON_SVG;
   btn.title = t('find.openInFile');
-  btn.style.left = left + 'px';
+  // CSS owns mobile seats; desktop keeps the caller's requested offset.
+  btn.style.setProperty('--canvas-find-left', left + 'px');
   btn.addEventListener('click', () => {
     import('../fileSearch.js').then(({ openFindForPane }) => openFindForPane(pane))
       .catch(() => { /* module unavailable — no-op */ });

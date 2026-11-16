@@ -1,5 +1,8 @@
 # Tasks
 
+- [x] Implement second-round single-row controls, real Ask/Note seed layering fix, card-free hero, message-only unread badges, adopted-secondary scroll/skirt repair, mirrored right-edge back and top-card-only switching.
+- [ ] Complete and record the second-round real-component synthetic before/after engine/theme/width matrix, required checkout gates, and review. Physical-device smoothness and real backend delivery remain outside synthetic acceptance.
+
 - [x] FMA-SCN-005: retire full-width Canvas glass/fade, center pagination independently, separate narrow-width tool rows, share contact floating chrome, and preserve green disabled send styling; isolated Chromium/WebKit acceptance added.
 - [x] FMA-SCN-006: center workbench identity, restore settings list row, reuse full account card in me with scoped existing logout binding, and remove settings bottom skirt; isolated browser acceptance added.
 - [ ] Complete real-engine asset-routing, physical-device safe-area and successful provider logout acceptance; isolated fixture transport checks do not replace these.

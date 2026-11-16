@@ -45,8 +45,6 @@ import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
 // 作者行动」的量（待批准 + 待销账/待处置 + 未读回执），纯未读消息不上徽标
 // （新鲜度 ≠ 可行动量，闭合相关性判据）。
-import { pendingAskCount } from './askPending.js';
-import { actionableTotal, onActionableChanged } from './actionable.js';
 // 【入口收敛批 todo-unify-entry-collapse 2026-11-04】改版批（2026-10-31）的
 // 消息列表顶部「待办事项」入口行（scheduled-task.js buildTodoEntryRow）**退役**：
 // 待办唯一入口 = 顶带 #top-overlays 内的待办胶囊（js/todoFace.js，双端同现，
@@ -527,21 +525,10 @@ function compareConversations(a, b) {
 }
 
 function updateBadge() {
-  // 徽标 = 未读真值（与会话行徽标同源）+ 可行动量（另一轴，非未读量：待答卡
-  // `pendingAskCount` + 跨面板待销账待办/未读回执 `actionableTotal`）。
-  // 🔴 未读腿**必须是 totalUnread()**：这是行徽标与图标角标唯一的同源点。
-  const on = loggedIn();
-  const unread = on ? totalUnread() : 0;
-  const actionable = on ? pendingAskCount() + actionableTotal() : 0;
-  const n = unread + actionable;
-  // aria 文案：未读腿在场按未读报（与行徽标同词），否则按可行动量报。
-  setActivityBadge('messages-btn', n, unread > 0
-    ? t('messages.ariaUnread', { n: unread })
-    : t('messages.ariaActionable', { n: actionable }));
+  // Task/agent actionability is not a message. Mirror only real unread messages.
+  const unread = loggedIn() ? totalUnread() : 0;
+  setActivityBadge('messages-btn', unread, t('messages.ariaUnread', { n: unread }));
 }
-
-// 任一可行动提供者计数变化 ⇒ 重算徽标（actionable.js 广播面）。
-onActionableChanged(() => updateBadge());
 
 // ── Conversation list (§3.2) ─────────────────────────────
 /** 会话列表刷新。
@@ -5597,7 +5584,8 @@ async function onFriendEvent(msg, retried = false) {
       const fromPeer = (conv.kind === 'group' || conv.kind === 'device')
         ? oursBySenderId(m, conv) === false
         : !!(m.senderId && conv.friend && m.senderId === conv.friend.userId);
-      if (fromPeer && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
+      if (fromPeer && !isAgentSent(m) && m.origin !== 'system' && m.kind !== 'system'
+        && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
     }
     // U-a 幂等：同 messageId 的重复到达不得二次上屏 / 二次自动转发（**渲染面**）。
     if (!markFrameMessageSeen(m.id)) return;

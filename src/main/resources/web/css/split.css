@@ -3680,6 +3680,7 @@ body.col-resizing #canvas-panel { transition: none; }
    72 = 源码钮 16 + 48 + 8；monaco.js 16 不变 —— 源码态无簇，单钮独坐）。 */
 .canvas-find-toggle {
   position: absolute; bottom: 16px;
+  left: var(--canvas-find-left, 128px);
   width: var(--cv-size-circle-lg); height: var(--cv-size-circle-lg); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);

@@ -13,7 +13,7 @@
 #### Scenario: [FMA-SCN-002] 多宽度下操作控件
 - **WHEN** 在手机窄宽及标准宽度和深浅主题下操作搜索、返回和 Canvas 控件
 - **THEN** 图标视觉居中、可命中、不重叠、不水平溢出，正常导航仍工作；测试结合具体不对称图形、viewBox 和可访问热区，不假定统一像素阈值。
-- **AND** Canvas 页码点始终相对安全区水平居中，独立于页数和两侧按钮数量；320 与 390 宽度下按钮热区至少 44px，必要时分行，不移动指示点到剩余空间。
+- **AND** Canvas pagination SHALL remain centered in the safe rectangle on the same row as its controls at 320 and 390 widths. Each side SHALL contain at most two controls with targets at least 44px; mobile source switching SHALL be hidden without changing desktop controls. Ask and Note SHALL have visible, contrasting icons rather than unexplained blank circles.
 
 ### Requirement: [FMA-REQ-005] 手机悬浮顶栏与发送键
 Canvas 与联系人会话 SHALL 使用透明、无边框、无整宽底层的悬浮顶栏。正文初始让位 SHALL 属于滚动内容，滚动后可从控件下方穿过。联系人会话 MUST 复用主会话 mh-idhead、ds-chrome-band、g2-fab 及 ds-turn-btn。发送键空输入和非空输入 SHALL 保持同一绿色视觉；空输入与连接状态的行为守卫不变。
@@ -42,3 +42,24 @@ Canvas 与联系人会话 SHALL 使用透明、无边框、无整宽底层的悬
 #### Scenario: [FMA-SCN-004] 取消手势并切换断点
 - **WHEN** 在减少动态效果模式下短拖取消返回，并反复切换手机和桌面断点
 - **THEN** 页面不返回且即时归位；重新激活后每次手势只被处理一次，不遗留全局监听。
+
+### Requirement: [FMA-REQ-007] Mobile second-round interaction
+Mobile workbench identity SHALL appear directly on the page background. Every adopted secondary panel SHALL permit full bottom-content access without a painted skirt. Detail pages and secondary overlays SHALL support a leftward swipe starting at the right screen edge, while retaining existing left-edge rightward back and vertical scroll. Content-region media gestures SHALL not navigate back.
+
+#### Scenario: [FMA-SCN-007] Workbench detail returns and scrolls
+- **WHEN** a user opens settings, account, plugin or nested configuration pages and scrolls or swipes left from the right edge
+- **THEN** all content is reachable and exactly the current detail closes; the hero has no enclosing card background, border or shadow.
+
+### Requirement: [FMA-REQ-008] Real-message badges
+Message badges SHALL count unread contact, device and group messages only. Agent, system and actionable/task notifications SHALL NOT increase the message badge. Empty decorative badge pills SHALL NOT appear.
+
+#### Scenario: [FMA-SCN-008] Synthetic source-separated messages
+- **WHEN** human, agent and system messages arrive through the real websocket consumer
+- **THEN** only the human inbound unread count increases, preserving existing read, mute and deduplication behavior.
+
+### Requirement: [FMA-REQ-009] Top-card media motion
+Collapsed media switching SHALL animate only the current top card with compositor transforms; lower cards SHALL remain stationary throughout the outgoing gesture and animation. Cancellation SHALL NOT switch cards, reduced-motion preference SHALL be respected, and no switch animation SHALL write layout geometry.
+
+#### Scenario: [FMA-SCN-009] Swipe two three and five images
+- **WHEN** a user drags a collapsed stack of two, three or five images in light or dark mode
+- **THEN** only the top card moves during dragging and the outgoing transition, the next image becomes current after commit, and an edge-back gesture returns without changing the image index.

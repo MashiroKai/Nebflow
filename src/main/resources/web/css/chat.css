@@ -4973,7 +4973,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    UI 统一批：卡脸盒的形（含 --ds-media-face-w 卡面尺度单源）已上收
    design-system.css .ds-media-stack__view；本节只留拖动态。 */
 .pop-stack-view.dragging { cursor: grabbing; }
-.pop-stack-view.dragging .media-layer { transition: none; }
+/* Fan slots never animate: only the outgoing top card owns motion. */
+.pop-stack-view .media-layer { transition: none; }
 /* The 2026-10-30 fan design (「像扑克一样轻微旋转展开 而不是重叠」): each back
    layer keeps the front card's FULL size and fans out with a small translate
    + a slight rotation about the layer's own center — a poker spread, not the

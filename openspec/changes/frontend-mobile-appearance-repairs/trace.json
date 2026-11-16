@@ -3,6 +3,21 @@
   "change": "frontend-mobile-appearance-repairs",
   "mappings": [
     {
+      "requirement": "FMA-REQ-007", "scenario": "FMA-SCN-007",
+      "implementation": ["src/main/resources/web/css/mobileLayer.css", "src/main/resources/web/css/ask.css", "src/main/resources/web/css/split.css", "src/main/resources/web/js/viewers/shared.js", "src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/js/gesture/backSwipe.js"],
+      "tests": [{"path": "tests/mobile-round2.spec.mjs", "name": "mobile round two canvas workbench badges back and top-card motion"}]
+    },
+    {
+      "requirement": "FMA-REQ-008", "scenario": "FMA-SCN-008",
+      "implementation": ["src/main/resources/web/js/messages.js", "src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/css/mobileLayer.css"],
+      "tests": [{"path": "tests/mobile-round2.spec.mjs", "name": "mobile round two canvas workbench badges back and top-card motion"}]
+    },
+    {
+      "requirement": "FMA-REQ-009", "scenario": "FMA-SCN-009",
+      "implementation": ["src/main/resources/web/js/popArtifacts.js", "src/main/resources/web/css/chat.css"],
+      "tests": [{"path": "tests/mobile-round2.spec.mjs", "name": "mobile round two canvas workbench badges back and top-card motion"}]
+    },
+    {
       "requirement": "FMA-REQ-005", "scenario": "FMA-SCN-005",
       "implementation": ["src/main/resources/web/css/mobileLayer.css", "src/main/resources/web/css/design-system.css", "src/main/resources/web/css/input.css", "src/main/resources/web/css/sapphire.css", "src/main/resources/web/js/viewers/html.js"],
       "tests": [{"path": "tests/mobile-canvas-toolbar-layout.spec.mjs", "name": "transparent floating bands and independent centered pagination"}, {"path": "tests/mobile-workbench-account-chat.spec.mjs", "name": "shared contact chrome and green send face"}]

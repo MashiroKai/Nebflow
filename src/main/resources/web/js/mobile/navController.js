@@ -2225,7 +2225,7 @@ const EDGE_AXIS_PX = 8;     // 轴锁阈值（与切卡手势同参）
 const EDGE_FLICK_MS = 200;  // 快弹判定窗（短距快滑也提交）
 
 /** @type {{id: number, x0: number, y0: number, t0: number, claimed: boolean,
- *          target: EventTarget | null, pageEl: HTMLElement | null} | null} */
+ *          direction: number, target: EventTarget | null, pageEl: HTMLElement | null} | null} */
 let edgeBack = null;
 
 /** 活动页面 section（跟手位移对象）。 */
@@ -2255,17 +2255,19 @@ function bindEdgeBack(root) {
     // 页面栈本腿让路；面板关完登记项清空，这条腿自然恢复（主会话/页面栈语义优先
     // 于「没有浮层」的那个常态）。
     if (hasBackHandler()) return;
-    if (e.clientX > EDGE_BAND_PX) return;
+    const direction = e.clientX <= EDGE_BAND_PX ? 1
+      : e.clientX >= window.innerWidth - EDGE_BAND_PX ? -1 : 0;
+    if (!direction) return;
     if (/** @type {Element} */ (e.target).closest('button, input, textarea, select, a')) return;
     edgeBack = {
       id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(),
-      claimed: false, target: e.target, pageEl: livePageEl(),
+      claimed: false, direction, target: e.target, pageEl: livePageEl(),
     };
   }, true);   // 捕获相位：先于内容面/切卡手势（认领权在带内最高）
 
   root.addEventListener('pointermove', (e) => {
     if (!edgeBack || e.pointerId !== edgeBack.id) return;
-    const dx = e.clientX - edgeBack.x0;
+    const dx = (e.clientX - edgeBack.x0) * edgeBack.direction;
     const dy = e.clientY - edgeBack.y0;
     if (!edgeBack.claimed) {
       if (Math.abs(dx) <= EDGE_AXIS_PX && Math.abs(dy) <= EDGE_AXIS_PX) return;
@@ -2278,7 +2280,7 @@ function bindEdgeBack(root) {
     if (page && page.isConnected) {
       const w = page.getBoundingClientRect().width || window.innerWidth;
       page.style.transition = 'none';
-      page.style.transform = `translate3d(${Math.max(0, edgeDamp(dx, w))}px,0,0)`;
+      page.style.transform = `translate3d(${edgeBack.direction * Math.max(0, edgeDamp(dx, w))}px,0,0)`;
     }
   }, true);
 
@@ -2289,11 +2291,12 @@ function bindEdgeBack(root) {
     edgeBack = null;
     if (!st.claimed) return;
     swipeSuppressed = false;
-    const dx = e.clientX - st.x0;
+    const dx = (e.clientX - st.x0) * st.direction;
     const dt = Date.now() - st.t0;
     const page = st.pageEl;
     const w = (page && page.isConnected ? page.getBoundingClientRect().width : 0) || window.innerWidth;
-    const commit = dx > Math.max(80, w * 0.22) || (dx > 28 && dt < EDGE_FLICK_MS);
+    const commit = e.type !== 'pointercancel'
+      && (dx > Math.max(80, w * 0.22) || (dx > 28 && dt < EDGE_FLICK_MS));
     if (commit) {
       logEvent('edge-back', { page: stack[stack.length - 1], dx: Math.round(dx) });
       if (page) { page.style.transition = ''; page.style.transform = ''; delete page.dataset.edgeSpring; }
@@ -2327,7 +2330,7 @@ function bindEdgeBack(root) {
     if (!edgeBack) return;
     const t = e.changedTouches && e.changedTouches[0];
     if (!t) return;
-    const dx = t.clientX - edgeBack.x0;
+    const dx = (t.clientX - edgeBack.x0) * edgeBack.direction;
     const dy = t.clientY - edgeBack.y0;
     if (Math.abs(dx) > Math.abs(dy) && dx > 0) e.preventDefault();
   };
@@ -2865,7 +2868,6 @@ function paintDockCenterAvatar() {
  *  无守卫的赋值 = 自触发无限循环（本轮实测：D3 3 分钟超时、页面假死）。 */
 function applyDockBadges() {
   const msgs = document.getElementById('messages-badge');
-  const cts = document.getElementById('contacts-badge');
   const setBadge = (dockId, on, text = '') => {
     const b = /** @type {HTMLElement|null} */ (dockKeys.get(dockId)?.querySelector('.dock-badge'));
     if (!b) return;
@@ -2874,9 +2876,10 @@ function applyDockBadges() {
     if (b.textContent !== want) b.textContent = want;
     b.classList.toggle('is-count', on && text !== ''); // 数字角标形态 vs 纯红点
   };
-  const msgOn = !!msgs && !msgs.hidden && msgs.textContent !== '';
+  const msgOn = !!msgs && !msgs.hidden && Number.parseInt(msgs.textContent || '', 10) > 0;
   setBadge('messages', msgOn, msgOn ? String(msgs.textContent) : '');
-  setBadge('contacts', !!cts && !cts.hidden && cts.textContent !== '');
+  // Friend requests are not messages; their status stays inside Contacts.
+  setBadge('contacts', false);
 }
 
 /** 已观察的徽标节点（徽标可能晚于 buildDock 才建出 —— 封存态剖面里好友面

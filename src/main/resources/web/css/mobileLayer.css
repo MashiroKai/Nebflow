@@ -757,7 +757,7 @@ body.mobile-layer .dock-badge {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--status-word);
+  background: var(--color-danger);
   pointer-events: none;
 }
 /* [hidden] 契约压过两条形态：.is-count 的 display:flex 特异度高于本行，
@@ -778,7 +778,7 @@ body.mobile-layer .dock-badge.is-count {
   display: flex;          /* 居中不靠 line-height：描边吃掉盒高后仍垂直居中 */
   align-items: center;
   justify-content: center;
-  background: var(--status-word);
+  background: var(--color-danger);
   color: var(--ds-ink-inverse);
   font-size: var(--mfs-min);
   font-weight: 600;
@@ -2672,13 +2672,9 @@ body.mobile-layer .mf-me-entry {
   min-height: 148px;
   padding: var(--ds-space-4) var(--ds-space-4) calc(var(--ds-space-4) + var(--ds-space-1));
   border: none;
-  border-radius: calc(var(--ds-radius-card-lg) + 6px);
-  background-color: var(--color-surface);
-  background-image:
-    radial-gradient(120% 140% at 8% 0%,
-      color-mix(in srgb, var(--sapphire) 12%, transparent) 0%,
-      transparent 62%);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--color-text);
   font-size: var(--mfs-body);
   text-align: center;
@@ -2686,18 +2682,8 @@ body.mobile-layer .mf-me-entry {
   touch-action: manipulation;
   overflow: hidden;
 }
-@media (prefers-color-scheme: dark) {
-  body.mobile-layer .mf-me-entry {
-    background-color: var(--color-surface);
-    background-image:
-      radial-gradient(120% 140% at 8% 0%,
-        color-mix(in srgb, var(--sapphire) 18%, transparent) 0%,
-        transparent 62%);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
-  }
-}
 body.mobile-layer .mf-me-entry:active {
-  background: color-mix(in srgb, var(--color-text) 6%, var(--color-surface));
+  opacity: var(--btn-press-fade);
 }
 /* hero 的身份文字块：名 22/600、邮箱 13 muted、tagline 11（末行不再跟 chevron）。 */
 body.mobile-layer .mf-me-meta {
@@ -2771,8 +2757,19 @@ body.mobile-layer .mf-me-entry :is(.mf-me-name, .mf-me-sub) { max-width: 100%; }
 body.mobile-layer .mf-account-card { margin: var(--ds-space-6) var(--ds-space-4); }
 body.mobile-layer .mf-account-card .neblink-account-actions { padding: var(--ds-space-4); }
 body.mobile-layer .mf-account-card .neblink-logout-btn { width: 100%; border-radius: var(--ds-radius-input); }
-/* The adopted settings panel ends above the dock: no desktop glass skirt. */
-body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal::after { content: none; }
+/* Adopted secondary faces are pages, never desktop glass skirts. */
+body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::after,
+body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::before {
+  content: none;
+}
+/* Keep the adopted settings scroller inside the flex remainder at every depth. */
+body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-content {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--mpage-fab-clearance);
+}
 /* 个人主页（me）：资料卡。 */
 body.mobile-layer .mf-me-card {
   display: flex;
@@ -4977,25 +4974,29 @@ body.mobile-layer .mf-dots {
    transform 属性（上方既有档 scale(1.24) 原样保留），故本批用
    left/right:0 + width:max-content + margin-inline:auto 实现居中，
    transform 面上两个意图（居中 / 放大）永不相撞。 */
-/* Keep pagination centered in the safe rectangle, independent of tool count.
-   Five 48px controls plus dots cannot fit a 320px row. Put document tools and
-   note on the preceding row instead of moving pagination or shrinking targets. */
+/* One row: two left tools, centered pagination, two right tools.
+   Retire source/zoom controls on mobile instead of adding another floating row. */
 body.mobile-layer .mf-dots {
   left: env(safe-area-inset-left, 0px);
   right: env(safe-area-inset-right, 0px);
 }
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-source-toggle,
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-zoom-bar {
+  display: none;
+}
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-ref-select,
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
-  bottom: calc(var(--ds-space-4) + var(--mtap-lg) + var(--ds-space-2));
+  bottom: var(--ds-space-4);
 }
-body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane:has(.canvas-source-toggle) .canvas-zoom-bar {
-  bottom: calc(var(--ds-space-4) + 2 * (var(--mtap-lg) + var(--ds-space-2)));
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
+  left: var(--ds-space-4);
+}
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-ref-select {
+  left: calc(var(--ds-space-4) + var(--mtap-lg) + var(--ds-space-2));
 }
 body.mobile-layer:has(.mobile-page[data-page="canvas"].live) .ask-fab.note-fab {
-  margin-right: 0;
-  /* translate preserves the reader-specific inline bottom set by askDock. */
-  translate: 0 calc(-1 * (var(--mtap-lg) + var(--ds-space-2)));
+  margin-right: calc(var(--ask-fab-size) + var(--ds-space-2));
+  translate: none;
 }
 
 /* 底部可滚余量（md / 纯文本 / epub 三面同尺）：末行滚到控件行之上。

@@ -703,7 +703,8 @@ body.mobile-layer .ask-fab {
   position: fixed;
   right: var(--ask-fab-gap);
   bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px);
-  z-index: 260;
+  /* Closed morph seeds live in the dock below their action buttons. */
+  z-index: 261;
 }
 body.mobile-layer .ask-dock,
 body.mobile-layer .note-dock {
