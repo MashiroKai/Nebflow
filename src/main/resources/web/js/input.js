@@ -141,7 +141,8 @@ function wireAttBytes(a) {
  */
 function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRefs, refs, wireAtts, chatWidth }) {
   const baseBytes = (content ? content.length : 0) + (sessionId ? sessionId.length : 0)
-    + (clientMessageId ? clientMessageId.length : 0) + 512;
+    + (clientMessageId ? clientMessageId.length : 0) + JSON.stringify(refs || []).length
+    + JSON.stringify(taskRefs || []).length + 512;
   const totalBytes = baseBytes + (wireAtts || []).reduce((s, a) => s + wireAttBytes(a), 0);
   const buildFrame = (attachments, cmid, withExtras) => ({
     content,
@@ -176,6 +177,8 @@ function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRe
     const cmid = (content || idx > 1) ? clientMessageId + '/a' + idx : clientMessageId;
     sendWs({
       device: deviceStamp(),
+      ...(!content && idx === 1 && taskRefs?.length ? { taskRefs } : {}),
+      ...(!content && idx === 1 && refs?.length ? { refs } : {}),
       attachments: chunk,
       clientMessageId: cmid,
       sessionId

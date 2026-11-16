@@ -124,31 +124,18 @@ object RefResolver:
         else
           val datePart = if date.nonEmpty then s" | $date" else ""
           Some(s"[引用 · 好友消息 | 来自 $name($nl)$datePart]\n$body")
-      // quote-message 一期（spec 20261009 §3.2）：主聊天区消息引用 —— content-bearing
-      // ref，逐字镜像 friend-message 的形态。注入模板（钉死文本层格式）：
-      //   [引用 · 消息 | 来自 {senderName} | {MM-dd HH:mm}]
-      //   {fullText ≤1200}
-      // senderName/excerpt/fullText 一律过 sanitize（防伪造注入行）；fullText 截
-      // 1200（好友消息 4000 与指针 ref ~100 token 之间的取值，作者裁定）；时间取
-      // meta.ts（被引消息 epoch ms，前端随 ref 提供）。fullText 与 excerpt 均空 ⇒
-      // None（fail-open 跳过，不阻塞消息）。
+      // Pure formatter; console ingress uses ConsoleQuoteResolver.structured for
+      // snapshot completeness checks, long-body handles and attachment metadata.
       case "chat-message" =>
         val name = sanitize(src.downField("senderName").as[String].getOrElse(""))
         val ts = ref.hcursor.downField("meta").downField("ts").as[Long].toOption.getOrElse(0L)
         val content = c.downField("content")
-        val body = content
-          .downField("fullText")
-          .as[String]
-          .getOrElse("")
-          .filter(ch => ch >= ' ' || ch == '\n')
-          .take(1200)
-        val excerpt = sanitize(content.downField("excerpt").as[String].getOrElse(""))
-        val text = if body.nonEmpty then body else excerpt.take(1200)
-        if text.isEmpty then None
+        val body = content.downField("fullText").as[String].getOrElse("")
+        if body.isEmpty then Some("[引用未能解析：聊天消息] 原因：正文缺失")
         else
           val fromPart = if name.nonEmpty then s" | 来自 $name" else ""
           val datePart = if ts > 0 then s" | ${formatMsgTs(ts)}" else ""
-          Some(s"[引用 · 消息$fromPart$datePart]\n$text")
+          Some(s"[引用 · 消息$fromPart$datePart]\n$body")
       case _ => None // "task" → return flow (processTaskReturns); unknown → skip
     end match
   end resolve

@@ -1,6 +1,8 @@
 package nebflow.gateway
 
 import cats.effect.IO
+import io.circe.Json
+import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.msgtokens.MsgTokenRegistry
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
@@ -36,6 +38,33 @@ class ConsoleQuoteResolverSpec extends CatsEffectSuite:
       assert(foldedCard.contains("已折叠") && foldedCard.contains("/api/sessions/msg-token/") && !foldedCard.contains(long), foldedCard)
       assertEquals(lookedUp.map(_.text), Some(long))
       assert(badCard.contains("引用未能解析"), badCard)
+    ).guarantee(IO.blocking(os.remove.all(root)))
+  }
+  test("structured snapshots retain short text, long query handles, missing markers and media metadata") {
+    val root = os.temp.dir(prefix = "structured-quote-")
+    val registry = new MsgTokenRegistry(root / "sessions", () => true)
+    def ref(text: String, complete: Boolean) = Json.obj(
+      "source" -> Json.obj("messageId" -> "row-1".asJson, "senderName" -> "author".asJson),
+      "content" -> Json.obj("fullText" -> text.asJson, "fullTextComplete" -> complete.asJson,
+        "attachments" -> Json.arr(Json.obj("type" -> "image".asJson, "name" -> "a.png".asJson, "path" -> "/tmp/a.png".asJson)),
+        "itemIndex" -> 1.asJson, "itemTotal" -> 3.asJson)
+    )
+    val short = ("abc" * 800) + "\tEND"
+    val long = ("long text " * 600) + "THE END"
+    (for
+      small <- ConsoleQuoteResolver.structured(ref(short, true), "receiving-session", registry)
+      large <- ConsoleQuoteResolver.structured(ref(long, true), "receiving-session", registry)
+      core = "msg-token/([0-9a-f]{8}-[0-9]{6})".r.findFirstMatchIn(large).get.group(1)
+      lookup <- registry.lookup(core)
+      missing <- ConsoleQuoteResolver.structured(ref("", false), "receiving-session", registry)
+      legacy <- ConsoleQuoteResolver.structured(ref("possibly truncated", false), "receiving-session", registry)
+    yield
+      assert(small.contains(short), small)
+      assert(small.contains("a.png") && small.contains("/tmp/a.png") && small.contains("2/3"), small)
+      assert(large.contains("已折叠") && !large.contains(long), large)
+      assertEquals(lookup.map(_.text), Some(long))
+      assert(missing.contains("引用未能解析"), missing)
+      assert(legacy.contains("引用未能解析"), legacy)
     ).guarantee(IO.blocking(os.remove.all(root)))
   }
 end ConsoleQuoteResolverSpec

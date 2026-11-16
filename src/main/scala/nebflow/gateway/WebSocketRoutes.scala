@@ -2264,7 +2264,7 @@ class WebSocketRoutes(
                               // 路径整体移除。#303 D1: resolve non-task refs
                               // (file/document/html-element) into [引用: …]
                               // injection blocks; refType=task fail-open 跳过。
-                              processRefs(json, blocks).flatMap { _ =>
+                              processRefs(json, blocks, msgSessionId).flatMap { _ =>
                                 ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens).flatMap { resolvedContent =>
                                 if content.nonEmpty then blocks.update(0, ContentBlock.Text(resolvedContent))
                                 // device-provenance 批：标记块前插为首块（正文块逐字不动；
@@ -2680,14 +2680,16 @@ class WebSocketRoutes(
    */
   private def processRefs(
     frame: io.circe.Json,
-    blocks: scala.collection.mutable.ListBuffer[ContentBlock]
+    blocks: scala.collection.mutable.ListBuffer[ContentBlock],
+    sessionId: String
   ): IO[Unit] =
     val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
-    refs.foreach { ref =>
+    refs.traverse_ { ref =>
       val refType = ref.hcursor.downField("refType").as[String].getOrElse("")
-      if refType != "task" then RefResolver.resolve(ref).foreach(block => blocks += ContentBlock.Text(block))
+      if refType == "chat-message" then
+        ConsoleQuoteResolver.structured(ref, sessionId, sharedResources.msgTokens).map(block => blocks += ContentBlock.Text(block)).void
+      else IO { if refType != "task" then RefResolver.resolve(ref).foreach(block => blocks += ContentBlock.Text(block)) }
     }
-    IO.unit
 
   /**
    * quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里 refType==='chat-message'

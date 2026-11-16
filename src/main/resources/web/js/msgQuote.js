@@ -131,7 +131,7 @@ function fullTextOf(d) {
       return `${t('chat.quoteTypeImage')} ${pos ? pos + ' · ' : ''}${d.fileName || ''}${pathTail}`.trim();
     }
     case 'file': return `${t('chat.quoteTypeFile')} ${d.fileName || ''}${pathTail}`.trim();
-    default: return String(d.text || '').slice(0, 1200);
+    default: return String(d.text || '');
   }
 }
 
@@ -154,6 +154,7 @@ export function chatMessageRefInput(d) {
   const content = {
     excerpt: excerptOf(d),
     fullText: fullTextOf(d),
+    fullTextComplete: d.kind === 'text' || d.kind === 'image' || d.kind === 'file',
     attachments: atts.slice(0, MAX_QUOTE_ATTS).map(a => ({
       type: a.type === 'image' || a.type === 'video' ? a.type : 'file',
       name: String(a.name || '').slice(0, 200),

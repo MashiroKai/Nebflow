@@ -2,6 +2,7 @@ package nebflow.gateway
 
 import cats.effect.IO
 import cats.syntax.all.*
+import io.circe.Json
 import nebflow.core.msgtokens.MsgTokenRegistry
 import nebflow.core.scheduler.ScheduledTaskStore
 import nebflow.shared.NebflowLogger
@@ -37,4 +38,40 @@ object ConsoleQuoteResolver:
         if withTodo == text then resolved else resolved + withTodo.substring(text.length)
       }
     }
+
+  /** A client snapshot is not a durable message identity; mint an independent lookup only for a complete long snapshot. */
+  def structured(ref: Json, sessionId: String, tokens: MsgTokenRegistry): IO[String] =
+    val cursor = ref.hcursor
+    val content = cursor.downField("content")
+    val body = content.downField("fullText").as[String].getOrElse("")
+    val complete = content.downField("fullTextComplete").as[Boolean].getOrElse(false)
+    val source = cursor.downField("source")
+    val id = RefResolver.sanitize(source.downField("messageId").as[String].getOrElse("")).take(100)
+    val name = RefResolver.sanitize(source.downField("senderName").as[String].getOrElse(""))
+    val attachments = content.downField("attachments").as[List[Json]].getOrElse(Nil).take(8).map { a =>
+      val c = a.hcursor
+      val kind = RefResolver.sanitize(c.downField("type").as[String].getOrElse("file"))
+      val name = RefResolver.sanitize(c.downField("name").as[String].getOrElse(""))
+      val path = RefResolver.sanitize(c.downField("path").as[String].getOrElse(""))
+      s"[引用附件 · $kind · $name${if path.nonEmpty then s" · 客户端声明路径（未验证）: $path" else " · 原文件不可寻址"} · 原始媒体未随引用注入]"
+    }.mkString("\n")
+    val position = content.downField("itemIndex").as[Int].toOption.filter(_ >= 0).map { index =>
+      val total = content.downField("itemTotal").as[Int].toOption.filter(_ > index).fold("")(n => s"/$n")
+      s" · 第 ${index + 1}$total 项"
+    }.getOrElse("")
+    val suffix = if attachments.nonEmpty then "\n" + attachments else ""
+    val header = s"[引用 · 消息 · $name$position]"
+    if body.isEmpty || !complete then
+      logger.warn(s"CONSOLE-QUOTE-MISS structured id=$id reason=missing-or-unverified-snapshot") *>
+        IO.pure(s"[引用未能解析：聊天消息 $id] 原因：正文缺失或旧版快照不保证完整$suffix")
+    else if body.length <= Threshold then IO.pure(s"$header\n$body$suffix")
+    else
+      tokens.mint(Some(sessionId).filter(_.nonEmpty), body).flatMap {
+        case Some(mapping) =>
+          val core = s"${mapping.sid8}-${f"${mapping.seq}%06d"}"
+          IO.pure(s"$header\n[共 ${body.length} 字 · 已折叠；全文查询 GET /api/sessions/msg-token/$core]\n${body.take(SummaryLength)}\n[摘要结束]$suffix")
+        case None =>
+          logger.warn(s"CONSOLE-QUOTE-MISS structured id=$id reason=snapshot-mint-failed") *>
+            IO.pure(s"[引用未能解析：聊天消息 $id] 原因：全文句柄创建失败$suffix")
+      }
 end ConsoleQuoteResolver
