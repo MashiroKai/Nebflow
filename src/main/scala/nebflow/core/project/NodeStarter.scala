@@ -413,7 +413,7 @@ private[project] trait NodeStarter:
                   case (Right(wGrant), Right(vGrant)) =>
                     for
                       cancelSig <- Deferred[IO, Unit]
-                      _ <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
+                      runIdentity <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
                       worker <- spawnLoopSession(
                         workerBase,
                         prepared,
@@ -466,7 +466,7 @@ private[project] trait NodeStarter:
                         sessionDevice = sessionDevice,
                         sessionDeviceWorkspace = sessionDeviceWorkspace
                       )
-                      _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
+                      _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume, runIdentity)
                         .guarantee(
                           destroyLoopSessions(nodeId, worker, verify) *>
                             resources.pluginMcp.release(workerSessionId) *>
@@ -1229,7 +1229,7 @@ private[project] trait NodeStarter:
               val text = extractLastAssistantText(messages)
               // The completed node's final assistant text is the completion payload;
               // no report-tool declaration is required to forward it.
-              completeNodeR(nodeId, text).void
+              completeNodeR(nodeId, text, flipped.nodes.get(nodeId).map(n => (n.sessionRef, n.startedAt))).void
             case Left(fo) =>
               if fo.message.contains("cancelled") then
                 // R2：原因文本从桥消息还原（此前只做 `contains("cancelled")` 布尔嗅探后

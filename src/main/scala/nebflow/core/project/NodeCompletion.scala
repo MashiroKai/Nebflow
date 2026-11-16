@@ -44,9 +44,14 @@ private[project] trait NodeCompletion:
    * 语义、分支、判据与修前逐字一致，只有返回值从 `Unit` 变为落地判词（调用方
    * 按需取用）。
    */
-  private[project] def completeNodeR(nodeId: String, resultText: String): IO[Boolean] =
+  private[project] def completeNodeR(
+    nodeId: String,
+    resultText: String,
+    expectedRun: Option[(Option[String], Option[Long])] = None
+  ): IO[Boolean] =
     store.getNode(nodeId).flatMap {
-      case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+      case Some(fresh) if fresh.status == NodeLifecycle.Running &&
+          expectedRun.forall(_ == (fresh.sessionRef, fresh.startedAt)) =>
         // Plain-verifier verdict leg: a verifier's first-line `VERDICT: PASS|FAIL` IS the verdict
         // declaration. FAIL routes through the same leg the loop runner uses (verdict recorded +
         // fail-route selection + rejection-state audit + re-loop / circuit break); a genuine
@@ -67,13 +72,14 @@ private[project] trait NodeCompletion:
                   detail = f.issues.mkString("; "),
                   suggestion = f.requirements
                 ),
-                resultText
+                resultText,
+                Some((fresh.sessionRef, fresh.startedAt))
               )
             case Some(VerdictReader.Verdict.Pass) =>
-              recordVerdict(nodeId, VerdictPass) *> gateAndCompleteFor(nodeId, fresh, resultText)
+              gateAndCompleteFor(nodeId, fresh, resultText, Some((VerdictPass, false)))
             case None => gateAndCompleteFor(nodeId, fresh, resultText)
         else gateAndCompleteFor(nodeId, fresh, resultText)
-      case _ => completedNodeR(nodeId, resultText)
+      case _ => IO.pure(false)
     }
 
   /**
@@ -88,46 +94,52 @@ private[project] trait NodeCompletion:
       case None        => completedNodeR(nodeId, resultText)
     }
 
-  private def gateAndCompleteFor(nodeId: String, fresh: NodeDef, resultText: String): IO[Boolean] =
+  private[project] def gateAndCompleteFor(
+    nodeId: String, fresh: NodeDef, resultText: String, verdict: Option[(String, Boolean)] = None
+  ): IO[Boolean] =
     CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
       case CompletionGate.Pass(reason) =>
         logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
-        completedNodeR(nodeId, resultText)
+        completedNodeR(nodeId, resultText, Some((fresh.sessionRef, fresh.startedAt)), verdict)
       case CompletionGate.Reject(reason, _) =>
         logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
         failNodeR(
           nodeId,
-          s"Completion gate rejected node output: $reason\n${CompletionGate.withOriginalText(resultText)}"
-        )
+          s"Completion gate rejected node output: $reason\n${CompletionGate.withOriginalText(resultText)}",
+          Some((fresh.sessionRef, fresh.startedAt))
+        ).map(landed => landed && !verdict.exists(_._1 == VerdictFail))
     }
 
   /**
    * completed 原路径：落库 completed + TTL → emitEvent nodeCompleted → deliverOut → settleDeps。
-   * 返回值（#239①）= 落地判词：`true` = 落库可见并走完完成链；`false` = 节点已消失
-   * （下方 `case None`，既有「result not persisted」WARN 支）——刻意**不吞**该支。
+   * 返回 true 仅当本事务赢得当前 running 轮次的终态转换；重放、取消和旧轮均返回 false。
    */
-  private def completedNodeR(nodeId: String, resultText: String): IO[Boolean] =
+  private def completedNodeR(
+    nodeId: String,
+    resultText: String,
+    expectedRun: Option[(Option[String], Option[Long])] = None,
+    verdict: Option[(String, Boolean)] = None
+  ): IO[Boolean] =
     for
       now <- IO(System.currentTimeMillis())
-      s <- store.mutate { st =>
+      (_, transition) <- store.mutateWithResult { st =>
         st.nodes.get(nodeId) match
-          case Some(fresh) =>
-            st.copy(nodes =
-              st.nodes.updated(
-                nodeId,
-                withoutReportPending(
-                  fresh.copy(
-                    status = NodeLifecycle.Completed,
-                    result = Some(resultText),
-                    completedAt = Some(now),
-                    ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)
-                  )
-                )
+          case Some(fresh) if fresh.status == NodeLifecycle.Running &&
+              expectedRun.forall(_ == (fresh.sessionRef, fresh.startedAt)) =>
+            val completed = withoutReportPending(
+              fresh.copy(
+                status = NodeLifecycle.Completed,
+                result = Some(resultText),
+                lastVerdict = verdict.map(_._1).orElse(fresh.lastVerdict),
+                loopRound = if verdict.exists(_._2) then fresh.loopRound + 1 else fresh.loopRound,
+                completedAt = Some(now),
+                ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)
               )
             )
-          case None => st
+            (st.copy(nodes = st.nodes.updated(nodeId, completed)), Some(completed))
+          case _ => (st, None)
       }
-      landed <- s.nodes.get(nodeId) match
+      landed <- transition match
         case Some(completed) =>
           emitWithChain("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
             logger.info(s"Node '${completed.name}' completed (result ${resultText.length} chars)") *>
@@ -159,9 +171,7 @@ private[project] trait NodeCompletion:
             dispatchNotify.notifyTerminal(completed, NotifyReason.Completion) *>
             // #239① 落地判词：本条腿是 fresh-read 之后**写成功**支（落库可见 + 完成链走完）
             IO.pure(true)
-        case None =>
-          logger.warn(s"Node '$nodeId' vanished before completion — result not persisted") *>
-            IO.pure(false)
+        case None => IO.pure(false)
     yield landed
 
   /**
@@ -514,7 +524,12 @@ private[project] trait NodeCompletion:
    * `false` = 两条拒写支——① 优雅关机期 draining 抑制（节点保持 Running 交 boot
    * sweep）；② 节点已消失（既有「error not persisted」WARN 支）。
    */
-  private[project] def failNodeR(nodeId: String, err: String): IO[Boolean] =
+  private[project] def failNodeR(
+    nodeId: String,
+    err: String,
+    expectedRun: Option[(Option[String], Option[Long])] = None,
+    verdict: Option[String] = None
+  ): IO[Boolean] =
     // ── draining 守卫（中断恢复语义批 2026-09-13，spec §2.3-3）────────────────
     // 优雅关机窗口内，abort 钩子（GracefulInterruptHook 第 3 腿 / ShutdownAbort）
     // 会让每个在飞 agent turn 以「真实失败」形态回落本函数——那是「进程要死了」，
@@ -541,26 +556,24 @@ private[project] trait NodeCompletion:
     else
       for
         now <- IO(System.currentTimeMillis())
-        s <- store.mutate { st =>
+        (_, transition) <- store.mutateWithResult { st =>
           st.nodes.get(nodeId) match
-            case Some(fresh) =>
-              st.copy(nodes =
-                st.nodes.updated(
-                  nodeId,
-                  withoutReportPending(
-                    fresh.copy(
-                      status = NodeLifecycle.Failed,
-                      result = Some(err),
-                      completedAt = Some(now),
-                      // 2026-09-07 作者裁定：failed 无 TTL 强制清——死亡现场保留待上层裁决。
-                      ttlExpireAt = None
-                    )
-                  )
+            case Some(fresh) if expectedRun.isEmpty ||
+                (fresh.status == NodeLifecycle.Running && expectedRun.contains((fresh.sessionRef, fresh.startedAt))) =>
+              val failed = withoutReportPending(
+                fresh.copy(
+                  status = NodeLifecycle.Failed,
+                  result = Some(err),
+                  lastVerdict = verdict.orElse(fresh.lastVerdict),
+                  completedAt = Some(now),
+                  // failed retains the failure scene without a TTL.
+                  ttlExpireAt = None
                 )
               )
-            case None => st
+              (st.copy(nodes = st.nodes.updated(nodeId, failed)), Some(failed))
+            case _ => (st, None)
         }
-        landed <- s.nodes.get(nodeId) match
+        landed <- transition match
           case Some(failed) =>
             emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
               logger.warn(s"Node '${failed.name}' failed: ${err.take(200)}") *>
