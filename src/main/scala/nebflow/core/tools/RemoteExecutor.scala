@@ -811,6 +811,29 @@ class RemoteExecutor(
 
   end transferGetScopedChunked
 
+  /** Run byte-preserving scaffold logic using the existing remote Bash channel. */
+  def ensureRemoteScaffold(peer: PeerInfo, workspace: String): IO[Either[String, String]] =
+    def quote(value: String): String = "'" + value.replace("'", "'\\\"'\\\"'") + "'"
+    val source = scala.io.Source.fromResource("remote_scaffold.py")
+    val script = try source.mkString finally source.close()
+    val encoded = java.util.Base64.getEncoder.encodeToString(script.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    val command = s"python3 -c ${quote("import base64;exec(base64.b64decode('" + encoded + "'))")} ${quote(workspace)} ${quote(peer.deviceName)}"
+    val params = JsonObject("command" -> command.asJson, "timeout" -> 30000L.asJson, "description" -> "Prepare remote project scaffold".asJson)
+    executeViaBestPath(peer, "Bash", params, 60.seconds, workspace, kind = "scaffold").map {
+      case Left(err) => Left(s"device '${peer.deviceName}', path '$workspace': channel failure: ${err.message}; all items unconfirmed")
+      case Right(output) =>
+        val marker = "REMOTE_SCAFFOLD_RESULT="
+        output.linesIterator.find(_.startsWith(marker)) match
+          case None => Left(s"device '${peer.deviceName}', path '$workspace': missing scaffold result: $output; all items unconfirmed")
+          case Some(line) =>
+            io.circe.parser.parse(line.drop(marker.length)) match
+              case Left(err) => Left(s"device '${peer.deviceName}', path '$workspace': invalid scaffold result: ${err.getMessage}")
+              case Right(json) =>
+                if json.hcursor.get[Boolean]("ok").getOrElse(false) then Right(json.noSpaces)
+                else Left(json.noSpaces)
+    }
+  end ensureRemoteScaffold
+
   /**
    * 远端**单文件 Write**（v2.1 §A.5 远端创建脚手架腿的唯一落笔口）：走既有
    * remote-exec Write 工具通道（对端 createFolders 语义幂等建目录）；projectRoot

@@ -105,14 +105,16 @@ private[project] object DeviceProjectMount:
                   else
                     // ④ 骨架落设备真实路径（缺件即补、既有永不覆盖）。复用 ③ 列举
                     // （同 peer 同路径二次 list 去重，2026-10-26 #901 批）。
-                    scaffold(executor, p, devicePath, listing).flatMap {
+                    executor.ensureRemoteScaffold(p, devicePath).flatMap {
+                      case Left(err) => IO.raiseError(new RuntimeException(ProjectMountPreflight.deviceRefusal(p.deviceName, devicePath, err)))
+                      case Right(remoteReport) => scaffold(executor, p, devicePath, listing).flatMap {
                       case Left(err) =>
                         IO.raiseError(
                           new RuntimeException(
                             ProjectMountPreflight.deviceRefusal(
                               p.deviceName,
                               devicePath,
-                              s"scaffold write failed: $err (retry is safe: missing pieces are backfilled, existing files are never overwritten)"
+                              s"scaffold write failed: $err; earlier remote scaffold items: $remoteReport"
                             )
                           )
                         )
@@ -121,9 +123,10 @@ private[project] object DeviceProjectMount:
                         // ⑤ AGENTS.md 镜像 + 本机大脑根建目录（唯一的本机写盘点）。
                         mirrorAgentsMd(executor, p, devicePath, brainWs).flatMap { _ =>
                           IO.blocking(os.makeDir.all(os.Path(brainWs) / ".nebflow")).as(
-                            Prepared(p, brainWs, note)
+                            Prepared(p, brainWs, s"$note; remote scaffold items: $remoteReport")
                           )
                         }
+                      }
                     }
               }
         }
@@ -151,8 +154,7 @@ private[project] object DeviceProjectMount:
         e.hcursor.downField("name").as[String].toOption
       }.toSet
     val wanted: List[(String, String)] = List(
-      ("AGENTS.md", ProjectCreateService.AgentMdTemplateFull),
-      (".gitignore", ".nebflow/\n")
+      ("AGENTS.md", ProjectCreateService.AgentMdTemplateFull)
     )
     val missing = wanted.filterNot((name, _) => existing.contains(name))
     if missing.isEmpty then IO.pure(Right("scaffold on device: nothing to do (all pieces already present)"))
