@@ -455,6 +455,17 @@ class AnthropicAdapter(
       Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson)) // 强制思考：off 兜底 enabled
     case ThinkingKind.EffortTopLevel => Json.obj() // K3 恒推理，无「关」可表达
 
+  private def effortFragment(params: SendMessageParams, kind: ThinkingKind): Option[Json] =
+    val effort = params.thinkingResolved.flatMap(_.effort)
+    val fragment = ThinkingEffortGate.effortFragment(kind, params.model, effort, endpoint)
+    for
+      requested <- effort
+      sent <- fragment.flatMap(_.hcursor.get[String]("reasoning_effort").toOption)
+      if sent != requested.wireName
+    do nebflow.shared.NebflowLogger.forName("nebflow.llm.anthropic")
+      .warnSync(s"thinking effort mapped: model=${params.model} requested=${requested.wireName} sent=$sent endpoint=$endpoint")
+    fragment
+
   private def onWire(params: SendMessageParams, kind: ThinkingKind, semantic: Json): Json =
     kind match
       case ThinkingKind.Budget =>
@@ -463,8 +474,7 @@ class AnthropicAdapter(
       case ThinkingKind.EffortAnthropic =>
         // 官方 anthropic 面：thinking 支持（budget_tokens 被忽略）→ 只发开关位。
         val base = Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
-        ThinkingEffortGate
-          .effortFragment(kind, params.model, params.thinkingResolved.flatMap(_.effort)) match
+        effortFragment(params, kind) match
           case Some(extra) => base.deepMerge(extra)
           case None => base
       case ThinkingKind.Toggle =>
@@ -478,15 +488,13 @@ class AnthropicAdapter(
         }
         val base = Json.obj("thinking" -> Json.obj(thinkingObj.toList*))
         // glm 族 effort 腿（门开时）：顶层 reasoning_effort（body 级，非 thinking 键内）。
-        ThinkingEffortGate
-          .effortFragment(kind, params.model, params.thinkingResolved.flatMap(_.effort)) match
+        effortFragment(params, kind) match
           case Some(extra) => base.deepMerge(extra)
           case None => base
       case ThinkingKind.EffortTopLevel =>
         // K3：不发 thinking 配置（官方明示移除）；effort 核定后走顶层
         // reasoning_effort（第二段点亮腿）。
-        ThinkingEffortGate
-          .effortFragment(kind, params.model, params.thinkingResolved.flatMap(_.effort)) match
+        effortFragment(params, kind) match
           case Some(extra) => extra
           case None => Json.obj()
 

@@ -897,11 +897,18 @@ class ChainLedgerStore private (
       )
 
   /** 台账全量自检：结构 + 每轮守恒 + 轮间链式 + 压缩镜像（判据全在 [[ChainLedger]]）。 */
-  def verify: IO[Either[String, Unit]] =
+  def verify: IO[Either[String, Unit]] = verifySnapshot(IO.unit)
+
+  // Round payloads are append-only and published before the manifest. Audit only
+  // the rounds committed in the captured state, never an in-flight newer round.
+  private[project] def verifySnapshot(afterSnapshot: IO[Unit]): IO[Either[String, Unit]] =
     for
       st <- state.get
+      _ <- afterSnapshot
       files <- readRounds
-    yield ChainLedger.verifyLedger(st, files, payloadIdsOf(files))
+      committed = st.rounds.iterator.map(_.round).toSet
+      snapshotFiles = files.filter(f => committed.contains(f.round))
+    yield ChainLedger.verifyLedger(st, snapshotFiles, payloadIdsOf(snapshotFiles))
 
   /**
    * 压缩镜像面（**取每个 id 的最晚一轮口径**）：某 id 的载荷此刻是否应在冷档 ——

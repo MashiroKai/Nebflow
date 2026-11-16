@@ -62,9 +62,9 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 30.seconds
 
-  private def adapter(passback: Boolean = false): AnthropicAdapter =
+  private def adapter(passback: Boolean = false, url: String = "http://localhost:0"): AnthropicAdapter =
     AnthropicAdapter(
-      "http://localhost:0",
+      url,
       "k",
       null.asInstanceOf[StreamBackend[IO, Fs2Streams[IO]]],
       passback
@@ -86,6 +86,12 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     fragment.hcursor.downField("thinking").focus
 
   // ── W1/W2：Budget 族（未知模型兜底）─────────────────────────────────────
+
+  test("unknown Anthropic-compatible endpoint does not inherit another endpoint's effort capability") {
+    val resolved = Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.Max)))
+    val fragment = adapter().wireThinkingFragment(params("k3.1-pro-highspeed", budgetOn, resolved))
+    assertEquals(fragment.hcursor.downField("reasoning_effort").focus, None)
+  }
 
   test("W1: budget kind + enabled → legacy {type:enabled,budget_tokens} verbatim") {
     val f = adapter().wireThinkingFragment(params("claude-sonnet-x", budgetOn))
@@ -184,23 +190,23 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
   // ── W9/W10/W11/W12：第二段点亮（effort 档位）────────────────────────────
 
   test("W9: k3.1 + effort high → top-level reasoning_effort:high, still NO thinking key") {
-    val f = adapter().wireThinkingFragment(
+    val f = adapter(url = "https://api.kimi.com/coding").wireThinkingFragment(
       params("k3.1-pro-highspeed", budgetOn, Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.High))))
     )
     assertEquals(f.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"))
     assertEquals(thinkingKeyOf(f), None)
   }
 
-  test("W10: three-tier faces map minimal→low and medium→high (k3.1 and glm)") {
+  test("W10: unverified medium tier is omitted even at documented endpoints") {
     assertEquals(EffortWire.threeTier(ThinkingEffort.Minimal), "low")
-    val k3 = adapter().wireThinkingFragment(
+    val k3 = adapter(url = "https://api.kimi.com/coding").wireThinkingFragment(
       params("k3.1-pro-highspeed", budgetOn, Some(ResolvedThinking(ThinkingKind.EffortTopLevel, enabled = true, Some(ThinkingEffort.Medium))))
     )
-    assertEquals(k3.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"))
-    val glm = adapter().wireThinkingFragment(
+    assertEquals(k3.hcursor.downField("reasoning_effort").as[String].toOption, None, "unverified tier is not remapped")
+    val glm = adapter(url = "https://open.bigmodel.cn/api/anthropic").wireThinkingFragment(
       params("glm-5.3-flash", budgetOn, Some(ResolvedThinking(ThinkingKind.Toggle, enabled = true, Some(ThinkingEffort.Medium))))
     )
-    assertEquals(glm.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"))
+    assertEquals(glm.hcursor.downField("reasoning_effort").as[String].toOption, None, "unverified tier is not remapped")
     assertEquals(thinkingKeyOf(glm), Some(Json.obj("type" -> "enabled".asJson)))
   }
 
@@ -350,7 +356,7 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     finally if server != null then server.stop(0)
   }
 
-  test("E4: model layer effort=high flows through the full chain to reasoning_effort") {
+  test("E4: model layer effort is omitted at an unknown local endpoint") {
     val captured = ConcurrentLinkedQueue[String]()
     var server: HttpServer = null
     try
@@ -360,7 +366,7 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
           modelLayer = Some(ThinkingLayerConfig(effort = Some(ThinkingEffort.High)))),
         captured
       )
-      assertEquals(body.hcursor.downField("reasoning_effort").as[String].toOption, Some("high"))
+      assertEquals(body.hcursor.downField("reasoning_effort").focus, None, "localhost is not a verified endpoint")
       assertEquals(body.hcursor.downField("thinking").focus, None)
     finally if server != null then server.stop(0)
   }

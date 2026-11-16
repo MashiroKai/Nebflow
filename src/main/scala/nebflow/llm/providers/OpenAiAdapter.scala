@@ -74,31 +74,13 @@ class OpenAiAdapter(
     if base.endsWith("/chat/completions") then base else s"$base/chat/completions"
 
   /**
-   * Map Anthropic-style budget_tokens to OpenAI reasoning_effort.
-   *
-   * OpenAI doesn't have a quantitative reasoning budget, only a qualitative
-   * effort scale.  This mapping gives the user a natural continuum:
-   *   ≤ 2048   → low
-   *   2049…8192   → medium
-   *   8193…32768  → high
-   *   > 32768     → xhigh
-   */
-  private def budgetToEffort(budget: Int): String =
-    if budget <= 2048 then "low"
-    else if budget <= 8192 then "medium"
-    else if budget <= 32768 then "high"
-    else "xhigh"
-
-  /**
    * Build thinking-related request body based on the model.
    *  - GLM models: send `thinking: { type: "enabled" }` (GLM's native format)
    *  - OpenAI o-series: send `reasoning_effort` (OpenAI's format)
    *  - Others: send nothing (API will ignore unknown params)
    *
-   * thinking-config 批（2026-10-28，设计 §4.2 openai 行「直发档位」）：候选解析出
-   * effort 档位（per-model/provider/全局三层）⇒ 直发该档位（三档面 medium→high
-   * 客户端映射单点 = EffortWire.threeTier）；未配档位 ⇒ 保留旧 budget 换算
-   * （budgetToEffort 边界不动，旧单旋钮值仍可换算）。
+   * Compatible protocol and model names are not evidence of endpoint effort support;
+   * unknown endpoints omit reasoning_effort rather than converting a numeric budget.
    */
   private def thinkingBody(model: String, thinking: Option[io.circe.Json], resolved: Option[ResolvedThinking]): Json =
     thinking match
@@ -108,11 +90,9 @@ class OpenAiAdapter(
           // GLM uses its own `thinking` parameter, not OpenAI's `reasoning_effort`
           Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
         else
-          resolved.flatMap(_.effort) match
-            case Some(effort) => Json.obj("reasoning_effort" -> EffortWire.openAi(effort).asJson)
-            case None =>
-              val budget = t.hcursor.get[Int]("budget_tokens").getOrElse(32000)
-              Json.obj("reasoning_effort" -> budgetToEffort(budget).asJson)
+          // No endpoint-specific OpenAI-compatible effort capability is established
+          // in the repository. Do not infer one from the model or protocol name.
+          Json.obj()
       case _ => Json.obj()
 
   /** Build a stable system prefix containing instructions and route identity. */
