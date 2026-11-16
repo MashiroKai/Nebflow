@@ -168,7 +168,7 @@ object SearchIndexMigration:
     require(path.getParent.toRealPath().startsWith(temp) && !Files.exists(path), "new snapshot under /tmp required")
     val adapter = new nebflow.core.search.chat.ChatSearchAdapter(os.Path(sessions))
     val all = adapter.sessionIdsForReconcile.get.sorted
-    val selected = all.take(200)
+    val selected = all
     println(s"eligible_sessions=${all.size} selected_sessions=${selected.size}")
     val c = DriverManager.getConnection(s"jdbc:sqlite:$path")
     c.setAutoCommit(false)
@@ -197,7 +197,7 @@ object SearchIndexMigration:
     if args.length == 3 && args(0) == "--snapshot" then
       makeSessionSnapshot(args(1), args(2))
       return
-    require(args.length == 2, "usage: SearchIndexMigration /tmp/<output>.sqlite /path/to/source.sqlite")
+    require(args.length == 2 || (args.length == 3 && args(2) == "--halt-50"), "usage: SearchIndexMigration /tmp/<output>.sqlite /path/to/source.sqlite [--halt-50]")
     val temp = Paths.get("/tmp").toRealPath()
     val path = Paths.get(args(0)).toAbsolutePath.normalize()
     require(path.getParent.toRealPath().startsWith(temp), "output must be under /tmp")
@@ -207,7 +207,8 @@ object SearchIndexMigration:
     val c = DriverManager.getConnection(s"jdbc:sqlite:$path")
     val started = System.nanoTime()
     try
-      migrate(c, source, batchSize = 20, maxRows = Int.MaxValue)
+      migrate(c, source, batchSize = 20, maxRows = Int.MaxValue,
+        afterBatch = n => if args.length == 3 && n == 50 then Runtime.getRuntime.halt(1))
       println(f"elapsed_seconds=${(System.nanoTime() - started) / 1e9}%.3f")
     finally
       c.close()
