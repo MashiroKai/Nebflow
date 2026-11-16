@@ -1,0 +1,29 @@
+openjdk version "23.0.1" 2024-10-15
+OpenJDK Runtime Environment Temurin-23.0.1+11 (build 23.0.1+11)
+OpenJDK 64-Bit Server VM Temurin-23.0.1+11 (build 23.0.1+11, mixed mode, sharing)
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] STILL waiting ~0min. escape hatch: SBT_GATE=off sbt …
+[sbt-gate] acquired after 7s
+[sbt-gate] gate acquired after 7s
+[sbt-gate] heap cap not injected: SBT_OPTS already carries -Xmx (explicit wins)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project small-llm-20261116-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/project
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/project/target/scala-2.12/sbt-1.0/classes ...
+[info] done compiling
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand-wt/small-llm-20261116/)
+[info] compiling 824 Scala sources to /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 1188 Scala sources to /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/target/scala-3.5.2/test-classes ...
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/src/test/scala/nebflow/core/ModelRolesSpec.scala:37:32 
+[error] 37 |      assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/main"))
+[error]    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    | value smallLlmModel is not a member of object nebflow.core.SchemePolicy
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/src/test/scala/nebflow/core/ModelRolesSpec.scala:39:32 
+[error] 39 |      assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/small"))
+[error]    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    | value smallLlmModel is not a member of object nebflow.core.SchemePolicy
+[error] two errors found
+[error] (Test / compileIncremental) Compilation failed
+[error] Total time: 103 s (0:01:43.0), completed 2026年11月16日 09:57:40

@@ -55,6 +55,7 @@ object ModelRoles:
   val DispatcherWire = "dispatcher"
   val NodeWire = "node"
   val SubagentWire = "subagent"
+  val SmallLlmWire = "small-llm"
 
   /**
    * (wire, 中文标签, sidecar 槽名)。槽名 = agents/ 目录名（wire 与槽名解耦：main 的槽是 Nebula）。
@@ -74,7 +75,8 @@ object ModelRoles:
     (KernelWire, "kernel", KernelWire),
     (DispatcherWire, "dispatcher", nebflow.core.SchemePolicy.DispatcherName),
     (NodeWire, "node", NodeWire),
-    (SubagentWire, "subagent", SubagentWire)
+    (SubagentWire, "subagent", SubagentWire),
+    (SmallLlmWire, "通用小 LLM", SmallLlmWire)
   )
 
   /** 该名字是否为可配置的模型槽（REST GET/PUT /agents/:name/model 的合法面）。 */
@@ -97,7 +99,7 @@ object ModelRoles:
    * 该名字是否为**虚拟**槽（只有 model sidecar、没有 agent 实体——EntityLoader 存在性
    * 闸对它必须跳过）：kernel / node / subagent 三个。
    */
-  val VirtualSlots: Set[String] = Set(KernelWire, NodeWire, SubagentWire)
+  val VirtualSlots: Set[String] = Set(KernelWire, NodeWire, SubagentWire, SmallLlmWire)
 
   def isVirtualSlot(name: String): Boolean = VirtualSlots.contains(name)
 

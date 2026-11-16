@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "change": "general-small-llm",
+  "mappings": [
+    {
+      "requirement": "SLLM-REQ-001",
+      "scenario": "SLLM-SCN-001",
+      "implementation": ["src/main/scala/nebflow/core/ModelRoles.scala", "src/main/scala/nebflow/core/SchemePolicy.scala"],
+      "tests": [{"path": "src/test/scala/nebflow/core/ModelRolesSpec.scala", "name": "small LLM slot is settable and resolves its own chain before main"}]
+    },
+    {
+      "requirement": "SLLM-REQ-001",
+      "scenario": "SLLM-SCN-002",
+      "implementation": ["src/main/scala/nebflow/core/SchemePolicy.scala"],
+      "tests": [
+        {"path": "src/test/scala/nebflow/core/ModelRolesSpec.scala", "name": "small LLM slot is settable and resolves its own chain before main"},
+        {"path": "src/test/scala/nebflow/core/ModelRolesSpec.scala", "name": "small LLM fallback logs WARN while configured selection does not"}
+      ]
+    },
+    {
+      "requirement": "SLLM-REQ-002",
+      "scenario": "SLLM-SCN-003",
+      "implementation": ["src/main/resources/web/js/modelPanel.js", "src/main/resources/web/js/locales/en.js", "src/main/resources/web/js/locales/zh-CN.js", "openspec/changes/general-small-llm/proposal.md", "openspec/changes/general-small-llm/design.md", "openspec/changes/general-small-llm/tasks.md", "openspec/changes/general-small-llm/specs/small-llm/spec.md", "openspec/changes/general-small-llm/trace.json"],
+      "tests": [{"path": "tests/model-chain-slim.spec.mjs", "name": "小模型选择写入独立槽"}]
+    }
+  ]
+}
