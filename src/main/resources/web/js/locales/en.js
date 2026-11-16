@@ -1490,6 +1490,8 @@ export default {
   // the P1-2 "zero consumers" registration is lifted: kernel returns as a slot.
   'model.roleNode': 'Node',
   'model.roleSubagent': 'Subagent',
+  'model.smallLlm': 'General small LLM',
+  'model.smallLlmFallback': 'Not configured (falls back to main model)',
   'model.viaSlash': 'Edit with the /model command',
   'model.currentRun': 'Running',
   // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): two new /model

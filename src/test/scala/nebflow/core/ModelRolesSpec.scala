@@ -25,10 +25,38 @@ import nebflow.shared.AgentModelConfig
  */
 class ModelRolesSpec extends FunSuite:
 
+  test("small LLM slot is settable and resolves its own chain before main") {
+    assert(ModelRoles.isSlot("small-llm"))
+    assert(ModelRoles.isVirtualSlot("small-llm"))
+    assert(SchemePolicy.isSettable("small-llm"))
+    val original = nebflow.shared.PathUtil.dataRoot
+    val tmp = os.temp.dir(prefix = "nb-small-llm-")
+    try
+      nebflow.shared.PathUtil.setDataRoot(tmp)
+      os.write.over(
+        tmp / "agents" / "Nebula" / "agent.json",
+        """{"model":{"preferred":"p/main"}}""",
+        createFolders = true
+      )
+      assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/main"))
+      os.write.over(
+        tmp / "agents" / "small-llm" / "agent.json",
+        """{"model":{"preferred":"p/small"}}""",
+        createFolders = true
+      )
+      assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/small"))
+      os.write.over(tmp / "agents" / "small-llm" / "agent.json", """{"model":{}}""")
+      assertEquals(SchemePolicy.smallLlmModel().preferred, Some("p/main"))
+    finally
+      nebflow.shared.PathUtil.setDataRoot(original)
+      os.remove.all(tmp)
+    end try
+  }
+
   test("五槽 wire 名 = main/kernel/dispatcher/node/subagent；sidecar 槽名与 wire 名解耦") {
     assertEquals(
       ModelRoles.Slots.map(_._1),
-      List("main", "kernel", "dispatcher", "node", "subagent"),
+      List("main", "kernel", "dispatcher", "node", "subagent", "small-llm"),
       "五类槽的 wire 名清单（/model 面板、设置面板、REST 路径共用同一拼写）"
     )
     val byWire = ModelRoles.Slots.map { case (w, _, slot) => w -> slot }.toMap
@@ -42,7 +70,7 @@ class ModelRolesSpec extends FunSuite:
   test("虚拟槽 = kernel/node/subagent；isSlot 覆盖 wire 名与槽名双拼写，不收编陌生名") {
     assertEquals(
       ModelRoles.VirtualSlots,
-      Set("kernel", "node", "subagent"),
+      Set("kernel", "node", "subagent", "small-llm"),
       "只有 model sidecar、没有 agent 实体的三个槽（EntityLoader 存在性闸跳过判据）"
     )
     List("kernel", "node", "subagent").foreach(n => assert(ModelRoles.isVirtualSlot(n)))
@@ -68,13 +96,29 @@ class ModelRolesSpec extends FunSuite:
     // 🔴 返回值面 = **槽目录名**（`ownChainOf` 的入参形态），故 dispatcher 会话归
     // `project-dispatcher`（wire 名 "dispatcher" 在 agents/ 下没有目录——首轮实跑把它
     // 直接喂给 ownChainOf 时类切换静默失效，本断言即该缺陷的钉子）。
-    assertEquals(ModelRoles.slotOfSessionId(Some("delegate-abc123")), Some("subagent"), "DelegateTool.spawnDelegate 的 id 形状")
-    assertEquals(ModelRoles.slotOfSessionId(Some("dispatcher-1a2b3c4d")), Some("project-dispatcher"), "分发器会话 → 槽目录 project-dispatcher")
+    assertEquals(
+      ModelRoles.slotOfSessionId(Some("delegate-abc123")),
+      Some("subagent"),
+      "DelegateTool.spawnDelegate 的 id 形状"
+    )
+    assertEquals(
+      ModelRoles.slotOfSessionId(Some("dispatcher-1a2b3c4d")),
+      Some("project-dispatcher"),
+      "分发器会话 → 槽目录 project-dispatcher"
+    )
     assertEquals(ModelRoles.slotOfSessionId(Some("dag-node-1-2")), Some("node"), "FlowDagExecutor 节点会话 id 形状")
     assertEquals(ModelRoles.slotOfSessionId(Some("node-proj-1")), Some("node"), "项目节点会话族")
-    assertEquals(ModelRoles.slotOfSessionId(Some("ask-a0d6ad6e")), Some("Nebula"), "Ask 会话继承 main/Nebula 模型槽，避免迁移后链配置不可达")
+    assertEquals(
+      ModelRoles.slotOfSessionId(Some("ask-a0d6ad6e")),
+      Some("Nebula"),
+      "Ask 会话继承 main/Nebula 模型槽，避免迁移后链配置不可达"
+    )
     // 🔴 判据顺序：kernel 会话 id 本身以 delegate- 开头，前缀顺序颠倒会被错归 subagent。
-    assertEquals(ModelRoles.slotOfSessionId(Some("delegate-kernel-9f8e7d6c")), Some("kernel"), "kernel 会话不得被 delegate- 抢先归到 subagent")
+    assertEquals(
+      ModelRoles.slotOfSessionId(Some("delegate-kernel-9f8e7d6c")),
+      Some("kernel"),
+      "kernel 会话不得被 delegate- 抢先归到 subagent"
+    )
     assertEquals(ModelRoles.slotOfSessionId(Some("kernel-xyz")), Some("kernel"), "裸 kernel- 前缀同样归 kernel 槽")
     assertEquals(ModelRoles.slotOfSessionId(Some("sess-0001")), None, "主会话（Nebula 对话框）不命中任何槽 ⇒ 不覆写")
     assertEquals(ModelRoles.slotOfSessionId(Some("")), None, "空 id 不命中")
@@ -133,10 +177,14 @@ class ModelRolesSpec extends FunSuite:
       val refs = chain.toList.flatMap(c => c.preferred.toList ++ c.fallbacks)
       assertEquals(refs, List("zhipu/glm-5.3-flash"), "Ask 链必须非空且保留已配置 provider ref")
       val allUnknown = List("missing/model")
-      assert(allUnknown.nonEmpty && !allUnknown.exists(_.startsWith("zhipu/")), "全未配置链仍可识别为无可用候选，接口会记录 MODEL-CHAIN-EMPTY")
+      assert(
+        allUnknown.nonEmpty && !allUnknown.exists(_.startsWith("zhipu/")),
+        "全未配置链仍可识别为无可用候选，接口会记录 MODEL-CHAIN-EMPTY"
+      )
     finally
       nebflow.shared.PathUtil.setDataRoot(original)
       os.remove.all(tmp)
+    end try
   }
 
   test("effectiveModel：槽未命中 ⇒ base 原样透传（不改写、不造候选；槽已配置腿依赖真实 dataRoot，运行时单点见头注）") {

@@ -30,6 +30,7 @@ import { statusIcon, escapeHtml } from './utils.js';
 import { mobileSheetBack } from './mobile/popSheet.js';
 import { createDepVisibility } from './depVisibility.js';
 import { rootNameParams } from './rootName.js';
+import { setRow } from './settingsRows.js';
 
 // ── Shared helpers (model refs + chain display) ────────────
 
@@ -146,6 +147,7 @@ export function modelSourceNoteKey(model) {
 const PANEL_HIDDEN_ROLES = [];
 const ALL_ROLES = ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'];
 const ROLES = ALL_ROLES.filter((r) => !PANEL_HIDDEN_ROLES.includes(r));
+const SMALL_LLM = 'small-llm';
 const FOLLOWER_ROLES = ROLES.filter((r) => r !== 'Nebula');
 /** Frontend mirror of SchemePolicy.SettableAgents (the /model write gate). */
 export const SETTABLE_ROLES = new Set(ROLES);
@@ -199,8 +201,9 @@ function fetchModelOf(role) {
 }
 
 async function fetchAllRoles() {
-  const results = await Promise.all(ROLES.map(fetchModelOf));
-  ROLES.forEach((role, i) => {
+  const roles = [...ROLES, SMALL_LLM];
+  const results = await Promise.all(roles.map(fetchModelOf));
+  roles.forEach((role, i) => {
     const st = roleState.get(role) || { chain: null, expanded: false };
     st.data = results[i];
     // Re-sync the working copy from disk on every fetch. Local edits are
@@ -641,6 +644,22 @@ function renderSettingsRoleSelector(container) {
 function renderChainSectionBody(container) {
   container.replaceChildren();
   renderSettingsRoleSelector(container);
+  const small = roleState.get(SMALL_LLM);
+  const row = document.createElement('div');
+  row.id = 'small-llm-settings-row';
+  const refs = getAllModelRefs();
+  const selected = small?.data?.mode === 'explicit' ? chainRefs(small.data.chain)[0] : '';
+  const options = `<option value="">${esc(t('model.smallLlmFallback'))}</option>` + refs.map(ref =>
+    `<option value="${esc(ref)}"${ref === selected ? ' selected' : ''}>${esc(ref)}</option>`
+  ).join('');
+  row.insertAdjacentHTML('beforeend', setRow({
+    title: t('model.smallLlm'),
+    control: `<select class="cfg-select set-field" aria-label="${esc(t('model.smallLlm'))}"${small?.data ? '' : ' disabled'}>${options}</select>`,
+  }));
+  row.querySelector('select').addEventListener('change', (event) => {
+    void putChain(SMALL_LLM, event.target.value ? [event.target.value] : null);
+  });
+  container.appendChild(row);
   // Jev / image generation remain separate provider selectors, not conversation roles.
   const list = document.createElement('div');
   list.className = 'mp-group-list';

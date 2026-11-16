@@ -1,0 +1,121 @@
+PASS  [chromium/desktop/light/zh-CN] 通用小 LLM 设置行使用统一行令牌
+PASS  [chromium/desktop/light/zh-CN] 小模型未配置提示回退主模型
+PASS  [chromium/desktop/light/zh-CN] 小模型选择写入独立槽
+PASS  [chromium/desktop/light/zh-CN] 清除小模型配置
+PASS  [chromium/desktop/light/zh-CN] ③ 标题 = 模型（按会话类别） / Model (per session class)  — title="模型（按会话类别）" disclosure="5 类会话模型›"
+PASS  [chromium/desktop/light/zh-CN] ④ 摘要显示可配置会话类别数量  — summary="
+        5 类会话模型›
+      "
+PASS  [chromium/desktop/light/zh-CN] ④ 说明文字在位  — {"text":"在输入框输入 /model 命令，按会话类别（主agent/kernel/dispatcher/node/subagent）配置各自的单个模型。","h":48,"lh":18,"box":494,"natural":354,"scroll":494}
+PASS  [chromium/desktop/light/zh-CN] ④ 说明在布局内可见（允许按冻结规格换行）  — h=48 box=494 scroll=494
+PASS  [chromium/desktop/light/zh-CN] 五类角色独立切换器齐全  — {"tabs":["主 Agent","kernel","任务分发器","node（节点）","subagent（子代理）"],"selected":"主 Agent","select":"SELECT","options":4}
+PASS  [chromium/desktop/light/zh-CN] 当前类别单模型选择器带可用模型  — {"tabs":["主 Agent","kernel","任务分发器","node（节点）","subagent（子代理）"],"selected":"主 Agent","select":"SELECT","options":4}
+PASS  [chromium/desktop/light/zh-CN] i18n 双语标题齐  — zh="模型（按会话类别）" en="Model (per session class)"
+PASS  [chromium/desktop/light/zh-CN] 渐进披露摘要双语键齐  — zh="{n} 类会话模型" en="{n} session classes"
+PASS  [chromium/desktop/light/zh-CN] i18n 双语说明齐  — zh="每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。" en="One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn."
+PASS  [chromium/desktop/light/zh-CN] i18n 退役键零残留（zh/en 双向）  — {"zhLeak":[],"enLeak":[]}
+PASS  [chromium/desktop/light/zh-CN] i18n 删键对称（差值 = 存量基线 7）  — zh=2661 en=2654 Δ=7
+PASS  [chromium/desktop/light/zh-CN] 五类别视图截图落盘  — /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/evidence/small-llm-shots/role-<role>-chromium-desktop-light.png
+PASS  [chromium/desktop/light/zh-CN] 零 console error / 零 pageerror
+PASS  [chromium/mobile/light/zh-CN] 通用小 LLM 设置行使用统一行令牌
+PASS  [chromium/mobile/light/zh-CN] 小模型未配置提示回退主模型
+PASS  [chromium/mobile/light/zh-CN] 小模型选择写入独立槽
+PASS  [chromium/mobile/light/zh-CN] 清除小模型配置
+PASS  [chromium/mobile/light/zh-CN] ③ 标题 = 模型（按会话类别） / Model (per session class)  — title="模型（按会话类别）" disclosure="5 类会话模型›"
+PASS  [chromium/mobile/light/zh-CN] ④ 摘要显示可配置会话类别数量  — summary="
+        5 类会话模型›
+      "
+PASS  [chromium/mobile/light/zh-CN] ④ 说明文字在位  — {"text":"在输入框输入 /model 命令，按会话类别（主agent/kernel/dispatcher/node/subagent）配置各自的单个模型。","h":90,"lh":19.5,"box":311,"natural":244,"scroll":311}
+PASS  [chromium/mobile/light/zh-CN] ④ 说明在布局内可见（允许按冻结规格换行）  — h=90 box=311 scroll=311
+PASS  [chromium/mobile/light/zh-CN] 五类角色独立切换器齐全  — {"tabs":["主 Agent","kernel","任务分发器","node（节点）","subagent（子代理）"],"selected":"主 Agent","select":"SELECT","options":4}
+PASS  [chromium/mobile/light/zh-CN] 当前类别单模型选择器带可用模型  — {"tabs":["主 Agent","kernel","任务分发器","node（节点）","subagent（子代理）"],"selected":"主 Agent","select":"SELECT","options":4}
+PASS  [chromium/mobile/light/zh-CN] i18n 双语标题齐  — zh="模型（按会话类别）" en="Model (per session class)"
+PASS  [chromium/mobile/light/zh-CN] 渐进披露摘要双语键齐  — zh="{n} 类会话模型" en="{n} session classes"
+PASS  [chromium/mobile/light/zh-CN] i18n 双语说明齐  — zh="每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。" en="One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn."
+PASS  [chromium/mobile/light/zh-CN] i18n 退役键零残留（zh/en 双向）  — {"zhLeak":[],"enLeak":[]}
+PASS  [chromium/mobile/light/zh-CN] i18n 删键对称（差值 = 存量基线 7）  — zh=2661 en=2654 Δ=7
+PASS  [chromium/mobile/light/zh-CN] 五类别视图截图落盘  — /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/evidence/small-llm-shots/role-<role>-chromium-mobile-light.png
+PASS  [chromium/mobile/light/zh-CN] 零 console error / 零 pageerror
+PASS  [chromium/desktop/dark/zh-CN] 通用小 LLM 设置行使用统一行令牌
+PASS  [chromium/desktop/dark/zh-CN] 小模型未配置提示回退主模型
+PASS  [chromium/desktop/dark/zh-CN] 小模型选择写入独立槽
+PASS  [chromium/desktop/dark/zh-CN] 清除小模型配置
+PASS  [chromium/desktop/dark/zh-CN] ③ 标题 = 模型（按会话类别） / Model (per session class)  — title="模型（按会话类别）" disclosure="5 类会话模型›"
+PASS  [chromium/desktop/dark/zh-CN] ④ 摘要显示可配置会话类别数量  — summary="
+        5 类会话模型›
+      "
+PASS  [chromium/desktop/dark/zh-CN] ④ 说明文字在位  — {"text":"在输入框输入 /model 命令，按会话类别（主agent/kernel/dispatcher/node/subagent）配置各自的单个模型。","h":48,"lh":18,"box":494,"natural":354,"scroll":494}
+PASS  [chromium/desktop/dark/zh-CN] ④ 说明在布局内可见（允许按冻结规格换行）  — h=48 box=494 scroll=494
+PASS  [chromium/desktop/dark/zh-CN] 五类角色独立切换器齐全  — {"tabs":["主 Agent","kernel","任务分发器","node（节点）","subagent（子代理）"],"selected":"主 Agent","select":"SELECT","options":4}
+PASS  [chromium/desktop/dark/zh-CN] 当前类别单模型选择器带可用模型  — {"tabs":["主 Agent","kernel","任务分发器","node（节点）","subagent（子代理）"],"selected":"主 Agent","select":"SELECT","options":4}
+PASS  [chromium/desktop/dark/zh-CN] i18n 双语标题齐  — zh="模型（按会话类别）" en="Model (per session class)"
+PASS  [chromium/desktop/dark/zh-CN] 渐进披露摘要双语键齐  — zh="{n} 类会话模型" en="{n} session classes"
+PASS  [chromium/desktop/dark/zh-CN] i18n 双语说明齐  — zh="每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。" en="One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn."
+PASS  [chromium/desktop/dark/zh-CN] i18n 退役键零残留（zh/en 双向）  — {"zhLeak":[],"enLeak":[]}
+PASS  [chromium/desktop/dark/zh-CN] i18n 删键对称（差值 = 存量基线 7）  — zh=2661 en=2654 Δ=7
+PASS  [chromium/desktop/dark/zh-CN] 五类别视图截图落盘  — /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/evidence/small-llm-shots/role-<role>-chromium-desktop-dark.png
+PASS  [chromium/desktop/dark/zh-CN] 零 console error / 零 pageerror
+PASS  [chromium/mobile/dark/zh-CN] 通用小 LLM 设置行使用统一行令牌
+PASS  [chromium/mobile/dark/zh-CN] 小模型未配置提示回退主模型
+PASS  [chromium/mobile/dark/zh-CN] 小模型选择写入独立槽
+PASS  [chromium/mobile/dark/zh-CN] 清除小模型配置
+PASS  [chromium/mobile/dark/zh-CN] ③ 标题 = 模型（按会话类别） / Model (per session class)  — title="模型（按会话类别）" disclosure="5 类会话模型›"
+PASS  [chromium/mobile/dark/zh-CN] ④ 摘要显示可配置会话类别数量  — summary="
+        5 类会话模型›
+      "
+PASS  [chromium/mobile/dark/zh-CN] ④ 说明文字在位  — {"text":"在输入框输入 /model 命令，按会话类别（主agent/kernel/dispatcher/node/subagent）配置各自的单个模型。","h":90,"lh":19.5,"box":311,"natural":244,"scroll":311}
+PASS  [chromium/mobile/dark/zh-CN] ④ 说明在布局内可见（允许按冻结规格换行）  — h=90 box=311 scroll=311
+PASS  [chromium/mobile/dark/zh-CN] 五类角色独立切换器齐全  — {"tabs":["主 Agent","kernel","任务分发器","node（节点）","subagent（子代理）"],"selected":"主 Agent","select":"SELECT","options":4}
+PASS  [chromium/mobile/dark/zh-CN] 当前类别单模型选择器带可用模型  — {"tabs":["主 Agent","kernel","任务分发器","node（节点）","subagent（子代理）"],"selected":"主 Agent","select":"SELECT","options":4}
+PASS  [chromium/mobile/dark/zh-CN] i18n 双语标题齐  — zh="模型（按会话类别）" en="Model (per session class)"
+PASS  [chromium/mobile/dark/zh-CN] 渐进披露摘要双语键齐  — zh="{n} 类会话模型" en="{n} session classes"
+PASS  [chromium/mobile/dark/zh-CN] i18n 双语说明齐  — zh="每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。" en="One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn."
+PASS  [chromium/mobile/dark/zh-CN] i18n 退役键零残留（zh/en 双向）  — {"zhLeak":[],"enLeak":[]}
+PASS  [chromium/mobile/dark/zh-CN] i18n 删键对称（差值 = 存量基线 7）  — zh=2661 en=2654 Δ=7
+PASS  [chromium/mobile/dark/zh-CN] 五类别视图截图落盘  — /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/evidence/small-llm-shots/role-<role>-chromium-mobile-dark.png
+PASS  [chromium/mobile/dark/zh-CN] 零 console error / 零 pageerror
+PASS  [chromium/desktop/dark/en] 通用小 LLM 设置行使用统一行令牌
+PASS  [chromium/desktop/dark/en] 小模型未配置提示回退主模型
+PASS  [chromium/desktop/dark/en] 小模型选择写入独立槽
+PASS  [chromium/desktop/dark/en] 清除小模型配置
+PASS  [chromium/desktop/dark/en] ③ 标题 = 模型（按会话类别） / Model (per session class)  — title="Model (per session class)" disclosure="5 session classes›"
+PASS  [chromium/desktop/dark/en] ④ 摘要显示可配置会话类别数量  — summary="
+        5 session classes›
+      "
+PASS  [chromium/desktop/dark/en] ④ 说明文字在位  — {"text":"Type the /model command to configure one model per session class (main agent / kernel / dispatcher / node / subagent).","h":48,"lh":18,"box":494,"natural":420,"scroll":494}
+PASS  [chromium/desktop/dark/en] ④ 说明在布局内可见（允许按冻结规格换行）  — h=48 box=494 scroll=494
+PASS  [chromium/desktop/dark/en] 五类角色独立切换器齐全  — {"tabs":["Main agent","kernel","Project dispatcher","Node","Subagent"],"selected":"Main agent","select":"SELECT","options":4}
+PASS  [chromium/desktop/dark/en] 当前类别单模型选择器带可用模型  — {"tabs":["Main agent","kernel","Project dispatcher","Node","Subagent"],"selected":"Main agent","select":"SELECT","options":4}
+PASS  [chromium/desktop/dark/en] i18n 双语标题齐  — zh="模型（按会话类别）" en="Model (per session class)"
+PASS  [chromium/desktop/dark/en] 渐进披露摘要双语键齐  — zh="{n} 类会话模型" en="{n} session classes"
+PASS  [chromium/desktop/dark/en] i18n 双语说明齐  — zh="每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。" en="One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn."
+PASS  [chromium/desktop/dark/en] i18n 退役键零残留（zh/en 双向）  — {"zhLeak":[],"enLeak":[]}
+PASS  [chromium/desktop/dark/en] i18n 删键对称（差值 = 存量基线 7）  — zh=2661 en=2654 Δ=7
+PASS  [chromium/desktop/dark/en] 五类别视图截图落盘  — /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/evidence/small-llm-shots/role-<role>-chromium-desktop-dark.png
+PASS  [chromium/desktop/dark/en] 零 console error / 零 pageerror
+PASS  [chromium/mobile/dark/en] 通用小 LLM 设置行使用统一行令牌
+PASS  [chromium/mobile/dark/en] 小模型未配置提示回退主模型
+PASS  [chromium/mobile/dark/en] 小模型选择写入独立槽
+PASS  [chromium/mobile/dark/en] 清除小模型配置
+PASS  [chromium/mobile/dark/en] ③ 标题 = 模型（按会话类别） / Model (per session class)  — title="Model (per session class)" disclosure="5 session classes›"
+PASS  [chromium/mobile/dark/en] ④ 摘要显示可配置会话类别数量  — summary="
+        5 session classes›
+      "
+PASS  [chromium/mobile/dark/en] ④ 说明文字在位  — {"text":"Type the /model command to configure one model per session class (main agent / kernel / dispatcher / node / subagent).","h":71,"lh":19.5,"box":311,"natural":246,"scroll":311}
+PASS  [chromium/mobile/dark/en] ④ 说明在布局内可见（允许按冻结规格换行）  — h=71 box=311 scroll=311
+PASS  [chromium/mobile/dark/en] 五类角色独立切换器齐全  — {"tabs":["Main agent","kernel","Project dispatcher","Node","Subagent"],"selected":"Main agent","select":"SELECT","options":4}
+PASS  [chromium/mobile/dark/en] 当前类别单模型选择器带可用模型  — {"tabs":["Main agent","kernel","Project dispatcher","Node","Subagent"],"selected":"Main agent","select":"SELECT","options":4}
+PASS  [chromium/mobile/dark/en] i18n 双语标题齐  — zh="模型（按会话类别）" en="Model (per session class)"
+PASS  [chromium/mobile/dark/en] 渐进披露摘要双语键齐  — zh="{n} 类会话模型" en="{n} session classes"
+PASS  [chromium/mobile/dark/en] i18n 双语说明齐  — zh="每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。" en="One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn."
+PASS  [chromium/mobile/dark/en] i18n 退役键零残留（zh/en 双向）  — {"zhLeak":[],"enLeak":[]}
+PASS  [chromium/mobile/dark/en] i18n 删键对称（差值 = 存量基线 7）  — zh=2661 en=2654 Δ=7
+PASS  [chromium/mobile/dark/en] 五类别视图截图落盘  — /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/evidence/small-llm-shots/role-<role>-chromium-mobile-dark.png
+PASS  [chromium/mobile/dark/en] 零 console error / 零 pageerror
+PASS  [chromium/desktop/dark/functional] 五类逐一选择、PUT并读回对应槽链  — [{"role":"Nebula","model":{"preferred":"kimi/kimi-for-coding","fallbacks":[]}},{"role":"kernel","model":{"preferred":"kimi/kimi-for-coding","fallbacks":[]}},{"role":"project-dispatcher","model":{"preferred":"kimi/kimi-for-coding","fallbacks":[]}},{"role":"node","model":{"preferred":"kimi/kimi-for-coding","fallbacks":[]}},{"role":"subagent","model":{"preferred":"kimi/kimi-for-coding","fallbacks":[]}}]
+PASS  [chromium/desktop/dark/functional] /model 面板同源面（逐字节同款）同样零退役控件  — {"retired":[0,0,0,0],"rows":1,"drags":0}
+PASS  [chromium/desktop/dark/functional] 零 console error / 零 pageerror
+
+shots → /Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/evidence/small-llm-shots
+
+ALL PASS
