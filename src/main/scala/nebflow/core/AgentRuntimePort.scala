@@ -40,6 +40,8 @@ import java.util.concurrent.atomic.AtomicReference
  */
 trait AgentRuntimePort extends AgentRegistryPort:
 
+  def externalThinkingConfig: IO[ThinkingConfig] = IO.pure(ThinkingConfig())
+
   def executionCommitPort: ExecutionCommitPort = ExecutionCommitPort.unsupported
   def delegateRecoveryMode: Option[String] = None
   def isProtectedExecution(sessionId: String): Boolean = false

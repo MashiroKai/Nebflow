@@ -385,11 +385,19 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     prompt: String,
     resumeSid: Option[String]
   ): IO[Unit] =
-    IO.blocking {
-      val process = buildProcess(ex, spec, prompt, resumeSid).start()
-      sealChildStdin(process)
-      process
-    }.attempt
+    (for
+      thinking <- spec.resources.externalThinkingConfig
+      catalog <- if ex.id == "codex" && thinking.enabled && thinking.effort.nonEmpty && spec.model.exists(_.nonEmpty) then
+        IO.blocking(ExternalReasoning.catalog(spec.binPath, spec.model.get))
+      else IO.pure(None)
+      decision = ExternalReasoning.decide(thinking, spec.model, catalog)
+      _ <- if ex.id == "codex" then appendRaw(sessionId, run, decision.trace) else IO.unit
+      process <- IO.blocking {
+        val process = buildProcess(ex, spec, prompt, resumeSid, Option.when(ex.id == "codex")(decision)).start()
+        sealChildStdin(process)
+        process
+      }
+    yield process).attempt
       .flatMap {
         case Left(error) =>
           settleLocked(
@@ -438,9 +446,11 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     ex: ExternalExecutor.ExternalExecutor,
     spec: SpawnSpec,
     prompt: String,
-    resumeSid: Option[String]
+    resumeSid: Option[String],
+    reasoning: Option[ExternalReasoning.Decision]
   ): java.lang.ProcessBuilder =
-    configureProcessBuilder(spec.binPath, spec.workspace, ex.launchArgsWithModel(prompt, resumeSid, spec.model))
+    val args = ex.launchArgsWithModel(prompt, resumeSid, spec.model)
+    configureProcessBuilder(spec.binPath, spec.workspace, reasoning.fold(args)(ExternalReasoning.argv(args, _)))
 
   /**
    * spawn 构造纯面（spec 可驱动）：argv + cwd + 分管 + 代理环境注入
