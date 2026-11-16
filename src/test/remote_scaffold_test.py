@@ -2,6 +2,8 @@ import importlib.util
 import os
 import multiprocessing
 import io
+import json
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -120,6 +122,9 @@ class RemoteScaffoldTest(unittest.TestCase):
             print('LOCK CONTENDER:', blocked)
             self.assertFalse(blocked['ok'])
             self.assertIn('lock exists', blocked['reason'])
+            self.assertIn('gitignore.lock', blocked['reason'])
+            self.assertIn('owner=', blocked['reason'])
+            self.assertIn('remaining wait', blocked['reason'])
             self.assertEqual(target.read_bytes(), original)
         finally:
             release.set()
@@ -132,6 +137,40 @@ class RemoteScaffoldTest(unittest.TestCase):
         self.assertEqual(target.read_bytes(), original + b'/.nebflow/\n.stand/worktrees/\n.stand/tmp/\n')
         results.close()
         results.join_thread()
+
+    def test_stale_lock_takeover(self):
+        target = self.root / '.gitignore'
+        target.write_bytes(b'user\n')
+        lock = self.root / '.nebflow/locks/gitignore.lock'
+        lock.parent.mkdir(parents=True)
+        timestamp = time.time() - 1200
+        lock.write_text(json.dumps({'pid': 123, 'host': 'old-host', 'timestamp': timestamp, 'operator': 'alice'}))
+        result = scaffold.run(str(self.root), 'test-device')
+        print('STALE RESULT:', result)
+        print('STALE FINAL:', repr(target.read_bytes()))
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['stale_lock_takeover']['host'], 'old-host')
+        self.assertEqual(result['stale_lock_takeover']['timestamp'], timestamp)
+        self.assertEqual(target.read_bytes(), b'user\n/.nebflow/\n.stand/worktrees/\n.stand/tmp/\n')
+        self.assertFalse(lock.exists())
+
+    def test_conflict_retry_backoff(self):
+        target = self.root / '.gitignore'
+        target.write_bytes(b'user\n')
+        calls = []
+        def change_once():
+            calls.append(1)
+            if len(calls) == 1:
+                with target.open('ab') as stream:
+                    stream.write(b'external\n')
+        with patch.object(scaffold.time, 'sleep') as pause:
+            result = scaffold.run(str(self.root), 'test-device', change_once)
+        print('BACKOFF RESULT:', result)
+        print('BACKOFF DELAYS:', [c.args[0] for c in pause.call_args_list])
+        print('BACKOFF FINAL:', repr(target.read_bytes()))
+        self.assertTrue(result['ok'], result)
+        pause.assert_called_once_with(0.2)
+        self.assertEqual(target.read_bytes(), b'user\nexternal\n/.nebflow/\n.stand/worktrees/\n.stand/tmp/\n')
 
     def test_permission_error_report(self):
         with patch.object(scaffold.os, 'makedirs', side_effect=PermissionError('permission denied')):
