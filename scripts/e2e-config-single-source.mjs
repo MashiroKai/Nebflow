@@ -32,8 +32,8 @@ const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GATEWAY_PORT = Number(process.env.NF_CFG_PORT || 8799);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NF_CFG_HOME || join(tmpdir(), `nf-cfg-single-source-${Date.now()}`);
-// Evidence = an EvidenceTemp batch (manifest.json + no .active ⇒ the engine's
-// 7-day TTL sweep can reclaim it); a fully green run deletes the batch outright.
+// Script batches live in the legacy shared namespace and are retained; the
+// engine only sweeps its own process-private evidence root.
 const EVID = process.env.NF_CFG_EVIDENCE || evidenceBatch('stand', 'config-single-source');
 const JAR = (() => {
   const dir = join(REPO, 'target');

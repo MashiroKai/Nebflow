@@ -86,11 +86,7 @@ class EvidenceTempSpec extends FunSuite:
   }
 
   test("sweep is fail-closed: an expired, inactive batch WITHOUT a manifest is never reclaimed") {
-    // Pins the cross-language producer contract: writing into the stand-evidence
-    // namespace without a manifest.json means the sweep can never date (let alone
-    // delete) the batch — fail-closed retention, not reclamation. This is exactly
-    // why the script-side helper (scripts/lib/evidence-batch.mjs) writes a
-    // manifest, and why a namespace writer without one is a defect.
+    // A missing manifest is never eligible even inside the owned root.
     val name = s"unit-failclosed-${java.util.UUID.randomUUID()}"
     val orphan = EvidenceTemp.createBatch(name, "no-manifest")
     val reclaimable = EvidenceTemp.createBatch(name, "with-manifest")
