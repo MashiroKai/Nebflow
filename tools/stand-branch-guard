@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -u
+
+usage() {
+  cat <<'EOF'
+Usage:
+  stand-branch-guard --check-branch BRANCH
+  stand-branch-guard --check-pr-source BRANCH
+  stand-branch-guard --check-push [--allow] [REMOTE URL]
+  stand-branch-guard --help
+
+--check-push reads Git pre-push records from stdin, checks every destination,
+and rejects main and release/* updates or deletions unless --allow is explicit.
+An empty stream means no refs to push. REMOTE and URL are optional hook args.
+Exit codes: 0 allowed, 1 policy violation or malformed hook record,
+2 invalid invocation or missing dependency. --allow is not authorization;
+local checks do not replace server-side protection.
+EOF
+}
+
+error() { printf '%s\n' "$*" >&2; }
+if ! command -v git >/dev/null 2>&1; then error 'git is required'; exit 2; fi
+valid_branch() { git check-ref-format "refs/heads/$1" >/dev/null 2>&1; }
+
+case "${1:-}" in
+  --help) [ "$#" -eq 1 ] || exit 2; usage ;;
+  --check-branch|--check-pr-source)
+    [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+    mode=$1 branch=$2
+    valid_branch "$branch" || { error "Invalid branch name: $branch"; exit 1; }
+    if [ "$mode" = --check-pr-source ]; then
+      case "$branch" in feat/*|bug/*) exit 0;; esac
+    else
+      case "$branch" in main|feat/*|bug/*|achieve/*|release/beta|release/stable) exit 0;; esac
+    fi
+    error "Branch not permitted for $mode: $branch"; exit 1 ;;
+  --check-push)
+    shift
+    allow=false
+    if [ "${1:-}" = --allow ]; then allow=true; shift; fi
+    if [ "$#" -ne 0 ] && [ "$#" -ne 2 ]; then usage >&2; exit 2; fi
+    status=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      local_ref= local_oid= remote_ref= remote_oid= extra=
+      read -r local_ref local_oid remote_ref remote_oid extra <<< "$line"
+      if [ -n "$extra" ] || [ -z "$local_ref" ] ||
+         ! [[ "$local_oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
+         ! [[ "$remote_oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
+         [ "${#local_oid}" -ne "${#remote_oid}" ] ||
+         ! git check-ref-format "$remote_ref" >/dev/null 2>&1; then
+        error 'Malformed pre-push record'; status=1; continue
+      fi
+      case "$remote_ref" in
+        refs/heads/main|refs/heads/release/*)
+          if [ "$allow" = false ]; then
+            error "Protected push destination: $remote_ref"; status=1
+          fi ;;
+      esac
+    done
+    exit "$status" ;;
+  *) usage >&2; exit 2 ;;
+esac

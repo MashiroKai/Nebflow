@@ -256,7 +256,7 @@
 #usage-months {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: calc(var(--ud-cell, 11px) + 2px);
+  grid-auto-columns: var(--ud-cell, 11px);
   gap: 0 var(--ds-space-half);
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
