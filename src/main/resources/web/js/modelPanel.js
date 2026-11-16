@@ -568,8 +568,8 @@ function buildFollowerBlock(container, role, commit) {
 
 /**
  * 节级渲染：Nebula 数据读数失败 ⇒ 台账 #937 同款显式降级面（节级缩小版），
- * 不静默半死。Jev/生图 两组**与本节的 Nebula 状态互不连坐**——降级面之后照常
- * 追加（两面各自读过，失败即隐藏自己那组）。
+ * 不静默半死。生图一组**与本节的 Nebula 状态互不连坐**——降级面之后照常
+ * 追加（该面自己读过，失败即隐藏自己那组）。
  * @param {HTMLElement} container #model-chain-section-body
  */
 let settingsActiveRole = 'Nebula';
@@ -660,7 +660,7 @@ function renderChainSectionBody(container) {
     void putChain(SMALL_LLM, event.target.value ? [event.target.value] : null);
   });
   container.appendChild(row);
-  // Jev / image generation remain separate provider selectors, not conversation roles.
+  // Image generation remains a separate provider selector, not a conversation role.
   const list = document.createElement('div');
   list.className = 'mp-group-list';
   container.appendChild(list);
@@ -691,10 +691,11 @@ export function mountModelChainSection(container) {
   return () => { alive = false; off(); };
 }
 
-// ── Jev / 生图 切换分组（jev-imagegen-align-llm 批 2026-11-02，作者令第 4 条）
-// 契约 §I-3 定案：这两面**不是** agent 模型回退链（没有「角色」，各自是单
-// provider 单 model 的配置节）——/model 里的两个新组是「该配置节当前使用哪个
-// provider」的**指针切换器**，写 `jev.provider` / `imagegen.defaultProvider`。
+// ── 生图 切换分组（jev-imagegen-align-llm 批 2026-11-02，作者令第 4 条；
+// jev-retire 批 2026-11-16 起只剩生图一面——JeV 面随 JeV 全量退役）
+// 契约 §I-3 定案：这一面**不是** agent 模型回退链（没有「角色」，是单
+// provider 单 model 的配置节）——/model 里的组是「该配置节当前使用哪个
+// provider」的**指针切换器**，写 `imagegen.defaultProvider`。
 // 故写通道独立于 PUT /api/agents/:name/model，也**不进** ALL_ROLES / ROLES /
 // FOLLOWER_ROLES / SETTABLE_ROLES（那四行被 roles-hiddenfilter spec 逐字钉死）。
 //
@@ -709,12 +710,11 @@ export function mountModelChainSection(container) {
 // `<details>/<summary>`（不是 <button>），首屏零新增可见高度。
 
 /**
- * 两个「面」的静态描述（读数端点 / 指针字段 / 标题键 / data-group 名）。
+ * 切换「面」的静态描述（读数端点 / 指针字段 / 标题键 / data-group 名）。
  * 单点定义：读数、渲染、写通道三处都从这里取，禁第二份字面量。
- * @type {Array<{group: 'jev'|'imagegen', endpoint: string, pointer: string, titleKey: string}>}
+ * @type {Array<{group: 'imagegen', endpoint: string, pointer: string, titleKey: string}>}
  */
 const SWITCH_FACES = [
-  { group: 'jev', endpoint: '/api/config/jev', pointer: 'provider', titleKey: 'model.groupJev' },
   { group: 'imagegen', endpoint: '/api/config/imagegen', pointer: 'defaultProvider', titleKey: 'model.groupImagegen' },
 ];
 
@@ -722,7 +722,7 @@ const SWITCH_FACES = [
 const /** @type {Map<string, any>} */ faceState = new Map();
 
 /**
- * 读一面的状态投影（GET /api/config/jev 或 /api/config/imagegen）。
+ * 读一面的状态投影（GET /api/config/imagegen）。
  * @param {{endpoint: string}} face
  * @returns {Promise<any|null>} 非 2xx / 非对象 / 异常 ⇒ null
  */
@@ -737,7 +737,7 @@ async function fetchFaceStatus(face) {
   }
 }
 
-/** 并行重读两面投影：一面失败只影响那一面（互不连坐）。 */
+/** 并行重读各面投影：一面失败只影响那一面（互不连坐）。 */
 async function fetchFaceStatuses() {
   const results = await Promise.all(SWITCH_FACES.map(fetchFaceStatus));
   SWITCH_FACES.forEach((face, i) => faceState.set(face.group, results[i]));
@@ -765,7 +765,7 @@ function switchOptionLabel(name, entry) {
 }
 
 /**
- * 一个切换分组的 DOM（Jev / 生图 × /model 面板 / 设置页节 = **同一次产出**，
+ * 一个切换分组的 DOM（生图 × /model 面板 / 设置页节 = **同一次产出**，
  * 差别只在 `opts.collapsible`）。
  *  - 读数失败 ⇒ 返回 null（调用方不渲染该组，面板不炸）；
  *  - 未配置任何 provider ⇒ 组内一行空态提示 + 禁用的 select（绝不造假选项）。
@@ -850,9 +850,9 @@ function buildSwitchGroup(face, opts = {}) {
 }
 
 /**
- * 把两面分组渲染进容器（**两处唯一实现**：/model 面板的 `.mp-groups-slot` 与
+ * 把切换分组渲染进容器（**两处唯一实现**：/model 面板的 `.mp-groups-slot` 与
  * 设置页 `#model-chain-section-body` 尾部的 `.mp-group-list`）。
- * 两面都读不到 ⇒ 容器留空且隐藏（不占位、不炸面）。
+ * 所有面都读不到 ⇒ 容器留空且隐藏（不占位、不炸面）。
  * @param {HTMLElement|null} container
  * @param {{collapsible?: boolean}} [opts]
  */
@@ -878,22 +878,6 @@ function renderSwitchGroups(container, opts = {}) {
 function renderPanelGroups() {
   const slot = /** @type {HTMLElement|null} */ (panelEl?.querySelector('.mp-groups-slot') || null);
   renderSwitchGroups(slot, { collapsible: false });
-}
-
-/**
- * Jev 切换载荷：只写顶层 `provider` 指针 + 该 provider 的 model
- * （ConfigService.setJevSection 是**逐键 merge** ⇒ 其余键与 `providers` 整块原样
- * 保留）。条目无 model ⇒ 不带 model 键（不把顶层 model 写成 null）。
- * @param {string} name
- * @returns {Record<string, string>}
- */
-function jevSwitchPayload(name) {
-  /** @type {Record<string, string>} */
-  const body = { provider: name };
-  const entry = faceProvidersOf(faceState.get('jev'))[name];
-  const model = entry && typeof entry.model === 'string' ? entry.model : '';
-  if (model) body.model = model;
-  return body;
 }
 
 /**
@@ -941,7 +925,7 @@ function imagegenSwitchPayload(name) {
  * @param {string} name 目标 provider 名
  */
 async function applyFaceSwitch(face, name) {
-  const body = face.group === 'jev' ? jevSwitchPayload(name) : imagegenSwitchPayload(name);
+  const body = imagegenSwitchPayload(name);
   try {
     const resp = await fetch(face.endpoint, {
       method: 'PUT',
@@ -1055,7 +1039,7 @@ function renderPanel() {
     buildFollowerBlock(followers, drill, commit);
     const banner = panelEl.querySelector('.mp-banner');
     if (banner) banner.style.display = 'none';
-    // 下钻态只看该角色 —— Jev/生图 分组让位（回列表时 renderPanel 重建）。
+    // 下钻态只看该角色 —— 生图分组让位（回列表时 renderPanel 重建）。
     const groupsSlot = /** @type {HTMLElement|null} */ (panelEl.querySelector('.mp-groups-slot'));
     if (groupsSlot) groupsSlot.style.display = 'none';
     return;
@@ -1063,7 +1047,7 @@ function renderPanel() {
   buildNebulaBlock(nebula, commit);
   FOLLOWER_ROLES.forEach(role => buildFollowerBlock(followers, role, commit));
   renderBannerContent();
-  // Jev / 生图 两个切换分组（与设置页节同一次产出；手机下钻态已让位）。
+  // 生图切换分组（与设置页节同一次产出；手机下钻态已让位）。
   renderPanelGroups();
   // Block visibility = f(mode, fork state) — the shared widget decides which
   // of the banner / follower group is showing.

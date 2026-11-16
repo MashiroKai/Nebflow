@@ -8,21 +8,19 @@ import nebflow.llm.{ModelCandidate, ProviderRegistry, SendMessageParams}
 import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
 
 /**
- * LlmAllocator —— **LLM 兜底分配腿**（jev-plugins 批 #1226；原文「未配 Jev → 新
- * LlmAllocator（单次 LLM JSON 选插件，同语义）」的执行体）.
+ * LlmAllocator —— **小模型分配腿**（jev-retire 批：JeV 腿退役后唯一分配执行体）.
  *
- * == 与判定机同族（裁定⑦背书）==
- * 分配族 = **Jev 优先＋LLM 兜底**，与 #1224 判定机（SmallJudge）机制同一：
- * Jev 未配置**或 Jev 调用失败** ⇒ 单次 LLM 调用（HealthMonitor.SendMessageParams
- * 模式；模型 = 候选链整链遍历——2026-10-29 fail-open 根因修复，见 companion
- * `candidatesFrom`/`chainCall`；JSON 输出）。执行次序由
+ * == 机制 ==
+ * 单次 LLM 调用（HealthMonitor.SendMessageParams 模式；模型 = 候选链整链遍历
+ * ——2026-10-29 fail-open 根因修复，见 companion `candidatesFrom`/`chainCall`；
+ * 候选源 = `SchemePolicy.smallLlmModel()`，未配置回退主模型+WARN）。执行次序由
  * [[PluginAllocatorMachine]] 编排；本件只做「task + 目录 → 集合」的一条腿。
  *
- * == 「同语义」的落法 ==
- * state 模板逐字复用 JevAllocator 的（preamble ＋ brief ＋ 目录块——`private[decision]`
- * 单源引用，禁第二份拷贝）；成员资格规则 = 同一条 R2 主规则（「任务主目的离开该
- * 能力包即无法正确执行 ⇒ needed」），只是问答形态从 JeV 批量问句换成单次 JSON。
- * 目录序、brief 封顶（12000）与 JevAllocator 完全一致。
+ * == state 模板（单源本件）==
+ * preamble ＋ brief ＋ 目录块——常量与 `catalogText` 自 JevAllocator 原文迁入
+ * （jev-retire 批，逐字节不变；preamble 终源在 `PromptCatalog.Classifiers`）；
+ * 成员资格规则 = 同一条 R2 主规则（「任务主目的离开该能力包即无法正确执行
+ * ⇒ needed」），问答形态 = 单次 JSON。目录序、brief 封顶（12000）不变。
  *
  * == 解析纪律 ==
  * 回文取第一个完整 JSON 对象（裸 JSON / ```json 围栏 / 混排皆容——判定机
@@ -30,7 +28,7 @@ import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
  * 剔除**（目录是唯一合法值域——模型幻觉名绝不进注入面），剔除留 WARN；缺键/形错
  * = Failure fail-open（绝不 fabricate 空集成功）。
  *
- * 🔴 提示词为**模型可见文案**——本批最小成稿（§16 待过目，终稿归 N3 提示词批）。
+ * 🔴 提示词为**模型可见文案**——逐字报审（jev-retire 批随件呈作者）。
  */
 final class LlmAllocator(
   /** 单次调用缝（生产 = registry.getAdapter(...).sendMessage；spec 注 canned 回文）。 */
@@ -104,19 +102,19 @@ final class LlmAllocator(
       }
 
   /**
-   * 模型可见 prompt：state 模板（JevAllocator 单源）＋成员资格规则＋JSON 答令。
-   * 🔴 §16 待过目——除 state 模板（既有单源）外的新增文案 = 下两段，逐字报审。
+   * 模型可见 prompt：state 模板（本件单源）＋成员资格规则＋JSON 答令。
+   * 🔴 除 state 模板（既有单源）外的文案 = 下两段，逐字报审。
    */
   private def prompt(taskText: String, catalog: List[CatalogEntry]): String =
     val brief =
-      if taskText.length > JevAllocator.DefaultStateCapChars then taskText.take(JevAllocator.DefaultStateCapChars)
+      if taskText.length > LlmAllocator.DefaultStateCapChars then taskText.take(LlmAllocator.DefaultStateCapChars)
       else taskText
-    s"""${JevAllocator.StatePreamble}
+    s"""${LlmAllocator.StatePreamble}
 
-${JevAllocator.BriefHeader}
+${LlmAllocator.BriefHeader}
 $brief
-${JevAllocator.CatalogHeader}
-${JevAllocator.catalogText(catalog)}
+${LlmAllocator.CatalogHeader}
+${LlmAllocator.catalogText(catalog)}
 
 Choose the capability packages this task NEEDS, applying exactly the membership rule stated above: count a package as needed only when the task's primary purpose cannot be properly executed without the capability that package provides. Multiple packages may be needed; judge each package independently. If no package is needed, return an empty list.
 
@@ -148,6 +146,38 @@ Answer with ONLY a JSON object: {"plugins": ["<package-name>", ...], "reason": "
 end LlmAllocator
 
 object LlmAllocator:
+
+  /**
+   * `state` brief 封顶（原 JevAllocator 同名常量原文迁入）：封顶的是 BRIEF 段，
+   * 不封目录段——迁移前 scorer 的口径（12000 字符），逐值不变。
+   */
+  private[decision] val DefaultStateCapChars: Int = 12000
+
+  /**
+   * state 前导（原 JevAllocator.StatePreamble 原文迁入）——终源在
+   * `PromptCatalog.Classifiers.AllocationStatePreamble`（单行拼接字面量，不得改行）。
+   */
+  private[decision] val StatePreamble: String = nebflow.prompts.PromptCatalog.Classifiers.AllocationStatePreamble
+
+  /** brief 段头（原 JevAllocator 同名常量原文迁入）。 */
+  private[decision] val BriefHeader: String = "=== TASK BRIEF ==="
+
+  /** 目录段头（原 JevAllocator 同名常量原文迁入）。 */
+  private[decision] val CatalogHeader: String = "=== INSTALLED PLUGIN CAPABILITY CATALOG ==="
+
+  /**
+   * 目录渲染为 `### <name>\n<description>` 块、空行相接、保序（原
+   * JevAllocator.catalogText 原文迁入）。双模式批（2026-10-28）增量键增量渲染：
+   * keywords 非空 / useWhen 在 ⇒ 各加一行；缺席 = 块形不变。
+   */
+  private[decision] def catalogText(catalog: List[CatalogEntry]): String =
+    catalog
+      .map { e =>
+        val kw = if e.keywords.isEmpty then "" else s"\nkeywords: ${e.keywords.mkString(", ")}"
+        val uw = e.useWhen.map(w => s"\nuse when: $w").getOrElse("")
+        s"### ${e.name}\n${e.description}$kw$uw"
+      }
+      .mkString("\n\n")
 
   /**
    * 超时/传输类异常判定（缺陷① 重试闸，2026-11-02）：只有「这次调用根本没拿到

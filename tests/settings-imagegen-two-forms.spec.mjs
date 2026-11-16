@@ -58,8 +58,9 @@ test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
 const TYPES = {
-  domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }, { id: 'jev', enabledSwitch: true }],
-  adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview', 'openai-images'], jev: ['typesafe-jev'] },
+  // （jev 域投影已随 JeV 退役摘除——jev-retire 批 2026-11-16。）
+  domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }],
+  adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview', 'openai-images'] },
 };
 
 /**
