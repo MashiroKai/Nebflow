@@ -1,5 +1,6 @@
 package nebflow.core.plugin
 
+import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
