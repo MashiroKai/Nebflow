@@ -880,16 +880,27 @@ function wireGlobals(ctx) {
   ctx.on(document, 'nf:mobile-nav', () => syncGate());
   // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
   ctx.on(document, 'nf-reader-mounted', () => syncSeat());
-  // 收起三通路之一：点击画布空白（#canvas-content 本体 = 无浮层处；卡片内
-  // 点击/文本选择不受扰——panes/浮件自有 target）。
-  const content = document.getElementById('canvas-content');
-  if (content) {
-    ctx.on(content, 'click', (e) => {
-      if (e.target !== content) return;
-      if (isOpen()) close();
-      if (isNoteOpen()) closeNote(); // 记事本批：同一条收起通路
-    });
-  }
+  // Capture sees panel interactions even when the existing panel handlers stop bubbling.
+  // Track all pointers, including those starting inside a panel, so a second finger
+  // cannot dismiss it during a drag, selection, resize, or navigation gesture.
+  const pointers = new Set();
+  ctx.on(document, 'pointerdown', (e) => {
+    const busy = pointers.size > 0 || !e.isPrimary;
+    pointers.add(e.pointerId);
+    if (busy || e.button !== 0 || !el || !isCanvasVisible()) return;
+    const target = e.target;
+    if (!(target instanceof Node)) return;
+    if ([el.dock, el.noteDock, el.fab, el.noteFab].some(node => node.contains(target))) return;
+    // The deck and viewport edges own pointerdown before an axis can be known.
+    const edge = e.pointerType === 'touch' ? 20 : 64;
+    if (e.clientX <= edge || e.clientX >= window.innerWidth - edge ||
+        document.getElementById('deck-layer')?.classList.contains('live')) return;
+    if (isOpen()) close();
+    if (isNoteOpen()) closeNote();
+  }, true);
+  const releasePointer = (e) => { pointers.delete(e.pointerId); };
+  ctx.on(document, 'pointerup', releasePointer, true);
+  ctx.on(document, 'pointercancel', releasePointer, true);
 }
 
 // ── 一次性观察器（应用级生命周期；不问组件连接态）─────────────────────────
