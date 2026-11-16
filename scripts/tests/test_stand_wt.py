@@ -32,12 +32,26 @@ class Lifecycle(unittest.TestCase):
             run('python3', tool, 'new', 'sample', '--branch', 'feat/sample')
             wt = repo / '.stand/worktrees/sample'
             tmp = repo / '.stand/tmp/sample'
+            (tmp / 'MANIFEST.md').unlink()
+            output = run('python3', checker, '--manifest-only', cwd=wt, expect=1)
+            self.assertIn('missing', output)
+            run('python3', tool, 'audit', 'sample')
+            output = run('python3', checker, '--manifest-only', cwd=wt)
+            self.assertIn('Temporary delivery and manifest checked:', output)
             artifact = tmp / 'delivery/batch/changes.md'
             artifact.parent.mkdir(parents=True)
             artifact.write_text('What Why Impact\n')
             run('python3', tool, 'list')
             run('python3', tool, 'audit', 'sample')
             self.assertIn('未入库', (tmp / 'MANIFEST.md').read_text())
+            output = run('python3', checker, '--manifest-only', cwd=wt)
+            self.assertIn('WARNING uncommitted within TTL', output)
+            os.utime(artifact, (1, 1))
+            run('python3', tool, 'audit', 'sample')
+            output = run('python3', checker, '--manifest-only', cwd=wt, expect=1)
+            self.assertIn('delivery/batch/changes.md', output)
+            os.utime(artifact, None)
+            run('python3', tool, 'audit', 'sample')
             (tmp / 'MANIFEST.md').write_text('bad manifest\n')
             run('python3', checker, '--base', base, '--tmp', str(tmp), cwd=wt, expect=1)
             run('python3', tool, 'audit', 'sample')
@@ -62,6 +76,13 @@ class Lifecycle(unittest.TestCase):
             output = run('python3', tool, 'clean', '--dry-run')
             self.assertIn('DRY-RUN', output)
             self.assertTrue(tmp.exists())
+            run('python3', tool, 'clean', '--apply')
+            self.assertFalse(tmp.exists())
+            reports = list((repo / '.stand/tmp/worktree-audit').glob('*/clean-sample.txt'))
+            self.assertEqual(len(reports), 1)
+            self.assertIn('入库 ', reports[0].read_text())
+            self.assertIn(str(tmp.resolve()), reports[0].read_text())
+            self.assertIn('SKIP temporary manifest', run('python3', checker, '--manifest-only'))
 
 
 if __name__ == '__main__':

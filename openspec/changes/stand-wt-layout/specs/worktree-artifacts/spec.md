@@ -15,5 +15,11 @@ The system SHALL regenerate `MANIFEST.md` with one row per artifact including re
 - **THEN** it warns and retains the directory unless force is explicitly supplied.
 
 #### Scenario: Review temporary delivery
-- **WHEN** the delivery checker is supplied a temporary worktree artifact directory
-- **THEN** it validates the manifest and committed status against the reviewed Git tree.
+- **WHEN** the delivery checker runs in a linked worktree, including through the default static profile
+- **THEN** it infers the temporary artifact directory and validates the manifest and committed status against the reviewed Git tree.
+- **AND** missing manifests or uncommitted files older than seven days fail, while younger uncommitted files warn.
+- **AND** a primary checkout explicitly reports that local temporary manifest validation was skipped.
+
+#### Scenario: Record cleanup
+- **WHEN** cleanup applies deletion to eligible temporary directories
+- **THEN** it records the candidate list and each manifest under `.stand/tmp/worktree-audit/<timestamp>/` before deleting anything.

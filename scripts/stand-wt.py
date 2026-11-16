@@ -22,7 +22,7 @@ def root():
 
 
 def name(value):
-    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', value) or value in ('.', '..'):
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', value) or value in ('.', '..', 'worktree-audit'):
         raise ValueError('invalid worktree name')
     return value
 
@@ -111,7 +111,7 @@ def main():
     elif args.command == 'audit':
         dirs = [tmp / args.name] if args.name else sorted(tmp.iterdir()) if tmp.exists() else []
         for directory in dirs:
-            if directory.is_dir() and not directory.is_symlink():
+            if directory.name != 'worktree-audit' and directory.is_dir() and not directory.is_symlink():
                 uncommitted, committed = audit(project, directory.name)
                 print(f'{directory.name}: committed={committed} uncommitted={uncommitted}')
     else:
@@ -119,7 +119,7 @@ def main():
             raise ValueError('invalid TTL or conflicting apply/dry-run')
         candidates = []
         for directory in sorted(tmp.iterdir()) if tmp.exists() else []:
-            if directory.is_symlink() or not directory.is_dir():
+            if directory.name == 'worktree-audit' or directory.is_symlink() or not directory.is_dir():
                 continue
             # Exclude only the generated root manifest, not artifacts of the same name.
             entries = [directory] + [p for p in directory.rglob('*') if p != directory / 'MANIFEST.md']
@@ -134,7 +134,19 @@ def main():
             candidates.append(directory)
         for directory in candidates:
             print(f'{"DELETE" if args.apply else "DRY-RUN"} {directory}')
-        if args.apply:
+        if args.apply and candidates:
+            audit_base = tmp / 'worktree-audit'
+            if audit_base.is_symlink():
+                raise ValueError(f'unsafe audit directory: {audit_base}')
+            audit_base.mkdir(exist_ok=True)
+            stamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+            audit_dir = audit_base / stamp
+            audit_dir.mkdir()
+            listing = '\n'.join(str(p) for p in candidates)
+            for directory in candidates:
+                report = audit_dir / f'clean-{directory.name}.txt'
+                report.write_text(f'Candidates:\n{listing}\n\nManifest for {directory}:\n' + (directory / 'MANIFEST.md').read_text(encoding='utf-8'), encoding='utf-8')
+                print(f'AUDIT {report}')
             for directory in candidates:
                 shutil.rmtree(directory)
     return 0

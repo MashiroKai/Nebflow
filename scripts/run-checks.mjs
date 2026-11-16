@@ -55,6 +55,8 @@ export const CHECKS = [
       'scripts/check-js-types.mjs', 'scripts/run-checks.mjs', 'scripts/check-sdd.mjs', 'scripts/check-openspec.mjs', 'scripts/tests/'] },
   { name: 'script-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, '--test', ...scriptTests] },
+  { name: 'worktree-manifest', profiles: ['static'], timeoutMs: 120_000,
+    argv: ['python3', '-B', 'scripts/check-delivery.py', '--manifest-only'] },
   { name: 'cli-logo', profiles: ['static'], timeoutMs: 150_000,
     argv: ['python3', '-B', 'scripts/check-logo-matrix.py'] },
   { name: 'cli-logo-tests', profiles: ['static'], timeoutMs: 120_000,
