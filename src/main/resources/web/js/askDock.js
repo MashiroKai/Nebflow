@@ -90,6 +90,7 @@
 //     逐字节同义。ctx.on 登记的全局监听随断开自动拆、重连自动挂回。
 
 import { key } from './branding.js';
+import { askBubbleClass, chatComposerClass } from './chatUi.js';
 import state from './state.js';
 import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
 import { activeCanvasEntry } from './canvas.js';
@@ -390,7 +391,7 @@ function buildDock() {
     // 输入条 = 毛玻璃唯一工具类 `.nf-glass`（glass-unify 批）：材质/描边/内高光/
     // 模糊全部来自 stand-tokens.css 的 --nf-glass-* 单源，本组件零本地材质声明。
     // `ask-input` 身份类保留（既有 spec 选择器），它在本文件只承载几何与焦点态。
-    h('div', { class: 'ask-input nf-glass' }, [input, send, stop]),
+    h('div', { class: chatComposerClass('ask') }, [input, send, stop]),
   ]);
 }
 
@@ -1536,7 +1537,7 @@ function render() {
     // 另造一套等效样式」）。材质/描边/内高光/模糊全部来自 --nf-glass-* 单源，
     // 本组件零本地材质声明；`ask-bub` / `user` / `ai` 三个身份类只承载几何与
     // 语义色（气泡最大宽度、圆角、user 侧 sapphire tint）。
-    const b = h('div', { class: 'ask-bub nf-glass ' + (m.role === 'user' ? 'user' : 'ai') });
+    const b = h('div', { class: askBubbleClass(m.role) });
     // ① 修复批 2026-10-31：ai 族走主会话渲染腿（markdown 全套）；user 族
     // 维持 textContent（用户输入纯文本面，与主会话一致）。渲染腿复用不重写。
     // ⚠ **本模块唯一的 HTML 落点 = markdown 渲染腿**（renderMarkdownWithMath 的

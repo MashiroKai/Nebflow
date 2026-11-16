@@ -19,6 +19,7 @@ export const CHECKS = [
   nodeCheck('css-structure', 'check-css-structure'),
   nodeCheck('design-tokens', 'check-design-tokens'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
+  nodeCheck('chat-ui', 'check-chat-ui'),
   nodeCheck('bubble-side', 'check-bubble-side'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),

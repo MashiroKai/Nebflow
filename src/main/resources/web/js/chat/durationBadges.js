@@ -4,6 +4,7 @@ import { t } from '../i18n.js';
 // 时钟 formatHm 语义，更早按本地日历日加日期层）——A 侧 chat.js 本簇改动随簇迁入。
 import { formatFooterTime, bindTimeToggle } from '../timeFormat.js';
 import { createMsgCopyButton } from '../utils.js';
+import { chatFooter, chatFooterDivider, chatFooterTime } from '../chatUi.js';
 
 /**
  * Format milliseconds into a human-readable duration string.
@@ -74,11 +75,9 @@ export function pickThinkingPhrase(durationMs, seed) {
  * @returns {HTMLElement}
  */
 export function createMsgFooterBadge(timestamp, copyText) {
-  const badge = document.createElement('div');
-  badge.className = 'duration-badge';
+  const badge = chatFooter();
   if (timestamp && timestamp > 0) {
-    const timeSpan = document.createElement('span');
-    timeSpan.className = 'duration-badge-time';
+    const timeSpan = chatFooterTime();
     // data-ts = 搜索跳转锚点（chatSearch.js#scrollToMessage 消费，容器级挂载点同用此属性）；
     // data-ts-text = 时制刷新的显式声明（纯时钟文本节点，见 timeFormat.js 契约）；
     // data-ts-text-format="day" = 本节点文本走分层 footer label（formatFooterTime，
@@ -92,8 +91,7 @@ export function createMsgFooterBadge(timestamp, copyText) {
   }
   if (copyText) {
     if (badge.childElementCount > 0) {
-      const div = document.createElement('span');
-      div.className = 'duration-badge-divider';
+      const div = chatFooterDivider();
       badge.appendChild(div);
     }
     badge.appendChild(createMsgCopyButton(copyText));
@@ -120,8 +118,7 @@ export function createMsgFooterBadge(timestamp, copyText) {
  * @returns {HTMLElement}
  */
 export function createDurationBadgeElement(durationMs, model, seed, timestamp, copyText) {
-  const badge = document.createElement('div');
-  badge.className = 'duration-badge';
+  const badge = chatFooter();
   // Metadata for #346 summary reconstruction (not rendered — footer is
   // time + copy only, v1.2 ruling).
   badge.dataset.nfPhrase = pickThinkingPhrase(durationMs, seed);
@@ -132,15 +129,13 @@ export function createDurationBadgeElement(durationMs, model, seed, timestamp, c
   // copy only; the old leading divider was a leftover of "phrase | time").
   const appendDivider = () => {
     if (badge.childElementCount === 0) return;
-    const div = document.createElement('span');
-    div.className = 'duration-badge-divider';
+    const div = chatFooterDivider();
     badge.appendChild(div);
   };
 
   if (timestamp) {
     appendDivider();
-    const timeSpan = document.createElement('span');
-    timeSpan.className = 'duration-badge-time';
+    const timeSpan = chatFooterTime();
     // data-ts = jump anchor (chatSearch.js#scrollToMessage); data-ts-text = refresh target;
     // data-ts-text-format="day" = layered footer label (formatFooterTime —
     // footer-time batch 2026-10-06), same formatter on 12/24 in-place refresh.
