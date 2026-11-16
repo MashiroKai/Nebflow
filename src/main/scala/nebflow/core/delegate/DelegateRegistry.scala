@@ -269,7 +269,8 @@ object DelegateRegistry:
      * ——终态邮箱幂等键 `<id>#<roundId>` 即既有代际机制）。缺省 None / ""：旧盘面
      * 照常解码（无轮次形态，行为与升级前兼容）。
      */
-    roundId: Option[String] = None
+    roundId: Option[String] = None,
+    externalModel: Option[String] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -801,6 +802,7 @@ object DelegateRegistry:
       seatSnapshotDirty <- c.get[Option[List[String]]]("seatSnapshotDirty")
       roundNo <- c.get[Option[Int]]("roundNo")
       roundId <- c.get[Option[String]]("roundId")
+      externalModel <- c.get[Option[String]]("externalModel")
     yield Record(
       id,
       executor,
@@ -838,7 +840,8 @@ object DelegateRegistry:
       seatSnapshotSha,
       seatSnapshotDirty,
       roundNo,
-      roundId
+      roundId,
+      externalModel
     )
 
   /**

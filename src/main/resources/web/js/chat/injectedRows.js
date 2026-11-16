@@ -431,6 +431,33 @@ function buildScheduleCardRow(row, text, timestamp, deferFn, schedule) {
   return row;
 }
 
+/** ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址 chip（纯 DOM builder——
+ *  后台代理面板 bg-task-addr 同形语义：视觉截断、data-ask-addr 携全文、点击复制
+ *  + stopPropagation（不触发标签行的折叠切换）、一瞬 is-copied 着色）。
+ *  地址逐字来自引擎字段（帧/落盘行 `askAddress`）——本文件零推导、零反解析。 */
+function askMailAddrPart(addr) {
+  const full = String(addr || '').trim();
+  if (!full) return null;
+  const chip = document.createElement('span');
+  chip.className = 'ask-mail-addr';
+  chip.setAttribute('role', 'button');
+  chip.setAttribute('tabindex', '-1');
+  chip.dataset.askAddr = full;
+  chip.title = full;
+  chip.textContent = full;
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    try {
+      const p = navigator.clipboard && navigator.clipboard.writeText(chip.dataset.askAddr);
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) { /* 无剪贴板面：chip 文本仍可手选 */ }
+    chip.classList.add('is-copied');
+    setTimeout(() => chip.classList.remove('is-copied'), 1200);
+  });
+  chip.addEventListener('keydown', (e) => e.stopPropagation());
+  return chip;
+}
+
 /** Build a row element for an injected message (pure builder — no DOM append,
  *  no scroll). Shared by live render (renderInjectedBubble) and history
  *  restore (persistence.js) so both paths render identically.
@@ -474,8 +501,13 @@ function buildScheduleCardRow(row, text, timestamp, deferFn, schedule) {
  *  receiverSid (optional, 来源链批 2026-11-01 19:23 作者令): 收件会话 id——完工卡
  *  归属链的上层段判据：收件会话是 delegate（有批次短名）⇒ 该 delegate 名即
  *  「挂在谁下面」的上层段（pill 首段前插「父短名 · DELEGATE · INTERNAL」形）；
- *  根会话收件 = 无上层链（作者令「不造空段」）⇒ 缺省/空 = 卡面逐字节不变。 */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges, schedule, receiverSid) {
+ *  根会话收件 = 无上层链（作者令「不造空段」）⇒ 缺省/空 = 卡面逐字节不变。
+ *  askAddress (optional, ask-mail 批 2026-11-16，作者令「给 ASK · INJECTED 加上
+ *  地址，使编排方可通过 Mail 续聊」): ask 会话的 Mail 续聊地址（`ask:<会话id>`，
+ *  引擎字段是唯一真源——面板零推导，禁从正文反解析）。在场 ⇒ 标签行尾渲染
+ *  **可复制**地址 chip（.ask-mail-addr，后台代理面板 bg-task-addr 先例：点击复制
+ *  + stopPropagation，不触发折叠切换）；缺席 ⇒ 逐字节不变（旧行/非 ask 腿）。 */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges, schedule, receiverSid, askAddress) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -706,6 +738,10 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   } else {
     label.appendChild(document.createTextNode(renderedLabel));
     appendDeliveryBadge(label, delivery);
+    // ask-mail 批（2026-11-16）：ask 会话的续聊地址 chip（在场才渲染；引擎字段
+    // 唯一真源）。挂标签行尾、停冒泡——点击复制不触发折叠切换。
+    const addrChip = askMailAddrPart(askAddress);
+    if (addrChip) label.appendChild(addrChip);
     bubble.appendChild(label);
     // 外部注入统一通道批（2026-11-05）：折叠态也要「看得到是什么」。
     // 来源行下追加**一句话摘要**（正文首条有效行，逐字取自注入内容）；
@@ -755,11 +791,12 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
  *  near-bottom judgement (utils.js shouldFollowBottom) so a notification that
  *  arrives while the user is scrolled up stays put and raises the ↓ N pill.
  *  fileChanges (optional): delegate 终态 diff 载荷透传（bug #58 修）——live 帧
- *  与历史恢复（persistence.js）走同一 builder，渲染逐字同构。 */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header, fileChanges, schedule) {
+ *  与历史恢复（persistence.js）走同一 builder，渲染逐字同构。
+ *  askAddress (optional, ask-mail 批 2026-11-16)：ask 续聊地址透传（同上同构）。 */
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header, fileChanges, schedule, askAddress) {
   const chat = activeView.dom.chat;
   // 来源链批（2026-11-01 19:23）：收件会话 id 随 builder 下传（完工卡归属链上层段）。
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges, schedule, activeView?.sessionId);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges, schedule, activeView?.sessionId, askAddress);
   // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此：
   // 纯 doc-order 追加，等价语义、同为唯一追加语义（禁反向 import chat.js 成环）。
   chat.append(row);

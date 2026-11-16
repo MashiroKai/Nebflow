@@ -122,6 +122,8 @@ import { define } from './component.js';
 export const INTERNAL_CLASSES = [
   'ask-fab', 'ask-dock', 'ask-col', 'ask-colwrap', 'ask-input',
   'ask-bub', 'ask-send', 'ask-stop', 'ask-sess-dot',
+  // ask-mail 批（2026-11-16）：dock 内的会话地址行（可复制）。
+  'ask-addr',
   // 记事本批（2026-11-05）：同一组件的第二对节点，同样只在本模块内建/查。
   'note-fab', 'note-dock', 'note-body',
   // canvas-ask-restricted-edit ③（2026-11-16）：待审编辑提案 diff 卡一族
@@ -391,6 +393,23 @@ function buildDock() {
   }, [ICONS.stop()]);
 
   return h('div', { class: 'ask-dock closed' }, [
+    // ask-mail 批（2026-11-16）：会话地址行——ask 会话的 Mail 可达地址
+    // （`ask:<sessionId>`，编排方续聊通道），面板头部右贴（气泡列之上的留白带，
+    // 列内容底锚，顶部常年空）。⚠ **座位刻意在 colwrap 之前**：colwrap 的负
+    // margin-bottom（气泡穿入批）把「下一个兄弟」当作被穿入面——行若插在
+    // colwrap 与输入条之间，穿入几何（输入条顶边−最新气泡底边 = 列缝）会被
+    // 本行顶开，canvas-ask-legibility 的五档机械断言即红。文本由 syncAddrRow
+    // 按当前会话注水（引擎 askState 帧 mailAddress 字段优先，本地同式派生
+    // 兜底），点击复制（bgAgents .bg-task-addr chip 同式）。hidden 起手：无会话
+    // 时整行不占位。
+    h('div', {
+      class: 'ask-addr',
+      'data-ask-addr-row': true,
+      role: 'button',
+      tabindex: '-1',
+      hidden: '',
+      title: tt('点击复制会话地址（Mail 续聊用）', 'Click to copy the session address (Mail follow-ups)'),
+    }, [h('span', { class: 'ask-addr-text' })]),
     handle,
     // main（ask-fade-content-opacity 批）已把 .ask-veil 遮罩条退役——渐隐归
     // .ask-col 的 mask-image，本组件不复活任何渐隐元素。
@@ -503,6 +522,8 @@ function ensureInner() {
     noteDock,
     col: dock.querySelector('.ask-col'),
     colwrap: dock.querySelector('.ask-colwrap'),
+    // ask-mail 批（2026-11-16）：会话地址行（buildDock 内 data-ask-addr-row）。
+    addr: dock.querySelector('[data-ask-addr-row]'),
     inputRow: dock.querySelector('.ask-input'),
     resize: askSurface.handle,
     input: dock.querySelector('textarea'),
@@ -842,6 +863,21 @@ function wireElements() {
   });
   el.send.addEventListener('click', () => submit());
   el.stop.addEventListener('click', () => stopAsk());
+  // ask-mail 批（2026-11-16）：地址行点击 = 复制**完整**地址（视觉可截断，复制
+  // 绝不截断——dataset.askAddr 是 syncAddrRow 注的全文）。停冒泡：dock 本体的点击
+  // 防外溢腿不受影响；复制成功给一瞬 is-copied 着色（bgAgents 地址 chip 同式，
+  // 不弹 toast——复制是最轻的动作，反馈不打断）。
+  el.addr.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const full = el.addr.dataset.askAddr || '';
+    if (!full) return;
+    try {
+      const p = navigator.clipboard && navigator.clipboard.writeText(full);
+      if (p && p.catch) p.catch(() => {});
+    } catch { /* 老引擎/无权限：粘不到剪贴板也不报错，行文本仍可手选 */ }
+    el.addr.classList.add('is-copied');
+    setTimeout(() => el.addr.classList.remove('is-copied'), 1200);
+  });
   // canvas-ask-restricted-edit ③：diff 卡 Accept/Reject（委托到列容器——卡随
   // render() 重建，直挂监听会漏；同面选择器 .ask-edit-* 见 INTERNAL_CLASSES）。
   el.col.addEventListener('click', (e) => {
@@ -1581,9 +1617,33 @@ async function syncNoteForFile() {
 // ── 渲染（升腾入场 + 顶带 12px 内容级渐隐由 CSS mask 承担）────────────────
 // glass-unify 批 2026-11-05：原「按龄渐隐」腿已退役（见下方 render() 内注释）。
 
+/**
+ * ask-mail 批（2026-11-16）：按当前会话注水地址行（render() 每拍同步）。
+ * 地址单源 = 引擎 askState 帧的 mailAddress 字段；本地兜底 `'ask:' + sid` 与
+ * 引擎派生**同式同源**（ensureSid 的 sha256 前 8 hex —— 两端一条公式，非猜测）。
+ * 无会话/无 sid ⇒ 整行 hidden（不占位）。
+ */
+function syncAddrRow() {
+  if (!el) return;
+  const s = activeSession();
+  const addr = s ? (s.mailAddress || (s.sid ? 'ask:' + s.sid : '')) : '';
+  if (!addr) {
+    el.addr.hidden = true;
+    delete el.addr.dataset.askAddr;
+    return;
+  }
+  // data-ask-addr：与注入泡 chip（injectedRows .ask-mail-addr）同一可复制令牌键名。
+  el.addr.dataset.askAddr = addr;
+  const span = el.addr.querySelector('.ask-addr-text');
+  if (span) span.textContent = addr;
+  el.addr.title = addr + ' · ' + tt('点击复制', 'Click to copy');
+  el.addr.hidden = false;
+}
+
 function render() {
   if (!el) return;
   const s = activeSession();
+  syncAddrRow(); // ask-mail 批：地址行随每拍渲染同步（含「无会话⇒隐藏」腿）
   el.col.textContent = '';
   if (!s) return;
   // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不
@@ -1867,6 +1927,9 @@ function consumeFrame(msg) {
     case 'askState': {
       entry.sid = msg.sessionId || entry.sid;
       entry.fileName = msg.fileName || entry.fileName;
+      // ask-mail 批（2026-11-16）：引擎下发的会话 Mail 地址（`ask:<sid>` 逐字，
+      // 与本地派生同式——引擎字段优先，仅存内存不落盘：每帧 askState 都重发）。
+      if (typeof msg.mailAddress === 'string' && msg.mailAddress) entry.mailAddress = msg.mailAddress;
       // ④ 双泡修复批伴随守卫：submit 先 askOpen 后 askQuestion，回放帧快照可能
       // 早于本拍提问落账——整表替换会把刚发的 user 泡抹掉（视觉丢问）。
       // 持久批 2026-11-01 升级为「永不缩水」合并（头注动机链）：ask 转录是

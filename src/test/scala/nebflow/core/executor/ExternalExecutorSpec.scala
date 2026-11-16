@@ -42,6 +42,50 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     try f(dir)
     finally os.remove.all(dir)
 
+  test("external model arguments support fresh and resumed sessions without affecting unsupported CLI") {
+    for resume <- List(None, Some("session-id")) do
+      val claude = ExternalExecutor.ClaudeCode.launchArgsWithModel("task", resume, Some("sonnet"))
+      assert(claude.containsSlice(List("--model", "sonnet")))
+      val codex = ExternalExecutor.Codex.launchArgsWithModel("task", resume, Some("example-model"))
+      assert(codex.containsSlice(List("--model", "example-model")))
+      assertEquals(
+        ExternalExecutor.ZCode.launchArgsWithModel("task", resume, Some("ignored")),
+        ExternalExecutor.ZCode.launchArgs("task", resume)
+      )
+      assertEquals(
+        ExternalExecutor.Codex.launchArgsWithModel("task", resume, None),
+        ExternalExecutor.Codex.launchArgs("task", resume)
+      )
+  }
+
+  test("executor models are hot read and independently updated") {
+    withTempDataRoot { _ =>
+      val config = nebflow.service.ConfigService
+      assertEquals(config.setExecutorModel("claude-code", "sonnet").unsafeRunSync(), Right(()))
+      assertEquals(config.setExecutorModel("codex", "model-b").unsafeRunSync(), Right(()))
+      assertEquals(ExecutorRegistry.configuredModel("claude-code"), Some("sonnet"))
+      assertEquals(ExecutorRegistry.configuredModel("codex"), Some("model-b"))
+      assertEquals(config.setExecutorModel("claude-code", "").unsafeRunSync(), Right(()))
+      assertEquals(ExecutorRegistry.configuredModel("claude-code"), None)
+      assertEquals(ExecutorRegistry.configuredModel("codex"), Some("model-b"))
+      assert(config.setExecutorModel("zcode", "model").unsafeRunSync().isLeft)
+    }
+  }
+
+  test("external model selection round trips through delegate records") {
+    val record = nebflow.core.delegate.DelegateRegistry.Record(
+      "external-codex-x", "codex", "/tmp", None, None, "parent", "title", 1L, externalModel = Some("model-a")
+    )
+    assertEquals(
+      record.asJson.as[nebflow.core.delegate.DelegateRegistry.Record].toOption.flatMap(_.externalModel),
+      Some("model-a")
+    )
+    assertEquals(
+      record.copy(externalModel = None).asJson.as[nebflow.core.delegate.DelegateRegistry.Record].toOption.flatMap(_.externalModel),
+      None
+    )
+  }
+
   // ── claude-code 适配器 fixture 回放 ─────────────────────────────
 
   test("claude-code: init → Start(cliSessionId), assistant blocks → Text/Tool, result → Final") {

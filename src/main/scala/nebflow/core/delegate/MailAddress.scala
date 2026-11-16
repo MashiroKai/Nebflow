@@ -27,6 +27,10 @@ import nebflow.actor.AgentKind
  *  - `node:<节点id或名>`：Project 节点会话（session id 前缀 `node-`）。节点会话 id 是
  *    `node-<uuid>`，**不含节点 id**——ref 只能取自注册表记录的 displayName（节点名，
  *    注册点写入，`Mail` 的 node 腿按 id 或名双寻址），故 nodeName 缺席 ⇒ None。
+ *  - `ask:<sessionId>`：canvas ask 会话（session id 前缀 `ask-`，ask-mail 批
+ *    2026-11-16）。会话身份归 ask 绑定表（`AskSessionRegistry`）——Mail 侧按
+ *    id 直达（live 注入 / 不 live 落会话邮箱），授权面 root-only（与 delegate
+ *    续聊同面）。
  */
 object MailAddress:
 
@@ -35,17 +39,29 @@ object MailAddress:
   val KernelPrefix = "kernel:"
   val NodePrefix = "node:"
 
+  /**
+   * canvas ask 会话地址前缀（ask-mail 批 2026-11-16，作者令「给 ASK · INJECTED 加上
+   * 地址，使编排方可通过 Mail 续聊」）：`ask:` + **完整会话 id**（即 `ask:ask-<8hex>`，
+   * 前缀自叠与 `kernel:delegate-kernel-<uuid>` 同形——「前缀 + sessionId 零变换」
+   * 单一规则，不造第二种 id 形）。
+   */
+  val AskPrefix = "ask:"
+
   /** kernel 实例会话 id 前缀（判据同 `AgentActor.isKernelSession`）。 */
   val KernelSessionPrefix = "delegate-kernel-"
 
   /** Project 节点会话 id 前缀（权威常量在 NodeEngine，此处只做别名）。 */
   val NodeSessionPrefix: String = nebflow.core.project.NodeEngine.SessionPrefix
 
-  /** 地址种类（= Mail 的三条续聊/投递腿）。 */
+  /** ask 会话 id 前缀（权威常量在 AskSessions，此处只做别名——mail 面单源纪律）。 */
+  val AskSessionPrefix: String = nebflow.core.ask.AskSessions.Prefix
+
+  /** 地址种类（= Mail 的续聊/投递腿）。 */
   enum Form(val prefix: String, val wire: String):
     case Delegate extends Form(DelegatePrefix, "delegate")
     case Kernel extends Form(KernelPrefix, "kernel")
     case Node extends Form(NodePrefix, "node")
+    case Ask extends Form(AskPrefix, "ask")
 
   /** 解析结果：种类 + 目标 ref（前缀之后的部分，逐字保留）。 */
   final case class Parsed(form: Form, target: String):
@@ -63,6 +79,7 @@ object MailAddress:
       if a.startsWith(DelegatePrefix) then nonEmpty(a.stripPrefix(DelegatePrefix)).map(Parsed(Form.Delegate, _))
       else if a.startsWith(KernelPrefix) then nonEmpty(a.stripPrefix(KernelPrefix)).map(Parsed(Form.Kernel, _))
       else if a.startsWith(NodePrefix) then nonEmpty(a.stripPrefix(NodePrefix)).map(Parsed(Form.Node, _))
+      else if a.startsWith(AskPrefix) then nonEmpty(a.stripPrefix(AskPrefix)).map(Parsed(Form.Ask, _))
       else None
     }
 
@@ -76,6 +93,7 @@ object MailAddress:
   def of(kind: AgentKind, sessionId: String, nodeName: Option[String] = None): Option[String] =
     nonEmpty(sessionId).flatMap { sid =>
       if sid.startsWith(KernelSessionPrefix) then Some(KernelPrefix + sid)
+      else if sid.startsWith(AskSessionPrefix) then Some(AskPrefix + sid)
       else if kind == AgentKind.Delegate then Some(DelegatePrefix + sid)
       else if kind == AgentKind.Flow && sid.startsWith(NodeSessionPrefix) then
         nodeName.flatMap(nonEmpty).map(NodePrefix + _)

@@ -55,6 +55,16 @@ object MailTool extends Tool:
   //                          project trigger face (task dispatching is Delegate's entry;
   //                          Mail communicates only)
   //   MAIL_TASK_PARAM_UNSUPPORTED  a stale caller still sends `task=` => explicit refusal
+  //   MAIL_ASK_EXCLUSIVE     the `ask:<id>` continuation leg is root-only (the same
+  //                          authorization face as the delegate continuation leg):
+  //                          every non-root caller is refused
+  //   MAIL_ASK_NOT_FOUND     no ask file binding exists for the id => explicit
+  //                          refusal (never a silent drop)
+  //   MAIL_ASK_NOT_ROUTABLE  the binding exists but its bound file is gone or no
+  //                          longer askable (md/html/ebook) — the session can no
+  //                          longer wake => explicit refusal
+  //   MAIL_ASK_UNAVAILABLE   this instance has no ask face mounted (ask services
+  //                          not installed) => explicit refusal
   //                          (fail-closed tombstone, same shape as the `delivery` /
   //                          `device` tombstones — the schema key is deleted and the
   //                          engine does zero JSON-Schema validation => the stale key
@@ -67,6 +77,10 @@ object MailTool extends Tool:
   val ErrKernelSpawnRetired: String = "MAIL_KERNEL_SPAWN_UNSUPPORTED"
   val ErrProjectTriggerUnsupported: String = "MAIL_PROJECT_TRIGGER_UNSUPPORTED"
   val ErrTaskParamUnsupported: String = "MAIL_TASK_PARAM_UNSUPPORTED"
+  val ErrAskExclusive: String = "MAIL_ASK_EXCLUSIVE"
+  val ErrAskNotFound: String = "MAIL_ASK_NOT_FOUND"
+  val ErrAskNotRoutable: String = "MAIL_ASK_NOT_ROUTABLE"
+  val ErrAskUnavailable: String = "MAIL_ASK_UNAVAILABLE"
 
   /** Project-address refusal (pure constructor, for direct spec testing). */
   private[tools] def projectTriggerUnsupportedError(address: String): ToolError =
@@ -146,6 +160,40 @@ object MailTool extends Tool:
       s"[$ErrKernelNotLive] No live kernel instance 'kernel:$id' — kernel instances are one-shot Delegate " +
         "sessions: when an instance finishes, its result is delivered back to your session and its address " +
         "stops being routable. Nothing was sent. Start a new instance with Delegate(task=...)."
+    )
+
+  // ── ask leg（ask-mail 批 2026-11-16）：`ask:<id>` 续聊腿的拒绝词族 ──────────
+
+  /** Ask-leg unauthorized-caller refusal (root-only — the delegate continuation face). */
+  private[tools] def askExclusiveError(address: String, role: String): ToolError =
+    ToolError(
+      s"[$ErrAskExclusive] The ask address leg is EXCLUSIVE to the Nebula root session: dispatchers, " +
+        "delegates and nodes cannot continue an ask session. " +
+        s"Nothing was sent (address='$address', your role: $role). Route the question through Nebula instead — " +
+        "mail your report to Nebula and let it ask."
+    )
+
+  /** No ask file binding for the id (fail-closed; the address stops being routable). */
+  private[tools] def askNotFoundError(id: String): ToolError =
+    ToolError(
+      s"[$ErrAskNotFound] No ask session '$id' on record — an ask address is only routable while its " +
+        "file binding exists (the address the ask panel / handoff receipt carried is authoritative; check " +
+        "it verbatim). Nothing was sent."
+    )
+
+  /** Binding exists but the bound file is gone / no longer askable (the session can no longer wake). */
+  private[tools] def askNotRoutableError(id: String, fileName: String): ToolError =
+    ToolError(
+      s"[$ErrAskNotRoutable] Ask session '$id' is no longer routable — its bound file '$fileName' is " +
+        "missing or no longer an askable file type, so the session can never wake again. Nothing was " +
+        "sent (nothing was queued either). Ask the file again from the canvas instead."
+    )
+
+  /** This instance has no ask face mounted (ask services not installed). */
+  private[tools] def askUnavailableError(id: String): ToolError =
+    ToolError(
+      s"[$ErrAskUnavailable] Ask sessions are not available on this instance (no ask face mounted), " +
+        s"so 'ask:$id' cannot be routed. Nothing was sent."
     )
 
   // (W1 shim note: the Q5 address-face description subsystem below already
@@ -382,7 +430,9 @@ outcomes are an explicit refusal; cancellation requires a new Delegate request.
   registered delegate chain (its chain-registered id OR name). Project addresses
   (`project:<name>` or a bare mounted project name) are NOT Mail targets — task
   dispatching is Delegate's face (MAIL_PROJECT_TRIGGER_UNSUPPORTED). No bare
-  `kernel` address and no self-address.
+  `kernel` address and no self-address. `ask:<sessionId>` — continue a canvas
+  file-QA (ask) session (the ask panel / handoff receipt carries the address;
+  root-only, the same face as the delegate leg).
 
 ## Kernel continuation leg (Nebula-exclusive)
 Only the Nebula root session may mail a kernel — a dispatcher, team agent or node that
@@ -488,7 +538,7 @@ Delivery follows recipient state (there is no delivery parameter to set):
     "## Address face (role-scoped — an address outside your face is an explicit error)\n"
 
   private[nebflow] val AddressFaceRoot: String =
-    "- **Nebula (root)**: `delegate:<id>` — continue THAT live Delegate-started session\n  (the Delegate receipt carries its id; starting one is Delegate's job, never\n  Mail's); `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a\n  registered delegate chain (its chain-registered id OR name). Project addresses\n  (`project:<name>` or a bare mounted project name) are NOT Mail targets — task\n  dispatching is Delegate's face (MAIL_PROJECT_TRIGGER_UNSUPPORTED). No bare\n  `kernel` address and no self-address.\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not\nSTART kernels: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.\n\n"
+    "- **Nebula (root)**: `delegate:<id>` — continue THAT live Delegate-started session\n  (the Delegate receipt carries its id; starting one is Delegate's job, never\n  Mail's); `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a\n  registered delegate chain (its chain-registered id OR name). Project addresses\n  (`project:<name>` or a bare mounted project name) are NOT Mail targets — task\n  dispatching is Delegate's face (MAIL_PROJECT_TRIGGER_UNSUPPORTED). No bare\n  `kernel` address and no self-address. `ask:<sessionId>` — continue a canvas\n  file-QA (ask) session (the ask panel / handoff receipt carries the address;\n  root-only, the same face as the delegate leg).\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not\nSTART kernels: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.\n\n"
 
   private[nebflow] val AddressFaceDelegate: String =
     "- **Delegate session (a chain's creator)**: `node:<id|name>` — a node in YOUR OWN\n  scope chain map (its chain-registered id OR name; ambiguous name = explicit error).\n"
@@ -543,7 +593,7 @@ Delivery follows recipient state (there is no delivery parameter to set):
       "properties" -> Json.obj(
         "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Role-scoped address. Mail is a pure communication primitive — it carries no task-dispatch face. Nebula (root): \"delegate:<id>\" continues THAT live Delegate-started session (the Delegate receipt carries its id — starting one is Delegate's job, never Mail's); \"node:<id|name>\" addresses a node in a registered delegate chain. Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". A project address (\"project:<name>\" or a bare mounted project name) is an explicit error (MAIL_PROJECT_TRIGGER_UNSUPPORTED) — dispatching is Delegate's face. An address outside your face is an explicit error.".asJson
+          "description" -> "Role-scoped address. Mail is a pure communication primitive — it carries no task-dispatch face. Nebula (root): \"delegate:<id>\" continues THAT live Delegate-started session (the Delegate receipt carries its id — starting one is Delegate's job, never Mail's); \"node:<id|name>\" addresses a node in a registered delegate chain; \"ask:<sessionId>\" continues a canvas file-QA (ask) session (root-only, the same face as the delegate leg). Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". A project address (\"project:<name>\" or a bare mounted project name) is an explicit error (MAIL_PROJECT_TRIGGER_UNSUPPORTED) — dispatching is Delegate's face. An address outside your face is an explicit error.".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
@@ -786,6 +836,9 @@ Delivery follows recipient state (there is no delivery parameter to set):
   /** 统一 delegate 续聊地址前缀。 */
   private val DelegatePrefix = nebflow.core.delegate.MailAddress.DelegatePrefix
 
+  /** canvas ask 会话地址前缀（单源在 MailAddress；ask-mail 批 2026-11-16）。 */
+  private val AskPrefix = nebflow.core.delegate.MailAddress.AskPrefix
+
   /**
    * 分层地址面判据（name/address 批 2026-11-05）：该字符串是否落在本工具的
    * **分层地址腿**（`delegate:` / `kernel:` / `node:`，前缀 + 非空 target）。
@@ -798,7 +851,7 @@ Delivery follows recipient state (there is no delivery parameter to set):
   def isLayeredAddress(address: String): Boolean =
     layeredAddressFormOf(address).isDefined
 
-  /** 分层地址形态名（"delegate" / "kernel" / "node"）；非分层面或 target 为空 ⇒ None。 */
+  /** 分层地址形态名（"delegate" / "kernel" / "node" / "ask"）；非分层面或 target 为空 ⇒ None。 */
   def layeredAddressFormOf(address: String): Option[String] =
     val a = Option(address).getOrElse("").trim
     if a.startsWith(DelegatePrefix) then
@@ -806,10 +859,11 @@ Delivery follows recipient state (there is no delivery parameter to set):
     else if a.startsWith(KernelPrefix) then
       Option(a.stripPrefix(KernelPrefix).trim).filter(_.nonEmpty).map(_ => "kernel")
     else if a.startsWith(NodePrefix) then Option(a.stripPrefix(NodePrefix).trim).filter(_.nonEmpty).map(_ => "node")
+    else if a.startsWith(AskPrefix) then Option(a.stripPrefix(AskPrefix).trim).filter(_.nonEmpty).map(_ => "ask")
     else None
 
   private def rootFace: String =
-    "\"delegate:<id>\"/\"kernel:<id>\"（续聊）或 \"node:<节点id或名>\"（已登记 delegate 链）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
+    "\"delegate:<id>\"/\"kernel:<id>\"（续聊）、\"node:<节点id或名>\"（已登记 delegate 链）或 \"ask:<会话id>\"（canvas 文件问答会话）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id或名>\""
 
   private def delegateFace: String =
@@ -872,6 +926,21 @@ Delivery follows recipient state (there is no delivery parameter to set):
       Some(
         if role != SenderRole.Root then IO.pure(Left(kernelExclusiveError(address, role.toString)))
         else deliverToDelegate(address.stripPrefix(prefix).trim, message, blocks, ctx, system, isLegacyForm)
+      )
+    else if address.startsWith(AskPrefix) then
+      // ── ask leg: the canvas file-QA continuation address（ask-mail 批 2026-11-16）──
+      // `ask:<会话id>` = root-only 续聊腿（与 delegate 续聊同授权面）：编排方（Spider）
+      // 经 handoff 回执拿到地址后，可继续向该 ask 会话投递问题/补充。会话身份归 ask
+      // 绑定表（AskSessionRegistry，经 AskGatewayServices 服务定位——gateway 装配、
+      // core 消费）；绑定缺席/文件失联 = 显式拒绝（零静默投递、零隐式排队）。
+      val askId = address.stripPrefix(AskPrefix).trim
+      Some(
+        if askId.isEmpty then
+          IO.pure(
+            Left(ToolError(s"Malformed address '$address' — expected \"ask:<会话id>\" (the id the ask panel / handoff receipt carried)."))
+          )
+        else if role != SenderRole.Root then IO.pure(Left(askExclusiveError(address, role.toString)))
+        else deliverToAsk(askId, message, ctx, system)
       )
     else if address.startsWith(NodePrefix) then
       // S6=C（N1 刀3 · v3 §7.2）：`node:<id|name>` 授权面扩 = 创建者 delegate ＋
@@ -1403,6 +1472,107 @@ Delivery follows recipient state (there is no delivery parameter to set):
       }
 
   end queueRecoverySupplement
+
+  /**
+   * `ask:<会话id>` 投递腿（ask-mail 批 2026-11-16）：注入该 ask 会话的**下一轮边界**
+   * （与 delegate 补充同语义），授权已由 [[layeredRoute]] 的 root-only 闸收敛。
+   *
+   * 三态：
+   *  · live（统一注册表有活 actor）⇒ `ExternalEvent("mail", "inject", …)` 直投
+   *    （askReply 同款已证腿——idle 面收到即渲染注入泡并触发一轮应答；忙面进
+   *    pendingEvents 于回合边界排入）；
+   *  · 不 live ⇒ `SessionMailbox.mailOnce` 落该会话邮箱（delegate 补充同款持久
+   *    队列；ask 会话下次唤醒（askOpen/askQuestion）时由 MailboxDrain 排干注入）；
+   *  · 绑定缺席 / 文件失联 / ask 面未装配 ⇒ 显式拒绝词（见错误族），零静默。
+   *
+   * 无 AgentKind 闸：`ask-` 会话 id 命名空间 + 绑定表在场即身份判据（ask 会话
+   * 不进 DelegateRegistry，AgentKind 亦无 ask 值）。
+   */
+  private def deliverToAsk(
+    id: String,
+    message: String,
+    ctx: ToolContext,
+    system: ActorSystem
+  ): IO[Either[ToolError, String]] =
+    nebflow.core.ask.AskGatewayServices.instance match
+      case None => IO.pure(Left(askUnavailableError(id)))
+      case Some(svc) =>
+        svc.registry.byId(id).flatMap {
+          case None => IO.pure(Left(askNotFoundError(id)))
+          case Some(binding) =>
+            // routable 闸：ask 会话无显式终态（绑定不清理）——「不可达」面 = 绑定文件
+            // 缺席或不再可问（spawn 面 agentDefFor 同判据拒绝 ⇒ 邮箱永不被排干，
+            // 静默积压正是作者令「显式错误不静默」要挡的形态）。
+            IO.blocking {
+              val p = os.Path(binding.file, os.pwd)
+              os.isFile(p) && nebflow.core.ask.AskSessions.isAskable(binding.file)
+            }.flatMap { routable =>
+              if !routable then IO.pure(Left(askNotRoutableError(id, binding.fileName)))
+              else
+                (ctx.sharedResources, ctx.actorSystem) match
+                  case (Some(res), Some(sys)) =>
+                    res.agentRegistry.get.flatMap { reg =>
+                      reg.get(id)
+                        .fold(IO.pure(Option.empty[AgentRecord]))(entry =>
+                          sys.isAlive(entry.ref.path).map(alive => Option.when(alive)(entry))
+                        )
+                        .flatMap {
+                          case Some(rec) =>
+                            val metadata = JsonObject(
+                              "agentName" -> ctx.agentDef.map(_.name).getOrElse("").asJson,
+                              "senderSessionId" -> ctx.sessionId.getOrElse("").asJson,
+                              "askMailAddress" -> (AskPrefix + id).asJson
+                            )
+                            (rec.ref ! AgentCommand.ExternalEvent(
+                              "mail",
+                              "inject",
+                              message,
+                              metadata,
+                              None
+                            )) *>
+                              nebflow.core.UsageTracker
+                                .record("mail", ctx.sessionId.getOrElse(""))
+                                .as(
+                                  Right(
+                                    s"[ask:$id] Message injected into the live ask session for its next turn boundary."
+                                  )
+                                )
+                          case _ => queueAskMail(id, message, ctx)
+                        }
+                    }
+                  case _ =>
+                    IO.pure(Left(ToolError("Cannot deliver to the ask leg: missing resources.")))
+            }
+        }
+  end deliverToAsk
+
+  /** ask 腿的不 live 面补充（delegate `queueRecoverySupplement` 同款持久邮箱队列）。 */
+  private def queueAskMail(id: String, message: String, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val invocation = Option(ctx.toolCallId).filter(_.nonEmpty).getOrElse(java.util.UUID.randomUUID().toString)
+    val identity = s"ask-mail:${ctx.sessionId.getOrElse("unknown")}:$invocation:$id"
+    val event = AgentCommand.ExternalEvent(
+      "mail",
+      "inject",
+      message,
+      metadata = JsonObject(
+        "agentName" -> ctx.agentDef.map(_.name).getOrElse("").asJson,
+        "senderSessionId" -> ctx.sessionId.getOrElse("").asJson,
+        "askMailAddress" -> (AskPrefix + id).asJson
+      ),
+      correlationId = Some(identity)
+    )
+    nebflow.core.mail.SessionMailbox
+      .mailOnce(id, event, "ask-mail", identity, producer = "mail", deduplicateReceipts = true)
+      .map {
+        case nebflow.core.mail.SessionMailbox.MailResult.Failed(error) =>
+          Left(ToolError(s"Could not persist the ask message: $error"))
+        case _ =>
+          Right(
+            s"[ask:$id] The ask session is not live right now — message saved in its session mailbox; " +
+              "it is injected when the ask session next opens (askOpen/askQuestion)."
+          )
+      }
+  end queueAskMail
 
   private def deliverToDelegateAdmitted(
     id: String,

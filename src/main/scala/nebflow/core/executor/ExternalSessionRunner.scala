@@ -133,7 +133,8 @@ object ExternalSessionRunner:
      * = true——外部 CLI 是 host 本地进程，设备仓路径不是本机盘路径。座位政策统一
      * 后本标记只剩归属语义（外部腿不参与设备盘 git 面）。
      */
-    deviceProject: Boolean = false
+    deviceProject: Boolean = false,
+    model: Option[String] = None
   )
 
   /** Delegate 外部腿入口。成功 = `(sessionId, ack)`（续聊地址行由调用方拼）。 */
@@ -155,7 +156,7 @@ object ExternalSessionRunner:
             // 内部腿同政策；引擎不再建分支/worktree（需要隔离检出时外部执行器
             // 自建自管）。
             val seatWs = spec.workspace
-            val seatedSpec = spec
+            val seatedSpec = spec.copy(model = ExecutorRegistry.configuredModel(ex.id))
             val seatedTask = spec.task
             withAdmission(sessionId, seatedSpec) { run =>
               for
@@ -177,7 +178,8 @@ object ExternalSessionRunner:
                       name = spec.name.orElse(DelegateRegistry.find(sessionId).flatMap(_.name)),
                       // G1 编排模式初值（delegate-ui 批 2026-10-08）：外部执行器零平台
                       // 工具注入（无 Subagent/AgentFlow 可调）⇒ 恒 single，无升级腿。
-                      orchestrationMode = Some(DelegateRegistry.ModeSingle)
+                      orchestrationMode = Some(DelegateRegistry.ModeSingle),
+                      externalModel = seatedSpec.model
                     )
                   )
                 }
@@ -279,7 +281,8 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                 rootSessionId = record.parentSessionId,
                 parentRef = parentRef,
                 wsSend = wsSend,
-                resources = resources
+                resources = resources,
+                model = record.externalModel
               )
               ExternalOutputStore.isLive(sid).flatMap { live =>
                 if live then
@@ -437,7 +440,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     prompt: String,
     resumeSid: Option[String]
   ): java.lang.ProcessBuilder =
-    configureProcessBuilder(spec.binPath, spec.workspace, ex.launchArgs(prompt, resumeSid))
+    configureProcessBuilder(spec.binPath, spec.workspace, ex.launchArgsWithModel(prompt, resumeSid, spec.model))
 
   /**
    * spawn 构造纯面（spec 可驱动）：argv + cwd + 分管 + 代理环境注入
