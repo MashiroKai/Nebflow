@@ -208,16 +208,7 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     }
   }
 
-  /**
-   * 压缩前归档段（`monthKey=Some("")`）不得被时间窗月桶粗筛误杀：查询带 since 时
-   * 服务端的 monthPreFilter 只保留「窗口月 / current / 空桶」三档，归档行落在空桶
-   * ⇒ 恒保留（这正是 adapter 里归档行写空桶的原因）。
-   */
-  test("月桶覆盖：归档行（空桶）在带时间窗的查询里不被粗筛误杀") {
-    // 三行 ts 都在查询窗口内（since 之下），差别只在月桶：
-    //   ord 0 = 归档行，显式空桶（''）⇒ 粗筛「未知/旧桶，保留」⇒ 必须命中；
-    //   ord 1 = 会话桶（默认 current）⇒ 保留 ⇒ 命中；
-    //   ord 2 = 显式非窗口月桶 ⇒ 被粗筛砍掉（证明粗筛确实在工作，不是恒真）。
+  test("time filtering does not discard matches based on session month") {
     SearchIndexService.unsafeInsertDocs(face, List(
       SearchIndexService.IndexDoc("arc", 0, "message", 1_795_000_000_000L, "archived needle", "", Some("")),
       SearchIndexService.IndexDoc("arc", 1, "message", 1_796_000_000_000L, "archived needle", "", None),
@@ -225,7 +216,15 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     ))
     SearchIndexService.query(face, q("archived", kinds = List("message"), since = Some(1_790_000_000_000L))).map { r =>
       val res = r.toOption.get
-      assertEquals(res.hits.map(_.ord).sorted, List(0, 1))
+      assertEquals(res.hits.map(_.ord).sorted, List(0, 1, 2))
+    }
+  }
+
+  test("literal substring includes partial words even when whole-word matches exist") {
+    seed(List(doc("substring", 0, "message", 1L, "session"),
+      doc("substring", 1, "message", 2L, "multisession")))
+    SearchIndexService.query(face, q("session", kinds = List("message"))).map { r =>
+      assertEquals(r.toOption.get.total, 2)
     }
   }
 

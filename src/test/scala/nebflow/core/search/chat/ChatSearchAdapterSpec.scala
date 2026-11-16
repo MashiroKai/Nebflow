@@ -215,4 +215,23 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     assert(adapter.sessionMtimeOpt("s11").getOrElse(0L) >= mtBefore.getOrElse(0L))
   }
 
+  test("archive text remains searchable beyond the former cap") {
+    writeUi("long-archive", List(UiMessage.User(text = "recent", timestamp = 9000L)))
+    writeArchive("long-archive", "001", List((1000L, "user", "x" * 2100 + "needleaftercap")))
+    val docs = adapter.extractSession("long-archive").getOrElse(Nil)
+    assert(docs.exists(_.text.contains("needleaftercap")))
+  }
+
+  test("all-session search reconciles newly written source and exposes malformed source") {
+    writeUi("freshness", List(UiMessage.User(text = "freshneedle", timestamp = 1000L)))
+    SearchIndexService.unsafeResetForTests()
+    SearchIndexService.unsafeRegisterInMemory(adapter)
+    for
+      found <- SearchIndexService.query("chat", SearchIndexService.Query("freshneedle", kinds = List("message")))
+      _ = assertEquals(found.toOption.get.total, 1)
+      _ = os.write.over(dir / "freshness.ui.json", "not json")
+      failed <- SearchIndexService.query("chat", SearchIndexService.Query("freshneedle", kinds = List("message")))
+    yield assert(failed.isLeft)
+  }
+
 end ChatSearchAdapterSpec

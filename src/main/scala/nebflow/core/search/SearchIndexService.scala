@@ -5,7 +5,6 @@ import cats.effect.unsafe.implicits.global
 import nebflow.shared.NebflowLogger
 
 import java.sql.{Connection, DriverManager, PreparedStatement}
-import java.time.{Instant, LocalDate, ZoneId}
 
 /**
  * SearchIndexService —— 数据层检索骨架的索引服务单例（设计稿 §4.1-4.4；
@@ -380,19 +379,22 @@ object SearchIndexService:
             Left(s"index query failed: ${e.getClass.getSimpleName}")
         }
 
-  /** 惰性对账（§4.3 兜底）：指定会话（current 档）查询前顺手重建；
-   *  scope=all 不逐会话预检——冷启动由 boot 后台 fiber 负责，查询读最后
-   *  同步快照，可接受（索引陈旧 = 慢，不是错）。 */
+  /** Reconcile enumerated sources before querying; failures trigger the caller's fallback. */
   private def reconcileBeforeQuery(fs: FaceState, sid: Option[String]): IO[Unit] =
-    sid.fold(IO.unit)(s => syncSessionIO(fs, s, forceFull = false).attempt.as(()))
+    sid match
+      case Some(s) => syncSessionIO(fs, s, forceFull = false)
+      case None => IO.blocking(fs.adapter.sessionIdsForReconcile).flatMap {
+        case Some(sids) => sids.foldLeft(IO.unit)((io, s) => io *> syncSessionIO(fs, s, forceFull = false))
+        case None => IO.unit
+      }
 
   private def runQuery(fs: FaceState, q: Query): Either[String, QueryResult] =
     val hasPredicate = q.kinds.nonEmpty || q.sid.isDefined || q.since.isDefined || q.until.isDefined
     if q.text.trim.isEmpty then Left("query text must be non-empty")
     else if !hasPredicate then Left("query must carry a shard predicate (kinds/sid/since/until)")
     else
-      val (andExpr, orExpr, likePattern) = CjkBigram.ftsQuery(q.text.trim)
-      if andExpr.isEmpty && likePattern.isEmpty then Left("query has no indexable terms")
+      val (andExpr, _, _) = CjkBigram.ftsQuery(q.text.trim)
+      if q.text.trim.isEmpty then Left("query has no indexable terms")
       else
         // 谓词预过滤 WHERE（分片预过滤——类型片/时间片/会话键；§4.1 ③）
         val where  = new StringBuilder(" WHERE 1=1")
@@ -410,11 +412,6 @@ object SearchIndexService:
         fs.adapter.excludedSidPrefixes.foreach { prefix =>
           where.append(" AND d.sid NOT LIKE ? ESCAPE '\\'")
           params += (escapeLike(prefix) + "%")
-        }
-        monthPreFilter(q).foreach { mk =>
-          // 粗筛保守：空 month_key = 未知/旧桶行，保留（精确 ts 谓词收口正确性）。
-          where.append(" AND (d.month_key=? OR d.month_key='current' OR d.month_key='')")
-          params += mk
         }
 
         /** 谓词参数绑到 [start+1 .. start+params.size]（MATCH 参数占首位时 start=1）。 */
@@ -453,33 +450,9 @@ object SearchIndexService:
             if rs.next() then rs.getInt(1) else 0
           finally ps.close()
 
-        def execMatch(expr: String): (List[Hit], Int) =
-          // FTS5 MATCH 谓词 = 表级约束，必须直接挂在 docs_fts 后，普通谓词
-          // 以 AND 追加（SQL 序：docs_fts MATCH ? AND d.kind IN …）；绑定序同 SQL 序。
-          val w = s" WHERE docs_fts MATCH ?${where.toString.replace(" WHERE 1=1", "")}"
-          val total = fetchCount(
-            s"SELECT COUNT(*) FROM docs d JOIN docs_fts f ON f.rowid=d.rowid$w",
-            ps => {
-              ps.setString(1, expr)
-              bindBase(ps, 1)
-            })
-          val hits = fetch(
-            s"""SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d
-               |JOIN docs_fts f ON f.rowid=d.rowid$w
-               |ORDER BY d.ts DESC, d.ord DESC LIMIT ? OFFSET ?""".stripMargin,
-            ps => {
-              ps.setString(1, expr)
-              bindBase(ps, 1)
-              ps.setInt(params.size + 2, math.max(1, math.min(q.limit, 200)))
-              ps.setInt(params.size + 3, math.max(0, q.offset))
-            })
-          (hits, total)
-
         def execLike(pattern: String): (List[Hit], Int) =
-          // pattern 来自 CjkBigram.ftsQuery 的 likePattern（"%单字%"，% 是通配）。
-          // 只转义字面段、保留 % 通配——整串 escapeLike 会把通配吃掉（曾致
-          // LIKE 退化为整串等值匹配，单字 CJK 永远 0 命中）。
-          val likeParam = pattern.split("%", -1).map(escapeLike).mkString("%")
+          // Escape literal wildcard characters before adding the substring wildcards.
+          val likeParam = "%" + escapeLike(pattern) + "%"
           val w = s"${where} AND d.text LIKE ? ESCAPE '\\'"
           val total = fetchCount(
             s"SELECT COUNT(*) FROM docs d$w",
@@ -489,7 +462,7 @@ object SearchIndexService:
             })
           val hits = fetch(
             s"""SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d$w
-               |ORDER BY d.ts DESC, d.ord DESC LIMIT ? OFFSET ?""".stripMargin,
+               |ORDER BY d.ts DESC, d.sid ASC, d.ord DESC, d.rowid ASC LIMIT ? OFFSET ?""".stripMargin,
             ps => {
               bindBase(ps, 0)
               ps.setString(params.size + 1, likeParam)
@@ -498,20 +471,8 @@ object SearchIndexService:
             })
           (hits, total)
 
-        val (hits, total, degraded) =
-          if andExpr.nonEmpty then
-            val (h, t) = execMatch(andExpr)
-            if h.nonEmpty then (h, t, false)
-            else if orExpr.nonEmpty then
-              val (h2, t2) = execMatch(orExpr)
-              (h2, t2, h2.nonEmpty)
-            else if likePattern.nonEmpty then
-              val (h3, t3) = execLike(likePattern)
-              (h3, t3, true)
-            else (Nil, 0, false)
-          else
-            val (h3, t3) = execLike(likePattern)
-            (h3, t3, true)
+        val (hits, total) = execLike(q.text.trim)
+        val degraded = andExpr.isEmpty
 
         Right(QueryResult(
           hits, total,
@@ -522,14 +483,6 @@ object SearchIndexService:
 
   private def escapeLike(s: String): String =
     s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-  /** 时间窗的月桶粗筛键（窗口起点所在月；窗口跨多月靠 ts 精确谓词收口，
-   *  粗筛只砍历史桶——current 桶恒保留）。 */
-  private def monthPreFilter(q: Query): Option[String] =
-    q.since.orElse(q.until).map { ms =>
-      val d = LocalDate.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault())
-      f"${d.getYear}%04d${d.getMonthValue}%02d"
-    }
 
   /**
    * 查询凭证 ETag（§4.4）：结构键 = face + 规范化参数 + Σ(命中会话 version)。
