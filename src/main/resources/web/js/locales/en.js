@@ -1437,7 +1437,7 @@ export default {
   'model.saved': 'Saved',
   'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
   'model.divergedView': 'View',
-  'model.seedNote': 'Not configured — the first available model will be used',
+  'model.seedNote': 'Not configured — select an explicit model to enable requests',
   'model.singleModelNote': 'Single model: on failure the session is marked invalid and waits silently — switch it from the sub-agent panel or the dialog',
   'model.loadFailed': 'Failed to load',
   'model.rateLimited': 'Too many requests. Retrying in {n} seconds.',
