@@ -175,6 +175,11 @@ object PluginAllocatorMachine:
             IO.pure(PluginAllocator.PluginAllocationResult(
               JevAllocation.FellBack(JevFallbackKind.Failure, "small model unavailable"), None
             ))
+        }.handleError { error =>
+          PluginAllocator.PluginAllocationResult(
+            JevAllocation.FellBack(JevFallbackKind.Failure, s"small model allocation failed: ${error.getClass.getSimpleName}"),
+            None
+          )
         }.flatTap { result =>
           val audit = result.allocation match
             case JevAllocation.Allocated(names) if catalog.isEmpty =>

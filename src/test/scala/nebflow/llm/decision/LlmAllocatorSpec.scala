@@ -105,6 +105,27 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     }
   }
 
+  test("candidate resolution exception produces one allocation decision log") {
+    val logger = org.slf4j.LoggerFactory.getLogger("nebflow.llm.plugin-alloc")
+      .asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    import scala.jdk.CollectionConverters.*
+    val registry = new nebflow.llm.ProviderRegistry(null, null):
+      override def getCandidatesForAgent(model: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
+        IO.raiseError(new java.util.concurrent.TimeoutException("mock timeout"))
+    IO { appender.start(); logger.addAppender(appender) }.bracket { _ =>
+      withTempDataRoot { tmp =>
+        IO(os.write.over(tmp / "agents" / "small-llm" / "agent.json", """{"model":{"preferred":"p/small"}}""", createFolders = true)) *>
+          PluginAllocatorMachine.face(registry).allocatePlugins("subject", "task", catalog).map { result =>
+            assert(result.allocation.isInstanceOf[JevAllocation.FellBack])
+            val events = appender.list.asScala.toList.map(_.getFormattedMessage).filter(_.contains("allocation decision"))
+            assertEquals(events.size, 1)
+            assert(events.head.contains("TimeoutException"))
+          }
+      }
+    }(_ => IO(logger.detachAppender(appender)).void)
+  }
+
   test("successful allocation logs selected plugins and model rationale") {
     val logger = org.slf4j.LoggerFactory.getLogger("nebflow.llm.plugin-alloc")
       .asInstanceOf[ch.qos.logback.classic.Logger]
