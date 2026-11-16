@@ -820,20 +820,18 @@ External executors receive the task text only — no platform tools or plugins a
       .filter(_.nonEmpty)
       .mkString("\n\n")
 
-  /**
-   * Assemble the final system prompt: the agent system.md FIRST, then
-   * conditional blocks.
-   *
-   * The leading stable segment is the provider prefix-cache anchor — the
-   * shared system.md base (identical across sessions of the same template)
-   * must stay at the very front or the common prefix is lost and every
-   * session's prompt cache is invalidated. Phase-2 batch A (2026-09) retired
-   * the shared system-prefix layer; the stable system.md base now serves
-   * that role. Pinned by PromptSectionsSpec.
-   */
-  def assembleSystemPrompt(agentPrompt: String, conditionalBlocks: String): String =
-    val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
-    s"$agentPrompt$separator$conditionalBlocks"
+  /** Read the optional shared prefix at assembly time, before the agent prompt.
+    * Changing it invalidates provider prefix caches on subsequent assemblies.
+    */
+  def assembleSystemPrompt(agentPrompt: String, conditionalBlocks: String, dataRoot: os.Path = PathUtil.dataRoot): String =
+    val file = dataRoot / "prompt-prefix.md"
+    val prefix = if os.exists(file) then os.read(file).trim else ""
+    val sections = Seq(
+      Option.when(prefix.nonEmpty)(s"--- SYSTEM PREFIX ---\n$prefix"),
+      Some(agentPrompt),
+      Option.when(conditionalBlocks.nonEmpty)(conditionalBlocks)
+    ).flatten
+    sections.mkString("\n\n")
 
   /**
    * Remove a `## Section` block from a prompt string.
