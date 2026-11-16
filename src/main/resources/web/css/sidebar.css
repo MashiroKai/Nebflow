@@ -2857,7 +2857,5 @@ body.stt-disabled .fm-mic-btn { display: none !important; }
 .cfg-imagegen-keyrow { display: flex; align-items: center; gap: var(--ds-space-2); }
 .cfg-imagegen-keyrow .cfg-password-wrap { flex: 1 1 auto; min-width: 0; }
 
-/* ④ JeV 分配区重排（C 件）：组件族已并入 STT 高级设置同款
-   （settings-collapse-toggle / settings-collapse-body / cfg-form-group，
-   零新形态）；仅清掉旧卡头形态在折叠体内的残留间距依赖。 */
-#jev-advance-body .cfg-form-group { margin-top: var(--ds-space-1); }
+/* （jev-retire 批 2026-11-16：`#jev-advance-body .cfg-form-group` 旧卡间距规则
+   随 JeV 面删除——该 id 自 provider-add-tabs 批起已无发射点，本批清走残留。 */

@@ -225,11 +225,21 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
   ): IO[os.Path] =
     for
       // A crashed owner retains its durable registration; a missing record is an orphan chain.
-      _ <- IO(nebflow.core.delegate.DelegateRegistry.put(nebflow.core.delegate.DelegateRegistry.Record(
-        id = delegateId, executor = "builtin", cwd = ws.toString, project = None,
-        taskId = None, parentSessionId = "nebula-root", title = "scope owner",
-        createdAt = System.currentTimeMillis(), mode = Some("dispatcher")
-      )))
+      _ <- IO(
+        nebflow.core.delegate.DelegateRegistry.put(
+          nebflow.core.delegate.DelegateRegistry.Record(
+            id = delegateId,
+            executor = "builtin",
+            cwd = ws.toString,
+            project = None,
+            taskId = None,
+            parentSessionId = "nebula-root",
+            title = "scope owner",
+            createdAt = System.currentTimeMillis(),
+            mode = Some("dispatcher")
+          )
+        )
+      )
       mo <- mount(ws, delegateId, system, res)
       h = mo.getOrElse(fail("host must mount for seeding"))
       _ <- h.store.mutate { s =>
@@ -253,6 +263,41 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       }.void
       _ <- DelegateFlowHosts.unmount(delegateId)
     yield ws / ".nebflow" / "flow-maps" / delegateId
+
+  test("sweep reports claimed nodes separately from orphan scopes") {
+    val ws = os.temp.dir(prefix = "nb-dfh-units-", deleteOnExit = false)
+    val system = ActorSystem("dfh-units")
+    val owner = "delegate-general-unitowner"
+    val orphan = "delegate-general-unitorphan"
+    val program = for
+      res <- mkResources(system, ScriptLlm(_ => "UNUSED").handle)
+      _ <- mountCarrier("dfh-carrier-units", ws, system, res)
+      _ <- seedResidue(ws, owner, "unit-1", None, system, res)
+      ownerHost <- mount(ws, owner, system, res)
+      _ <- ownerHost.get.store.mutate(s =>
+        s.copy(nodes = s.nodes.updated("unit-2", s.nodes("unit-1").copy(id = "unit-2")))
+      )
+      _ <- DelegateFlowHosts.unmount(owner)
+      _ <- seedResidue(ws, orphan, "orphan-1", None, system, res)
+      orphanHost <- mount(ws, orphan, system, res)
+      _ <- orphanHost.get.store.mutate(s =>
+        s.copy(nodes = s.nodes.updated("orphan-1", s.nodes("orphan-1").copy(chainId = Some("chain-unit"))))
+      )
+      _ <- DelegateFlowHosts.unmount(orphan)
+      _ = nebflow.core.delegate.DelegateRegistry.remove(orphan)
+      report <- ProjectCrashRecovery.recoverDelegateScopes(reportGateHold = Some(false), rootNotifyQuietMs = Some(0))
+    yield
+      assertEquals(report, ProjectCrashRecovery.DelegateSweepReport(claimedNodes = 2, orphanScopes = 1))
+      assertEquals(
+        report.summary,
+        "Boot delegate-scope sweep: 2 node(s) claimed (rehydrate/failed), 0 node(s) held for manual recovery, 1 orphan scope(s) paused"
+      )
+    program.guarantee(
+      DelegateFlowHosts.unmount(owner) *> DelegateFlowHosts.unmount(orphan) *> system.stopAll.handleErrorWith(_ =>
+        IO.unit
+      )
+    )
+  }
 
   // ── H1 挂载 ─────────────────────────────────────────────────────────────
 
@@ -287,7 +332,12 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       res <- mkResources(system, llm.handle)
       _ <- mountCarrier("dfh-carrier-manual", ws, system, res)
       _ <- seedResidue(ws, delegateId, "n-manual-scope", Some("node-manual-saved"), system, res)
-      _ <- ProjectCrashRecovery.recoverDelegateScopes(reportGateHold = Some(false), rootNotifyQuietMs = Some(0), manual = true)
+      report <- ProjectCrashRecovery.recoverDelegateScopes(
+        reportGateHold = Some(false),
+        rootNotifyQuietMs = Some(0),
+        manual = true
+      )
+      _ = assertEquals(report, ProjectCrashRecovery.DelegateSweepReport(heldNodes = 1))
       host <- DelegateFlowHosts.get(delegateId)
       h = host.getOrElse(fail("saved scope remains mounted for inspection"))
       _ <- h.engine.settleRunnableSweep()
@@ -396,7 +446,7 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       _ <- DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(actions, 1, "exactly one scope with recovery actions")
+      assertEquals(actions.claimedNodes, 1, "exactly one node claimed")
       assertEquals(a.status, NodeLifecycle.Completed, "rehydrated scope node completes")
       assertEquals(a.result, Some("SCOPE-RECOVERED"))
       assert(reqs.exists(_.contains("WIP-HALF")), "resume must hydrate the on-disk transcript")
@@ -407,7 +457,7 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       // ⑷ creator 不 live：零旁路认账——结果滞留主图，等 delegate 侧消费面（不投 Nebula、
       // 不建第二上送、无分发器汇总）。
       assert(a.nebulaDeliveredAt.isEmpty, "dead creator ⇒ result PARKED (ledger retention, no bypass)")
-      assertEquals(actions2, 0, "second sweep pass: no residues left (idempotent)")
+      assertEquals(actions2.claimedNodes, 0, "second sweep pass: no residues left (idempotent)")
       assertEquals(legacyAfter, legacyBefore, "legacy per-project flow-map.json untouched by the scope sweep (v3-⑧)")
       assert(os.exists(scopeDir / "flow-map.json"), "scope map persists under flow-maps/")
     end for
@@ -431,7 +481,7 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       _ <- DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(actions, 1, "(c)-class handling counts as one action")
+      assertEquals(actions.claimedNodes, 1, "(c)-class handling counts as one action")
       assertEquals(a.status, NodeLifecycle.Failed, "lost transcript ⇒ failed via the existing chain")
       assert(a.result.exists(_.contains("crash recovery")), s"honest failure reason, got: ${a.result}")
       assert(

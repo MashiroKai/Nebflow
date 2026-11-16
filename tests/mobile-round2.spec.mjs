@@ -32,9 +32,8 @@ for (const engine of engines) {
         ] },
         '/api/groups/invites': { body: { incoming: [] } },
         '/api/plugins': { body: { plugins: [] } },
-        '/api/config/provider-types': { body: { domains: [{ id: 'llm' }, { id: 'imagegen' }, { id: 'jev' }] } },
+        '/api/config/provider-types': { body: { domains: [{ id: 'llm' }, { id: 'imagegen' }] } },
         '/api/config/imagegen': { body: { enabled: false, providers: {} } },
-        '/api/config/jev': { body: { enabled: false, providers: {} } },
         '/api/config/provider-keys': { body: {} },
       } });
       const { page } = session;

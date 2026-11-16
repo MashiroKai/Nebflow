@@ -14,7 +14,7 @@
 |---|---|
 | [`EmbeddingService.scala`](EmbeddingService.scala) | EmbeddingService —— OpenAI 兼容 embeddings 端点客户端（task-rag 批 #1227 / §Batch 7）。 |
 | [`TaskSearchIndex.scala`](TaskSearchIndex.scala) | TaskSearchIndex —— 任务检索索引（task-rag 批 #1227 / §Batch 7）。 ==索引源（原文口径）== |
-| [`TaskSearchRerank.scala`](TaskSearchRerank.scala) | TaskSearch 重排注册器端口（task-rag 批 #1227 / §Batch 7「可选 Jev 重排」）。 分层纪律（core 零 `nebflow.llm` import——`core/jev/JevAll |
+| [`TaskSearchRerank.scala`](TaskSearchRerank.scala) | TaskSearch 重排注册器端口（task-rag 批 #1227 / §Batch 7「可选 Jev 重排」；jev-retire 批 2026-11-16 起注销腿删除，未注册 ⇒ None 中性端口）。 分层纪律（core 零 `nebflow.llm` import |
 | [`VectorStore.scala`](VectorStore.scala) | VectorStore —— 检索向量落盘（task-rag 批 #1227 / §Batch 7）。 单文件 `~/.nebflow/index/vectors.json`（`PathUtil.dataRoot / " |
 
 ## 依赖的兄弟模块

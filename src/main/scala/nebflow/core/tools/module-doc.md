@@ -78,7 +78,7 @@
 | [`TaskBoardTool.scala`](TaskBoardTool.scala) | TaskBoard 工具（TaskBoard 批 2 接线，规格 project-task-board 规格件 §1b/§1d/§1e/§2，2026-09-08）——项目内共享工作项看板的工具面。 |
 | [`TaskListHistory.scala`](TaskListHistory.scala) | TaskList 变更史 —— 独立 append-only JSONL 数据面（TaskList 升级批）。 动机：`tasks.json` 是整库覆盖写（read-modify-write），前后值即弃；定案口径： |
 | [`TaskListTool.scala`](TaskListTool.scala) | TaskList 任务工具。 动机（设计文档 ~/.nebflow/memory/tasklist-design.md）：「Nebula 把记忆当任务 |
-| [`TaskSearchTool.scala`](TaskSearchTool.scala) | TaskSearch —— 任务语义检索工具（Nebula 面；task-rag 批 #1227 / §Batch 7）。 管线（原文口径）：query → embed → cosine top-k →（可选 Jev 重 |
+| [`TaskSearchTool.scala`](TaskSearchTool.scala) | TaskSearch —— 任务语义检索工具（Nebula 面；task-rag 批 #1227 / §Batch 7）。 管线（原文口径）：query → embed → cosine top-k（可选重排腿已随 JeV 退役 |
 | [`TaskTool.scala`](TaskTool.scala) | The `Task` tool -- the **single write face of the unified ledger** (Nebula-exclusive; taskunify batch 2026-09- |
 | [`TaskToolHelper.scala`](TaskToolHelper.scala) | Shared helper for task-related tools to emit list-update events. 任务工具重做（2026-08-30）：TaskArchive/归档索引退役——事件推送保留 |
 | [`TeamTaskCreateTool.scala`](TeamTaskCreateTool.scala) | Team task tool — create. 任务工具重做 (2026-08-30): injected into EVERY team member (progress-display semantics); th |

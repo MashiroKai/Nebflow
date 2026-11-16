@@ -4,8 +4,9 @@
 // 会话引导：POST /api/auth/console-ticket（Bearer file token，BearerFileOnly 轨）
 // → GET /?ticket=（303 + HttpOnly stand_session cookie）→ WS/REST 全轨可用。
 //
-// 覆盖：JeV key 明文（①）、imagegen 缺 key→录入→已配置（②）、调试徽标（③）、
+// 覆盖：imagegen 缺 key→录入→已配置（②）、调试徽标（③）、
 // cmdcode 测试钮真打 API（④⑤端到端）、STT toggle 关→stt-disabled（⑥D 件）。
+// （① JeV key 明文腿已随 JeV 全量退役删除——jev-retire 批 2026-11-16。）
 // 截图落 .nebflow/evidence/20261028_settings-panel-jev-imagegen/isolated-ui/。
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
@@ -30,10 +31,11 @@ await page.click('#settings-btn');
 // 才有内容；面板先开，再等数据到位——renderSettings 会在 echo 后重绘）
 await page.waitForFunction(() => document.querySelectorAll('#provider-list .cfg-card').length > 0, null, { timeout: 20000 });
 // provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
-// 单一服务商面板」）：生图/JeV = 统一服务商面板的类型标签——点 Image generation
-// 标签后列表/新增/表单都在面板内（不再有层级下钻浮层）。
+// 单一服务商面板」）：生图 = 统一服务商面板的类型标签——点 Image generation
+// 标签后列表/新增/表单都在面板内（不再有层级下钻浮层；JeV 标签已随 JeV 退役
+// 删除——jev-retire 批 2026-11-16）。
 await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 15000 });
-await page.waitForTimeout(600); // 投影（provider-types/imagegen/jev）落地重绘
+await page.waitForTimeout(600); // 投影（provider-types/imagegen）落地重绘
 await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());
 await page.waitForSelector('.nf-provider-panel[data-type="imagegen"]', { timeout: 15000 });
 await page.waitForTimeout(800);
@@ -42,23 +44,6 @@ const check = (name, ok, extra = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
   if (!ok) process.exitCode = 1;
 };
-
-// ① JeV key 字段面（provider-add-tabs 批换代：统一表单值不回显——存量值回读
-// 面随旧表单退役；语义 = 空态 + 覆写占位词，值只进写入腿）
-await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
-await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 15000 });
-await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
-await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 15000 });
-const jevFace = await page.evaluate(() => {
-  const f = document.querySelector('#cfg-modal [data-field="apiKey"]');
-  return { value: f ? f.value : null, placeholder: f ? f.placeholder : '', modalOpen: !!document.getElementById('cfg-modal') };
-});
-check('① jev key 字段空态（值不回显）', jevFace.modalOpen && jevFace.value === '', `placeholder=${jevFace.placeholder}`);
-check('① 占位词 = 覆写提示', String(jevFace.placeholder).includes('覆盖'), `placeholder=${jevFace.placeholder}`);
-await page.locator('#cfg-modal').screenshot({ path: `${SHOT}/S1-jev-key-field.png` });
-await page.evaluate(() => document.getElementById('cfg-modal')?.remove());
-await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());
-await page.waitForSelector('.nf-provider-panel[data-type="imagegen"]', { timeout: 15000 });
 
 // ③ 调试徽标（功能开放批 2026-10-30：正式开放，徽标退役——必须零渲染）
 const badge = await page.locator('.imagegen-badge').count();

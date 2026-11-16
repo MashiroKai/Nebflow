@@ -7,9 +7,8 @@ import { createSession, settle } from '../scripts/lib/visual-harness.mjs';
 const SID = 'forms-root';
 const BOOT = { sessionId: SID, config: { llm: { providers: {} }, features: {} } };
 const PANEL_STUBS = {
-  '/api/config/provider-types': { body: { domains: [{ id: 'llm' }, { id: 'imagegen' }, { id: 'jev' }], adapters: { imagegen: [], jev: ['typesafe-jev', 'laya'] } } },
+  '/api/config/provider-types': { body: { domains: [{ id: 'llm' }, { id: 'imagegen' }], adapters: { imagegen: [] } } },
   '/api/config/imagegen': { body: { enabled: false, compiledIn: true, providers: {} } },
-  '/api/config/jev': { body: { enabled: false, providers: {} } },
   '/api/config/provider-keys': { body: { providers: {} } },
 };
 
@@ -197,107 +196,10 @@ test('FRM-SCN-001 validation failure keeps the form open without sending anythin
   }
 });
 
-test('FRM-SCN-004 JeV probe from the real provider form sends the adapter id, form endpoint/model and the unsaved key', async ({ browser }) => {
-  const s = await session(browser, { apiStubs: PANEL_STUBS });
-  const { page } = s;
-  const probes = [];
-  const writes = [];
-  try {
-    // Registered after the harness catch-all, so these win.
-    await page.route('**/api/jev/test', (route) => { probes.push(route.request().postDataJSON()); return route.fulfill({ json: { ok: true, latencyMs: 12 } }); });
-    await page.route('**/api/config/jev', (route) => {
-      if (route.request().method() !== 'GET') { writes.push(route.request().method()); return route.fulfill({ json: { updated: true } }); }
-      return route.fulfill({ json: { enabled: false, providers: {} } });
-    });
-    await boot(s);
-    await mountProviderPanel(page);
-    await page.locator('[data-provider-type="jev"]').dispatchEvent('click');
-    await page.locator('#btn-add-provider').dispatchEvent('click');
-    const modal = page.locator('#cfg-modal');
-    await expect(modal).toBeVisible();
-    await modal.locator('[data-field="name"]').fill('my-jev-instance');
-    await modal.locator('[data-field="type"]').selectOption('laya');
-    await modal.locator('[data-field="endpoint"]').fill('http://127.0.0.1:9/predict');
-    await modal.locator('[data-field="model"]').fill('form-model');
-    await modal.locator('[data-field="apiKey"]').fill('form-key');
-    await page.locator('#btn-test-jev').dispatchEvent('click');
-    await expect.poll(() => probes.length).toBe(1);
-    expect(probes[0]).toEqual({
-      provider: 'laya', endpoint: 'http://127.0.0.1:9/predict', model: 'form-model', apiKey: 'form-key', keyRef: 'jev-my-jev-instance-key',
-    });
-    expect(probes[0].provider).not.toBe('my-jev-instance');
-    await expect(page.locator('.cfg-test-results-jev')).not.toBeEmpty();
-    expect(writes).toEqual([]);
-  } finally {
-    await s.close();
-  }
-});
-
-test('FRM-SCN-004 JeV probe without an adapter sends nothing and asks for one', async ({ browser }) => {
-  const s = await session(browser, { apiStubs: PANEL_STUBS });
-  const { page } = s;
-  const probes = [];
-  try {
-    await page.route('**/api/jev/test', (route) => { probes.push(route.request().postDataJSON()); return route.fulfill({ json: { ok: true, latencyMs: 7 } }); });
-    await boot(s);
-    await mountProviderPanel(page);
-    await page.locator('[data-provider-type="jev"]').dispatchEvent('click');
-    await page.locator('#btn-add-provider').dispatchEvent('click');
-    const modal = page.locator('#cfg-modal');
-    await expect(modal).toBeVisible();
-    await modal.locator('[data-field="name"]').fill('my-laya');
-    await modal.locator('[data-field="endpoint"]').fill('http://127.0.0.1:9/predict');
-    await modal.locator('[data-field="apiKey"]').fill('form-key');
-    // The adapter select is left on its placeholder.
-    await expect(modal.locator('[data-field="type"]')).toHaveValue('');
-    await page.locator('#btn-test-jev').dispatchEvent('click');
-    const line = page.locator('.cfg-test-results-jev .cfg-test-result-line');
-    await expect(line).toHaveClass(/\berr\b/);
-    await expect(line).toContainText(/adapter|协议适配/i);
-    await expect(page.locator('#btn-test-jev')).toBeEnabled();
-    expect(probes).toEqual([]);
-
-    // Choosing an adapter makes the same form probe, with that adapter.
-    await modal.locator('[data-field="type"]').selectOption('laya');
-    await page.locator('#btn-test-jev').dispatchEvent('click');
-    await expect.poll(() => probes.length).toBe(1);
-    expect(probes[0].provider).toBe('laya');
-  } finally {
-    await s.close();
-  }
-});
-
-test('FRM-SCN-001 a JeV save that fails on the network says so and keeps the draft', async ({ browser }) => {
-  const s = await session(browser, { apiStubs: PANEL_STUBS });
-  const { page } = s;
-  try {
-    await page.route('**/api/secrets/**', (route) => route.fulfill({ status: 201, json: {} }));
-    await page.route('**/api/config/jev', (route) => (route.request().method() === 'GET'
-      ? route.fulfill({ json: { enabled: false, providers: {} } })
-      : route.abort('failed')));
-    await boot(s);
-    await mountProviderPanel(page);
-    await captureToasts(page);
-    await page.locator('[data-provider-type="jev"]').dispatchEvent('click');
-    await page.locator('#btn-add-provider').dispatchEvent('click');
-    const modal = page.locator('#cfg-modal');
-    await expect(modal).toBeVisible();
-    await modal.locator('[data-field="name"]').fill('my-jev');
-    await modal.locator('[data-field="type"]').selectOption('laya');
-    await modal.locator('[data-field="endpoint"]').fill('http://127.0.0.1:9/predict');
-    await modal.locator('[data-field="model"]').fill('form-model');
-    await modal.locator('[data-field="apiKey"]').fill('form-key');
-    await page.locator('#cfg-modal-save').dispatchEvent('click');
-
-    await expect.poll(async () => (await errorToasts(page)).length).toBeGreaterThan(0);
-    await expect(modal).toBeVisible();
-    await expect(page.locator('#cfg-modal-save')).toBeEnabled();
-    await expect(modal.locator('[data-field="name"]')).toHaveValue('my-jev');
-    await expect(modal.locator('[data-field="model"]')).toHaveValue('form-model');
-  } finally {
-    await s.close();
-  }
-});
+// （三处 JeV 表单用例——FRM-SCN-004 两腿（adapter 造型）+ FRM-SCN-001 网络失败
+// 腿——已随 JeV 全量退役删除，jev-retire 批 2026-11-16：jev 域不在统一服务商
+// 面板，/api/config/jev 与 #btn-test-jev 不复存在。表单失败保留草稿语义的 LLM
+// 腿仍由本文件 FRM-SCN-001 与 forms-provider-consumer.spec 守。）
 
 // Mount the mobile Apple todo face on a minimal navigator. The previous flow leaves its list page mounted, so
 // callers always take the newest page (`.last()`).

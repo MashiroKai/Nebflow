@@ -203,8 +203,9 @@
   overflow: hidden;
 }
 /* provider-add-tabs 批（溢出零容忍 P6）：裸 nowrap ⇒ 补齐省略号三件（overflow
-   由 .stt-status 外层与自身承接）；title 全文由 paintJevHealth slot.title 提供，
-   四件齐 = 合规收尾，不是「靠遮掩」的假绿。 */
+   由 .stt-status 外层与自身承接）；title 全文由徽标 slot.title 提供（该先例
+   出自原 paintJevHealth，现已随 JeV 面退役——2026-11-16），四件齐 = 合规收尾，
+   不是「靠遮掩」的假绿。 */
 .set-nav > .stt-status .st-badge,
 .set-nav > .stt-status .st-badge .badge-reason {
   white-space: nowrap;

@@ -154,8 +154,18 @@ object PluginCommand extends CliCommand:
                 val via = s.hcursor.downField("via").as[String].getOrElse("?")
                 val kind = s.hcursor.downField("kind").as[String].getOrElse("?")
                 val digest = s.hcursor.downField("digest").as[String].map(_.take(12) + "…").getOrElse("-")
+                // §12.1 分发信任面（additive；A 期 officialBadge 恒 false——无目录签名）
+                val dist = s.hcursor.downField("distribution")
+                val origin = dist.downField("origin").as[String].getOrElse("?")
+                val trustLevel = dist.downField("trustLevel").as[String].getOrElse("?")
+                val policy = s.hcursor.downField("updatePolicy").as[String].toOption.getOrElse("-")
+                val pinned = s.hcursor.downField("pinned").as[Boolean].toOption.exists(identity)
+                val badge = s.hcursor.downField("officialBadge").as[Boolean].toOption.exists(identity)
                 val url = s.hcursor.downField("url").as[String].toOption
-                s"  $name  (v$version, via=$via kind=$kind, digest $digest)${url.fold("")(u => s"  ← $u")}"
+                s"  $name  (v$version, via=$via kind=$kind, digest $digest, " +
+                  s"origin=$origin trust=$trustLevel policy=$policy" +
+                  (if pinned then " PINNED" else "") + (if badge then " [official]" else "") +
+                  s")${url.fold("")(u => s"  ← $u")}"
               } ++ unknown.map { u =>
                 val name = u.hcursor.downField("name").as[String].getOrElse("?")
                 s"  $name  (unknown-source: provenance not recorded or unreadable)"

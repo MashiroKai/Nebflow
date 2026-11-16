@@ -3,7 +3,8 @@
 // 两腿（MODE 环境变量）：
 //   MODE=settings（默认）—— 设置页读数 + 截图：改前/改后各跑一次，靠
 //     SHOTS_DIR 区分落盘目录；同时做**功能断言**（O6：开关点击的 WS 报文、
-//     语言切换、下钻子页开合、JeV 保存 PUT 报文与 inline 状态、思考档位 WS）。
+//     语言切换、下钻子页开合、类型标签切换、思考档位 WS）。JeV 保存 PUT 报文
+//     腿已随 JeV 退役删除（jev-retire 批 2026-11-16）。
 //   MODE=kit —— 设计体系 kit 文档页（docs/…/kit.html）五组件 DOM 读数 + 截图。
 //
 // 读数输出：每行 `PASS|FAIL  <name>  — <json 读数>`，末尾 `___READINGS___` 后
@@ -96,7 +97,6 @@ const CONFIG = {
       kimi: { baseUrl: 'https://api.kimi.example/v1/', apiKey: '***', protocol: 'anthropic', models: [{ id: 'kimi-k2', contextWindow: 8192 }] },
     },
   },
-  jev: { enabled: true, provider: 'typesafe-jev', endpoint: 'https://api.typesafe.ai/v1/systemone', keyRef: 'typesafe-api-key' },
   stt: { enabled: false },
 };
 
@@ -141,12 +141,6 @@ async function boot(colorScheme) {
   await page.route('**/api/**', (route) => {
     const u = new URL(route.request().url());
     const p = u.pathname;
-    if (p.startsWith('/api/secrets/')) {
-      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ value: 'sk-jev-secret' }) });
-    }
-    if (p === '/api/config/jev' && route.request().method() === 'PUT') {
-      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
-    }
     if (p === '/api/config/imagegen') {
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ compiledIn: true, enabled: false, providers: {} }) });
     }
@@ -232,29 +226,18 @@ async function settingsLeg(colorScheme) {
   ok(`功能·思考档位（${colorScheme}）`, !!thinkMsg && !!thinkMsg.thinking && thinkMsg.thinking.budgetTokens > 0, thinkMsg ?? null);
 
   //    c) provider-add-tabs 批换代：类型标签切换 = 面板重绘（列表 data-type 跟随）。
-  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
-  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', null, { timeout: 5000 });
+  //    （jev 标签腿已随 JeV 退役改走 imagegen——jev-retire 批 2026-11-16；
+  //    原 d) JeV 统一表单保存腿随 jev 域下线删除。）
+  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());
+  await page.waitForSelector('.nf-provider-panel[data-type="imagegen"]', null, { timeout: 5000 });
   await sleep(250);
-  await page.screenshot({ path: join(SHOTS_DIR, `provider-panel-jev-${colorScheme}.png`) });
+  await page.screenshot({ path: join(SHOTS_DIR, `provider-panel-imagegen-${colorScheme}.png`) });
   const tabState = await page.evaluate(() => ({
     type: document.querySelector('.nf-provider-panel')?.dataset.type,
     cards: document.querySelectorAll('#provider-list .cfg-card').length,
     overlay: !!document.querySelector('.config-drill-overlay'),
   }));
-  ok(`功能·类型标签切换（${colorScheme}）`, tabState.type === 'jev' && tabState.overlay === false, tabState);
-
-  //    d) JeV 保存：统一表单保存腿 → PUT /api/config/jev 报文。
-  let putBody = null;
-  page.on('request', (r) => {
-    if (r.url().includes('/api/config/jev') && r.method() === 'PUT') putBody = r.postData();
-  });
-  await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
-  await page.waitForSelector('#cfg-modal .cfg-modal-body', null, { timeout: 5000 });
-  await page.click('#cfg-modal-save');
-  await sleep(600);
-  ok(`功能·JeV 统一表单保存（${colorScheme}）`, !!putBody, { put: putBody ? JSON.parse(putBody) : null });
-  await page.evaluate(() => document.getElementById('cfg-modal')?.remove());
-  await sleep(200);
+  ok(`功能·类型标签切换（${colorScheme}）`, tabState.type === 'imagegen' && tabState.overlay === false, tabState);
 
   //    e) 语言切换 → select 值落盘 + 重渲（locale 生效判据）。
   await page.selectOption('#cfg-language', 'en');

@@ -3,7 +3,7 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
-import { chatFooter, chatFooterDivider, chatFooterTime } from './chatUi.js';
+import { chatFooter, chatFooterDivider, chatFooterTime, fmBubbleRowClass } from './chatUi.js';
 // bubble-side-color 批（2026-11-06）：气泡归属方判定/类名工厂单点（收编前本处
 // 直接拼 `bubble ${out ? 'user' : 'peer'}`，归属方语义散在模板串里）。
 import { bubbleClass, bubbleSideOfOutgoing } from './bubbleSide.js';
@@ -3475,7 +3475,9 @@ export function bubbleEl(m, conv) {
   // （出向=我方绿 / 入向=对方白），本处只把结论交给 bubbleClass()；底色本身由
   // css/glass.css「气泡归属方底色单点」块消费令牌，本文件零色值。
   const side = bubbleSideOfOutgoing(out);
-  const bubble = el('div', `fm-msg-bubble ${bubbleClass(out ? 'user' : 'peer', side)}`);
+  // 外壳类拼写走 chatUi.fmBubbleRowClass()（chat-ui-package 批④词表收口：
+  // `fm-msg-bubble` 不再本文件直写）；内芯（角色/归属方类）仍由 bubbleClass() 单点。
+  const bubble = el('div', fmBubbleRowClass(bubbleClass(out ? 'user' : 'peer', side)));
   bubble.dataset.bubbleSide = side;
   // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
   // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
