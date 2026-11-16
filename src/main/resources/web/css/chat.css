@@ -4581,6 +4581,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    UI-G (author 2026-10-03 19:59 ruling): a subagent / flow popup window adds
    `.nf-static`; the ONE rule below turns every animation and every transition
    in this block off for that window — no per-element handling. */
+/* The canvas Ask preview uses the same live-line typography and caret. */
+.nf-workline,
+.ask-stream-line {
+  font-size: var(--ds-fs-hint);
+  line-height: var(--ds-lh-body, 1.5);
+  font-weight: 500;
+  color: var(--color-text-dim);
+  opacity: 0.9;
+}
 .nf-workline {
   display: flex;
   /* 2026-10-06 author screenshot defect (「›偏上、文字基线偏下」): the row
@@ -4592,17 +4601,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: 85%;
   margin: var(--ds-space-half) 0;
   padding: var(--ds-space-1) var(--ds-space-3);
-  font-size: var(--ds-fs-hint);
   /* zcode-484 batch: ONE text row, fixed — the line box has to be deterministic
      (the slot's fixed height below mirrors it) and it must survive the terminal
      morph, where `.nf-workline` is dropped by the `.turn-header` class swap.
      row-center 批（作者令 2026-11-05 20:18「> 和 spinner 以及文字，没有上下居中
      对齐」）：行高**只从令牌取** —— `--ds-lh-body`(1.5) × `--ds-fs-hint`(12px) = 18px，
      与改前硬写的 `18px` 逐像素同值（改前是档外裸值，本批收编，零几何漂移）。 */
-  line-height: var(--ds-lh-body, 1.5);
-  font-weight: 500;
-  color: var(--color-text-dim);
-  opacity: 0.9;
   position: relative;
   cursor: default;
   /* row-center 批：本行**取消入场渐显**（作者令 2026-11-05 20:28「不要有这个模糊
@@ -4860,7 +4864,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   overflow-wrap: normal;
   vertical-align: baseline;
 }
-.nf-wl-think::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
+.nf-wl-think::after, .ask-stream-line::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
 .nf-wl-item.is-done .nf-wl-think::after { display: none; }
 
 @keyframes nf-wl-in { from { opacity: 0; } to { opacity: 1; } }
@@ -4922,6 +4926,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .nf-wl-spin::before,
   .nf-wl-dots .thinking-dot,
   .nf-wl-think::after,
+  .ask-stream-line::after,
   .bubble.nf-pop { animation: none; }
   .nf-wl-item.is-enter-late { animation-delay: 0s; }
   /* The tail fade is not motion, but under an explicit reduced-motion request
