@@ -305,7 +305,7 @@ let convScope = null;
 // `total` 恒为**命中总数**（索引给 total；本地路径 = 命中数组长度），UI 据此报
 // 「已加载 N/M 条」，more=false 才停（= 已翻到最早一条）。
 /**
- * @typedef {{mode:'index'|'local', url:string, offset:number, total:number,
+ * @typedef {{mode:'index'|'local', url:string, offset:number, cursor?:string, total:number,
  *   loaded:number, revealed:number, pageSize:number, more:boolean,
  *   loading:boolean, failed:boolean}} SearchPager
  */
@@ -1642,7 +1642,7 @@ async function loadAfterPages() {
 /**
  * 索引检索的分页 URL 构造（分页腿唯一构造点：首屏与续取页同源，禁第二套拼装）。
  * @param {{q:string, kinds:string[], sid:string}} base 查询基址
- * @param {number} offset 已取条数（下一页起点）
+ * @param {string} cursor Opaque continuation cursor.
  * @returns {string}
  */
 function indexPageUrl(base, cursor) {
