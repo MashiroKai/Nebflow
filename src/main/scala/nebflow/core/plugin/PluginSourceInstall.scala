@@ -593,7 +593,7 @@ object PluginSourceInstall:
             val location = try
               val rel = java.net.URI.create(artifact)
               if rel.isAbsolute || rel.getRawAuthority != null || rel.getRawQuery != null || rel.getRawFragment != null ||
-                  artifact.startsWith("/") || artifact.contains("\\") || artifact.split("/").exists(s => s == ".." || s == "." || s.isEmpty) then None
+                  artifact.contains("%") || artifact.startsWith("/") || artifact.contains("\\") || artifact.split("/").exists(s => s == ".." || s == "." || s.isEmpty) then None
               else if m.catalog.isDir then Some((os.Path(m.catalog.location) / os.SubPath(artifact)).toNIO.toUri.toString)
               else Some(java.net.URI.create(m.catalog.location).resolve(rel).toString)
             catch case NonFatal(_) => None

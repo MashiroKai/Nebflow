@@ -135,7 +135,7 @@ object PluginDistributionCatalog:
       finally in.close()
     catch case NonFatal(e) => Left(s"catalog fetch failed: ${e.getMessage} ($CodeCatalogSourceUnknown)")
 
-  private def checkRevision(id: String, revision: Long, advance: Boolean): Either[String, Unit] =
+  private def checkRevision(id: String, revision: Long, advance: Boolean): Either[String, Unit] = synchronized {
     def check(): Either[String, Unit] =
       val path = PathUtil.dataRoot / "plugin-catalog-state" / s"$id.json"
       val previous: Either[String, Option[Long]] =
@@ -162,6 +162,7 @@ object PluginDistributionCatalog:
           try check() finally lock.release()
         finally channel.close()
     catch case NonFatal(e) => Left(bad(s"catalog state failure: ${e.getMessage}"))
+  }
 
   def loadVerified(sourceId: String, advance: Boolean = true): IO[Either[String, VerifiedCatalog]] = IO.blocking {
     for

@@ -146,8 +146,8 @@ test('C1: clipboard stand:// link asks once on focus; never auto-installs; same 
 
   const modal = page.locator('[data-install-link-modal]');
   await expect(modal).toBeVisible({ timeout: 5000 });
-  await expect(page.locator('[data-install-link-id]')).toHaveText('acme.demo-kit');
-  await expect(page.locator('[data-install-link-version]')).toHaveText('1.5.0');
+  await expect(modal.locator('[data-install-link-id]')).toHaveText('acme.demo-kit');
+  await expect(modal.locator('[data-install-link-version]')).toHaveText('1.5.0');
 
   // 绝不自动安装：弹窗出现后（未点击）零 POST
   await page.waitForTimeout(300);

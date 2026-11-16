@@ -103,7 +103,7 @@ class PluginInstallLinkSpec extends FunSuite:
       "keyId" -> keyId.asJson,
       "value" -> signBytes(kp.getPrivate, PluginDistributionCatalog.canonicalSigningBytes(catalogJson)).asJson
     )
-    os.makeDir.all(dir)
+    os.makeDir.all(dir / "artifacts")
     os.write.over(dir / "catalog.json", Json.obj("catalog" -> catalogJson, "signature" -> signature).noSpaces)
     configureDirSource(sourceId, dir, keyId, pubHex(kp))
     (sourceId, dir)
@@ -328,7 +328,7 @@ class PluginInstallLinkSpec extends FunSuite:
       "keyId" -> "acme-release-1".asJson,
       "value" -> signBytes(kp.getPrivate, PluginDistributionCatalog.canonicalSigningBytes(catalogJson)).asJson
     )
-    os.makeDir.all(dir)
+    os.makeDir.all(dir / "artifacts")
     os.write.over(dir / "catalog.json", Json.obj("catalog" -> catalogJson, "signature" -> signature).noSpaces)
     os.write.over(dir / "artifacts" / "ghost-kit.zip", zip)
     writeConfig(
