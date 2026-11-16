@@ -95,7 +95,7 @@ const ROWS_PER_PAGE = WITH_CARDS ? 60 : 50;   // 卡片消息产出 2 行（工�
 const FINAL_ROWS = ROWS_PER_PAGE * (TOTAL / LIMIT);
 /** 一页 50 行：10 组 × [user 2KB, ai md 2.5KB, tool 60KB, ai 短, card 图]。
  *  idx = 会话内绝对下标（同一 idx 恒同内容 ⇒ 跨页确定性）。 */
-const rowAt = (idx) => {
+const rawRowAt = (idx) => {
   // Every message carries an independently visible, unique sequence token in
   // the logical-order fixture. The mixed fixture remains the performance case.
   if (process.env.NB_SEQUENCE_FIXTURE === '1') return { type: 'user', text: `SEQ-${idx}-END`, timestamp: 1750000000000 + idx * 1000 };
@@ -105,6 +105,15 @@ const rowAt = (idx) => {
   if (k === 2) return { type: 'tool', label: 'Read', summary: `读取 /data/node_${idx}.json`, isError: false, content: BIG(idx) };
   if (k === 3) return { type: 'ai', text: `收到，第 ${idx} 条小结。`, timestamp: 1750000000000 + idx * 1000 };
   return WITH_CARDS ? cardRow(idx) : { type: 'tool', label: 'Note', summary: `备注 ${idx}`, isError: false, content: '小工具正文 ' + idx };
+};
+const rowAt = (idx) => {
+  const row = rawRowAt(idx);
+  if (process.env.NB_MIXED_SEQUENCE !== '1') return row;
+  const marker = ` SEQ-${idx}-END`;
+  if (row.type === 'user' || row.type === 'ai') row.text += marker;
+  else if (idx % 5 === 4) row.label += marker;
+  else row.summary += marker;
+  return row;
 };
 const pageMessages = (offset, n) => Array.from({ length: n }, (_, i) => rowAt(offset + i));
 /** 初载（无 beforeIndex）= 最旧在视页 offset=TOTAL-LIMIT；上滑 = 更旧一页。 */
@@ -260,6 +269,26 @@ const firstDup = await page.evaluate(() => {
 await page.evaluate(() => { window.__noReloadMarker = { at: Date.now() }; window.__lt = { n: 0, total: 0, max: 0 }; });
 const navAtBoot = navigated;
 
+// Trusted browser input: move the viewport by five upward wheel ticks, then
+// retain the visible element while the resulting pagination completes.
+let realWheelResult = null;
+if (process.env.NB_REAL_WHEEL === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  const start = await chat.evaluate((c) => c.scrollTop);
+  for (let i = 0; i < 5; i++) await page.mouse.wheel(0, -80);
+  await page.waitForTimeout(150);
+  const end = await chat.evaluate((c) => c.scrollTop);
+  const anchor = await chat.evaluate((c) => {
+    const bounds = c.getBoundingClientRect();
+    const row = [...c.querySelectorAll('.row')].find((r) => { const rect = r.getBoundingClientRect(); return rect.bottom > bounds.top && rect.top < bounds.bottom; });
+    window.__wheelAnchor = row && { row, top: row.getBoundingClientRect().top - bounds.top };
+    return !!row;
+  });
+  realWheelResult = { start, end, moved: end < start, anchor };
+  console.log('[real-wheel] ' + JSON.stringify(realWheelResult));
+}
+
 /** 上滑一页（滚到 250px —— 预取带内、停顶续拉阈值上方）并等行数落定。 */
 async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
   const t0 = Date.now();
@@ -341,6 +370,10 @@ for (let i = 1; i <= 4; i++) {
   anchorErrors.push(r.error);
   rows = await rowCount();
 }
+if (realWheelResult) realWheelResult.errorAfterPagination = await page.evaluate(() => {
+  const c = document.getElementById('chat'), a = window.__wheelAnchor;
+  return a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null;
+});
 const manualRows = rows;
 // 末段：停在顶部 ⇒ 停顶续拉腿把剩余页自动补齐到全量收口（卡片行双计）。
 const parkT0 = Date.now();
@@ -352,7 +385,7 @@ for (;;) {
 }
 const maxPageMs = Math.max(...pageTimes);
 // Only user messages carry this fixture's unambiguous sequence marker.
-const sequenceFixture = process.env.NB_SEQUENCE_FIXTURE === '1';
+const sequenceFixture = process.env.NB_SEQUENCE_FIXTURE === '1' || process.env.NB_MIXED_SEQUENCE === '1';
 const userSequence = await page.evaluate((sequenceFixture) => [...document.querySelectorAll('#chat .row')]
   .map((row) => (row.textContent || '').match(sequenceFixture ? /SEQ-(\d+)-END/ : /用户消息 (\d+)：/))
   .filter(Boolean).map((match) => Number(match[1])), sequenceFixture);
@@ -405,8 +438,8 @@ ok('P0-b 首屏时延 < ' + FIRST_MS + 'ms（init getHistory → 行落定）',
   firstScreenMs >= 0 && firstScreenMs < FIRST_MS, `firstScreen=${firstScreenMs}ms`);
 ok('A1 前插后保持同一可见行位置', anchorErrors.every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
   `errors=${JSON.stringify(anchorErrors)} tolerance=${ANCHOR_TOLERANCE_CSS_PX} CSS px`);
-if (process.env.NB_RAPID_GESTURES === '1') ok('A3 五次合成 wheel 意图后锚点不跳（非真实上滑）', anchorErrors.every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX), `errors=${JSON.stringify(anchorErrors)}`);
-ok('A2 用户消息序号连续无缺口', userSequenceComplete,
+if (process.env.NB_REAL_WHEEL === '1') ok('A3 真实 wheel 后滚动及锚定', !!realWheelResult?.moved && realWheelResult.errorAfterPagination !== null && realWheelResult.errorAfterPagination <= ANCHOR_TOLERANCE_CSS_PX, `wheel=${JSON.stringify(realWheelResult)} errors=${JSON.stringify(anchorErrors)}`);
+ok('A2 已标记消息序号连续无缺口', userSequenceComplete,
   `observed=${JSON.stringify(userSequence)} expected=${JSON.stringify(expectedUsers)}`);
 ok('A4 相邻页边界补页不跳', anchorErrors.slice(1, 3).every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
   `errors=${JSON.stringify(anchorErrors.slice(1, 3))}`);
