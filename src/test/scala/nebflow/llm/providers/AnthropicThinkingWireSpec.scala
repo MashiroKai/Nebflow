@@ -92,6 +92,14 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     assertEquals(thinkingKeyOf(f), Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 32000.asJson)))
   }
 
+  test("budget wire does not leak internal effort or clearThinking carrier fields") {
+    val carrier = Some(nebflow.shared.ThinkingConfig.toLlmJson(
+      nebflow.shared.ThinkingConfig(budgetTokens = 32000, effort = Some(ThinkingEffort.Max), clearThinking = Some(false))
+    ))
+    val fragment = adapter().wireThinkingFragment(params("claude-sonnet-x", carrier))
+    assertEquals(thinkingKeyOf(fragment), Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 32000.asJson)))
+  }
+
   test("W2: budget kind + off → EMPTY fragment (thinking key omitted, never null)") {
     val f = adapter().wireThinkingFragment(params("claude-sonnet-x", off))
     assertEquals(f, Json.obj(), "off must omit the thinking key entirely")

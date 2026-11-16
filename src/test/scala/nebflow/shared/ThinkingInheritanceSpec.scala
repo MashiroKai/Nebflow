@@ -66,6 +66,14 @@ class ThinkingInheritanceSpec extends FunSuite:
     assertEquals(ThinkingMode.resolveEffective(None, None, g).effort, Some(ThinkingEffort.Medium))
   }
 
+  test("global request carrier preserves configured effort and clearThinking after worker budget cap") {
+    val global = ThinkingConfig(budgetTokens = 65536, effort = Some(ThinkingEffort.Max), clearThinking = Some(false))
+    val carrier = ThinkingConfig.toLlmJson(ThinkingConfig.cappedForSubagent(global))
+    assertEquals(carrier.hcursor.get[String]("effort").toOption, Some("max"))
+    assertEquals(carrier.hcursor.get[Boolean]("clearThinking").toOption, Some(false))
+    assertEquals(carrier.hcursor.get[Int]("budget_tokens").toOption, Some(32000))
+  }
+
   // ── I3：配置面零破坏 ─────────────────────────────────────────────────────
 
   test("I3: legacy config JSON (no new fields) decodes to the legacy values") {

@@ -457,7 +457,9 @@ class AnthropicAdapter(
 
   private def onWire(params: SendMessageParams, kind: ThinkingKind, semantic: Json): Json =
     kind match
-      case ThinkingKind.Budget => Json.obj("thinking" -> semantic) // 既有 budget 形态逐字保留
+      case ThinkingKind.Budget =>
+        // The request carrier includes internal inheritance fields, not wire fields.
+        Json.obj("thinking" -> semantic.mapObject(_.remove("effort").remove("clearThinking")))
       case ThinkingKind.EffortAnthropic =>
         // 官方 anthropic 面：thinking 支持（budget_tokens 被忽略）→ 只发开关位。
         val base = Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))

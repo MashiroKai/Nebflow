@@ -563,7 +563,8 @@ object LlmInterface extends LlmRuntime:
                 // ask 思考低档腿（2026-10-31 换装批）：请求构造点（AgentSessionExecution
                 // askThinkingJson）为 ask 会话 deepMerge 的 per-request effort 档——
                 // 键缺席（一切非 ask 会话）⇒ None，原三层继承语义逐字节不变。
-                effort = t.hcursor.get[nebflow.shared.ThinkingEffort]("effort").toOption
+                effort = t.hcursor.get[nebflow.shared.ThinkingEffort]("effort").toOption,
+                clearThinking = t.hcursor.get[Boolean]("clearThinking").toOption
               )
               val resolved = nebflow.shared.ThinkingMode.resolveEffective(
                 candidate.thinking,

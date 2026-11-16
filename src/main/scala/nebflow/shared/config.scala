@@ -684,10 +684,12 @@ object ThinkingConfig:
    */
   def toLlmJson(tc: ThinkingConfig): io.circe.Json =
     if tc.enabled then
-      io.circe.Json.obj(
-        "type" -> "enabled".asJson,
-        "budget_tokens" -> tc.budgetTokens.asJson
-      )
+      val base = List("type" -> "enabled".asJson, "budget_tokens" -> tc.budgetTokens.asJson)
+      val extra = List(
+        tc.effort.map(e => "effort" -> e.asJson),
+        tc.clearThinking.map(c => "clearThinking" -> c.asJson)
+      ).flatten
+      io.circe.Json.obj((base ++ extra)*)
     else io.circe.Json.Null
 
   /**
