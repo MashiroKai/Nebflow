@@ -225,15 +225,36 @@ object AskHostTool extends Tool:
           next.fold[Either[String, String]](Left(s"no root ancestry for session $id"))(loop(_, seen + id))
     loop(bound, Set.empty)
 
+  private[nebflow] def awaitReply(id: String, waiter: Deferred[IO, String], timeout: FiniteDuration): IO[Either[ToolError, String]] =
+    waiter.get.map(Right(_)).timeoutTo(timeout,
+      AskHostLedger.cancel(id, "root reply timed out").flatMap {
+        case true => IO.pure(Left(ToolError(s"AskHost request $id timed out waiting for root; retry or escalate")))
+        case false => AskHostLedger.recover.map(_.find(_.pending.correlationId == id).flatMap(_.answer) match
+          case Some(answer) => Right(answer)
+          case None => Left(ToolError(s"AskHost request $id is no longer available")))
+      })
+
+  private[nebflow] def trustedFallback(resources: nebflow.core.AgentRuntimePort, registry: Map[String, nebflow.actor.AgentRecord]): IO[Option[String]] =
+    registry.values.toList.filter(r => r.kind == nebflow.actor.AgentKind.Root && r.rootSessionId == r.sessionId)
+      .traverse(r => resources.sessionStore.getSessionMeta(r.sessionId).map(_.filter(m =>
+        m.agentName.getOrElse(RootAgentIdentity.Name) == RootAgentIdentity.Name).map(_ => r.sessionId)))
+      .map(_.flatten match
+        case single :: Nil => Some(single)
+        case _ => None)
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val question = input("question").flatMap(_.asString).map(_.trim).getOrElse("")
     if question.isEmpty then IO.pure(Left(ToolError("AskHost: question must be non-empty")))
     else (ctx.sessionId, ctx.rootSessionId, ctx.agentDef, ctx.sharedResources) match
       case (Some(worker), Some(boundRoot), Some(agent), Some(resources)) if worker != boundRoot =>
         resources.agentRegistry.get.flatMap { registry =>
-          resolveRoot(boundRoot, registry) match
-          case Left(reason) => IO.pure(Left(ToolError(s"AskHost: root session unavailable: $reason")))
-          case Right(root) =>
+          val resolved = resolveRoot(boundRoot, registry)
+          val destination = resolved match
+            case Right(root) => IO.pure(Some(root))
+            case Left(_) => trustedFallback(resources, registry)
+          destination.flatMap {
+          case None => IO.pure(Left(ToolError(s"AskHost: root session unavailable: ${resolved.swap.toOption.getOrElse("ambiguous trusted root")}")))
+          case Some(root) =>
             val rootRecord = registry(root)
             AskHostLedger.beginForCall(worker, root, agent.name, question, ctx.toolCallId).flatMap { case (request, _) =>
               val payload = s"[AskHost request ${request.correlationId} from ${request.sourceAgent} / ${request.workerSession}]\n$question"
@@ -246,13 +267,7 @@ object AskHostTool extends Tool:
               durable.flatMap {
                 case nebflow.core.mail.SessionMailbox.MailResult.Enqueued(_) | nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
                   (rootRecord.ref ! AgentCommand.MailboxArrived) *> AskHostLedger.restoreWaiter(request.correlationId).flatMap { waiter =>
-                    waiter.get.map(Right(_)).timeoutTo(10.minutes,
-                      AskHostLedger.cancel(request.correlationId, "root reply timed out").flatMap {
-                        case true => IO.pure(Left(ToolError(s"AskHost request ${request.correlationId} timed out waiting for root; retry or escalate")))
-                        case false => AskHostLedger.recover.map(_.find(_.pending.correlationId == request.correlationId).flatMap(_.answer) match
-                          case Some(answer) => Right(answer)
-                          case None => Left(ToolError(s"AskHost request ${request.correlationId} is no longer available")))
-                      })
+                    awaitReply(request.correlationId, waiter, 10.minutes)
                   }
                 case other => AskHostLedger.markUnavailable(request.correlationId, s"delivery failed: $other") *>
                   IO.pure(Left(ToolError(s"AskHost root delivery failed for request ${request.correlationId}: $other")))
@@ -261,6 +276,7 @@ object AskHostTool extends Tool:
                   IO.pure(Left(ToolError(s"AskHost request ${request.correlationId} failed: ${error.getMessage}")))
               }
             }
+          }
         }
       case _ => IO.pure(Left(ToolError("AskHost is only available to a worker with an engine-bound root session")))
 end AskHostTool
