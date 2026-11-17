@@ -12,6 +12,18 @@ try {
   await boot(); await page.waitForSelector('body.mobile-layer');
   await page.evaluate(async () => (await import('/js/mobile/navController.js')).pushPage('settings'));
   await settle(page);
+  const middle = await page.locator('#settings-content').evaluate(e => {
+    e.scrollTop = (e.scrollHeight - e.clientHeight) / 2;
+    const s = e.getBoundingClientRect();
+    const back = document.querySelector('.mobile-page[data-page="settings"] .mobile-back-btn').getBoundingClientRect();
+    const candidates = [...e.querySelectorAll('.set-card-title, .set-card, button')].filter(el => { const r = el.getBoundingClientRect(); return r.bottom > s.top && r.top < s.bottom; });
+    const first = candidates[0]; const r = first?.getBoundingClientRect();
+    const x = r ? Math.max(r.left + 5, back.left + 5) : 0, y = s.top + 2;
+    return {scrollTop:e.scrollTop, scroller:s.toJSON(), back:back.toJSON(), first:r?.toJSON(), hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,200)};
+  });
+  assert.ok(middle.scroller.top >= middle.back.bottom, 'settings scroller begins below the top control');
+  console.log('settings middle:', JSON.stringify(middle));
+  await page.screenshot({path:`${out}/settings-middle.png`,animations:'disabled'});
   await page.locator('#settings-content').evaluate(e => { e.scrollTop = e.scrollHeight; });
   await settle(page);
   const result = await page.evaluate(() => {
