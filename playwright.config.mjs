@@ -32,6 +32,9 @@ standaloneScripts.push(
   'mobile-chat-initial-scroll.spec.mjs',
   'mobile-touch-target.spec.mjs',
   'toggle-green-revert.spec.mjs',
+  // Standalone browser script, not a Playwright Test suite; CI runs it directly.
+  'project-open-contract.test.mjs',
+  'dropdown-menu.test.mjs',
 );
 
 // instance-backed spec：驱动真实服务器（BASE_URL/NEBFLOW_URL + token）。
