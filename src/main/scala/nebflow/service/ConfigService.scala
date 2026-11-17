@@ -118,7 +118,9 @@ object ConfigService:
       .flatMap(_.hcursor.downField("llm").downField("providers").as[Map[String, Json]].toOption)
       .getOrElse(Map.empty[String, Json])
     Json.obj("providers" -> Json.fromFields(providers.flatMap { case (id, p) =>
-      p.hcursor.downField("apiKey").as[String].toOption.filter(_.nonEmpty).map(id -> Json.fromString(_))
+      p.hcursor.downField("apiKey").as[String].toOption.filter(_.nonEmpty).map { key =>
+        id -> Json.fromString(nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, key, "provider-settings"))
+      }
     }))
   }
 
@@ -137,6 +139,25 @@ object ConfigService:
     //     stored key. Round-trip closed by construction.
     if os.exists(configPath) then maskSecrets(os.read(configPath)) else "{}"
   }
+
+  /** Convert provider keys before the final configuration write. */
+  private[nebflow] def persistProviderCredentials(json: Json): Json =
+    json.mapObject { root =>
+      root("llm").flatMap(_.asObject) match
+        case None => root
+        case Some(llm) =>
+          llm("providers").flatMap(_.asObject) match
+            case None => root
+            case Some(providers) =>
+              val updated = JsonObject.fromIterable(providers.toIterable.map { case (id, provider) =>
+                id -> provider.mapObject { obj =>
+                  obj("apiKey").flatMap(_.asString) match
+                    case Some(value) => obj.add("apiKey", Json.fromString(nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value)))
+                    case None => obj
+                }
+              })
+              root.add("llm", Json.fromJsonObject(llm.add("providers", Json.fromJsonObject(updated))))
+    }
 
   /** Validate config JSON — returns list of errors. Empty list means valid. */
   def validateConfig(jsonStr: String): List[String] =
@@ -245,7 +266,8 @@ object ConfigService:
                 // provider apiKeys in cleartext — the file lands 0600 instead
                 // of the umask default 0644 (legacy files converge on their
                 // next save; no migration script).
-                AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), merged)
+                val persisted = persistProviderCredentials(parse(merged).fold(_ => throw new IllegalArgumentException("Invalid merged configuration"), identity))
+                AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), persisted.spaces2)
               }
               .attempt
               .flatMap {

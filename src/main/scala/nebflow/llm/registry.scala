@@ -73,11 +73,13 @@ class ProviderRegistry(
     // openai 面收到同样配置（cmdcode 就显式写了 requireThinkingPassback:true）
     // 时是个哑开关——配置说了要回传，代码从不回传。
     val passback = ThinkingFamily.requiresPassback(providerId, provider)
+    val apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+      nebflow.shared.PathUtil.dataRoot, provider.apiKey, "provider-runtime")
     provider.protocol match
       case LlmProtocol.OpenAI =>
         OpenAiAdapter(
           provider.baseUrl,
-          provider.apiKey,
+          apiKey,
           backend,
           requireThinkingPassback = passback,
           providerId = providerId,
@@ -87,7 +89,7 @@ class ProviderRegistry(
       case LlmProtocol.Anthropic =>
         AnthropicAdapter(
           provider.baseUrl,
-          provider.apiKey,
+          apiKey,
           backend,
           // DeepSeek's thinking mode rejects history replay that omits unsigned
           // thinking blocks (400 invalid_request → provider marked DOWN); real

@@ -27,6 +27,14 @@ object ConfigCredentialStore:
       "secret:" + name
     finally Files.deleteIfExists(tmp)
 
+  def persist(root: os.Path, value: String): String =
+    if value.isEmpty || value.startsWith("secret:") then value else mint(root, value)
+
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.config.credentials")
+
+  def resolveManaged(root: os.Path, value: String, reader: String): String =
+    resolve(root, value, reader, (who, ref) => logger.infoSync(s"credential read: reader=$who reference=$ref"))
+
   /** Managed reads are audited; arbitrary reads by a same-identity shell are not interceptable here. */
   def resolve(root: os.Path, input: String, reader: String, audit: (String, String) => Unit): String =
     if !input.startsWith(Prefix) then input

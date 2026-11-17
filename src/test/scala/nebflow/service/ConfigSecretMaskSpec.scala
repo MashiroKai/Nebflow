@@ -160,8 +160,11 @@ class ConfigSecretMaskSpec extends FunSuite:
 
     val disk = readDisk()
     // 真 key 存活（*** = 保留旧值）；被编辑字段落盘
-    assertEquals(apiKeyOf(disk, "kimi"), Some("sk-real-kimi-1"))
-    assertEquals(apiKeyOf(disk, "deepseek"), Some("sk-real-ds-2"))
+    for id <- List("kimi", "deepseek") do
+      assert(apiKeyOf(disk, id).exists(_.startsWith("secret:config-")))
+    val revealed = ConfigService.revealProviderApiKeys.unsafeRunSync()
+    assert(revealed.hcursor.downField("providers").downField("kimi").as[String].toOption.contains("sk-real-kimi-1"))
+    assert(revealed.hcursor.downField("providers").downField("deepseek").as[String].toOption.contains("sk-real-ds-2"))
     assertEquals(
       disk.hcursor.downField("llm").downField("providers").downField("kimi").downField("baseUrl").as[String],
       Right("https://kimi.example.com/v2")
