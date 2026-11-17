@@ -784,7 +784,7 @@ const DECK_SCALE_SIDE = 0.84;    // 邻卡缩径
 const DECK_SCALE_FAR = 0.72;     // 第二邻卡缩径
 const DECK_SWITCH_PX = 56;       // 横拖过阈即换中央卡（松手吸附）
 const DECK_AXIS_PX = 8;          // 轴锁死区（内 = 点按）
-const DECK_SWIPE_Y_PX = 48;      // 纵拖过阈：上滑收面回阅读 / 下滑关当前标签
+const DECK_SWIPE_Y_PX = 48;      // 纵拖过阈：上滑或下滑关闭当前标签
 
 // ── 手势仲裁（内容操作优先，作者令 2026-11-01「拖动图谱、调整图片大小这类
 //    内容操作，会和左右滑动切换卡片的手势冲突……内容区起手的横滑归内容操作，
@@ -1491,8 +1491,7 @@ function buildDeckView(wrap) {
 
 /** 堆叠面拖拽（iOS app switcher 手势；轴锁 + 分轴语义）：
  *  · 横轴 = 卡列跟手平移，松手过 DECK_SWITCH_PX 换中央卡，不过阈回弹；
- *  · 纵轴下 = 中央卡跟手坠落 + 渐淡，松手过 DECK_SWIPE_Y_PX 关该标签（零确认）；
- *  · 纵轴上 = 整列上移预览，松手过阈收面回阅读（与阅读面「上滑进堆叠」互逆）。 */
+ *  · 纵轴任一方向 = 中央卡跟手移动 + 渐淡，松手过 DECK_SWIPE_Y_PX 关闭当前标签。 */
 function bindDeckSwipe(stage) {
   /** @type {{id: number, x0: number, y0: number, axis: string|null}|null} */
   let g = null;
@@ -1548,15 +1547,11 @@ function bindDeckSwipe(stage) {
         hapticTap(6);
       }
     } else if (axis === 'y') {
-      if (dy >= DECK_SWIPE_Y_PX) {
-        // 下滑 = 关当前标签（零确认 —— 作者 21:54 裁定「只是关闭标签页而已」）。
-        logEvent('deck-close', { via: 'swipe-down' });
+      if (Math.abs(dy) >= DECK_SWIPE_Y_PX) {
+        // Both vertical directions close the active card; horizontal switching is unchanged.
+        logEvent('deck-close', { via: dy < 0 ? 'swipe-up' : 'swipe-down' });
         closeCard();
         hapticTap(12);
-      } else if (dy <= -DECK_SWIPE_Y_PX) {
-        // 上滑 = 收面回阅读（与阅读面「上滑进堆叠」互逆成环）。
-        logEvent('deck-exit', { via: 'swipe-up' });
-        toggleDeck(false);
         return;                                // 面已收，无需回弹排版
       }
     }

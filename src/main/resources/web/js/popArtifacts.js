@@ -910,10 +910,10 @@ function buildMediaStack(items, opts) {
   view.addEventListener('keydown', (e) => {
     if (e.target !== view) return;
     const n = layers.length;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') front = (front + 1) % n;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') front = (front - 1 + n) % n;
-    else if (e.key === 'Home') front = 0;
-    else if (e.key === 'End') front = n - 1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') switchFront(1);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') switchFront(-1);
+    else if (e.key === 'Home') switchFront(-front);
+    else if (e.key === 'End') switchFront(n - 1 - front);
     else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
       e.preventDefault();
       e.stopPropagation();
@@ -921,7 +921,6 @@ function buildMediaStack(items, opts) {
       return;
     } else return;
     e.preventDefault();
-    applyLayers();
   });
 
   /** The expanded column's natural height: the sum of its layers plus the
@@ -991,13 +990,16 @@ function buildMediaStack(items, opts) {
   const stack = { suppressClick: false };
   let sx = null, dx = 0;
   let switching = false;
+  const pendingSteps = [];
   const reduceStackMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  // Only the outgoing front card moves. Fan slots change atomically afterwards,
-  // with no transitions on the lower layers and no layout reads in pointermove.
+  // Animate only the two participating cards; commit the new fan slots together.
   const switchFront = (step) => {
-    if (switching) return;
+    if (!step) return;
+    if (switching) { pendingSteps.push(step); return; }
     const layer = layers[front];
+    const next = layers[(front + step + layers.length) % layers.length];
     const finish = () => {
+      layers.forEach(el => { el.style.visibility = ''; });
       layer.style.transform = '';
       layer.style.willChange = '';
       front = (front + step + layers.length) % layers.length;
@@ -1005,18 +1007,53 @@ function buildMediaStack(items, opts) {
       switching = false;
       view.classList.remove('is-switching');
       stack.suppressClick = false;
+      if (pendingSteps.length) switchFront(pendingSteps.shift());
     };
     if (reduceStackMotion() || !motionEnabled()) { finish(); return; }
     switching = true;
     stack.suppressClick = true;
     view.classList.add('is-switching');
     const from = layer.style.transform || 'translate3d(0,0,0) rotate(0deg) scale(1)';
-    const animation = layer.animate([
-      { transform: from },
-      { transform: `translate3d(${-step * 110}%,0,0) rotate(${-step * 12}deg) scale(.96)` },
-    ], { duration: parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200,
-      easing: getComputedStyle(view).getPropertyValue('--ds-ease-panel').trim() || 'ease-out' });
-    animation.finished.then(finish, finish);
+    const duration = parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200;
+    const options = { duration, easing: 'ease-in-out' };
+    // Establish final slot geometry before starting, then animate every visible
+    // final slot from behind the incoming face to its actual fan transform.
+    const oldFront = front;
+    layer.style.transform = '';
+    front = (front + step + layers.length) % layers.length;
+    applyLayers();
+    front = oldFront;
+    const targets = layers.map(el => getComputedStyle(el).transform);
+    const outgoingBuried = layer.classList.contains('is-buried');
+    layer.classList.remove('is-buried');
+    const direction = step > 0 ? -1 : 1;
+    const animations = [];
+    for (const el of layers) {
+      if (el === layer || el === next || el.classList.contains('is-buried')) continue;
+      animations.push(el.animate([
+        { transform: 'translate3d(0,0,0) scale(.90)' },
+        { transform: targets[layers.indexOf(el)] },
+      ], { ...options, fill: 'both' }));
+    }
+    // 出场卡单一连续路径：沿手势方向飞离到顶点（画外扇面之外、与其余层零
+    // 重叠的窗口），层级在顶点窗口翻转（像素不可见），再沿连续曲线回到终态
+    // 槽位。旧实现把顶点后的行程折叠成 45%→46% 一帧的离散重定位（画外→
+    // 终态槽位 + z 4→0 同时翻）—— 几何跳变已删，两端 t=0/t=1 几何不变。
+    // 埋层卡顶点后回到全遮挡口袋位（与第三卡同款 scale(.90) 起点槽），终态
+    // 的 display:none 在完全遮挡处接手 —— 不再有画外卡整卡显隐。
+    const flyout = `translate3d(${direction * 120}%,0,0) scale(.94)`;
+    const outgoingTarget = outgoingBuried ? 'translate3d(0,0,0) scale(.90)' : targets[layers.indexOf(layer)];
+    animations.push(layer.animate([
+      { transform: from, zIndex: 4, offset: 0 },
+      { transform: flyout, zIndex: 4, offset: .45 },
+      { transform: flyout, zIndex: 0, offset: .46 },
+      { transform: outgoingTarget, zIndex: 0, offset: 1 },
+    ], { ...options, fill: 'both' }));
+    animations.push(next.animate([
+      { transform: `translate3d(${-direction * 12}%,0,0) scale(.94)` },
+      { transform: 'translate3d(0,0,0) scale(1)' },
+    ], { ...options, fill: 'both' }));
+    Promise.allSettled(animations.map(a => a.finished)).then(() => { finish(); animations.forEach(a => a.cancel()); });
   };
   view.addEventListener('pointerdown', e => {
     const control = e.target instanceof Element ? e.target.closest('button') : null;
@@ -1024,23 +1061,23 @@ function buildMediaStack(items, opts) {
     // Both screen-edge bands belong to back navigation, even over a card.
     if (document.body.classList.contains('mobile-layer')
         && (e.clientX <= 20 || e.clientX >= window.innerWidth - 20)) return;
-    if (switching || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
     sx = e.clientX; dx = 0;
     view.classList.add('dragging');
-    layers[front].style.willChange = 'transform';
+    if (!switching) layers[front].style.willChange = 'transform';
     try { view.setPointerCapture(e.pointerId); } catch { /* detached */ }
   });
   view.addEventListener('pointermove', e => {
     if (sx === null) return;
     dx = e.clientX - sx;
-    layers[front].style.transform = `translate3d(${dx * .65}px,0,0) rotate(${dx * .04}deg) scale(.98)`;
+    if (!switching) layers[front].style.transform = `translate3d(${dx * .65}px,0,0) rotate(${dx * .04}deg) scale(.98)`;
   });
   const up = (e) => {
     if (sx === null) return;
     view.classList.remove('dragging');
     const step = e.type !== 'pointercancel' && Math.abs(dx) > 38 ? (dx < 0 ? 1 : -1) : 0;
     if (step) switchFront(step);
-    else {
+    else if (!switching) {
       layers[front].style.transform = '';
       layers[front].style.willChange = '';
     }
