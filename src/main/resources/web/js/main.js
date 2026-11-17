@@ -186,6 +186,9 @@ import { initFleetUpdate } from './fleetUpdate.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
+// desktop-search-field 批（2026-11-17）：「消息」面板顶部搜索框（社交消息检索，
+// 与手机常驻条同一引擎 js/socialSearchCore.js）；随好友门控同拍装配。
+import { initPanelSearch } from './panelSearch.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initAskDock } from './askDock.js';
@@ -3036,6 +3039,7 @@ onMessage('configData', (msg, view) => {
       enableFriendPanels();
       initContacts();
       initMessages();
+      initPanelSearch();
     }
   }
   // Voice seal latch（voiceseal 批 #508 → 纠正批 #513 双参化）：分面受控。

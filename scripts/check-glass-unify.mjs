@@ -527,22 +527,38 @@ if (!existsSync(ASK_DIALOG)) {
   // 手机搜索条（glass-top-overlays 批 2026-11-06）：作者点名面 —— 消息/联系人
   // 两页的搜索框浮在滚动列表之上，必须挂唯一工具类（本条管「DOM 真的挂上了」，
   // CSS 侧管「挂了以后没人把它冲掉」= G7b 的登记面）。
-  if (!existsSync(SOCIAL_SEARCH)) {
+  // desktop-search-field 批（2026-11-17）起输入行壳的建节点上抽到
+  // socialSearchCore.buildFieldShell（两端同一构建器）⇒ 判据分两半：
+  // ① 壳建点（core）必须挂 .nf-glass；② 手机条（socialSearch）必须经
+  // buildFieldShell 建壳（不允许绕开共用构建器自造一行 DOM）。
+  const SOCIAL_SEARCH_CORE = join(JS_DIR, 'socialSearchCore.js');
+  if (!existsSync(SOCIAL_SEARCH) || !existsSync(SOCIAL_SEARCH_CORE)) {
     add({
       rule: 'G5', file: rel(SOCIAL_SEARCH), line: 0, selector: '-',
-      detail: 'js/mobile/socialSearch.js 不存在',
+      detail: 'js/mobile/socialSearch.js 或 js/socialSearchCore.js 不存在',
       why: '环境异常：手机搜索条无法核对',
     });
   } else {
     const src = readFileSync(SOCIAL_SEARCH, 'utf8');
-    if (!/row\.className\s*=\s*'mh-search-bar nf-glass'/.test(src)) {
+    const coreSrc = readFileSync(SOCIAL_SEARCH_CORE, 'utf8');
+    if (!/shell\.className\s*=\s*'sf-field nf-glass'/.test(coreSrc)) {
+      add({
+        rule: 'G5',
+        file: rel(SOCIAL_SEARCH_CORE),
+        line: 0,
+        selector: '搜索字段壳（.sf-field）',
+        detail: "建节点处缺少 .nf-glass（应为 shell.className = 'sf-field nf-glass'）",
+        why: '顶部悬浮可透出面绕过唯一毛玻璃工具类（作者点名面）',
+      });
+    }
+    if (!/buildFieldShell\(/.test(src)) {
       add({
         rule: 'G5',
         file: rel(SOCIAL_SEARCH),
         line: 0,
         selector: '手机搜索条（.mh-search-bar）',
-        detail: "建节点处缺少 .nf-glass（应为 row.className = 'mh-search-bar nf-glass'）",
-        why: '顶部悬浮可透出面绕过唯一毛玻璃工具类（作者点名面）',
+        detail: '未经 socialSearchCore.buildFieldShell 建壳（绕开共用构建器）',
+        why: '搜索条 DOM 必须走唯一壳构建器，禁止第二处自造',
       });
     }
   }

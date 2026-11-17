@@ -184,6 +184,10 @@
        只消费不生产数值。判据脚本 = scripts/check-canvas-hint-tokens.mjs（静态）
        + tests/canvas-hint-safe-area.spec.mjs（真几何）。 -->
   <link rel="stylesheet" href="css/canvasHint.css">
+  <!-- 面板搜索字段（desktop-search-field 批 2026-11-17）：桌面「消息」顶部搜索框 +
+       联系人搜索块统一壳。--sfs-* 令牌唯一出生地；置于文件列末以在同特异度下
+       覆盖 friends.css 的旧输入行档（.fm-search-* 几何已让位，见 friends.css 注）。 -->
+  <link rel="stylesheet" href="css/searchField.css">
   <!-- 偶发裸渲染修复批（2026-10-30，作者 20:03 截图实证：冷启动实例「有时候」
        右侧面板整面无样式、工作台列表以原文竖排裸露）。根因面：stylesheet 是
        渲染阻塞资源，但若任一 CSS 请求**失败**（实例重启在途请求被掐断 / 隧道

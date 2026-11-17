@@ -284,13 +284,12 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
 .fm-search-input {
   flex: 1;
   min-width: 0;
-  padding: var(--ds-space-1h) var(--ds-space-inline-x);
-  font-size: var(--ds-fs-body);
-  color: var(--color-text, #000);
 }
-/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
+/* desktop-search-field 批（2026-11-17）：输入件移入 .sf-field.nf-glass 壳
+   （js/contacts.js#buildSearch）⇒ 内距/字号/字色让位壳内统一档
+   （css/searchField.css --sfs-* / inputSurface 裸件成员表），此处只留行内几何。 */
 
-/* 焦点态：.fm-search-input 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 
 /* ── ④ 控件面：搜索键 / 同意 / 拒绝（2026-09-12 波2）──────────────────────
    材质全部落既有 token（--glass-send-* 中性灰族 + --color-text + 亮档

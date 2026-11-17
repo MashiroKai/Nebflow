@@ -27,8 +27,11 @@
 //   · 消息页 = 类微信跨会话聊天记录检索：范围 chips（全部/好友/设备/群聊）+
 //     按会话分组结果 + <mark> 高亮 + 点行跳转定位（messages.js revealMessage
 //     缝）。纯客户端渐进检索：getConversations 快照 + 每会话 getMessages 前向
-//     翻页（20 页 × 50 = 1000 条上限，脚注声明）；300ms debounce + requestId
+//     翻页（20 页 × 50 = 1000 条/段，段尾续扫到最早）；300ms debounce + requestId
 //     竞态丢弃 + AbortController 中止（chatSearch 同族纪律）。
+//     —— desktop-search-field 批（2026-11-17）起检索引擎/范围 chips/结果行/
+//     输入行骨架**上抽到 js/socialSearchCore.js 单一实现**（桌面消息面板搜索框
+//     与本条共用同一引擎，本模块只剩 UI 壳：挂载/版面让位/收起形变）。
 //   · 联系人页 = 既有桌面搜索块逻辑零改动承载：常驻条只做输入的**单入口**，
 //     查询串写回 contacts.js 的 searchQ 单一源并走同一条提交流水（节流/六态
 //     结果卡/渲染全复用，contacts.js#submitContactsSearch）。联系人页无「好友/
@@ -42,35 +45,12 @@
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { friendsEnabled } from '../featureFlags.js';
-import * as api from '../friendsApi.js';
-import {
-  openConversation, revealMessage, personLabel, deviceLabel, fmtTime, conversationSnapshot,
-} from '../messages.js';
-import { groupTitleOf } from '../friendGroups.js';
 import { logEvent } from './navEvents.js';
-// 件一（2026-11-02）「描述进检索」：谓词唯一实现 = 零依赖叶子 `descSearch.js`
-// （桌面联系人本地过滤与手机常驻条共用同一份，禁各写一套 includes）。
-import { descMatches, convDescribeFields } from '../descSearch.js';
+// 引擎/部件单一实现（desktop-search-field 批上抽；检索纪律注释见该文件）。
+import { createSocialMessageSearch, buildFieldShell, SCOPES } from '../socialSearchCore.js';
 
-/** 检索纪律（检索全覆盖批 2026-11-07 放宽：作者「可以分段显示，但要能查看」）：
- *   · PAGE_SIZE = 单次取数页（服务端 keyset clamp ≤200 内）；
- *   · CHUNK_PAGES = **每次揭示**最多扫多少页（20×50 = 1000 条/段），扫到即停、
- *     段尾给「加载更多（本会话）」继续从游标往下扫——不再是「每会话只看前 1000
- *     条就永远看不到更早」的硬顶；
- *   · 命中采集不再设每会话上限（旧 MATCH_CAP_PER_CONV=30 会静默丢命中）。 */
-const PAGE_SIZE = 50;
-const CHUNK_PAGES = 20;
-const DEBOUNCE_MS = 300;
 /** 联系人页 = 远程用户名检索，去抖略长（桌面提交键另有 1s 最小间隔，同源）。 */
 const CONTACTS_DEBOUNCE_MS = 450;
-
-/** 范围档位（值 ↔ conversation.kind：friend = 缺省非 group/device 行）。 */
-const SCOPES = [
-  { value: 'all', labelKey: 'mhsearch.scopeAll' },
-  { value: 'friend', labelKey: 'mhsearch.scopeFriend' },
-  { value: 'device', labelKey: 'mhsearch.scopeDevice' },
-  { value: 'group', labelKey: 'mhsearch.scopeGroup' },
-];
 
 /** 常驻搜索条所属页（其余面的搜索入口零触碰）。 */
 const PAGE_IDS = ['messages', 'contacts'];
@@ -97,18 +77,8 @@ const EXPAND_AT = 4;
 
 /** @type {Map<string, SearchBar>} page id → 常驻条部件表。 */
 const bars = new Map();
-/** @type {HTMLElement|null} 消息页结果流（检索腿只服务这一页）。 */
-let msgResults = null;
-/** @type {HTMLElement|null} 消息页状态行。 */
-let msgStatus = null;
-/** @type {string} 当前范围档。 */
-let scope = 'all';
-/** @type {number} requestId 竞态丢弃判据。 */
-let seq = 0;
-/** @type {AbortController|null} */
-let abortCtl = null;
-/** @type {ReturnType<typeof setTimeout>|null} 消息页去抖。 */
-let debTimer = null;
+/** @type {ReturnType<typeof createSocialMessageSearch>|null} 消息页检索引擎（core 实例）。 */
+let msgEngine = null;
 /** @type {ReturnType<typeof setTimeout>|null} 联系人页去抖。 */
 let contactTimer = null;
 /** @type {Array<() => void>} */
@@ -136,66 +106,20 @@ function msgBar() { return bars.get('messages') || null; }
  *  收起态（同一节点追加 `.g2-fab`）继承的仍是同一份玻璃；`.nf-glass` 常驻
  *  不收不展 —— 它不参与几何，只供材质。 */
 function buildBarRow(placeholder) {
-  const row = document.createElement('div');
-  row.className = 'mh-search-bar nf-glass';
-  const ic = document.createElement('i');
-  ic.setAttribute('data-lucide', 'search');
-  ic.setAttribute('aria-hidden', 'true');
+  // 输入行骨架单一实现 = socialSearchCore.buildFieldShell（desktop-search-field
+  // 批起两端同构建器）；本端只补手机层类名（收起形变/带内布局的选择器认它们）。
   const input = document.createElement('input');
   input.className = 'mh-search-input';
   input.type = 'text';
   input.autocomplete = 'off';
-  input.placeholder = placeholder;
-  input.setAttribute('aria-label', placeholder);
-  const clear = document.createElement('button');
-  clear.type = 'button';
-  clear.className = 'mh-search-clear';
-  clear.title = t('mhsearch.clear');
-  clear.setAttribute('aria-label', t('mhsearch.clear'));
-  // 构建器而非 HTML 串（component-contract R5）：clear 是刚 createElement 出来的
-  // 新元素，无需 HTML 解析面；图标仍是同一个 lucide 'x'，尺寸/位置零变化。
-  const clearIcon = document.createElement('i');
-  clearIcon.dataset.lucide = 'x';
-  clear.append(clearIcon);
-  clear.addEventListener('click', () => {
-    input.value = '';
-    row.classList.remove('has-text');
-    // 清空 = 走与键入同一条 input 处理腿（单一驱动，零第二套复位逻辑）。
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.focus();
-  });
-  input.addEventListener('input', () => row.classList.toggle('has-text', input.value.length > 0));
-  row.append(ic, input, clear);
+  const { shell: row, clear } = buildFieldShell(input, { placeholder, shellClass: 'mh-search-bar' });
+  clear.classList.add('mh-search-clear');
   return { row, input, clear };
 }
 
-/** 消息页：输入行 + 范围 chips + 状态行 + 结果流 + 脚注（全部常驻，静止态折叠视觉由 CSS）。 */
+/** 消息页：输入行 + 范围 chips + 状态行 + 结果流 + 脚注（全部常驻，静止态折叠视觉由 CSS）。
+ *  检索腿 = core 引擎实例（去抖/竞态/分段扫描全在 socialSearchCore，本函数只挂宿主）。 */
 function fillMessagesBar(dock, parts) {
-  const scopeRow = document.createElement('div');
-  scopeRow.className = 'mh-scope-row';
-  scopeRow.setAttribute('role', 'group');
-  scopeRow.setAttribute('aria-label', t('mhsearch.aria'));
-  for (const s of SCOPES) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'mh-scope-chip' + (s.value === scope ? ' on' : '');
-    chip.dataset.scope = s.value;
-    chip.textContent = t(s.labelKey);
-    chip.setAttribute('aria-pressed', String(s.value === scope));
-    chip.addEventListener('click', () => {
-      if (scope === s.value) return;
-      scope = s.value;
-      scopeRow.querySelectorAll('.mh-scope-chip').forEach((c) => {
-        const on = (/** @type {HTMLElement} */ (c)).dataset.scope === scope;
-        c.classList.toggle('on', on);
-        c.setAttribute('aria-pressed', String(on));
-      });
-      logEvent('mh-scope', { scope });
-      scheduleSearchNow();
-    });
-    scopeRow.appendChild(chip);
-  }
-
   const status = document.createElement('div');
   status.className = 'mh-search-status';
   status.setAttribute('role', 'status');
@@ -209,15 +133,18 @@ function fillMessagesBar(dock, parts) {
   note.className = 'mh-search-note';
   note.textContent = t('mhsearch.capNote');
 
-  dock.append(parts.row, scopeRow, status, results, note);
-  msgStatus = status;
-  msgResults = results;
-
-  // 输入即搜：查询串非空 ⇒ 条吃满余量 + 列表让位（CSS 判据 = .has-query）。
-  parts.input.addEventListener('input', () => {
-    dock.classList.toggle('has-query', parts.input.value.trim().length > 0);
-    onQuery();
+  msgEngine = createSocialMessageSearch({
+    input: parts.input,
+    resultsHost: results,
+    statusEl: status,
+    // 输入即搜：查询串非空 ⇒ 条吃满余量 + 列表让位（CSS 判据 = .has-query）。
+    onHasQuery: (has) => dock.classList.toggle('has-query', has),
   });
+  const scopeRow = msgEngine.scopeRow();
+
+  dock.append(parts.row, scopeRow, status, results, note);
+
+  parts.input.addEventListener('input', () => msgEngine?.onValueInput());
   parts.input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       // Esc = 清空回列表（常驻条的「收起」语义已无，保留清场一键）。
@@ -226,7 +153,7 @@ function fillMessagesBar(dock, parts) {
       parts.clear.click();
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      scheduleSearchNow();
+      msgEngine?.submitNow();
     }
   });
 
@@ -317,315 +244,25 @@ function destroyBar(pageId) {
   bar.dock.remove();
   if (pageId === 'messages') {
     resetMsgSearch();
-    msgStatus = null;
-    msgResults = null;
+    msgEngine?.destroy();
+    msgEngine = null;
   } else if (contactTimer) {
     clearTimeout(contactTimer);
     contactTimer = null;
   }
 }
 
-// ── 消息页检索腿 ────────────────────────────────────────────────────
+// ── 消息页检索腿（引擎 = socialSearchCore 实例；此处只留条级复位）────────
 
-function setStatus(text) {
-  if (!msgStatus) return;
-  msgStatus.hidden = !text;
-  msgStatus.textContent = text || '';
-}
-
-/** 输入去抖（chatSearch scheduleSearch 同族纪律）。 */
-function onQuery() {
-  if (debTimer) clearTimeout(debTimer);
-  debTimer = setTimeout(() => { debTimer = null; runSearch(); }, DEBOUNCE_MS);
-}
-
-function scheduleSearchNow() {
-  if (debTimer) { clearTimeout(debTimer); debTimer = null; }
-  runSearch();
-}
-
-/** 清空即回列表：结果/状态清场（范围档保留——下次查询续用）。 */
+/** 清空即回列表：结果/状态清场（范围档保留——下次查询续用）+ 输入串复位。 */
 function resetMsgSearch() {
-  seq++;
-  abortCtl?.abort();
-  abortCtl = null;
-  if (msgResults) msgResults.replaceChildren();
-  setStatus('');
+  msgEngine?.hardReset();
   const bar = msgBar();
   if (bar) {
     bar.input.value = '';
     bar.bar.classList.remove('has-text');
     bar.dock.classList.remove('has-query');
   }
-}
-
-/** 会话标签（与 convRow 渲染同源：好友 personLabel / 设备 deviceLabel / 群群名）。 */
-function convLabel(conv) {
-  if (conv.kind === 'device') return deviceLabel(conv.device);
-  if (conv.kind === 'group') return groupTitleOf(conv);
-  return personLabel(conv.friend);
-}
-
-/** 发送者标签：direct/设备 = 对方 id 命中会话标签，否则「我」；群 = 省略（组头已载）。 */
-function senderLabel(conv, m) {
-  if (conv.kind === 'group') return '';
-  const peerId = conv.friend?.userId ?? conv.device?.ownerUserId ?? null;
-  if (peerId != null && String(m.senderId) === String(peerId)) return convLabel(conv);
-  return t('mhsearch.me');
-}
-
-/** 命中片段：首命中 ±28 字，mark 高亮片段内全部命中（DOM 构建，textContent 防 XSS）。 */
-function buildSnippet(body, q) {
-  const lower = body.toLowerCase();
-  const ql = q.toLowerCase();
-  const idx = lower.indexOf(ql);
-  const start = Math.max(0, idx - 28);
-  const end = Math.min(body.length, idx + ql.length + 28);
-  const frag = document.createDocumentFragment();
-  if (start > 0) frag.appendChild(document.createTextNode('…'));
-  let pos = start;
-  while (pos < end) {
-    const hit = lower.indexOf(ql, pos);
-    if (hit === -1 || hit >= end) {
-      frag.appendChild(document.createTextNode(body.slice(pos, end)));
-      break;
-    }
-    if (hit > pos) frag.appendChild(document.createTextNode(body.slice(pos, hit)));
-    const mark = document.createElement('mark');
-    mark.textContent = body.slice(hit, hit + ql.length);
-    frag.appendChild(mark);
-    pos = hit + ql.length;
-  }
-  if (end < body.length) frag.appendChild(document.createTextNode('…'));
-  return frag;
-}
-
-/**
- * 单会话检索**段**（检索全覆盖批 2026-11-07）：从 `cur.after` 游标起扫最多
- * CHUNK_PAGES 页，命中全收（**不设每会话命中上限**）；扫到会话尾 / 预算耗尽即停。
- * 段尾由 [[syncConvMore]] 挂「加载更多（本会话）」继续从游标往下扫 —— 于是可以
- * 一路查到最早一条（旧实现是两处静默截断：PAGE_CAP×PAGE_SIZE=1000 条 + 每会话
- * 30 命中，作者的「搜不全」在会话档同样成立）。
- * @param {{conv:any, q:string, after:number, matches:any[], done:boolean, scanning:boolean}} cur
- * @returns {Promise<boolean>} false = 竞态丢弃（弃画，UI 归新查询）
- */
-async function scanConversationChunk(cur, mySeq, signal) {
-  const ql = cur.q.toLowerCase();
-  cur.scanning = true;
-  try {
-    for (let page = 0; page < CHUNK_PAGES; page++) {
-      if (mySeq !== seq || signal.aborted) return false;
-      let msgs = [];
-      try { msgs = await api.getMessages(cur.conv.conversationId, { after: cur.after, limit: PAGE_SIZE }); }
-      catch { cur.done = true; return true; } // 单会话取数失败 = 本会话收口，不拖垮全局
-      if (!Array.isArray(msgs) || !msgs.length) { cur.done = true; break; }
-      for (const m of msgs) {
-        const body = typeof m.body === 'string' ? m.body : '';
-        if (body && body.toLowerCase().includes(ql)) cur.matches.push(m);
-      }
-      if (msgs.length < PAGE_SIZE) { cur.done = true; break; }
-      const lastId = Number(msgs[msgs.length - 1].id);
-      if (!Number.isFinite(lastId) || lastId <= cur.after) { cur.done = true; break; } // id 不前进 ⇒ 防死循环
-      cur.after = lastId;
-    }
-    return true;
-  } finally {
-    cur.scanning = false;
-  }
-}
-
-/** 组头文案（会话标签 · 已加载命中数）——计数随续段更新，禁只报首段数。 */
-function convGroupLabel(conv, n) {
-  return `${convLabel(conv)} · ${t('mhsearch.resultCount', { n })}`;
-}
-
-/**
- * 揭示本会话**新增**命中行（分段揭示：已画过的 painted 部分不重画）。
- * @param {any} cur 会话检索游标
- * @param {string} q 关键词（高亮用）
- * @returns {number} 本次新增行数
- */
-function paintConvMatches(cur, q) {
-  if (!cur.host) return 0;
-  let added = 0;
-  for (let i = cur.painted; i < cur.matches.length; i++) {
-    cur.host.appendChild(buildResultRow(cur.conv, cur.matches[i], q));
-    added++;
-  }
-  cur.painted = cur.matches.length;
-  if (cur.headerEl) cur.headerEl.textContent = convGroupLabel(cur.conv, cur.matches.length);
-  return added;
-}
-
-/**
- * 段尾「加载更多（本会话）」（检索全覆盖批 2026-11-07）：还有未扫的页 ⇒ 挂按钮，
- * 点它从游标续扫下一段（最多 CHUNK_PAGES 页）并揭示新增命中；扫尽 ⇒ 摘按钮。
- * 这就是会话档「能一直往下查看到最早一条」的落点（旧实现到顶即停，更早的永远
- * 看不到）。
- * @param {any} cur 会话检索游标
- * @param {(added:number)=>void} onMore 续段后回调（调用方更新总计数/状态行）
- */
-function syncConvMore(cur, onMore) {
-  cur.moreBtn?.remove();
-  cur.moreBtn = null;
-  if (cur.done || !cur.host) return;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'mh-sr-more';
-  btn.textContent = t('mhsearch.loadMore');
-  btn.addEventListener('click', async () => {
-    if (cur.scanning) return;
-    btn.disabled = true;
-    const mySeq = seq;
-    const signal = abortCtl?.signal || new AbortController().signal;
-    const ok = await scanConversationChunk(cur, mySeq, signal);
-    if (!ok || mySeq !== seq) return;
-    const added = paintConvMatches(cur, cur.q);
-    btn.remove();
-    cur.moreBtn = null;
-    if (!cur.done) syncConvMore(cur, onMore);
-    onMore(added);
-  });
-  cur.host.appendChild(btn);
-  cur.moreBtn = btn;
-}
-
-/** 范围过滤（friend = 缺省非 group/device 行，convRow 判据同源）。 */
-function scopeFilter(conv) {
-  if (scope === 'all') return true;
-  if (scope === 'device') return conv.kind === 'device';
-  if (scope === 'group') return conv.kind === 'group';
-  return conv.kind !== 'device' && conv.kind !== 'group';
-}
-
-/** 结果行：meta（发送者 · 时间）+ 命中片段；点击跳转定位。 */
-function buildResultRow(conv, m, q) {
-  const row = document.createElement('button');
-  row.type = 'button';
-  row.className = 'mh-sr-row';
-  const meta = document.createElement('div');
-  meta.className = 'mh-sr-meta';
-  const sender = senderLabel(conv, m);
-  if (sender) {
-    const senderEl = document.createElement('span');
-    senderEl.className = 'mh-sr-sender';
-    senderEl.textContent = sender;
-    meta.appendChild(senderEl);
-  }
-  const time = document.createElement('span');
-  time.className = 'mh-sr-time';
-  time.textContent = fmtTime(m.createdAt);
-  meta.appendChild(time);
-  const snippet = document.createElement('div');
-  snippet.className = 'mh-sr-snippet';
-  snippet.appendChild(buildSnippet(typeof m.body === 'string' ? m.body : '', q));
-  row.append(meta, snippet);
-  row.addEventListener('click', async () => {
-    logEvent('mh-result-jump', { conv: String(conv.conversationId), msg: String(m.id) });
-    try {
-      await openConversation(conv.conversationId, null);
-      const ok = await revealMessage(m.id);
-      if (!ok) window.__showToast?.(t('mhsearch.jumpFail'), 'error');
-    } catch { window.__showToast?.(t('mhsearch.jumpFail'), 'error'); }
-  });
-  return row;
-}
-
-/**
- * 渐进主检索：快照会话表 → 并发 2 逐会话翻页扫描 → 命中即增量上屏（按会话分组）。
- * 竞态纪律：seq 换代丢弃 + AbortController 中止在飞取数。
- */
-async function runSearch() {
-  const q = (msgBar()?.input.value || '').trim();
-  const mySeq = ++seq;
-  abortCtl?.abort();
-  abortCtl = new AbortController();
-  const signal = abortCtl.signal;
-  if (msgResults) msgResults.replaceChildren();
-  if (!q) { setStatus(''); return; }
-  setStatus(t('mhsearch.searching'));
-  let convs = conversationSnapshot();
-  if (!convs.length) {
-    // 名册未初始化（极早首次进入）——回落直连快照；此后随列表刷新自然有值。
-    try { convs = (await api.getConversations()) || []; } catch { convs = []; }
-  }
-  if (mySeq !== seq) return;
-  convs = convs.filter(scopeFilter);
-
-  // ── 描述命中段（件一 2026-11-02）─────────────────────────────────────
-  // 定案（勘察报告 §7.2）：会话的**档案描述**（好友 remark/bio、群 remark/description）
-  // 不进消息正文检索，而是作为**会话级命中**单独成组（组名 = 会话标签 · 「资料命中」），
-  // 点击 = 直接开会话。这样「按描述找联系人/群」与「按正文找消息」两个语义面不互相
-  // 污染（不然一条描述命中的会话会显示成「0 条消息」的空组）。
-  const descHits = convs.filter((c) => descMatches(q, convDescribeFields(c)));
-  if (descHits.length && msgResults) {
-    const g = document.createElement('div');
-    g.className = 'mh-sr-group mh-sr-group-desc';
-    g.textContent = `${t('mhsearch.descHits', { n: descHits.length })}`;
-    msgResults.appendChild(g);
-    for (const conv of descHits) {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'mh-sr-row mh-sr-row-desc';
-      row.dataset.mhDesc = '1';
-      const meta = document.createElement('div');
-      meta.className = 'mh-sr-meta';
-      const name = document.createElement('span');
-      name.className = 'mh-sr-sender';
-      name.textContent = convLabel(conv);
-      meta.appendChild(name);
-      const kind = document.createElement('span');
-      kind.className = 'mh-sr-time';
-      kind.textContent = conv.kind === 'group'
-        ? (conv.remark ? t('profile.groupRemarkLabel') : t('profile.groupDescriptionLabel'))
-        : (conv.friend && conv.friend.remark ? t('profile.friendRemarkLabel') : t('profile.friendBioLabel'));
-      meta.appendChild(kind);
-      row.appendChild(meta);
-      row.addEventListener('click', () => {
-        logEvent('mh-desc-hit-jump', { conv: String(conv.conversationId) });
-        openConversation(conv.conversationId, null).catch(() => {
-          window.__showToast?.(t('mhsearch.jumpFail'), 'error');
-        });
-      });
-      msgResults.appendChild(row);
-    }
-  }
-
-  let total = 0;
-  let cursor = 0;
-  const workers = [0, 1].map(async () => {
-    while (cursor < convs.length) {
-      if (mySeq !== seq || signal.aborted) return;
-      const conv = convs[cursor++];
-      /** @type {any} */
-      const cur = {
-        conv, q, after: 0, matches: [], painted: 0, done: false, scanning: false,
-        headerEl: null, host: null, moreBtn: null,
-      };
-      const ok = await scanConversationChunk(cur, mySeq, signal);
-      if (!ok || mySeq !== seq || signal.aborted) return;
-      if (!cur.matches.length && cur.done) continue;  // 扫尽且零命中：不占行
-      if (!msgResults) return;
-      // 组头（会话标签 · 命中数）与行同层兄弟——形态与旧版逐字一致，续段只往后追加。
-      const header = document.createElement('div');
-      header.className = 'mh-sr-group';
-      header.textContent = convGroupLabel(conv, cur.matches.length);
-      msgResults.appendChild(header);
-      cur.headerEl = header;
-      cur.host = msgResults;
-      total += paintConvMatches(cur, q);
-      if (!cur.done) syncConvMore(cur, (added) => {
-        total += added;
-        setStatus(t('mhsearch.resultCount', { n: total }));
-      });
-      setStatus(t('mhsearch.resultCount', { n: total }));
-    }
-  });
-  await Promise.all(workers);
-  if (mySeq !== seq || signal.aborted) return;
-  setStatus(total
-    ? t('mhsearch.resultCount', { n: total })
-    : `${t('mhsearch.noResults')} · ${t('mhsearch.noResultsHint')}`);
 }
 
 // ── 件八：滚动收起 / 右上角圆钮（作者令 2026-11-05 12:28，逐字见文件头）───
@@ -769,14 +406,8 @@ export function activateSocialSearch() {
   return function teardownSocialSearch() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }
     document.removeEventListener('nf:mobile-nav', syncGate);
-    if (debTimer) { clearTimeout(debTimer); debTimer = null; }
     if (contactTimer) { clearTimeout(contactTimer); contactTimer = null; }
-    seq++;
-    abortCtl?.abort();
-    abortCtl = null;
     for (const pageId of [...bars.keys()]) destroyBar(pageId);
-    msgResults = null;
-    msgStatus = null;
-    scope = 'all';
+    msgEngine = null;
   };
 }

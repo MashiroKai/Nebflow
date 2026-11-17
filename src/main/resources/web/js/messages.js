@@ -4093,16 +4093,18 @@ async function loadOlderMessages() {
 /**
  * 搜索批（2026-10-31）会话名册快照：与消息列表同一份 `conversations`
  * （refreshConversations 合并口径：单聊 + 群 + 设备，已排序）。
- * 唯手机层消息页搜索调用；桌面零行为改动（加性只读导出）。
+ * 调用方 = 手机消息页搜索 + 桌面「消息」面板搜索（desktop-search-field 批
+ * 2026-11-17 起，两端同一引擎 js/socialSearchCore.js）；加性只读导出。
  * @returns {Array<any>} 快照（浅拷贝，元素为列表行对象引用）
  */
 export function conversationSnapshot() { return conversations.slice(); }
 
 /**
- * 搜索批（2026-10-31 作者令 16:03）跳转定位缝：唯手机层消息页搜索调用——
- * 窗口内未载则按既有 keyset 回退链自动翻旧页（每轮 = 一次 loadOlderMessages
- * 语义，上限 25 轮防呆），命中节点滚动居中 + 1.6s 闪烁（CSS 手机层块）。
- * 桌面零行为改动：无调用方即不生效；会话换/窗关中途退出返回 false。
+ * 搜索批（2026-10-31 作者令 16:03）跳转定位缝：手机消息页搜索 + 桌面「消息」
+ * 面板搜索（desktop-search-field 批 2026-11-17 起）调用——窗口内未载则按既有
+ * keyset 回退链自动翻旧页（每轮 = 一次 loadOlderMessages 语义，上限 25 轮防呆），
+ * 命中节点滚动居中 + 1.6s 闪烁（CSS 手机层块）。
+ * 会话换/窗关中途退出返回 false。
  * @param {string|number} messageId
  * @returns {Promise<boolean>} 是否定位成功
  */
