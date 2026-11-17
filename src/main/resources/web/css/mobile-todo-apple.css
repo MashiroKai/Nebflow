@@ -198,6 +198,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-sec-label {
 
 /* Large-radius surface card (row container) */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-listcard {
+  flex-shrink: 0;
   margin: 0 var(--mpad-x);
   border-radius: var(--ta-card-radius);
   background: var(--color-surface);
