@@ -39,6 +39,7 @@ for (const width of [320,375,390,430]) {
  console.log(`INFO takeover card visible=${await page.locator('#modal-overlay.on #takeover-box').isVisible()} width=${width}`);
  if(process.env.BAND_NEGATIVE) await page.addStyleTag({content:'body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar { width: 31px !important; height:31px !important }'});
  if(process.env.COMPOSER_NEGATIVE) await page.addStyleTag({content:'body.mobile-layer #input-bar {padding-left:12px !important;padding-right:12px !important;gap:8px !important} .ask-input {padding-left:6px !important;gap:6px !important}'});
+ if(process.env.HIT_NEGATIVE) await page.addStyleTag({content:'@media(max-width:700px){.decision-preview-entry{top:auto !important;bottom:90px !important}}'});
  const rows=[];
  for(const id of ['chat','messages','contacts','canvas','workbench','settings','tasks','todo-apple-item']) {
   if(id==='canvas') await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'band-document',title:'Canvas test',itemType:'markdown',absPath:'/fixture/band-document.md',pinned:false,background:false,content:'# Canvas'}})));
@@ -64,14 +65,14 @@ for (const width of [320,375,390,430]) {
     if(!bar)return null;
     const input=bar.querySelector('textarea,input');if(!input)return null;
     const box=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,right:r.right}};
-    const rect=box(bar),text=box(input),controls=[...bar.children].filter(e=>!e.contains(input)&&e!==input&&getComputedStyle(e).display!=='none'&&getComputedStyle(e).visibility!=='hidden'&&e.getBoundingClientRect().width>0).map(e=>{const r=box(e),hit=document.elementFromPoint(r.x+r.w/2,r.y+r.h/2);return {id:e.id||e.className,...r,hit:!!hit&&(e===hit||e.contains(hit))}});
+    const rect=box(bar),text=box(input),controls=[...bar.children].filter(e=>!e.contains(input)&&e!==input&&getComputedStyle(e).display!=='none'&&getComputedStyle(e).visibility!=='hidden'&&e.getBoundingClientRect().width>0).map(e=>{const r=box(e),hit=document.elementFromPoint(r.x+r.w/2,r.y+r.h/2);return {id:e.id||e.className,...r,hit:!!hit&&(e===hit||e.contains(hit)),disabled:e.disabled,chain:hit?[hit,...(function*(n){while(n.parentElement){n=n.parentElement;yield n}})(hit)].slice(0,5).map(n=>({tag:n.tagName,id:n.id,cls:String(n.className),pointer:getComputedStyle(n).pointerEvents,opacity:getComputedStyle(n).opacity,transform:getComputedStyle(n).transform})):[]}});
     const css=getComputedStyle(bar);return {bar:rect,input:text,controls,padding:css.padding,gap:css.gap,utilization:text.w/rect.w};
    },id);
    console.log('COMPOSER',JSON.stringify({width,id,...inputInfo}));
    if(!inputInfo) {console.log('FAIL missing composer',id,width);errors++;}
    else {
     const c=inputInfo.controls, side=c.reduce((n,e)=>n+e.w,0), expected=inputInfo.bar.w-side-(id==='chat'?16:12)-(c.length*4)-2;
-    if(inputInfo.input.w<expected-.15 || c.some(e=>e.x<inputInfo.bar.x-.15||e.right>inputInfo.bar.right+.15||Math.min(e.right,inputInfo.input.right)-Math.max(e.x,inputInfo.input.x)>.15)) {console.log('FAIL composer width or overlap',JSON.stringify({width,id,expected,...inputInfo}));errors++;}
+    if(inputInfo.input.w<expected-.15 || c.some(e=>!e.hit||e.x<inputInfo.bar.x-.15||e.right>inputInfo.bar.right+.15||Math.min(e.right,inputInfo.input.right)-Math.max(e.x,inputInfo.input.x)>.15)) {console.log('FAIL composer width or overlap',JSON.stringify({width,id,expected,...inputInfo}));errors++;}
    }
    if(width===320||width===375) await page.screenshot({path:join(out,`${width}-${id}-composer.png`)});
   }
@@ -140,8 +141,18 @@ for (const width of [320,375,390,430]) {
  const desktopExpected=mainInput.bar-mainInput.children.reduce((n,e)=>n+e.w,0)-2*8-mainInput.children.length*4-2;
  if(mainInput.input<desktopExpected-.15){console.log('FAIL desktop composer width',desktopExpected,JSON.stringify(mainInput));errors++;}
  await page.screenshot({path:join(out,'desktop-composer.png')});
- await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'desktop-band-document',title:'Canvas test',itemType:'markdown',pinned:false,content:'# Canvas'}})));
+ await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'desktop-band-document',title:'Canvas test',itemType:'markdown',absPath:'/fixture/desktop-band-document.md',pinned:false,content:'# Canvas'}})));
  await page.waitForSelector('.canvas-tab-pane .canvas-find-toggle',{timeout:12000});
+ const askFab=page.locator('.ask-fab:not(.note-fab):visible').first();
+ if(await askFab.count()) {
+  await askFab.click({timeout:3000});
+  await page.waitForSelector('.ask-dock:not(.closed) .ask-input:visible',{timeout:5000});
+  await page.waitForFunction(()=>{const d=document.querySelector('.ask-dock:not(.closed) .ask-input textarea');return d&&d.getBoundingClientRect().width>10},{timeout:5000});
+  const ask=await page.evaluate(()=>{const b=document.querySelector('.ask-dock:not(.closed) .ask-input'),i=b.querySelector('textarea'),br=b.getBoundingClientRect(),ir=i.getBoundingClientRect(),controls=[...b.children].filter(e=>!e.contains(i)&&e!==i&&getComputedStyle(e).display!=='none'&&e.getBoundingClientRect().width>0).map(e=>{const r=e.getBoundingClientRect();return {id:e.className,w:r.width,x:r.x,right:r.right}});return {bar:br.width,input:ir.width,ratio:ir.width/br.width,controls,padding:getComputedStyle(b).padding,gap:getComputedStyle(b).gap}});
+  console.log('DESKTOP ASK',JSON.stringify(ask));
+  const min=ask.bar-ask.controls.reduce((n,e)=>n+e.w,0)-12-4*ask.controls.length-2;
+  if(ask.input<min-.15){console.log('FAIL desktop ask width',JSON.stringify(ask),min);errors++;}
+ } else {console.log('FAIL desktop ask entry missing');errors++;}
  const rows=await page.evaluate(()=>[...document.querySelectorAll('#canvas-head-close, .canvas-tab-pane .canvas-find-toggle, .canvas-tab-pane .canvas-source-toggle, .canvas-tab-pane .canvas-ref-select')].map(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e),i=e.querySelector('svg')?.getBoundingClientRect();return {selector:e.className||e.id,w:r.width,h:r.height,icon:i?{w:i.width,h:i.height}:null,radius:s.borderRadius,padding:s.padding,visible:r.width>0&&r.height>0}}).filter(e=>e.visible));
  console.log('DESKTOP',JSON.stringify(rows));
  const desktopBottom=await page.locator('.canvas-tab-pane .canvas-find-toggle:visible').first().boundingBox();
