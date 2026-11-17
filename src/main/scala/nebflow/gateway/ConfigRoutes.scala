@@ -128,13 +128,26 @@ private[gateway] object ConfigRoutes:
           // 读 body 有界：take(max+1) 后超限即 413，防大 payload 拉爆内存。
           val maxBytes = CanvasTabs.MaxBodyBytes
           req.body.take(maxBytes.toLong + 1).compile.toVector.flatMap { bytes =>
-            CanvasTabs.parseBody(bytes.toArray, maxBytes) match
+            val raw = bytes.toArray
+            val operation = if raw.length <= maxBytes then io.circe.parser.parse(new String(raw, java.nio.charset.StandardCharsets.UTF_8)).toOption.filter(_.hcursor.downField("operationId").succeeded) else None
+            if operation.nonEmpty then
+              val json = operation.get
+              new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").applyOperation(json).flatMap {
+                case Left(reason) =>
+                  logger.warn(s"canvas tab operation rejected: $reason source=${req.remoteAddr} operationId=${json.hcursor.get[String]("operationId").getOrElse("invalid")}") *>
+                    BadRequest(Json.obj("error" -> reason.asJson))
+                case Right((result, duplicate)) =>
+                  val ack = Json.obj("ok" -> true.asJson, "operationId" -> result.hcursor.downField("operationId").focus.getOrElse(Json.Null), "writeVersion" -> result.hcursor.downField("writeVersion").focus.getOrElse(Json.Null))
+                  (if duplicate then IO.unit else wsHub.broadcast(result.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson)))) *> Ok(ack)
+              }
+            else CanvasTabs.parseBody(raw, maxBytes) match
               case Left((status, msg)) =>
                 val st = org.http4s.Status.fromInt(status).getOrElse(Status.BadRequest)
                 IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
               case Right(json) =>
-                new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
-                  .mergeSave(json)
+                (logger.warn(s"canvas tabs legacy PUT deprecated; missing tabs ignored, source=${req.remoteAddr}") *>
+                  new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
+                  .mergeSave(json))
                   .flatMap { merged =>
                     // 写穿即外推（canvas-tab-sync 批 2026-11-17）：合并后的权威
                     // 存档广播给全部已连端，他端开/关/切/排序即时跟随，不等刷新。

@@ -38,6 +38,14 @@ class CanvasTabOperationSpec extends CatsEffectSuite:
       assert(z.isLeft)
   }
 
+  test("legacy stale snapshot must not erase another client's new tab") {
+    val s = fixture()
+    for
+      _ <- s.mergeSave(j(s"""{"v":2,"tabs":$a}"""), now)
+      result <- s.mergeSave(j(s"""{"v":2,"tabs":$b}"""), now)
+    yield assertEquals(ids(result).toSet, Set("a", "b"))
+  }
+
   test("close and explicit reopen use tombstone time semantics") {
     val s = fixture()
     for

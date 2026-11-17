@@ -305,6 +305,7 @@ class CanvasTabStore(path: os.Path):
             .filter(_.hcursor.get[Long]("appliedAt").toOption.exists(_ >= nowMs - 86400000L))
           val duplicate = ledger.find(_.hcursor.get[String]("operationId").toOption.contains(id.get))
           duplicate match
+            case None if ledger.size >= 10000 => Left("operation ledger capacity reached; retry later")
             case Some(rec) =>
               Right((Json.obj("operationId" -> Json.fromString(id.get), "writeVersion" -> rec.hcursor.downField("version").focus.get), true))
             case None =>
@@ -337,7 +338,14 @@ class CanvasTabStore(path: os.Path):
     IO.blocking {
       CanvasTabStore.mergeGate.acquire()
       try
-        val merged = CanvasTabs.merge(loadSync(), put, nowMs)
+        val previous = loadSync()
+        val old = previous.flatMap(_.hcursor.get[Vector[Json]]("tabs").toOption).getOrElse(Vector.empty)
+        val incoming = put.hcursor.get[Vector[Json]]("tabs").getOrElse(Vector.empty)
+        val incomingIds = incoming.flatMap(_.hcursor.get[String]("id").toOption).toSet
+        val mergedInput = put.deepMerge(Json.obj("tabs" -> Json.fromValues(incoming ++ old.filterNot(t => t.hcursor.get[String]("id").toOption.exists(incomingIds)))))
+        val version = previous.flatMap(_.hcursor.get[Long]("writeVersion").toOption).getOrElse(0L) + 1L
+        val ledger = previous.flatMap(_.hcursor.downField("operationLedger").focus).getOrElse(Json.arr())
+        val merged = CanvasTabs.merge(previous, mergedInput, nowMs).deepMerge(Json.obj("writeVersion" -> Json.fromLong(version), "operationLedger" -> ledger))
         AtomicJson.writeSync(path, merged.noSpaces)
         merged
       finally CanvasTabStore.mergeGate.release()
