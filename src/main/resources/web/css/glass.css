@@ -207,6 +207,15 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
   backdrop-filter: var(--nf-glass-input-filter);
 }
 
+/* Registered floating consumers use the same composer glass background. */
+#todo-island.tfl-card,
+.tfl-fab-add,
+#search-go.glass-control,
+#search-select-files.glass-control,
+#search-open-selected-files.glass-control {
+  background: var(--nf-glass-input-bg);
+}
+
 /* Mobile todo chrome uses the shared glass recipe; layout stays in its page CSS. */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,

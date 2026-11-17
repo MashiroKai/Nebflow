@@ -398,7 +398,7 @@ html[data-theme="dark"] {
      11-11「毛玻璃一律不透底」；本批把全站唯一材质定回基准件配方，旧档名
      （--nf-glass-bg/-hover/-filter/-blur/-saturate）全部降为指向本组的别名
      ——存量消费链（sapphire.css --glass-* / --cv-*）不改名即换材质。 */
-  --nf-glass-input-bg: #ffffffF7;            /* 唯一玻璃底（亮档）α=.968（近实底白） */
+  --nf-glass-input-bg: rgba(255, 255, 255, 0.95);            /* 唯一玻璃底（亮档）α=.968（近实底白） */
   --nf-glass-input-filter: blur(24px) saturate(1.15); /* 唯一模糊配方 */
   --nf-glass-bg: var(--nf-glass-input-bg);   /* 别名：唯一底（旧消费链随材质） */
   /* hover 升一档（唯一材质上的交互层级，单一材质批 2026-11-15 补正）：质感 =
@@ -447,7 +447,7 @@ html[data-theme="dark"] {
   }
 }
 html[data-theme="light"] {
-  --nf-glass-input-bg: #ffffffF7;
+  --nf-glass-input-bg: rgba(255, 255, 255, 0.95);
   --nf-glass-bg: var(--nf-glass-input-bg);
   --nf-glass-bg-hover: #ffffff;
   --nf-glass-border-color: #ffffff59;
