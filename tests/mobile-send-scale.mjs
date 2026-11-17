@@ -13,7 +13,7 @@ const browser = await chromium.launch();
 let failed = false;
 try {
   for (const mobile of [true, false]) for (const theme of ['light', 'dark']) {
-    const ctx = await browser.newContext({ viewport: mobile ? viewport : {width: 1280, height: 860}, hasTouch: mobile, colorScheme: theme, deviceScaleFactor: mobile ? dpr : 1 });
+    const ctx = await browser.newContext({ viewport: mobile ? viewport : {width: 1280, height: Number(process.env.MSS_DESKTOP_HEIGHT || 860)}, hasTouch: mobile, colorScheme: theme, deviceScaleFactor: mobile ? dpr : 1 });
     await ctx.addInitScript(() => { localStorage.setItem('nebflow_token', 'fixture'); localStorage.setItem('nebflow_locale', 'zh-CN'); });
     const page = await ctx.newPage();
     await page.route('**/*', async route => {

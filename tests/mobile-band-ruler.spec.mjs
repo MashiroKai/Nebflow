@@ -8,7 +8,7 @@ const out = resolve(process.env.BAND_OUT || '/private/tmp/stand-band-evidence');
 mkdirSync(out, {recursive:true});
 const browser = await chromium.launch();
 let errors = 0;
-for (const width of [375,390]) {
+for (const width of [320,375,390,430]) {
  const context = await browser.newContext({viewport:{width,height:812}, deviceScaleFactor:2, hasTouch:true, reducedMotion:'reduce'});
  const page = await context.newPage();
  await page.addInitScript(() => {localStorage.setItem('nebflow_token','e2e-token'); localStorage.setItem('stand_sw','0');});
@@ -28,13 +28,11 @@ for (const width of [375,390]) {
  await page.goto('http://localhost:8899/');
  await page.waitForSelector('body.mobile-layer');
  await page.waitForFunction(async()=>{const s=(await import('/js/state.js')).default; return s.ws?.readyState===1});
- // Fixture-only ownership: no live backend exists. Remove takeover overlay and assert it no longer intercepts.
- await page.evaluate(async()=>{const s=(await import('/js/state.js')).default; s.consoleSuperseded=false; const o=document.querySelector('#modal-overlay'); o.classList.remove('on','takeover-live','takeover-blur'); document.querySelector('#takeover-box').style.display='none';});
- if(await page.locator('#modal-overlay').isVisible()) throw Error('fixture takeover overlay remains visible');
- console.log(`PASS fixture overlay absent width=${width}`);
+ // Geometry does not require input. Record ownership-card state without altering it.
+ console.log(`INFO takeover card visible=${await page.locator('#modal-overlay.on #takeover-box').isVisible()} width=${width}`);
  if(process.env.BAND_NEGATIVE) await page.addStyleTag({content:'body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar { width: 31px !important; height:31px !important }'});
  const rows=[];
- for(const id of ['chat','messages','contacts','canvas','workbench','settings','tasks']) {
+ for(const id of ['chat','messages','contacts','canvas','workbench','settings','tasks','todo-apple-item']) {
   if(id==='canvas') await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'band-document',title:'Canvas test',itemType:'markdown',pinned:false,background:false,content:'# Canvas'}})));
   await page.evaluate(async id=>{const n=await import('/js/mobile/navController.js'); if(id==='chat') n.goHome(); else n.navigateTo(id);},id);
   if(id!=='chat') await page.waitForSelector(`.mobile-page.live[data-page="${id}"]`,{timeout:12000});
@@ -46,9 +44,20 @@ for (const width of [375,390]) {
    const els=[...root.querySelectorAll(sel)].filter(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width&&r.height&&s.visibility!=='hidden'&&s.display!=='none'});
    const rect=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,right:innerWidth-r.right,cy:r.y+r.height/2}};
    const avatar=root.querySelector('.mh-idhead img,.g2-chat-head img,.mh-idhead-avatar');
-   return {id,buttons:els.map(e=>({box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null})),avatar:avatar?rect(avatar):null, bottom:getComputedStyle(document.body).getPropertyValue('--mcv-size-circle').trim(),capsule:getComputedStyle(document.body).getPropertyValue('--mcap-h').trim()};
+   const tool=root.querySelector('.ta-tool');
+   return {id,buttons:els.map(e=>({box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null})),avatar:avatar?rect(avatar):null, tool:tool?rect(tool):null,bottom:getComputedStyle(document.body).getPropertyValue('--mcv-size-circle').trim(),capsule:getComputedStyle(document.body).getPropertyValue('--mcap-h').trim()};
   },id);
   rows.push(data); console.log(JSON.stringify({width,...data}));
+  if (process.env.BAND_CLICKS && width===375 && ['messages','contacts','settings','canvas'].includes(id)) {
+   const card=await page.locator('#modal-overlay.on #takeover-box').isVisible();
+   console.log(`CLICK ${id} takeover-card-visible=${card}`);
+   const hit=async selector=>{const locator=page.locator(selector).first(); const info=await locator.evaluate(e=>{const r=e.getBoundingClientRect();const t=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return {target:t?.outerHTML.slice(0,180),clear:e===t||e.contains(t)}});console.log('CLICK point',id,JSON.stringify(info));if(!info.clear) throw Error(`blocked ${id} ${JSON.stringify(info)}`); await locator.click({timeout:3000});};
+   try {
+    if(['messages','contacts'].includes(id)){await hit('.mobile-page.live .mh-search-bar'); const inp=page.locator('.mobile-page.live .mh-search-input'); await inp.waitFor({state:'visible',timeout:3000}); if(!await inp.evaluate(e=>e===document.activeElement)) throw Error('search input not focused');console.log(`PASS click ${id} search focused`);}
+    if(id==='settings'){await hit('.mobile-page.live .mobile-back-btn'); await page.waitForFunction(()=>!document.querySelector('.mobile-page.live[data-page="settings"]'),null,{timeout:3000});console.log('PASS click settings back');}
+    if(id==='canvas'){await hit('.mobile-page.live .mf-cv-stack');await page.waitForSelector('.mf-stack-view:not([hidden])',{timeout:3000});console.log('PASS click canvas stack');await hit('.mf-stack-x');await page.waitForSelector('.mf-stack-view:not([hidden])',{state:'hidden',timeout:3000});const n=await page.locator('.mobile-page.live .mf-strip-chip').count();await hit('.mobile-page.live .mf-cv-close');await page.waitForFunction(n=>document.querySelectorAll('.mobile-page.live .mf-strip-chip').length<n,n,{timeout:3000});console.log('PASS click canvas close');}
+   } catch(e) { console.log(`FAIL click ${id}: ${e.message}`);await page.screenshot({path:join(out,`click-failure-${id}.png`)});errors++; }
+  }
   if(['messages','contacts','canvas'].includes(id)) await page.screenshot({path:join(out,`${width}-${id}.png`)});
  }
  writeFileSync(join(out,`${width}.json`),JSON.stringify(rows,null,2));
