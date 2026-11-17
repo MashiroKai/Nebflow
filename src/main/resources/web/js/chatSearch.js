@@ -48,6 +48,7 @@
 //   泄漏 overflow:hidden 祖先）。手机层同一条腿：关搜索面后回聊天根再定位。
 
 import state from './state.js';
+import { openDropdownMenu } from './dropdownMenu.js';
 import { key } from './branding.js';
 import { t, getLocale } from './i18n.js';
 import { pushLayer, popLayer } from './focusTrap.js';
@@ -340,6 +341,38 @@ const inputById = (id) => /** @type {HTMLInputElement|null} */ (document.getElem
  * @returns {HTMLSelectElement|null}
  */
 const selectById = (id) => /** @type {HTMLSelectElement|null} */ (document.getElementById(id));
+const filterOptions = new Map();
+let closeToolMenu = () => {};
+function setFilterOptions(id, options, value = '') {
+  const button = document.getElementById(id);
+  if (!button) return;
+  filterOptions.set(id, options);
+  button.value = options.some(o => o.value === value) ? value : (options[0]?.value || '');
+  button.textContent = options.find(o => o.value === button.value)?.label || '';
+}
+function setToolOptions(options, value = '') { setFilterOptions('search-tool', options, value); }
+function openToolMenu(button) {
+  closeToolMenu();
+  const menu = document.createElement('div');
+  menu.className = 'project-open-menu nf-glass';
+  menu.setAttribute('role', 'menu');
+  for (const option of filterOptions.get(button.id) || []) {
+    const item = document.createElement('button');
+    item.type = 'button'; item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(option.value === button.value));
+    const icon = document.createElement('span'), label = document.createElement('span'), check = document.createElement('span');
+    label.textContent = option.label; check.textContent = option.value === button.value ? '✓' : '';
+    check.setAttribute('aria-hidden', 'true'); item.append(icon, label, check);
+    item.addEventListener('click', () => {
+      closeToolMenu();
+      if (button.value === option.value) return;
+      button.value = option.value; button.textContent = option.label;
+      button.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    menu.append(item);
+  }
+  closeToolMenu = openDropdownMenu(button, menu);
+}
 
 // 会话档（convScope）恒单会话 ⇒ 无分组形态（与 scope=current 同视）。
 const isGrouped = () => !convScope && (selectById('search-scope')?.value || 'current') === 'all';
@@ -425,6 +458,10 @@ export function initChatSearch() {
   bindImeGuard(document.getElementById('search-keyword'));
   for (const id of ['search-scope', 'search-agent', 'search-tool']) {
     document.getElementById(id)?.addEventListener('change', scheduleSearch);
+  }
+
+  for (const id of ['search-scope', 'search-agent', 'search-tool']) {
+    document.getElementById(id)?.addEventListener('click', event => openToolMenu(event.currentTarget));
   }
 
   // Category tabs (click). The date tab (now IN the roving enumeration but
@@ -583,6 +620,7 @@ export function openSearchModal(scope = null) {
 }
 
 export function closeSearchModal() {
+  closeToolMenu();
   // Abort any in-flight search and drop pending work.
   searchSeq++;
   searchAbort?.abort();
@@ -640,20 +678,12 @@ function resetSearchState() {
 
 /** Fill labels/placeholders that depend on the current locale. */
 function renderStaticLabels() {
-  const scope = document.getElementById('search-scope');
-  if (scope) {
-    scope.innerHTML =
-      `<option value="current">${escapeHtml(t('search.scopeCurrent'))}</option>` +
-      `<option value="all">${escapeHtml(t('search.scopeAll'))}</option>`;
-  }
-  const tool = document.getElementById('search-tool');
-  if (tool) {
-    tool.innerHTML = `<option value="">${escapeHtml(t('search.allTypes'))}</option>`;
-  }
-  const agent = document.getElementById('search-agent');
-  if (agent) {
-    agent.innerHTML = `<option value="">${escapeHtml(t('search.allAgents'))}</option>`;
-  }
+  setFilterOptions('search-scope', [
+    { value: 'current', label: t('search.scopeCurrent') },
+    { value: 'all', label: t('search.scopeAll') }
+  ], 'current');
+  setToolOptions([{ value: '', label: t('search.allTypes') }]);
+  setFilterOptions('search-agent', [{ value: '', label: t('search.allAgents') }]);
   for (const tab of CONTENT_TABS) {
     const el = document.getElementById(`search-tab-${tab}`);
     if (el) el.textContent = t(TAB_I18N[tab]);
@@ -938,6 +968,11 @@ function openPillListbox(pill, pop) {
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
+  const expandedFilter = document.querySelector('.search-filters [aria-expanded="true"]');
+  if (expandedFilter) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeToolMenu(); expandedFilter.focus(); }
+    return;
+  }
   // ⑤ 收归：单一谓词（元素级 dataset 兜底 + 事件级 isComposing/keyCode 229）。
   if (isImeComposing(e, e.target instanceof HTMLElement ? e.target : null)) return;
 
@@ -2430,10 +2465,10 @@ function populateAgentFilter(sessions, keepValue) {
     if (name) counts.set(name, (counts.get(name) || 0) + 1);
   }
   const sorted = [...counts.keys()].sort((a, b) => a.localeCompare(b));
-  sel.innerHTML =
-    `<option value="">${escapeHtml(t('search.allAgents'))}</option>` +
-    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
-  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+  setFilterOptions('search-agent', [
+    { value: '', label: t('search.allAgents') },
+    ...sorted.map(n => ({ value: n, label: `${n} (${counts.get(n)})` }))
+  ], keepValue);
 }
 
 /** Rebuild the tool filter options from the tool labels in the fetched set.
@@ -2451,12 +2486,11 @@ function populateToolFilter(perSession, keepValue) {
     }
   }
   const sorted = [...counts.keys()].sort();
-  sel.innerHTML =
-    `<option value="">${escapeHtml(t('search.allTypes'))}</option>` +
-    `<option value="__any__">${escapeHtml(t('search.anyTool'))}</option>` +
-    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
-  // Restore previous selection if still available
-  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+  setToolOptions([
+    { value: '', label: t('search.allTypes') },
+    { value: '__any__', label: t('search.anyTool') },
+    ...sorted.map(n => ({ value: n, label: `${n} (${counts.get(n)})` }))
+  ], keepValue);
 }
 
 // ── Result rendering ───────────────────────────────────────

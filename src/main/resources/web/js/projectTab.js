@@ -1,4 +1,5 @@
 import { mountProjectWorkspaces } from './projectWorkspaces.js';
+import { openDropdownMenu } from './dropdownMenu.js';
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
 // 沿用 .team-card 视觉与交互范式。点击 project name → 同一标签页就地切换到
@@ -1279,28 +1280,7 @@ async function showProjectOpenMenu(button, name) {
     });
     menu.append(item);
   }
-  document.body.append(menu);
-  const rect = button.getBoundingClientRect();
-  menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
-  menu.style.top = `${Math.max(8, Math.min(rect.bottom + 4, innerHeight - menu.offsetHeight - 8))}px`;
-  button.setAttribute('aria-expanded', 'true');
-  const outside = event => { if (!menu.contains(event.target) && event.target !== button && !button.contains(event.target)) closeProjectOpenMenu(); };
-  const key = event => {
-    if (event.key === 'Escape') { closeProjectOpenMenu(); button.focus(); }
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault();
-      const items = [...menu.querySelectorAll('button')];
-      const index = items.indexOf(document.activeElement);
-      items[(index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
-    }
-  };
-  closeProjectOpenMenu = () => {
-    menu.remove(); button.setAttribute('aria-expanded', 'false');
-    document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key);
-    closeProjectOpenMenu = () => {};
-  };
-  document.addEventListener('pointerdown', outside); document.addEventListener('keydown', key);
-  menu.querySelector('button')?.focus();
+  closeProjectOpenMenu = openDropdownMenu(button, menu);
 }
 
 /** 单卡事件绑定（随卡生命周期，一次）。

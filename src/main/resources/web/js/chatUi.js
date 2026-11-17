@@ -193,9 +193,9 @@ const SEARCH_SHELL = `
                   aria-haspopup="dialog" aria-expanded="false" data-tab="date"></button>
         </div>
         <div class="search-filters">
-          <select id="search-scope" class="cfg-select"></select>
-          <select id="search-agent" class="cfg-select"></select>
-          <select id="search-tool" class="cfg-select"></select>
+          <button id="search-scope" type="button" class="cfg-select" aria-haspopup="menu" aria-expanded="false"></button>
+          <button id="search-agent" type="button" class="cfg-select" aria-haspopup="menu" aria-expanded="false"></button>
+          <button id="search-tool" type="button" class="cfg-select" aria-haspopup="menu" aria-expanded="false"></button>
           <button id="search-go" class="glass-control cfg-btn cfg-btn-sm">Search</button>
         </div>
         <div id="search-date-popover" role="dialog" hidden></div>
