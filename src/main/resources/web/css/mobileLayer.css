@@ -310,18 +310,15 @@ body.mobile-layer {
      -start/-snap/-p 随 .mobile-page-title 规则族整链退役，本槽继续承担
      nohead 根页的首行顶呼吸）。 */
   --mtitle-lead: 12px;
-  /* ── 带几何单源（ui-unify-panels 批 2026-11-17）────────────────────────
-     顶/底三区带（[圆钮]—[胶囊]—[圆钮]）的统一直径档：
-       --band-d    手机直径 = clamp(36px, 10vw, 44px)（375 视宽 → 37.5；
-                   414 → 41.4；≥440 封顶 44）；桌面档 = sapphire.css
-                   --cv-size-circle 40px（不动）。**胶囊高恒等圆钮直径**。
-       --band-icon 带内图标 = 直径 45%（胶囊内图标口径；圆钮同用一把尺，
-                   37.5 × 0.45 = 16.875）。CSS 不能做 px/px 比值，但
-                   calc(长度 × 0.45) 合法 ⇒ 图标随直径档自动等比。
-     消费面（一律 var()，禁第二把尺）：glass.css 手机 .g2-fab、本文件
-     chrome 键/返回钮/三点键/胶囊/页面 FAB 让位、mobile-todo-apple.css
-     带族、design-system.css --ds-turn-btn 手机档（经 --mcv-* 桥）。 */
-  --band-d: clamp(36px, 10vw, 44px);
+  /* 手机带几何：顶带和底带使用同一比例体系的两个直径档。
+     顶带圆钮与顶带胶囊消费 --band-d / --band-icon；底部发送、停止与
+     待办键盘工具条消费 --bottom-band-d / --bottom-band-icon。 */
+  /* Two tiers: preserve the existing bottom/composer scale, while the top
+     reaches 48px at 375px, never falls below 44px at 320px, and caps at
+     52px above 406px to avoid oversized controls on wide phones. */
+  --bottom-band-d: clamp(36px, 10vw, 44px);
+  --bottom-band-icon: calc(var(--bottom-band-d) * 0.45);
+  --band-d: clamp(44px, 12.8vw, 52px);
   --band-icon: calc(var(--band-d) * 0.45);
   --mcap-h: var(--band-d);
   --mcap-pad: 24px;
@@ -351,8 +348,8 @@ body.mobile-layer {
      全部 .g2-fab 基准钮（返回钮/chrome 键/canvas 页 ✕ 与层叠钮/会话页三点——
      它们的 48 档是各自块的显式口径，基类一改就是一次范围外视觉回归）。本组
      token 只服务面板底钮这一档，主会话腿（--mtap-lg 48 / --micon 22）不读它。 */
-  --mcv-size-circle: var(--band-d);
-  --mcv-icon: var(--band-icon);
+  --mcv-size-circle: var(--bottom-band-d);
+  --mcv-icon: var(--bottom-band-icon);
   /* ── 顶部悬浮 chrome 簇几何（内容起点让位批 2026-11-02 作者令： 「内容都需要
      从按钮下开始，只有向上滑动的时候才允许从按钮下过」）──
      簇 = 页头零高带里那几颗 48px 悬浮圆钮（返回钮 / canvas 页 ✕ 与层叠钮 /
@@ -1977,7 +1974,7 @@ body.mobile-layer .mf-cv-toolbar .g2-fab {
 }
 body.mobile-layer .mf-cv-toolbar .mf-cv-close { left: var(--mchrome-top, 16px); }
 body.mobile-layer .mf-cv-toolbar .mf-cv-stack { right: var(--mchrome-top, 16px); }
-body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: 20px; height: 20px; }
+body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: var(--band-icon); height: var(--band-icon); }
 /* 禁用 opacity .35 档随统一按钮玻璃批迁 glass.css 圆钮禁用档（.g2-fab 共档）。 */
 /* 堆叠视角打开时浮带工具钮让位（堆叠面自带同位 ✕，零双键重叠）。 */
 body.mobile-layer .mobile-page[data-page="canvas"]:has(.mf-stack-view:not([hidden])) .mf-cv-toolbar {

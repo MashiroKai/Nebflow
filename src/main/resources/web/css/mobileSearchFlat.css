@@ -65,13 +65,13 @@
    无 font-size 字面量。 */
 
 /* ── 形变算术单源（时长/曲线/带高）────────────────────────────────────── */
-/* 带高常量：48（--ds-hit-tap-lg，g2-fab 手机档圆钮 = 主会话按钮同档）+ 12。
+/* 带高 = 顶带按钮直径 + 上下各 --mchrome-top，使圆钮顶边对齐主会话。
    声明在两页**页面体**上而不是带上：带（.mh-search-dock）与收编滚区
    （#fm-conversations / #fm-contacts-body）是兄弟，只在带上声明则滚区取不到；
    页面体是两者共同祖先 ⇒ 一处定义、两处 var() 引用（透明顶带的让位内距就用它）。 */
 body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body,
 body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body {
-  --mhsc-band: calc(var(--ds-hit-tap-lg, 48px) + var(--ds-space-3, 12px));
+  --mhsc-band: calc(var(--band-d) + 2 * var(--mchrome-top));
 }
 body.mobile-layer .mh-search-dock {
   --mhsc-dur: 280ms;
@@ -200,9 +200,9 @@ body.mobile-layer .mh-search-dock .mh-search-input {
    内距。静止时列表首行仍在带下（滚区自带让位内距）；上滚后内容从**透明**带内
    穿过（本批：带不再占流、也不再给内容加裁切线），圆钮是唯一浮在内容上的件。 */
 body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar {
-  width: var(--ds-hit-tap-lg, 48px);
-  height: var(--ds-hit-tap-lg, 48px);
-  margin-left: calc(100% - var(--ds-space-4) - var(--ds-hit-tap-lg, 48px));
+  width: var(--band-d);
+  height: var(--band-d);
+  margin-left: calc(100% - var(--ds-space-4) - var(--band-d));
   margin-right: var(--ds-space-4);
   padding-left: 0;
   padding-right: 0;

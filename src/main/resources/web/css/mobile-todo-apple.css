@@ -98,7 +98,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
     28px,
     calc(
       max(var(--ta-kb, 0px), var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px))
-      + 8px + var(--band-d, 48px) + 8px
+      + 8px + var(--bottom-band-d, 48px) + 8px
     )
   );
 }
@@ -728,7 +728,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
     max(var(--ta-kb, 0px), calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px)))
     + 8px
   );
-  height: var(--band-d, 48px);
+  height: var(--bottom-band-d, 48px);
   display: flex;
   align-items: center;
   justify-content: space-around;
@@ -741,7 +741,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: var(--band-d, 44px);
+  min-height: var(--bottom-band-d, 44px);
   padding: 0 12px;
   border: none;
   border-radius: 999px;
@@ -754,8 +754,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
   max-width: 40%;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn svg {
-  width: var(--band-icon, 20px);
-  height: var(--band-icon, 20px);
+  width: var(--bottom-band-icon, 20px);
+  height: var(--bottom-band-icon, 20px);
   display: block;
   flex: none;
 }
