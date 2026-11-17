@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 
@@ -37,19 +37,32 @@ test('reader can browse without takeover; rejected write notifies once', async (
     const ticketResponse = await fetch(base+'/api/auth/console-ticket',{method:'POST',headers:{Authorization:`Bearer ${token}`}});
     expect(ticketResponse.status).toBe(200); const {ticket} = await ticketResponse.json();
     context = await browser.newContext({viewport:{width:375,height:812},isMobile:true,hasTouch:true,userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'});
+    if (process.env.READER_BASELINE) {
+      const source=execFileSync('git',['show','50bd47a06:src/main/resources/web/js/canvas.js'],{cwd:root,encoding:'utf8'});
+      await context.route('**/js/canvas.js', route => route.fulfill({status:200,contentType:'application/javascript',body:source}));
+    }
     const page = await context.newPage(); const errors = [];
     page.on('pageerror', e => errors.push(`pageerror: ${e.stack || String(e)}`));
     page.on('console', m => { if(m.type()==='error') errors.push(`console.error: ${m.text()} ${JSON.stringify(m.location())}`); });
+    page.on('response', r => { if(r.status()>=400) console.log('[http-error]',r.status(),new URL(r.url()).pathname); });
     await page.goto(`${base}/?ticket=${encodeURIComponent(ticket)}`, {waitUntil:'domcontentloaded'});
     await page.waitForSelector('#activity-bar',{state:'attached',timeout:30000});
+    if (process.env.READER_MODAL_NEGATIVE) await page.waitForTimeout(3000);
     await page.screenshot({path:process.env.READER_SCREENSHOT || info.outputPath('initial.png')});
     await expect(page.locator('#modal-overlay.on #takeover-box')).toBeHidden();
+    if (process.env.READER_MODAL_NEGATIVE) {
+      await expect(page.locator('#takeover-box')).toBeHidden({timeout:5000});
+      return;
+    }
     await expect(page.locator('#chat .row').first()).toBeVisible({timeout:30000});
     await expect(page.locator('#chat')).toContainText('reader fixture message');
     console.log('[mobile-message-rows]', await page.locator('#chat .row').count());
     const puts = []; page.on('request', r => { if (new URL(r.url()).pathname === '/api/canvas-tabs' && r.method() === 'PUT') puts.push(r.url()); });
     await page.evaluate(async path => { const m=await import('/js/explorer.js'); m.openExplorerAt(path); }, home);
     const file = page.locator('.explorer-item.explorer-file').filter({hasText:'reader-fixture.md'});
+    await expect(file).toBeAttached({timeout:15000});
+    await page.screenshot({path:process.env.READER_FILE_SCREENSHOT || info.outputPath('file-entry.png')});
+    console.log('[file-entry-visibility]', JSON.stringify(await file.evaluate(el=>({display:getComputedStyle(el).display,sidebar:getComputedStyle(document.querySelector('#sidebar')).display,activity:getComputedStyle(document.querySelector('#activity-bar')).display}))));
     await expect(file).toBeVisible({timeout:15000});
     await file.click();
     await expect(page.locator('#canvas-content')).toContainText('REAL_READER_CONTENT',{timeout:15000});
