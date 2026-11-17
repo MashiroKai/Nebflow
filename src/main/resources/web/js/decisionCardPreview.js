@@ -28,7 +28,7 @@ export function installDecisionCardPreview() {
     .decision-preview-entry{position:fixed;right:16px;bottom:90px;z-index:200;background:var(--ds-color-surface,#fff);color:var(--ds-color-text,#222);border:1px solid #999;border-radius:20px;padding:8px 12px}
     .decision-preview{position:fixed;inset:8% 12%;z-index:201;overflow:auto;background:var(--ds-color-surface,#fff);color:var(--ds-color-text,#222);border:1px solid #999;border-radius:16px;padding:20px;box-shadow:0 8px 40px #0004}
     .decision-preview[hidden]{display:none}.decision-preview article{border:1px solid #aaa;border-radius:12px;padding:16px;margin:12px 0;overflow-wrap:anywhere}.decision-preview h2{margin:0}.decision-preview button{margin:6px;padding:8px}.decision-preview .cover{aspect-ratio:16/9;background:#e9ecef;display:grid;place-items:center;color:#555}.decision-preview .mobile-nav{display:none}
-    @media(max-width:700px){.decision-preview{inset:3%;}.decision-preview article:not(.current){display:none}.decision-preview .mobile-nav{display:block}}
+    @media(max-width:700px){.decision-preview-entry{display:none}.decision-preview{inset:3%;}.decision-preview article:not(.current){display:none}.decision-preview .mobile-nav{display:block}}
   `;
   document.head.append(style);
   document.body.append(entry, panel);
