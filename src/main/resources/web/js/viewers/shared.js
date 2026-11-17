@@ -652,7 +652,9 @@ export function addSourceToggle(pane, renderFn, ctx) {
         btn.innerHTML = EYE_ICON_SVG;
         btn.title = t('canvas.viewRendered');
         if (pane._editorHandle) { pane._editorHandle.dispose(); pane._editorHandle = null; }
+        const updateHint = pane.querySelector('.canvas-update-hint');
         pane.innerHTML = '';
+        if (updateHint) pane.prepend(updateHint);
         pane.classList.remove('scrollable');
 
         const container = document.createElement('div');
@@ -719,7 +721,9 @@ export function addSourceToggle(pane, renderFn, ctx) {
         delete pane.dataset.sourceMode;
         // renderFn clears the pane and re-attaches the toggle via its own
         // addSourceToggle call, carrying the updated content forward.
+        const updateHint = pane.querySelector('.canvas-update-hint');
         await renderFn(pane, { ...ctx, content: latest });
+        if (updateHint) pane.prepend(updateHint);
         // canvas 文件刷新批: this round trip bypasses openWorkspaceItem (no
         // readFile), and renderFn wiped pane.innerHTML — the refresh button
         // went with it. Tell canvas.js to re-seat it (listener registered on

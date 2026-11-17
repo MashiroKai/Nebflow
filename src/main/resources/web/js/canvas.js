@@ -1001,6 +1001,7 @@ function refreshFileTab(entry, opts = {}) {
   }
   if (entry._refreshing) return;
   entry._refreshing = true;
+  entry._forceRefreshDirtySnapshot = opts.force && isTabDirty(entry) ? pane._nfSourceDirtyFor : undefined;
   // Safety: un-busy even if the response never arrives (mirrors the
   // _refreshing safety window in scheduleFileRefresh).
   setTimeout(() => { if (entry._refreshing) settleFileRefresh(entry); }, 10000);
@@ -1059,11 +1060,16 @@ function noteAutoFileChange(entry) {
   if (!entry || !entry.absPath) return;
   entry._autoChangeAt = Date.now();
   clearTimeout(entry._autoRefreshTimer);
-  const wait = Math.max(autoRefreshDeadline(entry) - Date.now(), 0);
-  entry._autoRefreshTimer = setTimeout(() => {
+  const checkDeadline = () => {
+    const remaining = autoRefreshDeadline(entry) - Date.now();
+    if (remaining > 0) {
+      entry._autoRefreshTimer = setTimeout(checkDeadline, remaining);
+      return;
+    }
     entry._autoRefreshTimer = null;
     fireAutoRefresh(entry);
-  }, wait);
+  };
+  entry._autoRefreshTimer = setTimeout(checkDeadline, Math.max(autoRefreshDeadline(entry) - Date.now(), 0));
 }
 
 /** 到点腿：静默窗（与最小间隔）已满。页签已关/在途 ⇒ 丢弃（后续信号会再布防）；
@@ -1121,7 +1127,7 @@ function showUpdateHint(entry) {
   now.type = 'button';
   now.textContent = t('canvas.updateNow');
   now.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
-  now.onclick = () => { hideUpdateHint(entry); refreshFileTab(entry); };
+  now.onclick = () => { refreshFileTab(entry); };
   chip.append(text, now);
   pane.prepend(chip);
 }
@@ -1581,6 +1587,9 @@ export async function openWorkspaceItem(item) {
     // 仍不抢激活（同下方 :1067 口径），面板开着的路径零变化。
     if (!item.background && !isCanvasOpen()) openCanvas();
     const entry = tabs.get(id);
+    const forceSnapshot = item.background && manual ? entry._forceRefreshDirtySnapshot : undefined;
+    entry._forceRefreshDirtySnapshot = undefined;
+    const forceDiscard = forceSnapshot != null && forceSnapshot === entry.paneEl._nfSourceDirtyFor && entry.paneEl.dataset.sourceMode !== '1';
     settleFileRefresh(entry);  // response arrived (or user-initiated open) — un-busy the refresh button
     // A response arrived = the file was freshly checked. Update unconditionally
     // — binary viewers (image/pdf/...) receive no content and never re-render,
@@ -1638,7 +1647,12 @@ export async function openWorkspaceItem(item) {
     // canvas-auto-refresh 批：二进制腿加 (size:mtimeMs) 判重——版本读数未变
     // 的重读（聚焦/慢对账布防的自动腿常态）不再重挂/重取字节。
     const binUnchanged = !content && !stream && prevFileVer !== undefined && prevFileVer === entry._fileVer;
-    if ((content || manual) && !binUnchanged && !stream && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
+    if ((content || manual) && !binUnchanged && !stream && (!isTabDirty(entry) || forceDiscard) && entry.paneEl.dataset.sourceMode !== '1') {
+      if (forceDiscard) {
+        entry.paneEl._dirty = false;
+        entry.paneEl._nfSourceDirtyFor = null;
+        entry.paneEl.dispatchEvent(new CustomEvent('editor-dirty-change', { detail: { dirty: false } }));
+      }
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for
       // zero visible change (matters for focus-triggered refreshes).
@@ -4834,9 +4848,11 @@ export function initCanvas() {
   // 变更信号通道②（explorer-rt 批的 fsChanged/聚焦/慢对账三腿汇流事件，由
   // explorer.js 派发）：canvas-auto-refresh 批起不再即读活动页签，改入迟滞引擎
   // ——静默窗满 60s 才执行一次（最小间隔 60s）；无变更事件 ⇒ 零布防零取数。
-  window.addEventListener('explorer-focus-refresh', () => {
+  window.addEventListener('explorer-focus-refresh', (event) => {
     const entry = activeTabId ? tabs.get(activeTabId) : null;
-    if (entry) noteAutoFileChange(entry);
+    // A periodic reconcile is a probe, not evidence of another write. Do not
+    // let it postpone a pending real change indefinitely.
+    if (entry && !(/** @type {CustomEvent} */ (event).detail?.reconcile && entry._autoRefreshTimer)) noteAutoFileChange(entry);
   });
 
   // Listen for Pop tool WS messages — agent opens a file in Canvas.

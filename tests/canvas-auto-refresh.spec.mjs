@@ -68,18 +68,36 @@ async function bootPage(browser, { files = {}, colorScheme = 'light' } = {}) {
     localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
     localStorage.setItem('nebflow_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
     localStorage.setItem('neblink_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+    if (location.search.includes('carTrace=1')) {
+      const set = window.setTimeout;
+      window.setTimeout = function (fn, delay, ...args) {
+        const stack = new Error().stack || '';
+        if (stack.includes('noteAutoFileChange')) {
+          console.log('[CAR] arm', Date.now(), delay, stack.replace(/\n/g, ' | '));
+          return set.call(this, (...a) => { console.log('[CAR] fire', Date.now()); fn(...a); }, delay, ...args);
+        }
+        return set.call(this, fn, delay, ...args);
+      };
+      for (const event of ['nf-file-external-change', 'explorer-focus-refresh', 'workspace-open-item']) {
+        window.addEventListener(event, e => console.log('[CAR] event', Date.now(), event, JSON.stringify(e.detail || null)));
+      }
+    }
   });
   const page = await ctx.newPage();
+  if (process.env.CAR_TRACE) page.on('console', msg => console.log('[BROWSER]', msg.text()));
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 300)));
   await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
   await installTicketMock(page);
   const reads = [];   // { t, path } — pop.readFile 客户端→服务端帧（= 刷新动作本体）
   let pushWs = null;
+  let connections = 0;
   await page.routeWebSocket(/\/ws/, (ws) => {
     pushWs = ws;
+    if (process.env.CAR_TRACE) console.log('[CAR] ws connection', ++connections, Date.now());
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
+      if (process.env.CAR_TRACE && ['ping', 'pop.readFile'].includes(m.type)) console.log('[CAR] client frame', Date.now(), raw);
       // 心跳必须应答：ws.js 是应用层 ping/pong（3 miss 自我逐出重连）。mock 不回
       // pong ⇒ 重连风暴 ⇒ explorer onReconnect 每轮都派发 explorer-focus-refresh
       // ⇒ canvas 迟滞引擎每轮重布防 60s 定时器 ⇒ 永不到点（生产 ws 真回 pong）。
@@ -100,10 +118,10 @@ async function bootPage(browser, { files = {}, colorScheme = 'light' } = {}) {
     ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
   });
-  await page.goto(BASE + '/index.html');
+  await page.goto(BASE + '/index.html' + (process.env.CAR_TRACE ? '?carTrace=1' : ''));
   await page.waitForSelector('#activity-bar', { timeout: 20000 });
   /** 测试侧推一条引擎→前端帧（如 nf-cache-invalidate = 引擎写路径广播真形）。 */
-  const pushFrame = (m) => pushWs && pushWs.send(JSON.stringify(m));
+  const pushFrame = (m) => { if (process.env.CAR_TRACE) console.log('[CAR] server frame', Date.now(), JSON.stringify(m)); return pushWs && pushWs.send(JSON.stringify(m)); };
   return { ctx, page, errors, reads, pushFrame };
 }
 

@@ -2634,7 +2634,7 @@ function reconcileTick() {
   reconcileNextAllowedAt = now + (now < reconcileBoostUntil ? RECONCILE_BOOST_MS : RECONCILE_BASE_MS);
   if (!document.querySelector('.explorer-root')) return;
   refreshExpandedDirs();
-  window.dispatchEvent(new CustomEvent('explorer-focus-refresh'));
+  window.dispatchEvent(new CustomEvent('explorer-focus-refresh', { detail: { reconcile: true } }));
 }
 
 function bindSlowReconcile() {
