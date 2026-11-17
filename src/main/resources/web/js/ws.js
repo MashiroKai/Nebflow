@@ -362,6 +362,13 @@ const GLOBAL_MSG_TYPES = new Set([
   //                   （消费点 = takeoverModal.js）。
   //   takeoverResult  【重新接管】的回执（ok ⇒ 收模态回 active）。
   'takeover', 'takeoverResult',
+  // canvas-tab-sync 批（2026-11-17）：canvas 页签跨设备实时收敛帧
+  // {type:'canvasTabsChanged', v:2, tabs:[...], tombstones?, activeTabId?} ——
+  // 服务端 /api/canvas-tabs PUT 落盘成功后把合并存档 wsHub.broadcast 到全部
+  // 连接（无 sessionId）。🔴 必须入 GLOBAL：否则会被下方视图路由当会话内事件
+  // ⇒ setActiveView(primary)，任一端开/关页签都把其他端正在看的视图抢走
+  // （projectCreated 同律）。消费点 = canvas.js applyLiveTabsFrame（幂等收敛）。
+  'canvasTabsChanged',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

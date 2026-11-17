@@ -369,6 +369,9 @@ function moveTab(dragId, targetId, after) {
   });
   tabs.clear();
   newOrder.forEach(([k, v]) => tabs.set(k, v));
+  // canvas-tab-sync 批（2026-11-17）：排序是同步面之一——落一次存档让顺序
+  // 经权威存档广播到他端（此前顺序只在下一次无关操作时才顺带写穿）。
+  persistTabs();
 }
 
 /** Is the window too narrow for a side-by-side chat + canvas split?
@@ -802,6 +805,18 @@ export function openTab(id, title, opts = {}) {
 
   setActiveTab(id);
   persistTabs();
+
+  // canvas-tab-sync 批（2026-11-17）：远端帧点名的激活页签尚未落地（文件签
+  // readFile 在途）时，恢复腿（noRevive）晚到开签不得顶掉它——否则本端把
+  // 被顶掉的激活随下次 PUT 写穿，反向抢走发起端的视图。显式打开（用户动作）
+  // 不受限：noRevive=false 直通。标记 8s 过期（帧已陈旧/落地无望就放行）。
+  if (noRevive && lateSyncActive && lateSyncActive.id !== id) {
+    if (lateSyncActive.id && Date.now() - lateSyncActive.at < 8000 && tabs.has(lateSyncActive.id)) {
+      setActiveTab(lateSyncActive.id);
+    } else {
+      lateSyncActive = null;
+    }
+  }
 
   return entry;
 }
@@ -5395,11 +5410,14 @@ function seedKnownTombstones(data) {
  *  时，页签会先经恢复腿打开，墓碑这时才到。本会话显式重开过的 id 跳过（其
   *  重开账在途，服务端墓碑即将让位）。 */
 function suppressTombstonedTabs() {
+  let removed = 0;
   for (const id of [...tabs.keys()]) {
     if (!tombstoneGateActive(id)) continue;
     if (sessionReopens.has(id)) continue;
     teardownTab(id, { silent: true });
+    removed++;
   }
+  return removed;
 }
 
 // 所有显式关闭路径的记账点（× 按钮 / deck 侧滑 / 关闭其他 / 预览替换——
@@ -5451,7 +5469,12 @@ function persistTabs() {
         closable: t.closable !== false,  // default true
       });
     }
+    // canvas-tab-sync 批（2026-11-17）：activeTabId 随载荷上服务端（schema 早支持，
+    // 服务端 merge 命中生效墓碑即丢弃）——激活页签是跨设备同步面的一部分，
+    // 此前只进 localStorage 缓存，他端无从跟随。null 序列化为缺省（服务端沿用
+    // prev，与旧载荷逐字兼容）。
     const payload = { v: 2, tabs: serializable };
+    if (activeTabId) payload.activeTabId = activeTabId;
     // #910: 附带本会话关闭/重开意图账（服务端墓碑合并；账幂等可重放）。
     if (sessionTombstones.size > 0) payload.tombstones = [...sessionTombstones.values()];
     if (sessionReopens.size > 0) payload.reopened = [...sessionReopens.values()];
@@ -5531,19 +5554,44 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', flushPendingPersist);
 
 let persistReconnectBound = false;
+/** canvas-tab-sync 批：远端帧点名的激活页签尚未落地（文件签 readFile 在途）
+ *  时的晚到标记。{ id, at } | null；8s 过期，openTab(noRevive) 腿消费。 */
+let lateSyncActive = null;
+/** canvas-tab-sync 批：canvasTabsChanged 订阅只绑一次（幂等闸）。 */
+let liveTabsWsBound = false;
 function bindPersistReconnect() {
   if (persistReconnectBound) return;
   persistReconnectBound = true;
   import('./ws.js')
-    .then(({ onReconnect }) => {
+    .then(({ onReconnect, onMessage }) => {
+      // canvas-tab-sync 批：重连 = 补对账——离线期间错过的广播帧无从重放，
+      // 经权威存档 GET 一次收敛（先对账后重放脏写：反过来会把离线旧视图
+      // 盖回权威存档）。404/网络失败 = 无可收敛，本地态照旧。
+      const convergeFromServer = () => fetch(TABS_API, { headers: { ...authHeaders() } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((serverData) => {
+          const parsed = parseTabsData(serverData);
+          if (parsed) applyLiveTabsFrame(parsed);
+        })
+        .catch(() => { /* 离线：待下次重连 */ });
       onReconnect(() => {
-        if (!persistDirty) return;
-        // 重放「当前集合」而非旧载荷：persistTabs 重建载荷后走防抖 PUT。
-        // 只在连接恢复时触发，不逐帧重试，无自旋/日志风暴。
-        persistTabs();
+        convergeFromServer().finally(() => {
+          if (!persistDirty) return;
+          // 重放「当前集合」而非旧载荷：persistTabs 重建载荷后走防抖 PUT。
+          // 只在连接恢复时触发，不逐帧重试，无自旋/日志风暴。
+          persistTabs();
+        });
+      });
+      if (liveTabsWsBound) return;
+      liveTabsWsBound = true;
+      // 服务端写穿广播（他端开/关/切/排序 → PUT 落盘成功外推）：就地收敛。
+      // 自己 PUT 的回声同样进这里——收敛幂等（集合/顺序已一致即零动作）。
+      onMessage('canvasTabsChanged', (msg) => {
+        const parsed = parseTabsData(msg);
+        if (parsed) applyLiveTabsFrame(parsed);
       });
     })
-    .catch(() => { /* ws.js 不可用 → 无重放通道，保持 dirty */ });
+    .catch(() => { /* ws.js 不可用 → 无重放/收敛通道，保持 dirty */ });
 }
 bindPersistReconnect();
 
@@ -5757,4 +5805,76 @@ export function restoreTabs() {
       })
       .catch(() => resolve(didLocal));
   });
+}
+
+// ── 跨设备实时收敛（canvas-tab-sync 批 2026-11-17）──────────────────────
+// 作者报障「各端 canvas 页签不同步——搞单实例就是想从各端打开状态都是同步的」。
+// 根因是设计缺口：存档（F1/#910）只在页面加载时被 GET（restoreTabs），运行中
+// 任一端的开/关/切/排序都不外推，他端不刷新永远看不到。本批补最小实现：服务端
+// PUT 落盘后广播 `canvasTabsChanged`（合并后权威存档），本函数是全部接收端
+// （广播帧 / 重连对账共用）的唯一收敛点，语义与 #910 加载腿同源：
+//   ① 墓碑播种 → 生效墓碑摘除（他端关闭 → 本端跟随消失，静默 teardown）；
+//   ② reconcile 补开缺失（他端打开 → 本端出现；面板同步、文件走 readFile）；
+//   ③ 顺序跟随权威存档（本地独有页签保持在尾部，避免未写穿的新签被重排丢位）；
+//   ④ 激活页签跟随（帧 activeTabId 已落地即切；未落地记晚到标记，openTab 的
+//      noRevive 腿落地时不被顶掉）；
+//   ⑤ 摘到末签 → 收面板（对齐 closeTab 的末签语义）。
+// 冲突裁定：服务端存档是唯一真源，后写赢（PUT 到达序）；收敛只摘带生效墓碑的
+// 页签，绝不清除本地新开（本地独有签随下一次 persistTabs 写穿回去）——两端
+// 同时操作最终并集收敛，不出现各显示一套且都不收敛。
+// @param {any} data 已过 parseTabsData 的合法 v2 存档
+function applyLiveTabsFrame(data) {
+  if (cardWindowMode) return; // 卡窗不管理主窗标签组（批⑧ 纪律）
+  seedKnownTombstones(data);
+  const removed = suppressTombstonedTabs();
+  // 被摘的可能正是激活签 → 邻位接管 / 末签收面板（closeTab 同语义的静默版）。
+  if (removed > 0 && activeTabId && !tabs.has(activeTabId)) {
+    const ids = [...tabs.keys()];
+    if (ids.length > 0) setActiveTab(ids[0]);
+    else if (isCanvasOpen()) closeCanvas();
+  }
+  reconcileFromServer(data);       // 空集合法（全部远端关闭）：reconcile 早退，摘除腿已收口
+  reorderTabsToArchive(data);
+  const want = typeof data.activeTabId === 'string' ? data.activeTabId : null;
+  if (want) {
+    if (tabs.has(want)) {
+      if (activeTabId !== want) setActiveTab(want);
+    } else if (!tombstoneGateActive(want)) {
+      lateSyncActive = { id: want, at: Date.now() }; // 文件签在途：落地时守卫接管
+    }
+  }
+}
+
+/** 顺序收敛：把本地页签（Map + DOM）排到权威存档顺序；本地独有 id 保持原相对
+ *  顺序缀尾（它们尚未写穿，缀尾 = 下次 PUT 把并集顺序发布回去）。幂等：顺序
+ *  已一致时零 DOM 动作。 */
+function reorderTabsToArchive(data) {
+  const serverOrder = (Array.isArray(data?.tabs) ? data.tabs : [])
+    .map((t) => (t && typeof t.id === 'string') ? t.id : null)
+    .filter((id) => id && tabs.has(id));
+  const extra = [...tabs.keys()].filter((id) => !serverOrder.includes(id));
+  const finalOrder = [...serverOrder, ...extra];
+  // extras 在场时不得早退——并集必须写穿（见函数尾）；顺序已一致 + 无 extras
+  // （绝大多数帧：自己操作的回声）才零动作直返。
+  let same = extra.length === 0 && finalOrder.length === tabs.size;
+  if (same) {
+    let i = 0;
+    for (const id of tabs.keys()) { if (id !== finalOrder[i++]) { same = false; break; } }
+  }
+  if (same) return;
+  const tabBar = document.getElementById('canvas-tab-bar');
+  if (!tabBar) return;
+  const entries = new Map(finalOrder.map((id) => [id, tabs.get(id)]));
+  for (const id of finalOrder) {
+    const el = entries.get(id)?.tabEl;
+    if (el) tabBar.appendChild(el); // appendChild 移动既有节点 = 按 finalOrder 重排
+  }
+  tabs.clear();
+  for (const id of finalOrder) tabs.set(id, entries.get(id));
+  renderCanvasHeader(); // 叠卡头/环面随 Map 序重渲（openTab/closeTab 同款通知面）
+  // 并发开签收敛（两端同时各开一签：对方帧先到 ⇒ 本端新签成「本地独有」）：
+  // 立即写穿并集，让他端也收敛到同一集合——否则本端独有签滞留在本地，直到
+  // 下一次无关操作才顺带发布（期间两端各显示一套）。写穿触发一次广播，对端
+  // 收敛后 extras 为空 ⇒ 链路有界，不成环。
+  if (extra.length > 0) persistTabs();
 }

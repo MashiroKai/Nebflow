@@ -109,6 +109,12 @@ private[gateway] object ConfigRoutes:
       // —— #910（2026-10-26）起 PUT 不再整档覆盖：锁内 load→merge→save 落墓碑
       // 语义（关闭意图优先，显式重开才恢复，TTL 30d/上限 500）；非法输入 400 /
       // 超限 413 不落盘。
+      // 跨设备实时同步（canvas-tab-sync 批 2026-11-17）：作者报障「各端 canvas
+      // 页签不同步——单实例的本意就是任一端开/关/切其他端一致」。此前存档只在
+      // 页面加载时被 GET（restoreTabs），运行中无推送腿。修法=补最小广播：PUT
+      // 接受落盘后把**合并后的权威存档**经既有 wsHub.broadcast 外推一帧
+      // `canvasTabsChanged`（configUpdated / projectArchived 同面零第二套推送），
+      // 各端按 #910 墓碑语义就地收敛（详见 js/canvas.js applyLiveTabsFrame）。
       case req @ GET -> Root / "canvas-tabs" =>
         withAuth(req) {
           new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").load().flatMap {
@@ -128,7 +134,15 @@ private[gateway] object ConfigRoutes:
                 IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
               case Right(json) =>
                 new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
-                  .mergeSave(json) *> Ok(ApiJson.ok)
+                  .mergeSave(json)
+                  .flatMap { merged =>
+                    // 写穿即外推（canvas-tab-sync 批 2026-11-17）：合并后的权威
+                    // 存档广播给全部已连端，他端开/关/切/排序即时跟随，不等刷新。
+                    // 帧载荷 = GET 同构（v/tabs/tombstones/activeTabId）+ type 键。
+                    wsHub.broadcast(
+                      merged.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson))
+                    ) *> Ok(ApiJson.ok)
+                  }
                   .handleErrorWith { e =>
                     logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
                       IO.pure(
