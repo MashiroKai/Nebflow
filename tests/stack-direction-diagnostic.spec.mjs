@@ -70,6 +70,17 @@ for (const version of (process.env.STACK_VERSIONS || 'worktree').split(',')) {
      }
      writeFileSync(`${out}/${version}-${viewport.width}-n${count}-${side}.json`,JSON.stringify(results,null,2));
      if (version === 'worktree' || process.env.STACK_ASSERT_SYMMETRY === '1') {
+      // Absolute displacement is the primary check: normalization must not
+      // hide an exaggerated direction. 100% is checked separately after finish.
+      const absoluteFailures = [];
+      for (let i = 0; i <= 19; i++) {
+       const x = dir => Math.abs(Number(results[dir][i].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]));
+       const left = x('left'), right = x('right');
+       const ratio = left === 0 && right === 0 ? 1 : left / right;
+       if (!Number.isFinite(ratio) || ratio < 0.95 || ratio > 1.05) absoluteFailures.push({percent:i*5,left,right,ratio});
+      }
+      console.log(JSON.stringify({version,viewport:viewport.width,count,side,absoluteFailures}));
+      expect(absoluteFailures).toEqual([]);
       // The outgoing card returns from the common apex to distinct fan slots.
       // Normalize the return by each direction's signed apex-to-target distance.
       const signedX = (dir, i) => Number(results[dir][i].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]);
