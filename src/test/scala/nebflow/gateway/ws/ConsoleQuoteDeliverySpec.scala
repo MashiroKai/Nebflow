@@ -118,6 +118,18 @@ class ConsoleQuoteDeliverySpec extends CatsEffectSuite:
       _ <- runner.use { server =>
         val port = server.address.getPort
         IO.blocking {
+          val log = evidence.resolve("canvas-watch-ws.txt").toFile
+          val pb = new ProcessBuilder("node", "tests/fixtures/canvas-watch-ws.mjs", port.toString, auth.sessionId,
+            nebflow.gateway.GatewaySessionStore.CookieName, sid, root.toString)
+          pb.redirectErrorStream(true)
+          pb.redirectOutput(log)
+          val code = pb.start().waitFor()
+          assertEquals(code, 0, Files.readString(log.toPath))
+        }
+      }
+      _ <- runner.use { server =>
+        val port = server.address.getPort
+        IO.blocking {
           val log = evidence.resolve("browser-ws-process.txt").toFile
           val pb = new ProcessBuilder("node", "tests/fixtures/console-quote-ws.mjs", port.toString, auth.sessionId,
             nebflow.gateway.GatewaySessionStore.CookieName, sid)
