@@ -61,12 +61,15 @@ for (const version of (process.env.STACK_VERSIONS || 'worktree').split(',')) {
      }
      writeFileSync(`${out}/${version}-${viewport.width}-n${count}-${side}.json`,JSON.stringify(results,null,2));
      if (version === 'worktree' || process.env.STACK_ASSERT_SYMMETRY === '1') {
-      const at75 = dir => Math.abs(Number(results[dir][15].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]));
-      const left = at75('left'), right = at75('right');
-      const ratio = left / right;
-      console.log(JSON.stringify({version,viewport:viewport.width,count,side,left,right,ratio}));
-      expect(ratio).toBeGreaterThanOrEqual(0.95);
-      expect(ratio).toBeLessThanOrEqual(1.05);
+      const xAt = (dir, i) => Math.abs(Number(results[dir][i].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]));
+      const failures = [];
+      for (let i = 0; i < results.left.length; i++) {
+       const left = xAt('left', i), right = xAt('right', i);
+       const ratio = left === 0 && right === 0 ? 1 : left / right;
+       if (!(ratio >= 0.95 && ratio <= 1.05)) failures.push({percent:i*5,left,right,ratio});
+      }
+      console.log(JSON.stringify({version,viewport:viewport.width,count,side,failures}));
+      expect(failures).toEqual([]);
      }
     });
    }
