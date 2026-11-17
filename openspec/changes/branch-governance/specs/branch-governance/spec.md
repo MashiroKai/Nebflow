@@ -2,7 +2,7 @@
 
 ### Requirement: [BG-REQ-001] Branch governance guards
 
-The guard SHALL validate Git branch syntax and accept only main, feat/*, bug/*, achieve/*, release/beta and release/stable; MR sources SHALL be restricted to valid feat/* and bug/* names. Push checks SHALL reject updates and deletions to main and release/* unless explicitly overridden; malformed hook input SHALL fail closed.
+New development branches SHALL use feat/* or bug/* and derive from feat/base, except release hotfix bug/* branches may derive from main with target main. MR checks SHALL accept feat/*, bug/* and grandfathered fix/* to feat/base, main to feat/base, feat/base to main, and bug/* to main only with an auditable main baseline SHA that is an ancestor of both main and source HEAD. Hotfixes require author approval; repository checks cannot prove authenticity or grant authority. Missing MR input SHALL fail closed. Push checks SHALL reject main and release/* updates and deletions, and feat/base creation, deletion and non-fast-forward updates, unless explicitly overridden; malformed input SHALL fail closed. Only the author may create or delete feat/base. Server-side permissions, not local checks, enforce release authority.
 
 #### Scenario: [BG-SCN-001] branch and MR checks
 
