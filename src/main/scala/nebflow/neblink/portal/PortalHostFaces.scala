@@ -85,14 +85,14 @@ object PortalHostFaces:
   /**
    * The conn-guard tunnel face as a port: count one tunneled request for the
    * envelope IP (`observe`), then read the admission verdict (`check`;
-   * `Some(reason)` = over threshold). Key = envelope IP — the single-value
+   * `Some(reason)` = over threshold). Key = envelope IP and path class; IP is the single-value
    * `x-forwarded-for` the ingress writes from the trusted proxy-injected
    * X-Real-IP — never the ingress socket address (which is always the proxy
    * container's). The loopback exemption NEVER applies on this face.
    */
   final case class TunnelGuard(
-    observe: String => IO[Unit],
-    check: String => IO[Option[String]]
+    observe: (String, String) => IO[Unit],
+    check: (String, String) => IO[Option[String]]
   )
 
   /**

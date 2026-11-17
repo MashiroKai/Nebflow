@@ -342,6 +342,41 @@ class ConnGuardSpec extends CatsEffectSuite:
     assertEquals(ConnGuard.connWarnLine(base.copy(wsTotal = 820), 100L), None)
     assert(ConnGuard.warnLine(base.copy(wsTotal = 820)).isDefined)
 
+  test("rate fairness: 4/s and 40/s chains cannot starve file or API"):
+    import scala.concurrent.duration.*
+    import cats.effect.testkit.TestControl
+    def scenario(rate: Int): IO[Unit] =
+      val ip = "198.51.100.7"
+      def request(g: ConnGuard, path: String): IO[Int] =
+        g.observeTunnelRequest(ip, path) *> g.checkTunnel(ip, path).map(_.fold(200)(_ => 429))
+      for
+        g <- guard(ConnGuardConfig(tunnelPerIpCap = 12, tunnelTotalCap = 10000))
+        _ <- (1 to (rate * 4)).toList.traverse_(_ => request(g, "/api/chains/x") *> IO.sleep((1000 / rate).millis))
+        image <- request(g, "/api/nf-file")
+        api <- request(g, "/api/search")
+      yield
+        assertEquals(image, 200, s"$rate/s file")
+        assertEquals(api, 200, s"$rate/s API")
+    TestControl.executeEmbed(scenario(4) *> scenario(40))
+
+  test("route budgets remain bounded and global total spans routes"):
+    val ip = "198.51.100.7"
+    def request(g: ConnGuard, path: String): IO[Option[String]] =
+      g.observeTunnelRequest(ip, path) *> g.checkTunnel(ip, path)
+    for
+      g <- guard(ConnGuardConfig(tunnelPerIpCap = 2, tunnelTotalCap = 5))
+      a <- request(g, "/api/nf-file")
+      b <- request(g, "/uploads/picture.png")
+      c <- request(g, "/api/nf-file?q=x")
+      d <- request(g, "/api/search")
+      e <- request(g, "/api/chains/x")
+      f <- request(g, "/api/search")
+    yield
+      assertEquals(List(a, b), List(None, None))
+      assertEquals(c, Some("tunnel-per-ip-cap"))
+      assertEquals(List(d, e), List(None, None))
+      assertEquals(f, Some("tunnel-total-cap"))
+
   // ── Phase 3a tunnel face（判据⑤：键 = 信封 IP ∧ 环回不豁免 ∧ 阈值拒）─────
 
   test("default tunnel budget admits two cold console boots but remains bounded"):
@@ -449,11 +484,17 @@ class ConnGuardSpec extends CatsEffectSuite:
   test("fromEnv: tunnel face knobs parse and junk falls back"):
     val o = ConnGuardConfig.fromEnv {
       case "GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP" => Some("120")
+      case "GATEWAY_CONN_GUARD_TUNNEL_CHAINS_PER_IP_CAP" => Some("30")
+      case "GATEWAY_CONN_GUARD_TUNNEL_FILES_PER_IP_CAP" => Some("40")
+      case "GATEWAY_CONN_GUARD_TUNNEL_OTHER_PER_IP_CAP" => Some("50")
       case "GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP"  => Some("1200")
       case "GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC" => Some("junk")
       case _                                       => None
     }
     assertEquals(o.tunnelPerIpCap, 120)
+    assertEquals(o.tunnelChainsPerIpCap, Some(30))
+    assertEquals(o.tunnelFilesPerIpCap, Some(40))
+    assertEquals(o.tunnelOtherPerIpCap, Some(50))
     assertEquals(o.tunnelTotalCap, 1200)
     assertEquals(o.tunnelWindowSec, 60) // junk falls back
 

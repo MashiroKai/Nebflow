@@ -2404,8 +2404,8 @@ object GatewayMain extends IOApp:
                                                         portalHostFaces.bindHttpApp(gatewayApp)
                                                         portalHostFaces.bindTunnelGuard(
                                                           nebflow.neblink.portal.PortalHostFaces.TunnelGuard(
-                                                            ip => connGuard.observeTunnelRequest(ip),
-                                                            ip => connGuard.checkTunnel(ip)
+                                                            (ip, path) => connGuard.observeTunnelRequest(ip, path),
+                                                            (ip, path) => connGuard.checkTunnel(ip, path)
                                                           )
                                                         )
                                                         // R-1b：请求级 per-IP 观测 tap（§C④-2，只计数不拦截——

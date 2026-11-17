@@ -380,8 +380,8 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       echoApp,
       guard = Some(
         PortalHostFaces.TunnelGuard(
-          observe = ip => IO(observedIps.add(ip)).void,
-          check = _ => IO.pure(Some("tunnel-per-ip-cap"))
+          observe = (ip, _) => IO(observedIps.add(ip)).void,
+          check = (_, _) => IO.pure(Some("tunnel-per-ip-cap"))
         )
       )
     ) { (bridge, fake, _) =>
@@ -396,11 +396,43 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       yield ()
     }
 
+  test("real guard preserves file and API responses during 4/s and 40/s chains"):
+    def scenario(rate: Int): IO[Unit] =
+      for
+        guard <- nebflow.gateway.ConnGuard.forConfig(
+          nebflow.gateway.ConnGuardConfig(tunnelPerIpCap = 12, tunnelTotalCap = 10000),
+          nebflow.shared.NebflowLogger.forName("test.fairness")
+        )
+        port = PortalHostFaces.TunnelGuard(
+          (ip, path) => guard.observeTunnelRequest(ip, path),
+          (ip, path) => guard.checkTunnel(ip, path)
+        )
+        _ <- withBridge(echoApp, Some(port)) { (bridge, fake, _) =>
+          val ip = Vector("x-forwarded-for" -> "198.51.100.7")
+          def rid(id: String): String = java.util.UUID.nameUUIDFromBytes(id.getBytes(UTF_8)).toString
+          def send(id: String, path: String): IO[Unit] =
+            IO(bridge.enqueueFrame(HttpRequest(rid(id), "GET", path, ip)))
+          for
+            _ <- (1 to rate * 4).toList.traverse_(i =>
+              send(s"$rate-chain-$i", "/api/chains/x") *> IO.sleep((1000 / rate).millis))
+            _ <- send(s"$rate-file", "/api/nf-file")
+            _ <- send(s"$rate-api", "/api/search")
+            done <- waitUntil(5.seconds)(IO(httpCycles(fake).exists(_._1 == rid(s"$rate-api"))))
+            cycles = httpCycles(fake)
+            _ = assert(done, s"no API response at $rate/s")
+            _ = assert(cycles.contains((rid(s"$rate-file"), 200)), s"file: $cycles")
+            _ = assert(cycles.contains((rid(s"$rate-api"), 200)), s"API: $cycles")
+            _ = assert(cycles.contains((rid(s"$rate-chain-13"), 429)))
+          yield ()
+        }
+      yield ()
+    scenario(4) *> scenario(40)
+
   test("absent x-forwarded-for degrades to the unknown bucket (direct/dev shape)"):
     withBridge(
       echoApp,
       guard = Some(
-        PortalHostFaces.TunnelGuard(observe = ip => IO(observedIps.add(ip)).void, check = _ => IO.pure(None))
+        PortalHostFaces.TunnelGuard(observe = (ip, _) => IO(observedIps.add(ip)).void, check = (_, _) => IO.pure(None))
       )
     ) { (bridge, fake, _) =>
       bridge.enqueueFrame(HttpRequest(Rid, "GET", "/api/x", Vector.empty))
