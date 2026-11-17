@@ -154,9 +154,15 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
     resources: SharedResources,
     parentRef: nebflow.actor.ActorRef[AgentCommand],
     childSid: String,
-    parentSid: String
+    parentSid: String,
+    progressEnabled: Option[Boolean] = Some(true)
   ): IO[nebflow.actor.ActorRef[AgentEvent]] =
     for
+      _ <- IO {
+        progressEnabled.foreach(enabled =>
+          os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), s"""{"delegateProgressNotifications":$enabled}""", createFolders = true)
+        )
+      }
       childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       childRef <- system.spawn(mkStopOnStopProbe(childEvents), s"child-$childSid")
       supervisor <- system.spawn(
@@ -199,6 +205,37 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
       .scanPending(parentSid)
       .map(_.filter(_.kind == kind))
       .handleErrorWith(_ => IO.pure(Nil))
+
+  test("default off versus explicit on: held text delivers zero versus one, terminal delivers in both") {
+    def scenario(enabled: Option[Boolean], suffix: String): IO[(Int, Int)] =
+      val system = ActorSystem(s"gate-switch-$suffix")
+      val tmp = os.temp.dir()
+      val childSid = s"delegate-switch-$suffix"
+      for
+        resources <- mkResources(system, tmp)
+        parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
+        parentSid = parent.id
+        _ = mkDelegateRecord(childSid, parentSid)
+        _ <- resources.subAgentTaskStore.recordTask(mkChildRow(childSid, s"child-$suffix", "running"))
+        events <- Ref.of[IO, List[AgentCommand]](Nil)
+        parentRef <- system.spawn(mkRecordingCmd(events), s"parent-$suffix")
+        supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parentSid, enabled)
+        _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("held nonempty text")))
+        _ <- IO.sleep(800.millis)
+        progress <- mails(parentSid, "delegate-progress")
+        _ <- resources.subAgentTaskStore.updateStatus(childSid, s"child-$suffix", "completed", completedAt = Some(System.currentTimeMillis()))
+        _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("final report")))
+        _ <- waitUntil(10.seconds)(mails(parentSid, "delegate-terminal").map(_.nonEmpty))
+        terminal <- mails(parentSid, "delegate-terminal")
+        _ <- system.stopAll
+      yield (progress.size, terminal.size)
+    for
+      off <- scenario(None, "off")
+      on <- scenario(Some(true), "on")
+    yield
+      assertEquals(off, (0, 1), "default off suppresses progress only")
+      assertEquals(on, (1, 1), "negative control: explicit on delivers progress and terminal")
+  }
 
   // ── G-a scope-map in-flight nodes ─────────────────────────────────────────
 

@@ -43,6 +43,12 @@ node scripts/build-web.mjs    # esbuild bundle -> build/web-dist
 
 The `Makefile` wraps the common invocations: `make compile`, `make run`, `make assembly`, `make install` (JAR to `~/.local/bin`), and `make check` (compile + format/lint checks, see [Code style](#code-style)).
 
+## Delegate progress notifications
+
+The top-level `stand.json` setting `"delegateProgressNotifications": true` opts into
+held delegate progress messages. It defaults to false when absent. Terminal delegate
+notifications are unaffected. Set the key to false or remove it to suppress progress.
+
 ## Testing
 
 ### Backend (Scala, munit)

@@ -859,7 +859,9 @@ object BackoffSupervisor:
          */
         def deliverProgressMessage(messages: List[Message], heldBy: String): IO[Unit] =
           val text = extractLastAssistantText(messages)
-          if text.trim.isEmpty || text.trim == Defaults.MaxTokensStubText then IO.unit
+          if text.trim.isEmpty || text.trim == Defaults.MaxTokensStubText ||
+              !scala.util.Try(nebflow.shared.Config.loadServiceConfig().delegateProgressNotifications.getOrElse(false)).getOrElse(false)
+          then IO.unit
           else
             val turnSeq = messages.count(_.role == MessageRole.Assistant)
             IO

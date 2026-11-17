@@ -704,7 +704,8 @@ case class NebflowServiceConfig(
    * 运行时是热读（MsgTokenRegistry.enabledFromConfig，GlobalSafety 同款形态），本
    * 类型化节主要服务 GET /api/config 透传可见与 PATCH 深合并可写。
    */
-  msgTokens: Option[MsgTokensConfig] = None
+  msgTokens: Option[MsgTokensConfig] = None,
+  delegateProgressNotifications: Option[Boolean] = None
 )
 
 /**
