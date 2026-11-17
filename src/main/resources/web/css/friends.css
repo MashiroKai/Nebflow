@@ -1765,7 +1765,7 @@ body:not(.mobile-layer) #profile-face-overlay {
   gap: var(--ds-space-3);
 }
 .pf-modal > .sp-panel-header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pf-hero {
+.pf-hero.sp-identity {
   /* 🔴 三点入口批（2026-11-05 作者令「头像小一点。布局扁平化」）：
      旧形态 = 居中列的英雄区（头像 + 名字 + 副行三行堆叠，视觉上是一张「封面卡」）；
      新形态 = **左对齐单行**（40px 头像 + 名字/副行两行文本并排），无分隔线、无背景、
