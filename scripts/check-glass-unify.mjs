@@ -802,7 +802,8 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
         const glassed = viaClass
           ? (glassBases.has(`.${viaClass}`) || glassBases.has(viaClass))
           : (effBlur(e) || (glassBases.has(base) && !effOptedOut(e)));
-        const bandOk = a === null || (a >= GLASS_ALPHA_MIN && a <= GLASS_ALPHA_MAX);
+        // An unknown computed alpha is not evidence of a compliant glass face.
+        const bandOk = a !== null && a >= GLASS_ALPHA_MIN && a <= GLASS_ALPHA_MAX;
         if (e && /^var\(\s*--color-surface\s*\)$/.test(String(e.bg || '').trim())) {
           entry.ok = false;
           entry.detail = `常态玻璃面不得使用降级实底 ${e.bg}（${e.bgFile}:${e.bgLine}）`;
@@ -811,7 +812,9 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
           entry.detail = `期望毛玻璃，但该面没有任何模糊来源（${viaClass ? `.${viaClass} 不在 glass.css 供体里` : '既无成员也无类'}）`;
         } else if (!bandOk) {
           entry.ok = false;
-          entry.detail = `玻璃底 α=${a.toFixed(3)} 跑出 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX})（${e.bg}）`;
+          entry.detail = a === null
+            ? `无法证明玻璃底：无法解析 ${e?.bg || '(无背景声明)'}`
+            : `玻璃底 α=${a.toFixed(3)} 跑出 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX})（${e.bg}）`;
         }
       }
       g7.registry.push(entry);
