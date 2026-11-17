@@ -195,7 +195,7 @@ const SEARCH_SHELL = `
         <div class="search-filters">
           <select id="search-scope" class="cfg-select"></select>
           <select id="search-agent" class="cfg-select"></select>
-          <select id="search-tool" class="cfg-select"></select>
+          <button id="search-tool" type="button" class="cfg-select" aria-haspopup="menu" aria-expanded="false"></button>
           <button id="search-go" class="glass-control cfg-btn cfg-btn-sm">Search</button>
         </div>
         <div id="search-date-popover" role="dialog" hidden></div>

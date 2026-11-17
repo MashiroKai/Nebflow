@@ -139,6 +139,19 @@ await page.waitForTimeout(600);
 const dateEnabled = await tabs.nth(4).getAttribute('aria-disabled');
 check('§3 date tab still enabled after leaving media', dateEnabled !== 'true', String(dateEnabled));
 
+// Tool filter uses the shared menu while retaining the search value contract.
+await page.locator('#search-tool').click();
+const toolMenu = page.locator('.project-open-menu');
+check('tool menu opens on desktop', await toolMenu.isVisible());
+check('tool menu initial check', await toolMenu.locator('[aria-checked="true"]').count() === 1);
+await toolMenu.locator('[role="menuitemradio"]').nth(1).click();
+check('tool menu changes value', await page.locator('#search-tool').evaluate(el => el.value) === '__any__');
+await page.locator('#search-tool').click();
+check('tool menu selected value persists', await toolMenu.locator('[aria-checked="true"]').count() === 1 && (await toolMenu.locator('[aria-checked="true"]').innerText()).includes('工具'));
+await page.keyboard.press('Escape');
+check('tool menu closes on escape', await toolMenu.count() === 0);
+await page.locator('#search-tool').click();
+await toolMenu.locator('[role="menuitemradio"]').first().click();
 // B11: tool select linkage
 await tabs.nth(1).click();
 await page.waitForTimeout(300);

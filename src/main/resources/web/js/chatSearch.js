@@ -48,6 +48,7 @@
 //   泄漏 overflow:hidden 祖先）。手机层同一条腿：关搜索面后回聊天根再定位。
 
 import state from './state.js';
+import { openDropdownMenu } from './dropdownMenu.js';
 import { key } from './branding.js';
 import { t, getLocale } from './i18n.js';
 import { pushLayer, popLayer } from './focusTrap.js';
@@ -340,6 +341,37 @@ const inputById = (id) => /** @type {HTMLInputElement|null} */ (document.getElem
  * @returns {HTMLSelectElement|null}
  */
 const selectById = (id) => /** @type {HTMLSelectElement|null} */ (document.getElementById(id));
+let toolOptions = [];
+let closeToolMenu = () => {};
+function setToolOptions(options, value = '') {
+  const button = document.getElementById('search-tool');
+  if (!button) return;
+  toolOptions = options;
+  button.value = options.some(o => o.value === value) ? value : '';
+  button.textContent = options.find(o => o.value === button.value)?.label || '';
+}
+function openToolMenu(button) {
+  closeToolMenu();
+  const menu = document.createElement('div');
+  menu.className = 'project-open-menu nf-glass';
+  menu.setAttribute('role', 'menu');
+  for (const option of toolOptions) {
+    const item = document.createElement('button');
+    item.type = 'button'; item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(option.value === button.value));
+    const icon = document.createElement('span'), label = document.createElement('span'), check = document.createElement('span');
+    label.textContent = option.label; check.textContent = option.value === button.value ? '✓' : '';
+    check.setAttribute('aria-hidden', 'true'); item.append(icon, label, check);
+    item.addEventListener('click', () => {
+      closeToolMenu();
+      if (button.value === option.value) return;
+      button.value = option.value; button.textContent = option.label;
+      button.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    menu.append(item);
+  }
+  closeToolMenu = openDropdownMenu(button, menu);
+}
 
 // 会话档（convScope）恒单会话 ⇒ 无分组形态（与 scope=current 同视）。
 const isGrouped = () => !convScope && (selectById('search-scope')?.value || 'current') === 'all';
@@ -426,6 +458,8 @@ export function initChatSearch() {
   for (const id of ['search-scope', 'search-agent', 'search-tool']) {
     document.getElementById(id)?.addEventListener('change', scheduleSearch);
   }
+
+  document.getElementById('search-tool')?.addEventListener('click', event => openToolMenu(event.currentTarget));
 
   // Category tabs (click). The date tab (now IN the roving enumeration but
   // never a category) toggles the calendar popover instead of switching; its
@@ -583,6 +617,7 @@ export function openSearchModal(scope = null) {
 }
 
 export function closeSearchModal() {
+  closeToolMenu();
   // Abort any in-flight search and drop pending work.
   searchSeq++;
   searchAbort?.abort();
@@ -646,10 +681,7 @@ function renderStaticLabels() {
       `<option value="current">${escapeHtml(t('search.scopeCurrent'))}</option>` +
       `<option value="all">${escapeHtml(t('search.scopeAll'))}</option>`;
   }
-  const tool = document.getElementById('search-tool');
-  if (tool) {
-    tool.innerHTML = `<option value="">${escapeHtml(t('search.allTypes'))}</option>`;
-  }
+  setToolOptions([{ value: '', label: t('search.allTypes') }]);
   const agent = document.getElementById('search-agent');
   if (agent) {
     agent.innerHTML = `<option value="">${escapeHtml(t('search.allAgents'))}</option>`;
@@ -938,6 +970,10 @@ function openPillListbox(pill, pop) {
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
+  if (document.getElementById('search-tool')?.getAttribute('aria-expanded') === 'true') {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeToolMenu(); document.getElementById('search-tool')?.focus(); }
+    return;
+  }
   // ⑤ 收归：单一谓词（元素级 dataset 兜底 + 事件级 isComposing/keyCode 229）。
   if (isImeComposing(e, e.target instanceof HTMLElement ? e.target : null)) return;
 
@@ -2451,12 +2487,11 @@ function populateToolFilter(perSession, keepValue) {
     }
   }
   const sorted = [...counts.keys()].sort();
-  sel.innerHTML =
-    `<option value="">${escapeHtml(t('search.allTypes'))}</option>` +
-    `<option value="__any__">${escapeHtml(t('search.anyTool'))}</option>` +
-    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
-  // Restore previous selection if still available
-  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+  setToolOptions([
+    { value: '', label: t('search.allTypes') },
+    { value: '__any__', label: t('search.anyTool') },
+    ...sorted.map(n => ({ value: n, label: `${n} (${counts.get(n)})` }))
+  ], keepValue);
 }
 
 // ── Result rendering ───────────────────────────────────────
