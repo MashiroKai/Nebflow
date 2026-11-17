@@ -7,8 +7,7 @@
 //   ExternalEvent metadata `askMailAddress` → emitInjectedUserEvent(askAddress=)
 //   → UiMessage.User.askAddress → WS 帧 / .ui.json 行（条件键：缺席 = 不出键）
 //   → 注入泡 label 尾的 `.ask-mail-addr` chip（data-ask-addr 携全文）；
-//   dock 侧 = 引擎 askState 帧 `mailAddress` 字段（本地同式派生兜底）→
-//   `.ask-addr` 行（面板头部，可复制）。
+//   dock 输入面不展示地址；注入消息上的地址芯片仍保留。
 //
 // 本 spec 钉的面（fixture 结构断言，零像素门禁）：
 //   T1 ASK · INJECTED 注入泡：chip 在 label 尾、文本/data-ask-addr/title 三处
@@ -17,10 +16,7 @@
 //   T3 恢复双腿：saveMsg 落的本地缓存行携带 askAddress（restoreFromStorage 族
 //      读 m.askAddress——header 先例）；reload 呈现单源 = 后端历史重放（引擎
 //      .ui.json 行携 askAddress → buildHistoryRow 透传 → chip 复现）；
-//   D1 dock：无会话 ⇒ 地址行 [hidden]（不占位）；
-//   D2 dock：开文件 + 开面板 ⇒ 行可见，地址 = 引擎 askState mailAddress 字段
-//      逐字（无字段 ⇒ 本地同式派生兜底 'ask:'+sha256(absPath).slice(0,8)）；
-//   D3 点击复制全文 + is-copied 一瞬；收起态行随面板隐身（visibility 规则加盟面）。
+//   D1–D3 dock：无会话、收到地址、有会话但无地址、收起时均不渲染地址行。
 //
 // 数据面 = WS mock 直种（routeWebSocket），零后端、零 sbt：
 //   T 组 = agentcontrol-address-chip.spec.mjs 同款（静态文件 catch-all 路由 +
@@ -333,62 +329,19 @@ async function openFile(page, name) {
 /** ask 入口钮（.ask-fab 双挂：ask 本体 + note-fab 同类名——选 ask 本体）。 */
 const askFab = (page) => page.locator('.ask-fab:not(.note-fab)');
 
-test('D1+D2 dock address row: hidden with no session; engine askState mailAddress verbatim when present', async ({ page }) => {
-  const errors = watchErrors(page);
-  const engineAddr = 'ask:ask-9f8e7d6c';
-  await bootCanvas(page, { mailAddress: engineAddr });
-  // D1 无会话 ⇒ 整行 [hidden]（不占位；组件模板 hidden 起手）
-  const row = page.locator('.ask-dock .ask-addr');
-  await expect(row).toHaveCount(1);
-  await expect(row).toHaveAttribute('hidden', '');
-  // D2 开文件 + 开面板 ⇒ 行可见，文本 = 引擎字段逐字（非客户端派生值）
-  const absPath = await openFile(page, 'spec-doc.md');
-  await expect(askFab(page)).toBeVisible();
-  await askFab(page).click();
-  await page.waitForTimeout(600); // askOpen → askState(mailAddress) 回包 + render
-  await expect(row).not.toHaveAttribute('hidden', '');
-  const span = row.locator('.ask-addr-text');
-  await expect(span).toHaveText(engineAddr);
-  await expect(row).toHaveAttribute('data-ask-addr', engineAddr);
-  await expect(row).toHaveAttribute('title', new RegExp(engineAddr));
-  // 引擎字段 ≠ 本地派生兜底（两者此现场不同值 ⇒ 逐字来自字段是被钉住的，不是巧合）
-  expect(engineAddr).not.toBe('ask:' + sidOf(absPath));
-  expect(errors).toEqual([]);
-});
-
-test('D2b fallback leg: no mailAddress field ⇒ client-side same-form derivation (ask:+sha256-8hex)', async ({ page }) => {
-  const errors = watchErrors(page);
-  await bootCanvas(page, { mailAddress: null });
-  const absPath = await openFile(page, 'spec-doc.md');
-  await askFab(page).click();
-  await page.waitForTimeout(600);
-  const derived = 'ask:' + sidOf(absPath);
-  const row = page.locator('.ask-dock .ask-addr');
-  await expect(row.locator('.ask-addr-text')).toHaveText(derived);
-  await expect(row).toHaveAttribute('data-ask-addr', derived);
-  expect(errors).toEqual([]);
-});
-
-test('D3 click copies the full address (is-copied flash); closing the dock hides the row with the panel', async ({ page }) => {
-  const errors = watchErrors(page);
-  await bootCanvas(page, { mailAddress: null });
-  await openFile(page, 'spec-doc.md');
-  await askFab(page).click();
-  await page.waitForTimeout(600);
-  const row = page.locator('.ask-dock .ask-addr');
-  const derived = 'ask:' + sidOf('/tmp/ask-mail-fixture/spec-doc.md');
-  await expect(row).toHaveAttribute('data-ask-addr', derived);
-  // 点击复制全文（视觉可截断只是版式——dataset 是全文）+ 一瞬 is-copied
-  await row.click();
-  const clip = await page.evaluate(() => navigator.clipboard.readText());
-  expect(clip).toBe(derived);
-  await expect(row).toHaveClass(/is-copied/);
-  await page.waitForTimeout(1400);
-  await expect(row).not.toHaveClass(/is-copied/);
-  // 收起态：行随面板隐身（.ask-dock.closed .ask-addr 加盟 visibility 规则）
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(400);
-  const visibility = await row.evaluate((el) => getComputedStyle(el).visibility);
-  expect(visibility).toBe('hidden');
-  expect(errors).toEqual([]);
-});
+for (const mailAddress of ['ask:ask-9f8e7d6c', null]) {
+  test(`dock never renders address chip with mailAddress=${mailAddress}`, async ({ page }) => {
+    const errors = watchErrors(page);
+    await bootCanvas(page, { mailAddress });
+    const row = page.locator('.ask-dock .ask-addr, .ask-dock [data-ask-addr]');
+    await expect(row).toHaveCount(0);
+    await openFile(page, 'spec-doc.md');
+    await expect(askFab(page)).toBeVisible();
+    await askFab(page).click();
+    await page.waitForTimeout(600);
+    await expect(row).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(row).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}
