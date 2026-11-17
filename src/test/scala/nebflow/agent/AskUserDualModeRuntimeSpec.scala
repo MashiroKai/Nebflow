@@ -452,10 +452,16 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         rootSessionId = "askhost-root-session", parentRef = None, startedAt = now,
         status = AgentStatus.Processing, lastActivityMs = now
       )))
+      delegateRef <- system.spawn(Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)), "askhost-delegate")
+      _ <- resources.agentRegistry.update(_ + ("askhost-delegate-session" -> AgentRecord(
+        sessionId = "askhost-delegate-session", ref = delegateRef, kind = AgentKind.Delegate,
+        rootSessionId = "askhost-root-session", parentRef = None, startedAt = now,
+        status = AgentStatus.Processing, lastActivityMs = now
+      )))
       context = ToolContext(
         projectRoot = tmp.toString,
         sessionId = Some("askhost-worker-session"),
-        rootSessionId = Some("askhost-root-session"),
+        rootSessionId = Some("askhost-delegate-session"),
         agentDef = Some(AgentDef(name = executorName, description = "", tools = Nil)),
         depth = 1,
         sharedResources = Some(resources),
