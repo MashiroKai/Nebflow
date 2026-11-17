@@ -791,8 +791,8 @@ body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /*
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ask-user-source-parent { max-width: 14em; min-width: 6em; font-weight: 500; }
-.ask-user-source-node   { max-width: 18em; min-width: 5em; font-weight: 700; color: var(--color-text); }
+.ask-user-source-parent { max-width: 14em; font-weight: 500; }
+.ask-user-source-node   { max-width: 18em; font-weight: 700; color: var(--color-text); }
 .ask-user-source-sep    { flex: 0 0 auto; opacity: 0.7; }
 /* 展开态（点按 / Enter / Space）：撤掉一切截断，全文可读并允许换行。 */
 .ask-user-source.is-expanded { white-space: normal; }
@@ -807,12 +807,8 @@ body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /*
 /* 可点（仅两段时挂 role=button）——键盘可达性靠 tabIndex，焦点框沿用既有平台默认。 */
 .ask-user-source[role="button"] { cursor: pointer; }
 .ask-user-source[role="button"]:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-/* 窄屏折行：两段各自独占行宽，段①②都完整可见（不丢段、不撑破卡片）。 */
+/* 窄屏允许段间折行；各段仍使用桌面上限和省略规则。 */
 @media (max-width: 520px) {
   .ask-user-source { flex-wrap: wrap; white-space: normal; }
-  .ask-user-source-parent { max-width: 100%; flex: 1 1 auto; }
-  .ask-user-source-node { max-width: 100%; flex: 1 1 auto; }
 }
 body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-width: 100%; }
-body.mobile-layer .ask-user-source-parent,
-body.mobile-layer .ask-user-source-node { max-width: 100%; flex: 1 1 auto; }
