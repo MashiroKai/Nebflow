@@ -186,6 +186,20 @@ async function waitForConverged(a, b, wantIds, timeout = 12000) {
 
 test.describe.configure({ mode: 'serial' });
 
+test('stale frame cannot overwrite a pending local activation', async ({ browser }) => {
+  engine.reset();
+  const a = await bootClient(browser);
+  await drive(a.page, `m.openTab('guard-a', 'A', {type:'generic', pinned:true}); m.openTab('guard-b', 'B', {type:'generic', pinned:true})`);
+  await expect.poll(() => engine.archive?.tabs?.some(t => t.id === 'guard-b')).toBe(true);
+  await drive(a.page, `m.setActiveTab('guard-a')`);
+  const stale = { ...engine.archive, activeTabId: 'guard-b', writeVersion: 1 };
+  for (const ws of engine.wsClients) ws.send(JSON.stringify({ type: 'canvasTabsChanged', ...stale }));
+  await expect.poll(() => a.page.locator(tabSel('guard-a') + '.active').count(), { timeout: 3000 }).toBe(1);
+  await a.page.waitForTimeout(200);
+  await expect(a.page.locator(tabSel('guard-a') + '.active')).toHaveCount(1);
+  await a.ctx.close();
+});
+
 // ════ a. A 开新页签 → B 不刷新出现（记时延）════
 test('A opens a tab; B (mobile viewport, no reload) follows — latency recorded', async ({ browser }) => {
   engine.reset();
