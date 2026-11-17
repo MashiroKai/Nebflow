@@ -670,13 +670,14 @@ private[gateway] object PresenceRoutes:
           if !nebflow.core.delegate.ChainStore.validKey(key) then
             BadRequest(Json.obj("error" -> "invalid chain key".asJson))
           else
-            sharedResources.agentRegistry.get.flatMap(reg =>
-              ChainsReadFace.chainJson(key, reg).flatMap {
-                case None =>
-                  NotFound(Json.obj("error" -> s"no delegate chain on record for key '$key'".asJson))
-                case Some(body) => Ok(body)
+            sharedResources.agentRegistry.get.flatMap { reg =>
+              nebflow.core.delegate.DelegateLiveness.adopted(sharedResources.actorSystem, reg).flatMap { adopted =>
+                ChainsReadFace.chainJson(key, reg, adopted).flatMap {
+                  case None => NotFound(Json.obj("error" -> s"no delegate chain on record for key '$key'".asJson))
+                  case Some(body) => Ok(body)
+                }
               }
-            )
+            }
         }
 
       // ===== Flow Editor APIs =====

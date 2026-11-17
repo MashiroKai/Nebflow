@@ -528,7 +528,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       assertEquals(a.hcursor.get[String]("status").toOption, Some("pending"), "pending/wiring ⇒ pending")
       assertEquals(a.hcursor.downField("deps").as[List[String]].toOption, Some(List("n-b")))
       val statuses = nodes.flatMap(_.hcursor.get[String]("status").toOption)
-      assertEquals(statuses, List("pending", "running", "completed", "failed"), "v3 §9 mapping table single point")
+      assertEquals(statuses, List("pending", "interrupted", "completed", "failed"), "unowned running node is interrupted")
       assertEquals(m.hcursor.downField("chain").get[Boolean]("mounted").toOption, Some(true))
       // record = 三行族原样（适配层直接输入；此处为空记录形）。
       assertEquals(

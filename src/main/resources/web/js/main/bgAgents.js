@@ -806,7 +806,7 @@ function bgTaskDiagHtml(raw) {
 /** flow-step node status → panel row state. One table for the row renderer and the active count (a dirty value
  *  falls back to the conservative idle). */
 const BG_FLOW_NODE_STATE = {
-  pending: 'idle', running: 'active', completed: 'done',
+  pending: 'idle', running: 'active', interrupted: 'idle', completed: 'done',
   failed: 'error', cancelled: 'done', blocked: 'stuck',
 };
 
