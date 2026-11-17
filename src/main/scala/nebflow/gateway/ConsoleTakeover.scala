@@ -137,17 +137,22 @@ final class ConsoleTakeover(
       IO.blocking(canvasLock.acquire()) *> poll(fa).guarantee(IO(canvasLock.release()))
     }
 
-  // Optimistic observed epoch makes concurrently competing claims single-winner;
-  // a later explicit claim observes the new epoch and can take over.
+  // Default claims preempt; expectedEpoch opts into strict compare-and-set.
   def claimCanvas(principal: String, client: String, tab: String, expectedEpoch: Option[Long] = None): IO[Option[Long]] =
-    controlRef.get.flatMap { observed =>
-      canvasExclusive(controlRef.modify { state =>
-        if state.canvasEpoch != observed.canvasEpoch || state.owner != observed.owner || expectedEpoch.exists(_ != state.canvasEpoch) then (state, None)
+    val key = ConsoleTakeover.holderOf(principal, Some(client))
+    canvasExclusive {
+      controlRef.modify { state =>
+        if expectedEpoch.exists(_ != state.canvasEpoch) then (state, None)
         else
           val next = Math.addExact(state.canvasEpoch, 1L)
           val writer = ConsoleTakeover.CanvasWriter(principal, client, tab, next)
-          (state.copy(owner = Some(ConsoleTakeover.holderOf(principal, Some(client))), canvasEpoch = next, writer = Some(writer)), Some(next))
-      })
+          (state.copy(owner = Some(key), canvasEpoch = next, writer = Some(writer)), Some((next, state.owner)))
+      }.flatMap {
+        case None => IO.pure(None)
+        case Some((epoch, previous)) =>
+          (if previous.contains(key) then recordOwner(key)
+           else reverseKickAfterClaim(key, previous).void).as(Some(epoch))
+      }
     }
 
   def releaseCanvas(principal: String, client: String, tab: String, epoch: Long): IO[Boolean] =
@@ -601,11 +606,16 @@ final class ConsoleTakeover(
    * ——最终一致，A9 同款兜底）。
    */
   private def claimAndReverseKick(key: String, prevOwner: Option[String]): IO[Int] =
+    claim(key) *> reverseKickAfterClaim(key, prevOwner)
+
+  // Shared post-transition path: Canvas performs its state transition atomically under
+  // the same lock, so it cannot call claim(key) again (that would clear its writer).
+  private def reverseKickAfterClaim(key: String, prevOwner: Option[String]): IO[Int] =
     for
       now <- nowMs()
       prevInst <- prevOwner.flatTraverse(p => instancesRef.get.map(_.get(p)))
-      _ <- clearSpectator(key) // 显式 retake = 用户意志：观察位解除
-      _ <- claim(key)
+      _ <- clearSpectator(key)
+      _ <- recordOwner(key)
       _ <- prevInst
         .filter(p => ConsoleTakeover.isLive(p, now, activityTtlMs) && !p.automated)
         .traverse_(p => p.conns.toList.sorted.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(now))))
@@ -613,10 +623,12 @@ final class ConsoleTakeover(
 
   /** 记 owner + pastOwners 账（LRU 帽内淘汰最旧）。 */
   private def claim(key: String): IO[Unit] =
+    canvasExclusive(controlRef.update(s =>
+      if s.owner.contains(key) then s else s.copy(owner = Some(key), writer = None)
+    )) *> recordOwner(key)
+
+  private def recordOwner(key: String): IO[Unit] =
     nowMs().flatMap { now =>
-      canvasExclusive(controlRef.update(s =>
-        if s.owner.contains(key) then s else s.copy(owner = Some(key), writer = None)
-      )) *>
         pastOwnersRef.update { v =>
           val pruned = v.filterNot(_._1 == key) :+ ((key, now))
           if pruned.length > ConsoleTakeover.PastOwnerCap then pruned.drop(pruned.length - ConsoleTakeover.PastOwnerCap)

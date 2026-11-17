@@ -28,6 +28,52 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
       assertEquals(List(a, b).count(_ == Status.Conflict), 1)
     }
   }
+  test("concurrent preemptive claims leave exactly one writer and fence the earlier epoch") {
+    val token = "canvas-writer-test-token"
+    val routes = new RestApiRoutes(
+      tokenRef = Ref.unsafe[IO, String](token),
+      configRef = Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+      sharedResources = null, sessionStore = null, wsRoutes = null
+    ).routes
+    def call(method: Method, path: String, body: Json): IO[Response[IO]] =
+      val req = Request[IO](method, Uri.unsafeFromString(path))
+        .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token))).withEntity(body)
+      routes(req).value.map(_.getOrElse(fail("route fell through")))
+    def identity(tab: String): Json = Json.obj("clientId" -> "browser-a".asJson, "tabInstanceId" -> tab.asJson)
+    def claim(tab: String): IO[(String, Long)] =
+      call(Method.POST, "/canvas-writer/claim", identity(tab)).flatMap { r =>
+        assertEquals(r.status, Status.Ok)
+        r.as[Json].map(j => (tab, j.hcursor.get[Long]("epoch").toOption.get))
+      }
+    def put(pair: (String, Long)): IO[Response[IO]] =
+      call(Method.PUT, "/canvas-tabs", identity(pair._1).deepMerge(
+        Json.obj("epoch" -> pair._2.asJson, "v" -> 2.asJson, "tabs" -> Json.arr())))
+    for
+      claims <- (claim("a"), claim("b")).parTupled
+      sorted = List(claims._1, claims._2).sortBy(_._2)
+      _ = assertEquals(sorted.map(_._2), List(1L, 2L))
+      earlier <- put(sorted.head)
+      _ = assertEquals(earlier.status, Status.Conflict)
+      rejected <- earlier.as[Json]
+      _ = assertEquals(rejected.hcursor.get[String]("error").toOption, Some("stale_writer_epoch"))
+      winner <- put(sorted.last)
+      _ = assertEquals(List(earlier.status, winner.status).count(_ == Status.Ok), 1)
+    yield ()
+  }
+
+  test("Canvas owner change uses console takeover notification") {
+    for
+      sent <- Ref.of[IO, Vector[(String, Json)]](Vector.empty)
+      takeover = new ConsoleTakeover((id, frame) => sent.update(_ :+ (id -> frame)), nebflow.shared.NebflowLogger.forName("test"))
+      _ <- takeover.onConnect("session-a", "conn-a", Some("client-a"))
+      _ <- takeover.claimCanvas("principal-b", "client-b", "tab-b")
+      frames <- sent.get
+      _ = assert(frames.exists { case (id, json) => id == "conn-a" && json.hcursor.get[String]("type").toOption.contains("takeover") })
+      owner <- takeover.owner
+      _ = assertEquals(owner, Some("c:client-b"))
+    yield ()
+  }
+
   test("authenticated legacy canvas PUT without writer identity is rejected") {
     val token = "canvas-writer-test-token"
     val routes = new RestApiRoutes(
