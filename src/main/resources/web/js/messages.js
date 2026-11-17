@@ -2275,6 +2275,33 @@ function buildMediaStackGroup(entrys) {
     onOpen: (item, index) => {
       const e = entrys[index];
       if (!e) return;
+      // mobile-image-lightbox 批（2026-11-17）：手机层叠卡图组 = 整组进画廊（字节 =
+      // 各层已水合的同一枚 URL，零第二条取字节路）；视频张/未水合层不入组，组尽空
+      // 或点的张不在组内 ⇒ 落回下方单卡既有腿。
+      if (isMobileLayer() && item.kind === 'image') {
+        /** @type {{kind: string, name: string, src: string}[]} */
+        const group = [];
+        let gi = -1;
+        entrys.forEach((en, j) => {
+          if (!isImageAttachmentName(String(en.name || (en.att && en.att.name) || ''))) return;
+          const faces = (area.popFaces && area.popFaces[j]) || null;
+          const els = (faces && faces.els) || [];
+          const im = /** @type {HTMLImageElement|undefined} */ (els.filter(el => el.tagName === 'IMG')[0]);
+          const url = im && im.dataset.nfMediaFailed !== '1' ? (im.currentSrc || im.src || '') : '';
+          if (!url) return;
+          if (j === index) gi = group.length;
+          group.push({ kind: 'image', name: String(en.name || (en.att && en.att.name) || ''), src: url });
+        });
+        if (group.length && gi >= 0) {
+          const single = () => Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
+            .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
+            .catch(() => modalToast(t('messages.attachPreviewFailed')));
+          import('./lightbox.js')
+            .then((lb) => { if (!lb.openImageGallery(group, gi)) single(); })
+            .catch(single);
+          return;
+        }
+      }
       Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
         .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
         .catch(() => modalToast(t('messages.attachPreviewFailed')));
@@ -2361,9 +2388,28 @@ async function previewMediaDirectOf(att, kind, src) {
 /** 点击 ⇒ Canvas 预览（既有腿，判据与改前逐字同表）：好友/群 = `previewFriendAttachment`
  *  （鉴权路由流式开）；设备 = `previewDeviceSavedAttachment`（blob/票据双腿）。
  *  媒体点击统一批 P16：手机层改走 `previewMediaDirectOf`（系统直开，桌面逐字保留）。
- *  层判定 = isMobileLayer 单点（mobile/popSheet，面板按钮去重批判面纪律）。 */
+ *  层判定 = isMobileLayer 单点（mobile/popSheet，面板按钮去重批判面纪律）。
+ *  mobile-image-lightbox 批（2026-11-17 作者令「现在手机端点图片为什么会单独
+ *  打开一个标签页 我想的是像微信那样的弹窗就行了」）：手机层**图片**改开应用内
+ *  画廊（lightbox.openImageGallery），字节 = 卡面已水合的同一枚 URL（渲染时已走
+ *  账本/鉴权路由取数腿，零第二条取字节路）；判型 = isImageAttachmentName 单点
+ *  （PDF 等其他可预览件照旧直开系统查看器）。面未水合/失败 ⇒ 落回既有直开腿。 */
 function previewAttachmentOf(att, card, kind, src) {
-  if (isMobileLayer()) return previewMediaDirectOf(att, kind, src);
+  if (isMobileLayer()) {
+    const name = String((att && att.name) || '');
+    if (isImageAttachmentName(name)) {
+      const img = card && card.querySelector ? card.querySelector('img') : null;
+      const url = img && img.dataset.nfMediaFailed !== '1' ? (img.currentSrc || img.src || '') : '';
+      if (url) {
+        const fallBack = () => previewMediaDirectOf(att, kind, src);
+        import('./lightbox.js')
+          .then((lb) => { if (!lb.openImageGallery([{ kind: 'image', name, src: url }], 0)) fallBack(); })
+          .catch(fallBack);
+        return false;   // 画廊已开（或异步腿自兜底）：不给 attachPreviewFailed 降级
+      }
+    }
+    return previewMediaDirectOf(att, kind, src);
+  }
   return kind === 'device'
     ? previewDeviceSavedAttachment(att, card, src)
     : previewFriendAttachment(att, card);

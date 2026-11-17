@@ -661,9 +661,11 @@ function canvasCornerButton(item) {
  *  单点——手机层一切媒体点击 = 系统直开（桌面行为逐字保留；pathless 桌面腿
  *  仍灯箱，理由见 mediaOpenRoute 头注）。
  *  （导出：附件批 2026-10-31 —— msgQuote 引用块缩略点击同款单点，动态 import
- *    复用；静态 import 会成环。） */
-export function openMediaItemClick(item) {
-  routeMediaClick(item, openPopArtifact, () => openMediaLightbox(item));
+ *    复用；静态 import 会成环。）
+ *  mobile-image-lightbox 批（2026-11-17）：`group` = 所属图组（叠卡整组/引用块
+ *  所在组），只被手机画廊腿消费（左右滑切图）；桌面行为逐字不变。 */
+export function openMediaItemClick(item, group) {
+  routeMediaClick(item, openPopArtifact, () => openMediaLightbox(item), group);
 }
 
 /* ── 触控板横滑翻页（2026-10-22 作者令「除了长按左右拖动来切换，mac的双指
@@ -730,7 +732,11 @@ const POP_SWIPE_QUIET_MS = 160;  // 动量窗：翻页后事件流静默 ≥160m
  *  fm 三窗（好友/群聊/设备）的调用点 = `messages.js::buildMediaStackGroup`，只传
  *  `onOpen` + `cornerFor`（动作 + 角标），零位置类键。 */
 function buildMediaStack(items, opts) {
-  const openItem = (opts && typeof opts.onOpen === 'function') ? opts.onOpen : openMediaItemClick;
+  // 缺省开件动作带图组（mobile-image-lightbox 批）：整组 items 递给
+  // openMediaItemClick ⇒ 手机画廊可整组滑动切图；桌面腿不消费组，逐字不变。
+  const openItem = (opts && typeof opts.onOpen === 'function')
+    ? opts.onOpen
+    : (it) => openMediaItemClick(it, items);
   const cornerFor = (opts && typeof opts.cornerFor === 'function') ? opts.cornerFor : null;
   // 引用入口移入 footer 批（2026-11-02 11:00 作者令「图片引用在footer显示就行了。
   // 不需要hover图片的时候也显示一个图标」）：叠卡面上**不再长**任何引用钮，改为把
