@@ -118,8 +118,17 @@ object DelegateRoundLedger:
   /**
    * 每轮现值（append-only 读面：同一 roundNo 取最后一行；稳定序 = roundNo 升序）。
    * 只含 `kind="round"` 行——stale-round 审计行不参与轮次状态求值。
+   *
+   * 阶段③（delegate-lifecycle-reform）：**索引路径优先**（[[DelegateIndex.currentRoundsOf]]
+   * ——去重物化表，避免每次现读台账文件）；索引缺席/禁用/孤儿台账/任何异常 ⇒ 回退
+   * [[currentRoundsFromFile]]（阶段③ 前的唯一读面）。两条路径等值由
+   * [[DelegateIndex.verify]] 的逐台账对账钉住。
    */
   def currentRounds(id: String): List[RoundRow] =
+    DelegateIndex.currentRoundsOf(id).getOrElse(currentRoundsFromFile(id))
+
+  /** 文件读面（**唯一去重实现点**：索引物化与回退路径共用同一判据）。 */
+  def currentRoundsFromFile(id: String): List[RoundRow] =
     val latest = scala.collection.mutable.LinkedHashMap.empty[Int, RoundRow]
     rowsOf(id).filter(_.kind == KindRound).foreach(r => latest.put(r.roundNo, r))
     latest.values.toList.sortBy(_.roundNo)
@@ -138,6 +147,8 @@ object DelegateRoundLedger:
     val dir = PathUtil.dataRoot / "delegates"
     os.makeDir.all(dir)
     os.write.append(fileOf(id), row.asJson.noSpaces + "\n", createFolders = true)
+    // 阶段③ 写路径钩子（单缝追加）：台账区重同步（去重物化）；失败软化
+    DelegateIndex.onLedgerAppended(id)
 
   /**
    * 开轮（幂等）：该 roundNo 已有**未结算**现值行 ⇒ 零写返回原行（同轮重复开 =

@@ -287,7 +287,16 @@ object DelegateRegistry:
      */
     disposition: Option[String] = None,
     /** 表态时刻（epoch millis；与 [[disposition]] 同写点单写，清旗时一并清空）。 */
-    dispositionAt: Option[Long] = None
+    dispositionAt: Option[Long] = None,
+    /**
+     * **置顶标记**（delegate-lifecycle-reform 阶段③ · 作者令「七天物理清理 + 重要记录置顶」）：
+     * 时刻（epoch millis）在场 = 本条身份**豁免 7 天物理清理**——终态 TTL 判读
+     * （[[DelegateTerminalTtl.verdict]]）对它恒返 [[DelegateTerminalTtl.Pinned]]，
+     * 清理链（[[nebflow.agent.DelegateTtlSweep]]）零动作。**非破坏性、可撤销**：
+     * 摘标记（[[unpin]]）即回到正常 TTL 计时（记录/台账/历史原样留存，零删除）。
+     * 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    pinnedAt: Option[Long] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -307,6 +316,8 @@ object DelegateRegistry:
   def put(record: Record): Unit =
     os.makeDir.all(dir)
     AtomicJson.writeSync(fileOf(record.id), record.asJson.noSpaces)
+    // 阶段③ 写路径钩子（单缝追加，零新增写面；失败软化——索引落后由读面对账收敛）
+    DelegateIndex.onRecordWritten(record.id)
 
   /** 持久查找（每次现读；坏形/缺失 → None，绝不抛）。 */
   def find(id: String): Option[Record] =
@@ -318,7 +329,17 @@ object DelegateRegistry:
         else io.circe.parser.parse(os.read(p)).toOption.flatMap(_.as[Record].toOption)
       catch case _: Throwable => None
 
-  /** Remove one registry entry after its terminal TTL has elapsed. */
+  /**
+   * 移除一条登记条目（终态 TTL 到期后的**物理清理**动作面）。
+   *
+   * 阶段③（delegate-lifecycle-reform）**扩物理面**：本函数现在一并清走该身份自己的
+   * 两份源文件与索引行——`<id>.json`（身份）+ `<id>.rounds.jsonl`（轮次台账 append-only
+   * 史）+ 索引两区行。理由 = 作者令的「七天物理清理」：TTL 到期的身份若把台账留在盘上，
+   * 「清理」只清一半（台账成为无主孤儿，正是 [[DelegateIndex.validateDedup]] 要报告的
+   * 形态）；已在册身份仍走 TTL 判读（[[DelegateTerminalTtl.Pinned]] 置顶者**永不**到此），
+   * 历史事实由 ChainStore 行与子代理记账承载（brief「语义 = 清理」不变）。
+   * 任务行剪行仍由调用方（[[nebflow.agent.DelegateTtlSweep]]）负责。
+   */
   def remove(id: String): Either[String, Unit] =
     if !validId(id) then Left(s"delegate registry: invalid session id '$id'")
     else
@@ -326,21 +347,24 @@ object DelegateRegistry:
         try
           val file = fileOf(id)
           if os.exists(file) then os.remove(file)
+          val ledger = DelegateIndex.ledgerFileOf(PathUtil.dataRoot, id)
+          if os.exists(ledger) then os.remove(ledger)
+          DelegateIndex.onRecordRemoved(id)
           Right(())
         catch case e: Throwable => Left(s"delegate registry remove failed for '$id': ${e.getMessage}")
       }
 
-  /** 全量列出（按 createdAt 倒序；坏文件跳过）。 */
+  /**
+   * 全量列出（按 createdAt 倒序，id 为确定性次序键；坏文件跳过）。
+   *
+   * 阶段③（delegate-lifecycle-reform）：**启动加载面改吃索引**——索引在场且源码在场 ⇒
+   * [[DelegateIndex.listRecords]] 给出全量记录（水位 `(mtime,size)` 失效策略，零源文件
+   * 重解析）；关闸 / 索引禁用 / 源码目录缺席 / 任何异常 ⇒ [[DelegateIndex.scanRecords]]
+   * 目录扫描（与阶段③ 前逐行同源）。**正确性不依赖索引新鲜度**：索引只在源码在场时服务，
+   * 回退路径就是阶段③ 前的基线面（最坏 = 慢，不退化为错）。
+   */
   def list(): List[Record] =
-    try
-      if !os.exists(dir) then Nil
-      else
-        os.list(dir)
-          .filter(_.ext == "json")
-          .flatMap(p => io.circe.parser.parse(os.read(p)).toOption.flatMap(_.as[Record].toOption))
-          .toList
-          .sortBy(-_.createdAt)
-    catch case _: Throwable => Nil
+    DelegateIndex.listRecords().getOrElse(DelegateIndex.scanRecords(PathUtil.dataRoot))
 
   /** 续聊地址行——Delegate 回执与 Mail 地址面提示共用一份措辞。 */
   def continuationLine(id: String): String =
@@ -671,6 +695,56 @@ object DelegateRegistry:
   def dispositionOf(id: String): Option[(String, Long)] =
     find(id).flatMap(rec => rec.disposition.map(w => (w, rec.dispositionAt.getOrElse(0L))))
 
+  // ── 置顶标记（阶段③：七天物理清理的**豁免面**）───────────────────────────
+
+  /** 置顶读数（纯查盘；清理面/TTL 判读共用）。 */
+  def pinnedOf(id: String): Option[Long] = find(id).flatMap(_.pinnedAt)
+
+  /** 是否置顶（读数短形）。 */
+  def isPinned(id: String): Boolean = pinnedOf(id).isDefined
+
+  /**
+   * 置顶单写（阶段③ · 作者令「重要记录置顶」）：`pinnedAt = now` 单槽——**幂等**
+   * （已置顶 = 原时刻零重写，与墓碑/归档旗同款纪律）。置顶 = 终态 TTL **不判到期**
+   * （[[DelegateTerminalTtl.Pinned]]）⇒ 七天物理清理永不作用于本身份；记录/台账/历史
+   * 原样留存。查无记录 = `Left`（置顶只对真实 spawn 生效）。写锁同缝串行。
+   */
+  def pin(id: String): Either[String, Long] =
+    if !validId(id) then Left(s"pin: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"pin: no registry record for '$id'")
+          case Some(rec) =>
+            rec.pinnedAt match
+              case Some(ts) => Right(ts) // 幂等：已置顶原样返回，零重写
+              case None =>
+                try
+                  val ts = System.currentTimeMillis()
+                  put(rec.copy(pinnedAt = Some(ts)))
+                  Right(ts)
+                catch case e: Throwable => Left(s"pin: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 摘置顶（**非破坏性的对偶面**）：`pinnedAt` 单槽清空 ⇒ 该身份回到正常 7 天 TTL 计时
+   * （记录/台账/历史原样留存，零删除）。幂等：未置顶 = `Right` 零写。查无记录 = `Left`。
+   */
+  def unpin(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"unpin: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"unpin: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.pinnedAt.isEmpty then Right(()) // 幂等：未置顶零写
+            else
+              try
+                put(rec.copy(pinnedAt = None))
+                Right(())
+              catch case e: Throwable => Left(s"unpin: write failed: ${e.getMessage}")
+      }
+
   /**
    * 重启打断单写（任务列表行重启对账批 2026-10-22）：`restartInterruptedAt = now`
    * 单旗，**幂等**（已旗 = 原时间戳零重写，与 [[archive]] 同款）。查无记录 =
@@ -837,6 +911,7 @@ object DelegateRegistry:
       externalModel <- c.get[Option[String]]("externalModel")
       disposition <- c.get[Option[String]]("disposition")
       dispositionAt <- c.get[Option[Long]]("dispositionAt")
+      pinnedAt <- c.get[Option[Long]]("pinnedAt")
     yield Record(
       id,
       executor,
@@ -877,7 +952,8 @@ object DelegateRegistry:
       roundId,
       externalModel,
       disposition,
-      dispositionAt
+      dispositionAt,
+      pinnedAt
     )
 
   /**

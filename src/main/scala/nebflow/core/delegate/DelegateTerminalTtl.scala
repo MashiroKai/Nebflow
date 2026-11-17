@@ -10,9 +10,10 @@ import nebflow.shared.{Defaults, SubAgentTask}
  * 边界：本对象只判「登记条目/任务行」的年龄；工作区与分支永不因 TTL 回收
  * （引擎不回收座位——`Defaults.DelegateTerminalTtlMs` = 7 天，全仓唯一定义点）。
  *
- * 三态判读（spec 钉死边界）：
+ * 四态判读（spec 钉死边界）：
  *  - `InFlight`     在飞会话——**绝不清理**（红线：running/restarting/ready-to-merge
  *    且未停靠的行永不过期，100 天也不清）；
+ *  - `Pinned`       置顶（阶段③）——终态但**人不许清**（七天物理清理零动作）；
  *  - `WithinTtl`    终态/保存态但未满 7 天——保留；
  *  - `Expired`      到期——进入清理面（登记条目移除 + 任务行剪行 + worktree 联动
  *    回收；本对象只判读，动作面在 [[nebflow.agent.DelegateTtlSweep]]）。
@@ -46,6 +47,16 @@ object DelegateTerminalTtl:
     def isExpired: Boolean
 
   case object InFlight extends Verdict:
+    val anchor: Option[(Long, String)] = None
+    val isExpired: Boolean = false
+
+  /**
+   * 置顶（阶段③ · 作者令「重要记录置顶」）：`pinnedAt` 在场 ⇒ **永不判到期**
+   * （七天物理清理零动作）。与 [[InFlight]] 的区别是语义而非形状：InFlight = 现场
+   * 还在跑；Pinned = 现场已终态但**人不许清**。摘置顶（[[DelegateRegistry.unpin]]）即
+   * 回正常计时。
+   */
+  case object Pinned extends Verdict:
     val anchor: Option[(Long, String)] = None
     val isExpired: Boolean = false
 
@@ -88,6 +99,7 @@ object DelegateTerminalTtl:
    *     堵住「远古登记刻 + 活着的子项」被 TTL 剪掉的最坏形态。
    */
   def verdict(rec: DelegateRegistry.Record, taskOpt: Option[SubAgentTask], nowMs: Long): Verdict =
+    if rec.pinnedAt.isDefined then return Pinned
     val managed = WorkspaceLedger.default.snapshot
     if managed.workspaces.exists(_.owner == rec.id) || managed.mergers.exists(_.delegateId == rec.id) then
       return InFlight
@@ -103,7 +115,8 @@ object DelegateTerminalTtl:
     nowMs: Long,
     reading: DelegateVisibility.Reading
   ): Verdict =
-    if reading.liveChildItems > 0 || reading.childFileUnreadable then InFlight
+    if rec.pinnedAt.isDefined then Pinned // 置顶（阶段③）：终态与否都不判到期
+    else if reading.liveChildItems > 0 || reading.childFileUnreadable then InFlight
     else
       val settledAnchor: Option[(Long, String)] =
         reading.settledAt.filter(_ => reading.settled).map(ms => (ms, "settled-state"))

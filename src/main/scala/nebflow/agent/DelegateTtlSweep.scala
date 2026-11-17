@@ -46,16 +46,18 @@ object DelegateTtlSweep:
     recordsRemoved: List[String] = Nil,
     /** 在飞守卫放行的 delegate id（零触碰）。 */
     inFlightKept: List[String] = Nil,
+    /** 置顶（阶段③）放行的 delegate id：终态但不许清（七天物理清理零动作）。 */
+    pinnedKept: List[String] = Nil,
     /** 到期但清理链部分失败保留现场的 delegate id（fail-soft 留痕）。 */
     keptOnError: List[(String, String)] = Nil
   ):
 
     def hasWork: Boolean =
-      expired.nonEmpty || inFlightKept.nonEmpty || keptOnError.nonEmpty
+      expired.nonEmpty || inFlightKept.nonEmpty || pinnedKept.nonEmpty || keptOnError.nonEmpty
 
     def summary: String =
       s"expired=${expired.size} taskRowsPruned=${taskRowsPruned.size} recordsRemoved=${recordsRemoved.size} " +
-        s"inFlightKept=${inFlightKept.size} keptOnError=${keptOnError.size}"
+        s"inFlightKept=${inFlightKept.size} pinnedKept=${pinnedKept.size} keptOnError=${keptOnError.size}"
 
   end Report
 
@@ -89,6 +91,9 @@ object DelegateTtlSweep:
             // ② 到期判读（单源）。
             nebflow.core.delegate.DelegateTerminalTtl.verdict(rec, rowsById.get(rec.id), now) match
               case nebflow.core.delegate.DelegateTerminalTtl.InFlight => IO.unit
+              case nebflow.core.delegate.DelegateTerminalTtl.Pinned =>
+                // 阶段③ 置顶（重要记录）：终态也不清——只留痕，零动作。
+                ref.update(r => r.copy(pinnedKept = r.pinnedKept :+ rec.id))
               case _: nebflow.core.delegate.DelegateTerminalTtl.WithinTtl => IO.unit
               case expired: nebflow.core.delegate.DelegateTerminalTtl.Expired =>
                 // ③ 清理动作（任务行剪行 → 登记移除；fail-soft）。工作区/分支一律
