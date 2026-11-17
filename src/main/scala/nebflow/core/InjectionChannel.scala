@@ -47,6 +47,22 @@ object InjectionChannel:
 
   private val logger = NebflowLogger.forName("nebflow.core.injection-channel")
 
+  /** Read-only diagnostic; never records event payloads. Disable with -Dnebflow.injection.decisionLog=false. */
+  def logSuppressed(sessionId: String, source: String, eventType: String, sourceId: String,
+    gate: String, basis: JsonObject): IO[Unit] =
+    if sys.props.get("nebflow.injection.decisionLog").contains("false") then IO.unit
+    else
+      val row = Json.obj(
+        "timestampMs" -> System.currentTimeMillis().asJson,
+        "sessionId" -> sessionId.asJson,
+        "source" -> source.asJson,
+        "eventType" -> eventType.asJson,
+        "sourceId" -> sourceId.asJson,
+        "gate" -> gate.asJson,
+        "basis" -> Json.fromJsonObject(basis)
+      )
+      logger.info(s"[injection-decision] ${row.noSpaces}").handleError(_ => ())
+
   /** 投递结果（审计/测试读数面）。 */
   enum Outcome:
     /** 已落盘 + 已广播。 */
@@ -189,9 +205,9 @@ object InjectionChannel:
       if dedup && hasText then admit(dedupKey(sessionId, row))
       else true
     if !admitted then
-      logger.info(
-        s"[injection-channel] collapsed duplicate injection (source=${row.source.getOrElse("")} " +
-          s"eventType=${row.eventType.getOrElse("")} session=${sessionId.take(24)}) — same notice within ${windowMs}ms"
+      logSuppressed(sessionId, row.source.getOrElse(""), row.eventType.getOrElse(""),
+        row.sender.getOrElse(""), "injection-window-dedup",
+        JsonObject("windowMs" -> windowMs.asJson, "fingerprint" -> fingerprint(row.text).asJson)
       ).as(Outcome.Collapsed)
     else
       val persist =

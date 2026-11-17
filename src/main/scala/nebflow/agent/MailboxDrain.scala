@@ -260,7 +260,7 @@ private[agent] object MailboxDrain:
       def announcementKey(e: AgentCommand.ExternalEvent): String =
         str(e, "completionGeneration").fold(member(e))(generation => s"${member(e)}#$generation")
       val terminals = events.filter(terminal)
-      if terminals.isEmpty then events
+      if terminals.isEmpty then (events, List.empty[(AgentCommand.ExternalEvent, String, String)])
       else
         val previous: Map[String, List[String]] =
           if !os.exists(ledger) then Map.empty
@@ -280,6 +280,7 @@ private[agent] object MailboxDrain:
         }
         val deltaMembers = delta.filter(_._2.nonEmpty)
         val announce = terminals.filter(e => deltaMembers.get(family(e)).exists(_.contains(announcementKey(e))))
+        val suppressed = terminals.filterNot(announce.contains)
         val output =
           if announce.isEmpty then events.filterNot(terminal)
           else
@@ -313,8 +314,17 @@ private[agent] object MailboxDrain:
           ledger,
           io.circe.Json.obj("v" -> 1.asJson, "families" -> nextLedger.asJson).noSpaces
         )
-        output
+        (output, suppressed.map(e => (e,
+          str(e, "taskId").orElse(str(e, "failedSessionId")).orElse(e.correlationId).getOrElse(""),
+          nebflow.core.InjectionChannel.fingerprint(announcementKey(e)))))
       end if
+    }
+    .flatMap { case (output, suppressed) =>
+      suppressed.traverse_ { case (e, id, key) =>
+        nebflow.core.InjectionChannel.logSuppressed((ledger / os.up).last, e.source, e.eventType, id, "delegate-terminal-ledger",
+          io.circe.JsonObject("announcementKeyFingerprint" -> key.asJson)
+        )
+      }.as(output)
     }
     .handleErrorWith { error =>
       logger.warn(s"terminal notification ledger unavailable: ${error.getMessage}").as(events)
