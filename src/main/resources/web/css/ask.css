@@ -615,7 +615,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * 统一按钮玻璃批 2026-11-01：材质迁 glass.css 面级浮件档，本文件只留几何。 */
 .ask-input {
   width: 100%; position: relative;
-  display: flex; align-items: center; gap: var(--ds-space-1h); padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1h);
+  display: flex; align-items: center; gap: var(--ds-space-1); padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1);
   /* 气泡穿入批（2026-11-05）：输入条必须画在气泡列之上（.ask-colwrap z:1）。
      材质本身归 .nf-glass（stand-tokens --nf-glass-* 单源 + glass.css 配方），
      本文件不写任何毛玻璃值 —— 作者令「输入框也要是毛玻璃效果」由类供给。 */

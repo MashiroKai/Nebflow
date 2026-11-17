@@ -36,10 +36,10 @@
   border-radius: var(--ds-radius-shell);
   /* 瘦身批：垂直内 padding 8px → 6px（横向 12px 不动；mic-orb 64px/图标钮 36px
      为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。 */
-  padding: var(--ds-space-1h) var(--ds-space-3);
+  padding: var(--ds-space-1h) var(--ds-space-2);
   display: flex;
   align-items: center;
-  gap: var(--ds-space-2);
+  gap: var(--ds-space-1);
   flex-shrink: 0;
   /* 统一按钮玻璃批 2026-11-01：材质（--glass-bg + blur24 sat1.15 双写 +
      --cv-shadow 三档栈 + 顶缘折射线 ::before）迁 css/glass.css 面级浮件档
