@@ -1426,7 +1426,7 @@ export default {
   // 压到一行以内（超长删繁就简，不再折行）。
   'settings.modelChainTitle': '模型（按会话类别）',
   'settings.modelChainDisclosureTitle': '模型（按会话类别）',
-  'settings.modelChainSectionHint': '每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。',
+  'settings.modelChainSectionHint': '各会话类别的模型与 /model 同步。',
   'settings.modelRoleTabs': '选择会话类别',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',

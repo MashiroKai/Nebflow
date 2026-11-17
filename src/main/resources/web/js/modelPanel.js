@@ -573,10 +573,10 @@ function renderSettingsRoleSelector(container) {
   for (const role of ROLES) {
     const st = roleState.get(role);
     const row = document.createElement('div');
-    row.className = 'mp-settings-role-panel';
+    row.className = 'mp-roleblock mp-settings-role-panel';
     row.dataset.role = role;
     const label = document.createElement('label');
-    label.className = 'mp-settings-role-label';
+    label.className = 'mp-role-head mp-role-name';
     label.htmlFor = `model-role-select-${role}`;
     label.textContent = roleLabel(role);
     row.appendChild(label);

@@ -924,8 +924,7 @@ export function renderSettings() {
       </button>
       <div id="model-chain-disclosure" class="set-disclosure-body"${settingsDisclosure.models ? '' : ' hidden'}>
         <!-- 模型回退链节的状态与保存通道仍单点归 modelPanel.js，/model 同步不变。 -->
-        <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
-        <div class="set-row-hint">${t('settings.modelChainSectionHint')}</div>
+        <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainSectionHint')}</div>
         <div id="model-chain-section-body"></div>
       </div>` })}
       <!-- 🔴 provider-add-tabs 批（2026-11-06 作者令）：原 Jev 卡（setNavRow

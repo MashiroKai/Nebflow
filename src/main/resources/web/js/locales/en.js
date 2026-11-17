@@ -1470,7 +1470,7 @@ export default {
   // 压到一行以内（超长删繁就简，不再折行）。
   'settings.modelChainTitle': 'Model (per session class)',
   'settings.modelChainDisclosureTitle': 'Model (per session class)',
-  'settings.modelChainSectionHint': 'One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn.',
+  'settings.modelChainSectionHint': 'Session class models sync with /model.',
   'settings.modelRoleTabs': 'Choose a conversation category',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
