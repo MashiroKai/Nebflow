@@ -153,8 +153,25 @@ const childrenFetchedAt = new Map();
 /** 在飞父（防同一父并发打点；同 refreshChildren 的单飞闸门）。 */
 const childrenInflight = new Set();
 
+// Each chain URL has its own rate-limit state; no request is queued or delayed.
+const chainBackoff = new Map();
+const CHAIN_RATE_LIMITED = Symbol('chain-rate-limited');
 async function fetchJson(url) {
+  const isChain = url === '/api/chains' || url.startsWith('/api/chains/');
+  const previous = isChain ? chainBackoff.get(url) : null;
+  if (previous && Date.now() < previous.until) return CHAIN_RATE_LIMITED;
   const r = await fetch(url, { headers: authHeaders() });
+  if (isChain && r.status === 429) {
+    const current = chainBackoff.get(url);
+    const attempts = (current?.attempts || 0) + 1;
+    const value = r.headers.get('Retry-After');
+    const seconds = value === null ? NaN : Number(value);
+    const serverDelay = Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : 0;
+    const delay = Math.max(serverDelay, Math.min(60000, 1000 * 2 ** Math.min(attempts - 1, 6)));
+    chainBackoff.set(url, { attempts, until: Math.max(current?.until || 0, Date.now() + delay) });
+    return CHAIN_RATE_LIMITED;
+  }
+  if (isChain && r.ok && (!previous || chainBackoff.get(url) === previous)) chainBackoff.delete(url);
   if (!r.ok) return null; // 404/5xx 都不是崩面——调用方按「无读数」降级
   return await r.json();
 }
@@ -245,6 +262,7 @@ function projectChain(body) {
 /** 拉某键链视图入镜像（fail-soft：任何失败不动现值）。 */
 async function refreshChain(key) {
   const body = await fetchJson(CHAINS_API.chain(key));
+  if (body === CHAIN_RATE_LIMITED) return;
   if (!body) {
     // 404 = 查无记录：镜像置 null（视图走 fail-soft 重试态），记空键防打点。
     mirror.chains.set(key, null);
