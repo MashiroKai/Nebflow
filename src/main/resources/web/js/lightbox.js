@@ -309,6 +309,7 @@ function ensureDom() {
 
   imgEl = document.createElement('img');
   imgEl.className = 'nf-lightbox-img';
+  imgEl.draggable = false;
   imgEl.alt = '';
 
   statusEl = document.createElement('div');

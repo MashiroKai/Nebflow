@@ -33,10 +33,9 @@ const SID = 'mil-gallery-session';
 const IMG_PATH = 'docs/pic.png';
 
 // 1×1 真解码 PNG（img onload 面，与 media-click-unify 族同款夹具字节）。
-const PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64'
-);
+const PNG = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540"><rect width="960" height="540" fill="#175b80"/><circle cx="710" cy="160" r="90" fill="#ffd166"/><path d="M0 460L240 190 470 420 610 260 960 540H0" fill="#75ba9a"/><text x="55" y="90" fill="white" font-size="48">Landscape 960 × 540</text></svg>`);
+const PORTRAIT = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="480" height="760"><rect width="480" height="760" fill="#864ba1"/><circle cx="240" cy="320" r="150" fill="#facb73"/><text x="50" y="90" fill="white" font-size="38">Portrait 480 × 760</text></svg>`);
+const SQUARE = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><rect width="600" height="600" fill="#b65e44"/><path d="M60 520L300 70 540 520Z" fill="#f8d385"/><text x="100" y="580" fill="white" font-size="40">Square 600 × 600</text></svg>`);
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -82,7 +81,9 @@ async function bootApp(page) {
         return route.fulfill({ status: 200, contentType: 'application/json', body });
       }
       if (p === '/api/nf-file') {
-        return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+        const name = url.searchParams.get('path') || '';
+        const image = /b\.png$/.test(name) ? PORTRAIT : /c\.png$/.test(name) ? SQUARE : PNG;
+        return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: image });
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     }
@@ -431,6 +432,41 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
   });
 });
 
+test.describe('media classification and mixed gallery', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+  test('document exclusions and media controls', async ({ page }) => {
+    await bootApp(page);
+    const result = await page.evaluate(async () => {
+      const { mediaKind, routeMediaClick } = await import('/js/mediaOpenRoute.js');
+      const cases = ['x.pdf', 'x.html', 'x.md', 'x.png', 'x.mp4', 'x.mp3'];
+      const kinds = cases.map(name => mediaKind({ name, mime: 'application/octet-stream' }));
+      const opened = [];
+      for (const name of cases.slice(0, 3)) routeMediaClick({ name, path: '/tmp/' + name }, path => opened.push(path), () => {});
+      return { kinds, opened, overlay: !!document.querySelector('.nf-lightbox.on') };
+    });
+    expect(result.kinds).toEqual(['', '', '', 'image', 'video', 'audio']);
+    expect(result.opened).toEqual(['/tmp/x.pdf', '/tmp/x.html', '/tmp/x.md']);
+    expect(result.overlay).toBe(false);
+    await page.evaluate(async () => {
+      const { openImageGallery } = await import('/js/lightbox.js');
+      openImageGallery([
+        { kind: 'image', name: 'one.png', src: '/api/nf-file?path=one.png' },
+        { kind: 'video', name: 'two.mp4', src: '/api/nf-file?path=two.mp4' },
+        { kind: 'audio', name: 'three.mp3', src: '/api/nf-file?path=three.mp3' },
+      ], 0);
+    });
+    const lb = page.locator('.nf-lightbox.on');
+    await expect(lb).toHaveAttribute('data-nf-lb-gal-total', '3');
+    await page.keyboard.press('ArrowRight');
+    await expect(lb.locator('video')).toHaveCount(1);
+    await page.keyboard.press('ArrowRight');
+    await expect(lb.locator('video')).toHaveCount(0);
+    await expect(lb.locator('audio')).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.nf-lightbox audio')).toHaveCount(0);
+  });
+});
+
 test.describe('desktop gallery interactions', () => {
   test.use({ viewport: { width: 1280, height: 900 } });
   test('keyboard, zoom, pan, backdrop and escape', async ({ page }) => {
@@ -443,6 +479,7 @@ test.describe('desktop gallery interactions', () => {
     const lb = page.locator('.nf-lightbox.on');
     await expect(lb).toBeVisible();
     await expect(lb).toHaveAttribute('data-nf-lb-gal-total', '2');
+    await expect(lb.locator('.nf-lightbox-img.loaded')).toBeVisible();
     if (SHOTS_DIR) await page.screenshot({ path: join(SHOTS_DIR, 'desktop-multiple-after.png') });
     expect(await page.evaluate(() => window.__nfOpenItems.length)).toBe(0);
     await page.keyboard.press('ArrowRight');
@@ -454,9 +491,18 @@ test.describe('desktop gallery interactions', () => {
     await expect(lb).toHaveAttribute('data-nf-lb-zoom', '1');
     await page.locator('.nf-lightbox-img').dispatchEvent('dblclick');
     await expect(lb).toHaveAttribute('data-nf-lb-zoom', '2');
+    await page.mouse.move(640, 450);
+    await page.mouse.down();
+    await page.mouse.move(700, 490, { steps: 5 });
+    await page.mouse.up();
+    await expect(lb.locator('.nf-lightbox-img')).toHaveCSS('transform', /matrix\(2, 0, 0, 2, 60, 40\)/);
     await page.keyboard.press('ArrowLeft');
     await expect(lb).toHaveAttribute('data-nf-lb-gal-index', '0');
     await page.keyboard.press('Escape');
+    await expect(lb).toHaveCount(0);
+    await page.locator('.pop-stack-view').first().dispatchEvent('click');
+    await expect(lb).toBeVisible();
+    await lb.click({ position: { x: 10, y: 450 } });
     await expect(lb).toHaveCount(0);
   });
 });
