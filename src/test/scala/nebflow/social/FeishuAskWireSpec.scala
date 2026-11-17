@@ -49,6 +49,9 @@ class FeishuAskWireSpec extends CatsEffectSuite:
     val closed: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val hubQueries: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val injected: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+    val decisions: Ref[IO, List[Boolean]] = Ref.unsafe[IO, List[Boolean]](Nil)
+    override def decidePermission(requestId: String, rootSessionId: String, kind: nebflow.actor.InteractionKind, approved: Boolean): IO[Boolean] =
+      decisions.modify(xs => if xs.isEmpty then (List(approved), true) else (xs, false))
 
     override def listPendingAsks: IO[List[Json]] = hubQueries.update(_ + 1).as(frames)
 
@@ -138,6 +141,44 @@ class FeishuAskWireSpec extends CatsEffectSuite:
         case Some(rec) => (_, _, _) => rec.adapter
         case None => FeishuBridgePlugin.defaultRichAdapter
     )
+
+  test("permission callbacks bind approver, chat and message and only flip after hub acknowledgement") {
+    val seams = new Seams
+    val p = plugin(seams, Some(List("author")))
+    val ctx = new HubCtx(Nil)
+    val frame = Json.obj("type" -> "askPermission".asJson, "requestId" -> "r1".asJson,
+      "input" -> Json.obj("token" -> "NEVER-SEND".asJson))
+    val value = Json.obj("nf" -> FeishuPermissionCard.namespace.asJson, "requestId" -> "r1".asJson, "decision" -> "allow".asJson)
+    def action(user: String, chat: String, message: String) =
+      FeishuChannel.CardAction(Some(user), Some(chat), Some(message), value)
+    for
+      _ <- p.routesRef.set(Map("oc_author" -> "root-1"))
+      _ <- p.onAgentEvent("root-1", frame)
+      cards <- seams.cards.get
+      _ = assertEquals(cards.size, 1)
+      _ = assert(!cards.head.contains("NEVER-SEND"))
+      wrongUser <- p.handleCardAction(ctx, action("other", "oc_author", "om-1"))
+      wrongChat <- p.handleCardAction(ctx, action("author", "wrong", "om-1"))
+      wrongMessage <- p.handleCardAction(ctx, action("author", "oc_author", "wrong"))
+      _ = assert(List(wrongUser, wrongChat, wrongMessage).forall(_.card.isEmpty))
+      accepted <- p.handleCardAction(ctx, action("author", "oc_author", "om-1"))
+      duplicate <- p.handleCardAction(ctx, action("author", "oc_author", "om-1"))
+      decisions <- ctx.decisions.get
+    yield
+      assert(accepted.card.nonEmpty)
+      assert(duplicate.card.isEmpty)
+      assertEquals(decisions, List(true))
+  }
+
+  test("empty permission allowlist never sends or approves") {
+    val seams = new Seams
+    val p = plugin(seams)
+    for
+      _ <- p.routesRef.set(Map("oc_author" -> "root-1"))
+      _ <- p.onAgentEvent("root-1", Json.obj("type" -> "askPermission".asJson, "requestId" -> "r1".asJson))
+      cards <- seams.cards.get
+    yield assertEquals(cards, Nil)
+  }
 
   /**
    * A hub-shaped askUser frame — the exact fields the bridge consumes

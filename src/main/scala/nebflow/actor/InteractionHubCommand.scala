@@ -24,6 +24,15 @@ object InteractionHubCommand:
   /** Gateway → hub: user answered (translated from permissionAnswer/askUserAnswer). */
   final case class Answered(ans: InteractionAnswered) extends InteractionHubCommand
 
+  /** Atomically consume only the exact permission slot and acknowledge completion. */
+  final case class DecideBridgePermission(
+    requestId: String,
+    rootSessionId: String,
+    kind: InteractionKind,
+    approved: Boolean,
+    reply: ActorRef[Boolean]
+  ) extends InteractionHubCommand
+
   /**
    * 刷新存活 (2026-09-03): gateway → hub — snapshot the still-pending AskUser
    * cards for `rootSessionId` (oldest first), each rendered exactly like the

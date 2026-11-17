@@ -115,6 +115,10 @@ trait BridgeContext:
    */
   def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] = IO.unit
 
+  /** Acknowledged exact-slot permission decision; unavailable implementations refuse. */
+  def decidePermission(requestId: String, rootSessionId: String, kind: nebflow.actor.InteractionKind, approved: Boolean): IO[Boolean] =
+    IO.pure(false)
+
   /**
    * Ask the hub to close one pending slot by requestId (`CloseRequest`) —
    * the B-3 新问顶旧问 primitive: a new ask on a channel that carries one

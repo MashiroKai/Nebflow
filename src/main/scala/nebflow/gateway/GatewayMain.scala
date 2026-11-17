@@ -1517,6 +1517,20 @@ object GatewayMain extends IOApp:
                                           case Some(routes) =>
                                             routes.forwardBridgeInteractionAnswer(requestId, rootSessionId, payload)
                                           case None => IO.unit
+                                      override def decidePermission(
+                                        requestId: String,
+                                        rootSessionId: String,
+                                        kind: nebflow.actor.InteractionKind,
+                                        approved: Boolean
+                                      ): IO[Boolean] =
+                                        sharedResources.interactionHubRef.get.flatMap {
+                                          case Some(hub) => hub.?[Boolean](reply =>
+                                            nebflow.actor.InteractionHubCommand.DecideBridgePermission(
+                                              requestId, rootSessionId, kind, approved, reply
+                                            )
+                                          )
+                                          case None => IO.pure(false)
+                                        }
                                       override def closeInteractionRequest(requestId: String): IO[Unit] =
                                         sharedResources.interactionHubRef.get.flatMap {
                                           case Some(hub) =>

@@ -214,6 +214,9 @@ final class FeishuBridgePlugin(
   private[social] val askChatRef =
     cats.effect.Ref.unsafe[IO, Map[String, String]](Map.empty)
 
+  private[social] case class PermissionRoute(root: String, kind: nebflow.actor.InteractionKind, chat: String, message: String)
+  private[social] val permissionRoutes = cats.effect.Ref.unsafe[IO, Map[String, PermissionRoute]](Map.empty)
+
   /**
    * Package-visible for the LIVE rig probe (FeishuAskLiveProbe): the rig must
    * arm the context WITHOUT start() — start would open a SECOND long
@@ -274,6 +277,7 @@ final class FeishuBridgePlugin(
     } *> pendingRef.set(Map.empty) // a torn turn is never a reply, also across restarts
       *> richRef.set(Map.empty) // …and neither is a rich product from a torn turn
       *> askChatRef.set(Map.empty) // askuser-remote P1: a torn ask's routing cache dies with the bridge
+      *> permissionRoutes.set(Map.empty)
 
   // ───────────────────────────── inbound ─────────────────────────────
   /**
@@ -778,6 +782,8 @@ final class FeishuBridgePlugin(
       // no second mechanism). The frame reached this bridge already (hub
       // render → rootWsSend → wsHub broadcast); it simply had no arm before.
       case "askUser" => onAskUserFrame(sessionId, c)
+      case "askPermission" => onPermissionFrame(sessionId, c, nebflow.actor.InteractionKind.Permission)
+      case "mcpPermission" => onPermissionFrame(sessionId, c, nebflow.actor.InteractionKind.McpPermission)
       case "askUserClosed" =>
         // 撤卡/台账清除 (P1 form): the hub slot is gone (withdraw / cleanup /
         // restart), so the routing cache entry dies with it. A later click on
@@ -785,10 +791,51 @@ final class FeishuBridgePlugin(
         // / zombie closure the design pins, with zero extra API calls (a
         // PATCH-based disable is a P2 candidate, not taken here).
         val rid = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-        rid.fold(IO.unit)(r => askChatRef.update(_ - r))
+        rid.fold(IO.unit)(r => askChatRef.update(_ - r) *> permissionRoutes.update(_ - r))
       case _ => IO.unit
     end match
   end onAgentEvent
+
+  private[social] def onPermissionFrame(
+    sessionId: String, c: io.circe.HCursor, kind: nebflow.actor.InteractionKind
+  ): IO[Unit] =
+    (allowedRef.get, routesRef.get).tupled.flatMap { (allowed, routes) =>
+      val rid = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+      val chat = routes.collectFirst { case (id, sid) if sid == sessionId => id }
+      (allowed.filter(_.trim.nonEmpty), rid, chat, creds) match
+        case (Nil, _, _, _) => logger.warn("feishu bridge: remote permission disabled: empty approver allowlist")
+        case (_, Some(id), Some(cid), Some(cr)) =>
+          sendCard(cr.appId, cr.appSecret, region, cid, FeishuPermissionCard.card(id)).flatMap { result =>
+            result.messageId.filter(_ => result.ok).filter(_.nonEmpty) match
+              case Some(mid) => permissionRoutes.update(_ + (id -> PermissionRoute(sessionId, kind, cid, mid)))
+              case None => logger.warn("feishu bridge: permission card delivery not confirmed")
+          }
+        case _ => IO.unit
+    }
+
+  private def permissionAction(ctx: BridgeContext, a: FeishuChannel.CardAction): IO[FeishuChannel.CardActionResponse] =
+    val c = a.value.hcursor
+    val id = c.downField("requestId").as[String].toOption.filter(_.nonEmpty)
+    val decision = c.downField("decision").as[String].toOption.flatMap {
+      case "allow" => Some(true)
+      case "deny" => Some(false)
+      case _ => None
+    }
+    val refused = FeishuChannel.CardActionResponse(Some("审批不可用或已失效"), None)
+    (allowedRef.get, permissionRoutes.get, routesRef.get).tupled.flatMap { (allowed, bindings, routes) =>
+      (id, decision, a.openId, a.chatId, a.messageId) match
+        case (Some(rid), Some(approved), Some(operator), Some(chat), Some(message))
+            if allowed.exists(x => x.nonEmpty && x == operator) =>
+          bindings.get(rid) match
+            case Some(binding) if binding.chat == chat && binding.message == message && routes.get(chat).contains(binding.root) =>
+              ctx.decidePermission(rid, binding.root, binding.kind, approved).attempt.flatMap {
+                case Right(true) => permissionRoutes.update(_ - rid).as(
+                  FeishuChannel.CardActionResponse(None, Some(FeishuPermissionCard.card(rid, Some(approved))) ))
+                case _ => IO.pure(refused)
+              }
+            case _ => IO.pure(refused)
+        case _ => IO.pure(refused)
+    }
 
   // ───────────── askuser-remote P1: the askUser frame leg ─────────────
 
@@ -1027,6 +1074,11 @@ final class FeishuBridgePlugin(
     ctx: BridgeContext,
     a: FeishuChannel.CardAction
   ): IO[FeishuChannel.CardActionResponse] =
+    if a.value.hcursor.downField("nf").as[String].toOption.contains(FeishuPermissionCard.namespace) then
+      permissionAction(ctx, a)
+    else handleAskCardAction(ctx, a)
+
+  private def handleAskCardAction(ctx: BridgeContext, a: FeishuChannel.CardAction): IO[FeishuChannel.CardActionResponse] =
     val refuse: String => IO[FeishuChannel.CardActionResponse] =
       toast => IO.pure(FeishuChannel.CardActionResponse(toast = Some(toast), card = None))
     allowedRef.get.flatMap { allowed =>
@@ -1084,7 +1136,7 @@ final class FeishuBridgePlugin(
       end if
     }
 
-  end handleCardAction
+  end handleAskCardAction
 
   /**
    * The happy path: frame items → the SAME flatten as the send leg → slots →

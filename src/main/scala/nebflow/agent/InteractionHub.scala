@@ -121,6 +121,8 @@ object InteractionHub:
               ctx.forkTurn(handleRequest(pending, rootWsSend, req) *> ledgerRecord *> todoAttach) *> IO.pure(behavior)
             case InteractionHubCommand.Answered(ans) =>
               ctx.forkTurn(handleAnswered(pending, rootWsSend, ans, ledger, todoBridge)) *> IO.pure(behavior)
+            case InteractionHubCommand.DecideBridgePermission(rid, root, kind, approved, reply) =>
+              ctx.forkTurn(handleBridgePermission(pending, rootWsSend, rid, root, kind, approved, reply, ledger, todoBridge)) *> IO.pure(behavior)
             case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
               // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
               ctx.forkTurn(handleListPendingAsks(pending, liveness, rootSessionId, reply)) *> IO.pure(behavior)
@@ -606,6 +608,42 @@ object InteractionHub:
   // ============================================================
   // Answer: complete the reply target (multi-slot by requestId)
   // ============================================================
+
+  private def handleBridgePermission(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
+    rid: String,
+    root: String,
+    kind: InteractionKind,
+    approved: Boolean,
+    reply: ActorRef[Boolean],
+    ledger: Option[PendingAskLedger],
+    todoBridge: Option[nebflow.core.scheduler.AskTodoBridge]
+  ): IO[Unit] =
+    pending.modify { slots =>
+      slots.get(rid) match
+        case Some(p) if rid.nonEmpty && root.nonEmpty && p.rootSessionId == root && p.kind == kind &&
+            (kind == InteractionKind.Permission || kind == InteractionKind.McpPermission) =>
+          (slots - rid, Some(p))
+        case _ => (slots, None)
+    }.flatMap {
+      case None => (reply ! false).void
+      case Some(p) =>
+        val ans = InteractionAnswered(rid, root, Json.obj("approved" -> Json.fromBoolean(approved)))
+        val delivered = p.reply match
+          case InteractionReply.PermissionReply(d) => d.complete(approved)
+          case InteractionReply.McpPermissionReply(d) =>
+            nebflow.shared.McpPermissionAnswer.decode(ans.payload).fold(IO.pure(false))(d.complete)
+          case _ => IO.pure(false)
+        (delivered.flatMap { ok =>
+          if !ok then (reply ! false).void
+          else (reply ! true).void *> (
+            complete(p, ans, rootWsSend, via = "feishu") *>
+              ledger.fold(IO.unit)(_.remove(rid)) *>
+              todoBridge.fold(IO.unit)(_.retire(rid))
+          ).handleErrorWith(e => logger.warn(s"feishu permission completion cleanup failed: ${e.getClass.getSimpleName}"))
+        }).handleErrorWith(_ => (reply ! false).void)
+    }
 
   private def handleAnswered(
     pending: Ref[IO, Map[String, PendingRequest]],
