@@ -165,8 +165,23 @@ async function openSettings(page, { mobile }) {
   const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
   if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
   await page.waitForSelector('#model-chain-section-body [data-role="Nebula"] .mp-settings-role-model', { state: 'visible', timeout: 15000 });
-  await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'center' }));
+  await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'start' }));
   await sleep(350);
+  if (mobile) {
+    const clearance = await page.evaluate(() => {
+      const title = document.querySelector('.mobile-page-title');
+      const pageTitle = document.querySelector('.mobile-page-title');
+      const cardTitle = document.querySelector('#model-chain-section > .set-card-title');
+      const disclosure = document.querySelector('#model-chain-disclosure');
+      if (!pageTitle || !cardTitle || !disclosure) return null;
+      const titleRect = pageTitle.getBoundingClientRect();
+      const cardRect = cardTitle.getBoundingClientRect();
+      const disclosureRect = disclosure.getBoundingClientRect();
+      return { pageTitleBottom: titleRect.bottom, cardTitleTop: cardRect.top, disclosureTop: disclosureRect.top };
+    });
+    ok('mobile/clearance', '模型说明在固定/吸附页标题下方完整可见',
+      !!clearance && clearance.cardTitleTop >= clearance.pageTitleBottom, JSON.stringify(clearance));
+  }
 }
 
 /* ─────────────── 单腿：断言 + 实拍 ─────────────── */
