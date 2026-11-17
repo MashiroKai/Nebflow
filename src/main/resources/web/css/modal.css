@@ -1463,6 +1463,9 @@
   padding: 0 var(--ds-space-2);
   cursor: pointer;
 }
+/* F 批 2026-11-17（下拉统一）：select 被 .nf-select 包裹后，本行的伸缩职责
+   （flex:1 / min-width）上移到包裹层——select 在格内仍 100% 跟随。 */
+.mp-addrow .nf-select { flex: 1; min-width: 170px; }
 /* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 /* ui-status-redesign（盘点 #38，S9 同族）：11.5px 红字 → 中性正文 + 行首
    circle-alert 红图标（modelPanel.js 注入）。 */

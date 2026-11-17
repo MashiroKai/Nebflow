@@ -141,8 +141,8 @@ test('T1 page shell: full-width push page, glass round back button, adopted pane
   await expect(back).toBeVisible();
   const radius = await back.evaluate((el) => getComputedStyle(el).borderRadius);
   expect(radius).toBe('50%');
-  const title = await page.locator('.mobile-page[data-page="projects"] .mobile-page-title').textContent();
-  expect(title).toBe('项目');
+  // 大标题退役（ui-unify-panels B 批 2026-11-17）：项目页零标题节点。
+  await expect(page.locator('.mobile-page[data-page="projects"] .mobile-page-title')).toHaveCount(0);
 
   // 内容面 = 收编桌面 pane（adoptPane）：pane 在页面体内，卡片在其中渲染
   // —— 收编是异步腿（动态 import + openTab 完成才 adoptPane），重试断言

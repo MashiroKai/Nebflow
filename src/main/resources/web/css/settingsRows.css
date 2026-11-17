@@ -34,6 +34,13 @@
   box-sizing: border-box;
 }
 
+.sp-panel-group { display: flex; flex-direction: column; gap: var(--set-group-gap); }
+.sp-panel-group > h2 { margin: 0; font-size: var(--ds-fs-meta); color: var(--ds-text-muted); }
+.sp-panel-group[data-panel-group="models"] { order: 2; }
+.sp-panel-group[data-panel-group="runtime"] { order: 3; }
+.sp-panel-group[data-panel-group="advanced"] { order: 4; }
+.sp-panel-group[data-panel-group="about"] { order: 5; }
+
 /* ── 分组卡 ────────────────────────────────────────────────────────────── */
 .set-card {
   position: relative;

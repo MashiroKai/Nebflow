@@ -237,6 +237,7 @@ import { pushLayer, popLayer } from './focusTrap.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { getAuthToken } from './neblink.js';
+import { syncSelectFace } from './dropdown.js'; // F 批 2026-11-17：保存失败回滚是静默 .value 赋值，trigger 脸要显式跟
 import { noteAuthRejected } from './sessionGate.js';
 import {
   SOCIAL_CHANNELS, visibleChannels, channelById, storedKey, channelStatus, channelProblem, fieldValues,
@@ -1475,7 +1476,7 @@ async function saveDefaultSession(channelId, sessionId) {
     defaultSessionByChannel[channelId] = {
       available: prev.available, sessionId: prev.sessionId, sessionName: prev.sessionName,
     };
-    if (select instanceof HTMLSelectElement) select.value = prev.sessionId || '';
+    if (select instanceof HTMLSelectElement) { select.value = prev.sessionId || ''; syncSelectFace(select); }
     setSaveState(channelId, t('social.feishu.defaultSession.saveFailed', { code: 'io' }));
   }
 }

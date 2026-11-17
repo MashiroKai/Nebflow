@@ -1,0 +1,70 @@
+/* dropdown.css — 原生 <select> → 点击展开点选（ui-unify-panels F 批 2026-11-17）
+   ═══════════════════════════════════════════════════════════════════════════
+   与 js/dropdown.js 同一对。分工纪律（与 inputSurface.css 的单源观一致）：
+     · trigger 的「脸」（底/边/圆角/影/caret/焦点态）= JS 挂的 nf-field
+       nf-field--select，造型唯一来源仍是 css/inputSurface.css —— 本文件
+       对 trigger 只写几何（flex/对齐/字体族/省略号），零造型声明；
+     · 选项单的材质 = .fm-context-menu 族（split.css 底 + glass.css 材质 +
+       mobileLayer.css 手机全屏表），本文件只补「值语义」的修饰：
+       高度上限滚动、optgroup 分组头、当前项勾选。
+     · .nf-select 包裹层（类名尾段恰为 select —— 输入面判据按尾段命中）
+       同样零造型：只做 inline-grid 栈（trigger 在下、透明原生 select 蒙上）。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 包裹层：grid 栈，trigger 与原生 select 同格叠放 ──────────────────────
+   原生 select 透明 + 指针穿透（真人永远打不开原生弹层，只会打开组件的
+   选项单）；但它仍占格、仍是 Playwright/selectOption 与站点 .value 读写
+   的落点 —— 「账本不动，只换脸与手」。 */
+.nf-select {
+  display: inline-grid;
+  vertical-align: middle;
+  max-width: 100%;
+}
+.nf-select > * {
+  grid-area: 1 / 1;
+}
+.nf-select .nf-select-native {
+  opacity: 0;
+  pointer-events: none;
+  width: 100%;
+  min-width: 0;
+  justify-self: stretch;
+}
+
+/* ── trigger：几何档（脸见 inputSurface.css 的 .nf-field--select）──────── */
+.nf-select-trigger {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  text-align: left;
+  font-family: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.nf-select-val {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 选项单：值语义修饰（材质见 .fm-context-menu 族）───────────────────── */
+body:not(.mobile-layer) .nf-select-menu {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+.nf-select-group {
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-half);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+.nf-select-opt.is-cur {
+  font-weight: 600;
+}
+.nf-select-opt.is-cur::after {
+  content: '✓';
+  margin-left: var(--ds-space-1h);
+  color: var(--color-primary);
+}

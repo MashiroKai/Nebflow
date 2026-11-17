@@ -340,13 +340,15 @@ const hasLayoutTransition = (s) => {
     !!rest.img && rest.padTop !== null && rest.padTop >= 52,
     `padTop=${rest.padTop} cls=${rest.safeTag}`);
 
-  const titlePt = await page.evaluate(() => {
-    const el = document.querySelector('.mobile-page-title, .mobile-page[data-page="canvas"] .mobile-page-title');
+  // 大标题退役（ui-unify-panels B 批 2026-11-17）：hover 靶从页名胶囊换到
+  // 页壳返回钮（顶铬区唯一常驻件），位移/顶垫不变判据照旧。
+  const chromePt = await page.evaluate(() => {
+    const el = document.querySelector('.mobile-page[data-page="canvas"] .mobile-back-btn');
     if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
-  if (titlePt) { await page.mouse.move(titlePt.x, titlePt.y); await sleep(600); }
+  if (chromePt) { await page.mouse.move(chromePt.x, chromePt.y); await sleep(600); }
   const hov = await snap(page);
   ok('H7b 手机端 hover 标题：不挂 .capsule-ring-open + 图片零位移 + 顶垫不变',
     rest.padTop === hov.padTop && boxDelta(rest.img, hov.img) <= 0.5

@@ -492,10 +492,10 @@ async function main() {
     const pageRows = await page.evaluate(() => {
       const rows = [...document.querySelectorAll('#reminder-panel .reminder-row')];
       const title = document.querySelector(".mobile-page[data-page='reminder'] .mobile-page-title");
-      return { rows: rows.length, titleOverflow: title ? title.scrollWidth > title.clientWidth + 1 : null };
+      return { rows: rows.length, titleGone: !title };
     });
-    ok('M1 手机提醒面不回归（行仍在、页名不截断）',
-      pageRows.rows > 0 && pageRows.titleOverflow === false, JSON.stringify(pageRows));
+    ok('M1 手机提醒面不回归（行仍在、页名节点退役）',
+      pageRows.rows > 0 && pageRows.titleGone === true, JSON.stringify(pageRows));
 
     // 抽屉新建 + 时间滚轮 sheet
     await page.evaluate(() => document.querySelector('.reminder-fab-add')?.click());

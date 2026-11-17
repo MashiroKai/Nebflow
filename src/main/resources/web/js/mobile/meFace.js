@@ -67,7 +67,7 @@ function fieldRow(body, label, valueText) {
 function navRow(card, icon, label, onClick, pageId, valueText = '') {
   const row = document.createElement('button');
   row.type = 'button';
-  row.className = 'mf-hub-row';
+  row.className = 'mf-hub-row sp-panel-row';
   row.dataset.mePage = pageId; // QA 断言面：层级行机械定位
   row.append(h('i', { 'data-lucide': icon }), h('span', { class: 'mf-hub-row-label' }));
   if (valueText) row.append(h('span', { class: 'mf-hub-row-val' }));
@@ -100,8 +100,8 @@ function paintAvatarFrame(frame) {
 function buildMeHome(body, push) {
   const id = getIdentityReadout();
   // 资料卡：大头像 + 名 + 邮箱（未登录态给登录键，与顶栏批登录面同源）。
-  const card = el(body, 'mf-me-card');
-  const frame = el(card, 'mf-me-avatar-frame big');
+  const card = el(body, 'mf-me-card sp-identity');
+  const frame = el(card, 'mf-me-avatar-frame huge');
   frame.innerHTML = `
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">
@@ -134,7 +134,7 @@ function buildMeHome(body, push) {
   paintCbs.add(paintAccount);
   // 账号分组（苹果层级入口；全部为 App 内页面）。
   el(body, 'mf-hub-label mf-me-grouplabel').textContent = tt('账号', 'Account');
-  const rows = el(body, 'mf-hub-rows');
+  const rows = el(body, 'mf-hub-rows sp-panel-group');
   // 右值禁拿昵称/邮箱冒充用户名（与身份卡同一口径：读不到 = 未知）。
   navRow(rows, 'user-round', tt('用户名', 'Username'), () => push('me-user'), 'me-user',
     id.username || unknownText());

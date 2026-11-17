@@ -149,6 +149,13 @@ async function wire(page) {
       else if (m.type === 'getHistory') {
         ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0, total: 0 }));
       }
+      // 回合终态桩：零后端夹具没有引擎回助理回合 ⇒ input.js injectUserMessage 在
+      // 首发后 setBusy 且 busy 永不自清，第二发会被 busy 闸静默吞掉（B2 Enter 发送
+      // 之后 B3 的点钮发送）。补一帧会话级 done（main.js clearBusyFor 的权威终态）
+      // 让回合收口，第二发才走得通。
+      else if (typeof m.content === 'string' && m.sessionId) {
+        ws.send(JSON.stringify({ type: 'done', sessionId: m.sessionId }));
+      }
     });
   });
 }
@@ -318,28 +325,51 @@ try {
   })()`);
   ok('B1 占位符已本地化（无裸键名）', !!ph && !ph.includes('todoface.'), `placeholder=${ph}`);
 
-  // 回车 = 换行不发送：pressSequentially 逐键（真实按键道），Enter 后核对帧与框态
+  // E 批（ui-unify-panels 2026-11-17 作者令「待办回复框复刻 ask 卡片输入样式/交互」）
+  // 前提翻新：回车 = 发送（bindComposerKeys，主会话/ask 同一实现；2026-11-06 ④
+  // 「回车只换行」口径退役）——Enter 后帧即出、框收；换行改走 Shift+Enter（B2b）。
+  // 帧体前提同步校正：sendReply 现拼 `#<名>·<id> <正文>`（·id = 名字撞车时的定位
+  // 面，为既有代码事实），B3/C1 旧 want 漏写该段 = 既有红，随批对齐。
   const taSel = `${BOX} .tfl-hit-reply`;
   await page.locator(taSel).click();
   await page.locator(taSel).pressSequentially('第一行');
   await page.keyboard.press('Enter');
-  await page.locator(taSel).pressSequentially('第二行');
-  await sleep(250);
+  await sleep(500);
   const enterState = await page.evaluate(`(() => {
-    const ta = document.querySelector(${JSON.stringify(taSel)});
     const box = document.querySelector(${JSON.stringify(BOX)});
     const composer = document.getElementById('input');
-    return { value: ta ? ta.value : null, boxOpen: !!box, composerValue: composer ? composer.value : null };
+    return { boxOpen: !!box, composerValue: composer ? composer.value : null };
   })()`);
   const framesAfterEnter = userContentFrames();
-  ok('B2 回车 = 换行不发送（值含 \\n、框不收、无用户帧、主输入框零污染）',
-    enterState.value === '第一行\n第二行' && enterState.boxOpen === true
-    && framesAfterEnter.length === 0 && (enterState.composerValue === '' || enterState.composerValue == null),
-    `value=${JSON.stringify(enterState.value)} boxOpen=${enterState.boxOpen} userFrames=${framesAfterEnter.length} composer=${JSON.stringify(enterState.composerValue)}`);
+  ok('B2 回车 = 发送（ask 同款：帧 `#<名>·<id> 第一行` 出线、框收、主输入框零污染）',
+    framesAfterEnter.length === 1 && framesAfterEnter[0] === '#3d打印模型上色·f-2 第一行'
+    && enterState.boxOpen === false
+    && (enterState.composerValue === '' || enterState.composerValue === null),
+    `frames=${JSON.stringify(framesAfterEnter)} after=${JSON.stringify(enterState)}`);
+  await page.screenshot({ path: join(OUT, 'reply-enter-send.png') }); shots.push('reply-enter-send.png');
+
+  // B2b Shift+Enter = 换行（不发送、框不收）——重开框后走换行键道。
+  await page.evaluate(`document.querySelector(${JSON.stringify(ROW2)}).click()`);
+  await sleep(400);
+  await page.locator(taSel).click();
+  await page.locator(taSel).pressSequentially('第一行');
+  await page.keyboard.press('Shift+Enter');
+  await page.locator(taSel).pressSequentially('第二行');
+  await sleep(250);
+  const shiftState = await page.evaluate(`(() => {
+    const ta = document.querySelector(${JSON.stringify(taSel)});
+    const box = document.querySelector(${JSON.stringify(BOX)});
+    return { value: ta ? ta.value : null, boxOpen: !!box };
+  })()`);
+  const framesAfterShift = userContentFrames();
+  ok('B2b Shift+Enter = 换行（值含 \\n、框不收、无新用户帧）',
+    shiftState.value === '第一行\n第二行' && shiftState.boxOpen === true
+    && framesAfterShift.length === 1,
+    `value=${JSON.stringify(shiftState.value)} boxOpen=${shiftState.boxOpen} frames=${framesAfterShift.length}`);
 
   await page.screenshot({ path: join(OUT, 'reply-multiline.png') }); shots.push('reply-multiline.png');
 
-  // 发送 = 独立钮；消息体逐字 = `#<待办名> <回复>`
+  // 发送 = 独立钮；消息体逐字 = `#<待办名>·<id> <回复>`
   const composerBefore = await page.evaluate("document.getElementById('input') ? document.getElementById('input').value : null");
   await page.locator(`${BOX} .tfl-hit-send`).click();
   await sleep(500);
@@ -350,9 +380,9 @@ try {
     return { taValue: ta ? ta.value : null, boxGone: !box, composerValue: composer ? composer.value : null };
   })()`);
   const frames = userContentFrames();
-  const wantBody = '#3d打印模型上色 第一行\n第二行';
-  ok('B3 点发送 ⇒ 用户帧逐字 `#<名> <回复>`（换行原样）、框收、双输入清空（send() 单源出口）',
-    frames.length === 1 && frames[0] === wantBody && afterSend.boxGone === true
+  const wantBody = '#3d打印模型上色·f-2 第一行\n第二行';
+  ok('B3 点发送 ⇒ 用户帧逐字 `#<名>·<id> <回复>`（换行原样）、框收、双输入清空（send() 单源出口）',
+    frames.length === 2 && frames[1] === wantBody && afterSend.boxGone === true
     && afterSend.taValue === null && (afterSend.composerValue === '' || afterSend.composerValue === null)
     && composerBefore === '' ,
     `frames=${JSON.stringify(frames)} want=${JSON.stringify(wantBody)} after=${JSON.stringify(afterSend)} composerBefore=${JSON.stringify(composerBefore)}`);
@@ -373,8 +403,8 @@ try {
     gateRead.normalChips === 1 && gateRead.digitChips === 0
     && gateRead.normalText.includes('修登录态过期') && gateRead.digitText.includes('3d打印模型上色'),
     JSON.stringify(gateRead));
-  ok('C1 数字头待办回复照发逐字（投递腿不受门禁影响；帧见 B3）',
-    frames.length === 1 && frames[0].startsWith('#3d打印模型上色 '), frames[0]);
+  ok('C1 数字头待办回复照发逐字（投递腿不受门禁影响；帧见 B3；前缀含 ·id 定位面）',
+    frames.length === 2 && frames[1].startsWith('#3d打印模型上色·f-2 '), frames[1]);
 
   /* ══════ D 组：收起路径 + 命中盒 ══════ */
   // D1 Esc 收起
@@ -404,20 +434,29 @@ try {
   const toggledGone = await page.evaluate(() => !document.querySelector('.tfl-hit'));
   ok('D3 再点同一行收起（toggle 语义）', openAgain && toggledGone, `open=${openAgain} afterToggleGone=${toggledGone}`);
 
-  // D4 发送钮命中盒 ≥ 48（最小可点尺寸令牌单源；本批不另跑全页机检——gate 节点做）
+  // D4 发送钮（E 批 2026-11-17 前提翻新：发送键 = ds-turn-btn--send 实心圆钮，
+  // 手机档 = ask 面板底钮同款 --mcv-size-circle / 图标 --mcv-icon。两令牌都是
+  // 视口 clamp 族（375w 解析 37.5 / 16.9，宽屏回到 44 / 20）⇒ 断言按带不按点：
+  // 正圆 + 尺寸带 [36, 44.5] + 图标带 [16, 20.1] + 50% 圆角。旧「--ds-hit-tap-min
+  // 48 文字钮」档随批退役——旧腿在改前树上也红（--ds-hit-tap-min 未定义 ⇒ 实测
+  // 30.7×23 文字盒），非本批引入。）
   const sendHit = await page.evaluate(async () => {
-    // 开框读 .tfl-hit-send 的 min 尺寸声明与实际命中盒
     const row = document.querySelector(".mobile-page[data-page='tasks'] .tfl-row[data-id='f-1'] .tfl-row-main");
     row.click();
     await new Promise((r) => setTimeout(r, 400));
     const send = document.querySelector(".mobile-page[data-page='tasks'] .tfl-hit-send");
     if (!send) return null;
     const cs = getComputedStyle(send);
+    const svg = send.querySelector('svg');
     const b = send.getBoundingClientRect();
-    return { minW: cs.minWidth, minH: cs.minHeight, w: +b.width.toFixed(1), h: +b.height.toFixed(1) };
+    const sb = svg ? svg.getBoundingClientRect() : null;
+    return { hasSvg: !!svg, icon: sb ? +sb.width.toFixed(1) : null,
+             w: +b.width.toFixed(1), h: +b.height.toFixed(1), radius: cs.borderRadius };
   });
-  ok('D4 发送钮命中盒 ≥ --ds-hit-tap-min（令牌单源声明 + 实测）',
-    !!sendHit && sendHit.minH === '48px' && sendHit.h >= 47.5 && sendHit.w >= 47.5,
+  ok('D4 发送钮 = ask 面板底钮同档（正圆 / 尺寸带 36–44.5 / 图标带 16–20.1 / 50% 圆角 / svg）',
+    !!sendHit && sendHit.hasSvg && Math.abs(sendHit.w - sendHit.h) <= 0.5
+    && sendHit.w >= 36 && sendHit.w <= 44.5
+    && sendHit.radius === '50%' && sendHit.icon != null && sendHit.icon >= 16 && sendHit.icon <= 20.1,
     JSON.stringify(sendHit));
   await page.evaluate(() => { const b = document.querySelector('.tfl-hit'); if (b) b.remove(); });
 

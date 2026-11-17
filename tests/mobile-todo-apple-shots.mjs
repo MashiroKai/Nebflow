@@ -161,13 +161,10 @@ async function mainLeg() {
   await push(page, 'tasks');
   ok('(1) tasks page live (pushPage works)', await page.locator('.mobile-page[data-page="tasks"].live').count() === 1);
   ok('(1) shell back button present (48 g2-fab)', await page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn').count() === 1);
-  // The shell page title is statically hidden on this page (selector scoped to it)
-  ok('(1) in-flow page title statically hidden on this page (display:none)',
-    await page.locator('.mobile-page[data-page="tasks"] .mobile-page-title').evaluate((el) => getComputedStyle(el).display) === 'none');
-  // The page title is a single node (no separate sticky-capsule node), so
-  // hiding that one node covers both the in-flow and the sticky state.
-  ok('(1) no separate sticky title node (single-node title: hidden in both states)',
-    await page.locator('.mobile-page[data-page="tasks"] .mobile-page-title-mini').count() === 0);
+  // 大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不
+  // 渲染大标题」）：tasks 页壳不再建标题节点（旧「本页静态隐藏」判据随之退场）。
+  ok('(1) zero page-title nodes on this page (title retired)',
+    await page.locator('.mobile-page[data-page="tasks"] .mobile-page-title, .mobile-page[data-page="tasks"] .mobile-page-title-mini').count() === 0);
 
   // (2) the four cards carry data
   const cards = await page.evaluate(() => {
@@ -215,9 +212,12 @@ async function mainLeg() {
     const f = document.querySelector('.mobile-page[data-page="tasks"] .ta-fab');
     if (!f) return null;
     const r = f.getBoundingClientRect();
-    return { w: r.width, h: r.height, right: innerWidth - r.right, bg: getComputedStyle(f).backgroundColor };
+    const d = getComputedStyle(document.body).getPropertyValue('--band-d') || '48px';
+    return { w: r.width, h: r.height, right: innerWidth - r.right, bg: getComputedStyle(f).backgroundColor, bandD: d.trim() };
   });
-  ok('(2) bottom-right blue FAB (48x48, --mtap-lg)', !!fab && Math.abs(fab.w - 48) < 1 && Math.abs(fab.h - 48) < 1, JSON.stringify(fab));
+  // ui-unify-panels 批（2026-11-17）：带直径档 48 字面量退役 → --band-d
+  // clamp(36px,10vw,44px)（375 视宽 = 37.5），FAB 与顶带圆钮同一把尺。
+  ok('(2) bottom-right blue FAB (--band-d, = top band circle tier)', !!fab && Math.abs(fab.w - 37.5) < 1 && Math.abs(fab.h - 37.5) < 1, JSON.stringify(fab));
 
   await page.screenshot({ path: join(SHOTS, 'light-01-tasks.png') });
 

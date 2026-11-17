@@ -1381,6 +1381,9 @@
   min-width: 0;
 }
 .cfg-model-row .cfg-model-id { flex: 2; min-width: 0; }
+/* F 批 2026-11-17（下拉统一）：模型 id 由 input 升级为 select 后被 .nf-select
+   包裹，flex:2 伸缩职责上移到包裹层（input 态不受影响——无包裹层）。 */
+.cfg-model-row .nf-select { flex: 2; min-width: 0; }
 /* provider-add-tabs 批（溢出零容忍断言 320px 弹窗腿）：ctx 输入框要能缩——
    数字输入框的固有宽度（size 默认 ~20ch）在 320px 弹窗四件一行时顶出裁剪；
    flex-basis 120px + min-width:0 让它参与收缩，值域滚动由输入框内滚承担。 */

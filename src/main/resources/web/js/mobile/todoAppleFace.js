@@ -232,8 +232,9 @@ function openCreateSheet(section, initialTagId, trigger) {
   save.type = 'button';
   save.textContent = t('todoapple.save');
   actions.append(cancel, save);
-  const title = inputEl('ta-create-title');
-  title.type = 'text';
+  // D 批（同上）：新建名输入面同样换 textarea（多行名可创建）。
+  const title = /** @type {HTMLTextAreaElement} */ (el('textarea', 'ta-create-title'));
+  title.rows = 1;
   title.placeholder = t('todoapple.newTodo');
   title.setAttribute('aria-label', t('todoapple.newTodo'));
   bindImeGuard(title);
@@ -479,6 +480,11 @@ function buildHome(root, section, nav) {
   // ── White three-icon capsule at the top right (left end stays empty for the
   // back button; all three keys have real backing capabilities) ──
   const cluster = elIn(section, 'div', 'ta-cluster');
+  // 左槽隐形占位（ui-unify-panels 批 2026-11-17）：首页顶带左槽没有返回钮动作
+  // ⇒ 按带几何口径放等宽 invisible spacer 保三区结构（子页同槽 = 壳返回钮）。
+  // 绝不渲染可点但无功能的假按钮：spacer aria-hidden + pointer-events none。
+  const slotSpacer = elIn(cluster, 'div', 'ta-slot-spacer');
+  slotSpacer.setAttribute('aria-hidden', 'true');
   const pill = elIn(cluster, 'div', 'ta-pill nf-glass');
   const bSearch = iconBtn('ta-pill-btn', 'search', t('todoapple.search'));
   const bNewList = iconBtn('ta-pill-btn', 'list-plus', t('todoapple.newList'));
@@ -753,11 +759,11 @@ function cycleDue() {
 function buildItem(root, section, nav) {
   const wrap = elIn(root, 'div', 'ta-edit');
   const row = elIn(wrap, 'div', 'ta-newrow');
-  const input = inputEl('ta-title-input nf-field--bare');
-  input.type = 'text';
-  input.autocomplete = 'off';
+  // D 批（ui-unify-panels 2026-11-17「待办内容不要截断，展示与编辑都多行」）：
+  // 名编辑域 input → textarea（多行可编；保存走底部 ta-save 簇）。
+  const input = /** @type {HTMLTextAreaElement} */ (elIn(row, 'textarea', 'ta-title-input nf-field--bare'));
+  input.rows = 1;
   bindImeGuard(input);
-  row.appendChild(input);
   const infoBtn = iconBtn('ta-info', 'info', t('todoapple.info'));
   row.appendChild(infoBtn);
   const notes = /** @type {HTMLTextAreaElement} */ (elIn(wrap, 'textarea', 'ta-notes'));

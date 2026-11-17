@@ -161,12 +161,13 @@ test('T2 main-session face: one pill title, scope retired, kind row = second fil
   // 🔴 三点入口批（2026-11-05 作者令「把搜索和搜索聊天记录结合……下面的文字不要，
   // 然后底下的说明文字不要」）：旧断言（面板头图标 `.mh-search-head-ic` 在场 +
   // 底部说明脚注文案）**整组换代**——
-  //   · 顶部唯一标题 = 页面名胶囊（PAGES.search）；
+  //   · 顶部唯一标题 = 页面名胶囊（PAGES.search）——大标题退役（ui-unify-panels
+  //     B 批 2026-11-17）后该节点亦不再建，页面零标题节点；
   //   · 面板头 `.search-modal-header`（重复标题 + 头图标所在层）整块隐藏；
   //   · 底部说明行 `#mh-search-foot` 连 DOM 一起删除（不是 display:none）。
   // 🔴 会话内独立搜索批（2026-11-06 作者令「不要有省略 那就用搜索两个字吧」）：
   //   页名胶囊随 search.title 同批改「搜索」二字（「搜索聊天记录」整族退役）。
-  await expect(page.locator('.mobile-page[data-page="search"] .mobile-page-title')).toHaveText('搜索');
+  await expect(page.locator('.mobile-page[data-page="search"] .mobile-page-title')).toHaveCount(0);
   await expect(page.locator('#search-modal .search-modal-header')).toBeHidden();
   await expect(page.locator('#mh-search-foot')).toHaveCount(0);
 

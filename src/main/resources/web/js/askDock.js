@@ -392,23 +392,6 @@ function buildDock() {
   }, [ICONS.stop()]);
 
   return h('div', { class: 'ask-dock closed' }, [
-    // ask-mail 批（2026-11-16）：会话地址行——ask 会话的 Mail 可达地址
-    // （`ask:<sessionId>`，编排方续聊通道），面板头部右贴（气泡列之上的留白带，
-    // 列内容底锚，顶部常年空）。⚠ **座位刻意在 colwrap 之前**：colwrap 的负
-    // margin-bottom（气泡穿入批）把「下一个兄弟」当作被穿入面——行若插在
-    // colwrap 与输入条之间，穿入几何（输入条顶边−最新气泡底边 = 列缝）会被
-    // 本行顶开，canvas-ask-legibility 的五档机械断言即红。文本由 syncAddrRow
-    // 按当前会话注水（引擎 askState 帧 mailAddress 字段优先，本地同式派生
-    // 兜底），点击复制（bgAgents .bg-task-addr chip 同式）。hidden 起手：无会话
-    // 时整行不占位。
-    h('div', {
-      class: 'ask-addr',
-      'data-ask-addr-row': true,
-      role: 'button',
-      tabindex: '-1',
-      hidden: '',
-      title: tt('点击复制会话地址（Mail 续聊用）', 'Click to copy the session address (Mail follow-ups)'),
-    }, [h('span', { class: 'ask-addr-text' })]),
     handle,
     // main（ask-fade-content-opacity 批）已把 .ask-veil 遮罩条退役——渐隐归
     // .ask-col 的 mask-image，本组件不复活任何渐隐元素。
@@ -521,8 +504,6 @@ function ensureInner() {
     noteDock,
     col: dock.querySelector('.ask-col'),
     colwrap: dock.querySelector('.ask-colwrap'),
-    // ask-mail 批（2026-11-16）：会话地址行（buildDock 内 data-ask-addr-row）。
-    addr: dock.querySelector('[data-ask-addr-row]'),
     inputRow: dock.querySelector('.ask-input'),
     resize: askSurface.handle,
     input: dock.querySelector('textarea'),
@@ -1596,33 +1577,9 @@ async function syncNoteForFile() {
 // ── 渲染（升腾入场 + 顶带 12px 内容级渐隐由 CSS mask 承担）────────────────
 // glass-unify 批 2026-11-05：原「按龄渐隐」腿已退役（见下方 render() 内注释）。
 
-/**
- * ask-mail 批（2026-11-16）：按当前会话注水地址行（render() 每拍同步）。
- * 地址单源 = 引擎 askState 帧的 mailAddress 字段；本地兜底 `'ask:' + sid` 与
- * 引擎派生**同式同源**（ensureSid 的 sha256 前 8 hex —— 两端一条公式，非猜测）。
- * 无会话/无 sid ⇒ 整行 hidden（不占位）。
- */
-function syncAddrRow() {
-  if (!el) return;
-  const s = activeSession();
-  const addr = s ? (s.mailAddress || (s.sid ? 'ask:' + s.sid : '')) : '';
-  if (!addr) {
-    el.addr.hidden = true;
-    delete el.addr.dataset.askAddr;
-    return;
-  }
-  // data-ask-addr：与注入泡 chip（injectedRows .ask-mail-addr）同一可复制令牌键名。
-  el.addr.dataset.askAddr = addr;
-  const span = el.addr.querySelector('.ask-addr-text');
-  if (span) span.textContent = addr;
-  el.addr.title = addr + ' · ' + tt('点击复制', 'Click to copy');
-  el.addr.hidden = false;
-}
-
 function render() {
   if (!el) return;
   const s = activeSession();
-  syncAddrRow(); // ask-mail 批：地址行随每拍渲染同步（含「无会话⇒隐藏」腿）
   el.col.textContent = '';
   if (!s) return;
   // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不

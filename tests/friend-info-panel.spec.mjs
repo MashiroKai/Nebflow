@@ -258,8 +258,9 @@ test('P6–P7 搜索入口复用同一面板 + 顶部只有一个胶囊', async 
     '两条入口打开的是同一个 DOM 节点（不是复制品）').toBe('1');
 
   // ── P7 顶部收敛 ──
-  // 2026-11-06 作者令「不要有省略 那就用搜索两个字吧」：页名胶囊 = 「搜索」。
-  await expect(page.locator('.mobile-page[data-page="search"] .mobile-page-title')).toHaveText('搜索');
+  // 2026-11-06 作者令「不要有省略 那就用搜索两个字吧」→ 大标题退役
+  // （ui-unify-panels B 批 2026-11-17）：页名胶囊节点亦不再建。
+  await expect(page.locator('.mobile-page[data-page="search"] .mobile-page-title')).toHaveCount(0);
   await expect(page.locator('#search-modal .search-modal-header')).toBeHidden();
   await expect(page.locator('#mh-search-foot')).toHaveCount(0);
   const visibleTitles = await page.evaluate(() => [...document.querySelectorAll('#search-modal-title')]

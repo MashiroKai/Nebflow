@@ -13,19 +13,18 @@
 //   ② dock 中键 logo 居中修正：裸 inline <picture> 百分比双基准问题（修前像素
 //      实证墨迹 left 2 / right 17.5，盒 left 0 / right 16.7）——尺寸上移
 //      picture（62%）+ flex 双轴居中（会话头同款成熟模式）。
-//   ③ 面板「标题→首个内容块」间距收整（手机档）：usage 双层垫 24→12；
-//      projects 桌面胶囊让位带 68→12（pt56/top56 双维归零）；大标题 flex:none
-//      防收编面争抢收缩（设置页标题盒被压 31px 裁字修红）。全站节奏 12px。
+//   ③ 面板首件让位（大标题退役 ui-unify-panels B 批 2026-11-17 改版）：
+//      页名节点 .mobile-page-title 全局不建（见 mobile-panel-title.spec.mjs）⇒
+//      B 腿改量「页体顶距 = 返回钮底缘 + 呼吸 8」与零标题节点。
 //
 // 覆盖（双引擎 Chromium/WebKit × 双主题 light/dark × 手机 390×844）：
 //   A1 会话头芯片：底色随主题黑白翻转；logo src 随主题 light/dark 换源；
 //      img 盒四向边距等分（居中）；芯片圆形。
 //   A2 dock 中键：芯片底色随主题（logo 态）；元素截图墨迹扫描 = 墨心偏移
 //      ≤1.5px、左右墨距差 ≤2px（居中硬证）；SVG 换源随主题。
-//   B1 标题-内容间距 sweep（9 面）：usage/projects 首块 12±2；todo 14±2；
-//      settings/daemon/reminder/plugins/background/me ≤16（首可见件）。
-//   B2 标题盒恒 52±2（flex:none 防裁字；设置页修红点专项）。
-//   B3 截图存证：usage/projects/settings/todo 展开态 ×引擎×主题。
+//   B1 零标题节点 sweep（8 面）+ 页体顶距 = 钮底 + 呼吸 8（B 批让位单源
+//      --mchrome-clear + safe；首可见件不钻返回钮命中区）。
+//   B3 截图存证：usage/projects/settings 展开态 ×引擎×主题。
 //   C1 自定义头像零回归（chromium-light 腿）：注入头像 → 会话头 has-img；
 //      dock 显示照片且底色保持 sapphire 族（非黑白芯片）。
 //   C2 桌面零回归腿（1280×800）：mobile-layer 不激活；桌面头芯片随主题翻转 +
@@ -268,26 +267,23 @@ async function openHubPage(page, hubPage, liveSelector) {
   await page.waitForTimeout(450);
 }
 
-async function openTodo(page) {
-  await gotoWorkbench(page);
-  await page.evaluate(() => document.dispatchEvent(new CustomEvent('nf:mobile-todo-entry')));
-  await page.waitForSelector('#mobile-pages .mobile-page.live[data-page="todo"] #todo-page .reminder-row', { timeout: 15000 });
-  await page.waitForTimeout(450);
-}
-
-/* 标题→首个可见内容块间距（首可见件 = 页面体/收编面内首个 h>4 且非隐藏元素）。 */
+/* 页体顶距/首可见件让位读数（大标题退役 ui-unify-panels B 批 2026-11-17 改版：
+   首可见件 = 页面体/收编面内首个 h>4 且非隐藏元素）。 */
 async function gapProbe(page, pageId, firstSel) {
+  // 大标题退役（ui-unify-panels B 批 2026-11-17）改版：原量「标题盒底 → 首块」
+  // 间距；现在量「返回钮底缘 → 页体顶距/首可见件」的让位（页体 padding 自管）。
   return page.evaluate(({ pid, sel }) => {
     const sec = document.querySelector(`#mobile-pages .mobile-page[data-page="${pid}"]`);
     if (!sec) return { found: false };
-    const title = sec.querySelector('.mobile-page-title');
-    if (!title) return { found: false };
-    const tb = title.getBoundingClientRect();
+    const back = sec.querySelector('.mobile-back-btn');
+    const body = sec.querySelector('.mobile-page-body');
+    if (!back || !body) return { found: false };
+    const bb = back.getBoundingClientRect();
+    const padTop = parseFloat(getComputedStyle(body).paddingTop);
     let first = null;
     if (sel) {
       first = sec.querySelector(sel);
     } else {
-      const root = sec.querySelector('.mobile-page-body');
       const scan = (parent) => {
         for (const el of parent.children) {
           const s = getComputedStyle(el);
@@ -299,18 +295,17 @@ async function gapProbe(page, pageId, firstSel) {
         }
         return null;
       };
-      first = scan(root);
+      first = scan(body);
     }
-    if (!first) return { found: false, titleBottom: Math.round(tb.bottom) };
+    if (!first) return { found: false, backBottom: +bb.bottom.toFixed(1), padTop };
     const fr = first.getBoundingClientRect();
     return {
       found: true,
-      titleText: title.textContent,
-      titleH: Math.round(tb.height),
-      titleBottom: Math.round(tb.bottom),
+      titleCount: sec.querySelectorAll('.mobile-page-title, .mobile-page-title-mini').length,
+      backBottom: +bb.bottom.toFixed(1),
+      padTop: +padTop.toFixed(1),
       firstTag: `${first.tagName.toLowerCase()}${first.id ? '#' + first.id : ''}.${String(first.className).split(' ').slice(0, 2).join('.')}`,
-      firstTop: Math.round(fr.top),
-      gap: Math.round(fr.top - tb.bottom),
+      firstTop: +fr.top.toFixed(1),
     };
   }, { pid: pageId, sel: firstSel || null });
 }
@@ -352,10 +347,10 @@ async function avatarLeg(engineName, scheme) {
 
     await page.screenshot({ path: join(SHOTS, `${tag}-chat-home-avatar.png`) });
 
-    // B3 截图存证 + B1/B2 间距 sweep（同腿顺路）。
-    // 断言口径（作者令「标题→首个内容块」）：usage/projects = 纯内容首块精确档
-    // 12±2（修红点）；settings/daemon/reminder/todo = 功能控制行（B 批「计数/
-    // 新建/关闭功能钮全留」）首可见件 ≤16；plugins/background = 内容面首块 ≤16。
+    // B3 截图存证 + B1/B2 让位 sweep（同腿顺路；大标题退役 ui-unify-panels B 批
+    // 2026-11-17 改版）：B1 = 零标题节点（原「标题→首块间距」前提已灭）；
+    // B2 = 页体顶距 = 返回钮底缘 + 呼吸 8（--mchrome-clear + safe 单源，
+    // 首可见件不钻返回钮命中区；与 mobile-panel-title.spec Z4 同判据）。
     const gapTargets = [
       ['usage', 'usage', '#usage-dashboard .ud-filters'],
       ['projects', 'projects', '.team-scroll .project-card'],
@@ -367,19 +362,17 @@ async function avatarLeg(engineName, scheme) {
       ['reminder', 'reminder', '#reminder-panel .reminder-panel-header'],
       ['background', 'background', '#bg-dropdown .bg-section'],
     ];
-    const expect = { usage: 12, projects: 12 };
     for (const [pid, hub, firstSel] of gapTargets) {
       if (hub) await openHubPage(page, hub, `#mobile-pages .mobile-page.live[data-page="${pid}"]`);
-      else await openTodo(page);
       const g = await gapProbe(page, pid, firstSel);
       ok(`${tag} B1 ${pid} 面板在场`, g.found);
       if (!g.found) continue;
-      ok(`${tag} B2 ${pid} 标题盒 52±2（防裁字）`, Math.abs(g.titleH - 52) <= 2, `h=${g.titleH}`);
-      if (pid in expect) {
-        ok(`${tag} B1 ${pid} 标题→首块 = ${expect[pid]}±2px`, Math.abs(g.gap - expect[pid]) <= 2,
-          `${g.firstTag} gap=${g.gap}`);
-      } else {
-        ok(`${tag} B1 ${pid} 标题→首可见件 ≤16px`, g.gap <= 16, `${g.firstTag} gap=${g.gap}`);
+      ok(`${tag} B1 ${pid} 零标题节点（大标题退役）`, g.titleCount === 0, `count=${g.titleCount}`);
+      ok(`${tag} B2 ${pid} 页体顶距 = 返回钮底 + 呼吸 8`, Math.abs(g.padTop - (g.backBottom + 8)) <= 1.5,
+        `padTop=${g.padTop} backBottom=${g.backBottom}`);
+      if (g.firstTop != null) {
+        ok(`${tag} B2 ${pid} 首可见件不钻返回钮命中区（≥ 钮底 + 8）`, g.firstTop >= g.backBottom + 8 - 1.5,
+          `${g.firstTag} top=${g.firstTop}`);
       }
       if (['usage', 'projects', 'settings'].includes(pid)) {
         await page.screenshot({ path: join(SHOTS, `${tag}-${pid}-expanded.png`) });

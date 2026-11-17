@@ -882,7 +882,12 @@ export function renderSettings() {
   // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
   // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
-    ${mobileLayer ? '' : accountCardHTML()}
+    <section class="sp-panel-group" data-panel-group="account"><h2>${t('settings.account')}</h2>${accountCardHTML({ mobile: mobileLayer })}</section>
+    <section class="sp-panel-group" data-panel-group="general"><h2>${t('settings.general')}</h2>
+      ${setCard({ body: setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` })) })}
+      ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
+    </section>
+    <section class="sp-panel-group" data-panel-group="runtime"><h2>${t('settings.runtime')}</h2>
     ${setCard({ title: t('settings.runtime'), body: `
       ${setGroup(
         setRow({
@@ -901,10 +906,6 @@ export function renderSettings() {
       <div id="ttl-section-wrap">${renderTtlSection()}</div>
       ${setGroup(
         setRow({
-          title: t('settings.language'),
-          control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>`,
-        })
-        + setRow({
           title: t('settings.autostart'),
           control: toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) }),
           hint: escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported')),
@@ -912,7 +913,8 @@ export function renderSettings() {
           hintStyle: `display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'}`,
         })
       )}` })}
-    ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
+    </section>
+    <section class="sp-panel-group" data-panel-group="models"><h2>${t('settings.modelsAndServices')}</h2>
     ${setCard({ title: t('settings.providers'), id: 'provider-section', body: `
       <button type="button" class="set-disclosure" data-settings-disclosure="providers"
         aria-expanded="${settingsDisclosure.providers ? 'true' : 'false'}" aria-controls="provider-panel-disclosure">
@@ -953,6 +955,8 @@ export function renderSettings() {
         value: '…',
         valueId: 'secrets-entry-sub',
       })}` })}
+    </section>
+    <section class="sp-panel-group" data-panel-group="advanced"><h2>${t('settings.advanced')}</h2>
     ${setCard({ title: t('settings.advanced'), body: `
       <div class="set-actions">
         <button class="cfg-btn set-btn" id="btn-toggle-json" title="${t('settings.editRawJson')}">${t('settings.editRawJson')}</button>
@@ -978,6 +982,8 @@ export function renderSettings() {
           移除：按钮 + 两段式确认逻辑 + #restart-status 状态行 + restartStatus/restartResult
           两个模块级订阅全删（前端零发射面）；后端 WS `restart` 命令保留不动（其余消费方
           仍在）。更新功能已随 auth-trim 批（2026-10-20 作者令）退役。 */ ''}
+    </section>
+    <section class="sp-panel-group" data-panel-group="about"><h2>${t('settings.about')}</h2>
     ${setCard({ title: t('settings.about'), body: `
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
@@ -985,12 +991,16 @@ export function renderSettings() {
           ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
           : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
       </div>
-    ` })}`;
+    ` })}</section>`;
 
+  for (const name of ['account', 'general', 'models', 'runtime', 'advanced', 'about']) {
+    const group = content.querySelector(`[data-panel-group="${name}"]`);
+    if (group) content.appendChild(group);
+  }
   paintSettingsIdentity();
   bindSettingsDisclosure(content);
   bindSettingsEvents(content, cfg);
-  if (!mobileLayer) bindNeblinkEvents(() => renderSettings());
+  bindNeblinkEvents(() => renderSettings(), content);
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
@@ -1045,7 +1055,7 @@ export function renderSettings() {
         const wrapper = document.createElement('div');
         wrapper.innerHTML = neblinkSettingsHTML();
         neblinkDiv.replaceWith(wrapper.firstElementChild);
-        if (!mobileLayer) bindNeblinkEvents(() => renderSettings());
+        bindNeblinkEvents(() => renderSettings(), content);
       }
       // Keep the avatar section in lockstep with login/avatar changes.
       paintSettingsIdentity();
