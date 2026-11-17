@@ -102,6 +102,8 @@
 .project-open-current-icon, .project-open-app-icon img, .project-open-app-icon svg { width: 20px; height: 20px; object-fit: contain; }
 .project-open-menu {
   position: fixed; z-index: 10000; min-width: 180px; padding: 4px;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
+  overflow-y: auto; box-sizing: border-box;
   border: 1px solid var(--color-border); border-radius: var(--ds-radius-input);
   box-shadow: var(--shadow-md);
 }
@@ -112,6 +114,7 @@
   color: var(--color-frame-text); text-align: left; cursor: pointer;
 }
 .project-open-menu button:hover, .project-open-menu button:focus-visible { background: rgb(var(--sapphire) / 0.15); }
+.project-open-menu button:focus-visible { outline: 2px solid rgb(var(--sapphire)); outline-offset: -2px; }
 
 /* 取消加载按钮（unmount-console 面板批 2026-11-02）：卡片头部显式人工卸载入口
    （原 .project-archive-btn 面位回归，类名随语义更替）。尺寸/形态对齐
