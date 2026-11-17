@@ -62,6 +62,18 @@ for (const version of (process.env.STACK_VERSIONS || 'worktree').split(',')) {
        samples.push(await view.locator('.media-layer').evaluateAll((els,p)=>({percent:p,layers:els.map(e=>({transform:getComputedStyle(e).transform,display:getComputedStyle(e).display,zIndex:getComputedStyle(e).zIndex}))}),p));
        if ([0,25,50,75,80,85,90,95,100].includes(p)) await page.screenshot({path:`${out}/${version}-${viewport.width}-n${count}-${side}-${direction}-${p}.png`});
       }
+      const dense = await page.evaluate(() => {
+       const a = window.__probeAnims.find(a => a.effect.target === document.querySelector('#chat .pop-stack-view > .media-layer'));
+       const duration = a.effect.getTiming().duration;
+       const points = [];
+       for (let ms = 0; ms <= duration; ms += 2) {
+        window.__probeAnims.forEach(anim => { anim.currentTime = ms; });
+        const x = new DOMMatrix(getComputedStyle(a.effect.target).transform).m41;
+        points.push({ms,x});
+       }
+       return points;
+      });
+      results[`${direction}Dense`] = dense;
       await page.evaluate(() => window.__probeAnims.forEach(a => a.finish()));
       await expect.poll(() => view.locator('.media-layer').evaluateAll(ls => ls.findIndex(l => l.classList.contains('layer-front')))).toBe(direction === 'left' ? 1 : count - 1);
       const settled = await view.locator('.media-layer').evaluateAll(els => els.map(e => ({transform:getComputedStyle(e).transform, inline:e.style.transform, display:getComputedStyle(e).display})));
@@ -81,18 +93,16 @@ for (const version of (process.env.STACK_VERSIONS || 'worktree').split(',')) {
       }
       console.log(JSON.stringify({version,viewport:viewport.width,count,side,absoluteFailures}));
       expect(absoluteFailures).toEqual([]);
-      // The outgoing card returns from the common apex to distinct fan slots.
-      // Normalize the return by each direction's signed apex-to-target distance.
-      const signedX = (dir, i) => Number(results[dir][i].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]);
-      const failures = [], values = [];
-      for (let i = 10; i <= 19; i++) {
-       const norm = dir => (signedX(dir,i)-signedX(dir,20))/(signedX(dir,10)-signedX(dir,20));
-       const left=norm('left'), right=norm('right');
-       values.push({percent:i*5,left,right});
-       if (!Number.isFinite(left) || !Number.isFinite(right) || Math.abs(left-right)>0.05) failures.push({percent:i*5,left,right});
+      for (const dir of ['left','right']) {
+       const dense=results[`${dir}Dense`];
+       const deltas=dense.slice(1).map((p,i)=>({ms:p.ms,dx:p.x-dense[i].x}));
+       const peak=Math.max(...deltas.map(d=>Math.abs(d.dx)));
+       const tail=deltas.filter(d=>d.ms>180);
+       const sign=Math.sign(dense.at(-1).x-dense.find(p=>p.ms===180).x);
+       const failures=tail.filter(d=>Math.abs(d.dx)>peak+0.001 || (sign && d.dx*sign < -0.001));
+       console.log(JSON.stringify({version,viewport:viewport.width,count,side,dir,peak,sign,tail,failures}));
+       expect(failures).toEqual([]);
       }
-      console.log(JSON.stringify({version,viewport:viewport.width,count,side,values,failures}));
-      expect(failures).toEqual([]);
      }
     });
    }
