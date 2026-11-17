@@ -4,47 +4,75 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 import io.circe.JsonObject
-import nebflow.core.ask.{AskEditProposals, AskGatewayServices, AskSessions}
+import nebflow.core.ask.{AskEditHunk, AskEditReviews, AskGatewayServices, AskSessions}
 
 import scala.util.control.NonFatal
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * File-bound Canvas Ask · 受限编辑两件套（openspec canvas-ask-restricted-edit，
- * CAE-REQ-001）：`ask_edit`（old_str→new_str 替换）/ `ask_write`（整文件重写）。
+ * File-bound Canvas Ask · 受限编辑两件套（canvas-ask-restricted-edit 起骨架，
+ * canvas-inline-diff-review 批 2026-11-16 翻成 Cursor 式「先应用、后审阅」）：
+ * `ask_edit`（old_str→new_str 替换）/ `ask_write`（整文件重写）。
  *
  * 与普通 Edit/Write 的三个本质差：
- *   1. 目标唯一：仅本会话绑定文件的绝对路径（AskEditProposals.capture 闸：
+ *   1. 目标唯一：仅本会话绑定文件的绝对路径（AskEditReviews.capture 闸：
  *      逐字相等 + 无 .. + 非软链 + 非二进制；不创建/删除/移动文件）；
- *   2. 零直写：调用即生成**待审提案**（快照 = diff 基线），盘上不动——用户在
- *      前端 diff 卡逐卡 Accept（写盘）/ Reject（丢弃）；
+ *   2. 直接落盘 + 记账：调用即写盘（作者原话「agent编辑都是直接成功的」），
+ *      同时入账待审变更；用户在 canvas 文件面的**原文档内联 diff** 里逐块
+ *      接受/拒绝或一键全部接受/拒绝（拒绝=回退；过期/外部改动=显式冲突，
+ *      不静默覆盖）；
  *   3. 授权面双保险：挂载面 = AskSessions.AskExclusiveTools（非 ask 角色剥除）；
  *      工具内侧 = isAskSession + 绑定回查（REST 直调/无绑定一律拒）。
  *
- * 提案帧：ctx.wsSend 直推 `askEditProposal`（旧/新全文在前端做行级 diff 渲染）；
- * Accept/Reject 经 WS 域 askEditAccept/askEditReject（WsAskHandlers）回
- * `askEditResolved`。
+ * 帧面：ctx.wsSend 直推 `askEditApplied`（聚合审阅态：base/current 全文 +
+ * hunks 块表，前端渲染原文档内联 diff）；resolve 动作经 WS 域
+ * askEditAccept/askEditReject/askEditDismiss（WsAskHandlers）回
+ * `askEditResolved`（携带余下审阅态或 error）。
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 object AskEditTools:
 
-  /** 提案帧下发（成功提案后；wsSend 缺席 = 无前端通道，提案仍成立）。 */
-  private[tools] def pushProposalFrame(proposal: nebflow.core.ask.AskEditProposal, ctx: ToolContext): IO[Unit] =
+  /** hunk 表的 wire 形（0 起行号 + 计数面）。 */
+  private[tools] def hunkJson(h: AskEditHunk): Json = Json.obj(
+    "id" -> h.id.asJson,
+    "oldStart" -> h.oldStart.asJson,
+    "oldCount" -> h.oldCount.asJson,
+    "newStart" -> h.newStart.asJson,
+    "newCount" -> h.newCount.asJson,
+    "added" -> h.added.asJson,
+    "removed" -> h.removed.asJson
+  )
+
+  /** 审阅态 wire 形（askEditApplied 帧 + askEditResolved.review + askState.review 同一单源）。 */
+  private[tools] def reviewJson(r: nebflow.core.ask.AskEditReview): Json = Json.obj(
+    "path" -> r.path.asJson,
+    "fileName" -> r.fileName.asJson,
+    "baseText" -> r.baseText.asJson,
+    "currentText" -> r.currentText.asJson,
+    "hunks" -> r.hunks.map(hunkJson).asJson,
+    "count" -> r.changes.length.asJson,
+    "updatedAt" -> r.updatedAt.asJson
+  )
+
+  /** 落盘成功帧下发（wsSend 缺席 = 无前端通道，账仍成立）。 */
+  private[tools] def pushAppliedFrame(review: nebflow.core.ask.AskEditReview, ctx: ToolContext): IO[Unit] =
     ctx.wsSend match
       case Some(send) =>
         send(Json.obj(
-          "type" -> "askEditProposal".asJson,
-          "sessionId" -> proposal.sessionId.asJson,
-          "proposalId" -> proposal.id.asJson,
-          "path" -> proposal.path.asJson,
-          "fileName" -> proposal.fileName.asJson,
-          "oldText" -> proposal.oldText.asJson,
-          "newText" -> proposal.newText.asJson
-        )).handleError(_ => ())
+          "type" -> "askEditApplied".asJson,
+          "sessionId" -> review.changes.lastOption.map(_.sessionId).getOrElse("").asJson,
+          "changeId" -> review.changes.lastOption.map(_.id).getOrElse("").asJson
+        ).deepMerge(reviewJson(review))).handleError(_ => ())
       case None => IO.unit
 
-  /** 提案成功后给模型的回话（两件共用）。 */
-  private[tools] def proposalReply(action: String, proposal: nebflow.core.ask.AskEditProposal): String =
-    s"Proposal ${proposal.id} created ($action on ${proposal.path}). The file is UNCHANGED — the user reviews a diff card and must Accept (write) or Reject (discard) it. Tell the user a change proposal awaits their review."
+  /** 落盘成功后给模型的回话（两件共用）：编辑已生效，审阅在 canvas。 */
+  private[tools] def appliedReply(action: String, review: nebflow.core.ask.AskEditReview): String =
+    val hunks = review.hunks
+    val added = hunks.map(_.added).sum
+    val removed = hunks.map(_.removed).sum
+    s"OK:APPLIED $action on ${review.path} (+$added -$removed lines in ${hunks.length} block${if hunks.length == 1 then "" else "s"} pending review). " +
+      "The file on disk is ALREADY updated — the user reviews it as an inline diff in the canvas file tab " +
+      "(per-block accept / reject, or accept-all / reject-all; rejecting reverts). " +
+      "Tell the user briefly that the change is in place and can be reviewed in canvas."
 
   /** 绑定回查（SendMessageToMainChatTool 同款纪律）。 */
   private[tools] def bindingFor(sid: String): IO[Option[nebflow.core.ask.AskBinding]] =
@@ -66,7 +94,7 @@ object AskEditTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Propose a search-and-replace edit to THE file this ask session is bound to (the only editable path; absolute path required). The edit is held as a pending proposal rendered to the user as a diff card — the file is NOT changed until the user accepts it. Rejects: any other path, `..` traversal, symlinks, binary content, old_str not found / ambiguous without replace_all. Prefer ask_edit for targeted changes; use ask_write to rewrite the whole file."""
+    """Apply a search-and-replace edit to THE file this ask session is bound to (the only editable path; absolute path required). The edit is applied to the file IMMEDIATELY; the user reviews it as an inline diff in the canvas file tab (per-block accept/reject — rejecting a block reverts it). Rejects: any other path, `..` traversal, symlinks, binary content, old_str not found / ambiguous without replace_all. Prefer ask_edit for targeted changes; use ask_write to rewrite the whole file."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -111,7 +139,7 @@ object AskEditTool extends Tool:
     else if oldStr.isEmpty then
       IO.pure(Left(ToolError("ask_edit: `old_str` must be a non-empty string (the ask face cannot create files — the bound file already exists).")))
     else if oldStr == newStr then
-      IO.pure(Left(ToolError("ask_edit: `old_str` and `new_str` are identical — no change proposed.")))
+      IO.pure(Left(ToolError("ask_edit: `old_str` and `new_str` are identical — no change to apply.")))
     else
       AskEditTools.bindingFor(sid).flatMap {
         case None =>
@@ -127,10 +155,10 @@ object AskEditTool extends Tool:
             else
               val i = snapshot.indexOf(oldStr)
               Right(snapshot.substring(0, i) + newStr + snapshot.substring(i + oldStr.length))
-          AskEditProposals.propose(sid, binding, path, transform).flatMap {
+          AskEditReviews.applyChange(sid, binding, path, transform).flatMap {
             case Left(why) => IO.pure(Left(ToolError(why)))
-            case Right(proposal) =>
-              AskEditTools.pushProposalFrame(proposal, ctx).as(Right(AskEditTools.proposalReply("edit", proposal)))
+            case Right(review) =>
+              AskEditTools.pushAppliedFrame(review, ctx).as(Right(AskEditTools.appliedReply("edit", review)))
           }
       }.handleErrorWith(e => IO.pure(Left(ToolError(s"ask_edit failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))))
   end call
@@ -151,7 +179,7 @@ object AskWriteTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Propose a whole-file rewrite of THE file this ask session is bound to (absolute path required; the only editable path). The new content is held as a pending proposal rendered as a diff card — the file is NOT changed until the user accepts it. Use for restructuring that is larger than a few replacements; otherwise prefer ask_edit."""
+    """Apply a whole-file rewrite of THE file this ask session is bound to (absolute path required; the only editable path). The new content is written IMMEDIATELY; the user reviews it as an inline diff in the canvas file tab (per-block accept/reject — rejecting a block reverts it). Use for restructuring that is larger than a few replacements; otherwise prefer ask_edit."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -188,10 +216,10 @@ object AskWriteTool extends Tool:
         case None =>
           IO.pure(Left(ToolError("ask_write: this ask session has no file binding — open the file card in canvas first. (ASK_EDIT_NO_BINDING)")))
         case Some(binding) =>
-          AskEditProposals.propose(sid, binding, path, _ => Right(content)).flatMap {
+          AskEditReviews.applyChange(sid, binding, path, _ => Right(content)).flatMap {
             case Left(why) => IO.pure(Left(ToolError(why)))
-            case Right(proposal) =>
-              AskEditTools.pushProposalFrame(proposal, ctx).as(Right(AskEditTools.proposalReply("rewrite", proposal)))
+            case Right(review) =>
+              AskEditTools.pushAppliedFrame(review, ctx).as(Right(AskEditTools.appliedReply("rewrite", review)))
           }
       }.handleErrorWith(e => IO.pure(Left(ToolError(s"ask_write failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))))
   end call

@@ -191,6 +191,9 @@ import { initMessages } from './messages.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initAskDock } from './askDock.js';
+// canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write 直接落盘的 canvas
+// 审阅页签（原文档内联 diff 逐块/全量接受拒绝）。
+import { initAskEditReview } from './askEditReview.js';
 import { initLightbox } from './lightbox.js';
 // flowAnim.js side-effect import REMOVED (flowmaptab-retire, #1228 两裁② 停用清单
 // 面 3 · 上游 a60af705d 申报 S10/S11 零复用——链视图为静态卡列表，动效全由 CSS 承担).
@@ -4722,6 +4725,7 @@ initBackSwipe();
   depth: Number(document.documentElement.dataset.backSwipeDepth || 0),
 });
 initAskDock(); // canvas ask mode 批（2026-10-28）：右下角入口 + 每文件独立会话气泡列
+initAskEditReview(); // canvas-inline-diff-review（2026-11-16）：审阅页签动作/快捷键接线
 initColResizers();
 // #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页
 registerCanvasPanelButton('projects', 'projects-btn', () => openProjectsTab());

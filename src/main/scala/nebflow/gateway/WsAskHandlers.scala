@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.AskHandoffPort
-import nebflow.core.ask.{AskCooldown, AskEditProposals, AskGatewayServices, AskNoteSnapshot, AskNoteStore, AskNoteWrite, AskSessions}
+import nebflow.core.ask.{AskCooldown, AskGatewayServices, AskNoteSnapshot, AskNoteStore, AskNoteWrite, AskSessions}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Canvas ask mode · WS 域（机制稿 §2/§3.3/§4/§7，实施批 2026-10-28）
@@ -31,9 +31,11 @@ private[gateway] object WsAskHandlers:
     "askReply" -> handleAskReply,
     "askNoteGet" -> handleAskNoteGet,
     "askNotePut" -> handleAskNotePut,
-    // canvas-ask-restricted-edit（CAE-REQ-001）：diff 卡 Accept/Reject 腿。
+    // canvas-inline-diff-review：canvas 内联审阅 resolve 三腿（接受/拒绝可携
+    // hunkId 逐块；dismiss = 冲突逃生口）。
     "askEditAccept" -> handleAskEditAccept,
-    "askEditReject" -> handleAskEditReject
+    "askEditReject" -> handleAskEditReject,
+    "askEditDismiss" -> handleAskEditDismiss
   )
 
   private def send(wsSend: Json => IO[Unit], payload: Json): IO[Unit] = wsSend(payload)
@@ -113,9 +115,10 @@ private[gateway] object WsAskHandlers:
                   // 编排方/用户可经 Mail(ask:<会话id>) 续聊。
                   "mailAddress" -> (nebflow.core.delegate.MailAddress.AskPrefix + sid).asJson,
                   "messages" -> encodeTranscript(msgs).asJson,
-                  // canvas-ask-restricted-edit：在列提案随回放下发（重载/换端后
-                  // diff 卡重建；引擎为权威——服务端重启即清零，前端本地态让位）。
-                  "edits" -> encodePendingEdits(sid).asJson
+                  // canvas-inline-diff-review：在列审阅态随回放下发（重载/换端后
+                  // canvas 审阅页签重建；引擎为权威——服务端重启即清零，前端本
+                  // 地态让位）。
+                  "review" -> encodePendingReview(sid)
                 )
               )
             yield ()
@@ -283,56 +286,70 @@ private[gateway] object WsAskHandlers:
     end if
   end handleAskReply
 
-  // ── canvas-ask-restricted-edit：提案 Accept/Reject 腿（CAE-REQ-001）────────
-  //   askEditAccept {sessionId, proposalId}
-  //     → askEditResolved {sessionId, proposalId, outcome:"accepted", path}
-  //     → askEditResolved {sessionId, proposalId, outcome:"error", error}（stale/
-  //       写失败——提案保持待审，可 Reject 或重新提案）
-  //   askEditReject {sessionId, proposalId}
-  //     → askEditResolved {sessionId, proposalId, outcome:"rejected"}（零写盘）
+  // ── canvas-inline-diff-review：审阅 resolve 腿 ─────────────────────────────
+  //   askEditAccept {sessionId, hunkId?}   hunkId 缺省 = 全部接受（清账零写盘）；
+  //     Some(h) = 该块标记已审（基线前移，零写盘）。
+  //   askEditReject {sessionId, hunkId?}   hunkId 缺省 = 全部拒绝（回写 base，
+  //     整体回退）；Some(h) = 该块回退（回写 current 去掉该块）。
+  //   askEditDismiss {sessionId}           保留盘上现状、清账（冲突逃生口）。
+  // 应答：askEditResolved {sessionId, action, hunkId?, outcome:"done"|"error",
+  //   error?, review?}——review 为余下审阅态（了结时 null）；error（stale 等）
+  // 时审阅保持，前端冲突条给重试/保留现状二路。
 
-  private def encodePendingEdits(sid: String): List[Json] =
-    nebflow.core.ask.AskEditProposals.pendingFor(sid).map(p =>
-      Json.obj(
-        "proposalId" -> p.id.asJson,
-        "path" -> p.path.asJson,
-        "fileName" -> p.fileName.asJson,
-        "oldText" -> p.oldText.asJson,
-        "newText" -> p.newText.asJson,
-        "createdAt" -> p.createdAt.asJson
+  /** 在列审阅态 wire 形（与 AskEditTools.reviewJson 同构；gateway 不引 tools
+    * 的私有伴生，此处独立编码保持层界）。 */
+  private def encodePendingReview(sid: String): Json =
+    nebflow.core.ask.AskEditReviews.reviewFor(sid) match
+      case None => Json.Null
+      case Some(r) => Json.obj(
+        "path" -> r.path.asJson,
+        "fileName" -> r.fileName.asJson,
+        "baseText" -> r.baseText.asJson,
+        "currentText" -> r.currentText.asJson,
+        "hunks" -> r.hunks.map(hu => Json.obj(
+          "id" -> hu.id.asJson,
+          "oldStart" -> hu.oldStart.asJson,
+          "oldCount" -> hu.oldCount.asJson,
+          "newStart" -> hu.newStart.asJson,
+          "newCount" -> hu.newCount.asJson,
+          "added" -> hu.added.asJson,
+          "removed" -> hu.removed.asJson
+        )).asJson,
+        "count" -> r.changes.length.asJson,
+        "updatedAt" -> r.updatedAt.asJson
       )
-    )
 
   private def handleAskEditResolve(
-    accept: Boolean,
+    action: String,
     text: String,
     wsSend: Json => IO[Unit]
   ): IO[Unit] =
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
-    val proposalId = raw.hcursor.downField("proposalId").as[String].getOrElse("")
+    val hunkId = raw.hcursor.downField("hunkId").as[String].toOption.filter(_.trim.nonEmpty)
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askEdit: sessionId must be an ask- session")
-    else if proposalId.trim.isEmpty then askError(wsSend, sid, "askEdit: proposalId is required")
     else
-      val outcome =
-        if accept then AskEditProposals.accept(sid, proposalId.trim)
-        else AskEditProposals.reject(sid, proposalId.trim)
+      val outcome: IO[Either[String, nebflow.core.ask.AskEditReviews.ResolveResult]] = action match
+        case "accept"  => nebflow.core.ask.AskEditReviews.accept(sid, hunkId)
+        case "reject"  => nebflow.core.ask.AskEditReviews.reject(sid, hunkId)
+        case "dismiss" => nebflow.core.ask.AskEditReviews.dismiss(sid)
       outcome.flatMap {
-        case Right(proposal) =>
+        case Right(_) =>
           wsSend(Json.obj(
             "type" -> "askEditResolved".asJson,
             "sessionId" -> sid.asJson,
-            "proposalId" -> proposalId.asJson,
-            "outcome" -> (if accept then "accepted" else "rejected").asJson,
-            "path" -> proposal.path.asJson
+            "action" -> action.asJson,
+            "outcome" -> "done".asJson,
+            "review" -> encodePendingReview(sid)
           ))
         case Left(err) =>
           wsSend(Json.obj(
             "type" -> "askEditResolved".asJson,
             "sessionId" -> sid.asJson,
-            "proposalId" -> proposalId.asJson,
+            "action" -> action.asJson,
             "outcome" -> "error".asJson,
-            "error" -> err.asJson
+            "error" -> err.asJson,
+            "review" -> encodePendingReview(sid)
           ))
       }
   end handleAskEditResolve
@@ -342,14 +359,21 @@ private[gateway] object WsAskHandlers:
     text: String,
     wsSend: Json => IO[Unit],
     watch: ExplorerWatchSession
-  ): IO[Unit] = handleAskEditResolve(accept = true, text, wsSend)
+  ): IO[Unit] = handleAskEditResolve("accept", text, wsSend)
 
   private def handleAskEditReject(
     ctx: WsDispatchCtx,
     text: String,
     wsSend: Json => IO[Unit],
     watch: ExplorerWatchSession
-  ): IO[Unit] = handleAskEditResolve(accept = false, text, wsSend)
+  ): IO[Unit] = handleAskEditResolve("reject", text, wsSend)
+
+  private def handleAskEditDismiss(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] = handleAskEditResolve("dismiss", text, wsSend)
 
   // ── Note persistence ───────────────────────────────────────────────────
   // Two inbound frames and two outbound frames, with the same file identity as the ask session

@@ -32,8 +32,8 @@ object AskSessions:
   val Prefix = "ask-"
 
   /** Only these tools are stripped from non-Ask roles; shared lookup tools and Bash are not exclusive.
-   * canvas-ask-restricted-edit（CAE-REQ-001）：ask_edit/ask_write = 提案制受限编辑
-   * （仅绑定文件；盘上零直写，前端 diff 卡 Accept/Reject）。 */
+   * canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write = 直接落盘的受限编辑
+   * （仅绑定文件；落盘即入账，canvas 原文档内联 diff 逐块审阅）。 */
   val AskExclusiveTools: Set[String] =
     Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write")
 

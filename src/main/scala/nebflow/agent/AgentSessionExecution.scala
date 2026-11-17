@@ -2660,9 +2660,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
-    // Ask has an independent ten-tool face (query-only Bash + proposal-based
-    // ask_edit/ask_write, canvas-ask-restricted-edit). Return before
-    // definition, fixed-role, plugin or delegate grants can widen that face.
+    // Ask has an independent ten-tool face (query-only Bash + direct-apply
+    // ask_edit/ask_write with canvas inline review, canvas-inline-diff-review).
+    // Return before definition, fixed-role, plugin or delegate grants can widen
+    // that face.
     if askSession then return nebflow.core.ask.AskSessions.AllowedTools
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量

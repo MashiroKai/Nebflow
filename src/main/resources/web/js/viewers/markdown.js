@@ -12,6 +12,7 @@
 //     and "open in wiki graph".
 
 import { addSourceToggle, addFindToggle, routeLocalHref, openLocalFileTab, openExternalUrlTab } from './shared.js';
+import { showDocumentTermCard } from '../documentTermCard.js';
 //（readerChrome 挂载已随 Canvas 改造批⑦退役：2026-10-31 作者令「阅读器视角
 //  仅电子书格式生效（epub/mobi/azw3 等）」——md 退出统一阅读 chrome，正文
 //  滚回 .canvas-md-scroll 原生滚动面；阅读位记账（pane._mdScrollPos +
@@ -769,7 +770,7 @@ async function renderBacklinks(mdViewer, absPath) {
 }
 
 /** Handle a click on a rendered wikilink. */
-async function onWikilinkClick(a, mdViewer) {
+async function onWikilinkClick(a, mdViewer, confirmed = false) {
   hideTermTip();
   const anchorRaw = a.dataset.wikiAnchor || '';
   const target = a.dataset.wikiTarget || '';
@@ -778,7 +779,7 @@ async function onWikilinkClick(a, mdViewer) {
     ? { kind: 'block', id: anchorRaw.slice(1) }
     : (anchorRaw ? { kind: 'heading', text: anchorRaw } : null);
   // Self-reference (or an anchor-only link in this document).
-  if (!target) {
+  if (!target && !a.dataset.wikiResolved) {
     if (anchor) applyJumpAnchor(mdViewer, anchor);
     return;
   }
@@ -796,6 +797,12 @@ async function onWikilinkClick(a, mdViewer) {
     }
   }
   if (!resolved) { window.__showToast?.(t('wiki.unresolved'), 'info'); return; }
+  if (!resolved.term && !confirmed) {
+    const path = resolved.absPath || (resolved.remote ? resolved.remote.vault.replace(/[\\/]+$/, '') + '/' + resolved.remote.rel : '');
+    showDocumentTermCard(a, { path, title: a.textContent, remote: !!resolved.remote,
+      openDocument: () => onWikilinkClick(a, mdViewer, true) });
+    return;
+  }
   // 词条命中落点（F2）：作者未写锚时采用消解产物自带的块锚 —— 深链跳到词条
   // 定义段（applyJumpAnchor 滚动 + nf-jump-flash 高亮的既有通道，零新机制）。
   if (!anchor && resolved.anchor) anchor = resolved.anchor;
