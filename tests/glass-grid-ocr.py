@@ -7,7 +7,7 @@ from PIL import Image
 
 out = os.environ.get('GSU_EVID', '/private/tmp/gsu-evid')
 img = Image.open(os.path.join(out, 'parameter-grid.png')).convert('RGB')
-alphas = [.85, .88, .90, .92, .94, .96, .98, 1, 0]
+alphas = [i / 100 for i in range(90, 101)] + [0]
 blurs = [0, 8, 16, 24, 32]
 rows = []
 for i, (alpha, blur) in enumerate((a, b) for a in alphas for b in blurs):

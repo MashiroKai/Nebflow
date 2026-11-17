@@ -8,7 +8,7 @@ const { mod } = loadPlaywright();
 const { browser, version } = await launchBrowser(mod);
 try {
   const page = await browser.newPage({ viewport: { width: 1120, height: 800 }, deviceScaleFactor: 1, colorScheme: 'light' });
-  const alphas = [.85,.88,.90,.92,.94,.96,.98,1,0];
+  const alphas = Array.from({ length: 11 }, (_, i) => (90 + i) / 100).concat([0]);
   const blurs = [0,8,16,24,32];
   await page.setContent(`<style>*{box-sizing:border-box}body{margin:0;background:#ddd}.row{height:160px;display:flex;gap:20px;padding:20px}.sample{width:250px;height:120px;position:relative;overflow:hidden;background:#fff}.text{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:bold 64px Arial;color:#000;white-space:nowrap}.glass{position:absolute;inset:0}.red{background:#f00}.blue{background:#00f}</style><div id="root"></div>`);
   await page.evaluate(({ alphas, blurs, dark }) => {
