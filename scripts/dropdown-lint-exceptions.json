@@ -1,0 +1,23 @@
+[
+  {"file":"js/modelPanel.js","line":332,"reason":"Legacy model-add selector pending migration."},
+  {"file":"js/modelPanel.js","line":612,"reason":"Legacy role model selector pending migration."},
+  {"file":"js/modelPanel.js","line":657,"reason":"Legacy small model selector pending migration."},
+  {"file":"js/modelPanel.js","line":814,"reason":"Legacy provider group selector pending migration."},
+  {"file":"js/onboarding.js","line":874,"reason":"Legacy onboarding model selector pending migration."},
+  {"file":"js/wikiGraph.js","line":389,"reason":"Legacy wiki vault selector pending migration."},
+  {"file":"js/orbSettingsUI.js","line":92,"reason":"Legacy orb state selector pending migration."},
+  {"file":"js/orbSettingsUI.js","line":100,"reason":"Legacy orb base selector pending migration."},
+  {"file":"js/orbSettingsUI.js","line":114,"reason":"Legacy orb source selector pending migration."},
+  {"file":"js/socialPanel.js","line":1100,"reason":"Legacy configuration-driven social selector pending migration."},
+  {"file":"js/sidebar.js","line":890,"reason":"Legacy thinking effort selector pending migration."},
+  {"file":"js/sidebar.js","line":905,"reason":"Legacy language selector pending migration."},
+  {"file":"js/usageDashboard.js","line":186,"reason":"Legacy usage filter selectors pending migration."},
+  {"file":"js/daemonPanel.js","line":178,"reason":"Legacy daemon setting selector pending migration."},
+  {"file":"js/bgAgentPopup.js","line":639,"reason":"Legacy background-agent model selector pending migration."},
+  {"file":"js/chatUi.js","line":196,"reason":"Legacy search scope selector pending migration."},
+  {"file":"js/chatUi.js","line":197,"reason":"Legacy search agent selector pending migration."},
+  {"file":"js/chatUi.js","line":198,"reason":"Legacy search tool selector pending migration."},
+  {"file":"js/sidebar/providersUi.js","line":245,"reason":"Legacy provider model selector pending migration."},
+  {"file":"js/sidebar/providersUi.js","line":614,"reason":"Legacy provider configuration selector pending migration."},
+  {"file":"js/mobile/searchFace.js","line":86,"reason":"Legacy mobile search kind selector pending migration; native-system exception not yet adjudicated."}
+]
