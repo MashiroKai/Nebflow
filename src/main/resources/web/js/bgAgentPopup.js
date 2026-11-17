@@ -513,6 +513,7 @@ onReconnect(refreshDurablePopupHistory);
 export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   closeStepPopup();
   currentStepId = nodeSessionId;
+  sendWs({ type: 'getModelOptions', sessionId: currentStepId });
 
   const entry = ensureStepView(currentStepId);
   entry.view.visible = true;
@@ -1343,10 +1344,10 @@ let lastModelSwitchSig = null; // value-change guard — keep DOM stable
 function renderModelSwitch() {
   const el = popupOverlay?.querySelector('#bgagent-model-switch');
   if (!el) return;
-  const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
-  const cfg = popupModelCfg || {};
   const selected = state.sessionModelSelections?.[currentStepId];
-  const current = selected !== undefined ? selected : (live || cfg.current || cfg.preferred || '');
+  // The live/role model is not a session override. Only the explicit
+  // selection determines the source shown by this control.
+  const current = selected !== undefined ? selected : '';
   const refs = (state.allModelRefs || []).slice();
   if (current && !refs.includes(current)) refs.unshift(current);
   const sig = current + '|' + refs.join(',');
