@@ -148,7 +148,29 @@ function retakeErrorText(resp, json) {
  * 失败 ⇒ 分类文案落卡面错误行 + toast（网络/超时/会话过期/总闸关闭/拒绝各自
  * 有名），恢复可点可再试——不静默。
  */
+let canvasClaim = null;
+export function showCanvasTakeover(claim, unsynced = false) {
+  canvasClaim = claim;
+  show();
+  const button = document.getElementById('takeover-retake');
+  if (button && unsynced) button.textContent = '放弃本地变更并取回控制权';
+}
+export function hideCanvasTakeover() {
+  if (!canvasClaim) return;
+  canvasClaim = null;
+  state.consoleSuperseded = false;
+  hide();
+}
+
 export async function takeoverRetake() {
+  if (canvasClaim) {
+    setRetakeLoading(true);
+    try {
+      if (await canvasClaim()) { hideCanvasTakeover(); return; }
+      retakeFailed('取得控制权失败，请刷新后重试。');
+    } catch { retakeFailed('取得控制权失败，请重试。'); }
+    return;
+  }
   const btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('takeover-retake'));
   if (!btn || btn.disabled) return; // 单飞：loading 期间再点忽略
   setRetakeLoading(true);

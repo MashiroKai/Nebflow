@@ -142,7 +142,9 @@ private[gateway] object ConfigRoutes:
               (client, tab) match
                 case (Some(id), Some(t)) if action == "claim" =>
                   canvasTakeover.claimCanvas(principal, id, t, c.get[Long]("expectedEpoch").toOption).flatMap {
-                    case Some(epoch) => Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
+                    case Some(epoch) =>
+                      wsHub.broadcast(Json.obj("type" -> "canvasWriterChanged".asJson, "epoch" -> epoch.asJson)) *>
+                        Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
                     case None => Conflict(Json.obj("error" -> "concurrent_writer_claim".asJson))
                   }
                 case (Some(id), Some(t)) =>

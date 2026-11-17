@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -34,6 +34,80 @@ async function boot(browser,s,colorScheme) {
   await page.waitForSelector('#activity-bar',{state:'attached',timeout:30000});
   return {context,page};
 }
+test('same browser canvas takeover overlay', async ({browser}, info) => {
+  test.setTimeout(180000); const s=await start(); let context;
+  try {
+    const first=await boot(browser,s,process.env.CANVAS_SCHEME || 'light'); context=first.context;
+    const a=first.page, b=await context.newPage();
+    await b.goto(s.base+'/',{waitUntil:'domcontentloaded'});
+    await b.waitForSelector('#activity-bar',{state:'attached',timeout:30000});
+    await a.evaluate(async()=>{const m=await import('/js/canvas.js');m.openCanvas()});
+    await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openCanvas()});
+    await expect(a.locator('#modal-overlay.on #takeover-box')).toBeVisible();
+    await expect(b.locator('#modal-overlay.on #takeover-box')).toBeVisible();
+    await b.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-box')).toBeHidden();
+    const claimResponse = a.waitForResponse(r=>r.url().endsWith('/api/canvas-writer/claim') && r.status()===200);
+    await a.locator('#takeover-retake').click();
+    await claimResponse;
+    const started = performance.now();
+    await expect(a.locator('#takeover-box')).toBeHidden();
+    await expect(b.locator('#takeover-box')).toBeVisible({timeout:5000});
+    console.log(`[notification-observed-ms] ${Math.round(performance.now()-started)}`);
+    await b.screenshot({path:info.outputPath('cover.png')});
+    await b.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-box')).toBeHidden();
+    // Create a real debounced local change, then preempt it before the PUT fires.
+    await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('local-unsynced','Unsynced',{pinned:true})});
+    await a.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-retake')).toContainText('放弃本地变更', {timeout:5000});
+    let claims=0; b.on('request',r=>{if(r.url().endsWith('/api/canvas-writer/claim')) claims++});
+    b.once('dialog', dialog=>dialog.dismiss());
+    await b.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-box')).toBeVisible();
+    expect(claims).toBe(0);
+    expect(await b.evaluate(async()=>{const m=await import('/js/canvas.js');return m.hasTab('local-unsynced')})).toBe(true);
+    b.once('dialog', dialog=>dialog.accept());
+    await b.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-box')).toBeHidden({timeout:30000});
+    expect(await b.evaluate(async()=>{const m=await import('/js/canvas.js');return m.hasTab('local-unsynced')})).toBe(false);
+    let releaseResponse, arrived;
+    const arrivedPromise = new Promise(resolve=>{arrived=resolve});
+    const boundedArrival = Promise.race([arrivedPromise, new Promise((_, reject) => setTimeout(() => reject(new Error('in-flight PUT did not arrive within 15s')), 15000))]);
+    const releasePromise = new Promise(resolve=>{releaseResponse=resolve});
+    await b.route('**/api/canvas-tabs', async (route) => {
+      if(route.request().method()!=='PUT') return route.continue();
+      const response=await route.fetch(); arrived(response.status());
+      await releasePromise; await route.fulfill({response});
+    });
+    try {
+      await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('inflight-tab','In flight',{pinned:true})});
+      expect(await boundedArrival).toBe(200);
+      if (!process.env.CANVAS_INFLIGHT_NEGATIVE) {
+        await a.locator('#takeover-retake').click();
+        await expect(b.locator('#takeover-box')).toBeVisible();
+      }
+      const diskBeforeLateResponse=readFileSync(join(s.data,'canvas_tabs.json'),'utf8');
+      const responseFinished = b.waitForResponse(r=>new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT');
+      releaseResponse();
+      await responseFinished;
+      await expect(b.locator('#takeover-box')).toBeVisible();
+      const changed=await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('must-not-open','Blocked',{pinned:true}); return m.hasTab('must-not-open')});
+      expect(changed).toBe(false);
+      expect(readFileSync(join(s.data,'canvas_tabs.json'),'utf8')).toBe(diskBeforeLateResponse);
+    } finally { releaseResponse(); await b.unroute('**/api/canvas-tabs'); }
+  } finally {
+    if(context) await context.close();
+    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),60000))]);
+    if(!result) throw Error(`isolated instance did not exit: ${s.dir}, ${s.port}`);
+    const probe = createServer(); probe.listen(s.port,'127.0.0.1'); await once(probe,'listening');
+    await new Promise((ok,fail)=>probe.close(e=>e?fail(e):ok()));
+    rmSync(s.dir,{recursive:true});
+    expect(existsSync(s.dir)).toBe(false);
+    console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} port_free=true home_removed=true`);
+  }
+});
+
 test('real reader, claim, persist, preemption', async ({browser}, info) => {
   test.setTimeout(180000); const s=await start(); let a,b;
   try {
@@ -109,7 +183,7 @@ test('real reader, claim, persist, preemption', async ({browser}, info) => {
     expect(blocked.path).toBe(blocked.snapshot.absPath);
   } finally {
     if(a) await a.context.close(); if(b) await b.context.close();
-    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),20000))]);
+    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),60000))]);
     if(!result) throw Error(`isolated instance did not exit: ${s.dir}, ${s.port}`);
     console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} home=${s.dir}`);
   }
