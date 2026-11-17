@@ -677,7 +677,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   // 胶囊 / 右上 ⋯ 详情浮层 / 右下悬浮终止钮 / 标题行 ✕ 退役；stopBtn/retryBtn 是
   // **同一节点**迁位（syncManageControls 线路零复制）。桌面 ⇒ null，零影响。
   bgMobileChromeApi = mountBgAgentMobileChrome({
-    overlay: popupOverlay, modal, bar, nodeSessionId, agentName,
+    overlay: popupOverlay, modal, bar, nodeSessionId, agentName, taskDescription,
   });
 
   // delegate 收起式摘要条（两层架构批 WF-01：brief 摘要一行 + 点开 brief/结果

@@ -220,14 +220,14 @@ class DelegateUiDataPlaneSpec extends FunSuite:
 
   // ── G4：聚合单查投影 ─────────────────────────────────────────────────────
 
-  test("G4: delegateJson aggregates record+live(null)+verdict(null)+task(null)+childrenCount") {
+  test("G4: delegateJson aggregates record+interrupted live+verdict(null)+task(null)+childrenCount") {
     put("delegate-nebflow-g4agg0001")
     val agg = ChainsReadFace.delegateJson("delegate-nebflow-g4agg0001", Map.empty, childrenCount = 3).unsafeRunSync()
     assert(agg.isDefined, "existing record must aggregate")
     val obj = agg.get.hcursor
     assertEquals(obj.downField("record").downField("id").as[String], Right("delegate-nebflow-g4agg0001"))
     assertEquals(obj.downField("childrenCount").as[Int], Right(3))
-    assertEquals(obj.downField("live").focus, Some(io.circe.Json.Null))
+    assertEquals(obj.downField("live").get[String]("status"), Right("interrupted"))
     assertEquals(obj.downField("task").focus, Some(io.circe.Json.Null))
     assertEquals(obj.downField("verdict").focus, Some(io.circe.Json.Null))
   }

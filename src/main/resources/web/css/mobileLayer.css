@@ -5911,12 +5911,28 @@ body.mobile-layer .bgagent-overlay .flow-agent-footer { display: none; }
    几何 = 聊天 chrome 带（top 16+safe；48px 钮带内垂直居中 = +10）；材质 =
    .mobile-page-title 胶囊同款（--cv-bg 底 / --cv-border 描边 / 零投影，无独立
    backdrop——悬浮钮统一批的标题胶囊语言，零新配方）。只读面：不拦交互。 */
-body.mobile-layer .bgagent-overlay .bgagent-status-pill {
+body.mobile-layer .bgagent-overlay .bgagent-mobile-heading {
   position: absolute;
-  top: calc(16px + env(safe-area-inset-top, 0px) + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: calc(100vw - 152px); /* 两侧钮（16+48）各留 12px 呼吸 ⇒ 76×2 */
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 76px;
+  right: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  z-index: 40;
+  pointer-events: none;
+}
+body.mobile-layer .bgagent-overlay .bgagent-mobile-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--ds-fw-btn);
+  color: var(--color-frame-text, var(--color-text));
+}
+body.mobile-layer .bgagent-overlay .bgagent-status-pill {
+  max-width: 100%;
   height: 28px;
   display: inline-flex;
   align-items: center;
@@ -5932,7 +5948,7 @@ body.mobile-layer .bgagent-overlay .bgagent-status-pill {
   overflow: hidden;
   pointer-events: none;
   user-select: none;
-  z-index: 40;
+  transition: width 200ms ease, background-color 200ms ease, border-color 200ms ease;
 }
 body.mobile-layer .bgagent-overlay .bgagent-pill-status {
   display: inline-flex;

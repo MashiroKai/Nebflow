@@ -56,6 +56,19 @@ class ActorMailboxExplosionGuardSpec extends CatsEffectSuite:
       else IO.sleep(50.millis) *> awaitProcessed(processed, target)
     }.timeoutTo(30.seconds, processed.get)
 
+  test("stopping an older actor must not unregister its same-path replacement") {
+    val system = ActorSystem(s"actor-incarnation-${scala.util.Random.nextInt(100000)}")
+    val idle = new Behavior[String]:
+      def receive(ctx: ActorContext[String], msg: String): IO[Behavior[String]] = IO.pure(this)
+    (for
+      old <- system.spawn(idle, "same-name")
+      replacement <- system.spawn(idle, "same-name")
+      _ <- system.stop(old)
+      resolved <- system.resolve[String](replacement.path.toString)
+    yield assert(resolved eq replacement, "old incarnation cleanup removed its replacement"))
+      .guarantee(system.stopAll)
+  }
+
   test("K1/K2/K3: filling the kernel box to capacity + 1 records exactly ONE dead letter, keeps the actor alive, loses no queued message") {
     val cap = ActorSystem.DefaultMailboxCapacity
     val system = ActorSystem(s"deadletter-spec-${scala.util.Random.nextInt(100000)}")
