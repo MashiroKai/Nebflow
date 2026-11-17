@@ -77,7 +77,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', '--project', type=Path, help='project checkout path (default: current working directory); resolves its primary checkout')
     sub = parser.add_subparsers(dest='command', required=True)
-    p = sub.add_parser('new'); p.add_argument('name', type=name); p.add_argument('--branch')
+    p = sub.add_parser('new'); p.add_argument('name', type=name); p.add_argument('--branch'); p.add_argument('--base', default='feat/base'); p.add_argument('--target', default='feat/base')
     sub.add_parser('list')
     p = sub.add_parser('audit'); p.add_argument('name', nargs='?', type=name)
     p = sub.add_parser('clean'); p.add_argument('--ttl-days', type=float, default=7); p.add_argument('--apply', action='store_true'); p.add_argument('--force', action='store_true'); p.add_argument('--dry-run', action='store_true')
@@ -88,11 +88,27 @@ def main():
     if args.command == 'new':
         target = project / '.stand' / 'worktrees' / args.name
         branch = args.branch or 'feat/' + args.name
-        target.parent.mkdir(parents=True, exist_ok=True)
+        if not re.fullmatch(r'(feat|bug)/.+', branch) or branch == 'feat/base' or subprocess.run(['git', 'check-ref-format', 'refs/heads/' + branch], cwd=project).returncode:
+            raise ValueError('new development branches must use feat/* or bug/*; feat/base is reserved')
+        if (args.base, args.target) != ('feat/base', 'feat/base') and not (branch.startswith('bug/') and (args.base, args.target) == ('main', 'main')):
+            raise ValueError('only bug/* hotfixes may use --base main --target main; otherwise use feat/base')
+        base = git('rev-parse', '--verify', 'refs/heads/' + args.base + '^{commit}', cwd=project)
         exists = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/' + branch], cwd=project).returncode == 0
-        subprocess.run(['git', 'worktree', 'add', str(target)] + ([branch] if exists else ['-b', branch]), cwd=project, check=True)
+        if exists and git('merge-base', branch, base, cwd=project) != base:
+            raise ValueError(f'merge-base({branch}, {args.base}) is not {base}')
+        if exists and args.base == 'main':
+            raise ValueError('hotfix creation requires a new branch to record its main baseline')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(['git', 'worktree', 'add', str(target)] + ([branch] if exists else ['-b', branch, base]), cwd=project, check=True)
+        if git('merge-base', branch, base, cwd=project) != base:
+            raise ValueError(f'merge-base({branch}, {args.base}) validation failed')
+        print(f'Base verified: merge-base({branch}, {args.base}) = {base}')
+        if args.base == 'main':
+            print(f'Hotfix audit: include this line in the MR description: Hotfix-Main-Baseline: {base} (author approval required)')
         for part in ('delivery', 'evidence'):
             (tmp / args.name / part).mkdir(parents=True, exist_ok=True)
+        if args.base == 'main':
+            (tmp / args.name / 'evidence' / 'hotfix-main-baseline.txt').write_text(f'Hotfix-Main-Baseline: {base}\n', encoding='utf-8')
         audit(project, args.name)
         print(f'Created {target}; artifacts {tmp / args.name}')
     elif args.command == 'list':
