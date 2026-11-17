@@ -200,6 +200,8 @@ body.mobile-layer .mh-search-dock .mh-search-input {
    内距。静止时列表首行仍在带下（滚区自带让位内距）；上滚后内容从**透明**带内
    穿过（本批：带不再占流、也不再给内容加裁切线），圆钮是唯一浮在内容上的件。 */
 body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar {
+  width: var(--ds-hit-tap-lg, 48px);
+  height: var(--ds-hit-tap-lg, 48px);
   margin-left: calc(100% - var(--ds-space-4) - var(--ds-hit-tap-lg, 48px));
   margin-right: var(--ds-space-4);
   padding-left: 0;

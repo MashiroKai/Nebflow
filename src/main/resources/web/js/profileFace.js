@@ -383,14 +383,14 @@ function renderBody() {
   // `fm-avatar-40`（40×40，friends.css 既有规则，零新尺寸字面量）。
   const hero = el('div', 'pf-hero sp-identity');
   if (current?.kind === 'group') {
-    hero.appendChild(avatarNode({ name: current.conv?.title || '' }, 56));
+    hero.appendChild(avatarNode({ name: current.conv?.title || '' }, 40));
     const idText = el('div', 'pf-hero-id');
     idText.appendChild(el('div', 'pf-hero-name', subjectTitle()));
     idText.appendChild(el('div', 'pf-hero-sub', t('messages.memberCount', { n: Number(current.conv?.memberCount) || 0 })));
     hero.appendChild(idText);
   } else {
     const f = current?.conv || {};
-    hero.appendChild(avatarNode({ name: f.name, neblinkId: f.neblinkId, avatarUrl: f.avatarUrl }, 56));
+    hero.appendChild(avatarNode({ name: f.name, neblinkId: f.neblinkId, avatarUrl: f.avatarUrl }, 40));
     const idText = el('div', 'pf-hero-id');
     idText.appendChild(el('div', 'pf-hero-name', subjectTitle()));
     idText.appendChild(el('div', 'pf-hero-sub', f.neblinkId || ''));
