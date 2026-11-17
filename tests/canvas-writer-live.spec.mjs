@@ -82,8 +82,10 @@ test('same browser canvas takeover overlay', async ({browser}, info) => {
     try {
       await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('inflight-tab','In flight',{pinned:true})});
       expect(await arrivedPromise).toBe(200);
-      await a.locator('#takeover-retake').click();
-      await expect(b.locator('#takeover-box')).toBeVisible();
+      if (!process.env.CANVAS_INFLIGHT_NEGATIVE) {
+        await a.locator('#takeover-retake').click();
+        await expect(b.locator('#takeover-box')).toBeVisible();
+      }
       const diskBeforeLateResponse=readFileSync(join(s.data,'canvas_tabs.json'),'utf8');
       const responseFinished = b.waitForResponse(r=>new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT');
       releaseResponse();
