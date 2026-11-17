@@ -10,12 +10,13 @@ try {
  for (const theme of ['light', 'dark']) {
   const s = await createSession(browser, { width:1280, height:844, colorScheme:theme, baseURL:'https://stand.test/', apiStubs:{
    '/api/canvas-writer':{body:{role:'writer',epoch:1}},
+   '/api/canvas-tabs':{body:{v:2,tabs:[]}},
    '/api/projects':{body:{projects:[{name:'Example',workspace:'/example/workspace',description:'Project workspace'}]}},
    '/api/project-open-apps':{body:{apps:[{id:'editor',label:'Editor',icon:'/favicon-32.png'}]}},
    '/api/projects/Example/open-in-app':{body:{ok:true}}
   }});
   await s.boot(); const {page}=s;
-  await page.locator('.canvas-writer-controls [role="status"]').filter({hasText:'Canvas：可写'}).waitFor({state:'visible'});
+  await page.waitForFunction(() => document.querySelector('.canvas-writer-controls [role="status"]')?.textContent === 'Canvas：可写');
   await page.evaluate(async theme=>{document.documentElement.dataset.theme=theme; (await import('/js/projectTab.js')).openProjectsTab();},theme);
   const button=page.locator('.project-card [data-open-workspace]').first(); await button.waitFor({state:'visible'});
   for(let i=0;i<20;i++) {
