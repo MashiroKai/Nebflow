@@ -24,7 +24,7 @@ export function todoToDecisionCard(task) {
     type: detail ? 'detail' : 'direct',
     response: null,
     status: task.completedAt == null ? 'unresolved' : 'completed',
-    source: { type: 'todo', id: String(task.id), sessionId: task.sessionId || null },
+    source: { type: 'todo', id: String(task.id), sessionId: task.sessionId || null, project: task.project || null, creator: task.creator || null },
   };
 }
 

@@ -249,6 +249,9 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
         assertEquals(row.hcursor.get[Int]("priority").toOption, Some(3))
         assertEquals(row.hcursor.get[Boolean]("completed").toOption, Some(false))
         assert(row.hcursor.downField("completedAt").focus.contains(Json.Null))
+        assertEquals(row.hcursor.get[String]("sessionId").toOption, Some("s1"))
+        assert(row.hcursor.downField("project").focus.contains(Json.Null))
+        assert(row.hcursor.downField("creator").focus.contains(Json.Null))
         // opt-in 面：已完成殿后返回
         val allRows = all.head.hcursor.downField("tasks").as[List[Json]].getOrElse(Nil)
         assertEquals(

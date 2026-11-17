@@ -10,6 +10,8 @@ test('only rows with an explicit matching session are projected', () => {
   const rows = [{ id: '1', kind: 'todo', sessionId: 's' }, { id: '2', kind: 'todo' }, { id: '3', kind: 'todo', sessionId: 'other' }];
   assert.deepEqual(currentSessionDecisionCards(rows, 's').map(card => card.id), ['1']);
   assert.deepEqual(currentSessionDecisionCards(rows, ''), []);
+  const matching = currentSessionDecisionCards([...rows, rows[0], { id: '4', kind: 'todo', sessionId: null }, { id: '5', kind: 'todo', sessionId: 's', completedAt: 1 }], 's');
+  assert.equal(unresolvedDecisionCardCount(matching), 1);
 });
 
 test('new card length boundaries reject without truncation', () => {

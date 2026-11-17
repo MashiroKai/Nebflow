@@ -266,6 +266,19 @@ async function bootApp(page) {
 
 const frames = (captured, type) => captured.filter((f) => f.type === type);
 
+test('null 来源不回填当前会话且不可错误寻址', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: [{ id: 'unknown', kind: 'todo', content: '来源未知', sessionId: null, project: null }] });
+  await h.waitRows(1);
+  const row = await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.allItems()[0]);
+  expect(row.sessionId).toBeNull();
+  const count = frames(h.captured, 'completeTodo').length;
+  await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.completeItem('unknown'));
+  expect(frames(h.captured, 'completeTodo')).toHaveLength(count);
+  expect((await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.allItems()[0])).completed).toBe(false);
+});
+
 test('① 首次挂载惰性拉真源：listScheduledTasks{scope:"all"} 一发 + 渲染面取到回执数据（后端排序权威，chips 行序不参与）', async ({ page }) => {
   const h = await bootApp(page);
   // 零用户操作：等待回执落库（惰性首拉发生在渲染层挂载 subscribe 时）。
