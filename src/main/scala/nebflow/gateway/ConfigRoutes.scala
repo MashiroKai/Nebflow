@@ -125,6 +125,18 @@ private[gateway] object ConfigRoutes:
 
       case req @ PUT -> Root / "canvas-tabs" =>
         withAuth(req) {
+          // Fail closed until the takeover arbiter can fence the actual write.
+          // Neither a client-supplied identity nor a version is an authorization.
+          Conflict(Json.obj(
+            "error" -> "canvas_read_only".asJson,
+            "role" -> "reader".asJson,
+            "recovery" -> "Canvas writer control is unavailable; upgrade or continue read-only".asJson
+          ))
+        }
+
+      /* Pending integration with the atomic takeover arbiter: do not expose unfenced writes.
+      case req @ PUT -> Root / "canvas-tabs" =>
+        withAuth(req) {
           // 读 body 有界：take(max+1) 后超限即 413，防大 payload 拉爆内存。
           val maxBytes = CanvasTabs.MaxBodyBytes
           req.body.take(maxBytes.toLong + 1).compile.toVector.flatMap { bytes =>
@@ -165,6 +177,7 @@ private[gateway] object ConfigRoutes:
                   }
           }
         }
+      */
 
       // ── Executors（executor-registry 批 2026-10-03）──────────────────────
       // GET /api/executors —— 统一 delegate 的执行器快照：全部在册执行器 +
