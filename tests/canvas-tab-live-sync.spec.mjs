@@ -244,6 +244,7 @@ test('A closes the tab; B follows — tab disappears without reload', async ({ b
   await a.ctx.close(); await b.ctx.close();
 });
 
+// 验收重复判据：本用例 --repeat-each=20 --workers=1 必须 20/20；另需稳定窗口验证。
 // ════ c. A 切激活 → B 激活跟随（activeTabId 载荷腿）════
 test('A switches the active tab; B active follows via activeTabId payload', async ({ browser }) => {
   engine.reset();
