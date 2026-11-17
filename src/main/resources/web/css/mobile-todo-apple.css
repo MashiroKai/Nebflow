@@ -584,6 +584,29 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item.is-done .ta
   color: var(--color-text-muted);
   text-decoration: line-through;
 }
+/* Decision content stays in the list flow, above the existing bottom clearance. */
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-detail {
+  padding: 4px 16px 16px 58px;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-detail[hidden] { display: none; }
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-question { font-weight: 600; }
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-status,
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-submit { color: var(--color-text-muted); }
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-decision-submit {
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--ds-radius-xl);
+  padding: 0 16px;
+  background: var(--color-surface);
+}
 /* Empty state: vertically + horizontally centered, neutral grey */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-empty {
   flex: 1 1 auto;

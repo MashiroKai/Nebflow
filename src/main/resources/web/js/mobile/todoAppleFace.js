@@ -705,6 +705,10 @@ function buildList(root, section, nav) {
       // Structured build (contract R5): single circle span, DOM identical to
       // the previous template string.
       check.appendChild(el('span', 'ta-check-circle'));
+      if (it.decision) {
+        check.disabled = true;
+        check.setAttribute('aria-label', '决策待办，回答未接线');
+      }
       check.addEventListener('click', (e) => {
         e.stopPropagation();
         todoStore.completeItem(it.id);
@@ -724,11 +728,38 @@ function buildList(root, section, nav) {
       const bodyBtn = btnEl('ta-item-body');
       bodyBtn.type = 'button';
       elIn(bodyBtn, 'span', 'ta-item-title', it.title || '—');
+      if (it.decision) elIn(bodyBtn, 'span', 'ta-item-due', '决策 · 回答未接线');
       if (it.due != null) elIn(bodyBtn, 'span', 'ta-item-due', dueText(it.due));
-      bodyBtn.addEventListener('click', () => openItem(it.id, nav));
       row.appendChild(bodyBtn);
-
-      itemsBox.appendChild(row);
+      if (it.decision) {
+        bodyBtn.setAttribute('aria-expanded', 'false');
+        const detail = el('div', 'ta-decision-detail');
+        detail.hidden = true;
+        elIn(detail, 'div', 'ta-decision-question', String(it.decision.question || ''));
+        const options = Array.isArray(it.decision.options) ? it.decision.options : [];
+        options.forEach((option) => {
+          const label = elIn(detail, 'label', 'ta-decision-option');
+          const input = document.createElement('input');
+          input.type = it.decision.multiSelect ? 'checkbox' : 'radio';
+          input.disabled = true;
+          label.appendChild(input);
+          elIn(label, 'span', '', String(option));
+        });
+        if (it.decision.allowOther) elIn(detail, 'div', 'ta-decision-status', '其他选项未接线');
+        const submit = btnEl('ta-decision-submit');
+        submit.type = 'button';
+        submit.disabled = true;
+        submit.textContent = '提交回答（未接线）';
+        detail.appendChild(submit);
+        bodyBtn.addEventListener('click', () => {
+          detail.hidden = !detail.hidden;
+          bodyBtn.setAttribute('aria-expanded', String(!detail.hidden));
+        });
+        itemsBox.append(row, detail);
+      } else {
+        bodyBtn.addEventListener('click', () => openItem(it.id, nav));
+        itemsBox.appendChild(row);
+      }
     }
     empty.hidden = list.length > 0;
     empty.textContent = listTarget.mode === 'completed'
