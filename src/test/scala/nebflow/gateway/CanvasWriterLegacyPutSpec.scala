@@ -32,3 +32,39 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
       }
     }
   }
+
+  test("two tabs of one browser compete and a reader PUT is rejected") {
+    val token = "canvas-writer-test-token"
+    val routes = new RestApiRoutes(
+      tokenRef = Ref.unsafe[IO, String](token),
+      configRef = Ref.unsafe[IO, NebflowServiceConfig](
+        NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
+      ),
+      sharedResources = null,
+      sessionStore = null,
+      wsRoutes = null
+    ).routes
+    def call(method: Method, path: String, body: Json): IO[Response[IO]] =
+      val req = Request[IO](method, Uri.unsafeFromString(path))
+        .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token)))
+        .withEntity(body)
+      routes(req).value.map(_.getOrElse(fail(s"route fell through: $path")))
+    def identity(tab: String): Json = Json.obj("clientId" -> "browser-a".asJson, "tabInstanceId" -> tab.asJson)
+    for
+      first <- call(Method.POST, "/canvas-writer/claim", identity("tab-a"))
+      _ = assertEquals(first.status, Status.Ok)
+      firstBody <- first.as[Json]
+      firstEpoch = firstBody.hcursor.get[Long]("epoch").toOption.get
+      second <- call(Method.POST, "/canvas-writer/claim", identity("tab-b"))
+      _ = assertEquals(second.status, Status.Ok)
+      secondBody <- second.as[Json]
+      secondEpoch = secondBody.hcursor.get[Long]("epoch").toOption.get
+      _ = assert(secondEpoch > firstEpoch)
+      reader <- call(Method.PUT, "/canvas-tabs", identity("tab-a").deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
+      ))
+      _ = assertEquals(reader.status, Status.Conflict)
+      rejection <- reader.as[Json]
+      _ = assert(Set("canvas_read_only", "stale_writer_epoch").contains(rejection.hcursor.get[String]("error").getOrElse("")))
+    yield ()
+  }
