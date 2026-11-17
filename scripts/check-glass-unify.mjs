@@ -593,7 +593,7 @@ function cssLoadOrder() {
   return order;
 }
 
-const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registry: [], exemptRows: [] };
+const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registry: [], exemptRows: [], degradeRules: [] };
 {
   const order = cssLoadOrder();
   const rulesOf = new Map();
@@ -706,10 +706,22 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   for (const f of order) {
     for (const r of rulesOf.get(f)) {
       seq++;
-      if (isDegradeBlock(r)) continue;
+      if (isDegradeBlock(r)) {
+        for (const cx of splitTop(r.selector, /,/)) {
+          g7.degradeRules.push({ file: f, line: r.line, selector: cx.trim() });
+        }
+        continue;
+      }
       const blur = hasBlur(r);
       const optedOut = r.decls.some((d) => isBackdropProp(d.prop) && /^none$/i.test(d.value.trim()));
       for (const cx of splitTop(r.selector, /,/)) {
+        // An explicit no-backdrop selector is a separate fallback cascade, not
+        // the normal surface. Check each selector independently: a selector
+        // list can mix normal and fallback selectors in the same CSS rule.
+        if (/(?:^|[\s>+~])(?:html)?\.no-backdrop\b/i.test(cx)) {
+          g7.degradeRules.push({ file: f, line: r.line, selector: cx.trim() });
+          continue;
+        }
         if (/::-webkit-scrollbar/.test(cx)) continue;   // 滚动条不是面
         const key = keyOf(cx);
         if (!key) continue;
@@ -791,7 +803,10 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
           ? (glassBases.has(`.${viaClass}`) || glassBases.has(viaClass))
           : (effBlur(e) || (glassBases.has(base) && !effOptedOut(e)));
         const bandOk = a === null || (a >= GLASS_ALPHA_MIN && a <= GLASS_ALPHA_MAX);
-        if (!glassed) {
+        if (e && /^var\(\s*--color-surface\s*\)$/.test(String(e.bg || '').trim())) {
+          entry.ok = false;
+          entry.detail = `常态玻璃面不得使用降级实底 ${e.bg}（${e.bgFile}:${e.bgLine}）`;
+        } else if (!glassed) {
           entry.ok = false;
           entry.detail = `期望毛玻璃，但该面没有任何模糊来源（${viaClass ? `.${viaClass} 不在 glass.css 供体里` : '既无成员也无类'}）`;
         } else if (!bandOk) {
@@ -893,6 +908,7 @@ if (argv.has('--json')) {
       elementSurfaces: g7.surfaces,
       violations: g7.hits,
       exempted: g7.exemptHits,
+      degradeRuleCount: g7.degradeRules.length,
       registry: g7.registry,
       exemptions: g7.exemptRows,
     },
