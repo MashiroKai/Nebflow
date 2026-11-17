@@ -11,6 +11,8 @@ const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', '
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 
 const SID = 'smoke-session-1';
+let extraSession = false;
+let additionalSession = false;
 const NOW = Date.now();
 const DAY = 86400000;
 // Cross-day seed: today, yesterday, 3 days ago
@@ -46,7 +48,10 @@ await page.route('**/*', (route) => {
   let p = decodeURIComponent(url.pathname);
   if (p === '/') p = '/index.html';
   if (p === '/api/sessions') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'Smoke', agentName: 'Nebula' }], activeId: SID }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'Smoke', agentName: 'Nebula' }, ...(extraSession ? [{ id: 'other-session', name: 'Other', agentName: 'OtherAgent' }] : []), ...(additionalSession ? [{ id: 'third-session', name: 'Third', agentName: 'ThirdAgent' }] : [])], activeId: SID }) });
+  }
+  if (p.startsWith('/api/sessions/other-session/history')) {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: [{type:'user', text:'unique other agent marker', timestamp:NOW}], total:1 }) });
   }
   if (p.startsWith(`/api/sessions/${SID}/history`)) {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: HISTORY, total: HISTORY.length, sessionId: SID }) });
@@ -152,6 +157,30 @@ await page.waitForTimeout(600);
 const dateEnabled = await tabs.nth(4).getAttribute('aria-disabled');
 check('§3 date tab still enabled after leaving media', dateEnabled !== 'true', String(dateEnabled));
 
+// Exercise the actual filtering chain with two distinguishable sessions.
+extraSession = true;
+await page.locator('#search-scope').click();
+await page.locator('.project-open-menu [role="menuitemradio"]').nth(1).click();
+await page.waitForFunction(() => document.querySelector('#search-results')?.textContent.includes('unique other agent marker'), null, { timeout: 5000 });
+check('scope all fetches other session results', true);
+await page.locator('#search-agent').click();
+await page.locator('.project-open-menu [role="menuitemradio"]').filter({ hasText:'OtherAgent' }).click();
+await page.waitForFunction(() => document.querySelector('#search-agent')?.value === 'OtherAgent' && document.querySelector('#search-results')?.textContent.includes('unique other agent marker') && !document.querySelector('#search-results')?.textContent.includes('today plain message'), null, { timeout: 5000 });
+check('agent selection filters results', true);
+additionalSession = true;
+const refresh = page.waitForResponse(response => response.url().includes('/api/sessions?') && response.request().method() === 'GET', { timeout: 5000 });
+await page.locator('#search-keyword').fill('unique');
+await refresh;
+await page.waitForFunction(() => document.querySelector('#search-results')?.textContent.includes('unique other agent marker') && document.querySelector('#search-agent')?.value === 'OtherAgent' && !document.querySelector('#search-results')?.hasAttribute('data-loading'), null, { timeout: 5000 });
+await page.locator('#search-agent').click();
+check('agent options rebuilt while value stays selected', await page.locator('.project-open-menu [aria-checked="true"]').innerText().then(s => s.includes('OtherAgent')) && await page.locator('.project-open-menu [role="menuitemradio"]').filter({hasText:'ThirdAgent'}).count() === 1);
+await page.keyboard.press('Escape');
+await page.locator('#search-keyword').fill('');
+await page.locator('#search-agent').click();
+await page.keyboard.press('Escape');
+await page.locator('#search-agent').click(); await page.locator('.project-open-menu [role="menuitemradio"]').first().click();
+await page.locator('#search-scope').click(); await page.locator('.project-open-menu [role="menuitemradio"]').first().click();
+extraSession = false;
 // Scope and agent remain keyboard-operable single-choice filters.
 for (const id of ['search-scope', 'search-agent']) {
   const trigger = page.locator(`#${id}`);
