@@ -577,7 +577,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
       // `completed` 是 `completedAt.isDefined` 的布尔镜像——避免前端各自判 null。
       "priority" -> t.priority.asJson,
       "completed" -> t.isCompleted.asJson,
-      "completedAt" -> t.completedAt.asJson
+      "completedAt" -> t.completedAt.asJson,
+      "decision" -> t.decision.asJson
     )
 
   private def handleDeleteScheduledTask(
@@ -834,6 +835,13 @@ private[gateway] object WsTasksWorkspaceHandlers:
     val cpId = json.hcursor.downField("id").as[String].getOrElse("")
     if cpSessionId.nonEmpty && cpId.nonEmpty then
       sharedResources.scheduledTaskStore.findTaskById(cpId).flatMap {
+        case Some(t) if t.isTodo && t.decision.nonEmpty =>
+          // Fail closed until validation, secret storage and durable delivery are wired.
+          wsSend(io.circe.Json.obj(
+            "type" -> "error".asJson,
+            "msgType" -> "completeTodo".asJson,
+            "message" -> "Decision answers are not supported yet; the todo was not completed.".asJson
+          ))
         case Some(t) if t.isTodo =>
           val now = System.currentTimeMillis()
           // 幂等：已完成的再次打卡沿用首次完成时刻，不重复写 done 痕（周报不虚涨）。
