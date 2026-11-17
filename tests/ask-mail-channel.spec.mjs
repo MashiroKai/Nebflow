@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { installTicketMock, ticketGuard } from './nf-ticket-mock.mjs';
+import { scanRowCenters } from './row-center-scan.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
@@ -181,6 +182,25 @@ test('T1 ASK · INJECTED row carries the ask chip: text + data-ask-addr + title 
   await expect(chip).toHaveText(ASK_ADDR);
   await expect(chip).toHaveAttribute('data-ask-addr', ASK_ADDR);
   await expect(chip).toHaveAttribute('title', ASK_ADDR);
+  // Compare actual rendered text and chip centers, allowing 1 CSS px for rounding.
+  const centers = await label.evaluate((el) => {
+    const text = document.createRange();
+    text.selectNodeContents(el.firstChild);
+    const a = text.getBoundingClientRect();
+    const b = el.querySelector('.ask-mail-addr').getBoundingClientRect();
+    const row = el.getBoundingClientRect();
+    return { text: (a.top + a.bottom) / 2, chip: (b.top + b.bottom) / 2, row: (row.top + row.bottom) / 2 };
+  });
+  console.log('ASK label centers', JSON.stringify(centers));
+  expect(Math.abs(centers.text - centers.chip), JSON.stringify(centers)).toBeLessThanOrEqual(1);
+  const scanSource = scanRowCenters.toString();
+  const violations = await row.evaluate((el, source) => (0, eval)(`(${source})`)(el), scanSource);
+  expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+  await chip.evaluate((el) => { el.style.transform = 'translateY(4px)'; });
+  const injected = await row.evaluate((el, source) => (0, eval)(`(${source})`)(el), scanSource);
+  console.log('Injected displacement audit:', JSON.stringify(injected));
+  expect(injected.some(v => v.container.includes('injected-source-label') && v.delta > 1)).toBe(true);
+  await chip.evaluate((el) => { el.style.transform = ''; });
   // 正文里的可续聊地址行（编排方 LLM 上下文面）也在场
   await expect(row).toContainText('Mail(address="ask:ask-1a2b3c4d")');
   expect(errors).toEqual([]);

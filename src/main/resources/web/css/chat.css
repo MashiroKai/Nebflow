@@ -1399,6 +1399,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-bottom-right-radius: 4px;
 }
 .bubble.injected .injected-source-label {
+  display: flex;
+  align-items: center;
   color: rgb(var(--sapphire) / 0.85);
   opacity: 1;
 }
@@ -1468,9 +1470,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 /* ask 会话的 Mail 续聊地址 chip（ask-mail 批 2026-11-16）：挂在注入气泡来源
    标签尾（ASK · INJECTED 面上，编排方续聊通道的可见形态）。形态 = .bg-task-addr
-   同族（值全走 --ds-* 槽，不另起材质）；差异只沿 .delivery-badge 的内联版式
-   （来源标签是文本行不是 flex 行）：inline-block + ellipsis，**全文在 title 与
-   data-ask-addr**，复制恒给全文——截断只是版式，不是数据。 */
+   同族（值全走 --ds-* 槽，不另起材质）；来源标签用 flex 交叉轴居中，
+   地址用 ellipsis，**全文在 title 与 data-ask-addr**，复制恒给全文。 */
 .ask-mail-addr {
   display: inline-block;
   margin-left: var(--ds-space-1h);
