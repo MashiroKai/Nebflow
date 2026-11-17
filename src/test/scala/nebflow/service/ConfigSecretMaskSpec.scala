@@ -185,6 +185,15 @@ class ConfigSecretMaskSpec extends FunSuite:
       assertEquals(apiKeyOf(agent, "cycle"), Some("***"))
   }
 
+  test("saving search credentials stores a reference that resolves") {
+    val input = Json.obj("search" -> Json.obj("apiKey" -> Json.fromString("fixture-search-secret")))
+    assertEquals(ConfigService.updateConfig(input.noSpaces).unsafeRunSync(), Right(()))
+    val key = readDisk().hcursor.downField("search").downField("apiKey").as[String].toOption.get
+    assert(key.startsWith("secret:config-"))
+    assert(nebflow.core.secrets.ConfigCredentialStore.resolve(PathUtil.dataRoot, key, "test", (_, _) => ()) == "fixture-search-secret")
+    assert(!os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName).contains("fixture-search-secret"))
+  }
+
   test("snapshot externalizes legacy provider and search credentials") {
     val backupDir = PathUtil.dataRoot / "backups"
     if os.exists(backupDir) then os.remove.all(backupDir)

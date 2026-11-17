@@ -159,6 +159,18 @@ object ConfigService:
               root.add("llm", Json.fromJsonObject(llm.add("providers", Json.fromJsonObject(updated))))
     }
 
+  private[nebflow] def persistSearchCredentials(json: Json): Json =
+    json.mapObject { root =>
+      root("search").flatMap(_.asObject) match
+        case None => root
+        case Some(search) =>
+          val secured = search("apiKey").flatMap(_.asString) match
+            case Some(value) => search.add("apiKey", Json.fromString(
+              nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value)))
+            case None => search
+          root.add("search", Json.fromJsonObject(secured))
+    }
+
   /** Validate config JSON — returns list of errors. Empty list means valid. */
   def validateConfig(jsonStr: String): List[String] =
     parse(jsonStr) match
@@ -266,7 +278,8 @@ object ConfigService:
                 // provider apiKeys in cleartext — the file lands 0600 instead
                 // of the umask default 0644 (legacy files converge on their
                 // next save; no migration script).
-                val persisted = persistProviderCredentials(parse(merged).fold(_ => throw new IllegalArgumentException("Invalid merged configuration"), identity))
+                val persisted = persistSearchCredentials(persistProviderCredentials(
+                  parse(merged).fold(_ => throw new IllegalArgumentException("Invalid merged configuration"), identity)))
                 AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), persisted.spaces2)
               }
               .attempt

@@ -39,17 +39,7 @@ object ConfigSnapshot:
       // Convert first; the snapshot remains recoverable through the same references.
       val source = parse(os.read(configPath)).fold(
         _ => throw new IllegalArgumentException("Cannot snapshot invalid configuration"), identity)
-      val providersConverted = ConfigService.persistProviderCredentials(source)
-      val converted = providersConverted.mapObject { root =>
-        root("search").flatMap(_.asObject) match
-          case None => root
-          case Some(search) =>
-            val secured = search("apiKey").flatMap(_.asString) match
-              case Some(value) => search.add("apiKey", io.circe.Json.fromString(
-                nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value)))
-              case None => search
-            root.add("search", io.circe.Json.fromJsonObject(secured))
-      }
+      val converted = ConfigService.persistSearchCredentials(ConfigService.persistProviderCredentials(source))
       nebflow.core.AtomicJson.writeSyncRestricted(snapshot, converted.spaces2)
       prune()
   }
