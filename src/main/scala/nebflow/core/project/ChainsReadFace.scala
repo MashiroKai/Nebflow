@@ -250,17 +250,14 @@ object ChainsReadFace:
   )(rec: DelegateRegistry.Record): IO[Json] =
     IO.blocking {
       val key = ChainStore.keyFor(rec.taskId, rec.id)
-      // A registry entry alone is not a lifecycle state. A restart marker may
-      // be superseded only by activity from a later, owned Processing turn.
-      val live = registry.get(rec.id).filter { agent =>
-        agent.ref != null && agent.status == nebflow.actor.AgentStatus.Processing &&
-          rec.restartInterruptedAt.forall(agent.lastActivityMs > _)
-      }.map(_ => Json.obj("status" -> "running".asJson))
-        .orElse(Some(Json.obj("status" -> "interrupted".asJson)))
+      // 「真活」判定的唯一派生单点（legacy-delegate-settle 批）：持久记录 × 本实例在册
+      // 快照 → running | interrupted。零逐行 resolve；旧投影的「键缺席 ⇒ 前端兜底 running」
+      // 是本批要收口的陈旧面板根因——读面现在**总是**给显式读数。
+      val live = nebflow.core.delegate.DelegateLiveness.verdictOf(rec, registry.get(rec.id)).json
       val verdict = latestVerdict(key)
       rec.asJson.asObject match
         case Some(obj) =>
-          val withLive = live.fold(obj)(v => obj.add("live", v))
+          val withLive = obj.add("live", live)
           val withVerdict = verdict.fold(withLive)(v => withLive.add("verdict", v))
           val withTask = taskStatuses.get(rec.id).fold(withVerdict) { s =>
             withVerdict.add("taskStatus", s.asJson)

@@ -14,17 +14,33 @@ object LegacySettledManifest:
   private var cachedIds = Set.empty[String]
 
   def contains(id: String): Boolean = synchronized {
+    refresh()
+    cachedIds.contains(id)
+  }
+
+  /** 只读：当前 manifest 的 id 全集（扫描/审计面用；缺档/坏形 = 空集，fail-open）。 */
+  def loadedIds(): Set[String] = synchronized {
+    refresh()
+    cachedIds
+  }
+
+  /** 路径+mtime+size 快照校验后重读（缺档/坏形 = 空集，绝不抛）。 */
+  private def refresh(): Unit =
     val p = path
     val stamp = if os.exists(p) then s"${os.mtime(p)}:${os.size(p)}" else "missing"
     if cachedPath != p.toString || cachedStamp != stamp then
       cachedIds = try
         if !os.exists(p) then Set.empty
-        else io.circe.parser.parse(os.read(p)).toOption.flatMap(_.hcursor.get[List[String]]("ids").toOption).getOrElse(Nil).toSet
+        else
+          io.circe.parser
+            .parse(os.read(p))
+            .toOption
+            .flatMap(_.hcursor.get[List[String]]("ids").toOption)
+            .getOrElse(Nil)
+            .toSet
       catch case _: Throwable => Set.empty
       cachedPath = p.toString
       cachedStamp = stamp
-    cachedIds.contains(id)
-  }
 
   /** Explicit invocation only: data root must be an offline isolated root. */
   def generate(): (Int, Boolean) =
