@@ -24,6 +24,15 @@ class InstallTest(unittest.TestCase):
     def run_cli(self, *args):
         return subprocess.run([sys.executable, str(CLI), *map(str, args), '--root', str(self.root)], capture_output=True, text=True)
 
+    def test_nonexistent_environment_root_does_not_fall_back(self):
+        home = self.base / 'home'
+        (home / '.stand').mkdir(parents=True)
+        env = {**os.environ, 'HOME': str(home), 'STAND_DATA_ROOT': str(self.root)}
+        r = subprocess.run([sys.executable, str(CLI), 'install', str(self.pkg)], env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.root / 'plugins' / 'demo' / 'plugin.json').is_file())
+        self.assertEqual(list((home / '.stand').iterdir()), [])
+
     def test_install_backup_and_rollback(self):
         r = self.run_cli('install', self.pkg)
         self.assertEqual(r.returncode, 0, r.stderr)
