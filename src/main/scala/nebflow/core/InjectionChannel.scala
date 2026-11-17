@@ -68,6 +68,9 @@ object InjectionChannel:
     /** 已落盘 + 已广播。 */
     case Emitted
 
+    /** One or both delivery legs failed; successful append is cache acceptance, not a disk flush. */
+    case Failed(appendFailed: Boolean, broadcastFailed: Boolean)
+
     /** 去重命中 ⇒ 本轮**零落盘零广播**（同一条通知的第二、三次）。 */
     case Collapsed
   end Outcome
@@ -185,7 +188,7 @@ object InjectionChannel:
    * **唯一投递入口**：去重闸 → 落盘 → 广播。
    *
    * 纪律（逐条与改前单腿行为等价，禁回退）：
-   *  · 落盘失败/广播失败各自 WARN 兜底，永不向上抛（注入路径绝不因呈现面失败中断 turn）；
+   *  · 落盘失败/广播失败各自 WARN 并返回 Failed，不向上抛（注入路径不因呈现面失败中断 turn）；
    *  · 顺序恒为「先落盘、后广播」（live 帧时序与 `.ui.json` 行序同前）；
    *  · `text` 为空 ⇒ 只广播不落盘（旧录制层同款判据）；
    *  · `dedup = true` 且命中 ⇒ 零落盘零广播（[[Outcome.Collapsed]]）。
@@ -212,13 +215,18 @@ object InjectionChannel:
     else
       val persist =
         if hasText then
-          store
-            .appendUiMessages(sessionId, List(row))
-            .handleErrorWith(e => logger.warn(s"injected user event persist failed: ${e.getMessage}"))
-        else IO.unit
-      persist *>
-        send(frame(sessionId, row, extra))
-          .handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}"))
-          .as(Outcome.Emitted)
+          IO.defer(store.appendUiMessages(sessionId, List(row))).attempt.flatMap {
+            case Right(_) => IO.pure(false)
+            case Left(e) => logger.warn(s"injected user event persist failed: ${e.getMessage}").as(true)
+          }
+        else IO.pure(false)
+      persist.flatMap { appendFailed =>
+        IO.defer(send(frame(sessionId, row, extra))).attempt.flatMap {
+          case Right(_) => IO.pure(if appendFailed then Outcome.Failed(true, false) else Outcome.Emitted)
+          case Left(e) =>
+            logger.warn(s"injected user event failed: ${e.getMessage}")
+              .as(Outcome.Failed(appendFailed, true))
+        }
+      }
 
 end InjectionChannel
