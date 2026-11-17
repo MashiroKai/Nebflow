@@ -94,6 +94,7 @@ class ExplorerWatchSessionSpec extends CatsEffectSuite:
         // entry's mtime changed in the root listing) — assert "src" is in the
         // merged dirs, not strict equality.
         f1 <- await(20.seconds)(fsFrames(ref).map(_.find(f => dirsOf(f).contains("src"))))
+        _ <- IO(Option(System.getenv("CAR_FRAME_PATH")).foreach(p => JFiles.writeString(Paths.get(p), f1.noSpaces)))
         _ <- IO(os.write.over(root / "src" / "a.txt", "two"))
         _ <- IO(os.write(root / "src" / "b.txt", "three"))
         _ <- IO(os.remove(root / "src" / "b.txt"))

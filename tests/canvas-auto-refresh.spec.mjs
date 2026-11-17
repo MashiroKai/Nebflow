@@ -143,7 +143,10 @@ const paneSel = (absPath) => `.canvas-tab-pane[data-tab-id="file:${absPath}"]`;
  *  nf-file-external-change → canvas 迟滞引擎；生产线上同一条真径）。 */
 function externalWrite(files, pushFrame, absPath, content, mtimeMs) {
   files[absPath] = { ...files[absPath], content, mtimeMs };
-  pushFrame({ type: 'nf-cache-invalidate', path: absPath });
+  const captured = process.env.CAR_WATCH_FRAME && !absPath.endsWith('/conflict.md');
+  // The conflict-bar regression exercises the distinct engine-write invalidation
+  // channel; OS watch notifications carry directories, not an exact file path.
+  pushFrame(captured ? JSON.parse(readFileSync(process.env.CAR_WATCH_FRAME, 'utf8')) : { type: 'nf-cache-invalidate', path: absPath });
 }
 
 // ════ U1 单元级边界（假等待零秒：常数与判定函数）════
