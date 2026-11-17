@@ -126,12 +126,17 @@ object ChainsReadFace:
   ): IO[Json] =
     IO.blocking(DelegateRegistry.list()).flatMap { records =>
       val continuations = continuationLinks(records, taskRows)
-      val scoped = records.filter(rec => rec.archivedAt.isDefined == archived)
+      // 阶段②（delegate-lifecycle-reform）：两窗划分改由**状态派生可见性**供给
+      // （[[nebflow.core.delegate.DelegateVisibility.Reading.historyWindow]] = 收口 ∧
+      // （非破坏性确认/忽略旗 ∨ 存量归档旗））——存储式归档写点已退役，读面不再看旗本身。
+      val readings: Map[String, nebflow.core.delegate.DelegateVisibility.Reading] =
+        records.map(r => r.id -> nebflow.core.delegate.DelegateVisibility.readOf(r.id)).toMap
+      val scoped = records.filter(rec => readings.get(rec.id).exists(_.historyWindow) == archived)
       val windowed: IO[List[DelegateRegistry.Record]] =
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
       windowed
-        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations)))
+        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations, readings)))
         .map(rows => Json.obj("rows" -> rows.asJson))
     }
 
@@ -153,7 +158,9 @@ object ChainsReadFace:
       .view
       .mapValues(_.map(t => s"${t.description}\n${t.prompt}").mkString("\n"))
       .toMap
-    val interrupted = records.filter(r => r.restartInterruptedAt.isDefined && r.archivedAt.isEmpty)
+    val interrupted = records.filter(r =>
+      r.restartInterruptedAt.isDefined && !nebflow.core.delegate.DelegateVisibility.settledOf(r)
+    )
     interrupted.flatMap { r =>
       val needle = r.id
       val candidates = records.filter { c =>
@@ -237,7 +244,8 @@ object ChainsReadFace:
   private def rowJson(
     registry: Map[String, nebflow.actor.AgentRecord],
     taskStatuses: Map[String, String],
-    continuations: Map[String, String] = Map.empty
+    continuations: Map[String, String] = Map.empty,
+    readings: Map[String, nebflow.core.delegate.DelegateVisibility.Reading] = Map.empty
   )(rec: DelegateRegistry.Record): IO[Json] =
     IO.blocking {
       val key = ChainStore.keyFor(rec.taskId, rec.id)
@@ -253,7 +261,14 @@ object ChainsReadFace:
           val withCont = continuations.get(rec.id).fold(withTask) { succ =>
             withTask.add("continuedBy", succ.asJson)
           }
-          Json.fromJsonObject(withCont)
+          // 阶段②：状态派生可见性读数随行透出（面板/审计单点；缺读数 = 键缺席，
+          // 旧前端诚实降级——不造第二权威）。
+          val withVisibility = readings.get(rec.id).fold(withCont) { rd =>
+            withCont
+              .add("visibility", rd.windowWord.asJson)
+              .add("settled", rd.settled.asJson)
+          }
+          Json.fromJsonObject(withVisibility)
         case None => rec.asJson
       end match
     }.handleErrorWith(e =>

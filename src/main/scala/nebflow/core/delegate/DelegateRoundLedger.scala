@@ -235,12 +235,16 @@ object DelegateRoundLedger:
    * Mail 到达时的轮次判定（纯函数——输入全部机械事实，判据单点）：
    *   - 忙碌（actor 在册 ∨ 任务行在飞/冻结/待并）⇒ [[MailRoundDecision.InjectCurrentRound]]
    *     ——注入当前轮防双活（roundNo 不变、不建第二执行体）；
-   *   - 已结算（任务行终态 completed/failed，或行缺而 archivedAt 在）⇒
-   *     [[MailRoundDecision.OpenNewRound]]——开新轮（roundNo+1、新 roundId、
-   *     archivedAt 清除、差异基线重设、旧轮台账保留）；
-   *   - 证据不足（行缺且未归档——旧盘面形态）⇒ [[MailRoundDecision.LeaveAsIs]]
+   *   - 已结算（任务行终态 completed/failed，或行缺而**状态派生**身份已收口）⇒
+   *     [[MailRoundDecision.OpenNewRound]]——开新轮（roundNo+1、新 roundId、差异基线重设、
+   *     旧轮台账保留；**阶段② 起零旗写盘**：回现役窗由状态派生现读复现）；
+   *   - 证据不足（行缺且身份未收口——旧盘面形态）⇒ [[MailRoundDecision.LeaveAsIs]]
    *     ——沿用既有续起行为（同轮续跑语义，零新写）。
    * 墓碑拒绝不在本判定内（调用方先行——取消压过一切）。
+   *
+   * @param identityClosed 身份层收口读数（[[DelegateVisibility.Reading.identityClosed]]，
+   *                       由调用方现读后传入——本函数保持纯函数：盘面读数统一由
+   *                       [[DelegateVisibility]] 单点出，不在判定内开第二读面）
    */
   enum MailRoundDecision:
     case InjectCurrentRound, OpenNewRound, LeaveAsIs
@@ -254,7 +258,8 @@ object DelegateRoundLedger:
   def decideMailRound(
     record: DelegateRegistry.Record,
     taskStatus: Option[String],
-    actorRegistered: Boolean
+    actorRegistered: Boolean,
+    identityClosed: Boolean = false
   ): MailRoundDecision =
     if actorRegistered then MailRoundDecision.InjectCurrentRound
     else
@@ -263,7 +268,7 @@ object DelegateRoundLedger:
         case Some(s) if SettledRowStatuses.contains(s) => MailRoundDecision.OpenNewRound
         case Some(_) => MailRoundDecision.LeaveAsIs // unknown status: legacy behavior, no new writes
         case None =>
-          if record.archivedAt.isDefined then MailRoundDecision.OpenNewRound else MailRoundDecision.LeaveAsIs
+          if identityClosed then MailRoundDecision.OpenNewRound else MailRoundDecision.LeaveAsIs
 
   /** 座位差异基线快照（fail-soft：非 git / 读失败 = None）。 */
   private def seatBaseline(seat: String): (Option[String], Option[List[String]]) =
@@ -274,22 +279,22 @@ object DelegateRoundLedger:
     catch case _: Throwable => (None, None)
 
   /**
-   * 开新轮（Mail 到达已结算身份时的单点写）：roundNo+1、新铸 roundId、
-   * `archivedAt` 清除（身份回现役窗）、差异基线重设（座位快照）、台账追加起跑行
-   * （旧行原样保留）。返回新轮读数。Registry 写失败 ⇒ Left（调用方回旧腿，
-   * 不破坏现场）。
+   * 开新轮（Mail 到达已收口身份时的单点写）：roundNo+1、新铸 roundId、差异基线重设
+   * （座位快照）、台账追加起跑行（旧行原样保留）。**阶段② 起零旗写盘**：身份回现役窗
+   * 由状态派生现读复现（新轮未结算 ⇒ 非收口 ⇒ 行自动回活动窗），不再摘任何归档旗。
+   * 返回新轮读数。Registry 写失败 ⇒ Left（调用方回旧腿，不破坏现场）。
    */
   def openNewRound(record: DelegateRegistry.Record): Either[String, RoundRow] =
     val nextNo = record.roundNo.getOrElse(1) + 1
     val nextId = java.util.UUID.randomUUID().toString
     val (baseSha, baseDirty) = seatBaseline(record.cwd)
-    DelegateRegistry.startRound(record.id, nextNo, nextId, clearArchive = true) match
+    DelegateRegistry.startRound(record.id, nextNo, nextId) match
       case Left(error) => Left(error)
       case Right(()) =>
         openRound(record.id, nextNo, nextId, CauseMail, baseSha, baseDirty)
         logger.infoSync(
           s"[delegate-rounds] opened round $nextNo ($nextId) for '${record.id}' via Mail — " +
-            s"archivedAt cleared, diff baseline re-anchored (head=${baseSha.getOrElse("-")}, " +
+            s"diff baseline re-anchored (head=${baseSha.getOrElse("-")}, " +
             s"dirty=${baseDirty.map(_.size).getOrElse(0)} path(s)); prior rounds preserved in the ledger"
         )
         Right(RoundRow(KindRound, nextNo, nextId, System.currentTimeMillis(), CauseMail, baseSha, baseDirty))

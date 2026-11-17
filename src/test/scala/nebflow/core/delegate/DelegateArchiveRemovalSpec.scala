@@ -116,8 +116,10 @@ class DelegateArchiveRemovalSpec extends FunSuite:
     assert(!view.contains("unarchiveDelegate"), "the undo/restore action (unarchive binding) must be gone from the view")
     assert(!view.contains("delegate.archive.undo"), "the 5s undo label must be gone from the view")
     assert(!view.contains("delegate-restore"), "the drawer's manual 'restore' action must be gone")
-    assert(!api.contains("/archive"), "delegateApi must not bind the retired archive endpoint")
-    assert(!api.contains("/unarchive"), "delegateApi must not bind the retired unarchive endpoint")
+    assert(
+      !api.contains("archive:") && !api.contains("unarchive:"),
+      "delegateApi must not bind the retired archive/unarchive endpoints (comments may still narrate the retirement)"
+    )
     assert(api.contains("/disposition"), "delegateApi must bind the disposition endpoint instead")
   }
 

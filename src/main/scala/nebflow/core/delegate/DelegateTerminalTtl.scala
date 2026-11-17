@@ -18,6 +18,9 @@ import nebflow.shared.{Defaults, SubAgentTask}
  *    回收；本对象只判读，动作面在 [[nebflow.agent.DelegateTtlSweep]]）。
  *
  * 终态时刻锚（按优先级，spec 钉死解析序）：
+ *  0. **状态派生收口锚**（阶段②）：身份完整收口（[[DelegateVisibility.Reading.settled]]）
+ *     时以**收口时刻**（轮次结算刻 ∨ 存量归档刻）计时——不再用派发刻冒充终态刻；读数
+ *     显示仍有在飞子项 / 子项档不可解 ⇒ 直接 `InFlight`（作者令「no child items」条）；
  *  1. **保存态锚**（作者 2026-11-06 20:36 新规「保存态待手动恢复同属终态计时」）：
  *     `standbySince`（待命停靠）/ `frozenSince`（错误冻结）——保存态不能无限堆积，
  *     7 天后一并清理；
@@ -72,9 +75,17 @@ object DelegateTerminalTtl:
   def rowExpired(t: SubAgentTask, nowMs: Long): Boolean = rowVerdict(t, nowMs).isExpired
 
   /**
-   * 记录级判读（**清理面闸**——DelegateTtlSweep 消费）：保存态锚优先 → 任务行 →
-   * 登记兜底。调用方（sweep）负责在飞守卫（活体 actor / 开放合并队列成员资格）
-   * ——本函数只做盘上判读。
+   * 记录级判读（**清理面闸**——DelegateTtlSweep 消费）：**状态派生收口读数**（阶段②）
+   * → 保存态锚 → 任务行 → 登记兜底。调用方（sweep）负责在飞守卫（活体 actor / 开放
+   * 合并队列成员资格）——本函数只做盘上判读。
+   *
+   * 阶段②（delegate-lifecycle-reform）两条重算：
+   *  1. **锚重算**：身份**完整收口**（[[DelegateVisibility.Reading.settled]]：收口证据在
+   *     ∧ 四个活标记空 ∧ 子项全收口）时，终态锚 = **状态派生的收口时刻**
+   *     （轮次结算刻 ∨ 存量归档刻）——不再拿 `createdAt`（派发刻）冒充终态刻；
+   *  2. **「无子项」闸**：读数显示仍有在飞子项（`liveChildItems > 0`）或子项档不可解
+   *     ⇒ **InFlight**（永不清理）——作者令完整判据里的「no child items」条落到清理面，
+   *     堵住「远古登记刻 + 活着的子项」被 TTL 剪掉的最坏形态。
    */
   def verdict(rec: DelegateRegistry.Record, taskOpt: Option[SubAgentTask], nowMs: Long): Verdict =
     val managed = WorkspaceLedger.default.snapshot
@@ -82,20 +93,34 @@ object DelegateTerminalTtl:
       return InFlight
     // Legacy worktree ownership is kept until explicitly reconciled into the ledger.
     if rec.worktree.exists(_.nonEmpty) then return InFlight
-    val savedAnchor: Option[(Long, String)] =
-      (rec.standbySince, rec.frozenSince) match
-        case (Some(a), Some(b)) => Some((math.max(a, b), "saved-state"))
-        case (Some(a), None) => Some((a, "standby"))
-        case (None, Some(b)) => Some((b, "frozen"))
-        case (None, None) => None
-    savedAnchor match
-      case Some((ms, name)) => ageVerdict(ms, name, nowMs)
-      case None =>
-        taskOpt match
-          case Some(t) => rowVerdict(t, nowMs)
-          case None =>
-            rec.cancelRequestedAt.orElse(rec.restartInterruptedAt) match
-              case Some(ms) => ageVerdict(ms, "registry-cancel-marker", nowMs)
-              case None => ageVerdict(rec.createdAt, "registry-created", nowMs)
+    verdict(rec, taskOpt, nowMs, DelegateVisibility.readOf(rec.id))
+  end verdict
+
+  /** 判读本体（读数由调用方给定——纯形，spec 可直驱；见 [[verdict]] 注两条重算）。 */
+  def verdict(
+    rec: DelegateRegistry.Record,
+    taskOpt: Option[SubAgentTask],
+    nowMs: Long,
+    reading: DelegateVisibility.Reading
+  ): Verdict =
+    if reading.liveChildItems > 0 || reading.childFileUnreadable then InFlight
+    else
+      val settledAnchor: Option[(Long, String)] =
+        reading.settledAt.filter(_ => reading.settled).map(ms => (ms, "settled-state"))
+      val savedAnchor: Option[(Long, String)] =
+        (rec.standbySince, rec.frozenSince) match
+          case (Some(a), Some(b)) => Some((math.max(a, b), "saved-state"))
+          case (Some(a), None) => Some((a, "standby"))
+          case (None, Some(b)) => Some((b, "frozen"))
+          case (None, None) => None
+      settledAnchor.orElse(savedAnchor) match
+        case Some((ms, name)) => ageVerdict(ms, name, nowMs)
+        case None =>
+          taskOpt match
+            case Some(t) => rowVerdict(t, nowMs)
+            case None =>
+              rec.cancelRequestedAt.orElse(rec.restartInterruptedAt) match
+                case Some(ms) => ageVerdict(ms, "registry-cancel-marker", nowMs)
+                case None => ageVerdict(rec.createdAt, "registry-created", nowMs)
   end verdict
 end DelegateTerminalTtl

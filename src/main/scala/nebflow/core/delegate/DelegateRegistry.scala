@@ -141,10 +141,14 @@ object DelegateRegistry:
      */
     worktreeJudged: Option[Boolean] = None,
     /**
-     * 归档时间戳（delegate-ui 批 2026-10-08 · G6，epoch millis）：`None` = 在册
-     * （rows 默认窗）；`Some` = 历史窗（`GET /api/chains?archived=1`）。**零删除
-     * 纪律**：归档只加时间戳旗（记录/子代理记账/链记录原样留存——children 随档 =
-     * 查询面按 parentSessionId 原样可达），绝不删行。缺省 None：旧盘面照常解码。
+     * **存量归档旗**（delegate-ui 批 2026-10-08 · G6，epoch millis）——delegate-lifecycle-reform
+     * 阶段② 起**只读兼容面**：可见性改由状态派生（[[DelegateVisibility]] 的收口证据 +
+     * [[disposition]] 非破坏性旗），本槽**零新写入**（归档/反归档写点与自动归档已整体退役）。
+     *
+     * 读面语义（**为什么保留**）：863 条在盘旧记录的既有「已归档」读数原样可读——
+     * [[DelegateVisibility.Reading.legacyArchived]] = 本槽在场，读面等价折叠成历史窗
+     * （面板观感零变化）；引擎行为腿（崩溃恢复/复活/唤醒/TTL）**不再吃本槽**（改吃状态
+     * 派生读数）。零删除纪律不破：记录/子代理记账/链记录原样留存。缺省 None：旧盘面照常解码。
      */
     archivedAt: Option[Long] = None,
     /**
@@ -270,7 +274,20 @@ object DelegateRegistry:
      * 照常解码（无轮次形态，行为与升级前兼容）。
      */
     roundId: Option[String] = None,
-    externalModel: Option[String] = None
+    externalModel: Option[String] = None,
+    /**
+     * **非破坏性确认/忽略旗**（delegate-lifecycle-reform 阶段② · 作者令）：值域 =
+     * [[DispositionAcknowledged]]（"acknowledged" = 我看到了/收下了）/ [[DispositionIgnored]]
+     * （"ignored" = 我不想再看到）；空 = 未表态。这是「归档」退场后的**用户表态**承载面：
+     *  - **零删除**：只写本槽与 [[dispositionAt]]，记录/子代理记账/转录/worktree/历史行
+     *    原样留存，可随时清除（[[clearDisposition]]）⇒ 行回活动窗；
+     *  - **可见性**（[[DelegateVisibility.Reading.historyWindow]]）：收口 ∧ 本旗在场 ⇒
+     *    历史窗；**收口前表态无效**（未收口的身份照常在活动窗，绝不因表态隐藏未完工作）；
+     *  - 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    disposition: Option[String] = None,
+    /** 表态时刻（epoch millis；与 [[disposition]] 同写点单写，清旗时一并清空）。 */
+    dispositionAt: Option[Long] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -589,49 +606,70 @@ object DelegateRegistry:
               catch case e: Throwable => Left(s"orchestrationMode upgrade: write failed: ${e.getMessage}")
       }
 
+  // ── 非破坏性确认/忽略旗（阶段②：归档写点的替代面）────────────────────────
+
+  /** 表态值：确认（"acknowledged"）。 */
+  val DispositionAcknowledged: String = "acknowledged"
+
+  /** 表态值：忽略（"ignored"）。 */
+  val DispositionIgnored: String = "ignored"
+
+  /** 表态值域（写面白名单；未列表值 = Left，绝不落自由文本）。 */
+  val DispositionWords: Set[String] = Set(DispositionAcknowledged, DispositionIgnored)
+
+  /** 值域校验（HTTP 面/工具面共用单点）。 */
+  def isDispositionWord(word: String): Boolean = DispositionWords.contains(word)
+
   /**
-   * 归档单写（G6，delegate-ui 批 2026-10-08）：`archivedAt = now` 单旗，**零删除**——
-   * 记录本体/子代理记账/链记录原样留存（历史窗 = 读面按本旗过滤，见
-   * [[nebflow.core.project.ChainsReadFace]] rows 臂 `?archived=1`）。幂等：已归档 =
-   * 返回原时间戳（零重写）。查无记录 = `Left`（归档动作只对真实 spawn 生效）。
+   * 表态单写（阶段② · 「归档/反归档」退场后的**唯一可见性写面**）：
+   * `disposition = word` + `dispositionAt = now`，**只动这两槽**——记录本体/子代理记账/
+   * 转录/worktree/轮次台账原样（零删除纪律）。幂等：同值已表态 = 原时刻返回（零重写）。
+   * 查无记录 = `Left`；word ∉ [[DispositionWords]] = `Left`（值域闸，绝不落自由文本）。
+   * 写锁同缝串行（与其余单记录读-改-写互斥）。
    */
-  def archive(id: String): Either[String, Long] =
-    if !validId(id) then Left(s"archive: invalid session id '$id'")
+  def setDisposition(id: String, word: String): Either[String, Long] =
+    if !validId(id) then Left(s"disposition: invalid session id '$id'")
+    else if !isDispositionWord(word) then
+      Left(s"disposition: unknown value '$word' (expected one of ${DispositionWords.toList.sorted.mkString(", ")})")
     else
       writeLock.synchronized {
         find(id) match
-          case None => Left(s"archive: no registry record for '$id'")
+          case None => Left(s"disposition: no registry record for '$id'")
           case Some(rec) =>
-            rec.archivedAt match
-              case Some(ts) => Right(ts) // 幂等：已归档原样返回，零重写
-              case None =>
+            rec.disposition match
+              case Some(existing) if existing == word =>
+                Right(rec.dispositionAt.getOrElse(System.currentTimeMillis())) // 幂等：同值零重写
+              case _ =>
                 val ts = System.currentTimeMillis()
                 try
-                  put(rec.copy(archivedAt = Some(ts)))
+                  put(rec.copy(disposition = Some(word), dispositionAt = Some(ts)))
                   Right(ts)
-                catch case e: Throwable => Left(s"archive: write failed: ${e.getMessage}")
+                catch case e: Throwable => Left(s"disposition: write failed: ${e.getMessage}")
       }
 
   /**
-   * 反归档单写（delegate/flowmap 两层架构批 2026-10-09 · G4-2）：`archivedAt = None`
-   * ——归档抽屉「恢复」动作的引擎缝（历史窗 → 在册窗回流）。幂等：未归档 = `Right`
-   * 零写；查无记录 = `Left`。**零删除纪律不破**：恢复只摘旗，记录本体/子代理记账/
-   * 链记录原样（与 [[archive]] 对偶的单点反操作——写锁同缝串行）。
+   * 表态清除（**非破坏性的对偶面**）：`disposition` / `dispositionAt` 双槽清空 ⇒
+   * 该行按状态派生可见性回活动窗（收口后仍收口——清除的只是「用户表态」）。幂等：
+   * 未表态 = `Right` 零写。查无记录 = `Left`。**零删除**：记录与全部历史原样。
    */
-  def unarchive(id: String): Either[String, Unit] =
-    if !validId(id) then Left(s"unarchive: invalid session id '$id'")
+  def clearDisposition(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearDisposition: invalid session id '$id'")
     else
       writeLock.synchronized {
         find(id) match
-          case None => Left(s"unarchive: no registry record for '$id'")
+          case None => Left(s"clearDisposition: no registry record for '$id'")
           case Some(rec) =>
-            if rec.archivedAt.isEmpty then Right(()) // 幂等：未归档零写
+            if rec.disposition.isEmpty && rec.dispositionAt.isEmpty then Right(()) // 幂等：未表态零写
             else
               try
-                put(rec.copy(archivedAt = None))
+                put(rec.copy(disposition = None, dispositionAt = None))
                 Right(())
-              catch case e: Throwable => Left(s"unarchive: write failed: ${e.getMessage}")
+              catch case e: Throwable => Left(s"clearDisposition: write failed: ${e.getMessage}")
       }
+
+  /** 表态读数（纯查盘；面板/读面单点）。 */
+  def dispositionOf(id: String): Option[(String, Long)] =
+    find(id).flatMap(rec => rec.disposition.map(w => (w, rec.dispositionAt.getOrElse(0L))))
 
   /**
    * 重启打断单写（任务列表行重启对账批 2026-10-22）：`restartInterruptedAt = now`
@@ -729,13 +767,13 @@ object DelegateRegistry:
     find(id).map(SessionResumption.displayTitle(_)).getOrElse(id)
 
   /**
-   * 当前轮指针单写（轮次模型）：`roundNo` / `roundId` 一并落盘；
-   * `clearArchive = true` 时同步清 `archivedAt`（开新轮 = 身份回现役窗——面板
-   * 现役窗按 archivedAt==null 过滤，清旗即回归可见）。幂等语义由调用方
-   * （[[DelegateRoundLedger.openNewRound]] / spawn 写点）持有——本函数只做
-   * 读-改-写单点。查无记录 = `Left`（轮次只对真实 spawn 生效）。
+   * 当前轮指针单写（轮次模型）：`roundNo` / `roundId` 一并落盘。**阶段② 起不再摘归档旗**
+   * ——身份回现役窗是**状态派生**的（新轮未结算 ⇒ [[DelegateVisibility]] 现读判非收口 ⇒
+   * 行自动回活动窗），零旗写盘即可复现「开新轮即回现役」。幂等语义由调用方
+   * （[[DelegateRoundLedger.openNewRound]] / spawn 写点）持有——本函数只做读-改-写单点。
+   * 查无记录 = `Left`（轮次只对真实 spawn 生效）。
    */
-  def startRound(id: String, roundNo: Int, roundId: String, clearArchive: Boolean): Either[String, Unit] =
+  def startRound(id: String, roundNo: Int, roundId: String): Either[String, Unit] =
     if !validId(id) then Left(s"startRound: invalid session id '$id'")
     else if roundNo < 1 then Left(s"startRound: roundNo must be >= 1, got $roundNo")
     else if roundId.trim.isEmpty then Left(s"startRound: roundId must be non-empty")
@@ -745,13 +783,7 @@ object DelegateRegistry:
           case None => Left(s"startRound: no registry record for '$id'")
           case Some(rec) =>
             try
-              put(
-                rec.copy(
-                  roundNo = Some(roundNo),
-                  roundId = Some(roundId),
-                  archivedAt = if clearArchive then None else rec.archivedAt
-                )
-              )
+              put(rec.copy(roundNo = Some(roundNo), roundId = Some(roundId)))
               Right(())
             catch case e: Throwable => Left(s"startRound: write failed: ${e.getMessage}")
       }
@@ -803,6 +835,8 @@ object DelegateRegistry:
       roundNo <- c.get[Option[Int]]("roundNo")
       roundId <- c.get[Option[String]]("roundId")
       externalModel <- c.get[Option[String]]("externalModel")
+      disposition <- c.get[Option[String]]("disposition")
+      dispositionAt <- c.get[Option[Long]]("dispositionAt")
     yield Record(
       id,
       executor,
@@ -841,7 +875,9 @@ object DelegateRegistry:
       seatSnapshotDirty,
       roundNo,
       roundId,
-      externalModel
+      externalModel,
+      disposition,
+      dispositionAt
     )
 
   /**

@@ -66,6 +66,10 @@ object DelegateRevival:
     try java.nio.file.Files.isDirectory(java.nio.file.Path.of(cwd))
     catch case _: Throwable => false
 
+  /** 冻结保留期是否已过（**状态派生**：`frozenSince` 龄 vs `DelegateFreeze.retentionMs`）。 */
+  private def frozenRetentionExpired(rec: nebflow.core.delegate.DelegateRegistry.Record): Boolean =
+    rec.frozenSince.exists(ts => nebflow.core.delegate.DelegateFreeze.retentionExpired(ts))
+
   // ══════════════════════════════════════════════════════════════════════════
   // standby 分型（中断恢复批 2026-11-04 · 审计 D2；作者 11:27 裁定「链等待形态
   // 必须自动复活」）
@@ -206,14 +210,18 @@ object DelegateRevival:
       IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {
         case None => IO.pure(Some("no DelegateRegistry record — cannot rebuild the seat"))
         case Some(rec) =>
+          // 阶段②：复活资格不再吃归档旗——改吃**状态派生收口读数**（轮次结算证据 ∨ 存量
+          // 归档旗；见 [[nebflow.core.delegate.DelegateVisibility]]）。收口身份 = 无未完
+          // 业务 ⇒ 不复活（不诈尸）；判据单点，四条行为腿同源。
+          val settled = nebflow.core.delegate.DelegateVisibility.settledOf(rec)
           val budgetLeft = task.revivalCount.getOrElse(0) < Defaults.DelegateRevivalMaxPerTask
           val ageOk = java.lang.System.currentTimeMillis() - task.spawnedAt <= Defaults.DelegateRevivalMaxAgeMs
           // 错误冻结批（2026-11-01）：冻结记录 = **异常冻结待唤醒**——与 standby
           // （自愿待命、不复活）相反，冻结**正是**要复活的对象（同 id 续原上下文；
           // 冻结期的现场全在盘上）。冻结腿的年龄判据走冻结保留期
           // （`Defaults.DelegateFreezeRetentionDays`）而非在飞年龄预算——保留期内
-          // 的冻结一律可复活（超保留期的由 `DelegateFreeze.dormantSweep` 归档，
-          // 归档记录在此被 archived 闸拒绝）。
+          // 的冻结一律可复活（超保留期的由 `DelegateFreeze.dormantSweep` 留痕，
+          // 状态派生收口读数在此拒绝）。
           val frozen = rec.frozenSince
           val ageBudget = frozen
             .map(_ => nebflow.core.delegate.DelegateFreeze.retentionMs)
@@ -253,7 +261,11 @@ object DelegateRevival:
                 Some(
                   s"closing report already delivered (reportStatus=${deliveredReport.get}) — not an unfinished delegate"
                 )
-              else if rec.archivedAt.isDefined then Some("record archived")
+              else if settled then
+                Some(
+                  "identity is settled by state-derived visibility (settled round or legacy archive evidence) — " +
+                    "it has no unfinished business; dispatch a fresh delegate instead"
+                )
               else if !seatExists(rec.cwd) then Some(s"seat directory missing: ${rec.cwd}")
               else if !parentExists then Some(s"parent session '${task.parentSessionId}' no longer exists")
               else if !budgetLeft then
@@ -301,8 +313,9 @@ object DelegateRevival:
    * 与 boot 复活腿共用全部 spawn/注册/插件/pending 处置，唯一增量 = 唤醒者指令
    * 拼在唤醒横幅之后（`instruction` 非空时）。
    *
-   * 资格：记录在册 ∧ 带冻结线值（`frozenReason` 是本批词表）∧ 未归档。其余
-   * （非冻结记录 / 外部执行器 / 已归档）⇒ Left(reason)，调用方落既有腿。
+   * 资格：记录在册 ∧ 带冻结线值（`frozenReason` 是本批词表）∧ 冻结龄未过保留期
+   * （阶段②：状态派生的 `frozenSince` 龄判据；原「已归档」闸即该事实的存储式表达）。
+   * 其余（非冻结记录 / 外部执行器 / 超保留期）⇒ Left(reason)，调用方落既有腿。
    *
    * @param instruction 唤醒者的一句指令（Mail 正文 / 面板输入框）；空 = 纯唤醒。
    */
@@ -318,8 +331,13 @@ object DelegateRevival:
             rec.frozenReason.getOrElse("")
           ) =>
         IO.pure(Left("record is not in the delegate-error frozen state"))
-      case Some(rec) if rec.archivedAt.isDefined =>
-        IO.pure(Left("record is archived (freeze retention expired) — dispatch a fresh delegate instead"))
+      case Some(rec) if frozenRetentionExpired(rec) =>
+        IO.pure(
+          Left(
+            "frozen longer than the freeze retention window (state-derived from frozenSince — the retired archive " +
+              "flag used to express this) — dispatch a fresh delegate instead"
+          )
+        )
       case Some(rec) if rec.executor != ExecutorRegistry.DefaultId =>
         IO.pure(Left(s"external executor '${rec.executor}' — use the Mail continuation leg"))
       case Some(rec) =>

@@ -29,7 +29,7 @@ import nebflow.shared.NebflowLogger
  *
  * 接线（GatewayMain boot）：跑在 subagentCrashSweep **之前**——先把名单外的
  * 远古尸体清走，随后的收殓/标记/对账腿对已清条目天然零视野（已移除条目不进
- * markInterruptedRecords 的 `archivedAt.isEmpty` 守卫；任务行已剪行 = 复活视野
+ * markInterruptedRecords 的**状态派生收口守卫**；任务行已剪行 = 复活视野
  * 永远看不到它们）。
  * 失败软化：单条失败只 WARN 入 kept，绝不阻断 boot。
  */

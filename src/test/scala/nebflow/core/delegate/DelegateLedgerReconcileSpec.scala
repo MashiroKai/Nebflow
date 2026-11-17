@@ -135,7 +135,7 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
   private def newLedgerEntry(fx: Fx, title: String): String =
     fx.ledger.createSyncReturningId(title).getOrElse(fail(s"ledger create failed: $title"))
 
-  test("L1a: onLedgerTerminal archives terminal flagged rows, leaves in-flight rows alone") {
+  test("L1a: onLedgerTerminal clears the interrupt mark on terminal flagged rows, leaves in-flight rows alone") {
     withFx("l1a") { fx =>
       val seat = os.temp.dir(prefix = "recon-seat-l1a")
       try
@@ -155,14 +155,18 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
           _ <- DelegateLedgerReconcile.onLedgerTerminal(fx.store, entryLive)
           a1 <- IO(DelegateRegistry.find("delegate-nebflow-a1"))
           a2 <- IO(DelegateRegistry.find("delegate-nebflow-a2"))
-          _ = assert(a1.flatMap(_.archivedAt).isDefined, "terminal flagged row folded (archived) once the ledger adjudicates")
-          _ = assert(a2.flatMap(_.archivedAt).isEmpty, "in-flight row untouched — panel stays truthful")
+          _ = assert(
+            a1.flatMap(_.restartInterruptedAt).isEmpty,
+            "terminal flagged row's interrupt mark is cleared once the ledger adjudicates (state-derived visibility then owns the window)"
+          )
+          _ = assert(a1.flatMap(_.archivedAt).isEmpty, "阶段② 零归档写：no storage archive flag is written")
+          _ = assert(a2.flatMap(_.restartInterruptedAt).isDefined, "in-flight row untouched — panel stays truthful")
         yield ()
       finally os.remove.all(seat)
     }
   }
 
-  test("L1b: TaskTool(action=complete) folds the linked delegate row through the tool face") {
+  test("L1b: TaskTool(action=complete) clears the linked delegate row's interrupt mark through the tool face") {
     withFx("l1b") { fx =>
       val seat = os.temp.dir(prefix = "recon-seat-l1b")
       try
@@ -184,7 +188,11 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
           out <- nebflow.core.tools.TaskToolDef.call(JsonObject("action" -> "complete".asJson, "id" -> entry.asJson), ctx)
           _ = assert(out.isRight, s"complete must succeed: $out")
           rec <- IO(DelegateRegistry.find("delegate-nebflow-b1"))
-          _ = assert(rec.flatMap(_.archivedAt).isDefined, "TaskTool complete folds the panel row (ledger → panel wiring)")
+          _ = assert(
+            rec.flatMap(_.restartInterruptedAt).isEmpty,
+            "TaskTool complete clears the interrupt mark (ledger → panel wiring)"
+          )
+          _ = assert(rec.flatMap(_.archivedAt).isEmpty, "阶段② 零归档写：the completion leg writes no archive flag")
         yield ()
       finally os.remove.all(seat)
     }
@@ -252,7 +260,7 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
     }
   }
 
-  test("L3a: boot reconcile archives a flagged row whose ledger entry is completed") {
+  test("L3a: boot reconcile clears the interrupt mark of a flagged row whose ledger entry is completed") {
     withFx("l3a") { fx =>
       val seat = os.temp.dir(prefix = "recon-seat-l3a")
       try
@@ -261,9 +269,10 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
           _ <- IO(fx.ledger.completeSync(entry))
           _ <- IO(DelegateRegistry.put(mkRecord("delegate-nebflow-d1", seat.toString, Some(entry))))
           report <- DelegateLedgerReconcile.reconcileInterruptedRecords(fx.store)
-          _ = assertEquals(report.archivedByLedger, List("delegate-nebflow-d1"))
+          _ = assertEquals(report.settledByLedger, List("delegate-nebflow-d1"))
           rec <- IO(DelegateRegistry.find("delegate-nebflow-d1"))
-          _ = assert(rec.flatMap(_.archivedAt).isDefined, "flagged row folded by ledger adjudication")
+          _ = assert(rec.flatMap(_.restartInterruptedAt).isEmpty, "flagged row's interrupt mark cleared by ledger adjudication")
+          _ = assert(rec.flatMap(_.archivedAt).isEmpty, "阶段② 零归档写：adjudication writes no archive flag")
         yield ()
       finally os.remove.all(seat)
     }
@@ -286,7 +295,7 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
     }
   }
 
-  test("L3c: boot reconcile archives on merge evidence (branch merged into base) + ledger note") {
+  test("L3c: boot reconcile clears the interrupt mark on merge evidence (branch merged into base) + ledger note") {
     withFx("l3c") { fx =>
       // git 现场放在 worktree 的 target/ 下（sbt scratch，gitignored），不进 TMPDIR——
       // 观测批注 2026-10-22：TMPDIR 内的现场目录在本套件运行中会被环境间歇清走/使
@@ -326,9 +335,9 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
           _ <- IO.blocking(buildGitFixture())
           _ = assert(os.exists(repo / ".git"), "git fixture must survive until the reconcile step")
           report <- DelegateLedgerReconcile.reconcileInterruptedRecords(fx.store)
-          _ = assertEquals(report.archivedByMerge, List("delegate-nebflow-f1"))
+          _ = assertEquals(report.settledByMerge, List("delegate-nebflow-f1"))
           rec <- IO(DelegateRegistry.find("delegate-nebflow-f1"))
-          _ = assert(rec.flatMap(_.archivedAt).isDefined, "merge evidence folds the flagged row")
+          _ = assert(rec.flatMap(_.restartInterruptedAt).isEmpty, "merge evidence clears the flagged row's interrupt mark")
           note <- IO(fx.ledger.showSync(entry, Map.empty))
           _ = assert(
             note.getOrElse("").contains("已并入基分支"),

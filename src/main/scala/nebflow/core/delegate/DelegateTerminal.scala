@@ -213,15 +213,6 @@ object DelegateTerminal:
       resources.pluginMcp
         .release(delegateId)
         .handleErrorWith(e => IO(logger.warn(s"delegate plugin MCP release failed: ${e.getMessage}")))
-    // 终态自动写 `archivedAt` 旗（面板归档抽屉的唯一归档面）。幂等：已归档零重写；
-    // 查无记录（外部腿/旧盘）= 零动作。fail-soft 只 WARN（绝不拖垮终态交付）。
-    val autoArchive: IO[Unit] =
-      if record.isEmpty then IO.unit
-      else
-        IO
-          .blocking(DelegateRegistry.archive(delegateId))
-          .void
-          .handleErrorWith(e => IO(logger.warn(s"delegate auto-archive failed: ${e.getMessage}")))
     // 台账↔面板对账批：终态交付自动台账记账——record.taskId 定义时 append 结算 note
     // （复活注记读任务行 revivalCount随行）。fail-soft。
     val ledgerNote =
@@ -248,7 +239,7 @@ object DelegateTerminal:
           case Left(e) => IO(logger.warn(s"standby clear failed for $delegateId: ${e.getMessage}"))
           case Right(_) => IO.unit
         }
-    verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> standbyClear *> autoArchive *> graceRemoval
+    verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> standbyClear *> graceRemoval
   end onTerminalCleanup
 
 end DelegateTerminal

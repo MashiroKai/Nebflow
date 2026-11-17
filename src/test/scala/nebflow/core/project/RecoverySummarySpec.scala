@@ -556,7 +556,7 @@ class RecoverySummarySpec extends CatsEffectSuite:
     assertEquals(unarchived.archivedAt, None)
     assert(unarchived.frozen === false && unarchived.standby === false)
 
-    DelegateRegistry.archive(scope) // 归档 ⇒ 终态
+    putRecord(scope, archivedAt = Some(now)) // 存量归档旗（只读兼容证据）⇒ 状态派生终态
     val archived = gen(scope).facets.terminal
     assert(archived.terminal && archived.archived)
     assert(archived.archivedAt.isDefined)
@@ -626,7 +626,7 @@ class RecoverySummarySpec extends CatsEffectSuite:
     assertEquals(
       s.blockers,
       List(
-        "identity-not-archived",
+        "identity-not-settled",
         "non-terminal-nodes:1",
         "human-holds:1",
         "paused-chains:1",
@@ -642,7 +642,7 @@ class RecoverySummarySpec extends CatsEffectSuite:
     val fs = gen(facetsOnly)
     assert(fs.facetsClean, "five-facet view is clean here")
     assert(!fs.quiet, "…but the five-facet view must never be used as the defer gate")
-    assertEquals(fs.blockers, List("identity-not-archived"))
+    assertEquals(fs.blockers, List("identity-not-settled"))
 
     // 全净⇒空表（同一作用域清干净：归档身份、零保持、零开轮、零暂停、全终态节点）
     val clean = "rs-v2-blockers-clean"

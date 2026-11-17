@@ -2135,9 +2135,7 @@ export default {
   'delegate.flowmap.title': 'Delegate flow',
   'delegate.projectflow.title': 'Project flow',
   'delegate.kids.empty': 'No subagent / flow calls yet',
-  'delegate.archive.toast': '{n} completed and archived',
-  'delegate.archive.undo': 'Undo',
-  'delegate.archive.restore': 'Restore',
+  'delegate.archive.toast': '{n} settled',
   'delegate.archive.openFlow': 'Flow →',
   'delegate.archive.drawerTitle': 'Archived delegates',
 

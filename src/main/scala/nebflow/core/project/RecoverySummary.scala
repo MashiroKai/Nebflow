@@ -5,7 +5,7 @@ import io.circe.{Decoder, Encoder, Json}
 import io.circe.generic.semiauto
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
-import nebflow.core.delegate.{DelegateRegistry, DelegateRoundLedger}
+import nebflow.core.delegate.{DelegateRegistry, DelegateRoundLedger, DelegateVisibility}
 import nebflow.core.mail.SessionMailbox
 import nebflow.shared.{NebflowLogger, PathUtil}
 
@@ -35,10 +35,11 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  * [[Summary.quiet]] 是「该作用域已无待处理事实」的**合取**判据，七条全净才成立
  * （阶段① 补上末段两条——此前只有下面第 3–7 条，故旧判据会把「身份未终态」或
  * 「仍有在飞子项」的作用域误读成无待处理事实）：
- *  1. **身份终态**（[[TerminalState]]）：注册记录在场、已归档（`archivedAt` 有值），
- *     且 standby / frozen / restart-interrupted / cancel 四个活标记全空。归档是
- *     **必要条件不是充分条件**——启动加载清单 §「作用域」实证：687 个已归档身份中
- *     13 个仍带非终态／旧状态节点，故本判据恒与其下各条合取。
+ *  1. **身份终态**（[[TerminalState]]）：注册记录在场、**收口证据在场**（阶段② 起 =
+ *     [[nebflow.core.delegate.DelegateVisibility]] 现读：轮次结算 ∨ **存量**归档旗），
+ *     且 standby / frozen / restart-interrupted / cancel 四个活标记全空。归档旗是新制
+ *     **存量兼容证据之一，不是必要条件**——启动加载清单 §「作用域」实证：687 个已归档
+ *     身份中 13 个仍带非终态／旧状态节点，故本判据恒与其下各条合取。
  *  2. **无子项**（[[ChildItems]]）：本作用域自己的子代理任务行全部已收口。
  *  3. 非终态节点（[[Facets.nonTerminalNodes]]）——活动区 status ∉
  *     [[NodeLifecycle.Terminal]] 的节点（含 legacy `blocked` 与非终态 `interrupted`；
@@ -72,8 +73,9 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  * == 保守回退语义（规格：缺失/损坏按全量加载，绝不因摘要残缺漏加载控制面）==
  * [[Verdict.Fallback]] 的消费纪律恒为**按全量加载处理**（后续批的唯一合法用途）；缺失
  * （`missing`）、坏形（`corrupt`）、schema 升格（`schema`）、指纹漂移（`stale`）、读失败
- * （`unreadable`）五路一律回退，[[inspect]] 永不抛、永不返回假 quiet。归档（`archivedAt`）
- * **只作必要条件参与判据第 1 条**——「归档 ≠ 安全跳过」是清单 §「作用域」的实证结论
+ * （`unreadable`）五路一律回退，[[inspect]] 永不抛、永不返回假 quiet。归档旗
+ * **只作存量兼容证据参与判据第 1 条**（阶段② 起收口证据的**主面**是状态派生的轮次结算，
+ * 归档写点已整体退役）——「归档 ≠ 安全跳过」是清单 §「作用域」的实证结论
  * （687 个已归档身份中 13 个仍带非终态节点 / 人工保持），quiet 恒由七条合取派生，
  * 任何单条都不能独自放行。
  *
@@ -83,12 +85,12 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  * 原始读（`CompletionDebtStore` 的读面带隔离区副作用，摘要只读故直读文件、Debt 编解码
  * 语义一致）；投递候选 = DispatchNotify / NodeEngine 伴生单点（本批随摘要落地抽取）。
  * node-message 台账锚点 = 引擎座位（注册记录 `cwd`，缺记录回落基工作区——与
- * `recoverDelegateScope` 的座位解析逐字同款）。阶段① 两条新判据同样引值域单点：
- * 身份终态 = `DelegateRegistry.Record` 既有槽（`archivedAt` / `frozenSince` /
- * `standbySince` / `restartInterruptedAt` / `cancelRequestedAt`，零新状态机）；子项 =
- * `SubAgentTaskStore` 同布局同文件（`<dataRoot>/subagent-tasks/<scope>.json`，scope id
- * 即父会话 id）的原始读，收口值域照抄其投影面 `status` 与 `terminalExecutions`
- * 值域（该两集在 store 内私有，故此处显式枚举 = 值域镜像，见 [[ChildItems]]）。
+ * `recoverDelegateScope` 的座位解析逐字同款）。**判据①②（阶段② 起）= 单点转调
+ * [[nebflow.core.delegate.DelegateVisibility]]**（身份收口证据 + 子项原始读的唯一实现；
+ * 四条行为腿与作用域可见性共用同一读数——值域：收口证据 = 轮次结算 ∨ 存量归档旗；
+ * 活标记 = `frozenSince` / `standbySince` / `restartInterruptedAt` / `cancelRequestedAt`；
+ * 子项收口 = `status` ∉ {completed, failed, cancelled} 为在飞，另有 `executionStatus` /
+ * `incomplete` / `notificationPending` 三路保守补刀）。
  */
 object RecoverySummary:
 
@@ -99,10 +101,13 @@ object RecoverySummary:
 
   /**
    * 摘要 schema 版本（升格 ⇒ 旧摘要整体 `Fallback(schema)` 回退，不试图兼容读）。
-   * v2 = 阶段①完整可见性判据：`facets` 增 `terminal` / `childItems` 两面，v1 摘要
-   * 经 schema 闸整体回退（保守全量加载）——「升格即回退」是既有纪律，不做兼容读。
+   * v2 = 阶段①完整可见性判据：`facets` 增 `terminal` / `childItems` 两面。
+   * v3 = **阶段②**（delegate-lifecycle-reform）：判据①/②改由**状态派生**单源供给
+   * （[[nebflow.core.delegate.DelegateVisibility]]：轮次结算证据 ∨ 存量归档旗；存储式
+   * 归档写点整体退役），且 `terminal` 面携带派生证据读数——判据基座变了，旧档一律经
+   * schema 闸回退（保守全量加载），不做兼容读。
    */
-  val SchemaVersion: Int = 2
+  val SchemaVersion: Int = 3
 
   // ── 模型 ─────────────────────────────────────────────────────────────────
 
@@ -116,19 +121,27 @@ object RecoverySummary:
   final case class NonTerminalNodes(count: Int, ids: List[String], byStatus: List[(String, Int)])
 
   /**
-   * 判据①身份终态（阶段①新增面）。`terminal` = delegate 注册记录在场、已归档
-   * （`archivedAt` 有值）且四个活标记（standby / frozen / restart-interrupted /
-   * cancel）全空——**归档是必要条件，不是充分条件**（见对象头注第 1 条）。
+   * 判据①身份终态（阶段①新增面；**阶段② 改由状态派生判据供给**）。`terminal` =
+   * [[nebflow.core.delegate.DelegateVisibility]] 现读的**收口证据在场**（轮次结算 ∨
+   * 存量归档旗，见 [[settlementEvidence]]）且四个活标记（standby / frozen /
+   * restart-interrupted / cancel）全空。
+   *
+   * 阶段② 落法（delegate-lifecycle-reform 作者令「用状态派生可见性替换存储式归档」）：
+   * 归档旗**不再是必要证据**——它是存量读面兼容证据之一；新制身份靠**轮次结算**收口。
+   * 「归档 ≠ 安全跳过」的实证结论原样保留（687 个已归档身份中 13 个仍带非终态节点／
+   * 人工保持），故本判据恒与其下各条合取。
+   *
+   * `archived` / `archivedAt` 两槽 = **存量归档旗观测面**（只读兼容，零新写入）；
+   * `evidence` / `settledAt` = 派生读数（凭什么算终态 / 收口时刻）。
    *
    * 四个活标记各自落档（观测面 + [[Summary.blockers]] 的诊断词），语义各引注册表单点：
-   * `archived` = 归档旗；`frozen` = 错误冻结（等唤醒续做）；`standby` = 显式待命
-   * （等作者给活）；`restartInterrupted` = 重启打断（等恢复）；`cancelRequested` =
-   * 取消墓碑（永不复活，但取消本身未必已达终态）。实证盘面（2026-11-17）：863 条
-   * 归档记录中 54 条仍带活标记（restartInterruptedAt 22 / cancelRequestedAt 32），
-   * 它们一律算非终态（保守面）。
+   * `frozen` = 错误冻结（等唤醒续做）；`standby` = 显式待命（等作者给活）；
+   * `restartInterrupted` = 重启打断（等恢复）；`cancelRequested` = 取消墓碑（永不复活，
+   * 但取消本身未必已达终态）。实证盘面（2026-11-17）：863 条归档记录中 54 条仍带活标记
+   * （restartInterruptedAt 22 / cancelRequestedAt 32），它们一律算非终态（保守面）。
    *
-   * 记录缺失（归档未发生 / 盘上无行）⇒ `terminal = false`——**缺证据不算终态**
-   * （该形态同时被判据⑤ `orphanCandidate` 命中，两处保守互不替代）。
+   * 记录缺失（盘上无行）⇒ `terminal = false`——**缺证据不算终态**（该形态同时被判据⑤
+   * `orphanCandidate` 命中，两处保守互不替代）。
    */
   final case class TerminalState(
     terminal: Boolean,
@@ -137,7 +150,15 @@ object RecoverySummary:
     frozen: Boolean,
     standby: Boolean,
     restartInterrupted: Boolean,
-    cancelRequested: Boolean
+    cancelRequested: Boolean,
+    /**
+     * 派生的收口证据词（阶段②；[[nebflow.core.delegate.DelegateVisibility.RoundSettledPrefix]]
+     * 轮次结算 / `legacy-archive-flag` 存量归档旗）——`terminal` = 证据在场 ∧ 四个活标记空，
+     * 证据清单是审计面「凭什么算终态」的可验证读数。空表 = 无收口证据。
+     */
+    settlementEvidence: List[String] = Nil,
+    /** 状态派生的收口时刻（轮次结算刻 ∨ 存量归档刻）——TTL 腿同源锚。 */
+    settledAt: Option[Long] = None
   )
 
   /**
@@ -262,7 +283,7 @@ object RecoverySummary:
       ).flatten
       val identity =
         if facets.terminal.terminal then None
-        else if !facets.terminal.archived then Some("identity-not-archived")
+        else if facets.terminal.settlementEvidence.isEmpty then Some("identity-not-settled")
         else if marks.nonEmpty then Some(s"identity-live-marks:${marks.mkString("+")}")
         else Some("identity-not-terminal")
       List(
@@ -307,23 +328,26 @@ object RecoverySummary:
   // ── 判据①身份终态 / 判据②子项（阶段①新增两面，派生单点）────────────────────
 
   /**
-   * 判据①派生（纯函数单点）：归档旗在场 **且** 四个活标记全空才 `terminal`。
-   * 记录缺失 ⇒ 全 false（缺证据不算终态，见 [[TerminalState]] 注）。
+   * 判据①派生（纯函数单点；**阶段② 改由状态派生单源供给**）：收口证据在场（轮次结算 ∨
+   * 存量归档旗）**且**四个活标记全空才 `terminal`。记录缺失 ⇒ 全 false（缺证据不算终态）。
+   *
+   * 判据实现单点 = [[nebflow.core.delegate.DelegateVisibility.read]]：本函数只做形状映射
+   * （四条行为腿与作用域可见性共用同一判据，禁在本文件复刻第二份）。
    */
   private def terminalStateOf(record: Option[DelegateRegistry.Record]): TerminalState =
-    val archived = record.exists(_.archivedAt.isDefined)
-    val frozen = record.exists(_.frozenSince.isDefined)
-    val standby = record.exists(_.standbySince.isDefined)
-    val restartInterrupted = record.exists(_.restartInterruptedAt.isDefined)
-    val cancelRequested = record.exists(_.cancelRequestedAt.isDefined)
+    val reading = record match
+      case None => DelegateVisibility.Empty
+      case Some(rec) => DelegateVisibility.read(Some(rec), DelegateRoundLedger.currentRounds(rec.id), DelegateVisibility.liveChildrenOf(rec.id))
     TerminalState(
-      terminal = archived && !frozen && !standby && !restartInterrupted && !cancelRequested,
-      archived = archived,
+      terminal = reading.identityClosed,
+      archived = reading.legacyArchived,
       archivedAt = record.flatMap(_.archivedAt),
-      frozen = frozen,
-      standby = standby,
-      restartInterrupted = restartInterrupted,
-      cancelRequested = cancelRequested
+      frozen = reading.blockers.contains(s"live-mark:${DelegateVisibility.FrozenMark}"),
+      standby = reading.blockers.contains(s"live-mark:${DelegateVisibility.StandbyMark}"),
+      restartInterrupted = reading.blockers.contains(s"live-mark:${DelegateVisibility.RestartInterruptedMark}"),
+      cancelRequested = reading.blockers.contains(s"live-mark:${DelegateVisibility.CancelRequestedMark}"),
+      settlementEvidence = reading.evidence,
+      settledAt = reading.settledAt
     )
 
   /**
@@ -334,48 +358,21 @@ object RecoverySummary:
   private def childTaskFile(scope: String): os.Path =
     PathUtil.dataRoot / "subagent-tasks" / s"$scope.json"
 
-  /** 子项收口 status 值域（`SubAgentTaskStore` 投影面：`status` ∉ 本集 = 在飞）。 */
-  private val ChildTerminalStatus: Set[String] = Set("completed", "failed", "cancelled")
+  /** 子项未收口判据（三路，缺字段不读作 false；判据实现单点 = DelegateVisibility）。 */
+  private def isLiveChild(t: nebflow.shared.SubAgentTask): Boolean = DelegateVisibility.isLiveChild(t)
 
   /**
-   * 子项收口执行值域（`SubAgentTaskStore.terminalExecutions` 的值域镜像；该集在 store
-   * 内私有，且 `core.project → agent` 无依赖边，故此处显式枚举——对照点为
-   * `SubAgentTaskStore.projectedStatus`：`interrupted` 投影成 `pending-recovery`（等恢复），
-   * 故 status 面已把它算在飞，此处只用于「status 已终态但执行面仍活跃」的保守补刀）。
-   */
-  private val ChildTerminalExecution: Set[String] = Set("finished", "failed", "cancelled", "interrupted")
-
-  /** 子项未收口判据（三路，缺字段不读作 false；见 [[ChildItems]] 注）。 */
-  private def isLiveChild(t: nebflow.shared.SubAgentTask): Boolean =
-    !ChildTerminalStatus.contains(t.status) ||
-      t.executionStatus.exists(s => !ChildTerminalExecution.contains(s)) ||
-      t.incomplete.contains(true) ||
-      t.notificationPending.contains(true)
-
-  /**
-   * 判据②派生（原始读单点，与 [[completionDebtPending]] 同款纪律——不经 live store：
-   * 零 ActorSystem）。档缺席 = 零子项；档在场但不可解 = 保守记 1 条未知在飞子项。
+   * 判据②派生（**单点转调** [[nebflow.core.delegate.DelegateVisibility.liveChildrenOf]]：
+   * 同一份原始读既供四条行为腿的「无子项」条，也供本判据面——禁第二实现）。
    */
   private def childItemsOf(scope: String): ChildItems =
-    val p = childTaskFile(scope)
-    if !os.exists(p) then ChildItems(count = 0, ids = Nil, byStatus = Nil, fileUnreadable = false)
-    else
-      io.circe.parser.decode[List[nebflow.shared.SubAgentTask]](os.read(p)) match
-        case Right(rows) =>
-          val live = rows.filter(isLiveChild)
-          ChildItems(
-            count = live.size,
-            ids = live.map(_.taskId).sorted,
-            byStatus = live.groupBy(_.status).view.mapValues(_.size).toList.sortBy(_._1),
-            fileUnreadable = false
-          )
-        case Left(_) =>
-          ChildItems(
-            count = 1,
-            ids = List(ChildItems.UnreadableId),
-            byStatus = List((ChildItems.UnreadableId, 1)),
-            fileUnreadable = true
-          )
+    val live = DelegateVisibility.liveChildrenOf(scope)
+    ChildItems(
+      count = live.count,
+      ids = live.ids,
+      byStatus = live.byStatus,
+      fileUnreadable = live.fileUnreadable
+    )
 
   // ── 生成 ─────────────────────────────────────────────────────────────────
 
@@ -651,7 +648,19 @@ object RecoverySummary:
       standby <- c.get[Option[Boolean]]("standby").map(_.getOrElse(false))
       restartInterrupted <- c.get[Option[Boolean]]("restartInterrupted").map(_.getOrElse(false))
       cancelRequested <- c.get[Option[Boolean]]("cancelRequested").map(_.getOrElse(false))
-    yield TerminalState(terminal, archived, archivedAt, frozen, standby, restartInterrupted, cancelRequested)
+      evidence <- c.get[Option[List[String]]]("settlementEvidence").map(_.getOrElse(Nil))
+      settledAt <- c.get[Option[Long]]("settledAt")
+    yield TerminalState(
+      terminal,
+      archived,
+      archivedAt,
+      frozen,
+      standby,
+      restartInterrupted,
+      cancelRequested,
+      evidence,
+      settledAt
+    )
 
   private given Decoder[ChildItems] = (c: io.circe.HCursor) =>
     for
@@ -727,7 +736,7 @@ object RecoverySummary:
       digest <- c.get[String]("digest")
     yield Summary(schema, scope, generatedAt, facets.getOrElse(emptyFacets), sources, digest)
 
-  /** 判据①脏缺省：非终态（记录缺失 / 未归档同形——缺证据不算终态）。 */
+  /** 判据①脏缺省：非终态（记录缺失 / 无收口证据同形——缺证据不算终态）。 */
   private val emptyTerminal: TerminalState =
     TerminalState(
       terminal = false,
@@ -736,7 +745,9 @@ object RecoverySummary:
       frozen = false,
       standby = false,
       restartInterrupted = false,
-      cancelRequested = false
+      cancelRequested = false,
+      settlementEvidence = Nil,
+      settledAt = None
     )
 
   /** 判据②脏缺省：`fileUnreadable = true`（子项读面不可信 ⇒ 不静默判「无子项」）。 */

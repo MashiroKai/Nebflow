@@ -1397,11 +1397,11 @@ Delivery follows recipient state (there is no delivery parameter to set):
                 case Some(current) =>
                   // Round-model decision point (inside the start-lease critical
                   // section, naturally mutually exclusive with revival/continuation):
-                  // a settled identity with no tombstone and no busy signal gets a NEW
-                  // round (roundNo+1, fresh roundId, archivedAt cleared, diff baseline
-                  // re-anchored); anything busy (actor registered, or an in-flight /
-                  // frozen task row) stays in the CURRENT round — Mail injects, never
-                  // builds a second execution body.
+                  // a settled identity (state-derived reading — no archive flag) with
+                  // no tombstone and no busy signal gets a NEW round (roundNo+1, fresh
+                  // roundId, diff baseline re-anchored); anything busy (actor
+                  // registered, or an in-flight / frozen task row) stays in the
+                  // CURRENT round — Mail injects, never builds a second execution body.
                   openNewRoundIfSettled(current, task, live) *>
                     deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
                 case _ =>
@@ -1427,8 +1427,9 @@ Delivery follows recipient state (there is no delivery parameter to set):
     liveEntry: Option[AgentRecord]
   ): IO[Unit] =
     IO.blocking {
+      val identityClosed = nebflow.core.delegate.DelegateVisibility.readOf(record.id).identityClosed
       nebflow.core.delegate.DelegateRoundLedger
-        .decideMailRound(record, task.map(_.status), liveEntry.isDefined)
+        .decideMailRound(record, task.map(_.status), liveEntry.isDefined, identityClosed)
     }.flatMap {
       case nebflow.core.delegate.DelegateRoundLedger.MailRoundDecision.OpenNewRound =>
         IO.blocking(nebflow.core.delegate.DelegateRoundLedger.openNewRound(record)).void.handleErrorWith { e =>

@@ -280,12 +280,18 @@ object FreezeNotice:
     def oldestAgeMs: Long = if items.isEmpty then 0L else items.map(_.ageMs).max
 
   /**
-   * 记录 → 一波统计项（纯函数）：只收**在册未归档**且带 delegate 冻结线值的记录；
+   * 记录 → 一波统计项（纯函数）：只收**仍在冻结态且冻结龄未过保留期**的记录；
    * 窗口 = `now - windowMs` 之后冻结的算同一波（`windowMs <= 0` = 全部）。
+   *
+   * 阶段②（delegate-lifecycle-reform）：原先的「在册未归档」（`archivedAt.isEmpty`）
+   * 闸改由**状态派生**判据供给——归档写点退役后，「过保留期」由冻结龄现读复算
+   * （[[DelegateFreeze.retentionExpired]] 单点）。语义修正：存档旗不再**掩盖**唤醒面
+   * ——旧世界里保留期届满即写旗，`frozenSince` 仍在场的记录被旗静默排除在唤醒清单外；
+   * 现在同一事实由冻结龄表达，读面口径与唤醒/复活两腿统一。
    */
   def itemsOf(records: List[DelegateRegistry.Record], now: Long, windowMs: Long): List[Item] =
     records
-      .filter(r => r.frozenSince.isDefined && r.archivedAt.isEmpty)
+      .filter(r => r.frozenSince.isDefined && !r.frozenSince.exists(ts => DelegateFreeze.retentionExpired(ts, now)))
       .filter(r => DelegateFreeze.isFreezeWire(r.frozenReason.getOrElse("")))
       .filter { r =>
         windowMs <= 0L || now - r.frozenSince.getOrElse(now) <= windowMs

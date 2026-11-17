@@ -432,10 +432,13 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
         _ = assertEquals(row.status, "failed")
         rec <- IO(nebflow.core.delegate.DelegateRegistry.find(child))
-        _ = assert(rec.flatMap(_.restartInterruptedAt).isDefined, "salvaged row carries the interruption flag")
         _ = assert(
-          rec.flatMap(_.archivedAt).isDefined,
-          "ledger-completed adjudication folds the flagged row in the SAME boot (author complaint #2 closed)"
+          rec.flatMap(_.restartInterruptedAt).isEmpty,
+          "ledger-completed adjudication clears the interrupt mark in the SAME boot (author complaint #2 closed)"
+        )
+        _ = assert(
+          rec.flatMap(_.archivedAt).isEmpty,
+          "阶段② 零归档写：the adjudication writes no storage archive flag (state-derived visibility owns the window)"
         )
       yield ()
     }

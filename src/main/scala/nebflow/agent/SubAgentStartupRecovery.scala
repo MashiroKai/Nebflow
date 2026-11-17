@@ -590,7 +590,9 @@ object SubAgentStartupRecovery:
   /**
    * 重启打断标记回溯腿（幂等，boot 恰一次）：任务记录带重启指纹（本 boot 终态化的
    * 或历史 boot 落下的）⇒ 对应 registry 记录落 `restartInterruptedAt` 旗。守卫三闸：
-   * 未旗（幂等）/ 在册未归档（归档尸体零触碰）/ 未交付报告（真完成不被旗截断）。
+   * 未旗（幂等）/ **状态派生未收口**（收口身份零触碰——阶段② 起由
+   * [[nebflow.core.delegate.DelegateVisibility]] 现读判据供给，不再吃归档旗）/
+   * 未交付报告（真完成不被旗截断）。
    * 单条失败只 WARN，绝不阻断 boot。
    */
   private def markInterruptedRecords(store: SubAgentTaskStore): IO[Int] =
@@ -609,7 +611,8 @@ object SubAgentStartupRecovery:
               val now = System.currentTimeMillis()
               records
                 .filter(r =>
-                  r.restartInterruptedAt.isEmpty && r.archivedAt.isEmpty && r.reportStatus.isEmpty && lostIds.contains(
+                  r.restartInterruptedAt.isEmpty && !nebflow.core.delegate.DelegateVisibility
+                    .settledOf(r) && r.reportStatus.isEmpty && lostIds.contains(
                     r.id
                   )
                 )
