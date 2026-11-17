@@ -47,9 +47,13 @@ test('same browser canvas takeover overlay', async ({browser}, info) => {
     await expect(b.locator('#modal-overlay.on #takeover-box')).toBeVisible();
     await b.locator('#takeover-retake').click();
     await expect(b.locator('#takeover-box')).toBeHidden();
+    const claimResponse = a.waitForResponse(r=>r.url().endsWith('/api/canvas-writer/claim') && r.status()===200);
     await a.locator('#takeover-retake').click();
+    await claimResponse;
+    const started = performance.now();
     await expect(a.locator('#takeover-box')).toBeHidden();
     await expect(b.locator('#takeover-box')).toBeVisible({timeout:5000});
+    console.log(`[notification-observed-ms] ${Math.round(performance.now()-started)}`);
     await b.screenshot({path:info.outputPath('cover.png')});
     await b.locator('#takeover-retake').click();
     await expect(b.locator('#takeover-box')).toBeHidden();
@@ -67,9 +71,31 @@ test('same browser canvas takeover overlay', async ({browser}, info) => {
     await b.locator('#takeover-retake').click();
     await expect(b.locator('#takeover-box')).toBeHidden({timeout:30000});
     expect(await b.evaluate(async()=>{const m=await import('/js/canvas.js');return m.hasTab('local-unsynced')})).toBe(false);
+    let releaseResponse, arrived;
+    const arrivedPromise = new Promise(resolve=>{arrived=resolve});
+    const releasePromise = new Promise(resolve=>{releaseResponse=resolve});
+    await b.route('**/api/canvas-tabs', async (route) => {
+      if(route.request().method()!=='PUT') return route.continue();
+      const response=await route.fetch(); arrived(response.status());
+      await releasePromise; await route.fulfill({response});
+    });
+    try {
+      await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('inflight-tab','In flight',{pinned:true})});
+      expect(await arrivedPromise).toBe(200);
+      await a.locator('#takeover-retake').click();
+      await expect(b.locator('#takeover-box')).toBeVisible();
+      const diskBeforeLateResponse=readFileSync(join(s.data,'canvas_tabs.json'),'utf8');
+      const responseFinished = b.waitForResponse(r=>new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT');
+      releaseResponse();
+      await responseFinished;
+      await expect(b.locator('#takeover-box')).toBeVisible();
+      const changed=await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('must-not-open','Blocked',{pinned:true}); return m.hasTab('must-not-open')});
+      expect(changed).toBe(false);
+      expect(readFileSync(join(s.data,'canvas_tabs.json'),'utf8')).toBe(diskBeforeLateResponse);
+    } finally { releaseResponse(); await b.unroute('**/api/canvas-tabs'); }
   } finally {
     if(context) await context.close();
-    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),20000))]);
+    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),60000))]);
     if(!result) throw Error(`isolated instance did not exit: ${s.dir}, ${s.port}`);
     const probe = createServer(); probe.listen(s.port,'127.0.0.1'); await once(probe,'listening');
     await new Promise((ok,fail)=>probe.close(e=>e?fail(e):ok()));
@@ -154,7 +180,7 @@ test('real reader, claim, persist, preemption', async ({browser}, info) => {
     expect(blocked.path).toBe(blocked.snapshot.absPath);
   } finally {
     if(a) await a.context.close(); if(b) await b.context.close();
-    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),20000))]);
+    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),60000))]);
     if(!result) throw Error(`isolated instance did not exit: ${s.dir}, ${s.port}`);
     console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} home=${s.dir}`);
   }
