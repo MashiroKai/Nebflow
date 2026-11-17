@@ -115,8 +115,8 @@ const ALLOWED_FILTER_VALUES = new Set([
  *  （作者 2026-11-11 令「毛玻璃一律不透底」）；唯一材质近实底
  *  （亮 .968 / 暗 .941），上限 1 不包含在内，否则背景颜色无法透入。
  *  下限暂沿用既有门槛，不代表已完成像素实验。 */
-const GLASS_ALPHA_MIN = 0.90;
-const GLASS_ALPHA_MAX = 1.0;
+const GLASS_ALPHA_TARGET = 0.16;
+const GLASS_ALPHA_TOLERANCE = 0.005;
 
 /** G3 出生地钉死：旧档名必须仍指向唯一值；第二份字面值 = 第二种材质。
  *  --nf-glass-bg-hover 例外（同函数下方 G3-H 检查）：它是唯一材质上的
@@ -379,16 +379,14 @@ for (const d of inputBgDecls) {
     });
     continue;
   }
-  if (a < GLASS_ALPHA_MIN || a >= GLASS_ALPHA_MAX) {
-    const which = a >= GLASS_ALPHA_MAX ? '达到或高于上限（α=1 不承接背景颜色）'
-      : '低于下限（内容透底：底下的字看得出来 = 作者说的「脏」；11-11 令「毛玻璃一律不透底」）';
+  if (Math.abs(a - GLASS_ALPHA_TARGET) > GLASS_ALPHA_TOLERANCE) {
     add({
       rule: 'G3',
       file: rel(TOKENS),
       line: d.line,
       selector: d.selector,
-      detail: `${d.prop}: ${d.value}  ⇒ α=${a.toFixed(3)} 跑出 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX})`,
-      why: `标准失效：${which}`,
+      detail: `${d.prop}: ${d.value} ⇒ α=${a.toFixed(3)}；目标 ${GLASS_ALPHA_TARGET} ± ${GLASS_ALPHA_TOLERANCE}`,
+      why: '透明度偏离三点基准',
     });
   }
 }
@@ -812,7 +810,7 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
           ? (glassBases.has(`.${viaClass}`) || glassBases.has(viaClass))
           : (effBlur(e) || (glassBases.has(base) && !effOptedOut(e)));
         // An unknown computed alpha is not evidence of a compliant glass face.
-        const bandOk = a !== null && a >= GLASS_ALPHA_MIN && a <= GLASS_ALPHA_MAX;
+        const bandOk = a !== null && Math.abs(a - GLASS_ALPHA_TARGET) <= GLASS_ALPHA_TOLERANCE;
         if (e && /^var\(\s*--color-surface\s*\)$/.test(String(e.bg || '').trim())) {
           entry.ok = false;
           entry.detail = `常态玻璃面不得使用降级实底 ${e.bg}（${e.bgFile}:${e.bgLine}）`;
@@ -826,7 +824,7 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
             entry.ok = false;
             entry.detail = a === null
               ? `无法证明玻璃底：无法解析 ${e?.bg || '(无背景声明)'}`
-              : `玻璃底 α=${a.toFixed(3)} 跑出 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX})（${e.bg}）`;
+              : `玻璃底 α=${a.toFixed(3)} 偏离 ${GLASS_ALPHA_TARGET} ± ${GLASS_ALPHA_TOLERANCE}（${e.bg}）`;
           }
         }
       }
@@ -912,7 +910,8 @@ if (argv.has('--json')) {
     ok: violations.length === 0,
     singleSource: rel(SINGLE_SOURCE),
     tokenSource: rel(TOKENS),
-    glassAlphaBand: [GLASS_ALPHA_MIN, GLASS_ALPHA_MAX],
+    glassAlphaTarget: GLASS_ALPHA_TARGET,
+    glassAlphaTolerance: GLASS_ALPHA_TOLERANCE,
     pinnedInputFilter: PINNED_INPUT_FILTER,
     blocksWithBackdrop: stats.blocks,
     noneOptOuts: stats.noneOptOuts,
@@ -965,7 +964,7 @@ if (violations.length) {
     console.error(`      ${v.why}`);
   }
   console.error('\n处置：把这一面改成 .nf-glass（或加进 css/glass.css 的成员登记表）、');
-  console.error(`        配方值只准 var(--nf-glass-input-filter)、唯一玻璃底 α 落进 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX})、`);
+  console.error(`        配方值只准 var(--nf-glass-input-filter)、唯一玻璃底 α 落进 ${GLASS_ALPHA_TARGET} ± ${GLASS_ALPHA_TOLERANCE}、`);
   console.error(`        唯一模糊配方逐值 = ${PINNED_INPUT_FILTER}（幕布类允许 var(--nf-glass-scrim-blur)）。`);
   console.error('        顶部悬浮可透出面（G7）：不是挂 .nf-glass / 进成员表，就是进规范的');
   console.error('        例外清单写明理由 —— 不许半透明洗色底 + 零模糊悄悄留着。');
@@ -975,7 +974,7 @@ if (violations.length) {
 
 console.log(
   `✓ glass-unify gate passed — 配方块 ${stats.blocks} 全部在单一源（${members} 条规则）、` +
-  `none 摘除档 ${stats.noneOptOuts}、唯一玻璃底 α ∈ [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX})、` +
+  `none 摘除档 ${stats.noneOptOuts}、唯一玻璃底 α ∈ ${GLASS_ALPHA_TARGET} ± ${GLASS_ALPHA_TOLERANCE}、` +
   `唯一配方 ${PINNED_INPUT_FILTER}（主输入框质感，全站只此一种）、ask 面走 .nf-glass、` +
   `顶部悬浮面 ${g7.registry.length} 条全绿（违规 ${g7.hits.length} / 具名例外命中 ${g7.exemptHits.length}）`,
 );
