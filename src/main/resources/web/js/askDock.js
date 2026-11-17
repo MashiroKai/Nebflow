@@ -116,6 +116,12 @@ import { define } from './component.js';
 // 卡整体退役），ask_edit/ask_write 的直接落盘审阅态由 askEditReview 模块在 canvas
 // 审阅页签呈现——本模块只把 askEdit* 帧路由过去，不再自持任何审阅态。
 import { consumeApplied, consumeResolved, consumeAskState } from './askEditReview.js';
+// ask-stream-ui（2026-11-17 作者令「这里的设计可以参考主会话的实现」）：气泡列
+// 贴底跟随 + 「↓N 条新消息 / 回到底部」胶囊复用**会话面唯一组件** js/scrollPill.js
+//（主会话 utils.js syncScrollPill 与好友/群/设备窗 messages.js fmSyncFollowPill
+// 同一工厂、同一 `.scroll-new-pill` 形态 chat.css、同一容差/动效）；思考期 spinner
+// 复用主会话三点族 chat.css `.thinking-dot`（workline.js startWorklineDots 同源）。
+import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js';
 
 /**
  * 组件内部结构类名（单点声明；门禁 scripts/check-component-contract.mjs R4 的解析面）。
@@ -192,6 +198,14 @@ let wired = false; // 元素级监听/观察器已绑（节点复用 ⇒ 只绑�
 let turnToggle = null; // 中断状态机（createTurnToggle；建一次，单 dock 对）
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
+// ── ask-stream-ui（2026-11-17）：气泡列贴底跟随的宿主状态（单 dock 一份）──────
+//   · colSnapped = 跟随意图 latch（写入点只有两个：本列唯一滚动监听 + 显式贴底
+//     snapCol——主会话 view.stream.scrollSnapped 同律）；
+//   · colUnseen = 离底期间到达的**真实新消息**条数（主会话口径：typing 流式行 =
+//     过程指示，不计不数）；胶囊本体的显隐/文案/几何全在 scrollPill.js 组件里。
+let colSnapped = true;
+let colUnseen = 0;
+let askPill = null;
 // 记事本批（2026-11-05）：当前草稿归属（absPath + 与 ask 同式的 sid）与落盘防抖拍。
 let notePath = '';
 let noteSid = '';
@@ -885,6 +899,29 @@ function wireElements() {
   // 键盘/IME/发送判定 = 主会话同一实现（包装配；组字期 Enter 只确认候选）。
   bindComposerKeys(el.input, { onSend: () => { submit(); } });
   el.input.addEventListener('focus', syncSeat);
+  // ── ask-stream-ui（2026-11-17）：贴底跟随 + 「↓N 条新消息 / 回到底部」胶囊 ──
+  // 与主会话同一组件、同一语义（作者令「参考主会话的实现」）：胶囊本体 =
+  // scrollPill.js 唯一工厂（好友/群窗 messages.js fmSyncFollowPill 是非主窗消费
+  // 的先例——形态 chat.css `.scroll-new-pill` 单源、贴底容差 AT_BOTTOM_PX、
+  // 回底拐点 SHOW_AFTER_PX、平滑贴底与 reduced-motion 全在组件里）。本文件只留
+  // 两项宿主状态（上方 colSnapped/colUnseen）：
+  //   · **本列唯一滚动监听**（主会话 B4 纪律同律：一滚动事件一次几何探测）——
+  //     重读贴底 latch 并同步胶囊（回底即清零），只读不写滚动位；
+  //   · 落列跟随单点 = settleCol（smartScroll/shouldFollowBottom 的 ask 对应，
+  //     见 render 段）；胶囊落位参照 = 输入条顶缘（textarea 长高/手机档变化由
+  //     组件 park 现算，与主窗 #input-area 参照同构）。
+  askPill = createScrollPill({
+    host: el.dock,
+    scrollEl: el.col,
+    anchor: () => el.inputRow,
+    onReturn: () => { colUnseen = 0; colSnapped = true; },
+  });
+  el.col.addEventListener('scroll', () => {
+    if (!el) return;
+    colSnapped = bottomDistance(el.col) < AT_BOTTOM_PX;
+    if (colSnapped) colUnseen = 0;
+    if (askPill) askPill.sync({ count: colUnseen, atBottom: colSnapped });
+  }, { passive: true });
   // ── 记事本批（2026-11-05）：入口钮 / 浮窗自身的事件 ─────────────────────
   // 开合与 ask 同律：钮再点即收；窗内点击/按下不外溢（画布空白点击的收起腿只
   // 认 #canvas-content 本体，这里再挡一道，与 ask dock 同写法）。
@@ -1006,6 +1043,14 @@ function wireObserversOnce() {
         if (!el || !el.dock || el.dock.classList.contains('closed')) return;
         const h = el.inputRow.offsetHeight;
         if (h > 0) el.dock.style.setProperty('--ask-under', (h / 2).toFixed(2) + 'px');
+        // ask-stream-ui：输入条高度变了 = 胶囊落位参照（anchor）顶缘动了 —— 可见
+        // 中的胶囊就地重落（主窗 #input-area RO → refreshScrollPill 同构）。
+        if (askPill) askPill.refresh();
+        // 输入条高度变化同时会动列的视口高（面板 flex 列互挤）：跟随意图在身则
+        // 原地重钉底，否则钉底那一下留下的旧 scrollHeight 会差几 px 常驻
+        // （实测开窗回放差 8px；主会话输入条长高跟随意图同律——读历史不受扰，
+        // colSnapped=false 时零动作）。
+        if (colSnapped && el.col) el.col.scrollTop = el.col.scrollHeight;
       });
     };
     if (el && el.inputRow) {
@@ -1065,6 +1110,7 @@ function onMount(host, ctx) {
   reclampSize();
   if (isOpen()) {
     render();
+    snapCol(); // ask-stream-ui：宿主迁移前若已贴底，迁移后保持贴底（改前 render 自带钉底同义）
   }
   if (turnToggle) {
     const s = activeSession();
@@ -1139,6 +1185,7 @@ function syncToActiveTab() {
   if (isOpen()) {
     if (currentFile) {
       render();
+      snapCol(); // ask-stream-ui：切会话 = 新视图从底起读（旧会话的 latch/计数不带入）
       // 切卡即切 session（作者令⑦）：新文件的会话未回放过 → 即刻 askOpen
       // （绑定 + 历史回放；服务端为权威，重复帧幂等）。
       ensureActiveSession().then((loaded) => {
@@ -1286,6 +1333,7 @@ async function open() {
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
   render();
+  snapCol(); // ask-stream-ui：开窗即读 = 从最新一条起（未读清零 + 胶囊收敛）
   askOpen(s);
   syncSeat();
   setTimeout(() => { try { el.input.focus(); } catch { /* detached */ } }, 260);
@@ -1619,6 +1667,51 @@ function syncAddrRow() {
   el.addr.hidden = false;
 }
 
+// ── ask-stream-ui（2026-11-17）：落列跟随单点（主会话 smartScroll/shouldFollowBottom 同律）──
+// 旧路径：render/textDelta/appendTyping 各自无条件 `scrollTop = scrollHeight`——
+// 用户上翻读历史时任何新内容都会把滚动位抢走（本批根治点）。新律：
+//   · 贴底（latch 或几何，shouldFollowBottom 同式）⇒ rAF 跟随钉底；
+//   · 离底 ⇒ **绝不写滚动位**（阅读位置不动），真实新消息计数进胶囊（主会话
+//     countsAsRealMessage 口径的 ask 对应：user/ai 两族气泡计数，typing 流式行 =
+//     过程指示不计不数）。
+/** 贴底判定（容差 = 组件 AT_BOTTOM_PX 44px，与主会话 NEAR_BOTTOM_PX 同档实测值）。 */
+function colAtBottom() {
+  return !!el && bottomDistance(el.col) < AT_BOTTOM_PX;
+}
+/** 跟随意图（latch 优先、几何兜底——utils.shouldFollowBottom 同式）。 */
+function colFollows() {
+  return colSnapped === true || colAtBottom();
+}
+/** 胶囊同步（atBottom 已有本帧判定就带上，组件不再二次探测）。 */
+function askPillSync(count, atBottom) {
+  if (!askPill) return;
+  askPill.sync(atBottom === true ? { count: 0, atBottom: true } : { count });
+}
+/**
+ * 落列后调用的唯一跟随决定：跟随钉底 / 计数进胶囊。
+ * @param {number} arrived 本次落列的**真实新消息**条数（typing 等过程行传 0）
+ */
+function settleCol(arrived) {
+  if (!el) return;
+  if (colFollows()) {
+    colSnapped = true;
+    colUnseen = 0;
+    requestAnimationFrame(() => { if (el) el.col.scrollTop = el.col.scrollHeight; });
+    askPillSync(0, true);
+  } else {
+    if (arrived > 0) colUnseen += arrived;
+    askPillSync(colUnseen);
+  }
+}
+/** 显式贴底（开窗/切会话/本机点停）：latch 的第二个写点 + 胶囊收敛为隐藏。 */
+function snapCol() {
+  if (!el) return;
+  colSnapped = true;
+  colUnseen = 0;
+  requestAnimationFrame(() => { if (el) el.col.scrollTop = el.col.scrollHeight; });
+  askPillSync(0, true);
+}
+
 function render() {
   if (!el) return;
   const s = activeSession();
@@ -1647,7 +1740,9 @@ function render() {
     // of it stays fully legible. (FCC-REQ-004)
     el.col.appendChild(b);
   });
-  requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; });
+  // ask-stream-ui：render 不再自带滚动——落列后的跟随/计数由调用点经 settleCol/
+  // snapCol 单点决定（本函数只建 DOM；整列同步重建不产生中间布局拍，离底时的
+  // 阅读位置原样保留）。
 }
 
 /** 流式增量更新（不整列重渲——textDelta 高频）。 */
@@ -1702,6 +1797,7 @@ async function submit() {
   s.msgs.push({ role: 'user', text: v });
   persistSession(s); // 发问即落盘（持久批：重载/竞态现场问题不丢）
   render();
+  settleCol(1); // 本机发问 = 1 条真实新消息（主会话 .row.user 计入口径同律：贴底跟随、离底计数）
   appendTyping();
   armTurn(s); // 中断状态机：生成中 = 发送钮让位中断钮（输入行为包批）
   if (!s.stateSent) askOpen(s); // 未绑定先补一拍（历史回放与流式都依赖 askState）
@@ -1737,7 +1833,7 @@ function stopAsk() {
   if (!s || !s.busy) return;
   requestTurnInterrupt(s.sid);
   settleTurn(s);
-  if (isOpen()) { removeTyping(); render(); }
+  if (isOpen()) { removeTyping(); render(); snapCol(); } // 本机动作 → 保持改前「点停即钉底」行为
 }
 
 // 静默看门：busy 期间 180s 无任何流帧 ⇒ 本地收口（终态帧丢失形态）。帧到即续臂
@@ -1756,18 +1852,36 @@ function appendTyping() {
   if (!el) return;
   removeTyping();
   // One transient line reuses the existing Ask stream; it is status-only, never expandable.
+  // ── ask-stream-ui（2026-11-17 作者令「思考中的时候应该设计一个 spinner」）──
+  // 思考期（submit → 首个非空 textDelta）= 三点 spinner +「思考中」：dots 复用
+  // 主会话思考族形态（chat.css `.thinking-dot` 全局面，workline.js
+  // startWorklineDots 同一构造——纯 CSS 脉动，无 JS 计时器）；文案 = 主会话
+  // token chat.thinking.now 的字面（zh 思考中 / en Thinking，tt() 双语保真）。
+  // 首个非空 token 由 updateTypingText 把整行替换为流式文本（dots 让位首 token，
+  // 主会话同律）⇒ spinner 与既有流式指示（横向单行预览）**不同相**，零并存打架。
   const tp = h('div', {
     class: 'ask-stream-line',
     role: 'status',
     'aria-live': 'polite',
     'aria-label': tt('正在生成回答', 'Generating answer'),
-  }, tt('正在生成…', 'Generating…'));
+  }, [
+    h('span', { class: 'ask-thinking-dots', 'aria-hidden': 'true' }, [
+      h('span', { class: 'thinking-dot' }),
+      h('span', { class: 'thinking-dot' }),
+      h('span', { class: 'thinking-dot' }),
+    ]),
+    h('span', { class: 'ask-thinking-label' }, tt('思考中', 'Thinking')),
+  ]);
   el.col.appendChild(tp);
-  el.col.scrollTop = el.col.scrollHeight;
+  // 流式行 = 过程指示（主会话口径不计不数）：只贴底跟随，离底不写滚动位。
+  if (colFollows()) el.col.scrollTop = el.col.scrollHeight;
   typingNode = tp;
 }
 function updateTypingText(text) {
   if (!typingNode || !typingNode.isConnected || typeof text !== 'string') return;
+  // 思考期保持 spinner：零/空文本不换相——首个**非空** token 才把行整替为流式
+  // 文本（空 delta 不灭 dots，主会话「dots 直到首 token」同律）。
+  if (!text) return;
   typingNode.textContent = text;
   // Keep the newest generated tail in view without making the line interactive.
   typingNode.scrollLeft = typingNode.scrollWidth;
@@ -1795,6 +1909,7 @@ function consumeFrame(msg) {
 
   switch (msg.type) {
     case 'askState': {
+      const prevLen = entry.msgs.length; // ask-stream-ui：回放落列的增量基数（对账补齐按到达计数）
       entry.sid = msg.sessionId || entry.sid;
       entry.fileName = msg.fileName || entry.fileName;
       // ask-mail 批（2026-11-16）：引擎下发的会话 Mail 地址（`ask:<sid>` 逐字，
@@ -1838,7 +1953,12 @@ function consumeFrame(msg) {
       if (entry.busy && adopted.length && adopted[adopted.length - 1].role === 'ai') settleTurn(entry);
       if (file === currentFile) {
         // 回放即读（用户此刻正看着该会话）：未读清零 + 通知点落位。
-        if (isOpen()) { entry.unread = false; removeTyping(); render(); }
+        if (isOpen()) {
+          entry.unread = false;
+          removeTyping();
+          render();
+          settleCol(Math.max(0, entry.msgs.length - prevLen)); // 对账增量按真实到达计数（开窗/切会话侧已 snapCol）
+        }
         syncUnreadDot();
       }
       break;
@@ -1853,7 +1973,9 @@ function consumeFrame(msg) {
       ai.text += msg.delta || '';
       if (entry === activeSession() && isOpen()) {
         updateTypingText(ai.text);
-        el.col.scrollTop = el.col.scrollHeight;
+        // ask-stream-ui：流式行是过程指示（主会话口径不计不数）——只贴底跟随，
+        // 离底绝不写滚动位（读历史不被流式拉走）。
+        if (colFollows()) el.col.scrollTop = el.col.scrollHeight;
       }
       // 流式落盘节流（持久批）：textDelta 高频，800ms 一拍写 localStorage；
       // 终局由 done 全量落盘兜底。
@@ -1869,7 +1991,7 @@ function consumeFrame(msg) {
       if (last && last.role === 'ai' && !last.text && msg.finalText) last.text = msg.finalText;
       persistSession(entry);
       if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); }
+        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 定稿 ai 泡 = 1 条真实新消息
         syncUnreadDot();
       }
       break;
@@ -1882,7 +2004,7 @@ function consumeFrame(msg) {
       settleTurn(entry);
       persistSession(entry);
       if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); }
+        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 部分答案落泡 = 1 条真实新消息
         syncUnreadDot();
       }
       break;
@@ -1897,7 +2019,7 @@ function consumeFrame(msg) {
       else entry.msgs.push({ role: 'ai', text: errText });
       persistSession(entry);
       if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); }
+        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 错误落助手泡槽 = 1 条真实新消息
         syncUnreadDot();
       }
       break;
@@ -1932,7 +2054,7 @@ function consumeFrame(msg) {
         entry.msgs.push({ role: 'user', text: msg.text || '' });
         persistSession(entry);
         if (entry === activeSession()) {
-          if (isOpen()) { removeTyping(); render(); }
+          if (isOpen()) { removeTyping(); render(); settleCol(1); } // 注入问 = 1 条真实新消息
           syncUnreadDot();
         }
       }

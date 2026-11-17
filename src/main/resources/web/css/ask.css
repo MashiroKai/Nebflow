@@ -577,6 +577,26 @@ body.mobile-layer .note-dock .ds-resize-handle {
 }
 .ask-stream-line::-webkit-scrollbar { display: none; }
 
+/* ═══ ask-stream-ui（2026-11-17 作者令「参考主会话」）：思考期 spinner + 回底胶囊 ═══
+ * 思考期 = .ask-stream-line 内的三点 spinner（`.thinking-dot` 全局面在
+ * css/chat.css——主会话思考族同一形态源，workline.js startWorklineDots 同构）+
+ * 「思考中」文案（= 主会话 locale token chat.thinking.now 的字面）。首个非空
+ * textDelta 由 askDock.js updateTypingText 把整行替换为流式文本 ⇒ 与既有流式
+ * 指示（横向单行预览）不同相、零叠置。本段只写两件落位形态（dots 排布/label
+ * 间距），动画与配色单源在 chat.css 的 .thinking-dot 段，零第二套。 */
+.ask-stream-line .ask-thinking-dots {
+  display: inline-flex; align-items: center; gap: var(--ds-space-half);
+}
+.ask-stream-line .ask-thinking-label {
+  margin-left: var(--ds-space-1h);
+}
+/* 回底胶囊：本体/形态/动效单源 = css/chat.css `.scroll-new-pill`（主会话面唯一
+ * 组件 js/scrollPill.js 的落位产物，与主窗/好友窗/搜索回跳同一枚）。本文件只补
+ * ask 面的收起纪律——收起态随面板内容件一起隐身（.closed 隐身名单，同
+ * .ask-colwrap / .ask-input > * 那两条的成员法）。落位（输入条顶缘之上）与堆叠
+ * 互斥全由组件 park()/show() 现算，本文件零几何。 */
+.ask-dock.closed .scroll-new-pill { visibility: hidden; }
+
 /* ── 「按龄渐隐」退役（glass-unify 批 2026-11-05）────────────────────────
    原规则：`.ask-bub[data-age] { opacity: var(--ask-age-alpha, 1); }`，JS 为每条
    历史气泡写 α = max(.3, 1 − 距底条数 × .13)。作者实拍报障「只有最新一条能看清，
