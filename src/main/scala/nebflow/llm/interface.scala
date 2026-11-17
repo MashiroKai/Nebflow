@@ -634,11 +634,9 @@ object LlmInterface extends LlmRuntime:
                 // 终局判定需要完整受限清单——链出口先滤会把受限信息丢成「空链」，
                 // 流面就会落进 120s 全灭闸等待而非带原因快失败。
                 regCandidates <- registry.getCandidatesForAgentUnfiltered(req.agentModel)
-                authorizedOverride = overrides.get(req.sessionId).filter(o =>
-                  regCandidates.exists(c => c.providerId == o.providerId && c.model == o.model)
-                ).toList
-                candidates = authorizedOverride ++ regCandidates
-                  .filterNot(c => authorizedOverride.exists(o => o.providerId == c.providerId && o.model == c.model))
+                // An explicit session choice is the entire chain, not a suggestion
+                // to prepend to the role model. Failure must not switch models.
+                candidates = overrides.get(req.sessionId).fold(regCandidates)(List(_))
                 // #33: drop stale session overrides whose provider was removed
                 // by a config hot-reload — graceful skip, never "Unknown provider".
                 // 缺陷批 2026-11-05：带原因版本——被剔候选进账本（不静默消失）。
@@ -846,11 +844,8 @@ object LlmInterface extends LlmRuntime:
                         // 全受限终局判定需要完整受限清单——链出口先滤会把受限信息
                         // 丢成「空链」，流面就会落进 120s 全灭闸等待而非带原因快失败。
                         regCandidates <- registry.getCandidatesForAgentUnfiltered(req.agentModel)
-                        authorizedOverride = overrides.get(req.sessionId).filter(o =>
-                          regCandidates.exists(c => c.providerId == o.providerId && c.model == o.model)
-                        ).toList
-                        candidates = authorizedOverride ++ regCandidates
-                          .filterNot(c => authorizedOverride.exists(o => o.providerId == c.providerId && o.model == c.model))
+                        // A manual session choice replaces the role chain entirely.
+                        candidates = overrides.get(req.sessionId).fold(regCandidates)(List(_))
                         // #33: same graceful skip as the non-streaming path.
                         // 缺陷批 2026-11-05：带原因版本（进候选账本）。
                         knownRes <- registry.filterKnownProvidersDetailed(candidates)

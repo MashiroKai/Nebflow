@@ -3094,6 +3094,10 @@ onMessage('configUpdated', (msg, view) => {
 onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
   state.allModelRefs = models.map(m => m.ref).filter(Boolean);
+  if (msg.sessionId) {
+    state.sessionModelSelections ||= {};
+    state.sessionModelSelections[msg.sessionId] = msg.current || '';
+  }
 });
 
 onMessage('sessionModelSet', (msg, view) => {

@@ -551,14 +551,10 @@ class ProviderRegistry(
         case Left(e) =>
           IO.delay(logger.warnSync(s"Candidate-chain snapshot after reload failed: ${e.getMessage}")).attempt.void
       }
-      staleIds <- overridesRef match
-        case Some(ref) =>
-          ref.modify { overrides =>
-            val (keep, drop) = overrides.partition { case (_, c) => newConfig.llm.providers.contains(c.providerId) }
-            (keep, drop.keys.toList)
-          }
-        case None => IO.pure(Nil)
-    yield staleIds
+      // Preserve explicit choices even when a provider disappears. The request
+      // eligibility gate reports the missing provider instead of silently
+      // reverting the session to its role model.
+    yield Nil
 
   /**
    * Graceful skip for candidates whose provider is not present in the current

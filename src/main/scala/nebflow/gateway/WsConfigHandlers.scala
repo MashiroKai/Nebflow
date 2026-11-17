@@ -438,7 +438,8 @@ private[gateway] object WsConfigHandlers:
                 "description" -> desc.asJson
               )
             }.asJson,
-            "current" -> currentOpt.asJson
+            "current" -> currentOpt.asJson,
+            "source" -> (if currentOpt.isDefined then "override" else "follow").asJson
           )
         )
       }
