@@ -277,12 +277,14 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
         _ <- res.scheduledTaskStore.addTask(todo("decision-1").copy(decision = Some(decision)))
         listed <- send(c, "listScheduledTasks", """{"type":"listScheduledTasks","sessionId":"s1","scope":"all"}""")
         frames <- send(c, "completeTodo", """{"type":"completeTodo","sessionId":"s1","id":"decision-1"}""")
+        retry <- send(c, "completeTodo", """{"type":"completeTodo","sessionId":"s1","id":"decision-1"}""")
         onDisk <- res.scheduledTaskStore.loadTasks("s1")
         done <- res.doneRecordStore.loadAll
       yield
         val rows = listed.head.hcursor.downField("tasks").focus.flatMap(_.asArray).getOrElse(Vector.empty)
         assertEquals(rows.head.hcursor.downField("decision").get[String]("question").toOption, Some("Choose"))
         assertEquals(types(frames), List("error"))
+        assertEquals(types(retry), List("error"))
         assertEquals(onDisk.head.decision, Some(decision))
         assertEquals(onDisk.head.completedAt, None)
         assertEquals(done.length, 0)
