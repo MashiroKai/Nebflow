@@ -92,6 +92,16 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
   padding-bottom: max(28px, var(--mpage-fab-clearance, 28px));
   box-sizing: border-box;
 }
+/* item 页覆写：底带不是 FAB 而是 .ta-tool（贴键盘/贴 dock 的胶囊带）。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
+  padding-bottom: max(
+    28px,
+    calc(
+      max(var(--ta-kb, 0px), var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px))
+      + 8px + var(--band-d, 48px) + 8px
+    )
+  );
+}
 
 /* ═══ A · Lists home page ═══════════════════════════════════════════════ */
 
