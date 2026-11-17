@@ -407,6 +407,13 @@ html[data-theme="dark"] {
      ——存量消费链（sapphire.css --glass-* / --cv-*）不改名即换材质。 */
   --nf-glass-input-bg: rgba(255, 255, 255, 0.95);            /* 唯一玻璃底（亮档）α=.968（近实底白） */
   --nf-glass-input-filter: blur(24px) saturate(1.15); /* 唯一模糊配方 */
+  /* Canvas 三点基准：暂作为具名引用，不改变全局旧玻璃消费方；全局迁移须
+     同步更新 alpha 契约、降级面及逐控件验证，不能仅替换背景值。 */
+  --nf-glass-dots-bg: var(--ds-wash-16);
+  --nf-glass-dots-border: var(--glass-border);
+  --nf-glass-dots-shadow: var(--ds-shadow-dots);
+  --nf-glass-dots-radius: var(--ds-radius-pill);
+  --nf-glass-dots-filter: var(--nf-glass-input-filter);
   --nf-glass-bg: var(--nf-glass-input-bg);   /* 别名：唯一底（旧消费链随材质） */
   /* hover 升一档（唯一材质上的交互层级，单一材质批 2026-11-15 补正）：质感 =
      blur/描边配方不动，层级 = 底色α 只提不透。旧批（单一材质首版）曾把本槽
