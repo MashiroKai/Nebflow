@@ -14,8 +14,6 @@
   {"file":"js/usageDashboard.js","line":186,"reason":"Legacy usage filter selectors pending migration."},
   {"file":"js/daemonPanel.js","line":178,"reason":"Legacy daemon setting selector pending migration."},
   {"file":"js/bgAgentPopup.js","line":639,"reason":"Legacy background-agent model selector pending migration."},
-  {"file":"js/chatUi.js","line":196,"reason":"Legacy search scope selector pending migration."},
-  {"file":"js/chatUi.js","line":197,"reason":"Legacy search agent selector pending migration."},
   {"file":"js/sidebar/providersUi.js","line":245,"reason":"Legacy provider model selector pending migration."},
   {"file":"js/sidebar/providersUi.js","line":614,"reason":"Legacy provider configuration selector pending migration."},
   {"file":"js/mobile/searchFace.js","line":86,"reason":"Legacy mobile search kind selector pending migration; native-system exception not yet adjudicated."}

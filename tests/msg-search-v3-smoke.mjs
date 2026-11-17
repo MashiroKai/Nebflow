@@ -139,6 +139,16 @@ await page.waitForTimeout(600);
 const dateEnabled = await tabs.nth(4).getAttribute('aria-disabled');
 check('§3 date tab still enabled after leaving media', dateEnabled !== 'true', String(dateEnabled));
 
+// Scope and agent remain keyboard-operable single-choice filters.
+for (const id of ['search-scope', 'search-agent']) {
+  const trigger = page.locator(`#${id}`);
+  await trigger.click();
+  const menu = page.locator('.project-open-menu');
+  check(`${id} opens with a checked item`, await menu.isVisible() && await menu.locator('[aria-checked="true"]').count() === 1);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Escape');
+  check(`${id} escape restores focus`, await menu.count() === 0 && await trigger.evaluate(el => document.activeElement === el));
+}
 // Tool filter uses the shared menu while retaining the search value contract.
 await page.locator('#search-tool').click();
 const toolMenu = page.locator('.project-open-menu');

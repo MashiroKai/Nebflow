@@ -341,21 +341,22 @@ const inputById = (id) => /** @type {HTMLInputElement|null} */ (document.getElem
  * @returns {HTMLSelectElement|null}
  */
 const selectById = (id) => /** @type {HTMLSelectElement|null} */ (document.getElementById(id));
-let toolOptions = [];
+const filterOptions = new Map();
 let closeToolMenu = () => {};
-function setToolOptions(options, value = '') {
-  const button = document.getElementById('search-tool');
+function setFilterOptions(id, options, value = '') {
+  const button = document.getElementById(id);
   if (!button) return;
-  toolOptions = options;
-  button.value = options.some(o => o.value === value) ? value : '';
+  filterOptions.set(id, options);
+  button.value = options.some(o => o.value === value) ? value : (options[0]?.value || '');
   button.textContent = options.find(o => o.value === button.value)?.label || '';
 }
+function setToolOptions(options, value = '') { setFilterOptions('search-tool', options, value); }
 function openToolMenu(button) {
   closeToolMenu();
   const menu = document.createElement('div');
   menu.className = 'project-open-menu nf-glass';
   menu.setAttribute('role', 'menu');
-  for (const option of toolOptions) {
+  for (const option of filterOptions.get(button.id) || []) {
     const item = document.createElement('button');
     item.type = 'button'; item.setAttribute('role', 'menuitemradio');
     item.setAttribute('aria-checked', String(option.value === button.value));
@@ -459,7 +460,9 @@ export function initChatSearch() {
     document.getElementById(id)?.addEventListener('change', scheduleSearch);
   }
 
-  document.getElementById('search-tool')?.addEventListener('click', event => openToolMenu(event.currentTarget));
+  for (const id of ['search-scope', 'search-agent', 'search-tool']) {
+    document.getElementById(id)?.addEventListener('click', event => openToolMenu(event.currentTarget));
+  }
 
   // Category tabs (click). The date tab (now IN the roving enumeration but
   // never a category) toggles the calendar popover instead of switching; its
@@ -675,17 +678,12 @@ function resetSearchState() {
 
 /** Fill labels/placeholders that depend on the current locale. */
 function renderStaticLabels() {
-  const scope = document.getElementById('search-scope');
-  if (scope) {
-    scope.innerHTML =
-      `<option value="current">${escapeHtml(t('search.scopeCurrent'))}</option>` +
-      `<option value="all">${escapeHtml(t('search.scopeAll'))}</option>`;
-  }
+  setFilterOptions('search-scope', [
+    { value: 'current', label: t('search.scopeCurrent') },
+    { value: 'all', label: t('search.scopeAll') }
+  ], 'current');
   setToolOptions([{ value: '', label: t('search.allTypes') }]);
-  const agent = document.getElementById('search-agent');
-  if (agent) {
-    agent.innerHTML = `<option value="">${escapeHtml(t('search.allAgents'))}</option>`;
-  }
+  setFilterOptions('search-agent', [{ value: '', label: t('search.allAgents') }]);
   for (const tab of CONTENT_TABS) {
     const el = document.getElementById(`search-tab-${tab}`);
     if (el) el.textContent = t(TAB_I18N[tab]);
@@ -970,8 +968,9 @@ function openPillListbox(pill, pop) {
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
-  if (document.getElementById('search-tool')?.getAttribute('aria-expanded') === 'true') {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeToolMenu(); document.getElementById('search-tool')?.focus(); }
+  const expandedFilter = document.querySelector('.search-filters [aria-expanded="true"]');
+  if (expandedFilter) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeToolMenu(); expandedFilter.focus(); }
     return;
   }
   // ⑤ 收归：单一谓词（元素级 dataset 兜底 + 事件级 isComposing/keyCode 229）。
@@ -2466,10 +2465,10 @@ function populateAgentFilter(sessions, keepValue) {
     if (name) counts.set(name, (counts.get(name) || 0) + 1);
   }
   const sorted = [...counts.keys()].sort((a, b) => a.localeCompare(b));
-  sel.innerHTML =
-    `<option value="">${escapeHtml(t('search.allAgents'))}</option>` +
-    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
-  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+  setFilterOptions('search-agent', [
+    { value: '', label: t('search.allAgents') },
+    ...sorted.map(n => ({ value: n, label: `${n} (${counts.get(n)})` }))
+  ], keepValue);
 }
 
 /** Rebuild the tool filter options from the tool labels in the fetched set.
