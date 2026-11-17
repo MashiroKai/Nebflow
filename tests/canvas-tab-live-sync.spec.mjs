@@ -186,8 +186,8 @@ async function waitForConverged(a, b, wantIds, timeout = 12000) {
 
 test.describe.configure({ mode: 'serial' });
 
-test.fixme('stale frame cannot overwrite a pending local activation', async ({ browser }) => {
-  // S2a: enable after operation-correlated pending intent prevents stale frame rollback.
+test('stale frame cannot overwrite a pending local activation', async ({ browser }) => {
+  // Legacy PUT acknowledgement must not let a stale frame undo a local switch.
   engine.reset();
   const a = await bootClient(browser);
   await drive(a.page, `m.openTab('guard-a', 'A', {type:'generic', pinned:true}); m.openTab('guard-b', 'B', {type:'generic', pinned:true})`);

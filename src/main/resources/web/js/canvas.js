@@ -64,6 +64,12 @@ let closeTimeout = null;
 // Map of tabId -> { id, title, type, paneEl, tabEl, closable }
 const tabs = new Map();
 let activeTabId = null;
+// Legacy PUTs have no operation id: tie an acknowledgement to the exact local
+// activation generation captured by the submitted snapshot, never just its id.
+let pendingLocalActivation = null;
+let activationGeneration = 0;
+let applyingLiveTabsFrame = false;
+const persistActivationGeneration = new WeakMap();
 // Preview (temporary) tabs, one per preview group — VS Code behavior, but
 // scoped: tabs only replace a preview tab within their own group. File tabs
 // (with absPath) share the 'file' group so opening a .md still replaces a
@@ -1198,6 +1204,10 @@ document.addEventListener('canvas-viewer-rerendered', (e) => {
  *  @param {string} id — Tab identifier. */
 export function setActiveTab(id) {
   if (!tabs.has(id)) return;
+  if (!applyingLiveTabsFrame && activeTabId !== id) {
+    pendingLocalActivation = { id, at: Date.now(), generation: ++activationGeneration };
+    lateSyncActive = null;
+  }
   activeTabId = id;
   tabs.forEach(t => {
     t.paneEl.classList.toggle('active', t.id === id);
@@ -5500,6 +5510,9 @@ let pendingPersistPayload = null;
 let persistDirty = false;
 
 function scheduleServerPersist(payload) {
+  if (pendingLocalActivation && payload.activeTabId === pendingLocalActivation.id) {
+    persistActivationGeneration.set(payload, pendingLocalActivation.generation);
+  }
   pendingPersistPayload = payload;
   if (serverPersistTimer) clearTimeout(serverPersistTimer);
   serverPersistTimer = setTimeout(() => {
@@ -5524,7 +5537,14 @@ function sendServerPersist(payload, keepalive) {
     body: JSON.stringify(payload),
   })
     .then((r) => {
-      if (r.ok) { persistDirty = false; return; }
+      if (r.ok) {
+        persistDirty = false;
+        if (pendingLocalActivation &&
+            persistActivationGeneration.get(payload) === pendingLocalActivation.generation) {
+          pendingLocalActivation = null;
+        }
+        return;
+      }
       persistDirty = true;
       console.warn('[canvas-tabs] server persist failed:', r.status);
     })
@@ -5825,6 +5845,9 @@ export function restoreTabs() {
 // @param {any} data 已过 parseTabsData 的合法 v2 存档
 function applyLiveTabsFrame(data) {
   if (cardWindowMode) return; // 卡窗不管理主窗标签组（批⑧ 纪律）
+  const localIntent = pendingLocalActivation;
+  applyingLiveTabsFrame = true;
+  try {
   seedKnownTombstones(data);
   const removed = suppressTombstonedTabs();
   // 被摘的可能正是激活签 → 邻位接管 / 末签收面板（closeTab 同语义的静默版）。
@@ -5835,13 +5858,18 @@ function applyLiveTabsFrame(data) {
   }
   reconcileFromServer(data);       // 空集合法（全部远端关闭）：reconcile 早退，摘除腿已收口
   reorderTabsToArchive(data);
-  const want = typeof data.activeTabId === 'string' ? data.activeTabId : null;
+  const want = localIntent && tabs.has(localIntent.id)
+    ? localIntent.id
+    : (typeof data.activeTabId === 'string' ? data.activeTabId : null);
   if (want) {
     if (tabs.has(want)) {
       if (activeTabId !== want) setActiveTab(want);
     } else if (!tombstoneGateActive(want)) {
       lateSyncActive = { id: want, at: Date.now() }; // 文件签在途：落地时守卫接管
     }
+  }
+  } finally {
+    applyingLiveTabsFrame = false;
   }
 }
 
