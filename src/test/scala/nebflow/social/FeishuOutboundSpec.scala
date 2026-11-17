@@ -202,6 +202,18 @@ val x = 1
     assert(plain.contains("val x = 1"), "code content is preserved, only the fence is dropped")
   }
 
+  test("Feishu tables become labeled rows without changing ambiguous or fenced tables") {
+    val input = "Intro\n| Name | Link |\n| --- | :---: |\n| Alice | [site](https://example.com) |\n| Bob | 42 |\nEnd"
+    val result = OutboundText.toPlain(FeishuTableText.render(input))
+    assertEquals(result, "Intro\nName: Alice\nLink: site (https://example.com)\n\nName: Bob\nLink: 42\nEnd")
+    val uneven = "| A | B |\n| --- | --- |\n| one | two | extra |"
+    assertEquals(FeishuTableText.render(uneven), uneven)
+    val escaped = "| A | B |\n| --- | --- |\n| x\\|y | z |"
+    assertEquals(FeishuTableText.render(escaped), escaped)
+    val fenced = "```\n| A | B |\n| --- | --- |\n| x | y |\n```"
+    assertEquals(FeishuTableText.render(fenced), fenced)
+  }
+
   test("OB-R8 every plan satisfies the no-silent-drop invariants") {
     val png = path("a.png")
     val pdf = path("b.pdf")

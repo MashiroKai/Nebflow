@@ -1341,7 +1341,7 @@ final class FeishuBridgePlugin(
               // ruling #299): the OUTBOUND copy is de-marked-up so Feishu shows
               // no bare markdown syntax and keeps links alive as bare URLs. The
               // in-session original above is never rewritten — only this copy is.
-              val outbound = nebflow.social.outbound.OutboundText.toPlain(text)
+              val outbound = nebflow.social.outbound.OutboundText.toPlain(FeishuTableText.render(text))
               send(c.appId, c.appSecret, region, chatId, outbound).flatMap { res =>
                 if res.ok then
                   segmentFailNoted.update(_ - sessionId) *>
