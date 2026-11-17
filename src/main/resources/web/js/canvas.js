@@ -82,6 +82,7 @@ function createCanvasWriterClient(transport) {
       const run = async () => {
         if (role !== 'writer' || epoch !== capturedEpoch) return false;
         const result = await transport.put(payload, capturedEpoch);
+        if (role !== 'writer' || epoch !== capturedEpoch) return false;
         if (!result) { this.lost(); transport.failed?.(); }
         return result;
       };

@@ -151,38 +151,15 @@ function retakeErrorText(resp, json) {
 let canvasClaim = null;
 export function showCanvasTakeover(claim, unsynced = false) {
   canvasClaim = claim;
-  const panel = document.getElementById('canvas-slide');
-  const original = boxEl();
-  if (!panel || !original) return;
-  let cover = panel.querySelector('.canvas-takeover');
-  if (!cover) {
-    cover = document.createElement('div');
-    cover.className = 'canvas-takeover';
-    const card = original.cloneNode(true);
-    card.removeAttribute('id');
-    card.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
-    card.style.display = 'flex';
-    const buttons = card.querySelectorAll('button');
-    buttons.forEach(button => button.remove());
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      try { if (await canvasClaim?.()) hideCanvasTakeover(); }
-      finally { button.disabled = false; }
-    });
-    card.appendChild(button);
-    cover.appendChild(card);
-    panel.appendChild(cover);
-  }
-  const button = cover.querySelector('button');
-  button.textContent = unsynced ? '放弃本地变更并取回控制权' : '重新接管';
-  cover.style.display = 'flex';
+  show();
+  const button = document.getElementById('takeover-retake');
+  if (button && unsynced) button.textContent = '放弃本地变更并取回控制权';
 }
 export function hideCanvasTakeover() {
+  if (!canvasClaim) return;
   canvasClaim = null;
-  const cover = document.querySelector('#canvas-slide .canvas-takeover');
-  if (cover) cover.style.display = 'none';
+  state.consoleSuperseded = false;
+  hide();
 }
 
 export async function takeoverRetake() {

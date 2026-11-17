@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -43,29 +43,39 @@ test('same browser canvas takeover overlay', async ({browser}, info) => {
     await b.waitForSelector('#activity-bar',{state:'attached',timeout:30000});
     await a.evaluate(async()=>{const m=await import('/js/canvas.js');m.openCanvas()});
     await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openCanvas()});
-    await expect(a.locator('#canvas-slide .canvas-takeover')).toBeVisible();
-    await expect(b.locator('#canvas-slide .canvas-takeover')).toBeVisible();
-    await b.locator('.canvas-takeover button').click();
-    await expect(b.locator('.canvas-takeover')).toBeHidden();
-    await a.locator('.canvas-takeover button').click();
-    await expect(a.locator('.canvas-takeover')).toBeHidden();
-    await expect(b.locator('.canvas-takeover')).toBeVisible({timeout:5000});
+    await expect(a.locator('#modal-overlay.on #takeover-box')).toBeVisible();
+    await expect(b.locator('#modal-overlay.on #takeover-box')).toBeVisible();
+    await b.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-box')).toBeHidden();
+    await a.locator('#takeover-retake').click();
+    await expect(a.locator('#takeover-box')).toBeHidden();
+    await expect(b.locator('#takeover-box')).toBeVisible({timeout:5000});
     await b.screenshot({path:info.outputPath('cover.png')});
-    await b.locator('.canvas-takeover button').click();
-    await expect(b.locator('.canvas-takeover')).toBeHidden();
+    await b.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-box')).toBeHidden();
     // Create a real debounced local change, then preempt it before the PUT fires.
     await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('local-unsynced','Unsynced',{pinned:true})});
-    await a.locator('.canvas-takeover button').click();
-    await expect(b.locator('.canvas-takeover button')).toContainText('放弃本地变更', {timeout:5000});
+    await a.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-retake')).toContainText('放弃本地变更', {timeout:5000});
+    let claims=0; b.on('request',r=>{if(r.url().endsWith('/api/canvas-writer/claim')) claims++});
+    b.once('dialog', dialog=>dialog.dismiss());
+    await b.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-box')).toBeVisible();
+    expect(claims).toBe(0);
+    expect(await b.evaluate(async()=>{const m=await import('/js/canvas.js');return m.hasTab('local-unsynced')})).toBe(true);
     b.once('dialog', dialog=>dialog.accept());
-    await b.locator('.canvas-takeover button').click();
-    await expect(b.locator('.canvas-takeover')).toBeHidden({timeout:30000});
+    await b.locator('#takeover-retake').click();
+    await expect(b.locator('#takeover-box')).toBeHidden({timeout:30000});
     expect(await b.evaluate(async()=>{const m=await import('/js/canvas.js');return m.hasTab('local-unsynced')})).toBe(false);
   } finally {
     if(context) await context.close();
     s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),20000))]);
     if(!result) throw Error(`isolated instance did not exit: ${s.dir}, ${s.port}`);
-    console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} home=${s.dir}`);
+    const probe = createServer(); probe.listen(s.port,'127.0.0.1'); await once(probe,'listening');
+    await new Promise((ok,fail)=>probe.close(e=>e?fail(e):ok()));
+    rmSync(s.dir,{recursive:true});
+    expect(existsSync(s.dir)).toBe(false);
+    console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} port_free=true home_removed=true`);
   }
 });
 
