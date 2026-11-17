@@ -48,7 +48,7 @@ printf 'driver=%s target=%s port=%s home=%s checkout=%s dry_run=%s\n' "$driver" 
 if [ "$dry" != 1 ]; then echo 'ERROR: live mode is disabled until owned-instance cleanup is safe and verified.' >&2; exit 1; fi
 git -C "$repo" worktree add --detach "$checkout" "$commit"
 added=1
-printf 'build: (cd %q && sbt compile)\n' "$checkout"
-(cd "$checkout" && sbt compile)
+printf 'build: (cd %q && sbt -J-Xmx4g -J-XX:MaxMetaspaceSize=2g compile)\n' "$checkout"
+(cd "$checkout" && sbt -J-Xmx4g -J-XX:MaxMetaspaceSize=2g compile)
 printf 'launch: (cd %q && COLDSTART_PORT=%q COLDSTART_HOME=%q COLDSTART_FULL=1 COLDSTART_NO_OPEN=1 bash %q --net off)\n' "$checkout" "$port" "$home" "$script_dir/coldstart.sh"
 echo 'dry-run: build complete; instance not started'

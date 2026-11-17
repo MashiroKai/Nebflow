@@ -4,7 +4,7 @@ base=$(cd "$(dirname "$0")/.." && pwd -P)
 tmp=$(mktemp -d /tmp/stand-ref-test.XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/bin"
-printf '#!/bin/sh\n[ "$1" = compile ]\nprintf "MOCK sbt compile\\n"\n' > "$tmp/bin/sbt"
+printf '#!/bin/sh\n[ "$1" = -J-Xmx4g ] && [ "$2" = -J-XX:MaxMetaspaceSize=2g ] && [ "$3" = compile ] || exit 1\nprintf "MOCK sbt compile\\n"\n' > "$tmp/bin/sbt"
 chmod +x "$tmp/bin/sbt"
 export PATH="$tmp/bin:$PATH" COLDSTART_REPO="$base"
 output=$(bash "$base/scripts/coldstart-ref.sh" --ref HEAD --port 39127 --home "$tmp/home" --dry-run)
