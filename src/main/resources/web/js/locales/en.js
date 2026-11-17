@@ -2225,9 +2225,15 @@ export default {
   'canvas.loadingFile': 'Opening…',
   'canvas.loadFailed': 'Failed to open',
   'canvas.retry': 'Retry',
-  // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button
-  'canvas.refresh': 'Re-read from disk',
+  // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button.
+  // Retired by canvas-auto-refresh (2026-11-17 author order — hysteresis auto refresh,
+  // 60s window); canvas.refresh key removed with the button, refreshDirty stays
+  // (reused by the auto path's dirty guard).
   'canvas.refreshDirty': 'Unsaved changes — save or revert before refreshing.',
+  // Dirty "has updates" hint (canvas-auto-refresh batch): lightweight non-resident
+  // chip shown when the quiet window elapsed but the tab is dirty/in source mode.
+  'canvas.updateHint': 'This file changed on disk (auto refresh deferred: unsaved edits here).',
+  'canvas.updateNow': 'Refresh now',
   // B7 doc follow-up batch (2026-11-01): dirty-tab close confirm + external-change conflict bar
   'canvas.closeDirtyTitle': 'Close unsaved tab?',
   'canvas.closeDirtyMsg': '"{name}" has unsaved changes. Closing discards them.',

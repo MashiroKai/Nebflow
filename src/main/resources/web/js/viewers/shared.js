@@ -652,7 +652,9 @@ export function addSourceToggle(pane, renderFn, ctx) {
         btn.innerHTML = EYE_ICON_SVG;
         btn.title = t('canvas.viewRendered');
         if (pane._editorHandle) { pane._editorHandle.dispose(); pane._editorHandle = null; }
+        const updateHint = pane.querySelector('.canvas-update-hint');
         pane.innerHTML = '';
+        if (updateHint) pane.prepend(updateHint);
         pane.classList.remove('scrollable');
 
         const container = document.createElement('div');
@@ -719,7 +721,9 @@ export function addSourceToggle(pane, renderFn, ctx) {
         delete pane.dataset.sourceMode;
         // renderFn clears the pane and re-attaches the toggle via its own
         // addSourceToggle call, carrying the updated content forward.
+        const updateHint = pane.querySelector('.canvas-update-hint');
         await renderFn(pane, { ...ctx, content: latest });
+        if (updateHint) pane.prepend(updateHint);
         // canvas 文件刷新批: this round trip bypasses openWorkspaceItem (no
         // readFile), and renderFn wiped pane.innerHTML — the refresh button
         // went with it. Tell canvas.js to re-seat it (listener registered on
@@ -820,123 +824,6 @@ export function addFindToggle(pane, left = 128) {
   return btn;
 }
 
-// ── File refresh button (canvas 文件刷新批, 作者令 2026-10-25) ──────────
-
-const REFRESH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
-// Same corner family as source/ref/find: **48px glass circles on a 56px
-// pitch**, bottom:16 (split.css). The zoom bar is the one non-circle member —
-// its occupied span is measured, not assumed.（图谱圆钮批④退役后簇内只剩
-// 源码/引用/查找三圆钮 + 缩放条 + 壳刷新钮。
-// 单行排布批 2026-11-01：簇左锚化——座位计算同式镜像到 left 轴。
-// canvas 控件尺寸对齐批 2026-11-02：钮 40→48 ⇒ 槽距 48→56（缝 8px 不变），
-// 第二行底锚 64→72（= 圆钮行顶 16+48 + 8 缝），行判定容差随槽距同源。）
-const REFRESH_CIRCLE_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle';
-const REFRESH_CIRCLE_SIZE = 48;      // = --cv-size-circle-lg
-const REFRESH_ROW_PITCH = 56;        // = --cv-row-pitch-lg（48 钮 + 8 缝）
-const REFRESH_ROW_BOTTOMS = [16, 72];
-const REFRESH_ROW_TOLERANCE = REFRESH_ROW_PITCH / 2;  // 行归并容差（同槽距半档）
-
-function _refreshCornerItems(pane) {
-  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : NaN; };
-  const items = [];
-  for (const el of pane.querySelectorAll(REFRESH_CIRCLE_SEL + ', .canvas-zoom-bar')) {
-    const cs = getComputedStyle(el);
-    if (cs.display === 'none' || cs.visibility === 'hidden') continue;
-    // Inline style wins (find/graph seats are JS-written); CSS fallback covers
-    // the source/ref circles and both zoom-bar variants.
-    // 单行排布批 2026-11-01：左锚轴（左端 16 起排，first-free-slot 同式镜像）。
-    const left = Number.isFinite(num(el.style.left)) ? num(el.style.left) : (num(cs.left) || 16);
-    const bottom = num(cs.bottom) || 16;
-    const isBar = el.classList.contains('canvas-zoom-bar');
-    items.push({ left, bottom, span: isBar ? (el.getBoundingClientRect().width || 222) + 8 : REFRESH_ROW_PITCH });
-  }
-  return items;
-}
-
-/** First free seat on the bottom-left corner row for one more 48px circle.
- *  Row 0 = bottom:16 (the circle row); when the measured seat would overflow
- *  the panel the button drops to row 1 = bottom:72 (same convention the narrow
- *  html zoom bar uses — 圆钮行顶 16+48 + 8 缝). */
-function _refreshSeat(pane) {
-  const items = _refreshCornerItems(pane);
-  // The mount can run mid open-transition (flex-basis 0 → target, 0.32s): the
-  // pane's live clientWidth is then transient and would falsely route to row 1.
-  // `--canvas-width` (documentElement inline style — canvas.js openCanvas /
-  // colResizer / deck resize all keep it current) holds the TARGET panel
-  // width; fall back to clientWidth when unset. Unknown width ⇒ keep row 0
-  // (every computed seat so far fits the 320px panel minimum).
-  const target = parseFloat(document.documentElement.style.getPropertyValue('--canvas-width')) || pane.clientWidth || 0;
-  const widthKnown = target > 200;
-  for (const bottom of REFRESH_ROW_BOTTOMS) {
-    let left = 16;
-    for (const it of items) {
-      if (Math.abs(it.bottom - bottom) > REFRESH_ROW_TOLERANCE) continue;  // different row
-      left = Math.max(left, it.left + it.span);
-    }
-    if (bottom === REFRESH_ROW_BOTTOMS[0] && widthKnown && left + REFRESH_CIRCLE_SIZE > target - 8) continue;  // row 0 full
-    return { left, bottom };
-  }
-  return { left: 16, bottom: REFRESH_ROW_BOTTOMS[1] };
-}
-
-/** Seat one refresh button for `pane`'s corner cluster (used both at mount and
- *  on every active-tab switch — the cluster differs per viewer). Offsets are
- *  written onto `btn` relative to its PARENT, compensated for the parent's
- *  padding: seat values are pane-visual margins (16px from the pane edge), and
- *  when the parent is the shell (#canvas-content, padding-bottom 8px) the abs
- *  child resolves against the padding box — add it back so the VISUAL margin
- *  stays 16px regardless of host. 单行排布批 2026-11-01：left 轴同式（壳
- *  padding-left 若有则同补）。 */
-export function seatRefreshButton(btn, pane) {
-  const host = btn.parentElement || pane;
-  const seat = _refreshSeat(pane);
-  const hcs = getComputedStyle(host);
-  const padL = parseFloat(hcs.paddingLeft) || 0;
-  const padB = parseFloat(hcs.paddingBottom) || 0;
-  btn.style.left = (seat.left + padL) + 'px';
-  btn.style.bottom = (seat.bottom + padB) + 'px';
-}
-
-/**
- * Floating "re-read from disk" button for canvas file tabs (canvas 文件刷新批,
- * 作者令 2026-10-25). Same frosted-glass material family as the source toggle
- * (split.css `.canvas-refresh-toggle`); seats automatically in the first free
- * 48px slot of the bottom-right corner cluster (zoom bar measured by width).
- * The click handler is owned by the caller (canvas.js refreshFileTab); while a
- * re-read is in flight the caller puts `.busy` on the returned button (icon
- * spins). Hidden in source mode via CSS (`[data-source-mode="1"]`).
- * 定位修复（作者报障 2026-10-27「刷新钮悬浮在正文中间」）：默认挂载点上移到
- * `opts.host`（canvas.js 传不滚动的面板壳 #canvas-content）。pane 自身即滚动
- * 容器的查看器（docx/yaml/xlsx/pptx 走 `.canvas-tab-pane.scrollable`）里，
- * absolute 子元素按整份滚动内容盒定位——bottom:16 落到文档末尾随滚动漂移；
- * 壳层 position:relative + overflow:hidden 不滚动，按钮恒钉可视区右下角。
- *  @param {HTMLElement} pane — canvas tab pane (seat measuring + fallback host)
- *  @param {{ onRefresh?: (btn: HTMLButtonElement) => void, host?: HTMLElement|null }} [opts]
- * @returns {HTMLButtonElement}
- */
-export function addRefreshButton(pane, opts) {
-  const { onRefresh, host } = opts || {};
-  const mount = (host && host.isConnected) ? host : pane;
-  // Singleton scope: only the shell-level button (direct child) is ours —
-  // never touch anything inside the panes.
-  mount.querySelector(':scope > .canvas-refresh-toggle')?.remove();
-  if (getComputedStyle(mount).position === 'static') mount.style.position = 'relative';
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'canvas-button canvas-refresh-toggle';
-  btn.innerHTML = REFRESH_ICON_SVG;
-  btn.title = t('canvas.refresh');
-
-  btn.addEventListener('click', () => {
-    if (btn.classList.contains('busy')) return;  // a re-read is already in flight
-    if (typeof onRefresh === 'function') onRefresh(btn);
-  });
-  mount.appendChild(btn);
-  seatRefreshButton(btn, pane);
-  return btn;
-}
-
 // ── 底部浮钮让位：滚动面末尾安全留白（canvas 正文底部遮挡修复批）─────────
 // 作者报障 2026-11-05 12:09（逐字）「因为我们现在canvas的文档的底部不是有按钮吗，
 // 按钮会挡住底部的文字，所以要允许文档再进一步上滑，保证最底部的文字能够呈现在
@@ -974,12 +861,10 @@ const BOTTOM_CHROME_GLOBAL_SEL = '.ask-fab, .note-fab';
 /** 末行与浮钮带顶之间的呼吸缝（与手机档 76 = 16 + 48 + 12 的 12 同一把尺）。 */
 export const BOTTOM_CLEARANCE_GAP = 12;
 
-/** 该 pane 当下的底部浮钮候选（pane 内簇 + 壳层刷新钮单例 + 同带全局 fab）。 */
+/** 该 pane 当下的底部浮钮候选（pane 内簇 + 同带全局 fab）。canvas-auto-refresh
+ *  批（2026-11-17）：壳层刷新钮单例已随手动钮整面退役，此处不再查壳层直子。 */
 function _bottomChromeCandidates(pane) {
   const out = [...pane.querySelectorAll(BOTTOM_CHROME_SEL)];
-  const shell = pane.parentElement;
-  const refresh = shell ? shell.querySelector(':scope > .canvas-refresh-toggle') : null;
-  if (refresh) out.push(refresh);
   // 全局同带 fab 走**类选择器 + 几何过滤**（不用面 id 选择器：本模块无面，
   // 跨面 id 直查会踩组件契约 R2；几何过滤本身就是判定「是否与这个 pane 同带」）。
   for (const el of document.querySelectorAll(BOTTOM_CHROME_GLOBAL_SEL)) out.push(el);
@@ -1057,9 +942,9 @@ export function observeBottomClearance(pane) {
       st.ro.disconnect();
       st.ro.observe(pane, { box: 'border-box' });
       for (const el of next) st.ro.observe(el, { box: 'border-box' });
-      // 浮钮「座位/显隐」属性的变化（seatRefreshButton 写 style、syncFileRefreshButton
-      // 写 hidden、换档写 class）不改变任何被观测盒的尺寸时才需要这条腿 —— 例如窄面板
-      // 下刷新钮从第一行下移到第二行（bottom 16 → 72），浮钮带顶因此抬高。
+      // 浮钮「座位/显隐」属性的变化（查找钮 JS 写 style、换档写 class/hidden）不改
+      // 变任何被观测盒的尺寸时才需要这条腿 —— 例如窄面板下缩放条回落第二行，浮钮带
+      // 顶因此抬高。（canvas-auto-refresh 批：手动刷新钮退役前其换行是本腿主例。）
       st.moAttr?.disconnect();
       if (st.moAttr) for (const el of next) st.moAttr.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
       st.els = next;
@@ -1078,8 +963,9 @@ export function observeBottomClearance(pane) {
     st.ro = new ResizeObserver(schedule);
     st.mo = new MutationObserver(schedule);
     st.moAttr = new MutationObserver(schedule);
-    // 子树增删盯**面板壳**（pane 的父层）：壳层刷新钮是 #canvas-content 的直接子
-    // （定位修复批 2026-10-25），只盯 pane 会漏掉它挂上/摘下的那一次。本函数自己只写
+    // 子树增删盯**面板壳**（pane 的父层）：换页签/换查看器重建浮钮原先只盯 pane 会
+    // 漏壳层挂载的那一次（定位修复批 2026-10-25 的壳层刷新钮；该钮已随
+    // canvas-auto-refresh 批退役，观测面保留兜换查看器的重建腿）。本函数自己只写
     // pane 的 style 变量（attribute）⇒ 不触发这条 childList 观测，无自激环。
     st.mo.observe(pane.parentElement || pane, { childList: true, subtree: true });
     // 祖先「显隐/态类」腿（手机层实测补）：手机页面栈里非前台页是 **visibility:

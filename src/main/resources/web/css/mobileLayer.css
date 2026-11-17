@@ -3226,8 +3226,7 @@ body.mobile-layer .fm-pick-modal .fm-pick-body {
 }
 body.mobile-layer .canvas-source-toggle,
 body.mobile-layer .canvas-ref-select,
-body.mobile-layer .canvas-find-toggle,
-body.mobile-layer .canvas-refresh-toggle {
+body.mobile-layer .canvas-find-toggle {
   width: 48px;
   height: 48px;
 }

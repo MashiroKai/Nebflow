@@ -378,14 +378,13 @@ export function mountReader(pane, adapter) {
   // ── 阅读菜单（中间 1/3 唤出；毛玻璃浮层锚定阅读器顶部，禁 overlay 暗化） ──
   const menuOpen = () => !menu.hidden;
 
-  /** 刷新动作（设计稿 §2.2：语义 = 文件变了重读，走面板角浮件同款腿）。 */
+  /** 刷新动作（设计稿 §2.2：语义 = 文件变了重读，走面板角浮件同款腿）。
+   *  canvas-auto-refresh 批（2026-11-17）：壳层刷新钮已退役，统一走画布请求事件
+   *  （canvas.js 的 canvas-request-refresh 监听 → refreshFileTab，同套脏守卫）。 */
   function requestRefresh() {
     closeMenu();
     closeBarMenu();
-    // 有壳层钮就点它（桌面原位不动），无钮（预览组等）退化为画布请求事件。
-    const shellBtn = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-content > .canvas-refresh-toggle:not([hidden])'));
-    if (shellBtn) shellBtn.click();
-    else pane.dispatchEvent(new CustomEvent('canvas-request-refresh', { bubbles: true }));
+    pane.dispatchEvent(new CustomEvent('canvas-request-refresh', { bubbles: true }));
   }
 
   function renderMenu() {

@@ -1198,7 +1198,7 @@ function syncSeat() {
   // 现口径：中线 = 面板底 → 簇钮盒中线（实测），fab 底距 = 中线 − fab 半高 ⇒ 尺寸档
   // 再改也不会漂；簇钮缺席（无活动内容页签）时按 token 兜底 壳底垫 8 + 行底距 16 + 半钮高。
   const fabH = (el.fab && el.fab.getBoundingClientRect().height) || 48;
-  const rowBtn = panel.querySelector('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-refresh-toggle');
+  const rowBtn = panel.querySelector('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle');
   const rowR = rowBtn ? rowBtn.getBoundingClientRect() : null;
   const tokenSize = parseFloat(getComputedStyle(panel).getPropertyValue('--cv-size-circle-lg')) || 40;
   const rowMid = rowR && rowR.height > 0 ? panelRect.bottom - (rowR.top + rowR.height / 2) : (24 + tokenSize / 2);
