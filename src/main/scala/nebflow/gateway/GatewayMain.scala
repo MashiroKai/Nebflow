@@ -2404,8 +2404,8 @@ object GatewayMain extends IOApp:
                                                         portalHostFaces.bindHttpApp(gatewayApp)
                                                         portalHostFaces.bindTunnelGuard(
                                                           nebflow.neblink.portal.PortalHostFaces.TunnelGuard(
-                                                            ip => connGuard.observeTunnelRequest(ip),
-                                                            ip => connGuard.checkTunnel(ip),
+                                                            (ip, path) => connGuard.observeTunnelRequest(ip, path),
+                                                            (ip, path) => connGuard.checkTunnel(ip, path),
                                                             connGuard.config.tunnelWindowSec
                                                           )
                                                         )

@@ -184,7 +184,7 @@ private[neblink] final class PortalTunnelBridge(
     val envelopeIp = envelopeIpOf(frame)
     deps.faces.tunnelGuard match
       case Some(guard) =>
-        guard.observe(envelopeIp) *> guard.check(envelopeIp).flatMap {
+        guard.observe(envelopeIp, frame.path) *> guard.check(envelopeIp, frame.path).flatMap {
           case Some(reason) =>
             logger.warn(
               s"portal http_request rejected by the tunnel guard: requestId=${frame.requestId} " +

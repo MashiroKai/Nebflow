@@ -46,12 +46,15 @@ final case class ConnGuardConfig(
   maxTrackedIps: Int = 1024,
   snapshotSec: Int = 60,
   extraTrustedIps: Set[String] = Set.empty,
-  /** Tunnel face (phase 3a): per-envelope-IP request budget per window. Implementation constants. */
+  /** Default per-envelope-IP budget for each route class per window. */
   tunnelPerIpCap: Int = ConnGuardConfig.DefaultTunnelPerIpCap,
   /** Tunnel face: cross-IP total request budget per window. */
   tunnelTotalCap: Int = ConnGuardConfig.DefaultTunnelTotalCap,
   /** Tunnel face: fixed-window length. */
-  tunnelWindowSec: Int = 60
+  tunnelWindowSec: Int = 60,
+  tunnelChainsPerIpCap: Option[Int] = None,
+  tunnelFilesPerIpCap: Option[Int] = None,
+  tunnelOtherPerIpCap: Option[Int] = None
 ):
   /** 环回恒在信任名单：本机 web UI / CLI / 健康探针的管理通道不能被限死。 */
   val trustedIps: Set[String] = ConnGuardConfig.DefaultTrustedIps ++ extraTrustedIps
@@ -108,7 +111,10 @@ object ConnGuardConfig:
       extraTrustedIps = extra,
       tunnelPerIpCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP", DefaultTunnelPerIpCap, 1),
       tunnelTotalCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP", DefaultTunnelTotalCap, 1),
-      tunnelWindowSec = intEnv("GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC", 60, 1)
+      tunnelWindowSec = intEnv("GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC", 60, 1),
+      tunnelChainsPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_CHAINS_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1),
+      tunnelFilesPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_FILES_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1),
+      tunnelOtherPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_OTHER_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1)
     )
   end fromEnv
 
@@ -137,6 +143,7 @@ object ConnGuard:
     lastSeenMs: Long,
     reqTotal: Long = 0L,
     tunnelReqTotal: Long = 0L,
+    tunnelRouteCounts: Map[String, Long] = Map.empty,
     tunnelWindowStartMs: Long = 0L
   )
 
@@ -458,10 +465,16 @@ class ConnGuard private (
    * ingress writes from the trusted proxy-injected X-Real-IP. Never the
    * ingress socket address (always the proxy container's IP); never a
    * client-supplied XFF chain (the ingress strips it). Fixed window per IP
-   * and globally (`tunnelWindowSec`); slot creation shares the same bounded
+   * and route class, and globally (`tunnelWindowSec`); slot creation shares the same bounded
    * `ensureSlot` discipline as the WS and request faces.
    */
-  def observeTunnelRequest(ip: String): IO[Unit] =
+  private def tunnelRoute(path: String): String =
+    val p = path.takeWhile(_ != '?')
+    if p.startsWith("/api/chains") then "chains"
+    else if p == "/api/nf-file" || p.startsWith("/uploads/") then "files"
+    else "other"
+
+  def observeTunnelRequest(ip: String, path: String = ""): IO[Unit] =
     if !config.enabled then IO.unit
     else
       IO.realTime.map(_.toMillis).flatMap { now =>
@@ -475,9 +488,12 @@ class ConnGuard private (
             case Some(st2) =>
               val e0 = st2.perIp.getOrElse(ip, IpEntry(0, now))
               val ipRolled = e0.tunnelWindowStartMs == 0L || now - e0.tunnelWindowStartMs >= windowMs
+              val counts = if ipRolled then Map.empty[String, Long] else e0.tunnelRouteCounts
+              val route = tunnelRoute(path)
               val entry = e0.copy(
                 tunnelWindowStartMs = if ipRolled then now else e0.tunnelWindowStartMs,
                 tunnelReqTotal = if ipRolled then 1L else e0.tunnelReqTotal + 1L,
+                tunnelRouteCounts = counts.updated(route, counts.getOrElse(route, 0L) + 1L),
                 lastSeenMs = now
               )
               st2.copy(
@@ -505,13 +521,19 @@ class ConnGuard private (
    * through the tunnel is a remote user in the authorization model. Residual
    * self-lockout risk is bounded by the conservative per-kind totals above.
    */
-  def checkTunnel(ip: String): IO[Option[String]] =
+  def checkTunnel(ip: String, path: String = ""): IO[Option[String]] =
+    val route = tunnelRoute(path)
+    val cap = (route match
+      case "chains" => config.tunnelChainsPerIpCap
+      case "files" => config.tunnelFilesPerIpCap
+      case _ => config.tunnelOtherPerIpCap
+    ).getOrElse(config.tunnelPerIpCap)
     if !config.enabled then IO.pure(None)
     else
       stateRef.get.flatMap { st =>
         val reject =
           if st.tunnelTotalReq > config.tunnelTotalCap then Some("tunnel-total-cap")
-          else if st.perIp.get(ip).exists(_.tunnelReqTotal > config.tunnelPerIpCap) then
+          else if st.perIp.get(ip).exists(_.tunnelRouteCounts.getOrElse(route, 0L) > cap) then
             Some("tunnel-per-ip-cap")
           else None
         reject match
