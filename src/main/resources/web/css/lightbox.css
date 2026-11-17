@@ -219,7 +219,7 @@ body.mobile-layer.nf-lightbox-open #chat,
 body.mobile-layer.nf-lightbox-open .mobile-page-body { overflow: hidden; }
 
 /* 跟手拖动期间浏览器不得接管手势（滚动/边缘滑）：浮层内没有别的可滚内容。 */
-.nf-lightbox[data-nf-lb-gallery="on"] { touch-action: none; overflow: hidden; background: #111; }
+.nf-lightbox[data-nf-lb-gallery="on"] { touch-action: none; overflow: hidden; background: var(--ds-media-letterbox); }
 .nf-lightbox-av { max-width: var(--nf-lb-fit-w); max-height: var(--nf-lb-fit-h); }
 body.mobile-layer .nf-lightbox .nf-lightbox-close { display: flex; }
 
