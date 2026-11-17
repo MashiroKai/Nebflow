@@ -258,7 +258,8 @@ object CanvasTabStore:
 
 end CanvasTabStore
 
-class CanvasTabStore(path: os.Path):
+class CanvasTabStore(path: os.Path, ledgerLimit: Int = 100000):
+  require(ledgerLimit > 0)
   import CanvasTabs.*
 
   /** 同步读存档（load 的阻塞体，mergeSave 复用）。None = 无存档或损坏。 */
@@ -323,9 +324,9 @@ class CanvasTabStore(path: os.Path):
               val result = CanvasTabs.merge(prev, payload, nowMs).deepMerge(Json.obj("writeVersion" -> Json.fromLong(version), "operationId" -> Json.fromString(id.get)))
               val record = Json.obj("operationId" -> Json.fromString(id.get), "version" -> Json.fromLong(version), "appliedAt" -> Json.fromLong(nowMs))
               val entries = (ledger :+ record).sortBy(_.hcursor.get[Long]("appliedAt").getOrElse(0L))
-              if entries.size > 100000 then
+              if entries.size > ledgerLimit then
                 NebflowLogger.forName("nebflow.canvas-tabs").warnSync("operation ledger cap reached; evicting oldest records")
-              AtomicJson.writeSync(path, result.deepMerge(Json.obj("operationLedger" -> Json.fromValues(entries.takeRight(100000)))).noSpaces)
+              AtomicJson.writeSync(path, result.deepMerge(Json.obj("operationLedger" -> Json.fromValues(entries.takeRight(ledgerLimit)))).noSpaces)
               Right((result, false))
       finally CanvasTabStore.mergeGate.release()
     }
@@ -341,7 +342,7 @@ class CanvasTabStore(path: os.Path):
    * （墓碑并集压过开放集 + 显式重开 + TTL/上限回收）→ 原子写。返回合并后
    * 的存档。单个 IO.blocking 包住整个临界区（阻塞池线程，绝不占计算池）。
    */
-  def mergeSave(put: Json, nowMs: Long = System.currentTimeMillis()): IO[Json] =
+  def mergeSave(put: Json, nowMs: Long = System.currentTimeMillis(), source: String = "unknown"): IO[Json] =
     IO.blocking {
       CanvasTabStore.mergeGate.acquire()
       try
@@ -350,7 +351,8 @@ class CanvasTabStore(path: os.Path):
         val incoming = put.hcursor.get[Vector[Json]]("tabs").getOrElse(Vector.empty)
         val incomingIds = incoming.flatMap(_.hcursor.get[String]("id").toOption).toSet
         val missing = old.flatMap(_.hcursor.get[String]("id").toOption).filterNot(incomingIds)
-        if missing.nonEmpty then NebflowLogger.forName("nebflow.canvas-tabs").warnSync(s"legacy PUT ignored missing tabs: ${missing.mkString(",")}")
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(put.noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8)).map(b => f"${b & 0xff}%02x").mkString
+        NebflowLogger.forName("nebflow.canvas-tabs").warnSync(s"legacy PUT deprecated source=$source sha256=$fingerprint ignoredMissing=${missing.mkString(",")}")
         val mergedInput = put.deepMerge(Json.obj("tabs" -> Json.fromValues(incoming ++ old.filterNot(t => t.hcursor.get[String]("id").toOption.exists(incomingIds)))))
         val version = previous.flatMap(_.hcursor.get[Long]("writeVersion").toOption).getOrElse(0L) + 1L
         val ledger = previous.flatMap(_.hcursor.downField("operationLedger").focus).getOrElse(Json.arr())

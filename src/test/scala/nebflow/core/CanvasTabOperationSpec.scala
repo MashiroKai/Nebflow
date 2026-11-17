@@ -46,6 +46,20 @@ class CanvasTabOperationSpec extends CatsEffectSuite:
     yield assertEquals(ids(result).toSet, Set("a", "b"))
   }
 
+  test("bounded ledger evicts oldest and still accepts new operations") {
+    val s = new CanvasTabStore(os.temp.dir() / "tabs.json", ledgerLimit = 3)
+    for
+      _ <- s.applyOperation(op("one", a), now)
+      _ <- s.applyOperation(op("two", b, time = now + 1), now + 1)
+      _ <- s.applyOperation(op("three", time = now + 2), now + 2)
+      x <- s.applyOperation(op("four", time = now + 3), now + 3)
+      stored <- s.load()
+    yield
+      assert(x.isRight)
+      val records = stored.get.hcursor.get[Vector[Json]]("operationLedger").toOption.get
+      assertEquals(records.map(_.hcursor.get[String]("operationId").toOption.get), Vector("two", "three", "four"))
+  }
+
   test("close and explicit reopen use tombstone time semantics") {
     val s = fixture()
     for

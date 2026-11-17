@@ -147,7 +147,7 @@ private[gateway] object ConfigRoutes:
               case Right(json) =>
                 (logger.warn(s"canvas tabs legacy PUT deprecated; missing tabs ignored, source=${req.remoteAddr}") *>
                   new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
-                  .mergeSave(json))
+                    .mergeSave(json, source = req.remoteAddr.fold("unknown")(_.toString)))
                   .flatMap { merged =>
                     // 写穿即外推（canvas-tab-sync 批 2026-11-17）：合并后的权威
                     // 存档广播给全部已连端，他端开/关/切/排序即时跟随，不等刷新。
