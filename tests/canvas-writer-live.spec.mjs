@@ -47,10 +47,13 @@ test('real reader, claim, persist, preemption', async ({browser}, info) => {
     await a.page.getByRole('button',{name:'取得控制权'}).click({force:true});
     await expect(status).toContainText('可写');
     await a.page.screenshot({path: info.outputPath('writer.png')});
+    const beforeVersion = await a.page.evaluate(async()=>{const r=await fetch('/api/canvas-tabs'); return r.ok ? (await r.json()).writeVersion || 0 : 0});
     const put=a.page.waitForResponse(r=>new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT');
     await a.page.evaluate(async()=>{const m=await import('/js/canvas.js'); m.openTab('writer-test','Writer test',{type:'generic',pinned:true})});
     expect((await put).status()).toBe(200);
     await expect.poll(()=>a.page.evaluate(async()=>{const r=await fetch('/api/canvas-tabs'); const j=await r.json();return j.tabs?.some(t=>t.id==='writer-test')})).toBe(true);
+    const disk = JSON.parse(readFileSync(join(s.data,'canvas_tabs.json'),'utf8'));
+    expect(disk.writeVersion).toBe(beforeVersion + 1);
     await b.page.getByRole('button',{name:'取得控制权'}).click({force:true});
     await expect(b.page.locator('#canvas-panel .canvas-writer-controls [role=status]')).toContainText('可写');
     // A same-browser-tab takeover may not emit a console takeover frame; exercise
@@ -59,7 +62,23 @@ test('real reader, claim, persist, preemption', async ({browser}, info) => {
     await a.page.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('writer-stale','Stale',{type:'generic',pinned:true})});
     expect((await stale).status()).toBe(409);
     await expect(status).toContainText('只读');
+    await expect(status).toContainText('仅本地');
+    await expect(status).toContainText('不会自动同步');
+    await expect(a.page.locator('[data-tab-id="writer-stale"]').first()).toBeAttached();
     await a.page.screenshot({path: info.outputPath('preempted.png')});
+    const blocked = await a.page.evaluate(async()=>{
+      const m=await import('/js/canvas.js');
+      const before=m.canvasTabEntry('writer-test');
+      const snapshot={id:before.id,pinned:before.pinned,absPath:before.absPath};
+      m.openTab('blocked-open','blocked',{pinned:true});
+      m.closeTab('writer-test'); m.pinTab('writer-test');
+      m.retargetFileTabs('writer-test','renamed','/');
+      return {opened:m.hasTab('blocked-open'), exists:m.hasTab('writer-test'), pinned:before.pinned, path:before.absPath, snapshot};
+    });
+    expect(blocked.opened).toBe(false);
+    expect(blocked.exists).toBe(true);
+    expect(blocked.pinned).toBe(blocked.snapshot.pinned);
+    expect(blocked.path).toBe(blocked.snapshot.absPath);
   } finally {
     if(a) await a.context.close(); if(b) await b.context.close();
     s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),20000))]);

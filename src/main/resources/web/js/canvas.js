@@ -68,6 +68,7 @@ function createCanvasWriterClient(transport) {
     credentials: () => role === 'writer' ? { epoch } : null,
     lost() { generation++; role = 'reader'; epoch = null; transport.changed?.(role); },
     async claim() {
+      if (transport.canClaim && !transport.canClaim()) return;
       generation++;
       const result = await transport.claim();
       if (result?.role === 'writer' && Number.isSafeInteger(result.epoch)) {
@@ -88,8 +89,10 @@ const canvasTabInstanceId = globalThis.crypto?.randomUUID?.() || `tab-${Date.now
 const canvasIdentity = () => ({ clientId: deviceClientId(), tabInstanceId: canvasTabInstanceId });
 let writerStatusEl = null;
 let writerClaimEl = null;
+let localUnsynced = false;
 function writerChanged(role) {
-  if (writerStatusEl) writerStatusEl.textContent = role === 'writer' ? 'Canvas：可写' : 'Canvas：只读';
+  if (writerStatusEl) writerStatusEl.textContent = localUnsynced
+    ? 'Canvas：存在仅本地变更，不会自动同步。' : (role === 'writer' ? 'Canvas：可写' : 'Canvas：只读');
   if (writerClaimEl) writerClaimEl.hidden = role === 'writer';
   if (role !== 'writer') {
     if (serverPersistTimer) clearTimeout(serverPersistTimer);
@@ -99,12 +102,13 @@ function writerChanged(role) {
   }
 }
 function writerNotice(message = 'Canvas 当前为只读，请先取得控制权。') {
-  if (writerStatusEl) writerStatusEl.textContent = message;
+  if (writerStatusEl) writerStatusEl.textContent = localUnsynced ? `${message} 存在仅本地变更，不会自动同步。` : message;
   window.__showToast?.(message, 'info');
 }
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,
-  failed: () => writerNotice('Canvas 控制权已失效或保存失败，当前为只读。'),
+  canClaim: () => { if (localUnsynced) { writerNotice('请刷新后再取得控制权。'); return false; } return true; },
+  failed: () => { localUnsynced = true; writerNotice('Canvas 控制权已失效或保存失败，当前为只读。'); },
   async query() {
     try {
       const query = new URLSearchParams(canvasIdentity());
@@ -135,7 +139,8 @@ const canvasWriter = createCanvasWriterClient({
   },
 });
 function allowCanvasMutation() {
-  if (applyingLiveTabsFrame || canvasWriter.role() === 'writer') return true;
+  if (applyingLiveTabsFrame || (canvasWriter.role() === 'writer' && !localUnsynced)) return true;
+  if (localUnsynced) { writerNotice('请先刷新以丢弃仅本地变更，再取得控制权。'); return false; }
   writerNotice();
   return false;
 }
@@ -5703,6 +5708,7 @@ function bindPersistReconnect() {
         })
         .catch(() => { /* 离线：待下次重连 */ });
       onMessage('takeover', () => {
+        if (pendingPersistPayload || persistDirty) localUnsynced = true;
         canvasWriter.lost();
         writerNotice('Canvas 控制权已被接管，当前为只读。');
       });
