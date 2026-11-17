@@ -155,6 +155,9 @@ final class ConsoleTakeover(
       }
     }
 
+  def canvasRole(principal: String, client: String, tab: String): IO[Option[Long]] =
+    controlRef.get.map(_.writer.filter(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab).map(_.epoch))
+
   def releaseCanvas(principal: String, client: String, tab: String, epoch: Long): IO[Boolean] =
     canvasExclusive(controlRef.modify { state =>
       if state.writer.contains(ConsoleTakeover.CanvasWriter(principal, client, tab, epoch)) then

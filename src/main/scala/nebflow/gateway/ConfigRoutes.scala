@@ -123,6 +123,14 @@ private[gateway] object ConfigRoutes:
           }
         }
 
+      case req @ GET -> Root / "canvas-writer" =>
+        withRecoveryPrincipal(req) { principal =>
+          canvasTakeover.canvasRole(principal, req.params.getOrElse("clientId", ""), req.params.getOrElse("tabInstanceId", "")).flatMap {
+            case Some(epoch) => Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
+            case None => Ok(Json.obj("role" -> "reader".asJson, "epoch" -> Json.Null))
+          }
+        }
+
       case req @ POST -> Root / "canvas-writer" / action if action == "claim" || action == "release" =>
         withRecoveryPrincipal(req) { principal =>
           req.attemptAs[Json].value.flatMap {

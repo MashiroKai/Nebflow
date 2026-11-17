@@ -19,6 +19,7 @@ import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
+import { deviceClientId } from './deviceIdentity.js';
 import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
 // 胶囊标签截断（作者令 2026-11-05 12:10 第④条「可辨识前缀 + 关键尾部」）：
 // 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
@@ -49,6 +50,78 @@ const LS_TABS_KEY = key('canvas_tabs');
 // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端作为权威标签存档，localStorage 仅作降级缓存。
 // 根治 Safari 无痕/多窗口清空 localStorage 导致的标签重启丢失。
 const TABS_API = '/api/canvas-tabs';
+
+function createCanvasWriterClient(transport) {
+  let role = 'reader';
+  let epoch = null;
+  return {
+    role: () => role,
+    credentials: () => role === 'writer' ? { epoch } : null,
+    lost() { role = 'reader'; epoch = null; transport.changed?.(role); },
+    async claim() {
+      const result = await transport.claim();
+      if (result?.role === 'writer' && Number.isSafeInteger(result.epoch)) {
+        role = 'writer'; epoch = result.epoch; transport.changed?.(role);
+      }
+    },
+    async put(payload) {
+      if (role !== 'writer') return false;
+      const result = await transport.put(payload, epoch);
+      if (!result) { this.lost(); transport.failed?.(); }
+      return result;
+    },
+  };
+}
+// END CANVAS WRITER CLIENT
+
+const canvasTabInstanceId = globalThis.crypto?.randomUUID?.() || `tab-${Date.now()}-${Math.random()}`;
+const canvasIdentity = () => ({ clientId: deviceClientId(), tabInstanceId: canvasTabInstanceId });
+let writerStatusEl = null;
+let writerClaimEl = null;
+function writerChanged(role) {
+  if (writerStatusEl) writerStatusEl.textContent = role === 'writer' ? 'Canvas：可写' : 'Canvas：只读';
+  if (writerClaimEl) writerClaimEl.hidden = role === 'writer';
+  if (role !== 'writer') {
+    if (serverPersistTimer) clearTimeout(serverPersistTimer);
+    serverPersistTimer = null;
+    pendingPersistPayload = null;
+    persistDirty = false;
+  }
+}
+function writerNotice(message = 'Canvas 当前为只读，请先取得控制权。') {
+  if (writerStatusEl) writerStatusEl.textContent = message;
+  window.__showToast?.(message, 'info');
+}
+const canvasWriter = createCanvasWriterClient({
+  changed: writerChanged,
+  failed: () => writerNotice('Canvas 控制权已失效或保存失败，当前为只读。'),
+  async claim() {
+    try {
+      const response = await fetch('/api/canvas-writer/claim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(canvasIdentity()),
+      });
+      if (!response.ok) { writerNotice('取得 Canvas 控制权失败，请重试。'); return null; }
+      return await response.json();
+    } catch { writerNotice('无法连接服务端，Canvas 保持只读。'); return null; }
+  },
+  async put(payload, epoch) {
+    try {
+      const response = await fetch(TABS_API, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ ...payload, ...canvasIdentity(), epoch }),
+      });
+      if (response.ok) return true;
+      writerNotice(response.status === 409 ? 'Canvas 控制权已失效，请重新取得。' : 'Canvas 保存失败，请重新取得控制权。');
+      return false;
+    } catch { writerNotice('Canvas 保存失败，已切换只读。'); return false; }
+  },
+});
+function allowCanvasMutation() {
+  if (applyingLiveTabsFrame || canvasWriter.role() === 'writer') return true;
+  writerNotice();
+  return false;
+}
 // F1: 服务端 PUT 防抖计时器——openTab/closeTab/setActiveTab/pinTab 都调 persistTabs，
 // 防抖合并连续操作成一次 PUT。
 let serverPersistTimer = null;
@@ -353,6 +426,7 @@ function attachDragHandlers(tabEl, id) {
  *  @param {string} targetId  — The tab it's dropped on.
  *  @param {boolean} after    — true = place after target, false = before. */
 function moveTab(dragId, targetId, after) {
+  if (!allowCanvasMutation()) return;
   const dragEntry = tabs.get(dragId);
   const targetEntry = tabs.get(targetId);
   if (!dragEntry || !targetEntry) return;
@@ -698,6 +772,7 @@ function disposeTabEditor(entry) {
  *  @param {object} opts  — { type: 'flow'|'markdown'|'code'|'html'|'generic', closable: bool }
  *  @returns {object|null} — The tab entry, or null on failure. */
 export function openTab(id, title, opts = {}) {
+  if (!opts.noRevive && !tabs.has(id) && !allowCanvasMutation()) return null;
   const { type = 'generic', closable = true, pinned = false, noRevive = false } = opts;
 
   // Open the panel if it's not already visible.
@@ -858,6 +933,7 @@ function teardownTab(id, opts = {}) {
  *  @param {{discardDirty?: boolean}} [opts] 关闭确认之后的内部腿专用
  *    （用户已经点过「关闭并丢弃」），外部调用一律不传。 */
 export function closeTab(id, opts = {}) {
+  if (!allowCanvasMutation()) return;
   const entry = tabs.get(id);
   if (!entry) return;
 
@@ -935,6 +1011,7 @@ export function closeTab(id, opts = {}) {
  *  pinning makes the tab persistent. No-op if already pinned.
  *  @param {string} id — Tab identifier. */
 export function pinTab(id) {
+  if (!allowCanvasMutation()) return;
   const entry = tabs.get(id);
   if (!entry || entry.pinned) return;
   entry.pinned = true;
@@ -1257,6 +1334,7 @@ export function setActiveTab(id) {
  *  @param {string} newRel — new explorer-relative path prefix
  *  @param {string} rootPath — explorer root (absolute, '' = default root) */
 export function retargetFileTabs(oldRel, newRel, rootPath) {
+  if (!allowCanvasMutation()) return;
   const root = (rootPath || '').replace(/\/+$/, '');
   const absOld = root ? root + '/' + oldRel : null;
   const absNew = root ? root + '/' + newRel : null;
@@ -4696,6 +4774,18 @@ export function quoteActiveCardRef() {
 
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
+  const header = document.querySelector('#canvas-panel .canvas-header');
+  if (header && !writerStatusEl) {
+    writerStatusEl = document.createElement('span');
+    writerStatusEl.setAttribute('role', 'status');
+    writerClaimEl = document.createElement('button');
+    writerClaimEl.type = 'button';
+    writerClaimEl.textContent = '取得控制权';
+    writerClaimEl.addEventListener('click', () => canvasWriter.claim());
+    header.append(writerStatusEl, writerClaimEl);
+    writerChanged('reader');
+    fetch('/api/canvas-writer', { headers: { ...authHeaders() } }).catch(() => {});
+  }
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
   // boot 序）置位，否则卡窗会把主窗整组标签恢复进来。
   initCardWindowMode();
@@ -5443,6 +5533,7 @@ function recordTombstone(id) {
 }
 
 function persistTabs() {
+  if (canvasWriter.role() !== 'writer') return;
   // UI 批⑧：独立卡窗零存档副作用 —— 卡窗自己的单卡标签绝不能写穿服务端权威
   // 存档/本地缓存（否则会把主窗整组标签覆盖成一张卡）。
   if (cardWindowMode) return;
@@ -5528,16 +5619,9 @@ function scheduleServerPersist(payload) {
 // Bearer 头，而 /api/canvas-tabs 走 withAuth（无 token 会 403）。
 function sendServerPersist(payload, keepalive) {
   if (!payload) return;
-  fetch(TABS_API, {
-    method: 'PUT',
-    keepalive: !!keepalive,
-    // withAuth (RestApiRoutes) only accepts Bearer/query token — NOT cookie.
-    // Without the header the PUT 403s and the service archive never persists.
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(payload),
-  })
-    .then((r) => {
-      if (r.ok) {
+  canvasWriter.put(payload)
+    .then((ok) => {
+      if (ok) {
         persistDirty = false;
         if (pendingLocalActivation &&
             persistActivationGeneration.get(payload) === pendingLocalActivation.generation) {
@@ -5545,8 +5629,7 @@ function sendServerPersist(payload, keepalive) {
         }
         return;
       }
-      persistDirty = true;
-      console.warn('[canvas-tabs] server persist failed:', r.status);
+      persistDirty = false;
     })
     .catch((e) => {
       persistDirty = true;
@@ -5594,6 +5677,10 @@ function bindPersistReconnect() {
           if (parsed) applyLiveTabsFrame(parsed);
         })
         .catch(() => { /* 离线：待下次重连 */ });
+      onMessage('takeover', () => {
+        canvasWriter.lost();
+        writerNotice('Canvas 控制权已被接管，当前为只读。');
+      });
       onReconnect(() => {
         convergeFromServer().finally(() => {
           if (!persistDirty) return;
