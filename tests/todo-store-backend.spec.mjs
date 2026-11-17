@@ -95,7 +95,7 @@ function backendSort(rows) {
 const rowJson = (r) => ({
   id: r.id, content: r.content, triggerAt: r.triggerAt, createdAt: r.createdAt,
   triggered: r.triggered, triggeredAt: r.triggeredAt, referencePath: r.referencePath,
-  repeat: r.repeat, enabled: r.enabled, kind: r.kind, name: r.name, missCount: r.missCount,
+  repeat: r.repeat, enabled: r.enabled, kind: r.kind, name: r.name, detail: r.detail ?? null, missCount: r.missCount,
   sessionId: r.sessionId, project: r.project,
   priority: r.priority, completed: !!r.completed, completedAt: r.completedAt ?? null,
 });
@@ -184,7 +184,7 @@ async function bootApp(page) {
           const row = {
             id: `srv-${++backend.createSeq}`, content: m.content, triggerAt: T0 + 24 * H, createdAt: Date.now(),
             triggered: false, triggeredAt: null, referencePath: null, repeat: null, enabled: true,
-            kind: 'todo', name: null, missCount: 0, sessionId: m.sessionId,
+            kind: 'todo', name: m.name ?? null, detail: m.detail ?? null, missCount: 0, sessionId: m.sessionId,
             project: m.project ?? null, priority: m.priority ?? 0, completed: false, completedAt: null,
           };
           backend.rows.push(row);
@@ -195,6 +195,8 @@ async function bootApp(page) {
           const row = findRow(m.id);
           if (!row) { send({ type: 'scheduledTaskDeleted', id: m.id, sessionId: m.sessionId }); break; }
           if (typeof m.content === 'string' && m.content) row.content = m.content;
+          if (typeof m.name === 'string') row.name = m.name || null;
+          if (typeof m.detail === 'string') row.detail = m.detail || null;
           if (typeof m.priority === 'number') row.priority = Math.min(3, Math.max(0, m.priority));
           if (typeof m.project === 'string') row.project = m.project || null;
           send({ type: 'scheduledTaskUpdated', sessionId: row.sessionId, task: rowJson(row) });
@@ -298,7 +300,9 @@ test('① 首次挂载惰性拉真源：listScheduledTasks{scope:"all"} 一发 +
   expect(s.tags.sort()).toEqual(['工作', '生活']);
   expect(s.openCount).toBe(4);
   expect(s.overdueCount).toBe(1);       // t2 triggerAt 已过
-  expect(s.persistence.notes).toBe('local-only');
+  // 806d45c51: notes aliases durable detail; persistence declares the canonical key.
+  expect(s.persistence.notes).toBeUndefined();
+  expect(s.persistence.detail).toBe('detail');
 
   // 反转 chips 行序后行序**不变** ⇒ 真源面没有任何"只有前端知道"的顺序。
   await page.evaluate(async () => {
@@ -381,17 +385,18 @@ test('③ updateItem(priority/title) ⇒ updateScheduledTask 字段级 patch；r
     todoStore.updateItem('t1', { title: '待办一（改名）' });
   });
   await expect.poll(() => frames(h.captured, 'updateScheduledTask').length).toBeGreaterThanOrEqual(2);
-  expect(frames(h.captured, 'updateScheduledTask').at(-1)).toEqual({ type: 'updateScheduledTask', id: 't1', sessionId: SID, content: '待办一（改名）' });
+  expect(frames(h.captured, 'updateScheduledTask').at(-1)).toEqual({ type: 'updateScheduledTask', id: 't1', sessionId: SID, content: '待办一（改名）', name: '待办一（改名）', detail: '' });
 
-  // notes / due 不落库：本地生效、**零帧**（诚实申报，不假装落库）。
+  // 806d45c51: notes is the compatibility alias for durable detail.
   const beforeNotes = frames(h.captured, 'updateScheduledTask').length;
   s = await h.store();
   await page.evaluate(async () => {
     const { todoStore } = await import('/js/todoStore.js');
     todoStore.updateItem('t1', { notes: '本地备注' });
   });
-  await page.waitForTimeout(200);
-  expect(frames(h.captured, 'updateScheduledTask').length).toBe(beforeNotes);
+  await expect.poll(() => frames(h.captured, 'updateScheduledTask').length).toBe(beforeNotes + 1);
+  expect(frames(h.captured, 'updateScheduledTask').at(-1)).toEqual({ type: 'updateScheduledTask', id: 't1', sessionId: SID, content: '本地备注', name: '待办一（改名）', detail: '本地备注' });
+  await expect.poll(() => h.backend.rows.find((r) => r.id === 't1')?.detail).toBe('本地备注');
 
   // 新建：kind=todo + content + priority + project（tagId → 后端 project 落库）。
   await page.evaluate(async () => {
