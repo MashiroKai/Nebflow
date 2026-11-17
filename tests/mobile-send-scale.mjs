@@ -1,8 +1,15 @@
 // Browser-enforced mobile composer geometry; route a synthetic backend, never a live instance.
 import { chromium } from 'playwright-core';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, realpath } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
 
+// No backend is launched; fail closed before starting Chromium.
+if (!process.env.STAND_TEST_DATA_ROOT) throw Error('STAND_TEST_DATA_ROOT is required');
+const dataRoot = await realpath(process.env.STAND_TEST_DATA_ROOT);
+const productionRoot = await realpath('/Users/kaiyu/.stand');
+console.log(`fixture data root: ${dataRoot}`);
+if (dataRoot === productionRoot || dataRoot.startsWith(productionRoot + '/')) throw Error('refusing production data root');
+console.log('PASS isolated data root');
 const web = resolve(process.env.MSS_WEB || 'src/main/resources/web');
 const out = resolve(process.env.MSS_OUT || '/tmp/mobile-send-scale-evidence');
 const extra = process.env.MSS_EXTRA === '1';

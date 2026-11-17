@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 // Isolated browser geometry probe; BAND_WEB selects the asset tree, BAND_NEGATIVE injects a regression.
 import { chromium } from 'playwright';
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
+// No backend is launched; require an existing explicitly isolated root before any browser starts.
+if (!process.env.STAND_TEST_DATA_ROOT) throw Error('STAND_TEST_DATA_ROOT is required');
+const dataRoot = realpathSync(process.env.STAND_TEST_DATA_ROOT);
+const productionRoot = realpathSync('/Users/kaiyu/.stand');
+console.log(`fixture data root: ${dataRoot}`);
+if (dataRoot === productionRoot || dataRoot.startsWith(productionRoot + '/')) throw Error('refusing production data root');
+console.log('PASS isolated data root');
 const web = resolve(process.env.BAND_WEB || 'src/main/resources/web');
 const out = resolve(process.env.BAND_OUT || '/private/tmp/stand-band-evidence');
 mkdirSync(out, {recursive:true});
