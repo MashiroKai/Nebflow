@@ -149,6 +149,33 @@ function externalWrite(files, pushFrame, absPath, content, mtimeMs) {
   pushFrame(captured ? JSON.parse(readFileSync(process.env.CAR_WATCH_FRAME, 'utf8')) : { type: 'nf-cache-invalidate', path: absPath });
 }
 
+// A captured production WatchService frame must retain the consumer's exact
+// schema and actually reach the explorer → canvas event seam.
+test('watch frame contract: captured schema and explorer delivery', async ({ browser }) => {
+  test.skip(!process.env.CAR_WATCH_FRAME, 'requires a frame captured by ExplorerWatchSessionSpec');
+  const frame = JSON.parse(readFileSync(process.env.CAR_WATCH_FRAME, 'utf8'));
+  if (process.env.CAR_RENAME_FIELD) { frame.directories = frame.dirs; delete frame.dirs; }
+  expect(Object.keys(frame).sort()).toEqual(['dirs', 'overflow', 'rootPath', 'type']);
+  expect(frame.type).toBe('fsChanged');
+  expect(typeof frame.rootPath).toBe('string');
+  expect(Array.isArray(frame.dirs)).toBe(true);
+  expect(frame.dirs.every(d => typeof d === 'string')).toBe(true);
+  expect(typeof frame.overflow).toBe('boolean');
+  const explorer = readFileSync(join(WEB_DIR, 'js/explorer.js'), 'utf8');
+  const handler = explorer.match(/onMessage\('fsChanged',\s*\(msg\)\s*=>\s*\{([\s\S]*?)\n\}\);/);
+  expect(handler, 'production explorer fsChanged handler exists').toBeTruthy();
+  for (const field of ['rootPath', 'dirs', 'overflow']) {
+    expect(handler[1], `consumer reads ${field}`).toMatch(new RegExp(`\\bmsg\\.${field}\\b`));
+  }
+  expect(handler[1]).toContain("CustomEvent('explorer-focus-refresh'");
+  const { ctx, page, pushFrame } = await bootPage(browser, {});
+  await page.evaluate(() => { window.__watchContractEvents = 0; window.addEventListener('explorer-focus-refresh', () => window.__watchContractEvents++); });
+  const before = await page.evaluate(() => window.__watchContractEvents);
+  pushFrame(frame);
+  await expect.poll(() => page.evaluate(() => window.__watchContractEvents), { timeout: 5000 }).toBe(before + 1);
+  await ctx.close();
+});
+
 // ════ U1 单元级边界（假等待零秒：常数与判定函数）════
 test('U1 hysteresis constants = 60s and the deadline predicate flips exactly at t=60s', async ({ browser }) => {
   const { ctx, page } = await bootPage(browser, {});
