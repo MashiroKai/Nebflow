@@ -14,6 +14,7 @@
 // JS sets a CSS custom property (--canvas-width) and toggles body.canvas-open;
 // CSS handles all transitions via flex-basis.
 
+import { EVENTS } from './events.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
@@ -1808,7 +1809,7 @@ export async function openWorkspaceItem(item) {
       if (forceDiscard) {
         entry.paneEl._dirty = false;
         entry.paneEl._nfSourceDirtyFor = null;
-        entry.paneEl.dispatchEvent(new CustomEvent('editor-dirty-change', { detail: { dirty: false } }));
+        entry.paneEl.dispatchEvent(new CustomEvent(EVENTS.EDITOR_DIRTY_CHANGE, { detail: { dirty: false } }));
       }
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for
@@ -1933,7 +1934,7 @@ export async function openWorkspaceItem(item) {
   const pane = entry.paneEl;
 
   // Listen for dirty state changes from Monaco editor
-  pane.addEventListener('editor-dirty-change', (e) => {
+  pane.addEventListener(EVENTS.EDITOR_DIRTY_CHANGE, (e) => {
     const tabEl = entry.tabEl;
     const labelEl = tabEl.querySelector('.canvas-tab-label');
     if (labelEl) {

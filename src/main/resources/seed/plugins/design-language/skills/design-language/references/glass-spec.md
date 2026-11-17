@@ -233,7 +233,6 @@ status: active
 | T12 | 手机 canvas 主胶囊 | `.mf-strip-chip.on::after` | 毛玻璃 | 三签里**唯一带材质**的那一枚（作者令 2026-11-06「主胶囊要采用毛玻璃底」），成员表在册。两侧签同批零材质（「背景的文字不使用胶囊」）⇒ 不是「半透明但没走玻璃」，而是根本没有面 |
 | T13 | 手机身份头 | `.mh-idhead` | 零画 | 「不得有横贯顶栏带」原令：头本体零底零描边，只有头像与名字胶囊接事件 |
 | T14 | 手机身份名胶囊 | `.mh-idhead-name` | 毛玻璃 | 四种会话同一枚 |
-| T15 | 手机页标题胶囊 | `.mobile-page-title::before` | 毛玻璃 | 单元素连续变形的壳层（--mtitle-p 驱动 opacity） |
 | T16 | 手机聊天 chrome 键 | `.mh-chrome-btn` | 毛玻璃@g2-fab | 右上搜索键等，材质由 `.g2-fab` 供 |
 | T17 | 手机返回钮 | `.mobile-back-btn` | 毛玻璃@g2-fab | 左上「<」，材质由 `.g2-fab` 供 |
 | T18 | 手机聊天钮带 | `#mobile-fab-layer` | 零画 | `.ds-chrome-band` 族：零画 + 手势落穿 |

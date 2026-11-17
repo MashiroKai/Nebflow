@@ -762,11 +762,19 @@ function ensureGalleryChrome() {
   const label = t('lightbox.openTab');
   galTabBtnEl.title = label;
   galTabBtnEl.setAttribute('aria-label', label);
-  galTabBtnEl.innerHTML =
-    '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 ' +
-    '0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/>' +
-    '<line x1="10" y1="14" x2="21" y2="3"/></svg>';
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const icon = document.createElementNS(svgNs, 'svg');
+  for (const [name, value] of Object.entries({ width: '17', height: '17', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) icon.setAttribute(name, value);
+  for (const [tag, attrs] of [
+    ['path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }],
+    ['polyline', { points: '15 3 21 3 21 9' }],
+    ['line', { x1: '10', y1: '14', x2: '21', y2: '3' }],
+  ]) {
+    const child = document.createElementNS(svgNs, tag);
+    for (const [name, value] of Object.entries(attrs)) child.setAttribute(name, value);
+    icon.append(child);
+  }
+  galTabBtnEl.append(icon);
   galTabBtnEl.addEventListener('click', (e) => {
     e.stopPropagation();          // 不冒泡成遮罩点空白关闭
     const item = galItems && galItems[galIndex];

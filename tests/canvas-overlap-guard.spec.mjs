@@ -48,6 +48,15 @@ function ok(name, cond, detail = '') {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`);
   if (cond) pass++; else fail++;
 }
+// A collision check without at least two visible bodies proves nothing.
+function checkCollected(state, items) {
+  ok(`[${state}] 至少两件可见登记`, items.length >= 2, `${items.length} 件登记`);
+  return items.length >= 2;
+}
+if (process.argv.includes('--selftest-empty')) {
+  checkCollected('negative-control', []);
+  process.exit(fail ? 1 : 0);
+}
 const R2 = (n) => Math.round(n * 100) / 100;
 const ovl = (a, b) => {
   const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
@@ -228,6 +237,7 @@ async function runStates(page, { mobile, scheme }, tag, selftest) {
       await sleep(600);
     }
     const items = await collect(page, mobile);
+    checkCollected(`${tag}/${st}`, items);
     if (MEASURE) console.log(`\n== ${tag}/${st} ==\n` + items.map((x) => `  ${x.id}: ${fmt(x.rect)}`).join('\n'));
     await page.screenshot({ path: join(SHOTS, `${tag}-${st}${selftest ? '-inject' : ''}.png`) });
     const bad = pairFails(`${tag}/${st}`, items);

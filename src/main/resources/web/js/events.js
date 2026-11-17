@@ -16,6 +16,7 @@
 export const EVENTS = Object.freeze({
   // workspace 面：工作区条目打开（树/搜索/最近三腿共用一个事件）
   WORKSPACE_OPEN_ITEM: 'workspace-open-item',
+  EDITOR_DIRTY_CHANGE: 'editor-dirty-change',
   // flowMap 社交面：分组/好友缓存变更后重绘两条腿
   FM_GROUPS_CHANGED: 'fm-groups-changed',
   FM_FRIENDS_CHANGED: 'fm-friends-changed',
