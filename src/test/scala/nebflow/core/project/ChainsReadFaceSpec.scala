@@ -153,72 +153,29 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       .find(_.hcursor.get[String]("id").toOption.contains(id))
       .flatMap(_.hcursor.downField("live").get[String]("status").toOption)
 
-  // ── 真活判定三控（legacy-delegate-settle 批）──────────────────────────────
-  //
-  // 单一持久字段 = `restartInterruptedAt`；派生索引 = DelegateLiveness.verdictOf（纯函数）。
-  // 三控共用**同一行投影**（rowsJson → live 键），不另造读点。
-
-  test("liveness POSITIVE control: a fresh Processing turn held by this instance ⇒ running") {
-    val now = System.currentTimeMillis()
-    val fresh = record("delegate-live-fresh", None)
-    DelegateRegistry.put(fresh)
-    val registry = Map(fresh.id -> agentRecord(fresh.id).copy(lastActivityMs = now))
-    ChainsReadFace.rowsJson(registry).map { body =>
-      assertEquals(liveStatus(body, fresh.id), Some("running"), "在册 ∧ 持引用 ∧ 处理中 ∧ 旗缺席 ⇒ 真活")
-    }
-  }
-
-  test(
-    "liveness NEGATIVE control (REAL form): dead holder — real reference retained, status Processing ⇒ interrupted"
-  ) {
-    // 真实形态：真 ActorSystem 真 spawn 真 stop——`ref` 是**非 null 的真引用对象**（旧引用
-    // 保留在册），其持有者已死；`status` 仍是 Processing（清理腿没跑到的泄漏形态）；
-    // `restartInterruptedAt` 是 boot 对账腿对重启丢失任务落的持久旗（真实生产形态：
-    // markInterruptedRecords 只对 lastError 带重启指纹的任务行打旗）。
-    val system = ActorSystem(s"liveness-neg-${scala.util.Random.nextInt(100000)}")
+  test("instance ownership distinguishes a stopped holder from a live incarnation without interruption flags") {
+    val system = ActorSystem(s"liveness-${scala.util.Random.nextInt(100000)}")
     val idle = new nebflow.actor.Behavior[AgentCommand]:
-      def receive(
-        ctx: nebflow.actor.ActorContext[AgentCommand],
-        msg: AgentCommand
-      ): IO[nebflow.actor.Behavior[AgentCommand]] = IO.pure(this)
-    for
-      deadRef <- system.spawn(idle, "dead-holder")
-      _ <- system.stop(deadRef)
-      now = System.currentTimeMillis()
-      rec = record("delegate-live-dead-holder", None).copy(restartInterruptedAt = Some(now - 1000L))
-      _ = DelegateRegistry.put(rec)
-      held = agentRecord(rec.id).copy(
-        ref = deadRef,
-        status = nebflow.actor.AgentStatus.Processing,
-        lastActivityMs = now - 2000L
-      )
-      body <- ChainsReadFace.rowsJson(Map(rec.id -> held))
-      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+      def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[nebflow.actor.Behavior[AgentCommand]] = IO.pure(this)
+    val program = for
+      dead <- system.spawn(idle, "dead-holder")
+      _ <- system.stop(dead)
+      fresh <- system.spawn(idle, "fresh-holder")
+      deadRec = record("delegate-live-dead-holder", None)
+      freshRec = record("delegate-live-fresh", None)
+      _ = DelegateRegistry.put(deadRec)
+      _ = DelegateRegistry.put(freshRec)
+      agents = Map(deadRec.id -> agentRecord(deadRec.id).copy(ref = dead), freshRec.id -> agentRecord(freshRec.id).copy(ref = fresh))
+      adopted <- nebflow.core.delegate.DelegateLiveness.adopted(system, agents)
+      body <- ChainsReadFace.rowsJson(agents, adoptedIds = adopted)
+      bypass <- ChainsReadFace.rowsJson(agents, adoptedIds = agents.keySet)
     yield
-      assert(deadRef != null, "real form: the old reference object is still retained (non-null)")
-      assertEquals(
-        liveStatus(body, rec.id),
-        Some("interrupted"),
-        "死持有者 + 旧引用 + Processing ⇒ 打断（旗覆盖旗前活动）"
-      )
-  }
-
-  test(
-    "liveness REVERSE negative control: switch the aging leg OFF and the same row would be judged running (the leg is load-bearing)"
-  ) {
-    // 「关闭老化时断言失败」的反向负控：同一个体内存对象、同一输入，只把老化腿关掉——
-    // 若老化腿被删/被短路，上面那条 interrupted 断言就会红；本用例把它机械化成可执行断言。
-    val now = System.currentTimeMillis()
-    val rec = record("delegate-live-reverse", None).copy(restartInterruptedAt = Some(now - 1000L))
-    val held = agentRecord(rec.id).copy(lastActivityMs = now - 2000L)
-    val aged = nebflow.core.delegate.DelegateLiveness.verdictOf(rec, Some(held))
-    val unaged = nebflow.core.delegate.DelegateLiveness.verdictOf(rec, Some(held), aging = false)
-    assertEquals(aged.running, false, "老化腿在 ⇒ 旗后无新活动 ⇒ interrupted")
-    assertEquals(unaged.running, true, "老化腿关 ⇒ 同一行变 running ⇒ 期望 interrupted 的断言必红（承重件证明）")
-    assertNotEquals(aged, unaged, "两读数必须不同——相同即说明老化腿是装饰")
-    // 旗后确有新活动 ⇒ 旗让位（复活腿正控，同一函数）。
-    val revived = nebflow.core.delegate.DelegateLiveness.verdictOf(rec, Some(held.copy(lastActivityMs = now)))
-    assertEquals(revived.running, true, "旗时点之后的新活动让旗让位（复活即回真活）")
+      assertEquals(deadRec.restartInterruptedAt, None)
+      assertEquals(adopted, Set(freshRec.id))
+      assertEquals(liveStatus(body, deadRec.id), Some("interrupted"))
+      assertEquals(liveStatus(body, freshRec.id), Some("running"))
+      assertEquals(liveStatus(bypass, deadRec.id), Some("running"), "bypassing ownership must invert the negative control")
+    program.guarantee(system.stopAll)
   }
 
   // ── C1 行投影 ───────────────────────────────────────────────────────────
@@ -238,7 +195,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         .obj("verdict" -> "ready-to-merge".asJson, "reason" -> "branch ready".asJson, "source" -> "self-report".asJson)
     )
     val registry = Map("delegate-general-11aa22bb" -> agentRecord("delegate-general-11aa22bb"))
-    ChainsReadFace.rowsJson(registry).map { body =>
+    ChainsReadFace.rowsJson(registry, adoptedIds = Set(liveRec.id)).map { body =>
       val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
       assertEquals(rows.size, 2, "one row per registry record")
       val live =

@@ -647,13 +647,15 @@ private[gateway] object PresenceRoutes:
               .map(tasks => tasks -> tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
               .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
               .flatMap { case (taskRows, statuses) =>
-                ChainsReadFace.rowsJson(reg, archived, statuses, taskRows).flatMap { body =>
+                nebflow.core.delegate.DelegateLiveness.adopted(sharedResources.actorSystem, reg).flatMap { adopted =>
+                ChainsReadFace.rowsJson(reg, archived, statuses, taskRows, adopted).flatMap { body =>
                   // M2 缓存语义小刀（v2 §3.1 ① · 链集合行）：ETag = 载荷内容寻址。
                   // 行投影由不可变事实流组成（DelegateRegistry 落盘记录 × 台账判词行 ×
                   // 任务状态读数）——`live` 只是 {status:"running"}|null 的活性提示位
                   // （ChainsReadFace delegateJson 同源），无逐秒漂移字段 ⇒ 内容 hash
                   // 稳定（服务端本无 gen 计数器——flowMapTab.bumpGen 是前端概念）。
                   HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
+                }
                 }
               }
           }
@@ -963,6 +965,7 @@ private[gateway] object PresenceRoutes:
               .map(tasks => tasks -> tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
               .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
               .flatMap { case (taskRows, statuses) =>
+                nebflow.core.delegate.DelegateLiveness.adopted(sharedResources.actorSystem, reg).flatMap { adopted =>
                 ChainsReadFace
                   .delegatesJson(
                     reg,
@@ -970,9 +973,11 @@ private[gateway] object PresenceRoutes:
                     statuses,
                     project,
                     sharedResources.subAgentTaskStore.findByParent,
-                    taskRows
+                    taskRows,
+                    adopted
                   )
                   .flatMap(body => HttpCache.conditionalOk(req, body, HttpCache.ofJson(body)))
+                }
               }
           }
         }
@@ -990,7 +995,8 @@ private[gateway] object PresenceRoutes:
           else
             sharedResources.agentRegistry.get.flatMap { reg =>
               sharedResources.subAgentTaskStore.findByParent(id).flatMap { children =>
-                ChainsReadFace.delegateJson(id, reg, children.size).flatMap {
+                nebflow.core.delegate.DelegateLiveness.adopted(sharedResources.actorSystem, reg).flatMap { adopted =>
+                ChainsReadFace.delegateJson(id, reg, children.size, adopted).flatMap {
                   case None =>
                     NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
                   case Some(core) =>
@@ -1009,6 +1015,7 @@ private[gateway] object PresenceRoutes:
                         // `/api/chains` 行（{status:"running"}|null，无逐秒漂移）。
                         HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
                     }
+                }
                 }
               }
             }

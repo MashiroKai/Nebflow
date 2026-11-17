@@ -122,7 +122,8 @@ object ChainsReadFace:
     registry: Map[String, nebflow.actor.AgentRecord],
     archived: Boolean = false,
     taskStatuses: Map[String, String] = Map.empty,
-    taskRows: List[nebflow.shared.SubAgentTask] = Nil
+    taskRows: List[nebflow.shared.SubAgentTask] = Nil,
+    adoptedIds: Set[String] = Set.empty
   ): IO[Json] =
     IO.blocking(DelegateRegistry.list()).flatMap { records =>
       val continuations = continuationLinks(records, taskRows)
@@ -137,7 +138,7 @@ object ChainsReadFace:
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
       windowed
-        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations, readings)))
+        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations, readings, adoptedIds)))
         .map(rows => Json.obj("rows" -> rows.asJson))
     }
 
@@ -246,14 +247,15 @@ object ChainsReadFace:
     registry: Map[String, nebflow.actor.AgentRecord],
     taskStatuses: Map[String, String],
     continuations: Map[String, String] = Map.empty,
-    readings: Map[String, nebflow.core.delegate.DelegateVisibility.Reading] = Map.empty
+    readings: Map[String, nebflow.core.delegate.DelegateVisibility.Reading] = Map.empty,
+    adoptedIds: Set[String] = Set.empty
   )(rec: DelegateRegistry.Record): IO[Json] =
     IO.blocking {
       val key = ChainStore.keyFor(rec.taskId, rec.id)
       // 「真活」判定的唯一派生单点（legacy-delegate-settle 批）：持久记录 × 本实例在册
       // 快照 → running | interrupted。零逐行 resolve；旧投影的「键缺席 ⇒ 前端兜底 running」
       // 是本批要收口的陈旧面板根因——读面现在**总是**给显式读数。
-      val live = nebflow.core.delegate.DelegateLiveness.verdictOf(rec, registry.get(rec.id)).json
+      val live = nebflow.core.delegate.DelegateLiveness.verdictOf(registry.get(rec.id), adoptedIds.contains(rec.id)).json
       val verdict = latestVerdict(key)
       rec.asJson.asObject match
         case Some(obj) =>
@@ -324,9 +326,10 @@ object ChainsReadFace:
     taskStatuses: Map[String, String] = Map.empty,
     project: Option[String] = None,
     childrenOf: String => IO[List[nebflow.shared.SubAgentTask]] = _ => IO.pure(Nil),
-    taskRows: List[nebflow.shared.SubAgentTask] = Nil
+    taskRows: List[nebflow.shared.SubAgentTask] = Nil,
+    adoptedIds: Set[String] = Set.empty
   ): IO[Json] =
-    rowsJson(registry, archived, taskStatuses, taskRows).flatMap { body =>
+    rowsJson(registry, archived, taskStatuses, taskRows, adoptedIds).flatMap { body =>
       val rows = body.hcursor.downField("rows").as[List[Json]].getOrElse(Nil)
       val scoped = project.fold(rows)(p => rows.filter(rowProjectOf(_).contains(p)))
       scoped.traverse(withTopology(_, childrenOf)).map(rs => Json.obj("rows" -> rs.asJson))
@@ -445,7 +448,7 @@ object ChainsReadFace:
    * `/delegates/:id/output` 同源单点，本面零触碰 executor 域）。**零新存储**：全部
    * 现读既有面。
    */
-  def delegateJson(id: String, registry: Map[String, nebflow.actor.AgentRecord], childrenCount: Int): IO[Option[Json]] =
+  def delegateJson(id: String, registry: Map[String, nebflow.actor.AgentRecord], childrenCount: Int, adoptedIds: Set[String] = Set.empty): IO[Option[Json]] =
     if !DelegateRegistry.validId(id) then IO.pure(None)
     else
       IO.blocking(DelegateRegistry.find(id)).flatMap {
@@ -459,7 +462,7 @@ object ChainsReadFace:
             Some(
               Json.obj(
                 "record" -> rec.asJson,
-                "live" -> registry.get(id).map(_ => Json.obj("status" -> "running".asJson)).getOrElse(Json.Null),
+                "live" -> nebflow.core.delegate.DelegateLiveness.verdictOf(registry.get(id), adoptedIds.contains(id)).json,
                 "verdict" -> verdict.getOrElse(Json.Null),
                 "task" -> task.map(_.asJson).getOrElse(Json.Null),
                 "childrenCount" -> childrenCount.asJson
