@@ -109,7 +109,7 @@
   display: grid; grid-template-columns: 24px 1fr 20px; align-items: center;
   width: 100%; min-height: 40px; padding: 0 8px; border: 0;
   border-radius: var(--ds-radius-input); background: transparent;
-  color: var(--color-text); text-align: left; cursor: pointer;
+  color: var(--color-frame-text); text-align: left; cursor: pointer;
 }
 .project-open-menu button:hover, .project-open-menu button:focus-visible { background: rgb(var(--sapphire) / 0.15); }
 
