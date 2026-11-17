@@ -73,10 +73,10 @@ def resolve_data_root(explicit):
     if explicit:
         return os.path.expanduser(explicit)
     home = os.path.expanduser("~")
-    candidates = []
     for env in ("STAND_DATA_ROOT", "STAND_HOME", "NEBFLOW_HOME"):
         if os.environ.get(env):
-            candidates.append(os.path.expanduser(os.environ[env]))
+            return os.path.expanduser(os.environ[env])
+    candidates = []
     candidates.append(os.path.join(home, ".stand"))  # 当前品牌默认
     candidates.append(os.path.join(home, ".nebflow"))  # legacy 硬编码兜底
     candidates.append(os.path.join(home, ".stand"))  # 全不存在 = 默认（报错面更可读）
