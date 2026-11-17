@@ -36,7 +36,7 @@ async function canvasPage(browser) {
   await page.goto(base+'/src/main/resources/web/index.html');
   await page.waitForSelector('#activity-bar', { state: 'attached' });
   for (const name of ['alpha.md','bravo.md','charlie.md']) {
-    await page.evaluate(name => { const absPath='/tmp/canvas-stack-fixture/'+name; window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'file:'+absPath,itemType:'markdown',title:name,content:'# '+name,absPath,pinned:true}})); }, name);
+    await page.evaluate(name => { const absPath='/tmp/canvas-stack-fixture/'+name; window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'file:'+absPath,itemType:'markdown',title:name,content:('# '+name+'\n\n'+('Scrollable line with text.\n\n'.repeat(250))),absPath,pinned:true}})); }, name);
     await page.waitForSelector(`.canvas-tab-pane[data-tab-id="file:/tmp/canvas-stack-fixture/${name}"]`, { state: 'attached' });
   }
   return {ctx,page};
@@ -59,6 +59,41 @@ for (const [name,dx,dy,close] of [['up',0,-80,true],['down',0,80,true],['below',
   console.log(JSON.stringify({case:name,activeBefore,before,after})); await page.screenshot({path:`${out}/canvas-${name}-after.png`}); await ctx.close();
  });
 }
+test('mobile reading scroll preserves tab collection', async ({browser}) => {
+ const {ctx,page}=await canvasPage(browser); await page.getByRole('tab',{name:'看板'}).click();
+ const scroll=page.locator('.mf-cv-host .canvas-md-scroll'); await expect(scroll).toBeVisible();
+ const before=await page.locator('.canvas-tab-pane').evaluateAll(es=>es.map(e=>e.dataset.tabId).sort());
+ const box=await scroll.boundingBox(); const pos=await scroll.evaluate(e=>({top:e.scrollTop,height:e.scrollHeight,client:e.clientHeight}));
+ expect(pos.height).toBeGreaterThan(pos.client);
+ await touch(page,Math.round(box.x+box.width/2),Math.round(box.y+box.height*.75),0,-150);
+ await expect.poll(()=>scroll.evaluate(e=>e.scrollTop)).toBeGreaterThan(pos.top);
+ const after=await page.locator('.canvas-tab-pane').evaluateAll(es=>es.map(e=>e.dataset.tabId).sort()); expect(after).toEqual(before);
+ console.log('reading scroll',JSON.stringify({before,after,from:pos.top,to:await scroll.evaluate(e=>e.scrollTop)})); await page.screenshot({path:`${out}/reading-scroll.png`}); await ctx.close();
+});
+test('touch rapid consecutive page requests', async ({browser}) => {
+ const ctx=await browser.newContext({hasTouch:true,isMobile:true,viewport:{width:375,height:812},deviceScaleFactor:3});
+ const page=await ctx.newPage(); await page.goto(base+'/tests/fixtures/pop-artifacts/harness.html'); await page.waitForFunction(()=>window.__ready===true);
+ await page.evaluate(()=>{document.querySelector('#popup-chat').style.display='none';window.__popStackMixedRatios();});
+ const view=page.locator('#chat .pop-stack-view'); await expect(view.locator('.media-layer')).toHaveCount(3);
+ const box=await view.boundingBox(); const current=()=>view.locator('.media-layer').evaluateAll(ls=>ls.findIndex(l=>l.classList.contains('layer-front')));
+ await touch(page,box.x+box.width*.75,box.y+box.height/2,-80,0);
+ await touch(page,box.x+box.width*.75,box.y+box.height/2,-80,0);
+ await expect.poll(current,{timeout:5000}).toBe(2);
+ console.log('touch rapid result',await current()); await page.screenshot({path:`${out}/touch-rapid.png`}); await ctx.close();
+});
+for (const variant of ['before','after']) test(`deterministic frames ${variant}`, async ({browser}) => {
+ const page=await browser.newPage({viewport:{width:1000,height:800}});
+ if(variant==='before') { const old=execFileSync('git',['show','0f9f5aab762f601d382e8121fc7c994f366d4c06:src/main/resources/web/js/popArtifacts.js'],{cwd:root,encoding:'utf8'}); await page.route('**/src/main/resources/web/js/popArtifacts.js',r=>r.fulfill({contentType:'text/javascript',body:old})); }
+ await page.goto(base+'/tests/fixtures/pop-artifacts/harness.html'); await page.waitForFunction(()=>window.__ready===true);
+ await page.evaluate(async()=>{document.querySelector('#popup-chat').style.display='none'; await window.__popStackMixedRatios(); document.querySelectorAll('#chat .pop-stack-view .media-layer').forEach((layer,i)=>{ const badge=document.createElement('div'); badge.textContent=String(i+1); Object.assign(badge.style,{position:'absolute',inset:'0',background:['#df564d','#4d91df','#53ad67'][i],color:'white',display:'grid',placeItems:'center',font:'bold 120px sans-serif'}); layer.appendChild(badge); }); });
+ const view=page.locator('#chat .pop-stack-view'); const box=await view.boundingBox();
+ // Pause at creation so no real time can escape between the gesture and capture.
+ await page.evaluate(()=>{ const orig=Element.prototype.animate; Element.prototype.animate=function(...args){const a=orig.apply(this,args); if(this.closest('.pop-stack-view')) a.pause(); return a;}; });
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2); await page.mouse.down(); await page.mouse.move(box.x+box.width/2-75,box.y+box.height/2,{steps:5}); await page.mouse.up();
+ const count=await page.evaluate(()=>document.querySelector('.pop-stack-view').getAnimations({subtree:true}).length); console.log('animations',variant,count); expect(count).toBeGreaterThan(0);
+ for(const percent of [0,25,50,75,99]) { await page.evaluate(p=>document.querySelector('.pop-stack-view').getAnimations({subtree:true}).forEach(a=>{ a.currentTime=a.effect.getTiming().duration*p/100; }),percent); await page.screenshot({path:`${out}/det-${variant}-${percent}.png`,clip:{x:Math.max(0,box.x-100),y:Math.max(0,box.y-100),width:450,height:480}}); }
+ await page.close();
+});
 for (const variant of ['before','after']) test(`motion ${variant}`, async ({browser}) => {
  const ctx=await browser.newContext({viewport:{width:1000,height:800},recordVideo:{dir:out}}); const page=await ctx.newPage();
  if(variant==='before') { const old=execFileSync('git',['show','0f9f5aab762f601d382e8121fc7c994f366d4c06:src/main/resources/web/js/popArtifacts.js'],{cwd:root,encoding:'utf8'}); await page.route('**/src/main/resources/web/js/popArtifacts.js',r=>r.fulfill({contentType:'text/javascript',body:old})); }

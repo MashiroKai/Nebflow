@@ -1035,23 +1035,23 @@ function buildMediaStack(items, opts) {
     // Both screen-edge bands belong to back navigation, even over a card.
     if (document.body.classList.contains('mobile-layer')
         && (e.clientX <= 20 || e.clientX >= window.innerWidth - 20)) return;
-    if (switching || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
     sx = e.clientX; dx = 0;
     view.classList.add('dragging');
-    layers[front].style.willChange = 'transform';
+    if (!switching) layers[front].style.willChange = 'transform';
     try { view.setPointerCapture(e.pointerId); } catch { /* detached */ }
   });
   view.addEventListener('pointermove', e => {
     if (sx === null) return;
     dx = e.clientX - sx;
-    layers[front].style.transform = `translate3d(${dx * .65}px,0,0) rotate(${dx * .04}deg) scale(.98)`;
+    if (!switching) layers[front].style.transform = `translate3d(${dx * .65}px,0,0) rotate(${dx * .04}deg) scale(.98)`;
   });
   const up = (e) => {
     if (sx === null) return;
     view.classList.remove('dragging');
     const step = e.type !== 'pointercancel' && Math.abs(dx) > 38 ? (dx < 0 ? 1 : -1) : 0;
     if (step) switchFront(step);
-    else {
+    else if (!switching) {
       layers[front].style.transform = '';
       layers[front].style.willChange = '';
     }
