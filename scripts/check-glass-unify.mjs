@@ -248,6 +248,18 @@ const violations = [];
 const stats = { cssFiles: 0, jsFiles: 0, blocks: 0, members: 0, noneOptOuts: 0, files: new Map() };
 const add = (v) => violations.push(v);
 
+// G8 —— ask 用户气泡禁止重写标准玻璃底；同一个选择器的状态覆盖也不可绕过。
+// 这是局部门禁，并不代表已覆盖整个成员表的 CSS 级联。
+for (const rule of walkRules(readFileSync(SINGLE_SOURCE, 'utf8'))) {
+  if (!/\.ask-dock\s+\.ask-bub\.user\b/.test(rule.selector)) continue;
+  for (const d of rule.decls) {
+    if (/^background(?:-color)?$/.test(d.prop) && d.value.trim() !== 'var(--nf-glass-input-bg)') {
+      add({ rule: 'G8', file: rel(SINGLE_SOURCE), line: d.line, selector: rule.selector,
+        detail: `${d.prop}: ${d.value}`, why: 'ask 用户玻璃底必须引用主输入框令牌' });
+    }
+  }
+}
+
 // G1/G2 —— CSS 全量
 for (const f of readdirSync(CSS_DIR).filter((x) => x.endsWith('.css')).sort()) {
   const path = join(CSS_DIR, f);

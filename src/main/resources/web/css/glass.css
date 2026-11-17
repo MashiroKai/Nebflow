@@ -528,11 +528,7 @@ html[data-theme="light"] {
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
-/* 用户输入与外部注入通知共用同一蓝色；助手回复保留原玻璃底。 */
-.ask-dock .ask-bub.user {
-  background: var(--nf-bub-injected-bg);
-  border-color: var(--cv-border, var(--glass-border));
-}
+/* 用户气泡与助手气泡共用玻璃底；注入通知的语义底不用于玻璃面。 */
 /* 顶缘折射线（面级浮件的第三件）：几何与 #input-bar::before 逐值相同
    （top:0 / 左右各 10% / 高 1px / border-radius inherit），色值 = 同一个
    --glass-refraction-line token（= #header 背景第一层的那个渐变）。
