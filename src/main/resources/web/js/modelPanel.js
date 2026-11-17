@@ -708,9 +708,10 @@ function renderChainSectionBody(container) {
       const active = current.contains(document.activeElement) ? document.activeElement : null;
       const activeId = active?.id;
       const activeSelect = active?.tagName === 'SELECT';
-      current.replaceWith(fresh);
-      if (activeId) /** @type {HTMLElement|null} */ (fresh.querySelector(`#${CSS.escape(activeId)}`))?.focus({ preventScroll: true });
-      else if (activeSelect) fresh.querySelector('select')?.focus({ preventScroll: true });
+      // Preserve the role row itself while asynchronous role reads update its controls.
+      current.replaceChildren(...fresh.childNodes);
+      if (activeId) /** @type {HTMLElement|null} */ (current.querySelector(`#${CSS.escape(activeId)}`))?.focus({ preventScroll: true });
+      else if (activeSelect) current.querySelector('select')?.focus({ preventScroll: true });
     }
   }
   // Image generation remains a separate provider selector, not a conversation role.
