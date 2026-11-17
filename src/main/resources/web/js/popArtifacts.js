@@ -910,10 +910,10 @@ function buildMediaStack(items, opts) {
   view.addEventListener('keydown', (e) => {
     if (e.target !== view) return;
     const n = layers.length;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') front = (front + 1) % n;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') front = (front - 1 + n) % n;
-    else if (e.key === 'Home') front = 0;
-    else if (e.key === 'End') front = n - 1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') switchFront(1);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') switchFront(-1);
+    else if (e.key === 'Home') switchFront(-front);
+    else if (e.key === 'End') switchFront(n - 1 - front);
     else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
       e.preventDefault();
       e.stopPropagation();
@@ -921,7 +921,6 @@ function buildMediaStack(items, opts) {
       return;
     } else return;
     e.preventDefault();
-    applyLayers();
   });
 
   /** The expanded column's natural height: the sum of its layers plus the
@@ -995,7 +994,7 @@ function buildMediaStack(items, opts) {
   // Only the outgoing front card moves. Fan slots change atomically afterwards,
   // with no transitions on the lower layers and no layout reads in pointermove.
   const switchFront = (step) => {
-    if (switching) return;
+    if (switching || !step) return;
     const layer = layers[front];
     const finish = () => {
       layer.style.transform = '';
@@ -1011,12 +1010,22 @@ function buildMediaStack(items, opts) {
     stack.suppressClick = true;
     view.classList.add('is-switching');
     const from = layer.style.transform || 'translate3d(0,0,0) rotate(0deg) scale(1)';
-    const animation = layer.animate([
-      { transform: from },
-      { transform: `translate3d(${-step * 110}%,0,0) rotate(${-step * 12}deg) scale(.96)` },
-    ], { duration: parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200,
-      easing: getComputedStyle(view).getPropertyValue('--ds-ease-panel').trim() || 'ease-out' });
-    animation.finished.then(finish, finish);
+    const next = layers[(front + step + layers.length) % layers.length];
+    const duration = parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200;
+    const options = { duration, easing: 'ease-in-out' };
+    // Separate the outgoing and incoming faces in depth; transforms stay on
+    // the compositor. Keep slot/z-index changes until both animations settle.
+    next.classList.remove('is-buried');
+    const incomingFrom = getComputedStyle(next).transform;
+    const outgoing = layer.animate([
+      { transform: from, opacity: 1 },
+      { transform: `translate3d(0,55%,0) rotateX(35deg) scale(.85)`, opacity: 0 },
+    ], options);
+    const incoming = next.animate([
+      { transform: incomingFrom === 'none' ? 'translate3d(0,-35%,0) scale(.88)' : incomingFrom, opacity: .6 },
+      { transform: 'translate3d(0,0,0) rotate(0deg) scale(1)', opacity: 1 },
+    ], options);
+    Promise.allSettled([outgoing.finished, incoming.finished]).then(finish);
   };
   view.addEventListener('pointerdown', e => {
     const control = e.target instanceof Element ? e.target.closest('button') : null;

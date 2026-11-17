@@ -2046,7 +2046,7 @@ function deckScrubRelease(vy) {
  *  feedDy = 纵轴已喂给引擎的累计位移（增量喂给防回滚段倒灌）。 */
 function deckDragState(e) {
   return {
-    id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, feedDy: 0,
+    id: e.pointerId, touch: e.pointerType === 'touch', x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, feedDy: 0,
     vx: 0, vy: 0, lastX: e.clientX, lastY: e.clientY, lastT: e.timeStamp,
     axis: null, wasDragged: false,
   };
@@ -2058,7 +2058,7 @@ function deckDragTrack(d, e) {
   if (!d.axis && Math.max(Math.abs(dx), Math.abs(dy)) > DECK_AXIS_LOCK_PX) {
     d.axis = deckDominantAxis(dx, dy);
     d.wasDragged = true;
-    if (d.axis === 'y' && deck.M < 2) d.axis = 'n';
+    if (d.axis === 'y' && deck.M < 2 && !d.touch) d.axis = 'n';
   }
   const dtms = Math.max(1, e.timeStamp - d.lastT);
   d.vx = 0.8 * d.vx + 0.2 * ((e.clientX - d.lastX) / dtms);
@@ -2594,7 +2594,7 @@ function deckMakeCardEl(entry, r, cls) {
     const d = deck.cardDrag;
     const axis = deckDragTrack(d, e);
     if (axis === 'x') d.dx = e.clientX - d.x0;                     // 跟手位移由 frame() 直写
-    else if (axis === 'y') deckDragFeedVertical(d, e);             // 纵向主导：换卡（不关闭）
+    else if (axis === 'y') { if (d.touch) d.dy = e.clientY - d.y0; else deckDragFeedVertical(d, e); }
   });
   const endCardDrag = (e, cancelled) => {
     if (!deck.cardDrag || e.pointerId !== deck.cardDrag.id || deck.cardDrag.el !== card) return;
@@ -2613,7 +2613,11 @@ function deckEndCardDrag(d, cancelled) {
   deck.cardDrag = null;
   if (cancelled || !d.wasDragged) return;                        // 未锁轴（≤8px 死区）= 点击，交给 click
   deck.suppressCardClick = performance.now() + 350;
-  if (d.axis === 'y') { deckScrubRelease(d.vy); return; }        // 纵向：惯性+贴靠换卡，永不触发关闭
+  if (d.axis === 'y') {
+    if (d.touch) { if (Math.abs(d.dy) > 48) deckRequestClose(d.tabId); }
+    else deckScrubRelease(d.vy);
+    return;
+  }
   if (d.axis !== 'x') return;                                    // 死轴（单卡纵拖）：静默结束
   const rect = deckPanelRect();
   const far = Math.abs(d.dx) > rect.width * 0.20 || Math.abs(d.vx) > 0.55;
@@ -3706,7 +3710,8 @@ function bindDeckInput() {
       deckSetRootFxStyle(panel, d.dx, d.dx * 0.028, 1);
       deckStartLoop();
     } else if (axis === 'y') {                                     // 纵向主导 = scrub 换卡（跟手连续）
-      deckDragFeedVertical(d, e);
+      if (d.touch) d.dy = e.clientY - d.y0;
+      else deckDragFeedVertical(d, e);
     }
   });
   const endPanelDrag = (e, cancelled) => {
@@ -3720,7 +3725,10 @@ function bindDeckInput() {
       return;                                          // 死轴（单卡纵拖）：复位静默，不关闭不擦洗
     }
     if (d.axis === 'y') {                              // 纵向主导：惯性 + 贴靠换卡，永不触发关闭
-      deckScrubRelease(d.vy);
+      if (d.touch) {
+        panel.classList.remove('no-trans');
+        if (Math.abs(d.dy) > 48) deckRequestClose(activeTabId);
+      } else deckScrubRelease(d.vy);
       return;
     }
     const far = Math.abs(d.dx) > rect.width * 0.20 || Math.abs(d.vx) > 0.55;
