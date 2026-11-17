@@ -1035,11 +1035,18 @@ function buildMediaStack(items, opts) {
         { transform: targets[layers.indexOf(el)] },
       ], { ...options, fill: 'both' }));
     }
-    const outgoingTarget = outgoingBuried ? `translate3d(${direction * 120}%,0,0) scale(.94)` : targets[layers.indexOf(layer)];
+    // 出场卡单一连续路径：沿手势方向飞离到顶点（画外扇面之外、与其余层零
+    // 重叠的窗口），层级在顶点窗口翻转（像素不可见），再沿连续曲线回到终态
+    // 槽位。旧实现把顶点后的行程折叠成 45%→46% 一帧的离散重定位（画外→
+    // 终态槽位 + z 4→0 同时翻）—— 几何跳变已删，两端 t=0/t=1 几何不变。
+    // 埋层卡顶点后回到全遮挡口袋位（与第三卡同款 scale(.90) 起点槽），终态
+    // 的 display:none 在完全遮挡处接手 —— 不再有画外卡整卡显隐。
+    const flyout = `translate3d(${direction * 120}%,0,0) scale(.94)`;
+    const outgoingTarget = outgoingBuried ? 'translate3d(0,0,0) scale(.90)' : targets[layers.indexOf(layer)];
     animations.push(layer.animate([
       { transform: from, zIndex: 4, offset: 0 },
-      { transform: `translate3d(${direction * 120}%,0,0) scale(.94)`, zIndex: 4, offset: .45 },
-      { transform: outgoingTarget, zIndex: 0, offset: .46 },
+      { transform: flyout, zIndex: 4, offset: .45 },
+      { transform: flyout, zIndex: 0, offset: .46 },
       { transform: outgoingTarget, zIndex: 0, offset: 1 },
     ], { ...options, fill: 'both' }));
     animations.push(next.animate([
