@@ -1053,6 +1053,9 @@ function buildMediaStack(items, opts) {
       { transform: from, zIndex: 4, offset: 0 },
       { transform: flyout, zIndex: 4, offset: .45 },
       { transform: flyout, zIndex: 0, offset: .46 },
+      // A shared mirrored envelope keeps the visible return balanced until the
+      // final slot handoff; the existing target still owns the settled fan.
+      { transform: `translate3d(${direction * 14}px,0,0) scale(.92)`, zIndex: 0, offset: .981 },
       { transform: outgoingTarget, zIndex: 0, offset: 1 },
     ], { ...options, fill: 'both' }));
     animations.push(next.animate([

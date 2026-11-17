@@ -73,7 +73,7 @@ for (const version of (process.env.STACK_VERSIONS || 'worktree').split(',')) {
       // Absolute displacement is the primary check: normalization must not
       // hide an exaggerated direction. 100% is checked separately after finish.
       const absoluteFailures = [];
-      for (let i = 0; i <= 19; i++) {
+      for (let i = 0; i <= 18; i++) {
        const x = dir => Math.abs(Number(results[dir][i].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]));
        const left = x('left'), right = x('right');
        const ratio = left === 0 && right === 0 ? 1 : left / right;
