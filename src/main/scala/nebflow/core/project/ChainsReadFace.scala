@@ -383,7 +383,6 @@ object ChainsReadFace:
                       "id" -> nid.asJson,
                       "label" -> label.asJson,
                       "status" -> status.asJson,
-                      "sessionRef" -> n.hcursor.get[Option[String]]("sessionRef").toOption.flatten.asJson,
                       "deps" -> deps.asJson
                     )
                   }
@@ -547,7 +546,6 @@ object ChainsReadFace:
               "kind" -> "flow-step".asJson,
               "label" -> label.asJson,
               "description" -> n.description.getOrElse("").asJson,
-              "sessionRef" -> n.sessionRef.asJson,
               "status" -> (if n.status == "running" && !n.sessionRef.exists(id => nebflow.core.delegate.DelegateLiveness.verdictOf(registry.get(id), adoptedIds.contains(id)).running) then "interrupted" else rowStatusOf(n.status)).asJson,
               "deps" -> n.deps.asJson,
               "executor" -> "".asJson

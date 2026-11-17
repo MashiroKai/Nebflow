@@ -30,8 +30,11 @@ object ChainsRowsFixture:
     val out = os.Path(args(1), os.pwd)
     os.makeDir.all(out)
 
-    val next = ChainsReadFace.rowsJson(Map.empty, archived = false).unsafeRunSync()
+    val records = nebflow.core.delegate.DelegateRegistry.list()
+    val adopted = Set.empty[String] // constructed empty snapshot, not a live-instance measurement
+    val next = ChainsReadFace.rowsJson(Map.empty, archived = false, adoptedIds = adopted).unsafeRunSync()
     val rows = next.hcursor.downField("rows").as[List[Json]].getOrElse(Nil)
+    val running = rows.count(_.hcursor.downField("live").get[String]("status").toOption.contains("running"))
     val prev = rows.map { r =>
       r.asObject.map(o => Json.fromJsonObject(o.remove("live"))).getOrElse(r)
     }
@@ -41,6 +44,9 @@ object ChainsRowsFixture:
       Json
         .obj(
           "root" -> root.toString.asJson,
+          "sourceTotal" -> records.size.asJson,
+          "projectedRunning" -> running.asJson,
+          "constructedAdoptedCount" -> adopted.size.asJson,
           "rowsNext" -> rows.size.asJson,
           "rowsPrev" -> prev.size.asJson,
           "out" -> out.toString.asJson
