@@ -38,9 +38,10 @@ for (const width of [320,375,390,430]) {
  // Geometry does not require input. Record ownership-card state without altering it.
  console.log(`INFO takeover card visible=${await page.locator('#modal-overlay.on #takeover-box').isVisible()} width=${width}`);
  if(process.env.BAND_NEGATIVE) await page.addStyleTag({content:'body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar { width: 31px !important; height:31px !important }'});
+ if(process.env.COMPOSER_NEGATIVE) await page.addStyleTag({content:'body.mobile-layer #input-bar {padding-left:12px !important;padding-right:12px !important;gap:8px !important} .ask-input {padding-left:6px !important;gap:6px !important}'});
  const rows=[];
  for(const id of ['chat','messages','contacts','canvas','workbench','settings','tasks','todo-apple-item']) {
-  if(id==='canvas') await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'band-document',title:'Canvas test',itemType:'markdown',pinned:false,background:false,content:'# Canvas'}})));
+  if(id==='canvas') await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'band-document',title:'Canvas test',itemType:'markdown',absPath:'/fixture/band-document.md',pinned:false,background:false,content:'# Canvas'}})));
   await page.evaluate(async id=>{const n=await import('/js/mobile/navController.js'); if(id==='chat') n.goHome(); else n.navigateTo(id);},id);
   if(id!=='chat') await page.waitForSelector(`.mobile-page.live[data-page="${id}"]`,{timeout:12000});
   if(['messages','contacts'].includes(id)) await page.evaluate(()=>{const dock=document.querySelector('.mobile-page.live .mh-search-dock'); if(dock){dock.classList.add('mh-search-collapsed');dock.querySelector('.mh-search-bar')?.classList.add('g2-fab');}});
@@ -56,6 +57,24 @@ for (const width of [320,375,390,430]) {
    return {id,buttons:els.map(e=>{const s=getComputedStyle(e);return {box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null,padding:s.padding,radius:s.borderRadius,overflowX:document.documentElement.scrollWidth-innerWidth}}),bottomControls,avatar:avatar?rect(avatar):null, tool:tool?rect(tool):null,bottom:getComputedStyle(document.body).getPropertyValue('--mcv-size-circle').trim(),capsule:getComputedStyle(document.body).getPropertyValue('--mcap-h').trim()};
   },id);
   rows.push(data); console.log(JSON.stringify({width,...data}));
+  if(id==='chat'||id==='canvas') {
+   if(id==='canvas') {const fab=page.locator('.ask-fab:not(.note-fab):visible').first();if(await fab.count()) {await fab.click({timeout:3000});await page.waitForTimeout(400);}}
+   const inputInfo=await page.evaluate(id=>{
+    const bar=document.querySelector(id==='chat'?'#input-bar':'.ask-dock:not(.closed) .ask-input');
+    if(!bar)return null;
+    const input=bar.querySelector('textarea,input');if(!input)return null;
+    const box=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,right:r.right}};
+    const rect=box(bar),text=box(input),controls=[...bar.children].filter(e=>!e.contains(input)&&e!==input&&getComputedStyle(e).display!=='none'&&getComputedStyle(e).visibility!=='hidden'&&e.getBoundingClientRect().width>0).map(e=>{const r=box(e),hit=document.elementFromPoint(r.x+r.w/2,r.y+r.h/2);return {id:e.id||e.className,...r,hit:!!hit&&(e===hit||e.contains(hit))}});
+    const css=getComputedStyle(bar);return {bar:rect,input:text,controls,padding:css.padding,gap:css.gap,utilization:text.w/rect.w};
+   },id);
+   console.log('COMPOSER',JSON.stringify({width,id,...inputInfo}));
+   if(!inputInfo) {console.log('FAIL missing composer',id,width);errors++;}
+   else {
+    const c=inputInfo.controls, side=c.reduce((n,e)=>n+e.w,0), expected=inputInfo.bar.w-side-(id==='chat'?16:12)-(c.length*4)-2;
+    if(inputInfo.input.w<expected-.15 || c.some(e=>e.x<inputInfo.bar.x-.15||e.right>inputInfo.bar.right+.15||Math.min(e.right,inputInfo.input.right)-Math.max(e.x,inputInfo.input.x)>.15)) {console.log('FAIL composer width or overlap',JSON.stringify({width,id,expected,...inputInfo}));errors++;}
+   }
+   if(width===320||width===375) await page.screenshot({path:join(out,`${width}-${id}-composer.png`)});
+  }
   if(id==='canvas') {
    const states=await page.evaluate(()=>{
     const top=document.querySelector('.mobile-page.live .mf-cv-close'), bottom=document.querySelector('.mobile-page.live .canvas-find-toggle');
@@ -116,6 +135,11 @@ for (const width of [320,375,390,430]) {
  });
  await page.goto('http://localhost:8899/');
  await page.waitForFunction(async()=>{const s=(await import('/js/state.js')).default;return s.ws?.readyState===1});
+ const mainInput=await page.evaluate(()=>{const bar=document.querySelector('#input-bar'),input=bar.querySelector('textarea'),b=bar.getBoundingClientRect(),r=input.getBoundingClientRect(),s=getComputedStyle(bar);return {bar:b.width,input:r.width,padding:s.padding,gap:s.gap,children:[...bar.children].filter(e=>!e.contains(input)&&getComputedStyle(e).display!=='none'&&getComputedStyle(e).visibility!=='hidden'&&e.getBoundingClientRect().width>0).map(e=>({id:e.id,w:e.getBoundingClientRect().width,x:e.getBoundingClientRect().x}))}});
+ console.log('DESKTOP COMPOSER',JSON.stringify(mainInput));
+ const desktopExpected=mainInput.bar-mainInput.children.reduce((n,e)=>n+e.w,0)-2*8-mainInput.children.length*4-2;
+ if(mainInput.input<desktopExpected-.15){console.log('FAIL desktop composer width',desktopExpected,JSON.stringify(mainInput));errors++;}
+ await page.screenshot({path:join(out,'desktop-composer.png')});
  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'desktop-band-document',title:'Canvas test',itemType:'markdown',pinned:false,content:'# Canvas'}})));
  await page.waitForSelector('.canvas-tab-pane .canvas-find-toggle',{timeout:12000});
  const rows=await page.evaluate(()=>[...document.querySelectorAll('#canvas-head-close, .canvas-tab-pane .canvas-find-toggle, .canvas-tab-pane .canvas-source-toggle, .canvas-tab-pane .canvas-ref-select')].map(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e),i=e.querySelector('svg')?.getBoundingClientRect();return {selector:e.className||e.id,w:r.width,h:r.height,icon:i?{w:i.width,h:i.height}:null,radius:s.borderRadius,padding:s.padding,visible:r.width>0&&r.height>0}}).filter(e=>e.visible));

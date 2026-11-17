@@ -2956,7 +2956,7 @@ body.mobile-layer .ask-dock .ds-turn-btn {
    before 78 / after 58）。canvas 页 ask 输入条为独立组件（ask.css .ask-input
    自带几何，与主会话不共组件/几何 token）——按令分开实现先不动。 */
 body.mobile-layer #input-bar {
-  padding: var(--ds-space-1) var(--ds-space-3);
+  padding: var(--ds-space-1) var(--ds-space-2);
 }
 body.mobile-layer #mic-orb-wrap {
   margin: -8px 0;
