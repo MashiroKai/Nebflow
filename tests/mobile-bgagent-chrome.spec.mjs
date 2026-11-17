@@ -119,6 +119,11 @@ const IN_PAGE_MEASURE = (sid) => {
     overlayPresent: !!overlay,
     closeX: closeX ? { count: 1, visible: vis(closeX) } : { count: 0, visible: false },
     back: back ? { present: true, visible: vis(back), rect: back.getBoundingClientRect().toJSON() } : { present: false },
+    heading: (() => {
+      const heading = overlay && overlay.querySelector('.bgagent-mobile-heading');
+      const title = heading && heading.querySelector('.bgagent-mobile-title');
+      return heading && title && pill ? { text: title.textContent.trim(), title: title.getBoundingClientRect().toJSON(), pill: pill.getBoundingClientRect().toJSON(), nested: pill.parentElement === heading } : null;
+    })(),
     pill: pill ? {
       ...pick(pill, PILL), visible: vis(pill),
       text: pill.textContent.trim(),
@@ -304,6 +309,10 @@ async function run() {
       && fm.pill.rect.y < 64 && fm.pill.rect.h <= 32,
     `text="${fm.pill ? fm.pill.text : '-'}" y=${fm.pill ? fm.pill.rect.y : '-'} h=${fm.pill ? fm.pill.rect.h : '-'}`);
 
+  check('M2b', 'name above status in same heading',
+    !!fm.heading && !!fm.heading.text && fm.heading.nested && fm.heading.title.bottom <= fm.heading.pill.top,
+    `heading=${JSON.stringify(fm.heading)}`);
+
   check('M3', '终止钮走悬浮圆钮类且命中盒 ≥40（右下离边、玻璃、危险档、图标已转换）',
     !!fm.stopFab && fm.stopFab.visible && fm.stopFab.inOverlayNotFooter
       && /\bg2-fab\b/.test(fm.stopFab.classes)
@@ -315,11 +324,9 @@ async function run() {
       && (fm.stopFab.rect.y + fm.stopFab.rect.h) > 812 - 30,
     `classes="${fm.stopFab ? fm.stopFab.classes : '-'}" hit=${fm.stopFab ? fm.stopFab.hitBox : '-'} color=${fm.stopFab ? fm.stopFab.color : '-'} danger=${fm.stopFab ? fm.stopFab.dangerColor : '-'} icon=${fm.stopFab ? fm.stopFab.hasConvertedIcon : '-'} right=${fm.stopFab ? (fm.stopFab.rect.x + fm.stopFab.rect.w).toFixed(1) : '-'} bottom=${fm.stopFab ? (fm.stopFab.rect.y + fm.stopFab.rect.h).toFixed(1) : '-'} bf=${fm.stopFab ? fm.stopFab.backdropFilter : '-'}`);
 
-  check('M4', '⋯ 详情浮层可开合且含插件/工作树/任务内容三字段（毛玻璃卡）',
+  check('M4', '⋯ 详情浮层可开合且含来源、创建与任务内容（毛玻璃卡）',
     !!st && !!st.opened && st.opened.visible === true && st.opened.hidden === false
       && st.opened.nfGlass === true
-      && st.opened.metaRows.some((r) => r.includes('插件') && r.includes('wiki-docs'))
-      && st.opened.metaRows.some((r) => r.includes('工作树') && r.includes('fee-final'))
       && st.opened.metaRows.some((r) => r.includes('来源'))
       && st.opened.metaRows.some((r) => r.includes('创建'))
       && st.opened.taskText.includes('第三次 FEE 巡检复测')

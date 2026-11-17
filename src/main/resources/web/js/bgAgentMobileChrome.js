@@ -85,7 +85,7 @@ function capsuleIcon(tone) {
  * @returns {{sheetBody: HTMLElement, sheetAnchor: HTMLElement, refresh: (meta: any) => void,
  *   autoExpandStrip: (host: HTMLElement, sid: string) => void}|null}
  */
-export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, agentName }) {
+export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, agentName, taskDescription }) {
   if (!overlay || !(overlay instanceof HTMLElement)) return null;
   if (!document.body.classList.contains('mobile-layer')) return null; // 桌面零变化第一道闸
   closeBgAgentMobileChrome(); // 幂等（重开路径不叠旧账本）
@@ -105,7 +105,19 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
   const pillDur = document.createElement('span');
   pillDur.className = 'bgagent-pill-dur';
   pill.append(pillIcon, pillWord, pillDur);
-  overlay.appendChild(pill);
+  const heading = document.createElement('div');
+  heading.className = 'bgagent-mobile-heading';
+  const title = document.createElement('div');
+  title.className = 'bgagent-mobile-title';
+  const setTitle = (value) => {
+    const name = String(value || '').trim();
+    title.textContent = name;
+    title.title = name;
+    cardTitle.textContent = name;
+    cardTitle.hidden = !name;
+  };
+  heading.append(title, pill);
+  overlay.appendChild(heading);
 
   // ③ 右上 ⋯ 键（g2-fab；几何 = 会话页 .mh-sess-more 同一条 CSS 档）。
   const moreBtn = document.createElement('button');
@@ -133,6 +145,7 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
   cardTitle.className = 'bgagent-sheet-title';
   cardTitle.textContent = agentName || '';
   cardTitle.hidden = !agentName; // 零空位
+  setTitle(agentName || taskDescription || '');
   const metaBlock = document.createElement('div');
   metaBlock.className = 'bgagent-sheet-meta';
   const actions = document.createElement('div');
@@ -204,6 +217,7 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
       if (!active || active.overlay !== overlay) return; // 弹窗已切走 → 静默弃
       const record = detail && detail.record && typeof detail.record === 'object' ? detail.record : null;
       if (!record) return; // 拉取失败 → meta 区缺席（fail-soft，浮层其余部分不受影响）
+      setTitle(record.name || record.title || agentName || taskDescription || '');
       metaRow('bgagent.detail.source', [
         badgeFaceOfKind('Delegate'),
         String(record.executor || ''),
@@ -220,6 +234,7 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
     const face = capsuleFace(meta);
     const dur = (meta && meta.startedAt && face.tone === 'active')
       ? fmtUptime(Date.now() - Number(meta.startedAt)) : '';
+    const oldWidth = pill.getBoundingClientRect().width;
     pillIcon.className = `bgagent-pill-status bg-status-${face.tone}`;
     pillIcon.replaceChildren(h('i', { 'data-lucide': capsuleIcon(face.tone), class: 'st-ic', style: `width:12px;height:12px` }));
     if (typeof lucide !== 'undefined') createIconsIn(pillIcon);
@@ -227,6 +242,11 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
     pillDur.textContent = dur ? `· ${dur}` : '';
     pillDur.hidden = !dur;
     pill.setAttribute('aria-label', dur ? `${face.word} · ${dur}` : face.word);
+    pill.style.width = 'max-content';
+    const newWidth = pill.getBoundingClientRect().width;
+    if (oldWidth && Math.abs(oldWidth - newWidth) > 0.5 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      pill.animate([{ width: `${oldWidth}px` }, { width: `${newWidth}px` }], { duration: 200, easing: 'ease-out' });
+    }
     // ⑥ 动作区随恢复入口可达性开合（syncManageControls 刚在 updateFooterStatus 跑过）。
     if (bar && bar.retryBtn) actions.hidden = bar.retryBtn.style.display === 'none';
   };
