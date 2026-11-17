@@ -13,7 +13,9 @@ const design = read(web + 'css/design-system.css');
 const errors = [];
 const check = (condition, message) => { if (!condition) errors.push(message); };
 check(/mf-me-card sp-identity/.test(me) && /mf-me-avatar-frame huge/.test(me), 'personal identity must use shared centered structure and huge avatar');
-check(/pf-hero sp-identity/.test(profile) && (profile.match(/avatarNode\([^\n]+, 56\)/g) || []).length === 2, 'profile identities must use shared structure and 56px avatars');
+// Both baseline and current implementation use 40px; OpenSpec specifies the shared
+// centered structure, not a pixel size. 3fc6173f4 intentionally restored 40px.
+check(/pf-hero sp-identity/.test(profile) && (profile.match(/avatarNode\([^\n]+, 40\)/g) || []).length === 2, 'profile identities must use shared structure and 40px avatars');
 check(/\.sp-identity\s*\{[^}]*flex-direction:\s*column;[^}]*align-items:\s*center;/s.test(design), 'shared identity column must center');
 check(/pf-edit-bar ds-chrome-band/.test(profile) && /g2-fab pf-edit-submit/.test(profile) && /g2-fab pf-edit-cancel/.test(profile), 'registered profile bottom controls must use canvas outlets');
 check(/bar\.hidden = !dirty/.test(profile) && /save\.hidden = true/.test(profile), 'pending actions only; no duplicate inline save');

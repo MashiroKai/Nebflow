@@ -8,7 +8,8 @@ const web = fileURLToPath(new URL('../src/main/resources/web/', import.meta.url)
 const read = p => readFileSync(join(web, p), 'utf8');
 const failures = [];
 for (const [file, patterns] of Object.entries({
-  'js/viewers/shared.js': ['canvas-source-toggle', 'canvas-ref-select', 'canvas-find-toggle', 'canvas-refresh-toggle'],
+  // Manual refresh was retired in favor of automatic refresh; do not require its emitter.
+  'js/viewers/shared.js': ['canvas-source-toggle', 'canvas-ref-select', 'canvas-find-toggle'],
   'js/viewers/zoom.js': ['canvas-zoom-btn'],
   'js/viewers/image.js': ['canvas-zoom-btn canvas-pan-toggle', 'viewer-retry-btn'],
   'js/viewers/largeText.js': ['lt-btn'],
