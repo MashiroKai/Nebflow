@@ -41,13 +41,13 @@ async function canvasPage(browser) {
   }
   return {ctx,page};
 }
-for (const [name,dx,dy,close] of [['up',0,-80,true],['down',0,80,true],['below',0,40,false],['deadzone',5,5,false],['horizontal',-100,0,false]]) {
+for (const [name,dx,dy,close] of [['up',0,-80,true],['down',0,80,true],['below',0,40,false],['deadzone',5,5,false],['horizontal',-100,0,false],['up47',0,-47,false],['up48',0,-48,true],['up49',0,-49,true],['down47',0,47,false],['down48',0,48,true],['down49',0,49,true]]) {
  test(`mobile canvas ${name}`, async ({browser}) => {
   const {ctx,page}=await canvasPage(browser);
   await page.screenshot({path:`${out}/canvas-${name}-setup.png`});
   await page.getByRole('tab', { name: '看板' }).click();
   const stack=page.locator('.mf-cv-stack'); await expect(stack).toBeVisible(); await stack.click();
-  const panel=page.locator('.mf-deck-card.on'); await expect(panel).toBeVisible(); const box=await panel.boundingBox();
+  const panel=page.locator('.mf-deck-card.on'); await expect(panel).toBeVisible(); const box=await panel.boundingBox(); box.x = Math.round(box.x); box.y = Math.round(box.y);
   const before=await page.locator('.canvas-tab-pane').evaluateAll(els=>els.map(e=>e.dataset.tabId));
   const activeBefore=await page.locator('.mf-deck-card.on').getAttribute('data-tab-id');
   await touch(page,box.x+box.width/2,box.y+30,dx,dy);

@@ -38,4 +38,8 @@ test('keyboard wraps in both directions and queues rapid steps', async ({ page }
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await expect.poll(current).toBe(2);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(current).toBe(1);
 });

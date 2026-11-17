@@ -1019,13 +1019,12 @@ function buildMediaStack(items, opts) {
     // Separate the outgoing and incoming faces in depth; transforms stay on
     // the compositor. Keep slot/z-index changes until both animations settle.
     next.classList.remove('is-buried');
-    const incomingFrom = getComputedStyle(next).transform;
     const outgoing = layer.animate([
       { transform: from, opacity: 1 },
       { transform: `translate3d(0,55%,0) rotateX(35deg) scale(.85)`, opacity: 0 },
     ], options);
     const incoming = next.animate([
-      { transform: incomingFrom === 'none' ? 'translate3d(0,-35%,0) scale(.88)' : incomingFrom, opacity: .6 },
+      { transform: 'translate3d(0,35%,0) scale(.88)', opacity: .6 },
       { transform: 'translate3d(0,0,0) rotate(0deg) scale(1)', opacity: 1 },
     ], options);
     Promise.allSettled([outgoing.finished, incoming.finished]).then(finish);
