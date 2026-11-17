@@ -109,12 +109,12 @@ test('T1 根页顶栏退役：消息/联系人/工作台/canvas 无页头无标�
     await expect(pg.locator('.mobile-page-header')).toHaveCount(0);
     await expect(pg.locator('.mobile-page-title')).toHaveCount(0);
   }
-  // 详情页（设置）顶栏照旧：「<」+ 标题胶囊在场（先回工作台根——根页互斥，
-  // canvas 在位时工作台 hub 行不可点）。
+  // 详情页（设置）顶栏只剩「<」圆钮（大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不渲染大标题」）；
+  // 先回工作台根——根页互斥，canvas 在位时工作台 hub 行不可点）。
   await dockTo(page, 'workbench');
   await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  await expect(page.locator('.mobile-page[data-page="settings"] .mobile-page-title')).toHaveText('设置');
+  await expect(page.locator('.mobile-page[data-page="settings"] .mobile-page-title')).toHaveCount(0);
   await expect(page.locator('.mobile-page[data-page="settings"] .mobile-back-btn')).toHaveCount(1);
 });
 
@@ -150,17 +150,17 @@ test('T3 个人主页层级：点头像进 me 页，用户名/头像/绑定子�
   await dockTo(page, 'workbench');
   await page.locator('.mobile-page[data-page="workbench"] .mf-me-entry').click();
   await expect(page.locator('.mobile-page[data-page="me"]')).toHaveClass(/live/);
-  // 苹果层级壳：子页 = 既有详情页（左上「<」+ 标题胶囊）。
-  for (const [row, sub, titleText] of [
-    ['me-user', 'me-user', '用户名'],
-    ['me-avatar', 'me-avatar', '头像'],
-    ['me-bind', 'me-bind', '绑定'],
+  // 苹果层级壳：子页 = 既有详情页（左上「<」圆钮；大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不渲染大标题」））。
+  for (const [row, sub] of [
+    ['me-user', 'me-user'],
+    ['me-avatar', 'me-avatar'],
+    ['me-bind', 'me-bind'],
   ]) {
     await page.locator(`.mobile-page[data-page="me"] .mf-hub-row[data-me-page="${row}"]`).click();
     const subPage = page.locator(`.mobile-page[data-page="${sub}"]`);
     await expect(subPage).toHaveClass(/live/);
     await expect(subPage.locator('.mobile-back-btn')).toHaveCount(1);
-    await expect(subPage.locator('.mobile-page-title')).toHaveText(titleText);
+    await expect(subPage.locator('.mobile-page-title')).toHaveCount(0);
     // 返回 = pop 一层回个人主页（层级栈语义）。
     await subPage.locator('.mobile-back-btn').click();
     await expect(page.locator('.mobile-page[data-page="me"]')).toHaveClass(/live/);

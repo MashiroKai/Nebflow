@@ -409,22 +409,16 @@ test('FMA-SCN-001 ordinary page keeps accessible name without title capsule', as
   const section = page.locator('.mobile-page[data-page="settings"]');
   await expect(section).toBeVisible();
   await expect(section).toHaveAttribute('aria-label', /\S/);
-  const title = section.locator('.mobile-page-title');
-  await expect(title).toHaveText(/\S/);
-  const geometry = await title.evaluate(el => {
-    const r = el.getBoundingClientRect();
-    return { width: r.width, height: r.height, position: getComputedStyle(el).position };
-  });
-  expect(geometry.width).toBeLessThanOrEqual(1);
-  expect(geometry.height).toBeLessThanOrEqual(1);
-  expect(geometry.position).not.toBe('sticky');
+  // 大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不渲染大标题」）：
+  // 标题节点不再建（旧「1px 隐藏位」几何判据随节点一并退场）。
+  await expect(section.locator('.mobile-page-title')).toHaveCount(0);
   const scroller = section.locator('#settings-content');
   await expect(scroller).toBeVisible();
   const distance = await scroller.evaluate(el => el.scrollHeight - el.clientHeight);
   expect(distance).toBeGreaterThan(0);
   await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
   await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
-  await expect(title).toHaveCSS('width', '1px');
+  await expect(section.locator('.mobile-page-title')).toHaveCount(0);
   await scroller.evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
   await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBe(0);
   await section.locator('.mobile-back-btn').click();
@@ -444,9 +438,8 @@ test('FMA-SCN-001 project list scrolls without a title capsule', async ({ page }
   await expect(cards.first()).toBeVisible();
   await cards.last().scrollIntoViewIfNeeded();
   await expect(cards.last()).toBeInViewport();
-  const title = section.locator('.mobile-page-title');
-  await expect(title).toHaveCSS('position', 'absolute');
-  await expect(title).toHaveCSS('width', '1px');
+  // 大标题退役（ui-unify-panels B 批 2026-11-17）：项目页同样零标题节点。
+  await expect(section.locator('.mobile-page-title')).toHaveCount(0);
   await section.locator('.mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="workbench"]')).toBeVisible();
 });

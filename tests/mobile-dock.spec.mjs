@@ -816,7 +816,8 @@ test('D15 workbench root: settings demoted to hub row; settings row pushes setti
   await settlePage(page, 'settings');
   // 设置面收编进设置页体（overlay 载体原位留作状态源）。
   await expect(page.locator('.mobile-page[data-page="settings"] .mobile-page-body > #settings-modal')).toHaveCount(1);
-  await expect(page.locator('.mobile-page[data-page="settings"] .mobile-page-title')).toHaveText('设置');
+  // 大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不渲染大标题」）。
+  await expect(page.locator('.mobile-page[data-page="settings"] .mobile-page-title')).toHaveCount(0);
   // 返回 = 弹一层回工作台根（非聊天根）。
   await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
@@ -898,7 +899,7 @@ test('D17 page switch animation retired: zero transition, zero transform, direct
   expect(errors).toEqual([]);
 });
 
-test('D18 floating chrome band: zero-height transparent band, back 48px g2-fab at 16/16+safe, icon centered, title in flow (B批)', async ({ page }) => {
+test('D18 floating chrome band: zero-height transparent band, back band-d g2-fab at 16/16+safe, icon centered', async ({ page }) => {
   const errors = watchErrors(page);
   // 悬浮钮统一批 2026-10-31 作者令 16:03：页头 = 悬浮 chrome 带（零高透明不拦截），
   // 返回钮归 48px g2-fab 基准（材质 --g2-fab-bg 探针同源），悬浮位 = 聊天根任务键
@@ -906,16 +907,16 @@ test('D18 floating chrome band: zero-height transparent band, back 48px g2-fab a
   // 面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」）把标题自
   // 页头胶囊改流内大标题（页体首件）——本探针随批改读流内标题（左缘 16px
   // 流内左对齐；28px/字重/两态滚动等深判据归 mobile-panel-title.spec.mjs 单源，
-  // 此处不复制）。
+  // 此处不复制。大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不渲染大标题」）：标题节点不再建，标题族读数整组退场。）
   await dockTo(page, 'workbench');
   await page.locator('.mf-hub-row[data-hub-page="settings"]').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
   const st = await page.evaluate(() => {
     const page = document.querySelector('.mobile-page[data-page="settings"]');
     const head = page.querySelector('.mobile-page-header');
-    const title = page.querySelector('.mobile-page-title');
     const back = head.querySelector('.mobile-back-btn');
     const svg = back.querySelector('svg');
+    const titleCount = page.querySelectorAll('.mobile-page-title').length;
     // token 同源探针（frontend-verification 口径）：等值判据取自同一 var()。
     // 统一按钮玻璃批（2026-11-01）：.g2-fab 材质单源换 --glass-bg 族（原
     // --g2-fab-bg 随族退役）—— 探针随批改读现役单源（canvas 面 --cv-bg 不在
@@ -928,21 +929,14 @@ test('D18 floating chrome band: zero-height transparent band, back 48px g2-fab a
     const br = back.getBoundingClientRect();
     const sr = svg.getBoundingClientRect();
     const hs = getComputedStyle(head);
-    const ts = getComputedStyle(title);
     const bs = getComputedStyle(back);
     return {
       // 带无通栏底面：零高透明、不拦截指针。
       headBg: hs.backgroundColor,
       headHeight: hs.height,
       headPointerEvents: hs.pointerEvents,
-      // 标题（B批 → 两段式标题批 2026-11-02）：流内块、页体首件、文本**水平
-      // 居中**，左右内缩各 72px（--mtitle-inset = 返回钮左 16 + 钮 48 + 缝 8，
-      // 块通栏、缩进在 padding 上 —— 居中大标题与左上返回钮横向零重叠）。
-      titlePosition: ts.position,
-      titleIsBodyFirst: page.querySelector('.mobile-page-body')?.firstElementChild === title,
-      titlePadLeft: ts.paddingLeft,
-      titlePadRight: ts.paddingRight,
-      titleTextAlign: ts.textAlign,
+      // 大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不渲染大标题」）：标题族读数只剩零节点计数。
+      titleCount,
       // 返回钮 = 48px g2-fab（材质与 chrome 键同源 token 族），悬浮位同 chrome 几何。
       backBg: bs.backgroundColor,
       backFabBg: fabBg,
@@ -957,14 +951,14 @@ test('D18 floating chrome band: zero-height transparent band, back 48px g2-fab a
   expect(st.headBg).toBe('rgba(0, 0, 0, 0)');
   expect(st.headHeight).toBe('0px');
   expect(st.headPointerEvents).toBe('none');
-  expect(st.titlePosition).toBe('static');
-  expect(st.titleIsBodyFirst).toBe(true);
-  expect(st.titlePadLeft).toBe('72px'); // 两段式标题批：居中内缩（原 16px 左对齐退役）
-  expect(st.titlePadRight).toBe('72px');
-  expect(st.titleTextAlign).toBe('center');
+  expect(st.titleCount).toBe(0); // 大标题退役（ui-unify-panels B 批 2026-11-17）
   expect(st.backBg).toBe(st.backFabBg); // 返回钮 = g2-fab 族（统一批新基准）
   expect(st.backRadius).toBe('50%');
-  expect(st.backBox).toEqual({ w: 48, h: 48 });
+  // A 批（ui-unify-panels 45a3918a5）：返回钮直径换挡 --band-d =
+  // clamp(36px,10vw,44px)（375 档 = 37.5；原 48px g2-fab 档退役）。
+  const BAND_D = Math.min(44, Math.max(36, 375 * 0.1));
+  expect(Math.abs(st.backBox.w - BAND_D)).toBeLessThanOrEqual(1);
+  expect(Math.abs(st.backBox.h - BAND_D)).toBeLessThanOrEqual(1);
   expect(st.backPos).toEqual({ top: 16, left: 16 }); // safe-area 测试视口 = 0
   expect(st.backDx).toBeLessThanOrEqual(1);
   expect(st.backDy).toBeLessThanOrEqual(1);

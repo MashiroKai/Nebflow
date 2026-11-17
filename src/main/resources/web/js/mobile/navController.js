@@ -235,142 +235,15 @@ let unsubs = [];
 
 const backLabel = () => tt('返回', 'Back');
 
-// ── 面板头标题「大标题 → 胶囊」滚动探针（两段式标题批 2026-11-02 作者令，
-//    标题单元素化批 2026-11-02 22:32 沿用同一进度源）──────────────────
-// 承接 B 批（2026-11-01 17:01 选型）的 56px 吸附阈值，并把它由「布尔切换」
-// 升级为**连续进度**：同一元素（.mobile-page-title）的全部形态量（字号/盒高/
-// 内距/外边距/字距/壳层 alpha）都由 CSS 侧的 --mtitle-p 0→1 插值，逐帧跟手。
-//   进度区间：[ROLL_START, ROLL_THRESHOLD] = [8, 56]（区间外钳死在 0/1）——
-//   8 起算 = 手指一动即开始收，56 到位 = 字形缩到胶囊档、壳层显影到满。
-//   .rolled 保留为「进度到顶」的布尔判据（spec 与兼容读者用；阈值仍 56）。
-const ROLL_START = 8;
-const ROLL_THRESHOLD = 56;
-/** reduced-motion：形态二值切换（进度只在 0/1 两值 —— 本形态零 transition、
- *  零位移量，故二值即「瞬时换形、不卡中间」，无额外摘除）。 */
+// ── 大标题滚动收缩探针退役（ui-unify-panels B 批 2026-11-17）─────────────
+// 两段式标题批（2026-11-02）起的 bindRollProbe/applyRoll/measureTitleStill/
+// refreshRoll 整链随页名节点 .mobile-page-title 一并退役（作者令「一级与次级
+// 面板都不渲染大标题」）：页壳零标题 ⇒ 无形态量可插值（--mtitle-p/.rolled/
+// .mpt-pane-scroll/.mtitle-clip 四个判据全灭）。历史数值契约留档：
+// 进度区间 [8, 56]、盒 52→48、字号 28→15、中心恒 40 = 返回钮中心。
+/** reduced-motion（页面切换腿 :2305 仍消费）：全局减动偏好。 */
 const reducedMotion = () => typeof window.matchMedia === 'function'
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-/** 事件目标到 section 之间**最外层**纵向可滚容器（getComputedStyle overflowY
- *  auto/scroll + 真实可滚余量）—— 内层横滑 chip 条/嵌套小滚区不误判。 */
-function primaryScroller(section, target) {
-  let primary = null;
-  for (let n = /** @type {Element} */ (target); n && n !== section; n = n.parentElement) {
-    const oy = getComputedStyle(n).overflowY;
-    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight - n.clientHeight > 4) primary = n;
-  }
-  return primary;
-}
-/** 写进度 + 两个判据类：
- *   --mtitle-p        0→1 连续进度（CSS 两段形态量单源）；
- *   .rolled           scrollTop > 阈值（吸附成立，spec/兼容读者）；
- *   .mpt-pane-scroll  主滚轴**不是**页面体（pane/内滚面：大标题不会随滚走，
- *                     故 CSS 侧按进度收高把整条顶带还给收编面）。 */
-function applyRoll(section, scroller) {
-  const st = scroller ? scroller.scrollTop : 0;
-  let p = (st - ROLL_START) / (ROLL_THRESHOLD - ROLL_START);
-  p = p < 0 ? 0 : p > 1 ? 1 : p;
-  if (reducedMotion()) p = p >= 0.5 ? 1 : 0;
-  section.style.setProperty('--mtitle-p', String(Math.round(p * 1000) / 1000));
-  section.classList.toggle('rolled', st > ROLL_THRESHOLD);
-  const body = section.querySelector('.mobile-page-body');
-  section.classList.toggle('mpt-pane-scroll', !!scroller && scroller !== body);
-  // 长页名溢出标记（端区分批 2026-11-05 09:28 起 `.mtitle-clip` 不再画渐隐蒙版，
-  // 只作「这一页的名字被钳宽了」的**溢出标记类**：截断本体 = 基座档的可见省略号
-  // （css/mobileLayer.css .mobile-page-title）。类本身保留，供标题几何/探针按
-  // 「是否钳宽」分档读数。进度写盘后同帧读 scrollWidth（样式落定后读布局量会
-  // 同步重排，无滞后帧），不误伤装得下的页名。
-  const title = /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title'));
-  if (title) title.classList.toggle('mtitle-clip', title.scrollWidth > title.clientWidth + 1);
-  measureTitleStill(section, title);
-}
-
-/**
- * 大标题档内容宽实测（schedule-todo-unify 批 2026-11-06「顶栏标题被截成『定时任...』」
- * 修复的读数腿）：
- *  · CSS 侧大标题宽度随进度插值（左对齐批后 = 左对齐带满宽 → 贴字收紧），
- *    即内容宽只能在**进度 0** 时测（进度 >0 时盒已被收窄，
- *    盒宽会自己钳住 —— 那样测出来的值会随滚动变化，不是内容宽）。
- *  · 故把进度暂时打到 0、量文字实宽（Range），再还原进度 —— 全部在同一次样式落定内
- *    完成，不产生可见帧。只在文字可能变了的时候重测（首帧 / 换页 / locale 重绘 /
- *    窗口宽度变），拖动滚动时不重测（内容宽与滚动无关，省掉每帧强制布局）。
- * @param {HTMLElement} section
- * @param {HTMLElement|null} title
- */
-function measureTitleStill(section, title) {
-  if (!title) return;
-  const cs = getComputedStyle(title);
-  const mcapPad = parseFloat(cs.getPropertyValue('--mcap-pad')) || 12;
-  const prevP = section.style.getPropertyValue('--mtitle-p') || '0';
-  const oldW = title.style.getPropertyValue('--mtitle-w-still');
-  // 静止档实测：进度 0 + 拔 max-width ⇒ 量**文字实宽**（Range 跨内容包围盒）。
-  // 旧 `title.scrollWidth` 在盒宽 ≥ 文字宽时恒返回**盒宽**（块级 scrollWidth =
-  // max(内容宽, 盒宽)），满宽带下量出的是带宽 ⇒ --mtitle-w-still 被写成带宽、
-  // 胶囊永不收紧反随 max-width 插值**变宽**（P2 续批③ pristine 实证：
-  // title-morph L5b「宽 246 → 342 随滚变大」/L7e 红 —— 改 Range 后胶囊重新
-  // 贴字收紧）。scrollWidth 的溢出判据（clip 翻写，:285）语义不变仍用原式。
-  const oldMax = title.style.maxWidth;
-  title.style.maxWidth = 'none';
-  section.style.setProperty('--mtitle-p', '0');
-  const range = document.createRange();
-  range.selectNodeContents(title);
-  const textW = Math.round(range.getBoundingClientRect().width * 100) / 100;
-  title.style.maxWidth = oldMax;
-  section.style.setProperty('--mtitle-p', prevP);
-  // 胶囊终态盒 = 文字 + 2×胶囊内距（贴字收紧）；超长页名钳到「满宽 − 2×胶囊内距」
-  // （胶囊永不贴屏幕边；bodyW = 页体内容宽 = 视口 − 页体内距，实测不按页写死）。
-  // 「文字」= 胶囊档字号的文字：量到的静止档宽按字号比折到 mini 档（胶囊态文字
-  // 以 --mfs-title-mini 渲染，28 档直加内距会宽出一倍 —— P2 续批③ L7e 实证）。
-  const body = title.parentElement;
-  let bodyW = 0;
-  if (body) {
-    const bcs = getComputedStyle(body);
-    bodyW = body.clientWidth - (parseFloat(bcs.paddingLeft) || 0) - (parseFloat(bcs.paddingRight) || 0);
-  }
-  const fsTitle = parseFloat(cs.getPropertyValue('--mfs-title')) || parseFloat(cs.fontSize) || 28;
-  const fsMini = parseFloat(cs.getPropertyValue('--mfs-title-mini')) || 15;
-  const textWMini = textW * (fsMini / (fsTitle || fsMini));
-  const still = Math.min(textWMini + 2 * mcapPad, Math.max(0, bodyW - 2 * mcapPad));
-  title.style.setProperty('--mtitle-w-still', `${still}px`);
-  if (oldW !== `${still}px`) {
-    // 文字变了才重算截断标记（同一帧内读，不额外起帧）。
-    title.classList.toggle('mtitle-clip', title.scrollWidth > title.clientWidth + 1);
-  }
-}
-/** 滚动收缩探针：section 上挂捕获相位监听（scroll 不冒泡但走捕获，页内一切
- *  滚动容器——页体自身/pane 内部 .team-scroll、#settings-content、.todo-page-body
- *  等——统一汇入，零逐面接线）。 */
-function bindRollProbe(section) {
-  section.addEventListener('scroll', (e) => {
-    const sc = primaryScroller(section, e.target) || /** @type {HTMLElement} */ (e.target);
-    applyRoll(section, sc);
-  }, { capture: true, passive: true });
-}
-/** 进场对账（push/切根时调用）：页面壳 DOM 常驻、滚动位保留，故按当前实测
- *  主滚轴重算一次进度（否则离场时的吸附态会带进下一次进场）。
- *  判据同事件腿：**最外层**有余量的纵向滚动器（按距 section 的层级取最小者，
- *  避免把 earlier 兄弟里的嵌套滚区误当主滚轴）。 */
-function refreshRoll(section) {
-  if (section.classList.contains('mobile-page-nohead')) return;
-  const body = section.querySelector('.mobile-page-body');
-  let primary = null;
-  let primaryDepth = Infinity;
-  const depthOf = (n) => {
-    let d = 0;
-    for (let p = n; p && p !== section; p = p.parentElement) d += 1;
-    return d;
-  };
-  if (body) {
-    for (const n of [body, ...body.querySelectorAll('*')]) {
-      const oy = getComputedStyle(n).overflowY;
-      if (oy !== 'auto' && oy !== 'scroll') continue;
-      if (n.scrollHeight - n.clientHeight <= 4) continue;
-      const d = depthOf(n);
-      if (d < primaryDepth) { primary = n; primaryDepth = d; }
-      if (d === 1) break; // 页体自身可滚 ⇒ 它必是最外层，无需再扫
-    }
-  }
-  applyRoll(section, primary || body);
-  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
-}
 
 // ── 页面壳构建 ───────────────────────────────────────────────────────
 
@@ -389,26 +262,18 @@ function buildSection(def) {
   //  canvas/工作台）顶栏整体退役——标题胶囊移除、内容上移吃回顶栏空间；
   //  安全区顶距改由页面壳自管（mobileLayer.css .mobile-page-nohead =
   //  env(safe-area-inset-top)，真机不留刘海侵入、桌面视口零高）。
-  //  面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」，样张
-  //  ~/.stand/design-explore/panel-label-variants/）：详情页顶部
-  //  旧 glass-control 胶囊退役，换两态大标题 —— 展开态 = 大标题在页体流内
-  //  （随滚走；.mobile-page-title 类名不变，locale 重绘/ push 聚焦两个既有
-  //  查询点零改）；收缩态 = 小字居中 + 顶缘渐隐带承底（几何/材质在
-  //  mobileLayer.css）。dock 根页无页头不变。
-  //  两段式标题批（2026-11-02 作者令，实拍 IMG_1677/1678）：两态升级为
-  //  「静止大标题（水平居中）→ 吸附毛玻璃胶囊」连续两段，渐隐带退役；
-  //  滚动进度 --mtitle-p 由 bindRollProbe 写（几何全在 mobileLayer.css）。
+  //  ── 历史选型留档（面板头标识 B 批 2026-11-01 选型 B「iOS 大标题式」→
+  //  两段式标题批 2026-11-02 → 标题单元素化批 2026-11-02 22:32）：详情页页名
+  //  曾历经「两态大标题 → 静止居中大标题+吸附毛玻璃胶囊 → 单元素连续变形」。
+  //  大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不
+  //  渲染大标题」）推翻该选型：页壳零页名节点，顶区 = 仅左上返回钮悬浮带，
+  //  滚动收缩探针（bindRollProbe/applyRoll/measureTitleStill）随之整链退役。
+  //  dock 根页无页头不变。
   if (!def.dock) {
     const head = document.createElement('div');
     // 零底带类 = design-system.css 单源（透传悬浮批 2026-11-03：与聊天根
     // #mobile-fab-layer / canvas 工具条同一族，一处定义处处引用）。
     head.className = ME_PAGE_IDS.has(def.id) ? 'mobile-page-header ds-chrome-band sp-panel-header' : 'mobile-page-header ds-chrome-band';
-    // 标题单元素化批（2026-11-02 22:32 作者令「两个割裂的形态…一直是同一个的
-    // 形式」）：吸附态装饰副本 .mobile-page-title-mini **退役**（DOM 不再建节点）。
-    // 双影根因 = 两套元素同屏交接（大标题盒收高的同时胶囊元素登场，交接区间内
-    // 两者同时可见）。现在页名只有一个节点 .mobile-page-title，吸附态由它自身的
-    // ::before 壳层（玻璃底/圆角/描边）连续渐显承担 —— 原理与读数见
-    // mobileLayer.css「面板头标题单元素连续变形」块。
     const back = document.createElement('button');
     back.type = 'button';
     // 悬浮钮统一批（作者令 10-31 16:03）：「<」归 48px g2-fab 基准材质，
@@ -421,14 +286,13 @@ function buildSection(def) {
     back.addEventListener('click', () => backOut());
     head.append(back);
     if (typeof lucide !== 'undefined') createIconsIn(head);
-    // 唯一页名节点：静止态 = 流内大标题，吸附态 = 同一件的胶囊形态（无第二份）。
-    const title = document.createElement('span');
-    title.className = 'mobile-page-title';
-    title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
-    title.textContent = tt(def.zh, def.en);
-    body.appendChild(title);
+    // 大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不渲染
+    // 大标题」）：页壳不再建页名节点 .mobile-page-title（原两态 = 静止流内大标题
+    // → 吸附毛玻璃胶囊，随节点一并退役）。顶区 = 仅左上返回钮悬浮带；页名信息
+    // 由 section aria-label 承担（读屏照常播报）。首件内容让位改由页体自身
+    // padding-top 承担（mobileLayer.css 详情页规则，= --mchrome-clear 72 + safe，
+    // 与 tasks/todo-apple 三页既有口径合流）。
     section.append(head, body);
-    bindRollProbe(section);
   } else {
     // 顶栏批：根页无页头 —— 壳级标记 = 安全区顶距由页面壳自管（mobileLayer.css）。
     section.classList.add('mobile-page-nohead');
@@ -595,11 +459,9 @@ function ensureContainer() {
     for (const def of PAGES) {
       const s = sections.get(def.id);
       if (!s) continue;
-      // 标题单元素化批（2026-11-02）：页名只有 .mobile-page-title 一个节点
-      // （装饰副本已退役），locale 重绘单点。
-      const t = s.querySelector('.mobile-page-title');
+      // 大标题退役（ui-unify-panels B 批 2026-11-17）：页名节点不再建，
+      // locale 只重写 section aria-label 与返回钮文案。
       s.setAttribute('aria-label', tt(def.zh, def.en));
-      if (t) t.textContent = tt(def.zh, def.en);
       const b = /** @type {HTMLElement|null} */ (s.querySelector('.mobile-back-btn'));
       if (b) { b.title = backLabel(); b.setAttribute('aria-label', backLabel()); }
     }
@@ -2427,12 +2289,8 @@ function renderPages() {
   for (const [id, section] of sections) {
     const live = top === id;
     section.classList.toggle('live', live);
-    if (live) {
-      (/** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')))?.focus?.();
-      // 两段式标题批：进场按当前实测主滚轴重算进度（DOM 常驻、滚动位保留，
-      // 离场时的吸附态不得带进下一次进场）。
-      refreshRoll(section);
-    }
+    // 大标题退役（ui-unify-panels B 批 2026-11-17）：原进场两件事（页名节点
+    // 聚焦 + refreshRoll 进度对账）随节点退役；页名播报由 section aria-label 承担。
   }
   document.body.classList.toggle('mf-page-open', top !== 'chat');
   syncDockActive();
@@ -2452,22 +2310,8 @@ function backOut() {
   else if (stack[0] !== 'chat') goHome();
 }
 
-// 大标题内容宽在「文字 / 视口宽」变化时重测（schedule-todo-unify 批）：
-// locale 重绘（i18n 改 .mobile-page-title 文本）与视口变化（横竖屏）都会让静止档
-// 内容宽变化，而这两个事件不经过 renderPages —— 只挂在 document 上一次监听，
-// 按当前可见页重测，零逐面接线。
-window.addEventListener('locale-changed', () => {
-  const top = stack[stack.length - 1];
-  const section = sections.get(top);
-  if (!section) return;
-  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
-});
-window.addEventListener('resize', () => {
-  const top = stack[stack.length - 1];
-  const section = sections.get(top);
-  if (!section) return;
-  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
-});
+// 大标题内容宽重测监听（locale-changed/resize → measureTitleStill）随页名节点
+// 退役（ui-unify-panels B 批 2026-11-17）：无标题 ⇒ 无静止档内容宽可重测。
 
 /** 页面面关闭（出栈/换根时归位桌面开/关态）。 */
 function closePageFace(pageId) {

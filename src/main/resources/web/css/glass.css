@@ -135,7 +135,6 @@
 .nf-lightbox,
 #conn-banner,
 body.mobile-layer #mobile-dock,
-body.mobile-layer .mobile-page-title::before,
 /* Mobile canvas: only the active capsule owns glass, never the full band. */
 body.mobile-layer .mf-strip-chip.on::after,
 body.mobile-layer .mf-dots,

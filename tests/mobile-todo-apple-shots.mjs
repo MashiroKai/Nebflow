@@ -161,13 +161,10 @@ async function mainLeg() {
   await push(page, 'tasks');
   ok('(1) tasks page live (pushPage works)', await page.locator('.mobile-page[data-page="tasks"].live').count() === 1);
   ok('(1) shell back button present (48 g2-fab)', await page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn').count() === 1);
-  // The shell page title is statically hidden on this page (selector scoped to it)
-  ok('(1) in-flow page title statically hidden on this page (display:none)',
-    await page.locator('.mobile-page[data-page="tasks"] .mobile-page-title').evaluate((el) => getComputedStyle(el).display) === 'none');
-  // The page title is a single node (no separate sticky-capsule node), so
-  // hiding that one node covers both the in-flow and the sticky state.
-  ok('(1) no separate sticky title node (single-node title: hidden in both states)',
-    await page.locator('.mobile-page[data-page="tasks"] .mobile-page-title-mini').count() === 0);
+  // 大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不
+  // 渲染大标题」）：tasks 页壳不再建标题节点（旧「本页静态隐藏」判据随之退场）。
+  ok('(1) zero page-title nodes on this page (title retired)',
+    await page.locator('.mobile-page[data-page="tasks"] .mobile-page-title, .mobile-page[data-page="tasks"] .mobile-page-title-mini').count() === 0);
 
   // (2) the four cards carry data
   const cards = await page.evaluate(() => {

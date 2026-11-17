@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// 375 双主题实拍：静止 / 吸附中 / 回顶 三态 × 3 面板 + 「修前 vs 修后」同屏占比对比帧。
+// 375 双主题实拍（大标题退役 ui-unify-panels B 批 2026-11-17 改版）：静止 / 滚动中 /
+// 滚到底三拍 × 2 面板，页帧同帧读零标题节点数（原「两段式三态」随 .mobile-page-title
+// 退役 —— mid/snapped 现仅为「滚动后仍零标题」的证据帧）。
 // 用法：node tests/mobile-two-stage-title-shots.mjs <outDir> [--web-root <webDir>] [--tag <name>]
 //   --web-root 默认本仓 src/main/resources/web；「修前」指向 main 工作树的同名目录。
 import { chromium } from 'playwright';
@@ -112,7 +114,7 @@ const dom = {
       const t = primary || bodyEl;
       t.scrollTop = v;
       t.dispatchEvent(new Event('scroll', { bubbles: false }));
-      return { tag: t.className || t.id || t.tagName, top: t.scrollTop, p: getComputedStyle(sec.querySelector('.mobile-page-title')).getPropertyValue('--mtitle-p').trim() };
+      return { tag: t.className || t.id || t.tagName, top: t.scrollTop, titles: sec.querySelectorAll('.mobile-page-title, .mobile-page-title-mini').length };
     }, { pid, v });
   },
 };
@@ -123,24 +125,32 @@ const shot = async (pg, name) => { const f = join(outDir, `${TAG}-${name}.png`);
 for (const scheme of ['light', 'dark']) {
   const { pg, browser } = await page(scheme);
   try {
-    // 设置：静止 / 吸附中 / 回顶
+    // 设置：静止 / 滚动中 / 滚到底 / 回顶（B 批后各帧同判零标题）
     await dom.hub(pg, 'settings', '#mobile-pages .mobile-page.live[data-page="settings"] #settings-modal');
     await shot(pg, `${scheme}-settings-rest`);
     const midInfo = await dom.scroll(pg, 'settings', 32);
     await shot(pg, `${scheme}-settings-mid`);
-    await dom.scroll(pg, 'settings', 300);
-    await shot(pg, `${scheme}-settings-snapped`);
+    const snapInfo = await dom.scroll(pg, 'settings', 300);
+    await shot(pg, `${scheme}-settings-scrolled`);
     await dom.scroll(pg, 'settings', 0);
     await pg.waitForTimeout(200);
     await shot(pg, `${scheme}-settings-backtop`);
+    if (midInfo.titles !== 0 || snapInfo.titles !== 0) {
+      console.error(`[FAIL] ${scheme} settings 滚动态出现标题节点（mid=${midInfo.titles} scrolled=${snapInfo.titles}）`);
+      process.exitCode = 1;
+    }
 
-    // 项目：静止 / 吸附
+    // 项目：静止 / 滚动后
     await dom.hub(pg, 'projects', '#mobile-pages .mobile-page.live[data-page="projects"] .team-scroll');
     await shot(pg, `${scheme}-projects-rest`);
-    await dom.scroll(pg, 'projects', 300);
-    await shot(pg, `${scheme}-projects-snapped`);
+    const projInfo = await dom.scroll(pg, 'projects', 300);
+    await shot(pg, `${scheme}-projects-scrolled`);
     await dom.scroll(pg, 'projects', 32);
     await shot(pg, `${scheme}-projects-mid`);
+    if (projInfo.titles !== 0) {
+      console.error(`[FAIL] ${scheme} projects 滚动态出现标题节点（${projInfo.titles}）`);
+      process.exitCode = 1;
+    }
 
     // 待办：静止 / 吸附 —— ⛔ 腿退役（入口收敛批 todo-unify-entry-collapse
     // 2026-11-04）：#todo-page 整面退役、推送腿摘除 ⇒ 页面栈无 todo 页，
