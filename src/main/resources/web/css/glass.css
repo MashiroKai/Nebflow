@@ -568,16 +568,16 @@ html[data-theme="light"] {
 }
 
 /* ── ③ 圆钮级浮件档（收编升格：--cv-* 全站悬浮控件单源，设计稿 §2.4）─────
-   成员 = canvas 工具圆钮族（source/ref/find/refresh）+ ask-fab + deck-fab +
+   成员 = canvas 工具圆钮族（source/ref/find）+ ask-fab + deck-fab +
    关签钮 #canvas-head-close + .g2-fab 基准类（dock 待办/搜索、页面壳返回钮、
    mf-cv-close/stack、mf-stack-x、mh-fab-search 等 JS 挂类面，类名零改动）。
    材质/状态归本包；几何/落位留在各面（split/ask/mobileLayer）。
-   图谱钮 .canvas-graph-toggle 已随 Canvas 改造批④ 退役（JS 零创建），本块
-   不再列名——F1 时代死选择器随之消失。 */
+   图谱钮 .canvas-graph-toggle 已随 Canvas 改造批④ 退役（JS 零创建）；刷新钮
+   .canvas-refresh-toggle 已随 canvas-auto-refresh 批（2026-11-17 手动钮退役）
+   离场——本块不再列名，死选择器随之消失。 */
 .canvas-source-toggle,
 .canvas-ref-select,
 .canvas-find-toggle,
-.canvas-refresh-toggle,
 .ask-fab,
 #deck-fab,
 #canvas-head-close,
@@ -595,7 +595,6 @@ html[data-theme="light"] {
   .canvas-source-toggle:hover,
   .canvas-ref-select:hover,
   .canvas-find-toggle:hover,
-  .canvas-refresh-toggle:hover,
   .ask-fab:hover,
   #deck-fab:hover,
   #canvas-head-close:hover,
@@ -610,7 +609,6 @@ html[data-theme="light"] {
 .canvas-source-toggle:active,
 .canvas-ref-select:active,
 .canvas-find-toggle:active,
-.canvas-refresh-toggle:active,
 .ask-fab:active,
 #deck-fab:active,
 #canvas-head-close:active,
@@ -631,7 +629,6 @@ html[data-theme="light"] {
 .canvas-source-toggle:disabled,
 .canvas-ref-select:disabled,
 .canvas-find-toggle:disabled,
-.canvas-refresh-toggle:disabled,
 .ask-fab:disabled,
 #deck-fab:disabled,
 #canvas-head-close:disabled,
@@ -643,7 +640,6 @@ html[data-theme="light"] {
   .canvas-source-toggle:disabled:hover,
   .canvas-ref-select:disabled:hover,
   .canvas-find-toggle:disabled:hover,
-  .canvas-refresh-toggle:disabled:hover,
   .ask-fab:disabled:hover,
   #deck-fab:disabled:hover,
   #canvas-head-close:disabled:hover,
@@ -658,7 +654,6 @@ html[data-theme="light"] {
 .canvas-source-toggle:focus-visible,
 .canvas-ref-select:focus-visible,
 .canvas-find-toggle:focus-visible,
-.canvas-refresh-toggle:focus-visible,
 .ask-fab:focus-visible,
 #deck-fab:focus-visible,
 #canvas-head-close:focus-visible,
@@ -849,7 +844,6 @@ body.mobile-layer .g2-pill {
 body.mobile-layer .canvas-source-toggle,
 body.mobile-layer .canvas-ref-select,
 body.mobile-layer .canvas-find-toggle,
-body.mobile-layer .canvas-refresh-toggle,
 body.mobile-layer .ask-fab,
 body.mobile-layer .g2-fab {
   transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
@@ -858,7 +852,6 @@ body.mobile-layer .g2-fab {
 body.mobile-layer .canvas-source-toggle:active,
 body.mobile-layer .canvas-ref-select:active,
 body.mobile-layer .canvas-find-toggle:active,
-body.mobile-layer .canvas-refresh-toggle:active,
 body.mobile-layer .ask-fab:active,
 body.mobile-layer .g2-fab:active {
   transform: scale(0.88);
@@ -867,7 +860,6 @@ body.mobile-layer .g2-fab:active {
   body.mobile-layer .canvas-source-toggle:active,
   body.mobile-layer .canvas-ref-select:active,
   body.mobile-layer .canvas-find-toggle:active,
-  body.mobile-layer .canvas-refresh-toggle:active,
   body.mobile-layer .ask-fab:active,
   body.mobile-layer .g2-fab:active {
     transform: none;
@@ -876,7 +868,6 @@ body.mobile-layer .g2-fab:active {
   body.mobile-layer .canvas-source-toggle,
   body.mobile-layer .canvas-ref-select,
   body.mobile-layer .canvas-find-toggle,
-  body.mobile-layer .canvas-refresh-toggle,
   body.mobile-layer .ask-fab,
   body.mobile-layer .g2-fab {
     transition-duration: 0.01s;
@@ -953,7 +944,6 @@ body.mobile-layer #g2-edge-fade {
   .canvas-source-toggle,
   .canvas-ref-select,
   .canvas-find-toggle,
-  .canvas-refresh-toggle,
   .ask-fab,
   #deck-fab,
   #canvas-head-close,
@@ -1000,7 +990,6 @@ html.no-backdrop .dev-menu.explorer-dev-menu,
 html.no-backdrop .canvas-source-toggle,
 html.no-backdrop .canvas-ref-select,
 html.no-backdrop .canvas-find-toggle,
-html.no-backdrop .canvas-refresh-toggle,
 html.no-backdrop .ask-fab,
 html.no-backdrop #deck-fab,
 html.no-backdrop #canvas-head-close,

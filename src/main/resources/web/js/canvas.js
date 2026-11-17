@@ -815,6 +815,7 @@ export function openTab(id, title, opts = {}) {
 function teardownTab(id, opts = {}) {
   const entry = tabs.get(id);
   if (!entry) return null;
+  clearTimeout(entry._autoRefreshTimer);  // 迟滞引擎布防中的定时器随页签退场
   disposeTabEditor(entry);
   document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id } }));
   entry.paneEl.remove();
@@ -981,28 +982,25 @@ export function refreshFileTabByPath(absPath) {
   }
 }
 
-/** Manual re-read for a file tab (canvas 文件刷新批, 作者令 2026-10-25): the
- *  bottom-right refresh button's action. Rides the SAME readFile round trip as
- *  scheduleFileRefresh (pop.readFile → fileContent → workspace-open-item →
- *  openWorkspaceItem) but bypasses the activation cooldown (the user asked for
- *  it), never clobbers unsaved edits (visible toast, same isTabDirty discipline
- *  as every other refresh path) and drops the nf-file blob-ledger entry first —
- *  a ledger hit renders cached bytes with zero fetch, which would make the
- *  button silently lie for image/pdf tabs. */
+/** Re-read for a file tab (canvas 文件刷新批, 作者令 2026-10-25；canvas-auto-refresh
+ *  批 2026-11-17 起无手动钮，调用面 = 迟滞引擎到点腿 / 脏态「有更新」提示点击 /
+ *  冲突条「重载」/ 阅读菜单 canvas-request-refresh). Rides the SAME readFile round
+ *  trip as scheduleFileRefresh (pop.readFile → fileContent → workspace-open-item →
+ *  openWorkspaceItem) but bypasses the activation cooldown, never clobbers unsaved
+ *  edits (visible toast, same isTabDirty discipline as every other refresh path)
+ *  and drops the nf-file blob-ledger entry first — a ledger hit renders cached
+ *  bytes with zero fetch, which would silently lie for image/pdf tabs. */
 function refreshFileTab(entry, opts = {}) {
   if (!entry || !entry.absPath) return;
   const pane = entry.paneEl;
   if (!pane || !pane.isConnected) return;
-  if (pane.dataset.sourceMode === '1') return;  // button hidden there (CSS); programmatic guard
+  if (pane.dataset.sourceMode === '1') return;  // source editor mounted — a re-render would destroy it
   if (isTabDirty(entry) && !opts.force) {
     window.__showToast?.(t('canvas.refreshDirty'), 'info');
     return;
   }
   if (entry._refreshing) return;
   entry._refreshing = true;
-  // 定位修复批：钮已是壳层单例（#canvas-content 直子），不再按 pane 作用域查
-  const btn = (fileRefreshBtn && fileRefreshBtn.isConnected) ? fileRefreshBtn : null;
-  if (btn) btn.classList.add('busy');
   // Safety: un-busy even if the response never arrives (mirrors the
   // _refreshing safety window in scheduleFileRefresh).
   setTimeout(() => { if (entry._refreshing) settleFileRefresh(entry); }, 10000);
@@ -1022,24 +1020,135 @@ function refreshFileTab(entry, opts = {}) {
   }).catch(() => { settleFileRefresh(entry); });
 }
 
-/** Clear one file tab's refresh-in-flight state (busy icon + _refreshing). */
+/** Clear one file tab's refresh-in-flight state (_refreshing + 脏态「有更新」提示——
+ *  应答已到 = 盘上内容已是刚核过的，提示过期即撤). */
 function settleFileRefresh(entry) {
   entry._refreshing = false;
-  // 壳层单例：busy 类挂在共享按钮上，代表「任一在飞刷新」——清它即可
-  if (fileRefreshBtn && fileRefreshBtn.isConnected) fileRefreshBtn.classList.remove('busy');
+  hideUpdateHint(entry);
 }
+
+// ── 自动检查变更刷新 · 迟滞引擎（canvas-auto-refresh 批，作者令 2026-11-17 逐字
+// 「我们现在 canvas 有个刷新按钮 去掉 改为带迟滞的自动检查变更刷新 时间窗60s」）──
+// 右下「从磁盘重新读取」手动钮整面退役（DOM/挂载同步/i18n/CSS 同批清），换成本
+// 引擎。变更探测**只复用既有通道，不新造面**（无新 WS 操作、无新轮询循环）：
+//   · nf-file-external-change —— 引擎写路径广播（Write/Edit 工具、编辑器保存…），
+//     main.js 的 nf-cache-invalidate 处理器转派；
+//   · explorer-focus-refresh —— explorer 的 fsChanged（引擎侧真实文件 watch 推
+//     送）/ 窗口聚焦 / 慢对账定时器三腿汇流事件（explorer-rt 批）。
+// 两条都只做「记变更时刻 + 布防定时器」，无变更 ⇒ 永不布防 ⇒ 零定时器、零取数、
+// 零 DOM（「无变更 = 零视觉噪音」由构造保证，不靠事后清理）。
+
+/** 静默窗：从**最后一次**探测到变更起算，需连续静默满 60s 才执行一次刷新——
+ *  连续被改 ⇒ 每次信号都重置定时器，一直推迟（不许每 60s 追一次刷不停）。 */
+const AUTO_REFRESH_QUIET_MS = 60_000;
+/** 最小间隔：两次自动刷新之间至少 60s。 */
+const AUTO_REFRESH_MIN_INTERVAL_MS = 60_000;
+
+/** 下一次允许自动刷新的时刻（迟滞判定，纯函数）：
+ *  max(末次变更 + 静默窗, 上次自动刷新 + 最小间隔)。 */
+function autoRefreshDeadline(entry) {
+  return Math.max(
+    (entry._autoChangeAt || 0) + AUTO_REFRESH_QUIET_MS,
+    (entry._lastAutoRefreshAt || 0) + AUTO_REFRESH_MIN_INTERVAL_MS,
+  );
+}
+
+/** 变更信号入口（两通道共用）：记时刻 + （重）布防。每次新信号 clearTimeout 后
+ *  重排 ⇒ 静默窗永远从最后一次变更起算。 */
+function noteAutoFileChange(entry) {
+  if (!entry || !entry.absPath) return;
+  entry._autoChangeAt = Date.now();
+  clearTimeout(entry._autoRefreshTimer);
+  const wait = Math.max(autoRefreshDeadline(entry) - Date.now(), 0);
+  entry._autoRefreshTimer = setTimeout(() => {
+    entry._autoRefreshTimer = null;
+    fireAutoRefresh(entry);
+  }, wait);
+}
+
+/** 到点腿：静默窗（与最小间隔）已满。页签已关/在途 ⇒ 丢弃（后续信号会再布防）；
+ *  脏态或源码态（正在编辑）⇒ 不执行刷新，改挂轻量「有更新」提示（点击立即刷新，
+ *  时机归用户）；干净 ⇒ 走 refreshFileTab 重读（应答未变 ⇒ openWorkspaceItem 不重
+ *  挂 = 零视觉噪音）。消费后清 _autoChangeAt：后台再次收到信号才会重新布防。 */
+function fireAutoRefresh(entry) {
+  if (!tabs.has(entry.id) || tabs.get(entry.id) !== entry) return;
+  if (entry._refreshing) return;
+  entry._autoChangeAt = 0;
+  if (isTabDirty(entry) || entry.paneEl?.dataset.sourceMode === '1') { showUpdateHint(entry); return; }
+  entry._lastAutoRefreshAt = Date.now();
+  refreshFileTab(entry);
+}
+
+// ── 脏态「有更新」提示（canvas-auto-refresh 批）────────────────────────────
+// 「有更新但用户在编辑」的轻量告知面：**不是常驻按钮**——只在迟滞到点且页签
+// 脏/源码态时挂上，任一刷新应答落地（settleFileRefresh）即撤。样式与 B7-2 冲突条
+// 同族（内联样式、零 CSS 依赖、role=status、不进层栈不抢焦点）。点击「立即刷新」
+// 仍走 refreshFileTab 的脏守卫：未保存 ⇒ toast canvas.refreshDirty（既有语义，
+// 决不覆盖本地编辑），保存后点即刷。与冲突条互斥：冲突条在场（引擎写路径已在
+// 信号时刻给过更强提示 + 自带「重载磁盘版本」一键）则跳过；冲突条后到则顶掉
+// 本提示（同一信息不双报）。
+const UPDATE_HINT_CLASS = 'canvas-update-hint';
+
+/** 挂（或保持）某页签的「有更新」提示。幂等；冲突条在场时让位。 */
+function showUpdateHint(entry) {
+  const pane = entry && entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  if (pane.querySelector('.' + CONFLICT_BAR_CLASS)) return;
+  if (pane.querySelector('.' + UPDATE_HINT_CLASS)) return;
+  const chip = document.createElement('div');
+  chip.className = UPDATE_HINT_CLASS;
+  chip.setAttribute('role', 'status');
+  chip.dataset.path = entry.absPath || '';
+  chip.setAttribute('style', [
+    // md 族查看器的滚动面是 pane 内 absolute inset:0（split.css .canvas-md-scroll），
+    // 会盖住 pane 静态流子元素的指针层——relative+z:5 把提示抬到滚动面之上、
+    // 圆钮簇（z:10）之下（与下方冲突条同修，见彼处注释）。
+    'position:relative', 'z-index:5',
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
+    'border-radius:var(--ds-radius-button)',
+    'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
+    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
+    'border:1px solid rgba(255,255,255,0.12)',
+    'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
+  ].join(';'));
+  const text = document.createElement('span');
+  text.className = 'canvas-update-hint-text';
+  text.textContent = t('canvas.updateHint');
+  text.setAttribute('style', 'flex:1 1 auto;');
+  const now = document.createElement('button');
+  now.className = 'canvas-update-hint-refresh';
+  now.type = 'button';
+  now.textContent = t('canvas.updateNow');
+  now.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  now.onclick = () => { hideUpdateHint(entry); refreshFileTab(entry); };
+  chip.append(text, now);
+  pane.prepend(chip);
+}
+
+/** 撤某页签的「有更新」提示（幂等；页签不在 = 无事可做）。 */
+function hideUpdateHint(entry) {
+  entry?.paneEl?.querySelector('.' + UPDATE_HINT_CLASS)?.remove();
+}
+
+// 迟滞判定的只读测试面（spec 断言常数 = 60s 与 t=59/t=60 边界用；零行为能力，
+// 参照 window.__cardBeatTimer 一类既有调试句柄先例）。
+/** @type {any} */ (window).__canvasAutoRefreshDebug = {
+  QUIET_MS: AUTO_REFRESH_QUIET_MS,
+  MIN_INTERVAL_MS: AUTO_REFRESH_MIN_INTERVAL_MS,
+  deadline: autoRefreshDeadline,
+};
 
 // ── B7-2 外部改动冲突条（文档后续批，2026-11-01）─────────────────────────
 // 病灶（计划 §B7-2）：`nf-cache-invalidate` 只喂 nf-file 账本，从不触达编辑器；
 // 而 `scheduleFileRefresh` 在脏页签上**静默 return** —— 合计效果是「文件被改过」
 // 这件事对正在编辑的人完全不可见，用户接着保存就把别人的改动覆盖掉。
 //
-// 现在的语义（冲突条二选一，两条各自改状态）：
-//   干净页签 → 照旧走 scheduleFileRefresh（读回新内容，不打扰人）；
+// 现在的语义（冲突条二选一，两条各自改状态；canvas-auto-refresh 批后干净腿入迟滞）：
+//   干净页签 → noteAutoFileChange 入迟滞引擎（静默窗满 60s 读回新内容，不打扰人）；
 //   脏页签   → 出一条冲突条：**保留**（继续编辑，什么都不做）/ **重载**（丢弃本地
 //              编辑，强制重读）。条子内联样式、零 CSS 依赖 —— 与 staleTabHint.js
-//              （2026-10-28 作者令④）同一先例，本批不改 css/ 一字，`app-*.css`
-//              哈希因此不动。
+//              （2026-10-28 作者令④）同一先例，`app-*.css` 哈希不动。
 // 不进层栈：它不是模态，不加遮罩、不抢焦点、不拦 Tab（壳契约逐字保留）。
 const CONFLICT_BAR_CLASS = 'nf-file-conflict';
 
@@ -1047,6 +1156,7 @@ const CONFLICT_BAR_CLASS = 'nf-file-conflict';
 function showExternalConflict(entry) {
   const pane = entry && entry.paneEl;
   if (!pane || !pane.isConnected) return;
+  hideUpdateHint(entry);  // 冲突条是更强提示（自带重载一键），顶掉弱一档的「有更新」
   const old = pane.querySelector('.' + CONFLICT_BAR_CLASS);
   if (old) old.remove();
   const bar = document.createElement('div');
@@ -1054,6 +1164,11 @@ function showExternalConflict(entry) {
   bar.setAttribute('role', 'status');
   bar.dataset.path = entry.absPath || '';
   bar.setAttribute('style', [
+    // canvas-auto-refresh 批顺手修（E4b 验收暴露）：md 族查看器的滚动面是 pane 内
+    // absolute inset:0（split.css .canvas-md-scroll），盖住本条的指针层 ⇒ md 页签
+    // 上「保留/重载」两键看得见点不着（B7-2 落地即如此，未被抓到——彼时验收走
+    // 的是代码页签）。relative+z:5 抬到滚动面之上、圆钮簇（z:10）之下。
+    'position:relative', 'z-index:5',
     'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
     'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
     'border-radius:var(--ds-radius-button)',
@@ -1096,85 +1211,20 @@ window.addEventListener('nf-file-external-change', (e) => {
   if (!entry) return;                      // 没开这个文件 ⇒ 无事可做（账本已由 main.js 淘汰）
   entry._externalConflict = Date.now();
   if (isTabDirty(entry)) showExternalConflict(entry);
-  else scheduleFileRefresh(entry);
+  // canvas-auto-refresh 批：干净页签不再即刷（原 scheduleFileRefresh 300ms 防抖腿
+  // 退役），改入迟滞引擎——静默窗满 60s 才执行，连续写盘只推迟不追刷。
+  noteAutoFileChange(entry);
 });
 
-// ── 文件刷新钮 · 壳层挂载（定位修复，作者报障 2026-10-27「刷新钮悬浮在正文
-// 中间」）────────────────────────────────────────────────────────────────
-// 根因：刷新钮 absolute 挂在 pane 里，而 docx/yaml/xlsx/pptx 等查看器把
-// .scrollable 加在 pane 自身（pane 即滚动容器）——absolute 子元素按整份滚动
-// 内容盒定位，bottom:16 落到文档末尾而非可视区底缘，随滚动漂移（md/code 等
-// pane 不自滚的页签不受累）。修法：挂载点上移到不滚动的面板壳 #canvas-content
-// （split.css: position:relative + overflow:hidden），按钮 = 每文档单例，可见性
-// 与座位随活动页签同步（syncFileRefreshButton）；源码态隐藏由 addSourceToggle
-// 的 canvas-source-mode-changed 事件驱动（shared.js 无回流 import 边，同
-// canvas-viewer-rerendered 先例）。主题（亮暗）只换 token 色值，几何不动。
-let fileRefreshBtn = null;
-
-/** The active tab's entry iff it is a live file tab (absPath + connected pane). */
-function activeFileEntry() {
-  const entry = activeTabId ? tabs.get(activeTabId) : null;
-  const pane = entry && entry.paneEl;
-  return (entry && entry.absPath && pane && pane.isConnected) ? entry : null;
-}
-
-/** Mount the bottom-right refresh button for rendered file tabs. Called after
- *  every renderFile (call sites unchanged from the 刷新批) — the shell button
- *  survives viewer innerHTML wipes, so remounts collapse to a no-op; the
- *  visibility/seat sync below is what does the per-tab work. */
-function mountFileRefreshButton(pane, entry) {
-  if (!entry || !entry.absPath) return;
-  import('./viewers/shared.js').then(({ addRefreshButton }) => {
-    // The tab can close (or the whole pane be replaced) while the import settles.
-    if (!pane.isConnected || tabs.get(entry.id) !== entry) return;
-    if (!fileRefreshBtn || !fileRefreshBtn.isConnected) {
-      const host = document.getElementById('canvas-content');
-      // Click resolves the ACTIVE file entry at click time (the singleton
-      // outlives any one tab's closure).
-      fileRefreshBtn = addRefreshButton(pane, {
-        host,
-        onRefresh: () => { const e = activeFileEntry(); if (e) refreshFileTab(e); },
-      });
-    }
-    syncFileRefreshButton();
-  }).catch(() => { /* shared.js unavailable — button absent, zero behavior change */ });
-}
-
-/** Shell button follows the active tab: visible iff the active entry is a live
- *  file tab outside source mode; seat recomputed against the active pane's
- *  corner cluster (source/ref/find/graph circles + zoom bar live in the pane
- *  and differ per viewer). */
-function syncFileRefreshButton() {
-  const btn = fileRefreshBtn;
-  if (!btn || !btn.isConnected) return;
-  const entry = activeFileEntry();
-  const pane = entry && entry.paneEl;
-  const visible = !!(entry && pane.dataset.sourceMode !== '1');
-  btn.hidden = !visible;
-  if (!entry) return;
-  const entryId = entry.id;
-  import('./viewers/shared.js').then(({ seatRefreshButton }) => {
-    if (btn.isConnected && activeTabId === entryId) seatRefreshButton(btn, pane);
-  }).catch(() => {});
-}
-
-// MD/HTML source↔rendered toggle swaps pane.dataset.sourceMode — the shell
-// button must hide/show with it (event decouples shared.js from canvas.js; no
-// import edge back). Only the ACTIVE pane owns the button.
-document.addEventListener('canvas-source-mode-changed', (e) => {
-  const pane = /** @type {any} */ (e.target);
-  if (pane instanceof HTMLElement && pane.classList.contains('active')) syncFileRefreshButton();
-});
-
-// MD/HTML source↔rendered toggle round trips re-run the viewer WITHOUT a
-// readFile (addSourceToggle → renderFn). The shell button survives the render
-// wipe; this remains as a self-healing re-sync (and first-mount belt for flows
-// that bypass openWorkspaceItem).
-document.addEventListener('canvas-viewer-rerendered', (e) => {
+// ── 阅读菜单刷新腿（canvas-auto-refresh 批：壳层刷新钮退役后的兜底接线）──────
+// readerChrome.js 的阅读菜单「刷新」原走「有壳层钮就点钮，无钮退化发事件」；钮
+// 整面退役后此事件成为唯一路径——由 pane 反查页签，同一套 refreshFileTab 守卫
+// （脏态 toast、源码态让路），零新机制。
+document.addEventListener('canvas-request-refresh', (e) => {
   const pane = /** @type {any} */ (e.target);
   if (!(pane instanceof HTMLElement)) return;
   for (const entry of tabs.values()) {
-    if (entry.paneEl === pane) { mountFileRefreshButton(pane, entry); return; }
+    if (entry.paneEl === pane) { refreshFileTab(entry); return; }
   }
 });
 
@@ -1213,11 +1263,11 @@ export function setActiveTab(id) {
   persistTabs();
   syncCanvasPanelButtons();
 
-  // Live-refresh file tabs on activation (debounced, dirty-safe).
+  // 自动刷新（迟滞引擎）：后台布防的变更若静默窗（含最小间隔）已满，切到前台
+  // 即刻结算（作者口径「后台 pane 只做标记、切到前台或静默窗满足时才刷」的前
+  // 半腿）；未满则由定时器到点自理，激活本身不再触发整文件重读。
   const entry = tabs.get(id);
-  if (entry) scheduleFileRefresh(entry);
-  // 壳层刷新钮（定位修复批）：随活动页签同步可见性 + 座位
-  syncFileRefreshButton();
+  if (entry && entry._autoChangeAt && Date.now() >= autoRefreshDeadline(entry)) fireAutoRefresh(entry);
 
   // canvas-stack：居中标题头随激活易主；叠卡开着时环重置到新 active 的前景位
   // （外部换签——agent 开文件 / 换入编排——都收敛到「新 canvas 在前景位」）。
@@ -1496,9 +1546,6 @@ export async function openWorkspaceItem(item) {
     const entry = openTab(id, placeholderTitle, { type: 'code', pinned: !!pinned, absPath: absPath || id, noRevive: viaRestore });
     if (!entry) return;
     renderFilePlaceholder(entry.paneEl, item.error, absPath || id);
-    // 骨架标签也挂刷新钮：文件恢复可读后一键重读即可翻正（readFile →
-    // fileContent → 下方既有页签重渲腿），不用整页刷新。
-    mountFileRefreshButton(entry.paneEl, entry);
     entry._lastRefreshAt = Date.now();
     if (!item.background) setActiveTab(id);
     return;
@@ -1541,6 +1588,12 @@ export async function openWorkspaceItem(item) {
     // engages, and refresh→setActiveTab loops forever (each cycle stealing
     // activation back to the binary tab — "can't switch away from an image").
     entry._lastRefreshAt = Date.now();
+    // canvas-auto-refresh 批：记 (size:mtimeMs) 版本读数——自动重读对二进制页签
+    // （应答无 content）用同一把尺判重，未变不再整面重挂/重取字节（流式大文本的
+    // acceptMeta 判重同式先例，见下方 stream 分支）。先留旧读数：判重比的是上一
+    // 次应答，不是本次刚记的这份。
+    const prevFileVer = entry._fileVer;
+    entry._fileVer = `${size || 0}:${mtimeMs || 0}`;
     // Streamed large-text tab (卡 §三.3 后台刷新行): the response carries NO content,
     // so the re-render branch below never fires. Compare mtimeMs/size instead —
     // changed ⇒ the view voids its loaded windows + index and re-fetches (never a
@@ -1579,10 +1632,13 @@ export async function openWorkspaceItem(item) {
       if (Number.isFinite(pgExisting)) /** @type {any} */ (entry.paneEl)._scrollToPage?.(pgExisting);
     }
     // 手动刷新（manual，canvas 文件刷新批）：二进制腿的 readFile 应答不带
-    // content——没有 manual 旗标时该分支对图片/PDF 永不触发，刷新按钮就是
-    // 无声空点。流式大文本除外：其变更面走上方 acceptMeta（保滚动位），
+    // content——没有 manual 旗标时该分支对图片/PDF 永不触发，自动刷新就会
+    // 无声空过。流式大文本除外：其变更面走上方 acceptMeta（保滚动位），
     // 整面重挂反而把读者扔回文件头。
-    if ((content || manual) && !stream && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
+    // canvas-auto-refresh 批：二进制腿加 (size:mtimeMs) 判重——版本读数未变
+    // 的重读（聚焦/慢对账布防的自动腿常态）不再重挂/重取字节。
+    const binUnchanged = !content && !stream && prevFileVer !== undefined && prevFileVer === entry._fileVer;
+    if ((content || manual) && !binUnchanged && !stream && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for
       // zero visible change (matters for focus-triggered refreshes).
@@ -1594,7 +1650,6 @@ export async function openWorkspaceItem(item) {
         }
         const { renderFile } = await import('./fileViewers.js');
         await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: anchor || stash, warnings });
-        mountFileRefreshButton(entry.paneEl, entry);
         notifyCardUpdate(id);   // UI 批⑧：独立窗内容同步（卡窗重读文件）
       }
     }
@@ -1739,7 +1794,6 @@ export async function openWorkspaceItem(item) {
   /** @type {import('./utils.js').ViewerContext & {objectUrl?: string, stream?: any, mtimeMs?: number, readOnly?: boolean}} */
   const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl, stream: item.stream || null, mtimeMs: item.mtimeMs || 0, readOnly: readOnly === true };
   await renderFile(pane, renderCtx);
-  mountFileRefreshButton(pane, entry);  // 文件刷新批：右下刷新钮（查看器会清 pane.innerHTML，须渲后挂载）
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
   notifyCardUpdate(id);               // UI 批⑧：独立窗首渲/重渲同步（卡窗自读文件）
 }
@@ -4777,12 +4831,12 @@ export function initCanvas() {
   // 2026-10-22 作者令：胶囊环（hover 展开 · 横滑换选 · 点击切换 · 右键菜单扩容）。
   initCapsuleRing();
 
-  // Window-focus refresh (dispatched by explorer.js after reloading the tree):
-  // re-check the active file tab for external edits. Dirty-guarded, debounced,
-  // and unchanged content never re-renders (see openWorkspaceItem).
+  // 变更信号通道②（explorer-rt 批的 fsChanged/聚焦/慢对账三腿汇流事件，由
+  // explorer.js 派发）：canvas-auto-refresh 批起不再即读活动页签，改入迟滞引擎
+  // ——静默窗满 60s 才执行一次（最小间隔 60s）；无变更事件 ⇒ 零布防零取数。
   window.addEventListener('explorer-focus-refresh', () => {
     const entry = activeTabId ? tabs.get(activeTabId) : null;
-    if (entry) scheduleFileRefresh(entry);
+    if (entry) noteAutoFileChange(entry);
   });
 
   // Listen for Pop tool WS messages — agent opens a file in Canvas.

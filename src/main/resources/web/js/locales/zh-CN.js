@@ -2143,9 +2143,14 @@ export default {
   'canvas.loadingFile': '正在打开…',
   'canvas.loadFailed': '打开失败',
   'canvas.retry': '重试',
-  // canvas 文件刷新批（2026-10-25 作者令）：页签右下「重新读盘」钮
-  'canvas.refresh': '从磁盘重新读取',
+  // canvas 文件刷新批（2026-10-25 作者令）：页签右下「重新读盘」钮。canvas-auto-
+  // refresh 批（2026-11-17 作者令「去掉 改为带迟滞的自动检查变更刷新 时间窗60s」）
+  // 起手动钮与 canvas.refresh 键退役；refreshDirty 保留（自动路径脏守卫复用）。
   'canvas.refreshDirty': '有未保存的修改，先保存或撤销后再刷新。',
+  // 脏态「有更新」提示（canvas-auto-refresh 批）：迟滞到点但页签脏/源码态时挂的
+  // 轻量告知面（非常驻按钮），点击「立即刷新」仍走 refreshDirty 守卫。
+  'canvas.updateHint': '这个文件在磁盘上已有新内容（自动刷新已让路：本地有未保存的修改）。',
+  'canvas.updateNow': '立即刷新',
   // B7 文档后续批（2026-11-01）：脏页签关闭确认 + 外部改动冲突条
   'canvas.closeDirtyTitle': '关闭未保存的页签？',
   'canvas.closeDirtyMsg': '「{name}」有未保存的修改，关闭后这些修改会丢失。',
