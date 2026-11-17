@@ -280,6 +280,48 @@ class CanvasTabStore(path: os.Path):
    */
   def load(): IO[Option[Json]] = IO.blocking(loadSync())
 
+  /** Apply an operation atomically with its version and bounded retry ledger. */
+  def applyOperation(op: Json, nowMs: Long = System.currentTimeMillis()): IO[Either[String, (Json, Boolean)]] =
+    IO.blocking {
+      CanvasTabStore.mergeGate.acquire()
+      try
+        val h = op.hcursor
+        val id = h.get[String]("operationId").toOption.filter(s => s.nonEmpty && s.length <= 128)
+        val issued = h.get[Long]("issuedAt").toOption
+        val opened = h.get[Vector[Json]]("opened").toOption
+        val closed = h.get[Vector[Json]]("closed").toOption
+        val reopened = h.downField("reopened").focus.getOrElse(Json.arr())
+        val base = h.get[Long]("baseVersion").toOption.filter(_ >= 0) // diagnostic only, never arbitrates LWW
+        val candidate = Json.obj("v" -> Json.fromInt(2), "tabs" -> Json.fromValues(opened.getOrElse(Vector.empty)),
+          "tombstones" -> Json.fromValues(closed.getOrElse(Vector.empty)), "reopened" -> reopened)
+        if id.isEmpty || issued.isEmpty || opened.isEmpty || closed.isEmpty || base.isEmpty ||
+          h.get[Option[String]]("activeTabId").isLeft || CanvasTabs.validate(candidate).isLeft then
+          Left("invalid canvas tab operation")
+        else if issued.get < nowMs - 600000L || issued.get > nowMs + 600000L then
+          Left("expired operation or clock skew exceeds ten minutes")
+        else
+          val prev = loadSync()
+          val ledger = prev.flatMap(_.hcursor.get[Vector[Json]]("operationLedger").toOption).getOrElse(Vector.empty)
+            .filter(_.hcursor.get[Long]("appliedAt").toOption.exists(_ >= nowMs - 86400000L))
+          val duplicate = ledger.find(_.hcursor.get[String]("operationId").toOption.contains(id.get))
+          duplicate match
+            case Some(rec) =>
+              Right((Json.obj("operationId" -> Json.fromString(id.get), "writeVersion" -> rec.hcursor.downField("version").focus.get), true))
+            case None =>
+              val old = prev.flatMap(_.hcursor.get[Vector[Json]]("tabs").toOption).getOrElse(Vector.empty)
+              val byId = scala.collection.mutable.LinkedHashMap.empty[String, Json]
+              old.foreach(t => t.hcursor.get[String]("id").toOption.foreach(k => byId(k) = t))
+              opened.get.foreach(t => t.hcursor.get[String]("id").toOption.foreach(k => byId(k) = byId.get(k).fold(t)(_.deepMerge(t))))
+              val active = h.downField("activeTabId").focus.fold(Json.obj())(x => Json.obj("activeTabId" -> x))
+              val payload = candidate.deepMerge(Json.obj("tabs" -> Json.fromValues(byId.values))) .deepMerge(active)
+              val version = prev.flatMap(_.hcursor.get[Long]("writeVersion").toOption).getOrElse(0L) + 1L
+              val result = CanvasTabs.merge(prev, payload, nowMs).deepMerge(Json.obj("writeVersion" -> Json.fromLong(version), "operationId" -> Json.fromString(id.get)))
+              val record = Json.obj("operationId" -> Json.fromString(id.get), "version" -> Json.fromLong(version), "appliedAt" -> Json.fromLong(nowMs))
+              AtomicJson.writeSync(path, result.deepMerge(Json.obj("operationLedger" -> Json.fromValues((ledger :+ record).takeRight(10000)))).noSpaces)
+              Right((result, false))
+      finally CanvasTabStore.mergeGate.release()
+    }
+
   /** 原子写存档（tmp + ATOMIC_MOVE，崩溃安全；写失败抛错由调用方转 500）。 */
   def save(json: Json): IO[Unit] =
     IO.blocking {
