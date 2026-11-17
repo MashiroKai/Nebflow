@@ -60,6 +60,7 @@ final class RestApiCtx(
   val gatewayPort: Int,
   val wsHub: WsHub,
   val connGuard: ConnGuard,
+  val canvasTakeover: ConsoleTakeover,
   val logger: NebflowLogger
 ):
 

@@ -38,6 +38,10 @@ standaloneScripts.push(
 // 由 frontend-smoke 在拉起 CI 实例、桥接 ~/.stand/auth.json 后点名跑；
 // 自足套件任务用 PW_SELFCONTAINED_ONLY=1 整体排除它们。
 const instanceBacked = [
+  // Real isolated Java gateways need an exported classpath; run only explicitly, not in self-contained CI.
+  'canvas-writer-live.spec.mjs',
+  'canvas-tab-live-sync.spec.mjs',
+  'canvas-legacy-stale-comparison.spec.mjs',
   'smoke.spec.mjs',
   'askuser.spec.mjs',
   'askuser-attach.spec.mjs',

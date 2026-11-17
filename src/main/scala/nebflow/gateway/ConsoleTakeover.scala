@@ -126,8 +126,50 @@ final class ConsoleTakeover(
   /** 自动化端观察位开关（同端判据批 C；缺省读 env，spec 可显式开/关）。 */
   automationSpectator: Boolean = ConsoleTakeover.automationSpectator
 ):
-  /** 拥有控制权的实例（全局唯一——控制台是每引擎一个的互斥资源）；值是 holder 键。 */
-  private val ownerRef: Ref[IO, Option[String]] = Ref.unsafe(None)
+  // Default domain combines console control and shared Canvas; subject to author review.
+  // Both console ownership and Canvas fencing live in this single authoritative record.
+  private val controlRef: Ref[IO, ConsoleTakeover.ControlState] = Ref.unsafe(ConsoleTakeover.ControlState())
+  private val canvasLock = new java.util.concurrent.Semaphore(1)
+
+  // Serialize claim/release with the entire authorized write, not just its check.
+  private def canvasExclusive[A](fa: IO[A]): IO[A] =
+    IO.uncancelable { poll =>
+      IO.blocking(canvasLock.acquire()) *> poll(fa).guarantee(IO(canvasLock.release()))
+    }
+
+  // Default claims preempt; expectedEpoch opts into strict compare-and-set.
+  def claimCanvas(principal: String, client: String, tab: String, expectedEpoch: Option[Long] = None): IO[Option[Long]] =
+    val key = ConsoleTakeover.holderOf(principal, Some(client))
+    canvasExclusive {
+      controlRef.modify { state =>
+        if expectedEpoch.exists(_ != state.canvasEpoch) then (state, None)
+        else
+          val next = Math.addExact(state.canvasEpoch, 1L)
+          val writer = ConsoleTakeover.CanvasWriter(principal, client, tab, next)
+          (state.copy(owner = Some(key), canvasEpoch = next, writer = Some(writer)), Some((next, state.owner)))
+      }.flatMap {
+        case None => IO.pure(None)
+        case Some((epoch, previous)) =>
+          (if previous.contains(key) then recordOwner(key)
+           else reverseKickAfterClaim(key, previous).void).as(Some(epoch))
+      }
+    }
+
+  def canvasRole(principal: String, client: String, tab: String): IO[Option[Long]] =
+    controlRef.get.map(_.writer.filter(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab).map(_.epoch))
+
+  def releaseCanvas(principal: String, client: String, tab: String, epoch: Long): IO[Boolean] =
+    canvasExclusive(controlRef.modify { state =>
+      if state.writer.contains(ConsoleTakeover.CanvasWriter(principal, client, tab, epoch)) then
+        (state.copy(writer = None), true)
+      else (state, false)
+    })
+
+  def withCanvasWriter[A](principal: String, client: String, tab: String, epoch: Long)(write: IO[A]): IO[Option[A]] =
+    canvasExclusive(controlRef.get.flatMap { state =>
+      if state.writer.contains(ConsoleTakeover.CanvasWriter(principal, client, tab, epoch)) then write.map(Some(_))
+      else IO.pure(None)
+    })
 
   /** holder → 实例账（活跃连接集 + 身份 + 最后入账时刻）。 */
   private val instancesRef: Ref[IO, Map[String, ConsoleTakeover.Instance]] = Ref.unsafe(Map.empty)
@@ -157,7 +199,7 @@ final class ConsoleTakeover(
   def gateFrame(holder: String, text: String): IO[Boolean] =
     if !enabled then IO.pure(true)
     else
-      ownerRef.get.flatMap {
+      controlRef.get.map(_.owner).flatMap {
         case None => IO.pure(true) // owner 未定（claim 前引导窗）⇒ 放行——首实例就位前不饿引导帧
         case Some(o) if o == holder => IO.pure(true)
         case Some(o) =>
@@ -190,7 +232,7 @@ final class ConsoleTakeover(
       }
 
   /** 控制权读数（spec / 未来观测面用）：当前 owner 的 holder 键。 */
-  def owner: IO[Option[String]] = ownerRef.get
+  def owner: IO[Option[String]] = controlRef.get.map(_.owner)
 
   /** 会话的活跃连接数（spec 读数；同一浏览器多标签/多 holder 求和）。 */
   def connCount(sessionId: String): IO[Int] =
@@ -268,7 +310,7 @@ final class ConsoleTakeover(
             for
               now <- nowMs()
               moved <- migrateConn(connId, key, sessionId, full, now)
-              cur <- ownerRef.get
+              cur <- controlRef.get.map(_.owner)
               _ <- if moved && !cur.contains(key) then settle(key, connId) else IO.unit
               _ <- migrateNote(moved)
             yield Some(key)
@@ -304,7 +346,7 @@ final class ConsoleTakeover(
           case Some(key) =>
             IO.uncancelable { _ =>
               for
-                cur <- ownerRef.get
+                cur <- controlRef.get.map(_.owner)
                 _ <- cur match
                   case Some(c) if c == key =>
                     // 已是 owner（竞态窗：模态未收时所有权已回）——幂等 ok，零帧。
@@ -342,7 +384,7 @@ final class ConsoleTakeover(
       val key = ConsoleTakeover.holderOf(sessionId, clientId)
       IO.uncancelable { _ =>
         for
-          cur <- ownerRef.get
+          cur <- controlRef.get.map(_.owner)
           kicked <- cur match
             case Some(c) if c == key =>
               // 已是 owner（竞态窗：模态未收时所有权已回）——幂等成功，零帧。
@@ -377,7 +419,7 @@ final class ConsoleTakeover(
     for
       now <- nowMs()
       m <- instancesRef.get
-      cur <- ownerRef.get
+      cur <- controlRef.get.map(_.owner)
       _ <- cur match
         case None =>
           // 首实例即位：无事件。
@@ -487,7 +529,7 @@ final class ConsoleTakeover(
             pruned.updated(key, ConsoleTakeover.merged(prev, sessionId, meta, Set(connId), now))
           }
           // 所有权与历史随标签走：迁移不是身份变化，不得把 owner 让给一个已不存在的键。
-          _ <- oldKey.traverse_(old => ownerRef.update(o => if o.contains(old) then Some(key) else o))
+          _ <- oldKey.traverse_(old => canvasExclusive(controlRef.update(s => if s.owner.contains(old) then s.copy(owner = Some(key), writer = None) else s)))
           _ <- oldKey.traverse_ { old =>
                  pastOwnersRef.update { v =>
                    v.map { case (k, t) => (if k == old then key else k, t) }
@@ -553,7 +595,7 @@ final class ConsoleTakeover(
       .flatMap { dead =>
         if dead.isEmpty then IO.unit
         else
-          ownerRef.update(o => if o.exists(dead.contains) then None else o) *>
+          canvasExclusive(controlRef.update(s => if s.owner.exists(dead.contains) then s.copy(owner = None, writer = None) else s)) *>
             logger.info(
               s"console-takeover: swept ${dead.size} stale instance(s) " +
                 s"[${dead.toList.sorted.map(label).mkString(", ")}] — owner cleared if it was one of them"
@@ -567,11 +609,16 @@ final class ConsoleTakeover(
    * ——最终一致，A9 同款兜底）。
    */
   private def claimAndReverseKick(key: String, prevOwner: Option[String]): IO[Int] =
+    claim(key) *> reverseKickAfterClaim(key, prevOwner)
+
+  // Shared post-transition path: Canvas performs its state transition atomically under
+  // the same lock, so it cannot call claim(key) again (that would clear its writer).
+  private def reverseKickAfterClaim(key: String, prevOwner: Option[String]): IO[Int] =
     for
       now <- nowMs()
       prevInst <- prevOwner.flatTraverse(p => instancesRef.get.map(_.get(p)))
-      _ <- clearSpectator(key) // 显式 retake = 用户意志：观察位解除
-      _ <- claim(key)
+      _ <- clearSpectator(key)
+      _ <- recordOwner(key)
       _ <- prevInst
         .filter(p => ConsoleTakeover.isLive(p, now, activityTtlMs) && !p.automated)
         .traverse_(p => p.conns.toList.sorted.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(now))))
@@ -579,8 +626,12 @@ final class ConsoleTakeover(
 
   /** 记 owner + pastOwners 账（LRU 帽内淘汰最旧）。 */
   private def claim(key: String): IO[Unit] =
+    canvasExclusive(controlRef.update(s =>
+      if s.owner.contains(key) then s else s.copy(owner = Some(key), writer = None)
+    )) *> recordOwner(key)
+
+  private def recordOwner(key: String): IO[Unit] =
     nowMs().flatMap { now =>
-      ownerRef.set(Some(key)) *>
         pastOwnersRef.update { v =>
           val pruned = v.filterNot(_._1 == key) :+ ((key, now))
           if pruned.length > ConsoleTakeover.PastOwnerCap then pruned.drop(pruned.length - ConsoleTakeover.PastOwnerCap)
@@ -596,6 +647,9 @@ final class ConsoleTakeover(
 end ConsoleTakeover
 
 object ConsoleTakeover:
+
+  final case class CanvasWriter(principal: String, clientId: String, tabInstanceId: String, epoch: Long)
+  final case class ControlState(owner: Option[String] = None, canvasEpoch: Long = 0L, writer: Option[CanvasWriter] = None)
 
   /**
    * 实例账（holder → 活跃连接 + 身份 + 最后入账时刻 + 端指纹 + 可见活动戳）。

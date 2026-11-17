@@ -109,6 +109,12 @@ private[gateway] object ConfigRoutes:
       // —— #910（2026-10-26）起 PUT 不再整档覆盖：锁内 load→merge→save 落墓碑
       // 语义（关闭意图优先，显式重开才恢复，TTL 30d/上限 500）；非法输入 400 /
       // 超限 413 不落盘。
+      // 跨设备实时同步（canvas-tab-sync 批 2026-11-17）：作者报障「各端 canvas
+      // 页签不同步——单实例的本意就是任一端开/关/切其他端一致」。此前存档只在
+      // 页面加载时被 GET（restoreTabs），运行中无推送腿。修法=补最小广播：PUT
+      // 接受落盘后把**合并后的权威存档**经既有 wsHub.broadcast 外推一帧
+      // `canvasTabsChanged`（configUpdated / projectArchived 同面零第二套推送），
+      // 各端按 #910 墓碑语义就地收敛（详见 js/canvas.js applyLiveTabsFrame）。
       case req @ GET -> Root / "canvas-tabs" =>
         withAuth(req) {
           new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").load().flatMap {
@@ -117,18 +123,77 @@ private[gateway] object ConfigRoutes:
           }
         }
 
+      case req @ GET -> Root / "canvas-writer" =>
+        withRecoveryPrincipal(req) { principal =>
+          canvasTakeover.canvasRole(principal, req.params.getOrElse("clientId", ""), req.params.getOrElse("tabInstanceId", "")).flatMap {
+            case Some(epoch) => Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
+            case None => Ok(Json.obj("role" -> "reader".asJson, "epoch" -> Json.Null))
+          }
+        }
+
+      case req @ POST -> Root / "canvas-writer" / action if action == "claim" || action == "release" =>
+        withRecoveryPrincipal(req) { principal =>
+          req.attemptAs[Json].value.flatMap {
+            case Left(_) => BadRequest(Json.obj("error" -> "invalid_body".asJson))
+            case Right(body) =>
+              val c = body.hcursor
+              val client = c.get[String]("clientId").toOption.filter(s => s.trim.nonEmpty && s.length <= 128)
+              val tab = c.get[String]("tabInstanceId").toOption.filter(s => s.trim.nonEmpty && s.length <= 128)
+              (client, tab) match
+                case (Some(id), Some(t)) if action == "claim" =>
+                  canvasTakeover.claimCanvas(principal, id, t, c.get[Long]("expectedEpoch").toOption).flatMap {
+                    case Some(epoch) => Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
+                    case None => Conflict(Json.obj("error" -> "concurrent_writer_claim".asJson))
+                  }
+                case (Some(id), Some(t)) =>
+                  c.get[Long]("epoch").toOption match
+                    case Some(epoch) => canvasTakeover.releaseCanvas(principal, id, t, epoch).flatMap {
+                      case true => Ok(Json.obj("role" -> "reader".asJson))
+                      case false => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson))
+                    }
+                    case None => BadRequest(Json.obj("error" -> "invalid_epoch".asJson))
+                case _ => BadRequest(Json.obj("error" -> "invalid_writer_identity".asJson))
+          }
+        }
+
       case req @ PUT -> Root / "canvas-tabs" =>
-        withAuth(req) {
+        withRecoveryPrincipal(req) { principal =>
           // 读 body 有界：take(max+1) 后超限即 413，防大 payload 拉爆内存。
           val maxBytes = CanvasTabs.MaxBodyBytes
           req.body.take(maxBytes.toLong + 1).compile.toVector.flatMap { bytes =>
-            CanvasTabs.parseBody(bytes.toArray, maxBytes) match
+            val raw = bytes.toArray
+            val parsed = if raw.length <= maxBytes then io.circe.parser.parse(new String(raw, java.nio.charset.StandardCharsets.UTF_8)).toOption else None
+            val cursor = parsed.map(_.hcursor)
+            val client = cursor.flatMap(_.get[String]("clientId").toOption).filter(s => s.trim.nonEmpty && s.length <= 128)
+            val tab = cursor.flatMap(_.get[String]("tabInstanceId").toOption).filter(s => s.trim.nonEmpty && s.length <= 128)
+            val epoch = cursor.flatMap(_.get[Long]("epoch").toOption)
+            val operation = parsed.filter(_.hcursor.downField("operationId").succeeded)
+            def save: IO[Response[IO]] = if operation.nonEmpty then
+              val json = operation.get
+              new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").applyOperation(json).flatMap {
+                case Left(reason) =>
+                  logger.warn(s"canvas tab operation rejected: $reason source=${req.remoteAddr} operationId=${json.hcursor.get[String]("operationId").getOrElse("invalid")}") *>
+                    BadRequest(Json.obj("error" -> reason.asJson))
+                case Right((result, duplicate)) =>
+                  val ack = Json.obj("ok" -> true.asJson, "operationId" -> result.hcursor.downField("operationId").focus.getOrElse(Json.Null), "writeVersion" -> result.hcursor.downField("writeVersion").focus.getOrElse(Json.Null))
+                  (if duplicate then IO.unit else wsHub.broadcast(result.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson)))) *> Ok(ack)
+              }
+            else CanvasTabs.parseBody(raw, maxBytes) match
               case Left((status, msg)) =>
                 val st = org.http4s.Status.fromInt(status).getOrElse(Status.BadRequest)
                 IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
               case Right(json) =>
-                new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
-                  .mergeSave(json) *> Ok(ApiJson.ok)
+                (logger.warn(s"canvas tabs legacy PUT deprecated; missing tabs ignored, source=${req.remoteAddr}") *>
+                  new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
+                    .mergeSave(json, source = req.remoteAddr.fold("unknown")(_.toString)))
+                  .flatMap { merged =>
+                    // 写穿即外推（canvas-tab-sync 批 2026-11-17）：合并后的权威
+                    // 存档广播给全部已连端，他端开/关/切/排序即时跟随，不等刷新。
+                    // 帧载荷 = GET 同构（v/tabs/tombstones/activeTabId）+ type 键。
+                    wsHub.broadcast(
+                      merged.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson))
+                    ) *> Ok(ApiJson.ok)
+                  }
                   .handleErrorWith { e =>
                     logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
                       IO.pure(
@@ -136,6 +201,13 @@ private[gateway] object ConfigRoutes:
                           .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
                       )
                   }
+            (client, tab, epoch) match
+              case (Some(id), Some(t), Some(e)) =>
+                canvasTakeover.withCanvasWriter(principal, id, t, e)(save).flatMap {
+                  case Some(response) => IO.pure(response)
+                  case None => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson, "role" -> "reader".asJson))
+                }
+              case _ => Conflict(Json.obj("error" -> "canvas_read_only".asJson, "role" -> "reader".asJson))
           }
         }
 
