@@ -21,11 +21,13 @@ class SocialSearchScanSpec extends munit.FunSuite:
   }
 
   test("failure and page limit are visible") {
-    val failure = SocialSearchScan.search(List("a"), "x", (_, _, _) => IO.pure(Left("offline"))).unsafeRunSync()
-    assert(failure.failed && failure.truncated)
-    val bounded = SocialSearchScan.search(List("a"), "missing", (_, after, _) => IO.pure(Right(
-      (1 to 200).toList.map(i => MessageSummary(after + i, "s", "text", "other", 1L))
-    ))).unsafeRunSync()
-    assertEquals(bounded.pages, 10)
-    assert(bounded.truncated)
+    (1 to 20).foreach { _ =>
+      val failure = SocialSearchScan.search(List("a"), "x", (_, _, _) => IO.pure(Left("offline"))).unsafeRunSync()
+      assert(failure.failed && failure.truncated)
+      val bounded = SocialSearchScan.search(List("a"), "missing", (_, after, _) => IO.pure(Right(
+        (1 to 200).toList.map(i => MessageSummary(after + i, "s", "text", "other", 1L))
+      ))).unsafeRunSync()
+      assertEquals(bounded.pages, 10)
+      assert(bounded.truncated)
+    }
   }
