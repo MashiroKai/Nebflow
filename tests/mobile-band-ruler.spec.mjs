@@ -53,9 +53,21 @@ for (const width of [320,375,390,430]) {
    const avatar=root.querySelector('.mh-idhead img,.g2-chat-head img,.mh-idhead-avatar');
    const tool=root.querySelector('.ta-tool');
    const bottomControls = id === 'canvas' ? [...root.querySelectorAll('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-zoom-btn')].filter(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width&&r.height&&s.visibility!=='hidden'&&s.display!=='none'}).map(e=>{const s=getComputedStyle(e);return {selector:e.className,box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null,padding:s.padding,radius:s.borderRadius,transform:s.transform}}) : [];
-   return {id,buttons:els.map(e=>({box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null})),bottomControls,avatar:avatar?rect(avatar):null, tool:tool?rect(tool):null,bottom:getComputedStyle(document.body).getPropertyValue('--mcv-size-circle').trim(),capsule:getComputedStyle(document.body).getPropertyValue('--mcap-h').trim()};
+   return {id,buttons:els.map(e=>{const s=getComputedStyle(e);return {box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null,padding:s.padding,radius:s.borderRadius,overflowX:document.documentElement.scrollWidth-innerWidth}}),bottomControls,avatar:avatar?rect(avatar):null, tool:tool?rect(tool):null,bottom:getComputedStyle(document.body).getPropertyValue('--mcv-size-circle').trim(),capsule:getComputedStyle(document.body).getPropertyValue('--mcap-h').trim()};
   },id);
   rows.push(data); console.log(JSON.stringify({width,...data}));
+  if(id==='canvas') {
+   const states=await page.evaluate(()=>{
+    const top=document.querySelector('.mobile-page.live .mf-cv-close'), bottom=document.querySelector('.mobile-page.live .canvas-find-toggle');
+    const read=e=>({opacity:getComputedStyle(e).opacity,cursor:getComputedStyle(e).cursor,transform:getComputedStyle(e).transform});
+    if(!top||!bottom)return null;
+    const rest=[read(top),read(bottom)]; top.disabled=true;bottom.disabled=true;
+    const disabled=[read(top),read(bottom)]; top.disabled=false;bottom.disabled=false;
+    return {rest,disabled};
+   });
+   console.log('STATES',JSON.stringify({width,states}));
+   if(!states || states.disabled.some(s=>s.opacity!=='0.35'||s.cursor!=='not-allowed')) {console.log('FAIL disabled state',width,JSON.stringify(states));errors++;}
+  }
   if (process.env.BAND_CLICKS && width===375 && ['messages','contacts','settings','canvas'].includes(id)) {
    const card=await page.locator('#modal-overlay.on #takeover-box').isVisible();
    console.log(`CLICK ${id} takeover-card-visible=${card}`);
@@ -71,7 +83,7 @@ for (const width of [320,375,390,430]) {
  writeFileSync(join(out,`${width}.json`),JSON.stringify(rows,null,2));
  const values=rows.flatMap(r=>r.buttons.map(b=>({id:r.id,...b})));
  const expected=48;
- for(const b of values) if(Math.abs(b.box.w-expected)>.15||Math.abs(b.box.h-expected)>.15||!b.icon||Math.abs(b.icon.w-18)>.15||Math.abs(b.box.y-16)>.5||Math.min(b.box.x,b.box.right)>16.5) {console.log('FAIL geometry',JSON.stringify({width,...b,expected}));errors++;}
+ for(const b of values) if(Math.abs(b.box.w-expected)>.15||Math.abs(b.box.h-expected)>.15||!b.icon||Math.abs(b.icon.w-18)>.15||Math.abs(b.box.y-16)>.5||Math.min(b.box.x,b.box.right)>16.5 || b.box.x<0 || b.box.x+b.box.w>width+.15 || b.overflowX>0 || b.padding!=='0px' || !(b.radius==='50%' || parseFloat(b.radius)>=expected/2)) {console.log('FAIL geometry',JSON.stringify({width,...b,expected}));errors++;}
  for(const id of ['chat','messages','contacts','canvas','settings','tasks']) if(!rows.find(r=>r.id===id).buttons.length) {console.log('FAIL missing top button',id); errors++;}
  if(rows.find(r=>r.id==='canvas').buttons.length!==2) { console.log('FAIL canvas requires two top controls'); errors++; }
  const bottomControls=rows.find(r=>r.id==='canvas').bottomControls;
@@ -82,6 +94,40 @@ for (const width of [320,375,390,430]) {
   }
  }
  if(rows.find(r=>r.id==='workbench').buttons.length) { console.log('FAIL workbench unexpectedly has a top button'); errors++; }
+ await context.close();
+}
+// Desktop uses the same real application assets and a routed, isolated backend fixture.
+{
+ const context=await browser.newContext({viewport:{width:1280,height:800},reducedMotion:'reduce'});
+ const page=await context.newPage();
+ await page.addInitScript(()=>{localStorage.setItem('nebflow_token','e2e-token');localStorage.setItem('stand_sw','0');});
+ await page.route('**/*',route=>{
+  const p=decodeURIComponent(new URL(route.request().url()).pathname);
+  if(p.startsWith('/api/')) return route.fulfill({json:{}});
+  const f=resolve(web,'.'+(p==='/'?'/index.html':p));
+  if(!f.startsWith(web+'/')) return route.fulfill({status:403});
+  const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.json':'application/json','.png':'image/png','.woff2':'font/woff2'};
+  try{return route.fulfill({body:readFileSync(f),contentType:mime[extname(f)]||'application/octet-stream'});}catch{return route.fulfill({status:404});}
+ });
+ await page.routeWebSocket(/\/ws/,ws=>{
+  const config=()=>ws.send(JSON.stringify({type:'configData',config:'{}',configured:true,onboarding:'done'}));
+  const sessions=()=>ws.send(JSON.stringify({type:'sessionList',sessions:[{id:'band-test',name:'root',agentName:'Nebula'}],folders:[],activeId:'band-test'}));
+  config();sessions();ws.onMessage(raw=>{let m;try{m=JSON.parse(raw)}catch{return}if(m.type==='getConfig')config();if(['getSessions','listSessions'].includes(m.type))sessions();if(m.type==='getHistory')ws.send(JSON.stringify({type:'historyPage',sessionId:m.sessionId,messages:[],hasMore:false,offset:0}));});
+ });
+ await page.goto('http://localhost:8899/');
+ await page.waitForFunction(async()=>{const s=(await import('/js/state.js')).default;return s.ws?.readyState===1});
+ await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'desktop-band-document',title:'Canvas test',itemType:'markdown',pinned:false,content:'# Canvas'}})));
+ await page.waitForSelector('.canvas-tab-pane .canvas-find-toggle',{timeout:12000});
+ const rows=await page.evaluate(()=>[...document.querySelectorAll('#canvas-head-close, .canvas-tab-pane .canvas-find-toggle, .canvas-tab-pane .canvas-source-toggle, .canvas-tab-pane .canvas-ref-select')].map(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e),i=e.querySelector('svg')?.getBoundingClientRect();return {selector:e.className||e.id,w:r.width,h:r.height,icon:i?{w:i.width,h:i.height}:null,radius:s.borderRadius,padding:s.padding,visible:r.width>0&&r.height>0}}).filter(e=>e.visible));
+ console.log('DESKTOP',JSON.stringify(rows));
+ const desktopBottom=await page.locator('.canvas-tab-pane .canvas-find-toggle:visible').first().boundingBox();
+ const desktopSource=await page.locator('.canvas-tab-pane .canvas-source-toggle:visible').first().boundingBox();
+ const gap=desktopBottom.x-(desktopSource.x+desktopSource.width);
+ console.log('DESKTOP GAP',gap);
+ if(Math.abs(gap-8)>.15){console.log('FAIL desktop gap',gap);errors++;}
+ if(!rows.some(r=>r.selector.includes('canvas-find-toggle'))) {console.log('FAIL desktop missing baseline');errors++;}
+ for(const row of rows) if(Math.abs(row.w-40)>.15||Math.abs(row.h-40)>.15||!row.icon||Math.abs(row.icon.w-18)>.15||row.padding!=='0px'||!(row.radius==='50%'||parseFloat(row.radius)>=20)){console.log('FAIL desktop geometry',JSON.stringify(row));errors++;}
+ await page.screenshot({path:join(out,'desktop.png')});
  await context.close();
 }
 await browser.close();
