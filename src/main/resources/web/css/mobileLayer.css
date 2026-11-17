@@ -1929,20 +1929,24 @@ body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
   mask-image: none;
 }
 /* 点活签展开全名（作者令 §二.3「点击展开全名」）：常态已放大到 112px 宽，展开
-   档再加一档。钳法沿用内容起点让位批的 --mchrome-inset 口径（两侧各让 72 =
-   簇顶 16 + 钮 48 + 呼吸 8），但**先除掉环位姿 scale 再钳**：`max-width` 是
-   缩放前的盒宽，渲染宽 = max-width × --rsc（中签 1.14）—— 直接按 100vw − 2·72
-   钳会渲染成 263px、两头各压进浮钮 8px（旧批里 scale=1 时才成立）。除掉 scale
-   ⇒ 375 下 max-width 202.6、渲染恰 231px、跨 72…303，两端各余 8px 气隙；
-   `260px` 上限（渲染 296px）只在窄屏且 scale 更小时兜底。仍居中、仍同一水平线、
-   仍零省略号（超宽继续走 label 的 mask 渐隐，而不是「…」）。
-   展开预算**加回引用钮的 44px**（canvas 引用钮批 0f2b45d62 起，展开档签内含
-   「引用此看板」≥44px 触控热区；不给回去 label 就被挤窄一档，作者令 §二.3
-   「点击展开全名」的合同被穿底 —— 实测 375 label 147.4 < 常态收束 160.5）。
+   档再加一档。钳法沿用内容起点让位批的 --mchrome-inset 口径（两侧各让
+   --mchrome-inset = 簇顶 16 + 钮径 --band-d + 呼吸 8；band-d 批起随视宽 clamp
+   36…44，375 下 37.5 ⇒ inset 61.5），但**先除掉环位姿 scale 再钳**：`max-width`
+   是缩放前的盒宽，渲染宽 = max-width × --rsc（中签 ~1.10）——直接按渲染宽钳
+   会两头各压进浮钮。除掉 scale ⇒ 375 下渲染封顶 251.5、实测 248.6、跨
+   63.2…311.8，两端各余 ~9.7px 气隙；`260px` 上限只在宽屏且 scale 更小时兜底。
+   仍居中、仍同一水平线、仍零省略号（超宽继续走 label 的整字收束）。
+   引用钮的 44px 记在**预算内**（canvas 引用钮批 0f2b45d62 起，展开档签内含
+   「引用此看板」≥44px 触控热区，与 label 同一份内容宽，chipInnerWidth 同源
+   扣减）。旧档曾在预算上**再加** 44px（0f2b45d62）：渲染宽随之超到 296px、
+   签缘压进两侧 ✕/堆叠浮钮（canvas-overlap-guard 批 2026-11-17 改前实测 375
+   两侧各交叠 211px²，签越长压得越深、预算上限 14px）—— 预算 = 浮钮让位后
+   的全宽，引用钮只能在预算里分，不能外借。展开 ≥ 常态的合同由预算差保住
+   （展开 ~220 ≫ 常态 112，label 拿到的份额仍大于常态档）。
    2600ms 自动收，换签即收 —— JS 侧定时。 */
 body.mobile-layer .mf-strip-chip.is-expanded {
   z-index: 3;
-  max-width: min(calc((100vw - 2 * var(--mchrome-inset) + 44px) / var(--rsc, 1)), calc(260px + 44px));
+  max-width: min(calc((100vw - 2 * var(--mchrome-inset)) / var(--rsc, 1)), 260px);
   opacity: 1;
   filter: none;
 }
@@ -1993,6 +1997,30 @@ body.mobile-layer .mf-cv-count {
   white-space: nowrap;
   border: 0;
   pointer-events: none;
+}
+/* ── canvas 查找条手机档（canvas-overlap-guard 批 2026-11-17）──────────────
+   split.css 的 .nf-findbar 锚 --cv-head-clear —— 那是**桌面**口径（= header 行
+   下缘 46 + 10 呼吸 = 56），手机层从未覆写它（mobileLayer 只覆写 --cv-safe-top /
+   --cv-head-2row）。修前实测 375：查找条落 y56…100 —— 上缘切进环带
+   （--mf-strip-h = --mchrome-clear，band-d 批后 61.5）里、活签底缘被压 1.6px
+   （交叠 188px²）；且条宽 364（输入固定 200 + 计数 44 + 三钮 + 缝）> 375 − 2×14
+   ⇒ 左缘溢出屏外 3px。手机档三改（桌面零触碰）：
+     ① top 换锚 --mf-strip-h + 8 呼吸（band-d 批后 375 实测带高 61.5 ⇒ 条顶
+        69.5，与活签底 57.6 让开 11.9px）：条恒在环带/浮钮下方，与桌面「条在
+        header 行下方」的排他语义同族，只是让位尺换手机顶带；
+     ② left/right 同钉 14：条宽随视口自适应（375 下恰 347），不再定宽溢出；
+     ③ 输入 width:auto + flex 收缩：窄屏由输入让位，内件（计数/钮）保尺寸。
+   回归钉：tests/canvas-overlap-guard.spec.mjs（碰撞体积门禁，改前红基线即
+   上述两条读数）。 */
+body.mobile-layer .canvas-tab-pane .nf-findbar {
+  top: calc(var(--mf-strip-h, var(--mchrome-clear)) + var(--ds-space-2, 8px));
+  left: 14px;
+  right: 14px;
+}
+body.mobile-layer .nf-findbar-input {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* ── 底部小点指示器（作者令 2026-11-02 07:22 §三）───────────────────────
    位置 = 内容区底部居中（dock 之上；不压 dock、不压内容）。
