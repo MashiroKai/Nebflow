@@ -92,7 +92,8 @@ object PortalHostFaces:
    */
   final case class TunnelGuard(
     observe: String => IO[Unit],
-    check: String => IO[Option[String]]
+    check: String => IO[Option[String]],
+    retryAfterSeconds: Int = 60
   )
 
   /**

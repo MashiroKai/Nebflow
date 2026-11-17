@@ -196,7 +196,8 @@ private[neblink] final class PortalTunnelBridge(
                 frame.requestId,
                 429,
                 "application/json",
-                s"""{"error":"rate_limited","reason":"$reason"}"""
+                s"""{"error":"rate_limited","reason":"$reason"}""",
+                Vector("retry-after" -> guard.retryAfterSeconds.toString)
               ).start.void
           case None => startHttpCycle(frame)
         }
@@ -431,10 +432,16 @@ private[neblink] final class PortalTunnelBridge(
     (merged.toVector, setCookies.toVector)
 
   /** Standalone status answer (429 / 502 / 503 shapes) with a one-frame plain body. */
-  private def respondStatus(requestId: String, status: Int, contentType: String, body: String): IO[Unit] =
+  private def respondStatus(
+    requestId: String,
+    status: Int,
+    contentType: String,
+    body: String,
+    extraHeaders: Vector[(String, String)] = Vector.empty
+  ): IO[Unit] =
     sender.send(
       PortalWireCodec.encode(
-        PortalWireCodec.HttpResponse(requestId, status, Vector("content-type" -> contentType), Vector.empty)
+        PortalWireCodec.HttpResponse(requestId, status, Vector("content-type" -> contentType) ++ extraHeaders, Vector.empty)
       )
     ) *>
       // Every cycle ends with a `more=false` frame — empty body included; the
