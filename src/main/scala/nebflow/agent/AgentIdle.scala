@@ -336,6 +336,7 @@ private[agent] object AgentIdle:
                   )
                 )
               else IO.unit
+            _ <- emitLedgerReplay(resources, state, ledgerFlush)
             _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
             _ <- sessionBusyIO
             _ <- injectedEventIO
@@ -769,6 +770,7 @@ private[agent] object AgentIdle:
                       )
                     )
                   else IO.unit
+                _ <- emitLedgerReplay(resources, state, ledgerFlush)
                 _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
                 _ <- sessionBusyIO
                 _ <- receiveVisibility(waiting = false)
@@ -1126,6 +1128,7 @@ private[agent] object AgentIdle:
                   s"batch=${expanded.size} heldFlush=${heldMessages.size} texts=${expanded.map(_.text.take(40)).mkString(" | ").take(200)}"
                 )
               )
+              _ <- emitLedgerReplay(resources, state, ledgerFlush)
               _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
               _ <-
                 if depth == 0 then

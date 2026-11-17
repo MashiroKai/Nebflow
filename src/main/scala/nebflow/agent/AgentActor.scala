@@ -453,6 +453,18 @@ object AgentActor extends AgentCore with AgentSession:
         s"held=${plan.events.size}"
       )
     ) *>
+      plan.events.traverse_ { event =>
+        visibleExternalEventSource(event.source, event.eventType).fold(IO.unit) { source =>
+          val sender = event.metadata("agentName").flatMap(_.asString)
+            .orElse(event.metadata("taskId").flatMap(_.asString)).orElse(event.correlationId)
+          emitInjectedUserEvent(
+            resources, plan.state.wsSend, plan.state.sessionId, event.payload, source,
+            Some(event.eventType), sender, sessionProject = plan.state.projectName,
+            fileChanges = event.metadata("fileChanges"), dedup = true,
+            askAddress = event.metadata("askMailAddress").flatMap(_.asString)
+          )
+        }
+      } *>
       touchBarrierSnapshot(resources, plan.state.sessionId, 0, 0) *>
       syncHeldReceipts(resources, plan.state.sessionId, Nil).flatMap((held, unread) =>
         emitHeldReceiptsBadge(plan.state, held, unread)
@@ -484,6 +496,19 @@ object AgentActor extends AgentCore with AgentSession:
     /** 补投的账目条目（日志/断言输入）。 */
     entries: List[nebflow.core.tools.BgTaskLedger.Entry]
   )
+
+  private[agent] def emitLedgerReplay(
+    resources: SharedResources,
+    state: AgentState,
+    plan: LedgerFlushPlan
+  )(using ActorContext[AgentCommand]): IO[Unit] =
+    plan.entries.traverse_ { entry =>
+      val text = s"Background task ${entry.jobId}: ${entry.description}\n${entry.payload.take(2000)}"
+      emitInjectedUserEvent(
+        resources, state.wsSend, state.sessionId, text, "background", Some(entry.eventType),
+        Some(entry.jobId), sessionProject = state.projectName
+      )
+    }
 
   private[agent] def flushPendingLedgerCompletions(
     state: AgentState,
