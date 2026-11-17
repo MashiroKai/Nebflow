@@ -133,8 +133,10 @@ private[gateway] object ConfigRoutes:
               val tab = c.get[String]("tabInstanceId").toOption.filter(s => s.trim.nonEmpty && s.length <= 128)
               (client, tab) match
                 case (Some(id), Some(t)) if action == "claim" =>
-                  canvasTakeover.claimCanvas(principal, id, t).flatMap(epoch =>
-                    Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson)))
+                  canvasTakeover.claimCanvas(principal, id, t, c.get[Long]("expectedEpoch").toOption).flatMap {
+                    case Some(epoch) => Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
+                    case None => Conflict(Json.obj("error" -> "concurrent_writer_claim".asJson))
+                  }
                 case (Some(id), Some(t)) =>
                   c.get[Long]("epoch").toOption match
                     case Some(epoch) => canvasTakeover.releaseCanvas(principal, id, t, epoch).flatMap {

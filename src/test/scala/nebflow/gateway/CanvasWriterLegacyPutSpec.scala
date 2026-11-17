@@ -11,6 +11,23 @@ import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.Authorization
 
 class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
+  test("concurrent claims with the same observed epoch have one winner") {
+    val token = "canvas-writer-test-token"
+    val routes = new RestApiRoutes(
+      tokenRef = Ref.unsafe[IO, String](token),
+      configRef = Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+      sharedResources = null, sessionStore = null, wsRoutes = null
+    ).routes
+    def claim(tab: String): IO[Status] =
+      val body = Json.obj("clientId" -> "browser-a".asJson, "tabInstanceId" -> tab.asJson, "expectedEpoch" -> 0.asJson)
+      val req = Request[IO](Method.POST, Uri.unsafeFromString("/canvas-writer/claim"))
+        .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token))).withEntity(body)
+      routes(req).value.map(_.getOrElse(fail("route fell through")).status)
+    (claim("a"), claim("b")).parTupled.map { case (a, b) =>
+      assertEquals(List(a, b).count(_ == Status.Ok), 1)
+      assertEquals(List(a, b).count(_ == Status.Conflict), 1)
+    }
+  }
   test("authenticated legacy canvas PUT without writer identity is rejected") {
     val token = "canvas-writer-test-token"
     val routes = new RestApiRoutes(
@@ -54,17 +71,31 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
       first <- call(Method.POST, "/canvas-writer/claim", identity("tab-a"))
       _ = assertEquals(first.status, Status.Ok)
       firstBody <- first.as[Json]
+      _ = assertEquals(firstBody.hcursor.get[String]("role").toOption, Some("writer"))
       firstEpoch = firstBody.hcursor.get[Long]("epoch").toOption.get
+      _ = assertEquals(firstEpoch, 1L)
       second <- call(Method.POST, "/canvas-writer/claim", identity("tab-b"))
       _ = assertEquals(second.status, Status.Ok)
       secondBody <- second.as[Json]
       secondEpoch = secondBody.hcursor.get[Long]("epoch").toOption.get
-      _ = assert(secondEpoch > firstEpoch)
+      _ = assertEquals(secondBody.hcursor.get[String]("role").toOption, Some("writer"))
+      _ = assertEquals(secondEpoch, firstEpoch + 1L)
       reader <- call(Method.PUT, "/canvas-tabs", identity("tab-a").deepMerge(
         Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
       ))
       _ = assertEquals(reader.status, Status.Conflict)
       rejection <- reader.as[Json]
-      _ = assert(Set("canvas_read_only", "stale_writer_epoch").contains(rejection.hcursor.get[String]("error").getOrElse("")))
+      _ = assertEquals(rejection.hcursor.get[String]("error").toOption, Some("stale_writer_epoch"))
+      writer <- call(Method.PUT, "/canvas-tabs", identity("tab-b").deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> secondEpoch.asJson)
+      ))
+      _ = assertEquals(writer.status, Status.Ok)
+      stored <- call(Method.GET, "/canvas-tabs", Json.obj())
+      _ = assertEquals(stored.status, Status.Ok)
+      storedBody <- stored.as[Json]
+      _ = assertEquals(storedBody.hcursor.get[Int]("v").toOption, Some(2))
+      third <- call(Method.POST, "/canvas-writer/claim", identity("tab-a"))
+      thirdBody <- third.as[Json]
+      _ = assertEquals(thirdBody.hcursor.get[Long]("epoch").toOption, Some(secondEpoch + 1L))
     yield ()
   }
