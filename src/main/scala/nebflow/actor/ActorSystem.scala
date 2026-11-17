@@ -184,9 +184,15 @@ final class LocalActorSystem(
       ctx = new LocalActorContext[Msg](ref, this, ctxLog, turnFibersRef, childrenRef)
       initBehavior <- behavior.onStart(ctx)
       behaviorRef <- Ref.of[IO, Behavior[Msg]](initBehavior)
-      fiber <- actorLoop(path, ctx, queue, sysQueue, behaviorRef, ttl, childrenRef).start
-      _ <- fiberPromise.complete(fiber)
-      _ <- registry.update(_.updated(path.toString, RegistryEntry(ref, fiber, sysQueue)))
+      published <- Deferred[IO, Unit]
+      _ <- IO.uncancelable { _ =>
+        for
+          fiber <- (published.get *> actorLoop(path, ctx, queue, sysQueue, behaviorRef, ttl, childrenRef)).start
+          _ <- fiberPromise.complete(fiber)
+          _ <- registry.update(_.updated(path.toString, RegistryEntry(ref, fiber, sysQueue)))
+          _ <- published.complete(())
+        yield ()
+      }
     yield ref
     end for
 
@@ -209,7 +215,11 @@ final class LocalActorSystem(
   def stop(ref: ActorRef[?]): IO[Unit] =
     ref match
       case r: LocalActorRef[?] =>
-        r.stop *> registry.update(_ - r.path.toString)
+        r.stop *> registry.update { entries =>
+          entries.get(r.path.toString) match
+            case Some(entry) if entry.ref eq r => entries - r.path.toString
+            case _ => entries
+        }
       case _ => IO.unit
 
   def isAlive(path: ActorPath): IO[Boolean] = registry.get.map(_.contains(path.toString))
@@ -378,7 +388,11 @@ final class LocalActorSystem(
     // is the only place that knows it exited; remove self here.
     loop.guarantee {
       for
-        _ <- registry.update(_ - path.toString)
+        _ <- registry.update { entries =>
+          entries.get(path.toString) match
+            case Some(entry) if entry.ref eq ctx.self => entries - path.toString
+            case _ => entries
+        }
         _ <- ctx
           .cancelCurrentTurn()
           .handleErrorWith(e => ctx.log.warn(s"cancelCurrentTurn during cleanup failed: ${e.getMessage}").void)
