@@ -323,7 +323,20 @@ body.mobile-layer {
   --mtitle-r: var(--ds-space-4);
   --mtitle-start: 8px;
   --mtitle-snap: 56px;
-  --mcap-h: 48px;
+  /* ── 带几何单源（ui-unify-panels 批 2026-11-17）────────────────────────
+     顶/底三区带（[圆钮]—[胶囊]—[圆钮]）的统一直径档：
+       --band-d    手机直径 = clamp(36px, 10vw, 44px)（375 视宽 → 37.5；
+                   414 → 41.4；≥440 封顶 44）；桌面档 = sapphire.css
+                   --cv-size-circle 40px（不动）。**胶囊高恒等圆钮直径**。
+       --band-icon 带内图标 = 直径 45%（胶囊内图标口径；圆钮同用一把尺，
+                   37.5 × 0.45 = 16.875）。CSS 不能做 px/px 比值，但
+                   calc(长度 × 0.45) 合法 ⇒ 图标随直径档自动等比。
+     消费面（一律 var()，禁第二把尺）：glass.css 手机 .g2-fab、本文件
+     chrome 键/返回钮/三点键/胶囊/页面 FAB 让位、mobile-todo-apple.css
+     带族、design-system.css --ds-turn-btn 手机档（经 --mcv-* 桥）。 */
+  --band-d: clamp(36px, 10vw, 44px);
+  --band-icon: calc(var(--band-d) * 0.45);
+  --mcap-h: var(--band-d);
   --mcap-pad: 24px;
   --mcap-vpad: 1px;
   --mcap-radius: 999px;
@@ -353,8 +366,8 @@ body.mobile-layer {
      全部 .g2-fab 基准钮（返回钮/chrome 键/canvas 页 ✕ 与层叠钮/会话页三点——
      它们的 48 档是各自块的显式口径，基类一改就是一次范围外视觉回归）。本组
      token 只服务面板底钮这一档，主会话腿（--mtap-lg 48 / --micon 22）不读它。 */
-  --mcv-size-circle: 44px;
-  --mcv-icon: 20px;
+  --mcv-size-circle: var(--band-d);
+  --mcv-icon: var(--band-icon);
   /* ── 顶部悬浮 chrome 簇几何（内容起点让位批 2026-11-02 作者令： 「内容都需要
      从按钮下开始，只有向上滑动的时候才允许从按钮下过」）──
      簇 = 页头零高带里那几颗 48px 悬浮圆钮（返回钮 / canvas 页 ✕ 与层叠钮 /
@@ -376,7 +389,7 @@ body.mobile-layer {
      本批的消费点 = ①标题/胶囊左右内缩（--mtitle-inset）；②canvas 环标签展开
      签的横向钳位（--mchrome-inset，见 .mf-strip-chip.is-expanded）。 */
   --mchrome-top: var(--ds-space-4);      /* 16 —— 桥桌面间距阶梯（透传悬浮批，同值换源） */
-  --mchrome-btn: var(--mtap-lg);
+  --mchrome-btn: var(--band-d);
   --mchrome-breathe: var(--ds-space-2);  /* 8 —— 同上（簇顶/呼吸两字面量随批归 --ds-* 桥） */
   --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
   --mchrome-inset: var(--mchrome-clear);
@@ -421,7 +434,7 @@ body.mobile-layer {
          出整条钮带，最后一行的底缘恒在钮上缘之上（不做「压住末行再补 padding」
          的两把尺）。 */
   --mpage-fab-inset: var(--ds-space-4);
-  --mpage-fab-clearance: calc(var(--mtap-lg) + var(--mpage-fab-inset) * 2);
+  --mpage-fab-clearance: calc(var(--band-d) + var(--mpage-fab-inset) * 2);
   /* 图标 */
   --micon: 22px;
   --micon-sm: 20px;
@@ -560,7 +573,7 @@ body.mobile-layer .mh-chrome-btn {
 }
 body.mobile-layer .mh-chrome-btn[data-chrome='tasks'] { left: var(--mchrome-top, 16px); }
 body.mobile-layer .mh-chrome-btn[data-chrome='search'] { right: var(--mchrome-top, 16px); }
-body.mobile-layer .mh-chrome-btn svg { width: 20px; height: 20px; }
+body.mobile-layer .mh-chrome-btn svg { width: var(--band-icon, 20px); height: var(--band-icon, 20px); }
 /* 按压弹簧随统一按钮玻璃批迁 glass.css 手机弹簧档（.g2-fab 基准类共档）。 */
 body.mobile-layer .mh-chrome-badge {
   position: absolute;
@@ -1014,8 +1027,8 @@ body.mobile-layer .mobile-back-btn {
   position: absolute;
   top: calc(var(--mchrome-top, 16px) + env(safe-area-inset-top, 0px));
   left: var(--mchrome-top, 16px);
-  width: 48px;
-  height: 48px;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
   padding: 0;
   border-radius: 50%;
   color: var(--color-frame-text-bright, var(--color-frame-text));
@@ -1032,8 +1045,8 @@ body.mobile-layer .mobile-back-btn {
    （20px，与 chrome 键同）；按压/材质 = g2-fab 既有块（scale .88 spring）。 */
 body.mobile-layer .mobile-back-btn svg {
   display: block;
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
 }
 /* 玻璃空间居中清查（顶部胶囊语言统一批「玻璃空间相对按钮图标居中…全清查」）：
    顶栏/页面族全部圆形玻璃键的图标块统一 display:block + flex 居中口径——
@@ -4736,8 +4749,13 @@ body.mobile-layer #usage-grid .ud-cell[data-date]::after {
    绝对定位后代不受该盒 overflow 裁剪）。 */
 body.mobile-layer .mh-idhead {
   --idhead-avatar: 56px;
-  --idhead-seat: 12px;  /* 头顶净空：12 + 56/2 = 40 = 左右 48px 钮的中心（top 16 + 24）
-                           ⇒ 头像中心与两颗钮同轴，且头像视觉中心落在同一水平线 */
+  /* 头顶净空（ui-unify-panels 批 2026-11-17 由字面量 12 改派生）：带直径从
+     48 档换 --band-d 后中心线随直径走，座位必须跟着算才保「头像中心 = 双钮
+     中心」≤1px：seat = 带顶 16 + 直径/2 − 头像/2（band-d 37.5 时 = 6.75）。 */
+  --idhead-seat: calc(
+    var(--mchrome-top, 16px) + var(--band-d, 48px) / 2
+    - var(--idhead-avatar) / 2
+  );
   position: absolute;
   top: calc(var(--idhead-seat) + env(safe-area-inset-top, 0px));
   left: 0;
@@ -4839,8 +4857,8 @@ body.mobile-layer .mh-sess-more {
   position: absolute;
   top: calc(16px + env(safe-area-inset-top, 0px));
   right: 16px;
-  width: 48px;
-  height: 48px;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
   padding: 0;
   border-radius: 50%;
   display: flex;
@@ -4851,8 +4869,8 @@ body.mobile-layer .mh-sess-more {
 }
 body.mobile-layer .mh-sess-more svg {
   display: block;
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
 }
 /* ⑥ 会话窗体里的**旧窗头退场**（作者令「不许任一会话类型保留旧的『行内小头像 +
    名字』形态」）：头像/名字节点已迁入 .mh-idhead（同一节点、非复制 ⇒

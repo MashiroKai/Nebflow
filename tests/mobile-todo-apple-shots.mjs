@@ -215,9 +215,12 @@ async function mainLeg() {
     const f = document.querySelector('.mobile-page[data-page="tasks"] .ta-fab');
     if (!f) return null;
     const r = f.getBoundingClientRect();
-    return { w: r.width, h: r.height, right: innerWidth - r.right, bg: getComputedStyle(f).backgroundColor };
+    const d = getComputedStyle(document.body).getPropertyValue('--band-d') || '48px';
+    return { w: r.width, h: r.height, right: innerWidth - r.right, bg: getComputedStyle(f).backgroundColor, bandD: d.trim() };
   });
-  ok('(2) bottom-right blue FAB (48x48, --mtap-lg)', !!fab && Math.abs(fab.w - 48) < 1 && Math.abs(fab.h - 48) < 1, JSON.stringify(fab));
+  // ui-unify-panels 批（2026-11-17）：带直径档 48 字面量退役 → --band-d
+  // clamp(36px,10vw,44px)（375 视宽 = 37.5），FAB 与顶带圆钮同一把尺。
+  ok('(2) bottom-right blue FAB (--band-d, = top band circle tier)', !!fab && Math.abs(fab.w - 37.5) < 1 && Math.abs(fab.h - 37.5) < 1, JSON.stringify(fab));
 
   await page.screenshot({ path: join(SHOTS, 'light-01-tasks.png') });
 

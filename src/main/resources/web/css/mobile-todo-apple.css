@@ -86,7 +86,10 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
   display: flex;
   flex-direction: column;
   width: 100%;
-  padding-bottom: 28px;
+  /* H 批（ui-unify-panels 2026-11-17）：末尾让位不再用裸 28px —— 每页按自己的
+     底带垫整条钮带（tasks/list = 右下 FAB --mpage-fab-clearance；item = 底部
+     键盘工具胶囊 .ta-tool 的整条带），滚动到头时末行底缘恒在底带上缘之上。 */
+  padding-bottom: max(28px, var(--mpage-fab-clearance, 28px));
   box-sizing: border-box;
 }
 
@@ -308,10 +311,12 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill {
   position: absolute;
   top: 0;
   right: 0;
+  /* 胶囊高 = 圆钮直径（ui-unify-panels 批 2026-11-17）：--mcap-h 已换
+     --band-d 档，内键同径 ⇒ padding 2px 退役归 0，三键并排即是胶囊本体。 */
   height: var(--mcap-h);
   display: flex;
   align-items: center;
-  padding: 2px;
+  padding: 0;
   box-sizing: border-box;
   border-radius: var(--mcap-radius);
   pointer-events: auto;
@@ -319,18 +324,31 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill {
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill[hidden],
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill[hidden],
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill[hidden] { display: none; }
+/* 左槽隐形 spacer（ui-unify-panels 批 2026-11-17）：无动作槽位保三区带结构 ——
+   等宽于圆钮直径（--band-d）、零渲染零命中（visibility:hidden + 不接事件），
+   子页同槽被壳返回钮顶替时本元素不建（JS 只在首页 cluster 挂）。 */
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-slot-spacer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
+  border-radius: 50%;
+  visibility: hidden;
+  pointer-events: none;
+}
 /* Item page top bar, coaxial three pieces: the capsule yields to the left of
    the save button (48 + 8 gap) — back (shell "<") / capsule mid-right / save
    button at the far right (the .ta-save rule below pins it to right:0). */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill {
-  right: calc(var(--mtap-lg) + var(--mgap));
+  right: calc(var(--band-d, 48px) + var(--mgap));
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn {
   flex: none;
-  width: 44px;
-  height: 44px;
+  width: var(--band-d, 44px);
+  height: var(--band-d, 44px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -345,8 +363,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn {
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn svg,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn svg,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn svg {
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
   display: block;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn.on,
@@ -417,13 +435,13 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap {
   position: absolute;
   right: var(--mpad-x);
   bottom: 16px;
-  width: var(--mtap-lg);
-  height: var(--mtap-lg);
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
   z-index: 7;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab {
-  width: var(--mtap-lg);
-  height: var(--mtap-lg);
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
   background: rgb(var(--sapphire));
   border-color: transparent;
   color: var(--ta-ink);
@@ -433,8 +451,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab:hover {
   background: rgb(var(--sapphire));
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
-  width: 24px;
-  height: 24px;
+  width: var(--band-icon, 24px);
+  height: var(--band-icon, 24px);
   display: block;
 }
 
@@ -675,8 +693,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save:hover {
   transform: none;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save svg {
-  width: 22px;
-  height: 22px;
+  width: var(--band-icon, 22px);
+  height: var(--band-icon, 22px);
   stroke-width: 2.4;
 }
 /* Keyboard toolbar (three keys = date / flag / tag): hugs the keyboard —
@@ -692,7 +710,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
     max(var(--ta-kb, 0px), calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px)))
     + 8px
   );
-  height: 56px;
+  height: var(--band-d, 48px);
   display: flex;
   align-items: center;
   justify-content: space-around;
@@ -705,7 +723,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 44px;
+  min-height: var(--band-d, 44px);
   padding: 0 12px;
   border: none;
   border-radius: 999px;
@@ -718,8 +736,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
   max-width: 40%;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn svg {
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
   display: block;
   flex: none;
 }

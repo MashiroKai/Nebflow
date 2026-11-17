@@ -830,14 +830,17 @@ html[data-theme="dark"] {
   outline-offset: var(--btn-ring-offset);
 }
 
-/* ── 手机尺寸/弹簧档（body.mobile-layer 总开关，桌面零命中）────────────── */
+/* ── 手机尺寸/弹簧档（body.mobile-layer 总开关，桌面零命中）──────────────
+   带直径档（ui-unify-panels 批 2026-11-17）：48px 字面量退役，改吃
+   mobileLayer.css --band-d（clamp(36px,10vw,44px)；胶囊高 = 圆钮直径同一把尺），
+   图标 = 直径 45%（--band-icon）。缺 token 的边缘加载位回落旧 48/20 档。 */
 body.mobile-layer .g2-fab {
-  width: 48px;
-  height: 48px;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
 }
 body.mobile-layer .g2-fab svg {
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
 }
 body.mobile-layer .g2-pill {
   height: 44px;

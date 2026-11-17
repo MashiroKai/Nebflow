@@ -479,6 +479,11 @@ function buildHome(root, section, nav) {
   // ── White three-icon capsule at the top right (left end stays empty for the
   // back button; all three keys have real backing capabilities) ──
   const cluster = elIn(section, 'div', 'ta-cluster');
+  // 左槽隐形占位（ui-unify-panels 批 2026-11-17）：首页顶带左槽没有返回钮动作
+  // ⇒ 按带几何口径放等宽 invisible spacer 保三区结构（子页同槽 = 壳返回钮）。
+  // 绝不渲染可点但无功能的假按钮：spacer aria-hidden + pointer-events none。
+  const slotSpacer = elIn(cluster, 'div', 'ta-slot-spacer');
+  slotSpacer.setAttribute('aria-hidden', 'true');
   const pill = elIn(cluster, 'div', 'ta-pill nf-glass');
   const bSearch = iconBtn('ta-pill-btn', 'search', t('todoapple.search'));
   const bNewList = iconBtn('ta-pill-btn', 'list-plus', t('todoapple.newList'));
