@@ -3929,6 +3929,22 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wg-tip.para .td { color: var(--color-frame-text-dim, var(--wg-muted)); }
 
+/* Document citation card: full summary, never line-clamped. */
+.document-term-card {
+  position: fixed; z-index: 901; box-sizing: border-box;
+  width: min(380px, calc(100vw - 16px)); max-height: calc(100vh - 16px);
+  overflow-y: auto; overflow-wrap: anywhere;
+  padding: 14px; border-radius: var(--ds-radius-xl, 14px);
+  border: 1px solid var(--glass-border, rgba(128,128,128,.35));
+  background: var(--nf-glass-bg, var(--color-bg, #fff));
+  color: var(--color-frame-text-bright, var(--color-text, #222));
+  box-shadow: var(--frost-shadow, 0 8px 28px rgba(0,0,0,.18));
+}
+.document-term-summary { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; }
+.document-term-meta, .document-term-path { margin-top: 8px; font-size: 12px; opacity: .8; }
+.document-term-open { margin-top: 12px; cursor: pointer; }
+.document-term-open:focus-visible { outline: 2px solid var(--ds-link-term, #2684ff); outline-offset: 2px; }
+
 /* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。 */
 .nf-term-tip {
   position: fixed;

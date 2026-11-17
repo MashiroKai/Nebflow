@@ -8,4 +8,8 @@ During CLI index rebuild, a vault document with a frontmatter `summary` of 40–
 
 ## Acceptance
 
-Automated tests cover missing, underlength, 40, 100, and overlength summaries and real CLI rebuild/list/show/doc including complete text, path, status and modification time. Execute the suite 20 consecutive times in a single JVM without retry. No frontend or runtime instance changes.
+Automated tests cover missing, underlength, 40, 100, and overlength summaries and real CLI rebuild/list/show/doc including complete text, path, status and modification time. Execute the suite 20 consecutive times in a single JVM without retry.
+
+## Document citation card delta
+
+Document wikilinks and backlinks, and document reference message cards, open a keyboard-accessible card before navigation. The card queries the SQLite terms API for an exact local document path on every opening and presents the full summary, status, file update time and path; absent summaries retain an explicit fallback and an open-document button. Escape and outside click close and restore focus. Ordinary glossary-term previews and explicit file-opening surfaces remain unchanged. Remote documents show an unavailable-summary state because the local SQLite index cannot establish remote identity. Tests exercise the two citation surfaces, backlinks, missing summary and keyboard actions; real isolated-instance screenshots remain an acceptance requirement.
