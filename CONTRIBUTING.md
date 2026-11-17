@@ -72,6 +72,10 @@ BASE_URL=http://localhost:8090 NEBFLOW_TOKEN=... npx playwright test tests/smoke
 
 CI runs the smoke suite against a freshly built JAR, so a green local run plus green CI is the bar for frontend changes.
 
+### Mobile composer scale lint
+
+For the main composer at the mobile viewport, the send button's circular border box must be 0.625 times the voice button's circular border-box height, in both dimensions (tolerance 0.5 CSS px). The reference is the voice button's stable 64px interaction box, not the animated and transparent canvas pixels; the 40px send circle is smaller than the former 48px, while the shared component expands its hit area to 44px. Send and stop remain the same size. Desktop and other composers are outside this rule. The self-contained browser gate `node tests/mobile-send-scale.mjs` runs after the Playwright setup above; CI's `mobile-send-scale-lint` is blocking. It samples light and dark at 390×844; it is not a replacement for broader visual and interaction testing.
+
 ## Branches and commits
 
 The six branch classes are:

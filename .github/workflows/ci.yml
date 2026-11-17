@@ -70,6 +70,21 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: python3 scripts/check-delivery.py --base "$PR_BASE" --head HEAD
 
+  mobile-send-scale-lint:
+    name: Mobile send / voice scale lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock @playwright/test@1.62.0
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/mobile-send-scale.mjs
+
   user-knowledge-gate:
     name: User Knowledge Gate (#338)
     timeout-minutes: 10

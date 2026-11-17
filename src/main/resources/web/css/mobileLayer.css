@@ -3021,6 +3021,13 @@ body.mobile-layer .ds-turn-btn {
       的成果，本令不撤），本块更具体 ⇒ 只命中 Canvas Ask 面板输入条那两钮。
    ③ ask.css 的 `max(画布 chrome 档 40, 组件槽)` 取大者：桌面腿取 40（未变），
       手机腿取本块 44（> 40）⇒ 桌面/手机两档各走各的，互不牵动。 */
+/* The main composer shares a 40:64 visual-box scale with the voice orb.
+   Keep send and stop equal; the component retains its 44px expanded hit area. */
+body.mobile-layer #input-bar > .ds-turn-btn {
+  --ds-turn-btn-size: 40px;
+  --ds-turn-btn-icon: 18px;
+}
+
 body.mobile-layer .ask-dock .ds-turn-btn {
   --ds-turn-btn-size: var(--mcv-size-circle);
   --ds-turn-btn-icon: var(--mcv-icon);
