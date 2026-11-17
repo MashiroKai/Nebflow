@@ -42,7 +42,8 @@ object SttService:
         parse(os.read(configPath)).toOption.flatMap { json =>
           val hc = json.hcursor
           val apiKeyOpt = hc.downField("apiKey").as[String].toOption.filter(_.nonEmpty)
-          apiKeyOpt.flatMap { apiKey =>
+          apiKeyOpt.flatMap { storedKey =>
+            val apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, storedKey, "stt-runtime")
             val model = hc.downField("model").as[String].getOrElse(Defaults.SttDefaultModel)
             val endpoint = hc
               .downField("endpoint")

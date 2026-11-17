@@ -7,11 +7,11 @@ import nebflow.actor.AgentState
  * TaskBoard 注入拼装 + 身份透传 spec（TaskBoard 批 2：规格 §3a/§3c + §1d-2）。
  *
  * 覆盖：
- *  - newTaskPrompt/reentryPrompt 的 <task-board> 注入块拼装（§3a）：空串零注入
+ *  - newTaskPrompt/answerReentryPrompt 的 <task-board> 注入块拼装（§3a）：空串零注入
  *    （旧行为逐字节不变——DispatcherSpawnPromptSpec 回归基线不动）；非空时整块
  *    原样进入且【在任务文本之前】（拼装相对顺序 …→目录→记忆→任务板→任务文本）；
- *  - ProtocolFootnote 上报指引行（§3c）：末行措辞固化（spawn 注入链与 blocked
- *    协议同点同生命周期）；
+ *  - ProtocolFootnote 上报指引行（§3c）：末行措辞固化（spawn 注入链与节点协议
+ *    同点同生命周期）；blocked 终态退役后值域仅 finish / pass·fail，零受阻申报出口；
  *  - 身份透传链（§1d-2）：AgentState 三字段（flowNodeId/isDispatcher/projectName）
  *    → SessionContext → extension 读回（AgentCore 据此透传 ToolContext——字段
  *    拷贝由编译器命名参数把关，此处锁数据链语义）。
@@ -26,7 +26,6 @@ class TaskBoardInjectionSpec extends FunSuite:
     createdAt = 0L
   )
   private val node = NodeDef(id = "n-inj", name = "注入夹具节点", agent = "general", createdAt = 0L)
-  private val feedback = BlockedFeedback(category = "task-underspecified", detail = "缺参数", suggestion = "补任务文本")
 
   private val boardBlock =
     s"""<task-board>
@@ -54,40 +53,57 @@ class TaskBoardInjectionSpec extends FunSuite:
     val idx = List(p.indexOf("CATALOG-段"), p.indexOf("MEMORY-段"), p.indexOf("<task-board>"), p.indexOf("Task: T"))
     assert(idx.forall(_ >= 0) && idx == idx.sorted, s"order broken:\n$p")
 
-  test("reentryPrompt: 空板块零注入；非空时板块在四动作块之前"):
-    val plain = ProjectActor.reentryPrompt(pd, node, feedback, 1, "", "", "")
+  test("answerReentryPrompt: 空板块零注入；非空时板块在四动作块之前"):
+    val plain = ProjectActor.answerReentryPrompt(pd, node, "req-1", "答复文本X", "", "", "")
     assert(!plain.contains("<task-board>"), plain)
     assert(plain.contains("Read the current state first (NodeList"), plain) // 四动作块仍在
-    val withBoard = ProjectActor.reentryPrompt(pd, node, feedback, 1, "", "", boardBlock)
+    val withBoard = ProjectActor.answerReentryPrompt(pd, node, "req-1", "答复文本X", "", "", boardBlock)
     val boardIdx = withBoard.indexOf("<task-board>")
     val actionsIdx = withBoard.indexOf("Read the current state first (NodeList")
     assert(boardIdx >= 0 && boardIdx < actionsIdx, s"board must precede the four-action block:\n$withBoard")
 
   // ===== 节点侧脚注（§3c，措辞原文固化）=====
 
-  test("ProtocolFootnote 末行上报指引：close=完成，blocked=受阻（与 blocked 协议同点注入）"):
-    val last = NodeEngine.ProtocolFootnote.linesIterator.toList.last
-    assertEquals(last, "TaskBoard work order ⇒ close = done, blocked = stuck.")
-    // blocked 协议本体不动（既有断言锚）
-    assert(NodeEngine.ProtocolFootnote.contains("needs-split"))
-
-  test("ProtocolFootnote 措辞（blocked 结构化信号批 20260909，spec §5.2 #7；泛化批更名 node_report 统一三语义）：工具优先 + 文本备用通道裸形态强调"):
+  test("ProtocolFootnote 末行上报指引：close=完成，blocked=受阻（任务板四状态域措辞，与节点协议同点注入）"):
     val fn = NodeEngine.ProtocolFootnote
-    assert(fn.contains("node_report"), s"第一优先=工具申报:\n$fn")
-    assert(fn.contains("pass"), s"pass/fail 语义同走结构化申报（泛化面）:\n$fn")
-    assert(fn.contains("still write your wrap-up report"), s"申报后照常收尾（申报≠终止输出）:\n$fn")
-    assert(fn.contains("No tool ⇒ first line exactly `BLOCKED`"), s"文本通道降级定位:\n$fn")
-    assert(fn.contains("first line exactly `BLOCKED`"), s"裸形态强调（6 例 markdown 形态侵蚀实证）:\n$fn")
+    val last = fn.linesIterator.toList.last
+    assertEquals(last, "TaskBoard work order ⇒ close = done, blocked = stuck.")
+    // 节点生命周期 blocked 已退役：脚注零「受阻申报」出口（backtick 值域形态零出现；
+    // 末行的裸 blocked 属任务板四状态域语义，不是节点生命周期）
+    assert(!fn.contains("`blocked`"), s"blocked 值域形态必须零出现:\n$fn")
+    assert(!fn.contains("needs-split"), s"blocked 细分域已随终态退役删除:\n$fn")
+    assert(!fn.contains("BLOCKED"), s"文本锚定备用通道已随出口一并删除:\n$fn")
 
-  // node-output contract（2026-09-24）：末条输出 = 自身完成汇报、结果自包含（禁指代收尾）
-  // 两条要求是**新钉**（非既有断言措辞同步——本批未触发 §五 的同步条件：末行全等钉与
-  // `still write your wrap-up report` / `No tool ⇒ first line exactly \`BLOCKED\`` 等子串
-  // 全部逐字保持，无需改写任何既有断言字面量）。
-  test("ProtocolFootnote 输出契约（node-output contract）：末条输出 = 自身完成汇报（申报 ≠ 汇报）、结果自包含（禁 see above 指代）"):
+  test(
+    "ProtocolFootnote wording (text-anchored protocol): final text is the deliverable + AskHost guidance + no stopped/waiting declaration"
+  ):
+    val fn = NodeEngine.ProtocolFootnote
+    // Completion channel: the final assistant text IS the terminal report (the deliverable is the report; no prior declaration needed)
+    assert(
+      fn.contains("Your final assistant text IS the terminal report"),
+      s"completion report = the text itself:\n$fn"
+    )
+    assert(fn.contains("There is no stopped/waiting declaration"), s"no stopped/waiting declaration exit:\n$fn")
+    assert(fn.contains("call AskHost"), s"unclear task/authorization/dependency => AskHost:\n$fn")
+    assert(
+      fn.contains("state what is missing plainly in your wrap-up report"),
+      s"fallback = the wrap-up report states what is missing:\n$fn"
+    )
+    // The declaration tool channel and the BLOCKED grammar are retired and must not come back.
+    assert(!fn.contains("node_report") && !fn.contains("BLOCKED"), s"retired channels must not return:\n$fn")
+    assert(!fn.contains("Report before you finish"), s"old tool-declaration header must not return:\n$fn")
+    assert(!fn.contains("call it before wrapping up"), s"old tool-declaration duty sentence must not return:\n$fn")
+
+  // node-output contract: the last output is the node's own completion report and is self-contained
+  // (no "see above" style back references). The final text is both the terminal report and the
+  // wrap-up: there is no second declaration artifact any more.
+  test(
+    "ProtocolFootnote output contract (node-output contract): the last output is the node's own completion report (= the terminal report itself) and is self-contained"
+  ):
     val fn = NodeEngine.ProtocolFootnote
     assert(fn.contains("Your last output is the deliverable"), s"末条输出 = 交付物（引擎取最后一条 assistant 文本）:\n$fn")
     assert(fn.contains("completion report for this node"), s"内容 = 自身完成汇报:\n$fn")
-    assert(fn.contains("terminal declaration, not that report"), s"申报（node_report）≠ 汇报，两者是两件事:\n$fn")
+    assert(fn.contains("writing it IS the wrap-up action"), s"写报文 = 收尾动作本体（申报与汇报一体）:\n$fn")
     assert(fn.contains("Keep it self-contained"), s"要求 2 的抬头句:\n$fn")
     assert(fn.contains("\"see above\""), s"指代收尾必须点名禁用:\n$fn")
     assert(

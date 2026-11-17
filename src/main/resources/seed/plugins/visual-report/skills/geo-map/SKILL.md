@@ -51,7 +51,7 @@ description: 地理报告（cartopy 静态+folium 交互）；地图与空间分
 | Natural Earth 数据 | 海岸线/国界/行政区几何 | `ls ~\.local\share\cartopy\shapefiles\natural_earth\` → physical + cultural 在盘（见下） | https://www.naturalearthdata.com/ · 下载端点 https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip | 200 · 200（2026-10-04 实测） | 用已缓存图层降级；全缺则文字表格 |
 | matplotlib | cartopy 底座渲染 | 已装 3.11.2 | 见插件 README 链接验证表 | 200（2026-10-04，README 表） | plotly（已装）或数值表 |
 
-本机数据缓存现状（实测 2026-10-04）：`C:\Users\Kai\.local\share\cartopy\shapefiles\natural_earth\` 下 physical（110m coastline/land、50m coastline）+ cultural（110m admin_0_countries，180,924 B，本日补齐）。瓦片实测（同日）：tile.openstreetmap.org HEAD 与 GET 均超时；镜像 `https://tile.openstreetmap.de/{z}/{x}/{y}.png` 修正 301 后 GET 出真瓦片（256×256 PNG）；CartoDB 直连 `basemaps.cartocdn.com` GET 出真瓦片但 folium 0.20 内建名触发 API-key 警告（库口径按需 key，不依赖）；folium 页面依赖 CDN（jsdelivr/cdnjs/jquery 六端点）全部 200。
+本机数据缓存现状（实测 2026-10-04）：`C:\Users\name\.local\share\cartopy\shapefiles\natural_earth\` 下 physical（110m coastline/land、50m coastline）+ cultural（110m admin_0_countries，180,924 B，本日补齐）。瓦片实测（同日）：tile.openstreetmap.org HEAD 与 GET 均超时；镜像 `https://tile.openstreetmap.de/{z}/{x}/{y}.png` 修正 301 后 GET 出真瓦片（256×256 PNG）；CartoDB 直连 `basemaps.cartocdn.com` GET 出真瓦片但 folium 0.20 内建名触发 API-key 警告（库口径按需 key，不依赖）；folium 页面依赖 CDN（jsdelivr/cdnjs/jquery 六端点）全部 200。
 
 ### 降级链
 

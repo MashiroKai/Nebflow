@@ -195,7 +195,18 @@ const PROBE = `(() => {
     cluster: ['.canvas-source-toggle', '.canvas-ref-select', '.canvas-find-toggle']
       .map((s) => ({ s, r: box(pane ? pane.querySelector(s) : null) })).filter((c) => c.r),
     tier: {
-      mcapH: cs.getPropertyValue('--mcap-h').trim(),
+      // A 批（ui-unify-panels 45a3918a5）令 --mcap-h 换挡 var(--band-d)（clamp）：
+      // token 串不再可 parseFloat，档高真值改读探针**计算值**（height 单源同 var）。
+      mcapH: (() => {
+        const p = document.createElement('span');
+        p.style.height = 'var(--mcap-h)';
+        p.style.position = 'fixed';
+        p.style.visibility = 'hidden';
+        document.body.appendChild(p);
+        const h = getComputedStyle(p).height;
+        p.remove();
+        return h;
+      })(),
       cvCircleLg: root.getPropertyValue('--cv-size-circle-lg').trim(),
       cvSizeBtn: root.getPropertyValue('--cv-size-btn').trim(),
       mtapLg: cs.getPropertyValue('--mtap-lg').trim(),
@@ -205,8 +216,8 @@ const PROBE = `(() => {
     closeBtn: box(document.querySelector('.mf-cv-close')),
     stackBtn: box(document.querySelector('.mf-cv-stack')),
     askFab: box(document.querySelector('.ask-fab')),
-    // 标题单元素化批 2026-11-02：吸附胶囊 = .mobile-page-title 自身（装饰副本
-    // .mobile-page-title-mini 退役）——钮高对照仍取「页名元素在吸附态的高」。
+    // 大标题退役（ui-unify-panels B 批 2026-11-17）：页名元素不再建，
+    // capsule 读数恒 null（留作证据帧；档高真值单源 = --mcap-h token）。
     capsule: box(document.querySelector('.mobile-page-title')),
     pane: box(pane),
     panel: box(panel),
@@ -241,15 +252,15 @@ function assertLeg(tag, m, leg) {
   const square = boxes.filter((b) => Math.abs(b.r.h - b.r.w) > TOL).map((b) => `${b.name}=${b.r.w}×${b.r.h}`);
   ok(`${tag} ③ 钮高 = 钮宽 ±1（正方/正圆，${boxes.length} 件）`, square.length === 0, square.join(' ') || 'all square');
 
-  // ④ 钮高 = 尺寸真值档（手机：吸附胶囊实测高；桌面：--cv-size-circle-lg）
-  // 标题单元素化批 2026-11-02：吸附胶囊 = .mobile-page-title 自身，静止态它的盒
-  // 是**大标题档 52**（胶囊档 48 只是 p=1 的形态）；故档高真值取 token
-  // `--mcap-h`（单源），不再读静止态盒高（那会读成 52）。
+  // ④ 钮高 = 尺寸真值档（手机：--mtap-lg；桌面：--cv-size-circle-lg）
+  // 「钮高 = 吸附胶囊高」旧耦合双重退场：A 批（45a3918a5）令 --mcap-h 换挡
+  // var(--band-d)（≈37.5@375），B 批（2026-11-17）大标题整面退役 ⇒ 手机档
+  // 真值改取 --mtap-lg（这些 48px 触达钮的实际单源）。
   const tierVal = leg === 'mobile'
-    ? parseFloat(m.tier.mcapH)
+    ? parseFloat(m.tier.mtapLg)
     : parseFloat(m.tier.cvCircleLg);
   const heights = boxes.map((b) => b.r.h);
-  ok(`${tag} ④ 钮高 = 档高（${leg === 'mobile' ? '吸附胶囊 --mcap-h' : '--cv-size-circle-lg'} = ${tierVal}）|差| ≤2px`,
+  ok(`${tag} ④ 钮高 = 档高（${leg === 'mobile' ? '--mtap-lg' : '--cv-size-circle-lg'} = ${tierVal}）|差| ≤2px`,
     Number.isFinite(tierVal) && Math.abs(tierVal - WANT) <= TOL && heights.every((h) => Math.abs(h - tierVal) <= TIER_TOL),
     `tier=${tierVal} heights=${heights.map((h) => h.toFixed(0)).join('/')} tokens=${JSON.stringify(m.tier)}`);
 

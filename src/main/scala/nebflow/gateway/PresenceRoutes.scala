@@ -25,7 +25,6 @@ import nebflow.core.skill.SkillService
 import nebflow.core.task.{FileTaskStore, TaskStore}
 import nebflow.core.tools.NodeTools
 import nebflow.llm.*
-import nebflow.llm.decision.DecisionProvider
 import nebflow.llm.imagegen.{ImageGenAdapters, ImageGenProbe}
 import nebflow.llm.providers.ModelListFaces
 import nebflow.neblink.core.FriendCodecs.given
@@ -65,10 +64,6 @@ private[gateway] object PresenceRoutes:
   // 服务侧的第二道闸，不是唯一闸）。
   private val modelTestGate = new ProviderModelProbe.Gate
 
-  // JeV 分配通道 / 生图 provider 探针的单飞闸（settings-panel-jev-imagegen 批
-  // 2026-10-29 作者令「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」
-  // ——同 B 件口径：引擎侧第二道闸，前端钮禁用是第一道）。
-  private val jevTestGate = new ProviderModelProbe.Gate
   private val imagegenTestGate = new ImageGenProbe.Gate
 
   /**
@@ -259,6 +254,15 @@ private[gateway] object PresenceRoutes:
       }
     }
   end presenceWsStreams
+
+  /**
+   * 状态派生可见性词（阶段②：表态端点的回执读数单点；`active` / `history`）。
+   * 纯读投影（[[nebflow.core.delegate.DelegateVisibility.readOf]]），读失败保守回落
+   * `active`（宁可见勿隐藏）。
+   */
+  private def visibilityWord(id: String): String =
+    try nebflow.core.delegate.DelegateVisibility.readOf(id).windowWord
+    catch case _: Throwable => "active"
 
   def routes(wsb: WebSocketBuilder2[IO], ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
@@ -813,6 +817,88 @@ private[gateway] object PresenceRoutes:
             }
         }
 
+      case req @ GET -> Root / "delegates" / id / "recovery" =>
+        withRecoveryPrincipal(req) { _ =>
+          sharedResources.executionProtection(id).flatMap {
+            case nebflow.shared.ExecutionProtection.Protected(List(run)) =>
+              sharedResources.executionCommitPort.observeChain(id, run).flatMap {
+                case nebflow.shared.ExecutionChainObservation.Verified(state) =>
+                  Ok(Json.obj("sessionId" -> id.asJson, "runId" -> run.asJson,
+                    "revision" -> state.ref.revision.asJson, "recordHash" -> state.ref.recordHash.asJson,
+                    "phase" -> state.phase.asJson, "runnerStopped" -> state.runnerStopped.asJson))
+                case nebflow.shared.ExecutionChainObservation.ReviewRequired(_, reason) =>
+                  Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
+              }
+            case nebflow.shared.ExecutionProtection.Unprotected => NotFound()
+            case _ => Conflict(Json.obj("error" -> "recovery-classification-unavailable".asJson))
+          }
+        }
+
+      // POST /delegates/:id/recovery/resume — explicit protected same-run resume.
+      // If-Match carries the exact observed record hash; Idempotency-Key carries the
+      // stable request identity. No body identity is trusted.
+      case req @ POST -> Root / "delegates" / id / "recovery" / "resume" =>
+        withRecoveryPrincipal(req) { principal =>
+          val observedHash =
+            req.headers.get(CIString("If-Match")).map(_.head.value.trim).getOrElse("")
+              .stripPrefix("W/").stripPrefix("\"").stripSuffix("\"")
+          val requestId = req.headers.get(CIString("Idempotency-Key")).map(_.head.value.trim).getOrElse("")
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
+            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
+          else if !observedHash.matches("[0-9a-f]{64}") then
+            BadRequest(Json.obj("error" -> "If-Match must carry the observed record hash".asJson))
+          else if requestId.isEmpty || !requestId.forall(c => c.isLetterOrDigit || c == '-' || c == '_') then
+            BadRequest(Json.obj("error" -> "Idempotency-Key must be a stable request id".asJson))
+          else
+            req.bodyText.compile.string.flatMap { raw =>
+              val parsed = if raw.trim.isEmpty then Right(Json.obj()) else parser.parse(raw)
+              parsed match
+                case Left(_) => BadRequest(Json.obj("error" -> "invalid recovery body".asJson))
+                case Right(body) =>
+                  val inputField = body.hcursor.get[Json]("input").toOption
+                  val input = inputField.flatMap(_.asString)
+                  if inputField.nonEmpty && input.isEmpty then
+                    BadRequest(Json.obj("error" -> "input must be a string".asJson))
+                  else
+                    sharedResources.executionProtection(id).flatMap {
+                      case nebflow.shared.ExecutionProtection.Protected(List(run)) =>
+                        sharedResources.executionCommitPort.observeChain(id, run).flatMap {
+                          case nebflow.shared.ExecutionChainObservation.Verified(state) =>
+                            sharedResources.resumeProtectedExecution(
+                              nebflow.shared.ProtectedRecoveryRequest(id, run,
+                                nebflow.shared.ExecutionCommitRef(state.ref.revision, observedHash),
+                                requestId, principal, input)
+                            ).flatMap {
+                              case Right(result) =>
+                                Ok(Json.obj(
+                                  "sessionId" -> result.sessionId.asJson, "runId" -> result.executionId.asJson,
+                                  "attemptId" -> result.attemptId.asJson,
+                                  "incarnationId" -> result.incarnationId.asJson,
+                                  "revision" -> result.ref.revision.asJson,
+                                  "recordHash" -> result.ref.recordHash.asJson,
+                                  "duplicate" -> result.duplicate.asJson
+                                ))
+                              case Left("stale-observed-ref") =>
+                                PreconditionFailed(Json.obj("error" -> "stale-observed-ref".asJson))
+                              case Left("unresolved-operation-review-required") =>
+                                Conflict(Json.obj("error" -> "review-required".asJson,
+                                  "reason" -> "unresolved-operation-review-required".asJson))
+                              case Left(reason) if reason.startsWith("review-required") =>
+                                Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
+                              case Left(reason) =>
+                                Conflict(Json.obj("error" -> "recovery-rejected".asJson, "reason" -> reason.asJson))
+                            }
+                          case nebflow.shared.ExecutionChainObservation.ReviewRequired(_, reason) =>
+                            Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
+                        }
+                      case nebflow.shared.ExecutionProtection.Protected(_) =>
+                        Conflict(Json.obj("error" -> "ambiguous-protected-execution".asJson))
+                      case nebflow.shared.ExecutionProtection.Unprotected => NotFound()
+                      case _ => Conflict(Json.obj("error" -> "recovery-classification-unavailable".asJson))
+                    }
+            }
+        }
+
       // POST /delegates/restore — 手动恢复单个子代理会话（重启手动恢复批，作者令
       // 2026-11-06 20:36「由用户手动恢复，粒度可以是逐个点击」）：body
       // `{"taskId": "<delegate-id>"}` → [[nebflow.agent.ManualRevival.restoreOne]]
@@ -949,6 +1035,25 @@ private[gateway] object PresenceRoutes:
             }
         }
 
+      // Authenticated console scope, with no private content broadcast through WsHub.
+      case req @ GET -> Root / "subagent-tasks" / rootSessionId =>
+        withAuth(req) {
+          if !nebflow.core.delegate.DelegateRegistry.validId(rootSessionId) then
+            BadRequest(Json.obj("error" -> "invalid session id".asJson))
+          else
+            sharedResources.agentRegistry.get.flatMap { registry =>
+              sharedResources.subAgentTaskStore.findAllTasks().flatMap { tasks =>
+                val rows = ChainsReadFace.scopedTaskRows(rootSessionId, tasks, registry)
+                Ok(
+                  Json.obj(
+                    "rootSessionId" -> rootSessionId.asJson,
+                    "tasks" -> rows.map(ChainsReadFace.taskVisibilityJson).asJson
+                  )
+                )
+              }
+            }
+        }
+
       // Session-scoped hierarchy projection: never expose prompts or errors on this new read face.
       case req @ GET -> Root / "session-children" / id =>
         withAuth(req) {
@@ -973,34 +1078,50 @@ private[gateway] object PresenceRoutes:
             }
         }
 
-      // POST /delegates/:id/archive — 归档动作（delegate-ui 批 2026-10-08 · G6，视图④
-      // 归档入口的引擎缝）：`archivedAt = now` 单旗写（幂等：已归档 = 原时间戳零重写）；
-      // **零删除纪律**——记录/子代理记账/链记录原样留存（children 随档 = 查询面按
-      // parentSessionId 原样可达），历史窗 = `GET /api/chains?archived=1`。404 = 查无
-      // 记录；400 = 非法 id。
-      case req @ POST -> Root / "delegates" / id / "archive" =>
+      // POST /delegates/:id/disposition — **非破坏性确认/忽略旗**（delegate-lifecycle-reform
+      // 阶段②：`POST /delegates/:id/archive` 与 `/unarchive` 两个手动归档入口**已整体退役**
+      // ——存储式归档被状态派生可见性取代，两个旧端点不再存在，调用方得到干净的 404）。
+      // body = {"value": "acknowledged" | "ignored" | ""}：
+      //   - 非空值 = 表态（`disposition` + `dispositionAt` 双槽单写，幂等零删除）；
+      //   - 空值   = 清除表态（行按状态派生可见性回活动窗）；
+      // 400 = 非法 id / 非法 value / 坏 body；404 = 查无记录；200 = 回读
+      // {id, disposition, dispositionAt, visibility}。零删除：记录/子代理记账/转录/
+      // worktree/历史行原样留存。
+      case req @ POST -> Root / "delegates" / id / "disposition" =>
         withAuth(req) {
           if !nebflow.core.delegate.DelegateRegistry.validId(id) then
             BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
           else
-            IO.blocking(nebflow.core.delegate.DelegateRegistry.archive(id)).flatMap {
-              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
-              case Right(ts) => Ok(Json.obj("id" -> id.asJson, "archived" -> true.asJson, "archivedAt" -> ts.asJson))
-            }
-        }
-
-      // POST /delegates/:id/unarchive — 反归档（delegate/flowmap 两层架构批 2026-10-09
-      // · G4-2，L2 归档抽屉「恢复」动作的引擎缝）：`archivedAt` 摘旗（幂等：未归档 =
-      // 原样零写）；**零删除纪律不破**——记录/子代理记账/链记录原样，只是回在册窗
-      // （L2 平铺面）。404 = 查无记录；400 = 非法 id。
-      case req @ POST -> Root / "delegates" / id / "unarchive" =>
-        withAuth(req) {
-          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
-            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
-          else
-            IO.blocking(nebflow.core.delegate.DelegateRegistry.unarchive(id)).flatMap {
-              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
-              case Right(_) => Ok(Json.obj("id" -> id.asJson, "archived" -> false.asJson))
+            req.attemptAs[Json].value.flatMap {
+              case Left(_) => BadRequest(Json.obj("error" -> "malformed JSON body".asJson))
+              case Right(body) =>
+                val value = body.hcursor.get[String]("value").toOption.getOrElse("").trim
+                if value.isEmpty then
+                  IO.blocking(nebflow.core.delegate.DelegateRegistry.clearDisposition(id)).flatMap {
+                    case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+                    case Right(_) =>
+                      Ok(Json.obj(
+                        "id" -> id.asJson,
+                        "disposition" -> Json.Null,
+                        "dispositionAt" -> Json.Null,
+                        "visibility" -> visibilityWord(id).asJson
+                      ))
+                  }
+                else if !nebflow.core.delegate.DelegateRegistry.isDispositionWord(value) then
+                  BadRequest(Json.obj(
+                    "error" -> s"unknown disposition '$value' (expected ${nebflow.core.delegate.DelegateRegistry.DispositionWords.toList.sorted.mkString(", ")} or an empty value to clear)".asJson
+                  ))
+                else
+                  IO.blocking(nebflow.core.delegate.DelegateRegistry.setDisposition(id, value)).flatMap {
+                    case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+                    case Right(at) =>
+                      Ok(Json.obj(
+                        "id" -> id.asJson,
+                        "disposition" -> value.asJson,
+                        "dispositionAt" -> at.asJson,
+                        "visibility" -> visibilityWord(id).asJson
+                      ))
+                  }
             }
         }
 
@@ -1161,6 +1282,7 @@ private[gateway] object PresenceRoutes:
                     )
                   yield body)
             yield result
+            end for
         }
 
       // PUT /agents/:name/model — write the agent's own model chain (the /model
@@ -1247,30 +1369,10 @@ private[gateway] object PresenceRoutes:
                           case true =>
                             val (effective, resolvedFrom) = nebflow.core.SchemePolicy.resolveModel(slotName, own)
                             val mode = if own.isDefined then "explicit" else "follow"
-                            // 模型链热应用（2026-10-31 作者报障②「fallback 链加了新模型
-                            // 不立即生效」）：链面保存后清掉**链外**的会话驻留旧链引用。
-                            // 驻留两面 = in-memory sessionModelOverrides（composer 会话级
-                            // pin，请求路径 overrides 前插 + 同 (provider,model) 链成员
-                            // 剔除 ⇒ 链改了 pin 恒赢）+ 盘上 SessionMeta.modelRef（重启
-                            // 后由 meta 恢复的同一 pin）。两面同步清（#33/#311 reloadConfig
-                            // 先例同形：内存腿 + 持久腿一致）。判据 = **新生效链成员资格**：
-                            // pin 的模型仍在链上 ⇒ 保留（选择器显式意图）；已不在链上 ⇒
-                            // 清除，该会话下一请求即吃新链。spec 守卫：部分 route spec 臂以
-                            // sessionStore=null 组装（ModelChainRoutesSpec.mkResources），
-                            // 持久腿 null 下跳过，内存腿恒跑。
-                            // fallback 废除批：链成员资格 = preferred 一根（fallbacks
-                            // 不再进请求链，驻留 pin 对着死数据判断成员会误清/误留）。
-                            val chainRefs = effective.preferred.toList.toSet
-                            sharedResources.sessionModelOverrides
-                              .modify { overrides =>
-                                val (keep, drop) =
-                                  overrides.partition((_, c) => chainRefs.contains(s"${c.providerId}/${c.model}"))
-                                (keep, drop.keys.toList)
-                              }
-                              .flatMap { droppedIds =>
-                                val persistedLeg =
-                                  if sessionStore == null then IO.unit
-                                  else droppedIds.traverse_(id => sessionStore.updateSessionModel(id, None))
+                            // Followers read the slot on their next turn. Explicit session
+                            // pins, both in memory and on disk, are never changed here.
+                            locally {
+                                val persistedLeg = IO.unit
                                 // config-single-source batch (2026-11-05): the Nebula
                                 // primary chain IS the global chain, and its single
                                 // source is `llm.fallback` in the config file. Mirror the
@@ -1518,6 +1620,40 @@ private[gateway] object PresenceRoutes:
           yield result
         }
 
+      case req @ GET -> Root / "plugins" / "catalogs" =>
+        withAuth(req) {
+          Ok(Json.obj("catalogs" -> nebflow.core.plugin.PluginDistributionCatalog.configuredSourceIds.asJson))
+        }
+
+      case req @ GET -> Root / "plugins" / "install-link" / "resolve" =>
+        withAuth(req) {
+          import nebflow.core.plugin.PluginInstallLink
+          req.params.get("link").toRight("link is required").flatMap(PluginInstallLink.parse) match
+            case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+            case Right(link) => PluginInstallLink.resolveAcrossConfigured(link).flatMap {
+              case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+              case Right(m) =>
+                val p = m.resolved.pkg
+                val v = m.resolved.v
+                Ok(Json.obj("ok" -> true.asJson, "id" -> p.id.asJson, "version" -> v.version.asJson,
+                  "sha256" -> v.sha256.asJson, "size" -> v.size.asJson, "publisherKeyId" -> p.publisherKeyId.asJson,
+                  "publisherClass" -> p.publisherClass.map(_.label).asJson, "catalogSource" -> m.catalog.sourceId.asJson,
+                  "yanked" -> v.yanked.asJson))
+            }
+        }
+
+      case req @ POST -> Root / "plugins" / "install-link" =>
+        withAuth(req) {
+          req.as[Json].attempt.flatMap { body =>
+            body.toOption.flatMap(_.hcursor.get[String]("link").toOption) match
+              case None => BadRequest(Json.obj("ok" -> false.asJson, "error" -> "link is required".asJson))
+              case Some(link) => nebflow.core.plugin.PluginSourceInstall.installFromLink(link).flatMap {
+                case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+                case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+              }
+          }
+        }
+
       // GET /plugins/catalog — 分发器目录段同源（trusted only；前端调试/预览用）
       case req @ GET -> Root / "plugins" / "catalog" =>
         withAuth(req) {
@@ -1548,7 +1684,26 @@ private[gateway] object PresenceRoutes:
                       .add("kind", e.kind.label.asJson)
                       .add("installedAt", e.installedAt.asJson)
                       .add("official", ((e.via == Via.Seed || e.via == Via.Official)).asJson)
-                    val withUrl = e.url.fold(base)(u => base.add("url", u.asJson))
+                    // §12.1 分发信任面（additive 分轴投影；旧 via 基 official 字段保留——通道面）：
+                    // officialBadge = 官方根键签名 ∧ publisherClass=official（A 期无目录签名 ⇒ 恒 false）；
+                    // publisherClass/预留空值族缺席 ≠ null（§12.1）。
+                    val distribution = JsonObject.empty
+                      .add("origin", e.distribution.origin.label.asJson)
+                      .add("trustLevel", e.distribution.trustLevel.label.asJson)
+                      .add("distributionOwner", e.distribution.distributionOwner.label.asJson)
+                    val distWithPublisher = e.distribution.publisherClass.fold(distribution)(p =>
+                      distribution.add("publisherClass", p.label.asJson)
+                    )
+                    val withDist = base
+                      .add("distribution", Json.fromJsonObject(distWithPublisher))
+                      .add("updatePolicy", e.updatePolicy.label.asJson)
+                      .add("pinned", e.pinned.asJson)
+                      .add(
+                        "officialBadge",
+                        nebflow.core.plugin.PluginDistributionTrust
+                          .officialBadge(signedByOfficialRootKey = false, e.distribution.publisherClass).asJson
+                      )
+                    val withUrl = e.url.fold(withDist)(u => withDist.add("url", u.asJson))
                     val withPin = e.pin.fold(withUrl)(pin => withUrl.add("pin", pin.toJson))
                     known += Json.fromJsonObject(withPin)
                   case UnknownSource(reason) =>
@@ -1597,7 +1752,7 @@ private[gateway] object PresenceRoutes:
                   Ok(
                     ApiJson.okMessage(
                       s"Plugin '$name' updated: v${r.fromVersion} → v${r.toVersion} (commit ${r.commit.take(12)}…, " +
-                        s"digest ${r.digest.take(12)}…). ${r.effective}" +
+                        s"digest ${r.digest.take(12)}…, plan ${r.planId}). ${r.effective}" +
                         r.backupDir.fold("")(b => s" Previous version backed up at $b.")
                     )
                   )
@@ -2148,7 +2303,8 @@ private[gateway] object PresenceRoutes:
                     val apiKey =
                       // Masked key from the edit dialog — fall back to the stored one.
                       if rawKey.nonEmpty && rawKey != "***" then rawKey
-                      else stored.map(_.apiKey).getOrElse("")
+                      else stored.map(p => nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+                        nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-model-list")).getOrElse("")
                     ModelListFaces.models(face, base) match
                       case Nil => BadGateway(Json.obj("error" -> ModelListFaces.noEndpointMessage(face).asJson))
                       case urls =>
@@ -2156,6 +2312,12 @@ private[gateway] object PresenceRoutes:
                           case Right(models) => Ok(Json.obj("models" -> models.asJson))
                           case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
                         }
+                  }.handleErrorWith {
+                    case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                      BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                    case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                      BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                    case e => IO.raiseError(e)
                   }
             end if
           }
@@ -2197,7 +2359,10 @@ private[gateway] object PresenceRoutes:
               BadRequest(Json.obj("error" -> protocolDecoded.swap.toOption.get.asJson))
             else
               configRef.get.flatMap { cfg =>
-                val stored = cfg.llm.providers.get(name)
+                val stored = cfg.llm.providers.get(name).map { p =>
+                  p.copy(apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+                    nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-probe"))
+                }
                 (baseUrlOv, stored) match
                   case (None, None) =>
                     NotFound(Json.obj("error" -> s"unknown provider '$name'".asJson))
@@ -2211,66 +2376,12 @@ private[gateway] object PresenceRoutes:
                     val proto = protocolDecoded.toOption.flatten.getOrElse(LlmProtocol.OpenAI)
                     val key = apiKeyOv.getOrElse(stored.map(_.apiKey).getOrElse(""))
                     runProviderTest(proto, base, key, model, List(key) ++ stored.map(_.apiKey).toList)
-              }
-            end if
-          }
-        }
-
-      // ── JeV 分配通道连接性测试（settings-panel-jev-imagegen 批 2026-10-29
-      // 作者令逐字「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」）──
-      // 表单覆写腿优先（未保存也测）：provider/endpoint/**apiKey**/keyRef 覆写即按
-      // 表单值探活；缺省回落存储配置（**含选中项 provider 的 providers 条目**——
-      // jev-imagegen-align-llm 批 2026-11-02：provider/endpoint/model/keyRef 逐字段
-      // `providers[选中项] > 顶层 > 缺省`，与 JevSettings.resolve 同回落序）。
-      // token 解析三腿单点 = JevProbe.resolveToken（apiKey 覆写 > 已存 keyRef
-      // secret > 无）；旧 keyRef 腿逐字保留（JevProbeSpec.callWithKeyRef 断言照绿）。
-      // laya 走 /health metadata 面、typesafe 走极小真实补全（JevProbe 单点）；
-      // keyRef secret 缺席 = 直接 Failed（待录入），不发注定 401 的击。
-      // 🔴 日志零 key：本臂不打任何日志；apiKey 覆写值只在 process 内活到一击。
-      // 零持久化——纯诊断读数。
-      case req @ POST -> Root / "jev" / "test" =>
-        withAuth(req) {
-          req.as[Json].flatMap { body =>
-            val providerOv = body.hcursor.downField("provider").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-            val endpointOv = body.hcursor.downField("endpoint").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-            val keyRefOv = body.hcursor.downField("keyRef").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-            val apiKeyOv = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-            if providerOv.exists(p => !DecisionProvider.AllIds.contains(p)) then
-              BadRequest(Json.obj("error" -> s"unknown jev provider '${providerOv.get}'".asJson))
-            else
-              configRef.get.flatMap { cfg =>
-                val stored = cfg.jev
-                val selected = providerOv.orElse(stored.flatMap(_.provider)).getOrElse(DecisionProvider.TypesafeJev)
-                // 选中项条目（jev.providers.<selected>）：逐字段优先于顶层。
-                val entry = stored.flatMap(_.providers).flatMap(_.get(selected))
-                val provider = selected
-                val endpoint = endpointOv
-                  .orElse(entry.flatMap(_.endpoint).map(_.trim).filter(_.nonEmpty))
-                  .orElse(stored.flatMap(_.endpoint))
-                  .getOrElse(
-                    if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
-                    else DecisionProvider.DefaultTypesafeEndpoint
-                  )
-                val model = entry
-                  .flatMap(_.model)
-                  .map(_.trim)
-                  .filter(_.nonEmpty)
-                  .orElse(stored.flatMap(_.model))
-                  .getOrElse(DecisionProvider.DefaultModel)
-                val keyRef = keyRefOv
-                  .orElse(entry.flatMap(_.keyRef).map(_.trim).filter(_.nonEmpty))
-                  .orElse(stored.flatMap(_.keyRef))
-                if !jevTestGate.tryAcquire() then
-                  Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
-                else
-                  IO.blocking(JevProbe.callWithToken(provider, endpoint, model, apiKeyOv, keyRef))
-                    .flatMap {
-                      case JevProbe.Verdict.Ok(latency, reply) =>
-                        Ok(Json.obj("ok" -> true.asJson, "latencyMs" -> latency.asJson, "reply" -> reply.asJson))
-                      case JevProbe.Verdict.Failed(detail) =>
-                        Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
-                    }
-                    .guarantee(IO.blocking(jevTestGate.release()))
+              }.handleErrorWith {
+                case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                  BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                  BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                case e => IO.raiseError(e)
               }
             end if
           }

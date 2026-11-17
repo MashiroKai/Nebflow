@@ -34,7 +34,7 @@ class NodeDepsSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 180.seconds
 
-  private val tempRoot: os.Path = os.pwd / "target" / "test-node-deps"
+  private val tempRoot: os.Path = os.pwd / "target" / s"test-node-deps-${java.util.UUID.randomUUID()}"
   private val originalRoot = PathUtil.dataRoot
 
   /**
@@ -43,8 +43,6 @@ class NodeDepsSpec extends CatsEffectSuite:
    */
   private val nebulaMarker = OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)
 
-  PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
 
   os.write.over(
@@ -60,6 +58,8 @@ class NodeDepsSpec extends CatsEffectSuite:
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
+  // Publish the process-wide root only after the unique fixture is ready.
+  PathUtil.setDataRoot(tempRoot)
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -172,8 +172,7 @@ class NodeDepsSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
-        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
+        // 显式关终态 hold 腿（休眠旋钮；本 fixture 主题与之正交）。
         reportGateHold = Some(false)
       )
       pd = ProjectDef(

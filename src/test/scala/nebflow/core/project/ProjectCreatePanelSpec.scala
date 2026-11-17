@@ -251,10 +251,14 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assertEquals(defn.agentFile, (ws / "AGENTS.md").toString)
       assert(defn.createdAt > 0, "createdAt must be set")
       assert(os.exists(ws / "AGENTS.md"), "workspace AGENTS.md scaffold must exist")
+      // 过时测试修复（2026-11-15）：文档库落位批（4d57d7f1b，2026-11-03）后面板
+      // 创建路径落盘 AGENTS.md = AgentMdTemplateFull（docs discipline 模板）；
+      // 空模板（作者 2026-09-18 裁定）现仅存于 NodeEdit 的 L1 腿
+      // （AgentMdTemplate = ""，ProjectCreateService 头注两模板并存口径）。
       assertEquals(
         os.read(ws / "AGENTS.md"),
-        "",
-        "AGENTS.md 默认空模板（作者 2026-09-18 裁定）：创建路径落盘的也是 0 字节空文件，内容由用户自持"
+        ProjectCreateService.AgentMdTemplateFull,
+        "AGENTS.md 面板创建路径 = docs discipline 全模板（4d57d7f1b）；空模板仅 NodeEdit L1 腿"
       )
       assert(os.isDir(ws / ".nebflow"), "workspace .nebflow/ scaffold must exist")
       assert(gitignore.contains(".nebflow/"), "workspace .gitignore must guard .nebflow/")
@@ -754,10 +758,13 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       //   ② 模板被写回非空 ⇒ `restoredText` 非空，次条红（正是本批要抓的回归类）。
       // 只断 exists 会漏 ②；旧写法 nonEmpty 与「默认空模板」裁定正面对撞（本条即为更新点）。
       assert(restoredExists, s"被删的 AGENTS.md 必须由幂等挂载路径补回（③-8）：文件本体必须存在（exists=$restoredExists）")
+      // 过时测试修复（2026-11-15）：同 ①——幂等挂载补缺走面板服务腿，补回的
+      // AGENTS.md = AgentMdTemplateFull（4d57d7f1b docs 批）；判据强度不变
+      // （非空模板写回/缺件未补两类回归仍被抓住：逐字节等值）。
       assertEquals(
         restoredText,
-        "",
-        s"AGENTS.md 默认空模板（作者 2026-09-18 裁定）：补回的文件内容必须为空，实测 ${restoredText.length} 字符"
+        ProjectCreateService.AgentMdTemplateFull,
+        s"AGENTS.md 补回 = docs discipline 全模板（逐字节），实测 ${restoredText.length} 字符"
       )
       assertEquals(giAfter, giBefore, ".gitignore 必须逐字节不变（已含 .nebflow/ 行）")
       assertEquals(

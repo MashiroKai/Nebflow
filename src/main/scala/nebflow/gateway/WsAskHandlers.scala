@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.AskHandoffPort
-import nebflow.core.ask.{AskCooldown, AskGatewayServices, AskNoteStore, AskNoteWrite, AskSessions}
+import nebflow.core.ask.{AskCooldown, AskGatewayServices, AskNoteSnapshot, AskNoteStore, AskNoteWrite, AskSessions}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Canvas ask mode · WS 域（机制稿 §2/§3.3/§4/§7，实施批 2026-10-28）
@@ -30,7 +30,12 @@ private[gateway] object WsAskHandlers:
     "askHandoff" -> handleAskHandoff,
     "askReply" -> handleAskReply,
     "askNoteGet" -> handleAskNoteGet,
-    "askNotePut" -> handleAskNotePut
+    "askNotePut" -> handleAskNotePut,
+    // canvas-inline-diff-review：canvas 内联审阅 resolve 三腿（接受/拒绝可携
+    // hunkId 逐块；dismiss = 冲突逃生口）。
+    "askEditAccept" -> handleAskEditAccept,
+    "askEditReject" -> handleAskEditReject,
+    "askEditDismiss" -> handleAskEditDismiss
   )
 
   private def send(wsSend: Json => IO[Unit], payload: Json): IO[Unit] = wsSend(payload)
@@ -105,7 +110,15 @@ private[gateway] object WsAskHandlers:
                   "sessionKey" -> AskSessions.displayKey(canonical).asJson,
                   "file" -> freshBinding.file.asJson,
                   "fileName" -> freshBinding.fileName.asJson,
-                  "messages" -> encodeTranscript(msgs).asJson
+                  // ask-mail 批（2026-11-16）：会话的 Mail 续聊地址（单源 =
+                  // MailAddress.AskPrefix + sid）——dock 头部渲染可复制地址行，
+                  // 编排方/用户可经 Mail(ask:<会话id>) 续聊。
+                  "mailAddress" -> (nebflow.core.delegate.MailAddress.AskPrefix + sid).asJson,
+                  "messages" -> encodeTranscript(msgs).asJson,
+                  // canvas-inline-diff-review：在列审阅态随回放下发（重载/换端后
+                  // canvas 审阅页签重建；引擎为权威——服务端重启即清零，前端本
+                  // 地态让位）。
+                  "review" -> encodePendingReview(sid)
                 )
               )
             yield ()
@@ -273,19 +286,152 @@ private[gateway] object WsAskHandlers:
     end if
   end handleAskReply
 
-  // ── 记事本持久（持久化缺陷批 2026-11-05：内容会丢 → 引擎侧真源）───────────
-  // 入站两帧 / 出站两帧，与 ask 会话同一套文件身份（sid = ask-<8hex>）：
-  //   askNoteGet {sessionId}            → askNoteState {sessionId, text, ts, exists}
-  //   askNotePut {sessionId, text, baseTs?}
-  //                                     → askNoteAck {sessionId, ok, ts, overwritten,
-  //                                                    error?, bytes?, limit?}
-  // 落盘单点 = AskNoteStore（`<dataRoot>/ask/notes/<sid>.md`；容量/清理/并发口径
-  // 见该文件头注）。本层只做帧 → store 的映射与错误回执，**不缓存内容**。
-  //
-  // 为什么不在 askOpen 里捎带记事本：askOpen 的 askState 是转录回放帧（「永不
-  // 缩水」合并律的输入），记事本是另一条独立生命周期的数据（与问答零同步关系），
-  // 捎带会让「打开问答窗」成为记事本读盘的前置——记事本钮与 ask 钮是两个独立
-  // 入口（作者令 2026-11-05 11:38），读盘也必须各自独立。
+  // ── canvas-inline-diff-review：审阅 resolve 腿 ─────────────────────────────
+  //   askEditAccept {sessionId, hunkId?}   hunkId 缺省 = 全部接受（清账零写盘）；
+  //     Some(h) = 该块标记已审（基线前移，零写盘）。
+  //   askEditReject {sessionId, hunkId?}   hunkId 缺省 = 全部拒绝（回写 base，
+  //     整体回退）；Some(h) = 该块回退（回写 current 去掉该块）。
+  //   askEditDismiss {sessionId}           保留盘上现状、清账（冲突逃生口）。
+  // 应答：askEditResolved {sessionId, action, hunkId?, outcome:"done"|"error",
+  //   error?, review?}——review 为余下审阅态（了结时 null）；error（stale 等）
+  // 时审阅保持，前端冲突条给重试/保留现状二路。
+
+  /** 在列审阅态 wire 形（与 AskEditTools.reviewJson 同构；gateway 不引 tools
+    * 的私有伴生，此处独立编码保持层界）。 */
+  private def encodePendingReview(sid: String): Json =
+    nebflow.core.ask.AskEditReviews.reviewFor(sid) match
+      case None => Json.Null
+      case Some(r) => Json.obj(
+        "path" -> r.path.asJson,
+        "fileName" -> r.fileName.asJson,
+        "baseText" -> r.baseText.asJson,
+        "currentText" -> r.currentText.asJson,
+        "hunks" -> r.hunks.map(hu => Json.obj(
+          "id" -> hu.id.asJson,
+          "oldStart" -> hu.oldStart.asJson,
+          "oldCount" -> hu.oldCount.asJson,
+          "newStart" -> hu.newStart.asJson,
+          "newCount" -> hu.newCount.asJson,
+          "added" -> hu.added.asJson,
+          "removed" -> hu.removed.asJson
+        )).asJson,
+        "count" -> r.changes.length.asJson,
+        "updatedAt" -> r.updatedAt.asJson
+      )
+
+  private def handleAskEditResolve(
+    action: String,
+    text: String,
+    wsSend: Json => IO[Unit]
+  ): IO[Unit] =
+    val raw = WsDispatch.parsedJson(text)
+    val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
+    val hunkId = raw.hcursor.downField("hunkId").as[String].toOption.filter(_.trim.nonEmpty)
+    if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askEdit: sessionId must be an ask- session")
+    else
+      val outcome: IO[Either[String, nebflow.core.ask.AskEditReviews.ResolveResult]] = action match
+        case "accept"  => nebflow.core.ask.AskEditReviews.accept(sid, hunkId)
+        case "reject"  => nebflow.core.ask.AskEditReviews.reject(sid, hunkId)
+        case "dismiss" => nebflow.core.ask.AskEditReviews.dismiss(sid)
+      outcome.flatMap {
+        case Right(_) =>
+          wsSend(Json.obj(
+            "type" -> "askEditResolved".asJson,
+            "sessionId" -> sid.asJson,
+            "action" -> action.asJson,
+            "outcome" -> "done".asJson,
+            "review" -> encodePendingReview(sid)
+          ))
+        case Left(err) =>
+          wsSend(Json.obj(
+            "type" -> "askEditResolved".asJson,
+            "sessionId" -> sid.asJson,
+            "action" -> action.asJson,
+            "outcome" -> "error".asJson,
+            "error" -> err.asJson,
+            "review" -> encodePendingReview(sid)
+          ))
+      }
+  end handleAskEditResolve
+
+  private def handleAskEditAccept(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] = handleAskEditResolve("accept", text, wsSend)
+
+  private def handleAskEditReject(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] = handleAskEditResolve("reject", text, wsSend)
+
+  private def handleAskEditDismiss(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] = handleAskEditResolve("dismiss", text, wsSend)
+
+  // ── Note persistence ───────────────────────────────────────────────────
+  // Two inbound frames and two outbound frames, with the same file identity as the ask session
+  // (sid = ask-<8 hex>); the store is `AskNoteStore` (versions, clears, size limit: see its header).
+  //   askNoteGet {sessionId}
+  //     → askNoteState {sessionId, text, ts, exists, version, cleared}   (`ts` equals `version`)
+  //     → askNoteState {sessionId, error:"read-failed", detail}           (the note cannot be read)
+  //   askNotePut {sessionId, text, baseVersion, writeId?}
+  //     → askNoteAck {sessionId, ok:true, ts, version, overwritten:false}
+  //     → askNoteAck {sessionId, ok:false, error:"conflict"|"version-required", text, ts, version, exists, cleared}
+  //     → askNoteAck {sessionId, ok:false, error:"read-failed"|"too-large"|"bad-session-id"|"write-failed", …}
+  //   `writeId` is echoed verbatim so a client can match a receipt to one write. A put without
+  //   `baseVersion` (a page loaded before versions existed) is always refused: it cannot tell a note
+  //   that never existed from one cleared before clears were versioned, and overwriting is the failure.
+  // The note is not carried by askOpen: it is a separate data lifecycle from the transcript replay.
+
+  private def noteStateFields(snap: AskNoteSnapshot): List[(String, Json)] =
+    List(
+      "text" -> snap.text.asJson,
+      "ts" -> snap.ts.asJson,
+      "version" -> snap.version.asJson,
+      "exists" -> snap.exists.asJson,
+      "cleared" -> snap.cleared.asJson
+    )
+
+  private def noteStateFrame(sid: String, snap: AskNoteSnapshot): Json =
+    snap.error match
+      case Some(why) =>
+        Json.obj(
+          "type" -> "askNoteState".asJson,
+          "sessionId" -> sid.asJson,
+          "error" -> "read-failed".asJson,
+          "detail" -> why.asJson
+        )
+      case None =>
+        val head = List("type" -> "askNoteState".asJson, "sessionId" -> sid.asJson)
+        Json.obj((head ++ noteStateFields(snap))*)
+
+  private def noteAckFrame(sid: String, writeId: Option[Json], result: AskNoteWrite): Json =
+    def ack(fields: (String, Json)*): Json =
+      val head = List("type" -> "askNoteAck".asJson, "sessionId" -> sid.asJson)
+      Json.obj((head ++ writeId.map("writeId" -> _).toList ++ fields)*)
+    result match
+      case AskNoteWrite.Ok(version, _) =>
+        // overwritten stays for older clients: a conditional write never replaces an unseen version.
+        ack("ok" -> true.asJson, "ts" -> version.asJson, "version" -> version.asJson, "overwritten" -> false.asJson)
+      case AskNoteWrite.Conflict(current) =>
+        ack((List("ok" -> false.asJson, "error" -> "conflict".asJson) ++ noteStateFields(current))*)
+      case AskNoteWrite.VersionRequired(current) =>
+        ack((List("ok" -> false.asJson, "error" -> "version-required".asJson) ++ noteStateFields(current))*)
+      case AskNoteWrite.ReadFailed(msg) =>
+        ack("ok" -> false.asJson, "error" -> "read-failed".asJson, "detail" -> String.valueOf(msg).asJson)
+      case AskNoteWrite.TooLarge(bytes, limit) =>
+        ack("ok" -> false.asJson, "error" -> "too-large".asJson, "bytes" -> bytes.asJson, "limit" -> limit.asJson)
+      case AskNoteWrite.BadSessionId(id) =>
+        ack("ok" -> false.asJson, "error" -> "bad-session-id".asJson, "detail" -> id.asJson)
+      case AskNoteWrite.Failed(msg) =>
+        ack("ok" -> false.asJson, "error" -> "write-failed".asJson, "detail" -> String.valueOf(msg).asJson)
 
   private def handleAskNoteGet(
     ctx: WsDispatchCtx,
@@ -296,16 +442,7 @@ private[gateway] object WsAskHandlers:
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askNoteGet: sessionId must be an ask- session")
-    else
-      AskNoteStore.current.read(sid).map { snap =>
-        Json.obj(
-          "type" -> "askNoteState".asJson,
-          "sessionId" -> sid.asJson,
-          "text" -> snap.text.asJson,
-          "ts" -> snap.ts.asJson,
-          "exists" -> snap.exists.asJson
-        )
-      }.flatMap(send(wsSend, _))
+    else AskNoteStore.current.read(sid).map(noteStateFrame(sid, _)).flatMap(send(wsSend, _))
 
   private def handleAskNotePut(
     ctx: WsDispatchCtx,
@@ -315,46 +452,14 @@ private[gateway] object WsAskHandlers:
   ): IO[Unit] =
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
-    val body = raw.hcursor.downField("text").as[String].getOrElse("")
-    val baseTs = raw.hcursor.downField("baseTs").as[Long].getOrElse(0L)
+    val body = raw.hcursor.downField("text").as[String].toOption
+    // A missing, null, negative or non-numeric base is "no base version".
+    val baseVersion = raw.hcursor.downField("baseVersion").as[Long].toOption.filter(_ >= 0L)
+    val writeId = raw.hcursor.downField("writeId").focus
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askNotePut: sessionId must be an ask- session")
-    else
-      AskNoteStore.current.write(sid, body).map {
-        case AskNoteWrite.Ok(ts, supersededTs) =>
-          Json.obj(
-            "type" -> "askNoteAck".asJson,
-            "sessionId" -> sid.asJson,
-            "ok" -> true.asJson,
-            "ts" -> ts.asJson,
-            // overwritten = 本次写覆盖了别人在 baseTs 之后的更新（并发写信号；
-            // 策略是最后写者胜，这里只让前端能把这件事说出来，不静默）。
-            "overwritten" -> (supersededTs > 0L && supersededTs > baseTs).asJson
-          )
-        case AskNoteWrite.TooLarge(bytes, limit) =>
-          Json.obj(
-            "type" -> "askNoteAck".asJson,
-            "sessionId" -> sid.asJson,
-            "ok" -> false.asJson,
-            "error" -> "too-large".asJson,
-            "bytes" -> bytes.asJson,
-            "limit" -> limit.asJson
-          )
-        case AskNoteWrite.BadSessionId(id) =>
-          Json.obj(
-            "type" -> "askNoteAck".asJson,
-            "sessionId" -> sid.asJson,
-            "ok" -> false.asJson,
-            "error" -> "bad-session-id".asJson,
-            "detail" -> id.asJson
-          )
-        case AskNoteWrite.Failed(msg) =>
-          Json.obj(
-            "type" -> "askNoteAck".asJson,
-            "sessionId" -> sid.asJson,
-            "ok" -> false.asJson,
-            "error" -> "write-failed".asJson,
-            "detail" -> String.valueOf(msg).asJson
-          )
-      }.flatMap(send(wsSend, _))
+    else body match
+      case None => send(wsSend, noteAckFrame(sid, writeId, AskNoteWrite.Failed("text is required")))
+      case Some(value) =>
+        AskNoteStore.current.put(sid, value, baseVersion).map(noteAckFrame(sid, writeId, _)).flatMap(send(wsSend, _))
   end handleAskNotePut
 end WsAskHandlers

@@ -245,4 +245,49 @@ class TodoPriorityCompletionSpec extends CatsEffectSuite:
     )
   }
 
+
+  test("FDC-SCN-007 tool rearm keeps user and unknown-origin todos") {
+    val root = os.Path(java.nio.file.Files.createTempDirectory("data-owner-test"))
+    val ledger = new ScheduledTaskStore(root)
+    val base = ScheduledTask.create("s1", "body", 1000L, name = Some("same"), kind = Some("todo"))
+    val human = base.copy(id = "human", source = Some("user"))
+    val unknown = base.copy(id = "unknown")
+    val tool = base.copy(id = "tool1", source = Some("tool"))
+    val replacement = base.copy(id = "tool2", source = Some("tool"))
+    val result = (for
+      _ <- ledger.addTask(human)
+      _ <- ledger.addTask(unknown)
+      _ <- ledger.addTask(tool)
+      rejected <- ledger.upsertTaskByName(replacement).attempt
+      rows <- ledger.loadTasks("s1")
+      _ <- ledger.deleteTask("s1", "unknown")
+      rearm <- ledger.upsertTaskByName(replacement)
+      updated <- ledger.loadTasks("s1")
+    yield (rejected, rows, rearm, updated)).unsafeRunSync()
+    assert(result._1.isLeft)
+    assertEquals(result._2.map(_.id).toSet, Set("human", "unknown", "tool1"))
+    // The rearm keeps the record it already owns (stable identity), not the request's id.
+    assertEquals(result._3.saved.id, "tool1")
+    assertEquals(result._3.replaced.map(_.id), List("tool1"))
+    assertEquals(result._4.map(_.id).toSet, Set("human", "tool1"))
+  }
+
+  test("FDC-SCN-011 cross-session rearm moves the owned record with its id and no loss") {
+    val root = os.Path(java.nio.file.Files.createTempDirectory("data-cross-test"))
+    val ledger = new ScheduledTaskStore(root)
+    val old = ScheduledTask.create("old", "before", 1000L, name = Some("routine")).copy(source = Some("tool"))
+    val fresh = ScheduledTask.create("new", "after", 2000L, name = Some("routine")).copy(id = "requested-id", source = Some("tool"))
+    val result = (for
+      _ <- ledger.addTask(old)
+      rearm <- ledger.upsertTaskByName(fresh, ScheduledTaskStore.toolOwnsLegacyNamedTask)
+      before <- ledger.loadTasks("old")
+      after <- ledger.loadTasks("new")
+    yield (rearm, before, after)).unsafeRunSync()
+    assertEquals(result._1.saved.id, old.id, "rearm must preserve the owned record's id")
+    assertEquals(result._1.saved.sessionId, "new")
+    assertEquals(result._1.saved.content, "after")
+    assertEquals(result._2, Nil, "the source session no longer holds the moved record")
+    assertEquals(result._3.map(_.id), List(old.id), "the destination holds exactly one copy")
+  }
+
 end TodoPriorityCompletionSpec

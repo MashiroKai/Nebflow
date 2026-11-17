@@ -66,6 +66,10 @@ object DelegateRevival:
     try java.nio.file.Files.isDirectory(java.nio.file.Path.of(cwd))
     catch case _: Throwable => false
 
+  /** 冻结保留期是否已过（**状态派生**：`frozenSince` 龄 vs `DelegateFreeze.retentionMs`）。 */
+  private def frozenRetentionExpired(rec: nebflow.core.delegate.DelegateRegistry.Record): Boolean =
+    rec.frozenSince.exists(ts => nebflow.core.delegate.DelegateFreeze.retentionExpired(ts))
+
   // ══════════════════════════════════════════════════════════════════════════
   // standby 分型（中断恢复批 2026-11-04 · 审计 D2；作者 11:27 裁定「链等待形态
   // 必须自动复活」）
@@ -123,22 +127,25 @@ object DelegateRevival:
   private def scopeBaseOf(rec: DelegateRegistry.Record): String =
     rec.projectWorkspace.map(_.trim).filter(_.nonEmpty).getOrElse(rec.cwd)
 
-  /** git 读数（fail-soft：非 repo / git 缺席 / 异常 = 不可判 = 零旁证）。 */
-  private def gitOf(ws: String, args: String*): Option[String] =
-    try
-      val dir = os.Path(ws)
-      val res = os
-        .proc(Seq("git", "-C", dir.toString) ++ args)
-        .call(cwd = dir, check = false, mergeErrIntoOut = true)
-      if res.exitCode == 0 then Some(res.out.trim()) else None
-    catch case _: Throwable => None
-
-  /** 分支领先基分支的提交数（未合并交付提交；不可判 = 0）。 */
+  /**
+   * Seat-unfinished reading: the seat's HEAD differs from the current round's
+   * baseline head (round ledger `baseHeadSha`) — the same mechanical fact the
+   * old branch/baseBranch pair carried, anchored on the round baseline instead
+   * of an engine-assigned branch. Unreadable baseline/seat = 0.
+   */
   private def unmergedCommitsOf(rec: DelegateRegistry.Record): Int =
-    (rec.branch.map(_.trim), rec.baseBranch.map(_.trim)) match
-      case (Some(b), Some(base)) if b.nonEmpty && base.nonEmpty =>
-        gitOf(scopeBaseOf(rec), "rev-list", "--count", s"$base..$b").flatMap(_.toIntOption).getOrElse(0)
-      case _ => 0
+    nebflow.core.delegate.DelegateRoundLedger.currentRound(rec.id).flatMap(_.baseHeadSha) match
+      case Some(baseSha) =>
+        try
+          val p = os.Path(scopeBaseOf(rec))
+          if !nebflow.core.GitWorktrees.isGitRepo(p) then 0
+          else
+            // 1 = seat HEAD moved off the round baseline (commits exist that the
+            // round has not settled); 0 = still at baseline or unreadable.
+            if nebflow.core.GitWorktrees.headSha(p).exists(_ != baseSha) then 1
+            else 0
+        catch case _: Throwable => 0
+      case None => 0
 
   /** 作用域图非终态节点数（读盘，纯同步；缺图 = 0）。 */
   private def openNodesOf(rec: DelegateRegistry.Record): Int =
@@ -203,14 +210,18 @@ object DelegateRevival:
       IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {
         case None => IO.pure(Some("no DelegateRegistry record — cannot rebuild the seat"))
         case Some(rec) =>
+          // 阶段②：复活资格不再吃归档旗——改吃**状态派生收口读数**（轮次结算证据 ∨ 存量
+          // 归档旗；见 [[nebflow.core.delegate.DelegateVisibility]]）。收口身份 = 无未完
+          // 业务 ⇒ 不复活（不诈尸）；判据单点，四条行为腿同源。
+          val settled = nebflow.core.delegate.DelegateVisibility.settledOf(rec)
           val budgetLeft = task.revivalCount.getOrElse(0) < Defaults.DelegateRevivalMaxPerTask
           val ageOk = java.lang.System.currentTimeMillis() - task.spawnedAt <= Defaults.DelegateRevivalMaxAgeMs
           // 错误冻结批（2026-11-01）：冻结记录 = **异常冻结待唤醒**——与 standby
           // （自愿待命、不复活）相反，冻结**正是**要复活的对象（同 id 续原上下文；
           // 冻结期的现场全在盘上）。冻结腿的年龄判据走冻结保留期
           // （`Defaults.DelegateFreezeRetentionDays`）而非在飞年龄预算——保留期内
-          // 的冻结一律可复活（超保留期的由 `DelegateFreeze.dormantSweep` 归档，
-          // 归档记录在此被 archived 闸拒绝）。
+          // 的冻结一律可复活（超保留期的由 `DelegateFreeze.dormantSweep` 留痕，
+          // 状态派生收口读数在此拒绝）。
           val frozen = rec.frozenSince
           val ageBudget = frozen
             .map(_ => nebflow.core.delegate.DelegateFreeze.retentionMs)
@@ -222,8 +233,8 @@ object DelegateRevival:
           val evidenceIo = if standbyGate then standbyTriage(rec).map(Some(_)) else IO.pure(None)
           // failed 行复活腿（本批任务②）：「已交付收尾报告」的记录不再有未完成业务。
           val deliveredReport = rec.reportStatus.filter(s =>
-            s == nebflow.core.tools.DelegateReportTool.FinishValue ||
-              s == nebflow.core.tools.DelegateReportTool.MergeValue
+            s == nebflow.core.delegate.DelegateRegistry.FinishValue ||
+              s == nebflow.core.delegate.DelegateRegistry.MergeValue
           )
           evidenceIo.flatMap { evidenceOpt =>
             // 父会话在场判据 = [[SessionLiveness]] 记录面（索引 ∪ 盘上会话记录）。
@@ -250,7 +261,11 @@ object DelegateRevival:
                 Some(
                   s"closing report already delivered (reportStatus=${deliveredReport.get}) — not an unfinished delegate"
                 )
-              else if rec.archivedAt.isDefined then Some("record archived")
+              else if settled then
+                Some(
+                  "identity is settled by state-derived visibility (settled round or legacy archive evidence) — " +
+                    "it has no unfinished business; dispatch a fresh delegate instead"
+                )
               else if !seatExists(rec.cwd) then Some(s"seat directory missing: ${rec.cwd}")
               else if !parentExists then Some(s"parent session '${task.parentSessionId}' no longer exists")
               else if !budgetLeft then
@@ -298,8 +313,9 @@ object DelegateRevival:
    * 与 boot 复活腿共用全部 spawn/注册/插件/pending 处置，唯一增量 = 唤醒者指令
    * 拼在唤醒横幅之后（`instruction` 非空时）。
    *
-   * 资格：记录在册 ∧ 带冻结线值（`frozenReason` 是本批词表）∧ 未归档。其余
-   * （非冻结记录 / 外部执行器 / 已归档）⇒ Left(reason)，调用方落既有腿。
+   * 资格：记录在册 ∧ 带冻结线值（`frozenReason` 是本批词表）∧ 冻结龄未过保留期
+   * （阶段②：状态派生的 `frozenSince` 龄判据；原「已归档」闸即该事实的存储式表达）。
+   * 其余（非冻结记录 / 外部执行器 / 超保留期）⇒ Left(reason)，调用方落既有腿。
    *
    * @param instruction 唤醒者的一句指令（Mail 正文 / 面板输入框）；空 = 纯唤醒。
    */
@@ -315,8 +331,13 @@ object DelegateRevival:
             rec.frozenReason.getOrElse("")
           ) =>
         IO.pure(Left("record is not in the delegate-error frozen state"))
-      case Some(rec) if rec.archivedAt.isDefined =>
-        IO.pure(Left("record is archived (freeze retention expired) — dispatch a fresh delegate instead"))
+      case Some(rec) if frozenRetentionExpired(rec) =>
+        IO.pure(
+          Left(
+            "frozen longer than the freeze retention window (state-derived from frozenSince — the retired archive " +
+              "flag used to express this) — dispatch a fresh delegate instead"
+          )
+        )
       case Some(rec) if rec.executor != ExecutorRegistry.DefaultId =>
         IO.pure(Left(s"external executor '${rec.executor}' — use the Mail continuation leg"))
       case Some(rec) =>
@@ -334,40 +355,26 @@ object DelegateRevival:
    *                    横幅之后成为本窗口的首条指令；空 = 纯「从冻结点继续」。
    */
   private def reviveImpl(deps: Deps, task: SubAgentTask, instruction: String = ""): IO[Either[String, Unit]] =
-    nebflow.core.delegate.MergerInitialization
-      .exclusive(task.taskId) {
-        nebflow.core.delegate.MergerInitialization.repairLocked(deps.resources, task.taskId) *>
+    deps.resources.executionProtection(task.taskId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected => nebflow.core.delegate.SessionStartLease
+        .exclusive(task.taskId) {
           deps.resources.agentRegistry.get.flatMap { live =>
             live.get(task.taskId).fold(IO.pure(false))(record => deps.system.isAlive(record.ref.path)).flatMap {
               case true => IO.pure(Left("Session is already live; use its explicit wake or continuation entry"))
               case false =>
                 deps.resources.sessionStore.loadMessagesForSession(task.taskId).flatMap { transcript =>
-                  if transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript) then
-                    IO.pure(
-                      Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
-                    )
-                  else
-                    IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(task.taskId, allowFrozen = true))
-                      .flatMap {
-                        case Left(error) => IO.pure(Left(error))
-                        case Right(_) =>
-                          reviveAdmitted(deps, task, instruction).flatTap {
-                            case Right(_) => IO.unit
-                            case Left(error) =>
-                              nebflow.core.delegate.MergerInitialization.failed(deps.resources, task.taskId, error)
-                          }
-                      }
+                  nebflow.core.ResumeHandoff.recoverableAskHostOnly(task.taskId, transcript).flatMap { safe =>
+                    if transcript.isEmpty || !safe then
+                      IO.pure(Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)"))
+                    else reviveAdmitted(deps, task, instruction)
+                  }
                 }
             }
           }
-      }
-      .handleErrorWith(error =>
-        nebflow.core.delegate.MergerInitialization
-          .failed(deps.resources, task.taskId, s"Recovery could not safely start: ${error.getMessage}")
-          .attempt
-          .void
-          .as(Left(s"Recovery could not safely start: ${error.getMessage}"))
-      )
+        }
+        .handleErrorWith(error => IO.pure(Left(s"Recovery could not safely start: ${error.getMessage}")))
+      case _ => IO.pure(Left("Protected or unknown execution requires exact-ref recovery; legacy revival is unavailable"))
+    }
 
   private def reviveAdmitted(deps: Deps, task: SubAgentTask, instruction: String): IO[Either[String, Unit]] =
     IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {
@@ -384,17 +391,21 @@ object DelegateRevival:
         val frozenReason = record.frozenReason.getOrElse("")
         val frozenDetail = record.frozenDetail.getOrElse("")
         Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+          val admitted = Ref.unsafe[IO, Option[SubAgentTask]](None)
           val attempt = for
             // Re-read and verify the checkpoint before changing the task row or spawning.
             transcript <- deps.resources.sessionStore.loadMessagesForSession(task.taskId)
-            _ <- IO.raiseWhen(transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript))(
+            safe <- nebflow.core.ResumeHandoff.recoverableAskHostOnly(task.taskId, transcript)
+            _ <- IO.raiseWhen(transcript.isEmpty || !safe)(
               new IllegalStateException("Saved context changed or a tool outcome is unknown (RECOVERY_UNVERIFIED)")
             )
-            _ <- deps.resources.subAgentTaskStore
-              .markRevived(parentSid, task.taskId, nextCount, now)
-              .handleErrorWith(e =>
-                logger.warn(s"[delegate-revival] task-row update failed for ${task.taskId}: ${e.getMessage}")
-              )
+            _ <-
+              if task.runId.nonEmpty then
+                deps.resources.subAgentTaskStore.resumeObserved(
+                  task.copy(revivalCount = Some(nextCount), revivedAt = Some(now))
+                )
+              else deps.resources.subAgentTaskStore.markRevived(parentSid, task.taskId, nextCount, now)
+            _ <- deps.resources.subAgentTaskStore.findByTaskId(task.taskId).flatMap(admitted.set)
             // ②b 断点台账（中断恢复批 2026-11-04 · V4/审计 D6）：把「已完成到哪」写成
             //    机器可读件（转录游标 + 已完成回合/工具回合 + 步骤摘要），随 nudge 交付
             //    ⇒ 复活后模型能机械区分「已完成/待做」，不重做已完成步骤的副作用。
@@ -405,7 +416,7 @@ object DelegateRevival:
             //    单点 = [[ResumeHandoff]]，本腿不自行拼注入文案。
             //    `legacyNudge` 逐字保留改前的提示文案：仅当没有工具边界（普通中断 /
             //    旧格式会话）时才注入它，行为与改前一字不差。
-            handoff =
+            handoff0 =
               val ckLine = checkpoint
                 .map(f =>
                   s"\n\nCompleted-work checkpoint (machine-readable ledger `sessions/${task.taskId}/${RevivalCheckpoint.FileName}`): " +
@@ -427,6 +438,7 @@ object DelegateRevival:
                   s"[system] The engine process restarted while your task was in flight. Your work so far (${transcript.size} transcript messages) is loaded below — continue the task from where you left off.$ckLine$wakeInstr"
                 else s"${task.prompt}$wakeInstr"
               )
+            handoff <- ResumeHandoff.resolveAskHost(task.taskId, handoff0)
             _ <- IO(
               ResumeHandoff.logPlan(
                 task.taskId,
@@ -555,7 +567,6 @@ object DelegateRevival:
             //    模型收到的是那次调用的 tool_result（无感续跑）；否则逐字回落改前的提示文案。
             //    冻结腿（frozen 在场）注完之后清冻结槽 + 合并队列重排
             //    （[[DelegateFreeze.onWoken]]）——唤醒 = 冻结生命周期的唯一出口。
-            _ <- nebflow.core.delegate.MergerInitialization.ready(task.taskId)
             _ <- subagentRef ! ResumeHandoff.userInput(handoff, replyTo = Some(adapterRef))
             _ <-
               if frozen.isDefined then
@@ -576,12 +587,25 @@ object DelegateRevival:
             )
           yield Right(())
 
-          val stopPartial =
-            if record.mode.contains("merger") then
-              cleanup.get.flatten *>
-                deps.resources.agentRegistry.update(_ - task.taskId) *> DelegateFlowHosts.unmount(task.taskId)
-            else IO.unit
-          attempt.onError { case _ => stopPartial }.onCancel(stopPartial)
+          val failed = admitted.get
+            .flatMap {
+              case Some(row) if row.runId.nonEmpty =>
+                deps.resources.subAgentTaskStore
+                  .completeRun(
+                    row.parentSessionId,
+                    row.taskId,
+                    row.runId.get,
+                    "failed",
+                    reason = Some("Revival startup failed; manual recovery required"),
+                    incomplete = true,
+                    notifyParent = false
+                  )
+                  .void
+              case _ => IO.unit
+            }
+            .attempt
+            .void *> cleanup.get.flatten.void
+          attempt.onError { case _ => failed }.onCancel(failed)
         }
 
     }

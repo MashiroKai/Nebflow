@@ -41,6 +41,58 @@ import nebflow.shared.PathUtil
 
 object ChainsReadFace:
 
+  /** Discover durable descendants without requiring their parent to be active. */
+  def scopedTaskRows(
+    rootSessionId: String,
+    tasks: List[nebflow.shared.SubAgentTask],
+    registry: Map[String, nebflow.actor.AgentRecord]
+  ): List[nebflow.shared.SubAgentTask] =
+    val byId = tasks.map(t => t.taskId -> t).toMap
+    def belongs(id: String, visited: Set[String]): Boolean =
+      if id == rootSessionId then true
+      else if id.isEmpty || visited.contains(id) then false
+      else
+        val next = visited + id
+        byId.get(id) match
+          case Some(t) =>
+            t.rootSessionId.filter(_.nonEmpty) match
+              case Some(root) => root == rootSessionId
+              case None => belongs(t.parentSessionId, next)
+          case None =>
+            registry.get(id).exists(r => r.rootSessionId == rootSessionId || belongs(r.parentSessionId, next))
+    tasks
+      .filter(t => t.taskId != rootSessionId && belongs(t.taskId, Set.empty))
+      .sortBy(t => (t.spawnedAt, t.taskId))
+
+  end scopedTaskRows
+
+  /** Discovery metadata only: transcripts stay behind the existing history face. */
+  def taskVisibilityJson(task: nebflow.shared.SubAgentTask): Json =
+    task.asJson.mapObject(_.filter { case (key, _) =>
+      Set(
+        "taskId",
+        "parentSessionId",
+        "rootSessionId",
+        "agentName",
+        "description",
+        "source",
+        "status",
+        "spawnedAt",
+        "completedAt",
+        "retryCount",
+        "runId",
+        "committedRevision",
+        "executor",
+        "executionStatus",
+        "activityAt",
+        "activityKind",
+        "activityLabel",
+        "resultRef",
+        "terminalReason",
+        "incomplete"
+      ).contains(key)
+    })
+
   /**
    * 任务行投影（rows 臂）。`registry` = agentRegistry 快照（活性提示单源）。
    * `taskStatuses`（#566 修复批 · 行终态权威）：delegateId → 引擎任务行终态
@@ -72,64 +124,21 @@ object ChainsReadFace:
     taskStatuses: Map[String, String] = Map.empty,
     taskRows: List[nebflow.shared.SubAgentTask] = Nil
   ): IO[Json] =
-    IO.blocking(
-      (
-        DelegateRegistry.list(),
-        // base 漂移状态面（`[base-moved]` 降噪重写批 2026-11-05 作者令第五条）：
-        // 「base 动了」这个**事实**放面板可见，不进消息流——消息腿只在可行动
-        // （动到我改过的文件 / base 历史被改写）时聚合发一条。
-        nebflow.core.delegate.BaseDriftWatch.statuses()
-      )
-    ).flatMap { case (records, drift) =>
+    IO.blocking(DelegateRegistry.list()).flatMap { records =>
       val continuations = continuationLinks(records, taskRows)
-      val scoped = records.filter(rec => rec.archivedAt.isDefined == archived)
+      // 阶段②（delegate-lifecycle-reform）：两窗划分改由**状态派生可见性**供给
+      // （[[nebflow.core.delegate.DelegateVisibility.Reading.historyWindow]] = 收口 ∧
+      // （非破坏性确认/忽略旗 ∨ 存量归档旗））——存储式归档写点已退役，读面不再看旗本身。
+      val readings: Map[String, nebflow.core.delegate.DelegateVisibility.Reading] =
+        records.map(r => r.id -> nebflow.core.delegate.DelegateVisibility.readOf(r.id)).toMap
+      val scoped = records.filter(rec => readings.get(rec.id).exists(_.historyWindow) == archived)
       val windowed: IO[List[DelegateRegistry.Record]] =
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
       windowed
-        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations)))
-        .map(rows => Json.obj("rows" -> withBaseDrift(rows, drift).asJson))
+        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations, readings)))
+        .map(rows => Json.obj("rows" -> rows.asJson))
     }
-
-  /**
-   * 行挂 `baseDrift` 键（`[base-moved]` 降噪重写批 2026-11-05）：只挂 `moves > 0`
-   * 的行（没动过的行不占面板，🔴 缺键纪律 = 不加空壳键）。形状
-   * `{moves, pendingMoves, pendingConflicts, pendingFiles, actionable, lastNotifyMs,
-   * baselineTip, lastSeenTip}`——`moves` = 自派发基线的 base 前进次数（面板文案
-   * 「base 已前进 N 次」的唯一供给），与是否发过通知**无关**（静默也照数）。
-   */
-  private def withBaseDrift(
-    rows: List[Json],
-    drift: Map[String, nebflow.core.delegate.BaseDriftWatch.Entry]
-  ): List[Json] =
-    if drift.isEmpty then rows
-    else
-      rows.map { row =>
-        row.hcursor
-          .get[String]("id")
-          .toOption
-          .flatMap(drift.get)
-          .filter(_.moves > 0)
-          .fold(row) { e =>
-            row.asObject
-              .map(
-                _.add(
-                  "baseDrift",
-                  Json.obj(
-                    "moves" -> e.moves.asJson,
-                    "pendingMoves" -> e.pendingMoves.asJson,
-                    "pendingConflicts" -> e.pendingConflicts.asJson,
-                    "pendingFiles" -> e.pendingFiles.asJson,
-                    "actionable" -> e.actionablePending.asJson,
-                    "lastNotifyMs" -> e.lastNotifyMs.asJson,
-                    "baselineTip" -> e.baselineTip.asJson,
-                    "lastSeenTip" -> e.lastSeenTip.asJson
-                  )
-                )
-              )
-              .fold(row)(Json.fromJsonObject)
-          }
-      }
 
   /**
    * 接续引用推导（任务列表行重启对账批 2026-10-22 · 纯函数单点）：重启打断记录
@@ -149,7 +158,9 @@ object ChainsReadFace:
       .view
       .mapValues(_.map(t => s"${t.description}\n${t.prompt}").mkString("\n"))
       .toMap
-    val interrupted = records.filter(r => r.restartInterruptedAt.isDefined && r.archivedAt.isEmpty)
+    val interrupted = records.filter(r =>
+      r.restartInterruptedAt.isDefined && !nebflow.core.delegate.DelegateVisibility.settledOf(r)
+    )
     interrupted.flatMap { r =>
       val needle = r.id
       val candidates = records.filter { c =>
@@ -233,7 +244,8 @@ object ChainsReadFace:
   private def rowJson(
     registry: Map[String, nebflow.actor.AgentRecord],
     taskStatuses: Map[String, String],
-    continuations: Map[String, String] = Map.empty
+    continuations: Map[String, String] = Map.empty,
+    readings: Map[String, nebflow.core.delegate.DelegateVisibility.Reading] = Map.empty
   )(rec: DelegateRegistry.Record): IO[Json] =
     IO.blocking {
       val key = ChainStore.keyFor(rec.taskId, rec.id)
@@ -249,7 +261,14 @@ object ChainsReadFace:
           val withCont = continuations.get(rec.id).fold(withTask) { succ =>
             withTask.add("continuedBy", succ.asJson)
           }
-          Json.fromJsonObject(withCont)
+          // 阶段②：状态派生可见性读数随行透出（面板/审计单点；缺读数 = 键缺席，
+          // 旧前端诚实降级——不造第二权威）。
+          val withVisibility = readings.get(rec.id).fold(withCont) { rd =>
+            withCont
+              .add("visibility", rd.windowWord.asJson)
+              .add("settled", rd.settled.asJson)
+          }
+          Json.fromJsonObject(withVisibility)
         case None => rec.asJson
       end match
     }.handleErrorWith(e =>

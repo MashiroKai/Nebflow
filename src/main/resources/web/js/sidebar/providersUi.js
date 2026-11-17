@@ -4,7 +4,7 @@
 // (原 :70-71)、flushConfigToServer(原 :1607-1611,saveNewProvider 的写路径单点)。
 // escapeHtml 随段落于本模块(sidebar.js 全文件共用,由此单向提供)。
 import state from '../state.js';
-import { sendWs } from '../ws.js';
+import { sendWs, onMessage } from '../ws.js';
 import { t } from '../i18n.js';
 // authHeaders（Bearer 令牌头，flowHelpers 是 branding 叶子单依赖，无环）：
 // 明文回读拉取与 secretsPanel.api 的鉴权头同一条 owner 面。
@@ -46,6 +46,49 @@ function protocolFormLabel(protocol) {
 
 export const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 export const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+/** Apply one provider change to a config object. A rename leaves a null delete marker for the old id (config deep-merge drops it). */
+function setProviderEntry(config, name, data, existingName) {
+  config.llm ||= {};
+  config.llm.providers ||= {};
+  if (existingName && existingName !== name) config.llm.providers[existingName] = null;
+  config.llm.providers[name] = data;
+}
+
+/**
+ * Persist one provider through `updateConfig` and resolve only when the server answers this very request:
+ * true on a matching successful `configUpdated`, false on a matching `error`, a closed socket, or no
+ * answer within the timeout. The caller keeps its form open on false. The reply is matched by `requestId`
+ * (echoed by the gateway), so an unrelated config acknowledgement can never confirm this save. The local
+ * snapshot changes only after confirmation; the follow-up `configData` refresh remains the source of truth.
+ * @param {string} name
+ * @param {any} data
+ * @param {string} existingName previous id when renaming, else ''
+ * @returns {Promise<boolean>}
+ */
+export function saveProviderWithAck(name, data, existingName) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return Promise.resolve(false);
+  const config = JSON.parse(JSON.stringify(state.parsedConfig || {}));
+  setProviderEntry(config, name, data, existingName);
+  const requestId = `provider-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return new Promise((resolve) => {
+    let timer;
+    const finish = (ok) => {
+      clearTimeout(timer); offSuccess(); offError();
+      if (ok) {
+        state.parsedConfig ||= {};
+        setProviderEntry(state.parsedConfig, name, data, existingName);
+        state.configText = JSON.stringify(state.parsedConfig, null, 2);
+        state.configDirty = false;
+      }
+      resolve(ok);
+    };
+    const offSuccess = onMessage('configUpdated', msg => { if (msg.requestId === requestId) finish(msg.success !== false); });
+    const offError = onMessage('error', msg => { if (msg.requestId === requestId) finish(false); });
+    timer = setTimeout(() => finish(false), 15000);
+    sendWs({ type: 'updateConfig', config: JSON.stringify(config), requestId });
+  });
+}
 
 function flushConfigToServer() {
   const json = JSON.stringify(state.parsedConfig, null, 2);
@@ -308,9 +351,11 @@ export function saveNewProvider(name, data) {
  * settings panel. onSaved fires after the config has been flushed.
  */
 export function openProviderWizard(onSaved) {
-  showProviderModal(null, null, (name, data) => {
-    saveNewProvider(name, data);
-    if (typeof onSaved === 'function') onSaved(name);
+  showProviderModal(null, null, async (name, data) => {
+    const ok = await saveProviderWithAck(name, data, '');
+    if (ok && typeof onSaved === 'function') onSaved(name);
+    if (!ok) window.__showToast?.(t('settings.saveFailed'), 'error');
+    return ok;
   });
 }
 
@@ -362,7 +407,7 @@ function showProviderModal(existingName, existingData, onSave) {
         placeholder: t('provider.maxConcurrentActorsPh'),
       },
     ],
-    onConfirm(values) {
+    async onConfirm(values) {
       const name = values.name.trim();
       if (!name) { window.__showToast?.(t('provider.idRequired'), 'error'); return; }
       if (/\s/.test(name)) { window.__showToast?.(t('provider.noSpaces'), 'error'); return; }
@@ -437,7 +482,7 @@ function showProviderModal(existingName, existingData, onSave) {
         window.__showToast?.(t('provider.maxConcurrentActorsInvalid'), 'error');
         return;
       }
-      onSave(name, {
+      const saved = await onSave(name, {
         baseUrl,
         apiKey,
         protocol: values.protocol,
@@ -445,6 +490,7 @@ function showProviderModal(existingName, existingData, onSave) {
         unavailableWindows: uwOut,
         maxConcurrentActors: actorsCap,
       });
+      if (saved === false) return false;
       if (clampedRows.length) {
         for (const c of clampedRows) {
           window.__showToast?.(t('provider.ctxClampedToMax', { id: c.id, max: c.max.toLocaleString() }), 'info');
@@ -453,6 +499,7 @@ function showProviderModal(existingName, existingData, onSave) {
       if (defaultedIds.length) {
         window.__showToast?.(t('provider.ctxDefaulted', { ids: defaultedIds.join('、'), def: CTX_WINDOW_DEFAULT.toLocaleString() }), 'info');
       }
+      return true;
     }
   });
   // baseUrl/apiKey change → auto-fetch model list (dropdown); degrades to
@@ -528,7 +575,7 @@ function collectWindows(host) {
  * 收口。渲染器按字段类型（text / number / select / password / textarea /
  * models / windows）单点实现，加一个类型只加一套字段描述，不改渲染。
  *
- * @param {{title:string, fields:Array<any>, onConfirm:(values:any)=>void,
+ * @param {{title:string, fields:Array<any>, onConfirm:(values:any)=>boolean|void|Promise<boolean|void>,
  *          onCancel?:()=>void, extraActionsHTML?:string,
  *          bindExtra?:((overlay:HTMLElement)=>void)|null}} spec
  */
@@ -702,10 +749,18 @@ export function showProviderForm({title, fields, onCancel, onConfirm, extraActio
     try { bindExtra(overlay); } catch (err) { console.warn('provider form extra bind failed', err); }
   }
 
-  const close = () => { overlay.remove(); if (typeof onCancel === 'function') onCancel(); };
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    overlay.remove();
+    if (typeof onCancel === 'function') onCancel();
+  };
   document.getElementById('cfg-modal-cancel').addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  document.getElementById('cfg-modal-save').addEventListener('click', () => {
+  const saveButton = /** @type {HTMLButtonElement} */ (document.getElementById('cfg-modal-save'));
+  saveButton.addEventListener('click', async () => {
+    if (saveButton.disabled) return;
     const values = {};
     // 段列表组（models / unavailableWindows）以各自专用读面收集，不走 .value。
     overlay.querySelectorAll('[data-field]:not([data-field="models"]):not([data-field="unavailableWindows"])').forEach(el => {
@@ -747,8 +802,15 @@ export function showProviderForm({title, fields, onCancel, onConfirm, extraActio
         values.models.push(entry);
       });
     }
-    onConfirm(values);
-    close();
+    saveButton.disabled = true;
+    try {
+      const saved = await onConfirm(values);
+      if (saved === true) close();
+    } catch (err) {
+      window.__showToast?.(t('settings.saveFailed'), 'error');
+    } finally {
+      saveButton.disabled = false;
+    }
   });
 }
 

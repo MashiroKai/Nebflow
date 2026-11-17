@@ -138,7 +138,7 @@ test.describe('手机视口（mobile-layer）', () => {
     expect(errors).toEqual([]);
   });
 
-  test('M2 §9-② 渐隐带 blur(18px) saturate(1.5) + 两段式 mask', async ({ page }) => {
+  test('M2 §9-② 渐隐带统一玻璃配方 blur(24px) saturate(1.15) + 两段式 mask', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page);
     const r = await page.evaluate(() => {
@@ -149,21 +149,23 @@ test.describe('手机视口（mobile-layer）', () => {
         veil: cs.backgroundImage,
       };
     });
-    expect(String(r.backdrop)).toContain('blur(18px)');
-    expect(String(r.backdrop)).toContain('saturate(1.5)');
+    // 本条断言在 FE 基线上就是红的：.ds-edge-fade 已入册 glass.css 成员登记表、
+    // 吃唯一配方（单一材质批 2026-11-15），旧 blur(18px)/saturate(1.5) 为渐隐带
+    // 子族 M9 遗值 —— 断言随之改正到统一配方。
+    expect(String(r.backdrop)).toContain('blur(24px)');
+    expect(String(r.backdrop)).toContain('saturate(1.15)');
     expect(r.mask).not.toBe('none');
     expect(String(r.mask)).toContain('linear-gradient');
     expect(String(r.veil)).toContain('linear-gradient');
     expect(errors).toEqual([]);
   });
 
-  test('M3 §9-③ 悬浮圆钮正圆 48px（移动档）；折射层 blur 20 / sat 2.2（v3 §D）；图标 20px', async ({ page }) => {
+  test('M3 §9-③ 悬浮圆钮正圆 48px（移动档）；本体直挂统一玻璃 blur 24 / sat 1.15（折射层退役）；图标 20px', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page);
     const r = await page.evaluate(() => {
       const btn = document.querySelector('#mobile-fab-layer .mh-chrome-btn');
       const cs = getComputedStyle(btn);
-      const bcs = getComputedStyle(btn, '::before'); // 折射层在伪元素（liquid-glass.css）
       const svg = btn.querySelector('svg') || btn.querySelector('i');
       const scs = svg ? getComputedStyle(svg) : null;
       return {
@@ -171,23 +173,23 @@ test.describe('手机视口（mobile-layer）', () => {
         w: cs.width,
         h: cs.height,
         bg: cs.backgroundColor,
-        blur: bcs.backdropFilter || bcs.webkitBackdropFilter,
-        highlight: bcs.backgroundImage,
+        // 本条断言在 FE 基线上就是红的：::before 折射层随统一按钮玻璃批
+        // （2026-11-01）退役，材质改在元素本体直挂（glass.css 圆钮档）——
+        // 读数面从伪元素改到本体，配方值随之改正到唯一 blur(24px)/saturate(1.15)。
+        blur: cs.backdropFilter || cs.webkitBackdropFilter,
         svgW: scs ? scs.width : null,
       };
     });
     expect(r.radius).toBe('50%');
     expect(r.w).toBe('48px');
     expect(r.h).toBe('48px');
-    // v3 §D 令牌单源（stand-tokens.css --g2-fab-blur/sat）：20px / 2.2。
-    expect(String(r.blur)).toContain('blur(20px)');
-    expect(String(r.blur)).toContain('saturate(2.2)');
-    expect(r.highlight).toContain('linear-gradient'); // 上半镜面高光层
+    expect(String(r.blur)).toContain('blur(24px)');
+    expect(String(r.blur)).toContain('saturate(1.15)');
     expect(r.svgW).toBe('20px');
     expect(errors).toEqual([]);
   });
 
-  test('M4 §9-④ CSSOM：圆钮 :active scale(.88) / 药丸 scale(.95)，过渡时长 ≈180ms', async ({ page }) => {
+  test('M4 §9-④ CSSOM：圆钮按压档（桌面 var 单源 0.96 / 手机弹簧 0.88 + 180ms）；药丸 var 单源 + 时长 token', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page);
     const r = await page.evaluate(() => {
@@ -199,39 +201,57 @@ test.describe('手机视口（mobile-layer）', () => {
             if (!rule.selectorText) continue;
             const sels = rule.selectorText.split(',').map((s) => s.trim());
             if (!sels.includes(sel)) continue;
-            if (wantDuration && !rule.style.transitionDuration) continue;
-            return { transform: rule.style.transform, duration: rule.style.transitionDuration };
+            if (wantDuration && !rule.style.transition && !rule.style.transitionDuration) continue;
+            return {
+              transform: rule.style.transform,
+              duration: rule.style.transitionDuration,
+              // var() 进 shorthand 后 CSSOM 不再分解子属性（transitionDuration
+              // 返回空串），故把 shorthand 本体一并带回，供 token 形断言。
+              shorthand: rule.style.transition,
+            };
           }
         }
         return null;
       };
       return {
-        // 形变值在 :active 规则；spring 时长在基类 transition（:active 规则本身无时长）。
+        // 形变值在 :active 规则；时长在基类 transition（:active 规则本身无时长）。
         fab: grab('.g2-fab:active'),
         pill: grab('.g2-pill:active'),
-        fabBase: grab('.g2-fab', true),
+        fabMobile: grab('body.mobile-layer .g2-fab:active'),
+        fabMobileBase: grab('body.mobile-layer .g2-fab', true),
         pillBase: grab('.g2-pill', true),
       };
     });
-    expect(r.fab?.transform).toBe('scale(0.88)');
-    expect(r.pill?.transform).toBe('scale(0.95)');
-    for (const base of [r.fabBase, r.pillBase]) {
-      const secs = String(base?.duration || '').split(',').map((s) => parseFloat(s));
-      expect(secs.some((s) => Math.abs(s - 0.18) < 0.02)).toBe(true);
-    }
+    // 本条断言在 FE 基线上就是红的：扁平六态批（2026-11-05）把按压形变/时长
+    // 收成 token 单源（--cv-active-scale / --btn-press-scale / --btn-dur-*），
+    // CSSOM 字面量随之改为 var() 形；手机弹簧档（glass.css mobile 块）仍是
+    // 字面 0.88 + 0.18s spring —— 两档都钉。
+    expect(r.fab?.transform).toBe('scale(var(--cv-active-scale, 0.96))');
+    expect(r.fabMobile?.transform).toBe('scale(0.88)');
+    expect(r.pill?.transform).toBe('scale(var(--btn-press-scale))');
+    // 手机弹簧时长（设计稿 §3.4 手机档 180ms）。
+    const mobileSecs = String(r.fabMobileBase?.duration || '').split(',').map((s) => parseFloat(s));
+    expect(mobileSecs.some((s) => Math.abs(s - 0.18) < 0.02)).toBe(true);
+    // 药丸按下时长走 --btn-dur-press（桌面档 90ms，出生地 sapphire.css）；
+    // var() shorthand 在 CSSOM 不分解（transitionDuration 空串）⇒ 只能在
+    // shorthand 串上钉 token 名，字面值归令牌出生地（令牌检查管）。
+    expect(String(r.pillBase?.shorthand || '')).toContain('var(--btn-dur-press)');
     expect(errors).toEqual([]);
   });
 
-  test('M5 §9-④ 发送键纯圆化（收形批⑥ 作者令 10-31 22:50）：r50% 36×36 圆钮，绿保留（真元素断言）', async ({ page }) => {
+  test('M5 §9-④ 发送键纯圆 48×48（手机 send/stop 同档批 2026-11-03 作者报障），绿保留（真元素断言）', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page);
     const r = await page.evaluate(() => {
       const cs = getComputedStyle(document.getElementById('send-btn'));
       return { radius: cs.borderRadius, w: cs.width, h: cs.height, bg: cs.backgroundColor, color: cs.color };
     });
+    // 本条断言在 FE 基线上就是红的：收形批⑥的 36×36 被 2026-11-03 send/stop
+    // 同档批（作者报障「发送按钮怎么那么大」→ 两钮同升 --mtap-lg 48、图标 22）
+    // 取代 —— 几何断言随之改正。
     expect(r.radius).toBe('50%');
-    expect(r.w).toBe('36px');
-    expect(r.h).toBe('36px');
+    expect(r.w).toBe('48px');
+    expect(r.h).toBe('48px');
     expect(errors).toEqual([]);
   });
 });
@@ -283,31 +303,37 @@ test.describe('桌面视口（桌面按钮族换代，#header 不动）', () => 
     await page.evaluate(() => {
       const el = document.createElement('button');
       el.type = 'button';
-      el.className = 'g2-pill';
+      // 探针必须自带判别类：裸 .g2-pill 会命中 DOM 序更靠前的隐藏接管弹窗钮
+      // #takeover-exit（page.hover 卡 180s 超时，双树实证）——这是本测试自身
+      // 的选择器缺陷，不是页面缺陷。
+      el.className = 'g2-pill lg2-pill-probe';
       el.textContent = 'HoverProbe';
       el.style.cssText = 'position:fixed;left:400px;top:300px;z-index:5;';
       document.body.appendChild(el);
     });
-    const rest = await page.evaluate(() => getComputedStyle(document.querySelector('.g2-pill')).backgroundColor);
-    await page.hover('.g2-pill');
+    const rest = await page.evaluate(() => getComputedStyle(document.querySelector('.lg2-pill-probe')).backgroundColor);
+    await page.hover('.lg2-pill-probe');
     await page.waitForTimeout(250); // 等 :hover 样式落定（实测零等待时读数偶发未切换）
-    const hover = await page.evaluate(() => getComputedStyle(document.querySelector('.g2-pill')).backgroundColor);
-    const alpha = (rgba) => {
-      const m = /rgba\(\s*\d+,\s*\d+,\s*\d+,\s*([\d.]+)\s*\)/.exec(rgba);
-      return m ? parseFloat(m[1]) : 1;
+    const hover = await page.evaluate(() => getComputedStyle(document.querySelector('.lg2-pill-probe')).backgroundColor);
+    const alpha255 = (color) => {
+      const m = /rgba?\(\s*\d+,\s*\d+,\s*\d+(?:,\s*([\d.]+)\s*)?\)/.exec(color);
+      // 无 alpha 段 = 不透明（rgb()）；Chrome 把 α 序列化成两位小数（实测
+      // #ffffffF7 ⇒ rgba(...,0.97)），浮点域会把真实 Δ=8.0/255 压成 0.030 ——
+      // §9-⑤ 的 8/255 本就是 8-bit 域一档，比对在 8-bit 整数域做（非弱化）。
+      return m ? Math.round(parseFloat(m[1] ?? '1') * 255) : 255;
     };
-    const delta = Math.abs(alpha(hover) - alpha(rest));
-    expect(delta).toBeGreaterThanOrEqual(8 / 255);
+    const delta = Math.abs(alpha255(hover) - alpha255(rest));
+    expect(delta).toBeGreaterThanOrEqual(8);
     expect(errors).toEqual([]);
   });
 });
 
 test.describe('三态 token 解析（§9-⑥）', () => {
-  test('T1 --g2-fab-bg 三态可解析且亮暗不同', async ({ page }) => {
+  test('T1 唯一玻璃底 --nf-glass-input-bg 三态可解析且亮暗不同', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page, { width: 1280, height: 800, colorScheme: 'light' });
     const read = () => page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue('--g2-fab-bg').trim());
+      getComputedStyle(document.documentElement).getPropertyValue('--nf-glass-input-bg').trim());
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
     const light = await read();
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
@@ -316,17 +342,19 @@ test.describe('三态 token 解析（§9-⑥）', () => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForTimeout(120);
     const fallbackDark = await read();
-    // v3 §D：--g2-fab-bg 亮 0.30 / 暗 0.10（stand-tokens.css 三态块）。
-    expect(light).toContain('0.30');
-    expect(dark).toContain('0.10');
-    expect(fallbackDark).toContain('0.10');
+    // 本条断言在 FE 基线上就是红的：--g2-fab-bg 随统一按钮玻璃批退役；三态
+    // 解析契约落在唯一玻璃底 --nf-glass-input-bg（单一材质批 2026-11-15 出生
+    // 地）：亮 #ffffffF7 / 暗 #181c26F0。
+    expect(light.toLowerCase()).toContain('#fffffff7');
+    expect(dark.toLowerCase()).toContain('#181c26f0');
+    expect(fallbackDark.toLowerCase()).toContain('#181c26f0');
     expect(light).not.toBe(dark);
     expect(errors).toEqual([]);
   });
 });
 
 test.describe('no-backdrop 降级（§9-⑦）', () => {
-  test('F1 圆钮实色回落：亮 alpha ≥ .55 / 暗 alpha ≥ .20（v3 --g2-fab-solid），高光投影保留', async ({ page }) => {
+  test('F1 no-backdrop 圆钮回落实色：亮 α ≥ .55 / 暗 α ≥ .20（--glass-bg 原值）；零投影契约', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page, { width: 1280, height: 800, colorScheme: 'light' });
     const read = () => page.evaluate(() => {
@@ -344,49 +372,46 @@ test.describe('no-backdrop 降级（§9-⑦）', () => {
     await page.evaluate(() => document.documentElement.classList.add('no-backdrop'));
     const light = await read();
     expect(parseFloat(/,\s*([\d.]+)\)$/.exec(light.bg)[1])).toBeGreaterThanOrEqual(0.55 - 1e-6);
-    expect(light.shadow).toContain('inset'); // 高光/浮影保留（不裸断）
+    // 本条断言在 FE 基线上就是红的：inset 高光随 F1 时代折射层退役（统一按钮
+    // 玻璃批文件头：回落实色档 = --glass-bg 原值）；扁平化批（2026-11-05 作者
+    // 报障「像浮起来的实体按钮」）把圆钮族投影整体退役 ⇒ 零投影即契约。
+    expect(light.shadow).toBe('none');
     await page.evaluate(() => {
       document.documentElement.setAttribute('data-theme', 'dark');
     });
     const dark = await read();
     expect(parseFloat(/,\s*([\d.]+)\)$/.exec(dark.bg)[1])).toBeGreaterThanOrEqual(0.20 - 1e-6);
+    expect(dark.shadow).toBe('none');
     expect(errors).toEqual([]);
   });
 });
 
-test.describe('边缘光折射（追加批）', () => {
-  test('R1 能力探测类开关 + 折射层滤镜契约 + 摘除后保留高光（不裸断）', async ({ page }) => {
+test.describe('边缘光折射（追加批 → 退役契约）', () => {
+  test('R1 折射层退役契约（统一按钮玻璃批 2026-11-01）：无能力类、无 ::before 折射层，本体直挂唯一配方', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page, { width: 1280, height: 800 });
-    const on = await page.evaluate(() => {
+    const now = await page.evaluate(() => {
       const el = document.createElement('button');
       el.type = 'button';
       el.className = 'g2-fab';
       el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:1;';
       document.body.appendChild(el);
+      const cs = getComputedStyle(el);
       const before = getComputedStyle(el, '::before');
       return {
         cls: document.documentElement.classList.contains('g2-refract-on'),
-        filter: before.filter,
-        backdrop: before.backdropFilter || before.webkitBackdropFilter,
-        highlight: before.backgroundImage,
+        backdrop: cs.backdropFilter || cs.webkitBackdropFilter,
+        beforeBackdrop: before.backdropFilter || before.webkitBackdropFilter,
       };
     });
-    // headless Chromium 支持 SVG 滤镜 ⇒ 类开关应挂上（defs 在场双判据）。
-    expect(on.cls).toBe(true);
-    expect(String(on.filter)).toContain('url(');
-    expect(String(on.backdrop)).toContain('blur(20px)');
-    expect(String(on.backdrop)).toContain('saturate(2.2)');
-    expect(on.highlight).toContain('linear-gradient'); // 镜面高光层常驻
-    // 摘除类 = 旧 WebView 降级面：滤镜消失、高光/直 blur 保留。
-    const off = await page.evaluate(() => {
-      document.documentElement.classList.remove('g2-refract-on');
-      const before = getComputedStyle(document.querySelector('.g2-fab'), '::before');
-      return { filter: before.filter, backdrop: before.backdropFilter || before.webkitBackdropFilter, highlight: before.backgroundImage };
-    });
-    expect(String(off.filter)).toBe('none');
-    expect(String(off.backdrop)).toContain('blur(20px)');
-    expect(off.highlight).toContain('linear-gradient');
+    // 本条断言在 FE 基线上就是红的：追加批时代的 feDisplacementMap 折射层与
+    // g2-refract-on 能力类已随统一按钮玻璃批（2026-11-01）整体退役 —— 测试
+    // 随之改正为「退役契约」：能力类永不出现、伪元素零折射、本体直挂唯一配方
+    // （blur(24px) saturate(1.15)，单一材质批 2026-11-15）。
+    expect(now.cls).toBe(false);
+    expect(String(now.backdrop)).toContain('blur(24px)');
+    expect(String(now.backdrop)).toContain('saturate(1.15)');
+    expect(String(now.beforeBackdrop)).toBe('none');
     expect(errors).toEqual([]);
   });
 });

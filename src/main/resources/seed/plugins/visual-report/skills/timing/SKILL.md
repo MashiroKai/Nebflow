@@ -50,7 +50,7 @@ description: 接口/总线时序报告（WaveDrom 波形）；时序图任务使
 
 ## 3. 工具链与自检
 
-> 实测日期 2026-10-04；`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。链接验证记录统一引用 `${SKILL_DIR}/../README.md` 全表（同日实测，引用前超 30 天须复测）。
+> 实测日期 2026-10-04；`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`。链接验证记录统一引用 `${SKILL_DIR}/../README.md` 全表（同日实测，引用前超 30 天须复测）。
 
 | 工具 | 用途 | 本机检测命令（实测） | 官方下载链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
@@ -66,7 +66,7 @@ description: 接口/总线时序报告（WaveDrom 波形）；时序图任务使
 npx -y wavedrom-cli -i <wavejson>.json -s <出图>.svg   # SVG 交付物
 npx -y wavedrom-cli -i <wavejson>.json -p <预览>.png   # 仅 PNG 预览 / 目检
 # 暗色适配（core §3 要求；幂等，只注入 CSS 不动几何）
-C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe C:\Users\Kai\.nebflow\skills\visual-report-suite\timing\wavedrom_dark.py <出图>.svg
+C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe C:\Users\name\.nebflow\skills\visual-report-suite\timing\wavedrom_dark.py <出图>.svg
 # 备途径（python 2.0.3.post3）
 <venv>\python.exe -c "import wavedrom; fin=open(r'<wavejson>.json',encoding='utf-8'); fout=open(r'<出图>.svg','w',encoding='utf-8'); wavedrom.render_write(fin,fout)"
 ```
@@ -94,5 +94,5 @@ WaveJSON 速查：`1/0` 电平、`p/n` 时钟、`x` 不定态、`z` 高阻、`.`
 
 ## 5. 示例
 
-- `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\timing.md` —— ADC 采样 / SPI 读回握手 demo：信号表 → 双图（转换触发 + SPI 读回，wavedrom-cli 3.2.0 实渲染）→ 逐段解读（采样窗 / 因果链 / 建立保持核对）→ 完整 wavejson 源码 → 复现命令。
+- `C:\Users\name\.nebflow\skills\visual-report-suite\demos\timing.md` —— ADC 采样 / SPI 读回握手 demo：信号表 → 双图（转换触发 + SPI 读回，wavedrom-cli 3.2.0 实渲染）→ 逐段解读（采样窗 / 因果链 / 建立保持核对）→ 完整 wavejson 源码 → 复现命令。
 - WaveJSON 官方教程：https://wavedrom.com/tutorial.html（README 验证 200，2026-10-04）。

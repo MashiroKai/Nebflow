@@ -8,7 +8,6 @@ import nebflow.agent.{SharedResources, SpecResources}
 import nebflow.core.GitWorktrees
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
-import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 
 /**
@@ -125,7 +124,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       .lastOption
 
   test(
-    "① matrix: judge absent + no self-report ⇒ NudgeIdle (complete×idle = remind, never complete); self-report finish → completed; self-report blocked (retired) → completed + note; self-report merge (retired) → completed + note"
+    "① pass-through contract (report channel retired): every turn end releases to the parent — undeclared, finish-slot, retired-blocked-slot, retired-merge-slot all land the same delivery; no verdict line is written"
   ) {
     val system = ActorSystem(s"dt-1-${scala.util.Random.nextInt(100000)}")
     for
@@ -156,30 +155,20 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       v4 = verdictLine("delegate-nebflow-f4")
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      // 状态矩阵批（作者令）：complete × 未申报 = 提醒调整状态，绝不判完成
-      // ——NudgeIdle、零判词行。
-      assert(
-        r1.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle],
-        s"undeclared turn end must be reminded (NudgeIdle), never completed: $r1"
-      )
-      assertEquals(v1, None, "an undeclared turn writes NO verdict line")
-      assert(r2.isInstanceOf[DelegateTerminal.Outcome.Release])
-      assertEquals(v2, Some("completed"))
-      // 退役 blocked 申报 → completed＋注记（wire 无 blocked；注记走尾注+reason）。
-      assert(
-        r3.isInstanceOf[DelegateTerminal.Outcome.Release] && r3.toString.contains("completed"),
-        "self-report blocked (retired) → completed release"
-      )
-      assert(r3.toString.contains("missing key material"), "the retired-blocked detail rides the report note")
-      assertEquals(v3, Some("completed"), "no separate blocked wire word is ever written")
-      assert(r3.toString.contains("[delegate-judge] note:"), "the note channel is explicit in the release suffix")
-      // 退役 merge 申报 → completed＋注记（集成 = 项目 merger 的授权请求）。
-      assert(
-        r4.isInstanceOf[DelegateTerminal.Outcome.Release] && r4.toString.contains("completed"),
-        "self-report merge (retired) → completed release"
-      )
-      assert(r4.toString.contains("left on the branch"), "the retired-merge detail rides the report note")
-      assertEquals(v4, Some("completed"), "no separate merge wire word is ever written")
+      // 申报工具通道退役（T2 批）：回合结束 = 完成交付——四种槽位形态（未申报 /
+      // finish / 退役 blocked / 退役 merge）一律 Release 直通，槽位不再改写终局。
+      List("r1" -> r1, "r2" -> r2, "r3" -> r3, "r4" -> r4).foreach { (name, r) =>
+        assert(
+          r.isInstanceOf[DelegateTerminal.Outcome.Release],
+          s"$name: every turn end must release (pass-through), got: $r"
+        )
+      }
+      assert(r1.toString.contains("done work"), "the release payload carries the final text")
+      assert(r2.toString.contains("result text"), "the declared-slot shape releases the same way")
+      // 判词行不再写（判定机/自申报消费随通道退役）。
+      List("f1" -> v1, "f2" -> v2, "f3" -> v3, "f4" -> v4).foreach { (name, v) =>
+        assertEquals(v, None, s"$name: no terminal-verdict line may be written (retired protocol)")
+      }
     end for
   }
 
@@ -278,351 +267,51 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     wt
 
   test(
-    "⑥ (drift red ①) shared-checkout seat + zero-ahead + non-attributable base advance ⇒ completed+note, source=drift, reason carries fork/baseTip/commits"
-  ) {
-    val system = ActorSystem(s"dt-6-${scala.util.Random.nextInt(100000)}")
-    for
-      res <- mkResources(system, tempRoot, new SilentLlm)
-      // 判定机缺席：漂移闸独立定罪（确证 ⇒ 根本不进判定机——闸先于判定机）
-      (child, sup) <- noopRefs(system)
-      (repo, fork, baseTip) = mkDriftRepo(
-        tempRoot / "drift-direct",
-        "delegate/delegate-nebflow-dg1",
-        advance = "direct"
-      )
-      _ = seedRecord("delegate-nebflow-dg1", Some("91"), branch = Some("delegate/delegate-nebflow-dg1"), cwd = repo)
-      // 状态矩阵批：finish 申报 = 判词链门票（漂移闸在链内照常先于判定机）。
-      _ = DelegateRegistry.updateReport("delegate-nebflow-dg1", "finish", "declared", "")
-      outcome <- withJudgeAbsent(
-        DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-dg1",
-          "nebula-root",
-          "t",
-          "brief",
-          "done reading",
-          child,
-          sup
-        )
-      )
-      rows = verdictRows("delegate-nebflow-dg1")
-      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield
-      // 确证漂移 = completed＋注记（source=drift），不是独立 blocked 状态。
-      assert(outcome.toString.contains("completed"), s"confirmed drift must land a completed release: $outcome")
-      assert(
-        outcome.toString.contains("[delegate-judge] note:"),
-        s"the drift evidence rides the note channel: $outcome"
-      )
-      assertEquals(
-        rows.map(_._1).lastOption,
-        Some("completed"),
-        "the verdict line must be completed (note form, no blocked wire word)"
-      )
-      assertEquals(rows.map(_._2).lastOption, Some("drift"), "the payload source must be drift")
-      val reason = rows.map(_._3).mkString
-      // 证据三件：fork / baseTip / 不可归属提交列表（全 sha 直比）
-      assert(reason.contains(fork), s"reason must carry the fork sha $fork: $reason")
-      assert(reason.contains(baseTip), s"reason must carry the baseTip sha $baseTip: $reason")
-      assert(
-        reason.contains("non-attributable commits") && reason.contains(baseTip) && reason.contains("direct commit"),
-        s"reason must carry the non-attributable commit list: $reason"
-      )
-    end for
-  }
-
-  test(
-    "⑦ (drift red ②) same drift shape but the base advance is another delegate's merge ⇒ not penalized (delegate/ prefix attribution)"
-  ) {
-    val system = ActorSystem(s"dt-7-${scala.util.Random.nextInt(100000)}")
-    for
-      res <- mkResources(system, tempRoot, new SilentLlm)
-      (child, sup) <- noopRefs(system)
-      (repo, _, _) = mkDriftRepo(tempRoot / "drift-attr", "delegate/delegate-nebflow-dg2", advance = "delegateMerge")
-      _ = seedRecord("delegate-nebflow-dg2", Some("92"), branch = Some("delegate/delegate-nebflow-dg2"), cwd = repo)
-      // 状态矩阵批：finish 申报 = 判词链门票。
-      _ = DelegateRegistry.updateReport("delegate-nebflow-dg2", "finish", "declared", "")
-      outcome <- withJudgeAbsent(
-        DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-dg2",
-          "nebula-root",
-          "t",
-          "brief",
-          "done reading",
-          child,
-          sup
-        )
-      )
-      rows = verdictRows("delegate-nebflow-dg2")
-      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield
-      assertEquals(
-        rows.map(_._1).lastOption,
-        Some("completed"),
-        "a fully-attributable base advance must NOT be penalized"
-      )
-      assert(!rows.map(_._2).contains("drift"), "no drift source may land on the attributable shape")
-      assert(outcome.toString.contains("completed"), s"got: $outcome")
-    end for
-  }
-
-  test(
-    "⑨ (drift red ④) git reading unverifiable ⇒ no penalty, WARN only (fail-open, no fake block); classifier Warn branch anchored"
-  ) {
-    val system = ActorSystem(s"dt-9-${scala.util.Random.nextInt(100000)}")
-    // 分类器纯函数锚（零 git）：锚读数缺失 ⇒ Warn，绝不 Penalty（🔴 禁假阻塞）
-    val rec = DelegateRegistry.Record(
-      id = "dg-x",
-      executor = "nebflow",
-      cwd = "/tmp",
-      project = None,
-      taskId = None,
-      parentSessionId = "p",
-      title = "t",
-      createdAt = 1L,
-      branch = Some("delegate/x"),
-      baseBranch = Some("main")
-    )
-    val warned = DelegateTerminal.classifyDrift(
-      rec,
-      DelegateTerminal.DriftReadings(
-        fork = None,
-        baseTip = Some("bt"),
-        branchTip = Some("bt"),
-        baseAdvances = (_, _) => None,
-        branchTips = () => None,
-        isAncestorOf = (_, _) => Some(false)
-      )
-    )
-    for
-      res <- mkResources(system, tempRoot, new SilentLlm)
-      (child, sup) <- noopRefs(system)
-      // e2e：branch ref 缺失（rev-parse 不可确证）⇒ 闸 WARN 不罚
-      (repo, _, _) = mkDriftRepo(tempRoot / "drift-gone", "delegate/delegate-nebflow-dg4", advance = "direct")
-      _ = os
-        .proc("git", "-C", repo.toString, "branch", "-D", "delegate/delegate-nebflow-dg4")
-        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-      _ = seedRecord("delegate-nebflow-dg4", Some("94"), branch = Some("delegate/delegate-nebflow-dg4"), cwd = repo)
-      // 状态矩阵批：finish 申报 = 判词链门票。
-      _ = DelegateRegistry.updateReport("delegate-nebflow-dg4", "finish", "declared", "")
-      outcome <- withJudgeAbsent(
-        DelegateTerminal.onCompleted(res, "delegate-nebflow-dg4", "nebula-root", "t", "brief", "done", child, sup)
-      )
-      rows = verdictRows("delegate-nebflow-dg4")
-      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield
-      assert(warned.isInstanceOf[DelegateTerminal.DriftResult.Warn], s"missing anchor reading ⇒ Warn, got: $warned")
-      assertEquals(rows.map(_._1).lastOption, Some("completed"), "unverifiable git readings must NOT block (fail-open)")
-      // 矩阵批：finish 申报在场 ⇒ 自申报背书——平线 source=judge（纯 unjudged 角
-      // = 未申报 × ahead>0 × 无 worktree，归 DelegateTerminalPrecheckSpec③）。
-      assertEquals(rows.map(_._2).lastOption, Some("judge"), "self-report backed: no unjudged marker")
-      assert(!outcome.toString.contains("unjudged"), s"got: $outcome")
-      assert(outcome.toString.contains("completed"), s"got: $outcome")
-    end for
-  }
-
-  test("⑩ (drift red ⑤) worktree seat, same drift shape ⇒ note merged into the judge digest, no penalty") {
-    val system = ActorSystem(s"dt-10-${scala.util.Random.nextInt(100000)}")
-    val captured = ListBuffer.empty[DelegateJudge.TerminalInput]
-    try
-      for
-        res <- mkResources(system, tempRoot, new SilentLlm)
-        // fake 判定机（后装覆盖真机）：捕获 gitDigest 输入
-        _ = DelegateJudge.DelegateJudgePort.install(
-          new DelegateJudge.DelegateJudgePort.Face:
-            def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
-              IO { captured += input; Some(DelegateJudge.Verdict.Completed) }
-        )
-        (child, sup) <- noopRefs(system)
-        (repo, fork, baseTip) = mkDriftRepo(tempRoot / "drift-wt", "delegate/delegate-nebflow-dg5", advance = "direct")
-        wt = addWorktree(repo, "delegate/delegate-nebflow-dg5", tempRoot / "wt-dg5")
-        _ = seedRecord(
-          "delegate-nebflow-dg5",
-          Some("95"),
-          branch = Some("delegate/delegate-nebflow-dg5"),
-          cwd = wt,
-          worktree = Some(wt),
-          projectWorkspace = Some(repo)
-        )
-        // 状态矩阵批：finish 申报 = 判词链门票。
-        _ = DelegateRegistry.updateReport("delegate-nebflow-dg5", "finish", "declared", "")
-        outcome <- DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-dg5",
-          "nebula-root",
-          "t",
-          "brief",
-          "done reading",
-          child,
-          sup
-        )
-        rows = verdictRows("delegate-nebflow-dg5")
-        _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-      yield
-        assertEquals(rows.map(_._1).lastOption, Some("completed"), "worktree seat ⇒ note only, never blocked")
-        assert(!rows.map(_._2).contains("drift"), "no drift source may land on the worktree-seat shape")
-        assert(
-          captured.exists(i =>
-            i.gitDigest.contains("[base-drift note]") && i.gitDigest.contains(fork) && i.gitDigest.contains(baseTip)
-          ),
-          s"the drift note (with fork/baseTip evidence) must be merged into the judge digest; captured: ${captured.map(_.gitDigest)}"
-        )
-        assert(outcome.toString.contains("completed"), s"got: $outcome")
-      end for
-    finally DelegateJudge.DelegateJudgePort.clear()
-    end try
-  }
-
-  test("⑪ classifier matrix (pure, zero git): penalty/note/clear/attribution rows") {
-    val base = DelegateRegistry.Record(
-      id = "dg-m",
-      executor = "nebflow",
-      cwd = "/tmp",
-      project = None,
-      taskId = None,
-      parentSessionId = "p",
-      title = "t",
-      createdAt = 1L,
-      branch = Some("delegate/m"),
-      baseBranch = Some("main")
-    )
-    val shared = DelegateTerminal.DriftReadings(
-      fork = Some("f"),
-      baseTip = Some("b"),
-      branchTip = Some("f"),
-      baseAdvances = (_, _) => Some(List(GitWorktrees.CommitInfo("c1", List("f"), "wip"))),
-      branchTips = () => Some(Nil),
-      isAncestorOf = (_, _) => Some(false)
-    )
-    // 共享座位 × 不可归属直写 ⇒ Penalty，reason 携证据三件
-    val p = DelegateTerminal.classifyDrift(base, shared)
-    assert(p.isInstanceOf[DelegateTerminal.DriftResult.Penalty], s"got: $p")
-    val reason = p.asInstanceOf[DelegateTerminal.DriftResult.Penalty].reason
-    assert(
-      reason.contains("f") && reason.contains("b") && reason.contains("c1") && reason.contains("direct commit"),
-      reason
-    )
-    // worktree 座位同读数 ⇒ NoteOnly（只注记不罚）
-    val wtRec = base.copy(worktree = Some("/wt"))
-    assert(DelegateTerminal.classifyDrift(wtRec, shared).isInstanceOf[DelegateTerminal.DriftResult.NoteOnly])
-    // delegate 形 merge（delegate/ 前缀归属）＋其搭载提交（可达被并 tip）⇒ Clear
-    // （归属豁免——fork..baseTip 含被并分支自身提交，随并归属）
-    val merged = shared.copy(
-      baseAdvances = (_, _) =>
-        Some(
-          List(
-            GitWorktrees.CommitInfo("m1", List("f", "t2"), "merge other"),
-            GitWorktrees.CommitInfo("d1", List("f"), "other's own deliverable")
-          )
-        ),
-      branchTips = () => Some(List("delegate/other" -> "t2")),
-      isAncestorOf = (c, t) => Some(c == "d1" && t == "t2")
-    )
-    assert(DelegateTerminal.classifyDrift(base, merged) == DelegateTerminal.DriftResult.Clear)
-    // 搭载提交不可达（祖先读数不可确证）⇒ Warn（fail-open）
-    val brokenAncestry = merged.copy(isAncestorOf = (_, _) => None)
-    assert(
-      DelegateTerminal.classifyDrift(base, brokenAncestry).isInstanceOf[DelegateTerminal.DriftResult.Warn]
-    )
-    // 非 delegate ref 的 merge ＋不在任何 attributable 支上的单亲 ⇒ Penalty
-    val foreignMerge = merged.copy(
-      branchTips = () => Some(List("feat/landing" -> "t2")),
-      isAncestorOf = (_, _) => Some(false)
-    )
-    assert(
-      DelegateTerminal
-        .classifyDrift(base, foreignMerge)
-        .isInstanceOf[DelegateTerminal.DriftResult.Penalty]
-    )
-  }
-
-  test(
-    "⑫ legacy shapes stay Clear: no branch anchor, non-git cwd, zero-ahead with unmoved base (existing regression)"
-  ) {
-    val base = DelegateRegistry.Record(
-      id = "dg-l",
-      executor = "nebflow",
-      cwd = "/tmp",
-      project = None,
-      taskId = None,
-      parentSessionId = "p",
-      title = "t",
-      createdAt = 1L,
-      branch = None,
-      baseBranch = Some("main")
-    )
-    val readings = DelegateTerminal.DriftReadings(None, None, None, (_, _) => None, () => None, (_, _) => Some(false))
-    // 无锚 ⇒ 闸盲（外部执行器腿 / 判否零绑定 legacy 记录同形）
-    assert(DelegateTerminal.classifyDrift(base, readings) == DelegateTerminal.DriftResult.Clear)
-    // D1∨D2 不成立 ⇒ Clear（delegate 自己有领先提交 / 基未动的零领先）
-    val noDrift =
-      DelegateTerminal.DriftReadings(Some("f"), Some("f"), Some("f"), (_, _) => None, () => None, (_, _) => Some(false))
-    val withBranch = base.copy(branch = Some("delegate/l"))
-    assert(DelegateTerminal.classifyDrift(withBranch, noDrift) == DelegateTerminal.DriftResult.Clear)
-    val ownWork =
-      DelegateTerminal.DriftReadings(Some("f"), Some("b"), Some("w"), (_, _) => None, () => None, (_, _) => Some(false))
-    assert(DelegateTerminal.classifyDrift(withBranch, ownWork) == DelegateTerminal.DriftResult.Clear)
-  }
-
-  test(
-    "⑬ judged-completed working seat + commits ahead ⇒ completed release + unmerged-work audit row; the engine never merges anything itself and never enqueues anything"
+    "⑬ pass-through contract on a working seat with commits ahead: the turn end releases to the parent; the engine never merges anything itself and writes no audit rows (the unmerged-work note channel retired with the declaration channel)"
   ) {
     val system = ActorSystem(s"dt-13-${scala.util.Random.nextInt(100000)}")
-    try
-      for
-        res <- mkResources(system, tempRoot, new SilentLlm)
-        // 真判定机在 mkResources 构造行安装，fake 必须后装才生效。
-        // 判定机裁定 completed（交付走项目 merger 的授权请求，未并提交只注记）。
-        _ = DelegateJudge.DelegateJudgePort.install(
-          new DelegateJudge.DelegateJudgePort.Face:
-            def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
-              IO.pure(Some(DelegateJudge.Verdict.Completed))
-        )
-        (child, sup) <- noopRefs(system)
-        // 工作座位形态：分支领先 1。
-        workingRepo = mkRealRepoLike(tempRoot / "work-note-repo", branch = "delegate/delegate-nebflow-wn", ahead = 1)
-        _ = seedRecord(
-          "delegate-nebflow-wn",
-          Some("64"),
-          branch = Some("delegate/delegate-nebflow-wn"),
-          cwd = workingRepo,
-          worktree = Some(workingRepo),
-          worktreeJudged = Some(true)
-        )
-        workOutcome <- DelegateTerminal.onCompleted(
-          res,
-          "delegate-nebflow-wn",
-          "nebula-root",
-          "t",
-          "brief",
-          "done",
-          child,
-          sup
-        )
-        noteRows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "unmerged-work").flatMap { e =>
-          e.payload.hcursor
-            .get[String]("delegateId")
-            .toOption
-            .filter(_ == "delegate-nebflow-wn")
-            .map(_ => e.payload.hcursor.get[Int]("commitsAhead").toOption)
-        }
-        _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-      yield
-        assert(
-          workOutcome.isInstanceOf[DelegateTerminal.Outcome.Release],
-          s"a completed verdict releases to the parent: $workOutcome"
-        )
-        assert(workOutcome.toString.contains("completed"), s"got: $workOutcome")
-        assertEquals(verdictLine("delegate-nebflow-wn"), Some("completed"), "the verdict line is completed")
-        assertEquals(noteRows.flatMap(_.toList), List(1), "the unmerged-work audit row carries the ahead count")
-        assert(
-          !GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true),
-          "the engine did NOT merge anything itself (integration is a separate authorized merger request)"
-        )
-      end for
-    finally DelegateJudge.DelegateJudgePort.clear()
-    end try
+    for
+      res <- mkResources(system, tempRoot, new SilentLlm)
+      (child, sup) <- noopRefs(system)
+      // 工作座位形态：分支领先 1。
+      workingRepo = mkRealRepoLike(tempRoot / "work-note-repo", branch = "delegate/delegate-nebflow-wn", ahead = 1)
+      _ = seedRecord(
+        "delegate-nebflow-wn",
+        Some("64"),
+        branch = Some("delegate/delegate-nebflow-wn"),
+        cwd = workingRepo,
+        worktree = Some(workingRepo),
+        worktreeJudged = Some(true)
+      )
+      workOutcome <- DelegateTerminal.onCompleted(
+        res,
+        "delegate-nebflow-wn",
+        "nebula-root",
+        "t",
+        "brief",
+        "done",
+        child,
+        sup
+      )
+      noteRows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "unmerged-work")
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assert(
+        workOutcome.isInstanceOf[DelegateTerminal.Outcome.Release],
+        s"a turn end releases to the parent: $workOutcome"
+      )
+      assert(workOutcome.toString.contains("done"), "the release payload carries the final text")
+      assertEquals(
+        verdictLine("delegate-nebflow-wn"),
+        None,
+        "no terminal-verdict line (the judged-completed protocol retired with the declaration channel)"
+      )
+      assert(noteRows.isEmpty, "no unmerged-work audit row (the note channel retired)")
+      assert(
+        !GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true),
+        "the engine did NOT merge anything itself (integration is a separate authorized merger request)"
+      )
+    end for
   }
 
   /**

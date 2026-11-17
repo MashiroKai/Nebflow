@@ -44,6 +44,7 @@ object MailboxBootSweep:
   private val logger = NebflowLogger.forName("nebflow.agent.mailbox-boot-sweep")
 
   final case class Report(tmpSwept: Int = 0, synthesized: List[String] = Nil, boxesNonEmpty: Int = 0):
+
     def summary: String =
       s"tmpSwept=$tmpSwept synthesized=${synthesized.size} (${synthesized.mkString(",")}) boxesNonEmpty=$boxesNonEmpty"
 
@@ -51,7 +52,9 @@ object MailboxBootSweep:
   // private 类会让 public given 触发泄露检查、private given 又对调用点不可见——
   // 类保持嵌套 public 即两端成立。
   final case class BootEpoch(v: Int = 1, lastBootMs: Long = 0L, thisBootMs: Long = 0L)
+
   object BootEpoch:
+
     given io.circe.Encoder[BootEpoch] = io.circe.Encoder.instance { e =>
       io.circe.Json.obj(
         "v" -> e.v.asJson,
@@ -59,6 +62,7 @@ object MailboxBootSweep:
         "thisBootMs" -> e.thisBootMs.asJson
       )
     }
+
     given io.circe.Decoder[BootEpoch] = io.circe.Decoder.instance { c =>
       for
         v <- c.get[Option[Int]]("v")
@@ -88,9 +92,17 @@ object MailboxBootSweep:
 
   /** boot sweep 入口（GatewayMain 装配链；失败只 WARN 绝不阻塞启动）。 */
   def run(store: SubAgentTaskStore, sessionStore: nebflow.core.SessionStore): IO[Report] =
+    runAt(store, sessionStore, System.currentTimeMillis())
+
+  private[agent] def runAt(
+    store: SubAgentTaskStore,
+    sessionStore: nebflow.core.SessionStore,
+    nowMs: => Long
+  ): IO[Report] =
     for
       swept <- SessionMailbox.sweepTmpAll()
-      epoch <- rollEpoch(System.currentTimeMillis())
+      _ <- nebflow.core.executor.ExternalSessionRunner.recoverPendingNotifications(store, sessionStore)
+      epoch <- rollEpoch(nowMs)
       rows <- terminalDelegateRows(store)
       candidates =
         if epoch.lastBootMs <= 0 || epoch.thisBootMs <= 0 then Nil // 空窗安全侧
@@ -130,7 +142,7 @@ object MailboxBootSweep:
             decode[List[SubAgentTask]](os.read(f)) match
               case Right(list) =>
                 list.filter(t =>
-                  t.source != "subtask" && Set("completed", "failed", "cancelled").contains(t.status)
+                  t.source != "subtask" && t.runId.isEmpty && Set("completed", "failed", "cancelled").contains(t.status)
                 )
               case Left(_) => Nil
           }
@@ -157,8 +169,14 @@ object MailboxBootSweep:
             pending <- SessionMailbox.scanPending(t.parentSessionId)
             taken <- SessionMailbox.scanTaken(t.parentSessionId)
             tombstoned <- SessionMailbox.deliveredContains(t.parentSessionId, Set(t.taskId))
-            accounted =
-              pending.exists(_.identity == t.taskId) || taken.exists(_.identity == t.taskId) || tombstoned.nonEmpty
+            // #2178：真实终态入箱身份已带 generation 后缀（`taskId#gen`）——对账判
+            // 「任一代已入箱/已消费」必须按前缀匹配，否则已交付终态会被误判缺账
+            // 而重合成（boot 不重合成已交付终态）。
+            identityPrefix = s"${t.taskId}#"
+            genBearing = (e: SessionMailbox.Entry) => e.identity == t.taskId || e.identity.startsWith(identityPrefix)
+            tombstonedAnyGen <- SessionMailbox.deliveredContainsPrefix(t.parentSessionId, identityPrefix)
+            accounted = pending
+              .exists(genBearing) || taken.exists(genBearing) || tombstoned.nonEmpty || tombstonedAnyGen
             result <-
               if accounted then IO.pure(None) // 条目在盘（待消费/消费中）或已消费——账信相符，零动作
               else

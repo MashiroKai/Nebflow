@@ -23,7 +23,7 @@ object NodeListTool extends Tool:
 
 ## Parameters
 - **project** (optional; defaults to current project): project name.
-- **status** (optional): filter the map to specific lifecycle state(s) — single value, comma-separated list, or array. Valid: wiring, pending, running, completed, failed, cancelled, blocked. Example: "running,pending" to see only active work. Omitted = ALL nodes (use this for the full picture; filter only when the map is large and you know which slice you need). Applies to the map listing only, not to detail=.
+- **status** (optional): filter the map to specific lifecycle state(s) — single value, comma-separated list, or array. Valid: wiring, pending, running, completed, failed, cancelled. Example: "running,pending" to see only active work. Omitted = ALL nodes (use this for the full picture; filter only when the map is large and you know which slice you need). Applies to the map listing only, not to detail=.
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
 
 ## Returns
@@ -45,7 +45,7 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
               Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
             )
             .asJson,
-          "description" -> "Optional lifecycle filter: wiring|pending|running|completed|failed|cancelled|blocked — single, comma-separated, or array. Omitted = all nodes".asJson
+          "description" -> "Optional lifecycle filter: wiring|pending|running|completed|failed|cancelled — single, comma-separated, or array. Omitted = all nodes".asJson
         ),
         "detail" -> Json.obj(
           "type" -> "string".asJson,

@@ -1,0 +1,65 @@
+## ADDED Requirements
+
+### Requirement: [FMA-REQ-001] 普通手机面板标题
+普通手机面板 SHALL 不出现不必要的顶部居中胶囊；真正 Canvas 标签胶囊 MUST 保留，页面名称及返回能力 MUST 可访问。
+
+#### Scenario: [FMA-SCN-001] 滚动普通面板而非 Canvas
+- **WHEN** 用户打开设置或项目并向下滚动再回顶部
+- **THEN** 页面无居中标题胶囊、页名可识别、正文首末项可达且返回正常；Canvas 标签胶囊仍可见和可操作。
+
+### Requirement: [FMA-REQ-002] 手机控件几何
+搜索、返回和 Canvas 相关可见图标 SHALL 在按钮内视觉居中且不被裁切，并保留可触范围和按钮语义。
+
+#### Scenario: [FMA-SCN-002] 多宽度下操作控件
+- **WHEN** 在手机窄宽及标准宽度和深浅主题下操作搜索、返回和 Canvas 控件
+- **THEN** 图标视觉居中、可命中、不重叠、不水平溢出，正常导航仍工作；测试结合具体不对称图形、viewBox 和可访问热区，不假定统一像素阈值。
+- **AND** Canvas pagination SHALL remain centered in the safe rectangle on the same row as its controls at 320 and 390 widths. Each side SHALL contain at most two controls with targets at least 44px; mobile source switching SHALL be hidden without changing desktop controls. Ask and Note SHALL have visible, contrasting icons rather than unexplained blank circles.
+
+### Requirement: [FMA-REQ-005] 手机悬浮顶栏与发送键
+Canvas 与联系人会话 SHALL 使用透明、无边框、无整宽底层的悬浮顶栏。正文初始让位 SHALL 属于滚动内容，滚动后可从控件下方穿过。联系人会话 MUST 复用主会话 mh-idhead、ds-chrome-band、g2-fab 及 ds-turn-btn。发送键空输入和非空输入 SHALL 保持同一绿色视觉；空输入与连接状态的行为守卫不变。
+
+#### Scenario: [FMA-SCN-005] 顶栏穿透与发送空态
+- **WHEN** 用户在手机 Canvas 或联系人会话阅读、滚动，或在联系人输入框输入和清空文本
+- **THEN** 顶栏不绘制整宽底层、不永久截断滚动面，初始首行不被控件遮住；发送键保持共享绿色且空文本不可发送。
+
+### Requirement: [FMA-REQ-006] 工作台与账号分层
+工作台 SHALL 居中显示大头像及其下方的姓名、邮箱；设置 SHALL 作为工作台列表行出现。头像入口 SHALL 打开个人主页，在其中复用完整账号卡和原有退出登录流程；手机设置页 MUST 不再包含账号卡。设置底部 MUST 无遮挡内容的玻璃裙边，末卡可滚动到完整可见。
+
+#### Scenario: [FMA-SCN-006] 从工作台进入设置与个人主页
+- **WHEN** 用户点击工作台设置行或头像，再查看页面底部或点击个人主页退出登录
+- **THEN** 设置与个人主页各承担唯一内容，账号卡只在个人主页；退出沿用既有 end-session 链且一次点击只发一次请求，设置末卡无遮挡。
+
+### Requirement: [FMA-REQ-003] 输入配方与单源
+相关玻璃消费者 SHALL 复用现有主输入材质配方，不通过整体透明度弱化文字；相关输入与扁平按钮 SHALL 使用既有共享规则，保留状态、对比度、键盘焦点及语义色。
+
+#### Scenario: [FMA-SCN-003] 共享材质及焦点
+- **WHEN** 在明暗主题比较主输入与搜索、相关 Ask 输入和悬浮玻璃按钮，并滚动高对比背景
+- **THEN** 消费者使用主输入同源材质配方，背景色有反馈但背景内容不可辨，前景文字可读、键盘焦点可见；Todo 相关输入和按钮使用共享样式，不改主输入配方。
+
+### Requirement: [FMA-REQ-004] 边缘返回生命周期
+取消的边缘返回 SHALL 遵循减少动态效果偏好，反复启停手机层 MUST 清理全局触摸监听，不改变正常返回栈语义。
+
+#### Scenario: [FMA-SCN-004] 取消手势并切换断点
+- **WHEN** 在减少动态效果模式下短拖取消返回，并反复切换手机和桌面断点
+- **THEN** 页面不返回且即时归位；重新激活后每次手势只被处理一次，不遗留全局监听。
+
+### Requirement: [FMA-REQ-007] Mobile second-round interaction
+Mobile workbench identity SHALL appear directly on the page background. Every adopted secondary panel SHALL permit full bottom-content access without a painted skirt. Detail pages and secondary overlays SHALL support a leftward swipe starting at the right screen edge, while retaining existing left-edge rightward back and vertical scroll. Content-region media gestures SHALL not navigate back.
+
+#### Scenario: [FMA-SCN-007] Workbench detail returns and scrolls
+- **WHEN** a user opens settings, account, plugin or nested configuration pages and scrolls or swipes left from the right edge
+- **THEN** all content is reachable and exactly the current detail closes; the hero has no enclosing card background, border or shadow.
+
+### Requirement: [FMA-REQ-008] Real-message badges
+Message badges SHALL count unread contact, device and group messages only. Agent, system and actionable/task notifications SHALL NOT increase the message badge. Empty decorative badge pills SHALL NOT appear.
+
+#### Scenario: [FMA-SCN-008] Synthetic source-separated messages
+- **WHEN** human, agent and system messages arrive through the real websocket consumer
+- **THEN** only the human inbound unread count increases, preserving existing read, mute and deduplication behavior.
+
+### Requirement: [FMA-REQ-009] Top-card media motion
+Collapsed media switching SHALL animate only the current top card with compositor transforms; lower cards SHALL remain stationary throughout the outgoing gesture and animation. Cancellation SHALL NOT switch cards, reduced-motion preference SHALL be respected, and no switch animation SHALL write layout geometry.
+
+#### Scenario: [FMA-SCN-009] Swipe two three and five images
+- **WHEN** a user drags a collapsed stack of two, three or five images in light or dark mode
+- **THEN** only the top card moves during dragging and the outgoing transition, the next image becomes current after commit, and an edge-back gesture returns without changing the image index.

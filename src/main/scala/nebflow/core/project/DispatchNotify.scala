@@ -27,10 +27,8 @@ import scala.concurrent.duration.*
  *
  * == 单一通知入口（可扩展，多 reason 共用） ==
  * 全部通知走唯一入口 [[notifyTerminal(reason, node)]]，带原因码 NotifyReason
- * （completion / failed / blocked / …）。completion 与 failed 已接线；blocked 仍预留零动作（接口层锁死「组合不双触发」：
- * blocked 重入由 FeedbackRouter 独占——同一节点终态唯一，failed 走 deliverFailed →
- * notifyTerminal(Failed)，blocked 走 blockedNode → FeedbackRouter.route，双通道在
- * 接口层结构性互斥）。
+ * （completion / failed / cancelled）。三者均已接线（blocked 原因已随 blocked
+ * 终态退役移除）。
  *
  * == cancelled 回流（R1 方案 2） ==
  * `NotifyReason.Cancelled` 与 failed **完全对称**：不查 notifyDispatcher flag、持久
@@ -85,7 +83,7 @@ import scala.concurrent.duration.*
  * completion：completedNode 在终态落库+投递+deps 结算完成后调用本入口（1 行挂接）。
  * failed：NodeEngine.deliverFailed 尾部挂接（单点收口——failNode 与
  * autoFailDeadRunning 两口必经 deliverFailed；通知在 out 结算**之后**发出，分发器
- * spawn/注入时读到的 Flow Map 是结算后状态，拓扑判断不失真）。D5 起：failed 零结算：普通下游停等 pending/wiring、merge 下游转 blocked，
+ * spawn/注入时读到的 Flow Map 是结算后状态，拓扑判断不失真）。D5 起：failed 零结算：普通下游停等 pending/wiring、merge 下游转 wedge 告警（barrier 永久闸死监督面），
  * 通知文本尾部附停等等待者清单（E-③，[[waitingSuccessors]]）。宿主重启后未投递
  * 通知（notifySentAt 为空）由 ProjectActor.TtlTick(30s) 挂 [[redeliver]] 周期补投
  * （参照 redeliverUnconsumedNebulaResults 形态）。
@@ -113,10 +111,10 @@ final class DispatchNotify(
   projectName: String,
   /**
    * 预算耗尽/窗口熔断升级通道（NodeEngine 注入 deliverToRoot(_, _, "notice")
-   * ——notice 语义非 blocked：节点保持终态，前端不可标 BLOCKED）。
+   * ——notice 语义监督通报：节点保持终态，不改判、不打终态标签）。
    */
   escalate: (String, String) => IO[Unit],
-  /** 预留（已不再在预算耗尽路径调用——节点不再转 blocked，无需 WS 刷新）。 */
+  /** 预留（预算耗尽路径不再改判节点终态，无需 WS 刷新）。 */
   emitUpdated: NodeDef => IO[Unit],
   /**
    * 触发通道（默认经 ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher；
@@ -482,8 +480,7 @@ final class DispatchNotify(
   /**
    * 单一通知入口（可扩展）：终态节点 → 分发器通知。
    *
-   * guard 链按 reason 分流（failed 已接线；blocked 仍接口层预留零
-   * 动作——组合不双触发由接口层锁定，blocked 重入由 FeedbackRouter 独占）。全路径
+   * guard 链按 reason 分流（completion / failed / cancelled 均已接线）。全路径
    * best-effort：内部错误只 WARN 不上抛（通知失败不拖垮终态链）。
    */
   def notifyTerminal(node: NodeDef, reason: NotifyReason): IO[Unit] =
@@ -528,12 +525,6 @@ final class DispatchNotify(
         // 标停等，拓扑主人不知情就无人承接（静默死锁的直接成因）。持久去重同款按 store 现读判定。
         if node.status != NodeLifecycle.Cancelled then IO.pure(false)
         else markerEmpty(node.id)
-      case NotifyReason.Blocked =>
-        logger
-          .debug(
-            s"dispatch-notify: reason '${NotifyReason.code(reason)}' reserved (FeedbackRouter owns blocked reentry) — node '${node.name}' (${node.id}) no-op"
-          )
-          .as(false)
     guarded.flatMap {
       case false => IO.unit
       case true =>
@@ -694,27 +685,13 @@ final class DispatchNotify(
   def redeliver(): IO[Int] =
     budgetUsed.set(0) *> failedBudgetUsed.set(0) *> cancelledBudgetUsed.set(0) *> store.snapshot.flatMap { s =>
       val completions = s.nodes.values
-        .filter(n =>
-          // 策略单点（R2/R3）：显式 `silent` ⇒ 不入候选；缺键 ⇒ legacy flag。
-          NotifyPolicy.completionNotifiesDispatcher(n) &&
-            n.status == NodeLifecycle.Completed &&
-            n.notifySentAt.isEmpty &&
-            n.result.isDefined
-        )
+        .filter(DispatchNotify.completionRedeliverCandidate)
         .toList
       val failures = s.nodes.values
-        .filter(n =>
-          n.status == NodeLifecycle.Failed &&
-            n.notifySentAt.isEmpty &&
-            n.result.isDefined
-        )
+        .filter(DispatchNotify.failureRedeliverCandidate)
         .toList
       val cancellations = s.nodes.values
-        .filter(n =>
-          n.status == NodeLifecycle.Cancelled &&
-            n.notifySentAt.isEmpty &&
-            n.result.isDefined
-        )
+        .filter(DispatchNotify.cancellationRedeliverCandidate)
         .toList
       (completions.traverse_(n => notifyTerminal(n, NotifyReason.Completion)) *>
         failures.traverse_(n => notifyTerminal(n, NotifyReason.Failed)) *>
@@ -724,14 +701,14 @@ final class DispatchNotify(
 
   /**
    * completion 预算耗尽（语义修正）：**不再翻转节点状态**——completedNode
-   * 已先 deliverOut+settleDeps，下游已按完成推进，此时把节点转 blocked 会污染
+   * 已先 deliverOut+settleDeps，下游已按完成推进，改判终态会污染
    * 完成事实 + 切断分发器回流（缺陷根因）。改为三动作：
    *   1. 落 notifySentAt（复用 [[markSent]]）→ 节点退出 [[redeliver]] 候选集
    *      （notifyDispatcher∧Completed∧notifySentAt.isEmpty∧result.nonEmpty），
    *      否则保持 completed 会被 TtlTick 每 30s 反复重扫 → 反复 escalate；
    *   2. 进程内 single-flight：仅首次预算耗尽向 Nebula 发一条非阻塞监督通知
-   *      （notice 语义，非 blocked——eventType=blocked 会让前端标 BLOCKED，
-   *      监督方看到「完成节点被标阻塞」）；后续耗尽只留痕不重报；
+   *      （notice 语义监督通知，不改判节点状态——监督方看到的是「完成事实保留 +
+   *      通知欠账升级」）；后续耗尽只留痕不重报；
    *   3. FlowMapEventLog 审计一条（budget exhausted + kept completed）。
    * 全部 best-effort（通知失败不拖垮完成链）。
    */
@@ -991,8 +968,9 @@ final class DispatchNotify(
    * D5 停等等待者清单（E-③）：因本节点 failed 而停等的下游。
    * 判定（status ∈ {pending, wiring} 的停等态）：in-barrier 等待 = in 引用本节点 ∧
    * 未收到其投递（deliveredTo 无此键——与 startNode barrier 闸门同构）；deps 等待 =
-   * deps 引用本节点（depsSatisfied 只认 completed，failed 永不满足）。合并节点例外
-   * 下游已转 blocked（可见终态 + merge-blocked 独立通报），不在停等集合，不入清单。
+ * deps 引用本节点（depsSatisfied 只认 completed，failed 永不满足）。合并节点例外：
+ * 下游保持停等（D5 零结算），停等可见性由 barrier-blocked / chain-wedged 监督面
+ * 承担，不在本停等清单重复入列。
    *
    * cancelled 侧扩展（R1/R4）：被取消节点在**引擎自动摘除**后
    * 已不在下游的 `in` 里（镜像 prune），改以 `pendingSuccession`（「待承接」标）
@@ -1349,6 +1327,38 @@ object DispatchNotify:
       FreezeNotice.infraFault(node.result.getOrElse(""))
 
   /**
+   * 补投候选判据单点族（recovery-summary 批 2026-11-16 抽取；禁复刻判据）：
+   * `redeliver()` 的三路 inline 判据逐字迁出（行为保持重构）。消费面（两处，共用本
+   * 族单点）：补投扫描本身＋恢复摘要 `RecoverySummary` 的待投递面观察（维护期只读
+   * 镜像，不改动判据本身）。
+   *
+   * 三 reason 分账（completion/failed/cancelled）各自独立预算，故判据按 reason 分列；
+   * [[redeliverCandidate]] = 三者之并（摘要面只问「有没有欠账」，不区分 reason）。
+   */
+  /** completion 候选 = notifyDispatcher ∧ completed ∧ 未标记 ∧ 有结果（策略单点 R2/R3：显式 `silent` ⇒ 不入候选；缺键 ⇒ legacy flag）。 */
+  def completionRedeliverCandidate(n: NodeDef): Boolean =
+    NotifyPolicy.completionNotifiesDispatcher(n) &&
+      n.status == NodeLifecycle.Completed &&
+      n.notifySentAt.isEmpty &&
+      n.result.isDefined
+
+  /** failed 候选 = failed ∧ 未标记 ∧ 有结果（无 flag 条件，设计 §3）。 */
+  def failureRedeliverCandidate(n: NodeDef): Boolean =
+    n.status == NodeLifecycle.Failed &&
+      n.notifySentAt.isEmpty &&
+      n.result.isDefined
+
+  /** cancelled 候选 = cancelled ∧ 未标记 ∧ 有结果（R1；R2 后 cancelled 必有 result，非空守卫保留与新语义一致）。 */
+  def cancellationRedeliverCandidate(n: NodeDef): Boolean =
+    n.status == NodeLifecycle.Cancelled &&
+      n.notifySentAt.isEmpty &&
+      n.result.isDefined
+
+  /** 三路之并（`redeliver()` 的候选总集 = 本函数；摘要面消费同一单点）。 */
+  def redeliverCandidate(n: NodeDef): Boolean =
+    completionRedeliverCandidate(n) || failureRedeliverCandidate(n) || cancellationRedeliverCandidate(n)
+
+  /**
    * **R1/R4 文本契约锚**：user-cancel 变体的可判读标记
    * （通知文本与 spec / 复核位恒同源引用；改这两条即改对外契约，须同步改判据）。
    */
@@ -1468,7 +1478,7 @@ object DispatchNotify:
   /**
    * 默认触发通道：ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher
    * （与 `Mail(address="project:<名>")` 同链路；rootSessionId 用挂载根——系统发起，
-   * 与 ReenterDispatcher 同规）。best-effort：未挂载/无 actor 只 WARN。
+   * 与 AskAnswerReentry 同规）。best-effort：未挂载/无 actor 只 WARN。
    */
   def defaultTrigger(projectName: String, rootSessionId: String): String => IO[Unit] = text =>
     ProjectRuntimeRegistry.get(projectName).flatMap {
@@ -1544,13 +1554,12 @@ end DispatchNotify
 
 /**
  * 通知原因码（单一入口 dispatchNotify(reason, node) 的 reason 维度）。
- * completion 与 failed 已接线；blocked 预留接口
- * （blocked 由 FeedbackRouter 重入独占——组合不双触发），后续 reason 按需扩展。
+ * completion / failed / cancelled 已接线；后续 reason 按需扩展。
+ * （blocked 原因已随 blocked 终态退役移除——引擎不再产生 blocked 节点状态。）
  */
 enum NotifyReason:
   case Completion
   case Failed
-  case Blocked
 
   /**
    * cancelled 终态回流（**R1 方案 2**）：
@@ -1568,5 +1577,4 @@ object NotifyReason:
     r match
       case NotifyReason.Completion => "completion"
       case NotifyReason.Failed => "failed"
-      case NotifyReason.Blocked => "blocked"
       case NotifyReason.Cancelled => "cancelled"

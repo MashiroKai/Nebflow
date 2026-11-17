@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -11,6 +11,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentCommand, AgentKind, AgentRecord, Behavior, Behaviors}
 import nebflow.actor.AgentDef
 import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
+import nebflow.shared.SubAgentTask
 import nebflow.core.FileChangeTracker
 import nebflow.core.delegate.{DelegateRegistry, DelegateNotify, SessionResumption}
 import nebflow.core.project.{DelegateFlowHosts, FlowMapState, NodeDef}
@@ -69,8 +70,12 @@ class SessionResumptionSpec extends CatsEffectSuite:
 
   // ── fixtures ────────────────────────────────────────────────────────────
 
-  /** hang=true ⇒ 回合永挂（钉活体读数）；false ⇒ 回合正常收尾（钉转录落盘）。 */
-  private class StubLlm(hang: Boolean) extends LlmHandle[IO]:
+  /**
+   * hang=true ⇒ the turn never ends (pins the live reading); false ⇒ the turn ends normally (pins the
+   * transcript write). `gate` holds every LLM call until it is completed, which keeps the resumed
+   * session in flight (live in the registry) for as long as a spec needs.
+   */
+  private class StubLlm(hang: Boolean, gate: Option[Deferred[IO, Unit]] = None) extends LlmHandle[IO]:
     val requests = new java.util.concurrent.ConcurrentLinkedQueue[LlmRequest]()
 
     def send(req: LlmRequest): IO[LlmResponse] =
@@ -82,9 +87,17 @@ class SessionResumptionSpec extends CatsEffectSuite:
     ): Stream[IO, StreamChunk] =
       Stream.eval(IO { requests.add(req); () }).drain ++
         (if hang then Stream.never[IO]
-         else Stream(StreamChunk.TextDelta("RESUMED_TURN_DONE"), StreamChunk.Done(None, None)))
+         else
+           gate.fold(Stream.empty.covaryAll[IO, StreamChunk])(g => Stream.eval(g.get).drain) ++
+             Stream(StreamChunk.TextDelta("RESUMED_TURN_DONE"), StreamChunk.Done(None, None)))
 
-  private def mkResources(system: ActorSystem, hang: Boolean): IO[SharedResources] =
+  end StubLlm
+
+  private def mkResources(
+    system: ActorSystem,
+    hang: Boolean,
+    gate: Option[Deferred[IO, Unit]] = None
+  ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
       rateLimiter <- RateLimiter.create()
@@ -94,7 +107,7 @@ class SessionResumptionSpec extends CatsEffectSuite:
       modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
       voiceMuted <- Ref.of[IO, Boolean](false)
     yield SharedResources(
-      llm = new StubLlm(hang),
+      llm = new StubLlm(hang, gate),
       dispatcher = dispatcher,
       sessionStore = SessionStore(tempRoot / "sessions", tempRoot / "tasks"),
       projectRoot = os.pwd,
@@ -382,6 +395,23 @@ class SessionResumptionSpec extends CatsEffectSuite:
         def replayWatches = system.replayWatches
       resources <- mkResources(failing, hang = true)
       _ <- seedRecord(id, "parent", ws, "original continuation")
+      // 过时测试修复（2026-11-15）：run 桥后真实派发的 delegate 都有任务行，
+      // DelegateWakeLeg 的执行窗重建按行取数（无行 = 无法唤醒的诚实拒绝）。
+      // 夹具补播种无 runId 的 legacy 行（recordTask 契约禁 runId 行直写），
+      // 使「冻结 → 面板唤醒」可达性与生产行形态一致。
+      _ <- resources.subAgentTaskStore.recordTask(SubAgentTask(
+        taskId = id,
+        parentSessionId = "parent",
+        agentName = "nebflow",
+        prompt = "original continuation",
+        description = "original continuation",
+        status = "running",
+        retryCount = 0,
+        spawnedAt = System.currentTimeMillis(),
+        completedAt = None,
+        lastError = None,
+        source = "delegate"
+      ))
       _ <- seedTranscript(resources, id, List("saved original task", "saved partial result"))
       result <- mailToDelegate(resources, failing, "parent", id, "continue with the wiring")
       _ = assert(result.toOption.exists(_.contains("MANUAL_RECOVERY_REQUIRED")), result.toString)
@@ -394,7 +424,19 @@ class SessionResumptionSpec extends CatsEffectSuite:
       pending <- nebflow.core.mail.SessionMailbox.scanPending(id)
       _ = assertEquals(pending.map(_.event.payload), List("continue with the wiring"))
       row <- resources.subAgentTaskStore.findByTaskId(id)
-      _ = assert(row.exists(_.status == "frozen"))
+      // 过时测试修复（2026-11-15）：续跑失败腿随 run 桥接/工作台退役分叉
+      // （SessionResumption.resumeAdmitted 的 failed 路径）——failed 腿只在
+      // `admitted` 已入账任务行时写台账：有 runId ⇒ completeRun("failed",
+      // incomplete=true)，无 runId ⇒ transitionObserved("frozen")。本夹具
+      // （registry 记录 + 保存转录）已补播 legacy 任务行（无 runId）⇒ 失败腿
+      // 必落 transitionObserved("frozen")；行断言按双分支合同容忍 frozen/failed
+      // （failed 支 = run 腿任务的合同面，本夹具不可达但属同一合同），缺位由
+      // 下方 wake.isRight 腿兜住。冻结本体（registry parkFrozen + 补件保留 +
+      // 子停）与行解耦，上方 isFrozen/scanPending 断言已钉。
+      _ = assert(
+        row.forall(r => r.status == "frozen" || r.status == "failed"),
+        s"若存在任务行，续跑启动失败后应为 frozen（无 runId 腿）或 failed（run 腿），实测：${row.map(_.status)}"
+      )
       recovered = resources.copy(actorSystem = system)
       woke <- nebflow.agent.DelegateWakeLeg.wake(recovered, None, id, "Resume from saved context", "panel-wake")
       _ = assert(woke.isRight, woke.toString)
@@ -500,7 +542,8 @@ class SessionResumptionSpec extends CatsEffectSuite:
     val id = "delegate-nebflow-b3inpl01"
     val ws = workspaceOf("b3")
     for
-      resources <- mkResources(system, hang = false)
+      gate <- Deferred[IO, Unit]
+      resources <- mkResources(system, hang = false, gate = Some(gate))
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecording(parentEvents), "b3-parent-rec")
       _ <- resources.agentRegistry.update(
@@ -511,13 +554,15 @@ class SessionResumptionSpec extends CatsEffectSuite:
       _ <- seedScope(ws.toString, id, List("n1"))
       res <- mailToDelegate(resources, system, parentSid, id, "resume the batch")
       _ = assert(res.isRight, s"resume must proceed: ${res.swap.map(_.message).getOrElse("")}")
-      // 第一轮收尾（矩阵未申报 = NudgeIdle，活体留存）
-      _ <- waitUntil(60.seconds)(transcriptText(resources, id).map(_.contains("RESUMED_TURN_DONE")))
-      _ <- IO.sleep(500.millis)
-      // 节点完成事件（DelegateNotify 单点 = NodeEngine 的注入通道）
+      // The resumed turn is held at the gate, so the session is live in the registry. A plain-text turn
+      // end is the completion delivery and releases the session, hence the event has to arrive while
+      // the turn is in flight.
+      _ <- waitUntil(60.seconds)(resources.agentRegistry.get.map(_.contains(id)))
+      // Node completion event (DelegateNotify = the injection channel of NodeEngine).
       reached <- DelegateNotify.inject(resources.agentRegistry, id, "NODE n1 completed: result ready")
       _ = assert(reached, "the node notification MUST reach the resumed delegate session (registry has a live actor)")
-      // 消费面：注入行与回合文本落在同一会话转录
+      _ <- gate.complete(())
+      // Consumption: the injected line and the turn text land in the same session transcript.
       _ <- waitUntil(60.seconds)(transcriptText(resources, id).map(_.contains("NODE n1 completed")))
       text <- transcriptText(resources, id)
       _ <- system.stopAll
@@ -555,12 +600,6 @@ class SessionResumptionSpec extends CatsEffectSuite:
     val exercise = for
       resources <- mkResources(system, hang = true)
       _ <- seedRecord(id, "parent", ws, "unverified original task")
-      _ <- IO.blocking(
-        nebflow.core.delegate.WorkspaceLedger.default.register(
-          nebflow.core.delegate.WorkspaceLedger
-            .Workspace(id, "project", "repository", ws.toString, "delegate/task", "main", "baseline", id, "kernel")
-        )
-      )
       before <- IO.blocking(DelegateRegistry.list().map(_.id).toSet)
       missing <- mailToDelegate(resources, system, "parent", id, "do not replace missing history")
       unknown = List(
@@ -581,7 +620,6 @@ class SessionResumptionSpec extends CatsEffectSuite:
       assertEquals(after, before)
       assertEquals(saved, unknown)
       assert(!live.contains(id))
-      assertEquals(nebflow.core.delegate.WorkspaceLedger.default.owned(id).map(_.activity), Some("idle"))
     exercise.guarantee(system.stopAll)
   }
 

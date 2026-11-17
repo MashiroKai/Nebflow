@@ -309,6 +309,26 @@
       await raf2();
     };
 
+    /** Two images — the N=2 stack handoff (stack-continuity batch: the outgoing
+     * card's committed slot is the MID slot, the only fan slot in play). */
+    function payloadTwoImages() {
+      const specs = [[1600, 400], [400, 1600]];
+      return {
+        fileRefs: { inlined: 2, referenced: 0, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: specs.map(([w, h], i) => ({
+          kind: 'image', path: `/tmp/pop/pair-${i}.png`, name: `pair-${i}.png`, src: svgDataUri(w, h),
+        })),
+      };
+    }
+
+    window.__popStackTwo = async () => {
+      chatMod.renderUserBubble('两张图', [], Date.now());
+      chatMod.renderTool('Pop\n  ("pair-0.png", …)', '2 files', popContent(payloadTwoImages()), false,
+        '{"filePath":["/tmp/pop/pair-0.png","/tmp/pop/pair-1.png"]}', 'pop-harness');
+      await raf2();
+    };
+
     /** Three different-ratio images — the fan-design stack probe. */
     window.__popStackMixedRatios = async () => {
       chatMod.renderUserBubble('三比例图', [], Date.now());

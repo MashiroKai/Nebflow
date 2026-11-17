@@ -280,72 +280,98 @@ A task with 2+ independent parts — different file domains, or different nature
       rootSessionId = resolvedRoot,
       isSubTaskWorker = true
     )
-    for
-      workerRef <- NodeRunner.spawnAgentActor(system, params)
-      // P2: BackoffSupervisor is the subtask adapter — auto-restarts on crash,
-      // handles AgentEvent.Cancelled (AgentControl cancel path)
-      adapterRef <- NodeRunner.spawnSupervisedAdapter(
-        system = system,
-        params = params,
-        childRef = workerRef,
-        childName = subtaskId,
-        description = description,
-        agentName = agentDef.name,
-        subagentId = subtaskId,
-        parentSessionId = parentSessionId.getOrElse(""),
-        initialPrompt = prompt,
-        source = "subtask",
-        extraMetadata = JsonObject("kind" -> "SubTask".asJson),
-        wsSend = Some(childWsSend)
-      )
-      _ = logger.info(s"Spawned supervised sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
-      // Registered in agentRegistry (active snapshot + kind) but NOT in
-      // the (retired) team session registry / its sessionMap — the worker has no Mail identity.
-      _ <- NodeRunner.registerAgent(
-        resources,
-        id = subtaskId,
-        ref = workerRef,
-        kind = AgentKind.SubTask,
-        rootSessionId = resolvedRoot,
-        parentRef = parentRef,
-        // AgentControl：list/up/idle 列 + cancel/restart 直达 supervisor。
-        startedAt = System.currentTimeMillis(),
-        lastActivityMs = System.currentTimeMillis(),
-        supervisorRef = Some(adapterRef),
-        parentSessionId = parentSessionId.getOrElse("")
-      )
-      // P3.1: persist task metadata for crash recovery
-      _ <- resources.subAgentTaskStore
-        .recordTask(
-          SubAgentTask(
-            taskId = subtaskId,
-            parentSessionId = parentSessionId.getOrElse(""),
-            agentName = agentDef.name,
-            prompt = prompt,
-            description = description,
-            status = "running",
-            retryCount = 0,
-            spawnedAt = System.currentTimeMillis(),
-            completedAt = None,
-            lastError = None,
-            source = "subtask"
+    val runId = java.util.UUID.randomUUID().toString
+    cats.effect.Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+      val attempt = for
+        _ <- resources.subAgentTaskStore
+          .beginRun(
+            SubAgentTask(
+              taskId = subtaskId,
+              parentSessionId = parentSessionId.getOrElse(""),
+              agentName = agentDef.name,
+              prompt = prompt,
+              description = description,
+              status = "running",
+              retryCount = 0,
+              spawnedAt = System.currentTimeMillis(),
+              completedAt = None,
+              lastError = None,
+              source = "subtask"
+            ),
+            runId,
+            resolvedRoot,
+            "nebflow"
           )
+          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+        workerRef <- NodeRunner.spawnAgentActor(system, params)
+        _ <- cleanup.update(previous => system.stop(workerRef).attempt.void *> previous)
+        // P2: BackoffSupervisor is the subtask adapter — auto-restarts on crash,
+        // handles AgentEvent.Cancelled (AgentControl cancel path)
+        adapterRef <- NodeRunner.spawnSupervisedAdapter(
+          system = system,
+          params = params,
+          childRef = workerRef,
+          childName = subtaskId,
+          description = description,
+          agentName = agentDef.name,
+          subagentId = subtaskId,
+          parentSessionId = parentSessionId.getOrElse(""),
+          initialPrompt = prompt,
+          source = "subtask",
+          extraMetadata = JsonObject("kind" -> "SubTask".asJson),
+          wsSend = Some(childWsSend)
         )
-        .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
-      // G3: blocks carry attachments with the prompt text as the first Text
-      // block (UserInput drops `text` when blocks are present).
-      _ <- workerRef ! AgentCommand.UserInput(
-        prompt,
-        Some(adapterRef),
-        blocks = ImageInject.messageBlocks(prompt, attachments)
-      )
-    yield Right(
-      s"""Sub-task worker started for: $description.
+        _ <- cleanup.update(previous => system.stop(adapterRef).attempt.void *> previous)
+        _ = logger.info(s"Spawned supervised sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
+        // Registered in agentRegistry (active snapshot + kind) but NOT in
+        // the (retired) team session registry / its sessionMap — the worker has no Mail identity.
+        _ <- NodeRunner.registerAgent(
+          resources,
+          id = subtaskId,
+          ref = workerRef,
+          kind = AgentKind.SubTask,
+          rootSessionId = resolvedRoot,
+          parentRef = parentRef,
+          // AgentControl：list/up/idle 列 + cancel/restart 直达 supervisor。
+          startedAt = System.currentTimeMillis(),
+          lastActivityMs = System.currentTimeMillis(),
+          supervisorRef = Some(adapterRef),
+          parentSessionId = parentSessionId.getOrElse("")
+        )
+        _ <- resources.subAgentTaskStore
+          .updateRun(parentSessionId.getOrElse(""), subtaskId, runId, executionStatus = Some("running"))
+          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+        // G3: blocks carry attachments with the prompt text as the first Text
+        // block (UserInput drops `text` when blocks are present).
+        _ <- workerRef ! AgentCommand.UserInput(
+          prompt,
+          Some(adapterRef),
+          blocks = ImageInject.messageBlocks(prompt, attachments)
+        )
+      yield Right(
+        s"""Sub-task worker started for: $description.
 You will be notified when it completes via a system message.
 Do NOT duplicate this worker's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
-    )
+      )
 
-    end for
+      def failed(reason: String): IO[Unit] =
+        resources.subAgentTaskStore
+          .completeRun(
+            parentSessionId.getOrElse(""),
+            subtaskId,
+            runId,
+            "failed",
+            reason = Some(reason),
+            incomplete = true,
+            notifyParent = false
+          )
+          .attempt
+          .void *>
+          cleanup.get.flatten *> resources.agentRegistry.update(_ - subtaskId)
+      attempt
+        .onError { case error => failed(s"Spawn failed: ${error.getMessage}") }
+        .onCancel(failed("Spawn admission cancelled"))
+    }
 
   end spawnWorker
 

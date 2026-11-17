@@ -8,7 +8,8 @@
 #
 # 安全设计（为何这样写）：
 #   1) 逐 pid 验身才 kill —— 端口可能被无关进程占用（复用 8097 的其它服务/调试进程）。
-#      只有 cmdline 含 `nebflow-coldstart` 特征（即本脚本自己起的实例）才允许 kill；
+#      只有 cmdline 含自家 home 特征段（现行 stand-evidence/coldstart｜旧缺省
+#      nebflow-coldstart，即本脚本自己起的实例）才允许 kill；
 #      非特征进程一律拒绝启动并报 WARN，绝不盲杀（盲杀 = 杀错无辜进程 / 宿主）。
 #   1b) pid 文件自证（sbt-fork 形态补丁）—— `sbt run` fork 出的 JVM 真参在启动即被
 #      sbt 删除的临时文件里，cmdline 永不含 marker ⇒ Ctrl+C 杀掉 sbt 壳后，孤儿 fork
@@ -23,7 +24,7 @@
 #   3) DRY_RUN=1 只预览不删不杀不种 —— 供作者先审行为（将 kill 谁 / 将清哪个 home /
 #      将种哪些件）再实跑，防止脚本在作者未 review 的情况下就动手删数据/杀进程/写配置。
 #   4) 默认【不】放行生产设备注册 —— 隔离实验若要进生产网必须显式设 env（作者 2026-09-17 裁定 (b)）。
-#      本脚本的 data root 在 /tmp（非默认根），会命中 NebLink 隔离护栏
+#      本脚本的 data root 在系统临时目录（EvidenceTemp 命名空间，非默认根），会命中 NebLink 隔离护栏
 #      （src/main/scala/nebflow/neblink/EnrollGuard.scala：非默认 data root ∧ 未显式放行 ∧
 #      目标 host ∈ 生产域 nebflow.space ⇒ 拒绝自动注册，且以响亮日志说明原因，绝不静默）。
 #      故未设 NEBFLOW_ALLOW_PROD_ENROLL 时，本脚本【不导出、不覆盖】该变量 ⇒ 护栏按原语义生效、
@@ -150,10 +151,19 @@
 set -euo pipefail
 
 COLDSTART_PORT="${COLDSTART_PORT:-8097}"
-COLDSTART_HOME="${COLDSTART_HOME:-/tmp/nebflow-coldstart}"
+# 实例 home 缺省落 EvidenceTemp 命名空间（统一临时目录约定，目录形状见
+# nebflow.shared.EvidenceTemp：<tmp>/stand-evidence/…）。路径取【稳定段】
+# （无 UUID / 无日期层）：模型配置保留件与 secrets 持久链接跨冷启动存活的
+# 核心语义不变；不写 manifest ⇒ EvidenceTemp.sweep 的 fail-closed 遍历永不
+# 触碰本目录（清扫只删「带合法 manifest 的过期非活批」），生命周期仍由本
+# 脚本自管（逐 pid 验身 kill + 选择性清理）。
+COLDSTART_HOME="${COLDSTART_HOME:-${TMPDIR:-/tmp}/stand-evidence/coldstart/instance}"
 DRY_RUN="${DRY_RUN:-0}"
-# 本脚本自起实例的 cmdline 特征标记（验身用）。
-COLDSTART_MARKER="nebflow-coldstart"
+# 本脚本自起实例的 cmdline 特征标记（验身用）：现行为 home 缺省路径中的稳定
+# 特征段；LEGACY 保旧缺省（/tmp/nebflow-coldstart）实例的跨版本接管面——
+# 两标记任一命中即自家实例（pid 文件自证渠道不受影响）。
+COLDSTART_MARKER="stand-evidence/coldstart"
+COLDSTART_MARKER_LEGACY="nebflow-coldstart"
 # 出厂档开关：1 = 跳过模型配置种子（home 全零携带，见文件头 8)）；缺省 0。
 COLDSTART_FULL="${COLDSTART_FULL:-0}"
 # 开门用 Chrome 可执行件（缺省 = 标准 macOS 安装位；缺失时退化为无痕窗口指引）。
@@ -296,21 +306,21 @@ else
   for pid in $pids; do
     # 读取 cmdline。ps 失败（沙箱受限 / 进程已消亡）则置空，视作"无法确认特征"→ 归入拒绝分支。
     cmdline=$(ps -p "$pid" -o command= 2>/dev/null || true)
-    if echo "$cmdline" | grep -q "$COLDSTART_MARKER"; then
-      echo "[coldstart]   pid=$pid 特征命中（${COLDSTART_MARKER}）→ 判定为本脚本旧实例，允许清理"
+    if echo "$cmdline" | grep -q -e "$COLDSTART_MARKER" -e "$COLDSTART_MARKER_LEGACY"; then
+      echo "[coldstart]   pid=$pid 特征命中（${COLDSTART_MARKER}｜legacy ${COLDSTART_MARKER_LEGACY}）→ 判定为本脚本旧实例，允许清理"
       feature_pids="$feature_pids $pid"
     elif coldstart_pidfile_self "$pid"; then
       echo "[coldstart]   pid=$pid 命中 pid 文件自证（<home>/.pid + .pid.meta 与实测进程一致）→ 判定为本脚本上一轮 sbt-fork 实例（真参在已删临时文件，特征法不可见），允许清理"
       feature_pids="$feature_pids $pid"
     else
-      echo "[coldstart]   pid=$pid cmdline=『${cmdline:-<无法读取>}』不含特征 '${COLDSTART_MARKER}' → 非特征进程" >&2
+      echo "[coldstart]   pid=$pid cmdline=『${cmdline:-<无法读取>}』不含特征（${COLDSTART_MARKER} / ${COLDSTART_MARKER_LEGACY}）→ 非特征进程" >&2
       feature_pids=""   # 一旦发现非特征，整体拒绝。
       break
     fi
   done
   if [ -z "$feature_pids" ]; then
     echo "[coldstart] WARN: 端口 $COLDSTART_PORT 被非特征进程占用，拒绝启动（绝不盲杀）。" >&2
-    echo "[coldstart] WARN: cmdline 不含 '${COLDSTART_MARKER}' 的进程不是本脚本实例，可能是其它服务/调试进程。" >&2
+    echo "[coldstart] WARN: cmdline 不含特征（${COLDSTART_MARKER} / ${COLDSTART_MARKER_LEGACY}）的进程不是本脚本实例，可能是其它服务/调试进程。" >&2
     echo "[coldstart] 请用 lsof -nP -iTCP:$COLDSTART_PORT -sTCP:LISTEN 检查占端进程，人工确认后释放，或改用 COLDSTART_PORT。" >&2
     exit 1
   fi

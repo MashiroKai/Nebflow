@@ -91,7 +91,7 @@ object BootWakeInventory:
 
   end Item
 
-  /** 清单（项目级）。`histogram` 覆盖全部七态（缺失态计 0——判红判据「不得漏报」的可核面）。 */
+  /** 清单（项目级）。`histogram` 覆盖全部七态 + legacy blocked token（缺失态计 0——判红判据「不得漏报」的可核面；存量 blocked 行仍计数）。 */
   final case class Inventory(
     project: String,
     atMs: Long,
@@ -170,7 +170,12 @@ object BootWakeInventory:
     sessionsDir: os.Path = PathUtil.dataRoot / "sessions"
   ): Inventory =
     val all = st.nodes
-    val histogram = NodeLifecycle.All.toList.map(s => s -> all.values.count(_.status == s)).toMap
+    // 直方图枚举面 = 全部合法生命周期 + legacy blocked token（no-blocked-semantics 一期：
+    // blocked 已退役，但存量行仍须计数——「不得漏报」判据对存量行有效，缺列会让带
+    // blocked 行的项目直方图悄悄对不上活动区总数）。
+    val histogram = (NodeLifecycle.All + NodeLifecycle.Blocked).toList.map(s =>
+      s -> all.values.count(_.status == s)
+    ).toMap
     val items = all.values.toList
       .sortBy(n => (n.createdAt, n.id))
       .flatMap(n => itemFor(n, all, nebflowDir, sessionsDir, nowMs))

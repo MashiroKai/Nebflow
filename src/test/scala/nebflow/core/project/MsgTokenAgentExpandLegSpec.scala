@@ -281,7 +281,6 @@ class MsgTokenAgentExpandLegSpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = SenderSid,
         projectName = name,
-        feedbackMode = FeedbackRouter.ModeAuto,
         emitEvent = (_, _, _) => IO.unit
       )
       pd = ProjectDef(

@@ -386,7 +386,12 @@ try {
   ok('T2c 通路② Esc 收起', g2.dockClosed === true);
   await page.click('.ask-fab');
   await sleep(350);
-  await page.evaluate(() => document.getElementById('canvas-content').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  await page.evaluate(() => {
+    const content = document.getElementById('canvas-content');
+    const event = { bubbles: true, pointerId: 42, pointerType: 'mouse', isPrimary: true, button: 0, clientX: window.innerWidth / 2 };
+    content.dispatchEvent(new PointerEvent('pointerdown', event));
+    content.dispatchEvent(new PointerEvent('pointerup', event));
+  });
   await sleep(350);
   g2 = await geo(page);
   ok('T2d 通路③ 画布空白点击收起', g2.dockClosed === true);
@@ -418,6 +423,36 @@ try {
     return line ? { text: line.textContent, overflow: getComputedStyle(line).overflowX, pointerEvents: getComputedStyle(line).pointerEvents, height: line.getBoundingClientRect().height } : null;
   });
   ok('T3e1 流式行显示增量、单行且不可交互展开', !!streamLine && streamLine.text.includes('笔记') && streamLine.height < 60 && streamLine.pointerEvents === 'none', JSON.stringify(streamLine));
+  const streamContract = await page.evaluate(() => {
+    const line = document.querySelector('.ask-dock .ask-stream-line');
+    const col = line.parentElement;
+    const reference = document.createElement('div');
+    reference.className = 'nf-workline nf-wl-think';
+    reference.textContent = 'Reference';
+    document.body.append(reference);
+    const props = ['fontSize', 'fontWeight', 'lineHeight', 'color', 'opacity'];
+    const actual = getComputedStyle(line), expected = getComputedStyle(reference);
+    const styles = Object.fromEntries(props.map(p => [p, [actual[p], expected[p]]]));
+    const caret = ['content', 'color', 'animationName', 'animationDuration', 'animationTimingFunction'].map(p => [p, getComputedStyle(line, '::after')[p], getComputedStyle(reference, '::after')[p]]);
+    // Constrain the actual flex column: a last flex item must not shrink below its line box.
+    const old = col.style.cssText;
+    col.style.height = '80px';
+    col.style.maxHeight = '80px';
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    const text = range.getBoundingClientRect(), box = line.getBoundingClientRect();
+    const geometry = { textTop: text.top, textBottom: text.bottom, boxTop: box.top, boxBottom: box.bottom, clientHeight: line.clientHeight, scrollHeight: line.scrollHeight };
+    col.style.cssText = old;
+    reference.remove();
+    return { styles, caret, geometry };
+  });
+  const g = streamContract.geometry;
+  ok('T3e2 拥挤列内流式文字行框完整', g.textTop >= g.boxTop - 0.5 && g.textBottom <= g.boxBottom + 0.5 && g.scrollHeight <= g.clientHeight, JSON.stringify(g));
+  ok('T3e3 主会话流式文字与光标计算样式一致', Object.values(streamContract.styles).every(([a, b]) => a === b) && streamContract.caret.every(([, a, b]) => a === b), JSON.stringify({ styles: streamContract.styles, caret: streamContract.caret }));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const reducedCaret = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-stream-line'), '::after').animationName);
+  ok('T3e4 减少动态效果时流式光标不闪烁', reducedCaret === 'none', reducedCaret);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await shot(page, 't3-stream-line');
   for (const d of ['τ=30 半衰期 ≈21 天。', '<cite>§近因加权</cite>']) {
     wsSend({ type: 'textDelta', sessionId: askedSid, delta: d });
@@ -517,10 +552,12 @@ try {
     };
   });
   const askDockSrc = readFileSync(join(WEB_DIR, 'js', 'askDock.js'), 'utf8');
-  ok('F3 顶缘渐隐 = 逐泡 opacity（面板内零遮罩条元素；.ask-col 零 mask（backdrop root 摘除）'
-    + '+ askDock.js syncAskFade 载体在场；--ask-fade-h 衰减档保留）',
-    f3.fadeLayers === 0 && f3.colMask === 'none' && f3.fadeH > 0 && /syncAskFade/.test(askDockSrc),
-    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH, syncAskFade: /syncAskFade/.test(askDockSrc) }));
+  // FCC-REQ-004: history bubbles are never dimmed any more, so the per-bubble opacity carrier is gone;
+  // the clearance band (--ask-fade-h) stays as plain padding.
+  ok('F3 顶缘无渐隐（面板内零遮罩条元素；.ask-col 零 mask（backdrop root 摘除）'
+    + '+ askDock.js 无逐泡 opacity 载体；--ask-fade-h 净空档保留）',
+    f3.fadeLayers === 0 && f3.colMask === 'none' && f3.fadeH > 0 && !/syncAskFade/.test(askDockSrc) && !/\.style\.opacity\s*=/.test(askDockSrc),
+    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH, syncAskFade: /syncAskFade/.test(askDockSrc), opacityWrite: /\.style\.opacity\s*=/.test(askDockSrc) }));
   ok('F3-b 整体透明无边框（dock 零背景/零边框/零浮影/零 backdrop-filter；外框零 mask）',
     f3.dockBg === 'rgba(0, 0, 0, 0)' && parseFloat(f3.dockBorder) === 0 && f3.dockShadow === 'none'
       && /^none$/.test(String(f3.dockFilter)) && f3.colwrapMask === 'none' && /^none$/.test(String(f3.colwrapMask)),
@@ -565,6 +602,22 @@ try {
     backA.user.includes('τ 为什么取 30 天') && backA.ai.includes('近因加权'),
     JSON.stringify(backA).slice(0, 120));
   await shot(page, 't4-session-switch');
+
+  // A running must not leak its composer state into idle B, and must return on switch back.
+  wsSend({ type: 'textDelta', sessionId: askedSid, delta: 'running' });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-stop')).display !== 'none');
+  await openFile(page, 'wiki-graph-redesign-design.md');
+  const idleB = await page.evaluate(() => ({
+    stop: getComputedStyle(document.querySelector('.ask-stop')).display,
+    send: getComputedStyle(document.querySelector('.ask-send')).display,
+    indicators: document.querySelectorAll('.ask-stream-line').length,
+  }));
+  ok('running state is isolated from idle B', idleB.stop === 'none' && idleB.send !== 'none' && idleB.indicators === 0, JSON.stringify(idleB));
+  await openFile(page, '记忆检索调优笔记.md');
+  const runningA = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-stop')).display !== 'none');
+  ok('running state restored on A', runningA);
+  wsSend({ type: 'done', sessionId: askedSid });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-stop')).display === 'none');
 
   // T5 未读通知点（三修② 作者令 2026-10-29：绿点只在有未读时显示，无未读不显示）
   await page.click('.ask-fab'); // 收起（刚读完：无未读）
@@ -718,11 +771,7 @@ try {
     const glassBg = norm(cs0.getPropertyValue('--glass-bg'));
     const paper = norm(cs0.getPropertyValue('--color-bg'));
     probe.remove();
-    const composite = glassBg && paper ? {
-      r: Math.round(glassBg.a * glassBg.r + (1 - glassBg.a) * paper.r),
-      g: Math.round(glassBg.a * glassBg.g + (1 - glassBg.a) * paper.g),
-      b: Math.round(glassBg.a * glassBg.b + (1 - glassBg.a) * paper.b),
-    } : null;
+  const opaqueBg = norm(cs0.getPropertyValue('--nf-glass-opaque-bg'));
     const asRgba = (s) => {
       const m = String(s).match(/rgba?\(([^)]+)\)/);
       if (!m) return null;
@@ -738,7 +787,7 @@ try {
       header: pick(document.getElementById('header')),
       inputBg: asRgba(pick(document.querySelector('.ask-input')).bg),
       bubBg: asRgba(pick(document.querySelector('.ask-bub.ai')).bg),
-      composite,
+      opaqueBg,
     };
   });
   const matSame = (a, b) => !!a && !!b && a.bg === b.bg && a.border === b.border && a.blur === b.blur;
@@ -746,15 +795,15 @@ try {
   // #deck-fab 同族（旧「= #header」断言为 v3 批欠账——ask.css 三修③ 的 --cv-*
   // 基础档被 liquid-glass.css ④ 后写胜出，#deck-fab 同吃同配方，两者计算样式相等）。
   ok('T12a 入口钮材质 = 悬浮族 F1 单源（#deck-fab 同配方逐项相等）', matSame(mat.fab, mat.deck), JSON.stringify({ fab: mat.fab, deck: mat.deck }));
-  // 配方件相等（blur / border 逐项）+ 底 α=1 + 底 = 压平合成值（2026-11-05 改判）
+  // 配方件相等（blur / border 逐项）+ 底 α≥.97（正文区不透字）。
   const recipeSame = (a, b) => !!a && !!b && a.border === b.border && a.blur === b.blur;
   const near3 = (x, y) => !!x && !!y && Math.abs(x.r - y.r) <= 1 && Math.abs(x.g - y.g) <= 1 && Math.abs(x.b - y.b) <= 1;
-  ok('T12b 输入条 = #header 同套配方（blur/描边逐项相等）+ 底收不透明档（α=1 且 = 玻璃压平纸面的合成值）',
-    recipeSame(mat.input, mat.header) && !!mat.inputBg && mat.inputBg.a === 1 && near3(mat.inputBg, mat.composite),
-    JSON.stringify({ input: mat.input, ref: mat.header, bg: mat.inputBg, composite: mat.composite }));
-  ok('T12c 气泡 = #header 同套配方（blur/描边逐项相等）+ 底收不透明档（α=1 且 = 玻璃压平纸面的合成值）',
-    recipeSame(mat.bub, mat.header) && !!mat.bubBg && mat.bubBg.a === 1 && near3(mat.bubBg, mat.composite),
-    JSON.stringify({ bub: mat.bub, ref: mat.header, bg: mat.bubBg, composite: mat.composite }));
+  ok('T12b 输入条 = #header 同套配方（blur/描边逐项相等）+ 正文底 α≥.97',
+    recipeSame(mat.input, mat.header) && !!mat.inputBg && mat.inputBg.a >= 0.97,
+    JSON.stringify({ input: mat.input, ref: mat.header, bg: mat.inputBg }));
+  ok('T12c 气泡 = #header 同套配方（blur/描边逐项相等）+ 正文底 α≥.97',
+    recipeSame(mat.bub, mat.header) && !!mat.bubBg && mat.bubBg.a >= 0.97,
+    JSON.stringify({ bub: mat.bub, ref: mat.header, bg: mat.bubBg }));
   const greenFaces = await page.evaluate(() => ({
     send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
     sendInk: getComputedStyle(document.querySelector('.ask-input .ask-send')).color,

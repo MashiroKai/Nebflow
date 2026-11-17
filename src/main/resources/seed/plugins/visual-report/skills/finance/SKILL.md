@@ -49,7 +49,7 @@ description: 行情复盘报告（mplfinance K线量价）；行情、K线、量
 | matplotlib | 辅助图（收盘线/回撤/分布） | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2 | https://matplotlib.org/ | HTTP 200（2026-10-04 实测，README 链接验证表同） | plotly（viz-venv 已装，含 candlestick）；再缺 ⇒ 文字行情表，不得手画 |
 | pandas | OHLCV 整理/指标计算（rolling） | `<venv>\python.exe -c "import pandas; print(pandas.__version__)"` → 3.0.5 | https://pypi.org/project/pandas/ | HTTP 200（2026-10-04，README 链接验证表） | 纯 csv 读取 + 手写滑动均值循环（小数据量可行） |
 
-numpy（2.5.3）为插件共用基线，实测记录见插件 README 链接验证表。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。API 名注意：0.12.10b0 是 `mpf.make_marketcolors` / `mpf.make_mpf_style`（无下划线别名不存在）。
+numpy（2.5.3）为插件共用基线，实测记录见插件 README 链接验证表。`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`。装包只进 viz-venv（core §5）。API 名注意：0.12.10b0 是 `mpf.make_marketcolors` / `mpf.make_mpf_style`（无下划线别名不存在）。
 
 ### 场景规范（本场景红线细则）
 

@@ -21,7 +21,7 @@
 | [`FileChangeLedger.scala`](FileChangeLedger.scala) | How an agent-visible file changed (mirrors the delivery contract keys). |
 | [`FriendRosterPort.scala`](FriendRosterPort.scala) | `neblink.FriendRoster` 的窄投影(严格DAG第⑥步第二批 R10):FriendRoster 留驻 neblink(依赖 core.tools.ToolError,属好友域词汇单点),core 侧( |
 | [`FriendsSeal.scala`](FriendsSeal.scala) | friends-seal latch (friendseal batch, 2026-09-25; DEFAULT FLIPPED by the 功能开放批， author order 2026-10-30 18:22  |
-| [`GitWorktrees.scala`](GitWorktrees.scala) | Git worktree / branch creation machinery — the SHARED single point extracted from `NodeEditTool.createWorktree |
+| [`GitWorktrees.scala`](GitWorktrees.scala) | Read-only Git facts for the engine's seat faces: branch/HEAD readings, dirty sets, ancestry, status digests. |
 | [`Guardrails.scala`](Guardrails.scala) | 专用化改造·轨道二（引擎护栏）— team task #5（设计基线 dedicated-agents-taxonomy 设计件 §C）。 |
 | [`HeadlessMode.scala`](HeadlessMode.scala) | NEBFLOW_HEADLESS=1 — deterministic benchmark mode, read once at JVM start. Benchmark containers (Terminal-Benc |
 | [`InstallLayout.scala`](InstallLayout.scala) | Locates the jpackage app-image payload and the bundled dependencies (Team #11, beta.53). |
@@ -71,7 +71,7 @@
 - [`hotrestart/`](hotrestart/module-doc.md) — 热重启编排：intent、后继门、端口让渡、安装指针。
 - [`hotupdate/`](hotupdate/module-doc.md) — 统一更新编排：更新请求、七相位执行、回滚。
 - [`index/`](index/module-doc.md) — 检索索引（任务/会话）增量维护。
-- [`jev/`](jev/module-doc.md) — JEV（jev）事件与判定。
+- [`jev/`](jev/module-doc.md) — 插件分配共享基础设施（分配端口/审计类型/能力目录）。
 - [`mail/`](mail/module-doc.md) — 会话邮箱（SessionMailbox）。
 - [`mcp/`](mcp/module-doc.md) — MCP 管理、MCP 工具门与注册。
 - [`msgtokens/`](msgtokens/module-doc.md) — 消息身份牌注册表。

@@ -1134,44 +1134,8 @@ button.fm-req-decline:focus-visible {
 .fm-msg.in { align-self: flex-start; align-items: flex-start; }
 .fm-msg > .bubble { max-width: 100%; }
 
-/* ── 桌面会话面**扁平直框**（flat-thread 批 2026-11-07；作者令逐字「把电脑端好友/
-   群聊的前端 改回类似微信一样的扁平化的框，不要现在的跟主会话一样的布局了」）───────
-   判据：上面「气泡族改挂主会话」块（四会话统一批 2026-11-05，作者令「改成与主 agent
-   对话窗口一致」）把好友/群/设备三面的消息泡**直接继承主会话的浮层卡形态**（16px
-   大圆角 + whisper 描边 + `--glass-bub-ai-shadow` 柔影 + 4px 方向尾角）。本令对该
-   形态**只撤「浮层卡气质」，不撤结构与复用**：
-     · 圆角 6px 单值（`--ds-radius-chip` 档）—— 与主会话 16px 浮层卡档明确分档；
-       单值 shorthand 同时吃掉主会话那两枚「方向尾角 4px」长写（微信气泡是四角
-       同值的直框，尾角那种「说话人箭头」在这里读作浮层卡残留）。
-     · 零柔影、零 backdrop-filter —— 「扁平」的机械含义就是这两条归零：消息框
-       只是面上的一块有边界的实底，不再是从面上浮起来的玻璃片。
-     · 入向 1px 实描边（etched 档，与联系人行/输入条同一条发丝线语言）＝「框」；
-       出向不描边（实底自身成框，微信同侧无描边）—— 这条**不是**新配色：底色
-       仍由 glass.css 单点块的 --nf-bub-ours-bg / --nf-bub-theirs-bg 决定，
-       本文件继续零色值（check-bubble-side.mjs R2 只认这两枚令牌，故本块**不写
-       background**）。
-     · 范围 = `body:not(.mobile-layer)` 且选择器带 `.fm-msg` 前缀 ⇒ 主会话
-       （`.row > .bubble`）与手机层（`body.mobile-layer`，另一腿所有）零命中。
-   未纳入本令（如实登记）：窗壳/窗头/输入条的毛玻璃 = 作者 2026-09-19「弹窗面板 =
-   毛玻璃既定规矩」的既有裁定，本批不动；设备会话面（.dropbox-msg）另属 sapphire.css
-   单源，本批不动。 */
-body:not(.mobile-layer) .fm-msg > .bubble {
-  border-radius: var(--ds-radius-chip);
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-body:not(.mobile-layer) .fm-msg.in > .bubble {
-  border: 1px solid var(--glass-etched-border);
-}
-body:not(.mobile-layer) .fm-msg.out > .bubble {
-  border: none;
-}
-/* 元信息 pill 的戒指影同属「浮层卡」气质（chat.css `.duration-badge` 单源），
-   会话窗内归零；主会话那枚照旧带影（选择器只带 .fm-msg-meta 钩子）。 */
-body:not(.mobile-layer) .fm-msg-meta {
-  box-shadow: none;
-}
+/* Author selection: use the primary conversation bubble and footer styling on
+   desktop as well as mobile; retain only the FM row layout above. */
 
 /* ── 跨天居中日期行（日期行上移批 2026-11-06 作者令②）─────────────────────────
    「跨天只显示一次」：日期层从每条 footer（formatFooterTime 分层档，每条都显）
@@ -1782,29 +1746,33 @@ body:not(.mobile-layer) #profile-face-overlay {
   max-height: none;
   border-radius: 0;
 }
-.pf-close {
-  float: right;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--ds-radius-input);
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font: inherit;
+.pf-edit-bar.ds-chrome-band {
+  top: auto;
+  bottom: var(--sp-safe-bottom, env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: space-between;
+  padding: 0 var(--ds-space-4) var(--ds-space-4);
+  z-index: 2;
 }
-.pf-close:hover { color: var(--color-text); }
-.pf-close svg { width: 16px; height: 16px; }
-.pf-hero {
+.pf-edit-bar[hidden] { display: none; }
+.pf-edit-bar > button { pointer-events: auto; }
+.pf-edit-submit { color: var(--ds-accent); }
+.pf-has-pending .pf-fields { padding-bottom: calc(76px + var(--sp-safe-bottom, env(safe-area-inset-bottom))); }
+.pf-modal > .sp-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+}
+.pf-modal > .sp-panel-header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-hero.sp-identity {
   /* 🔴 三点入口批（2026-11-05 作者令「头像小一点。布局扁平化」）：
      旧形态 = 居中列的英雄区（头像 + 名字 + 副行三行堆叠，视觉上是一张「封面卡」）；
      新形态 = **左对齐单行**（40px 头像 + 名字/副行两行文本并排），无分隔线、无背景、
      无卡片盒 ⇒ 层数从「壳 > 英雄区 > 头像/名字/副行」压到「壳 > 英雄行 > 头像 + 文本列」。 */
   display: flex;
+  flex-direction: row;
+  text-align: left;
   align-items: center;
   gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-block-y) var(--ds-panel-pad-x) var(--ds-space-2);
@@ -2095,6 +2063,7 @@ body:not(.mobile-layer) #profile-face-overlay {
    🔴 原 `border-top: 1px solid var(--glass-etched-border)` 与 `padding: 10/16/14`
    一并摘除 —— 那条线是「输入条有边缘」的直接成因，与本令的「无边缘+悬浮」相反。 */
 .fm-input-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
@@ -2301,7 +2270,7 @@ body:not(.mobile-layer) #profile-face-overlay {
   color: var(--color-text-muted, #888);
   cursor: pointer;
 }
-.fm-gs-open:hover { background: var(--glass-control-bg-hover); color: var(--color-text, #000); }
+.fm-gs-open:hover { color: var(--color-text, #000); }
 .fm-gs-open svg { width: 16px; height: 16px; }
 
 /* 群设置抽屉（窗头下方、消息区上方；可滚动） */
@@ -2763,4 +2732,97 @@ body:not(.mobile-layer) #profile-face-overlay {
 }
 .fm-msg-device-receipt[data-receipt-state='read'] {
   color: rgb(var(--sapphire));
+}
+
+/* ══ Desktop: friend, group and device conversations in the main chat area (FCC-REQ-007) ════════════════════════════
+   The conversation window is the same element tree as ever; on desktop it is hosted inside #main instead of a dialog
+   (js/messages/mainHost.js). The Agent view stays in the DOM, hidden and inert. The conversation's identity lives in
+   #header, which keeps its own left and right controls. Mobile keeps the dialog shell its page controller adopts. */
+#fm-chat-overlay.fm-chat-host {
+  position: absolute;
+  inset: 0;
+  z-index: 15;               /* above the hidden Agent view, below the header (30) */
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;      /* the window itself takes the events; the header above stays reachable */
+}
+/* Panels the window raises over itself (the forward window) float centred above it and take events. */
+#fm-chat-overlay.fm-chat-host > .fm-fwd-modal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  pointer-events: auto;
+}
+#fm-chat-overlay.fm-chat-host > .fm-modal-main {
+  pointer-events: auto;
+  flex: 1;
+  min-height: 0;
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  border-radius: 0;
+}
+/* The window's input bar follows the Agent input bar: same edge slot, bottom flush with the main column. */
+.fm-modal-main > .fm-input-bar { margin: 0 var(--ds-main-col-edge-x) 0; }
+.fm-modal-main > .fm-modal-toast { top: calc(var(--fm-head-h) + var(--ds-space-2)); }
+/* The group drawer opens at the top of the window, below the header. */
+.fm-modal-main > .fm-group-settings { margin-top: var(--fm-head-clear); }
+.fm-modal-main:has(> .fm-group-settings) > .fm-flow { padding-top: var(--nf-head-gap); }
+
+/* Header identity: one compact row in the centre of #header, same size language as the Agent name it replaces. */
+#header .fm-main-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+#header .fm-main-head > .fm-modal-avatar { zoom: 0.7; }   /* the 40px identity avatar becomes the header's 28px icon */
+#header .fm-main-head > .fm-modal-title { flex: 0 1 auto; align-items: center; min-width: 0; }
+#header .fm-main-head .fm-modal-id { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Going back to the Agent is the flipped avatar in the activity bar; one way back, not two. */
+#header .fm-main-head > .fm-modal-close { display: none; }
+
+/* The Agent-only header controls rest while a conversation is shown. They are addressed through .header-right (a
+   class that exists only in #header), not through #header itself: the glass gate reads a #header ancestor as "this
+   surface sits in the top band" and would then judge those controls' own translucent fills. */
+#main.fm-social-main .header-center > :not(.fm-main-head) { display: none; }
+#main.fm-social-main .header-right > #bypass-dropdown,
+#main.fm-social-main .header-right > #voice-toggle-btn,
+#main.fm-social-main .header-right > #bg-indicator,
+#main.fm-social-main .header-right > #pending-asks-indicator,
+#main.fm-social-main .header-right > #held-receipts-indicator,
+#main.fm-social-main .header-right > #bgagent-indicator { display: none; }
+/* The Agent view is not shown, and nothing that belongs to it (its return pill, its top band) shows through. */
+#main.fm-social-main > #chat,
+#main.fm-social-main > #input-area,
+#main.fm-social-main > #top-overlays,
+#main.fm-social-main > #g2-edge-fade,
+#main.fm-social-main > .scroll-new-pill { visibility: hidden; }
+
+/* Activity-bar avatar: the account face flips to the Agent face while a conversation is shown. */
+#activity-avatar .activity-avatar-agent {
+  display: none;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+}
+#activity-avatar[data-face='agent'] .activity-avatar-agent { display: flex; }
+#activity-avatar[data-face='agent'] > picture,
+#activity-avatar[data-face='agent'] > .activity-avatar-photo,
+#activity-avatar[data-face='agent'] > .activity-avatar-letter { display: none; }
+.activity-avatar-agent-photo { width: 100%; height: 100%; object-fit: cover; }
+.activity-avatar-agent-logo { width: 24px; height: 24px; object-fit: contain; }
+/* The flip lasts as long as FLIP_MS in js/activityBar.js, which changes the face at half time and then removes the class. */
+#activity-avatar.is-flipping { animation: nf-avatar-flip 0.28s ease-in-out; }
+@keyframes nf-avatar-flip { 0% { transform: rotateY(0); } 50% { transform: rotateY(90deg); } 100% { transform: rotateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  #activity-avatar.is-flipping { animation: none; }
 }

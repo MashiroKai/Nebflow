@@ -8,10 +8,13 @@ matplotlib patches 按真实米制坐标绘制。
 - 层高 3.0 m × 2，坡屋面檐口 6.0 m、屋脊 8.4 m（配合 three.js 体块模型同源数据）
 - 面积按轴线尺寸计
 
-输出: C:/Users/Kai/.nebflow/plots/vrs2-archart/20261004_arch_plan.png
+输出: C:/Users/name/.nebflow/plots/vrs2-archart/20261004_arch_plan.png
 """
 import os
-os.environ.setdefault("MPLCONFIGDIR", r"C:\Users\Kai\.nebflow\tools\mplconfig")
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(DATA_ROOT, "tools", "mplconfig"))
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -20,7 +23,8 @@ from matplotlib.patches import Rectangle, Arc, Circle
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
 plt.rcParams["axes.unicode_minus"] = False
 
-OUT = r"C:\Users\Kai\.nebflow\plots\vrs2-archart\20261004_arch_plan.png"
+OUT = os.path.join(DATA_ROOT, 'plots', 'vrs2-archart', '20261004_arch_plan.png')
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
 INK, MUT, PAPER = "#2a2e38", "#6b7078", "#f2f4f8"
 WIN, DOOR = "#4a6fa5", "#8a4a32"

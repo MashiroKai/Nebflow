@@ -29,6 +29,18 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   private val Token = "test-token-b2"
   private val TokenRef = cats.effect.Ref.unsafe[IO, String](Token)
 
+  // 0c2ccf2d2（2026-11-10 网关属主批）：chat 面为 owner-scoped ⇒ 判据切到
+  // GatewayAuth.Rails.StaticAuth（session cookie 唯一轨道）；Bearer 文件 token
+  // 不再鉴此面（有效 Bearer ⇒ 401 "Invalid token"，同批 GatewayAuthSpec 已钉）。
+  // 鉴权夹具随之从 Bearer 翻到 session cookie（GatewayAuthSpec 同款铸造法）；
+  // bearerProbe 负控腿钉「有效文件 token 恒 401」。
+  private val sessions = GatewaySessionStore.unsafeCreate()
+  private lazy val fixtureSid: String =
+    sessions
+      .create("logto|shim-user", GatewaySessionStore.OriginRelayMint, "net-1")
+      .map(_.sessionId)
+      .unsafeRunSync()
+
   private class ScriptedLlm(resp: LlmResponse) extends LlmHandle[IO]:
     val seen = cats.effect.Ref.unsafe[IO, List[LlmRequest]](Nil)
 
@@ -74,8 +86,17 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
         EntityEncoder.byteArrayEncoder[IO]
       )
       .withContentType(`Content-Type`(MediaType.application.json))
-    if withAuth then base.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, Token)))
+    if withAuth then base.addCookie(GatewaySessionStore.CookieName, fixtureSid)
     else base
+
+  /** 负控探针：有效文件 token Bearer（0c2ccf2d2 后恒 401 "Invalid token"）。 */
+  private def bearerProbe(body: String): Request[IO] =
+    Request[IO](Method.POST, Uri.unsafeFromString("/v1/chat/completions"))
+      .withEntity(body.getBytes(java.nio.charset.StandardCharsets.UTF_8))(
+        EntityEncoder.byteArrayEncoder[IO]
+      )
+      .withContentType(`Content-Type`(MediaType.application.json))
+      .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, Token)))
 
   /** Same, for an arbitrary path (the in-tree control case). */
   private def rawJsonRequest(path: String, body: String): Request[IO] =
@@ -508,7 +529,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   // ── 3. the alias route: same routes value, same auth gate ────────────────
 
   test("route: alias path requires auth exactly like the in-tree paths") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef, sessions).routes
     val body =
       """{"model":"paid/paid-model","messages":[{"role":"user","content":"x"}],"session_id":"s","agent_id":"a"}"""
     List("/v1/chat", "/v1/chat/completions")
@@ -525,9 +546,9 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
       }
   }
 
-  test("route: with a valid token the alias answers 200 in the OpenAI shape") {
+  test("route: with a valid session the alias answers 200 in the OpenAI shape") {
     val llm = new ScriptedLlm(mkResponse(reply = "pong"))
-    val routes = new ChatRoutes(llm, TokenRef).routes
+    val routes = new ChatRoutes(llm, TokenRef, sessions).routes
     val body =
       """{"model":"paid/paid-model","messages":[{"role":"user","content":"ping"}],"session_id":"s","agent_id":"a"}"""
     routes(req(body)).value.flatMap {
@@ -545,12 +566,29 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
     }
   }
 
+  test("route: a valid file-token Bearer no longer authenticates the owner-scoped chat face (0c2ccf2d2)") {
+    // 0c2ccf2d2（2026-11-10 网关属主批）：Bearer 凭据无账号属主，不得鉴
+    // owner-scoped 的 chat 请求 ⇒ 判据 = StaticAuth（session 唯一轨）。有效文件
+    // token 恒 401，且 401 文案取「presented-Bearer ⇒ Invalid token」分支。
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse(reply = "pong")), TokenRef, sessions).routes
+    val body =
+      """{"model":"paid/paid-model","messages":[{"role":"user","content":"ping"}],"session_id":"s","agent_id":"a"}"""
+    routes(bearerProbe(body)).value.flatMap {
+      case None => fail("the alias route fell through")
+      case Some(resp) =>
+        assertEquals(resp.status, Status.Unauthorized)
+        respJson(resp).map(json =>
+          assertEquals(json.hcursor.downField("error").as[String], Right("Invalid token"))
+        )
+    }
+  }
+
   test("route: the alias hands the caller's model to the LLM handle (end to end)") {
     // Round-1 verdict的线上读数之一：三个不同 `model` 值在 mock 侧收到的完全相同。
     // 这条断言把「线上」那一读搬进 spec——handle 收到的 agentModel 必须随 wire 上的
     // `model` 变化，否则返工未落实。
     val llm = new ScriptedLlm(mkResponse(reply = "pong"))
-    val routes = new ChatRoutes(llm, TokenRef).routes
+    val routes = new ChatRoutes(llm, TokenRef, sessions).routes
     def call(m: String) =
       routes(
         req(
@@ -575,7 +613,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   }
 
   test("route: a refused body answers 400 with the OpenAI error envelope") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef, sessions).routes
     val body = """{"model":"paid/paid-model","messages":[{"role":"user","content":"x"}]}"""
     routes(req(body)).value.flatMap {
       case None => fail("the alias route fell through")
@@ -590,7 +628,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   }
 
   test("route: a non-JSON body answers 400 with the invalid_json envelope") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef, sessions).routes
     routes(req("not json at all")).value.flatMap {
       case None => fail("the alias route fell through")
       case Some(resp) =>
@@ -602,7 +640,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   }
 
   test("route: the in-tree path keeps its own semantics (no OpenAI keys added)") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse(reply = "pong")), TokenRef).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse(reply = "pong")), TokenRef, sessions).routes
     // Note the role of this body in the test: it exercises the IN-TREE decode
     // path (`req.as[LlmRequest]`) with a minimal legacy wire body — only the
     // three required fields (messages / sessionId / agentId) plus an explicit
@@ -612,7 +650,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
     val body =
       """{"messages":[{"role":"user","content":"ping"}],"sessionId":"s","agentId":"a","searchAllowed":true}"""
     val inTree = rawJsonRequest("/v1/chat", body)
-      .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, Token)))
+      .addCookie(GatewaySessionStore.CookieName, fixtureSid)
     routes(inTree).value.flatMap {
       case None => fail("/v1/chat fell through")
       case Some(resp) =>
@@ -633,7 +671,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   }
 
   test("route: an unknown path under /v1/chat is still a fall-through (404)") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef, sessions).routes
     routes(req("{}").withUri(Uri.unsafeFromString("/v1/chat/other"))).value.map {
       case None => ()
       case Some(resp) => assertEquals(resp.status, Status.NotFound)

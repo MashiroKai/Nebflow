@@ -108,7 +108,7 @@ class ScheduledTaskStore(
       val before =
         if os.exists(f) then decode[List[ScheduledTask]](os.read(f)).getOrElse(Nil)
         else Nil
-      os.write.over(f, tasks.asJson.noSpaces)
+      nebflow.core.AtomicJson.writeSync(f, tasks.asJson.noSpaces)
       before
     }.flatMap { before =>
       shadowDiff(sessionId, before, tasks)
@@ -147,18 +147,51 @@ class ScheduledTaskStore(
         legs.sequence_.void
 
   /** 持锁读-改-写单会话文件：f 纯函数变换，返回 (新列表, 结果)。 */
-  private def modifySession[A](sessionId: String)(f: List[ScheduledTask] => (List[ScheduledTask], A)): IO[A] =
-    storeLock.lock.surround {
-      loadUnlocked(sessionId).flatMap { existing =>
-        val (updated, result) = f(existing)
-        saveUnlocked(sessionId, updated).as(result)
-      }
+  /** Session ids represented by the on-disk `<sid>.json` files (blocking read of the directory). */
+  private def sessionIdsUnlocked: IO[List[String]] = IO.blocking {
+    if !os.exists(baseDir) then Nil
+    else os.list(baseDir).filter(_.last.endsWith(".json")).map(_.last.stripSuffix(".json")).toList
+  }
+
+  /** Transform the authoritative payload once, then retire stale copies only after it lands. */
+  private def updateByIdUnlocked(taskId: String)(f: ScheduledTask => ScheduledTask): IO[Option[ScheduledTask]] =
+    sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
+      val copies = sessions.flatMap(_._2).filter(_.id == taskId)
+      distinctById(copies).headOption match
+        case None if copies.nonEmpty =>
+          IO.raiseError(new IllegalStateException(s"scheduled task $taskId has conflicting revisions; update refused"))
+        case None => IO.pure(None)
+        case Some(current) =>
+          val changed = f(current).copy(
+            id = current.id, sessionId = current.sessionId, createdAt = current.createdAt, source = current.source,
+            revision = current.revision
+          )
+          val updated =
+            if changed == current then current
+            else changed.copy(revision = Math.addExact(current.revision, 1L))
+          val rows = sessions.find(_._1 == current.sessionId).get._2
+          val target = rows.map(t => if t.id == taskId then updated else t)
+          (if target == rows then IO.unit else saveUnlocked(current.sessionId, target)) *>
+            sessions.filter { case (sid, stored) => sid != current.sessionId && stored.exists(_.id == taskId) }
+              .traverse_ { case (sid, stored) =>
+                saveUnlocked(sid, stored.filterNot(_.id == taskId))
+                  .handleErrorWith(e => logger.warn(s"task update left a stale copy in $sid (id=$taskId): ${e.getMessage}"))
+              }.as(Some(updated))
     }
 
   private def addUnlocked(task: ScheduledTask): IO[Unit] =
-    loadUnlocked(task.sessionId).flatMap(existing => saveUnlocked(task.sessionId, existing :+ task))
+    loadUnlocked(task.sessionId).flatMap { existing =>
+      if existing.exists(_.id == task.id) then IO.raiseError(new IllegalArgumentException("duplicate task id"))
+      else saveUnlocked(task.sessionId, existing :+ task)
+    }
 
-  private def removeByNameUnlocked(name: String, kind: Option[String]): IO[List[ScheduledTask]] = IO.blocking {
+  private def removeByNameUnlocked(
+    name: String,
+    kind: Option[String],
+    owner: Option[String],
+    legacyOwner: ScheduledTask => Boolean,
+    excludeId: String = ""
+  ): IO[List[ScheduledTask]] = IO.blocking {
     if !os.exists(baseDir) then Nil
     else
       val removed = List.newBuilder[ScheduledTask]
@@ -169,12 +202,18 @@ class ScheduledTaskStore(
         .foreach { f =>
           decode[List[ScheduledTask]](os.read(f)) match
             case Right(list) =>
+              // Ownership must be explicit or PROVEN by a legacy marker; a record whose
+              // origin cannot be shown is kept, never guessed away. An unreadable file is
+              // likewise left byte-for-byte untouched.
               val (drop, keep) =
-                list.partition(t => t.name.contains(name) && ScheduledTask.sameKind(t.kind, Some(matchKind)))
+                list.partition(t =>
+                  t.id != excludeId && t.name.contains(name) && ScheduledTask.sameKind(t.kind, Some(matchKind)) &&
+                    owner.isDefined && (t.source == owner || (t.source.isEmpty && legacyOwner(t)))
+                )
               if drop.nonEmpty then
                 removed ++= drop
-                os.write.over(f, keep.asJson.noSpaces)
-            case Left(_) => () // unreadable: leave untouched
+                nebflow.core.AtomicJson.writeSync(f, keep.asJson.noSpaces)
+            case Left(_) => () // unreadable: leave untouched (source unknown ⇒ never delete)
         }
       removed.result()
   }.flatMap { dropped =>
@@ -212,33 +251,101 @@ class ScheduledTaskStore(
     }
 
   // ------------------------------------------------------------------
-  // Public API — 全部持锁（单会话读-改-写走 modifySession；跨文件走 lock.surround）
+  // Public API — 全部持锁；按 id 的删除/更新/触发覆盖所有会话文件里的副本
+  // （跨会话 rearm 的可恢复窗口可能留下同 id 第二份），按 name 的清理仍跨文件。
   // ------------------------------------------------------------------
 
   def loadTasks(sessionId: String): IO[List[ScheduledTask]] =
-    storeLock.lock.surround(loadUnlocked(sessionId))
+    storeLock.lock.surround {
+      // Keep this read's quarantine/DB recovery, but do not expose a stale session copy.
+      loadUnlocked(sessionId).flatMap { local =>
+        scanUnlocked(_.sessionId != sessionId, sort = false)
+          .map(other => distinctById(local ++ other).filter(_.sessionId == sessionId))
+      }
+    }
 
   def saveTasks(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
     storeLock.lock.surround(saveUnlocked(sessionId, tasks))
 
   def addTask(task: ScheduledTask): IO[Unit] =
-    modifySession(task.sessionId)(existing => (existing :+ task, ()))
+    storeLock.lock.surround(addUnlocked(task))
 
+  /** Idempotent user-create retry, scoped to one session and exact requested fields.
+   *
+   * `triggerAt`/`completedAt` are deliberately NOT part of the identity: a retry recomputes
+   * `nextTodoSurfaceAt` and the user may have completed the row since the lost receipt, so
+   * comparing those state fields would turn a legitimate retry into an identity conflict.
+   * The created frame reports the durable row (`saved`) so the client sees the real state.
+   */
+  def addUserTodoOnce(task: ScheduledTask): IO[ScheduledTask] =
+    storeLock.lock.surround {
+      loadUnlocked(task.sessionId).flatMap { existing =>
+        existing.find(_.id == task.id) match
+          case Some(old) if old.source.contains("user") && old.isTodo &&
+              old.content == task.content && old.name == task.name && old.detail == task.detail &&
+              old.project == task.project && old.priority == task.priority => IO.pure(old)
+          case Some(_) => IO.raiseError(new IllegalArgumentException("create identity conflict"))
+          case None => saveUnlocked(task.sessionId, existing :+ task).as(task)
+      }
+    }
+
+  /**
+   * Delete a task by id. An id is globally unique, but a cross-session rearm whose source
+   * removal failed can leave the same id in two session files (see `upsertTaskByName`).
+   * A cancel must therefore cover **every** copy: otherwise the survivor keeps firing.
+   * The `sessionId` argument stays for API compatibility; the id is the authority.
+   */
   def deleteTask(sessionId: String, taskId: String): IO[Unit] =
-    modifySession(sessionId)(existing => (existing.filterNot(_.id == taskId), ()))
+    cancelTask(taskId).void
+
+  /** Explicit cancellation needs no authoritative payload. Return all removed copies so
+   * callers can distinguish absence and notify every affected session without guessing.
+   */
+  def cancelTask(taskId: String): IO[List[ScheduledTask]] =
+    storeLock.lock.surround {
+      sessionIdsUnlocked.flatMap(_.traverse(sid => loadUnlocked(sid).map(sid -> _))).flatMap { sessions =>
+        val copies = sessions.flatMap(_._2).filter(_.id == taskId)
+        // Remove stale rows first. A failed cleanup must not leave only an obsolete due row.
+        sessions.filter(_._2.exists(_.id == taskId))
+          .sortBy { case (sid, rows) => (rows.filter(_.id == taskId).map(_.revision).max, sid) }
+          .traverse_ { case (sid, rows) => saveUnlocked(sid, rows.filterNot(_.id == taskId)) }
+          .as(copies)
+      }
+    }
 
   def markTriggered(sessionId: String, taskId: String): IO[Unit] =
-    modifySession(sessionId) { existing =>
-      val updated = existing.map { t =>
-        if t.id == taskId then t.copy(triggered = true, triggeredAt = Some(System.currentTimeMillis()))
-        else t
-      }
-      (updated, ())
+    storeLock.lock.surround {
+      updateByIdUnlocked(taskId)(_.copy(triggered = true, triggeredAt = Some(System.currentTimeMillis()))).void
     }
 
   /** Reschedule a recurring task — bump triggerAt forward, keep triggered=false. */
   def rescheduleTask(sessionId: String, taskId: String, nextTriggerAt: Long): IO[Unit] =
     updateTask(sessionId, taskId)(_.copy(triggered = false, triggeredAt = None, triggerAt = nextTriggerAt)).void
+
+  /** Resolve authority BEFORE any state/time predicate; rearm may move the time either way.
+   * Equal-version replicas may differ only in location. Conflicting legacy payloads have no
+   * provable ordering: preserve them, warn, and refuse to fire until cancelled or rearmed.
+   * Raw scans remain available to rearm/cleanup so no stored copy is hidden from repair.
+   */
+  private def distinctById(rows: List[ScheduledTask]): List[ScheduledTask] =
+    val byId = rows.groupBy(_.id)
+    rows.map(_.id).distinct.flatMap { id =>
+      val copies = byId(id)
+      val revision = copies.map(_.revision).max
+      val newest = copies.filter(_.revision == revision)
+      if newest.map(_.copy(sessionId = "")).distinct.size == 1 then
+        newest.sortBy(_.sessionId).headOption
+      else
+        logger.warnSync(s"scheduled task authority conflict: id=$id revision=${newest.head.revision} " +
+          s"sessions=${newest.map(_.sessionId).sorted.mkString(",")}; reads suppressed until cancel or rearm")
+        None
+    }
+
+  private def readUnlocked(filter: ScheduledTask => Boolean, sort: Boolean): IO[List[ScheduledTask]] =
+    scanUnlocked(_ => true, sort = false).map { rows =>
+      val selected = distinctById(rows).filter(filter)
+      if sort then selected.sortBy(_.triggerAt) else selected
+    }
 
   /**
    * Get all due (untriggered, past triggerAt) tasks across all sessions.
@@ -248,7 +355,7 @@ class ScheduledTaskStore(
   def getAllDueTasks: IO[List[ScheduledTask]] =
     storeLock.lock.surround {
       val now = System.currentTimeMillis()
-      scanUnlocked(t => !t.triggered && t.triggerAt <= now && t.enabled && !t.isTodo, sort = true)
+      readUnlocked(t => !t.triggered && t.triggerAt <= now && t.enabled && !t.isTodo, sort = true)
     }
 
   /**
@@ -259,11 +366,11 @@ class ScheduledTaskStore(
    * 行留在库里，但「下一次浮出」与 list 面都不许再看到它。
    */
   def getAllPendingTasks: IO[List[ScheduledTask]] =
-    storeLock.lock.surround(scanUnlocked(t => !t.triggered && !t.isCompleted, sort = false))
+    storeLock.lock.surround(readUnlocked(t => !t.triggered && !t.isCompleted, sort = false))
 
   private def todosUnlocked(includeCompleted: Boolean): IO[List[ScheduledTask]] =
     storeLock.lock.surround {
-      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled && (includeCompleted || !t.isCompleted), sort = false)
+      readUnlocked(t => t.isTodo && !t.triggered && t.enabled && (includeCompleted || !t.isCompleted), sort = false)
         .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
     }
 
@@ -294,7 +401,7 @@ class ScheduledTaskStore(
   def getAllDueTodos: IO[List[ScheduledTask]] =
     storeLock.lock.surround {
       val now = System.currentTimeMillis()
-      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled && !t.isCompleted && t.triggerAt <= now, sort = false)
+      readUnlocked(t => t.isTodo && !t.triggered && t.enabled && !t.isCompleted && t.triggerAt <= now, sort = false)
         .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
     }
 
@@ -304,23 +411,22 @@ class ScheduledTaskStore(
 
   /** Toggle the enabled state of a task. Returns the updated enabled value. */
   def toggleTask(sessionId: String, taskId: String): IO[Boolean] =
-    modifySession(sessionId) { existing =>
-      val updated = existing.map { t =>
-        if t.id == taskId then t.copy(enabled = !t.enabled)
-        else t
-      }
-      (updated, updated.find(_.id == taskId).map(_.enabled).getOrElse(true))
+    storeLock.lock.surround {
+      updateByIdUnlocked(taskId)(t => t.copy(enabled = !t.enabled)).map(_.map(_.enabled).getOrElse(true))
     }
 
   /**
    * 通用任务更新（2026-10-29 降频/哨兵批）：f 纯函数变换目标任务（conditionState /
    * idleStreak / reviewFlag / lastFiredAt 等新字段的唯一写入口）。任务不存在 ⇒
    * 原样写回、返回 false（调用方自行决定是否告警）。
+   *
+   * 按 id 覆盖**所有**会话文件里的副本（跨会话 rearm 的可恢复窗口可能留下同 id
+   * 第二份；只更新一份会让另一份继续浮出/触发）。id 全局唯一，`sessionId` 仅为
+   * 兼容既有调用签名。
    */
   def updateTask(sessionId: String, taskId: String)(f: ScheduledTask => ScheduledTask): IO[Boolean] =
-    modifySession(sessionId) { existing =>
-      val updated = existing.map(t => if t.id == taskId then f(t) else t)
-      (updated, updated.exists(_.id == taskId))
+    storeLock.lock.surround {
+      updateByIdUnlocked(taskId)(f).map(_.isDefined)
     }
 
   /**
@@ -330,7 +436,7 @@ class ScheduledTaskStore(
    */
   def findTaskById(taskId: String): IO[Option[ScheduledTask]] =
     storeLock.lock.surround {
-      scanUnlocked(_.id == taskId, sort = false).map(_.headOption)
+      readUnlocked(_.id == taskId, sort = false).map(_.headOption)
     }
 
   /**
@@ -340,27 +446,129 @@ class ScheduledTaskStore(
    * 双面化（2026-10-24）：kind 圈定清理范围——待办与定时任务可同名互不覆盖
    * （kind 不匹配者原样保留）；默认 None = 定时任务面，对存量调用方零变化。
    */
-  def removeByName(name: String, kind: Option[String] = Some(ScheduledTask.KindTask)): IO[List[ScheduledTask]] =
-    storeLock.lock.surround(removeByNameUnlocked(name, kind))
+  def removeByName(
+    name: String,
+    kind: Option[String] = Some(ScheduledTask.KindTask),
+    legacyOwner: ScheduledTask => Boolean = _ => false
+  ): IO[List[ScheduledTask]] =
+    storeLock.lock.surround(removeByNameUnlocked(name, kind, Some("engine"), legacyOwner))
 
   /**
-   * Upsert（2026-09-06 事故根因修复）：带 name 的任务替换全库所有同 name 任务
-   * （重启后 re-arm 例行任务同名自动去重，收敛单份）；无 name 任务按旧语义
-   * 直接追加、不参与去重。返回被替换掉的旧任务列表。双面化（2026-10-24）：
-   * 清理半步按 task 自身 kind 圈定——todo upsert 不吃同名定时任务，反之亦然。
-   * 🔒 同一 permit 内原子完成（清理半步 + 追加），并发 upsert 不再互相掏空。
+   * Upsert（2026-09-06 事故根因修复，2026-11-14 收尾：稳定身份 + 可恢复跨会话迁移）：
+   * 带 name 的任务收敛全库同 name 的**同来源**记录——例行任务重启后 re-arm 不叠加。
+   *
+   * 🔴 身份稳定：被替换的记录保留它自己的 `id` 与 `createdAt`；请求中新建的 id
+   * 只用于「没有任何同来源记录」的首次创建。调用方据 [[Rearm.saved]] 回报/广播
+   * 真实 id，不能再用请求里的临时 id。
+   *
+   * 🔴 来源：只合并显式同来源（`task.source`）或**可证明**的旧记录
+   * （`legacyOwner`，由 producer 自己提供判据，例如「kind=task 且带 name 只可能
+   * 来自 ScheduleTool」）。来源未知（`source` 为空且判据不成立）⇒ 明确拒绝，
+   * 且在任何写入之前抛出；未知记录保持原样，绝不按名字猜测删除。
+   *
+   * 🔴 跨会话：记录被移动到请求的会话（保持同一 id）。顺序 = 先原子写目标会话
+   * （失败 ⇒ 旧记录分毫未动，无丢失），再逐个清理旧会话/重复副本。第二步失败
+   * 只 WARN：同一 id 可能短暂存在于两个会话文件，下一次 rearm 会再次收敛——
+   * 这是可恢复的中间态，记录不丢。不存在跨文件原子事务能力（AtomicJson 只保证
+   * 单文件替换），所以用这个「先写后删」的可恢复顺序，而不是假装两文件原子。
+   *
+   * 同名但**不同显式来源**的记录（如用户待办）一律保留，不参与替换。
+   * 无 name ⇒ 直接追加（旧语义）。`task.source` 为空 ⇒ 仅合并同为空的旧记录
+   * （数据批之前的调用方语义，零迁移）。
    */
-  def upsertTaskByName(task: ScheduledTask): IO[List[ScheduledTask]] =
+  def upsertTaskByName(
+    task: ScheduledTask,
+    legacyOwner: ScheduledTask => Boolean = _ => false
+  ): IO[Rearm] =
     task.name match
-      case None => addTask(task).as(Nil)
+      case None => addTask(task).as(Rearm(task, Nil))
       case Some(n) =>
         storeLock.lock.surround {
-          removeByNameUnlocked(n, task.kind).flatMap(removed => addUnlocked(task).as(removed))
+          scanUnlocked(t => t.name.contains(n) && ScheduledTask.sameKind(t.kind, task.kind), sort = false).flatMap { candidates =>
+            val owner = task.source
+            val (owned, unknown) =
+              if owner.isEmpty then (candidates.filter(_.source.isEmpty), Nil)
+              else
+                val legacy = candidates.filter(_.source.isEmpty)
+                (candidates.filter(t => owner.isDefined && t.source == owner) ++ legacy.filter(legacyOwner),
+                  legacy.filterNot(legacyOwner))
+            if unknown.nonEmpty then
+              IO.raiseError(
+                new IllegalStateException(
+                  s"legacy task ownership is unknown; rearm refused (name=$n kind=${task.kind.getOrElse(ScheduledTask.KindTask)} " +
+                    s"unknown=${unknown.map(t => s"${t.id}@${t.sessionId}").mkString(",")})"
+                )
+              )
+            else
+              val canonical =
+                owned.find(_.sessionId == task.sessionId)
+                  .orElse(owned.sortBy(t => (t.createdAt, t.id)).headOption)
+              canonical match
+                case None =>
+                  loadUnlocked(task.sessionId).flatMap { existing =>
+                    if existing.exists(_.id == task.id) then IO.raiseError(new IllegalArgumentException("duplicate task id"))
+                    else saveUnlocked(task.sessionId, existing :+ task).as(Rearm(task, Nil))
+                  }
+                case Some(old) =>
+                  // Stable identity: keep the id and creation time the record already has;
+                  // the request only supplies the new fields and the destination session.
+                  val persisted =
+                    task.copy(id = old.id, sessionId = task.sessionId, createdAt = old.createdAt, source = owner,
+                      revision = Math.addExact(owned.map(_.revision).max, 1L))
+                  loadUnlocked(task.sessionId).flatMap { targetRows =>
+                    val sameSessionIds = owned.filter(_.sessionId == task.sessionId).map(_.id).toSet
+                    val target = targetRows.filterNot(t => t.id == persisted.id || sameSessionIds.contains(t.id)) :+ persisted
+                    // Step 1 (atomic, single file): the destination has the new record before
+                    // any source copy is dropped, so a failure here cannot lose it.
+                    saveUnlocked(task.sessionId, target).flatMap { _ =>
+                      // Step 2 (recoverable): drop the old/duplicate copies. A failure only
+                      // leaves the same id in two files; the next rearm converges it.
+                      owned
+                        .filter(_.sessionId != task.sessionId)
+                        .groupBy(_.sessionId)
+                        .toList
+                        .sortBy(_._1)
+                        .foldLeft(IO.unit) { case (acc, (sid, rows)) =>
+                          val ids = rows.map(_.id).toSet
+                          acc *> loadUnlocked(sid)
+                            .flatMap(current => saveUnlocked(sid, current.filterNot(t => ids.contains(t.id))))
+                            .handleErrorWith(e =>
+                              logger.warn(s"rearm left a duplicate in session $sid (ids=${ids.mkString(",")}): ${e.getMessage}")
+                            )
+                        }
+                        .as(Rearm(persisted, owned))
+                    }
+                  }
+          }
         }
 
 end ScheduledTaskStore
 
 object ScheduledTaskStore:
-  /** 生产默认存储目录（SharedResources 装配点同值；默认根判别的基准）。
-   *  def 而非 val：PathUtil.dataRoot 是测试换根缝，须每次求值。 */
+  /** Production default storage directory (SharedResources assembly point; the default-root
+   *  discriminator baseline). `def` rather than `val`: PathUtil.dataRoot is the test root seam,
+   *  so it must be evaluated per call. */
   def defaultBaseDir: os.Path = PathUtil.dataRoot / "scheduled-tasks"
+
+  /**
+   * Outcome of [[ScheduledTaskStore.upsertTaskByName]].
+   *
+   * `saved` is the record actually stored: on rearm it carries the record's existing `id`
+   * (stable identity) and the destination session. `replaced` lists the rows that were
+   * replaced/dropped by this call (old copies or duplicates), for the caller's delete/update
+   * broadcasts. A first create reports `replaced = Nil`.
+   */
+  final case class Rearm(saved: ScheduledTask, replaced: List[ScheduledTask])
+
+  /**
+   * Provenance a tool rearm may adopt without guessing: a **named scheduled task**.
+   *
+   * Evidence in the tree: the UI create arm (`WsTasksWorkspaceHandlers.handleCreateScheduledTask`,
+   * the `kind != todo` branch) builds `ScheduledTask.create` without a `name`, and the
+   * reminder panel frame (`scheduled-task.js` create payload) sends no `name`. Only
+   * ScheduleTool names `kind=task` records (its todo arm names `kind=todo`). A legacy
+   * `kind=todo` row with a name is therefore NOT provable — the todo UI does send a name
+   * (`todoStore.js` create frames) — and stays "unknown" for a tool rearm.
+   */
+  val toolOwnsLegacyNamedTask: ScheduledTask => Boolean =
+    t => ScheduledTask.sameKind(t.kind, Some(ScheduledTask.KindTask)) && t.name.exists(_.nonEmpty)

@@ -132,8 +132,10 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
     yield a
 
   /** 铺 600 条历史（> MaxHistoryPage 500，> 默认 50）——三条断言的分母。 */
-  private def seed600(res: SharedResources): IO[String] =
-    val sid = "clamp-session"
+  // UI 消息现已写穿落盘（d6bdd7997 持久化族）——套件级 tempRoot 只在 class init 清一次，
+  // 同套件内先跑的测试会把种子泄给后跑测试的冷装载。改为每测试独立 sessionId
+  // （按键隔离），600 条/会话的断言口径不变。
+  private def seed600(res: SharedResources, sid: String): IO[String] =
     val msgs = (1 to 600).toList.map(i => UiMessage.User(s"message $i"): UiMessage)
     res.sessionStore.appendUiMessages(sid, msgs).as(sid)
 
@@ -151,7 +153,7 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
   test("H1: limit=100000 through the REAL WS getHistory handler returns exactly MaxHistoryPage messages (the newest ones, nothing dropped)") {
     withStore { res =>
       for
-        sid <- seed600(res)
+        sid <- seed600(res, "clamp-h1")
         // 无闸基线：存储层对同一荒谬 limit 会老老实实吐 600 条（offset=0）——
         // 所以下面 handler 回的 500 **只可能来自入口夹取**（去掉夹取即变红）。
         raw <- res.sessionStore.getHistoryPage(sid, 100000, None)
@@ -178,7 +180,7 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
   test("H2: omitting limit keeps the historical default of 50 (no behaviour change for the normal frontend)") {
     withStore { res =>
       for
-        sid <- seed600(res)
+        sid <- seed600(res, "clamp-h2")
         frames <- wsGetHistory(res, sid, "")
       yield
         val (size, total, offset, hasMore) = pageOf(frames)
@@ -194,7 +196,7 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
   test("H3: limit=0 falls back to the default page size (a bad client value neither empties the page nor enlarges it)") {
     withStore { res =>
       for
-        sid <- seed600(res)
+        sid <- seed600(res, "clamp-h3")
         frames <- wsGetHistory(res, sid, ""","limit":0""")
       yield
         val (size, _, _, _) = pageOf(frames)

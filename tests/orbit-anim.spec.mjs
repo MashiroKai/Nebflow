@@ -25,6 +25,10 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
+
+// Diagnostic shots live in a TTL-sweepable EvidenceTemp batch, not bare /tmp files.
+const SHOT_DIR = evidenceBatch('orbit-anim', 'visual-record');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
@@ -86,6 +90,66 @@ const RING_ANGLE = `(node, ring) => {
 
 const DIRS = [1, -1, 1];      // ring-2 counter-rotates (CSS animation-direction: reverse)
 const PHASES = [0, 120, 240]; // resting phases == loop endpoints (CSS .ring-N .solar-dot-wrap)
+
+test('orbit-less folded chains leave timers and clicks responsive after terminal transitions', async ({ page }) => {
+  // Bound native observer delivery even on the broken revision: it must fail an
+  // assertion rather than freeze the browser running the regression itself.
+  await page.addInitScript(() => {
+    const NativeObserver = window.MutationObserver;
+    window.__orbitDeliveryGuard = { tripped: false };
+    window.MutationObserver = class extends NativeObserver {
+      constructor(callback) {
+        let deliveries = 0;
+        let resetPending = false;
+        super((records, observer) => {
+          if (!resetPending) {
+            resetPending = true;
+            setTimeout(() => { deliveries = 0; resetPending = false; }, 0);
+          }
+          if (++deliveries > 12) {
+            window.__orbitDeliveryGuard.tripped = true;
+            observer.disconnect();
+            return;
+          }
+          callback(records, observer);
+        });
+      }
+    };
+  });
+  await page.goto(base + '/harness');
+  await page.waitForFunction('window.__harnessReady === true && !!window.__orbitTest');
+  const result = await page.evaluate(async () => {
+    const { chainCardHtml } = await import('/js/fmNodeCard.js');
+    const pane = document.querySelector('.canvas-tab-pane');
+    const cards = ['completed', 'failed', 'cancelled'].map((terminal, index) => {
+      const holder = document.createElement('div');
+      holder.innerHTML = chainCardHtml({ id: 'chain-' + index, status: 'running', memberCount: 2 }, { x: 0, y: 0 }, 0);
+      const card = holder.firstElementChild;
+      pane.appendChild(card);
+      return { card, terminal };
+    });
+    window.__orbitTest.sync();
+    for (const { card, terminal } of cards) {
+      card.classList.remove('running');
+      card.classList.add(terminal);
+    }
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const button = document.createElement('button');
+    button.textContent = 'Orbit responsiveness probe';
+    button.id = 'orbit-responsive-button';
+    button.onclick = () => { button.dataset.clicked = 'true'; };
+    document.body.appendChild(button);
+    return {
+      tripped: window.__orbitDeliveryGuard.tripped,
+      rings: cards.map(({ card }) => card.querySelectorAll('.solar-dot-spin').length),
+      coasting: cards.some(({ card }) => card.classList.contains('fm-orbit-coast')),
+      tracked: window.__orbitTest.states().filter(state => state.key.includes('|chain-')).length,
+    };
+  });
+  expect(result).toEqual({ tripped: false, rings: [0, 0, 0], coasting: false, tracked: 0 });
+  await page.locator('#orbit-responsive-button').click();
+  await expect(page.locator('#orbit-responsive-button')).toHaveAttribute('data-clicked', 'true');
+});
 
 test('R1: running dots rotate at constant angular velocity (no stalls/jumps)', async ({ page }) => {
   const report = await page.evaluate(`new Promise((resolve) => {
@@ -449,7 +513,7 @@ test('pane-scoped keys isolate identical node ids across projects', async ({ pag
 test('visual record: running vs completed screenshots', async ({ page }) => {
   await page.evaluate(() => window.__orbitTest.sync());
   await page.waitForTimeout(400);
-  await page.screenshot({ path: '/tmp/orbit-running.png' });
+  await page.screenshot({ path: join(SHOT_DIR, 'orbit-running.png') });
   await page.evaluate(`(() => {
     const n = document.getElementById('n1');
     n.classList.remove('running');
@@ -457,6 +521,6 @@ test('visual record: running vs completed screenshots', async ({ page }) => {
     window.__orbitTest.sync();
   })()`);
   await page.waitForTimeout(1800); // coast + fade done
-  await page.screenshot({ path: '/tmp/orbit-completed.png' });
+  await page.screenshot({ path: join(SHOT_DIR, 'orbit-completed.png') });
   expect(true).toBe(true);
 });

@@ -38,9 +38,9 @@
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * ⓪ 毛玻璃（glass）—— 全站唯一标准 · 唯一工具类 · 唯一配方组装点
- *    （glass-unify 批 2026-11-05 立术语；glass-recalibrate 批 2026-11-05 18:13
- *      重定标 —— 作者原话：「我要的是主会话的输入框的这种，不透明，但是能反映
- *      背景内容颜色的。」）
+ *    （glass-unify 批 2026-11-05 立术语；单一质感批 2026-11-15 作者令逐字：
+ *      「我们只允许存在一种毛玻璃质感。你看看主输入框用的是哪种，然后统一为
+ *      规则和检查，只准使用这一种。」—— 全站唯一材质 = 主输入框配方）
  *
  * 术语 → 唯一落点（说「毛玻璃」三个字就是这里，不是 CSS 片段）：
  *   ① 值       = css/stand-tokens.css 的 `--nf-glass-*` 段（设计令牌单一源）
@@ -49,17 +49,19 @@
  *   ④ 词条     = design-language 插件 flat-button-spec 同族的 glass-spec.md
  *                （插件侧术语条目，新人只看文档也能找到同一份标准）
  *
- * 唯一形态 = **不透明，但承接背景色**（参照物 = 主会话输入框）：
- *   中等不透明白底（亮 α .55 / 暗 α .68，与参照物逐值相同）
- *   + 强模糊 blur(40px)（把背景的**内容**洗掉）
- *   + 提饱和 saturate(1.4)（把背景的**颜色**留下并放大）
+ * 唯一形态 = **近实底，但反映背景内容颜色**（参照物 = 主会话输入框，逐值同档）：
+ *   近实底（亮 α .968 / 暗 α .941）
+ *   + blur(24px)（背景的内容被洗成颜色）
+ *   + saturate(1.15)（背景的颜色留下）
  *   + 细边 + 内高光 + 可选的顶缘折射线。
- *   读法：颜色是低频、文字图形是高频 —— blur 是低通，所以「透色不透内容」不是
- *   折中，是 blur 半径与 α 分工的必然结果（读数与定律见 stand-tokens.css 玻璃段注）。
+ *   沿革注：11-05 recalibrate 曾定全局 40px/1.4 通透档（α .55/.68）；11-06 把
+ *   输入框原配方收成基准件 carve-out；11-11「毛玻璃一律不透底」；本批按作者令
+ *   把全站唯一材质定为输入框配方，旧 40px 档退役（旧档令牌已降为指向唯一值
+ *   的别名，stand-tokens.css 单一质感批注）。
  *
  * 已判死刑的两端：
- *   · 死白（α ≥ .90，本轮被作者否掉）：红底上的色度只剩 6.9 —— 背景颜色进不来；
- *   · 内容透底（α < .45 且 blur 小）：底下的正文大字看得出来 = 作者说的「脏」。
+ *   · 内容透底（α < .90）：底下的正文大字看得出来 = 作者说的「脏」
+ *     （11-11 作者令「毛玻璃一律不透底」）；近实底不算死白——它正是参照物。
  *
  * 用法（新面一律这样写，别处不许再写 backdrop-filter）：
  *   <div class="nf-glass">…</div>
@@ -72,26 +74,27 @@
 .nf-glass,
 .glass,
 .glass-control {
-  background: var(--nf-glass-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
-  border: var(--nf-glass-border);
-  box-shadow: var(--nf-glass-shadow);
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--cv-shadow);
 }
 
 /* 毛玻璃的 hover 档（只提不透，不改形态/不改模糊——形态只有一种） */
 @media (hover: hover) {
   .nf-glass:hover {
-    background: var(--nf-glass-bg-hover);
+    background: var(--nf-glass-input-bg);
   }
 }
 
 /* 幕布档（scrim）——把背景压下去的遮罩层，**不是**毛玻璃面：无玻璃底、
-   无描边、无内高光。它只借模糊能力，值在 --nf-glass-scrim* 单源。 */
+   无描边、无内高光。它只借模糊能力，值在 --nf-glass-scrim* 单源
+   （单一质感批 2026-11-15：blur 与唯一毛玻璃配方脱钩，消费自有 token）。 */
 .nf-glass-scrim {
   background: var(--nf-glass-scrim);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  -webkit-backdrop-filter: var(--nf-glass-scrim-blur);
+  backdrop-filter: var(--nf-glass-scrim-blur);
 }
 
 /* ── 成员登记表（M1..Mn）─────────────────────────────────────────────────
@@ -132,13 +135,7 @@
 .nf-lightbox,
 #conn-banner,
 body.mobile-layer #mobile-dock,
-body.mobile-layer .mobile-page-title::before,
-/* 手机 canvas 顶部环带（mobile-canvas-tabs-c 批 2026-11-06，方案 C 落地）：
-   玻璃带层 `.mf-strip::before` = 整条 64px 顶栏一枚玻璃面（正文从底下滚过、
-   被「化掉」的第一档）；主胶囊 `.mf-strip-chip.on::after` = 三签里唯一带材质的
-   那一枚（作者令「主胶囊要采用毛玻璃底」）。两侧签同批改零材质（「背景的文字
-   不使用胶囊」）⇒ 不再进本表，深度只留环邻位模糊（--ds-ring-blur）。 */
-body.mobile-layer .mf-strip::before,
+/* Mobile canvas: only the active capsule owns glass, never the full band. */
 body.mobile-layer .mf-strip-chip.on::after,
 body.mobile-layer .mf-dots,
 body.mobile-layer .mf-swipe-ring,
@@ -205,8 +202,42 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
 .voice-toggle:hover,
 #voice-mode-overlay,
 .nf-lightbox-bar {
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
+}
+
+/* Registered floating consumers use the same composer glass background. */
+#todo-island.tfl-card,
+.tfl-fab-add,
+#search-go.glass-control,
+#search-select-files.glass-control,
+#search-open-selected-files.glass-control {
+  background: var(--nf-glass-input-bg);
+}
+
+/* Mobile todo chrome uses the shared glass recipe; layout stays in its page CSS. */
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill,
+body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill,
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
+  background: var(--nf-glass-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
+  border: var(--nf-glass-border);
+}
+/* The capsule is flat; only the menu and toolbar are elevated panel surfaces. */
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
+  box-shadow: var(--nf-glass-shadow);
+}
+/* Expanded social search shares the actual composer recipe, not the older overlay recipe. */
+body.mobile-layer .mh-search-bar:not(.g2-fab) {
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--cv-shadow);
 }
 
 /* hover 成员（只在 (hover:hover) 生效；触屏无 hover ⇒ 零命中） */
@@ -218,18 +249,19 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
   .activity-btn:hover,
   #perception-btn:hover,
   .pp-icon-btn:hover,
+  .fm-gs-open:hover,
   #reminder-btn:hover,
   .panel-btn:hover, .activity-avatar:hover, .session-delete:hover, .folder-delete:hover, .explorer-folder-btn:hover, .explorer-action-btn:hover, .canvas-close-btn:hover, .reminder-create-btn:hover, .cfg-eye-btn:hover, .agent-detail-prompt-toggle:hover, .project-unmount-btn:hover {
-    -webkit-backdrop-filter: var(--nf-glass-filter);
-    backdrop-filter: var(--nf-glass-filter);
+    -webkit-backdrop-filter: var(--nf-glass-input-filter);
+    backdrop-filter: var(--nf-glass-input-filter);
   }
 }
 
 /* 粗指针（触屏桌面壳）成员 */
 @media (pointer: coarse) and (hover: none) {
   .cr-capsule.is-center, .cr-capsule.is-edge {
-    -webkit-backdrop-filter: var(--nf-glass-filter);
-    backdrop-filter: var(--nf-glass-filter);
+    -webkit-backdrop-filter: var(--nf-glass-input-filter);
+    backdrop-filter: var(--nf-glass-input-filter);
   }
 }
 
@@ -255,8 +287,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
 .team-act-btn:hover,
 .team-card-header,
 #fleet-update-card {
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
 }
 
 /* ── ① 气泡半透明实底档（气泡禁独立 backdrop-filter）────────────────────
@@ -281,6 +313,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
   /* 归属方两档 = 全站唯一的两个气泡底色令牌 */
   --nf-bub-ours-bg: color-mix(in srgb, var(--color-bubble-user) 97%, transparent);
   --nf-bub-theirs-bg: color-mix(in srgb, var(--color-bubble-ai) 97%, transparent);
+  --nf-bub-injected-bg: rgb(var(--sapphire) / 0.12);
   /* 兼容别名：旧 token 名一律**指向**上面两档（禁再写第二份色值） */
   --glass-bub-user-bg: var(--nf-bub-ours-bg);
   --glass-bub-ai-bg: var(--nf-bub-theirs-bg);
@@ -320,7 +353,7 @@ html[data-theme="light"] {
    用户绿、助手白。`peer`（好友/群/设备会话窗的对方）仍 = 白，与助手同档；
    `injected` 注入行是通知面，仍走 sapphire 淡染（门禁 carve 在 R2 精确点名）。 */
 .bubble.user { background: var(--nf-bub-ours-bg); }
-.bubble.injected { background: rgb(var(--sapphire) / 0.12); }
+.bubble.injected { background: var(--nf-bub-injected-bg); }
 .bubble.ai,
 .bubble.peer { background: var(--nf-bub-theirs-bg); }
 /* dropbox 面（自有类族，未挂 .bubble）：同一判据的镜像——`.out` = 我方。 */
@@ -371,8 +404,8 @@ html[data-theme="light"] {
 #header,
 .fm-modal-header {
   background: var(--nf-head-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
   border: var(--nf-head-border-w) solid var(--nf-glass-border-color);
   border-bottom-color: transparent;
   box-shadow: var(--nf-head-shadow);
@@ -399,7 +432,8 @@ html[data-theme="light"] {
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
-#input-bar::before {
+#input-bar::before,
+.fm-input-bar::before {
   content: '';
   position: absolute;
   top: 0;
@@ -453,8 +487,8 @@ html[data-theme="light"] {
 .model-panel,
 .wsp-panel {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
@@ -478,18 +512,17 @@ html[data-theme="light"] {
      是为了让「面板内零渐变背景」这条结构判据（tests/ask-sheet-fade-height A0d：
      不许出现任何过渡条/色块层）保持可读：1px 折射线与「渐变色块」在计算样式里
      无法区分，所以按既有先例落到伪元素。 */
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
-  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
+  border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
 
 /* canvas ask 气泡：材质 = 输入基准件原配方档（ask 面三修② 2026-11-11，作者令
    「毛玻璃一律不透底」）—— 与主会话 #input-bar 逐项同档（bg / blur / 描边 / 浮影，
    tests/ask-glass-drag G1 逐项相等 + G1e 防复活）。09:32 那版为「看不清」单开的
-   α=1 档随 recalibrate 统一退役；用户侧无 tint 复合层（bubble-side-color 批
-   2026-11-06 摘除，两向同材质，识别靠贴靠侧）。
+   α=1 档随 recalibrate 统一退役；用户侧底色在下方单独与注入通知共源。
    特异性 = .ask-dock .ask-bub（2 类）：压过同页挂的 .nf-glass 工具类（1 类），
    glass.css 后载的同性度规则不会把它冲掉，而 ask.css 已把这一块材质整段移交
    本文件（那里只留几何/年龄渐隐）。 */
@@ -503,14 +536,7 @@ html[data-theme="light"] {
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
-/* 用户侧气泡：bubble-side-color 批（2026-11-06）摘除 sapphire tint 复合层 ——
-   ask 面全部消息都代表本机账号（我方），再按「问/答」分两个色相即等于按
-   「消息类型」另开配色（作者令禁）。两向同材质；左右识别改由气泡自身几何
-   （.ask-bub.user 的右侧贴靠，见 askDock.js）承担。 */
-.ask-dock .ask-bub.user {
-  background: var(--nf-glass-input-bg);
-  border-color: var(--cv-border, var(--glass-border));
-}
+/* 用户气泡与助手气泡共用玻璃底；注入通知的语义底不用于玻璃面。 */
 /* 顶缘折射线（面级浮件的第三件）：几何与 #input-bar::before 逐值相同
    （top:0 / 左右各 10% / 高 1px / border-radius inherit），色值 = 同一个
    --glass-refraction-line token（= #header 背景第一层的那个渐变）。
@@ -539,31 +565,31 @@ html[data-theme="light"] {
 #mention-dropdown,
 .dev-menu.explorer-dev-menu {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
 
 /* ── ③ 圆钮级浮件档（收编升格：--cv-* 全站悬浮控件单源，设计稿 §2.4）─────
-   成员 = canvas 工具圆钮族（source/ref/find/refresh）+ ask-fab + deck-fab +
+   成员 = canvas 工具圆钮族（source/ref/find）+ ask-fab + deck-fab +
    关签钮 #canvas-head-close + .g2-fab 基准类（dock 待办/搜索、页面壳返回钮、
    mf-cv-close/stack、mf-stack-x、mh-fab-search 等 JS 挂类面，类名零改动）。
    材质/状态归本包；几何/落位留在各面（split/ask/mobileLayer）。
-   图谱钮 .canvas-graph-toggle 已随 Canvas 改造批④ 退役（JS 零创建），本块
-   不再列名——F1 时代死选择器随之消失。 */
+   图谱钮 .canvas-graph-toggle 已随 Canvas 改造批④ 退役（JS 零创建）；刷新钮
+   .canvas-refresh-toggle 已随 canvas-auto-refresh 批（2026-11-17 手动钮退役）
+   离场——本块不再列名，死选择器随之消失。 */
 .canvas-source-toggle,
 .canvas-ref-select,
 .canvas-find-toggle,
-.canvas-refresh-toggle,
 .ask-fab,
 #deck-fab,
 #canvas-head-close,
 .g2-fab {
-  background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
-  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
+  border: 1px solid var(--glass-border);
   /* 圆钮族零投影（扁平化批 2026-11-05）：原 `box-shadow: var(--cv-shadow)` 退役。
      圆钮的"浮"由 backdrop 玻璃采样 + 1px 描边表达，不靠投影造厚度。 */
 }
@@ -573,7 +599,6 @@ html[data-theme="light"] {
   .canvas-source-toggle:hover,
   .canvas-ref-select:hover,
   .canvas-find-toggle:hover,
-  .canvas-refresh-toggle:hover,
   .ask-fab:hover,
   #deck-fab:hover,
   #canvas-head-close:hover,
@@ -588,7 +613,6 @@ html[data-theme="light"] {
 .canvas-source-toggle:active,
 .canvas-ref-select:active,
 .canvas-find-toggle:active,
-.canvas-refresh-toggle:active,
 .ask-fab:active,
 #deck-fab:active,
 #canvas-head-close:active,
@@ -602,14 +626,13 @@ html[data-theme="light"] {
 #deck-fab[aria-pressed="true"] {
   color: var(--color-primary);
   border-color: rgb(var(--sapphire) / 0.35);
-  background: rgb(var(--sapphire) / 0.12);
+  background: var(--nf-glass-input-bg);
 }
 
 /* 禁用：opacity .35 + not-allowed + hover 不形变不换底（设计稿 §3.4） */
 .canvas-source-toggle:disabled,
 .canvas-ref-select:disabled,
 .canvas-find-toggle:disabled,
-.canvas-refresh-toggle:disabled,
 .ask-fab:disabled,
 #deck-fab:disabled,
 #canvas-head-close:disabled,
@@ -621,7 +644,6 @@ html[data-theme="light"] {
   .canvas-source-toggle:disabled:hover,
   .canvas-ref-select:disabled:hover,
   .canvas-find-toggle:disabled:hover,
-  .canvas-refresh-toggle:disabled:hover,
   .ask-fab:disabled:hover,
   #deck-fab:disabled:hover,
   #canvas-head-close:disabled:hover,
@@ -636,7 +658,6 @@ html[data-theme="light"] {
 .canvas-source-toggle:focus-visible,
 .canvas-ref-select:focus-visible,
 .canvas-find-toggle:focus-visible,
-.canvas-refresh-toggle:focus-visible,
 .ask-fab:focus-visible,
 #deck-fab:focus-visible,
 #canvas-head-close:focus-visible,
@@ -696,8 +717,8 @@ html[data-theme="light"] {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
   border: 1px solid var(--cv-border, var(--glass-border));
   /* 零投影：厚度道具在此族结构上不存在（见文件头契约） */
   transition:
@@ -808,14 +829,16 @@ html[data-theme="dark"] {
   outline-offset: var(--btn-ring-offset);
 }
 
-/* ── 手机尺寸/弹簧档（body.mobile-layer 总开关，桌面零命中）────────────── */
+/* ── 手机尺寸/弹簧档（body.mobile-layer 总开关，桌面零命中）──────────────
+   手机圆钮吃 mobileLayer.css --band-d，图标 = 直径 45%（--band-icon）。
+   缺 token 的边缘加载位回落旧 48/20 档；发送/停止另用保留的底带档。 */
 body.mobile-layer .g2-fab {
-  width: 48px;
-  height: 48px;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
 }
 body.mobile-layer .g2-fab svg {
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
 }
 body.mobile-layer .g2-pill {
   height: 44px;
@@ -827,7 +850,6 @@ body.mobile-layer .g2-pill {
 body.mobile-layer .canvas-source-toggle,
 body.mobile-layer .canvas-ref-select,
 body.mobile-layer .canvas-find-toggle,
-body.mobile-layer .canvas-refresh-toggle,
 body.mobile-layer .ask-fab,
 body.mobile-layer .g2-fab {
   transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
@@ -836,7 +858,6 @@ body.mobile-layer .g2-fab {
 body.mobile-layer .canvas-source-toggle:active,
 body.mobile-layer .canvas-ref-select:active,
 body.mobile-layer .canvas-find-toggle:active,
-body.mobile-layer .canvas-refresh-toggle:active,
 body.mobile-layer .ask-fab:active,
 body.mobile-layer .g2-fab:active {
   transform: scale(0.88);
@@ -845,7 +866,6 @@ body.mobile-layer .g2-fab:active {
   body.mobile-layer .canvas-source-toggle:active,
   body.mobile-layer .canvas-ref-select:active,
   body.mobile-layer .canvas-find-toggle:active,
-  body.mobile-layer .canvas-refresh-toggle:active,
   body.mobile-layer .ask-fab:active,
   body.mobile-layer .g2-fab:active {
     transform: none;
@@ -854,7 +874,6 @@ body.mobile-layer .g2-fab:active {
   body.mobile-layer .canvas-source-toggle,
   body.mobile-layer .canvas-ref-select,
   body.mobile-layer .canvas-find-toggle,
-  body.mobile-layer .canvas-refresh-toggle,
   body.mobile-layer .ask-fab,
   body.mobile-layer .g2-fab {
     transition-duration: 0.01s;
@@ -894,6 +913,23 @@ body.mobile-layer #g2-edge-fade {
    双保险：@supports 媒体查询 + html.no-backdrop 类（js/scrollUnderGlass.js）。
    回落实色档 = --glass-bg 原值（设计稿 §3.5.2）；渐隐带退化纯渐层罩。 */
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .nf-glass:not(.g2-fab),
+  body.mobile-layer .mh-search-bar:not(.g2-fab) {
+    background: var(--color-surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  /* 成员表面的兜底同档（单一材质批 2026-11-15 补齐，FMA-SCN-003）：
+     todo 胶囊/菜单/工具走成员表玻璃，无 backdrop 引擎时同样回落实底。 */
+  body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill,
+  body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
+  body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill,
+  body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu,
+  body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
+    background: var(--color-surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
   #input-bar,
   #queue-bar.visible,
   #modal-box,
@@ -914,7 +950,6 @@ body.mobile-layer #g2-edge-fade {
   .canvas-source-toggle,
   .canvas-ref-select,
   .canvas-find-toggle,
-  .canvas-refresh-toggle,
   .ask-fab,
   #deck-fab,
   #canvas-head-close,
@@ -931,6 +966,17 @@ body.mobile-layer #g2-edge-fade {
   }
   /* 渐隐带降级档随 doc-ask-fade 批收编到 design-system.css `.ds-edge-fade`
      （@supports / html.no-backdrop 两处），此处不再单列 —— 防双源漂移。 */
+}
+html.no-backdrop .nf-glass:not(.g2-fab),
+html.no-backdrop body.mobile-layer .mh-search-bar:not(.g2-fab),
+html.no-backdrop body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill,
+html.no-backdrop body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
+html.no-backdrop body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill,
+html.no-backdrop body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu,
+html.no-backdrop body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
+  background: var(--color-surface);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 html.no-backdrop #modal-box,
 html.no-backdrop #delete-box,
@@ -950,7 +996,6 @@ html.no-backdrop .dev-menu.explorer-dev-menu,
 html.no-backdrop .canvas-source-toggle,
 html.no-backdrop .canvas-ref-select,
 html.no-backdrop .canvas-find-toggle,
-html.no-backdrop .canvas-refresh-toggle,
 html.no-backdrop .ask-fab,
 html.no-backdrop #deck-fab,
 html.no-backdrop #canvas-head-close,

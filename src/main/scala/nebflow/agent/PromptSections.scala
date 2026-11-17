@@ -124,14 +124,6 @@ object PromptSections:
      */
     executorsText: String = "",
     /**
-     * Pre-rendered existing-worktree candidate list body (worktree-reuse-selection
-     * 批 2026-11-02)：本工作区既有 delegate worktree 清单（状态词 orphan /
-     * active / done + 脏度 + 最后活动），模型面「续用哪棵树」的选择输入。
-     * 来源 = `WorktreeCandidates.render`（AgentSessionExecution 装配期现读）。
-     * 仅根代理渲染；空串 = 段不注入（无既有树的会话零字节变化）。
-     */
-    worktreesText: String = "",
-    /**
      * Pre-rendered `## Self` section body (identity-sync 批 2026-10-23): the
      * agent's display name / avatar self-knowledge — rendered by
      * AgentIdentityStore.selfSectionText from the CURRENT display face. Empty
@@ -200,23 +192,6 @@ object PromptSections:
   /** Quick helper: condition that requires one or more tools to be available. */
   def requiresTools(names: String*): PromptContext => Boolean =
     ctx => names.forall(ctx.availableTools.contains)
-
-  /**
-   * 节点会话 always-on belt 行（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起形态
-   * = 「一句申报义务 + 权威位指针」，不再自携值域/后果/受阻行）。公开常量 = 段长门
-   * 的断言对象（本常量 UTF-8 字节数 ≤ [[NodeSessionAlwaysOnSectionMaxBytes]]）。
-   * 完整协议（角色值域、blocked JSON 文法、verifier verdict、未申报语义）的**单一
-   * 权威** = 输入面协议脚注 `NodeEngine.ProtocolFootnote`（引擎编译、随任务输入
-   * 注入、角色分支）+ `node_report` 工具 description；本段禁复述其内容（段进每次
-   * node LLM 调用，token 是经常性成本）。
-   */
-  val NodeSessionAlwaysOnSection: String =
-    """## Node terminal report (Flow Map node sessions)
-
-Before wrapping up call `node_report` — reporting IS the wrap-up action, not a blocked-only exception. The single authoritative protocol is the `node_report` tool description plus the Node protocol footnote injected with node task input; this line is only the always-on belt."""
-
-  /** 段长门阈值（字节）：段正文 UTF-8 字节数必须 ≤ 本值。 */
-  val NodeSessionAlwaysOnSectionMaxBytes: Int = 400
 
   // ============================================================
   // Built-in section text constants
@@ -355,38 +330,15 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       body = traceSection
     ),
 
-    // --- 节点终态申报段（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起 = belt+指针，
-    // 不再自携值域/后果行）：本段存在的真实理由有二。① 系统提示词面的**存在性保证**
-    // （抗漂移）：运行时副本陈旧曾是 #304 的主因（noderept-usage-recon：39/39 node
-    // 会话实收系统提示词零命中 node_report 纪律），seed 播种（add-only）做不到
-    // 「引擎改了、运行时一定跟上」——本行由**引擎编译**注入、与盘面无关，无论
-    // seed/运行面处于何种同步状态，节点系统提示词上恒有一句申报义务（loop verify
-    // 等输入面无脚注的会话形态由此兜底）。② 它是项目面 AGENTS.md 终态申报行所指
-    // 「引擎 always-on 段」的本体（该行已终态冻结，指针目标不得悬空）。
-    // 完整协议的**单一权威** = 输入面脚注 `NodeEngine.ProtocolFootnote`（blocked
-    // JSON 文法 + 角色值域 + verifier verdict 分支的唯一引擎文本）+ `node_report`
-    // 工具 description——本段**不复述**它们（F8 判据：引擎贡献装配面恰一份完整
-    // 纪律；种子条件句自携完整规则系 promptfix 作者并存终态，不属该判据域。本段
-    // 收口为短句指针）。条件判据 `PromptContext.availableTools` 含 node_report ≡
-    // flowNodeSession（唯一追加点 = `AgentCore.buildAllowedToolSet` 末段身份闸；
-    // 声明逃逸由 `NebulaExclusiveTools` 全剥），非节点会话（kernel/memory-
-    // consolidator/dispatcher/Nebula）恒不含 ⇒ 收不到本段。段长门：
-    // `NodeSessionAlwaysOnSectionMaxBytes`（≤400 B）——段进每次 node LLM 调用，
-    // token 是经常性成本。段序 360 = 落在 stable 段之后、dynamic identity 段（395）
-    // 之前，不破坏 system.md 前缀缓存锚（`assembleSystemPrompt` 契约）。
-    PromptSection(
-      360,
-      condition = ctx => ctx.availableTools.contains(nebflow.core.tools.NodeReportToolDef.Name),
-      body = NodeSessionAlwaysOnSection
-    ),
-
     // --- 根代理路由纪律（冷启动路由批 2026-09-17）：条件 isRootAgent ⇒ 唯一
     // 注入面 = 根 Nebula 会话；项目分发器 / 节点会话（isRootAgent=false）收不到
     // 本段，正合其义（分发器自己就是被路由到的落点，不需要「先路由」纪律）。
-    // 段序 370 = 落在 order-360 节点申报段之后、order-395 identity 段之前；本段
+    // 段序 370 = 落在 stable 段之后、order-395 identity 段之前；本段
     // 必须排在 system.md 之后（所有条件段的共同前提），故不追求更早槽位——与
     // 字面量里 "Recon: Read only" 的冲突靠**文本内显式声明优先**消解（判据②），
     // 不靠段序。
+    // （order-360 节点终态申报段已随申报工具整体退役删除——终态协议的引擎文本
+    // 单点 = 输入面脚注 `NodeEngine.ProtocolFootnote`，纯文本锚定。）
     PromptSection(
       370,
       condition = ctx => ctx.isRootAgent,
@@ -570,19 +522,6 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
 ${ctx.executorsText}
 
 External executors receive the task text only — no platform tools or plugins are injected."""
-    ),
-    // --- 既有 worktree 候选段（worktree-reuse-selection 批 2026-11-02）──────
-    // 作者令：「不仅是要能分配 worktree 还要能选择接着已有的 worktree继续干的
-    // 能力 灵活一点」。候选发现 + 状态标注在 core（`WorktreeCandidates`），本段
-    // 只是它的渲染面：根代理逐棵看到 orphan（前任退场但树上有活）/ active（活
-    // 会话持有——续用需 force）/ done 三态与脏度。
-    // 注入判据与 Mounted Projects / Available executors 同族：仅根代理（分发器
-    // 与节点会话不派发 Delegate，零面）；空清单 = 段不注入（无既有树的工作区
-    // 提示词字节零变化）。
-    PromptSection.dynamic(
-      645,
-      condition = ctx => ctx.isRootAgent && ctx.worktreesText.nonEmpty,
-      renderer = _.worktreesText
     ),
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 630 Task List Protocol 段已删除
     // ——内容下迁进 TeamTask 三件 description（双轨期语义，阶段 3 随 team
@@ -881,20 +820,21 @@ External executors receive the task text only — no platform tools or plugins a
       .filter(_.nonEmpty)
       .mkString("\n\n")
 
-  /**
-   * Assemble the final system prompt: the agent system.md FIRST, then
-   * conditional blocks.
-   *
-   * The leading stable segment is the provider prefix-cache anchor — the
-   * shared system.md base (identical across sessions of the same template)
-   * must stay at the very front or the common prefix is lost and every
-   * session's prompt cache is invalidated. Phase-2 batch A (2026-09) retired
-   * the shared system-prefix layer; the stable system.md base now serves
-   * that role. Pinned by PromptSectionsSpec.
-   */
+  /** Packaged prefix: updates require a new build, not a data-root file. */
+  private lazy val systemPrefix: String =
+    val stream = Option(getClass.getResourceAsStream("/seed/prompt-prefix.md"))
+      .getOrElse(throw new IllegalStateException("Missing classpath resource seed/prompt-prefix.md"))
+    val source = scala.io.Source.fromInputStream(stream, "UTF-8")
+    try source.mkString.trim
+    finally source.close()
+
   def assembleSystemPrompt(agentPrompt: String, conditionalBlocks: String): String =
-    val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
-    s"$agentPrompt$separator$conditionalBlocks"
+    val sections = Seq(
+      Some(s"--- SYSTEM PREFIX ---\n$systemPrefix"),
+      Some(agentPrompt),
+      Option.when(conditionalBlocks.nonEmpty)(conditionalBlocks)
+    ).flatten
+    sections.mkString("\n\n")
 
   /**
    * Remove a `## Section` block from a prompt string.

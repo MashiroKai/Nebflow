@@ -46,7 +46,7 @@ object ChildOrphanWatch:
   def action: String =
     sys.props.getOrElse("nebflow.session.orphan.action", "cancel").trim.toLowerCase match
       case "report" => "report"
-      case _        => "cancel"
+      case _ => "cancel"
 
   /** 端口（生产 = [[fromResources]]；测试 = 假端口）。 */
   trait Port:
@@ -55,6 +55,7 @@ object ChildOrphanWatch:
     def cancelChild(rec: AgentRecord, reason: String): IO[Unit]
     def settleTaskRow(rec: AgentRecord, reason: String): IO[Unit]
     def notifyRoot(rec: AgentRecord, text: String): IO[Unit]
+
     /** 审计行（生产写 ChainStore；测试可空实现）。 */
     def audit(values: Map[String, String]): IO[Unit] = IO.unit
 
@@ -63,24 +64,23 @@ object ChildOrphanWatch:
     def registry = resources.agentRegistry.get
     def tombstonedParents =
       IO.blocking(CancelCascade.terminalParents(DelegateRegistry.list()))
-        .handleErrorWith(e => logger.warn(s"child-orphan-watch: delegate registry read failed: ${e.getMessage}").as(Set.empty[String]))
+        .handleErrorWith(e =>
+          logger.warn(s"child-orphan-watch: delegate registry read failed: ${e.getMessage}").as(Set.empty[String])
+        )
     def cancelChild(rec: AgentRecord, reason: String) =
       IO.blocking(DelegateRegistry.markCancelRequested(rec.sessionId, By)).attempt.void *>
         (rec.supervisorRef match
           case Some(sup) => (sup ! AgentEvent.Cancelled(rec.sessionId, reason)).void
           case None =>
-            resources.agentRegistry.update(_ - rec.sessionId) *> (rec.ref ! AgentCommand.Stop(reason))
-        )
+            resources.agentRegistry.update(_ - rec.sessionId) *> (rec.ref ! AgentCommand.Stop(reason)))
     def settleTaskRow(rec: AgentRecord, reason: String) =
       if rec.parentSessionId.nonEmpty then
         resources.subAgentTaskStore
-          .updateStatus(
-            rec.parentSessionId,
-            rec.sessionId,
-            "cancelled",
-            completedAt = Some(System.currentTimeMillis()),
-            lastError = Some(reason.take(200))
-          )
+          .findByTaskId(rec.sessionId)
+          .flatMap {
+            case Some(task) => resources.subAgentTaskStore.transitionObserved(task, "cancelled", Some(reason.take(200)))
+            case None => IO.unit
+          }
           .handleErrorWith(e => logger.warn(s"child-orphan-watch: task row settle failed: ${e.getMessage}"))
       else IO.unit
     def notifyRoot(rec: AgentRecord, text: String) =
@@ -89,7 +89,7 @@ object ChildOrphanWatch:
         DelegateNotify
           .inject(resources.agentRegistry, rec.rootSessionId, text)
           .flatMap {
-            case true  => IO.unit
+            case true => IO.unit
             case false => logger.info(s"child-orphan-watch: root '${rec.rootSessionId}' not live — notice not injected")
           }
           .handleErrorWith(e => logger.warn(s"child-orphan-watch: root notify failed: ${e.getMessage}"))
@@ -151,7 +151,10 @@ object ChildOrphanWatch:
         auditRow *> port
           .notifyRoot(
             child,
-            s"""[orphan-child] session '${child.sessionId}' (${child.kind}) is still running although its parent session '${orphan.parentId}' is terminal — ${orphan.cause}. Disposition: ${if action == "report" then "reported only (nebflow.session.orphan.action=report)" else "cancelled by the engine (tombstone + stop, task row settled)"}."""
+            s"""[orphan-child] session '${child.sessionId}' (${child.kind}) is still running although its parent session '${orphan.parentId}' is terminal — ${orphan.cause}. Disposition: ${
+                if action == "report" then "reported only (nebflow.session.orphan.action=report)"
+                else "cancelled by the engine (tombstone + stop, task row settled)"
+              }."""
           )
           .handleErrorWith(e => logger.warn(s"child-orphan-watch: root notify failed: ${e.getMessage}")) *>
           (if action == "report" then
@@ -160,7 +163,13 @@ object ChildOrphanWatch:
              )
            else
              (port.cancelChild(child, reason) *> port.settleTaskRow(child, reason)).as(
-               CancelCascade.Step(child.sessionId, child.kind.toString, child.status.toString, CancelCascade.Outcome.Killed, reason.take(200))
+               CancelCascade.Step(
+                 child.sessionId,
+                 child.kind.toString,
+                 child.status.toString,
+                 CancelCascade.Outcome.Killed,
+                 reason.take(200)
+               )
              )
           ).handleErrorWith(e =>
             IO.pure(
@@ -174,5 +183,6 @@ object ChildOrphanWatch:
             )
           )
     }
+  end handle
 
 end ChildOrphanWatch

@@ -127,12 +127,12 @@
   flex: none;
 }
 .reminder-row-fact-value {
+  /* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：事实值 wrap（ellipsis 退役）。 */
   color: var(--color-text);
   opacity: 0.78;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 /* 展开态宿主：同框加内距 + 升一档底色（平底、零投影 —— 扁平契约）。
    两态之间只有 padding / background-color / border-radius 三个几何材质事实，

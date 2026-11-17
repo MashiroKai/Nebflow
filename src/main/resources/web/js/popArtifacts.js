@@ -182,6 +182,9 @@ import { fileIconStyle, extOf } from './fileIcon.js';
 
 const FWD_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.2 5.1c0-.86 1.02-1.3 1.65-.73l7.06 6.4c.44.4.44 1.08 0 1.48l-7.06 6.4c-.63.57-1.65.13-1.65-.73v-2.9c-4.3.14-7.02 1.42-9.06 4.06-.5.65-1.55.2-1.4-.6.9-4.7 3.9-8.5 10.46-8.9V5.1z"/></svg>';
 
+/** Error handlers installed by the last `hydrateMedia` run per element (see the retry note inside). */
+const hydrationHandlers = new WeakMap();
+
 /** Hydrate one media element's bytes. `src` (data URI) wins; otherwise the
  *  path rides an /api/nf-file ticket, re-minted once on a load error. On the
  *  TERMINAL failure the element is marked (`nf-img-failed` +
@@ -212,6 +215,13 @@ export function hydrateMedia(el, item, onFail) {
   // load 事件照常驱动 `natural` 上报（fitLayer 出真比）。主会话链路零命中本分支。
   if (item.dry) return;
   const path = item.path;
+  // A retry runs this function again for the same element: drop the listeners of the previous run so
+  // handlers never stack (a stacked error handler would re-mint twice per failure).
+  for (const [type, handler] of hydrationHandlers.get(el) || []) el.removeEventListener(type, handler);
+  /** @type {Array<[string, EventListener]>} */
+  const handlers = [];
+  hydrationHandlers.set(el, handlers);
+  const listen = (type, handler) => { handlers.push([type, handler]); el.addEventListener(type, handler); };
   const fail = () => {
     // 终态闩：双腿各有一次出场机会，fail 只落一次（appendFailureNote 已有
     // 幂等守卫，这里是 class/dataset 面的同款保险）。
@@ -237,7 +247,7 @@ export function hydrateMedia(el, item, onFail) {
         el.removeEventListener('error', onResolverError);
         startTicketLeg();
       };
-      el.addEventListener('error', onResolverError);
+      listen('error', onResolverError);
       el.src = url;
       return;
     }
@@ -248,7 +258,7 @@ export function hydrateMedia(el, item, onFail) {
     // No `once` on the error listener: the FIRST error arms the re-mint, and a
     // second error (re-mint also failed, or the re-minted URL 404s) must reach
     // the terminal branch — with `once` that case left the element blank.
-    el.addEventListener('error', () => {
+    listen('error', () => {
       if (el.dataset.nfReminted === '1') { fail(); return; }
       el.dataset.nfReminted = '1';
       // imgdoor 二次加载批（2026-10-24）：账本腿（blob: URL）解码失败 = 手上这份
@@ -298,16 +308,55 @@ export function hydrateMedia(el, item, onFail) {
  *  row had NO visible failure sign at all before (缺陷 D), and a subagent
  *  (static) window shows no animation chrome to hint with — the note is pure
  *  text, so it reads identically in both window roles (UI-C family). */
-function appendFailureNote(face, el) {
+function appendFailureNote(face, el, retry) {
   if (!face || face.querySelector('.nf-media-failed-note')) return;
+  const name = (el && (el.alt || el.dataset.nfName)) || '';
+  noteMediaFailure(el, face, t('chat.popMediaFailed'), name, retry);
+}
+
+/** What is shown, per failed element, besides the failed state itself: the note line and the retry
+ *  control. Kept so that `clearMediaFailure` can take both away again. */
+const failureParts = new WeakMap();
+
+/** Append the plain-text note and, when `retry` is given, a retry button as a SIBLING of the note (the
+ *  note's own text stays exactly the sentence, so what reads it keeps reading the same thing). */
+function noteMediaFailure(el, host, label, name, retry) {
   const note = document.createElement('div');
   note.className = 'nf-media-failed-note';
-  const name = (el && (el.alt || el.dataset.nfName)) || '';
-  const label = t('chat.popMediaFailed');
   // The name is appended here (not interpolated) so the locale string stays a
   // plain sentence and an item with no name shows no dangling separator.
   note.textContent = name ? label + ' — ' + name : label;
-  face.appendChild(note);
+  host.appendChild(note);
+  const parts = /** @type {HTMLElement[]} */ ([note]);
+  if (typeof retry === 'function') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'nf-media-retry';
+    button.textContent = t('messages.retry');
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearMediaFailure(el);
+      retry();
+    });
+    host.appendChild(button);
+    parts.push(button);
+  }
+  failureParts.set(el, parts);
+}
+
+/** Take the failed state of one media element away (class, flags, note, retry control) so that the item
+ *  can be loaded again. Only this element is touched. */
+export function clearMediaFailure(el) {
+  if (!el) return;
+  el.classList.remove('nf-img-failed');
+  if (el.dataset) {
+    delete el.dataset.nfMediaFailed;
+    delete el.dataset.nfReminted;
+    delete el.dataset.nfBlobRetried;
+  }
+  for (const part of failureParts.get(el) || []) part.remove();
+  failureParts.delete(el);
 }
 
 /** 失败面单点（fm-att-component-lib 批 2026-11-02 导出）：字节终态失败的媒体元素
@@ -316,21 +365,15 @@ function appendFailureNote(face, el) {
  *  `noteHost` = 注记行宿主（叠卡层 = `.media-layer`；缺省 = 元素父节点）；
  *  `noteText` = 注记文案覆写（缺省 = 既有「加载失败」键——如叠卡成员 410 过期传
  *  「附件已过期」，同一结构、准确语义）。 */
-export function markMediaFailed(el, noteHost, noteText) {
+export function markMediaFailed(el, noteHost, noteText, retry) {
   if (!el) return;
   if (el.dataset && el.dataset.nfMediaFailed === '1') return;
   el.classList.add('nf-img-failed');
   if (el.dataset) el.dataset.nfMediaFailed = '1';
   const host = noteHost || el.parentElement;
   if (!host || host.querySelector('.nf-media-failed-note')) return;
-  const note = document.createElement('div');
-  note.className = 'nf-media-failed-note';
   const name = (el && (el.alt || el.dataset.nfName)) || '';
-  const label = noteText || t('chat.popMediaFailed');
-  // The name is appended here (not interpolated) so the locale string stays a
-  // plain sentence and an item with no name shows no dangling separator.
-  note.textContent = name ? label + ' — ' + name : label;
-  host.appendChild(note);
+  noteMediaFailure(el, host, noteText || t('chat.popMediaFailed'), name, retry);
 }
 
 /** One media card face for `item`: <img>/<video>/<audio> + the video overlay face.
@@ -370,7 +413,8 @@ function mediaFace(item, interactive, natural) {
     audio.addEventListener('click', e => e.stopPropagation());
     // Same two legs as img/video: `src` wins, else the /api/nf-file ticket,
     // re-minted once on a load error, terminal failure → note line (缺陷 D).
-    hydrateMedia(audio, item, el => appendFailureNote(wrap, el));
+    const failedAudio = (el) => appendFailureNote(wrap, el, () => hydrateMedia(audio, item, failedAudio));
+    hydrateMedia(audio, item, failedAudio);
     wrap.appendChild(audio);
   } else if (item.kind === 'video') {
     const expandedFace = interactive === 'expanded';
@@ -384,7 +428,8 @@ function mediaFace(item, interactive, natural) {
     video.controls = expandedFace;
     // The note is appended through the callback (the face must already be in
     // the DOM — `wrap` is by the time the async failure resolves).
-    hydrateMedia(video, item, el => appendFailureNote(wrap, el));
+    const failedVideo = (el) => appendFailureNote(wrap, el, () => hydrateMedia(video, item, failedVideo));
+    hydrateMedia(video, item, failedVideo);
     const ring = document.createElement('div');
     ring.className = 'play-ring';
     const chip = document.createElement('div');
@@ -439,7 +484,8 @@ function mediaFace(item, interactive, natural) {
     img.loading = 'lazy';
     img.draggable = false;
     img.addEventListener('load', () => report(img.naturalWidth, img.naturalHeight));
-    hydrateMedia(img, item, el => appendFailureNote(wrap, el));
+    const failedImage = (el) => appendFailureNote(wrap, el, () => hydrateMedia(img, item, failedImage));
+    hydrateMedia(img, item, failedImage);
     wrap.appendChild(img);
   }
   return wrap;
@@ -615,9 +661,11 @@ function canvasCornerButton(item) {
  *  单点——手机层一切媒体点击 = 系统直开（桌面行为逐字保留；pathless 桌面腿
  *  仍灯箱，理由见 mediaOpenRoute 头注）。
  *  （导出：附件批 2026-10-31 —— msgQuote 引用块缩略点击同款单点，动态 import
- *    复用；静态 import 会成环。） */
-export function openMediaItemClick(item) {
-  routeMediaClick(item, openPopArtifact, () => openMediaLightbox(item));
+ *    复用；静态 import 会成环。）
+ *  mobile-image-lightbox 批（2026-11-17）：`group` = 所属图组（叠卡整组/引用块
+ *  所在组），只被手机画廊腿消费（左右滑切图）；桌面行为逐字不变。 */
+export function openMediaItemClick(item, group) {
+  routeMediaClick(item, openPopArtifact, () => openMediaLightbox(item), group);
 }
 
 /* ── 触控板横滑翻页（2026-10-22 作者令「除了长按左右拖动来切换，mac的双指
@@ -684,7 +732,11 @@ const POP_SWIPE_QUIET_MS = 160;  // 动量窗：翻页后事件流静默 ≥160m
  *  fm 三窗（好友/群聊/设备）的调用点 = `messages.js::buildMediaStackGroup`，只传
  *  `onOpen` + `cornerFor`（动作 + 角标），零位置类键。 */
 function buildMediaStack(items, opts) {
-  const openItem = (opts && typeof opts.onOpen === 'function') ? opts.onOpen : openMediaItemClick;
+  // 缺省开件动作带图组（mobile-image-lightbox 批）：整组 items 递给
+  // openMediaItemClick ⇒ 手机画廊可整组滑动切图；桌面腿不消费组，逐字不变。
+  const openItem = (opts && typeof opts.onOpen === 'function')
+    ? opts.onOpen
+    : (it) => openMediaItemClick(it, items);
   const cornerFor = (opts && typeof opts.cornerFor === 'function') ? opts.cornerFor : null;
   // 引用入口移入 footer 批（2026-11-02 11:00 作者令「图片引用在footer显示就行了。
   // 不需要hover图片的时候也显示一个图标」）：叠卡面上**不再长**任何引用钮，改为把
@@ -864,10 +916,10 @@ function buildMediaStack(items, opts) {
   view.addEventListener('keydown', (e) => {
     if (e.target !== view) return;
     const n = layers.length;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') front = (front + 1) % n;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') front = (front - 1 + n) % n;
-    else if (e.key === 'Home') front = 0;
-    else if (e.key === 'End') front = n - 1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') switchFront(1);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') switchFront(-1);
+    else if (e.key === 'Home') switchFront(-front);
+    else if (e.key === 'End') switchFront(n - 1 - front);
     else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
       e.preventDefault();
       e.stopPropagation();
@@ -875,7 +927,6 @@ function buildMediaStack(items, opts) {
       return;
     } else return;
     e.preventDefault();
-    applyLayers();
   });
 
   /** The expanded column's natural height: the sum of its layers plus the
@@ -944,23 +995,102 @@ function buildMediaStack(items, opts) {
   // swipe does not double-fire as a bring-to-front).
   const stack = { suppressClick: false };
   let sx = null, dx = 0;
+  let switching = false;
+  const pendingSteps = [];
+  const reduceStackMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Animate only the two participating cards; commit the new fan slots together.
+  const switchFront = (step) => {
+    if (!step) return;
+    if (switching) { pendingSteps.push(step); return; }
+    const layer = layers[front];
+    const next = layers[(front + step + layers.length) % layers.length];
+    const finish = () => {
+      layers.forEach(el => { el.style.visibility = ''; });
+      layer.style.transform = '';
+      layer.style.willChange = '';
+      front = (front + step + layers.length) % layers.length;
+      applyLayers();
+      switching = false;
+      view.classList.remove('is-switching');
+      stack.suppressClick = false;
+      if (pendingSteps.length) switchFront(pendingSteps.shift());
+    };
+    if (reduceStackMotion() || !motionEnabled()) { finish(); return; }
+    switching = true;
+    stack.suppressClick = true;
+    view.classList.add('is-switching');
+    const from = layer.style.transform || 'translate3d(0,0,0) rotate(0deg) scale(1)';
+    const duration = parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200;
+    const options = { duration, easing: 'ease-in-out' };
+    // Establish final slot geometry before starting, then animate every visible
+    // final slot from behind the incoming face to its actual fan transform.
+    const oldFront = front;
+    layer.style.transform = '';
+    front = (front + step + layers.length) % layers.length;
+    applyLayers();
+    front = oldFront;
+    const targets = layers.map(el => getComputedStyle(el).transform);
+    const outgoingBuried = layer.classList.contains('is-buried');
+    layer.classList.remove('is-buried');
+    const direction = step > 0 ? -1 : 1;
+    const animations = [];
+    for (const el of layers) {
+      if (el === layer || el === next || el.classList.contains('is-buried')) continue;
+      animations.push(el.animate([
+        { transform: 'translate3d(0,0,0) scale(.90)' },
+        { transform: targets[layers.indexOf(el)] },
+      ], { ...options, fill: 'both' }));
+    }
+    // 出场卡单一连续路径：沿手势方向飞离到顶点（画外扇面之外、与其余层零
+    // 重叠的窗口），层级在顶点窗口翻转（像素不可见），再沿连续曲线回到终态
+    // 槽位。旧实现把顶点后的行程折叠成 45%→46% 一帧的离散重定位（画外→
+    // 终态槽位 + z 4→0 同时翻）—— 几何跳变已删，两端 t=0/t=1 几何不变。
+    // 埋层卡顶点后回到全遮挡口袋位（与第三卡同款 scale(.90) 起点槽），终态
+    // 的 display:none 在完全遮挡处接手 —— 不再有画外卡整卡显隐。
+    const flyout = `translate3d(${direction * 120}%,0,0) scale(.94)`;
+    const outgoingTarget = outgoingBuried ? 'translate3d(0,0,0) scale(.90)' : targets[layers.indexOf(layer)];
+    animations.push(layer.animate([
+      { transform: from, zIndex: 4, offset: 0 },
+      { transform: flyout, zIndex: 4, offset: .45 },
+      { transform: flyout, zIndex: 0, offset: .46 },
+      { transform: outgoingTarget, zIndex: 0, offset: 1 },
+    ], { ...options, fill: 'both' }));
+    animations.push(next.animate([
+      { transform: `translate3d(${-direction * 12}%,0,0) scale(.94)` },
+      { transform: 'translate3d(0,0,0) scale(1)' },
+    ], { ...options, fill: 'both' }));
+    Promise.allSettled(animations.map(a => a.finished)).then(() => { finish(); animations.forEach(a => a.cancel()); });
+  };
   view.addEventListener('pointerdown', e => {
+    const control = e.target instanceof Element ? e.target.closest('button') : null;
+    if (control && view.contains(control)) return;
+    // Both screen-edge bands belong to back navigation, even over a card.
+    if (document.body.classList.contains('mobile-layer')
+        && (e.clientX <= 20 || e.clientX >= window.innerWidth - 20)) return;
+    if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
     sx = e.clientX; dx = 0;
     view.classList.add('dragging');
+    if (!switching) layers[front].style.willChange = 'transform';
     try { view.setPointerCapture(e.pointerId); } catch { /* detached */ }
   });
   view.addEventListener('pointermove', e => {
     if (sx === null) return;
     dx = e.clientX - sx;
-    view.style.transform = 'translateX(' + (dx * 0.35) + 'px)';
+    if (!switching) layers[front].style.transform = `translate3d(${dx * .65}px,0,0) rotate(${dx * .04}deg) scale(.98)`;
   });
-  const up = () => {
+  const up = (e) => {
     if (sx === null) return;
     view.classList.remove('dragging');
-    view.style.transform = '';
-    if (dx < -38) { front = (front + 1) % layers.length; applyLayers(); }
-    else if (dx > 38) { front = (front - 1 + layers.length) % layers.length; applyLayers(); }
-    if (Math.abs(dx) > 8) { stack.suppressClick = true; setTimeout(() => { stack.suppressClick = false; }, 60); }
+    const step = e.type !== 'pointercancel' && Math.abs(dx) > 38 ? (dx < 0 ? 1 : -1) : 0;
+    if (step) switchFront(step);
+    else if (!switching) {
+      layers[front].style.transform = '';
+      layers[front].style.willChange = '';
+    }
+    if (!step && Math.abs(dx) > 8) {
+      stack.suppressClick = true;
+      setTimeout(() => { stack.suppressClick = false; }, 60);
+    }
     sx = null; dx = 0;
   };
   view.addEventListener('pointerup', up);
@@ -992,8 +1122,7 @@ function buildMediaStack(items, opts) {
     }
     swipeAcc += d;
     if (Math.abs(swipeAcc) >= POP_SWIPE_STEP_PX) {
-      front = (front + (swipeAcc > 0 ? 1 : -1) + layers.length) % layers.length;
-      applyLayers();
+      switchFront(swipeAcc > 0 ? 1 : -1);
       swipeArmed = false;                                      // 本次动量窗口只翻一页
     }
     swipeQuietTimer = setTimeout(swipeRearm, POP_SWIPE_QUIET_MS);

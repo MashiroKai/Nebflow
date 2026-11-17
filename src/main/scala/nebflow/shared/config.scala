@@ -188,7 +188,9 @@ case class ProviderConfig(
    * 缺省头（零行为变化）。
    * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
    */
-  headers: Option[Map[String, String]] = None
+  headers: Option[Map[String, String]] = None,
+  /** Exact full endpoint URL -> model ID -> allowed effort tiers; absence denies all. */
+  effortAllowlist: Option[Map[String, Map[String, List[ThinkingEffort]]]] = None
 )
 
 object ProviderConfig:
@@ -291,107 +293,6 @@ object SearchConfig:
   given Decoder[SearchConfig] = deriveDecoder[SearchConfig]
 
 /**
- * JeV decision-allocation config — the top-level `jev` block of nebflow.json
- * (JeV integration Face A / P1-A2; form precedent = [[SearchConfig]] above).
- *
- *   "jev": { "enabled": true, "provider": "typesafe-jev",
- *            "endpoint": "https://api.typesafe.ai/v1/systemone",
- *            "model": "jev-latest", "keyRef": "typesafe-api-key",
- *            "choiceHighBasePolicy": "warn",
- *            "providers": { "typesafe-jev": { "type": "typesafe-jev", … } } }
- *
- * ==Every field is optional ON PURPOSE==
- * `SearchConfig` requires `provider` + `apiKey`, so a partially written
- * `search` block fails to decode. The `jev` block must not repeat that: the
- * seed can write a partial block (e.g. only `{"enabled":true}`) during a cold
- * start, and a decode failure there would send `GatewayMain` down the
- * crash-recovery path and restore a `{}` snapshot — the exact failure mode the
- * `ensureLlmDefaults` note on [[NebflowServiceConfig]] documents for `llm`.
- * With everything optional, a partial/seed block decodes to its defaults and
- * the absence of the whole block decodes to `None`.
- *
- * ==Graceful degrade (zero migration)==
- * `enabled=false`, or a missing/empty `keyRef`, or a `keyRef` that resolves to
- * no readable secret all mean "the face is skipped" — existing users need no
- * migration, exactly as with `search`.
- *
- * 🔴 零超时（2026-10-19 作者拍板，「stand 设计不要有任何超时控制」）：本节
- * **不带 `timeoutMs` 配置位**——分配链的 15s 决策预算已拆除（原字段进入
- * config 即被忽略，零迁移）；决策调用完成与否靠监测手段表达（探活面 +
- * 面板可见），不用定时器杀。
- *
- * @param keyRef
- *   NAME of a secret under `~/.nebflow/secrets/` (the social/daemon reference
- *   form: the config stores a POINTER, never a value). Being a pointer rather
- *   than a credential, it is intentionally NOT matched by
- *   `ConfigService.sensitiveKeyPattern`; the pattern still covers any key
- *   adjacent to it that WOULD carry a value (e.g. `apiKey`).
- * @param choiceHighBasePolicy
- *   What to do when a choice question exceeds the provider's precision range
- *   (LAYA degrades above ~20 options). Carried as an opaque policy string for
- *   now: it feeds a WARNING in the adaptation layer, and promoting it to a
- *   typed enum would fix a product decision that is still open.
- */
-/**
- * JeV provider 子节（jev-imagegen-align-llm 批 2026-11-02）——`jev.providers.<name>` 项。
- *
- *   "providers": { "typesafe-jev": { "type": "typesafe-jev",
- *                                    "endpoint": "https://api.typesafe.ai/v1/systemone",
- *                                    "model": "jev-latest",
- *                                    "keyRef": "jev-typesafe-jev-key" } }
- *
- * ==为什么是「可缺席的新事实源」==
- * `JevConfig` 的顶层 5 键**一个不删**（旧配置零迁移、旧读点零改坏）；
- * `providers` 一旦存在即优先——`JevSettings.resolve` 逐字段走
- * `providers[当前选中项] > 顶层 > 缺省` 三级回落（[[ImageGenProviderConfig]]
- * 同族形状，生图侧先例）。
- *
- * 🔴 凭据纪律（jev/embedding/imagegen 同先例）：`keyRef` 是数据根 `secrets/`
- * 下的**名字**（指针，不落值）；解析方现读在位性，缺件/空/不可读 ⇒ 该腿自动关。
- * 🔴 形状纪律（同 [[JevConfig]] 注释）：**除 `type` 外全部 Option 且带 `= None`**
- * ——`deriveDecoder` 不认 case class 默认值，新增必填位会打回冷启动中间态。
- *
- * @param `type`
- *   适配器标识，枚举 = `nebflow.llm.decision.DecisionProvider.AllIds`；选中项的
- *   type 优先于顶层 `provider` 指针（两者平时同值）。
- */
-case class JevProviderConfig(
-  `type`: String,
-  endpoint: Option[String] = None,
-  model: Option[String] = None,
-  keyRef: Option[String] = None
-)
-
-object JevProviderConfig:
-  given Decoder[JevProviderConfig] = deriveDecoder[JevProviderConfig]
-
-case class JevConfig(
-  enabled: Option[Boolean] = None,
-  provider: Option[String] = None,
-  endpoint: Option[String] = None,
-  model: Option[String] = None,
-  keyRef: Option[String] = None,
-  choiceHighBasePolicy: Option[String] = None,
-  /**
-   * 多 provider 事实源（jev-imagegen-align-llm 批；可缺席）——键 = provider 名，
-   * 与顶层 `provider`（当前选中项指针）配对。存在即优先，见
-   * [[JevProviderConfig]] 与 `JevSettings.resolve` 的三级回落。
-   */
-  providers: Option[Map[String, JevProviderConfig]] = None
-):
-  /**
-   * Toggle semantics: absent means OFF is the SAFE default for a face that
-   * sends node task text off-machine. (Contrast `plugins.enabled`, which
-   * defaults true — there the safe direction is the other way.)
-   */
-  def isEnabled: Boolean = enabled.getOrElse(false)
-
-end JevConfig
-
-object JevConfig:
-  given Decoder[JevConfig] = deriveDecoder[JevConfig]
-
-/**
  * Embedding 检索面配置节（task-rag 批 #1227 / §Batch 7）：顶层 `embedding` 块，
  * 驱动 OpenAI 兼容 embeddings 端点（`POST {baseUrl}/embeddings`）。
  *
@@ -400,19 +301,19 @@ object JevConfig:
  *                  "timeoutMs": 20000 }
  *
  * ==Every field is optional ON PURPOSE==
- * Form precedent = [[JevConfig]] (all-optional, `SearchConfig`-style graceful
- * degrade): a partially written block decodes to its defaults instead of
- * failing the whole service-config read.
+ * Form precedent = `SearchConfig`-style graceful degrade (all-optional): a
+ * partially written block decodes to its defaults instead of failing the
+ * whole service-config read.
  *
  * ==Graceful degrade (zero migration)==
  * `enabled` absent/false, or a missing `baseUrl`/`model`, or a `keyRef` that
  * resolves to no readable secret ⇒ the embedding face is OFF and task search
  * falls back to lexical matching — existing users need zero migration. 🔴
- * Absent means OFF is the SAFE default (same direction as `jev`): the face
- * sends task/notes text off-machine.
+ * Absent means OFF is the SAFE default: the face sends task/notes text
+ * off-machine.
  *
  * @param keyRef
- *   NAME of a secret under `~/.nebflow/secrets/` (the `jev` reference form:
+ *   NAME of a secret under `~/.nebflow/secrets/` (the pointer reference form:
  *   the config stores a POINTER, never a value; resolved by the consumer).
  * @param timeoutMs
  *   Per embeddings-call deadline. None → 20000.
@@ -426,7 +327,7 @@ case class EmbeddingConfig(
 ):
   /**
    * Toggle semantics: absent means OFF is the safe default for a face that
-   * sends task text off-machine (same direction as `JevConfig.isEnabled`).
+   * sends task text off-machine.
    */
   def isEnabled: Boolean = enabled.getOrElse(false)
 
@@ -446,8 +347,8 @@ object EmbeddingConfig:
  *                                  "accountTextMarkers": ["您的账户已达到速率限制"] } }
  *
  * ==Every field is optional ON PURPOSE==
- * Form precedent = [[JevConfig]]（全字段可选、半节解码为缺省而非抛，同 `jev` 节
- * 教训——防 GatewayMain 走 crash-recovery 用 `{}` 快照打回 nebflow.json）。
+ * Form precedent = `SearchConfig`（全字段可选、半节解码为缺省而非抛——防
+ * GatewayMain 走 crash-recovery 用 `{}` 快照打回 nebflow.json）。
  *
  * ==总闸缺省关 = 零行为变化==
  * `enabled` absent/false ⇒ 限流器整体旁路（acquire 纯透传、零状态、零日志），
@@ -481,7 +382,7 @@ case class AdaptiveThrottleConfig(
   /**
    * Toggle semantics: absent means OFF is the safe default — the gate sits on
    * EVERY model call's hot path, and a concurrency cap is a behavior change
-   * even before the first 429 (JevConfig.isEnabled same direction).
+   * even before the first 429.
    */
   def isEnabled: Boolean = enabled.getOrElse(false)
 
@@ -491,7 +392,7 @@ object AdaptiveThrottleConfig:
 /**
  * 生图 provider 子节（imagegen 双层批 2026-10-24）——`imagegen.providers.<name>` 项。
  *
- * 🔴 凭据纪律（jev/embedding 同先例）：`keyRef` 是数据根 `secrets/` 下的**名字**
+ * 🔴 凭据纪律（embedding 同先例）：`keyRef` 是数据根 `secrets/` 下的**名字**
  * （指针，不落值）；解析方现读在位性，缺件/空/不可读 ⇒ 该 provider 腿自动关。
  */
 case class ImageGenProviderConfig(
@@ -513,7 +414,7 @@ object ImageGenProviderConfig:
  *                   "cogview-3-flash", "keyRef": "zhipu-api-key" } } }
  *
  * ==Graceful degrade (zero migration)==：`enabled` 缺省 false——面把 prompt 文本送出
- * 本机，缺省必须关（同 `jev`/`embedding` 方向）。
+ * 本机，缺省必须关（同 `embedding` 方向）。
  */
 case class ImageGenConfig(
   enabled: Option[Boolean] = None,
@@ -532,8 +433,7 @@ object ImageGenConfig:
  * @param utilityModel
  *   SmallJudge（LLM 兜底腿）的模型 ref（`providerId/modelId` 形态）。None =
  *   缺省口径「全局候选链整链」（fail-open 根因修复批 2026-10-29 判定机同族刀：
- *   从「根链首选」升为整链遍历——已配且可解则该候选钉首位＋去重）。Jev 优先腿
- *   不受本键影响（Jev 走 `jev` 节自带的 provider/model）。
+ *   从「根链首选」升为整链遍历——已配且可解则该候选钉首位＋去重）。
  * @param timeoutMs
  *   判定调用时限（worktree 判定与终态三态判定共用）。None → 默认 30s（判定
  *   有界：spawn 腿与终态腿都绝不因判定机长悬）。
@@ -552,7 +452,7 @@ object JudgeConfig:
  * 整句不渲染（零本地信息缺省面）；配置存在时渲染同步句（句内 remote 名取
  * 配置键名段 `collabSync`，非硬编码）。渲染时现读（BuiltinAgents.DispatcherPrompt
  * 为 def）＋fail-safe（配置读失败等同未配置）。全字段可选：半节解码为缺省
- * 而非抛（同 `jev` / `judge` 节教训）。
+ * 而非抛（同 `judge` 节教训）。
  */
 case class CollabSyncConfig(
   remoteUrl: Option[String] = None
@@ -602,7 +502,7 @@ case class ServiceLlmConfig(
   /**
    * LLM provider 自适应并发限流器（429 反应式并发闸批，作者令 2026-10-29 21:32）
    * ——见 [[AdaptiveThrottleConfig]]。`None` = 未配置 ⇒ 限流器整体旁路（缺省关 =
-   * 零行为变化）；全字段可选，半节解码为缺省而非抛（同 `jev` 节教训）。热读：
+   * 零行为变化）；全字段可选，半节解码为缺省而非抛。热读：
    * 过闸点每次现读 `cfgRef`，改配置即刻生效。
    */
   adaptiveThrottle: Option[AdaptiveThrottleConfig] = None,
@@ -684,10 +584,12 @@ object ThinkingConfig:
    */
   def toLlmJson(tc: ThinkingConfig): io.circe.Json =
     if tc.enabled then
-      io.circe.Json.obj(
-        "type" -> "enabled".asJson,
-        "budget_tokens" -> tc.budgetTokens.asJson
-      )
+      val base = List("type" -> "enabled".asJson, "budget_tokens" -> tc.budgetTokens.asJson)
+      val extra = List(
+        tc.effort.map(e => "effort" -> e.asJson),
+        tc.clearThinking.map(c => "clearThinking" -> c.asJson)
+      ).flatten
+      io.circe.Json.obj((base ++ extra)*)
     else io.circe.Json.Null
 
   /**
@@ -768,18 +670,11 @@ case class NebflowServiceConfig(
    */
   daemonPanel: Option[io.circe.Json] = None,
   /**
-   * JeV 决策分配面（Face A / P1-A2）的顶层 `jev` 节——见 [[JevConfig]]。
-   * `None` = 未配置 ⇒ 整个面短路走现行路径（零迁移）；本节**全字段可选**，
-   * 种子中间态（只落 `{"enabled":true}` 等半节）解码为缺省而非抛
-   * `Missing required field` ⇒ 防 GatewayMain 走 crash-recovery 用 `{}` 快照
-   * 打回（同 `llm` 节的既有教训）。
-   */
-  jev: Option[JevConfig] = None,
-  /**
    * Delegate 判定机 utility model 节（worktree-judge-fifo 批 #1224 增补）——见
    * [[JudgeConfig]]。`None` = 未配置 ⇒ SmallJudge 走「全局候选链整链」缺省
-   * （2026-10-29 判定机同族刀：从「根链首选」升为整链遍历）、Jev 优先
-   * 腿照常由 `jev` 节决定；全字段可选，半节解码为缺省而非抛（同 `jev` 节教训）。
+   * （2026-10-29 判定机同族刀：从「根链首选」升为整链遍历）；全字段可选，
+   * 半节解码为缺省而非抛。jev-retire 批（2026-11-16）起顶层 `jev` 节整体退役
+   * ——旧文件残留的 `jev` 块被解码器忽略（零迁移），不再有任何读点。
    */
   judge: Option[JudgeConfig] = None,
   /**
@@ -791,13 +686,13 @@ case class NebflowServiceConfig(
   /**
    * Embedding 检索面节（task-rag 批 #1227 / §Batch 7）——见 [[EmbeddingConfig]]。
    * `None` = 未配置 ⇒ embedding 面关、任务检索走词法降级（零迁移）；全字段
-   * 可选，半节解码为缺省而非抛（同 `jev` / `judge` 节教训）。
+   * 可选，半节解码为缺省而非抛（同 `judge` 节教训）。
    */
   embedding: Option[EmbeddingConfig] = None,
   /**
    * 生图面节（imagegen 双层批 2026-10-24）——顶层 `imagegen` 块。`None` = 未配置 ⇒
    * 生图面关（腿①工具提交即给可行动配置文案；腿②路由 503——零迁移安全缺省，方向
-   * 同 `jev`/`embedding`）；全字段可选、半节解码为缺省而非抛（同 `jev` 节教训）。
+   * 同 `embedding`）；全字段可选、半节解码为缺省而非抛。
    * 适配器形态按协议划分：`cogview` / `openai-images`（gpt-image-1 与一切 OpenAI
    * 兼容 images 端点，含豆包 Seedream/火山方舟兼容模式）/ `imagen`（预留位）。
    */
@@ -809,12 +704,13 @@ case class NebflowServiceConfig(
    * 运行时是热读（MsgTokenRegistry.enabledFromConfig，GlobalSafety 同款形态），本
    * 类型化节主要服务 GET /api/config 透传可见与 PATCH 深合并可写。
    */
-  msgTokens: Option[MsgTokensConfig] = None
+  msgTokens: Option[MsgTokensConfig] = None,
+  delegateProgressNotifications: Option[Boolean] = None
 )
 
 /**
  * 消息身份牌机制开关（msgtokens 批）——nebflow.json 顶层 `msgTokens` 块。
- * 缺席 = 开（作者拍板③； contrast `jev.enabled`，那面朝机器外发 faces，安全方向相反）。
+ * 缺席 = 开（作者拍板③； contrast `embedding.enabled`，那面朝机器外发，安全方向相反）。
  */
 case class MsgTokensConfig(enabled: Option[Boolean] = None):
   def isEnabled: Boolean = enabled.getOrElse(true)

@@ -19,6 +19,10 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
+
+// Diagnostic shot lives in a TTL-sweepable EvidenceTemp batch, not a bare /tmp file.
+const SHOT_OUT = evidenceBatch('flow-dag-parallel', 'shot');
 
 const require = createRequire('/Users/dev/.nebflow/projects/slideblocks/node_modules/');
 const { chromium } = require('playwright-chromium');
@@ -190,8 +194,9 @@ try {
 
   check('no console/page errors', consoleErrors.length === 0, consoleErrors.join(' | ').slice(0, 300));
 
-  await page.screenshot({ path: '/tmp/flow-dag-parallel.png', fullPage: true });
-  console.log('\nScreenshot: /tmp/flow-dag-parallel.png');
+  const shotPath = path.join(SHOT_OUT, 'flow-dag-parallel.png');
+  await page.screenshot({ path: shotPath, fullPage: true });
+  console.log(`\nScreenshot: ${shotPath}`);
 } finally {
   await browser.close();
   server.close();

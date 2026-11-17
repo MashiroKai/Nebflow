@@ -1,6 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.{IO, Ref}
+import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
@@ -182,14 +183,16 @@ class ChainLedgerStore private (
       .map("%02x".format(_))
       .mkString
 
-  /** 冷档目录里的可读文件清单（新旧四种形态全收；名字升序 —— 消费方均按轮号重排，序不敏感）。 */
+  /** Payload inventory in all four formats; manifest side volumes are not RoundFile bundles. */
   private def coldFiles: List[os.Path] =
     if !os.exists(archiveDir) then Nil
     else
-      os.list(archiveDir).toList
+      os.list(archiveDir)
+        .toList
         .filter(f =>
           val n = f.last
-          n.endsWith(".json") || n.endsWith(".json.gz") || n.endsWith(".jsonl") || n.endsWith(".jsonl.gz")
+          n != RoundsSideVolumeFile && n != s"$RoundsSideVolumeFile.gz" &&
+          (n.endsWith(".json") || n.endsWith(".json.gz") || n.endsWith(".jsonl") || n.endsWith(".jsonl.gz"))
         )
         .sortBy(_.last)
 
@@ -207,8 +210,7 @@ class ChainLedgerStore private (
   private def foldJsonl[A](f: os.Path, z: A)(step: (A, String, Int) => A): Option[A] =
     try
       val stream =
-        if f.last.endsWith(".gz") then
-          new java.util.zip.GZIPInputStream(new java.io.FileInputStream(f.toIO), 64 * 1024)
+        if f.last.endsWith(".gz") then new java.util.zip.GZIPInputStream(new java.io.FileInputStream(f.toIO), 64 * 1024)
         else new java.io.FileInputStream(f.toIO)
       val out =
         try
@@ -243,8 +245,7 @@ class ChainLedgerStore private (
       val ch = java.nio.channels.FileChannel.open(tmp.toNIO, java.nio.file.StandardOpenOption.READ)
       try ch.force(true)
       finally ch.close()
-      try
-        java.nio.file.Files.move(tmp.toNIO, target.toNIO, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+      try java.nio.file.Files.move(tmp.toNIO, target.toNIO, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
       catch
         case _: java.nio.file.AtomicMoveNotSupportedException =>
           java.nio.file.Files.move(tmp.toNIO, target.toNIO, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
@@ -279,14 +280,16 @@ class ChainLedgerStore private (
     else
       val text =
         try if name.endsWith(".gz") then gunzip(f) else os.read(f)
-        catch case e: Exception =>
-          logger.warnSync(s"chain-ledger[$project] cold file unreadable: $name: ${e.getMessage} — skipped")
-          return None
+        catch
+          case e: Exception =>
+            logger.warnSync(s"chain-ledger[$project] cold file unreadable: $name: ${e.getMessage} — skipped")
+            return None
       jsonParse(text).flatMap(_.as[RoundFile]) match
         case Right(r) => Some(List(r))
         case Left(e) =>
           logger.warnSync(s"chain-ledger[$project] cold file corrupt: $name: $e — skipped")
           None
+    end if
   end parseColdFile
 
   /** 冷档全量读入（按轮号升序去重；单档损坏只跳该档并 WARN，不拖垮台账）。 */
@@ -302,9 +305,11 @@ class ChainLedgerStore private (
         .reverse
     }
 
-  /** 写一轮冷档（**只归档不删除**；文件内容含该轮阈值与前后读数 ⇒ 离线可复算）。
-    * R3 续批起落 **gzip 形态**（`round-<n>.json.gz`：归档只写不读、读路径透明解压，
-    * 44 KB 级未压缩 JSON 的盘面放大就此收口）。返回 (实际文件名, 未压缩内容摘要)。 */
+  /**
+   * 写一轮冷档（**只归档不删除**；文件内容含该轮阈值与前后读数 ⇒ 离线可复算）。
+   * R3 续批起落 **gzip 形态**（`round-<n>.json.gz`：归档只写不读、读路径透明解压，
+   * 44 KB 级未压缩 JSON 的盘面放大就此收口）。返回 (实际文件名, 未压缩内容摘要)。
+   */
   private def writeRound(f: RoundFile): IO[(String, String)] =
     val content = f.asJson.noSpaces
     val name = s"round-${f.round}.json.gz"
@@ -600,7 +605,9 @@ class ChainLedgerStore private (
         case some @ Some(_) => IO.pure(some)
         case None =>
           val pendingHit =
-            st.pendingDissolve.entries.find(_.chainId == id).map(_.chainId)
+            st.pendingDissolve.entries
+              .find(_.chainId == id)
+              .map(_.chainId)
               .orElse(st.pendingDissolve.aliases.find(_.alias == id).map(_.canonical))
               .orElse(st.pendingRetire.entries.find(_.chainId == id).map(_.chainId))
               .orElse(st.pendingRetire.aliases.find(_.alias == id).map(_.canonical))
@@ -626,12 +633,12 @@ class ChainLedgerStore private (
                         foldJsonl(f, out) { (o, line, _) =>
                           jsonParse(line).flatMap(_.as[RoundFile]).toOption match
                             case Some(r) => hitsOf(r) ::: o
-                            case None    => o
+                            case None => o
                         }.getOrElse(out)
                       else
                         parseColdFile(f) match
                           case Some(rounds) => rounds.flatMap(hitsOf) ::: out
-                          case None         => out
+                          case None => out
                     }
                   }
                 }
@@ -639,6 +646,7 @@ class ChainLedgerStore private (
                   out.sortBy(_._1).reverse.collectFirst { case (_, Some(canonical)) => canonical }
                 }
             }
+          end if
     }
 
   // ── 拍点：reconcile（出生/承继/合并/拆分 → 计数 → 退役 → 压缩）──────────
@@ -713,7 +721,8 @@ class ChainLedgerStore private (
       // `hotAfter` 取落轮后的热态。批内行来自本拍与此前各拍 ⇒ 轮的坐标仍以「本拍计数
       // 复算之后」的热态为基准（与旧口径同源，链式成立）。
       val flushDissolve = pd1.isFlushDue(now)
-      val stAfterDissolveFlush = if flushDissolve then stBase.copy(pendingDissolve = ChainLedger.PendingOffline()) else stBase
+      val stAfterDissolveFlush =
+        if flushDissolve then stBase.copy(pendingDissolve = ChainLedger.PendingOffline()) else stBase
       val hotAfterDissolve = ChainLedger.totals(stAfterDissolveFlush)
       val fileDissolve = roundFileOf(
         tick,
@@ -727,13 +736,15 @@ class ChainLedgerStore private (
       for
         // ── flush 腿 1 落盘（冷档在前、旁卷次之、热账最后；见类头注第 2 条）──
         writtenD <-
-          if flushDissolve then writeRound(fileDissolve).map { case (n, d) => Some(manifestOf(fileDissolve, n, d, tick)) }
+          if flushDissolve then
+            writeRound(fileDissolve).map { case (n, d) => Some(manifestOf(fileDissolve, n, d, tick)) }
           else IO.pure(None)
         _ <- appendSideVolume(writtenD.toList)
         stAfterDissolve = stAfterDissolveFlush.copy(rounds = stBase.rounds ++ writtenD.toList)
         // ── flush 腿 2（retire 批整批落轮；轴 a×b 联合判据的行在此下沉）──
         flushRetire = pr1.isFlushDue(now)
-        stAfterRetireFlush = if flushRetire then stAfterDissolve.copy(pendingRetire = ChainLedger.PendingOffline()) else stAfterDissolve
+        stAfterRetireFlush =
+          if flushRetire then stAfterDissolve.copy(pendingRetire = ChainLedger.PendingOffline()) else stAfterDissolve
         hotAfterRetire = ChainLedger.totals(stAfterRetireFlush)
         roundRetire = stAfterDissolve.rounds.size + 1
         fileRetire = roundFileOf(
@@ -783,7 +794,9 @@ class ChainLedgerStore private (
           if flushDissolve || flushRetire || hasCompact then
             IO(
               logger.infoSync(
-                s"chain-ledger[$project] rounds: dissolve=${if flushDissolve then s"1(${pd1.rowCount} rows)" else "0"}" +
+                s"chain-ledger[$project] rounds: dissolve=${
+                    if flushDissolve then s"1(${pd1.rowCount} rows)" else "0"
+                  }" +
                   s" retire=${if flushRetire then s"1(${pr1.rowCount} rows)" else "0"}" +
                   s" compact=${if hasCompact then 1 else 0}" +
                   s" pendingD=${pd1.rowCount}/pendingR=${pr1.rowCount}" +
@@ -822,7 +835,7 @@ class ChainLedgerStore private (
    * bounded prefix — the returned value is a LOWER BOUND of the true size
    * whenever the budget was crossed, which [[selfCheck]] words as "at least".
    */
-  private def coldArchiveBytes: Long =
+  private[project] def coldArchiveBytes: Long =
     if !os.exists(archiveDir) then 0L
     else
       val files = coldFiles.iterator
@@ -838,36 +851,71 @@ class ChainLedgerStore private (
    * startupMount). Over-budget archives skip the cold-file audit at open time —
    * the hot state is still loaded and [[verify]] remains the explicit
    * full-audit entrypoint.
+   *
+   * The check is informational only (report, never block). It runs detached on
+   * a small process-wide gate ([[SelfCheckConcurrency]]) so a store open stays
+   * cheap on boot paths (startup project mounts + the delegate-scope boot
+   * sweep, each of which opens one ledger per project/scope) while the audits
+   * stay bounded no matter how many stores open at once; ordering across
+   * stores is not guaranteed and never mattered (each audit is independent
+   * and read-only).
    */
-  private def selfCheck(tag: String): IO[Unit] =
-    IO.blocking(coldArchiveBytes).flatMap { coldBytes =>
-      if coldBytes > coldReadBudgetBytes then
-        IO(
-          logger.infoSync(
-            s"chain-ledger[$project] self-check ($tag): cold archive of at least $coldBytes bytes exceeds the " +
-              s"$coldReadBudgetBytes-byte open-time read budget — skipping the cold-file audit " +
-              s"(hot state loaded; run verify for the full conservation audit)"
-          )
-        )
-      else
-        verify.flatMap {
-          case Right(()) => IO.unit
-          case Left(diag) =>
+  private[project] def selfCheck(tag: String, afterSnapshot: IO[Unit] = IO.unit): IO[Unit] =
+    ChainLedgerStore.selfCheckGate.permit
+      .use { _ =>
+        IO.blocking(coldArchiveBytes).flatMap { coldBytes =>
+          if coldBytes > coldReadBudgetBytes then
             IO(
-              logger.warnSync(
-                s"chain-ledger[$project] self-check FAILED ($tag): $diag — 台账不自洽（只报不阻；" +
-                  s"排查面：${path} + ${archiveDir}）"
+              logger.infoSync(
+                s"chain-ledger[$project] self-check ($tag): cold archive of at least $coldBytes bytes exceeds the " +
+                  s"$coldReadBudgetBytes-byte open-time read budget — skipping the cold-file audit " +
+                  s"(hot state loaded; run verify for the full conservation audit)"
               )
             )
+          else
+            verifySnapshot(afterSnapshot).flatMap {
+              case Right(()) => IO.unit
+              case Left(diag) =>
+                IO(
+                  logger.warnSync(
+                    s"chain-ledger[$project] self-check FAILED ($tag): $diag — 台账不自洽（只报不阻；" +
+                      s"排查面：${path} + ${archiveDir}）"
+                  )
+                )
+            }
         }
-    }
+      }
+      .handleErrorWith(e =>
+        // Detached fiber discipline: an audit failure must never surface as an
+        // unobserved dead fiber — it is reported here and swallowed, exactly
+        // the "report, never block" contract the synchronous form had.
+        IO(
+          logger.warnSync(
+            s"chain-ledger[$project] self-check ($tag) errored: ${Option(e.getMessage).getOrElse(e.toString)} — skipped"
+          )
+        )
+      )
 
   /** 台账全量自检：结构 + 每轮守恒 + 轮间链式 + 压缩镜像（判据全在 [[ChainLedger]]）。 */
-  def verify: IO[Either[String, Unit]] =
-    for
-      st <- state.get
-      files <- readRounds
-    yield ChainLedger.verifyLedger(st, files, payloadIdsOf(files))
+  def verify: IO[Either[String, Unit]] = verifySnapshot(IO.unit)
+
+  // Round payloads are append-only and published before the manifest. Audit only
+  // the rounds committed in the captured state, never an in-flight newer round.
+  private[project] def verifySnapshot(afterSnapshot: IO[Unit]): IO[Either[String, Unit]] =
+    def readStable(hook: IO[Unit]): IO[Either[String, Unit]] =
+      for
+        st <- state.get
+        _ <- hook
+        files <- readRounds
+        current <- state.get
+        result <-
+          if !(st eq current) then readStable(IO.unit)
+          else
+            val committed = st.rounds.iterator.map(_.round).toSet
+            val snapshotFiles = files.filter(f => committed.contains(f.round))
+            IO.pure(ChainLedger.verifyLedger(st, snapshotFiles, payloadIdsOf(snapshotFiles)))
+      yield result
+    readStable(afterSnapshot)
 
   /**
    * 压缩镜像面（**取每个 id 的最晚一轮口径**）：某 id 的载荷此刻是否应在冷档 ——
@@ -888,6 +936,19 @@ end ChainLedgerStore
 object ChainLedgerStore:
 
   private val logger: NebflowLogger = NebflowLogger.forName("nebflow.chain-ledger")
+
+  /**
+   * Process-wide gate for the detached open-time self-checks ([[selfCheck]]).
+   * The permit count bounds how many cold-archive audits walk the disk at the
+   * same time; a boot that opens hundreds of stores (project mounts plus the
+   * delegate-scope sweep) must not turn "audits off the critical path" into
+   * "hundreds of concurrent full-archive parses" — that is the same OOM shape
+   * the read budget exists to prevent.
+   */
+  private val SelfCheckConcurrency = 2
+
+  private val selfCheckGate =
+    cats.effect.std.Semaphore[IO](SelfCheckConcurrency).unsafeRunSync()
 
   /**
    * **启动期载入**（与 `flow-map.json` 同生命周期）。两文件形态（perf-481 A3）：
@@ -960,7 +1021,10 @@ object ChainLedgerStore:
         rotateBytes = rotateBytes
       )
       _ = store.markSideVolumeComplete(missing.isEmpty)
-      _ <- store.selfCheck("open")
+      // Informational audit only — detached so the open itself stays a pure
+      // hot-state load (see selfCheck scaladoc). The fiber owns its own error
+      // reporting; nothing downstream waits on it.
+      _ <- store.selfCheck("open").start.void
     yield store
   end open
 
@@ -993,6 +1057,7 @@ object ChainLedgerStore:
             if acc.headOption.exists(_.round == m.round) then m :: acc.tail else m :: acc
           }
           .reverse
+      end if
     }
 
   /**
@@ -1030,7 +1095,8 @@ object ChainLedgerStore:
         // 缺省 0，回落 `rounds.size`（两值在旧格式下恒相等）。journal 记录不推进该水位
         // —— 它们相对 checkpoint 而非相对上一条记录（记录 = 完整快照 + 轮号去重 ⇒ 幂等）。
         val committedRounds =
-          committed.flatMap(s => if s.roundsTotal > 0 then Some(s.roundsTotal) else None)
+          committed
+            .flatMap(s => if s.roundsTotal > 0 then Some(s.roundsTotal) else None)
             .getOrElse(committed.map(_.rounds.size).getOrElse(0))
         val base = committed.getOrElse(ChainLedger.State(project = project))
         parsedNotes.lastOption match

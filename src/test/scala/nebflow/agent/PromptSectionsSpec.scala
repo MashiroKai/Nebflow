@@ -282,22 +282,24 @@ class PromptSectionsSpec extends munit.FunSuite:
       os.remove.all(tempRoot)
 
   // ============================================================
-  // System prompt assembly（阶段 2 批 A：systemPrefix 层退役，稳定首段 =
-  // agent system.md——provider prefix-cache 锚点）
+  // System prompt assembly uses the packaged resource, not the data root.
   // ============================================================
 
-  test("agent system.md is the first stable segment in assembled prompt"):
-    // 阶段 2 批 A 退役共享 system-prefix 层后，稳定首段 = agent system.md
-    // （同模版会话共享的基座）——provider 前缀缓存锚点，必须位于最前。
-    val prompt = assembleSystemPrompt("AGENT-MD", "CONDITIONAL")
-    assert(prompt.startsWith("AGENT-MD"), "agent system.md must be first")
-    val agentIdx = prompt.indexOf("AGENT-MD")
-    val condIdx = prompt.indexOf("CONDITIONAL")
-    assert(agentIdx < condIdx, "order must be agent.md → conditional")
-
-  test("assembleSystemPrompt omits separator when no conditional blocks"):
-    assertEquals(assembleSystemPrompt("A", ""), "A")
-    assertEquals(assembleSystemPrompt("A", "C"), "A\n\nC")
+  test("assembly prepends the classpath resource and ignores external overrides"):
+    withIsolatedDataRoot {
+      os.write(PathUtil.dataRoot / "prompt-prefix.md", "EXTERNAL OVERRIDE")
+      val stream = getClass.getResourceAsStream("/seed/prompt-prefix.md")
+      assert(stream != null, "packaged prefix resource must exist")
+      val source = scala.io.Source.fromInputStream(stream, "UTF-8")
+      val resource =
+        try source.mkString.trim
+        finally source.close()
+      val prompt = assembleSystemPrompt("AGENT-MD", "CONDITIONAL")
+      assertEquals(prompt, s"--- SYSTEM PREFIX ---\n$resource\n\nAGENT-MD\n\nCONDITIONAL")
+      assert(!prompt.contains("EXTERNAL OVERRIDE"))
+      val withoutBlocks = assembleSystemPrompt("AGENT-MD", "")
+      assertEquals(withoutBlocks, s"--- SYSTEM PREFIX ---\n$resource\n\nAGENT-MD")
+    }
 
   // ============================================================
   // Mounted projects (progressive disclosure 2026-09-07): Nebula-only
@@ -388,7 +390,7 @@ class PromptSectionsSpec extends munit.FunSuite:
         !dispatcher.contains(nebflow.shared.Defaults.OutputBlockRule),
         "dispatcher/node sessions carry the rule via brief/footnote faces, not the systemStable section"
       )
-      val nodeCtx = PromptContext(isRootAgent = false, availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name))
+      val nodeCtx = PromptContext(isRootAgent = false, availableTools = Set("NodeEdit"))
       val node = buildConditionalBlocks(nodeCtx)
       assert(
         !node.contains(nebflow.shared.Defaults.OutputBlockRule),
@@ -490,7 +492,7 @@ class PromptSectionsSpec extends munit.FunSuite:
         !dispatcher.contains(nebflow.shared.Defaults.SendMessageScopeRule),
         "dispatcher/node sessions carry no SendMessage tool at all — the root-only section must not leak"
       )
-      val nodeCtx = PromptContext(isRootAgent = false, availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name))
+      val nodeCtx = PromptContext(isRootAgent = false, availableTools = Set("NodeEdit"))
       val node = buildConditionalBlocks(nodeCtx)
       assert(
         !node.contains(nebflow.shared.Defaults.SendMessageScopeRule),
@@ -510,7 +512,7 @@ class PromptSectionsSpec extends munit.FunSuite:
       val root = buildConditionalBlocks(PromptContext(isRootAgent = true))
       val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
       val node = buildConditionalBlocks(
-        PromptContext(isRootAgent = false, availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name))
+        PromptContext(isRootAgent = false, availableTools = Set("NodeEdit"))
       )
       for (who, blocks) <- Seq("root" -> root, "dispatcher" -> dispatcher, "node" -> node) do
         assert(
@@ -732,49 +734,9 @@ class PromptSectionsSpec extends munit.FunSuite:
       assert(!rawSystemMd.equals(cleanedForWorker), "对照组：剥离确有差异")
     }
 
-  // node-output contract（2026-09-24）：order-360 段是「末条输出 = 自身完成汇报 +
-  // 结果自包含、禁 see above 指代」在系统提示词面的最短兜底。A 线后续批把**输出契约
-  // 两句整体迁入权威位**（`node_report` description，NodeReportTool），本段收窄为
-  // 纯指针 + 一句 wrap-up 铁律 ⇒ 判据随迁：段长门不变，两句契约改钉权威位。
-  test("order-360 段：段长门 ≤400 B + wrap-up 铁律一句 + 输出契约两句在权威位"):
-    withIsolatedDataRoot {
-      val bytes = NodeSessionAlwaysOnSection.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
-      assert(
-        bytes <= NodeSessionAlwaysOnSectionMaxBytes,
-        s"段长门：$bytes B 超 ${NodeSessionAlwaysOnSectionMaxBytes} B（本段进每次 node LLM 调用）"
-      )
-      // 段内钉句：收尾即申报（wrap-up 铁律，not blocked-only）
-      assert(
-        NodeSessionAlwaysOnSection.contains("Before wrapping up call `node_report`") &&
-          NodeSessionAlwaysOnSection.contains("reporting IS the wrap-up action, not a blocked-only exception"),
-        s"wrap-up 铁律句:\n$NodeSessionAlwaysOnSection"
-      )
-      // 要求 1/2 的两句契约迁入权威位（node_report description）——改钉权威面
-      val authority = nebflow.core.tools.NodeReportToolDef.description
-      assert(
-        authority.contains("your final assistant text is the node result"),
-        s"要求 1（末条输出 = 节点结果，权威位）"
-      )
-      assert(
-        authority.contains("your own completion report"),
-        s"要求 1（= 自身完成汇报，权威位）"
-      )
-      assert(authority.contains("self-contained"), "要求 2（自包含，权威位）")
-      assert(authority.contains("\"see above\""), "要求 2（点名禁 see above，权威位）")
-      // 段仍是指针：权威位不变（node_report description + 协议脚注）
-      assert(
-        NodeSessionAlwaysOnSection.contains("`node_report` tool description")
-          && NodeSessionAlwaysOnSection.contains("Node protocol footnote"),
-        "指针目标不得悬空"
-      )
-      // order-360 段在节点身份下仍注入（条件维度不变）
-      val blocks =
-        buildConditionalBlocks(PromptContext(availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name)))
-      assert(blocks.contains("## Node terminal report"), s"order-360 段注入丢失：$blocks")
-      assert(
-        blocks.contains("Before wrapping up call `node_report`"),
-        s"段正文注入丢失：$blocks"
-      )
-    }
+  // order-360 段（node terminal report 兜底段）已随终态申报工具通道整体退役删除：
+  // 终态协议 = 引擎贡献面单点（`NodeEngine.ProtocolFootnote`，完成点文本锚定），
+  // 系统提示词面的常驻兜底段不再是权威（防双权威分叉）。本文件原「order-360 段长门
+  // + wrap-up 铁律」用例随之移除；权威面协议文法由 NodeEngineContract 相关 spec 判定。
 
 end PromptSectionsSpec

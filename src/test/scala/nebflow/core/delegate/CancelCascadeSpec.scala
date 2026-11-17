@@ -173,7 +173,64 @@ class CancelCascadeSpec extends CatsEffectSuite:
       assertEquals(rows, List("orphan-kid")) // 任务行终态化
   }
 
-  test("②b 负控：父无墓碑/归档 ⇒ 子绝不误判孤儿（防误杀铁律）") {
+  test("②b 自然完成后父归档：直接子/孙仍处理时生产 scan 不取消且重复扫描幂等") {
+    for
+      port <- mkPort(
+        Map(
+          "parent" -> rec("parent", "root-x", AgentStatus.Idle),
+          "child" -> rec("child", "parent"),
+          "grandchild" -> rec("grandchild", "child")
+        )
+      )
+      (fake, _) = port
+      parent = DelegateRegistry.Record(
+        id = "parent", executor = "nebflow", cwd = "/tmp/spec", project = None,
+        taskId = None, parentSessionId = "root-x", title = "parent", createdAt = 1L,
+        archivedAt = Some(2L)
+      )
+      terminal = CancelCascade.terminalParents(List(parent))
+      watchPort = new ChildOrphanWatch.Port:
+        def registry = fake.registry
+        def tombstonedParents = IO.pure(terminal)
+        def cancelChild(r: AgentRecord, reason: String) = fake.cancelChild(r, reason)
+        def settleTaskRow(r: AgentRecord, reason: String) = fake.settleTaskRow(r, reason)
+        def notifyRoot(r: AgentRecord, text: String) = fake.notifyRoot(r, text)
+        override def audit(values: Map[String, String]) = fake.audit(values)
+      first <- ChildOrphanWatch.scan(watchPort)
+      second <- ChildOrphanWatch.scan(watchPort)
+      reg <- fake.registry
+      stopped <- fake.stopped.get
+    yield
+      assertEquals(first, Nil)
+      assertEquals(second, Nil)
+      assertEquals(reg.keySet, Set("parent", "child", "grandchild"))
+      assertEquals(stopped, Nil)
+  }
+
+  test("②b 明确取消墓碑保留原有孤儿子会话处置") {
+    for
+      port <- mkPort(Map("child" -> rec("child", "parent")))
+      (fake, _) = port
+      parent = DelegateRegistry.Record(
+        id = "parent", executor = "nebflow", cwd = "/tmp/spec", project = None,
+        taskId = None, parentSessionId = "root-x", title = "parent", createdAt = 1L,
+        cancelRequestedAt = Some(2L)
+      )
+      steps <- ChildOrphanWatch.scan(new ChildOrphanWatch.Port:
+        def registry = fake.registry
+        def tombstonedParents = IO.pure(CancelCascade.terminalParents(List(parent)))
+        def cancelChild(r: AgentRecord, reason: String) = fake.cancelChild(r, reason)
+        def settleTaskRow(r: AgentRecord, reason: String) = fake.settleTaskRow(r, reason)
+        def notifyRoot(r: AgentRecord, text: String) = fake.notifyRoot(r, text)
+      )
+      stopped <- fake.stopped.get
+    yield
+      assertEquals(steps.map(_.sessionId), List("child"))
+      assertEquals(steps.head.outcome, CancelCascade.Outcome.Killed)
+      assertEquals(stopped, List("child"))
+  }
+
+  test("②c 负控：父无墓碑/归档 ⇒ 子绝不误判孤儿（防误杀铁律）") {
     for
       port <- mkPort(Map("kid" -> rec("kid", "alive-parent")))
       (fake, _) = port

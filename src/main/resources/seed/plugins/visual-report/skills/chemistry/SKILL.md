@@ -44,7 +44,7 @@ description: 化学反应报告（rdkit 验证+3Dmol 交互）；反应与分子
 
 ## 3. 工具链与自检
 
-**2026-10-04 实测**（viz-venv = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`，Python 3.12.9）：
+**2026-10-04 实测**（viz-venv = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`，Python 3.12.9）：
 
 | 工具 | 用途 | 本机检测命令（实测 2026-10-04） | 官方链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|

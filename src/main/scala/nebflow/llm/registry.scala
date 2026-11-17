@@ -73,20 +73,23 @@ class ProviderRegistry(
     // openai 面收到同样配置（cmdcode 就显式写了 requireThinkingPassback:true）
     // 时是个哑开关——配置说了要回传，代码从不回传。
     val passback = ThinkingFamily.requiresPassback(providerId, provider)
+    val apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+      nebflow.shared.PathUtil.dataRoot, provider.apiKey, "provider-runtime")
     provider.protocol match
       case LlmProtocol.OpenAI =>
         OpenAiAdapter(
           provider.baseUrl,
-          provider.apiKey,
+          apiKey,
           backend,
           requireThinkingPassback = passback,
           providerId = providerId,
-          providerHeaders = provider.headers
+          providerHeaders = provider.headers,
+          effortAllowlist = provider.effortAllowlist
         )
       case LlmProtocol.Anthropic =>
         AnthropicAdapter(
           provider.baseUrl,
-          provider.apiKey,
+          apiKey,
           backend,
           // DeepSeek's thinking mode rejects history replay that omits unsigned
           // thinking blocks (400 invalid_request → provider marked DOWN); real
@@ -97,7 +100,8 @@ class ProviderRegistry(
           // 代码面根治 + live 配置显式补键 = 双保险。
           requireThinkingPassback = passback,
           providerId = providerId,
-          providerHeaders = provider.headers
+          providerHeaders = provider.headers,
+          effortAllowlist = provider.effortAllowlist
         )
 
     end match
@@ -549,14 +553,10 @@ class ProviderRegistry(
         case Left(e) =>
           IO.delay(logger.warnSync(s"Candidate-chain snapshot after reload failed: ${e.getMessage}")).attempt.void
       }
-      staleIds <- overridesRef match
-        case Some(ref) =>
-          ref.modify { overrides =>
-            val (keep, drop) = overrides.partition { case (_, c) => newConfig.llm.providers.contains(c.providerId) }
-            (keep, drop.keys.toList)
-          }
-        case None => IO.pure(Nil)
-    yield staleIds
+      // Preserve explicit choices even when a provider disappears. The request
+      // eligibility gate reports the missing provider instead of silently
+      // reverting the session to its role model.
+    yield Nil
 
   /**
    * Graceful skip for candidates whose provider is not present in the current

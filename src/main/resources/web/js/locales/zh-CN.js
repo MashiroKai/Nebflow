@@ -31,38 +31,6 @@ export default {
   'project.workspaceRunning': '工作中',
   'project.workspaceIdle': '空闲',
   'project.workspaceFrozen': '待手动恢复',
-  'project.mergeRequest': '合并记录',
-  'project.requestOriginPanel': '用户手动',
-  'project.requestOriginAgent': '主 agent 提交',
-  'project.mergeSelected': '合并所选工作区',
-  'project.mergeSubmitted': '已提交合并请求',
-  'project.mergeNeedsResume': '已登记，请手动恢复工程 merger 后继续',
-  'project.mergeScope': '此操作授权合并、验证和移除所选工作区，不包含推送或发布。',
-  'project.resumeMerger': '恢复合并会话',
-  'project.mergerRecoveryAccepted': '已接受恢复，请在合并会话中查看进展。',
-  'project.openMerger': '打开合并会话',
-  'project.mergerInitializing': '正在初始化',
-  'project.mergerRecoveryRequired': '初始化中断，等待手动恢复',
-  'project.mergerRequired': '请先由主智能体创建工程 merger。',
-  'project.createMerger': '请主智能体创建 merger',
-  'project.createMergerPrefill': '请为本项目创建工程 merger：Delegate(mode="merger", project="{name}")。它只按已登记的合并请求整合已授权的工作区。',
-  'project.createMergerUnavailable': '无法写入主会话输入框，请手动创建 merger。',
-  'project.continueWork': '继续工作',
-  'project.factsAhead': '+{count} 领先',
-  'project.factsDirty': '{tracked} 处改动 · {untracked} 个未跟踪',
-  'project.factsClean': '无本地改动',
-  'project.factsError': '工作区状态不可读',
-  'project.factsVerified': '验证通过',
-  'project.factsUnverified': '无验证记录',
-  'project.factsReconcileIntegrated': '源已入目标',
-  'project.factsReconcileResumable': '可续处理',
-  'project.factsReconcileUnknown': '现场未知',
-  'project.selectionExpired': '{count} 个所选工作区已不再处于空闲开放状态，已从选择中移除。',
-  'project.mergeConfirmTitle': '确认合并请求',
-  'project.mergeConfirmEntry': '{branch} 并入 {target}\n源提交 {commit} · {ahead} · {dirty}',
-  'project.mergeConfirmConfirm': '提交合并请求',
-  'project.mergeStop': '请求终止',
-  'project.mergeStopRequested': '已请求终止，等待 merger 核对现场；已合并成果不会撤销。',
   'project.mergePhase.accepted': '已登记',
   'project.mergePhase.processing': '处理中',
   'project.mergePhase.paused': '已暂停',
@@ -75,25 +43,11 @@ export default {
   'project.mergePhase.failed': '失败',
   'project.mergePhase.cancelled': '已终止',
   'project.mergePhase.reserved': '等待合并',
-  'project.mergeNotificationPending': '请求已登记，但通知尚未送达；请联系工程 merger 核对。',
   'project.workspaceCleaning': '清理中',
   'project.workspaceClosedMerged': '已合并并关闭',
   'project.workspaceClosedRetained': '目录已清理，分支保留',
-  'project.cleanupConfirmUnavailable': '确认窗口尚未就绪，请重新打开项目面板。',
-  'project.cleanupScope': '将移除目录：{path}。分支 {branch} 保留，不会删除提交。',
-  'project.cleanupUnmerged': '这个分支还有未合并提交。确认后仅移除工作目录，提交仍保留在分支上。',
-  'project.cleanupIntegrated': '当前提交已包含在目标分支中。',
-  'project.cleanupDirty': '确认后将丢弃 {count} 项未提交改动：',
-  'project.cleanupTitle': '确认清理工作区',
-  'project.cleanupConfirm': '确认移除目录',
-  'project.cleanupDone': '工作目录已清理，分支保留。',
-  'project.cleanupWorkspace': '清理工作区',
-  'project.cleanupNeedsAcceptance': '已合入，目录已清理；等待 merger 完成验收上报',
   'project.workspaces': '工作区',
   'project.workspacesLoading': '读取工作区…',
-  'project.creationBaseline': '新工作区基线',
-  'project.saveBaseline': '保存基线',
-  'project.baselineSaved': '已保存，仅影响以后创建的工作区',
   'project.noWorkspaces': '暂无受管理工作区',
   'project.title': '项目',
   'project.loading': '加载项目…',
@@ -482,6 +436,7 @@ export default {
   // 动作由重试键本身承载，不写「请检查网络连接」这类排查教学。
   'messages.listLoadFailed': '会话列表加载失败',
   'messages.retry': '重试',
+  'messages.backToAgent': '返回智能体对话',
   // 🔴 `systemNowFriends` = **好友接受流程**的语境（唯一合法消费点 =
   // messages.js `onFriendEvent` 的 `friend_accepted` 分支）⇒ 下条群语境键是
   // **拆键**产物（2026-09-16 作者令「入群提示还是：你们已成为好友，这不对」：
@@ -570,6 +525,7 @@ export default {
   'messages.forwardPartial': '已转发 {n} 条，{f} 条失败',
   // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
   'messages.queueAttachUnrecoverable': '{n} 个附件因页面刷新无法恢复，请重新添加',
+  'input.historyAttachLost': '历史记录里有 {n} 个附件的内容已不在本机，请重新添加',
   // attach-split 批（2026-10-24 现场事故修复）：服务端超限帧有声拒绝（messageTooLarge
   // 回执）的用户可见文案 —— {size}/{limit} = 实测帧 MB / 服务端上限 MB。
   'send.messageTooLarge': '这条消息（约 {size} MB）超过投递上限 {limit} MB，未被发送——请减少附件数量后重发',
@@ -740,6 +696,13 @@ export default {
   'login.action.service-unavailable': '重启 {lowerBrand} 后重新登录',
   'login.reason.logto-not-configured': '登录服务未配置（缺少应用标识）',
   'login.action.logto-not-configured': '检查 {lowerBrand} 的登录配置后重试',
+  // 账号归属闸三条（logout-login-recovery 批 2026-11-08，与后端 CredentialFailure 同码单源）。
+  'login.reason.account-switch-requires-logout': '本机的账号根属于另一个账号：同一台机器同一时间只能服务一个账号',
+  'login.action.account-switch-requires-logout': '先在本机退出当前账号，然后再登录新账号（退出登录不会删除本机账号数据）',
+  'login.reason.enroll-refused-no-account-root': '本机处于未登录层（还没有账号根）：登录服务已连通，但设备注册在这个状态下不可完成',
+  'login.action.enroll-refused-no-account-root': '本机账号数据不受影响；该状态需要账号根建立流程处理，当前版本暂未提供，请不要反复重试',
+  'login.reason.account-identity-missing': '登录服务没有返回账号身份：无法确认这台机器该归属哪个账号',
+  'login.action.account-identity-missing': '点「重试」重新登录；仍失败请附日志反馈',
   'login.reason.login-failed': '登录过程中出现未分类的错误',
   'login.action.login-failed': '点「重试」；仍失败请附日志反馈',
   'messages.login': '登录',
@@ -946,7 +909,7 @@ export default {
   // Waiting 行同词；申报 standby 的行走 standby 词）。
   'subagents.status.waiting': '停靠等待中',
   'subagents.status.waitingMerge': '停靠等待中',
-  // delegate 显式待命态（delegate_report standby）——行状态位直显「待命」
+  // delegate 显式待命态（状态槽 standby）——行状态位直显「待命」
   // （tooltip = 申报的「在等什么」）。
   'subagents.status.standby': '待命（等作者）',
   'subagents.status.idle': '空闲',
@@ -1028,6 +991,9 @@ export default {
   'subagents.hierarchyLevel': '层级 {level}',
   'subagents.parentAbsent': '父不在场',
   'subagents.parentAbsentTip': '父会话当前不在面板 · {sid}',
+  // DAG 依赖边 chip（face C）：执行顺序依赖 ≠ 父子嵌套——词面只标注依赖关系。
+  'subagents.dependsOn': '依赖',
+  'subagents.dependsOnTip': '执行依赖（DAG）：{deps}',
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
@@ -1286,38 +1252,8 @@ export default {
   'settings.cfgCard.keyMissing': '未配置',
   'settings.cfgCard.models': '{n} 个模型',
   'settings.cfgCard.emptyHint': '尚未配置提供方——填写下方表单并保存。',
-  'settings.jev': 'Jev（插件分配）',
-  'settings.jevEnabled': '用 Jev 分配插件',
-  'settings.jevProvider': '提供方',
-  'settings.jevEndpoint': '端点',
-  'settings.jevHealth': '分配通道',
-  'settings.jevHealthUp': '正常',
-  'settings.jevHealthDown': '异常',
-  'settings.jevHealthUnconfigured': '未配置',
-  // jev-panel-threefix（2026-10-09 用户反馈三点）：行体开合 title / 回退态徽标词
-  // （如实反映「Jev 不可用 → 已回退 llm」）。
-  'settings.jevToggleDetails': '展开或收起分配设置',
-  'settings.jevHealthFallback': 'Jev 不可用 → 已回退 llm',
-  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.2）：Jev 配置面 20 键 ——
-  // 提供方名/协议适配/模型/单一 key 框（UI 层零密钥引用字眼）。
-  'settings.jev.name': '提供方名称',
-  'settings.jev.namePlaceholder': '如 typesafe-jev',
-  'settings.jev.type': '协议适配',
-  'settings.jev.typeTypesafe': 'Typesafe JeV（官方托管）',
-  'settings.jev.typeLaya': 'LAYA（自托管）',
-  'settings.jev.model': '模型',
-  'settings.jev.modelPlaceholder': '模型名',
-  'settings.jev.keyEntry': 'API Key',
-  'settings.jev.keyShow': '显示 key 值',
-  'settings.jev.keyHide': '隐藏 key 值',
-  'settings.jev.keySaved': '密钥已保存',
-  'settings.jev.keySaveFailed': '密钥保存失败（{code}）',
-  'settings.jev.keyEmpty': 'key 值为空',
-  'settings.jev.nameRequired': '先填写提供方名称',
-  'settings.jev.nameInvalid': '提供方名称只允许字母/数字/._-',
-  'settings.jev.typeRequired': '先选择协议适配',
-  'settings.jev.modelRequired': '模型不能为空',
-  'settings.jev.detailHint': '填入 API Key 并保存即可；未配 key 时 Jev 腿自动关闭。',
+  // （jev-retire 批 2026-11-16：settings.jev* 整族键——启用开关/健康徽标/
+  // D.2 配置面 20 键——随 JeV 全量退役删除；原块横跨 jev-panel-threefix 批。）
   // settings-panel 批 D 件（2026-10-28）：STT 总开关（缺席=开，存量行为
   // 逐字不变；关=STT 整体停用，入口与快捷键全收）。
   'settings.sttEnabled': '启用语音识别',
@@ -1362,10 +1298,8 @@ export default {
   'settings.imagegenNameRequired': '先填写提供方名称',
   'settings.imagegenNameInvalid': '提供方名称只允许字母/数字/._-',
   // settings-panel-jev-imagegen 批（2026-10-29 作者令「然后 Jev/生图，也要像我们
-  // LLM 这样，有个按钮来测试可用性」）：JeV 一枚测试钮（同 LLM 测试钮口径）；
-  // 生图两级（轻探活 + 实跑一次最小生成）。
-  'settings.jevTestBtn': '测试可用性',
-  'settings.jevTestTitle': '连接性测试：向分配通道发一次最小真实调用（测当前表单值，未保存也可测）',
+  // LLM 这样，有个按钮来测试可用性」）：JeV 测试钮随 JeV 退役删除（2026-11-16）；
+  // 生图两级（轻探活 + 实跑一次最小生成）保留。
   'settings.imagegenTestBtn': '测试可用性',
   'settings.imagegenTestTitle': '轻探活：key 解析 + 上游可达（models 端点）',
   'settings.imagegenGenBtn': '实跑一次最小生成',
@@ -1398,12 +1332,9 @@ export default {
   // 按「术语按英文统一」批的口径走英文原词，两语言同值（不是漏翻译）。
   'settings.providerType.llm': 'LLM',
   'settings.providerType.imagegen': 'Image generation',
-  'settings.providerType.jev': 'Jev',
   // 类型枚举投影读取失败 / 与面板行为绑定不一致（都是失败闭合态，不指路）。
   'settings.providerTypesError': '服务商类型清单读取失败',
   'settings.providerTypesDrift': '有服务商类型未接入面板',
-  'settings.jevHealthTitle': '分配通道',
-  'settings.jevEndpointPinned': '端点固定（typesafe-jev 分配通道由引擎约定，不可编辑）',
   'settings.enabled': '启用',
   'settings.cfgCard.saved': '已保存',
   'settings.cfgCard.keyReentryPlaceholder': '已配置——重新输入即覆盖',
@@ -1477,11 +1408,13 @@ export default {
   // 模型槽的显示名（原 P1-2 的「零消费点」登记就此解除——kernel 以独立槽身份回归）。
   'model.roleNode': 'node（节点）',
   'model.roleSubagent': 'subagent（子代理）',
+  'model.smallLlm': '通用小 LLM',
+  'model.smallLlmFallback': '未配置（回退主模型）',
   'model.viaSlash': '用 /model 命令编辑',
   'model.currentRun': '当前运行',
-  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.4）：/model 里 Jev / 生图
-  // 两个新分组 = 「该配置节当前使用哪个提供方」的指针切换器（不是 agent 模型链）。
-  'model.groupJev': 'Jev（插件分配）',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.4）：/model 里的生图新分组 =
+  // 「该配置节当前使用哪个提供方」的指针切换器（不是 agent 模型链）；Jev 分组随
+  // JeV 退役删除（2026-11-16）。
   'model.groupImagegen': '生图',
   'model.groupSwitch': '切换',
   'model.groupSwitched': '已切换到 {name}',
@@ -1489,6 +1422,9 @@ export default {
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
   'settings.account': '账号',
+  'settings.general': '通用',
+  'settings.modelsAndServices': '模型与服务',
+  'profile.cancelEdit': '取消修改',
   // 件四 · 设置页身份卡本地化（作者令 2026-11-02「头像在上，下面是用户名和邮箱…
   // 点击胶囊直接进自己的 profile 设置页」）。zh/en **同键对称**新增（14 键 × 2 文件）。
   'settings.identityCardLabel': '账号资料',
@@ -1529,6 +1465,7 @@ export default {
   'provider.models': '模型',
   'provider.remove': '移除',
   'provider.removeConfirm': '确定移除服务商 "{name}"？',
+  'provider.removeNamed': '移除服务商 {name}',
   'provider.edit': '编辑服务商：{name}',
   'provider.add': '添加服务商',
   'provider.id': '服务商 ID',
@@ -1785,7 +1722,7 @@ export default {
   'chat.errorTileWaiting': '等恢复',
   'chat.typeAnswer': '输入你的回答...',
   'chat.failedRender': '选项渲染失败，请重试。',
-  'askUser.viewCompare': '在 Canvas 查看',
+  'askUser.viewCompare': '在看板查看',
   // AskUser 附件行批（chain-askuser-enhance-impl，2026-10-02）—— 顶层 `attachments`
   // 渲染为整次提问层的可点击附件行。🔴 草案：候作者逐字过目（§16 冻结闸）后才生效；
   // 生效候重启窗（静态资源服务自 jar 内资源）。
@@ -2083,8 +2020,7 @@ export default {
   // === Delegate 面（#1228 换源接线批 · §16 七键逐字过目已过，zh/en 成对）===
   // 🔴 值为作者 §16 裁定逐字（#1228 两裁①），禁改一字。键名按 delegate.* 族
   // （delegateChainStub / .task-delegate 命名空间同族）。
-  // ① ready-to-merge 状态词（delegate 行状态列；分支产物待落地，
-  //    集成走项目 merger 的授权请求）
+  // ① ready-to-merge 状态词（delegate 行状态列；历史盘面记录值）
   'delegate.readyToMerge': '待合并',
   // 手动恢复批（作者令 2026-11-06 20:36）：失效态两档 + 恢复动作（子代理面板）。
   'delegate.invalidWaiting': '失效 · 静默等待恢复',
@@ -2095,6 +2031,11 @@ export default {
   'delegate.restoreFailed': '恢复失败：{error}',
   'delegate.modelSwitch': '切换模型',
   'delegate.modelFollowSlot': '跟随类别（默认）',
+  'delegate.externalModelFuture': '该执行器后续新派发的模型（不影响当前会话）',
+  'delegate.externalModelUnsupported': '该 CLI 未提供 headless 模型参数',
+  'delegate.externalModelDefault': '留空使用 CLI 默认',
+  'delegate.externalModelSaved': '已保存',
+  'delegate.externalModelError': '模型设置读取或保存失败',
   // ② S10 per-task 链视图顶栏返回钮
   'delegate.backToTasks': '返回任务列表',
   // ③ S11 结构总视图头
@@ -2123,56 +2064,12 @@ export default {
   'delegate.flowmap.title': '委托流程图',
   'delegate.projectflow.title': '项目流程图',
   'delegate.kids.empty': '尚未产生 subagent / flow 调用',
-  'delegate.archive.toast': '{n} 已完成并归档',
-  'delegate.archive.undo': '撤销',
-  'delegate.archive.restore': '恢复',
+  'delegate.archive.toast': '{n} 已收口',
+  'delegate.disposition.move': '移入历史',
+  'delegate.disposition.undo': '撤销',
+  'delegate.disposition.error': '表态更新失败',
   'delegate.archive.openFlow': '流程图 →',
   'delegate.archive.drawerTitle': '已归档委托',
-  // === delegate 全景视图（视图重设计实施批 2026-10-21 · 设计说明 §7 多语言）===
-  // 键族 delegate.view.*：zh/en 成对；状态词沿既有词根（delegate.readyToMerge /
-  // flowmap.done / flowmap.fail / flowmap.st.cancelled / task.inProgressShort），
-  // 此处只补全景新面（顶栏/带头/泳道/子过程区/图例/空态）。
-  'delegate.view.title': '委托全景',
-  'delegate.view.back': '任务列表',
-  'delegate.view.stats': '{projects} 项目 · {delegates} 委托 · 活跃 {active} · 候合并 {rtm} · 合并窗 {win}',
-  'delegate.view.filterAll': '全部',
-  'delegate.view.entryBadge': '任务列表 ＝ 项目面板',
-  'delegate.view.lane.dispatch': '派发',
-  'delegate.view.lane.running': '运行',
-  'delegate.view.lane.rtm': '候合并',
-  'delegate.view.lane.merging': '合并中',
-  'delegate.view.lane.done': '完成',
-  'delegate.view.lane.sink': '汇点',
-  'delegate.view.sinkSub': '合并汇点 · base',
-  'delegate.view.subzone': '子过程 · 真实拓扑',
-  'delegate.view.stepPending': '待运行',
-  'delegate.view.merging': '合并中',
-  'delegate.view.restart': '重启中',
-  'delegate.view.windowHold': '合并窗持有',
-  'delegate.view.queueBadge': '合并队列 #{n}/{m}',
-  'delegate.view.fifo': 'FIFO #{n}',
-  'delegate.view.mergeWindow': '合并窗',
-  'delegate.view.report': '报告',
-  'delegate.view.ribbon': '合并管线批次推进',
-  'delegate.view.nDelegates': '{n} 委托',
-  'delegate.view.empty': '本项目暂无委托 · 从任务列表派发',
-  'delegate.view.emptyGlobal': '暂无委托 · 从任务列表派发',
-  'delegate.view.retry': '全景读取失败，点击重试',
-  'delegate.view.legend.status': '状态',
-  'delegate.view.legend.edges': '连线',
-  'delegate.view.legend.shapes': '形状',
-  'delegate.view.legend.edgeIdle': '派发 / 待上游',
-  'delegate.view.legend.edgeInflight': '进行中',
-  'delegate.view.legend.edgeDelivered': '已投递',
-  'delegate.view.legend.edgeRtm': '候合并入队',
-  'delegate.view.legend.edgeMerge': '合并窗流入',
-  'delegate.view.legend.shapeRoot': '任务根',
-  'delegate.view.legend.shapeDelegate': '委托',
-  'delegate.view.legend.shapeSub': '子过程',
-  'delegate.view.legend.shapeSink': '汇点',
-  'delegate.view.ariaBand': '项目 {name} 的委托全景',
-  'delegate.view.ariaCanvas': '项目 {name} 委托拓扑图：{summary}',
-
   // === 链视图（链视图紧凑 v2 批 2026-10-01 · 前端面 §16 草案键表）===
   // 徽标五态（§二.1.3）+ 悬停三条 + 取消确认框一条 + 未分组一条。
   // 🔴 定稿由复核位抽取呈作者（本位只按 mockup 措辞起草）。
@@ -2250,9 +2147,14 @@ export default {
   'canvas.loadingFile': '正在打开…',
   'canvas.loadFailed': '打开失败',
   'canvas.retry': '重试',
-  // canvas 文件刷新批（2026-10-25 作者令）：页签右下「重新读盘」钮
-  'canvas.refresh': '从磁盘重新读取',
+  // canvas 文件刷新批（2026-10-25 作者令）：页签右下「重新读盘」钮。canvas-auto-
+  // refresh 批（2026-11-17 作者令「去掉 改为带迟滞的自动检查变更刷新 时间窗60s」）
+  // 起手动钮与 canvas.refresh 键退役；refreshDirty 保留（自动路径脏守卫复用）。
   'canvas.refreshDirty': '有未保存的修改，先保存或撤销后再刷新。',
+  // 脏态「有更新」提示（canvas-auto-refresh 批）：迟滞到点但页签脏/源码态时挂的
+  // 轻量告知面（非常驻按钮），点击「立即刷新」仍走 refreshDirty 守卫。
+  'canvas.updateHint': '这个文件在磁盘上已有新内容（自动刷新已让路：本地有未保存的修改）。',
+  'canvas.updateNow': '立即刷新',
   // B7 文档后续批（2026-11-01）：脏页签关闭确认 + 外部改动冲突条
   'canvas.closeDirtyTitle': '关闭未保存的页签？',
   'canvas.closeDirtyMsg': '「{name}」有未保存的修改，关闭后这些修改会丢失。',
@@ -2632,7 +2534,9 @@ export default {
   'search.loadedOf': '已加载 {n}/{m} 条',
   'search.loadMore': '加载更多（已加载 {n}/{m} 条）',
   // 多选文件批量在 Canvas 打开（chatsearch-batch-open 批）
-  'search.openSelectedInCanvas': '在 Canvas 打开 ({n})',
+  'search.openSelectedInCanvas': '打开所选文件 ({n})',
+  'search.selectFiles': '选择文件',
+  'search.cancelSelection': '取消选择',
   'search.jumpArchived': '该消息在压缩前归档里，回放窗口内无原位',
   'search.noResults': '无匹配结果',
   'search.noResultsSuggestion': '试试缩短关键词或清除日期/类型筛选',
@@ -2803,6 +2707,8 @@ export default {
   'lightbox.loading': '加载中…',
   'lightbox.loadError': '图片加载失败',
   'lightbox.clickHint': '点击查看大图',
+  // 手机图片画廊（mobile-image-lightbox 批 2026-11-17）：P16 直开能力的显式次级入口。
+  'lightbox.openTab': '在标签页打开',
   // 框图大图查看（mermaid-viewer-stability 批 2026-11-06）
   'lightbox.diagramLabel': '框图查看',
   'lightbox.zoomIn': '放大',
@@ -3005,8 +2911,8 @@ export default {
   // 的 `promptFaces` 字段（判据单点 = BuiltinAgents.panelPromptFaces）。
   'agentManager.faceDelegate': 'Delegate 目标',
   'agentManager.faceNode': 'Node（flow 节点）',
-  'agentManager.faceDelegateHint': 'Delegate 会话收到的系统提示词（delegate_report 纪律）。',
-  'agentManager.faceNodeHint': 'flow 节点会话收到的系统提示词（node_report 纪律）。',
+  'agentManager.faceDelegateHint': 'Delegate 会话收到的系统提示词（delegate 终态语义）。',
+  'agentManager.faceNodeHint': 'flow 节点会话收到的系统提示词（节点终态申报纪律）。',
   'explorer.newFile': '新建文件',
   'explorer.newFolder': '新建文件夹',
   // === ui-device-faces 批（2026-10-10）：面B 文件浏览器远端目录 ===
@@ -3352,6 +3258,9 @@ export default {
   'todoapple.newListPh': '新建列表',
   'todoapple.more': '更多',
   'todoapple.newTodo': '新待办',
+  'todoapple.createUnconfirmed': '尚未确认保存，请检查连接并重试。为避免重复，请回到原会话重试。',
+  'todoapple.discardPending': '放弃重试',
+  'todoapple.replyFailed': '回复未发送，请检查主会话状态和连接后重试。',
   'todoapple.notes': '备注（可选）',
   'todoapple.save': '保存',
   'todoapple.markComplete': '标记完成',

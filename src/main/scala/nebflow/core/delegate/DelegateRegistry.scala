@@ -31,11 +31,29 @@ import nebflow.shared.PathUtil
  */
 object DelegateRegistry:
 
+  // ── 状态槽值域常量（终态申报工具通道退役 · T2 批：原定义随工具件删除，
+  //    引擎内部承接写点（updateReport / SubAgentStartupRecovery 落「已交付」态）
+  //    的值域 ⇒ 迁本伴生对象单点持有）。
+
+  /** 状态槽值：任务完成（引擎内部承接写点使用；模型可见面零申报工具指令）。 */
+  val FinishValue: String = "finish"
+
+  /** 状态槽值：入队等合并（历史盘面兼容值）。 */
+  val MergeValue: String = "merge"
+
+  /**
+   * 状态槽值：显式待命（案A 批 2026-10-31 · 作者 11:40 拍板「显式待命态为主干」；
+   * 状态矩阵批 2026-11-01 收编为矩阵组合 complete×standby）：回合收尾挂起待命——
+   * 不终判、不投父、任务行保持 running、会话停靠 Waiting 显「待命」，Mail 到达唤醒续跑。
+   */
+  val StandbyValue: String = "standby"
+
   /**
    * 一条持久 delegate 记录。
    *
-   * worktree-judge-fifo 批（#1224 增补 §3.4）**扩面**：末四字段 = delegate_report
-   * 的**状态槽**（仅状态单写，不携汇报——汇报仍走终态消息直传）。旧记录无此四键
+   * worktree-judge-fifo 批（#1224 增补 §3.4）**扩面**：末四字段 = 终态申报的
+   * **状态槽**（仅状态单写，不携汇报——汇报仍走终态消息直传；申报工具通道退役后
+   * 本槽由引擎内部写点持有）。旧记录无此四键
    * ⇒ 解码按缺失 = None 容忍（手工 Decoder 单点，见文件尾——deriveDecoder 不吃
    * 缺键，会让存量记录在 list 里静默消失，禁）。
    */
@@ -68,7 +86,7 @@ object DelegateRegistry:
     baseBranch: Option[String] = None,
     /** 基工作区（合并执行的 `git -C` 目标；worktree 腿 = 项目 workspace，就地腿 = cwd）。 */
     projectWorkspace: Option[String] = None,
-    /** delegate_report 状态槽：finish | blocked（未申报 = None）。 */
+    /** 终态申报状态槽：finish | blocked（未申报 = None）。 */
     reportStatus: Option[String] = None,
     /** 申报 detail（blocked 的原因承载）。 */
     reportDetail: Option[String] = None,
@@ -76,7 +94,7 @@ object DelegateRegistry:
     reportSuggestion: Option[String] = None,
     /**
      * 工作结果文本槽（delegate-finish-report 修复批 2026-10-25）：ready-to-merge
-     * 停靠（HoldForMerge）时保真的**工作轮终稿**（delegate_report merge 轮的终文
+     * 停靠（HoldForMerge）时保真的**工作轮终稿**（申报 merge 轮的终文
      * ——合并轮 finish 终文会把它顶掉，本槽 = 工作结果不随两段汇报丢失的承载面）。
      * first-write-wins（首个非空文本落槽后不再改写）；`updateReport` 覆写旧
      * detail 时此处留底（老 delegate 无停靠保真 → merge 申报 detail 回落补种）。
@@ -123,10 +141,14 @@ object DelegateRegistry:
      */
     worktreeJudged: Option[Boolean] = None,
     /**
-     * 归档时间戳（delegate-ui 批 2026-10-08 · G6，epoch millis）：`None` = 在册
-     * （rows 默认窗）；`Some` = 历史窗（`GET /api/chains?archived=1`）。**零删除
-     * 纪律**：归档只加时间戳旗（记录/子代理记账/链记录原样留存——children 随档 =
-     * 查询面按 parentSessionId 原样可达），绝不删行。缺省 None：旧盘面照常解码。
+     * **存量归档旗**（delegate-ui 批 2026-10-08 · G6，epoch millis）——delegate-lifecycle-reform
+     * 阶段② 起**只读兼容面**：可见性改由状态派生（[[DelegateVisibility]] 的收口证据 +
+     * [[disposition]] 非破坏性旗），本槽**零新写入**（归档/反归档写点与自动归档已整体退役）。
+     *
+     * 读面语义（**为什么保留**）：863 条在盘旧记录的既有「已归档」读数原样可读——
+     * [[DelegateVisibility.Reading.legacyArchived]] = 本槽在场，读面等价折叠成历史窗
+     * （面板观感零变化）；引擎行为腿（崩溃恢复/复活/唤醒/TTL）**不再吃本槽**（改吃状态
+     * 派生读数）。零删除纪律不破：记录/子代理记账/链记录原样留存。缺省 None：旧盘面照常解码。
      */
     archivedAt: Option[Long] = None,
     /**
@@ -169,7 +191,7 @@ object DelegateRegistry:
      * 待命停靠时刻（案A 批 2026-10-31 · 作者 11:40 拍板显式待命态为主干；审计基线
      * `docs/20261031_112344_delegate-standby-semantics-audit__delegate-nebflow-c0a2b939.md`；
      * 状态矩阵批 2026-11-01 收编为矩阵组合 complete×standby）：
-     * delegate_report 申报 `standby` 且回合收尾被判定机采纳 ⇒ 停靠写时刻（epoch
+     * 显式待命申报 `standby` 且回合收尾被判定机采纳 ⇒ 停靠写时刻（epoch
      * millis）——任务行保持 running、会话置 Waiting、不终判不投父；面板/快照面
      * 据此透出「待命（等作者）」。**写点 = 回合收尾采纳点**（非申报点——同回合
      * 后续 finish/merge 覆写申报时本槽不脏）；消费三态：Some = 在待命、None =
@@ -189,7 +211,7 @@ object DelegateRegistry:
      * 重启后仍在；`frozenSince = 冻结时刻`（epoch millis）。
      *
      * 与 [[standbySince]] 的分工（两者互斥语义，不共用槽）：standby = **自愿待命**
-     * （delegate_report 申报，回合正常收尾，等作者给活）；frozen = **异常冻结**（回合
+     * （显式待命申报，回合正常收尾，等作者给活）；frozen = **异常冻结**（回合
      * 异常中断，等唤醒续做）。写点 = 监督者冻结腿（[[nebflow.core.delegate
      * .DelegateFreeze.park]]），清点 = 唤醒（Mail live 注入 / 面板唤醒 / boot 原地复活）
      * 与真正终态（[[nebflow.core.delegate.DelegateTerminal.onTerminalCleanup]]）。
@@ -237,7 +259,44 @@ object DelegateRegistry:
      */
     seatSnapshotSha: Option[String] = None,
     /** 就地腿的派发时快照：spawn 时 `git status --porcelain` 的路径集（同上）。 */
-    seatSnapshotDirty: Option[List[String]] = None
+    seatSnapshotDirty: Option[List[String]] = None,
+    /**
+     * 当前执行轮次号（轮次模型）：spawn = round 1；已结算后 Mail 续唤开新轮
+     * （roundNo+1）；冻结唤醒 / boot 复活 = 同轮续跑（不变）。明细（起跑、基线、
+     * 结算、判词、已计提交）在 `delegates/<id>.rounds.jsonl` append-only 台账
+     * （[[DelegateRoundLedger]]），Record 只存**当前轮指针**。缺省 None：旧盘面
+     * 记录照常解码（读面按 round 1 隐式处理，零迁移）。
+     */
+    roundNo: Option[Int] = None,
+    /**
+     * 当前轮次主键（UUID，轮次开跑时铸造；与 CompletionDebtStore 的 generation 同值
+     * ——终态邮箱幂等键 `<id>#<roundId>` 即既有代际机制）。缺省 None / ""：旧盘面
+     * 照常解码（无轮次形态，行为与升级前兼容）。
+     */
+    roundId: Option[String] = None,
+    externalModel: Option[String] = None,
+    /**
+     * **非破坏性确认/忽略旗**（delegate-lifecycle-reform 阶段② · 作者令）：值域 =
+     * [[DispositionAcknowledged]]（"acknowledged" = 我看到了/收下了）/ [[DispositionIgnored]]
+     * （"ignored" = 我不想再看到）；空 = 未表态。这是「归档」退场后的**用户表态**承载面：
+     *  - **零删除**：只写本槽与 [[dispositionAt]]，记录/子代理记账/转录/worktree/历史行
+     *    原样留存，可随时清除（[[clearDisposition]]）⇒ 行回活动窗；
+     *  - **可见性**（[[DelegateVisibility.Reading.historyWindow]]）：收口 ∧ 本旗在场 ⇒
+     *    历史窗；**收口前表态无效**（未收口的身份照常在活动窗，绝不因表态隐藏未完工作）；
+     *  - 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    disposition: Option[String] = None,
+    /** 表态时刻（epoch millis；与 [[disposition]] 同写点单写，清旗时一并清空）。 */
+    dispositionAt: Option[Long] = None,
+    /**
+     * **置顶标记**（delegate-lifecycle-reform 阶段③ · 作者令「七天物理清理 + 重要记录置顶」）：
+     * 时刻（epoch millis）在场 = 本条身份**豁免 7 天物理清理**——终态 TTL 判读
+     * （[[DelegateTerminalTtl.verdict]]）对它恒返 [[DelegateTerminalTtl.Pinned]]，
+     * 清理链（[[nebflow.agent.DelegateTtlSweep]]）零动作。**非破坏性、可撤销**：
+     * 摘标记（[[unpin]]）即回到正常 TTL 计时（记录/台账/历史原样留存，零删除）。
+     * 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    pinnedAt: Option[Long] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -257,6 +316,8 @@ object DelegateRegistry:
   def put(record: Record): Unit =
     os.makeDir.all(dir)
     AtomicJson.writeSync(fileOf(record.id), record.asJson.noSpaces)
+    // 阶段③ 写路径钩子（单缝追加，零新增写面；失败软化——索引落后由读面对账收敛）
+    DelegateIndex.onRecordWritten(record.id)
 
   /** 持久查找（每次现读；坏形/缺失 → None，绝不抛）。 */
   def find(id: String): Option[Record] =
@@ -268,7 +329,17 @@ object DelegateRegistry:
         else io.circe.parser.parse(os.read(p)).toOption.flatMap(_.as[Record].toOption)
       catch case _: Throwable => None
 
-  /** Remove one registry entry after its terminal TTL has elapsed. */
+  /**
+   * 移除一条登记条目（终态 TTL 到期后的**物理清理**动作面）。
+   *
+   * 阶段③（delegate-lifecycle-reform）**扩物理面**：本函数现在一并清走该身份自己的
+   * 两份源文件与索引行——`<id>.json`（身份）+ `<id>.rounds.jsonl`（轮次台账 append-only
+   * 史）+ 索引两区行。理由 = 作者令的「七天物理清理」：TTL 到期的身份若把台账留在盘上，
+   * 「清理」只清一半（台账成为无主孤儿，正是 [[DelegateIndex.validateDedup]] 要报告的
+   * 形态）；已在册身份仍走 TTL 判读（[[DelegateTerminalTtl.Pinned]] 置顶者**永不**到此），
+   * 历史事实由 ChainStore 行与子代理记账承载（brief「语义 = 清理」不变）。
+   * 任务行剪行仍由调用方（[[nebflow.agent.DelegateTtlSweep]]）负责。
+   */
   def remove(id: String): Either[String, Unit] =
     if !validId(id) then Left(s"delegate registry: invalid session id '$id'")
     else
@@ -276,30 +347,34 @@ object DelegateRegistry:
         try
           val file = fileOf(id)
           if os.exists(file) then os.remove(file)
+          val ledger = DelegateIndex.ledgerFileOf(PathUtil.dataRoot, id)
+          if os.exists(ledger) then os.remove(ledger)
+          DelegateIndex.onRecordRemoved(id)
           Right(())
         catch case e: Throwable => Left(s"delegate registry remove failed for '$id': ${e.getMessage}")
       }
 
-  /** 全量列出（按 createdAt 倒序；坏文件跳过）。 */
+  /**
+   * 全量列出（按 createdAt 倒序，id 为确定性次序键；坏文件跳过）。
+   *
+   * 阶段③（delegate-lifecycle-reform）：**启动加载面改吃索引**——索引在场且源码在场 ⇒
+   * [[DelegateIndex.listRecords]] 给出全量记录（水位 `(mtime,size)` 失效策略，零源文件
+   * 重解析）；关闸 / 索引禁用 / 源码目录缺席 / 任何异常 ⇒ [[DelegateIndex.scanRecords]]
+   * 目录扫描（与阶段③ 前逐行同源）。**正确性不依赖索引新鲜度**：索引只在源码在场时服务，
+   * 回退路径就是阶段③ 前的基线面（最坏 = 慢，不退化为错）。
+   */
   def list(): List[Record] =
-    try
-      if !os.exists(dir) then Nil
-      else
-        os.list(dir)
-          .filter(_.ext == "json")
-          .flatMap(p => io.circe.parser.parse(os.read(p)).toOption.flatMap(_.as[Record].toOption))
-          .toList
-          .sortBy(-_.createdAt)
-    catch case _: Throwable => Nil
+    DelegateIndex.listRecords().getOrElse(DelegateIndex.scanRecords(PathUtil.dataRoot))
 
   /** 续聊地址行——Delegate 回执与 Mail 地址面提示共用一份措辞。 */
   def continuationLine(id: String): String =
     s"\nContinuation address: \"delegate:$id\" — later communication about THIS instance (supplements, corrections) goes through Mail(address=\"delegate:$id\"). Its result is delivered back to your session when it finishes."
 
   /**
-   * delegate_report 状态槽单写（#1224 增补 §3.4）：读-改-写（同步整写），只动
+   * 终态申报状态槽单写（#1224 增补 §3.4）：读-改-写（同步整写），只动
    * report* 四键，其余字段原样保真。查无记录 = `Left`（不凭空造记录——申报的
-   * 身份必须来自真实 spawn）。
+   * 身份必须来自真实 spawn）。申报工具通道退役（T2 批）后本写点 = **引擎内部
+   * 承接写**（恢复腿落「已交付」态等），不再是模型可见通道。
    *
    * delegate-finish-report 修复批 2026-10-25 **preserve-before-overwrite**：本槽
    * 是单槽（新申报覆写旧申报）——merge 轮的详细工作汇报会被 finish 轮的「合并
@@ -308,11 +383,12 @@ object DelegateRegistry:
    * ——停靠保真已落槽的工作轮终稿优先级更高，绝不被申报留底顶掉）。
    */
   def updateReport(id: String, status: String, detail: String, suggestion: String): Either[String, Unit] =
-    if !validId(id) then Left(s"delegate_report: invalid session id '$id'")
+    if !validId(id) then Left(s"delegate registry: invalid session id '$id'")
     else
       writeLock.synchronized {
         find(id) match
-          case None => Left(s"delegate_report: no registry record for '$id' — report after a real Delegate spawn")
+          case None =>
+            Left(s"delegate registry: no record for '$id' — the write point only lands on a real Delegate spawn")
           case Some(rec) =>
             try
               val preservedWorkReport = rec.workReport.orElse {
@@ -323,7 +399,7 @@ object DelegateRegistry:
               // standby 是旧轮的意图——唤醒/重申报后轮收尾不再误认待命）。standby
               // 申报本身不动槽（停靠时刻由回合收尾采纳点单写，见 [[parkStandby]]）。
               val standbyCleared =
-                if status != nebflow.core.tools.DelegateReportTool.StandbyValue then None
+                if status != StandbyValue then None
                 else rec.standbySince
               // 待命期边界（应答消费批 2026-11-03）：非 standby 申报把停靠槽清掉
               // ⇒ 旧待命期结束，看护记账清零（下一轮待命 = 新期，退避序从头发）。
@@ -338,7 +414,7 @@ object DelegateRegistry:
                 )
               )
               Right(())
-            catch case e: Throwable => Left(s"delegate_report: write failed: ${e.getMessage}")
+            catch case e: Throwable => Left(s"delegate registry: report write failed: ${e.getMessage}")
       }
 
   /**
@@ -348,6 +424,39 @@ object DelegateRegistry:
    * = 零写（无可保真）。查无记录 = `Left`（与 updateReport 同纪律：只对真实
    * spawn 生效）。
    */
+  /** Root workspace reconciliation's structured finish update; caller supplies only a durable confirmation receipt. */
+  def confirmWorkspaceCompletion(id: String, operationId: String, confirmation: String): Either[String, Unit] =
+    if !validId(id) then Left(s"workspace reconcile: invalid delegate id '$id'")
+    else if operationId.trim.isEmpty || confirmation.trim.isEmpty then
+      Left("workspace reconcile: missing operation receipt")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"workspace reconcile: no registry record for '$id'")
+          case Some(rec) =>
+            decideCompletionWrite(rec, confirmation) match
+              case Left(error) => Left(error)
+              case Right(updated) =>
+                try
+                  put(updated)
+                  Right(())
+                catch case e: Throwable => Left(s"workspace reconcile registry write failed: ${e.getMessage}")
+      }
+
+  /**
+   * Pure decision for the reconciliation finish write — deterministic and disk-free so
+   * replays can never clobber a NEWER claim: an old receipt is idempotent only against
+   * itself, allowed onto an unreported slot, and refused against any later finish /
+   * standby / blocked report. `workReport` is never touched here.
+   */
+  private[delegate] def decideCompletionWrite(rec: Record, confirmation: String): Either[String, Record] =
+    if rec.reportStatus.contains("finish") && rec.reportDetail.contains(confirmation) then
+      Right(rec) // idempotent replay
+    else if rec.cancelRequestedAt.isDefined then Left("delegate has a cancel tombstone; completion receipt refused")
+    else if rec.reportStatus.isEmpty then
+      Right(rec.copy(reportStatus = Some("finish"), reportDetail = Some(confirmation), reportSuggestion = None))
+    else Left("registry report slot carries a newer claim; stale reconcile receipt refused")
+
   def updateWorkResult(id: String, text: String): Either[String, Unit] =
     if !validId(id) then Left(s"updateWorkResult: invalid session id '$id'")
     else if text.trim.isEmpty then Right(())
@@ -383,7 +492,6 @@ object DelegateRegistry:
             val ts = System.currentTimeMillis()
             try
               put(rec.copy(standbySince = Some(ts)))
-              if !rec.mode.contains("dispatcher") then WorkspaceLedger.default.settle(id, frozen = false)
               Right(ts)
             catch case e: Throwable => Left(s"parkStandby: write failed: ${e.getMessage}")
       }
@@ -448,7 +556,6 @@ object DelegateRegistry:
                   frozenTrigger = rec.frozenTrigger.orElse(trig)
                 )
               )
-              WorkspaceLedger.default.settle(id, frozen = true)
               Right(ts)
             catch case e: Throwable => Left(s"parkFrozen: write failed: ${e.getMessage}")
       }
@@ -523,48 +630,119 @@ object DelegateRegistry:
               catch case e: Throwable => Left(s"orchestrationMode upgrade: write failed: ${e.getMessage}")
       }
 
+  // ── 非破坏性确认/忽略旗（阶段②：归档写点的替代面）────────────────────────
+
+  /** 表态值：确认（"acknowledged"）。 */
+  val DispositionAcknowledged: String = "acknowledged"
+
+  /** 表态值：忽略（"ignored"）。 */
+  val DispositionIgnored: String = "ignored"
+
+  /** 表态值域（写面白名单；未列表值 = Left，绝不落自由文本）。 */
+  val DispositionWords: Set[String] = Set(DispositionAcknowledged, DispositionIgnored)
+
+  /** 值域校验（HTTP 面/工具面共用单点）。 */
+  def isDispositionWord(word: String): Boolean = DispositionWords.contains(word)
+
   /**
-   * 归档单写（G6，delegate-ui 批 2026-10-08）：`archivedAt = now` 单旗，**零删除**——
-   * 记录本体/子代理记账/链记录原样留存（历史窗 = 读面按本旗过滤，见
-   * [[nebflow.core.project.ChainsReadFace]] rows 臂 `?archived=1`）。幂等：已归档 =
-   * 返回原时间戳（零重写）。查无记录 = `Left`（归档动作只对真实 spawn 生效）。
+   * 表态单写（阶段② · 「归档/反归档」退场后的**唯一可见性写面**）：
+   * `disposition = word` + `dispositionAt = now`，**只动这两槽**——记录本体/子代理记账/
+   * 转录/worktree/轮次台账原样（零删除纪律）。幂等：同值已表态 = 原时刻返回（零重写）。
+   * 查无记录 = `Left`；word ∉ [[DispositionWords]] = `Left`（值域闸，绝不落自由文本）。
+   * 写锁同缝串行（与其余单记录读-改-写互斥）。
    */
-  def archive(id: String): Either[String, Long] =
-    if !validId(id) then Left(s"archive: invalid session id '$id'")
+  def setDisposition(id: String, word: String): Either[String, Long] =
+    if !validId(id) then Left(s"disposition: invalid session id '$id'")
+    else if !isDispositionWord(word) then
+      Left(s"disposition: unknown value '$word' (expected one of ${DispositionWords.toList.sorted.mkString(", ")})")
     else
       writeLock.synchronized {
         find(id) match
-          case None => Left(s"archive: no registry record for '$id'")
+          case None => Left(s"disposition: no registry record for '$id'")
           case Some(rec) =>
-            rec.archivedAt match
-              case Some(ts) => Right(ts) // 幂等：已归档原样返回，零重写
-              case None =>
+            rec.disposition match
+              case Some(existing) if existing == word =>
+                Right(rec.dispositionAt.getOrElse(System.currentTimeMillis())) // 幂等：同值零重写
+              case _ =>
                 val ts = System.currentTimeMillis()
                 try
-                  put(rec.copy(archivedAt = Some(ts)))
+                  put(rec.copy(disposition = Some(word), dispositionAt = Some(ts)))
                   Right(ts)
-                catch case e: Throwable => Left(s"archive: write failed: ${e.getMessage}")
+                catch case e: Throwable => Left(s"disposition: write failed: ${e.getMessage}")
       }
 
   /**
-   * 反归档单写（delegate/flowmap 两层架构批 2026-10-09 · G4-2）：`archivedAt = None`
-   * ——归档抽屉「恢复」动作的引擎缝（历史窗 → 在册窗回流）。幂等：未归档 = `Right`
-   * 零写；查无记录 = `Left`。**零删除纪律不破**：恢复只摘旗，记录本体/子代理记账/
-   * 链记录原样（与 [[archive]] 对偶的单点反操作——写锁同缝串行）。
+   * 表态清除（**非破坏性的对偶面**）：`disposition` / `dispositionAt` 双槽清空 ⇒
+   * 该行按状态派生可见性回活动窗（收口后仍收口——清除的只是「用户表态」）。幂等：
+   * 未表态 = `Right` 零写。查无记录 = `Left`。**零删除**：记录与全部历史原样。
    */
-  def unarchive(id: String): Either[String, Unit] =
-    if !validId(id) then Left(s"unarchive: invalid session id '$id'")
+  def clearDisposition(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearDisposition: invalid session id '$id'")
     else
       writeLock.synchronized {
         find(id) match
-          case None => Left(s"unarchive: no registry record for '$id'")
+          case None => Left(s"clearDisposition: no registry record for '$id'")
           case Some(rec) =>
-            if rec.archivedAt.isEmpty then Right(()) // 幂等：未归档零写
+            if rec.disposition.isEmpty && rec.dispositionAt.isEmpty then Right(()) // 幂等：未表态零写
             else
               try
-                put(rec.copy(archivedAt = None))
+                put(rec.copy(disposition = None, dispositionAt = None))
                 Right(())
-              catch case e: Throwable => Left(s"unarchive: write failed: ${e.getMessage}")
+              catch case e: Throwable => Left(s"clearDisposition: write failed: ${e.getMessage}")
+      }
+
+  /** 表态读数（纯查盘；面板/读面单点）。 */
+  def dispositionOf(id: String): Option[(String, Long)] =
+    find(id).flatMap(rec => rec.disposition.map(w => (w, rec.dispositionAt.getOrElse(0L))))
+
+  // ── 置顶标记（阶段③：七天物理清理的**豁免面**）───────────────────────────
+
+  /** 置顶读数（纯查盘；清理面/TTL 判读共用）。 */
+  def pinnedOf(id: String): Option[Long] = find(id).flatMap(_.pinnedAt)
+
+  /** 是否置顶（读数短形）。 */
+  def isPinned(id: String): Boolean = pinnedOf(id).isDefined
+
+  /**
+   * 置顶单写（阶段③ · 作者令「重要记录置顶」）：`pinnedAt = now` 单槽——**幂等**
+   * （已置顶 = 原时刻零重写，与墓碑/归档旗同款纪律）。置顶 = 终态 TTL **不判到期**
+   * （[[DelegateTerminalTtl.Pinned]]）⇒ 七天物理清理永不作用于本身份；记录/台账/历史
+   * 原样留存。查无记录 = `Left`（置顶只对真实 spawn 生效）。写锁同缝串行。
+   */
+  def pin(id: String): Either[String, Long] =
+    if !validId(id) then Left(s"pin: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"pin: no registry record for '$id'")
+          case Some(rec) =>
+            rec.pinnedAt match
+              case Some(ts) => Right(ts) // 幂等：已置顶原样返回，零重写
+              case None =>
+                try
+                  val ts = System.currentTimeMillis()
+                  put(rec.copy(pinnedAt = Some(ts)))
+                  Right(ts)
+                catch case e: Throwable => Left(s"pin: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 摘置顶（**非破坏性的对偶面**）：`pinnedAt` 单槽清空 ⇒ 该身份回到正常 7 天 TTL 计时
+   * （记录/台账/历史原样留存，零删除）。幂等：未置顶 = `Right` 零写。查无记录 = `Left`。
+   */
+  def unpin(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"unpin: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"unpin: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.pinnedAt.isEmpty then Right(()) // 幂等：未置顶零写
+            else
+              try
+                put(rec.copy(pinnedAt = None))
+                Right(())
+              catch case e: Throwable => Left(s"unpin: write failed: ${e.getMessage}")
       }
 
   /**
@@ -663,6 +841,28 @@ object DelegateRegistry:
     find(id).map(SessionResumption.displayTitle(_)).getOrElse(id)
 
   /**
+   * 当前轮指针单写（轮次模型）：`roundNo` / `roundId` 一并落盘。**阶段② 起不再摘归档旗**
+   * ——身份回现役窗是**状态派生**的（新轮未结算 ⇒ [[DelegateVisibility]] 现读判非收口 ⇒
+   * 行自动回活动窗），零旗写盘即可复现「开新轮即回现役」。幂等语义由调用方
+   * （[[DelegateRoundLedger.openNewRound]] / spawn 写点）持有——本函数只做读-改-写单点。
+   * 查无记录 = `Left`（轮次只对真实 spawn 生效）。
+   */
+  def startRound(id: String, roundNo: Int, roundId: String): Either[String, Unit] =
+    if !validId(id) then Left(s"startRound: invalid session id '$id'")
+    else if roundNo < 1 then Left(s"startRound: roundNo must be >= 1, got $roundNo")
+    else if roundId.trim.isEmpty then Left(s"startRound: roundId must be non-empty")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"startRound: no registry record for '$id'")
+          case Some(rec) =>
+            try
+              put(rec.copy(roundNo = Some(roundNo), roundId = Some(roundId)))
+              Right(())
+            catch case e: Throwable => Left(s"startRound: write failed: ${e.getMessage}")
+      }
+
+  /**
    * JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
    * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
    * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。
@@ -706,6 +906,12 @@ object DelegateRegistry:
       resumedFrom <- c.get[Option[String]]("resumedFrom")
       seatSnapshotSha <- c.get[Option[String]]("seatSnapshotSha")
       seatSnapshotDirty <- c.get[Option[List[String]]]("seatSnapshotDirty")
+      roundNo <- c.get[Option[Int]]("roundNo")
+      roundId <- c.get[Option[String]]("roundId")
+      externalModel <- c.get[Option[String]]("externalModel")
+      disposition <- c.get[Option[String]]("disposition")
+      dispositionAt <- c.get[Option[Long]]("dispositionAt")
+      pinnedAt <- c.get[Option[Long]]("pinnedAt")
     yield Record(
       id,
       executor,
@@ -741,7 +947,13 @@ object DelegateRegistry:
       frozenTrigger,
       resumedFrom,
       seatSnapshotSha,
-      seatSnapshotDirty
+      seatSnapshotDirty,
+      roundNo,
+      roundId,
+      externalModel,
+      disposition,
+      dispositionAt,
+      pinnedAt
     )
 
   /**

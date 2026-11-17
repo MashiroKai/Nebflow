@@ -66,7 +66,7 @@ object NodeRunner:
      * （`task` | `verifier`）随 spawn 注入 —— NodeEngine 节点/loop 会话 spawn 点
      * 置 `Some(node.role)`；分发器与非项目轨（Delegate/SubTask/flow）保持 None。
      * 经 SessionContext → AgentCore → ToolContext.flowNodeRole 全链透传，是
-     * `node_report` 值域分化与 ProtocolFootnote 角色分支的来源。None = 判据侧
+     * 终态协议角色分支（ProtocolFootnote verifier 附录）的来源。None = 判据侧
      * 回落 `NodeRoles.Task`（缺省语义）。
      */
     flowNodeRole: Option[String] = None,
@@ -140,7 +140,12 @@ object NodeRunner:
      * 对端会话初始 cwd（对端接收面 params.cwd → ToolContext.sessionCwd）。
      * None = 无注入（现状零变化）。
      */
-    sessionDeviceWorkspace: Option[String] = None
+    sessionDeviceWorkspace: Option[String] = None,
+    protectedExecution: Option[nebflow.core.ProtectedExecutionHandle] = None,
+    /** Durable checkpoint state restored before the protected actor starts. */
+    initialState: Option[AgentState] = None,
+    /** Protected recovery must continue from the next legal boundary on spawn. */
+    continueOnSpawn: Boolean = false
   )
 
   /**
@@ -149,8 +154,31 @@ object NodeRunner:
    * agent.SharedResources.spawnAgentActor(resources 以 this 代入,receiver == p.resources
    * 由本委托保证);此处一行委托,零行为差。
    */
+  def admitProtected(
+    p: SpawnParams,
+    admission: nebflow.shared.ExecutionAdmission
+  ): IO[Either[String, SpawnParams]] =
+    val unsupported = p.isDispatcher || p.isFlowNode || p.isSubTaskWorker || p.expectsMail ||
+      p.flowNodeId.nonEmpty || p.flowNodeRole.nonEmpty || p.flowChainId.nonEmpty ||
+      p.sessionDevice.nonEmpty || p.sessionDeviceWorkspace.nonEmpty || p.projectSession || p.initialMessages.nonEmpty
+    if p.sessionId != admission.sessionId || p.protectedExecution.nonEmpty then
+      IO.pure(Left("invalid-protected-binding"))
+    else if unsupported || p.agentDef.name != nebflow.core.entity.BuiltinAgents.ExecutorName then
+      IO.pure(Left("unsupported-boundary"))
+    else
+      p.resources.executionProtection(admission.ownerBinding).flatMap {
+        case nebflow.shared.ExecutionProtection.Unprotected =>
+          nebflow.core.ExecutionCommitPort.admitHandle(p.resources.executionCommitPort, admission)
+            .map(_.map(handle => p.copy(protectedExecution = Some(handle))))
+        case _ => IO.pure(Left("unsupported-protected-parent"))
+      }
+
   def spawnAgentActor(system: ActorSystem, p: SpawnParams): IO[ActorRef[AgentCommand]] =
-    p.resources.spawnAgentActor(system, p)
+    if p.protectedExecution.nonEmpty then p.resources.spawnAgentActor(system, p)
+    else p.resources.executionProtection(p.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected => p.resources.spawnAgentActor(system, p)
+      case _ => IO.raiseError(new IllegalStateException("protected-or-unknown-execution-requires-recovery"))
+    }
 
   /**
    * 子会话 WS 路由包装（node/dispatcher 会话进 subagent 面板的接线点，#28

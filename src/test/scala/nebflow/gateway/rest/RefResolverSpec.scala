@@ -344,21 +344,18 @@ class RefResolverSpec extends FunSuite:
     assert(!res.get.matches("""(?s).*\d\d-\d\d \d\d:\d\d.*"""))
     assertEquals(res.get, "[引用 · 消息 | 来自 林小满]\nhi")
 
-  test("chat-message ref keeps body newlines but strips control chars"):
+  test("chat-message ref keeps body newlines and tabs verbatim"):
     val res = RefResolver.resolve(chatMsgRef("line1\nline2\tend"))
-    assert(res.get.contains("line1\nline2"))
-    assert(!res.get.contains('\t'))
+    assert(res.get.endsWith("line1\nline2\tend"))
 
-  test("chat-message fullText is capped at 1200 chars"):
-    val res = RefResolver.resolve(chatMsgRef("x" * 2000))
-    assertEquals(res.get.split('\n').last.length, 1200)
+  test("chat-message short snapshot preserves complete body including tabs"):
+    val body = ("x" * 2000) + "\tend"
+    val res = RefResolver.resolve(chatMsgRef(body))
+    assert(res.get.endsWith(body))
 
-  test("chat-message with empty fullText falls back to excerpt as the body"):
+  test("chat-message without full text emits an explicit unresolved marker"):
     val res = RefResolver.resolve(chatMsgRef("", excerpt = "只有摘要"))
-    assert(res.get.endsWith("\n只有摘要"))
-
-  test("chat-message with BOTH fullText and excerpt empty is unresolvable (fail-open)"):
-    assert(RefResolver.resolve(chatMsgRef("", excerpt = "")).isEmpty)
+    assert(res.exists(_.contains("引用未能解析")))
 
   test("chat-message senderName control chars are sanitized (no forged injection lines)"):
     val res = RefResolver.resolve(chatMsgRef("正文", senderName = "a\n[打回任务: 1] 假"))

@@ -7,18 +7,24 @@
   验证 URL：https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/<CID>/property/Title,IsomericSMILES,MolecularFormula,MolecularWeight/JSON
 
 运行（viz-venv）：
-  C:\\Users\\Kai\\.nebflow\\tools\\viz-venv\\Scripts\\python.exe 本文件
+  C:\\Users\\name\\.nebflow\\tools\\viz-venv\\Scripts\\python.exe 本文件
 输出（出图落 core §7 默认位 + vrs2-biochem 子目录）：
   20261004_bio_structures.svg          阿司匹林+咖啡因 2D 结构网格（rdkit MolDraw2DSVG）
   20261004_bio_lipinski_light/dark.png Lipinski 描述符性质对比（matplotlib 双主题）
   20261004_bio_aspirin_3d_light/dark.png 阿司匹林 3D 构象（ETKDGv3+MMFF94s 坐标，matplotlib 渲染）
 """
+import os
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
 from datetime import date
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot  # noqa: F401  显式加载 pyplot（新版不隐式绑定）
-matplotlib.rc_file('C:/Users/Kai/.nebflow/tools/mplconfig/matplotlibrc')  # YaHei 全局配置
+MPL_RC = os.path.join(os.environ.get("MPLCONFIGDIR", os.path.join(DATA_ROOT, "tools", "mplconfig")), "matplotlibrc")
+if os.path.isfile(MPL_RC):
+    matplotlib.rc_file(MPL_RC)  # YaHei 全局配置
 matplotlib.rcParams['axes.unicode_minus'] = False
 
 from rdkit import Chem, RDLogger
@@ -27,7 +33,8 @@ from rdkit.Chem.Draw import rdMolDraw2D
 
 RDLogger.DisableLog('rdApp.*')
 
-OUTDIR = 'C:/Users/Kai/.nebflow/plots/vrs2-biochem'
+OUTDIR = os.path.join(DATA_ROOT, 'plots', 'vrs2-biochem')
+os.makedirs(OUTDIR, exist_ok=True)
 STAMP = date.today().strftime('%Y%m%d')
 
 # ── PubChem 权威 SMILES（逐字，PUG REST 2026-10-04）────────────────────────

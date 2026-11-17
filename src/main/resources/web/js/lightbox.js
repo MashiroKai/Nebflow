@@ -19,6 +19,13 @@
 //      Both faces (chat bubble + Canvas document) ride the SAME fence renderer,
 //      so this is one entry point, not two components.
 // Close: ESC / backdrop click / close button.
+//   4. 手机层图片画廊（mobile-image-lightbox 批 2026-11-17 作者令逐字：「现在手机
+//      端点图片为什么会单独打开一个标签页 我想的是像微信那样的弹窗就行了」）——
+//      P16 的「手机媒体 = 系统直开」由本批收窄为「图片进画廊、视频/其他附件照旧
+//      直开」：routeMediaClick 手机腿动态 import 本模块 openImageGallery（画廊 =
+//      既有浮层的图片模式 + 滑动切图/页码/下滑关闭/「在标签页打开」次级入口，
+//      见下方画廊块；动态 import 是既有防环先例——mediaOpenRoute 已被本模块静态
+//      import，utils.js 同款）。
 //
 // ── 两种内容模式，一个组件（不造第二个查看器）───────────────────────────
 //   mode 'img'  —— 图片：既有路径逐字保留（账本单点取字节 / 票据纪律 / 失败面）。
@@ -40,7 +47,7 @@ import { figureSize } from './fenceKit.js';
 // 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，手机端
 // 的媒体统一都是直接打开」）：markdown 气泡图与帧消息图片两类入口的分流单点。
 // 灯箱本体降为兜底面（桌面 pathless / 手机直开链尽空），不再是这两类入口的一级行为。
-import { routeMediaClick } from './mediaOpenRoute.js';
+import { routeMediaClick, openMediaDirect } from './mediaOpenRoute.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：本地路径的字节改经 **nfFileCache 账本
 // 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
 // 账本票据链取数 + 入账（恰一次）。失败回落既有 reMint 直取腿（下方逐字保留）。
@@ -85,6 +92,40 @@ const FIG_MIN = 0.3;
 const FIG_MAX = 6;
 /** 拖动容差（px）：起手在图上滑一下不等于点开（作者令「避免…拖动误触打开」）。 */
 const DRAG_SLOP = 8;
+
+/* ── 画廊模式（mobile-image-lightbox 批 2026-11-17）─────────────────────
+   作者令逐字：「现在手机端点图片为什么会单独打开一个标签页 我想的是像微信
+   那样的弹窗就行了」——手机层图片点击不再走 mediaOpenRoute 的系统直开腿，
+   改开本组件的画廊面：
+   · 遮罩 + 居中大图；进/退场 = 平滑淡入淡出（既有 .nf-lightbox-img 的 loaded
+     过渡面；缩略图缩放起飞**不做**——申报制）；
+   · 多图（图组）左右滑**跟手**切图 + 页码 `n / m`；下滑**跟手**关闭（图随指
+     位移 + 淡出，松手过阈提交）；
+   · 底层滚动锁：既有 body.nf-lightbox-open{overflow:hidden} 之外，手机页体
+     的真实滚动容器 .mobile-page-body 补一条锁（见 lightbox.css——手机层页
+     不滚在 body 上）；锁 = overflow:hidden，scrollTop 不动 ⇒ 关闭回原滚动位；
+   · 返回键/右滑返 = 既有 mobileSheetBack 链路（openImageGallery 每开幂等补注，
+     兼容跨档重排后首开 DOM 早于手机层的时序）；
+   · 「在标签页打开」显式钮 = 原 openMediaDirect 腿原样保留（P16 原能力降级为
+     次级入口，不静默丢）。
+   桌面零变化：画廊只由 routeMediaClick 的手机腿进入；openLightbox /
+   openDiagramLightbox 两条既有面逐字不动（画廊态在单图面/图形面进入时清零）。 */
+/** @type {{kind: string, name?: string, src?: string, path?: string,
+ *          resolver?: (p: string) => string, blob?: Blob}[]|null} 画廊组；null = 非画廊。 */
+let galItems = null;
+let galIndex = 0;
+/** .nf-lightbox-pager 页码（组内 ≥2 才显示）。 */
+let galPagerEl = null;
+/** .nf-lightbox-opentab 「在标签页打开」次级入口钮。 */
+let galTabBtnEl = null;
+/** 滑切换序号：慢腿（blob 铸 URL 等）不得盖掉更新的滑。 */
+let galSlideSeq = 0;
+/** 本组 item.blob 腿铸出的 objectURL（关闭/换组时统一回收）。 */
+const galBlobUrls = [];
+/** 跟手拖动态：{id,x0,y0,t0,axis:'x'|'y'|0,dx,dy}；axis=0 未定轴。 */
+let galDrag = null;
+/** 最近一次成轴拖动的松手时刻（拖完松手那一下不当作点遮罩关闭）。 */
+let galDragEndAt = 0;
 
 /** The proxied local path behind an /api/nf-file URL ('' when not one). */
 function nfPathOf(src) {
@@ -275,11 +316,17 @@ function ensureDom() {
 
   overlayEl.append(closeBtn, imgEl, statusEl);
   // Backdrop click closes; clicks on the image itself do not.
+  // 画廊态多一道「刚拖完」闸：跟手拖动松手会续派一次 click 到遮罩，不当作关闭
+  // （非画廊路径的判据逐字不变——Date 差恒大于闸窗）。
   overlayEl.addEventListener('click', (e) => {
-    if (e.target === overlayEl) closeLightbox();
+    if (e.target !== overlayEl) return;
+    if (galItems && Date.now() - galDragEndAt < 160) return;
+    closeLightbox();
   });
   mobileSheetBack(overlayEl, closeLightbox);
   document.body.appendChild(overlayEl);
+  // 画廊跟手手势（只在画廊态起作用；非画廊的点击/滚轮语义零变化）。
+  bindGalleryGestures();
   // 浮层落 DOM 后再对位：`syncViewportPin` 只改内联盒，无观测、无回环。
   armViewportPin();
 }
@@ -573,6 +620,7 @@ export function openDiagramLightbox(svg) {
  */
 export function openLightbox(src, alt, path) {
   if (!src || typeof src !== 'string') return;
+  clearGalleryState();        // 单图面进入 = 画廊态清零（面语义互斥；非画廊时零动作）
   ensureDom();
   setMode('img');
   syncViewportPin();          // 浮层先对位到可视屏幕（图片模式同一处入口）
@@ -580,8 +628,27 @@ export function openLightbox(src, alt, path) {
   overlayEl.setAttribute('data-nf-open-seq', String(openCount));
   overlayEl.setAttribute('aria-label', t('lightbox.ariaLabel'));
   lastFocus = document.activeElement;
+  presentImage(src, alt, path);
 
+  overlayEl.classList.add('on');
+  // B4：看图大图 = 第 9 个壳（body 级 overlay）。入层栈 ⇒ Tab 不跑到背后的画布。
+  pushLayer(overlayEl, { name: 'lightbox' });
+  document.body.classList.add('nf-lightbox-open');
+  overlayEl.querySelector('.nf-lightbox-close').focus();
+}
+
+/**
+ * 图片装载面（单图 openLightbox 与画廊滑 galGo 共用同一装载腿，字节链/失败面/
+ * 自愈腿逐字同源）：置 loading 态 → 本地路径走账本单点票据纪律 / pathless 直挂
+ * src。画廊滑进来时浮层已 on，本函数只换内容不碰层栈。
+ * @param {string} src @param {string} [alt] @param {string} [path]
+ */
+function presentImage(src, alt, path) {
+  if (!src && !path) return;
   // Reset to loading state
+  imgEl.style.transition = '';   // 画廊跟手/滑动的内联样式清零（跟指位移不带到新图）
+  imgEl.style.transform = '';
+  imgEl.style.opacity = '';
   imgEl.classList.remove('loaded');
   imgEl.removeAttribute('src');
   delete imgEl.dataset.nfLbRetried; // 账本自愈旗标按次开清零（每开恰一次自愈机会）
@@ -655,12 +722,6 @@ export function openLightbox(src, alt, path) {
   } else {
     imgEl.src = src;  // remote / data: URL — nothing to mint, nothing to strip
   }
-
-  overlayEl.classList.add('on');
-  // B4：看图大图 = 第 9 个壳（body 级 overlay）。入层栈 ⇒ Tab 不跑到背后的画布。
-  pushLayer(overlayEl, { name: 'lightbox' });
-  document.body.classList.add('nf-lightbox-open');
-  overlayEl.querySelector('.nf-lightbox-close').focus();
 }
 
 export function closeLightbox() {
@@ -668,6 +729,7 @@ export function closeLightbox() {
   popLayer(overlayEl); // B4：出栈 + 回焦
   overlayEl.classList.remove('on');
   document.body.classList.remove('nf-lightbox-open');
+  clearGalleryState();            // 画廊态/页码/开标签页钮/组内 objectURL 一并收尾
   openSeq += 1;                   // invalidate any in-flight ticket fetch
   imgEl.onload = null;
   imgEl.onerror = null;
@@ -682,6 +744,223 @@ export function closeLightbox() {
   if (pctEl) pctEl.textContent = '100%';
   if (lastFocus && lastFocus.focus) lastFocus.focus();
   lastFocus = null;
+}
+
+/* ── 画廊模式：开/滑/页码/次级入口/手势 ──────────────────────────────── */
+
+/** 画廊 chrome（页码 + 「在标签页打开」钮）：惰性建一次、只在画廊态显示——桌面
+ *  DOM 永不出现这两枚节点（画廊只在手机层进入）。 */
+function ensureGalleryChrome() {
+  if (galPagerEl && galPagerEl.isConnected) return;
+  galPagerEl = document.createElement('div');
+  galPagerEl.className = 'nf-lightbox-pager';
+  galPagerEl.setAttribute('aria-live', 'polite');
+
+  galTabBtnEl = document.createElement('button');
+  galTabBtnEl.type = 'button';
+  galTabBtnEl.className = 'nf-lightbox-opentab';
+  const label = t('lightbox.openTab');
+  galTabBtnEl.title = label;
+  galTabBtnEl.setAttribute('aria-label', label);
+  galTabBtnEl.innerHTML =
+    '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 ' +
+    '0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/>' +
+    '<line x1="10" y1="14" x2="21" y2="3"/></svg>';
+  galTabBtnEl.addEventListener('click', (e) => {
+    e.stopPropagation();          // 不冒泡成遮罩点空白关闭
+    const item = galItems && galItems[galIndex];
+    if (!item) return;
+    // 原能力显式入口（P16 直开不静默丢）：openMediaDirect 腿原样（预约式开页）。
+    void openMediaDirect(item);
+  });
+
+  overlayEl.append(galPagerEl, galTabBtnEl);
+}
+
+/** 页码读数（`n / m`；组内 ≥2 才显示）。index/total 同步落 data-*，供验收断言。 */
+function updateGalChrome() {
+  if (!galPagerEl || !galItems) return;
+  const n = galItems.length;
+  galPagerEl.style.display = n > 1 ? '' : 'none';
+  galPagerEl.textContent = (galIndex + 1) + ' / ' + n;
+  overlayEl.setAttribute('data-nf-lb-gal-index', String(galIndex));
+  overlayEl.setAttribute('data-nf-lb-gal-total', String(n));
+}
+
+/** 画廊态清零：页码/钮隐藏、组内 objectURL 回收、跟手内联样式复位。openLightbox
+ *  （单图面进入）与 closeLightbox 都走这里；非画廊时除属性清零外零动作。 */
+function clearGalleryState() {
+  galItems = null;
+  galIndex = 0;
+  galSlideSeq += 1;               // 作废在飞的滑装载
+  galDrag = null;
+  if (imgEl) {
+    imgEl.style.transition = '';
+    imgEl.style.transform = '';
+    imgEl.style.opacity = '';
+  }
+  if (!overlayEl) return;
+  overlayEl.removeAttribute('data-nf-lb-gallery');
+  overlayEl.removeAttribute('data-nf-lb-gal-index');
+  overlayEl.removeAttribute('data-nf-lb-gal-total');
+  if (galPagerEl) galPagerEl.style.display = 'none';
+  if (galTabBtnEl) galTabBtnEl.style.display = 'none';
+  for (const u of galBlobUrls.splice(0)) {
+    try { URL.revokeObjectURL(u); } catch (e) { /* already dead */ }
+  }
+}
+
+/** 画廊装载第 i 张：item 取数序与 mediaOpenRoute.mediaDirectUrl 同源（src >
+ *  blob > resolver > path），但本地路径走 presentImage 的账本票据腿（C2-20
+ *  凭据纪律不降档）；resolver/src 的可显示 URL 直挂（与缩略图同一份 URL）。 */
+function galGo(i) {
+  if (!galItems || !galItems.length) return;
+  galIndex = Math.min(Math.max(0, i), galItems.length - 1);
+  updateGalChrome();
+  const item = galItems[galIndex];
+  const seq = ++galSlideSeq;
+  const apply = (src, path) => {
+    if (seq !== galSlideSeq) return;
+    presentImage(src, item.name || '', path || '');
+  };
+  const fail = () => {
+    if (seq !== galSlideSeq) return;
+    statusEl.className = 'nf-lightbox-status error';
+    statusEl.textContent = t('lightbox.loadError');
+  };
+  const s = typeof item.src === 'string' ? item.src : '';
+  if (s) return apply(s, item.path || nfPathOf(s));
+  if (item.blob && typeof item.blob.size === 'number' && item.blob.size > 0) {
+    try {
+      const u = URL.createObjectURL(item.blob);
+      galBlobUrls.push(u);
+      return apply(u, '');
+    } catch (e) { /* 落下一腿 */ }
+  }
+  if (item.path) {
+    if (typeof item.resolver === 'function') {
+      try {
+        const u = item.resolver(item.path);
+        if (u) return apply(u, '');
+      } catch (e) { /* resolver 拒答 ⇒ 落票据腿 */ }
+    }
+    return apply('', item.path);
+  }
+  fail();
+}
+
+/** 滑向切图（dir = +1 下一张 / -1 上一张）：新图从手势对侧带位移进场，与既有
+ *  淡入过渡合成（进场档 44px / 200ms，与 .nf-lightbox-img 过渡同手感）。 */
+function galSlide(dir) {
+  if (!galItems) return;
+  const next = galIndex + dir;
+  if (next < 0 || next >= galItems.length) return;
+  imgEl.classList.add(dir > 0 ? 'nf-gal-in-right' : 'nf-gal-in-left');
+  galGo(next);
+  requestAnimationFrame(() => { imgEl.classList.remove('nf-gal-in-right', 'nf-gal-in-left'); });
+}
+
+/**
+ * 打开手机层图片画廊（微信式弹窗面；入口 = mediaOpenRoute.routeMediaClick 的
+ * 手机图片腿——桌面不经此路，openLightbox/openDiagramLightbox 面逐字不变）。
+ * 进场 = 平滑淡入淡出（既有 loaded 过渡；缩略图缩放起飞不做，申报制）。
+ * @param {Array<{kind: string, name?: string, src?: string, path?: string,
+ *          resolver?: (p: string) => string, blob?: Blob}>} items 图组（≥1）
+ * @param {number} [index] 起始张序号
+ * @returns {boolean} 是否真开（无可装载项 = false，调用方落直开兜底）
+ */
+export function openImageGallery(items, index) {
+  const list = (Array.isArray(items) ? items : []).filter(
+    (it) => it && it.kind !== 'video' && (it.src || it.path || it.blob),
+  );
+  if (!list.length) return false;
+  ensureDom();
+  setMode('img');
+  syncViewportPin();
+  const wasOn = overlayEl.classList.contains('on');
+  if (!wasOn) lastFocus = document.activeElement;
+  clearGalleryState();            // 上一组的 objectURL/页码/跟手内联样式先收
+  galItems = list;
+  openCount += 1;
+  overlayEl.setAttribute('data-nf-open-seq', String(openCount));
+  overlayEl.setAttribute('data-nf-lb-gallery', 'on');
+  overlayEl.setAttribute('aria-label', t('lightbox.ariaLabel'));
+  ensureGalleryChrome();
+  galPagerEl.style.display = '';
+  galTabBtnEl.style.display = '';
+  // 返回键/右滑返 = 既有链路；每开幂等补注（singleton 首建早于手机层跨档的时序兜底）。
+  mobileSheetBack(overlayEl, closeLightbox);
+  galGo(typeof index === 'number' ? index : 0);
+  overlayEl.classList.add('on');
+  if (!wasOn) {
+    pushLayer(overlayEl, { name: 'lightbox' });
+    document.body.classList.add('nf-lightbox-open');
+  }
+  overlayEl.querySelector('.nf-lightbox-close').focus();
+  return true;
+}
+
+/** 画廊跟手手势（ensureDom 装一次；只在画廊态起作用——非画廊的浮层点击/滚轮
+ *  语义零变化）：横滑跟手位移（组端橡皮筋 ×0.3）松手过阈/快弹切图；下滑跟手
+ *  （图随指位移 + 淡出）松手过阈/快弹关闭；其余回弹。纯点按不拦截（遮罩点按
+ *  关闭 / 图上点按无动作 = 既有语义）。 */
+function bindGalleryGestures() {
+  const active = () => overlayEl.getAttribute('data-nf-lb-gallery') === 'on'
+    && lmode === 'img' && !!galItems;
+  overlayEl.addEventListener('pointerdown', (e) => {
+    if (!active() || galDrag) return;
+    // 控件起手不进拖动（关闭/在标签页打开/返回钮自己处理点击）。
+    if (e.target.closest && e.target.closest('button, .nf-lightbox-bar')) return;
+    try { overlayEl.setPointerCapture(e.pointerId); } catch (err) { /* 已释放 */ }
+    galDrag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), axis: 0, dx: 0, dy: 0 };
+  });
+  overlayEl.addEventListener('pointermove', (e) => {
+    if (!galDrag || e.pointerId !== galDrag.id || !active()) return;
+    const d = galDrag;
+    d.dx = e.clientX - d.x0;
+    d.dy = e.clientY - d.y0;
+    if (!d.axis) {
+      if (Math.abs(d.dx) < DRAG_SLOP && Math.abs(d.dy) < DRAG_SLOP) return;
+      d.axis = Math.abs(d.dx) > Math.abs(d.dy) ? 'x' : 'y';
+    }
+    imgEl.style.transition = 'none';   // 跟手帧不进过渡
+    if (d.axis === 'x') {
+      const atEdge = (galIndex === 0 && d.dx > 0) || (galIndex === galItems.length - 1 && d.dx < 0);
+      imgEl.style.transform = `translateX(${(atEdge ? d.dx * 0.3 : d.dx).toFixed(1)}px)`;
+    } else {
+      const p = Math.min(1, Math.max(0, d.dy / 320));
+      imgEl.style.transform = `translateY(${(d.dy * 0.9).toFixed(1)}px) scale(${(1 - p * 0.15).toFixed(3)})`;
+      imgEl.style.opacity = String(1 - p * 0.6);
+    }
+  });
+  const end = (e, cancelled) => {
+    if (!galDrag || e.pointerId !== galDrag.id) return;
+    const d = galDrag;
+    galDrag = null;
+    if (!d.axis) return;               // 纯点按：click 语义自己走
+    galDragEndAt = Date.now();
+    if (!galItems) return;             // 拖动途中画廊已关：无收尾动作
+    const dt = Math.max(1, Date.now() - d.t0);
+    if (d.axis === 'x') {
+      const dir = d.dx < 0 ? 1 : -1;
+      const commit = !cancelled
+        && (Math.abs(d.dx) > 72 || (Math.abs(d.dx) > 24 && Math.abs(d.dx) / dt > 0.45))
+        && galIndex + dir >= 0 && galIndex + dir < galItems.length;
+      imgEl.style.transition = '';
+      imgEl.style.transform = '';      // 回弹（不过阈）或让位给 galSlide 进场档
+      if (commit) galSlide(dir);
+    } else {
+      const commit = !cancelled && d.dy > 0
+        && (d.dy > 110 || (d.dy > 40 && d.dy / dt > 0.5));
+      if (commit) { closeLightbox(); return; }   // 关闭路径的内联样式复位在 clearGalleryState
+      imgEl.style.transition = '';
+      imgEl.style.transform = '';
+      imgEl.style.opacity = '';
+    }
+  };
+  overlayEl.addEventListener('pointerup', (e) => end(e, false));
+  overlayEl.addEventListener('pointercancel', (e) => end(e, true));
 }
 
 /** 桌面 Canvas 单点的懒包装（媒体点击统一批 P16）：lightbox.js 是轻叶子，禁静态
@@ -723,10 +1002,23 @@ export function initLightbox() {
     // 本机路径在 data-nf-md-path（markdown viewer 改写腿写入），优先取它。
     const dsPath = (img.dataset && img.dataset.nfMdPath) || '';
     const path = mediaPathOf(src, dsPath);
+    // 画廊图组（mobile-image-lightbox 批）：同一消息气泡内的全部 .nf-zoom-img
+    // 为一组（微信式多图消息，手机画廊可左右滑）；无气泡宿主（Canvas 文档等）
+    // = 单图。group 只被手机腿消费——桌面行为逐字不变。
+    const host = img.closest('.bubble');
+    const imgs = host ? Array.from(host.querySelectorAll(/** @type {'img'} */ ('img.nf-zoom-img'))) : [img];
+    const gi = Math.max(0, imgs.indexOf(img));
+    const group = imgs.map((im) => {
+      const s = im.currentSrc || im.src;
+      const p = mediaPathOf(s, (im.dataset && im.dataset.nfMdPath) || '');
+      return { kind: 'image', name: im.alt || p.split('/').pop(), src: s, path: p };
+    });
     routeMediaClick(
-      { kind: 'image', name: img.alt || path.split('/').pop(), src, path },
+      group[gi] || { kind: 'image', name: img.alt || path.split('/').pop(), src, path },
       openCanvasLazy,
-      () => openLightbox(src, img.alt)
+      () => openLightbox(src, img.alt),
+      group,
+      gi
     );
   });
 

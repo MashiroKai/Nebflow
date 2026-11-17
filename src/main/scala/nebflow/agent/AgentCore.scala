@@ -1,7 +1,5 @@
 package nebflow.agent
 
-import nebflow.neblink.social.*
-
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
@@ -54,7 +52,7 @@ object AgentCore:
    *   - `isDispatcher` ⟵ `AgentState/session.isDispatcher`（`ProjectActor` spawn 置位）；
    *   - `nodeRole` ⟵ `SessionContext.flowNodeRole`，经 `NodeRoles` **归一 + 白名单校验**；
    *     **缺省 / 非法 / 未登记 ⇒ `None`**（= 基础面，fail-closed）——定义层**不**
-   *     替运行期做「缺省就是 task」的身份推断：那是 `NodeReportTool.enumFor` 的
+   *     替运行期做「缺省就是 task」的身份推断：申报值域判据（已退役）曾以本字段
    *     运行期口径，定义层据此分化会让「无身份的旁支会话」静默落到 task 变体。
    */
   private[agent] final case class ToolFaceIdentity(
@@ -103,8 +101,9 @@ object AgentCore:
     // AskUserQuestion 的 schema 变体分支已随「非阻塞-only」裁定整体删除：该工具一律
     // 以非阻塞方式提问，参数面不再有 `mode` 键 ⇒ root 面与基础面 schema 逐字节相等，
     // 无变体可分（`ToolFaceVariantSchemaSpec` 的 AskUser 豁免同步收紧为 Set.empty）。
-    if NodeReportToolDef.Name == td.name then NodeReportToolDef.roleVariant(td, identity.nodeRole)
-    else if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
+    // 终态申报工具的按角色 schema 分化分支已随该工具整体退役删除（文本锚定协议
+    // 无 schema 维度）。
+    if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
     else td
 
   /**
@@ -202,7 +201,6 @@ object AgentCore:
     "AskHostClarify",
     "Schedule",
     "Delegate",
-    "MergerRequest",
     "AgentControl",
     "MemoryNote",
     // Task（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件合一
@@ -223,12 +221,6 @@ object AgentCore:
     // 插件白名单摘除；真实授能 = NebulaOrchestrationTools 单点）。执行面另有
     // PopTool 分发层身份闸（POP_NEBULA_ONLY）——定义层与分发层两层收口。
     "Pop",
-    // node_report（20260909 NodeReport 泛化批）：flow 节点会话专属终态语义申报
-    // 工具，与 TaskBoard 同享防声明逃逸通道——"*"/显式声明对一切非节点会话身份
-    // 不授能（真实授能 = 末段 flowNodeSession 按身份追加）。v1 report_blocked
-    // 未入本集（通配声明者 allowedSet 带 schema 泄漏面，执行侧由工具内身份拒绝
-    // 兜底），泛化批补齐同款隔离；剥离与授能两点不相干扰（同 TaskBoard 注）。
-    nebflow.core.tools.NodeReportToolDef.Name,
     // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 #5 推荐路线，
     // 2026-09-12）：Nebula 专属只读好友名册——全 agent 面披露的是**全量社交图谱**
     // （一次性给出「你是谁的好友」全集），与 TaskList/MemoryNote 同域隔离纪律一致；
@@ -248,7 +240,7 @@ object AgentCore:
     // ChainWrite（N1 刀2，v3 §5 S4）：delegate 会话专属整链登记件——同享本集
     // 【防声明逃逸】通道：插件/agent.json 声明（含 "*"）对非 delegate 会话身份
     // 不授能（真实授能 = buildAllowedToolSet 尾段 delegateSession 腿单点）；
-    // 工具内 DelegateSessions 身份拒绝双保险（TaskBoard/node_report 同款纪律，
+    // 工具内 DelegateSessions 身份拒绝双保险（TaskBoard 同款纪律，
     // 剥离与授能两点不相干扰）。
     "ChainWrite",
     // TaskSearch（task-rag 批 #1227 / §Batch 7）：Nebula 专属只读检索件——
@@ -257,10 +249,7 @@ object AgentCore:
     "TaskSearch",
     // ConversationSearch is Nebula-root-only and read-only; block agent/plugin declaration escape.
     "ConversationSearch",
-    // WorkspaceSummary (worktree-merger delivery, Priority E): Nebula-root-only
-    // workspace coordination picture + dismiss-suggestion; blocks declaration
-    // escape for agent/plugin declarations (MergerRequestTool same-slot precedent).
-    "WorkspaceSummary",
+
     // GenerateImage（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
@@ -430,20 +419,6 @@ object AgentCore:
     // `RootExclusiveTools` 的 "Delegate" 条目继续承担**防声明逃逸**剥离（非
     // Nebula 身份声明 Delegate 仍被剥）。
     "Delegate",
-    "MergerRequest",
-    // WorktreeContext (worktree-merger delivery, Priority D): read-only
-    // per-workspace context assembly (task brief, node graph, verification,
-    // commits, merge history, paginated mail). The main agent reads any managed
-    // workspace; merger-mode sessions get the same tool through the merger
-    // mount face.
-    "WorktreeContext",
-    // WorkspaceSummary (worktree-merger delivery, Priority E): the main
-    // agent's per-project coordination picture — workspaces with live Git
-    // facts, pending merge requests with origins, advisor suggestions with
-    // states, merger initialization — plus the dismiss-suggestion action.
-    // Root-only (RootExclusiveTools blocks declaration escape); the advisor
-    // itself never merges and never touches manual merge requests.
-    "WorkspaceSummary",
     // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
     // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
     // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
@@ -541,7 +516,8 @@ object AgentCore:
    * 名字永不抵达 LLM——幻觉调用在 allowed-set 分区即落，与 friends seal 同机制。
    */
   def imageGenSealedStrip: Set[String] =
-    if nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace then Set.empty else Set("GenerateImage")
+    if nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace then Set.empty
+    else Set("GenerateImage")
 
   /**
    * 阶段 2c 收敛的 agent 定义名（§C.1 总览，本集 = 四个在册名）：其 agent.json tools
@@ -640,17 +616,11 @@ object AgentCore:
    * 注册表（删 `"AgentFlow"` 注册项）、墓碑表（"Workflow" 指路改 ChainWrite
    * ＋"AgentFlow" 条目复活）与 orchestrationMode 的升级写点（迁入 ChainWriteTool）。
    *
-   * **worktree-merger 交付批（Priority D）：+`WorktreeContext`，常量对齐实际面 22**——
-   * 工作区全景上下文只读件（主 agent 面；merger 模式会话经挂载面同享）。本增量
-   * 属「按面变更」（新增成员），非「凑数字」；ConversationSearch 批 +1 时常量
-   * 未随动，本批一并把常量钉回实测件数。
-   *
-   * **worktree-merger 交付批（Priority E）：+`WorkspaceSummary` ⇒ 23**——主 agent
-   * 的工作区协调读面 + dismiss-suggestion（RootOrchestrationTools + RootExclusive
-   * Tools 双集，MergerRequestTool 同槽先例）。本增量属「按面变更」（新增成员），
-   * 非「凑数字」。
+   * **托管树退场批**：−`MergerRequest` / −`WorktreeContext` / −`WorkspaceSummary` /
+   * −`WorkspaceReconcile`（26 → 22）——managed workspace 与 merger 全链退役，四名
+   * 离开本集并从注册表删除（RetiredToolGuides 墓碑接管旧名调用）。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 25
+  val RootOrchestrationToolsExpectedSize: Int = 22
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
@@ -702,7 +672,15 @@ object AgentCore:
     // ChainWrite）。旧会话 / 存量提示词打这个名必须拿到「改用 ChainWrite 一次写全链」
     // 的指引——不许静默消失（B5-c 可诊断退役）。
     "AgentFlow" ->
-      """The tool is retired. `agentflow` names a MODE, not a tool: a dispatcher's node-orchestration shape (the `orchestrationMode` value written when a chain registration succeeds). To run several steps, register the WHOLE chain in ONE call: `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)` — one write for the entire chain; the engine wires the deps edges so every step receives its upstream results, and the ack carries the chain id immediately (non-blocking). For one blocking read-only recon leg use `Subagent(prompt=...)`."""
+      """The tool is retired. `agentflow` names a MODE, not a tool: a dispatcher's node-orchestration shape (the `orchestrationMode` value written when a chain registration succeeds). To run several steps, register the WHOLE chain in ONE call: `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)` — one write for the entire chain; the engine wires the deps edges so every step receives its upstream results, and the ack carries the chain id immediately (non-blocking). For one blocking read-only recon leg use `Subagent(prompt=...)`.""",
+    "MergerRequest" ->
+      """MergerRequest is not available — managed workspaces and the merger are retired. Delegates run in the dispatch workspace and manage their own git worktrees; integration into a project's main line is the author's explicit decision. To see what a delegate produced, read its final report and inspect the branch it names; to land it, the author (or a delegate under the author's explicit instruction) performs the merge.""",
+    "WorktreeContext" ->
+      """WorktreeContext is not available — the managed-workspace records it assembled are retired. A delegate's deliverable is its final report plus the commits it names; read those directly (Read/Bash on the reported branch and paths).""",
+    "WorkspaceSummary" ->
+      """WorkspaceSummary is not available — the per-project workspace coordination picture is retired. For live work, read the background-agents panel and each delegate's final report; recorded merge-request history stays on the workspace ledger file.""",
+    "WorkspaceReconcile" ->
+      """WorkspaceReconcile is not available — registered-workspace completion reconciliation is retired with the managed workspaces. A delegate's completion is its settled final report; no separate workspace confirmation exists."""
   )
 
   /**
@@ -725,7 +703,7 @@ object AgentCore:
     "NodeCancel",
     // agentflow 批 2026-10-02：−`Mail` +`AskUserQuestion`（件数 9 → 9）。挂载点在
     // `buildAllowedToolSet` 末段按引擎侧身份 `isDispatcher` 追加（TaskBoard/
-    // node_report 同款「挂载面 + 工具内身份拒绝」双保险）。
+    // TaskBoard 同款「挂载面 + 工具内身份拒绝」双保险）。
     "AskUserQuestion",
     "Read",
     "Glob",
@@ -761,7 +739,7 @@ object AgentCore:
    *   来源标注 `subagent · <任务摘要>`（U3）。
    * - 显式**不含**：Delegate/SubTask/Task（叶子纪律——内核不再派生）、Mail
    *   （已退役）、AgentControl/Card/Pop（管控与用户面归 Nebula）、TaskBoard/
-   *   node_report/Node 系工具/TaskList/MemoryNote/Schedule（项目与编排面）、
+   *   Node 系工具/TaskList/MemoryNote/Schedule（项目与编排面）、
    *   plugin 与 MCP 工具（极简 = 机制固定、零配置面，裁定 11）。
    *
    * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的
@@ -776,11 +754,11 @@ object AgentCore:
   val NebflowFixedTools: Set[String] = BaseTools + "AskHost" + "Subagent"
 
   /**
-   * 只读侦察子面（builtin-merge 批 2026-10-03）：SubagentTool 的 spawn 目标
-   * `subagent` 的机制固定工具面——恰五件只读（Read/Glob/Grep/WebSearch/
-   * WebFetch），**无写、无 shell、无消息**（只读由机制保证，不由提示词保证）。
+   * Fixed reconnaissance face for the builtin Subagent target. Bash uses the normal
+   * execution pipeline; reconnaissance is role policy, not a read-only shell sandbox.
+   * No separate Write/Edit, messaging or recursive agent tools are granted.
    */
-  val SubagentFixedTools: Set[String] = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch")
+  val SubagentFixedTools: Set[String] = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
 
   /**
    * 通用模版固定工具集（§C.1/§C.5）：沿革「恰七件 = BaseTools 六件 + AskUserQuestion」；
@@ -879,7 +857,7 @@ object AgentCore:
           // AgentFlow 件随工具退役摘除（九件）。
           // 机制固定单点，不经 legacyFixedTools 的 catch-all。
           case "nebflow" => AgentCore.NebflowFixedTools
-          // 只读侦察子（SubagentTool 的 spawn 目标）：机制固定只读五件。
+          // SubagentTool target: fixed six-tool reconnaissance face, including Bash.
           case "subagent" => AgentCore.SubagentFixedTools
           // E5 batch 2026-10-01: the former fifth member's by-name branch is deleted
           // together with that name -- the agent retired on 2026-09-25 (`aa371d68f`)

@@ -1079,8 +1079,14 @@ final class DbHandle private[db] (
 
   /** 优雅关闭（AutoCloseable）：收口 Batched 档、释放实例锁（世代号留盘给下一任）。 */
   override def close(): Unit =
+    var failure: Option[Throwable] = None
     try flushSync()
-    catch case _: Exception => ()
-    instanceLock.release()
+    catch case scala.util.control.NonFatal(e) => failure = Some(e)
+    try instanceLock.release()
+    catch case scala.util.control.NonFatal(e) =>
+      failure match
+        case Some(first) => first.addSuppressed(e)
+        case None => failure = Some(e)
+    failure.foreach(throw _)
 
 end DbHandle

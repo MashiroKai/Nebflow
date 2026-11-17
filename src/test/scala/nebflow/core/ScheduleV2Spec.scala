@@ -64,7 +64,7 @@ class ScheduleV2Spec extends CatsEffectSuite:
   // P1-2: SystemReminders.collectAllIO
   // ------------------------------------------------------------------
 
-  test("collectAllIO returns time + schedule on user turns (root agent)"):
+  test("collectAllIO returns schedule on user turns (root agent); time reminder retired"):
     val later = System.currentTimeMillis() + 3_600_000L
     for
       _ <- reset()
@@ -72,9 +72,10 @@ class ScheduleV2Spec extends CatsEffectSuite:
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true)
     yield
       val cats = reminders.map(_.category)
-      assert(cats.contains("time"), s"expected time category, got $cats")
-      assert(!cats.contains("time-context"), s"time-context must be removed, got $cats")
-      assert(cats.contains("schedule"), s"expected schedule category, got $cats")
+      // 时钟简化批（2eb988a4f，作者令 2026-11-06 22:26/22:29）：每请求 time 提醒
+      // 彻底退役——时间锚面 = 会话提示的 TimeAnchor.userLine（Now: … | epoch_ms …），
+      // 不再走提醒通道（time-context 面更早已退役）。
+      assertEquals(cats, List("schedule"), "reminder face = schedule single item (time retired, must not return)")
       val sched = reminders.find(_.category == "schedule").get
       assert(sched.content.contains("Pending schedules (1)"), sched.content)
       assert(sched.content.contains("整理记忆"), sched.content)
@@ -99,8 +100,8 @@ class ScheduleV2Spec extends CatsEffectSuite:
       _ <- taskStore.addTask(ScheduledTask.create("other-session", "不属于本会话", System.currentTimeMillis() + 3_600_000L))
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true)
     yield
-      assert(reminders.exists(_.category == "time"))
-      assert(!reminders.exists(_.category == "time-context"), "time-context must be removed")
+      // 时钟简化批（2eb988a4f）：time 提醒退役——无任务会话的提醒面 = 空。
+      assert(reminders.isEmpty, s"no schedule for this session and no other deltas ⇒ zero reminders, got ${reminders.map(_.category)}")
       assert(!reminders.exists(_.category == "schedule"), "schedule must be empty for session without tasks")
 
   test("time-context removed entirely (no time-context reminder ever)"):
@@ -146,20 +147,18 @@ class ScheduleV2Spec extends CatsEffectSuite:
       assert(dev.content.contains("+ Desktop-PC"), dev.content)
       assert(dev.content.contains("- Old-Phone"), dev.content)
 
-  test("collectAllIO has no time-suppression switch: the ≥1h system-event gate is retired (time感知修复批 2026-11-05)"):
+  test("collectAllIO carries NO time reminder on any user turn (anchor lives in the clock line; 时钟简化批 2eb988a4f)"):
     for
       _ <- reset()
-      // 传参面已无 `injectTime`：每一次起始轮（含 system-event 轮）都必须拿到当刻锚。
-      // 旧用例钉的是「1 小时闸内不重注时间」——那道闸正是相对时间误判的入口
-      // （最多 59 分钟前的旧锚 / 干脆没锚），随本批一起退役。
+      // 双退役：≥1h 闸随 time感知修复批退役；time 提醒本体随后此时钟简化批退役
+      // （每请求动态时钟块彻底退役——锚 = TimeAnchor.userLine，提醒通道不再产时间项）。
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true)
-    yield assertEquals(
-      reminders.count(_.category == "time"),
-      1,
-      s"system-event turns must carry the anchor too (gate retired): ${reminders.map(_.category)}"
+    yield assert(
+      !reminders.exists(_.category == "time"),
+      s"the time reminder must stay retired on every turn (anchor moved to the clock line): ${reminders.map(_.category)}"
     )
 
-  test("collectAllIO omits reminders when values are empty (time stays)"):
+  test("collectAllIO omits every reminder when values are empty (time retired)"):
     for
       _ <- reset()
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true)
@@ -169,7 +168,8 @@ class ScheduleV2Spec extends CatsEffectSuite:
       assert(!cats.contains("environment"), cats)
       assert(!cats.contains("tasks"), cats)
       assert(!cats.contains("language"), cats)
-      assert(cats.contains("time"), "time reminder must remain (持久化语义不受影响)")
+      // 时钟简化批（2eb988a4f）：空值面 = 零提醒（time 不再「留下」——已退役）。
+      assertEquals(cats, Nil, "empty deltas ⇒ zero reminders (time reminder retired)")
 
   test("collectAllIO tasks ride along whenever text is non-empty (gate lives upstream in AgentCore)"):
     for
@@ -191,7 +191,8 @@ class ScheduleV2Spec extends CatsEffectSuite:
       assert(cats.contains("tasks"), s"task reminder must follow the supplied text, got $cats")
       assert(cats.contains("devices"), s"devices stays for non-root agents, got $cats")
       assert(cats.contains("language"), s"language stays for non-root agents, got $cats")
-      assert(cats.contains("time"), s"time stays for non-root agents, got $cats")
+      // 时钟简化批（2eb988a4f）：非 root 面同样零 time 项（退役无角色差异）。
+      assert(!cats.contains("time"), s"time reminder must stay retired for non-root agents too, got $cats")
 
   test("collectAllIO suppresses all reminders on non-user turns"):
     for

@@ -1130,7 +1130,7 @@ button.glass-control.fm-login-btn:disabled {
 /* ── 幽灵 — 无底 + 文字弱化（行级面 R12′：允许 rest 零区隔，但 hover ∧ active
    双态必有实测反馈）────────────────────────────────────────────────────── */
 :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .neblink-peer.fm-device-row, .fm-msg-act,
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
     .settings-avatar-entry, .settings-collapse-toggle,
     .fm-context-menu button:not(.danger)) {
@@ -1304,7 +1304,7 @@ button.fm-req-decline:active,
    --glass-send-stack 四层栈退役，零 backdrop-filter）──────────────────── */
 #dropbox-send-btn,
 .cfg-btn.cfg-btn-primary,
-button.fm-send-btn,
+button.fm-send-btn:not(.ds-turn-btn),
 button.fm-verify-send,
 button.fm-send-chip,
 button.glass-control.fm-gs-save,
@@ -1318,7 +1318,7 @@ button.glass-control.fm-req-accept {
 @media (hover: hover) {
   #dropbox-send-btn:hover,
   .cfg-btn.cfg-btn-primary:hover,
-  button.fm-send-btn:hover,
+  button.fm-send-btn:not(.ds-turn-btn):hover,
   button.fm-verify-send:hover,
   button.fm-send-chip:hover,
   button.glass-control.fm-gs-save:hover,
@@ -1332,7 +1332,7 @@ button.glass-control.fm-req-accept {
 
 #dropbox-send-btn:active,
 .cfg-btn.cfg-btn-primary:active,
-button.fm-send-btn:active,
+button.fm-send-btn:not(.ds-turn-btn):active,
 button.fm-verify-send:active,
 button.fm-send-chip:active,
 button.glass-control.fm-gs-save:active,
@@ -1348,7 +1348,7 @@ button.glass-control.fm-req-accept:active {
     .cfg-btn-primary, .config-actions .btn-save, .neblink-login-btn,
     .fm-login-btn, .login-modal-btn, .flow-viewer-save, .pp-btn.primary,
     .daemon-btn.start,
-    button.fm-send-btn, button.fm-verify-send, button.fm-send-chip,
+    button.fm-send-btn:not(.ds-turn-btn), button.fm-verify-send, button.fm-send-chip,
     button.glass-control.fm-gs-save,
     button.glass-control.fm-req-accept):focus-visible {
   outline: 2px solid var(--btn-focus-ring);
@@ -1367,7 +1367,7 @@ button.glass-control.fm-req-accept:active {
 
 /* ── 禁用 / 掉线档（R2′/J3：具名 token `--glass-send-bg-disabled` + not-allowed；
    声明在最后 ⇒ 与 `:hover` 同档时以禁用胜出）────────────────────────── */
-:is(#dropbox-send-btn, .cfg-btn.cfg-btn-primary, button.fm-send-btn,
+:is(#dropbox-send-btn, .cfg-btn.cfg-btn-primary, button.fm-send-btn:not(.ds-turn-btn),
     button.fm-verify-send, button.fm-send-chip,
     button.glass-control.fm-gs-save, button.glass-control.fm-req-accept,
     button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
@@ -1379,7 +1379,7 @@ button.glass-control.fm-req-accept:active {
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
     .settings-avatar-entry, .settings-collapse-toggle,
     .fm-context-menu button):disabled,
-:is(#dropbox-send-btn, .cfg-btn.cfg-btn-primary, button.fm-send-btn,
+:is(#dropbox-send-btn, .cfg-btn.cfg-btn-primary, button.fm-send-btn:not(.ds-turn-btn),
     button.fm-verify-send, button.fm-send-chip,
     button.glass-control.fm-gs-save, button.glass-control.fm-req-accept,
     button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,

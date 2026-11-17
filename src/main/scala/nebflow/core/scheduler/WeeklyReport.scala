@@ -34,6 +34,15 @@ import java.time.{DayOfWeek, Instant, ZoneId, ZonedDateTime}
  */
 object WeeklyReport:
 
+  /** Reserved upsert-name prefix of the inbox entry this generator owns. Already written by
+   *  the pre-`source` engine, so the prefix is the provable provenance for those legacy rows. */
+  val InboxNamePrefix: String = "weekly-report-"
+
+  /** A legacy weekly-report entry can be adopted as engine-owned without guessing: only this
+   *  generator assigns `weekly-report-<weekKey>` (see the name at the upsert below). */
+  val engineOwnsLegacyInboxEntry: ScheduledTask => Boolean =
+    t => t.name.exists(_.startsWith(InboxNamePrefix))
+
   /** 一周聚合读数（纯数据；spec 直断言）。 */
   final case class WeekStats(
     weekKey: String,
@@ -309,9 +318,10 @@ final class WeeklyReportGenerator(
                                 s" — 周报：$reportPath（读后可打卡销账）",
                             triggerAt = ScheduledTask.nextTodoSurfaceAt(instant.toEpochMilli, zone),
                             referencePath = Some(reportPath),
-                            name = Some(s"weekly-report-$weekKey"),
+                            name = Some(s"${WeeklyReport.InboxNamePrefix}$weekKey"),
                             kind = Some(ScheduledTask.KindTodo)
-                          )
+                          ).copy(source = Some("engine")),
+                          WeeklyReport.engineOwnsLegacyInboxEntry
                         )
                         .void
                   summary = s"打卡周报 ${weekKey} 已生成：打卡 ${stats.doneCount}/${stats.plannedCount}，趋势${stats.trendArrow}（reports/weekly-checkin）"

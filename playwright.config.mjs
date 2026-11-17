@@ -32,12 +32,19 @@ standaloneScripts.push(
   'mobile-chat-initial-scroll.spec.mjs',
   'mobile-touch-target.spec.mjs',
   'toggle-green-revert.spec.mjs',
+  // Standalone browser script, not a Playwright Test suite; CI runs it directly.
+  'project-open-contract.test.mjs',
+  'dropdown-menu.test.mjs',
 );
 
 // instance-backed spec：驱动真实服务器（BASE_URL/NEBFLOW_URL + token）。
 // 由 frontend-smoke 在拉起 CI 实例、桥接 ~/.stand/auth.json 后点名跑；
 // 自足套件任务用 PW_SELFCONTAINED_ONLY=1 整体排除它们。
 const instanceBacked = [
+  // Real isolated Java gateways need an exported classpath; run only explicitly, not in self-contained CI.
+  'canvas-writer-live.spec.mjs',
+  'canvas-tab-live-sync.spec.mjs',
+  'canvas-legacy-stale-comparison.spec.mjs',
   'smoke.spec.mjs',
   'askuser.spec.mjs',
   'askuser-attach.spec.mjs',

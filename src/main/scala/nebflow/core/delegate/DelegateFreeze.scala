@@ -15,7 +15,7 @@ import nebflow.shared.{Defaults, NebflowLogger}
  *
  * == 与既有三态的分工（语义分工表见本批 docs/ 的冻结态状态机文档）==
  *   - `standby`（案A 批 2026-10-31）= **自愿待命**（回合正常收尾、申报
- *     `delegate_report(category="standby")`，等作者给活）——actor 活着、状态
+ *     显式待命（状态槽 standby，等作者给活）——actor 活着、状态
  *     `Waiting`、等待合法；
  *   - `frozen`（本件）= **异常冻结**（LLM 层故障 / 工具层不可恢复错误 / 引擎侧
  *     异常 / 配额取消）——同一会话（同 id、同历史、同 worktree）就地停住，
@@ -113,13 +113,14 @@ object DelegateFreeze:
   /** 落 `AgentRecord.frozenReason` / `Record.frozenReason` 的完整线值。 */
   def wireValue(r: Reason): String = s"$WirePrefix:${wire(r)}"
 
-  /** 线值 → 原因（非本批前缀 / 未知词 = None——旧盘面与其它冻结族零误判）。
-    *
-    * 线值允许携带**诊断后缀**（`detailedWireValue` 写出的
-    * `engine-fault[trigger=…; errorType=…; …]`）——判定只读 `[` 之前的裸原因码，
-    * 后缀是给人与审计面的触发源证据，绝不参与判等（对全部原因码机械生效，不特判
-    * 单一码——旧盘面无后缀时行为逐字节不变）。
-    */
+  /**
+   * 线值 → 原因（非本批前缀 / 未知词 = None——旧盘面与其它冻结族零误判）。
+   *
+   * 线值允许携带**诊断后缀**（`detailedWireValue` 写出的
+   * `engine-fault[trigger=…; errorType=…; …]`）——判定只读 `[` 之前的裸原因码，
+   * 后缀是给人与审计面的触发源证据，绝不参与判等（对全部原因码机械生效，不特判
+   * 单一码——旧盘面无后缀时行为逐字节不变）。
+   */
   def parse(line: String): Option[Reason] =
     val s = Option(line).getOrElse("").trim
     if !s.startsWith(WirePrefix) then None
@@ -266,6 +267,8 @@ object DelegateFreeze:
       }
     (trigger, errorType)
 
+  end diagnosisFieldsOf
+
   /** 单字段行首形态（供 [[diagnosisFieldsOf]] 逐段消费）。 */
   private def diagnosisFieldOf(detail: String, key: String): Option[String] =
     val s = Option(detail).getOrElse("").trim
@@ -274,10 +277,11 @@ object DelegateFreeze:
       val v = s.stripPrefix(s"$key=").takeWhile(_ != ';').trim
       Option.when(v.nonEmpty)(v)
 
-  /** 剥掉行首的结构化诊断前缀（`trigger=…; errorType=…; `），让判据表读到**原始错误文本**
-    * （`ProviderFault` 判据表是子串匹配——`errorType=Timeout` 自带的 "timeout" 字样
-    * 不得参与正文族判定）。无前缀 = 原样返回（旧记录零影响）。
-    */
+  /**
+   * 剥掉行首的结构化诊断前缀（`trigger=…; errorType=…; `），让判据表读到**原始错误文本**
+   * （`ProviderFault` 判据表是子串匹配——`errorType=Timeout` 自带的 "timeout" 字样
+   * 不得参与正文族判定）。无前缀 = 原样返回（旧记录零影响）。
+   */
   def stripTriggerDiagnosis(detail: String): String =
     val s = Option(detail).getOrElse("").trim
     var rest = s
@@ -361,7 +365,8 @@ object DelegateFreeze:
     parentSessionId: String,
     reason: Reason,
     detail: String,
-    trigger: String = ""
+    trigger: String = "",
+    expectedRunId: Option[String] = None
   ): IO[Option[Long]] =
     val d = compactDetail(detail)
     val registryWrite = IO
@@ -375,17 +380,25 @@ object DelegateFreeze:
     val rowWrite =
       if parentSessionId.trim.isEmpty then IO.unit
       else
-        resources.subAgentTaskStore
-          .updateStatus(
-            parentSessionId,
-            delegateId,
-            TaskStatus,
-            lastError = Some(s"[frozen:${wire(reason)}] $d")
-          )
-          .handleErrorWith(e =>
-            logger.warn(s"[delegate-freeze] task row write failed for $delegateId: ${e.getMessage}")
-          )
-    registryWrite <* rowWrite
+        (expectedRunId match
+          case Some(run) =>
+            resources.subAgentTaskStore
+              .updateRun(
+                parentSessionId,
+                delegateId,
+                run,
+                Some(TaskStatus),
+                diagnostic = Some(s"[frozen:${wire(reason)}] $d")
+              )
+              .flatMap(_.fold(error => IO.raiseError(new IllegalStateException(error)), _ => IO.unit))
+          case None =>
+            resources.subAgentTaskStore.findByTaskId(delegateId).flatMap {
+              case Some(task) =>
+                resources.subAgentTaskStore.transitionObserved(task, TaskStatus, Some(s"[frozen:${wire(reason)}] $d"))
+              case None => IO.unit
+            }
+      )
+    rowWrite *> registryWrite
 
   end park
 
@@ -437,7 +450,11 @@ object DelegateFreeze:
           if parentSid.trim.isEmpty then IO.unit
           else
             resources.subAgentTaskStore
-              .updateStatus(parentSid, delegateId, "running")
+              .findByTaskId(delegateId)
+              .flatMap {
+                case Some(task) => resources.subAgentTaskStore.transitionObserved(task, "running")
+                case None => IO.unit
+              }
               .handleErrorWith(e =>
                 logger.warn(s"[delegate-freeze] task row wake write failed for $delegateId: ${e.getMessage}")
               )
@@ -537,15 +554,28 @@ object DelegateFreeze:
   /** 缺省保留期（ms）：`Defaults.DelegateFreezeRetentionDays`（缺省 14 天；0 = 关闭归档）。 */
   def retentionMs: Long = Defaults.DelegateFreezeRetentionDays * 24L * 3600L * 1000L
 
+  /**
+   * 冻结保留期是否已过（**状态派生纯函数单点** · 阶段②）。
+   *
+   * 冻结保留期届满这一事实原先是**存储式**表达的（`dormantSweep` 到点写 `archivedAt`
+   * 旗，唤醒/复活/通知三腿再读该旗拒绝）；归档写点退役后三腿统一改读本函数——
+   * 同一条判据（`frozenSince` 龄 vs [[retentionMs]]）、零存储旗依赖。
+   * `retentionMs <= 0`（保留期关闭）= 永不到期。
+   */
+  def retentionExpired(frozenSince: Long, now: Long = System.currentTimeMillis()): Boolean =
+    val retain = retentionMs
+    retain > 0L && now - frozenSince >= retain
+
   /** 进程内提示/归档去重（重启后重发一次提醒 = 无害；归档本身幂等）。 */
   private val reminded = new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
 
   /**
    * 长期冻结兜底扫描（挂 `FreezeScheduler` 的既有 30s 拍，零新增定时器）：
    * 逐条冻结记录 → [[staleDormant]] 判读 → Dormant 一次面板提示
-   * （`delegateFrozenDormant` 帧 + WARN）、Expired 归档（`DelegateRegistry.archive`
-   * 语义：只加 `archivedAt` 旗，记录/子代理记账/转录/worktree 原样留存——历史窗
-   * 仍可查）。全链 fail-soft：扫描器必须活着。
+   * （`delegateFrozenDormant` 帧 + WARN）、Expired 只留审计读数 + 任务行注记
+   * （**阶段② 起零归档写**：存储式归档退役，可见性由 [[DelegateVisibility]]
+   * 状态派生——冻结活标记在场即非收口，记录/子代理记账/转录/worktree 原样留存）。
+   * 全链 fail-soft：扫描器必须活着。
    */
   def dormantSweep(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]]): IO[Unit] =
     if !Defaults.DelegateFreezeEnabled then IO.unit
@@ -584,25 +614,27 @@ object DelegateFreeze:
               case Stage.Expired =>
                 if reminded.putIfAbsent(s"expired:${rec.id}", java.lang.Boolean.TRUE) == null then
                   val ageD = (now - since) / 86400000L
+                  // delegate-lifecycle-reform 阶段②：冻结保留期满**不再写归档旗**（存储式归档
+                  // 整体退役）——只留审计读数与任务行注记；该记录的可见性由状态派生
+                  // （[[DelegateVisibility]]：冻结活标记在场 ⇒ 非收口 ⇒ 行仍在活动窗，
+                  // 「需唤醒」语义不再被归档旗掩盖），7 天 TTL 腿照常在有最终归宿。
                   logger.warn(
                     s"[delegate-freeze] frozen delegate '${rec.id}' exceeded the ${Defaults.DelegateFreezeRetentionDays}-day retention " +
-                      s"(frozen ${ageD}d, reason=${rec.frozenReason.getOrElse("?")}) — archiving the registry record " +
-                      "(transcript/worktree/task row are untouched and stay queryable via archived=1)"
-                  ) *> IO
-                    .blocking(DelegateRegistry.archive(rec.id))
-                    .attempt
+                      s"(frozen ${ageD}d, reason=${rec.frozenReason.getOrElse("?")}) — retention expired; NO archive write " +
+                      "(state-derived visibility keeps it in the active window until coped with; transcript/worktree/task row untouched)"
+                  ) *> resources.subAgentTaskStore
+                    .findByTaskId(rec.id)
                     .flatMap {
-                      case Right(_) => IO.unit
-                      case Left(e) => logger.warn(s"[delegate-freeze] archive failed for ${rec.id}: ${e.getMessage}")
-                    } *> resources.subAgentTaskStore
-                    .updateStatus(
-                      rec.parentSessionId,
-                      rec.id,
-                      TaskStatus,
-                      lastError = Some(
-                        s"[frozen:expired] frozen for ${ageD}d, no wake — registry record archived after retention; transcript/worktree kept"
-                      )
-                    )
+                      case Some(task) =>
+                        resources.subAgentTaskStore.transitionObserved(
+                          task,
+                          TaskStatus,
+                          Some(
+                            s"[frozen:expired] frozen for ${ageD}d, no wake — retention expired (no archive flag written; state-derived visibility); transcript/worktree kept"
+                          )
+                        )
+                      case None => IO.unit
+                    }
                     .handleErrorWith(_ => IO.unit)
                 else IO.unit
             end match

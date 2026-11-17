@@ -108,9 +108,13 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
         }
   end StallLlm
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
+  private def mkResources(
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    dispatcher: Dispatcher[IO]
+  ): IO[SharedResources] =
     for
-      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
       rateLimiter <- RateLimiter.create()
       tracker <- FileChangeTracker.create(os.pwd.toString)
       fileLocks <- FileLockManager.create
@@ -139,7 +143,6 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
     )
 
   private def withEnv[A](llm: LlmHandle[IO])(test: (SharedResources, ActorSystem) => IO[A]): IO[A] =
-    val system = ActorSystem(s"flow-supervision-${UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
     val dataRoot = tmp / "data"
@@ -150,18 +153,18 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
         """{"name":"worker","description":"test worker","tools":["Read"]}"""
       )
       PathUtil.setDataRoot(dataRoot)
-    }.guaranteeCase {
-      case cats.effect.Outcome.Succeeded(_) => IO.unit
-      case _ => IO.unit
-    }.flatMap { _ =>
-      // AgentActor writes flow sessions via the SHARED sessionStore from
-      // resources (tmp), but FlowReportStore is a global keyed by sessionId —
-      // isolated per test by unique session ids. LlmLogWriter off.
+    }.bracket { _ =>
+      // AgentActor writes flow sessions via the shared temporary sessionStore.
+      // FlowReportStore entries are isolated by unique session ids.
       nebflow.core.LlmLogWriter.setEnabled(false)
-      mkResources(system, tmp, llm).flatMap(test(_, system))
-    }.guarantee {
-      IO.delay { PathUtil.setDataRoot(prevRoot) } *> system.stopAll
-        .handleErrorWith(_ => IO.unit)
+      Dispatcher.parallel[IO].use { dispatcher =>
+        ActorSystem.resource(s"flow-supervision-${UUID.randomUUID().toString.take(6)}").use { system =>
+          mkResources(system, tmp, llm, dispatcher).flatMap(test(_, system))
+        }
+      }
+    } { _ =>
+      IO.delay(PathUtil.setDataRoot(prevRoot)) *>
+        IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
 
   end withEnv

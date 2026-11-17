@@ -50,7 +50,6 @@ class LoginGateCliSpec extends FunSuite:
 
   private val happyReply: PartialFunction[(String, Json), Either[Throwable, Json]] = {
     case (p, _) if p == LoginFlow.LoginPath  => Right(json("""{"ok":true}"""))
-    case (p, _) if p == LoginFlow.StatusPath => Right(json(statusJson))
   }
 
   private val statusJson =
@@ -101,9 +100,10 @@ class LoginGateCliSpec extends FunSuite:
     val fake = PostFake(happyReply)
     val gate: String => IO[Either[Refusal, Unit]] = _ => IO.pure(Right(()))
     val result = LoginFlow
-      .signInWith(CliContext.offline(), fake.post, IO.pure(Some(TargetAccount)), IO.pure(Some(password)), gate)
+      .signInWith(CliContext.offline(), fake.post, IO.pure(Some(TargetAccount)), IO.pure(Some(password)), gate,
+        () => IO.pure(Right(json(statusJson))))
       .unsafeRunSync()
-    assertEquals(fake.calls.map(_._1).toList, List(LoginFlow.LoginPath, LoginFlow.StatusPath), "放行 ⇒ 出站照常")
+    assertEquals(fake.calls.map(_._1).toList, List(LoginFlow.LoginPath), "放行 ⇒ 登录 POST 照常")
     result match
       case CliResult.Text(lines) => assertEquals(lines, List("Signed in as b@example.com."))
       case other                 => fail(s"expected H3 text, got $other")

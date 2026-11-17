@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
-import cats.effect.IO
+import cats.effect.{Deferred, IO}
+import cats.syntax.all.*
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.actor.AgentDef
@@ -53,6 +54,175 @@ class AskHostToolsSpec extends CatsEffectSuite:
       AskHostLedger.clearForTests()
       os.remove.all(tmp)
     })
+  }
+
+  test("crash recovery accepts a delayed answer by the original request id without a live waiter") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (pending, _) <- AskHostLedger.begin("worker", "root", "agent", "first")
+      _ <- IO(AskHostLedger.clearForTests())
+      accepted <- AskHostLedger.answer(pending.correlationId, "decision")
+      restored <- AskHostLedger.restoreWaiter(pending.correlationId)
+      result <- restored.get.timeout(scala.concurrent.duration.DurationInt(3).seconds)
+      _ = assert(accepted)
+      _ = assertEquals(result, "decision")
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("duplicate decision is accepted only once and distinct pending requests remain independent") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (a, _) <- AskHostLedger.begin("worker", "root", "agent", "one")
+      (b, _) <- AskHostLedger.begin("worker", "root", "agent", "two")
+      accepted <- AskHostLedger.answer(a.correlationId, "yes")
+      duplicate <- AskHostLedger.answer(a.correlationId, "yes")
+      rows <- AskHostLedger.recover
+      _ = assert(accepted && !duplicate)
+      _ = assertEquals(rows.size, 2)
+      _ = assertNotEquals(a.correlationId, b.correlationId)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("recovery repeatedly reattaches to the same request and preserves distinct calls") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (a, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "one", "call-a")
+      (b, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "two", "call-b")
+      _ <- IO(AskHostLedger.clearForTests())
+      (again, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "one", "call-a")
+      _ <- IO(AskHostLedger.clearForTests())
+      (third, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "one", "call-a")
+      rows <- AskHostLedger.recover
+      _ = assertEquals(again.correlationId, a.correlationId)
+      _ = assertEquals(third.correlationId, a.correlationId)
+      _ = assertNotEquals(a.correlationId, b.correlationId)
+      _ = assertEquals(rows.size, 2)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("request replay is suppressed after the mailbox has taken and consumed it") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val event = nebflow.actor.AgentCommand.ExternalEvent("askhost", "request", "question", JsonObject.empty, Some("request-a"))
+    import nebflow.core.mail.SessionMailbox
+    (for
+      first <- SessionMailbox.mailOnce("root", event, "askhost-request", "request-a", deduplicateReceipts = true)
+      entries <- SessionMailbox.scanPending("root")
+      _ <- SessionMailbox.take("root", entries)
+      during <- SessionMailbox.mailOnce("root", event, "askhost-request", "request-a", deduplicateReceipts = true)
+      _ <- SessionMailbox.unlinkTaken("root", List("request-a"))
+      after <- SessionMailbox.mailOnce("root", event, "askhost-request", "request-a", deduplicateReceipts = true)
+      _ = assert(first.isInstanceOf[SessionMailbox.MailResult.Enqueued])
+      _ = assertEquals(during, SessionMailbox.MailResult.AlreadyPresent)
+      _ = assertEquals(after, SessionMailbox.MailResult.AlreadyPresent)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("recovered handoff waits for the original request and returns its decision as the original tool result") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    import nebflow.shared.{Message, MessageRole, ContentBlock}
+    import nebflow.core.ResumeHandoff
+    val transcript = List(Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("call-a", "AskHost", JsonObject.empty)))))
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "one", "call-a")
+      _ <- IO(AskHostLedger.clearForTests())
+      safe <- ResumeHandoff.recoverableAskHostOnly("worker", transcript)
+      p = ResumeHandoff.plan(transcript, ResumeHandoff.Cause.EngineRestart)
+      fiber <- ResumeHandoff.resolveAskHost("worker", p).start
+      _ <- AskHostLedger.answer(request.correlationId, "approved")
+      resolved <- fiber.joinWithNever
+      results = resolved.injectBlocks.toList.flatten.collect { case x: ContentBlock.ToolResult => x }
+      _ = assert(safe)
+      _ = assertEquals(results.map(r => (r.toolUseId, r.content, r.isError)), List(("call-a", "approved", Some(false))))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("two simultaneous calls retain separate identities and never exchange decisions") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      start <- Deferred[IO, Unit]
+      firstReady <- Deferred[IO, Unit]
+      secondReady <- Deferred[IO, Unit]
+      first <- (firstReady.complete(()) *> start.get *> AskHostLedger.beginForCall("worker", "root", "agent", "first", "call-a")).start
+      second <- (secondReady.complete(()) *> start.get *> AskHostLedger.beginForCall("worker", "root", "agent", "second", "call-b")).start
+      _ <- firstReady.get *> secondReady.get *> start.complete(())
+      (a, wa) <- first.joinWithNever
+      (b, wb) <- second.joinWithNever
+      _ <- (AskHostLedger.answer(a.correlationId, "answer-a"), AskHostLedger.answer(b.correlationId, "answer-b")).parTupled
+      pair <- (wa.get, wb.get).parTupled
+      _ = assertNotEquals(a.correlationId, b.correlationId)
+      _ = assertEquals(pair, ("answer-a", "answer-b"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("answered request closes only after matching tool result is committed") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    import nebflow.shared.{Message, MessageRole, ContentBlock}
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "q", "call-a")
+      _ <- AskHostLedger.answer(request.correlationId, "yes")
+      _ <- AskHostLedger.closeCommittedResults("worker", Nil)
+      before <- AskHostLedger.recover
+      result = Message(MessageRole.User, Right(List(ContentBlock.ToolResult("call-a", "yes", Some(false)))))
+      _ <- AskHostLedger.closeCommittedResults("worker", List(result))
+      after <- AskHostLedger.recover
+      _ = assertEquals(before.size, 1)
+      _ = assertEquals(after.size, 0)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("cancellation wins before an answer without a second terminal transition") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "q", "cancel-first")
+      cancelled <- AskHostLedger.cancel(request.correlationId, "user cancelled")
+      accepted <- AskHostLedger.answer(request.correlationId, "late")
+      rows <- AskHostLedger.recover
+      _ = assert(cancelled && !accepted && rows.isEmpty)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("answer wins before cancellation and remains recoverable") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "q", "answer-first")
+      accepted <- AskHostLedger.answer(request.correlationId, "yes")
+      cancelled <- AskHostLedger.cancel(request.correlationId, "user cancelled")
+      rows <- AskHostLedger.recover
+      _ = assert(accepted && !cancelled)
+      _ = assertEquals(rows.flatMap(_.answer), List("yes"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("legacy requests lacking call identity are not re-created as recovery requests") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (legacy, _) <- AskHostLedger.begin("old-worker", "root", "agent", "old question")
+      (current, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "new question", "call-1")
+      _ <- AskHostLedger.expireLegacy()
+      rows <- AskHostLedger.recover
+      _ = assertEquals(rows.map(_.pending.correlationId), List(current.correlationId))
+      _ = assert(!rows.exists(_.pending.correlationId == legacy.correlationId))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 
   test("AskUserQuestion remains non-blocking and keeps its existing question schema") {

@@ -10,13 +10,17 @@ RC 电路充电，t = 0 / τ / 2τ / 3τ / 4τ / 5τ 逐步充电压阶跃分步
   20261004_edu_rc_charge_steps_static.svg —— 页面嵌入主图（注入暗色 @media 块）
   20261004_edu_rc_charge_steps_static.png —— 备用位图
 """
-import math
 import os
+
+DATA_ROOT = os.path.expanduser(os.environ.get("STAND_HOME") or os.environ.get("NEBFLOW_HOME") or "~/.stand")
+
+import math
 from pathlib import Path
 
-os.environ.setdefault("MPLCONFIGDIR", r"C:\Users\Kai\.nebflow\tools\mplconfig")
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(DATA_ROOT, "tools", "mplconfig"))
 
-OUT_DIR = Path(r"C:\Users\Kai\.nebflow\plots\education-motion")
+OUT_DIR = Path(os.path.join(DATA_ROOT, 'plots', 'education-motion'))
+os.makedirs(OUT_DIR, exist_ok=True)
 
 # 教学示例值
 R, C, U = 1e3, 1e-6, 1.0

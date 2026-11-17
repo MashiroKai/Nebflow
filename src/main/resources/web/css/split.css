@@ -727,6 +727,22 @@ body.canvas-open.canvas-overlay #canvas-panel {
    通栏变体）不受桌面居中/排他规则（自有形态）；卡窗（body.card-window）随
    件一批并入面板同款居中（下方 §卡窗 段）。deck 叠卡态（面板 = 前卡）顶中
    即 v2① 卡顶名称条位，无需另钉。 */
+.canvas-writer-controls {
+  position: absolute;
+  top: var(--cv-head-clear, 60px);
+  right: 14px;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2, 8px);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-primary, white);
+  color: var(--text-primary, black);
+  font-size: var(--ds-fs-hint, 12px);
+}
+.canvas-writer-controls button { white-space: nowrap; }
+
 .canvas-header {
   position: absolute;
   top: 10px;
@@ -2093,61 +2109,11 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
      全站选中标准（glass.css .canvas-ref-select.active 共档块）。 */
 }
 
-/* canvas 文件刷新批（作者令 2026-10-25）：文件页签右下「重新读盘」钮。
-   材质与槽位 = source/ref 同族（frosted 标准 token 单源；40px 圆、48px 槽距、
-   bottom:16）——座位由 shared.js seatRefreshButton 按既有圆钮/缩放条实测让位
-   （溢出面板宽则落第二行 bottom:64，同窄幅 html 缩放条先例）。
-   定位修复（作者报障 2026-10-27「↻ 压在正文上」）：挂载点从 pane 上移到不滚动
-   的面板壳 #canvas-content（position:relative + overflow:hidden，本文件 :806）。
-   根因 = docx/yaml/xlsx/pptx 等查看器把 .scrollable 加在 pane 自身（pane 即滚动
-   容器），absolute 子元素按整份滚动内容盒定位，bottom:16 落到文档末尾随滚动
-   漂移；壳层不滚动 ⇒ 恒钉可视区右下——滚动、内容变化、亮暗主题切换（纯 token
-   换色，无几何参与）位置均不动。壳层 padding-bottom 8px 由 seatRefreshButton
-   补齐（视觉边距仍以 pane 为准的 16px）。按钮 = 每文档单例，可见性由 canvas.js
-   syncFileRefreshButton 随活动页签/源码态同步。
-   z 层级：z:10 压 pane 内容（pane z:auto 不建层叠上下文，同层比较胜出）；
-   #912 错误态顶部让位带（纯 padding，非浮层）与卡头胶囊/胶囊环（头部区 z-30，
-   空间不与右下角交叠）互不相扰；deck 层/独立浮标各自独立空间位。
-   canvas 控件尺寸对齐批（2026-11-02）：40 → **48**（--cv-size-circle-lg）——
-   本钮就是作者实拍里「缩放条旁边那颗又大一号的圆钮」，与条内钮一并对齐到
-   同一真值；槽距 48 → 56 由 shared.js 的 REFRESH_ROW_PITCH 同步。 */
-.canvas-refresh-toggle {
-  position: absolute;
-  width: var(--cv-size-circle-lg);
-  height: var(--cv-size-circle-lg);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  z-index: 10;
-  color: var(--color-text);
-  /* hover 零布局批（2026-11-03）：`transition: all` → 显式白名单（同族档；
-     busy 态 svg 自转在子元素，不受本条）。 */
-  transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
-  /* 材质/状态档迁 glass.css 圆钮级浮件档（D3，busy 旋转动画保留下方）。 */
-}
-.canvas-refresh-toggle.busy svg {
-  animation: canvasRefreshSpin 1s linear infinite;
-}
-@keyframes canvasRefreshSpin {
-  to { transform: rotate(360deg); }
-}
-/* 可见性同步腿（定位修复批）：原生 hidden 的 UA display:none 会被上面的
-   display:flex（作者样式）压过，必须显式钉死。源码态隐藏走 JS（hidden 置位，
-   canvas-source-mode-changed 事件），不再用 pane 后代选择器（按钮已不在 pane 内）。 */
-.canvas-refresh-toggle[hidden] {
-  display: none !important;
-}
-@media (prefers-reduced-motion: reduce) {
-  .canvas-refresh-toggle.busy svg { animation: none; }
-}
-
+/* canvas 文件刷新批（2026-10-25）的右下「重新读盘」钮已随 canvas-auto-refresh 批
+   （2026-11-17 作者令「去掉 改为带迟滞的自动检查变更刷新 时间窗60s」）整面退役：
+   DOM（shared.js addRefreshButton/座位计算）、事件（canvas.js 壳层挂载同步）、
+   i18n（canvas.refresh 键）、本文件几何/busy/hidden 档与下方阅读器让位档一并
+   移除。 */
 
 .canvas-md-scroll {
   position: absolute;
@@ -2867,13 +2833,8 @@ mark.nf-anno[data-anno-stale] {
 }
 
 /* ── 阅读器底栏让位（P1 §2.2）─────────────────────────────────────────────
-   角浮件簇（壳层刷新钮）抬到底栏上方同簇；移动层阅读器的刷新退入 ⋯ 菜单，
-   壳层浮件直隐（双显防增额）。:has() 随活动页签自动落位/复位，零 JS。
-   canvas 控件尺寸对齐批（2026-11-02）：钮档 40 → 48 后「底栏上方一行」的底锚
-   随行高走 64 → **72**（= 圆钮行顶 16+48 + 8 缝；与 shared.js REFRESH_ROW_BOTTOMS
-   第二行、html 窄面板回落行同值）—— 否则 48 钮会压到底栏上沿。 */
-#canvas-content:has(.canvas-tab-pane.active .epub-reader) > .canvas-refresh-toggle { bottom: 72px !important; /* 座席是内联样式，须压 */ }
-body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .canvas-refresh-toggle { display: none !important; }
+   角浮件簇（壳层刷新钮）抬到底栏上方同簇的 :has() 档已随 canvas-auto-refresh 批
+   （2026-11-17）与钮一并退役。 */
 
 /* ── YAML viewer ── */
 .canvas-yaml-viewer {
@@ -3680,6 +3641,7 @@ body.col-resizing #canvas-panel { transition: none; }
    72 = 源码钮 16 + 48 + 8；monaco.js 16 不变 —— 源码态无簇，单钮独坐）。 */
 .canvas-find-toggle {
   position: absolute; bottom: 16px;
+  left: var(--canvas-find-left, 128px);
   width: var(--cv-size-circle-lg); height: var(--cv-size-circle-lg); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);
@@ -3927,6 +3889,22 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   margin-bottom: var(--ds-space-half);
 }
 .wg-tip.para .td { color: var(--color-frame-text-dim, var(--wg-muted)); }
+
+/* Document citation card: full summary, never line-clamped. */
+.document-term-card {
+  position: fixed; z-index: 901; box-sizing: border-box;
+  width: min(380px, calc(100vw - 16px)); max-height: calc(100vh - 16px);
+  overflow-y: auto; overflow-wrap: anywhere;
+  padding: 14px; border-radius: var(--ds-radius-xl, 14px);
+  border: 1px solid var(--glass-border, rgba(128,128,128,.35));
+  background: var(--nf-glass-bg, var(--color-bg, #fff));
+  color: var(--color-frame-text-bright, var(--color-text, #222));
+  box-shadow: var(--frost-shadow, 0 8px 28px rgba(0,0,0,.18));
+}
+.document-term-summary { margin-top: 8px; white-space: pre-wrap; line-height: 1.5; }
+.document-term-meta, .document-term-path { margin-top: 8px; font-size: 12px; opacity: .8; }
+.document-term-open { margin-top: 12px; cursor: pointer; }
+.document-term-open:focus-visible { outline: 2px solid var(--ds-link-term, #2684ff); outline-offset: 2px; }
 
 /* 词条点击释义弹层：桌面/触屏均为小弹层，固定在 body 顶层避免滚动容器裁剪。 */
 .nf-term-tip {
@@ -4188,6 +4166,9 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 /* Project switcher (#744-B): one vault = one graph; glass-chip material —
    same --glass-* family as .wg-search below (禁各画各的). */
 .wg-switch { margin-top: var(--ds-space-1h); }
+/* F 批 2026-11-17（下拉统一）：select 被 .nf-select 包裹后，块容器里的
+   width:100% 填充职责上移到包裹层（display:grid = 块级填满）。 */
+.wg-switch .nf-select { display: grid; width: 100%; }
 .wg-switch-select {
   width: 100%;
   color: var(--color-frame-text); font: inherit; font-size: var(--ds-fs-hint);
@@ -4464,9 +4445,17 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
    本钮在手机层恒离场（零占位零位移）。 */
 body.mobile-layer .canvas-pop-btn,
 body.card-window .canvas-pop-btn { display: none !important; }
-/* Canvas popout and Ask controls share the capsule's floating shadow token. */
-.canvas-pop-btn,
-.ask-fab { box-shadow: var(--ds-shadow-float); }
+/* Shared canvas control face; the float shadow resolves per theme. */
+.canvas-button.canvas-button {
+  border-radius: var(--ds-radius-pill);
+  box-shadow: var(--ds-shadow-float);
+}
+@media (hover: hover) {
+  .canvas-button.canvas-button:hover {
+    background: var(--cv-hover-bg);
+    transform: scale(var(--cv-hover-scale));
+  }
+}
 
 /* ── 环卡卡头「在独立窗口打开」钮（批⑤后独立窗唯一可见卡头入口；标题头
    #canvas-pop-btn 同批退役）────────────────────────────────────────── */

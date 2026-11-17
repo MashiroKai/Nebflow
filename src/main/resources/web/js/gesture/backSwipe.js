@@ -33,6 +33,8 @@
 // popBackHandler(id)。这条链路里**没有第二套关闭逻辑** —— 面板怎么关，还是它
 // 自己的关闭钮说了算（滑返只是把那颗钮按剧本点一次）。
 
+import { isLiveMobilePage } from '../mobile/pageState.js';
+
 const EDGE_BAND_TOUCH = 20;   // 触屏左缘带宽（iOS 同档；navController 同值）
 const EDGE_BAND_POINTER = 64; // 指针设备（鼠标/触控笔）起手带宽 —— 鼠标 20px 太难命中
 const AXIS_LOCK = 8;          // 轴锁阈值（与 navController 同参）
@@ -161,17 +163,19 @@ function onDown(e) {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   const top = topBackHandler();
   if (!top) return;
-  if (e.clientX > (e.pointerType === 'touch' ? EDGE_BAND_TOUCH : EDGE_BAND_POINTER)) return;
+  const band = e.pointerType === 'touch' ? EDGE_BAND_TOUCH : EDGE_BAND_POINTER;
+  const direction = e.clientX <= band ? 1 : e.clientX >= window.innerWidth - band ? -1 : 0;
+  if (!direction) return;
   const t = /** @type {Element|null} */ (e.target && e.target.nodeType === 1 ? e.target : null);
   if (t && t.closest(HSCROLL_SEL)) return;        // 横向滚动区/输入框起手：不认领
   // 面板自带 root 时，起手点必须落在面板里（面板不铺满视口也不误伤背后内容）。
   if (top.root && t && !top.root.contains(t)) return;
-  g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), claimed: false, entry: top, root: top.root || null };
+  g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), direction, claimed: false, entry: top, root: top.root || null };
 }
 
 function onMove(e) {
   if (!g || e.pointerId !== g.id) return;
-  const dx = e.clientX - g.x0;
+  const dx = (e.clientX - g.x0) * g.direction;
   const dy = e.clientY - g.y0;
   if (!g.claimed) {
     if (Math.abs(dx) <= AXIS_LOCK && Math.abs(dy) <= AXIS_LOCK) return;
@@ -185,14 +189,14 @@ function onMove(e) {
   const w = g.root.getBoundingClientRect().width || window.innerWidth;
   g.root.dataset.backSpring = '';                 // 夺回清理权
   g.root.style.transition = 'none';
-  g.root.style.transform = `translate3d(${Math.max(0, damp(dx, w))}px,0,0)`;
+  g.root.style.transform = `translate3d(${g.direction * Math.max(0, damp(dx, w))}px,0,0)`;
 }
 
 function onUp(e) {
   if (!g || e.pointerId !== g.id) return;
   const st = g;
   const claimed = st.claimed;
-  const dx = e.clientX - st.x0;
+  const dx = (e.clientX - st.x0) * st.direction;
   const dy = e.clientY - st.y0;
   const dt = Date.now() - st.t0;
   g = null;
@@ -282,7 +286,10 @@ const wired = new Map();
 function syncPanels() {
   for (const p of PANELS) {
     const ov = document.querySelector(p.overlay);
-    const on = visible(ov);
+    // Adopted overlays are only state carriers. Their mobile page shell owns
+    // navigation; a stale carrier must not steal its edge gesture.
+    const adopted = isLiveMobilePage(p.key);
+    const on = !adopted && visible(ov);
     const has = wired.get(p.key);
     if (on && !has) {
       const root = /** @type {HTMLElement|null} */ (ov);

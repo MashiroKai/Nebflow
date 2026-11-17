@@ -86,6 +86,10 @@ export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
 let teamMetaApplier = null;
 export function setTeamMetaApplier(fn) { teamMetaApplier = fn; }
 
+// Committed task streams use history snapshots, never uncertain delta replay.
+let durableTaskFrameObserver = null;
+export function setDurableTaskFrameObserver(fn) { durableTaskFrameObserver = fn; }
+
 // ── Ask-dock frame interceptor (registered by askDock.js) ────────────────
 // Canvas ask mode（2026-10-28 实施批）：sessionId = "ask-<hash>" 的帧（后端
 // WsAskHandlers 域 + ask 会话 AgentStream 流）路由进气泡列，与主会话视图
@@ -358,6 +362,13 @@ const GLOBAL_MSG_TYPES = new Set([
   //                   （消费点 = takeoverModal.js）。
   //   takeoverResult  【重新接管】的回执（ok ⇒ 收模态回 active）。
   'takeover', 'takeoverResult',
+  // canvas-tab-sync 批（2026-11-17）：canvas 页签跨设备实时收敛帧
+  // {type:'canvasTabsChanged', v:2, tabs:[...], tombstones?, activeTabId?} ——
+  // 服务端 /api/canvas-tabs PUT 落盘成功后把合并存档 wsHub.broadcast 到全部
+  // 连接（无 sessionId）。🔴 必须入 GLOBAL：否则会被下方视图路由当会话内事件
+  // ⇒ setActiveView(primary)，任一端开/关页签都把其他端正在看的视图抢走
+  // （projectCreated 同律）。消费点 = canvas.js applyLiveTabsFrame（幂等收敛）。
+  'canvasTabsChanged', 'canvasWriterChanged',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
@@ -1538,6 +1549,8 @@ export function connect() {
       if (state.consoleSuperseded && msg.type !== 'takeover' && msg.type !== 'takeoverResult') {
         return;
       }
+
+      if (durableTaskFrameObserver?.(msg)) return;
 
       // ── BUG 6 fix: save/restore activeView ────────────────────────────
       // activeView is a module-global (chatView.js). The bg-agent/flow

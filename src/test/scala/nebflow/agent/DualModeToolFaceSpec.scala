@@ -1,6 +1,5 @@
 package nebflow.agent
 
-import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.JsonObject
@@ -12,19 +11,9 @@ import nebflow.core.tools.{SubagentTool, ToolContext}
 import nebflow.shared.{PathUtil, SubAgentTask}
 
 /**
- * 双模式批（2026-10-28 · 设计 §4.2/§5.1）工具面分叉 spec：
- *
- *  - F1-F4 **挂载面单点分叉**（buildAllowedToolSet 尾段 delegateSession 腿）：
- *    kernel = 编排面整体退场（node 四件全摘）**但携带 Subagent**（只读侦察腿，
- *    tool-face-agentflow-retire 批 2026-11-05 作者裁定一）；dispatcher = Subagent
- *    摘除、node 四件保留（编排本体）；`delegateMode=None`（闸关/未判定）与
- *    `delegateSession=false` ⇒ 本段全部分叉失效（现状逐字节）。
- *  - 同批裁定二：`AgentFlow` **工具整体退役** ⇒ 任何面都不再携带该名（F1/F2/F3 各钉一条）。
- *  - F5 **工具内第二保险**（防 schema 注入/显式调用逃逸）：dispatcher 会话显式拒
- *    （DUAL_MODE_FACE_REMOVED）、**kernel 会话放行**；闸关 = 现行为腿（参数校验错误，
- *    绝不出双模式文案）。
- *  - F7 mode 参数声明面：DelegateTool schema 携 mode enum（kernel|dispatcher）。
- *  - F8 mode 字段落任务行：SubAgentTask 手写 decoder 缺键容忍（旧盘面照读）。
+ * Delegate mode tool faces, prompt validation and orchestration guidance.
+ * Both modes retain reconnaissance Subagent; only dispatchers receive node tools.
+ * Ordinary callers and legacy records retain their existing behavior.
  */
 class DualModeToolFaceSpec extends FunSuite:
 
@@ -36,6 +25,44 @@ class DualModeToolFaceSpec extends FunSuite:
 
     def allowedWithDelegateMode(defn: AgentDef, delegateSession: Boolean, delegateMode: Option[String]): Set[String] =
       buildAllowedToolSet(defn, 0, delegateSession = delegateSession, delegateMode = delegateMode)
+
+    def askFace(defn: AgentDef): Set[String] =
+      buildAllowedToolSet(defn, 1, askSession = true, delegateSession = true, delegateMode = Some("dispatcher"))
+
+  test("Ask effective face stays independent of dispatcher and declared tools") {
+    val definition = AgentDef(name = "subagent", description = "", tools = List("*"))
+    val face = CoreProbe.askFace(definition)
+    assertEquals(
+      face,
+      Set(
+        "message_record_search",
+        "send_message_to_main_chat",
+        "Read",
+        "Glob",
+        "Grep",
+        "WebSearch",
+        "WebFetch",
+        "Bash"
+      )
+    )
+    assert(!face.contains("GitQuery"))
+  }
+
+  test("non-Ask roles retain Bash without gaining Ask-exclusive tools") {
+    val definitions = List(
+      AgentDef(name = "subagent", description = "", tools = List("*")),
+      AgentDef(name = "custom-bash", description = "", tools = List("Bash")),
+      AgentDef(name = "custom-read", description = "", tools = List("Read")),
+      probeDef,
+      AgentDef(name = nebflow.actor.RootAgentIdentity.Name, description = "")
+    )
+    for definition <- definitions; mode <- List(None, Some("kernel"), Some("dispatcher")) do
+      val face = CoreProbe.allowedWithDelegateMode(definition, delegateSession = mode.isDefined, delegateMode = mode)
+      assert(face.contains("Bash"), clue(definition.name))
+      assert(!face.contains("message_record_search"))
+      assert(!face.contains("send_message_to_main_chat"))
+      assert(!face.contains("GitQuery"))
+  }
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     tmp = os.temp.dir(prefix = "dual-mode-face")
@@ -65,18 +92,18 @@ class DualModeToolFaceSpec extends FunSuite:
   private val NodeFace = Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite")
 
   /**
-   * 内核腿期望面 = `NebflowFixedTools` + `delegate_report` + `Mail`。kernel 按裁定
-   * **拿到** Subagent（只读侦察腿）。Node 四件与 node_report 不在本腿。
+   * Kernel-leg expected face = `NebflowFixedTools` (file/shell six + BgWait + AskUserQuestion + Subagent)
+   * + `Mail`. The kernel gets Subagent (read-only reconnaissance leg) by ruling. The four Node tools and
+   * the terminal report tools are not on this leg.
    */
-  private val ExpectedKernelFace =
-    nebflow.agent.AgentCore.NebflowFixedTools + nebflow.core.tools.DelegateReportTool.Name + "Mail"
+  private val ExpectedKernelFace = nebflow.agent.AgentCore.NebflowFixedTools + "Mail"
 
-  /** 分发器腿期望面（**14 件**）= 内核腿 − Subagent ＋ node 四件。 */
-  private val ExpectedDispatcherFace: Set[String] = (ExpectedKernelFace - "Subagent") ++ NodeFace
+  /** Dispatcher delegates retain reconnaissance alongside the node orchestration face. */
+  private val ExpectedDispatcherFace: Set[String] = ExpectedKernelFace ++ NodeFace
 
   // ── 挂载面 ──────────────────────────────────────────────────────────────────
 
-  test("F1 kernel 腿：有 Subagent；node 四件与 node_report 不在") {
+  test("F1 kernel leg: has Subagent; the four node tools are absent") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
@@ -94,13 +121,6 @@ class DualModeToolFaceSpec extends FunSuite:
       set.contains("Subagent"),
       s"kernel face MUST carry Subagent (read-only recon leg, author ruling 2026-11-05; got: ${set.toList.sorted})"
     )
-    // node_report 摘除（作者裁定 2026-10-29：「那不是agentflow的节点使用的工具吗」）
-    // ——现状事实源：RootExclusiveTools 防声明逃逸剥离 + flowNodeSession 尾段专属
-    // 挂载，本就不达 delegate 面；kernel 腿的显式减法是未来挂载面变动下的保险销。
-    assert(
-      !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
-      "kernel face must not carry node_report (flow-node-only tool — dual insurance: mount face + in-tool identity rejection)"
-    )
     // 🔴 裁定二：AgentFlow 工具整体退役 ⇒ 任何固定面都不许再出现这个名字。
     assert(
       !set.contains("AgentFlow"),
@@ -108,24 +128,26 @@ class DualModeToolFaceSpec extends FunSuite:
     )
     assert(!nebflow.core.tools.ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be unregistered")
     assert(set.contains("Mail"), "kernel delegate keeps Mail (node:<id> continuation leg)")
-    assert(set.contains(nebflow.core.tools.DelegateReportTool.Name), "kernel delegate keeps delegate_report")
     assert(set.contains("Read") && set.contains("Bash"), "kernel delegate keeps the executor base face")
-    // 读数：面值恰 11 件（不照抄任务书，按本读数核）
+    // 读数：面值恰 10 件（不照抄任务书，按本读数核）
     println(s"[FACE-KERNEL] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
     assertEquals(set, ExpectedKernelFace, s"kernel face reading, got: ${set.toList.sorted}")
-    assertEquals(set.size, ExpectedKernelFace.size, s"kernel face size must match expected set, got: ${set.toList.sorted}")
+    assertEquals(
+      set.size,
+      ExpectedKernelFace.size,
+      s"kernel face size must match expected set, got: ${set.toList.sorted}"
+    )
   }
 
-  test("F2 dispatcher 腿：Subagent 摘除、node 四件保留") {
+  test("F2 dispatcher exposes Subagent alongside the four node tools") {
+    val id = "delegate-nebflow-f2"
+    mkModeRecord(id, DualModeConfig.ModeDispatcher)
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
-      delegateMode = Some(DualModeConfig.ModeDispatcher)
+      delegateMode = DelegateRegistry.modeFaceOf(Some(id))
     )
-    assert(
-      !set.contains("Subagent"),
-      "dispatcher face strips Subagent (Q2: recon subagent is not an orchestration face)"
-    )
+    assert(set.contains("Subagent"), "dispatcher face keeps the read-only reconnaissance tool")
     // 裁定二：AgentFlow 工具退役 ⇒ dispatcher 面同样没有它（编排 = ChainWrite）。
     assert(
       !set.contains("AgentFlow"),
@@ -134,15 +156,13 @@ class DualModeToolFaceSpec extends FunSuite:
     NodeFace.foreach { t =>
       assert(set.contains(t), s"dispatcher keeps the node face: $t (got: ${set.toList.sorted})")
     }
-    // 事实钉（2026-10-29 裁定②「dispatcher 保留」= 本腿不做 node_report 摘除动作；
-    // 现状该工具本就 flow 节点会话专属——本断言钉的是「本批不引入变化」）。
-    assert(
-      !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
-      "node_report stays flow-node-only (unchanged by this batch; the dispatcher leg does no node_report work)"
-    )
     println(s"[FACE-DISPATCHER] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
     assertEquals(set, ExpectedDispatcherFace, s"dispatcher face reading, got: ${set.toList.sorted}")
-    assertEquals(set.size, ExpectedDispatcherFace.size, s"dispatcher face size must match expected set, got: ${set.toList.sorted}")
+    assertEquals(
+      set.size,
+      ExpectedDispatcherFace.size,
+      s"dispatcher face size must match expected set, got: ${set.toList.sorted}"
+    )
   }
 
   test("F3 闸关（mode=None）⇒ 全量面逐字节：Subagent + node 四件俱在（AgentFlow 已不存在于任何面）") {
@@ -156,7 +176,7 @@ class DualModeToolFaceSpec extends FunSuite:
     )
   }
 
-  test("F4 非 delegate 会话 + mode=dispatcher ⇒ 零分叉（挂载面判据 = delegateSession ∧ mode 两条件）") {
+  test("F4 ordinary callers retain their face when passed dispatcher mode") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = false,
@@ -166,6 +186,7 @@ class DualModeToolFaceSpec extends FunSuite:
     // Subagent 不因 mode 参数而被摘（挂载面分叉需要两条件同时成立）。
     assert(set.contains("Subagent"), "non-delegate sessions never fork on mode: Subagent")
     assert(!set.contains("ChainWrite"), "the node face remains delegateSession-tail-only (unchanged baseline)")
+    assertEquals(set, CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = false, delegateMode = None))
   }
 
   // ── 工具内第二保险 ──────────────────────────────────────────────────────────
@@ -173,29 +194,20 @@ class DualModeToolFaceSpec extends FunSuite:
   private def faceCtx(sessionId: Option[String]): ToolContext =
     ToolContext(projectRoot = tmp.toString, sessionId = sessionId)
 
-  test("F5 SubagentTool：**kernel 放行**、dispatcher 显式拒（DUAL_MODE_FACE_REMOVED）；闸关 = 现行为腿") {
-    mkModeRecord("delegate-nebflow-f5k", DualModeConfig.ModeKernel)
-    mkModeRecord("delegate-nebflow-f5d", DualModeConfig.ModeDispatcher)
-    // ① kernel：身份闸**放行**——用空输入证明「过了身份闸、落到参数校验」（真 spawn 的
-    //    端到端面由 BlockingSubagentEndToEndSpec 与 KernelChildSpawnGateSpec K1a 承担）。
-    val kernel = SubagentTool.call(JsonObject.empty, faceCtx(Some("delegate-nebflow-f5k"))).unsafeRunSync()
-    assert(kernel.left.exists(_.message.contains("Missing required parameter")), kernel.toString)
-    assert(
-      !kernel.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
-      s"kernel must NOT be refused anymore (author ruling 2026-11-05), got: $kernel"
-    )
-    // ② dispatcher：工具内第二保险仍然拒（挂载面已摘 + 本闸双保险）
-    val dispatcher = SubagentTool
-      .call(JsonObject("prompt" -> "look around".asJson), faceCtx(Some("delegate-nebflow-f5d")))
-      .unsafeRunSync()
-    assert(dispatcher.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), dispatcher.toString)
-    // ③ 闸关：同一会话形态（无记录 ⇒ mode=None）= 现行为（缺参校验错误，绝不出双模式文案）。
-    val gateOff = SubagentTool.call(JsonObject.empty, faceCtx(Some("delegate-nebflow-f5x"))).unsafeRunSync()
-    assert(gateOff.left.exists(_.message.contains("Missing required parameter")), gateOff.toString)
-    assert(
-      !gateOff.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
-      "gate-off must never produce the dual-mode error"
-    )
+  test("F5 Subagent validates empty prompts for dispatcher, kernel and ordinary callers") {
+    val kernelId = "delegate-nebflow-f5k"
+    val dispatcherId = "delegate-nebflow-f5d"
+    mkModeRecord(kernelId, DualModeConfig.ModeKernel)
+    mkModeRecord(dispatcherId, DualModeConfig.ModeDispatcher)
+    val callers = List(Some(kernelId), Some(dispatcherId), Some("ordinary-session"), None)
+    val invalidInputs = List(JsonObject.empty, JsonObject("prompt" -> " \n\t".asJson))
+    for caller <- callers; input <- invalidInputs do
+      val out = SubagentTool.call(input, faceCtx(caller)).unsafeRunSync()
+      assertEquals(
+        out.left.map(_.message),
+        Left("Missing required parameter: prompt — give the sub-agent a self-contained question."),
+        s"normal prompt validation must apply to caller $caller"
+      )
   }
 
   // ── 声明面/记录面 ───────────────────────────────────────────────────────────
@@ -212,8 +224,8 @@ class DualModeToolFaceSpec extends FunSuite:
       modeJ.flatMap(_.asObject).flatMap(_("enum")).flatMap(_.asArray).map(_.toList.flatMap(_.asString)).getOrElse(Nil)
     assertEquals(
       enumVals,
-      List("kernel", "dispatcher", "merger"),
-      s"mode enum must be kernel|dispatcher (the allocator is gone, so auto is no longer a legal word); mode=$modeJ"
+      List("kernel", "dispatcher"),
+      s"mode enum must be kernel|dispatcher (merger is retired with the managed workspaces); mode=$modeJ"
     )
     // delegate-param-decisions 批（2026-11-04）：判定机已删除 ⇒ schema 里不许再出现
     // 「worktree judge」；且必须写明「不填 = 确定性 kernel + 没有分配器」。
@@ -225,9 +237,20 @@ class DualModeToolFaceSpec extends FunSuite:
 
   // ── 分发器提示词两段（2026-10-29 作者补令 · DispatcherDisciplineLine 单点）──
 
-  test("F9 分发器纪律段：subagent-via-nodes 用法指导逐点在案（自足 task / out 边回流 / verifier+loop 判定）") {
+  test("F9 dispatcher distinguishes blocking read-only reconnaissance from chain task execution") {
     val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
-    assert(line.contains("Subagent tool is gone by design"), "the removal is explained, not silent")
+    assert(line.contains("use Subagent for blocking lookups and analysis"))
+    assert(line.contains("Read/Glob/Grep/WebSearch/WebFetch/Bash"))
+    assert(line.contains("findings return as this tool call's result"))
+    assert(line.contains("foreground shell-backed reconnaissance"))
+    assert(line.contains("no separate Write/Edit, messaging or recursive agent tools"))
+    assert(line.contains("not a read-only sandbox"))
+    assert(line.contains("finish shell work and include its result before answering"))
+    assert(line.contains("Use chain nodes for task execution, not Subagent"))
+    assert(!line.contains("Subagent tool is gone"))
+    assert(!line.contains("read-only / analysis = one node"))
+    assert(SubagentTool.description.contains("dispatchers must use chain nodes instead of executing it themselves"))
+    assert(!SubagentTool.description.contains("do those yourself"))
     assert(
       line.contains("SELF-CONTAINED"),
       "node tasks must be self-contained (nodes see none of the dispatcher's context)"
@@ -247,13 +270,22 @@ class DualModeToolFaceSpec extends FunSuite:
     )
     assert(line.contains("never assemble a chain node-by-node"), "piecemeal NodeEdit chain-building is forbidden")
     assert(line.contains("not for building it"), "NodeEdit is refinement-only")
-    // worktree 裁定（2026-10-29 18:12）：座位共享而非「无 worktree」——旧表述必须消失。
+    // 座位共享 + 自管隔离（口径统一批）：节点默认落本会话工作区（共享非嵌套）；
+    // 需隔离位时节点自建自管 branch/worktree；main 保护 seal 与 deps 串行不变。
     assert(!line.contains("no branches and no worktrees"), s"the retracted claim must be gone: $line")
     assert(
-      line.contains("inside this session's worktree seat"),
+      !line.contains("never create branches or worktrees"),
+      s"the retracted node-layer isolation ban must be gone: $line"
+    )
+    assert(
+      line.contains("THIS session's workspace"),
       "the shared-seat semantics are stated (sharing, not nesting)"
     )
-    assert(line.contains("never create branches or worktrees"), "the node-layer seal is stated")
+    assert(
+      line.contains("creates and manages its own branch/worktree"),
+      "on-demand node-level self-isolation is stated"
+    )
+    assert(line.contains("never commits straight to `main`"), "the main-protection seal is stated")
     assert(line.contains("`deps`"), "the write-scope serialization discipline stays")
   }
 
@@ -322,6 +354,28 @@ class DualModeToolFaceSpec extends FunSuite:
     assert(line.contains("Dispatcher mode"), "the section is unmistakably labeled for the dispatcher mode")
   }
 
+  test("F12 三面隔离口径统一：node/delegate/dispatcher 同句自主隔离 + main 保护；旧禁令零残留") {
+    // 自管隔离批：托管树退役后节点/delegate/dispatcher 三面统一为「按需自建自管
+    // branch/worktree + 永不直提 main」；旧「never create branches or worktrees」
+    // 全封禁句在三面均不得残留（生成节点面 = Roles.NebflowNodePrompt 经 entry 路径
+    // 实读，判据门 PromptFaceSplitSpec）。
+    val faces = List(
+      "node" -> nebflow.prompts.PromptCatalog.Roles.NebflowNodePrompt,
+      "delegate" -> nebflow.prompts.PromptCatalog.Roles.NebflowDelegatePrompt,
+      "dispatcher" -> nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
+    )
+    for (name, face) <- faces do
+      assert(
+        face.contains("own branch/worktree"),
+        s"[$name] on-demand self-isolation is stated"
+      )
+      assert(face.contains("straight to `main`"), s"[$name] the main-protection seal is stated")
+      assert(
+        !face.contains("never create branches or worktrees"),
+        s"[$name] the retired blanket isolation ban must be gone"
+      )
+  }
+
   test("F8 SubAgentTask mode 字段：缺键容忍（旧盘面照读解码 None）；在键透传") {
     val legacy = """{"taskId":"delegate-nebflow-f8","parentSessionId":"p","agentName":"nebflow","prompt":"p",
       |"description":"d","status":"running","retryCount":0,"spawnedAt":1700000000000,"source":"delegate"}""".stripMargin
@@ -335,25 +389,22 @@ class DualModeToolFaceSpec extends FunSuite:
     assertEquals(decoded2.map(_.mode), Right(Some("dispatcher")))
   }
 
-  test("the merger face carries WorktreeContext but cannot create a development node chain") {
-    val definition = AgentDef(name = "nebflow", description = "merger face")
-    val merger = CoreProbe.allowedWithDelegateMode(definition, true, Some("merger"))
-    assert(merger.contains(nebflow.core.tools.WorktreeContextTool.Name), "the merger face carries WorktreeContext")
-    assert(merger.contains(nebflow.core.tools.MergerRequestTool.Name), "the merger face carries the merge request tool")
-    assert(!merger.contains("ChainWrite"))
+  test("the retired workspace/merger tools are on no face at all (kernel, executor, root)") {
+    val definition = AgentDef(name = "nebflow", description = "faces")
     val kernel = CoreProbe.allowedWithDelegateMode(definition, true, Some("kernel"))
-    assert(!kernel.contains(nebflow.core.tools.WorktreeContextTool.Name), "kernel delegates never see WorktreeContext")
+    val dispatcher = CoreProbe.allowedWithDelegateMode(definition, true, Some("dispatcher"))
     val executor = CoreProbe.allowedWithDelegateMode(definition, false, None)
-    assert(
-      !executor.contains(nebflow.core.tools.WorktreeContextTool.Name),
-      "the executor base face never sees WorktreeContext"
-    )
-    // The main-agent (Nebula root) face carries WorktreeContext via RootOrchestrationTools.
     val root = CoreProbe.allowedWithDelegateMode(
       AgentDef(name = nebflow.actor.RootAgentIdentity.Name, description = "root face"),
       delegateSession = false,
       delegateMode = None
     )
-    assert(root.contains(nebflow.core.tools.WorktreeContextTool.Name), "the main-agent face carries WorktreeContext")
+    for face <- List(kernel, dispatcher, executor, root) do
+      assert(!face.contains("MergerRequest"), "MergerRequest is retired and mounts on no face")
+      assert(!face.contains("WorktreeContext"), "WorktreeContext is retired and mounts on no face")
+      assert(!face.contains("WorkspaceSummary"), "WorkspaceSummary is retired and mounts on no face")
+      assert(!face.contains("WorkspaceReconcile"), "WorkspaceReconcile is retired and mounts on no face")
+    assert(!kernel.contains("ChainWrite"))
+    assert(dispatcher.contains("ChainWrite"), "the dispatcher keeps its chain tools")
   }
 end DualModeToolFaceSpec

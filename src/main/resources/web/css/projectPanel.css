@@ -98,6 +98,29 @@
 
 
 .project-open-btn svg { width: 15px; height: 15px; }
+.project-open-btn { width: 40px; height: 40px; gap: 3px; }
+.project-open-current-icon, .project-open-app-icon img, .project-open-app-icon svg { width: 20px; height: 20px; object-fit: contain; }
+.project-open-menu {
+  --dropdown-min-width: 180px;
+  --dropdown-item-height: 40px;
+  --dropdown-icon-column: 24px;
+  --dropdown-check-column: 20px;
+  --dropdown-hover: rgb(var(--sapphire) / 0.15);
+  --dropdown-focus: rgb(var(--sapphire));
+  position: fixed; z-index: 10000; min-width: var(--dropdown-min-width); padding: 4px;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
+  overflow-y: auto; box-sizing: border-box;
+  border: 1px solid var(--color-border); border-radius: var(--ds-radius-input);
+  box-shadow: var(--shadow-md);
+}
+.project-open-menu button {
+  display: grid; grid-template-columns: var(--dropdown-icon-column) 1fr var(--dropdown-check-column); align-items: center;
+  width: 100%; min-height: var(--dropdown-item-height); padding: 0 8px; border: 0;
+  border-radius: var(--ds-radius-input); background: transparent;
+  color: var(--color-frame-text); text-align: left; cursor: pointer;
+}
+.project-open-menu button[aria-checked="true"], .project-open-menu button:hover, .project-open-menu button:focus-visible { background: var(--dropdown-hover); }
+.project-open-menu button:focus-visible { outline: 2px solid var(--dropdown-focus); outline-offset: -2px; }
 
 /* 取消加载按钮（unmount-console 面板批 2026-11-02）：卡片头部显式人工卸载入口
    （原 .project-archive-btn 面位回归，类名随语义更替）。尺寸/形态对齐
@@ -1067,7 +1090,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   color: rgb(var(--sapphire));
 }
 
-/* Workspace controls keep their DOM while ledger snapshots update. */
+/* Read-only legacy ledger rows (the managed-workspace mechanism is retired). */
 .project-workspaces {
   padding: var(--ds-space-3);
   border-top: var(--ds-border-width) solid var(--ds-border-hairline);
@@ -1076,33 +1099,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   overflow-wrap: anywhere;
 }
 .project-workspaces > summary { cursor: pointer; }
-.project-workspaces-baseline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: var(--ds-space-2);
-  margin-block: var(--ds-space-3);
-}
-.project-workspaces-baseline label { display: grid; gap: var(--ds-space-1); min-width: 0; flex: 1; }
-.project-workspaces-baseline input { min-width: 0; width: 100%; box-sizing: border-box; color: inherit; font-family: inherit; }
 .project-workspaces-list { list-style: none; padding: 0; margin: 0; }
 .project-workspaces-row { padding-block: var(--ds-space-2); border-bottom: var(--ds-border-width) solid var(--ds-border-hairline); }
 .project-workspaces-row > label { display: flex; align-items: center; gap: var(--ds-space-2); }
 .project-workspaces-meta { color: var(--ds-text-muted); margin-block: var(--ds-space-2); }
-.project-workspaces-message { white-space: pre-wrap; }
-.project-workspaces-requests { margin-top: var(--ds-space-3); }
-/* Workspace facts chips (ahead / dirty / verification / reconcile): badge scale,
-   token-only values per the design-spec rules. */
-.project-ws-chips { display: flex; flex-wrap: wrap; gap: var(--ds-space-1); margin-block: var(--ds-space-1); }
-.project-ws-chip {
-  display: inline-block; padding: 1px var(--ds-space-2);
-  border-radius: var(--ds-radius-badge); font-size: var(--ds-fs-meta);
-  color: var(--ds-text-muted);
-}
-.project-ws-chip.is-verified { color: var(--ds-success-icon); }
-.project-ws-chip.is-unverified { color: var(--ds-text-muted); }
-.project-ws-chip.is-resumable { color: var(--ds-warn-icon); }
-.project-ws-chip.is-unknown { color: var(--ds-text-muted); }
-.project-ws-actions { display: flex; gap: var(--ds-space-2); margin-block: var(--ds-space-1); }
-
 .project-workspaces [hidden] { display: none; }

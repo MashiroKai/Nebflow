@@ -11,9 +11,9 @@
 //   ② 删重复叉号：标题行 #bgagent-close 整件退役（DOM 移除）——关闭路径只留
 //      popSheet.mobileSheetBack 注入的左上返回圆钮（「发起群聊」批同款）。
 //   ③ 右上 ⋯ 悬浮控件（g2-fab 48 档，会话页 .mh-sess-more 同几何）：点开毛玻璃
-//      详情浮层（nf-glass 单源材质）——插件 / 工作树 / 模型 / 创建时间 / 来源
-//      （badgeFaceOfKind 单源词面）+ 任务内容全文（delegate 摘要条迁入）+ 最近动作 /
-//      本会话后台任务（bgws 条迁入，口径⑥灰行收进详情）。
+//      详情浮层（nf-glass 单源材质）——来源（badgeFaceOfKind 单源词面）/ 创建时间
+//      + 任务内容全文（delegate 摘要条迁入）+ 最近动作 / 本会话后台任务（bgws 条
+//      迁入，口径⑥灰行收进详情）。工作树与插件不再进手机详情（冗余信息）。
 //   ④ 底部状态条退役：footer 由 mobileLayer.css 整条隐藏；uptime 由胶囊承担。
 //   ⑤ 终止钮 = 右下悬浮圆钮：footer 管理条里的 stopBtn **同一节点**迁出（不建第二
 //      个按钮、不复制 cancelAgent 线路——bindManageActions/syncManageControls 照旧
@@ -184,7 +184,7 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
     actions.appendChild(bar.retriesEl);
   }
 
-  // ③ 详情 meta 行（数据到位才建行——零空位纪律）：来源 / 创建 / 工作树 / 插件。
+  // ③ Detail meta rows (a row exists only when its data arrived): source, created. Worktree and plugins are intentionally absent.
   const metaRow = (labelKey, value, title) => {
     if (!value) return;
     const row = document.createElement('div');
@@ -211,15 +211,6 @@ export function mountBgAgentMobileChrome({ overlay, modal, bar, nodeSessionId, a
       ].filter(Boolean).join(' · '));
       if (record.createdAt) {
         metaRow('bgagent.detail.created', new Date(Number(record.createdAt)).toLocaleString());
-      }
-      // 工作树：显式缺席（就地通道）也是信息 ⇒ 出「就地」词；无记录字段才缺席。
-      metaRow('bgagent.detail.worktree',
-        record.worktree
-          ? (String(record.worktree).split('/').filter(Boolean).pop() || String(record.worktree))
-          : t('bgagent.detail.noWorktree'),
-        record.worktree ? String(record.worktree) : '');
-      if (record.plugins && Array.isArray(record.plugins) && record.plugins.length) {
-        metaRow('bgagent.detail.plugins', record.plugins.map((p) => String(p || '')).filter(Boolean).join(', '));
       }
     }).catch(() => { /* fail-soft：meta 区缺席 */ });
   }

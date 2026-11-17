@@ -15,9 +15,8 @@
      · White text and white icons always use --ctl-send-ink (the only white-ink
        token that stays #fff in both themes; --btn-ink-ink flips to dark ink in
        the dark theme and must not be used as white text);
-     · Capsule / toolbar / menu materials come from the glass style pack single
-       source (--cv-bg / --cv-blur / --cv-saturate / --cv-border / --cv-shadow);
-       this file adds zero new material literals.
+     · Capsule / toolbar / menu materials come from the shared recipe in
+       glass.css; this file owns their geometry, not their glass material.
 
    Geometry (single source with the mobileLayer.css token block):
      · Top floating band = --mchrome-top 16 + --mchrome-btn 48 (button bottom 64);
@@ -67,11 +66,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
    the page. display:none rather than opacity: the shell title is a single
    node whose sticky-capsule state is its own ::before, so removing the node
    from the render tree hides both states. */
-body.mobile-layer .mobile-page[data-page="tasks"] .mobile-page-title,
-body.mobile-layer .mobile-page[data-page="todo-apple-list"] .mobile-page-title,
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .mobile-page-title {
-  display: none;
-}
+/* The shared shell keeps its title visually hidden but accessible. */
 /* Page body top clearance (no in-flow large title on these pages, so the body
    owns the clearance): first element starts at 72 + safe, always below the
    floating button bottom edge of 64 (same criterion as mobile-chrome-clearance
@@ -91,8 +86,21 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
   display: flex;
   flex-direction: column;
   width: 100%;
-  padding-bottom: 28px;
+  /* H 批（ui-unify-panels 2026-11-17）：末尾让位不再用裸 28px —— 每页按自己的
+     底带垫整条钮带（tasks/list = 右下 FAB --mpage-fab-clearance；item = 底部
+     键盘工具胶囊 .ta-tool 的整条带），滚动到头时末行底缘恒在底带上缘之上。 */
+  padding-bottom: max(28px, var(--mpage-fab-clearance, 28px));
   box-sizing: border-box;
+}
+/* item 页覆写：底带不是 FAB 而是 .ta-tool（贴键盘/贴 dock 的胶囊带）。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
+  padding-bottom: max(
+    28px,
+    calc(
+      max(var(--ta-kb, 0px), var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px))
+      + 8px + var(--bottom-band-d, 48px) + 8px
+    )
+  );
 }
 
 /* ═══ A · Lists home page ═══════════════════════════════════════════════ */
@@ -170,14 +178,10 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-search-input {
   width: 100%;
   height: 44px;
   box-sizing: border-box;
-  padding: 0 14px;
-  border-radius: var(--ds-radius-xl);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  padding: var(--ds-input-pad-lg);
   color: var(--color-text);
   font-size: var(--mfs-body);
   font-family: inherit;
-  outline: none;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-search-input::placeholder {
   color: var(--color-text-muted);
@@ -247,12 +251,13 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot-new {
   background: transparent;
   border: 1.5px solid var(--color-text-muted);
 }
+/* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：行首名换行
+   显示（ellipsis 退役，长名/多行名整段可见）。 */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row-label {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   font-size: var(--mfs-body);
   color: var(--color-text);
 }
@@ -290,12 +295,9 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input {
   flex: 1 1 auto;
   min-width: 0;
   height: 44px;
-  border: none;
-  background: transparent;
   color: var(--color-text);
   font-size: var(--mfs-body);
   font-family: inherit;
-  outline: none;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input::placeholder { color: var(--color-text-muted); }
 
@@ -320,34 +322,44 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill {
   position: absolute;
   top: 0;
   right: 0;
+  /* 胶囊高 = 圆钮直径（ui-unify-panels 批 2026-11-17）：--mcap-h 已换
+     --band-d 档，内键同径 ⇒ padding 2px 退役归 0，三键并排即是胶囊本体。 */
   height: var(--mcap-h);
   display: flex;
   align-items: center;
-  padding: 2px;
+  padding: 0;
   box-sizing: border-box;
   border-radius: var(--mcap-radius);
-  background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  border: 1px solid var(--cv-border, var(--glass-border));
-  box-shadow: var(--cv-shadow);
   pointer-events: auto;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill[hidden],
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill[hidden],
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill[hidden] { display: none; }
+/* 左槽隐形 spacer（ui-unify-panels 批 2026-11-17）：无动作槽位保三区带结构 ——
+   等宽于圆钮直径（--band-d）、零渲染零命中（visibility:hidden + 不接事件），
+   子页同槽被壳返回钮顶替时本元素不建（JS 只在首页 cluster 挂）。 */
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-slot-spacer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
+  border-radius: 50%;
+  visibility: hidden;
+  pointer-events: none;
+}
 /* Item page top bar, coaxial three pieces: the capsule yields to the left of
    the save button (48 + 8 gap) — back (shell "<") / capsule mid-right / save
    button at the far right (the .ta-save rule below pins it to right:0). */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill {
-  right: calc(var(--mtap-lg) + var(--mgap));
+  right: calc(var(--band-d, 48px) + var(--mgap));
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn {
   flex: none;
-  width: 44px;
-  height: 44px;
+  width: var(--band-d, 44px);
+  height: var(--band-d, 44px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -362,8 +374,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn {
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn svg,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn svg,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn svg {
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
   display: block;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn.on,
@@ -388,11 +400,6 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu {
   padding: 6px;
   box-sizing: border-box;
   border-radius: 14px;
-  background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  border: 1px solid var(--cv-border, var(--glass-border));
-  box-shadow: var(--cv-shadow);
   z-index: 7;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu[hidden] { display: none; }
@@ -439,24 +446,24 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap {
   position: absolute;
   right: var(--mpad-x);
   bottom: 16px;
-  width: var(--mtap-lg);
-  height: var(--mtap-lg);
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
   z-index: 7;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab {
-  width: var(--mtap-lg);
-  height: var(--mtap-lg);
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
   background: rgb(var(--sapphire));
   border-color: transparent;
   color: var(--ta-ink);
-  box-shadow: var(--cv-shadow);
+  box-shadow: none;
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab:hover {
   background: rgb(var(--sapphire));
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
-  width: 24px;
-  height: 24px;
+  width: var(--band-icon, 24px);
+  height: var(--band-icon, 24px);
   display: block;
 }
 
@@ -481,9 +488,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-dtitle {
   line-height: 34px;
   text-align: left;
   color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-items {
   display: flex;
@@ -562,12 +568,12 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item-body {
   text-align: left;
   cursor: pointer;
 }
+/* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：条目名 wrap。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item-title {
   font-size: var(--mfs-body);
   color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item-due {
   font-size: var(--mfs-min);
@@ -606,16 +612,21 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-newrow {
   gap: 8px;
   min-height: 48px;
 }
+/* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：名编辑域 = textarea
+   （js/mobile/todoAppleFace.js 同批换元素），44 = 单行起步厚度，内容长随长。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input {
+  box-sizing: border-box;
   flex: 1 1 auto;
   min-width: 0;
-  height: 44px;
-  border: none;
-  background: transparent;
+  min-height: 44px;
+  max-height: 132px;
+  overflow: auto;
+  resize: vertical;
   color: var(--color-text);
   font-size: var(--mfs-body);
   font-family: inherit;
-  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input::placeholder {
   color: var(--color-text-muted);
@@ -700,8 +711,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save:hover {
   transform: none;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-save svg {
-  width: 22px;
-  height: 22px;
+  width: var(--band-icon, 22px);
+  height: var(--band-icon, 22px);
   stroke-width: 2.4;
 }
 /* Keyboard toolbar (three keys = date / flag / tag): hugs the keyboard —
@@ -717,25 +728,20 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
     max(var(--ta-kb, 0px), calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px)))
     + 8px
   );
-  height: 56px;
+  height: var(--bottom-band-d, 48px);
   display: flex;
   align-items: center;
   justify-content: space-around;
   padding: 0 8px;
   box-sizing: border-box;
   border-radius: var(--mcap-radius);
-  background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  border: 1px solid var(--cv-border, var(--glass-border));
-  box-shadow: var(--cv-shadow);
   z-index: 8;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 44px;
+  min-height: var(--bottom-band-d, 44px);
   padding: 0 12px;
   border: none;
   border-radius: 999px;
@@ -748,8 +754,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn {
   max-width: 40%;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-btn svg {
-  width: 20px;
-  height: 20px;
+  width: var(--bottom-band-icon, 20px);
+  height: var(--bottom-band-icon, 20px);
   display: block;
   flex: none;
 }
@@ -760,15 +766,51 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool-label {
   font-size: var(--mfs-min);
 }
 
-/* No-backdrop fallback (legacy WebView/X5: solid surface when backdrop-filter
-   is unavailable, same family contract as glass.css — material may degrade,
-   geometry and color steps may not). */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill,
-  body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
-  body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill,
-  body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu,
-  body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
-    background: var(--color-surface);
-  }
+/* Mobile todo creation is an out-of-flow sheet, not a second page. */
+body.mobile-layer .mobile-page:is([data-page="tasks"], [data-page="todo-apple-list"]) > .ta-create-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  background: transparent;
 }
+body.mobile-layer .ta-create-sheet {
+  width: 100%;
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 12px var(--mpad-x) max(16px, env(safe-area-inset-bottom, 0px));
+  border-radius: var(--ds-radius-xl) var(--ds-radius-xl) 0 0;
+}
+body.mobile-layer .ta-create-actions,
+body.mobile-layer .ta-create-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+body.mobile-layer .ta-create-actions { justify-content: space-between; }
+body.mobile-layer .ta-create-actions button,
+body.mobile-layer .ta-create-option {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--ds-radius-xl);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+}
+body.mobile-layer .ta-create-save { color: rgb(var(--sapphire)) !important; }
+body.mobile-layer .ta-create-title,
+body.mobile-layer .ta-create-notes {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 12px;
+  color: var(--color-text);
+  font: inherit;
+}
+body.mobile-layer .ta-create-notes { min-height: 76px; margin-top: 8px; resize: vertical; }
+body.mobile-layer .ta-create-options { flex-wrap: wrap; }
+
+/* No-backdrop fallback is provided by the shared glass component. */

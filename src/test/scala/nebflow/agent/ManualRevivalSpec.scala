@@ -101,7 +101,7 @@ class ManualRevivalSpec extends FunSuite:
     seat: os.Path
   )
 
-  private def withFx(name: String)(body: Fx => IO[Unit]): Unit =
+  private def withFx(name: String, verifiedLegacy: Boolean = false)(body: Fx => IO[Unit]): Unit =
     val tmp = os.temp.dir(prefix = s"manual-revival-$name")
     val seat = os.temp.dir(prefix = s"manual-revival-seat-$name")
     PathUtil.setDataRoot(tmp / "data")
@@ -138,8 +138,16 @@ class ManualRevivalSpec extends FunSuite:
           subAgentTaskStore = store,
           voiceMutedRef = voiceMuted
         )
-        deps = DelegateRevival.Deps(resources, system, None)
-        _ <- body(Fx(store, sessionStore, resources, deps, system, tmp, seat))
+        _ <- if verifiedLegacy then
+          IO.blocking(os.makeDir.all(tmp / "sessions")) *>
+            ExecutionCommitStore.resource((tmp / "sessions").toNIO).use { authority =>
+              val verified = resources.copy(executionCommitPort = authority)
+              val deps = DelegateRevival.Deps(verified, system, None)
+              body(Fx(store, sessionStore, verified, deps, system, tmp, seat))
+            }
+        else
+          val deps = DelegateRevival.Deps(resources, system, None)
+          body(Fx(store, sessionStore, resources, deps, system, tmp, seat))
       yield ()
     try io.unsafeRunSync()
     finally
@@ -180,7 +188,7 @@ class ManualRevivalSpec extends FunSuite:
   test(
     "MR1: manual boot sweep saves state — in-flight orphan + queue-less ready-to-merge zombie → pending-recovery, zero revive, zero terminalize, zero upward notify"
   ) {
-    withFx("mr1") { fx =>
+    withFx("mr1", verifiedLegacy = true) { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
         running = "delegate-nebflow-mr1-run"
@@ -223,7 +231,7 @@ class ManualRevivalSpec extends FunSuite:
   test(
     "MR2: a second boot does not disturb pending rows (idempotent save; never auto-terminalizes behind the user's back)"
   ) {
-    withFx("mr2") { fx =>
+    withFx("mr2", verifiedLegacy = true) { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
         id = "delegate-nebflow-mr2"
@@ -249,7 +257,7 @@ class ManualRevivalSpec extends FunSuite:
   test(
     "MR3: restoreAll (panel 一键全部恢复) revives every eligible pending row in place — same id, resumed transcript, row back to running"
   ) {
-    withFx("mr3") { fx =>
+    withFx("mr3", verifiedLegacy = true) { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
         a = "delegate-nebflow-mr3-a"
@@ -285,8 +293,208 @@ class ManualRevivalSpec extends FunSuite:
     }
   }
 
+  test("manual recovery rejects an on-disk protected run after authority reopen with carrier off") {
+    withFx("protected-reopen") { fx =>
+      val id = "delegate-protected"
+      val sessions = fx.tmp / "authority-sessions"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("task"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(sessions))
+        _ <- fx.store.recordTask(mkTask(id, "parent", "pending-recovery"))
+        _ <- ExecutionCommitStore.resource(sessions.toNIO).use(_.admit(admission))
+        results <- ExecutionCommitStore.resource(sessions.toNIO).use { authority =>
+          val resources = fx.resources.copy(executionCommitPort = authority, delegateRecoveryMode = Some("off"))
+          for
+            restored <- ManualRevival.restoreOne(fx.deps.copy(resources = resources), fx.store, id)
+            wake <- DelegateWakeLeg.wake(resources, None, id, "", "self-heal")
+            record = nebflow.actor.AgentRecord(sessionId = id, ref = null,
+              kind = nebflow.actor.AgentKind.Delegate, rootSessionId = "parent")
+            cancelled <- nebflow.core.tools.AgentControlTool.doCancel(resources, record, "operator")
+            observed <- authority.observeChain(id, "run")
+          yield (restored, wake, cancelled, observed)
+        }
+        row <- fx.store.findByTaskId(id)
+        live <- fx.resources.agentRegistry.get
+      yield
+        assert(results._1.left.toOption.exists(_.contains("exact-ref recovery")))
+        assert(results._2.left.toOption.exists(_.contains("exact-ref recovery")))
+        assert(results._3.toOption.exists(_.contains("prior runner stop unconfirmed")))
+        assertEquals(results._4.asInstanceOf[nebflow.shared.ExecutionChainObservation.Verified].state.phase, "cancelled")
+        assertEquals(row.map(_.status), Some("pending-recovery"))
+        assert(!live.contains(id))
+    }
+  }
+
+  test("restoreAll refuses an on-disk protected run without changing its task or starting an agent") {
+    withFx("protected-restore-all") { fx =>
+      val id = "delegate-protected-restore-all"
+      val sessions = fx.tmp / "authority-sessions"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("task"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(sessions))
+        _ <- fx.store.recordTask(mkTask(id, "parent", "pending-recovery"))
+        before <- fx.store.findByTaskId(id)
+        admitted <- ExecutionCommitStore.resource(sessions.toNIO).use(_.admit(admission))
+        _ = assert(admitted.isInstanceOf[nebflow.shared.ExecutionCommitResult.Committed])
+        result <- ExecutionCommitStore.resource(sessions.toNIO).use { authority =>
+          val resources = fx.resources.copy(executionCommitPort = authority, delegateRecoveryMode = Some("off"))
+          ManualRevival.restoreAll(fx.deps.copy(resources = resources), fx.store)
+        }
+        after <- fx.store.findByTaskId(id)
+        live <- fx.resources.agentRegistry.get
+        events <- mailboxEvents(fx, "parent")
+      yield
+        assertEquals(result._1, Nil)
+        assertEquals(result._2.map(_._1), List(id))
+        assert(result._2.head._2.contains("exact-ref recovery"))
+        assertEquals(after, before)
+        assert(!live.contains(id))
+        assertEquals(events, Nil)
+    }
+  }
+
+  test("no-resource recovery and watchdog preserve an on-disk protected task") {
+    withFx("no-resource-protected") { fx =>
+      val id = "delegate-no-resource-protected"
+      val sessions = fx.tmp / "sessions"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("task"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(sessions))
+        _ <- fx.store.recordTask(mkTask(id, "parent", "running"))
+        _ <- ExecutionCommitStore.resource(sessions.toNIO).use(_.admit(admission))
+        recovery <- SubAgentStartupRecovery.sweep(fx.store, fx.sessionStore, None)
+        reaped <- SubAgentStartupRecovery.watchdogSweep(fx.store, fx.resources.agentRegistry, fx.sessionStore, 0L)
+        row <- fx.store.findByTaskId(id)
+      yield
+        assertEquals(recovery.terminalized, Nil)
+        assert(!reaped.contains(id))
+        assertEquals(row.map(_.status), Some("running"))
+    }
+  }
+
+  test("manual startup preserves a protected row while pending an unrelated legacy row") {
+    withFx("mixed-startup") { fx =>
+      val protectedId = "delegate-mixed-protected"
+      val legacyId = "delegate-mixed-legacy"
+      val sessions = fx.tmp / "sessions"
+      val admission = nebflow.shared.ExecutionAdmission(
+        protectedId, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("task"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(sessions))
+        _ <- fx.store.recordTask(mkTask(protectedId, "parent", "running"))
+        _ <- fx.store.recordTask(mkTask(legacyId, "parent", "running"))
+        _ <- ExecutionCommitStore.resource(sessions.toNIO).use { authority =>
+          (IO(fx.sessionStore.installExecutionAuthority(authority)) *> (for
+            admitted <- authority.admit(admission)
+            _ = assert(admitted.isInstanceOf[nebflow.shared.ExecutionCommitResult.Committed])
+            report <- SubAgentStartupRecovery.sweep(fx.store, fx.sessionStore, None, manual = true)
+            protectedRow <- fx.store.findByTaskId(protectedId)
+            legacyRow <- fx.store.findByTaskId(legacyId)
+          yield
+            assertEquals(report.pended, List(legacyId))
+            assertEquals(protectedRow.map(_.status), Some("running"))
+            assertEquals(legacyRow.map(_.status), Some("pending-recovery"))
+          )).guarantee(IO(fx.sessionStore.releaseExecutionAuthority(authority)))
+        }
+      yield ()
+    }
+  }
+
+  test("manual startup preserves a live binding missing from the configured authority") {
+    withFx("mismatched-live-authority") { fx =>
+      val id = "delegate-live-mismatch"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("task"), "input"
+      )
+      val other = admission.copy(sessionId = "delegate-other-candidate", executionId = "other-run")
+      for
+        _ <- fx.store.recordTask(mkTask(id, "parent", "running"))
+        _ <- IO.blocking {
+          os.makeDir.all(fx.tmp / "authority-a")
+          os.makeDir.all(fx.tmp / "authority-b")
+        }
+        _ <- (ExecutionCommitStore.resource((fx.tmp / "authority-a").toNIO),
+          ExecutionCommitStore.resource((fx.tmp / "authority-b").toNIO)).tupled.use { (live, configured) =>
+          for
+            bound <- nebflow.core.ExecutionCommitPort.admitHandle(live, admission)
+            _ <- configured.admit(other)
+            resources = fx.resources.copy(executionCommitPort = configured,
+              protectedExecutions = Map(id -> bound.toOption.get))
+            report <- SubAgentStartupRecovery.sweep(fx.store, fx.sessionStore,
+              Some(SubAgentStartupRecovery.RevivalDeps(resources, fx.system, None)), manual = true)
+            row <- fx.store.findByTaskId(id)
+          yield
+            assertEquals(report.pended, Nil)
+            assertEquals(row.map(_.status), Some("running"))
+        }
+      yield ()
+    }
+  }
+
+  test("no-resource recovery and watchdog reuse the installed authority") {
+    withFx("installed-authority") { fx =>
+      val id = "delegate-installed-authority"
+      val sessions = fx.tmp / "sessions"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("task"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(sessions))
+        _ <- fx.store.recordTask(mkTask(id, "parent", "running"))
+        _ <- ExecutionCommitStore.resource(sessions.toNIO).use { authority =>
+          (IO(fx.sessionStore.installExecutionAuthority(authority)) *> (for
+            _ <- authority.admit(admission)
+            recovery <- SubAgentStartupRecovery.sweep(fx.store, fx.sessionStore, None)
+            reaped <- SubAgentStartupRecovery.watchdogSweep(fx.store, fx.resources.agentRegistry, fx.sessionStore, 0L)
+            row <- fx.store.findByTaskId(id)
+          yield
+            assertEquals(recovery.terminalized, Nil)
+            assertEquals(reaped, Nil)
+            assertEquals(row.map(_.status), Some("running"))
+          )).guarantee(IO(fx.sessionStore.releaseExecutionAuthority(authority)))
+        }
+      yield ()
+    }
+  }
+
+  test("watchdog preserves an on-disk protected in-flight task after authority reopen") {
+    withFx("watchdog-protected") { fx =>
+      val id = "delegate-watchdog-protected"
+      val sessions = fx.tmp / "authority-sessions"
+      val admission = nebflow.shared.ExecutionAdmission(
+        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        io.circe.Json.fromString("task"), "input"
+      )
+      for
+        _ <- IO.blocking(os.makeDir.all(sessions))
+        _ <- fx.store.recordTask(mkTask(id, "parent", "running"))
+        _ <- ExecutionCommitStore.resource(sessions.toNIO).use(_.admit(admission))
+        reaped <- ExecutionCommitStore.resource(sessions.toNIO).use { authority =>
+          val resources = fx.resources.copy(executionCommitPort = authority, delegateRecoveryMode = Some("off"))
+          SubAgentStartupRecovery.watchdogSweep(fx.store, resources.agentRegistry, fx.sessionStore, 0L, Some(resources))
+        }
+        row <- fx.store.findByTaskId(id)
+      yield
+        assert(!reaped.contains(id))
+        assertEquals(row.map(_.status), Some("running"))
+    }
+  }
+
   test("manual recovery refuses missing history and unknown tool outcomes before starting or changing the task row") {
-    withFx("unverified-context") { fx =>
+    withFx("unverified-context", verifiedLegacy = true) { fx =>
       val id = "delegate-unverified-context"
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))

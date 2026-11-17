@@ -190,7 +190,7 @@ object NodeEditTool extends Tool:
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (ready to use); a blocked (deny-listed) package is refused. Omitting the key on create is refused (NODE_PLUGINS_UNDECLARED) — use plugins=[] for 'no capability face'.
 - Not settable (refused): agent/skill/mcp (NODE_AGENT_UNSUPPORTED) ⇒ plugins; preset (NODE_PRESET_UNSUPPORTED) — no per-node scheme, dispatcher's applies; worktree/merge=true/dangling (NODE_WORKTREE_UNSUPPORTED / NODE_MERGE_UNSUPPORTED / NODE_DANGLING_UNSUPPORTED) — worktree provisioning is the delegate layer's call, dispatch Delegate tasks instead of merge nodes, an empty out is legal as-is.
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
-- role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
+- role (optional, CREATE-ONLY): "task" (default; execution node) | "verifier" (judges another node's output; anchors its verdict in the final text: `VERDICT: PASS` / `VERDICT: FAIL`). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - chainId (optional, declare-on-write): EXPLICIT chain membership — the node belongs to this id verbatim (declaration beats the derived fallback; undeclared keeps the derived in/out component). Metadata only: deps NEVER decides membership, so declaring changes no start/merge/barrier behaviour. Value domain in the schema property (else NODE_CHAIN_ID_INVALID); null = withdraw. Audited as chain-membership-changed.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered). Omitted ⇒ rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
@@ -205,7 +205,7 @@ object NodeEditTool extends Tool:
 - out delivery: completed ⇒ pass edges fire (:result payload / :signal bare start; ≤1 per (target,mode)); failed ⇒ on-failed :signal edges fire, the rest waits (D5); wiring into a FAILED upstream with no on-failed edge ⇒ warning.
 - Edit: in appends; deps/out/description replace; removing a consumed target (running/terminal) rejected — NodeCancel first; other terminal rewires auto-deliver the retained result to new targets.
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered.
-- Failed node edit: a real change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED edit (SIGINT/SIGTERM left it non-terminal): a real change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED re-runs only with reactivateCompleted=true; cancelled not reactivatable (create successor).
+- Failed node edit: a real change reactivates (first-choice recovery; blockCount→0). INTERRUPTED edit (SIGINT/SIGTERM left it non-terminal): a real change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED re-runs only with reactivateCompleted=true; cancelled not reactivatable (create successor).
 - Archived nodes (TTL-expired, result retained): only 'out' rewiring is accepted; other edits refused (restoreChain=true overrides).
 - Validation (0 spawn): description rules; referenced nodes exist; DAG cycle check; running target ⇒ input frozen. Result = the agent's final output, auto-saved + delivered along out. Full result: NodeList(detail=<nodeId>)."""
 
@@ -295,8 +295,8 @@ object NodeEditTool extends Tool:
         ),
         "role" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> ("Node role — CREATE-ONLY (NODE_ROLE_CREATE_ONLY; rejected on edit: a node's role decides its node_report value domain and whether it may route a verdict, so it is a topology identity, not a runtime switch). " +
-            "\"task\" (default) = execution node: reports finish/blocked; \"verifier\" = verification node: it judges another node's output and reports pass/fail/blocked, routing the reject verdict along its '(fail)<worker>:loop' edge. " +
+          "description" -> ("Node role — CREATE-ONLY (NODE_ROLE_CREATE_ONLY; rejected on edit: a node's role decides its terminal-report face and whether it may route a verdict, so it is a topology identity, not a runtime switch). " +
+            "\"task\" (default) = execution node; \"verifier\" = verification node: it judges another node's output, anchors the verdict in its final text ('VERDICT: PASS' / 'VERDICT: FAIL'), routing the reject verdict along its '(fail)<worker>:loop' edge. " +
             "A verifier MUST declare exactly one fail route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE), may not use the 'failed' gate, and may not also be a loop=true node. " +
             "Creating a verifier with NO out edge requires verifierRoutePending=true (see that property). " +
             "Use verifier only when the verification outcome must DRIVE ROUTING (a rejected artifact must trigger a re-run); a report that does not route stays a task node with the conclusion in its result text.").asJson
@@ -370,14 +370,7 @@ object NodeEditTool extends Tool:
     if result.length > 200 then result.take(197) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val admitted =
-      if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
-        IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(ctx.sessionId.get, allowFrozen = false))
-      else IO.pure(Right(()))
-    admitted.flatMap {
-      case Left(error) => IO.pure(Left(ToolError(error)))
-      case Right(_) => callAdmitted(input, ctx)
-    }
+    callAdmitted(input, ctx)
 
   private def callAdmitted(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val project = input("project").flatMap(_.asString)
@@ -502,8 +495,8 @@ object NodeEditTool extends Tool:
             case Some(s) =>
               Left(
                 s"'role' must be one of ${NodeRoles.All.toList.sorted.mkString(" | ")} (got '$s') — " +
-                  "role=task: execution node (reports finish/blocked); role=verifier: verification node that judges another " +
-                  "node's output and routes its verdict along '(fail)<worker>:loop' (reports pass/fail/blocked). " +
+                  "role=task: execution node (reports finish); role=verifier: verification node that judges another " +
+                  "node's output and routes its verdict along '(fail)<worker>:loop' (reports pass/fail). " +
                   "(NODE_ROLE_INVALID)"
               )
             case None =>
@@ -1515,11 +1508,9 @@ object NodeEditTool extends Tool:
                       NodeTools.runDetached(rt, s"deliver retained upstream results -> $nodeId")(
                         ins.traverse_ { upId =>
                           rt.store.findNode(upId).flatMap {
-                            // R1（blocked 反馈重入设计 §6）：blocked 是终态且 result=反馈渲染串，
-                            // 但反馈串不是可投结果——D1 显式排除 blocked（failed 错误投递语义保持不变）
-                            case Some(up)
-                                if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal
-                                  .contains(up.status) =>
+                            // R1/D1：反馈渲染串不是可投结果——blocked 已退役（不在 Terminal 集，
+                            // legacy blocked 行天然不命中）；failed 错误投递语义保持不变。
+                            case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
                               if s.nodes(nodeId).merge && up.status == NodeLifecycle.Failed then IO.unit
                               else rt.engine.deliverOutTo(up, nodeId, up.result.get)
                             case _ => IO.unit
@@ -1840,7 +1831,7 @@ object NodeEditTool extends Tool:
   ): IO[Either[ToolError, String]] =
     // ── 动作分支 ──
     // role create-only：角色 = 拓扑身份（决定
-    // node_report 值域与 verdict 选通合法性），中途改会让已落盘的值域/路由语义与
+    // 终态申报面形态与 verdict 选通合法性），中途改会让已落盘的语义与
     // 声明面脱节 ⇒ 与 merge/worktree 同口径硬拒（可行动：新建节点替代）。放在最前
     // ——任何副作用（含 abandon）之前即拒。
     if roleFlag.provided then
@@ -1848,7 +1839,7 @@ object NodeEditTool extends Tool:
         Left(
           ToolError(
             s"'role' is a create-time parameter — node '${node.name}' already exists (role=${node.role}). " +
-              "A node's role decides its node_report value domain and whether it may route a verdict, so it cannot be changed " +
+              "A node's role decides its terminal-report face and whether it may route a verdict, so it cannot be changed " +
               "after creation: create a new node with the intended role and rewire. (NODE_ROLE_CREATE_ONLY)"
           )
         )
@@ -2631,8 +2622,9 @@ object NodeEditTool extends Tool:
                                               // 儿数据）；notifySentAt 清除（重激活后再次真失败 →
                                               // 分发器再获通知——重试回路非循环口径，DispatchNotify
                                               // §2.2；inFlight 占位在通知尝试后已释放，不会挡第二次）。
-                                              // blocked 版三者保留（blockCount 记语义阻塞轮次，
-                                              // FeedbackRouter LoopCap 依赖）。
+                                              // blocked 版三者保留（legacy 存量行口径：blockCount
+                                              // 记历史阻塞轮次，仅随行迁移展示——重入上限链已随
+                                              // blocked 终态退役删除）。
                                               didReactivate <-
                                                 if reactivate then
                                                   rt.store
@@ -2775,7 +2767,7 @@ object NodeEditTool extends Tool:
                                                           n.in.traverse_ { upId =>
                                                             rt.store.findNode(upId).flatMap {
                                                               case Some(up)
-                                                                  if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal
+                                                                  if up.result.isDefined && NodeLifecycle.Terminal
                                                                     .contains(up.status) =>
                                                                 rt.engine.deliverOutTo(up, n.id, up.result.get)
                                                               case _ => IO.unit
@@ -2809,8 +2801,7 @@ object NodeEditTool extends Tool:
                                               // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
                                               _ <- (
                                                 outProvided && newOut.nonEmpty && node.result.isDefined
-                                                  && node.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal
-                                                    .contains(node.status)
+                                                  && NodeLifecycle.Terminal.contains(node.status)
                                               ) match
                                                 case true =>
                                                   val res = node.result.get
@@ -2854,13 +2845,14 @@ object NodeEditTool extends Tool:
                                                       // 永久等待）；②新建边指向归档上游（fix a 路径，setOut
                                                       // 归档感知后不再崩溃）。运行中上游天然跳过（无 result，
                                                       // 等 completeNode → deliverOut 正常投）。
-                                                      // R1：blocked 反馈串不是可投结果，显式排除（同 create 路径）。
+                                                      // R1：反馈渲染串不是可投结果（blocked 已退役，不在 Terminal 集，
+                                                      // legacy blocked 行天然不命中；同 create 路径）。
                                                       _ <- rt.store.getNode(node.id).flatMap {
                                                         case Some(nFresh) =>
                                                           nFresh.in.traverse_ { upId =>
                                                             rt.store.findNode(upId).flatMap {
                                                               case Some(up)
-                                                                  if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal
+                                                                  if up.result.isDefined && NodeLifecycle.Terminal
                                                                     .contains(up.status) =>
                                                                 rt.engine.deliverOutTo(up, node.id, up.result.get)
                                                               case _ => IO.unit

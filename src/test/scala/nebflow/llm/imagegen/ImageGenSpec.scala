@@ -200,7 +200,10 @@ class ImageGenSpec extends munit.FunSuite:
     assert(!nebflow.agent.AgentCore.fixedToolsFor(execDef).contains("GenerateImage"))
   }
 
-  test("seal: 期望常量 = 静态集大小（25，含 AskHostReply/AskHostClarify）") {
-    assertEquals(nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize, 25)
+  test("seal: 期望常量 = 静态集大小（22；AskHostReply/AskHostClarify 在集内）") {
+    // 3007e48da（2026-11-13 托管树退场批）：−MergerRequest/WorktreeContext/
+    // WorkspaceSummary/WorkspaceReconcile（26 → 22）——seal 字面量随集更新。
+    // 防呆语义不变：期望常量必须与静态集大小同源同步（上一条 seal 钉已验 size==constant）。
+    assertEquals(nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize, 22)
   }
 end ImageGenSpec

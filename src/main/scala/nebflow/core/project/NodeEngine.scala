@@ -31,9 +31,6 @@ import scala.concurrent.duration.*
  *    out=null → 结果保留（接线后从活动/归档自动投递）；failed →
  *    ImmediateInput("[Node '<name>' failed]\n<err>")
  * 4. NodeCancel：运行中节点 → cancel 信号 → 停 agent + status=cancelled（不投递）
- * 5. blocked 终态（20260902 反馈重入设计 §1/§2）：completeNode 入口经 BlockedReader
- *    解析——最终输出以 BLOCKED 锚定 + JSON 体 → status=blocked（不结算下游）+
- *    FeedbackRouter 重入/升级路由；非 BLOCKED 开头 → completed 原路径无损降级
  *
  * 硬约束：不设运行超时（TaskStuckWatcher 10min 零活动兜底）；节点无 Mail 身份。
  */
@@ -46,8 +43,6 @@ class NodeEngine(
   val rootSessionId: String,
   /** 项目名：Node 完成通知蓝气泡 header 第二段（NODE · <项目名> · <节点名> · <状态>）。 */
   val projectName: String,
-  /** blocked 反馈档位（设计 §7.1）：auto（默认）| escalate-only。挂载时读 project.json。 */
-  val feedbackMode: String = FeedbackRouter.ModeAuto,
   /** WS 事件推送（type → payload 载体）。 */
   private[project] val emitEvent: (String, String, Json) => IO[Unit],
   /**
@@ -77,7 +72,7 @@ class NodeEngine(
    */
   val sessionDevice: Option[String] = None,
   /**
-   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\Kai\stand`）：Bash
+   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\name\stand`）：Bash
    * 经设备通道下发时注入为对端会话初始 cwd（「派发任务的命令 cwd 指向设备
    * workspace」——对端接收面 params.cwd → ToolContext.sessionCwd）。节点首条消息
    * 的 `[device workspace]` 行同源本值。None = 本机项目（现状零变化）。
@@ -111,9 +106,9 @@ class NodeEngine(
    */
   bgGateCompletionHold: Option[Boolean] = None,
   /**
-   * 完成门腿 2 开关（noderpt 批 A 段）：未申报 `node_report` 是否拦节点终态化。
-   * None = 现读 `Defaults.NodeReportCompletionHold`（生产默认 **true**：未申报的
-   * `Completed` 不终态化、节点保持 Running，由未申报提醒阶梯兜底）；Some = spec 注入。
+   * 完成门腿 2 开关（noderpt 批 A 段；**休眠旋钮**——申报槽闸的放行面检查已随
+   * 终态申报工具通道整体退役后，本参数仅作 spec 构造面兼容保留，生产路径不再读）。
+   * None = 现读 `Defaults.NodeReportCompletionHold`；Some = spec 注入。
    */
   reportGateHold: Option[Boolean] = None,
   /**
@@ -247,9 +242,9 @@ class NodeEngine(
    *   ① **event face** = one [[FlowMapEventLog.UplinkRefusedType]] (`grep uplink-refused`);
    *   ② **log face** = one WARN (plus an extra ALERT inside the window, prefix
    *      `[UPLINK-REFUSED]`);
-   *   ③ that same text carries the **node id** ∧ the **refusal reason**
-   *      (`no-attribution`) ∧ the **way out** (`register-attribution` / `node_report` /
-   *      `Flow Map` / `manual`).
+   * ③ that same text carries the **node id** ∧ the **refusal reason**
+   *      (`no-attribution`) ∧ the **way out** (`register-attribution` / fix the
+   *      `taskId` / `Flow Map` / `manual`).
    * **Silence is forbidden, and a log line alone is forbidden** — criterion 10.4.5 states
    * plainly "log only, no event face = red".
    *
@@ -257,14 +252,12 @@ class NodeEngine(
    * suppression, no merging** ("two in a row ⇒ two events" is a hard criterion; this is
    * **deliberately different** from `enqueueRootNotify`'s merging semantics).
    *
-   * `kind` = the uplink class (`failed` / `completed` / `landing` / `reentry` / `escalate` /
-   * `cancelled` / `redelivery`). 🔴 **The landing/merge class must carry `landing`** (the
+   * `kind` = the uplink class (`failed` / `completed` / `landing` / `redelivery`).
+   * 🔴 **The landing/merge class must carry `landing`** (the
    * core of criterion 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`).
    *
-   * 🔴 **U8 (`node_report`) is unaffected**: this gate only intercepts the **engine-side
-   * uplink circuit** (delivery of node notifications). A node's own terminal declaration
-   * goes through `NodeReportRegistry` (keyed by sessionId) and **never passes through this
-   * function**.
+   * A node's own terminal result is carried by its final assistant text at the
+   * session-completion point and **never passes through this function**.
    */
   private[project] def uplinkAllowed(node: NodeDef, kind: String): IO[Boolean] =
     if !uplinkFailClosedEnabled then IO.pure(true)
@@ -273,7 +266,7 @@ class NodeEngine(
       val n = uplinkRefusals.incrementAndGet()
       val reason = "no-attribution"
       val way =
-        "register-attribution/fix the node's taskId, or report through node_report; visibility stays via the Flow Map"
+        "register-attribution/fix the node's taskId; visibility stays via the Flow Map"
       val loud = taskLedgerUplinkLoudAlertFirstN
         .getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN)
       val text =
@@ -295,23 +288,6 @@ class NodeEngine(
          else logger.warn(text)) *>
         IO.pure(false)
 
-  /**
-   * Name-resolving wrapper for the U5 uplink gate (implplan §10.4 U5 "the three escalate
-   * channels"): those three escalate seams only have the signature `(text, nodeName)` (the
-   * injection face of `FeedbackRouter` / `DispatchNotify`) ⇒ resolve the node by name first,
-   * then go through [[uplinkAllowed]] (**the same single-point gate**, no second criterion).
-   * Unresolvable (the node was pruned or renamed) ⇒ **allowed**: this gate targets "a node
-   * exists but has no attribution", not "the node cannot be found" (the latter is the
-   * existing chain's own alert face, which this gate does not take over).
-   */
-  private[project] def uplinkAllowedByName(nodeName: String, kind: String): IO[Boolean] =
-    if !uplinkFailClosedEnabled then IO.pure(true)
-    else
-      store.snapshot.map(_.nodes.values.find(_.name == nodeName)).flatMap {
-        case Some(n) => uplinkAllowed(n, kind)
-        case None => IO.pure(true)
-      }
-
   /** 完成门腿 1 生效值（每次判定现读；无在线翻转路由 ⇒ 生产侧改 prop 需重启宿主）。 */
   private[project] def bgGateHoldEnabled: Boolean =
     bgGateCompletionHold.getOrElse(nebflow.shared.Defaults.BgGateCompletionHold)
@@ -325,22 +301,16 @@ class NodeEngine(
     destroyWindowMs.getOrElse(nebflow.shared.Defaults.NodeDestroyWindowMs)
 
   /**
-   * blocked 反馈路由器（§2.2/§2.3）：档位决策 + 项目级频率保护 + 重入/升级执行。
-   * escalate 通道 = 本引擎的 [[enqueueRootNotify]]（eventType="blocked"，前端 label 自动 BLOCKED）；
-   * escalateFailed 通道 = 同型 [[enqueueRootNotify]]（eventType="failed"）——P2 RetryCap
-   * 升级专用（spec §2.3 G12：failed 终态真实显示，不冒充 BLOCKED）。
-   * ⚠ notifybatch 批（2026-09-18）：两条通道改走**打包入口**（决策②「异常类一并合并、
+   * Retry-cap escalation router（P2 RetryCap）：failed 节点自动回跳预算耗尽时的
+   * 升级通道。escalateFailed = 本引擎的 [[enqueueRootNotify]]（eventType="failed"）。
+   * ⚠ notifybatch 批（2026-09-18）：通道走**打包入口**（决策②「异常类一并合并、
    * 不单列」）——`nodeId=None`（fire-and-forget，不记账）语义逐字未变，只是投递节拍
    * 由 root 通道打包窗统一（单件场景文本逐字不变）。
    */
   private[project] val feedbackRouter: FeedbackRouter = new FeedbackRouter(
     projectName = projectName,
     workspace = workspace,
-    // Scoped chains report blockers to their owning delegate via the root channel.
-    // Legacy project reentry resolves a different dispatcher and must not be used here.
-    feedbackMode = if delegateScope then FeedbackRouter.ModeEscalateOnly else feedbackMode,
-    escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Blocked),
-    escalateFailed = Some((text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed))
+    escalateFailed = (text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed)
   )
 
   /**
@@ -356,7 +326,7 @@ class NodeEngine(
     workspace,
     projectName,
     rootSessionId,
-    // notice 语义（非 blocked）：预算耗尽时节点保持 completed，前端不可标 BLOCKED。
+    // notice 语义（监督通报，非终态改判）：预算耗尽时节点保持 completed。
     // notifybatch 批（2026-09-18）：改走 root 打包入口（异常/监督通报同窗打包，决策②）。
     escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, DispatchNotify.NoticeEventType),
     emitUpdated = emitUpdated,
@@ -505,23 +475,8 @@ class NodeEngine(
         }
     }
 
-  /**
-   * quiescent 档写事件节流记账（nodeId → 上次写事件的 ts）。内存态：重启后每个节点
-   * 至多多写一条 quiescent 事件（幂等冗余，不丢监督面）；阶梯拍数的幂等不依赖本表
-   * （那是 `reportReminderCount` 的持久 CAS）。
-   */
-  private val quiescentNotified: Ref[IO, Map[String, Long]] =
-    Ref.unsafe[IO, Map[String, Long]](Map.empty)
-
   /** 死会话 background-task 豁免留痕单发记账（nodeId 集合，进程内一次）。 */
   private val bgCompletionExemptNotified: Ref[IO, Set[String]] = Ref.unsafe[IO, Set[String]](Set.empty)
-
-  /**
-   * 释放唤醒单发记账（nodeId → 已唤醒的 `reportPendingSince` 值，进程内）：同一**未申报
-   * 期**只注入一次唤醒轮——防 TtlTick 30s 拍连发 LLM turn。新一轮翻转/新会话重排起表
-   * （新起点值）自动重新允许；进程重启后表空 ⇒ 至多再唤醒一次（幂等冗余，不丢监督面）。
-   */
-  private[project] val releaseWakeSent: Ref[IO, Map[String, Long]] = Ref.unsafe[IO, Map[String, Long]](Map.empty)
 
   /**
    * J1 形态的**单发**事件留痕（`worktree-missing`；取证件 §6.1 建议 4）：节点声明的
@@ -565,8 +520,8 @@ class NodeEngine(
    * （只告警不终态化，与 #27 mount-stalled 同族）。
    *
    * 🔴 顺序义务（令第 6 条「**先补提醒覆盖再降档**」，裸降档 ⇒ dead-session 节点永久挂）：
-   * 本腿 = 降档后的**覆盖补齐件**——写 `node-session-dead-reminder` 事件 + `logger.warn`，
-   * 与既有 `fireQuiescentEvent`（提醒阶梯的只写事件档）同款形态：**只提醒、永不判死、
+   * 本腿 = 降档后的**覆盖补齐件**——写 `node-session-dead-reminder` 事件 + `logger.warn`：
+   * **只提醒、永不判死、
    * 永不上报失败、永不杀进程或会话**（节点保持 Running 等人工处置）。
    *
    * 🔴 `private[project]`（not `private`）because the single caller that remains after the
@@ -587,94 +542,6 @@ class NodeEngine(
         s"Node '${node.name}' (${node.id}) session '$sessionId' is dead — kept Running, reminder only " +
           "(no failed convergence, no failed delivery)"
       )
-
-  /**
-   * 会话已死提醒腿（killruling 批 2026-09-23，作者裁定 #19「先补提醒覆盖再降档」）。
-   *
-   * 触发点 = 提醒阶梯的 `candidates.find(reg.contains) == None`（改前为 `IO.unit`
-   * 「注入不可达 ⇒ 跳过」）。语义与 [[fireQuiescentEvent]] 同款——**只写事件不注入**：
-   * 会话已死 ⇒ 注入物理不可达，但「该节点该拍仍未申报且会话已死」这一事实必须可见。
-   * 单发节流复用 [[quiescentNotified]]（与 quiescent 档同键记账）：
-   * `NodeReportReminderQuiescentMs`（现读默认 4h）一拍，防 30s 节拍刷屏——与
-   * quiescent 档「每拍一次事件」的纪律同源；`≤0` 亦同款（关闭节流 = 每拍都写）。
-   * 判据强度：`reportPendingSince` 已置 + 过了第 N 拍 + 无活会话 ⇒ 提醒**永不停**
-   * （节点保持 Running，处置交人工）。
-   */
-  private def deadSessionReminder(
-    node: NodeDef,
-    since: Long,
-    elapsed: Long,
-    rung: Int,
-    aliveProbe: String => Boolean,
-    candidates: List[String]
-  ): IO[Unit] =
-    val intervalMs = nebflow.shared.Defaults.NodeReportReminderQuiescentMs
-    IO(System.currentTimeMillis()).flatMap { now =>
-      quiescentNotified.get.map(_.getOrElse(node.id, 0L)).flatMap { last =>
-        if intervalMs > 0 && last > 0 && now - last < intervalMs then IO.unit
-        else
-          quiescentNotified.update(_ + (node.id -> now)) *>
-            FlowMapEventLog.append(
-              workspace,
-              projectName,
-              node.id,
-              NodeEngine.NodeSessionDeadReminderEventType,
-              s"node_report still missing at reminder rung $rung and NO live session is registered " +
-                s"(candidates=[${candidates.mkString(",")}], alive=[${candidates.filter(aliveProbe).mkString(",")}]) — " +
-                s"waited ${elapsed / 1000}s since $since: reminder only, node stays Running (never failed, never killed)"
-            ) *>
-            logger.warn(
-              s"Node '${node.name}' (${node.id}) has no live session at reminder rung $rung " +
-                s"(waited ${elapsed / 1000}s) — dead-session reminder written, node kept Running)"
-            )
-      }
-    }
-
-  end deadSessionReminder
-
-  /**
-   * quiescent 档（第 maxRungs 拍之后）：**不注入**，每 `quiescentIntervalMs` 写一条
-   * `node-report-missing`（stage=quiescent，reminderCount 不递增）。节点保持 Running。
-   */
-  private[project] def fireQuiescentEvent(
-    node: NodeDef,
-    since: Long,
-    elapsed: Long,
-    maxRungs: Int,
-    lastRungMs: Long
-  ): IO[Unit] =
-    val intervalMs = nebflow.shared.Defaults.NodeReportReminderQuiescentMs
-    val stageEntry = since + lastRungMs
-    IO(System.currentTimeMillis()).flatMap { now =>
-      quiescentNotified.get.map(_.getOrElse(node.id, stageEntry)).flatMap { last =>
-        if intervalMs <= 0 || now - last < intervalMs then IO.unit
-        else
-          quiescentNotified.update(_ + (node.id -> now)) *>
-            FlowMapEventLog.append(
-              workspace,
-              projectName,
-              node.id,
-              NodeEngine.NodeReportMissingEventType,
-              NodeEngine.reportMissingSummary(
-                stage = NodeEngine.NodeReportStageQuiescent,
-                rung = maxRungs,
-                maxRungs = maxRungs,
-                rungMs = lastRungMs,
-                elapsedMs = elapsed,
-                pendingSince = since,
-                reminderCount = node.reportReminderCount,
-                ladderExhausted = true,
-                delivered = None
-              )
-            ) *>
-            logger.warn(
-              s"Node '${node.name}' (${node.id}) still has no node_report declaration after the reminder ladder " +
-                s"(${maxRungs} rungs, waited ${elapsed / 1000}s) — quiescent stage: no further reminders injected, " +
-                "periodic audit event only; node stays Running awaiting human action (never failed, never killed)"
-            )
-      }
-    }
-  end fireQuiescentEvent
 
   private[project] def suspendLog(sessionId: String, nodeId: String): Unit =
     logger.info(
@@ -701,7 +568,7 @@ class NodeEngine(
   //
   // LoopNode 语义（作者 13 条红线，主设计 §2）：
   //  - worker/verify 双会话**贯穿节点存续期**（裁定 B 2026-09-03 00:59）：首轮 spawn、
-  //    跨轮同会话注入续跑、终态（PASS 投递 /failed/cancelled/blocked）双会话一并销毁。
+  //    跨轮同会话注入续跑、终态（PASS 投递 /failed/cancelled）双会话一并销毁。
   //  - worker 会话生产 → verify 会话校验：PASS → completeNode（投递 worker 最终产出
   //    原文，§2.2 裁定建议）。FAIL → 打回 worker（输入恒定，同会话注入返工模板二）
   //    重跑；达 maxRounds(K) 仍未 PASS → 终态（failNode，§2.5 轮级兜底）。
@@ -710,8 +577,6 @@ class NodeEngine(
   //  - LoopGuard（turn 级，会话内既有防线）与 maxRounds（轮级）两轴独立：worker/verify
   //    会话内部 LoopGuard R-text 精确重复 → 会话 L1 终止 → 以执行层 failed 形态上浮 →
   //    整 Loop failed；轮级由 runLoopNode 的 maxRounds 兜底（本方法）。
-  //  - blocked 分流：worker/verify 产出命中 BlockedReader 锚定 → Loop 级 blockedNode
-  //    （§2.7：FAIL=产出质量问题内部迭代消化；BLOCKED=任务/拓扑问题传播停止+重入）。
   //
   // 关键：本方法只编排**已 spawn 的** worker/verify 双会话（spawnAndRunLoop 负责
   // 翻转+spawn+插件/MCP）；终态会话销毁在 spawnAndRunLoop 的 guarantee 内。
@@ -990,7 +855,7 @@ class NodeEngine(
    *    failed 重激活同字段族）；R2 纪律——事务内现读 fresh 仍 failed 才写。
    * ② retry.upstream 重激活（仅终态上游——wiring/pending/running 的上游已有在途
    *    重跑，不干预不双跑）。
-   * ③ 本节点其余 in 上游（终态有结果、非 blocked）重投（NodeEdit 重激活补投同款，
+   * ③ 本节点其余 in 上游（终态有结果）重投（NodeEdit 重激活补投同款，
    *    deliverOutTo dedup 幂等）——否则清账后 barrier 永不归零。
    * ④ fork：上游补投+启动（入口上游直接启动）——上游重跑完成经 pass 边重投本节点
    *    （settleTo 记账归零 barrier → 启动），deps 邻居场景经 settleDeps 触达 →
@@ -1043,10 +908,9 @@ class NodeEngine(
             } *>
             b.in.filterNot(_ == policy.upstream).traverse_ { upId =>
               store.findNode(upId).flatMap {
-                case Some(up)
-                    if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(
-                      up.status
-                    ) =>
+                // Terminal（completed/failed/cancelled）有结果即重投；blocked 已退役，
+                // 不在 Terminal 集（legacy blocked 行天然不命中）。
+                case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
                   deliverOutTo(up, b.id, up.result.get)
                 case _ => IO.unit
               }
@@ -1071,7 +935,7 @@ class NodeEngine(
    * **R4 输入域（cancelsem 批 1）**：本方法的唯一生产调用方 = [[retryReactivate]] 的
    * retry.upstream 腿，而「**用户主动取消**」的上游已在 [[retryOrNotify]] 被整腿抑制
    * ⇒ 本方法的输入域**不含** user-cancel 节点（判据单点 [[CancelSource.isUserCancelled]]）；
-   * 引擎发起取消（Cancelled ∧ source=engine/不可判定）与 completed/failed/blocked 照旧
+   * 引擎发起取消（Cancelled ∧ source=engine/不可判定）与 completed/failed 照旧
    * 入域——「某轨是否可以重新武装」的裁决点只有一个（retryOrNotify），本方法只做写。
    */
   private def reactivateForRetry(up: NodeDef, now: Long): IO[Unit] =
@@ -1111,16 +975,15 @@ class NodeEngine(
 
   /**
    * 重激活补投递 + 启动（NodeTools 重激活链同款骨架，引擎内单点）：全部 in 上游
-   * 「终态有结果、非 blocked」重投（deliverOutTo dedup 幂等）→ barrier 归零启动；
+   * 「终态有结果」重投（deliverOutTo dedup 幂等）→ barrier 归零启动；
    * 入口节点（无 in、Pending）直接启动。
    */
   private def redeliverInAndStart(n: NodeDef): IO[Unit] =
     n.in.traverse_ { upId =>
       store.findNode(upId).flatMap {
-        case Some(up)
-            if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(
-              up.status
-            ) =>
+        // Terminal（completed/failed/cancelled）有结果即重投；blocked 已退役，
+        // 不在 Terminal 集（legacy blocked 行天然不命中）。
+        case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
           deliverOutTo(up, n.id, up.result.get)
         case _ => IO.unit
       }
@@ -1314,30 +1177,7 @@ class NodeEngine(
           arch <- store.archiveSnapshot
           now <- IO(System.currentTimeMillis())
           unpaid = (active.nodes.values ++ arch.nodes.values)
-            .filter(n =>
-              (n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed) &&
-                // P1（spec §2.2 #5）：按边判定——存在指向 Nebula 且 on 含「status 对应门」
-                // 的边（completed→pass / failed→failed）。旧 "Nebula" 双读为 {pass,failed}
-                // 双通报边 → 两态恒命中（旧拓扑零漂移）；显式门控按声明收窄。
-                // N3（2026-09-12 批）：**再按 mode 收窄**——本扫描的补投调用不经
-                // nebulaDelivery/deliverFailed 的 mode 分支（直调 deliverToNebula）⇒
-                // 只看门集会把 mode=signal 的**出口标记**边当成通知声明补投（bare
-                // "Nebula" 出口标记节点若在 markNebulaDelivered 之前崩溃/重启，30s 扫描
-                // 就把它投到 root，绕过「默认不升根」）。补 e.mode == Result 这一合取项。
-                n.out.exists(e =>
-                  e.to == OutEdge.RootTarget &&
-                    e.mode == OutEdge.Result &&
-                    e.on.contains(if n.status == NodeLifecycle.Completed then OutEdge.Pass else OutEdge.Failed)
-                ) &&
-                // R5 补投感知（spec §5 行 14「策略 ≠ root 的节点不得被补投扫描复活投递」）：
-                // **completed 腿**再按通知策略裁决（显式 silent/dispatcher ⇒ 不入候选）。
-                // failed 腿**不查策略**（R14 不豁免：显式 `(failed)Nebula` 的失败通报根
-                // 语义与今天逐字相同）；legacy 节点的 completed 判据退化为同一个边的
-                // 存在性判据 ⇒ 存量补投行为字节级零漂移。
-                (n.status != NodeLifecycle.Completed || NotifyPolicy.completedRootVisible(n)) &&
-                n.result.isDefined &&
-                n.nebulaDeliveredAt.isEmpty
-            )
+            .filter(NodeEngine.rootResultUndelivered)
           // 缺口3（2026-09-04 夹具信封排除）：名字命中夹具家族 ∧ 任务载荷带夹具
           // 自证标记 → 排除投递 + WARN（09-03 实证 cancel-test-* 夹具家族轰炸根
           // 会话）。排除后照常记账（nebulaDeliveredAt 置位=通知通道对该信封关闭）
@@ -1521,6 +1361,9 @@ object NodeEngine:
 
   def isFixtureEnvelope(node: NodeDef): Boolean = NodeEngineContract.isFixtureEnvelope(node)
 
+  /** V8 补投候选判据单点（[[nebflow.core.project.NodeEngineContract.rootResultUndelivered]]）。 */
+  def rootResultUndelivered(node: NodeDef): Boolean = NodeEngineContract.rootResultUndelivered(node)
+
   val RootDedupWindowMs: Long = NodeEngineContract.RootDedupWindowMs
 
   /** Pre-W1 name for [[RootDedupWindowMs]] -- the same value (one source). */
@@ -1539,69 +1382,13 @@ object NodeEngine:
 
   val SessionPrefix = NodeEngineContract.SessionPrefix
 
-  val NodeReportReminderPrefix: String = NodeEngineContract.NodeReportReminderPrefix
-
-  val NodeReportMissingEventType: String = NodeEngineContract.NodeReportMissingEventType
-
   val DeadSessionBgCompletionEventType: String = NodeEngineContract.DeadSessionBgCompletionEventType
-
-  val NodeReportReminderSource: String = NodeEngineContract.NodeReportReminderSource
-
-  val NodeReportStageActive: String = NodeEngineContract.NodeReportStageActive
-
-  val NodeReportStageQuiescent: String = NodeEngineContract.NodeReportStageQuiescent
-
-  val NodeReportReleaseWakePrefix: String = NodeEngineContract.NodeReportReleaseWakePrefix
-
-  val NodeReportReleaseWakeSource: String = NodeEngineContract.NodeReportReleaseWakeSource
-
-  val NodeReportReleaseWakeEventType: String = NodeEngineContract.NodeReportReleaseWakeEventType
-
-  def reportReleaseWakeText(nodeName: String): String = NodeEngineContract.reportReleaseWakeText(nodeName)
-
-  def reportReleaseWakeSummary(sessionId: String, pendingSince: Long, delivered: Boolean): String =
-    NodeEngineContract.reportReleaseWakeSummary(sessionId, pendingSince, delivered)
-
-  val ReportUnconsumedEventType: String = NodeEngineContract.ReportUnconsumedEventType
-
-  val ReportConsumedEventType: String = NodeEngineContract.ReportConsumedEventType
 
   val DestroyScheduledEventType: String = NodeEngineContract.DestroyScheduledEventType
 
   val DestroyedEventType: String = NodeEngineContract.DestroyedEventType
 
   val DestroyWithdrawnEventType: String = NodeEngineContract.DestroyWithdrawnEventType
-
-  def reportRungLabel(ms: Long): String = NodeEngineContract.reportRungLabel(ms)
-
-  def reportReminderText(nodeName: String, rung: Int, maxRungs: Int, rungMs: Long, elapsedMs: Long): String =
-    NodeEngineContract.reportReminderText(nodeName, rung, maxRungs, rungMs, elapsedMs)
-
-  def reportMissingSummary(
-    stage: String,
-    rung: Int,
-    maxRungs: Int,
-    rungMs: Long,
-    elapsedMs: Long,
-    pendingSince: Long,
-    reminderCount: Int,
-    ladderExhausted: Boolean,
-    delivered: Option[Boolean]
-  ): String =
-    NodeEngineContract.reportMissingSummary(
-      stage,
-      rung,
-      maxRungs,
-      rungMs,
-      elapsedMs,
-      pendingSince,
-      reminderCount,
-      ladderExhausted,
-      delivered
-    )
-
-  def parseReportMissingSummary(summary: String): Map[String, String] =
-    NodeEngineContract.parseReportMissingSummary(summary)
 
   def findNodeForSession(snap: FlowMapState, sessionId: String): Option[NodeDef] =
     NodeEngineContract.findNodeForSession(snap, sessionId)
@@ -1629,8 +1416,6 @@ object NodeEngine:
   def stuckResumeNote(anchor: Option[RecoveryAnchor]): String = NodeEngineContract.stuckResumeNote(anchor)
 
   private[project] def a3UnavailableNote(dir: String): String = NodeEngineContract.a3UnavailableNote(dir)
-
-  val MaxBlockRoundsPerNode: Int = NodeEngineContract.MaxBlockRoundsPerNode
 
   val ProtocolFootnote: String = NodeEngineContract.ProtocolFootnote
 

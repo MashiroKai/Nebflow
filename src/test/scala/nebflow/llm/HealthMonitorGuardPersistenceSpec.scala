@@ -26,12 +26,18 @@ class HealthMonitorGuardPersistenceSpec extends CatsEffectSuite:
 
   /** 两 provider 测试 registry（保守向测试用；null backend——探测腿不在本 spec 面）。 */
   private def twoProviderRegistry: ProviderRegistry =
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "prov-a" -> ProviderConfig("https://a.example", "k", LlmProtocol.OpenAI,
-        models = List(ModelConfig(id = "model-a"))),
-      "prov-b" -> ProviderConfig("https://b.example", "k", LlmProtocol.OpenAI,
-        models = List(ModelConfig(id = "model-b")))
-    )))
+    // config-single-source（作者裁定 ①③ 2026-11-05）后全局链锚 = llm.fallback 节
+    // （FallbackChain），缺节且无 Nebula 侧车 ⇒ fail-closed 空链（provider inventory
+    // 不再编造候选）——夹具补 preferred 锚供保守向键源派生。
+    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(
+      providers = Map(
+        "prov-a" -> ProviderConfig("https://a.example", "k", LlmProtocol.OpenAI,
+          models = List(ModelConfig(id = "model-a"))),
+        "prov-b" -> ProviderConfig("https://b.example", "k", LlmProtocol.OpenAI,
+          models = List(ModelConfig(id = "model-b")))
+      ),
+      fallback = Some(AgentModelConfig(preferred = Some("prov-a/model-a"), fallbacks = Nil))
+    ))
     new ProviderRegistry(Ref.unsafe[IO, NebflowServiceConfig](cfg), null)
 
   test("B2 写穿 + 避坑窗重启不归零（kill -9 模拟）"):

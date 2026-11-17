@@ -1,7 +1,7 @@
 // input.js — Input handling module for Stand
 // All send logic, keyboard/input events, slash commands, attachments, drag/drop, voice.
 
-import state, { LS_HISTORY_KEY } from './state.js';
+import state from './state.js';
 import { key } from './branding.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
 import { sendWs, onReconnect, onMessage } from './ws.js';
@@ -33,8 +33,11 @@ import { showToast } from './modal.js';
 // 刷新后水合灌回、派发闸拒绝空心帧（失败可见可重传）。叶子模块（queueVault → branding）。
 import {
   available as vaultAvailable, queueVaultKey, put as vaultPut, get as vaultGet,
-  del as vaultDel, keys as vaultKeys,
+  del as vaultDel, keys as vaultKeys, HISTORY_VAULT_PREFIX,
 } from './queueVault.js';
+// Sent-input history with attachments: the store records every sent message (text + attachments)
+// and rebuilds the attachments when the history keys recall an entry.
+import { recordSentInput, entryHasAttachments, restoreEntryAttachments } from './input/historyStore.js';
 // device-provenance 批（2026-10-23 作者令）：来源设备声明随用户消息帧上行
 // （`device` 键；网关对照 NebLink 花名册出已登记/未登记标记，只进模型面）。
 import { deviceStamp } from './deviceIdentity.js';
@@ -136,9 +139,10 @@ function wireAttBytes(a) {
  *     nonEmpty` 早覆盖）⇒ 附件帧对未升级服务端同样可达（落 UiMessage.User + 块注入）。
  * 返回首帧 sendWs 结果（false = 帧进 ws.js pendingSends 内存轨，离线补发腿据此留队）。
  */
-function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRefs, refs, wireAtts, chatWidth }) {
+export function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRefs, refs, wireAtts, chatWidth }) {
   const baseBytes = (content ? content.length : 0) + (sessionId ? sessionId.length : 0)
-    + (clientMessageId ? clientMessageId.length : 0) + 512;
+    + (clientMessageId ? clientMessageId.length : 0) + JSON.stringify(refs || []).length
+    + JSON.stringify(taskRefs || []).length + 512;
   const totalBytes = baseBytes + (wireAtts || []).reduce((s, a) => s + wireAttBytes(a), 0);
   const buildFrame = (attachments, cmid, withExtras) => ({
     content,
@@ -173,6 +177,8 @@ function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRe
     const cmid = (content || idx > 1) ? clientMessageId + '/a' + idx : clientMessageId;
     sendWs({
       device: deviceStamp(),
+      ...(!content && idx === 1 && taskRefs?.length ? { taskRefs } : {}),
+      ...(!content && idx === 1 && refs?.length ? { refs } : {}),
       attachments: chunk,
       clientMessageId: cmid,
       sessionId
@@ -502,23 +508,12 @@ export function send(resendId) {
         ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
         : { type: a.type, name: a.name, preview: a.preview })});
   }
-  // Save to input history
-  // (/clear 特判已随命令摘除退役 —— /clear 现在就是普通文本消息，照常入历史)
-  // 同 id 重发不入历史（首次尝试已入；再入会出现上下键重影）。
-  if (frameText && !isResend) {
-    state.inputHistory.push(frameText);
-    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
-    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {
-      // Quota exceeded — trim history to 100 entries and retry once
-      if (state.inputHistory.length > 100) {
-        state.inputHistory = state.inputHistory.slice(-100);
-        try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e2) {}
-      }
-      console.debug('[input] history save failed:', e);
-    }
-  }
+  // Save to input history, with the attachments of this message (a same-id resend was recorded by
+  // its first attempt; recording it again would double the entry).
+  if (!isResend) recordSentInput(frameText, v.pendingAttachments);
   v.historyIndex = -1;
   v.historyDraft = '';
+  v.historyRecalledAtts = [];
   try {
     // v2 §5.2/§6.1 + B (2026-08-20): taskRefs carry taskId/sessionId/subject —
     // 描述/产出不重复进载荷（agent 凭 taskId 定位任务，记忆里有上下文）；
@@ -807,7 +802,8 @@ export function hydrateQueueFromVault() {
           }
         }
         const all = await vaultKeys();
-        await Promise.all(all.filter(k => !valid.has(k)).map(k => vaultDel(k)));
+        // Sent-input history payloads live in the same database under their own prefix.
+        await Promise.all(all.filter(k => !valid.has(k) && !k.startsWith(HISTORY_VAULT_PREFIX)).map(k => vaultDel(k)));
       } catch { /* 清扫失败不影响水合结果 */ }
     }
   };
@@ -1064,11 +1060,7 @@ function dispatchOfflineItem(sid, item) {
     : a.type === 'ref'
       ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
       : { type: a.type, name: a.name, preview: a.preview }) }, sid);
-  if (item.text) {
-    state.inputHistory.push(item.text);
-    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
-    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch (e) {}
-  }
+  recordSentInput(item.text, item.attachments);
   // turn 簿记（同 send()/drainMessageQueue：本次派发 = 新 turn 起点 ⇒ 取代上一 turn
   // 终止戳、武装看门；服务端 busy 中 ⇒ 帧由服务端排队受理，busy 登记本就恒真）。
   if (sid) {
@@ -1215,11 +1207,7 @@ function sendImmediate(sessionId, item) {
       ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
       : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
   // Save to input history (same as normal send and drainMessageQueue)
-  if (item.text) {
-    state.inputHistory.push(item.text);
-    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
-    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
-  }
+  recordSentInput(item.text, item.attachments);
   // Remove from queue and refresh bar
   const q = state.messageQueue[sessionId];
   if (q) {
@@ -1241,6 +1229,34 @@ function removeQueuedItem(sessionId, item) {
   refreshQueue(sessionId);
   persistQueue();
   purgeVaultItem(sessionId, item); // qattachvault：项已离队 ⇒ 载荷库清账
+}
+
+/**
+ * Put the attachments of the history entry the view now points at into the input strip, replacing the
+ * ones the previous recall added. Attachments the user added by hand are never touched. The payload may
+ * come from IndexedDB, so the result is applied only if the view still points at the same entry.
+ * @param {import('./chatView.js').ChatView} view
+ */
+function recallHistoryAttachments(view) {
+  const strip = () => renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
+  const previous = view.historyRecalledAtts;
+  if (previous.length > 0) {
+    view.pendingAttachments = view.pendingAttachments.filter((att) => !previous.includes(att));
+    view.historyRecalledAtts = [];
+    strip();
+  }
+  const index = view.historyIndex;
+  const ticket = ++view.historyRecallTicket;
+  if (index < 0 || !entryHasAttachments(index)) return;
+  void restoreEntryAttachments(index).then(({ atts, lost }) => {
+    if (ticket !== view.historyRecallTicket || view.historyIndex !== index) return;
+    if (atts.length > 0) {
+      view.pendingAttachments.push(...atts);
+      view.historyRecalledAtts = atts;
+      strip();
+    }
+    if (lost > 0) showToast(t('input.historyAttachLost', { n: lost }), 'error');
+  });
 }
 
 /** Recall a queued item back to the input box for editing, removing it from the queue. */
@@ -1386,11 +1402,7 @@ function dispatchQueuedItemNow(sessionId, item, opts = {}) {
   }
 
   // Save to history
-  if (item.text) {
-    state.inputHistory.push(item.text);
-    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
-    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
-  }
+  recordSentInput(item.text, item.attachments);
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
     ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
     : a.type === 'ref'
@@ -1483,6 +1495,21 @@ function dispatchQueuedItemNow(sessionId, item, opts = {}) {
     setTimeout(() => { view.isSending = false; }, 300);
   }
   return true;
+}
+
+// Send an explicit todo reply without borrowing either composer's draft or attachments.
+// injectUserMessage renders and persists through activeView, so scope that binding
+// synchronously to the primary view and restore the caller even on failure.
+export function sendPrimaryTodoReply(text) {
+  const primary = chatViews.primary;
+  if (!primary || !primary.sessionId || !text?.trim()) return false;
+  const previous = activeView;
+  try {
+    setActiveView(primary);
+    return injectUserMessage(text, { sessionId: primary.sessionId });
+  } finally {
+    setActiveView(previous);
+  }
 }
 
 // ---------- Inject User Message (for plugin card interactions) ----------
@@ -1851,6 +1878,7 @@ export function initInput(view) {
           view.historyIndex--;
         }
         input.value = state.inputHistory[view.historyIndex];
+        recallHistoryAttachments(view);
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 200) + 'px';
         input.setSelectionRange(input.value.length, input.value.length);
@@ -1866,6 +1894,7 @@ export function initInput(view) {
           view.historyIndex++;
           input.value = state.inputHistory[view.historyIndex];
         }
+        recallHistoryAttachments(view);
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 200) + 'px';
         input.setSelectionRange(input.value.length, input.value.length);
@@ -1896,6 +1925,9 @@ export function initInput(view) {
   // covering primary + popup input bars — see #303).
   if (view.id === 'primary') {
     document.addEventListener('paste', (e) => {
+      // A conversation shown in the main area leaves this composer hidden and inert: a paste is not meant for it, and
+      // an attachment added to it would ride the next Agent message unseen.
+      if (view.dom.inputBar && view.dom.inputBar.closest('[inert]')) return;
       const items = e.clipboardData && e.clipboardData.items;
       if (!items) return;
       for (const item of items) {

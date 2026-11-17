@@ -64,7 +64,8 @@ class OpenAiAdapter(
    * 装配唯一一点 = [[HttpHeaders]]：引擎缺省必带 User-Agent，本参数覆盖/追加。
    * cmdcode（OpenAI 面）的 403/1010 事故就是无 UA 被 Cloudflare 边缘挡下。
    */
-  providerHeaders: Option[Map[String, String]] = None
+  providerHeaders: Option[Map[String, String]] = None,
+  effortAllowlist: Option[Map[String, Map[String, List[ThinkingEffort]]]] = None
 ) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
   private val logger = NebflowLogger.forName("nebflow.llm.openai")
@@ -74,31 +75,13 @@ class OpenAiAdapter(
     if base.endsWith("/chat/completions") then base else s"$base/chat/completions"
 
   /**
-   * Map Anthropic-style budget_tokens to OpenAI reasoning_effort.
-   *
-   * OpenAI doesn't have a quantitative reasoning budget, only a qualitative
-   * effort scale.  This mapping gives the user a natural continuum:
-   *   ≤ 2048   → low
-   *   2049…8192   → medium
-   *   8193…32768  → high
-   *   > 32768     → xhigh
-   */
-  private def budgetToEffort(budget: Int): String =
-    if budget <= 2048 then "low"
-    else if budget <= 8192 then "medium"
-    else if budget <= 32768 then "high"
-    else "xhigh"
-
-  /**
    * Build thinking-related request body based on the model.
    *  - GLM models: send `thinking: { type: "enabled" }` (GLM's native format)
    *  - OpenAI o-series: send `reasoning_effort` (OpenAI's format)
    *  - Others: send nothing (API will ignore unknown params)
    *
-   * thinking-config 批（2026-10-28，设计 §4.2 openai 行「直发档位」）：候选解析出
-   * effort 档位（per-model/provider/全局三层）⇒ 直发该档位（三档面 medium→high
-   * 客户端映射单点 = EffortWire.threeTier）；未配档位 ⇒ 保留旧 budget 换算
-   * （budgetToEffort 边界不动，旧单旋钮值仍可换算）。
+   * Compatible protocol and model names are not evidence of endpoint effort support;
+   * unknown endpoints omit reasoning_effort rather than converting a numeric budget.
    */
   private def thinkingBody(model: String, thinking: Option[io.circe.Json], resolved: Option[ResolvedThinking]): Json =
     thinking match
@@ -108,11 +91,9 @@ class OpenAiAdapter(
           // GLM uses its own `thinking` parameter, not OpenAI's `reasoning_effort`
           Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
         else
-          resolved.flatMap(_.effort) match
-            case Some(effort) => Json.obj("reasoning_effort" -> EffortWire.openAi(effort).asJson)
-            case None =>
-              val budget = t.hcursor.get[Int]("budget_tokens").getOrElse(32000)
-              Json.obj("reasoning_effort" -> budgetToEffort(budget).asJson)
+          resolved.filter(_.enabled).flatMap(_.effort)
+            .filter(e => effortAllowlist.flatMap(_.get(endpoint)).flatMap(_.get(model)).exists(_.contains(e)))
+            .fold(Json.obj())(e => Json.obj("reasoning_effort" -> e.wireName.asJson))
       case _ => Json.obj()
 
   /** Build a stable system prefix containing instructions and route identity. */
@@ -466,7 +447,7 @@ class OpenAiAdapter(
 
       // 🔴 缺陷①（2026-11-02，本线保留）：非流式请求必须显式带 readTimeout——sttp
       // client4 的 60s 缺省会把插件自动分配/小判官/健康探测腿在 60.0xx s 掐断。
-      // 与流式面同口径给 LlmReadTimeoutSec（600s）；USTC 侧的结构（applyHeaders
+      // 与流式面同口径给 LlmReadTimeoutSec（600s）；既有流式侧的结构（applyHeaders
       // 统一装头 + wireError）逐字保留。
       val request = applyHeaders(
         basicRequest
@@ -751,6 +732,7 @@ class OpenAiAdapter(
               // 正文归一化（protocol-compat 批）：`content` 规范上是字符串，但
               // 兼容端点会发数组（[{type:text,text:..}]）或 null。旧实现只认
               // 字符串 ⇒ 数组形态的正文整段丢失。统一走 WireShape 降级。
+              // Whitespace-only deltas carry Markdown boundaries and must survive streaming.
               val textChunks =
                 d.hcursor.downField("content").as[String].toOption
                   .orElse {
@@ -765,7 +747,7 @@ class OpenAiAdapter(
                           case WireShape.Block.Opaque(_)  => None
                       ).mkString(""))
                   }
-                  .filter(_.trim.nonEmpty)
+                  .filter(_.nonEmpty)
                   .toList
               val textDeltas = textChunks.map(StreamChunk.TextDelta.apply)
               // Some OpenAI-compatible providers (GLM, DeepSeek, etc.) return reasoning/thinking
@@ -778,7 +760,7 @@ class OpenAiAdapter(
                 .toOption
                 .orElse(d.hcursor.downField("thinking").as[String].toOption)
                 .orElse(d.hcursor.downField("reasoning").as[String].toOption)
-                .filter(_.trim.nonEmpty)
+                .filter(_.nonEmpty)
               val thinkingDeltas = thinkText.map(t => List(StreamChunk.ThinkingDelta(t))).getOrElse(Nil)
               val allTextDeltas = thinkingDeltas ++ textDeltas
 

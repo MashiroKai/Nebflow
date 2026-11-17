@@ -109,11 +109,11 @@ for n in (1, 3, 5, 7, 9):
 
 | 产件 | 绝对路径 | 规格（ffprobe/脚本实测） |
 |---|---|---|
-| 过程动画 MP4 | `C:\Users\Kai\.nebflow\plots\vrs2-math\taylor_sin_cos_approx.mp4` | 12.00s / 1320×506 / h264 yuv420p / 20fps / 240 帧；motion-toolkit `mpl_anim.py` 封装出片 |
-| manim 公式对照 MP4 | `C:\Users\Kai\.nebflow\plots\vrs2-math\taylor_formula_manim.mp4` | 12.20s / 854×480 / h264 yuv420p / 15fps；manim 0.21.0 `-ql` |
-| 静态误差图 PNG | `C:\Users\Kai\.nebflow\plots\vrs2-math\taylor_error_logscale.png` | 1290×810（8.6×5.4 in @150dpi），对数轴 |
+| 过程动画 MP4 | `C:\Users\name\.nebflow\plots\vrs2-math\taylor_sin_cos_approx.mp4` | 12.00s / 1320×506 / h264 yuv420p / 20fps / 240 帧；motion-toolkit `mpl_anim.py` 封装出片 |
+| manim 公式对照 MP4 | `C:\Users\name\.nebflow\plots\vrs2-math\taylor_formula_manim.mp4` | 12.20s / 854×480 / h264 yuv420p / 15fps；manim 0.21.0 `-ql` |
+| 静态误差图 PNG | `C:\Users\name\.nebflow\plots\vrs2-math\taylor_error_logscale.png` | 1290×810（8.6×5.4 in @150dpi），对数轴 |
 
-渲染脚本（`C:\Users\Kai\.nebflow\skills\visual-report-suite\mathematics\`）：`taylor_anim.py`（motion-toolkit 用户脚本，`build(fig, ax)` 契约）、`manim_taylor.py`、`taylor_error_static.py`。
+渲染脚本（`C:\Users\name\.nebflow\skills\visual-report-suite\mathematics\`）：`taylor_anim.py`（motion-toolkit 用户脚本，`build(fig, ax)` 契约）、`manim_taylor.py`、`taylor_error_static.py`。
 
 manim 终判：**可行**（0.21.0，`-ql` 渲染 exit 0、产物合法 mp4）；但 **MathTex/Tex 不可用**——本机无 LaTeX 发行版，实测 `FileNotFoundError: [WinError 2]`；本样公式镜头走 `Text`/`MarkupText`（Pango）路线，已实测出片。
 

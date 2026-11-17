@@ -564,7 +564,22 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     // 刀一④：maybeAutoCompact 现为 IO[Option[IO]]（门状态热读上提）——None 仍
     // 逐字落回本派发体（FastMicroCompact/ContextRefresher 等零漂移）。
-    maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing).flatMap {
+    val protectedHandle = state.sessionId.flatMap(resources.protectedExecutions.get)
+    val admission = protectedHandle.traverse_ { handle =>
+      ProtectedAgentExecution.validate(handle) *>
+        IO.raiseWhen(!state.sessionId.exists(resources.protectedRunners.contains))(
+          new IllegalStateException("protected-runner-unavailable")
+        ) *> IO.raiseWhen(state.pendingCompaction.nonEmpty || state.askMode.nonEmpty ||
+        state.session.sessionDevice.nonEmpty || state.isDispatcher || state.isFlowNode || state.isSubTaskWorker)(
+        new IllegalStateException("unsupported-execution-boundary")
+      )
+    }
+    val compact = maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing).flatMap {
+      case Some(_) if protectedHandle.nonEmpty =>
+        IO.raiseError(new IllegalStateException("unsupported-compaction-boundary"))
+      case result => IO.pure(result)
+    }
+    (admission *> compact).flatMap {
       case Some(ioBehavior) => ioBehavior
       case None =>
         // Phase-aware compaction: Compact turn disables tools (existing behavior).
@@ -622,7 +637,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         // runs prepareCompactionInput) — the compact input carries overview +
         // persisted-path references, not the giant bodies, so this skip no
         // longer risks a provider rejection on multi-MB histories.
-        val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
+        val microResult = if isCompactTurn || isAskTurn || protectedHandle.nonEmpty then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
           case Some(compacted) =>
             logAgentEvent(
@@ -730,21 +745,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 )
               )
             else IO.pure("")
-          // 既有 worktree 候选段（worktree-reuse-selection 批 2026-11-02）：根代理
-          // only（同 executorsText 判据）。数据源 = WorktreeCandidates.inventory
-          // （候选发现 + 活会话对账 + 状态标注），fail-soft 空串 = 段不注入。
-          // 注入时机 = systemStable 生命周期重建（同快照口径）；mid-session 变化
-          // 靠 Delegate 拒绝面的显式文案自纠错（active 拒绝时列出谁在持有）。
-          worktreesText <-
-            if isRootAgent then
-              // 枚举根 = 根会话座位工作区（挂载项目各自的 worktree 不在此列——派发
-              // 到别的项目时，`Delegate` 的续用腿按**目标项目**的 workspace 现读重
-              // 枚举，见 DelegateTool.internalSpawn；本段只是主座位的提示面）。
-              val rootWs = turnCtx.projectRoot.getOrElse((PathUtil.dataRoot / "general").toString)
-              nebflow.core.delegate.WorktreeCandidates
-                .inventory(rootWs)
-                .map(inv => nebflow.core.delegate.WorktreeCandidates.render(inv, rootWs))
-            else IO.pure("")
           // identity-sync 批（2026-10-23）：展示身份现读（displayName + 头像 sha）——
           // `## Self` 段体（order 396）与 identity 变更提醒的唯一数据源。空 = 该
           // agent 无非默认身份（未起名且无自定义头像）= 段不注入、提醒不产生 =
@@ -839,7 +839,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             isRootAgent = isRootAgent,
             mountedProjectsText = mountedProjectsText,
             executorsText = executorsText,
-            worktreesText = worktreesText,
             identitySelfText = identitySelfText
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
@@ -917,7 +916,23 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   )
               )
             case None => IO.unit
-          loggedReminders <- SystemReminders.logAndReturn(reminders ++ msgTokenReminder.toList)
+          // Passive task ledger reminder: only a genuine root-session user turn may
+          // consult the throttle. This is attached to the already-running input turn;
+          // no scheduler, wakeup, or background-event path exists.
+          passiveTaskReminder <- IO.blocking {
+            TaskLedgerPassiveReminder.forTurn(
+              isRealUserTurn = isRealUserTurn,
+              isRootAgent = isRootAgent,
+              isCompactTurn = isCompactTurn,
+              isAskTurn = isAskTurn,
+              sessionId = stateForLlm.sessionId,
+              nowMs = System.currentTimeMillis(),
+              summary = nebflow.core.project.TaskLedgerStore.open().passiveReminderSummary()
+            )
+          }
+          loggedReminders <- SystemReminders.logAndReturn(
+            reminders ++ msgTokenReminder.toList ++ passiveTaskReminder.toList
+          )
           // Clock is attached once at explicit real-user input conversion; this
           // request/reminder assembly path never creates or injects one.
           // Plugins-live (2026-09-12): the plugin-surface reminder is PERSISTED (like
@@ -1048,9 +1063,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // UI 客户端缺省形态）以下，防 20 分钟空烧再现（现场：鹦鹉骑自行车
           // delegate，thinking 146K 字符、textLen=0、零工具调用）。纯函数钳在
           // ThinkingConfig.cappedForSubagent（spec 判红锚）；根会话零变化。
-          workerThinking =
-            if depth > 0 then nebflow.shared.ThinkingConfig.cappedForSubagent(turnCtx.thinkingConfig)
-            else turnCtx.thinkingConfig
+          workerThinking = turnCtx.thinkingConfig
           // ask 思考低档（2026-11-02 换装批，作者令「思考强度低」）：ask 会话
           // （ask- 前缀身份，AskSessions 单点）逐请求 effort 强制 low——经
           // req.thinking 语义载体的 effort 键携带（toLlmJson 主面不变；非 ask
@@ -1100,6 +1113,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             agentId = freshDef.name,
             tools = freshTools,
             thinking = Some(askThinkingJson),
+            subagentThinkingBudgetCap = Option.when(depth > 0)(nebflow.shared.Defaults.SubagentThinkingBudgetCap),
             systemStable = Some(systemStable),
             // 时钟简化批（作者令 2026-11-06 22:26/22:29）：动态段时钟整体退役——
             // **永不主动注入**（空转/pingpong/工具往返轮被每请求时钟反复叫醒、无法
@@ -1126,7 +1140,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
             // must never leak into summarization loops.
-            searchAllowed = !(isCompactTurn || isAskTurn),
+            searchAllowed = !(isCompactTurn || isAskTurn || sessionIdOpt.exists(resources.protectedExecutions.contains)),
             requestId = Some(llmRequestId)
           )
         yield (turnCtx, request, stateWithCache)
@@ -1164,6 +1178,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               val sseEncoder = new nebflow.core.LlmLogWriter.StreamEventEncoder(llmRequestId, request.agentId)
               // Synchronously update gitBranch in state — no async message
               val stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
+              def runModel(work: IO[ConsumeResult]): IO[ConsumeResult] =
+                sessionIdOpt.flatMap(resources.protectedExecutions.get) match
+                  case None => work
+                  case Some(handle) =>
+                    sessionIdOpt.flatMap(resources.protectedRunners.get) match
+                      case Some(runner) => ProtectedAgentExecution.modelRound(handle, runner, request,
+                        math.max(0, nebflow.llm.Fallback.MaxTurnLlmCalls - stateForLlm.execution.llmCallsThisTurn))(work)
+                      case None => IO.raiseError(new IllegalStateException("protected-runner-unavailable"))
               ctx
                 .forkTurn(
                   // ── Token 止损（2026-08-18 事故，方案 C）：per-turn LLM 重试预算 ──
@@ -1185,7 +1207,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                     LlmLogWriter.logRequest(request, llmRequestId, isSubagent, isCompactTurn) *>
                     // pi-logic 接线点 1：LLM 流起点审计行（MessageStarted——纯增日志）。
                     IO(piBridge.messageStart(turnId)) *>
-                    resources.llm
+                    runModel(resources.llm
                       .sendStream(request, onAttempt = Some(onAttemptCb))
                       // B2（RC-2，2026-10-04）：携带本轮 LLM 轮次标识 (round, block)。
                       // round 取 dispatch 序号 stateForLlm.currentTurnId——它恰好是
@@ -1244,7 +1266,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                             resultUsage = cr.usage,
                             resultModel = cr.model
                           ) *> IO.pure(cr.copy(requestId = Some(llmRequestId)))
-                      }
+                      })
                       .attempt
                       .flatMap {
                         // pi-logic 接线点 4（PiLoopTranslator 影子面）：完成腿事件——
@@ -1252,7 +1274,16 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                         // 六分支/ToolsComplete（影子事件序随主链真实序）。
                         case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
                         case Left(e) =>
-                          IO(piBridge.llmFailedTurnEnd(turnId)) *> (ctx.self ! LlmFailed(e, replyTo, turnId))
+                          (sessionIdOpt.flatMap(resources.protectedExecutions.get),
+                            sessionIdOpt.flatMap(resources.protectedRunners.get)) match
+                            case (Some(handle), Some(runner)) =>
+                              ProtectedAgentExecution.suspendModel(handle, runner) *>
+                                NebflowLogger.forName("nebflow.agent").warn(
+                                  s"Protected model boundary requires review: ${e.getMessage}"
+                                )
+                            case (Some(_), None) =>
+                              NebflowLogger.forName("nebflow.agent").warn("Protected model runner unavailable; review required")
+                            case _ => IO(piBridge.llmFailedTurnEnd(turnId)) *> (ctx.self ! LlmFailed(e, replyTo, turnId))
                       }
                       .handleErrorWith { e =>
                         NebflowLogger
@@ -1260,8 +1291,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                           .warn(s"pipeLlmCall failed: ${e.getMessage}")
                           // pi-logic 接线期四件 ④（崩溃兜底）：synthesizeTruncatedEvents
                           // 合成终态对经桥 audit 面——「循环崩溃对下游仍呈现为一次正常收尾」。
-                          .flatMap(_ => PiLoopWiring.crashTailIO(piBridge, turnId))
-                          .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
+                          .flatMap { _ =>
+                            (sessionIdOpt.flatMap(resources.protectedExecutions.get),
+                              sessionIdOpt.flatMap(resources.protectedRunners.get)) match
+                              case (Some(handle), Some(runner)) => ProtectedAgentExecution.suspendModel(handle, runner)
+                              case (Some(_), None) => IO.raiseError(new IllegalStateException("protected-runner-unavailable", e))
+                              case _ => PiLoopWiring.crashTailIO(piBridge, turnId) *> (ctx.self ! LlmFailed(e, replyTo, turnId))
+                          }
                       }
                 )
                 .map { _ =>
@@ -1380,6 +1416,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         askSession = nebflow.core.ask.AskSessions.isAskSession(state.sessionId),
         delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(state.sessionId)
       )
+      // An AskHost must not become externally visible before its original tool-use
+      // boundary is durable. Mixed batches remain subject to the existing
+      // RECOVERY_UNVERIFIED gate because other tools may have side effects.
+      _ <- if result.toolCalls.exists(_.name == "AskHost") && !sessionIdOpt.exists(resources.protectedExecutions.contains) then
+        sessionIdOpt.traverse_ { sid =>
+          val blocks = result.thinking.toList.map(t => ContentBlock.Thinking(t, result.thinkingSignature)) ++
+            (if result.text.nonEmpty then List(ContentBlock.Text(result.text)) else Nil) ++
+            result.toolCalls.map(c => ContentBlock.ToolUse(c.id, c.name, c.input))
+          resources.sessionStore.saveMessagesForSession(sid, state.messages :+ Message(MessageRole.Assistant, Right(blocks)))
+        }
+      else IO.unit
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
@@ -1487,7 +1534,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         flowNodeId = state.session.flowNodeId,
         isDispatcher = state.session.isDispatcher,
         // 节点角色（nrloop 一期 2026-09-12，B1 透传链第三段）：SessionContext.flowNodeRole
-        // → ToolContext.flowNodeRole——node_report 值域分化（enumFor）与 ProtocolFootnote
+        // → ToolContext.flowNodeRole——终态协议角色分支与 ProtocolFootnote
         // 角色分支的引擎侧判据来源（不信客户端参数，与 flowNodeId 同款纪律）。
         flowNodeRole = state.session.flowNodeRole,
         projectName = state.session.projectName,
@@ -1506,12 +1553,44 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         // 本机项目/非项目轨 None（现状零变化）。
         sessionDevice = state.session.sessionDevice,
         sessionDeviceWorkspace = state.session.sessionDeviceWorkspace,
+        protectedExecutionRoots =
+          if sessionIdOpt.exists(resources.protectedExecutions.contains) then
+            val sessions = resources.sessionStore.executionAuthorityRoot
+            List(sessions, sessions.getParent.resolve("subagent-tasks"))
+          else Nil,
         executionIdentity = Option.when(depth == 0 && effectiveDef.name == nebflow.actor.RootAgentIdentity.Name)(
           nebflow.core.tools.ToolExecutionIdentity.issue(effectiveDef.name, "root")
         ),
         sandbox = sandboxPolicy
       )
-      freshResults <- filteredCalls.parTraverse { call =>
+      _ <- sessionIdOpt.filter(resources.protectedExecutions.contains).traverse_ { sid =>
+        val execution = resources.protectedExecutions(sid)
+        execution.authority.observeChain(sid, execution.admission.executionId).flatMap {
+          case nebflow.shared.ExecutionChainObservation.Verified(chain)
+              if chain.attemptId == execution.admission.attemptId &&
+                chain.incarnationId == execution.admission.incarnationId && chain.phase == "decided" =>
+            val expected = result.toolCalls.map { call =>
+              chain.intents.values.find(i => i.modelCallId == call.id && i.tool == call.name &&
+                i.arguments == Json.fromJsonObject(call.input))
+            }
+            val allPrepared = expected.forall(_.exists(i => Set("prepared", "outcome").contains(
+              chain.operations.getOrElse(i.operationId, "")))) &&
+              expected.flatten.map(_.operationId).distinct.size == chain.intents.size
+            val supported = result.toolCalls.forall { call =>
+              val path = call.input("file_path").flatMap(_.asString).getOrElse("")
+              val extension = path.split('.').lastOption.getOrElse("").toLowerCase
+              call.name == "Read" && path.nonEmpty &&
+                !Set("png", "jpg", "jpeg", "gif", "webp", "bmp").contains(extension) &&
+                call.input("device").isEmpty
+            }
+            if droppedCalls.nonEmpty || expected.size != chain.intents.size || !allPrepared || !supported ||
+                toolCtx.sessionDevice.nonEmpty || (toolCtx.hookEngine ne nebflow.core.hooks.HookEngine.noop) then
+              IO.raiseError(new IllegalStateException("unsupported-or-unprepared-tool-batch"))
+            else IO.unit
+          case _ => IO.raiseError(new IllegalStateException("execution-review-required"))
+        }
+      }
+      runTool = (call: ToolCall) =>
         val skipStreaming = call.name == "AskUserQuestion"
         val callCtx = toolCtx.copy(toolCallId = call.id)
         // pi-logic 接线点 9：单调用起点审计行（与 ToolStart 帧位同步——纯增日志）。
@@ -1531,7 +1610,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               // round). Pure echo, zero side effects — bypasses the permission
               // system (an Ask here would deadlock the round-trip on a
               // synthetic tool the user never configured).
-              if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
+              if sessionIdOpt.exists(resources.protectedExecutions.contains) then
+                protectedRead(call, callCtx, resources, sessionIdOpt.get)
+              else if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
                 IO.delay(
                   NebflowLogger
                     .forName("nebflow.agent")
@@ -1543,7 +1624,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 ).as(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
                   .flatTap(r => logToolStructured(call, callCtx, r))
               else
-                permissionDecision(resources, call, sessionIdOpt.getOrElse(""))
+                permissionDecision(resources, call, sessionIdOpt.getOrElse(""), callCtx)
                   .flatMap {
                     case PermissionDecision.Allow =>
                       // 2026-09-10 卡死判据换轴：工具**开始**点——记当前工具相位
@@ -1561,7 +1642,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                         // R6（取消静默死锁修复批 2026-09-10）：工具自己声明的授权时长
                         // （入参 `timeout`，只读声明值）随工具相位一并登记 —— 判据据此
                         // 尊重「命令被允许跑多久」，不再对带长授权的前台命令误杀。
-                        toolDeadlineMs = nebflow.shared.Defaults.declaredToolTimeoutMs(call.input)
+                        toolDeadlineMs = nebflow.shared.Defaults.declaredToolTimeoutMs(call.input),
+                        toolCallId = Some(call.id)
                       ) *>
                         // 审计 20260903 子项①：工具执行期心跳包裹（仅实际执行段——
                         // 权限 Ask/AskUserQuestion 等待由前端 askUser 处理器既有
@@ -1587,6 +1669,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               .attempt
               .flatMap {
                 case Right(pair) => IO.pure(pair)
+                case Left(e) if sessionIdOpt.exists(resources.protectedExecutions.contains) => IO.raiseError(e)
                 case Left(e) =>
                   val r = ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)
                   logToolStructured(call, callCtx, r).as((call, r))
@@ -1612,10 +1695,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                    else IO.unit)
               }
               .flatMap { (call, r) =>
-                ToolResultGuard.guardResult(call, r, state.sessionId.getOrElse("default")).map(r => (call, r))
+                if sessionIdOpt.exists(resources.protectedExecutions.contains) then IO.pure((call, r))
+                else ToolResultGuard.guardResult(call, r, state.sessionId.getOrElse("default")).map(r => (call, r))
               })
-      }
-      guardedBatch <- ToolResultGuard.guardBatch(freshResults, state.sessionId.getOrElse("default"))
+      freshResults <-
+        if sessionIdOpt.exists(resources.protectedExecutions.contains) then filteredCalls.traverse(runTool)
+        else filteredCalls.parTraverse(runTool)
+      guardedBatch <-
+        if sessionIdOpt.exists(resources.protectedExecutions.contains) then IO.pure(freshResults)
+        else ToolResultGuard.guardBatch(freshResults, state.sessionId.getOrElse("default"))
       droppedResults <- droppedCalls.traverse { call =>
         val r = ToolExecResult(s"Tool not available: ${call.name}", isError = true)
         logToolStructured(call, toolCtx, r).as((call, r))
@@ -1744,14 +1832,29 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
 
     for _ <- ctx.forkTurn(io.handleErrorWith { e =>
         val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-        NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg") *>
-          // pi-logic 四件 ④（崩溃兜底）：工具管线失败 = 轮崩溃——合成终态对（审计面）。
-          PiLoopWiring.crashTailIO(piBridge, state.execution.currentTurnId) *>
-          (ctx.self ! LlmFailed(
-            ToolPipelineError(s"Tool execution pipeline failed: $msg"),
-            replyTo,
-            state.currentTurnId
-          ))
+        state.sessionId.flatMap(resources.protectedExecutions.get) match
+          case Some(execution) =>
+            val admission = execution.admission
+            execution.authority.observeChain(admission.sessionId, admission.executionId).flatMap {
+              case nebflow.shared.ExecutionChainObservation.Verified(current) =>
+                val id = java.util.UUID.randomUUID().toString
+                execution.authority.transition(nebflow.shared.ExecutionTransition(
+                  admission.sessionId, admission.executionId, id, id, current.ref,
+                  admission.attemptId, admission.incarnationId,
+                  nebflow.shared.ExecutionEvent.Suspended("tool-pipeline-review-required")
+                )).flatMap(result =>
+                  NebflowLogger.forName("nebflow.agent").warn(s"Protected tool pipeline suspended: $msg; commit=$result")
+                )
+              case _ => NebflowLogger.forName("nebflow.agent").warn(s"Protected tool pipeline requires review: $msg")
+            }
+          case None =>
+            NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg") *>
+              PiLoopWiring.crashTailIO(piBridge, state.execution.currentTurnId) *>
+              (ctx.self ! LlmFailed(
+                ToolPipelineError(s"Tool execution pipeline failed: $msg"),
+                replyTo,
+                state.currentTurnId
+              ))
       })
     yield
       // loopCounters 不在此写回——它在 forkTurn 的异步 IO 内计算，行为返回时
@@ -1777,6 +1880,98 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
    * P0-1 / P-M1（2026-09-20）插点：**MCP / ScriptTool 面**在 `isReversible` 之前改走
    * `McpToolGate.decide`（面判定为 None 的内置工具 ⇒ 上述原路径逐字不变）。
    */
+  /** Protected dispatch currently supports only local text Read with an empty hook engine. */
+  private[agent] def protectedRead(
+    call: ToolCall,
+    toolCtx: ToolContext,
+    resources: SharedResources,
+    sessionId: String,
+    read: (JsonObject, ToolContext) => IO[Either[ToolError, String]] = ReadTool.call
+  ): IO[ToolExecResult] =
+    val handle = resources.protectedExecutions.get(sessionId)
+    val runner = resources.protectedRunners.get(sessionId)
+    val path = call.input("file_path").flatMap(_.asString).getOrElse("")
+    val image = Set("png", "jpg", "jpeg", "gif", "webp", "bmp").contains(path.split('.').lastOption.getOrElse("").toLowerCase)
+    if call.name != "Read" || image || path.isEmpty || toolCtx.sessionDevice.nonEmpty ||
+        call.input("device").nonEmpty || (toolCtx.hookEngine ne nebflow.core.hooks.HookEngine.noop) then
+      IO.raiseError(new IllegalStateException("unsupported-boundary"))
+    else (handle, runner) match
+      case (Some(execution), Some(owner)) =>
+        execution.authority.observeChain(sessionId, execution.admission.executionId).flatMap {
+          case nebflow.shared.ExecutionChainObservation.Verified(state)
+              if state.attemptId == execution.admission.attemptId && state.incarnationId == execution.admission.incarnationId &&
+                state.phase == "decided" =>
+            val previous = state.intents.values.find(i => i.modelCallId == call.id && i.tool == call.name &&
+              i.arguments == Json.fromJsonObject(call.input)).flatMap(i => state.outcomes.get(i.operationId))
+            previous match
+              case Some(value) =>
+                (value.hcursor.get[String]("content"), value.hcursor.get[Boolean]("isError"),
+                  value.hcursor.get[Option[String]]("frontendContent")) match
+                  case (Right(content), Right(isError), Right(frontend)) if value.hcursor.downField("imageBlocks").focus.contains(Json.Null) =>
+                    IO.pure(ToolExecResult(content, isError = isError, frontendContent = frontend))
+                  case _ => IO.raiseError(new IllegalStateException("stored-tool-outcome-invalid"))
+              case None => protectedReadFresh(call, toolCtx, resources, sessionId, execution, owner, read)
+          case _ => IO.raiseError(new IllegalStateException("execution-review-required"))
+        }
+      case _ => IO.raiseError(new IllegalStateException("runner-unavailable"))
+
+  private def protectedReadFresh(
+    call: ToolCall,
+    toolCtx: ToolContext,
+    resources: SharedResources,
+    sessionId: String,
+    execution: nebflow.core.ProtectedExecutionHandle,
+    owner: ExecutionCommitStore#RunnerHandle,
+    read: (JsonObject, ToolContext) => IO[Either[ToolError, String]]
+  ): IO[ToolExecResult] =
+        permissionDecision(resources, call, sessionId, toolCtx).flatMap {
+          case PermissionDecision.Allow =>
+            val admission = execution.admission
+            def command(ref: nebflow.shared.ExecutionCommitRef, event: nebflow.shared.ExecutionEvent) =
+              val id = java.util.UUID.randomUUID().toString
+              nebflow.shared.ExecutionTransition(sessionId, admission.executionId, id, id, ref,
+                admission.attemptId, admission.incarnationId, event)
+            for
+              observed <- execution.authority.observeChain(sessionId, admission.executionId)
+              current <- observed match
+                case nebflow.shared.ExecutionChainObservation.Verified(value) => IO.pure(value)
+                case _ => IO.raiseError(new IllegalStateException("execution-review-required"))
+              intent <- current.intents.values.find(i => i.modelCallId == call.id && i.tool == call.name &&
+                i.arguments == Json.fromJsonObject(call.input)) match
+                case Some(value) => IO.pure(value)
+                case None => IO.raiseError(new IllegalStateException("intent-mismatch"))
+              value <- cats.effect.Deferred[IO, ToolExecResult]
+              permission <- permissionDecision(resources, call, sessionId, toolCtx)
+              _ <- permission match
+                case PermissionDecision.Allow => IO.unit
+                case _ => IO.raiseError(new IllegalStateException("permission-boundary-unsupported"))
+              started <- owner.dispatch(command(current.ref, nebflow.shared.ExecutionEvent.ToolStarted(intent.operationId)), intent) {
+                read(call.input, toolCtx).flatMap {
+                  case Right(content) => value.complete(ToolExecResult(content)).void
+                  case Left(error) => value.complete(ToolExecResult(error.message, isError = true)).void
+                }
+              }
+              receipt <- started match
+                case Right((_, receipt)) => IO.pure(receipt)
+                case Left(result) => IO.raiseError(new IllegalStateException(s"dispatch-unconfirmed: $result"))
+              completed <- receipt.await
+              result <- completed match
+                case cats.effect.kernel.Outcome.Succeeded(_) => value.get
+                case _ => IO.raiseError(new IllegalStateException("tool-outcome-unknown"))
+              beforeOutcome <- execution.authority.observeChain(sessionId, admission.executionId)
+              outcomeRef <- beforeOutcome match
+                case nebflow.shared.ExecutionChainObservation.Verified(state) => IO.pure(state.ref)
+                case _ => IO.raiseError(new IllegalStateException("execution-review-required"))
+              installed <- owner.outcome(command(outcomeRef, nebflow.shared.ExecutionEvent.ToolOutcome(intent.operationId,
+                Json.obj("content" -> result.content.asJson, "isError" -> result.isError.asJson,
+                  "frontendContent" -> result.frontendContent.asJson, "imageBlocks" -> Json.Null))), receipt)
+              _ <- installed match
+                case _: nebflow.shared.ExecutionCommitResult.Committed => IO.unit
+                case _ => IO.raiseError(new IllegalStateException(s"outcome-unconfirmed: $installed"))
+            yield result
+          case _ => IO.raiseError(new IllegalStateException("permission-boundary-unsupported"))
+        }
+
   private enum PermissionDecision:
     case Allow, Ask
 
@@ -1789,26 +1984,33 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   private def permissionDecision(
     resources: SharedResources,
     call: ToolCall,
-    sessionId: String
+    sessionId: String,
+    toolContext: ToolContext
   ): IO[PermissionDecision] =
     resources.effectiveSafetyMode.flatMap { mode =>
-      // P0-1 / P-M1 插点（spec §2.3）：工具名命中 MCP / ScriptTool 注册面时，在
-      // `ToolReversibility.isReversible` 分支**之前**改走 `McpToolGate.decide`。
-      //
-      // 面判定为 None（内置工具：Read/Write/Edit/Bash/Curl/Pop/…) ⇒ 走原路径**逐字不变**
-      // —— `isReversible` 函数体与调用形状零改动（验收 A1-8 零回归的机械保证）。
-      nebflow.core.McpToolGate.surfaceOf(call.name) match
-        case Some(ref) =>
-          val outcome = nebflow.core.McpToolGate.decide(ref, call.input, mode, sessionId)
-          auditMcpGate(outcome, mode, sessionId) *>
+      // AGENTS.md is human-owned project policy: even auto-all cannot authorize
+      // an agent-originated write. Identity comes from the engine's ToolContext,
+      // never a client-supplied tool argument; console REST saves stay separate.
+      if AgentInstructionWriteGate.requiresConfirmation(call, isAgent = toolContext.agentDef.isDefined) then
+        IO.pure(PermissionDecision.Ask)
+      else
+        // P0-1 / P-M1 插点（spec §2.3）：工具名命中 MCP / ScriptTool 注册面时，在
+        // `ToolReversibility.isReversible` 分支**之前**改走 `McpToolGate.decide`。
+        //
+        // 面判定为 None（内置工具：Read/Write/Edit/Bash/Curl/Pop/…) ⇒ 走原路径**逐字不变**
+        // —— `isReversible` 函数体与调用形状零改动（验收 A1-8 零回归的机械保证）。
+        nebflow.core.McpToolGate.surfaceOf(call.name) match
+          case Some(ref) =>
+            val outcome = nebflow.core.McpToolGate.decide(ref, call.input, mode, sessionId)
+            auditMcpGate(outcome, mode, sessionId) *>
+              IO.pure(
+                if outcome.allowed then PermissionDecision.Allow else PermissionDecision.AskMcp(outcome)
+              )
+          case None =>
             IO.pure(
-              if outcome.allowed then PermissionDecision.Allow else PermissionDecision.AskMcp(outcome)
+              if ToolReversibility.isReversible(call.name, call.input, mode) then PermissionDecision.Allow
+              else PermissionDecision.Ask
             )
-        case None =>
-          IO.pure(
-            if ToolReversibility.isReversible(call.name, call.input, mode) then PermissionDecision.Allow
-            else PermissionDecision.Ask
-          )
     }
 
   /**
@@ -2163,7 +2365,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // native $web_search before the permission gate; if one ever reaches here
     // (e.g. via the deferred-approval path), echo instead of failing it
     // through the malformed/registry checks below.
-    if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
+    if ctx.sharedResources.exists(resources => ctx.sessionId.exists(resources.isProtectedExecution)) then
+      IO.raiseError(new IllegalStateException("protected-tool-dispatch-not-integrated"))
+    else if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
       IO.pure(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
     else
       // Issue #18: adapters mark tool calls whose arguments JSON could not be
@@ -2204,6 +2408,18 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 IO.pure(ToolExecResult(blockMsg, isError = true))
               else
                 val finalInput = preResult.updatedInput.getOrElse(call.input)
+                // canvas-ask-restricted-edit（CAE-REQ-002/CAE-SCN-003）：文件绑定
+                // Ask 的 Bash = 默认拒绝的只读白名单执行器——在 post-hook（上方
+                // beforeTool 已跑，hook 仍可先拦）之后、远端/本地路由之前单点短路：
+                // 拒绝在**任何执行前**显式返回；放行的命令经 argv 直执行（无 shell），
+                // 既不进远端 device 通道也不进普通 ShellSession。非 Ask 会话零路径
+                // 变化（判据单点 AskSessions.isAskSession）。
+                val askBashFace: Option[IO[ToolExecResult]] =
+                  Option.when(call.name == "Bash" && nebflow.core.ask.AskSessions.isAskSession(ctx.sessionId)) {
+                    nebflow.core.ask.AskBashFace
+                      .runAskBash(finalInput, ctx)
+                      .map { (out, isErr) => ToolExecResult(out, isError = isErr) }
+                  }
                 // S3（2026-09-14 作者裁定，工具面 `device` 摘除批的引擎面第二层）：
                 // `device` 的远端消费**收窄到 `RemoteExecutor.remoteableTools`**（六件真
                 // 远端），使代码回到 `RemoteExecutor.scala` 的自陈意图（「Only these tools
@@ -2241,7 +2457,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   Option.when(fleetEnforceOn && remoteable && explicitDeviceRaw.isEmpty) {
                     fleetDeviceRefusalIO(call.name, sessionDefaultDevice, ctx)
                   }
-                val execIO: IO[ToolExecResult] = enforceRefusal.getOrElse(remoteDeviceOpt match
+                val execIO: IO[ToolExecResult] = askBashFace.getOrElse(enforceRefusal.getOrElse(remoteDeviceOpt match
                   case Some(deviceName) if RemoteExecutor.current.isDefined =>
                     var remoteInput = finalInput.remove("device")
                     // 「命令 cwd 指向设备 workspace」（跨设备批 2026-10-25）：会话默认
@@ -2356,7 +2572,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                             imageBlocks = imageBlocks
                           )
                         }
-                    }) // close enforceRefusal.getOrElse( <remoteDeviceOpt match …> )
+                    })) // close askBashFace.getOrElse( enforceRefusal.getOrElse( <remoteDeviceOpt match …> ) )
                 execIO.handleErrorWith {
                   case _: UserAbort => IO.raiseError(new UserAbort())
                   case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
@@ -2444,14 +2660,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
-    // Canvas ask mode（2026-10-28 实施批，机制稿 §5；2026-11-02 换装批）：白名单
-    // **封闭枚举**早退——ask 会话工具面 = AskSessions.AllowedTools（ask 专属两件
-    // + 只读五件 Read/Glob/Grep/WebSearch/WebFetch，后者与 Subagent 侦察面同源），
-    // 白名单外一律不下发（含 bash/edit/write 等一切编辑与编排工具，作者令点名
-    // 禁止）。早退在最前 ⇒ 声明面/fixed 面/plugin 面/尾段挂载全不触及；判据 =
-    // 引擎侧会话身份（AskSessions 单点，`ask-` 前缀），与 delegateSession 同款
-    // 透传链。工具内侧再用 ctx.sessionId 同判据拒绝（AskTools 双保险，先例
-    // DelegateReportTool）。
+    // Ask has an independent ten-tool face (query-only Bash + direct-apply
+    // ask_edit/ask_write with canvas inline review, canvas-inline-diff-review).
+    // Return before definition, fixed-role, plugin or delegate grants can widen
+    // that face.
     if askSession then return nebflow.core.ask.AskSessions.AllowedTools
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
@@ -2595,68 +2807,23 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 九件先被 nebulaFiltered 剥、此处按会话身份重挂，两段不冲突；双轨 flow/
     // team/Nebula 会话 flag=false 恒不挂（工具面 + 工具内身份拒绝双保险 §1d-4）。
     val withBoard = if projectBoardSession then pluginGranted + "TaskBoard" else pluginGranted
-    // node_report（blocked 结构化信号批 20260909，设计 spec §5.2 #4；同日作者
-    // 裁定泛化更名 NodeReport 统一三语义）：flow 节点会话专属挂载——编排层专属
-    // 工具族（Pop/AskUser/Schedule 同类），不进通用 agent 工具面。判据 =
-    // flowNodeSession（引擎侧 flowNodeId.isDefined），**不能用 isFlowNode**：
-    // 分发器会话 spawn 也带 isFlowNode=true（ProjectActor.scala spawn 点）但
-    // flowNodeId 恒 None——用 isFlowNode 会把工具 schema 泄漏进分发器工具面
-    // （spec §6/§9.3 明确禁止）。追加点与 TaskBoard 同段（全部角色过滤之后）：
-    // guardrails 剥离链与 NebulaExclusiveTools 均不触及；工具内身份拒绝
-    // （ctx.flowNodeId 空 → NODE_REPORT_FORBIDDEN）与挂载面过滤构成双保险
-    // （TaskBoardTool.scala:46-49 同款）；插件声明不授能（不在
-    // BuiltinToolWhitelist）。信号消费点 = NodeEngine 会话完成时点
-    // NodeReportRegistry.drain（按类别分流既有链：blocked/pass/fail；文本锚定
-    // 降级面不放宽）。
     // AskUserQuestion mount for the dispatcher session (agentflow batch
     // 2026-10-02): appended by **engine-side identity** at the same tail as
-    // TaskBoard/node_report -- after every role filter and the
+    // TaskBoard -- after every role filter and the
     // NebulaExclusiveTools strip, so the fixed face and this grant never
     // interfere. 🔴 The criterion is `isDispatcher` **alone**, NOT
     // `projectBoardSession`: that flag is `isDispatcher || flowNodeId.isDefined`
     // (a project node would be pulled in => an over-grant). The two ends
     // (mount face + the tool's own identity check) form the twin safeguard,
-    // TaskBoard/node_report precedent.
+    // TaskBoard precedent.
     val withDispatcherAsk = if isDispatcher then withBoard + "AskUserQuestion" else withBoard
-    // delegate_report（worktree-judge-fifo 批 #1224 增补 §3.4）：delegate 会话
-    // 专属终态语义申报——node_report 同款「挂载面 + 工具内身份拒绝」双保险。
-    // 判据 = delegateSession（引擎侧：DelegateSessions.isDelegateSession(sessionId)，
-    // `delegate-` 前缀单点），**不能用 agentDef.name**：nebflow def 也服务
-    // Subagent/Workflow 子会话与非 delegate 形态（over-grant）。追加点在同段
-    // 尾部（全部角色过滤与 NebulaExclusiveTools 剥离之后）；插件声明不授能
-    // （不在 BuiltinToolWhitelist）。信号消费点 = 终态判定机（DelegateJudge
-    // selfReport 输入 + 判定机失败回落）与任务列表状态面。
-    val withDelegateReport =
-      if delegateSession then withDispatcherAsk + nebflow.core.tools.DelegateReportTool.Name else withDispatcherAsk
-    // ── 双模式批（2026-10-28 · 设计 §4.2/§5.1）：模式面单点分叉 ──────────────
-    // delegateMode = None（总闸关/未判定）⇒ 本段全部分叉失效，现状逐字节。
-    // kernel 腿（极简内核执行器）：编排面整体退场——node 四件（ChainWrite/
-    //   NodeEdit/NodeList/NodeCancel）在追加前截断。
-    //   tool-face-agentflow-retire 批（2026-11-05）：`- "AgentFlow"` 减法**删除**——
-    //   该名已不在任何固定面里（工具整体退役、注册表无此名），Set 减法恒为空操作。
-    //   `- "Subagent"` 减法**同时删除**（作者裁定一：kernel 腿补只读侦察件）——
-    //   kernel 现在**有** Subagent（只读五件，无写/无 shell/无消息），与之配套的是
-    //   不变量 R-3a 的收窄（core.delegate.KernelChildSpawnGate 只放行
-    //   def='subagent' 的子 actor 生成，其余照旧拒）。
-    //   node_report 摘除（作者裁定 2026-10-29 逐字「node_report工具对极简内核应该
-    //   不需要吧，那不是agentflow的节点使用的工具吗？」）：显式减法钉语义——现状
-    //   事实源 node_report 本就不达 delegate 面（RootExclusiveTools 防声明逃逸剥
-    //   离 + 真实授能只在 flowNodeSession 尾段挂载、工具内 flowNodeId 空即拒——
-    //   挂载面+身份拒绝双保险既有），本减法是未来挂载面变动下的保险销。
-    // dispatcher 腿（分发器）：node 四件保留（编排本体）+ Subagent 摘除
-    //   （Q2 裁定：Subagent 是侦察子代理不是编排面，分发器不需要）；node_report
-    //   腿不动（同上现状事实源——flow 节点会话专属，本就零泄漏）。
-    val mergerFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeMerger)
-    val kernelFace =
-      delegateSession && (delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel) || mergerFace)
-    val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
-    val modeTruncated =
-      if kernelFace then withDelegateReport - nebflow.core.tools.NodeReportToolDef.Name
-      else if dispatcherFace then withDelegateReport - "Subagent"
-      else withDelegateReport
+    // Both delegate modes retain the fixed reconnaissance Subagent tool. Only kernel
+    // mode suppresses the node orchestration face; its child-spawn restrictions
+    // remain enforced independently by KernelChildSpawnGate.
+    val kernelFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
     // NodeEdit/NodeList/NodeCancel（分发器三件的作用域面）+ ChainWrite（整链登记）。
-    // TaskBoard/node_report/delegate_report 同款「挂载面 + 工具内身份拒绝」双保险：
+    // TaskBoard 同款「挂载面 + 工具内身份拒绝」双保险：
     // 判据 = delegateSession 单独（引擎侧 DelegateSessions.isDelegateSession），
     // **不能用 isFlowNode/agentDef.name**（nebflow def 也服务非 delegate 形态；
     // over-grant 防线）；插件声明不授能（ChainWrite 在 RootExclusiveTools 防声明
@@ -2664,36 +2831,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 单点）——挂载面只放行名字，不看参数。
     // [双模式批] kernel 腿在追加前截断（极简内核无编排诉求——Q2 延伸裁定）。
     val withDelegateFace =
-      if delegateSession && !kernelFace then modeTruncated ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
-      else modeTruncated
+      if delegateSession && !kernelFace then withDispatcherAsk ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
+      else withDispatcherAsk
     // S6=C（N1 刀3 · v3 §7.2 ①授权面扩＝创建者 delegate＋root）：delegate 会话挂
     // Mail——地址面经 MailTool.layeredRoute 分层判据收窄为自己作用域的
     // `node:<id|name>` 腿（SenderRole.Delegate 单点；其余形态显式越界报错）。同段
     // 追加（全部角色过滤与 NebulaExclusiveTools 剥离之后）：挂载面授权 + 工具内
-    // 地址面分层 = 双保险（TaskBoard/node_report 同款纪律）；kernel-def 的极简内核
+    // 地址面分层 = 双保险（TaskBoard 同款纪律）；kernel-def 的极简内核
     // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
     // 不经此腿。
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
-    // ask 工具反剥（ask 早退的对偶防线）：ask 专属三件（message_record_search /
-    // send_message_to_main_chat / GitQuery，gitquery 批 2026-11-05 增第三件）只对
-    // ask 会话授能——其余身份即便 agent.json 声明 "*" 也不得获得（the tool name
-    // IS the permission boundary，TeamTaskTools 剥离先例）。**反剥集 =
-    // AskExclusiveTools（只这三件）**：AllowedTools 里的只读五件是全员注册工具，
-    // 进反剥集会连主会话读面一起剥掉。GitQuery 进反剥集的理由 = 它必须在
-    // ToolRegistry 在册才解析得出 schema，而在册即意味着 "*" 声明会拿到名字——
-    // 本集是唯一能把名字从非 ask 身份摘掉的面（工具内 isAskSession 闸为第二保险）。
-    val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
-    // 🔴 The subtract legs only apply to delegate sessions: WorktreeContext and
-    // MergerRequest are RootOrchestrationTools members, so an unconditional strip
-    // would remove them from the main-agent face. The merger face carries both
-    // names; in-tool identity checks stay the second safeguard.
-    val mergerTools =
-      if mergerFace then
-        askStripped + nebflow.core.tools.MergerRequestTool.Name + nebflow.core.tools.WorktreeContextTool.Name
-      else if delegateSession then
-        askStripped - nebflow.core.tools.MergerRequestTool.Name - nebflow.core.tools.WorktreeContextTool.Name
-      else askStripped
-    if flowNodeSession then mergerTools + nebflow.core.tools.NodeReportToolDef.Name else mergerTools
+    // Strip only the two Ask-exclusive message/history tools from other roles.
+    // Shared lookup tools and Bash retain their existing role permissions.
+    withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
 

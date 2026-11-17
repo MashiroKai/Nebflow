@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
-import nebflow.shared.{McpServerConfig, NebflowLogger, PathUtil}
+import nebflow.shared.*
 
 import java.security.MessageDigest
 
@@ -534,13 +534,19 @@ object PluginRegistry:
       (dir :: all).map(p => p.toString -> os.mtime(p)).sortBy(_._1)
     catch case _: Exception => Nil
 
-  /** 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。
+  /**
+   * 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。
    *
    * 卸载出册过滤（2026-10-29 卸载批）：`plugins.removed` 命中者**整体消失**——
    * 不在 plugins 也不在 rejected（卸载 = 移除出册，不是拒载也不是封禁；面板/CLI/
    * 目录/resolve 全部视同未安装）。`nebflow.json` 的变化不在目录树 mtime 签名内
    * ⇒ 写面（[[PluginRemovePolicy]]）负责失效缓存，读面每次扫描现读表（廉价）。
    * 过滤在拒载 WARN 打点之前 ⇒ 已卸载包不再刷「rejected」日志（出册 = 零声音）。
+   *
+   * 扫描器加固（插件分发与生命周期协议升级草案 §9 A 行，2026-11-16）：**点目录与
+   * `plugins-backups` 排除**（[[scanExcluded]]——备份不是候选，整体隐身：不进 plugins
+   * 也不进 rejected）；**重复身份全拒**（两个目录同 manifest 名 ⇒ 双双拒载点名全部
+   * 冲突目录，他包不受牵连）。排除先于装载 ⇒ 备份里的同名拷贝不形成第二候选。
    *
    * provenance 回填挂载点（P1 源引用批，§2.4）：**首次扫描产出**后跑一次存量回填
    * （[[runProvenanceBackfill]]，一次性闸；幂等——已记账零改写、绝不改包目录字节）。
@@ -555,20 +561,40 @@ object PluginRegistry:
       if !os.isDir(pluginsDir) then Snapshot(Nil, Nil)
       else
         val removed = PluginRemovePolicy.removedNames()
-        val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last).filterNot(d => removed(d.last))
+        val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last)
+          .filterNot(d => removed(d.last))
+          .filterNot(d => scanExcluded(d.last)) // 备份/点目录整体隐身（先于装载与重名检测）
         val full = treeSig(pluginsDir)
         cache.get match
           case Some(c) if c.sig == full && c.removed == removed => c.snapshot
           case _ =>
             val loaded = subDirs.map(d => loadPlugin(d))
+            // 重复身份全拒（§9 A 行）：两个目录同 manifest 名 ⇒ 双双拒载点名全部冲突目录
+            // （ambiguous identity——重名解析不可猜），他包不受牵连。目录名 ≠ manifest 名
+            // 仅告警的旧口径（2026-11-16 安全债务：原样备份放进 plugins/ 会形成第二个
+            // 同名候选）在身份面升级为全拒；排除先于装载 ⇒ 备份里的同名拷贝不触发本面。
+            val loadedPlugins = loaded.collect { case Right(p) => p }
+            val ambiguousNames = loadedPlugins.groupBy(_.name).collect { case (n, ps) if ps.size > 1 => n }.toSet
+            val dupRejects = loadedPlugins.filter(p => ambiguousNames.contains(p.name)).groupBy(_.name).toList.sortBy(_._1).map { (name, ps) =>
+              name -> (s"duplicate identity: manifest name '$name' claimed by multiple directories " +
+                s"[${ps.map(p => os.Path(p.dir).last).sorted.mkString(", ")}] — all copies rejected (ambiguous identity, resolve to a single directory)")
+            }
             val snap = Snapshot(
-              plugins = loaded.collect { case Right(p) => p },
-              rejected = loaded.collect { case Left((n, r)) => n -> r }
+              plugins = loadedPlugins.filterNot(p => ambiguousNames.contains(p.name)),
+              rejected = loaded.collect { case Left((n, r)) => n -> r } ++ dupRejects
             )
             snap.rejected.foreach { case (n, r) => logger.warnSync(s"Plugin '$n' rejected: $r") }
             cache.set(Some(Cache(full, removed, snap)))
             snap
     }.flatMap(snap => backfillOnce(snap).as(snap))
+
+  /**
+   * 扫描面排除（§9 A 行「备份目录排除」）：点目录（编辑器/.DS_Store 类噪声、历史形态的
+   * `.` 前缀备份）与 `plugins-backups`（update 腿备份根误入 plugins/ 的形态）**整体
+   * 隐身**——不进 plugins 也不进 rejected（备份不是候选，不刷拒载告警）。
+   */
+  private def scanExcluded(dirName: String): Boolean =
+    dirName.startsWith(".") || dirName == "plugins-backups"
 
   // ── provenance 存量回填（P1 源引用批；首查一次，幂等）──────────────────
   // 判据与写面全部在 [[PluginSourceLedger]]（单点）；此处只负责「何时跑」与「失败不阻塞」。
@@ -603,7 +629,7 @@ object PluginRegistry:
 
   /** 回填覆盖设置（**仅测试**；传 None 恢复真实现）。 */
   def setProvenanceBackfillForTest(
-      f: Option[List[PluginDef] => PluginSourceLedger.BackfillReport]
+    f: Option[List[PluginDef] => PluginSourceLedger.BackfillReport]
   ): Unit = backfillOverride.set(f)
 
   /** 复位一次性闸（**仅测试**：同一进程内验证「第二次扫描不再回填」）。 */
@@ -630,7 +656,7 @@ object PluginRegistry:
         case None =>
           Left(
             s"Plugin '$name' not found in registry (scan ${all.size} plugin(s)). " +
-              "Check the directory name under ~/.nebflow/plugins/. (PLUGIN_NOT_FOUND)"
+              s"Check the directory name under ${PathUtil.dataRootRenderValue}/plugins/. (PLUGIN_NOT_FOUND)"
           )
         case Some(p) if !p.trust.trusted =>
           val reason = p.trust match
@@ -671,7 +697,7 @@ object PluginRegistry:
     // `Plugin.md`（恰一文件、逐字命名，与 validator 镜像逐字一致）；小写
     // `plugin.md` 不收——注入面回退同认，但装载面维持「正字」纪律，与
     // validator C11b 的改名提示同向。
-    val known = Set("plugin.json", "mcp.json", "skills", "org.nebflow", "Plugin.md")
+    val known = PluginPackagingSpec.KnownRootEntries
     os.list(dir).foreach { e =>
       val n = e.last
       if !known.contains(n) then warnings += s"ignored unknown entry '$n' (forward-compat: skipped)"
@@ -1121,8 +1147,10 @@ object PluginRegistry:
                     "${secret:…} pointer (expected exactly '${secret:<name>}' with a valid secret name, §7.2.2)"
               }
             }
-            _ <- if env.exists(_.values.exists(v => v.contains("${secret:") && !SecretEnvPointer.matches(v)))
-              then None else Some(())
+            _ <-
+              if env.exists(_.values.exists(v => v.contains("${secret:") && !SecretEnvPointer.matches(v)))
+              then None
+              else Some(())
             // cwd：须为 ./ 前缀（插件相对）或 ${PLUGIN_ROOT}/${PLUGIN_DATA} 占位
             // （官方 schema pattern）；归一为占位形式，运行期（acquire）展开为绝对路径。
             cwdRaw <- c.downField("cwd").as[Option[String]] match
@@ -1347,7 +1375,11 @@ object PluginRegistry:
     PluginSourceInstall.installFromSpecJson(specJson)
 
   private def installFromSync(source: String): Either[String, String] =
-    val tmp = os.temp.dir(prefix = "nb-plugin-install")
+    // Staging lives in a registered evidence-temp batch (same shape as
+    // RichRenderer/NfOfficeRoutes): a crashed install leaves an inactive,
+    // TTL-swept batch rather than an orphaned OS temp dir.
+    val batch = EvidenceTemp.createBatch("plugin-install", "local-source")
+    val tmp = os.Path(batch)
     try
       val staged = tmp / "repo"
       // 本地目录腿（git 腿已升级为 pin clone 流：PluginSourceInstall.installGitPinned；
@@ -1371,6 +1403,8 @@ object PluginRegistry:
             os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
             Right(())
           end if
+        end if
+      end sourced
 
       sourced.flatMap { _ =>
         // manifest name 为准（§5.5 校验复用装载规则）
@@ -1399,19 +1433,26 @@ object PluginRegistry:
                     // 账本在包目录**外**（<dataRoot>/plugin-sources/<name>.json）⇒ 硬不变量「记账不改
                     // 包 digest」（先装→记账→重算前后相等，spec 钉死）。best-effort：落账失败不回滚
                     // 安装（在位即信任零变化），该包查询面降级 unknown-source 并 WARN 留痕。
-                    recordProvenance(pname, target, json, source)
+                    val planId = recordProvenance(pname, target, json, source)
                     cache.set(None)
                     logger.infoSync(
                       s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)"
                     )
                     Right(
                       s"Plugin '$pname' installed to $target — active on the next scan (presence = trust: no approval step). " +
+                        planId.fold("")(id => s"Lifecycle plan $id. ") +
                         s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'stand plugin revoke $pname'."
                     )
+                  end if
               end match
         end if
       }
     finally
+      // Retire the batch first, then remove it wholesale: complete teardown
+      // leaves nothing on disk, and a partially failed teardown stays inactive
+      // with a valid manifest and remains TTL-sweepable.
+      try EvidenceTemp.finishBatch(batch)
+      catch case _: Exception => ()
       try os.remove.all(tmp)
       catch case _: Exception => ()
 
@@ -1429,36 +1470,48 @@ object PluginRegistry:
    * 账本缺席的代价是该包查询面 unknown-source（诚实降级），绝不因 provenance 拒绝安装。
    */
   private def recordProvenance(
-      pname: String,
-      target: os.Path,
-      manifest: Json,
-      source: String
-  ): Unit =
+    pname: String,
+    target: os.Path,
+    manifest: Json,
+    source: String
+  ): Option[String] =
     computeDigest(target) match
       case Left(err) =>
         logger.warnSync(
           s"plugin provenance not recorded for '$pname' (digest computation failed after install: $err) — " +
             "the package stays installed; its source query degrades to unknown-source"
         )
+        None
       case Right((digest, _)) =>
         val version = manifest.hcursor.downField("version").as[String].toOption.map(_.trim).getOrElse("")
         val url =
           try Some(os.Path(source, os.pwd).toString)
           catch case _: Exception => Some(source)
-        PluginSourceLedger.recordInstall(
-          name = pname,
-          kind = PluginSourceLedger.Kind.Local,
-          url = url,
-          pin = None,
-          version = version,
-          digest = digest,
-          via = PluginSourceLedger.Via.Local
-        ).left.foreach { err =>
-          logger.warnSync(
-            s"plugin provenance recording failed for '$pname' ($err) — the package stays installed " +
-              "(presence = trust); its source query degrades to unknown-source"
+        PluginSourceLedger
+          .recordInstall(
+            name = pname,
+            kind = PluginSourceLedger.Kind.Local,
+            url = url,
+            pin = None,
+            version = version,
+            digest = digest,
+            via = PluginSourceLedger.Via.Local,
+            meta = PluginSourceLedger.InstallMeta(validationSummary = Some("local-layout@1"))
           )
-        }
+          match
+            case Right(entry) =>
+              // 统一生命周期计划（§6.3/§9 A 行）：planId 返回给成功文案
+              Some(
+                PluginLifecyclePlan.planId(
+                  PluginLifecyclePlan.forInstall(pname, version, digest, entry.updatePolicy)
+                )
+              )
+            case Left(err) =>
+              logger.warnSync(
+                s"plugin provenance recording failed for '$pname' ($err) — the package stays installed " +
+                  "(presence = trust); its source query degrades to unknown-source"
+              )
+              None
 
   /**
    * canonical 化后 `src` == cwd 自身或为 cwd 的**祖先** ⇒ true（该源一旦拷贝就是整个 cwd 树）。

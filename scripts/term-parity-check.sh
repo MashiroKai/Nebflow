@@ -31,7 +31,7 @@ python3 "$PY_SCRIPT" --root "$FIXTURE" --dump-terms --json > "$PY_JSON"
 rc=$?
 echo "PYTHON_DUMP_EXIT=$rc"
 if [ "$rc" -ne 0 ]; then
-  echo "python dump 失败（见 $PY_JSON）" >&2
+  echo "python dump 失败（见 ${PY_JSON}）" >&2
   exit 2
 fi
 

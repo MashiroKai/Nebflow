@@ -208,11 +208,11 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
    *
    * **批 A 回改（B1 掩蔽处置，2026-09-12）**：此前走 `ProjectRuntimeRegistry.mount`
    * （不注入 `reportGateHold`）⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold`
-   * = true）判「未申报 node_report 不终态化」⇒ A/B 永不 completed，:196 的 60s
+   * = true）走终态 hold 腿 ⇒ A/B 永不 completed，:196 的 60s
    * waitUntil 先超时、:207-:212 的目标断言**恒不可达**（与范围外既有红同因 ⇒ 被掩蔽）。
    * 改为**自有挂载夹具**（NodeAcceptanceSpec / OutNullableDeliverySpec 同款先例）：显式注入
    * `reportGateHold = Some(false)`——**仅测试面、零生产改动**（本 spec 主题是「建节点→接线→
-   * 投递」闭环，未申报提醒语义由 NodeReportReminderSpec 覆盖）。其余装配与 mount 逐项同构；
+   * 投递」闭环，与终态 hold 腿正交）。其余装配与 mount 逐项同构；
    * mount 另跑的两个动作（僵尸 running 收殓 + Nebula 欠账补投扫描）对本 spec 的全新工作区
    * 恒为空操作，故省略。
    */
@@ -236,7 +236,6 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        feedbackMode = pd.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
         emitEvent = (_, _, _) => IO.unit,
         board = board,
         projectGoal = pd.description,

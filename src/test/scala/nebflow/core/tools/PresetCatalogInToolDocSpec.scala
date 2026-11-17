@@ -77,7 +77,10 @@ class PresetCatalogInToolDocSpec extends FunSuite:
     assert(!props.contains("preset"), s"preset must be gone from Delegate schema, got: $props")
     // external-executors 批 #1225：键集 += `executor`（主 agent 动态选择面）。
     // 双模式批 2026-10-28：键集 += `mode`（执行形态显式声明面）。
-    assertEquals(props, Set("task", "project", "executor", "mode"))
+    // 过时测试修复（2026-11-15）：命名批（2026-10-31 `name`）与附件传输批
+    // （2026-11-05 `attachments`）后键集再扩，现值恰六参
+    // （worktree/force 已随 3007e48da 退役；与 DelegateToolSpec.schema 同钉面）。
+    assertEquals(props, Set("task", "name", "project", "executor", "mode", "attachments"))
 
   test("SubTask inputSchema embeds live catalog from the store"):
     val doc = presetParamDoc(SubTaskTool.inputSchema)

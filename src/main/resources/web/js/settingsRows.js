@@ -109,6 +109,6 @@ export function setRow(o) {
   const hintStyle = o.hintStyle ? ` style="${o.hintStyle}"` : '';
   const hint = o.hint ? `<div class="set-row-hint"${hintId}${hintStyle}>${o.hint}</div>` : '';
   // provider-add-tabs 批（溢出零容忍断言）：同 set-nav-label，title 全文豁免件。
-  return `<div class="set-row"${id}><span class="set-row-label" title="${esc(o.title)}">${o.title}</span>`
+  return `<div class="set-row sp-panel-row"${id}><span class="set-row-label" title="${esc(o.title)}">${o.title}</span>`
     + `<span class="set-row-ctrl">${o.control || ''}</span></div>${hint}`;
 }

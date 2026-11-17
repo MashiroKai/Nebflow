@@ -22,13 +22,49 @@ object NeblinkEnrollment:
 
   private val logger = NebflowLogger.forName("nebflow.neblink.enroll")
 
+  /**
+   * 账号归属闸（logout-login-recovery 批 2026-11-08 重定形；前形 = 2bc597e62 的
+   * 「非账号档一律 fail-closed」，那会把你登出后的平铺机器永远锁在登录门外）。
+   *
+   * 语义表（`incomingSub` 来自本次登录 id_token 的 `sub` 声明）：
+   *  - 账号档 + 同账号 ⇒ 放行（同一账号的凭据落回自己的账号根）；
+   *  - 账号档 + 异账号 ⇒ `account-switch-requires-logout`（跨账号 enroll 硬拒，不变）；
+   *  - 平铺档 ⇒ **放行**。平铺根是兼容红线档（契约 §0 总则 1：无 layout 标记的根
+   *    一切字节不变、dataRoot == machineRoot）。本批起平铺登录 = **只落凭据**
+   *    （device.json + config.json，即阶梯前多年验证过的稳态），根层零写
+   *    （[[writeActiveAccountPointer]] 的非账号档跳过腿与本闸同批同源）—— 无迁移、
+   *    无指针、无半迁移态，也就**没有**「需要重启才生效」的欠账：登出 → 登录 →
+   *    重启整个闭环在平铺稳态上成立。旧拒绝串 `account-root-restart-required` 随之
+   *    退役（它承诺的重启路径在平铺根上根本不存在——重启后仍是平铺档）。
+   *  - 未登录层 ⇒ `enroll-refused-no-account-root`（fail-closed 不变）：该层不铸设备
+   *    身份（NeblinkModel 硬闸，契约 §6.2）且落在该层的凭据无法跨根携带 —— 与其让
+   *    注册腿在身份铸造处炸成未分类错误，不如在闸上给稳定码 + 可行动文案。
+   *  - 显式登录拿不到 `sub` ⇒ 分层：**账号档 / 未登录层**拒 `account-identity-missing`
+   *    （无主凭据落进有主根 = 串号面，fail-closed 不变）；**平铺档放行** —— 配对码腿
+   *    （门户 E6：`POST /api/neblink/enroll`，无 Logto 令牌面）正是这个形态，平铺根
+   *    没有账号归属可串，凭据只落本机平铺根（指针腿对 None-sub 本就不写）。
+   *    修前该分支不分层一刀切，把配对码入网连同登出重登一起锁死（2bc597e62 回归）。
+   *  - 自动路径（`explicit = false`）无 `sub` ⇒ 放行（静默续登/设备码遗产路径，不变）。
+   */
   private[nebflow] def accountCutoverRefusal(layer: RootLayer, incomingSub: Option[String], explicit: Boolean): Option[String] =
     incomingSub.flatMap { sub =>
       layer match
         case RootLayer.Account(_, owner, _) if owner == sub => None
         case RootLayer.Account(_, _, _) => Some("account-switch-requires-logout: this engine serves a different account")
-        case _ => Some("account-root-restart-required: account root cutover is not yet available")
-    }.orElse(Option.when(explicit && incomingSub.isEmpty)("account-identity-missing: cannot safely establish account root"))
+        case RootLayer.Flat(_, _) => None
+        case RootLayer.Unauthenticated(_, _) =>
+          Some("enroll-refused-no-account-root: the unauthenticated layer has no account root; device registration is not available in this state")
+    }.orElse {
+      // 平铺档：无身份的显式入网（配对码腿，无 Logto 令牌面）放行 —— 平铺根没有账号
+      // 归属可串，凭据只落本机平铺根。有主根（账号档 / 未登录层）fail-closed：
+      // 无主凭据落进有主根 = 串号面。
+      val ownedLayer = layer match
+        case RootLayer.Flat(_, _) => false
+        case _                    => true
+      Option.when(explicit && incomingSub.isEmpty && ownedLayer)(
+        "account-identity-missing: cannot safely establish account root"
+      )
+    }
 
   /**
    * Persist the EnrollResponse fields. `logtoRefresh` carries the provider
@@ -365,7 +401,9 @@ object NeblinkEnrollment:
    *      与 OwnerIdentity 同一解码单点）；
    *   2. 已存凭据里的 id_token（merge 后的 `logtoBlock`）。
    * 两者都拿不到 sub ⇒ 不写指针（没有任何可指的账号），打 INFO 留痕。
-   * 指针落盘失败向调用方报告，不伪报登录成功。
+   * 拿到 sub 但进程**不是账号档**（平铺根 / 未登录层）⇒ 同样不写（logout-login-recovery
+   * 批：平铺登录 = 只落凭据，根层零写；见下方实现内注）。指针落盘失败向调用方报告，
+   * 不伪报登录成功。
    */
   private def writeActiveAccountPointer(
     incomingIdToken: Option[String],
@@ -383,18 +421,32 @@ object NeblinkEnrollment:
         case None =>
           logger.infoSync("[root] no account sub available — active-account pointer not written")
         case Some(accountSub) =>
-          val email = incomingIdToken
-            .flatMap(t => LogtoAuthCode.decodeIdTokenClaims(t, Seq("email")).get("email"))
-            .getOrElse("")
-          val now = java.time.format.DateTimeFormatter
-            .ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
-            .withZone(java.time.ZoneId.of("UTC"))
-            .format(java.time.Instant.now())
-          // 机器层根与 Main 启动序同一解析链（PathUtil.machineRoot），不引入第二套 home 解析
-          val dir = establishAccountRootAfterSignIn(PathUtil.machineRoot, accountSub, email, now)
-          logger.infoSync(
-            s"[root] active-account pointer -> '$accountSub' ($dir); takes effect on next process start"
-          )
+          // 平铺兼容红线（logout-login-recovery 批 2026-11-08）：登录腿只在**账号档**进程上
+          // 写根层（指针 / 布局 / 迁移）。平铺根（以及防御性的未登录层——正常到不了这里，
+          // 账号归属闸已拒）只落凭据：device.json / config.json 在本步之前已写完，这里
+          // **零根层写**。为什么不做 migrate+指针（尽管 [[establishAccountRootAfterSignIn]]
+          // 的平铺分支已实现且 spec 覆盖）：进程内禁热切（契约 §0 总则 2）⇒ 迁移后本进程
+          // 仍以平铺根为有效根继续写盘，制造「副本已建、原件仍在长」的半迁移态——这正是
+          // 该函数平铺分支今天**停用**的原因。根层晋升（migrate + 指针 + 重启生效）由账号
+          // 根切换批整体接线；本批的平铺稳态 = 登录前后字节不变、重启后照常服务。
+          if RootLadder.current.name == RootLayer.AccountName then
+            val email = incomingIdToken
+              .flatMap(t => LogtoAuthCode.decodeIdTokenClaims(t, Seq("email")).get("email"))
+              .getOrElse("")
+            val now = java.time.format.DateTimeFormatter
+              .ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+              .withZone(java.time.ZoneId.of("UTC"))
+              .format(java.time.Instant.now())
+            // 机器层根与 Main 启动序同一解析链（PathUtil.machineRoot），不引入第二套 home 解析
+            val dir = establishAccountRootAfterSignIn(PathUtil.machineRoot, accountSub, email, now)
+            logger.infoSync(
+              s"[root] active-account pointer -> '$accountSub' ($dir); takes effect on next process start"
+            )
+          else
+            logger.infoSync(
+              s"[root] root layer=${RootLadder.current.name}: credential-only login — no root-layer " +
+                "writes (account root cutover is a separate batch)"
+            )
     }
 
   /**

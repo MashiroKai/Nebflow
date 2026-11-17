@@ -294,8 +294,9 @@ function expectPinnedGeometry(st, pageId) {
   expect(st.bar.left, `${pageId}: left 16`).toBe(16);
   expect(st.bar.right, `${pageId}: right 359`).toBe(359);
   // 材质换代（glass-top-overlays 2026-11-06 作者令「所有悬浮在顶部 可以透出背景的
-  // 都用毛玻璃效果 比如消息和联系人的手机端的搜索框」）：条 = `.nf-glass` 唯一
-  // 毛玻璃标准 —— 玻璃底 / 细边 / 内高光浮影 / blur(40px) saturate(1.4) 四项
+  // 都用毛玻璃效果 比如消息和联系人的手机端的搜索框」；单一材质批 2026-11-15
+  // 全站唯一质感 = 主输入框配方）：条 = `.nf-glass` 唯一毛玻璃标准 ——
+  // 玻璃底 / 细边 / 内高光浮影 / blur(24px) saturate(1.15) 四项
   // 逐值 == --nf-glass-* 解析值。几何（44 高 / 圆角 12 / 左右 16 / 常驻不位移）
   // 与「浮钮退役」语义零改。判据面单源 = tests/mobile-search-flat.spec.mjs。
   expect(st.radius, `${pageId}: 圆角 = --ds-radius-xl 12px`).toBe('12px');
@@ -305,8 +306,8 @@ function expectPinnedGeometry(st, pageId) {
   expect(st.hasGlassClass, `${pageId}: 条挂 .nf-glass（唯一工具类）`).toBe(true);
   expect(st.bg, `${pageId}: 玻璃底 = --nf-glass-bg 单源`).toBe(st.tokenGlassBg);
   expect(st.borderTopColor, `${pageId}: 细边 = --nf-glass-border-color 单源`).toBe(st.tokenGlassBorder);
-  expect(st.backdrop, `${pageId}: 毛玻璃配方 = --nf-glass-filter 单源`).toBe(st.tokenGlassFilter);
-  expect(st.backdrop, `${pageId}: 配方含 blur(40px) saturate(1.4)`).toMatch(/blur\(40px\)\s+saturate\(1\.4\)/);
+  expect(st.backdrop, `${pageId}: 毛玻璃配方 = --nf-glass-filter 别名单源（= input-filter）`).toBe(st.tokenGlassFilter);
+  expect(st.backdrop, `${pageId}: 配方含 blur(24px) saturate(1.15)`).toMatch(/blur\(24px\)\s+saturate\(1\.15\)/);
   expect(st.shadow, `${pageId}: 浮影 = --nf-glass-shadow 单源（面级浮件档）`).toBe(st.tokenGlassShadow);
   expect(st.transform, `${pageId}: 无 transform（常驻不位移）`).toBe('none');
   // 旧浮钮语汇在这两页退役。
@@ -555,7 +556,7 @@ test.describe('light scheme material', () => {
     await dockTo(page, 'messages');
     const st = await readPinnedBar(page, 'messages');
     expect(st.bg).toBe(st.tokenGlassBg);
-    expect(st.tokenGlassBg, '亮档玻璃底 α 落进 [0.45, 0.75]').toMatch(/rgba\(255, 255, 255, 0\.5[0-9]+\)/);
+    expect(st.tokenGlassBg, '亮档玻璃底 α 落进 [0.90, 1.0]（唯一材质近实底）').toMatch(/rgba\(255, 255, 255, 0\.9[0-9]+\)/);
     await dockTo(page, 'contacts');
     const ct = await readPinnedBar(page, 'contacts');
     expect(ct.bg).toBe(ct.tokenGlassBg);
@@ -569,7 +570,7 @@ test('P10b dark: pinned bar fill = --nf-glass-bg 单源（暗档玻璃底）', a
   await dockTo(page, 'messages');
   const st = await readPinnedBar(page, 'messages');
   expect(st.bg).toBe(st.tokenGlassBg);
-  expect(st.tokenGlassBg, '暗档玻璃底 α 落进 [0.45, 0.75]').toMatch(/rgba\(24, 28, 38, 0\.6[0-9]+\)/);
+  expect(st.tokenGlassBg, '暗档玻璃底 α 落进 [0.90, 1.0]（唯一材质近实底）').toMatch(/rgba\(24, 28, 38, 0\.9[0-9]+\)/);
   await dockTo(page, 'contacts');
   const ct = await readPinnedBar(page, 'contacts');
   expect(ct.bg).toBe(ct.tokenGlassBg);

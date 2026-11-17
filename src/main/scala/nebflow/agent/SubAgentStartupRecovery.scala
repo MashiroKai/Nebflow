@@ -2,13 +2,13 @@ package nebflow.agent
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.SessionStore
 import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateTerminalTtl}
-import nebflow.core.tools.DelegateReportTool
 import nebflow.shared.*
+import nebflow.shared.given
 
 import scala.concurrent.duration.*
 
@@ -185,16 +185,76 @@ object SubAgentStartupRecovery:
     revival: Option[RevivalDeps],
     manual: Boolean = false
   ): IO[Report] =
+    revival match
+      case None =>
+        def scan(authority: nebflow.core.ExecutionCommitPort): IO[Report] =
+          authority.candidates.flatMap {
+            case Right(Nil) => sweepLegacy(store, sessionStore, revival, manual)
+            case Right(_) if manual => repairCommittedProjections(store, authority) *> sweepManualUnprotected(store, authority)
+            case Right(_) => repairCommittedProjections(store, authority) *>
+              logger.warn("[startup-recovery] protected or unknown candidate; legacy sweep deferred").as(Report())
+            case Left(reason) => logger.warn(s"[startup-recovery] authority discovery failed: $reason").as(Report())
+          }
+        sessionStore.installedExecutionAuthority match
+          case Some(authority) => scan(authority)
+          case None => ExecutionCommitStore.resource(sessionStore.executionAuthorityRoot).use(scan)
+      case Some(deps) =>
+        deps.resources.executionCommitPort.candidates.flatMap {
+          case Left(reason) =>
+            logger.warn(s"[startup-recovery] authority discovery failed: $reason; legacy sweep deferred").as(Report())
+          case Right(candidates) if candidates.nonEmpty && manual =>
+            recoverPendingInternal(store, sessionStore, Some(deps.resources)) *>
+              sweepManualUnprotected(store, deps.resources.executionCommitPort, Some(deps.resources))
+          case Right(candidates) if candidates.nonEmpty =>
+            recoverPendingInternal(store, sessionStore, Some(deps.resources)) *>
+              logger.warn(s"[startup-recovery] ${candidates.size} protected or unknown session(s) found; legacy sweep deferred").as(Report())
+          case Right(_) =>
+            store.findAllTasks().flatMap { tasks =>
+              tasks.traverse(t => deps.resources.executionProtection(t.taskId)).flatMap { states =>
+                if states.forall(_ == nebflow.shared.ExecutionProtection.Unprotected) then
+                  sweepLegacy(store, sessionStore, revival, manual)
+                else
+                  logger.warn("[startup-recovery] protected or unknown execution: legacy sweep deferred").as(Report())
+              }
+            }
+        }
+
+  private def sweepManualUnprotected(
+    store: SubAgentTaskStore,
+    authority: nebflow.core.ExecutionCommitPort,
+    resources: Option[SharedResources] = None
+  ): IO[Report] =
+    inFlightTasks(store).flatMap { rows =>
+      rows.filterNot(_.status == FrozenStatus).traverseFilter { task =>
+        resources.fold(authority.protection(task.taskId))(_.executionProtection(task.taskId)).flatMap {
+          case nebflow.shared.ExecutionProtection.Unprotected =>
+            authority.withUnprotectedSession(task.taskId) {
+              store.transitionObserved(task, PendingRecoveryStatus,
+                Some("Execution interrupted; manual recovery required")).as(Some(task.taskId))
+            }.handleErrorWith(e =>
+              logger.warn(s"[startup-recovery] guarded pending transition failed for ${task.taskId}: ${e.getMessage}").as(None)
+            )
+          case _ => IO.pure(None)
+        }
+      }.map(ids => Report(pended = ids))
+    }
+
+  private def sweepLegacy(
+    store: SubAgentTaskStore,
+    sessionStore: SessionStore,
+    revival: Option[RevivalDeps],
+    manual: Boolean
+  ): IO[Report] =
     def settle(): IO[Unit] =
       // 完成未报告收尾腿（本批 V5/审计 D8）先于标记/对账：干完不报的会话在
       // 「重启打断旗」落旗之前就被收尾，不会被误标成「中断」。
-      finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
+      recoverPendingInternal(store, sessionStore, revival.map(_.resources)) *>
+        finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
         markInterruptedRecords(store).void *>
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
-    val metadata = revival.fold(IO.unit)(deps => nebflow.core.delegate.MergerInitialization.repairAll(deps.resources))
-    val tasks =
-      metadata *> inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
-    tasks.flatMap {
+    val tasks = interruptExternalRuns(store) *>
+      inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
+    tasks.map(_.filterNot(t => revival.exists(_.resources.isProtectedExecution(t.taskId)))).flatMap {
       case Nil => settle().as(Report())
       case allOrphans =>
         // ── 会话死亡台账结算（2026-10-28 · R1 同族监督持久性面）────────────────
@@ -215,15 +275,10 @@ object SubAgentStartupRecovery:
             )
         // 冻结行的复活 = 可选腿（有 deps 才做）：冻结行不参与「在飞孤儿」的收殓分流，
         // 复活失败也只回原状（行仍 frozen、待作者唤醒）。
-        val automaticFrozenRows = frozenRows.filterNot(t =>
-          nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergerBootstraps
-            .get(t.taskId)
-            .exists(_.status != "ready")
-        )
         def reviveFrozen(): IO[List[String]] =
           if frozenRows.isEmpty || revival.isEmpty || !Defaults.DelegateRevivalEnabled then IO.pure(Nil)
           else
-            automaticFrozenRows
+            frozenRows
               .traverse(t =>
                 DelegateRevival
                   .eligibility(sessionStore, t)
@@ -259,7 +314,7 @@ object SubAgentStartupRecovery:
                 val head =
                   s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
                     "had reached ready-to-merge under a previous engine version; no merge round can be granted for it anymore — " +
-                    "the row is settled to interrupted (branch/worktree kept as-is; integration goes through an authorized merger request)."
+                    "the row is settled to interrupted (branch/worktree kept as-is; commits remain on the branch, landing is the author's decision)."
                 recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources))
                   .handleErrorWith { e =>
                     logger
@@ -293,7 +348,7 @@ object SubAgentStartupRecovery:
               .as(()) *> tasks
               .traverse(t =>
                 store
-                  .updateStatus(t.parentSessionId, t.taskId, PendingRecoveryStatus)
+                  .transitionObserved(t, PendingRecoveryStatus, Some("Execution interrupted; manual recovery required"))
                   .handleErrorWith(e =>
                     logger
                       .warn(s"[startup-recovery] pending-recovery mark failed for ${t.taskId}: ${e.getMessage}")
@@ -372,7 +427,138 @@ object SubAgentStartupRecovery:
         )
     }
 
-  end sweep
+  end sweepLegacy
+
+  private def repairCommittedProjections(store: SubAgentTaskStore, port: nebflow.core.ExecutionCommitPort): IO[Unit] =
+    port match
+      case authority: ExecutionCommitStore =>
+        authority.candidates.flatMap {
+          case Left(reason) => logger.warn(s"[startup-recovery] candidate scan failed: $reason")
+          case Right(candidates) => candidates.traverse_ { candidate =>
+            candidate.protection match
+              case nebflow.shared.ExecutionProtection.Protected(ids) => ids.traverse_ { run =>
+                authority.repairTerminalProjection(candidate.sessionId, run, store).flatMap {
+                  case Right(_) => IO.unit
+                  case Left(reason) if reason == "terminal-uncommitted" => IO.unit
+                  case Left(reason) => logger.warn(s"[startup-recovery] terminal projection requires review: ${candidate.sessionId}/$run: $reason")
+                }
+              }
+              case _ => IO.unit
+          }
+        }
+      case _ => IO.unit
+
+  /** Replay the exact saved terminal envelope; never synthesize a success report. */
+  private[agent] def recoverPendingInternal(
+    store: SubAgentTaskStore,
+    sessionStore: SessionStore,
+    resources: Option[SharedResources]
+  ): IO[Unit] = resources.fold(IO.unit) { rs =>
+    repairCommittedProjections(store, rs.executionCommitPort) *> store
+      .findAllTasks()
+      .flatMap(
+        _.filter(t =>
+          t.executor.contains("nebflow") && t.runId.nonEmpty && t.notificationId.nonEmpty
+        ).traverse_ { task =>
+          rs.executionProtection(task.taskId).flatMap {
+            case nebflow.shared.ExecutionProtection.Unprotected if task.notificationPending.contains(true) =>
+              sessionStore.loadTerminalEnvelope(task.taskId, task.runId.get).flatMap { saved =>
+                val fallback = Option.when(
+                  task.executionStatus.exists(Set("failed", "cancelled").contains) &&
+                    task.resultRef.isEmpty && task.terminalReason.nonEmpty
+                )(
+                  AgentCommand.ExternalEvent(
+                    task.source,
+                    task.status,
+                    task.terminalReason.get,
+                    JsonObject("taskId" -> task.taskId.asJson, "runId" -> task.runId.asJson),
+                    Some(task.taskId)
+                  )
+                )
+                saved.orElse(fallback).fold(IO.unit) { event =>
+                  val identity = task.notificationId.get
+                  MailboxProducer
+                    .deliver(
+                      rs,
+                      task.parentSessionId,
+                      event,
+                      identity,
+                      "delegate-terminal",
+                      coalesce = false,
+                      producer = "task-lifecycle-recovery"
+                    )
+                    .flatMap {
+                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                      case _ =>
+                        store.acknowledgeNotification(task.parentSessionId, task.taskId, task.runId.get, identity).void
+                    }
+                }
+              }
+            case nebflow.shared.ExecutionProtection.Protected(List(run)) if task.runId.contains(run) &&
+                task.executionStatus.contains("finished") && task.notificationId.contains(s"${task.taskId}#$run") =>
+              val encoded = java.util.Base64.getUrlEncoder.withoutPadding()
+                .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+              val expected = sessionStore.executionAuthorityRoot.toAbsolutePath.normalize()
+                .resolve(task.taskId).resolve(s"terminal-$encoded.json").toString
+              if !task.resultRef.contains(expected) then IO.unit
+              else rs.executionCommitPort.committedTerminal(task.taskId, run).flatMap {
+                case Left(_) => IO.unit
+                case Right(confirmed) => sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
+                  case Some(event) if Json.obj("source" -> event.source.asJson, "eventType" -> event.eventType.asJson,
+                      "payload" -> event.payload.asJson, "metadata" -> Json.fromJsonObject(event.metadata),
+                      "correlationId" -> event.correlationId.asJson, "blocks" -> event.blocks.asJson) == confirmed =>
+                    MailboxProducer.deliver(rs, task.parentSessionId, event,
+                    task.notificationId.get, "delegate-terminal", coalesce = false, producer = "task-lifecycle-recovery")
+                    .flatMap {
+                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(_) => IO.unit
+                      case nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
+                        val identity = task.notificationId.get
+                        (nebflow.core.mail.SessionMailbox.scanPending(task.parentSessionId),
+                          nebflow.core.mail.SessionMailbox.scanTaken(task.parentSessionId),
+                          nebflow.core.mail.SessionMailbox.deliveredContains(task.parentSessionId, Set(identity))).tupled.flatMap {
+                          case (pending, taken, delivered) =>
+                            val matches = (pending ++ taken).filter(_.identity == identity)
+                            if matches.exists(_.event != event) then
+                              logger.warn(s"[startup-recovery] conflicting protected terminal mailbox identity for ${task.taskId}")
+                            else if matches.nonEmpty || delivered.contains(identity) then
+                              store.acknowledgeNotification(task.parentSessionId, task.taskId, run, identity).void
+                            else logger.warn(s"[startup-recovery] protected terminal mailbox receipt unavailable for ${task.taskId}")
+                        }
+                      case _ => store.acknowledgeNotification(task.parentSessionId, task.taskId, run,
+                        task.notificationId.get).void
+                    }
+                  case _ => IO.unit
+                }
+              }
+            case _ => IO.unit
+          }
+        }
+      )
+  }
+
+  /** Loss of monitoring is not proof that the external process died or failed its task. */
+  private[agent] def interruptExternalRuns(store: SubAgentTaskStore): IO[List[String]] =
+    store
+      .findAllTasks()
+      .flatMap(
+        _.filter(t =>
+          t.runId.nonEmpty && t.executor.exists(_ != "nebflow") &&
+            t.executionStatus.exists(Set("starting", "running", "waiting-input").contains)
+        ).traverseFilter { task =>
+          store
+            .completeRun(
+              task.parentSessionId,
+              task.taskId,
+              task.runId.get,
+              "interrupted",
+              reason = Some("Execution monitoring was lost during restart; the original process may still be running"),
+              resultRef = task.resultRef,
+              incomplete = true,
+              diagnostic = Some("Manual recovery required; no process identity or output attachment was verified")
+            )
+            .map(_.toOption.map(_.taskId))
+        }
+      )
 
   /**
    * 在飞任务全量（running/restarting/ready-to-merge/frozen；单遍 findAllTasks 后过滤——boot 一次性）。
@@ -404,7 +590,9 @@ object SubAgentStartupRecovery:
   /**
    * 重启打断标记回溯腿（幂等，boot 恰一次）：任务记录带重启指纹（本 boot 终态化的
    * 或历史 boot 落下的）⇒ 对应 registry 记录落 `restartInterruptedAt` 旗。守卫三闸：
-   * 未旗（幂等）/ 在册未归档（归档尸体零触碰）/ 未交付报告（真完成不被旗截断）。
+   * 未旗（幂等）/ **状态派生未收口**（收口身份零触碰——阶段② 起由
+   * [[nebflow.core.delegate.DelegateVisibility]] 现读判据供给，不再吃归档旗）/
+   * 未交付报告（真完成不被旗截断）。
    * 单条失败只 WARN，绝不阻断 boot。
    */
   private def markInterruptedRecords(store: SubAgentTaskStore): IO[Int] =
@@ -423,7 +611,8 @@ object SubAgentStartupRecovery:
               val now = System.currentTimeMillis()
               records
                 .filter(r =>
-                  r.restartInterruptedAt.isEmpty && r.archivedAt.isEmpty && r.reportStatus.isEmpty && lostIds.contains(
+                  r.restartInterruptedAt.isEmpty && !nebflow.core.delegate.DelegateVisibility
+                    .settledOf(r) && r.reportStatus.isEmpty && lostIds.contains(
                     r.id
                   )
                 )
@@ -486,7 +675,8 @@ object SubAgentStartupRecovery:
             // ≥ 7 天前）不再被自动收尾——远古收尾报告绝不重投；7 天内的收尾照旧。
             val now = System.currentTimeMillis()
             rows.filter(t =>
-              t.status == "completed" && t.source != "subtask" && !DelegateTerminalTtl.rowExpired(t, now)
+              !rs.isProtectedExecution(t.taskId) && t.status == "completed" && t.source != "subtask" &&
+                !DelegateTerminalTtl.rowExpired(t, now)
             )
           }
           .handleErrorWith(e => logger.warn(s"[startup-recovery] completed-row scan failed: ${e.getMessage}").as(Nil))
@@ -560,7 +750,7 @@ object SubAgentStartupRecovery:
             // overwrite 保证它不被顶掉），reportStatus=finish ⇒ 本腿一次性。
             marked <- delivered match
               case Right(_) =>
-                IO.blocking(DelegateRegistry.updateReport(t.taskId, DelegateReportTool.FinishValue, report, "")).attempt
+                IO.blocking(DelegateRegistry.updateReport(t.taskId, DelegateRegistry.FinishValue, report, "")).attempt
               case Left(_) => IO.pure(Right(()))
             _ <- IO
               .blocking(
@@ -603,12 +793,32 @@ object SubAgentStartupRecovery:
     stallMs: Long,
     resources: Option[SharedResources] = None
   ): IO[List[String]] =
+    resources match
+      case Some(rs) => watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, rs.executionCommitPort)
+      case None => sessionStore.installedExecutionAuthority match
+        case Some(authority) => watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, authority)
+        case None => ExecutionCommitStore.resource(sessionStore.executionAuthorityRoot).use { authority =>
+          watchdogSweepWithAuthority(store, agentRegistry, sessionStore, stallMs, resources, authority)
+        }
+
+  private def watchdogSweepWithAuthority(
+    store: SubAgentTaskStore,
+    agentRegistry: Ref[IO, Map[String, nebflow.actor.AgentRecord]],
+    sessionStore: SessionStore,
+    stallMs: Long,
+    resources: Option[SharedResources],
+    authority: nebflow.core.ExecutionCommitPort
+  ): IO[List[String]] =
     for
       inFlight <- store.findRunningTasks
       registry <- agentRegistry.get
       now <- IO(System.currentTimeMillis())
-      zombies = inFlight.filter { t =>
+      candidates = inFlight.filter { t =>
         !registry.contains(t.taskId) && now - t.statusAt.getOrElse(t.spawnedAt) >= stallMs
+      }
+      zombies <- candidates.filterA { task =>
+        val classification = resources.fold(authority.protection(task.taskId))(_.executionProtection(task.taskId))
+        classification.map(_ == nebflow.shared.ExecutionProtection.Unprotected)
       }
       _ <-
         if zombies.isEmpty then IO.unit
@@ -731,9 +941,8 @@ object SubAgentStartupRecovery:
       // 3. Terminalize — after the notify append, so a crash anywhere leaves
       // either (task running + event queued) [retry, no duplicate] or
       // (task failed + event queued) [done]. Never a lost notification.
-      _ <- store.updateStatus(
-        task.parentSessionId,
-        task.taskId,
+      _ <- store.transitionObserved(
+        task,
         status = "failed",
         lastError = Some(
           // 文案与事实同源（D1）：`delivered` 为 Left 时必须写「投递失败」，绝不写
@@ -756,8 +965,7 @@ object SubAgentStartupRecovery:
               else
                 s"$RestartLossFingerprint — result lost" +
                   "; parent NOT notified (zero-notify by author order 2026-11-06 — sub-agent panel shows the state; restore via ManualRevival)"
-        ),
-        completedAt = Some(now)
+        )
       )
       _ <- logger.info(
         s"[startup-recovery] orphan ${task.taskId} (${task.agentName}) terminalized; " +

@@ -9,7 +9,9 @@ import { renderProviderFailureStatus } from './providerFailureStatus.js';
 // The user opens the popup by clicking the bg-agent dropdown entry.
 
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
-import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
+import { sendWs, onMessage, onReconnect, setBgAgentStepInterceptor } from './ws.js';
+import { listScopedTasks, onDurableTasksChanged, refreshScopedTasks } from './delegateChainProvider.js';
+import { taskExecutionPresentation } from './subagentRevision.js';
 import { restoreFromBackendHistory } from './persistence.js';
 import { isBgAgentId, truncateMiddle, shouldFollowBottom, initScrollFollow, statusIcon } from './utils.js';
 import state from './state.js';
@@ -70,6 +72,7 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
    修法：造型全部交还标准（裸件档 + 下拉档，本类已登记进
    css/inputSurface.css 的两个成员表），本块**只留几何**（flex/宽度上限/字档/
    纵向内距）——底/边/圆角/影/箭头/焦点环一处都不许在这里写（I2 判据）。 */
+.bgagent-external-model-input { color: var(--color-text); }
 .bgagent-model-switch {
   flex: 0 1 auto;
   min-width: 0; max-width: 14rem;
@@ -466,9 +469,51 @@ function resetCardWidths(container) {
 
 // ── Open popup ────────────────────────────────────────────
 
+let durableHistoryTimer = null;
+const dirtyDurableHistories = new Set();
+function refreshDurablePopupHistory() {
+  const entry = stepViews.get(currentStepId);
+  if (!entry?.view.visible) return;
+  if (entry.view.pagination.pendingInitialLoad) {
+    dirtyDurableHistories.add(currentStepId);
+    return;
+  }
+  dirtyDurableHistories.delete(currentStepId);
+  entry.view.pagination.pendingInitialLoad = true;
+  sendWs({ type: 'getHistory', sessionId: currentStepId, limit: BG_PAGE_LIMIT });
+}
+
+function applyDurableTaskMeta(entry, row) {
+  const execution = taskExecutionPresentation(row);
+  if (!execution) return;
+  entry.meta.executionStatus = row.executionStatus;
+  entry.meta.terminalReason = row.terminalReason;
+  entry.meta.incomplete = row.incomplete === true;
+  entry.meta.status = execution.state === 'pending-recovery' ? 'stopped'
+    : execution.state === 'error' ? 'failed'
+      : execution.state === 'done' ? 'done' : 'running';
+}
+
+onDurableTasksChanged((rows) => {
+  const row = rows.find(task => task.taskId === currentStepId);
+  if (!row) return;
+  const entry = stepViews.get(currentStepId);
+  if (entry && row.executionStatus) {
+    applyDurableTaskMeta(entry, row);
+    updateFooterStatus(entry);
+  }
+  if (durableHistoryTimer) return;
+  durableHistoryTimer = setTimeout(() => {
+    durableHistoryTimer = null;
+    refreshDurablePopupHistory();
+  }, 150);
+});
+onReconnect(refreshDurablePopupHistory);
+
 export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   closeStepPopup();
   currentStepId = nodeSessionId;
+  sendWs({ type: 'getModelOptions', sessionId: currentStepId });
 
   const entry = ensureStepView(currentStepId);
   entry.view.visible = true;
@@ -476,6 +521,13 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   // snapshot kind from activeAgents refines when present (backend gap: kind
   // arrives via sessionBgAgents once main.js stores it).
   entry.meta.kind = entry.meta.kind || 'Delegate';
+  const durable = listScopedTasks(state.activeSessionId).find(row => row.taskId === nodeSessionId);
+  if (durable) {
+    applyDurableTaskMeta(entry, durable);
+    entry.meta.startedAt = durable.spawnedAt;
+    entry.meta.kind = durable.source === 'external' ? 'External' : entry.meta.kind;
+  }
+  refreshScopedTasks();
   for (const byRoot of Object.values(state.sessionBgAgents || {})) {
     const row = byRoot && byRoot[nodeSessionId];
     if (row) {
@@ -603,7 +655,8 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   }
 
   document.body.appendChild(popupOverlay);
-  renderModelBadge(); // 即使没有 agentName 或模型配置请求失败，也先建立可操作的选项表
+  renderModelBadge();
+  if (nodeSessionId.startsWith('external-')) mountExternalModelControl(popupOverlay, nodeSessionId); // 即使没有 agentName 或模型配置请求失败，也先建立可操作的选项表
   mobileSheetBack(popupOverlay, closeStepPopup);
 
   const modal = /** @type {HTMLElement} */ (popupOverlay.querySelector('.flow-agent-modal'));
@@ -904,6 +957,10 @@ export function handleBgAgentHistory(msg) {
   const isInitialLoad = view.pagination.pendingInitialLoad;
   if (isInitialLoad) {
     view.pagination.pendingInitialLoad = false;
+    if (dirtyDurableHistories.has(msg.sessionId)) {
+      dirtyDurableHistories.delete(msg.sessionId);
+      setTimeout(refreshDurablePopupHistory, 0);
+    }
     // ── Container reconciliation (rework round 1) ───────────────────────
     // This branch used to wipe the container unconditionally and rebuild it
     // from the frame alone. That is sound only when the frame can reproduce
@@ -1099,6 +1156,11 @@ function updateFooterStatus(entry) {
       taskEl.textContent = entry.meta.task || 'Session';
     }
   }
+  const durableExecution = taskExecutionPresentation(entry.meta);
+  if (taskEl && durableExecution) {
+    taskEl.title = durableExecution.reason;
+    if (durableExecution.reason) taskEl.textContent = durableExecution.reason;
+  }
   // Phase text (#343): granular activity — thinking / tool / responding.
   const phaseEl = entry.footerEl.querySelector('.fa-phase');
   if (phaseEl) {
@@ -1115,11 +1177,13 @@ function updateFooterStatus(entry) {
       stuck: 'Stuck',
       stopped: 'Stopped',
     };
-    const text = phaseMap[status] || '';
+    const execution = taskExecutionPresentation(entry.meta);
+    const text = execution?.label || phaseMap[status] || '';
     phaseEl.textContent = text;
     // Unified panel spec §7: long text → single-line ellipsis + title with
     // the full text (hover tooltip). Non-tool phases are short — no tooltip.
-    phaseEl.title = (status === 'tool' && fullLabel) ? `Using tool: ${fullLabel}` : '';
+    phaseEl.title = execution ? [execution.label, execution.reason].filter(Boolean).join(' · ')
+      : (status === 'tool' && fullLabel) ? `Using tool: ${fullLabel}` : '';
     phaseEl.style.display = text ? '' : 'none';
   }
   // Management cluster: state-linked buttons + permission matrix.
@@ -1214,6 +1278,61 @@ function renderModelBadge() {
   el.innerHTML = html;
 }
 
+function mountExternalModelControl(overlay, sessionId) {
+  const executor = ['claude-code', 'codex', 'zcode'].find(id => sessionId.startsWith(`external-${id}-`));
+  if (!executor) return;
+  const select = overlay.querySelector('#bgagent-model-switch');
+  select.hidden = true;
+  const container = document.createElement('div');
+  container.className = 'bgagent-delegate-strip';
+  const label = document.createElement('label');
+  label.textContent = t('delegate.externalModelFuture');
+  const status = document.createElement('span');
+  status.setAttribute('role', 'status');
+  container.append(label, status);
+  overlay.querySelector('.flow-agent-header').after(container);
+  const token = localStorage.getItem(key('token')) || '';
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const url = `/api/executors/${encodeURIComponent(executor)}/model`;
+  fetch(url, { headers }).then(response => {
+    if (!response.ok) throw new Error('load failed');
+    return response.json();
+  }).then(config => {
+    if (!overlay.isConnected) return;
+    if (!config.supported) { status.textContent = t('delegate.externalModelUnsupported'); return; }
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'bgagent-external-model-input';
+    input.value = config.model || '';
+    input.placeholder = t('delegate.externalModelDefault');
+    input.setAttribute('aria-label', t('delegate.externalModelFuture'));
+    const list = document.createElement('datalist');
+    list.id = 'bgagent-external-model-suggestions';
+    input.setAttribute('list', list.id);
+    for (const suggestion of config.suggestions || []) {
+      const option = document.createElement('option');
+      option.value = suggestion;
+      list.appendChild(option);
+    }
+    label.append(input, list);
+    let saved = input.value;
+    input.addEventListener('change', async () => {
+      input.disabled = true;
+      try {
+        const response = await fetch(url, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: input.value }) });
+        if (!response.ok) throw new Error('save failed');
+        const result = await response.json();
+        saved = result.model;
+        input.value = saved;
+        status.textContent = t('delegate.externalModelSaved');
+      } catch (_) {
+        input.value = saved;
+        status.textContent = t('delegate.externalModelError');
+      } finally { input.disabled = false; }
+    });
+  }).catch(() => { if (overlay.isConnected) status.textContent = t('delegate.externalModelError'); });
+}
+
 // 模型粒度批（作者令 2026-11-06 20:36）：弹窗头**单切**下拉 = 单会话模型切换的
 // 承载面（「点击具体的对话框里去选择切换」）。选项 = state.allModelRefs（WS
 // modelOptions 帧，main.js 单点落 state）∪ 当前生效值；空值项 = 「跟随类别（默认）」
@@ -1225,10 +1344,10 @@ let lastModelSwitchSig = null; // value-change guard — keep DOM stable
 function renderModelSwitch() {
   const el = popupOverlay?.querySelector('#bgagent-model-switch');
   if (!el) return;
-  const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
-  const cfg = popupModelCfg || {};
   const selected = state.sessionModelSelections?.[currentStepId];
-  const current = selected !== undefined ? selected : (live || cfg.current || cfg.preferred || '');
+  // The live/role model is not a session override. Only the explicit
+  // selection determines the source shown by this control.
+  const current = selected !== undefined ? selected : '';
   const refs = (state.allModelRefs || []).slice();
   if (current && !refs.includes(current)) refs.unshift(current);
   const sig = current + '|' + refs.join(',');

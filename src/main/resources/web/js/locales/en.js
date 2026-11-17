@@ -31,38 +31,6 @@ export default {
   'project.workspaceRunning': 'Working',
   'project.workspaceIdle': 'Idle',
   'project.workspaceFrozen': 'Needs manual recovery',
-  'project.mergeRequest': 'Merge request',
-  'project.requestOriginPanel': 'user-manual',
-  'project.requestOriginAgent': 'agent-submitted',
-  'project.mergeSelected': 'Merge selected workspaces',
-  'project.mergeSubmitted': 'Merge request submitted',
-  'project.mergeNeedsResume': 'Queued; manually resume the project merger to continue',
-  'project.mergeScope': 'This authorizes merge, verification and removal of selected workspaces. Pushing and publishing require separate authorization.',
-  'project.resumeMerger': 'Resume merger session',
-  'project.mergerRecoveryAccepted': 'Recovery accepted; open the merger session for progress.',
-  'project.openMerger': 'Open merger session',
-  'project.mergerInitializing': 'Initializing',
-  'project.mergerRecoveryRequired': 'Initialization interrupted; manual recovery required',
-  'project.mergerRequired': 'Ask the main agent to create the project merger first.',
-  'project.createMerger': 'Ask the main agent to create the merger',
-  'project.createMergerPrefill': 'Create the project merger for this project with Delegate(mode="merger", project="{name}"). It integrates authorized workspaces through recorded merge requests only.',
-  'project.createMergerUnavailable': 'Could not fill the main chat input; create the merger manually.',
-  'project.continueWork': 'Continue work',
-  'project.factsAhead': '+{count} ahead',
-  'project.factsDirty': '{tracked} changed · {untracked} untracked',
-  'project.factsClean': 'no local changes',
-  'project.factsError': 'workspace facts unavailable',
-  'project.factsVerified': 'verification passed',
-  'project.factsUnverified': 'no verification record',
-  'project.factsReconcileIntegrated': 'source already integrated',
-  'project.factsReconcileResumable': 'resumable',
-  'project.factsReconcileUnknown': 'state unknown',
-  'project.selectionExpired': '{count} selected workspace(s) are no longer open and idle; the selection was cleared.',
-  'project.mergeConfirmTitle': 'Confirm merge request',
-  'project.mergeConfirmEntry': '{branch} into {target}\nsource {commit} · {ahead} · {dirty}',
-  'project.mergeConfirmConfirm': 'Submit merge request',
-  'project.mergeStop': 'Request stop',
-  'project.mergeStopRequested': 'Stop requested; waiting for the merger to reconcile actual progress. Existing merges remain.',
   'project.mergePhase.accepted': 'Accepted',
   'project.mergePhase.processing': 'Processing',
   'project.mergePhase.paused': 'Paused',
@@ -75,25 +43,11 @@ export default {
   'project.mergePhase.failed': 'Failed',
   'project.mergePhase.cancelled': 'Stopped',
   'project.mergePhase.reserved': 'Reserved for merge',
-  'project.mergeNotificationPending': 'Request recorded, but notification is pending. Contact the project merger to reconcile.',
   'project.workspaceCleaning': 'Cleaning',
   'project.workspaceClosedMerged': 'Integrated and closed',
   'project.workspaceClosedRetained': 'Directory removed; branch retained',
-  'project.cleanupConfirmUnavailable': 'Confirmation is not ready. Reopen the project panel.',
-  'project.cleanupScope': 'Remove directory: {path}. Branch {branch} and its commits will be retained.',
-  'project.cleanupUnmerged': 'This branch contains unmerged commits. Only the directory will be removed; its commits stay on the branch.',
-  'project.cleanupIntegrated': 'The current commit is already included in the target branch.',
-  'project.cleanupDirty': 'Confirming discards {count} uncommitted changes:',
-  'project.cleanupTitle': 'Confirm workspace cleanup',
-  'project.cleanupConfirm': 'Remove directory',
-  'project.cleanupDone': 'Directory removed; branch retained.',
-  'project.cleanupWorkspace': 'Clean up workspace',
-  'project.cleanupNeedsAcceptance': 'Integrated and directory removed; awaiting final merger verification report',
   'project.workspaces': 'Workspaces',
   'project.workspacesLoading': 'Loading workspaces…',
-  'project.creationBaseline': 'New workspace baseline',
-  'project.saveBaseline': 'Save baseline',
-  'project.baselineSaved': 'Saved; applies to future workspaces',
   'project.noWorkspaces': 'No managed workspaces',
   'project.title': 'Projects',
   'project.loading': 'Loading projects…',
@@ -480,6 +434,7 @@ export default {
   // fact only — the retry control carries the next step.
   'messages.listLoadFailed': "Couldn't load conversations",
   'messages.retry': 'Retry',
+  'messages.backToAgent': 'Back to the agent conversation',
   // 🔴 `systemNowFriends` belongs to the **friend-acceptance** context (its only
   // legal consumer = the `friend_accepted` branch of `onFriendEvent` in
   // messages.js) ⇒ the two group keys below are the **key split** product
@@ -569,6 +524,7 @@ export default {
   // 说清**为什么**（页面刷新把载荷剥离了——localStorage 放不下）与**怎么办**
   // （重新添加）。修前该情形只有 console.warn，对用户是**静默消失**。
   'messages.queueAttachUnrecoverable': '{n} attachment(s) could not be restored because the page was refreshed — please add them again',
+  'input.historyAttachLost': '{n} attachment(s) from this history entry are no longer stored on this device — please add them again',
   // attach-split batch (2026-10-24 incident fix): user-visible copy for the server's
   // loud rejection receipt (messageTooLarge) — {size}/{limit} = measured frame MB / server cap MB.
   'send.messageTooLarge': 'This message (~{size} MB) exceeds the {limit} MB delivery limit and was NOT sent — remove some attachments and retry',
@@ -747,6 +703,14 @@ export default {
   'login.action.service-unavailable': 'restart {lowerBrand} and sign in again',
   'login.reason.logto-not-configured': 'the login service is not configured (application id missing)',
   'login.action.logto-not-configured': 'check the {lowerBrand} login settings and retry',
+  // Account ownership guard trio (logout-login-recovery batch, 2026-11-08; same code
+  // single source as the backend CredentialFailure enum).
+  'login.reason.account-switch-requires-logout': 'the account root on this machine belongs to a different account: one machine serves one account at a time',
+  'login.action.account-switch-requires-logout': 'sign out of the current account on this machine first, then sign in with the new account (signing out never deletes local account data)',
+  'login.reason.enroll-refused-no-account-root': 'this machine is in the unauthenticated layer (no account root yet): the login service was reached, but device registration cannot complete in this state',
+  'login.action.enroll-refused-no-account-root': 'local account data is unaffected; this state needs the account-root provisioning flow, which the current version does not provide yet — please do not retry repeatedly',
+  'login.reason.account-identity-missing': 'the login service did not return an account identity: this machine cannot be matched to an account safely',
+  'login.action.account-identity-missing': 'click "Retry" to sign in again; if it still fails, send us the log',
   'login.reason.login-failed': 'an unclassified error occurred during login',
   'login.action.login-failed': 'click "Retry"; if it still fails, send us the log',
   'messages.login': 'Log in',
@@ -994,7 +958,7 @@ export default {
   // standby rows use the standby word).
   'subagents.status.waiting': 'Docked, waiting',
   'subagents.status.waitingMerge': 'docked, waiting',
-  // Delegate explicit standby (delegate_report standby) — the row status word is
+  // Delegate explicit standby (status-slot standby) — the row status word is
   // "Standby" (tooltip = what it declared it is waiting for).
   'subagents.status.standby': 'Standby (awaiting orders)',
   'subagents.status.idle': 'Idle',
@@ -1070,6 +1034,9 @@ export default {
   'subagents.hierarchyLevel': 'Level {level}',
   'subagents.parentAbsent': 'Parent absent',
   'subagents.parentAbsentTip': 'Parent session not currently shown · {sid}',
+  // DAG dependency chip (face C): execution-order deps are not parent-child nesting.
+  'subagents.dependsOn': 'after',
+  'subagents.dependsOnTip': 'Execution dependencies (DAG): {deps}',
   // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
@@ -1327,39 +1294,9 @@ export default {
   'settings.cfgCard.keyMissing': 'Not configured',
   'settings.cfgCard.models': '{n} models',
   'settings.cfgCard.emptyHint': 'No provider yet — fill in the form below and save.',
-  'settings.jev': 'Jev (plugin allocation)',
-  'settings.jevEnabled': 'Use Jev to allocate plugins',
-  'settings.jevProvider': 'Provider',
-  'settings.jevEndpoint': 'Endpoint',
-  'settings.jevHealth': 'Allocation channel',
-  'settings.jevHealthUp': 'Up',
-  'settings.jevHealthDown': 'Down',
-  'settings.jevHealthUnconfigured': 'Not configured',
-  // jev-panel-threefix (2026-10-09 user feedback, three points): head-row
-  // toggle title / fallback badge word.
-  'settings.jevToggleDetails': 'Expand or collapse allocation settings',
-  'settings.jevHealthFallback': 'Jev unavailable → fell back to llm',
-  // jev-imagegen-align-llm batch (2026-11-02, contract §D.2): Jev config face,
-  // 20 keys — provider name / protocol adapter / model / one single key box
-  // (zero pointer wording on the UI layer).
-  'settings.jev.name': 'Provider name',
-  'settings.jev.namePlaceholder': 'e.g. typesafe-jev',
-  'settings.jev.type': 'Protocol adapter',
-  'settings.jev.typeTypesafe': 'Typesafe JeV (hosted)',
-  'settings.jev.typeLaya': 'LAYA (self-hosted)',
-  'settings.jev.model': 'Model',
-  'settings.jev.modelPlaceholder': 'Model name',
-  'settings.jev.keyEntry': 'API Key',
-  'settings.jev.keyShow': 'Show key value',
-  'settings.jev.keyHide': 'Hide key value',
-  'settings.jev.keySaved': 'Key saved',
-  'settings.jev.keySaveFailed': 'Key save failed ({code})',
-  'settings.jev.keyEmpty': 'Key value is empty',
-  'settings.jev.nameRequired': 'Enter a provider name first',
-  'settings.jev.nameInvalid': 'Provider name allows letters/digits/._- only',
-  'settings.jev.typeRequired': 'Pick a protocol adapter first',
-  'settings.jev.modelRequired': 'Model must not be empty',
-  'settings.jev.detailHint': 'Enter the API key and save; without a key the Jev leg stays closed.',
+  // (jev-retire batch 2026-11-16: the whole settings.jev* key family — enabled
+  // switch / health badge / 20-key config face / test button — was removed with
+  // the JeV retirement; the block spanned jev-panel-threefix + the D.2 face.)
   // settings-panel batch D (2026-10-28): STT master switch (absent = on —
   // existing behavior untouched; off = the whole STT face collected).
   'settings.sttEnabled': 'Enable speech-to-text',
@@ -1406,10 +1343,9 @@ export default {
   'settings.imagegenNameRequired': 'Enter a provider name first',
   'settings.imagegenNameInvalid': 'Provider name allows letters/digits/._- only',
   // settings-panel-jev-imagegen batch (2026-10-29, author order: give JeV and
-  // imagegen the same test-availability button the LLM face has). JeV = one
-  // button; imagegen = two levels (light probe + one minimal real generation).
-  'settings.jevTestBtn': 'Test availability',
-  'settings.jevTestTitle': 'Connectivity test: one minimal real call to the allocation channel (tests the current form values — unsaved edits included)',
+  // imagegen the same test-availability button the LLM face has). The JeV button
+  // left with the JeV retirement (2026-11-16); imagegen = two levels (light
+  // probe + one minimal real generation).
   'settings.imagegenTestBtn': 'Test availability',
   'settings.imagegenTestTitle': 'Light probe: key resolution + upstream reachability (models endpoint)',
   'settings.imagegenGenBtn': 'Run one minimal generation',
@@ -1443,11 +1379,8 @@ export default {
   // by the terminology-unification ruling — identical value in both locales.
   'settings.providerType.llm': 'LLM',
   'settings.providerType.imagegen': 'Image generation',
-  'settings.providerType.jev': 'Jev',
   'settings.providerTypesError': 'Could not load provider types',
   'settings.providerTypesDrift': 'A provider type is not wired into the panel',
-  'settings.jevHealthTitle': 'Allocation channel',
-  'settings.jevEndpointPinned': 'Endpoint is fixed (the typesafe-jev channel is engine-defined, not editable)',
   'settings.enabled': 'Enabled',
   'settings.cfgCard.saved': 'Saved',
   'settings.cfgCard.keyReentryPlaceholder': 'Configured — re-entering overwrites',
@@ -1523,12 +1456,13 @@ export default {
   // the P1-2 "zero consumers" registration is lifted: kernel returns as a slot.
   'model.roleNode': 'Node',
   'model.roleSubagent': 'Subagent',
+  'model.smallLlm': 'General small LLM',
+  'model.smallLlmFallback': 'Not configured (falls back to main model)',
   'model.viaSlash': 'Edit with the /model command',
   'model.currentRun': 'Running',
-  // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): two new /model
-  // groups = pointer switchers ("which provider this config section uses"),
-  // NOT agent model chains.
-  'model.groupJev': 'Jev (plugin allocation)',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): /model groups =
+  // pointer switchers ("which provider this config section uses"), NOT agent
+  // model chains. (The JeV group left with the JeV retirement, 2026-11-16.)
   'model.groupImagegen': 'Image generation',
   'model.groupSwitch': 'Switch',
   'model.groupSwitched': 'Switched to {name}',
@@ -1536,6 +1470,9 @@ export default {
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
   'settings.account': 'Account',
+  'settings.general': 'General',
+  'settings.modelsAndServices': 'Models & services',
+  'profile.cancelEdit': 'Cancel changes',
   // 件四 · settings identity card localization (author ruling 2026-11-02: avatar on
   // top, one capsule below with username + email; the capsule opens the profile page).
   // zh/en added **symmetrically** (14 keys x 2 files).
@@ -1578,6 +1515,7 @@ export default {
   'provider.models': 'Models',
   'provider.remove': 'Remove',
   'provider.removeConfirm': 'Remove provider "{name}"?',
+  'provider.removeNamed': 'Remove provider {name}',
   'provider.edit': 'Edit Provider: {name}',
   'provider.add': 'Add Provider',
   'provider.id': 'Provider ID',
@@ -2151,8 +2089,8 @@ export default {
   // === Delegate faces (#1228 换源接线批 · §16 七键 §16-passed verbatim, zh/en paired) ===
   // 🔴 Values are author-approved verbatim (§16 verdict #1228 两裁①) — no rewording.
   // Key names follow the delegate.* family (delegateChainStub/task-delegate namespace).
-  // ① ready-to-merge status word (delegate row status column; #1224 verdict semantics:
-  //    "has branch artifacts, entered the FIFO awaiting merge")
+  // ① ready-to-merge status word (delegate row status column; recorded
+  //    verdict value on legacy data)
   'delegate.readyToMerge': 'Ready to merge',
   // Manual-recovery batch (author order 2026-11-06 20:36): the two invalid
   // states + restore actions (sub-agent panel).
@@ -2164,6 +2102,11 @@ export default {
   'delegate.restoreFailed': 'Restore failed: {error}',
   'delegate.modelSwitch': 'Switch model',
   'delegate.modelFollowSlot': 'Follow class (default)',
+  'delegate.externalModelFuture': 'Model for future dispatches with this executor (not this session)',
+  'delegate.externalModelUnsupported': 'This CLI does not provide a headless model parameter',
+  'delegate.externalModelDefault': 'Leave empty for CLI default',
+  'delegate.externalModelSaved': 'Saved',
+  'delegate.externalModelError': 'Could not load or save model setting',
   // ② S10 per-task chain view top bar back button
   'delegate.backToTasks': 'Back to tasks',
   // ③ S11 structure overview header
@@ -2195,55 +2138,12 @@ export default {
   'delegate.flowmap.title': 'Delegate flow',
   'delegate.projectflow.title': 'Project flow',
   'delegate.kids.empty': 'No subagent / flow calls yet',
-  'delegate.archive.toast': '{n} completed and archived',
-  'delegate.archive.undo': 'Undo',
-  'delegate.archive.restore': 'Restore',
+  'delegate.archive.toast': '{n} settled',
+  'delegate.disposition.move': 'Move to history',
+  'delegate.disposition.undo': 'Undo',
+  'delegate.disposition.error': 'Could not update disposition',
   'delegate.archive.openFlow': 'Flow →',
   'delegate.archive.drawerTitle': 'Archived delegates',
-  // === Delegate panorama view (view redesign impl batch, 2026-10-21 · design §7
-  // i18n) === Key family delegate.view.*: zh/en paired; status words reuse existing
-  // roots (delegate.readyToMerge / flowmap.done / flowmap.fail / flowmap.st.cancelled
-  // / task.inProgressShort) — only the new panorama faces live here.
-  'delegate.view.title': 'Delegate panorama',
-  'delegate.view.back': 'Task list',
-  'delegate.view.stats': '{projects} projects · {delegates} delegates · active {active} · ready {rtm} · window {win}',
-  'delegate.view.filterAll': 'All',
-  'delegate.view.entryBadge': 'Task list ＝ Project panel',
-  'delegate.view.lane.dispatch': 'Dispatch',
-  'delegate.view.lane.running': 'Running',
-  'delegate.view.lane.rtm': 'Ready',
-  'delegate.view.lane.merging': 'Merging',
-  'delegate.view.lane.done': 'Done',
-  'delegate.view.lane.sink': 'Sink',
-  'delegate.view.sinkSub': 'Merge sink · base',
-  'delegate.view.subzone': 'Sub-process · real topology',
-  'delegate.view.stepPending': 'Pending',
-  'delegate.view.merging': 'Merging',
-  'delegate.view.restart': 'Restarting',
-  'delegate.view.windowHold': 'Merge window held',
-  'delegate.view.queueBadge': 'Merge queue #{n}/{m}',
-  'delegate.view.fifo': 'FIFO #{n}',
-  'delegate.view.mergeWindow': 'Merge window',
-  'delegate.view.report': 'Report',
-  'delegate.view.ribbon': 'Merge pipeline stage progress',
-  'delegate.view.nDelegates': '{n} delegates',
-  'delegate.view.empty': 'No delegates in this project · dispatch from the task list',
-  'delegate.view.emptyGlobal': 'No delegates yet · dispatch from the task list',
-  'delegate.view.retry': 'Panorama unavailable — click to retry',
-  'delegate.view.legend.status': 'Status',
-  'delegate.view.legend.edges': 'Edges',
-  'delegate.view.legend.shapes': 'Shapes',
-  'delegate.view.legend.edgeIdle': 'Dispatch / waiting upstream',
-  'delegate.view.legend.edgeInflight': 'In flight',
-  'delegate.view.legend.edgeDelivered': 'Delivered',
-  'delegate.view.legend.edgeRtm': 'Queued for merge',
-  'delegate.view.legend.edgeMerge': 'Merge window inflow',
-  'delegate.view.legend.shapeRoot': 'Task root',
-  'delegate.view.legend.shapeDelegate': 'Delegate',
-  'delegate.view.legend.shapeSub': 'Sub-process',
-  'delegate.view.legend.shapeSink': 'Sink',
-  'delegate.view.ariaBand': 'Delegate panorama of project {name}',
-  'delegate.view.ariaCanvas': 'Project {name} delegate topology: {summary}',
 
   // === Chain view (chain-view compact v2 batch, 2026-10-01 · front-end face,
   //     §16 draft key table) ===
@@ -2325,9 +2225,15 @@ export default {
   'canvas.loadingFile': 'Opening…',
   'canvas.loadFailed': 'Failed to open',
   'canvas.retry': 'Retry',
-  // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button
-  'canvas.refresh': 'Re-read from disk',
+  // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button.
+  // Retired by canvas-auto-refresh (2026-11-17 author order — hysteresis auto refresh,
+  // 60s window); canvas.refresh key removed with the button, refreshDirty stays
+  // (reused by the auto path's dirty guard).
   'canvas.refreshDirty': 'Unsaved changes — save or revert before refreshing.',
+  // Dirty "has updates" hint (canvas-auto-refresh batch): lightweight non-resident
+  // chip shown when the quiet window elapsed but the tab is dirty/in source mode.
+  'canvas.updateHint': 'This file changed on disk (auto refresh deferred: unsaved edits here).',
+  'canvas.updateNow': 'Refresh now',
   // B7 doc follow-up batch (2026-11-01): dirty-tab close confirm + external-change conflict bar
   'canvas.closeDirtyTitle': 'Close unsaved tab?',
   'canvas.closeDirtyMsg': '"{name}" has unsaved changes. Closing discards them.',
@@ -2711,7 +2617,9 @@ export default {
   'search.loadedOf': '{n}/{m} loaded',
   'search.loadMore': 'Load more ({n}/{m} loaded)',
   // Batch open of multi-selected files in the Canvas panel (chatsearch-batch-open)
-  'search.openSelectedInCanvas': 'Open in Canvas ({n})',
+  'search.openSelectedInCanvas': 'Open selected files ({n})',
+  'search.selectFiles': 'Select files',
+  'search.cancelSelection': 'Cancel selection',
   'search.jumpArchived': 'Archived before compaction — no in-place row in the replay window',
   'search.noResults': 'No matching messages',
   'search.noResultsSuggestion': 'Try a shorter keyword or clear the date/type filters',
@@ -2885,6 +2793,9 @@ export default {
   'lightbox.loading': 'Loading…',
   'lightbox.loadError': 'Failed to load image',
   'lightbox.clickHint': 'Click to view the full-size image',
+  // Mobile image gallery (mobile-image-lightbox batch 2026-11-17): the explicit
+  // secondary entry keeping the P16 direct-open capability.
+  'lightbox.openTab': 'Open in a tab',
   // Diagram viewer (mermaid-viewer-stability batch 2026-11-06)
   'lightbox.diagramLabel': 'Diagram viewer',
   'lightbox.zoomIn': 'Zoom in',
@@ -3089,8 +3000,8 @@ export default {
   // `promptFaces` field of GET /api/agents/:name (BuiltinAgents.panelPromptFaces).
   'agentManager.faceDelegate': 'Delegate target',
   'agentManager.faceNode': 'Node (flow node)',
-  'agentManager.faceDelegateHint': 'System prompt carried by delegate sessions (delegate_report discipline).',
-  'agentManager.faceNodeHint': 'System prompt carried by flow-node sessions (node_report discipline).',
+  'agentManager.faceDelegateHint': 'System prompt carried by delegate sessions (delegate terminal semantics).',
+  'agentManager.faceNodeHint': 'System prompt carried by flow-node sessions (node terminal-report discipline).',
   'explorer.newFile': 'New File',
   'explorer.newFolder': 'New Folder',
   // === ui-device-faces batch (2026-10-10): face B — remote directories in the file browser ===
@@ -3445,6 +3356,9 @@ export default {
   'todoapple.newListPh': 'New list',
   'todoapple.more': 'More',
   'todoapple.newTodo': 'New to-do',
+  'todoapple.createUnconfirmed': 'Save not confirmed. Check your connection and retry in the original session to avoid duplicates.',
+  'todoapple.discardPending': 'Discard retry',
+  'todoapple.replyFailed': 'Reply not sent. Check the primary session and connection, then retry.',
   'todoapple.notes': 'Notes (optional)',
   'todoapple.save': 'Save',
   'todoapple.markComplete': 'Mark complete',

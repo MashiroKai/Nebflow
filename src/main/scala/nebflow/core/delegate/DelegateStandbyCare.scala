@@ -77,10 +77,12 @@ object DelegateStandbyCare:
 
   /**
    * 提醒载荷（模型可见文案；bg-lifecycle nudge 同款 `<system-reminder>` 形态，
-   * 双语在册——en 主文 + zh 摘要行）。
+   * 双语在册——en 主文 + zh 摘要行）。终态申报工具通道退役（T2 批）后本文案钉
+   * **纯文本语义**：回合结束 = 完成事件，待命 = 正文明说在等什么——不再引导调用
+   * 任何申报工具。
    * `lastReminder` = 档序穷尽腿——明示「此后回纯事件驱动、零杀零超时」。
    * `chainsInFlight` / `emptyTurn` = 未申报腿的两种形态锚：等上游链（链在飞也必须
-   * 申报，不许裸等）/ 空烧轮。
+   * 交代）/ 空烧轮。
    */
   def nudgePayload(
     lastReminder: Boolean,
@@ -89,16 +91,16 @@ object DelegateStandbyCare:
   ): String =
     val why =
       if chainsInFlight then
-        "your dispatcher chains are still in flight — if you are waiting on upstream results, that is exactly what standby is for"
+        "your dispatcher chains are still in flight — if you are waiting on upstream results, say exactly that"
       else if emptyTurn then "the turn produced no text output and no tool calls (empty burn)"
-      else "the turn ended with a substantive result but NO declaration"
+      else "the turn ended with a substantive result but NO closing statement"
     val enBody =
-      s"""[delegate-matrix] Your turn ended WITHOUT a delegate_report — the engine did NOT judge it complete (matrix rule: complete × undeclared = remind, never complete). $why. DECLARE NOW, before anything else: call delegate_report(category="standby", detail="what you are waiting for") if you are waiting for orders/events, or delegate_report(category="finish"|"merge", detail=…) if the end state is reached — then END YOUR TURN with your final report as normal text output (finish must lead with the work result; it is what the dispatcher receives)."""
+      s"""[delegate-matrix] Your turn ended WITHOUT a closing statement — the engine did NOT judge it complete (matrix rule: complete × undeclared = remind, never complete). $why. STATE YOUR POSITION NOW, in plain text, before anything else: if you are waiting for orders/events, say explicitly what you are waiting for; if the end state is reached, write your final report as normal text output (the work result first — it is what the dispatcher receives)."""
     val zhBody =
       if chainsInFlight then
-        "【状态矩阵】你的回合结束时没有调用 delegate_report——引擎未判完成（矩阵规则：complete×未申报 = 提醒补报，绝不判完成）。你的分发链仍在飞——若在等上游结果，这正是 standby 的用途。请立即补报：等指令/等上游 = delegate_report(category=\"standby\", detail=在等什么)；已到终态 = delegate_report(category=\"finish\"或\"merge\", detail=…)；补报后用正文输出最终报告再结束回合。"
+        "【状态矩阵】你的回合结束时没有交代状态——引擎未判完成（矩阵规则：complete×未申报 = 提醒补告，绝不判完成）。你的分发链仍在飞——若在等上游结果，请用正文明说在等什么；已到终态 = 用正文输出最终报告（工作结果开头——那是交付给派发方的正文）。"
       else
-        "【状态矩阵】你的回合结束时没有调用 delegate_report——引擎未判完成（矩阵规则：complete×未申报 = 提醒补报，绝不判完成）。请立即补报：在等指令/事件 = delegate_report(category=\"standby\", detail=在等什么)；工作已到终态 = delegate_report(category=\"finish\"或\"merge\", detail=…)；补报后用正文输出最终报告再结束回合（finish 报文须以工作结果开头——那是交付给派发方的正文）。"
+        "【状态矩阵】你的回合结束时没有交代状态——引擎未判完成（矩阵规则：complete×未申报 = 提醒补告，绝不判完成）。请立即用正文交代：在等指令/事件 = 明说在等什么；工作已到终态 = 正文输出最终报告（工作结果开头——那是交付给派发方的正文）。"
     val tail =
       if lastReminder then
         "\nThis is the LAST reminder of the sequence — the session returns to pure event-driven waiting (Mail wakes it anytime; nothing is killed; no timeout).\n【提醒穷尽】这是本序列最后一条提醒——此后回纯事件驱动等待（Mail 随时唤醒；零杀零超时）。"
@@ -419,16 +421,20 @@ object DelegateStandbyCare:
   end loop
 
   /**
-   * 复验「仍在等」：**未申报空等**判据 = 记录在册未归档 ∧ 活体在册 ∧ 会话未处于
-   * 申报待命（`standbySince` 为空）。会话一旦申报 standby（停靠槽置位）本腿即静默
-   * ——作者 2026-11-03 18:14「都已经报了 stand by 了，还通知什么」。fail-soft：读面
-   * 任何故障 ⇒ false（保守自我了断——宁可少催，绝不打扰在飞回合）。
+   * 复验「仍在等」：**未申报空等**判据 = 记录在册且**状态派生未收口** ∧ 活体在册 ∧
+   * 会话未处于申报待命（`standbySince` 为空）。会话一旦申报 standby（停靠槽置位）本腿
+   * 即静默——作者 2026-11-03 18:14「都已经报了 stand by 了，还通知什么」。
+   *
+   * 阶段②（delegate-lifecycle-reform）：原「未归档」闸（`archivedAt.isEmpty`）改由状态
+   * 派生收口读数供给（[[DelegateVisibility]]：轮次结算证据 ∨ 存量归档旗）——归档写点
+   * 退役后本腿不再依赖任何存储旗。fail-soft：读面任何故障 ⇒ false（保守自我了断
+   * ——宁可少催，绝不打扰在飞回合）。
    */
   private def stillWaiting(delegateId: String, resources: AgentRuntimePort): IO[Boolean] =
     IO.blocking(DelegateRegistry.find(delegateId))
       .flatMap { rec =>
         resources.agentRegistry.get.map { reg =>
-          rec.exists(r => r.archivedAt.isEmpty && r.standbySince.isEmpty) && reg.contains(delegateId)
+          rec.exists(r => !DelegateVisibility.settledOf(r) && r.standbySince.isEmpty) && reg.contains(delegateId)
         }
       }
       .handleErrorWith(e =>

@@ -30,7 +30,6 @@
 | [`BrowseGetCursor.scala`](BrowseGetCursor.scala) | BrowseGetCursor —— 浏览取件**分块拉取腿**的收端游标（M2 · 设计 v1 §7 M2-1）。 作者令「Windows 下载进度条」的正主腿：改前浏览取件 = `RemoteExecutor.tra |
 | [`ChainWriteTool.scala`](ChainWriteTool.scala) | ChainWrite —— **整链一次登记**（N1 刀2 · 设计 v3 §5/S4；⑴′ 代裁＝独立件，不塞 既有工具件）。 |
 | [`CurlTool.scala`](CurlTool.scala) | 定义: CurlTool |
-| [`DelegateReportTool.scala`](DelegateReportTool.scala) | delegate_report —— delegate 终态语义申报工具（S7/S8；worktree-judge-fifo 批 #1224 增补 §3.4）. |
 | [`DelegateTool.scala`](DelegateTool.scala) | DelegateTool —— Nebula 唯一的派发入口（unified-delegate 批 2026-10-03）。 大改后的形态（作者令）：**只填 `task` 与 `project`（选填）**—— |
 | [`DeviceProfile.scala`](DeviceProfile.scala) | 单个实测字段的值 + 探测时刻。`source` 恒为 "auto"（结构即声明，不另设键）。 |
 | [`DiffUtil.scala`](DiffUtil.scala) | Shared utilities for EditTool and WriteTool. |
@@ -57,7 +56,6 @@
 | [`NodeCancelTool.scala`](NodeCancelTool.scala) | 定义: NodeCancelTool |
 | [`NodeEditTool.scala`](NodeEditTool.scala) | notifyDispatcher 参数载体：call() 解析的 （flag, provided）经 implicit 从 call() 词法作用域自动填入 createNode/proceed/ |
 | [`NodeListTool.scala`](NodeListTool.scala) | status 过滤参数解析（语义⑤a）：三形态宽容（单值 string / array / 逗号串， 复用 parseIn 语义），逐值对生命周期枚举校验——非法值给可行动错误（列出全部 |
-| [`NodeReportTool.scala`](NodeReportTool.scala) | node_report — Flow Map 节点专属终态语义申报工具（NodeReport 统一三语义迁移）。 裁定结论（转述）：工具按 NodeReport 命名而非 report_blocked——Blocked  |
 | [`NodeTools.scala`](NodeTools.scala) | Node 工具集（#28 阶段 0，方案 §2.2 —— 任务分发器用）。 全部走工具、0 文件写入（验收①）：拓扑变更经 FlowMapStore 单事务原子更新； |
 | [`PerceptionMailTool.scala`](PerceptionMailTool.scala) | `EmailSend` 工具（r2 §7 / §13 agent 工具面，r3+ 增强）：感知邮件发送的 拟稿入口。**工具只负责「落草稿 + 弹快照卡」**——发送动作永远由用户在 |
 | [`PointerPickup.scala`](PointerPickup.scala) | PointerPickup —— 浏览面单件取件的本地落盘（v2.1 阶段 1 §C.2「按需取件」的 落位单点；产物指针登记不迁移语义的本地读数端）。 |
@@ -80,7 +78,7 @@
 | [`TaskBoardTool.scala`](TaskBoardTool.scala) | TaskBoard 工具（TaskBoard 批 2 接线，规格 project-task-board 规格件 §1b/§1d/§1e/§2，2026-09-08）——项目内共享工作项看板的工具面。 |
 | [`TaskListHistory.scala`](TaskListHistory.scala) | TaskList 变更史 —— 独立 append-only JSONL 数据面（TaskList 升级批）。 动机：`tasks.json` 是整库覆盖写（read-modify-write），前后值即弃；定案口径： |
 | [`TaskListTool.scala`](TaskListTool.scala) | TaskList 任务工具。 动机（设计文档 ~/.nebflow/memory/tasklist-design.md）：「Nebula 把记忆当任务 |
-| [`TaskSearchTool.scala`](TaskSearchTool.scala) | TaskSearch —— 任务语义检索工具（Nebula 面；task-rag 批 #1227 / §Batch 7）。 管线（原文口径）：query → embed → cosine top-k →（可选 Jev 重 |
+| [`TaskSearchTool.scala`](TaskSearchTool.scala) | TaskSearch —— 任务语义检索工具（Nebula 面；task-rag 批 #1227 / §Batch 7）。 管线（原文口径）：query → embed → cosine top-k（可选重排腿已随 JeV 退役 |
 | [`TaskTool.scala`](TaskTool.scala) | The `Task` tool -- the **single write face of the unified ledger** (Nebula-exclusive; taskunify batch 2026-09- |
 | [`TaskToolHelper.scala`](TaskToolHelper.scala) | Shared helper for task-related tools to emit list-update events. 任务工具重做（2026-08-30）：TaskArchive/归档索引退役——事件推送保留 |
 | [`TeamTaskCreateTool.scala`](TeamTaskCreateTool.scala) | Team task tool — create. 任务工具重做 (2026-08-30): injected into EVERY team member (progress-display semantics); th |

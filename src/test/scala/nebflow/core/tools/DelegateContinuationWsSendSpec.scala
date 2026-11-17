@@ -95,12 +95,17 @@ class DelegateContinuationWsSendSpec extends CatsEffectSuite:
     val i = src.indexOf("private def continueDelegate")
     assert(i >= 0, "continueDelegate 不在 MailTool.scala —— 本钉需随源码结构重锚")
     val body = src.substring(i, math.min(src.length, i + 6000))
-    val spawnAt = body.indexOf("spawnBackground(")
-    assert(spawnAt >= 0, "continueDelegate 内找不到 spawnBackground 调用")
-    val call = body.substring(spawnAt, math.min(body.length, spawnAt + 3000))
+    // 过时测试修复（2026-11-15）：续聊腿随「在位续跑/单启动租约」批重写——
+    // spawnBackground 直启改为 `SessionResumption.resumeInPlaceLocked(Deps(...))`
+    // （原行注「本钉需随源码结构重锚」）。钉的意图不变：调用方 wsSend 必须随
+    // Deps 桥进续聊链（SessionResumption 内 routeWsSendFor(id, parent, deps.wsSend)
+    // 消费同一字段 ⇒ ai/tool/thinking 行落盘），禁止回退 None。
+    val bridgeAt = body.indexOf("ctx.wsSend")
+    assert(bridgeAt >= 0, "continueDelegate 内找不到 ctx.wsSend 桥接（必须随 Deps 传入续跑链）")
     assert(
-      call.contains("wsSend = ctx.wsSend"),
-      "续聊腿必须把调用方 wsSend 传给 spawnBackground（否则该会话 ai/tool/thinking 行永不落盘 ⇒ 面板正文空白）"
+      body.substring(math.max(0, bridgeAt - 200), math.min(body.length, bridgeAt + 200))
+        .contains("SessionResumption.Deps"),
+      "ctx.wsSend 必须桥进 SessionResumption.Deps（下游 routeWsSendFor 消费它）"
     )
-    assert(!call.contains("wsSend = None"), "续聊腿回退成 wsSend = None 会让面板重新空白（2026-11-01 报障根因）")
+    assert(!body.contains("wsSend = None"), "续聊腿回退成 wsSend = None 会让面板重新空白（2026-11-01 报障根因）")
   }

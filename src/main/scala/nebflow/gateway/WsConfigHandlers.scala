@@ -265,10 +265,15 @@ private[gateway] object WsConfigHandlers:
         oldCfgOpt.flatMap { oldCfg =>
           SttService.mergeConfig(oldCfg, patch) match
             case Some(cfgJson) =>
-              // Restricted form (keyaudit-quickfix ①): stt-config.json carries the
-              // STT apiKey in cleartext — the file lands 0600 (legacy files
-              // converge on their next save).
-              AtomicJson.writeRestricted(SttService.configPath, cfgJson.noSpaces) *>
+              val persistCfg = IO.blocking {
+                cfgJson.mapObject { obj =>
+                  obj("apiKey").flatMap(_.asString) match
+                    case Some(value) => obj.add("apiKey", Json.fromString(
+                      nebflow.core.secrets.ConfigCredentialStore.persist(nebflow.shared.PathUtil.dataRoot, value)))
+                    case None => obj
+                }
+              }
+              persistCfg.flatMap(j => AtomicJson.writeRestricted(SttService.configPath, j.noSpaces)) *>
                 SttService.create().flatMap { svc =>
                   sttServiceRef.set(svc) *> logger.info(
                     s"STT config set: endpoint=${svc.map(_.endpoint).getOrElse("(defaults)")}"
@@ -438,7 +443,8 @@ private[gateway] object WsConfigHandlers:
                 "description" -> desc.asJson
               )
             }.asJson,
-            "current" -> currentOpt.asJson
+            "current" -> currentOpt.asJson,
+            "source" -> (if currentOpt.isDefined then "override" else "follow").asJson
           )
         )
       }
@@ -976,6 +982,7 @@ private[gateway] object WsConfigHandlers:
   ): IO[Unit] =
     import ctx.*
     val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
+    val requestId = parse(text).toOption.flatMap(_.hcursor.downField("requestId").as[String].toOption)
     if cfg.nonEmpty then
       // 冻结修复（2026-08-27）：runtime 热更键以内存 ref 为权威——调用方的
       // config 快照可能陈旧（页面加载时刻底稿），不覆写则任意 provider 类
@@ -994,7 +1001,17 @@ private[gateway] object WsConfigHandlers:
         configService.updateConfig(cfg, runtimeOverrides).flatMap {
           case Left(err) =>
             // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+            // `msgType` names the rejected request (the same convention as the scheduled-task
+            // rejections in WsTasksWorkspaceHandlers), so a client can tell a refused config save
+            // from a failed conversation turn instead of treating every `error` frame as one.
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "error".asJson,
+                "msgType" -> "updateConfig".asJson,
+                "message" -> err.asJson,
+                "requestId" -> requestId.asJson
+              )
+            )
           case Right(_) =>
             // #311: the first provider/model save seeds/repairs the default
             // preset (from the just-saved llm.model chain) so agent model
@@ -1019,7 +1036,10 @@ private[gateway] object WsConfigHandlers:
                       logger.info("Config hot-reloaded successfully")
                   case Left(e) =>
                     logger.warn(s"Config hot-reload failed: ${e.getMessage}")
-                } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+                } *> wsSend(
+                io.circe.Json
+                  .obj("type" -> "configUpdated".asJson, "success" -> true.asJson, "requestId" -> requestId.asJson)
+              )
         }
       }
     else IO.unit

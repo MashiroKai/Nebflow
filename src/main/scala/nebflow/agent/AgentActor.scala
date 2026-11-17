@@ -624,7 +624,11 @@ object AgentActor extends AgentCore with AgentSession:
       case Some(sid) =>
         CompactionQueueStore.save(
           sid,
-          CompactionQueueStore.PersistedQueues(exec.pendingImmediateInputs, exec.pendingEvents)
+          CompactionQueueStore.PersistedQueues(
+            exec.pendingImmediateInputs,
+            exec.pendingEvents,
+            exec.outstandingSubagentResults
+          )
         )
       case None => IO.unit
 
@@ -855,7 +859,16 @@ object AgentActor extends AgentCore with AgentSession:
      * ask 等族的同文两次是两次合法投递，不得被呈现层吞掉）。只有外部事件可见化
      * 四站点（AgentIdle / AgentFinishTurn / AgentProcessing ×2）置 true。
      */
-    dedup: Boolean = false
+    dedup: Boolean = false,
+    /**
+     * **ask 会话的 Mail 续聊地址**（ask-mail 批 2026-11-16）：ask handoff 注入行
+     * （source="ask"）携带的 `ask:<会话id>` 形态字符串——随注入帧（WS
+     * `askAddress` 键）与 `.ui.json` 行**同源落盘** ⇒ live 渲染与历史恢复在该泡
+     * 标签行渲染同一枚**可复制**地址 chip（引擎字段是唯一真源，面板零推导）。
+     * 缺席即不落键 ⇒ 非 ask 行与旧行字节形态逐字不变（intake/header 先例同款
+     * 条件编码）。
+     */
+    askAddress: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       // 气泡四段式统一批（2026-09-15，作者 12:33 令）：**唯一格式化调用点**——
@@ -916,7 +929,10 @@ object AgentActor extends AgentCore with AgentSession:
         header = headerOpt,
         // file-diff → 委托结果行（bug #58 修）：与 WS 帧**同一实例**同源落盘
         // （live 与历史恢复逐字同构；缺席 ⇒ 不落键，旧行逐字不变）。
-        fileChanges = fileChanges
+        fileChanges = fileChanges,
+        // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址同源落盘
+        // （缺席 ⇒ 不落键，非 ask 行逐字不变）。
+        askAddress = askAddress
       )
       // 外部注入统一通道批（2026-11-05）：落盘 + 广播两腿改走**唯一投递入口**
       // [[InjectionChannel.deliver]]（去重闸 → 落盘 → 广播）。改前本点自带一份手写
@@ -1002,7 +1018,7 @@ object AgentActor extends AgentCore with AgentSession:
     /**
      * 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：NodeDef.role 随
      * spawn 注入（NodeEngine 节点/loop 会话），经 AgentCore 透传
-     * ToolContext.flowNodeRole——node_report 值域分化 + ProtocolFootnote 角色分支
+     * ToolContext.flowNodeRole——终态协议角色分支（ProtocolFootnote）
      * 的来源。默认 None = 非项目会话/旧路径（判据回落 NodeRoles.Task）。
      */
     flowNodeRole: Option[String] = None,
@@ -1070,7 +1086,11 @@ object AgentActor extends AgentCore with AgentSession:
      */
     sessionDeviceWorkspace: Option[String] = None,
     /** 派发时刻钉定的模型链快照（provider-concurrency 批）。None = 不钉（既有行为）。唯一写入点 = SharedResources.spawnAgentActor。 */
-    providerChainPin: Option[nebflow.llm.PinnedChain] = None
+    providerChainPin: Option[nebflow.llm.PinnedChain] = None,
+    /** Explicit protected recovery restores the verified checkpoint execution state. */
+    initialState: Option[AgentState] = None,
+    /** Explicit protected recovery continues at the next legal turn boundary. */
+    continueOnSpawn: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -1090,12 +1110,16 @@ object AgentActor extends AgentCore with AgentSession:
       // NOTE: `ctx.self !` returns IO[Unit] — a bare statement would be
       // built-not-run (2026-08-30 probe: setup-time self-send silently
       // dropped), so it MUST be sequenced into the factory's IO.
-      (ctx.self ! AgentCommand.RecoverPersistedQueues) *>
+      (if sessionId.exists(resources.protectedExecutions.contains) then IO.unit
+       else ctx.self ! AgentCommand.RecoverPersistedQueues) *>
         // 乒乓压缩重启恢复自投（主会话无感上下文压缩一期，2026-10-09 spec §E-7/8）：
         // phase=compacting → 作废重触发；phase=s-ready → S 续用换入（幂等闸防重换）。
         // 仅根会话非 no-op（recoverAtIdle 内含 RootAgentIdentity 谓词闸，此处
         // 同谓词预筛避免无谓 IO）；邮箱序保证先于任何外部投递处理。
         (if RootAgentIdentity.isRootAgent(Some(agentDef), depth) then ctx.self ! AgentCommand.PingpongRecover
+         else IO.unit) *>
+        (if continueOnSpawn && sessionId.exists(resources.protectedExecutions.contains) then
+           ctx.self ! AgentCommand.ContinueProtectedRun
          else IO.unit) *>
         IO.pure(
           idle(
@@ -1103,48 +1127,62 @@ object AgentActor extends AgentCore with AgentSession:
             resources,
             depth,
             parentRef,
-            AgentState(
-              messages = initialMessages,
-              status = AgentStatus.Idle,
-              depth = depth,
-              sessionId = sessionId,
-              sessionName = sessionName,
-              pendingCompaction = None,
-              latestUsage = None,
-              pendingAskUser = None,
-              pendingPermission = None,
-              wsSend = wsSend,
-              readTracker = readTracker,
-              fileHistory = fileHistory,
-              contextWindow = contextWindow,
-              projectRoot = projectRoot,
-              rulesMd = rulesMd,
-              agentsMd = agentsMd,
-              folderId = folderId,
-              safetyMode = safetyMode,
-              gitBranch = gitBranch,
-              expectsMail = expectsMail,
-              rootSessionId = effectiveRootSessionId,
-              isSubTaskWorker = isSubTaskWorker,
-              freezeExempt = freezeExempt,
-              isFlowNode = isFlowNode,
-              userFacingNode = userFacingNode,
-              flowNodeId = flowNodeId,
-              isDispatcher = isDispatcher,
-              flowNodeRole = flowNodeRole,
-              projectName = projectName,
-              taskId = taskId,
-              flowNodeName = flowNodeName,
-              flowChainId = flowChainId,
-              sandboxEnabled = sandboxEnabled,
-              sandboxRoot = sandboxRoot,
-              sessionCwd = sessionCwd,
-              projectSession = projectSession,
-              compactThresholdRatio = compactThresholdRatio,
-              sessionDevice = sessionDevice,
-              sessionDeviceWorkspace = sessionDeviceWorkspace,
-              providerChainPin = providerChainPin
-            )
+            {
+              val base = AgentState(
+                messages = initialMessages,
+                status = AgentStatus.Idle,
+                depth = depth,
+                sessionId = sessionId,
+                sessionName = sessionName,
+                pendingCompaction = None,
+                latestUsage = None,
+                pendingAskUser = None,
+                pendingPermission = None,
+                wsSend = wsSend,
+                readTracker = readTracker,
+                fileHistory = fileHistory,
+                contextWindow = contextWindow,
+                projectRoot = projectRoot,
+                rulesMd = rulesMd,
+                agentsMd = agentsMd,
+                folderId = folderId,
+                safetyMode = safetyMode,
+                gitBranch = gitBranch,
+                expectsMail = expectsMail,
+                rootSessionId = effectiveRootSessionId,
+                isSubTaskWorker = isSubTaskWorker,
+                freezeExempt = freezeExempt,
+                isFlowNode = isFlowNode,
+                userFacingNode = userFacingNode,
+                flowNodeId = flowNodeId,
+                isDispatcher = isDispatcher,
+                flowNodeRole = flowNodeRole,
+                projectName = projectName,
+                taskId = taskId,
+                flowNodeName = flowNodeName,
+                flowChainId = flowChainId,
+                sandboxEnabled = sandboxEnabled,
+                sandboxRoot = sandboxRoot,
+                sessionCwd = sessionCwd,
+                projectSession = projectSession,
+                compactThresholdRatio = compactThresholdRatio,
+                sessionDevice = sessionDevice,
+                sessionDeviceWorkspace = sessionDeviceWorkspace,
+                providerChainPin = providerChainPin
+              )
+              initialState match
+                case Some(restored) =>
+                  base.copy(
+                    execution = restored.execution,
+                    loopTurnKey = restored.loopTurnKey,
+                    loopCounters = restored.loopCounters,
+                    pingpong = restored.pingpong,
+                    pilogicLedger = restored.pilogicLedger,
+                    cachedSystemStable = None,
+                    stableSnapshot = None
+                  )
+                case None => base
+            }
           )(using ctx)
         )
     }

@@ -131,7 +131,7 @@ test('T3: 行腿渲染抛错 ⇒ meta 错误+行失败态；开批腿抛错 ⇒ 
   await page.evaluate((i) => window.__clickRow(i), 0);
   await page.waitForFunction('window.__metaState().err === true');
   const meta = await page.evaluate(() => window.__metaState());
-  expect(meta.text).toContain('Canvas');  // 失败文案（zh-CN 键文案）
+  expect(meta.text).toContain('看板');  // 失败文案（zh-CN 键文案）
   expect(meta.failRows).toBe(1);          // 行失败标记在场
 
   // 恢复 ⇒ 同行重试成功 ⇒ 失败面清除（错误态不粘死）。
@@ -144,7 +144,7 @@ test('T3: 行腿渲染抛错 ⇒ meta 错误+行失败态；开批腿抛错 ⇒ 
   await page.evaluate((ctx) => window.__openBatchSabotaged(ctx.n, ctx.i, ctx.f), { n: 20, i: 1, f: 'added' });
   await page.waitForFunction('window.__metaState().err === true');
   const meta2 = await page.evaluate(() => window.__metaState());
-  expect(meta2.text).toContain('Canvas');
+  expect(meta2.text).toContain('看板');
 
   // 恢复 ⇒ 正常开批成功 ⇒ 失败面清除 + tab 在场。
   await page.evaluate((n) => window.__openBatch(window.__bigPayload(n)), 20);

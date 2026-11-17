@@ -1,6 +1,6 @@
 # 工程测试报告示例（engineering demo）
 
-> **数据源声明**：本文全部数据与图表为**演示样例数据**——由合成模型 + 固定随机种子（seed = 42）生成，**不代表任何真实器件或真实测量**，仅用于展示 `engineering/SKILL.md` 的报告骨架与图表体例。生成脚本：`C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\engineering_demo_gen.py`（重跑可逐字复现本文全部数值与 SVG）。
+> **数据源声明**：本文全部数据与图表为**演示样例数据**——由合成模型 + 固定随机种子（seed = 42）生成，**不代表任何真实器件或真实测量**，仅用于展示 `engineering/SKILL.md` 的报告骨架与图表体例。生成脚本：`C:\Users\name\.nebflow\skills\visual-report-suite\demos\engineering_demo_gen.py`（重跑可逐字复现本文全部数值与 SVG）。
 
 - [目的](#目的)
 - [条件与方法](#条件与方法)

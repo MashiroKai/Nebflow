@@ -77,6 +77,38 @@ object ChainStore:
   def append(key: String, kind: String, payload: Json): Either[Throwable, Unit] =
     scala.util.Try(appendSync(key, kind, payload)).toEither
 
+  /**
+   * `delegate-spawn` 行的载荷单点（内置腿与外部执行器腿共用）。座位政策 =
+   * 派发座位（`cwd`）；branch/worktree 族键保留空串形态（行形状与历史行兼容，
+   * 引擎不再分配树）。`workspaceSeat` 仅设备项目直用 workspace 座位时落值。
+   */
+  def delegateSpawnPayload(
+    delegateId: String,
+    executor: String,
+    project: Option[String],
+    cwd: String,
+    plugins: Option[List[String]] = None,
+    allocation: Option[String] = None,
+    workspaceSeat: Option[String] = None
+  ): Json =
+    io.circe.Json.fromJsonObject(
+      io.circe.JsonObject.fromIterable(
+        List(
+          "delegateId" -> delegateId.asJson,
+          "executor" -> executor.asJson,
+          "project" -> project.getOrElse("").asJson,
+          "branch" -> "".asJson,
+          "worktree" -> "".asJson,
+          "cwd" -> cwd.asJson,
+          "baseWorkspace" -> "".asJson,
+          "baseBranch" -> "".asJson,
+          "baseSha" -> "".asJson
+        ) ++ plugins.toList.map(p => "plugins" -> p.asJson)
+          ++ allocation.toList.map(a => "allocation" -> a.asJson)
+          ++ workspaceSeat.toList.map(w => "workspaceSeat" -> w.asJson)
+      )
+    )
+
   /** 现读一个 task 的链记录（坏形/缺失 → None）。 */
   def readSync(key: String): Option[Record] =
     if !validKey(key) then None

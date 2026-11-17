@@ -119,6 +119,8 @@ case class AgentRecord(
    * Processing 清 0）。
    */
   currentToolDeadlineMs: Long = 0L,
+  /** Identity of the tool in the single diagnostic phase slot, never inferred from text. */
+  currentToolCallId: Option[String] = None,
   /**
    * AgentControl（2026-08-19 spec §3.1）：监听该 agent 终态的 adapter 引用——
    * ephemeral Delegate/SubTask = BackoffSupervisor；persistent Delegate =
@@ -411,7 +413,7 @@ case class SessionContext(
    */
   sessionDevice: Option[String] = None,
   /**
-   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\Kai\stand`）：Bash
+   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\name\stand`）：Bash
    * 经设备通道下发时注入为对端会话初始 cwd——「派发任务的命令 cwd 指向设备
    * workspace」（对端接收面 params.cwd → ToolContext.sessionCwd → ShellSession
    * 初 cwd）。同时是节点首条消息 `[device workspace]` 行与 AGENTS.md 镜像语义的
@@ -456,8 +458,8 @@ case class SessionContext(
    * 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：本节点会话所属
    * `NodeDef.role`（`task` | `verifier`，见 `NodeRoles`）。NodeEngine 节点 spawn
    * 点从 `NodeDef.role` 置位 → 经 AgentCore 透传进 `ToolContext.flowNodeRole`
-   * ——`node_report` 值域按角色分化的判据来源（错误码
-   * `NODE_REPORT_CATEGORY_ROLE`）；同时驱动 `ProtocolFootnote` 的角色分支注入。
+   * ——终态协议按角色分化的提示词面判据来源（历史上另有
+   * 按角色值域校验错误码）；同时驱动 `ProtocolFootnote` 的角色分支注入。
    * None = 非项目节点会话（分发器/Nebula/team/flow 双轨/REST）或旧会话——判据侧
    * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。
    */

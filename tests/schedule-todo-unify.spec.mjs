@@ -259,10 +259,10 @@ async function main() {
     };
   });
   writeFileSync(join(OUT, 'title-readings.json'), JSON.stringify(titleInfo, null, 2));
-  ok('T1 页名完整显示（未截断：文字不溢出）', titleInfo && !titleInfo.overflow,
+  // T1/T2 原为页名截断/内缩带判据；大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不渲染大标题」）
+  // ⇒ 两判据合并为零节点哨兵。
+  ok('T1/T2 页名节点退役（reminder 面零 .mobile-page-title）', titleInfo === null,
     JSON.stringify(titleInfo));
-  ok('T2 页名主档吃满内缩带（宽 ≥ band − 2×72）', titleInfo && titleInfo.w >= titleInfo.band - 2 * 72 - 1,
-    `w=${titleInfo?.w} band=${titleInfo?.band}`);
 
   const dupTitle = await page.evaluate(() => {
     const sec = document.querySelector(".mobile-page[data-page='reminder']");

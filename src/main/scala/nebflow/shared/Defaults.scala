@@ -587,16 +587,37 @@ object Defaults:
   def BgTurnEndIdleCapMs: Long =
     sys.props.getOrElse("nebflow.bgtask.turnend.idleCapMs", (15 * 60 * 1000L).toString).toLong
 
+  /**
+   * **#2141 · 监督检查退避阶梯（作者裁定 2026-11-12「是分钟 不是秒」）**——
+   * delegate 等待屏障 hold 期间向被监督会话注入的**可见检查通知**的相邻间隔序列
+   * （ms）。默认 `10min → 30min → 60min`，阶梯走完后封顶按末档（60min）重复；
+   * 每个等待期（supervision generation）只有一个计时器（臂号闸复用既有
+   * BgCompletionCapTick 面），真实进展（等待集缩小）把阶梯重置回首档。
+   *
+   * 单位是**分钟**级——不设秒级默认（秒级会造成通知轰炸）。system prop
+   * `nebflow.supervision.checkBackoffMs`（逗号分隔 ms 现读，BgGateWaitTimeoutMs
+   * 同款先例；空/全非正 = 关闭检查腿，回到既有纯兜底行为）。spec 验收走
+   * `BackoffSupervisor(checkBackoffMs = …)` 构造器缝注入毫秒级小值 + 虚拟推进，
+   * 不真实等待。
+   */
+  def SupervisionCheckBackoffMs: List[Long] =
+    sys.props
+      .getOrElse("nebflow.supervision.checkBackoffMs", "600000,1800000,3600000")
+      .split(',')
+      .toList
+      .flatMap(_.trim.toLongOption)
+      .filter(_ > 0L)
+
   // ── 节点生命周期收敛批（noderpt 批 A 段，2026-09-11 作者裁定）───────────────
   //
-  // 完成门的**两条腿**各自独立开关（同一闸门、两个判据）：
+  // 完成门的两条腿各自独立开关（同一闸门、两个判据）；腿 2 的放行面检查已随
+  // 终态申报工具通道整体退役移除（完成 = 末条 assistant 文本单通道），其旋钮
+  // 休眠保留（NodeEngine 构造缝的 spec 兼容面）：
   //   腿 1（后台任务存活）：`BgGateCompletionHold` —— 默认 **true = 默认保结果**
   //     （bash-overhaul T4 批，作者令 2026-11-04 + 自查件
   //     20261104_110500_our-bash-tool-defects.md D2：旧缺省 false ⇒ 「结束回合 =
   //     丢结果」，与 Bash 工具描述承诺相反；翻转后丢弃必须显式声明）；
-  //   腿 2（未申报 node_report）：`NodeReportCompletionHold` —— 默认 **true**
-  //     （作者 2026-09-11 裁定：未申报的 Completed 不终态化，节点保持 Running，
-  //     由未申报提醒阶梯兜底；申报后下一个 Completed 放行终态化）。
+  //   腿 2（休眠旋钮）：`NodeReportCompletionHold` —— 无生产读点。
   //
   // 两者都是「现读」prop（sys.props.getOrElse，BgGateWaitTimeoutMs 同款先例）——
   // 生产侧无在线翻转路由，改值需重启宿主生效；spec 侧走 NodeEngine 构造入参
@@ -622,11 +643,9 @@ object Defaults:
     sys.props.getOrElse("nebflow.bgGate.completionHold", "true").trim.equalsIgnoreCase("true")
 
   /**
-   * 完成门腿 2 开关（`nebflow.noderpt.completionHold`，默认 `true`）：
-   * true = 桥收到本会话 `AgentEvent.Completed` 且 `NodeReportRegistry` 申报槽为空 ⇒
-   * **不终态化**（节点保持 Running、会话存活），由未申报提醒阶梯提醒；申报槽非空 ⇒
-   * 照常放行（resultDeferred 完成 → drain 分流终态化）。
-   * false = 未申报也照常放行 = 本批之前的文本锚定降级面行为（零行为变化）。
+   * 完成门腿 2 开关（`nebflow.noderpt.completionHold`，默认 `true`；**休眠旋钮**——
+   * 申报槽闸的放行面检查已随终态申报工具通道整体退役移除，本 prop 无生产读点，
+   * 仅作 NodeEngine 构造缝的 spec 兼容面保留）。
    */
   def NodeReportCompletionHold: Boolean =
     sys.props.getOrElse("nebflow.noderpt.completionHold", "true").trim.equalsIgnoreCase("true")
@@ -645,43 +664,6 @@ object Defaults:
    */
   def StallReNotifyMs: Long =
     sys.props.getOrElse("nebflow.stall.reNotifyMs", (10 * 60 * 1000L).toString).trim.toLong
-
-  /**
-   * 未申报提醒阶梯（`nebflow.noderpt.remind.ladderMs`，逗号分隔毫秒，默认
-   * `10min / 30min / 1h / 2h / 4h` + 此后每 4h：8 拍 = 10m/30m/1h/2h/4h/8h/12h/16h）。
-   * 第 N 个元素 = 第 N 拍的触发阈值（elapsed ≥ 该值且尚未发过 ⇒ 发一拍）。
-   * 空数组 = 阶梯关闭（结合 maxRungs=0 即整条提醒腿停摆）。每次调用现读（验收可压到
-   * 10s/30s 级）。
-   */
-  def NodeReportReminderLadderMs: List[Long] =
-    sys.props
-      .getOrElse(
-        "nebflow.noderpt.remind.ladderMs",
-        "600000,1800000,3600000,7200000,14400000,28800000,43200000,57600000"
-      )
-      .split(',')
-      .iterator
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .flatMap(_.toLongOption)
-      .toList
-
-  /**
-   * 单节点提醒上限（`nebflow.noderpt.remind.maxRungs`，默认 8 = 作者裁定「单节点上限
-   * 8 拍」）。超过上限后**停止注入**（每拍都是一次完整 LLM turn，封顶为省 token），
-   * 改由 [[NodeReportReminderQuiescentMs]] 的 quiescent 档继续写事件。`0` = 关闭提醒腿。
-   */
-  def NodeReportReminderMaxRungs: Int =
-    sys.props.getOrElse("nebflow.noderpt.remind.maxRungs", "8").trim.toIntOption.getOrElse(8)
-
-  /**
-   * 阶梯耗尽后的 quiescent 事件间隔（`nebflow.noderpt.remind.quiescentIntervalMs`，
-   * 默认 4h；作者 2026-09-11 裁定②：第 8 拍后**不再注入**、但**事件不停**——每 4h
-   * 写一条 `node-report-missing`（`stage=quiescent`、不递增 reminderCount），持续到
-   * 节点终态/挂起出口/申报清表。同一 prop 现读，验收可压到 10s 级。
-   */
-  def NodeReportReminderQuiescentMs: Long =
-    sys.props.getOrElse("nebflow.noderpt.remind.quiescentIntervalMs", (4 * 60 * 60 * 1000L).toString).toLong
 
   // ── 终态延迟销毁窗口（noderpt 批 B 段，2026-09-11 作者裁定：一律存活 30 分钟再销毁）──
 
@@ -1027,7 +1009,7 @@ object Defaults:
   def BgLifecycleNudgeMaxBackoffMs: Long =
     sys.props.getOrElse("nebflow.bglifecycle.nudgeMaxBackoffMs", (40 * 60 * 1000L).toString).toLong
 
-  // ── Delegate 待命态看护（案A 批 2026-10-31：delegate_report 扩 standby 申报 +
+  // ── Delegate 待命态看护（案A 批 2026-10-31：终态申报扩 standby 申报 +
   //    显式待命停靠；状态矩阵批 2026-11-01 收编：complete×standby 停靠看护 +
   //    complete×idle（未申报）提醒腿——作者令「system reminder 提醒它调整状态，
   //    不终判」；JeV 判断注入（案B2）作者本轮未点名，由提醒腿承担。退避档
@@ -2131,7 +2113,7 @@ object Defaults:
    * 「同机双产品必须各自独立启动……给 nebflow 独立默认端口，如 6140 之类」；
    * 取代双实例并存批 2026-10-30 的 8080 选择）。
    *
-   * 事故链（2026-10-31，KAI）：KAI 的 nebflow 产品是 10-25 后构建
+   * 事故链（2026-10-31，Windows 实机）：实机上的 nebflow 产品是 10-25 后构建
    * （`nebflow-assembly-2026.10.26-beta.1.jar`），引擎代码默认口只有一个
    * [[GatewayPort]]（6138）——两个品牌的产品裸启动都落 6138，stand 先占口后
    * `nebflow` 的守卫把 stand 实例当自己人 focus（或经弃用 shim nebflow.cmd→

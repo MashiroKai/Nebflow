@@ -1,7 +1,7 @@
 package nebflow.core.plugin
 
 import cats.effect.IO
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.shared.{EvidenceTemp, NebflowLogger, PathUtil}
 import PluginSourceLedger.{Kind, Pin, Via}
 
 import java.security.MessageDigest
@@ -87,6 +87,7 @@ object PluginSourceInstall:
 
   sealed trait ArgClass
   object ArgClass:
+    final case class Link(raw: String)                               extends ArgClass
     final case class Git(url: String, tag: Option[String])           extends ArgClass
     final case class Local(path: String)                             extends ArgClass
     final case class Official(id: String, version: Option[String])   extends ArgClass
@@ -103,6 +104,7 @@ object PluginSourceInstall:
     val arg = raw.trim
     if arg.isEmpty then
       Left("plugin source required — pass an official plugin id (name[@version]), a git URL ('<url>#<tag>'), or a local plugin directory")
+    else if arg.startsWith("stand://") then Right(ArgClass.Link(arg))
     else
       val hash = arg.indexOf('#')
       val base = if hash >= 0 then arg.substring(0, hash).trim else arg
@@ -156,6 +158,7 @@ object PluginSourceInstall:
   def installFromArg(raw: String): IO[Either[String, String]] =
     classifyArg(raw) match
       case Left(err)                       => IO.pure(Left(err))
+      case Right(ArgClass.Link(link))       => installFromLink(link)
       case Right(ArgClass.Git(url, tag))   => installGitFromArg(url, tag)
       case Right(ArgClass.Local(path))     => PluginRegistry.installFromLocalPath(path)
       case Right(ArgClass.Official(id, v)) => installOfficial(id, v, beta = engineBeta, explicitIndex = None)
@@ -233,7 +236,14 @@ object PluginSourceInstall:
                                     pkg, digest, fallbackVersion = ventry.version,
                                     kind = Kind.Official, via = Via.Official,
                                     url = artifact.url, pin = None,
-                                    sourceDesc = s"official source ($id@${ventry.version})"
+                                    sourceDesc = s"official source ($id@${ventry.version})",
+                                    meta = PluginSourceLedger.InstallMeta(
+                                      // §5.4 A 期地基字段（厂方索引腿）：分发 id + 已验归档 sha256（双值校验面）；
+                                      // publisherKeyId = 签名目录键，A 期无目录 ⇒ 不赋值
+                                      distributionId = Some(id),
+                                      artifactSha256 = Option.when(expectedSha.nonEmpty)(expectedSha),
+                                      validationSummary = Some("official-zip-dualvalue@1")
+                                    )
                                   )
                                 }
                               }
@@ -463,7 +473,11 @@ object PluginSourceInstall:
    */
   def installGitPinned(spec: PluginSourceSpec.GitSpec): IO[Either[String, String]] =
     IO.blocking {
-      val tmp = os.temp.dir(prefix = "nb-plugin-git-clone")
+      // Clone workspace lives in a registered evidence-temp batch (same shape
+      // as RichRenderer/NfOfficeRoutes): a crashed clone leaves an inactive,
+      // TTL-swept batch rather than an orphaned OS temp dir.
+      val batch = EvidenceTemp.createBatch("plugin-install", "git-clone")
+      val tmp = os.Path(batch)
       try
         val repo = tmp / "repo"
         val cloneUrl = localFileUri(spec.url).getOrElse(spec.url)
@@ -503,12 +517,17 @@ object PluginSourceInstall:
                         kind = Kind.Git, via = Via.Git,
                         url = Some(spec.url),
                         pin = Some(Pin.Commit(spec.pin.tag, spec.pin.commit)),
-                        sourceDesc = s"git ${spec.url} @ ${spec.pin.commit.take(12)}…"
+                        sourceDesc = s"git ${spec.url} @ ${spec.pin.commit.take(12)}…",
+                        meta = PluginSourceLedger.InstallMeta(validationSummary = Some("git-pin-clone@1"))
                       )
                     case Left(err) => Left(s"digest computation failed on cloned package: $err (${CodeArchiveLayout})")
                 }
         }
-      finally try os.remove.all(tmp) catch case NonFatal(_) => ()
+      finally
+        // Retire first, then remove wholesale: a partially failed teardown
+        // stays inactive with a valid manifest and remains TTL-sweepable.
+        try EvidenceTemp.finishBatch(batch) catch case NonFatal(_) => ()
+        try os.remove.all(tmp) catch case NonFatal(_) => ()
     }
   end installGitPinned
 
@@ -550,13 +569,51 @@ object PluginSourceInstall:
                 pkg, digest, fallbackVersion = "",
                 kind = Kind.Https, via = Via.Https,
                 url = Some(spec.archive), pin = None,
-                sourceDesc = s"direct archive ${spec.archive}"
+                sourceDesc = s"direct archive ${spec.archive}",
+                meta = PluginSourceLedger.InstallMeta(
+                  // HttpsSpec.sha256 是必填 String（spec 解析面已验 64-hex）——落账前归一化
+                  artifactSha256 = Some(spec.sha256.trim.toLowerCase),
+                  validationSummary = Some("https-zip-dualvalue@1")
+                )
               )
             }
           }
         }
     }
   end installHttps
+
+  def installFromLink(raw: String): IO[Either[String, String]] =
+    PluginInstallLink.parse(raw) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(link) =>
+        PluginInstallLink.resolveAcrossConfigured(link, advance = true).flatMap {
+          case Left(err) => IO.pure(Left(err))
+          case Right(m) =>
+            val artifact = m.resolved.v.artifact
+            val location = try
+              val rel = java.net.URI.create(artifact)
+              if rel.isAbsolute || rel.getRawAuthority != null || rel.getRawQuery != null || rel.getRawFragment != null ||
+                  artifact.contains("%") || artifact.startsWith("/") || artifact.contains("\\") || artifact.split("/").exists(s => s == ".." || s == "." || s.isEmpty) then None
+              else if m.catalog.isDir then Some((os.Path(m.catalog.location) / os.SubPath(artifact)).toNIO.toUri.toString)
+              else Some(java.net.URI.create(m.catalog.location).resolve(rel).toString)
+            catch case NonFatal(_) => None
+            location match
+              case None => IO.pure(Left("unsafe catalog artifact location"))
+              case Some(url) => fetchBytes(url).flatMap {
+                case Left(err) => IO.pure(Left(s"artifact fetch failed: $err ($CodeUnreachable)"))
+                case Right(bytes) => IO.blocking {
+                  withStagingSync("catalog") { pkg =>
+                    verifyAndStageZip(bytes, pkg, Some(m.resolved.v.size), m.resolved.v.sha256, None).flatMap { digest =>
+                      commitStaged(pkg, digest, m.resolved.v.version, Kind.Catalog, Via.Hub, Some(url), None,
+                        s"catalog ${m.catalog.sourceId}", PluginSourceLedger.InstallMeta(
+                          distributionId = Some(m.resolved.pkg.id), publisherKeyId = Some(m.resolved.pkg.publisherKeyId),
+                          artifactSha256 = Some(m.resolved.v.sha256), validationSummary = Some("catalog-zip-sha256@1")
+                        ), m.resolved.pkg.publisherClass)
+                    }
+                  }
+                }
+              }
+        }
 
   // ── 暂存（plugins/ 之外 ⇒ 半装态零扫描面）与原子落盘 ──────────────
 
@@ -592,7 +649,8 @@ object PluginSourceInstall:
    * 覆盖/备份属 P3 更新流）。步骤：staged manifest 校验（name 过 §5.5）→ 空位检查 →
    * makeDir plugins → `os.move` 原子 rename → 复职（清 removed 墓碑，卸载批语义）→
    * 缓存失效 → provenance 落账（best-effort：写失败仅 WARN 不回滚——在位即信任零变化）
-   * → 成功文案。
+   * → 统一生命周期计划（§6.3/§9 A 行：planId 进审计行与成功文案）→ 成功文案。
+   * `meta` = §5.4 A 期地基字段载荷（各腿 validator summary / 归档 sha256 / 分发 id），缺省空——既有行为面不破。
    */
   private def commitStaged(
       pkg: os.Path,
@@ -602,7 +660,9 @@ object PluginSourceInstall:
       via: Via,
       url: Option[String],
       pin: Option[Pin],
-      sourceDesc: String
+      sourceDesc: String,
+      meta: PluginSourceLedger.InstallMeta = PluginSourceLedger.InstallMeta(),
+      publisherClass: Option[PluginDistributionTrust.PublisherClass] = None
   ): Either[String, String] =
     val manifestFile = pkg / "plugin.json"
     if !os.isFile(manifestFile) then Left(s"staged package has no plugin.json manifest — not a plugin package (${CodeArchiveLayout})")
@@ -638,22 +698,33 @@ object PluginSourceInstall:
                   PluginRegistry.invalidateCache()
                   PluginSourceLedger.recordInstall(
                     name = pname, kind = kind, url = url, pin = pin,
-                    version = version, digest = digest, via = via
+                    version = version, digest = digest, via = via, meta = meta, publisherClass = publisherClass
                   ) match
-                    case Right(_) =>
+                    case Right(entry) =>
                       logger.infoSync(
                         s"[plugin-sources] '$pname' installed from $sourceDesc — via=${via.label} " +
-                          s"digest=${digest.take(12)}… (presence = trust; provenance recorded)"
+                          s"digest=${digest.take(12)}… plan=${PluginLifecyclePlan.planId(
+                            PluginLifecyclePlan.forInstall(pname, version, digest, entry.updatePolicy)
+                          )} (presence = trust; provenance recorded)"
                       )
                     case Left(err) =>
                       logger.warnSync(
                         s"[plugin-sources] provenance recording failed for '$pname' ($err) — the package stays installed " +
                           "(presence = trust); its source query degrades to unknown-source"
                       )
+                  val planId = PluginLifecyclePlan.planId(
+                    PluginLifecyclePlan.forInstall(
+                      pname, version, digest,
+                      // 落账失败（best-effort 面）时策略面回落默认 check——计划身份不依赖账本写成功
+                      PluginSourceLedger.query(pname) match
+                        case PluginSourceLedger.Known(e) => e.updatePolicy
+                        case _                            => PluginDistributionTrust.UpdatePolicy.Check
+                    )
+                  )
                   Right(
                     s"Plugin '$pname'${if version.isEmpty then "" else s" (v$version)"} installed to $target from $sourceDesc — " +
                       "active on the next scan (presence = trust: no approval step). Provenance recorded " +
-                      s"(via=${via.label}, digest ${digest.take(12)}…). " +
+                      s"(via=${via.label}, digest ${digest.take(12)}…, plan $planId). " +
                       s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'stand plugin revoke $pname'."
                   )
                 }

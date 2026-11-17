@@ -259,6 +259,14 @@ const zoomBridgeScript = `<script>
 /** Watch for system theme changes and propagate CSS vars to all Canvas HTML iframes.
  *  Initialized once on first viewHtml call. */
 let _canvasThemeWatcherInit = false;
+function htmlMobileClearanceCSS() {
+  if (!document.body.classList.contains('mobile-layer')) return '';
+  const chrome = getComputedStyle(document.body);
+  const top = ['--mchrome-top', '--mchrome-btn', '--mchrome-breathe']
+    .map(name => chrome.getPropertyValue(name).trim()).join(' + ');
+  return `html body{padding-top:calc(${top})!important;padding-bottom:calc(${chrome.getPropertyValue('--mtap-lg').trim()} * 3 + ${chrome.getPropertyValue('--ds-space-4').trim()} * 3)!important;}`;
+}
+
 function initCanvasThemeWatcher() {
   if (_canvasThemeWatcherInit) return;
   _canvasThemeWatcherInit = true;
@@ -276,6 +284,17 @@ function initCanvasThemeWatcher() {
     });
   };
   mq.addEventListener('change', handler);
+  // Layer activation reparents existing panes without rerendering their frames.
+  const syncClearance = () => {
+    for (const iframe of document.querySelectorAll('iframe[data-nf-canvas-html]')) {
+      try {
+        const frame = /** @type {HTMLIFrameElement} */ (iframe);
+        const style = frame.contentDocument?.getElementById('nf-mobile-clearance');
+        if (style) style.textContent = htmlMobileClearanceCSS();
+      } catch { /* A navigated cross-origin frame owns its own layout. */ }
+    }
+  };
+  new MutationObserver(syncClearance).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 }
 
 // ── #303 B6: element-select mode state machine (tab-level, single active) ──
@@ -490,6 +509,9 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
 
   // 3. Build theme CSS from parent document
   const themeCSS = buildThemeVarsCSS();
+  // Iframe content owns scrolling, so its initial chrome clearance must scroll
+  // away inside the document, not shrink the iframe below a permanent header.
+  const mobileClearanceCSS = htmlMobileClearanceCSS();
 
   // 4. CSS overrides for graphviz SVGs: edges/labels use theme vars, not hardcoded black
   const graphvizCSS = `
@@ -535,7 +557,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:var(--ds-fs-title);line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}mark.nf-find-hit{background:rgba(255,213,0,0.45);color:inherit;}mark.nf-find-current{background:rgba(94,106,210,0.55);color:#fff;}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${frameFindMarkup()}${zoomBridgeScript}${svgInlineScript}${imgClickMarkup}${anchorNavScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:var(--ds-fs-title);line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}mark.nf-find-hit{background:rgba(255,213,0,0.45);color:inherit;}mark.nf-find-current{background:rgba(94,106,210,0.55);color:#fff;}</style><style id="nf-mobile-clearance">${mobileClearanceCSS}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${frameFindMarkup()}${zoomBridgeScript}${svgInlineScript}${imgClickMarkup}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';
@@ -545,6 +567,13 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
   iframe.setAttribute('scrolling', 'auto');
   iframe.dataset.nfCanvasHtml = '1';
+  // Reparenting a live iframe can reload srcdoc; apply the current layer then too.
+  iframe.addEventListener('load', () => {
+    try {
+      const style = iframe.contentDocument?.getElementById('nf-mobile-clearance');
+      if (style) style.textContent = htmlMobileClearanceCSS();
+    } catch { /* A navigated cross-origin document owns its own layout. */ }
+  });
   iframe.srcdoc = srcdoc;
   pane.appendChild(iframe);
 
@@ -681,7 +710,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     text.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     const back = document.createElement('button');
     back.type = 'button';
-    back.className = 'glass-control nf-frame-nav-back';
+    back.className = 'canvas-button glass-control nf-frame-nav-back';
     back.textContent = 'Back to document';
     back.style.cssText = 'flex:none;cursor:pointer;font-size:var(--ds-fs-hint);white-space:nowrap';
     back.addEventListener('click', () => { backToDocument(); });

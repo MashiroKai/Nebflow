@@ -27,7 +27,7 @@ import nebflow.shared.{MemoryBudget, MemoryWriteGate, PathUtil}
  *   - **默认注入只含全局记忆**——ContextRefresher 注入路径零改动（瘦身），
  *     项目记忆绝不进入 Nebula 常驻系统提示词；
  *   - 派发项目任务 → 该项目分发器 prompt（ProjectActor newTaskPrompt/
- *     reentryPrompt）+ 该项目节点首条消息（NodeEngine.buildInput）自动注入
+ *     answerReentryPrompt）+ 该项目节点首条消息（NodeEngine.buildInput）自动注入
  *     本文件内容；
  *   - 注入形态三态（共用 MemoryBudget project 判据）：预算内全文（KB 级
  *     可承受）；软警区（>80%）全文+WARN 脚注；超硬顶只注头部+字节/条目

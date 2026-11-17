@@ -83,11 +83,13 @@ export const NODE_WS = {
   removed: 'nodeRemoved',
 };
 
-// blocked（20260902 反馈路径设计 §4.2）：Node→分发器反馈重入的终态——turn 正常结束
-// 但节点声明无法继续，需分发器调整任务/拓扑；待办语义（ttlExpireAt=None 常驻活动图）。
+// blocked 已退役（no-blocked-semantics 一期：blocked 终态整体退役，引擎零写点——
+// 节点不清 ⇒ AskHost 问信任的 root，不申报停等态）。'blocked' 仅为渲染 legacy 存量行
+// 保留（旧盘面已写入的行按原样式展示；新图不会出现该状态）。
 export const NODE_STATUS = ['pending', 'running', 'completed', 'failed', 'blocked', 'cancelled', 'wiring'];
 
-// 节点状态 → 面板状态色 class（复用 flow-run 的 solar 状态色，见 flowCss.js）
+// 节点状态 → 面板状态色 class（复用 flow-run 的 solar 状态色，见 flowCss.js；
+// blocked 色仅 legacy 存量行命中）
 export const NODE_STATUS_CLS = {
   pending: 'pending',
   running: 'running',
@@ -420,50 +422,5 @@ export async function fetchProjectWorkspaces(name) {
   const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces`, { headers: authHeaders() });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `workspaces ${response.status}`);
-  return data;
-}
-
-export async function saveProjectBaseline(name, branch) {
-  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/baseline`, {
-    method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ branch }),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `baseline ${response.status}`);
-  return data;
-}
-
-export async function submitProjectMerge(name, requestId, workspaceIds) {
-  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/merge-requests`, {
-    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requestId, workspaceIds }),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `merge request ${response.status}`);
-  return data;
-}
-
-export async function cancelProjectMerge(name, requestId) {
-  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/merge-requests/${encodeURIComponent(requestId)}/cancel`, {
-    method: 'POST', headers: authHeaders(),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `cancel request ${response.status}`);
-  return data;
-}
-
-export async function previewProjectWorkspaceCleanup(name, id) {
-  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/${encodeURIComponent(id)}/cleanup`, { headers: authHeaders() });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `cleanup preview ${response.status}`);
-  return data;
-}
-
-export async function cleanProjectWorkspace(name, id, confirmation) {
-  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/${encodeURIComponent(id)}/cleanup`, {
-    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(confirmation),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `cleanup ${response.status}`);
   return data;
 }

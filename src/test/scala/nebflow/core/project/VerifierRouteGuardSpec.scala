@@ -3,26 +3,13 @@ package nebflow.core.project
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
-import io.circe.{Json, JsonObject}
+import io.circe.Json
 import io.circe.parser.parse as jsonParse
-import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources, SpecResources, StubLlm}
-import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.ModelCandidate
-import nebflow.shared.{
-  ContentBlock,
-  LlmHandle,
-  LlmRequest,
-  LlmResponse,
-  PathUtil,
-  StreamChunk,
-  ThinkingConfig,
-  ToolCall
-}
+import nebflow.agent.{SharedResources, SpecResources, StubLlm}
+import nebflow.core.tools.{NodeEditTool, NodeTools, ToolContext}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 
@@ -73,23 +60,17 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
   // ── 装配 ────────────────────────────────────────────────────────
 
   /**
-   * 工具申报状态机（`LoopExecutionLegSpec.FailReportLlm` 同款）：首 turn 发
-   * `node_report(fail)`，见回执后收尾 ⇒ 判词由**真实引擎路径**产生（`verifierFailR`）。
+   * 判词文本锚定桩（申报工具通道退役后的纯文本形态）：唯一 turn 直接给出锚定判词文
+   * （首行 `VERDICT: FAIL` + FAIL JSON 体 issues/requirements）⇒ 判词由**真实引擎
+   * 路径**产生（`verifierFailR`，完成点消费末条 assistant 文本）。
    */
   private class FailReportLlm:
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
-    private val ackText = "[OK] verdict recorded (fail)"
 
-    private def sawAck(req: LlmRequest): Boolean =
-      req.messages.exists { m =>
-        m.content match
-          case Right(blocks) =>
-            blocks.exists {
-              case ContentBlock.ToolResult(_, content, _) => content.contains(ackText)
-              case _ => false
-            }
-          case Left(t) => t.contains(ackText)
-      }
+    val verdictText: String =
+      """VERDICT: FAIL
+        |{"issues":["artifact does not compile"],"requirements":"re-run upstream after the dependency rollback"}
+        |The object under review does not compile; this node wraps up.""".stripMargin
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -97,30 +78,8 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
         req: LlmRequest,
         onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
-        val text = req.messages.map(_.textContent).mkString("\n")
-        if sawAck(req) then
-          Stream.eval(inputs.update(_ :+ text)) >>
-            Stream(StreamChunk.TextDelta("被判定对象不合格，正式给出 fail verdict。本节点收尾。"), StreamChunk.Done(None, None))
-        else
-          Stream.eval(inputs.update(_ :+ text)) >>
-            Stream(
-              StreamChunk.ToolCallChunk(
-                ToolCall(
-                  "vrg-fail-1",
-                  "node_report",
-                  JsonObject(
-                    "category" -> "fail".asJson,
-                    "detail" -> "artifact does not compile".asJson,
-                    "suggestion" -> "re-run upstream after the dependency rollback".asJson
-                  )
-                )
-              ),
-              StreamChunk.Done(Some("tool_use"), None)
-            )
-
-        end if
-
-      end sendStream
+        Stream.eval(inputs.update(_ :+ req.messages.map(_.textContent).mkString("\n"))) >>
+          Stream(StreamChunk.TextDelta(verdictText), StreamChunk.Done(None, None))
 
   end FailReportLlm
 

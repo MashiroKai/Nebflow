@@ -5,8 +5,10 @@
 //
 //   §7.2 bootstrap   POST /api/auth/console-ticket (file-token Bearer) -> one
 //                    ticket -> GET /?ticket= => 303 + the FROZEN Set-Cookie
-//                    attribute set (HttpOnly / Secure / SameSite=Lax / Path=/
-//                    / Max-Age=2592000=30d / host-only, criterion 4;
+//                    attribute set (HttpOnly / Secure=https-legs-only / SameSite=Lax
+//                    / Path=/ / Max-Age=2592000=30d / host-only, criterion 4;
+//                    plain-http legs omit Secure by design #522; cookie name =
+//                    brand single source, taken from the wire here;
 //                    session TTL batch 2026-10-21: was 43200=12h)
 //   §7.2(4) JS face  the landed page cannot READ the session cookie
 //                    (document.cookie, HttpOnly), yet /api/nf-authcheck
@@ -95,15 +97,29 @@ async function main() {
   check('mint returns a one-shot ticket', typeof ticket1 === 'string' && ticket1.length >= 40);
 
   // ── §7.2(3): redemption response-header assertions (criterion 4) ────────
-  const brand = 'nebflow'; // window.__BRAND__ default brand; cookie name derives from it
-  const SESSION_COOKIE = `${brand}_session`;
+  // The cookie NAME derives from the brand single source (GatewaySessionStore
+  // `s"${Branding.lowerName}_session"`); the spec stays brand-agnostic and
+  // takes the name from the wire (2026-11-15 drift fix: the old hardcoded
+  // `nebflow_session` predates the nebflow→stand rebrand).
   const redir = await fetch(`${BASE}/?ticket=${encodeURIComponent(ticket1)}`, { redirect: 'manual' });
   check('redemption answers 303', redir.status === 303, `status=${redir.status}`);
   check('Location: /', redir.headers.get('location') === '/', `got ${redir.headers.get('location')}`);
-  const setc = cookieHeader(redir, SESSION_COOKIE) ?? '';
-  check('Set-Cookie names the session cookie', setc.startsWith(`${SESSION_COOKIE}=`), setc);
+  const redemptionCookies = typeof redir.headers.getSetCookie === 'function' ? redir.headers.getSetCookie() : [];
+  const sessionCookieLine = redemptionCookies.find((c) => /^[^=;]+_session=/i.test(c)) ?? '';
+  const SESSION_COOKIE = sessionCookieLine.slice(0, sessionCookieLine.indexOf('='));
+  check('Set-Cookie names the session cookie (<brand>_session, brand single source)', SESSION_COOKIE !== '', redemptionCookies.join(' | '));
+  const setc = sessionCookieLine;
   check('Set-Cookie is HttpOnly', /httponly/i.test(setc), setc);
-  check('Set-Cookie is Secure', /secure/i.test(setc), setc);
+  // Secure is computed per consuming origin (GatewaySessionStore.newCookie):
+  // present on https legs, deliberately omitted on plain-http direct legs
+  // (#522 — WebKit drops Secure cookies delivered over http, bricking the
+  // local console). Assert the leg-correct side, BOTH directions.
+  const isHttpsLeg = BASE.startsWith('https:');
+  check(
+    isHttpsLeg ? 'Set-Cookie is Secure (https leg)' : 'Set-Cookie omits Secure on the plain-http leg (#522)',
+    isHttpsLeg === /secure/i.test(setc),
+    setc
+  );
   check('Set-Cookie is SameSite=Lax', /samesite=lax/i.test(setc), setc);
   check('Set-Cookie Path=/', /path=\//i.test(setc), setc);
   check('Set-Cookie Max-Age=2592000 (30d absolute ceiling)', /max-age=2592000/i.test(setc), setc);
@@ -140,21 +156,34 @@ async function main() {
     docCookie
   );
 
+  // Session TTL batch (2026-10-21): a session-rail 204 SLIDES the browser
+  // cookie — same id, fresh Max-Age = the 30d absolute TTL. The slide is
+  // asserted at the NETWORK layer: Chromium suppresses Set-Cookie in
+  // JS-visible Headers (in-page headers.getSetCookie() returns [] — a
+  // measurement artifact, not gateway behavior, 2026-11-15 wire-verified),
+  // and playwright response-header capture is timing-dependent. So the
+  // browser's own session cookie is replayed from the jar in a node fetch,
+  // whose undici headers expose getSetCookie() deterministically.
+  const cookieBefore = (await context.cookies(`${BASE}/`)).find((c) => c.name === SESSION_COOKIE);
   const authcheck = await page.evaluate(async () => {
     const r = await fetch('/api/nf-authcheck', { credentials: 'same-origin', cache: 'no-store' });
     return {
       status: r.status,
       rail: r.headers.get(`x-${(window.__BRAND__ ?? { lowerName: 'nebflow' }).lowerName}-credential`),
-      // Session TTL batch (2026-10-21): a session-rail 204 SLIDES the browser
-      // cookie — same id, fresh Max-Age = the 30d absolute TTL.
-      slid: (typeof r.headers.getSetCookie === 'function' ? r.headers.getSetCookie() : [])
-        .find((c) => c.startsWith(`${(window.__BRAND__ ?? { lowerName: 'nebflow' }).lowerName}_session=`)) ?? '',
     };
   });
+  const slideResp = await fetch(`${BASE}/api/nf-authcheck`, {
+    headers: cookieBefore ? { Cookie: `${cookieBefore.name}=${cookieBefore.value}` } : {},
+    cache: 'no-store',
+  });
+  const slid = (typeof slideResp.headers.getSetCookie === 'function' ? slideResp.headers.getSetCookie() : [])
+    .find((c) => c.startsWith(`${SESSION_COOKIE}=`)) ?? '';
   check('the landed page authenticates to /api/nf-authcheck (204)', authcheck.status === 204, `status=${authcheck.status}`);
   check('the rail header names the session rail', authcheck.rail === 'session', `rail=${authcheck.rail}`);
-  check('the authcheck 204 slides the session cookie (same sid, Max-Age=2592000)',
-    /max-age=2592000/i.test(authcheck.slid) && /httponly/i.test(authcheck.slid), authcheck.slid || 'NO SET-COOKIE');
+  check('the authcheck 204 slides the session cookie (same sid, Max-Age=2592000, network layer)',
+    slideResp.status === 204 && !!cookieBefore && slid.startsWith(`${SESSION_COOKIE}=`) &&
+      slid.includes(cookieBefore.value) && /max-age=2592000/i.test(slid) && /httponly/i.test(slid),
+    `status=${slideResp.status} slide=${slid || 'NO SET-COOKIE'}`);
 
   // ── B' purge: the long-lived copies are gone after a session-rail landing ──
   const purge = await page.evaluate(() => ({

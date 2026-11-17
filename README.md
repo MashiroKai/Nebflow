@@ -15,7 +15,7 @@ A self-hosted AI agent orchestration platform — bring all your work to one ent
   <img src="docs/assets/readme/hero-flow-map.png" alt="Stand Flow Map — a task chain executing live" width="960">
 </p>
 
-**[Website](https://mystand.space)** · **[Releases](https://git.ustc.edu.cn/kaiyu/nebflow/-/releases)**
+**[Website](https://mystand.space)** · **[Releases](https://github.com/MashiroKai/nebflow/releases)**
 
 </div>
 
@@ -69,6 +69,12 @@ Friends run on your **stand account** — the same sign-in that pairs your machi
   <img src="docs/assets/readme/friends-demo.gif" alt="Opening the Contacts panel from the Stand activity bar" width="720">
 </p>
 
+### Subagent history and recovery
+
+The subagent panel reads persisted task records in addition to live execution events. Reloading a page or opening it after a task started can recover the task row and its saved conversation. Execution status, recent captured activity, and result-collection errors are separate facts; a normally exited CLI does not prove that the requested work succeeded.
+
+External Claude Code and Codex messages are saved before they are published to the interface. Each execution has a separate identity, and parent results are delivered through the durable session mailbox. Recovery replays pending notifications, not the task itself. An execution whose monitoring cannot be restored is shown as interrupted and requires an explicit continuation or retry.
+
 ### And more
 
 - **Multi-provider LLM** — OpenAI- and Anthropic-compatible APIs, with health monitoring and automatic fallback chains
@@ -100,7 +106,7 @@ Then start the workspace:
 stand start    # serves the web UI at http://localhost:6138
 ```
 
-Releases on [the USTC releases page](https://git.ustc.edu.cn/kaiyu/nebflow/-/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.
+Releases on [the GitHub releases page](https://github.com/MashiroKai/nebflow/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.
 
 To build from source (Java 21+, sbt):
 
@@ -151,11 +157,11 @@ Full documentation lives at [mystand.space](https://mystand.space).
 
 ## Architecture
 
-Stand is written in **Scala 3** on **self-developed actors** (message passing and state management) and **http4s / cats-effect** (HTTP, WebSocket, and side-effect orchestration), with a deliberate boundary keeping the two layers apart. Work is organized as **Projects → Nodes**: a dispatcher turns a task into a Flow Map DAG, executes each node in an isolated worktree, and collects results along the out-edges for merge. Everything ships as a single self-contained JAR you host yourself — the web UI is served from embedded resources, with no separate frontend build step.
+Stand is written in **Scala 3** on **self-developed actors** (message passing and state management), with **Apache Pekko Typed** providing managed one-shot timers and native Flow result-bridge lifecycles, and **http4s / cats-effect** (HTTP, WebSocket, and side-effect orchestration), with a deliberate boundary keeping the two layers apart. Work is organized as **Projects → Nodes**: a dispatcher turns a task into a Flow Map DAG, executes each node in an isolated worktree, and collects results along the out-edges for merge. Everything ships as a single self-contained JAR you host yourself — the web UI is served from embedded resources, with no separate frontend build step.
 
 ## Development & Contributions
 
-Development happens on an internal USTC Git instance ([git.ustc.edu.cn/kaiyu/nebflow](https://git.ustc.edu.cn/kaiyu/nebflow)); external pull requests are not accepted. The GitHub repository stays frozen as a read-only archive of the project's history. Internal workflow and conventions are described in [CONTRIBUTING.md](CONTRIBUTING.md).
+Development happens on GitHub ([github.com/MashiroKai/nebflow](https://github.com/MashiroKai/nebflow)); external pull requests are not accepted. Internal workflow and conventions are described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

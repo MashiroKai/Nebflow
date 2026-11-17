@@ -88,9 +88,7 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
                 id = "tc-delegate-root",
                 name = "Delegate",
                 input = JsonObject(
-                  "prompt" -> "coordinate the nested job".asJson,
-                  "description" -> "nested-e2e clone".asJson,
-                  "agent" -> "Worker".asJson
+                  "task" -> "coordinate the nested job".asJson
                 )
               )
             ),

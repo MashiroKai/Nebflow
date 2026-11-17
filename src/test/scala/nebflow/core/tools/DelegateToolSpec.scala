@@ -88,17 +88,42 @@ class DelegateToolSpec extends CatsEffectSuite:
   private def required: List[String] =
     DelegateTool.inputSchema("required").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil)
 
+  test("unavailable recovery mode rejects admission before attachment validation and spawn"):
+    val input = JsonObject(
+      "task" -> "work".asJson,
+      "attachments" -> "not-an-array".asJson
+    )
+    for
+      protectedResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), Some("local-leaf-b1"))
+      invalidResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), Some("unknown"))
+      absentResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), None)
+      emptyResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), Some(""))
+      legacyResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), Some("off"))
+    yield
+      assertEquals(
+        protectedResult,
+        Left(ToolError("Delegate recovery B1 is unavailable; admission is disabled (unsupported-boundary)."))
+      )
+      assertEquals(invalidResult, Left(ToolError("Invalid Delegate recovery mode; admission is disabled.")))
+      val attachmentError = Left(ToolError("attachments must be an array of absolute file path strings."))
+      assertEquals(absentResult, attachmentError)
+      assertEquals(emptyResult, attachmentError)
+      assertEquals(legacyResult, attachmentError)
+
   // ---------- 1. schema 面 ----------
 
-  test("schema: exactly task/name/project/executor/worktree/force/mode/attachments — legacy parameters stay gone"):
+  test("schema: exactly task/name/project/executor/mode/attachments — retired parameters stay gone"):
     // external-executors 批 #1225（S14 运行时半）：`executor` 入场。
     // 面板命名批（2026-10-31）：`name` 入场（≤12 字，maxLength 钉死）。
-    // worktree-reuse-selection 批（2026-11-02）：`worktree` / `force` 入场。
-    // delegate-param-decisions 批（2026-11-04）：`mode` 值域收敛为 kernel|dispatcher，
-    // `worktree` 语义改为「worktree 的 name（不填 = 零分配的就地只读通道）」。
+    // delegate-param-decisions 批（2026-11-04）：`mode` 值域收敛，`worktree` 语义改为
+    // 「worktree 的 name」。
     // 附件传输批（2026-11-05）：`attachments` 入场（判据与六例见
     // [[DelegateAttachmentsSpec]]）。
-    assertEquals(props, Set("task", "name", "project", "executor", "worktree", "force", "mode", "attachments"))
+    // 过时测试修复（2026-11-15）：随基线 3007e48da「Retire the engine-managed delegate
+    // worktrees and the dedicated merger」补齐漏改断言——`worktree`/`force` 参数与
+    // merger 模式随该批整体退役（同批已删 WorktreeReuseSelectionSpec 等 400+ 行
+    // 专属 spec），本测试的面断言漏改。现值 = 附件传输批后的六参 + 二值 mode。
+    assertEquals(props, Set("task", "name", "project", "executor", "mode", "attachments"))
     assertEquals(required, List("task"))
     val nameMaxLen: Option[Int] = io.circe.Json
       .fromJsonObject(DelegateTool.inputSchema)
@@ -123,8 +148,12 @@ class DelegateToolSpec extends CatsEffectSuite:
       .as[List[String]]
       .toOption
       .getOrElse(Nil)
-    assertEquals(modeEnum, List("kernel", "dispatcher", "merger"), "mode enum includes the project merger, no auto")
-    // 描述文本与代码同步（作者令：文档与代码不同步等于没改）——旧口径的两句假话
+    // merger 随专职合并器退役（3007e48da 同批）⇒ 值域 = 恰二值，无 auto。
+    assertEquals(modeEnum, List("kernel", "dispatcher"), "mode enum is exactly kernel|dispatcher, no auto/merger")
+    // 退役参数不得以任何形态回流。
+    for retired <- List("worktree", "force") do
+      assert(!props.contains(retired), s"retired parameter `$retired` must stay gone from the schema")
+    // 描述文本与代码同步（作者令：文档与代码不同步等于没改）——旧口径的假话
     // 必须在 schema 与工具描述两处都消失。
     val modeDesc = io.circe.Json
       .fromJsonObject(DelegateTool.inputSchema)
@@ -135,30 +164,19 @@ class DelegateToolSpec extends CatsEffectSuite:
       .as[String]
       .toOption
       .getOrElse("")
-    val wtDesc = io.circe.Json
-      .fromJsonObject(DelegateTool.inputSchema)
-      .hcursor
-      .downField("properties")
-      .downField("worktree")
-      .downField("description")
-      .as[String]
-      .toOption
-      .getOrElse("")
     assert(!modeDesc.contains("mode allocator decides"), modeDesc)
     assert(!modeDesc.contains("JeV -> LLM fallback"), modeDesc)
     assert(modeDesc.contains("deterministically"), modeDesc)
-    assert(!wtDesc.contains("REUSE an existing delegate worktree instead of creating a fresh one"), wtDesc)
-    assert(!wtDesc.contains("Omit (default) = fresh worktree"), wtDesc)
-    assert(wtDesc.contains("MUST pass it"), wtDesc)
-    assert(wtDesc.contains("read-only"), wtDesc)
     val toolDesc = DelegateTool.description
     assert(
       !toolDesc.contains("mode allocator decides"),
       "the model-visible tool description must not carry the removed allocator copy"
     )
     assert(!toolDesc.contains("creates a fresh worktree exactly as before"), toolDesc)
-    assert(toolDesc.contains("Omit it ONLY for read-only tasks"), toolDesc)
-    assert(toolDesc.contains("IN PLACE in the project workspace"), toolDesc)
+    // worktree 退役口径（3007e48da）：引擎不再分配 worktree——模型可见描述必须
+    // 说清新政策（委托自管 git worktree），不许残留「自动新建/复用」旧承诺。
+    assert(!toolDesc.contains("Omit it ONLY for read-only tasks"), toolDesc)
+    assert(toolDesc.contains("allocates no worktrees"), toolDesc)
 
   test("name parameter: short-name guidance is model-visible (dispatch prompt face)"):
     // 面板命名批（2026-10-31 ②）：dispatch 提示词面（description = 模型可见指导）
@@ -270,9 +288,12 @@ class DelegateToolSpec extends CatsEffectSuite:
         "the plugin-assignment discipline reached the merged prompt (wording aligned 2026-10-08: the pre-split assertion string 'is your capability assignment' no longer matched HEAD's model-visible text — an existing red, realigned here to the standing wording, no assertion weakened: BLOCKED + no-HTML-comment pins stay)"
       )
       assert(
-        res.systemPrompt.contains("BLOCKED"),
-        "the capability-boundary (BLOCKED) contract reached the merged prompt"
+        res.systemPrompt.contains(
+          "a missing required capability => STOP: declare what is missing and the options in your report"
+        ),
+        "the capability-boundary contract reached the merged prompt"
       )
+      assert(!res.systemPrompt.contains("BLOCKED"), "the delegate prompt carries no BLOCKED anchor grammar")
       assert(!res.systemPrompt.startsWith("<!--"), "the code prompt carries no seed-machinery HTML comment")
 
   test("unified-delegate: default workspace is created and the call reaches spawn prerequisites"):
@@ -393,18 +414,30 @@ class DelegateToolSpec extends CatsEffectSuite:
   // ---------- 5. 内核工具面常量（装配面单点来源） ----------
 
   test(
-    "nebflow tool face = BaseTools + AskUserQuestion + Subagent (9 items) and excludes orchestration/message tools"
+    "nebflow tool face = BaseTools + AskHost + Subagent (8 items; AskUserQuestion root-only per c6329920e) and excludes orchestration/message tools"
   ):
     val face = nebflow.agent.AgentCore.NebflowFixedTools
-    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent")
+    // 过时测试修复（2026-11-15）：随基线 c6329920e「Restrict AskUserQuestion to
+    // root tool face」补齐漏改断言——执行面提问件 = AskHost（correlated request
+    // 问 root），AskUserQuestion（问用户卡）收归 Nebula root 面
+    // （AgentCore.RootOrchestrationTools；AllowedToolSetSpec 同款钉法）。
+    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskHost" + "Subagent")
     // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 工具整体退役
     // ⇒ 本面九 → **十件回落为九件**（本批确实改了机制面，非为过测放宽）：带 `device` 者
     // 仍恰为六件（`RemoteExecutor.remoteableTools` 未动，wait mode is on Bash and does not change the remote-executable set），
     // 该不变式由 `RemoteableDeviceParamSpec` 逐件钉死。
-    assertEquals(face.size, 9)
+    // c6329920e（2026-11-10）：AskUserQuestion → AskHost ⇒ 九件回落八件。
+    assertEquals(face.size, 8)
+    assert(!face.contains("AskUserQuestion"), "executor face must not hold AskUserQuestion (root-only)")
+    assert(
+      nebflow.agent.AgentCore
+        .fixedToolsFor(AgentDef(name = "Nebula", description = "", tools = Nil, systemPrompt = ""))
+        .contains("AskUserQuestion"),
+      "root face retains AskUserQuestion"
+    )
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
     // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
-    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop")
+    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "ChainWrite", "AgentControl", "Mail", "Pop")
       .foreach { t =>
         assert(!face.contains(t), s"nebflow must not hold: $t")
       }
@@ -414,10 +447,11 @@ class DelegateToolSpec extends CatsEffectSuite:
       face
     )
 
-  test("subagent tool face is read-only five — no write, no shell, no message"):
+  test("subagent tool face is six tools including registered Bash — no Write/Edit, messaging or recursion"):
     val face = nebflow.agent.AgentCore.SubagentFixedTools
-    assertEquals(face, Set("Read", "Glob", "Grep", "WebSearch", "WebFetch"))
-    Set("Write", "Edit", "Bash", "Mail", "Subagent", "Delegate").foreach { t =>
+    assertEquals(face, Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash"))
+    assert(ToolRegistry.TOOL_MAP("Bash") eq BashTool)
+    Set("Write", "Edit", "Mail", "Subagent", "Delegate").foreach { t =>
       assert(!face.contains(t), s"subagent must not hold: $t")
     }
     assertEquals(

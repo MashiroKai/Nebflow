@@ -13,6 +13,8 @@ object Dependencies {
   val OsLibVer = "0.11.3"
   val MunitVer = "1.1.0"
   val MunitCEVer = "2.0.0"
+  val PekkoVer = "2.0.0"
+  val pekkoActorTyped = "org.apache.pekko" %% "pekko-actor-typed" % PekkoVer
 
   // CLI
   val scopt = "com.github.scopt" %% "scopt" % ScoptVer

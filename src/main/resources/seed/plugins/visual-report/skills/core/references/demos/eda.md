@@ -34,7 +34,7 @@ schemdraw 真实渲染的电路原理图示例，核电子学标准拓扑：JFET
 ## 复现
 
 ```bash
-C:\Users\Kai\.nebflow\tools\viz-venv\Scripts\python.exe C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\eda_cspa_schematic.py
+C:\Users\name\.nebflow\tools\viz-venv\Scripts\python.exe C:\Users\name\.nebflow\skills\visual-report-suite\demos\eda_cspa_schematic.py
 ```
 
 schemdraw 0.23 实测渲染（viz-venv，2026-10-04），亮 / 暗两张 PNG 落 `~/.nebflow/plots/`；脚本即本 demos 目录内 `eda_cspa_schematic.py`。

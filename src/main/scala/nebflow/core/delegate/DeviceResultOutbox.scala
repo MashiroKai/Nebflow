@@ -11,13 +11,13 @@ import nebflow.shared.{NebflowLogger, PathUtil}
 /**
  * DeviceResultOutbox —— **跨设备完成件的持久待发区**（台账 #944 跨设备回报丢件腿）。
  *
- * == 病灶（2026-10-26 实证链，KAI 侧日志 + Mac 侧日志双侧对账）==
+ * == 病灶（2026-10-26 实证链，Windows 侧日志 + Mac 侧日志双侧对账）==
  *
  * 现象：Mac 父会话只收到 15:27 后报的 #939 一件，此前的件全丢。
- * 定因（不是 relay 断连窗口丢包——那条链是好的，KAI 的 `delegate-result sent to
+ * 定因（不是 relay 断连窗口丢包——那条链是好的，Windows 侧的 `delegate-result sent to
  * host` 与 Mac 的 `result received` 逐件对得上）：
  *
- *   KAI 引擎 **14:39:04 进程重启**（stand.log「stand 2026.10.26-beta.2」boot 行）。
+ *   Windows 实机引擎 **14:39:04 进程重启**（stand.log「stand 2026.10.26-beta.2」boot 行）。
  *   重启把当时在飞的 6 个 device-delegate 会话连人带**回投代理 actor**
  *   （[[DeviceDelegate.resultProxyBehavior]]）一起杀掉——代理只终态事件才发结果，
  *   会话被 kill 就永远没有终态事件 ⇒ 这 6 件**从未离机**。boot 收殓腿

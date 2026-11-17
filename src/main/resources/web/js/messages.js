@@ -3,6 +3,7 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
+import { chatFooter, chatFooterDivider, chatFooterTime, fmBubbleRowClass } from './chatUi.js';
 // bubble-side-color 批（2026-11-06）：气泡归属方判定/类名工厂单点（收编前本处
 // 直接拼 `bubble ${out ? 'user' : 'peer'}`，归属方语义散在模板串里）。
 import { bubbleClass, bubbleSideOfOutgoing } from './bubbleSide.js';
@@ -45,8 +46,6 @@ import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
 // 作者行动」的量（待批准 + 待销账/待处置 + 未读回执），纯未读消息不上徽标
 // （新鲜度 ≠ 可行动量，闭合相关性判据）。
-import { pendingAskCount } from './askPending.js';
-import { actionableTotal, onActionableChanged } from './actionable.js';
 // 【入口收敛批 todo-unify-entry-collapse 2026-11-04】改版批（2026-10-31）的
 // 消息列表顶部「待办事项」入口行（scheduled-task.js buildTodoEntryRow）**退役**：
 // 待办唯一入口 = 顶带 #top-overlays 内的待办胶囊（js/todoFace.js，双端同现，
@@ -64,6 +63,9 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 复用主窗同一管线 —— 识别流/双模/态机全在 voiceEngine.js，组件只做「键 ⇄ 输入框」
 // 接线）。本模块不再持任何输入条装配语句（三面零分叉；设备面本批补齐语音）。
 import { buildFmComposer } from './messages/fmComposer.js';
+// Desktop: a conversation is shown in the main chat area (header, avatar flip and Agent view handled there).
+import { canHostInMain, mountInMain, unmountFromMain, setActiveSocialName } from './messages/mainHost.js';
+import { EVENTS } from './events.js';
 import { withFocusKey } from './focusTrap.js';
 // 字段方言双兼容批：预览字段的**收面单点**（方言登记表判读 + `data:` 合成全仓唯一落点；
 // 该模块零 import ⇒ 无环）。
@@ -150,7 +152,7 @@ import { MAX_INLINE_IMAGE_BYTES, isImageAttachmentName, isVideoAttachmentName } 
 // 文件面/下载键字形/扩展名/失败占位单点全部取自 popArtifacts（主会话卡语言唯一家，
 // 三面板**逐字调用同一组件**，禁面板内第二套形态/描边/几何算术）。依赖方向安全：
 // popArtifacts 及其依赖不回指本模块（无环）。
-import { buildMediaFlat, buildMediaStack, buildFileCard, extOf, fitMediaBox, markMediaFailed, DOWNLOAD_SVG, DL_CHECK_SVG } from './popArtifacts.js';
+import { buildMediaFlat, buildMediaStack, buildFileCard, extOf, fitMediaBox, markMediaFailed, clearMediaFailure, DOWNLOAD_SVG, DL_CHECK_SVG } from './popArtifacts.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -524,21 +526,10 @@ function compareConversations(a, b) {
 }
 
 function updateBadge() {
-  // 徽标 = 未读真值（与会话行徽标同源）+ 可行动量（另一轴，非未读量：待答卡
-  // `pendingAskCount` + 跨面板待销账待办/未读回执 `actionableTotal`）。
-  // 🔴 未读腿**必须是 totalUnread()**：这是行徽标与图标角标唯一的同源点。
-  const on = loggedIn();
-  const unread = on ? totalUnread() : 0;
-  const actionable = on ? pendingAskCount() + actionableTotal() : 0;
-  const n = unread + actionable;
-  // aria 文案：未读腿在场按未读报（与行徽标同词），否则按可行动量报。
-  setActivityBadge('messages-btn', n, unread > 0
-    ? t('messages.ariaUnread', { n: unread })
-    : t('messages.ariaActionable', { n: actionable }));
+  // Task/agent actionability is not a message. Mirror only real unread messages.
+  const unread = loggedIn() ? totalUnread() : 0;
+  setActivityBadge('messages-btn', unread, t('messages.ariaUnread', { n: unread }));
 }
-
-// 任一可行动提供者计数变化 ⇒ 重算徽标（actionable.js 广播面）。
-onActionableChanged(() => updateBadge());
 
 // ── Conversation list (§3.2) ─────────────────────────────
 /** 会话列表刷新。
@@ -883,11 +874,14 @@ function rerenderConvRow(conversationId) {
  *  的左上「<」= 唯一出页入口（窗头 × 与窗头行在手机层已退场），
  *  `navController.closePageFace('conversation')` 以动态 import 调本函数（禁第二套
  *  关窗实现；桌面零变化 —— 桌面 caller 仍走内部引用）。 */
-export function closeChat() {
+export function closeChat(opts) {
+  // The draft and the reading position of the conversation being left are kept for its next opening.
+  rememberConvUi();
   // Every close path (ESC, backdrop, ×, post-send) funnels through here —
   // detach the document listener centrally so open/close cycles stay
   // symmetric (D4, mem-diag 20260907). removeEventListener is idempotent.
   document.removeEventListener('keydown', escClose);
+  window.removeEventListener(EVENTS.AGENT_VIEW_REQUESTED, leaveForAgent);
   // msgmenu 一期：两态随窗归零（「关窗重开选中归零」= 验收判据；引用态同理
   // —— 关窗即弃，禁跨窗残留）。注意：exitSelection 在 modalEls 被清前调用。
   exitSelection();
@@ -904,6 +898,8 @@ export function closeChat() {
     modalEls.overlay.remove();
     modalEls = null;
   }
+  // Desktop: the Agent view, header and avatar come back.
+  unmountFromMain();
   // U-b：窗口一关，在飞乐观项的节点即脱离文档 ⇒ 登记随之作废（在飞 POST 的
   // 续接腿会因 `node.isConnected === false` 自动走最小回落）。
   resetPending();
@@ -917,9 +913,62 @@ export function closeChat() {
   // post-open renderList (unread clear), so refind by conversation id.
   const back = (triggeringRow && triggeringRow.isConnected) ? triggeringRow
     : (triggeringConvId ? document.querySelector(`#fm-conversations .fm-conv-row[data-conversation-id="${CSS.escape(triggeringConvId)}"]`) : null);
-  if (back) back.focus();
+  // Returning through the flipped avatar leaves the focus on the avatar the user just used.
+  if (back && !(opts && opts.focusRow === false)) back.focus();
   triggeringRow = null;
   triggeringConvId = null;
+}
+
+/** Draft and reading position per conversation id, so that leaving a conversation for another one, or for the Agent,
+ *  and coming back finds it as it was. Entries are independent: nothing is shared between conversations. */
+const convUi = new Map();
+
+/** What a conversation is called in everything kept per conversation: its id, or the friend's id while the
+ *  conversation does not exist yet (the first send creates it), so that two such conversations never share a key. */
+function convKeyOf(conv) {
+  if (conv && conv.conversationId) return String(conv.conversationId);
+  return '__pending__' + (conv && conv.friend && conv.friend.userId);
+}
+
+/** Remember the draft and the reading position of the conversation that is shown (if any). Only the desktop host does
+ *  this: the mobile layer keeps entering a conversation at its latest message. */
+function rememberConvUi() {
+  if (!modalEls || !modalEls.conv || !modalEls.inMain) return;
+  const flow = modalEls.flow;
+  const id = convKeyOf(modalEls.conv);
+  const entry = { draft: modalEls.input.value, scrollTop: flow.scrollTop, atBottom: isAtBottom(flow) };
+  if (!entry.draft && entry.atBottom) convUi.delete(id);
+  else convUi.set(id, entry);
+}
+
+/** Give a text that was not sent back to the conversation it was typed in: into the input of the window that shows that
+ *  conversation now (the window that sent it, or a later window of the same conversation), otherwise into the draft kept
+ *  for that conversation (the window shown now belongs to someone else's conversation and must not receive it). */
+function restoreUnsentText(win, conv, text) {
+  const id = convKeyOf(conv);
+  if (modalEls && modalEls.conv && (modalEls === win || convKeyOf(modalEls.conv) === id)) {
+    modalEls.input.value = text;
+    syncComposerSend();
+    return;
+  }
+  if (!win || !win.inMain) return;
+  convUi.set(id, { scrollTop: 0, atBottom: true, ...convUi.get(id), draft: text });
+}
+
+/** First render of a reopened conversation: put the reading position back instead of pinning to the bottom. */
+function restorePendingScroll() {
+  const pending = modalEls && modalEls.restore;
+  if (!modalEls || !pending) return;
+  modalEls.restore = null;
+  cancelSettleBottom(modalEls.flow);
+  modalEls.flow.scrollTop = pending.scrollTop;
+  fmSyncFollowPill();
+}
+
+/** Root that holds the header parts (avatar, name, sub line, trust slot): the window itself, except in the main
+ *  area, where the header lives in #header. */
+function headRoot() {
+  return modalEls && modalEls.inMain ? modalEls.head : modalRoot();
 }
 
 function currentConv() {
@@ -978,7 +1027,7 @@ function paintGroupAvatarInto(host, conv, cells) {
  *  （展开面板不再重复「头像 + 群名 + 成员数」）⇒ 本函数只重打窗头那**一处**。 */
 function refreshOpenGroupHeaderAvatar() {
   if (!modalEls) return;
-  const slot = modalRoot()?.querySelector('.fm-modal-avatar');
+  const slot = headRoot()?.querySelector('.fm-modal-avatar');
   if (!slot) return;
   const conv = currentConv();
   if (!conv || conv.kind !== 'group') return;
@@ -1026,6 +1075,10 @@ function markConvRead(conv) {
  *  （卡 §5.4 风险表：双写期双读数分歧）。 */
 function persistConversation(conv) {
   if (!conv || !conv.conversationId || chatMsgs.length === 0) return;
+  // `chatMsgs` is the window of the conversation shown now and is only ever stored under that conversation's key.
+  // An answer that comes back after its conversation was left (a sync, a send) must not store the newcomer's
+  // messages under the old id: the keyset watermark would then never fetch the missing ones again.
+  if (String(openConvId) !== String(conv.conversationId)) return;
   let watermark = 0;
   for (const m of chatMsgs) { const n = Number(m.id); if (Number.isFinite(n) && n > watermark) watermark = n; }
   const lastMessageAt = toEpochMs(conv.lastMessage?.createdAt);
@@ -1128,6 +1181,8 @@ async function syncConversation(conversationId, { pages = 1, trigger = 'open' } 
 export async function openConversation(conversationId, rowEl) {
   const conv = conversations.find(c => c.conversationId === conversationId);
   if (!conv) return;
+  // Already shown in the main area: nothing to rebuild, the live window keeps its draft and position.
+  if (modalEls && modalEls.inMain && openConvId === conversationId) { modalEls.input.focus(); return; }
   // 设备会话（MVP-1）：同窗骨架、另一条数据面（网关本机 dropbox 腿）⇒ 走设备分支。
   if (conv.kind === 'device') { openDeviceConversation(conv, rowEl); return; }
   triggeringRow = rowEl || null;
@@ -1313,19 +1368,25 @@ async function hydrateGroupSenderNames(conv) {
 }
 
 function renderChatModal(conv) {
+  // Replacing the conversation that is shown: it keeps its draft and reading position.
+  rememberConvUi();
   document.getElementById('fm-chat-overlay')?.remove();
 
-  const overlay = el('div', 'cfg-modal-overlay');
+  // Desktop shows the conversation in the main chat area; the mobile layer keeps the dialog shell that its page
+  // controller adopts.
+  const inMain = canHostInMain();
+  const overlay = el('div', inMain ? 'fm-chat-host' : 'cfg-modal-overlay');
   overlay.id = 'fm-chat-overlay';
 
-  const modal = el('div', 'cfg-modal fm-modal');
-  modal.setAttribute('role', 'dialog');
+  const modal = el('div', inMain ? 'fm-modal fm-modal-main' : 'cfg-modal fm-modal');
+  modal.setAttribute('role', inMain ? 'region' : 'dialog');
   modal.setAttribute('aria-label', convTitleLabel(conv));
 
   // header: name · neblinkId | trust slot | ×
   // 窗头转发按钮已移除（作者 2026-09-12 裁定，方案 §3.1 S5）：转发入口只保留
   // 按消息的两条 —— 气泡内按钮 + 气泡右键，共用 forwardBubble（无第二实现）。
-  const header = el('div', 'fm-modal-header');
+  // In the main area the header is part of #header (no floating window head of its own).
+  const header = el('div', inMain ? 'fm-main-head' : 'fm-modal-header');
   // 窗头头像槽（**三类全挂**（作者 2026-09-21 16:54 令「好友/群/设备类对话框统一
   // 显示头像」）：同槽类 `.fm-modal-avatar`、同 40px 档 ⇒ **零新 CSS**）：
   //   · 群窗 = 组合头像（方案 §3.1 P1），随名册/群列表变更就地重打（禁整窗重建）；
@@ -1416,7 +1477,9 @@ function renderChatModal(conv) {
           if (modalEls && groupSettingsMounted) mountDrawer();
         },
       });
-      header.insertAdjacentElement('afterend', drawer);
+      // In the main area the header lives in #header, so the drawer opens at the top of the window instead.
+      if (inMain) modal.insertBefore(drawer, modal.firstChild);
+      else header.insertAdjacentElement('afterend', drawer);
       groupSettingsMounted = true;
     };
     /** 窗头组合头像就地重打（成员/群列表变更 ⇒ 九宫格失效重算；禁整窗重建）。 */
@@ -1466,7 +1529,8 @@ function renderChatModal(conv) {
   closeBtn.addEventListener('click', closeChat);
   closeBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter') closeChat(); });
   header.appendChild(closeBtn);
-  modal.appendChild(header);
+  // In the main area the header goes into #header (mountInMain below), not into the window.
+  if (!inMain) modal.appendChild(header);
 
   // ── 会话页头同构批（件二+件三，作者令 2026-11-02）─────────────────────────────
   // 手机层三会话（好友 / 群 / 设备）页头 = **只有左右两颗钮** + **中悬浮身份头**：
@@ -1666,8 +1730,16 @@ function renderChatModal(conv) {
   modal.appendChild(quoteStrip);
 
   overlay.appendChild(modal);
-  document.body.appendChild(overlay);
-  modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, idHead };
+  if (inMain) {
+    mountInMain({
+      overlay, modal, head: header,
+      convId: String(conv.conversationId), convName: convTitleLabel(conv),
+      onReturn: () => closeChat({ focusRow: false }),
+    });
+  } else {
+    document.body.appendChild(overlay);
+  }
+  modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, idHead, head: header, inMain, restore: null };
   // （渐隐解绑器 `unbindFade` 已随身份头常显批 2026-11-04 删除 —— 身份头不再有
   // 滚动监听，故 modalEls 无需解绑字段，closeChat 也没有对应的解绑腿。）
   // Fresh modal → reset history-window state (a stale older conversation's
@@ -1687,8 +1759,17 @@ function renderChatModal(conv) {
   hasMoreHistory = false;
   loadingHistory = false;
 
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeChat(); });
+  // A conversation that was shown before gets its draft back; its reading position is applied by the first render.
+  const kept = inMain ? convUi.get(convKeyOf(conv)) : null;
+  if (kept) {
+    if (kept.draft) input.value = kept.draft;
+    modalEls.restore = kept.atBottom ? null : { scrollTop: kept.scrollTop };
+  }
+
+  // A dialog closes on a click outside it; the main-area host has no outside.
+  if (!inMain) overlay.addEventListener('click', (e) => { if (e.target === overlay) closeChat(); });
   document.addEventListener('keydown', escClose);
+  if (inMain) window.addEventListener(EVENTS.AGENT_VIEW_REQUESTED, leaveForAgent);
 
   // ③A8 / ③-B：好友面零附件入口（不挂入口、也不做灰置假入口），但**静默吞文件
   // 不可接受**（项目纪律：失败必须可见）——好友窗内落文件 ⇒ 一次显式提示，文件
@@ -1715,6 +1796,8 @@ function renderChatModal(conv) {
   applyBlockState(conv);
   updateTrustBadge(conv);
   createIconsIn(overlay);
+  // In the main area the header parts live outside the overlay and need their icons drawn as well.
+  if (inMain) createIconsIn(header);
 }
 
 // ⑦ 窗头标题面（显示优先级第三处）：备注/群名改动后就地重打，不整窗重建。
@@ -1860,8 +1943,9 @@ function openDeviceDescPanel(conv, row, btn) {
 
 function updateModalTitle(conv) {
   if (!modalEls) return;
-  const nameEl = modalRoot()?.querySelector('.fm-modal-name');
+  const nameEl = headRoot()?.querySelector('.fm-modal-name');
   if (nameEl) nameEl.textContent = convTitleLabel(conv);
+  setActiveSocialName(convTitleLabel(conv));
   const dlg = modalRoot()?.querySelector('.fm-modal');
   if (dlg) dlg.setAttribute('aria-label', convTitleLabel(conv));
 }
@@ -1869,7 +1953,7 @@ function updateModalTitle(conv) {
 // 信任状态指示：trusted → sapphire chip（shield-check + 「已信任」），未信任
 // → 空槽。fm-trust-changed（contacts 右键菜单开关）到达时对开着的窗重打。
 function updateTrustBadge(conv) {
-  const slot = modalEls && modalRoot()?.querySelector('.fm-trust-slot');
+  const slot = modalEls && headRoot()?.querySelector('.fm-trust-slot');
   if (!slot) return;
   slot.innerHTML = '';
   if (!conv || !conv.friend || !isFriendTrusted(conv.friend.userId)) return;
@@ -1881,8 +1965,26 @@ function updateTrustBadge(conv) {
   createIconsIn(slot);
 }
 
+/** An Agent session was asked for (selected, created or activated): a conversation shown in the main area gives way. */
+function leaveForAgent() {
+  if (modalEls && modalEls.inMain) closeChat({ focusRow: false });
+}
+
+/** Whether an Escape keydown is aimed at the conversation shown in the main area: focus is inside its window or its
+ *  header, or nowhere in particular (the page body). */
+function escapeAimedAtHost(target) {
+  if (!(target instanceof Node) || target === document || target === document.body || target === document.documentElement) return true;
+  return !!modalEls && (modalEls.overlay.contains(target) || (!!modalEls.head && modalEls.head.contains(target)));
+}
+
 function escClose(e) {
+  // Escape that cancels an input-method composition belongs to the input method.
+  if (isImeComposing(e, e.target)) return;
   if (e.key === 'Escape' && modalEls) {
+    // In the main area the rest of the page stays reachable: an Escape aimed at another layer (Settings, search, a
+    // viewer, a dialog) or at another part of the page, or one that another handler has already consumed (a dropdown,
+    // an overlay closed by the page's global handler), belongs to that layer, not to the conversation.
+    if (modalEls.inMain && (e.defaultPrevented || !escapeAimedAtHost(e.target))) return;
     // msgmenu 一期：① 浮层菜单开着 ⇒ 这一下 Esc 归菜单（`contextMenu.js` 的捕获期
     // 监听已关它）⇒ 本处理器让位，禁同一击既关菜单又关窗/退多选；
     // ② 多选态 ⇒ 先退多选（作者口径「Esc 退出选择态」），窗不关；
@@ -2173,6 +2275,33 @@ function buildMediaStackGroup(entrys) {
     onOpen: (item, index) => {
       const e = entrys[index];
       if (!e) return;
+      // mobile-image-lightbox 批（2026-11-17）：手机层叠卡图组 = 整组进画廊（字节 =
+      // 各层已水合的同一枚 URL，零第二条取字节路）；视频张/未水合层不入组，组尽空
+      // 或点的张不在组内 ⇒ 落回下方单卡既有腿。
+      if (isMobileLayer() && item.kind === 'image') {
+        /** @type {{kind: string, name: string, src: string}[]} */
+        const group = [];
+        let gi = -1;
+        entrys.forEach((en, j) => {
+          if (!isImageAttachmentName(String(en.name || (en.att && en.att.name) || ''))) return;
+          const faces = (area.popFaces && area.popFaces[j]) || null;
+          const els = (faces && faces.els) || [];
+          const im = /** @type {HTMLImageElement|undefined} */ (els.filter(el => el.tagName === 'IMG')[0]);
+          const url = im && im.dataset.nfMediaFailed !== '1' ? (im.currentSrc || im.src || '') : '';
+          if (!url) return;
+          if (j === index) gi = group.length;
+          group.push({ kind: 'image', name: String(en.name || (en.att && en.att.name) || ''), src: url });
+        });
+        if (group.length && gi >= 0) {
+          const single = () => Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
+            .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
+            .catch(() => modalToast(t('messages.attachPreviewFailed')));
+          import('./lightbox.js')
+            .then((lb) => { if (!lb.openImageGallery(group, gi)) single(); })
+            .catch(single);
+          return;
+        }
+      }
       Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
         .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
         .catch(() => modalToast(t('messages.attachPreviewFailed')));
@@ -2237,21 +2366,20 @@ function buildFileAttachmentCard(att, kind, name, src) {
  *  返回约定与桌面腿一致：true = 需要调用方给 attachPreviewFailed 可见降级。 */
 async function previewMediaDirectOf(att, kind, src) {
   const s = src || { kind: 'none' };
-  const name = (att && att.name) || '';
   const mr = await import('./mediaOpenRoute.js');
   // ① 设备·发送侧本机句柄（blob）：字节已在手，零取数。
   if (kind === 'device' && s.kind === 'blob' && s.file) {
-    return !(await mr.openMediaDirect({ blob: s.file, name }));
+    return !(await mr.openMediaDirect({ blob: s.file }));
   }
   // ② 设备·本机落盘件（path）：铸票直开（系统播放器/查看器自带 Range 流式语义）。
   if (kind === 'device' && s.kind === 'path' && s.path) {
-    return !(await mr.openMediaDirect({ path: s.path, name }));
+    return !(await mr.openMediaDirect({ path: s.path }));
   }
   // ③ 好友/群（鉴权 id 路由）：整件取回（与桌面 previewWithProgress 同一取数口）。
   if (att && att.id) {
     try {
       const { blob } = await api.downloadAttachment(att.id);
-      if (blob && blob.size > 0) return !(await mr.openMediaDirect({ blob, name }));
+      if (blob && blob.size > 0) return !(await mr.openMediaDirect({ blob }));
     } catch (e) { /* 取数败 ⇒ 落下方可见降级 */ }
   }
   return true;
@@ -2260,9 +2388,28 @@ async function previewMediaDirectOf(att, kind, src) {
 /** 点击 ⇒ Canvas 预览（既有腿，判据与改前逐字同表）：好友/群 = `previewFriendAttachment`
  *  （鉴权路由流式开）；设备 = `previewDeviceSavedAttachment`（blob/票据双腿）。
  *  媒体点击统一批 P16：手机层改走 `previewMediaDirectOf`（系统直开，桌面逐字保留）。
- *  层判定 = isMobileLayer 单点（mobile/popSheet，面板按钮去重批判面纪律）。 */
+ *  层判定 = isMobileLayer 单点（mobile/popSheet，面板按钮去重批判面纪律）。
+ *  mobile-image-lightbox 批（2026-11-17 作者令「现在手机端点图片为什么会单独
+ *  打开一个标签页 我想的是像微信那样的弹窗就行了」）：手机层**图片**改开应用内
+ *  画廊（lightbox.openImageGallery），字节 = 卡面已水合的同一枚 URL（渲染时已走
+ *  账本/鉴权路由取数腿，零第二条取字节路）；判型 = isImageAttachmentName 单点
+ *  （PDF 等其他可预览件照旧直开系统查看器）。面未水合/失败 ⇒ 落回既有直开腿。 */
 function previewAttachmentOf(att, card, kind, src) {
-  if (isMobileLayer()) return previewMediaDirectOf(att, kind, src);
+  if (isMobileLayer()) {
+    const name = String((att && att.name) || '');
+    if (isImageAttachmentName(name)) {
+      const img = card && card.querySelector ? card.querySelector('img') : null;
+      const url = img && img.dataset.nfMediaFailed !== '1' ? (img.currentSrc || img.src || '') : '';
+      if (url) {
+        const fallBack = () => previewMediaDirectOf(att, kind, src);
+        import('./lightbox.js')
+          .then((lb) => { if (!lb.openImageGallery([{ kind: 'image', name, src: url }], 0)) fallBack(); })
+          .catch(fallBack);
+        return false;   // 画廊已开（或异步腿自兜底）：不给 attachPreviewFailed 降级
+      }
+    }
+    return previewMediaDirectOf(att, kind, src);
+  }
   return kind === 'device'
     ? previewDeviceSavedAttachment(att, card, src)
     : previewFriendAttachment(att, card);
@@ -2502,7 +2649,16 @@ function attachMediaBytes(card, att, kind, src, els, opts = {}) {
   const primary = els[0];
   const fail = () => {
     if (stackLayer) {
-      els.forEach((el) => markMediaFailed(el));
+      // The layer keeps its failed placeholder and offers a retry for this item alone: the other layers and
+      // the message are untouched, and a second failure is retryable again.
+      const retryLayer = () => {
+        // Both faces of the layer (collapsed and expanded) fail and recover together: whichever one was clicked, the
+        // other one must not keep its failed state while the bytes are loaded again.
+        els.forEach((el) => { clearMediaFailure(el); delete el.dataset.attSrc; delete el.dataset.attLoaded; });
+        mounted = false;
+        attachMediaBytes(card, att, kind, src, els, opts);
+      };
+      els.forEach((el) => markMediaFailed(el, null, undefined, retryLayer));
       return;
     }
     // Preserve the media's measured/fallback box and offer an explicit retry;
@@ -3365,7 +3521,9 @@ export function bubbleEl(m, conv) {
   // （出向=我方绿 / 入向=对方白），本处只把结论交给 bubbleClass()；底色本身由
   // css/glass.css「气泡归属方底色单点」块消费令牌，本文件零色值。
   const side = bubbleSideOfOutgoing(out);
-  const bubble = el('div', `fm-msg-bubble ${bubbleClass(out ? 'user' : 'peer', side)}`);
+  // 外壳类拼写走 chatUi.fmBubbleRowClass()（chat-ui-package 批④词表收口：
+  // `fm-msg-bubble` 不再本文件直写）；内芯（角色/归属方类）仍由 bubbleClass() 单点。
+  const bubble = el('div', fmBubbleRowClass(bubbleClass(out ? 'user' : 'peer', side)));
   bubble.dataset.bubbleSide = side;
   // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
   // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
@@ -3410,7 +3568,7 @@ export function bubbleEl(m, conv) {
   // `.duration-badge`（chat.css 单点：内距/圆角/戒指影/暗档）+ 时间 `.duration-badge-time`
   // + 分隔 `.duration-badge-divider` + 复制键 `.msg-copy`。旧 `.fm-msg-*` 类保留为
   // 宿主钩子（断言面/滚动面引用），几何与配色不再由本文件另写一份。
-  const meta = el('div', 'fm-msg-meta duration-badge');
+  const meta = chatFooter('fm-msg-meta');
   // 批 D（作者裁定 2026-09-14 20:5x「双方可见」）：徽标**两端渲染**、无抑制逻辑
   // —— 修前判据 `out && isAgentSent(m)` 让接收侧（`out === false`）**永不进入**
   // 本分支（即便 `origin` 已修复到位，对方也看不到）⇒ 与作者诉求相左。
@@ -3435,7 +3593,7 @@ export function bubbleEl(m, conv) {
   //   · `data-ts`（跳转锚）+ `data-ts-text`（时钟就地重排）两契约保留；去掉
   //     `data-ts-text-format="day"` ⇒ 12/24 切换按纯时钟重排（timeFormat 契约）；
   //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
-  const timeSpan = el('span', 'fm-msg-time duration-badge-time', timeMs ? formatHm(timeMs) : '');
+  const timeSpan = chatFooterTime('fm-msg-time', timeMs ? formatHm(timeMs) : '');
   if (timeMs) {
     timeSpan.setAttribute('data-ts', String(timeMs));
     timeSpan.setAttribute('data-ts-text', String(timeMs));
@@ -3484,7 +3642,7 @@ export function bubbleEl(m, conv) {
   // @.2 + flex-shrink:0）—— fm-footer-align 批 2026-11-02：旧形态用
   // `.fm-msg-actions::before` 伪元素（视觉等价、结构不同），现与主会话同构：真节点、
   // 同几何、同间距档（pill gap 6 + 1 + 6 = 13px，主会话实测同档）。
-  meta.appendChild(el('span', 'fm-msg-divider duration-badge-divider'));
+  meta.appendChild(chatFooterDivider('fm-msg-divider'));
   meta.appendChild(actions);
 
   wrap.appendChild(meta);
@@ -3692,6 +3850,7 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
     //   用户一动手即解除，窗口有截止时刻——见 chat/settleBottom.js 头注）。
     apply();
     settleBottom(flow);
+    restorePendingScroll();
     return;
   }
   // ⑩ 合并/增量路径（`appendMessages` 等）：以**可视锚点**为准补偿。
@@ -4102,6 +4261,13 @@ function modalToast(text) {
   modalEls.toast.hidden = false;
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { if (modalEls) modalEls.toast.hidden = true; }, 2000);
+}
+
+/** Report a failed send in the window that sent it while that window is shown; once the user has moved on, the page's own
+ *  toast carries it (the window shown now is another conversation and must not show it). */
+function tellSendFailure(win, text) {
+  if (modalEls && modalEls === win) modalToast(text);
+  else window.__showToast?.(text, 'error');
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -4838,6 +5004,9 @@ function dispatchFiles(conv, fileList) {
 
 async function sendCurrent(conv, opts) {
   if (!modalEls) return;
+  // The window this send belongs to. The answer may come back after the user moved on to another conversation: what the
+  // answer changes outside this window must then not touch the window that is shown by that time.
+  const win = modalEls;
   const text = modalEls.input.value.trim();
   // 长度闸只管**用户正文**（引用信封是加性前缀，~≤200 字符；见报告「开放项」）。
   if (!text || text.length > 2000) return;
@@ -4897,7 +5066,7 @@ async function sendCurrent(conv, opts) {
     if (!conv.conversationId && resp.conversationId) {
       // First send created the conversation (friend-addressed send)
       conv.conversationId = resp.conversationId;
-      openConvId = resp.conversationId;
+      if (modalEls === win) openConvId = resp.conversationId;
     }
     // delivered: silent (§6.2 克制)
     conv.lastMessage = { ...pending.entry, id: realId };
@@ -4924,7 +5093,8 @@ async function sendCurrent(conv, opts) {
         conversations = conversations.filter(c => c.conversationId !== conv.conversationId);
         renderList();
         updateBadge();
-        closeChat();
+        // Only the window that sent it closes; a conversation shown by now is not the one that was refused.
+        if (modalEls === win) closeChat();
         return;
       }
     }
@@ -4941,14 +5111,16 @@ async function sendCurrent(conv, opts) {
     // 调用即无键，禁自行 `createElement`，旧内联重试键符号零引用）。
     if (conv.kind !== 'group' && api.isFriendTerminalCode(err && err.data && err.data.error)) {
       applyPhase(wrap, PHASE.FAILED);
-      modalToast(t(FRIEND_TERMINAL_TEXT[err.data.error]));
+      tellSendFailure(win, t(FRIEND_TERMINAL_TEXT[err.data.error]));
       wrap.remove();
       const i = chatMsgs.findIndex(x => x.id === tempId);
       if (i >= 0) chatMsgs.splice(i, 1);
-      modalEls.input.value = body;
-      syncComposerSend();
+      restoreUnsentText(win, conv, body);
       return;
     }
+    // The window that sent it is gone: the failed bubble and its retry key went with it, so the text goes back to the
+    // draft of that conversation instead of being lost (a network failure is reported by the page's own toast).
+    if (!(modalEls && modalEls === win)) restoreUnsentText(win, conv, body);
     // S5 重试键（§3.1 唯一装配点 `bindRetry`；`title`/`aria-label` = `contacts.retry` 逐字，
     // 见 §8.2 改写①——改前用的是 `messages.send`「发送」，与键语义不符）。
     const retryKey = bindRetry(wrap, () => {
@@ -4977,7 +5149,7 @@ async function sendCurrent(conv, opts) {
         const shown = failCode.length > 80 ? `${failCode.slice(0, 80)}…` : failCode;
         wrap.dataset.sendErrorCode = shown;
         if (retryKey) retryKey.title = `${retryKey.title} · ${shown}`;
-        modalToast(t('messages.sendFailedCode', { code: shown }));
+        tellSendFailure(win, t('messages.sendFailedCode', { code: shown }));
       }
     }
   }
@@ -5461,7 +5633,8 @@ async function onFriendEvent(msg, retried = false) {
       const fromPeer = (conv.kind === 'group' || conv.kind === 'device')
         ? oursBySenderId(m, conv) === false
         : !!(m.senderId && conv.friend && m.senderId === conv.friend.userId);
-      if (fromPeer && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
+      if (fromPeer && !isAgentSent(m) && m.origin !== 'system' && m.kind !== 'system'
+        && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
     }
     // U-a 幂等：同 messageId 的重复到达不得二次上屏 / 二次自动转发（**渲染面**）。
     if (!markFrameMessageSeen(m.id)) return;
@@ -7102,9 +7275,9 @@ function refreshOpenDevicePresence() {
   const conv = modalEls.conv;
   const fresh = devicePeers().find(d => d.deviceId === conv.device.deviceId);
   if (fresh) conv.device = fresh;
-  const sub = modalRoot()?.querySelector('.fm-modal-id');
+  const sub = headRoot()?.querySelector('.fm-modal-id');
   if (sub) sub.textContent = deviceSubLabel(conv.device);
-  const slot = modalRoot()?.querySelector('.fm-modal-presence');
+  const slot = headRoot()?.querySelector('.fm-modal-presence');
   if (slot) {
     const badge = presenceBadgeHTML({ ...(conv.device || {}), isLocal: false });
     slot.innerHTML = badge;
@@ -7146,6 +7319,7 @@ function onDeviceMessageChanged(deviceId) {
  *  · 否则（peers 派生行 / 旧网关）：legacy dropbox 腿原样保留 —— 网关本机
  *    `~/.nebflow/dropbox/messages.json` 的全量帧（判红④的降级展示面）。 */
 async function openDeviceConversation(conv, rowEl) {
+  if (modalEls && modalEls.inMain && openConvId === conv.conversationId) { modalEls.input.focus(); return; }
   triggeringRow = rowEl || null;
   triggeringConvId = conv.conversationId;
   openConvId = conv.conversationId;

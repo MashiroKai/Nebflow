@@ -439,69 +439,6 @@ Git safety:
     if lines.length <= n then stdout
     else lines.takeRight(n).mkString("\n")
 
-  // ── Merger repository write exclusion ─────────────────────────────────
-  //
-  // An executing merger's shell writes to the merge target repository must be
-  // mutually exclusive across processes (different data roots over the same git
-  // common-dir). Resolution order: the durable ledger merger row (its
-  // delegateId equals the session id) carries the repository key; a registry
-  // mode=merger record without a ledger row falls back to the record's own
-  // workspace. Sessions that are not mergers (dev delegates, root, read-only
-  // legacy) resolve None and are untouched — zero added cost beyond one small
-  // registry file check. The device leg (isRemoteExec) is exempt: the receiving
-  // session acts as a device channel for a peer-initiated command and is never
-  // a merger itself.
-  private def mergerRepositoryOf(rawSessionId: String): Option[String] =
-    if rawSessionId.trim.isEmpty then None
-    else
-      val record = nebflow.core.delegate.DelegateRegistry.find(rawSessionId)
-      if !record.exists(_.mode.contains(nebflow.core.delegate.DualModeConfig.ModeMerger)) then None
-      else
-        scala.util
-          .Try {
-            nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergers
-              .find(_.delegateId == rawSessionId)
-              .map(_.repository)
-              .orElse(
-                record
-                  .flatMap(r => r.projectWorkspace.orElse(Option(r.cwd)))
-                  .flatMap(ws =>
-                    scala.util.Try(nebflow.core.delegate.WorkspaceLedger.repositoryKey(os.Path(ws))).toOption
-                  )
-              )
-          }
-          .toOption
-          .flatten
-
-      end if
-
-  /**
-   * Acquire the session-reentrant repository write hold for a merger session.
-   * `Right(None)` = not a merger (pass through); `Left` = the repository is
-   * being written by another merger writer (any process) — the command is
-   * refused without starting a process.
-   */
-  private[tools] def acquireMergerHold(
-    ctx: ToolContext
-  ): IO[Either[ToolError, Option[nebflow.core.delegate.RepositoryWriteLock.Hold]]] =
-    val rawSessionId = ctx.sessionId.getOrElse("default")
-    IO.blocking(mergerRepositoryOf(rawSessionId)).flatMap {
-      case None => IO.pure(Right(None))
-      case Some(repo) =>
-        IO.blocking(nebflow.core.delegate.RepositoryWriteLock.acquireFor(rawSessionId, repo)).map {
-          case Right(hold) => Right(Some(hold))
-          case Left(inUse) =>
-            Left(
-              ToolError(
-                s"[Repository write lock in use] $inUse — another merger writer is active on this repository; " +
-                  "wait for it to finish before running this command (cross-process merger exclusion)"
-              )
-            )
-        }
-    }
-
-  end acquireMergerHold
-
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // provider 语义（design §4.2）：
     //
@@ -596,115 +533,119 @@ Git safety:
         (background && explicitTimeoutMs.isDefined) ||
         (command.isEmpty && bgJobId.isEmpty)
     val runPlan =
-      if invalidMode then IO.pure(Left(ToolError("Bash modes are exclusive: command (optional timeout), background_job_id with optional timeout to wait, or background_job_id with cancel_background_job=true to cancel.")))
-      else bgJobId match
-        case Some(jobId) =>
-          // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
-          // sessionId, so a query that created the session first would otherwise
-          // hand the later execute path a session created without injection.
-          // askuser-secret 批：`++ otpEnv` = 本条命令消费的一次性验证码（otpEnv 为空
-          // ⇒ 与改前逐字节同参）。
-          ShellSession
-            .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt, secretEnv = secretEnv ++ otpEnv)
-            .flatMap { shell =>
-              if cancelBg then
-                shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
-                  val takeRow =
-                    if cancelled then
-                      BgTaskRegistry.unregisterReturning(jobId).void *>
-                        BgTaskOutputStore
-                          .finalizeTask(jobId, "cancelled", None, Some("Cancelled by agent (tool call)"))
-                          .handleErrorWith(_ => IO.unit)
-                    else IO.unit
-                  takeRow.as {
-                    if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
-                    else Right(s"[Background job not found] Job ID: $jobId")
-                  }
-                }
-              else
-                val waitMs = explicitTimeoutMs.getOrElse(math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs))
-                shell.waitBackgroundResults(Seq(jobId), waitMs).void *>
-                  shell.getBackgroundResult(jobId).flatMap {
-                    case None =>
-                      shell.getBackgroundJobHealth(jobId).map {
-                        case Some(h) =>
-                          val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
-                          val isStuck = h.idleMs > stuckThreshold
-                          val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
-                          val stuckWarning =
-                            if isStuck then
-                              s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
-                            else ""
-                          Right(
-                            s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
-                          )
-                        case None => Right(s"[Background job pending] Job ID: $jobId")
-                      }
-                    case Some(Left(e)) =>
-                      val errMsg = e match
-                        case _: TimeoutException => "[Command timed out]"
-                        case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                      IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
-                    case Some(Right(result)) =>
-                      BgTaskRegistry.markAwaited(jobId).attempt.void *>
-                        IO {
-                          val out = cleanOutput(sanitizeCardOutput(result.stdout))
-                          val cleanedErr = cleanOutput(result.stderr)
-                          val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
-                          Right(s"[Background job completed] Job ID: $jobId\n$out$errLine")
-                        }
-                  }
-            }
-        case None =>
-          if command.isEmpty then IO.pure(Right("[Empty command]"))
-          else
-            val interactiveWarning = checkInteractive(command)
-            if interactiveWarning.isDefined then
-              IO.pure(
-                Left(
-                  ToolError(
-                    s"[Interactive command] ${interactiveWarning.get}\nThis command cannot run in the agent environment (no terminal available). Please execute it manually in your terminal."
-                  )
-                )
-              )
-            else
-              // D12-b（delegate reset 零闸治理，作者裁定 2026-10-23）：reset 系命令
-              // 审计事件——auto-all 顶档下危险命令清单是死信（ToolReversibility
-              // AutoAll ⇒ true），就地腿 delegate 与他方共享检出区，一次 reset 即
-              // 清掉他方未持久化的进行中工作且无痕。此处（权限闸之后、进程起跑之前）
-              // 落至少一行审计（谁/何时/命令/受波及的 live delegate 及其当时状态/任务）。
-              // best-effort：审计失败只 WARN，绝不影响命令执行（RelayExecAudit 同款
-              // 失败语义）；零超时设计——非 reset 命令零开销透传（一组正则判别）。
-              val resetAuditIo =
-                if ResetAudit.isResetCommand(command) then ResetAudit.record(command, ctx, ctx.sharedResources)
-                else IO.unit
-              resetAuditIo *> ShellSession
+      if invalidMode then
+        IO.pure(
+          Left(
+            ToolError(
+              "Bash modes are exclusive: command (optional timeout), background_job_id with optional timeout to wait, or background_job_id with cancel_background_job=true to cancel."
+            )
+          )
+        )
+      else
+        bgJobId match
+          case Some(jobId) =>
+            // 🔴 `secretEnv` is passed on the QUERY path too: sessions are keyed by
+            // sessionId, so a query that created the session first would otherwise
+            // hand the later execute path a session created without injection.
+            // askuser-secret 批：`++ otpEnv` = 本条命令消费的一次性验证码（otpEnv 为空
+            // ⇒ 与改前逐字节同参）。
+            ShellSession
               .forSession(
                 sessionId,
                 initialDir = sessionInitialDir,
                 sandbox = sandboxOpt,
                 secretEnv = secretEnv ++ otpEnv
-              ) // otpEnv：一次性验证码（空 Map = 改前同参）
+              )
               .flatMap { shell =>
-                if background then
-                  val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
-                  val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
-                  val bgDescription = desc.getOrElse(firstLine)
-                  // 等待型任务的完成回调需带闸记账信息（超时杀 → 节点 failed 注明）。
-                  val gateOwned = !persistent && isNodeSession(ctx)
-                  // #753 会话级创建速率闸：熔断激活/触发 ⇒ 本拍拒绝（可读错误回执，
-                  // 不建任务）。persistent=true（服务型 server）不设闸——dev server
-                  // 等长驻任务是合法低频创建，闸针对的是 waiter/poller 刷屏族。
-                  def startBg: IO[Either[ToolError, String]] =
-                    // Merger write exclusion: the hold covers the WHOLE background job
-                    // lifetime — the release rides the job's execution fiber at terminal
-                    // state (completion, idle/stall kill, explicit cancel, session
-                    // reclaim all terminalize that fiber). Acquisition failure = another
-                    // merger writer is active = the command is refused before any
-                    // process starts (correctness over convenience).
-                    acquireMergerHold(ctx).flatMap {
-                      case Left(err) => IO.pure(Left(err))
-                      case Right(mergerHold) =>
+                if cancelBg then
+                  shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
+                    val takeRow =
+                      if cancelled then
+                        BgTaskRegistry.unregisterReturning(jobId).void *>
+                          BgTaskOutputStore
+                            .finalizeTask(jobId, "cancelled", None, Some("Cancelled by agent (tool call)"))
+                            .handleErrorWith(_ => IO.unit)
+                      else IO.unit
+                    takeRow.as {
+                      if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
+                      else Right(s"[Background job not found] Job ID: $jobId")
+                    }
+                  }
+                else
+                  val waitMs = explicitTimeoutMs.getOrElse(math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs))
+                  shell.waitBackgroundResults(Seq(jobId), waitMs).void *>
+                    shell.getBackgroundResult(jobId).flatMap {
+                      case None =>
+                        shell.getBackgroundJobHealth(jobId).map {
+                          case Some(h) =>
+                            val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
+                            val isStuck = h.idleMs > stuckThreshold
+                            val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
+                            val stuckWarning =
+                              if isStuck then
+                                s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
+                              else ""
+                            Right(
+                              s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
+                            )
+                          case None => Right(s"[Background job pending] Job ID: $jobId")
+                        }
+                      case Some(Left(e)) =>
+                        val errMsg = e match
+                          case _: TimeoutException => "[Command timed out]"
+                          case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                        IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
+                      case Some(Right(result)) =>
+                        BgTaskRegistry.markAwaited(jobId).attempt.void *>
+                          IO {
+                            val out = cleanOutput(sanitizeCardOutput(result.stdout))
+                            val cleanedErr = cleanOutput(result.stderr)
+                            val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
+                            Right(s"[Background job completed] Job ID: $jobId\n$out$errLine")
+                          }
+                    }
+              }
+          case None =>
+            if command.isEmpty then IO.pure(Right("[Empty command]"))
+            else
+              val interactiveWarning = checkInteractive(command)
+              if interactiveWarning.isDefined then
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"[Interactive command] ${interactiveWarning.get}\nThis command cannot run in the agent environment (no terminal available). Please execute it manually in your terminal."
+                    )
+                  )
+                )
+              else
+                // D12-b（delegate reset 零闸治理，作者裁定 2026-10-23）：reset 系命令
+                // 审计事件——auto-all 顶档下危险命令清单是死信（ToolReversibility
+                // AutoAll ⇒ true），就地腿 delegate 与他方共享检出区，一次 reset 即
+                // 清掉他方未持久化的进行中工作且无痕。此处（权限闸之后、进程起跑之前）
+                // 落至少一行审计（谁/何时/命令/受波及的 live delegate 及其当时状态/任务）。
+                // best-effort：审计失败只 WARN，绝不影响命令执行（RelayExecAudit 同款
+                // 失败语义）；零超时设计——非 reset 命令零开销透传（一组正则判别）。
+                val resetAuditIo =
+                  if ResetAudit.isResetCommand(command) then ResetAudit.record(command, ctx, ctx.sharedResources)
+                  else IO.unit
+                resetAuditIo *> ShellSession
+                  .forSession(
+                    sessionId,
+                    initialDir = sessionInitialDir,
+                    sandbox = sandboxOpt,
+                    secretEnv = secretEnv ++ otpEnv
+                  ) // otpEnv：一次性验证码（空 Map = 改前同参）
+                  .flatMap { shell =>
+                    if background then
+                      val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
+                      val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+                      val bgDescription = desc.getOrElse(firstLine)
+                      // 等待型任务的完成回调需带闸记账信息（超时杀 → 节点 failed 注明）。
+                      val gateOwned = !persistent && isNodeSession(ctx)
+                      // #753 会话级创建速率闸：熔断激活/触发 ⇒ 本拍拒绝（可读错误回执，
+                      // 不建任务）。persistent=true（服务型 server）不设闸——dev server
+                      // 等长驻任务是合法低频创建，闸针对的是 waiter/poller 刷屏族。
+                      def startBg: IO[Either[ToolError, String]] =
                         // Policy "backgrounded commands have no limit": waiting-type background jobs have NO time cap —
                         // the old 30min tier (ctx.bashConfig.hardTimeoutMs) and the node
                         // 4h tier (BgGateNodeHardTimeoutMs) are both retired from the
@@ -750,10 +691,7 @@ Git safety:
                             outputSink = Some(BgTaskOutputStore.lineSink(jobId, outBuffer)),
                             // B1 只提醒腿的审计出口：经 ctx 身份解析
                             // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
-                            onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary)),
-                            releaseAtTerminal = mergerHold.map(hold =>
-                              IO.blocking(nebflow.core.delegate.RepositoryWriteLock.releaseFor(hold)).attempt.void
-                            )
+                            onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
                           )
                           _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                         yield Right(
@@ -761,114 +699,111 @@ Git safety:
                             s"""Wait with Bash(background_job_id: "$jobId", timeout: <milliseconds>) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
                         )
                         end for
-                    }
-                  end startBg
-                  val run =
-                    if persistent then startBg
-                    else
-                      // 告警帧只在熔断**触发沿**发（breakerEngaged）——熔断激活期
-                      // 内的每次拒绝只回工具面错误，不再重复 toast（防告警刷屏）。
-                      BgTaskRegistry.gateCreation(ctx.sessionId.getOrElse("")).flatMap { d =>
-                        if d.breakerEngaged then emitRateAlert(ctx) *> IO.pure(Left(ToolError(d.message.getOrElse(""))))
-                        else if !d.allowed then IO.pure(Left(ToolError(d.message.getOrElse(""))))
-                        else startBg
-                      }
-                  run
-                else if ctx.isRemoteExec then
-                  // ── 设备腿（本实例替对端实例跑一条 Bash 请求）────────────────
-                  // T7（作者令 2026-11-04，自查件 D9 M6/§4）：**与本地前台腿同构**。
-                  //
-                  // 改前（缺陷态）：`explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT = 30s)`
-                  // 被当作**进程超时**——30s 到点即杀对端命令并回
-                  // `[Command timed out after 30000ms]`（`isError=true`，喂 S1 同败
-                  // streak，8 次就 L1 杀会话）。而本地腿早在 main-agent-nonblocking 批
-                  // 就把「到点」从**杀**改成了**收编为后台**。
-                  //
-                  // 改后（本块）：唯一上限 = 显式 timeout（解析面钳 60min；缺省 =
-                  // 前台等待预算 `ctx.bashConfig.foregroundWaitBudgetMs`。2026-11-10
-                  // 作者令：显式 timeout 可超预算，不再 min 钳制）——与
-                  // [[executeForeground]] **同源单点**，禁第二个上限（尤其禁 30s 兜底）。竞速（racePair，落败
-                  // 侧不取消）：
-                  //   - 预算内完成 ⇒ 既有 [[formatOutcome]]（成功/停滞/真错误三态照旧）；
-                  //   - 到点未完成 ⇒ **收编为后台任务**：进程不杀，按 host 下发的
-                  //     `bgJobId`（= 对端发起侧的任务 id，两侧同一 id）登记本侧
-                  //     `BgTaskRegistry`（`kind="remote"`，命令来自对端）并把仍在跑的执行
-                  //     fiber 挂进会话任务图，回**与本地 auto-background 逐字同形**的回执
-                  //     （同一构造点 [[RemoteExecutor.autoBackgroundReceipt]]），
-                  //     `isError=false`，可由 Bash(background_job_id, timeout) 等待、可由 cancel 按同一 id 取消。
-                  // 本侧无 PeerInfo，故「远端后台机制」在本侧的同构体 =
-                  // `shell.adoptAsBackgroundJob` + `BgTaskRegistry.register`（= host 侧
-                  // `executeRemoteBackground`/`startRemoteBgFiber` 的等价面）。
-                  // 真失败（cwd 不存在、shell 起不来、真错误）**照旧** Left(ToolError)
-                  // [[formatOutcome]]，绝不被吞成后台回执。
-                  // `run_in_background: true` 的显式后台语义不经过本块（上方 background 腿）。
-                  val deviceBudgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
-                  val waitBudgetMs = explicitTimeoutMs.getOrElse(deviceBudgetMs)
-                  // P2 单任务取消远端腿：host 随下发参数带 bgJobId ⇒ 对端把本进程
-                  // 登记进 RemoteExecCancelRegistry（execKey），bg-cancel 按它精确杀树；
-                  // 同一 id 也是收编行的 jobId（登记行与回执同一 id，不铸第二个）。
-                  val execKey = input("bgJobId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-                  val deviceHealth = new JobHealth()
-                  for
-                    // 进程级时间杀退役（同本地腿）：365.days 送下去，判据只有预算竞速。
-                    execFiber <- shell
-                      .execute(actualCommand, 365.days, Some(deviceHealth), execKey = execKey)
-                      .attempt
-                      .start
-                    raced <- IO.racePair(joinResult(execFiber), IO.sleep(waitBudgetMs.millis))
-                    result <- (raced match
-                      case Left((winOutcome, budgetFiber)) =>
-                        // 预算内完成 —— 既有渲染三态（毫秒不差）。
-                        budgetFiber.cancel *> unwrapOutcome(winOutcome).map(res => formatOutcome(res, desc, tailN))
-                      case Right(_) =>
-                        // 预算到点仍在跑 —— 收编，进程不杀，回执 isError=false。
-                        remoteLegAutoBackground(
-                          shell,
-                          execFiber,
-                          deviceHealth,
-                          actualCommand,
-                          desc,
-                          ctx,
-                          tailN,
-                          waitBudgetMs,
-                          execKey
+                      end startBg
+                      val run =
+                        if persistent then startBg
+                        else
+                          // 告警帧只在熔断**触发沿**发（breakerEngaged）——熔断激活期
+                          // 内的每次拒绝只回工具面错误，不再重复 toast（防告警刷屏）。
+                          BgTaskRegistry.gateCreation(ctx.sessionId.getOrElse("")).flatMap { d =>
+                            if d.breakerEngaged then
+                              emitRateAlert(ctx) *> IO.pure(Left(ToolError(d.message.getOrElse(""))))
+                            else if !d.allowed then IO.pure(Left(ToolError(d.message.getOrElse(""))))
+                            else startBg
+                          }
+                      run
+                    else if ctx.isRemoteExec then
+                      // ── 设备腿（本实例替对端实例跑一条 Bash 请求）────────────────
+                      // T7（作者令 2026-11-04，自查件 D9 M6/§4）：**与本地前台腿同构**。
+                      //
+                      // 改前（缺陷态）：`explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT = 30s)`
+                      // 被当作**进程超时**——30s 到点即杀对端命令并回
+                      // `[Command timed out after 30000ms]`（`isError=true`，喂 S1 同败
+                      // streak，8 次就 L1 杀会话）。而本地腿早在 main-agent-nonblocking 批
+                      // 就把「到点」从**杀**改成了**收编为后台**。
+                      //
+                      // 改后（本块）：唯一上限 = 显式 timeout（解析面钳 60min；缺省 =
+                      // 前台等待预算 `ctx.bashConfig.foregroundWaitBudgetMs`。2026-11-10
+                      // 作者令：显式 timeout 可超预算，不再 min 钳制）——与
+                      // [[executeForeground]] **同源单点**，禁第二个上限（尤其禁 30s 兜底）。竞速（racePair，落败
+                      // 侧不取消）：
+                      //   - 预算内完成 ⇒ 既有 [[formatOutcome]]（成功/停滞/真错误三态照旧）；
+                      //   - 到点未完成 ⇒ **收编为后台任务**：进程不杀，按 host 下发的
+                      //     `bgJobId`（= 对端发起侧的任务 id，两侧同一 id）登记本侧
+                      //     `BgTaskRegistry`（`kind="remote"`，命令来自对端）并把仍在跑的执行
+                      //     fiber 挂进会话任务图，回**与本地 auto-background 逐字同形**的回执
+                      //     （同一构造点 [[RemoteExecutor.autoBackgroundReceipt]]），
+                      //     `isError=false`，可由 Bash(background_job_id, timeout) 等待、可由 cancel 按同一 id 取消。
+                      // 本侧无 PeerInfo，故「远端后台机制」在本侧的同构体 =
+                      // `shell.adoptAsBackgroundJob` + `BgTaskRegistry.register`（= host 侧
+                      // `executeRemoteBackground`/`startRemoteBgFiber` 的等价面）。
+                      // 真失败（cwd 不存在、shell 起不来、真错误）**照旧** Left(ToolError)
+                      // [[formatOutcome]]，绝不被吞成后台回执。
+                      // `run_in_background: true` 的显式后台语义不经过本块（上方 background 腿）。
+                      val deviceBudgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
+                      val waitBudgetMs = explicitTimeoutMs.getOrElse(deviceBudgetMs)
+                      // P2 单任务取消远端腿：host 随下发参数带 bgJobId ⇒ 对端把本进程
+                      // 登记进 RemoteExecCancelRegistry（execKey），bg-cancel 按它精确杀树；
+                      // 同一 id 也是收编行的 jobId（登记行与回执同一 id，不铸第二个）。
+                      val execKey = input("bgJobId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+                      val deviceHealth = new JobHealth()
+                      for
+                        // 进程级时间杀退役（同本地腿）：365.days 送下去，判据只有预算竞速。
+                        execFiber <- shell
+                          .execute(actualCommand, 365.days, Some(deviceHealth), execKey = execKey)
+                          .attempt
+                          .start
+                        raced <- IO.racePair(joinResult(execFiber), IO.sleep(waitBudgetMs.millis))
+                        result <- (raced match
+                          case Left((winOutcome, budgetFiber)) =>
+                            // 预算内完成 —— 既有渲染三态（毫秒不差）。
+                            budgetFiber.cancel *> unwrapOutcome(winOutcome).map(res => formatOutcome(res, desc, tailN))
+                          case Right(_) =>
+                            // 预算到点仍在跑 —— 收编，进程不杀，回执 isError=false。
+                            remoteLegAutoBackground(
+                              shell,
+                              execFiber,
+                              deviceHealth,
+                              actualCommand,
+                              desc,
+                              ctx,
+                              tailN,
+                              waitBudgetMs,
+                              execKey
+                            )
+                        ).handleErrorWith(e =>
+                          // 契约 2：真失败（进程起不来、cwd 不存在、执行期异常）如实走
+                          // Left(ToolError)，绝不被吞成后台回执（与改前同域）。
+                          IO.pure(
+                            Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
+                          )
                         )
-                    ).handleErrorWith(e =>
-                      // 契约 2：真失败（进程起不来、cwd 不存在、执行期异常）如实走
-                      // Left(ToolError)，绝不被吞成后台回执（与改前同域）。
-                      IO.pure(Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")))
-                    )
-                  yield result
-                  end for
-                else
-                  // sleep-poll 禁令批 B 段：护栏只包前台腿（显式 run_in_background
-                  // 豁免——后台是正道姿势；auto-background 收编路径也在本腿内，
-                  // 收编前的长 sleep 照样计犯）。判据/阶梯/文案单点 =
-                  // [[SleepPollGuard]]（纯函数，747cd36a `sleep 570; echo wN`
-                  // 心跳形态的机制补位——LoopGuard R-call 判同参指纹抓不到变参
-                  // 心跳；本护栏看命令形态）：
-                  //   - 首犯：放行执行，回执首部附警告+指导；
-                  //   - 第 N 次（Defaults.SleepPollEscalateAfter，默认 3）：
-                  //     拒绝执行 + taskStuck 面板可见帧升级。
-                  // Merger write exclusion: the repository is resolved once per call
-                  // (cheap registry check; mergers only) and handed to the foreground
-                  // leg, which acquires the non-blocking write lock right before the
-                  // process fiber starts and releases it at process terminal state.
-                  IO.blocking(mergerRepositoryOf(ctx.sessionId.getOrElse("default"))).flatMap { mergerRepo =>
-                    sleepPollGate(sessionId, actualCommand, ctx) {
-                      executeForeground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN, mergerRepo)
-                    }
+                      yield result
+                      end for
+                    else
+                      // sleep-poll 禁令批 B 段：护栏只包前台腿（显式 run_in_background
+                      // 豁免——后台是正道姿势；auto-background 收编路径也在本腿内，
+                      // 收编前的长 sleep 照样计犯）。判据/阶梯/文案单点 =
+                      // [[SleepPollGuard]]（纯函数，747cd36a `sleep 570; echo wN`
+                      // 心跳形态的机制补位——LoopGuard R-call 判同参指纹抓不到变参
+                      // 心跳；本护栏看命令形态）：
+                      //   - 首犯：放行执行，回执首部附警告+指导；
+                      //   - 第 N 次（Defaults.SleepPollEscalateAfter，默认 3）：
+                      //     拒绝执行 + taskStuck 面板可见帧升级。
+                      sleepPollGate(sessionId, actualCommand, ctx) {
+                        executeForeground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
+                      }
                   }
-              }
-              .flatTap { result =>
-                // After git branch-changing commands, reset branch tracking so the
-                // next refreshTurn re-detects silently (no false notification).
-                // Harmless if the command failed — branch didn't change, re-detect = same.
-                if isGitBranchChange(actualCommand) && result.isRight then
-                  ctx.agentActorRef.fold(IO.unit)(ref => ref ! AgentCommand.UpdateGitBranch(None))
-                else IO.unit
-              }
-          end if
+                  .flatTap { result =>
+                    // After git branch-changing commands, reset branch tracking so the
+                    // next refreshTurn re-detects silently (no false notification).
+                    // Harmless if the command failed — branch didn't change, re-detect = same.
+                    if isGitBranchChange(actualCommand) && result.isRight then
+                      ctx.agentActorRef.fold(IO.unit)(ref => ref ! AgentCommand.UpdateGitBranch(None))
+                    else IO.unit
+                  }
+              end if
+            end if
 
     // askuser-secret 批：otpFace 拒绝闸（消费失败 ⇒ 原命令不执行）。
     otpFace match
@@ -912,18 +847,7 @@ Git safety:
     explicitTimeoutMs: Option[Long],
     desc: Option[String],
     ctx: ToolContext,
-    tailN: Option[Int] = None,
-    /**
-     * Merger write exclusion: when present (this session is a merger), the
-     * non-blocking repository write lock is acquired immediately before the
-     * process fiber starts and the fiber releases it at terminal state. The
-     * guarantee rides the SAME fiber that runs the process, so an
-     * auto-background adoption keeps the exclusion until the process actually
-     * exits; a plain foreground completion releases at completion. Acquisition
-     * failure = another writer is active = the call is refused before any
-     * process starts.
-     */
-    mergerRepo: Option[String] = None
+    tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
     // Policy "no hard cap; auto-background at the deadline, never kill":
     // the wait deadline is the explicit `timeout` hint when provided (the
@@ -969,42 +893,16 @@ Git safety:
       // Foreground run with NO command-level time kill, raced against the wait
       // budget. racePair (not race) so the losing fiber keeps running: on the
       // budget side the execution fiber must survive for the adoption.
-      // The merger hold is acquired immediately before the fiber starts and its
-      // release is registered INSIDE that fiber (`guarantee`), so every
-      // acquisition has a guaranteed release exactly at process terminal state.
-      result <- mergerRepo match
-        case None =>
-          raceExec(
-            shell,
-            shell.execute(command, 365.days, Some(health)).attempt,
-            health,
-            command,
-            desc,
-            ctx,
-            tailN,
-            waitBudgetMs
-          )
-        case Some(repo) =>
-          IO.blocking(nebflow.core.delegate.RepositoryWriteLock.acquireFor(ctx.sessionId.getOrElse("default"), repo))
-            .flatMap {
-              case Left(inUse) =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"[Repository write lock in use] $inUse — another merger writer is active on this repository; " +
-                        "wait for it to finish before running this command (cross-process merger exclusion)"
-                    )
-                  )
-                )
-              case Right(hold) =>
-                val guarded = shell
-                  .execute(command, 365.days, Some(health))
-                  .attempt
-                  .guarantee(
-                    IO.blocking(nebflow.core.delegate.RepositoryWriteLock.releaseFor(hold)).attempt.void
-                  )
-                raceExec(shell, guarded, health, command, desc, ctx, tailN, waitBudgetMs)
-            }
+      result <- raceExec(
+        shell,
+        shell.execute(command, 365.days, Some(health)).attempt,
+        health,
+        command,
+        desc,
+        ctx,
+        tailN,
+        waitBudgetMs
+      )
       _ <- bridgeFiber.cancel // 活动桥接只保命令生命周期；命令返回（含转后台）即停
     yield result
     end for
@@ -1012,11 +910,10 @@ Git safety:
   end executeForeground
 
   /**
-   * The foreground race body shared by the plain and the merger-guarded exec
-   * fiber: run the (already configured) execution IO against the foreground
-   * wait budget; within the budget = plain foreground result, budget reached =
-   * adopt into the background registry (process keeps running, so a merger
-   * hold configured on the fiber keeps guarding it to terminal state).
+   * The foreground race body: run the (already configured) execution IO against
+   * the foreground wait budget; within the budget = plain foreground result,
+   * budget reached = adopt into the background registry (process keeps
+   * running).
    */
   private def raceExec(
     shell: ShellSession,
@@ -1616,7 +1513,7 @@ Git safety:
    * 在本模块内对项目面**零新增依赖**——`FlowMapEventLog` 是 project 包内的事件写入器，
    * 而本模块已有的 layer 边界只禁 `core.project`→`core.tools` 的反向。为守住「不新增
    * 跨层 import」，本腿经 `ToolContext` 已注入的**引擎侧身份**（`projectName` /
-   * `flowNodeId`）+ `ProjectRuntimeRegistry` 解析 workspace——与 `NodeReportTool`
+   * `flowNodeId`）+ `ProjectRuntimeRegistry` 解析 workspace——与编排工具族
    * 的 `ctx.projectName → ProjectRuntimeRegistry → workspace` 单点同款（判据不猜：
    * 解析不到 ⇒ 静默 no-op，只留 `logger.warn`；猜错 = 把事件写进别人的日志更糟）。
    */

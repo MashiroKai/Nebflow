@@ -25,7 +25,9 @@ import { fetchNeblinkStatus, getNeblinkState, startPkceLogin, pollPkceState, can
 // setUpdateDot（settings-btn 更新绿点，updateCheck.js）已随 auth-trim 批删除 ——
 // 绿点与静默自动检查整链退役（2026-10-20 作者令，未来由官网统一检测更新取代）。
 import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
-import { standLockupSvg } from './brand.js';
+import { standLockupSvg, brand } from './brand.js';
+// Agent face of the avatar (a conversation is shown in the main area): the Agent's own avatar.
+import { agentAvatarDataUrl, onAgentAvatarChange } from './agentProfile.js';
 // 件四（作者令 2026-11-02）：设置页身份卡的头像引擎（换头像流程触发）+ App 内个人资料面。
 // 无环：该模块是叶子（只依 neblink/friendsApi/utils/i18n/brand/mobile-popSheet）。
 import { openSettingsAvatarPicker, openProfileFace } from './settingsIdentity.js';
@@ -542,7 +544,126 @@ function openAccountMenu(anchorEl) {
 function bindAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
-  avatar.addEventListener('click', () => activateAccountEntry(avatar));
+  // While the avatar shows the Agent face a click returns to the Agent instead of opening the account entry.
+  avatar.addEventListener('click', () => {
+    if (agentFaceReturn) agentFaceReturn();
+    else activateAccountEntry(avatar);
+  });
+}
+
+// ── Agent face ─────────────────────────────────────────────────────────────
+// While a friend, group or device conversation is shown in the main chat area (messages/mainHost.js), the avatar flips
+// from the account face to the Agent face; clicking it returns to the Agent. The face is a data attribute on the same
+// button, so the account renderer above keeps working untouched.
+
+/** @type {(() => void)|null} */
+let agentFaceReturn = null;
+/** @type {(() => void)|null} */
+let unsubscribeAgentAvatar = null;
+let flipTimer = 0;
+let flipEndTimer = 0;
+/** @type {((e: AnimationEvent) => void)|null} */
+let flipEndHandler = null;
+/** One card flip lasts this long (the CSS animation `nf-avatar-flip` runs for the same time); the face changes at half. */
+const FLIP_MS = 280;
+
+/** Stop the flip class: the animation is over, or a new face was asked for before it was. */
+function endFlip(button) {
+  window.clearTimeout(flipEndTimer);
+  if (flipEndHandler) button.removeEventListener('animationend', flipEndHandler);
+  flipEndHandler = null;
+  button.classList.remove('is-flipping');
+}
+/** Title and label of the account face, put back when the avatar flips back. While the Agent face is shown the status
+ *  refresh keeps `title` current here instead of writing the button. */
+let accountFace = { title: '', label: /** @type {string|null} */ (null) };
+
+/** Paint the Agent face: the Agent's own avatar, or the brand mark when it has none. */
+function paintAgentFace(button) {
+  let face = button.querySelector('.activity-avatar-agent');
+  if (!face) {
+    face = document.createElement('span');
+    face.className = 'activity-avatar-agent';
+    face.setAttribute('aria-hidden', 'true');
+    button.appendChild(face);
+  }
+  const dataUrl = agentAvatarDataUrl();
+  if (dataUrl) {
+    const image = document.createElement('img');
+    image.className = 'activity-avatar-agent-photo';
+    image.alt = '';
+    image.draggable = false;
+    image.src = dataUrl;
+    face.replaceChildren(image);
+    return;
+  }
+  const picture = document.createElement('picture');
+  const dark = document.createElement('source');
+  dark.media = '(prefers-color-scheme: dark)';
+  dark.srcset = brand.logoDarkUrl;
+  const logo = document.createElement('img');
+  logo.className = 'activity-avatar-agent-logo';
+  logo.alt = '';
+  logo.src = brand.logoUrl;
+  picture.append(dark, logo);
+  face.replaceChildren(picture);
+}
+
+/** @param {'account'|'agent'} face */
+function setAvatarFace(face) {
+  const button = document.getElementById('activity-avatar');
+  if (!button) return;
+  window.clearTimeout(flipTimer);
+  const showing = button.dataset.face === 'agent' ? 'agent' : 'account';
+  // The account's title and label are read now, before the flip replaces them half way through it.
+  if (face === 'agent' && showing === 'account') accountFace = { title: button.title, label: button.getAttribute('aria-label') };
+  const apply = () => {
+    if (face === 'agent') {
+      paintAgentFace(button);
+      button.dataset.face = 'agent';
+      button.setAttribute('aria-label', t('messages.backToAgent'));
+      button.title = t('messages.backToAgent');
+    } else {
+      delete button.dataset.face;
+      if (accountFace.label === null) button.removeAttribute('aria-label');
+      else button.setAttribute('aria-label', accountFace.label);
+      button.title = accountFace.title;
+    }
+  };
+  endFlip(button);
+  // Already showing that face: nothing to change (a flip that was on its way elsewhere is cancelled above).
+  if (showing === face) return;
+  const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) { apply(); return; }
+  // A short card flip: the face changes at its half-way point and the flip runs on to its end.
+  button.classList.add('is-flipping');
+  flipTimer = window.setTimeout(apply, FLIP_MS / 2);
+  // The class goes when the animation has run to its end; the timer is only the way out if no animation ever runs.
+  flipEndHandler = (e) => { if (e.target === button) endFlip(button); };
+  button.addEventListener('animationend', flipEndHandler);
+  flipEndTimer = window.setTimeout(() => endFlip(button), FLIP_MS + 200);
+}
+
+/**
+ * Flip the avatar to the Agent face; a click runs `onReturn` instead of the account entry.
+ * @param {() => void} onReturn
+ */
+export function flipAvatarToAgent(onReturn) {
+  agentFaceReturn = onReturn;
+  if (unsubscribeAgentAvatar) unsubscribeAgentAvatar();
+  unsubscribeAgentAvatar = onAgentAvatarChange(() => {
+    const button = document.getElementById('activity-avatar');
+    if (button && button.dataset.face === 'agent') paintAgentFace(button);
+  });
+  setAvatarFace('agent');
+}
+
+/** Put the account face (and its click) back. */
+export function restoreAvatarAccountFace() {
+  agentFaceReturn = null;
+  if (unsubscribeAgentAvatar) unsubscribeAgentAvatar();
+  unsubscribeAgentAvatar = null;
+  setAvatarFace('account');
 }
 
 /**
@@ -1150,7 +1271,10 @@ function renderAvatar() {
 
   // Tooltip via i18n (this used to write Chinese literals, clobbering the
   // `activity-avatar → activity.login` mapping in i18n.js on every 10s refresh).
-  avatar.title = st.pairing
+  const accountTitle = st.pairing
     ? t('activity.pairing')
     : (st.loggedIn ? t('activity.profile') : t('activity.login'));
+  // While the Agent face is shown the tooltip says where a click goes; the account's own waits for the way back.
+  if (avatar.dataset.face === 'agent') accountFace.title = accountTitle;
+  else avatar.title = accountTitle;
 }

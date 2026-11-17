@@ -56,6 +56,9 @@ let tasks = [];
 // 后端/all 之外路径仍按 kind 过滤兜底，故渲染侧一律只取 kind=todo）。
 let inboxTodos = [];
 let isCreating = false;
+/** Draft round: bumped whenever a create/edit draft is started. A refresh reuses the open form of the current
+ *  round; a reopened or retargeted form belongs to a new round and is built fresh, never mistaken for the old one. */
+let draftRound = 0;
 let isCreatingTodo = false;
 let panelOpen = false;
 let todoPageOpen = false;
@@ -148,7 +151,8 @@ function isOverdue(t) {
 }
 
 function isTodoTask(t) {
-  return t.kind === 'todo';
+  // Legacy surface cannot safely edit the decision-card JSON payload.
+  return t.kind === 'todo' && t.project !== '__decision_card_mvp__';
 }
 
 /**
@@ -353,7 +357,14 @@ function renderReminderPanel() {
   const countEl = $('#reminder-panel .reminder-panel-count');
   if (countEl) countEl.textContent = pending.length > 0 ? pending.length : '';
 
-  // Clear and rebuild
+  // A refresh keeps the open desktop draft (value, focus, caret). A draft belongs to one round: a form built for
+  // an earlier create/edit (another target, or the same one reopened) is rebuilt, never carried over.
+  const round = String(draftRound);
+  const liveForm = isCreating && !mobileLayerOn() ? /** @type {HTMLElement|null} */ (body.querySelector('.reminder-inline-create')) : null;
+  const draftForm = liveForm && liveForm.dataset.draft === round ? liveForm : null;
+  const focused = /** @type {HTMLInputElement|HTMLTextAreaElement|null} */ (draftForm && draftForm.contains(document.activeElement) ? document.activeElement : null);
+  const selection = focused && 'selectionStart' in focused ? [focused.selectionStart, focused.selectionEnd] : null;
+  let formBuilt = false;
   body.innerHTML = '';
 
   if (pending.length === 0 && !isCreating) {
@@ -405,12 +416,19 @@ function renderReminderPanel() {
     // 时清（写口在 setDrawerOpen 的收尾计时器）—— 表单还在输入中时到达的
     // listScheduledTasks 刷新帧不再抹掉输入值（旧写法会抹，顺手修掉的暗坑）。
     const wantOpen = !!(isCreating && mDrawerBody);
-    if (sheet && mDrawerBody && wantOpen && !mDrawerBody.children.length) {
-      mDrawerBody.appendChild(buildInlineCreate());
+    const drawerForm = mDrawerBody ? /** @type {HTMLElement|null} */ (mDrawerBody.querySelector('.reminder-inline-create')) : null;
+    if (sheet && mDrawerBody && wantOpen && (!drawerForm || drawerForm.dataset.draft !== round)) {
+      mDrawerBody.replaceChildren(buildInlineCreate());
+      formBuilt = true;
     }
     setDrawerOpen(wantOpen);
   } else if (isCreating) {
-    body.appendChild(buildInlineCreate());
+    formBuilt = !draftForm;
+    body.appendChild(draftForm || buildInlineCreate());
+    if (focused) {
+      focused.focus({ preventScroll: true });
+      if (selection && selection[0] != null && selection[1] != null) focused.setSelectionRange(selection[0], selection[1]);
+    }
   }
 
   if (typeof lucide !== 'undefined') {
@@ -422,16 +440,10 @@ function renderReminderPanel() {
   // Focus inline input if creating：表单在两处宿主之一（手机 = 抽屉体，桌面 = 列表
   // 尾部），所以按**当前宿主**取输入件（类选择器，不再走 #reminder-* id 直查 ——
   // 组件契约 R2 计数只许降不许升）。
-  if (isCreating) {
+  if (isCreating && formBuilt) {
     const host = mobileLayerOn() ? mDrawerBody : body;
     const input = host ? /** @type {HTMLInputElement|null} */ (host.querySelector('.reminder-inline-input')) : null;
-    // 编辑态：每次重建后重新预填两段（表单重建 = 值随重建走，单一预填出口；
-    // main schedule-todo-unify 批 2026-11-06 的既有面）。
-    if (editingTask && host) {
-      if (input) input.value = nameOf(editingTask);
-      const desc = /** @type {HTMLTextAreaElement|null} */ (host.querySelector('.reminder-inline-desc'));
-      if (desc) { desc.value = descriptionOf(editingTask); updateDescAutosize(desc); }
-    }
+    // buildInlineCreate fills an editing draft once; a refresh neither rebuilds it nor moves its focus.
     // preventScroll（S4 实测驱动 2026-11-06）：开抽屉的首拍抽屉盒还在
     // translateY(100%) 场外（is-open 下一帧才翻类），此刻 focus 会触发浏览器的
     // focus-scroll 去页面壳上把场外输入件滚进可视区 —— 页面壳 scrollTop 被写、
@@ -886,6 +898,8 @@ function buildInlineCreate() {
   const wrap = document.createElement('div');
   wrap.className = 'reminder-inline-create';
   wrap.id = 'reminder-inline-create';
+  wrap.dataset.target = editingTask ? String(editingTask.id) : '';
+  wrap.dataset.draft = String(draftRound);
 
   const dtStr = toLocalDatetimeString(defaultTriggerAt());
   const [dtDate, dtTime] = dtStr.split('T');
@@ -1162,6 +1176,7 @@ function toggleTodoPage() {
 
 function startInlineCreate() {
   if (isCreating) return;
+  draftRound += 1;
   isCreating = true;
   editingTask = null;       // 新建 = 清编辑态（否则抽屉标题/预填会带着上一条）
   currentRepeat = 'once';   // fresh form → one-shot by default
@@ -1207,6 +1222,7 @@ function cancelInlineCreate() {
 
 /** 行尾 ✎：编辑定时任务的 name/description（表单复用 buildInlineCreate，预填两段）。 */
 function startTaskEdit(r) {
+  draftRound += 1;
   editingTask = r;
   isCreating = true;
   currentRepeat = r.repeat || 'once';
@@ -1682,7 +1698,7 @@ onMessage('scheduledTaskList', (msg) => {
     inboxTodos = (msg.tasks || []).filter(isTodoTask);
     saveCachedInbox(inboxTodos);
   } else {
-    tasks = msg.tasks || [];
+    tasks = (msg.tasks || []).filter(t => t.project !== '__decision_card_mvp__');
     if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
   }
   renderList();

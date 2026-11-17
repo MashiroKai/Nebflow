@@ -118,8 +118,12 @@ class ScheduleCardContractSpec extends FunSuite:
       "落盘行缺 injected=true —— 无标记行走绿泡分支（退化根源）")
     assert(actorScala.contains("schedule = Some("),
       "落盘行缺 schedule 卡片载荷 —— 卡片降级为无载荷形态")
-    assert(actorScala.contains("\"type\" -> \"user\""),
-      "广播帧不是注入 user 帧 —— 触发即渲染腿断裂（须刷新才见卡）")
+    // 过时测试修复（2026-11-15）：#822 复活批「Schedule 双面化」后 live 广播帧
+    // 改为专用 `scheduledTaskTriggered` 事件（ScheduledTaskActor 落盘+广播双写；
+    // 前端 scheduled-task.js onMessage('scheduledTaskTriggered') 触发即渲染），
+    // 旧 `"type" -> "user"` 注入帧形态退役。钉的意图不变：触发即渲染腿必须在。
+    assert(actorScala.contains("\"type\" -> \"scheduledTaskTriggered\""),
+      "广播缺 scheduledTaskTriggered 专用帧 —— 触发即渲染腿断裂（须刷新才见卡）")
     assert(!actorScala.contains("\"userMessage\""),
       "死帧 userMessage 广播仍在 —— 双轨发射面未收口（schedcard 批收口令）")
 

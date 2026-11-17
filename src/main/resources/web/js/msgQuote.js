@@ -131,7 +131,7 @@ function fullTextOf(d) {
       return `${t('chat.quoteTypeImage')} ${pos ? pos + ' · ' : ''}${d.fileName || ''}${pathTail}`.trim();
     }
     case 'file': return `${t('chat.quoteTypeFile')} ${d.fileName || ''}${pathTail}`.trim();
-    default: return String(d.text || '').slice(0, 1200);
+    default: return String(d.text || '');
   }
 }
 
@@ -154,6 +154,7 @@ export function chatMessageRefInput(d) {
   const content = {
     excerpt: excerptOf(d),
     fullText: fullTextOf(d),
+    fullTextComplete: d.kind === 'text' || d.kind === 'image' || d.kind === 'file',
     attachments: atts.slice(0, MAX_QUOTE_ATTS).map(a => ({
       type: a.type === 'image' || a.type === 'video' ? a.type : 'file',
       name: String(a.name || '').slice(0, 200),
@@ -274,7 +275,7 @@ export function mountQuoteFooterButton(rowEl) {
 //    currentQuoteStackTarget / _qib* 观察器）全部退役，**不留替代按钮**。
 //    叠卡单张引用的能力面（startItemQuote）原样保留：它现在没有 UI 入口，等「引用
 //    消息图标化」语义核准后再设计入口（本批只做移除，不新造入口）。
-//    防复活钉 = /Users/kaiyu/.stand/evidence/ui-unification-20261103/input-fixes/
+//    防复活钉 = ~/.stand/evidence/ui-unification-20261103/input-fixes/
 //    verify-five-fixes.mjs ② 腿（五处 #quote-item-btn / initQuoteItemButton 0 命中）。
 
 let _btnMountRaf = 0;

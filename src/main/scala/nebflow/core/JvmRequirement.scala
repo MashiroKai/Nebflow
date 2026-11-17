@@ -10,9 +10,7 @@ package nebflow.core
  * the library surface (logback, http4s, …) whose class files or
  * multi-release entries may themselves need a newer runtime.
  *
- * Note: Pekko was listed in this surface until 2026-11-05; its (never-used)
- * dependency declaration has been removed — Pekko 依赖已于 2026-11-05 移除 —
- * so it is no longer part of the dependency surface this gate reasons about.
+ * Pekko timers are initialized only after this gate accepts the runtime.
  *
  * Detection order (fail-loud, never fail-open):
  *   1. `java.specification.version` — `"1.8"` → 8, `"1.N"` → N, otherwise the

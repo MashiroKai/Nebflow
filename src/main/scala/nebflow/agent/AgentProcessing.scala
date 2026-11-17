@@ -11,6 +11,7 @@ import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.llm.*
 import nebflow.shared.{NebflowLogger, *}
+import nebflow.shared.given
 
 import scala.concurrent.duration.*
 
@@ -133,6 +134,11 @@ private[agent] object AgentProcessing:
             pending
           )
         end if
+
+      case _: LlmFailed if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        ProtectedAgentExecution.suspend(handle, "failed-round-review-required") *>
+          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       case LlmFailed(error, replyTo, turnId, msg) =>
         // pi-logic 接线点 2（轮 A 织入）：stale 判定经 TurnNumber 类型化（数值语义不变）。
@@ -576,6 +582,11 @@ private[agent] object AgentProcessing:
         end if
 
       // --- Tools completed ---
+      case _: ToolsComplete if state.execution.stopDeferred && state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        ProtectedAgentExecution.suspend(handle, "deferred-stop-review-required") *>
+          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+
       case tc: ToolsComplete if state.execution.stopDeferred =>
         // eng-deferred-cancel batch (2026-10-02) — K-1 observer + K-2 artifact
         // preservation, both landing here because a transcript is only
@@ -655,6 +666,35 @@ private[agent] object AgentProcessing:
 
       // Normal batch continuation. The deferred variant above never falls
       // through here — it stops the actor.
+
+      case tc: ToolsComplete if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        val nextState = state.withMessages(batchMessages(tc, state.messages))
+          .copy(loopCounters = tc.loopCounters.getOrElse(state.loopCounters))
+        if tc.compactedMessages.nonEmpty || tc.freezeAfter.nonEmpty || tc.loopReminder.nonEmpty then
+          ProtectedAgentExecution.suspend(handle, "unsupported-tool-boundary") *>
+            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        else
+          val immediate = nextState.execution.pendingImmediateInputs
+          val queued = nextState.execution.pendingUserInputs
+          val cleanState = nextState.copy(execution = nextState.execution.copy(
+            pendingImmediateInputs = Nil, pendingUserInputs = Nil))
+          val users = queued.collect { case input: UserInput => input }
+          val selectedImmediate = immediate.map { input =>
+            val content = input.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(input.text))(Right(_))
+            Message(MessageRole.User, content, source = input.source, messageId = input.clientMessageId)
+          }
+          val selectedUsers = users.map { input =>
+            val content = input.blocks.filter(_.nonEmpty).fold[Either[String, List[ContentBlock]]](Left(input.text))(Right(_))
+            Message(MessageRole.User, content, source = input.source, messageId = input.clientMessageId)
+          }
+          if users.size != queued.size || users.size > 1 || (immediate.nonEmpty && queued.nonEmpty) then
+            ProtectedAgentExecution.suspend(handle, "unsupported-input-order") *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          else
+            ProtectedAgentExecution.commitTranscriptRound(handle, cleanState) *>
+              pipeLlmCall(agentDef, resources, depth, parentRef,
+                cleanState.withMessages(cleanState.messages ++ selectedImmediate ++ selectedUsers), tc.replyTo)
 
       case tc: ToolsComplete =>
         // ── pi-logic 接线点 6（轮 A 织入）：tool.BatchSettled 位点 + 工具轮收束审计行
@@ -1053,6 +1093,7 @@ private[agent] object AgentProcessing:
       case AgentCommand.Interrupt() =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user")
         for
+          _ <- state.sessionId.traverse_(sid => nebflow.core.tools.AskHostLedger.cancelWorker(sid, "user interrupted"))
           _ <- ctx.cancelCurrentTurn()
 
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
@@ -1463,6 +1504,43 @@ private[agent] object AgentProcessing:
               // satisfies one outstanding slot of the parallel batch. The drain at the
               // turn boundary only releases subtask/delegate events once the counter
               // hits 0, so a batch completing mid-turn is still injected together.
+              // 完成通道修复批（2026-11-12）：与 idle 面 ackDelegateDelivery 同判——
+              // 无身份（owner/recipient 任一为空）的 delegate 终态事件不进终端验收面
+              // （checkAcceptance 的 require 会炸掉忙面 actor，见 ReminderWiringSpec.①
+              // 阶梯证据）；无债身份可验 ⇒ 跳过债面，事件照常入队。
+              val owner = event.correlationId.getOrElse("")
+              val recipient = event.metadata("parentSessionId").flatMap(_.asString).getOrElse("")
+              val completionDebtAck =
+                if event.source == "delegate" && Set("completed", "failed", "cancelled").contains(event.eventType)
+                  && owner.nonEmpty && recipient.nonEmpty then
+                  val completionEvent = event.copy(payload = payload)
+                  nebflow.core.mail.CompletionDebtStore.checkAcceptance(owner, recipient, completionEvent).flatMap {
+                    case nebflow.core.mail.CompletionDebtStore.Acceptance.Conflict =>
+                      NebflowLogger.forName("nebflow.agent").error(s"conflicting duplicate terminal '$owner' withheld from parent processing")
+                    case nebflow.core.mail.CompletionDebtStore.Acceptance.Duplicate =>
+                      // Acceptance survived a crash before ACK; retain the atomic identity guard.
+                      event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption) match
+                        case Some(messages) =>
+                          nebflow.core.mail.CompletionDebtStore
+                            .acknowledge(owner, recipient, messages, nebflow.core.mail.CompletionDebtStore.generationOf(event))
+                            .flatMap(settled => IO.whenA(!settled)(NebflowLogger.forName("nebflow.agent")
+                              .info(s"duplicate terminal '$owner' replayed against non-matching debt; debt retained")))
+                        case None => IO.unit
+                    case nebflow.core.mail.CompletionDebtStore.Acceptance.New =>
+                      val consumed = state.execution.pendingEvents.exists(e =>
+                        e.source == event.source && e.eventType == event.eventType && e.correlationId == event.correlationId && e.payload == event.payload
+                      )
+                      if consumed then IO.unit
+                      else nebflow.core.mail.CompletionDebtStore.pending(owner).flatMap {
+                        case Right(Some(debt)) if recipient.nonEmpty && debt.recipientSessionId == recipient =>
+                          event.metadata("completionMessages").flatMap(_.as[List[nebflow.shared.Message]].toOption) match
+                            case Some(messages) => IO.unit // pending/held completion is not acknowledged before injection
+                            case None => IO.unit
+                        case Right(None) => IO.unit
+                        case _ => NebflowLogger.forName("nebflow.agent").error(s"completion debt ack withheld for '$owner': recipient mismatch/unreadable")
+                      }
+                  }
+                else IO.unit
               val updatedOutstanding =
                 if TurnBoundaryDrains.isSubagentResult(event) then math.max(0, state.execution.outstandingSubagentResults - 1)
                 else state.execution.outstandingSubagentResults
@@ -1494,7 +1572,10 @@ private[agent] object AgentProcessing:
                     fileChanges = metadata("fileChanges"),
                     sessionProject = state.projectName,
                     // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
-                    dedup = true
+                    dedup = true,
+                    // ask-mail 批（2026-11-16）：ask handoff 载荷的续聊地址透传
+                    //（缺席 = 非 ask 腿，旧行为逐字）。
+                    askAddress = metadata("askMailAddress").flatMap(_.asString)
                   )
                 case None => IO.unit
               bubbleIO *>
@@ -1503,7 +1584,7 @@ private[agent] object AgentProcessing:
                   AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
                   isSubagent = depth > 0,
                   state.sessionId
-                ) *> persistQueues(state.sessionId, updatedExec) *>
+                ) *> persistQueues(state.sessionId, updatedExec) *> completionDebtAck *>
                 // 台账对账（平台修复批 fix 1 落账点）：回执入 held 队列即记 producedAt，
                 // HeldDeliveryWatchdog 据此起算「N 分钟未投递」催注时钟；徽标帧随行
                 // （held 计数上升面）。
@@ -1669,6 +1750,20 @@ private[agent] object AgentProcessing:
       // 🔴 查而不记：这里**不能**注册 id —— 排队项在 turn 边界会原样转发给自己
       // （head-to-self drain），真正的注册点 = idle 直投的 checkDuplicate；若在入队
       // 时注册，转发到 idle 的队头会被自己的注册误判成重复 ⇒ 排队消息永远不派发。
+      case msg: AgentCommand.UserInput if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        InputLanding.protectedUserReceipt(handle, msg).flatMap {
+          case Right(receipt) if receipt.accepted =>
+            val queued = msg.copy(clientMessageId = Some(receipt.identity))
+            val execution = state.execution.copy(pendingUserInputs = state.execution.pendingUserInputs :+ queued)
+            IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = execution), pending))
+          case Right(_) =>
+            emitDuplicateReceipt(state.wsSend, state.sessionId, msg.clientMessageId) *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          case Left(reason) =>
+            logger.warn(s"Protected input admission failed: $reason") *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        }
       case msg: AgentCommand.UserInput =>
         val isDuplicate = msg.clientMessageId.exists(state.recentMessageIds.contains)
         if isDuplicate then
@@ -1716,6 +1811,18 @@ private[agent] object AgentProcessing:
           pendingUserInputs = state.execution.pendingUserInputs :+ msg
         )
         IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
+      case msg: AgentCommand.ImmediateInput if state.sessionId.exists(resources.protectedExecutions.contains) =>
+        val handle = resources.protectedExecutions(state.sessionId.get)
+        InputLanding.protectedImmediateReceipt(handle, msg).flatMap {
+          case Right(receipt) if receipt.accepted =>
+            val queued = msg.copy(clientMessageId = Some(receipt.identity))
+            val execution = state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+ queued)
+            IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = execution), pending))
+          case Right(_) => IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          case Left(reason) =>
+            logger.warn(s"Protected immediate input admission failed: $reason") *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        }
       case msg: AgentCommand.ImmediateInput =>
         logAgentEvent(
           agentDef,

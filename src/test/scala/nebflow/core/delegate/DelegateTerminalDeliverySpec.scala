@@ -55,7 +55,7 @@ class DelegateTerminalDeliverySpec extends CatsEffectSuite:
   // ── needsRedelivery：本例形态的机检读数 ────────────────────────────────
 
   test("needsRedelivery: 超龄未确认 = true（barrier 清零但父未收到的精确形态）") {
-    // 本例实态钉死：delegate_report(finish) 已落盘、会话 Idle、barrier 0/0——
+    // 本例实态钉死：finish 申报已落盘、会话 Idle、barrier 0/0——
     // 但父会话从未收到终态；首投回执超龄未 ack 即该形态。
     assert(DelegateDeliveryReceipts.needsRedelivery(receipt(), now = 1000L + 10 * 60 * 1000L + 1, graceMs = 10 * 60 * 1000L))
   }

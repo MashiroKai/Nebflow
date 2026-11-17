@@ -7,8 +7,9 @@ import nebflow.core.jev.CatalogEntry
 /**
  * 双模式批（2026-10-28 · 设计 §7 插件三层规范）——**分配问对面 + 校验脚本**层：
  *
- *  - T3 catalogText（JevAllocator/LlmAllocator 共用的分配问对面渲染单点）：
- *    keywords/useWhen 增量行随块；缺席 = 块形逐字节不变。
+ *  - T3 catalogText（LlmAllocator 的分配问对面渲染单点；jev-retire 批
+ *    2026-11-16 起自 JevAllocator 原文迁入）：keywords/useWhen 增量行随块；
+ *    缺席 = 块形逐字节不变。
  *  - T4 validate_plugin.py C17/C18 增量软检查：description>200 → WARN；
  *    Plugin.md 引用 SKILL.md 断链 → WARN（[WARN] 永不阻断；无引用/无 Plugin.md =
  *    PASS）。
@@ -18,12 +19,12 @@ class PluginCatalogLayerSpec extends FunSuite:
   // ── T3 分配问对面 ───────────────────────────────────────────────────────────
 
   test("T3a catalogText 缺席增量键 = 旧块形逐字节") {
-    val text = JevAllocator.catalogText(List(CatalogEntry("pkg-a", "cap statement")))
+    val text = LlmAllocator.catalogText(List(CatalogEntry("pkg-a", "cap statement")))
     assertEquals(text, "### pkg-a\ncap statement", "the legacy block shape is untouched")
   }
 
   test("T3b catalogText 在键 = keywords/use when 增量行随块") {
-    val text = JevAllocator.catalogText(
+    val text = LlmAllocator.catalogText(
       List(
         CatalogEntry("pkg-a", "cap statement", List("alpha", "beta"), Some("when the task needs it")),
         CatalogEntry("pkg-b", "other", Nil, None)

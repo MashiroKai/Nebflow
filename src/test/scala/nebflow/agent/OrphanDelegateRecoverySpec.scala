@@ -72,6 +72,7 @@ class OrphanDelegateRecoverySpec extends FunSuite:
     PathUtil.setDataRoot(tmp / "data")
     try
       val store = new SubAgentTaskStore(tmp / "subagent-tasks")
+      os.makeDir.all(tmp / "sessions")
       val sessionStore = SessionStore(tmp / "sessions", tmp / "tasks")
       body(store, sessionStore, tmp)
     finally
@@ -123,6 +124,28 @@ class OrphanDelegateRecoverySpec extends FunSuite:
         tasks.forall(t => t.lastError.exists(_.contains("parent NOT notified"))),
         clue(tasks).toString
       )
+    }
+  }
+
+  test("startup discovery preserves a protected task after authority reopen") {
+    withFixture("protected-startup") { (store, sessionStore, tmp) =>
+      val child = "delegate-protected"
+      val admission = nebflow.shared.ExecutionAdmission(
+        child, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
+        _root_.io.circe.Json.fromString("initial"), "input"
+      )
+      val io = for
+        _ <- IO.blocking(os.makeDir.all(tmp / "sessions"))
+        _ <- store.recordTask(mkTask(child, "parent"))
+        _ <- ExecutionCommitStore.resource(sessionStore.executionAuthorityRoot).use(_.admit(admission))
+        recovered <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore)
+        row <- store.findByTaskId(child)
+        reopened <- ExecutionCommitStore.resource(sessionStore.executionAuthorityRoot).use(_.protection(child))
+      yield (recovered, row, reopened)
+      val (recovered, row, protection) = io.unsafeRunSync()
+      assertEquals(recovered, Nil)
+      assertEquals(row.map(_.status), Some("running"))
+      assertEquals(protection, nebflow.shared.ExecutionProtection.Protected(List("run")))
     }
   }
 

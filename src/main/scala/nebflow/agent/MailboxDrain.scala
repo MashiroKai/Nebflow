@@ -55,7 +55,14 @@ private[agent] object MailboxDrain:
 
   /** drain 产出事件的 viaMailbox 标（旧机器判别位：标记/ack 面对邮箱件零动作）。 */
   private def stamped(e: SessionMailbox.Entry): AgentCommand.ExternalEvent =
-    e.event.copy(metadata = e.event.metadata.deepMerge(JsonObject("viaMailbox" -> true.asJson)))
+    e.event.copy(metadata =
+      e.event.metadata.deepMerge(
+        JsonObject(
+          "viaMailbox" -> true.asJson,
+          "mailboxIdentity" -> e.identity.asJson
+        )
+      )
+    )
 
   /**
    * W2 批门禁（纯函数，spec 判红锚）。入参必须已按 seq 序。
@@ -95,22 +102,12 @@ private[agent] object MailboxDrain:
     .fold(IO.pure(true)) { sid =>
       for
         live <- resources.agentRegistry.get.map(_.get(sid))
-        facts <- IO.blocking {
-          val state = nebflow.core.delegate.WorkspaceLedger.default.snapshot
-          val workspace = state.workspaces
-            .find(_.owner == sid)
-            .orElse(live.flatMap(entry => state.workspaces.find(_.owner == entry.rootSessionId)))
-          val record = nebflow.core.delegate.DelegateRegistry.find(sid)
-          val initPending = state.mergerBootstraps.get(sid).exists(_.status != "ready")
-          (workspace, record, initPending)
-        }
-        (workspace, record, pending) = facts
+        record <- IO.blocking(nebflow.core.delegate.DelegateRegistry.find(sid))
         task <-
           if record.nonEmpty || live.exists(_.kind == AgentKind.Delegate) then
             resources.subAgentTaskStore.findByTaskId(sid)
           else IO.pure(None)
-      yield !workspace.exists(_.lifecycle != "open") &&
-        !nebflow.core.delegate.SessionResumption.requiresManual(record, task, live, workspace, pending)
+      yield !nebflow.core.delegate.SessionResumption.requiresManual(record, task, live)
     }
     .handleErrorWith(error =>
       logger.warn(s"Mailbox execution held: recovery state unreadable: ${error.getMessage}").as(false)
@@ -167,7 +164,16 @@ private[agent] object MailboxDrain:
 
   /** 消费完成清除（装配点调用；幂等）。 */
   def unlinkConsumed(sid: String, events: List[AgentCommand.ExternalEvent]): IO[Unit] =
-    SessionMailbox.unlinkTaken(sid, events.map(_.correlationId.getOrElse("")).filter(_.nonEmpty))
+    SessionMailbox.unlinkTaken(
+      sid,
+      events.flatMap { event =>
+        event
+          .metadata("mailboxIdentity")
+          .flatMap(_.asString)
+          .filter(_.nonEmpty)
+          .orElse(event.correlationId.filter(_.nonEmpty))
+      }
+    )
 
   // ── 呈现组装（逐字保留既有注入管线形态）──────────────────────────────
 
@@ -222,7 +228,10 @@ private[agent] object MailboxDrain:
           e.metadata("agentName").flatMap(_.asString),
           fileChanges = e.metadata("fileChanges"),
           sessionProject = state.projectName,
-          waitingForBatch = waitingForBatch
+          waitingForBatch = waitingForBatch,
+          // ask-mail 批（2026-11-16）：ask 腿邮箱排干件的续聊地址透传（缺席 = 非
+          // ask 腿，旧行为逐字）。
+          askAddress = e.metadata("askMailAddress").flatMap(_.asString)
         )
       case None => IO.unit)
 

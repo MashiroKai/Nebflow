@@ -8,7 +8,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, MailTool, NodeReportToolDef, TaskBoardToolDef, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, TaskBoardToolDef, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{LlmHandle, LlmRequest, PathUtil, StreamChunk, ThinkingConfig}
@@ -26,7 +26,8 @@ import scala.concurrent.duration.*
  * 判据映射（任务书 §③ 验收）：
  *  - **c)** 真实写点 + 计数正确性：R1 = `mail-usage` **端到端**（真投递一封带链号的 Mail ⇒
  *    台账 `externalRefs` 落痕 + 覆盖式复算后该链 `refCount` 由 0 变 1）；R2 = `board-usage`
- *    （板卡写动作正文命中 ⇒ 增）；R3 = `report-usage`（node_report 正文命中 ⇒ 增）。
+ *    （板卡写动作正文命中 ⇒ 增）；R3 = `report-usage`（正文计账判据——申报工具写点已随
+ *    终态申报工具通道退役，face 保留作历史审计口径占位 ⇒ 本面改钉 store 级 API 判据本体）。
  *  - **d)** 退役判据不回归：R4（`refCount == 0` 才可退役的读数 + 本批计数**不得复活**
  *    已退役/已归档链 —— 离场下沉后再引用只落零命中）。
  *  - **e)** 零回填：R5（悬空号 / 未登记号出现在正文里 ⇒ 不建条目、不建别名、不建计数键；
@@ -35,7 +36,7 @@ import scala.concurrent.duration.*
  *
  * 变异验红（复核位复跑点；本 spec 的承重断言与变异体的对应关系）：
  *  - **M1** 摘掉 `MailTool.layeredRoute` 的 `countMailUsage` 包裹 ⇒ **R1 红**
- *    （`externalRefs` 恒空）；同理摘 `TaskBoardTool`/`NodeReportTool` 的钩子 ⇒ **R2/R3 红**。
+ *    （`externalRefs` 恒空）；同理摘 `TaskBoardTool` 的钩子 ⇒ **R2 红**。
  *  - **M2** 只把三面 `wired` 置 true 而不接线 ⇒ 本 spec R1/R2/R3 全红（`ChainLedgerSpec`
  *    T7 反而绿 —— T7 守的是面集合，本 spec 守的是接线本体；两条互为补集）。
  *  - **M3** 放宽退役判据（`planRetire` 条目谓词改 `refCount < 0` 之类的永不退役式）⇒
@@ -133,7 +134,6 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        feedbackMode = FeedbackRouter.ModeAuto,
         emitEvent = (_, _, _) => IO.unit
       )
       pd = ProjectDef(
@@ -341,9 +341,12 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
     end for
   }
 
-  // ── R3 [c) report-usage] ───────────────────────────────────────────────
+  // ── R3 [c) report-usage]（终态申报工具通道退役批改口径：face 登记与正文计账判据
+  //    保留（历史审计口径占位，见 `ChainLedger.ReferenceFaces` 的 `report-usage`
+  //    writePoint 注记）；申报工具写点已随通道退役 ⇒ 本用例改钉 store 级正文计账
+  //    API（`noteTextReferences`）的判据本体：已登记号命中 ⇒ 计 1；未登记号 ⇒ 零计数。）──
 
-  test("R3 [c) report-usage] node_report 正文命中已登记链号 ⇒ 计 1；未登记号正文 ⇒ 零计数") {
+  test("R3 [c) report-usage] 正文计账判据：已登记链号命中 ⇒ 计 1；未登记号正文 ⇒ 零计数（零回填）") {
     val ws = tempRoot / "ws-rf-r3"
     os.makeDir.all(ws)
     val system = ActorSystem(s"rf-r3-${scala.util.Random.nextInt(100000)}")
@@ -351,35 +354,25 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       _ <- writeLedgerFixture(ws, "rf-r3", canonFixture("rf-r3"))
       res <- mkResources(system, tempRoot)
       rt <- mountProject("rf-r3", ws, system, res)
-      ctx = mkCtx(res, system, ws.toString).copy(
-        projectName = Some("rf-r3"),
-        flowNodeId = Some("n-r3"),
-        flowNodeRole = Some(NodeRoles.Task)
-      )
       st0 <- ledgerOf(rt)
-      ok <- NodeReportToolDef
-        .call(Json.obj("category" -> "finish".asJson, "detail" -> s"本节点交付物引用链 $Canon（报告正文面）".asJson).asObject.get, ctx)
-        .map(failMsg)
+      hit1 <- rt.store.chainLedgerStore.noteTextReferences(
+        s"本节点交付物引用链 $Canon（报告正文面）",
+        "report-usage"
+      )
       st1 <- ledgerOf(rt)
-      // 未登记号只在正文里 ⇒ 零计数（禁回填）
-      _ <- NodeReportToolDef
-        .call(
-          Json.obj("category" -> "finish".asJson, "detail" -> "本条只提到 chain-n-rf-ghost 与 681".asJson).asObject.get,
-          ctx
-        )
-        .map(failMsg)
+      // 未登记号只在正文里 ⇒ 零命中零计数（禁回填）
+      hit2 <- rt.store.chainLedgerStore.noteTextReferences(
+        "本条只提到 chain-n-rf-ghost 与 681",
+        "report-usage"
+      )
       st2 <- ledgerOf(rt)
-      onDisk <- IO.blocking {
-        val p = os.Path(ws.toString, PathUtil.dataRoot) / ".nebflow" / NodeReportRegistry.JournalFileName
-        if os.exists(p) then os.read(p) else ""
-      }
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(st0.externalRefs, Map.empty[String, Int], "起跑：零外部引用")
-      assert(ok.startsWith("Right("), s"合法申报必须成功，got: $ok")
-      assertEquals(st1.externalRefs.get(Canon), Some(1), "🔴 report-usage 计数钩子：申报登记成功后正文命中 ⇒ 计 1")
+      assertEquals(hit1, Right(List(Canon)): Either[String, List[String]], "已登记链号正文命中 ⇒ 恰 1 项")
+      assertEquals(st1.externalRefs.get(Canon), Some(1), "🔴 report-usage 正文计账：命中 ⇒ 计 1")
+      assertEquals(hit2, Right(Nil): Either[String, List[String]], "未登记号 ⇒ 零命中")
       assertEquals(st2.externalRefs, st1.externalRefs, "未登记号 ⇒ 零计数（零回填）")
-      assert(onDisk.contains("chain-n-rf-ghost"), "申报正文照旧落库（计数与否不改变申报本身）")
     end for
   }
 

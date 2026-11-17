@@ -518,6 +518,7 @@ function renderPluginCard(manifest, updates) {
       ${status.blocked ? `<div class="plugins-card-hint blocked">${esc(t('plugins.blockedHint'))}</div>` : ''}
       ${composition ? `<div class="plugins-card-composition">${composition}</div>` : ''}
       ${sourceRowHtml(name, updates)}
+      <div data-review-timeline hidden></div>
       <div class="plugins-item-actions">
         <button type="button" class="plugins-item-doc" data-plugin-doc="${esc(name)}" hidden>${statusIcon('file-text', 12, '')}Plugin.md</button>
         <span class="plugins-card-dispatch">
@@ -612,9 +613,24 @@ export function renderPlugins() {
         <span class="plugins-title">${esc(t('activity.plugins'))}</span>
         ${topStatsHtml(plugins)}
       </div>
-      ${listHtml}`;
+      ${listHtml}
+      <button type="button" data-plugins-add aria-label="Add plugin" style="position:fixed;right:24px;bottom:24px;z-index:10">+</button>
+      <div data-plugins-add-dialog hidden role="dialog" aria-label="Add plugin">
+        <label>Install link <input data-plugins-add-input></label>
+        <button type="button" data-plugins-add-resolve>Preview</button>
+        <div data-plugins-add-error hidden></div>
+        <div data-plugins-add-preview hidden><span data-install-link-id></span> <span data-install-link-version></span></div>
+        <button type="button" data-plugins-add-install disabled>Install</button>
+        <button type="button" data-plugins-add-close>Cancel</button>
+      </div>
+      <div data-install-link-modal hidden role="dialog" aria-label="Install plugin">
+        <span data-install-link-id></span> <span data-install-link-version></span>
+        <button type="button" data-install-link-install>Install</button>
+        <button type="button" data-install-link-dismiss>Cancel</button>
+      </div>`;
 
     bindPluginsEvents(content);
+    bindInstallLinks(content);
   }).catch(err => {
     if (!content.isConnected) return;
     // 失败分态（2026-09-22 作者裁定 (c) 之②）：401/403 ⇒ 面板内**可见兜底**登录引导卡；
@@ -947,6 +963,73 @@ function applyRegistryStates(registry) {
   }
   return inserted;
 }
+
+const askedInstallHashes = new Set();
+let clipboardCheckInFlight = false;
+async function previewInstallLink(link) {
+  const response = await api('/api/plugins/install-link/resolve?link=' + encodeURIComponent(link));
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to resolve install link');
+  return data;
+}
+async function postInstallLink(link) {
+  const response = await api('/api/plugins/install-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link }) });
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.error || 'Installation failed');
+}
+function fillInstallPreview(el, data) {
+  el.querySelector('[data-install-link-id]').textContent = data.id;
+  el.querySelector('[data-install-link-version]').textContent = data.version;
+}
+function bindInstallLinks(content) {
+  const dialog = content.querySelector('[data-plugins-add-dialog]');
+  const input = dialog.querySelector('[data-plugins-add-input]');
+  const preview = dialog.querySelector('[data-plugins-add-preview]');
+  const error = dialog.querySelector('[data-plugins-add-error]');
+  const install = dialog.querySelector('[data-plugins-add-install]');
+  let approvedLink = null;
+  content.querySelector('[data-plugins-add]').onclick = () => { dialog.hidden = false; };
+  dialog.querySelector('[data-plugins-add-close]').onclick = () => { dialog.hidden = true; };
+  input.oninput = () => { approvedLink = null; install.disabled = true; preview.hidden = true; };
+  dialog.querySelector('[data-plugins-add-resolve]').onclick = async () => {
+    const link = input.value.trim(); approvedLink = null; install.disabled = true; preview.hidden = true; error.hidden = true;
+    try {
+      const data = await previewInstallLink(link);
+      if (input.value.trim() !== link) return;
+      fillInstallPreview(preview, data); preview.hidden = false; approvedLink = link; install.disabled = false;
+    } catch (e) { error.textContent = e.message; error.hidden = false; }
+  };
+  install.onclick = async () => {
+    if (!approvedLink || input.value.trim() !== approvedLink) return;
+    install.disabled = true;
+    try { await postInstallLink(approvedLink); dialog.hidden = true; renderPlugins(); }
+    catch (e) { error.textContent = e.message; error.hidden = false; install.disabled = false; }
+  };
+}
+window.addEventListener('focus', async () => {
+  if (!pluginsPanelActive() || clipboardCheckInFlight || !navigator.clipboard?.readText) return;
+  clipboardCheckInFlight = true;
+  try {
+    const link = await navigator.clipboard.readText();
+    if (!link.startsWith('stand://plugin/install?')) return;
+    const url = new URL(link);
+    const sha = url.searchParams.get('s');
+    if (!sha || !/^[a-f0-9]{64}$/i.test(sha) || askedInstallHashes.has(sha.toLowerCase())) return;
+    askedInstallHashes.add(sha.toLowerCase());
+    const data = await previewInstallLink(link);
+    if (!pluginsPanelActive()) return;
+    const modal = /** @type {HTMLElement|null|undefined} */ (pluginsContentEl()?.querySelector('[data-install-link-modal]'));
+    if (!modal) return;
+    fillInstallPreview(modal, data); modal.hidden = false;
+    /** @type {HTMLElement} */ (modal.querySelector('[data-install-link-dismiss]')).onclick = () => { modal.hidden = true; };
+    /** @type {HTMLElement} */ (modal.querySelector('[data-install-link-install]')).onclick = async (event) => {
+      /** @type {HTMLButtonElement} */ (event.currentTarget).disabled = true;
+      try { await postInstallLink(link); modal.hidden = true; renderPlugins(); }
+      catch (e) { /** @type {HTMLButtonElement} */ (event.currentTarget).disabled = false; window.alert(e.message); }
+    };
+  } catch { /* clipboard access and rejected previews do not install */ }
+  finally { clipboardCheckInFlight = false; }
+});
 
 // ── Poller: keep the list live while the panel is visible & active ───────
 // Double gate (author ruling 2026-09-05): the tab must be the ACTIVE canvas

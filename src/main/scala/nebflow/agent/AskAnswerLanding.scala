@@ -23,10 +23,9 @@ import nebflow.shared.{AskItem, NebflowLogger}
  * 接**三臂着陆**（原分支的 WARN+丢 = 本面失败出口的前身，行为被取代）：
  *
  *   1. **会话亡＋归因在＋项目宿主在（节点在项目图内）** ⇒ 引擎重入：
- *      `ProjectActor.AskAnswerReentry`（ReenterDispatcher 同族管线；分发器把答案
- *      折进节点任务后 NodeEdit 重激活——开放问题 #5 采纳推荐默认 5b：答案 = 对
- *      该问题的直接回答，随 task 重读进入节点）。审计 `answer-retry`（任务令
- *      措辞；先例 `reentry-triggered` 同基座）。
+ *      `ProjectActor.AskAnswerReentry`（分发器把答案折进节点任务后 NodeEdit
+ *      重激活——开放问题 #5 采纳推荐默认 5b：答案 = 对该问题的直接回答，随
+ *      task 重读进入节点）。审计 `answer-retry`（任务令措辞）。
  *   2. **项目图无此节点、委托作用域宿主在且委托会话活** ⇒ 注入**委托会话**：
  *      委托作用域无分发器（DelegateFlowRuntime 零 actor 指令面），委托会话自己
  *      就是该图的编排者——答案作为用户输入注入（fromUser=true），由它 NodeEdit

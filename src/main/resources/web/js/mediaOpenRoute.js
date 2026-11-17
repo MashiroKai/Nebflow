@@ -10,10 +10,10 @@
 //   · 手机层（body.mobile-layer）——**一切**媒体点击 = `openMediaDirect`：铸 URL
 //     交给系统预览（新标签页原生显示，捏合缩放/关闭都归系统），应用内不再弹面板
 //     也不再叠灯箱；
-//   · 桌面层——带 path 的媒体 = Canvas 打开（既有 openPopArtifact / workspace-open-item
-//     单点，注入传入，本模块零第二套派发形状）；pathless 维持灯箱（#491 主题三
-//     既有裁定原文「Canvas cannot open a pathless file」仍然成立——内联预览字节是
-//     缩略档，开成 Canvas 页签反而是低清面，落盘回传 path 后即自动并入 Canvas 腿）。
+//   · Desktop media with a path uses the injected openPopArtifact /
+//     workspace-open-item entry point. Pathless media keeps the lightbox:
+//     Canvas requires a file path (issue 491). Inline bytes may be thumbnails;
+//     once a saved path is available, the same item can use Canvas.
 //
 // URL 链（openMediaDirect 的取数纪律——禁第三条取字节路，全部是应用既有出口）：
 //   ① resolver（uploads 路由，用户附件面）——社交通道/用户媒体的指针登记路；
@@ -75,6 +75,11 @@ export async function mediaDirectUrl(item) {
       try { return adoptObjectUrl(URL.createObjectURL(await (await fetch(s)).blob())); } catch (e) { /* 落下一腿 */ }
     } else if (/^https?:/i.test(s)) {
       return s;
+    } else if (s.startsWith('/uploads/') || s.startsWith('/api/')) {
+      // 同源 Web 路由（用户附件 uploads 面 / API 面）——浏览器可直接导航，
+      // 不是本机路径（mobile-image-lightbox 批：画廊「在标签页打开」入口会把
+      // 已水合的 /uploads 缩略 URL 递进来，落到下一条腿会被当 FS 路径铸票 404）。
+      return s;
     } else if (s.startsWith('/')) {
       // 原始本机路径（工具卡图片引用件的 md src 形态）——同一铸票路。
       try { return await ticketUrl(s); } catch (e) { /* 落下一腿 */ }
@@ -89,7 +94,7 @@ export async function mediaDirectUrl(item) {
  * window.open 会被弹窗拦截器吃掉），URL 到手后导航该页；全链尽空 ⇒ 关掉占位页
  * 返回 false（调用方落灯箱兜底）。导航目标永不为 data:（内联字节先转 objectURL，
  * 顶帧 data: 导航被现代浏览器禁止；blob:/同源 http(s) 均可导航）。
- * @param {{path?: string, src?: string, resolver?: (path: string) => string}} item
+ * @param {{path?: string, src?: string, blob?: Blob, name?: string, resolver?: (path: string) => string}} item
  * @returns {Promise<boolean>}
  */
 export async function openMediaDirect(item) {
@@ -108,6 +113,13 @@ export async function openMediaDirect(item) {
 /**
  * 媒体点击路由单点。
  *
+ * mobile-image-lightbox 批（2026-11-17 作者令「现在手机端点图片为什么会单独
+ * 打开一个标签页 我想的是像微信那样的弹窗就行了」）：手机腿**图片**改开应用内
+ * 画廊（lightbox.openImageGallery——遮罩居中大图/滑动切图/页码/下滑关闭/「在
+ * 标签页打开」次级入口）；视频与其他附件照旧 openMediaDirect 系统直开。桌面
+ * 分支一行不动。动态 import 是既有防环先例（lightbox.js 静态依赖本模块，
+ * utils.js 同款反向动态引入）。
+ *
  * @param {{kind?: string, name?: string, path?: string, src?: string,
  *          resolver?: (path: string) => string}|null} item
  *   调用方面上已有的媒体项形状（popArtifacts item / 帧消息 payload / 裸 {src,path}）。
@@ -116,9 +128,25 @@ export async function openMediaDirect(item) {
  *   回指 popArtifacts，popArtifacts 静态依赖本模块）。
  * @param {() => void} fallback
  *   桌面 pathless / 手机直开全链尽空的兜底（各自的灯箱面）。
+ * @param {Array<Object>} [group] 图组（手机画廊滑动切图用；桌面不消费）。
+ * @param {number} [index] 点的是图组内第几张（缺省按 item 在 group 内定位）。
  */
-export function routeMediaClick(item, openCanvas, fallback) {
+export function routeMediaClick(item, openCanvas, fallback, group, index) {
   if (isMobileLayer()) {
+    if (item && item.kind === 'image') {
+      const list = Array.isArray(group) && group.length ? group : [item];
+      const i = typeof index === 'number' && list[index] === item
+        ? index
+        : Math.max(0, list.indexOf(item));
+      import('./lightbox.js')
+        .then((lb) => {
+          if (!lb.openImageGallery(list, i)) {
+            void openMediaDirect(item).then((ok) => { if (!ok) fallback(); });
+          }
+        })
+        .catch(() => { void openMediaDirect(item).then((ok) => { if (!ok) fallback(); }); });
+      return;
+    }
     void openMediaDirect(item).then((ok) => { if (!ok) fallback(); });
     return;
   }

@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "repository": "https://github.com/Fission-AI/OpenSpec",
+  "assets": {
+    "darwin-arm64": { "name": "openspec-darwin-arm64.tar.gz", "sha256": "cf1583baacb84711c18d58ea143928e4ed1701936e67ebda735200109f084af6" },
+    "darwin-x64": { "name": "openspec-darwin-x64.tar.gz", "sha256": "662dadaeabfe369df558aff20dfa893f891e34216c849e2950b13fb0ce10f8bd" },
+    "linux-arm64": { "name": "openspec-linux-arm64.tar.gz", "sha256": "c3f8313663f0a9ffe41c4df274b22398810f8685189713068ec80e574a325f5b" },
+    "linux-x64": { "name": "openspec-linux-x64.tar.gz", "sha256": "de16fddbce121ee176e74c963a31dc723e851629a3b89a78bd16e360d34dcf4c" },
+    "win32-arm64": { "name": "openspec-windows-arm64.zip", "sha256": "c0593bc817879f212fee034751cec9e73d32daaa354954eaa42faa79bcd48958" },
+    "win32-x64": { "name": "openspec-windows-x64.zip", "sha256": "4f50ca6765d7b7c214519558bf71635cc837f789155a42b21f73bbb6e11cb36b" }
+  }
+}

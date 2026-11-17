@@ -20,18 +20,16 @@ import nebflow.shared.NebflowLogger
  *     一并清理，保存态不能无限堆积）；任务行终态以 completedAt 为锚；owner-gone
  *     （无任务行）以取消墓碑/重启旗/登记时间为兜底；
  *  3. **清理动作（到期才做，语义=清理）**：
- *      a. worktree 联动回收 —— `PostMergeCleanup.run(expiredTerminal=true)`：
- *         树按 git 本体纪律移除（无 --force，脏树被拒=现场保留），分支删除仍守
- *         零领先（未落地提交绝不因 TTL 消失），reports/evidence 先抢救；
- *      b. 任务行剪行 —— `SubAgentTaskStore.removeTask`（重启丢失行自此离开复活
+ *      a. 任务行剪行 —— `SubAgentTaskStore.removeTask`（重启丢失行自此离开复活
  *         视野 = 通知源永久沉默的根除腿）；
- *      c. 登记条目移除 —— `DelegateRegistry.remove`（记录文件删除；台账历史由
- *         ChainStore `worktree-cleanup` 行与子代理记账留存承载——brief「语义=
- *         清理，不丢台账历史可接受归档」的清理腿）。
+ *      b. 登记条目移除 —— `DelegateRegistry.remove`（记录文件删除；台账历史由
+ *         ChainStore 行与子代理记账留存承载——brief「语义=清理，不丢台账历史
+ *         可接受归档」的清理腿）。工作区/分支一律不动（引擎不回收座位——需要
+ *         隔离检出时 delegate 自建自管）。
  *
  * 接线（GatewayMain boot）：跑在 subagentCrashSweep **之前**——先把名单外的
  * 远古尸体清走，随后的收殓/标记/对账腿对已清条目天然零视野（已移除条目不进
- * markInterruptedRecords 的 `archivedAt.isEmpty` 守卫；任务行已剪行 = 复活视野
+ * markInterruptedRecords 的**状态派生收口守卫**；任务行已剪行 = 复活视野
  * 永远看不到它们）。
  * 失败软化：单条失败只 WARN 入 kept，绝不阻断 boot。
  */
@@ -42,27 +40,24 @@ object DelegateTtlSweep:
   final case class Report(
     /** 到期条目（进了清理面的 id，按处理序）。 */
     expired: List[String] = Nil,
-    /** worktree 已回收的 delegate id。 */
-    worktreesRemoved: List[String] = Nil,
-    /** worktree 保留的 delegate id（git 拒绝 = 脏树/未领先提交在场）。 */
-    worktreesKept: List[String] = Nil,
     /** 任务行已剪行的 delegate id。 */
     taskRowsPruned: List[String] = Nil,
     /** 登记条目已移除的 delegate id。 */
     recordsRemoved: List[String] = Nil,
     /** 在飞守卫放行的 delegate id（零触碰）。 */
     inFlightKept: List[String] = Nil,
+    /** 置顶（阶段③）放行的 delegate id：终态但不许清（七天物理清理零动作）。 */
+    pinnedKept: List[String] = Nil,
     /** 到期但清理链部分失败保留现场的 delegate id（fail-soft 留痕）。 */
     keptOnError: List[(String, String)] = Nil
   ):
 
     def hasWork: Boolean =
-      expired.nonEmpty || inFlightKept.nonEmpty || keptOnError.nonEmpty
+      expired.nonEmpty || inFlightKept.nonEmpty || pinnedKept.nonEmpty || keptOnError.nonEmpty
 
     def summary: String =
-      s"expired=${expired.size} worktreesRemoved=${worktreesRemoved.size} worktreesKept=${worktreesKept.size} " +
-        s"taskRowsPruned=${taskRowsPruned.size} recordsRemoved=${recordsRemoved.size} " +
-        s"inFlightKept=${inFlightKept.size} keptOnError=${keptOnError.size}"
+      s"expired=${expired.size} taskRowsPruned=${taskRowsPruned.size} recordsRemoved=${recordsRemoved.size} " +
+        s"inFlightKept=${inFlightKept.size} pinnedKept=${pinnedKept.size} keptOnError=${keptOnError.size}"
 
   end Report
 
@@ -85,43 +80,51 @@ object DelegateTtlSweep:
       ref <- Ref.of[IO, Report](Report())
       _ <- records.traverse_ { rec =>
         // ① 在飞守卫（红线）：活体 actor ⇒ 零触碰。
-        if live.contains(rec.id) then ref.update(r => r.copy(inFlightKept = r.inFlightKept :+ rec.id))
-        else
-          // ② 到期判读（单源）。
-          nebflow.core.delegate.DelegateTerminalTtl.verdict(rec, rowsById.get(rec.id), now) match
-            case nebflow.core.delegate.DelegateTerminalTtl.InFlight => IO.unit
-            case _: nebflow.core.delegate.DelegateTerminalTtl.WithinTtl => IO.unit
-            case expired: nebflow.core.delegate.DelegateTerminalTtl.Expired =>
-              // ③ 清理动作（worktree 回收 → 任务行剪行 → 登记移除；fail-soft）。
-              for
-                wtRemoved <-
-                  nebflow.core.delegate.PostMergeCleanup
-                    .run(Some(rec))
-                    .handleError(_ => false)
-                _ <-
-                  rowsById.get(rec.id).traverse_ { t =>
-                    resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId)
-                  }
-                rm <- IO(nebflow.core.delegate.DelegateRegistry.remove(rec.id)).attempt
-                _ = logger.info(
-                  s"[delegate-ttl] '${rec.id}' expired the " +
-                    s"${nebflow.core.delegate.DelegateTerminalTtl.TtlMs / 86400000L}-day terminal TTL " +
-                    s"(anchor=${expired.anchorName} age=${(now - expired.anchorMs) / 86400000L}d) — " +
-                    s"worktree=${if wtRemoved then "recycled" else "kept"} " +
-                    s"taskRow=${if rowsById.contains(rec.id) then "pruned" else "none"} " +
-                    s"record=${rm.fold(err => s"kept($err)", _ => "removed")}"
+        resources.executionProtection(rec.id).flatMap {
+          case nebflow.shared.ExecutionProtection.Protected(_) =>
+            ref.update(r => r.copy(keptOnError = r.keptOnError :+ (rec.id -> "protected-execution")))
+          case nebflow.shared.ExecutionProtection.Unknown(reason) =>
+            ref.update(r => r.copy(keptOnError = r.keptOnError :+ (rec.id -> s"protection-unknown: $reason")))
+          case nebflow.shared.ExecutionProtection.Unprotected if live.contains(rec.id) =>
+            ref.update(r => r.copy(inFlightKept = r.inFlightKept :+ rec.id))
+          case nebflow.shared.ExecutionProtection.Unprotected =>
+            // ② 到期判读（单源）。
+            nebflow.core.delegate.DelegateTerminalTtl.verdict(rec, rowsById.get(rec.id), now) match
+              case nebflow.core.delegate.DelegateTerminalTtl.InFlight => IO.unit
+              case nebflow.core.delegate.DelegateTerminalTtl.Pinned =>
+                // 阶段③ 置顶（重要记录）：终态也不清——只留痕，零动作。
+                ref.update(r => r.copy(pinnedKept = r.pinnedKept :+ rec.id))
+              case _: nebflow.core.delegate.DelegateTerminalTtl.WithinTtl => IO.unit
+              case expired: nebflow.core.delegate.DelegateTerminalTtl.Expired =>
+                // ③ 清理动作（任务行剪行 → 登记移除；fail-soft）。工作区/分支一律
+                // 不动（引擎不再回收座位——需要隔离检出时 delegate 自建自管）。
+                resources.executionCommitPort.withUnprotectedSession(rec.id) {
+                  for
+                    _ <- rowsById.get(rec.id).traverse_ { t =>
+                      resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId)
+                    }
+                    rm <- IO(nebflow.core.delegate.DelegateRegistry.remove(rec.id)).attempt
+                    _ = logger.info(
+                      s"[delegate-ttl] '${rec.id}' expired the " +
+                        s"${nebflow.core.delegate.DelegateTerminalTtl.TtlMs / 86400000L}-day terminal TTL " +
+                        s"(anchor=${expired.anchorName} age=${(now - expired.anchorMs) / 86400000L}d) — " +
+                        s"taskRow=${if rowsById.contains(rec.id) then "pruned" else "none"} " +
+                        s"record=${rm.fold(err => s"kept($err)", _ => "removed")}"
+                    )
+                    _ <- ref.update { r =>
+                      r.copy(
+                        expired = r.expired :+ rec.id,
+                        taskRowsPruned = if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
+                        recordsRemoved = if rm.isRight then r.recordsRemoved :+ rec.id else r.recordsRemoved,
+                        keptOnError = rm.fold(err => r.keptOnError :+ (rec.id -> err.getMessage), _ => r.keptOnError)
+                      )
+                    }
+                  yield ()
+                }.handleErrorWith(e =>
+                  ref.update(r => r.copy(keptOnError = r.keptOnError :+ (rec.id ->
+                    s"cleanup-unconfirmed: ${e.getClass.getSimpleName}")))
                 )
-                _ <- ref.update { r =>
-                  r.copy(
-                    expired = r.expired :+ rec.id,
-                    worktreesRemoved = if wtRemoved then r.worktreesRemoved :+ rec.id else r.worktreesRemoved,
-                    worktreesKept = if !wtRemoved then r.worktreesKept :+ rec.id else r.worktreesKept,
-                    taskRowsPruned = if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
-                    recordsRemoved = if rm.isRight then r.recordsRemoved :+ rec.id else r.recordsRemoved,
-                    keptOnError = rm.fold(err => r.keptOnError :+ (rec.id -> err.getMessage), _ => r.keptOnError)
-                  )
-                }
-              yield ()
+        }
       }
       report <- ref.get
       _ <-

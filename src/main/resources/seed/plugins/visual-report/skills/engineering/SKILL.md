@@ -46,7 +46,7 @@ visual-report 插件场景之一：把测试 / 实验 / 性能验证结果写成
 
 ## 3. 工具链与自检
 
-本机 KAI Windows/MSYS2：传 Windows 路径参数加 `MSYS2_ARG_CONV_EXCL='*'`；Python 一律走 viz-venv，禁动系统 Python。
+本机 Windows/MSYS2 实机：传 Windows 路径参数加 `MSYS2_ARG_CONV_EXCL='*'`；Python 一律走 viz-venv，禁动系统 Python。
 
 - **matplotlib（主绘图）**：viz-venv 全局 matplotlibrc 已配 Microsoft YaHei，中文默认可读；输出 SVG 落 `~/.nebflow/plots/`。
 - **numpy / scipy / pandas（辅助计算）**：拟合、FFT、滤波、统计；与 matplotlib 同环境直调，无需额外自检记录（随装随用）。
@@ -54,12 +54,12 @@ visual-report 插件场景之一：把测试 / 实验 / 性能验证结果写成
 
 ### 工具自检（core §6 模板；检测命令逐条实测）
 
-`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`
+`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`
 
 | 工具 | 用途 | 本机检测命令（实测） | 官方下载链接 | 链接验证记录 | 缺装降级策略 |
 |---|---|---|---|---|---|
 | matplotlib | 幅频/温漂/FFT 等结果图 | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2（实测 2026-10-04） | https://matplotlib.org/ | HTTP 200（2026-10-04，README 验证表） | plotly（已装）→ 纯表格；禁手画 SVG、禁空转 |
-| graphviz (dot) | 测试流程/信号链框图 | `C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0（实测 2026-10-04） | https://graphviz.org/download/ | HTTP 200（2026-10-04，README 验证表） | mermaid-cli 未装 → 文字流程列表；禁手画 SVG |
+| graphviz (dot) | 测试流程/信号链框图 | `C:\Users\name\.nebflow\tools\graphviz\bin\dot.exe -V` → dot - graphviz version 16.1.0（实测 2026-10-04） | https://graphviz.org/download/ | HTTP 200（2026-10-04，README 验证表） | mermaid-cli 未装 → 文字流程列表；禁手画 SVG |
 
 全工具链接验证与计数（19 通过 / 3 失效已换端点补验）见 `${SKILL_DIR}/../README.md`「全工具链接验证表」，本场景不复制；引用前超 30 天须复测，新增工具先过 core §6 自检再补表。
 
@@ -92,5 +92,5 @@ visual-report 插件场景之一：把测试 / 实验 / 性能验证结果写成
 
 ## 5. 示例
 
-- `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\engineering.md` —— 完整骨架样例：放大器幅频响应 + 基准电压温漂两张真渲染图、四列指标表、演示样例数据声明。
-- 生成脚本 `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\engineering_demo_gen.py`（合成模型 + 固定随机种子，重跑可逐字复现 demo 全部数值与 SVG）。
+- `C:\Users\name\.nebflow\skills\visual-report-suite\demos\engineering.md` —— 完整骨架样例：放大器幅频响应 + 基准电压温漂两张真渲染图、四列指标表、演示样例数据声明。
+- 生成脚本 `C:\Users\name\.nebflow\skills\visual-report-suite\demos\engineering_demo_gen.py`（合成模型 + 固定随机种子，重跑可逐字复现 demo 全部数值与 SVG）。

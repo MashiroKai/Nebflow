@@ -17,312 +17,91 @@ env:
   COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
-  js-types:
-    name: JS Types (checkJs gate)
-    timeout-minutes: 10
+  dropdown-contract:
+    name: Dropdown contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Dropdown lint
+        run: node scripts/check-dropdown.mjs
+      - run: npm install --no-save --no-package-lock @playwright/test@1.62.0
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/dropdown-menu.test.mjs
+      - run: node tests/project-open-contract.test.mjs
+
+  static:
+    name: Static quality gates
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install TypeScript
-        run: npm install --no-save --no-package-lock typescript@5.5
-      - name: checkJs vs baseline
-        # A1 gate: any new file with errors, any (file, code) count increase,
-        # or any total increase above tests/type-baseline.json fails the job.
-        run: node scripts/check-js-types.mjs
-      - name: Circular deps (static imports)
-        # P2-4 gate: static-import SCC analysis - any cycle fails. Dynamic
-        # import() is the sanctioned escape hatch and is not counted.
-        run: node scripts/check-circular.mjs
-      - name: IME guard (single composition decision point)
-        # ⑤ gate (author ruling 2026-09-12): any file under web/js that reads
-        # isComposing / keyCode 229 / binds compositionstart|compositionend
-        # directly must import imeGuard.js - the one predicate and the one
-        # writer of el.dataset.imeComposing. Violations are listed as file:line.
-        # Same logic locally: node scripts/check-ime-guard.mjs
-        run: node scripts/check-ime-guard.mjs
-      - name: Component contract (frontend component paradigm gate)
-        # ask-paradigm-a batch (2026-11-03): the Ask surface now ships as a real
-        # component (<nf-ask-dock>, light DOM, outward face = open/close/syncSession).
-        # A contract that only lives in a document is NOT a contract - nothing warns
-        # the next person who copies the pattern. This step pins the five rules the
-        # batch actually paid for, any one of them failing the job:
-        #   R1 light DOM only            no attachShadow anywhere in web/js, web/css,
-        #                                index.html (SHADOW_ALLOWLIST is per-file and
-        #                                must carry a written reason - no wildcards).
-        #   R2 no cross-face DOM lookups getElementById('<face>-...') / '#<face>-...'
-        #                                inside querySelector(All)/closest from a
-        #                                module of ANOTHER face. The face table is
-        #                                derived from web/css/*.css at run time (no
-        #                                second hand-maintained list).
-        #   R3 no bare event literals    new CustomEvent('<literal>') at a new site.
-        #                                Sanctioned form: new CustomEvent(EVENTS.X).
-        #   R4 no component DOM leak     another module selecting on a component's
-        #                                INTERNAL_CLASSES - the outward face is the
-        #                                method surface, the structure is private.
-        #   R5 no bare innerHTML =       at a new site (DOM writes go through
-        #                                mdHtmlGate / builders).
-        # Legacy hits are frozen in scripts/component-contract-baseline.json: counts
-        # may only go DOWN, and a file OUTSIDE the baseline must be all-zero (raising
-        # the baseline = letting water in, it needs a per-item justification).
-        # Offline and hermetic: pure static text scan, no network, no credentials.
-        # Same logic locally: node scripts/check-component-contract.mjs
-        run: node scripts/check-component-contract.mjs
-      - name: Console takeover identity guard (single-instance identity chain)
-        # 身份必达批 gate (author report 2026-11-03: "手机端和电脑端同时在线，没有
-        # 被挤掉"): console single-instance only kicks when BOTH sides carry a
-        # provable browser identity. The identity rides THREE legs - the WS
-        # handshake query (`?clientId=`), the in-band frame
-        # (`takeoverIdentify`, the leg that survives tunnels/proxies which
-        # rewrite the request target) and the HTTP retake body - all from ONE
-        # source (`deviceClientId()`), with the frame type owned by
-        # ConsoleTakeover.IdentifyFrameType. A rename on either side is
-        # wire-level and silently reproduces the reported bug, so it is gated.
-        # Same logic locally: node scripts/check-takeover-identify.mjs
-        run: node scripts/check-takeover-identify.mjs
-      - name: Message style single source (shared message surface)
-        # ③-G gate (author ruling 2026-09-12, batch ②④③): the message surface
-        # values shared by the friend chat modal and the dropbox modal (out
-        # bubble tint, bubble geometry/max-width token, meta pill, file-card
-        # class) must have exactly ONE literal home = css/sapphire.css. Any
-        # feature CSS re-typing one of them fails the job (the "edit one copy,
-        # miss the other" drift that ③A1/③A3/③A5 exist to prevent).
-        # Same logic locally: node scripts/check-msgstyle-single-source.mjs
-        run: node scripts/check-msgstyle-single-source.mjs
-      - name: Bubble side color (our side = green / peer = white, no third)
-        # bubble-side-color batch (author ruling 2026-11-06): bubble background is
-        # decided by SENDER SIDE ONLY - ours (author + our agents/delegates/nodes/
-        # bg-tasks/injected/system) = green, theirs (friends/group peers/external) =
-        # white. No third rung: the old sapphire tint / etched grey / neutral grey
-        # bubble backgrounds are banned on any bubble face. Single decision point =
-        # css/glass.css block (--nf-bub-ours-bg / --nf-bub-theirs-bg) plus
-        # js/bubbleSide.js for the side computation.
-        # Same logic locally: node scripts/check-bubble-side.mjs
-        run: node scripts/check-bubble-side.mjs
-      - name: Design tokens (literal -> var(--ds-*) sentinel)
-        # Design-token gate (design-system-token-batch 2026-11-02): every design
-        # literal has exactly one home. Two tiers - a per-file baseline that may
-        # only go DOWN (any new literal in a known file fails), and a strict face
-        # (settings structure + design-system layer) that must stay literal-free.
-        # It existed since 2026-11-02 but was in no CI job and in no default make
-        # target (self-explaining-cleanup batch 2026-11-04 found and fixed that:
-        # a gate nobody runs is not a gate).
-        # Same logic locally: node scripts/check-design-tokens.mjs (or `make frontend-gates`)
-        run: node scripts/check-design-tokens.mjs
-      - name: Provider panel singleton (provider-add-tabs)
-        # Gate: provider-add-tabs batch (2026-11-06, author directive "把添加服务商
-        # 统一成标签切换类型 + 单一服务商面板 … 这里一定要加断言，保证所有文字都
-        # 不能溢出"). Static face P1-P6: retired entries must not reappear; the
-        # provider panel / type tabs stay single-implementation; provider-type
-        # enum is consumed from the backend projection only (no frontend literal
-        # tables); the panel family's overflow disposition is wrap-or-ellipsis+title.
-        # The zero-tolerance *rendered* assertion lives in
-        # tests/provider-panel-overflow.spec.mjs (320/375/1440 × light/dark).
-        # Same logic locally: node scripts/check-provider-panel.mjs
-        run: node scripts/check-provider-panel.mjs
-      - name: Self-explaining copy (rule 8 — no teaching sentences in UI text)
-        # Copy self-explanation gate (author ruling 2026-11-04 12:46 "好的前端设计
-        # 应该是自解释的"; rule text = plugins/stand-dev references/frontend/
-        # visual-style.md 铁律 8). Judged face = locale values (js/locales/*.js)
-        # + index.html text nodes, comments stripped by syntax (the rule's raw
-        # grep only strips line comments, so block/HTML comments showed up as 10
-        # false positives out of 37).
-        # THREE mechanical classes from rule 8(e) - path guidance / behaviour
-        # teaching / capability claim - plus EN twins (the rule's word list is
-        # Chinese-only while the rule itself says "zh/en 双版同禁").
-        # Fourth class (duplicate explanation) has NO mechanical criterion: it is
-        # a documented blind spot, not a silent one.
-        # Baseline = scripts/self-explaining-baseline.json: every entry is a
-        # KEPT hit (state fact / failure closure / action label / empty-state next
-        # step / tooltip fact). Only shrinks; a new locale file tolerates zero.
-        # Same logic locally: node scripts/check-self-explaining.mjs (or `make frontend-gates`)
-        run: node scripts/check-self-explaining.mjs
-      - name: Badge words single source (identity/type words = English, one table)
-        # Term-unification batch 2026-11-06 (author order verbatim: "统一 根据英文").
-        # Identity/type badge words (kernel / dispatcher / node / subagent /
-        # delegate / AgentFlow) must come from ONE table = js/termWords.js: no
-        # badge slot may hard-code a face, no locale pack may translate it
-        # (task.mode.* / subagents.kind* families are retired - that is how the
-        # zh face ended up with its own 内核/分发器/节点 words), and one concept
-        # may not have two faces. Narrative copy is out of scope by design (the
-        # boundary is documented in the script header).
-        # Same logic locally: node scripts/check-badge-words.mjs (or `make frontend-gates`)
-        run: node scripts/check-badge-words.mjs
-      - name: API route existence (frontend calls x gateway route registry)
-        # Route-existence sentinel (empty-state-must-not-lie batch, 2026-11-05, item 3).
-        # The 2026-11-05 incident: the `GET /api/conversations` route case was deleted
-        # by a mistargeted edit (`SocialRoutes.scala`, commit 6c1feea6d). The gateway
-        # answered 404, the frontend's catch swallowed it, and the message panel
-        # rendered "No conversations". NOTHING asserted "the frontend calls a route
-        # the backend no longer registers" - the backend compiled, the frontend type
-        # gate passed, every test was green.
-        # Judgement: static diff of every `/api/` string literal in web/js (comments
-        # stripped by syntax) against the gateway route registry (`*Routes.scala`
-        # patterns: `Root / "a" / id`, pathInfo prefixes, proxied subpath tables).
-        # Frontend-only path => RED. Plus a CRITICAL whitelist (conversations /
-        # history / attachments / upload / friends / groups / sessions) asserted
-        # with exact method+shape, and a stale-exemption check (an EXTERNAL entry the
-        # frontend no longer calls is itself RED - exemptions may only shrink).
-        # Offline and hermetic: pure source-text scan, no network, no credentials.
-        # Same logic locally: node scripts/check-api-routes.mjs (or `make frontend-gates`)
-        run: node scripts/check-api-routes.mjs
-      - name: Flat buttons (no shadow / emboss / gradient on button surfaces)
-        # flat-button gate (author order 2026-11-05 13:35 verbatim: "我们的按钮扁平化
-        # 风格要求要落实到各处 不管是hover还是点击 或者按下"). Trigger = the
-        # takeover dialog's two pill buttons still carried a drop shadow + inset
-        # emboss, i.e. a "button that looks physically raised". Flat means no
-        # thickness props on any button state: box-shadow / text-shadow / css
-        # gradient / drop-shadow / translateY press displacement.
-        # Button surface = mechanically detected (type `button`, [type=button],
-        # or a class/id token segment btn|button|pill|fab with only modifier
-        # segments after it), so the gate cannot be dodged by renaming a file.
-        # Exceptions live in the SPEC FILE, never in the script:
-        # seed/plugins/design-language/skills/design-language/references/
-        # flat-button-spec.md ("## 例外清单"). A missing spec is itself RED.
-        # Same logic locally: node scripts/check-flat-buttons.mjs (or `make frontend-gates`)
-        run: node scripts/check-flat-buttons.mjs
-      - name: Toggle single source (one switch implementation site-wide)
-        # toggle-unify gate (author ruling 2026-11-05 19:55 verbatim: "A 胶囊滑块",
-        # i.e. the option page's group A = 40x22 capsule + 16px knob, state read by
-        # knob position). Trigger = the site carried FOUR hand-drawn switches
-        # (.nb-toggle / .tfl-switch / .daemon-autostart / .pp-toggle), each with its
-        # own track, knob, colors and transition - and .pp-toggle had no
-        # role/aria-checked at all. Three criteria: T1 behavior = role="switch" may
-        # only appear in js/toggle.js; T2 skin = no other file may draw a switch
-        # avatar (knob ::after + border-radius:50% / sliding translateX /
-        # :checked+translateX); T3 tokens = geometry/motion only from the
-        # --nf-toggle-* block in stand-tokens.css, component must consume them.
-        # Same logic locally: node scripts/check-toggle-unify.mjs (or `make frontend-gates`)
-        run: node scripts/check-toggle-unify.mjs
-      - name: Conversation pill centering (family single form, horizontally centered)
-        # scroll-pill-centering gate (author ruling 2026-11-06 08:05 verbatim:
-        # "你现在是把之前居中的 新消息通知的胶囊全部靠边了 不要靠边 就保持之前的
-        #  居中"). The conversation-face pill is ONE component with THREE consumers
-        # (new-message notification / back-to-bottom / search return jump); its form
-        # is declared exactly once, in css/chat.css `.scroll-new-pill`, anchored
-        # `left: 50%` + `transform: translateX(-50%)`. Fails on: a second form block,
-        # a missing centering anchor, ANY state (hover/active/focus/reduced-motion)
-        # that drops the centering transform, right-side alignment devices
-        # (right:/justify-self:end/margin-left:auto/text-align) on the family, or a
-        # second `scroll-*-pill` form class reappearing. Geometric truth (horizontal
-        # center delta <= 0.5px at 1440 and 375) lives in
-        # tests/scroll-pill-family.spec.mjs.
-        # Same logic locally: node scripts/check-scroll-pill-center.mjs (or `make frontend-gates`)
-        run: node scripts/check-scroll-pill-center.mjs
-      - name: Mobile canvas top strip (glass band / no horizontal fade / no pill / 28px edge)
-        # mobile-canvas-tabs-c gate (author order 2026-11-06 08:33 verbatim: "采用方案c
-        # 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端hover 上下选项
-        # 的那种模糊效果 文字两边不要渐隐"). The mobile canvas top strip grew five
-        # mutually-exclusive visual systems in six months (52->64 side feathering ->
-        # per-chip directional mask -> mask moved onto ::after -> flat chips -> plan C).
-        # Two of the author's clauses are PROHIBITIONS and must be machine-checked,
-        # otherwise the next refactor silently restores them:
-        #   S1 glass single source: any translucent (alpha in (0,.90)) face on the strip
-        #      must be a css/glass.css member; the 64px glass band (`.mf-strip::before`)
-        #      and the main capsule (`.mf-strip-chip.on::after`) must exist and be glassed.
-        #   S2 no horizontal fade: any 90deg/270deg/to-left/to-right mask-image on the
-        #      strip, ANY non-none mask on a label, or JS writing mask/--rfade => RED.
-        #   S3 background text carries no capsule: the shared chip visual layer must be
-        #      zero-material (pill material only under `.on`); content hosts
-        #      (.canvas-md-scroll / .mf-cv-host / .canvas-tab-pane) zero background,
-        #      never pill-shaped.
-        #   S4 bottom fade thickness = 28px: `.mf-strip::after` present, painting
-        #      var(--ds-fade-veil), height token arithmetic exactly 28px, top exactly the
-        #      64px glass height (--mchrome-clear 72 - --ds-space-2 8).
-        # Static, zero-port (no browser). Real-render readings (375/1440 x light/dark)
-        # live in scripts/capture-mobile-canvas-tabs.mjs and the paired spec.
-        # Same logic locally: node scripts/check-mobile-canvas-strip.mjs (or `make frontend-gates`)
-        run: node scripts/check-mobile-canvas-strip.mjs
-      - name: Panel design language (title tokens / back-or-X dedup / exception hygiene)
-        # panel-language gate (contact-panel-unify chain, author order 2026-11-06 verbatim:
-        #   (c) "面板宽度与形态：不要做成弹窗，要运用整个面板的宽度"
-        #   (d) "按钮去重：不要保留功能重复的按钮，比如已经有返回键了，就不要再放叉号键（X）"
-        #   (e) "规范统一：顶部文字大小等面板设计，可以参考项目面板，统一整理出一套面板的设计语言").
-        # Registry-driven, the registries live in the spec (panel-spec.md), not in this
-        # script - change the spec first:
-        #   P1 same-class panel titles may only use the mandated tokens
-        #     (--ds-panel-title-* family; a bare 15px/600 literal or a borrowed token = RED),
-        #   P2 a panel that renders a mobile back button must NOT also build an X close
-        #     button: the creation anchor must sit within 3 lines of an isMobileLayer()
-        #     guard (single source: popSheet.isMobileLayer); panels inherited from the
-        #     2026-10-30 dedup batch keep a css-hide drift check instead,
-        #   P3 exception-table hygiene: empty/stale reasons are RED,
-        #   P4 every registered token must be declared in some css file.
-        # Before/after with the SAME script: node scripts/check-panel-unify.mjs
-        # --root=<pre-change-tree> (this batch: 7 red before -> 0 after). Real-render
-        # readings: tests/panel-language.spec.mjs.
-        # Same logic locally: node scripts/check-panel-unify.mjs (or `make frontend-gates`)
-        run: node scripts/check-panel-unify.mjs
-      - name: Design spec scale sync (spec table <-> token source)
-        # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
-        # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /
-        # spacing / text-to-edge padding / font size) live in ONE spec table inside
-        # the design-language plugin's references/design-language-tokens.md. This
-        # gate fails on drift in BOTH directions - a spec row whose token is
-        # missing or carrying another value, and a --ds-{fs,radius,space}-* token
-        # born in code without a spec row - plus the --dl-* ledger mirror.
-        # Same logic locally: node scripts/check-design-spec-sync.mjs
-        run: node scripts/check-design-spec-sync.mjs
-      - name: Prompt single source (one home for prompt text)
-        # Prompt-catalog gate (author order 2026-11-01, "把上下文集中到一个 scala
-        # 文件中"): every prompt body lives in nebflow/prompts/PromptCatalog.scala
-        # and nowhere else. Same RULES shape as the message-style gate - a
-        # distinctive literal per prompt family, equal-count per file, any other
-        # src/main/scala file hitting it fails the job.
-        # Known limit (documented in the script): verbatim copies only - an
-        # already-reworded copy is not caught.
-        # Same logic locally: node scripts/check-prompt-single-source.mjs
-        run: node scripts/check-prompt-single-source.mjs
-      - name: Prompt catalog has zero business deps (Scala has no cycle check)
-        # Cycle gate for the prompt catalog. Scala 3 does NOT diagnose reference
-        # cycles: prompts <-> core.tools compiles green and yields a silent
-        # runtime `null` (spike evidence E3d). check-circular.mjs only scans web
-        # JS, so this is the missing Scala-side gate: nebflow/prompts/** may
-        # import nothing outside scala.*/java.* - hence cycle-impossible by
-        # construction.
-        # Same logic locally: node scripts/check-prompt-catalog-imports.mjs
-        run: node scripts/check-prompt-catalog-imports.mjs
-      - name: Provider model-list endpoints (per-face declaration)
-        # Gate: the provider model-list endpoint must be declared by each
-        # protocol face (`ModelListFaces` + the adapters), never built in the
-        # gateway by appending "models" to a posted baseUrl — that global concat
-        # only ever worked for a baseUrl that already ends in `/v1` (kimi 404,
-        # zhipu "HTTP 200 + body 404 NOT_FOUND"). Also asserts the caller keeps
-        # the declaration, the explicit "no list endpoint" refusal, and the
-        # pseudo-200 / unreachable classifications. Offline and hermetic: no
-        # network, no credentials.
-        # Same logic locally: node scripts/check-provider-modellist.mjs
-        run: node scripts/check-provider-modellist.mjs
-      - name: Local coupling (no contributor-machine identifiers in the ship face)
-        # Gate #491 (author-approved 2026-09-14). The ship face (src/main/**,
-        # build/packaging scripts, .github/workflows/**, README.md) must not carry
-        # a contributor's own machine/user identity. The judgement source is the
-        # STRICT layer of scripts/user-knowledge-patterns.txt, parsed at run time
-        # (no parallel pattern list here); the executing machine's own HOME
-        # basename / hostname / whoami are derived at run time too, so the gate
-        # defends on every contributor's machine, not only the author's. `\b` is
-        # never handed to a platform ERE (that dialect silently reports zero
-        # hits), and a positive probe must hit before "no hits" is trusted.
-        # src/test/** is reported as a warning only; vendor/ is exempt.
-        # Exit code != 0 = hit.
-        # Same logic locally: node scripts/check-local-coupling.mjs
-        run: node scripts/check-local-coupling.mjs
-      - name: Tag format (release tags carry no `v`)
-        # F3 mount (tagfix batch 2026-09-17): the anchor
-        # scripts/check-tag-format.mjs existed since tagfmt-sink but was not
-        # wired into any pipeline step (manual / review-face gate only). This
-        # step makes it an automatic gate. It scans the two CI release paths
-        # (.github/workflows/release.yml, auto-release.yml) plus the installer
-        # download path (release/install.sh, release/install.ps1): zero
-        # v-prefixed version forms on both faces, and the no-v form present
-        # exactly once at each of the three build points. Probe-before-trust:
-        # "zero hits" is only trusted after the synthetic v-form probes hit.
-        # Offline and hermetic: no network, no credentials.
-        # Same logic locally: node scripts/check-tag-format.mjs
-        run: node scripts/check-tag-format.mjs
+          cache: npm
+      - name: Install locked tooling
+        run: npm ci
+      - name: Checkout-only static registry
+        run: npm run check:static
+      - name: Official OpenSpec validation
+        if: ${{ !cancelled() }}
+        run: npm run check:openspec -- --download
+      - name: Explicit-base SDD coverage
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            [[ "$PR_BASE" =~ ^[0-9a-f]{40}$ && ! "$PR_BASE" =~ ^0+$ ]]
+            base="$PR_BASE"
+          else
+            base="${PUSH_BEFORE:-}"
+          fi
+          if [[ "$base" =~ ^[0-9a-f]{40}$ && ! "$base" =~ ^0+$ ]]; then
+            git cat-file -e "$base^{commit}" 2>/dev/null || git fetch --no-tags origin "$base"
+          else
+            test -n "$DEFAULT_BRANCH"
+            git fetch --no-tags origin "$DEFAULT_BRANCH"
+            base=$(git merge-base HEAD FETCH_HEAD)
+          fi
+          git cat-file -e "$base^{commit}"
+          npm run check:commit-attribution -- "$base..HEAD"
+          npm run check:sdd-changed -- --base "$base"
+      - name: Delivery checker self-test
+        run: python3 -B scripts/tests/test-delivery.py
+      - name: Delivery artifacts
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/check-delivery.py --base "$PR_BASE" --head HEAD
+
+  mobile-send-scale-lint:
+    name: Mobile send / voice scale lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock @playwright/test@1.62.0
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/mobile-send-scale.mjs
 
   user-knowledge-gate:
     name: User Knowledge Gate (#338)
@@ -485,15 +264,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Scala layering gate (Phase 5 ratchet)
-        # Phase 5 分层门禁(2026-09-25):src/main/scala 的 (文件,目标包) 粒度
-        # 反向边集合 ⊆ scripts/layer-exemptions.json 基线,基线只减不增;
-        # shared/actor 底层零反向(现状已达成),豁免边出图后包图必须无环
-        # (Tarjan)。非纯 import 正则:含 Scala 3 通配/{A,B} import、剥注释与
-        # 字符串后的 FQN 裸引用(内插 ${...} 是代码,保留),否则会对
-        # core→gateway 的 FQN 用点报假绿。Exit 1 = 违规未豁免。
-        # Same logic locally: node scripts/check-scala-layers.mjs
-        run: node scripts/check-scala-layers.mjs
 
   compile:
     name: Compile (${{ matrix.os }})
@@ -598,7 +368,7 @@ jobs:
     name: Build JAR
     timeout-minutes: 45
     runs-on: ubuntu-latest
-    needs: [compile, test]
+    needs: [static, compile, test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

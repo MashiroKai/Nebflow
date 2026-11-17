@@ -1,10 +1,5 @@
 package nebflow.core.tools
 
-import nebflow.neblink.core.*
-import nebflow.neblink.identity.*
-import nebflow.neblink.misc.*
-import nebflow.neblink.relay.*
-
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, Fiber, IO, Ref}
 import io.circe.parser.decode
@@ -845,7 +840,7 @@ class RemoteExecutor(
   // ---- 附件跨设备送达批（2026-11-05）：Delegate 设备腿的分块 put 两件 ----
   //
   // 注：本批**一度**还有一个「建位」动作（用对端 `Write` 建父目录 + 空目标件），实测在
-  // KAI 上失败（`Relay failed: Error writing file: C:\Users\PC`）⇒ 建位责任下沉到接收腿
+  // Windows 实机上失败（`Relay failed: Error writing file: C:\Users\PC`）⇒ 建位责任下沉到接收腿
   // 自己（`FileTransferAction.ensureParentDir`，跨设备附件批对接收端的对齐改动），发送
   // 侧不再依赖对端工具腿、也不猜对端 home。那条已删除，不留死码。
 
@@ -1104,7 +1099,7 @@ class RemoteExecutor(
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
     // 输出查看补全批（作者令 2026-10-25「远端任务看不到」）：从命令文本解析对端
     // 日志路径（LLM 惯例把远端长任务输出重定向到日志，实证 test5 的
-    // `/c/Users/Kai/stand-win-test5.log`）——解析不到 = 空（面板降级注明原因，
+    // `/c/Users/name/stand-win-test5.log`）——解析不到 = 空（面板降级注明原因，
     // 不猜路径）。startedAtMs 一并捕获（fillRemote 落账 origin 用）。
     val bgOutputPath = RemoteBgOutputLog.parseRedirect(commandStr).getOrElse("")
     val bgStartedAtMs = System.currentTimeMillis()
@@ -2514,7 +2509,7 @@ object RemoteExecutor:
    * 签名不中 ⇒ `None`（调用方错误通道逐字节不变）。
    *
    * 动因（2026-10-26 晨生产实录）：Mac 引擎（device-project-mount 批）对设备
-   * KAI 发 `direction=list` 做目录核验，KAI 在产 daemon（2026.9.19 stable，
+   * Windows 设备发 `direction=list` 做目录核验，设备在产 daemon（2026.9.19 stable，
    * 早于 2026-10-10 list 方向落位）的 legacy 接收分支原样回答
    * `"Unknown direction: list"`——这不是「目录不存在」，是**对端引擎版本偏斜**。
    * 旧文案（"Create/verify the directory on that device first"）把用户引去

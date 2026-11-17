@@ -70,7 +70,10 @@
    wiki 搜索胶囊 / 邮件收件人与主题行 / 提醒行内输入 / todo 行标题 / 移动端
    搜索框 / delegate 弹窗头部模型下拉）。成员只拿「裸」，几何仍归各自文件。
    提醒行内**描述**（`.reminder-inline-desc`）同属「提醒行内」这一面：它和同行
-   的 name 输入件在同一个成形容器里，故并入本成员表。 */
+   的 name 输入件在同一个成形容器里，故并入本成员表。
+   待办回复框内芯（`.tfl-hit-reply`，ui-unify-panels E 批 2026-11-17）：行壳
+   `.tfl-hit-replyrow` = nf-glass 输入条外壳（复刻 ask 卡片输入），内芯按裸件
+   收编。 */
 .nf-field--bare,
 #input,
 .ask-input textarea,
@@ -84,6 +87,10 @@
 .reminder-inline-desc,
 .reminder-inline-project input,
 .tfl-row-title-input,
+.tfl-hit-reply,
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
 .bgagent-model-switch {
   background: var(--nf-field-bare-bg);
   border: none;
@@ -177,8 +184,11 @@ html[data-nf-modality="pointer"] .nf-field:focus-visible {
 /* ── 输入条外壳成员（composer shell）─────────────────────────────────────
    `.ask-input` 是画布 ask 窗的输入条外壳：它不在本文件的「输入件」清单里
    （它是外壳，材质由 `.nf-glass` 供），只有圆角这一项曾在本文件之前散在
-   ask.css —— 收到这里，与 `#input-bar` 的 `--ds-radius-shell` 同族。 */
-.ask-input {
+   ask.css —— 收到这里，与 `#input-bar` 的 `--ds-radius-shell` 同族。
+   `.tfl-hit-replyrow`（ui-unify-panels E 批 2026-11-17）：待办互动框的回复
+   输入条外壳，复刻 ask 卡片输入（材质同样由 JS 挂 `.nf-glass` 供）。 */
+.ask-input,
+.tfl-hit-replyrow {
   border-radius: var(--nf-field-shell-radius, var(--ds-radius-xl));
 }
 
@@ -202,7 +212,9 @@ html[data-nf-modality="pointer"] .nf-field:focus-visible {
    这是**唯一**一条具名例外（规范 §4 例外清单第 1 行），因为它不是「另一种
    造型」，是「不造型」。 */
 #input:focus,
-#input:focus-visible {
+#input:focus-visible,
+.fm-input:focus,
+.fm-input:focus-visible {
   outline: none;
   box-shadow: none;
 }

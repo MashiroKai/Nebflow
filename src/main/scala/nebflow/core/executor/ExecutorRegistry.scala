@@ -65,7 +65,11 @@ object ExecutorRegistry:
   object ExecutorState:
     given Encoder[ExecutorState] = deriveEncoder
 
-  final case class Settings(default: Option[String], disabled: List[String])
+  final case class Settings(default: Option[String], disabled: List[String], models: Map[String, String] = Map.empty)
+
+  def configuredModel(id: String): Option[String] =
+    Option.when(Set("claude-code", "codex").contains(id))(id)
+      .flatMap(readSettings.models.get).map(_.trim).filter(_.nonEmpty)
 
   /** 内置执行器永远在册且可用（不可 disabled——它是唯一的零依赖兜底面）。 */
   val DefaultId: String = "nebflow"
@@ -171,7 +175,8 @@ object ExecutorRegistry:
     val c = Json.fromJsonObject(o).hcursor
     Settings(
       default = c.downField("default").as[String].toOption,
-      disabled = c.downField("disabled").as[List[String]].toOption.getOrElse(Nil)
+      disabled = c.downField("disabled").as[List[String]].toOption.getOrElse(Nil),
+      models = c.downField("models").as[Map[String, String]].toOption.getOrElse(Map.empty)
     )
 
   /**

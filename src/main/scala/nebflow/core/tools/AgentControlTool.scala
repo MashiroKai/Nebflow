@@ -337,6 +337,7 @@ When to use:
                   // （Sub-Agents 面板取消实时刷新修复）。
                   doCancel(resources, rec, reason, by = callerLabel(ctx), notifyWs = ctx.wsSend)
                 )
+              end if
           case "restart" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("restart requires sessionId (run list first to get one)")))
             else
@@ -469,6 +470,8 @@ When to use:
           IO.pure(Some(Set.empty[String]))
     yield (registry, pred)
 
+  end scopeFilterFor
+
   private def doList(resources: AgentRuntimePort, ctx: ToolContext): IO[Either[ToolError, String]] =
     for
       (registry, anchorsOpt) <- scopeFilterFor(resources, ctx)
@@ -570,12 +573,13 @@ When to use:
           // sweep 会按 grace 重投。
           val pendingDelivery =
             try
-              nebflow.core.delegate.DelegateDeliveryReceipts.list().count(r =>
-                r.parentSessionId == rec.sessionId && r.ackedAt.isEmpty
-              )
+              nebflow.core.delegate.DelegateDeliveryReceipts
+                .list()
+                .count(r => r.parentSessionId == rec.sessionId && r.ackedAt.isEmpty)
             catch case _: Throwable => 0
           val barrier =
-            if rec.outstandingSubagents > 0 || rec.pendingEventCount > 0 || rec.unreadReceiptCount > 0 || pendingDelivery > 0 then
+            if rec.outstandingSubagents > 0 || rec.pendingEventCount > 0 || rec.unreadReceiptCount > 0 || pendingDelivery > 0
+            then
               val base = s"${rec.outstandingSubagents}/${rec.pendingEventCount}"
               val withUnread = if rec.unreadReceiptCount > 0 then s"$base(+${rec.unreadReceiptCount})" else base
               if pendingDelivery > 0 then s"$withUnread!$pendingDelivery" else withUnread
@@ -917,7 +921,9 @@ When to use:
                 s"External delegate '$sessionId' (executor=${rec.executor}) has no output buffer on this instance " +
                   "(process finished and its retained buffer was evicted, or it ran before the last restart). " +
                   s"Record: workspace=${rec.cwd}, project=${rec.project.getOrElse("-")}, taskId=${rec.taskId.getOrElse("-")}. " +
-                  s"""Continue it via Mail(address="${nebflow.core.delegate.MailAddress.of(AgentKind.Delegate, sessionId).getOrElse("-")}", …)."""
+                  s"""Continue it via Mail(address="${nebflow.core.delegate.MailAddress
+                      .of(AgentKind.Delegate, sessionId)
+                      .getOrElse("-")}", …)."""
               )
             )
           case None =>
@@ -1009,6 +1015,7 @@ When to use:
               agentRef = Some(rec.ref)
             )
             .map(_.leftMap(ToolError(_)))
+        end if
     }
 
   def doCancel(
@@ -1018,6 +1025,21 @@ When to use:
     by: String = "the user panel",
     notifyWs: Option[io.circe.Json => IO[Unit]] = None
   ): IO[Either[ToolError, String]] =
+    resources.executionProtection(rec.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected => doCancelLegacy(resources, rec, reason, by, notifyWs)
+      case _: nebflow.shared.ExecutionProtection.Protected =>
+        resources.cancelProtectedExecution(rec.sessionId, reason).map(_.leftMap(ToolError(_)))
+      case _: nebflow.shared.ExecutionProtection.Unknown =>
+        IO.pure(Left(ToolError("Protected or unknown execution requires authority-routed cancellation.")))
+    }
+
+  private def doCancelLegacy(
+    resources: AgentRuntimePort,
+    rec: AgentRecord,
+    reason: String,
+    by: String,
+    notifyWs: Option[io.circe.Json => IO[Unit]]
+  ): IO[Either[ToolError, String]] =
     // ── 缺陷七 · cancel 级联（引擎会话治理专项，作者 2026-11-03 15:09 报障逐字
     // 「你杀掉父会话，子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话
     // 变成孤儿」）：级联**后序**编队（先孙后子、父最后结算），在两条成功腿的文案
@@ -1025,172 +1047,177 @@ When to use:
     // （dispatcher-/node-）另解析 flow map 的节点 sessionRef 作种子——注册表行没有
     // parentSessionId 边，属主边只在图盘上。
     val cascadeLeg: String => IO[String] = finalText =>
-      projectSeeds(resources, rec).flatMap(seeds =>
-        CancelCascade
-          .cascade(
-            new CancelCascade.Port:
-              def registry = resources.agentRegistry.get
-              def tombstoned = IO
-                .blocking(nebflow.core.delegate.DelegateRegistry.list())
-                .map(_.filter(_.cancelRequestedAt.isDefined).map(_.id).toSet)
-                .handleError(_ => Set.empty[String])
-              def cancelChild(kid: nebflow.actor.AgentRecord, why: String) =
-                // 同一原语递归（cascade=false 防二次走查；报告逐条如实）。
-                doCancel(resources, kid, why, by = s"$by (cascade)", notifyWs = None)
-                  .flatMap {
-                    case Right(_)  => IO.pure(Right(()))
-                    case Left(err) => IO.pure(Left(err.message))
-                  }
-                  .handleErrorWith(e => IO.pure(Left(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))))
-          ,
-            rec.sessionId,
-            seeds
-          )
-      ).map { steps =>
-        if steps.nonEmpty then
-          logger.info(
-            s"[cancel-cascade] ${rec.sessionId}: ${steps.count(_.outcome == CancelCascade.Outcome.Killed)} killed, " +
-              s"${steps.count(_.outcome == CancelCascade.Outcome.AlreadyTerminal)} already-terminal, " +
-              s"${steps.count(_.outcome == CancelCascade.Outcome.Refused)} refused"
-          )
-        finalText + CancelCascade.report(steps)
-      }
-    val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
-    rec.supervisorRef match
-      case Some(sup) =>
-        // R1 缝隙 A+C 修（2026-10-28 实施批 · 报告二 §1.3 硬验收）：
-        //  ① 取消意图**先行落墓碑**（DelegateRegistry.markCancelRequested——缝隙 C
-        //     件：意图先于信号持久在案，crash 窗口内「信号已发意图未落」不可能）；
-        //  ② Cancelled 投递后**带回执确认**（原 fire-and-forget tell 改造）：有界窗
-        //     内轮询任务行翻 cancelled（notifyParentAndStop 的 taskUpdate = 终态结算
-        //     的盘面证据）——监督者已死/消息被弃的场景不再回假成功文案；
-        //  ③ 超窗未确认 = **降级兜底直落**（taskUpdate cancelled + registry 活体
-        //     清除 + child Stop），回执如实申报「监督者路径未确认，已走兜底」。
-        // Project flow 会话（node-/dispatcher-）与 Ephemeral 无任务行语义（观察桥
-        // 清理形态，见下注）——确认腿不适用，保持旧投递语义（墓碑照写，查无记录
-        // = Left 只 WARN）。
-        val tombstoneWrite = IO.blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(rec.sessionId, by)).attempt.flatMap {
-          case Right(_)  => IO.unit
-          case Left(err) => logger.warn(s"cancel tombstone write failed for '${rec.sessionId}': $err")
-        }
-        val rowReceiptApplies = rec.kind == AgentKind.Delegate || rec.kind == AgentKind.SubTask
-        val verifyBudget = nebflow.core.delegate.CancelReceipt.verifyBudgetMs
-        tombstoneWrite *> (sup ! AgentEvent.Cancelled(rec.sessionId, reason)).flatMap { _ =>
-          val panelFrame =
-            if rec.kind == AgentKind.Flow && rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
-            then
-              notifyWs.fold(IO.unit)(ws =>
-                nebflow.core.node.NodeRunner
-                  .emitSubagentPanelDone(ws, rec.sessionId, rec.rootSessionId)
-                  .handleErrorWith(_ => IO.unit)
-              )
-            else IO.unit
-          val verifiedIo: IO[Boolean] =
-            if rowReceiptApplies then
-              nebflow.core.delegate.CancelReceipt.awaitTerminal(resources.subAgentTaskStore, rec.sessionId, verifyBudget)
-            else IO.pure(true) // 无任务行语义的形态：投递即成功（旧语义逐字）
-          verifiedIo.flatMap {
-            case true =>
-              panelFrame *> cascadeLeg(
-                if rec.kind == AgentKind.Flow then
-                  s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
-                    (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
-                       "; the node settles to status=cancelled and its result is NOT delivered"
-                     else "") + "."
-                else
-                  s"Cancel sent to supervisor for '${rec.sessionId}' and CONFIRMED (task row settled to cancelled). " +
-                    "The parent session receives a cancelled notification. A cancel tombstone is on record — " +
-                    "this instance can never be revived across restarts."
-              ).map(Right(_))
-            case false =>
-              // 监督者路径未确认（监督者已死/超窗未结算）——降级兜底直落终态。
-              // 兜底不重复父通知（正路若迟到，其通知仍会到——双发比假成功诚实）。
-              logger
-                .warn(
-                  s"[cancel-receipt] supervisor path for '${rec.sessionId}' unconfirmed within ${verifyBudget}ms — applying fallback terminal state"
-                )
-                .flatMap { _ =>
-                  val taskUpdate =
-                    if rowReceiptApplies && rec.parentSessionId.nonEmpty then
-                      resources.subAgentTaskStore
-                        .updateStatus(
-                          rec.parentSessionId,
-                          rec.sessionId,
-                          "cancelled",
-                          completedAt = Some(System.currentTimeMillis()),
-                          lastError = Some(s"cancelled by $by via AgentControl$reasonSuffix (supervisor unconfirmed — fallback terminal)")
-                        )
-                        .handleErrorWith(e => logger.warn(s"cancel fallback taskStore update failed: ${e.getMessage}"))
-                    else IO.unit
-                  taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
-                    (rec.ref ! AgentCommand.Stop(s"agent-control-cancel-fallback$reasonSuffix")).flatMap { _ =>
-                      cascadeLeg(
-                        s"Cancel sent to supervisor for '${rec.sessionId}' but the terminal state was NOT confirmed " +
-                          s"within ${verifyBudget}ms — fallback terminal state written directly " +
-                          "(task row cancelled, registry entry removed, agent stopped). If the supervisor settles later, " +
-                          "its terminal event still wins (first-terminal-wins). Cancel tombstone is on record."
-                      ).map(Right(_))
+      projectSeeds(resources, rec)
+        .flatMap(seeds =>
+          CancelCascade
+            .cascade(
+              new CancelCascade.Port:
+                def registry = resources.agentRegistry.get
+                def tombstoned = IO
+                  .blocking(nebflow.core.delegate.DelegateRegistry.list())
+                  .map(_.filter(_.cancelRequestedAt.isDefined).map(_.id).toSet)
+                  .handleError(_ => Set.empty[String])
+                def cancelChild(kid: nebflow.actor.AgentRecord, why: String) =
+                  // 同一原语递归（cascade=false 防二次走查；报告逐条如实）。
+                  doCancel(resources, kid, why, by = s"$by (cascade)", notifyWs = None)
+                    .flatMap {
+                      case Right(_) => IO.pure(Right(()))
+                      case Left(err) => IO.pure(Left(err.message))
                     }
-                }
-          }
+                    .handleErrorWith(e => IO.pure(Left(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))))
+              ,
+              rec.sessionId,
+              seeds
+            )
+        )
+        .map { steps =>
+          if steps.nonEmpty then
+            logger.info(
+              s"[cancel-cascade] ${rec.sessionId}: ${steps.count(_.outcome == CancelCascade.Outcome.Killed)} killed, " +
+                s"${steps.count(_.outcome == CancelCascade.Outcome.AlreadyTerminal)} already-terminal, " +
+                s"${steps.count(_.outcome == CancelCascade.Outcome.Refused)} refused"
+            )
+          finalText + CancelCascade.report(steps)
         }
-      case None =>
-        // 降级路径（spec §3.2 兜底）：Ephemeral（bridge death-watch 兜底回收）或
-        // 无 supervisor 记录的旧记录——直接 Stop + 自补通知 + registry 移除。
-        // R1-C 修：取消意图同样先行落墓碑（幂等；查无 registry 记录 = Left 只
-        // WARN——墓碑只在真实 spawn 记录上生效）。
-        val source = rec.kind match
-          case AgentKind.SubTask => "subtask"
-          case AgentKind.Delegate => "delegate"
-          case AgentKind.External => "external"
-          case _ => "background-task"
-        val tombstoneWrite = IO
-          .blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(rec.sessionId, by))
-          .attempt
-          .flatMap {
-            case Right(_)  => IO.unit
-            case Left(err) => logger.warn(s"cancel tombstone write failed for '${rec.sessionId}': $err")
+    val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
+    resources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { observedTask =>
+      rec.supervisorRef match
+        case Some(sup) =>
+          // R1 缝隙 A+C 修（2026-10-28 实施批 · 报告二 §1.3 硬验收）：
+          //  ① 取消意图**先行落墓碑**（DelegateRegistry.markCancelRequested——缝隙 C
+          //     件：意图先于信号持久在案，crash 窗口内「信号已发意图未落」不可能）；
+          //  ② Cancelled 投递后**带回执确认**（原 fire-and-forget tell 改造）：有界窗
+          //     内轮询任务行翻 cancelled（notifyParentAndStop 的 taskUpdate = 终态结算
+          //     的盘面证据）——监督者已死/消息被弃的场景不再回假成功文案；
+          //  ③ 超窗未确认 = **降级兜底直落**（taskUpdate cancelled + registry 活体
+          //     清除 + child Stop），回执如实申报「监督者路径未确认，已走兜底」。
+          // Project flow 会话（node-/dispatcher-）与 Ephemeral 无任务行语义（观察桥
+          // 清理形态，见下注）——确认腿不适用，保持旧投递语义（墓碑照写，查无记录
+          // = Left 只 WARN）。
+          val tombstoneWrite =
+            IO.blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(rec.sessionId, by)).attempt.flatMap {
+              case Right(_) => IO.unit
+              case Left(err) => logger.warn(s"cancel tombstone write failed for '${rec.sessionId}': $err")
+            }
+          val rowReceiptApplies = rec.kind == AgentKind.Delegate || rec.kind == AgentKind.SubTask
+          val verifyBudget = nebflow.core.delegate.CancelReceipt.verifyBudgetMs
+          tombstoneWrite *> (sup ! AgentEvent.Cancelled(rec.sessionId, reason)).flatMap { _ =>
+            val panelFrame =
+              if rec.kind == AgentKind.Flow && rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+              then
+                notifyWs.fold(IO.unit)(ws =>
+                  nebflow.core.node.NodeRunner
+                    .emitSubagentPanelDone(ws, rec.sessionId, rec.rootSessionId)
+                    .handleErrorWith(_ => IO.unit)
+                )
+              else IO.unit
+            val verifiedIo: IO[Boolean] =
+              if rowReceiptApplies then
+                nebflow.core.delegate.CancelReceipt
+                  .awaitTerminal(resources.subAgentTaskStore, rec.sessionId, verifyBudget)
+              else IO.pure(true) // 无任务行语义的形态：投递即成功（旧语义逐字）
+            verifiedIo.flatMap {
+              case true =>
+                panelFrame *> cascadeLeg(
+                  if rec.kind == AgentKind.Flow then
+                    s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
+                      (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
+                         "; the node settles to status=cancelled and its result is NOT delivered"
+                       else "") + "."
+                  else
+                    s"Cancel sent to supervisor for '${rec.sessionId}' and CONFIRMED (task row settled to cancelled). " +
+                      "The parent session receives a cancelled notification. A cancel tombstone is on record — " +
+                      "this instance can never be revived across restarts."
+                ).map(Right(_))
+              case false =>
+                // 监督者路径未确认（监督者已死/超窗未结算）——降级兜底直落终态。
+                // 兜底不重复父通知（正路若迟到，其通知仍会到——双发比假成功诚实）。
+                logger
+                  .warn(
+                    s"[cancel-receipt] supervisor path for '${rec.sessionId}' unconfirmed within ${verifyBudget}ms — applying fallback terminal state"
+                  )
+                  .flatMap { _ =>
+                    val taskUpdate =
+                      if rowReceiptApplies && rec.parentSessionId.nonEmpty then
+                        observedTask
+                          .fold(IO.unit)(task =>
+                            resources.subAgentTaskStore.transitionObserved(
+                              task,
+                              "cancelled",
+                              Some(s"cancelled by $by via AgentControl$reasonSuffix (supervisor unconfirmed)")
+                            )
+                          )
+                          .handleErrorWith(e =>
+                            logger.warn(s"cancel fallback taskStore update failed: ${e.getMessage}")
+                          )
+                      else IO.unit
+                    taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
+                      (rec.ref ! AgentCommand.Stop(s"agent-control-cancel-fallback$reasonSuffix")).flatMap { _ =>
+                        cascadeLeg(
+                          s"Cancel sent to supervisor for '${rec.sessionId}' but the terminal state was NOT confirmed " +
+                            s"within ${verifyBudget}ms — fallback terminal state written directly " +
+                            "(task row cancelled, registry entry removed, agent stopped). If the supervisor settles later, " +
+                            "its terminal event still wins (first-terminal-wins). Cancel tombstone is on record."
+                        ).map(Right(_))
+                      }
+                  }
+            }
           }
-        val metadata = JsonObject(
-          "failedSessionId" -> rec.sessionId.asJson,
-          "retryable" -> false.asJson,
-          "failureType" -> "cancelled".asJson,
-          "cancelled" -> true.asJson,
-          "reason" -> reason.asJson
-        )
-        val notify = rec.parentRef.fold(IO.unit)(p =>
-          p ! AgentCommand.ExternalEvent(
-            source = source,
-            eventType = "cancelled",
-            payload = s"\"${rec.sessionId}\": cancelled by $by via AgentControl$reasonSuffix",
-            metadata = metadata,
-            correlationId = Some(rec.sessionId)
+        case None =>
+          // 降级路径（spec §3.2 兜底）：Ephemeral（bridge death-watch 兜底回收）或
+          // 无 supervisor 记录的旧记录——直接 Stop + 自补通知 + registry 移除。
+          // R1-C 修：取消意图同样先行落墓碑（幂等；查无 registry 记录 = Left 只
+          // WARN——墓碑只在真实 spawn 记录上生效）。
+          val source = rec.kind match
+            case AgentKind.SubTask => "subtask"
+            case AgentKind.Delegate => "delegate"
+            case AgentKind.External => "external"
+            case _ => "background-task"
+          val tombstoneWrite = IO
+            .blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(rec.sessionId, by))
+            .attempt
+            .flatMap {
+              case Right(_) => IO.unit
+              case Left(err) => logger.warn(s"cancel tombstone write failed for '${rec.sessionId}': $err")
+            }
+          val metadata = JsonObject(
+            "failedSessionId" -> rec.sessionId.asJson,
+            "retryable" -> false.asJson,
+            "failureType" -> "cancelled".asJson,
+            "cancelled" -> true.asJson,
+            "reason" -> reason.asJson
           )
-        )
-        val taskUpdate =
-          // 裁定4：外部腿（ref=null）没有任务行语义，不在此终态化。
-          if rec.kind != AgentKind.External && rec.parentSessionId.nonEmpty then
-            resources.subAgentTaskStore
-              .updateStatus(
-                rec.parentSessionId,
-                rec.sessionId,
-                "cancelled",
-                completedAt = Some(System.currentTimeMillis()),
-                lastError = Some(s"cancelled by $by via AgentControl$reasonSuffix")
-              )
-              .handleErrorWith(e => logger.warn(s"cancel taskStore update failed: ${e.getMessage}"))
-          else IO.unit
-        tombstoneWrite *> notify *> taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
-          (rec.ref ! AgentCommand.Stop(s"agent-control-cancel$reasonSuffix")).flatMap { _ =>
-            cascadeLeg(
-              s"Terminated '${rec.sessionId}' directly (no supervisor on record — fallback path). " +
-                "Registry entry removed (cancel tombstone retained); parent notified if applicable."
-            ).map(Right(_))
-          }
+          val notify = rec.parentRef.fold(IO.unit)(p =>
+            p ! AgentCommand.ExternalEvent(
+              source = source,
+              eventType = "cancelled",
+              payload = s"\"${rec.sessionId}\": cancelled by $by via AgentControl$reasonSuffix",
+              metadata = metadata,
+              correlationId = Some(rec.sessionId)
+            )
+          )
+          val taskUpdate =
+            // 裁定4：外部腿（ref=null）没有任务行语义，不在此终态化。
+            if rec.kind != AgentKind.External && rec.parentSessionId.nonEmpty then
+              observedTask
+                .fold(IO.unit)(task =>
+                  resources.subAgentTaskStore
+                    .transitionObserved(task, "cancelled", Some(s"cancelled by $by via AgentControl$reasonSuffix"))
+                )
+                .handleErrorWith(e => logger.warn(s"cancel taskStore update failed: ${e.getMessage}"))
+            else IO.unit
+          tombstoneWrite *> notify *> taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
+            (rec.ref ! AgentCommand.Stop(s"agent-control-cancel$reasonSuffix")).flatMap { _ =>
+              cascadeLeg(
+                s"Terminated '${rec.sessionId}' directly (no supervisor on record — fallback path). " +
+                  "Registry entry removed (cancel tombstone retained); parent notified if applicable."
+              ).map(Right(_))
+            }
 
-    end match
+      end match
+    }
 
-  end doCancel
+  end doCancelLegacy
 
   /**
    * 项目域级联种子（缺陷七 · cancel 级联的项目腿）：`dispatcher-*` / `node-*` 会话在
@@ -1233,6 +1260,17 @@ When to use:
    * 本方法的入口判定因之直接落到 supervisor 分支（Delegate/SubTask 重启腿逐字未动）。
    */
   def doRestart(
+    resources: AgentRuntimePort,
+    ctx: ToolContext,
+    rec: AgentRecord,
+    reason: String
+  ): IO[Either[ToolError, String]] =
+    resources.executionProtection(rec.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Unprotected => doRestartLegacy(resources, ctx, rec, reason)
+      case _ => IO.pure(Left(ToolError("Protected or unknown execution requires exact-ref recovery.")))
+    }
+
+  private def doRestartLegacy(
     resources: AgentRuntimePort,
     ctx: ToolContext,
     rec: AgentRecord,
@@ -1287,7 +1325,7 @@ When to use:
               case _ =>
                 for
                   _ <- resources.subAgentTaskStore
-                    .updateStatus(parentSid, rec.sessionId, "restarting")
+                    .transitionObserved(task, "restarting")
                     .handleErrorWith(e => logger.warn(s"restart taskStore update failed: ${e.getMessage}"))
                   _ <- rec.ref ! AgentCommand.Stop(
                     s"agent-control-restart${if reason.nonEmpty then s": $reason" else ""}"
@@ -1317,9 +1355,10 @@ When to use:
     if sessionId.trim.isEmpty then IO.unit
     else
       resources.agentRegistry
-        .update(m => m.get(sessionId) match
-          case Some(rec) if rec.escalation.isDefined => m.updated(sessionId, rec.copy(escalation = None))
-          case _ => m
+        .update(m =>
+          m.get(sessionId) match
+            case Some(rec) if rec.escalation.isDefined => m.updated(sessionId, rec.copy(escalation = None))
+            case _ => m
         )
         .handleErrorWith(e => logger.warn(s"clearRegistryEscalation($sessionId) failed: ${e.getMessage}"))
 

@@ -27,7 +27,7 @@ agent 运行时：主循环、会话执行、交互枢纽、子代理与崩溃�
 | [`AgentStreamPipelines.scala`](AgentStreamPipelines.scala) | WS 流事件合批管道（原 streamEmitter 内联实现，2026-09-07 抽出并修复 park 饿死）。 缺陷（B-after-A 冒烟悬案，2026-09-07 插桩实证）：旧实现 flush 只发生在 |
 | [`AskAnswerLanding.scala`](AskAnswerLanding.scala) | AskUser 社交腿答案的**着陆面**（answer-landing 实施批 2026-10-21；设计批 `reports/20261020_123548_askuser-social-answer-inject/ |
 | [`AskUserAnswerBridge.scala`](AskUserAnswerBridge.scala) | AskUserQuestion **非阻塞模式的回投桥**（工具面按角色分化批 B5/L9，2026-09-13）。 职责（规格 §2.2 D3/D4）：非阻塞模式下，hub 槽位的 `reply` 不指向「等着工具结果 |
-| [`BackoffSupervisor.scala`](BackoffSupervisor.scala) | Supervises a child agent actor. On crash (fiber termination), restarts the child with exponential backoff. Mir |
+| [`BackoffSupervisor.scala`](BackoffSupervisor.scala) | Supervises child agents and completion delivery. Stale detection uses the debt execution roundId, independently of delivery generation; stale cleanup preserves replacement actor registration. |
 | [`BgInboxBackstop.scala`](BgInboxBackstop.scala) | D1 后台任务通知「持久补投」面（steward 批 2026-10-23）：[[BgInboxPort]] 的 agent 侧实现——把待补投事件 append 进目标会话的**持久注入队 |
 | [`CompactionAbandon.scala`](CompactionAbandon.scala) | 压缩作业被**放弃**（用户中断 / turn 在 compact 阶段前结束）时的两面决策。 纯决策对象（无 IO、无 actor 依赖）——沿用 `TurnBoundaryDrains` 的「纯决策 + 调用点 |
 | [`CompactionQueueStore.scala`](CompactionQueueStore.scala) | F2 (2026-08-30, compact-injection-shield batch 2): durable queue store for the compaction-window injection que |

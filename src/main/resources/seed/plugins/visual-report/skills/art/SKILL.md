@@ -61,7 +61,7 @@ description: 生成艺术与色彩分析（p5.js 可复现算法）；生成艺�
 | numpy | 降级艺术/数值生成 | `<venv>\python.exe -c "import numpy; print(numpy.__version__)"` → 2.5.3 | https://pypi.org/project/numpy/ | 200（2026-10-04） | 纯 Python `math`/`random` |
 | Chrome（headless 实拍） | 渲染实证截图 / 双渲染复现校验 | `chrome.exe --headless=new --screenshot=... --window-size=1124,1580 --virtual-time-budget=8000 file:///<html>` → 875-912 KB PNG | —（google.com/chrome 本网不可达；本机 Chrome 154.0.8037.93 为准） | 本机在位 | Edge `msedge.exe` 后备 |
 
-全基础工具链接验证表见插件 README，直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`；装包只进 viz-venv（core §5）。
+全基础工具链接验证表见插件 README，直接引用不复制。`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`；装包只进 viz-venv（core §5）。
 
 ### 降级策略
 

@@ -12,10 +12,10 @@ import scala.util.control.NonFatal
  * 判定：**成立**。seed 树的语义是「字节随引擎分发载体走」（`src/main/resources/seed/plugins/`
  * → jar → boot 期 `SeedService` 抄到 `<dataRoot>/plugins/`，见 `SeedService` 类注释与
  * `OfficialPackages`「载体现读」段），于是插件内容的任何前进都被绑死在**引擎发版**上：
- *  - 不发版 ⇒ 实例永远停在 jar 里那一份（今天实证：seed/运行时 v1.1.0，USTC 源 v1.2.0）；
+ *  - 不发版 ⇒ 实例永远停在 jar 里那一份（今天实证：seed/运行时 v1.1.0，源仓 v1.2.0）；
  *  - 发版 ⇒ 靠 boot 期 digest 仲裁覆盖（`SeedService.reconcilePlugin`），而仲裁基准是
  *    approve 时刻的 fingerprint ⇒ 用户改过就永不收敛（`SeedService` 类注释已登记该缺口）。
- * 自研插件（stand-dev 等）的 canonical 副本在**我们自己的 git 仓**（USTC `kaiyu/stand-dev`），
+ * 自研插件（stand-dev 等）的 canonical 副本在**我们自己的 git 仓**（GitHub `MashiroKai/stand-dev`），
  * 不在引擎仓 ⇒ 正确形态 = **指针随引擎分发、字节随源**：本件只带「包名 → 源 URL + 分支」，
  * 字节由 [[PluginSourceSync]] 按需拉取并在运行时原子换装（零重启生效）。
  *
@@ -68,8 +68,9 @@ object PluginSourceCatalog:
 
   // ── 代码内建声明（作者令 2026-11-01 22:55「自研插件走远端源，不进 seed」）──
 
-  /** USTC 自研插件仓命名空间（`kaiyu/` 名下，单仓单包）。🔴 只在此处出现，禁散落字面。 */
-  val UstcBase = "git@git.ustc.edu.cn:kaiyu"
+  /** 自研插件仓命名空间（GitHub `MashiroKai/` 名下，单仓单包）。🔴 只在此处出现，禁散落字面。
+    * 正典主页迁移（作者令 2026-11-15，local-coupling 处置a）：随仓库迁移一次性更换。 */
+  val GitBase = "git@github.com:MashiroKai"
 
   /**
    * 内建源清单。**加包规则**：自研（来源在我们自己的仓）⇒ 进本表 + `preinstall=true`，
@@ -78,13 +79,13 @@ object PluginSourceCatalog:
    * `PluginSourceCatalogSpec` 对「内建源 ∧ seed 树」交集断言为空。
    *
    * `stand-dev`（2026-11-01 本批迁出 seed）：统一开发知识包，canonical 副本 =
-   * `git@git.ustc.edu.cn:kaiyu/stand-dev.git` @ `main`；包在仓根（无子目录）。
+   * `git@github.com:MashiroKai/stand-dev.git` @ `main`；包在仓根（无子目录）。
    */
   val Builtins: List[SourceDecl] = List(
     SourceDecl(
       name = "stand-dev",
       kind = "git",
-      url = s"$UstcBase/stand-dev.git",
+      url = s"$GitBase/stand-dev.git",
       branch = SourceDecl.DefaultBranch,
       path = None,
       preinstall = true,
@@ -179,11 +180,11 @@ object PluginSourceCatalog:
    * 展示/审计用的一句源描述（面板卡片「来源」行、审计行、错误文案共用）。
    * 🔴 形如 `git · host/path @branch` / `local <dir>`，**不重复 `kind` 字面**：调用点常写
    * `s"git ls-remote failed for ${describe(...)}"`，若这里再带一个 `git `，实测文案就成了
-   * 「git git@…」（本批 USTC 实测读到过）。去协议/凭据面同 [[shortLabel]]。
+   * 「git git@…」（本批实测读到过）。去协议/凭据面同 [[shortLabel]]。
    */
   def describe(d: SourceDecl): String = shortLabel(d)
 
-  /** 面板「来源」短标签：`git · git.ustc.edu.cn/kaiyu/stand-dev @main`（去协议/凭据面）。 */
+  /** 面板「来源」短标签：`git · github.com/MashiroKai/stand-dev @main`（去协议/凭据面）。 */
   def shortLabel(d: SourceDecl): String =
     if !d.isGit then d.url
     else

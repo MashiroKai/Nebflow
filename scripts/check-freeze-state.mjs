@@ -287,21 +287,44 @@ check('⑤ 前端按钮判据 = 权威块 wakeable（旧后端才回落分类表
   return '快照按 asOf 定序、按钮=wakeable（可降级）';
 });
 
-// ══ ⑥ 任何状态变更都推帧（Mail 唤醒后必须自动刷新）══════════════════════
-check('⑥ 唤醒腿（含 Mail）都发状态变更帧 delegateWoken', () => {
+// Explicit recovery publishes its state; Mail alone preserves the recovery hold.
+check('⑥ explicit recovery publishes delegateWoken; Mail retains recovery-held supplements', () => {
   const df = readFileSync(DELEGATE_FREEZE_SCALA, 'utf8');
   assert(/def onWoken\([\s\S]{0,300}wsSend: Option\[Json => IO\[Unit\]\]/.test(df),
     'onWoken 缺 wsSend（Mail 唤醒腿无从发帧——本轮报障成因）');
   assert(/"delegateWoken"/.test(df), 'onWoken 未发 delegateWoken 帧');
   assert(/"freeze" -> nebflow\.actor\.FreezeTruth\.running/.test(df), '帧缺非冻结 freeze 块');
+  const wake = readFileSync(join(ROOT, 'src/main/scala/nebflow/agent/DelegateWakeLeg.scala'), 'utf8');
+  assert(/\.onWoken\(resources, delegateId, via, wsSend\)/.test(wake), 'Explicit live recovery must pass wsSend to onWoken');
   const mail = readFileSync(MAIL_TOOL_SCALA, 'utf8');
-  assert(/onWoken\(res, id, "mail-live-wake", ctx\.wsSend\)/.test(mail), 'Mail 唤醒腿未传 wsSend');
+  const delivery = mail.slice(mail.indexOf('private def deliverToDelegate('), mail.indexOf('end deliverToDelegate'));
+  assert(/if nebflow\.core\.delegate\.SessionResumption\.requiresManual\(\s*Some\(current\),\s*task,\s*live\s*\)\s*=>\s*queueRecoverySupplement\(id, message, blocks, ctx\)/.test(delivery),
+    'Recovery-held Mail must retain its supplement before any execution path');
+  const heldAt = delivery.indexOf('queueRecoverySupplement(');
+  assert(heldAt >= 0 && heldAt < delivery.indexOf('deliverToDelegateAdmitted('), 'Manual recovery guard must precede execution');
+  assert(!/onWoken\(|DelegateWakeLeg|wakeFrozen\(/.test(mail), 'Mail must not release a manual recovery gate');
+  const supplement = mail.slice(mail.indexOf('private def queueRecoverySupplement('), mail.indexOf('end queueRecoverySupplement'));
+  assert(/\.mailOnce\(id, event, "mail-supplement", identity, producer = "mail", deduplicateReceipts = true\)/.test(supplement),
+    'Recovery-held Mail must persist a deduplicated supplement');
+  assert(/"recoveryHeld" -> true\.asJson/.test(supplement) && /MANUAL_RECOVERY_REQUIRED/.test(supplement),
+    'Recovery-held Mail must mark and report the retained supplement');
+  const resumption = readFileSync(join(ROOT, 'src/main/scala/nebflow/core/delegate/SessionResumption.scala'), 'utf8');
+  const manual = resumption.slice(resumption.indexOf('def requiresManual('), resumption.indexOf('def resumeInPlace('));
+  for (const marker of ['r.frozenSince.nonEmpty', 'r.frozenReason.nonEmpty', 'r.restartInterruptedAt.nonEmpty',
+    'r.cancelRequestedAt.nonEmpty', 'Set("pending-recovery", "frozen").contains(t.status)',
+    'r.status == nebflow.actor.AgentStatus.Frozen', 'r.frozenReason.nonEmpty']) {
+    assert(manual.includes(marker), `Manual recovery predicate is missing ${marker}`);
+  }
+  const predicate = manual.slice(manual.indexOf('): Boolean =') + '): Boolean ='.length)
+    .replace(/\/\*[^]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').replace(/\s+/g, '');
+  assert(predicate === 'record.exists(r=>r.frozenSince.nonEmpty||r.frozenReason.nonEmpty||r.restartInterruptedAt.nonEmpty||r.cancelRequestedAt.nonEmpty)||task.exists(t=>Set("pending-recovery","frozen").contains(t.status))||live.exists(r=>r.status==nebflow.actor.AgentStatus.Frozen||r.frozenReason.nonEmpty)',
+    'Every recovery-held source must independently block Mail execution');
   const ws = readFileSync(WS_JS, 'utf8');
   assert(/'delegateWoken'/.test(ws), "ws.js 帧过滤集缺 'delegateWoken'（会被入口过滤器静默丢弃）");
   const main = readFileSync(MAIN_JS, 'utf8');
   assert(/onMessage\('delegateWoken'/.test(main), 'main.js 未收 delegateWoken');
   assert(/mergeFreeze\(info, msg\.freeze\)/.test(main), 'delegateWoken 未按权威块落行');
-  return 'Mail/面板/复活三腿发帧；前端收帧即降级';
+  return 'Explicit recovery forwards wsSend; Mail preserves the manual gate and durable supplement';
 });
 
 check('⑥ 一致性扫描工具在册（可复现今日 case）', () => {

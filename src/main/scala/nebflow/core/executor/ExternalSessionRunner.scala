@@ -2,6 +2,8 @@ package nebflow.core.executor
 
 import cats.effect.IO
 import cats.effect.Ref
+import cats.effect.std.Mutex
+import scala.concurrent.duration.*
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
@@ -12,54 +14,17 @@ import nebflow.core.AgentRuntimePort
 import nebflow.core.GitWorktrees
 import nebflow.core.delegate.ChainStore
 import nebflow.core.delegate.DelegateRegistry
-import nebflow.core.delegate.DelegateWorkspace
-import nebflow.core.delegate.ExternalJudgeHook
-import nebflow.core.delegate.DelegateTerminal
 import nebflow.shared.Message
 import nebflow.shared.MessageRole
 import nebflow.shared.NebflowLogger
 import nebflow.shared.SubAgentTask
 
-import scala.collection.immutable.Queue
 import scala.util.Try
 
 /**
- * ExternalSessionRunner —— 外部执行器会话运行器（external-executors 批
- * #1225，2026-10-06）。R2/R11 外部腿真通路的执行半：子进程生命周期、流帧、
- * 终态投递、续聊与取消。
- *
- * == 通路（增补任务书 §一/§二 定稿句）==
- *   - spawn：[[ExecutorRegistry]] 检测面 → [[ExternalExecutor.launchArgs]] →
- *     `ProcessBuilder`（cwd = project workspace 或默认 general 目录）→ stdout
- *     逐行 → 适配器帧 → WS（nodeSessionId=`external-<exec>-<id>`；与
- *     routeSubagentWsSend 同契约：rootSessionId 归桶键 + sessionId 路由键 +
- *     nodeSessionId 弹窗键）→ agentStart/agentTextDelta/agentToolStart/agentDone。
- *   - 会话 = SessionStore 持久会话（`getOrCreateSession(subagentId)` ＋ 逐轮
- *     user/assistant 追加）——外部会话历史与内部同库（#1228 任务行/历史消费）。
- *   - 台账/地址/任务行 = DelegateRegistry（持久记录；cliSessionId = 续聊锚点）
- *     ＋ SubAgentTaskStore（per-parent 任务行）＋ TaskLedger note。
- *   - 取消 = ProcessTree.killProcessTree（原书）；进度 = [[ExternalOutputStore]]
- *     缓冲（REST `GET /api/delegates/:id/output`，仿 bg-tasks 输出面）。
- *   - 终态 = ExternalEvent(source="delegate") 直投父会话（与内部 delegate 同一
- *     回投链、同一 barrier 语义）；三态判定缝 = [[ExternalJudgeHook]]（缺省接
- *     DelegateJudgePort 判定机——引擎加固批 2026-10-09 P1-2；未接线回退进程结果
- *     直判）。
- *   - **座位纪律（P1-2，2026-10-09）**：spawn 前与内部腿走同一
- *     [[nebflow.core.delegate.DelegateWorkspace.prepare]]（git 工作区 = 分支
- *     `delegate/<id>` ＋ worktree 座位，进程 cwd = 座位；非 git = 旧形态逐字）；
- *     座位纪律与内部腿同源（[[nebflow.core.delegate.DelegateWorkspace]]）；
- *     漂移闸对外部腿 = 注记级（[[nebflow.core.delegate.DelegateTerminal]]
- *     .externalDriftNote 并入判定输入——零罚则面，保护等级注记级）。集成走
- *     项目 merger 的授权请求——外部腿不并入任何合并队列。
- *   - 续聊（S15 通道，增补条款 3.5：地址面零新面——同一 `delegate:<id>`）：
- *     live ⇒ mailbox 排队（本 run 终态后一条 resume 消化）；终态 ⇒ CLI resume
- *     续起。
- *
- * == fail-closed（增补条款 3.4，R2/R11）==
- * 适配器建立 / resume / 进程失败一律显式终态（failed ＋原因——#566：无独立
- * blocked 状态），错误面走任务行
- * / AgentControl status / REST 输出面；**零静默回退 nebflow**、零自动重试
- * （单次失败即终态，重派是主 agent 的决策）。
+ * Runs external CLI sessions with durable task admission, committed message history,
+ * execution-scoped cancellation and mailbox-first result delivery. Process handles
+ * are ephemeral; task records and session transcripts remain authoritative after exit.
  */
 object ExternalSessionRunner:
 
@@ -72,10 +37,75 @@ object ExternalSessionRunner:
   val SessionPrefix = "external-"
 
   // ── 运行态（进程级）──────────────────────────────────────────────────
-  private val cancelRequested: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
-  private val settled: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+  private final case class Execution(runId: String, decision: Ref[IO, String], gate: Mutex[IO], spec: SpawnSpec)
+  private val executions: Ref[IO, Map[String, Execution]] = Ref.unsafe(Map.empty)
+  private val gates: Ref[IO, Map[String, Mutex[IO]]] = Ref.unsafe(Map.empty)
 
-  /** 续聊启动互斥窗（防「同时 resume 双进程」竞态——输家入队 mailbox）。 */
+  private def sessionGate(id: String): IO[Mutex[IO]] =
+    Mutex[IO].flatMap(candidate =>
+      gates.modify { current =>
+        val gate = current.getOrElse(id, candidate)
+        (current.updated(id, gate), gate)
+      }
+    )
+
+  /** Retry the same durable operation, never an external execution. */
+  private def retryWrite[A](action: IO[A], attempts: Int = 5): IO[A] =
+    action.handleErrorWith { error =>
+      if attempts <= 1 then IO.raiseError(error)
+      else IO.sleep((6 - attempts).seconds) *> retryWrite(action, attempts - 1)
+    }
+
+  private def releaseExecution(id: String, run: Execution, spec: SpawnSpec): IO[Unit] =
+    currentExecution(id, run).flatMap { current =>
+      IO.whenA(current)(
+        nebflow.actor.ExternalAgentRecord.detach(spec.resources.agentRegistry, id) *>
+          executions.update(_ - id)
+      )
+    }
+
+  private def startExecution(sessionId: String, spec: SpawnSpec): IO[Execution] =
+    for
+      decision <- Ref.of[IO, String]("running")
+      gate <- sessionGate(sessionId)
+      run = Execution(java.util.UUID.randomUUID().toString, decision, gate, spec)
+      row = SubAgentTask(
+        taskId = sessionId,
+        parentSessionId = spec.parentSessionId,
+        agentName = spec.executorId,
+        prompt = spec.task,
+        description = spec.title,
+        status = "running",
+        retryCount = 0,
+        spawnedAt = System.currentTimeMillis(),
+        completedAt = None,
+        lastError = None,
+        source = "delegate"
+      )
+      accepted <- spec.resources.subAgentTaskStore.beginRun(row, run.runId, spec.rootSessionId, spec.executorId)
+      _ <- accepted.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit)
+      _ <- executions.update(_ + (sessionId -> run))
+    yield run
+
+  private def withAdmission[A](id: String, spec: SpawnSpec)(action: Execution => IO[A]): IO[A] =
+    sessionGate(id).flatMap(_.lock.surround {
+      IO.uncancelable { _ =>
+        startExecution(id, spec).flatMap { run =>
+          action(run).handleErrorWith { error =>
+            settleLocked(id, run, spec, None, Nil, false, Some(s"Execution setup failed: ${error.getMessage}")) *> IO
+              .raiseError(error)
+          }
+        }
+      }
+    })
+
+  private def requireCommit(result: Either[String, SubAgentTask]): IO[SubAgentTask] =
+    result.fold(reason => IO.raiseError(new IllegalStateException(reason)), IO.pure)
+
+  private def currentExecution(sessionId: String, run: Execution): IO[Boolean] =
+    executions.get.map(_.get(sessionId).exists(_.runId == run.runId))
+
+  /** Concurrent continuation requests cannot start a second process. */
   private val resuming: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
 
   /** spawn/续聊共用参数（Delegate 外部腿与 Mail 续聊腿一条通路）。 */
@@ -99,12 +129,12 @@ object ExternalSessionRunner:
      */
     name: Option[String] = None,
     /**
-     * 跨设备 worktree 归属修复批（2026-10-30）：设备项目（origin 绑对端）= true——
-     * 外部 CLI 是 **host 本地进程**，对设备仓跑本机 git 判定腿是归属错（worktree
-     * 会落在编排机 brain 下）；跳过 DelegateWorkspace.prepare（binding=None，旧形态
-     * spawn：座位 = 传入 workspace）。本机项目恒缺省 false（零变化）。
+     * Device-project marker（跨设备批 2026-10-30 遗留）：设备项目（origin 绑对端）
+     * = true——外部 CLI 是 host 本地进程，设备仓路径不是本机盘路径。座位政策统一
+     * 后本标记只剩归属语义（外部腿不参与设备盘 git 面）。
      */
-    deviceProject: Boolean = false
+    deviceProject: Boolean = false,
+    model: Option[String] = None
   )
 
   /** Delegate 外部腿入口。成功 = `(sessionId, ack)`（续聊地址行由调用方拼）。 */
@@ -122,117 +152,92 @@ object ExternalSessionRunner:
             IO.pure(Left(s"Delegate: $wsErr (EXTERNAL_WORKSPACE_UNAVAILABLE)"))
           case Right(_) =>
             val sessionId = newSessionId(ex.id)
-            for
-              // 引擎加固批 2026-10-09（P1-2 外部腿接纪律）：外部 CLI 与内部腿走
-              // **同一** DelegateWorkspace.prepare——git 工作区 = 判定机（jev/small
-              // 判定机已删（delegate-param-decisions 2026-11-04）：外部腿无 worktree
-              // 参数 ⇒ 零分配就地座位 + 分支 `delegate/<id>`；非 git 工作区 = None
-              // （座位 = 原 workspace）。
-              // 归属修复批（2026-10-30）：设备项目跳过本机判定腿——外部 CLI 是 host
-              // 本地进程，设备仓的 worktree/分支纪律不适用于 host 座位（在 brain 下
-              // 建 worktree = 归属错）；binding=None = 旧形态逐字。
-              binding <-
-                if spec.deviceProject then IO.pure(None)
-                else
-                  // 外部执行器腿没有 `worktree` 参数（工具面已显式拒收）⇒ 零分配：
-                  // 就地跑道（分支 `delegate/<id>` 照建，共享 HEAD 不动）。
-                  DelegateWorkspace
-                    .prepareInPlace(spec.workspace, sessionId)
-                    .handleErrorWith(e =>
-                      logger
-                        .warn(
-                          s"DelegateWorkspace.prepare failed on the external leg (degraded to legacy spawn): ${e.getMessage}"
-                        )
-                        .as(None)
+            // 工作座政策（托管树退场）：座位恒 = 派发 workspace——外部 CLI 与
+            // 内部腿同政策；引擎不再建分支/worktree（需要隔离检出时外部执行器
+            // 自建自管）。
+            val seatWs = spec.workspace
+            val seatedSpec = spec.copy(model = ExecutorRegistry.configuredModel(ex.id))
+            val seatedTask = spec.task
+            withAdmission(sessionId, seatedSpec) { run =>
+              for
+                _ <- ExternalOutputStore.open(sessionId)
+                _ <- ExternalOutputStore.claimRun(sessionId, run.runId)
+                _ <- IO.blocking {
+                  DelegateRegistry.put(
+                    DelegateRegistry.Record(
+                      id = sessionId,
+                      executor = ex.id,
+                      cwd = seatWs,
+                      project = spec.project,
+                      taskId = spec.taskId,
+                      parentSessionId = spec.parentSessionId,
+                      title = spec.title,
+                      createdAt = System.currentTimeMillis(),
+                      // 面板命名批（2026-10-31）：批次短名落盘；续聊腿 spec.name 缺席时
+                      // 回读存量记录补保（复活/续起不丢名）。
+                      name = spec.name.orElse(DelegateRegistry.find(sessionId).flatMap(_.name)),
+                      // G1 编排模式初值（delegate-ui 批 2026-10-08）：外部执行器零平台
+                      // 工具注入（无 Subagent/AgentFlow 可调）⇒ 恒 single，无升级腿。
+                      orchestrationMode = Some(DelegateRegistry.ModeSingle),
+                      externalModel = seatedSpec.model
                     )
-              seatWs = binding.map(_.cwd).getOrElse(spec.workspace)
-              // 进程 cwd = 工作座位（worktree 腿）；spawn 后续 settle 的 git 读数同座。
-              seatedSpec = spec.copy(workspace = seatWs)
-              // brief 行前置（🔴 模型可见文案——workingBranchLine 同内部腿；外部零
-              // 平台注入，任务文本即全部上下文——申报行走文本前位）。
-              seatedTask = binding.flatMap(_.briefLine).map(l => s"$l\n\n${spec.task}").getOrElse(spec.task)
-              _ <- ExternalOutputStore.open(sessionId)
-              _ <- IO.blocking {
-                DelegateRegistry.put(
-                  DelegateRegistry.Record(
-                    id = sessionId,
-                    executor = ex.id,
-                    cwd = seatWs,
-                    project = spec.project,
-                    taskId = spec.taskId,
+                  )
+                }
+                // 作者裁定4「登记 AgentKind.External」（2026-11-05 09:38）：内部腿有
+                // actor + 统一注册表行，外部腿此前**两样都没有**（AgentControlTool 自陈
+                // 「外部 delegate 无 actor / agentRegistry 行」）。此处在统一注册表补一条
+                // kind=External 记录（ref=null），只为关闭「所有 agent 都能被 list /
+                // cancel / 挂终态」这条不变式——**不参与监督与恢复**（恢复走
+                // ExternalOutputStore / CLI resume），终态首胜时由 settle 摘除。
+                _ <- nebflow.actor.ExternalAgentRecord.attach(
+                  spec.resources.agentRegistry,
+                  nebflow.actor.ExternalAgentRecord.build(
+                    sessionId = sessionId,
+                    rootSessionId = spec.rootSessionId,
                     parentSessionId = spec.parentSessionId,
-                    title = spec.title,
-                    createdAt = System.currentTimeMillis(),
-                    // 面板命名批（2026-10-31）：批次短名落盘；续聊腿 spec.name 缺席时
-                    // 回读存量记录补保（复活/续起不丢名）。
-                    name = spec.name.orElse(DelegateRegistry.find(sessionId).flatMap(_.name)),
-                    // P1-2：分支纪律四键（非 git 腿 = None——解码缺键容忍不变）
-                    branch = binding.map(_.branch),
-                    worktree = binding.flatMap(_.worktree),
-                    baseBranch = binding.flatMap(_.baseBranch),
-                    projectWorkspace = binding.map(_.baseWs),
-                    // 判定机已删（delegate-param-decisions 批 2026-11-04）：恒 None。
-                    worktreeJudged = None,
-                    // G1 编排模式初值（delegate-ui 批 2026-10-08）：外部执行器零平台
-                    // 工具注入（无 Subagent/AgentFlow 可调）⇒ 恒 single，无升级腿。
-                    orchestrationMode = Some(DelegateRegistry.ModeSingle)
+                    startedAt = System.currentTimeMillis()
                   )
                 )
-              }
-              _ <- recordTaskTolerant(spec.resources, sessionId, spec.parentSessionId, ex.id, spec.task, spec.title)
-              // 作者裁定4「登记 AgentKind.External」（2026-11-05 09:38）：内部腿有
-              // actor + 统一注册表行，外部腿此前**两样都没有**（AgentControlTool 自陈
-              // 「外部 delegate 无 actor / agentRegistry 行」）。此处在统一注册表补一条
-              // kind=External 记录（ref=null），只为关闭「所有 agent 都能被 list /
-              // cancel / 挂终态」这条不变式——**不参与监督与恢复**（恢复走
-              // ExternalOutputStore / CLI resume），终态首胜时由 settle 摘除。
-              _ <- nebflow.actor.ExternalAgentRecord.attach(
-                spec.resources.agentRegistry,
-                nebflow.actor.ExternalAgentRecord.build(
-                  sessionId = sessionId,
-                  rootSessionId = spec.rootSessionId,
-                  parentSessionId = spec.parentSessionId,
-                  startedAt = System.currentTimeMillis()
-                )
-              )
-              _ <- persistUserTurn(spec.resources, sessionId, spec.title, seatedTask)
-              // ⑤A 链存储：外部腿 spawn 行（P1-2 起外部腿与内部腿同账——branch/
-              // worktree/判定两键齐备；非 git 腿 binding=None，旧行字节不变）。
-              _ <- IO
-                .blocking(
-                  ChainStore.appendSync(
-                    ChainStore.keyFor(spec.taskId, sessionId),
-                    "delegate-spawn",
-                    DelegateWorkspace.spawnPayload(sessionId, ex.id, spec.project, binding)
+                _ <- persistUserTurn(spec.resources, sessionId, spec.title, seatedTask, run.runId)
+                // ⑤A 链存储：外部腿 spawn 行（与内部腿同账——cwd/执行器；branch/
+                // worktree 族键为空串形态，与历史无绑定行兼容）。
+                _ <- IO
+                  .blocking(
+                    ChainStore.appendSync(
+                      ChainStore.keyFor(spec.taskId, sessionId),
+                      "delegate-spawn",
+                      nebflow.core.delegate.ChainStore.delegateSpawnPayload(
+                        sessionId,
+                        ex.id,
+                        spec.project,
+                        seatWs
+                      )
+                    )
                   )
-                )
-                .handleErrorWith(e =>
-                  logger.warn(s"ChainStore delegate-spawn line (external) failed: ${e.getMessage}").void
-                )
-              ack =
-                s"""Delegate task started in the background${spec.taskId.map(n => s" (task #$n)").getOrElse("")}.
+                  .handleErrorWith(e =>
+                    logger.warn(s"ChainStore delegate-spawn line (external) failed: ${e.getMessage}").void
+                  )
+                ack =
+                  s"""Delegate task started in the background${spec.taskId.map(n => s" (task #$n)").getOrElse("")}.
 Executor: ${ex.displayName} (external CLI); workspace: $seatWs${spec.project
-                    .map(p => s" (project '$p')")
-                    .getOrElse("")}${binding
-                    .map(b => s"; branch: ${b.branch}")
-                    .getOrElse("")}.
+                      .map(p => s" (project '$p')")
+                      .getOrElse("")}.
 It runs in session $sessionId with no project context and no memory; the brief is its entire context. External executors receive the task text only — no platform tools or plugins are injected.
 You will be notified when it completes via a system message. Do NOT duplicate this task — wait for the result or work on something unrelated."""
-              _ <- emitAgentStart(
-                seatedSpec.wsSend,
-                sessionId,
-                seatedSpec.rootSessionId,
-                seatedSpec.parentSessionId,
-                ex,
-                spec.title
-              )
-              _ <- launchTurn(sessionId, ex, seatedSpec, prompt = seatedTask, resumeSid = None)
-              _ = logger.info(
-                s"External delegate spawned: $sessionId (executor=${ex.id}, workspace=$seatWs${binding.map(b => s", branch=${b.branch}${b.worktree.map(w => s", worktree=$w").getOrElse("")}").getOrElse("")})"
-              )
-            yield Right((sessionId, ack))
-
-            end for
+                _ <- emitAgentStart(
+                  seatedSpec.wsSend,
+                  sessionId,
+                  seatedSpec.rootSessionId,
+                  seatedSpec.parentSessionId,
+                  ex,
+                  spec.title
+                )
+                _ <- launchTurn(sessionId, run, ex, seatedSpec, prompt = seatedTask, resumeSid = None)
+                _ = logger.info(
+                  s"External delegate spawned: $sessionId (executor=${ex.id}, workspace=$seatWs)"
+                )
+              yield Right((sessionId, ack))
+            }
 
   /** Mail 续聊腿。live ⇒ mailbox 排队；终态 ⇒ CLI resume 续起（S15 注入通道）。 */
   def continueExternal(
@@ -276,25 +281,24 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                 rootSessionId = record.parentSessionId,
                 parentRef = parentRef,
                 wsSend = wsSend,
-                resources = resources
+                resources = resources,
+                model = record.externalModel
               )
               ExternalOutputStore.isLive(sid).flatMap { live =>
                 if live then
-                  ExternalOutputStore.enqueue(sid, message).map { depth =>
-                    Right(
-                      s"[delegate #$sid] Instance is running — your message is queued in its mailbox (depth $depth) and will be consumed as one continuation turn when the current run finishes."
+                  IO.pure(
+                    Left(
+                      s"Delegate '$sid' is still executing. Retry this continuation after it finishes; the instruction was not accepted or queued."
                     )
-                  }
+                  )
                 else
                   resuming.modify { s => if s.contains(sid) then (s, false) else (s + sid, true) }.flatMap { acquired =>
                     if !acquired then
-                      ExternalOutputStore
-                        .enqueue(sid, message)
-                        .map(depth =>
-                          Right(
-                            s"[delegate #$sid] A continuation turn is starting — your message is queued (depth $depth)."
-                          )
+                      IO.pure(
+                        Left(
+                          s"Delegate '$sid' is already starting a continuation. This instruction was not accepted or queued."
                         )
+                      )
                     else startResumeTurn(record, ex, message, spec).guarantee(resuming.update(_ - sid))
                   }
               }
@@ -312,123 +316,121 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     message: String,
     spec: SpawnSpec
   ): IO[Either[String, String]] =
-    for
-      resumeSid <- ExternalOutputStore.cliSessionIdOf(record.id).map(_.orElse(record.cliSessionId))
-      brief <- resumeSid match
-        case Some(_) => IO.pure(message) // CLI 自带会话持久化——消息即续轮输入
-        case None =>
-          // 无 CLI 会话锚点（旧记录/流未给出）：带前文终稿的续聊 brief（诚实降级，
-          // 仍在同一 delegate 地址、同一外部执行器内——零回落）。
-          priorFinalText(spec.resources, record.id).map { prior =>
-            val head =
-              if prior.nonEmpty then
-                s"[continuation of delegate ${record.id} — the instance's last output follows]\n\n$prior\n\n[New instruction]\n"
-              else s"[continuation of delegate ${record.id} — no prior output captured]\n\n[New instruction]\n"
-            head + message
-          }
-      // P1-2（引擎加固批 2026-10-09）：resume 轮的 settle 重武装——`settled` 单飞
-      // 标记原为「进程生命周期一次」防重入；合并轮（和 mailbox 续聊轮）是同会话的
-      // **新** run，其终态必须再判（机械验收闸/父投递都在 settle），不重武装 =
-      // 合并轮永不终结（队列窗口悬挂）。
-      _ <- settled.update(_ - record.id)
-      _ <- ExternalOutputStore.resetForNewRun(record.id)
-      _ <- persistUserTurn(spec.resources, record.id, record.title, message)
-      _ <- recordTaskTolerant(
-        spec.resources,
-        record.id,
-        record.parentSessionId,
-        ex.id,
-        message,
-        s"continuation: ${record.title}"
+    withAdmission(record.id, spec) { run =>
+      for
+        resumeSid <- ExternalOutputStore.cliSessionIdOf(record.id).map(_.orElse(record.cliSessionId))
+        brief <- resumeSid match
+          case Some(_) => IO.pure(message) // CLI 自带会话持久化——消息即续轮输入
+          case None =>
+            // 无 CLI 会话锚点（旧记录/流未给出）：带前文终稿的续聊 brief（诚实降级，
+            // 仍在同一 delegate 地址、同一外部执行器内——零回落）。
+            priorFinalText(spec.resources, record.id).map { prior =>
+              val head =
+                if prior.nonEmpty then
+                  s"[continuation of delegate ${record.id} — the instance's last output follows]\n\n$prior\n\n[New instruction]\n"
+                else s"[continuation of delegate ${record.id} — no prior output captured]\n\n[New instruction]\n"
+              head + message
+            }
+        _ <- ExternalOutputStore.open(record.id)
+        _ <- ExternalOutputStore.resetForNewRun(record.id)
+        _ <- ExternalOutputStore.claimRun(record.id, run.runId)
+        _ <- persistUserTurn(spec.resources, record.id, record.title, message, run.runId)
+        _ <- nebflow.actor.ExternalAgentRecord.attach(
+          spec.resources.agentRegistry,
+          nebflow.actor.ExternalAgentRecord
+            .build(record.id, spec.rootSessionId, spec.parentSessionId, System.currentTimeMillis())
+        )
+        _ <- emitAgentStart(spec.wsSend, record.id, record.parentSessionId, record.parentSessionId, ex, record.title)
+        _ <- launchTurn(record.id, run, ex, spec, prompt = brief, resumeSid = resumeSid)
+        _ <- appendLedgerNote(
+          record.taskId,
+          s"Mail supplement → external resume turn (${ex.id}${resumeSid.fold("")(sid => s" cli=$sid")})"
+        )
+      yield Right(
+        s"[delegate #${record.id}] Instance was not live — your message CONTINUED the external ${ex.displayName} session (resume turn started). Its result is delivered back when it finishes."
       )
-      _ <- emitAgentStart(spec.wsSend, record.id, record.parentSessionId, record.parentSessionId, ex, record.title)
-      _ <- launchTurn(record.id, ex, spec, prompt = brief, resumeSid = resumeSid)
-      _ <- appendLedgerNote(
-        record.taskId,
-        s"Mail supplement → external resume turn (${ex.id}${resumeSid.fold("")(sid => s" cli=$sid")})"
-      )
-    yield Right(
-      s"[delegate #${record.id}] Instance was not live — your message CONTINUED the external ${ex.displayName} session (resume turn started). Its result is delivered back when it finishes."
-    )
+    }
 
   // ── 取消（AgentControl / 面板 cancelAgent 共用；原书：杀进程树）─────────
 
   def cancel(id: String, reason: String, by: String): IO[Either[String, String]] =
-    ExternalOutputStore.kill(id).flatMap {
-      case false =>
-        IO.pure(Left(s"No live external delegate '$id' to cancel (already settled or never ran on this instance)."))
-      case true =>
-        cancelRequested
-          .update(_ + id)
-          .as(
-            Right(
-              s"Cancel sent for external delegate '$id' — the CLI process tree is being terminated; the parent session receives a cancelled notification."
-            )
-          )
-    }
-
-  // ── turn 执行（子进程 + 流帧 + 终态）──────────────────────────────────
+    sessionGate(id).flatMap(_.lock.surround {
+      executions.get.flatMap(_.get(id) match
+        case None => IO.pure(Left(s"No live external delegate '$id' to cancel."))
+        case Some(run) =>
+          run.decision
+            .modify {
+              case "running" => ("cancelled", true)
+              case other => (other, false)
+            }
+            .flatMap {
+              case false => IO.pure(Left(s"External delegate '$id' is already finishing."))
+              case true =>
+                val durable = retryWrite(
+                  run.spec.resources.subAgentTaskStore
+                    .updateRun(run.spec.parentSessionId, id, run.runId, diagnostic = Some("Cancellation requested"))
+                    .flatMap(requireCommit)
+                )
+                durable
+                  .guarantee(ExternalOutputStore.killRun(id, run.runId).void)
+                  .as(Right(s"Cancellation recorded for external delegate '$id'."))
+            })
+    })
 
   private def launchTurn(
     sessionId: String,
+    run: Execution,
     ex: ExternalExecutor.ExternalExecutor,
     spec: SpawnSpec,
     prompt: String,
     resumeSid: Option[String]
   ): IO[Unit] =
-    IO.delay(buildProcess(ex, spec, prompt, resumeSid))
-      .flatMap { pb =>
-        IO.blocking {
-          val p = pb.start()
-          // codex-spawn-fix 批 2026-10-19 死因②：spawn 后立即关闭子进程 stdin——
-          // codex exec 发现 stdin 可读就「Reading additional input from stdin...」
-          // 永等（引擎会话 40 秒变 orphan 的要因）；exec 模式的 claude/zcode/codex
-          // 任务文本全走 argv，零 stdin 依赖，统一关闭。
-          sealChildStdin(p)
-          // stderr 全量入缓冲（错误面留痕），不入流帧——读取线程 = 守护线程。
-          val errThread = new Thread(() =>
-            val reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getErrorStream))
-            Iterator.continually(Option(reader.readLine())).takeWhile(_.isDefined).flatten.foreach { line =>
-              ExternalOutputStore.append(sessionId, s"[stderr] $line").unsafeRunSync()
-            }
+    IO.blocking {
+      val process = buildProcess(ex, spec, prompt, resumeSid).start()
+      sealChildStdin(process)
+      process
+    }.attempt
+      .flatMap {
+        case Left(error) =>
+          settleLocked(
+            sessionId,
+            run,
+            spec,
+            None,
+            Nil,
+            hasTerminal = false,
+            Some(s"Process launch failed: ${error.getMessage}")
           )
-          errThread.setDaemon(true)
-          errThread.setName(s"external-stderr-$sessionId")
-          errThread.start()
-          p
-        }.flatMap { p =>
-          ExternalOutputStore.attachProcess(sessionId, p) *>
-            // 读取循环放后台 fiber——spawn 立即返回（ack 不等进程）。
-            readLoop(sessionId, ex, spec, p)
-              .handleErrorWith(e =>
-                logger.warn(s"External delegate $sessionId read loop crashed: ${e.getMessage}") *>
-                  ExternalOutputStore.append(sessionId, s"[read-loop crashed] ${e.getMessage}") *>
-                  // fail-closed：读取循环崩溃 ≠ 完成——显式失败帧进 settle（failed），
-                  // 不向可能仍存活的进程要退出码（exitValue 会抛）。
+        case Right(process) =>
+          (ExternalOutputStore.attachProcessForRun(sessionId, run.runId, process) *>
+            retryWrite(
+              spec.resources.subAgentTaskStore
+                .updateRun(
+                  spec.parentSessionId,
+                  sessionId,
+                  run.runId,
+                  executionStatus = Some("running"),
+                  activityAt = Some(System.currentTimeMillis()),
+                  activityKind = Some("started"),
+                  activityLabel = Some("Execution started")
+                )
+                .flatMap(requireCommit)
+            ) *>
+            readLoop(sessionId, run, ex, spec, process)
+              .handleErrorWith { error =>
+                ExternalOutputStore.stopOwnedProcess(process) *>
                   settle(
                     sessionId,
-                    ex,
+                    run,
                     spec,
-                    exitCode = None,
-                    finalFrame =
-                      Some(ExternalExecutor.Frame.Final(s"read loop crashed: ${e.getMessage}", failed = true))
+                    None,
+                    Nil,
+                    false,
+                    Some(s"Output reader failed: ${error.getClass.getSimpleName}: ${error.getMessage}")
                   )
-              )
+              }
               .start
-              .void
-        }
-      }
-      .handleErrorWith { e =>
-        // 进程建立失败 = fail-closed 终态（failed），绝不静默回落。
-        logger.warn(s"External delegate $sessionId process launch failed: ${e.getMessage}") *>
-          ExternalOutputStore.append(sessionId, s"[launch-failed] ${e.getMessage}") *>
-          settle(
-            sessionId,
-            ex,
-            spec,
-            exitCode = None,
-            finalFrame = Some(ExternalExecutor.Frame.Final(s"process launch failed: ${e.getMessage}", failed = true))
-          )
+              .void).onError { case _ => ExternalOutputStore.stopOwnedProcess(process) }
       }
 
   /** 构造 ProcessBuilder（cwd = 工作座位；stdout/stderr 分管）。 */
@@ -438,7 +440,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     prompt: String,
     resumeSid: Option[String]
   ): java.lang.ProcessBuilder =
-    configureProcessBuilder(spec.binPath, spec.workspace, ex.launchArgs(prompt, resumeSid))
+    configureProcessBuilder(spec.binPath, spec.workspace, ex.launchArgsWithModel(prompt, resumeSid, spec.model))
 
   /**
    * spawn 构造纯面（spec 可驱动）：argv + cwd + 分管 + 代理环境注入
@@ -472,299 +474,457 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     try p.getOutputStream.close()
     catch case _: Throwable => () // 已关闭/进程早夭——无害，终态由 readLoop/settle 判定
 
-  /** stdout 读取循环：行 → 缓冲 + 帧解析 → WS；进程退出后 settle。 */
+  private def rawPath(sessionId: String, runId: String): os.Path =
+    nebflow.shared.PathUtil.dataRoot / "sessions" / sessionId / s"external-$runId.log"
+
+  /** Raw evidence has a per-run 8 MiB ceiling; full assistant history is stored separately. */
+  private[executor] val RawLimitBytes = 8 * 1024 * 1024
+  private val rawLock = new Object
+
+  private[executor] def appendRawFile(path: os.Path, line: String): IO[Unit] = IO.blocking {
+    rawLock.synchronized {
+      import java.nio.file.{Files, LinkOption, StandardOpenOption}
+      import java.nio.file.attribute.PosixFilePermissions
+      val parent = path.toNIO.getParent
+      Files.createDirectories(parent)
+      val posix = Files.getFileStore(parent).supportsFileAttributeView("posix")
+      if posix then Files.setPosixFilePermissions(parent, PosixFilePermissions.fromString("rwx------"))
+      if !Files.exists(path.toNIO, LinkOption.NOFOLLOW_LINKS) then
+        if posix then
+          Files.createFile(
+            path.toNIO,
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
+          )
+        else Files.createFile(path.toNIO)
+      if Files.isSymbolicLink(path.toNIO) then throw new IllegalStateException("Raw log cannot be a symbolic link")
+      if posix then Files.setPosixFilePermissions(path.toNIO, PosixFilePermissions.fromString("rw-------"))
+      val size = Files.size(path.toNIO)
+      val marker = "\n[Raw output truncated at 8 MiB; assistant history is retained separately.]\n"
+        .getBytes(java.nio.charset.StandardCharsets.UTF_8)
+      if size < RawLimitBytes then
+        val bytes = (line + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val remaining = (RawLimitBytes - size).toInt
+        val write =
+          if bytes.length <= remaining - marker.length then bytes
+          else bytes.take(math.max(0, remaining - marker.length)) ++ marker.take(remaining)
+        Files.write(path.toNIO, write, StandardOpenOption.APPEND, LinkOption.NOFOLLOW_LINKS)
+    }
+  }
+
+  private def appendRaw(sessionId: String, run: Execution, line: String): IO[Unit] =
+    appendRawFile(rawPath(sessionId, run.runId), line) *>
+      ExternalOutputStore.appendForRun(sessionId, run.runId, line)
+
+  private def commitMessages(
+    sessionId: String,
+    run: Execution,
+    spec: SpawnSpec,
+    messages: List[ExternalMessageCollector.CollectedMessage]
+  ): IO[Unit] = messages.traverse_ { captured =>
+    retryWrite(for
+      current <- currentExecution(sessionId, run)
+      _ <- IO.raiseWhen(!current)(new IllegalStateException("Stale external execution"))
+      fresh <- spec.resources.sessionStore.appendDurableMessage(
+        sessionId,
+        Message(
+          MessageRole.Assistant,
+          Left(captured.text),
+          source = Some("delegate"),
+          messageId = Some(captured.id),
+          runId = Some(run.runId)
+        )
+      )
+      row <- spec.resources.subAgentTaskStore
+        .updateRun(
+          spec.parentSessionId,
+          sessionId,
+          run.runId,
+          activityAt = Some(System.currentTimeMillis()),
+          activityKind = Some("text"),
+          activityLabel = Some("Assistant message received")
+        )
+        .flatMap(requireCommit)
+      _ <- IO.whenA(fresh)(
+        emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
+          Json.obj(
+            "type" -> "agentTextDelta".asJson,
+            "agentId" -> sessionId.asJson,
+            "taskId" -> sessionId.asJson,
+            "runId" -> run.runId.asJson,
+            "committedRevision" -> row.committedRevision.asJson,
+            "messageId" -> captured.id.asJson,
+            "delta" -> captured.text.asJson
+          )
+        )
+      )
+    yield ())
+  }
+
   private def readLoop(
     sessionId: String,
+    run: Execution,
     ex: ExternalExecutor.ExternalExecutor,
     spec: SpawnSpec,
-    p: java.lang.Process
+    process: java.lang.Process
   ): IO[Unit] =
-    IO.blocking {
-      val reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream))
-      val lines = Iterator.continually(Option(reader.readLine())).takeWhile(_.isDefined).flatten
-      var finalFrame: Option[ExternalExecutor.Frame.Final] = None
-      lines.foreach { line =>
-        ExternalOutputStore.append(sessionId, line).unsafeRunSync()
-        ex.parseLine(line).foreach {
-          case ExternalExecutor.Frame.Start(cliSidOpt) =>
-            cliSidOpt.foreach { cliSid =>
-              (ExternalOutputStore.setCliSession(sessionId, cliSid) *> updateRecordCliSession(sessionId, cliSid))
-                .unsafeRunSync()
-            }
-          case ExternalExecutor.Frame.Text(t) =>
-            emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
-              Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> sessionId.asJson, "delta" -> t.asJson)
-            ).unsafeRunSync()
-          case ExternalExecutor.Frame.Tool(label) =>
-            emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
-              Json.obj("type" -> "agentToolStart".asJson, "agentId" -> sessionId.asJson, "label" -> label.asJson)
-            ).unsafeRunSync()
-          case f: ExternalExecutor.Frame.Final => finalFrame = Some(f)
+    val collector = new ExternalMessageCollector(run.runId)
+    val failures = scala.collection.mutable.ListBuffer.empty[String]
+    def capture(action: IO[Unit]): Unit = action.attempt.unsafeRunSync() match
+      case Left(error) => failures.synchronized { failures += error.getClass.getSimpleName; () }
+      case Right(_) => ()
+    val stderr = IO.interruptibleMany {
+      val reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getErrorStream))
+      try
+        Iterator.continually(Option(reader.readLine())).takeWhile(_.isDefined).flatten.foreach { line =>
+          capture(appendRaw(sessionId, run, s"[stderr] $line"))
         }
+      finally reader.close()
+    }
+    val stdout = IO.interruptibleMany {
+      val reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream))
+      var lastFlush = System.nanoTime()
+      var pendingChars = 0
+      try
+        Iterator.continually(Option(reader.readLine())).takeWhile(_.isDefined).flatten.foreach { line =>
+          capture(appendRaw(sessionId, run, line))
+          val frames = Try(ex.parseLine(line)).getOrElse {
+            failures.synchronized { failures += "Frame parser failed" }
+            Nil
+          }
+          frames.foreach { frame =>
+            frame match
+              case ExternalExecutor.Frame.Start(Some(cliSid)) =>
+                capture(
+                  ExternalOutputStore.setCliSession(sessionId, cliSid) *> updateRecordCliSession(sessionId, cliSid)
+                )
+              case ExternalExecutor.Frame.Tool(label) =>
+                capture(
+                  spec.resources.subAgentTaskStore
+                    .updateRun(
+                      spec.parentSessionId,
+                      sessionId,
+                      run.runId,
+                      activityAt = Some(System.currentTimeMillis()),
+                      activityKind = Some("tool"),
+                      activityLabel = Some(label.take(120))
+                    )
+                    .flatMap(requireCommit)
+                    .flatMap { row =>
+                      emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
+                        Json.obj(
+                          "type" -> "agentToolStart".asJson,
+                          "agentId" -> sessionId.asJson,
+                          "taskId" -> sessionId.asJson,
+                          "runId" -> run.runId.asJson,
+                          "committedRevision" -> row.committedRevision.asJson,
+                          "label" -> label.take(120).asJson
+                        )
+                      )
+                    }
+                )
+              case ExternalExecutor.Frame.Text(text) => pendingChars += text.length
+              case _ => ()
+            end match
+            capture(commitMessages(sessionId, run, spec, collector.accept(frame)))
+          }
+          if pendingChars >= 4096 || System.nanoTime() - lastFlush >= 1000000000L then
+            capture(commitMessages(sessionId, run, spec, collector.drainPending()))
+            pendingChars = 0
+            lastFlush = System.nanoTime()
+        }
+      finally reader.close()
+      end try
+    }
+    // Both pipes must drain even if one reader fails; neither waits for the other to start.
+    for
+      errFiber <- stderr.onError { case _ => ExternalOutputStore.stopOwnedProcess(process) }.attempt.start
+      readResult <- IO
+        .race(
+          stdout,
+          IO.fromCompletableFuture(IO(process.onExit())) *> IO.sleep(5.seconds) *>
+            IO.raiseError[Unit](new IllegalStateException("Stdout remained open after process exit"))
+        )
+        .void
+        .onError { case _ => ExternalOutputStore.stopOwnedProcess(process) }
+        .attempt
+      exited <- IO.blocking(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS))
+      _ <- IO.unlessA(exited)(
+        ExternalOutputStore.stopOwnedProcess(process) *>
+          IO { failures.synchronized { failures += "Process did not exit after stdout closed"; () } }
+      )
+      exit <- IO.blocking(process.exitValue())
+      errResult <- errFiber.joinWithNever.timeoutTo(
+        3.seconds,
+        IO.pure(Left(new IllegalStateException("Stderr did not close after process exit")))
+      )
+      _ <- IO(collector.flush())
+      flushed <- commitMessages(sessionId, run, spec, collector.messages).attempt
+      errors = failures.toList ++ List(readResult, errResult, flushed).collect { case Left(e) =>
+        e.getClass.getSimpleName
       }
-      finalFrame
-    }.flatMap(finalFrame =>
-      IO.blocking(p.waitFor()).flatMap(exit => settle(sessionId, ex, spec, Some(exit), finalFrame))
-    )
+      diagnostic = (errors ++ collector.diagnostics).distinct.mkString("; ")
+      _ <- IO
+        .blocking {
+          val path = rawPath(sessionId, run.runId)
+          if os.exists(path) then
+            val channel = java.nio.channels.FileChannel.open(path.toNIO, java.nio.file.StandardOpenOption.WRITE)
+            try channel.force(true)
+            finally channel.close()
+        }
+        .handleErrorWith(e => logger.warn(s"External raw output flush failed: ${e.getMessage}"))
+      _ <- settle(
+        sessionId,
+        run,
+        spec,
+        Some(exit),
+        collector.messages,
+        collector.hasTerminal,
+        Option.when(diagnostic.nonEmpty)(diagnostic),
+        collector.failed
+      )
+    yield ()
 
-  // ── 终态 settle（三态缝 → 父投递 → 面板帧 → mailbox 消化）───────────────
+    end for
+
+  end readLoop
 
   private def settle(
     sessionId: String,
-    ex: ExternalExecutor.ExternalExecutor,
+    run: Execution,
     spec: SpawnSpec,
     exitCode: Option[Int],
-    finalFrame: Option[ExternalExecutor.Frame.Final]
-  ): IO[Unit] =
-    settled.modify(s => if s.contains(sessionId) then (s, false) else (s + sessionId, true)).flatMap {
-      case false => IO.unit // 首个终态胜出（cancel 与自然终态竞态防重入）
-      case true =>
-        for
-          // 裁定4：外部腿终态首胜即从统一注册表摘下（「记录 = 活着」语义与内部腿对齐；
-          // 死行不留）。幂等——没登记过（旧腿/测试）也安全。
-          _ <- nebflow.actor.ExternalAgentRecord.detach(spec.resources.agentRegistry, sessionId)
-          cancelledNow <- cancelRequested.get.map(_.contains(sessionId))
-          processFailed = exitCode.exists(_ != 0) || finalFrame.exists(_.failed)
-          text = finalFrame.map(_.text).map(_.trim).filter(_.nonEmpty).getOrElse("")
-          // 引擎加固批 2026-10-09（P1-2）：判定缝素材补全——git 摘要（工作座位）
-          // ＋漂移注记（[[DelegateTerminal.externalDriftNote]]，注记级覆盖）。
-          rec = DelegateRegistry.find(sessionId)
-          gitDigest <- IO
-            .blocking {
-              Try(os.Path(spec.workspace)).toOption
-                .filter(GitWorktrees.isGitRepo)
-                .map(ws => GitWorktrees.statusDigest(ws, rec.flatMap(_.baseBranch)))
-                .getOrElse("")
-            }
-            .handleError(_ => "")
-          driftNote <- DelegateTerminal.externalDriftNote(rec)
-          digest = driftNote.map(n => if gitDigest.isEmpty then n else s"$gitDigest\n$n").getOrElse(gitDigest)
-          verdict <- ExternalJudgeHook.decide(
-            ExternalJudgeHook.Input(
-              id = sessionId,
-              executor = ex.id,
-              workspace = spec.workspace,
-              project = spec.project,
-              taskId = spec.taskId,
-              title = spec.title,
-              finalText = text,
-              exitCode = exitCode,
-              processFailed = processFailed && !cancelledNow,
-              gitDigest = digest
-            )
-          )
-          outcome <- cancelledNow match
-            case true => IO.pure(Outcome.Cancelled)
-            case false =>
-              (verdict, processFailed) match
-                case (Some(ExternalJudgeHook.Verdict.Failed(r)), _) => IO.pure(Outcome.Failed(r))
-                case (Some(ExternalJudgeHook.Verdict.Completed), _) => IO.pure(Outcome.Completed)
-                case (None, true) =>
-                  IO.pure(
-                    Outcome.Failed(
-                      finalFrame
-                        .map(_.text)
-                        .filter(_.trim.nonEmpty)
-                        .getOrElse(
-                          s"external CLI exited ${exitCode.map(_.toString).getOrElse("abnormally")} without a success result"
-                        )
-                    )
-                  )
-                case (None, false) => IO.pure(Outcome.Completed)
-          reasonOpt = outcome match
-            case Outcome.Failed(r) => Some(r)
-            case Outcome.Cancelled => Some("cancelled")
-            case _ => None
-          // 进度面终态（#566 词表：failed——无独立 blocked）。
-          _ <- ExternalOutputStore.finalizeTask(
-            sessionId,
-            status = outcome match
-              case Outcome.Failed(_) => "failed"
-              case Outcome.Completed => "completed"
-              case Outcome.Cancelled => "cancelled",
-            exitCode = exitCode,
-            errorHint = reasonOpt
-          )
-          // 会话持久化：assistant 终稿（空输出也给占位，历史面完整）。
-          _ <- persistAssistantTurn(spec.resources, sessionId, if text.nonEmpty then text else "(no text output)")
-          // 任务行终态。
-          _ <- outcome match
-            case Outcome.Completed =>
-              updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "completed", lastError = None)
-            case Outcome.Cancelled =>
-              updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "cancelled", lastError = reasonOpt)
-            case Outcome.Failed(_) =>
-              updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "failed", lastError = reasonOpt)
-          _ <- appendLedgerNote(
-            spec.taskId,
-            outcome match
-              case Outcome.Completed =>
-                s"External delegate finished (executor=${ex.id}, exit=${exitCode.map(_.toString).getOrElse("-")})"
-              case Outcome.Cancelled => s"External delegate cancelled (executor=${ex.id})"
-              case Outcome.Failed(r) => s"External delegate failed (executor=${ex.id}): $r"
-          )
-          // 空回执显式化（P5 第二波 · 告警面）：completed 而终文为空 = 空回执，引擎
-          // 日志必须有一条 WARN（与内部腿 BackoffSupervisor.completeNormally 的静默
-          // 完成告警同款纪律）。判据 = 终文不可用（settle 的 text 已 trim/filter，
-          // 空 = 无可用产出，与内部腿 hasRealOutput 的「空串不可判」同义）；外部流
-          // 没有诚实可取的轮次/工具帧计数入诊断行，故此处只告警不造数
-          // （（no text output）字样已随回执显式报父，store 行不重复标注——不发明
-          // 第二套口径）。
-          _ <- IO.whenA(outcome == Outcome.Completed && text.isEmpty)(
-            logger.warn(
-              s"external delegate $sessionId completed with NO text output (empty receipt) — " +
-                s"exit=${exitCode.map(_.toString).getOrElse("-")}; the parent notification names it explicitly ((no text output))"
-            )
-          )
-          // 父投递（终态直投——集成走项目 merger 的授权请求，无队列持有父回报权）。
-          _ <- notifyParent(spec, sessionId, outcome, text, reasonOpt)
-          // 面板终态帧（与内部 delegate 的 agentDone 同契约）。
-          _ <- emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
-            Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
-          )
-          _ = logger.info(
-            s"External delegate settled: $sessionId outcome=$outcome exit=${exitCode.map(_.toString).getOrElse("-")}"
-          )
-          // mailbox 消化：live 期间的来信 = 一条 resume 续聊（S15 同通道）。
-          _ <- outcome match
-            case Outcome.Cancelled => IO.unit // 取消即终止——来信留队列由下轮续聊取
-            case _ =>
-              ExternalOutputStore.drainMailbox(sessionId).flatMap {
-                case q if q.isEmpty => IO.unit
-                case q =>
-                  DelegateRegistry.find(sessionId) match
-                    case None => IO.unit
-                    case Some(rec) =>
-                      val joined = q.mkString("\n\n[queued message]\n\n")
-                      continueExternal(rec, joined, spec.parentRef, spec.wsSend, spec.resources).void
-                      // 回执（queued/续起）丢弃——父已被终态通知，消化是后台续轮。
-              }
-        yield ()
-    }
+    messages: List[ExternalMessageCollector.CollectedMessage],
+    hasTerminal: Boolean,
+    diagnostic: Option[String],
+    protocolFailed: Boolean = false
+  ): IO[Unit] = run.gate.lock
+    .surround(settleLocked(sessionId, run, spec, exitCode, messages, hasTerminal, diagnostic, protocolFailed))
 
-  /**
-   * settle 的终态词汇（判词 ＋ cancelled 的 runner 内部形态）。#566：原 Blocked
-   * 改名 Failed——外部腿的「做不成」= 进程/结果真失败，终态恒 failed（作者令：
-   * delegate 面无 blocked 状态，failed 保留给真失败）。`private[executor]` =
-   * spec 装配缝（[[ExternalTerminalBackstopSpec]] 构造终态直投现场）。
-   */
+  private def settleLocked(
+    sessionId: String,
+    run: Execution,
+    spec: SpawnSpec,
+    exitCode: Option[Int],
+    messages: List[ExternalMessageCollector.CollectedMessage],
+    hasTerminal: Boolean,
+    diagnostic: Option[String],
+    protocolFailed: Boolean = false
+  ): IO[Unit] =
+    run.decision
+      .modify {
+        case "running" => ("finishing", Some(false))
+        case "cancelled" => ("finishing", Some(true))
+        case other => (other, None)
+      }
+      .flatMap {
+        case None => IO.unit
+        case Some(cancelled) =>
+          (for
+            current <- currentExecution(sessionId, run)
+            _ <- IO.raiseWhen(!current)(new IllegalStateException("Stale external completion"))
+            incomplete = !hasTerminal || diagnostic.nonEmpty
+            reason =
+              if cancelled then Some("Cancelled")
+              else if incomplete then Some("Result collection incomplete" + diagnostic.fold("")(d => s": $d"))
+              else if exitCode.exists(_ != 0) || protocolFailed then
+                Some(s"External execution failed (exit ${exitCode.getOrElse(-1)})")
+              else None
+            outcome =
+              if cancelled then Outcome.Cancelled else reason.fold[Outcome](Outcome.Completed)(Outcome.Failed.apply)
+            committed <- retryWrite(
+              spec.resources.subAgentTaskStore.completeRun(
+                spec.parentSessionId,
+                sessionId,
+                run.runId,
+                executionStatus = outcome match
+                  case Outcome.Completed => "finished"
+                  case Outcome.Cancelled => "cancelled"
+                  case _ => "failed",
+                reason = reason,
+                resultRef = Some(s"$sessionId#${run.runId}"),
+                incomplete = incomplete,
+                diagnostic = diagnostic,
+                notificationId = Some(s"$sessionId#${run.runId}")
+              )
+            )
+            row <- committed match
+              case Right(row) => IO.pure(row)
+              case Left("terminal-run") =>
+                spec.resources.subAgentTaskStore.findByTaskId(sessionId).flatMap {
+                  case Some(row) if row.runId.contains(run.runId) => IO.pure(row)
+                  case _ => IO.raiseError(new IllegalStateException("Stale completion retry"))
+                }
+              case Left(reason) => IO.raiseError(new IllegalStateException(reason))
+            persistedOutcome = row.executionStatus match
+              case Some("finished") => Outcome.Completed
+              case Some("cancelled") => Outcome.Cancelled
+              case _ => Outcome.Failed(row.terminalReason.getOrElse("External execution failed"))
+            text <- storedRunText(spec.resources.sessionStore, sessionId, run.runId)
+            _ <- ExternalOutputStore.finalizeRun(sessionId, run.runId, row.status, exitCode, row.terminalReason)
+            _ <- retryWrite(notifyParent(spec, sessionId, persistedOutcome, text, row.terminalReason, Some(run.runId)))
+            _ <- retryWrite(
+              spec.resources.subAgentTaskStore
+                .acknowledgeNotification(spec.parentSessionId, sessionId, run.runId, s"$sessionId#${run.runId}")
+                .flatMap(requireCommit)
+            )
+            _ <- emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
+              Json.obj(
+                "type" -> "agentDone".asJson,
+                "agentId" -> sessionId.asJson,
+                "taskId" -> sessionId.asJson,
+                "runId" -> run.runId.asJson,
+                "committedRevision" -> row.committedRevision.asJson
+              )
+            )
+          yield ())
+            .handleErrorWith { error =>
+              logger.warn(
+                s"External completion remains pending after bounded retries for $sessionId/${run.runId}: ${error.getMessage}"
+              )
+            }
+            .guarantee(releaseExecution(sessionId, run, spec))
+      }
+
+  private[executor] def reconstructRunText(messages: List[Message], runId: String): String =
+    val groups = scala.collection.mutable.LinkedHashMap.empty[String, StringBuilder]
+    messages.zipWithIndex.foreach { case (message, index) =>
+      if message.role == MessageRole.Assistant && message.runId.contains(runId) then
+        val key = message.messageId
+          .map { id =>
+            val block = id.lastIndexOf("/block/")
+            if block >= 0 then id.take(block) else id
+          }
+          .getOrElse(s"legacy-$index")
+        groups.getOrElseUpdate(key, new StringBuilder).append(message.textContent)
+    }
+    groups.valuesIterator.map(_.toString).mkString("\n\n")
+
+  private def storedRunText(store: nebflow.core.SessionStore, sessionId: String, runId: String): IO[String] =
+    store.loadMessagesForSession(sessionId).map(reconstructRunText(_, runId))
+
   private[executor] enum Outcome:
     case Completed
     case Failed(reason: String)
     case Cancelled
 
-  /**
-   * 父会话投递（ExternalEvent source="delegate"——与内部 delegate 同一回投链，
-   * 同一 barrier 释放语义）。完成必回报（P5 第二波）：parentRef=None / 直投失败
-   * 两腿都不再止步于告警日志——终态事件照常落父会话 F2 注入队（内部腿
-   * 监督链自动恢复批 2026-10-22 同款兜底），「不可投递」升级为「父会话下次
-   * 唤醒点必达」。
-   */
   private[executor] def notifyParent(
     spec: SpawnSpec,
     sessionId: String,
     outcome: Outcome,
     text: String,
-    reasonOpt: Option[String]
+    reasonOpt: Option[String],
+    runId: Option[String] = None
   ): IO[Unit] =
-    spec.parentRef match
-      case None =>
-        // mail-continuation delivery backstop（2026-10-09，与 BackoffSupervisor 同款
-        // 纪律）：parentRef=None ⇒ 终态结果无投递对象——历史分支是裸 IO.unit（静默
-        // 丢）。 绝不静默：响亮 WARN（带 payload 头部）。taskStore 状态写入与
-        // agentDone 面板帧照常（上方），终态仍可查；F2 持久兜底（P5 第二波）保证
-        // 回执延迟可达。
-        logger.warn(
-          s"[terminal-result-undelivered] external delegate session '$sessionId' (${spec.executorId}) reached its terminal state " +
-            s"but no parent ref exists (parent session '${spec.parentSessionId}' not live at spawn) — the result was NOT delivered to any session. " +
-            s"Payload head: ${text.take(500)}"
-        ) *> f2DeliveryBackstop(spec, externalTerminalEvent(spec, sessionId, outcome, text, reasonOpt))
-      case Some(parent) =>
-        val event = externalTerminalEvent(spec, sessionId, outcome, text, reasonOpt)
-        (parent ! event).void
-          .handleErrorWith { e =>
-            logger.warn(s"External delegate parent notify failed: ${e.getMessage}") *>
-              // 完成必回报（P5 第二波）：直投抛错 ≠ 回执可丢——同落 F2 兜底队。
-              f2DeliveryBackstop(spec, event)
-          }
+    val identity = runId.fold(sessionId)(r => s"$sessionId#$r")
+    val event = terminalEvent(sessionId, spec.title, spec.executorId, outcome, text, reasonOpt, runId)
+    enqueueResult(spec.parentSessionId, identity, event) *>
+      spec.resources.agentRegistry.get.map(_.get(spec.parentSessionId)).flatMap {
+        case Some(record) if nebflow.actor.ExternalAgentRecord.isMessagable(record.kind) =>
+          (record.ref ! AgentCommand.MailboxArrived).void.handleErrorWith(_ => IO.unit)
+        case _ => IO.unit
+      }
 
-  /**
-   * 外部腿终态事件的构造单点（直投与 F2 兜底共用同一形状——兜底入队的必须是
-   * 「本该直投的那一份」，不是重建的近似品）。
-   */
-  private def externalTerminalEvent(
-    spec: SpawnSpec,
+  end notifyParent
+
+  private def terminalEvent(
     sessionId: String,
+    title: String,
+    executor: String,
     outcome: Outcome,
     text: String,
-    reasonOpt: Option[String]
+    reason: Option[String],
+    runId: Option[String]
   ): AgentCommand.ExternalEvent =
-    val (eventType, payload, failureMetadata) = outcome match
-      case Outcome.Completed =>
-        val body = if text.nonEmpty then s""""${spec.title}":\n$text""" else s""""${spec.title}" (no text output)"""
-        ("completed", body, io.circe.JsonObject.empty)
-      case Outcome.Cancelled =>
-        (
-          "cancelled",
-          s""""${spec.title}": cancelled — ${reasonOpt.getOrElse("external CLI process terminated")}""",
-          io.circe.JsonObject(
-            "failedSessionId" -> sessionId.asJson,
-            "retryable" -> false.asJson,
-            "failureType" -> "cancelled".asJson,
-            "cancelled" -> true.asJson,
-            "reason" -> reasonOpt.getOrElse("").asJson
-          )
-        )
-      case Outcome.Failed(_) =>
-        (
-          "failed",
-          s""""${spec.title}": failed — ${reasonOpt.getOrElse("external executor failed")}""",
-          io.circe.JsonObject(
-            "failedSessionId" -> sessionId.asJson,
-            "retryable" -> false.asJson,
-            "failureType" -> "failed".asJson,
-            "reason" -> reasonOpt.getOrElse("").asJson
-          )
-        )
+    val limit = 48000
+    val body =
+      if text.length <= limit then text
+      else
+        text.take(limit) +
+          s"\n[Truncated; full result remains in session $sessionId, execution ${runId.getOrElse("legacy")}.]"
+    val eventType = outcome match
+      case Outcome.Completed => "completed"
+      case Outcome.Cancelled => "cancelled"
+      case _ => "failed"
+    val heading =
+      if eventType == "completed" then "Execution finished; requirement completion is not inferred."
+      else reason.getOrElse(eventType)
     AgentCommand.ExternalEvent(
       source = "delegate",
       eventType = eventType,
-      payload = payload,
-      metadata = io.circe
-        .JsonObject("description" -> spec.title.asJson, "agentName" -> spec.executorId.asJson)
-        .deepMerge(failureMetadata),
+      payload = s"$title: $heading\n$body\n[Result history: $sessionId]",
+      metadata = io.circe.JsonObject(
+        "description" -> title.asJson,
+        "agentName" -> executor.asJson,
+        "taskId" -> sessionId.asJson,
+        "completionGeneration" -> runId.asJson,
+        "failedSessionId" -> Option.when(eventType != "completed")(sessionId).asJson,
+        "retryable" -> false.asJson,
+        "reason" -> reason.asJson
+      ),
       correlationId = Some(sessionId)
     )
 
-  /**
-   * 终态回执 F2 注入队持久兜底（P5 第二波，完成必回报；与 BackoffSupervisor 同款
-   * 机制）：parentRef=None / 直投失败时把终态 ExternalEvent append 进父会话持久
-   * 注入队（correlationId=sessionId 幂等），父会话下次 spawn 时
-   * RecoverPersistedQueues 重放。父会话已删（盘上无记录，读数故障 fail-open）=
-   * 跳过（不产生无人读的垃圾文件）。fail-soft：append 失败只 WARN。
-   */
-  private def f2DeliveryBackstop(spec: SpawnSpec, event: AgentCommand.ExternalEvent): IO[Unit] =
-    if spec.parentSessionId.isEmpty then IO.unit
-    else
-      spec.resources.sessionStore.sessionRecordExists(spec.parentSessionId).handleError(_ => true).flatMap {
-        case false => IO.unit
-        case true =>
-          nebflow.agent.CompactionQueueStore
-            .load(spec.parentSessionId)
-            .flatMap { existing =>
-              val already =
-                existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
-              if already then IO.unit
-              else
-                val q = existing.getOrElse(nebflow.agent.CompactionQueueStore.PersistedQueues())
-                nebflow.agent.CompactionQueueStore.save(spec.parentSessionId, q.copy(events = q.events :+ event))
-            }
-            .handleErrorWith(e =>
-              logger.warn(
-                s"[terminal-f2-backstop] external append failed for parent '${spec.parentSessionId}': ${e.getMessage}"
+  end terminalEvent
+
+  private def enqueueResult(parentId: String, identity: String, event: AgentCommand.ExternalEvent): IO[Unit] =
+    nebflow.core.mail.SessionMailbox
+      .mailOnce(
+        parentId,
+        event,
+        kind = "delegate-terminal",
+        identity = identity,
+        producer = "external-session-runner",
+        deduplicateReceipts = true
+      )
+      .flatMap {
+        case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) =>
+          IO.raiseError(new IllegalStateException(cause))
+        case _ => IO.unit
+      }
+
+  def recoverPendingNotifications(
+    store: nebflow.core.SubAgentTaskStorePort,
+    sessions: nebflow.core.SessionStore
+  ): IO[Unit] =
+    store
+      .findAllTasks()
+      .flatMap(
+        _.filter(t =>
+          t.executor.exists(_ != ExecutorRegistry.DefaultId) &&
+            t.notificationPending.contains(true) && t.runId.nonEmpty && t.notificationId.nonEmpty
+        ).traverse_ { task =>
+          val runId = task.runId.get
+          val outcome = task.executionStatus match
+            case Some("finished") => Outcome.Completed
+            case Some("cancelled") => Outcome.Cancelled
+            case _ => Outcome.Failed(task.terminalReason.getOrElse("External execution failed"))
+          (for
+            text <- storedRunText(sessions, task.taskId, runId)
+            _ <- retryWrite(
+              enqueueResult(
+                task.parentSessionId,
+                task.notificationId.get,
+                terminalEvent(
+                  task.taskId,
+                  task.description,
+                  task.executor.getOrElse(task.agentName),
+                  outcome,
+                  text,
+                  task.terminalReason,
+                  Some(runId)
+                )
               )
             )
-      }
+            _ <- retryWrite(
+              store
+                .acknowledgeNotification(task.parentSessionId, task.taskId, runId, task.notificationId.get)
+                .flatMap(requireCommit)
+            )
+          yield ()).handleErrorWith(e =>
+            logger.warn(s"External notification remains pending for ${task.taskId}: ${e.getMessage}")
+          )
+        }
+      )
 
   // ── WS 帧发射（routeSubagentWsSend 同契约的本地盖章面）──────────────────
 
@@ -798,7 +958,9 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               else withSession.add("nodeSessionId", sessionId.asJson)
             Json.fromJsonObject(withNode)
           case None => frame
-        send(routed).handleErrorWith(e => logger.warn(s"External delegate WS frame failed: ${e.getMessage}"))
+        send(routed)
+          .timeout(5.seconds)
+          .handleErrorWith(e => logger.warn(s"External delegate WS frame failed: ${e.getMessage}"))
 
   private def emitAgentStart(
     wsSend: Option[Json => IO[Unit]],
@@ -833,85 +995,36 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       else Left(s"workspace '$ws' is not an existing directory")
     catch case e: Throwable => Left(s"workspace '$ws' is invalid: ${e.getMessage}")
 
-  /** SessionStore 持久会话：确保存在 + 追加 user 消息（source=delegate）。 */
   private def persistUserTurn(
     resources: AgentRuntimePort,
     sessionId: String,
     title: String,
-    userText: String
+    userText: String,
+    runId: String
   ): IO[Unit] =
-    val store = resources.sessionStore
-    store
-      .getOrCreateSession(sessionId, title)
-      .flatMap { _ =>
-        store
-          .loadMessagesForSession(sessionId)
-          .map(_ :+ Message(MessageRole.User, Left(userText), source = Some("delegate")))
-      }
-      .flatMap(msgs => store.saveMessagesForSession(sessionId, msgs))
-      .handleErrorWith(e => logger.warn(s"External session persist failed for $sessionId: ${e.getMessage}"))
-
-  end persistUserTurn
-
-  private def persistAssistantTurn(resources: AgentRuntimePort, sessionId: String, text: String): IO[Unit] =
-    val store = resources.sessionStore
-    store
-      .loadMessagesForSession(sessionId)
-      .map(_ :+ Message(MessageRole.Assistant, Left(text), source = Some("delegate")))
-      .flatMap(msgs => store.saveMessagesForSession(sessionId, msgs))
-      .handleErrorWith(e => logger.warn(s"External assistant persist failed for $sessionId: ${e.getMessage}"))
+    resources.sessionStore.getOrCreateSession(sessionId, title) *>
+      resources.sessionStore
+        .appendDurableMessage(
+          sessionId,
+          Message(
+            MessageRole.User,
+            Left(userText),
+            source = Some("delegate"),
+            messageId = Some(s"$runId-input"),
+            runId = Some(runId)
+          )
+        )
+        .void
 
   private def priorFinalText(resources: AgentRuntimePort, sessionId: String): IO[String] =
     resources.sessionStore
       .loadMessagesForSession(sessionId)
       .map(msgs =>
-        msgs.reverse.collectFirst { case m if m.role == MessageRole.Assistant => m.textContent }.getOrElse("")
+        msgs.reverse.collectFirst { case m if m.role == MessageRole.Assistant => m } match
+          case Some(message) => message.runId.fold(message.textContent)(reconstructRunText(msgs, _))
+          case None => ""
       )
       .handleError(_ => "")
-
-  /** 任务行记录（fail-soft——任务行失败不阻断派发，同内部口径）。 */
-  private def recordTaskTolerant(
-    resources: AgentRuntimePort,
-    taskId: String,
-    parentSessionId: String,
-    agentName: String,
-    prompt: String,
-    description: String
-  ): IO[Unit] =
-    resources.subAgentTaskStore
-      .recordTask(
-        SubAgentTask(
-          taskId = taskId,
-          parentSessionId = parentSessionId,
-          agentName = agentName,
-          prompt = prompt,
-          description = description,
-          status = "running",
-          retryCount = 0,
-          spawnedAt = System.currentTimeMillis(),
-          completedAt = None,
-          lastError = None,
-          source = "delegate"
-        )
-      )
-      .handleErrorWith(e => logger.warn(s"External taskStore.recordTask failed: ${e.getMessage}"))
-
-  private def updateTaskTolerant(
-    resources: AgentRuntimePort,
-    parentSessionId: String,
-    taskId: String,
-    status: String,
-    lastError: Option[String]
-  ): IO[Unit] =
-    resources.subAgentTaskStore
-      .updateStatus(
-        parentSessionId,
-        taskId,
-        status,
-        lastError = lastError,
-        completedAt = Some(System.currentTimeMillis())
-      )
-      .handleErrorWith(e => logger.warn(s"External taskStore.updateStatus failed: ${e.getMessage}"))
 
   /** 台账 note（taskId 缺失 / 失败 = 静默——fail-soft，同内部口径）。 */
   private def appendLedgerNote(taskId: Option[String], note: String): IO[Unit] =

@@ -339,6 +339,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
     val json = parsedJson(text)
     val hc = json.hcursor
     val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
+    val createRequestId = hc.downField("requestId").as[Option[String]].getOrElse(None)
+      .filter(_.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"))
     val crContent = hc.downField("content").as[String].getOrElse("")
     val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
     val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
@@ -368,10 +370,12 @@ private[gateway] object WsTasksWorkspaceHandlers:
         Some(nebflow.core.scheduler.ScheduledTask.KindTodo), None, crProject,
         crPriority, crDetail
       )
+      val userTodo = todo.copy(id = createRequestId.getOrElse(todo.id), source = Some("user"))
       (for
-        removed <- crName match
-          case Some(_) => sharedResources.scheduledTaskStore.upsertTaskByName(todo)
-          case None => sharedResources.scheduledTaskStore.addTask(todo).as(Nil)
+        saved <- createRequestId match
+          case Some(_) => sharedResources.scheduledTaskStore.addUserTodoOnce(userTodo)
+          case None => sharedResources.scheduledTaskStore.addTask(userTodo).as(userTodo)
+        removed = List.empty[nebflow.core.scheduler.ScheduledTask]
         _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
         _ <- removed.traverse_(old =>
           wsSend(
@@ -386,26 +390,37 @@ private[gateway] object WsTasksWorkspaceHandlers:
           io.circe.Json.obj(
             "type" -> "scheduledTaskCreated".asJson,
             "sessionId" -> crSessionId.asJson,
+            "requestId" -> createRequestId.asJson,
             "task" -> io.circe.Json.obj(
-              "id" -> todo.id.asJson,
-              "content" -> todo.content.asJson,
-              "triggerAt" -> todo.triggerAt.asJson,
-              "createdAt" -> todo.createdAt.asJson,
+              "id" -> saved.id.asJson,
+              "sessionId" -> Option(saved.sessionId).filter(_.nonEmpty).asJson,
+              "creator" -> io.circe.Json.Null,
+              "content" -> saved.content.asJson,
+              "triggerAt" -> saved.triggerAt.asJson,
+              "createdAt" -> saved.createdAt.asJson,
               "referencePath" -> io.circe.Json.Null,
               "repeat" -> io.circe.Json.Null,
-              "name" -> todo.name.asJson,
-              "detail" -> todo.detail.asJson,
+              "name" -> saved.name.asJson,
+              "detail" -> saved.detail.asJson,
               "kind" -> nebflow.core.scheduler.ScheduledTask.KindTodo.asJson,
-              "project" -> todo.project.asJson,
+              "project" -> saved.project.asJson,
               // 待办体系统一批（2026-11-04）：纯增量三键（老前端零感知）。
-              "priority" -> todo.priority.asJson,
-              "completed" -> todo.isCompleted.asJson,
-              "completedAt" -> todo.completedAt.asJson
+              // 全部取自 saved：同一 requestId 在创建后又被完成/编辑时，重试回执必须
+              // 报告库里真实的完成态，不能回显请求里的初始快照。
+              "priority" -> saved.priority.asJson,
+              "completed" -> saved.isCompleted.asJson,
+              "completedAt" -> saved.completedAt.asJson
             )
           )
         )
       yield ()).handleErrorWith(e =>
-        logger.warn(s"createScheduledTask(kind=todo) failed: ${e.getMessage}")
+        logger.warn(s"createScheduledTask(kind=todo) failed: ${e.getMessage}") *>
+          wsSend(io.circe.Json.obj(
+            "type" -> "error".asJson,
+            "msgType" -> "createScheduledTask".asJson,
+            "requestId" -> createRequestId.asJson,
+            "message" -> "Unable to confirm todo creation".asJson
+          ))
       )
     else if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
       // 定时任务两段化（schedule-todo-unify 批 2026-11-06 作者令「定时任务也要按
@@ -460,6 +475,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
         io.circe.Json.obj(
           "type" -> "error".asJson,
           "msgType" -> "createScheduledTask".asJson,
+          "requestId" -> createRequestId.asJson,
           "message" -> s"Invalid scheduled task: $reason".asJson
         )
       )
@@ -552,7 +568,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
       // 连续未销卡条目的调整建议）。
       "missCount" -> t.missCount.asJson,
       // 改版批（2026-10-31）：行级会话归属（scope:all 收件箱的跨会话寻址面）。
-      "sessionId" -> t.sessionId.asJson,
+      "sessionId" -> Option(t.sessionId).filter(_.nonEmpty).asJson,
+      // No creator identity is recorded by ScheduledTask; do not infer it from session.
+      "creator" -> io.circe.Json.Null,
       // 改版批追加令（2026-10-31 23:14）：项目维度（UI 分组/筛选主维度；None=未分组）。
       "project" -> t.project.asJson,
       // 待办体系统一批（2026-11-04）：重要度 + 完成态（纯增量三键；老前端零感知）。

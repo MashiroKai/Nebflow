@@ -11,6 +11,8 @@ const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', '
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 
 const SID = 'smoke-session-1';
+let extraSession = false;
+let additionalSession = false;
 const NOW = Date.now();
 const DAY = 86400000;
 // Cross-day seed: today, yesterday, 3 days ago
@@ -33,7 +35,9 @@ function check(name, ok, extra = '') {
 }
 
 const browser = await chromium.launch();
-const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+const theme = process.env.SEARCH_TEST_THEME || 'light';
+const mobile = process.env.SEARCH_TEST_MOBILE === '1';
+const page = await (await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, colorScheme: theme })).newPage();
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -44,7 +48,10 @@ await page.route('**/*', (route) => {
   let p = decodeURIComponent(url.pathname);
   if (p === '/') p = '/index.html';
   if (p === '/api/sessions') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'Smoke', agentName: 'Nebula' }], activeId: SID }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'Smoke', agentName: 'Nebula' }, ...(extraSession ? [{ id: 'other-session', name: 'Other', agentName: 'OtherAgent' }] : []), ...(additionalSession ? [{ id: 'third-session', name: 'Third', agentName: 'ThirdAgent' }] : [])], activeId: SID }) });
+  }
+  if (p.startsWith('/api/sessions/other-session/history')) {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: [{type:'user', text:'unique other agent marker', timestamp:NOW}], total:1 }) });
   }
   if (p.startsWith(`/api/sessions/${SID}/history`)) {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: HISTORY, total: HISTORY.length, sessionId: SID }) });
@@ -77,6 +84,17 @@ await page.waitForFunction(async (sid) => {
   return s.activeSessionId === sid && s.ws && s.ws.readyState === 1;
 }, SID, { timeout: 15000 });
 await page.waitForTimeout(300);
+await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+if (mobile) {
+  await page.evaluate(async () => {
+    document.body.classList.add('mobile-layer');
+    (await import('/js/chatSearch.js')).openSearchModal();
+  });
+  await page.waitForSelector('#search-overlay.on');
+  check('mobile search filters hidden on actual page', await page.locator('.search-filters').evaluate(el => getComputedStyle(el).display === 'none'));
+  await browser.close();
+  if (checks.some(c => !c.ok)) process.exitCode = 1;
+} else {
 
 // ── Open the modal ──
 await page.click('#search-btn');
@@ -139,6 +157,56 @@ await page.waitForTimeout(600);
 const dateEnabled = await tabs.nth(4).getAttribute('aria-disabled');
 check('§3 date tab still enabled after leaving media', dateEnabled !== 'true', String(dateEnabled));
 
+// Exercise the actual filtering chain with two distinguishable sessions.
+extraSession = true;
+await page.locator('#search-scope').click();
+await page.locator('.project-open-menu [role="menuitemradio"]').nth(1).click();
+await page.waitForFunction(() => document.querySelector('#search-results')?.textContent.includes('unique other agent marker'), null, { timeout: 5000 });
+check('scope all fetches other session results', true);
+await page.locator('#search-agent').click();
+await page.locator('.project-open-menu [role="menuitemradio"]').filter({ hasText:'OtherAgent' }).click();
+await page.waitForFunction(() => document.querySelector('#search-agent')?.value === 'OtherAgent' && document.querySelector('#search-results')?.textContent.includes('unique other agent marker') && !document.querySelector('#search-results')?.textContent.includes('today plain message'), null, { timeout: 5000 });
+check('agent selection filters results', true);
+additionalSession = true;
+const refresh = page.waitForResponse(response => response.url().includes('/api/sessions?') && response.request().method() === 'GET', { timeout: 5000 });
+await page.locator('#search-keyword').fill('unique');
+await refresh;
+await page.waitForFunction(() => document.querySelector('#search-results')?.textContent.includes('unique other agent marker') && document.querySelector('#search-agent')?.value === 'OtherAgent' && !document.querySelector('#search-results')?.hasAttribute('data-loading'), null, { timeout: 5000 });
+await page.locator('#search-agent').click();
+check('agent options rebuilt while value stays selected', await page.locator('.project-open-menu [aria-checked="true"]').innerText().then(s => s.includes('OtherAgent')) && await page.locator('.project-open-menu [role="menuitemradio"]').filter({hasText:'ThirdAgent'}).count() === 1);
+await page.keyboard.press('Escape');
+await page.locator('#search-keyword').fill('');
+await page.locator('#search-agent').click();
+await page.keyboard.press('Escape');
+await page.locator('#search-agent').click(); await page.locator('.project-open-menu [role="menuitemradio"]').first().click();
+await page.locator('#search-scope').click(); await page.locator('.project-open-menu [role="menuitemradio"]').first().click();
+extraSession = false;
+// Scope and agent remain keyboard-operable single-choice filters.
+for (const id of ['search-scope', 'search-agent']) {
+  const trigger = page.locator(`#${id}`);
+  await trigger.click();
+  const menu = page.locator('.project-open-menu');
+  check(`${id} opens with a checked item`, await menu.isVisible() && await menu.locator('[aria-checked="true"]').count() === 1);
+  const style = await menu.evaluate(el => { const s = getComputedStyle(el); return { bg: s.backgroundColor, radius: s.borderRadius, shadow: s.boxShadow }; });
+  const background = theme === 'dark' ? 'rgba(24, 28, 38, 0.94)' : 'rgba(255, 255, 255, 0.97)';
+  check(`${id} ${theme} computed menu style`, style.bg === background && style.radius === '8px' && style.shadow !== 'none', JSON.stringify(style));
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Escape');
+  check(`${id} escape restores focus`, await menu.count() === 0 && await trigger.evaluate(el => document.activeElement === el));
+}
+// Tool filter uses the shared menu while retaining the search value contract.
+await page.locator('#search-tool').click();
+const toolMenu = page.locator('.project-open-menu');
+check('tool menu opens on desktop', await toolMenu.isVisible());
+check('tool menu initial check', await toolMenu.locator('[aria-checked="true"]').count() === 1);
+await toolMenu.locator('[role="menuitemradio"]').nth(1).click();
+check('tool menu changes value', await page.locator('#search-tool').evaluate(el => el.value) === '__any__');
+await page.locator('#search-tool').click();
+check('tool menu selected value persists', await toolMenu.locator('[aria-checked="true"]').count() === 1 && (await toolMenu.locator('[aria-checked="true"]').innerText()).includes('工具'));
+await page.keyboard.press('Escape');
+check('tool menu closes on escape', await toolMenu.count() === 0);
+await page.locator('#search-tool').click();
+await toolMenu.locator('[role="menuitemradio"]').first().click();
 // B11: tool select linkage
 await tabs.nth(1).click();
 await page.waitForTimeout(300);
@@ -277,4 +345,5 @@ check('no page errors', pageErrors.length === 0, pageErrors.join('; '));
 const failed = checks.filter(c => !c.ok);
 console.log(`\n${checks.length - failed.length}/${checks.length} passed`);
 await browser.close();
-process.exit(failed.length ? 1 : 0);
+process.exitCode = failed.length ? 1 : 0;
+}

@@ -86,6 +86,26 @@ enum CredentialFailure(val code: String):
   /** logto 段缺 `pkceClientId` 等配置缺口。 */
   case LogtoNotConfigured extends CredentialFailure("logto-not-configured")
 
+  /**
+   * 账号归属闸（logout-login-recovery 批，2026-11-08）：本引擎的账号根属于**另一个**
+   * 账号 —— 换账号必须先登出（跨账号 enroll 硬拒）。code 与 `LoginGuard.LoginCode`
+   * 逐字同源（同一语义只在 `Guards.scala` 一处命名，CLI snake_case 形态由其闭集换算）。
+   */
+  case AccountSwitchRequiresLogout extends CredentialFailure("account-switch-requires-logout")
+
+  /**
+   * 账号归属闸：本机处于**未登录层**（有布局标记、无指针、无账号根）。该层不铸设备
+   * 身份（NeblinkModel 硬闸，契约 §6.2），设备注册在这个状态下不可完成。登出后重启过
+   * 的账号布局机器会落进这一档 —— 修复前的表现是未分类的 login-failed。
+   */
+  case EnrollRefusedNoAccountRoot extends CredentialFailure("enroll-refused-no-account-root")
+
+  /**
+   * 账号归属闸：显式登录拿不到账号身份（id_token 缺 `sub`）—— 无法安全建立账号归属，
+   * 不能把一次无名登录铸成本机账号根的凭据。
+   */
+  case AccountIdentityMissing extends CredentialFailure("account-identity-missing")
+
   /** 兜底：其余未分类失败（原文只进日志）。 */
   case Unclassified extends CredentialFailure("login-failed")
 
@@ -104,8 +124,15 @@ object CredentialDiagnostics:
   /**
    * 用户可见串的**禁项正则**（§10.2 G2/G3 判据逐字同源）。
    * 命中 = 泄露了文件系统路径或 Java 异常类名 —— 只许出现在日志里。
+   * Data-root directory names are matched as path segments for BOTH brands:
+   * the hardcoded legacy `.nebflow` forms and the current brand root
+   * ([[Branding.homeDirName]], e.g. `.stand`). The brand-root alternative
+   * carries a negative lookahead so ordinary words that merely contain the
+   * name (`.standalone`, `.standard`) are not flagged.
    */
-  val ForbiddenInVisibleText: String = "(java\\.|Exception|[A-Za-z]:\\\\|/\\.nebflow/|\\.nebflow)"
+  val ForbiddenInVisibleText: String =
+    val brandRoot = java.util.regex.Pattern.quote(Branding.homeDirName)
+    s"(java\\.|Exception|[A-Za-z]:\\\\|/\\.nebflow/|\\.nebflow|$brandRoot(?![A-Za-z0-9._-]))"
 
   private val Forbidden = ForbiddenInVisibleText.r
 
@@ -136,6 +163,12 @@ object CredentialDiagnostics:
     case CredentialFailure.ProviderError => "登录被服务方拒绝或中断"
     case CredentialFailure.ServiceUnavailable => s"${Branding.lowerName} 服务未初始化"
     case CredentialFailure.LogtoNotConfigured => "登录服务未配置（缺少应用标识）"
+    case CredentialFailure.AccountSwitchRequiresLogout =>
+      "本机的账号根属于另一个账号：同一台机器同一时间只能服务一个账号"
+    case CredentialFailure.EnrollRefusedNoAccountRoot =>
+      "本机处于未登录层（还没有账号根）：登录服务已连通，但设备注册在这个状态下不可完成"
+    case CredentialFailure.AccountIdentityMissing =>
+      "登录服务没有返回账号身份：无法确认这台机器该归属哪个账号"
     case CredentialFailure.Unclassified => "登录过程中出现未分类的错误"
 
   private def actionOf(f: CredentialFailure): String = f match
@@ -169,6 +202,11 @@ object CredentialDiagnostics:
     case CredentialFailure.ProviderError => "重新点「登录」；必要时换一个账号"
     case CredentialFailure.ServiceUnavailable => s"重启 ${Branding.lowerName} 后重新登录"
     case CredentialFailure.LogtoNotConfigured => s"检查 ${Branding.lowerName} 的登录配置后重试"
+    case CredentialFailure.AccountSwitchRequiresLogout =>
+      "先在本机退出当前账号，然后再登录新账号（退出登录不会删除本机账号数据）"
+    case CredentialFailure.EnrollRefusedNoAccountRoot =>
+      "本机账号数据不受影响；该状态需要账号根建立流程处理，当前版本暂未提供，请不要反复重试"
+    case CredentialFailure.AccountIdentityMissing => "点「重试」重新登录；仍失败请附日志反馈"
     case CredentialFailure.Unclassified => "点「重试」；仍失败请附日志反馈"
 
   /**
@@ -231,6 +269,20 @@ object CredentialDiagnostics:
    */
   def byVisibleMessage(msg: String): Option[CredentialFailure] =
     all.find(f => diagnosticOf(f).message == msg)
+
+  /**
+   * 账号归属闸拒绝（`NeblinkEnrollment.accountCutoverRefusal` 的 Left 通道）反查。
+   * 该通道的稳定形态 = `"<code>: <英文原因>"` —— 按 **code 冒号头**逐字前缀匹配，
+   * 不做子串猜测（英文原因只进日志，不进可见文案：三条分类各自有完整三段式中文文案）。
+   * 未命中 ⇒ None（调用面继续走既有反查/兜底，绝不把非闸串误分类）。
+   */
+  def byGuardRefusal(msg: String): Option[CredentialFailure] =
+    val m = if msg == null then "" else msg
+    List(
+      CredentialFailure.AccountSwitchRequiresLogout,
+      CredentialFailure.EnrollRefusedNoAccountRoot,
+      CredentialFailure.AccountIdentityMissing
+    ).find(f => m.startsWith(s"${f.code}:"))
 
   /**
    * 异常 → 分类（按**操作面**分派，不靠异常类型猜面：Windows 上读写失败常常都只是

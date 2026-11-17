@@ -199,10 +199,10 @@ async function openFriendProfileViaMenu(page, rowName) {
 async function openGroupProfileViaDrawer(page) {
   if ((await page.locator('#fm-chat-overlay').count()) === 0) {
     await page.locator('#fm-conversations .fm-conv-row[data-conversation-id="g-1"]').click();
-    await page.waitForSelector('#fm-chat-overlay .fm-modal-header', { timeout: 8000 });
+    await page.waitForSelector('#header .fm-main-head', { timeout: 8000 });
   }
   if ((await page.locator('#fm-chat-overlay .fm-group-settings').count()) === 0) {
-    await page.locator('#fm-chat-overlay .fm-gs-open').click();
+    await page.locator('#header .fm-main-head .fm-gs-open').click();
     await page.waitForSelector('#fm-chat-overlay .fm-group-settings', { timeout: 5000 });
   }
   await page.locator('.fm-group-settings .fm-gs-profile').click();

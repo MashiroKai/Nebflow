@@ -906,7 +906,7 @@ async function scenarioD() {
     });
     // 入站非图片（att-in-2）
     SRV.msgs.cC.push({ id: 302, senderId: 'u-p', kind: 'text', body: '', createdAt: iso(EPOCH - 30), attachments: [{ ...IN_ATT_TXT }] });
-    await page.click('.fm-modal-close');
+    await page.click('#activity-avatar');
     await sleep(400);
     await openConv(page, 'cC');
     await sleep(900);

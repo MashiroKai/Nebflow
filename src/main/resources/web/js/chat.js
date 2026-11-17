@@ -2,6 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
+import { mainBubbleClass } from './chatUi.js';
 import { key } from './branding.js';
 // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：TTS
 // 输出族（<voice> 块 + VoicePlayer 播报）与全双工同 flag 封存（voiceEnabled，
@@ -554,7 +555,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
     // UI-G: main window only — a subagent / flow popup view renders the same
     // bubble with no animation class at all (its container also carries
     // `.nf-static`; this keeps the class off its DOM too).
-    bubble.className = activeView.motionEnabled() ? 'bubble user nf-pop' : 'bubble user';
+    bubble.className = mainBubbleClass('user', activeView.motionEnabled() ? 'nf-pop' : '');
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
@@ -577,7 +578,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
       // 循环，否则同一引用渲染两遍）。
       if (att.type === 'ref' && att.refType === 'chat-message') return;
       const bubble = document.createElement('div');
-      bubble.className = 'bubble user att-bubble';
+      bubble.className = mainBubbleClass('user', 'att-bubble');
       // #303 v1.1 + (2026-08-27 打回注入块收敛): ALL task-return references -
       // unified type:'ref' AND the legacy type:'taskRef' from old
       // history/queue restores - normalize into the same Reference and render
@@ -648,7 +649,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
 // 旧后端不发此帧 ⇒ 订阅永不触发 ⇒ 行为与改前一致（无回归面）。
 //
 // 📌 断线史（2026-10-28 报障「我自己发的图，还是点不开」根因）：本订阅在
-// 2026-10-10 USTC dev/main 合并的冲突解决中整体丢失（checkpoint a0f2edfc7 的
+// 2026-10-10 内网仓 dev/main 合并的冲突解决中整体丢失（checkpoint a0f2edfc7 的
 // chat.js:490 原文可溯；`patchUserMediaRow`/`onMessage` 的 import 线都在、唯一
 // 消费块没了）⇒ live 发送腿的行永远停在 pathless 形态，点击开 Canvas（三修 ②
 // 裁定、与 Pop 同款）直到刷新才由恢复腿接管。user-attach-canvas-open spec A2
@@ -772,7 +773,7 @@ export function appendAiText(text, mark) {
     const row = document.createElement('div');
     row.className = 'row ai';
     view.stream.currentAiBubble = document.createElement('div');
-    view.stream.currentAiBubble.className = 'bubble ai';
+    view.stream.currentAiBubble.className = mainBubbleClass('ai');
     row.appendChild(view.stream.currentAiBubble);
     appendChatRow(chat, row);
   }
@@ -909,7 +910,7 @@ export function appendAgentText(agentId, text) {
     const row = document.createElement('div');
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
-    bubble.className = 'bubble ai';
+    bubble.className = mainBubbleClass('ai');
     let badge = null;
     if (agentId && agentId !== 'default') {
       // F1（作者 2026-09-16 决策卡）：通用「Agent 代发」徽章 —— 主对话面**放弃**
@@ -978,7 +979,7 @@ import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, a
 // ⇒ buildMediaFlat/buildMediaStack 在本文件的消费点清零（组件本体仍在
 // popArtifacts.js，主会话/社交三窗照用）。缩略帧字节腿 = 同一 `hydrateMedia`
 // （nfFileCache 账本 ⇒ 预览与灯箱复用同一份字节，零重复抓取）。
-import { openMediaLightbox, hydrateMedia } from './popArtifacts.js';
+import { openMediaLightbox, hydrateMedia, clearMediaFailure } from './popArtifacts.js';
 
 /** quote-message 一期：AskUser 卡首个 question 的纯文本（剥 HTML 标签；镜像
  *  persistence.js askUserQuestionText 的剥标签先例 —— chat.js 不反向 import
@@ -1961,7 +1962,10 @@ export function removeStillProcessingNotice(sid) {
  *  与改动前逐字同险）。 */
 function resendLastInput(v) {
   const history = state.inputHistory;
-  const lastMsg = history.length > 0 ? history[history.length - 1] : '';
+  // The history also holds messages that were sent with attachments only (an empty text): the text to send again is the
+  // newest one that has any.
+  let lastMsg = '';
+  for (let i = history.length - 1; i >= 0 && !lastMsg; i -= 1) lastMsg = history[i];
   if (!lastMsg) return;
   const sid = v && v.sessionId;
   const resendId = (sid && state.lastUserSendId[sid]) || '';
@@ -3219,8 +3223,11 @@ function renderAskAttachments(box, attachments, originLabel, opts = {}) {
     if (!note) {
       note = document.createElement('span');
       note.className = 'ask-att-reason';
-      const name = chip.querySelector('.att-file-name');
+      // 两档名字类：缩略/chip 面 = .att-file-name；问面文件卡（buildFileCard）= .fc-name。
+      // 都不命中（结构兜底）⇒ 直接挂卡尾——原因档不得因名字类换脸而消失（⑤a「原因+动作」）。
+      const name = chip.querySelector('.att-file-name, .fc-name');
       if (name) name.after(note);
+      else chip.appendChild(note);
     }
     const why = t('askUser.attUnavailable_' + (reason || 'network'));
     note.textContent = why + ' · ' + t('askUser.attCanDownload');
@@ -3277,7 +3284,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   // (finishAi re-attaches a preserved box under streamed markdown) keep their
   // face — the marker is deliberately an explicit class, never a blanket :has().
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai ob-ghost-seat';
+  bubble.className = mainBubbleClass('ai', 'ob-ghost-seat');
   row.appendChild(bubble);
   // Source badge. D6 批 F1 (G9): project context (project node / dispatcher ask)
   // renders "project · nodeName" so concurrent asks from several nodes stay
@@ -3682,7 +3689,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // Ghost seat (askuser-hybrid 重皮): the permission card is an option-box
   // carrier (badge/banner + box only) — the bubble de-faces, same as renderAskUser.
   const bubble = document.createElement('div');
-  bubble.className = 'bubble ai ob-ghost-seat';
+  bubble.className = mainBubbleClass('ai', 'ob-ghost-seat');
 
   // Danger level decorations
   const level = dangerLevel || 0;
@@ -3933,13 +3940,52 @@ function renderAttachmentFace(att, opts) {
     img.className = 'att-thumb';
     img.alt = nameText;
     img.draggable = false;
+    const thumbRoot = root;
+    // A thumbnail that cannot be shown stays in the strip as a failed item; its retry control loads this
+    // one thumbnail again and touches nothing else.
+    const showThumbFailed = () => {
+      if (thumbRoot.classList.contains('is-failed')) return;
+      thumbRoot.classList.add('is-failed');
+      img.style.display = 'none';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'att-thumb-retry';
+      retry.title = t('messages.retry');
+      retry.setAttribute('aria-label', t('messages.retry') + (nameText ? ' ' + nameText : ''));
+      const svgNs = 'http://www.w3.org/2000/svg';
+      const icon = document.createElementNS(svgNs, 'svg');
+      for (const [name, value] of Object.entries({
+        viewBox: '0 0 24 24', width: '14', height: '14', fill: 'none', stroke: 'currentColor',
+        'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true',
+      })) icon.setAttribute(name, value);
+      for (const d of ['M21 12a9 9 0 1 1-3-6.7', 'M21 3v6h-6']) {
+        const path = document.createElementNS(svgNs, 'path');
+        path.setAttribute('d', d);
+        icon.appendChild(path);
+      }
+      retry.appendChild(icon);
+      retry.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        retry.remove();
+        thumbRoot.classList.remove('is-failed');
+        img.style.display = '';
+        if (src) {
+          img.removeAttribute('src');
+          img.src = src;
+        } else {
+          clearMediaFailure(img);
+          hydrateMedia(img, { path: pathText }, showThumbFailed);
+        }
+      });
+      thumbRoot.appendChild(retry);
+    };
     if (src) {
       img.src = src;
-      img.onerror = () => { img.style.display = 'none'; };
+      img.onerror = showThumbFailed;
     } else {
-      // 票腿/账本腿单点（popArtifacts.hydrateMedia）：失败面由宿主经
-      // opts.onFail 或外层探针（probeAttachmentFile）接管，本函数不自造降级面。
-      hydrateMedia(img, { path: pathText });
+      // Ticket / ledger leg (popArtifacts.hydrateMedia); its terminal failure lands in the same failed item.
+      hydrateMedia(img, { path: pathText }, showThumbFailed);
     }
     root.appendChild(img);
   } else {
@@ -4055,7 +4101,7 @@ export function appendAskAnswer(delta) {
     const row = document.createElement('div');
     row.className = 'row ai';
     view.stream.currentAskBubble = document.createElement('div');
-    view.stream.currentAskBubble.className = 'bubble ai';
+    view.stream.currentAskBubble.className = mainBubbleClass('ai');
     const label = document.createElement('div');
     label.className = 'ask-label';
     label.textContent = t('chat.askLabel');
@@ -4443,7 +4489,7 @@ export function appendThinkingDelta(delta, mark) {
     // the tool rows), so a reader can verify the round split from the DOM.
     stampRound(activeView, row);
     const bubble = document.createElement('div');
-    bubble.className = 'bubble ai thinking-bubble';
+    bubble.className = mainBubbleClass('ai', 'thinking-bubble');
     // #346 v2 stats: thinking duration for the turn header (turnGroup.js
     // computes 思考 <N>s from nfStart/nfEnd on the bubble).
     bubble.dataset.nfStart = String(Date.now());

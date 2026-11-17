@@ -1,7 +1,5 @@
 package nebflow.core
 
-import nebflow.neblink.core.*
-
 /**
  * The ONE source of truth for the "filesystem path ⇄ URL query parameter" pair
  * (imgref batch, 2026-09-18 作者令).

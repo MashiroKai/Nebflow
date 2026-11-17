@@ -25,6 +25,7 @@ import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
 import { bindImeGuard, commitEnter } from '../imeGuard.js';
+import state from '../state.js';
 
 const DAY = 86_400_000;
 
@@ -158,6 +159,39 @@ let searchOpen = false;
 let searchQuery = '';
 let newListOpen = false;
 let moreOpen = false;
+/** Retain an unconfirmed creation across page navigation. */
+let pendingCreate = null;
+try { pendingCreate = JSON.parse(sessionStorage.getItem('stand.todo.pendingCreate') || 'null'); } catch { /* storage unavailable */ }
+function persistPendingCreate() {
+  try {
+    if (pendingCreate) sessionStorage.setItem('stand.todo.pendingCreate', JSON.stringify(pendingCreate));
+    else sessionStorage.removeItem('stand.todo.pendingCreate');
+  } catch { /* retain the in-memory draft */ }
+}
+
+/**
+ * Idempotency key for one todo create. The server accepts only a lowercase v4 UUID
+ * (`WsTasksWorkspaceHandlers` requestId regex); `crypto.randomUUID` is absent in
+ * non-secure contexts, so the fallbacks must still produce exactly that shape.
+ * @returns {string}
+ */
+function newCreateRequestId() {
+  try {
+    const c = globalThis.crypto;
+    if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+    if (c && typeof c.getRandomValues === 'function') {
+      const b = new Uint8Array(16);
+      c.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40;
+      b[8] = (b[8] & 0x3f) | 0x80;
+      const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+      return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+    }
+  } catch { /* fall through */ }
+  const hex = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
+  const time = Date.now().toString(16).padStart(12, '0').slice(-12);
+  return `${time.slice(0, 8)}-${time.slice(8, 12)}-4${hex().slice(1)}-${(8 + Math.floor(Math.random() * 4)).toString(16)}${hex().slice(1)}-${hex()}${hex()}${hex()}`;
+}
 
 /** @param {ListMode} mode @param {string|null} tagId @param {TaNav} nav */
 function openList(mode, tagId, nav) {
@@ -172,6 +206,120 @@ function openList(mode, tagId, nav) {
 function openItem(itemId, nav) {
   itemTarget = itemId;
   nav.push('todo-apple-item');
+}
+
+/** Create without replacing the Apple list page or its scroll position.
+ * @param {HTMLElement} section
+ * @param {string|null} initialTagId
+ * @param {HTMLButtonElement} trigger
+ */
+function openCreateSheet(section, initialTagId, trigger) {
+  if (section.querySelector('[data-todo-create-overlay]')) return;
+  const firstTag = todoStore.tags[0];
+  let tagId = pendingCreate?.tagId ?? initialTagId ?? (firstTag ? firstTag.id : null);
+  let priority = pendingCreate?.priority ?? 0;
+  const overlay = elIn(section, 'div', 'ta-create-overlay');
+  overlay.dataset.todoCreateOverlay = '';
+  const sheet = elIn(overlay, 'div', 'ta-create-sheet nf-glass');
+  sheet.dataset.todoCreateSheet = '';
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-label', t('todoapple.newTodo'));
+  const actions = elIn(sheet, 'div', 'ta-create-actions');
+  const cancel = btnEl('ta-create-cancel');
+  cancel.type = 'button';
+  cancel.textContent = t('todoface.cancel');
+  const save = btnEl('ta-create-save');
+  save.type = 'button';
+  save.textContent = t('todoapple.save');
+  actions.append(cancel, save);
+  // D 批（同上）：新建名输入面同样换 textarea（多行名可创建）。
+  const title = /** @type {HTMLTextAreaElement} */ (el('textarea', 'ta-create-title'));
+  title.rows = 1;
+  title.placeholder = t('todoapple.newTodo');
+  title.setAttribute('aria-label', t('todoapple.newTodo'));
+  bindImeGuard(title);
+  const notes = /** @type {HTMLTextAreaElement} */ (el('textarea', 'ta-create-notes'));
+  notes.rows = 3;
+  notes.placeholder = t('todoapple.notes');
+  notes.setAttribute('aria-label', t('todoapple.notes'));
+  bindImeGuard(notes);
+  sheet.append(title, notes);
+  const options = elIn(sheet, 'div', 'ta-create-options');
+  const flag = btnEl('ta-create-option');
+  flag.type = 'button';
+  const tag = btnEl('ta-create-option');
+  tag.type = 'button';
+  options.append(flag, tag);
+  const renderOptions = () => {
+    flag.textContent = `${t('todoapple.toPriority')}: ${priorityLabel(priority)}`;
+    tag.textContent = `${t('todoapple.toTag')}: ${tagId ? (todoStore.tagById(tagId)?.name || t('todoapple.none')) : t('todoapple.none')}`;
+  };
+  renderOptions();
+  flag.addEventListener('click', () => { priority = (priority + 1) % 4; renderOptions(); });
+  tag.addEventListener('click', () => {
+    const tags = todoStore.tags;
+    if (!tags.length) return;
+    const index = tags.findIndex((entry) => entry.id === tagId);
+    tagId = tags[(index + 1) % tags.length].id;
+    renderOptions();
+  });
+  const close = () => {
+    document.removeEventListener('nf:mobile-nav', onNavigate);
+    overlay.remove();
+    if (trigger.isConnected) trigger.focus();
+  };
+  const onNavigate = () => close();
+  document.addEventListener('nf:mobile-nav', onNavigate);
+  cancel.addEventListener('click', close);
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) close(); });
+  overlay.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+  const error = elIn(sheet, 'div', 'ta-create-error');
+  error.setAttribute('role', 'alert');
+  if (pendingCreate) {
+    title.value = pendingCreate.title;
+    notes.value = pendingCreate.notes;
+    title.readOnly = notes.readOnly = true;
+    flag.disabled = tag.disabled = true;
+    // The retry is pinned to its original session/identity. If that can no longer succeed
+    // (session switched, or the row was edited after a lost receipt), the user needs an
+    // explicit way out that is not "close the tab": drop the identity, keep the text, and
+    // allow a fresh create. The original row is never guessed away.
+    const discard = btnEl('ta-create-discard');
+    discard.type = 'button';
+    discard.textContent = t('todoapple.discardPending');
+    discard.addEventListener('click', () => {
+      pendingCreate = null;
+      persistPendingCreate();
+      title.readOnly = notes.readOnly = false;
+      flag.disabled = tag.disabled = false;
+      error.textContent = '';
+      discard.remove();
+    });
+    actions.insertBefore(discard, save);
+  }
+  let saving = false;
+  const submit = async () => {
+    const value = title.value.trim();
+    if (!value || saving) { if (!value) title.focus(); return; }
+    if (!state.activeSessionId) { error.textContent = t('todoapple.createUnconfirmed'); return; }
+    if (!pendingCreate) {
+      pendingCreate = { tagId, title: value, notes: notes.value, priority, sessionId: state.activeSessionId, requestId: newCreateRequestId() };
+      persistPendingCreate();
+    }
+    saving = true;
+    save.disabled = true;
+    title.readOnly = notes.readOnly = true;
+    flag.disabled = tag.disabled = true;
+    error.textContent = '';
+    const ok = await todoStore.createItemConfirmed(pendingCreate);
+    saving = false;
+    save.disabled = false;
+    if (ok) { pendingCreate = null; persistPendingCreate(); close(); }
+    else error.textContent = t('todoapple.createUnconfirmed');
+  };
+  save.addEventListener('click', submit);
+  title.addEventListener('keydown', (event) => { if (commitEnter(event, title)) submit(); });
+  requestAnimationFrame(() => { if (overlay.isConnected) title.focus(); });
 }
 
 /** Draft reset (rebuilt on every item-page entry: edit = the item's current reading; create = the list page's current tag). */
@@ -311,7 +459,7 @@ function buildHome(root, section, nav) {
   const newRow = elIn(cardBox, 'div', 'ta-row ta-row-new');
   newRow.hidden = true;
   elIn(newRow, 'span', 'ta-dot ta-dot-new');
-  const nlInput = inputEl('ta-newlist-input');
+  const nlInput = inputEl('ta-newlist-input nf-field--bare');
   nlInput.type = 'text';
   nlInput.autocomplete = 'off';
   bindImeGuard(nlInput);
@@ -332,7 +480,12 @@ function buildHome(root, section, nav) {
   // ── White three-icon capsule at the top right (left end stays empty for the
   // back button; all three keys have real backing capabilities) ──
   const cluster = elIn(section, 'div', 'ta-cluster');
-  const pill = elIn(cluster, 'div', 'ta-pill');
+  // 左槽隐形占位（ui-unify-panels 批 2026-11-17）：首页顶带左槽没有返回钮动作
+  // ⇒ 按带几何口径放等宽 invisible spacer 保三区结构（子页同槽 = 壳返回钮）。
+  // 绝不渲染可点但无功能的假按钮：spacer aria-hidden + pointer-events none。
+  const slotSpacer = elIn(cluster, 'div', 'ta-slot-spacer');
+  slotSpacer.setAttribute('aria-hidden', 'true');
+  const pill = elIn(cluster, 'div', 'ta-pill nf-glass');
   const bSearch = iconBtn('ta-pill-btn', 'search', t('todoapple.search'));
   const bNewList = iconBtn('ta-pill-btn', 'list-plus', t('todoapple.newList'));
   const bMore = iconBtn('ta-pill-btn', 'ellipsis', t('todoapple.more'));
@@ -353,7 +506,7 @@ function buildHome(root, section, nav) {
   bMore.addEventListener('click', () => { moreOpen = !moreOpen; render(); });
 
   // More menu (two entries = real entries: completed view / all todos)
-  const menu = elIn(section, 'div', 'ta-menu');
+  const menu = elIn(section, 'div', 'ta-menu nf-glass');
   menu.hidden = true;
   const mDone = btnEl('ta-menu-row');
   mDone.type = 'button';
@@ -374,7 +527,7 @@ function buildHome(root, section, nav) {
   const fabWrap = elIn(section, 'div', 'ta-fab-wrap');
   const fab = iconBtn('ta-fab g2-fab', 'plus', t('todoapple.newTodo'));
   fabWrap.appendChild(fab);
-  fab.addEventListener('click', () => openItem(null, nav));
+  fab.addEventListener('click', () => openCreateSheet(section, null, fab));
 
   /** @returns {void} */
   function render() {
@@ -528,10 +681,10 @@ function buildList(root, section, nav) {
   // White capsule top right: the only backed capability = create a todo into
   // this list (createItem)
   const cluster = elIn(section, 'div', 'ta-cluster');
-  const pill = elIn(cluster, 'div', 'ta-pill');
+  const pill = elIn(cluster, 'div', 'ta-pill nf-glass');
   const addBtn = iconBtn('ta-pill-btn', 'list-plus', t('todoapple.newTodo'));
   pill.appendChild(addBtn);
-  addBtn.addEventListener('click', () => openItem(null, nav));
+  addBtn.addEventListener('click', () => openCreateSheet(section, listTarget.mode === 'tag' ? listTarget.tagId : null, addBtn));
 
   /** @returns {void} */
   function render() {
@@ -606,11 +759,11 @@ function cycleDue() {
 function buildItem(root, section, nav) {
   const wrap = elIn(root, 'div', 'ta-edit');
   const row = elIn(wrap, 'div', 'ta-newrow');
-  const input = inputEl('ta-title-input');
-  input.type = 'text';
-  input.autocomplete = 'off';
+  // D 批（ui-unify-panels 2026-11-17「待办内容不要截断，展示与编辑都多行」）：
+  // 名编辑域 input → textarea（多行可编；保存走底部 ta-save 簇）。
+  const input = /** @type {HTMLTextAreaElement} */ (elIn(row, 'textarea', 'ta-title-input nf-field--bare'));
+  input.rows = 1;
   bindImeGuard(input);
-  row.appendChild(input);
   const infoBtn = iconBtn('ta-info', 'info', t('todoapple.info'));
   row.appendChild(infoBtn);
   const notes = /** @type {HTMLTextAreaElement} */ (elIn(wrap, 'textarea', 'ta-notes'));
@@ -618,6 +771,30 @@ function buildItem(root, section, nav) {
   notes.hidden = true;
   bindImeGuard(notes);
   const meta = elIn(wrap, 'div', 'ta-meta');
+  const replyBox = elIn(wrap, 'div', 'ta-reply');
+  const reply = /** @type {HTMLTextAreaElement} */ (elIn(replyBox, 'textarea', 'ta-notes'));
+  reply.placeholder = t('todoface.replyPh');
+  reply.setAttribute('aria-label', t('todoface.replyPh'));
+  const replySend = btnEl('ta-create-save');
+  replySend.type = 'button';
+  replySend.textContent = t('todoface.send');
+  replyBox.appendChild(replySend);
+  const replyError = elIn(replyBox, 'div', 'ta-create-error');
+  replyError.setAttribute('role', 'alert');
+  replySend.addEventListener('click', async () => {
+    const item = todoStore.allItems().find((entry) => entry.id === itemTarget);
+    const text = reply.value.trim();
+    if (!item || !text || replySend.disabled) return;
+    replySend.disabled = true;
+    let ok = false;
+    try {
+      const { sendPrimaryTodoReply } = await import('../input.js');
+      ok = sendPrimaryTodoReply(`#${item.title}·${item.id} ${text}`);
+    } catch { ok = false; }
+    replySend.disabled = false;
+    if (ok) { reply.value = ''; replyError.textContent = ''; }
+    else replyError.textContent = t('todoapple.replyFailed');
+  });
 
   // Top bar, three pieces: back on the left (page shell "<"), capsule on the
   // right, blue circular check save at the far right.
@@ -628,7 +805,7 @@ function buildItem(root, section, nav) {
   //     toolbar flag; no new entity) — in create state there is no item to
   //     complete, so the complete key never appears.
   const cluster = elIn(section, 'div', 'ta-cluster');
-  const pill = elIn(cluster, 'div', 'ta-pill');
+  const pill = elIn(cluster, 'div', 'ta-pill nf-glass');
   const doneBtn = iconBtn('ta-pill-btn', 'circle-check', t('todoapple.markComplete'));
   const flagBtn = iconBtn('ta-pill-btn', 'flag', t('todoapple.toPriority'));
   pill.append(doneBtn, flagBtn);
@@ -644,7 +821,7 @@ function buildItem(root, section, nav) {
 
   // Keyboard toolbar (hugs the keyboard: bottom reads --ta-kb; three keys =
   // date / flag / tag)
-  const tool = elIn(section, 'div', 'ta-tool');
+  const tool = elIn(section, 'div', 'ta-tool nf-glass');
   /**
    * @param {string} icon
    * @param {string} label
@@ -716,6 +893,7 @@ function buildItem(root, section, nav) {
     // Capsule: in create state only "flag" is backed (nothing to complete, so
     // the complete key is absent); in edit state both keys show
     doneBtn.hidden = !itemTarget;
+    replyBox.hidden = !itemTarget;
     flagBtn.classList.toggle('on', draft.priority > 0);
     if (typeof lucide !== 'undefined') createIconsIn(section);
   }
@@ -729,10 +907,10 @@ function saveDraft(nav) {
   const title = draft.title.trim();
   if (!title) return;
   if (itemTarget) {
-    /** @type {{title:string, notes:string, priority:number, due?:number, hasDue?:boolean, tagId?:string}} */
+    /** @type {{title:string, notes:string, priority:number, due?:number, hasDue?:boolean, tagId?:string|null}} */
     const patch = { title, notes: draft.notes, priority: draft.priority };
     if (draft.due != null) patch.due = draft.due; else patch.hasDue = false;
-    if (draft.tagId) patch.tagId = draft.tagId;
+    patch.tagId = draft.tagId;
     todoStore.updateItem(itemTarget, patch);
   } else {
     todoStore.createItem({

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "change": "unify-cli-branding",
+  "mappings": [
+    {
+      "requirement": "CB-REQ-001",
+      "scenario": "CB-SCN-001",
+      "implementation": [
+        "scripts/render-install-banner.py",
+        "scripts/check-logo-matrix.py",
+        "scripts/tests/test-cli-banner-payload.py",
+        "src/main/resources/brand/stand-terminal-banner.properties",
+        "scripts/run-checks.mjs",
+        "openspec/changes/unify-cli-branding/proposal.md",
+        "openspec/changes/unify-cli-branding/design.md",
+        "openspec/changes/unify-cli-branding/tasks.md",
+        "openspec/changes/unify-cli-branding/trace.json",
+        "openspec/changes/unify-cli-branding/specs/cli-branding/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The source checker also regenerates vector artwork using optional developer rasterization tools; the mapping does not execute those tools.",
+        "steps": "Run python3 -B scripts/tests/test-cli-banner-payload.py and python3 -B scripts/check-logo-matrix.py with the rasterizer available.",
+        "expected": "Payload generation tests pass; all seven payloads are identical across both installers and the JVM resource, and independent source artwork is rejected."
+      }
+    },
+    {
+      "requirement": "CB-REQ-002",
+      "scenario": "CB-SCN-002",
+      "implementation": ["src/main/scala/nebflow/cli/splash.scala", "src/main/scala/nebflow/cli/ui.scala"],
+      "tests": [
+        {"path": "src/test/scala/nebflow/cli/SplashSpec.scala", "name": "ordinary terminals render the exact installer horizontal lockup"},
+        {"path": "src/test/scala/nebflow/cli/SplashSpec.scala", "name": "native Windows shells do not need TERM to select images"},
+        {"path": "src/test/scala/nebflow/cli/SplashSpec.scala", "name": "redirected output and CI remain silent, even with image overrides"}
+      ]
+    },
+    {
+      "requirement": "CB-REQ-002",
+      "scenario": "CB-SCN-003",
+      "implementation": ["src/main/scala/nebflow/Main.scala", "ops/bin/stand-cli-lib.sh", "ops/README.md", "src/main/scala/nebflow/cli/module-doc.md"],
+      "tests": [{"path": "ops/test/stand-lifecycle.test.sh", "name": "case 13: non-TTY start -> no shell banner, arguments reach Java"}],
+      "manual": {
+        "reason": "Mocked launcher tests cannot attest to host startup, native Windows terminals or deployment state.",
+        "steps": "Inspect runtime placement after port admission, run mock launcher cases and a standalone renderer under a pseudo-terminal without starting the gateway.",
+        "expected": "Launchers delegate unchanged arguments, runtime displays the official artwork once, and redirected renderer output remains empty."
+      }
+    }
+  ]
+}

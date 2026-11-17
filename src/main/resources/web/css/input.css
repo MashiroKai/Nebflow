@@ -358,6 +358,25 @@
   max-width: 100%;
   min-width: 0;
 }
+/* A thumbnail that failed to load stays in the strip as a failed item (dashed, muted); its retry control
+   fills the thumbnail box and loads that one thumbnail again. */
+.att-thumb-wrap.is-failed {
+  width: 28px; height: 28px;
+  box-sizing: border-box;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--ds-radius-input);
+}
+.att-thumb-retry {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.att-thumb-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 1px; }
 .att-file {
   height: 28px;
   box-sizing: border-box;
@@ -989,15 +1008,8 @@
 /* 四会话统一批 2026-11-05：**同一状态档**同时服务主会话发送键与三种会话窗的
    发送键（三窗改挂 `.ds-turn-btn--send` 后，禁用/掉线两态必须同源 —— 否则同一
    枚圆钮在会话窗里会「按下没反应也没变灰」）。 */
-:is(#send-btn, .fm-send-btn):disabled svg { opacity: 0.45; }
 :is(#send-btn, .fm-send-btn):disabled {
-  /* 灰玻璃禁用档（--btn-disabled-*）：发送键 = 空正文闸，语义不变。
-     形态批：几何（宽高/圆角/padding）已上抬组件层，本块只留**状态色**——
-     `:disabled` 的颜色不是「send 档」的一部分（停用件既不是绿也不是红），
-     因此不进 .ds-turn-btn--send / --stop 那两档。 */
-  background: var(--btn-disabled-bg);
-  border-color: var(--btn-disabled-stroke);
-  color: var(--btn-disabled-ink);
+  /* Empty-input gating changes behavior, never the shared green send face. */
   cursor: default;
   transform: none;
 }

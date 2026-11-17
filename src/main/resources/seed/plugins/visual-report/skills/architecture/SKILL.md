@@ -56,15 +56,15 @@ description: 建筑空间报告（米制平面/轴测/体块交互）；平面�
 |---|---|---|---|---|---|
 | matplotlib | 平面/立面/轴测主渲染器 | `<venv>\python.exe -c "import matplotlib; print(matplotlib.__version__)"` → 3.11.2 | https://matplotlib.org/ | HTTP 200（2026-10-04） | plotly（已装）或文字几何描述+数据表；不得手画 |
 | numpy | 面积/几何计算 | `<venv>\python.exe -c "import numpy; print(numpy.__version__)"` → 2.5.3 | https://pypi.org/project/numpy/ | HTTP 200（2026-10-04） | 纯 Python `math` 模块 |
-| three.js（经 motion-toolkit） | 体块交互 HTML | `node -e "console.log(require('C:/Users/Kai/.nebflow/skills/visual-report-suite/motion-toolkit/scripts/three-template/node_modules/three/package.json').version)"` → 0.186.1 | https://threejs.org/ | HTTP 200（2026-10-04 复测） | **matplotlib 轴测投影/三视图静态图**（`demos/architecture/axon_house.py` 即此通路的实证样张）；再不行文字几何表 |
+| three.js（经 motion-toolkit） | 体块交互 HTML | `node -e "console.log(require('C:/Users/name/.nebflow/skills/visual-report-suite/motion-toolkit/scripts/three-template/node_modules/three/package.json').version)"` → 0.186.1 | https://threejs.org/ | HTTP 200（2026-10-04 复测） | **matplotlib 轴测投影/三视图静态图**（`demos/architecture/axon_house.py` 即此通路的实证样张）；再不行文字几何表 |
 | Chrome（headless 实拍） | WebGL 出图证明 / 交互件复核 | `"C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --screenshot=out.png --window-size=1280,900 --virtual-time-budget=6000 file:///<html>` → 40-64 KB PNG | —（google.com/chrome 本网不可达，README 网络基线；以本机已装 Chrome 154.0.8037.93 为准） | 本机在位（实测可出 WebGL 截图） | Edge `msedge.exe` 后备（motion-toolkit §2）；再不行交互件只交 HTML 不附实拍 |
 
-全基础工具链接验证表见插件 README（含 matplotlib/numpy 行），直接引用不复制。`<venv>` = `C:\Users\Kai\.nebflow\tools\viz-venv\Scripts`；装包只进 viz-venv（core §5）。
+全基础工具链接验证表见插件 README（含 matplotlib/numpy 行），直接引用不复制。`<venv>` = `C:\Users\name\.nebflow\tools\viz-venv\Scripts`；装包只进 viz-venv（core §5）。
 
 ### 降级策略
 
 - three.js 不可用（node_modules 缺失且 npm 镜像不通）⇒ **matplotlib 轴测投影/三视图静态图**（同一份米制数据，painter's algorithm 深度排序）⇒ 仍不可用 ⇒ 文字几何描述 + 数据表；任何一步不空转、不手画 SVG（core §1.1/§5）；
-- 中文乱码 ⇒ 脚本内 `os.environ.setdefault("MPLCONFIGDIR", r"C:\Users\Kai\.nebflow\tools\mplconfig")` + `rcParams["font.sans-serif"]=["Microsoft YaHei"]`（motion-toolkit §2 同源做法）。
+- 中文乱码 ⇒ 脚本内 `os.environ.setdefault("MPLCONFIGDIR", r"C:\Users\name\.nebflow\tools\mplconfig")` + `rcParams["font.sans-serif"]=["Microsoft YaHei"]`（motion-toolkit §2 同源做法）。
 
 ## 质量红线
 

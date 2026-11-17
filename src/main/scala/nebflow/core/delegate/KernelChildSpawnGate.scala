@@ -9,25 +9,17 @@ import nebflow.actor.{ActorRef, AgentCommand, AgentRecord}
  *
  * == 为什么需要这道闸 ==
  * 本批之前，「kernel 不派生」只靠**工具面裁剪**兑现（`kernelFace` 从工具清单里摘掉
- * Subagent / AgentFlow / node 四件 / delegate_report 侧减法）。工具面是装配面的减法：
+ * Subagent / AgentFlow / node 四件 / 申报工具通道侧减法）。工具面是装配面的减法：
  * `buildToolList` 一旦漏一件、某条恢复腿绕开装配、或新增一个派生入口，kernel 会话就
  * 能派生——而**代码层没有任何断言**拦住它。R-3a 要求的是一条**spawn 期**的不变量
  * （拒绝点是 spawn 动作本身，不是「模型看不到工具」这种间接保证）。
  *
- * == 🔴 只读侦察腿豁免（tool-face-agentflow-retire 批 2026-11-05，作者逐字裁定
- * 「改 R-3a，只放行只读 subagent」）==
- * kernel 腿补上 `Subagent` 工具（作者裁定一）后，「kernel 一律不许生子 actor」会让
- * 这个工具变成**按了必报错的按钮**（生产链路 `AgentSessionExecution` 恒传
- * `agentActorRef=Some(ctx.self)`，父子关系成立 ⇒ 旧闸必拒）。作者裁决 = **放宽到
- * 最小面**：kernel 身份**只**放行 `def == subagent` 的子 actor 生成，其余任何 def、
- * 任何子 actor 一律照旧拒绝。这不是「kernel 一律放行」：
- *   - 判据只看**子会话的 def 名**（[[ReadOnlyReconAgentName]]，单一真相源 =
- *     `BuiltinAgents.SubagentName`），不看调用方、不看参数——被派生的 agent def 由
- *     内置表解析（`BlockingSubagent` 走 `BuiltinAgents.entry(defName)`），工具面由
- *     `AgentCore.SubagentFixedTools` 机制固定（五件只读，且 `subagent` 在
- *     `ConvergedAgentNames` 内 ⇒ agent.json 声明不授能），所以放行面**无法被扩写**；
- *   - 副产品语义：`SubAgentTaskStore` 会把父会话 `orchestrationMode` 升成
- *     `subagent-star`（如实显示，作者 2026-11-05 裁定不做 kernel 豁免）。
+ * The only kernel child exemption is the exact builtin `subagent` definition.
+ * BlockingSubagent resolves that definition through BuiltinAgents; its six-tool
+ * face is fixed by AgentCore.SubagentFixedTools, independent of declarations.
+ * Bash is a normal shell capability, not mechanical read-only enforcement;
+ * reconnaissance is role policy. Executor and custom child definitions remain refused.
+ * SubAgentTaskStore still records the parent's `subagent-star` orchestration mode.
  *
  * == 判据（双重身份，并集）==
  *   1. registry 模式记录：`DelegateRegistry.Record.mode == "kernel"`（delegate-param-
@@ -45,10 +37,8 @@ import nebflow.actor.{ActorRef, AgentCommand, AgentRecord}
 object KernelChildSpawnGate:
 
   /**
-   * 唯一被放行的子 agent def 名（只读侦察腿）。单一真相源 =
-   * `BuiltinAgents.SubagentName`（"subagent"）——该 def 的工具面由
-   * `AgentCore.SubagentFixedTools` 机制固定为五件只读（Read/Glob/Grep/WebSearch/
-   * WebFetch），无写、无 shell、无消息。
+   * The sole exempt builtin name. Retained identifier for compatibility; the fixed
+   * face includes Bash and does not mechanically enforce read-only behavior.
    */
   val ReadOnlyReconAgentName: String = nebflow.core.entity.BuiltinAgents.SubagentName
 
@@ -67,10 +57,8 @@ object KernelChildSpawnGate:
    * 两条判据的**并集**：模式记录与 id 前缀任一命中即认；都未命中 = 非 kernel。
    */
   def kernelEvidence(sessionId: String, modeWord: Option[String]): Option[String] =
-    if modeWord.contains(DualModeConfig.ModeKernel) then
-      Some(s"registry mode record = '${DualModeConfig.ModeKernel}'")
-    else if sessionId.startsWith(LegacyKernelPrefix) then
-      Some(s"legacy session id prefix '$LegacyKernelPrefix'")
+    if modeWord.contains(DualModeConfig.ModeKernel) then Some(s"registry mode record = '${DualModeConfig.ModeKernel}'")
+    else if sessionId.startsWith(LegacyKernelPrefix) then Some(s"legacy session id prefix '$LegacyKernelPrefix'")
     else None
 
   /**
@@ -84,16 +72,17 @@ object KernelChildSpawnGate:
   def message(parentSessionId: String, childSessionId: String, childAgent: String, evidence: String): String =
     s"kernel session '$parentSessionId' cannot spawn a child actor (child '$childSessionId', agent def '$childAgent'): " +
       "invariant R-3a (actor-tree spec v1 §13.2 #P2) — the kernel leg owns the whole task and derives nothing, " +
-      s"so fan-out is refused at spawn time. The ONE exception is the read-only recon leg (agent def " +
-      s"'$ReadOnlyReconAgentName' — five read-only tools, nothing writable): '$childAgent' is not it. " +
+      s"so fan-out is refused at spawn time. The ONE exception is the recon leg (agent def " +
+      s"'$ReadOnlyReconAgentName' — Read/Glob/Grep/WebSearch/WebFetch/Bash; reconnaissance is role policy, " +
+      s"not a read-only shell sandbox): '$childAgent' is not it. " +
       s"Judgement: $evidence. " +
-      "What to do: for read-only recon call `Subagent(prompt=...)` (not a spawn you construct yourself); " +
+      "What to do: for reconnaissance call `Subagent(prompt=...)` (not a spawn you construct yourself); " +
       "if the work must fan out into sub-actors, spawn with Delegate(mode=\"dispatcher\"); " +
       "or do the work inside this session as one actor. " +
       "(KERNEL_CHILD_SPAWN_REFUSED)"
 
   /**
-   * 只读侦察腿豁免判据（纯函数，spec 直驱）：**只**认子会话 def 名等于
+   * Reconnaissance exemption (pure predicate)：**只**认子会话 def 名等于
    * [[ReadOnlyReconAgentName]]。名字是唯一输入——不看调用方、不看会话 id、不看参数，
    * 所以「换个说法」或「传个参」都换不出第二个放行面。
    */
@@ -107,7 +96,7 @@ object KernelChildSpawnGate:
    * @param modeWordOf      会话 id ⇒ registry 模式词（生产 = `DelegateRegistry.modeFaceOf`；
    *                        形参注入使本表零端口、零落盘，可直接单测）
    * @param childSessionId  被派生的子会话 id
-   * @param childAgent      被派生的 agent def 名（kernel 身份下唯一放行面 = 只读侦察腿）
+   * @param childAgent      被派生的 agent def 名（kernel 身份下唯一放行面 = 侦察腿）
    */
   def judge(
     parentSessionId: Option[String],
@@ -120,10 +109,9 @@ object KernelChildSpawnGate:
       case Some(sid) =>
         kernelEvidence(sid, modeWordOf(sid)) match
           case None => Right(())
-          // 只读侦察腿：kernel 身份下**唯一**被放行的子 actor 生成（作者 2026-11-05
-          // 「改 R-3a，只放行只读 subagent」）。其余 def 一律落到下面的 Left。
+          // Only the exact builtin recon name is exempt; every other def is refused.
           case Some(_) if readOnlyReconExempt(childAgent) => Right(())
-          case Some(evidence)                            => Left(message(sid, childSessionId, childAgent, evidence))
+          case Some(evidence) => Left(message(sid, childSessionId, childAgent, evidence))
 
   /**
    * spawn 期闸（IO 面）：`parentRef → registry → 父会话身份 → [[judge]]`。
@@ -140,7 +128,7 @@ object KernelChildSpawnGate:
     registry.get.flatMap { reg =>
       val parentSessionId = parentRef.flatMap(r => reg.collectFirst { case (sid, rec) if rec.ref == r => sid })
       judge(parentSessionId, sid => DelegateRegistry.modeFaceOf(Some(sid)), childSessionId, childAgent) match
-        case Right(_)   => IO.unit
+        case Right(_) => IO.unit
         case Left(text) => IO.raiseError[Unit](Refused(text))
     }
 

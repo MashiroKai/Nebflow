@@ -119,7 +119,6 @@ class RootDeliveryDedupSpec extends FunSuite:
           workspace.toString,
           rootSid,
           "dedupproj",
-          FeedbackRouter.ModeAuto,
           (_, _, _) => IO.unit,
           // noderpt 批 A 段：本 fixture 主题 = 投递去重记账 ⇒ 显式关腿 2（生产默认开）。
           reportGateHold = Some(false),

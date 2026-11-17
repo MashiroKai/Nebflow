@@ -58,12 +58,12 @@ class DelegateStandbyCareSpec extends CatsEffectSuite:
       "the author-mandated injection form"
     )
     assert(
-      idle.contains("delegate_report(category=\"standby\""),
+      idle.contains("STATE YOUR POSITION NOW"),
       "the idle leg must demand entering standby explicitly"
     )
     assert(
-      idle.contains("finish"),
-      "the idle leg must offer the finish/merge escape (finish = the only judged-complete combination)"
+      idle.contains("write your final report as normal text output"),
+      "the idle leg must offer the escape (the end state = the final report as normal text)"
     )
     assert(
       idle.contains("NO terminal verdict") || idle.contains("did NOT judge"),

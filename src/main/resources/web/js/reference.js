@@ -13,6 +13,7 @@
 // P0 范围（v1.1）：输入框引用块定高/截断/可展开（A1-A6）+ 各入口产出引用（B 组）+ 拉到根目录（E 组）。
 // 消息内引用卡片（mode='message'）+ 点击跳转 = P1/P2，本模块预留 renderRefBlock mode 分支。
 import { t } from './i18n.js';
+import { showDocumentTermCard } from './documentTermCard.js';
 // 循环门禁修复批（2026-11-04）：**模型层**（makeReference + 它用到的纯补全助手）
 // 抽到叶子模块 refModel.js。缘由：msgQuote.js 只需要「行描述符 → Reference 对象」
 // 这一步模型转换，静态 import 本模块却会把整条**渲染**链（本文件 → popArtifacts
@@ -515,8 +516,17 @@ function buildFileLangRefCard(ref) {
   card.append(iconEl, meta);
   card.dataset.refType = ref.refType || '';
   card.dataset.refPath = path;
-  // #303 C2/C3: click the message card to jump to the referenced content
-  card.addEventListener('click', () => jumpRef(ref));
+  const isDocument = ref.refType === 'document' || /\.(md|markdown|html?)$/i.test(path);
+  const activate = () => {
+    if (isDocument && path) showDocumentTermCard(card, { path, title: name.textContent, openDocument: resolvedPath => jumpRef(ref, resolvedPath) });
+    else jumpRef(ref);
+  };
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.addEventListener('click', activate);
+  card.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
+  });
   return card;
 }
 
@@ -591,11 +601,11 @@ function renderMessageRef(ref) {
 // the source URL. task: referral records are back-references — no silent
 // navigation, but let the task panel reveal it if it owns the id (future); for
 // now this is a non-navigating record (the return already happened).
-function jumpRef(ref) {
+function jumpRef(ref, resolvedPath = '') {
   if (!ref) return;
   const rt = ref.refType;
   const src = ref.source || {};
-  const path = src.path || '';
+  const path = resolvedPath || src.path || '';
   if (rt === 'file' || rt === 'document') {
     if (!path) return;
     const title = ref.display?.label || src.title || path.split('/').pop();

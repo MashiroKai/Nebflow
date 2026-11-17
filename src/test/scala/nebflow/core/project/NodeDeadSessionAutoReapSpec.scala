@@ -188,8 +188,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
         backgroundWaitCapMs = backgroundWaitCapMs,
-        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
-        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）；腿 1 显式置回旧行为作对照
+        // Explicitly turn the terminal hold leg off (dormant knob; orthogonal to this fixture's topic).
         // （本 spec 的 Z4「等待后台任务不动」断言依赖腿 1 的 hold 语义）。
         bgGateCompletionHold = Some(true),
         reportGateHold = Some(false)

@@ -806,15 +806,25 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       // 但**面板解析层**自 auth-trim 批（设置页更新退役）起换用新命名空间
       // `neblink.updateCard.phase.<wire>`（M3 ④更新卡的相位文案，zh-CN/en 双表齐备）
       // ——旧的设置页 `update.phase.*` 文案键组已随该批删除，本断言改为验新表。
+      // auth-trim 批（设置页更新退役）的落地形态 = updateCard.js 模块连同其 i18n
+      // 键组/CSS 一并删除（contacts.js「零死键死规则」自注在案）——本测原钉的
+      // 「面板解析层换用 neblink.updateCard.phase.<wire> 新命名空间双表齐备」从未
+      // 落地（主检出与前端线 locale 均无此键组）。现行正钉 = 零死键：旧
+      // update.phase.* 与新 neblink.updateCard.* 键组都不得残留（展示文案面退役，
+      // 机器键帧照发——上面 D6 无文案钉不变）。
       zhRaw <- IO(os.read(os.pwd / "src/main/resources/web/js/locales/zh-CN.js"))
       enRaw <- IO(os.read(os.pwd / "src/main/resources/web/js/locales/en.js"))
       _ <- IO {
-        UpdatePhase.values.toList.foreach { p =>
-          val newKey = s"'neblink.updateCard.phase.${p.wire}':"
-          assert(zhRaw.contains(newKey), s"zh-CN must define ${newKey}")
-          assert(enRaw.contains(newKey), s"en must define ${newKey}")
+        List(zhRaw, enRaw).foreach { raw =>
+          assert(
+            !raw.contains("'update.phase."),
+            "retired settings-page update.phase keys must stay deleted (zero dead keys)"
+          )
+          assert(
+            !raw.contains("updateCard"),
+            "the updateCard i18n key group must stay deleted (zero dead keys)"
+          )
         }
-        assert(phaseTextSeparated(zhRaw), "对勾/叉号前缀不得并入相位文案")
       }
       // 既有重启进度帧作其子集保留不删、语义未变（向后兼容读数）
       restart <- frames.restartStatus.get
@@ -1007,11 +1017,5 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
     yield ()
   }
 
-  /** 对勾/叉号前缀与相位文本分离（设计 §7 通用契约）：本批新增的相位文案不得带前缀。 */
-  private def phaseTextSeparated(localeRaw: String): Boolean =
-    // 相位文案命名空间 = neblink.updateCard.phase.*（M3 ④；设置页 update.phase.*
-    // 键组已随 auth-trim 退役——判据随新表走，语义不变：前缀不得并入相位文案）
-    val block = localeRaw.split("'neblink.updateCard.phase.").drop(1)
-    block.forall(line => !line.take(200).contains("✓") && !line.take(200).contains("✗"))
 
 end UpdateOrchestratorSpec

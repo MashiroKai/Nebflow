@@ -98,7 +98,7 @@ export function enableViewerZoom(pane, opts) {
     // .canvas-zoom-btn 按 --cv-* token 档供给（sapphire.css 单源）。
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'canvas-zoom-btn';
+    b.className = 'canvas-button canvas-zoom-btn';
     b.innerHTML = `<i data-lucide="${icon}"></i>`;
     b.title = label;
     b.setAttribute('aria-label', label);

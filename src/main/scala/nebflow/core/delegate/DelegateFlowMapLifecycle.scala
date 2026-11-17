@@ -26,13 +26,12 @@ import scala.concurrent.duration.*
  *      都有确定性归宿（archived ∨ cancelled），台账不再滞留 `active` 谎报；
  *      **blocked 永不自动处置**（含 blocked 成员的链零触碰——人工裁定域）；
  *      ② unmount（既有单点，零盘面动作——不变）；
- *   ③ **宽限删除**：后台 fiber 睡 `graceMs`（缺省 10min；sys prop
- *      `nebflow.delegate.flowmap.graceMs`）后校验双闸——**未重挂**（isMounted=false，
- *      grace 窗内的复活/续聊腿优先）∧ **已归档**（archivedAt 在——终态 autoArchive
- *      的盘面证据；终态腿）⇒ 删作用域目录。任一闸不满足 = 跳过（审计面/复活面优先
- *      于整洁）。**孤儿收割腿**（R3 批）同窗复用：条件换成「盘面静默复核」（目录
- *      在 ∧ 重读 flow-map 无非终态 ∧ 无 blocked——reap 判据在宽限过期点的再确认，
- *      复活窗内重挂/盘面复活即跳过）。
+ *   ③ **宽限退役（迁移而非删除）**：后台 fiber 睡 `graceMs`（缺省 10min；sys prop
+ *      `nebflow.delegate.flowmap.graceMs`）后校验——**未重挂**（isMounted=false，
+ *      grace 窗内的复活/续聊腿优先）∧ **终态证据**（终态腿 = archivedAt 在 ∧
+ *      盘面静默复核；孤儿腿 = 盘面静默复核——两腿同过 `scopeQuietRecheck` 双保险）
+ *      ⇒ 复用既有 `flow-map-archive/` 归档通道把迟到完成扫进档、**目录保留**
+ *      （不整目录删除）。任一闸不满足 = 跳过（审计面/复活面优先于整洁）。
  *
  * == 触发判据（单点）==
  * `applies` = 属主 mode=dispatcher（registry mode 读面）——kernel/存量腿零触碰
@@ -87,8 +86,15 @@ object DelegateFlowMapLifecycle:
    *     的「blocked 永不自动归档」同一条纪律的退役侧镜像）。
    *   - **c. 台账收敛**：`reconcileChainLedger` 收尾一拍（既有 TtlTick ⑤ 同款）——
    *     改号/退役/压缩在退役窗内走完，台账热态以自洽态随目录退役。
+   *
+   * @param cancelAuthorized 取消授权（父会话终态收口单点 2026-11-12 · 误回收修复批）：
+   *   **只有明确取消墓碑（`cancelRequestedAt` 在案）才构成对仍在飞链的 cancelled
+   *   收口授权**。自然完成/普通归档不是取消授权——在飞链不再被台账假取消（台账
+   *   改写 ≠ 底层 actor 死亡；假取消记录会切断后代的可信归属/待结算证据）。缺省
+   *   `true` = 既有调用面（孤儿收割腿——宿主已不活，收口是结算记录而非假杀）逐字节
+   *   不变；DelegateTerminal 终态收口按墓碑在案与否传值。
    */
-  def flushBeforeUnmount(delegateId: String): IO[Unit] =
+  def flushBeforeUnmount(delegateId: String, cancelAuthorized: Boolean = true): IO[Unit] =
     DelegateFlowHosts.get(delegateId).flatMap {
       case None => IO.unit
       case Some(rt) =>
@@ -121,7 +127,7 @@ object DelegateFlowMapLifecycle:
                         )
                       )
                   }
-            sweepAudit *> finalizeAbandonedChains(delegateId) *> ledgerConverge(delegateId)
+            sweepAudit *> finalizeAbandonedChains(delegateId, cancelAuthorized) *> ledgerConverge(delegateId)
           }
           .handleErrorWith(e =>
             IO(logger.warn(s"[flowmap-lifecycle] pre-unmount sweep failed for '$delegateId': ${e.getMessage}"))
@@ -131,69 +137,77 @@ object DelegateFlowMapLifecycle:
   /**
    * ①-b 在飞链收口（R3 批 2026-10-29 · 审计二 §3.4-②「4 条 active vs 0 节点」的
    * 机制根因修复）：退役图内「非终态成员仍在 ∧ 无 blocked 成员」的链，台账控制态
-   * 落 `cancelled` + `chain-cancelled` 审计事件——任何终态路径（completed/failed/
-   * cancelled）经同一条收口序列，台账不再滞留 `active`。盘面节点零触碰（复活窗
-   * 安全）；sweep 已出库的链不再入选（活动区已无其成员）。
+   * 落 `cancelled` + `chain-cancelled` 审计事件。盘面节点零触碰（复活窗安全）；
+   * sweep 已出库的链不再入选（活动区已无其成员）。
+   *
+   * 终态收口单点批（2026-11-12 · 误回收修复）：收口授权 = `cancelAuthorized`（父
+   * 会话明确取消墓碑在案）。自然完成/普通归档不是取消授权 ⇒ 在飞链零收口——台账
+   * 保持真实状态（仍在飞 = 仍 active），不写 chain-cancelled 审计（台账改写 ≠
+   * 底层 actor 死亡；假取消会切断后代的可信归属/待结算证据）。
    */
-  private[delegate] def finalizeAbandonedChains(delegateId: String): IO[Unit] =
-    DelegateFlowHosts.get(delegateId).flatMap {
-      case None => IO.unit
-      case Some(rt) =>
-        for
-          s <- rt.store.snapshot
-          a <- rt.store.archiveSnapshot
-          now = System.currentTimeMillis()
-          chains = FlowMapStore.topologicalChains(s.nodes.values ++ a.nodes.values)
-          abandoned = chains.filter { c =>
-            val activeMembers = c.memberIds.flatMap(s.nodes.get(_))
-            activeMembers.exists(m => NodeLifecycle.ChainCancelScope.contains(m.status)) &&
-            !activeMembers.exists(_.status == NodeLifecycle.Blocked) // blocked 永不自动处置
-          }
-          _ <- abandoned.traverse_ { c =>
-            val members = c.memberIds.toList.sorted
-            val openCount =
-              members.count(id => s.nodes.get(id).exists(n => NodeLifecycle.ChainCancelScope.contains(n.status)))
-            val reason =
-              "delegate terminal closure (flowmap retirement): chain still in flight when the dispatcher session ended"
-            rt.store.chainLedgerStore
-              .setChainControl(c.id, ChainLedger.StatusCancelled, now)
-              .attempt
-              .void
-              .handleErrorWith(e =>
-                IO(logger.warn(s"[flowmap-lifecycle] retire cancel-mark failed (${c.id}): ${e.getMessage}"))
-              ) *>
-              FlowMapEventLog
-                .append(
-                  rt.baseWorkspace,
-                  rt.engine.projectName,
-                  c.memberIds.headOption.getOrElse(""),
-                  FlowMapEventLog.ChainCancelledType,
-                  FlowMapEventLog.chainCancelledSummary(
-                    c.id,
-                    CancelSource.Engine,
-                    reason,
-                    cancelled = openCount,
-                    preserved = members.size - openCount,
-                    skipped = 0,
-                    memberIds = members
-                  ),
-                  Some(c.id)
-                )
+  private[delegate] def finalizeAbandonedChains(delegateId: String, cancelAuthorized: Boolean): IO[Unit] =
+    if !cancelAuthorized then IO.unit
+    else
+      DelegateFlowHosts.get(delegateId).flatMap {
+        case None => IO.unit
+        case Some(rt) =>
+          for
+            s <- rt.store.snapshot
+            a <- rt.store.archiveSnapshot
+            now = System.currentTimeMillis()
+            chains = FlowMapStore.topologicalChains(s.nodes.values ++ a.nodes.values)
+            abandoned = chains.filter { c =>
+              val activeMembers = c.memberIds.flatMap(s.nodes.get(_))
+              activeMembers.exists(m => NodeLifecycle.ChainCancelScope.contains(m.status)) &&
+              !activeMembers.exists(_.status == NodeLifecycle.Blocked) // blocked 永不自动处置
+            }
+            _ <- abandoned.traverse_ { c =>
+              val members = c.memberIds.toList.sorted
+              val openCount =
+                members.count(id => s.nodes.get(id).exists(n => NodeLifecycle.ChainCancelScope.contains(n.status)))
+              val reason =
+                "delegate terminal closure (flowmap retirement): chain still in flight when the dispatcher session ended"
+              rt.store.chainLedgerStore
+                .setChainControl(c.id, ChainLedger.StatusCancelled, now)
+                .attempt
+                .void
                 .handleErrorWith(e =>
-                  IO(logger.warn(s"[flowmap-lifecycle] chain-cancelled audit append failed (${c.id}): ${e.getMessage}"))
+                  IO(logger.warn(s"[flowmap-lifecycle] retire cancel-mark failed (${c.id}): ${e.getMessage}"))
+                ) *>
+                FlowMapEventLog
+                  .append(
+                    rt.baseWorkspace,
+                    rt.engine.projectName,
+                    c.memberIds.headOption.getOrElse(""),
+                    FlowMapEventLog.ChainCancelledType,
+                    FlowMapEventLog.chainCancelledSummary(
+                      c.id,
+                      CancelSource.Engine,
+                      reason,
+                      cancelled = openCount,
+                      preserved = members.size - openCount,
+                      skipped = 0,
+                      memberIds = members
+                    ),
+                    Some(c.id)
+                  )
+                  .handleErrorWith(e =>
+                    IO(
+                      logger.warn(s"[flowmap-lifecycle] chain-cancelled audit append failed (${c.id}): ${e.getMessage}")
+                    )
+                  )
+            }
+            _ <-
+              if abandoned.isEmpty then IO.unit
+              else
+                IO(
+                  logger.info(
+                    s"[flowmap-lifecycle] retire cancel-closure for '$delegateId': ${abandoned.size} in-flight chain(s) marked cancelled " +
+                      s"(${abandoned.map(_.id).mkString(", ")})"
+                  )
                 )
-          }
-          _ <-
-            if abandoned.isEmpty then IO.unit
-            else
-              IO(
-                logger.info(
-                  s"[flowmap-lifecycle] retire cancel-closure for '$delegateId': ${abandoned.size} in-flight chain(s) marked cancelled " +
-                    s"(${abandoned.map(_.id).mkString(", ")})"
-                )
-              )
-        yield ()
-    }
+          yield ()
+      }
 
   /** ①-c 台账收敛拍（TtlTick ⑤ 同款；退役窗内最后一拍——失败只 WARN 不回滚）。 */
   private def ledgerConverge(delegateId: String): IO[Unit] =
@@ -209,14 +223,18 @@ object DelegateFlowMapLifecycle:
     }
 
   /**
-   * ③ 宽限删除腿（后台 fiber 本体）：睡 graceMs → 双闸校验 → 删作用域目录。
-   * 双闸：未重挂（grace 窗内的复活/续聊腿赢）∧ 终态证据——
-   *   - **终态腿**（缺省，onTerminalCleanup 消费）：`archivedAt` 在（终态 autoArchive
-   *     的盘面证据 = 「结果已交付」前提的读数）；
-   *   - **孤儿腿**（`orphanLeg = true`，孤儿收割卸载点消费）：终态证据换成**盘面静默
-   *     复核**（reap 判据在宽限过期点的再确认——目录在 ∧ 重读 flow-map 活动区无非
-   *     终态 ∧ 无 blocked）。孤儿 = 会话已灭且盘面无活，删除前提由 reap 判据承担；
-   *     复核不过（复活窗重挂 / 盘面复活 / blocked 在场）= 跳过。
+   * ③ 宽限退役腿（后台 fiber 本体）：睡 graceMs → 三闸校验 → **迁移式退役**。
+   * 闸序：
+   *   ① 未重挂（grace 窗内的复活/续聊腿赢）；
+   *   ② 终态证据——**两条腿都过盘面静默复核**（终态腿 = **状态派生收口读数**
+   *      [[DelegateVisibility.Reading.identityClosed]]（轮次结算 ∨ 存量归档旗；阶段②
+   *      起归档写点退役）∧ `scopeQuietRecheck`；孤儿腿 = `scopeQuietRecheck`）：复核不过
+   *      （复活窗重挂 / 盘面仍有非终态 / blocked 在场）= 跳过——审计面/复活面优先于整洁；
+   *   ③ 迁移而非删除：复用既有 `flow-map-archive/` 归档通道（openScope →
+   *      sweepCompletedChainsDetailed——迟到的已完成链出库进归档分文件），
+   *      **作用域目录保留**（健康退役目录的形态：flow-map.json + 台账 + journal +
+   *      flow-map-archive/ + results/）。退役窗内到点的迟到完成由此进档可考，
+   *      绝不再整目录删除。
    * 调用方负责判 `applies`（本件不重复判——fiber 启动点即触发判据点）。
    */
   def scheduleScopeRemoval(delegateId: String, orphanLeg: Boolean = false): IO[Unit] =
@@ -225,33 +243,78 @@ object DelegateFlowMapLifecycle:
         case true =>
           IO(
             logger.info(
-              s"[flowmap-lifecycle] scope '$delegateId' is mounted again within the grace window — scope dir removal skipped"
+              s"[flowmap-lifecycle] scope '$delegateId' is mounted again within the grace window — scope retirement skipped"
             )
           ).void
         case false =>
           val rec = DelegateRegistry.find(delegateId)
           val baseOpt = baseWorkspaceOf(rec)
+          // Both legs pass the on-disk quiet recheck: the terminal leg keeps its
+          // state-derived settlement evidence (阶段②：收口证据单点 = DelegateVisibility；
+          // 归档旗写点已退役——「已归档」这一事实由轮次结算 ∨ 存量归档旗现读复算)
+          // AND gains the same double-check the orphan leg has (defense in depth —
+          // the completion gate owns the primary judgment).
+          val identityClosed = DelegateVisibility.readOf(delegateId).identityClosed
           val terminalEvidence: IO[Boolean] =
             if orphanLeg then scopeQuietRecheck(baseOpt, delegateId)
-            else IO.pure(rec.flatMap(_.archivedAt).isDefined)
+            else
+              IO.pure(identityClosed).flatMap {
+                case false => IO.pure(false)
+                case true => scopeQuietRecheck(baseOpt, delegateId)
+              }
           terminalEvidence.flatMap {
             case true if baseOpt.isDefined =>
-              val dir = scopeDirOf(baseOpt.get, delegateId)
-              IO.blocking(os.remove.all(dir)).attempt.flatMap {
-                case Right(_) =>
-                  IO(logger.info(s"[flowmap-lifecycle] scope dir removed after grace window: $dir"))
-                case Left(e) =>
-                  IO(logger.warn(s"[flowmap-lifecycle] scope dir removal failed for '$delegateId': ${e.getMessage}"))
-              }
+              migrateScopeDir(baseOpt.get, delegateId, rec.flatMap(_.project))
             case _ =>
               IO(
                 logger.info(
-                  s"[flowmap-lifecycle] scope '$delegateId' not safely removable (orphanLeg=$orphanLeg, " +
-                    s"archived=${rec.flatMap(_.archivedAt).isDefined}, baseWorkspace known=${baseOpt.isDefined}) — removal skipped"
+                  s"[flowmap-lifecycle] scope '$delegateId' not safely retirable (orphanLeg=$orphanLeg, " +
+                    s"identityClosed=$identityClosed, baseWorkspace known=${baseOpt.isDefined}) — " +
+                    "retirement skipped, scope dir kept"
                 )
               ).void
           }
       }
+
+  /**
+   * 迁移式退役（替换原 `os.remove.all` 整删）：以挂载同式打开作用域存储，把迟到的
+   * 已完成链扫进既有 `flow-map-archive/` 归档分文件（含台账 Archived 翻转——
+   * sweep 内同刻绑定）+ `chain-archived` 审计事件，目录与全部历史件**原样保留**。
+   * 任何失败只 WARN（fail-soft，绝不拖垮也绝不破坏盘面）。
+   */
+  private def migrateScopeDir(base: String, delegateId: String, project: Option[String]): IO[Unit] =
+    val projectName = project.getOrElse(os.Path(base).last) // 挂载同式（general 腿 = 座位名）
+    FlowMapStore
+      .openScope(delegateId, projectName, base)
+      .flatMap { store =>
+        store.sweepCompletedChainsDetailed(System.currentTimeMillis()).flatMap { swept =>
+          swept.traverse_ { c =>
+            FlowMapEventLog
+              .append(
+                base,
+                projectName,
+                c.nodeId,
+                FlowMapEventLog.ChainArchivedType,
+                FlowMapEventLog.chainArchivedSummary(c.chainId, c.archivedAt, c.members),
+                Some(c.chainId)
+              )
+              .handleErrorWith(e =>
+                logger.warn(
+                  s"[flowmap-lifecycle] retire chain-archived audit append failed (${c.chainId}): ${e.getMessage}"
+                )
+              )
+          } *>
+            logger.info(
+              s"[flowmap-lifecycle] scope '$delegateId' retired by MIGRATION (dir kept): " +
+                s"${swept.size} late chain(s) archived into flow-map-archive/; on-disk history preserved"
+            )
+        }
+      }
+      .handleErrorWith(e =>
+        logger.warn(s"[flowmap-lifecycle] scope migration failed for '$delegateId' (dir kept as-is): ${e.getMessage}")
+      )
+
+  end migrateScopeDir
 
   /**
    * 孤儿腿的盘面静默复核（删除前的最后闸）：目录在 ⇒ 探针式只读 open（ChainsReadFace

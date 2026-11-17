@@ -34,6 +34,13 @@
   box-sizing: border-box;
 }
 
+.sp-panel-group { display: flex; flex-direction: column; gap: var(--set-group-gap); }
+.sp-panel-group > h2 { margin: 0; font-size: var(--ds-fs-meta); color: var(--ds-text-muted); }
+.sp-panel-group[data-panel-group="models"] { order: 2; }
+.sp-panel-group[data-panel-group="runtime"] { order: 3; }
+.sp-panel-group[data-panel-group="advanced"] { order: 4; }
+.sp-panel-group[data-panel-group="about"] { order: 5; }
+
 /* ── 分组卡 ────────────────────────────────────────────────────────────── */
 .set-card {
   position: relative;
@@ -203,8 +210,9 @@
   overflow: hidden;
 }
 /* provider-add-tabs 批（溢出零容忍 P6）：裸 nowrap ⇒ 补齐省略号三件（overflow
-   由 .stt-status 外层与自身承接）；title 全文由 paintJevHealth slot.title 提供，
-   四件齐 = 合规收尾，不是「靠遮掩」的假绿。 */
+   由 .stt-status 外层与自身承接）；title 全文由徽标 slot.title 提供（该先例
+   出自原 paintJevHealth，现已随 JeV 面退役——2026-11-16），四件齐 = 合规收尾，
+   不是「靠遮掩」的假绿。 */
 .set-nav > .stt-status .st-badge,
 .set-nav > .stt-status .st-badge .badge-reason {
   white-space: nowrap;

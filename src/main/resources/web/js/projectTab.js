@@ -1,4 +1,5 @@
 import { mountProjectWorkspaces } from './projectWorkspaces.js';
+import { openDropdownMenu } from './dropdownMenu.js';
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
 // 沿用 .team-card 视觉与交互范式。点击 project name → 同一标签页就地切换到
@@ -28,7 +29,7 @@ import { mountProjectWorkspaces } from './projectWorkspaces.js';
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
-import { esc } from './flowHelpers.js';
+import { esc, authHeaders } from './flowHelpers.js';
 import { onMinuteTick, statusIcon } from './utils.js';
 import { t } from './i18n.js';
 import { rootNameParams } from './rootName.js';
@@ -93,7 +94,6 @@ function ensureScroll(pane) {
   // `git merge-file` 试算 rc=0 零冲突、`checkJs` 不红，但挂载语句不可达 ⇒ 钮永不
   // 出现且**零报警**（本批唯一的静默失败形态）。
   attachProjectsCreateFab(pane); // 「+」钮：同款单点挂载（DOM 重建后随之回归；幂等）
-  attachProjectsFlowmapFab(pane); // 「项目流程图」钮（文件夹树批 A2）：同款单点挂载
   return scroll;
 }
 
@@ -126,7 +126,6 @@ export function openProjectsTab() {
 //   write face; only their call sites = 0 are recorded) — see the deliverable's
 //   "superseded" section.
 const PROJECTS_CREATE_FAB = 'proj-create-fab';
-const PROJECTS_FLOWMAP_FAB = 'proj-flowmap-fab';
 const PROJECT_CREATE_OVERLAY = 'proj-create-overlay';
 const PROJECT_CREATE_DESC_ID = 'proj-create-desc';
 const PROJECT_CREATE_WS_ID = 'proj-create-ws';
@@ -192,41 +191,6 @@ function attachProjectsCreateFab(pane) {
   });
   pane.appendChild(btn);
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(btn));
-}
-
-/** 「项目流程图」圆钮（任务列表文件夹树批 · 方案 A2 · 2026-10-09）：L1 顶栏结构
- *  入口钮退役（delegateChainView R7）后，L2 的唯一命名入口迁挂项目面板列表视图——
- *  右下角「+」钮上方 10px 叠一枚同语言 40px 圆钮（network 图标；材质 =
- *  .proj-flowmap-fab，全 --glass-control-* token 零新色值）。点击 =
- *  openDelegateChainStructure()（与项目卡标题点按同路；标题点按入口保留不动）。
- *  幂等 + 视图守卫两重沿 attachProjectsCreateFab 范式：① 已在场不重建；②
- *  delegate-chain 视图（S10/S11）摘钮早退（入口在该视图内无语义）。 */
-function attachProjectsFlowmapFab(pane) {
-  if (!pane) return;
-  if (pane.dataset.projectsView === 'delegate-chain') {
-    pane.querySelector(`.${PROJECTS_FLOWMAP_FAB}`)?.remove();
-    return;
-  }
-  if (pane.querySelector(`.${PROJECTS_FLOWMAP_FAB}`)) return; // 已在场 ⇒ 幂等早退
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = PROJECTS_FLOWMAP_FAB;
-  btn.innerHTML =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/>' +
-    '<rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/>' +
-    '<path d="M12 12V8"/></svg>';
-  btn.title = t('delegate.projectflow.title'); // 既有键（零新 locale 键）
-  btn.setAttribute('aria-label', t('delegate.projectflow.title'));
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    // 视图重设计实施批（2026-10-21）：项目流程图圆钮 = 全景视图全量（'' = 不过滤）。
-    import('./delegateChainView.js')
-      .then(({ openDelegateChainStructure }) => openDelegateChainStructure())
-      .catch(() => {});
-  });
-  pane.appendChild(btn);
 }
 
 /** 打开轻弹层（单例）。结构 = `chat.css` 既有 `.wsp-*` 族（不自造弹层），
@@ -1115,7 +1079,7 @@ function projectCardHtml(p) {
       <div class="team-card-header">
         <!-- 入口键（project 域 Flow Map 提示键）已随晨裁②退役照荐落（§3.3 在案）：卡标题
              不再挂「打开 Flow Map」提示（点击改指行为保留——delegate-chain 链视图，#1228 两裁②）。 -->
-        <div class="team-card-title" data-open-flowmap="${esc(name)}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span>${badge}<span class="project-empty-tag" data-cv-hint="empty" hidden>${esc(t('project.noNodes'))}</span></div>
+        <div class="team-card-title"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span>${badge}<span class="project-empty-tag" data-cv-hint="empty" hidden>${esc(t('project.noNodes'))}</span></div>
         <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
         <button class="project-unmount-btn" data-unmount-project="${esc(name)}" title="${esc(t('project.unmountBtn'))}" aria-label="${esc(t('project.unmountBtn'))} ${esc(name)}" aria-haspopup="dialog">${UNMOUNT_BTN_SVG}</button>
       </div>
@@ -1123,7 +1087,7 @@ function projectCardHtml(p) {
         <div class="project-field" title="${esc(p.workspace)}">
           <span class="project-field-label">${esc(t('project.workspace'))}</span>
           <span class="project-field-value mono">${esc(p.workspace)}</span>
-          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}"${badgeOf ? ` data-open-device="${esc(badgeOf.device)}"` : ''} title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
+          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}"${badgeOf ? ` data-open-device="${esc(badgeOf.device)}"` : ''} title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}" aria-haspopup="menu" aria-expanded="false"><i data-lucide="folder-open"></i><span aria-hidden="true">⌄</span></button>
         </div>
         <div class="project-field">
           <span class="project-field-label">${esc(t('project.agentFileLabel'))}</span>
@@ -1149,6 +1113,7 @@ function createProjectCard(p) {
   const card = wrap.firstElementChild;
   if (!card) return null;
   bindProjectCard(card);
+  if (selectedProjectApp !== 'builtin') updateProjectOpenIcon(card.querySelector('.project-open-btn'));
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(card));
   return card;
 }
@@ -1184,19 +1149,14 @@ function applyCardSummary(card, state, summary) {
 
 /** title 可点性/空态角标定点切换（原模板里的 `empty` 分支现在按摘要到达时刻补写）。 */
 function applyCardEmptyState(card, empty) {
-  const name = card.dataset.project || '';
   card.classList.toggle('is-empty', empty);
   if (empty) card.setAttribute('data-empty-flowmap', '1');
   else card.removeAttribute('data-empty-flowmap');
   const title = card.querySelector('.team-card-title');
   if (!title) return;
   title.classList.toggle('empty', empty);
-  if (empty) delete title.dataset.openFlowmap; // 🔴 无节点 → 点进 Flow Map 无意义
-  else title.dataset.openFlowmap = name;
-  // 入口键 project.openFlowMap 退役（晨裁②）：非空卡标题零提示（点进行为保留）；
-  // 空态提示键 project.noNodesHint 非退役键，原样保留。
-  if (empty) title.title = t('project.noNodesHint', { name });
-  else title.removeAttribute('title');
+  // Project titles no longer open the retired panorama.
+  title.removeAttribute('title');
   const tag = title.querySelector('.project-empty-tag');
   if (tag) tag.hidden = !empty;
 }
@@ -1238,43 +1198,103 @@ function playCardEnter(card) {
   }, reduced ? PROJECT_NEW_EMPHASIS_REDUCED_MS : PROJECT_NEW_EMPHASIS_MS);
 }
 
+let selectedProjectApp = 'builtin';
+let selectedProjectIcon = '';
+const projectIconCache = new Map();
+async function projectAppIcon(app) {
+  if (!app.icon) return '';
+  if (!projectIconCache.has(app.icon)) {
+    projectIconCache.set(app.icon, fetch(app.icon, { headers: authHeaders() })
+      .then(response => response.ok ? response.blob() : Promise.reject())
+      .then(blob => URL.createObjectURL(blob)).catch(() => ''));
+  }
+  return projectIconCache.get(app.icon);
+}
+function updateProjectOpenIcon(button) {
+  const existing = button.querySelector('.project-open-current-icon, svg, i[data-lucide]');
+  if (selectedProjectApp === 'builtin') {
+    if (!existing || existing.classList.contains('project-open-current-icon')) {
+      existing?.remove();
+      const icon = document.createElement('i'); icon.dataset.lucide = 'folder-open';
+      button.prepend(icon);
+      import('./utils.js').then(({ createIconsIn }) => createIconsIn(button));
+    }
+  } else {
+    existing?.remove();
+    if (selectedProjectIcon) {
+      const image = document.createElement('img'); image.className = 'project-open-current-icon';
+      image.alt = ''; image.src = selectedProjectIcon; image.onerror = () => image.remove();
+      button.prepend(image);
+    }
+  }
+}
+let closeProjectOpenMenu = () => {};
+async function showProjectOpenMenu(button, name) {
+  closeProjectOpenMenu();
+  const path = button.getAttribute('data-open-workspace') || '';
+  if (!path) return;
+  const device = button.getAttribute('data-open-device') || '';
+  let apps = [];
+  if (!device) {
+    try {
+      const response = await fetch('/api/project-open-apps', { headers: authHeaders() });
+      if (response.ok) apps = (await response.json()).apps || [];
+    } catch (_) { /* Built-in remains available offline. */ }
+  }
+  const menu = document.createElement('div');
+  menu.className = 'project-open-menu nf-glass';
+  menu.setAttribute('role', 'menu');
+  const options = [{ id: 'builtin', label: '内置' }, ...apps];
+  await Promise.all(apps.map(async app => { app.iconUrl = await projectAppIcon(app); }));
+  for (const app of options) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(app.id === selectedProjectApp));
+    item.innerHTML = `<span class="project-open-app-icon"></span><span>${esc(app.label)}</span><span aria-hidden="true">${app.id === selectedProjectApp ? '✓' : ''}</span>`;
+    if (app.iconUrl) {
+      const image = document.createElement('img'); image.src = app.iconUrl; image.alt = '';
+      image.onerror = () => image.remove(); item.firstElementChild.append(image);
+    } else if (app.id === 'builtin') {
+      item.firstElementChild.innerHTML = '<i data-lucide="folder-open"></i>';
+      import('./utils.js').then(({ createIconsIn }) => createIconsIn(item));
+    }
+    item.addEventListener('click', async () => {
+      closeProjectOpenMenu();
+      try {
+        if (app.id === 'builtin') {
+          const { openExplorerAt } = await import('./explorer.js');
+          openExplorerAt(path, device || undefined);
+        } else {
+          const response = await fetch(`/api/projects/${encodeURIComponent(name)}/open-in-app`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, app: app.id })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Open failed');
+        }
+        selectedProjectApp = app.id;
+        selectedProjectIcon = app.iconUrl || '';
+        document.querySelectorAll('.project-open-btn').forEach(updateProjectOpenIcon);
+      } catch (error) { window.__showToast?.(error.message || t('project.openWorkspaceFail'), 'error'); }
+    });
+    menu.append(item);
+  }
+  closeProjectOpenMenu = openDropdownMenu(button, menu);
+}
+
 /** 单卡事件绑定（随卡生命周期，一次）。
  *  title 的点击**总是**绑定，命中与否由 `data-open-flowmap` 在场判定——定点刷新下
  *  卡的「无节点」态会随后到达的摘要改变，按属性选择器择时绑定会漏/重。 */
 function bindProjectCard(card) {
   mountProjectWorkspaces(card, card.dataset.project);
-  const title = card.querySelector('.team-card-title');
-  title?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    // 🔴 入口改指（flowmaptab-retire · #1228 两裁② 停用清单面 1）：原 per-project
-    // Flow Map 就地视图（projectsView='flow-map' 分支）停用。视图重设计实施批
-    // （2026-10-21 · 入口统一 作者令⑤）：项目卡标题点按 = 全景视图按该项目收窄
-    // （同一组件同一数据面，仅 project 参数不同；data-open-flowmap = 项目名）。
-    const proj = title.getAttribute('data-open-flowmap') || '';
-    import('./delegateChainView.js')
-      .then(({ openDelegateChainStructure }) => openDelegateChainStructure(proj))
-      .catch(() => {});
-  });
   card.querySelector('[data-open-agent]')?.addEventListener('click', (e) => {
     e.stopPropagation();
     openAgentFile(e.currentTarget?.getAttribute('data-open-agent') || '');
   });
   card.querySelector('[data-open-workspace]')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    // §3.5「在文件浏览器中打开」——把侧边栏文件浏览器的根切到工作区并展开面板。
-    // 动态 import：projectTab 是 Canvas 标签页模块，静态依赖 explorer 会把
-    // 文件树拉进项目面板的首屏加载路径（且 explorer → activityBar → ... 更容易
-    // 绕出循环依赖）。
-    // 面C（ui-device-faces）：卡带 `data-open-device` = 远端项目 ⇒ 第二参把 origin
-    // 设备交给 openExplorerAt（explorer 整树同源该设备，listDir/readFile additive
-    // device 键）；本机卡零属性 ⇒ 单参调用，存量语义逐字节。
-    const path = e.currentTarget?.getAttribute('data-open-workspace') || '';
-    if (!path) return;
-    const dev = e.currentTarget?.getAttribute('data-open-device') || '';
-    import('./explorer.js').then(({ openExplorerAt }) => {
-      openExplorerAt(path, dev || undefined);
-      window.__showToast?.(t('project.workspaceOpened', { path }), 'info');
-    }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
+    showProjectOpenMenu(e.currentTarget, card.dataset.project || '');
   });
   // 台账 #920（2026-10-27）：描述行编辑钮 —— 面板侧写穿入口（POST /api/projects/
   // <name>/description；单点 = nodeData.updateProjectDescription）。保存成功由

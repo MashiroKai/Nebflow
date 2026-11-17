@@ -144,19 +144,12 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        // noderpt 批 A 段（2026-09-11）：**完成门腿 2** 生产默认 **开**
-        // （`Defaults.NodeReportCompletionHold=true`；判定点 `NodeStarter.scala` 的
-        // `case None if reportGateHoldEnabled && !anchoredBlocked`——2026-09-25 H 步重钉：
-        // 随启动簇 runWithAgent 自 `NodeEngine.scala` 迁至 NodeStarter，行为保持重构）
-        // ——节点交棒（桥收到 `AgentEvent.Completed`）而**未**调 `node_report` 时
-        // **不**终态化**，节点保持 Running（`NodeStarter.scala` 桥 hold 分支
-        // `markReportPendingIfAbsent(...).as(bridge)` 逐字）。本 spec 的主题是
-        // 「skill 目录停注 / wire 层工具描述」，`waitUntil(status == Completed)`
-        // （`:183-184`，载体 `:158/:154`）只是取首条 `LlmRequest` 的**前置**——腿 2
-        // 开着 ⇒ 该条件永不满足 ⇒ 60s 到点必假红。
-        // 故**显式关腿 2（仅测试面注入、零生产改动）**：14 个兄弟 spec 同款写法
-        // （`MountedProjectsWiringSpec.scala:108`、`CompletionGateSpec.scala:182` …）；
-        // 腿 2「默认开」的行为本体验由 `NodeReportReminderSpec` 覆盖。
+        // 终态 hold 腿（`Defaults.NodeReportCompletionHold=true`；判定点 `NodeStarter`
+        // 桥 hold 分支——2026-09-25 H 步随启动簇迁移至 NodeStarter，行为保持重构）：
+        // 申报通道退役后旋钮休眠，测试面保留显式关（仅测试面注入、零生产改动）。
+        // 本 spec 的主题是「skill 目录停注 / wire 层工具描述」，`waitUntil(status ==
+        // Completed)` 只是取首条 `LlmRequest` 的前置——hold 腿开着 ⇒ 该条件可能
+        // 永不满足 ⇒ 60s 到点必假红，故关。
         reportGateHold = Some(false)
       )
       pd = ProjectDef(
@@ -251,9 +244,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     assert(ContextRefresher.skillCatalogEnabledFor("Coder"), "legacy agent 保留至阶段 3")
 
   test("D.1-12: node 会话（执行 agent 模版）首条消息不含 per-agent skill 目录（order 800 停注）"):
-    // 注意：共享前缀层（system-prefix-for-all）已随阶段 2 批 A 退役——其
-    // JAR 内静态「## Skills」段一并消失，断言语义不受影响（本测试只钉
-    // order 800 per-agent 目录停注，设计 §D.1 #12）。
+    // 共享构建前缀与 order 800 per-agent skill 目录是不同的注入面。
     // per-agent 目录的特征：目录头句「Skills live at」+ 条目行「- <skill>:」。
     // P1-3 归因修正（2026-10-03）：节点执行名现为 BuiltinAgents.ExecutorName
     // （代码定义、skills = Nil）——本用例的判据面因此比磁盘夹具更强：目录段
@@ -267,6 +258,10 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
       s"executor node session must NOT carry the per-agent skill catalog (order 800 停注), got:\n${stable.take(1200)}"
     )
     assert(!stable.contains("catalog-probe"), "fixture skill must not leak into node session prompt")
+    for name <- List("stand-recall", "stand-messages", "stand-plugins", "stand-terms", "stand-profile") do
+      assert(stable.contains(s"tools/$name"), s"embedded prefix must contain $name")
+    assert(!stable.contains("stand-branch-guard"))
+    assert(stable.contains("EVERY agent on ANY project"))
 
   // 2026-09-05 agent 退役：原「legacy agent 会话保留 per-agent skill 目录（双轨期
   // 对照）」wire 级测试随 NodeEdit agent 参数一并退役——节点执行统一执行 agent
@@ -291,18 +286,26 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
       !tools.contains("Pop"),
       s"executor node must NOT receive Pop (2026-09-10 作者裁定：Pop 收归 Nebula 专属), got keys: ${tools.keys.toList.sorted}"
     )
-    // 2026-09-08 作者修订恢复 AskUser（D6 批D1）：节点 wire 层重新
-    // 收到该工具（2026-09-06 摘除断言反向）；order-400 指南仍随工具 description
-    // 自包含生效（删段不退化判据恢复钉死）
-    val ask =
-      tools.getOrElse("AskUserQuestion", fail("executor node must receive AskUserQuestion (2026-09-08 restored)"))
+    // 过时测试修复（2026-11-15）：随基线 c6329920e「Restrict AskUserQuestion to root
+    // tool face」补齐漏改面——执行面提问件 = AskHost；问用户卡在 wire 层同样限根
+    // （与定义层 AllowedToolSetSpec / AskUserDualModeSchemaSpec 同一批裁定）。
     assert(
-      ask.contains("When NOT to use"),
-      "AskUserQuestion description carries the order-400 guidance at the wire level"
+      !tools.contains("AskUserQuestion"),
+      s"executor node must NOT receive AskUserQuestion (c6329920e 限根裁定), got keys: ${tools.keys.toList.sorted}"
+    )
+    assert(tools.contains("AskHost"), "executor node receives AskHost (correlated request ask-root face)")
+    // order-400 指南仍随 AskUserQuestion 基线 description 自包含生效（删段不退化
+    // 判据保留，探针移到注册表基线——工具描述与身份无关，任何面拿到的都是这一份）
+    val baselineAsk = nebflow.core.tools.ToolRegistry.ALL_TOOLS
+      .find(_.name == nebflow.core.tools.AskUserQuestionTool.Name)
+      .getOrElse(fail("AskUserQuestion missing from the registry"))
+    assert(
+      baselineAsk.description.contains("When NOT to use"),
+      "AskUserQuestion baseline description carries the order-400 guidance (删段不退化)"
     )
     assert(
-      ask.contains("node-ask trace event") && ask.contains("project · node"),
-      "AskUserQuestion description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)"
+      baselineAsk.description.contains("node-ask trace event") && baselineAsk.description.contains("project · node"),
+      "AskUserQuestion baseline description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)"
     )
 
 end Phase2dSkillCatalogSpec

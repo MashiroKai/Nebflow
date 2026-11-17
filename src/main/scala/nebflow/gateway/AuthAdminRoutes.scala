@@ -2,6 +2,7 @@ package nebflow.gateway
 
 import nebflow.neblink.portal.*
 
+import cats.syntax.all.*
 import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
@@ -113,11 +114,14 @@ object AuthAdminRoutes:
                   if all then sessions.revokeAll()
                   else if idPrefix.nonEmpty then sessions.revokeByMaskedId(idPrefix)
                   else IO.raiseError(new IllegalArgumentException("either \"all\":true or a non-empty \"id\" prefix is required"))
-                revoke.attempt.flatMap {
+                // Ticket claims carry an untrusted sessionId for diagnostics only.
+                // Conservatively flush all path tickets on any session revocation.
+                val revokeTickets = faces.nfTicketRevocation.getOrElse(IO.pure(0))
+                (revoke, revokeTickets).tupled.attempt.flatMap {
                   case Left(_) =>
                     IO.pure(jsonError(Status.BadRequest, "either \"all\":true or a non-empty \"id\" prefix is required"))
-                  case Right(n) =>
-                    logger.info(s"console sessions revoked (count=$n${if all then ", scope=all" else s", scope=prefix:$idPrefix"})")
+                  case Right((n, revokedTickets)) =>
+                    logger.info(s"console sessions revoked (count=$n${if all then ", scope=all" else s", scope=prefix:$idPrefix"}, nf-tickets=$revokedTickets)")
                     Ok(Json.obj("revoked" -> n.asJson))
                 }
             }

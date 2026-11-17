@@ -104,6 +104,9 @@ object ProviderFault:
     disposition: String
   )
 
+  /** Shared with the engine's failure text so its upstream recovery guidance cannot silence a real failure. */
+  val EngineRecoveryFailureLead: String = "L3 hard-recovery resume failed"
+
   /** 判据表（唯一真源；顺序 = 判定优先级）。 */
   val Table: List[Row] = List(
     Row(
@@ -129,7 +132,8 @@ object ProviderFault:
         "not allowed to write",
         "越权",
         "数据损坏",
-        "业务失败"
+        "业务失败",
+        EngineRecoveryFailureLead.toLowerCase
       ),
       Nil,
       "确定性缺陷 ⇒ 真失败：照常通知（聚合后一条），不静默"

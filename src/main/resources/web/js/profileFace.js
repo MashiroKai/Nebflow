@@ -118,8 +118,20 @@ async function readFieldValue(field) {
  *    在场 ⇒ head 挂三态徽标（`refreshSyncBadges` 按 `GET /api/profile/sync-status`
  *    真值回填；写死的 `hintKey` 静态文案已随 3(a) 令退役）。
  */
+const fieldEdits = new WeakMap();
+
+function updateEditBar(row) {
+  const modal = row.closest('.pf-modal');
+  if (!modal) return;
+  const bar = modal.parentElement?.querySelector('.pf-edit-bar');
+  if (!bar) return;
+  const dirty = [...modal.querySelectorAll('.pf-field')].some(item => fieldEdits.get(item)?.dirty());
+  bar.hidden = !dirty;
+  modal.classList.toggle('pf-has-pending', dirty);
+}
+
 function fieldRow(spec) {
-  const row = el('div', 'pf-field');
+  const row = el('div', 'pf-field sp-panel-row');
   row.dataset.pfField = spec.field;
   const head = el('div', 'pf-field-head');
   head.appendChild(el('span', 'pf-label', t(spec.labelKey)));
@@ -147,14 +159,20 @@ function fieldRow(spec) {
   save.type = 'button';
   save.dataset.pfSave = spec.field;
 
+  let baseline = input.value;
+  let saving = false;
   const commit = async () => {
+    if (saving) return;
+    saving = true;
     const v = input.value.trim().slice(0, spec.max);
+    input.disabled = true;
     save.disabled = true;
     try {
       await spec.onSave(v);
       // 回读一致：保存后**以真值回读**为准（不做乐观写）
       const fresh = await readFieldValue(spec.field);
       input.value = fresh || '';
+      baseline = input.value;
       // 列表面的**唯一刷新信号**（禁本模块自己去摸 contacts/messages 的 DOM）：
       // 好友域 ⇒ `fm-friends-changed`（contacts 重取 + messages 重取会话），
       // 群域 ⇒ `fm-groups-changed`。这正是「描述进检索」成立的前提——过滤面读的是
@@ -170,9 +188,19 @@ function fieldRow(spec) {
       window.__showToast?.(t('messages.networkError'), 'error');
       console.debug('[profileFace] save failed', spec.field, err && err.message);
     } finally {
+      saving = false;
+      input.disabled = false;
       save.disabled = false;
+      updateEditBar(row);
     }
   };
+  fieldEdits.set(row, {
+    dirty: () => input.value !== baseline,
+    cancel: () => { input.value = baseline; updateEditBar(row); },
+    commit,
+  });
+  input.addEventListener('input', () => updateEditBar(row));
+  save.hidden = true;
   save.addEventListener('click', commit);
   input.addEventListener('keydown', (e) => {
     if (isImeComposing(e, input)) return;
@@ -323,13 +351,13 @@ function ensureShell() {
 function renderBody() {
   const ov = ensureShell();
   const label = current?.kind === 'group' ? t('profile.groupTitle') : t('profile.friendTitle');
-  const modal = el('div', 'cfg-modal pf-modal');
+  const modal = el('div', 'cfg-modal pf-modal sp-panel sp-panel-body');
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
   modal.setAttribute('aria-label', label);
   modal.dataset.pfKind = current?.kind || '';
 
-  const titleBar = el('div', 'cfg-modal-title');
+  const titleBar = el('div', 'cfg-modal-title sp-panel-header');
   titleBar.appendChild(el('span', null, label));
   // 3(d) 按钮去重（panel-language 批 2026-11-06）：手机层返回键在（afterMount 的
   // mobileSheetBack 注入 .mfs-back）⇒ X 键**不建**（作者令逐字「已经有返回键了，
@@ -341,6 +369,7 @@ function renderBody() {
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'pf-close';
+    closeBtn.classList.add('g2-fab');
     closeBtn.id = 'profile-face-close';
     closeBtn.setAttribute('aria-label', t('profile.close'));
     closeBtn.appendChild(h('i', { 'data-lucide': 'x' }));
@@ -352,7 +381,7 @@ function renderBody() {
   // 英雄区（三点入口批 2026-11-05 扁平化）：居中列 → **左对齐单行**（头像 + 名字/
   // 副行），头像档位从无规则的 `fm-avatar-56`（尺寸随源图漂）改为既有令牌档
   // `fm-avatar-40`（40×40，friends.css 既有规则，零新尺寸字面量）。
-  const hero = el('div', 'pf-hero');
+  const hero = el('div', 'pf-hero sp-identity');
   if (current?.kind === 'group') {
     hero.appendChild(avatarNode({ name: current.conv?.title || '' }, 40));
     const idText = el('div', 'pf-hero-id');
@@ -369,9 +398,36 @@ function renderBody() {
   }
   modal.appendChild(hero);
 
-  const body = el('div', 'pf-fields');
+  const body = el('div', 'pf-fields sp-panel-group');
   modal.appendChild(body);
-  ov.replaceChildren(modal);
+  const bar = el('div', 'pf-edit-bar ds-chrome-band');
+  bar.hidden = true;
+  const cancel = el('button', 'g2-fab pf-edit-cancel');
+  cancel.type = 'button';
+  cancel.setAttribute('aria-label', t('profile.cancelEdit'));
+  cancel.appendChild(h('i', { 'data-lucide': 'x' }));
+  cancel.addEventListener('click', () => {
+    for (const row of modal.querySelectorAll('.pf-field')) fieldEdits.get(row)?.cancel();
+  });
+  const saveAll = el('button', 'g2-fab pf-edit-submit');
+  saveAll.type = 'button';
+  saveAll.setAttribute('aria-label', t('profile.save'));
+  saveAll.appendChild(h('i', { 'data-lucide': 'check' }));
+  saveAll.addEventListener('click', async () => {
+    saveAll.disabled = true;
+    cancel.disabled = true;
+    try {
+      for (const row of modal.querySelectorAll('.pf-field')) {
+        const edit = fieldEdits.get(row);
+        if (edit?.dirty()) await edit.commit();
+      }
+    } finally {
+      saveAll.disabled = false;
+      cancel.disabled = false;
+    }
+  });
+  bar.append(cancel, saveAll);
+  ov.replaceChildren(modal, bar);
   return { ov, body };
 }
 

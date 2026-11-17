@@ -90,6 +90,7 @@
 //     逐字节同义。ctx.on 登记的全局监听随断开自动拆、重连自动挂回。
 
 import { key } from './branding.js';
+import { askBubbleClass, chatComposerClass } from './chatUi.js';
 import state from './state.js';
 import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
 import { activeCanvasEntry } from './canvas.js';
@@ -111,6 +112,16 @@ import { handleSlash } from './input/slashCommands.js';
 // 元素注册与生命周期走 component.js 的 define()（light DOM，禁开阴影根）。
 import { h, frag } from './dom.js';
 import { define } from './component.js';
+// canvas-inline-diff-review（2026-11-16）：diff 审阅退出会话问答路径（提案 diff
+// 卡整体退役），ask_edit/ask_write 的直接落盘审阅态由 askEditReview 模块在 canvas
+// 审阅页签呈现——本模块只把 askEdit* 帧路由过去，不再自持任何审阅态。
+import { consumeApplied, consumeResolved, consumeAskState } from './askEditReview.js';
+// ask-stream-ui（2026-11-17 作者令「这里的设计可以参考主会话的实现」）：气泡列
+// 贴底跟随 + 「↓N 条新消息 / 回到底部」胶囊复用**会话面唯一组件** js/scrollPill.js
+//（主会话 utils.js syncScrollPill 与好友/群/设备窗 messages.js fmSyncFollowPill
+// 同一工厂、同一 `.scroll-new-pill` 形态 chat.css、同一容差/动效）；思考期 spinner
+// 复用主会话三点族 chat.css `.thinking-dot`（workline.js startWorklineDots 同源）。
+import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js';
 
 /**
  * 组件内部结构类名（单点声明；门禁 scripts/check-component-contract.mjs R4 的解析面）。
@@ -123,6 +134,8 @@ export const INTERNAL_CLASSES = [
   'ask-bub', 'ask-send', 'ask-stop', 'ask-sess-dot',
   // 记事本批（2026-11-05）：同一组件的第二对节点，同样只在本模块内建/查。
   'note-fab', 'note-dock', 'note-body',
+  // canvas-inline-diff-review（2026-11-16）：提案 diff 卡一族随问答路径整体退役
+  //（审阅面移居 canvas 审阅页签，类名族 = askEditReview.js 的 .nf-ar-*）。
 ];
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
@@ -175,7 +188,7 @@ const ICONS = {
     ]),
 };
 
-/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number, mailAddress?: string}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
 let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）
@@ -183,6 +196,14 @@ let wired = false; // 元素级监听/观察器已绑（节点复用 ⇒ 只绑�
 let turnToggle = null; // 中断状态机（createTurnToggle；建一次，单 dock 对）
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
+// ── ask-stream-ui（2026-11-17）：气泡列贴底跟随的宿主状态（单 dock 一份）──────
+//   · colSnapped = 跟随意图 latch（写入点只有两个：本列唯一滚动监听 + 显式贴底
+//     snapCol——主会话 view.stream.scrollSnapped 同律）；
+//   · colUnseen = 离底期间到达的**真实新消息**条数（主会话口径：typing 流式行 =
+//     过程指示，不计不数）；胶囊本体的显隐/文案/几何全在 scrollPill.js 组件里。
+let colSnapped = true;
+let colUnseen = 0;
+let askPill = null;
 // 记事本批（2026-11-05）：当前草稿归属（absPath + 与 ask 同式的 sid）与落盘防抖拍。
 let notePath = '';
 let noteSid = '';
@@ -190,10 +211,8 @@ let noteTimer = 0;
 // 持久化缺陷批（2026-11-05）：两层持久的状态位。本地镜像可用性 / 未落服务端的
 // 脏编辑 / 最近一次推送内容（回执对账用）/ 服务端最近已知 mtime / 状态行 kind。
 let noteLocalOk = true;
-let noteDirty = false;
-let noteLastPushed = null;
-let noteServerTs = 0;
-let notePushTimer = 0;
+const noteEntries = new Map();
+let noteWriteSequence = 0;
 let noteStatus = '';
 
 // ── 每文档会话持久（2026-11-01 作者令批；头注「文档会话持久批」）────────────
@@ -322,7 +341,7 @@ function mountHost() {
 function buildFab() {
   return h('button', {
     type: 'button',
-    class: 'ask-fab',
+    class: 'canvas-button ask-fab',
     title: tt('问这份文件（ask mode）', 'Ask this file (ask mode)'),
     'aria-label': tt('问这份文件', 'Ask this file'),
   }, [
@@ -392,7 +411,7 @@ function buildDock() {
     // 输入条 = 毛玻璃唯一工具类 `.nf-glass`（glass-unify 批）：材质/描边/内高光/
     // 模糊全部来自 stand-tokens.css 的 --nf-glass-* 单源，本组件零本地材质声明。
     // `ask-input` 身份类保留（既有 spec 选择器），它在本文件只承载几何与焦点态。
-    h('div', { class: 'ask-input nf-glass' }, [input, send, stop]),
+    h('div', { class: chatComposerClass('ask') }, [input, send, stop]),
   ]);
 }
 
@@ -408,7 +427,7 @@ function buildDock() {
 function buildNoteFab() {
   return h('button', {
     type: 'button',
-    class: 'ask-fab note-fab',
+    class: 'canvas-button ask-fab note-fab',
     title: tt('记事本（记录思路）', 'Notes'),
     'aria-label': tt('记事本', 'Notes'),
     'aria-pressed': 'false',
@@ -844,6 +863,29 @@ function wireElements() {
   // 键盘/IME/发送判定 = 主会话同一实现（包装配；组字期 Enter 只确认候选）。
   bindComposerKeys(el.input, { onSend: () => { submit(); } });
   el.input.addEventListener('focus', syncSeat);
+  // ── ask-stream-ui（2026-11-17）：贴底跟随 + 「↓N 条新消息 / 回到底部」胶囊 ──
+  // 与主会话同一组件、同一语义（作者令「参考主会话的实现」）：胶囊本体 =
+  // scrollPill.js 唯一工厂（好友/群窗 messages.js fmSyncFollowPill 是非主窗消费
+  // 的先例——形态 chat.css `.scroll-new-pill` 单源、贴底容差 AT_BOTTOM_PX、
+  // 回底拐点 SHOW_AFTER_PX、平滑贴底与 reduced-motion 全在组件里）。本文件只留
+  // 两项宿主状态（上方 colSnapped/colUnseen）：
+  //   · **本列唯一滚动监听**（主会话 B4 纪律同律：一滚动事件一次几何探测）——
+  //     重读贴底 latch 并同步胶囊（回底即清零），只读不写滚动位；
+  //   · 落列跟随单点 = settleCol（smartScroll/shouldFollowBottom 的 ask 对应，
+  //     见 render 段）；胶囊落位参照 = 输入条顶缘（textarea 长高/手机档变化由
+  //     组件 park 现算，与主窗 #input-area 参照同构）。
+  askPill = createScrollPill({
+    host: el.dock,
+    scrollEl: el.col,
+    anchor: () => el.inputRow,
+    onReturn: () => { colUnseen = 0; colSnapped = true; },
+  });
+  el.col.addEventListener('scroll', () => {
+    if (!el) return;
+    colSnapped = bottomDistance(el.col) < AT_BOTTOM_PX;
+    if (colSnapped) colUnseen = 0;
+    if (askPill) askPill.sync({ count: colUnseen, atBottom: colSnapped });
+  }, { passive: true });
   // ── 记事本批（2026-11-05）：入口钮 / 浮窗自身的事件 ─────────────────────
   // 开合与 ask 同律：钮再点即收；窗内点击/按下不外溢（画布空白点击的收起腿只
   // 认 #canvas-content 本体，这里再挡一道，与 ask dock 同写法）。
@@ -851,10 +893,7 @@ function wireElements() {
   el.noteDock.addEventListener('click', (e) => e.stopPropagation());
   el.noteDock.addEventListener('pointerdown', (e) => e.stopPropagation());
   // 纯文本草稿：write-through 防抖 250ms（输入即存，切换卡/关窗/失焦都 flush）。
-  el.noteText.addEventListener('input', () => {
-    if (noteTimer) clearTimeout(noteTimer);
-    noteTimer = setTimeout(() => { noteTimer = 0; flushNote(); }, 250);
-  });
+  el.noteText.addEventListener('input', noteInputChanged);
   el.noteText.addEventListener('blur', flushNote);
   // 持久化缺陷批：同浏览器多标签页直通（另一标签写同一文件 ⇒ 本页未编辑即采纳）。
   // 浏览器原生 storage 事件只在**其它**标签页写时派发，本页自己写不回流，无回环。
@@ -879,23 +918,45 @@ function wireGlobals(ctx) {
   // 持久化缺陷批：页面关闭/隐藏前把最后一段输入同步落本地镜像（服务端推送会随
   // 连接一起走，下次打开由「本地 ts 更新 ⇒ 回推」对账补齐，不丢字）。
   ctx.on(window, 'pagehide', () => { flushNote(); });
-  ctx.on(window, 'resize', () => { syncSeat(); reclampSize(); syncAskFade(); });
-  // 毛玻璃批：列滚动即渐隐拍（opacity 逐泡重算；rAF 节流在 syncAskFade 内）。
-  el.col.addEventListener('scroll', syncAskFade, { passive: true });
+  ctx.on(window, 'resize', () => { syncSeat(); reclampSize(); });
   // 批⑨：手机层根页切换（nf:mobile-nav）重落可见性闸——离开 canvas 页即隐。
   ctx.on(document, 'nf:mobile-nav', () => syncGate());
   // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
   ctx.on(document, 'nf-reader-mounted', () => syncSeat());
-  // 收起三通路之一：点击画布空白（#canvas-content 本体 = 无浮层处；卡片内
-  // 点击/文本选择不受扰——panes/浮件自有 target）。
-  const content = document.getElementById('canvas-content');
-  if (content) {
-    ctx.on(content, 'click', (e) => {
-      if (e.target !== content) return;
-      if (isOpen()) close();
-      if (isNoteOpen()) closeNote(); // 记事本批：同一条收起通路
-    });
-  }
+  // Capture sees panel interactions even when the existing panel handlers stop bubbling.
+  // Track all pointers, including those starting inside a panel, so a second finger
+  // cannot dismiss it during a drag, selection, resize, or navigation gesture.
+  const pointers = new Set();
+  let candidate = null;
+  ctx.on(document, 'pointerdown', (e) => {
+    const busy = pointers.size > 0 || !e.isPrimary;
+    pointers.add(e.pointerId);
+    if (busy) { candidate = null; return; }
+    if (e.button !== 0 || !el || !isCanvasVisible()) return;
+    const target = e.target;
+    if (!(target instanceof Node)) return;
+    if ([el.dock, el.noteDock, el.fab, el.noteFab].some(node => node.contains(target))) return;
+    // The deck and viewport edges own pointerdown before an axis can be known.
+    const edge = e.pointerType === 'touch' ? 20 : 64;
+    if (e.clientX <= edge || e.clientX >= window.innerWidth - edge ||
+        document.getElementById('deck-layer')?.classList.contains('live')) return;
+    candidate = { id: e.pointerId, x: e.clientX, y: e.clientY, ask: isOpen(), note: isNoteOpen() };
+  }, true);
+  const moved = (e) => candidate && candidate.id === e.pointerId &&
+    Math.hypot(e.clientX - candidate.x, e.clientY - candidate.y) > 8;
+  ctx.on(document, 'pointermove', (e) => { if (moved(e)) candidate = null; }, true);
+  ctx.on(document, 'pointerup', (e) => {
+    pointers.delete(e.pointerId);
+    if (!candidate || candidate.id !== e.pointerId) return;
+    const tap = candidate;
+    if (moved(e)) { candidate = null; return; }
+    candidate = null;
+    if (!el || !isCanvasVisible() || document.getElementById('deck-layer')?.classList.contains('live')) return;
+    if (tap.ask && isOpen()) close();
+    if (tap.note && isNoteOpen()) closeNote();
+  }, true);
+  ctx.on(document, 'pointercancel', (e) => { pointers.delete(e.pointerId); candidate = null; }, true);
+  ctx.on(window, 'blur', () => { pointers.clear(); candidate = null; });
 }
 
 // ── 一次性观察器（应用级生命周期；不问组件连接态）─────────────────────────
@@ -946,6 +1007,14 @@ function wireObserversOnce() {
         if (!el || !el.dock || el.dock.classList.contains('closed')) return;
         const h = el.inputRow.offsetHeight;
         if (h > 0) el.dock.style.setProperty('--ask-under', (h / 2).toFixed(2) + 'px');
+        // ask-stream-ui：输入条高度变了 = 胶囊落位参照（anchor）顶缘动了 —— 可见
+        // 中的胶囊就地重落（主窗 #input-area RO → refreshScrollPill 同构）。
+        if (askPill) askPill.refresh();
+        // 输入条高度变化同时会动列的视口高（面板 flex 列互挤）：跟随意图在身则
+        // 原地重钉底，否则钉底那一下留下的旧 scrollHeight 会差几 px 常驻
+        // （实测开窗回放差 8px；主会话输入条长高跟随意图同律——读历史不受扰，
+        // colSnapped=false 时零动作）。
+        if (colSnapped && el.col) el.col.scrollTop = el.col.scrollHeight;
       });
     };
     if (el && el.inputRow) {
@@ -968,7 +1037,7 @@ function wireObserversOnce() {
     for (const s of sessions.values()) s.stateSent = false;
     // 持久化缺陷批：断连期间没推上去的记事本编辑在重连后补推（含「本机离线写过
     // 内容」这一常见形态——不补推就等于那个文件在引擎侧永远是空的）。
-    if (el && noteSid && noteDirty) scheduleNotePush(noteSid, el.noteText.value, 0);
+    resyncNotesAfterReconnect();
   });
 }
 
@@ -1005,6 +1074,7 @@ function onMount(host, ctx) {
   reclampSize();
   if (isOpen()) {
     render();
+    snapCol(); // ask-stream-ui：宿主迁移前若已贴底，迁移后保持贴底（改前 render 自带钉底同义）
   }
   if (turnToggle) {
     const s = activeSession();
@@ -1044,6 +1114,7 @@ function syncGate() {
   // 零残留；`.ask-fab.gate-off` / `.ask-dock|.note-dock.gate-off` 三条既有规则覆盖）。
   el.noteFab.classList.toggle('gate-off', off);
   el.noteDock.classList.toggle('gate-off', off);
+  if (!off) syncNoteSeed(); // P2 续批④：入场可见拍重测种子落点（gate 摘后 rect 才有效）
 }
 
 // ── 阅读器面板让位（阅读器 P1 批，设计稿 §2.2：阅读菜单/TOC 抽屉开时 ──────
@@ -1066,11 +1137,19 @@ function syncToActiveTab() {
   currentFile = file;
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
   if (!switched) { syncSeat(); return; }
+  // The composer DOM is shared, but its turn state belongs to the active file.
+  if (turnToggle) {
+    const session = activeSession();
+    if (session && session.busy) turnToggle.busy();
+    else turnToggle.idle();
+  }
+  removeTyping();
   syncNoteForFile(); // 记事本批：切卡即切记事本（每文件一份草稿；旧草稿先 flush）
   syncUnreadDot(); // 通知点随 active session 的未读态落位（绿点只在有未读时显示）
   if (isOpen()) {
     if (currentFile) {
       render();
+      snapCol(); // ask-stream-ui：切会话 = 新视图从底起读（旧会话的 latch/计数不带入）
       // 切卡即切 session（作者令⑦）：新文件的会话未回放过 → 即刻 askOpen
       // （绑定 + 历史回放；服务端为权威，重复帧幂等）。
       ensureActiveSession().then((loaded) => {
@@ -1101,6 +1180,28 @@ function onTabClosed() {
 //    仍需让位的只剩通栏底栏 = 电子书阅读器 nav（fab 抬其上，输入条联动同距）。
 //    移动端让位切换条同口径。）
 
+/** 记事本种子落点对账（P2 续批④ 位置感知液态形变）：闭态种子的落点 = **note
+ *  入口钮圆心**（apple-design-language §5.2「起点取被操作真实控件的 rect 中心」；
+ *  改前种子恒 `translateY(…)` 只落 dock 右下角正下方 = ask 钮位——note 钮在
+ *  ask 钮左邻一格，形变起手读作「ask 钮长出记事本」）。两条位移以**实测 rect**
+ *  派生写进 --note-seed-dx/--note-seed-dy（座位 fixed/absolute、epub 阅读器
+ *  让位抬升、safe-area 档、钮距档变化全部跟随）；CSS 闭态 transform 消费这两
+ *  条变量（缺省 fallback = token 公式，见 ask.css 同批注）。钮不可见（gate-off
+ *  /display:none）读数退化，跳过不写（保留上一次有效值或 fallback）；deck 整
+ *  面板缩放属瞬态舞台态，不在对账集。 */
+function syncNoteSeed() {
+  if (!el) return;
+  const fabR = el.noteFab.getBoundingClientRect();
+  const dockR = el.noteDock.getBoundingClientRect();
+  if (!(fabR.width > 0 && fabR.height > 0) || !(dockR.width > 0 && dockR.height > 0)) return;
+  const seed = parseFloat(getComputedStyle(el.noteDock).getPropertyValue('--ask-seed-size'));
+  const half = (Number.isFinite(seed) && seed > 0 ? seed : 48) / 2;
+  const dx = (fabR.left + fabR.width / 2) - (dockR.right - half);
+  const dy = (fabR.top + fabR.height / 2) - (dockR.bottom - half);
+  el.noteDock.style.setProperty('--note-seed-dx', dx.toFixed(1) + 'px');
+  el.noteDock.style.setProperty('--note-seed-dy', dy.toFixed(1) + 'px');
+}
+
 function syncSeat() {
   if (!el) return;
   const mobile = document.body.classList.contains('mobile-layer');
@@ -1122,6 +1223,7 @@ function syncSeat() {
         // 让位值一份，跟着 fab/dock 一起抬（不是第二套座位计算）。
         el.noteFab.style.bottom = fabBottom + 'px';
         el.noteDock.style.bottom = (fabBottom + 48 + 10) + 'px';
+        syncNoteSeed(); // P2 续批④：座位抬了，种子落点跟着重测
         return;
       }
     }
@@ -1131,6 +1233,7 @@ function syncSeat() {
     el.dock.style.bottom = '';
     el.noteFab.style.bottom = '';
     el.noteDock.style.bottom = '';
+    syncNoteSeed(); // P2 续批④：座位回 CSS 钉位，种子落点重测
     return;
   }
   const panel = document.getElementById('canvas-panel');
@@ -1142,7 +1245,7 @@ function syncSeat() {
   // 现口径：中线 = 面板底 → 簇钮盒中线（实测），fab 底距 = 中线 − fab 半高 ⇒ 尺寸档
   // 再改也不会漂；簇钮缺席（无活动内容页签）时按 token 兜底 壳底垫 8 + 行底距 16 + 半钮高。
   const fabH = (el.fab && el.fab.getBoundingClientRect().height) || 48;
-  const rowBtn = panel.querySelector('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-refresh-toggle');
+  const rowBtn = panel.querySelector('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle');
   const rowR = rowBtn ? rowBtn.getBoundingClientRect() : null;
   const tokenSize = parseFloat(getComputedStyle(panel).getPropertyValue('--cv-size-circle-lg')) || 40;
   const rowMid = rowR && rowR.height > 0 ? panelRect.bottom - (rowR.top + rowR.height / 2) : (24 + tokenSize / 2);
@@ -1162,6 +1265,7 @@ function syncSeat() {
   });
   bottomPx = occupied > 0 ? occupied + 12 : FAB_BOTTOM_BASE;
   panel.style.setProperty('--ask-fab-bottom', bottomPx + 'px');
+  syncNoteSeed(); // P2 续批④：桌面座位重算后种子落点跟着重测
 }
 
 // ── 开合（作者令⑧：transform-origin 锚定按钮圆心，开合同一曲线）───────────
@@ -1193,6 +1297,7 @@ async function open() {
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
   render();
+  snapCol(); // ask-stream-ui：开窗即读 = 从最新一条起（未读清零 + 胶囊收敛）
   askOpen(s);
   syncSeat();
   setTimeout(() => { try { el.input.focus(); } catch { /* detached */ } }, 260);
@@ -1250,6 +1355,8 @@ const NOTE_STATUS_TEXT = {
   unsaved: '引擎未连接：内容只在本机',
   'no-store': '存储不可用：关窗后内容会丢',
   'too-large': '超出单条上限（256 KB），未保存到引擎',
+  'read-failed': '读取失败，本地草稿已保留，未写入引擎',
+  conflict: '记事本存在冲突：本地草稿和引擎版本均已保留',
 };
 
 /** 读某文件的本地镜像（无/坏/私密模式 ⇒ 空；与 ask 转录持久同一降级口径）。 */
@@ -1297,93 +1404,139 @@ function requestNote(sid) {
   sendWs({ type: 'askNoteGet', sessionId: sid });
 }
 
-/** 引擎侧真源：写（防抖；sid/文本在**调用拍**捕获，切卡后不会串写到新文件）。 */
+// Draft text and its base are persisted together, including an empty unsent clear.
+const NOTE_DRAFT_PREFIX = 'note:draft:';
+function saveNoteEntry(sid, entry) {
+  try {
+    localStorage.setItem(key(NOTE_DRAFT_PREFIX + sid), JSON.stringify({ text: entry.text, version: entry.version, dirty: entry.dirty, held: entry.held, remote: entry.remote || null }));
+    return persistNoteLocal(sid, entry.text);
+  } catch { return false; }
+}
+function noteEntry(sid) {
+  if (!noteEntries.has(sid)) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(key(NOTE_DRAFT_PREFIX + sid)) || 'null'); } catch { /* unavailable mirror */ }
+    const valid = saved && typeof saved.text === 'string';
+    noteEntries.set(sid, { text: valid ? saved.text : loadNote(sid), dirty: valid ? !!saved.dirty : !!loadNote(sid), version: valid && typeof saved.version === 'number' ? saved.version : null, timer: 0, flight: null, readFailed: false, held: !!(valid && saved.held), remote: valid ? saved.remote : null });
+  }
+  return noteEntries.get(sid);
+}
+/** Input handler body（命名函数：可执行测试切片可直接驱动它，不依赖事件绑定）。 */
+function noteInputChanged() {
+  if (noteSid) { const entry = noteEntry(noteSid); entry.text = el.noteText.value; entry.dirty = true; saveNoteEntry(noteSid, entry); }
+  if (noteTimer) clearTimeout(noteTimer);
+  noteTimer = setTimeout(() => { noteTimer = 0; flushNote(); }, 250);
+}
+/** 重连后的记事本对账（命名函数：清 flight、把离线脏稿重新读一遍再补推）。 */
+function resyncNotesAfterReconnect() {
+  for (const [sid, entry] of noteEntries) { entry.flight = null; if (entry.dirty) requestNote(sid); }
+}
+function showNoteConflict(sid) {
+  if (sid !== noteSid || !el || !el.noteStatus) return;
+  const entry = noteEntry(sid);
+  setNoteStatus('conflict');
+  if (!entry.remote) return;
+  const preview = document.createElement('pre');
+  preview.textContent = entry.remote.text || tt('（服务端已清空）', '(Cleared on server)');
+  const mine = document.createElement('button');
+  mine.type = 'button'; mine.textContent = tt('保留本地', 'Keep local');
+  const theirs = document.createElement('button');
+  theirs.type = 'button'; theirs.textContent = tt('使用服务端', 'Use server');
+  mine.addEventListener('click', () => resolveNoteConflict(sid, 'local'));
+  theirs.addEventListener('click', () => resolveNoteConflict(sid, 'remote'));
+  el.noteStatus.append(preview, mine, theirs);
+}
+function resolveNoteConflict(sid, choice) {
+  const entry = noteEntry(sid);
+  if (!entry.held || !entry.remote) return;
+  const remote = entry.remote;
+  if (choice === 'remote') { entry.text = remote.text; entry.dirty = false; }
+  else if (choice === 'local') entry.dirty = true;
+  else return;
+  entry.version = remote.version; entry.held = false; entry.remote = null;
+  saveNoteEntry(sid, entry);
+  if (sid === noteSid && el) { el.noteText.value = entry.text; setNoteStatus(''); }
+  if (entry.dirty) scheduleNotePush(sid, entry.text, 0);
+}
 function scheduleNotePush(sid, text, delay) {
   if (!sid) return;
-  noteLastPushed = { sid, text };
-  if (notePushTimer) clearTimeout(notePushTimer);
-  const wait = typeof delay === 'number' ? delay : NOTE_PUSH_DELAY_MS;
-  notePushTimer = setTimeout(() => {
-    notePushTimer = 0;
-    const sent = sendWs({ type: 'askNotePut', sessionId: sid, text, baseTs: noteServerTs });
-    if (!sent) setNoteStatus(noteLocalOk ? 'unsaved' : 'no-store');
-  }, wait);
+  const entry = noteEntry(sid);
+  entry.text = text; entry.dirty = true;
+  saveNoteEntry(sid, entry);
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => {
+    entry.timer = 0;
+    if (entry.version === null || entry.readFailed || entry.held || entry.flight) return;
+    const writeId = String(++noteWriteSequence);
+    entry.flight = { writeId, text: entry.text };
+    if (!sendWs({ type: 'askNotePut', sessionId: sid, text: entry.text, baseVersion: entry.version, writeId }) && sid === noteSid) setNoteStatus('unsaved');
+  }, typeof delay === 'number' ? delay : NOTE_PUSH_DELAY_MS);
 }
-
-/** 立即落盘（防抖拍 + 收起/切卡/失焦都走这里，单点）。
- *  两层都写：本地镜像同步写（快显/离线）＋ 引擎侧防抖推送（真源）。 */
 function flushNote() {
   if (noteTimer) { clearTimeout(noteTimer); noteTimer = 0; }
   if (!el || !notePath || !noteSid) return;
-  const sid = noteSid;
-  const text = el.noteText.value;
-  noteLocalOk = persistNoteLocal(sid, text);
-  noteDirty = true;
-  scheduleNotePush(sid, text);
+  const entry = noteEntry(noteSid);
+  if (!entry.dirty) return;
+  entry.text = el.noteText.value;
+  noteLocalOk = saveNoteEntry(noteSid, entry);
+  scheduleNotePush(noteSid, entry.text);
   if (!noteLocalOk) setNoteStatus('mirror-off');
 }
-
-/** 服务端对账（askNoteState 回包）：判据见头注「冲突判据」。 */
 function applyServerNote(msg) {
-  if (!el) return;
   const sid = msg.sessionId || '';
-  if (!sid || sid !== noteSid) return; // 切卡后到达的旧回包：以当前文件为准
-  const serverText = typeof msg.text === 'string' ? msg.text : '';
-  const serverTs = typeof msg.ts === 'number' ? msg.ts : 0;
-  if (serverTs > noteServerTs) noteServerTs = serverTs;
-  const local = loadNoteLocal(sid);
-  const cur = el.noteText.value;
-  const localText = local.text || cur;
-  const localNewer = local.ts > serverTs && local.text !== serverText;
-  // 「服务端空、本地有」= 本地那份还没同步过（旧键迁移来的存量 / 离线写入 / 隐私
-  // 模式下镜像失败但 textarea 里有字）。此时**绝不能用空值清掉本地内容**——宁可
-  // 把它回推上去：记事本正文清掉就找不回来，保住内容优先于「服务端为权威」。
-  const localUnsynced = !!localText && !serverText;
-  // 「正在敲字」也算脏：防抖窗口内（输入已被本地镜像捕获但 flush 还没跑）收到对账
-  // 回包时，不能把用户正在写的这一行换掉。开窗后自动聚焦不算脏（值 === 镜像值）。
-  const editing = document.activeElement === el.noteText && cur !== local.text;
-  if (noteDirty || editing || localNewer || localUnsynced) {
-    // 本地更新/未同步 ⇒ 不覆盖本地，把本地推上去（正在写的以 textarea 为准）。
-    const pushText = noteDirty || editing ? cur : localText;
-    if (!(noteDirty || editing)) noteLocalOk = persistNoteLocal(sid, pushText, local.ts || Date.now());
-    scheduleNotePush(sid, pushText, 0);
+  if (!sid || !noteEntries.has(sid)) return;
+  const entry = noteEntry(sid);
+  if (msg.error || typeof msg.version !== 'number' || typeof msg.text !== 'string') {
+    entry.readFailed = true;
+    if (sid === noteSid) setNoteStatus('read-failed');
     return;
   }
-  // 服务端更新或本地无内容 ⇒ 采纳服务端（含「服务端为空」的清空态）。
-  noteServerTs = serverTs;
-  if (serverText !== el.noteText.value) el.noteText.value = serverText;
-  noteLocalOk = persistNoteLocal(sid, serverText, serverTs || Date.now());
-  noteDirty = false;
-  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  if (entry.version !== null && msg.version < entry.version) return;
+  entry.readFailed = false;
+  if (entry.text !== msg.text && (entry.held || (entry.dirty && (entry.version === null || entry.version !== msg.version)))) {
+    entry.held = true;
+    entry.remote = { text: msg.text, version: msg.version };
+    saveNoteEntry(sid, entry); showNoteConflict(sid); return;
+  }
+  entry.version = msg.version;
+  if (entry.dirty && entry.text !== msg.text) { saveNoteEntry(sid, entry); scheduleNotePush(sid, entry.text, 0); return; }
+  entry.dirty = false; entry.held = false; entry.remote = null; entry.text = msg.text;
+  saveNoteEntry(sid, entry);
+  if (sid === noteSid && el) { el.noteText.value = msg.text; setNoteStatus(''); }
 }
-
-/** 写回执（askNoteAck）：成功即清脏（只清「最后推的正是当前文本」那一拍）。 */
 function applyNoteAck(msg) {
-  if (!el) return;
   const sid = msg.sessionId || '';
-  if (msg.ok) {
-    if (typeof msg.ts === 'number' && msg.ts > noteServerTs) noteServerTs = msg.ts;
-    if (noteLastPushed && noteLastPushed.sid === sid && el.noteText.value === noteLastPushed.text) {
-      noteDirty = false;
+  const entry = noteEntries.get(sid);
+  if (!entry || !entry.flight || msg.writeId !== entry.flight.writeId) return;
+  const sent = entry.flight.text;
+  entry.flight = null;
+  if (msg.ok && typeof msg.version === 'number') {
+    entry.version = msg.version;
+    if (entry.text === sent) entry.dirty = false;
+    saveNoteEntry(sid, entry);
+    if (entry.dirty) scheduleNotePush(sid, entry.text, 0);
+    if (sid === noteSid) setNoteStatus('');
+  } else if ((msg.error === 'conflict' || msg.error === 'version-required') && typeof msg.version === 'number' && typeof msg.text === 'string') {
+    // 迟到/同一文本的回执：服务端已经是我们要写的文本（例：显式选了服务端副本后，
+    // 在途写的 conflict 回执才到；或未知基线的旧页面对上了同一文本）⇒ 无需再让用户
+    // 选择，直接采纳该版本。文本不同才保留两边并展示选择。
+    if (msg.text === entry.text) {
+      entry.version = msg.version; entry.dirty = false; entry.held = false; entry.remote = null;
+      saveNoteEntry(sid, entry);
+      if (sid === noteSid) setNoteStatus('');
+    } else {
+      entry.held = true; entry.remote = { text: msg.text, version: msg.version };
+      saveNoteEntry(sid, entry); showNoteConflict(sid);
     }
-    setNoteStatus(noteLocalOk ? '' : 'mirror-off');
-  } else if (msg.error === 'too-large') {
-    setNoteStatus('too-large');
-  } else if (msg.error === 'bad-session-id') {
-    setNoteStatus('no-store');
   } else {
-    setNoteStatus(noteLocalOk ? 'unsaved' : 'no-store');
+    if (msg.error === 'read-failed') entry.readFailed = true;
+    if (sid === noteSid) setNoteStatus(msg.error === 'too-large' ? 'too-large' : msg.error === 'read-failed' ? 'read-failed' : 'unsaved');
   }
 }
-
-/** 同浏览器多标签页直通（storage 事件）：本地无脏编辑即采纳对端写入。 */
 function onNoteStorage(e) {
-  if (!el || !noteSid) return;
-  if (e.key !== key(NOTE_STORE_PREFIX + noteSid) && e.key !== key(NOTE_TS_PREFIX + noteSid)) return;
-  if (noteDirty) return; // 本页有未落盘编辑：以本页为准（最后写者胜）
-  const local = loadNoteLocal(noteSid);
-  if (local.text !== el.noteText.value) el.noteText.value = local.text;
-  if (local.ts > noteServerTs) noteServerTs = local.ts;
+  if (!el || !noteSid || e.key !== key(NOTE_STORE_PREFIX + noteSid)) return;
+  const entry = noteEntry(noteSid);
+  if (!entry.dirty && !entry.flight) requestNote(noteSid);
 }
 
 function isNoteOpen() { return !!el && !el.noteDock.classList.contains('closed'); }
@@ -1397,12 +1550,12 @@ async function openNote() {
   if (!sid || currentFile !== path) return; // 派生期间切卡/关卡：让 syncNoteForFile 收口
   notePath = path;
   noteSid = sid;
-  noteDirty = false;
-  noteServerTs = 0;
-  el.noteText.value = loadNote(sid); // ① 本地镜像先上台（不等网络）
-  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  const entry = noteEntry(sid);
+  el.noteText.value = entry.text; // ① 本地镜像先上台（不等网络）
+  if (entry.held) showNoteConflict(sid); else setNoteStatus(noteLocalOk ? '' : 'mirror-off');
   requestNote(sid); // ② 引擎侧真源对账（回包 = consumeFrame 的 askNoteState）
   restoreSize(el.noteSurface); // ③ 尺寸偏好（与 ask 同一条恢复腿）
+  syncNoteSeed(); // P2 续批④：形变起手前最后一测（落点 = 此刻 note 钮圆心）
   el.noteDock.classList.remove('closed');
   el.noteFab.setAttribute('aria-pressed', 'true');
   syncSeat();
@@ -1415,6 +1568,7 @@ async function openNote() {
 function closeNote() {
   if (!el) return;
   flushNote();
+  syncNoteSeed(); // P2 续批④：回落种子对准此刻 note 钮（开窗期间座位可能变过）
   el.noteDock.classList.add('closed');
   el.noteFab.setAttribute('aria-pressed', 'false');
 }
@@ -1445,15 +1599,59 @@ async function syncNoteForFile() {
   if (notePath && notePath !== path) flushNote();
   notePath = path;
   noteSid = sid;
-  noteDirty = false;
-  noteServerTs = 0;
-  el.noteText.value = loadNote(sid);
-  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  const entry = noteEntry(sid);
+  el.noteText.value = entry.text;
+  if (entry.held) showNoteConflict(sid); else setNoteStatus(noteLocalOk ? '' : 'mirror-off');
   requestNote(sid); // 引擎侧真源对账（每文件独立生命周期，与问答回放零同步）
 }
 
 // ── 渲染（升腾入场 + 顶带 12px 内容级渐隐由 CSS mask 承担）────────────────
 // glass-unify 批 2026-11-05：原「按龄渐隐」腿已退役（见下方 render() 内注释）。
+
+// ── ask-stream-ui（2026-11-17）：落列跟随单点（主会话 smartScroll/shouldFollowBottom 同律）──
+// 旧路径：render/textDelta/appendTyping 各自无条件 `scrollTop = scrollHeight`——
+// 用户上翻读历史时任何新内容都会把滚动位抢走（本批根治点）。新律：
+//   · 贴底（latch 或几何，shouldFollowBottom 同式）⇒ rAF 跟随钉底；
+//   · 离底 ⇒ **绝不写滚动位**（阅读位置不动），真实新消息计数进胶囊（主会话
+//     countsAsRealMessage 口径的 ask 对应：user/ai 两族气泡计数，typing 流式行 =
+//     过程指示不计不数）。
+/** 贴底判定（容差 = 组件 AT_BOTTOM_PX 44px，与主会话 NEAR_BOTTOM_PX 同档实测值）。 */
+function colAtBottom() {
+  return !!el && bottomDistance(el.col) < AT_BOTTOM_PX;
+}
+/** 跟随意图（latch 优先、几何兜底——utils.shouldFollowBottom 同式）。 */
+function colFollows() {
+  return colSnapped === true || colAtBottom();
+}
+/** 胶囊同步（atBottom 已有本帧判定就带上，组件不再二次探测）。 */
+function askPillSync(count, atBottom) {
+  if (!askPill) return;
+  askPill.sync(atBottom === true ? { count: 0, atBottom: true } : { count });
+}
+/**
+ * 落列后调用的唯一跟随决定：跟随钉底 / 计数进胶囊。
+ * @param {number} arrived 本次落列的**真实新消息**条数（typing 等过程行传 0）
+ */
+function settleCol(arrived) {
+  if (!el) return;
+  if (colFollows()) {
+    colSnapped = true;
+    colUnseen = 0;
+    requestAnimationFrame(() => { if (el) el.col.scrollTop = el.col.scrollHeight; });
+    askPillSync(0, true);
+  } else {
+    if (arrived > 0) colUnseen += arrived;
+    askPillSync(colUnseen);
+  }
+}
+/** 显式贴底（开窗/切会话/本机点停）：latch 的第二个写点 + 胶囊收敛为隐藏。 */
+function snapCol() {
+  if (!el) return;
+  colSnapped = true;
+  colUnseen = 0;
+  requestAnimationFrame(() => { if (el) el.col.scrollTop = el.col.scrollHeight; });
+  askPillSync(0, true);
+}
 
 function render() {
   if (!el) return;
@@ -1469,7 +1667,7 @@ function render() {
     // 另造一套等效样式」）。材质/描边/内高光/模糊全部来自 --nf-glass-* 单源，
     // 本组件零本地材质声明；`ask-bub` / `user` / `ai` 三个身份类只承载几何与
     // 语义色（气泡最大宽度、圆角、user 侧 sapphire tint）。
-    const b = h('div', { class: 'ask-bub nf-glass ' + (m.role === 'user' ? 'user' : 'ai') });
+    const b = h('div', { class: askBubbleClass(m.role) });
     // ① 修复批 2026-10-31：ai 族走主会话渲染腿（markdown 全套）；user 族
     // 维持 textContent（用户输入纯文本面，与主会话一致）。渲染腿复用不重写。
     // ⚠ **本模块唯一的 HTML 落点 = markdown 渲染腿**（renderMarkdownWithMath 的
@@ -1477,54 +1675,14 @@ function render() {
     // marked+KaTeX 护栏）；业务 DOM（气泡壳、图标、拖柄、输入条）一律走 h()/frag()。
     if (m.role === 'user') b.textContent = m.text;
     else b.innerHTML = renderMarkdownWithMath(m.text);
-    // ── glass-unify 批 2026-11-05：「按龄渐隐」整条腿退役 ──────────────────
-    // 作者令（2026-11-05 16:50 逐字）：「canvas的ask现在有bug……是只有最新一条
-    // 消息能看清，其他前面的消息又是半透明的了。」
-    // 根因就在这里：原实现给**每条**历史气泡写 `--ask-age-alpha = max(0.3,
-    // 1 - 距底条数 × 0.13)`（第 1 条旧 = .87、第 3 条 = .61、第 6 条起压到 .30），
-    // CSS 侧 `.ask-bub[data-age] { opacity: var(--ask-age-alpha) }` 直接吃这个值。
-    // 于是「最新一条 α=1 清楚、前面全部半透明、底下的文档正文透上来」——这是
-    // 设计意图「弹幕感」与作者新令「毛玻璃一律不透底」的正面冲突，按**后者胜**
-    // 处理：整条年龄透明度腿删除（不写 --ask-age-alpha、不写 data-age）。
-    // 与「顶缘 12px 内容级渐隐」不冲突：那是作者 2026-11-04 09:22 明确要的
-    // 「滚到列顶时自身的 alpha 渐到 0」，毛玻璃批（2026-11-06）起作用在**逐泡
-    // opacity**（syncAskFade）且只有 12px 高，不是「每条历史消息整体降透明度」。
-    // 两者被本批区分为「位置渐隐」vs「年龄渐隐」，只保留前者。
+    // History bubbles never change opacity: not by age, not by scroll position. A bubble
+    // that crosses the column's top edge is clipped by the column, so every visible part
+    // of it stays fully legible. (FCC-REQ-004)
     el.col.appendChild(b);
   });
-  requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; syncAskFade(); });
-}
-
-// ── 顶缘渐隐（毛玻璃批 2026-11-06）─────────────────────────────────────────
-// 载体换代：列 mask 退役（css/ask.css .ask-col 块注：mask 使 .ask-col 成为
-// backdrop root，子气泡的 backdrop-filter 采样被架空 = 「半透明洗色」假毛玻璃，
-// 改前像素实证 diff(maskOn, blurOff) = 0.22 ≈ 0）。「消息 alpha 渐到 0」的
-// 2026-11-04 令语义不变，载体改**逐泡 opacity**：泡顶到列顶的距离在
-// --ask-fade-h（12px）内线性落 alpha，带外恒 1。opacity 不产生 backdrop root、
-// 不参与 hit-test，与真模糊并存。单实现（本函数是全站唯一写泡 opacity 的地方；
-// CSS 零 mask-image，防复活钉 = tests/ask-sheet-fade-height A0b/D3 +
-// tests/ask-glass-drag G2）。
-let fadeRaf = 0;
-function syncAskFade() {
-  if (!el || !el.col || !el.col.isConnected) return;
-  if (fadeRaf) return; // 一拍合一：滚动高频触发只排一帧
-  fadeRaf = requestAnimationFrame(() => {
-    fadeRaf = 0;
-    const col = el.col;
-    if (!col || !col.isConnected || col.classList.contains('closed')) return;
-    const fadeH = dsPx(el.askSurface, '--ask-fade-h', 12) || 12;
-    const colTop = col.getBoundingClientRect().top;
-    for (const bub of col.querySelectorAll('.ask-bub')) {
-      const d = bub.getBoundingClientRect().top - colTop;
-      // ask-fade-floor 批 2026-11-07（作者令逐字「ask对话框的消息会突然透明」）：
-      // 旧式 ratio = clamp(d/fadeH) ⇒ 泡顶一旦越过列顶就落 0，整条消息**完全
-      // 消失**（12px 衰减带的注释假设与真实渲染不符：泡顶越顶后 d<0 恒 0）。
-      // 现改为「边缘提示」而非「隐形」：底限 0.55，衰减带内线性升到 1。
-      // 效果 = 顶缘仍有一档柔化提示，但任何仍然可见的消息都不会突然变透明。
-      const ratio = Math.max(0, Math.min(1, d / fadeH));
-      bub.style.opacity = String(0.55 + 0.45 * ratio);
-    }
-  });
+  // ask-stream-ui：render 不再自带滚动——落列后的跟随/计数由调用点经 settleCol/
+  // snapCol 单点决定（本函数只建 DOM；整列同步重建不产生中间布局拍，离底时的
+  // 阅读位置原样保留）。
 }
 
 /** 流式增量更新（不整列重渲——textDelta 高频）。 */
@@ -1540,7 +1698,6 @@ function updateStreamingBubble(s) {
   // （同一 HTML 落点：markdown 渲染腿，见 render() 的注释。）
   node.innerHTML = last ? renderMarkdownWithMath(last.text, true, { cache: false }) : '';
   el.col.scrollTop = el.col.scrollHeight;
-  syncAskFade();
 }
 
 // ── 后端 WS 域（发 + 收）───────────────────────────────────────────────────
@@ -1580,6 +1737,7 @@ async function submit() {
   s.msgs.push({ role: 'user', text: v });
   persistSession(s); // 发问即落盘（持久批：重载/竞态现场问题不丢）
   render();
+  settleCol(1); // 本机发问 = 1 条真实新消息（主会话 .row.user 计入口径同律：贴底跟随、离底计数）
   appendTyping();
   armTurn(s); // 中断状态机：生成中 = 发送钮让位中断钮（输入行为包批）
   if (!s.stateSent) askOpen(s); // 未绑定先补一拍（历史回放与流式都依赖 askState）
@@ -1615,7 +1773,7 @@ function stopAsk() {
   if (!s || !s.busy) return;
   requestTurnInterrupt(s.sid);
   settleTurn(s);
-  if (isOpen()) { removeTyping(); render(); }
+  if (isOpen()) { removeTyping(); render(); snapCol(); } // 本机动作 → 保持改前「点停即钉底」行为
 }
 
 // 静默看门：busy 期间 180s 无任何流帧 ⇒ 本地收口（终态帧丢失形态）。帧到即续臂
@@ -1634,19 +1792,36 @@ function appendTyping() {
   if (!el) return;
   removeTyping();
   // One transient line reuses the existing Ask stream; it is status-only, never expandable.
+  // ── ask-stream-ui（2026-11-17 作者令「思考中的时候应该设计一个 spinner」）──
+  // 思考期（submit → 首个非空 textDelta）= 三点 spinner +「思考中」：dots 复用
+  // 主会话思考族形态（chat.css `.thinking-dot` 全局面，workline.js
+  // startWorklineDots 同一构造——纯 CSS 脉动，无 JS 计时器）；文案 = 主会话
+  // token chat.thinking.now 的字面（zh 思考中 / en Thinking，tt() 双语保真）。
+  // 首个非空 token 由 updateTypingText 把整行替换为流式文本（dots 让位首 token，
+  // 主会话同律）⇒ spinner 与既有流式指示（横向单行预览）**不同相**，零并存打架。
   const tp = h('div', {
     class: 'ask-stream-line',
     role: 'status',
     'aria-live': 'polite',
     'aria-label': tt('正在生成回答', 'Generating answer'),
-  }, tt('正在生成…', 'Generating…'));
+  }, [
+    h('span', { class: 'ask-thinking-dots', 'aria-hidden': 'true' }, [
+      h('span', { class: 'thinking-dot' }),
+      h('span', { class: 'thinking-dot' }),
+      h('span', { class: 'thinking-dot' }),
+    ]),
+    h('span', { class: 'ask-thinking-label' }, tt('思考中', 'Thinking')),
+  ]);
   el.col.appendChild(tp);
-  el.col.scrollTop = el.col.scrollHeight;
-  syncAskFade();
+  // 流式行 = 过程指示（主会话口径不计不数）：只贴底跟随，离底不写滚动位。
+  if (colFollows()) el.col.scrollTop = el.col.scrollHeight;
   typingNode = tp;
 }
 function updateTypingText(text) {
   if (!typingNode || !typingNode.isConnected || typeof text !== 'string') return;
+  // 思考期保持 spinner：零/空文本不换相——首个**非空** token 才把行整替为流式
+  // 文本（空 delta 不灭 dots，主会话「dots 直到首 token」同律）。
+  if (!text) return;
   typingNode.textContent = text;
   // Keep the newest generated tail in view without making the line interactive.
   typingNode.scrollLeft = typingNode.scrollWidth;
@@ -1674,8 +1849,12 @@ function consumeFrame(msg) {
 
   switch (msg.type) {
     case 'askState': {
+      const prevLen = entry.msgs.length; // ask-stream-ui：回放落列的增量基数（对账补齐按到达计数）
       entry.sid = msg.sessionId || entry.sid;
       entry.fileName = msg.fileName || entry.fileName;
+      // ask-mail 批（2026-11-16）：引擎下发的会话 Mail 地址（`ask:<sid>` 逐字，
+      // 与本地派生同式——引擎字段优先，仅存内存不落盘：每帧 askState 都重发）。
+      if (typeof msg.mailAddress === 'string' && msg.mailAddress) entry.mailAddress = msg.mailAddress;
       // ④ 双泡修复批伴随守卫：submit 先 askOpen 后 askQuestion，回放帧快照可能
       // 早于本拍提问落账——整表替换会把刚发的 user 泡抹掉（视觉丢问）。
       // 持久批 2026-11-01 升级为「永不缩水」合并（头注动机链）：ask 转录是
@@ -1706,12 +1885,20 @@ function consumeFrame(msg) {
         entry.msgs = entry.msgs.concat([localLastUser]);
       }
       persistSession(entry);
+      // canvas-inline-diff-review：待审编辑回放（askState.review）路由给审阅页签
+      // 模块播种（重载/换端后 canvas 审阅页签重建；会话内不再承载审阅面）。
+      consumeAskState(msg);
       // 断线中 turn 已终了的形态（输入行为包批）：回放转录末条已是 ai 答复而本地
       // 仍臂着 busy ⇒ 服务端为权威，即刻收口（幂等；turn 真在飞时转录末条是 user 问）。
       if (entry.busy && adopted.length && adopted[adopted.length - 1].role === 'ai') settleTurn(entry);
       if (file === currentFile) {
         // 回放即读（用户此刻正看着该会话）：未读清零 + 通知点落位。
-        if (isOpen()) { entry.unread = false; removeTyping(); render(); }
+        if (isOpen()) {
+          entry.unread = false;
+          removeTyping();
+          render();
+          settleCol(Math.max(0, entry.msgs.length - prevLen)); // 对账增量按真实到达计数（开窗/切会话侧已 snapCol）
+        }
         syncUnreadDot();
       }
       break;
@@ -1726,8 +1913,9 @@ function consumeFrame(msg) {
       ai.text += msg.delta || '';
       if (entry === activeSession() && isOpen()) {
         updateTypingText(ai.text);
-        el.col.scrollTop = el.col.scrollHeight;
-        syncAskFade();
+        // ask-stream-ui：流式行是过程指示（主会话口径不计不数）——只贴底跟随，
+        // 离底绝不写滚动位（读历史不被流式拉走）。
+        if (colFollows()) el.col.scrollTop = el.col.scrollHeight;
       }
       // 流式落盘节流（持久批）：textDelta 高频，800ms 一拍写 localStorage；
       // 终局由 done 全量落盘兜底。
@@ -1743,7 +1931,7 @@ function consumeFrame(msg) {
       if (last && last.role === 'ai' && !last.text && msg.finalText) last.text = msg.finalText;
       persistSession(entry);
       if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); }
+        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 定稿 ai 泡 = 1 条真实新消息
         syncUnreadDot();
       }
       break;
@@ -1756,7 +1944,7 @@ function consumeFrame(msg) {
       settleTurn(entry);
       persistSession(entry);
       if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); }
+        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 部分答案落泡 = 1 条真实新消息
         syncUnreadDot();
       }
       break;
@@ -1771,7 +1959,7 @@ function consumeFrame(msg) {
       else entry.msgs.push({ role: 'ai', text: errText });
       persistSession(entry);
       if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); }
+        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 错误落助手泡槽 = 1 条真实新消息
         syncUnreadDot();
       }
       break;
@@ -1779,6 +1967,21 @@ function consumeFrame(msg) {
     case 'askHandoffAck': {
       // v2.1：转交回执收进不可见处——不呈现（§7 转交机制不变，ack 静默消费；
       // 主会话侧 injected 气泡承担转交可见性）。
+      break;
+    }
+    case 'askEditApplied': {
+      // canvas-inline-diff-review：ask_edit/ask_write 直接落盘回执 → 审阅页签
+      // （askEditReview）。未读律同流帧（用户不在看着 = 绿点唤回）——审阅页签
+      // 开在 canvas，dock 未开也应唤回。
+      if (!(entry === activeSession() && isOpen())) entry.unread = true;
+      consumeApplied(msg);
+      syncUnreadDot();
+      break;
+    }
+    case 'askEditResolved': {
+      // Accept/Reject/Dismiss 终态 → 审阅页签模块（更新重渲 / 冲突条 / 清账收页签
+      // + 重载文件页签）。会话内不再留痕——审阅事实由 askState.review 回放。
+      consumeResolved(msg);
       break;
     }
     case 'user': {
@@ -1791,7 +1994,7 @@ function consumeFrame(msg) {
         entry.msgs.push({ role: 'user', text: msg.text || '' });
         persistSession(entry);
         if (entry === activeSession()) {
-          if (isOpen()) { removeTyping(); render(); }
+          if (isOpen()) { removeTyping(); render(); settleCol(1); } // 注入问 = 1 条真实新消息
           syncUnreadDot();
         }
       }

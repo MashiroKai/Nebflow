@@ -39,9 +39,12 @@ async function bootApp(page) {
           projects: [{
             name: 'demo', workspace: '/tmp/ws-demo',
             agentFile: '/tmp/ws-demo/AGENTS.md', description: 'demo project', createdAt: 0,
-          }],
+          }, { name: 'populated', workspace: '/tmp/ws-populated', agentFile: '/tmp/ws-populated/AGENTS.md', description: 'populated project', createdAt: 0 }],
         }),
       });
+    }
+    if (p === '/api/projects/populated/flow-map') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ nodes: [{ id: 'n1', title: 'task' }], worktrees: [], meta: { project: 'populated' } }) });
     }
     if (p === '/api/projects/demo/flow-map') {
       return route.fulfill({
@@ -99,6 +102,25 @@ async function bootApp(page) {
     return s.ws && s.ws.readyState === 1;
   }, null, { timeout: 15000 });
 }
+
+test('FRB-SCN-003 project title and FAB cannot open retired panorama', async ({ page }) => {
+  await bootApp(page);
+  await page.evaluate(() => import('/js/projectTab.js').then((m) => m.openProjectsTab()));
+  const cards = page.locator('.project-card');
+  await expect(cards).toHaveCount(2);
+  await expect(page.locator('.project-card[data-project="demo"]')).toHaveClass(/is-empty/);
+  await expect(page.locator('.project-card[data-project="populated"] .project-summary-skeleton')).toHaveCount(0);
+  await expect(page.locator('.project-card[data-project="populated"]')).not.toHaveClass(/is-empty/);
+  await expect(page.locator('.proj-flowmap-fab')).toHaveCount(0);
+  for (const name of ['demo', 'populated']) {
+    const title = page.locator(`.project-card[data-project="${name}"] .team-card-title`);
+    expect(await title.evaluate(el => getComputedStyle(el).cursor)).not.toBe('pointer');
+    await title.click();
+    await expect(cards).toHaveCount(2);
+    await expect(page.locator('[data-projects-view="delegate-chain"]')).toHaveCount(0);
+  }
+  await expect(page.locator('.proj-create-fab')).toBeVisible();
+});
 
 test('project card shows AGENTS.md label; viewer title/hint updated; save PUTs to agent.md', async ({ page }) => {
   putBodies = [];

@@ -150,7 +150,7 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
   private def lastVerdict(delegateId: String): Option[(String, String)] = verdictLines(delegateId).lastOption
 
   test(
-    "① matrix complete×idle (empty-burn form): zero tool calls + empty resultText + no report ⇒ NudgeIdle WITHOUT consulting the judge — no verdict line, no terminal, no standby badge"
+    "① pass-through (empty-burn form): zero tool calls + empty resultText + no slots ⇒ Release with the (no text output) body, WITHOUT consulting the judge — no verdict line, no terminal, no standby badge"
   ) {
     val system = ActorSystem(s"dtp-1-${scala.util.Random.nextInt(100000)}")
     try
@@ -179,26 +179,25 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
           .filter(_.payload.hcursor.get[String]("delegateId").toOption.contains("delegate-precheck-empty"))
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        // 状态矩阵未申报腿（空烧形态）：Outcome.NudgeIdle——提醒补报，绝不终判
-        // （ExplodingJudge 在场即炸证明零 LLM 消耗）。
-        outcome match
-          case DelegateTerminal.Outcome.NudgeIdle(chainsInFlight, emptyTurn) =>
-            assert(!chainsInFlight, "no flow host in the fixture ⇒ zero chains in flight")
-            assert(emptyTurn, "the empty-burn form must be named to the reminder")
-          case other => fail(s"expected Outcome.NudgeIdle (matrix idle leg), got: $other")
-        // 🔴 不给 completed 假终态：零 terminal-verdict 行、零父投递（Release 形态）。
-        assertEquals(v, None, "no terminal verdict line may be written for an undeclared empty turn")
-        // 「待命」徽标只归显式申报：未申报腿不落 standbySince、不补种申报槽。
-        assertEquals(rec.flatMap(_.standbySince), None, "the standby badge is declared-only")
-        assertEquals(rec.flatMap(_.reportStatus), None, "the declaration slot stays untouched (still undeclared)")
-        assertEquals(standbyLines, Nil, "no standby audit line for the undeclared leg")
+        // 申报通道退役（T2 批）：回合结束 = 直通交付——空烧形态也交付（正文缺位
+        // 显式化为 "(no text output)"），绝不再走提醒腿（ExplodingJudge 在场即炸
+        // 证明零 LLM 消耗）。
+        assert(
+          outcome.isInstanceOf[DelegateTerminal.Outcome.Release],
+          s"every turn end must release (pass-through), got: $outcome"
+        )
+        assert(outcome.toString.contains("(no text output)"), "the empty body is explicit in the payload")
+        assertEquals(v, None, "no terminal verdict line may be written for an empty turn")
+        assertEquals(rec.flatMap(_.standbySince), None, "the standby badge is never engine-seeded")
+        assertEquals(rec.flatMap(_.reportStatus), None, "the declaration slot stays untouched")
+        assertEquals(standbyLines, Nil, "no standby audit line")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
   test(
-    "② the max_tokens empty-burn stub is NOT real output either: stub + zero tools + no report ⇒ the same NudgeIdle (the incident form, no fake completion)"
+    "② the max_tokens stub text is NOT special either: stub + zero tools + no slots ⇒ the same pass-through Release (no fake completion marker, no reminder leg)"
   ) {
     val system = ActorSystem(s"dtp-2-${scala.util.Random.nextInt(100000)}")
     try
@@ -222,10 +221,11 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         rec = DelegateRegistry.find("delegate-precheck-stub")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        outcome match
-          case DelegateTerminal.Outcome.NudgeIdle(_, emptyTurn) => assert(emptyTurn)
-          case other => fail(s"stub-only output must land in the reminder leg, not a verdict: $other")
-        assertEquals(v, None, "no terminal verdict for the undeclared stub-only turn")
+        assert(
+          outcome.isInstanceOf[DelegateTerminal.Outcome.Release],
+          s"stub-only output still releases (pass-through), got: $outcome"
+        )
+        assertEquals(v, None, "no terminal verdict for the stub-only turn")
         assert(rec.flatMap(_.standbySince).isEmpty)
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
@@ -233,21 +233,17 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
   }
 
   test(
-    "③ honesty when both judge legs fail AND no self-report: the matrix's unjudged corner (undeclared × ahead>0 anti-degradation) keeps legacy completed semantics, but the line reads (unjudged — judge unavailable)"
+    "③ pass-through on a real working seat (ahead>0, no slots): the release carries the text verbatim; no unjudged marker, no dock parking (the honesty-marker protocol retired with the declaration channel)"
   ) {
     val system = ActorSystem(s"dtp-3-${scala.util.Random.nextInt(100000)}")
     val repo = tempRoot / "unjudged-repo"
     try
       for
         res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
-        // 判定机不可用 = 端口卸载（两层全败的测试形态）。
         _ = DelegateJudge.DelegateJudgePort.clear()
         (child, sup) <- noopRefs(system)
         _ = mkRealRepo(repo, "delegate/unjudged-1", ahead = 1)
         _ = seedRealRecord("delegate-unjudged", "83", repo, "delegate/unjudged-1")
-        // 状态矩阵下 unjudged 的唯一可达角：**无申报** × 防退化（ahead>0 拒停靠）
-        // ⇒ 槽位闸放行进判词链；判定机缺席 ⇒ fail-open completed 但标 unjudged。
-        // （finish 申报在场时是自申报背书——平线 source=judge，见④(b)。）
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-unjudged",
@@ -263,22 +259,17 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         rec = DelegateRegistry.find("delegate-unjudged")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        // fail-open 不变：verdict 仍是 completed（既有语义/下游零迁移）……
-        assertEquals(v.map(_._1), Some("completed"))
-        // ……但审计面可分「判过」与「没判成」：source=unjudged。
-        assertEquals(v.map(_._2), Some("unjudged"), "the chain line must mark the unjudged form")
-        val line = outcome.toString
-        assert(line.contains("(unjudged — judge unavailable)"), s"the honest marker must be in the verdict line: $line")
-        // 未申报 + ahead>0 + 无 worktree ⇒ 就地座位角：Release；零停靠。
         assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
-        assert(rec.flatMap(_.standbySince).isEmpty, "no standby parking on the undeclared leg")
+        assert(outcome.toString.contains("real result text"), "the release payload carries the final text verbatim")
+        assertEquals(v, None, "no chain line (the unjudged-marker protocol retired)")
+        assert(rec.flatMap(_.standbySince).isEmpty, "no standby parking")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
   test(
-    "④ no false positives (matrix): substantive-but-undeclared turns (tools counted or uncounted) are REMINDED too (NudgeIdle — only finish/merge declarations reach the chain); a self-reported finish is never 'unjudged'"
+    "④ pass-through uniformity: substantive-but-undeclared turns (tools counted or uncounted) release the same way; a finish-slot record releases identically — the slot never forks the outcome"
   ) {
     val system = ActorSystem(s"dtp-4-${scala.util.Random.nextInt(100000)}")
     try
@@ -286,7 +277,7 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
         _ = DelegateJudge.DelegateJudgePort.install(new ExplodingJudge)
         (child, sup) <- noopRefs(system)
-        // (a) Some(3)（有工具）＋空终文＋未申报 ⇒ 未申报腿（提醒），不进判词链。
+        // (a) Some(3)（有工具）＋空终文 ⇒ 直通。
         _ = seedRecord("delegate-tools3", Some("84"))
         r1 <- DelegateTerminal.onCompleted(
           res,
@@ -323,8 +314,7 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
           sup,
           sessionToolCalls = Some(7)
         )
-        // (b) finish 自申报在场 ⇒ 判词链（判定机缺席 ⇒ 自申报背书——卸载端口，
-        //     否则 ExplodingJudge 会被真实咨询而炸——链门票语义的另一面证明）。
+        // (b) finish 槽在场 ⇒ 同一直通（判定机缺席也不咨询——ExplodingJudge 不炸即证）。
         _ = DelegateJudge.DelegateJudgePort.clear()
         _ = seedRecord("delegate-selfrep", Some("86"))
         _ = DelegateRegistry.updateReport("delegate-selfrep", "finish", "declared", "")
@@ -345,51 +335,18 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         v3 = lastVerdict("delegate-selfrep")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        // 未申报（无论产出形态）= 提醒腿：零判词行、零终态。
-        assertEquals(v1, None, "undeclared + tools ⇒ reminded, not unjudged-completed")
-        assertEquals(v2, None, "undeclared + uncounted ⇒ reminded, not judged")
-        assertEquals(
-          v2b,
-          None,
-          "a substantive report WITHOUT a declaration is still just reminded (finish is the only judged-complete combination)"
-        )
-        assert(r1.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle], s"got: $r1")
-        assert(r2.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle], s"got: $r2")
-        assert(
-          r2b.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle],
-          "substantive but undeclared ⇒ remind (matrix), s got: $r2b"
-        )
-        // finish 自申报 → 判词链（判定机缺席 → 自申报背书 completed，source=judge）
-        assertEquals(v3.map(_._1), Some("completed"))
-        assertEquals(v3.map(_._2), Some("judge"), "a self-reported finish is NOT the unjudged form")
-        assert(!r3.toString.contains("unjudged"), s"self-report backed completions keep the plain line: $r3")
+        // 直通.uniform：零判词行，槽位不改变结果形态。
+        List("v1" -> v1, "v2" -> v2, "v2b" -> v2b, "v3" -> v3).foreach { (name, v) =>
+          assertEquals(v, None, s"$name: no chain line (retired protocol)")
+        }
+        List("r1" -> r1, "r2" -> r2, "r2b" -> r2b, "r3" -> r3).foreach { (name, r) =>
+          assert(r.isInstanceOf[DelegateTerminal.Outcome.Release], s"$name must release (pass-through): $r")
+        }
+        assert(r2b.toString.contains("a full substantive report"), "the substantive text rides the payload")
+        assert(r3.toString.contains("did the work"), "the finish-slot turn releases the text the same way")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
-  }
-
-  test("⑤ pure anchors: hasRealOutput / deterministicPrecheck / verdictLineCompleted") {
-    // stub 与空白都不是真实产出
-    assertEquals(DelegateTerminal.hasRealOutput(""), false)
-    assertEquals(DelegateTerminal.hasRealOutput("   \n "), false)
-    assertEquals(DelegateTerminal.hasRealOutput(Defaults.MaxTokensStubText), false)
-    assertEquals(DelegateTerminal.hasRealOutput("actual deliverable"), true)
-    // 预检只认 Some(0)（None = 调用方未计数，绝不发明数据）
-    assertEquals(DelegateTerminal.deterministicPrecheck("", Some(0)).isDefined, true)
-    assertEquals(DelegateTerminal.deterministicPrecheck(Defaults.MaxTokensStubText, Some(0)).isDefined, true)
-    assertEquals(DelegateTerminal.deterministicPrecheck("", Some(2)), None, "tools were called ⇒ not an empty burn")
-    assertEquals(DelegateTerminal.deterministicPrecheck("", None), None, "uncounted ⇒ precheck skipped")
-    assertEquals(
-      DelegateTerminal.deterministicPrecheck("done", Some(0)),
-      None,
-      "real text ⇒ judge's input, not the precheck's"
-    )
-    // 判词行措辞（作者令原文形态）
-    assertEquals(DelegateTerminal.verdictLineCompleted(unjudged = false), "\n\n[delegate-judge] verdict: completed.")
-    assertEquals(
-      DelegateTerminal.verdictLineCompleted(unjudged = true),
-      "\n\n[delegate-judge] verdict: completed (unjudged — judge unavailable)."
-    )
   }
 
 end DelegateTerminalPrecheckSpec

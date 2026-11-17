@@ -55,6 +55,7 @@ object ModelRoles:
   val DispatcherWire = "dispatcher"
   val NodeWire = "node"
   val SubagentWire = "subagent"
+  val SmallLlmWire = "small-llm"
 
   /**
    * (wire, 中文标签, sidecar 槽名)。槽名 = agents/ 目录名（wire 与槽名解耦：main 的槽是 Nebula）。
@@ -74,7 +75,8 @@ object ModelRoles:
     (KernelWire, "kernel", KernelWire),
     (DispatcherWire, "dispatcher", nebflow.core.SchemePolicy.DispatcherName),
     (NodeWire, "node", NodeWire),
-    (SubagentWire, "subagent", SubagentWire)
+    (SubagentWire, "subagent", SubagentWire),
+    (SmallLlmWire, "通用小 LLM", SmallLlmWire)
   )
 
   /** 该名字是否为可配置的模型槽（REST GET/PUT /agents/:name/model 的合法面）。 */
@@ -97,7 +99,7 @@ object ModelRoles:
    * 该名字是否为**虚拟**槽（只有 model sidecar、没有 agent 实体——EntityLoader 存在性
    * 闸对它必须跳过）：kernel / node / subagent 三个。
    */
-  val VirtualSlots: Set[String] = Set(KernelWire, NodeWire, SubagentWire)
+  val VirtualSlots: Set[String] = Set(KernelWire, NodeWire, SubagentWire, SmallLlmWire)
 
   def isVirtualSlot(name: String): Boolean = VirtualSlots.contains(name)
 
@@ -133,6 +135,24 @@ object ModelRoles:
       }
       .filter(_.nonEmpty)
     wire.flatMap(w => Slots.find(_._1 == w).map(_._3))
+  end slotOfSessionId
+
+  /**
+   * Slot whose chain edit governs a session's explicit model pin; `None` means the pin
+   * cannot be attributed to a category, so no category edit may clear it.
+   *
+   * The five request-time families come from [[slotOfSessionId]]. An ordinary main
+   * conversation (any id outside the background families, see
+   * [[nebflow.shared.SessionScope.isMainSession]]) belongs to the main slot: the Nebula
+   * chain is its base chain, even though [[slotOfSessionId]] leaves it unclassified on
+   * purpose for request resolution. Background families without a slot (`subtask-`,
+   * `subagent-`, `workflow-`, `external-`) and blank ids stay `None`.
+   */
+  def pinOwnerSlot(sessionId: String): Option[String] =
+    val id = sessionId.trim
+    slotOfSessionId(Some(id)).orElse(
+      Option.when(nebflow.shared.SessionScope.isMainSession(id))(SchemePolicy.NebulaName)
+    )
 
   /** 类别槽自身的链（槽 sidecar 现读；空/未配置 = None ⇒ 回落）。 */
   def ownChainOfSlot(slot: String): Option[AgentModelConfig] =

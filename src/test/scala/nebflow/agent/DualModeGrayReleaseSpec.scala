@@ -2,7 +2,6 @@ package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
-import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.AgentDef
 import nebflow.core.delegate.{DelegateRegistry, DualModeConfig, ModeDecision, ModeLeg, ModeParam}
@@ -17,8 +16,7 @@ import nebflow.shared.PathUtil
  *
  *  - GR1 记录里的 mode 是**权威读面**：不再有闸门把盘上的 mode 藏起来。
  *  - GR2 出厂缺省 = 确定性 kernel（不填 `mode` ⇒ kernel，零模型调用）。
- *  - GR3 `dispatcher` 全链：记录落盘 ⇒ modeFaceOf 读回 ⇒ 挂载面分叉（Subagent
- *    摘除）⇒ 工具内第二保险拒。
+ *  - GR3 dispatcher: persisted mode exposes Subagent and preserves prompt validation.
  *  - GR4 `kernel` 全链：编排面整体退场。
  *  - GR5 **分配器不存在**：`auto` 在参数解析点显式报错，任何调用都不可能被分配器
  *    截获（旧的「分配器从未被问」改钉「分配器已不存在」）。
@@ -99,22 +97,22 @@ class DualModeGrayReleaseSpec extends FunSuite:
     )
     val subagentCall =
       SubagentTool
-        .call(JsonObject("prompt" -> "recon".asJson), ToolContext(projectRoot = tmp.toString, sessionId = Some(id)))
+        .call(JsonObject.empty, ToolContext(projectRoot = tmp.toString, sessionId = Some(id)))
         .unsafeRunSync()
     (face, subagentCall)
 
-  test("GR3 全链形态一（dispatcher）：参数给 dispatcher ⇒ 读面 ⇒ 面 fork ⇒ Subagent 工具内拒") {
+  test("GR3 persisted dispatcher exposes Subagent and reaches prompt validation") {
     val (face, subagentCall) =
       fullChain(ModeDecision(DualModeConfig.ModeDispatcher, ModeLeg.Param, "explicit mode parameter"))
-    assert(!face.contains("Subagent"), "dispatcher face strips Subagent (mount face)")
+    assert(face.contains("Subagent"), "dispatcher face includes read-only reconnaissance")
     assert(face.contains("ChainWrite"), "dispatcher keeps the orchestration face (ChainWrite)")
     assert(
       !face.contains("AgentFlow"),
       "dispatcher must not carry AgentFlow — the tool is retired (tool-face-agentflow-retire 批 2026-11-05)"
     )
     assert(
-      subagentCall.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
-      s"the tool-internal second guard rejects the escaped call: $subagentCall"
+      subagentCall.left.exists(_.message.startsWith("Missing required parameter: prompt")),
+      s"dispatcher calls must reach normal prompt validation: $subagentCall"
     )
   }
 

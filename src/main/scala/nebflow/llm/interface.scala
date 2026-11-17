@@ -552,8 +552,8 @@ object LlmInterface extends LlmRuntime:
            * deepMerge 的 per-request `effort` 档（ask 会话思考低档腿）——键缺席 =
            * 无低档诉求，三层继承语义不变。
            */
-          def resolveThinkingFor(req: LlmRequest, candidate: ModelCandidate): Option[ResolvedThinking] =
-            req.thinking.map { t =>
+          def prepareThinkingFor(req: LlmRequest, candidate: ModelCandidate): (Option[io.circe.Json], Option[ResolvedThinking]) =
+            val prepared = req.thinking.map { t =>
               val global = nebflow.shared.ThinkingConfig(
                 enabled = t.hcursor.get[String]("type").toOption.contains("enabled"),
                 budgetTokens = t.hcursor
@@ -563,7 +563,8 @@ object LlmInterface extends LlmRuntime:
                 // ask 思考低档腿（2026-10-31 换装批）：请求构造点（AgentSessionExecution
                 // askThinkingJson）为 ask 会话 deepMerge 的 per-request effort 档——
                 // 键缺席（一切非 ask 会话）⇒ None，原三层继承语义逐字节不变。
-                effort = t.hcursor.get[nebflow.shared.ThinkingEffort]("effort").toOption
+                effort = t.hcursor.get[nebflow.shared.ThinkingEffort]("effort").toOption,
+                clearThinking = t.hcursor.get[Boolean]("clearThinking").toOption
               )
               val resolved = nebflow.shared.ThinkingMode.resolveEffective(
                 candidate.thinking,
@@ -573,8 +574,16 @@ object LlmInterface extends LlmRuntime:
               val kind = candidate.thinkingKind
                 .orElse(candidate.provider.thinkingKind)
                 .getOrElse(nebflow.shared.ThinkingFamily.forModel(candidate.model))
-              ResolvedThinking(kind, resolved.enabled, resolved.effort, resolved.clearThinking)
+              val cap = req.subagentThinkingBudgetCap.fold(Defaults.MaxThinkingBudget)(math.min(_, Defaults.MaxThinkingBudget))
+              val capped = math.min(resolved.budgetTokens, cap)
+              if capped != resolved.budgetTokens then
+                NebflowLogger.forName("nebflow.llm.thinking").warnSync(
+                  s"thinking budget clamped: provider=${candidate.providerId} model=${candidate.model} requested=${resolved.budgetTokens} effective=$capped"
+                )
+              val carrier = if t.isNull then t else t.deepMerge(io.circe.Json.obj("budget_tokens" -> io.circe.Json.fromInt(capped)))
+              (carrier, ResolvedThinking(kind, resolved.enabled, resolved.effort, resolved.clearThinking))
             }
+            (prepared.map(_._1), prepared.map(_._2))
 
           /**
            * 候选账本（缺陷批 2026-11-05，作者报障「fallback 队列里明明有可用模型，
@@ -625,11 +634,9 @@ object LlmInterface extends LlmRuntime:
                 // 终局判定需要完整受限清单——链出口先滤会把受限信息丢成「空链」，
                 // 流面就会落进 120s 全灭闸等待而非带原因快失败。
                 regCandidates <- registry.getCandidatesForAgentUnfiltered(req.agentModel)
-                authorizedOverride = overrides.get(req.sessionId).filter(o =>
-                  regCandidates.exists(c => c.providerId == o.providerId && c.model == o.model)
-                ).toList
-                candidates = authorizedOverride ++ regCandidates
-                  .filterNot(c => authorizedOverride.exists(o => o.providerId == c.providerId && o.model == c.model))
+                // An explicit session choice is the entire chain, not a suggestion
+                // to prepend to the role model. Failure must not switch models.
+                candidates = overrides.get(req.sessionId).fold(regCandidates)(List(_))
                 // #33: drop stale session overrides whose provider was removed
                 // by a config hot-reload — graceful skip, never "Unknown provider".
                 // 缺陷批 2026-11-05：带原因版本——被剔候选进账本（不静默消失）。
@@ -681,24 +688,7 @@ object LlmInterface extends LlmRuntime:
                 result <- Fallback.tryProviderWithFallback[AdapterResponse](
                   up,
                   candidate =>
-                    val cappedThinking = req.thinking.map { t =>                      t.hcursor.downField("budget_tokens").as[Int] match
-                        // Clamp at the internal ceiling (maxcfg batch 2026-09-16): the budget
-                        // no longer follows the removed per-model `maxTokens` config — the old
-                        // `maxTokens / 2` clamp cut "high" thinking (32768) to 8192 with the
-                        // default config, which OpenAiAdapter.budgetToEffort then read as the
-                        // "medium" effort class. Defaults.MaxThinkingBudget equals the highest
-                        // budget the product can produce, so no reachable configuration is
-                        // clamped; the clamp still bounds legacy / hand-edited values (the
-                        // original reason it exists: providers such as zhipu/glm crash when
-                        // budget_tokens exceeds their limit).
-                        case Right(budget) if budget > Defaults.MaxThinkingBudget =>
-                          t.deepMerge(
-                            io.circe.Json.obj(
-                              "budget_tokens" -> io.circe.Json.fromInt(Defaults.MaxThinkingBudget)
-                            )
-                          )
-                        case _ => t
-                    }
+                    val (cappedThinking, resolvedThinking) = prepareThinkingFor(req, candidate)
                     // visionfix (甲): no pre-send rewriting. Images are sent
                     // verbatim on every candidate — whether the endpoint accepts
                     // them is decided by the provider, not by a local heuristic.
@@ -721,7 +711,7 @@ object LlmInterface extends LlmRuntime:
                           // thinking-config 批（2026-10-28）：按候选解析思考语义
                           // （model > provider > 全局逐字段就近 + 能力类显式优先），
                           // adapter 据此走 wire 翻译表。
-                          thinkingResolved = resolveThinkingFor(req, candidate),
+                          thinkingResolved = resolvedThinking,
                           // cache-warmup 批（2026-11-06）：REQUEST-ONLY 提醒段随行，
                           // 适配器排在持久历史断点之后（CachePrefixAssemblySpec 契约）。
                           requestOnlyContext = req.requestOnlyContext
@@ -854,11 +844,8 @@ object LlmInterface extends LlmRuntime:
                         // 全受限终局判定需要完整受限清单——链出口先滤会把受限信息
                         // 丢成「空链」，流面就会落进 120s 全灭闸等待而非带原因快失败。
                         regCandidates <- registry.getCandidatesForAgentUnfiltered(req.agentModel)
-                        authorizedOverride = overrides.get(req.sessionId).filter(o =>
-                          regCandidates.exists(c => c.providerId == o.providerId && c.model == o.model)
-                        ).toList
-                        candidates = authorizedOverride ++ regCandidates
-                          .filterNot(c => authorizedOverride.exists(o => o.providerId == c.providerId && o.model == c.model))
+                        // A manual session choice replaces the role chain entirely.
+                        candidates = overrides.get(req.sessionId).fold(regCandidates)(List(_))
                         // #33: same graceful skip as the non-streaming path.
                         // 缺陷批 2026-11-05：带原因版本（进候选账本）。
                         knownRes <- registry.filterKnownProvidersDetailed(candidates)
@@ -1105,16 +1092,7 @@ object LlmInterface extends LlmRuntime:
                                   // still bounds legacy / hand-edited values (its original
                                   // purpose: providers such as zhipu/glm crash when budget_tokens
                                   // exceeds their limit).
-                                  val cappedThinking = req.thinking.map { t =>
-                                    t.hcursor.downField("budget_tokens").as[Int] match
-                                      case Right(budget) if budget > Defaults.MaxThinkingBudget =>
-                                        t.deepMerge(
-                                          io.circe.Json.obj(
-                                            "budget_tokens" -> io.circe.Json.fromInt(Defaults.MaxThinkingBudget)
-                                          )
-                                        )
-                                      case _ => t
-                                  }
+                                  val (cappedThinking, resolvedThinking) = prepareThinkingFor(req, candidate)
                                   // Hard-recovery P1/P6 (2026-09-07): per-attempt transport
                                   // (per-request HttpClient, 设计 D-1 方案 A) + deterministic
                                   // RecoverableAbort mapping. abortedRef flips BEFORE the client
@@ -1164,7 +1142,7 @@ object LlmInterface extends LlmRuntime:
                                               contextWindow = Some(candidate.contextWindow),
                                               // thinking-config 批（2026-10-28）：同非流面——
                                               // 按候选解析思考语义（wire 翻译表单点消费）。
-                                              thinkingResolved = resolveThinkingFor(req, candidate),
+                                              thinkingResolved = resolvedThinking,
                                               // cache-warmup 批（2026-11-06）：同非流面——
                                               // REQUEST-ONLY 提醒段随行（持久历史断点之后上线）。
                                               requestOnlyContext = req.requestOnlyContext,
@@ -1200,6 +1178,13 @@ object LlmInterface extends LlmRuntime:
                                       )
                                       .evalTap { chunk =>
                                         chunk match
+                                          // Preserve blank fragments without letting a blank OpenAI response win.
+                                          case StreamChunk.TextDelta(delta)
+                                              if candidate.provider.protocol == LlmProtocol.OpenAI && delta.trim.isEmpty =>
+                                            IO.unit
+                                          case StreamChunk.ThinkingDelta(delta)
+                                              if candidate.provider.protocol == LlmProtocol.OpenAI && delta.trim.isEmpty =>
+                                            IO.unit
                                           case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) |
                                               StreamChunk.ThinkingDelta(_) =>
                                             // 修 2026-10-21 「恢复不回绿」腿②：调用成功即清除。

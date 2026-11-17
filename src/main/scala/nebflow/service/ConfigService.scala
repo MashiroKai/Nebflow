@@ -8,7 +8,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
-import nebflow.shared.{Config, ImageGenConfig, JevConfig, PathUtil}
+import nebflow.shared.{Config, ImageGenConfig, PathUtil}
 
 object ConfigService:
 
@@ -118,7 +118,9 @@ object ConfigService:
       .flatMap(_.hcursor.downField("llm").downField("providers").as[Map[String, Json]].toOption)
       .getOrElse(Map.empty[String, Json])
     Json.obj("providers" -> Json.fromFields(providers.flatMap { case (id, p) =>
-      p.hcursor.downField("apiKey").as[String].toOption.filter(_.nonEmpty).map(id -> Json.fromString(_))
+      p.hcursor.downField("apiKey").as[String].toOption.filter(_.nonEmpty).map { key =>
+        id -> Json.fromString(nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, key, "provider-settings"))
+      }
     }))
   }
 
@@ -137,6 +139,37 @@ object ConfigService:
     //     stored key. Round-trip closed by construction.
     if os.exists(configPath) then maskSecrets(os.read(configPath)) else "{}"
   }
+
+  /** Convert provider keys before the final configuration write. */
+  private[nebflow] def persistProviderCredentials(json: Json): Json =
+    json.mapObject { root =>
+      root("llm").flatMap(_.asObject) match
+        case None => root
+        case Some(llm) =>
+          llm("providers").flatMap(_.asObject) match
+            case None => root
+            case Some(providers) =>
+              val updated = JsonObject.fromIterable(providers.toIterable.map { case (id, provider) =>
+                id -> provider.mapObject { obj =>
+                  obj("apiKey").flatMap(_.asString) match
+                    case Some(value) => obj.add("apiKey", Json.fromString(nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value)))
+                    case None => obj
+                }
+              })
+              root.add("llm", Json.fromJsonObject(llm.add("providers", Json.fromJsonObject(updated))))
+    }
+
+  private[nebflow] def persistSearchCredentials(json: Json): Json =
+    json.mapObject { root =>
+      root("search").flatMap(_.asObject) match
+        case None => root
+        case Some(search) =>
+          val secured = search("apiKey").flatMap(_.asString) match
+            case Some(value) => search.add("apiKey", Json.fromString(
+              nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value)))
+            case None => search
+          root.add("search", Json.fromJsonObject(secured))
+    }
 
   /** Validate config JSON — returns list of errors. Empty list means valid. */
   def validateConfig(jsonStr: String): List[String] =
@@ -245,7 +278,9 @@ object ConfigService:
                 // provider apiKeys in cleartext — the file lands 0600 instead
                 // of the umask default 0644 (legacy files converge on their
                 // next save; no migration script).
-                AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), merged)
+                val persisted = persistSearchCredentials(persistProviderCredentials(
+                  parse(merged).fold(_ => throw new IllegalArgumentException("Invalid merged configuration"), identity)))
+                AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), persisted.spaces2)
               }
               .attempt
               .flatMap {
@@ -500,91 +535,10 @@ object ConfigService:
   private val sensitiveKeyPattern = "(?i)(api[_-]?key|secret|app[_-]?secret|encrypt[_-]?key|token|password)".r
 
   /**
-   * 定向写顶层 `jev` 节（JeV 决策分配面，Face A / P1-A3）。
-   *
-   * 形态照 [[setLlmLogEnabled]]：整体包在 `writeLocked` 内与其它
-   * read-modify-write 写者串行；只覆写调用方显式给出的键（**`None` 的键原样
-   * 保留**，本节无其它写者）；写盘走既有 [[nebflow.core.AtomicJson]]；失败
-   * **上浮**（fail-loud）。
-   *
-   * 🔴 凭据纪律：`keyRef` 是 secrets 目录里的**名**（指针），**不是**凭据值。
-   * 故本条**允许**携带 `keyRef`；若将来本面真的收值型凭据键，须先过
-   * `sensitiveKeyPattern` 遮蔽与 `"***"` 保留规则（见 [[mergeConfig]]），
-   * 🔴 本函数当前**不**接受值型凭据（无 `apiKey` 入参，形态上不可表达）。
-   *
-   * @param values
-   *   键名 → JSON 值（值必须已是 JSON；`None` 键不动）。调用方只能给
-   *   [[JEV_WRITABLE_KEYS]] 里的键，越界键被拒（防错键静默写入）。
-   */
-  def setJevSection(values: Map[String, Json]): IO[Either[String, Unit]] =
-    val unknown = values.keySet.diff(JEV_WRITABLE_KEYS.toSet)
-    val valueBearing = values.keySet.filter(jevKeyIsValueBearing)
-    if unknown.nonEmpty then
-      IO.pure(Left(s"jev section write refused — unknown key(s): ${unknown.toList.sorted.mkString(", ")}"))
-    else if valueBearing.nonEmpty then
-      // 🔴 本面不收凭据**值**（契约 §C.6）：值型键即便混进白名单也拒写。
-      IO.pure(Left(s"jev section write refused — value-bearing key(s) not allowed on this face: ${valueBearing.toList.sorted.mkString(", ")}"))
-    else if values.isEmpty then IO.pure(Left("jev section write refused — no keys given"))
-    else
-      writeLocked {
-        IO.blocking {
-          val existing = if os.exists(configPath) then os.read(configPath) else "{}"
-          parse(existing) match
-            case Left(err) =>
-              Left(s"config file unparseable — refusing to rewrite for jev update: ${err.message}")
-            case Right(parsed) =>
-              val section = parsed.hcursor
-                .downField(JEV_SECTION)
-                .focus
-                .flatMap(_.asObject)
-                .getOrElse(JsonObject.empty)
-              val updatedSection = values.foldLeft(section) { case (acc, (k, v)) => acc.add(k, v) }
-              val updated = parsed.mapObject(_.add(JEV_SECTION, Json.fromJsonObject(updatedSection)))
-              AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
-              Right(())
-        }
-      }
-    end if
-  end setJevSection
-
-  /** 顶层节名（写侧单点，避免字符串散落）。 */
-  private val JEV_SECTION = "jev"
-
-  /**
-   * `jev` 节可写键白名单。
-   *
-   * 🔴 `keyRef` 在册（指针形态）；**值型凭据键一律不在册**——本白名单同时是
-   * 「本面不收凭据值」的机械表达（缺键 ⇒ 写入被拒）。
-   * 🔴 零超时（2026-10-19 作者拍板）：`timeoutMs` 已移出白名单——分配链的
-   * wall-clock 预算拆除后**不留配置位**，越界键 400（防超时位静默回归）。
-   * 🔴 `providers` 在册（jev-imagegen-align-llm 批 2026-11-02）：多 provider
-   * 事实源整块对象写入；`setJevSection` 逐键 merge 语义对它天然成立（本批零改）。
-   */
-  private val JEV_WRITABLE_KEYS: List[String] =
-    List("enabled", "provider", "endpoint", "model", "keyRef", "choiceHighBasePolicy", "providers")
-
-  /**
-   * `jev` 节**值型凭据**键的显式黑名单（jev-imagegen-align-llm 批 2026-11-02，
-   * 契约 §C.6）——白名单之外的第二道结构护栏：即便将来有人把某个值型键误加进
-   * [[JEV_WRITABLE_KEYS]]，本闸仍拒绝它落盘。命中的键名不分大小写与前后缀
-   * 变体（`apiKey`/`key`/`token`/`value`/`secret`），比较前统一小写去分隔符。
-   */
-  private val JEV_VALUE_KEY_DENYLIST: Set[String] =
-    Set("apikey", "key", "token", "value", "secret")
-
-  /** 键名归一（小写、去 `_`/`-`）——denylist 判据的唯一实现点。 */
-  private def jevKeyIsValueBearing(key: String): Boolean =
-    JEV_VALUE_KEY_DENYLIST.contains(key.toLowerCase.replaceAll("[_\\-]", ""))
-
-
-  /** 只读回程：过滤掉任何可能含凭据值的键（本面当前无此类键，作为结构性护栏）。 */
-  def jevWritableKeys: List[String] = JEV_WRITABLE_KEYS
-
-  /**
    * 定向写顶层 `embedding` 节（task-rag 批 #1227 / §Batch 7：OpenAI 兼容
-   * embeddings 端点的设置区，仿 [[setJevSection]] 先例）。
+   * embeddings 端点的设置区）。
    *
-   * 形态照 [[setJevSection]]：整体包在 `writeLocked` 内串行；只覆写调用方
+   * 形态：整体包在 `writeLocked` 内串行；只覆写调用方
    * 显式给出的键（`None` 键原样保留，本节无其它写者）；写盘走
    * [[nebflow.core.AtomicJson]]；失败上浮（fail-loud）。
    *
@@ -631,7 +585,7 @@ object ConfigService:
    * 定向写顶层 `executor` 节（executor-registry 批 2026-10-03：统一 delegate
    * 的执行器 default / disabled）。
    *
-   * 形态照 [[setJevSection]]：整体包在 `writeLocked` 内串行；只覆写调用方
+   * 形态：整体包在 `writeLocked` 内串行；只覆写调用方
    * 显式给出的键（`None` 键原样保留）；写盘走 [[nebflow.core.AtomicJson]]；
    * 失败上浮（fail-loud）。本节不收任何凭据键。
    *
@@ -677,6 +631,28 @@ object ConfigService:
       end if
     end if
   end setExecutorSection
+
+  /** Update one model under the same lock as all other config writes. */
+  def setExecutorModel(id: String, model: String): IO[Either[String, Unit]] =
+    if !Set("claude-code", "codex").contains(id) then IO.pure(Left("Executor does not support headless model selection"))
+    else if model.length > 200 || model.exists(_.isControl) || model.trim.startsWith("-") then
+      IO.pure(Left("Invalid model ID"))
+    else
+      writeLocked {
+        IO.blocking {
+          val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+          parse(existing) match
+            case Left(err) => Left(s"config file unparseable — refusing executor model update: ${err.message}")
+            case Right(parsed) =>
+              val section = parsed.hcursor.downField("executor").focus.flatMap(_.asObject).getOrElse(JsonObject.empty)
+              val models = section("models").flatMap(_.asObject).getOrElse(JsonObject.empty)
+              val value = model.trim
+              val updatedModels = if value.isEmpty then models.remove(id) else models.add(id, value.asJson)
+              val updated = parsed.mapObject(_.add("executor", Json.fromJsonObject(section.add("models", Json.fromJsonObject(updatedModels)))))
+              AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+              Right(())
+        }
+      }
 
   /** 顶层节名（写侧单点，避免字符串散落）。 */
   private val EXECUTOR_SECTION = "executor"
@@ -737,8 +713,8 @@ object ConfigService:
 
   /**
    * 定向写顶层 `imagegen` 节（**整节替换**——面板是本节唯一写者，每次提交
-   * 全量目标形态；缺键=从节里消失，无「省略=保留」歧义）。形态照
-   * [[setJevSection]]：整体包在 `writeLocked` 内串行；写盘走
+   * 全量目标形态；缺键=从节里消失，无「省略=保留」歧义）。形态：整体包在
+   * `writeLocked` 内串行；写盘走
    * [[nebflow.core.AtomicJson]] 限权形态（0600）；失败上浮（fail-loud）。
    * 调用方必须先过 [[validateImagegenSection]]（本函数重复校验，双保险）。
    */
@@ -767,7 +743,7 @@ object ConfigService:
    * 生图设置面状态投影（GET /api/config/imagegen 的载荷；面板两形态的唯一
    * 数据源）。`compiledIn` = 编译期 seal 常量（功能开放批 2026-10-30 起缺省
    * true——面板据此显示正常配置面；显式 `STAND_IMAGEGEN=0` 构建恒 false =
-   * 「未编入」提示位）；配置段热读现取（JevSettings 同款口径）；`keyConfigured`
+   * 「未编入」提示位）；配置段热读现取；`keyConfigured`
    * 只读 secrets **在位性**（存在且非空——ImageGenService.readSecret 同判据），
    * **永不回传 key 值**。`debugLabel` 随正式开放退役为空串（线框保留，任何面
    * 不得再渲染「调试中」）。🔴 日志零 key：本投影不打日志，值的唯一可能位置是
@@ -822,73 +798,19 @@ object ConfigService:
     }
 
   /**
-   * JeV 设置面状态投影（`GET /api/config/jev` 的载荷；jev-imagegen-align-llm 批
-   * 2026-11-02 契约 §B.4）。与 [[imagegenStatus]] **逐字段同构**，理由同源：设置
-   * 面板今日读的是 `GET /api/config` 的打码串（`parsedConfig.jev`），拿不到
-   * **key 在位性**，撑不起卡片上的「已保存/未配置」徽标。
-   *
-   *  - `configured` = `jev` 节可解码即真（半节/空节亦真，与 `imagegen` 同口径）；
-   *  - `keyConfigured` / `providers.<name>.keyConfigured` = **只在位性**（secret
-   *    存在且非空，[[jevKeyConfigured]] 单点）；
-   *  - `keyRef` / `providers.<name>.keyRef` 是 secrets 目录里的**名**（指针，
-   *    非值），逐字回传——与 `GET /api/config` 的既有打码口径一致（指针不打码）。
-   *
-   * 🔴 凭据纪律：投影**永不回传 key 值**。本函数不读值（只 stat + 读空判），
-   * 不打任何日志——值的唯一可能位置是 secrets 文件本身。
-   */
-  def jevStatus: IO[Json] = IO.blocking {
-    val raw = if os.exists(configPath) then os.read(configPath) else "{}"
-    val cfg = parse(raw).toOption
-      .flatMap(_.hcursor.downField(JEV_SECTION).as[JevConfig].toOption)
-    val providers = cfg.flatMap(_.providers).getOrElse(Map.empty)
-    val providerJson = Json.fromFields(providers.map { case (name, pc) =>
-      name ->
-        Json.obj(
-          "type" -> pc.`type`.asJson,
-          "endpoint" -> pc.endpoint.asJson,
-          "model" -> pc.model.asJson,
-          "keyRef" -> pc.keyRef.asJson,
-          "keyConfigured" -> jevKeyConfigured(pc.keyRef).asJson
-        )
-    })
-    Json.obj(
-      "configured" -> cfg.isDefined.asJson,
-      "enabled" -> cfg.exists(_.isEnabled).asJson,
-      "provider" -> cfg.flatMap(_.provider).asJson,
-      "endpoint" -> cfg.flatMap(_.endpoint).asJson,
-      "model" -> cfg.flatMap(_.model).asJson,
-      "keyRef" -> cfg.flatMap(_.keyRef).asJson,
-      "keyConfigured" -> jevKeyConfigured(cfg.flatMap(_.keyRef)).asJson,
-      "providers" -> providerJson
-    )
-  }
-
-  /** JeV keyRef 指针的**在位性**判定（存在且非空即已配——与
-   * [[nebflow.llm.decision.JevSettings.readSecretToken]] 的腿关判据同源：缺件/
-   * 空串/不可读一律 false）。只 stat/读空判，不回传值、不打日志。 */
-  private def jevKeyConfigured(keyRef: Option[String]): Boolean =
-    keyRef.filter(_.trim.nonEmpty).exists { name =>
-      try
-        val p = PathUtil.dataRoot / "secrets" / name.trim
-        os.exists(p) && os.read(p).trim.nonEmpty
-      catch case _: Exception => false
-    }
-
-  /**
    * 服务商面板的**类型域 + 协议适配器**枚举投影（`GET /api/config/provider-types`
    * 的载荷；provider-add-tabs 批 2026-11-06）。
    *
-   * 为什么必须有这个端点：设置页的「服务商」面板按类型切换字段套（LLM / 生图 /
-   * JeV），面板里的类型标签与各类型的协议下拉都必须是**后端枚举的投影**，而不是
-   * 前端再拼一份字面量表（旧面正是如此：`PROVIDER_TYPES = ['cogview', …]` 与
-   * `JEV_PROVIDER_TYPES = ['typesafe-jev', 'laya']` 两处前端硬编码，与后端
-   * `ImageGenAdapters.All` / `DecisionProvider.AllIds` 是同一事实的两份拷贝）。
+   * 为什么必须有这个端点：设置页的「服务商」面板按类型切换字段套（LLM / 生图），
+   * 面板里的类型标签与各类型的协议下拉都必须是**后端枚举的投影**，而不是
+   * 前端再拼一份字面量表（旧面正是如此：`PROVIDER_TYPES = ['cogview', …]` 等
+   * 前端硬编码，与后端 `ImageGenAdapters.All` 是同一事实的两份拷贝；jev 域
+   * 连同 `adapters.jev` 已随 jev-retire 批 2026-11-16 退役）。
    *
    * 单源三处，本函数只做汇编，零新字面量：
    *   · `domains`            ← [[nebflow.shared.ProviderDomains.All]]
    *   · `adapters.llm`       ← [[nebflow.shared.LlmProtocol]]（anthropic / openai）
    *   · `adapters.imagegen`  ← `ImageGenAdapters.All.map(_.type)`
-   *   · `adapters.jev`       ← `DecisionProvider.AllIds`
    * 载荷零配置值、零密钥——纯枚举（与其它 config GET 同 owner 门槛）。
    */
   def providerTypes: IO[Json] = IO.blocking {
@@ -905,8 +827,7 @@ object ConfigService:
         "llm" -> Json.fromValues(
           List(nebflow.shared.LlmProtocol.Anthropic, nebflow.shared.LlmProtocol.OpenAI).map(p => p.name.asJson)
         ),
-        "imagegen" -> Json.fromValues(nebflow.llm.imagegen.ImageGenAdapters.All.map(a => a.`type`.asJson)),
-        "jev" -> Json.fromValues(nebflow.llm.decision.DecisionProvider.AllIds.map(_.asJson))
+        "imagegen" -> Json.fromValues(nebflow.llm.imagegen.ImageGenAdapters.All.map(a => a.`type`.asJson))
       )
     )
   }

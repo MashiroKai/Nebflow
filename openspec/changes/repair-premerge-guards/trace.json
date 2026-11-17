@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "change": "repair-premerge-guards",
+  "mappings": [
+    {
+      "requirement": "PG-REQ-001",
+      "scenario": "PG-SCN-001",
+      "implementation": [
+        "scripts/check-freeze-state.mjs",
+        "scripts/check-freeze-silence.mjs",
+        "scripts/check-prompt-single-source.mjs",
+        "scripts/tests/stale-guards.test.mjs",
+        "openspec/changes/repair-premerge-guards/proposal.md",
+        "openspec/changes/repair-premerge-guards/design.md",
+        "openspec/changes/repair-premerge-guards/tasks.md",
+        "openspec/changes/repair-premerge-guards/trace.json",
+        "openspec/changes/repair-premerge-guards/specs/premerge-guards/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "Guard updates require comparison with current production behavior in addition to isolated mutation fixtures.",
+        "steps": "Run node --test scripts/tests/stale-guards.test.mjs and each updated guard; inspect the current manual-wake, resume and deterministic-defect contracts.",
+        "expected": "Current behavior passes while negative fixtures removing guarded behavior fail, without changing prompt text or suppressing failures."
+      }
+    },
+    {
+      "requirement": "PG-REQ-001",
+      "scenario": "PG-SCN-002",
+      "implementation": ["scripts/check-local-coupling.mjs", "scripts/tests/check-local-coupling.test.mjs", "scripts/tests/test-visual-report-paths.py"],
+      "tests": [],
+      "manual": {
+        "reason": "Production local-identity scanning and executable example path resolution need both focused tests and a full source scan.",
+        "steps": "Run node --test scripts/tests/check-local-coupling.test.mjs, python3 -B scripts/tests/test-visual-report-paths.py, and the local-coupling checker.",
+        "expected": "Legitimate font and numeric identifiers pass, true local paths still fail, and examples resolve portable paths without writing to a live home."
+      }
+    },
+    {
+      "requirement": "PG-REQ-002",
+      "scenario": "PG-SCN-003",
+      "implementation": [
+        "scripts/check-scala-layers.mjs",
+        "src/main/resources/web/css/glass.css",
+        "src/main/resources/web/css/mobile-todo-apple.css",
+        "src/main/resources/web/css/split.css",
+        "src/main/resources/web/js/chatSearch.js",
+        "src/main/resources/web/js/mediaOpenRoute.js",
+        "src/main/resources/web/js/messages.js",
+        "src/test/scala/nebflow/cli/GatewayClientPortSpec.scala"
+      ],
+      "tests": [{"path": "src/test/scala/nebflow/cli/GatewayClientPortSpec.scala", "name": "readPort refuses the brand default for an unconfigured isolated root"}],
+      "manual": {
+        "reason": "Static source gates do not prove browser appearance or authorize architectural migrations.",
+        "steps": "Run the design, glass, input, type, component and Scala layering gates; compile source and inspect any remaining dependency failures without editing exemption baselines.",
+        "expected": "Repaired frontend checks pass, isolated-root refusal remains enforced, and unresolved dependencies remain reported as blockers."
+      }
+    }
+  ]
+}

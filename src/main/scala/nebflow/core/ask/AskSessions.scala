@@ -31,42 +31,32 @@ object AskSessions:
   /** 会话 id 前缀单点——工具面/提示词/spawn 判据全部经本判据，禁写第二份。 */
   val Prefix = "ask-"
 
-  /**
-   * ask 专属工具封闭枚举（ask 原生两件 + gitquery 批的只读 git 查询，机制稿
-   * §5/§7）——**仅供 ask 会话持有**：其余身份（含 agent.json 声明 / "*"）经
-   * buildAllowedToolSet 尾段 `askStripped` 按本集反剥（the tool name IS the
-   * permission boundary，TeamTaskTools 先例）。反剥集 ≠ AllowedTools：
-   * AllowedTools 还含通用只读五件（Read/Glob/Grep/WebSearch/WebFetch 是全员注册
-   * 工具，决不能进反剥集——进了会把主会话的读面一并剥掉）。
-   *
-   * GitQuery（gitquery 批 2026-11-05）进本集的判据：它是**注册面工具**（必须在
-   * ToolRegistry 在册才解析得出 schema），而注册即意味着 `agent.json` 声明 `"*"`
-   * 的身份会拿到名字——本集是唯一能把它从非 ask 身份摘掉的面。进集 = 名字封闭
-   * （`askStripped` 注释与语义同批更新）+ 工具内 `isAskSession` 身份闸 = 双保险。
-   */
+  /** Only these tools are stripped from non-Ask roles; shared lookup tools and Bash are not exclusive.
+   * canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write = 直接落盘的受限编辑
+   * （仅绑定文件；落盘即入账，canvas 原文档内联 diff 逐块审阅）。 */
   val AskExclusiveTools: Set[String] =
-    Set("message_record_search", "send_message_to_main_chat", "GitQuery")
+    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write")
 
-  /**
-   * 白名单封闭枚举（机制稿 §5 + 2026-10-31 换装批，作者 12:25 裁定）：ask 会话
-   * 唯一工具面，白名单外一律不下发。名字 = 机制稿 §5 契约名（snake_case 逐字）+
-   * Subagent 只读侦察五件（与 AgentCore.SubagentFixedTools 同源引用——同一机制面
-   * 单点，改面两侧同步）。buildAllowedToolSet 早退集与工具注册名同源。
-   *   - message_record_search —— 消息检索 CLI 封装（只读）；
-   *   - send_message_to_main_chat —— 单向信使（§7 转交）；
-   *   - GitQuery —— 只读 git 查询（gitquery 批 2026-11-05；log / show / diff /
-   *     merge-base 四件封闭枚举，零自由 argv），对账审计文末的提交号与可复跑命令；
-   *   - Read / Glob / Grep / WebSearch / WebFetch —— 只读侦察五件（2026-10-31
-   *     换装批取代 10-31 上午批的 read_file_content 单件路线——Read 的范围从
-   *     「仅绑定文件」放宽为「绑定文件及其相关文件」：同目录 / glob / grep 可达
-   *     靠工具自然探，不做硬白名单；设计 =
-   *     docs/design/20261031_124045_ask-readonly-five-tool-redesign__delegate-nebflow-
-   *     6cf27f86.zh-CN.md，原 v1 清单 superseded）。
-   * 换装批同时**退役 read_file_content**（工具对象与注册一并删除）——能删则删，
-   * Read（512KB/2000 行自带顶 + ToolResultGuard）覆盖面是其超集。
-   */
+  /** Closed Ask face, independent of Subagent and returned before any other role grants. */
   val AllowedTools: Set[String] =
-    AskExclusiveTools ++ nebflow.agent.AgentCore.SubagentFixedTools
+    AskExclusiveTools ++ Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
+
+  /** Resolve only registered bindings; other roles retain their existing cwd selection. */
+  def sessionCwd(sessionId: String, registry: Option[AskSessionRegistry]): IO[Option[String]] =
+    if !isAskSession(sessionId) then IO.pure(None)
+    else
+      registry match
+        case None => IO.raiseError(new IllegalStateException(s"ask session $sessionId: ask services unavailable"))
+        case Some(r) =>
+          r.byId(sessionId).flatMap {
+            case None => IO.raiseError(new IllegalArgumentException(s"ask session $sessionId has no file binding"))
+            case Some(binding) =>
+              IO.blocking {
+                val file = os.Path(binding.file)
+                require(isAskable(binding.file) && os.isFile(file), s"ask session $sessionId: invalid bound file")
+                Some(file / os.up).map(_.toString)
+              }
+          }
 
   /** 重组冷却档（§3.3：10 分钟）。 */
   val ReassemblyCooldownMs: Long = 10L * 60L * 1000L

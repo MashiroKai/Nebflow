@@ -13,10 +13,9 @@
 //   ③ flow-notify（dispatch-notify）对基础设施故障**不投递**（判据单点在册并被调用）；
 //   ④ 引擎自动续跑：走既有唤醒腿（UserInput / wakeFrozen）——**绝不** RestartAgent
 //      （不花 supervisor 重启预算），且有次数上限 + 递增间隔的纯函数判据；
-//   ⑤ 聚合规则：归并键 = **错误类型族**（provider 冻结告警合并窗批 2026-11-05 19:08，
-//      作者令「30分钟才提醒，而且是有一个合并窗口，把同类型的错误合并后一起汇报，不要
-//      分开汇报」）——同类型窗内一条、异类型各一条、确定性缺陷即时单独一条；provider 族
-//      由「本轮冻结 ≥30 分钟」触发，之后按 30 分钟合并窗 tumbling 滚动；
+//   ⑤ Alert planning admits deterministic defects only and groups them by parent.
+//      Provider faults never create upward alerts, even after the former horizon.
+//      Panel statistics and bounded automatic recovery remain separate from alerts.
 //   ⑥ 面板面：静默统计帧 + 「N 条已冻结（可唤醒）」文案 + 待你处理徽标在册。
 //
 // 判定面全是静态/纯函数（零端口零浏览器）：Scala 源码的闸门在场性 + 前端纯函数真跑。
@@ -76,17 +75,21 @@ function loadFreezeState() {
 
 // ── ① 监督者冻结腿：provider 故障族零投递（闸门在场）──────────────────────
 check('① 监督者冻结腿按分类闸门投递（provider 故障族零投递）', () => {
-  const src = read(BACKOFF);
+  const full = read(BACKOFF);
+  const start = full.indexOf('private def freezeAndHold(');
+  const end = full.indexOf('end freezeAndHold', start);
+  assert(start >= 0 && end > start, 'Missing bounded freezeAndHold implementation');
+  const src = full.slice(start, end).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   assert(/FreezeNotice\.tierOfReason/.test(src), 'freezeAndHold 必须走分类单点 FreezeNotice.tierOfReason');
   assert(/val quiet\s*=\s*(nebflow\.shared\.)?Defaults\.DelegateFreezeSilence/.test(src), '静默闸（val quiet）必须在场');
   assert(/if quiet then/.test(src), '投递必须包在 `if quiet then` 的分支里（静默 ⇒ 不投）');
   const quietIdx = src.indexOf('if quiet then');
+  const elseIdx = src.indexOf('else', quietIdx);
   const deliverIdx = src.indexOf('MailboxProducer', quietIdx);
-  assert(deliverIdx > quietIdx, 'MailboxProducer 投递必须位于 quiet 闸门之后');
-  assert(
-    src.indexOf('MailboxProducer', 0) >= quietIdx,
-    '冻结腿里不得出现闸门之外的 MailboxProducer 调用'
-  );
+  assert(elseIdx > quietIdx && deliverIdx > elseIdx, 'Frozen receipt delivery must remain in the nonquiet branch');
+  assert(!/MailboxProducer|\.deliver\(/.test(src.slice(quietIdx, elseIdx)), 'Quiet freezes must never deliver mail');
+  assert((src.match(/MailboxProducer/g) || []).length === 1, 'freezeAndHold must have exactly one guarded mailbox delivery');
+  assert(src.includes('kind = "delegate-frozen"'), 'The guarded delivery must be the frozen receipt');
   return 'quiet 闸门在场，投递只在闸门外分支';
 });
 
@@ -124,7 +127,13 @@ check('④ 自动续跑走既有唤醒腿（UserInput / wakeFrozen），绝不 R
   // 只判**调用**（注释里说明「绝不发 RestartAgent」是允许的）。
   assert(!/AgentCommand\.RestartAgent/.test(sweep), '自动续跑腿里不得发 RestartAgent（会花 supervisor 重启预算）');
   const leg = read(WAKE_LEG);
-  assert(/AgentCommand\.UserInput\(/.test(leg), 'live 腿 = UserInput 注入');
+  assert(/live\.ref ! nebflow\.core\.ResumeHandoff\.userInput\(/.test(leg), 'Live recovery must delegate command construction to ResumeHandoff.userInput');
+  const handoff = read(RUBY(join('core', 'ResumeHandoff.scala')));
+  const command = handoff.slice(handoff.indexOf('def userInput('), handoff.indexOf('def describe('));
+  assert(/\): AgentCommand\.UserInput =\s*AgentCommand\.UserInput\(/.test(command), 'The handoff must construct UserInput');
+  for (const field of ['text = p.injectText', 'blocks = p.injectBlocks', 'clientMessageId = clientMessageId', 'fromUser = false']) {
+    assert(command.includes(field), `Handoff command must preserve ${field}`);
+  }
   assert(/clientMessageId = Some\(s"frozen-wake:/.test(leg), '唤醒必须带幂等键 clientMessageId');
   assert(/DelegateRevival\s*\n?\s*\.wakeFrozen\(/.test(leg) || /wakeFrozen\(/.test(leg),
     '不 live 腿 = wakeFrozen 同 id 复活');
@@ -143,7 +152,7 @@ check('④ 续跑次数上限 + 递增间隔是纯函数判据（60s/120s/240s�
 });
 
 // ── ⑤ 聚合规则：同类型一条 + 只有需人处理才发 + 合并窗滚动 ─────────────────
-check('⑤ 聚合规则：归并键 = 错误类型族；同类型一条、异类型各一条、缺陷即时', () => {
+check('⑤ alert planning: deterministic defects only; provider faults remain silent', () => {
   const notice = read(NOTICE);
   // 归并键是**类型**（不是父会话、不是 id 集：id 集键会让每多冻一条就多发一条）。
   assert(/freeze-defect:\$parentSessionId:/.test(notice),
@@ -155,14 +164,21 @@ check('⑤ 聚合规则：归并键 = 错误类型族；同类型一条、异类
   assert(/def planAlerts\(d: Digest\): List\[Alert\]/.test(notice), 'planAlerts 纯函数必须在场');
   assert(/i\.tier == Tier\.Escalate \|\| familyOfItem\(i\) == DeterministicFamily/.test(notice),
     '缺陷腿 = 确定性缺陷（含正文判为缺陷的静默条）——即时、不受时限与合并窗约束');
-  assert(/escalateDue\(i\.delegateId, i\.frozenSince, d\.now\)/.test(notice), 'provider 腿的唯一升级判据 = 本轮冻结时限');
-  assert(/groupBy\(familyOfItem\)/.test(notice), '必须按错误类型族归并（同类型合并成一条）');
+  const start = notice.indexOf('def planAlerts(d: Digest): List[Alert]');
+  const end = notice.indexOf('end planAlerts', start);
+  assert(start >= 0 && end > start, 'Missing bounded alert planner');
+  const planner = notice.slice(start, end).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  assert(/d\.items\s*\.filter\(i => i\.tier == Tier\.Escalate \|\| familyOfItem\(i\) == DeterministicFamily\)\s*\.groupBy\(_\.parentSessionId\)/.test(planner),
+    'Planner must filter deterministic defects before grouping by parent');
+  assert(/Alert\(\s*parent,\s*DeterministicFamily,\s*items,/.test(planner), 'Planner may only construct deterministic alerts');
+  assert(!/escalateDue|providerAlerts|\+\+|:::/.test(planner), 'Provider faults must not enter the alert plan at any age');
+  assert((planner.match(/Alert\(/g) || []).length === 1, 'Planner must have exactly one deterministic alert constructor');
   // 窗口参数与滚动。
   assert(/def claimAlert\(key: String, now: Long, windowMs: Long/.test(notice), 'claimAlert 必须可带窗口（按类型冷却）');
   assert(/Defaults\.DelegateFreezeDigestMergeWindowMs/.test(notice), 'provider 族冷却读合并窗参数（可配，缺省 30 分钟）');
   assert(/def rollWindow\(/.test(notice), '提交后必须滚动窗口（tumbling），否则要么刷屏要么永不重发');
   assert(/def trackWave\(/.test(notice), '窗口台账必须在场（会话数/跨度/已恢复读数的来源）');
-  return '类型单键 + 缺陷即时腿 + 时限判据 + tumbling 滚动';
+  return 'Deterministic defects aggregate immediately by parent; provider faults never create alerts';
 });
 
 check('⑤ 告警腿读全量在冻集（时限 30 分钟与面板 10 分钟波窗不许错配）', () => {

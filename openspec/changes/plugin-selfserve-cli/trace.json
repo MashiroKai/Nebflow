@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "change": "plugin-selfserve-cli",
+  "mappings": [
+    {"requirement": "PLUGIN-SELFSERVE-REQ-001", "scenario": "PLUGIN-SELFSERVE-SCN-001", "implementation": ["tools/stand-plugins"], "tests": [{"path": "tests/stand_plugins_cli_test.py", "name": "test_list_json_shape"}, {"path": "tests/stand_plugins_cli_test.py", "name": "test_mounts_json_shape"}, {"path": "tests/stand_plugins_cli_test.py", "name": "test_search_text_no_hits"}]},
+    {"requirement": "PLUGIN-SELFSERVE-REQ-002", "scenario": "PLUGIN-SELFSERVE-SCN-002", "implementation": ["tools/stand-plugins"], "tests": [{"path": "tests/stand_plugins_install_test.py", "name": "test_install_backup_and_rollback"}]},
+    {"requirement": "PLUGIN-SELFSERVE-REQ-002", "scenario": "PLUGIN-SELFSERVE-SCN-003", "implementation": ["tools/stand-plugins"], "tests": [{"path": "tests/stand_plugins_install_test.py", "name": "test_invalid_lists_missing_and_writes_nothing"}]},
+    {"requirement": "PLUGIN-SELFSERVE-REQ-002", "scenario": "PLUGIN-SELFSERVE-SCN-004", "implementation": ["tools/stand-plugins"], "tests": [{"path": "tests/stand_plugins_install_test.py", "name": "test_dry_run_no_writes"}]},
+    {"requirement": "PLUGIN-SELFSERVE-REQ-002", "scenario": "PLUGIN-SELFSERVE-SCN-005", "implementation": ["tools/stand-plugins"], "tests": [{"path": "tests/stand_plugins_install_test.py", "name": "test_reject_path_traversal_and_symlinks"}]}
+  ]
+}

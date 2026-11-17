@@ -171,10 +171,10 @@ object DetachedApply:
           .filter(p => os.exists(os.Path(p)))
     )
 
-  /** 安装根 = launcher 所在目录（Mac: ~/.stand/bin 指针布局；KAI: AppData 扁平布局）。 */
+  /** 安装根 = launcher 所在目录（Mac: ~/.stand/bin 指针布局；Windows: AppData 扁平布局）。 */
   def installDirOf(launcher: String): os.Path = os.Path(launcher) / os.up
 
-  /** 布局判别：目录含 current-version 指针 → Pointer；否则扁平 winsort（KAI 现状）。 */
+  /** 布局判别：目录含 current-version 指针 → Pointer；否则扁平 winsort（Windows 现状）。 */
   def detectLayout(installDir: os.Path): Layout =
     if os.exists(installDir / "current-version") then Layout.Pointer else Layout.WinsortFlat
 

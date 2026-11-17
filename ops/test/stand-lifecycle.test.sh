@@ -422,68 +422,76 @@ else
     assert_rc "stand-jdk check rc (absent)" 1 "$RC"
 fi
 
-# ── 13. 横幅降级: 非 TTY → 单行纯文本, 零艺术字零 ANSI ──
-t "case 13: banner non-TTY -> single plain line, no art no ANSI"
+# The launcher must not duplicate Splash.printBanner, which owns runtime artwork.
+# The silent Java mock lets these cases reject all shell art, slogans and escapes.
+assert_banner_handoff() { # <label> <output> <port>
+    # macOS script may echo a synthetic EOF when its own stdin is not a TTY.
+    # Strip only that transport prefix; any launcher output must still fail.
+    local _output="${2#$'^D\b\b'}"
+    assert_eq "$1: no shell banner output" "" "$_output"
+    assert_eq "$1: one Java invocation" "3" "$(FAKE_LOG_LINES)"
+    assert_contains "$1: startup arguments preserved" " start --port $3" "$(< "$FAKE_LOG")"
+    assert_contains "$1: port environment preserved" "PORTS:$3|$3" "$(< "$FAKE_LOG")"
+}
+
+# ── 13. Non-TTY startup is silent until the Java runtime takes over. ──
+t "case 13: non-TTY start -> no shell banner, arguments reach Java"
 fresh_sandbox
 P13=$(pick_free_port)
-run_stand_on "$P13" start; RC=$?
-assert_rc "non-tty start rc" 0 "$RC"
-assert_contains "plain slogan line" "stand — One entry, Every agent." "$RUN_OUT"
-assert_lacks "no block art in non-TTY" "█" "$RUN_OUT"
-assert_lacks "no ANSI escape in non-TTY" "$(printf '\033[')" "$RUN_OUT"
+run_stand_on "$P13" start --port "$P13"; RC=$?
+assert_rc "non-TTY start rc" 0 "$RC"
+assert_banner_handoff "non-TTY" "$RUN_OUT" "$P13"
 
-# ── 14. 横幅徽标款: pty(TTY) + 宽终端 → 候选 A 艺术字 ──
-t "case 14: banner TTY wide (pty, cols>=80) -> candidate A art"
+# ── 14. A wide TTY must not enable launcher artwork. ──
+t "case 14: wide TTY start -> no duplicate shell banner"
 fresh_sandbox
 P14=$(pick_free_port)
 PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
-    STAND_GATEWAY_PORT="$P14" FAKE_LOG="$FAKE_LOG" STAND_BANNER_COLS=100 \
+    STAND_GATEWAY_PORT="$P14" FAKE_LOG="$FAKE_LOG" COLUMNS=100 \
     TERM=xterm-256color \
-    script -q "$SANDBOX/pty-a.txt" "$SANDBOX/bin/stand" start 2>&1)"
+    script -q "$SANDBOX/pty-wide.txt" "$SANDBOX/bin/stand" start --port "$P14" 2>&1)"
 RC=$?
-assert_rc "pty wide start rc" 0 "$RC"
-assert_contains "candidate A slogan" "One entry, Every agent." "$(cat "$SANDBOX/pty-a.txt")"
-assert_contains "candidate A block art" "███████" "$(cat "$SANDBOX/pty-a.txt")"
+assert_rc "wide TTY start rc" 0 "$RC"
+assert_banner_handoff "wide TTY" "$PTY_OUT" "$P14"
 
-# ── 15. NO_COLOR 恒胜 TTY → 单行纯文本 ──
-t "case 15: banner NO_COLOR under pty -> plain single line"
+# ── 15. NO_COLOR belongs to the runtime, not a shell fallback banner. ──
+t "case 15: NO_COLOR under TTY -> no shell banner"
 fresh_sandbox
 P15=$(pick_free_port)
 PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
-    STAND_GATEWAY_PORT="$P15" FAKE_LOG="$FAKE_LOG" NO_COLOR=1 STAND_BANNER_COLS=100 \
+    STAND_GATEWAY_PORT="$P15" FAKE_LOG="$FAKE_LOG" NO_COLOR=1 COLUMNS=100 \
     TERM=xterm-256color \
-    script -q "$SANDBOX/pty-b.txt" "$SANDBOX/bin/stand" start 2>&1)"
+    script -q "$SANDBOX/pty-no-color.txt" "$SANDBOX/bin/stand" start --port "$P15" 2>&1)"
 RC=$?
 assert_rc "NO_COLOR start rc" 0 "$RC"
-assert_contains "NO_COLOR plain slogan" "stand — One entry, Every agent." "$(cat "$SANDBOX/pty-b.txt")"
-assert_lacks "NO_COLOR kills art" "███████" "$(cat "$SANDBOX/pty-b.txt")"
+assert_banner_handoff "NO_COLOR" "$PTY_OUT" "$P15"
 
-# ── 16. 窄终端 (cols<80) → 候选 B 双行款 ──
-t "case 16: banner narrow (cols<80) -> candidate B two-line"
+# ── 16. Narrow-terminal fallback is also rendered only by the runtime. ──
+t "case 16: narrow TTY start (columns<74) -> no shell fallback banner"
 fresh_sandbox
 P16=$(pick_free_port)
 PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
-    STAND_GATEWAY_PORT="$P16" FAKE_LOG="$FAKE_LOG" STAND_BANNER_COLS=40 \
+    STAND_GATEWAY_PORT="$P16" FAKE_LOG="$FAKE_LOG" COLUMNS=40 \
     TERM=xterm-256color \
-    script -q "$SANDBOX/pty-c.txt" "$SANDBOX/bin/stand" start 2>&1)"
+    script -q "$SANDBOX/pty-narrow.txt" "$SANDBOX/bin/stand" start --port "$P16" 2>&1)"
 RC=$?
-assert_rc "narrow start rc" 0 "$RC"
-assert_contains "candidate B slogan part 1" "One entry," "$(cat "$SANDBOX/pty-c.txt")"
-assert_contains "candidate B slogan part 2" "Every agent." "$(cat "$SANDBOX/pty-c.txt")"
-assert_lacks "narrow has no wide top bar" "███████" "$(cat "$SANDBOX/pty-c.txt")"
+assert_rc "narrow TTY start rc" 0 "$RC"
+assert_banner_handoff "narrow TTY" "$PTY_OUT" "$P16"
 
-# ── 17. STAND_BANNER=C 强制单行款 (宽终端也不出艺术字) ──
-t "case 17: STAND_BANNER=C override -> single-line wordmark"
-fresh_sandbox
-P17=$(pick_free_port)
-PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
-    STAND_GATEWAY_PORT="$P17" FAKE_LOG="$FAKE_LOG" STAND_BANNER=C STAND_BANNER_COLS=100 \
-    TERM=xterm-256color \
-    script -q "$SANDBOX/pty-d.txt" "$SANDBOX/bin/stand" start 2>&1)"
-RC=$?
-assert_rc "banner C start rc" 0 "$RC"
-assert_contains "candidate C slogan" "One entry, Every agent." "$(cat "$SANDBOX/pty-d.txt")"
-assert_lacks "candidate C has no block art" "█" "$(cat "$SANDBOX/pty-d.txt")"
+# ── 17. Runtime settings and the ignored legacy switch never enable shell art. ──
+t "case 17: banner settings under CI/TTY -> no shell banner, Java handoff intact"
+for _prefix in STAND NEBFLOW; do
+    fresh_sandbox
+    P17=$(pick_free_port)
+    PTY_OUT="$(cd "$SANDBOX" && env STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        STAND_GATEWAY_PORT="$P17" FAKE_LOG="$FAKE_LOG" CI=1 COLUMNS=100 \
+        STAND_BANNER=ignored "${_prefix}_BANNER_IMAGE=osc" "${_prefix}_BANNER_THEME=light" \
+        "${_prefix}_UI_LEVEL=3" TERM=xterm-256color \
+        script -q "$SANDBOX/pty-settings.txt" "$SANDBOX/bin/stand" start --port "$P17" 2>&1)"
+    RC=$?
+    assert_rc "$_prefix settings start rc" 0 "$RC"
+    assert_banner_handoff "$_prefix settings" "$PTY_OUT" "$P17"
+done
 
 # ── 18. nebflow 品牌面: start 未命中 → 透传 java, 只钉 NEBFLOW_* (零 STAND_* 写入) ──
 t "case 18: nebflow start miss -> passthrough with NEBFLOW_* pins only (no STAND_* writes)"

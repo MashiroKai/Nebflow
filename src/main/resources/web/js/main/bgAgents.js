@@ -1,5 +1,5 @@
 // main.js 抽取(FE组件化批次七 2026-09-28):后台代理下拉族 模块(行为保持)。
-// USTC 合并移植（2026-10-10）：面板体更新为本地 delegate-ui 两级化批（C2/R6 ·
+// 内网仓合并移植（2026-10-10）：面板体更新为本地 delegate-ui 两级化批（C2/R6 ·
 // 定稿蓝本 §1.2/§2）与「修订批（用户九点②/⑤ · 2026-10-09）」语义——远端拆分时
 // 携带的旧快照面板体由本地新版整体替换（SubTask→Delegate 显示词归一、C1 过渡
 // 过滤、两级组头/子行、空态自动收起），本文件骨架（indicator/uptime/fetch/stuck
@@ -26,7 +26,9 @@ import { listDelegateRows, listDelegateChildren, getChainByTask } from '../deleg
 import { restoreDelegate, restoreAllDelegates } from '../delegateApi.js';
 // 节点子智能体可见性批（2026-11-07）：节点父的 store 子条目补拉（provider 镜像的唯一
 // 补拉口——读面仍是 delegateChainStub.listDelegateChildren 那一个）。
-import { ensureChildren } from '../delegateChainProvider.js';
+import { ensureChildren, listScopedTasks, refreshScopedTasks } from '../delegateChainProvider.js';
+import { EVENTS } from '../events.js';
+import { taskExecutionPresentation } from '../subagentRevision.js';
 // 来源链批（作者令 2026-11-01 19:23）：孤儿行来源角标升级为名字链——父不可见行的
 // 「挂在谁下面」标注读上层 delegate 名字（bgSourceChain 单点解析；解析不到回退
 // 既有类型词）。
@@ -109,8 +111,9 @@ export function updateBgAgentIndicator(targetSid, opts) {
   // dispatcher inside its keep-alive window counts zero). Same predicate as the
   // list (visibleBgAgentEntries) — the two must never disagree (see the view
   // resolution note above: count>0 with an empty dropdown was a real defect).
-  const count = bgPanelModel(sid).total;
-  if (count > 0) {
+  const model = bgPanelModel(sid);
+  const count = model.activeCount;
+  if (model.total > 0) {
     el.classList.remove('hidden');
     el.querySelector('.bgagent-count').textContent = count;
   } else {
@@ -202,6 +205,8 @@ export function bgAgentKindFromSession(sessionId) {
  *  显式停靠态（引擎 Waiting 状态 / delegateWaiting 帧）——「等合并轮提醒」的显式
  *  等待，不再貌似 Idle 完成。 */
 function bgRowState(info) {
+  const execution = taskExecutionPresentation(info);
+  if (execution) return execution.state;
   if (info.done) return 'done';
   if (info.stuck) return 'stuck';
   // 错误冻结批（2026-11-01）：**错误冻结**优先于 waiting/idle——冻结 = 就地停住
@@ -446,6 +451,9 @@ function bgRowCollapseDefault(row) {
     if (g.chainLive) return false;
     return bgHeadDefaultCollapsed(g.info || {});
   }
+  // 结构父（face C）：默认随子树态——有活跃后代 ⇒ 展开（活跃可见），全终态 ⇒ 收起
+  // （与组头终态收起同规；用户偏好仍可覆写）。
+  if (r.level === 'struct') return !!r.structAllTerminal;
   if (r.level !== 'child') return false;
   const c = r.child || {};
   if (c.type === 'store') {
@@ -763,8 +771,17 @@ function bgScopeStoreInfo(child, parentSid) {
     name: String(c.agentName || ''),
     task: String(c.description || c.prompt || ''),
     kind: String(c.source || ''),
-    status: status === 'failed' ? 'Error' : (status === 'completed' || status === 'cancelled') ? 'Idle' : 'Processing',
-    done: status === 'completed' || status === 'cancelled',
+    status: status === 'failed' || c.incomplete ? 'Error' : (status === 'completed' || status === 'cancelled') ? 'Idle' : 'Processing',
+    done: !c.incomplete && (status === 'completed' || status === 'cancelled'),
+    ...(c.executionStatus ? { frozen: false, freeze: null, waiting: null, stuck: null } : {}),
+    executionStatus: String(c.executionStatus || ''),
+    terminalReason: String(c.terminalReason || ''),
+    currentTool: c.activityLabel || c.executionStatus || null,
+    lastActivityMs: Number(c.activityAt) || 0,
+    incomplete: c.incomplete === true,
+    committedRevision: c.committedRevision,
+    runId: c.runId,
+    resultRef: c.resultRef,
     startedAt: Number(c.spawnedAt) || 0,
     retryCount: Number(c.retryCount) || 0,
     diagnostic: String(c.diagnostic || ''),
@@ -785,6 +802,13 @@ function bgTaskDiagHtml(raw) {
     + '" role="' + (emptyRun ? 'alert' : 'note')
     + '" title="' + escapeHtml(diag) + '">' + escapeHtml(diag) + '</span>';
 }
+
+/** flow-step node status → panel row state. One table for the row renderer and the active count (a dirty value
+ *  falls back to the conservative idle). */
+const BG_FLOW_NODE_STATE = {
+  pending: 'idle', running: 'active', completed: 'done',
+  failed: 'error', cancelled: 'done', blocked: 'stuck',
+};
 
 /** flow 节点状态 → 面板状态词键（ROW_STATUS 值域；既有键复用，零新键）。 */
 const BG_FLOW_WORD_KEY = {
@@ -1084,10 +1108,11 @@ function bgRowTree(rows) {
     const pk = bgTreeParentKeyOf(row);
     const cand = (pk && pk !== self) ? byKey.get(pk) : null;
     if (cand && cand !== row) {
-      if (row.level === 'top') {
+      if (row.level === 'top' || row.level === 'struct') {
         // 属主边（parentSessionId 来的父子）不受同组约束限制，跨组照挂——顶层行的
         // 父锚：root 锚（锚无组）、另一条顶层行（dispatcher → node）、合成延续组头
-        // （父行在场的情形）。作者令逐字「每一层都是上一层的缩进」。
+        // （父行在场的情形）。作者令逐字「每一层都是上一层的缩进」。face C：结构父
+        // 行（level='struct'）同款跨组挂接（嵌套 delegate 的结构父可挂另一结构父下）。
         parentOf.set(row, cand);
         continue;
       }
@@ -1342,6 +1367,7 @@ export function bgOrphanRowKeys(rows, bucketSid) {
   const wild = new Set();
   for (const row of list) {
     if (!row || row.level === 'head' || row.level === 'root') continue; // 整体行 / root 锚是根，永非野
+    if (row.level === 'struct') continue;       // 结构父（face C 标签面）是基座，永非野
     if (row.level === 'child') continue;        // 成员行的父 = 所属整体行（在行集里）
     // 三代层级批：野 ⇔ 父态判定表③（判定单点 bgTopRowParentStateOf——②态「父不在场」
     // 的三代链行在此**不算野**：它们的归置面 = 父应在位置（root 锚直下），不进野组；
@@ -1351,6 +1377,21 @@ export function bgOrphanRowKeys(rows, bucketSid) {
     if (self) wild.add(self);
   }
   return wild;
+}
+
+/**
+ * Panel state of a planned row, for the active count. A row that carries an info record uses the shared row state.
+ * Group children built from a store entry or a flow-step node carry their source object instead, so they use the
+ * state tables their own renderers use: the badge and the list never disagree about what is running.
+ * @param {any} row
+ * @returns {string} '' when the row has no state source
+ */
+function bgPlanRowState(row) {
+  if (row.info) return bgRowState(row.info);
+  const c = row.child;
+  if (c && c.type === 'store') return bgStoreChildState(String((c.child && c.child.status) || ''));
+  if (c && c.type === 'flow') return BG_FLOW_NODE_STATE[String((c.node && c.node.status) || 'pending')] || 'idle';
+  return '';
 }
 
 /**
@@ -1371,7 +1412,7 @@ export function bgOrphanRowKeys(rows, bucketSid) {
  *
  * @param {{groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>}} model
  * @param {string} [bucketSid] 桶根会话 id（root 锚合成判据 + 野判定桶根条款）
- * @returns {{items: Array<Object>, total: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
+ * @returns {{items: Array<Object>, total: number, activeCount: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
  */
 function bgRowPlan(model, bucketSid) {
   const groups = (model && model.groups) || [];
@@ -1461,6 +1502,75 @@ function bgRowPlan(model, bucketSid) {
     const k = bgRowSessionKey(r);
     if (k && !keptByKey.has(k)) keptByKey.set(k, r);
   }
+  // ── ⑦ 结构父合成（face C · 全局后台面板层级）────────────────────────────
+  // 活跃/在场后代（kept 顶层行）的 parentSessionId 指向**已注册** delegate（镜像行
+  // 在场）而父无 live 行 ⇒ 从注册行合成**结构节点**（level='struct'，标签面）：
+  //   · 身份单源 = 注册行镜像（name/title/mode/taskStatus——spawn 落盘，零臆造；
+  //     镜像缺席 ⇒ 不合成，后代走既有野组面 = 标未知而非猜）；
+  //   · 已完成后代保留：结构父的 store 子条目（completed/failed——终态子行集）
+  //     挂结构父下（与组头 Pass 3 同读口同窗）；镜像未到 ⇒ 下轮
+  //     delegate-chain-mirror-updated 重渲补齐（增量/重连同缝）；
+  //   · 不入计数（total 见下）——「父可 idle 且不计活跃数」；
+  //   · 嵌套：结构父自身的 parentSessionId（注册行透传）再指注册 delegate ⇒ 链式
+  //     合成（visited 防环，深度上限防御）。
+  const regBySidLocal = bgRegistryRowsBySid();
+  const structRows = [];
+  const structByKey = new Map();
+  const claimersByParent = new Map();
+  for (const r of kept) {
+    if (r.level !== 'top') continue;
+    const pk = bgTreeParentKeyOf(r);
+    if (!pk || pk === bgRowSessionKey(r) || pk === bucketKey) continue;
+    if (keptByKey.has(pk)) continue; // parent already visible as a real row
+    if (!claimersByParent.has(pk)) claimersByParent.set(pk, []);
+    claimersByParent.get(pk).push(r);
+  }
+  const pending = [...claimersByParent.keys()];
+  const seenStruct = new Set();
+  while (pending.length && structRows.length < 24) {
+    const pk = pending.shift();
+    if (!pk || seenStruct.has(pk)) continue;
+    const reg = regBySidLocal.get(pk) || null;
+    if (!reg) continue; // unregistered parent — wild face keeps the honest unknown
+    seenStruct.add(pk);
+    const structRow = {
+      level: 'struct',
+      id: 'bg-struct:' + pk,
+      identity: pk,
+      info: { sessionId: pk, parentSessionId: String(reg.parentSessionId || '') },
+      structRow: reg,
+      group: null,
+      claimers: claimersByParent.get(pk) || [],
+      storeChildren: [],
+    };
+    structRows.push(structRow);
+    structByKey.set(pk, structRow);
+    const grand = String(reg.parentSessionId || '').replace(/^team-/, '').trim();
+    if (grand && grand !== pk && grand !== bucketKey && !keptByKey.has(grand)) pending.push(grand);
+  }
+  // Store children of struct parents（已完成后代保留 + 补拉去重——present 集 = 行集
+  // 键 ∪ 结构父键，同一子行不双出）。
+  if (structRows.length) {
+    const present = new Set([...keptByKey.keys(), ...structByKey.keys()]);
+    for (const structRow of structRows) {
+      for (const child of listDelegateChildren(bgRowSessionKey(structRow))) {
+        const cid = String((child && child.taskId) || '');
+        if (!cid || present.has(cid)) continue;
+        present.add(cid);
+        const info = bgScopeStoreInfo(child, bgRowSessionKey(structRow));
+        const row = { level: 'top', id: cid, info, storeChild: child, orphan: null };
+        structRow.storeChildren.push(row);
+        kept.push(row); // participates in the tree below; not in keptByKey→placed loops above
+      }
+    }
+    // Terminal-ness for the collapse default: all claimers + store children terminal.
+    for (const structRow of structRows) {
+      structRow.structAllTerminal = [...structRow.claimers, ...structRow.storeChildren]
+        .every((r) => bgRowTerminal((r && r.info) || {}));
+    }
+    items.push(...structRows);
+    for (const s of structRows) placed.add(s);
+  }
   let anchorRow = null;
   if (bucketKey) {
     const hasRootChildren = kept.some((r) => r.level === 'top'
@@ -1504,11 +1614,16 @@ function bgRowPlan(model, bucketSid) {
       row.absentParent = { parentSid: String(bgTreeParentKeyOf(row) || '') };
     }
   }
-  // total = 行集长度，root 锚除外（锚是标签面行，不是行——「签 == 实际 .bg-task-row
-  // 行数」口径不破；锚子树里的行照常计入）。
+  // total = 行集长度，root 锚与结构父（face C 标签面行）除外——「签 == 实际
+  // .bg-task-row 行数」口径不破；锚/结构父子树里的行照常计入（idle 父不计活跃数）。
   let total = 0;
-  for (const row of tree.order) if (!row || row.level !== 'root') total += 1;
-  return { items: tree.order, total, tree, orphanCount: wildKeys.size };
+  let activeCount = 0;
+  for (const row of tree.order) {
+    if (!row || row.level === 'root' || row.level === 'struct') continue;
+    total += 1;
+    if (bgPlanRowState(row) === 'active') activeCount += 1;
+  }
+  return { items: tree.order, total, activeCount, tree, orphanCount: wildKeys.size };
 }
 
 /**
@@ -1519,10 +1634,20 @@ function bgRowPlan(model, bucketSid) {
  * 层级缩进批（2026-11-05 腿②）：`rows` 已是树序、`tree` 带深度/子树（折叠剪枝用）。
  *
  * @param {string} bucketSid 主会话桶 id（视图 sessionId）
- * @returns {{bgAgents: Object, entries: Array<[string, any]>, groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>, rows: Array<Object>, total: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
+ * @returns {{bgAgents: Object, entries: Array<[string, any]>, groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>, rows: Array<Object>, total: number, activeCount: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
  */
 function bgPanelModel(bucketSid) {
-  const bgAgents = (bucketSid && state.sessionBgAgents[bucketSid]) || {};
+  const bgAgents = { ...((bucketSid && state.sessionBgAgents[bucketSid]) || {}) };
+  for (const child of listScopedTasks(bucketSid)) {
+    const existing = Object.keys(bgAgents).find(key =>
+      String(bgAgents[key]?.sessionId || key).replace(/^team-/, '') === child.taskId);
+    // Durable status wins; the existing key preserves management/click routing.
+    bgAgents[existing || child.taskId] = {
+      ...(existing ? bgAgents[existing] : {}),
+      ...bgScopeStoreInfo(child, child.parentSessionId),
+      durableTask: true,
+    };
+  }
   const entries = visibleBgAgentEntries(bgAgents);
   const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, bucketSid);
   // 面板三代层级批（2026-11-06）：bucketSid 随计划下传（root 锚合成 + 野判定桶根条款）。
@@ -1531,6 +1656,7 @@ function bgPanelModel(bucketSid) {
     bgAgents, entries, groups, leftovers, orphanBy,
     rows: plan.items,
     total: plan.total,
+    activeCount: plan.activeCount,
     tree: plan.tree,
     // 野节点归置批（2026-11-05 腿③）：归置分组的行数（判定式单点结论的计数读口——
     // 渲染面据此决定要不要出组头，回归 dump 与报告读数也读它）。
@@ -1736,6 +1862,57 @@ function bgRootAnchorHtml(key, childCount, collapsed) {
   '</div>';
 }
 
+// ── Registry-backed structural parent（全局后台面板层级 face C）────────────────
+// 契约：活跃后代在场而父 delegate 无 live 行（父已终态/空闲/离场）时，父必须作为
+// **结构节点**显示——不猜标题、不隐藏文案：父的身份只来自注册行镜像
+// （DelegateRegistry.Record——spawn 落盘、跨重启存活），镜像缺席 ⇒ 不合成（后代
+// 走既有野组面，标未知而非猜）。结构节点是**标签面**：不入行集计数、不占
+// data-bg-row-total、不带 .bg-task-row（「父可 idle 且不计活跃数」的机械形态——
+// 徽标/头部计数只数真实后代行）。已完成后代（store 子条目）随结构保留展示；
+// 有限历史窗 = 镜像现读（children 按父分区，一批的子集，非全局历史）。
+
+/** Registry row status → status word key (existing keys only; '' = no word). */
+function bgStructStatusWordKey(registryRow) {
+  const task = String((registryRow && registryRow.taskStatus) || '');
+  const st = task || String((registryRow && registryRow.status) || '');
+  if (st === 'completed') return 'flowmap.done';
+  if (st === 'failed') return 'flowmap.fail';
+  if (st === 'cancelled') return 'flowmap.st.cancelled';
+  if (st === 'interrupted') return 'task.nodeInterrupted';
+  if (st === 'ready-to-merge') return 'delegate.readyToMerge';
+  if (st === 'running') return 'task.inProgressShort';
+  return '';
+}
+
+/** Structural parent label face（caret + kind badge + name + muted status word）。
+ *  Machine anchors: data-bg-struct-parent="1" + data-bg-depth；sid 全文在 title。
+ *  @param {any} row 结构父行计划项（level='struct'，row.structRow = 注册行镜像）
+ *  @param {number} childCount 子行数（0 = 不带 caret 与折叠锚）
+ *  @param {boolean} collapsed @returns {string} */
+function bgStructParentHtml(row, childCount, collapsed) {
+  const reg = (row && row.structRow) || {};
+  const sid = bgRowSessionKey(row);
+  const kind = bgDelegateExecMode(reg);
+  const kindPart = kind
+    ? '<span class="bg-task-kind">' + escapeHtml(bgDelegateBadgeWord(kind)) + '</span>'
+    : '';
+  const shortName = String(reg.name || '').trim();
+  const titleLine = bgFirstLine(reg.title || '');
+  const label = shortName || titleLine || sid;
+  const tip = [shortName, titleLine, sid].filter(Boolean).join(' · ');
+  const wordKey = bgStructStatusWordKey(reg);
+  const word = wordKey ? t(wordKey) : '';
+  return '<div class="bg-struct-parent" data-bg-struct-parent="1" data-bg-depth="0" role="presentation"' +
+    bgCollapseAttrs(childCount, collapsed) +
+    ' aria-label="' + escapeHtml(label) + '">' +
+    (Number(childCount) > 0 ? bgCaretHtml(sid, collapsed) : '') +
+    '<span class="bg-struct-parent-name" title="' + escapeHtml(tip) + '">' +
+      escapeHtml(label) + '</span>' +
+    kindPart +
+    (word ? '<span class="bg-struct-parent-state">' + escapeHtml(word) + '</span>' : '') +
+  '</div>';
+}
+
 /** 野节点行（组内一行）：复用面板行构造器（状态点/主名/状态词/来源角标全同款），
  *  只多两个归置锚——`data-bg-orphan="1"`（组内成员）与 depth=0（不进树，无缩进层）。
  *  既有「来自 …」来源角标（bgOrphanChipHtml）原样带上：**那是事实，不删**。
@@ -1816,7 +1993,8 @@ export function bgTaskRowHtml(id, info, opts = {}) {
   // （时间表/退避/探测）不写「已冻结」，只在需要人时写；状态点同款分色（自动恢复族
   // 用既有的 waiting 点，需人介入保持 frozen 点）。
   const freezeKind = rowState === 'frozen' ? freezeKindOf(info) : '';
-  const statusLabel = chainContinued
+  const execution = taskExecutionPresentation(info);
+  const statusLabel = execution ? execution.label : chainContinued
     ? t('subagents.chainRunning')
     : rowState === 'frozen'
       ? t(freezeBadgeKey(freezeKind))
@@ -2050,10 +2228,10 @@ export function bgTaskRowHtml(id, info, opts = {}) {
           + statusIcon('snowflake', 11, 'st-warn')
           + escapeHtml(labelWithDetail)
           + '</span>'
-          + '<button class="bg-task-wake" type="button" data-bg-wake="'
+          + (wakeableOf(info) ? '<button class="bg-task-wake" type="button" data-bg-wake="'
           + escapeHtml(String((info && info.sessionId) || '').replace(/^team-/, ''))
           + '" title="' + escapeHtml(t('subagents.wakeTip')) + '">'
-          + escapeHtml(t('subagents.wake')) + '</button>';
+          + escapeHtml(t('subagents.wake')) + '</button>' : '');
       }
       const kind = freezeKindOf(info);
       const whyKey = freezeReasonLabelKey(freezeReasonWire(info));
@@ -2185,7 +2363,7 @@ export function bgTaskRowHtml(id, info, opts = {}) {
     '<div class="bg-task-info">' +
       '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
         namePart +
-        bgStatusHtml(statusState, { label: statusLabel, title: chainTip, tone: statusTone }) +
+        bgStatusHtml(statusState, { label: statusLabel, title: execution?.reason || chainTip, tone: statusTone }) +
         uptimePart +
       '</div>' +
       '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' +
@@ -2287,13 +2465,16 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   const wordKey = BG_FLOW_WORD_KEY[st] || '';
   const kindWord = bgMemberKindWord({ info: { kind: String(n.kind || 'flow-step') }, sessionId: String(n.id || '') });
   // flow 投影态 → bgRowStatus 状态键（单表；脏值回落 pending/idle 保守档）。
-  const flowState = {
-    pending: 'idle', running: 'active', completed: 'done',
-    failed: 'error', cancelled: 'done', blocked: 'stuck',
-  }[st] || 'idle';
+  const flowState = BG_FLOW_NODE_STATE[st] || 'idle';
   const deps = Array.isArray(n.deps) ? n.deps.map((d) => String(d || '')).filter(Boolean) : [];
+  // DAG dependency chip (face C): execution-order edges are NOT parent-child nesting —
+  // they render as a flat chip with the ⇢ glyph + dashed underline, visually distinct
+  // from the tree rails (├─/└─) that carry the ownership hierarchy. Machine anchor
+  // data-bg-deps; tooltip lists the upstream ids in full.
   const depPart = deps.length
-    ? '<span class="bg-task-project" title="deps: ' + escapeHtml(deps.join(',')) + '">← ' + escapeHtml(deps.join(',')) + '</span>'
+    ? '<span class="bg-flow-deps" data-bg-deps="' + escapeHtml(deps.join(',')) + '" title="'
+      + escapeHtml(t('subagents.dependsOnTip', { deps: deps.join(', ') })) + '">⇢ '
+      + escapeHtml(t('subagents.dependsOn')) + ' ' + escapeHtml(deps.join(', ')) + '</span>'
     : '';
   const childCount = Number(opts.childCount) || 0;
   const collapsedNow = !!(childCount > 0 && opts.collapsed);
@@ -2336,7 +2517,8 @@ export function renderBgAgentDropdown() {
   if (!activeView) return;
   const dropdownEl = activeView.dom.bgagentDropdownEl;
   const listEl = activeView.dom.bgagentDropdownListEl;
-  if (!listEl) return;
+  const carrier = activeView.dom.bgDropdownEl || dropdownEl;
+  if (!listEl || !carrier || carrier.classList.contains('hidden')) return;
   const sid = activeView?.sessionId;
   // Flow 会话可见性批（2026-11-01）：badge/头部计数/空态/行集全部走同一模型
   // （bgPanelModel 单点 = 主桶可见行 ∪ 作用域桶链行 ∪ 延续态组头）——计数签与
@@ -2493,6 +2675,12 @@ export function renderBgAgentDropdown() {
     }
     if (row.level === 'root') {
       htmlParts.push(bgRootAnchorHtml(bgRowSessionKey(row), childCount, collapsed));
+      continue;
+    }
+    // 结构父（face C）：注册行合成的标签面行——活跃后代在场而父无 live 行时，父作为
+    // 结构节点显示（不入计数、不带 .bg-task-row；折叠走同一把缝，键 = 父会话 id）。
+    if (row.level === 'struct') {
+      htmlParts.push(bgStructParentHtml(row, childCount, collapsed));
       continue;
     }
     // 顶层行（未被认领的 leftover / 收敛落点）：层级随树走（判定表①②带真实深度锚）。
@@ -2747,6 +2935,7 @@ export function fetchActiveAgentsOnOpen() {
   if (now - lastActiveAgentsFetchAt < 1000) return;
   lastActiveAgentsFetchAt = now;
   sendWs({ type: 'getActiveAgents' });
+  refreshScopedTasks();
 }
 
 // Sub-agents panel (2026-08-25): any activity on a stuck entry clears the
@@ -2766,7 +2955,8 @@ export function clearBgStuck(msg) {
 // （帧只当触发器，零帧解读——与 delegateChainView / taskList 的同名监听同园口径）。
 // 只在合并载体开着时刷：关着不打扰（下一次打开会读到新镜像）。
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-  window.addEventListener('delegate-chain-mirror-updated', () => {
+  window.addEventListener(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED, () => {
+    updateBgAgentIndicator(null, { keepDropdownOpen: true });
     const dd = activeView && activeView.dom && activeView.dom.bgDropdownEl;
     if (dd && !dd.classList.contains('hidden')) renderBgAgentDropdown();
   });

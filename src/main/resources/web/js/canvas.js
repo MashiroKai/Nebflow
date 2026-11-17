@@ -19,6 +19,7 @@ import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
+import { deviceClientId } from './deviceIdentity.js';
 import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
 // 胶囊标签截断（作者令 2026-11-05 12:10 第④条「可辨识前缀 + 关键尾部」）：
 // 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
@@ -49,6 +50,126 @@ const LS_TABS_KEY = key('canvas_tabs');
 // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端作为权威标签存档，localStorage 仅作降级缓存。
 // 根治 Safari 无痕/多窗口清空 localStorage 导致的标签重启丢失。
 const TABS_API = '/api/canvas-tabs';
+
+function createCanvasWriterClient(transport) {
+  let role = 'reader';
+  let epoch = null;
+  let generation = 0;
+  let pendingWrite = Promise.resolve();
+  return {
+    role: () => role,
+    async refresh() {
+      const current = generation;
+      const result = await transport.query();
+      if (generation !== current || !result) return;
+      role = result.role === 'writer' && Number.isSafeInteger(result.epoch) ? 'writer' : 'reader';
+      epoch = role === 'writer' ? result.epoch : null;
+      transport.changed?.(role);
+    },
+    credentials: () => role === 'writer' ? { epoch } : null,
+    lost() { generation++; role = 'reader'; epoch = null; transport.changed?.(role, true); },
+    async claim() {
+      if (transport.canClaim && !transport.canClaim()) return;
+      generation++;
+      const result = await transport.claim();
+      if (result?.role === 'writer' && Number.isSafeInteger(result.epoch)) {
+        role = 'writer'; epoch = result.epoch; transport.changed?.(role);
+      }
+    },
+    async put(payload) {
+      if (role !== 'writer') return false;
+      const capturedEpoch = epoch;
+      const run = async () => {
+        if (role !== 'writer' || epoch !== capturedEpoch) return false;
+        const result = await transport.put(payload, capturedEpoch);
+        if (role !== 'writer' || epoch !== capturedEpoch) return false;
+        if (!result) { this.lost(); transport.failed?.(); }
+        return result;
+      };
+      const result = pendingWrite.then(run, run);
+      pendingWrite = result.catch(() => false);
+      return result;
+    },
+  };
+}
+// END CANVAS WRITER CLIENT
+
+const canvasTabInstanceId = globalThis.crypto?.randomUUID?.() || `tab-${Date.now()}-${Math.random()}`;
+const canvasIdentity = () => ({ clientId: deviceClientId(), tabInstanceId: canvasTabInstanceId });
+let writerStatusEl = null;
+let writerClaimEl = null;
+let localUnsynced = false;
+function writerChanged(role, lost = false) {
+  // Initial reader state is browsing, not an ownership loss.
+  if (lost) import('./takeoverModal.js').then(mod => {
+    if (canvasWriter.role() !== 'reader') return;
+    mod.showCanvasTakeover(async () => {
+      if (localUnsynced) {
+        if (!window.confirm('放弃未同步的本地 Canvas 标签变更并取回控制权？')) return false;
+        try { localStorage.removeItem(LS_TABS_KEY); } catch { /* storage unavailable */ }
+        localUnsynced = false;
+        try { sessionStorage.setItem('canvas-claim-after-discard', '1'); } catch { return false; }
+        window.location.reload();
+        return false;
+      }
+      await canvasWriter.claim();
+      return canvasWriter.role() === 'writer';
+    }, localUnsynced);
+  });
+  if (writerStatusEl) writerStatusEl.textContent = localUnsynced
+    ? 'Canvas：存在仅本地变更，不会自动同步。' : (role === 'writer' ? 'Canvas：可写' : 'Canvas：只读');
+  if (writerClaimEl) writerClaimEl.hidden = role === 'writer';
+  if (role !== 'writer') {
+    if (serverPersistTimer) clearTimeout(serverPersistTimer);
+    serverPersistTimer = null;
+    pendingPersistPayload = null;
+    persistDirty = false;
+  }
+}
+const writerRejectionNotices = new Set();
+function writerNotice(message, reason) {
+  if (writerStatusEl) writerStatusEl.textContent = localUnsynced ? `${message} 存在仅本地变更，不会自动同步。` : message;
+  if (reason && !writerRejectionNotices.has(reason)) {
+    writerRejectionNotices.add(reason);
+    window.__showToast?.(message, 'info');
+  }
+}
+const canvasWriter = createCanvasWriterClient({
+  changed: writerChanged,
+  canClaim: () => { if (localUnsynced) { writerNotice('请刷新后再取得控制权。'); return false; } return true; },
+  failed: () => { localUnsynced = true; writerChanged('reader'); writerNotice('Canvas 控制权已失效或保存失败，当前为只读。'); },
+  async query() {
+    try {
+      const query = new URLSearchParams(canvasIdentity());
+      const response = await fetch(`/api/canvas-writer?${query}`, { headers: { ...authHeaders() } });
+      return response.ok ? await response.json() : null;
+    } catch { return null; }
+  },
+  async claim() {
+    try {
+      const response = await fetch('/api/canvas-writer/claim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(canvasIdentity()),
+      });
+      if (!response.ok) { writerNotice('取得 Canvas 控制权失败，请重试。'); return null; }
+      return await response.json();
+    } catch { writerNotice('无法连接服务端，Canvas 保持只读。'); return null; }
+  },
+  async put(payload, epoch) {
+    try {
+      const response = await fetch(TABS_API, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ ...payload, ...canvasIdentity(), epoch }),
+      });
+      if (response.ok) return true;
+      writerNotice(response.status === 409 ? 'Canvas 控制权已失效，请重新取得。' : 'Canvas 保存失败，请重新取得控制权。', `save:${response.status}`);
+      return false;
+    } catch { writerNotice('Canvas 保存失败，已切换只读。'); return false; }
+  },
+});
+function allowCanvasMutation() {
+  return applyingLiveTabsFrame || (canvasWriter.role() === 'writer' && !localUnsynced);
+}
 // F1: 服务端 PUT 防抖计时器——openTab/closeTab/setActiveTab/pinTab 都调 persistTabs，
 // 防抖合并连续操作成一次 PUT。
 let serverPersistTimer = null;
@@ -63,7 +184,16 @@ let closeTimeout = null;
 // ── Tab state ──────────────────────────────────────────────
 // Map of tabId -> { id, title, type, paneEl, tabEl, closable }
 const tabs = new Map();
+// Reader-only browsing must not become a shared edit after a later claim.
+const readerLocalTabs = new Set();
 let activeTabId = null;
+// Legacy PUTs have no operation id: tie an acknowledgement to the exact local
+// activation generation captured by the submitted snapshot, never just its id.
+let pendingLocalActivation = null;
+let activationGeneration = 0;
+let applyingLiveTabsFrame = false;
+let lastCanvasVersion = 0;
+const persistActivationGeneration = new WeakMap();
 // Preview (temporary) tabs, one per preview group — VS Code behavior, but
 // scoped: tabs only replace a preview tab within their own group. File tabs
 // (with absPath) share the 'file' group so opening a .md still replaces a
@@ -282,7 +412,7 @@ let draggedTabId = null;
 
 function attachDragHandlers(tabEl, id) {
   tabEl.addEventListener('dragstart', (e) => {
-    draggedTabId = id;
+    draggedTabId = tabEl.dataset.tabId || id;
     tabEl.classList.add('dragging');
     // canvasdnd: must be 'copyMove', NOT 'move'. initGlobalFileDrop (input.js)
     // rewrites dropEffect to 'copy' on every document-level dragover of an
@@ -347,6 +477,7 @@ function attachDragHandlers(tabEl, id) {
  *  @param {string} targetId  — The tab it's dropped on.
  *  @param {boolean} after    — true = place after target, false = before. */
 function moveTab(dragId, targetId, after) {
+  if (!allowCanvasMutation()) return;
   const dragEntry = tabs.get(dragId);
   const targetEntry = tabs.get(targetId);
   if (!dragEntry || !targetEntry) return;
@@ -369,6 +500,9 @@ function moveTab(dragId, targetId, after) {
   });
   tabs.clear();
   newOrder.forEach(([k, v]) => tabs.set(k, v));
+  // canvas-tab-sync 批（2026-11-17）：排序是同步面之一——落一次存档让顺序
+  // 经权威存档广播到他端（此前顺序只在下一次无关操作时才顺带写穿）。
+  persistTabs();
 }
 
 /** Is the window too narrow for a side-by-side chat + canvas split?
@@ -719,13 +853,14 @@ export function openTab(id, title, opts = {}) {
     const oldPreviewId = previewTabs.get(previewKey);
     if (oldPreviewId && oldPreviewId !== id) {
       const oldEntry = tabs.get(oldPreviewId);
-      if (oldEntry) {
+      if (oldEntry && (canvasWriter.role() === 'writer' || readerLocalTabs.has(oldPreviewId))) {
         disposeTabEditor(oldEntry);
         document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
         oldEntry.paneEl.remove();
         oldEntry.tabEl.remove();
         tabs.delete(oldPreviewId);
-        recordTombstone(oldPreviewId); // #910: 预览替换=显式关闭旧预览
+        const wasReaderLocal = readerLocalTabs.delete(oldPreviewId);
+        if (!wasReaderLocal && canvasWriter.role() === 'writer' && !localUnsynced) recordTombstone(oldPreviewId);
         previewTabs.delete(previewKey);
         persistTabs();
       }
@@ -753,7 +888,7 @@ export function openTab(id, title, opts = {}) {
      （批②三件套：✕/标题/堆叠视角钮，syncHeaderActions）+ 环卡卡头
      （.deck-card-pop）。 */
   const closeHtml = closable
-    ? `<button class="canvas-tab-close" title="${t('canvas.closeTab')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`
+    ? `<button class="canvas-tab-close canvas-button" title="${t('canvas.closeTab')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`
     : '';
   tab.innerHTML = `<span class="canvas-tab-label">${title}</span>${closeHtml}`;
 
@@ -774,6 +909,7 @@ export function openTab(id, title, opts = {}) {
                   rootPath: opts.rootPath || null,
                   filePath: opts.filePath || null };
   tabs.set(id, entry);
+  if (!noRevive && !applyingLiveTabsFrame && canvasWriter.role() !== 'writer') readerLocalTabs.add(id);
   // #910: 新建成功即视为显式重开落账（作者语义「显式重开才恢复」——点开
   // 这个文件/面板就是重开意图）。服务端对无墓碑的 id 忽略该账（不凭空造
   // 记录）；restoreTabs 批量恢复走这里也安全：能从服务端回来的 id 必无生效
@@ -783,7 +919,7 @@ export function openTab(id, title, opts = {}) {
   // 带墓碑、缓存会被陈旧窗口回写）。恢复腿（noRevive）不落账；显式腿落账并
   // 同步镜像本会话墓碑的 reopenedAt（服务端同款时间戳裁决，localStorage 里
   // 的墓碑账随之保持有效态，跨会话恢复过滤才有正确判据）。
-  if (!noRevive) {
+  if (!noRevive && canvasWriter.role() === 'writer' && !localUnsynced) {
     const reopenedAt = Date.now();
     sessionReopens.set(id, { id, reopenedAt });
     const st = sessionTombstones.get(id);
@@ -803,6 +939,18 @@ export function openTab(id, title, opts = {}) {
   setActiveTab(id);
   persistTabs();
 
+  // canvas-tab-sync 批（2026-11-17）：远端帧点名的激活页签尚未落地（文件签
+  // readFile 在途）时，恢复腿（noRevive）晚到开签不得顶掉它——否则本端把
+  // 被顶掉的激活随下次 PUT 写穿，反向抢走发起端的视图。显式打开（用户动作）
+  // 不受限：noRevive=false 直通。标记 8s 过期（帧已陈旧/落地无望就放行）。
+  if (noRevive && lateSyncActive && lateSyncActive.id !== id) {
+    if (lateSyncActive.id && Date.now() - lateSyncActive.at < 8000 && tabs.has(lateSyncActive.id)) {
+      setActiveTab(lateSyncActive.id);
+    } else {
+      lateSyncActive = null;
+    }
+  }
+
   return entry;
 }
 
@@ -815,12 +963,14 @@ export function openTab(id, title, opts = {}) {
 function teardownTab(id, opts = {}) {
   const entry = tabs.get(id);
   if (!entry) return null;
+  clearTimeout(entry._autoRefreshTimer);  // 迟滞引擎布防中的定时器随页签退场
   disposeTabEditor(entry);
   document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id } }));
   entry.paneEl.remove();
   entry.tabEl.remove();
   tabs.delete(id);
-  if (!opts.silent) recordTombstone(id); // #910: 显式关闭意图落账（× 按钮 / deck 侧滑共用此处）
+  const wasReaderLocal = readerLocalTabs.delete(id);
+  if (!opts.silent && !wasReaderLocal) recordTombstone(id);
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
   persistTabs();
   deckNotifyRemoved(id);
@@ -837,6 +987,7 @@ function teardownTab(id, opts = {}) {
  *  @param {{discardDirty?: boolean}} [opts] 关闭确认之后的内部腿专用
  *    （用户已经点过「关闭并丢弃」），外部调用一律不传。 */
 export function closeTab(id, opts = {}) {
+  if (!readerLocalTabs.has(id) && !allowCanvasMutation()) return;
   const entry = tabs.get(id);
   if (!entry) return;
 
@@ -914,11 +1065,13 @@ export function closeTab(id, opts = {}) {
  *  pinning makes the tab persistent. No-op if already pinned.
  *  @param {string} id — Tab identifier. */
 export function pinTab(id) {
+  if (!allowCanvasMutation()) return;
   const entry = tabs.get(id);
   if (!entry || entry.pinned) return;
   entry.pinned = true;
   entry.tabEl.classList.remove('preview');
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
+  persistTabs();
 }
 
 /** Check whether a tab has unsaved edits — refresh must never clobber them.
@@ -969,28 +1122,38 @@ function scheduleFileRefresh(entry) {
   }, FILE_REFRESH_DEBOUNCE);
 }
 
-/** Manual re-read for a file tab (canvas 文件刷新批, 作者令 2026-10-25): the
- *  bottom-right refresh button's action. Rides the SAME readFile round trip as
- *  scheduleFileRefresh (pop.readFile → fileContent → workspace-open-item →
- *  openWorkspaceItem) but bypasses the activation cooldown (the user asked for
- *  it), never clobbers unsaved edits (visible toast, same isTabDirty discipline
- *  as every other refresh path) and drops the nf-file blob-ledger entry first —
- *  a ledger hit renders cached bytes with zero fetch, which would make the
- *  button silently lie for image/pdf tabs. */
+/** canvas-ask-restricted-edit ③（diff 卡 Accept 后的画布重载腿）：按 absPath 找
+ *  文件 tab 走同一套 scheduleFileRefresh 守卫（脏编辑/源码模式/在途/冷却——ask 侧
+ *  提案写盘后由 askDock 的 askEditResolved 帧调用，守卫语义与自动刷新完全一致：
+ *  有未存编辑或编辑器在挂时宁可不动 tab，等用户自己处理）。找不到 tab（文件未开）
+ *  = 静默返回——写盘已发生，tab 下次打开自然读到新内容。 */
+export function refreshFileTabByPath(absPath) {
+  if (!absPath) return;
+  for (const entry of tabs.values()) {
+    if (entry.absPath === absPath) { scheduleFileRefresh(entry); return; }
+  }
+}
+
+/** Re-read for a file tab (canvas 文件刷新批, 作者令 2026-10-25；canvas-auto-refresh
+ *  批 2026-11-17 起无手动钮，调用面 = 迟滞引擎到点腿 / 脏态「有更新」提示点击 /
+ *  冲突条「重载」/ 阅读菜单 canvas-request-refresh). Rides the SAME readFile round
+ *  trip as scheduleFileRefresh (pop.readFile → fileContent → workspace-open-item →
+ *  openWorkspaceItem) but bypasses the activation cooldown, never clobbers unsaved
+ *  edits (visible toast, same isTabDirty discipline as every other refresh path)
+ *  and drops the nf-file blob-ledger entry first — a ledger hit renders cached
+ *  bytes with zero fetch, which would silently lie for image/pdf tabs. */
 function refreshFileTab(entry, opts = {}) {
   if (!entry || !entry.absPath) return;
   const pane = entry.paneEl;
   if (!pane || !pane.isConnected) return;
-  if (pane.dataset.sourceMode === '1') return;  // button hidden there (CSS); programmatic guard
+  if (pane.dataset.sourceMode === '1') return;  // source editor mounted — a re-render would destroy it
   if (isTabDirty(entry) && !opts.force) {
     window.__showToast?.(t('canvas.refreshDirty'), 'info');
     return;
   }
   if (entry._refreshing) return;
   entry._refreshing = true;
-  // 定位修复批：钮已是壳层单例（#canvas-content 直子），不再按 pane 作用域查
-  const btn = (fileRefreshBtn && fileRefreshBtn.isConnected) ? fileRefreshBtn : null;
-  if (btn) btn.classList.add('busy');
+  entry._forceRefreshDirtySnapshot = opts.force && isTabDirty(entry) ? pane._nfSourceDirtyFor : undefined;
   // Safety: un-busy even if the response never arrives (mirrors the
   // _refreshing safety window in scheduleFileRefresh).
   setTimeout(() => { if (entry._refreshing) settleFileRefresh(entry); }, 10000);
@@ -1010,24 +1173,140 @@ function refreshFileTab(entry, opts = {}) {
   }).catch(() => { settleFileRefresh(entry); });
 }
 
-/** Clear one file tab's refresh-in-flight state (busy icon + _refreshing). */
+/** Clear one file tab's refresh-in-flight state (_refreshing + 脏态「有更新」提示——
+ *  应答已到 = 盘上内容已是刚核过的，提示过期即撤). */
 function settleFileRefresh(entry) {
   entry._refreshing = false;
-  // 壳层单例：busy 类挂在共享按钮上，代表「任一在飞刷新」——清它即可
-  if (fileRefreshBtn && fileRefreshBtn.isConnected) fileRefreshBtn.classList.remove('busy');
+  hideUpdateHint(entry);
 }
+
+// ── 自动检查变更刷新 · 迟滞引擎（canvas-auto-refresh 批，作者令 2026-11-17 逐字
+// 「我们现在 canvas 有个刷新按钮 去掉 改为带迟滞的自动检查变更刷新 时间窗60s」）──
+// 右下「从磁盘重新读取」手动钮整面退役（DOM/挂载同步/i18n/CSS 同批清），换成本
+// 引擎。变更探测**只复用既有通道，不新造面**（无新 WS 操作、无新轮询循环）：
+//   · nf-file-external-change —— 引擎写路径广播（Write/Edit 工具、编辑器保存…），
+//     main.js 的 nf-cache-invalidate 处理器转派；
+//   · explorer-focus-refresh —— explorer 的 fsChanged（引擎侧真实文件 watch 推
+//     送）/ 窗口聚焦 / 慢对账定时器三腿汇流事件（explorer-rt 批）。
+// 两条都只做「记变更时刻 + 布防定时器」，无变更 ⇒ 永不布防 ⇒ 零定时器、零取数、
+// 零 DOM（「无变更 = 零视觉噪音」由构造保证，不靠事后清理）。
+
+/** 静默窗：从**最后一次**探测到变更起算，需连续静默满 60s 才执行一次刷新——
+ *  连续被改 ⇒ 每次信号都重置定时器，一直推迟（不许每 60s 追一次刷不停）。 */
+const AUTO_REFRESH_QUIET_MS = 60_000;
+/** 最小间隔：两次自动刷新之间至少 60s。 */
+const AUTO_REFRESH_MIN_INTERVAL_MS = 60_000;
+
+/** 下一次允许自动刷新的时刻（迟滞判定，纯函数）：
+ *  max(末次变更 + 静默窗, 上次自动刷新 + 最小间隔)。 */
+function autoRefreshDeadline(entry) {
+  return Math.max(
+    (entry._autoChangeAt || 0) + AUTO_REFRESH_QUIET_MS,
+    (entry._lastAutoRefreshAt || 0) + AUTO_REFRESH_MIN_INTERVAL_MS,
+  );
+}
+
+/** 变更信号入口（两通道共用）：记时刻 + （重）布防。每次新信号 clearTimeout 后
+ *  重排 ⇒ 静默窗永远从最后一次变更起算。 */
+function noteAutoFileChange(entry) {
+  if (!entry || !entry.absPath) return;
+  entry._autoChangeAt = Date.now();
+  clearTimeout(entry._autoRefreshTimer);
+  const checkDeadline = () => {
+    const remaining = autoRefreshDeadline(entry) - Date.now();
+    if (remaining > 0) {
+      entry._autoRefreshTimer = setTimeout(checkDeadline, remaining);
+      return;
+    }
+    entry._autoRefreshTimer = null;
+    fireAutoRefresh(entry);
+  };
+  entry._autoRefreshTimer = setTimeout(checkDeadline, Math.max(autoRefreshDeadline(entry) - Date.now(), 0));
+}
+
+/** 到点腿：静默窗（与最小间隔）已满。页签已关/在途 ⇒ 丢弃（后续信号会再布防）；
+ *  脏态或源码态（正在编辑）⇒ 不执行刷新，改挂轻量「有更新」提示（点击立即刷新，
+ *  时机归用户）；干净 ⇒ 走 refreshFileTab 重读（应答未变 ⇒ openWorkspaceItem 不重
+ *  挂 = 零视觉噪音）。消费后清 _autoChangeAt：后台再次收到信号才会重新布防。 */
+function fireAutoRefresh(entry) {
+  if (!tabs.has(entry.id) || tabs.get(entry.id) !== entry) return;
+  if (entry._refreshing) return;
+  entry._autoChangeAt = 0;
+  if (isTabDirty(entry) || entry.paneEl?.dataset.sourceMode === '1') { showUpdateHint(entry); return; }
+  entry._lastAutoRefreshAt = Date.now();
+  refreshFileTab(entry);
+}
+
+// ── 脏态「有更新」提示（canvas-auto-refresh 批）────────────────────────────
+// 「有更新但用户在编辑」的轻量告知面：**不是常驻按钮**——只在迟滞到点且页签
+// 脏/源码态时挂上，任一刷新应答落地（settleFileRefresh）即撤。样式与 B7-2 冲突条
+// 同族（内联样式、零 CSS 依赖、role=status、不进层栈不抢焦点）。点击「立即刷新」
+// 仍走 refreshFileTab 的脏守卫：未保存 ⇒ toast canvas.refreshDirty（既有语义，
+// 决不覆盖本地编辑），保存后点即刷。与冲突条互斥：冲突条在场（引擎写路径已在
+// 信号时刻给过更强提示 + 自带「重载磁盘版本」一键）则跳过；冲突条后到则顶掉
+// 本提示（同一信息不双报）。
+const UPDATE_HINT_CLASS = 'canvas-update-hint';
+
+/** 挂（或保持）某页签的「有更新」提示。幂等；冲突条在场时让位。 */
+function showUpdateHint(entry) {
+  const pane = entry && entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  if (pane.querySelector('.' + CONFLICT_BAR_CLASS)) return;
+  if (pane.querySelector('.' + UPDATE_HINT_CLASS)) return;
+  const chip = document.createElement('div');
+  chip.className = UPDATE_HINT_CLASS;
+  chip.setAttribute('role', 'status');
+  chip.dataset.path = entry.absPath || '';
+  chip.setAttribute('style', [
+    // md 族查看器的滚动面是 pane 内 absolute inset:0（split.css .canvas-md-scroll），
+    // 会盖住 pane 静态流子元素的指针层——relative+z:5 把提示抬到滚动面之上、
+    // 圆钮簇（z:10）之下（与下方冲突条同修，见彼处注释）。
+    'position:relative', 'z-index:5',
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
+    'border-radius:var(--ds-radius-button)',
+    'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
+    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
+    'border:1px solid rgba(255,255,255,0.12)',
+    'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
+  ].join(';'));
+  const text = document.createElement('span');
+  text.className = 'canvas-update-hint-text';
+  text.textContent = t('canvas.updateHint');
+  text.setAttribute('style', 'flex:1 1 auto;');
+  const now = document.createElement('button');
+  now.className = 'canvas-update-hint-refresh';
+  now.type = 'button';
+  now.textContent = t('canvas.updateNow');
+  now.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  now.onclick = () => { refreshFileTab(entry); };
+  chip.append(text, now);
+  pane.prepend(chip);
+}
+
+/** 撤某页签的「有更新」提示（幂等；页签不在 = 无事可做）。 */
+function hideUpdateHint(entry) {
+  entry?.paneEl?.querySelector('.' + UPDATE_HINT_CLASS)?.remove();
+}
+
+// 迟滞判定的只读测试面（spec 断言常数 = 60s 与 t=59/t=60 边界用；零行为能力，
+// 参照 window.__cardBeatTimer 一类既有调试句柄先例）。
+/** @type {any} */ (window).__canvasAutoRefreshDebug = {
+  QUIET_MS: AUTO_REFRESH_QUIET_MS,
+  MIN_INTERVAL_MS: AUTO_REFRESH_MIN_INTERVAL_MS,
+  deadline: autoRefreshDeadline,
+};
 
 // ── B7-2 外部改动冲突条（文档后续批，2026-11-01）─────────────────────────
 // 病灶（计划 §B7-2）：`nf-cache-invalidate` 只喂 nf-file 账本，从不触达编辑器；
 // 而 `scheduleFileRefresh` 在脏页签上**静默 return** —— 合计效果是「文件被改过」
 // 这件事对正在编辑的人完全不可见，用户接着保存就把别人的改动覆盖掉。
 //
-// 现在的语义（冲突条二选一，两条各自改状态）：
-//   干净页签 → 照旧走 scheduleFileRefresh（读回新内容，不打扰人）；
+// 现在的语义（冲突条二选一，两条各自改状态；canvas-auto-refresh 批后干净腿入迟滞）：
+//   干净页签 → noteAutoFileChange 入迟滞引擎（静默窗满 60s 读回新内容，不打扰人）；
 //   脏页签   → 出一条冲突条：**保留**（继续编辑，什么都不做）/ **重载**（丢弃本地
 //              编辑，强制重读）。条子内联样式、零 CSS 依赖 —— 与 staleTabHint.js
-//              （2026-10-28 作者令④）同一先例，本批不改 css/ 一字，`app-*.css`
-//              哈希因此不动。
+//              （2026-10-28 作者令④）同一先例，`app-*.css` 哈希不动。
 // 不进层栈：它不是模态，不加遮罩、不抢焦点、不拦 Tab（壳契约逐字保留）。
 const CONFLICT_BAR_CLASS = 'nf-file-conflict';
 
@@ -1035,6 +1314,7 @@ const CONFLICT_BAR_CLASS = 'nf-file-conflict';
 function showExternalConflict(entry) {
   const pane = entry && entry.paneEl;
   if (!pane || !pane.isConnected) return;
+  hideUpdateHint(entry);  // 冲突条是更强提示（自带重载一键），顶掉弱一档的「有更新」
   const old = pane.querySelector('.' + CONFLICT_BAR_CLASS);
   if (old) old.remove();
   const bar = document.createElement('div');
@@ -1042,8 +1322,13 @@ function showExternalConflict(entry) {
   bar.setAttribute('role', 'status');
   bar.dataset.path = entry.absPath || '';
   bar.setAttribute('style', [
+    // canvas-auto-refresh 批顺手修（E4b 验收暴露）：md 族查看器的滚动面是 pane 内
+    // absolute inset:0（split.css .canvas-md-scroll），盖住本条的指针层 ⇒ md 页签
+    // 上「保留/重载」两键看得见点不着（B7-2 落地即如此，未被抓到——彼时验收走
+    // 的是代码页签）。relative+z:5 抬到滚动面之上、圆钮簇（z:10）之下。
+    'position:relative', 'z-index:5',
     'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
-    'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
+    'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
     'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
@@ -1084,85 +1369,20 @@ window.addEventListener('nf-file-external-change', (e) => {
   if (!entry) return;                      // 没开这个文件 ⇒ 无事可做（账本已由 main.js 淘汰）
   entry._externalConflict = Date.now();
   if (isTabDirty(entry)) showExternalConflict(entry);
-  else scheduleFileRefresh(entry);
+  // canvas-auto-refresh 批：干净页签不再即刷（原 scheduleFileRefresh 300ms 防抖腿
+  // 退役），改入迟滞引擎——静默窗满 60s 才执行，连续写盘只推迟不追刷。
+  noteAutoFileChange(entry);
 });
 
-// ── 文件刷新钮 · 壳层挂载（定位修复，作者报障 2026-10-27「刷新钮悬浮在正文
-// 中间」）────────────────────────────────────────────────────────────────
-// 根因：刷新钮 absolute 挂在 pane 里，而 docx/yaml/xlsx/pptx 等查看器把
-// .scrollable 加在 pane 自身（pane 即滚动容器）——absolute 子元素按整份滚动
-// 内容盒定位，bottom:16 落到文档末尾而非可视区底缘，随滚动漂移（md/code 等
-// pane 不自滚的页签不受累）。修法：挂载点上移到不滚动的面板壳 #canvas-content
-// （split.css: position:relative + overflow:hidden），按钮 = 每文档单例，可见性
-// 与座位随活动页签同步（syncFileRefreshButton）；源码态隐藏由 addSourceToggle
-// 的 canvas-source-mode-changed 事件驱动（shared.js 无回流 import 边，同
-// canvas-viewer-rerendered 先例）。主题（亮暗）只换 token 色值，几何不动。
-let fileRefreshBtn = null;
-
-/** The active tab's entry iff it is a live file tab (absPath + connected pane). */
-function activeFileEntry() {
-  const entry = activeTabId ? tabs.get(activeTabId) : null;
-  const pane = entry && entry.paneEl;
-  return (entry && entry.absPath && pane && pane.isConnected) ? entry : null;
-}
-
-/** Mount the bottom-right refresh button for rendered file tabs. Called after
- *  every renderFile (call sites unchanged from the 刷新批) — the shell button
- *  survives viewer innerHTML wipes, so remounts collapse to a no-op; the
- *  visibility/seat sync below is what does the per-tab work. */
-function mountFileRefreshButton(pane, entry) {
-  if (!entry || !entry.absPath) return;
-  import('./viewers/shared.js').then(({ addRefreshButton }) => {
-    // The tab can close (or the whole pane be replaced) while the import settles.
-    if (!pane.isConnected || tabs.get(entry.id) !== entry) return;
-    if (!fileRefreshBtn || !fileRefreshBtn.isConnected) {
-      const host = document.getElementById('canvas-content');
-      // Click resolves the ACTIVE file entry at click time (the singleton
-      // outlives any one tab's closure).
-      fileRefreshBtn = addRefreshButton(pane, {
-        host,
-        onRefresh: () => { const e = activeFileEntry(); if (e) refreshFileTab(e); },
-      });
-    }
-    syncFileRefreshButton();
-  }).catch(() => { /* shared.js unavailable — button absent, zero behavior change */ });
-}
-
-/** Shell button follows the active tab: visible iff the active entry is a live
- *  file tab outside source mode; seat recomputed against the active pane's
- *  corner cluster (source/ref/find/graph circles + zoom bar live in the pane
- *  and differ per viewer). */
-function syncFileRefreshButton() {
-  const btn = fileRefreshBtn;
-  if (!btn || !btn.isConnected) return;
-  const entry = activeFileEntry();
-  const pane = entry && entry.paneEl;
-  const visible = !!(entry && pane.dataset.sourceMode !== '1');
-  btn.hidden = !visible;
-  if (!entry) return;
-  const entryId = entry.id;
-  import('./viewers/shared.js').then(({ seatRefreshButton }) => {
-    if (btn.isConnected && activeTabId === entryId) seatRefreshButton(btn, pane);
-  }).catch(() => {});
-}
-
-// MD/HTML source↔rendered toggle swaps pane.dataset.sourceMode — the shell
-// button must hide/show with it (event decouples shared.js from canvas.js; no
-// import edge back). Only the ACTIVE pane owns the button.
-document.addEventListener('canvas-source-mode-changed', (e) => {
-  const pane = /** @type {any} */ (e.target);
-  if (pane instanceof HTMLElement && pane.classList.contains('active')) syncFileRefreshButton();
-});
-
-// MD/HTML source↔rendered toggle round trips re-run the viewer WITHOUT a
-// readFile (addSourceToggle → renderFn). The shell button survives the render
-// wipe; this remains as a self-healing re-sync (and first-mount belt for flows
-// that bypass openWorkspaceItem).
-document.addEventListener('canvas-viewer-rerendered', (e) => {
+// ── 阅读菜单刷新腿（canvas-auto-refresh 批：壳层刷新钮退役后的兜底接线）──────
+// readerChrome.js 的阅读菜单「刷新」原走「有壳层钮就点钮，无钮退化发事件」；钮
+// 整面退役后此事件成为唯一路径——由 pane 反查页签，同一套 refreshFileTab 守卫
+// （脏态 toast、源码态让路），零新机制。
+document.addEventListener('canvas-request-refresh', (e) => {
   const pane = /** @type {any} */ (e.target);
   if (!(pane instanceof HTMLElement)) return;
   for (const entry of tabs.values()) {
-    if (entry.paneEl === pane) { mountFileRefreshButton(pane, entry); return; }
+    if (entry.paneEl === pane) { refreshFileTab(entry); return; }
   }
 });
 
@@ -1171,6 +1391,10 @@ document.addEventListener('canvas-viewer-rerendered', (e) => {
  *  @param {string} id — Tab identifier. */
 export function setActiveTab(id) {
   if (!tabs.has(id)) return;
+  if (!applyingLiveTabsFrame && activeTabId !== id) {
+    pendingLocalActivation = { id, at: Date.now(), generation: ++activationGeneration };
+    lateSyncActive = null;
+  }
   activeTabId = id;
   tabs.forEach(t => {
     t.paneEl.classList.toggle('active', t.id === id);
@@ -1201,11 +1425,11 @@ export function setActiveTab(id) {
   persistTabs();
   syncCanvasPanelButtons();
 
-  // Live-refresh file tabs on activation (debounced, dirty-safe).
+  // 自动刷新（迟滞引擎）：后台布防的变更若静默窗（含最小间隔）已满，切到前台
+  // 即刻结算（作者口径「后台 pane 只做标记、切到前台或静默窗满足时才刷」的前
+  // 半腿）；未满则由定时器到点自理，激活本身不再触发整文件重读。
   const entry = tabs.get(id);
-  if (entry) scheduleFileRefresh(entry);
-  // 壳层刷新钮（定位修复批）：随活动页签同步可见性 + 座位
-  syncFileRefreshButton();
+  if (entry && entry._autoChangeAt && Date.now() >= autoRefreshDeadline(entry)) fireAutoRefresh(entry);
 
   // canvas-stack：居中标题头随激活易主；叠卡开着时环重置到新 active 的前景位
   // （外部换签——agent 开文件 / 换入编排——都收敛到「新 canvas 在前景位」）。
@@ -1220,6 +1444,7 @@ export function setActiveTab(id) {
  *  @param {string} newRel — new explorer-relative path prefix
  *  @param {string} rootPath — explorer root (absolute, '' = default root) */
 export function retargetFileTabs(oldRel, newRel, rootPath) {
+  if (!allowCanvasMutation()) return;
   const root = (rootPath || '').replace(/\/+$/, '');
   const absOld = root ? root + '/' + oldRel : null;
   const absNew = root ? root + '/' + newRel : null;
@@ -1484,9 +1709,6 @@ export async function openWorkspaceItem(item) {
     const entry = openTab(id, placeholderTitle, { type: 'code', pinned: !!pinned, absPath: absPath || id, noRevive: viaRestore });
     if (!entry) return;
     renderFilePlaceholder(entry.paneEl, item.error, absPath || id);
-    // 骨架标签也挂刷新钮：文件恢复可读后一键重读即可翻正（readFile →
-    // fileContent → 下方既有页签重渲腿），不用整页刷新。
-    mountFileRefreshButton(entry.paneEl, entry);
     entry._lastRefreshAt = Date.now();
     if (!item.background) setActiveTab(id);
     return;
@@ -1522,6 +1744,9 @@ export async function openWorkspaceItem(item) {
     // 仍不抢激活（同下方 :1067 口径），面板开着的路径零变化。
     if (!item.background && !isCanvasOpen()) openCanvas();
     const entry = tabs.get(id);
+    const forceSnapshot = item.background && manual ? entry._forceRefreshDirtySnapshot : undefined;
+    entry._forceRefreshDirtySnapshot = undefined;
+    const forceDiscard = forceSnapshot != null && forceSnapshot === entry.paneEl._nfSourceDirtyFor && entry.paneEl.dataset.sourceMode !== '1';
     settleFileRefresh(entry);  // response arrived (or user-initiated open) — un-busy the refresh button
     // A response arrived = the file was freshly checked. Update unconditionally
     // — binary viewers (image/pdf/...) receive no content and never re-render,
@@ -1529,6 +1754,12 @@ export async function openWorkspaceItem(item) {
     // engages, and refresh→setActiveTab loops forever (each cycle stealing
     // activation back to the binary tab — "can't switch away from an image").
     entry._lastRefreshAt = Date.now();
+    // canvas-auto-refresh 批：记 (size:mtimeMs) 版本读数——自动重读对二进制页签
+    // （应答无 content）用同一把尺判重，未变不再整面重挂/重取字节（流式大文本的
+    // acceptMeta 判重同式先例，见下方 stream 分支）。先留旧读数：判重比的是上一
+    // 次应答，不是本次刚记的这份。
+    const prevFileVer = entry._fileVer;
+    entry._fileVer = `${size || 0}:${mtimeMs || 0}`;
     // Streamed large-text tab (卡 §三.3 后台刷新行): the response carries NO content,
     // so the re-render branch below never fires. Compare mtimeMs/size instead —
     // changed ⇒ the view voids its loaded windows + index and re-fetches (never a
@@ -1567,10 +1798,18 @@ export async function openWorkspaceItem(item) {
       if (Number.isFinite(pgExisting)) /** @type {any} */ (entry.paneEl)._scrollToPage?.(pgExisting);
     }
     // 手动刷新（manual，canvas 文件刷新批）：二进制腿的 readFile 应答不带
-    // content——没有 manual 旗标时该分支对图片/PDF 永不触发，刷新按钮就是
-    // 无声空点。流式大文本除外：其变更面走上方 acceptMeta（保滚动位），
+    // content——没有 manual 旗标时该分支对图片/PDF 永不触发，自动刷新就会
+    // 无声空过。流式大文本除外：其变更面走上方 acceptMeta（保滚动位），
     // 整面重挂反而把读者扔回文件头。
-    if ((content || manual) && !stream && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
+    // canvas-auto-refresh 批：二进制腿加 (size:mtimeMs) 判重——版本读数未变
+    // 的重读（聚焦/慢对账布防的自动腿常态）不再重挂/重取字节。
+    const binUnchanged = !content && !stream && prevFileVer !== undefined && prevFileVer === entry._fileVer;
+    if ((content || manual) && !binUnchanged && !stream && (!isTabDirty(entry) || forceDiscard) && entry.paneEl.dataset.sourceMode !== '1') {
+      if (forceDiscard) {
+        entry.paneEl._dirty = false;
+        entry.paneEl._nfSourceDirtyFor = null;
+        entry.paneEl.dispatchEvent(new CustomEvent('editor-dirty-change', { detail: { dirty: false } }));
+      }
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for
       // zero visible change (matters for focus-triggered refreshes).
@@ -1582,7 +1821,6 @@ export async function openWorkspaceItem(item) {
         }
         const { renderFile } = await import('./fileViewers.js');
         await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: anchor || stash, warnings });
-        mountFileRefreshButton(entry.paneEl, entry);
         notifyCardUpdate(id);   // UI 批⑧：独立窗内容同步（卡窗重读文件）
       }
     }
@@ -1666,13 +1904,14 @@ export async function openWorkspaceItem(item) {
   const oldPreviewId = previewTabs.get(itemPreviewKey);
   if (!pinned && oldPreviewId && oldPreviewId !== id) {
     const oldEntry = tabs.get(oldPreviewId);
-    if (oldEntry) {
+    if (oldEntry && (canvasWriter.role() === 'writer' || readerLocalTabs.has(oldPreviewId))) {
       disposeTabEditor(oldEntry);
       document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
       oldEntry.paneEl.remove();
       oldEntry.tabEl.remove();
       tabs.delete(oldPreviewId);
-      recordTombstone(oldPreviewId); // #910: 预览替换=显式关闭旧预览
+      const wasReaderLocal = readerLocalTabs.delete(oldPreviewId);
+      if (!wasReaderLocal && canvasWriter.role() === 'writer' && !localUnsynced) recordTombstone(oldPreviewId);
       previewTabs.delete(itemPreviewKey);
       persistTabs();
     }
@@ -1727,7 +1966,6 @@ export async function openWorkspaceItem(item) {
   /** @type {import('./utils.js').ViewerContext & {objectUrl?: string, stream?: any, mtimeMs?: number, readOnly?: boolean}} */
   const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl, stream: item.stream || null, mtimeMs: item.mtimeMs || 0, readOnly: readOnly === true };
   await renderFile(pane, renderCtx);
-  mountFileRefreshButton(pane, entry);  // 文件刷新批：右下刷新钮（查看器会清 pane.innerHTML，须渲后挂载）
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
   notifyCardUpdate(id);               // UI 批⑧：独立窗首渲/重渲同步（卡窗自读文件）
 }
@@ -2073,7 +2311,7 @@ function initDeck() {
   deckLayer.id = 'deck-layer';
   deckFab = document.createElement('button');
   deckFab.id = 'deck-fab';
-  deckFab.className = 'deck-fab g2-fab';   // 批②：材质升 v2 液体玻璃（liquid-glass.css 共享类）
+  deckFab.className = 'deck-fab g2-fab canvas-button';   // 批②：材质升 v2 液体玻璃（liquid-glass.css 共享类）
   deckFab.setAttribute('aria-pressed', 'false');
   deckFab.setAttribute('title', t('canvas.stackToggle'));
   deckFab.setAttribute('aria-label', '叠卡切换');
@@ -2216,7 +2454,7 @@ function syncHeaderActions() {
   if (!closeBtn) {
     closeBtn = document.createElement('button');
     closeBtn.id = 'canvas-head-close';
-    closeBtn.className = 'g2-fab';   // 左移批：材质/尺寸与堆叠钮同款（左右对称判据）
+    closeBtn.className = 'g2-fab canvas-button';   // 左移批：材质/尺寸与堆叠钮同款（左右对称判据）
     /** @type {HTMLButtonElement} */ (closeBtn).type = 'button';
     closeBtn.innerHTML = HEAD_CLOSE_SVG;
     closeBtn.setAttribute('title', t('canvas.closeTab'));
@@ -2253,7 +2491,7 @@ function syncHeaderActions() {
   if (!popBtn) {
     popBtn = document.createElement('button');
     popBtn.type = 'button';
-    popBtn.className = 'canvas-pop-btn';
+    popBtn.className = 'canvas-pop-btn canvas-button';
     // id 沿用批⑤前旧 id（既有 spec/验收脚本以 #canvas-pop-btn 命中；类名才是契约面）
     popBtn.id = 'canvas-pop-btn';
     popBtn.appendChild(cardPopIcon('pop-ic-pop', [
@@ -2370,7 +2608,7 @@ function syncRefBackButton() {
   if (!btnEl) {
     const fresh = document.createElement('button');
     fresh.id = 'canvas-refback-btn';
-    fresh.className = 'canvas-refback-btn';
+    fresh.className = 'canvas-refback-btn canvas-button';
     fresh.type = 'button';
     fresh.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2500,7 +2738,7 @@ function deckMakeCardEl(entry, r, cls) {
     '</div>' +
     '<div class="card-thumb" data-snap="pending">' + deckThumbMock(family) + '</div>' +
     /* uifix ③e：卡右上角 × 关闭钮（作者最新口径，推翻精修③竖排提示方案） */
-    '<button class="deck-card-x" type="button" title="关闭" aria-label="关闭 ' + escapeDeckText(entry.title || entry.id) + '">' +
+    '<button class="deck-card-x canvas-button" type="button" title="关闭" aria-label="关闭 ' + escapeDeckText(entry.title || entry.id) + '">' +
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>' +
     '</button>' +
     '<div class="card-shade"></div>';
@@ -2508,7 +2746,7 @@ function deckMakeCardEl(entry, r, cls) {
   if (entry.absPath) {
     const pop = document.createElement('button');
     pop.type = 'button';
-    pop.className = 'deck-card-pop';
+    pop.className = 'deck-card-pop canvas-button';
     pop.title = '独立窗口打开';
     pop.setAttribute('aria-label', '独立窗口打开');
     pop.innerHTML = CARD_POP_SVG;
@@ -3572,6 +3810,7 @@ export function deckKeyAction(action, e) {
 }
 
 function deckCloseOthers(keepId) {
+  if (!allowCanvasMutation()) return;
   if (!deck.open || deck.finalizing) return;
   for (const [id, entry] of [...tabs]) {
     if (id === keepId) continue;
@@ -4659,6 +4898,13 @@ export function quoteActiveCardRef() {
 
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
+  writerChanged('reader');
+  try {
+    if (sessionStorage.getItem('canvas-claim-after-discard') === '1') {
+      sessionStorage.removeItem('canvas-claim-after-discard');
+      canvasWriter.claim();
+    } else canvasWriter.refresh();
+  } catch { canvasWriter.refresh(); }
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
   // boot 序）置位，否则卡窗会把主窗整组标签恢复进来。
   initCardWindowMode();
@@ -4765,12 +5011,14 @@ export function initCanvas() {
   // 2026-10-22 作者令：胶囊环（hover 展开 · 横滑换选 · 点击切换 · 右键菜单扩容）。
   initCapsuleRing();
 
-  // Window-focus refresh (dispatched by explorer.js after reloading the tree):
-  // re-check the active file tab for external edits. Dirty-guarded, debounced,
-  // and unchanged content never re-renders (see openWorkspaceItem).
-  window.addEventListener('explorer-focus-refresh', () => {
+  // 变更信号通道②（explorer-rt 批的 fsChanged/聚焦/慢对账三腿汇流事件，由
+  // explorer.js 派发）：canvas-auto-refresh 批起不再即读活动页签，改入迟滞引擎
+  // ——静默窗满 60s 才执行一次（最小间隔 60s）；无变更事件 ⇒ 零布防零取数。
+  window.addEventListener('explorer-focus-refresh', (event) => {
     const entry = activeTabId ? tabs.get(activeTabId) : null;
-    if (entry) scheduleFileRefresh(entry);
+    // A periodic reconcile is a probe, not evidence of another write. Do not
+    // let it postpone a pending real change indefinitely.
+    if (entry && !(/** @type {CustomEvent} */ (event).detail?.reconcile && entry._autoRefreshTimer)) noteAutoFileChange(entry);
   });
 
   // Listen for Pop tool WS messages — agent opens a file in Canvas.
@@ -5287,7 +5535,7 @@ function initCardWindowMode() {
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (hdr && !hdr.querySelector('.canvas-merge-btn')) {
     const b = document.createElement('button');
-    b.className = 'canvas-merge-btn';
+    b.className = 'canvas-merge-btn canvas-button';
     b.id = 'canvas-merge-btn';
     b.title = '合并回主窗';
     b.setAttribute('aria-label', '合并回主窗');
@@ -5383,11 +5631,14 @@ function seedKnownTombstones(data) {
  *  时，页签会先经恢复腿打开，墓碑这时才到。本会话显式重开过的 id 跳过（其
   *  重开账在途，服务端墓碑即将让位）。 */
 function suppressTombstonedTabs() {
+  let removed = 0;
   for (const id of [...tabs.keys()]) {
     if (!tombstoneGateActive(id)) continue;
     if (sessionReopens.has(id)) continue;
     teardownTab(id, { silent: true });
+    removed++;
   }
+  return removed;
 }
 
 // 所有显式关闭路径的记账点（× 按钮 / deck 侧滑 / 关闭其他 / 预览替换——
@@ -5403,6 +5654,8 @@ function recordTombstone(id) {
 }
 
 function persistTabs() {
+  // Adopting a remote snapshot is not a new local intent; never echo it back.
+  if (applyingLiveTabsFrame || canvasWriter.role() !== 'writer') return;
   // UI 批⑧：独立卡窗零存档副作用 —— 卡窗自己的单卡标签绝不能写穿服务端权威
   // 存档/本地缓存（否则会把主窗整组标签覆盖成一张卡）。
   if (cardWindowMode) return;
@@ -5414,6 +5667,7 @@ function persistTabs() {
   try {
     const serializable = [];
     for (const [, t] of tabs) {
+      if (readerLocalTabs.has(t.id)) continue;
       // Skip runtime flow-run tabs — their instanceId is invalid after a
       // restart, so restoring them would leave dead tabs.
       if (t.type === 'flow-run') continue;
@@ -5439,7 +5693,12 @@ function persistTabs() {
         closable: t.closable !== false,  // default true
       });
     }
+    // canvas-tab-sync 批（2026-11-17）：activeTabId 随载荷上服务端（schema 早支持，
+    // 服务端 merge 命中生效墓碑即丢弃）——激活页签是跨设备同步面的一部分，
+    // 此前只进 localStorage 缓存，他端无从跟随。null 序列化为缺省（服务端沿用
+    // prev，与旧载荷逐字兼容）。
     const payload = { v: 2, tabs: serializable };
+    if (activeTabId && !readerLocalTabs.has(activeTabId)) payload.activeTabId = activeTabId;
     // #910: 附带本会话关闭/重开意图账（服务端墓碑合并；账幂等可重放）。
     if (sessionTombstones.size > 0) payload.tombstones = [...sessionTombstones.values()];
     if (sessionReopens.size > 0) payload.reopened = [...sessionReopens.values()];
@@ -5448,7 +5707,7 @@ function persistTabs() {
     // 墓碑过滤（陈旧窗口会把已关页签写回缓存），不带账的话下次加载本地恢复
     // 腿无从识别关闭意图，页签每次加载复活一次（本次报障链）。重开镜像进
     // tombstones 条目（openTab 显式腿已并入），跨会话重开态判据正确。
-    const lsRecord = { v: 2, tabs: serializable, activeTabId: activeTabId };
+    const lsRecord = { v: 2, tabs: serializable, activeTabId: readerLocalTabs.has(activeTabId) ? null : activeTabId };
     if (sessionTombstones.size > 0) lsRecord.tombstones = [...sessionTombstones.values()];
     localStorage.setItem(LS_TABS_KEY, JSON.stringify(lsRecord));
     console.log('[persistTabs] saved', serializable.length, 'tabs', serializable.map(t => t.id));
@@ -5465,6 +5724,9 @@ let pendingPersistPayload = null;
 let persistDirty = false;
 
 function scheduleServerPersist(payload) {
+  if (pendingLocalActivation && payload.activeTabId === pendingLocalActivation.id) {
+    persistActivationGeneration.set(payload, pendingLocalActivation.generation);
+  }
   pendingPersistPayload = payload;
   if (serverPersistTimer) clearTimeout(serverPersistTimer);
   serverPersistTimer = setTimeout(() => {
@@ -5480,18 +5742,17 @@ function scheduleServerPersist(payload) {
 // Bearer 头，而 /api/canvas-tabs 走 withAuth（无 token 会 403）。
 function sendServerPersist(payload, keepalive) {
   if (!payload) return;
-  fetch(TABS_API, {
-    method: 'PUT',
-    keepalive: !!keepalive,
-    // withAuth (RestApiRoutes) only accepts Bearer/query token — NOT cookie.
-    // Without the header the PUT 403s and the service archive never persists.
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(payload),
-  })
-    .then((r) => {
-      if (r.ok) { persistDirty = false; return; }
-      persistDirty = true;
-      console.warn('[canvas-tabs] server persist failed:', r.status);
+  canvasWriter.put(payload)
+    .then((ok) => {
+      if (ok) {
+        persistDirty = false;
+        if (pendingLocalActivation &&
+            persistActivationGeneration.get(payload) === pendingLocalActivation.generation) {
+          pendingLocalActivation = null;
+        }
+        return;
+      }
+      persistDirty = false;
     })
     .catch((e) => {
       persistDirty = true;
@@ -5519,19 +5780,55 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', flushPendingPersist);
 
 let persistReconnectBound = false;
+/** canvas-tab-sync 批：远端帧点名的激活页签尚未落地（文件签 readFile 在途）
+ *  时的晚到标记。{ id, at } | null；8s 过期，openTab(noRevive) 腿消费。 */
+let lateSyncActive = null;
+/** canvas-tab-sync 批：canvasTabsChanged 订阅只绑一次（幂等闸）。 */
+let liveTabsWsBound = false;
 function bindPersistReconnect() {
   if (persistReconnectBound) return;
   persistReconnectBound = true;
   import('./ws.js')
-    .then(({ onReconnect }) => {
+    .then(({ onReconnect, onMessage }) => {
+      // canvas-tab-sync 批：重连 = 补对账——离线期间错过的广播帧无从重放，
+      // 经权威存档 GET 一次收敛（先对账后重放脏写：反过来会把离线旧视图
+      // 盖回权威存档）。404/网络失败 = 无可收敛，本地态照旧。
+      const convergeFromServer = () => fetch(TABS_API, { headers: { ...authHeaders() } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((serverData) => {
+          const parsed = parseTabsData(serverData);
+          if (parsed) applyLiveTabsFrame(parsed);
+        })
+        .catch(() => { /* 离线：待下次重连 */ });
+      onMessage('takeover', () => {
+        if (pendingPersistPayload || persistDirty) localUnsynced = true;
+        canvasWriter.lost();
+      });
       onReconnect(() => {
-        if (!persistDirty) return;
-        // 重放「当前集合」而非旧载荷：persistTabs 重建载荷后走防抖 PUT。
-        // 只在连接恢复时触发，不逐帧重试，无自旋/日志风暴。
-        persistTabs();
+        convergeFromServer().finally(() => {
+          if (!persistDirty) return;
+          // 重放「当前集合」而非旧载荷：persistTabs 重建载荷后走防抖 PUT。
+          // 只在连接恢复时触发，不逐帧重试，无自旋/日志风暴。
+          persistTabs();
+        });
+      });
+      if (liveTabsWsBound) return;
+      liveTabsWsBound = true;
+      // 服务端写穿广播（他端开/关/切/排序 → PUT 落盘成功外推）：就地收敛。
+      // 自己 PUT 的回声同样进这里——收敛幂等（集合/顺序已一致即零动作）。
+      onMessage('canvasWriterChanged', (msg) => {
+        const current = canvasWriter.credentials();
+        if (current && Number.isSafeInteger(msg.epoch) && msg.epoch > current.epoch) {
+          if (pendingPersistPayload || persistDirty) localUnsynced = true;
+          canvasWriter.lost();
+        }
+      });
+      onMessage('canvasTabsChanged', (msg) => {
+        const parsed = parseTabsData(msg);
+        if (parsed) applyLiveTabsFrame(parsed);
       });
     })
-    .catch(() => { /* ws.js 不可用 → 无重放通道，保持 dirty */ });
+    .catch(() => { /* ws.js 不可用 → 无重放/收敛通道，保持 dirty */ });
 }
 bindPersistReconnect();
 
@@ -5666,7 +5963,7 @@ function reconcileFromServer(serverData) {
     // #910 追补：命中生效墓碑一律不开（服务端已过滤，此为纵深防御——
     // 播种集合与响应不一致的窗口期也不复活）。
     if (tombstoneGateActive(tab.id)) continue;
-    if (present.has(tab.id)) continue;  // 已开（本地恢复成功）→ 跳过
+    if (present.has(tab.id)) { readerLocalTabs.delete(tab.id); continue; }
     if (tab.absPath) fileToOpen.push(tab);
     else panelToOpen.push(tab);
   }
@@ -5745,4 +6042,87 @@ export function restoreTabs() {
       })
       .catch(() => resolve(didLocal));
   });
+}
+
+// ── 跨设备实时收敛（canvas-tab-sync 批 2026-11-17）──────────────────────
+// 作者报障「各端 canvas 页签不同步——搞单实例就是想从各端打开状态都是同步的」。
+// 根因是设计缺口：存档（F1/#910）只在页面加载时被 GET（restoreTabs），运行中
+// 任一端的开/关/切/排序都不外推，他端不刷新永远看不到。本批补最小实现：服务端
+// PUT 落盘后广播 `canvasTabsChanged`（合并后权威存档），本函数是全部接收端
+// （广播帧 / 重连对账共用）的唯一收敛点，语义与 #910 加载腿同源：
+//   ① 墓碑播种 → 生效墓碑摘除（他端关闭 → 本端跟随消失，静默 teardown）；
+//   ② reconcile 补开缺失（他端打开 → 本端出现；面板同步、文件走 readFile）；
+//   ③ 顺序跟随权威存档（本地独有页签保持在尾部，避免未写穿的新签被重排丢位）；
+//   ④ 激活页签跟随（帧 activeTabId 已落地即切；未落地记晚到标记，openTab 的
+//      noRevive 腿落地时不被顶掉）；
+//   ⑤ 摘到末签 → 收面板（对齐 closeTab 的末签语义）。
+// 冲突裁定：服务端存档是唯一真源，后写赢（PUT 到达序）；收敛只摘带生效墓碑的
+// 页签，绝不清除本地新开（本地独有签随下一次 persistTabs 写穿回去）——两端
+// 同时操作最终并集收敛，不出现各显示一套且都不收敛。
+// @param {any} data 已过 parseTabsData 的合法 v2 存档
+function applyLiveTabsFrame(data) {
+  if (cardWindowMode) return; // 卡窗不管理主窗标签组（批⑧ 纪律）
+  const version = Number(data.writeVersion);
+  if (Number.isSafeInteger(version) && version <= lastCanvasVersion) return;
+  if (Number.isSafeInteger(version)) lastCanvasVersion = version;
+  const localIntent = pendingLocalActivation;
+  applyingLiveTabsFrame = true;
+  try {
+  seedKnownTombstones(data);
+  const removed = suppressTombstonedTabs();
+  // 被摘的可能正是激活签 → 邻位接管 / 末签收面板（closeTab 同语义的静默版）。
+  if (removed > 0 && activeTabId && !tabs.has(activeTabId)) {
+    const ids = [...tabs.keys()];
+    if (ids.length > 0) setActiveTab(ids[0]);
+    else if (isCanvasOpen()) closeCanvas();
+  }
+  reconcileFromServer(data);       // 空集合法（全部远端关闭）：reconcile 早退，摘除腿已收口
+  reorderTabsToArchive(data);
+  const want = localIntent && tabs.has(localIntent.id)
+    ? localIntent.id
+    : (typeof data.activeTabId === 'string' ? data.activeTabId : null);
+  if (want) {
+    if (tabs.has(want)) {
+      if (activeTabId !== want) setActiveTab(want);
+    } else if (!tombstoneGateActive(want)) {
+      lateSyncActive = { id: want, at: Date.now() }; // 文件签在途：落地时守卫接管
+    }
+  }
+  } finally {
+    applyingLiveTabsFrame = false;
+  }
+}
+
+/** 顺序收敛：把本地页签（Map + DOM）排到权威存档顺序；本地独有 id 保持原相对
+ *  顺序缀尾（它们尚未写穿，缀尾 = 下次 PUT 把并集顺序发布回去）。幂等：顺序
+ *  已一致时零 DOM 动作。 */
+function reorderTabsToArchive(data) {
+  const serverOrder = (Array.isArray(data?.tabs) ? data.tabs : [])
+    .map((t) => (t && typeof t.id === 'string') ? t.id : null)
+    .filter((id) => id && tabs.has(id));
+  const extra = [...tabs.keys()].filter((id) => !serverOrder.includes(id));
+  const finalOrder = [...serverOrder, ...extra];
+  // extras 在场时不得早退——并集必须写穿（见函数尾）；顺序已一致 + 无 extras
+  // （绝大多数帧：自己操作的回声）才零动作直返。
+  let same = extra.length === 0 && finalOrder.length === tabs.size;
+  if (same) {
+    let i = 0;
+    for (const id of tabs.keys()) { if (id !== finalOrder[i++]) { same = false; break; } }
+  }
+  if (same) return;
+  const tabBar = document.getElementById('canvas-tab-bar');
+  if (!tabBar) return;
+  const entries = new Map(finalOrder.map((id) => [id, tabs.get(id)]));
+  for (const id of finalOrder) {
+    const el = entries.get(id)?.tabEl;
+    if (el) tabBar.appendChild(el); // appendChild 移动既有节点 = 按 finalOrder 重排
+  }
+  tabs.clear();
+  for (const id of finalOrder) tabs.set(id, entries.get(id));
+  renderCanvasHeader(); // 叠卡头/环面随 Map 序重渲（openTab/closeTab 同款通知面）
+  // 并发开签收敛（两端同时各开一签：对方帧先到 ⇒ 本端新签成「本地独有」）：
+  // 立即写穿并集，让他端也收敛到同一集合——否则本端独有签滞留在本地，直到
+  // 下一次无关操作才顺带发布（期间两端各显示一套）。写穿触发一次广播，对端
+  // 收敛后 extras 为空 ⇒ 链路有界，不成环。
+  if (extra.length > 0) persistTabs();
 }

@@ -1,5 +1,7 @@
 package nebflow.core
 
+import cats.effect.IO
+import cats.syntax.all.*
 import nebflow.actor.{ActorRef, AgentCommand, AgentEvent}
 import nebflow.shared.{ContentBlock, Message, MessageRole, NebflowLogger}
 
@@ -138,7 +140,7 @@ object ResumeHandoff:
   /** 已配对的 tool_use id 集（其后任何 user 消息里的 tool_result 都算配对）。 */
   private def answeredIds(messages: List[Message]): Set[String] =
     messages
-      .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+      .collect { case Message(MessageRole.User, Right(blocks), _, _, _, _) =>
         blocks.collect { case ContentBlock.ToolResult(id, _, _) => id }
       }
       .flatten
@@ -151,7 +153,7 @@ object ResumeHandoff:
 
   private def danglingOf(msg: Message, answered: Set[String]): List[(ContentBlock.ToolUse, String)] =
     msg match
-      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
+      case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
         blocks.collect { case u @ ContentBlock.ToolUse(id, name, _) if !answered.contains(id) => (u, name) }
       case _ => Nil
 
@@ -276,6 +278,33 @@ object ResumeHandoff:
    * 面板气泡/审计——**这就是「注入一条消息」被替换掉的地方**：投递路径没变，
    * 但模型读到的东西从「一条提示」变成了「那次调用的结果」。
    */
+  /** Resolve persisted AskHost calls without generating a new request. */
+  def resolveAskHost(sessionId: String, p: Plan): IO[Plan] =
+    nebflow.core.tools.AskHostLedger.recover.flatMap { rows =>
+      p.pending.filter(_.toolName == "AskHost").traverse { call =>
+        rows.filter(r => r.pending.workerSession == sessionId && r.pending.toolCallId == call.toolUseId) match
+          case row :: Nil =>
+            nebflow.core.tools.AskHostLedger.restoreWaiter(row.pending.correlationId).flatMap(_.get).map(call.toolUseId -> _)
+          case _ => IO.raiseError(new IllegalStateException(s"AskHost recovery requires one durable request for ${call.toolUseId}"))
+      }.map { resolved =>
+        val answers = resolved.toMap
+        val blocks = p.injectBlocks.map(_.map {
+          case r: ContentBlock.ToolResult if answers.contains(r.toolUseId) =>
+            ContentBlock.ToolResult(r.toolUseId, answers(r.toolUseId), Some(false))
+          case other => other
+        })
+        p.copy(injectBlocks = blocks)
+      }
+    }
+
+  def recoverableAskHostOnly(sessionId: String, transcript: List[Message]): IO[Boolean] =
+    val p = plan(transcript, Cause.Crash)
+    if !hasUnresolvedToolCalls(transcript) then IO.pure(true)
+    else if !p.atToolBoundary || p.repairedMidHistory > 0 || p.pending.isEmpty || p.pending.exists(_.toolName != "AskHost") then IO.pure(false)
+    else nebflow.core.tools.AskHostLedger.recover.map { rows =>
+      p.pending.forall(call => rows.count(r => r.pending.workerSession == sessionId && r.pending.toolCallId == call.toolUseId) == 1)
+    }
+
   def userInput(
     p: Plan,
     replyTo: Option[ActorRef[AgentEvent]] = None,

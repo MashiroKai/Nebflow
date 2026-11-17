@@ -144,30 +144,32 @@ class TodoScheduleSpec extends CatsEffectSuite:
   test("upsert is kind-scoped: a named todo never clobbers a same-name scheduled task"):
     for
       _ <- reset()
-      task <- IO(ScheduledTask.create("s1", "morning routine", future, None, Some("daily"), Some("review")))
+      task <- IO(ScheduledTask.create("s1", "morning routine", future, None, Some("daily"), Some("review")).copy(source = Some("tool")))
       todo1 <- IO(
-        ScheduledTask.create("s1", "todo v1", future, None, None, Some("review"), Some(ScheduledTask.KindTodo))
+        ScheduledTask.create("s1", "todo v1", future, None, None, Some("review"), Some(ScheduledTask.KindTodo)).copy(source = Some("tool"))
       )
       _ <- taskStore.addTask(task)
       _ <- taskStore.upsertTaskByName(todo1)
       todo2 <- IO(
-        ScheduledTask.create("s2", "todo v2", future + 1, None, None, Some("review"), Some(ScheduledTask.KindTodo))
+        ScheduledTask.create("s1", "todo v2", future + 1, None, None, Some("review"), Some(ScheduledTask.KindTodo)).copy(source = Some("tool"))
       )
-      removed <- taskStore.upsertTaskByName(todo2)
+      rearmTodo <- taskStore.upsertTaskByName(todo2)
       pending <- taskStore.getAllPendingTasks
       // 反向同理：定时任务同名 upsert 不吃待办
-      task3 <- IO(ScheduledTask.create("s3", "task v3", future + 2, None, None, Some("review")))
-      removed2 <- taskStore.upsertTaskByName(task3)
+      task3 <- IO(ScheduledTask.create("s1", "task v3", future + 2, None, None, Some("review")).copy(source = Some("tool")))
+      rearmTask <- taskStore.upsertTaskByName(task3)
       finalPending <- taskStore.getAllPendingTasks
     yield
-      assertEquals(removed.map(_.id), List(todo1.id), "todo upsert replaces only the same-kind same-name todo")
+      assertEquals(rearmTodo.replaced.map(_.id), List(todo1.id), "todo upsert replaces only the same-kind same-name todo")
+      assertEquals(rearmTodo.saved.id, todo1.id, "rearm keeps the todo's own id")
       assertEquals(
         pending.map(_.id).sorted,
-        List(task.id, todo2.id).sorted,
+        List(task.id, todo1.id).sorted,
         "the scheduled task must survive untouched"
       )
-      assertEquals(removed2.map(_.id), List(task.id))
-      assertEquals(finalPending.map(_.id).sorted, List(task3.id, todo2.id).sorted)
+      assertEquals(rearmTask.replaced.map(_.id), List(task.id))
+      assertEquals(rearmTask.saved.id, task.id, "rearm keeps the scheduled task's own id")
+      assertEquals(finalPending.map(_.id).sorted, List(task.id, todo1.id).sorted)
 
   // ==================================================================
   // 断言 2 + 3 + 4（service 面）：digest 浮出 / 销账 / 定时任务回归
@@ -456,6 +458,39 @@ class TodoScheduleSpec extends CatsEffectSuite:
       assert(text.startsWith("Cancelled todo"), text)
       assert(text.contains("will not surface again"), text)
       assertEquals(pending, Nil)
+
+  test("FDC-SCN-025 tool cancel removes conflicting copies without selecting an authority"):
+    for
+      _ <- reset()
+      old = ScheduledTask.create("old-session", "stale due payload", 1L).copy(id = "conflicted")
+      other = old.copy(sessionId = "new-session", content = "future payload", triggerAt = future)
+      unrelated = ScheduledTask.create("old-session", "keep me", future).copy(id = "unrelated")
+      _ <- taskStore.addTask(old)
+      _ <- taskStore.addTask(other)
+      _ <- taskStore.addTask(unrelated)
+      visible <- taskStore.findTaskById(old.id)
+      due <- taskStore.getAllDueTasks
+      ctx = mkCtx()
+      result <- IO(callTool(Json.obj("action" -> "cancel".asJson, "id" -> old.id.asJson), ctx))
+      broadcasts = wsSent.toList
+      oldRows <- taskStore.loadTasks("old-session")
+      newRows <- taskStore.loadTasks("new-session")
+      storedOld <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(tempRoot / "scheduled-tasks" / "old-session.json")).toOption.get)
+      storedNew <- IO(io.circe.parser.decode[List[ScheduledTask]](os.read(tempRoot / "scheduled-tasks" / "new-session.json")).toOption.get)
+      missing <- IO(callTool(Json.obj("action" -> "cancel".asJson, "id" -> "missing".asJson), ctx))
+    yield
+      assertEquals(visible, None, "automatic reads must not guess conflicting authority")
+      assertEquals(due, Nil)
+      assert(result.isRight, result.toString)
+      assert(!result.toOption.get.contains("stale due payload") && !result.toOption.get.contains("future payload"))
+      assertEquals(oldRows.map(_.id), List("unrelated"))
+      assertEquals(newRows, Nil)
+      assertEquals(storedOld.map(_.id), List("unrelated"), "all conflicting copies are physically removed")
+      assertEquals(storedNew, Nil)
+      val deletedSessions = broadcasts.filter(_.hcursor.downField("type").as[String].toOption.contains("scheduledTaskDeleted"))
+        .flatMap(_.hcursor.downField("sessionId").as[String].toOption).toSet
+      assertEquals(deletedSessions, Set("old-session", "new-session"))
+      assert(missing.isLeft, "cancelling an absent ID must not claim success")
 
   test("tool todo upsert by name converges to a single copy"):
     for

@@ -9,7 +9,6 @@ import cats.syntax.all.*
 import fs2.Stream
 import nebflow.neblink.logto.*
 import nebflow.core.root.{AccountRoot, ActiveAccount}
-import nebflow.neblink.*
 import nebflow.shared.{Branding, NebflowLogger, PathUtil}
 import org.http4s.*
 import org.http4s.dsl.io.*
@@ -278,7 +277,12 @@ private[gateway] object AuthRoutes:
       // Retain the pointer for retry if any critical teardown failed, not
       // only when enqueue failed. The account session is still revoked now.
       canClearPointer = List(credentialResult, configResult, discoveryResult, relayResult, queueResult).forall(_.isRight)
-      accountResult <- clearAccountSurface(sessions, PathUtil.machineRoot, clearPointer = canClearPointer).attempt
+      accountResult <- clearAccountSurface(
+        sessions,
+        PathUtil.machineRoot,
+        clearPointer = canClearPointer,
+        revokeTickets = faces.nfTicketRevocation.getOrElse(IO.pure(0))
+      ).attempt
       failures = List(credentialResult, configResult, discoveryResult, relayResult, infoResult, peersResult, queueResult)
         .collect { case Left(e) => e } ++ accountResult.left.toOption.toList
       _ <- if failures.isEmpty then IO.unit
@@ -303,7 +307,8 @@ private[gateway] object AuthRoutes:
   private[gateway] def clearAccountSurface(
     sessions: GatewaySessionStore,
     machineRoot: os.Path,
-    clearPointer: Boolean = true
+    clearPointer: Boolean = true,
+    revokeTickets: IO[Int] = IO.pure(0)
   ): IO[Option[ActiveAccount]] =
     val log = NebflowLogger.forName("nebflow.gateway.logout")
     IO.blocking(AccountRoot.readPointer(machineRoot)).flatMap {
@@ -311,12 +316,15 @@ private[gateway] object AuthRoutes:
         // Keep the pointer until the revocation is durably persisted so a
         // failed write remains retryable, including after process restart.
         sessions.revokeByAccount(acct.accountSub) *>
+          revokeTickets.void *>
           IO.blocking(AccountRoot.clearPointer(machineRoot)).whenA(clearPointer) *>
           log.info(s"logout account surface cleared for '${acct.accountSub}'").as(Some(acct))
       case None =>
         // A missing or damaged pointer does not identify a safe subset.
         // Fail closed by revoking all local console sessions.
-        sessions.revokeAll().flatTap(_ => IO.blocking(AccountRoot.clearPointer(machineRoot)).whenA(clearPointer)).as(None)
+        sessions.revokeAll() *>
+          revokeTickets *>
+          IO.blocking(AccountRoot.clearPointer(machineRoot)).whenA(clearPointer).as(None)
     }
 
   end clearAccountSurface
@@ -565,7 +573,14 @@ private[gateway] object AuthRoutes:
     nebflow.neblink.identity.EnrollGuard.enrollRefusal(serverUrl) match
       case Some(reason) if reason == err => CD.diagnosticOf(CF.EnrollRefusedIsolatedHome, err)
       case _ =>
-        CD.byVisibleMessage(err).map(f => CD.diagnosticOf(f)).getOrElse(CD.diagnosticOf(CF.Unclassified, err))
+        // 账号归属闸拒绝（logout-login-recovery 批）先于可见串反查：Left 通道的稳定
+        // 形态是 "<code>: <英文原因>"，按码头直查（映射单点 = CD.byGuardRefusal）；
+        // 英文原因只进日志面（diagnosticOf 的 detail 通道），可见面走各码的中文三段式。
+        // 可见串反查命中保持原形（不带 detail —— 与修前逐字一致）。
+        CD.byGuardRefusal(err)
+          .map(f => CD.diagnosticOf(f, err))
+          .orElse(CD.byVisibleMessage(err).map(f => CD.diagnosticOf(f)))
+          .getOrElse(CD.diagnosticOf(CF.Unclassified, err))
 
   /**
    * Static loopback login result page (success + error variants). The

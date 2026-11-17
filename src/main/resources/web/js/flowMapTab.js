@@ -1998,10 +1998,12 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
 // 取消**按钮**已随卡面迁 fmNodeCard（chainCancelButtonHtml 单源件）；确认卡与
 // 发帧腿属容器交互管线，留在本文件（#1228 拆件边界：渲染件出、交互留）。
 /** 取消集状态桶（与后端 `NodeLifecycle.ChainCancelScope` 同序；确认卡逐状态计数用）。
- *  仅 **显示** 用途——不代表任何判定口径（判定恒在后端）。 */
-const FM_CHAIN_CANCEL_BUCKETS = ['running', 'pending', 'wiring', 'blocked', 'interrupted'];
-/** 零触碰桶（确认卡第 ④ 要素的计数面）。 */
-const FM_CHAIN_KEEP_BUCKETS = ['completed', 'failed', 'cancelled'];
+ *  仅 **显示** 用途——不代表任何判定口径（判定恒在后端）。blocked 终态已退役
+ *  （no-blocked-semantics 一期）：不在取消桶；legacy 存量 blocked 行归零触碰桶
+ *  （引擎不自动处置存量行，与后端 preserve 口径一致）。 */
+const FM_CHAIN_CANCEL_BUCKETS = ['running', 'pending', 'wiring', 'interrupted'];
+/** 零触碰桶（确认卡第 ④ 要素的计数面；blocked = legacy 存量行展示位）。 */
+const FM_CHAIN_KEEP_BUCKETS = ['completed', 'failed', 'cancelled', 'blocked'];
 
 /** 不可逆确认卡（作者三答 2 + 工程面自决「四要素 + 放弃可恢复中断数提示」）：
  *  ① 链名 + chainId；② 将被取消的节点数与**逐状态计数**；③ 不可逆声明；④ 零触碰声明；

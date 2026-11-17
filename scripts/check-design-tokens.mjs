@@ -34,6 +34,7 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'acorn';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CSS_DIR = join(ROOT, 'src', 'main', 'resources', 'web', 'css');
@@ -137,6 +138,64 @@ function stripCommentsKeepLines(src) {
   return src.replace(COMMENT_RE, (m) => m.replace(/[^\n]/g, ' '));
 }
 
+function cssComments(src, offset) {
+  const comments = [];
+  let quote;
+  for (let i = 0; i < src.length; i++) {
+    if (src[i] === '\\') { i++; continue; }
+    if (quote) {
+      if (src[i] === quote) quote = undefined;
+    } else if (src[i] === '"' || src[i] === "'") {
+      quote = src[i];
+    } else if (src.startsWith('/*', i)) {
+      const end = src.indexOf('*/', i + 2);
+      if (end < 0) break;
+      comments.push({ start: offset + i, end: offset + end + 2 });
+      i = end + 1;
+    }
+  }
+  return comments;
+}
+
+function stripJsCommentsKeepLines(src) {
+  const comments = [];
+  const ast = parse(src, { ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true, onComment: comments });
+  const visit = (node, ancestors = []) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
+      const quasi = node.quasis[0];
+      const value = src.slice(quasi.start, quasi.end);
+      const parent = ancestors.at(-1);
+      const block = ancestors.findLast(ancestor => ancestor.type === 'BlockStatement');
+      const target = parent?.type === 'AssignmentExpression' && parent.operator === '=' && parent.right === node
+        ? parent.left : undefined;
+      const styleTarget = target?.type === 'MemberExpression' && !target.computed && target.property.name === 'textContent' &&
+        target.object.type === 'Identifier' && block?.body.some(statement => statement.type === 'VariableDeclaration' &&
+          statement.declarations.some(declaration => declaration.id.type === 'Identifier' && declaration.id.name === target.object.name &&
+            declaration.init?.type === 'CallExpression' && declaration.init.callee.type === 'MemberExpression' &&
+            !declaration.init.callee.computed && declaration.init.callee.object.name === 'document' &&
+            declaration.init.callee.property.name === 'createElement' && declaration.init.arguments[0]?.value === 'style'));
+      // Only known CSS payloads have CSS comments; ordinary JS strings retain their bytes.
+      if (styleTarget || /^\s*<style(?:\s[^>]*)?>[\s\S]*<\/style>\s*$/i.test(value)) {
+        comments.push(...cssComments(value, quasi.start));
+      }
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(child => visit(child, [...ancestors, node]));
+      else if (value && typeof value === 'object') visit(value, [...ancestors, node]);
+    }
+  };
+  visit(ast);
+  comments.sort((a, b) => a.start - b.start);
+  let result = '';
+  let pos = 0;
+  for (const { start, end } of comments) {
+    result += src.slice(pos, start) + src.slice(start, end).replace(/[^\r\n\u2028\u2029]/g, ' ');
+    pos = end;
+  }
+  return result + src.slice(pos);
+}
+
 /** 判断某一行是否落在「自定义属性声明」里（`--x: …`）——令牌出生地不算消费。 */
 function isTokenDeclLine(line) {
   return /^\s*--[a-z0-9-]+\s*:/i.test(line);
@@ -190,7 +249,8 @@ const counts = {};   // rel → {color, transitionAll, fsSmall, radiusOff}
 for (const abs of files) {
   const rel = relative(join(ROOT, 'src', 'main', 'resources', 'web'), abs).replaceAll('\\', '/');
   const isCss = extname(abs) === '.css';
-  const src = stripCommentsKeepLines(readFileSync(abs, 'utf8'));
+  const raw = readFileSync(abs, 'utf8');
+  const src = isCss ? stripCommentsKeepLines(raw) : stripJsCommentsKeepLines(raw);
   const lines = src.split('\n');
   const c = { color: 0, transitionAll: 0, fsSmall: 0, radiusOff: 0 };
   lines.forEach((line) => {

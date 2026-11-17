@@ -2,7 +2,7 @@ package nebflow.agent
 
 import munit.FunSuite
 import nebflow.actor.AgentDef
-import nebflow.core.tools.{MailTool, NodeReportToolDef, ToolRegistry}
+import nebflow.core.tools.{MailTool, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
 /**
@@ -11,15 +11,16 @@ import nebflow.shared.ToolDefinition
  *  ① **机制可判红**：变体选择单点 `AgentCore.schemaVariantFor`（唯一消费点）+
  *     两份定义常量（基础变体 = 逐字节现状 / 分化变体）+ 选择逻辑可证；去掉接线
  *     ⇒ 目标角色回落基础面（判红面 = 本 spec 的「分化面缺席」断言）。
- *  ② **零回归负控（逐字节）**：非目标工具、非目标角色的定义与基线**逐字节相同**；
+ *  ② **零回归负控（逐字节）**：非目标工具、非目标身份的定义与基线**逐字节相同**；
  *     `inputSchema` 全量 sha256 对照（Q5 只动 `description`）。
- *  ③ **试点读数**：`node_report` 逐角色 description（改前 = 注册表并集面 / 改后 =
- *     角色变体）+ 该角色取到的变体说明。
- *  ④ **Q5 读数**：Mail 地址面逐角色 + schema 逐字节不变断言。
+ *  ③ **试点读数**：Mail 地址面逐身份 description（改前 = 注册表并集面 / 改后 =
+ *     身份变体）+ 该身份取到的变体说明（终态申报工具的按角色分叉试点已随该工具
+ *     整体退役删除——文本锚定协议无 schema 维度；变体机制的现役试点 = Mail 单点）。
+ *  ④ **Q5 读数**：Mail 地址面逐身份 + schema 逐字节不变断言。
  *  ⑤ **变异三条的钉子**（变异实测见证据目录 `mutations.md`）：
  *     ①去掉变体选择分支 ⇒ 「分化描述缺失」断言必红；
  *     ②默认分支改分化变体 ⇒ 「基础身份 == 注册表定义」断言必红（fail-closed）；
- *     ③判据漏身份维度（丢 depth / 丢角色归一）⇒ 「旁支会话误取变体」断言必红。
+ *     ③判据漏身份维度（丢 depth / 丢地址角色）⇒ 「旁支会话误取变体」断言必红。
  *  ⑥ **措辞来源纪律**：分化变体**零新造字**——逐段取自基础文本、纯删段可逆。
  *
  * 跑法：单测直调 `AgentCore.buildToolList`（protected ⇒ 经先例
@@ -118,19 +119,13 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   test("① 机制存在: 两份定义常量（基础变体逐字节=现状 / 分化变体）") {
     // 基础变体恒等于「现状那一份」——分化绝不改基础面
     assertEquals(MailTool.descriptionBase, MailTool.description, "Mail 基础变体被改动")
-    assertEquals(NodeReportToolDef.descriptionBase, NodeReportToolDef.description, "node_report 基础变体被改动")
     assertEquals(MailTool.description, baseOf("Mail").description, "注册表里 Mail 的 description 不是基础变体")
-    assertEquals(NodeReportToolDef.description, baseOf(NodeReportToolDef.Name).description)
 
     // 分化变体存在且与基础面不同、且更短（纯删段 ⇒ 不可能更长）
     assert(MailTool.descriptionRoot != MailTool.descriptionBase, "Mail root 分化变体与基础面相同（机制空转）")
     assert(MailTool.descriptionDispatcher != MailTool.descriptionBase, "Mail dispatcher 分化变体与基础面相同（机制空转）")
     assert(MailTool.descriptionRoot.length < MailTool.descriptionBase.length, "root 变体未变短")
     assert(MailTool.descriptionDispatcher.length < MailTool.descriptionBase.length, "dispatcher 变体未变短")
-    assert(NodeReportToolDef.descriptionTask != NodeReportToolDef.descriptionBase, "task 变体与基础面相同")
-    assert(NodeReportToolDef.descriptionVerifier != NodeReportToolDef.descriptionBase, "verifier 变体与基础面相同")
-    assert(NodeReportToolDef.descriptionTask.length < NodeReportToolDef.descriptionBase.length)
-    assert(NodeReportToolDef.descriptionVerifier.length < NodeReportToolDef.descriptionBase.length)
   }
 
   test("① 选择逻辑可证: 同一 ToolDefinition 输入按身份产出不同定义；基础身份恒等映射") {
@@ -144,34 +139,23 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
       AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
       MailTool.descriptionDispatcher
     )
-    val nr = baseOf(NodeReportToolDef.Name)
-    assertEquals(
-      AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("task"))).description,
-      NodeReportToolDef.descriptionTask
-    )
-    assertEquals(
-      AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("verifier"))).description,
-      NodeReportToolDef.descriptionVerifier
-    )
     // 变体选择**只**动 description（Q5 判据 + 试点口径）
     for (td, id) <- List(
         (mail, AgentCore.ToolFaceIdentity(isRootAgent = true)),
-        (mail, AgentCore.ToolFaceIdentity(isDispatcher = true)),
-        (nr, AgentCore.ToolFaceIdentity(nodeRole = Some("task"))),
-        (nr, AgentCore.ToolFaceIdentity(nodeRole = Some("verifier")))
+        (mail, AgentCore.ToolFaceIdentity(isDispatcher = true))
       )
     do assertEquals(AgentCore.schemaVariantFor(td, id).inputSchema, td.inputSchema, s"${td.name}: 变体改了 inputSchema")
   }
 
-  test("① 判据单点: 两个变体构造器只被 AgentCore 单点调用（源码级 pin）") {
+  test("① 判据单点: 变体构造器只被 AgentCore 单点调用（源码级 pin）") {
     val root = os.pwd
     val mainSrc = root / "src" / "main" / "scala"
     assert(os.exists(mainSrc), s"源码根不存在：$mainSrc（本 spec 必须在仓根运行）")
     // re-pin（root 2026-10-02 令 #462 裁②「不保留 mode 键」）：`rootVariant(` 已随
-    // AskUser 的 schema 分叉面整体退场（工具与 AgentCore 双侧零出现）⇒ 本表只留
-    // 仍在役的两个构造器；下方另有「已退场构造器零出现」的反向断言。
+    // AskUser 的 schema 分叉面整体退场（工具与 AgentCore 双侧零出现）；re-pin（终态
+    // 申报工具退役批）：`roleVariant(` 同型退场（该工具的按角色分叉分支删除）。
+    // 本表只留仍在役的构造器；下方另有「已退场构造器零出现」的反向断言。
     val callers = Map(
-      "roleVariant(" -> "AgentCore.scala",
       "addressFaceVariant(" -> "AgentCore.scala"
     )
     for (needle, owner) <- callers do
@@ -180,7 +164,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
         .filter(p => p.ext == "scala")
         .filter { p =>
           val src = os.read(p)
-          // 定义行（`def roleVariant(`）不算调用；其余出现处必须是单点文件。
+          // 定义行（`def addressFaceVariant(`）不算调用；其余出现处必须是单点文件。
           src.linesIterator.exists(l => l.contains(needle) && !l.contains("def " + needle))
         }
         .map(_.last)
@@ -188,20 +172,23 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
         .sorted
       assertEquals(files, List(owner), s"变体构造器 '$needle' 出现了第二个调用点（变体选择必须单点）")
 
-    // AskUser 的 schema 变体构造器已退役：全 main 源内零出现（防「顺手写回」）
-    val retiredFiles = os
-      .walk(mainSrc)
-      .filter(p => p.ext == "scala")
-      .filter(_.last != "AgentCore.scala")
-      .filter(p => os.read(p).contains("rootVariant("))
-      .map(_.last)
-      .toList
-      .sorted
-    assertEquals(retiredFiles, Nil, "已退役的 `rootVariant(` 又出现在 main 源里")
-    assert(
-      !os.read(mainSrc / "nebflow" / "agent" / "AgentCore.scala").contains("rootVariant("),
-      "AgentCore 仍引用 rootVariant（AskUser 变体面未随裁② 退场）"
-    )
+    // 已退役的变体构造器：全 main 源内零出现（防「顺手写回」）。rootVariant（AskUser
+    // 批）与 roleVariant（终态申报工具退役批）同表。
+    val retiredNeedles = List("rootVariant(", "roleVariant(")
+    for needle <- retiredNeedles do
+      val retiredFiles = os
+        .walk(mainSrc)
+        .filter(p => p.ext == "scala")
+        .filter(_.last != "AgentCore.scala")
+        .filter(p => os.read(p).contains(needle))
+        .map(_.last)
+        .toList
+        .sorted
+      assertEquals(retiredFiles, Nil, s"已退役的 `$needle` 又出现在 main 源里")
+      assert(
+        !os.read(mainSrc / "nebflow" / "agent" / "AgentCore.scala").contains(needle),
+        s"AgentCore 仍引用 $needle（已退役的变体分支未删净）"
+      )
 
     // 身份装配判据（角色维度）只许出现在 AgentCore 单点内
     val roleFilterFiles = os
@@ -254,7 +241,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
 
   test("② 负控: 基础身份 / 无目标工具的身份面 == 注册表定义（逐字节，含 sha256）") {
     for (name, face) <- List(
-        "kernel(depth=1, 无 Mail 无 node_report)" -> kernelFace,
+        "kernel(depth=1, 无 Mail)" -> kernelFace,
         "Nebula 名 depth=1 节点会话" -> CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true)
       )
     do
@@ -294,40 +281,14 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
       assertEquals(names.distinct.size, names.size, s"$name 工具面出现重复元素")
   }
 
-  test("② 负控: 非目标角色的目标工具 == 注册表定义（并集面，逐字节）") {
+  test("② 负控: 非目标身份的目标工具 == 注册表定义（并集面，逐字节）") {
     // team 成员（legacy 面）持 Mail 但无身份维度 ⇒ 必须仍是并集面
     val teamMail = find(teamFace, "Mail").getOrElse(fail("team 面丢了 Mail"))
     assertEquals(teamMail, baseOf("Mail"), "未登记身份拿到了分化面（fail-closed 破裂）")
-    // 节点会话持 node_report 但 role 缺省/非法 ⇒ 基础面
-    for role <- List(None, Some(""), Some("unknown-role"), Some("verifier-x"))
-    do
-      val face = CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, flowNodeRole = role)
-      assertEquals(
-        find(face, NodeReportToolDef.Name).getOrElse(fail("节点面丢了 node_report")),
-        baseOf(NodeReportToolDef.Name),
-        s"role=$role 拿到了分化面（未登记形态必须落基础面）"
-      )
   }
 
   // ============================================================
-  // ③ 试点读数：node_report 逐角色
-  // ============================================================
-
-  test("③ 试点: node_report 逐角色变体 + 旁支面缺席") {
-    val taskNr = find(taskNodeFace, NodeReportToolDef.Name).getOrElse(fail("task 节点面丢了 node_report"))
-    val verNr = find(verifierNodeFace, NodeReportToolDef.Name).getOrElse(fail("verifier 节点面丢了 node_report"))
-    assertEquals(taskNr.description, NodeReportToolDef.descriptionTask, "task 节点未拿到 task 变体")
-    assertEquals(verNr.description, NodeReportToolDef.descriptionVerifier, "verifier 节点未拿到 verifier 变体")
-    // 分化面**缺席判据**（变异①：去掉变体选择 ⇒ 目标角色拿到并集面 ⇒ 这两条必红）
-    assert(!taskNr.description.contains("(2) role=verifier"), "task 变体仍含 verifier 段（分化面缺失）")
-    assert(!verNr.description.contains("(1) role=task"), "verifier 变体仍含 task 段（分化面缺失）")
-    // 第三条读数：dispatcher 面**不含** node_report（成员资格由 flowNodeSession 单点决定，未受影响）
-    assert(find(dispatcherFace, NodeReportToolDef.Name).isEmpty, "dispatcher 面出现了 node_report（成员资格被本批改动）")
-    assert(find(nebulaRootFace, NodeReportToolDef.Name).isEmpty, "Nebula root 面出现了 node_report")
-  }
-
-  // ============================================================
-  // ④ Q5 读数：Mail 地址面逐角色
+  // ③/④ 试点读数：Mail 地址面逐身份
   // ============================================================
 
   test("④ Q5: Mail 地址面逐角色 + schema 逐字节不变（agentflow 批后：分发器面不再持 Mail）") {
@@ -386,29 +347,17 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     )
   }
 
-  test("⑤③ 身份维度完整: depth 分量 + 角色维度缺失即误取变体（判红面）") {
+  test("⑤③ 身份维度完整: depth 分量缺失即误取变体（判红面）") {
     // depth 分量：Nebula 名 + depth=1（节点会话）绝不拿 root 变体
     val nebulaNamedNode =
       CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true, flowNodeRole = Some("task"))
     val mail = find(nebulaNamedNode, "Mail")
     assert(mail.forall(_.description == MailTool.descriptionBase), "depth=1 的 Nebula 节点会话拿到了 root 地址面（谓词丢 depth）")
-    assertEquals(
-      find(nebulaNamedNode, NodeReportToolDef.Name).map(_.description),
-      Some(NodeReportToolDef.descriptionTask)
-    )
 
     // dispatcher 维度：只有 isDispatcher 才拿 dispatcher 面
     assert(
       CoreProbe.face(defNamed("project-dispatcher")).forall(td => td.description == baseOf(td.name).description),
       "未标 isDispatcher 的分发器名会话拿到了 dispatcher 面"
-    )
-
-    // 角色维度：角色互斥（task 面不得含 verifier 段，反之亦然）+ 大小写宽容
-    val upper = CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, flowNodeRole = Some("Verifier"))
-    assertEquals(
-      find(upper, NodeReportToolDef.Name).map(_.description),
-      Some(NodeReportToolDef.descriptionVerifier),
-      "大写角色名未归一（判据丢归一维度）"
     )
   }
 
@@ -449,47 +398,4 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
       "dispatcher 变体 ≠ 基础删去另三段（出现了改写/新造字）"
     )
   }
-
-  test("⑥ 措辞来源: node_report 分化变体 = 基础删去另一角色行（行级、零新造字）") {
-    val lines = NodeReportToolDef.descriptionBase.split("\n", -1).toList
-    val verifierLine = lines.find(_.startsWith("(2) role=verifier")).getOrElse(fail("基础文本里没有 verifier 段"))
-    val taskLine = lines.find(_.startsWith("(1) role=task")).getOrElse(fail("基础文本里没有 task 段"))
-    assertEquals(lines.size, 5, "基础 description 行数变化（本 spec 的行级判据前提）")
-    assertEquals(NodeReportToolDef.descriptionTask, NodeReportToolDef.descriptionBase.replace(verifierLine + "\n", ""))
-    assertEquals(NodeReportToolDef.descriptionVerifier, NodeReportToolDef.descriptionBase.replace(taskLine + "\n", ""))
-    // 变体的每一行都逐字节来自基础（保序子序列）
-    def isOrderedSubseq(sub: List[String], all: List[String]): Boolean =
-      if sub.isEmpty then true
-      else
-        val i = all.indexOf(sub.head)
-        i >= 0 && isOrderedSubseq(sub.tail, all.drop(i + 1))
-    for v <- List(NodeReportToolDef.descriptionTask, NodeReportToolDef.descriptionVerifier) do
-      assert(isOrderedSubseq(v.split("\n", -1).toList, lines), "变体出现基础里没有的行（新造字）")
-  }
-
-  // node-output contract（2026-09-24）：输出契约只在**公共段**（角色行之外的那两行）
-  // 承载 ⇒ 两个角色都看得到，行级删段关系不受影响（新句子不得落进 (1)/(2) 角色行）。
-  test("⑥ 输出契约写在公共段：两角色变体都看到两条要求，且角色行未承载它"):
-    val base = NodeReportToolDef.descriptionBase
-    val sharedLines =
-      base.split("\n", -1).filterNot(l => l.startsWith("(1) role=task") || l.startsWith("(2) role=verifier"))
-    val carries = (s: String) => sharedLines.exists(_.contains(s))
-    assert(carries("final assistant text is the node result"), s"要求 1 必须落在公共段（两角色都该看到）:\n$base")
-    assert(carries("self-contained"), "要求 2 必须落在公共段")
-    for (label, v) <- List(
-        "task" -> NodeReportToolDef.descriptionTask,
-        "verifier" -> NodeReportToolDef.descriptionVerifier
-      )
-    do
-      assert(v.contains("final assistant text is the node result"), s"$label 变体必须看到要求 1")
-      assert(v.contains("\"see above\""), s"$label 变体必须看到要求 2（点名 see above）")
-      assert(v.contains("declaration, NOT your deliverable"), s"$label 变体必须看到「申报 ≠ 汇报」")
-    // 角色行本身不含输出契约字面（否则行级删段会让一个角色看不到）
-    val taskLine = base.split("\n", -1).find(_.startsWith("(1) role=task")).getOrElse(fail("no task line"))
-    val verLine = base.split("\n", -1).find(_.startsWith("(2) role=verifier")).getOrElse(fail("no verifier line"))
-    for l <- List(taskLine, verLine) do
-      assert(
-        !l.contains("self-contained") && !l.contains("final assistant text"),
-        s"输出契约不得写进角色行（会破坏行级删段的两角色可达性）：${l.take(80)}"
-      )
 end ToolFaceVariantSchemaSpec

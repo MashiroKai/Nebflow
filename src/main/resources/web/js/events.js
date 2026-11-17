@@ -21,6 +21,10 @@ export const EVENTS = Object.freeze({
   FM_FRIENDS_CHANGED: 'fm-friends-changed',
   // 会话面：某会话需要/撤销「求关注」标记
   SESSION_ATTENTION: 'session-attention',
+  SESSION_CHANGE: 'nebflow-session-change',
+  // The Agent conversation is asked for: an Agent session was selected (also the current one) or the active session
+  // changed. A friend, group or device conversation shown in the main area gives way to it.
+  AGENT_VIEW_REQUESTED: 'nebflow-agent-view-requested',
   // i18n 面：语言切换（content-i18n 重渲染腿）
   LOCALE_CHANGED: 'locale-changed',
   // Delegate mirror refresh and archive notifications.

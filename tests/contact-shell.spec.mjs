@@ -133,7 +133,8 @@ const READ = () => {
   const rectObj = (r) => (r ? { top: +r.top.toFixed(2), bottom: +r.bottom.toFixed(2), left: +r.left.toFixed(2), right: +r.right.toFixed(2), width: +r.width.toFixed(2), height: +r.height.toFixed(2) } : null);
   const q = (s) => document.querySelector(s);
   const modal = q('.fm-modal');
-  const header = q('.fm-modal-header');
+  // FCC-REQ-007: on desktop the conversation is hosted in the main area and the page header is its header.
+  const header = q('.fm-modal-header') || q('#header');
   const flow = q('.fm-flow');
   const bar = q('.fm-input-bar');
   const idhead = q('.mh-idhead');
@@ -188,6 +189,7 @@ const READ = () => {
       padding: hCs.padding,
       pad: [hCs.paddingTop, hCs.paddingRight, hCs.paddingBottom, hCs.paddingLeft],
       headH: resolveLen(varOf(header, '--fm-head-h') || varOf(modal, '--fm-head-h')),
+      fromModalTop: modal ? +(header.getBoundingClientRect().bottom - modal.getBoundingClientRect().top).toFixed(2) : null,
       headClear: resolveLen(varOf(flow, '--fm-head-clear')),
     } : null,
     flow: flow ? {
@@ -253,7 +255,7 @@ const READ = () => {
  *  与窗头带相交的消息。只认这种行 —— 仅看 rect 不看裁剪会把「已经滚出可视区、
  *  被 overflow 裁掉」的行也算成穿过（假阳性）。 */
 const PIERCE = () => {
-  const header = document.querySelector('.fm-modal-header');
+  const header = document.querySelector('.fm-modal-header') || document.querySelector('#header');
   const flow = document.querySelector('.fm-flow');
   if (!header || !flow) return null;
   const hb = header.getBoundingClientRect();
@@ -353,7 +355,13 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
   const s = await createSession(browser, { width: 1440, height: 900, colorScheme: 'light', apiStubs: API_STUBS, clock: FIXED });
   try {
     await s.boot({ config: CONFIG });
+    // The header's glass as it is while the Agent is shown, to compare with the header of the open conversation.
+    s.agentHeader = await s.page.evaluate(() => {
+      const cs = getComputedStyle(document.getElementById('header'));
+      return { backgroundColor: cs.backgroundColor, backdrop: cs.backdropFilter || cs.webkitBackdropFilter || 'none' };
+    });
     await openConv(s.page);
+    s.mainWidth = await s.page.evaluate(() => Math.round(document.getElementById('main').getBoundingClientRect().width));
     const before = await s.page.evaluate(READ);
     const pierce = await s.page.evaluate(PIERCE);
     await settle(s.page, 150);
@@ -364,17 +372,24 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
     const f = before.flow;
     const b = before.bar;
 
-    ok('1440 · 窗头在场（.fm-modal-header）', !!h);
+    ok('1440 · 窗头在场（桌面 = 主区顶栏 #header；手机层 = .fm-modal-header）', !!h);
     ok('.fm-flow 在场', !!f);
     ok('.fm-input-bar 在场', !!b);
     ok('消息 ≥ 20 条（可滚动）', before.msgCount >= 20, `count=${before.msgCount}`);
-    ok('窗体宽 1440（真渲染）', before.modal && before.modal.width > 400 && before.modal.width <= 600, `modal=${before.modal && before.modal.width}px`);
+    // FCC-REQ-007: the window fills the main column instead of being a 560px dialog.
+    ok('窗体 = 主区整列宽（真渲染，非 560px 对话框）', before.modal && before.modal.width > 400 && Math.abs(before.modal.width - s.mainWidth) <= 2, `modal=${before.modal && before.modal.width}px main=${s.mainWidth}`);
 
     // (i) 玻璃底
     ok('(i) 窗头背景非 transparent', h && h.bgAlpha > 0.05, `backgroundColor=${h && h.backgroundColor} α=${h && h.bgAlpha}`);
-    ok('(i) 窗头背景 α 落玻璃带 [.45,.75]', h && h.bgAlpha >= 0.45 && h.bgAlpha <= 0.75, `α=${h && h.bgAlpha}`);
-    ok('(i) 窗头 background = .nf-glass 玻璃底（逐值相等）', h && h.backgroundColor === before.probeGlassBg,
-      `header=${h && h.backgroundColor} / .nf-glass=${before.probeGlassBg}`);
+    ok('(i) 窗头背景 α 落唯一材质带 [.90,1.0]（单一材质批 2026-11-15）', h && h.bgAlpha >= 0.90 && h.bgAlpha <= 1, `α=${h && h.bgAlpha}`);
+    // FCC-REQ-007: the window's header is the main #header. The `.nf-glass` utility is the input-surface glass (inside
+    // #main it measures rgba(255, 255, 255, 0.97) in the light theme) and is not the header's material (0.55), so the
+    // header of the open conversation is compared with the same header while the Agent is shown (read before the
+    // conversation was opened): opening a conversation must not change its glass.
+    ok('(i) 窗头 background = 同一顶栏在 Agent 态的玻璃底（开会话不改材质，逐值相等）', h && s.agentHeader && h.backgroundColor === s.agentHeader.backgroundColor,
+      `open=${h && h.backgroundColor} / agent=${s.agentHeader && s.agentHeader.backgroundColor}`);
+    ok('(i) 窗头 backdrop-filter = 同一顶栏在 Agent 态的滤镜（逐值相等）', h && s.agentHeader && h.backdrop === s.agentHeader.backdrop,
+      `open=${h && h.backdrop} / agent=${s.agentHeader && s.agentHeader.backdrop}`);
     ok('(i) 窗头 backdrop-filter 含 blur', h && /blur\(/.test(h.backdrop), `filter=${h && h.backdrop}`);
 
     // (ii) 零边缘
@@ -385,12 +400,13 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
 
     // 几何链
     ok('窗头 position:absolute（离流悬浮）', h && h.position === 'absolute', `position=${h && h.position}`);
-    ok('窗头贴窗体顶缘', h && before.modal && Math.abs(h.rect.top - before.modal.top) <= 1,
+    // FCC-REQ-007: the header is #header, inset from the top edge by its own margin.
+    ok('窗头在窗体顶缘之内（#header 自带上外距）', h && before.modal && h.rect.top >= before.modal.top - 1 && h.rect.top - before.modal.top <= 24,
       `header.top=${h && h.rect.top} modal.top=${before.modal && before.modal.top}`);
     ok('窗头全宽（与窗体同宽）', h && before.modal && Math.abs(h.rect.width - before.modal.width) <= 2,
       `header.w=${h && h.rect.width} modal.w=${before.modal && before.modal.width}`);
-    ok('窗头高度 = --fm-head-h 公式值', h && h.headH != null && Math.abs(h.rect.height - h.headH) <= 1,
-      `实测=${h && h.rect.height} 令牌=${h && h.headH}`);
+    ok('窗头让位 --fm-head-h = 窗头下缘到窗体顶缘的实测距离', h && h.headH != null && h.fromModalTop != null && Math.abs(h.fromModalTop - h.headH) <= 1,
+      `实测=${h && h.fromModalTop} 令牌=${h && h.headH}`);
     ok('.fm-flow padding-top = --fm-head-clear 公式值', h && h.headClear != null && Math.abs(f.paddingTop - h.headClear) <= 1,
       `padding-top=${f && f.paddingTop} 令牌=${h && h.headClear}`);
 
@@ -415,8 +431,9 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
       b && b.borderTopWidth === b.borderBottomWidth && b.borderTopWidth === b.borderLeftWidth
         && b.borderTopColor === b.borderBottomColor && b.borderTopColor === b.borderLeftColor,
       `top=${b && b.borderTopWidth}/${b && b.borderTopColor} bottom=${b && b.borderBottomWidth}/${b && b.borderBottomColor} left=${b && b.borderLeftWidth}/${b && b.borderLeftColor}`);
-    ok('(iv) 输入条悬浮（左右各留内距 > 0）', b && b.distToModalLeft != null && b.distToModalLeft > 0,
-      `distToLeft=${b && b.distToModalLeft}`);
+    // FCC-REQ-007: in the main area the input bar spans the column like the Agent's (same edge slot as the header).
+    ok('(iv) 输入条与顶栏同缘同宽（主区边距槽，非对话框内距）', b && before.mainHeader && Math.abs(b.rect.left - before.mainHeader.rect.left) <= 1 && Math.abs(b.rect.right - before.mainHeader.rect.right) <= 1,
+      `bar=${b && b.rect.left}..${b && b.rect.right} header=${before.mainHeader && before.mainHeader.rect.left}..${before.mainHeader && before.mainHeader.rect.right}`);
 
     // (v) 无横向溢出
     ok('(v) 1440 无横向溢出', before.doc.scrollWidth <= before.doc.innerWidth + 1,
@@ -431,7 +448,7 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
       `#header=${mh && mh.pad && mh.pad.join('/')} / 会话窗=${h && h.pad && h.pad.join('/')}`);
     ok('收编 · 玻璃底逐值相等（两面同一 --nf-head-bg 的底）', mh && h && mh.backgroundColor === h.backgroundColor,
       `#header=${mh && mh.backgroundColor} / 会话窗=${h && h.backgroundColor}`);
-    ok('收编 · 模糊配方逐值相等（两面同一 --nf-glass-filter）', mh && h && mh.backdrop === h.backdrop,
+    ok('收编 · 模糊配方逐值相等（两面同一 --nf-glass-input-filter）', mh && h && mh.backdrop === h.backdrop,
       `#header=${mh && mh.backdrop} / 会话窗=${h && h.backdrop}`);
     ok('收编 · 主会话顶栏仍零下边缘（回归）', mh && mh.borderBottomAlpha === 0,
       `borderBottom=${mh && mh.borderBottomColor}`);
@@ -468,7 +485,7 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
     // 真入口：主对话顶栏搜索钮 → i18n 单点 search.title 渲染到 #search-modal-title。
     // 🔴 桌面会话窗是页级模态（cfg-modal-overlay 盖住顶栏）⇒ 先关窗再点主顶栏
     //    搜索钮（主会话搜索的本态 = 主对话在场）。
-    await s.page.click('.fm-modal-close');
+    await s.page.click('#activity-avatar');
     await settle(s.page, 300);
     await s.page.click('#search-btn');
     await s.page.waitForSelector('#search-overlay.on', { timeout: 8000 });

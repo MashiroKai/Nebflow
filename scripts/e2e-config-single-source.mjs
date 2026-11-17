@@ -22,16 +22,19 @@
 
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from './lib/evidence-batch.mjs';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GATEWAY_PORT = Number(process.env.NF_CFG_PORT || 8799);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NF_CFG_HOME || join(tmpdir(), `nf-cfg-single-source-${Date.now()}`);
-const EVID = process.env.NF_CFG_EVIDENCE || join(tmpdir(), 'stand-evidence', 'stand', `config-single-source-${Date.now()}`, new Date().toISOString().slice(0, 10).replaceAll('-', ''));
+// Evidence = an EvidenceTemp batch (manifest.json + no .active ⇒ the engine's
+// 7-day TTL sweep can reclaim it); a fully green run deletes the batch outright.
+const EVID = process.env.NF_CFG_EVIDENCE || evidenceBatch('stand', 'config-single-source');
 const JAR = (() => {
   const dir = join(REPO, 'target');
   const hits = readdirSync(dir).filter((d) => d.startsWith('scala-'));
@@ -333,6 +336,12 @@ async function main() {
 
   await stopGateway(HOME);
   log(`\n[e2e] ${failures === 0 ? 'ALL PASS' : `${failures} FAIL`} — evidence: ${EVID}`);
+  // Success: retire-then-delete the evidence batch (green runs leave nothing
+  // behind). Failure keeps it for diagnosis; the batch is non-active with a
+  // manifest, so the TTL sweep still bounds its life to 7 days.
+  if (failures === 0) {
+    try { rmSync(EVID, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
   process.exit(failures === 0 ? 0 : 1);
 }
 

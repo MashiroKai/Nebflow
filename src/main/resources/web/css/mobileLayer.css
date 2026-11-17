@@ -305,26 +305,28 @@ body.mobile-layer {
   --mfs-min: var(--ds-fs-body);
   --mfs-title: var(--ds-fs-title-lg);
   --mfs-title-mini: var(--mfs-sub);
-  /* 两段式标题几何（两段式标题批 2026-11-02；见上方 token 块注释） */
-  --mtitle-h: 52px;
-  --mtitle-pad-t: 10px;
-  --mtitle-pad-b: 6px;
+  /* 页体顶呼吸缝（原两段式标题几何 token 族的唯一幸存者 —— 大标题退役
+     ui-unify-panels B 批 2026-11-17：--mtitle-h/-pad-t/-pad-b/-inset/-x/-r/
+     -start/-snap/-p 随 .mobile-page-title 规则族整链退役，本槽继续承担
+     nohead 根页的首行顶呼吸）。 */
   --mtitle-lead: 12px;
-  /* 内容起点让位批（2026-11-02）：标题/胶囊左右内缩与簇几何**单源** —— 一律
-     由下方 --mchrome-inset 派生（= 簇顶 16 + 钮 48 + 呼吸 8 = 72），不再各写
-     一份 72px 字面量（同一读数两处来源 = 后续调簇几何必漏一处）。 */
-  --mtitle-inset: var(--mchrome-inset);
-  --mtitle-start: 8px;
-  --mtitle-snap: 56px;
-  --mcap-h: 48px;
+  /* 手机带几何：顶带和底带使用同一比例体系的两个直径档。
+     顶带圆钮与顶带胶囊消费 --band-d / --band-icon；底部发送、停止与
+     待办键盘工具条消费 --bottom-band-d / --bottom-band-icon。 */
+  /* Two tiers: preserve the existing bottom/composer scale, while the top
+     reaches 48px at 375px, never falls below 44px at 320px, and caps at
+     52px above 406px to avoid oversized controls on wide phones. */
+  --bottom-band-d: clamp(36px, 10vw, 44px);
+  --bottom-band-icon: calc(var(--bottom-band-d) * 0.45);
+  --band-d: clamp(44px, 12.8vw, 52px);
+  --band-icon: calc(var(--band-d) * 0.45);
+  --mcap-h: var(--band-d);
   --mcap-pad: 24px;
   --mcap-vpad: 1px;
   --mcap-radius: 999px;
   --mcap-top: 40px;
-  /* 收起进度：0 = 静止大标题 / 1 = 吸附胶囊（navController.bindRollProbe 写，
-     滚动跟随连续插值；reduced-motion 下写二值 0/1；无 JS 时取 0 —— 静止态即
-     大标题，两段形态仍由 CSS 呈现）。 */
-  --mtitle-p: 0;
+  /* --mtitle-p（收起进度）随大标题退役（ui-unify-panels B 批 2026-11-17）——
+     无标题即无形态量可插值；--mcap-* 族保留（ta-pill/ta-tool 等带件仍消费）。 */
   /* 触控热区 —— 同源桥到桌面热区槽（--ds-hit-row 44 = WCAG 2.5.5 触控下限）；
      48 档（悬浮圆钮 g2-fab 基准）走本批新增的 --ds-hit-tap-lg。 */
   --mtap: var(--ds-hit-row);
@@ -346,8 +348,8 @@ body.mobile-layer {
      全部 .g2-fab 基准钮（返回钮/chrome 键/canvas 页 ✕ 与层叠钮/会话页三点——
      它们的 48 档是各自块的显式口径，基类一改就是一次范围外视觉回归）。本组
      token 只服务面板底钮这一档，主会话腿（--mtap-lg 48 / --micon 22）不读它。 */
-  --mcv-size-circle: 44px;
-  --mcv-icon: 20px;
+  --mcv-size-circle: var(--bottom-band-d);
+  --mcv-icon: var(--bottom-band-icon);
   /* ── 顶部悬浮 chrome 簇几何（内容起点让位批 2026-11-02 作者令： 「内容都需要
      从按钮下开始，只有向上滑动的时候才允许从按钮下过」）──
      簇 = 页头零高带里那几颗 48px 悬浮圆钮（返回钮 / canvas 页 ✕ 与层叠钮 /
@@ -369,7 +371,7 @@ body.mobile-layer {
      本批的消费点 = ①标题/胶囊左右内缩（--mtitle-inset）；②canvas 环标签展开
      签的横向钳位（--mchrome-inset，见 .mf-strip-chip.is-expanded）。 */
   --mchrome-top: var(--ds-space-4);      /* 16 —— 桥桌面间距阶梯（透传悬浮批，同值换源） */
-  --mchrome-btn: var(--mtap-lg);
+  --mchrome-btn: var(--band-d);
   --mchrome-breathe: var(--ds-space-2);  /* 8 —— 同上（簇顶/呼吸两字面量随批归 --ds-* 桥） */
   --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
   --mchrome-inset: var(--mchrome-clear);
@@ -414,7 +416,7 @@ body.mobile-layer {
          出整条钮带，最后一行的底缘恒在钮上缘之上（不做「压住末行再补 padding」
          的两把尺）。 */
   --mpage-fab-inset: var(--ds-space-4);
-  --mpage-fab-clearance: calc(var(--mtap-lg) + var(--mpage-fab-inset) * 2);
+  --mpage-fab-clearance: calc(var(--band-d) + var(--mpage-fab-inset) * 2);
   /* 图标 */
   --micon: 22px;
   --micon-sm: 20px;
@@ -553,7 +555,7 @@ body.mobile-layer .mh-chrome-btn {
 }
 body.mobile-layer .mh-chrome-btn[data-chrome='tasks'] { left: var(--mchrome-top, 16px); }
 body.mobile-layer .mh-chrome-btn[data-chrome='search'] { right: var(--mchrome-top, 16px); }
-body.mobile-layer .mh-chrome-btn svg { width: 20px; height: 20px; }
+body.mobile-layer .mh-chrome-btn svg { width: var(--band-icon, 20px); height: var(--band-icon, 20px); }
 /* 按压弹簧随统一按钮玻璃批迁 glass.css 手机弹簧档（.g2-fab 基准类共档）。 */
 body.mobile-layer .mh-chrome-badge {
   position: absolute;
@@ -750,7 +752,7 @@ body.mobile-layer .dock-badge {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--status-word);
+  background: var(--color-danger);
   pointer-events: none;
 }
 /* [hidden] 契约压过两条形态：.is-count 的 display:flex 特异度高于本行，
@@ -771,7 +773,7 @@ body.mobile-layer .dock-badge.is-count {
   display: flex;          /* 居中不靠 line-height：描边吃掉盒高后仍垂直居中 */
   align-items: center;
   justify-content: center;
-  background: var(--status-word);
+  background: var(--color-danger);
   color: var(--ds-ink-inverse);
   font-size: var(--mfs-min);
   font-weight: 600;
@@ -854,139 +856,16 @@ body.mobile-layer .mobile-page-header {
   /* 零底带几何随透传悬浮批收编 .ds-chrome-band（navController.js 挂类；
      与 #mobile-fab-layer / .mf-cv-toolbar 同一族）—— 本块只留差档。 */
 }
-/* ═══ 面板头标题「大标题 → 胶囊」**单元素连续变形**（标题单元素化批
-   2026-11-02 22:32 作者令，实拍双影：「我们现在面板的这个胶囊态 是两个割裂的
-   形态 所以会出现两个重叠的现象 但是我想要的是文字逐渐缩小 然后胶囊轮廓逐渐
-   显现的这种 两种形态平滑过渡 且一直是同一个的形式」）
-
-   承接「面板头两段式标题批」（下方留档）：旧实现 = 大标题盒收高淡出 ∪ 同名
-   装饰副本（.mobile-page-title-mini）胶囊浮层各自按 --mtitle-p 交叉淡入淡出
-   —— 两套 DOM 交接，交接区间两份同名文字同屏（作者实拍双影）。本批并一套：
-
-   ① 唯一元素 = 页体流内首件大标题（.mobile-page-title；DOM/聚焦/locale 重绘
-      既有查询点零改）。装饰副本节点退役（navController.js 不再建）。
-
-   ② 同一元素全量插值（全部挂 --mtitle-p；无 transition —— 逐帧跟手，禁止
-      插值滞后于手指）：
-      · 文字：font-size 28 → 15px（--mfs-title → --mfs-title-mini，全程 ≥
-        13px HIG 下限）、字距 −0.01em → 0、行高 36 → 46（盒高公式自然带出）；
-      · 盒：高 52 → 48（**底缘恒 64** = 返回钮底缘；盒顶 12 → 16）、左右内距
-        72 → 24（= --mcap-pad 半径档）、宽度 max-content 随字收缩（零固定宽，
-        无宽度跳变）、水平 margin auto 居中不变；
-      · 流内占位：margin-top +4p ∪ margin-bottom −52p ⇒ 占位 52 → 0 连续归零
-        （旧 .mpt-pane-scroll 收高特例退役 —— pane 内滚型与页体自滚型同公式）；
-      · 轮廓：壳层 = 同一元素的 ::before（inset:0 / radius inherit / 玻璃样式
-        包材质单源），opacity = --mtitle-p 从 0 连续显影 —— 背景/描边/圆角/
-        阴影/毛玻璃**整层一起从无到有**，与字号插值同驱动、载体解耦（结构上
-        天然两套曲线互不牵制）；圆角恒 999（透明盒的圆角不可感知，半径不插值）；
-      · 钉住：position: sticky、top 随进度 12 → 16+safe —— 页体自身是主滚轴
-        的页面大标题不再随滚走，原地收缩成胶囊（iOS 大标题语义）；pane 型页面
-        页体不滚，sticky 恒不触发，同一公式两条滚型同形。
-
-   ③ 几何契约不变式（全程恒真，机械读数见 tests/mobile-title-morph.spec.mjs）：
-      文字垂直中心恒 40 = 返回钮中心（盒顶 +12+4p、文字中心 +28−4p，和恒 40）；
-      盒底缘恒 64 = 返回钮底缘；吸附态左缘 ≥ 72（不压返回钮）。
-
-   ④ 长页名：max-width = 100% − 2×72 钳宽，溢出走**右缘渐隐**（.mtitle-clip
-      蒙版，navController.applyRoll 按 scrollWidth 翻写）—— 省略号退役。
-
-   ⑤ reduced-motion：形态量二值（JS 写 p ∈ {0,1}，navController.reducedMotion）
-      ⇒ 瞬时换形，不卡中间；本形态无 transition/无位移量，零额外摘除。
-
-   ── 旧两段式批留档（2026-11-02 作者令，实拍 IMG_1677/1678）：静止态居中
-   大标题 28px/600/内缩 72、吸附胶囊 48 高/左缘 72/中心 40、进度区间 8→56
-   —— 数值契约全部沿用，只是载体从两套元素并为一套。 */
-body.mobile-layer .mobile-page-title {
-  /* 钉住：top 只带**形态量** 0 → 4px（= 盒高差的增量），页体顶呼吸缝
-     --mtitle-lead + safe 由页体自身 padding 承担，**不在这里重复写** ——
-     sticky 吸附参照系是滚动容器的内容盒（= padding 之后），把 lead/safe
-     再叠进 top 会让标题整体下移一条 lead（实测 12px，盒顶 24、文字中心 50）。 */
-  position: sticky;
-  top: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p));
-  display: block;
-  /* 宽度（schedule-todo-unify 批 2026-11-06 修「顶栏标题被截成『定时任...』」）：
-     改前恒 max-content + max-width(100%−2×inset) + 水平内距 72×2 —— 三者**双重
-     计入两端内缩**：盒钳到 231 后再扣 144 内距，文字区只剩 87px，四字页名
-     （112px @28px 字号）必然截成「定时任...」。现在内缩只落在**一处**（盒宽钳制）：
-     · 静止档 width = 满宽 → max-width 钳到内缩带（100%−2×72）→ 内距 0 →
-       文字区 = 整条内缩带（375 档 = 231px），四字/八字页名都放得下；
-     · 吸附档 width → --mtitle-w-still（= 文字 + 2×胶囊内距，navController 实测）、
-       max-width 放宽到满宽 − 2×胶囊内距、水平内距 → 胶囊内距 —— 胶囊贴着
-       文字收紧，超长页名钳到「不贴屏幕边」。
-     width / max-width / padding-x 三个几何量都由 --mtitle-p 同步驱动（仅白名单
-     属性），两态之间连续插值。 */
-  width: calc(100% - (100% - var(--mtitle-w-still, 100%)) * var(--mtitle-p));
-  max-width: calc(100% - 2 * var(--mtitle-inset)
-    + 2 * (var(--mtitle-inset) - var(--mcap-pad)) * var(--mtitle-p));
-  /* 盒下呼吸缝由收编面自带 padding-top 承担（B 批口径不变）。上下外边距承担
-     流内占位收缩：52 → 0 连续归零 —— 顶 +4p 把盒底缘钉在 64，底 −52p 把占位
-     还给页体（吸附态内容满铺到胶囊之下，与旧收高终态同布局）。 */
-  margin: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p)) auto
-    calc(var(--mtitle-h) * var(--mtitle-p) * -1);
-  /* 水平内距：静止档 0（内缩已由盒宽钳制承担，双重计入 = 截断根因，见上）；
-     吸附档 = 胶囊内距 --mcap-pad（文字到胶囊缘的呼吸缝）。 */
-  padding: calc(var(--mtitle-pad-t) + (var(--mcap-vpad) - var(--mtitle-pad-t)) * var(--mtitle-p))
-    calc(var(--mcap-pad) * var(--mtitle-p))
-    calc(var(--mtitle-pad-b) + (var(--mcap-vpad) - var(--mtitle-pad-b)) * var(--mtitle-p));
-  height: calc(var(--mtitle-h) + (var(--mcap-h) - var(--mtitle-h)) * var(--mtitle-p));
-  font-size: calc(var(--mfs-title) + (var(--mfs-title-mini) - var(--mfs-title)) * var(--mtitle-p));
-  font-weight: 600;
-  letter-spacing: calc(-0.01em * (1 - var(--mtitle-p)));
-  /* 行高吃满盒内高（52 − 10 − 6 = 36 → 48 − 1 − 1 = 46）—— 同一组进度量
-     自然带出，文字垂直中心恒 40 不漂。 */
-  line-height: calc(var(--mtitle-h) - var(--mtitle-pad-t) - var(--mtitle-pad-b)
-    + ((var(--mcap-h) - var(--mtitle-h))
-      - ((var(--mcap-vpad) - var(--mtitle-pad-t)) + (var(--mcap-vpad) - var(--mtitle-pad-b)))) * var(--mtitle-p));
-  text-align: center;
-  color: var(--color-frame-text-bright, var(--color-frame-text));
-  overflow: hidden;
-  /* 截断语义 = **可见省略号**（作者令 2026-11-05 09:28 撤掉右缘渐隐后落定；
-     装得下时不画「…」，零视觉差 —— 基座档直接给 ellipsis，不依赖 JS 类）。 */
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  outline: none;
-  /* 全圆角恒在（壳层透明时不可感知）；**文字层透明度恒 1** —— 同一元素始终
-     可见，只缩字不淡出（交叉淡出 = 双影根因，退役）。 */
-  border-radius: var(--mcap-radius);
-  /* 吸附过程浮在流内内容之上（旧装饰副本同层 5 < 返回钮 6，z 序契约沿用）。 */
-  z-index: 5;
-  /* 大标题恒全额占位（标题-内容间距修整批 2026-11-01 20:42）：页面体是 flex
-     column，收编面弹性吃满后与标题争抢收缩 —— flex:none 钉死标题基座，收缩
-     全额归 min-height:0 的滚动面（流内占位的进退由上面的 margin 对承担）。 */
-  flex: none;
-}
-/* 大标题档的**内容宽**（--mtitle-w-still）：上面 width 的两端差 = 100% − 内容宽，
-   由 navController.applyRoll 在首帧/换页/locale 重绘后实测一次写入（内容宽与
-   滚动进度无关，只在文字变了才变）。未写 ⇒ 缺省 100%（= 满宽，不截断）；
-   内容超过 inset 带 ⇒ 写 100%（max-width 钳宽 + 省略号兜底）。
-   为什么不在 CSS 里用 max-content：width 两端都含 max-content 时会按内容解析，
-   var() 跨属性/函数层不支持该关键字，实测会被当作 0 宽。 */
-/* 超宽页名钳宽后的截断（作者令 2026-11-05 09:28「那个字的右侧有渐隐的效果，
-   这个不要」）：右缘 78%→97% 的 alpha 渐隐**撤除**，改**可见省略号**——
-   .mtitle-clip 仍由 applyRoll 按 scrollWidth > clientWidth 翻写（钳宽态才挂），
-   本类现在只负责「溢出时允许画 …」；装得下的短页名零变化。
-   为什么不再用渐隐：页名是「被截断的文本」，渐隐读作「字没写完 / 没渲染完」，
-   与真溢出语义相悖（作者两次同型报障：2026-11-04 13:03 列表行、本批页名）。 */
-body.mobile-layer .mobile-page-title.mtitle-clip { text-overflow: ellipsis; }
-/* 胶囊壳层 = **同一元素**的 ::before：玻璃样式包材质单源（--cv-* → glass.css，
-   --glass-* 双主题自随），整层 opacity = --mtitle-p —— 背景/描边/阴影/毛玻璃
-   从无到有连续显影。z-index −1 落在元素自持 stacking context 内（sticky +
-   z-index 5 ⇒ 上下文成立）= 垫在文字下、浮在流内内容上；no-backdrop 降级
-   （旧 WebView/X5）在文件尾同族名单补登实底。 */
-body.mobile-layer .mobile-page-title::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--cv-bg, var(--glass-bg));
-  border: 1px solid var(--cv-border, var(--glass-border));
-  box-shadow: var(--cv-shadow);
-  opacity: var(--mtitle-p);
-  z-index: -1;
-  pointer-events: none;
-}
-/* 吸附成立（布尔判据，spec/兼容读者用）：标题胶囊不拦交互（返回钮始终可点）。 */
-body.mobile-layer .mobile-page.rolled .mobile-page-title { pointer-events: none; }
+/* ═══ 大标题退役（ui-unify-panels B 批 2026-11-17 作者令「一级与次级面板都不
+   渲染大标题」）═══════════════════════════════════════════════════════
+   原两段式/单元素连续变形家族（.mobile-page-title 基座 + .mtitle-clip 溢出
+   标记 + ::before 吸附胶囊壳层 + .rolled pointer-events）随 DOM 节点整链退役
+   —— navController 不再建页名节点，规则族无消费面。历史数值契约留档：静止
+   盒 52 高/28px/600、吸附胶囊 48 高/中心 40/左缘 72、进度区间 8→56（机械
+   读数见 git 历史与 tests/mobile-panel-title.spec.mjs 前提改写后的零标题断言）。
+   页名信息面 = section aria-label（读屏播报）；首件内容让位 = 下方详情页
+   .mobile-page-body 顶距规则（--mchrome-clear 72 + safe，与 tasks/todo-apple
+   三页既有口径合流）。 */
 /* 悬浮「<」返回钮：48px g2-fab 液体玻璃（基准规格材质；JS 挂 .g2-fab 类），
    悬浮位 = 左 16 / top 16+safe，与聊天根任务键同几何。
    z 序（B 批补）：带 4 < 小字 5 < 本钮 6 —— 渐隐带承底不蒙返回钮。 */
@@ -994,8 +873,8 @@ body.mobile-layer .mobile-back-btn {
   position: absolute;
   top: calc(var(--mchrome-top, 16px) + env(safe-area-inset-top, 0px));
   left: var(--mchrome-top, 16px);
-  width: 48px;
-  height: 48px;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
   padding: 0;
   border-radius: 50%;
   color: var(--color-frame-text-bright, var(--color-frame-text));
@@ -1012,8 +891,8 @@ body.mobile-layer .mobile-back-btn {
    （20px，与 chrome 键同）；按压/材质 = g2-fab 既有块（scale .88 spring）。 */
 body.mobile-layer .mobile-back-btn svg {
   display: block;
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
 }
 /* 玻璃空间居中清查（顶部胶囊语言统一批「玻璃空间相对按钮图标居中…全清查」）：
    顶栏/页面族全部圆形玻璃键的图标块统一 display:block + flex 居中口径——
@@ -1033,12 +912,8 @@ body.mobile-layer .mh-tpanel .tp-x svg {
    所指屏占比浪费）。新顶距 = --mtitle-lead 12（标题盒顶呼吸缝）+ safe，标题盒
    底 = 12 + 52 = 64 = 返回钮底缘 ⇒ 首屏内容较修前多出 60px。
    内容起点让位批（2026-11-02 作者令「内容都需要从按钮下开始，只有向上滑动的
-   时候才允许从按钮下过」）合并裁定：让位**责任方**仍归标题盒（它本身就是页体
-   流内首件、盒底与钮底同线），本批只做两件事 —— ①把左右内缩/簇几何收成单源
-   token（--mtitle-inset = var(--mchrome-inset) = 钮位 16 + 钮 48 + 呼吸 8，见
-   token 块）；②机械断言全页静止帧无正文落进钮命中区（tests/mobile-chrome-
-   clearance.spec.mjs C1，25 页 × 双引擎 × 双主题）。滚动态内容自钮下穿过 =
-   标题盒收高 + 胶囊浮层，非本规则。 */
+   时候才允许从按钮下过」）合并裁定（大标题退役 ui-unify-panels B 批 2026-11-17
+   起让位**责任方**改归页体自身 padding —— 详见下方详情页顶距规则）。 */
 body.mobile-layer .mobile-page-body {
   flex: 1;
   min-height: 0;
@@ -1048,6 +923,15 @@ body.mobile-layer .mobile-page-body {
   overscroll-behavior: contain;
   scrollbar-width: none;
   padding-top: calc(var(--mtitle-lead) + env(safe-area-inset-top, 0px));
+}
+/* 详情页首件让位（ui-unify-panels B 批 2026-11-17）：大标题退役后页体顶距
+   自管 —— 首件内容起点 = --mchrome-clear（簇顶 16 + 钮 48 + 呼吸 8 = 72）
+   + safe，恒在返回钮底缘（16 + 48 = 64）之下（判据同 mobile-chrome-clearance
+   C1；与 mobile-todo-apple.css tasks/todo-apple-list/todo-apple-item 三页的
+   既有同款规则合流为全局档）。会话页自带身份头足迹（:1069 覆写 padding-top 0）
+   不受本档影响。 */
+body.mobile-layer .mobile-page:not(.mobile-page-nohead) .mobile-page-body {
+  padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
 }
 /* 合流批注（顶栏批 15:19 ∪ 悬浮钮批 16:03）：dock 根页顶栏整体退役
    （.mobile-page-nohead，无 chrome 带可让位）——页体顶归零（安全区顶距由
@@ -1174,7 +1058,8 @@ body.mobile-layer #fm-chat-overlay {
         左右 12（与 dock 胶囊同轴）+ 底 12（页面壳已让 safe-area 与 dock 足迹），
         宽度不溢出 375。材质与圆角**不在这里重写**（禁第二套读数）。 */
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
-  padding-top: var(--ds-space-2);
+  /* Clearance belongs to scroll content, not a permanently clipped page body. */
+  padding-top: calc(104px + env(safe-area-inset-top, 0px));
 }
 /* mobile-page-body carries a bottom scroll clearance on every page (from the
    mobile-top-clearance pass). The conversation page's input bar is not scroll
@@ -1428,6 +1313,9 @@ body.mobile-layer #mh-search-kind {
   font-size: var(--mfs-min);
   border-radius: var(--ds-radius-input);
 }
+/* F 批 2026-11-17（下拉统一）：select 被 .nf-select 包裹后，本行的填充职责
+   （width:100% 于 flex 行）上移到包裹层。 */
+body.mobile-layer #mh-search-kind-row .nf-select { flex: 1; min-width: 0; }
 /* 🔴 三点入口批（2026-11-05 作者令「把搜索和搜索聊天记录结合，把胶囊的内容改为
    搜索聊天记录……下面的文字不要」）：页面名胶囊（`.mobile-page-title` = 「搜索聊天
    记录」）是本页**唯一**标题 ⇒ 面板头那枚重复标题整块退场。
@@ -1737,33 +1625,24 @@ body.mobile-layer .mf-canvas-page {
         滚动面不再叠一份 env(safe-area-inset-top)（会双计）。
    z 序：签组 z 20 压过 pane 内容（旧形态靠流内位置天然在上，离流后必须显式）；
    工具条（节根 z 20，DOM 在后）压过签组；堆叠视角 .mf-stack-view z 40 全盖。
-   桌面零触碰：全部 body.mobile-layer 限定。 */
+   桌面零触碰：全部 body.mobile-layer 限定。
    ══ 方案 C 落地批（mobile-canvas-tabs-c 2026-11-06；作者 08:33 逐字
    「采用方案c 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端
    hover 上下选项的那种模糊效果 文字两边不要渐隐」）════════════════════════
-   本批把环带从「72px 零底带 + 双侧水平羽化」换成方案 C 的**无下边缘**形态：
-     ① **玻璃带 64px**（`::before`，材质 = `--nf-glass-*` 单源、成员登记表在册）——
-        正文滚到带里只剩色块，读作「化掉」的第一档；
-     ② **下边缘渐隐带 28px**（`::after`，`--ds-fade-veil` 渐层、零 backdrop）——
-        64..92 这一段正文从「半洗」回到「清晰」，**没有一条硬边**；
+   后续透明悬浮授权取代整宽 64px 玻璃与 28px 渐隐，两个伪元素均零画。
+   以下选中胶囊及邻签材质保留：
      ③ **水平方向零渐隐**：`.fade` 的双侧 14px 羽化、邻签 `::after` 的方向 mask、
         label 的 9px 两端淡化**整族退役**（作者令「文字两边不要渐隐」）—— 全脸
-        只剩一条纵向（下缘）渐隐，横向 mask 一个不留；
+        横向 mask 一个不留；整宽纵向渐隐亦按后续授权退役；
      ④ **主胶囊真毛玻璃**：`.mf-strip-chip.on::after` 吃成员表 blur（`--nf-glass-filter`），
         两侧签**不再带胶囊包层**（作者令「背景的文字不使用胶囊」——方案 C 的扁平签
         原样保留，视觉只给环位姿），它们的「糊感」改由**环邻位深度令牌**
         `--ds-ring-blur` / `--ds-ring-saturate` 承担（与桌面 hover 上下选项同源）。
-   几何单源仍是 navController.js 的 RING_*（签心恒 y=40，仍在 64px 玻璃带内）；
-   `--mf-strip-*` 三枚局部量由 `.mf-canvas-page` 出生（带上量 + 正文初态让位共用
-   一把尺），禁各写裸值。 */
+   几何单源仍是 navController.js 的 RING_*；正文初态让位统一使用
+   --mchrome-clear，并随内容滚走。 */
 body.mobile-layer .mf-canvas-page {
-  /* 玻璃带高 = 簇净空（--mchrome-clear 72）收一档气隙（--ds-space-2 8）= 64 */
-  --mf-strip-glass-h: calc(var(--mchrome-clear) - var(--ds-space-2));
-  /* 下缘渐隐 = 一档留白（--ds-space-6 24）+ 一档缝（--ds-space-1 4）= **28px**
-     （作者口径 ④「下边缘渐隐厚度 = 28px」；本行是唯一出生地） */
-  --mf-strip-fade-h: calc(var(--ds-space-6) + var(--ds-space-1));
-  /* 带总高 = 64 + 28 = 92（正文初态让位 = 同值，见下方 canvas 正文块） */
-  --mf-strip-h: calc(var(--mf-strip-glass-h) + var(--mf-strip-fade-h));
+  /* Only the controls float; initial clearance scrolls away with the content. */
+  --mf-strip-h: var(--mchrome-clear);
 }
 body.mobile-layer .mf-strip {
   position: absolute;
@@ -1780,44 +1659,14 @@ body.mobile-layer .mf-strip {
      近缘只放大约 1.01 倍，不啃两边浮钮的净空）。 */
   perspective: 1200px;
 }
-/* ── 玻璃带层（0..64）：整条顶栏一枚玻璃面 ─────────────────────────────────
-   材质逐项取 `--nf-glass-*`（底 + 顶缘折射线 + 顶缘细边）；**下缘不画细边、
-   不投影**——外投影会在 64px 处画出一条硬边，正是本方案要消灭的东西。
-   blur 由 css/glass.css 成员登记表供给（G2：值只准 `var(--nf-glass-filter)`）。
-   成员 = 带本体（z-index:-1 负层）：带本体零视觉（G7b 登记为「零画」），画的是本层。 */
-body.mobile-layer .mf-strip::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  z-index: -1;
-  height: var(--mf-strip-glass-h, calc(var(--mchrome-clear) - var(--ds-space-2)));
-  background:
-    var(--nf-glass-refraction) center top / 80% var(--ds-space-hair) no-repeat,
-    var(--nf-glass-bg);
-  border-top: var(--nf-glass-border);
-  pointer-events: none;
-}
-/* ── 下边缘渐隐层（64..92，28px）：零 backdrop ─────────────────────────────
-   与玻璃层**分家**：mask/渐层 × backdrop-filter 落在同一元素上会被合成器架空
-   （本仓实证注释见 `.ds-edge-fade` 已知坑①，也是旧邻签没有 blur 的根因）。
-   故本层只铺页面底色族的洗层（`--ds-fade-veil`，与主对话窗顶缘渐隐同一枚
-   令牌），把「滚走的行」从半洗洗到清晰 —— 语义 = 继续化开，不是盖一条色带。 */
+/* No full-width glass/veil: material belongs to each floating control. */
+body.mobile-layer .mf-strip::before,
 body.mobile-layer .mf-strip::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: var(--mf-strip-glass-h, calc(var(--mchrome-clear) - var(--ds-space-2)));
-  z-index: -1;
-  height: var(--mf-strip-fade-h, calc(var(--ds-space-6) + var(--ds-space-1)));
-  background: var(--ds-fade-veil);
-  pointer-events: none;
+  content: none;
 }
 /* 签本体接回点击/手势（带 pointer-events:none 不下传 —— 上方透传悬浮批②）。 */
 body.mobile-layer .mf-strip-chip { pointer-events: auto; }
-/* ── canvas 正文初态让位 = 带总高（92）────────────────────────────────────
+/* ── canvas 正文初态让位 = 悬浮控制净空────────────────────────────────────
    旧值 = `--cv-safe-top`（= --mchrome-clear 72，语义「首条内容落在按钮/胶囊正下方」）。
    方案 C 落地后带子长到 92（玻璃 64 + 渐隐 28），若仍让 72，首行正好落在**渐隐带
    里**（64..92 的第 8px 处，veil α ≈ .55）—— 一进页面就被洗掉半行，读作「内容
@@ -2077,13 +1926,20 @@ body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
   mask-image: none;
 }
 /* 点活签展开全名（作者令 §二.3「点击展开全名」）：常态已放大到 112px 宽，展开
-   档再加一档。钳法沿用内容起点让位批的 --mchrome-inset 口径（两侧各让 72 =
-   簇顶 16 + 钮 48 + 呼吸 8），但**先除掉环位姿 scale 再钳**：`max-width` 是
-   缩放前的盒宽，渲染宽 = max-width × --rsc（中签 1.14）—— 直接按 100vw − 2·72
-   钳会渲染成 263px、两头各压进浮钮 8px（旧批里 scale=1 时才成立）。除掉 scale
-   ⇒ 375 下 max-width 202.6、渲染恰 231px、跨 72…303，两端各余 8px 气隙；
-   `260px` 上限（渲染 296px）只在窄屏且 scale 更小时兜底。仍居中、仍同一水平线、
-   仍零省略号（超宽继续走 label 的 mask 渐隐，而不是「…」）。
+   档再加一档。钳法沿用内容起点让位批的 --mchrome-inset 口径（两侧各让
+   --mchrome-inset = 簇顶 16 + 钮径 --band-d + 呼吸 8；band-d 批起随视宽 clamp
+   36…44，375 下 37.5 ⇒ inset 61.5），但**先除掉环位姿 scale 再钳**：`max-width`
+   是缩放前的盒宽，渲染宽 = max-width × --rsc（中签 ~1.10）——直接按渲染宽钳
+   会两头各压进浮钮。除掉 scale ⇒ 375 下渲染封顶 251.5、实测 248.6、跨
+   63.2…311.8，两端各余 ~9.7px 气隙；`260px` 上限只在宽屏且 scale 更小时兜底。
+   仍居中、仍同一水平线、仍零省略号（超宽继续走 label 的整字收束）。
+   引用钮的 44px 记在**预算内**（canvas 引用钮批 0f2b45d62 起，展开档签内含
+   「引用此看板」≥44px 触控热区，与 label 同一份内容宽，chipInnerWidth 同源
+   扣减）。旧档曾在预算上**再加** 44px（0f2b45d62）：渲染宽随之超到 296px、
+   签缘压进两侧 ✕/堆叠浮钮（canvas-overlap-guard 批 2026-11-17 改前实测 375
+   两侧各交叠 211px²，签越长压得越深、预算上限 14px）—— 预算 = 浮钮让位后
+   的全宽，引用钮只能在预算里分，不能外借。展开 ≥ 常态的合同由预算差保住
+   （展开 ~220 ≫ 常态 112，label 拿到的份额仍大于常态档）。
    2600ms 自动收，换签即收 —— JS 侧定时。 */
 body.mobile-layer .mf-strip-chip.is-expanded {
   z-index: 3;
@@ -2118,7 +1974,7 @@ body.mobile-layer .mf-cv-toolbar .g2-fab {
 }
 body.mobile-layer .mf-cv-toolbar .mf-cv-close { left: var(--mchrome-top, 16px); }
 body.mobile-layer .mf-cv-toolbar .mf-cv-stack { right: var(--mchrome-top, 16px); }
-body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: 20px; height: 20px; }
+body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: var(--band-icon); height: var(--band-icon); }
 /* 禁用 opacity .35 档随统一按钮玻璃批迁 glass.css 圆钮禁用档（.g2-fab 共档）。 */
 /* 堆叠视角打开时浮带工具钮让位（堆叠面自带同位 ✕，零双键重叠）。 */
 body.mobile-layer .mobile-page[data-page="canvas"]:has(.mf-stack-view:not([hidden])) .mf-cv-toolbar {
@@ -2138,6 +1994,30 @@ body.mobile-layer .mf-cv-count {
   white-space: nowrap;
   border: 0;
   pointer-events: none;
+}
+/* ── canvas 查找条手机档（canvas-overlap-guard 批 2026-11-17）──────────────
+   split.css 的 .nf-findbar 锚 --cv-head-clear —— 那是**桌面**口径（= header 行
+   下缘 46 + 10 呼吸 = 56），手机层从未覆写它（mobileLayer 只覆写 --cv-safe-top /
+   --cv-head-2row）。修前实测 375：查找条落 y56…100 —— 上缘切进环带
+   （--mf-strip-h = --mchrome-clear，band-d 批后 61.5）里、活签底缘被压 1.6px
+   （交叠 188px²）；且条宽 364（输入固定 200 + 计数 44 + 三钮 + 缝）> 375 − 2×14
+   ⇒ 左缘溢出屏外 3px。手机档三改（桌面零触碰）：
+     ① top 换锚 --mf-strip-h + 8 呼吸（band-d 批后 375 实测带高 61.5 ⇒ 条顶
+        69.5，与活签底 57.6 让开 11.9px）：条恒在环带/浮钮下方，与桌面「条在
+        header 行下方」的排他语义同族，只是让位尺换手机顶带；
+     ② left/right 同钉 14：条宽随视口自适应（375 下恰 347），不再定宽溢出；
+     ③ 输入 width:auto + flex 收缩：窄屏由输入让位，内件（计数/钮）保尺寸。
+   回归钉：tests/canvas-overlap-guard.spec.mjs（碰撞体积门禁，改前红基线即
+   上述两条读数）。 */
+body.mobile-layer .canvas-tab-pane .nf-findbar {
+  top: calc(var(--mf-strip-h, var(--mchrome-clear)) + var(--ds-space-2, 8px));
+  left: 14px;
+  right: 14px;
+}
+body.mobile-layer .nf-findbar-input {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* ── 底部小点指示器（作者令 2026-11-02 07:22 §三）───────────────────────
    位置 = 内容区底部居中（dock 之上；不压 dock、不压内容）。
@@ -2680,38 +2560,25 @@ body.mobile-layer .mf-hub-chev svg { width: 16px; height: 16px; }
 body.mobile-layer .mf-me-entry {
   position: relative;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: center;
   gap: var(--ds-space-4);
   margin: var(--ds-space-5) var(--mpad-x) 0;
   min-height: 148px;
   padding: var(--ds-space-4) var(--ds-space-4) calc(var(--ds-space-4) + var(--ds-space-1));
   border: none;
-  border-radius: calc(var(--ds-radius-card-lg) + 6px);
-  background-color: var(--color-surface);
-  background-image:
-    radial-gradient(120% 140% at 8% 0%,
-      color-mix(in srgb, var(--sapphire) 12%, transparent) 0%,
-      transparent 62%);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--color-text);
   font-size: var(--mfs-body);
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   touch-action: manipulation;
   overflow: hidden;
 }
-@media (prefers-color-scheme: dark) {
-  body.mobile-layer .mf-me-entry {
-    background-color: var(--color-surface);
-    background-image:
-      radial-gradient(120% 140% at 8% 0%,
-        color-mix(in srgb, var(--sapphire) 18%, transparent) 0%,
-        transparent 62%);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
-  }
-}
 body.mobile-layer .mf-me-entry:active {
-  background: color-mix(in srgb, var(--color-text) 6%, var(--color-surface));
+  opacity: var(--btn-press-fade);
 }
 /* hero 的身份文字块：名 22/600、邮箱 13 muted、tagline 11（末行不再跟 chevron）。 */
 body.mobile-layer .mf-me-meta {
@@ -2723,7 +2590,7 @@ body.mobile-layer .mf-me-meta {
   padding-bottom: 2px;
 }
 body.mobile-layer .mf-me-name {
-  font-size: 22px;
+  font-size: var(--ds-fs-display);
   font-weight: 600;
   line-height: 1.25;
   color: var(--color-frame-text-bright);
@@ -2738,30 +2605,6 @@ body.mobile-layer .mf-me-sub {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-body.mobile-layer .mf-me-tagline {
-  margin-top: 2px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: color-mix(in srgb, var(--color-text-muted) 78%, transparent);
-}
-/* hero 内设置入口（唯一设置入口；独立可点，不与整块点击冲突）。 */
-body.mobile-layer .mf-me-actions { flex: none; display: flex; align-items: center; }
-body.mobile-layer .mf-me-settings {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 var(--ds-space-3);
-  border-radius: var(--ds-radius-pill, 999px);
-  background: color-mix(in srgb, var(--color-text) 8%, transparent);
-  color: var(--color-text);
-  font-size: var(--mfs-min);
-  cursor: pointer;
-}
-body.mobile-layer .mf-me-settings:hover {
-  background: color-mix(in srgb, var(--color-text) 12%, transparent);
-}
-body.mobile-layer .mf-me-settings-ic { width: 16px; height: 16px; }
 /* 圆形头像框（登录态照片 / 未登录品牌标双态；几何 = 设置页头像框同族缩档）。 */
 body.mobile-layer .mf-me-avatar-frame {
   position: relative;
@@ -2800,31 +2643,33 @@ body.mobile-layer .mf-me-avatar-photo {
   object-fit: cover;
   pointer-events: none;
 }
-body.mobile-layer .mf-me-meta {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-half);
+body.mobile-layer .mf-me-entry .mf-me-meta {
+  flex: none;
+  align-items: center;
+  width: 100%;
 }
-body.mobile-layer .mf-me-name {
-  font-size: var(--mfs-body);
-  font-weight: 500;
-  color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+body.mobile-layer .mf-me-entry :is(.mf-me-name, .mf-me-sub) { max-width: 100%; }
+body.mobile-layer .mf-account-card { margin: var(--ds-space-6) var(--ds-space-4); }
+body.mobile-layer .mf-account-card .neblink-account-actions { padding: var(--ds-space-4); }
+body.mobile-layer .mf-account-card .neblink-logout-btn { width: 100%; border-radius: var(--ds-radius-input); }
+/* Adopted secondary faces are pages, never desktop glass skirts. */
+body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::after,
+body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::before {
+  content: none;
 }
-body.mobile-layer .mf-me-sub {
-  font-size: var(--mfs-min);
-  color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* Keep the adopted settings scroller inside the flex remainder at every depth. */
+body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-content {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--mpage-fab-clearance);
 }
 /* 个人主页（me）：资料卡。 */
 body.mobile-layer .mf-me-card {
   display: flex;
+  flex-direction: column;
+  text-align: center;
   align-items: center;
   gap: var(--ds-space-3);
   margin: var(--ds-space-3) 14px 0;
@@ -2989,11 +2834,12 @@ body.mobile-layer #task-list { display: none !important; }
 /* 胶囊的触控外扩档随胶囊一起在手机层失效（不许留死样式：display:none 的子件
    不可能被点到）。桌面档的胶囊外形与 ::after 命中面原样不动（css/todo-face.css）。 */
 
-/* 胶囊面件在手机层的尺寸口径（同一实现两套尺寸：桌面 34 / 手机 44）：
-   · 右下角加号 = 44px 触摸档圆形钮；
+/* 胶囊面件在手机层的尺寸口径（C 批 ui-unify-panels 2026-11-17：加号直径
+   换挡 --band-d，与 A 批带圆钮同一把尺；原 44px 字面量退役）：
+   · 右下角加号 = --band-d 触摸档圆形钮（经 .g2-fab 类吃 ③ 档材质）；
    · 行尾删除 = 常显 + 44px 命中面（::after 外扩，视觉件仍小而克制）；
    · 三个新件在手机上不吃 reduced-motion 之外的额外动画（沿用桌面规则）。 */
-body.mobile-layer .tfl-list-wrap { --tfl-fab-size: 44px; }
+body.mobile-layer .tfl-list-wrap { --tfl-fab-size: var(--band-d); }
 body.mobile-layer .tfl-del { opacity: 1; position: relative; }
 body.mobile-layer .tfl-del::after {
   content: '';
@@ -3073,6 +2919,18 @@ body.mobile-layer .ds-turn-btn {
       的成果，本令不撤），本块更具体 ⇒ 只命中 Canvas Ask 面板输入条那两钮。
    ③ ask.css 的 `max(画布 chrome 档 40, 组件槽)` 取大者：桌面腿取 40（未变），
       手机腿取本块 44（> 40）⇒ 桌面/手机两档各走各的，互不牵动。 */
+/* The main composer shares a 40:64 visual-box scale with the voice orb.
+   Keep send and stop equal; the component retains its 44px expanded hit area. */
+body.mobile-layer #input-bar > .ds-turn-btn {
+  --ds-turn-btn-size: 40px;
+  --ds-turn-btn-icon: 18px;
+}
+/* Absolute insets use the padding box, one pixel inside the 1px border.
+   Four pixels there give a symmetric 3px expansion beyond the border box. */
+body.mobile-layer #input-bar > .ds-turn-btn::after {
+  inset: -4px;
+}
+
 body.mobile-layer .ask-dock .ds-turn-btn {
   --ds-turn-btn-size: var(--mcv-size-circle);
   --ds-turn-btn-icon: var(--mcv-icon);
@@ -3345,6 +3203,12 @@ body.mobile-layer .ask-fab {
    （桌面 --ask-fab-size），本档只改这一枚变量，零第二套几何。 */
 body.mobile-layer .ask-dock,
 body.mobile-layer .note-dock { --ask-seed-size: var(--mtap-lg, 48px); }
+/* P2 续批④（位置感知种子）手机档 fallback：手机 fab 右钉 16px（上方本档）
+   而 dock 右钉 --ask-fab-gap 12px ⇒ note 钮圆心比种子自然位再左 4px 缝差
+   （60 = 48 钮 + 8 缝 + 4 钉差）；JS syncNoteSeed 的实测值优先于这条。 */
+body.mobile-layer .note-dock {
+  --note-seed-x0: calc(-1 * (var(--ask-fab-size) + var(--ds-space-2) + (16px - var(--ask-fab-gap))));
+}
 /* ── 建群面板（统一面板批 2026-11-06）：顶栏返回圆钮 / 右下悬浮加号 = 手机 48 档 ──
    尺寸档与页面壳返回钮 `.mobile-back-btn`、手机 `.ask-fab` 同一档
    （48 = --mtap-lg / 图标 20 = --micon-sm）；桌面档 40 由 `.g2-fab` 基准承担
@@ -3371,8 +3235,7 @@ body.mobile-layer .fm-pick-modal .fm-pick-body {
 }
 body.mobile-layer .canvas-source-toggle,
 body.mobile-layer .canvas-ref-select,
-body.mobile-layer .canvas-find-toggle,
-body.mobile-layer .canvas-refresh-toggle {
+body.mobile-layer .canvas-find-toggle {
   width: 48px;
   height: 48px;
 }
@@ -4103,35 +3966,9 @@ body.mobile-layer .mobile-page-body #settings-modal-title,
 body.mobile-layer .mobile-page-body #daemon-panel-title {
   display: none;
 }
-/* reduced-motion（标题单元素化批 2026-11-02）：本形态无 transition、无位移量
-   （形态量全部是「进度一旦给定即静态」的插值式：字号/盒高/内距/外边距/壳层
-   alpha），故**无需摘除任何量** —— 瞬时换形由 JS 写二值进度承担
-   （navController.js reducedMotion()：p ∈ {0,1}，不卡中间）。本块留作显式口径：
-   reduced-motion 下不得为此形态补任何 transition/animation。 */
-@media (prefers-reduced-motion: reduce) {
-  body.mobile-layer .mobile-page-title,
-  body.mobile-layer .mobile-page-title::before {
-    transition: none;
-    animation: none;
-  }
-}
-/* 标题单元素化批 2026-11-02 · 降级：胶囊壳层（.mobile-page-title::before）在
-   不支持 backdrop-filter 的 WebView（微信/X5）与 html.no-backdrop 实底档下
-   补登实底 —— 材质仍取 --cv-bg（= --glass-bg，双主题自随），仅摘采样层；
-   与 glass.css 降级块同字面、挂本文件（mobileLayer.css 在 glass.css 之后
-   加载，避免反向改玻璃包序）。 */
-@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  body.mobile-layer .mobile-page-title::before {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    background: var(--cv-bg, var(--glass-bg));
-  }
-}
-html.no-backdrop body.mobile-layer .mobile-page-title::before {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-  background: var(--cv-bg, var(--glass-bg));
-}
+/* 大标题退役（ui-unify-panels B 批 2026-11-17）：reduced-motion 显式口径块 +
+   ::before 壳层的 no-backdrop 降级块随 .mobile-page-title 节点整链退役
+   （无节点即无形态可降级；历史字面可 git 查）。 */
 
 /* ═══════════════════════════════════════════════════════════════════════
    输入框附件图标化批（作者令 2026-11-02）—— 手机层输入条的文件附件 chip
@@ -4434,6 +4271,9 @@ body.mobile-layer #settings-modal input[type='password'],
 body.mobile-layer #settings-modal select {
   min-height: var(--mtap);
 }
+/* F 批 2026-11-17（下拉统一）：触控行同档上移到包裹层（trigger 蒙在同格，
+   select 的 min-height 撑格即已保高；此条给格本身兜底对齐）。 */
+body.mobile-layer #settings-modal .nf-select { min-height: var(--mtap); width: 100%; }
 
 /* 后台任务合并面板：密度行 → 44 触控行 + 16 内距。 */
 body.mobile-layer #bg-dropdown .bg-task-row {
@@ -4780,8 +4620,13 @@ body.mobile-layer #usage-grid .ud-cell[data-date]::after {
    绝对定位后代不受该盒 overflow 裁剪）。 */
 body.mobile-layer .mh-idhead {
   --idhead-avatar: 56px;
-  --idhead-seat: 12px;  /* 头顶净空：12 + 56/2 = 40 = 左右 48px 钮的中心（top 16 + 24）
-                           ⇒ 头像中心与两颗钮同轴，且头像视觉中心落在同一水平线 */
+  /* 头顶净空（ui-unify-panels 批 2026-11-17 由字面量 12 改派生）：带直径从
+     48 档换 --band-d 后中心线随直径走，座位必须跟着算才保「头像中心 = 双钮
+     中心」≤1px：seat = 带顶 16 + 直径/2 − 头像/2（band-d 37.5 时 = 6.75）。 */
+  --idhead-seat: calc(
+    var(--mchrome-top, 16px) + var(--band-d, 48px) / 2
+    - var(--idhead-avatar) / 2
+  );
   position: absolute;
   top: calc(var(--idhead-seat) + env(safe-area-inset-top, 0px));
   left: 0;
@@ -4861,19 +4706,16 @@ body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
 body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name):empty {
   display: none;
 }
-/* ④ 会话页（好友/群/设备）：页面壳大标题（单元素胶囊本体）退场 —— 页头只余
-   左上返回 + 右上三点 + 悬浮身份头（主对话无页面壳标题，天然同形）。
-   （标题单元素化批 2026-11-02：装饰副本选择器随节点退役摘除。） */
-body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-title {
-  display: none;
-}
+/* ④ 会话页（好友/群/设备）：页头只余左上返回 + 右上三点 + 悬浮身份头。
+   （大标题退役 ui-unify-panels B 批 2026-11-17：本页的壳标题 display:none
+   特例随节点全局退役而冗余，规则摘除；页体顶让位仍由下方身份头足迹承担。） */
 /* 页体顶让位 = 身份头的可视足迹（8 头顶 + 56 头像 + 6 缝 + 24 名字胶囊 ≈ 94）
    + 与主对话同值的底呼吸缝。主对话侧的同一读数由 main.js 顶让位块给出
    （reserve = bandBottom(= 顶缘渐隐带 88 / #top-overlays 96 底缘) + 基线 8 =
    **104**）⇒ 本节取 104，四种会话「身份头底缘 → 首条内容」的间距逐像素一致
    （读数见批文档断言表）。 */
 body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-body {
-  padding-top: calc(104px + env(safe-area-inset-top, 0px));
+  padding-top: 0;
 }
 /* ⑤ 右上三点键（48px g2-fab 圆钮；材质/按压 = .g2-fab 共享档）。落位与主对话
    搜索键同一几何（top 16+safe / right 16）。包含块 = .mobile-page（.fm-modal
@@ -4883,8 +4725,8 @@ body.mobile-layer .mh-sess-more {
   position: absolute;
   top: calc(16px + env(safe-area-inset-top, 0px));
   right: 16px;
-  width: 48px;
-  height: 48px;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
   padding: 0;
   border-radius: 50%;
   display: flex;
@@ -4895,8 +4737,8 @@ body.mobile-layer .mh-sess-more {
 }
 body.mobile-layer .mh-sess-more svg {
   display: block;
-  width: 20px;
-  height: 20px;
+  width: var(--band-icon, 20px);
+  height: var(--band-icon, 20px);
 }
 /* ⑥ 会话窗体里的**旧窗头退场**（作者令「不许任一会话类型保留旧的『行内小头像 +
    名字』形态」）：头像/名字节点已迁入 .mh-idhead（同一节点、非复制 ⇒
@@ -4904,12 +4746,16 @@ body.mobile-layer .mh-sess-more svg {
    不拦事件 —— 桌面形态与既有断言面逐字不动）。多选计数/信任槽在窗头行内随之
    退场；设备描述键/群设置图标钮同批退役（入口已进右上三点菜单，禁三处入口）。 */
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal-header {
-  height: 1px;
+  height: 0;
   min-height: 0;
   padding: 0;
   gap: 0;
   overflow: hidden;
   border: none;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   pointer-events: none;
 }
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal-header > * {
@@ -5016,27 +4862,31 @@ body.mobile-layer .mf-dots {
    transform 属性（上方既有档 scale(1.24) 原样保留），故本批用
    left/right:0 + width:max-content + margin-inline:auto 实现居中，
    transform 面上两个意图（居中 / 放大）永不相撞。 */
-/* ── 存量红修（-legacy 提交 ui-unification-20261103-canvas-overlay-legacy）──
-   canvas-chrome-size-align ⑥ 手机两腿 2 红（main 存量）：2026-11-02 19:18
-   「底部控件浮层带批」把小点指示器从流内末件改成**浮层**、与底部 48 圆钮行共
-   中线后 —— html 页文档工具簇（source 16 / ref 72 / find 128，三颗 48 圆钮占
-   16..176）与小点（375 宽下居中 ≈142..233）落在同一条带上相交，第三颗钮
-   （find，128..176）被压（本轮 HEAD 复现：手机-dark / 手机-light 两腿各 1 红）。
-   修法：**簇在场的页面**把小点浮层收进「簇右缘 ↔ ask 钮左缘」之间的净带
-   （左 = 首钮座 16 + 3×48 + 2×槽缝 8 + 让位缝 8 = 184；右 = ask 座 16 + 钮宽
-   48 + 让位缝 8 = 72），中线 / 形态 / 手势面全不变；无簇页（md / monaco：
-   source+find 两钮 16..120，居中小点本就零相交；图 / pdf 无簇）维持既有居中。
-   判据用 `.canvas-ref-select`（= 引用选取钮，**只 html 查看器有** —— shared.js
-   addElementRefToggle 的唯一调用方是 viewers/html.js:714）⇒ 只有真会被压的
-   html 页让位，不牵连 md 面。:has() 不支持时整条规则回落 = 改前行为（与既有
-   mobileLayer :has 让位块同法）。 */
-body.mobile-layer .mf-canvas-page:has(.canvas-ref-select) .mf-dots {
-  /* 左 = 16 首钮座 + 3×48 钮宽 + 3×8 缝（2 槽缝 + 1 让位缝） */
-  left: calc(16px + var(--mtap-lg, 48px) * 3 + 8px * 3);
-  /* 右 = 16 ask 座 + 48 钮宽 + 8 让位缝 */
-  right: calc(16px + var(--mtap-lg, 48px) + 8px);
-  margin-inline: auto;   /* 净带内仍居中（原居中意图保留） */
+/* One row: two left tools, centered pagination, two right tools.
+   Retire source/zoom controls on mobile instead of adding another floating row. */
+body.mobile-layer .mf-dots {
+  left: env(safe-area-inset-left, 0px);
+  right: env(safe-area-inset-right, 0px);
 }
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-source-toggle,
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-zoom-bar {
+  display: none;
+}
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-ref-select,
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
+  bottom: var(--ds-space-4);
+}
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
+  left: var(--ds-space-4);
+}
+body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-ref-select {
+  left: calc(var(--ds-space-4) + var(--mtap-lg) + var(--ds-space-2));
+}
+body.mobile-layer:has(.mobile-page[data-page="canvas"].live) .ask-fab.note-fab {
+  margin-right: calc(var(--ask-fab-size) + var(--ds-space-2));
+  translate: none;
+}
+
 /* 底部可滚余量（md / 纯文本 / epub 三面同尺）：末行滚到控件行之上。
    值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。
    canvas 正文底部遮挡修复批（2026-11-05，桌面档补同一让位）：桌面侧改由 JS 实测
@@ -5897,11 +5747,13 @@ body.mobile-layer .tfl-menu-empty {
        顶部菜单（z25）之下；
      · 开合过渡串**不在此写**（时长/曲线/属性白名单 = js/motion/liquidMorph.js
        单源，JS 逐次写入）；reduced-motion 由同一模块降级 1ms；
-     · 输入面 = `.tfl-hit-reply`（`.tfl-edit-notes` 同族裸件表面：无环无边、
-       tinted 底 —— 与主输入框的 inputSurface 统一语言不冲突；本块补几何：自增
-       高上限唯一一份 max-height、`resize:none`）；回车 = 换行**不发送**（JS 只
-       放行默认换行），发送 = 独立钮，命中盒 ≥ --ds-hit-tap-min（最小可点尺寸
-       令牌单源 —— 本块不写第二把按钮尺）；
+     · 输入面（E 批 ui-unify-panels 2026-11-17 起复刻 ask 卡片输入）：行壳
+       `.tfl-hit-replyrow` = nf-glass 输入条外壳 + inputSurface 外壳圆角成员，
+       内芯 `.tfl-hit-reply` = inputSurface 裸件成员（零边零底零内距）；回车 =
+       发送、shift+回车换行（bindComposerKeys，主会话/ask 同一实现——
+       2026-11-06 ④「回车只换行」口径随 E 批翻新），发送 = ds-turn-btn--send
+       实心圆钮（手机档 44/20 = ask 面板底钮同档）；自增高上限唯一一份
+       max-height、`resize:none`；
      · 完成钮 = 主色文字钮、编辑钮 = 中性文字钮（语言镜像 .mf-drawer-done-btn /
        .mf-drawer-cancel-btn 同款：透明底 + pill + 令牌字号，零新造第二套钮）。
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -5980,8 +5832,7 @@ body.mobile-layer .tfl-hit-acts {
   gap: var(--ds-space-2);
 }
 body.mobile-layer .tfl-hit-done,
-body.mobile-layer .tfl-hit-edit,
-body.mobile-layer .tfl-hit-send {
+body.mobile-layer .tfl-hit-edit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6000,27 +5851,36 @@ body.mobile-layer .tfl-hit-send {
 }
 body.mobile-layer .tfl-hit-done { color: var(--color-primary); font-weight: 600; }
 body.mobile-layer .tfl-hit-edit { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+/* E 批（ui-unify-panels 2026-11-17 作者令「待办回复框复刻 ask 卡片输入样式/交互」）：
+   行壳 = nf-glass 输入条外壳（材质 JS 挂 .nf-glass；圆角 = inputSurface.css
+   外壳成员表），几何（对齐/gap/padding）与 .ask-input 同款；内芯 = 裸件
+   （造型在 inputSurface.css 裸件成员表，本块零边/零底/零内距不再自书），
+   字/行高/caret/占位取 .ask-input textarea 同一批令牌。 */
 body.mobile-layer .tfl-hit-replyrow {
   display: flex;
-  align-items: flex-end;
-  gap: var(--ds-space-2);
+  align-items: center;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1h);
 }
 body.mobile-layer .tfl-hit-reply {
   flex: 1 1 auto;
   min-width: 0;
-  box-sizing: border-box;
-  border: none;
-  outline: none;            /* 裸件无环（.tfl-edit-notes 同族；G1 非蓝语义同源） */
-  border-radius: var(--ds-radius-input);
-  background: color-mix(in srgb, var(--color-text, #000) 6%, transparent);
-  padding: var(--ds-space-1) var(--ds-space-1h);
-  font: 400 var(--ds-fs-bubble)/1.4 inherit;
+  font: 400 var(--nf-field-fs) -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
+  line-height: var(--nf-field-line);
   color: var(--color-text);
+  caret-color: var(--color-primary);
   max-height: 120px;        /* 自增高上限唯一一份（autosizeReply 按此钳，超出内部滚） */
   resize: none;
 }
-body.mobile-layer .tfl-hit-reply::placeholder { color: color-mix(in srgb, var(--color-text, #000) 35%, transparent); }
-body.mobile-layer .tfl-hit-send { color: var(--color-primary); font-weight: 600; }
+body.mobile-layer .tfl-hit-reply::placeholder { color: var(--cv-hint-color-dim); opacity: 1; }
+/* 发送键 = ds-turn-btn--send 实心圆钮（色彩/hover/active 全在组件单源，本面
+   零本地形态）；手机档几何槽与 ask 面板底钮同款（--mcv-size-circle 44 /
+   --mcv-icon 20，HIG 下限）。 */
+body.mobile-layer .tfl-hit-send {
+  flex: none;
+  --ds-turn-btn-size: var(--mcv-size-circle);
+  --ds-turn-btn-icon: var(--mcv-icon);
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    后台 agent 对话框手机简化批（作者令 2026-11-06 10:00/12:03 附实拍

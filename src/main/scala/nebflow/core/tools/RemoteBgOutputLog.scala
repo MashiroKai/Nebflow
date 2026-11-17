@@ -6,7 +6,7 @@ package nebflow.core.tools
  *
  * 远端后台任务（RemoteExecutor.executeRemoteBackground）的输出在任务结束前只存在
  * 于对端——本侧 fiber 是同步 HTTP 等待，结束才拿到全量。LLM 发起的远端命令照惯例
- * 把输出重定向到对端日志文件（实证：test5 的 `/c/Users/Kai/stand-win-test5.log`）。
+ * 把输出重定向到对端日志文件（实证：test5 的 `/c/Users/name/stand-win-test5.log`）。
  * 本面从命令文本里解析出该路径，作为 job 记录的 outputPath——详情面板据此经既有
  * 设备通道按需拉尾（远端 Bash `tail -c`，走 RemoteExecutor.readBgLogTail 的既有
  * P2P/relay 面，零新权限口子），无需实时流，轮询拉尾即可。

@@ -75,12 +75,12 @@
 
 | 产物 | 形态/用途 | 套件源（源工程/注册位） | plots 白名单副本 |
 |---|---|---|---|
-| 20261004_edu_rc_charge_schematic.svg | 共用电路锚点（本页嵌入） | `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\education-motion-src\rc_schematic.py` | `C:\Users\Kai\.nebflow\plots\education-motion\20261004_edu_rc_charge_schematic.svg` |
-| 20261004_edu_rc_charge_steps_static.svg / .png | 形态① | `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\education-motion-src\rc_static_steps.py` | `C:\Users\Kai\.nebflow\plots\education-motion\20261004_edu_rc_charge_steps_static.svg`（PNG 同名 .png） |
-| 20261004_edu_rc_charge_3d.html | 形态② | `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\education-motion-src\rc_charge_scene.js`（构建器：`motion-toolkit\scripts\three-template\build_three_html.py`） | `C:\Users\Kai\.nebflow\plots\education-motion\20261004_edu_rc_charge_3d.html` |
-| 20261004_edu_rc_charge_steps.mp4 | 形态③ | `C:\Users\Kai\.nebflow\skills\visual-report-suite\demos\education-motion-src\RcChargeSteps.tsx`（渲染注册位：`motion-toolkit\scripts\remotion-scaffold\src\RcChargeSteps.tsx` + `Root.tsx`） | `C:\Users\Kai\.nebflow\plots\education-motion\20261004_edu_rc_charge_steps.mp4` |
-| 20261004_edu_rc_charge_schematic_dark.png | 形态③内嵌素材 | `motion-toolkit\scripts\remotion-scaffold\public\rc_schematic_dark.png` | `C:\Users\Kai\.nebflow\plots\education-motion\20261004_edu_rc_charge_schematic_dark.png` |
-| _verify\*.png | 通路验证证据（headless 亮/暗实拍、MP4 抽帧） | — | `C:\Users\Kai\.nebflow\plots\education-motion\_verify\` |
+| 20261004_edu_rc_charge_schematic.svg | 共用电路锚点（本页嵌入） | `C:\Users\name\.nebflow\skills\visual-report-suite\demos\education-motion-src\rc_schematic.py` | `C:\Users\name\.nebflow\plots\education-motion\20261004_edu_rc_charge_schematic.svg` |
+| 20261004_edu_rc_charge_steps_static.svg / .png | 形态① | `C:\Users\name\.nebflow\skills\visual-report-suite\demos\education-motion-src\rc_static_steps.py` | `C:\Users\name\.nebflow\plots\education-motion\20261004_edu_rc_charge_steps_static.svg`（PNG 同名 .png） |
+| 20261004_edu_rc_charge_3d.html | 形态② | `C:\Users\name\.nebflow\skills\visual-report-suite\demos\education-motion-src\rc_charge_scene.js`（构建器：`motion-toolkit\scripts\three-template\build_three_html.py`） | `C:\Users\name\.nebflow\plots\education-motion\20261004_edu_rc_charge_3d.html` |
+| 20261004_edu_rc_charge_steps.mp4 | 形态③ | `C:\Users\name\.nebflow\skills\visual-report-suite\demos\education-motion-src\RcChargeSteps.tsx`（渲染注册位：`motion-toolkit\scripts\remotion-scaffold\src\RcChargeSteps.tsx` + `Root.tsx`） | `C:\Users\name\.nebflow\plots\education-motion\20261004_edu_rc_charge_steps.mp4` |
+| 20261004_edu_rc_charge_schematic_dark.png | 形态③内嵌素材 | `motion-toolkit\scripts\remotion-scaffold\public\rc_schematic_dark.png` | `C:\Users\name\.nebflow\plots\education-motion\20261004_edu_rc_charge_schematic_dark.png` |
+| _verify\*.png | 通路验证证据（headless 亮/暗实拍、MP4 抽帧） | — | `C:\Users\name\.nebflow\plots\education-motion\_verify\` |
 
 ## 待通路验证点清单（交验证节点/人工复核）
 

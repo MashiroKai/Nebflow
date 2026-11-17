@@ -58,8 +58,9 @@ test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
 const TYPES = {
-  domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }, { id: 'jev', enabledSwitch: true }],
-  adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview', 'openai-images'], jev: ['typesafe-jev'] },
+  // （jev 域投影已随 JeV 退役摘除——jev-retire 批 2026-11-16。）
+  domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }],
+  adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview', 'openai-images'] },
 };
 
 /**
@@ -127,6 +128,8 @@ async function bootPage(page, st, ledger) {
     (await import('/js/sidebar.js')).openSettingsPanel();
     document.getElementById('settings-overlay')?.classList.add('on');
   });
+  // Providers is a progressive-disclosure section: the unified panel mounts only once the user expands it.
+  await page.evaluate(() => document.querySelector('[data-settings-disclosure="providers"]')?.click());
   await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 10000 });
   await page.waitForTimeout(400); // projections land → repaint
   await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());

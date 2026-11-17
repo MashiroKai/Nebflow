@@ -36,7 +36,7 @@ import { renderVisionBadge } from './modelCapabilities.js';
  *   models?: Array<string>,
  *   metaExtra?: string,
  *   active?: boolean,
- *   face: 'llm'|'jev'|'imagegen'|'provider'
+ *   face: 'llm'|'imagegen'|'provider'
  * }} spec
  * @returns {string}
  */
@@ -73,7 +73,7 @@ export function providerCardHTML(spec) {
       <div class="cfg-card-header">
         ${typeBadge}
         <span class="cfg-card-title">${escapeHtml(name)}</span>
-        <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${escapeHtml(t('provider.remove'))}">×</button>
+        <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${escapeHtml(t('provider.remove'))}" aria-label="${escapeHtml(t('provider.removeNamed', { name }))}">×</button>
       </div>
       <div class="cfg-card-meta">
         ${badge}

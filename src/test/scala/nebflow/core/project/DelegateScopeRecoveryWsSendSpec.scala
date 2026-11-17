@@ -12,14 +12,7 @@ import nebflow.core.node.NodeRunner
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.ModelCandidate
-import nebflow.shared.{
-  LlmHandle,
-  LlmRequest,
-  LlmResponse,
-  PathUtil,
-  StreamChunk,
-  ThinkingConfig
-}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 import nebflow.shared.given
 
 import java.nio.file.{Files, Paths}
@@ -58,6 +51,7 @@ class DelegateScopeRecoveryWsSendSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
@@ -78,6 +72,7 @@ class DelegateScopeRecoveryWsSendSpec extends CatsEffectSuite:
 
   private class NullLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]]
@@ -318,3 +313,63 @@ class DelegateScopeRecoveryWsSendSpec extends CatsEffectSuite:
     assert(head.contains("recorder"), "接线处注释必须指认录制写者（进程级 recorder）")
     assert(!body.contains("＝**不修**"), "旧「不修」判定头必须已改写（禁已修却留未修判据——P3 反向漂移）")
   }
+
+  // ── S7 exactly-once boot sweep（源码钉：boot 链 sweep 恰执行一次）──────────────
+
+  test(
+    "S7 exactly-once pin: the delegate-scope boot sweep has one execution site; the scanner only waits on its completion gate"
+  ) {
+    val gateway = Files.readString(Paths.get("src/main/scala/nebflow/gateway/GatewayMain.scala"))
+    // The sweep program must be executed at exactly ONE site (its definition
+    // aside). The retired shape aliased the sweep start as an IO[Fiber] val and
+    // ran that alias in BOTH the boot chain leg and the scanner leg — each run
+    // spawned a fresh fiber, so the whole sweep executed twice per boot:
+    // duplicated chain-orphaned audit events and root notifies (2x per orphan
+    // scope in the boot fixture), and the lagging second pass unmounted
+    // freshly claimed scope hosts whose rehydrate was still in flight.
+    val uses = gateway
+      .split("\n")
+      .filter(_.contains("delegateScopeCrashSweep"))
+      .filterNot(_.trim.startsWith("val delegateScopeCrashSweep"))
+    assertEquals(
+      uses.length,
+      1,
+      s"delegate-scope sweep must have exactly one execution site (definition aside), found ${uses.length}"
+    )
+    assert(
+      uses.head.trim.startsWith("delegateScopeCrashSweep"),
+      "the single execution site must be the sweep start itself, not an alias"
+    )
+    assert(!gateway.contains("delegateScopeBootSweepFiber"), "the re-runnable IO[Fiber] sweep alias must stay retired")
+    // The start site must complete the shared gate on success AND failure (a
+    // failed sweep must not wedge the scanner leg). Match the raw (indented)
+    // use line so the definition line never satisfies the lookup.
+    val startAt = gateway.indexOf(uses.head)
+    assert(startAt >= 0, "sweep start site not found (structure drifted, re-anchor this pin)")
+    val startBody = gateway.substring(startAt, math.min(gateway.length, startAt + 400))
+    assert(startBody.contains(".guarantee("), "sweep start must guarantee the completion gate (both outcomes)")
+    assert(
+      startBody.contains("delegateScopeSweepDone.complete"),
+      "the sweep must complete the shared gate the scanner waits on"
+    )
+    // The scanner leg waits on that gate; it must never start or join a sweep
+    // program of its own.
+    val scannerAt = gateway.indexOf("val delegateScopeScanner")
+    assert(scannerAt >= 0, "delegateScopeScanner not in GatewayMain (structure drifted, re-anchor this pin)")
+    val scannerBody = gateway.substring(scannerAt, math.min(gateway.length, scannerAt + 700))
+    assert(scannerBody.contains("delegateScopeSweepDone.get"), "scanner must wait on the sweep completion gate")
+    assert(scannerBody.contains("launchScanner"), "scanner leg must launch the scope host scanner")
+    // The gate wait must run INSIDE the spawned fiber (parenthesized before
+    // .start). Waiting directly on the boot chain blocks listen behind the
+    // sweep and undoes the boot-latency cut.
+    assert(
+      scannerBody.contains("(delegateScopeSweepDone.get"),
+      "scanner gate wait must be parenthesized into the spawned fiber, not run on the boot chain"
+    )
+    assert(
+      !scannerBody.contains("delegateScopeCrashSweep") && !scannerBody.contains(".join") && !scannerBody
+        .contains("Fiber"),
+      "scanner leg must not start or join a second sweep"
+    )
+  }
+end DelegateScopeRecoveryWsSendSpec

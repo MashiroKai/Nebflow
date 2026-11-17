@@ -1,157 +1,193 @@
 package nebflow.core.executor
 
-import cats.effect.IO
-import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref, Resource}
+import cats.effect.std.Dispatcher
+import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.core.delegate.{ChainStore, DelegateJudge, DelegateRegistry}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, MessageRole, PathUtil, StreamChunk}
+import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
+import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
+import nebflow.core.delegate.{ChainStore, DelegateRegistry}
+import nebflow.core.mail.SessionMailbox
+import nebflow.core.task.FileTaskStore
+import nebflow.core.tools.FileLockManager
+import nebflow.db.DbHost
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{MessageRole, PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
-/**
- * 外部执行器腿接纪律判读（引擎加固批 2026-10-09，P1-2）：
- *
- *  - ① spawn 前的座位腿（delegate-param-decisions 批后 = **零分配就地腿**）：git
- *    工作区 = 分支 `delegate/<id>` ＋ 就地座位（进程 cwd = 项目工作区；外部腿没有
- *    `worktree` 参数，工具面显式拒收）；记录四键落库、spawn 行 `seat` 键在链上、
- *    brief 行进会话历史。判定机已删除——spawn 行不再有 worktreeJudged/judgeLeg；
- */
+/** External execution uses the supplied workspace and prompt without allocating a git seat. */
 class ExternalLegPrepareSpec extends CatsEffectSuite:
 
-  override def munitIOTimeout: FiniteDuration = 300.seconds
+  override val munitIOTimeout: FiniteDuration = 45.seconds
 
-  private val tempRoot: os.Path = os.pwd / "target" / "test-external-leg"
-  private val originalRoot = PathUtil.dataRoot
-
-  PathUtil.setDataRoot(tempRoot)
-  nebflow.ForceRemove.removeAll(tempRoot)
-  os.makeDir.all(tempRoot)
-
-  override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
-
-  override def beforeEach(context: munit.BeforeEach): Unit =
-    nebflow.ForceRemove.removeAll(tempRoot / "chains")
-    nebflow.ForceRemove.removeAll(tempRoot / "delegates")
-    nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
-
-  override def afterEach(context: munit.AfterEach): Unit =
-    DelegateJudge.DelegateJudgePort.clear()
-
-  private def mkRepo(dir: os.Path): os.Path =
-    nebflow.ForceRemove.removeAll(dir)
-    os.makeDir.all(dir)
-    os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-    os.proc("git", "-C", dir.toString, "config", "user.email", "spec@nebflow.local").call(check = true)
-    os.proc("git", "-C", dir.toString, "config", "user.name", "spec").call(check = true)
-    os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "init")
-      .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
-    dir
-
-  private class SilentLlm extends LlmHandle[IO]:
-    def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-
-    def sendStream(
-      req: LlmRequest,
-      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-    ): fs2.Stream[IO, StreamChunk] =
-      fs2.Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def spec(
-    repo: os.Path,
-    resources: nebflow.core.AgentRuntimePort,
-    task: String
-  ): ExternalSessionRunner.SpawnSpec =
-    ExternalSessionRunner.SpawnSpec(
-      executorId = "claude-code",
-      binPath = "/bin/echo", // 假 CLI：打印 argv 即退（exit 0，零帧）——真通路的进程面
-      task = task,
-      title = "external leg task",
-      workspace = repo.toString,
-      project = None,
-      taskId = Some("91"),
-      parentSessionId = "nebula-root",
-      rootSessionId = "nebula-root",
-      parentRef = None,
-      wsSend = None,
-      resources = resources
-    )
-
-  /** 轮询直到条件成立（外部腿 settle 是异步 fiber——轮询锚）。 */
-  private def pollUntil(label: String, maxMs: Long = 30000)(cond: IO[Boolean]): IO[Unit] =
-    val deadline = System.currentTimeMillis() + maxMs
-    def loop(): IO[Unit] =
-      cond.flatMap {
-        case true => IO.unit
-        case false =>
-          IO(System.currentTimeMillis()).flatMap { now =>
-            if now > deadline then IO.raiseError(new RuntimeException(s"poll timeout: $label"))
-            else IO.sleep(200.millis) *> loop()
-          }
-      }
-    loop()
-
-  test(
-    "① external spawn prepares the SAME branch + IN-PLACE seat (zero allocation); record + spawn-row `seat` key + brief line land"
-  ) {
-    val system = ActorSystem(s"el-1-${scala.util.Random.nextInt(100000)}")
+  private def resources(root: os.Path): Resource[IO, SharedResources] =
     for
-      res <- nebflow.agent.SpecResources.mkResources(system, tempRoot, new SilentLlm)
-      _ = DelegateJudge.DelegateJudgePort.clear() // 判定机缺席 = fail-open 反转腿
-      repo = mkRepo(tempRoot / "ext-repo")
-      spawned <- ExternalSessionRunner.spawn(spec(repo, res, "read the code and report"))
-      (sessionId, ack) = spawned.fold(err => fail(s"spawn failed: $err"), identity)
-      _ <- pollUntil("task row terminal (settle ran)")(
-        res.subAgentTaskStore.findByTaskId(sessionId).map(_.map(_.status).contains("completed"))
-      )
-      record = DelegateRegistry.find(sessionId)
-      spawnRows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "delegate-spawn")
-      userText <- res.sessionStore
-        .loadMessagesForSession(sessionId)
-        .map(
-          _.filter(_.role == MessageRole.User).map(_.textContent).mkString("\n")
+      dispatcher <- Dispatcher.parallel[IO]
+      system <- Resource.make(IO(ActorSystem("external-leg-prepare")))(_.stopAll)
+      shared <- Resource.eval {
+        for
+          rateLimiter <- RateLimiter.create()
+          tracker <- FileChangeTracker.create(root.toString)
+          fileLocks <- FileLockManager.create
+          thinking <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
+          models <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+          muted <- Ref.of[IO, Boolean](false)
+        yield SharedResources(
+          llm = null,
+          dispatcher = dispatcher,
+          sessionStore = SessionStore(root / "sessions", root / "tasks"),
+          projectRoot = root,
+          thinkingConfigRef = thinking,
+          rateLimiter = rateLimiter,
+          fileChangeTracker = tracker,
+          contextWindow = 100_000,
+          agentLibrary = new AgentLibrary(root / "agents"),
+          taskStore = FileTaskStore,
+          historyArchiver = null,
+          fileLockManager = fileLocks,
+          sessionModelOverrides = models,
+          providerRegistry = null,
+          healthMonitor = null,
+          actorSystem = system,
+          subAgentTaskStore = new SubAgentTaskStore(root / "subagent-tasks"),
+          voiceMutedRef = muted
         )
-      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield
-      val r = record.getOrElse(fail("no registry record for the external session"))
-      assertEquals(r.branch, Some(s"delegate/$sessionId"), "the external leg gets the same delegate/<id> branch")
-      // delegate-param-decisions 批（2026-11-04）：外部腿没有 `worktree` 参数（工具面
-      // 已显式拒收）⇒ **零分配**：不建树，座位 = 项目工作区本身。
-      assertEquals(r.worktree, None, "zero allocation: the external leg never gets a worktree")
-      assertEquals(r.cwd, repo.toString, "the process cwd is the shared project workspace")
-      assertEquals(r.baseBranch, Some("main"))
-      assertEquals(r.projectWorkspace, Some(repo.toString))
-      assertEquals(r.worktreeJudged, None, "the worktree judge is gone — no verdict is recorded")
-      assert(!os.exists(repo / ".nebflow" / "worktrees"), "not even the worktree root is created")
-      val branchOut = os
-        .proc("git", "-C", repo.toString, "rev-parse", "--abbrev-ref", s"delegate/$sessionId")
-        .call(check = true)
-        .out
-        .trim()
-      assertEquals(branchOut, s"delegate/$sessionId", "the branch exists in the base repo")
-      // spawn 行审计键（worktreeJudged / judgeLeg —— additive）
-      val row = spawnRows.find(_.payload.hcursor.get[String]("delegateId").toOption.contains(sessionId))
-      assert(row.isDefined, "the external leg writes a delegate-spawn ChainStore row")
-      val c = row.get.payload.hcursor
-      assertEquals(
-        c.get[String]("seat").toOption,
-        Some("none"),
-        "the spawn row records the seat rule that hit (here: zero allocation)"
-      )
-      assert(c.get[Boolean]("worktreeJudged").toOption.isEmpty, "judge keys are gone")
-      assert(c.get[String]("judgeLeg").toOption.isEmpty, "judge keys are gone")
-      assertEquals(c.get[String]("executor").toOption, Some("claude-code"))
-      // brief 申报行进会话历史（外部零平台注入——任务文本即全部上下文）
-      assert(
-        userText.contains("[working branch]"),
-        s"the working-branch line must precede the task text: ${userText.take(200)}"
-      )
-      assert(
-        userText.contains("NO worktree was allocated"),
-        s"the in-place brief line must declare the zero-allocation seat: ${userText.take(400)}"
-      )
-      assert(userText.contains("read the code and report"), "the original task text is preserved after the brief line")
-    end for
+      }
+    yield shared
+
+  private def isolatedRoot: Resource[IO, os.Path] =
+    Resource.make(IO.blocking {
+      assume(!ExecutorRegistry.isWindows, "The echo fixture requires POSIX")
+      val original = PathUtil.dataRoot
+      val root = os.temp.dir(prefix = "external-leg-prepare-")
+      PathUtil.setDataRoot(root)
+      (original, root)
+    }) { case (original, root) =>
+      IO.blocking(DbHost.release(root.toNIO)).guarantee(IO.blocking {
+        PathUtil.setDataRoot(original)
+        os.remove.all(root)
+      })
+    }.map(_._2)
+
+  private def mkRepo(dir: os.Path): IO[os.Path] = IO.blocking {
+    os.makeDir.all(dir)
+    os.proc("git", "init", "-b", "main", dir.toString).call(stdout = os.Pipe, stderr = os.Pipe)
+    os.proc("git", "-C", dir.toString, "config", "user.email", "spec@nebflow.local").call()
+    os.proc("git", "-C", dir.toString, "config", "user.name", "spec").call()
+    os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "Initialize fixture")
+      .call(stdout = os.Pipe, stderr = os.Pipe)
+    dir
   }
 
+  private def git(repo: os.Path, args: String*): IO[String] = IO.blocking {
+    os.proc(Seq("git", "-C", repo.toString) ++ args).call(stdout = os.Pipe, stderr = os.Pipe).out.trim()
+  }
+
+  private def pollUntil(label: String)(condition: IO[Boolean]): IO[Unit] =
+    def loop: IO[Unit] = condition.flatMap { ready =>
+      if ready then IO.unit else IO.sleep(20.millis) *> IO.defer(loop)
+    }
+    loop.timeoutTo(12.seconds, IO.raiseError(new AssertionError(s"Timed out waiting for $label")))
+
+  test("external spawn preserves main and the original prompt; an empty protocol fails incomplete") {
+    isolatedRoot.use { root =>
+      resources(root).use { shared =>
+        val prompt = "read the code and report"
+        val parent = "external-leg-parent"
+        for
+          repo <- mkRepo(root / "repo")
+          headBefore <- git(repo, "rev-parse", "HEAD")
+          branchesBefore <- git(repo, "for-each-ref", "--format=%(refname)", "refs/heads/")
+          worktreesBefore <- git(repo, "worktree", "list", "--porcelain")
+          spawnSpec = ExternalSessionRunner.SpawnSpec(
+            executorId = "claude-code",
+            // Echo exits zero but emits no recognized protocol frames.
+            binPath = "/bin/echo",
+            task = prompt,
+            title = "external leg task",
+            workspace = repo.toString,
+            project = None,
+            taskId = Some("91"),
+            parentSessionId = parent,
+            rootSessionId = parent,
+            parentRef = None,
+            wsSend = None,
+            resources = shared
+          )
+          _ <- Resource.make(
+            ExternalSessionRunner.spawn(spawnSpec).flatMap(result => IO.fromEither(
+              result.left.map(error => new AssertionError(s"Spawn failed: $error"))))
+          ) { case (id, _) =>
+            ExternalOutputStore.processOf(id).flatMap(_.traverse_(ExternalOutputStore.stopOwnedProcess)) *>
+              pollUntil("runner cleanup")(
+                shared.agentRegistry.get.map(!_.contains(id)))
+          }.use { case (id, ack) =>
+            for
+              _ <- pollUntil("durable failed terminal and mailbox enqueue")(
+                shared.subAgentTaskStore.findByTaskId(id).map(_.exists(task =>
+                  task.executionStatus.contains("failed") && task.notificationPending.contains(false))))
+              _ <- pollUntil("runner detachment and process exit")(
+                (shared.agentRegistry.get, ExternalOutputStore.processOf(id)).mapN { (registry, process) =>
+                  !registry.contains(id) && process.forall(p => !p.isAlive)
+                })
+              task <- shared.subAgentTaskStore.findByTaskId(id).map(_.getOrElse(fail("Missing task")))
+              messages <- shared.sessionStore.loadMessagesForSession(id)
+              mailbox <- SessionMailbox.scanPending(parent)
+              output <- ExternalOutputStore.read(id, 0L)
+              headAfter <- git(repo, "rev-parse", "HEAD")
+              branchAfter <- git(repo, "branch", "--show-current")
+              branchesAfter <- git(repo, "for-each-ref", "--format=%(refname)", "refs/heads/")
+              worktreesAfter <- git(repo, "worktree", "list", "--porcelain")
+              _ <- IO.blocking {
+                val record = DelegateRegistry.find(id).getOrElse(fail("Missing delegate record"))
+                assert(ack.contains(id))
+                assertEquals(record.cwd, repo.toString)
+                assertEquals(record.branch, None)
+                assertEquals(record.worktree, None)
+                assertEquals(record.baseBranch, None)
+                assertEquals(record.projectWorkspace, None)
+                assertEquals(record.worktreeJudged, None)
+                assertEquals(headAfter, headBefore)
+                assertEquals(branchAfter, "main")
+                assertEquals(branchesAfter, branchesBefore)
+                assertEquals(worktreesAfter, worktreesBefore)
+                assert(!os.exists(repo / ".nebflow" / "worktrees"))
+
+                val spawn = ChainStore.listSync().flatMap(_.entries).find(entry =>
+                  entry.kind == "delegate-spawn" &&
+                    entry.payload.hcursor.get[String]("delegateId").toOption.contains(id)
+                ).getOrElse(fail("Missing delegate-spawn chain entry"))
+                val cursor = spawn.payload.hcursor
+                assertEquals(cursor.get[String]("executor").toOption, Some("claude-code"))
+                assertEquals(cursor.get[String]("cwd").toOption, Some(repo.toString))
+                List("branch", "worktree", "baseWorkspace", "baseBranch", "baseSha").foreach { key =>
+                  assertEquals(cursor.get[String](key).toOption, Some(""), key)
+                }
+                assert(cursor.get[Boolean]("worktreeJudged").toOption.isEmpty)
+                assert(cursor.get[String]("judgeLeg").toOption.isEmpty)
+
+                assertEquals(messages.filter(_.role == MessageRole.User).map(_.textContent), List(prompt))
+                assertEquals(messages.filter(_.role == MessageRole.Assistant), Nil)
+                assert(messages.forall(_.runId == task.runId))
+                assertEquals(task.status, "failed")
+                assertEquals(task.incomplete, Some(true))
+                assert(task.terminalReason.exists(_.contains("Result collection incomplete")))
+                assert(task.diagnostic.exists(_.contains("without a protocol terminal")))
+                assertEquals(output.map(_.exitCode), Some(Some(0)))
+                assertEquals(output.map(_.status), Some("failed"))
+                assertEquals(mailbox.size, 1)
+                val result = mailbox.head
+                assertEquals(result.identity, task.notificationId.getOrElse(fail("Missing notification id")))
+                assertEquals(result.event.eventType, "failed")
+                assertEquals(result.event.metadata("retryable").flatMap(_.asBoolean), Some(false))
+                assertEquals(result.event.metadata("completionGeneration").flatMap(_.asString), task.runId)
+              }
+            yield ()
+          }
+        yield ()
+      }
+    }
+  }
 end ExternalLegPrepareSpec

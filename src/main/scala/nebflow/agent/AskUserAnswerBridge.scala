@@ -36,7 +36,7 @@ import scala.concurrent.duration.*
  *  - 残余风险只剩一种：**目标会话本体已消失**而槽位尚未回收。改前此处显式 WARN
  *    后放弃投递（答案终点站）；answer-landing 实施批（2026-10-21）把该分支升级为
  *    **三臂着陆面**（[[AskAnswerLanding]]）：会话亡＋归因在＋宿主在 ⇒ 引擎重入
- *    （ProjectActor.AskAnswerReentry，ReenterDispatcher 族管线）／委托宿主在 ⇒
+ *    （ProjectActor.AskAnswerReentry）／委托宿主在 ⇒
  *    注入委托会话；归因缺席/宿主不在 ⇒ 失败出口（审计 + 桌面 toast + 渠道失败
  *    回执「问题已作废+原因」）。**任何出口不静默**（原 WARN 面保留为失败出口的
  *    日志腿）。
@@ -138,8 +138,8 @@ object AskUserAnswerBridge:
           // answer-landing 实施批（2026-10-21）：**最后一公里断裂点接三臂着陆面**
           // （设计批 reports/20261020_123548_askuser-social-answer-inject §3–§5 原案）。
           // 改前此分支 = WARN + 静默丢（答案终点站）；现按构造时归因快照（ctx 的
-          // project/flowNodeId）分流：项目宿主在 ⇒ 引擎重入（ReenterDispatcher 族
-          // AskAnswerReentry）；委托宿主在 ⇒ 注入委托会话；归因缺席/宿主不在 ⇒
+          // project/flowNodeId）分流：项目宿主在 ⇒ 引擎重入（AskAnswerReentry）；
+          // 委托宿主在 ⇒ 注入委托会话；归因缺席/宿主不在 ⇒
           // 失败出口（审计 + 桌面 toast + 渠道失败回执「问题已作废+原因」——任何
           // 出口不静默）。附件清单段随答案同走重入（同一把 formatAnswer 尺，设计
           // §3「答案语义不变」）。

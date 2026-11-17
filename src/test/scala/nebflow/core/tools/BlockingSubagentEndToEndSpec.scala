@@ -116,6 +116,163 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
       }
       .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
 
+  test("dispatcher SubagentTool.call returns final text and reaps a six-tool child"):
+    val system = nebflow.actor.ActorSystem("bse2e-dispatcher-sub")
+    val captured = TrieMap[String, LlmRequest]()
+    val dispatcherId = "delegate-nebflow-recon-e2e"
+    def awaitStopped(childId: String, attempts: Int = 100): IO[Unit] =
+      system.isAlive(nebflow.actor.ActorPath(system.localDevice, childId)).flatMap {
+        case false => IO.unit
+        case true if attempts > 0 => IO.sleep(50.millis) *> awaitStopped(childId, attempts - 1)
+        case true => IO.raiseError(new AssertionError(s"child actor was not stopped: $childId"))
+      }
+    (for
+      parent <- dummyParent(system)
+      res <- SpecResources.mkResources(system, tempRoot, new ScriptedLlm(_ => "DISPATCHER-RECON-TEXT", captured))
+      _ <- IO {
+        nebflow.core.delegate.DelegateRegistry.put(
+          nebflow.core.delegate.DelegateRegistry.Record(
+            id = dispatcherId,
+            executor = "nebflow",
+            cwd = tempRoot.toString,
+            project = None,
+            taskId = None,
+            parentSessionId = "e2e-root",
+            title = "dispatcher reconnaissance",
+            createdAt = System.currentTimeMillis(),
+            mode = Some(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
+          )
+        )
+        assertEquals(
+          nebflow.core.delegate.DelegateRegistry.modeFaceOf(Some(dispatcherId)),
+          Some(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
+        )
+      }
+      _ <- nebflow.core.node.NodeRunner.registerAgent(
+        res,
+        id = dispatcherId,
+        ref = parent,
+        kind = nebflow.actor.AgentKind.Delegate,
+        rootSessionId = "e2e-root"
+      )
+      out <- SubagentTool.call(
+        JsonObject("prompt" -> "survey the repo".asJson, "description" -> "dispatcher-recon".asJson),
+        ctxFor(system, res, parent).copy(sessionId = Some(dispatcherId), depth = 1)
+      )
+      registry <- res.agentRegistry.get
+      tasks <- res.subAgentTaskStore.loadTasks(dispatcherId)
+      childId <- IO {
+        assertEquals(out, Right("DISPATCHER-RECON-TEXT"))
+        val childRequests = captured.values.toList.filter(_.sessionId.startsWith("subagent-"))
+        assertEquals(childRequests.size, 1, "the tool must run exactly one child session")
+        val request = childRequests.head
+        assertEquals(request.agentId, nebflow.core.entity.BuiltinAgents.SubagentName)
+        assertEquals(
+          request.tools.toList.flatten.map(_.name).toSet,
+          Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash"),
+          "the dispatcher must not broaden the child's fixed six-tool face"
+        )
+        assert(!registry.contains(request.sessionId), "the child registry entry must be reaped")
+        assert(registry.contains(dispatcherId), "the parent must remain registered")
+        val childTasks = tasks.filter(_.taskId == request.sessionId)
+        assertEquals(childTasks.size, 1)
+        assertEquals(childTasks.head.status, "completed")
+        assert(childTasks.head.completedAt.isDefined)
+        request.sessionId
+      }
+      _ <- awaitStopped(childId)
+    yield ()).guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
+
+  test("Subagent executes foreground Bash and returns its output before cleanup"):
+    val system = nebflow.actor.ActorSystem("bse2e-bash")
+    val captured = TrieMap[String, LlmRequest]()
+    val calls = new java.util.concurrent.atomic.AtomicInteger(0)
+    val toolId = "recon-printf"
+    val marker = "SUBAGENT-BASH-EVIDENCE"
+    val llm = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
+        Stream
+          .eval(IO {
+            captured.put(req.sessionId, req)
+            calls.incrementAndGet()
+          })
+          .flatMap { n =>
+            if n == 1 then
+              Stream(
+                StreamChunk.ToolCallChunk(
+                  nebflow.shared.ToolCall(
+                    toolId,
+                    "Bash",
+                    JsonObject(
+                      "command" -> "printf '%s\n' \"$PWD\" 'SUBAGENT-BASH-EVIDENCE'".asJson,
+                      "timeout" -> 5000.asJson,
+                      "run_in_background" -> false.asJson
+                    )
+                  )
+                ),
+                StreamChunk.Done(None, None)
+              )
+            else
+              val result = req.messages
+                .flatMap(_.content.toOption.toList.flatten)
+                .collectFirst { case nebflow.shared.ContentBlock.ToolResult(`toolId`, content, _) =>
+                  content
+                }
+                .getOrElse("missing Bash result")
+              Stream(StreamChunk.TextDelta(s"Shell reconnaissance: $result"), StreamChunk.Done(None, None))
+          }
+    def awaitCleanup(childId: String, res: SharedResources, attempts: Int = 100): IO[Unit] =
+      for
+        alive <- system.isAlive(nebflow.actor.ActorPath(system.localDevice, childId))
+        shell <- ShellSession.peekSession(childId)
+        registry <- res.agentRegistry.get
+        _ <-
+          if !alive && shell.isEmpty && !registry.contains(childId) then IO.unit
+          else if attempts > 0 then IO.sleep(50.millis) *> awaitCleanup(childId, res, attempts - 1)
+          else IO.raiseError(new AssertionError(s"child resources not reaped: $childId"))
+      yield ()
+    (for
+      parent <- dummyParent(system)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
+      out <- SubagentTool.call(
+        JsonObject("prompt" -> "Report the workspace and shell evidence.".asJson),
+        ctxFor(system, res, parent).copy(projectRoot = tempRoot.toString)
+      )
+      tasks <- res.subAgentTaskStore.loadTasks("e2e-parent")
+      childId <- IO {
+        assertEquals(calls.get(), 2, "one Bash call followed by one final answer")
+        assertEquals(captured.size, 1, "one child session")
+        val request = captured.values.head
+        assertEquals(
+          request.tools.toList.flatten.map(_.name).toSet,
+          Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
+        )
+        val result = request.messages
+          .flatMap(_.content.toOption.toList.flatten)
+          .collectFirst { case nebflow.shared.ContentBlock.ToolResult(`toolId`, content, error) =>
+            (content, error)
+          }
+          .getOrElse(fail("the child must receive the actual Bash tool result"))
+        assert(!result._2.contains(true), s"Bash failed: ${result._1}")
+        assert(result._1.contains(tempRoot.toString), s"Bash must run in the isolated fixture: ${result._1}")
+        assert(result._1.contains(marker), s"printf output must reach the child: ${result._1}")
+        assertEquals(out, Right(s"Shell reconnaissance: ${result._1}"))
+        val task = tasks.find(_.taskId == request.sessionId).getOrElse(fail("missing child task"))
+        assertEquals(task.status, "completed")
+        assert(task.completedAt.isDefined)
+        request.sessionId
+      }
+      _ <- awaitCleanup(childId, res)
+    yield ()).guarantee(
+      system.stopAll *> IO(captured.keys.toList).flatMap { ids =>
+        ids.foldLeft(IO.unit)((cleanup, id) => cleanup *> ShellSession.destroySession(id))
+      }
+    )
+
   // ── ChainWrite（N1 刀2）——整链登记闸 ＋ **orchestrationMode 升级写点** e2e ──
   // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：本用例原走 已删的 AgentFlow 工具
   // 薄壳（已随工具退役删除），改走**唯一现役入口** ChainWriteTool。同时钉住本批的

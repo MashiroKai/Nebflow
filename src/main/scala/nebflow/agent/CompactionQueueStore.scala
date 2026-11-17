@@ -34,7 +34,9 @@ object CompactionQueueStore:
   /** Disk snapshot of the two persisted queues. */
   case class PersistedQueues(
     imms: List[AgentCommand.ImmediateInput] = Nil,
-    events: List[AgentCommand.ExternalEvent] = Nil
+    events: List[AgentCommand.ExternalEvent] = Nil,
+    /** In-flight ephemeral delegate/subtask slots; absent in legacy snapshots. */
+    outstandingSubagentResults: Int = 0
   )
 
   // ── Codecs (hand-written, few fields; ContentBlock codec reused) ──
@@ -157,14 +159,19 @@ object CompactionQueueStore:
   }
 
   given Encoder[PersistedQueues] = Encoder.instance { q =>
-    Json.obj("imms" -> q.imms.asJson, "events" -> q.events.asJson)
+    Json.obj(
+      "imms" -> q.imms.asJson,
+      "events" -> q.events.asJson,
+      "outstandingSubagentResults" -> q.outstandingSubagentResults.asJson
+    )
   }
 
   given Decoder[PersistedQueues] = Decoder.instance { c =>
     for
       imms <- c.downField("imms").as[Option[List[AgentCommand.ImmediateInput]]]
       events <- c.downField("events").as[Option[List[AgentCommand.ExternalEvent]]]
-    yield PersistedQueues(imms.getOrElse(Nil), events.getOrElse(Nil))
+      outstanding <- c.downField("outstandingSubagentResults").as[Option[Int]]
+    yield PersistedQueues(imms.getOrElse(Nil), events.getOrElse(Nil), math.max(0, outstanding.getOrElse(0)))
   }
 
   private def queueFile(sessionId: String): os.Path =
@@ -178,7 +185,7 @@ object CompactionQueueStore:
    */
   def save(sessionId: String, q: PersistedQueues): IO[Unit] =
     if sessionId.isEmpty then IO.unit
-    else if q.imms.isEmpty && q.events.isEmpty then clear(sessionId)
+    else if q.imms.isEmpty && q.events.isEmpty && q.outstandingSubagentResults <= 0 then clear(sessionId)
     else
       val file = queueFile(sessionId)
       IO.blocking {

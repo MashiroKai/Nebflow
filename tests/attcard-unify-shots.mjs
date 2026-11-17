@@ -26,12 +26,14 @@ import { readFile } from 'node:fs/promises';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
 import { deflateSync } from 'node:zlib';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
 const MP4 = await readFile(join(ROOT, 'tests', 'fixtures', 'attcard-component-lib', 'tiny.mp4'));
-const OUT = process.env.ATT_SHOTS || '/tmp/attcard-unify-shots';
+// Default output = a TTL-sweepable EvidenceTemp batch; ATT_SHOTS keeps its meaning.
+const OUT = process.env.ATT_SHOTS || evidenceBatch('attcard-unify', 'shots');
 mkdirSync(OUT, { recursive: true });
 
 let failures = 0;

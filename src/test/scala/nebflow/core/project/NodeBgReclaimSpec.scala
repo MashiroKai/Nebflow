@@ -160,8 +160,8 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     // （生产默认 30min 由 Defaults 现读；spec 走构造入参避开全局 prop）。
     destroyWindowMs: Long = 0L,
     withBgHold: Boolean = true,
-    // noderpt 批 A 段腿 2（未申报 hold）。R9（NodeCancel 腿）用它把节点停成
-    // 「Running + 活 fiber + agent 空闲」——取消信号才有落点（走 NodeCancel 腿而非 reap）。
+    // 终态申报通道的 hold 旋钮（休眠件，申报工具退役后不再有置位写点）。保留为装配
+    // 入参以便其他 spec 显式关闸对齐生产缺省；本 spec 不再用它布景。
     reportGateHold: Boolean = false
   ): IO[ProjectRuntime] =
     for
@@ -176,9 +176,8 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
         backgroundWaitCapMs = backgroundWaitCapMs,
-        // noderpt 批 A 段：本 spec 主题 = bg 等待家族（腿 1）⇒ 显式置回旧行为；
-        // 腿 2（生产默认开）不在本 spec 主题内，显式关（默认开行为由
-        // NodeReportReminderSpec 覆盖）。
+        // This spec's topic is the background-wait family (completion gate leg 1) => restore the old
+        // behaviour explicitly; the terminal hold leg (dormant knob) is out of topic and explicitly off.
         bgGateCompletionHold = Some(withBgHold),
         reportGateHold = Some(reportGateHold),
         // noderpt 批 B 段：销毁窗口接缝（压 0 = 窗口当期到点）。
@@ -826,15 +825,20 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
-      // 腿 1 封存（生产 ① 口径）；腿 2 开（未申报 hold）⇒ 节点停在「Running + 活 fiber +
-      // agent 空闲」——取消信号才有落点（走 NodeCancel 腿而非 reap 腿）
-      rt <- mountProject("bg-r9", ws, system, res, wsFrames, withBgHold = false, reportGateHold = true)
+      // 布景走 bg-gate 完成门（腿 1，活机制）：stub 首轮登记真 bg 任务 ⇒ 回合收尾被
+      // hold 成「Running + 活 fiber + agent 空闲」——取消信号才有落点（走 NodeCancel
+      // 腿而非 reap 腿）。终态申报通道退役后其 hold 旋钮是休眠件，不再作布景。
+      rt <- mountProject("bg-r9", ws, system, res, wsFrames)
       _ <- createNode("bg-r9", ws, "cancel-leg-a", "result-CANCELLEG", res = res, system = system)
-      _ <- waitUntil(20.seconds)(byName(rt, "cancel-leg-a").map(_.reportPendingSince.isDefined))
+      sid <- waitNodeIdle(res)
       held <- byName(rt, "cancel-leg-a")
+      _ <- IO(
+        assert(
+          held.sessionRef.contains(sid),
+          s"the held node's sessionRef must match the parked node session (nodeRef=${held.sessionRef}, parked=$sid)"
+        )
+      )
       _ <- waitUntil(20.seconds)(rt.engine.isRunning(held.id))
-      sid <- IO.fromOption(held.sessionRef)(new AssertionError("node sessionRef must be set"))
-      _ <- waitUntil(20.seconds)(res.agentRegistry.get.map(_.contains(sid)))
       // 该腿收殓对象的取证载体（注册表级任务；D4b 读数见下）
       _ <- BgTaskRegistry.register("cancel-leg-job", sid, "cancel leg bg task", "local")
       _ <- rt.engine.cancelNodeById(held.id)
@@ -875,7 +879,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       assertEquals(
         done.reportPendingSince,
         None,
-        "the NodeCancel terminal write point clears the pending clock (⑧-3 coverage, same as the other 6)"
+        "the retired pending clock never engages; the terminal write keeps the field None (⑧-3 coverage)"
       )
       assertEquals(done.reportReminderCount, 0, "the rung counter is cleared with the clock")
     end for

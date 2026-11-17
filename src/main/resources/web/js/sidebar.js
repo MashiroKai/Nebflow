@@ -15,9 +15,10 @@ import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTodoTaskList } from './todoFace.js';
 import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
+import { emit } from './events.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
+import { fetchNeblinkStatus, neblinkSettingsHTML, accountCardHTML, bindNeblinkEvents } from './neblink.js';
 // 件四 · 设置页身份卡本地化（作者令 2026-11-02）：头像在上 + 用户名/邮箱单行胶囊，
 // 点胶囊 = App 内个人资料面（不再跳官网）。卡片结构/绘制/资料面全在该叶子模块，
 // 本文件只调两个入口（settingsIdentityCardHTML 出结构，paintSettingsIdentity 出读数）。
@@ -156,6 +157,9 @@ export function isSettingsPanelActive() {
 /** Switch the main panel to display a different session. */
 export function switchToSession(sessionId) {
   if (!sessionId) return;
+  // Selecting an Agent session, the current one included, is a request to see the Agent: a conversation shown in the
+  // main area gives way.
+  emit(window, 'AGENT_VIEW_REQUESTED', { sessionId });
 
   // Same-session: just clear unread and scroll to bottom
   if (sessionId === state.activeSessionId) {
@@ -830,7 +834,16 @@ function effortFromConfig() {
 // 7 个 i18n 键一并移除；`PUT /api/safety/mode` 的前端调用点随之归零（REST 端点
 // 由后端保留，供外部/脚本使用）。档位的**唯一 UI 入口 = 顶栏盾牌**
 // （`web/js/main.js` `initSafetyToggle`，写的是同一条全局持久路径）。
+let settingsLayerObserver = null;
 export function renderSettings() {
+  if (!settingsLayerObserver) {
+    settingsLayerObserver = new MutationObserver(() => {
+      const content = document.getElementById('settings-content');
+      const layer = String(document.body.classList.contains('mobile-layer'));
+      if (content?.hasChildNodes() && content.dataset.mobileAccountLayer !== layer) renderSettings();
+    });
+    settingsLayerObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  }
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
   // Build language selector options
@@ -838,8 +851,7 @@ export function renderSettings() {
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
   const llmProviders = cfg.llm?.providers || {};
   const providerCount = Object.values(llmProviders).filter(Boolean).length
-    + Object.keys(cfg.imagegen?.providers || {}).length
-    + Object.keys(cfg.jev?.providers || {}).length;
+    + Object.keys(cfg.imagegen?.providers || {}).length;
   const modelCount = ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].length;
   const langOpts = locales.map(code =>
     `<option value="${code}" ${code === getLocale() ? 'selected' : ''}>${localeLabels[code] || code}</option>`
@@ -856,6 +868,7 @@ export function renderSettings() {
   // 点胶囊 = App 内个人资料面；点头像 = 换头像流程 / 未登录登录卡（activityBar
   // 既有委托统一承担，本文件不绑任何点击）。
   const mobileLayer = typeof document !== 'undefined' && document.body.classList.contains('mobile-layer');
+  content.dataset.mobileAccountLayer = String(mobileLayer);
   // settings-progressive-disclosure 批：供应商与模型只在每次新开设置时折叠；
   // renderSettings 会因 WS echo 重建 DOM，展开状态需跨同一设置会话保留。
   const settingsDisclosure = window.__settingsDisclosure || (window.__settingsDisclosure = {
@@ -869,15 +882,12 @@ export function renderSettings() {
   // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
   // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
-    ${setCard({ title: t('settings.account'), body: `
-      ${/* account-hero-dedupe 批（2026-11-07 作者令逐字「手机端工作台上面的账户 做出
-           hero 那种感觉 并且去重 把设置的统一到这里」）：设置页**不再重复身份信息**
-           —— 头像 / 用户名 / 邮箱 / 退出登录的权威展示只有一处 = 工作台顶部 hero
-           （.mf-me-entry）。这里保留账号段的**功能分项**（连接/服务/退出等），
-           只留一行指路，不复述身份读数。 */ ''}
-      <div class="set-row-hint" data-acct-dedup-hint>身份与头像在工作台顶部</div>
-      ${neblinkSettingsHTML()}
-      ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}` })}
+    <section class="sp-panel-group" data-panel-group="account"><h2>${t('settings.account')}</h2>${accountCardHTML({ mobile: mobileLayer })}</section>
+    <section class="sp-panel-group" data-panel-group="general"><h2>${t('settings.general')}</h2>
+      ${setCard({ body: setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` })) })}
+      ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
+    </section>
+    <section class="sp-panel-group" data-panel-group="runtime"><h2>${t('settings.runtime')}</h2>
     ${setCard({ title: t('settings.runtime'), body: `
       ${setGroup(
         setRow({
@@ -896,10 +906,6 @@ export function renderSettings() {
       <div id="ttl-section-wrap">${renderTtlSection()}</div>
       ${setGroup(
         setRow({
-          title: t('settings.language'),
-          control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>`,
-        })
-        + setRow({
           title: t('settings.autostart'),
           control: toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) }),
           hint: escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported')),
@@ -907,7 +913,8 @@ export function renderSettings() {
           hintStyle: `display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'}`,
         })
       )}` })}
-    ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
+    </section>
+    <section class="sp-panel-group" data-panel-group="models"><h2>${t('settings.modelsAndServices')}</h2>
     ${setCard({ title: t('settings.providers'), id: 'provider-section', body: `
       <button type="button" class="set-disclosure" data-settings-disclosure="providers"
         aria-expanded="${settingsDisclosure.providers ? 'true' : 'false'}" aria-controls="provider-panel-disclosure">
@@ -929,9 +936,9 @@ export function renderSettings() {
       </div>` })}
       <!-- 🔴 provider-add-tabs 批（2026-11-06 作者令）：原 Jev 卡（setNavRow
            #jev-advance-toggle + #jev-advance-body）与生图卡（#imagegen-advance-toggle
-           + #imagegen-section-wrap）两节随三入口统一整件退役——JeV/生图全部
-           收进上方唯一服务商面板（sidebar/providerPanel.js 类型标签），
-           settings-jev-health 徽标由面板内 paintJevHealth 承载。 -->
+           + #imagegen-section-wrap）两节随三入口统一整件退役——生图收进上方唯一
+           服务商面板（sidebar/providerPanel.js 类型标签）；JeV 面随后于 jev-retire
+           批（2026-11-16）随 JeV 全量退役整体删除（含 settings-jev-health 徽标）。 -->
     ${setCard({ title: t('settings.secrets'), body: `
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
            2026-09-27 19:20): one row only — the list itself lives in the
@@ -947,6 +954,8 @@ export function renderSettings() {
         value: '…',
         valueId: 'secrets-entry-sub',
       })}` })}
+    </section>
+    <section class="sp-panel-group" data-panel-group="advanced"><h2>${t('settings.advanced')}</h2>
     ${setCard({ title: t('settings.advanced'), body: `
       <div class="set-actions">
         <button class="cfg-btn set-btn" id="btn-toggle-json" title="${t('settings.editRawJson')}">${t('settings.editRawJson')}</button>
@@ -972,6 +981,8 @@ export function renderSettings() {
           移除：按钮 + 两段式确认逻辑 + #restart-status 状态行 + restartStatus/restartResult
           两个模块级订阅全删（前端零发射面）；后端 WS `restart` 命令保留不动（其余消费方
           仍在）。更新功能已随 auth-trim 批（2026-10-20 作者令）退役。 */ ''}
+    </section>
+    <section class="sp-panel-group" data-panel-group="about"><h2>${t('settings.about')}</h2>
     ${setCard({ title: t('settings.about'), body: `
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
@@ -979,12 +990,16 @@ export function renderSettings() {
           ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
           : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
       </div>
-    ` })}`;
+    ` })}</section>`;
 
+  for (const name of ['account', 'general', 'models', 'runtime', 'advanced', 'about']) {
+    const group = content.querySelector(`[data-panel-group="${name}"]`);
+    if (group) content.appendChild(group);
+  }
   paintSettingsIdentity();
   bindSettingsDisclosure(content);
   bindSettingsEvents(content, cfg);
-  bindNeblinkEvents(() => renderSettings());
+  bindNeblinkEvents(() => renderSettings(), content);
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
@@ -1039,7 +1054,7 @@ export function renderSettings() {
         const wrapper = document.createElement('div');
         wrapper.innerHTML = neblinkSettingsHTML();
         neblinkDiv.replaceWith(wrapper.firstElementChild);
-        bindNeblinkEvents(() => renderSettings());
+        bindNeblinkEvents(() => renderSettings(), content);
       }
       // Keep the avatar section in lockstep with login/avatar changes.
       paintSettingsIdentity();
@@ -1702,6 +1717,7 @@ function renderSessionSidebarInner(sessionData, activeId) {
   }
   // If active session changed (new session, agent session, delete active), reset chat area
   if (activeId && activeId !== prevActiveId) {
+    emit(window, 'AGENT_VIEW_REQUESTED', { sessionId: activeId });
     setActiveView(chatViews.primary);
     saveInputDraft(prevActiveId);
     resetChatForActiveSession();

@@ -20,10 +20,13 @@
 //
 // 用法（改前 / 改后同一份脚本、同一组脸）：
 //   node scripts/capture-glass-overlays.mjs \
-//        --root /tmp/before-tree/src/main/resources/web --tag before \
-//        --out reports-evidence/glass-top-overlays__<stamp>
+//        --root /tmp/before-tree/src/main/resources/web --tag before
 //   node scripts/capture-glass-overlays.mjs \
 //        --root src/main/resources/web --tag after --out <同一个目录>
+// 缺省 --out = EvidenceTemp 批：<tmp>/stand-evidence/glass-capture/
+// glass-top-overlays-<uuid>/<日期>/（带 manifest、无 .active ⇒ TTL 清扫可回收）；
+// 显式 --out 语义不变（绝对路径或仓相对路径）。仓内 reports-evidence/ 已出库
+// 停用，不得再作为缺省输出位。
 //
 // 产出（每脸 × 每主题 × 每视口）：
 //   <tag>-<face>-<viewport>-<theme>.png      整屏（面在页里的位置）
@@ -35,18 +38,42 @@
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, extname, normalize, isAbsolute } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const argv = process.argv.slice(2);
 const valOf = (f, d = null) => { const i = argv.indexOf(f); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
 
+// EvidenceTemp 批（目录约定镜像 nebflow.shared.EvidenceTemp）：短命采集产物
+// 落 stand-evidence 命名空间（仓外），带 manifest、无 .active ⇒ 周期 TTL 清扫可回收，
+// 不在仓树留痕、不在 /tmp 散落裸文件。
+function evidenceBatch(project, task) {
+  const day = new Date().toISOString().slice(0, 10).replaceAll('-', '');
+  const batch = `${task}-${randomUUID()}`;
+  const dir = join(tmpdir(), 'stand-evidence', project, batch, day);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'manifest.json'),
+    JSON.stringify({ createdAt: new Date().toISOString(), project, batch }) + '\n',
+  );
+  return dir;
+}
+
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 const ROOT_ARG = valOf('--root', 'src/main/resources/web');
 const WEB = normalize(isAbsolute(ROOT_ARG) ? ROOT_ARG : join(REPO, ROOT_ARG));
 const TAG = valOf('--tag', 'after');
-const OUT_ARG = valOf('--out', 'reports-evidence/glass-top-overlays');
-const OUT = normalize(isAbsolute(OUT_ARG) ? OUT_ARG : join(REPO, OUT_ARG));
+// 缺省输出 = EvidenceTemp 批（镜像 nebflow.shared.EvidenceTemp 目录约定）：
+//   <tmp>/stand-evidence/<project>/<task>-<uuid>/<yyyyMMdd>/ + manifest.json，
+// 落盘即「非活批」（无 .active）⇒ 引擎 TTL 清扫可回收；不再缺省写仓内
+// reports-evidence/（出库裁定：该路径已自 git index 删除，禁重建）。
+// 显式 --out 语义不变（绝对路径，或仓相对路径）。
+const OUT_RAW = valOf('--out', null);
+const OUT = OUT_RAW
+  ? normalize(isAbsolute(OUT_RAW) ? OUT_RAW : join(REPO, OUT_RAW))
+  : evidenceBatch('glass-capture', 'glass-top-overlays');
 const THEMES = (valOf('--themes', 'light,dark') || '').split(',').filter(Boolean);
 const ONLY = (valOf('--only', '') || '').split(',').filter(Boolean);
 

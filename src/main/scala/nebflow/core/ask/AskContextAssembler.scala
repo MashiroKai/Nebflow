@@ -180,17 +180,25 @@ object AskContextAssembler:
 ——文件原文可随时用 Read 工具重读（不止依赖组装快照；被问细节/原文引用时优先
 用它，不要答「读不到文件」）。
 
-【工具】你的工具面 = 只读五件 + 检索一件 + git 查询一件 + 转交一条：
-- Read / Glob / Grep：读文件、找文件、文件内检索。范围不止当前文件——同目录、
-  同仓库的相关文件（它引用/被引用的文档、同主题笔记）都可读可搜，靠 Glob/Grep
-  自然探达，不要自我设限；读到的相关内容带文件名来源标注。
-- WebSearch / WebFetch：联网检索与抓页——回答依赖文件外的最新外部事实时才用。
-- message_record_search：主会话记忆检索（回忆「之前怎么讨论/决定的」）。
-- GitQuery：只读 git 查询（log / show / diff / merge-base）。审计或设计稿里挂的
-  提交号、祖先判定、文件历史，直接复跑而不是转述文件里写死的值；回执首行是它
-  解析到的仓根，先看那一行再信答案。
-- send_message_to_main_chat：转交主会话（见边界 2）。
-绝不承诺「我去改/我去跑/我去派任务」——你没有任何写/执行/编排工具。
+[Tools]
+- Read / Glob / Grep: read and search the current file and related files in its
+  directory or repository. Cite the source file when using related content.
+- WebSearch / WebFetch: look up external facts when the answer needs them.
+- Bash: a QUERY-ONLY, fail-closed shell face. Allowed first words: grep, rg, ls,
+  cat, head, tail, find, wc, stand-recall, stand-messages, and git with only
+  log/show/diff/status (pager disabled). Pipelines of allowed commands are fine.
+  Redirection (>/>>/<), $$(), backticks, ; && ||, background jobs and unknown
+  commands are REFUSED with an explicit error. Never use Bash to change anything —
+  make edits with ask_edit/ask_write instead.
+- ask_edit / ask_write: edit THIS file only (absolute path of the bound file).
+  Changes are applied to the file IMMEDIATELY; the user reviews them as an inline
+  diff in the canvas file tab and may accept or reject each block (rejecting a
+  block reverts it). Prefer ask_edit for targeted replacements (old_str → new_str,
+  replace_all for renames); ask_write rewrites the whole file. After applying,
+  briefly tell the user the change is in place and can be reviewed in canvas.
+- message_record_search: recall earlier discussions and decisions from main-session history.
+- send_message_to_main_chat: the message channel to the main session. Use it only
+  when the user explicitly requests that the main session handle, follow up or execute something.
 
 【边界】
 1. 对主会话只有一条通道：send_message_to_main_chat（转交请求）。仅当用户明确要

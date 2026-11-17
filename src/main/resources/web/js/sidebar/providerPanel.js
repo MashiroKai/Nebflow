@@ -34,23 +34,23 @@
 // 相等」，改后端枚举而忘了前端行为绑定 = 红）。
 //
 // ── 取数与保存腿（各自的既有通道，零新协议）─────────────────────────────────
-//   llm      : 读 state.parsedConfig.llm.providers；写 = saveNewProvider → WS
-//              updateConfig（providersUi.js 单点，与 onboarding 同一条腿）；
+//   llm      : reads state.parsedConfig.llm.providers; writes = saveProviderWithAck → WS
+//              updateConfig (single point in providersUi.js). The request carries a
+//              requestId and only the reply to that very save confirms it; a failure, a
+//              timeout or a closed socket keeps the form open with its draft;
 //   imagegen : 读 GET /api/config/imagegen；写 = PUT /api/config/imagegen
-//              整节替换 + secrets 面写 key（原名 imagegen-<name>-key）；
-//   jev      : 读 GET /api/config/jev；写 = PUT /api/config/jev 整块 + secrets
-//              面写 key（原名 jev-<name>-key）。
-//   两种 secrets 派生名对用户不可见（凭据面无感化纪律照旧）。
+//              整节替换 + secrets 面写 key（原名 imagegen-<name>-key）。
+//   secrets 派生名对用户不可见（凭据面无感化纪律照旧）。
+//   （jev-retire 批 2026-11-16：jev 域随 JeV 全量退役移出本面板。）
 
 import state from '../state.js';
 import { t } from '../i18n.js';
 import { h, frag } from '../dom.js';
-import { escapeHtml, statusIcon } from '../utils.js';
+import { escapeHtml } from '../utils.js';
 import { authHeaders } from '../flowHelpers.js';
 import { toggleHTML, setToggleState } from '../toggle.js';
 import { providerCardHTML, addProviderButtonHTML, bindCardRemove, bindCardSelect } from '../cfgProviderCard.js';
-import { showProviderForm, showProviderModal, protocolFormLabel, saveNewProvider, flushConfigToServer, revealProviderApiKeys } from './providersUi.js';
-import { jevTestButtonHTML, jevTestResultsHTML, bindJevTestButton } from './jevTestButton.js';
+import { showProviderForm, showProviderModal, protocolFormLabel, saveProviderWithAck, flushConfigToServer, revealProviderApiKeys } from './providersUi.js';
 import { imagegenTestButtonHTML, imagegenTestResultsHTML, bindImagegenTestButtons } from './imagegenTestButton.js';
 
 /** 面板宿主 id（sidebar.js renderSettings 里唯一挂点）。 */
@@ -60,11 +60,9 @@ export const PROVIDER_PANEL_HOST_ID = 'provider-panel-host';
 /** @type {{domains: Array<{id:string, enabledSwitch:boolean}>, adapters: Record<string,string[]>}|null} */
 let typeFace = null;
 
-/** 两个非-LLM 域的状态投影（GET /api/config/<domain>）；null = 尚未拉到。 */
+/** 非-LLM 域的状态投影（GET /api/config/<domain>）；null = 尚未拉到。 */
 /** @type {any} */
 let imagegenStatus = null;
-/** @type {any} */
-let jevStatus = null;
 
 /** 当前选中的类型标签（= 列表筛选 + 新增表单的类型）；'' = 尚未定。 */
 let activeType = '';
@@ -80,6 +78,7 @@ let typeFaceError = false;
  *   adapter: string,
  *   labelKey: string,
  *   enabledSwitch: boolean,
+ *   healthBadge?: boolean,
  *   providers: () => Record<string, any>,
  *   rows: () => Array<{name:string, badge:string, models:string[], metaExtra:string, active:boolean}>,
  *   fields: (of: any, ctx: any) => any[],
@@ -88,7 +87,6 @@ let typeFaceError = false;
  *   persist: (values: any, ctx: any) => Promise<boolean>,
  *   remove: (name: string) => Promise<boolean>,
  *   setEnabled: (on: boolean) => Promise<boolean>,
- *   healthBadge: boolean,
  * }>} */
 const DOMAIN_SPECS = {
   llm: {
@@ -119,11 +117,7 @@ const DOMAIN_SPECS = {
     bindExtra: () => {},
     async persist(values, ctx) {
       // ctx = {name, isEdit, existingName, data}（由 showProviderModal 自己算好）
-      if (ctx.existingName && ctx.name !== ctx.existingName) {
-        state.parsedConfig.llm.providers[ctx.existingName] = null;
-      }
-      saveNewProvider(ctx.name, ctx.data);
-      return true;
+      return saveProviderWithAck(ctx.name, ctx.data, ctx.existingName);
     },
     async remove(name) {
       state.parsedConfig.llm.providers[name] = null;
@@ -191,107 +185,9 @@ const DOMAIN_SPECS = {
       return putSection('imagegen', { ...sectionBodyImagegen(this.providers(), '', '', null), enabled: on });
     },
   },
-
-  jev: {
-    adapter: 'jev',
-    labelKey: 'settings.providerType.jev',
-    enabledSwitch: true,
-    healthBadge: true,
-    providers: () => /** @type {Record<string, any>} */ ((jevStatus && jevStatus.providers) || {}),
-    rows() {
-      return Object.entries(this.providers()).map(([name, p]) => {
-        const pc = /** @type {any} */ (p || {});
-        return {
-          name,
-          badge: pc.type ? String(pc.type) : '',
-          models: pc.model ? [String(pc.model)] : [],
-          metaExtra: keyBadgeHTML(!!pc.keyConfigured),
-          active: false,
-        };
-      });
-    },
-    fields(of, ctx) {
-      const adapters = adapterOptions('jev');
-      const pinned = endpointPinned(of.type);
-      return [
-        nameField(of),
-        {
-          key: 'type',
-          label: t('provider.protocol'),
-          type: 'select',
-          value: of.type || '',
-          options: [{ value: '', label: t('settings.imagegenTypePlaceholder') }, ...adapters.map((a) => ({ value: a, label: a }))],
-        },
-        {
-          key: 'endpoint',
-          label: t('settings.jevEndpoint'),
-          type: 'text',
-          value: pinned ? TYPESAFE_JEV_ENDPOINT : (of.endpoint || ''),
-          placeholder: 'http://127.0.0.1:8080/predict',
-          disabled: pinned,
-          title: pinned ? t('settings.jevEndpointPinned') : '',
-        },
-        { key: 'model', label: t('settings.jev.model'), type: 'text', value: of.model || '', placeholder: t('settings.jev.modelPlaceholder') },
-        secretField(ctx),
-      ];
-    },
-    extraActionsHTML: jevTestButtonHTML,
-    bindExtra(overlay, ctx) {
-      // 结果块与按钮同组呈现：块落在表单体尾（LLM 面 .cfg-test-results 同族）。
-      if (!overlay.querySelector('.cfg-test-results-jev')) {
-        const body = overlay.querySelector('.cfg-modal-body') || overlay;
-        body.insertAdjacentHTML('beforeend', jevTestResultsHTML());
-      }
-      // 端点钉死联动（R3 语义在统一骨架上的延续）：切换 type 下拉 ⇒ typesafe-jev
-      // 预填钉死值 + 禁用 + title；laya/其它 ⇒ 放开可编辑、钉死值不残留。
-      const typeSel = /** @type {HTMLSelectElement|null} */ (overlay.querySelector('[data-field="type"]'));
-      const endpointInput = /** @type {HTMLInputElement|null} */ (overlay.querySelector('[data-field="endpoint"]'));
-      if (typeSel && endpointInput) {
-        const apply = () => {
-          // R3 语义：切到 typesafe-jev ⇒ 预填钉死 + 禁用；切走 ⇒ 放开且钉死值
-          // 不残留（旧值不泄漏进 laya 面）。
-          const pin = endpointPinned(typeSel.value);
-          endpointInput.value = pin ? TYPESAFE_JEV_ENDPOINT : '';
-          endpointInput.disabled = pin;
-          endpointInput.title = pin ? t('settings.jevEndpointPinned') : '';
-        };
-        typeSel.addEventListener('change', apply);
-      }
-      bindJevTestButton(overlay, {
-        getForm: () => ({
-          provider: fieldValue(overlay, 'name'),
-          endpoint: fieldValue(overlay, 'endpoint'),
-          keyRef: keyRefFor('jev', ctx.existingName, fieldValue(overlay, 'name')),
-        }),
-      });
-    },
-    async persist(values, ctx) {
-      const name = values.name.trim();
-      if (values.apiKey && values.apiKey.trim()) {
-        const okKey = await writeSecret(`jev-${name.toLowerCase()}-key`.slice(0, 64), values.apiKey.trim());
-        if (!okKey) return false;
-      }
-      return putSection('jev', sectionBodyJev(this.providers(), ctx.existingName, name, values));
-    },
-    async remove(name) {
-      return putSection('jev', sectionBodyJev(this.providers(), name, '', null));
-    },
-    async setEnabled(on) {
-      const body = sectionBodyJev(this.providers(), '', '', null);
-      return putSection('jev', { ...body, enabled: on });
-    },
-  },
 };
 
 // ── 小件 ────────────────────────────────────────────────────────────────────
-
-// typesafe-jev 的端点钉死（jev-panel-threefix 批 R3 语义，2026-11-02 定版，随
-// 面板统一原样保留）：该分配通道端点是引擎侧约定值，用户永远不用（也不许）手填
-// ——表单预填 + 禁用 + title 说明；laya 自建通道保持可编辑。词面 title 两语言
-// 走既有 settings.jevEndpointPinned 键。
-const TYPESAFE_JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
-/** @param {string} type @returns {boolean} */
-const endpointPinned = (type) => String(type) === 'typesafe-jev';
 
 /** key 在位性徽标（三域同一组共用键，与旧窗逐字同款）。 */
 function keyBadgeHTML(configured) {
@@ -343,13 +239,6 @@ function existingKeyRef(map, existingName, name, derived) {
   return String(prev.keyRef || derived);
 }
 
-function keyRefFor(domain, existingName, typedName) {
-  const spec = DOMAIN_SPECS[domain];
-  const map = spec.providers();
-  const name = typedName || existingName;
-  return existingKeyRef(map, existingName, name, `${domain}-${String(name).toLowerCase()}-key`.slice(0, 64));
-}
-
 /**
  * 写一枚 secret（POST 先建、409 ⇒ PUT 覆写）：三域共用一条写腿，值只出现在
  * 请求体里，永不回显、不落 localStorage、不打日志。
@@ -379,7 +268,7 @@ async function writeSecret(name, value) {
   }
 }
 
-/** 整节/整块 PUT（imagegen 与 jev 同一条写腿形）。 */
+/** 整节/整块 PUT（imagegen 写腿形）。 */
 async function putSection(domain, body) {
   try {
     const resp = await fetch(`/api/config/${domain}`, {
@@ -394,6 +283,8 @@ async function putSection(domain, body) {
     }
     return true;
   } catch {
+    // Network failure: the form stays open, so the user must be told why nothing was saved.
+    window.__showToast?.(t('settings.saveFailed'), 'error');
     return false;
   }
 }
@@ -423,40 +314,6 @@ function sectionBodyImagegen(map, deleteName, editName, patch) {
   return body;
 }
 
-/** jev 整块体（原 sidebar.js saveJevProvider 的形状逐字搬入）。 */
-function sectionBodyJev(map, deleteName, editName, values) {
-  /** @type {Record<string, any>} */
-  const providers = {};
-  for (const [n, raw] of Object.entries(map)) {
-    if (n === deleteName) continue;
-    const e = /** @type {any} */ (raw || {});
-    /** @type {Record<string, string>} */
-    const row = { type: String(e.type || '') };
-    if (e.endpoint) row.endpoint = String(e.endpoint);
-    if (e.model) row.model = String(e.model);
-    if (e.keyRef) row.keyRef = String(e.keyRef);
-    providers[n] = row;
-  }
-  if (editName && values) {
-    /** @type {Record<string, string>} */
-    const row = { type: String(values.type || '') };
-    if (String(values.endpoint || '').trim()) row.endpoint = String(values.endpoint).trim();
-    row.model = String(values.model || '').trim();
-    const prev = map[editName] || {};
-    const keyRef = (values.apiKey && values.apiKey.trim())
-      ? `jev-${editName.toLowerCase()}-key`.slice(0, 64)
-      : String(prev.keyRef || '');
-    if (keyRef) row.keyRef = keyRef;
-    providers[editName] = row;
-  }
-  const remaining = Object.keys(providers);
-  return {
-    enabled: !!(jevStatus && jevStatus.enabled),
-    provider: editName || remaining[0] || '',
-    providers,
-  };
-}
-
 // ── 面板渲染（唯一一份 DOM 结构）────────────────────────────────────────────
 
 /** 可用域清单（后端投影优先；投影未到时退回行为绑定表，绝不因一次 GET 失败吞域）。 */
@@ -480,7 +337,6 @@ function tabLabel(id) {
 
 function enabledSwitchOn(id) {
   if (id === 'imagegen') return !!(imagegenStatus && imagegenStatus.enabled);
-  if (id === 'jev') return !!(jevStatus && jevStatus.enabled);
   return false;
 }
 
@@ -523,12 +379,8 @@ export function providerPanelDOM() {
     drift && h('div', { class: 'cfg-hint nf-provider-face-error', id: 'provider-face-drift' }, t('settings.providerTypesDrift')),
     h('div', { id: 'provider-type-extra' }, [
       spec && spec.enabledSwitch && h('div', { class: 'settings-row' }, [
-        h('span', { class: 'settings-label' }, t(current === 'imagegen' ? 'settings.imagegenEnabled' : 'settings.jevEnabled')),
+        h('span', { class: 'settings-label' }, t('settings.imagegenEnabled')),
         document.createRange().createContextualFragment(toggleHTML({ on: enabledSwitchOn(current), id: 'toggle-provider-enabled', label: t('settings.enabled') })),
-      ]),
-      spec && spec.healthBadge && h('div', { class: 'settings-row nf-provider-health-row' }, [
-        h('span', { class: 'settings-label' }, t('settings.jevHealthTitle')),
-        h('span', { class: 'cfg-hint stt-status' }, h('span', { class: 'st-badge', 'data-tone': 'mut', id: 'settings-jev-health' }, '…')),
       ]),
     ]),
     h('div', { id: 'provider-list', class: 'provider-card-list' }, listContent),
@@ -562,8 +414,14 @@ function openProviderForm(name) {
     const providers = /** @type {Record<string, any>} */ (state.parsedConfig && state.parsedConfig.llm && state.parsedConfig.llm.providers) || {};
     const existing = name ? providers[name] : null;
     Promise.resolve(revealProviderApiKeys()).catch(() => {}).then(() => {
-      showProviderModal(name || null, existing || null, (newName, data) => {
-        void spec.persist({}, { name: newName, existingName: name || '', data }).then(() => paintProviderPanel());
+      showProviderModal(name || null, existing || null, async (newName, data) => {
+        const ok = await spec.persist({}, { name: newName, existingName: name || '', data });
+        if (!ok) {
+          window.__showToast?.(t('settings.saveFailed'), 'error');
+          return false;
+        }
+        paintProviderPanel();
+        return true;
       });
     });
     return;
@@ -578,19 +436,18 @@ function openProviderForm(name) {
     fields: spec.fields(of, ctx),
     extraActionsHTML: spec.extraActionsHTML(),
     bindExtra: (overlay) => spec.bindExtra(overlay, ctx),
-    onConfirm: (values) => {
+    onConfirm: async (values) => {
       const verdict = validateProviderValues(type, values, ctx);
       if (!verdict.ok) {
         window.__showToast?.(t(verdict.key, verdict.params), 'error');
         return;
       }
-      void spec.persist(values, ctx).then(async (ok) => {
-        if (ok) {
-          await refreshProjections();
-          paintProviderPanel();
-          window.__showToast?.(t('settings.cfgCard.saved'), 'success');
-        }
-      });
+      const ok = await spec.persist(values, ctx);
+      if (!ok) return false;
+      await refreshProjections();
+      paintProviderPanel();
+      window.__showToast?.(t('settings.cfgCard.saved'), 'success');
+      return true;
     },
   });
 }
@@ -628,17 +485,15 @@ async function fetchJson(path) {
   }
 }
 
-/** 拉类型投影 + 两个非-LLM 域的状态投影并重画（幂等，可在任意时点调用）。 */
+/** 拉类型投影 + 非-LLM 域的状态投影并重画（幂等，可在任意时点调用）。 */
 export async function refreshProjections() {
-  const [face, img, jev] = await Promise.all([
+  const [face, img] = await Promise.all([
     fetchJson('/api/config/provider-types'),
     fetchJson('/api/config/imagegen'),
-    fetchJson('/api/config/jev'),
   ]);
   typeFaceError = !face;
   if (face) typeFace = face;
   imagegenStatus = img || imagegenStatus;
-  jevStatus = jev || jevStatus;
 }
 
 // ── 事件绑定（每次重画后重绑：节点随 innerHTML 重建）───────────────────────
@@ -661,8 +516,8 @@ function bindPanelEvents(host) {
 
   document.getElementById('btn-add-provider')?.addEventListener('click', () => openProviderForm(''));
 
-  // 启用开关（imagegen / jev 才有）：即时落盘（开关类设置变更即保存，与
-  // 设置页既有 toggle 纪律同源）。
+  // 启用开关（imagegen 才有）：即时落盘（开关类设置变更即保存，与设置页既有
+  // toggle 纪律同源）。
   document.getElementById('toggle-provider-enabled')?.addEventListener('click', function () {
     const spec = domainSpec(currentType());
     if (!spec) return;
@@ -676,10 +531,6 @@ function bindPanelEvents(host) {
       void refreshProjections().then(() => paintProviderPanel());
     });
   });
-
-  // Jev 分配通道健康徽标（读权面 GET /api/decision/health；jev-panel-threefix
-  // 三改③ 的三态 + 分腿语义逐字保留）。
-  if (host.querySelector('#settings-jev-health')) paintJevHealth();
 }
 
 /** 删除：统一一个确认框（LLM 面原有动效；三域不再各写一套）。 */
@@ -698,44 +549,6 @@ async function confirmRemove(name) {
     return;
   }
   await run();
-}
-
-/** Jev 通道健康徽标（三态 + legs 回退档，逻辑逐字承自旧 Jev 节）。 */
-function paintJevHealth() {
-  const slot = document.getElementById('settings-jev-health');
-  if (!slot) return;
-  fetch('/api/decision/health', { headers: authHeaders() })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((data) => {
-      const d = data && data.decision;
-      if (!d || !slot.isConnected) return;
-      const up = d.status === 'up';
-      const down = d.status === 'down';
-      const legs = d.legs || null;
-      const jevLeg = legs && legs.jev;
-      const fellBack = !!(up && jevLeg && jevLeg.status === 'down');
-      const icon = fellBack ? 'triangle-alert' : up ? 'activity' : down ? 'octagon-alert' : 'circle-dashed';
-      const cls = fellBack ? 'st-warn' : up ? 'st-ok' : down ? 'st-err' : '';
-      const tone = fellBack ? 'warn' : up ? 'ok' : down ? 'err' : 'mut';
-      const word = fellBack ? t('settings.jevHealthFallback')
-        : up ? t('settings.jevHealthUp')
-        : down ? t('settings.jevHealthDown')
-        : t('settings.jevHealthUnconfigured');
-      const jevReason = jevLeg && jevLeg.status === 'down' && jevReasonText(jevLeg) ? jevReasonText(jevLeg) : '';
-      const reason = fellBack ? jevReason : (down && d.reason ? String(d.reason) : '');
-      const llmReason = down && d.reason ? String(d.reason) : '';
-      const fullTitle = [jevReason, llmReason].filter(Boolean).join(' | ') || word;
-      slot.dataset.tone = tone;
-      slot.title = fullTitle;
-      const iconFragment = document.createRange().createContextualFragment(statusIcon(icon, 10, cls));
-      slot.replaceChildren(iconFragment, document.createTextNode(word));
-      if (reason) slot.appendChild(h('span', { class: 'badge-reason' }, `— ${reason}`));
-    })
-    .catch(() => {});
-}
-
-function jevReasonText(leg) {
-  return leg && leg.reason ? String(leg.reason) : '';
 }
 
 // ── 装配入口（settings 每次重渲调用一次）───────────────────────────────────

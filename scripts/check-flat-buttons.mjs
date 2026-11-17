@@ -315,10 +315,15 @@ function loadExceptions() {
   return { ok: true, list };
 }
 
-function exceptionCovers(selector, ruleId, exceptions) {
-  return exceptions.some(
-    (e) => e.valid && !e.sentinel && e.rules.includes(ruleId) && selector.includes(e.selector),
-  );
+function exceptionCovers(hit, exceptions) {
+  return exceptions.some((e) => {
+    if (!e.valid || e.sentinel || !e.rules.includes(hit.ruleId)) return false;
+    if (e.selector === '.canvas-button') {
+      return hit.file === 'split.css' && hit.selector === '.canvas-button.canvas-button' &&
+        hit.ruleId === 'F1' && hit.value === 'var(--ds-shadow-float)';
+    }
+    return hit.selector.includes(e.selector);
+  });
 }
 
 // ── 扫描 ────────────────────────────────────────────────────────────────
@@ -361,7 +366,7 @@ const inventory = argv.includes('--inventory');
 
 const exceptions = loadExceptions();
 const { hits, buttonBlocks, files } = scan();
-const effective = hits.filter((h) => !exceptionCovers(h.selector, h.ruleId, exceptions.list));
+const effective = hits.filter((h) => !exceptionCovers(h, exceptions.list));
 
 if (jsonOut) {
   console.log(JSON.stringify({

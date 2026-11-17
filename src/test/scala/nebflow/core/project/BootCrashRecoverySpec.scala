@@ -28,7 +28,7 @@ import scala.concurrent.duration.*
  *    只经正常投递链（上游 completed → deliverOut → deliveredTo 恰记一次）启动。
  *  - C3 (c) 类：sessionRef 无值 / transcript 文件缺失 → failed("crash recovery:
  *    session transcript lost") + deliverFailed 既有链（D5 零结算：普通下游停等 /
- *    merge 转 blocked）。
+ *    merge 同为停等——blocked 终态退役，wedge 告警承接可见性）。
  *  - C4 watchdog 竞速关闭：被认领节点无 dead-session-reaped；未被认领的 running
  *    残留仍由 watchdog 收敛 failed（降级兜底不变）。
  *  - C5 幂等重启：恢复完成后再跑 sweep → 零动作零事件零通知（每 boot 恰一条）。
@@ -184,8 +184,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
-        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
+        // 显式关终态 hold 腿（休眠旋钮；本 fixture 主题与之正交）。
         reportGateHold = Some(false),
         // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
         // 本 fixture 主题 = 崩溃恢复后的 transcript 续写 + 恰好一次投递（C1），其断言要求
@@ -466,7 +465,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
   // ── C3 (c) 类：transcript 缺失/无 sessionRef → failed + 既有 failed 投递链 ──
 
   test(
-    "C3: lost/corrupt transcript (class c) fails node via existing deliverFailed chain (D5 zero-settlement: plain downstream waits, merge blocks)"
+    "C3: lost/corrupt transcript (class c) fails node via existing deliverFailed chain (D5 zero-settlement: plain and merge downstreams both wait — blocked retirement)"
   ) {
     val ws = tempRoot / "ws-c3"
     os.makeDir.all(ws)
@@ -547,7 +546,13 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
         Nil,
         "failed upstream must not write deliveredTo key into downstream (wf1cde §3.2 hole source)"
       )
-      assertEquals(m.status, NodeLifecycle.Blocked, "merge downstream must turn blocked on upstream failure")
+      // blocked 终态退役：合并下游不再被写 blocked（引擎已无该写点）——与普通下游同为
+      // D5 零结算停等（wiring），可见性由 barrier-held 的 wedge 告警承接
+      assertEquals(
+        m.status,
+        NodeLifecycle.Wiring,
+        "merge downstream stays wiring on upstream failure (blocked retirement — wedge alert owns visibility)"
+      )
       assert(
         events.count(e => e.contains("boot-recovery") && (e.contains("n-c3a") || e.contains("n-c3b"))) == 2,
         "each class-c disposition must leave a boot-recovery audit event"

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -u
+
+usage() {
+  cat <<'EOF'
+Usage:
+  stand-branch-guard --check-branch BRANCH
+  stand-branch-guard --check-pr-source BRANCH
+  stand-branch-guard --check-mr SOURCE TARGET [HOTFIX_BASELINE_SHA]
+  stand-branch-guard --check-push [--allow] [REMOTE URL]
+  stand-branch-guard --help
+
+--check-mr validates both sides: development goes to feat/base; feat/base
+promotes to main; main may sync to feat/base. A bug/* hotfix to main requires
+an auditable main baseline and author approval; the check does not authorize it.
+
+--check-push reads Git pre-push records from stdin, checks every destination,
+and rejects main and release/* updates or deletions unless --allow is explicit.
+feat/base is reserved for the author: fast-forward merge advancement is
+allowed, while its creation, deletion, and non-fast-forward (or unverifiable)
+updates are rejected unless --allow is explicit.
+An empty stream means no refs to push. REMOTE and URL are optional hook args.
+Exit codes: 0 allowed, 1 policy violation or malformed hook record,
+2 invalid invocation or missing dependency. --allow is not authorization;
+local checks do not replace server-side protection. This guard only blocks
+local mistakes; it cannot grant or verify release-line authority, which rests
+with USTC server-side permissions (unverified from this repository).
+EOF
+}
+
+error() { printf '%s\n' "$*" >&2; }
+if ! command -v git >/dev/null 2>&1; then error 'git is required'; exit 2; fi
+valid_branch() { git check-ref-format "refs/heads/$1" >/dev/null 2>&1; }
+
+case "${1:-}" in
+  --help) [ "$#" -eq 1 ] || exit 2; usage ;;
+  --check-branch|--check-pr-source)
+    [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+    mode=$1 branch=$2
+    valid_branch "$branch" || { error "Invalid branch name: $branch"; exit 1; }
+    if [ "$mode" = --check-pr-source ]; then
+      case "$branch" in feat/*|bug/*) exit 0;; esac
+    else
+      case "$branch" in main|feat/*|bug/*|achieve/*|release/beta|release/stable) exit 0;; esac
+    fi
+    error "Branch not permitted for $mode: $branch"; exit 1 ;;
+  --check-mr)
+    [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }
+    source=$2 target=$3
+    valid_branch "$source" && valid_branch "$target" || { error 'Invalid MR source or target'; exit 1; }
+    if [ "$target" = feat/base ]; then
+      case "$source" in main) exit 0;; feat/base) ;; feat/*|bug/*|fix/*) exit 0;; esac
+    elif [ "$target" = main ]; then
+      [ "$source" = feat/base ] && exit 0
+      case "$source" in bug/*)
+        baseline=${4:-}
+        [[ "$baseline" =~ ^[0-9a-f]{40}$ ]] || { error 'Hotfix requires a full main baseline SHA'; exit 1; }
+        git merge-base --is-ancestor "$baseline" refs/remotes/origin/main 2>/dev/null &&
+        git merge-base --is-ancestor "$baseline" HEAD 2>/dev/null || { error 'Hotfix baseline must be an ancestor of origin/main and source HEAD'; exit 1; }
+        printf 'Hotfix baseline verified for audit: %s (author approval required)\n' "$baseline"; exit 0;;
+      esac
+    fi
+    error "MR direction not permitted: $source -> $target"; exit 1 ;;
+  --check-push)
+    shift
+    allow=false
+    if [ "${1:-}" = --allow ]; then allow=true; shift; fi
+    if [ "$#" -ne 0 ] && [ "$#" -ne 2 ]; then usage >&2; exit 2; fi
+    status=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      local_ref= local_oid= remote_ref= remote_oid= extra=
+      read -r local_ref local_oid remote_ref remote_oid extra <<< "$line"
+      if [ -n "$extra" ] || [ -z "$local_ref" ] ||
+         ! [[ "$local_oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
+         ! [[ "$remote_oid" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
+         [ "${#local_oid}" -ne "${#remote_oid}" ] ||
+         ! git check-ref-format "$remote_ref" >/dev/null 2>&1; then
+        error 'Malformed pre-push record'; status=1; continue
+      fi
+      case "$remote_ref" in
+        refs/heads/feat/base)
+          if [ "$allow" = false ] && { [[ "$local_oid" =~ ^0+$ ]] || [[ "$remote_oid" =~ ^0+$ ]] || ! git merge-base --is-ancestor "$remote_oid" "$local_oid" 2>/dev/null; }; then
+            error "Protected base creation, deletion or non-fast-forward: $remote_ref"; status=1
+          fi ;;
+        refs/heads/main|refs/heads/release/*)
+          if [ "$allow" = false ]; then
+            error "Protected push destination: $remote_ref"; status=1
+          fi ;;
+      esac
+    done
+    exit "$status" ;;
+  *) usage >&2; exit 2 ;;
+esac

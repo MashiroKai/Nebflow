@@ -443,21 +443,22 @@ function matchTodoAt(text, at, todos) {
   if (TODO_DIGIT_HEAD_RE.test(after)) return null;
   const token = after.split(/[\s，。！？；：、,.!?;:)/\]】」』]/)[0];
   if (token && TODO_HEX_SHAPE_RE.test(token)) return null;
-  /** @type {MentionTodo | null} */
-  let best = null;
-  let bestLen = 0;
+  /** @type {Array<{todo: MentionTodo, len: number}>} */
+  const matches = [];
   for (const todo of todos) {
     const name = todo && typeof todo.name === 'string' ? todo.name : '';
-    if (!name || after.length < name.length) continue;
-    if (after.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue;
+    if (!name || after.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue;
     const tail = after.slice(name.length);
-    if (tail && TODO_WORD_CONT_RE.test(tail[0])) continue;
-    if (name.length > bestLen) {
-      bestLen = name.length;
-      best = todo;
+    const suffix = todo.id ? '·' + todo.id : '';
+    if (suffix && tail.startsWith(suffix) && !TODO_WORD_CONT_RE.test(tail.slice(suffix.length, suffix.length + 1))) {
+      matches.push({ todo, len: name.length + suffix.length });
+    } else if (!tail.startsWith('·') && (!tail || !TODO_WORD_CONT_RE.test(tail[0]))) {
+      matches.push({ todo, len: name.length });
     }
   }
-  return best ? { todo: best, len: bestLen } : null;
+  const longest = Math.max(0, ...matches.map(match => match.len));
+  const winners = matches.filter(match => match.len === longest);
+  return winners.length === 1 ? winners[0] : null;
 }
 
 /**
@@ -1801,12 +1802,21 @@ function toolImgRefEl(paths, alts) {
     // 的 /abs/path 形态，readFile 原生可开）；data:/远程 src 桌面维持灯箱。
     // 动态 import：utils 是叶子模块（mediaOpenRoute→popSheet→utils 静态会成环；
     // lightbox/popArtifacts 同理由，与上方灯箱腿同款先例）。
+    // mobile-image-lightbox 批（2026-11-17）：「🖼 图片 ×N」引用件本身就是一组
+    // ——group = 全部 paths（手机画廊左右滑整组切图）；桌面开首张，逐字不变。
+    const items = paths.map((p, i) => ({
+      kind: 'image',
+      name: alts[i] || p.split('/').pop(),
+      src: p,
+      path: /^\/(?!\/)/.test(p) ? p : '',
+    }));
     const raw = paths[0] || '';
-    const localPath = /^\/(?!\/)/.test(raw) ? raw : '';
     import('./mediaOpenRoute.js').then((mr) => mr.routeMediaClick(
-      { kind: 'image', name: alts[0] || raw.split('/').pop(), src: raw, path: localPath },
+      items[0] || { kind: 'image', name: alts[0] || raw.split('/').pop(), src: raw, path: /^\/(?!\/)/.test(raw) ? raw : '' },
       (p, n) => import('./popArtifacts.js').then((m) => m.openPopArtifact(p, n)).catch(() => {}),
-      () => import('./lightbox.js').then((lb) => lb.openLightbox(raw, alts[0] || '')).catch(() => {})
+      () => import('./lightbox.js').then((lb) => lb.openLightbox(raw, alts[0] || '')).catch(() => {}),
+      items,
+      0
     ));
   });
   return ref;

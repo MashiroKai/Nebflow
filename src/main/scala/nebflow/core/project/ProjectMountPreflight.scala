@@ -9,9 +9,9 @@ import scala.util.Try
  *   1. **workspace 必须在声明设备上真实存在才准挂**；
  *   2. 不存在 ⇒ 结构化报错（**指明设备与路径**），绝不静默造骨架。
  *
- * 事故形态（2026-10-24 现场验证）：用设备 KAI 上的真实路径 `C:\Users\Kai\stand`
+ * 事故形态（2026-10-24 现场验证）：用 Windows 设备上的真实路径 `C:\Users\name\stand`
  * 在 Mac 引擎上走本机挂载腿——挂载面不校验存在性，`os.Path` 把 Windows 风格路径
- * 当**相对名**解析进 Mac 数据根，`ensureScaffold` 在 `~/.stand/C:\Users\Kai\stand/`
+ * 当**相对名**解析进 Mac 数据根，`ensureScaffold` 在 `~/.stand/C:\Users\name\stand/`
  * 静默造出垃圾骨架并「假挂载成功」。本对象是这类缺口的**唯一闸门**：
  *
  *   - [[checkLocalWorkspace]] = 本机腿预检（同步、**零写入**——纯 stat，不建目录）；

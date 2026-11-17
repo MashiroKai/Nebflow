@@ -92,6 +92,7 @@ lazy val root = (project in file("."))
       // Effect
       catsEffect,
       catsCore,
+      pekkoActorTyped,
       // JSON
       circeCore,
       circeParser,
@@ -181,10 +182,12 @@ lazy val root = (project in file("."))
     Test / testGrouping := {
       val tests = (Test / definedTests).value
       val chaos = tests.filter(_.name == "nebflow.db.chaos.DbKill9ChaosSpec")
-      val rest = tests.filterNot(_.name == "nebflow.db.chaos.DbKill9ChaosSpec")
+      val reminderProcesses = tests.filter(_.name == "nebflow.agent.TaskLedgerPassiveReminderSpec")
+      val rest = tests.filterNot(t => t.name == "nebflow.db.chaos.DbKill9ChaosSpec" || t.name == "nebflow.agent.TaskLedgerPassiveReminderSpec")
       Seq(
         Tests.Group("in-process-suites", rest, Tests.InProcess),
-        Tests.Group("db-kill9-chaos-isolated", chaos, Tests.SubProcess(ForkOptions()))
+        Tests.Group("db-kill9-chaos-isolated", chaos, Tests.SubProcess(ForkOptions())),
+        Tests.Group("task-ledger-process-isolated", reminderProcesses, Tests.SubProcess(ForkOptions()))
       )
     },
 

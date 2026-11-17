@@ -114,33 +114,41 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       _ <- taskStore.addTask(b)
       _ <- taskStore.addTask(c)
       fresh <- IO(ScheduledTask.create("s3", "new dream review", future, None, Some("daily"), Some("dream-review")))
-      removed <- taskStore.upsertTaskByName(fresh)
+      rearm <- taskStore.upsertTaskByName(fresh)
       pending <- taskStore.getAllPendingTasks
       s1 <- taskStore.loadTasks("s1")
       s2 <- taskStore.loadTasks("s2")
       s3 <- taskStore.loadTasks("s3")
     yield
       // 旧同 name 任务全部作废（跨 s1/s2），返回值报告被替换者
-      assertEquals(removed.map(_.id).toSet, Set(a.id, b.id))
-      // 收敛单份：全库 dream-review 只剩新任务
+      assertEquals(rearm.replaced.map(_.id).toSet, Set(a.id, b.id))
+      // 收敛单份：全库 dream-review 只剩新任务；身份沿用既有记录的 id（稳定 ID）
       assertEquals(pending.count(_.name.contains("dream-review")), 1)
-      assert(pending.exists(t => t.id == fresh.id && t.sessionId == "s3"), "new task must be the surviving one")
+      val surviving = pending.find(_.name.contains("dream-review")).getOrElse(fail("dream-review row missing"))
+      assertEquals(rearm.saved.id, surviving.id)
+      assert(Set(a.id, b.id).contains(surviving.id), "rearm keeps an existing id, not the request's")
+      assertEquals(surviving.sessionId, "s3", "rearm lands in the requested session")
       // 无关任务不动
       assertEquals(s1, Nil)
       assertEquals(s2.map(_.id), List(c.id))
-      assertEquals(s3.map(_.id), List(fresh.id))
+      assertEquals(s3.map(_.id), List(rearm.saved.id))
 
   test("upsert is idempotent — re-arm with same name never stacks"):
     for
       _ <- reset()
       first <- IO(ScheduledTask.create("s1", "v1", future, None, None, Some("daily-review")))
-      _ <- taskStore.upsertTaskByName(first)
+      r1 <- taskStore.upsertTaskByName(first)
       second <- IO(ScheduledTask.create("s2", "v2", future + 1, None, None, Some("daily-review")))
-      _ <- taskStore.upsertTaskByName(second)
+      r2 <- taskStore.upsertTaskByName(second)
       third <- IO(ScheduledTask.create("s3", "v3", future + 2, None, None, Some("daily-review")))
-      _ <- taskStore.upsertTaskByName(third)
+      r3 <- taskStore.upsertTaskByName(third)
       pending <- taskStore.getAllPendingTasks
-    yield assertEquals(pending.map(_.content), List("v3"))
+    yield
+      assertEquals(pending.map(_.content), List("v3"))
+      assertEquals(r1.saved.id, first.id)
+      assertEquals(r2.saved.id, first.id, "re-arm keeps the same id")
+      assertEquals(r3.saved.id, first.id, "re-arm keeps the same id across sessions")
+      assertEquals(pending.map(_.id), List(first.id))
 
   test("unnamed task upsert behaves as plain add — legacy callers unchanged"):
     for
@@ -258,6 +266,15 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       assert(text.contains("cancel"), "must tell the LLM how to cancel")
       assert(text.indexOf(paused.id) < text.indexOf(live.id), s"tool list must be triggerAt-sorted:\n$text")
 
+  test("quoted todo handle retrieves its complete body across sessions"):
+    for
+      _ <- reset()
+      body = "original line\n" + ("long body " * 300)
+      t <- IO(ScheduledTask.create("s1", body, future, None, None, Some("quoted title")))
+      _ <- taskStore.addTask(t)
+      result <- IO(callTool(Json.obj("action" -> "get".asJson, "id" -> t.id.asJson), mkCtx(taskStore)))
+    yield assert(result.toOption.exists(_.contains(body)), result.toString)
+
   test("tool action=list with zero tasks says so"):
     for
       _ <- reset()
@@ -337,6 +354,9 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       assert(text.contains(old.id), s"must name the replaced task id: $text")
       // 收敛单份 + 不双份注入的前提：全库只剩一条该 name 的待触发任务
       assertEquals(pending.count(_.name.contains("dream-review")), 1)
+      // 跨会话 re-arm：同一条记录移动（同一 id）到工具调用会话，不换身份、不丢记录
+      assertEquals(pending.head.id, old.id, "rearm keeps the record's id")
+      assertEquals(pending.head.sessionId, "s-tool", "rearm lands in the requesting session")
       // WS：旧任务广播删除、新任务广播创建（前端面板同步）
       assert(
         wsSent.exists(j =>
@@ -348,9 +368,10 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       assert(
         wsSent.exists(j =>
           j.hcursor.downField("type").as[String].toOption.contains("scheduledTaskCreated") &&
-            j.hcursor.downField("task").downField("name").as[String].toOption.contains("dream-review")
+            j.hcursor.downField("task").downField("name").as[String].toOption.contains("dream-review") &&
+            j.hcursor.downField("task").downField("id").as[String].toOption.contains(old.id)
         ),
-        s"created broadcast must carry name: $wsSent"
+        s"created broadcast must carry the stable id and name: $wsSent"
       )
 
   test("tool create without action/name keeps legacy behavior (plain add, no dedup)"):

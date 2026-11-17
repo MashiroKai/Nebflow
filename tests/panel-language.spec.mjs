@@ -109,6 +109,62 @@ function readStyle(page, selector) {
   }, selector);
 }
 
+test('contact pending actions retain failed input and cancel restores baseline', async ({ page }) => {
+  await bootApp(page);
+  await openProfile(page, 'friend');
+  const input = page.locator('[data-pf-input="remark"]');
+  const bar = page.locator('.pf-edit-bar');
+  await expect(bar).toBeHidden();
+  await input.fill('pending');
+  await expect(bar).toBeVisible();
+  await page.route('**/api/friends/*/remark', route => route.fulfill({ status: 500, body: '{}' }));
+  await page.locator('.pf-edit-submit').click();
+  await expect(input).toHaveValue('pending');
+  await expect(bar).toBeVisible();
+  await page.locator('.pf-edit-cancel').click();
+  await expect(input).toHaveValue('');
+  await expect(bar).toBeHidden();
+});
+
+test('contact save serializes a pending field and reads server value back', async ({ page }) => {
+  await bootApp(page);
+  let writes = 0;
+  let stored = '';
+  await page.route('**/api/friends', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ friends: [{ userId: 'u-f1', name: 'Friend', remark: stored }] }) }));
+  await page.route('**/api/friends/*/remark', async route => {
+    writes++;
+    stored = 'server-value';
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+  await openProfile(page, 'friend');
+  const input = page.locator('[data-pf-input="remark"]');
+  await input.fill('submitted');
+  await page.locator('.pf-edit-submit').click();
+  await expect(input).toHaveValue('server-value');
+  await expect(page.locator('.pf-edit-bar')).toBeHidden();
+  expect(writes).toBe(1);
+});
+
+test('desktop contact close consumes canvas button dimensions', async ({ page }) => {
+  await bootApp(page);
+  await openProfile(page, 'friend');
+  const dims = await page.locator('.pf-close').evaluate(el => {
+    const box = el.getBoundingClientRect();
+    const icon = el.querySelector('svg').getBoundingClientRect();
+    const title = el.closest('.sp-panel-header').getBoundingClientRect();
+    const content = document.querySelector('.pf-hero').getBoundingClientRect();
+    return { w: box.width, h: box.height, iw: icon.width, ih: icon.height, top: box.top - title.top, right: title.right - box.right, contentGap: content.top - box.bottom };
+  });
+  expect(dims.w).toBe(40);
+  expect(dims.h).toBe(40);
+  expect(dims.iw).toBe(18);
+  expect(dims.ih).toBe(18);
+  console.log('[contact header geometry]', JSON.stringify(dims));
+  expect(dims.top).toBe(14);
+  expect(dims.right).toBe(16);
+  expect(dims.contentGap).toBe(11);
+});
+
 // ── W1+W2：桌面档（1440×900）─────────────────────────────────────────────
 test.describe('desktop 1440', () => {
   test.use({ viewport: { width: 1440, height: 900 } });

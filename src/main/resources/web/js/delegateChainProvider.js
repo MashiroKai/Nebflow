@@ -21,7 +21,9 @@
 // 纪律：本件零用户可见文案（无 locale 触碰）；读取口异常一律 fail-soft（镜像保旧值
 // /返回 null，绝不崩渲染面）；mirror 首刷前 = 空行集（与 stub 默认空态同观感）。
 
-import { onMessage, onReconnect } from './ws.js';
+import { onMessage, onReconnect, setDurableTaskFrameObserver } from './ws.js';
+import state from './state.js';
+import { observeTaskRevision, taskRevision } from './subagentRevision.js';
 import { EVENTS } from './events.js';
 import { authHeaders } from './flowHelpers.js';
 import {
@@ -49,6 +51,98 @@ function rowKey(r) {
 
 /** @type {{rows: any[], chains: Map<string, any>, seq: number}} 本地镜像（同步读）。 */
 const mirror = { rows: [], chains: new Map(), seq: 0 };
+// These are projections and observed durable watermarks, not another task registry.
+const scopedTasks = new Map();
+const observedTasks = new Map();
+const taskRequests = new Map();
+const taskListeners = new Set();
+let taskAuthEpoch = 0;
+
+export function listScopedTasks(rootSessionId) {
+  return Array.from((scopedTasks.get(String(rootSessionId || '')) || new Map()).values());
+}
+
+export function onDurableTasksChanged(listener) {
+  taskListeners.add(listener);
+  return () => taskListeners.delete(listener);
+}
+
+function notifyTasks(rows) {
+  for (const listener of taskListeners) listener(rows);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+  }
+}
+
+/** A current authenticated request is the only authority for this root's rows. */
+export async function refreshScopedTasks(rootSessionId = state.activeSessionId) {
+  const root = String(rootSessionId || '');
+  if (!root || state.consoleSuperseded) return;
+  if (taskRequests.has(root)) return taskRequests.get(root);
+  const epoch = taskAuthEpoch;
+  const request = (async () => {
+    try {
+      const response = await fetch(`/api/subagent-tasks/${encodeURIComponent(root)}`, {
+        headers: authHeaders(), credentials: 'same-origin', cache: 'no-store',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.status === 401 || response.status === 403) {
+        taskAuthEpoch++;
+        scopedTasks.clear();
+        observedTasks.clear();
+        notifyTasks([]);
+        return;
+      }
+      if (!response.ok || epoch !== taskAuthEpoch || state.consoleSuperseded) return;
+      const body = await response.json();
+      if (epoch !== taskAuthEpoch || state.consoleSuperseded || body.rootSessionId !== root || !Array.isArray(body.tasks)) return;
+      const previous = scopedTasks.get(root) || new Map();
+      const next = new Map();
+      const changed = [];
+      for (const raw of body.tasks) {
+        if (!raw?.taskId) continue;
+        const row = projectChild(raw);
+        const old = previous.get(row.taskId);
+        const observed = observedTasks.get(row.taskId);
+        if (!observeTaskRevision(observed || old, row, true).accept) {
+          if (old) next.set(row.taskId, old);
+          continue;
+        }
+        // Compare projected fields, not only revisions: legacy rows have no cursor,
+        // and a complete snapshot can fill fields absent from a live invalidation.
+        if (old && Object.keys(row).every(key => old[key] === row[key])) {
+          next.set(row.taskId, old);
+          continue;
+        }
+        next.set(row.taskId, row);
+        observedTasks.set(row.taskId, row);
+        changed.push(row);
+      }
+      // Empty changes alone do not mean no change: an authoritative snapshot can
+      // remove rows. Keep those invalidations while silencing unchanged polls.
+      if (!changed.length && next.size === previous.size) return;
+      scopedTasks.set(root, next);
+      notifyTasks(changed);
+    } catch (_) { /* Keep the last good projection on transient failure. */ }
+  })();
+  taskRequests.set(root, request);
+  try { await request; } finally { taskRequests.delete(root); }
+}
+
+setDurableTaskFrameObserver((msg) => {
+  if (!msg?.taskId || !msg.runId || taskRevision(msg) === null) return false;
+  const previous = observedTasks.get(msg.taskId);
+  const decision = observeTaskRevision(previous, msg);
+  if (decision.accept) {
+    observedTasks.set(msg.taskId, msg);
+    notifyTasks([{ ...msg, historyInvalidated: true }]);
+  }
+  // Even duplicate frames can announce a task that is not in the latest snapshot.
+  refreshScopedTasks(msg.rootSessionId || state.activeSessionId);
+  // Only task transcript/lifecycle events switch to committed history rendering.
+  return /^(agent|text|thinking|tool|roundComplete|done)/.test(String(msg.type || ''));
+});
+
 /** 已请求过、确认查无链的键（防 miss 键反复打点；行集刷新时清空重探）。 */
 const emptyKeys = new Set();
 /** 星型子代理镜像（G3；delegateId → children[]）。refresh 臂随行集刷新逐父拉取；
@@ -80,7 +174,12 @@ function projectRow(entry) {
   const v = src.verdict;
   const out = {
     ...row,
+    settled: src.settled === true,
     taskStatus: String(src.taskStatus || ''),
+    // Ownership edge (Record.parentSessionId — spawn-persisted, survives
+    // restarts): carried as-is so hierarchy faces can resolve a registered
+    // parent without live frames. Absent key → '' (never guessed).
+    parentSessionId: String(src.parentSessionId || ''),
     branch: String(src.branch || ''),
     baseBranch: String(src.baseBranch || ''),
     worktreePath: String(src.worktree || ''),
@@ -171,6 +270,17 @@ function projectChild(c) {
     completedAt: typeof src.completedAt === 'number' ? src.completedAt : null,
     lastError: String(src.lastError || ''),
     source: String(src.source || ''),
+    rootSessionId: String(src.rootSessionId || ''),
+    committedRevision: taskRevision(src),
+    runId: String(src.runId || ''),
+    executor: String(src.executor || ''),
+    executionStatus: String(src.executionStatus || ''),
+    activityAt: typeof src.activityAt === 'number' ? src.activityAt : 0,
+    activityKind: String(src.activityKind || ''),
+    activityLabel: String(src.activityLabel || ''),
+    resultRef: String(src.resultRef || ''),
+    incomplete: src.incomplete === true,
+    terminalReason: String(src.terminalReason || ''),
   };
 }
 
@@ -331,7 +441,7 @@ for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']
 // 触发器把 delegate/external 会话自身的 turn 边界帧（nodeSessionId 前缀判据）
 // 也接进同一防抖刷——帧仍只当触发器，数据权威恒在 REST /api/chains；tool 级
 // 帧（agentToolStart/End）不接（每工具一帧太频，行状态变更已由 turn 边界覆盖：
-// spawn=agentStart、delegate_report=turn 内写盘 + 该 turn 的 agentDone 兜底）。
+// spawn=agentStart、终态状态槽=turn 内写盘 + 该 turn 的 agentDone 兜底）。
 const DELEGATE_TRIGGER_RE = /^(delegate|external)-/;
 function onDelegateLifecycle(msg) {
   const nsid = String((msg && (msg.nodeSessionId || msg.agentId)) || '');
@@ -345,4 +455,15 @@ function onDelegateLifecycle(msg) {
 for (const evt of ['agentStart', 'agentDone', 'agentEnd']) {
   onMessage(evt, onDelegateLifecycle);
 }
-onReconnect(() => refresh().catch(() => {}));
+onReconnect(() => {
+  refresh().catch(() => {});
+  refreshScopedTasks();
+});
+if (typeof window !== 'undefined') {
+  window.addEventListener(EVENTS.SESSION_CHANGE, () => refreshScopedTasks());
+  // Bounded polling discovers accepted work even when no start event arrives.
+  const timer = setInterval(() => {
+    if (document.visibilityState !== 'hidden') refreshScopedTasks();
+  }, 5000);
+  window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
+}

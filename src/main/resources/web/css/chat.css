@@ -426,6 +426,45 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Structural parent (face C · 全局后台面板层级)：registry-backed label face for a
+   delegate whose descendants are present while its live row is not (idle/terminal/
+   gone). Label-not-row discipline (same as the root anchor / orphan group head):
+   no .bg-task-row class, not counted in the panel totals. Token-only values —
+   light/dark follow the shared --ds-* slots. */
+.bg-struct-parent {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+}
+.bg-struct-parent-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--ds-fw-title);
+}
+.bg-struct-parent .bg-task-kind { flex-shrink: 0; }
+.bg-struct-parent-state { flex-shrink: 0; }
+/* DAG dependency chip (face C)：flow-step deps are execution-order edges, NOT
+   parent-child nesting — flat chip with the ⇢ glyph and a dashed underline,
+   visually distinct from the tree rails (├─/└─) that carry ownership. Mono ids,
+   meta scale, truncated with the full list in the title tooltip. */
+.bg-flow-deps {
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-dim);
+  border-bottom: var(--ds-border-width) dashed var(--ds-border-hairline);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+  min-width: 0;
+  flex-shrink: 1;
+}
 /* panel-ia 批：主名行升为行内第一读数后，meta 槽（状态词）与摘要同族 muted。 */
 .bg-task-state {
   font-size: var(--ds-fs-meta);
@@ -680,11 +719,11 @@
   color: var(--ds-text);
 }
 /* Device origin (多设备后台任务可见批 · 作者令 2026-10-25「多设备的后台任务
-   我们也要可见」): device-channel background tasks (Bash device=KAI +
+   我们也要可见」): device-channel background tasks (Bash device=<win> +
    run_in_background) carry the DEVICE as the origin chip — 「跑在哪台设备」,
    a different axis from nebula/dispatcher/node (谁开启). Same neutral chip
    family as dispatcher (one text notch brighter); the LABEL (device name,
-   e.g. KAI) is the differentiator. No new color tokens — existing glass /
+   e.g. <win>) is the differentiator. No new color tokens — existing glass /
    text tokens only (visual-style: reuse before inventing).
    设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：本类升格为**每行
    恒在的设备名 chip**——远端 = 对端设备名，本机 = 本机设备名（同名同类，本机不再
@@ -1398,6 +1437,31 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .delivery-immediate::before {
   content: '· ';
 }
+/* ask 会话的 Mail 续聊地址 chip（ask-mail 批 2026-11-16）：挂在注入气泡来源
+   标签尾（ASK · INJECTED 面上，编排方续聊通道的可见形态）。形态 = .bg-task-addr
+   同族（值全走 --ds-* 槽，不另起材质）；差异只沿 .delivery-badge 的内联版式
+   （来源标签是文本行不是 flex 行）：inline-block + ellipsis，**全文在 title 与
+   data-ask-addr**，复制恒给全文——截断只是版式，不是数据。 */
+.ask-mail-addr {
+  display: inline-block;
+  margin-left: var(--ds-space-1h);
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-meta);
+  line-height: 14px;
+  vertical-align: 1px;
+  background: var(--ds-control-bg);
+  border: var(--ds-border-width) solid var(--ds-control-border);
+  color: var(--ds-text-muted);
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: copy;
+  user-select: all;
+}
+.ask-mail-addr:hover { color: var(--ds-text); border-color: var(--ds-text-muted); }
+.ask-mail-addr.is-copied { color: rgb(var(--accent-agent-light)); border-color: rgb(var(--accent-agent-light) / 0.55); }
 .bubble.user.att-bubble {
   /* 底色 = 我方绿（glass.css 单点块）。bubble-side-color 批前这里是
      rgba(0,0,0,0.04) 灰 —— 同一族气泡的第二/第三种底色，按 2026-11-06
@@ -1447,6 +1511,17 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    glass-etched surface, no new color tokens, visual-style font weights. */
 .bubble.user.att-bubble.att-ref-bubble {
   max-width: 340px;
+}
+/* File reference cards already own their surface: do not wrap them in a
+   second, green message bubble. Other reference types keep their shell. */
+.bubble.user.att-bubble.att-ref-bubble:has(> .att-ref-card.file-lang) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.bubble.user.att-bubble.att-ref-bubble > .att-ref-card.file-lang {
+  margin-top: 0;
 }
 .bubble.user .att-ref-card {
   background: var(--glass-etched-bg);
@@ -2927,6 +3002,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-sizing: border-box;
   color: var(--color-text);
 }
+/* F 批 2026-11-17（下拉统一）：onboarding 模型下拉（option-input 族）被
+   .nf-select 包裹后，flex:1 伸缩职责上移到包裹层。 */
+.nf-select:has(> .option-input) { flex: 1; min-width: 0; }
 /* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .option-input.mono {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -4542,6 +4620,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    UI-G (author 2026-10-03 19:59 ruling): a subagent / flow popup window adds
    `.nf-static`; the ONE rule below turns every animation and every transition
    in this block off for that window — no per-element handling. */
+/* The canvas Ask preview uses the same live-line typography and caret. */
+.nf-workline,
+.ask-stream-line {
+  font-size: var(--ds-fs-hint);
+  line-height: var(--ds-lh-body, 1.5);
+  font-weight: 500;
+  color: var(--color-text-dim);
+  opacity: 0.9;
+}
 .nf-workline {
   display: flex;
   /* 2026-10-06 author screenshot defect (「›偏上、文字基线偏下」): the row
@@ -4553,17 +4640,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: 85%;
   margin: var(--ds-space-half) 0;
   padding: var(--ds-space-1) var(--ds-space-3);
-  font-size: var(--ds-fs-hint);
   /* zcode-484 batch: ONE text row, fixed — the line box has to be deterministic
      (the slot's fixed height below mirrors it) and it must survive the terminal
      morph, where `.nf-workline` is dropped by the `.turn-header` class swap.
      row-center 批（作者令 2026-11-05 20:18「> 和 spinner 以及文字，没有上下居中
      对齐」）：行高**只从令牌取** —— `--ds-lh-body`(1.5) × `--ds-fs-hint`(12px) = 18px，
      与改前硬写的 `18px` 逐像素同值（改前是档外裸值，本批收编，零几何漂移）。 */
-  line-height: var(--ds-lh-body, 1.5);
-  font-weight: 500;
-  color: var(--color-text-dim);
-  opacity: 0.9;
   position: relative;
   cursor: default;
   /* row-center 批：本行**取消入场渐显**（作者令 2026-11-05 20:28「不要有这个模糊
@@ -4821,7 +4903,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   overflow-wrap: normal;
   vertical-align: baseline;
 }
-.nf-wl-think::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
+.nf-wl-think::after, .ask-stream-line::after { content: "\258D"; color: var(--color-primary); animation: nf-wl-blink 0.7s steps(1) infinite; }
 .nf-wl-item.is-done .nf-wl-think::after { display: none; }
 
 @keyframes nf-wl-in { from { opacity: 0; } to { opacity: 1; } }
@@ -4883,6 +4965,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .nf-wl-spin::before,
   .nf-wl-dots .thinking-dot,
   .nf-wl-think::after,
+  .ask-stream-line::after,
   .bubble.nf-pop { animation: none; }
   .nf-wl-item.is-enter-late { animation-delay: 0s; }
   /* The tail fade is not motion, but under an explicit reduced-motion request
@@ -4934,7 +5017,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    UI 统一批：卡脸盒的形（含 --ds-media-face-w 卡面尺度单源）已上收
    design-system.css .ds-media-stack__view；本节只留拖动态。 */
 .pop-stack-view.dragging { cursor: grabbing; }
-.pop-stack-view.dragging .media-layer { transition: none; }
+/* Fan slots never animate: only the outgoing top card owns motion. */
+.pop-stack-view .media-layer { transition: none; }
 /* The 2026-10-30 fan design (「像扑克一样轻微旋转展开 而不是重叠」): each back
    layer keeps the front card's FULL size and fans out with a small translate
    + a slight rotation about the layer's own center — a poker spread, not the
@@ -5097,6 +5181,19 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
 }
+/* Retry control of one failed media item (sits right after its note line). */
+.nf-media-retry {
+  margin-top: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-pill);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--ds-fs-hint);
+  cursor: pointer;
+}
+.nf-media-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 2px; }
 .play-ring {
   position: absolute; top: 50%; left: 50%;
   width: 54px; height: 54px; margin: -27px 0 0 -27px;
@@ -5164,6 +5261,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .file-card .fc-quote-btn { margin-left: auto; flex: 0 0 auto; }
 .option-box .ask-att-question-card { cursor: pointer; max-width: 100%; }
 .option-box .ask-att-question-card:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+/* 问面文件卡降级态（⑤a「原因 + 动作」）：卡内可换行容纳原因档 + 重试键；
+   不可用 = 虚线描边（与缩略/chip 面同档语义）。 */
+.option-box .ask-att-question-card { box-sizing: border-box; min-width: 0; flex-wrap: wrap; }
+.option-box .ask-att-question-card .fc-meta { flex: 1 1 0; }
+.option-box .ask-att-question-card .ask-att-reason { display: block; font-size: var(--ds-fs-meta); }
+.option-box .ask-att-question-card.ask-att-unavailable { border-style: dashed; }
 .fc-icon {
   width: 38px; height: 38px; border-radius: var(--ds-radius-button); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;

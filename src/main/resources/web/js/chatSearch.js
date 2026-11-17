@@ -48,6 +48,7 @@
 //   泄漏 overflow:hidden 祖先）。手机层同一条腿：关搜索面后回聊天根再定位。
 
 import state from './state.js';
+import { openDropdownMenu } from './dropdownMenu.js';
 import { key } from './branding.js';
 import { t, getLocale } from './i18n.js';
 import { pushLayer, popLayer } from './focusTrap.js';
@@ -74,6 +75,7 @@ import { expandGroupContaining } from './turnGroup.js';
 // （.scroll-new-pill 同家族），锚点/降级/消失时机契约见 searchReturnPill.js 头注。
 import { captureReturnAnchor, armReturnPill } from './searchReturnPill.js';
 import { mountSearchSourceChips } from './searchSourceChips.js';
+import { activeSocialScope } from './messages/mainHost.js';
 
 // 检索全覆盖批（2026-11-07，作者报障「搜索为什么不是搜全部的内容，可以分段显示
 // 但是我要能查看」）：**取消「前 200 条」硬顶**。搜索模式改为「首屏一页 + 滚到底
@@ -112,6 +114,7 @@ const searchEtagCache = new Map();
 /** @type {Set<string>} 已选条目 id（媒体卡 = entry.id；结果行 = key）。 */
 let multiSelected = new Set();
 let multiAnchor = -1;        // Shift 范围选择的锚点（lastResults 下标）
+let fileSelectionMode = false;
 
 /** 条目选择 id：媒体卡 = entry.id；结果行 = key。 */
 function selIdOf(res) { return (res && (res.key || res.id)) || ''; }
@@ -119,8 +122,19 @@ function selIdOf(res) { return (res && (res.key || res.id)) || ''; }
 /** 选择态可视面：data-key 匹配的卡/行挂/摘 .multi-sel（样式随
  *  search-media-active-style 同款内联注入——chat.css 本批锁定）。 */
 function paintMultiClass(id, on) {
+  const results = document.getElementById('search-results');
+  if (results && !results.hasAttribute('aria-multiselectable')) {
+    results.setAttribute('aria-multiselectable', 'true');
+    results.querySelectorAll('[role="option"]').forEach(el => {
+      const item = /** @type {HTMLElement} */ (el);
+      el.setAttribute('aria-selected', String(multiSelected.has(item.dataset.key || '')));
+    });
+  }
   document.querySelectorAll(`#search-results [data-key="${CSS.escape(id)}"]`)
-    .forEach(el => el.classList.toggle('multi-sel', on));
+    .forEach(el => {
+      el.classList.toggle('multi-sel', on);
+      el.setAttribute('aria-selected', String(on));
+    });
 }
 
 /** Return selected, Canvas-openable files in result order, de-duplicated by path. */
@@ -134,14 +148,25 @@ function selectedFilesForCanvas() {
     else if (!res.type) file = popArtifactFromInput(res.tool, res.input);
     if (!file?.filePath || seen.has(file.filePath)) continue;
     seen.add(file.filePath);
-    files.push(file);
+    const mime = String(res.mime || res.mimeType || '').toLowerCase();
+    const path = file.filePath.toLowerCase().split(/[?#]/)[0];
+    const kind = mime.startsWith('video/') ? 'video' : mime.startsWith('image/') ? 'image'
+      : /\.(?:mp4|webm|mov|m4v|ogv)$/.test(path) ? 'video'
+      : /\.(?:png|jpe?g|gif|webp|avif|svg|bmp|heic)$/.test(path) ? 'image' : 'file';
+    files.push({ ...file, kind, source: res.source, thumbRef: res.thumbRef });
   }
   return files;
 }
 
 /** Keep the action bar tied to selected Canvas-openable files, not other rows. */
 function syncMultiAction() {
-  const button = document.getElementById('search-open-selected-files');
+  const select = document.getElementById('search-select-files');
+  if (select) {
+    select.hidden = currentTab !== 'files';
+    select.textContent = t(fileSelectionMode ? 'search.cancelSelection' : 'search.selectFiles');
+    select.setAttribute('aria-pressed', String(fileSelectionMode));
+  }
+  const button = batchOpenButton;
   if (!button) return;
   const count = selectedFilesForCanvas().length;
   button.hidden = count === 0;
@@ -151,9 +176,9 @@ function syncMultiAction() {
 function openSelectedFilesInCanvas() {
   const files = selectedFilesForCanvas();
   if (!files.length) return;
-  // Open in display order; one event per unique path lets Canvas create one tab each.
-  for (const file of files) openPopArtifact(file.filePath, file.title);
   closeSearchModal();
+  // Dispatch synchronously so each mobile media route can reserve a tab in the gesture.
+  for (const file of files) routeSelectedFile(file);
 }
 
 /** Cmd/Ctrl 点选：翻转入/出选择集；锚点恒更新到点中行。 */
@@ -192,8 +217,11 @@ function multiSelectAll() {
  * （entry 有 type = 媒体卡；否则 = 结果行）。不建持久化结果集——会话内
  * 一次性打开（未决项④裁定）。 */
 function openMultiSelected() {
+  const files = selectedFilesForCanvas();
+  if (files.length) openSelectedFilesInCanvas();
   for (const res of lastResults) {
     if (!multiSelected.has(selIdOf(res))) continue;
+    if (res.type === 'file' || (!res.type && popArtifactFromInput(res.tool, res.input))) continue;
     if (res.type) activateMediaEntry(res);
     else activateResult(res);
   }
@@ -203,6 +231,12 @@ function openMultiSelected() {
 function resetMulti() {
   multiSelected = new Set();
   multiAnchor = -1;
+  const results = document.getElementById('search-results');
+  results?.removeAttribute('aria-multiselectable');
+  results?.querySelectorAll('[role="option"]').forEach(el => {
+    el.classList.remove('multi-sel');
+    el.setAttribute('aria-selected', String(el.classList.contains('active')));
+  });
   syncMultiAction();
 }
 
@@ -214,6 +248,7 @@ const TAB_I18N = { all: 'search.tabAll', media: 'search.tabMedia', files: 'searc
 /** Tabs rendered as the unified media-entry grid (popMediaIndex entries). */
 const MEDIA_TABS = ['media', 'files', 'links'];
 
+let batchOpenButton = /** @type {HTMLButtonElement|null} */ (null);
 let initialized = false;
 let lastResults = [];        // loaded window items in display order
 let modelKeys = new Map();   // item key → model index
@@ -288,6 +323,12 @@ let searchTailEl = null;
 /** 结果面/状态面的现役节点（续取腿要用；renderStreamFresh 现装 ⇒ 零新增跨面直查）。 */
 let searchResultsEl = /** @type {HTMLElement|null} */ (null);
 let searchStatusEl = /** @type {HTMLElement|null} */ (null);
+/** 主弹层现役节点（locale 重绘腿要用；openSearchModal 现装 ⇒ 零新增跨面直查 ——
+ *  component-contract R2 基线只许减不许增：locale-changed 监听器（FE 整合新增腿）
+ *  一律读这里的缓存，不再自带 getElementById 直查）。 */
+let searchOverlayEl = /** @type {HTMLElement|null} */ (null);
+/** 日历弹层现役节点（locale 重绘腿要用；openCalendar 现装、closeCalendar 清档 ⇒ 同上）。 */
+let calPopEl = /** @type {HTMLElement|null} */ (null);
 
 /**
  * Typed element lookups (getElementById returns bare HTMLElement).
@@ -300,6 +341,38 @@ const inputById = (id) => /** @type {HTMLInputElement|null} */ (document.getElem
  * @returns {HTMLSelectElement|null}
  */
 const selectById = (id) => /** @type {HTMLSelectElement|null} */ (document.getElementById(id));
+const filterOptions = new Map();
+let closeToolMenu = () => {};
+function setFilterOptions(id, options, value = '') {
+  const button = /** @type {(HTMLElement & {value: string})|null} */ (document.getElementById(id));
+  if (!button) return;
+  filterOptions.set(id, options);
+  button.value = options.some(o => o.value === value) ? value : (options[0]?.value || '');
+  button.textContent = options.find(o => o.value === button.value)?.label || '';
+}
+function setToolOptions(options, value = '') { setFilterOptions('search-tool', options, value); }
+function openToolMenu(button) {
+  closeToolMenu();
+  const menu = document.createElement('div');
+  menu.className = 'project-open-menu nf-glass';
+  menu.setAttribute('role', 'menu');
+  for (const option of filterOptions.get(button.id) || []) {
+    const item = document.createElement('button');
+    item.type = 'button'; item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(option.value === button.value));
+    const icon = document.createElement('span'), label = document.createElement('span'), check = document.createElement('span');
+    label.textContent = option.label; check.textContent = option.value === button.value ? '✓' : '';
+    check.setAttribute('aria-hidden', 'true'); item.append(icon, label, check);
+    item.addEventListener('click', () => {
+      closeToolMenu();
+      if (button.value === option.value) return;
+      button.value = option.value; button.textContent = option.label;
+      button.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    menu.append(item);
+  }
+  closeToolMenu = openDropdownMenu(button, menu);
+}
 
 // 会话档（convScope）恒单会话 ⇒ 无分组形态（与 scope=current 同视）。
 const isGrouped = () => !convScope && (selectById('search-scope')?.value || 'current') === 'all';
@@ -340,18 +413,37 @@ export function initChatSearch() {
     document.head.appendChild(st);
   }
 
-  document.getElementById('search-btn')?.addEventListener('click', openSearchModal);
+  // While a friend, group or device conversation is shown in the main area, the header search is that conversation's
+  // search (scoped to it); otherwise it is the Agent history search.
+  document.getElementById('search-btn')?.addEventListener('click', () => openSearchModal(activeSocialScope()));
   document.getElementById('search-modal-close')?.addEventListener('click', closeSearchModal);
-  let batchOpen = document.getElementById('search-open-selected-files');
+  const resultsEl = document.getElementById('search-results');
+  let batchOpen = batchOpenButton;
   if (!batchOpen) {
-    batchOpen = document.createElement('button');
+    const button = document.createElement('button');
+    button.type = 'button';
+    batchOpen = button;
     batchOpen.id = 'search-open-selected-files';
-    batchOpen.type = 'button';
     batchOpen.className = 'glass-control cfg-btn cfg-btn-sm search-batch-open';
     batchOpen.hidden = true;
-    document.getElementById('search-results')?.before(batchOpen);
+    resultsEl?.before(batchOpen);
   }
+  batchOpenButton = batchOpen;
   batchOpen.addEventListener('click', openSelectedFilesInCanvas);
+  const selectFiles = document.createElement('button');
+  selectFiles.id = 'search-select-files';
+  selectFiles.type = 'button';
+  selectFiles.className = 'glass-control cfg-btn cfg-btn-sm search-batch-open';
+  selectFiles.hidden = true;
+  batchOpen.before(selectFiles);
+  selectFiles.addEventListener('click', () => {
+    fileSelectionMode = !fileSelectionMode;
+    if (!fileSelectionMode) {
+      for (const id of multiSelected) paintMultiClass(id, false);
+      resetMulti();
+    }
+    syncMultiAction();
+  });
   const overlay = document.getElementById('search-overlay');
   overlay?.addEventListener('click', (e) => {
     if (e.target === overlay) closeSearchModal();
@@ -366,6 +458,10 @@ export function initChatSearch() {
   bindImeGuard(document.getElementById('search-keyword'));
   for (const id of ['search-scope', 'search-agent', 'search-tool']) {
     document.getElementById(id)?.addEventListener('change', scheduleSearch);
+  }
+
+  for (const id of ['search-scope', 'search-agent', 'search-tool']) {
+    document.getElementById(id)?.addEventListener('click', event => openToolMenu(event.currentTarget));
   }
 
   // Category tabs (click). The date tab (now IN the roving enumeration but
@@ -404,13 +500,11 @@ export function initChatSearch() {
     if (e.target instanceof Element && e.target.closest('.monaco-editor')) return;
     import('./fileSearch.js').then(({ findInActiveTab }) => {
       findInActiveTab().then((handled) => {
-        if (!handled) openSearchModal();
-      }).catch(() => openSearchModal());
-    }).catch(() => openSearchModal());
+        if (!handled) openSearchModal(activeSocialScope());
+      }).catch(() => openSearchModal(activeSocialScope()));
+    }).catch(() => openSearchModal(activeSocialScope()));
     e.preventDefault();
   });
-
-  const resultsEl = document.getElementById('search-results');
 
   // Result click — event delegation on the results container
   resultsEl?.addEventListener('click', (e) => {
@@ -509,6 +603,7 @@ export function stageConvScope(scope) {
 export function openSearchModal(scope = null) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay) return;
+  searchOverlayEl = overlay; // locale 重绘腿的现装缓存（见模块级声明）
   const eff = scope || pendingConvScope || null; // 手机页面化入口的暂存消费（见上）
   pendingConvScope = null;
   setConvScope(eff || null); // 3(b)：会话档先落位（resetSearchState 不清它）
@@ -525,6 +620,7 @@ export function openSearchModal(scope = null) {
 }
 
 export function closeSearchModal() {
+  closeToolMenu();
   // Abort any in-flight search and drop pending work.
   searchSeq++;
   searchAbort?.abort();
@@ -557,6 +653,8 @@ function resetSearchState() {
   lastTotal = 0;
   activeIndex = -1;
   currentTab = 'all';
+  fileSelectionMode = false;
+  resetMulti();
   currentSource = '';
   anchorDate = null;
   calStaged = null;
@@ -580,20 +678,12 @@ function resetSearchState() {
 
 /** Fill labels/placeholders that depend on the current locale. */
 function renderStaticLabels() {
-  const scope = document.getElementById('search-scope');
-  if (scope) {
-    scope.innerHTML =
-      `<option value="current">${escapeHtml(t('search.scopeCurrent'))}</option>` +
-      `<option value="all">${escapeHtml(t('search.scopeAll'))}</option>`;
-  }
-  const tool = document.getElementById('search-tool');
-  if (tool) {
-    tool.innerHTML = `<option value="">${escapeHtml(t('search.allTypes'))}</option>`;
-  }
-  const agent = document.getElementById('search-agent');
-  if (agent) {
-    agent.innerHTML = `<option value="">${escapeHtml(t('search.allAgents'))}</option>`;
-  }
+  setFilterOptions('search-scope', [
+    { value: 'current', label: t('search.scopeCurrent') },
+    { value: 'all', label: t('search.scopeAll') }
+  ], 'current');
+  setToolOptions([{ value: '', label: t('search.allTypes') }]);
+  setFilterOptions('search-agent', [{ value: '', label: t('search.allAgents') }]);
   for (const tab of CONTENT_TABS) {
     const el = document.getElementById(`search-tab-${tab}`);
     if (el) el.textContent = t(TAB_I18N[tab]);
@@ -615,6 +705,8 @@ function renderStaticLabels() {
 function switchTab(tab) {
   if (tab === currentTab) return;
   currentTab = tab;
+  fileSelectionMode = false;
+  resetMulti();
   syncTabsUI();
   scheduleSearch();   // keyword is kept; re-run in the new category range
 }
@@ -683,6 +775,7 @@ function openCalendar() {
   const pop = document.getElementById('search-date-popover');
   const tab = document.getElementById('search-tab-date');
   if (!pop || !tab) return;
+  calPopEl = pop; // locale 重绘腿的现装缓存（见模块级声明）
   const today = new Date();
   const base = anchorDate || { y: today.getFullYear(), m0: today.getMonth(), d: today.getDate() };
   calView = { y: base.y, m0: base.m0 };
@@ -702,6 +795,7 @@ function openCalendar() {
 function closeCalendar(refocus) {
   calOpen = false;
   calStaged = null;
+  calPopEl = null; // locale 重绘腿缓存同步清档（下一次 openCalendar 现装）
   pillListboxEl?.remove();
   pillListboxEl = null;
   const pop = document.getElementById('search-date-popover');
@@ -874,6 +968,11 @@ function openPillListbox(pill, pop) {
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
+  const expandedFilter = /** @type {HTMLElement|null} */ (document.querySelector('.search-filters [aria-expanded="true"]'));
+  if (expandedFilter) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeToolMenu(); expandedFilter.focus(); }
+    return;
+  }
   // ⑤ 收归：单一谓词（元素级 dataset 兜底 + 事件级 isComposing/keyCode 229）。
   if (isImeComposing(e, e.target instanceof HTMLElement ? e.target : null)) return;
 
@@ -999,7 +1098,7 @@ function setActive(i, scroll = false) {
   const prev = /** @type {HTMLElement|null} */ (resultsEl.querySelector('.search-result.active, .search-media-card.active'));
   if (prev) {
     prev.classList.remove('active');
-    prev.setAttribute('aria-selected', 'false');
+    if (!resultsEl.hasAttribute('aria-multiselectable')) prev.setAttribute('aria-selected', 'false');
     prev.tabIndex = -1;
   }
   activeIndex = i;
@@ -1010,7 +1109,7 @@ function setActive(i, scroll = false) {
   const el = /** @type {HTMLElement|null} */ (resultsEl.querySelector(`[data-key="${CSS.escape(item.key || item.id || '')}"]`));
   if (!el) return;
   el.classList.add('active');
-  el.setAttribute('aria-selected', 'true');
+  el.setAttribute('aria-selected', resultsEl.hasAttribute('aria-multiselectable') ? String(multiSelected.has(selIdOf(item))) : 'true');
   el.tabIndex = 0;
   kw?.setAttribute('aria-activedescendant', el.id);
   if (scroll) el.scrollIntoView({ block: 'nearest' });
@@ -2366,10 +2465,10 @@ function populateAgentFilter(sessions, keepValue) {
     if (name) counts.set(name, (counts.get(name) || 0) + 1);
   }
   const sorted = [...counts.keys()].sort((a, b) => a.localeCompare(b));
-  sel.innerHTML =
-    `<option value="">${escapeHtml(t('search.allAgents'))}</option>` +
-    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
-  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+  setFilterOptions('search-agent', [
+    { value: '', label: t('search.allAgents') },
+    ...sorted.map(n => ({ value: n, label: `${n} (${counts.get(n)})` }))
+  ], keepValue);
 }
 
 /** Rebuild the tool filter options from the tool labels in the fetched set.
@@ -2387,12 +2486,11 @@ function populateToolFilter(perSession, keepValue) {
     }
   }
   const sorted = [...counts.keys()].sort();
-  sel.innerHTML =
-    `<option value="">${escapeHtml(t('search.allTypes'))}</option>` +
-    `<option value="__any__">${escapeHtml(t('search.anyTool'))}</option>` +
-    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
-  // Restore previous selection if still available
-  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+  setToolOptions([
+    { value: '', label: t('search.allTypes') },
+    { value: '__any__', label: t('search.anyTool') },
+    ...sorted.map(n => ({ value: n, label: `${n} (${counts.get(n)})` }))
+  ], keepValue);
 }
 
 // ── Result rendering ───────────────────────────────────────
@@ -2750,7 +2848,7 @@ function mediaEntryCard(e) {
   card.appendChild(time);
   // C5 多选：Cmd/Ctrl 点选、Shift 范围（卡片的直开单击语义保留给裸点）。
   card.addEventListener('click', (ev) => {
-    if (ev.metaKey || ev.ctrlKey || ev.shiftKey) {
+    if ((fileSelectionMode && currentTab === 'files') || ev.metaKey || ev.ctrlKey || ev.shiftKey) {
       ev.preventDefault();
       ev.stopPropagation();
       const idx = modelKeys.get(e.id);
@@ -2764,6 +2862,18 @@ function mediaEntryCard(e) {
   return card;
 }
 
+function routeSelectedFile(file) {
+  if (file.kind === 'file') {
+    openPopArtifact(file.filePath, file.title);
+    return;
+  }
+  const resolver = file.source === 'user'
+    ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
+    : undefined;
+  const item = { kind: file.kind, name: file.title, path: file.filePath, src: file.thumbRef || '', resolver };
+  routeMediaClick(item, openPopArtifact, () => openMediaLightbox(item));
+}
+
 /** Grid activation: media (image/video) with an absolute path opens CANVAS —
  *  the SAME single point the in-chat media card's whole-face click uses (三修 ②
  *  openMediaItemClick → openPopArtifact → workspace-open-item); the Canvas
@@ -2774,27 +2884,32 @@ function mediaEntryCard(e) {
  *  pathless file) keeps the #491 主题三 lightbox zoom, the in-chat split.
  *  媒体点击统一批（P16 · 2026-11-11 作者令）：媒体格的分流上收 routeMediaClick
  *  单点——手机层 = 系统直开（与聊天流媒体同一矩阵）；桌面行为逐字保留。
- *  File → the workspace-open-item single point, link → a new tab. */
+ *  File → the workspace-open-item single point, link → a new tab.
+ *  mobile-image-lightbox 批（2026-11-17）：手机图片改开画廊（routeMediaClick
+ *  手机腿），当前结果集内的全部图片为组（左右滑切图）；桌面逐字不变。 */
 function activateMediaEntry(e) {
   if (e.type === 'image' || e.type === 'video') {
     closeSearchModal();
+    const itemOf = (r) => ({
+      kind: r.type,
+      name: r.name,
+      src: r.thumbRef || '',
+      path: r.ref || '',
+      resolver: r.source === 'user'
+        ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
+        : undefined,
+    });
+    const item = itemOf(e);
+    // 图组 = 当前结果集（lastResults）内的全部图片；视频/文件不入组。
+    const pics = (lastResults || []).filter((r) => r && r.type === 'image');
+    const gi = pics.indexOf(e);
+    const group = gi >= 0 ? pics.map(itemOf) : undefined;
     routeMediaClick(
-      {
-        kind: e.type,
-        name: e.name,
-        src: e.thumbRef || '',
-        path: e.ref || '',
-        resolver: e.source === 'user'
-          ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
-          : undefined,
-      },
+      group ? group[gi] : item,
       openPopArtifact,
-      () => openMediaLightbox({
-        kind: e.type, name: e.name, src: e.thumbRef || '', path: e.ref,
-        resolver: e.source === 'user'
-          ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
-          : undefined,
-      })
+      () => openMediaLightbox(item),
+      group,
+      gi >= 0 ? gi : undefined
     );
   } else if (e.type === 'file') {
     // Act-and-exit, mirroring the artifact-row routing (v2 ruling): the modal
@@ -3071,16 +3186,17 @@ function scrollToMessage(res, st) {
 // Rendered results are re-drawn too so badges/status stay localized; the
 // calendar grid (weekday header / month names) re-renders as well.
 window.addEventListener('locale-changed', () => {
-  if (!document.getElementById('search-overlay')?.classList.contains('on')) return;
+  // 跨面直查零新增（R2 基线只许减不许增）：overlay/pop/results/status 一律读
+  // 模块级现装缓存（openSearchModal / openCalendar / renderStreamFresh 维护）。
+  if (!searchOverlayEl?.classList.contains('on')) return;
   renderStaticLabels();
   syncTabsUI();
-  if (calOpen) {
-    const pop = document.getElementById('search-date-popover');
-    if (pop) renderCalendar(pop);
+  if (calOpen && calPopEl) {
+    renderCalendar(calPopEl);
   }
   // Redraw the rendered window in the new locale (badges/times are localized).
-  const resultsEl = document.getElementById('search-results');
-  const statusEl = document.getElementById('search-status');
+  const resultsEl = searchResultsEl;
+  const statusEl = searchStatusEl;
   if (resultsEl && (lastResults.length || MEDIA_TABS.includes(currentTab))) {
     renderStreamFresh(resultsEl, /** @type {HTMLElement} */ (statusEl));
   }

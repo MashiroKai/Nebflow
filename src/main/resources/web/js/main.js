@@ -1,3 +1,7 @@
+// chat-ui-package 批①②（2026-11-16）：对话 UI 壳（主输入条 / 搜索壳）在
+// chatMount.js 里工厂装配 —— 必须是**首位 import**：#input-bar / #search-overlay
+// 的静态壳要在任何应用模块求值取节点之前填充完成（时序契约见 chatMount.js 头注）。
+import './chatMount.js';
 import { renderProviderFailureStatus } from './providerFailureStatus.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
@@ -37,6 +41,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
 // 为什么在产品侧：打包后 `/js/xxx.js` 路由不存在、导出名被压成单字母别名，
 // 验证脚本只能从产品自己的模块图取到**同一实例**，否则键盘闸永远只能验源树。
 installProbeSurface();
+installDecisionCardPreview();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
 // mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
@@ -57,6 +62,7 @@ import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArr
 // 清单 provider。两个模块都在这里 import 一次，引擎与渲染从此各有一份真源。
 import './todoComplete.js';
 import { todoStore } from './todoStore.js';
+import { installDecisionCardPreview } from './decisionCardPreview.js';
 import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
 import { initHotStampWatch } from './hotStamp.js'; // 台账 #919：热更新地基——asset stamp 轮询自愈（端点缺席 = 静默空转）
 // 冻结状态两套真相批（2026-11-05）：冻结面的合并/派生单点在 freezeState.js
@@ -91,6 +97,7 @@ import { cancelSettleBottom } from './chat/settleBottom.js';
 import { installMsgTokenChip } from './chat/msgTokenChip.js'; // msgchip 批：带短名引用小牌交互/取数腿
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
 import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
+import { startSelectEnhancer } from './dropdown.js'; // 下拉统一批（F 批 2026-11-17）：select → 点击展开点选
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
@@ -111,7 +118,7 @@ import { initMicOrb } from './micOrb.js';
 // delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
 // 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
-import './delegateChainProvider.js';
+import { refreshScopedTasks, onDurableTasksChanged } from './delegateChainProvider.js';
 // 控制台单实例批（2026-10-27）：接管独占客户端腿——模块副作用 = 注册 takeover/
 // takeoverResult 帧消费 + 接管模态按钮接线（叶子模块，只依赖 ws.js/state/i18n）。
 import './takeoverModal.js';
@@ -187,6 +194,9 @@ import { initMessages } from './messages.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initAskDock } from './askDock.js';
+// canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write 直接落盘的 canvas
+// 审阅页签（原文档内联 diff 逐块/全量接受拒绝）。
+import { initAskEditReview } from './askEditReview.js';
 import { initLightbox } from './lightbox.js';
 // flowAnim.js side-effect import REMOVED (flowmaptab-retire, #1228 两裁② 停用清单
 // 面 3 · 上游 a60af705d 申报 S10/S11 零复用——链视图为静态卡列表，动效全由 CSS 承担).
@@ -342,6 +352,7 @@ initPendingAsks();
 // 可见期节拍与页面重新可见共用一个 requestPendingAskSync，镜像不再只靠重连自愈。
 startPendingAskSync(sendWs);
 initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
+startSelectEnhancer(); // 下拉统一批（ui-unify-panels F 批 2026-11-17）：原生 select 全站收编为点击展开点选（观察器常驻，新 select 出生即收编）
 initServiceWorker(); // console-load-perf 批：温访问秒开（/sw.js 未上线的引擎上为静默空转）
 initHotStampWatch(); // 台账 #919：热更新地基——stamp 轮询自愈（/api/nf-asset-stamp 缺席的引擎上为静默空转）
 
@@ -1654,6 +1665,11 @@ onMessage('error', (msg, view) => {
   // 本批实测（隔离实例真浏览器）：不拦的话，卡上一次失败的保存会顺手把正在跑的
   // 回合标成失败、并在消息流里多冒一条与卡内错误重复的红行。
   if (msg.msgType === 'updateScheduledTask' || msg.msgType === 'deleteScheduledTask') return;
+  // A provider-form save that the gateway refused is answered with msgType 'updateConfig' and
+  // the save's own requestId. It belongs to that form (sidebar/providersUi.js keeps its draft open
+  // and reports the failure there), so it must neither end the running turn nor paint an error row
+  // into the conversation. A refusal without a requestId keeps the generic handling below.
+  if (msg.msgType === 'updateConfig' && msg.requestId) return;
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
@@ -2265,7 +2281,6 @@ Object.values(chatViews).forEach(v => {
     const opening = dropdown.classList.contains('hidden');
     if (opening) {
       fetchActiveAgentsOnOpen();
-      renderBgAgentDropdown();
       // 面板拆分批（2026-10-31 ④ · 作者追加令）：桌面端两键各开单族视图——本键
       // （智能体键）只显智能体节；手机端（mobile-layer）维持合并单面板不变，视图
       // 类由 CSS（body:not(.mobile-layer) 闸）兜住不生效。
@@ -2274,6 +2289,7 @@ Object.values(chatViews).forEach(v => {
         dropdown.classList.add('bg-view-agents');
       }
       dropdown.classList.remove('hidden');
+      renderBgAgentDropdown();
       armBgUptimeTick(v);
     } else {
       dropdown.classList.add('hidden');
@@ -3085,6 +3101,10 @@ onMessage('configUpdated', (msg, view) => {
 onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
   state.allModelRefs = models.map(m => m.ref).filter(Boolean);
+  if (msg.sessionId) {
+    state.sessionModelSelections ||= {};
+    state.sessionModelSelections[msg.sessionId] = msg.current || '';
+  }
 });
 
 onMessage('sessionModelSet', (msg, view) => {
@@ -3144,7 +3164,10 @@ onMessage('user', (msg, view) => {
     // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷随行进缓存——缓存恢复
     // 路径读 `m.schedule`，漏落 ⇒ 重载降级成无载荷卡（header 先例）。旧帧缺该字段
     // ⇒ null（缺席即回落，逐字不变）。
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null, fileChanges: msg.fileChanges || null, schedule: msg.schedule || null }, sid);
+    // askAddress（ask-mail 批 2026-11-16）：ask 续聊地址随行进缓存（header 先例）
+    // ——两条缓存恢复读路径（persistence.js）读 `m.askAddress`，漏落这一枚 ⇒ 走缓存
+    // 的重载丢地址 chip。旧帧缺该字段 ⇒ null（缺席即回落，逐字不变）。
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null, fileChanges: msg.fileChanges || null, schedule: msg.schedule || null, askAddress: msg.askAddress || null }, sid);
   }
   // Window ownership. First disjunct = the pre-existing rule, unchanged: a frame
   // whose sessionId is the globally active session renders into the active view.
@@ -3163,7 +3186,8 @@ onMessage('user', (msg, view) => {
     // fileChanges（bug #58 修）：delegate 终态 diff 载荷同位透传（缺席 = 旧行为）。
     // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同位透传——
     // `source==='schedule'` 的帧在 builder 内走专属卡分支（缺席 = 旧行为）。
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header, msg.fileChanges, msg.schedule);
+    // askAddress（ask-mail 批 2026-11-16）：ask 续聊地址同位透传（缺席 = 旧行为）。
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header, msg.fileChanges, msg.schedule, msg.askAddress);
     smartScroll();
   }
 });
@@ -3459,7 +3483,7 @@ function bgTaskRowState(task) {
  *  authoritative; fall back to the registering session-id prefix (old
  *  backend / REST-invoked tools carry no origin).
  *  多设备后台任务可见批（2026-10-25）：cat="device" = 设备通道后台任务
- *  （Bash device=KAI + run_in_background）——chip 回答「跑在哪台设备」，
+ *  （Bash device=<win> + run_in_background）——chip 回答「跑在哪台设备」，
  *  与 nebula/dispatcher/node（谁开启）并列可辨。旧后端快照回退（origin 字段
  *  缺席）：设备任务描述恒带 `[<设备>] ` 前缀（RemoteExecutor 形态）且
  *  kind=remote —— 前缀识别优先于会话前缀启发（后者只分得出「谁开启」），
@@ -4705,6 +4729,7 @@ initBackSwipe();
   depth: Number(document.documentElement.dataset.backSwipeDepth || 0),
 });
 initAskDock(); // canvas ask mode 批（2026-10-28）：右下角入口 + 每文件独立会话气泡列
+initAskEditReview(); // canvas-inline-diff-review（2026-11-16）：审阅页签动作/快捷键接线
 initColResizers();
 // #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页
 registerCanvasPanelButton('projects', 'projects-btn', () => openProjectsTab());
@@ -4971,6 +4996,7 @@ onReconnect(() => {
   // Sync background sub-agent state — agentStart events are not replayed
   // after a page refresh, so the indicator count would be lost without this
   sendWs({ type: 'getActiveAgents' });
+  refreshScopedTasks(sid);
   // composer-resync：activeAgents 不含 root session，不能拿它推断主会话闲忙。
   // 断连窗内 done/sessionBusy(false) 不重放，必须另查 AgentRegistry 权威相位；
   // 活跃会话也纳入（旧快照同步恰恰把它豁免，正是幽灵停止钮缺口）。
@@ -5041,6 +5067,18 @@ onMessage('activeBgTasks', (msg) => {
     if (v) updateBgTasksUI(v);
   }
   if (activeView) updateBgTasksUI(activeView);
+});
+
+// Committed task terminal state reconciles the child session, never its parent.
+onDurableTasksChanged((rows) => {
+  const roots = new Set();
+  for (const row of rows) {
+    if (!['completed', 'failed', 'cancelled', 'pending-recovery'].includes(row.status)) continue;
+    clearBusy(row.taskId);
+    delete state.turnExpecting[row.taskId];
+    if (row.rootSessionId) roots.add(row.rootSessionId);
+  }
+  for (const root of roots) updateBgAgentIndicator(root, { keepDropdownOpen: true });
 });
 
 // ---------- Reconnect: sync background sub-agents ----------
@@ -5327,7 +5365,7 @@ onMessage('remoteAgents', (msg) => {
   }
   state.remoteBgAgents = byDevice;
   scheduleRemoteTerminalCleanup();
-  // 面板重渲（面板关着 = 写进隐藏载体节点，零可见副作用；开面板路径照常命中）。
+  // Closed panels render the current projection when opened.
   renderBgAgentDropdown();
 });
 

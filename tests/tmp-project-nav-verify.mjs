@@ -9,6 +9,10 @@ import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
+
+// Diagnostic shots live in a TTL-sweepable EvidenceTemp batch, not bare /tmp files.
+const SHOT_DIR = evidenceBatch('project-nav-verify', 'shots');
 
 const WEB_DIR = join(import.meta.dirname, '..', 'src', 'main', 'resources', 'web');
 const PORT = 8977;
@@ -146,7 +150,7 @@ ok('B3d 点击 beta 无响应：仍是列表视图、无 flow-map 视图、无�
     && afterBetaClick.projectsView === 'list' && !afterBetaClick.hasFlowBody
     && afterBetaClick.activePane === 'projects',
   JSON.stringify(afterBetaClick));
-await page.screenshot({ path: '/tmp/project-nav-list-view.png' });
+await page.screenshot({ path: join(SHOT_DIR, 'project-nav-list-view.png') });
 
 // ── B1: 点有节点的项目 → 同一标签页就地切换（不开新标签）────────────────
 await page.click('.project-card[data-project="alpha"] .team-card-title');

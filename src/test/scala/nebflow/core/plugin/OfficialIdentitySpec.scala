@@ -34,24 +34,19 @@ class OfficialIdentitySpec extends FunSuite:
   private var prevRoot: os.Path = os.Path("/tmp")
   private var home: os.Path = os.Path("/tmp")
 
+  /**
+   * 世界形态（c9dff9829 迁移批 2026-10-31 作者令「六包合并为 stand-dev」）：seed 树
+   * 自此**零保留前缀包**——旧唯一官样 `nebflow-plugin-creator` 已随六包并入
+   * `stand-dev`（不带保留前缀）退役；`OfficialPackages` 守门面原样保留且 fail-closed
+   * （保留前缀 + digest 不在表内 ⇒ OFFICIAL_IMPERSONATION 拒载，空表 = 正当形态
+   * 非解析失败）。本 spec 各腿随之重锚：官样字节改用测试夹具包
+   * （official-fixtures/nebflow-official-fixture），「真实种子字节装载」腿随其世界
+   * 退役（仍有效的半边——世界形态与算法等价——收进 ①）。
+   */
   private val OfficialFixture = "nebflow-official-fixture"
   private val ImpostorFixture = "nebflow-impostor-fixture"
   private val ThirdPartyFixture = "third-party-fixture"
   private val FixtureRoot = "official-fixtures"
-
-  /**
-   * 真内置官方包样本（seed 资源树里带保留前缀的包；`nebflow-plugin-creator` 同时在
-   * seed manifest 默认预装集内）。
-   * 🔴 迁移批（2026-10-29 作者令「两个插件拒载修复」）：`nebflow-qa` /
-   * `nebflow-frontend-dev` 二包**移出官方保留 namespace**（重命名为 `qa` /
-   * `frontend-dev`——它们是独立上游仓同步来的开发/验证工具知识包，从来不在 seed
-   * manifest 默认集、也不在 validate_plugin.py OFFICIAL_FACE 官方面 9 包名单内；
-   * 实例侧内容被改后触发 OfficialPackages 硬闸 OFFICIAL_IMPERSONATION 拒载，修法 =
-   * 去保留前缀而非把种子追认为官方）。种子树保留前缀包自此只剩
-   * `nebflow-plugin-creator` 一件。
-   */
-  private val BuiltinOfficialSamples =
-    List("nebflow-plugin-creator")
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
@@ -100,7 +95,9 @@ class OfficialIdentitySpec extends FunSuite:
    * 🔴 parent = `null` 不是风格选择：本 suite 的父 classpath 上就有一棵 `file:` 形态的 `seed/`
    * 目录树，parent 非空时锚点会解析成**目录** ⇒ 走 file: 分支 ⇒ jar 臂退化成假绿。
    */
-  private def withFixtureJar[A](pkgs: List[String])(body: (os.Path, ClassLoader) => A): A =
+  private def withFixtureJar[A](pkgs: List[String], sourceRoot: String = FixtureRoot)(
+    body: (os.Path, ClassLoader) => A
+  ): A =
     val dir = os.Path(Files.createTempDirectory("nb-official-jarform"))
     val jar = dir / "jarform-fixture.jar"
     val out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar.toNIO))
@@ -111,7 +108,9 @@ class OfficialIdentitySpec extends FunSuite:
         out.closeEntry()
       add("seed/manifest.json", resourceBytes("seed/manifest.json"))
       pkgs.foreach { name =>
-        val pkg = resourceDir(s"seed/plugins/$name")
+        // jar 内布局恒为 seed/plugins/<name>/…（OfficialPackages 的锚点口径）；
+        // 字节来源面由 sourceRoot 选（种子树已零保留前缀包 ⇒ 夹具树）。
+        val pkg = resourceDir(s"$sourceRoot/$name")
         os.walk(pkg).filter(os.isFile).toList.sortBy(_.toString).foreach { f =>
           add(s"seed/plugins/$name/${f.relativeTo(pkg)}", os.read.bytes(f))
         }
@@ -133,7 +132,8 @@ class OfficialIdentitySpec extends FunSuite:
     PluginRegistry.invalidateCache()
     dest
 
-  /** 从 seed 资源树手工安装一个真内置包（与 `SeedService` 同源字节；不启动种子链）。 */
+  /** 从 seed 资源树手工安装一个真内置包（与 `SeedService` 同源字节；不启动种子链）。
+   *  （世界形态 ①：种子树零保留前缀包后无既有调用方——保留 helper 供后续恢复腿用。） */
   private def installBuiltin(name: String): os.Path =
     val dest = home / "plugins" / name
     os.makeDir.all(dest / os.up)
@@ -141,27 +141,41 @@ class OfficialIdentitySpec extends FunSuite:
     PluginRegistry.invalidateCache()
     dest
 
-  // ── ① 允许列表 + 算法等价 ─────────────────────────────────
+  // ── ① 世界形态 + 允许列表 + 算法等价 ───────────────────────
 
-  test("allowlist covers the distribution's built-in official packages and digestOf == computeDigest") {
+  test("current seed tree ships ZERO reserved-prefix packages ⇒ no reserved occupant in the allowlist (fail-closed guard intact); digestOf == computeDigest") {
+    // c9dff9829（2026-10-31 作者令「六包合并为 stand-dev」）后 seed 树不再有任何
+    // 保留前缀包：旧唯一官样 nebflow-plugin-creator 随六包并入 stand-dev 退役，
+    // 合并落点 stand-dev 本身不带保留前缀。空允许列表 = 迁移完成的正当形态。
+    assert(
+      getClass.getClassLoader.getResource("seed/plugins/nebflow-plugin-creator/plugin.json") == null,
+      "the retired package must be gone from the seed tree (the six-package merge is complete)"
+    )
     val table = OfficialPackages.allowlist()
-    assert(table.nonEmpty, "built-in official allowlist is empty — the built-in package directory was not resolved")
-    BuiltinOfficialSamples.foreach { name =>
-      val dir = resourceDir(s"seed/plugins/$name")
-      val authoritative = digestOfDir(dir)
-      assertEquals(
-        table.get(name),
-        Some(authoritative),
-        s"'$name' is a shipped reserved-prefix package but is missing from (or mismatched in) the official allowlist"
-      )
-      // 算法等价：classpath/jar 侧实现（digestOf）与装载层权威 walker（computeDigest）逐字相等
-      val files = os.walk(dir).filter(os.isFile).toList.map(f => f.relativeTo(dir).toString -> os.read.bytes(f))
-      assertEquals(
-        OfficialPackages.digestOf(files),
-        authoritative,
-        s"'$name': OfficialPackages.digestOf drifted from PluginRegistry.computeDigest"
-      )
-    }
+    // 允许列表 = 整棵 seed 树的 digest 清单（键 = 在装包，OfficialPackages.computeAllowlist
+    // 不按前缀过滤）；守门只对保留前缀键生效。迁移后世界：清单非空（在装包仍在），
+    // 但**零保留前缀键**——保留 namespace 无在册官方包 = 冒名面恒拒。
+    assert(table.nonEmpty, "the seed-tree digest inventory must resolve (non-empty)")
+    assert(
+      !table.keys.exists(_.startsWith("nebflow-")),
+      s"no reserved-prefix package may ship (zero reserved occupants), got: ${table.keys.toList.sorted}"
+    )
+    // 守门语义不随空表失效（fail-closed 原样）：保留前缀 + 任意 digest ⇒ 一律冒名拒；
+    // 第三方（含合并落点 stand-dev）恒放行。
+    assert(!OfficialPackages.admits("nebflow-anything", "0" * 64))
+    assert(OfficialPackages.rejectionReason("nebflow-anything", "0" * 64).contains("OFFICIAL_IMPERSONATION"))
+    assert(OfficialPackages.admits("stand-dev", "0" * 64))
+    assert(OfficialPackages.admits("slideblocks", "0" * 64))
+    // 算法等价：classpath/jar 侧实现（digestOf）与装载层权威 walker（computeDigest）
+    // 在真实目录树上逐字相等（夹具树作样本——种子树已无保留前缀包可取样）。
+    val dir = resourceDir(s"$FixtureRoot/$OfficialFixture")
+    val authoritative = digestOfDir(dir)
+    val files = os.walk(dir).filter(os.isFile).toList.map(f => f.relativeTo(dir).toString -> os.read.bytes(f))
+    assertEquals(
+      OfficialPackages.digestOf(files),
+      authoritative,
+      "OfficialPackages.digestOf drifted from PluginRegistry.computeDigest"
+    )
     assert(OfficialPackages.isReserved("nebflow-anything"))
     assert(!OfficialPackages.isReserved("slideblocks"))
   }
@@ -208,6 +222,10 @@ class OfficialIdentitySpec extends FunSuite:
   }
 
   // ── ③ 官方包（digest 命中）⇒ 装载 + Trusted ─────────────────
+  // （旧「real built-in official package (byte-copied from the seed tree) loads against
+  // the real allowlist」腿随其世界退役：seed 树已零保留前缀包（① 的世界形态钉在案），
+  // 「byte-identical ⇒ 免审批 Trusted」的仍有效半边由本腿（夹具 + 预置表）与 ⑧
+  // （jar 形态）继续持有。）
 
   test("official fixture with a matching digest loads and is Trusted") {
     freshHome()
@@ -220,15 +238,6 @@ class OfficialIdentitySpec extends FunSuite:
       assert(loaded.head.trust.trusted, "a shipped official package must be trusted without any user approval step")
       assertEquals(loaded.head.digest, digest)
     }
-  }
-
-  test("real built-in official package (byte-copied from the seed tree) loads against the real allowlist") {
-    freshHome()
-    installBuiltin("nebflow-plugin-creator")
-    val (loaded, rejected) = scan()
-    assertEquals(rejected, Nil, "a byte-identical copy of a shipped official package must not be refused")
-    assertEquals(loaded.map(_.name), List("nebflow-plugin-creator"))
-    assert(loaded.head.trust.trusted)
   }
 
   // ── ④ fail-safe 回落 ──────────────────────────────────────
@@ -269,30 +278,29 @@ class OfficialIdentitySpec extends FunSuite:
 
   // ── ⑥ 首启预置信任（端到端）─────────────────────────────────
 
-  test("first boot installs a built-in official package with a preset Trusted record aligned to the allowlist") {
+  test("first boot seeds the default set with ZERO reserved-prefix packages (empty allowlist, no impersonation refusals)") {
     freshHome()
     SeedService.ensureSeeded().unsafeRunSync()
     PluginRegistry.invalidateCache()
-    val installed = home / "plugins" / "nebflow-plugin-creator"
-    assert(os.exists(installed / "plugin.json"), "the default seed set must install nebflow-plugin-creator")
-
-    val table = OfficialPackages.allowlist()
-    val allowlisted = table.get("nebflow-plugin-creator")
-    assert(allowlisted.nonEmpty, "the shipped package must be in the official allowlist")
-    assertEquals(
-      digestOfDir(installed),
-      allowlisted.get,
-      "installed copy must be byte-identical to the shipped package"
+    // 迁移后世界（①）：允许列表 = seed 树 digest 清单，非空但零保留前缀键；
+    // 默认集不装任何保留前缀包（c9dff9829 六包并入 stand-dev——无保留前缀）。
+    val shippedTable = OfficialPackages.allowlist()
+    assert(shippedTable.nonEmpty, "the seed-tree digest inventory must resolve (non-empty)")
+    assert(
+      !shippedTable.keys.exists(_.startsWith("nebflow-")),
+      s"no reserved-prefix key may be in the allowlist, got: ${shippedTable.keys.toList.sorted}"
     )
-    assertEquals(
-      PluginRegistry.trustRecordDigest("nebflow-plugin-creator"),
-      allowlisted,
-      "the preset Trusted (audit) record must be written and aligned with the allowlist digest"
+    val seeded = os.list(home / "plugins").map(_.last).sorted
+    assert(seeded.nonEmpty, "the default seed set must still install (migration must not break seeding)")
+    assert(
+      !seeded.exists(_.startsWith("nebflow-")),
+      s"no reserved-prefix package may be seeded, got: $seeded"
     )
 
     val (loaded, rejected) = scan()
     assert(rejected.isEmpty, s"unexpected refusals after seeding: $rejected")
-    assert(loaded.exists(p => p.name == "nebflow-plugin-creator" && p.trust.trusted))
+    assert(loaded.nonEmpty, "the seeded default set must load")
+    assert(loaded.forall(p => !p.name.startsWith("nebflow-")), s"loaded set must be free of reserved prefixes: ${loaded.map(_.name)}")
   }
 
   // ── ⑦ jar 形态臂（分发形态：`jar:` 协议的资源树）──────────────
@@ -307,9 +315,11 @@ class OfficialIdentitySpec extends FunSuite:
   // （sbt 期 classpath = 目录树），故不暴露；本臂以真 jar 资源树覆盖同一条分支。
 
   test("jar form: a real jar resource tree yields the SAME allowlist as the file: tree") {
-    val samples = BuiltinOfficialSamples
+    // 官样字节改夹具包（①：种子树零保留前缀包）——本臂钉的是 jar 分支机械
+    // （entry 路径单次 strip + digest 不带目录名），与取样字节来源无关。
+    val samples = List(OfficialFixture)
     withFixtureJar(samples) { (_, jarLoader) =>
-      val fileForm = samples.map(n => n -> digestOfDir(resourceDir(s"seed/plugins/$n"))).toMap
+      val fileForm = samples.map(n => n -> digestOfDir(resourceDir(s"$FixtureRoot/$n"))).toMap
       OfficialPackages.withClassLoaderForTest(jarLoader) {
         val table = OfficialPackages.allowlist()
         assertEquals(
@@ -340,16 +350,16 @@ class OfficialIdentitySpec extends FunSuite:
     }
   }
 
-  test("jar form: byte-identical built-in official packages load as Trusted against the jar-resolved allowlist") {
-    val pkgs = List("nebflow-plugin-creator")
+  test("jar form: byte-identical packages load as Trusted against the jar-resolved allowlist") {
+    val pkgs = List(OfficialFixture)
     withFixtureJar(pkgs) { (_, jarLoader) =>
       OfficialPackages.withClassLoaderForTest(jarLoader) {
         freshHome()
-        pkgs.foreach(installBuiltin)
+        pkgs.foreach(installFixture)
         val (loaded, rejected) = scan()
-        assertEquals(rejected, Nil, "byte-identical shipped official packages must not be refused in jar form")
+        assertEquals(rejected, Nil, "byte-identical official packages must not be refused in jar form")
         assertEquals(loaded.map(_.name).sorted, pkgs.sorted)
-        assert(loaded.forall(_.trust.trusted), "shipped official packages must be trusted without user approval")
+        assert(loaded.forall(_.trust.trusted), "official packages must be trusted without user approval")
       }
     }
   }
