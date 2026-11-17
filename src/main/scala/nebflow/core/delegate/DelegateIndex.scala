@@ -286,7 +286,7 @@ object DelegateIndex:
 
   /** 身份区 + 台账区对账；返回本轮读到的台账文件数。 */
   private def reconcile(conn: Connection, root: os.Path, dir: os.Path): Long =
-    val files = os.list(dir).filter(_.ext == "json")
+    val files = os.list(dir).filter(p => p.ext == "json" && p.last != ".legacy-settled.json")
     val known = query(conn, "SELECT id, src_mtime, src_size FROM delegates")(rs =>
       (rs.getString(1), rs.getLong(2), rs.getLong(3))).map { case (id, m, s) => id -> (m, s) }.toMap
     val seen = scala.collection.mutable.Set.empty[String]
@@ -587,7 +587,7 @@ object DelegateIndex:
   /** 源目录里的身份文件清单。 */
   private def identityFiles(root: os.Path): List[os.Path] =
     val dir = sourceDirOf(root)
-    if !os.exists(dir) then Nil else os.list(dir).filter(_.ext == "json").toList.sortBy(_.last)
+    if !os.exists(dir) then Nil else os.list(dir).filter(p => p.ext == "json" && p.last != ".legacy-settled.json").toList.sortBy(_.last)
 
   /** 源目录里的台账文件清单。 */
   private def ledgerFiles(root: os.Path): List[os.Path] =

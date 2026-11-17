@@ -114,8 +114,13 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
   private def agentRecord(sid: String): AgentRecord =
     AgentRecord(
       sessionId = sid,
-      ref = null.asInstanceOf[nebflow.actor.ActorRef[AgentCommand]], // 读面只查键在册，零取用
+      ref = new nebflow.actor.ActorRef[AgentCommand]:
+        def path = nebflow.actor.ActorPath("test", List(sid))
+        def !(msg: AgentCommand): IO[Unit] = IO.unit
+        def ?[Reply](makeMsg: nebflow.actor.ActorRef[Reply] => AgentCommand, timeout: Option[FiniteDuration]): IO[Reply] = IO.raiseError(new Exception("not used"))
+      ,
       kind = AgentKind.Delegate,
+      status = nebflow.actor.AgentStatus.Processing,
       rootSessionId = sid,
       lastActivityMs = System.currentTimeMillis()
     )
@@ -147,7 +152,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     List(fresh, stale, restart).foreach(DelegateRegistry.put)
     val registry = Map(
       fresh.id -> agentRecord(fresh.id).copy(lastActivityMs = now),
-      stale.id -> agentRecord(stale.id).copy(lastActivityMs = now - 676L * 3600000L),
+      stale.id -> agentRecord(stale.id).copy(ref = null, lastActivityMs = now - 676L * 3600000L),
       restart.id -> agentRecord(restart.id).copy(lastActivityMs = now - 2000L)
     )
     ChainsReadFace.rowsJson(registry).map { body =>
