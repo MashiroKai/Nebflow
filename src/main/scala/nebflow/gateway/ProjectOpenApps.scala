@@ -5,7 +5,32 @@ import scala.util.Try
 
 /** Host-local application discovery and shell-free project opening. */
 private[gateway] object ProjectOpenApps:
-  final case class App(id: String, label: String, command: List[String])
+  final case class App(id: String, label: String, command: List[String], icon: Option[String] = None)
+
+  private val macIcons = Map(
+    "finder" -> "/System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns",
+    "vscode" -> "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
+    "terminal" -> "/System/Applications/Utilities/Terminal.app/Contents/Resources/Terminal.icns",
+    "iterm" -> "/Applications/iTerm.app/Contents/Resources/iTerm2 App Icon for Release.icns"
+  )
+
+  def iconPath(app: App): Option[Path] =
+    macIcons.get(app.id).filter(exists).flatMap { source =>
+      Try {
+        val dir = nebflow.shared.PathUtil.dataRoot.toNIO.resolve("cache/app-icons")
+        Files.createDirectories(dir)
+        val target = dir.resolve(app.id + ".png")
+        if !Files.exists(target) || Files.getLastModifiedTime(target).compareTo(Files.getLastModifiedTime(Paths.get(source))) < 0 then
+          val temporary = Files.createTempFile(dir, app.id, ".png")
+          try
+            val process = new ProcessBuilder("/usr/bin/sips", "-s", "format", "png", source, "--out", temporary.toString)
+              .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+            require(process.waitFor() == 0, "Icon conversion failed")
+            Files.move(temporary, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+          finally Files.deleteIfExists(temporary)
+        target
+      }.toOption
+    }
 
   private def executable(path: String): Boolean = Files.isExecutable(Paths.get(path))
   private def exists(path: String): Boolean = Files.exists(Paths.get(path))

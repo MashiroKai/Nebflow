@@ -99,6 +99,7 @@
 
 .project-open-btn svg { width: 15px; height: 15px; }
 .project-open-btn { width: 40px; height: 40px; gap: 3px; }
+.project-open-current-icon, .project-open-app-icon img, .project-open-app-icon svg { width: 20px; height: 20px; object-fit: contain; }
 .project-open-menu {
   position: fixed; z-index: 10000; min-width: 180px; padding: 4px;
   border: 1px solid var(--color-border); border-radius: var(--ds-radius-input);

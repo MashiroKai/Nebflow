@@ -1112,6 +1112,7 @@ function createProjectCard(p) {
   const card = wrap.firstElementChild;
   if (!card) return null;
   bindProjectCard(card);
+  if (selectedProjectApp !== 'builtin') updateProjectOpenIcon(card.querySelector('.project-open-btn'));
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(card));
   return card;
 }
@@ -1197,6 +1198,35 @@ function playCardEnter(card) {
 }
 
 let selectedProjectApp = 'builtin';
+let selectedProjectIcon = '';
+const projectIconCache = new Map();
+async function projectAppIcon(app) {
+  if (!app.icon) return '';
+  if (!projectIconCache.has(app.icon)) {
+    projectIconCache.set(app.icon, fetch(app.icon, { headers: authHeaders() })
+      .then(response => response.ok ? response.blob() : Promise.reject())
+      .then(blob => URL.createObjectURL(blob)).catch(() => ''));
+  }
+  return projectIconCache.get(app.icon);
+}
+function updateProjectOpenIcon(button) {
+  const existing = button.querySelector('.project-open-current-icon, svg, i[data-lucide]');
+  if (selectedProjectApp === 'builtin') {
+    if (!existing || existing.classList.contains('project-open-current-icon')) {
+      existing?.remove();
+      const icon = document.createElement('i'); icon.dataset.lucide = 'folder-open';
+      button.prepend(icon);
+      import('./utils.js').then(({ createIconsIn }) => createIconsIn(button));
+    }
+  } else {
+    existing?.remove();
+    if (selectedProjectIcon) {
+      const image = document.createElement('img'); image.className = 'project-open-current-icon';
+      image.alt = ''; image.src = selectedProjectIcon; image.onerror = () => image.remove();
+      button.prepend(image);
+    }
+  }
+}
 let closeProjectOpenMenu = () => {};
 async function showProjectOpenMenu(button, name) {
   closeProjectOpenMenu();
@@ -1214,13 +1244,20 @@ async function showProjectOpenMenu(button, name) {
   menu.className = 'project-open-menu nf-glass';
   menu.setAttribute('role', 'menu');
   const options = [{ id: 'builtin', label: '内置' }, ...apps];
-  const icons = { builtin: '▣', finder: '▤', vscode: '⌘', terminal: '>_', iterm: '>_', 'file-manager': '▤' };
+  await Promise.all(apps.map(async app => { app.iconUrl = await projectAppIcon(app); }));
   for (const app of options) {
     const item = document.createElement('button');
     item.type = 'button';
     item.setAttribute('role', 'menuitemradio');
     item.setAttribute('aria-checked', String(app.id === selectedProjectApp));
-    item.innerHTML = `<span aria-hidden="true">${esc(icons[app.id] || '▣')}</span><span>${esc(app.label)}</span><span aria-hidden="true">${app.id === selectedProjectApp ? '✓' : ''}</span>`;
+    item.innerHTML = `<span class="project-open-app-icon"></span><span>${esc(app.label)}</span><span aria-hidden="true">${app.id === selectedProjectApp ? '✓' : ''}</span>`;
+    if (app.iconUrl) {
+      const image = document.createElement('img'); image.src = app.iconUrl; image.alt = '';
+      image.onerror = () => image.remove(); item.firstElementChild.append(image);
+    } else if (app.id === 'builtin') {
+      item.firstElementChild.innerHTML = '<i data-lucide="folder-open"></i>';
+      import('./utils.js').then(({ createIconsIn }) => createIconsIn(item));
+    }
     item.addEventListener('click', async () => {
       closeProjectOpenMenu();
       try {
@@ -1236,6 +1273,8 @@ async function showProjectOpenMenu(button, name) {
           if (!response.ok) throw new Error(result.error || 'Open failed');
         }
         selectedProjectApp = app.id;
+        selectedProjectIcon = app.iconUrl || '';
+        document.querySelectorAll('.project-open-btn').forEach(updateProjectOpenIcon);
       } catch (error) { window.__showToast?.(error.message || t('project.openWorkspaceFail'), 'error'); }
     });
     menu.append(item);

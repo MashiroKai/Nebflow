@@ -84,7 +84,20 @@ private[gateway] object ProjectsRoutes:
 
       case req @ GET -> Root / "project-open-apps" =>
         withAuth(req) {
-          Ok(Json.obj("apps" -> ProjectOpenApps.detect().map(a => Json.obj("id" -> a.id.asJson, "label" -> a.label.asJson)).asJson))
+          IO.blocking(ProjectOpenApps.detect().map { a =>
+            Json.obj("id" -> a.id.asJson, "label" -> a.label.asJson,
+              "icon" -> ProjectOpenApps.iconPath(a).map(_ => s"/api/project-open-apps/${a.id}/icon").asJson)
+          }).flatMap(apps => Ok(Json.obj("apps" -> apps.asJson)))
+        }
+
+      case req @ GET -> Root / "project-open-apps" / id / "icon" =>
+        withAuth(req) {
+          IO.blocking(ProjectOpenApps.detect().find(_.id == id).flatMap(ProjectOpenApps.iconPath).map(java.nio.file.Files.readAllBytes(_))).flatMap {
+            case None => NotFound()
+            case Some(bytes) => IO.pure(Response[IO](status = Status.Ok,
+              headers = Headers(org.http4s.headers.`Content-Type`(MediaType.image.png)),
+              body = fs2.Stream.emits(bytes).covary[IO]))
+          }
         }
 
       case req @ POST -> Root / "projects" / name / "open-in-app" =>
