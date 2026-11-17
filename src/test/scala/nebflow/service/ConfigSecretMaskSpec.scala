@@ -160,12 +160,54 @@ class ConfigSecretMaskSpec extends FunSuite:
 
     val disk = readDisk()
     // 真 key 存活（*** = 保留旧值）；被编辑字段落盘
-    assertEquals(apiKeyOf(disk, "kimi"), Some("sk-real-kimi-1"))
-    assertEquals(apiKeyOf(disk, "deepseek"), Some("sk-real-ds-2"))
+    for id <- List("kimi", "deepseek") do
+      assert(apiKeyOf(disk, id).exists(_.startsWith("secret:config-")))
+    val revealed = ConfigService.revealProviderApiKeys.unsafeRunSync()
+    assert(revealed.hcursor.downField("providers").downField("kimi").as[String].toOption.contains("sk-real-kimi-1"))
+    assert(revealed.hcursor.downField("providers").downField("deepseek").as[String].toOption.contains("sk-real-ds-2"))
     assertEquals(
       disk.hcursor.downField("llm").downField("providers").downField("kimi").downField("baseUrl").as[String],
       Right("https://kimi.example.com/v2")
     )
+  }
+
+  test("provider save, resolve and user readback repeat twenty times") {
+    for i <- 1 to 20 do
+      val key = s"fixture-cycle-$i"
+      val input = Json.obj("llm" -> Json.obj("providers" -> Json.obj("cycle" -> providerJson(key))))
+      assertEquals(ConfigService.updateConfig(input.noSpaces).unsafeRunSync(), Right(()))
+      val reference = apiKeyOf(readDisk(), "cycle").get
+      assert(reference.startsWith("secret:config-"))
+      assert(nebflow.core.secrets.ConfigCredentialStore.resolve(PathUtil.dataRoot, reference, "cycle-test", (_, _) => ()) == key)
+      val visible = ConfigService.revealProviderApiKeys.unsafeRunSync()
+      assert(visible.hcursor.downField("providers").downField("cycle").as[String].toOption.contains(key))
+      val agent = parse(ConfigService.getConfig.unsafeRunSync()).toOption.get
+      assertEquals(apiKeyOf(agent, "cycle"), Some("***"))
+  }
+
+  test("saving search credentials stores a reference that resolves") {
+    val input = Json.obj("search" -> Json.obj("apiKey" -> Json.fromString("fixture-search-secret")))
+    assertEquals(ConfigService.updateConfig(input.noSpaces).unsafeRunSync(), Right(()))
+    val key = readDisk().hcursor.downField("search").downField("apiKey").as[String].toOption.get
+    assert(key.startsWith("secret:config-"))
+    assert(nebflow.core.secrets.ConfigCredentialStore.resolve(PathUtil.dataRoot, key, "test", (_, _) => ()) == "fixture-search-secret")
+    assert(!os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName).contains("fixture-search-secret"))
+  }
+
+  test("snapshot externalizes legacy provider and search credentials") {
+    val backupDir = PathUtil.dataRoot / "backups"
+    if os.exists(backupDir) then os.remove.all(backupDir)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seedConfig())
+    ConfigSnapshot.save().unsafeRunSync()
+    val snapshots = ConfigSnapshot.snapshots()
+    assertEquals(snapshots.size, 1)
+    val saved = os.read(snapshots.head)
+    assert(!saved.contains("sk-real-kimi-1"))
+    assert(!saved.contains("sk-real-ds-2"))
+    assert(!saved.contains("zhipu-real-3"))
+    val parsed = parse(saved).toOption.get
+    assert(apiKeyOf(parsed, "kimi").exists(_.startsWith("secret:config-")))
+    assert(parsed.hcursor.downField("search").downField("apiKey").as[String].toOption.exists(_.startsWith("secret:config-")))
   }
 
   test("save through the masked surface lands nebflow.json owner-only (quickfix ① cross-check)") {

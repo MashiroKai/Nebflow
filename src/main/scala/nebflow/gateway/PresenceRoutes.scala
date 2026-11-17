@@ -2278,7 +2278,8 @@ private[gateway] object PresenceRoutes:
                     val apiKey =
                       // Masked key from the edit dialog — fall back to the stored one.
                       if rawKey.nonEmpty && rawKey != "***" then rawKey
-                      else stored.map(_.apiKey).getOrElse("")
+                      else stored.map(p => nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+                        nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-model-list")).getOrElse("")
                     ModelListFaces.models(face, base) match
                       case Nil => BadGateway(Json.obj("error" -> ModelListFaces.noEndpointMessage(face).asJson))
                       case urls =>
@@ -2286,6 +2287,12 @@ private[gateway] object PresenceRoutes:
                           case Right(models) => Ok(Json.obj("models" -> models.asJson))
                           case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
                         }
+                  }.handleErrorWith {
+                    case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                      BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                    case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                      BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                    case e => IO.raiseError(e)
                   }
             end if
           }
@@ -2327,7 +2334,10 @@ private[gateway] object PresenceRoutes:
               BadRequest(Json.obj("error" -> protocolDecoded.swap.toOption.get.asJson))
             else
               configRef.get.flatMap { cfg =>
-                val stored = cfg.llm.providers.get(name)
+                val stored = cfg.llm.providers.get(name).map { p =>
+                  p.copy(apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+                    nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-probe"))
+                }
                 (baseUrlOv, stored) match
                   case (None, None) =>
                     NotFound(Json.obj("error" -> s"unknown provider '$name'".asJson))
@@ -2341,6 +2351,12 @@ private[gateway] object PresenceRoutes:
                     val proto = protocolDecoded.toOption.flatten.getOrElse(LlmProtocol.OpenAI)
                     val key = apiKeyOv.getOrElse(stored.map(_.apiKey).getOrElse(""))
                     runProviderTest(proto, base, key, model, List(key) ++ stored.map(_.apiKey).toList)
+              }.handleErrorWith {
+                case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                  BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                  BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                case e => IO.raiseError(e)
               }
             end if
           }
