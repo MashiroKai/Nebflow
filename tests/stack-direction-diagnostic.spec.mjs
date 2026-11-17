@@ -30,7 +30,12 @@ for (const version of (process.env.STACK_VERSIONS || 'worktree').split(',')) {
        let source = version === 'worktree'
         ? execFileSync('git', ['show', 'HEAD:src/main/resources/web/js/popArtifacts.js'], {cwd:root,encoding:'utf8'})
         : execFileSync('git', ['show', `${version}:src/main/resources/web/js/popArtifacts.js`], {cwd:root,encoding:'utf8'});
-       if (process.env.STACK_NEGATIVE === '1') source = (await import('node:fs')).readFileSync(path.join(root, 'src/main/resources/web/js/popArtifacts.js'), 'utf8').replace('direction * 24', '(direction < 0 ? direction * 40 : direction * 24)');
+       if (process.env.STACK_NEGATIVE === '1') {
+        source = (await import('node:fs')).readFileSync(path.join(root, 'src/main/resources/web/js/popArtifacts.js'), 'utf8');
+        const needle = '{ transform: outgoingTarget, zIndex: 0, offset: 1 },';
+        if (!source.includes(needle)) throw new Error('negative-control target missing');
+        source = source.replace(needle, "{ transform: direction < 0 ? flyout : outgoingTarget, zIndex: 0, offset: .85 },\n      { transform: outgoingTarget, zIndex: 0, offset: 1 },");
+       }
        await page.route('**/src/main/resources/web/js/popArtifacts.js', r => r.fulfill({contentType:'text/javascript',body:source}));
       }
       await page.goto(base + '/tests/fixtures/pop-artifacts/harness.html');
@@ -55,20 +60,27 @@ for (const version of (process.env.STACK_VERSIONS || 'worktree').split(',')) {
        await page.evaluate(p=>window.__probeAnims.forEach(a=>a.currentTime=a.effect.getTiming().duration*p/100),p);
        await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
        samples.push(await view.locator('.media-layer').evaluateAll((els,p)=>({percent:p,layers:els.map(e=>({transform:getComputedStyle(e).transform,display:getComputedStyle(e).display,zIndex:getComputedStyle(e).zIndex}))}),p));
-       if ([0,25,50,75,100].includes(p)) await page.screenshot({path:`${out}/${version}-${viewport.width}-n${count}-${side}-${direction}-${p}.png`});
+       if ([0,25,50,75,80,85,90,95,100].includes(p)) await page.screenshot({path:`${out}/${version}-${viewport.width}-n${count}-${side}-${direction}-${p}.png`});
       }
-      results[direction]=samples; await page.close();
+      await page.evaluate(() => window.__probeAnims.forEach(a => a.finish()));
+      await expect.poll(() => view.locator('.media-layer').evaluateAll(ls => ls.findIndex(l => l.classList.contains('layer-front')))).toBe(direction === 'left' ? 1 : count - 1);
+      const settled = await view.locator('.media-layer').evaluateAll(els => els.map(e => ({transform:getComputedStyle(e).transform, inline:e.style.transform, display:getComputedStyle(e).display})));
+      expect(settled[0].inline).toBe('');
+      results[direction]=samples; results[`${direction}Settled`]=settled; await page.close();
      }
      writeFileSync(`${out}/${version}-${viewport.width}-n${count}-${side}.json`,JSON.stringify(results,null,2));
      if (version === 'worktree' || process.env.STACK_ASSERT_SYMMETRY === '1') {
-      const xAt = (dir, i) => Math.abs(Number(results[dir][i].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]));
-      const failures = [];
-      for (let i = 0; i < results.left.length; i++) {
-       const left = xAt('left', i), right = xAt('right', i);
-       const ratio = left === 0 && right === 0 ? 1 : left / right;
-       if (!(ratio >= 0.95 && ratio <= 1.05)) failures.push({percent:i*5,left,right,ratio});
+      // The outgoing card returns from the common apex to distinct fan slots.
+      // Normalize the return by each direction's signed apex-to-target distance.
+      const signedX = (dir, i) => Number(results[dir][i].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]);
+      const failures = [], values = [];
+      for (let i = 10; i <= 19; i++) {
+       const norm = dir => (signedX(dir,i)-signedX(dir,20))/(signedX(dir,10)-signedX(dir,20));
+       const left=norm('left'), right=norm('right');
+       values.push({percent:i*5,left,right});
+       if (!Number.isFinite(left) || !Number.isFinite(right) || Math.abs(left-right)>0.05) failures.push({percent:i*5,left,right});
       }
-      console.log(JSON.stringify({version,viewport:viewport.width,count,side,failures}));
+      console.log(JSON.stringify({version,viewport:viewport.width,count,side,values,failures}));
       expect(failures).toEqual([]);
      }
     });
