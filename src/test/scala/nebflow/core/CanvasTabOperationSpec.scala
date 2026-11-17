@@ -18,7 +18,7 @@ class CanvasTabOperationSpec extends CatsEffectSuite:
     for
       x <- s.applyOperation(op("1", a, active = "\"a\""), now)
       y <- s.applyOperation(op("2", b, active = "\"b\""), now)
-      z <- s.applyOperation(op("3", """[{"id":"a","title":"changed","type":"generic"}]"""), now)
+      z <- s.applyOperation(op("3", """[{"id":"a","title":"changed"}]"""), now)
     yield
       assertEquals(ids(y.toOption.get._1), Vector("a", "b"))
       assertEquals(z.toOption.get._1.hcursor.downField("tabs").downN(0).get[String]("title").toOption, Some("changed"))
