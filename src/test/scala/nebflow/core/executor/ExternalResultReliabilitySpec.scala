@@ -259,6 +259,36 @@ class ExternalResultReliabilitySpec extends CatsEffectSuite:
     }
   }
 
+  test("finished external session continues in a new subprocess and deduplicates the message id") {
+    fixture.use { f =>
+      val marker = "finished continuation input marker"
+      val key = "finished-continuation-test-id"
+      for
+        run <- spawn(f, "codex", List(
+          """{"type":"thread.started","thread_id":"synthetic-finished-thread"}""",
+          codexMessage("reply", "first report"), codexEnd))
+        first <- settle(f, run)
+        record <- IO.blocking(nebflow.core.delegate.DelegateRegistry.find(run.id).get)
+        resolve = (_: String) => Right(ExecutorRegistry.ResolvedSelection.External(
+          ExecutorRegistry.defs.find(_.id == "codex").get, run.script.bin.toString))
+        receipt <- ExternalSessionRunner.continueExternalResolved(record, marker, None, None, f.resources, key, resolve)
+        _ = assert(receipt.isRight, receipt.toString)
+        argv <- eventually("finished continuation subprocess argv")(
+          IO.blocking(os.read(run.script.bin / os.up / "argv"))
+        )(_.contains(marker))
+        row <- eventually("second terminal run")(
+          f.freshTasks.findByTaskId(run.id)
+        )(_.exists(t => t.runId != first.row.runId && t.executionStatus.contains("finished") && t.notificationPending.contains(false)))
+        _ <- eventually("second run detachment")(f.resources.agentRegistry.get)(r => !r.contains(run.id))
+        messages <- f.freshSessions.loadMessagesForSession(run.id)
+        duplicate <- ExternalSessionRunner.continueExternalResolved(record, marker, None, None, f.resources, key, resolve)
+        _ = assert(duplicate.toOption.exists(_.contains("Duplicate")), duplicate.toString)
+        _ = assert(argv.contains(marker), argv)
+        _ = assert(messages.exists(m => m.role == MessageRole.User && m.textContent == marker && m.runId == row.flatMap(_.runId)))
+      yield ()
+    }
+  }
+
   test("Codex assistant text survives a textless turn.completed and a missing parent") {
     fixture.use { f =>
       for

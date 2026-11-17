@@ -199,6 +199,18 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       rootCtx(resources, system, parentSid)
     )
 
+  test("nonexistent external delegate mail returns a clear not-found error"):
+    val system = ActorSystem("external-mail-not-found")
+    for
+      resources <- mkResources(system, hang = true)
+      result <- continuationMail(resources, system, "not-found-parent", "external-codex-doesnotexist")
+      _ <- system.stopAll
+    yield
+      assert(result.isLeft, result.toString)
+      val error = result.swap.toOption.get.message
+      assert(error.contains("DELEGATE_NOT_FOUND"), error)
+      assert(!error.contains("null"), error)
+
   test("external registry entry without actor ref returns an explicit error, not a null dereference"):
     val id = "external-mail-null-ref-regression"
     val parent = "external-mail-parent"

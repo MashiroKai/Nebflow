@@ -106,6 +106,13 @@ object ExternalSessionRunner:
   private def currentExecution(sessionId: String, run: Execution): IO[Boolean] =
     executions.get.map(_.get(sessionId).exists(_.runId == run.runId))
 
+  // External continuation boot recovery is not supported. Pending inputs remain on disk
+  // until another continuation triggers a drain. Taken inputs block automatic draining:
+  // an operator must inspect the transcript and external side effects, reconcile the
+  // ambiguous run, then use a supported manual recovery procedure before retrying.
+  // InputMailbox retains only a bounded set of delivered IDs. Even within that window,
+  // launching a process and committing its outcome are not atomic: exactly-once external
+  // side effects cannot be guaranteed across a crash.
   private val continuationProducer = "external-delegate-mail"
 
   /** spawn/续聊共用参数（Delegate 外部腿与 Mail 续聊腿一条通路）。 */
@@ -249,6 +256,18 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     resources: AgentRuntimePort,
     messageId: String = java.util.UUID.randomUUID().toString
   ): IO[Either[String, String]] =
+    continueExternalResolved(record, message, parentRef, wsSend, resources, messageId,
+      id => ExecutorRegistry.resolveRequested(Some(id)))
+
+  private[executor] def continueExternalResolved(
+    record: DelegateRegistry.Record,
+    message: String,
+    parentRef: Option[ActorRef[AgentCommand]],
+    wsSend: Option[Json => IO[Unit]],
+    resources: AgentRuntimePort,
+    messageId: String,
+    resolve: String => Either[String, ExecutorRegistry.ResolvedSelection]
+  ): IO[Either[String, String]] =
     if record.executor == ExecutorRegistry.DefaultId then
       // 前置违例（内部记录误入外部腿）：显式拒绝，不猜路由。
       IO.pure(
@@ -265,7 +284,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             )
           )
         case Some(ex) =>
-          ExecutorRegistry.resolveRequested(Some(ex.id)) match
+          resolve(ex.id) match
             case Left(err) =>
               // CLI 被卸载 / 检测丢失：显式失败，绝不回落内置执行器。
               IO.pure(Left(s"Cannot continue external delegate '${record.id}': $err"))
