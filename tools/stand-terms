@@ -235,6 +235,28 @@ def run_dump(script, vault, project):
 # ── 文档元数据（只补标题/类型/状态；词条一律走抽取出口）──────────────
 
 
+def extract_document_summary(text):
+    """Single source adapter; return only a valid frontmatter summary or ''.
+
+    The future visible-summary-block policy belongs here, not in the indexer.
+    Length is measured in Unicode code points after removing scalar quotes.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != '---':
+        return ''
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() == '---'), None)
+    if end is None:
+        return ''
+    for line in lines[1:end]:
+        match = FM_KV_RE.match(line)
+        if match and match.group(1) == 'summary':
+            value = match.group(2).strip()
+            if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+                value = value[1:-1]
+            return value if 40 <= len(value) <= 100 else ''
+    return ''
+
+
 def parse_doc_meta(text, rel):
     """→ (title, doc_type, status)。front-matter 顶层标量 + 首个围栏外 H1。"""
     doc_type = status = ""
@@ -293,7 +315,7 @@ def scan_documents(vault):
         title, doc_type, status = parse_doc_meta(text, rel)
         rows.append({"rel": rel, "abs_path": str(path), "title": title,
                      "doc_type": doc_type, "status": status,
-                     "mtime": mtime, "size": size})
+                     "mtime": mtime, "size": size, "summary": extract_document_summary(text)})
     rows.sort(key=lambda r: r["rel"])
     return rows
 
@@ -417,6 +439,8 @@ SELECT t.id                                   AS term_id,
        t.definition                           AS definition,
        t.source                               AS source,
        t.updated_at                           AS updated_at,
+       d.status                               AS status,
+       d.abs_path                             AS abs_path,
        COALESCE((SELECT group_concat(a.alias, ',')
                  FROM term_aliases a WHERE a.term_id = t.id), '')        AS aliases,
        COALESCE((SELECT group_concat(x.facet || '/' || x.value, ',')
@@ -502,6 +526,7 @@ def cmd_rebuild(args, data_root):
     db_path = Path(os.path.expanduser(str(args.db))) if args.db else data_root.joinpath(*INDEX_REL)
     now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     con = connect(db_path, create=True)
+    con.execute("DROP VIEW IF EXISTS v_term_summary")
     con.executescript(SCHEMA_SQL)
 
     stats = {"vaults": [], "documents": 0, "terms": 0, "aliases": 0,
@@ -517,6 +542,14 @@ def cmd_rebuild(args, data_root):
                 data = run_dump(script, vault, project)
                 api_terms = data["terms"]
                 doc_rows = {r["rel"]: r for r in scan_documents(vault)}
+                # A document summary is a term but not a declared block anchor;
+                # reserve the empty anchor and preserve the file's own mtime.
+                for row in doc_rows.values():
+                    if row['summary']:
+                        api_terms.append({"rel": row['rel'], "name": row['title'],
+                                          "anchor": "", "line": 0, "end_line": 0,
+                                          "definition": row['summary'], "source": "document_summary",
+                                          "updated_at": datetime.fromtimestamp(row['mtime']).isoformat()})
                 term_counts = {}
                 for t in api_terms:
                     term_counts[t["rel"]] = term_counts.get(t["rel"], 0) + 1
@@ -564,7 +597,7 @@ def cmd_rebuild(args, data_root):
                         " definition, source, raw_name, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                         (doc_id, display, key, anchor, int(t["line"]), int(t["end_line"]),
                          t.get("definition", ""), t.get("source", "doc"),
-                         t["name"], now))
+                         t["name"], t.get("updated_at", now)))
                     term_id = cur.lastrowid
                     v_terms += 1
                     keys.setdefault(key, []).append((term_id, t.get("source", "doc")))
@@ -765,7 +798,11 @@ def summary_json(item, with_definition=True):
         "ref_count": item["ref_count"],
         "updated_at": item["updated_at"],
     }
-    if with_definition:
+    if item['source'] == 'document_summary':
+        data['definition'] = item['definition']
+        data['status'] = item['status']
+        data['abs_path'] = item['abs_path']
+    elif with_definition:
         data["definition"] = short_definition(item["definition"], item["name"])
     return data
 
@@ -774,6 +811,10 @@ def render_term_detail(item, index=None):
     head = f"词条：{item['name']}"
     if index is not None:
         head = f"[{index}] " + head
+    if item['source'] == 'document_summary':
+        return '\n'.join([head, f"  来源：文档提要", f"  路径：{item['abs_path']}",
+                          f"  状态：{item['status'] or '-'}　更新：{item['updated_at']}",
+                          f"  提要：{item['definition']}"])
     lines = [head]
     aliases = [a for a in (item["aliases"] or "").split(",") if a]
     lines.append(f"  别名：{'、'.join(aliases) if aliases else '-'}")
@@ -871,6 +912,9 @@ def cmd_list(con, args, root_project):
     if limit and limit > 0 and len(rows) > limit:
         note = f"（显示 {limit}/{len(rows)} 条；--limit 0 看全部）"
     print(render_terms(shown, note))
+    for item in shown:
+        if item['source'] == 'document_summary':
+            print('\n' + render_term_detail(item))
     return EXIT_OK
 
 
@@ -962,9 +1006,10 @@ def cmd_doc(con, args, root_project):
             continue
         rows = [(t["name"], t["aliases"] or "-", t["topic_tags"] or "-", t["source"],
                  str(t["line"]), str(t["ref_count"])) for t in item["terms_raw"]]
+        details = [render_term_detail(t) for t in item['terms_raw'] if t['source'] == 'document_summary']
         blocks.append(head + "\n" + meta + "\n"
                       + render_table(["词条", "别名", "主题标签", "来源", "行", "引用"], rows,
-                                     aligns="llllrr"))
+                                     aligns="llllrr") + ('\n' + '\n'.join(details) if details else ''))
     print("\n\n".join(blocks))
     if len(payload) > 1:
         print(f"\n— {len(payload)} 个文档同名命中（用完整 rel 可唯一定位）")
@@ -1135,7 +1180,7 @@ vault 与数据根：
     ls = sub.add_parser("list", parents=[common], help="按项目/主题/来源过滤列词条")
     ls.add_argument("--project", help="按 #proj/<slug> 标签过滤（不是文档所属项目；接受 stand / proj/stand / #proj/stand）")
     ls.add_argument("--topic", help="按 #topic/<slug> 标签过滤（接受 term-index / #topic/term-index）")
-    ls.add_argument("--source", choices=("glossary", "doc"), help="来源：glossary=词表，doc=文档声明块")
+    ls.add_argument("--source", choices=("glossary", "doc", "document_summary"), help="来源：glossary=词表，doc=文档声明块，document_summary=文档提要")
     ls.add_argument("--limit", type=int, default=50, help="最多显示 N 条（0 = 全部；默认 50）")
 
     sh = sub.add_parser("show", parents=[common], help="按词条名显示详情（精确优先）")
