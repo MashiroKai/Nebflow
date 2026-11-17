@@ -1,7 +1,7 @@
 // model-chain-slim.spec.mjs — 设置页渐进披露模型选择验收。
 // 冻结意图见 .stand/docs/settings-progressive-disclosure-zh__20261107_230657__flow-453d463d.md：
 // 每类会话单选一个模型，不再把回退链当作设置页契约；摘要可展开、说明可读。
-// 当前实现仍只挂载 Nebula 面，五类设置的完整度另由冻结规格验收，不由本 spec 冒充覆盖。
+// 五类独立角色在设置页逐行呈现，保存沿用既有单角色 PUT 通道；其余冻结验收另行列项。
 // 双引擎（Chromium + WebKit）× 深/浅主题 × 桌面 + Chromium 手机；功能腿验证单模型替换即存。
 //
 // 运行：node tests/model-chain-slim.spec.mjs                    # 双引擎
@@ -164,10 +164,20 @@ async function openSettings(page, { mobile }) {
   }
   const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
   if (await disclosure.getAttribute('aria-expanded') !== 'true') await disclosure.click();
-  await page.waitForSelector('#model-chain-section-body .mp-settings-role-tab', { state: 'visible', timeout: 15000 });
-  await page.waitForSelector('#model-chain-section-body .mp-settings-role-model', { state: 'visible', timeout: 10000 });
-  await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'center' }));
+  await page.waitForSelector('#model-chain-section-body [data-role="Nebula"] .mp-settings-role-model', { state: 'visible', timeout: 15000 });
+  await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'start' }));
   await sleep(350);
+  if (mobile) {
+    const clearance = await page.evaluate(() => {
+      const cardTitle = document.querySelector('#model-chain-section > .set-card-title');
+      const disclosure = document.querySelector('#model-chain-disclosure');
+      if (!cardTitle || !disclosure) return null;
+      const cardRect = cardTitle.getBoundingClientRect();
+      return { cardTitleTop: cardRect.top, disclosureTop: disclosure.getBoundingClientRect().top };
+    });
+    ok('mobile/clearance', '模型卡标题在视口内可见',
+      !!clearance && clearance.cardTitleTop >= 0, JSON.stringify(clearance));
+  }
 }
 
 /* ─────────────── 单腿：断言 + 实拍 ─────────────── */
@@ -218,15 +228,18 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
       `h=${hint.h} box=${hint.box} scroll=${hint.scroll}`);
   }
 
-  // 五类独立可切换；每个类别展示同一单模型下拉，不显示后备链编辑器。
-  const roles = await page.evaluate(() => ({
-    tabs: [...document.querySelectorAll('#model-chain-section-body [role="tab"]')].map((e) => e.textContent.trim()),
-    selected: document.querySelector('#model-chain-section-body [role="tab"][aria-selected="true"]')?.textContent.trim(),
-    select: document.querySelector('#model-chain-section-body .mp-settings-role-model')?.tagName,
-    options: document.querySelector('#model-chain-section-body .mp-settings-role-model')?.options.length || 0,
-  }));
-  ok(tag, '五类角色独立切换器齐全', roles.tabs.length === 5, JSON.stringify(roles));
-  ok(tag, '当前类别单模型选择器带可用模型', roles.selected && roles.select === 'SELECT' && roles.options >= 2, JSON.stringify(roles));
+  // 五类角色各有独立有效值与选择器，不显示后备链编辑器。
+  const roles = await page.evaluate(() => [...document.querySelectorAll('#model-chain-section-body [data-role]')].map((row) => ({
+    role: row.dataset.role,
+    label: row.querySelector('label')?.textContent.trim(),
+    select: row.querySelector('select')?.tagName,
+    options: row.querySelector('select')?.options.length || 0,
+    hidden: row.hidden,
+    height: row.querySelector('select')?.getBoundingClientRect().height || 0,
+    overflow: row.scrollWidth > row.clientWidth,
+  })));
+  ok(tag, '五类角色独立行齐全', roles.length === 5 && roles.map((r) => r.role).join(',') === 'Nebula,kernel,project-dispatcher,node,subagent', JSON.stringify(roles));
+  ok(tag, '五类角色均有单模型选择器、继承状态和44px触控高度', roles.every((r) => r.select === 'SELECT' && r.options >= 2 && r.height >= 44 && !r.overflow), JSON.stringify(roles));
 
   // i18n 双语键：新文案在册、旧键连根拔除、两字典同长
   const dict = await page.evaluate(async (retired) => {
@@ -252,12 +265,13 @@ async function leg(engineName, browser, { theme, locale = 'zh-CN', mobile = fals
   ok(tag, 'i18n 删键对称（差值 = 存量基线 7）', dict.zhCount - dict.enCount === 7,
     `zh=${dict.zhCount} en=${dict.enCount} Δ=${dict.zhCount - dict.enCount}`);
 
-  // 实拍：五类别各自截取当前编辑视图，确保不是仅有默认摘要基线。
+  // 实拍：五类角色各自独立在位，截图确认同屏可见。
   const roleKeys = ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'];
-  for (let i = 0; i < roleKeys.length; i++) {
-    await page.locator('#model-chain-section-body [role="tab"]').nth(i).click();
-    const roleShot = join(SHOTS_DIR, `role-${roleKeys[i]}-${engineName}-${mobile ? 'mobile' : 'desktop'}-${theme}${locale === 'en' ? '-en' : ''}.png`);
-    await page.locator('#model-chain-section').screenshot({ path: roleShot });
+  for (const role of roleKeys) {
+    const row = page.locator(`#model-chain-section-body [data-role="${role}"]`);
+    await row.scrollIntoViewIfNeeded();
+    const roleShot = join(SHOTS_DIR, `role-${role}-${engineName}-${mobile ? 'mobile' : 'desktop'}-${theme}${locale === 'en' ? '-en' : ''}.png`);
+    await row.screenshot({ path: roleShot });
   }
   const shot = join(SHOTS_DIR, `chain-${engineName}-${mobile ? 'mobile' : 'desktop'}-${theme}${locale === 'en' ? '-en' : ''}.png`);
   await page.locator('#model-chain-section').screenshot({ path: shot });
@@ -280,13 +294,12 @@ async function functionalLeg(browser) {
   });
   await openSettings(page, { mobile: false });
 
-  // Each category writes through the existing role endpoint and reads back independently.
+  // Each category writes through its existing role endpoint and reads back independently.
   for (const role of ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent']) {
-    const tab = page.locator(`#model-chain-section-body [role="tab"]`).nth(['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].indexOf(role));
-    await tab.click();
+    const select = page.locator(`#model-role-select-${role}`);
     const saved = page.waitForResponse((response) => response.request().method() === 'PUT' &&
       new URL(response.url()).pathname.endsWith(`/agents/${encodeURIComponent(role)}/model`));
-    await page.selectOption('#model-chain-section-body .mp-settings-role-model', 'kimi/kimi-for-coding');
+    await select.selectOption('kimi/kimi-for-coding');
     await saved;
     await page.waitForResponse((response) => response.request().method() === 'GET' &&
       new URL(response.url()).pathname.endsWith(`/agents/${encodeURIComponent(role)}/model`));

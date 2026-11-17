@@ -194,24 +194,40 @@ const roleState = new Map();
 
 function roleLabel(role) { return t(ROLE_KEY[role] || role, rootNameParams()); }
 
-function fetchModelOf(role) {
-  return fetch(`/api/agents/${encodeURIComponent(role)}/model`, { headers: authHeaders() })
-    .then(r => (r.ok ? r.json() : null))
-    .catch(() => null);
+async function fetchModelOf(role, onUpdate = () => {}) {
+  const st = roleState.get(role) || { chain: null, expanded: false };
+  roleState.set(role, st);
+  const path = `/api/agents/${encodeURIComponent(role)}/model`;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const response = await fetch(path, { headers: authHeaders() });
+      if (response.status === 429) {
+        const value = response.headers.get('Retry-After');
+        const seconds = value && /^\d+$/.test(value) ? Number(value) :
+          value && Number.isFinite(Date.parse(value)) ? Math.ceil((Date.parse(value) - Date.now()) / 1000) : 2 ** attempt;
+        const delay = Math.max(1, Math.min(60, seconds));
+        st.data = null;
+        st.error = { kind: attempt === 3 ? 'rate-exhausted' : 'rate', detail: `HTTP 429 · ${path}`, seconds: delay };
+        onUpdate();
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, delay * 1000));
+        continue;
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status} · GET ${path}`);
+      st.data = await response.json();
+      st.error = null;
+      st.chain = st.data && st.data.mode === 'explicit' ? chainRefs(st.data.chain) : null;
+      return;
+    } catch (error) {
+      st.data = null;
+      st.error = { kind: 'error', detail: `GET ${path}: ${String(error?.message || error)}` };
+      onUpdate();
+      return;
+    }
+  }
 }
 
-async function fetchAllRoles() {
-  const roles = [...ROLES, SMALL_LLM];
-  const results = await Promise.all(roles.map(fetchModelOf));
-  roles.forEach((role, i) => {
-    const st = roleState.get(role) || { chain: null, expanded: false };
-    st.data = results[i];
-    // Re-sync the working copy from disk on every fetch. Local edits are
-    // persisted through saveChain() before any refresh runs, so this sync
-    // never clobbers an in-panel edit.
-    st.chain = st.data && st.data.mode === 'explicit' ? chainRefs(st.data.chain) : null;
-    roleState.set(role, st);
-  });
+async function fetchAllRoles(onUpdate = () => {}) {
+  for (const role of [...ROLES, SMALL_LLM]) await fetchModelOf(role, onUpdate);
 }
 
 /** 台账 #937：全部角色读数失败 = 面板不可用态（未登录 / 引擎不可达）。
@@ -572,78 +588,84 @@ function buildFollowerBlock(container, role, commit) {
  * 追加（该面自己读过，失败即隐藏自己那组）。
  * @param {HTMLElement} container #model-chain-section-body
  */
-let settingsActiveRole = 'Nebula';
-
-function renderSettingsRoleSelector(container) {
-  const tabs = document.createElement('div');
-  tabs.className = 'mp-settings-role-tabs';
-  tabs.setAttribute('role', 'tablist');
-  tabs.setAttribute('aria-label', t('settings.modelRoleTabs'));
+function renderSettingsRoleSelector(container, refreshTarget = container) {
   for (const role of ROLES) {
-    const tab = document.createElement('button');
-    tab.type = 'button';
-    tab.className = 'cfg-btn cfg-btn-sm mp-settings-role-tab';
-    tab.textContent = roleLabel(role);
-    tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-selected', role === settingsActiveRole ? 'true' : 'false');
-    tab.addEventListener('click', () => {
-      settingsActiveRole = role;
-      renderChainSectionBody(container);
-    });
-    tabs.appendChild(tab);
-  }
-  container.appendChild(tabs);
+    const st = roleState.get(role);
+    const row = document.createElement('div');
+    row.className = 'mp-roleblock mp-settings-role-panel';
+    row.dataset.role = role;
+    const label = document.createElement('label');
+    label.className = 'mp-role-head mp-role-name';
+    label.htmlFor = `model-role-select-${role}`;
+    label.textContent = roleLabel(role);
+    row.appendChild(label);
 
-  const role = settingsActiveRole;
-  const st = roleState.get(role);
-  const panel = document.createElement('div');
-  panel.className = 'mp-settings-role-panel';
-  panel.setAttribute('role', 'tabpanel');
-  if (!st?.data) {
-    panel.textContent = t('model.loadFailed');
-  } else {
-    const effective = chainRefs(st.data.effectiveChain)[0] || '';
-    const status = document.createElement('div');
-    status.className = 'mp-note';
-    status.textContent = role === 'Nebula'
-      ? t('model.mainChain', rootNameParams())
-      : st.data.mode === 'explicit' ? t('model.independent') : t('model.followsNebula', rootNameParams());
-    panel.appendChild(status);
-    const select = document.createElement('select');
-    select.className = 'mp-add-select mp-settings-role-model';
-    select.setAttribute('aria-label', `${roleLabel(role)} — ${t('model.addModel')}`);
-    const refs = getAllModelRefs();
-    if (role !== 'Nebula') {
-      const inherit = document.createElement('option');
-      inherit.value = '';
-      inherit.textContent = t('model.followsNebula', rootNameParams());
-      select.appendChild(inherit);
+    if (!st?.data) {
+      const status = document.createElement('div');
+      status.className = 'mp-note';
+      status.setAttribute('role', 'status');
+      status.textContent = st?.error?.kind === 'rate'
+        ? t('model.rateLimited', { n: st.error.seconds })
+        : st?.error?.kind === 'rate-exhausted' ? t('model.rateLimitedExhausted') : t('model.loadFailed');
+      row.appendChild(status);
+      if (st?.error?.kind === 'rate-exhausted') {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'cfg-btn cfg-btn-sm';
+        retry.textContent = t('model.retry');
+        retry.addEventListener('click', () => void refreshChainSection(refreshTarget));
+        row.appendChild(retry);
+      }
+      if (st?.error?.detail && st.error.kind === 'error') {
+        const detail = document.createElement('code');
+        detail.textContent = st.error.detail;
+        row.appendChild(detail);
+      }
+    } else {
+      const effective = chainRefs(st.data.effectiveChain)[0] || '';
+      const status = document.createElement('div');
+      status.className = 'mp-note';
+      status.textContent = role === 'Nebula'
+        ? t('model.mainChain', rootNameParams())
+        : st.data.mode === 'explicit' ? t('model.independent') : t('model.followsNebula', rootNameParams());
+      row.appendChild(status);
+      const select = document.createElement('select');
+      select.id = `model-role-select-${role}`;
+      select.className = 'mp-add-select mp-settings-role-model';
+      select.setAttribute('aria-label', `${roleLabel(role)} — ${t('model.addModel')}`);
+      const refs = getAllModelRefs();
+      if (role !== 'Nebula') {
+        const inherit = document.createElement('option');
+        inherit.value = '';
+        inherit.textContent = t('model.followsNebula', rootNameParams());
+        select.appendChild(inherit);
+      }
+      for (const ref of refs) {
+        const option = document.createElement('option');
+        option.value = ref;
+        option.textContent = ref;
+        if (ref === effective && (role === 'Nebula' || st.data.mode === 'explicit')) option.selected = true;
+        select.appendChild(option);
+      }
+      if (!effective && role === 'Nebula') {
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = t('model.seedNote');
+        placeholder.selected = true;
+        select.insertBefore(placeholder, select.firstChild);
+      }
+      select.addEventListener('change', () => {
+        void putChain(role, select.value ? [select.value] : null);
+      });
+      row.appendChild(select);
     }
-    for (const ref of refs) {
-      const option = document.createElement('option');
-      option.value = ref;
-      option.textContent = ref;
-      if (ref === effective && (role === 'Nebula' || st.data.mode === 'explicit')) option.selected = true;
-      select.appendChild(option);
-    }
-    if (!effective && role === 'Nebula') {
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = t('model.seedNote');
-      placeholder.selected = true;
-      select.insertBefore(placeholder, select.firstChild);
-    }
-    select.addEventListener('change', () => {
-      void putChain(role, select.value ? [select.value] : null);
-    });
-    panel.appendChild(select);
+    container.appendChild(row);
   }
-  container.appendChild(panel);
 }
 
 function renderChainSectionBody(container) {
-  container.replaceChildren();
-  renderSettingsRoleSelector(container);
+  const draft = document.createElement('div');
+  renderSettingsRoleSelector(draft, container);
   const small = roleState.get(SMALL_LLM);
   const row = document.createElement('div');
   row.id = 'small-llm-settings-row';
@@ -660,20 +682,54 @@ function renderChainSectionBody(container) {
     const target = /** @type {HTMLSelectElement} */ (event.target);
     void putChain(SMALL_LLM, target.value ? [target.value] : null);
   });
-  container.appendChild(row);
+  if (small?.error) {
+    const message = document.createElement('div');
+    message.className = 'mp-note';
+    message.textContent = small.error.kind === 'rate' ? t('model.rateLimited', { n: small.error.seconds }) :
+      small.error.kind === 'rate-exhausted' ? t('model.rateLimitedExhausted') : `${t('model.loadFailed')} · ${small.error.detail}`;
+    row.appendChild(message);
+    if (small.error.kind === 'rate-exhausted') {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'cfg-btn cfg-btn-sm';
+      retry.textContent = t('model.retry');
+      retry.addEventListener('click', () => void refreshChainSection(container));
+      row.appendChild(retry);
+    }
+  }
+  draft.appendChild(row);
+  // Keep unchanged rows and controls mounted so saves do not steal focus or scroll.
+  for (const fresh of [...draft.children]) {
+    const key = fresh.dataset.role ? `[data-role="${fresh.dataset.role}"]` : '#small-llm-settings-row';
+    const current = container.querySelector(key);
+    if (!current) container.appendChild(fresh);
+    else if (current.outerHTML !== fresh.outerHTML) {
+      const active = current.contains(document.activeElement) ? document.activeElement : null;
+      const activeId = active?.id;
+      const activeSelect = active?.tagName === 'SELECT';
+      current.replaceWith(fresh);
+      if (activeId) fresh.querySelector(`#${CSS.escape(activeId)}`)?.focus({ preventScroll: true });
+      else if (activeSelect) fresh.querySelector('select')?.focus({ preventScroll: true });
+    }
+  }
   // Image generation remains a separate provider selector, not a conversation role.
-  const list = document.createElement('div');
-  list.className = 'mp-group-list';
-  container.appendChild(list);
+  let list = container.querySelector('.mp-group-list');
+  if (!list) {
+    list = document.createElement('div');
+    list.className = 'mp-group-list';
+    container.appendChild(list);
+  }
   renderSwitchGroups(list, { collapsible: true });
 }
 
 /** 拉取 Nebula 最新读数 + 两面状态投影 → 重绘节内容（seq 守卫丢弃陈旧响应）。 */
 async function refreshChainSection(container) {
   const seq = ++chainSectionSeq;
-  await Promise.all([fetchFaceStatuses(), fetchAllRoles()]);
-  if (seq !== chainSectionSeq) return;
-  if (container.isConnected) renderChainSectionBody(container);
+  const update = () => {
+    if (seq === chainSectionSeq && container.isConnected) renderChainSectionBody(container);
+  };
+  await Promise.all([fetchFaceStatuses(), fetchAllRoles(update)]);
+  update();
 }
 
 /**

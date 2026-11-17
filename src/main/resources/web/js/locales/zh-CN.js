@@ -1357,7 +1357,7 @@ export default {
   // 压到一行以内（超长删繁就简，不再折行）。
   'settings.modelChainTitle': '模型（按会话类别）',
   'settings.modelChainDisclosureTitle': '模型（按会话类别）',
-  'settings.modelChainSectionHint': '每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。',
+  'settings.modelChainSectionHint': '各会话类别的模型与 /model 同步。',
   'settings.modelRoleTabs': '选择会话类别',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
@@ -1392,6 +1392,8 @@ export default {
   'model.seedNote': '未配置，将使用首个可用模型',
   'model.singleModelNote': '单模型：模型失效时会话进入失效态、静默等待恢复；可在子代理面板或具体对话框里切换模型',
   'model.loadFailed': '加载失败',
+  'model.rateLimited': '请求过于频繁，{n} 秒后重试',
+  'model.rateLimitedExhausted': '请求过于频繁，请稍后重试',
   // 台账 #937：面板级降级面（全角色读数失败 —— 静默僵面修复）。提示给全
   // 真因两支 + 恢复路径。
   'model.loadFailedHint': '未登录或引擎不可达——登录（见顶部横幅）后点「重试」重新拉取。',

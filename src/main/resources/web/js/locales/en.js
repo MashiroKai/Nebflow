@@ -1403,7 +1403,7 @@ export default {
   // 压到一行以内（超长删繁就简，不再折行）。
   'settings.modelChainTitle': 'Model (per session class)',
   'settings.modelChainDisclosureTitle': 'Model (per session class)',
-  'settings.modelChainSectionHint': 'One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn.',
+  'settings.modelChainSectionHint': 'Session class models sync with /model.',
   'settings.modelRoleTabs': 'Choose a conversation category',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
@@ -1438,6 +1438,8 @@ export default {
   'model.seedNote': 'Not configured — the first available model will be used',
   'model.singleModelNote': 'Single model: on failure the session is marked invalid and waits silently — switch it from the sub-agent panel or the dialog',
   'model.loadFailed': 'Failed to load',
+  'model.rateLimited': 'Too many requests. Retrying in {n} seconds.',
+  'model.rateLimitedExhausted': 'Too many requests. Please retry later.',
   // Ledger #937: panel-wide degraded face (all role reads failed — silent-dead
   // panel fix). Hint names the two real causes + the recovery path.
   'model.loadFailedHint': 'Not signed in, or the engine is unreachable — sign in (see the top banner), then retry.',
