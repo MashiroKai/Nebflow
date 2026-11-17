@@ -33,7 +33,9 @@ function check(name, ok, extra = '') {
 }
 
 const browser = await chromium.launch();
-const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+const theme = process.env.SEARCH_TEST_THEME || 'light';
+const mobile = process.env.SEARCH_TEST_MOBILE === '1';
+const page = await (await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, colorScheme: theme })).newPage();
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -77,6 +79,17 @@ await page.waitForFunction(async (sid) => {
   return s.activeSessionId === sid && s.ws && s.ws.readyState === 1;
 }, SID, { timeout: 15000 });
 await page.waitForTimeout(300);
+await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+if (mobile) {
+  await page.evaluate(async () => {
+    document.body.classList.add('mobile-layer');
+    (await import('/js/chatSearch.js')).openSearchModal();
+  });
+  await page.waitForSelector('#search-overlay.on');
+  check('mobile search filters hidden on actual page', await page.locator('.search-filters').evaluate(el => getComputedStyle(el).display === 'none'));
+  await browser.close();
+  if (checks.some(c => !c.ok)) process.exitCode = 1;
+} else {
 
 // ── Open the modal ──
 await page.click('#search-btn');
@@ -145,6 +158,9 @@ for (const id of ['search-scope', 'search-agent']) {
   await trigger.click();
   const menu = page.locator('.project-open-menu');
   check(`${id} opens with a checked item`, await menu.isVisible() && await menu.locator('[aria-checked="true"]').count() === 1);
+  const style = await menu.evaluate(el => { const s = getComputedStyle(el); return { bg: s.backgroundColor, radius: s.borderRadius, shadow: s.boxShadow }; });
+  const background = theme === 'dark' ? 'rgba(24, 28, 38, 0.94)' : 'rgba(255, 255, 255, 0.97)';
+  check(`${id} ${theme} computed menu style`, style.bg === background && style.radius === '8px' && style.shadow !== 'none', JSON.stringify(style));
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Escape');
   check(`${id} escape restores focus`, await menu.count() === 0 && await trigger.evaluate(el => document.activeElement === el));
@@ -300,4 +316,5 @@ check('no page errors', pageErrors.length === 0, pageErrors.join('; '));
 const failed = checks.filter(c => !c.ok);
 console.log(`\n${checks.length - failed.length}/${checks.length} passed`);
 await browser.close();
-process.exit(failed.length ? 1 : 0);
+process.exitCode = failed.length ? 1 : 0;
+}
