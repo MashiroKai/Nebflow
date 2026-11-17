@@ -26,6 +26,12 @@ test('registry names are unique and all checks have explicit bounded argv', () =
   assert.throws(() => selectChecks('unknown'));
   assert.throws(() => selectChecks('sdd-changed'));
   assert.throws(() => selectChecks('static', 'main'));
+  const manifest = selectChecks('static', undefined, '/tmp/artifacts');
+  assert.deepEqual(manifest.find(check => check.name === 'worktree-manifest').argv.slice(-2), ['--tmp', '/tmp/artifacts']);
+  assert.equal(manifest.filter(check => check.argv.includes('--tmp')).length, 1);
+  assert.ok(!selectChecks('static').find(check => check.name === 'worktree-manifest').argv.includes('--tmp'));
+  assert.throws(() => selectChecks('static', undefined, 'relative'));
+  assert.throws(() => selectChecks('frontend', undefined, '/tmp/artifacts'));
 });
 
 test('runner records success, nonzero exit, spawn failure, signal and timeout', async () => {
@@ -119,7 +125,7 @@ test('lint covers new nested tooling tests and rejects undefined names', async (
 });
 
 test('arguments and malformed declarations fail closed', async () => {
-  for (const args of [['--profile'], ['--base'], ['--oops'], ['--profile', 'missing']]) {
+  for (const args of [['--profile'], ['--base'], ['--manifest-tmp'], ['--oops'], ['--profile', 'missing']]) {
     await assert.rejects(main(args));
   }
   await assert.rejects(runCheck({ name: 'invalid', argv: ['node'], timeoutMs: 0 }));

@@ -33,6 +33,8 @@
 // popBackHandler(id)。这条链路里**没有第二套关闭逻辑** —— 面板怎么关，还是它
 // 自己的关闭钮说了算（滑返只是把那颗钮按剧本点一次）。
 
+import { isLiveMobilePage } from '../mobile/pageState.js';
+
 const EDGE_BAND_TOUCH = 20;   // 触屏左缘带宽（iOS 同档；navController 同值）
 const EDGE_BAND_POINTER = 64; // 指针设备（鼠标/触控笔）起手带宽 —— 鼠标 20px 太难命中
 const AXIS_LOCK = 8;          // 轴锁阈值（与 navController 同参）
@@ -286,8 +288,7 @@ function syncPanels() {
     const ov = document.querySelector(p.overlay);
     // Adopted overlays are only state carriers. Their mobile page shell owns
     // navigation; a stale carrier must not steal its edge gesture.
-    const adopted = document.body.classList.contains('mobile-layer')
-      && !!document.querySelector(`#mobile-pages .mobile-page[data-page="${p.key}"].live`);
+    const adopted = isLiveMobilePage(p.key);
     const on = !adopted && visible(ov);
     const has = wired.get(p.key);
     if (on && !has) {

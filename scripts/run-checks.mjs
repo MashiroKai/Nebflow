@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const nodeCheck = (name, script, profiles = ['static', 'frontend']) => ({
@@ -65,12 +65,14 @@ export const CHECKS = [
   nodeCheck('sdd-changed', 'check-sdd', ['sdd-changed']),
 ];
 
-export function selectChecks(profile, base) {
+export function selectChecks(profile, base, manifestTmp) {
   if (!['static', 'frontend', 'sdd-changed'].includes(profile)) throw new Error(`Unknown profile: ${profile}`);
   if (profile === 'sdd-changed' && !base) throw new Error('sdd-changed requires an explicit --base');
   if (profile !== 'sdd-changed' && base) throw new Error('--base is only valid with sdd-changed');
+  if (manifestTmp && (profile !== 'static' || !isAbsolute(manifestTmp))) throw new Error('--manifest-tmp requires an absolute path and the static profile');
   return CHECKS.filter(check => check.profiles.includes(profile)).map(check => ({
-    ...check, argv: base ? [...check.argv, '--base', base] : [...check.argv],
+    ...check, argv: [...check.argv, ...(base ? ['--base', base] : []),
+      ...(manifestTmp && check.name === 'worktree-manifest' ? ['--tmp', manifestTmp] : [])],
   }));
 }
 
@@ -156,18 +158,20 @@ export async function runCheck(check, { cwd = ROOT, log = console.log } = {}) {
 export async function main(args = process.argv.slice(2)) {
   let profile = 'static';
   let base;
+  let manifestTmp;
   let list = false;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === '--list' || arg === '--dry-run') list = true;
-    else if (arg === '--profile' || arg === '--base') {
+    else if (arg === '--profile' || arg === '--base' || arg === '--manifest-tmp') {
       const value = args[++index];
       if (!value || value.startsWith('--')) throw new Error(`Missing value for ${arg}`);
       if (arg === '--profile') profile = value;
-      else base = value;
+      else if (arg === '--base') base = value;
+      else manifestTmp = value;
     } else throw new Error(`Unknown argument: ${arg}`);
   }
-  const checks = selectChecks(profile, base);
+  const checks = selectChecks(profile, base, manifestTmp);
   if (list) {
     for (const check of checks) console.log(`${check.name}: ${JSON.stringify(check.argv)} (timeout ${check.timeoutMs}ms)`);
     return 0;

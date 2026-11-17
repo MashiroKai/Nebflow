@@ -256,7 +256,7 @@ function enhance(select) {
   select.addEventListener('change', () => syncSelectFace(select));
 }
 
-/** 收编 root 下所有可收编的 <select>（root 自身是 select 也收）。幂等。 */
+/** 收编 root 下所有可收编的 <select>（root 自身是 select 也收）。幂等。 @param {Document|Element} root */
 export function enhanceSelects(root = document) {
   if (root instanceof HTMLSelectElement) enhance(root);
   else if (root instanceof Element) for (const s of root.querySelectorAll('select')) enhance(s);

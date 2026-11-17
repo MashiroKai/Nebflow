@@ -344,7 +344,7 @@ const selectById = (id) => /** @type {HTMLSelectElement|null} */ (document.getEl
 const filterOptions = new Map();
 let closeToolMenu = () => {};
 function setFilterOptions(id, options, value = '') {
-  const button = document.getElementById(id);
+  const button = /** @type {(HTMLElement & {value: string})|null} */ (document.getElementById(id));
   if (!button) return;
   filterOptions.set(id, options);
   button.value = options.some(o => o.value === value) ? value : (options[0]?.value || '');
@@ -968,7 +968,7 @@ function openPillListbox(pill, pop) {
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
-  const expandedFilter = document.querySelector('.search-filters [aria-expanded="true"]');
+  const expandedFilter = /** @type {HTMLElement|null} */ (document.querySelector('.search-filters [aria-expanded="true"]'));
   if (expandedFilter) {
     if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeToolMenu(); expandedFilter.focus(); }
     return;
