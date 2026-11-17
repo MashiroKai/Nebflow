@@ -22,6 +22,8 @@ export const CHECKS = [
   nodeCheck('chat-ui', 'check-chat-ui'),
   { name: 'chat-ui-computed', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/chat-ui-computed.mjs'] },
+  { name: 'media-gallery', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'node_modules/@playwright/test/cli.js', 'test', 'tests/mobile-image-gallery.spec.mjs', '--workers=1'] },
   nodeCheck('bubble-side', 'check-bubble-side'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),

@@ -60,7 +60,7 @@ import { escapeHtml, smartScroll, localizeToolLabel, localizeToolSummary } from 
 import { ticketUrl, reMint } from './nfTicket.js';
 // 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，手机端
 // 的媒体统一都是直接打开」）：媒体点击分流单点（手机系统直开 / 桌面 Canvas / 灯箱兜底）。
-import { routeMediaClick } from './mediaOpenRoute.js';
+import { routeMediaClick, mediaKind } from './mediaOpenRoute.js';
 // 手机层兜底面返回键（弹窗退场批同款注入器）：openMediaLightbox 成为手机层
 // 「直开链全尽空」的罕见兜底面后，同样不吃「桌面弹层原样弹出」的例外。
 import { mobileSheetBack } from './mobile/popSheet.js';
@@ -549,7 +549,11 @@ export function closeMediaLightbox() {
 /** `item`: {kind:'image'|'video', name, src?, path?, resolver?} — the same
  *  item shape the faces build, so callers pass what they already hold. */
 export function openMediaLightbox(item) {
-  if (!item || (item.kind !== 'image' && item.kind !== 'video')) return;
+  if (!item || !['image', 'video', 'audio'].includes(item.kind)) return;
+  import('./lightbox.js').then(lb => lb.openImageGallery([item], 0)).catch(() => {});
+}
+
+function openLegacyMediaLightbox(item) {
   closeMediaLightbox();
 
   const overlay = document.createElement('div');
@@ -640,12 +644,12 @@ function canvasCornerButton(item) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'pop-media-canvas';
-  btn.setAttribute('aria-label', t('chat.popOpenCanvas'));
-  btn.title = t('chat.popOpenCanvas');
+  btn.setAttribute('aria-label', item.name || 'Media');
+  btn.title = item.name || 'Media';
   btn.innerHTML = FWD_ICON;
   btn.addEventListener('click', e => {
     e.stopPropagation();
-    openPopArtifact(item.path, item.name);
+    openMediaItemClick(item);
   });
   return btn;
 }
@@ -1298,9 +1302,10 @@ export function popItemFromAttachment(att, resolver) {
   const name = String(att.name || '');
   const path = typeof att.path === 'string' ? att.path : '';
   const size = Number(att.size) || undefined;
-  if (att.type === 'image' || att.type === 'video') {
+  const media = mediaKind({ name, path, mime: att.mime, kind: att.type });
+  if (media) {
     return {
-      kind: att.type,
+      kind: media,
       name,
       // Inline preview wins (the live send always carries one); after a cache
       // strip the uploads resolver takes over via `path`.
@@ -1351,8 +1356,8 @@ export function buildUserMediaRow(attachments, opts) {
     .map(a => popItemFromAttachment(a, resolver))
     .filter(Boolean);
   if (!items.length) return null;
-  const media = items.filter(it => it.kind === 'image' || it.kind === 'video');
-  const files = items.filter(it => it.kind !== 'image' && it.kind !== 'video');
+  const media = items.filter(it => ['image', 'video', 'audio'].includes(it.kind));
+  const files = items.filter(it => !['image', 'video', 'audio'].includes(it.kind));
   if (!media.length && !files.length) return null;
   const row = document.createElement('div');
   // attach-side-align (2026-10-06 作者截图令): the row carries the SAME

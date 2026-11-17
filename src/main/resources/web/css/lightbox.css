@@ -51,7 +51,7 @@ body.nf-lightbox-open { overflow: hidden; }
 .nf-lightbox-close {
   position: absolute;
   top: 16px;
-  right: 16px;
+  left: 16px;
   /* 层级：舞台（.nf-lightbox-stage，inset:0）在 DOM 里排在关闭钮之后 ⇒ 无 z-index
      时它会盖住右上角这枚钮（mermaid-inline-center 批实测：图形模式下真实点击落到
      舞台身上，关闭钮永远收不到 click）。看图模式因此显式抬到舞台之上（缩放条
@@ -219,7 +219,9 @@ body.mobile-layer.nf-lightbox-open #chat,
 body.mobile-layer.nf-lightbox-open .mobile-page-body { overflow: hidden; }
 
 /* 跟手拖动期间浏览器不得接管手势（滚动/边缘滑）：浮层内没有别的可滚内容。 */
-.nf-lightbox[data-nf-lb-gallery="on"] { touch-action: none; }
+.nf-lightbox[data-nf-lb-gallery="on"] { touch-action: none; overflow: hidden; background: #111; }
+.nf-lightbox-av { max-width: var(--nf-lb-fit-w); max-height: var(--nf-lb-fit-h); }
+body.mobile-layer .nf-lightbox .nf-lightbox-close { display: flex; }
 
 /* 滑动切图的进场档：无过渡瞬移到对侧 44px，摘类后由既有 200ms 过渡滑回中位
    （与淡入合成；prefers-reduced-motion 时既有规则已把 .nf-lightbox-img 过渡关掉）。 */
@@ -248,7 +250,7 @@ body.mobile-layer.nf-lightbox-open .mobile-page-body { overflow: hidden; }
 .nf-lightbox-opentab {
   position: absolute;
   top: 16px;
-  right: 56px;
+  right: 16px;
   z-index: 3;
   width: 30px;
   height: 30px;

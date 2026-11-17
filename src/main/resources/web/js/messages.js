@@ -2395,6 +2395,22 @@ async function previewMediaDirectOf(att, kind, src) {
  *  账本/鉴权路由取数腿，零第二条取字节路）；判型 = isImageAttachmentName 单点
  *  （PDF 等其他可预览件照旧直开系统查看器）。面未水合/失败 ⇒ 落回既有直开腿。 */
 function previewAttachmentOf(att, card, kind, src) {
+  const name = String((att && att.name) || '');
+  const media = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|webm|mov|ogv|m4v|mp3|wav|ogg|m4a|aac|flac|opus)$/i.test(name);
+  if (media) {
+    void (async () => {
+      const mr = await import('./mediaOpenRoute.js');
+      const mediaType = mr.mediaKind({ name });
+      const source = src || {};
+      let item = { kind: mediaType, name };
+      if (kind === 'device' && source.kind === 'blob' && source.file) item.blob = source.file;
+      else if (kind === 'device' && source.kind === 'path' && source.path) item.path = source.path;
+      else if (att && att.id) item.blob = (await api.downloadAttachment(att.id)).blob;
+      const lb = await import('./lightbox.js');
+      if (!lb.openImageGallery([item], 0)) throw new Error('No media source');
+    })().catch(() => window.__showToast?.(t('messages.attachPreviewFailed'), 'error'));
+    return false;
+  }
   if (isMobileLayer()) {
     const name = String((att && att.name) || '');
     if (isImageAttachmentName(name)) {
