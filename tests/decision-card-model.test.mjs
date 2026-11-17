@@ -4,7 +4,20 @@ import { readFile } from 'node:fs/promises';
 
 // The web directory is browser ESM in a CommonJS package.
 const source = await readFile(new URL('../src/main/resources/web/js/decisionCardModel.js', import.meta.url), 'utf8');
-const { todoToDecisionCard, unresolvedDecisionCardCount, validateNewDecisionCard, currentSessionDecisionCards } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { todoToDecisionCard, unresolvedDecisionCardCount, validateNewDecisionCard, currentSessionDecisionCards, shouldBlockDecisionTurn } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+
+test('reserved todo payload reads summary and content without truncation', () => {
+  const card = todoToDecisionCard({id:'x',kind:'todo',project:'__decision_card_mvp__',name:'标题',detail:JSON.stringify({summary:'摘'.repeat(40),content:'正文'})});
+  assert.equal(card.summary, '摘'.repeat(40));
+  assert.equal(card.content, '正文');
+});
+
+test('unresolved decision blocks only its session', () => {
+  const rows = [{ id: '1', kind: 'todo', project: '__decision_card_mvp__', sessionId: 's', detail: JSON.stringify({summary:'摘要', content:''}) }];
+  assert.equal(shouldBlockDecisionTurn(rows, 's'), true);
+  assert.equal(shouldBlockDecisionTurn(rows, 'other'), false);
+  assert.equal(shouldBlockDecisionTurn([{...rows[0], completedAt: 1}], 's'), false);
+});
 
 test('only rows with an explicit matching session are projected', () => {
   const rows = [{ id: '1', kind: 'todo', sessionId: 's' }, { id: '2', kind: 'todo' }, { id: '3', kind: 'todo', sessionId: 'other' }];

@@ -651,7 +651,7 @@ function projectNameOf(tagId) {
  */
 /** @param {{tagId:string|null, title:string, notes:string, priority:number, requestId:string, sessionId:string}} input
  * @returns {Promise<boolean>} */
-async function createItemConfirmed({ tagId = null, title = '', notes = '', priority = 0, requestId, sessionId }) {
+async function createItemConfirmed({ tagId = null, title = '', notes = '', priority = 0, requestId, sessionId, project }) {
   if (fixtureMode) return !!createItem({ tagId, title, notes, priority });
   const sid = sessionId;
   if (sid !== currentSessionId()) return false;
@@ -659,7 +659,7 @@ async function createItemConfirmed({ tagId = null, title = '', notes = '', prior
   const socket = state.ws;
   const frame = { type: FRAME.create, kind: 'todo', sessionId: sid, requestId,
     name: title.trim(), content: notes.trim() || title.trim(), detail: notes.trim(), priority,
-    project: projectNameOf(tagId) || undefined };
+    project: project || projectNameOf(tagId) || undefined };
   return new Promise((resolve) => {
     let settled = false;
     let timer;
