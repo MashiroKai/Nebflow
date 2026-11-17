@@ -992,13 +992,14 @@ function buildMediaStack(items, opts) {
   let switching = false;
   const pendingSteps = [];
   const reduceStackMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  // Only the outgoing front card moves. Fan slots change atomically afterwards,
-  // with no transitions on the lower layers and no layout reads in pointermove.
+  // Animate only the two participating cards; commit the new fan slots together.
   const switchFront = (step) => {
     if (!step) return;
     if (switching) { pendingSteps.push(step); return; }
     const layer = layers[front];
+    const next = layers[(front + step + layers.length) % layers.length];
     const finish = () => {
+      layers.forEach(el => { el.style.visibility = ''; });
       layer.style.transform = '';
       layer.style.willChange = '';
       front = (front + step + layers.length) % layers.length;
@@ -1013,19 +1014,20 @@ function buildMediaStack(items, opts) {
     stack.suppressClick = true;
     view.classList.add('is-switching');
     const from = layer.style.transform || 'translate3d(0,0,0) rotate(0deg) scale(1)';
-    const next = layers[(front + step + layers.length) % layers.length];
     const duration = parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200;
     const options = { duration, easing: 'ease-in-out' };
-    // Separate the outgoing and incoming faces in depth; transforms stay on
-    // the compositor. Keep slot/z-index changes until both animations settle.
+    // Keep the outgoing face above the incoming face, and park every other
+    // card until the slot handoff. Neither animated face becomes translucent.
+    layers.forEach(el => { if (el !== layer && el !== next) el.style.visibility = 'hidden'; });
     next.classList.remove('is-buried');
+    const direction = step > 0 ? -1 : 1;
     const outgoing = layer.animate([
-      { transform: from, opacity: 1 },
-      { transform: `translate3d(0,55%,0) rotateX(35deg) scale(.85)`, opacity: 0 },
+      { transform: from },
+      { transform: `translate3d(${direction * 120}%,0,0) scale(.94)` },
     ], options);
     const incoming = next.animate([
-      { transform: 'translate3d(0,35%,0) scale(.88)', opacity: .6 },
-      { transform: 'translate3d(0,0,0) rotate(0deg) scale(1)', opacity: 1 },
+      { transform: `translate3d(${-direction * 12}%,0,0) scale(.94)` },
+      { transform: 'translate3d(0,0,0) scale(1)' },
     ], options);
     Promise.allSettled([outgoing.finished, incoming.finished]).then(finish);
   };

@@ -92,6 +92,10 @@ for (const variant of ['before','after']) test(`deterministic frames ${variant}`
  await page.mouse.move(box.x+box.width/2,box.y+box.height/2); await page.mouse.down(); await page.mouse.move(box.x+box.width/2-75,box.y+box.height/2,{steps:5}); await page.mouse.up();
  const count=await page.evaluate(()=>document.querySelector('.pop-stack-view').getAnimations({subtree:true}).length); console.log('animations',variant,count); expect(count).toBeGreaterThan(0);
  for(const percent of [0,25,50,75,99]) { await page.evaluate(p=>document.querySelector('.pop-stack-view').getAnimations({subtree:true}).forEach(a=>{ a.currentTime=a.effect.getTiming().duration*p/100; }),percent); await page.screenshot({path:`${out}/det-${variant}-${percent}.png`,clip:{x:Math.max(0,box.x-100),y:Math.max(0,box.y-100),width:450,height:480}}); }
+ await page.evaluate(()=>document.querySelector('.pop-stack-view').getAnimations({subtree:true}).forEach(a=>a.finish()));
+ await expect(view.locator('.layer-front')).toHaveCount(1);
+ await expect.poll(()=>view.locator('.media-layer').evaluateAll(ls=>ls.findIndex(l=>l.classList.contains('layer-front')))).toBe(1);
+ await page.screenshot({path:`${out}/det-${variant}-settled.png`,clip:{x:Math.max(0,box.x-100),y:Math.max(0,box.y-100),width:450,height:480}});
  await page.close();
 });
 for (const variant of ['before','after']) test(`motion ${variant}`, async ({browser}) => {
