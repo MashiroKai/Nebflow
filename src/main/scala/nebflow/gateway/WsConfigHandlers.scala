@@ -265,10 +265,15 @@ private[gateway] object WsConfigHandlers:
         oldCfgOpt.flatMap { oldCfg =>
           SttService.mergeConfig(oldCfg, patch) match
             case Some(cfgJson) =>
-              // Restricted form (keyaudit-quickfix ①): stt-config.json carries the
-              // STT apiKey in cleartext — the file lands 0600 (legacy files
-              // converge on their next save).
-              AtomicJson.writeRestricted(SttService.configPath, cfgJson.noSpaces) *>
+              val persistCfg = IO.blocking {
+                cfgJson.mapObject { obj =>
+                  obj("apiKey").flatMap(_.asString) match
+                    case Some(value) => obj.add("apiKey", Json.fromString(
+                      nebflow.core.secrets.ConfigCredentialStore.persist(nebflow.shared.PathUtil.dataRoot, value)))
+                    case None => obj
+                }
+              }
+              persistCfg.flatMap(j => AtomicJson.writeRestricted(SttService.configPath, j.noSpaces)) *>
                 SttService.create().flatMap { svc =>
                   sttServiceRef.set(svc) *> logger.info(
                     s"STT config set: endpoint=${svc.map(_.endpoint).getOrElse("(defaults)")}"
@@ -438,7 +443,8 @@ private[gateway] object WsConfigHandlers:
                 "description" -> desc.asJson
               )
             }.asJson,
-            "current" -> currentOpt.asJson
+            "current" -> currentOpt.asJson,
+            "source" -> (if currentOpt.isDefined then "override" else "follow").asJson
           )
         )
       }

@@ -1344,41 +1344,10 @@ private[gateway] object PresenceRoutes:
                           case true =>
                             val (effective, resolvedFrom) = nebflow.core.SchemePolicy.resolveModel(slotName, own)
                             val mode = if own.isDefined then "explicit" else "follow"
-                            // Hot-apply: after a chain save, clear the explicit model pins of THIS
-                            // category that no longer match the effective chain, so those
-                            // sessions' next request uses the new chain. A pin lives on two
-                            // surfaces that are cleared together: the in-memory
-                            // sessionModelOverrides (the composer pin, which wins on the request
-                            // path) and the persisted SessionMeta.modelRef (the same pin restored
-                            // after a restart).
-                            //
-                            // Scope: only pins owned by `slotName` (ModelRoles.pinOwnerSlot) are
-                            // candidates. Pins of other categories, and pins that cannot be
-                            // attributed to a category, are never touched: editing the kernel
-                            // chain must not reset a subagent or main-conversation choice.
-                            // Priority inside the category: the saved chain wins at save time (a
-                            // differing pin is cleared, a pin equal to the new preferred model
-                            // survives); a session choice made afterwards wins again until the
-                            // next edit of this category.
-                            //
-                            // Membership is the preferred model only (fallbacks are not part of
-                            // the request chain). Some route specs assemble with
-                            // sessionStore = null: the persisted leg is skipped there and the
-                            // in-memory leg always runs.
-                            val chainRefs = effective.preferred.toList.toSet
-                            sharedResources.sessionModelOverrides
-                              .modify { overrides =>
-                                val (keep, drop) =
-                                  overrides.partition { (id, c) =>
-                                    !nebflow.core.ModelRoles.pinOwnerSlot(id).contains(slotName) ||
-                                    chainRefs.contains(s"${c.providerId}/${c.model}")
-                                  }
-                                (keep, drop.keys.toList)
-                              }
-                              .flatMap { droppedIds =>
-                                val persistedLeg =
-                                  if sessionStore == null then IO.unit
-                                  else droppedIds.traverse_(id => sessionStore.updateSessionModel(id, None))
+                            // Followers read the slot on their next turn. Explicit session
+                            // pins, both in memory and on disk, are never changed here.
+                            locally {
+                                val persistedLeg = IO.unit
                                 // config-single-source batch (2026-11-05): the Nebula
                                 // primary chain IS the global chain, and its single
                                 // source is `llm.fallback` in the config file. Mirror the
@@ -2309,7 +2278,8 @@ private[gateway] object PresenceRoutes:
                     val apiKey =
                       // Masked key from the edit dialog — fall back to the stored one.
                       if rawKey.nonEmpty && rawKey != "***" then rawKey
-                      else stored.map(_.apiKey).getOrElse("")
+                      else stored.map(p => nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+                        nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-model-list")).getOrElse("")
                     ModelListFaces.models(face, base) match
                       case Nil => BadGateway(Json.obj("error" -> ModelListFaces.noEndpointMessage(face).asJson))
                       case urls =>
@@ -2317,6 +2287,12 @@ private[gateway] object PresenceRoutes:
                           case Right(models) => Ok(Json.obj("models" -> models.asJson))
                           case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
                         }
+                  }.handleErrorWith {
+                    case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                      BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                    case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                      BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                    case e => IO.raiseError(e)
                   }
             end if
           }
@@ -2358,7 +2334,10 @@ private[gateway] object PresenceRoutes:
               BadRequest(Json.obj("error" -> protocolDecoded.swap.toOption.get.asJson))
             else
               configRef.get.flatMap { cfg =>
-                val stored = cfg.llm.providers.get(name)
+                val stored = cfg.llm.providers.get(name).map { p =>
+                  p.copy(apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+                    nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-probe"))
+                }
                 (baseUrlOv, stored) match
                   case (None, None) =>
                     NotFound(Json.obj("error" -> s"unknown provider '$name'".asJson))
@@ -2372,6 +2351,12 @@ private[gateway] object PresenceRoutes:
                     val proto = protocolDecoded.toOption.flatten.getOrElse(LlmProtocol.OpenAI)
                     val key = apiKeyOv.getOrElse(stored.map(_.apiKey).getOrElse(""))
                     runProviderTest(proto, base, key, model, List(key) ++ stored.map(_.apiKey).toList)
+              }.handleErrorWith {
+                case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                  BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                  BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                case e => IO.raiseError(e)
               }
             end if
           }

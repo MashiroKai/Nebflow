@@ -452,10 +452,16 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         rootSessionId = "askhost-root-session", parentRef = None, startedAt = now,
         status = AgentStatus.Processing, lastActivityMs = now
       )))
+      delegateRef <- system.spawn(Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)), "askhost-delegate")
+      _ <- resources.agentRegistry.update(_ + ("askhost-delegate-session" -> AgentRecord(
+        sessionId = "askhost-delegate-session", ref = delegateRef, kind = AgentKind.Delegate,
+        rootSessionId = "askhost-root-session", parentRef = None, startedAt = now,
+        status = AgentStatus.Processing, lastActivityMs = now
+      )))
       context = ToolContext(
         projectRoot = tmp.toString,
         sessionId = Some("askhost-worker-session"),
-        rootSessionId = Some("askhost-root-session"),
+        rootSessionId = Some("askhost-delegate-session"),
         agentDef = Some(AgentDef(name = executorName, description = "", tools = Nil)),
         depth = 1,
         sharedResources = Some(resources),
@@ -465,6 +471,10 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         JsonObject("question" -> "Choose a safe option".asJson), context
       ).start
       pending <- waitForMailbox("askhost-root-session")
+      (injected, held) <- MailboxDrain.drainBarrierFace("askhost-root-session", outstanding = 1)
+      _ = assertEquals(held, 0)
+      _ = assertEquals(injected.map(_.source), List("askhost"))
+      _ = assert(MailboxDrain.mailboxMessage(injected).toString.contains("Choose a safe option"))
       entry = pending.head
       event = entry.event
       _ = assertEquals(event.source, "askhost")
@@ -496,6 +506,54 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
     }).unsafeRunSync()
+  }
+
+  test("AskHost falls back to the unique trusted Nebula root when ancestry is unavailable") {
+    val system = ActorSystem("askhost-fallback")
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp / "data")
+    val check = for
+      requests <- IO.ref(List.empty[LlmRequest])
+      gate <- Deferred[IO, Unit]
+      resources <- mkResources(system, tmp, new ScriptedAskLlm(requests, askInputNonBlocking, gate))
+      pair <- resources.sessionStore.ensureAgentSession("Nebula")
+      root = pair._1.id
+      ref <- system.spawn(Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.ignore)), "fallback-root")
+      _ <- resources.agentRegistry.update(_ + (root -> AgentRecord(root, ref, AgentKind.Root, root)))
+      context = ToolContext(projectRoot = tmp.toString, sessionId = Some("worker"), rootSessionId = Some("missing-parent"),
+        agentDef = Some(AgentDef(name = executorName, description = "", tools = Nil)), depth = 1,
+        sharedResources = Some(resources), toolCallId = "fallback-call")
+      fiber <- AskHostTool.call(JsonObject("question" -> "fallback question".asJson), context).start
+      pending <- waitForMailbox(root)
+      id = pending.head.event.correlationId.get
+      rootContext = ToolContext(projectRoot = tmp.toString, sessionId = Some(root),
+        agentDef = Some(AgentDef(name = "Nebula", description = "", tools = Nil)), depth = 0, sharedResources = Some(resources))
+      reply <- AskHostReplyTool.call(JsonObject("correlationId" -> id.asJson, "decision" -> "approved".asJson), rootContext)
+      result <- fiber.joinWithNever
+      _ = assert(reply.isRight)
+      _ = assertEquals(result, Right("approved"))
+      _ = println(s"ASKHOST_FALLBACK root=$root correlation=$id reply=$result")
+    yield ()
+    check.guarantee(IO {
+      PathUtil.setDataRoot(previous)
+      AskHostLedger.clearForTests()
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+    }).unsafeRunSync()
+  }
+
+  test("AskHost timeout wakes the worker and closes the pending request") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (request, waiter) <- AskHostLedger.beginForCall("worker", "root", "agent", "question", "timeout-call")
+      result <- AskHostTool.awaitReply(request.correlationId, waiter, 20.millis)
+      rows <- AskHostLedger.recover
+      _ = assert(result.isLeft, s"expected timeout: $result")
+      _ = assert(rows.isEmpty)
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 
   test("real worker actor executes AskHost and persists the original tool result") {

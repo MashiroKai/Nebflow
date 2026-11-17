@@ -35,7 +35,12 @@ object ConfigSnapshot:
         .now()
         .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
       val snapshot = backupDir / s"${Branding.configFileName}.$ts"
-      os.copy.over(configPath, snapshot, createFolders = true)
+      // Never copy a legacy inline provider credential to a new snapshot.
+      // Convert first; the snapshot remains recoverable through the same references.
+      val source = parse(os.read(configPath)).fold(
+        _ => throw new IllegalArgumentException("Cannot snapshot invalid configuration"), identity)
+      val converted = ConfigService.persistSearchCredentials(ConfigService.persistProviderCredentials(source))
+      nebflow.core.AtomicJson.writeSyncRestricted(snapshot, converted.spaces2)
       prune()
   }
 

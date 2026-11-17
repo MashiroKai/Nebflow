@@ -9,6 +9,7 @@ import nebflow.shared.PathUtil
 
 import java.util.UUID
 import scala.collection.concurrent.TrieMap
+import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
 /** AskHost's first end-to-end runtime slice: an engine-generated correlation, an
@@ -212,14 +213,49 @@ object AskHostTool extends Tool:
   )
   def summarize(input: JsonObject): String = s"AskHost(${input("question").flatMap(_.asString).getOrElse("").take(60)})"
   def summarizeResult(input: JsonObject, result: String): String = result.take(200)
+  private[nebflow] def resolveRoot(bound: String, registry: Map[String, nebflow.actor.AgentRecord]): Either[String, String] =
+    def loop(id: String, seen: Set[String]): Either[String, String] =
+      if seen(id) then Left(s"session ancestry cycle at $id")
+      else registry.get(id) match
+        case None => Left(s"session $id unavailable while resolving root")
+        case Some(record) if record.kind == nebflow.actor.AgentKind.Root && record.rootSessionId == id => Right(id)
+        case Some(record) =>
+          val next = Option(record.rootSessionId).filter(s => s.nonEmpty && s != id)
+            .orElse(Option(record.parentSessionId).filter(s => s.nonEmpty && s != id))
+          next.fold[Either[String, String]](Left(s"no root ancestry for session $id"))(loop(_, seen + id))
+    loop(bound, Set.empty)
+
+  private[nebflow] def awaitReply(id: String, waiter: Deferred[IO, String], timeout: FiniteDuration): IO[Either[ToolError, String]] =
+    waiter.get.map(Right(_)).timeoutTo(timeout,
+      AskHostLedger.cancel(id, "root reply timed out").flatMap {
+        case true => IO.pure(Left(ToolError(s"AskHost request $id timed out waiting for root; retry or escalate")))
+        case false => AskHostLedger.recover.map(_.find(_.pending.correlationId == id).flatMap(_.answer) match
+          case Some(answer) => Right(answer)
+          case None => Left(ToolError(s"AskHost request $id is no longer available")))
+      })
+
+  private[nebflow] def trustedFallback(resources: nebflow.core.AgentRuntimePort, registry: Map[String, nebflow.actor.AgentRecord]): IO[Option[String]] =
+    registry.values.toList.filter(r => r.kind == nebflow.actor.AgentKind.Root && r.rootSessionId == r.sessionId)
+      .traverse(r => resources.sessionStore.getSessionMeta(r.sessionId).map(_.filter(m =>
+        m.agentName.getOrElse(RootAgentIdentity.Name) == RootAgentIdentity.Name).map(_ => r.sessionId)))
+      .map(_.flatten match
+        case single :: Nil => Some(single)
+        case _ => None)
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val question = input("question").flatMap(_.asString).map(_.trim).getOrElse("")
     if question.isEmpty then IO.pure(Left(ToolError("AskHost: question must be non-empty")))
     else (ctx.sessionId, ctx.rootSessionId, ctx.agentDef, ctx.sharedResources) match
-      case (Some(worker), Some(root), Some(agent), Some(resources)) if worker != root =>
-        resources.agentRegistry.get.flatMap(_.get(root) match
-          case None => IO.pure(Left(ToolError("AskHost: root session unavailable")))
-          case Some(rootRecord) =>
+      case (Some(worker), Some(boundRoot), Some(agent), Some(resources)) if worker != boundRoot =>
+        resources.agentRegistry.get.flatMap { registry =>
+          val resolved = resolveRoot(boundRoot, registry)
+          val destination = resolved match
+            case Right(root) => IO.pure(Some(root))
+            case Left(_) => trustedFallback(resources, registry)
+          destination.flatMap {
+          case None => IO.pure(Left(ToolError(s"AskHost: root session unavailable: ${resolved.swap.toOption.getOrElse("ambiguous trusted root")}")))
+          case Some(root) =>
+            val rootRecord = registry(root)
             AskHostLedger.beginForCall(worker, root, agent.name, question, ctx.toolCallId).flatMap { case (request, _) =>
               val payload = s"[AskHost request ${request.correlationId} from ${request.sourceAgent} / ${request.workerSession}]\n$question"
               val metadata = JsonObject("correlationId" -> request.correlationId.asJson,
@@ -230,11 +266,18 @@ object AskHostTool extends Tool:
                 coalesce = false, producer = "askhost", deduplicateReceipts = true)
               durable.flatMap {
                 case nebflow.core.mail.SessionMailbox.MailResult.Enqueued(_) | nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
-                  (rootRecord.ref ! AgentCommand.MailboxArrived) *> AskHostLedger.restoreWaiter(request.correlationId).flatMap(_.get.map(Right(_)))
-                case other => IO.pure(Left(ToolError(s"AskHost root delivery unavailable; request ${request.correlationId} remains pending: $other")))
+                  (rootRecord.ref ! AgentCommand.MailboxArrived) *> AskHostLedger.restoreWaiter(request.correlationId).flatMap { waiter =>
+                    awaitReply(request.correlationId, waiter, 10.minutes)
+                  }
+                case other => AskHostLedger.markUnavailable(request.correlationId, s"delivery failed: $other") *>
+                  IO.pure(Left(ToolError(s"AskHost root delivery failed for request ${request.correlationId}: $other")))
+              }.handleErrorWith { error =>
+                AskHostLedger.markUnavailable(request.correlationId, s"delivery failed: ${error.getMessage}") *>
+                  IO.pure(Left(ToolError(s"AskHost request ${request.correlationId} failed: ${error.getMessage}")))
               }
             }
-        )
+          }
+        }
       case _ => IO.pure(Left(ToolError("AskHost is only available to a worker with an engine-bound root session")))
 end AskHostTool
 
