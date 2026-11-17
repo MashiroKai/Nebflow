@@ -30,7 +30,7 @@ try {
    await other.hover(); const hover=await other.evaluate(el=>getComputedStyle(el).backgroundColor); assert.equal(hover,expected[theme].selected,`${theme} hover color`);
    await page.keyboard.press('ArrowDown'); const outline=await other.evaluate(el=>({style:getComputedStyle(el).outlineStyle,width:getComputedStyle(el).outlineWidth,color:getComputedStyle(el).outlineColor})); assert.deepEqual(outline,{style:'solid',width:'2px',color:'rgb(91, 127, 191)'});
    await page.keyboard.press('Escape'); assert.equal(await menu.count(),0); assert.ok(await button.evaluate(el=>document.activeElement===el));
-   await button.click(); await page.mouse.click(2,2); assert.equal(await menu.count(),0);
+   await button.click(); await menu.waitFor({state:'visible'}); await page.mouse.click(2,2); await menu.waitFor({state:'detached'});
    await button.click(); await menu.locator('button').nth(1).click(); await button.locator('img.project-open-current-icon').waitFor({state:'visible'});
    await button.click(); assert.equal(await menu.locator('button').nth(1).getAttribute('aria-checked'),'true'); await page.keyboard.press('Escape');
    // Restore the baseline selected state for the next iteration.
