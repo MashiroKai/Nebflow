@@ -35,6 +35,22 @@ try {
     await page.goto('http://fixture.invalid/index.html');
     await page.locator('#input').waitFor({state:'visible',timeout:20000});
     await page.locator('#send-btn').waitFor({state:'visible'});
+    if (!mobile && process.env.MSS_DESKTOP_DIAG === '1') {
+      await page.evaluate(async () => { const c = await import('/js/canvas.js'); if (document.body.classList.contains('canvas-open')) c.closeCanvas(); });
+      await page.waitForFunction(() => !document.body.classList.contains('canvas-open'));
+      await page.waitForFunction(() => {
+        const x=document.querySelector('#send-btn').getBoundingClientRect().x;
+        const s=window.__desktopStable || {x, count:0};
+        s.count=Math.abs(s.x-x)<0.01?s.count+1:0; s.x=x; window.__desktopStable=s;
+        return s.count>=10;
+      }, null, {polling:'raf',timeout:10000});
+      const chain = await page.evaluate(() => {
+        const result=[]; let e=document.querySelector('#send-btn');
+        while(e) { const r=e.getBoundingClientRect(), s=getComputedStyle(e); result.push({element:e.tagName.toLowerCase()+(e.id?'#'+e.id:''),className:typeof e.className==='string'?e.className:'',x:r.x,y:r.y,w:r.width,h:r.height,display:s.display}); e=e.parentElement; }
+        return {viewport:[innerWidth,innerHeight],bodyClass:document.body.className,chain:result};
+      });
+      console.log('DESKTOP_CHAIN '+JSON.stringify(chain));
+    }
     const data = await page.evaluate(() => {
       const measure = selector => { const el = document.querySelector(selector); if (!el) throw Error('missing '+selector); const r = el.getBoundingClientRect(), s = getComputedStyle(el); return {x:r.x,y:r.y,width:r.width,height:r.height,cx:r.x+r.width/2,cy:r.y+r.height/2,padding:s.padding,borderRadius:s.borderRadius,margin:s.margin,display:s.display}; };
       const send = document.querySelector('#send-btn');
