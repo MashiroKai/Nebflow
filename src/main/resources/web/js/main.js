@@ -95,6 +95,7 @@ import { cancelSettleBottom } from './chat/settleBottom.js';
 import { installMsgTokenChip } from './chat/msgTokenChip.js'; // msgchip 批：带短名引用小牌交互/取数腿
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
 import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
+import { startSelectEnhancer } from './dropdown.js'; // 下拉统一批（F 批 2026-11-17）：select → 点击展开点选
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
@@ -346,6 +347,7 @@ initPendingAsks();
 // 可见期节拍与页面重新可见共用一个 requestPendingAskSync，镜像不再只靠重连自愈。
 startPendingAskSync(sendWs);
 initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
+startSelectEnhancer(); // 下拉统一批（ui-unify-panels F 批 2026-11-17）：原生 select 全站收编为点击展开点选（观察器常驻，新 select 出生即收编）
 initServiceWorker(); // console-load-perf 批：温访问秒开（/sw.js 未上线的引擎上为静默空转）
 initHotStampWatch(); // 台账 #919：热更新地基——stamp 轮询自愈（/api/nf-asset-stamp 缺席的引擎上为静默空转）
 

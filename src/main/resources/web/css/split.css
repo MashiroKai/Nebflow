@@ -4189,6 +4189,9 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 /* Project switcher (#744-B): one vault = one graph; glass-chip material —
    same --glass-* family as .wg-search below (禁各画各的). */
 .wg-switch { margin-top: var(--ds-space-1h); }
+/* F 批 2026-11-17（下拉统一）：select 被 .nf-select 包裹后，块容器里的
+   width:100% 填充职责上移到包裹层（display:grid = 块级填满）。 */
+.wg-switch .nf-select { display: grid; width: 100%; }
 .wg-switch-select {
   width: 100%;
   color: var(--color-frame-text); font: inherit; font-size: var(--ds-fs-hint);

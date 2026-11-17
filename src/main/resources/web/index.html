@@ -170,6 +170,13 @@
        --btn-press-* / --btn-ring-* / --btn-disabled-*；厚度禁令由
        scripts/check-flat-buttons.mjs 机械把关（例外须写进 flat-button-spec.md）。 -->
   <link rel="stylesheet" href="css/flatButtons.css">
+  <!-- 下拉统一批（ui-unify-panels F 批 2026-11-17，作者令「ALL native
+       <select> → 点击展开点选」）：.nf-select 网格栈（trigger + 透明原生
+       select）与 .nf-select-menu 选项单的几何/修饰。脸与材质都借单源：
+       trigger 造型 = inputSurface.css 的 .nf-field--select；选项单材质 =
+       .fm-context-menu 族 —— 本文件零造型声明（check-input-surface /
+       check-flat-buttons 双门禁约束下的写法）。行为见 js/dropdown.js。 -->
+  <link rel="stylesheet" href="css/dropdown.css">
   <!-- Canvas 提示文字统一制作规范（canvas-hint-text 批 2026-11-05，作者令
        「canvas 内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/
        胶囊重叠」）：三字档角色 + 四边安全区消费类 `.cv-safe-pad` + 零交叠/

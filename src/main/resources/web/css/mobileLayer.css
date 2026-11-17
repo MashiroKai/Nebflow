@@ -1316,6 +1316,9 @@ body.mobile-layer #mh-search-kind {
   font-size: var(--mfs-min);
   border-radius: var(--ds-radius-input);
 }
+/* F 批 2026-11-17（下拉统一）：select 被 .nf-select 包裹后，本行的填充职责
+   （width:100% 于 flex 行）上移到包裹层。 */
+body.mobile-layer #mh-search-kind-row .nf-select { flex: 1; min-width: 0; }
 /* 🔴 三点入口批（2026-11-05 作者令「把搜索和搜索聊天记录结合，把胶囊的内容改为
    搜索聊天记录……下面的文字不要」）：页面名胶囊（`.mobile-page-title` = 「搜索聊天
    记录」）是本页**唯一**标题 ⇒ 面板头那枚重复标题整块退场。
@@ -4232,6 +4235,9 @@ body.mobile-layer #settings-modal input[type='password'],
 body.mobile-layer #settings-modal select {
   min-height: var(--mtap);
 }
+/* F 批 2026-11-17（下拉统一）：触控行同档上移到包裹层（trigger 蒙在同格，
+   select 的 min-height 撑格即已保高；此条给格本身兜底对齐）。 */
+body.mobile-layer #settings-modal .nf-select { min-height: var(--mtap); width: 100%; }
 
 /* 后台任务合并面板：密度行 → 44 触控行 + 16 内距。 */
 body.mobile-layer #bg-dropdown .bg-task-row {

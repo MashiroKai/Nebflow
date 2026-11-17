@@ -3002,6 +3002,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-sizing: border-box;
   color: var(--color-text);
 }
+/* F 批 2026-11-17（下拉统一）：onboarding 模型下拉（option-input 族）被
+   .nf-select 包裹后，flex:1 伸缩职责上移到包裹层。 */
+.nf-select:has(> .option-input) { flex: 1; min-width: 0; }
 /* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .option-input.mono {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;

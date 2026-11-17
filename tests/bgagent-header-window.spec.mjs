@@ -143,7 +143,12 @@ const IN_PAGE_MEASURE = (modelRef) => {
       hasWorkspaceLine: bubbleContent ? bubbleContent.textContent.includes('[workspace] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/beta-release-nov') : false,
       hasTailLine: bubbleContent ? bubbleContent.textContent.includes('尾行哨兵') : false,
     } : null,
-    modelOccurrencesInHeader: header ? header.textContent.split(modelRef).length - 1 : 0,
+    // F 批（ui-unify-panels 2026-11-17）后头部模型串有两处 DOM 印记：可见 trigger 脸
+    // （.nf-select-val）+ 隐藏原生承载 select 的 options 文本。可见印刷仍只一次 ——
+    // 计数折去 select 子树，断言意图（徽标隐藏、不重复印串）不动。
+    modelOccurrencesInHeader: header
+      ? (header.textContent.split(modelRef).length - 1) - (sel ? sel.textContent.split(modelRef).length - 1 : 0)
+      : 0,
   };
 };
 
