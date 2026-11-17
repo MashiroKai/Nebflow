@@ -383,7 +383,7 @@ let draggedTabId = null;
 
 function attachDragHandlers(tabEl, id) {
   tabEl.addEventListener('dragstart', (e) => {
-    draggedTabId = id;
+    draggedTabId = tabEl.dataset.tabId || id;
     tabEl.classList.add('dragging');
     // canvasdnd: must be 'copyMove', NOT 'move'. initGlobalFileDrop (input.js)
     // rewrites dropEffect to 'copy' on every document-level dragover of an

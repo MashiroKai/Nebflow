@@ -57,14 +57,15 @@ test('real reader, claim, persist, preemption', async ({browser}, info) => {
     const file = join(s.dir,'old.txt'); writeFileSync(file,'fixture');
     const mutation = async (code, arg) => {
       const response = a.page.waitForResponse(r=>new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT', {timeout:6000});
-      await a.page.evaluate(code, arg); expect((await response).status()).toBe(200);
+      await a.page.evaluate(code, arg); const result = await response; expect(result.status()).toBe(200);
+      if (process.env.CANVAS_DIAGNOSTIC) console.log('[put-order]', JSON.parse(result.request().postData()).tabs.map(t=>t.id));
       return JSON.parse(readFileSync(join(s.data,'canvas_tabs.json'),'utf8'));
     };
     let archive = await mutation(async ({file})=>{const m=await import('/js/canvas.js');m.openTab('file:old.txt','Old',{type:'markdown',absPath:file,pinned:false})}, {file});
     expect(archive.tabs.find(t=>t.id==='file:old.txt').pinned).toBe(false);
     archive = await mutation(async()=>{const m=await import('/js/canvas.js');m.pinTab('file:old.txt')});
     expect(archive.tabs.find(t=>t.id==='file:old.txt').pinned).toBe(true);
-    archive = await mutation(async ({dir})=>{const m=await import('/js/canvas.js');m.retargetFileTabs('old.txt','new.txt',dir)}, {dir:s.dir});
+    archive = await mutation(async ({dir,from})=>{const m=await import('/js/canvas.js');m.retargetFileTabs(from,'new.txt',dir)}, {dir:s.dir, from:process.env.CANVAS_PATH_NEGATIVE ? 'missing.txt' : 'old.txt'});
     expect(archive.tabs.find(t=>t.id==='file:new.txt').absPath).toBe(join(s.dir,'new.txt'));
     expect(archive.tabs.map(t=>t.id).indexOf('writer-test')).toBeLessThan(archive.tabs.map(t=>t.id).indexOf('file:new.txt'));
     archive = await mutation(async()=>{
@@ -86,6 +87,11 @@ test('real reader, claim, persist, preemption', async ({browser}, info) => {
     await expect(status).toContainText('只读');
     await expect(status).toContainText('仅本地');
     await expect(status).toContainText('不会自动同步');
+    const diskBeforeSwitch = readFileSync(join(s.data,'canvas_tabs.json'),'utf8');
+    if (!process.env.CANVAS_SWITCH_NEGATIVE) await a.page.evaluate(async()=>{const m=await import('/js/canvas.js'); m.setActiveTab('writer-test')});
+    await expect(a.page.locator('#canvas-content .canvas-tab-pane[data-tab-id="writer-test"]')).toHaveClass(/active/);
+    await expect(status).toContainText('仅本地');
+    expect(readFileSync(join(s.data,'canvas_tabs.json'),'utf8')).toBe(diskBeforeSwitch);
     await expect(a.page.locator('[data-tab-id="writer-stale"]').first()).toBeAttached();
     await a.page.screenshot({path: info.outputPath('preempted.png')});
     const blocked = await a.page.evaluate(async()=>{
