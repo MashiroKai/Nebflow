@@ -2309,7 +2309,8 @@ private[gateway] object PresenceRoutes:
                     val apiKey =
                       // Masked key from the edit dialog — fall back to the stored one.
                       if rawKey.nonEmpty && rawKey != "***" then rawKey
-                      else stored.map(_.apiKey).getOrElse("")
+                      else stored.map(p => nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+                        nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-model-list")).getOrElse("")
                     ModelListFaces.models(face, base) match
                       case Nil => BadGateway(Json.obj("error" -> ModelListFaces.noEndpointMessage(face).asJson))
                       case urls =>
@@ -2358,7 +2359,10 @@ private[gateway] object PresenceRoutes:
               BadRequest(Json.obj("error" -> protocolDecoded.swap.toOption.get.asJson))
             else
               configRef.get.flatMap { cfg =>
-                val stored = cfg.llm.providers.get(name)
+                val stored = cfg.llm.providers.get(name).map { p =>
+                  p.copy(apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
+                    nebflow.shared.PathUtil.dataRoot, p.apiKey, "provider-probe"))
+                }
                 (baseUrlOv, stored) match
                   case (None, None) =>
                     NotFound(Json.obj("error" -> s"unknown provider '$name'".asJson))

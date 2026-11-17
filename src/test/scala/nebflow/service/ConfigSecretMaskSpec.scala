@@ -171,6 +171,36 @@ class ConfigSecretMaskSpec extends FunSuite:
     )
   }
 
+  test("provider save, resolve and user readback repeat twenty times") {
+    for i <- 1 to 20 do
+      val key = s"fixture-cycle-$i"
+      val input = Json.obj("llm" -> Json.obj("providers" -> Json.obj("cycle" -> providerJson(key))))
+      assertEquals(ConfigService.updateConfig(input.noSpaces).unsafeRunSync(), Right(()))
+      val reference = apiKeyOf(readDisk(), "cycle").get
+      assert(reference.startsWith("secret:config-"))
+      assert(nebflow.core.secrets.ConfigCredentialStore.resolve(PathUtil.dataRoot, reference, "cycle-test", (_, _) => ()) == key)
+      val visible = ConfigService.revealProviderApiKeys.unsafeRunSync()
+      assert(visible.hcursor.downField("providers").downField("cycle").as[String].toOption.contains(key))
+      val agent = parse(ConfigService.getConfig.unsafeRunSync()).toOption.get
+      assertEquals(apiKeyOf(agent, "cycle"), Some("***"))
+  }
+
+  test("snapshot externalizes legacy provider and search credentials") {
+    val backupDir = PathUtil.dataRoot / "backups"
+    if os.exists(backupDir) then os.remove.all(backupDir)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seedConfig())
+    ConfigSnapshot.save().unsafeRunSync()
+    val snapshots = ConfigSnapshot.snapshots()
+    assertEquals(snapshots.size, 1)
+    val saved = os.read(snapshots.head)
+    assert(!saved.contains("sk-real-kimi-1"))
+    assert(!saved.contains("sk-real-ds-2"))
+    assert(!saved.contains("zhipu-real-3"))
+    val parsed = parse(saved).toOption.get
+    assert(apiKeyOf(parsed, "kimi").exists(_.startsWith("secret:config-")))
+    assert(parsed.hcursor.downField("search").downField("apiKey").as[String].toOption.exists(_.startsWith("secret:config-")))
+  }
+
   test("save through the masked surface lands nebflow.json owner-only (quickfix ① cross-check)") {
     posixOnly()
     val saved = PathUtil.dataRoot / nebflow.shared.Branding.configFileName
