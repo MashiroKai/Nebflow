@@ -662,6 +662,22 @@ jobs:
       - name: Canvas writer ownership (real gateway)
         run: sbt "testOnly nebflow.gateway.CanvasWriterLegacyPutSpec"
 
+  row-center-lint:
+    name: Rendered row-center lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright
+        run: |
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium
+      - name: Check rendered rows
+        run: PW_SELFCONTAINED_ONLY=1 npx playwright test tests/ask-mail-channel.spec.mjs -g 'row-center' --reporter=line
+
   frontend-specs:
     name: Frontend Specs (self-contained suite, Playwright)
     # 2026-10-24 CI 迁移批：补足 node 全量面。本机全量 = sbt test + tests/*.spec.mjs；

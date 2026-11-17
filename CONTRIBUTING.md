@@ -84,7 +84,9 @@ For the main composer at the mobile viewport, the send button's circular border 
 
 ### Rendered row-center check
 
-Run locally or as a CI step after the Playwright setup above:
+Run locally after the Playwright setup above; CI runs the same command in the
+`row-center-lint` job without `continue-on-error` (the wider `frontend-specs`
+job is currently non-blocking; branch protection is configured separately):
 
 ```sh
 npx playwright test tests/ask-mail-channel.spec.mjs -g 'row-center' --reporter=line

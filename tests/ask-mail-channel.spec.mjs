@@ -300,7 +300,11 @@ function ensureCanvasServer() {
         const file = normalize(join(WEB, p));
         if (!file.startsWith(WEB)) { res.writeHead(403); res.end(); return; }
         try {
-          const body = readFileSync(file); // 先读后写头（404 路径不得半途炸响应）
+          // Baseline comparison serves every requested tracked web asset from Git,
+          // not just the two files changed by the badge fix. Missing files stay 404.
+          const body = process.env.ROW_CENTER_BASELINE
+            ? execFileSync('git', ['show', `${process.env.ROW_CENTER_BASELINE}:src/main/resources/web${p}`], { cwd: join(HERE, '..'), stdio: ['ignore', 'pipe', 'ignore'] })
+            : readFileSync(file); // 先读后写头（404 路径不得半途炸响应）
           res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
           res.end(body);
         } catch {
