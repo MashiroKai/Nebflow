@@ -194,24 +194,40 @@ const roleState = new Map();
 
 function roleLabel(role) { return t(ROLE_KEY[role] || role, rootNameParams()); }
 
-function fetchModelOf(role) {
-  return fetch(`/api/agents/${encodeURIComponent(role)}/model`, { headers: authHeaders() })
-    .then(r => (r.ok ? r.json() : null))
-    .catch(() => null);
+async function fetchModelOf(role, onUpdate = () => {}) {
+  const st = roleState.get(role) || { chain: null, expanded: false };
+  roleState.set(role, st);
+  const path = `/api/agents/${encodeURIComponent(role)}/model`;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const response = await fetch(path, { headers: authHeaders() });
+      if (response.status === 429) {
+        const value = response.headers.get('Retry-After');
+        const seconds = value && /^\d+$/.test(value) ? Number(value) :
+          value && Number.isFinite(Date.parse(value)) ? Math.ceil((Date.parse(value) - Date.now()) / 1000) : 2 ** attempt;
+        const delay = Math.max(1, Math.min(60, seconds));
+        st.data = null;
+        st.error = { kind: attempt === 3 ? 'rate-exhausted' : 'rate', detail: `HTTP 429 · ${path}`, seconds: delay };
+        onUpdate();
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, delay * 1000));
+        continue;
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status} · GET ${path}`);
+      st.data = await response.json();
+      st.error = null;
+      st.chain = st.data && st.data.mode === 'explicit' ? chainRefs(st.data.chain) : null;
+      return;
+    } catch (error) {
+      st.data = null;
+      st.error = { kind: 'error', detail: `GET ${path}: ${String(error?.message || error)}` };
+      onUpdate();
+      return;
+    }
+  }
 }
 
-async function fetchAllRoles() {
-  const roles = [...ROLES, SMALL_LLM];
-  const results = await Promise.all(roles.map(fetchModelOf));
-  roles.forEach((role, i) => {
-    const st = roleState.get(role) || { chain: null, expanded: false };
-    st.data = results[i];
-    // Re-sync the working copy from disk on every fetch. Local edits are
-    // persisted through saveChain() before any refresh runs, so this sync
-    // never clobbers an in-panel edit.
-    st.chain = st.data && st.data.mode === 'explicit' ? chainRefs(st.data.chain) : null;
-    roleState.set(role, st);
-  });
+async function fetchAllRoles(onUpdate = () => {}) {
+  for (const role of [...ROLES, SMALL_LLM]) await fetchModelOf(role, onUpdate);
 }
 
 /** 台账 #937：全部角色读数失败 = 面板不可用态（未登录 / 引擎不可达）。
@@ -588,8 +604,23 @@ function renderSettingsRoleSelector(container) {
       const status = document.createElement('div');
       status.className = 'mp-note';
       status.setAttribute('role', 'status');
-      status.textContent = t('model.loadFailed');
+      status.textContent = st?.error?.kind === 'rate'
+        ? t('model.rateLimited', { n: st.error.seconds })
+        : st?.error?.kind === 'rate-exhausted' ? t('model.rateLimitedExhausted') : t('model.loadFailed');
       row.appendChild(status);
+      if (st?.error?.kind === 'rate-exhausted') {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'cfg-btn cfg-btn-sm';
+        retry.textContent = t('model.retry');
+        retry.addEventListener('click', () => void refreshChainSection(container));
+        row.appendChild(retry);
+      }
+      if (st?.error?.detail && st.error.kind === 'error') {
+        const detail = document.createElement('code');
+        detail.textContent = st.error.detail;
+        row.appendChild(detail);
+      }
     } else {
       const effective = chainRefs(st.data.effectiveChain)[0] || '';
       const status = document.createElement('div');
@@ -651,6 +682,21 @@ function renderChainSectionBody(container) {
     const target = /** @type {HTMLSelectElement} */ (event.target);
     void putChain(SMALL_LLM, target.value ? [target.value] : null);
   });
+  if (small?.error) {
+    const message = document.createElement('div');
+    message.className = 'mp-note';
+    message.textContent = small.error.kind === 'rate' ? t('model.rateLimited', { n: small.error.seconds }) :
+      small.error.kind === 'rate-exhausted' ? t('model.rateLimitedExhausted') : `${t('model.loadFailed')} · ${small.error.detail}`;
+    row.appendChild(message);
+    if (small.error.kind === 'rate-exhausted') {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'cfg-btn cfg-btn-sm';
+      retry.textContent = t('model.retry');
+      retry.addEventListener('click', () => void refreshChainSection(container));
+      row.appendChild(retry);
+    }
+  }
   container.appendChild(row);
   // Image generation remains a separate provider selector, not a conversation role.
   const list = document.createElement('div');
@@ -662,9 +708,11 @@ function renderChainSectionBody(container) {
 /** 拉取 Nebula 最新读数 + 两面状态投影 → 重绘节内容（seq 守卫丢弃陈旧响应）。 */
 async function refreshChainSection(container) {
   const seq = ++chainSectionSeq;
-  await Promise.all([fetchFaceStatuses(), fetchAllRoles()]);
-  if (seq !== chainSectionSeq) return;
-  if (container.isConnected) renderChainSectionBody(container);
+  const update = () => {
+    if (seq === chainSectionSeq && container.isConnected) renderChainSectionBody(container);
+  };
+  await Promise.all([fetchFaceStatuses(), fetchAllRoles(update)]);
+  update();
 }
 
 /**
