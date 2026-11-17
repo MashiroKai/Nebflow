@@ -5705,11 +5705,13 @@ body.mobile-layer .tfl-menu-empty {
        顶部菜单（z25）之下；
      · 开合过渡串**不在此写**（时长/曲线/属性白名单 = js/motion/liquidMorph.js
        单源，JS 逐次写入）；reduced-motion 由同一模块降级 1ms；
-     · 输入面 = `.tfl-hit-reply`（`.tfl-edit-notes` 同族裸件表面：无环无边、
-       tinted 底 —— 与主输入框的 inputSurface 统一语言不冲突；本块补几何：自增
-       高上限唯一一份 max-height、`resize:none`）；回车 = 换行**不发送**（JS 只
-       放行默认换行），发送 = 独立钮，命中盒 ≥ --ds-hit-tap-min（最小可点尺寸
-       令牌单源 —— 本块不写第二把按钮尺）；
+     · 输入面（E 批 ui-unify-panels 2026-11-17 起复刻 ask 卡片输入）：行壳
+       `.tfl-hit-replyrow` = nf-glass 输入条外壳 + inputSurface 外壳圆角成员，
+       内芯 `.tfl-hit-reply` = inputSurface 裸件成员（零边零底零内距）；回车 =
+       发送、shift+回车换行（bindComposerKeys，主会话/ask 同一实现——
+       2026-11-06 ④「回车只换行」口径随 E 批翻新），发送 = ds-turn-btn--send
+       实心圆钮（手机档 44/20 = ask 面板底钮同档）；自增高上限唯一一份
+       max-height、`resize:none`；
      · 完成钮 = 主色文字钮、编辑钮 = 中性文字钮（语言镜像 .mf-drawer-done-btn /
        .mf-drawer-cancel-btn 同款：透明底 + pill + 令牌字号，零新造第二套钮）。
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -5788,8 +5790,7 @@ body.mobile-layer .tfl-hit-acts {
   gap: var(--ds-space-2);
 }
 body.mobile-layer .tfl-hit-done,
-body.mobile-layer .tfl-hit-edit,
-body.mobile-layer .tfl-hit-send {
+body.mobile-layer .tfl-hit-edit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5808,27 +5809,36 @@ body.mobile-layer .tfl-hit-send {
 }
 body.mobile-layer .tfl-hit-done { color: var(--color-primary); font-weight: 600; }
 body.mobile-layer .tfl-hit-edit { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+/* E 批（ui-unify-panels 2026-11-17 作者令「待办回复框复刻 ask 卡片输入样式/交互」）：
+   行壳 = nf-glass 输入条外壳（材质 JS 挂 .nf-glass；圆角 = inputSurface.css
+   外壳成员表），几何（对齐/gap/padding）与 .ask-input 同款；内芯 = 裸件
+   （造型在 inputSurface.css 裸件成员表，本块零边/零底/零内距不再自书），
+   字/行高/caret/占位取 .ask-input textarea 同一批令牌。 */
 body.mobile-layer .tfl-hit-replyrow {
   display: flex;
-  align-items: flex-end;
-  gap: var(--ds-space-2);
+  align-items: center;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1h);
 }
 body.mobile-layer .tfl-hit-reply {
   flex: 1 1 auto;
   min-width: 0;
-  box-sizing: border-box;
-  border: none;
-  outline: none;            /* 裸件无环（.tfl-edit-notes 同族；G1 非蓝语义同源） */
-  border-radius: var(--ds-radius-input);
-  background: color-mix(in srgb, var(--color-text, #000) 6%, transparent);
-  padding: var(--ds-space-1) var(--ds-space-1h);
-  font: 400 var(--ds-fs-bubble)/1.4 inherit;
+  font: 400 var(--nf-field-fs) -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
+  line-height: var(--nf-field-line);
   color: var(--color-text);
+  caret-color: var(--color-primary);
   max-height: 120px;        /* 自增高上限唯一一份（autosizeReply 按此钳，超出内部滚） */
   resize: none;
 }
-body.mobile-layer .tfl-hit-reply::placeholder { color: color-mix(in srgb, var(--color-text, #000) 35%, transparent); }
-body.mobile-layer .tfl-hit-send { color: var(--color-primary); font-weight: 600; }
+body.mobile-layer .tfl-hit-reply::placeholder { color: var(--cv-hint-color-dim); opacity: 1; }
+/* 发送键 = ds-turn-btn--send 实心圆钮（色彩/hover/active 全在组件单源，本面
+   零本地形态）；手机档几何槽与 ask 面板底钮同款（--mcv-size-circle 44 /
+   --mcv-icon 20，HIG 下限）。 */
+body.mobile-layer .tfl-hit-send {
+  flex: none;
+  --ds-turn-btn-size: var(--mcv-size-circle);
+  --ds-turn-btn-icon: var(--mcv-icon);
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    后台 agent 对话框手机简化批（作者令 2026-11-06 10:00/12:03 附实拍

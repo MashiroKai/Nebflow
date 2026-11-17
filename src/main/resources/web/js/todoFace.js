@@ -39,6 +39,7 @@
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import { isImeComposing } from './imeGuard.js';
+import { bindComposerKeys } from './input/composer.js';
 import { sessionShowsNodeEntries } from './taskList.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } from './todoStore.js';
 // 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
@@ -1621,21 +1622,29 @@ class TodoFace {
     acts.append(done, edit);
     body.appendChild(acts);
 
-    // ④ 多行输入：回车 = 换行（不发送）、内容自增高到上限后内部滚动、发送 = 独立钮
-    const replyRow = el('div', 'tfl-hit-replyrow');
+    // ④ 多行输入（E 批 ui-unify-panels 2026-11-17 作者令「复刻 ask 卡片输入样式/
+    //    交互」：行壳 = nf-glass 输入条外壳、内芯 = 裸件、发送 = ds-turn-btn--send
+    //    实心圆钮；键盘/IME/发送判定 = bindComposerKeys 与主会话/ask 同一实现——
+    //    Enter = 发送、Shift+Enter = 换行（2026-11-06 ④「回车只换行」口径随批翻新），
+    //    内容自增高到上限后内部滚动、发送 = 独立钮。
+    const replyRow = el('div', 'tfl-hit-replyrow nf-glass');
     const ta = el('textarea', 'tfl-hit-reply');
     ta.rows = 1;
     ta.placeholder = t('todoface.replyPh');
     ta.setAttribute('aria-label', t('todoface.replyPh'));
     ta.addEventListener('input', () => this.autosizeReply(ta));
-    ta.addEventListener('keydown', (e) => {
-      // 回车只换行：既不发送、也不让页面级键道接管（stopPropagation 不吃默认行为）。
-      // IME 组合中的回车照常交给输入法上屏（isImeComposing 判在按键处理器之外）。
-      if (e.key === 'Enter') e.stopPropagation();
-      if (e.key === 'Escape') e.stopPropagation();
+    bindComposerKeys(ta, {
+      // Enter/Esc 不外溢给页面级键道（stopPropagation 不吃默认行为/发送判定）。
+      preamble: (e) => {
+        if (e.key === 'Enter' || e.key === 'Escape') e.stopPropagation();
+      },
+      onSend: () => { this.sendReply(item); },
     });
-    const send = el('button', 'tfl-hit-send', t('todoface.send'));
+    const send = el('button', 'tfl-hit-send ds-turn-btn ds-turn-btn--send');
     send.type = 'button';
+    send.setAttribute('aria-label', t('todoface.send'));
+    send.innerHTML = '<i data-lucide="send"></i>';
+    createIconsIn(send);
     send.addEventListener('click', (e) => {
       e.stopPropagation();
       this.sendReply(item);
