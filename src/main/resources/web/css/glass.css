@@ -620,7 +620,7 @@ html[data-theme="light"] {
 #deck-fab[aria-pressed="true"] {
   color: var(--color-primary);
   border-color: rgb(var(--sapphire) / 0.35);
-  background: rgb(var(--sapphire) / 0.12);
+  background: var(--nf-glass-input-bg);
 }
 
 /* 禁用：opacity .35 + not-allowed + hover 不形变不换底（设计稿 §3.4） */
