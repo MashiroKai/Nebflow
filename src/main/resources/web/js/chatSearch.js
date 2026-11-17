@@ -89,7 +89,7 @@ const SEARCH_PAGE_MAX = 200;  // 单页上限（与服务端 clamp 同一口径�
 const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤200;
                               // 100 keeps cursor pagination reachable for B9's ≥120-seed)
 const RENDER_BATCH = 50;      // lazy-render batch (spec §6.1)
-const FETCH_CONCURRENCY = 4;
+const FETCH_CONCURRENCY = 1;
 const DEBOUNCE_MS = 300;
 const PAGE_JUMP = 5;
 
@@ -1160,6 +1160,31 @@ function authHeaders() {
   return tok ? { Authorization: `Bearer ${tok}` } : {};
 }
 
+// A tunnel budget applies to all requests, so remember its cooldown across
+// tab changes and retries. Abort superseded searches instead of waking them.
+let searchRateLimitUntil = 0;
+async function searchFetch(url, options = {}) {
+  const wait = Math.max(0, searchRateLimitUntil - Date.now());
+  if (wait) await new Promise((resolve, reject) => {
+    const signal = options.signal;
+    if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, wait);
+    function abort() { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); }
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+  const response = await fetch(url, options);
+  if (response.status === 429) {
+    const header = response.headers.get('Retry-After');
+    const seconds = header && /^\d+$/.test(header) ? Number(header) : 60;
+    const delay = Math.min(3600, Math.max(1, seconds));
+    searchRateLimitUntil = Math.max(searchRateLimitUntil, Date.now() + delay * 1000);
+    const error = new Error(`请求过于频繁，请等待 ${delay} 秒后重试`);
+    error.name = 'SearchRateLimitError';
+    throw error;
+  }
+  return response;
+}
+
 async function fetchSessionList(signal) {
   // includeUnindexed=1：会话搜索范围收窄批（2026-11-01，作者 17:29 令）之后，
   // 服务端只回**主会话**（索引会话 ∪ 盘上主会话；后台 agent 族 delegate/subtask/
@@ -1167,7 +1192,7 @@ async function fetchSessionList(signal) {
   // nebflow.shared.SessionScope）。范围收口在服务端数据源层（+ 索引库
   // /api/search/chat 同判据），所以本文件与手机层、搜索浮钮等所有入口**零过滤
   // 代码**即自动一致；禁在前端追加事后剔除。
-  const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders(), signal });
+  const resp = await searchFetch('/api/sessions?includeUnindexed=1', { headers: authHeaders(), signal });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json();
   return data.sessions || [];
@@ -1187,7 +1212,7 @@ async function fetchHistory(sessionId, signal, cursor = {}) {
   if (cursor.after != null) params.set('after', String(cursor.after));
   if (cursor.limit != null) params.set('limit', String(cursor.limit));
   const qs = params.toString();
-  const resp = await fetch(
+  const resp = await searchFetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/history${qs ? `?${qs}` : ''}`,
     { headers: authHeaders(), signal });
   // 2026-10-20 搜索空结果修复批：非 2xx 不再吞成 [] —— 中继隧道抖动窗（实测
@@ -1725,7 +1750,7 @@ async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsE
     const cached = searchEtagCache.get(url);
     const headers = { ...authHeaders() };
     if (cached) headers['If-None-Match'] = cached.etag;
-    const resp = await fetch(url, { headers, signal: ac.signal });
+    const resp = await searchFetch(url, { headers, signal: ac.signal });
     /** 首页到手 ⇒ 落分页档（续取基址/已取偏移/命中总数/是否还有下一页）。 */
     const take = (body) => {
       const n = Array.isArray(body.hits) ? body.hits.length : 0;
@@ -1748,7 +1773,7 @@ async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsE
     if (etag) searchEtagCache.set(url, { etag, body });
     return take(body);
   } catch (e) {
-    if (e.name === 'AbortError') throw e;   // runSearch 既有 catch 静默处理
+    if (e.name === 'AbortError' || e.name === 'SearchRateLimitError') throw e;
     if (mySeq !== searchSeq) return true;   // 已被取代：UI 归新查询，勿回落
     return false;                           // 网络错/体损坏 ⇒ 回落旧全扫
   }
@@ -2006,7 +2031,7 @@ async function loadMoreSearch() {
     const cached = searchEtagCache.get(url);
     const headers = { ...authHeaders() };
     if (cached) headers['If-None-Match'] = cached.etag;
-    const resp = await fetch(url, { headers, signal: searchAbort?.signal });
+    const resp = await searchFetch(url, { headers, signal: searchAbort?.signal });
     let body = null;
     if (resp.status === 304 && cached) body = cached.body;
     else if (resp.ok) {
@@ -2435,6 +2460,11 @@ function showError(statusEl, e) {
   btn.type = 'button';
   btn.className = 'glass-control cfg-btn cfg-btn-sm';
   btn.textContent = t('search.retry');
+  if (e.name === 'SearchRateLimitError') {
+    btn.disabled = true;
+    const delay = Math.max(0, searchRateLimitUntil - Date.now());
+    setTimeout(() => { btn.disabled = false; }, delay);
+  }
   btn.addEventListener('click', triggerSearch);
   statusEl.appendChild(btn);
 }

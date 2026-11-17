@@ -387,9 +387,12 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
     ) { (bridge, fake, _) =>
       bridge.enqueueFrame(HttpRequest(Rid, "GET", "/api/x", Vector("x-forwarded-for" -> "203.0.113.9")))
       for
-        ok <- waitUntil(5.seconds)(IO(httpCycles(fake).contains((Rid, 429))))
-        _ = assert(ok, s"expected a 429 answer; sent=${sentTexts(fake)}")
-        _ = assert(sentTexts(fake).exists(_.contains("429")))
+        ok <- waitUntil(5.seconds)(IO(bodyFrames(fake, Rid).nonEmpty))
+        _ = assert(ok, s"expected a complete 429 answer; sent=${sentTexts(fake)}")
+        response = decodeSent(fake).collectFirst { case r: HttpResponse if r.requestId == Rid => r }.get
+        _ = assertEquals(response.status, 429)
+        _ = assert(response.headers.exists { case (k, v) => k.equalsIgnoreCase("retry-after") && v == "60" })
+        _ = assertEquals(new String(assembledBody(fake, Rid), UTF_8), """{"error":"rate_limited","reason":"tunnel-per-ip-cap"}""")
         _ = assert(observedIps.contains("203.0.113.9"), s"guard must observe the ENVELOPE IP; observed=$observedIps")
         _ = assert(!observedIps.contains("unknown"), "a present XFF must not degrade to the unknown bucket")
         _ = assert(!httpCycles(fake).contains((Rid, 200)), "a rejected request must never reach the lifted app")
