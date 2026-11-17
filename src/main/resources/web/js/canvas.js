@@ -125,9 +125,13 @@ function writerChanged(role) {
     persistDirty = false;
   }
 }
-function writerNotice(message = 'Canvas 当前为只读，请先取得控制权。') {
+const writerRejectionNotices = new Set();
+function writerNotice(message, reason) {
   if (writerStatusEl) writerStatusEl.textContent = localUnsynced ? `${message} 存在仅本地变更，不会自动同步。` : message;
-  window.__showToast?.(message, 'info');
+  if (reason && !writerRejectionNotices.has(reason)) {
+    writerRejectionNotices.add(reason);
+    window.__showToast?.(message, 'info');
+  }
 }
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,
@@ -157,16 +161,13 @@ const canvasWriter = createCanvasWriterClient({
         body: JSON.stringify({ ...payload, ...canvasIdentity(), epoch }),
       });
       if (response.ok) return true;
-      writerNotice(response.status === 409 ? 'Canvas 控制权已失效，请重新取得。' : 'Canvas 保存失败，请重新取得控制权。');
+      writerNotice(response.status === 409 ? 'Canvas 控制权已失效，请重新取得。' : 'Canvas 保存失败，请重新取得控制权。', `save:${response.status}`);
       return false;
     } catch { writerNotice('Canvas 保存失败，已切换只读。'); return false; }
   },
 });
 function allowCanvasMutation() {
-  if (applyingLiveTabsFrame || (canvasWriter.role() === 'writer' && !localUnsynced)) return true;
-  if (localUnsynced) { writerNotice('请先刷新以丢弃仅本地变更，再取得控制权。'); return false; }
-  writerNotice();
-  return false;
+  return applyingLiveTabsFrame || (canvasWriter.role() === 'writer' && !localUnsynced);
 }
 // F1: 服务端 PUT 防抖计时器——openTab/closeTab/setActiveTab/pinTab 都调 persistTabs，
 // 防抖合并连续操作成一次 PUT。
@@ -182,6 +183,8 @@ let closeTimeout = null;
 // ── Tab state ──────────────────────────────────────────────
 // Map of tabId -> { id, title, type, paneEl, tabEl, closable }
 const tabs = new Map();
+// Reader-only browsing must not become a shared edit after a later claim.
+const readerLocalTabs = new Set();
 let activeTabId = null;
 // Legacy PUTs have no operation id: tie an acknowledgement to the exact local
 // activation generation captured by the submitted snapshot, never just its id.
@@ -819,7 +822,6 @@ function disposeTabEditor(entry) {
  *  @param {object} opts  — { type: 'flow'|'markdown'|'code'|'html'|'generic', closable: bool }
  *  @returns {object|null} — The tab entry, or null on failure. */
 export function openTab(id, title, opts = {}) {
-  if (!opts.noRevive && !tabs.has(id) && !allowCanvasMutation()) return null;
   const { type = 'generic', closable = true, pinned = false, noRevive = false } = opts;
 
   // Open the panel if it's not already visible.
@@ -850,13 +852,14 @@ export function openTab(id, title, opts = {}) {
     const oldPreviewId = previewTabs.get(previewKey);
     if (oldPreviewId && oldPreviewId !== id) {
       const oldEntry = tabs.get(oldPreviewId);
-      if (oldEntry) {
+      if (oldEntry && (canvasWriter.role() === 'writer' || readerLocalTabs.has(oldPreviewId))) {
         disposeTabEditor(oldEntry);
         document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
         oldEntry.paneEl.remove();
         oldEntry.tabEl.remove();
         tabs.delete(oldPreviewId);
-        recordTombstone(oldPreviewId); // #910: 预览替换=显式关闭旧预览
+        const wasReaderLocal = readerLocalTabs.delete(oldPreviewId);
+        if (!wasReaderLocal && canvasWriter.role() === 'writer' && !localUnsynced) recordTombstone(oldPreviewId);
         previewTabs.delete(previewKey);
         persistTabs();
       }
@@ -905,6 +908,7 @@ export function openTab(id, title, opts = {}) {
                   rootPath: opts.rootPath || null,
                   filePath: opts.filePath || null };
   tabs.set(id, entry);
+  if (!noRevive && !applyingLiveTabsFrame && canvasWriter.role() !== 'writer') readerLocalTabs.add(id);
   // #910: 新建成功即视为显式重开落账（作者语义「显式重开才恢复」——点开
   // 这个文件/面板就是重开意图）。服务端对无墓碑的 id 忽略该账（不凭空造
   // 记录）；restoreTabs 批量恢复走这里也安全：能从服务端回来的 id 必无生效
@@ -914,7 +918,7 @@ export function openTab(id, title, opts = {}) {
   // 带墓碑、缓存会被陈旧窗口回写）。恢复腿（noRevive）不落账；显式腿落账并
   // 同步镜像本会话墓碑的 reopenedAt（服务端同款时间戳裁决，localStorage 里
   // 的墓碑账随之保持有效态，跨会话恢复过滤才有正确判据）。
-  if (!noRevive) {
+  if (!noRevive && canvasWriter.role() === 'writer' && !localUnsynced) {
     const reopenedAt = Date.now();
     sessionReopens.set(id, { id, reopenedAt });
     const st = sessionTombstones.get(id);
@@ -964,7 +968,8 @@ function teardownTab(id, opts = {}) {
   entry.paneEl.remove();
   entry.tabEl.remove();
   tabs.delete(id);
-  if (!opts.silent) recordTombstone(id); // #910: 显式关闭意图落账（× 按钮 / deck 侧滑共用此处）
+  const wasReaderLocal = readerLocalTabs.delete(id);
+  if (!opts.silent && !wasReaderLocal) recordTombstone(id);
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
   persistTabs();
   deckNotifyRemoved(id);
@@ -981,7 +986,7 @@ function teardownTab(id, opts = {}) {
  *  @param {{discardDirty?: boolean}} [opts] 关闭确认之后的内部腿专用
  *    （用户已经点过「关闭并丢弃」），外部调用一律不传。 */
 export function closeTab(id, opts = {}) {
-  if (!allowCanvasMutation()) return;
+  if (!readerLocalTabs.has(id) && !allowCanvasMutation()) return;
   const entry = tabs.get(id);
   if (!entry) return;
 
@@ -1385,9 +1390,6 @@ document.addEventListener('canvas-request-refresh', (e) => {
  *  @param {string} id — Tab identifier. */
 export function setActiveTab(id) {
   if (!tabs.has(id)) return;
-  if (!applyingLiveTabsFrame && canvasWriter.role() !== 'writer' && activeTabId !== id) {
-    writerNotice('Canvas 只读：当前标签切换仅在本地显示，不会同步。');
-  }
   if (!applyingLiveTabsFrame && activeTabId !== id) {
     pendingLocalActivation = { id, at: Date.now(), generation: ++activationGeneration };
     lateSyncActive = null;
@@ -1671,7 +1673,6 @@ export async function openWorkspaceItem(item) {
   // Pop 卡 / 引用跳转等显式打开无标记，语义不变。骨架错误腿（下方 error
   // 分支）同受此闸：恢复一个「文件不可读」骨架也是复活。
   const viaRestore = requestedFilePaths.delete(absPath) || requestedFilePaths.delete(item.path);
-  if (!viaRestore && !tabs.has(id) && !allowCanvasMutation()) return;
 
   // URL type — render the page in a sandboxed iframe. Handled before all
   // file logic: URL tabs have no absPath (scheduleFileRefresh skips them)
@@ -1902,13 +1903,14 @@ export async function openWorkspaceItem(item) {
   const oldPreviewId = previewTabs.get(itemPreviewKey);
   if (!pinned && oldPreviewId && oldPreviewId !== id) {
     const oldEntry = tabs.get(oldPreviewId);
-    if (oldEntry) {
+    if (oldEntry && (canvasWriter.role() === 'writer' || readerLocalTabs.has(oldPreviewId))) {
       disposeTabEditor(oldEntry);
       document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
       oldEntry.paneEl.remove();
       oldEntry.tabEl.remove();
       tabs.delete(oldPreviewId);
-      recordTombstone(oldPreviewId); // #910: 预览替换=显式关闭旧预览
+      const wasReaderLocal = readerLocalTabs.delete(oldPreviewId);
+      if (!wasReaderLocal && canvasWriter.role() === 'writer' && !localUnsynced) recordTombstone(oldPreviewId);
       previewTabs.delete(itemPreviewKey);
       persistTabs();
     }
@@ -5664,6 +5666,7 @@ function persistTabs() {
   try {
     const serializable = [];
     for (const [, t] of tabs) {
+      if (readerLocalTabs.has(t.id)) continue;
       // Skip runtime flow-run tabs — their instanceId is invalid after a
       // restart, so restoring them would leave dead tabs.
       if (t.type === 'flow-run') continue;
@@ -5694,7 +5697,7 @@ function persistTabs() {
     // 此前只进 localStorage 缓存，他端无从跟随。null 序列化为缺省（服务端沿用
     // prev，与旧载荷逐字兼容）。
     const payload = { v: 2, tabs: serializable };
-    if (activeTabId) payload.activeTabId = activeTabId;
+    if (activeTabId && !readerLocalTabs.has(activeTabId)) payload.activeTabId = activeTabId;
     // #910: 附带本会话关闭/重开意图账（服务端墓碑合并；账幂等可重放）。
     if (sessionTombstones.size > 0) payload.tombstones = [...sessionTombstones.values()];
     if (sessionReopens.size > 0) payload.reopened = [...sessionReopens.values()];
@@ -5703,7 +5706,7 @@ function persistTabs() {
     // 墓碑过滤（陈旧窗口会把已关页签写回缓存），不带账的话下次加载本地恢复
     // 腿无从识别关闭意图，页签每次加载复活一次（本次报障链）。重开镜像进
     // tombstones 条目（openTab 显式腿已并入），跨会话重开态判据正确。
-    const lsRecord = { v: 2, tabs: serializable, activeTabId: activeTabId };
+    const lsRecord = { v: 2, tabs: serializable, activeTabId: readerLocalTabs.has(activeTabId) ? null : activeTabId };
     if (sessionTombstones.size > 0) lsRecord.tombstones = [...sessionTombstones.values()];
     localStorage.setItem(LS_TABS_KEY, JSON.stringify(lsRecord));
     console.log('[persistTabs] saved', serializable.length, 'tabs', serializable.map(t => t.id));
@@ -5799,7 +5802,6 @@ function bindPersistReconnect() {
       onMessage('takeover', () => {
         if (pendingPersistPayload || persistDirty) localUnsynced = true;
         canvasWriter.lost();
-        writerNotice('Canvas 控制权已被接管，当前为只读。');
       });
       onReconnect(() => {
         convergeFromServer().finally(() => {
@@ -5960,7 +5962,7 @@ function reconcileFromServer(serverData) {
     // #910 追补：命中生效墓碑一律不开（服务端已过滤，此为纵深防御——
     // 播种集合与响应不一致的窗口期也不复活）。
     if (tombstoneGateActive(tab.id)) continue;
-    if (present.has(tab.id)) continue;  // 已开（本地恢复成功）→ 跳过
+    if (present.has(tab.id)) { readerLocalTabs.delete(tab.id); continue; }
     if (tab.absPath) fileToOpen.push(tab);
     else panelToOpen.push(tab);
   }
