@@ -52,7 +52,8 @@ for (const width of [320,375,390,430]) {
    const rect=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,right:innerWidth-r.right,cy:r.y+r.height/2}};
    const avatar=root.querySelector('.mh-idhead img,.g2-chat-head img,.mh-idhead-avatar');
    const tool=root.querySelector('.ta-tool');
-   return {id,buttons:els.map(e=>({box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null})),avatar:avatar?rect(avatar):null, tool:tool?rect(tool):null,bottom:getComputedStyle(document.body).getPropertyValue('--mcv-size-circle').trim(),capsule:getComputedStyle(document.body).getPropertyValue('--mcap-h').trim()};
+   const bottomControls = id === 'canvas' ? [...root.querySelectorAll('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-zoom-btn')].filter(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width&&r.height&&s.visibility!=='hidden'&&s.display!=='none'}).map(e=>{const s=getComputedStyle(e);return {selector:e.className,box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null,padding:s.padding,radius:s.borderRadius,transform:s.transform}}) : [];
+   return {id,buttons:els.map(e=>({box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null})),bottomControls,avatar:avatar?rect(avatar):null, tool:tool?rect(tool):null,bottom:getComputedStyle(document.body).getPropertyValue('--mcv-size-circle').trim(),capsule:getComputedStyle(document.body).getPropertyValue('--mcap-h').trim()};
   },id);
   rows.push(data); console.log(JSON.stringify({width,...data}));
   if (process.env.BAND_CLICKS && width===375 && ['messages','contacts','settings','canvas'].includes(id)) {
@@ -69,10 +70,17 @@ for (const width of [320,375,390,430]) {
  }
  writeFileSync(join(out,`${width}.json`),JSON.stringify(rows,null,2));
  const values=rows.flatMap(r=>r.buttons.map(b=>({id:r.id,...b})));
- const expected=Math.min(52,Math.max(44,width*.128));
- for(const b of values) if(Math.abs(b.box.w-expected)>.15||Math.abs(b.box.h-expected)>.15||!b.icon||Math.abs(b.icon.w-expected*.45)>.15||Math.abs(b.box.y-16)>.5||Math.min(b.box.x,b.box.right)>16.5) {console.log('FAIL geometry',JSON.stringify({width,...b,expected}));errors++;}
+ const expected=48;
+ for(const b of values) if(Math.abs(b.box.w-expected)>.15||Math.abs(b.box.h-expected)>.15||!b.icon||Math.abs(b.icon.w-18)>.15||Math.abs(b.box.y-16)>.5||Math.min(b.box.x,b.box.right)>16.5) {console.log('FAIL geometry',JSON.stringify({width,...b,expected}));errors++;}
  for(const id of ['chat','messages','contacts','canvas','settings','tasks']) if(!rows.find(r=>r.id===id).buttons.length) {console.log('FAIL missing top button',id); errors++;}
  if(rows.find(r=>r.id==='canvas').buttons.length!==2) { console.log('FAIL canvas requires two top controls'); errors++; }
+ const bottomControls=rows.find(r=>r.id==='canvas').bottomControls;
+ if(!bottomControls.length) { console.log('FAIL canvas requires a visible bottom control for baseline measurement'); errors++; }
+ for(const bottom of bottomControls) for(const top of values) {
+  if(Math.abs(top.box.w-bottom.box.w)>.15 || Math.abs(top.box.h-bottom.box.h)>.15 || !top.icon || !bottom.icon || Math.abs(top.icon.w-bottom.icon.w)>.15 || Math.abs(top.icon.h-bottom.icon.h)>.15) {
+   console.log('FAIL bottom baseline mismatch',JSON.stringify({width,id:top.id,top:top.box,topIcon:top.icon,bottom})); errors++;
+  }
+ }
  if(rows.find(r=>r.id==='workbench').buttons.length) { console.log('FAIL workbench unexpectedly has a top button'); errors++; }
  await context.close();
 }
