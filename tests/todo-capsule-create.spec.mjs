@@ -3,7 +3,8 @@
 // 动画护栏 / 手机 375 视口胶囊可见可展开。
 //
 // 断言清单（对应节点任务书 ①–⑧，逐条钉成机械判据）：
-//   ① 右下角加号：存在、34px 圆钮（桌面档）、贴列表区右下角、**不压列表末行**；
+//   ① 右下角加号：存在、--cv-size-circle-lg（40）圆钮（C 批 ui-unify-panels
+//     2026-11-17 控制按钮单源；原桌面 34px 档退役）、贴列表区右下角、**不压列表末行**；
 //      点击 ⇒ 行内新建行出现且标题输入框获得焦点；
 //   ①b 同一实现两套尺寸：手机层 44px 触摸档（⑧ 里量）。
 //   ② 空白区点击建：列表空白 + footer 空白两条落点 ⇒ 行内新建 + 聚焦。
@@ -243,7 +244,7 @@ async function seedFixture(page, count) {
 }
 
 // ── ① 右下角加号 ─────────────────────────────────────────────────────────
-test('① 右下角加号：34px 圆钮贴列表右下角且不压末行，点击 ⇒ 行内新建行出现并聚焦', async ({ page }) => {
+test('① 右下角加号：40px 圆钮贴列表右下角且不压末行，点击 ⇒ 行内新建行出现并聚焦', async ({ page }) => {
   const { errors } = await bootApp(page);
   await openPanel(page);
 
@@ -253,12 +254,12 @@ test('① 右下角加号：34px 圆钮贴列表右下角且不压末行，点�
 
   const fabBox = await fab.boundingBox();
   const cardBox = await page.locator('.tfl-card').boundingBox();
-  // 桌面档 34px（32–40 量级内）
-  expect(Math.round(fabBox.width)).toBe(34);
-  expect(Math.round(fabBox.height)).toBe(34);
-  // 圆形（999px 全圆胶囊）
+  // 桌面档 = --cv-size-circle-lg（40，C 批单源；原 34px 字面量退役）
+  expect(Math.round(fabBox.width)).toBe(40);
+  expect(Math.round(fabBox.height)).toBe(40);
+  // 正圆 50%（C 批：圆角表达与带圆钮族同款）
   const radius = await fab.evaluate((el) => getComputedStyle(el).borderRadius);
-  expect(['999px', '17px']).toContain(radius);
+  expect(radius).toBe('50%');
   // 贴在卡片内右下角
   expect(fabBox.x).toBeGreaterThan(cardBox.x + cardBox.width / 2);
   expect(fabBox.x + fabBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width + 0.5);
@@ -526,7 +527,7 @@ test('⑦ 动画护栏：展开仍走 spring 几何通道（内联 height 逐帧
 // 作者令 2026-11-05 09:28：「电脑端是一个胶囊，手机端还是需要是之前那个左上角的
 // 一个悬浮的待办按钮」⇒ 本腿由「手机胶囊可见可展开」反转为「手机无胶囊、圆钮
 // 开面板」；面板内的触摸档断言（加号 44 / 行尾删除常显）原样保留。
-test('⑧ 手机 375：端区分——胶囊退场、左上任务圆钮开面板，加号 48px（Canvas 圆钮档）', async ({ page }) => {
+test('⑧ 手机 375：端区分——胶囊退场、左上任务圆钮开面板，加号 --band-d（带圆钮档）', async ({ page }) => {
   mkdirSync(SHOT_DIR, { recursive: true });
   const { errors } = await bootApp(page, { viewport: { width: 375, height: 812 } });
   await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 10000 });
@@ -541,8 +542,10 @@ test('⑧ 手机 375：端区分——胶囊退场、左上任务圆钮开面板
   const fabBox = await fab.boundingBox();
   expect(fabBox.x).toBeLessThan(24);
   expect(fabBox.y).toBeLessThan(48);
-  expect(Math.round(fabBox.width)).toBe(48);
-  expect(Math.round(fabBox.height)).toBe(48);
+  // C 批（ui-unify-panels 2026-11-17）：直径单源 --band-d（375 档 37.5）。
+  const BAND_D8 = Math.min(44, Math.max(36, 375 * 0.1));
+  expect(Math.abs(fabBox.width - BAND_D8)).toBeLessThanOrEqual(0.6);
+  expect(Math.abs(fabBox.height - BAND_D8)).toBeLessThanOrEqual(0.6);
   await page.screenshot({ path: join(SHOT_DIR, '04_mobile_todo_fab.png') });
 
   // 点击 ⇒ push 任务页，面板体（同一张 .tfl-card，.tfl-mobile 档）展开
@@ -554,13 +557,13 @@ test('⑧ 手机 375：端区分——胶囊退场、左上任务圆钮开面板
   await expect(page.locator('#mobile-task-panel .tfl-list')).toBeVisible();
   await page.screenshot({ path: join(SHOT_DIR, '05_mobile_panel_open.png') });
 
-  // 手机档尺寸：加号 = **Canvas 圆钮档 48**（todo-fullbleed 批 2026-11-05 作者令
-  // 「加号按钮使用我们 canvas 同款的按钮风格」⇒ 钮挂 .g2-fab，尺寸跟
-  // body.mobile-layer .g2-fab 的 48 = --mtap-lg，原 44 触摸档随批升档）；
+  // 手机档尺寸：加号 = --band-d（A 批带直径单源 clamp(36px,10vw,44px)；手机
+  // 测试视口 375 ⇒ 37.5。钮挂 .g2-fab，尺寸跟 body.mobile-layer .g2-fab 同源）；
   // 行尾删除常显。
   const addBox = await page.locator('#mobile-task-panel .tfl-fab-add').boundingBox();
-  expect(Math.round(addBox.width)).toBe(48);
-  expect(Math.round(addBox.height)).toBe(48);
+  const BAND_D = Math.min(44, Math.max(36, 375 * 0.1));
+  expect(Math.abs(addBox.width - BAND_D)).toBeLessThanOrEqual(0.6);
+  expect(Math.abs(addBox.height - BAND_D)).toBeLessThanOrEqual(0.6);
   // 材质单源：加号必须是 .g2-fab 成员（不许自造第二套按钮样式）
   await expect(page.locator('#mobile-task-panel .tfl-fab-add')).toHaveClass(/g2-fab/);
   const delOpacity = await page.locator('#mobile-task-panel .tfl-del').first().evaluate((el) => getComputedStyle(el).opacity);

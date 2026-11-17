@@ -110,6 +110,26 @@ const PROBE = () => {
     taSlotSpacer: zone(document.querySelector('.ta-slot-spacer')),
     idhead: zone(document.querySelector('.mh-idhead')),
     desktopPanelFab: zone(document.querySelector('.sp-panel-header > .g2-fab')),
+    // C 批（ui-unify-panels 2026-11-17）「+」等控制按钮单源：待办加号钮读数
+    //（直径/圆角/描边/图标占比；--glass-border 期望值用同 var 探针对照）。
+    tflFab: (() => {
+      const el = document.querySelector('.tfl-fab-add');
+      if (!el) return null;
+      const s = getComputedStyle(el);
+      const svg = el.querySelector('svg');
+      const sr = svg ? svg.getBoundingClientRect() : null;
+      const p = document.createElement('span');
+      p.style.border = '1px solid var(--glass-border)';
+      document.body.appendChild(p);
+      const wantBorder = getComputedStyle(p).borderColor;
+      p.remove();
+      return {
+        rect: rect(el), cls: String(el.className),
+        radius: s.borderRadius, borderWidth: s.borderWidth, borderColor: s.borderColor, wantBorder,
+        icon: sr ? { w: +sr.width.toFixed(2), h: +sr.height.toFixed(2) } : null,
+        visible: !!(el.offsetWidth || el.offsetHeight) && s.visibility !== 'hidden',
+      };
+    })(),
     misc: bySel(['#input-bar', '#input-area', '#agent-avatar-btn']),
   };
 };
@@ -263,6 +283,21 @@ async function leg(name, { w, h, mobile, scheme, nav }) {
         probe.taSlotSpacer.rect && !probe.taSlotSpacer.visible && !probe.taSlotSpacer.interactive,
         JSON.stringify(probe.taSlotSpacer));
     }
+    // C 批断言：待办「+」控制钮 = 一把尺（直径档 / 50% 正圆 / 1px --glass-border
+    // 描边 / 图标占比 45%）。手机档经 .g2-fab 吃 --band-d，桌面吃 --cv-size-circle-lg。
+    if (probe.tflFab && probe.tflFab.rect && probe.tflFab.visible) {
+      const f = probe.tflFab;
+      const d = f.rect.w;
+      check(`C1 ${name} 待办「+」直径 = 档（mobile --band-d / desk --cv-size-circle-lg）`,
+        Math.abs(d - expectD) <= 1 && Math.abs(f.rect.h - expectD) <= 1,
+        `w=${f.rect.w} h=${f.rect.h} expect=${expectD.toFixed(1)} cls=${f.cls}`);
+      check(`C2 ${name} 待办「+」圆角 50% + 描边 1px --glass-border`,
+        f.radius === '50%' && parseFloat(f.borderWidth) === 1 && f.borderColor === f.wantBorder,
+        `r=${f.radius} bw=${f.borderWidth} bc=${f.borderColor} want=${f.wantBorder}`);
+      check(`C3 ${name} 待办「+」图标占比 45%`,
+        !!f.icon && Math.abs(f.icon.w / d - 0.45) <= 0.02,
+        f.icon ? `icon=${f.icon.w} d=${d} ratio=${(f.icon.w / d).toFixed(3)}` : 'no-icon');
+    }
     // H 断言
     const ov = results[name].overlap || {};
     if (ov.chat?.lastRow && ov.chat?.inputArea) {
@@ -299,6 +334,8 @@ await leg('tasks-m', { w: 375, h: 812, mobile: true, scheme: 'dark', nav: 'tasks
 await leg('desk', { w: 1440, h: 900, mobile: false, scheme: 'light' });
 await leg('desk', { w: 1440, h: 900, mobile: false, scheme: 'dark' });
 await leg('item-m', { w: 375, h: 812, mobile: true, scheme: 'light', nav: 'item' });
+// C 批桌面证据位 = desk 腿（侧栏待办胶囊展开态里 .tfl-fab-add 可见，C1–C3 直接
+// 断言）；手机「+」= ta-fab / reminder-fab-add（.g2-fab 族），A1 直径断言已覆盖。
 
 const failed = asserts.filter((a) => !a.ok).length;
 writeFileSync(join(OUT, `geom-${TAG}.json`), JSON.stringify({ results, asserts }, null, 2));

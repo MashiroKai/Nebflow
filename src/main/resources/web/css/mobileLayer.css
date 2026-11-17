@@ -2806,11 +2806,12 @@ body.mobile-layer #task-list { display: none !important; }
 /* 胶囊的触控外扩档随胶囊一起在手机层失效（不许留死样式：display:none 的子件
    不可能被点到）。桌面档的胶囊外形与 ::after 命中面原样不动（css/todo-face.css）。 */
 
-/* 胶囊面件在手机层的尺寸口径（同一实现两套尺寸：桌面 34 / 手机 44）：
-   · 右下角加号 = 44px 触摸档圆形钮；
+/* 胶囊面件在手机层的尺寸口径（C 批 ui-unify-panels 2026-11-17：加号直径
+   换挡 --band-d，与 A 批带圆钮同一把尺；原 44px 字面量退役）：
+   · 右下角加号 = --band-d 触摸档圆形钮（经 .g2-fab 类吃 ③ 档材质）；
    · 行尾删除 = 常显 + 44px 命中面（::after 外扩，视觉件仍小而克制）；
    · 三个新件在手机上不吃 reduced-motion 之外的额外动画（沿用桌面规则）。 */
-body.mobile-layer .tfl-list-wrap { --tfl-fab-size: 44px; }
+body.mobile-layer .tfl-list-wrap { --tfl-fab-size: var(--band-d); }
 body.mobile-layer .tfl-del { opacity: 1; position: relative; }
 body.mobile-layer .tfl-del::after {
   content: '';

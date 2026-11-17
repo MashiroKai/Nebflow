@@ -747,8 +747,10 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  /* 加号直径（桌面档 34px；手机档 44px 见 css/mobileLayer.css 同名变量覆盖） */
-  --tfl-fab-size: 34px;
+  /* 加号直径统一（ui-unify-panels C 批 2026-11-17「+」等控制按钮一个 token）：
+     桌面 = --cv-size-circle-lg（40 圆钮档，与 canvas 工具圆钮同源）；手机档
+     走 css/mobileLayer.css 同名变量覆盖 = --band-d（A 批带直径单源）。 */
+  --tfl-fab-size: var(--cv-size-circle-lg, 40px);
 }
 .tfl-list {
   flex: 1 1 auto;
@@ -1132,8 +1134,10 @@
   width: var(--tfl-fab-size);
   height: var(--tfl-fab-size);
   padding: 0;
-  border: 0.5px solid color-mix(in srgb, var(--color-text) 12%, transparent);
-  border-radius: 999px;
+  /* C 批（ui-unify-panels 2026-11-17）：描边/圆角并入带圆钮单源
+     （1px --glass-border + 50% 正圆，与 .g2-fab 族同款）。 */
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
   color: color-mix(in srgb, var(--color-text) 60%, transparent);
   cursor: pointer;
@@ -1150,7 +1154,9 @@
   outline: 1.5px solid color-mix(in srgb, var(--color-text) 45%, transparent);
   outline-offset: 1px;
 }
-.tfl-fab-add svg { width: 15px; height: 15px; }
+/* C 批：图标占比单源 = 直径 45%（手机腿由 body.mobile-layer .g2-fab svg
+   （--band-icon，同为 45%）接管，双档同比例）。 */
+.tfl-fab-add svg { width: calc(var(--tfl-fab-size) * 0.45); height: calc(var(--tfl-fab-size) * 0.45); }
 .tfl-fab-add[hidden] { display: none; }
 
 /* ── 行尾删除钮（作者令 2026-11-04 ④「删除」）────────────────────────────
