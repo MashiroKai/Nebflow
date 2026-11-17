@@ -58,6 +58,11 @@ for (const width of [320,375,390,430]) {
    return {id,buttons:els.map(e=>{const s=getComputedStyle(e);return {box:rect(e),icon:e.querySelector('svg')?rect(e.querySelector('svg')):null,padding:s.padding,radius:s.borderRadius,overflowX:document.documentElement.scrollWidth-innerWidth}}),bottomControls,avatar:avatar?rect(avatar):null, tool:tool?rect(tool):null,bottom:getComputedStyle(document.body).getPropertyValue('--mcv-size-circle').trim(),capsule:getComputedStyle(document.body).getPropertyValue('--mcap-h').trim()};
   },id);
   rows.push(data); console.log(JSON.stringify({width,...data}));
+  if(width===320) {
+   const collision=await page.evaluate(()=>{const e=document.querySelector('.decision-preview-entry'),r=e.getBoundingClientRect();const items=[...document.querySelectorAll('.mobile-page.live button, #mobile-fab-layer button, #input-bar button')].filter(n=>{const b=n.getBoundingClientRect(),s=getComputedStyle(n);return b.width&&b.height&&s.display!=='none'&&s.visibility!=='hidden'&&Math.min(r.right,b.right)>Math.max(r.left,b.left)&&Math.min(r.bottom,b.bottom)>Math.max(r.top,b.top)}).map(n=>({id:n.id,cls:n.className,rect:n.getBoundingClientRect().toJSON()}));return {entry:r.toJSON(),visible:getComputedStyle(e).display!=='none',items};});
+   console.log('PREVIEW COLLISIONS',JSON.stringify({id,...collision}));
+   if(collision.visible&&(collision.entry.left<0||collision.entry.right>width||collision.items.length)){console.log('FAIL preview collision',JSON.stringify({id,...collision}));errors++;}
+  }
   if(id==='chat'||id==='canvas') {
    if(id==='canvas') {const fab=page.locator('.ask-fab:not(.note-fab):visible').first();if(await fab.count()) {await fab.click({timeout:3000});await page.waitForTimeout(400);}}
    const inputInfo=await page.evaluate(id=>{
@@ -85,7 +90,13 @@ for (const width of [320,375,390,430]) {
     const disabled=[read(top),read(bottom)]; top.disabled=false;bottom.disabled=false;
     return {rest,disabled};
    });
-   console.log('STATES',JSON.stringify({width,states}));
+   const probe=page.locator('.mobile-page.live .mf-cv-close');
+   const bb=await probe.boundingBox();
+   await page.mouse.move(bb.x+bb.width/2,bb.y+bb.height/2);await page.mouse.down();
+   const active=await probe.evaluate(e=>({transform:getComputedStyle(e).transform,opacity:getComputedStyle(e).opacity}));
+   await page.mouse.up();
+   console.log('STATES',JSON.stringify({width,states,active}));
+   if(active.opacity!=='0.8'){console.log('FAIL reduced motion active state',width,JSON.stringify(active));errors++;}
    if(!states || states.disabled.some(s=>s.opacity!=='0.35'||s.cursor!=='not-allowed')) {console.log('FAIL disabled state',width,JSON.stringify(states));errors++;}
   }
   if (process.env.BAND_CLICKS && width===375 && ['messages','contacts','settings','canvas'].includes(id)) {
