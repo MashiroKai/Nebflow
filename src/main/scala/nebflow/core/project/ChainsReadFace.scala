@@ -122,8 +122,16 @@ object ChainsReadFace:
     registry: Map[String, nebflow.actor.AgentRecord],
     archived: Boolean = false,
     taskStatuses: Map[String, String] = Map.empty,
-    taskRows: List[nebflow.shared.SubAgentTask] = Nil
+    taskRows: List[nebflow.shared.SubAgentTask] = Nil,
+    actorSystem: Option[nebflow.actor.ActorSystem] = None
   ): IO[Json] =
+    registry.toList.traverse { case (id, agent) =>
+      actorSystem match
+        case Some(system) if agent.ref != null =>
+          system.resolve[nebflow.actor.AgentCommand](agent.ref.path.toString)
+            .map(ref => Option.when(ref eq agent.ref)(id -> agent)).handleError(_ => None)
+        case _ => IO.pure(None)
+    }.map(_.flatten.toMap).flatMap { adopted =>
     IO.blocking(DelegateRegistry.list()).flatMap { records =>
       val continuations = continuationLinks(records, taskRows)
       // 阶段②（delegate-lifecycle-reform）：两窗划分改由**状态派生可见性**供给
@@ -137,8 +145,9 @@ object ChainsReadFace:
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
       windowed
-        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations, readings)))
+        .flatMap(_.traverse(rowJson(adopted, taskStatuses, continuations, readings)))
         .map(rows => Json.obj("rows" -> rows.asJson))
+    }
     }
 
   /**

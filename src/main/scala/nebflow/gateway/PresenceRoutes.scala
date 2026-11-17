@@ -647,7 +647,7 @@ private[gateway] object PresenceRoutes:
               .map(tasks => tasks -> tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
               .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
               .flatMap { case (taskRows, statuses) =>
-                ChainsReadFace.rowsJson(reg, archived, statuses, taskRows).flatMap { body =>
+                ChainsReadFace.rowsJson(reg, archived, statuses, taskRows, Option(sharedResources.actorSystem)).flatMap { body =>
                   // M2 缓存语义小刀（v2 §3.1 ① · 链集合行）：ETag = 载荷内容寻址。
                   // 行投影由不可变事实流组成（DelegateRegistry 落盘记录 × 台账判词行 ×
                   // 任务状态读数）——`live` 只是 {status:"running"}|null 的活性提示位
