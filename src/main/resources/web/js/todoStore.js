@@ -324,6 +324,7 @@ function mapRow(row) {
     project,
     name: parts.name,
     detail: parts.detail,
+    decision: row.decision && typeof row.decision === 'object' ? row.decision : null,
     // due ↔ triggerAt：引擎算出的下次浮出时刻（只读真源）。
     due: Number.isFinite(row.triggerAt) ? row.triggerAt : null,
     priority: clampPriority(row.priority),
@@ -984,6 +985,7 @@ function seed({ tagList, itemList, order } = {}) {
       // 夹具面接受两段名（name/detail）与旧名（title/notes），二者同义。
       name: String(x.name || x.title || ''),
       detail: String(x.detail || x.notes || ''),
+      decision: x.decision && typeof x.decision === 'object' ? x.decision : null,
       due: Number.isFinite(x.due) ? x.due : null,
       priority: clampPriority(x.priority),
       completed: !!x.completed,
