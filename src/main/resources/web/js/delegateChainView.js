@@ -26,7 +26,8 @@ import {
 } from './delegateChainStub.js';
 import { nodeHtml } from './fmNodeCard.js';
 import { executorIcon } from './executorIcons.js';
-import { fetchArchivedDelegates } from './delegateApi.js';
+import { fetchArchivedDelegates, setDelegateDisposition } from './delegateApi.js';
+import { refreshMirror } from './delegateChainProvider.js';
 // L1 map face: the flowmap engine re-driven on delegate data (driver module;
 // camera/edges/detail card/fold animations all engine-side).
 import { renderDelegateFlowMap, dropDelegateMapScope, delegateMapScope } from './delegateFlowMap.js';
@@ -419,6 +420,7 @@ function renderStructureBody(pane) {
         if (!external) {
           card.setAttribute('role', 'button');
           card.addEventListener('click', () => {
+            if (dispositionUndo) dispositionUndo.remove();
             openDelegateChainTask(p.key, {
               taskNo: r.taskNo, delegateId: r.delegateId, title: r.title,
               status: r.status, executor: r.executor, project: r.project,
@@ -427,6 +429,27 @@ function renderStructureBody(pane) {
         } else {
           // G7：外部行无子结构下钻——本体＋座位已在上文，链卡零入口。
           card.setAttribute('data-external-card', '1');
+        }
+        if (!external && r.settled === true && r.delegateId) {
+          const action = document.createElement('button');
+          action.type = 'button';
+          action.className = 'delegate-archive-act';
+          action.dataset.dispositionId = String(r.delegateId);
+          action.textContent = t('delegate.disposition.move');
+          action.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            action.disabled = true;
+            const result = await setDelegateDisposition(r.delegateId, 'acknowledged');
+            if (result.state !== 'ok') {
+              action.disabled = false;
+              action.title = t('delegate.disposition.error');
+              return;
+            }
+            showDispositionUndo(pane, r.delegateId, r.title || r.delegateId);
+            refreshMirror();
+            rerenderDelegateChainPane(pane);
+          });
+          card.appendChild(action);
         }
         list.appendChild(card);
       }
@@ -456,6 +479,36 @@ export function rerenderDelegateChainPane(pane) {
 // 唯一主动作 = 抽屉「恢复」。
 // 样式自注入（本视图无独立 CSS 载体；flowMap.css 的 .fm-fab 定位在 .fm-float-layer
 // 宿主语境，本视图 body 直接宿主——不挪用其类名，避免层叠面耦合）。
+let dispositionUndo = null;
+function showDispositionUndo(pane, id, label) {
+  if (dispositionUndo) dispositionUndo.remove();
+  const toast = document.createElement('div');
+  dispositionUndo = toast;
+  toast.className = 'delegate-archive-toast';
+  const text = document.createElement('span');
+  text.textContent = t('delegate.archive.toast', { n: label });
+  const undo = document.createElement('button');
+  undo.type = 'button';
+  undo.dataset.dispositionUndo = id;
+  undo.textContent = t('delegate.disposition.undo');
+  toast.append(text, undo);
+  pane.appendChild(toast);
+  const timer = setTimeout(() => toast.remove(), 5000);
+  undo.addEventListener('click', async () => {
+    undo.disabled = true;
+    const result = await setDelegateDisposition(id, '');
+    if (result.state !== 'ok') {
+      undo.disabled = false;
+      undo.title = t('delegate.disposition.error');
+      return;
+    }
+    clearTimeout(timer);
+    toast.remove();
+    refreshMirror();
+    rerenderDelegateChainPane(pane);
+  });
+}
+
 const STRUCT_ARCHIVE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>';
 const STRUCT_ARCHIVE_CSS_ID = 'delegate-structure-archive-css';
 const STRUCT_ARCHIVE_CSS = `

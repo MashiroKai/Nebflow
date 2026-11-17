@@ -2136,6 +2136,9 @@ export default {
   'delegate.projectflow.title': 'Project flow',
   'delegate.kids.empty': 'No subagent / flow calls yet',
   'delegate.archive.toast': '{n} settled',
+  'delegate.disposition.move': 'Move to history',
+  'delegate.disposition.undo': 'Undo',
+  'delegate.disposition.error': 'Could not update disposition',
   'delegate.archive.openFlow': 'Flow →',
   'delegate.archive.drawerTitle': 'Archived delegates',
 

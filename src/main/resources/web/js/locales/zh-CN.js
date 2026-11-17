@@ -2062,6 +2062,9 @@ export default {
   'delegate.projectflow.title': '项目流程图',
   'delegate.kids.empty': '尚未产生 subagent / flow 调用',
   'delegate.archive.toast': '{n} 已收口',
+  'delegate.disposition.move': '移入历史',
+  'delegate.disposition.undo': '撤销',
+  'delegate.disposition.error': '表态更新失败',
   'delegate.archive.openFlow': '流程图 →',
   'delegate.archive.drawerTitle': '已归档委托',
   // === 链视图（链视图紧凑 v2 批 2026-10-01 · 前端面 §16 草案键表）===

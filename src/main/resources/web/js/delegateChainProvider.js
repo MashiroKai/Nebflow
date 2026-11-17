@@ -174,6 +174,7 @@ function projectRow(entry) {
   const v = src.verdict;
   const out = {
     ...row,
+    settled: src.settled === true,
     taskStatus: String(src.taskStatus || ''),
     // Ownership edge (Record.parentSessionId — spawn-persisted, survives
     // restarts): carried as-is so hierarchy faces can resolve a registered
