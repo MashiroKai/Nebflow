@@ -2343,7 +2343,8 @@ object GatewayMain extends IOApp:
                                                           neblinkDiscovery = Some(tsDiscovery),
                                                           gatewayPort = cfg.port.value,
                                                           wsHub = wsHub,
-                                                          connGuard = connGuard
+                                                          connGuard = connGuard,
+                                                          canvasTakeover = consoleTakeover
                                                         )
 
                                                         // Phase 3a lifted slice：`Router(...).orNotFound`

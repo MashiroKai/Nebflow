@@ -123,26 +123,42 @@ private[gateway] object ConfigRoutes:
           }
         }
 
-      case req @ PUT -> Root / "canvas-tabs" =>
-        withAuth(req) {
-          // Fail closed until the takeover arbiter can fence the actual write.
-          // Neither a client-supplied identity nor a version is an authorization.
-          Conflict(Json.obj(
-            "error" -> "canvas_read_only".asJson,
-            "role" -> "reader".asJson,
-            "recovery" -> "Canvas writer control is unavailable; upgrade or continue read-only".asJson
-          ))
+      case req @ POST -> Root / "canvas-writer" / action if action == "claim" || action == "release" =>
+        withRecoveryPrincipal(req) { principal =>
+          req.attemptAs[Json].value.flatMap {
+            case Left(_) => BadRequest(Json.obj("error" -> "invalid_body".asJson))
+            case Right(body) =>
+              val c = body.hcursor
+              val client = c.get[String]("clientId").toOption.filter(s => s.trim.nonEmpty && s.length <= 128)
+              val tab = c.get[String]("tabInstanceId").toOption.filter(s => s.trim.nonEmpty && s.length <= 128)
+              (client, tab) match
+                case (Some(id), Some(t)) if action == "claim" =>
+                  canvasTakeover.claimCanvas(principal, id, t).flatMap(epoch =>
+                    Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson)))
+                case (Some(id), Some(t)) =>
+                  c.get[Long]("epoch").toOption match
+                    case Some(epoch) => canvasTakeover.releaseCanvas(principal, id, t, epoch).flatMap {
+                      case true => Ok(Json.obj("role" -> "reader".asJson))
+                      case false => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson))
+                    }
+                    case None => BadRequest(Json.obj("error" -> "invalid_epoch".asJson))
+                case _ => BadRequest(Json.obj("error" -> "invalid_writer_identity".asJson))
+          }
         }
 
-      /* Pending integration with the atomic takeover arbiter: do not expose unfenced writes.
       case req @ PUT -> Root / "canvas-tabs" =>
-        withAuth(req) {
+        withRecoveryPrincipal(req) { principal =>
           // 读 body 有界：take(max+1) 后超限即 413，防大 payload 拉爆内存。
           val maxBytes = CanvasTabs.MaxBodyBytes
           req.body.take(maxBytes.toLong + 1).compile.toVector.flatMap { bytes =>
             val raw = bytes.toArray
-            val operation = if raw.length <= maxBytes then io.circe.parser.parse(new String(raw, java.nio.charset.StandardCharsets.UTF_8)).toOption.filter(_.hcursor.downField("operationId").succeeded) else None
-            if operation.nonEmpty then
+            val parsed = if raw.length <= maxBytes then io.circe.parser.parse(new String(raw, java.nio.charset.StandardCharsets.UTF_8)).toOption else None
+            val cursor = parsed.map(_.hcursor)
+            val client = cursor.flatMap(_.get[String]("clientId").toOption).filter(s => s.trim.nonEmpty && s.length <= 128)
+            val tab = cursor.flatMap(_.get[String]("tabInstanceId").toOption).filter(s => s.trim.nonEmpty && s.length <= 128)
+            val epoch = cursor.flatMap(_.get[Long]("epoch").toOption)
+            val operation = parsed.filter(_.hcursor.downField("operationId").succeeded)
+            def save: IO[Response[IO]] = if operation.nonEmpty then
               val json = operation.get
               new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").applyOperation(json).flatMap {
                 case Left(reason) =>
@@ -175,9 +191,15 @@ private[gateway] object ConfigRoutes:
                           .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
                       )
                   }
+            (client, tab, epoch) match
+              case (Some(id), Some(t), Some(e)) =>
+                canvasTakeover.withCanvasWriter(principal, id, t, e)(save).flatMap {
+                  case Some(response) => IO.pure(response)
+                  case None => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson, "role" -> "reader".asJson))
+                }
+              case _ => Conflict(Json.obj("error" -> "canvas_read_only".asJson, "role" -> "reader".asJson))
           }
         }
-      */
 
       // ── Executors（executor-registry 批 2026-10-03）──────────────────────
       // GET /api/executors —— 统一 delegate 的执行器快照：全部在册执行器 +

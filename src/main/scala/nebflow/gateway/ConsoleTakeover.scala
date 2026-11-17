@@ -129,6 +129,36 @@ final class ConsoleTakeover(
   /** 拥有控制权的实例（全局唯一——控制台是每引擎一个的互斥资源）；值是 holder 键。 */
   private val ownerRef: Ref[IO, Option[String]] = Ref.unsafe(None)
 
+  // Default resource domain combines console control and the shared Canvas resource;
+  // this default is provisional, subject to the author's decision.
+  private val canvasWriterRef: Ref[IO, (Long, Option[ConsoleTakeover.CanvasWriter])] = Ref.unsafe((0L, None))
+  private val canvasLock = new java.util.concurrent.Semaphore(1)
+
+  // Serialize claim/release with the entire authorized write, not just its check.
+  private def canvasExclusive[A](fa: IO[A]): IO[A] =
+    IO.uncancelable { poll =>
+      IO.blocking(canvasLock.acquire()) *> poll(fa).guarantee(IO(canvasLock.release()))
+    }
+
+  def claimCanvas(principal: String, client: String, tab: String): IO[Long] =
+    canvasExclusive(canvasWriterRef.modify { case (epoch, _) =>
+      val next = Math.addExact(epoch, 1L)
+      ((next, Some(ConsoleTakeover.CanvasWriter(principal, client, tab, next))), next)
+    })
+
+  def releaseCanvas(principal: String, client: String, tab: String, epoch: Long): IO[Boolean] =
+    canvasExclusive(canvasWriterRef.modify { case state @ (current, writer) =>
+      if writer.contains(ConsoleTakeover.CanvasWriter(principal, client, tab, epoch)) then
+        ((current, None), true)
+      else (state, false)
+    })
+
+  def withCanvasWriter[A](principal: String, client: String, tab: String, epoch: Long)(write: IO[A]): IO[Option[A]] =
+    canvasExclusive(canvasWriterRef.get.flatMap { case (_, writer) =>
+      if writer.contains(ConsoleTakeover.CanvasWriter(principal, client, tab, epoch)) then write.map(Some(_))
+      else IO.pure(None)
+    })
+
   /** holder → 实例账（活跃连接集 + 身份 + 最后入账时刻）。 */
   private val instancesRef: Ref[IO, Map[String, ConsoleTakeover.Instance]] = Ref.unsafe(Map.empty)
 
@@ -596,6 +626,8 @@ final class ConsoleTakeover(
 end ConsoleTakeover
 
 object ConsoleTakeover:
+
+  final case class CanvasWriter(principal: String, clientId: String, tabInstanceId: String, epoch: Long)
 
   /**
    * 实例账（holder → 活跃连接 + 身份 + 最后入账时刻 + 端指纹 + 可见活动戳）。
