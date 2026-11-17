@@ -67,7 +67,7 @@ function createCanvasWriterClient(transport) {
       transport.changed?.(role);
     },
     credentials: () => role === 'writer' ? { epoch } : null,
-    lost() { generation++; role = 'reader'; epoch = null; transport.changed?.(role); },
+    lost() { generation++; role = 'reader'; epoch = null; transport.changed?.(role, true); },
     async claim() {
       if (transport.canClaim && !transport.canClaim()) return;
       generation++;
@@ -99,9 +99,11 @@ const canvasIdentity = () => ({ clientId: deviceClientId(), tabInstanceId: canva
 let writerStatusEl = null;
 let writerClaimEl = null;
 let localUnsynced = false;
-function writerChanged(role) {
-  import('./takeoverModal.js').then(mod => {
-    if (role === 'reader') mod.showCanvasTakeover(async () => {
+function writerChanged(role, lost = false) {
+  // Initial reader state is browsing, not an ownership loss.
+  if (lost) import('./takeoverModal.js').then(mod => {
+    if (canvasWriter.role() !== 'reader') return;
+    mod.showCanvasTakeover(async () => {
       if (localUnsynced) {
         if (!window.confirm('放弃未同步的本地 Canvas 标签变更并取回控制权？')) return false;
         try { localStorage.removeItem(LS_TABS_KEY); } catch { /* storage unavailable */ }
@@ -113,7 +115,6 @@ function writerChanged(role) {
       await canvasWriter.claim();
       return canvasWriter.role() === 'writer';
     }, localUnsynced);
-    else mod.hideCanvasTakeover();
   });
   if (writerStatusEl) writerStatusEl.textContent = localUnsynced
     ? 'Canvas：存在仅本地变更，不会自动同步。' : (role === 'writer' ? 'Canvas：可写' : 'Canvas：只读');

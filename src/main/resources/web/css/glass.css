@@ -830,9 +830,8 @@ html[data-theme="dark"] {
 }
 
 /* ── 手机尺寸/弹簧档（body.mobile-layer 总开关，桌面零命中）──────────────
-   带直径档（ui-unify-panels 批 2026-11-17）：48px 字面量退役，改吃
-   mobileLayer.css --band-d（clamp(36px,10vw,44px)；胶囊高 = 圆钮直径同一把尺），
-   图标 = 直径 45%（--band-icon）。缺 token 的边缘加载位回落旧 48/20 档。 */
+   手机圆钮吃 mobileLayer.css --band-d，图标 = 直径 45%（--band-icon）。
+   缺 token 的边缘加载位回落旧 48/20 档；发送/停止另用保留的底带档。 */
 body.mobile-layer .g2-fab {
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);

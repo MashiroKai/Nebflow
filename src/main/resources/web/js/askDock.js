@@ -188,7 +188,7 @@ const ICONS = {
     ]),
 };
 
-/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number, mailAddress?: string}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
 let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）

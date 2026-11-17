@@ -14,6 +14,13 @@
  */
 
 :root {
+  /* Exact fallback and translucent colors for inline edit review. */
+  --nf-review-border-fallback: rgba(128, 128, 128, 0.25);
+  --nf-review-muted-fallback: rgba(128, 128, 128, 0.9);
+  --nf-review-success-fallback: #3fb950;
+  --nf-review-danger-fallback: #f85149;
+  --nf-review-warning-fallback: #d29922;
+  --nf-review-info-fallback: #58a6ff;
   /* 品牌与语义（不随主题变） */
   --st-primary: #07c160;            /* 官网 --nfd-primary；2026-10-30 按钮体系批起降级为
                                        身份/状态专用绿（终端 glyph/caret/录音脉动/通知点），
