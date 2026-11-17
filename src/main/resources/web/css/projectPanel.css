@@ -98,6 +98,19 @@
 
 
 .project-open-btn svg { width: 15px; height: 15px; }
+.project-open-btn { width: 40px; height: 40px; gap: 3px; }
+.project-open-menu {
+  position: fixed; z-index: 10000; min-width: 180px; padding: 4px;
+  border: 1px solid var(--color-border); border-radius: var(--ds-radius-input);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.2);
+}
+.project-open-menu button {
+  display: grid; grid-template-columns: 24px 1fr 20px; align-items: center;
+  width: 100%; min-height: 40px; padding: 0 8px; border: 0;
+  border-radius: var(--ds-radius-input); background: transparent;
+  color: var(--color-text); text-align: left; cursor: pointer;
+}
+.project-open-menu button:hover, .project-open-menu button:focus-visible { background: rgb(var(--sapphire) / 0.15); }
 
 /* 取消加载按钮（unmount-console 面板批 2026-11-02）：卡片头部显式人工卸载入口
    （原 .project-archive-btn 面位回归，类名随语义更替）。尺寸/形态对齐

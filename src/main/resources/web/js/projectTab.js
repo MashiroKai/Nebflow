@@ -28,7 +28,7 @@ import { mountProjectWorkspaces } from './projectWorkspaces.js';
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
-import { esc } from './flowHelpers.js';
+import { esc, authHeaders } from './flowHelpers.js';
 import { onMinuteTick, statusIcon } from './utils.js';
 import { t } from './i18n.js';
 import { rootNameParams } from './rootName.js';
@@ -1086,7 +1086,7 @@ function projectCardHtml(p) {
         <div class="project-field" title="${esc(p.workspace)}">
           <span class="project-field-label">${esc(t('project.workspace'))}</span>
           <span class="project-field-value mono">${esc(p.workspace)}</span>
-          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}"${badgeOf ? ` data-open-device="${esc(badgeOf.device)}"` : ''} title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
+          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}"${badgeOf ? ` data-open-device="${esc(badgeOf.device)}"` : ''} title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}" aria-haspopup="menu" aria-expanded="false"><i data-lucide="folder-open"></i><span aria-hidden="true">⌄</span></button>
         </div>
         <div class="project-field">
           <span class="project-field-label">${esc(t('project.agentFileLabel'))}</span>
@@ -1196,6 +1196,74 @@ function playCardEnter(card) {
   }, reduced ? PROJECT_NEW_EMPHASIS_REDUCED_MS : PROJECT_NEW_EMPHASIS_MS);
 }
 
+let selectedProjectApp = 'builtin';
+let closeProjectOpenMenu = () => {};
+async function showProjectOpenMenu(button, name) {
+  closeProjectOpenMenu();
+  const path = button.getAttribute('data-open-workspace') || '';
+  if (!path) return;
+  const device = button.getAttribute('data-open-device') || '';
+  let apps = [];
+  if (!device) {
+    try {
+      const response = await fetch('/api/project-open-apps', { headers: authHeaders() });
+      if (response.ok) apps = (await response.json()).apps || [];
+    } catch (_) { /* Built-in remains available offline. */ }
+  }
+  const menu = document.createElement('div');
+  menu.className = 'project-open-menu nf-glass';
+  menu.setAttribute('role', 'menu');
+  const options = [{ id: 'builtin', label: '内置' }, ...apps];
+  const icons = { builtin: '▣', finder: '▤', vscode: '⌘', terminal: '>_', iterm: '>_', 'file-manager': '▤' };
+  for (const app of options) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(app.id === selectedProjectApp));
+    item.innerHTML = `<span aria-hidden="true">${esc(icons[app.id] || '▣')}</span><span>${esc(app.label)}</span><span aria-hidden="true">${app.id === selectedProjectApp ? '✓' : ''}</span>`;
+    item.addEventListener('click', async () => {
+      closeProjectOpenMenu();
+      try {
+        if (app.id === 'builtin') {
+          const { openExplorerAt } = await import('./explorer.js');
+          openExplorerAt(path, device || undefined);
+        } else {
+          const response = await fetch(`/api/projects/${encodeURIComponent(name)}/open-in-app`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, app: app.id })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Open failed');
+        }
+        selectedProjectApp = app.id;
+      } catch (error) { window.__showToast?.(error.message || t('project.openWorkspaceFail'), 'error'); }
+    });
+    menu.append(item);
+  }
+  document.body.append(menu);
+  const rect = button.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(rect.bottom + 4, innerHeight - menu.offsetHeight - 8))}px`;
+  button.setAttribute('aria-expanded', 'true');
+  const outside = event => { if (!menu.contains(event.target) && event.target !== button && !button.contains(event.target)) closeProjectOpenMenu(); };
+  const key = event => {
+    if (event.key === 'Escape') { closeProjectOpenMenu(); button.focus(); }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const items = [...menu.querySelectorAll('button')];
+      const index = items.indexOf(document.activeElement);
+      items[(index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    }
+  };
+  closeProjectOpenMenu = () => {
+    menu.remove(); button.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key);
+    closeProjectOpenMenu = () => {};
+  };
+  document.addEventListener('pointerdown', outside); document.addEventListener('keydown', key);
+  menu.querySelector('button')?.focus();
+}
+
 /** 单卡事件绑定（随卡生命周期，一次）。
  *  title 的点击**总是**绑定，命中与否由 `data-open-flowmap` 在场判定——定点刷新下
  *  卡的「无节点」态会随后到达的摘要改变，按属性选择器择时绑定会漏/重。 */
@@ -1207,20 +1275,7 @@ function bindProjectCard(card) {
   });
   card.querySelector('[data-open-workspace]')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    // §3.5「在文件浏览器中打开」——把侧边栏文件浏览器的根切到工作区并展开面板。
-    // 动态 import：projectTab 是 Canvas 标签页模块，静态依赖 explorer 会把
-    // 文件树拉进项目面板的首屏加载路径（且 explorer → activityBar → ... 更容易
-    // 绕出循环依赖）。
-    // 面C（ui-device-faces）：卡带 `data-open-device` = 远端项目 ⇒ 第二参把 origin
-    // 设备交给 openExplorerAt（explorer 整树同源该设备，listDir/readFile additive
-    // device 键）；本机卡零属性 ⇒ 单参调用，存量语义逐字节。
-    const path = e.currentTarget?.getAttribute('data-open-workspace') || '';
-    if (!path) return;
-    const dev = e.currentTarget?.getAttribute('data-open-device') || '';
-    import('./explorer.js').then(({ openExplorerAt }) => {
-      openExplorerAt(path, dev || undefined);
-      window.__showToast?.(t('project.workspaceOpened', { path }), 'info');
-    }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
+    showProjectOpenMenu(e.currentTarget, card.dataset.project || '');
   });
   // 台账 #920（2026-10-27）：描述行编辑钮 —— 面板侧写穿入口（POST /api/projects/
   // <name>/description；单点 = nodeData.updateProjectDescription）。保存成功由
