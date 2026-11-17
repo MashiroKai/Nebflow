@@ -3027,6 +3027,11 @@ body.mobile-layer #input-bar > .ds-turn-btn {
   --ds-turn-btn-size: 40px;
   --ds-turn-btn-icon: 18px;
 }
+/* Absolute insets use the padding box, one pixel inside the 1px border.
+   Four pixels there give a symmetric 3px expansion beyond the border box. */
+body.mobile-layer #input-bar > .ds-turn-btn::after {
+  inset: -4px;
+}
 
 body.mobile-layer .ask-dock .ds-turn-btn {
   --ds-turn-btn-size: var(--mcv-size-circle);

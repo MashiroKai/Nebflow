@@ -45,7 +45,7 @@ try {
     console.log(JSON.stringify({view:mobile?'mobile':'desktop',theme,...data,ratio:data.send.height/data.voice.height,difference:data.send.height-data.voice.height}));
     if (mobile && (!data.mobile || Math.abs(data.send.width - data.voice.height * 0.625) > 0.5 || Math.abs(data.send.height - data.voice.height * 0.625) > 0.5 || Math.abs(parseFloat(data.stopSize) - data.send.height) > 0.5 || data.send.width - 2 * parseFloat(data.hitInset) < 43.5)) { console.error('FAIL mobile send/voice scale (expected 0.625 ±0.5px)'); failed = true; }
     if (!mobile && data.mobile) { console.error('FAIL desktop unexpectedly mobile'); failed = true; }
-    if (mobile && extra) {
+    if (mobile) {
       // Observe real dispatched clicks, without sending a product message.
       await page.evaluate(() => {
         window.__mssClicks = 0;
@@ -66,6 +66,7 @@ try {
         console.log(JSON.stringify({test:'click',theme,viewport,dpr,side,offset,point,target,hit}));
         if ((offset === -2 || offset > 0) && !hit) { console.error('FAIL expected edge click'); failed = true; }
       }
+      if (extra) {
       const measureState = async state => {
         const v = await page.evaluate(() => {
           const send = document.querySelector('#send-btn'), stop = document.querySelector('#stop-btn');
@@ -84,6 +85,7 @@ try {
       await measureState('multiline');
       await page.evaluate(async () => { const chat = await import('/js/chat.js'); const {activeView} = await import('/js/chatView.js'); activeView.pendingAttachments.push({type:'file',name:'fixture.txt',mimeType:'text/plain'}); chat.renderAttachmentPreview(); });
       await measureState('multiline-attachment');
+      }
     }
     await ctx.close();
   }
