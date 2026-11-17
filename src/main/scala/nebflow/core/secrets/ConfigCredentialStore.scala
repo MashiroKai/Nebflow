@@ -42,4 +42,15 @@ object ConfigCredentialStore:
       val name = input.stripPrefix("secret:")
       if !Name.matches(name) then throw new IllegalArgumentException("Invalid credential reference")
       audit(reader, input)
-      new String(Files.readAllBytes((root / "secrets" / name).toNIO), StandardCharsets.UTF_8)
+      val path = (root / "secrets" / name).toNIO
+      try
+        if !Files.exists(path) then throw new java.nio.file.NoSuchFileException(name)
+        val permissions = Files.getPosixFilePermissions(path)
+        if !permissions.contains(java.nio.file.attribute.PosixFilePermission.OWNER_READ) then
+          throw new java.nio.file.AccessDeniedException(name)
+        new String(Files.readAllBytes(path), StandardCharsets.UTF_8)
+      catch
+        case _: java.nio.file.NoSuchFileException =>
+          throw new IllegalStateException("Credential reference is missing")
+        case _: java.nio.file.AccessDeniedException =>
+          throw new IllegalStateException("Credential reference is unreadable")
