@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync, mkdirSync, renameSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,18 +37,39 @@ async function downloadBinary(directory) {
   const asset = TOOLCHAIN.assets[`${process.platform}-${process.arch}`];
   if (!asset || !/^[a-f0-9]{64}$/.test(asset.sha256)) throw new Error('No verified OpenSpec asset for this platform');
   const url = `${TOOLCHAIN.repository}/releases/download/v${TOOLCHAIN.version}/${asset.name}`;
-  console.log(`Downloading pinned OpenSpec ${TOOLCHAIN.version}: ${asset.name}`);
-  const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-  if (!response.ok) throw new Error(`OpenSpec download failed: HTTP ${response.status}`);
-  const chunks = [];
-  let bytes = 0;
-  for await (const chunk of response.body) {
-    bytes += chunk.length;
-    if (bytes > 100 * 1024 * 1024) throw new Error('OpenSpec archive exceeds size limit');
-    chunks.push(chunk);
+  const cacheDir = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'stand', 'openspec', TOOLCHAIN.version);
+  const cachePath = join(cacheDir, `${asset.sha256}-${asset.name}`);
+  let archive;
+  try {
+    archive = readFileSync(cachePath);
+    if (archive.length > 100 * 1024 * 1024 || createHash('sha256').update(archive).digest('hex') !== asset.sha256) {
+      throw new Error('OpenSpec cached archive SHA-256 mismatch');
+    }
+    console.log(`OpenSpec cache hit: ${asset.name}`);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    console.log(`Downloading pinned OpenSpec ${TOOLCHAIN.version}: ${asset.name}`);
+    const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) throw new Error(`OpenSpec download failed: HTTP ${response.status}`);
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of response.body) {
+      bytes += chunk.length;
+      if (bytes > 100 * 1024 * 1024) throw new Error('OpenSpec archive exceeds size limit');
+      chunks.push(chunk);
+    }
+    archive = Buffer.concat(chunks);
+    if (createHash('sha256').update(archive).digest('hex') !== asset.sha256) throw new Error('OpenSpec archive SHA-256 mismatch');
+    mkdirSync(cacheDir, { recursive: true });
+    const temporary = join(cacheDir, `.${asset.name}-${process.pid}-${randomUUID()}`);
+    try {
+      writeFileSync(temporary, archive, { flag: 'wx' });
+      renameSync(temporary, cachePath);
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+    console.log(`OpenSpec cache stored: ${asset.name}`);
   }
-  const archive = Buffer.concat(chunks);
-  if (createHash('sha256').update(archive).digest('hex') !== asset.sha256) throw new Error('OpenSpec archive SHA-256 mismatch');
   const archivePath = join(directory, asset.name);
   writeFileSync(archivePath, archive);
   const options = { cwd: directory };
