@@ -588,7 +588,7 @@ function buildFollowerBlock(container, role, commit) {
  * 追加（该面自己读过，失败即隐藏自己那组）。
  * @param {HTMLElement} container #model-chain-section-body
  */
-function renderSettingsRoleSelector(container) {
+function renderSettingsRoleSelector(container, refreshTarget = container) {
   for (const role of ROLES) {
     const st = roleState.get(role);
     const row = document.createElement('div');
@@ -613,7 +613,7 @@ function renderSettingsRoleSelector(container) {
         retry.type = 'button';
         retry.className = 'cfg-btn cfg-btn-sm';
         retry.textContent = t('model.retry');
-        retry.addEventListener('click', () => void refreshChainSection(container));
+        retry.addEventListener('click', () => void refreshChainSection(refreshTarget));
         row.appendChild(retry);
       }
       if (st?.error?.detail && st.error.kind === 'error') {
@@ -664,8 +664,8 @@ function renderSettingsRoleSelector(container) {
 }
 
 function renderChainSectionBody(container) {
-  container.replaceChildren();
-  renderSettingsRoleSelector(container);
+  const draft = document.createElement('div');
+  renderSettingsRoleSelector(draft, container);
   const small = roleState.get(SMALL_LLM);
   const row = document.createElement('div');
   row.id = 'small-llm-settings-row';
@@ -697,11 +697,28 @@ function renderChainSectionBody(container) {
       row.appendChild(retry);
     }
   }
-  container.appendChild(row);
+  draft.appendChild(row);
+  // Keep unchanged rows and controls mounted so saves do not steal focus or scroll.
+  for (const fresh of [...draft.children]) {
+    const key = fresh.dataset.role ? `[data-role="${fresh.dataset.role}"]` : '#small-llm-settings-row';
+    const current = container.querySelector(key);
+    if (!current) container.appendChild(fresh);
+    else if (current.outerHTML !== fresh.outerHTML) {
+      const active = current.contains(document.activeElement) ? document.activeElement : null;
+      const activeId = active?.id;
+      const activeSelect = active?.tagName === 'SELECT';
+      current.replaceWith(fresh);
+      if (activeId) fresh.querySelector(`#${CSS.escape(activeId)}`)?.focus({ preventScroll: true });
+      else if (activeSelect) fresh.querySelector('select')?.focus({ preventScroll: true });
+    }
+  }
   // Image generation remains a separate provider selector, not a conversation role.
-  const list = document.createElement('div');
-  list.className = 'mp-group-list';
-  container.appendChild(list);
+  let list = container.querySelector('.mp-group-list');
+  if (!list) {
+    list = document.createElement('div');
+    list.className = 'mp-group-list';
+    container.appendChild(list);
+  }
   renderSwitchGroups(list, { collapsible: true });
 }
 
