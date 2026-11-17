@@ -78,6 +78,7 @@ let typeFaceError = false;
  *   adapter: string,
  *   labelKey: string,
  *   enabledSwitch: boolean,
+ *   healthBadge?: boolean,
  *   providers: () => Record<string, any>,
  *   rows: () => Array<{name:string, badge:string, models:string[], metaExtra:string, active:boolean}>,
  *   fields: (of: any, ctx: any) => any[],

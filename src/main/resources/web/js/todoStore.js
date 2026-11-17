@@ -651,7 +651,7 @@ function projectNameOf(tagId) {
  * 调用方行为逐字不变**。
  *
  */
-/** @param {{tagId:string|null, title:string, notes:string, priority:number, requestId:string, sessionId:string}} input
+/** @param {{tagId?:string|null, title:string, notes:string, priority?:number, requestId:string, sessionId:string, project?:string}} input
  * @returns {Promise<boolean>} */
 async function createItemConfirmed({ tagId = null, title = '', notes = '', priority = 0, requestId, sessionId, project }) {
   if (fixtureMode) return !!createItem({ tagId, title, notes, priority });

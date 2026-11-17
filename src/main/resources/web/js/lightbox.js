@@ -111,7 +111,7 @@ const DRAG_SLOP = 8;
    桌面零变化：画廊只由 routeMediaClick 的手机腿进入；openLightbox /
    openDiagramLightbox 两条既有面逐字不动（画廊态在单图面/图形面进入时清零）。 */
 /** @type {{kind: string, name?: string, src?: string, path?: string,
- *          resolver?: (p: string) => string, blob?: Blob}|null} 画廊组；null = 非画廊。 */
+ *          resolver?: (p: string) => string, blob?: Blob}[]|null} 画廊组；null = 非画廊。 */
 let galItems = null;
 let galIndex = 0;
 /** .nf-lightbox-pager 页码（组内 ≥2 才显示）。 */
@@ -1006,7 +1006,7 @@ export function initLightbox() {
     // 为一组（微信式多图消息，手机画廊可左右滑）；无气泡宿主（Canvas 文档等）
     // = 单图。group 只被手机腿消费——桌面行为逐字不变。
     const host = img.closest('.bubble');
-    const imgs = host ? Array.from(host.querySelectorAll('img.nf-zoom-img')) : [img];
+    const imgs = host ? Array.from(host.querySelectorAll(/** @type {'img'} */ ('img.nf-zoom-img'))) : [img];
     const gi = Math.max(0, imgs.indexOf(img));
     const group = imgs.map((im) => {
       const s = im.currentSrc || im.src;

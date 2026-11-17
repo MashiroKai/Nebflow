@@ -1,8 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateOfficial, main } from '../check-openspec.mjs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const valid = { items: [{ id: 'example', valid: true }], summary: { totals: { failed: 0 } } };
+
+test('corrupt cached archive fails closed without download', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'openspec-cache-test-'));
+  const previous = process.env.XDG_CACHE_HOME;
+  const toolchain = JSON.parse(readFileSync(new URL('../../openspec/toolchain.json', import.meta.url)));
+  const asset = toolchain.assets[`${process.platform}-${process.arch}`];
+  if (!asset) return;
+  try {
+    process.env.XDG_CACHE_HOME = root;
+    const directory = join(root, 'stand', 'openspec', toolchain.version);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, `${asset.sha256}-${asset.name}`), 'corrupt');
+    await assert.rejects(main(['--download']), /cached archive SHA-256 mismatch/);
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('official validator uses isolated read-only pinned invocation', () => {
   const calls = [];

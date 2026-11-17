@@ -317,13 +317,13 @@ export function initAskEditReview() {
 
   // 页签内动作（委托——整树重渲后监听不丢）。
   document.addEventListener('click', (e) => {
-    const target = e.target instanceof Element ? e.target : null;
+    const target = /** @type {HTMLButtonElement|null} */ (e.target instanceof Element ? e.target : null);
     if (!target) return;
-    const pane = target.closest('.canvas-tab-pane[data-type="askreview"]');
+    const pane = /** @type {HTMLElement|null} */ (target.closest('.canvas-tab-pane[data-type="askreview"]'));
     if (!pane) return;
     const sid = (pane.dataset.tabId || '').slice('askreview:'.length);
     if (!sid) return;
-    const hunkBtn = target.closest('.nf-ar-hunk-accept, .nf-ar-hunk-reject');
+    const hunkBtn = /** @type {HTMLButtonElement|null} */ (target.closest('.nf-ar-hunk-accept, .nf-ar-hunk-reject'));
     if (hunkBtn && !hunkBtn.disabled) {
       const hunkId = hunkBtn.getAttribute('data-hunk-id') || '';
       send(hunkBtn.classList.contains('nf-ar-hunk-accept') ? 'accept' : 'reject', sid, hunkId);

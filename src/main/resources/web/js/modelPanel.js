@@ -657,7 +657,8 @@ function renderChainSectionBody(container) {
     control: `<select class="cfg-select set-field" aria-label="${esc(t('model.smallLlm'))}"${small?.data ? '' : ' disabled'}>${options}</select>`,
   }));
   row.querySelector('select').addEventListener('change', (event) => {
-    void putChain(SMALL_LLM, event.target.value ? [event.target.value] : null);
+    const target = /** @type {HTMLSelectElement} */ (event.target);
+    void putChain(SMALL_LLM, target.value ? [target.value] : null);
   });
   container.appendChild(row);
   // Image generation remains a separate provider selector, not a conversation role.

@@ -68,7 +68,7 @@ export { bindImeGuard, isImeComposing, commitEnter };
  * a re-init on the same element would overwrite, never stack).
  *
  * @param {HTMLElement} input the editable element (textarea/input)
- * @param {{ preamble?: (e: Event) => void, cascade?: (e: KeyboardEvent) => boolean|void,
+ * @param {{ preamble?: (e: KeyboardEvent) => void, cascade?: (e: KeyboardEvent) => boolean|void,
  *            onSend?: (e: KeyboardEvent) => void }} [opts]
  */
 export function bindComposerKeys(input, opts = {}) {

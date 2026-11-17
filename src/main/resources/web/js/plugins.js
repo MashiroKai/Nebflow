@@ -1018,14 +1018,14 @@ window.addEventListener('focus', async () => {
     askedInstallHashes.add(sha.toLowerCase());
     const data = await previewInstallLink(link);
     if (!pluginsPanelActive()) return;
-    const modal = pluginsContentEl()?.querySelector('[data-install-link-modal]');
+    const modal = /** @type {HTMLElement|null|undefined} */ (pluginsContentEl()?.querySelector('[data-install-link-modal]'));
     if (!modal) return;
     fillInstallPreview(modal, data); modal.hidden = false;
-    modal.querySelector('[data-install-link-dismiss]').onclick = () => { modal.hidden = true; };
-    modal.querySelector('[data-install-link-install]').onclick = async (event) => {
-      event.currentTarget.disabled = true;
+    /** @type {HTMLElement} */ (modal.querySelector('[data-install-link-dismiss]')).onclick = () => { modal.hidden = true; };
+    /** @type {HTMLElement} */ (modal.querySelector('[data-install-link-install]')).onclick = async (event) => {
+      /** @type {HTMLButtonElement} */ (event.currentTarget).disabled = true;
       try { await postInstallLink(link); modal.hidden = true; renderPlugins(); }
-      catch (e) { event.currentTarget.disabled = false; window.alert(e.message); }
+      catch (e) { /** @type {HTMLButtonElement} */ (event.currentTarget).disabled = false; window.alert(e.message); }
     };
   } catch { /* clipboard access and rejected previews do not install */ }
   finally { clipboardCheckInFlight = false; }
