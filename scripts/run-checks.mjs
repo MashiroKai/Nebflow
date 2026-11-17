@@ -25,7 +25,7 @@ export const CHECKS = [
   { name: 'mobile-canvas-hit-clearance', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-canvas-hit-clearance.spec.mjs'] },
   { name: 'media-gallery', profiles: ['frontend'], timeoutMs: 120_000,
-    argv: [process.execPath, 'node_modules/@playwright/test/cli.js', 'test', 'tests/mobile-image-gallery.spec.mjs', 'tests/media-click-unify.spec.mjs', '--workers=1'] },
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/mobile-image-gallery.spec.mjs', 'tests/media-click-unify.spec.mjs', '--workers=1'] },
   nodeCheck('bubble-side', 'check-bubble-side'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),
