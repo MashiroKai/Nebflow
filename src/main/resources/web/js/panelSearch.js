@@ -15,13 +15,15 @@
 //     **零新后端**（/api/search/chat 是 agent 会话历史搜索，与此无关）。
 //   · 输入即搜（300ms 去抖）/ Enter 即搜 / Esc 与清空键 = 清空回列表 /
 //     空态 = 列表照常（条常驻）；无结果 = 状态行「未找到 · 提示」。
-//   · 快捷键：Mod+K（Ctrl/Cmd+K）聚焦搜索框（仅消息面板可见时；Mod+F 已被
-//     chatSearch 的 agent 会话搜索占用，不夺）。
+//   · 快捷键：Mod+Shift+K 聚焦搜索框，走 keymap.registerShortcut 单源注册
+//     （键位所有权纪律见 keymap.js 头注；Mod+K = 命令面板、Mod+F = agent
+//     会话搜索（chatSearch），均已名花有主）。
 //
 // 边界：只追加自有节点；封存态（features.friends OFF）main.js 不调 init ⇒ 不建。
 
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
+import { registerShortcut } from './keymap.js';
 import { createSocialMessageSearch, buildFieldShell } from './socialSearchCore.js';
 
 /** @type {ReturnType<typeof createSocialMessageSearch>|null} */
@@ -82,18 +84,23 @@ function buildMsgSearch() {
   });
 }
 
-/** Mod+K：消息面板可见时聚焦搜索框（栓在 window，一次装入；面板不可见不夺键）。 */
+/** Mod+Shift+K：消息面板可见时聚焦搜索框。
+ *  注册走 keymap 单源（combo 所有权纪律）；「面板激活」暂留在 handler 内判
+ *  （keyContext 尚无侧栏面板上下文键 —— 迁移期形态，入表时挪进 when）。 */
 function bindShortcut() {
-  window.addEventListener('keydown', (e) => {
-    if (!(e.metaKey || e.ctrlKey)) return;
-    if (e.key !== 'k' && e.key !== 'K') return;
-    const panel = document.querySelector('#panel-messages');
-    if (!panel || !panel.classList.contains('active')) return;
-    const input = /** @type {HTMLInputElement|null} */ (document.querySelector('#fm-msg-search-input'));
-    if (!input) return;
-    e.preventDefault();
-    input.focus();
-    input.select();
+  registerShortcut({
+    id: 'panel.messages.searchFocus',
+    combo: 'Mod+Shift+K',
+    description: '消息面板：聚焦搜索框',
+    group: '导航',
+    handler: () => {
+      const panel = document.querySelector('#panel-messages');
+      if (!panel || !panel.classList.contains('active')) return;
+      const input = /** @type {HTMLInputElement|null} */ (document.querySelector('#fm-msg-search-input'));
+      if (!input) return;
+      input.focus();
+      input.select();
+    },
   });
 }
 
