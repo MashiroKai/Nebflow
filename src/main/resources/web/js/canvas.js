@@ -101,9 +101,17 @@ let localUnsynced = false;
 function writerChanged(role) {
   import('./takeoverModal.js').then(mod => {
     if (role === 'reader') mod.showCanvasTakeover(async () => {
+      if (localUnsynced) {
+        if (!window.confirm('放弃未同步的本地 Canvas 标签变更并取回控制权？')) return false;
+        try { localStorage.removeItem(LS_TABS_KEY); } catch { /* storage unavailable */ }
+        localUnsynced = false;
+        try { sessionStorage.setItem('canvas-claim-after-discard', '1'); } catch { return false; }
+        window.location.reload();
+        return false;
+      }
       await canvasWriter.claim();
       return canvasWriter.role() === 'writer';
-    });
+    }, localUnsynced);
     else mod.hideCanvasTakeover();
   });
   if (writerStatusEl) writerStatusEl.textContent = localUnsynced
@@ -123,7 +131,7 @@ function writerNotice(message = 'Canvas 当前为只读，请先取得控制权�
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,
   canClaim: () => { if (localUnsynced) { writerNotice('请刷新后再取得控制权。'); return false; } return true; },
-  failed: () => { localUnsynced = true; writerNotice('Canvas 控制权已失效或保存失败，当前为只读。'); },
+  failed: () => { localUnsynced = true; writerChanged('reader'); writerNotice('Canvas 控制权已失效或保存失败，当前为只读。'); },
   async query() {
     try {
       const query = new URLSearchParams(canvasIdentity());
@@ -4819,7 +4827,12 @@ export function quoteActiveCardRef() {
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
   writerChanged('reader');
-  canvasWriter.refresh();
+  try {
+    if (sessionStorage.getItem('canvas-claim-after-discard') === '1') {
+      sessionStorage.removeItem('canvas-claim-after-discard');
+      canvasWriter.claim();
+    } else canvasWriter.refresh();
+  } catch { canvasWriter.refresh(); }
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
   // boot 序）置位，否则卡窗会把主窗整组标签恢复进来。
   initCardWindowMode();

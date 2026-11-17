@@ -34,6 +34,41 @@ async function boot(browser,s,colorScheme) {
   await page.waitForSelector('#activity-bar',{state:'attached',timeout:30000});
   return {context,page};
 }
+test('same browser canvas takeover overlay', async ({browser}, info) => {
+  test.setTimeout(180000); const s=await start(); let context;
+  try {
+    const first=await boot(browser,s,process.env.CANVAS_SCHEME || 'light'); context=first.context;
+    const a=first.page, b=await context.newPage();
+    await b.goto(s.base+'/',{waitUntil:'domcontentloaded'});
+    await b.waitForSelector('#activity-bar',{state:'attached',timeout:30000});
+    await a.evaluate(async()=>{const m=await import('/js/canvas.js');m.openCanvas()});
+    await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openCanvas()});
+    await expect(a.locator('#canvas-slide .canvas-takeover')).toBeVisible();
+    await expect(b.locator('#canvas-slide .canvas-takeover')).toBeVisible();
+    await b.locator('.canvas-takeover button').click();
+    await expect(b.locator('.canvas-takeover')).toBeHidden();
+    await a.locator('.canvas-takeover button').click();
+    await expect(a.locator('.canvas-takeover')).toBeHidden();
+    await expect(b.locator('.canvas-takeover')).toBeVisible({timeout:5000});
+    await b.screenshot({path:info.outputPath('cover.png')});
+    await b.locator('.canvas-takeover button').click();
+    await expect(b.locator('.canvas-takeover')).toBeHidden();
+    // Create a real debounced local change, then preempt it before the PUT fires.
+    await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('local-unsynced','Unsynced',{pinned:true})});
+    await a.locator('.canvas-takeover button').click();
+    await expect(b.locator('.canvas-takeover button')).toContainText('放弃本地变更', {timeout:5000});
+    b.once('dialog', dialog=>dialog.accept());
+    await b.locator('.canvas-takeover button').click();
+    await expect(b.locator('.canvas-takeover')).toBeHidden({timeout:30000});
+    expect(await b.evaluate(async()=>{const m=await import('/js/canvas.js');return m.hasTab('local-unsynced')})).toBe(false);
+  } finally {
+    if(context) await context.close();
+    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),20000))]);
+    if(!result) throw Error(`isolated instance did not exit: ${s.dir}, ${s.port}`);
+    console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} home=${s.dir}`);
+  }
+});
+
 test('real reader, claim, persist, preemption', async ({browser}, info) => {
   test.setTimeout(180000); const s=await start(); let a,b;
   try {
