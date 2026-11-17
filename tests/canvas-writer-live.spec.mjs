@@ -73,6 +73,7 @@ test('same browser canvas takeover overlay', async ({browser}, info) => {
     expect(await b.evaluate(async()=>{const m=await import('/js/canvas.js');return m.hasTab('local-unsynced')})).toBe(false);
     let releaseResponse, arrived;
     const arrivedPromise = new Promise(resolve=>{arrived=resolve});
+    const boundedArrival = Promise.race([arrivedPromise, new Promise((_, reject) => setTimeout(() => reject(new Error('in-flight PUT did not arrive within 15s')), 15000))]);
     const releasePromise = new Promise(resolve=>{releaseResponse=resolve});
     await b.route('**/api/canvas-tabs', async (route) => {
       if(route.request().method()!=='PUT') return route.continue();
@@ -81,7 +82,7 @@ test('same browser canvas takeover overlay', async ({browser}, info) => {
     });
     try {
       await b.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('inflight-tab','In flight',{pinned:true})});
-      expect(await arrivedPromise).toBe(200);
+      expect(await boundedArrival).toBe(200);
       if (!process.env.CANVAS_INFLIGHT_NEGATIVE) {
         await a.locator('#takeover-retake').click();
         await expect(b.locator('#takeover-box')).toBeVisible();
