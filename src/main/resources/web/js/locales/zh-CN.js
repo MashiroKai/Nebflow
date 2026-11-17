@@ -2698,6 +2698,8 @@ export default {
   'lightbox.loading': '加载中…',
   'lightbox.loadError': '图片加载失败',
   'lightbox.clickHint': '点击查看大图',
+  // 手机图片画廊（mobile-image-lightbox 批 2026-11-17）：P16 直开能力的显式次级入口。
+  'lightbox.openTab': '在标签页打开',
   // 框图大图查看（mermaid-viewer-stability 批 2026-11-06）
   'lightbox.diagramLabel': '框图查看',
   'lightbox.zoomIn': '放大',

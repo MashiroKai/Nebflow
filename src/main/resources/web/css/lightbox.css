@@ -202,3 +202,73 @@ img.nf-zoom-img { cursor: pointer; }
   .nf-lightbox-canvas { transition: none; }
   .nf-lightbox-ctl { transition: none; }
 }
+
+/* ── 画廊模式（mobile-image-lightbox 批 2026-11-17）─────────────────────
+   作者令「我想的是像微信那样的弹窗就行了」——手机层图片点击的应用内画廊面
+   （js/lightbox.js openImageGallery；只由 routeMediaClick 手机腿进入，桌面
+   不出现）。要素：遮罩居中大图（进/退场 = 既有 loaded 淡入淡出，缩略图缩放
+   起飞不做——申报制）、多图左右滑跟手切图 + 页码、下滑跟手关闭、「在标签页
+   打开」次级入口、锁底层滚动。 */
+
+/* 手机层的会话滚动容器是 #chat 自己（chat.css `#chat{overflow-y:auto}`，
+   手机层无覆盖——body.nf-lightbox-open{overflow:hidden} 锁 body 锁不到这个
+   内滚器）；.mobile-page-body 则是设置/fm 等其余手机页的滚动容器。画廊开着时
+   两个滚动面都补锁（overflow:hidden 不动 scrollTop ⇒ 关闭后回原滚动位）。
+   选择器挂 body.mobile-layer：桌面零变化。 */
+body.mobile-layer.nf-lightbox-open #chat,
+body.mobile-layer.nf-lightbox-open .mobile-page-body { overflow: hidden; }
+
+/* 跟手拖动期间浏览器不得接管手势（滚动/边缘滑）：浮层内没有别的可滚内容。 */
+.nf-lightbox[data-nf-lb-gallery="on"] { touch-action: none; }
+
+/* 滑动切图的进场档：无过渡瞬移到对侧 44px，摘类后由既有 200ms 过渡滑回中位
+   （与淡入合成；prefers-reduced-motion 时既有规则已把 .nf-lightbox-img 过渡关掉）。 */
+.nf-lightbox-img.nf-gal-in-left,
+.nf-lightbox-img.nf-gal-in-right { transition: none; }
+.nf-lightbox-img.nf-gal-in-left { transform: translateX(-44px) scale(0.96); }
+.nf-lightbox-img.nf-gal-in-right { transform: translateX(44px) scale(0.96); }
+
+/* 页码（组内 ≥2 才显示，js 控制）：底部居中胶囊，避开安全区。 */
+.nf-lightbox-pager {
+  position: absolute;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 3px 12px;
+  border-radius: var(--ds-radius-pill);
+  background: rgb(0 0 0 / 0.45);
+  color: var(--ds-ink-inverse);
+  font-size: var(--ds-fs-meta);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;   /* 页码不截点击（遮罩点按关闭语义让位） */
+}
+
+/* 「在标签页打开」次级入口（P16 直开能力的显式保留）：关闭钮同族圆钮，居其左。 */
+.nf-lightbox-opentab {
+  position: absolute;
+  top: 16px;
+  right: 56px;
+  z-index: 3;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ds-ink-inverse);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+.nf-lightbox-opentab:hover { opacity: 0.85; transform: scale(1.08); }
+.nf-lightbox-opentab:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.7);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-lightbox-opentab { transition: none; }
+}

@@ -1802,12 +1802,21 @@ function toolImgRefEl(paths, alts) {
     // 的 /abs/path 形态，readFile 原生可开）；data:/远程 src 桌面维持灯箱。
     // 动态 import：utils 是叶子模块（mediaOpenRoute→popSheet→utils 静态会成环；
     // lightbox/popArtifacts 同理由，与上方灯箱腿同款先例）。
+    // mobile-image-lightbox 批（2026-11-17）：「🖼 图片 ×N」引用件本身就是一组
+    // ——group = 全部 paths（手机画廊左右滑整组切图）；桌面开首张，逐字不变。
+    const items = paths.map((p, i) => ({
+      kind: 'image',
+      name: alts[i] || p.split('/').pop(),
+      src: p,
+      path: /^\/(?!\/)/.test(p) ? p : '',
+    }));
     const raw = paths[0] || '';
-    const localPath = /^\/(?!\/)/.test(raw) ? raw : '';
     import('./mediaOpenRoute.js').then((mr) => mr.routeMediaClick(
-      { kind: 'image', name: alts[0] || raw.split('/').pop(), src: raw, path: localPath },
+      items[0] || { kind: 'image', name: alts[0] || raw.split('/').pop(), src: raw, path: /^\/(?!\/)/.test(raw) ? raw : '' },
       (p, n) => import('./popArtifacts.js').then((m) => m.openPopArtifact(p, n)).catch(() => {}),
-      () => import('./lightbox.js').then((lb) => lb.openLightbox(raw, alts[0] || '')).catch(() => {})
+      () => import('./lightbox.js').then((lb) => lb.openLightbox(raw, alts[0] || '')).catch(() => {}),
+      items,
+      0
     ));
   });
   return ref;

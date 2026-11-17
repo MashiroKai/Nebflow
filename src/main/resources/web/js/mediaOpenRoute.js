@@ -75,6 +75,11 @@ export async function mediaDirectUrl(item) {
       try { return adoptObjectUrl(URL.createObjectURL(await (await fetch(s)).blob())); } catch (e) { /* 落下一腿 */ }
     } else if (/^https?:/i.test(s)) {
       return s;
+    } else if (s.startsWith('/uploads/') || s.startsWith('/api/')) {
+      // 同源 Web 路由（用户附件 uploads 面 / API 面）——浏览器可直接导航，
+      // 不是本机路径（mobile-image-lightbox 批：画廊「在标签页打开」入口会把
+      // 已水合的 /uploads 缩略 URL 递进来，落到下一条腿会被当 FS 路径铸票 404）。
+      return s;
     } else if (s.startsWith('/')) {
       // 原始本机路径（工具卡图片引用件的 md src 形态）——同一铸票路。
       try { return await ticketUrl(s); } catch (e) { /* 落下一腿 */ }
@@ -108,6 +113,13 @@ export async function openMediaDirect(item) {
 /**
  * 媒体点击路由单点。
  *
+ * mobile-image-lightbox 批（2026-11-17 作者令「现在手机端点图片为什么会单独
+ * 打开一个标签页 我想的是像微信那样的弹窗就行了」）：手机腿**图片**改开应用内
+ * 画廊（lightbox.openImageGallery——遮罩居中大图/滑动切图/页码/下滑关闭/「在
+ * 标签页打开」次级入口）；视频与其他附件照旧 openMediaDirect 系统直开。桌面
+ * 分支一行不动。动态 import 是既有防环先例（lightbox.js 静态依赖本模块，
+ * utils.js 同款反向动态引入）。
+ *
  * @param {{kind?: string, name?: string, path?: string, src?: string,
  *          resolver?: (path: string) => string}|null} item
  *   调用方面上已有的媒体项形状（popArtifacts item / 帧消息 payload / 裸 {src,path}）。
@@ -116,9 +128,25 @@ export async function openMediaDirect(item) {
  *   回指 popArtifacts，popArtifacts 静态依赖本模块）。
  * @param {() => void} fallback
  *   桌面 pathless / 手机直开全链尽空的兜底（各自的灯箱面）。
+ * @param {Array<Object>} [group] 图组（手机画廊滑动切图用；桌面不消费）。
+ * @param {number} [index] 点的是图组内第几张（缺省按 item 在 group 内定位）。
  */
-export function routeMediaClick(item, openCanvas, fallback) {
+export function routeMediaClick(item, openCanvas, fallback, group, index) {
   if (isMobileLayer()) {
+    if (item && item.kind === 'image') {
+      const list = Array.isArray(group) && group.length ? group : [item];
+      const i = typeof index === 'number' && list[index] === item
+        ? index
+        : Math.max(0, list.indexOf(item));
+      import('./lightbox.js')
+        .then((lb) => {
+          if (!lb.openImageGallery(list, i)) {
+            void openMediaDirect(item).then((ok) => { if (!ok) fallback(); });
+          }
+        })
+        .catch(() => { void openMediaDirect(item).then((ok) => { if (!ok) fallback(); }); });
+      return;
+    }
     void openMediaDirect(item).then((ok) => { if (!ok) fallback(); });
     return;
   }

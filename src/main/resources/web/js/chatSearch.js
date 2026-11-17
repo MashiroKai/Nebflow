@@ -2850,27 +2850,32 @@ function routeSelectedFile(file) {
  *  pathless file) keeps the #491 主题三 lightbox zoom, the in-chat split.
  *  媒体点击统一批（P16 · 2026-11-11 作者令）：媒体格的分流上收 routeMediaClick
  *  单点——手机层 = 系统直开（与聊天流媒体同一矩阵）；桌面行为逐字保留。
- *  File → the workspace-open-item single point, link → a new tab. */
+ *  File → the workspace-open-item single point, link → a new tab.
+ *  mobile-image-lightbox 批（2026-11-17）：手机图片改开画廊（routeMediaClick
+ *  手机腿），当前结果集内的全部图片为组（左右滑切图）；桌面逐字不变。 */
 function activateMediaEntry(e) {
   if (e.type === 'image' || e.type === 'video') {
     closeSearchModal();
+    const itemOf = (r) => ({
+      kind: r.type,
+      name: r.name,
+      src: r.thumbRef || '',
+      path: r.ref || '',
+      resolver: r.source === 'user'
+        ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
+        : undefined,
+    });
+    const item = itemOf(e);
+    // 图组 = 当前结果集（lastResults）内的全部图片；视频/文件不入组。
+    const pics = (lastResults || []).filter((r) => r && r.type === 'image');
+    const gi = pics.indexOf(e);
+    const group = gi >= 0 ? pics.map(itemOf) : undefined;
     routeMediaClick(
-      {
-        kind: e.type,
-        name: e.name,
-        src: e.thumbRef || '',
-        path: e.ref || '',
-        resolver: e.source === 'user'
-          ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
-          : undefined,
-      },
+      group ? group[gi] : item,
       openPopArtifact,
-      () => openMediaLightbox({
-        kind: e.type, name: e.name, src: e.thumbRef || '', path: e.ref,
-        resolver: e.source === 'user'
-          ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
-          : undefined,
-      })
+      () => openMediaLightbox(item),
+      group,
+      gi >= 0 ? gi : undefined
     );
   } else if (e.type === 'file') {
     // Act-and-exit, mirroring the artifact-row routing (v2 ruling): the modal

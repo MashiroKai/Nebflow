@@ -2783,6 +2783,9 @@ export default {
   'lightbox.loading': 'Loading…',
   'lightbox.loadError': 'Failed to load image',
   'lightbox.clickHint': 'Click to view the full-size image',
+  // Mobile image gallery (mobile-image-lightbox batch 2026-11-17): the explicit
+  // secondary entry keeping the P16 direct-open capability.
+  'lightbox.openTab': 'Open in a tab',
   // Diagram viewer (mermaid-viewer-stability batch 2026-11-06)
   'lightbox.diagramLabel': 'Diagram viewer',
   'lightbox.zoomIn': 'Zoom in',
