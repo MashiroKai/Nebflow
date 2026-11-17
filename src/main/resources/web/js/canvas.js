@@ -91,6 +91,13 @@ let writerStatusEl = null;
 let writerClaimEl = null;
 let localUnsynced = false;
 function writerChanged(role) {
+  import('./takeoverModal.js').then(mod => {
+    if (role === 'reader') mod.showCanvasTakeover(async () => {
+      await canvasWriter.claim();
+      return canvasWriter.role() === 'writer';
+    });
+    else mod.hideCanvasTakeover();
+  });
   if (writerStatusEl) writerStatusEl.textContent = localUnsynced
     ? 'Canvas：存在仅本地变更，不会自动同步。' : (role === 'writer' ? 'Canvas：可写' : 'Canvas：只读');
   if (writerClaimEl) writerClaimEl.hidden = role === 'writer';
@@ -164,6 +171,7 @@ let activeTabId = null;
 let pendingLocalActivation = null;
 let activationGeneration = 0;
 let applyingLiveTabsFrame = false;
+let lastCanvasVersion = 0;
 const persistActivationGeneration = new WeakMap();
 // Preview (temporary) tabs, one per preview group — VS Code behavior, but
 // scoped: tabs only replace a preview tab within their own group. File tabs
@@ -4802,21 +4810,8 @@ export function quoteActiveCardRef() {
 
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
-  const panel = document.getElementById('canvas-slide');
-  if (panel && !writerStatusEl) {
-    const controls = document.createElement('div');
-    controls.className = 'canvas-writer-controls';
-    writerStatusEl = document.createElement('span');
-    writerStatusEl.setAttribute('role', 'status');
-    writerClaimEl = document.createElement('button');
-    writerClaimEl.type = 'button';
-    writerClaimEl.textContent = '取得控制权';
-    writerClaimEl.addEventListener('click', () => canvasWriter.claim());
-    controls.append(writerStatusEl, writerClaimEl);
-    panel.append(controls);
-    writerChanged('reader');
-    canvasWriter.refresh();
-  }
+  writerChanged('reader');
+  canvasWriter.refresh();
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
   // boot 序）置位，否则卡窗会把主窗整组标签恢复进来。
   initCardWindowMode();
@@ -5564,7 +5559,8 @@ function recordTombstone(id) {
 }
 
 function persistTabs() {
-  if (canvasWriter.role() !== 'writer') return;
+  // Adopting a remote snapshot is not a new local intent; never echo it back.
+  if (applyingLiveTabsFrame || canvasWriter.role() !== 'writer') return;
   // UI 批⑧：独立卡窗零存档副作用 —— 卡窗自己的单卡标签绝不能写穿服务端权威
   // 存档/本地缓存（否则会把主窗整组标签覆盖成一张卡）。
   if (cardWindowMode) return;
@@ -5964,6 +5960,9 @@ export function restoreTabs() {
 // @param {any} data 已过 parseTabsData 的合法 v2 存档
 function applyLiveTabsFrame(data) {
   if (cardWindowMode) return; // 卡窗不管理主窗标签组（批⑧ 纪律）
+  const version = Number(data.writeVersion);
+  if (Number.isSafeInteger(version) && version <= lastCanvasVersion) return;
+  if (Number.isSafeInteger(version)) lastCanvasVersion = version;
   const localIntent = pendingLocalActivation;
   applyingLiveTabsFrame = true;
   try {
