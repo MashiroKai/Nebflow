@@ -206,6 +206,15 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
   backdrop-filter: var(--nf-glass-input-filter);
 }
 
+/* Registered floating consumers use the same composer glass background. */
+#todo-island.tfl-card,
+.tfl-fab-add,
+#search-go.glass-control,
+#search-select-files.glass-control,
+#search-open-selected-files.glass-control {
+  background: var(--nf-glass-input-bg);
+}
+
 /* Mobile todo chrome uses the shared glass recipe; layout stays in its page CSS. */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
@@ -527,11 +536,7 @@ html[data-theme="light"] {
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
-/* 用户输入与外部注入通知共用同一蓝色；助手回复保留原玻璃底。 */
-.ask-dock .ask-bub.user {
-  background: var(--nf-bub-injected-bg);
-  border-color: var(--cv-border, var(--glass-border));
-}
+/* 用户气泡与助手气泡共用玻璃底；注入通知的语义底不用于玻璃面。 */
 /* 顶缘折射线（面级浮件的第三件）：几何与 #input-bar::before 逐值相同
    （top:0 / 左右各 10% / 高 1px / border-radius inherit），色值 = 同一个
    --glass-refraction-line token（= #header 背景第一层的那个渐变）。
@@ -621,7 +626,7 @@ html[data-theme="light"] {
 #deck-fab[aria-pressed="true"] {
   color: var(--color-primary);
   border-color: rgb(var(--sapphire) / 0.35);
-  background: rgb(var(--sapphire) / 0.12);
+  background: var(--nf-glass-input-bg);
 }
 
 /* 禁用：opacity .35 + not-allowed + hover 不形变不换底（设计稿 §3.4） */
