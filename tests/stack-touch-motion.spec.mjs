@@ -81,7 +81,7 @@ test('touch rapid consecutive page requests', async ({browser}) => {
  await expect.poll(current,{timeout:5000}).toBe(2);
  console.log('touch rapid result',await current()); await page.screenshot({path:`${out}/touch-rapid.png`}); await ctx.close();
 });
-for (const variant of ['before','after']) test(`deterministic frames ${variant}`, async ({browser}) => {
+for (const variant of ['after','reverse']) test(`deterministic frames ${variant}`, async ({browser}) => {
  const page=await browser.newPage({viewport:{width:1000,height:800}});
  if(variant==='before') { const old=execFileSync('git',['show','0f9f5aab762f601d382e8121fc7c994f366d4c06:src/main/resources/web/js/popArtifacts.js'],{cwd:root,encoding:'utf8'}); await page.route('**/src/main/resources/web/js/popArtifacts.js',r=>r.fulfill({contentType:'text/javascript',body:old})); }
  await page.goto(base+'/tests/fixtures/pop-artifacts/harness.html'); await page.waitForFunction(()=>window.__ready===true);
@@ -89,12 +89,15 @@ for (const variant of ['before','after']) test(`deterministic frames ${variant}`
  const view=page.locator('#chat .pop-stack-view'); const box=await view.boundingBox();
  // Pause at creation so no real time can escape between the gesture and capture.
  await page.evaluate(()=>{ const orig=Element.prototype.animate; Element.prototype.animate=function(...args){const a=orig.apply(this,args); if(this.closest('.pop-stack-view')) a.pause(); return a;}; });
- await page.mouse.move(box.x+box.width/2,box.y+box.height/2); await page.mouse.down(); await page.mouse.move(box.x+box.width/2-75,box.y+box.height/2,{steps:5}); await page.mouse.up();
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2); await page.mouse.down(); await page.mouse.move(box.x+box.width/2+(variant==='reverse'?75:-75),box.y+box.height/2,{steps:5}); await page.mouse.up();
  const count=await page.evaluate(()=>document.querySelector('.pop-stack-view').getAnimations({subtree:true}).length); console.log('animations',variant,count); expect(count).toBeGreaterThan(0);
  for(const percent of [0,25,50,75,99]) { await page.evaluate(p=>document.querySelector('.pop-stack-view').getAnimations({subtree:true}).forEach(a=>{ a.currentTime=a.effect.getTiming().duration*p/100; }),percent); await page.screenshot({path:`${out}/det-${variant}-${percent}.png`,clip:{x:Math.max(0,box.x-100),y:Math.max(0,box.y-100),width:450,height:480}}); }
+ const beforeRects=await view.locator('.media-layer').evaluateAll(es=>es.map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]}));
  await page.evaluate(()=>document.querySelector('.pop-stack-view').getAnimations({subtree:true}).forEach(a=>a.finish()));
  await expect(view.locator('.layer-front')).toHaveCount(1);
- await expect.poll(()=>view.locator('.media-layer').evaluateAll(ls=>ls.findIndex(l=>l.classList.contains('layer-front')))).toBe(1);
+ await expect.poll(()=>view.locator('.media-layer').evaluateAll(ls=>ls.findIndex(l=>l.classList.contains('layer-front')))).toBe(variant==='reverse'?2:1);
+ const afterRects=await view.locator('.media-layer').evaluateAll(es=>es.map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]}));
+ const diffs=beforeRects.map((r,i)=>Math.max(...r.map((v,j)=>Math.abs(v-afterRects[i][j])))); console.log('handoff diffs',variant,JSON.stringify(diffs)); expect(Math.max(...diffs)).toBeLessThanOrEqual(1);
  await page.screenshot({path:`${out}/det-${variant}-settled.png`,clip:{x:Math.max(0,box.x-100),y:Math.max(0,box.y-100),width:450,height:480}});
  await page.close();
 });

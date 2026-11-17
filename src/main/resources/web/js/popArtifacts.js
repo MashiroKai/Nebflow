@@ -1016,20 +1016,37 @@ function buildMediaStack(items, opts) {
     const from = layer.style.transform || 'translate3d(0,0,0) rotate(0deg) scale(1)';
     const duration = parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200;
     const options = { duration, easing: 'ease-in-out' };
-    // Keep the outgoing face above the incoming face, and park every other
-    // card until the slot handoff. Neither animated face becomes translucent.
-    layers.forEach(el => { if (el !== layer && el !== next) el.style.visibility = 'hidden'; });
-    next.classList.remove('is-buried');
+    // Establish final slot geometry before starting, then animate every visible
+    // final slot from behind the incoming face to its actual fan transform.
+    const oldFront = front;
+    layer.style.transform = '';
+    front = (front + step + layers.length) % layers.length;
+    applyLayers();
+    front = oldFront;
+    const targets = layers.map(el => getComputedStyle(el).transform);
+    const outgoingBuried = layer.classList.contains('is-buried');
+    layer.classList.remove('is-buried');
     const direction = step > 0 ? -1 : 1;
-    const outgoing = layer.animate([
-      { transform: from },
-      { transform: `translate3d(${direction * 120}%,0,0) scale(.94)` },
-    ], options);
-    const incoming = next.animate([
+    const animations = [];
+    for (const el of layers) {
+      if (el === layer || el === next || el.classList.contains('is-buried')) continue;
+      animations.push(el.animate([
+        { transform: 'translate3d(0,0,0) scale(.90)' },
+        { transform: targets[layers.indexOf(el)] },
+      ], { ...options, fill: 'both' }));
+    }
+    const outgoingTarget = outgoingBuried ? `translate3d(${direction * 120}%,0,0) scale(.94)` : targets[layers.indexOf(layer)];
+    animations.push(layer.animate([
+      { transform: from, zIndex: 4, offset: 0 },
+      { transform: `translate3d(${direction * 120}%,0,0) scale(.94)`, zIndex: 4, offset: .45 },
+      { transform: outgoingTarget, zIndex: 0, offset: .46 },
+      { transform: outgoingTarget, zIndex: 0, offset: 1 },
+    ], { ...options, fill: 'both' }));
+    animations.push(next.animate([
       { transform: `translate3d(${-direction * 12}%,0,0) scale(.94)` },
       { transform: 'translate3d(0,0,0) scale(1)' },
-    ], options);
-    Promise.allSettled([outgoing.finished, incoming.finished]).then(finish);
+    ], { ...options, fill: 'both' }));
+    Promise.allSettled(animations.map(a => a.finished)).then(() => { finish(); animations.forEach(a => a.cancel()); });
   };
   view.addEventListener('pointerdown', e => {
     const control = e.target instanceof Element ? e.target.closest('button') : null;
