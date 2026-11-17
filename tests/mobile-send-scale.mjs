@@ -1,8 +1,15 @@
 // Browser-enforced mobile composer geometry; route a synthetic backend, never a live instance.
 import { chromium } from 'playwright-core';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, realpath } from 'node:fs/promises';
 import { resolve, extname, join } from 'node:path';
 
+// No backend is launched; fail closed before starting Chromium.
+if (!process.env.STAND_TEST_DATA_ROOT) throw Error('STAND_TEST_DATA_ROOT is required');
+const dataRoot = await realpath(process.env.STAND_TEST_DATA_ROOT);
+const productionRoot = await realpath('/Users/kaiyu/.stand');
+console.log(`fixture data root: ${dataRoot}`);
+if (dataRoot === productionRoot || dataRoot.startsWith(productionRoot + '/')) throw Error('refusing production data root');
+console.log('PASS isolated data root');
 const web = resolve(process.env.MSS_WEB || 'src/main/resources/web');
 const out = resolve(process.env.MSS_OUT || '/tmp/mobile-send-scale-evidence');
 const extra = process.env.MSS_EXTRA === '1';
@@ -13,7 +20,7 @@ const browser = await chromium.launch();
 let failed = false;
 try {
   for (const mobile of [true, false]) for (const theme of ['light', 'dark']) {
-    const ctx = await browser.newContext({ viewport: mobile ? viewport : {width: 1280, height: 860}, hasTouch: mobile, colorScheme: theme, deviceScaleFactor: mobile ? dpr : 1 });
+    const ctx = await browser.newContext({ viewport: mobile ? viewport : {width: 1280, height: Number(process.env.MSS_DESKTOP_HEIGHT || 860)}, hasTouch: mobile, colorScheme: theme, deviceScaleFactor: mobile ? dpr : 1 });
     await ctx.addInitScript(() => { localStorage.setItem('nebflow_token', 'fixture'); localStorage.setItem('nebflow_locale', 'zh-CN'); });
     const page = await ctx.newPage();
     await page.route('**/*', async route => {
@@ -35,6 +42,22 @@ try {
     await page.goto('http://fixture.invalid/index.html');
     await page.locator('#input').waitFor({state:'visible',timeout:20000});
     await page.locator('#send-btn').waitFor({state:'visible'});
+    if (!mobile && process.env.MSS_DESKTOP_DIAG === '1') {
+      await page.evaluate(async () => { const c = await import('/js/canvas.js'); if (document.body.classList.contains('canvas-open')) c.closeCanvas(); });
+      await page.waitForFunction(() => !document.body.classList.contains('canvas-open'));
+      await page.waitForFunction(() => {
+        const x=document.querySelector('#send-btn').getBoundingClientRect().x;
+        const s=window.__desktopStable || {x, count:0};
+        s.count=Math.abs(s.x-x)<0.01?s.count+1:0; s.x=x; window.__desktopStable=s;
+        return s.count>=10;
+      }, null, {polling:'raf',timeout:10000});
+      const chain = await page.evaluate(() => {
+        const result=[]; let e=document.querySelector('#send-btn');
+        while(e) { const r=e.getBoundingClientRect(), s=getComputedStyle(e); result.push({element:e.tagName.toLowerCase()+(e.id?'#'+e.id:''),className:typeof e.className==='string'?e.className:'',x:r.x,y:r.y,w:r.width,h:r.height,display:s.display}); e=e.parentElement; }
+        return {viewport:[innerWidth,innerHeight],bodyClass:document.body.className,chain:result};
+      });
+      console.log('DESKTOP_CHAIN '+JSON.stringify(chain));
+    }
     const data = await page.evaluate(() => {
       const measure = selector => { const el = document.querySelector(selector); if (!el) throw Error('missing '+selector); const r = el.getBoundingClientRect(), s = getComputedStyle(el); return {x:r.x,y:r.y,width:r.width,height:r.height,cx:r.x+r.width/2,cy:r.y+r.height/2,padding:s.padding,borderRadius:s.borderRadius,margin:s.margin,display:s.display}; };
       const send = document.querySelector('#send-btn');
