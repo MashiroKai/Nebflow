@@ -1039,6 +1039,7 @@ export function pinTab(id) {
   entry.pinned = true;
   entry.tabEl.classList.remove('preview');
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
+  persistTabs();
 }
 
 /** Check whether a tab has unsaved edits — refresh must never clobber them.

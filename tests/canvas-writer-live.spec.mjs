@@ -54,6 +54,28 @@ test('real reader, claim, persist, preemption', async ({browser}, info) => {
     await expect.poll(()=>a.page.evaluate(async()=>{const r=await fetch('/api/canvas-tabs'); const j=await r.json();return j.tabs?.some(t=>t.id==='writer-test')})).toBe(true);
     const disk = JSON.parse(readFileSync(join(s.data,'canvas_tabs.json'),'utf8'));
     expect(disk.writeVersion).toBe(beforeVersion + 1);
+    const file = join(s.dir,'old.txt'); writeFileSync(file,'fixture');
+    const mutation = async (code, arg) => {
+      const response = a.page.waitForResponse(r=>new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT', {timeout:6000});
+      await a.page.evaluate(code, arg); expect((await response).status()).toBe(200);
+      return JSON.parse(readFileSync(join(s.data,'canvas_tabs.json'),'utf8'));
+    };
+    let archive = await mutation(async ({file})=>{const m=await import('/js/canvas.js');m.openTab('file:old.txt','Old',{type:'markdown',absPath:file,pinned:false})}, {file});
+    expect(archive.tabs.find(t=>t.id==='file:old.txt').pinned).toBe(false);
+    archive = await mutation(async()=>{const m=await import('/js/canvas.js');m.pinTab('file:old.txt')});
+    expect(archive.tabs.find(t=>t.id==='file:old.txt').pinned).toBe(true);
+    archive = await mutation(async ({dir})=>{const m=await import('/js/canvas.js');m.retargetFileTabs('old.txt','new.txt',dir)}, {dir:s.dir});
+    expect(archive.tabs.find(t=>t.id==='file:new.txt').absPath).toBe(join(s.dir,'new.txt'));
+    expect(archive.tabs.map(t=>t.id).indexOf('writer-test')).toBeLessThan(archive.tabs.map(t=>t.id).indexOf('file:new.txt'));
+    archive = await mutation(async()=>{
+      const bar=document.querySelector('#canvas-tab-bar');
+      const drag=bar.querySelector('[data-tab-id="file:new.txt"]');
+      const target=bar.querySelector('[data-tab-id="writer-test"]');
+      const dt=new DataTransfer();
+      drag.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dt}));
+      target.dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:dt,clientX:-100}));
+    });
+    expect(archive.tabs.map(t=>t.id).indexOf('file:new.txt')).toBeLessThan(archive.tabs.map(t=>t.id).indexOf('writer-test'));
     await b.page.getByRole('button',{name:'取得控制权'}).click({force:true});
     await expect(b.page.locator('#canvas-panel .canvas-writer-controls [role=status]')).toContainText('可写');
     // A same-browser-tab takeover may not emit a console takeover frame; exercise
