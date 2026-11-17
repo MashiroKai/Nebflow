@@ -990,11 +990,13 @@ function buildMediaStack(items, opts) {
   const stack = { suppressClick: false };
   let sx = null, dx = 0;
   let switching = false;
+  const pendingSteps = [];
   const reduceStackMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // Only the outgoing front card moves. Fan slots change atomically afterwards,
   // with no transitions on the lower layers and no layout reads in pointermove.
   const switchFront = (step) => {
-    if (switching || !step) return;
+    if (!step) return;
+    if (switching) { pendingSteps.push(step); return; }
     const layer = layers[front];
     const finish = () => {
       layer.style.transform = '';
@@ -1004,6 +1006,7 @@ function buildMediaStack(items, opts) {
       switching = false;
       view.classList.remove('is-switching');
       stack.suppressClick = false;
+      if (pendingSteps.length) switchFront(pendingSteps.shift());
     };
     if (reduceStackMotion() || !motionEnabled()) { finish(); return; }
     switching = true;
