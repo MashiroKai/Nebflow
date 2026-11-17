@@ -4896,10 +4896,17 @@ body.mobile-layer:has(.mobile-page[data-page="canvas"].live) .ask-fab.note-fab {
    实测值都由「控件行底缝 + 钮径 + 呼吸」推导，手机档的 16/48 是静态 token（
    --mf-ctrl-row + --mtap-lg），桌面档取真几何；实测缺省 0px ⇒ max() 结果不变。 */
 body.mobile-layer .canvas-md-scroll,
-body.mobile-layer .canvas-txt-scroll,
+body.mobile-layer .canvas-txt-scroll {
+  /* The reader viewport ends above the floating row, not merely its content.
+     Padding alone lets intermediate lines pass underneath the controls. */
+  bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
+  padding-bottom: 12px;
+  scroll-padding-bottom: 12px;
+}
 body.mobile-layer .epub-reader-viewport {
-  padding-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
-  scroll-padding-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
+  margin-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
+  padding-bottom: 12px;
+  scroll-padding-bottom: 12px;
 }
 
 /* ── ④ 手机端阅读面字档（本批硬约束：正文 ≥17px / 辅助字 ≥13px）──────────
