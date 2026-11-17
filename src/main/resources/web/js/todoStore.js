@@ -307,7 +307,9 @@ function isTodoRow(row) {
   if (!row || typeof row.id !== 'string' || !row.id) return false;
   const kind = row.kind == null ? null : String(row.kind);
   if (kind != null && kind !== 'todo') return false;
-  return !MIRROR_NAME_RE.test(String(row.name || ''));
+  // Decision-card payloads are structured JSON, not editable legacy todos.
+  // Hide rather than risk displaying or overwriting the raw payload.
+  return row.project !== '__decision_card_mvp__' && !MIRROR_NAME_RE.test(String(row.name || ''));
 }
 
 /** 后端行 → 读口形状（映射单点；渲染层只认这里产出的键）。 */
@@ -329,7 +331,7 @@ function mapRow(row) {
     completedAt: Number.isFinite(row.completedAt) ? row.completedAt : null,
     createdAt: Number.isFinite(row.createdAt) ? row.createdAt : Date.now(),
     // 跨会话行级寻址面（写帧必须带**该行**的 sessionId）。
-    sessionId: String(row.sessionId || currentSessionId() || ''),
+    sessionId: typeof row.sessionId === 'string' && row.sessionId ? row.sessionId : null,
   });
 }
 
@@ -651,7 +653,7 @@ function projectNameOf(tagId) {
  */
 /** @param {{tagId:string|null, title:string, notes:string, priority:number, requestId:string, sessionId:string}} input
  * @returns {Promise<boolean>} */
-async function createItemConfirmed({ tagId = null, title = '', notes = '', priority = 0, requestId, sessionId }) {
+async function createItemConfirmed({ tagId = null, title = '', notes = '', priority = 0, requestId, sessionId, project }) {
   if (fixtureMode) return !!createItem({ tagId, title, notes, priority });
   const sid = sessionId;
   if (sid !== currentSessionId()) return false;
@@ -659,7 +661,7 @@ async function createItemConfirmed({ tagId = null, title = '', notes = '', prior
   const socket = state.ws;
   const frame = { type: FRAME.create, kind: 'todo', sessionId: sid, requestId,
     name: title.trim(), content: notes.trim() || title.trim(), detail: notes.trim(), priority,
-    project: projectNameOf(tagId) || undefined };
+    project: project || projectNameOf(tagId) || undefined };
   return new Promise((resolve) => {
     let settled = false;
     let timer;
@@ -757,7 +759,7 @@ function updateItem(id, patch = {}) {
   }
   if (!fixtureMode) {
     /** @type {Record<string, any>} 帧面（键集随批次增减，样式面走宽松字典） */
-    const frame = { type: FRAME.update, id: it.id, sessionId: it.sessionId || currentSessionId() };
+    const frame = { type: FRAME.update, id: it.id, sessionId: it.sessionId };
     let has = false;
     // content 是必填的注入面：两段任一变化都重算（detail 优先，缺则 name）。
     if ((it.name !== before.name || it.detail !== before.detail) && (it.detail || it.name)) {
@@ -790,7 +792,7 @@ function completeItem(id) {
   it.completed = true;
   it.completedAt = Date.now();
   if (!fixtureMode) {
-    const sid = it.sessionId || currentSessionId();
+    const sid = it.sessionId;
     if (!sid) {
       it.completed = before.completed;
       it.completedAt = before.completedAt;
@@ -812,7 +814,7 @@ function uncompleteItem(id) {
   it.completed = false;
   it.completedAt = null;
   if (!fixtureMode) {
-    const sid = it.sessionId || currentSessionId();
+    const sid = it.sessionId;
     if (!sid) {
       it.completed = before.completed;
       it.completedAt = before.completedAt;
@@ -833,7 +835,7 @@ function removeItem(id) {
   const idx = items.indexOf(it);
   items = items.filter((x) => x.id !== id);
   if (!fixtureMode) {
-    const sid = it.sessionId || currentSessionId();
+    const sid = it.sessionId;
     if (!sid) {
       items.splice(idx, 0, it);
       console.error(`[todoStore] removeItem(${id}) failed: no addressable session`);
@@ -873,6 +875,10 @@ function updateTag(id, patch = {}) {
   }
   const renamed = typeof patch.name === 'string' && patch.name.trim() ? patch.name.trim() : '';
   if (renamed && renamed !== tag.name) {
+    if (!fixtureMode && items.some((it) => it.project === tag.name && !it.sessionId)) {
+      console.error('[todoStore] rename group failed: row has no addressable session');
+      return;
+    }
     const oldName = tag.name;
     tag.name = renamed;
     if (!fixtureMode) {
@@ -881,7 +887,7 @@ function updateTag(id, patch = {}) {
         if (it.project !== oldName) continue;
         it.project = renamed;
         it.tagId = newId;
-        const sid = it.sessionId || currentSessionId();
+        const sid = it.sessionId;
         if (!sid) { console.error(`[todoStore] rename group: row ${it.id} has no addressable session`); continue; }
         // 分组名 = 后端 project ⇒ 改名必须落到每一行（真落库，不是本地幻觉）。
         sendWs({ type: FRAME.update, id: it.id, sessionId: sid, project: renamed });
@@ -901,6 +907,10 @@ function updateTag(id, patch = {}) {
  *  与旧内存态「删标签连带删条目」不同：真源行不因分组解散被销毁（本批申报）。 */
 function deleteTag(id) {
   const tag = tags.find((x) => x.id === id);
+  if (tag && !fixtureMode && items.some((it) => it.project === tag.name && !it.sessionId)) {
+    console.error('[todoStore] dissolve group failed: row has no addressable session');
+    return;
+  }
   tags = tags.filter((x) => x.id !== id);
   tagOrder = tagOrder.filter((x) => x !== id);
   if (tag && !fixtureMode) {
@@ -909,7 +919,7 @@ function deleteTag(id) {
       if (it.project !== tag.name) continue;
       it.tagId = null;
       it.project = null;
-      const sid = it.sessionId || currentSessionId();
+      const sid = it.sessionId;
       if (!sid) { console.error(`[todoStore] dissolve group: row ${it.id} has no addressable session`); continue; }
       sendWs({ type: FRAME.update, id: it.id, sessionId: sid, project: '' });
     }
@@ -979,7 +989,7 @@ function seed({ tagList, itemList, order } = {}) {
       completed: !!x.completed,
       completedAt: x.completed ? Date.now() : null,
       createdAt: Number.isFinite(x.createdAt) ? x.createdAt : Date.now(),
-      sessionId: String(x.sessionId || currentSessionId() || ''),
+      sessionId: typeof x.sessionId === 'string' && x.sessionId ? x.sessionId : null,
     }));
   }
   activeTagId = null;

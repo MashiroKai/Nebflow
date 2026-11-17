@@ -393,6 +393,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
             "requestId" -> createRequestId.asJson,
             "task" -> io.circe.Json.obj(
               "id" -> saved.id.asJson,
+              "sessionId" -> Option(saved.sessionId).filter(_.nonEmpty).asJson,
+              "creator" -> io.circe.Json.Null,
               "content" -> saved.content.asJson,
               "triggerAt" -> saved.triggerAt.asJson,
               "createdAt" -> saved.createdAt.asJson,
@@ -566,7 +568,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
       // 连续未销卡条目的调整建议）。
       "missCount" -> t.missCount.asJson,
       // 改版批（2026-10-31）：行级会话归属（scope:all 收件箱的跨会话寻址面）。
-      "sessionId" -> t.sessionId.asJson,
+      "sessionId" -> Option(t.sessionId).filter(_.nonEmpty).asJson,
+      // No creator identity is recorded by ScheduledTask; do not infer it from session.
+      "creator" -> io.circe.Json.Null,
       // 改版批追加令（2026-10-31 23:14）：项目维度（UI 分组/筛选主维度；None=未分组）。
       "project" -> t.project.asJson,
       // 待办体系统一批（2026-11-04）：重要度 + 完成态（纯增量三键；老前端零感知）。
