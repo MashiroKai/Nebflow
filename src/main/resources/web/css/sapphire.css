@@ -249,7 +249,7 @@
      输入框那款」——参考件 = #input-bar，input.css 现值逐字：顶缘 inset 高光 +
      两档外投影；修前只取 #header 的 inset-only 档，控件条在内容面上「飘
      不住」= 与输入框不同款）。暗档外投影两档见下方媒体块。 */
-  --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25), 0px 2px 8px rgba(0, 0, 0, 0.04), 0px 8px 24px rgba(0, 0, 0, 0.06);
+  --cv-shadow: var(--nf-glass-dots-shadow);
   /* hover-active 语言（= 聊天玻璃控件：hover 抬亮 --glass-control 族 +
      scale 手感；active 按压回缩） */
   --cv-hover-bg: var(--glass-control-bg-hover);
@@ -382,7 +382,7 @@
   :root {
     /* = chat #input-bar 暗档 box-shadow（input.css:1480-1485 逐字同源：
        inset 高光 + 0.2/0.35 两档外投影 —— 冷启动批③同令对齐） */
-    --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04), 0px 2px 8px rgba(0, 0, 0, 0.20), 0px 8px 24px rgba(0, 0, 0, 0.35);
+    --cv-shadow: var(--nf-glass-dots-shadow);
   }
 }
 
