@@ -132,6 +132,7 @@ class ExternalResultReliabilitySpec extends CatsEffectSuite:
          |[ "$$HOME" = ${quote(home.toString)} ] || exit 92
          |[ "$$PATH" = ${quote(emptyPath.toString)} ] || exit 93
          |printf '%s\\n' "$$$$" > ${quote(script.pid.toString)}
+         |printf '%s\\n' "$$@" > ${quote((dir / "argv").toString)}
          |$gate$output
          |exit 0
          |""".stripMargin)
@@ -250,6 +251,10 @@ class ExternalResultReliabilitySpec extends CatsEffectSuite:
           f.freshSessions.loadMessagesForSession(run.id)
         )(_.exists(m => m.role == MessageRole.User && m.textContent == "recognizable queued supplement"))
         _ = assert(messages.exists(_.textContent == "recognizable queued supplement"))
+        argv <- eventually("supplement reaches subprocess argv")(
+          IO.blocking(os.read(run.script.bin / os.up / "argv"))
+        )(_.contains("recognizable queued supplement"))
+        _ = assert(argv.contains("recognizable queued supplement"))
       yield ()
     }
   }

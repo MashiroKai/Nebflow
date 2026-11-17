@@ -1650,7 +1650,10 @@ Delivery follows recipient state (there is no delivery parameter to set):
                               message,
                               parentRef = parentRef,
                               wsSend = ctx.wsSend,
-                              resources = res
+                              resources = res,
+                              messageId = Option(ctx.toolCallId).filter(_.nonEmpty)
+                                .map(call => s"mail:${ctx.sessionId.getOrElse("")}:$call")
+                                .getOrElse(java.util.UUID.randomUUID().toString)
                             )
                             .map(_.left.map(ToolError(_)))
                         else continueDelegate(record, id, message, ctx, sys, res, parentRef, blocks)
