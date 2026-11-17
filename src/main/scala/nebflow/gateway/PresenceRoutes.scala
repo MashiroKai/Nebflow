@@ -2376,6 +2376,12 @@ private[gateway] object PresenceRoutes:
                     val proto = protocolDecoded.toOption.flatten.getOrElse(LlmProtocol.OpenAI)
                     val key = apiKeyOv.getOrElse(stored.map(_.apiKey).getOrElse(""))
                     runProviderTest(proto, base, key, model, List(key) ++ stored.map(_.apiKey).toList)
+              }.handleErrorWith {
+                case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                  BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                  BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                case e => IO.raiseError(e)
               }
             end if
           }
