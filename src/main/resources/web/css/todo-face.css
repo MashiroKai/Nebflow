@@ -805,25 +805,23 @@
   gap: var(--ds-space-1);
   min-width: 0;
 }
-/* 行内名称（件6 2026-11-05 作者令「事项名应该简单」）：**单行** + ellipsis。
-   改前是 2 行 -webkit-line-clamp（长名换行、视觉上把行撑高，且 text-overflow
-   读作 clip ⇒ 没有截断语义）；改后一行到底，超长读作「…」，完整值仍在
-   title 提示与编辑面板的名输入框里（值 = 全文）。 */
+/* 行内名称/备注（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：
+   单行 + ellipsis 截断退役 ⇒ 多行 wrap（pre-line 保留名内换行、折叠多余空格；
+   长串不断行处 overflow-wrap 兜底），行高随内容长。件6 的「事项名应该简单」
+   选型由此批推翻 —— 完整值直接在行内可见。 */
 .tfl-row-title {
   flex: 1 1 auto;
   min-width: 0;
   font: 500 var(--ds-fs-hint)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text, #000);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .tfl-row-notes {
   font: 400 var(--ds-fs-meta)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 35%, transparent);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .tfl-row-due {
   display: inline-flex;
@@ -934,11 +932,12 @@
   border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 5%, transparent);
 }
-/* 事项名输入面（件6）：与内容输入面同**视觉厚度**（同一盒高/内距/背景），
-   但字重与色阶略强（名 = 条目主键）。单行 + 失焦读作截断（ellipsis），
-   输入框 value 仍是全文（上限由 maxlength 与 JS 夹紧，见 js/todoFace.js NAME_MAX）。
-   选择器带面板前缀 ⇒ 稳胜过 `.tfl-row-title-input` 的字档。 */
+/* 事项名输入面（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：
+   单行 input + ellipsis 退役 ⇒ 名也走 textarea（构造点 js/todoFace.js
+   nameInputEl）；空内容按单行厚度，内容长则 field-sizing 随长，96px 封顶
+   自滚（与 detail 域同口径）。回车 = 保存、shift+回车换行（同 detail 域）。 */
 .tfl-edit-panel .tfl-edit-name {
+  box-sizing: border-box;
   border: none;
   outline: none;
   border-radius: var(--ds-radius-badge);
@@ -947,9 +946,13 @@
   min-width: 0;
   font: 500 11px/1.35 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text) 88%, transparent);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  field-sizing: content;
+  min-height: 0;
+  max-height: 96px;
+  resize: vertical;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .tfl-edit-panel .tfl-edit-name::placeholder { color: color-mix(in srgb, var(--color-text) 32%, transparent); }
 .tfl-edit-notes {
@@ -1043,13 +1046,22 @@
 .tfl-due-holder .tw-trigger { flex: 1 1 auto; min-width: 0; }
 .tfl-due-input { display: none; }
 
-/* 行标题输入（编辑/创建共用） */
+/* 行标题输入（编辑/创建共用；D 批 ui-unify-panels 2026-11-17 起 = textarea）：
+   空内容单行厚度（field-sizing content），长内容随长、96px 封顶自滚。 */
 .tfl-row-title-input {
+  box-sizing: border-box;
   flex: 1 1 auto;
   min-width: 0;
   padding: 0;
   font: 500 var(--ds-fs-hint)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text, #000);
+  field-sizing: content;
+  min-height: 0;
+  max-height: 96px;
+  resize: none;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 /* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
    标准批 2026-11-06）。 */

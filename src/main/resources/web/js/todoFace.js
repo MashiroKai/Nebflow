@@ -177,13 +177,16 @@ const BLANK_DRAG_PX = 8;
  *   · 定值 → 代码常量与 `maxlength` 属性、门禁断言三处同一读数，可机械判。 */
 const NAME_MAX = 120;
 
-/** 事项名输入面（编辑面板与创建行的**唯一**构造点；件6 2026-11-05）。
- *  单行 = `input[type=text]`（永不 textarea）；`maxlength` 属性给浏览器原生夹紧，
- *  `input` 事件里再夹一次（粘贴、程序赋值、拖放都收敛到上限），并把换行剥离
- *  （粘贴含换行的文本折叠成单行）。IME 组字期不动值（组字中的候选串会被打断）。 */
+/** 事项名输入面（编辑面板与创建行的**唯一**构造点）。
+ *  ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都
+ *  多行」：单行 input + 换行剥离退役 ⇒ 名也走 textarea（多行可编）。
+ *  `maxlength` 属性给浏览器原生夹紧，`input` 事件里再夹一次（粘贴、程序赋值、
+ *  拖放都收敛到上限；换行保留、CR 归一成 LF）。IME 组字期不动值（组字中的
+ *  候选串会被打断）。回车 = 保存、shift+回车 = 换行（口径同 detail 域，
+ *  行为挂接在各构造点）。 */
 function nameInputEl(cls, value = '') {
-  const input = el('input', cls);
-  input.type = 'text';
+  const input = /** @type {HTMLTextAreaElement} */ (el('textarea', cls));
+  input.rows = 1;
   input.maxLength = NAME_MAX;
   input.value = value;
   input.addEventListener('input', (e) => {
@@ -192,29 +195,15 @@ function nameInputEl(cls, value = '') {
     // 原始 composition 标志——件6 的 nameInputEl 曾自读 e.isComposing，本批
     // 合并时按门禁收归）。
     if (isImeComposing(e, input)) return;
-    const flat = input.value.replace(/[\r\n]+/g, '').slice(0, NAME_MAX);
+    const flat = input.value.replace(/\r\n?/g, '\n').slice(0, NAME_MAX);
     if (flat === input.value) return;
     const at = input.selectionStart == null ? flat.length : input.selectionStart;
     input.value = flat;
     const pos = Math.min(at, flat.length);
     try { input.setSelectionRange(pos, pos); } catch { /* 非文本态忽略 */ }
   });
-  // 真粘贴：剪贴板里的多行文本在单行输入面上会被浏览器转成空格（Chromium）
-  // 或直接吞掉换行——两种都不是「折叠成单行」的确定语义。含换行时自己接管，
-  // 剥掉换行后按单行插入；无换行时交回浏览器原生粘贴（保留 undo 栈）。
-  input.addEventListener('paste', (e) => {
-    const data = e.clipboardData ? e.clipboardData.getData('text') : '';
-    if (!data || !/[\r\n]/.test(data)) return;
-    e.preventDefault();
-    const clean = data.replace(/[\r\n]+/g, '');
-    const start = input.selectionStart == null ? input.value.length : input.selectionStart;
-    const end = input.selectionEnd == null ? start : input.selectionEnd;
-    const next = (input.value.slice(0, start) + clean + input.value.slice(end)).slice(0, NAME_MAX);
-    input.value = next;
-    const pos = Math.min(start + clean.length, NAME_MAX);
-    try { input.setSelectionRange(pos, pos); } catch { /* 非文本态忽略 */ }
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  // D 批：textarea 原生多行粘贴（换行保留），上限由上面的 input 夹紧兜住 ——
+  // 旧「剥掉换行后按单行插入」的接管粘贴退役。
   return input;
 }
 
@@ -1808,15 +1797,15 @@ class TodoFace {
 
   buildEditPanel(item) {
     const panel = el('div', 'tfl-edit-panel');
-    // ① 事项名（件6 2026-11-05）：**单行**轻量输入面（input，非 textarea）+
-    //    长度上限 + 换行剥离，构造点 = nameInputEl（唯一）。占面板第一行，
-    //    回车即保存（与备注同口径）；`tfl-row-title-input` 类保留给既有选择器。
-    //    两段化（待办结构化批 2026-11-05）：这一格就是 name（行头显示的那一段）。
+    // ① 事项名（D 批 ui-unify-panels 2026-11-17「展示与编辑都多行」）：
+    //    textarea 多行输入面 + 长度上限，构造点 = nameInputEl（唯一）。回车即
+    //    保存、shift+回车换行（与 detail 域同口径）；`tfl-row-title-input` 类
+    //    保留给既有选择器。两段化（待办结构化批）：这格就是 name。
     const name = nameInputEl('tfl-edit-name tfl-row-title-input', item.name);
     name.placeholder = t('todoface.titlePh');
     name.setAttribute('aria-label', t('todoface.titlePh'));
     name.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !isImeComposing(e, name)) { e.preventDefault(); e.stopPropagation(); this.saveEditing(); }
+      if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e, name)) { e.preventDefault(); e.stopPropagation(); this.saveEditing(); }
     });
     panel.appendChild(name);
     this.titleInput = name;
@@ -1892,7 +1881,8 @@ class TodoFace {
     this.createTitle.placeholder = t('todoface.titlePh');
     this.createTitle.setAttribute('aria-label', t('todoface.titlePh'));
     this.createTitle.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !isImeComposing(e, this.createTitle)) { e.preventDefault(); e.stopPropagation(); this.saveCreate(); }
+      // D 批：回车 = 保存、shift+回车 = 换行（多行名可创建）。
+      if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e, this.createTitle)) { e.preventDefault(); e.stopPropagation(); this.saveCreate(); }
     });
     head.append(dot, this.createTitle);
     row.appendChild(head);

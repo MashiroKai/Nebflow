@@ -283,7 +283,8 @@ test('① 右下角加号：40px 圆钮贴列表右下角且不压末行，点�
     const a = document.activeElement;
     return a ? `${a.tagName}.${a.className}` : '';
   });
-  expect(focused).toContain('INPUT');
+  // D 批（ui-unify-panels 2026-11-17）起名输入面 = textarea（多行可建）。
+  expect(focused).toContain('TEXTAREA');
   expect(focused).toContain('tfl-row-title-input');
   await page.screenshot({ path: join(SHOT_DIR, '02_fab_click_createrow.png') });
 

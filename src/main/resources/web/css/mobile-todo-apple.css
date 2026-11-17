@@ -251,12 +251,13 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-dot-new {
   background: transparent;
   border: 1.5px solid var(--color-text-muted);
 }
+/* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：行首名换行
+   显示（ellipsis 退役，长名/多行名整段可见）。 */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-row-label {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   font-size: var(--mfs-body);
   color: var(--color-text);
 }
@@ -487,9 +488,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-dtitle {
   line-height: 34px;
   text-align: left;
   color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-items {
   display: flex;
@@ -568,12 +568,12 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item-body {
   text-align: left;
   cursor: pointer;
 }
+/* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：条目名 wrap。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item-title {
   font-size: var(--mfs-body);
   color: var(--color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-item-due {
   font-size: var(--mfs-min);
@@ -612,13 +612,21 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-newrow {
   gap: 8px;
   min-height: 48px;
 }
+/* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：名编辑域 = textarea
+   （js/mobile/todoAppleFace.js 同批换元素），44 = 单行起步厚度，内容长随长。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input {
+  box-sizing: border-box;
   flex: 1 1 auto;
   min-width: 0;
-  height: 44px;
+  min-height: 44px;
+  max-height: 132px;
+  overflow: auto;
+  resize: vertical;
   color: var(--color-text);
   font-size: var(--mfs-body);
   font-family: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input::placeholder {
   color: var(--color-text-muted);
