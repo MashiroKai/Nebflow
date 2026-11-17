@@ -137,6 +137,26 @@ status: active
 > 是旧档的方法论存档；唯一材质的 A/B 读数由 `scripts/capture-glass-ab.mjs` 按
 > 当前标准重采，视觉验收锚点 = 作者 18:13 指认的主会话输入框本身。
 
+### 主页面亮色桌面采样：已裁定项
+
+以下是零端口主页面 harness 的计算值，不是全站清单；相同 DOM 元素的重复规则记录合并。测量文件为 `tests/glass-page-inventory.mjs`，原始结果在 `/private/tmp/gsu-evid/page-inventory.json`。所有项目为亮色／桌面；filter 除注明外均为 `blur(24px) saturate(1.15)`。本表记录裁定，不表示违规已经修复。
+
+| 实例 | 背景计算值 | 归类及理由 |
+|---|---|---|
+| `#todo-island.tfl-card` | `rgb(236,236,238)` | 违规：浮层卡片实底覆盖 |
+| `#search-go` | `rgb(236,236,238)` | 违规：玻璃控件实底覆盖 |
+| `#search-select-files` | `rgb(236,236,238)` | 违规：玻璃控件实底覆盖 |
+| `#search-open-selected-files` | `rgb(236,236,238)` | 违规：玻璃控件实底覆盖 |
+| `.tfl-fab-add` | `color(srgb 0.105882 0.117647 0.14902 / 0.08)` | 违规：浮层控件高透明底 |
+| `.canvas-tab.preview.active` | `rgba(0,0,0,0)` | 未完成判定：`split.css` 的选中态使用渐变背景图；仅靠 backgroundColor 不能断言其他层是否承载标准玻璃底 |
+| `#g2-edge-fade` | `rgba(0,0,0,0)` | 非玻璃：渐隐装饰层 |
+| `#voice-overlay` | `rgba(0,0,0,0.12)` | 非玻璃：遮罩 scrim |
+| `#daemon-config-overlay` | `rgba(0,0,0,0)` | 非玻璃：遮罩 scrim |
+| `.ask-send` | `rgb(5,154,76)` | 具名豁免：语义色按钮，颜色承载功能含义，不以玻璃底冲淡 |
+| `.ask-stop` | `rgb(244,67,54)` | 具名豁免：语义色按钮，颜色承载功能含义，不以玻璃底冲淡 |
+
+主页面亮色桌面还记录 315 条未匹配**分组规则记录**，不是独立选择器数；48 条 `filter:none` 记录尚未逐条分类，不能整体推定为非玻璃。`:root` 令牌定义、纯标题容器及实底主操作按钮按非玻璃分类；其他项需按实际角色核对。
+
 ## 6. 例外清单
 
 例外 = **具名豁免**，逐条写明为什么这一面不吃毛玻璃。格式（脚本按表解析，别改列序）：
