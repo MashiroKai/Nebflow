@@ -236,6 +236,24 @@ class ExternalResultReliabilitySpec extends CatsEffectSuite:
 
   private val codexEnd = """{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"""
 
+  test("live external supplement is queued and becomes a subsequent process input") {
+    fixture.use { f =>
+      for
+        run <- spawn(f, "codex", List(codexMessage("reply", "fixture response"), codexEnd), gated = true)
+        _ <- eventually("fixture start")(IO.blocking(os.exists(run.script.pid)))(identity)
+        record <- IO.blocking(nebflow.core.delegate.DelegateRegistry.find(run.id).get)
+        receipt <- ExternalSessionRunner.continueExternal(record, "recognizable queued supplement", None, None, f.resources)
+        _ = assert(receipt.isRight, receipt.toString)
+        _ = assert(receipt.toOption.get.toLowerCase.contains("queued"), receipt.toString)
+        _ <- IO.blocking(os.write(run.script.release, "release"))
+        messages <- eventually("supplement input in next run")(
+          f.freshSessions.loadMessagesForSession(run.id)
+        )(_.exists(m => m.role == MessageRole.User && m.textContent == "recognizable queued supplement"))
+        _ = assert(messages.exists(_.textContent == "recognizable queued supplement"))
+      yield ()
+    }
+  }
+
   test("Codex assistant text survives a textless turn.completed and a missing parent") {
     fixture.use { f =>
       for
