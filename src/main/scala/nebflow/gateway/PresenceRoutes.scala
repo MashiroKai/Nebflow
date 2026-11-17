@@ -255,6 +255,15 @@ private[gateway] object PresenceRoutes:
     }
   end presenceWsStreams
 
+  /**
+   * 状态派生可见性词（阶段②：表态端点的回执读数单点；`active` / `history`）。
+   * 纯读投影（[[nebflow.core.delegate.DelegateVisibility.readOf]]），读失败保守回落
+   * `active`（宁可见勿隐藏）。
+   */
+  private def visibilityWord(id: String): String =
+    try nebflow.core.delegate.DelegateVisibility.readOf(id).windowWord
+    catch case _: Throwable => "active"
+
   def routes(wsb: WebSocketBuilder2[IO], ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
 
@@ -1069,34 +1078,50 @@ private[gateway] object PresenceRoutes:
             }
         }
 
-      // POST /delegates/:id/archive — 归档动作（delegate-ui 批 2026-10-08 · G6，视图④
-      // 归档入口的引擎缝）：`archivedAt = now` 单旗写（幂等：已归档 = 原时间戳零重写）；
-      // **零删除纪律**——记录/子代理记账/链记录原样留存（children 随档 = 查询面按
-      // parentSessionId 原样可达），历史窗 = `GET /api/chains?archived=1`。404 = 查无
-      // 记录；400 = 非法 id。
-      case req @ POST -> Root / "delegates" / id / "archive" =>
+      // POST /delegates/:id/disposition — **非破坏性确认/忽略旗**（delegate-lifecycle-reform
+      // 阶段②：`POST /delegates/:id/archive` 与 `/unarchive` 两个手动归档入口**已整体退役**
+      // ——存储式归档被状态派生可见性取代，两个旧端点不再存在，调用方得到干净的 404）。
+      // body = {"value": "acknowledged" | "ignored" | ""}：
+      //   - 非空值 = 表态（`disposition` + `dispositionAt` 双槽单写，幂等零删除）；
+      //   - 空值   = 清除表态（行按状态派生可见性回活动窗）；
+      // 400 = 非法 id / 非法 value / 坏 body；404 = 查无记录；200 = 回读
+      // {id, disposition, dispositionAt, visibility}。零删除：记录/子代理记账/转录/
+      // worktree/历史行原样留存。
+      case req @ POST -> Root / "delegates" / id / "disposition" =>
         withAuth(req) {
           if !nebflow.core.delegate.DelegateRegistry.validId(id) then
             BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
           else
-            IO.blocking(nebflow.core.delegate.DelegateRegistry.archive(id)).flatMap {
-              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
-              case Right(ts) => Ok(Json.obj("id" -> id.asJson, "archived" -> true.asJson, "archivedAt" -> ts.asJson))
-            }
-        }
-
-      // POST /delegates/:id/unarchive — 反归档（delegate/flowmap 两层架构批 2026-10-09
-      // · G4-2，L2 归档抽屉「恢复」动作的引擎缝）：`archivedAt` 摘旗（幂等：未归档 =
-      // 原样零写）；**零删除纪律不破**——记录/子代理记账/链记录原样，只是回在册窗
-      // （L2 平铺面）。404 = 查无记录；400 = 非法 id。
-      case req @ POST -> Root / "delegates" / id / "unarchive" =>
-        withAuth(req) {
-          if !nebflow.core.delegate.DelegateRegistry.validId(id) then
-            BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
-          else
-            IO.blocking(nebflow.core.delegate.DelegateRegistry.unarchive(id)).flatMap {
-              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
-              case Right(_) => Ok(Json.obj("id" -> id.asJson, "archived" -> false.asJson))
+            req.attemptAs[Json].value.flatMap {
+              case Left(_) => BadRequest(Json.obj("error" -> "malformed JSON body".asJson))
+              case Right(body) =>
+                val value = body.hcursor.get[String]("value").toOption.getOrElse("").trim
+                if value.isEmpty then
+                  IO.blocking(nebflow.core.delegate.DelegateRegistry.clearDisposition(id)).flatMap {
+                    case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+                    case Right(_) =>
+                      Ok(Json.obj(
+                        "id" -> id.asJson,
+                        "disposition" -> Json.Null,
+                        "dispositionAt" -> Json.Null,
+                        "visibility" -> visibilityWord(id).asJson
+                      ))
+                  }
+                else if !nebflow.core.delegate.DelegateRegistry.isDispositionWord(value) then
+                  BadRequest(Json.obj(
+                    "error" -> s"unknown disposition '$value' (expected ${nebflow.core.delegate.DelegateRegistry.DispositionWords.toList.sorted.mkString(", ")} or an empty value to clear)".asJson
+                  ))
+                else
+                  IO.blocking(nebflow.core.delegate.DelegateRegistry.setDisposition(id, value)).flatMap {
+                    case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+                    case Right(at) =>
+                      Ok(Json.obj(
+                        "id" -> id.asJson,
+                        "disposition" -> value.asJson,
+                        "dispositionAt" -> at.asJson,
+                        "visibility" -> visibilityWord(id).asJson
+                      ))
+                  }
             }
         }
 

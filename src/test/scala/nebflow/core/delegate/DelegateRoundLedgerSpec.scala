@@ -51,7 +51,7 @@ class DelegateRoundLedgerSpec extends FunSuite:
     )
     DelegateRegistry.put(rec)
     // round pointer via the single write point (mirrors the spawn/Mail write faces)
-    roundNo.foreach(n => DelegateRegistry.startRound(id, n, roundId.getOrElse(""), clearArchive = false))
+    roundNo.foreach(n => DelegateRegistry.startRound(id, n, roundId.getOrElse("")))
     DelegateRegistry.find(id).getOrElse(sys.error("record must exist"))
 
   // ── R1 append-only + no whitewashing ──────────────────────────────────────
@@ -147,16 +147,16 @@ class DelegateRoundLedgerSpec extends FunSuite:
     // unknown / missing evidence: legacy behavior, zero new writes
     assertEquals(DelegateRoundLedger.decideMailRound(rec, Some("weird-status"), actorRegistered = false), D.LeaveAsIs)
     assertEquals(DelegateRoundLedger.decideMailRound(rec.copy(archivedAt = None), None, actorRegistered = false), D.LeaveAsIs)
-    // archived with no row: settled evidence exists
+    // no task row + the identity reads closed by STATE (阶段②：收口判据由归档旗改为状态派生读数)
     assertEquals(
-      DelegateRoundLedger.decideMailRound(rec.copy(archivedAt = Some(1L)), None, actorRegistered = false),
+      DelegateRoundLedger.decideMailRound(rec, None, actorRegistered = false, identityClosed = true),
       D.OpenNewRound
     )
   }
 
   // ── R6 openNewRound effects ───────────────────────────────────────────────
 
-  test("R6 openNewRound: roundNo+1, fresh roundId, archivedAt cleared, baseline re-anchored, prior rows kept") {
+  test("R6 openNewRound: roundNo+1, fresh roundId, no flag write (state-derived return to the active window), baseline re-anchored, prior rows kept") {
     val id = "delegate-nebflow-r6"
     // seat = a real git repo so the baseline snapshot is judgeable
     val seat = tmp / "seat"
@@ -170,6 +170,9 @@ class DelegateRoundLedgerSpec extends FunSuite:
     mkRecord(id, seat, roundNo = Some(1), roundId = Some("gen-r6a"), archived = true)
     DelegateRoundLedger.openSpawnRound(id, "gen-r6a", seat.toString)
     DelegateRoundLedger.settleRound(id, 1, "gen-r6a", "completed", List("oid-early"), None)
+    val flagBefore = DelegateRegistry.find(id).flatMap(_.archivedAt)
+    assert(flagBefore.isDefined, "the fixture carries the legacy archive flag")
+    assert(DelegateVisibility.readOf(id).historyWindow, "settled round 1 ⇒ the window reads history so far")
     // dirty one path BEFORE the new round opens — it belongs to the new baseline
     os.write.over(seat / "dirty.txt", "dirt\n")
 
@@ -183,7 +186,15 @@ class DelegateRoundLedgerSpec extends FunSuite:
     val rec2 = DelegateRegistry.find(id).get
     assertEquals(rec2.roundNo, Some(2))
     assertEquals(rec2.roundId, Some(row.roundId))
-    assertEquals(rec2.archivedAt, None, "archivedAt is cleared — the identity returns to the active window")
+    assertEquals(
+      rec2.archivedAt,
+      flagBefore,
+      "阶段② 起零旗写盘 — the legacy archive flag is NOT rewritten (no storage archive write point remains)"
+    )
+    assert(
+      !DelegateVisibility.readOf(id).historyWindow,
+      "the open new round returns the identity to the active window (state-derived, zero flag write)"
+    )
     val rounds = DelegateRoundLedger.currentRounds(id)
     assertEquals(rounds.map(_.roundNo), List(1, 2), "prior rounds stay in the ledger")
     assertEquals(rounds.head.cause, DelegateRoundLedger.CauseSpawn)

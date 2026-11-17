@@ -681,12 +681,13 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
       assertEquals(
         recordAfter.flatMap(_.cancelRequestedAt),
         None: Option[Long],
-        "natural terminal writes no tombstone (archive flag only)"
+        "natural terminal writes no tombstone (no lifecycle flag at all)"
       )
       assertEquals(
         recordAfter.flatMap(_.archivedAt).isDefined,
-        true,
-        "natural terminal auto-archives (pre-existing leg stays intact)"
+        false,
+        "阶段②：the auto-archive leg is retired — a natural terminal writes NO archive flag " +
+          "(the window is state-derived; the tombstone authorization stays record-derived)"
       )
       assertEquals(
         controlAfter,

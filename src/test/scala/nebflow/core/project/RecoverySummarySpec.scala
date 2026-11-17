@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.delegate.{DelegateRegistry, DelegateRoundLedger}
 import nebflow.core.mail.{CompletionDebtStore, SessionMailbox}
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, SubAgentTask}
 
 import scala.concurrent.duration.*
 
@@ -26,7 +26,17 @@ import scala.concurrent.duration.*
  *  - 回退：缺失 / 垃圾字节 / 载荷篡改（digest 闸）/ schema 升格 / 指纹漂移（stale）/
  *    非法 scope 六路各自 Fallback；round-trip 正常摘要 == Trusted 且逐字段相等。
  *  - archivedAt 陷阱：已归档身份带 running 节点 ⇒ **不 quiet**（687/13 实证形态）；
- *    已归档全净 ⇒ quiet（archivedAt 只是观测面）。
+ *    已归档全净 ⇒ quiet（archivedAt 是判据①的必要条件，不是充分条件）。
+ *
+ * 阶段① 增补（delegate-lifecycle-reform，2026-11-17）= **判据①②两面 + 查询面**：
+ *  - 判据①身份终态：未归档 / 归档带活标记（cancel 墓碑等）/ 记录缺失 ⇒ 面落档且不 quiet；
+ *    归档且四槽全空 ⇒ terminal。
+ *  - 判据②子项：档缺席 = 零子项；requesting/running/ready-to-merge/pending-recovery/
+ *    incomplete 行计入，completed/failed/cancelled 行不计；档在场但坏形 = 保守记 1。
+ *  - `blockers`：每条阻塞事实一个具名单位（不把不同处置动作相加）；空表 ⟺ quiet。
+ *  - `query`：Trusted ⇒ deferrable == quiet；Fallback（missing/stale/invalid-scope）⇒ 恒 false。
+ *  - v1 兼容：阶段① 前的摘要档经 schema 闸整体回退（保守全量加载），绝不静默 quiet。
+ *  - 正向腿的 fixture 自阶段① 起一律取「已归档」身份（终态形态），断言逐条不变。
  *
  * 隔离数据根纪律 = BootCrashRecoverySpec 同款（类体 setDataRoot + afterAll 还原）；
  * 全部走 store 级 API（零 NodeEngine / 零 ActorSystem——摘要机制本体不依赖宿主）。
@@ -134,11 +144,43 @@ class RecoverySummarySpec extends CatsEffectSuite:
   private def debtFileOf(scope: String): os.Path =
     PathUtil.dataRoot / "sessions" / SessionMailbox.safeId(scope) / "completion-debt.json"
 
+  // ── 阶段① 子项档（subagent-tasks/<scope>.json，写真行经 shared SubAgentTask codec）──
+
+  private def childFileOf(scope: String): os.Path =
+    PathUtil.dataRoot / "subagent-tasks" / s"$scope.json"
+
+  private def childRow(
+    scope: String,
+    id: String,
+    status: String,
+    executionStatus: Option[String] = None,
+    incomplete: Option[Boolean] = None
+  ): SubAgentTask =
+    SubAgentTask(
+      taskId = id,
+      parentSessionId = scope,
+      agentName = "general",
+      prompt = "",
+      description = id,
+      status = status,
+      retryCount = 0,
+      spawnedAt = now,
+      completedAt = None,
+      lastError = None,
+      source = "delegate",
+      executionStatus = executionStatus,
+      incomplete = incomplete
+    )
+
+  private def writeChildren(scope: String, rows: List[SubAgentTask]): Unit =
+    os.write.over(childFileOf(scope), rows.asJson.noSpaces, createFolders = true)
+
   // ── 状态面①：非终态节点 ─────────────────────────────────────────────────
 
   test("facet① green: all-terminal scope counts zero non-terminal nodes and is quiet") {
     val scope = "rs-nt-green"
-    putRecord(scope)
+    // 阶段① 起 quiet 含判据①身份终态：正向腿的作用域一律取「已归档」身份（真终态形态）。
+    putRecord(scope, archivedAt = Some(now))
     seedScope(
       scope,
       List(
@@ -184,7 +226,7 @@ class RecoverySummarySpec extends CatsEffectSuite:
 
   test("facet② green: no manual recovery holds counts zero") {
     val scope = "rs-hh-green"
-    putRecord(scope)
+    putRecord(scope, archivedAt = Some(now))
     seedScope(scope, List(terminalNode("hhg-done", NodeLifecycle.Completed))).unsafeRunSync()
 
     val s = gen(scope)
@@ -212,7 +254,7 @@ class RecoverySummarySpec extends CatsEffectSuite:
 
   test("facet③ green: registry record present and no paused chains is not orphan") {
     val scope = "rs-or-green"
-    putRecord(scope)
+    putRecord(scope, archivedAt = Some(now))
     seedScope(scope, List(terminalNode("org-done", NodeLifecycle.Completed))).unsafeRunSync()
 
     val s = gen(scope)
@@ -251,7 +293,7 @@ class RecoverySummarySpec extends CatsEffectSuite:
 
   test("facet④ green: no open rounds (settled round does not hold)") {
     val scope = "rs-rd-green"
-    putRecord(scope, roundNo = Some(1), roundId = Some("rid-g1"))
+    putRecord(scope, archivedAt = Some(now), roundNo = Some(1), roundId = Some("rid-g1"))
     seedScope(scope, List(terminalNode("rdg-done", NodeLifecycle.Completed))).unsafeRunSync()
     DelegateRoundLedger.openRound(scope, 1, "rid-g1", DelegateRoundLedger.CauseSpawn, None, None)
     DelegateRoundLedger.settleRound(scope, 1, "rid-g1", "pass", Nil, None)
@@ -278,7 +320,7 @@ class RecoverySummarySpec extends CatsEffectSuite:
 
   test("facet⑤ green: consumed messages / no debt / notified terminals / delivered roots count zero") {
     val scope = "rs-pd-green"
-    putRecord(scope)
+    putRecord(scope, archivedAt = Some(now))
     val rootDelivered =
       NodeDef(
         id = "pdg-root",
@@ -400,7 +442,7 @@ class RecoverySummarySpec extends CatsEffectSuite:
 
   test("fallback red: payload tampered without digest → Fallback(corrupt: digest mismatch)") {
     val scope = "rs-v-tamper"
-    putRecord(scope)
+    putRecord(scope, archivedAt = Some(now))
     seedScope(scope, List(terminalNode("vt-done", NodeLifecycle.Completed))).unsafeRunSync()
     val generated = gen(scope)
     assert(generated.quiet)
@@ -501,6 +543,160 @@ class RecoverySummarySpec extends CatsEffectSuite:
     assertEquals(cleanSummary.facets.orphanSuspension.registryArchivedAt, Some(now))
     assert(cleanSummary.quiet, "archived + all-facets-clean IS quiet (archivedAt is observation, not a blocker)")
     assert(expectTrusted(clean).quiet)
+  }
+
+  // ── 阶段①：完整可见性判据的七面（身份终态 ① / 子项 ②）与查询面 ──────────────
+
+  test("stage① facet: terminal state is derived from the registry record (archive + four live marks)") {
+    val scope = "rs-v2-terminal"
+    putRecord(scope) // 未归档 ⇒ 非终态
+    seedScope(scope, List(terminalNode("v2t-done", NodeLifecycle.Completed))).unsafeRunSync()
+    val unarchived = gen(scope).facets.terminal
+    assert(!unarchived.terminal && !unarchived.archived)
+    assertEquals(unarchived.archivedAt, None)
+    assert(unarchived.frozen === false && unarchived.standby === false)
+
+    putRecord(scope, archivedAt = Some(now)) // 存量归档旗（只读兼容证据）⇒ 状态派生终态
+    val archived = gen(scope).facets.terminal
+    assert(archived.terminal && archived.archived)
+    assert(archived.archivedAt.isDefined)
+
+    DelegateRegistry.markCancelRequested(scope, "the user panel") // 活标记 ⇒ 回落非终态
+    val marked = gen(scope).facets.terminal
+    assert(!marked.terminal && marked.archived && marked.cancelRequested)
+
+    val noRecord = "rs-v2-terminal-missing"
+    seedScope(noRecord, List(terminalNode("v2tm-done", NodeLifecycle.Completed))).unsafeRunSync()
+    val missing = gen(noRecord).facets.terminal
+    assert(!missing.terminal && !missing.archived, "no evidence is never read as terminal")
+  }
+
+  test("stage① facet: child items count only non-settled rows; missing file = zero; corrupt file = conservative 1") {
+    val scope = "rs-v2-children"
+    putRecord(scope, archivedAt = Some(now))
+    seedScope(scope, List(terminalNode("v2c-done", NodeLifecycle.Completed))).unsafeRunSync()
+
+    assert(!os.exists(childFileOf(scope)))
+    val absent = gen(scope).facets.childItems
+    assertEquals(absent.count, 0)
+    assert(!absent.fileUnreadable)
+
+    writeChildren(
+      scope,
+      List(
+        childRow(scope, "delegate-ok", "completed", Some("finished")),
+        childRow(scope, "delegate-cancelled", "cancelled", Some("cancelled")),
+        childRow(scope, "delegate-live", "running", Some("running")),
+        childRow(scope, "delegate-holdmerge", "ready-to-merge"),
+        childRow(scope, "delegate-recovery", "pending-recovery", Some("interrupted")),
+        childRow(scope, "delegate-incomplete", "completed", Some("finished"), incomplete = Some(true))
+      )
+    )
+    val mixed = gen(scope).facets.childItems
+    assertEquals(mixed.count, 4)
+    assertEquals(
+      mixed.ids,
+      List("delegate-holdmerge", "delegate-incomplete", "delegate-live", "delegate-recovery")
+    )
+    assertEquals(
+      mixed.byStatus,
+      List(("completed", 1), ("pending-recovery", 1), ("ready-to-merge", 1), ("running", 1))
+    )
+    assert(!mixed.fileUnreadable)
+
+    os.write.over(childFileOf(scope), "{ not a json array")
+    val corrupt = gen(scope).facets.childItems
+    assert(corrupt.fileUnreadable, "a present-but-corrupt child file must fall back conservatively")
+    assertEquals(corrupt.count, 1)
+    assertEquals(corrupt.ids, List(RecoverySummary.ChildItems.UnreadableId))
+  }
+
+  test("stage①: blockers is empty exactly when quiet, and every open item carries its own unit") {
+    val scope = "rs-v2-blockers"
+    putRecord(scope) // 未归档身份 + 无记录子项 + 开轮 + 人工保持 + 非终态节点
+    seedScope(
+      scope,
+      List(mkNode("v2b-run", NodeLifecycle.Running), terminalNode("v2b-done", NodeLifecycle.Completed)),
+      holds = Set("v2b-done")
+    ).unsafeRunSync()
+    DelegateRoundLedger.openRound(scope, 1, "rid-v2b", DelegateRoundLedger.CauseSpawn, None, None)
+    pauseChain(scope, "chain-v2b").unsafeRunSync()
+
+    val s = gen(scope)
+    assertEquals(
+      s.blockers,
+      List(
+        "identity-not-settled",
+        "non-terminal-nodes:1",
+        "human-holds:1",
+        "paused-chains:1",
+        "open-rounds:1"
+      )
+    )
+    assert(!s.quiet, "non-empty blockers ⇒ not quiet")
+
+    // 面视图与七判据的差异面（阶段① 红绿验收钉的就是它）：五面全净但身份未终态。
+    val facetsOnly = "rs-v2-blockers-facetsonly"
+    putRecord(facetsOnly)
+    seedScope(facetsOnly, List(terminalNode("v2bf-done", NodeLifecycle.Completed))).unsafeRunSync()
+    val fs = gen(facetsOnly)
+    assert(fs.facetsClean, "five-facet view is clean here")
+    assert(!fs.quiet, "…but the five-facet view must never be used as the defer gate")
+    assertEquals(fs.blockers, List("identity-not-settled"))
+
+    // 全净⇒空表（同一作用域清干净：归档身份、零保持、零开轮、零暂停、全终态节点）
+    val clean = "rs-v2-blockers-clean"
+    putRecord(clean, archivedAt = Some(now))
+    seedScope(clean, List(terminalNode("v2bc-done", NodeLifecycle.Completed))).unsafeRunSync()
+    val cs = gen(clean)
+    assertEquals(cs.blockers, Nil)
+    assert(cs.quiet && cs.facetsClean)
+  }
+
+  test("stage① query: Trusted carries deferrable == quiet; Fallback is never deferrable") {
+    val scope = "rs-v2-query"
+    putRecord(scope, archivedAt = Some(now))
+    seedScope(scope, List(terminalNode("v2q-done", NodeLifecycle.Completed))).unsafeRunSync()
+    gen(scope)
+
+    val trusted = RecoverySummary.query(wsPath, scope).unsafeRunSync()
+    assert(trusted.deferrable, s"expected deferrable, blockers=${trusted.blockers}")
+    assertEquals(trusted.blockers, Nil)
+    trusted.verdict match
+      case RecoverySummary.Verdict.Trusted(s) => assert(s.quiet)
+      case RecoverySummary.Verdict.Fallback(r) => fail(s"expected Trusted, got Fallback($r)")
+
+    DelegateRoundLedger.openRound(scope, 3, "rid-v2q", DelegateRoundLedger.CauseSpawn, None, None) // facts moved
+    val stale = RecoverySummary.query(wsPath, scope).unsafeRunSync()
+    assert(!stale.deferrable)
+    assert(stale.blockers.exists(_.startsWith("summary-fallback:stale")), s"got ${stale.blockers}")
+
+    val missing = RecoverySummary.query(wsPath, "rs-v2-query-missing").unsafeRunSync()
+    assert(!missing.deferrable)
+    assert(missing.blockers.exists(_.startsWith("summary-fallback:missing")), s"got ${missing.blockers}")
+
+    val invalid = RecoverySummary.query(wsPath, "bad scope with spaces").unsafeRunSync()
+    assert(!invalid.deferrable)
+    assert(invalid.blockers.exists(_.startsWith("summary-fallback:invalid-scope")), s"got ${invalid.blockers}")
+  }
+
+  test("stage① compat: a v1 summary (pre-stage① payload) falls back on the schema gate, never silently quiet") {
+    val scope = "rs-v2-v1compat"
+    putRecord(scope, archivedAt = Some(now))
+    seedScope(scope, List(terminalNode("v1c-done", NodeLifecycle.Completed))).unsafeRunSync()
+    gen(scope) // v2 档先落盘
+
+    // 降格成 v1 形态：schema=1、facets 摘掉阶段①两面、digest 保持原值（schema 闸先行）
+    tamperJson(scope) { j =>
+      val dropped = j.hcursor.downField("facets").downField("terminal").delete.top.getOrElse(j)
+      val dropped2 = dropped.hcursor.downField("facets").downField("childItems").delete.top.getOrElse(dropped)
+      dropped2.hcursor.downField("schema").set(1.asJson).top.getOrElse(dropped2)
+    }
+
+    expectFallback(scope)("schema:")
+    val q = RecoverySummary.query(wsPath, scope).unsafeRunSync()
+    assert(!q.deferrable)
+    assert(q.blockers.exists(_.startsWith("summary-fallback:schema")), s"got ${q.blockers}")
   }
 
 end RecoverySummarySpec

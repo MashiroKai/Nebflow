@@ -26,7 +26,8 @@ import {
 } from './delegateChainStub.js';
 import { nodeHtml } from './fmNodeCard.js';
 import { executorIcon } from './executorIcons.js';
-import { fetchArchivedDelegates, unarchiveDelegate } from './delegateApi.js';
+import { fetchArchivedDelegates, setDelegateDisposition } from './delegateApi.js';
+import { refreshMirror } from './delegateChainProvider.js';
 // L1 map face: the flowmap engine re-driven on delegate data (driver module;
 // camera/edges/detail card/fold animations all engine-side).
 import { renderDelegateFlowMap, dropDelegateMapScope, delegateMapScope } from './delegateFlowMap.js';
@@ -36,8 +37,9 @@ import { renderDelegateFlowMap, dropDelegateMapScope, delegateMapScope } from '.
 // camera, spawn/deps edges, fold chevron on the root card, floating detail
 // card on node click, diff-driven animations) re-driven on delegate data via
 // delegateFlowMap.js. L2 (structure view) = flat tiles + three lifecycle
-// segments + the single archive face (FAB → drawer: open-flowmap / unarchive)
-// + arrival feedback on auto-archive (badge pulse + toast with 5s undo).
+// segments + the single history face (FAB → read-only drawer: open-flowmap)
+// + arrival feedback on settlement (badge pulse + passive toast; the 5s undo
+// affordance was retired with manual archive/unarchive in stage ②).
 // Data sources = G3 children ∪ chain nodes ∪ row projection via the stub read
 // port; missing writer faces degrade honestly (no fabrication).
 
@@ -418,6 +420,7 @@ function renderStructureBody(pane) {
         if (!external) {
           card.setAttribute('role', 'button');
           card.addEventListener('click', () => {
+            if (dispositionUndo) dispositionUndo.remove();
             openDelegateChainTask(p.key, {
               taskNo: r.taskNo, delegateId: r.delegateId, title: r.title,
               status: r.status, executor: r.executor, project: r.project,
@@ -426,6 +429,27 @@ function renderStructureBody(pane) {
         } else {
           // G7：外部行无子结构下钻——本体＋座位已在上文，链卡零入口。
           card.setAttribute('data-external-card', '1');
+        }
+        if (!external && r.settled === true && r.delegateId) {
+          const action = document.createElement('button');
+          action.type = 'button';
+          action.className = 'delegate-archive-act';
+          action.dataset.dispositionId = String(r.delegateId);
+          action.textContent = t('delegate.disposition.move');
+          action.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            action.disabled = true;
+            const result = await setDelegateDisposition(r.delegateId, 'acknowledged');
+            if (result.state !== 'ok') {
+              action.disabled = false;
+              action.title = t('delegate.disposition.error');
+              return;
+            }
+            showDispositionUndo(pane, r.delegateId, r.title || r.delegateId);
+            refreshMirror();
+            rerenderDelegateChainPane(pane);
+          });
+          card.appendChild(action);
         }
         list.appendChild(card);
       }
@@ -455,6 +479,36 @@ export function rerenderDelegateChainPane(pane) {
 // 唯一主动作 = 抽屉「恢复」。
 // 样式自注入（本视图无独立 CSS 载体；flowMap.css 的 .fm-fab 定位在 .fm-float-layer
 // 宿主语境，本视图 body 直接宿主——不挪用其类名，避免层叠面耦合）。
+let dispositionUndo = null;
+function showDispositionUndo(pane, id, label) {
+  if (dispositionUndo) dispositionUndo.remove();
+  const toast = document.createElement('div');
+  dispositionUndo = toast;
+  toast.className = 'delegate-archive-toast';
+  const text = document.createElement('span');
+  text.textContent = t('delegate.archive.toast', { n: label });
+  const undo = document.createElement('button');
+  undo.type = 'button';
+  undo.dataset.dispositionUndo = id;
+  undo.textContent = t('delegate.disposition.undo');
+  toast.append(text, undo);
+  pane.appendChild(toast);
+  const timer = setTimeout(() => toast.remove(), 5000);
+  undo.addEventListener('click', async () => {
+    undo.disabled = true;
+    const result = await setDelegateDisposition(id, '');
+    if (result.state !== 'ok') {
+      undo.disabled = false;
+      undo.title = t('delegate.disposition.error');
+      return;
+    }
+    clearTimeout(timer);
+    toast.remove();
+    refreshMirror();
+    rerenderDelegateChainPane(pane);
+  });
+}
+
 const STRUCT_ARCHIVE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>';
 const STRUCT_ARCHIVE_CSS_ID = 'delegate-structure-archive-css';
 const STRUCT_ARCHIVE_CSS = `
@@ -577,13 +631,6 @@ const STRUCT_ARCHIVE_CSS = `
   animation: delegate-drawer-in 0.18s ease;
 }
 .delegate-archive-toast[hidden] { display: none; }
-.delegate-archive-toast-undo {
-  flex-shrink: 0; padding: var(--ds-space-hair) var(--ds-space-inline-x); border-radius: var(--ds-radius-input); cursor: pointer;
-  font: 500 var(--ds-fs-meta)/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
-  background: rgb(var(--sapphire) / 0.12); color: rgb(var(--sapphire));
-  border: 1px solid rgb(var(--sapphire) / 0.35);
-}
-.delegate-archive-toast-undo:hover { background: rgb(var(--sapphire) / 0.2); }
 /* L2 卡内子代理/flow 徽标（§D：与 §B 行内徽标同件同语言）。 */
 .delegate-card-kids, .delegate-card-flow {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: var(--ds-space-half);
@@ -640,13 +687,21 @@ export function attachStructureArchive(body) {
   drawer.hidden = true;
   body.appendChild(drawer);
 
-  /** 自动归档到达 toast（§D：单一在飞实例；5s 自动退场，撤销 = 反归档回平铺面）。 */
   let toastEl = null;
   let toastTimer = null;
   const hideToast = () => {
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
     if (toastEl) { toastEl.remove(); toastEl = null; }
   };
+
+  /**
+   * 收口到达 toast（§D：单一在飞实例；自动退场，**主动作已退役**）。
+   *
+   * 阶段②（delegate-lifecycle-reform）：原「5s 撤销」按钮（= 反归档回平铺面，
+   * `POST /delegates/:id/unarchive`）随手动归档/反归档整体退役——引擎侧端点与
+   * `DelegateRegistry.archive/unarchive` 写点已删除，钮再在就是死交互。本 toast
+   * 收敛为**纯通知**（无按钮，不产生任何写请求）。
+   */
   const showToast = (detail) => {
     if (!pane) return;
     hideToast();
@@ -657,38 +712,13 @@ export function attachStructureArchive(body) {
     const text = document.createElement('span');
     text.textContent = t('delegate.archive.toast', { n: label });
     toastEl.appendChild(text);
-    const undo = document.createElement('button');
-    undo.type = 'button';
-    undo.className = 'delegate-archive-toast-undo';
-    undo.textContent = t('delegate.archive.undo');
-    undo.addEventListener('click', async () => {
-      const id = String((detail && detail.delegateId) || '');
-      hideToast();
-      if (!id) return;
-      undo.disabled = true;
-      const res = await unarchiveDelegate(id).catch(() => ({ state: 'network' }));
-      if (res.state !== 'ok') showToastError(t('delegate.archiveFailed'));
-      // 反归档成功 → 镜像即时对账（行回在册窗 = 平铺面回归；fail-soft 静默）。
-      import('./delegateChainProvider.js').then((m) => m.refreshMirror && m.refreshMirror()).catch(() => {});
-    });
-    toastEl.appendChild(undo);
-    pane.appendChild(toastEl);
-    toastTimer = setTimeout(hideToast, 5000);
-  };
-  const showToastError = (msg) => {
-    if (!pane) return;
-    hideToast();
-    toastEl = document.createElement('div');
-    toastEl.className = 'delegate-archive-toast';
-    const text = document.createElement('span');
-    text.textContent = msg;
-    toastEl.appendChild(text);
     pane.appendChild(toastEl);
     toastTimer = setTimeout(hideToast, 5000);
   };
 
-  /** 拉归档历史窗进抽屉（fail-soft：null = 静默缺席，空态文案兜底）。行动作 ×2 =
-   *  流程图 →（历史态 L1，返回回本抽屉所在 L2）/ 恢复（反归档 → 平铺面回归）。 */
+  /** 拉历史窗进抽屉（fail-soft：null = 静默缺席，空态文案兜底）。行动作 ×1 =
+   *  流程图 →（历史态 L1，返回回本抽屉所在 L2）。阶段②：原「恢复」动作（反归档）
+   *  随手动归档退役删除——本抽屉为只读历史窗。 */
   const loadRows = async () => {
     drawer.innerHTML = `<div class="delegate-archive-empty">…</div>`;
     const rows = await fetchArchivedDelegates();
@@ -756,25 +786,9 @@ export function attachStructureArchive(body) {
         );
       });
       actions.appendChild(openFlow);
-      const restore = document.createElement('button');
-      restore.type = 'button';
-      restore.className = 'delegate-archive-act';
-      restore.dataset.testid = 'delegate-restore';
-      restore.textContent = t('delegate.archive.restore');
-      restore.addEventListener('click', async () => {
-        const id = String(r.delegateId || '');
-        if (!id || restore.disabled) return;
-        restore.disabled = true;
-        const res = await unarchiveDelegate(id).catch(() => ({ state: 'network' }));
-        if (res.state === 'ok') {
-          // 镜像即时对账：行回在册窗（平铺面经 mirror 事件重渲回归）。
-          import('./delegateChainProvider.js').then((m) => m.refreshMirror && m.refreshMirror()).catch(() => {});
-        } else {
-          restore.disabled = false;
-          showToastError(t('delegate.archiveFailed'));
-        }
-      });
-      actions.appendChild(restore);
+      // 🔴 阶段②（delegate-lifecycle-reform）：手动归档/反归档整体退役——原「恢复」
+      // 动作（POST /delegates/:id/unarchive）连同端点一并删除，本抽屉为**只读历史窗**
+      // （可见性由状态派生；「不想再看」走 /delegates/:id/disposition 表态面）。
       row.appendChild(actions);
       drawer.appendChild(row);
     }
@@ -832,7 +846,7 @@ export function attachStructureArchive(body) {
 // ── 镜像事件路由（两层架构批单点接线）─────────────────────────────────────
 // delegate-chain-mirror-updated（provider 刷新完成广播；帧只当触发器）→ 当前在图
 // pane 分流：L1 = fail-soft 态自动重渲（归档历史键 lazy 拉取到达同缝）；L2 = 平铺面
-// 随镜像重渲（终态自动归档卡淡出 / 抽屉「恢复」行回归）。activeChainPane 由
+// 随镜像重渲（收口卡淡出 / 抽屉历史行回归）。activeChainPane 由
 // openPane 建架时指向（pane 重建零监听堆积；isConnected 守卫兜底）。
 // Projects-tab teardown: an L1 map living in a closing pane loses its scope —
 // drop the engine caches (the tab-closed event fires with the tab id).

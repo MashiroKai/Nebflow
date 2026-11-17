@@ -16,8 +16,11 @@
 //                                      childrenCount+output?；视图④详情首绘单缝）
 //   GET  /api/delegates/:id/children  — G3 星型子代理查询（{delegateId,count,children[]}；
 //                                      查无文件 = count 0 非 404；flow 子结构不走本面）
-//   POST /api/delegates/:id/archive   — G6 归档单旗（幂等零删除；历史窗 =
-//                                      GET /api/chains?archived=1）
+//
+// delegate-lifecycle-reform 阶段②（2026-11-17）：**手动归档/反归档端点整体退役**
+// （`POST /api/delegates/:id/archive` 与 `/unarchive` 连同 `DelegateRegistry.archive` /
+// `unarchive` 写点一并删除，存储式归档被状态派生可见性取代）。替代面 = 非破坏性表态
+// 端点 `POST /api/delegates/:id/disposition`（body {value: acknowledged|ignored|""}）。
 //
 // 定位：与 nodeData.js 同族的叶子取数件——但 nodeData 是 project/node/flowmap 域
 // （#1228 停用清单已注定其 fetchFlowMap/controlChain 随 per-project 面退役），delegate
@@ -33,12 +36,10 @@ export const DELEGATE_API = {
   openNative: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}/open-native`,
   detail: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}`,
   children: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}/children`,
-  archive: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}/archive`,
-  // 反归档（两层架构批 2026-10-09 · G4-2）：归档抽屉「恢复」动作的引擎缝——
-  // archivedAt 摘旗（幂等零删除），行回在册窗（L2 平铺面）。
-  unarchive: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}/unarchive`,
-  // 归档历史窗（delegate-ui 修订批 2026-10-09 九点⑧：S11 右上角归档 FAB 的清单源；
-  // 与 /api/chains 在册窗互补零重叠——G6 双窗口径）。
+  // 非破坏性表态（阶段② · 归档/反归档两端点的替代面）：acknowledged / ignored / ""（清除）。
+  disposition: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}/disposition`,
+  // 历史窗清单源（阶段② 起 = **状态派生可见性**：收口 ∧（表态 ∨ 存量归档旗）；
+  // 与 /api/chains 活动窗互补零重叠——两窗同源派生）。
   archived: () => '/api/chains?archived=1',
   // 手动恢复（重启手动恢复批，作者令 2026-11-06 20:36「由用户手动恢复，粒度可以
   // 是逐个点击，也可以是子agent面板一键全部恢复」）：
@@ -156,40 +157,21 @@ export async function fetchArchivedDelegates() {
 }
 
 /**
- * G6 归档动作（视图④归档入口的引擎缝；幂等零删除）。返回可判别结果对象
- * （openDelegateNative 同形）：ok 200 {id,archived,archivedAt}；http 非 2xx
- * （404 查无记录 / 400 非法 id）；network fetch 拒绝。不抛异常。
+ * 非破坏性表态（阶段② · 手动归档/反归档两端点的**替代面**）。返回可判别结果对象
+ * （openDelegateNative 同形）：ok 200 {id,disposition,dispositionAt,visibility}；
+ * http 非 2xx（404 查无记录 / 400 非法 id 或非法 value / 坏 body）；network fetch 拒绝。
+ * **零删除**：只写表态双槽，记录/子代理记账/转录/worktree/历史行原样。
+ * `value` 空串 = 清除表态（行按状态派生可见性回活动窗）。
  * @param {string} id delegate id
+ * @param {''|'acknowledged'|'ignored'} value
  * @returns {Promise<{state:'ok', data:any}|{state:'http', status:number, data:any}|{state:'network'}>}
  */
-export async function archiveDelegate(id) {
+export async function setDelegateDisposition(id, value) {
   try {
-    const r = await fetch(DELEGATE_API.archive(id), {
+    const r = await fetch(DELEGATE_API.disposition(id), {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-    });
-    let data = null;
-    try { data = await r.json(); } catch (_) { data = null; }
-    if (!r.ok) return { state: 'http', status: r.status, data };
-    return { state: 'ok', data };
-  } catch (_) {
-    return { state: 'network' };
-  }
-}
-
-/**
- * G4-2 反归档动作（两层架构批 2026-10-09 · 归档抽屉「恢复」钮的引擎缝；幂等零删除
- * ——archivedAt 摘旗，行回在册窗）。返回可判别结果对象（archiveDelegate 同形）：
- * ok 200 {id,archived:false}；http 非 2xx（404 查无记录 / 400 非法 id）；network
- * fetch 拒绝。不抛异常。
- * @param {string} id delegate id
- * @returns {Promise<{state:'ok', data:any}|{state:'http', status:number, data:any}|{state:'network'}>}
- */
-export async function unarchiveDelegate(id) {
-  try {
-    const r = await fetch(DELEGATE_API.unarchive(id), {
-      method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: String(value || '') }),
     });
     let data = null;
     try { data = await r.json(); } catch (_) { data = null; }

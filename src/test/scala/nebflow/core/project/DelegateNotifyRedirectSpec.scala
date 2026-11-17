@@ -342,6 +342,9 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
         res
       )
       h <- rehydrateViaSweep(ws, delegateId, "n-r2", sid)
+      // Terminal status can precede the signal branch's ledger write; wait for the
+      // observable bookkeeping completion before taking the assertion snapshot.
+      _ <- waitUntil(10.seconds)(hostNode(h, "n-r2").map(_.nebulaDeliveredAt.isDefined))
       a <- hostNode(h, "n-r2")
       imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
       events <- readEvents(ws)

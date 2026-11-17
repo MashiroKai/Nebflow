@@ -554,15 +554,28 @@ object DelegateFreeze:
   /** 缺省保留期（ms）：`Defaults.DelegateFreezeRetentionDays`（缺省 14 天；0 = 关闭归档）。 */
   def retentionMs: Long = Defaults.DelegateFreezeRetentionDays * 24L * 3600L * 1000L
 
+  /**
+   * 冻结保留期是否已过（**状态派生纯函数单点** · 阶段②）。
+   *
+   * 冻结保留期届满这一事实原先是**存储式**表达的（`dormantSweep` 到点写 `archivedAt`
+   * 旗，唤醒/复活/通知三腿再读该旗拒绝）；归档写点退役后三腿统一改读本函数——
+   * 同一条判据（`frozenSince` 龄 vs [[retentionMs]]）、零存储旗依赖。
+   * `retentionMs <= 0`（保留期关闭）= 永不到期。
+   */
+  def retentionExpired(frozenSince: Long, now: Long = System.currentTimeMillis()): Boolean =
+    val retain = retentionMs
+    retain > 0L && now - frozenSince >= retain
+
   /** 进程内提示/归档去重（重启后重发一次提醒 = 无害；归档本身幂等）。 */
   private val reminded = new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
 
   /**
    * 长期冻结兜底扫描（挂 `FreezeScheduler` 的既有 30s 拍，零新增定时器）：
    * 逐条冻结记录 → [[staleDormant]] 判读 → Dormant 一次面板提示
-   * （`delegateFrozenDormant` 帧 + WARN）、Expired 归档（`DelegateRegistry.archive`
-   * 语义：只加 `archivedAt` 旗，记录/子代理记账/转录/worktree 原样留存——历史窗
-   * 仍可查）。全链 fail-soft：扫描器必须活着。
+   * （`delegateFrozenDormant` 帧 + WARN）、Expired 只留审计读数 + 任务行注记
+   * （**阶段② 起零归档写**：存储式归档退役，可见性由 [[DelegateVisibility]]
+   * 状态派生——冻结活标记在场即非收口，记录/子代理记账/转录/worktree 原样留存）。
+   * 全链 fail-soft：扫描器必须活着。
    */
   def dormantSweep(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]]): IO[Unit] =
     if !Defaults.DelegateFreezeEnabled then IO.unit
@@ -601,17 +614,15 @@ object DelegateFreeze:
               case Stage.Expired =>
                 if reminded.putIfAbsent(s"expired:${rec.id}", java.lang.Boolean.TRUE) == null then
                   val ageD = (now - since) / 86400000L
+                  // delegate-lifecycle-reform 阶段②：冻结保留期满**不再写归档旗**（存储式归档
+                  // 整体退役）——只留审计读数与任务行注记；该记录的可见性由状态派生
+                  // （[[DelegateVisibility]]：冻结活标记在场 ⇒ 非收口 ⇒ 行仍在活动窗，
+                  // 「需唤醒」语义不再被归档旗掩盖），7 天 TTL 腿照常在有最终归宿。
                   logger.warn(
                     s"[delegate-freeze] frozen delegate '${rec.id}' exceeded the ${Defaults.DelegateFreezeRetentionDays}-day retention " +
-                      s"(frozen ${ageD}d, reason=${rec.frozenReason.getOrElse("?")}) — archiving the registry record " +
-                      "(transcript/worktree/task row are untouched and stay queryable via archived=1)"
-                  ) *> IO
-                    .blocking(DelegateRegistry.archive(rec.id))
-                    .attempt
-                    .flatMap {
-                      case Right(_) => IO.unit
-                      case Left(e) => logger.warn(s"[delegate-freeze] archive failed for ${rec.id}: ${e.getMessage}")
-                    } *> resources.subAgentTaskStore
+                      s"(frozen ${ageD}d, reason=${rec.frozenReason.getOrElse("?")}) — retention expired; NO archive write " +
+                      "(state-derived visibility keeps it in the active window until coped with; transcript/worktree/task row untouched)"
+                  ) *> resources.subAgentTaskStore
                     .findByTaskId(rec.id)
                     .flatMap {
                       case Some(task) =>
@@ -619,7 +630,7 @@ object DelegateFreeze:
                           task,
                           TaskStatus,
                           Some(
-                            s"[frozen:expired] frozen for ${ageD}d, no wake — registry record archived after retention; transcript/worktree kept"
+                            s"[frozen:expired] frozen for ${ageD}d, no wake — retention expired (no archive flag written; state-derived visibility); transcript/worktree kept"
                           )
                         )
                       case None => IO.unit

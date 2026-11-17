@@ -226,9 +226,10 @@ object DelegateFlowMapLifecycle:
    * ③ 宽限退役腿（后台 fiber 本体）：睡 graceMs → 三闸校验 → **迁移式退役**。
    * 闸序：
    *   ① 未重挂（grace 窗内的复活/续聊腿赢）；
-   *   ② 终态证据——**两条腿都过盘面静默复核**（终态腿 = `archivedAt` 在 ∧
-   *      `scopeQuietRecheck`；孤儿腿 = `scopeQuietRecheck`）：复核不过（复活窗
-   *      重挂 / 盘面仍有非终态 / blocked 在场）= 跳过——审计面/复活面优先于整洁；
+   *   ② 终态证据——**两条腿都过盘面静默复核**（终态腿 = **状态派生收口读数**
+   *      [[DelegateVisibility.Reading.identityClosed]]（轮次结算 ∨ 存量归档旗；阶段②
+   *      起归档写点退役）∧ `scopeQuietRecheck`；孤儿腿 = `scopeQuietRecheck`）：复核不过
+   *      （复活窗重挂 / 盘面仍有非终态 / blocked 在场）= 跳过——审计面/复活面优先于整洁；
    *   ③ 迁移而非删除：复用既有 `flow-map-archive/` 归档通道（openScope →
    *      sweepCompletedChainsDetailed——迟到的已完成链出库进归档分文件），
    *      **作用域目录保留**（健康退役目录的形态：flow-map.json + 台账 + journal +
@@ -249,12 +250,15 @@ object DelegateFlowMapLifecycle:
           val rec = DelegateRegistry.find(delegateId)
           val baseOpt = baseWorkspaceOf(rec)
           // Both legs pass the on-disk quiet recheck: the terminal leg keeps its
-          // archivedAt evidence AND gains the same double-check the orphan leg has
-          // (defense in depth — the completion gate owns the primary judgment).
+          // state-derived settlement evidence (阶段②：收口证据单点 = DelegateVisibility；
+          // 归档旗写点已退役——「已归档」这一事实由轮次结算 ∨ 存量归档旗现读复算)
+          // AND gains the same double-check the orphan leg has (defense in depth —
+          // the completion gate owns the primary judgment).
+          val identityClosed = DelegateVisibility.readOf(delegateId).identityClosed
           val terminalEvidence: IO[Boolean] =
             if orphanLeg then scopeQuietRecheck(baseOpt, delegateId)
             else
-              IO.pure(rec.flatMap(_.archivedAt).isDefined).flatMap {
+              IO.pure(identityClosed).flatMap {
                 case false => IO.pure(false)
                 case true => scopeQuietRecheck(baseOpt, delegateId)
               }
@@ -265,7 +269,7 @@ object DelegateFlowMapLifecycle:
               IO(
                 logger.info(
                   s"[flowmap-lifecycle] scope '$delegateId' not safely retirable (orphanLeg=$orphanLeg, " +
-                    s"archived=${rec.flatMap(_.archivedAt).isDefined}, baseWorkspace known=${baseOpt.isDefined}) — " +
+                    s"identityClosed=$identityClosed, baseWorkspace known=${baseOpt.isDefined}) — " +
                     "retirement skipped, scope dir kept"
                 )
               ).void

@@ -399,14 +399,15 @@ object SessionResumption:
                     )
                     .void
                 )
-                // ⑦b'' 归档回流：活会话必须在在册窗可见（归档只加旗不删行——复活即摘旗，
-                // 否则面板在历史窗里显示一个正在跑的会话）。
-                _ <- IO.whenA(record.archivedAt.isDefined)(
-                  IO
-                    .blocking(DelegateRegistry.unarchive(id))
-                    .handleErrorWith(e => logger.warn(s"[session-resume] unarchive failed for $id: ${e.getMessage}"))
-                    .void
-                )
+                // ⑦b'' 可见性回流（阶段②）：原来靠「复活即摘归档旗」把活会话拉回在册窗；
+                // 归档写点退役后**零写盘即可复现**——可见性由状态派生现读（[[DelegateVisibility]]：
+                // 轮次结算证据决定收口与否），活会话天然回活动窗。
+                _ <- IO(
+                  logger.info(
+                    s"[session-resume] visibility is state-derived for $id (round evidence owns the window; " +
+                      "no archive flag written)"
+                  )
+                ).void
                 // ⑦c 输入注入：**转录在下、补充在上**——同一会话的下一轮。
                 // 无感恢复批 2026-11-07：载荷由 [[ResumeHandoff]] 出（上方 ②'），本处只投递。
                 _ <- IO(ResumeHandoff.logPlan(id, handoff, ResumeHandoff.Cause.Continuation))
@@ -445,7 +446,9 @@ object SessionResumption:
           )
         ).attempt
           .void *>
-        IO.blocking(DelegateRegistry.unarchive(id)).attempt.void *>
+        // 可见性：状态派生（阶段②）——续起失败的会话由读数自行落窗（原「unarchive
+        // 摘旗」写点随存储式归档退役，零写盘等价）。
+        IO.unit *>
         admitted.get
           .flatMap {
             case Some(task) if task.runId.nonEmpty =>
@@ -526,9 +529,12 @@ object SessionResumption:
 
   /**
    * 孤悬终点巡检（只读、可重入）：
-   *   - 已取消/已归档的记录（= 明确不可续的原会话）名下仍有**非终态节点**，且
+   *   - **状态派生收口**（取消墓碑 ∨ [[DelegateVisibility]] 判据收口）的记录名下仍有
+   *     **非终态节点**，且
    *   - 链账本里没有指向该会话的 `owner-migration` 接管记录，
    * ⇒ 一条疑点。事件到达不了的形态由此机械可判（不是靠人眼比对面板）。
+   * 阶段②：原「取消墓碑 ∨ 归档旗」的成对读法改为「取消墓碑 ∨ 状态派生收口」
+   * （归档写点退役；判据同源单点，语义不变）。
    */
   def orphanScopeSuspects(): IO[List[OrphanScope]] =
     IO.blocking {
@@ -536,11 +542,11 @@ object SessionResumption:
         val base = rec.projectWorkspace.getOrElse(rec.cwd)
         val dir = nebflow.core.project.ScopeHandover.scopeDir(base, rec.id)
         val open = openNodeCount(dir)
-        val terminalOwner = rec.cancelRequestedAt.isDefined || rec.archivedAt.isDefined
+        val terminalOwner = rec.cancelRequestedAt.isDefined || DelegateVisibility.settledOf(rec)
         if open > 0 && terminalOwner && !hasOwnerMigration(rec.id, rec.taskId) then
           val why =
             if rec.cancelRequestedAt.isDefined then "cancelled tombstone owner"
-            else "archived owner"
+            else "settled owner (state-derived)"
           List(OrphanScope(rec.id, dir.toString, open, why))
         else Nil
       }

@@ -778,6 +778,33 @@ test('T9 S11 结构总视图：FAB→结构根＋归档 FAB 抽屉续挂＋座/�
   expect(pageErrors).toEqual([]);
 });
 
+test('settled delegate disposition moves to history and undo restores active', async ({ page }) => {
+  await bootApp(page);
+  let archived = false;
+  const calls = [];
+  const settled = { ...row31, delegateId: 'delegate-settled-1234', title: 'Settled item', settled: true, status: 'completed' };
+  const running = { ...row34, delegateId: 'delegate-running-1234', title: 'Running item', settled: false };
+  await page.route('**/api/chains?archived=1', (route) => route.fulfill({ json: { rows: archived ? [settled] : [] } }));
+  await page.route('**/api/delegates/delegate-settled-1234/disposition', async (route) => {
+    const value = route.request().postDataJSON().value;
+    calls.push(value);
+    archived = value !== '';
+    await route.fulfill({ json: { id: settled.delegateId, visibility: archived ? 'history' : 'active' } });
+    await page.evaluate(({ rows }) => import('/js/delegateChainStub.js').then((m) => m.__setFixture({ rows, chains: [] })), { rows: archived ? [running] : [settled, running] });
+  });
+  await setFixture(page, { rows: [settled, running], chains: [] });
+  await page.evaluate(() => import('/js/delegateChainView.js').then((m) => m.openDelegateChainStructure()));
+  const pane = page.locator('.canvas-tab-pane[data-tab-id="projects"]');
+  await expect(pane.locator('[data-disposition-id="delegate-running-1234"]')).toHaveCount(0);
+  await pane.locator('[data-disposition-id="delegate-settled-1234"]').click();
+  await expect(pane.locator('.delegate-structure-tiles')).not.toContainText('Settled item');
+  await pane.locator('.delegate-archive-fab').click();
+  await expect(pane.locator('.delegate-archive-drawer')).toContainText('Settled item');
+  await pane.locator('[data-disposition-undo]').click();
+  await expect(pane.locator('.delegate-structure-tiles')).toContainText('Settled item');
+  expect(calls).toEqual(['acknowledged', '']);
+});
+
 test('T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增量＋展开守卫', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));

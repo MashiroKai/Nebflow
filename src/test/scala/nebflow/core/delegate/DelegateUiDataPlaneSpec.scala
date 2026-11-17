@@ -17,7 +17,8 @@ import nebflow.shared.{PathUtil, SubAgentTask}
  *    星型惰性升级挂钩（父为 delegate 记录 ⇒ 升 subagent-star）。
  *  - **G5** rows 条件键纪律：非命中条件键**缺键**
  * （「只收非空项」同款；spec 零注入）。
- *  - **G6** `archive` 单旗写幂等；rows 臂在册窗/历史窗互补零重叠（零删除）。
+ *  - **G6** 状态派生可见性两窗互补（零删除）：存量归档旗（只读兼容）与「收口 ∧ 显式表态」
+ *    落历史窗；[[DelegateRegistry.setDisposition]] 是非破坏性单点（幂等、零重写）。
  *  - **G4** `ChainsReadFace.delegateJson` 聚合形状（record/live/verdict/task/childrenCount）。
  *
  * 隔离纪律：`PathUtil.setDataRoot(tempRoot)`（DelegateRegistryPluginsSpec 同款）；
@@ -188,11 +189,11 @@ class DelegateUiDataPlaneSpec extends FunSuite:
     assert(!obj.toOption.get.contains("mergeQueuePos"), "rows must not carry the retired mergeQueuePos key")
   }
 
-  test("G6: rows default window excludes archived; ?archived=1 window is exactly the archived set") {
+  test("G6: rows default window excludes history rows; ?archived=1 window is exactly the history set (state-derived settlement)") {
     put("delegate-nebflow-g6live001")
-    put("delegate-nebflow-g6arch01")
-    val ts = DelegateRegistry.archive("delegate-nebflow-g6arch01")
-    assert(ts.isRight)
+    // 存量归档旗 = 旧世界「已归档」的**只读兼容证据** ⇒ 状态派生读为收口 ⇒ 落历史窗。
+    val ts = Some(System.currentTimeMillis())
+    put("delegate-nebflow-g6arch01", archivedAt = ts)
     val live = ChainsReadFace.rowsJson(Map.empty, archived = false).unsafeRunSync()
     val hist = ChainsReadFace.rowsJson(Map.empty, archived = true).unsafeRunSync()
     def ids(j: io.circe.Json): List[String] =
@@ -201,16 +202,20 @@ class DelegateUiDataPlaneSpec extends FunSuite:
     assertEquals(ids(hist), List("delegate-nebflow-g6arch01"))
     assertEquals(
       DelegateRegistry.find("delegate-nebflow-g6arch01").flatMap(_.archivedAt),
-      ts.toOption,
-      "archivedAt survives the read-back (zero-delete: record stays queryable)"
+      ts,
+      "the legacy flag survives the read-back (zero-delete: record stays queryable)"
     )
   }
 
-  test("G6: archive is idempotent (second call returns the same timestamp, no rewrite)") {
+  test("G6: the disposition flag is the single non-destructive marker (idempotent, zero rewrite)") {
     put("delegate-nebflow-g6idem001")
-    val first = DelegateRegistry.archive("delegate-nebflow-g6idem001")
-    val second = DelegateRegistry.archive("delegate-nebflow-g6idem001")
-    assertEquals(first, second)
+    val first = DelegateRegistry.setDisposition("delegate-nebflow-g6idem001", DelegateRegistry.DispositionAcknowledged)
+    val second = DelegateRegistry.setDisposition("delegate-nebflow-g6idem001", DelegateRegistry.DispositionAcknowledged)
+    assertEquals(first, second, "re-setting the same disposition is a zero-rewrite no-op")
+    assertEquals(
+      DelegateRegistry.dispositionOf("delegate-nebflow-g6idem001").map(_._1),
+      Some(DelegateRegistry.DispositionAcknowledged)
+    )
   }
 
   // ── G4：聚合单查投影 ─────────────────────────────────────────────────────

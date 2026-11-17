@@ -86,8 +86,13 @@ object DelegateWakeLeg:
               s"(frozenReason=${record.frozenReason.getOrElse("none")})"
           )
         )
-      case Some(record) if record.archivedAt.isDefined =>
-        IO.pure(Left(s"'$delegateId' is archived (freeze retention expired) — re-delegate the work"))
+      case Some(record) if wakeExpired(record) =>
+        IO.pure(
+          Left(
+            s"'$delegateId' has been frozen past the retention window (state-derived from frozenSince; the retired " +
+              "archive flag used to express this) — re-delegate the work"
+          )
+        )
       case Some(record) =>
         val frozenSince = record.frozenSince.getOrElse(0L)
         val banner = nebflow.core.delegate.DelegateFreeze.wakeBanner(
@@ -136,6 +141,13 @@ object DelegateWakeLeg:
           }
         }
     }
+
+  /**
+   * 冻结保留期是否已过（单点引用 [[nebflow.core.delegate.DelegateFreeze.retentionExpired]]：
+   * 状态派生纯函数）。阶段② 起本闸不再读归档旗——「过保留期」由冻结龄现读复算。
+   */
+  private def wakeExpired(record: nebflow.core.delegate.DelegateRegistry.Record): Boolean =
+    record.frozenSince.exists(ts => nebflow.core.delegate.DelegateFreeze.retentionExpired(ts))
 
   /** 是否属「不花重启预算」的唤醒对象（provider 故障族 —— 自愈与面板都只走本腿）。 */
   def isAutoResumable(frozenReason: String): Boolean =

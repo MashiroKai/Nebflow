@@ -421,16 +421,20 @@ object DelegateStandbyCare:
   end loop
 
   /**
-   * 复验「仍在等」：**未申报空等**判据 = 记录在册未归档 ∧ 活体在册 ∧ 会话未处于
-   * 申报待命（`standbySince` 为空）。会话一旦申报 standby（停靠槽置位）本腿即静默
-   * ——作者 2026-11-03 18:14「都已经报了 stand by 了，还通知什么」。fail-soft：读面
-   * 任何故障 ⇒ false（保守自我了断——宁可少催，绝不打扰在飞回合）。
+   * 复验「仍在等」：**未申报空等**判据 = 记录在册且**状态派生未收口** ∧ 活体在册 ∧
+   * 会话未处于申报待命（`standbySince` 为空）。会话一旦申报 standby（停靠槽置位）本腿
+   * 即静默——作者 2026-11-03 18:14「都已经报了 stand by 了，还通知什么」。
+   *
+   * 阶段②（delegate-lifecycle-reform）：原「未归档」闸（`archivedAt.isEmpty`）改由状态
+   * 派生收口读数供给（[[DelegateVisibility]]：轮次结算证据 ∨ 存量归档旗）——归档写点
+   * 退役后本腿不再依赖任何存储旗。fail-soft：读面任何故障 ⇒ false（保守自我了断
+   * ——宁可少催，绝不打扰在飞回合）。
    */
   private def stillWaiting(delegateId: String, resources: AgentRuntimePort): IO[Boolean] =
     IO.blocking(DelegateRegistry.find(delegateId))
       .flatMap { rec =>
         resources.agentRegistry.get.map { reg =>
-          rec.exists(r => r.archivedAt.isEmpty && r.standbySince.isEmpty) && reg.contains(delegateId)
+          rec.exists(r => !DelegateVisibility.settledOf(r) && r.standbySince.isEmpty) && reg.contains(delegateId)
         }
       }
       .handleErrorWith(e =>

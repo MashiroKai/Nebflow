@@ -76,7 +76,7 @@ class CompletionDebtRoundIdSpec extends FunSuite:
       .unsafeRunSync()
     putRecord("delegate-debt-d3", Some("gen-d3-r2"))
     // rewrite the registry pointer to round 2 (roundNo follows)
-    nebflow.core.delegate.DelegateRegistry.startRound("delegate-debt-d3", 2, "gen-d3-r2", clearArchive = false)
+    nebflow.core.delegate.DelegateRegistry.startRound("delegate-debt-d3", 2, "gen-d3-r2")
     CompletionDebtStore.record("delegate-debt-d3", "parent-debt", msgs("round two done")).unsafeRunSync()
     assertEquals(generationOf("delegate-debt-d3"), "gen-d3-r2")
   }
