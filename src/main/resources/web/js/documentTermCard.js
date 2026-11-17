@@ -2,6 +2,25 @@
 // rebuild is visible without a page reload; no live-registry cache is involved.
 import { authHeaders } from './flowHelpers.js';
 
+// Canonical key: exact project + vault-relative path for registration-vault
+// references, or exact absolute path for already-resolved local references.
+// Never pick by basename alone; malformed, ambiguous and truncated results fail closed.
+function documentIdentity(path, terms, complete) {
+  if (!complete) return null;
+  const value = String(path || '').replace(/\\/g, '/');
+  const absolute = value.startsWith('/') || /^[A-Za-z]:\//.test(value);
+  const parts = value.split('/');
+  if (parts.some(p => p === '.' || p === '..')) return null;
+  const relative = !absolute && parts.length >= 4 && parts[1] === '.stand' && parts[2] === 'docs';
+  if (!absolute && !relative) return null;
+  const hits = terms.filter(t => {
+    if (t.source !== 'document_summary' || !t.doc) return false;
+    if (absolute) return String(t.doc.abs_path || '').replace(/\\/g, '/') === value;
+    return t.doc.project === parts[0] && t.doc.rel === parts.slice(3).join('/');
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
 let active = null;
 let generation = 0;
 function closeCard(restore = true) {
@@ -54,7 +73,8 @@ export async function showDocumentTermCard(trigger, { path, title, remote = fals
   const x = Math.max(8, Math.min(rect.left, window.innerWidth - card.offsetWidth - 8));
   const y = rect.bottom + 8 + card.offsetHeight <= window.innerHeight ? rect.bottom + 8 : Math.max(8, rect.top - card.offsetHeight - 8);
   card.style.left = `${x}px`; card.style.top = `${y}px`;
-  button.addEventListener('click', () => { closeCard(false); openDocument(); });
+  let resolvedPath = '';
+  button.addEventListener('click', () => { closeCard(false); openDocument(resolvedPath); });
   // Place the button immediately after the trigger in keyboard order without
   // relying on body insertion order.
   card.addEventListener('keydown', e => { if (e.key === 'Tab' && e.shiftKey && document.activeElement === button) { e.preventDefault(); trigger.focus(); } });
@@ -72,8 +92,9 @@ export async function showDocumentTermCard(trigger, { path, title, remote = fals
     if (!res.ok) throw new Error('terms unavailable');
     const data = await res.json();
     if (current !== generation || !active || active.card !== card) return;
-    const hit = (data.terms || []).find(t => t.source === 'document_summary' && t.doc && t.doc.abs_path === path);
+    const hit = documentIdentity(path, data.terms || [], data.count == null || data.count <= (data.terms || []).length);
     if (hit) {
+      resolvedPath = hit.doc.abs_path || '';
       heading.textContent = hit.doc.title || hit.name || heading.textContent;
       summary.textContent = hit.definition || '此文档暂无提要';
       metadata.textContent = `状态：${hit.doc.status || '—'}　更新：${hit.updated_at || '—'}`;

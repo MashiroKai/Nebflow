@@ -10,7 +10,7 @@ const graph = {projects:[{name:'test',device:'self',vault:'/vault'}],nodes:[{id:
 (async () => {
  const srv = http.createServer((req,res) => {
   const url = new URL(req.url,'http://localhost');
-  if (url.pathname === '/api/wiki/terms') { res.setHeader('content-type','application/json'); res.end(JSON.stringify({available:true,terms:provideSummary ? [{name:'目标文档',source:'document_summary',definition:summary,updated_at:'updated',doc:{abs_path:'/vault/target.md',title:'目标文档',status:'draft',rel:'target.md'}}] : []})); return; }
+  if (url.pathname === '/api/wiki/terms') { res.setHeader('content-type','application/json'); res.end(JSON.stringify({available:true,terms:provideSummary ? [{name:'目标文档',source:'document_summary',definition:summary,updated_at:'updated',doc:{project:'test',abs_path:'/vault/target.md',title:'目标文档',status:'draft',rel:'target.md'}}] : []})); return; }
   let file = path.join(root, decodeURIComponent(url.pathname));
   if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
   try { res.setHeader('content-type',file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript');res.end(fs.readFileSync(file)); } catch {res.writeHead(404).end();}
@@ -35,10 +35,13 @@ const graph = {projects:[{name:'test',device:'self',vault:'/vault'}],nodes:[{id:
    await page.keyboard.press('Escape'); assert.equal(await link.evaluate(e=>document.activeElement===e),true);
    await link.click(); await dialog.waitFor(); await dialog.getByRole('button',{name:'打开原文档'}).click();
    assert.equal(await page.evaluate(()=>window.__opens.length),1);
-   await page.evaluate(async()=>{const m=await import('/src/main/resources/web/js/reference.js'); const ref={refType:'document',source:{path:'/vault/target.md'},display:{label:'目标文档'}};document.querySelector('.canvas-md-viewer').append(m.renderRefBlock(ref,{mode:'message'}));});
+   await page.evaluate(async()=>{const m=await import('/src/main/resources/web/js/reference.js'); const ref={refType:'document',source:{path:'test/.stand/docs/target.md'},display:{label:'目标文档'}};document.querySelector('.canvas-md-viewer').append(m.renderRefBlock(ref,{mode:'message'}));});
    await page.locator('.att-ref-card.file-lang').click(); await dialog.waitFor();
    await page.waitForFunction(expected => document.querySelector('.document-term-summary')?.textContent === expected, summary);
    assert.equal(await dialog.locator('.document-term-summary').textContent(),summary);
+   await dialog.getByRole('button',{name:'打开原文档'}).click();
+   assert.equal(await page.evaluate(()=>window.__opens.at(-1).absPath),'/vault/target.md');
+   await page.locator('.att-ref-card.file-lang').click(); await dialog.waitFor();
    await page.mouse.click(5,5); assert.equal(await dialog.isVisible(),false);
    provideSummary=false;
    await page.locator('.att-ref-card.file-lang').click(); await dialog.waitFor();

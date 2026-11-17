@@ -518,7 +518,7 @@ function buildFileLangRefCard(ref) {
   card.dataset.refPath = path;
   const isDocument = ref.refType === 'document' || /\.(md|markdown|html?)$/i.test(path);
   const activate = () => {
-    if (isDocument && path) showDocumentTermCard(card, { path, title: name.textContent, openDocument: () => jumpRef(ref) });
+    if (isDocument && path) showDocumentTermCard(card, { path, title: name.textContent, openDocument: resolvedPath => jumpRef(ref, resolvedPath) });
     else jumpRef(ref);
   };
   card.tabIndex = 0;
@@ -601,11 +601,11 @@ function renderMessageRef(ref) {
 // the source URL. task: referral records are back-references — no silent
 // navigation, but let the task panel reveal it if it owns the id (future); for
 // now this is a non-navigating record (the return already happened).
-function jumpRef(ref) {
+function jumpRef(ref, resolvedPath = '') {
   if (!ref) return;
   const rt = ref.refType;
   const src = ref.source || {};
-  const path = src.path || '';
+  const path = resolvedPath || src.path || '';
   if (rt === 'file' || rt === 'document') {
     if (!path) return;
     const title = ref.display?.label || src.title || path.split('/').pop();
