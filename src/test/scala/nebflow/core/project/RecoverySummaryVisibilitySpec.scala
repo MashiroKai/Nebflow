@@ -19,11 +19,20 @@ import scala.concurrent.duration.*
  *     cancel 活标记）②无子项（scope 的子代理任务行全部终态）③无非终态节点
  *   ④无人工保持 ⑤无孤儿暂停 ⑥无未结算轮 ⑦无未投递事项。
  *
- * 本 spec 是**阶段① 实施前的真实行为红**（基线 commit 0f9f5aab7 的 `Summary.quiet`
+ * 本 spec 是**阶段① 的真实行为红→绿**面（基线 commit 0f9f5aab7 的 `Summary.quiet`
  * 只算了后五项）：所有断言都落在既有 `Summary.quiet` 面上——断言编译得过（不吃编译
- * 错误当红），但 ①② 两条漏判使 1–6 号用例在基线上失败。实施后同一组断言逐条转绿；
+ * 错误当红），但 ①② 两条漏判使 1–6 号用例在基线（红态 commit 07794aacc）上失败：
+ *
+ * {{{
+ * 红：sbt -batch "testOnly nebflow.core.project.RecoverySummaryVisibilitySpec"
+ *     => Failed: Total 10, Failed 7, Errors 0, Passed 3
+ * 绿：sbt -batch "testOnly …RecoverySummarySpec …RecoverySummaryVisibilitySpec"
+ *     => Passed: Total 35, Failed 0, Errors 0, Passed 35
+ * }}}
+ *
  * 7/8/9 号（13 个反例、全净正向腿、子项档缺失正向腿）在前后都必须为绿——它们是
- * 「归档 ≠ 安全跳过」的对照面，不是红。
+ * 「归档 ≠ 安全跳过」的对照面，不是红。用例名仍保留 `red①②` 前缀 = 它们就是红态
+ * 那七条（同一条断言，无一字改动）。
  *
  * 实证口径（2026-11-17 盘面只读统计）：delegate 注册目录 910 条记录、863 条已归档，
  * 其中 54 条仍带活标记（restartInterruptedAt 22 / cancelRequestedAt 32）；带非终态
