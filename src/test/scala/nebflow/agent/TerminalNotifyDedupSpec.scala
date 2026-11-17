@@ -133,6 +133,20 @@ class TerminalNotifyDedupSpec extends CatsEffectSuite:
       )
   }
 
+  test("a new completion generation for the same delegate is announced once") {
+    def generation(id: String) = term("continued", "completed").copy(
+      metadata = term("continued", "completed").metadata.add("completionGeneration", id.asJson)
+    )
+    for
+      first <- MailboxDrain.terminalNotifications(List(generation("round-1")), ledger("rounds"))
+      second <- MailboxDrain.terminalNotifications(List(generation("round-2")), ledger("rounds"))
+      replay <- MailboxDrain.terminalNotifications(List(generation("round-2")), ledger("rounds"))
+    yield
+      assertEquals(first.size, 1)
+      assertEquals(second.size, 1, "a new round must have a visible source")
+      assertEquals(replay.size, 0, "replay of the same round remains deduplicated")
+  }
+
   test("E: batches without terminal events pass through byte-identically") {
     val events = List(other, term("skip", "frozen-waiting"))
     for out <- MailboxDrain.terminalNotifications(events, ledger("plain"))
