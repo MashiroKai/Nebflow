@@ -2615,6 +2615,7 @@ export default {
   'mhsearch.scanScope': 'Scanned {pages} pages',
   'mhsearch.scanPartial': 'Partial results: stopped on a match or scan limit',
   'mhsearch.scanFailed': 'Search partly failed or timed out; retry',
+  'mhsearch.fullScan': 'Search all messages (may be slow)',
   'mhsearch.loadMore': 'Load more (this conversation)',
   'mhsearch.me': 'Me',
   'mhsearch.jumpFail': "Couldn't locate that message",

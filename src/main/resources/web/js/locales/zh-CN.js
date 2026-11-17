@@ -2536,6 +2536,7 @@ export default {
   'mhsearch.scanScope': '已扫描 {pages} 页',
   'mhsearch.scanPartial': '结果不完整：命中或达到扫描上限即停止',
   'mhsearch.scanFailed': '部分搜索失败或超时，请重试',
+  'mhsearch.fullScan': '完整扫描消息（可能较慢）',
   'mhsearch.loadMore': '加载更多（本会话）',
   'mhsearch.me': '我',
   'mhsearch.jumpFail': '未能定位到该消息',

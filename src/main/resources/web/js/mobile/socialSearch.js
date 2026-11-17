@@ -137,6 +137,7 @@ function fillMessagesBar(dock, parts) {
     input: parts.input,
     resultsHost: results,
     statusEl: status,
+    boundedGateway: true,
     // 输入即搜：查询串非空 ⇒ 条吃满余量 + 列表让位（CSS 判据 = .has-query）。
     onHasQuery: (has) => dock.classList.toggle('has-query', has),
   });

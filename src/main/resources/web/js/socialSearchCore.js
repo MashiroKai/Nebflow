@@ -314,7 +314,7 @@ export function createSocialMessageSearch(host) {
   }
 
   /** 渐进主检索：快照会话表 → 并发 2 逐会话翻页扫描 → 命中即增量上屏（按会话分组）。 */
-  async function runSearch() {
+  async function runSearch(fullScan = false) {
     const q = (input.value || '').trim();
     const mySeq = ++seq;
     abortCtl?.abort();
@@ -341,7 +341,7 @@ export function createSocialMessageSearch(host) {
       for (const conv of descHits) resultsHost.appendChild(buildDescHitRow(conv, log));
     }
 
-    if (host.boundedGateway) {
+    if (host.boundedGateway && !fullScan) {
       try {
         const result = await api.searchSocialMessages(q, convs.map(c => String(c.conversationId)));
         if (mySeq !== seq || signal.aborted) return;
@@ -357,8 +357,24 @@ export function createSocialMessageSearch(host) {
           for (const hit of hits) { resultsHost.appendChild(buildResultRow(conv, hit.message, q, log)); total++; }
         }
         setStatus(`${total ? t('mhsearch.resultCount', { n: total }) : t('mhsearch.noResults')} · ${t('mhsearch.scanScope', { pages: result.pages })}${result.truncated ? ' · ' + t('mhsearch.scanPartial') : ''}${result.failed ? ' · ' + t('mhsearch.scanFailed') : ''}`);
+        if (result.truncated || result.failed) {
+          const more = document.createElement('button');
+          more.type = 'button';
+          more.className = 'mh-sr-more';
+          more.textContent = t('mhsearch.fullScan');
+          more.addEventListener('click', () => runSearch(true));
+          resultsHost.appendChild(more);
+        }
       } catch {
-        if (mySeq === seq) setStatus(t('mhsearch.scanFailed'));
+        if (mySeq === seq) {
+          setStatus(t('mhsearch.scanFailed'));
+          const more = document.createElement('button');
+          more.type = 'button';
+          more.className = 'mh-sr-more';
+          more.textContent = t('mhsearch.fullScan');
+          more.addEventListener('click', () => runSearch(true));
+          resultsHost.appendChild(more);
+        }
       }
       return;
     }

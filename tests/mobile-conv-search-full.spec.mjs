@@ -146,7 +146,9 @@ test('C1 会话档分段续查：第一段扫不到的命中，点「加载更�
   // 第一段（1..1000 条）扫完：命中 0 条，但会话未扫完 ⇒ 段尾必须有「加载更多」。
   const more = page.locator(`${sel} .mh-sr-more`);
   await expect(more).toBeVisible({ timeout: 20000 });
-  await expect(more).toHaveText('加载更多（本会话）');
+  await expect(more).toHaveText('完整扫描消息（可能较慢）');
+  await more.click();
+  await expect(more).toHaveText('加载更多（本会话）', { timeout: 20000 });
   expect(await page.locator(`${sel} .mh-sr-row`).count()).toBe(0);
   await expect(page.locator(`${sel} .mh-sr-group`)).toContainText('阿凯');
 
