@@ -18,7 +18,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => server?.kill());
 
-for (const version of ['34ccb63da', 'bd2df2bc2']) {
+for (const version of (process.env.STACK_VERSIONS || 'worktree').split(',')) {
  for (const viewport of [{width:375,height:812}, {width:1280,height:900}]) {
   for (const count of [3, 5]) {
    for (const side of ['assistant', 'user']) {
@@ -26,8 +26,13 @@ for (const version of ['34ccb63da', 'bd2df2bc2']) {
      const results = {};
      for (const direction of ['left', 'right']) {
       const page = await browser.newPage({ viewport });
-      const source = execFileSync('git', ['show', `${version}:src/main/resources/web/js/popArtifacts.js`], {cwd:root,encoding:'utf8'});
-      await page.route('**/src/main/resources/web/js/popArtifacts.js', r => r.fulfill({contentType:'text/javascript',body:source}));
+      if (version !== 'worktree' || process.env.STACK_NEGATIVE === '1') {
+       let source = version === 'worktree'
+        ? execFileSync('git', ['show', 'HEAD:src/main/resources/web/js/popArtifacts.js'], {cwd:root,encoding:'utf8'})
+        : execFileSync('git', ['show', `${version}:src/main/resources/web/js/popArtifacts.js`], {cwd:root,encoding:'utf8'});
+       if (process.env.STACK_NEGATIVE === '1') source = (await import('node:fs')).readFileSync(path.join(root, 'src/main/resources/web/js/popArtifacts.js'), 'utf8').replace('direction * 24', '(direction < 0 ? direction * 40 : direction * 24)');
+       await page.route('**/src/main/resources/web/js/popArtifacts.js', r => r.fulfill({contentType:'text/javascript',body:source}));
+      }
       await page.goto(base + '/tests/fixtures/pop-artifacts/harness.html');
       await page.waitForFunction(() => window.__ready === true);
       await page.evaluate(async ({count,side}) => {
@@ -55,6 +60,14 @@ for (const version of ['34ccb63da', 'bd2df2bc2']) {
       results[direction]=samples; await page.close();
      }
      writeFileSync(`${out}/${version}-${viewport.width}-n${count}-${side}.json`,JSON.stringify(results,null,2));
+     if (version === 'worktree' || process.env.STACK_ASSERT_SYMMETRY === '1') {
+      const at75 = dir => Math.abs(Number(results[dir][15].layers[0].transform.match(/^matrix\(([^)]+)\)$/)[1].split(',')[4]));
+      const left = at75('left'), right = at75('right');
+      const ratio = left / right;
+      console.log(JSON.stringify({version,viewport:viewport.width,count,side,left,right,ratio}));
+      expect(ratio).toBeGreaterThanOrEqual(0.95);
+      expect(ratio).toBeLessThanOrEqual(1.05);
+     }
     });
    }
   }

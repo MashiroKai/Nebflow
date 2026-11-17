@@ -1053,6 +1053,9 @@ function buildMediaStack(items, opts) {
       { transform: from, zIndex: 4, offset: 0 },
       { transform: flyout, zIndex: 4, offset: .45 },
       { transform: flyout, zIndex: 0, offset: .46 },
+      // Keep the visible return mirrored before easing into the fan's
+      // direction-independent final slot (or the buried-card pocket).
+      { transform: `translate3d(${direction * 24}%,0,0) scale(.91)`, zIndex: 0, offset: .93 },
       { transform: outgoingTarget, zIndex: 0, offset: 1 },
     ], { ...options, fill: 'both' }));
     animations.push(next.animate([
