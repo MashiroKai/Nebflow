@@ -82,6 +82,48 @@ private[gateway] object ProjectsRoutes:
           }
         }
 
+      case req @ GET -> Root / "project-open-apps" =>
+        withAuth(req) {
+          IO.blocking(ProjectOpenApps.detect().map { a =>
+            Json.obj("id" -> a.id.asJson, "label" -> a.label.asJson,
+              "icon" -> ProjectOpenApps.iconPath(a).map(_ => s"/api/project-open-apps/${a.id}/icon").asJson)
+          }).flatMap(apps => Ok(Json.obj("apps" -> apps.asJson)))
+        }
+
+      case req @ GET -> Root / "project-open-apps" / id / "icon" =>
+        withAuth(req) {
+          IO.blocking(ProjectOpenApps.detect().find(_.id == id).flatMap(ProjectOpenApps.iconPath).map(java.nio.file.Files.readAllBytes(_))).flatMap {
+            case None => NotFound()
+            case Some(bytes) => IO.pure(Response[IO](status = Status.Ok,
+              headers = Headers(org.http4s.headers.`Content-Type`(MediaType.image.png)),
+              body = fs2.Stream.emits(bytes).covary[IO]))
+          }
+        }
+
+      case req @ POST -> Root / "projects" / name / "open-in-app" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val path = body.hcursor.get[String]("path").getOrElse("")
+            val appId = body.hcursor.get[String]("app").getOrElse("")
+            ProjectStore.list().flatMap { projects =>
+              projects.find(_.name == name) match
+                case None => NotFound(Json.obj("error" -> "Project not found".asJson))
+                case Some(project) if ProjectStore.effectiveDevice(project) != "self" =>
+                  BadRequest(Json.obj("error" -> "Remote workspaces cannot be opened on the engine host".asJson))
+                case Some(project) =>
+                  ProjectOpenApps.registeredPath(path, project.workspace) match
+                    case Left(error) => BadRequest(Json.obj("error" -> error.asJson))
+                    case Right(real) => ProjectOpenApps.detect().find(_.id == appId) match
+                      case None => BadRequest(Json.obj("error" -> "Application is not available".asJson))
+                      case Some(app) => IO.blocking(ProjectOpenApps.launch(app, real)).attempt.flatMap {
+                        case Right(0) => Ok(Json.obj("opened" -> true.asJson))
+                        case Right(code) => InternalServerError(Json.obj("error" -> s"Application opener exited with code $code".asJson))
+                        case Left(e) => InternalServerError(Json.obj("error" -> s"Could not open application: ${e.getMessage}".asJson))
+                      }
+            }
+          }
+        }
+
       case req @ GET -> Root / "projects" =>
         withAuth(req) {
           (ProjectStore.list(), ProjectStore.listAll())
