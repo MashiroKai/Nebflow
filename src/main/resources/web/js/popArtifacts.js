@@ -60,10 +60,9 @@ import { escapeHtml, smartScroll, localizeToolLabel, localizeToolSummary } from 
 import { ticketUrl, reMint } from './nfTicket.js';
 // 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，手机端
 // 的媒体统一都是直接打开」）：媒体点击分流单点（手机系统直开 / 桌面 Canvas / 灯箱兜底）。
-import { routeMediaClick } from './mediaOpenRoute.js';
+import { routeMediaClick, mediaKind } from './mediaOpenRoute.js';
 // 手机层兜底面返回键（弹窗退场批同款注入器）：openMediaLightbox 成为手机层
 // 「直开链全尽空」的罕见兜底面后，同样不吃「桌面弹层原样弹出」的例外。
-import { mobileSheetBack } from './mobile/popSheet.js';
 // imgdoor 二次加载批（2026-10-24）：图片脸字节进 nfFileCache 账本——预览取数即入账，
 // Canvas 打开账本命中零取数（预览 + 打开 = 恰一次网络抓取）。账本模块只 import
 // state/branding，本边不成环。nfViewerSource = 取字节单点（手机端长按退役批的
@@ -525,110 +524,16 @@ const STACK_MAX = { w: 220, h: 320 };
 /** The expanded column's per-item allowance — full column width, taller cap. */
 const EXPAND_MAX = { w: 220, h: 420 };
 
-/** #491 主题三 (AC-S1): the WeChat-style in-stream lightbox — the zoom face
- *  shared by BOTH sides (user attachments and LLM Pop media). One overlay on
- *  document.body: dark backdrop, the media centered at its own ratio, the file
- *  name, and Canvas as the SECONDARY explicit entry (the ruling: 「媒体（图片/
- *  视频）点击放大 = 消息流内灯箱/浮层（微信式，就地放大，Esc/点击空白关闭）；
- *  Canvas 打开保留为次级动作」). File-type items never come here — they stay
- *  small cards whose click IS the Canvas open. */
-let _lightboxEl = null;
-let _lightboxKey = null;
-
-export function closeMediaLightbox() {
-  if (!_lightboxEl) return;
-  const el = _lightboxEl;
-  _lightboxEl = null;
-  if (_lightboxKey) {
-    window.removeEventListener('keydown', _lightboxKey, true);
-    _lightboxKey = null;
-  }
-  el.remove();
+/** Media previews share the gallery; failure is reported there, never Canvas. */
+export function openMediaLightbox(item) {
+  if (!item || !['image', 'video', 'audio'].includes(item.kind)) return;
+  import('./lightbox.js').then(lb => lb.openImageGallery([item], 0)).catch(() => {
+    window.__showToast?.(t('messages.attachPreviewFailed'), 'error');
+  });
 }
 
-/** `item`: {kind:'image'|'video', name, src?, path?, resolver?} — the same
- *  item shape the faces build, so callers pass what they already hold. */
-export function openMediaLightbox(item) {
-  if (!item || (item.kind !== 'image' && item.kind !== 'video')) return;
-  closeMediaLightbox();
-
-  const overlay = document.createElement('div');
-  // 预览层收编批（ui-unification-20261103-askuser-attach 2026-11-04）：本层与
-  // css/lightbox.js 的看图灯箱**同名** `.nf-lightbox`，两份基座声明撞车 ——
-  // lightbox.css 后载（index.html:80 > chat.css:53）⇒ 它的 `display:none` 压过本层
-  // 的 `display:flex`，实测「点卡片放大毫无反应」的机制根因（作者报障「点击没反应」
-  // 同族）。修法：本层挂**差异档修饰类** `nf-lightbox--media` + `on`（= 可视态档，
-  // 两灯箱同一套开合词法），基座形仍归 chat.css 的 `.nf-lightbox.nf-lightbox--media`
-  // 一档；看图灯箱（lightbox.js，`.on` 显隐）逐字不变。
-  overlay.className = 'nf-lightbox nf-lightbox--media on';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-label', item.name || 'media');
-  const stage = document.createElement('div');
-  stage.className = 'nf-lightbox-stage';
-  const head = document.createElement('div');
-  head.className = 'nf-lightbox-head';
-  const name = document.createElement('div');
-  name.className = 'nf-lightbox-name';
-  name.textContent = item.name || '';
-  head.appendChild(name);
-  // Secondary entry: Canvas open (only when the item knows an absolute path).
-  if (item.path) {
-    const canvasBtn = document.createElement('button');
-    canvasBtn.type = 'button';
-    canvasBtn.className = 'nf-lightbox-canvas';
-    canvasBtn.innerHTML = FWD_ICON + '<span>' + escapeHtml(t('chat.popOpenCanvas')) + '</span>';
-    canvasBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      // Act-and-exit for the lightbox layer: Canvas opens, the zoom face closes.
-      closeMediaLightbox();
-      openPopArtifact(item.path, item.name);
-    });
-    head.appendChild(canvasBtn);
-  }
-  stage.appendChild(head);
-
-  let mediaEl;
-  if (item.kind === 'video') {
-    mediaEl = document.createElement('video');
-    mediaEl.className = 'nf-lightbox-media';
-    mediaEl.controls = true;
-    mediaEl.playsInline = true;
-    mediaEl.preload = 'metadata';
-  } else {
-    mediaEl = document.createElement('img');
-    mediaEl.className = 'nf-lightbox-media';
-    mediaEl.alt = item.name || '';
-    mediaEl.draggable = false;
-  }
-  stage.appendChild(mediaEl);
-  overlay.appendChild(stage);
-  // Blank-area click closes (the ruling's 「点击空白关闭」): only a click that
-  // landed on the overlay itself — clicks on the media/head stop here.
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) closeMediaLightbox();
-  });
-  // Esc closes the TOP layer only. The handler rides window CAPTURE — window
-  // fires before document, where the search modal's own three-stage Esc
-  // handler lives; without this, an open modal would swallow every Escape and
-  // the lightbox could only be closed by the mouse. stopImmediatePropagation
-  // keeps the modal shut for THIS press; a second Esc (lightbox gone) reaches
-  // the modal's own contract again.
-  _lightboxKey = e => {
-    if (e.key === 'Escape') {
-      e.stopImmediatePropagation();
-      closeMediaLightbox();
-    }
-  };
-  window.addEventListener('keydown', _lightboxKey, true);
-  document.body.appendChild(overlay);
-  // 手机层兜底面（媒体点击统一批 P16）：直开链尽空才会落到本层——补左上返回
-  // （弹窗退场批 2026-10-31②「手机端不再有任何形式的弹窗界面」同纪律；桌面零变化，
-  // 注入器对非手机层直接不注）。
-  mobileSheetBack(overlay, closeMediaLightbox);
-  _lightboxEl = overlay;
-  // Same byte legs as the inline faces: inline src wins, then the item's own
-  // resolver (uploads route for user attachments), then the ticket leg.
-  hydrateMedia(mediaEl, item, null);
+export function closeMediaLightbox() {
+  import('./lightbox.js').then(lb => lb.closeLightbox()).catch(() => {});
 }
 
 /** The per-card Canvas secondary entry (ruling: 「卡片…上的显式入口」). Rendered
@@ -640,12 +545,12 @@ function canvasCornerButton(item) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'pop-media-canvas';
-  btn.setAttribute('aria-label', t('chat.popOpenCanvas'));
-  btn.title = t('chat.popOpenCanvas');
+  btn.setAttribute('aria-label', item.name || 'Media');
+  btn.title = item.name || 'Media';
   btn.innerHTML = FWD_ICON;
   btn.addEventListener('click', e => {
     e.stopPropagation();
-    openPopArtifact(item.path, item.name);
+    openMediaItemClick(item);
   });
   return btn;
 }
@@ -1301,9 +1206,10 @@ export function popItemFromAttachment(att, resolver) {
   const name = String(att.name || '');
   const path = typeof att.path === 'string' ? att.path : '';
   const size = Number(att.size) || undefined;
-  if (att.type === 'image' || att.type === 'video') {
+  const media = mediaKind({ name, path, mime: att.mime, kind: att.type });
+  if (media) {
     return {
-      kind: att.type,
+      kind: media,
       name,
       // Inline preview wins (the live send always carries one); after a cache
       // strip the uploads resolver takes over via `path`.
@@ -1354,8 +1260,8 @@ export function buildUserMediaRow(attachments, opts) {
     .map(a => popItemFromAttachment(a, resolver))
     .filter(Boolean);
   if (!items.length) return null;
-  const media = items.filter(it => it.kind === 'image' || it.kind === 'video');
-  const files = items.filter(it => it.kind !== 'image' && it.kind !== 'video');
+  const media = items.filter(it => ['image', 'video', 'audio'].includes(it.kind));
+  const files = items.filter(it => !['image', 'video', 'audio'].includes(it.kind));
   if (!media.length && !files.length) return null;
   const row = document.createElement('div');
   // attach-side-align (2026-10-06 作者截图令): the row carries the SAME

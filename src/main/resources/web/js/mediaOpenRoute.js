@@ -27,7 +27,6 @@
 // 只保留「上一枚」待换新时回收（立即 revoke 会杀掉刚打开的系统预览页）。
 
 import { ticketUrl } from './nfTicket.js';
-import { isMobileLayer } from './mobile/popSheet.js';
 
 /** 上一枚本模块发出的 objectURL（手机直开腿）；下次直开时回收上一枚。 */
 let lastDirectObjectUrl = '';
@@ -120,39 +119,37 @@ export async function openMediaDirect(item) {
  * 分支一行不动。动态 import 是既有防环先例（lightbox.js 静态依赖本模块，
  * utils.js 同款反向动态引入）。
  *
- * @param {{kind?: string, name?: string, path?: string, src?: string,
- *          resolver?: (path: string) => string}|null} item
+ * @param {any} item
  *   调用方面上已有的媒体项形状（popArtifacts item / 帧消息 payload / 裸 {src,path}）。
- * @param {(path: string, name?: string) => void} openCanvas
- *   桌面 Canvas 单点注入（popArtifacts.openPopArtifact 或其懒包装——本模块禁静态
- *   回指 popArtifacts，popArtifacts 静态依赖本模块）。
- * @param {() => void} fallback
- *   桌面 pathless / 手机直开全链尽空的兜底（各自的灯箱面）。
- * @param {Array<Object>} [group] 图组（手机画廊滑动切图用；桌面不消费）。
- * @param {number} [index] 点的是图组内第几张（缺省按 item 在 group 内定位）。
  */
+export function mediaKind(item) {
+  if (!item) return '';
+  const name = String(item.name || item.path || '').split(/[?#]/)[0].toLowerCase();
+  // A document extension is authoritative even when an upstream MIME is wrong.
+  if (/\.(pdf|html?|md|txt|js|ts|json|xml|csv|docx?|xlsx?|pptx?|zip)$/.test(name)) return '';
+  const mime = String(item.mime || item.type || item.blob?.type || '').toLowerCase().split(';')[0];
+  if (mime && mime !== 'application/octet-stream') {
+    if (/^image\//.test(mime)) return 'image';
+    if (/^video\//.test(mime)) return 'video';
+    if (/^audio\//.test(mime)) return 'audio';
+    return '';
+  }
+  if (/\.(png|jpe?g|gif|webp|bmp|svg|avif|heic)$/.test(name)) return 'image';
+  if (/\.(mp4|webm|mov|ogv|m4v)$/.test(name)) return 'video';
+  if (/\.(mp3|wav|ogg|m4a|aac|flac|opus)$/.test(name)) return 'audio';
+  return ['image', 'video', 'audio'].includes(item.kind) ? item.kind : '';
+}
+
 export function routeMediaClick(item, openCanvas, fallback, group, index) {
-  if (isMobileLayer()) {
-    if (item && item.kind === 'image') {
-      const list = Array.isArray(group) && group.length ? group : [item];
-      const i = typeof index === 'number' && list[index] === item
-        ? index
-        : Math.max(0, list.indexOf(item));
-      import('./lightbox.js')
-        .then((lb) => {
-          if (!lb.openImageGallery(list, i)) {
-            void openMediaDirect(item).then((ok) => { if (!ok) fallback(); });
-          }
-        })
-        .catch(() => { void openMediaDirect(item).then((ok) => { if (!ok) fallback(); }); });
-      return;
-    }
-    void openMediaDirect(item).then((ok) => { if (!ok) fallback(); });
+  const kind = mediaKind(item);
+  if (!kind) {
+    if (item && item.path) openCanvas(item.path, item.name || String(item.path).split('/').pop());
+    else fallback();
     return;
   }
-  if (item && item.path) {
-    openCanvas(item.path, item.name || String(item.path).split('/').pop());
-    return;
-  }
-  fallback();
+  const list = (Array.isArray(group) && group.length ? group : [item]).filter(it => mediaKind(it));
+  const i = Math.max(0, list.indexOf(item));
+  import('./lightbox.js').then(lb => {
+    if (!lb.openImageGallery(list.map(it => ({ ...it, kind: mediaKind(it) })), i)) fallback();
+  }).catch(fallback);
 }

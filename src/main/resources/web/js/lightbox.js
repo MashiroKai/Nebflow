@@ -47,13 +47,13 @@ import { figureSize } from './fenceKit.js';
 // 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，手机端
 // 的媒体统一都是直接打开」）：markdown 气泡图与帧消息图片两类入口的分流单点。
 // 灯箱本体降为兜底面（桌面 pathless / 手机直开链尽空），不再是这两类入口的一级行为。
-import { routeMediaClick, openMediaDirect } from './mediaOpenRoute.js';
+import { routeMediaClick, mediaDirectUrl } from './mediaOpenRoute.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：本地路径的字节改经 **nfFileCache 账本
 // 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
 // 账本票据链取数 + 入账（恰一次）。失败回落既有 reMint 直取腿（下方逐字保留）。
 import { nfViewerSource, nfCacheDrop } from './nfFileCache.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层灯箱补左上返回（灯箱本已全屏；桌面零变化）。
-import { mobileSheetBack } from './mobile/popSheet.js';
+import { registerOverlayBack } from './gesture/backSwipe.js';
 
 let overlayEl = null;   // lazily-created singleton
 let imgEl = null;
@@ -118,6 +118,9 @@ let galIndex = 0;
 let galPagerEl = null;
 /** .nf-lightbox-opentab 「在标签页打开」次级入口钮。 */
 let galTabBtnEl = null;
+let galMediaEl = null;
+let galZoom = 1, galPanX = 0, galPanY = 0;
+let galMouseDrag = null;
 /** 滑切换序号：慢腿（blob 铸 URL 等）不得盖掉更新的滑。 */
 let galSlideSeq = 0;
 /** 本组 item.blob 腿铸出的 objectURL（关闭/换组时统一回收）。 */
@@ -301,14 +304,12 @@ function ensureDom() {
   closeBtn.className = 'nf-lightbox-close';
   closeBtn.title = t('lightbox.close');
   closeBtn.setAttribute('aria-label', t('lightbox.close'));
-  closeBtn.innerHTML =
-    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-    'stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/>' +
-    '<line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  closeBtn.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
   closeBtn.addEventListener('click', closeLightbox);
 
   imgEl = document.createElement('img');
   imgEl.className = 'nf-lightbox-img';
+  imgEl.draggable = false;
   imgEl.alt = '';
 
   statusEl = document.createElement('div');
@@ -323,8 +324,8 @@ function ensureDom() {
     if (galItems && Date.now() - galDragEndAt < 160) return;
     closeLightbox();
   });
-  mobileSheetBack(overlayEl, closeLightbox);
   document.body.appendChild(overlayEl);
+  registerOverlayBack('lightbox', closeLightbox, overlayEl);
   // 画廊跟手手势（只在画廊态起作用；非画廊的点击/滚轮语义零变化）。
   bindGalleryGestures();
   // 浮层落 DOM 后再对位：`syncViewportPin` 只改内联盒，无观测、无回环。
@@ -759,28 +760,36 @@ function ensureGalleryChrome() {
   galTabBtnEl = document.createElement('button');
   galTabBtnEl.type = 'button';
   galTabBtnEl.className = 'nf-lightbox-opentab';
-  const label = t('lightbox.openTab');
+  const label = /^zh/i.test(document.documentElement.lang || navigator.language) ? '下载' : 'Download';
   galTabBtnEl.title = label;
   galTabBtnEl.setAttribute('aria-label', label);
   const svgNs = 'http://www.w3.org/2000/svg';
   const icon = document.createElementNS(svgNs, 'svg');
-  for (const [name, value] of Object.entries({ width: '17', height: '17', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) icon.setAttribute(name, value);
-  for (const [tag, attrs] of [
-    ['path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }],
-    ['polyline', { points: '15 3 21 3 21 9' }],
-    ['line', { x1: '10', y1: '14', x2: '21', y2: '3' }],
-  ]) {
-    const child = document.createElementNS(svgNs, tag);
-    for (const [name, value] of Object.entries(attrs)) child.setAttribute(name, value);
-    icon.append(child);
-  }
+  for (const [name, value] of Object.entries({ width: '18', height: '18', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) icon.setAttribute(name, value);
+  const path = document.createElementNS(svgNs, 'path');
+  path.setAttribute('d', 'M12 3v12m-5-5 5 5 5-5M4 17v3h16v-3');
+  icon.append(path);
   galTabBtnEl.append(icon);
-  galTabBtnEl.addEventListener('click', (e) => {
-    e.stopPropagation();          // 不冒泡成遮罩点空白关闭
+  galTabBtnEl.addEventListener('click', async (e) => {
+    e.stopPropagation();
     const item = galItems && galItems[galIndex];
     if (!item) return;
-    // 原能力显式入口（P16 直开不静默丢）：openMediaDirect 腿原样（预约式开页）。
-    void openMediaDirect(item);
+    try {
+      const url = await mediaDirectUrl(item);
+      if (!url) throw new Error('No media URL');
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Download failed');
+      const object = URL.createObjectURL(await response.blob());
+      const a = document.createElement('a');
+      a.href = object; a.download = item.name || 'download'; a.click();
+      setTimeout(() => URL.revokeObjectURL(object), 60000);
+      statusEl.textContent = label + ' ✓';
+      statusEl.className = 'nf-lightbox-status'; statusEl.style.display = '';
+      setTimeout(() => { if (statusEl.textContent === label + ' ✓') statusEl.style.display = 'none'; }, 2000);
+    } catch {
+      statusEl.textContent = label + ' failed';
+      statusEl.className = 'nf-lightbox-status error'; statusEl.style.display = '';
+    }
   });
 
   overlayEl.append(galPagerEl, galTabBtnEl);
@@ -803,7 +812,10 @@ function clearGalleryState() {
   galIndex = 0;
   galSlideSeq += 1;               // 作废在飞的滑装载
   galDrag = null;
+  galZoom = 1; galPanX = 0; galPanY = 0; galMouseDrag = null;
+  if (galMediaEl) { galMediaEl.pause(); galMediaEl.removeAttribute('src'); galMediaEl.remove(); galMediaEl = null; }
   if (imgEl) {
+    imgEl.style.display = '';
     imgEl.style.transition = '';
     imgEl.style.transform = '';
     imgEl.style.opacity = '';
@@ -827,7 +839,28 @@ function galGo(i) {
   galIndex = Math.min(Math.max(0, i), galItems.length - 1);
   updateGalChrome();
   const item = galItems[galIndex];
+  galZoom = 1; galPanX = 0; galPanY = 0;
+  overlayEl.dataset.nfLbZoom = '1';
+  if (galMediaEl) { galMediaEl.pause(); galMediaEl.removeAttribute('src'); galMediaEl.remove(); galMediaEl = null; }
+  imgEl.style.display = item.kind === 'image' ? '' : 'none';
   const seq = ++galSlideSeq;
+  if (item.kind === 'video' || item.kind === 'audio') {
+    ++openSeq;
+    imgEl.removeAttribute('src'); releaseObjectUrl();
+    statusEl.style.display = 'none';
+    galMediaEl = document.createElement(item.kind);
+    galMediaEl.className = 'nf-lightbox-av';
+    galMediaEl.controls = true;
+    if (item.kind === 'video') galMediaEl.setAttribute('playsinline', '');
+    overlayEl.appendChild(galMediaEl);
+    const media = galMediaEl;
+    void mediaDirectUrl(item).then(url => {
+      if (seq !== galSlideSeq) return;
+      if (url) media.src = url;
+      else { statusEl.textContent = t('lightbox.loadError'); statusEl.className = 'nf-lightbox-status error'; statusEl.style.display = ''; }
+    });
+    return;
+  }
   const apply = (src, path) => {
     if (seq !== galSlideSeq) return;
     presentImage(src, item.name || '', path || '');
@@ -880,7 +913,7 @@ function galSlide(dir) {
  */
 export function openImageGallery(items, index) {
   const list = (Array.isArray(items) ? items : []).filter(
-    (it) => it && it.kind !== 'video' && (it.src || it.path || it.blob),
+    (it) => it && ['image', 'video', 'audio'].includes(it.kind) && (it.src || it.path || it.blob),
   );
   if (!list.length) return false;
   ensureDom();
@@ -898,7 +931,6 @@ export function openImageGallery(items, index) {
   galPagerEl.style.display = '';
   galTabBtnEl.style.display = '';
   // 返回键/右滑返 = 既有链路；每开幂等补注（singleton 首建早于手机层跨档的时序兜底）。
-  mobileSheetBack(overlayEl, closeLightbox);
   galGo(typeof index === 'number' ? index : 0);
   overlayEl.classList.add('on');
   if (!wasOn) {
@@ -916,14 +948,47 @@ export function openImageGallery(items, index) {
 function bindGalleryGestures() {
   const active = () => overlayEl.getAttribute('data-nf-lb-gallery') === 'on'
     && lmode === 'img' && !!galItems;
+  const paintZoom = () => {
+    imgEl.style.transform = `translate(${galPanX}px, ${galPanY}px) scale(${galZoom})`;
+    overlayEl.dataset.nfLbZoom = String(galZoom);
+  };
+  overlayEl.addEventListener('wheel', e => {
+    if (!active() || galItems[galIndex].kind !== 'image' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    e.preventDefault();
+    galZoom = Math.min(5, Math.max(1, galZoom * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
+    if (galZoom === 1) galPanX = galPanY = 0;
+    paintZoom();
+  }, { passive: false });
+  overlayEl.addEventListener('dblclick', e => {
+    if (!active() || e.target !== imgEl) return;
+    galZoom = galZoom === 1 ? 2 : 1; galPanX = galPanY = 0; paintZoom();
+  });
+  document.addEventListener('keydown', e => {
+    if (!active() || !overlayEl.classList.contains('on') || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (e.target instanceof Element && e.target.closest('video, audio, input, textarea')) return;
+    e.preventDefault(); e.stopPropagation(); galSlide(e.key === 'ArrowRight' ? 1 : -1);
+  }, true);
   overlayEl.addEventListener('pointerdown', (e) => {
     if (!active() || galDrag) return;
+    if (e.pointerType === 'mouse' && !document.body.classList.contains('mobile-layer')) {
+      if (e.button === 0 && galZoom > 1 && e.target === imgEl) {
+        galMouseDrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        try { overlayEl.setPointerCapture(e.pointerId); } catch (err) { /* released */ }
+      }
+      return;
+    }
+    if (e.target.closest && e.target.closest('video, audio')) return;
     // 控件起手不进拖动（关闭/在标签页打开/返回钮自己处理点击）。
     if (e.target.closest && e.target.closest('button, .nf-lightbox-bar')) return;
     try { overlayEl.setPointerCapture(e.pointerId); } catch (err) { /* 已释放 */ }
     galDrag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), axis: 0, dx: 0, dy: 0 };
   });
   overlayEl.addEventListener('pointermove', (e) => {
+    if (galMouseDrag && e.pointerId === galMouseDrag.id && active()) {
+      galPanX += e.clientX - galMouseDrag.x; galPanY += e.clientY - galMouseDrag.y;
+      galMouseDrag.x = e.clientX; galMouseDrag.y = e.clientY; paintZoom(); return;
+    }
     if (!galDrag || e.pointerId !== galDrag.id || !active()) return;
     const d = galDrag;
     d.dx = e.clientX - d.x0;
@@ -943,6 +1008,7 @@ function bindGalleryGestures() {
     }
   });
   const end = (e, cancelled) => {
+    if (galMouseDrag && e.pointerId === galMouseDrag.id) { galMouseDrag = null; galDragEndAt = Date.now(); return; }
     if (!galDrag || e.pointerId !== galDrag.id) return;
     const d = galDrag;
     galDrag = null;

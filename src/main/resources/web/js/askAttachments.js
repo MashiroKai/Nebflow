@@ -102,6 +102,13 @@ const SVG_CHECK =
  */
 function openReplyAttachment(c, item) {
   const failed = () => toast(t('messages.attachPreviewFailed'));
+  if (item.file && /^(image|video|audio)\//.test(String(item.file.type || ''))) {
+    const kind = item.file.type.split('/')[0];
+    import('./lightbox.js').then(lb => {
+      if (!lb.openImageGallery([{ kind, name: item.name, blob: item.file }], 0)) failed();
+    }).catch(failed);
+    return;
+  }
   if (isMobileLayer()) {
     // mobile-image-lightbox 批（2026-11-17 作者令「手机端点图片…像微信那样的弹窗
     // 就行了」）：图片改开应用内画廊（字节 = 手上的同一枚 File，objectURL 生命

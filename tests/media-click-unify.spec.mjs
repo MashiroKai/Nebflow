@@ -166,82 +166,9 @@ test.describe('P16 media click unify matrix', () => {
       const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
       face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
-    // Canvas 打开面：页签在场、面板可见、灯箱未占位（readFile 往返后出查看器面）。
-    await page.waitForFunction(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length >= 1, null, { timeout: 10000 });
-    await page.waitForSelector('.canvas-image-viewport', { timeout: 10000 });
-    const st = await page.evaluate(() => ({
-      canvasVisible: document.body.classList.contains('canvas-open'),
-      tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
-      lightboxOn: !!document.querySelector('.nf-lightbox.on'),
-      viewport: !!document.querySelector('.canvas-image-viewport'),
-      paneHtml: (document.querySelector('.canvas-tab-pane') || {}).innerHTML ? document.querySelector('.canvas-tab-pane').innerHTML.slice(0, 300) : '',
-      openItems: (window.__nfOpenItems || []).slice(-3),
-    }));
-
-    expect(st.canvasVisible).toBe(true);
-    expect(st.tabs).toBeGreaterThanOrEqual(1);
-    expect(st.lightboxOn).toBe(false);
-    expect(st.viewport).toBe(true);
-    // 居中几何读数：查看器视口中心 == 激活页签 pane 中心（±2px；作者令「注意好居中」）。
-    await page.waitForFunction(() => {
-      const img = document.querySelector('.canvas-image-viewport img');
-      return img && img.complete && (img.naturalWidth || 0) > 0;
-    }, null, { timeout: 10000 });
-    const geo = await page.evaluate(() => {
-      const pane = [...document.querySelectorAll('.canvas-tab-pane')].find((p) => p.offsetParent !== null);
-      const vp = document.querySelector('.canvas-image-viewport');
-      const pr = pane.getBoundingClientRect();
-      const vr = vp.getBoundingClientRect();
-      // 居中基准 = 查看器**内容区**：查看器根盒减去视口以外的 chrome 兄弟
-      // （顶部内衬/底部控制条）——作者令「注意好居中」指的是可视内容区居中。
-      const wrap = document.querySelector('.canvas-image-viewer');
-      const wr = wrap ? wrap.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
-      const cs = wrap ? getComputedStyle(wrap) : { paddingTop: '0', paddingBottom: '0' };
-      const padT = parseFloat(cs.paddingTop) || 0;
-      const padB = parseFloat(cs.paddingBottom) || 0;
-      let above = padT, below = padB;
-      if (wrap) {
-        for (const child of wrap.children) {
-          if (child === /** @type {Element} */ (vp)) continue;
-          const cr = child.getBoundingClientRect();
-          if (cr.bottom <= vr.top + 1) above += cr.height;
-          else if (cr.top >= vr.bottom - 1) below += cr.height;
-        }
-      }
-      const contentTop = wr.top + above;
-      const contentH = Math.max(1, wr.height - above - below);
-      return {
-        dx: Math.abs((vr.left + vr.width / 2) - (pr.left + pr.width / 2)),
-        dyContent: Math.abs((vr.top + vr.height / 2) - (contentTop + contentH / 2)),
-        paneW: pr.width, paneH: pr.height,
-        above, below,
-      };
-    });
-    // 水平 = pane 内容区居中；垂直 = 查看器内容区（扣除控制条 chrome）居中。
-    expect(geo.dx).toBeLessThanOrEqual(2);
-    expect(geo.dyContent).toBeLessThanOrEqual(2);
-    // 关闭返回读数：卡头 ✕（#canvas-head-close，桌面标签行退役后的可见关闭座）
-    // → 页签消失（视图回到会话）。
-    const before = await page.evaluate(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length);
-    await page.evaluate(() => {
-      const btn = document.getElementById('canvas-head-close');
-      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await page.waitForFunction((n) => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length < n, before, { timeout: 5000 });
+    await expect(page.locator('.nf-lightbox.on[data-nf-lb-gallery="on"]')).toBeVisible();
+    expect(await page.evaluate(() => window.__nfOpenItems.length)).toBe(0);
     expect(errors).toEqual([]);
-    if (SHOTS_DIR) {
-      await renderRealPopRow(page, { type: 'image', name: 'pic.png', path: IMG_PATH });
-      // JS 派发（card-image-zoom 同法）：夹具视口里 footer 下载键悬浮在卡面中心，
-    // 真实指针坐标会落进角标；整面点击处理器在 .pop-media-flat 上，派发点击
-    // 即完整生产链（openMediaItemClick → routeMediaClick）。
-    await page.evaluate(() => {
-      const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
-      face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    });
-      await page.waitForSelector('.canvas-image-viewport', { timeout: 10000 });
-      await page.waitForTimeout(600);
-      await page.screenshot({ path: join(SHOTS_DIR, 'combo1-desktop-canvas-open.png') });
-    }
   });
 
   test('D2: desktop markdown bubble image (nf-file src) → Canvas tab', async ({ page }) => {
@@ -256,13 +183,8 @@ test.describe('P16 media click unify matrix', () => {
       document.getElementById('chat')?.appendChild(img);
     }, IMG_PATH);
     await page.locator('img.nf-zoom-img').click();
-    await page.waitForFunction(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length >= 1, null, { timeout: 10000 });
-    const st = await page.evaluate(() => ({
-      lightboxOn: !!document.querySelector('.nf-lightbox.on'),
-      tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
-    }));
-    expect(st.lightboxOn).toBe(false);
-    expect(st.tabs).toBeGreaterThanOrEqual(1);
+    await expect(page.locator('.nf-lightbox.on[data-nf-lb-gallery="on"]')).toBeVisible();
+    expect(await page.evaluate(() => window.__nfOpenItems.length)).toBe(0);
     expect(errors).toEqual([]);
   });
 
@@ -281,7 +203,7 @@ test.describe('P16 media click unify matrix', () => {
       const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
       face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
-    await page.waitForSelector('.nf-lightbox.nf-lightbox--media.on', { timeout: 8000 });
+    await page.waitForSelector('.nf-lightbox.on[data-nf-lb-gallery="on"]', { timeout: 8000 });
     // pathless 桌面腿：灯箱兜底（无页签被无谓开出——页签数不变）。
     const st = await page.evaluate((n) => ({
       tabs: document.querySelectorAll('#canvas-tab-bar .canvas-tab').length,
@@ -290,7 +212,7 @@ test.describe('P16 media click unify matrix', () => {
     if (SHOTS_DIR) await page.screenshot({ path: join(SHOTS_DIR, 'combo2-desktop-lightbox-fallback.png') });
     // ESC 关闭读数（灯箱层自己的开合词法）。
     await page.keyboard.press('Escape');
-    await page.waitForFunction(() => !document.querySelector('.nf-lightbox--media.on'), null, { timeout: 5000 });
+    await page.waitForFunction(() => !document.querySelector('.nf-lightbox.on[data-nf-lb-gallery="on"]'), null, { timeout: 5000 });
     expect(errors).toEqual([]);
   });
 

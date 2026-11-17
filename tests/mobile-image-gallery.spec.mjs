@@ -33,10 +33,9 @@ const SID = 'mil-gallery-session';
 const IMG_PATH = 'docs/pic.png';
 
 // 1×1 真解码 PNG（img onload 面，与 media-click-unify 族同款夹具字节）。
-const PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64'
-);
+const PNG = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540"><rect width="960" height="540" fill="#175b80"/><circle cx="710" cy="160" r="90" fill="#ffd166"/><path d="M0 460L240 190 470 420 610 260 960 540H0" fill="#75ba9a"/><text x="55" y="90" fill="white" font-size="48">Landscape 960 × 540</text></svg>`);
+const PORTRAIT = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="480" height="760"><rect width="480" height="760" fill="#864ba1"/><circle cx="240" cy="320" r="150" fill="#facb73"/><text x="50" y="90" fill="white" font-size="38">Portrait 480 × 760</text></svg>`);
+const SQUARE = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><rect width="600" height="600" fill="#b65e44"/><path d="M60 520L300 70 540 520Z" fill="#f8d385"/><text x="100" y="580" fill="white" font-size="40">Square 600 × 600</text></svg>`);
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -82,7 +81,9 @@ async function bootApp(page) {
         return route.fulfill({ status: 200, contentType: 'application/json', body });
       }
       if (p === '/api/nf-file') {
-        return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+        const name = url.searchParams.get('path') || '';
+        const image = /b\.png$/.test(name) ? PORTRAIT : /c\.png$/.test(name) ? SQUARE : PNG;
+        return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: image });
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     }
@@ -168,7 +169,7 @@ function galState(page) {
       pagerText: pager ? pager.textContent.trim() : '',
       pagerShown: !!pager && pager.style.display !== 'none',
       opentab: !!document.querySelector('.nf-lightbox .nf-lightbox-opentab'),
-      back: !!document.querySelector('.nf-lightbox > .mfs-back'),
+      back: !!document.querySelector('.nf-lightbox > .nf-lightbox-close'),
       imgLoaded: !!document.querySelector('.nf-lightbox .nf-lightbox-img.loaded'),
       bodyLock: document.body.classList.contains('nf-lightbox-open'),
       scrollLocked: scroller ? getComputedStyle(scroller).overflow : null,
@@ -381,16 +382,10 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
       return lb && lb.classList.contains('on') && lb.querySelector('.nf-lightbox-img.loaded');
     }, null, { timeout: 8000 });
     // 原能力显式入口：点「在标签页打开」→ 预约式 window.open → 铸票 nf-file URL。
-    const popupPromise = page.waitForEvent('popup');
+    const downloadPromise = page.waitForEvent('download');
     await page.locator('.nf-lightbox .nf-lightbox-opentab').click();
-    const popup = await popupPromise;
-    let navOk = false;
-    for (let i = 0; i < 40 && !navOk; i++) {
-      await page.waitForTimeout(200);
-      const u = popup.url();
-      if (u.includes('/api/nf-file?path=')) navOk = true;
-    }
-    expect(navOk).toBe(true);
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('pic.png');
     // 画廊本体仍在（入口不打断浏览）。
     const st = await galState(page);
     expect(st.on).toBe(true);
@@ -411,7 +406,7 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
       const lb = document.querySelector('.nf-lightbox');
       return lb && lb.classList.contains('on');
     }, null, { timeout: 8000 });
-    await page.locator('.nf-lightbox > .mfs-back').click();
+    await page.locator('.nf-lightbox > .nf-lightbox-close').click();
     await page.waitForFunction(() => !document.querySelector('.nf-lightbox.on'), null, { timeout: 5000 });
     const st = await galState(page);
     expect(st.on).toBe(false);
@@ -425,58 +420,113 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
     await bootApp(page);
     await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 15000 });
     await renderRealPopRow(page, { type: 'video', name: 'v.mp4', path: 'docs/v.mp4' });
-    const popupPromise = page.waitForEvent('popup');
     await page.evaluate(() => {
       const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
       face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
-    const popup = await popupPromise;
-    let navOk = false;
-    for (let i = 0; i < 40 && !navOk; i++) {
-      await page.waitForTimeout(200);
-      if (popup.url().includes('/api/nf-file?path=')) navOk = true;
-    }
-    expect(navOk).toBe(true);
+    await expect(page.locator('.nf-lightbox.on video')).toBeVisible();
     const st = await galState(page);
-    expect(st.on).toBe(false);           // 视频不进画廊
-    expect(st.gallery).toBe(null);
+    expect(st.on).toBe(true);
+    expect(st.gallery).toBe('on');
     expect(errors).toEqual([]);
   });
 });
 
+test.describe('media classification and mixed gallery', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+  test('document exclusions and media controls', async ({ page }) => {
+    await bootApp(page);
+    const result = await page.evaluate(async () => {
+      const { mediaKind, routeMediaClick } = await import('/js/mediaOpenRoute.js');
+      const cases = ['x.pdf', 'x.html', 'x.md', 'x.png', 'x.mp4', 'x.mp3'];
+      const kinds = cases.map(name => mediaKind({ name, mime: 'application/octet-stream' }));
+      const opened = [];
+      for (const name of cases.slice(0, 3)) routeMediaClick({ name, path: '/tmp/' + name }, path => opened.push(path), () => {});
+      return { kinds, opened, overlay: !!document.querySelector('.nf-lightbox.on') };
+    });
+    expect(result.kinds).toEqual(['', '', '', 'image', 'video', 'audio']);
+    expect(result.opened).toEqual(['/tmp/x.pdf', '/tmp/x.html', '/tmp/x.md']);
+    expect(result.overlay).toBe(false);
+    await page.evaluate(async () => {
+      const { openImageGallery } = await import('/js/lightbox.js');
+      openImageGallery([
+        { kind: 'image', name: 'one.png', src: '/api/nf-file?path=one.png' },
+        { kind: 'video', name: 'two.mp4', src: '/api/nf-file?path=two.mp4' },
+        { kind: 'audio', name: 'three.mp3', src: '/api/nf-file?path=three.mp3' },
+      ], 0);
+    });
+    const lb = page.locator('.nf-lightbox.on');
+    await expect(lb).toHaveAttribute('data-nf-lb-gal-total', '3');
+    await page.keyboard.press('ArrowRight');
+    await expect(lb.locator('video')).toHaveCount(1);
+    await page.keyboard.press('ArrowRight');
+    await expect(lb.locator('video')).toHaveCount(0);
+    await expect(lb.locator('audio')).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.nf-lightbox audio')).toHaveCount(0);
+  });
+});
+
+test.describe('desktop gallery interactions', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+  test('keyboard, zoom, pan, backdrop and escape', async ({ page }) => {
+    await bootApp(page);
+    await renderRealPopRow(page, [
+      { type: 'image', name: 'a.png', path: 'docs/a.png' },
+      { type: 'image', name: 'b.png', path: 'docs/b.png' },
+    ]);
+    await page.locator('.pop-stack-view').first().dispatchEvent('click');
+    const lb = page.locator('.nf-lightbox.on');
+    await expect(lb).toBeVisible();
+    await expect(lb).toHaveAttribute('data-nf-lb-gal-total', '2');
+    await expect(lb.locator('.nf-lightbox-img.loaded')).toBeVisible();
+    if (SHOTS_DIR) await page.screenshot({ path: join(SHOTS_DIR, 'desktop-multiple-after.png') });
+    expect(await page.evaluate(() => window.__nfOpenItems.length)).toBe(0);
+    await page.keyboard.press('ArrowRight');
+    await expect(lb).toHaveAttribute('data-nf-lb-gal-index', '1');
+    await page.mouse.move(640, 450);
+    await page.mouse.wheel(0, -120);
+    await expect(lb).toHaveAttribute('data-nf-lb-zoom', '1.2');
+    await page.locator('.nf-lightbox-img').dispatchEvent('dblclick');
+    await expect(lb).toHaveAttribute('data-nf-lb-zoom', '1');
+    await page.locator('.nf-lightbox-img').dispatchEvent('dblclick');
+    await expect(lb).toHaveAttribute('data-nf-lb-zoom', '2');
+    await page.mouse.move(640, 450);
+    await page.mouse.down();
+    await page.mouse.move(700, 490, { steps: 5 });
+    await page.mouse.up();
+    await expect(lb.locator('.nf-lightbox-img')).toHaveCSS('transform', /matrix\(2, 0, 0, 2, 60, 40\)/);
+    await page.keyboard.press('ArrowLeft');
+    await expect(lb).toHaveAttribute('data-nf-lb-gal-index', '0');
+    await page.keyboard.press('Escape');
+    await expect(lb).toHaveCount(0);
+    await page.locator('.pop-stack-view').first().dispatchEvent('click');
+    await expect(lb).toBeVisible();
+    await lb.click({ position: { x: 10, y: 450 } });
+    await expect(lb).toHaveCount(0);
+  });
+});
+
 test.describe('desktop zero-change control (D0)', () => {
-  test('D0: same fixture on desktop viewport → Canvas tab, no gallery chrome in DOM', async ({ page }) => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+  test('D0: desktop image opens gallery not Canvas', async ({ page }) => {
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e.message || e)));
     await bootApp(page);
     await renderRealPopRow(page, { type: 'image', name: 'pic.png', path: IMG_PATH });
-    const popupPromise = page.waitForEvent('popup', { timeout: 3000 }).catch(() => null);
     await page.evaluate(() => {
       const face = document.querySelector('.row.pop-artifact[data-testid="pop-artifact-row"] .pop-media-flat');
       face.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
-    // 桌面腿逐字不变：workspace-open-item（Canvas 页签）+ 无新页签 + 无画廊。
-    await page.waitForFunction(() => (window.__nfOpenItems || []).length > 0, null, { timeout: 8000 });
-    const popup = await popupPromise;
-    expect(popup).toBe(null);            // 桌面不开页签（P16 语义原样）
+    await expect(page.locator('.nf-lightbox.on')).toBeVisible();
     const st = await galState(page);
-    expect(st.on).toBe(false);
-    expect(st.gallery).toBe(null);
-    // 画廊 chrome 惰性建：桌面 DOM 永不出现页码/开页签钮节点。
-    expect(await page.evaluate(() => document.querySelector('.nf-lightbox-pager, .nf-lightbox-opentab'))).toBe(null);
-    const items = await page.evaluate(() => window.__nfOpenItems);
-    // 张数不进断言面（D1 同法）：workspace-open-item 的既有派发数非 1（开件/
-    // 激活多拍），断末项载荷即可。
-    expect(items.length).toBeGreaterThanOrEqual(1);
-    const last = items[items.length - 1];
-    // ws mock 回的 absPath 是 '/tmp/'+path，应用侧还会再并工作目录前缀——末段
-    // 对上即可（路径拼合非本批断言面）。
-    expect(String(last.absPath)).toContain(IMG_PATH);
-    expect(last.itemType).toBe('image');
+    expect(st.on).toBe(true);
+    expect(st.gallery).toBe('on');
+    expect(await page.evaluate(() => window.__nfOpenItems.length)).toBe(0);
     expect(errors).toEqual([]);
     if (SHOTS_DIR) {
       await page.waitForTimeout(600);
-      await page.screenshot({ path: join(SHOTS_DIR, 'd0-desktop-canvas-unchanged.png') });
+      await page.screenshot({ path: join(SHOTS_DIR, 'desktop-single-after.png') });
     }
   });
 });
