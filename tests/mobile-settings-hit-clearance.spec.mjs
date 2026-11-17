@@ -19,9 +19,17 @@ try {
     const candidates = [...e.querySelectorAll('.set-card-title, .set-card, button')].filter(el => { const r = el.getBoundingClientRect(); return r.bottom > s.top && r.top < s.bottom; });
     const first = candidates[0]; const r = first?.getBoundingClientRect();
     const x = r ? Math.max(r.left + 5, back.left + 5) : 0, y = s.top + 2;
-    return {scrollTop:e.scrollTop, scroller:s.toJSON(), back:back.toJSON(), first:r?.toJSON(), hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,200)};
+    const card = first?.closest('.set-card') || first;
+    const sticky = [...e.querySelectorAll('*')].filter(el => getComputedStyle(el).position === 'sticky').map(el => ({html:el.outerHTML.slice(0,120),rect:el.getBoundingClientRect().toJSON()}));
+    const clippedHit = document.elementFromPoint(x, Math.min(s.top - 1, Math.max(1, r.top + 5)));
+    const clipped = { scrollTop: e.scrollTop, rect: r?.toJSON(), hit:clippedHit?.outerHTML.slice(0,200) };
+    e.scrollTop += r.top - (s.top + 12);
+    const rr = first.getBoundingClientRect(), hit = document.elementFromPoint(rr.left + 20, rr.top + 10);
+    return {scroller:s.toJSON(), back:back.toJSON(), clipped, card:card?.outerHTML.slice(0,200), sticky, revealed: {scrollTop:e.scrollTop, rect:rr.toJSON(), hit:hit?.outerHTML.slice(0,200), hitTarget:first===hit || first.contains(hit)}};
   });
   assert.ok(middle.scroller.top >= middle.back.bottom, 'settings scroller begins below the top control');
+  assert.ok(middle.clipped.rect.top < middle.scroller.top, 'middle position clips the card at the scroll viewport');
+  assert.ok(middle.revealed.rect.top >= middle.scroller.top && middle.revealed.hitTarget, 'scrolling upward reveals the same card');
   console.log('settings middle:', JSON.stringify(middle));
   await page.screenshot({path:`${out}/settings-middle.png`,animations:'disabled'});
   await page.locator('#settings-content').evaluate(e => { e.scrollTop = e.scrollHeight; });
