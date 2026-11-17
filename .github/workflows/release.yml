@@ -189,13 +189,19 @@ jobs:
 
       - name: Clone pinned stand-dev harness
         # Same logic locally:
-        #   git clone git@git.ustc.edu.cn:kaiyu/stand-dev.git /tmp/stand-dev-harness
+        #   git clone "$STAND_DEV_HARNESS_URL" /tmp/stand-dev-harness
         #   git -C /tmp/stand-dev-harness checkout "$STAND_DEV_REF"
         shell: bash
+        env:
+          STAND_DEV_HARNESS_URL: ${{ vars.STAND_DEV_HARNESS_URL }}
         run: |
+          if [ -z "$STAND_DEV_HARNESS_URL" ]; then
+            echo "::error::repository variable STAND_DEV_HARNESS_URL is required"
+            exit 1
+          fi
           H="$RUNNER_TEMP/stand-dev-harness"
           rm -rf "$H"
-          git clone --quiet git@git.ustc.edu.cn:kaiyu/stand-dev.git "$H"
+          git clone --quiet -- "$STAND_DEV_HARNESS_URL" "$H"
           git -C "$H" checkout --quiet "$STAND_DEV_REF"
           if [ "$(git -C "$H" rev-parse HEAD)" != "$STAND_DEV_REF" ]; then
             echo "::error::harness pin drift (expected $STAND_DEV_REF)"
