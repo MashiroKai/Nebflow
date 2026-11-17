@@ -74,39 +74,29 @@ CI runs the smoke suite against a freshly built JAR, so a green local run plus g
 
 ## Branches and commits
 
-The six branch classes are:
+The author designated `feat/base` on 2026-11-17 as this repository's **only long-lived feat base branch** and feature integration baseline. It was created from local `main` at `0f9f5aab762f601d382e8121fc7c994f366d4c06`.
 
-| Branch | Purpose |
-|---|---|
-| `main` | Integration baseline; only the author lands verified changes. |
-| `feat/*` | Ordinary development, scoped to one change. |
-| `bug/*` | Fixes, including release issues, branched from `main`. |
-| `achieve/*` | Archives, for example a JeV preservation branch; not an MR source. |
-| `release/beta` | Author-controlled beta release line. |
-| `release/stable` | Author-controlled stable release line. |
-
-The author's `release:beta` / `release:stable` terminology maps to `release/beta` / `release/stable`: Git branch names cannot contain a colon. Existing `fix/*` branches are grandfathered, not renamed; the guard deliberately rejects them for new branch and MR checks. Batch branches use `feat/*` or `bug/*`.
+1. Create every development branch from `feat/base`, including fixes and batches. Use a scoped `feat/<topic>` or `bug/<topic>` name; existing `fix/*` branches need not be renamed.
+2. After development and verification, merge the development branch back into `feat/base`, **not directly into `main`**.
+3. Promote the integrated `feat/base` to `main` in a single feat:base-to-main merge, subject to author approval.
+4. Only the author personally pushes `main` to release; no one may do it on the author's behalf. Release lines remain downstream only.
 
 ```mermaid
 flowchart LR
-  M[main] --> F[feat/* development]
-  M --> B[bug/* release fix]
-  F --> V[upstream verification]
-  B --> V
-  V -->|author: ff-only| M
-  M -->|author chooses| RB[release/beta]
-  RB -->|author after beta verification| RS[release/stable]
-  M -. archival .-> A[achieve/*]
+  B[feat/base] --> D[feat/* or bug/* development]
+  D -->|verified merge| B
+  B -->|single feat:base merge| M[main]
+  M -->|author only| R[release]
 ```
 
-For a release problem, branch `bug/*` from `main`, fix and verify it, then the author lands it on `main` and chooses whether and where to propagate it. Only the author pushes release lines. Local checks are not authorization to push USTC.
+`achieve/*` branches are archives, not MR sources. The release lines are `release/beta` and `release/stable`; the author's `release:beta` / `release:stable` terminology maps to these slash-separated Git names. The existing local guard accepts `feat/*` and `bug/*` for new branch and MR checks and rejects `fix/*`; it does not establish or enforce the feat base workflow. Local checks are not authorization to push USTC.
 
 - Stage files explicitly (`git add <file>`); avoid `git add -A`.
 - Commit subjects use an optional `type(scope):` prefix; write an English subject describing the intent.
 
 ### Release flow
 
-After the author approves and lands verified changes on `main`, the author manually merges `main` into `release/beta`; its pipeline publishes the beta channel. After verifying the beta, the author merges `release/beta` into `release/stable`; its pipeline publishes the stable channel. Release lines are downstream only: never merge or write them back to `main`. Release fixes start on `main` and follow the same promotion path.
+After the integrated feat base is approved and merged into `main`, the author alone controls promotion to release. The author may merge `main` into `release/beta`; its pipeline publishes the beta channel. After verifying the beta, the author may merge `release/beta` into `release/stable`; its pipeline publishes the stable channel. Release lines are downstream only: never merge or write them back to `main`. Release fixes start from the feat base and return to it before promotion.
 
 ### Local guard
 
@@ -116,7 +106,7 @@ After the author approves and lands verified changes on `main`, the author manua
 
 1. In the project, inspect **Settings → Repository → Protected branches** (or the equivalent for the installed GitLab version); record existing rules and overlapping wildcard effects before changing them.
 2. Protect `main`, `release/beta`, and `release/stable`. Set push/merge permissions to the named author only where the installed edition supports per-user rules; otherwise use the narrowest role available and restrict membership accordingly. Disable force pushes and deletion for these branches. Configure required review and successful pipelines where supported. Verify the effective permissions, including broader wildcard rules and administrative bypasses.
-3. Restrict USTC write access so non-authors cannot push directly, and have the author alone open MRs from `feat/*` or `bug/*` to `main`, merge after upstream verification using fast-forward only, and push the chosen release line. GitLab branch protection by itself may not enforce source-name restrictions or distinguish one user from others with the same role; use an instance-supported server-side push/MR rule or author-controlled permissions, and document any edition limitation rather than claiming enforcement.
+3. Restrict USTC write access so non-authors cannot push directly. Development MRs target the feat base, not `main`; promotion to `main` is the single feat:base merge, and the author alone controls release pushes. GitLab branch protection by itself may not enforce source-name restrictions or distinguish one user from others with the same role; use an instance-supported server-side push/MR rule or author-controlled permissions, and document any edition limitation rather than claiming enforcement.
 4. Set the project merge method to **Fast-forward merge** if available. Test with a non-author account and disposable branches: forbidden direct pushes and unauthorized merges must fail; allowed author workflow and source-name checks must behave as intended. Do not force-update protected refs during testing.
 5. On USTC, archive the legacy branches as `achieve/beta-20261116` and `achieve/release-20261116`, verify the archive refs point to the original tips, then delete the legacy branches. Adjust protection only as necessary under author control; do not delete before verification. Confirm the new release-line protections and pipelines before publication.
 
@@ -138,7 +128,7 @@ When stopping a branch and reporting its SHA, also report its `delivery/<batch-n
 
 ## Pull requests
 
-- USTC PRs (merge requests) target `main`, use only `feat/*` or `bug/*` sources, and are opened by the author only. Keep the diff minimal and scoped to one change. Only the author merges after upstream verification, with fast-forward only; contributors and agents do not push directly to USTC.
+- Development USTC PRs (merge requests) target the feat base, not `main`, and use `feat/*` or `bug/*` sources. The author opens MRs; keep each diff minimal and scoped to one change. After upstream verification, integrate development into the feat base; the separate feat:base-to-main merge promotes the integrated result. Contributors and agents do not push directly to USTC.
 - Before opening: run the gates appropriate to the change and affected tests. For Scala changes run `sbt compile` and `make check` (scalafmt + scalafix); for frontend changes run the type/cycle gates and the affected Playwright specs (see below).
 - The static quality job is blocking in both `.github/workflows/ci.yml` and `.gitlab-ci.yml`; the latter includes merge requests and every branch. `.github/workflows/auto-release.yml` also requires this same entrypoint before building. Existing advisory browser jobs remain advisory. Configuration describes intended execution, not evidence that a remote CI run has passed.
 
