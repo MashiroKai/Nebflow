@@ -727,6 +727,22 @@ body.canvas-open.canvas-overlay #canvas-panel {
    通栏变体）不受桌面居中/排他规则（自有形态）；卡窗（body.card-window）随
    件一批并入面板同款居中（下方 §卡窗 段）。deck 叠卡态（面板 = 前卡）顶中
    即 v2① 卡顶名称条位，无需另钉。 */
+.canvas-writer-controls {
+  position: absolute;
+  top: var(--cv-head-clear, 60px);
+  right: 14px;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2, 8px);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-primary, white);
+  color: var(--text-primary, black);
+  font-size: var(--ds-fs-hint, 12px);
+}
+.canvas-writer-controls button { white-space: nowrap; }
+
 .canvas-header {
   position: absolute;
   top: 10px;

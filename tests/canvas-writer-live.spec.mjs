@@ -1,0 +1,69 @@
+import { test, expect } from '@playwright/test';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { once } from 'node:events';
+const root = resolve(process.cwd());
+const cp = readFileSync(join(root, 'target/e2e-classpath.txt'), 'utf8').trim();
+async function start() {
+  const dir = mkdtempSync(join(tmpdir(), 'canvas-writer-live-'));
+  const home = join(dir, 'home'), data = join(home, '.stand'); mkdirSync(data, {recursive:true});
+  writeFileSync(join(data, 'nebflow.json'), JSON.stringify({workSchedule:{enabled:false},safety:{defaultMode:'auto-all'}}));
+  writeFileSync(join(data, 'onboarding.json'), JSON.stringify({state:'skipped'}));
+  const socket = createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
+  const port = socket.address().port; await new Promise((ok, fail) => socket.close(e => e ? fail(e) : ok()));
+  if ([6138,8080,8097].includes(port)) throw Error('protected port');
+  const base = `http://127.0.0.1:${port}`;
+  const env = {PATH:process.env.PATH,HOME:home,STAND_HOME:data,NEBFLOW_HOME:data,NEBFLOW_GATEWAY_PORT:String(port),LANG:'en_US.UTF-8'};
+  const child = spawn('java',[`-Duser.home=${home}`,'-cp',cp,'nebflow.Main','--foreground','--home',data,'--port',String(port),'--no-browser'],{cwd:root,env,stdio:['pipe','pipe','pipe']});
+  let log=''; child.stdout.on('data', d => log+=d); child.stderr.on('data',d=>log+=d);
+  const exit = new Promise(r=>child.once('exit',(code,signal)=>r({code,signal})));
+  try {
+    await expect.poll(async()=>{if(child.exitCode!==null) throw Error(log.slice(-3000)); try{return (await fetch(base+'/api/health')).status}catch{return 0}}, {timeout:90000}).toBe(200);
+    return {dir,data,base,port,child,exit,token:JSON.parse(readFileSync(join(data,'auth.json'),'utf8'))};
+  } catch(e) { child.stdin.write('quit\n'); await exit; throw e; }
+}
+async function boot(browser,s,colorScheme) {
+  const context=await browser.newContext({viewport:{width:1440,height:960},colorScheme});
+  const page=await context.newPage();
+  const r=await fetch(s.base+'/api/auth/console-ticket',{method:'POST',headers:{Authorization:`Bearer ${s.token}`}});
+  expect(r.status).toBe(200); const {ticket}=await r.json();
+  await page.goto(`${s.base}/?ticket=${encodeURIComponent(ticket)}`,{waitUntil:'domcontentloaded'});
+  await page.waitForSelector('#activity-bar',{state:'attached',timeout:30000});
+  return {context,page};
+}
+test('real reader, claim, persist, preemption', async ({browser}, info) => {
+  test.setTimeout(180000); const s=await start(); let a,b;
+  try {
+    a=await boot(browser,s,process.env.CANVAS_SCHEME || 'light'); b=await boot(browser,s,process.env.CANVAS_SCHEME || 'light');
+    await a.page.evaluate(async()=>{const m=await import('/js/canvas.js');m.openCanvas()});
+    const status=a.page.locator('#canvas-panel .canvas-writer-controls [role=status]');
+    await expect(status).toContainText('只读');
+    await a.page.screenshot({path: info.outputPath('reader.png')});
+    const unauthorized=await a.page.evaluate(async()=>{const r=await fetch('/api/canvas-tabs',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({v:2,tabs:[]})});return r.status});
+    expect(unauthorized).toBe(409);
+    await a.page.getByRole('button',{name:'取得控制权'}).click({force:true});
+    await expect(status).toContainText('可写');
+    await a.page.screenshot({path: info.outputPath('writer.png')});
+    const put=a.page.waitForResponse(r=>new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT');
+    await a.page.evaluate(async()=>{const m=await import('/js/canvas.js'); m.openTab('writer-test','Writer test',{type:'generic',pinned:true})});
+    expect((await put).status()).toBe(200);
+    await expect.poll(()=>a.page.evaluate(async()=>{const r=await fetch('/api/canvas-tabs'); const j=await r.json();return j.tabs?.some(t=>t.id==='writer-test')})).toBe(true);
+    await b.page.getByRole('button',{name:'取得控制权'}).click({force:true});
+    await expect(b.page.locator('#canvas-panel .canvas-writer-controls [role=status]')).toContainText('可写');
+    // A same-browser-tab takeover may not emit a console takeover frame; exercise
+    // the real stale PUT by initiating another shared mutation from the old page.
+    const stale=a.page.waitForResponse(r=>new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT');
+    await a.page.evaluate(async()=>{const m=await import('/js/canvas.js');m.openTab('writer-stale','Stale',{type:'generic',pinned:true})});
+    expect((await stale).status()).toBe(409);
+    await expect(status).toContainText('只读');
+    await a.page.screenshot({path: info.outputPath('preempted.png')});
+  } finally {
+    if(a) await a.context.close(); if(b) await b.context.close();
+    s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),20000))]);
+    if(!result) throw Error(`isolated instance did not exit: ${s.dir}, ${s.port}`);
+    console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} home=${s.dir}`);
+  }
+});

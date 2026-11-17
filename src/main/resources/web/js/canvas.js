@@ -54,11 +54,21 @@ const TABS_API = '/api/canvas-tabs';
 function createCanvasWriterClient(transport) {
   let role = 'reader';
   let epoch = null;
+  let generation = 0;
   return {
     role: () => role,
+    async refresh() {
+      const current = generation;
+      const result = await transport.query();
+      if (generation !== current || !result) return;
+      role = result.role === 'writer' && Number.isSafeInteger(result.epoch) ? 'writer' : 'reader';
+      epoch = role === 'writer' ? result.epoch : null;
+      transport.changed?.(role);
+    },
     credentials: () => role === 'writer' ? { epoch } : null,
-    lost() { role = 'reader'; epoch = null; transport.changed?.(role); },
+    lost() { generation++; role = 'reader'; epoch = null; transport.changed?.(role); },
     async claim() {
+      generation++;
       const result = await transport.claim();
       if (result?.role === 'writer' && Number.isSafeInteger(result.epoch)) {
         role = 'writer'; epoch = result.epoch; transport.changed?.(role);
@@ -95,6 +105,13 @@ function writerNotice(message = 'Canvas 当前为只读，请先取得控制权�
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,
   failed: () => writerNotice('Canvas 控制权已失效或保存失败，当前为只读。'),
+  async query() {
+    try {
+      const query = new URLSearchParams(canvasIdentity());
+      const response = await fetch(`/api/canvas-writer?${query}`, { headers: { ...authHeaders() } });
+      return response.ok ? await response.json() : null;
+    } catch { return null; }
+  },
   async claim() {
     try {
       const response = await fetch('/api/canvas-writer/claim', {
@@ -1281,6 +1298,9 @@ document.addEventListener('canvas-viewer-rerendered', (e) => {
  *  @param {string} id — Tab identifier. */
 export function setActiveTab(id) {
   if (!tabs.has(id)) return;
+  if (!applyingLiveTabsFrame && canvasWriter.role() !== 'writer' && activeTabId !== id) {
+    writerNotice('Canvas 只读：当前标签切换仅在本地显示，不会同步。');
+  }
   if (!applyingLiveTabsFrame && activeTabId !== id) {
     pendingLocalActivation = { id, at: Date.now(), generation: ++activationGeneration };
     lateSyncActive = null;
@@ -1564,6 +1584,7 @@ export async function openWorkspaceItem(item) {
   // Pop 卡 / 引用跳转等显式打开无标记，语义不变。骨架错误腿（下方 error
   // 分支）同受此闸：恢复一个「文件不可读」骨架也是复活。
   const viaRestore = requestedFilePaths.delete(absPath) || requestedFilePaths.delete(item.path);
+  if (!viaRestore && !tabs.has(id) && !allowCanvasMutation()) return;
 
   // URL type — render the page in a sandboxed iframe. Handled before all
   // file logic: URL tabs have no absPath (scheduleFileRefresh skips them)
@@ -3687,6 +3708,7 @@ export function deckKeyAction(action, e) {
 }
 
 function deckCloseOthers(keepId) {
+  if (!allowCanvasMutation()) return;
   if (!deck.open || deck.finalizing) return;
   for (const [id, entry] of [...tabs]) {
     if (id === keepId) continue;
@@ -4774,17 +4796,20 @@ export function quoteActiveCardRef() {
 
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
-  const header = document.querySelector('#canvas-panel .canvas-header');
-  if (header && !writerStatusEl) {
+  const panel = document.getElementById('canvas-slide');
+  if (panel && !writerStatusEl) {
+    const controls = document.createElement('div');
+    controls.className = 'canvas-writer-controls';
     writerStatusEl = document.createElement('span');
     writerStatusEl.setAttribute('role', 'status');
     writerClaimEl = document.createElement('button');
     writerClaimEl.type = 'button';
     writerClaimEl.textContent = '取得控制权';
     writerClaimEl.addEventListener('click', () => canvasWriter.claim());
-    header.append(writerStatusEl, writerClaimEl);
+    controls.append(writerStatusEl, writerClaimEl);
+    panel.append(controls);
     writerChanged('reader');
-    fetch('/api/canvas-writer', { headers: { ...authHeaders() } }).catch(() => {});
+    canvasWriter.refresh();
   }
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
   // boot 序）置位，否则卡窗会把主窗整组标签恢复进来。
