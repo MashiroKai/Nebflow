@@ -766,7 +766,15 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   }
   const regTable = tables.find((t) => t.header.some((h) => /期望材质/.test(h)));
   const excTable = tables.find((t) => t.header.some((h) => /^理由$/.test(h)) && t.header.some((h) => /选择器/.test(h)));
+  const pendingTable = tables.find((t) => t.header.some((h) => /静态不可证原因/.test(h)) && t.header.some((h) => /已有运行态或缺口/.test(h)));
   const clean = (s) => String(s || '').replace(/`/g, '').trim();
+  const pending = new Map();
+  for (const row of pendingTable?.rows || []) {
+    const [sel, reason, evidence] = row.map(clean);
+    if (!sel || !reason || !evidence || pending.has(sel)) {
+      add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: sel || '-', detail: '待解析名单缺字段或重复', why: '豁免须逐项列出理由与证据缺口' });
+    } else pending.set(sel, { reason, evidence });
+  }
 
   if (!regTable) {
     add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: '-', detail: '缺少「顶部悬浮面清单」表', why: '没有登记面清单 = 顶部悬浮面无约束；先改规范再加面' });
@@ -811,10 +819,14 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
           entry.ok = false;
           entry.detail = `期望毛玻璃，但该面没有任何模糊来源（${viaClass ? `.${viaClass} 不在 glass.css 供体里` : '既无成员也无类'}）`;
         } else if (!bandOk) {
-          entry.ok = false;
-          entry.detail = a === null
-            ? `无法证明玻璃底：无法解析 ${e?.bg || '(无背景声明)'}`
-            : `玻璃底 α=${a.toFixed(3)} 跑出 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX})（${e.bg}）`;
+          if (a === null && pending.has(sel)) {
+            entry.detail = `静态待补证：${pending.get(sel).reason}；${pending.get(sel).evidence}`;
+          } else {
+            entry.ok = false;
+            entry.detail = a === null
+              ? `无法证明玻璃底：无法解析 ${e?.bg || '(无背景声明)'}`
+              : `玻璃底 α=${a.toFixed(3)} 跑出 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX})（${e.bg}）`;
+          }
         }
       }
       g7.registry.push(entry);

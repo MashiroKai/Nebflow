@@ -29,4 +29,9 @@ try {
   assert.equal(result.code, 1, 'normal solid background must fail');
   assert.ok(result.json.violations.some(v => v.rule === 'G7b' && v.selector === '.mh-search-bar'), JSON.stringify(result.json.violations));
   console.log('PASS fallback separated; normal solid background rejected by G7b');
+  writeFileSync(path, original + '\nbody.mobile-layer .mh-search-bar { background: var(--unknown-glass-token); }\n');
+  result = run();
+  assert.equal(result.code, 1, 'unknown unlisted background must fail');
+  assert.ok(result.json.violations.some(v => v.rule === 'G7b' && v.selector === '.mh-search-bar' && v.detail.includes('无法解析')), JSON.stringify(result.json.violations));
+  console.log('PASS unlisted unresolved background rejected by G7b');
 } finally { rmSync(tmp, { recursive: true, force: true }); }
