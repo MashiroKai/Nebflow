@@ -8,6 +8,7 @@
   {"file":"js/orbSettingsUI.js","line":92,"reason":"Legacy orb state selector pending migration."},
   {"file":"js/orbSettingsUI.js","line":100,"reason":"Legacy orb base selector pending migration."},
   {"file":"js/orbSettingsUI.js","line":114,"reason":"Legacy orb source selector pending migration."},
+  {"file":"js/socialPanel.js","line":1100,"reason":"Legacy configuration-driven social selector pending migration."},
   {"file":"js/sidebar.js","line":890,"reason":"Legacy thinking effort selector pending migration."},
   {"file":"js/sidebar.js","line":905,"reason":"Legacy language selector pending migration."},
   {"file":"js/usageDashboard.js","line":186,"reason":"Legacy usage filter selectors pending migration."},

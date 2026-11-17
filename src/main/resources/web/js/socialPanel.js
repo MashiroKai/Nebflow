@@ -233,7 +233,6 @@
 // Zero engine change throughout (GET /api/social/channels stays read-only).
 
 import { t } from './i18n.js';
-import { openDropdownMenu } from './dropdownMenu.js';
 import { pushLayer, popLayer } from './focusTrap.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
@@ -1089,13 +1088,17 @@ function fieldHTML(ch, f) {
     // feishubridge: hidden regions are data, not choices — the sealed lark
     // entry stays in the definition layer but never renders (HIDE, NOT DELETE;
     // restoring = dropping its `hidden` flag).
-    const regions = (ch.regions || []).filter(r => !r.hidden);
-    const value = (stored || f.default);
-    const current = regions.find(r => r.key === value) || regions[0];
-    return `<div class="social-field">
-        <span class="social-field-label" id="${id}-label">${label}</span>
-        <button type="button" id="${id}" class="social-input social-select" data-field="${escapeHtml(f.key)}" data-social-picker="${escapeHtml(ch.id)}" value="${escapeHtml(current?.key || '')}" aria-labelledby="${id}-label" aria-haspopup="menu" aria-expanded="false">${escapeHtml(current ? t(`social.${ch.id}.region.${current.key}`) : '')}</button>
-      </div>`;
+    const opts = (ch.regions || [])
+      .filter((r) => !r.hidden)
+      .map((r) => {
+        const sel = (stored || f.default) === r.key ? ' selected' : '';
+        return `<option value="${escapeHtml(r.key)}"${sel}>${escapeHtml(t(`social.${ch.id}.region.${r.key}`))}</option>`;
+      })
+      .join('');
+    return `<label class="social-field" for="${id}">
+        <span class="social-field-label">${label}</span>
+        <select id="${id}" class="social-input social-select" data-field="${escapeHtml(f.key)}">${opts}</select>
+      </label>`;
   }
   return `<label class="social-field" for="${id}">
       <span class="social-field-label">${label}</span>
@@ -1107,28 +1110,8 @@ function fieldHTML(ch, f) {
     </label>`;
 }
 
-let closeSocialPicker = () => {};
-function showSocialPicker(button) {
-  closeSocialPicker();
-  const ch = channelById(button.dataset.socialPicker);
-  if (!ch) return;
-  const menu = document.createElement('div');
-  menu.className = 'project-open-menu nf-glass'; menu.setAttribute('role', 'menu');
-  for (const region of (ch.regions || []).filter(r => !r.hidden)) {
-    const item = document.createElement('button'); item.type = 'button';
-    item.setAttribute('role', 'menuitemradio'); item.setAttribute('aria-checked', String(region.key === button.value));
-    const icon = document.createElement('span'), label = document.createElement('span'), check = document.createElement('span');
-    label.textContent = t(`social.${ch.id}.region.${region.key}`); check.textContent = region.key === button.value ? '✓' : '';
-    check.setAttribute('aria-hidden', 'true'); item.append(icon, label, check);
-    item.addEventListener('click', () => { button.value = region.key; button.textContent = label.textContent; closeSocialPicker(); button.focus(); });
-    menu.append(item);
-  }
-  closeSocialPicker = openDropdownMenu(button, menu);
-}
-
 /** Full modal render (channels + the remote-access section captions). */
 function renderAll() {
-  closeSocialPicker();
   const list = cardList();
   if (!list) return;
   // socialhide (PHASE 3): sealed channels (`hidden: true`) are data, not
@@ -1850,7 +1833,6 @@ export function openSocialPanel() {
 }
 
 export function closeSocialPanel() {
-  closeSocialPicker();
   const ov = overlay();
   if (!ov) return;
   // The in-card scan poll never outlives the panel (the closer owns the exit).
@@ -1878,8 +1860,6 @@ function onKeydown(ev) {
   const ov = overlay();
   if (!ov || !ov.classList.contains('on')) return;
   if (ev.key === 'Escape') {
-    const picker = document.querySelector('[data-social-picker][aria-expanded="true"]');
-    if (picker instanceof HTMLElement) { ev.preventDefault(); closeSocialPicker(); picker.focus(); return; }
     ev.preventDefault();
     closeSocialPanel();
     return;
@@ -1906,8 +1886,6 @@ function onKeydown(ev) {
 function onDocumentClick(ev) {
   const target = /** @type {HTMLElement|null} */ (ev.target instanceof Element ? ev.target : null);
   if (!target) return;
-  const picker = target.closest('[data-social-picker]');
-  if (picker instanceof HTMLButtonElement) { showSocialPicker(picker); return; }
   if (target.closest('#social-btn')) { openSocialPanel(); return; }
   if (target.closest('#social-modal-close')) { closeSocialPanel(); return; }
   // weixin-binditem: the item row's toggle. Checked BEFORE the action buttons:
