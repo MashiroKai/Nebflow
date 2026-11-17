@@ -769,9 +769,10 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   const pendingTable = tables.find((t) => t.header.some((h) => /静态不可证原因/.test(h)) && t.header.some((h) => /已有运行态或缺口/.test(h)));
   const clean = (s) => String(s || '').replace(/`/g, '').trim();
   const pending = new Map();
+  const allowedPending = new Set(['#header', '.cr-capsule', '.retry-status', '.mf-strip-chip.on::after', '.mh-idhead-name', '.mh-chrome-btn', '.mobile-back-btn']);
   for (const row of pendingTable?.rows || []) {
     const [sel, reason, evidence] = row.map(clean);
-    if (!sel || !reason || !evidence || pending.has(sel)) {
+    if (!sel || !reason || !evidence || pending.has(sel) || !allowedPending.has(sel)) {
       add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: sel || '-', detail: '待解析名单缺字段或重复', why: '豁免须逐项列出理由与证据缺口' });
     } else pending.set(sel, { reason, evidence });
   }

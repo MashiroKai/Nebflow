@@ -34,4 +34,11 @@ try {
   assert.equal(result.code, 1, 'unknown unlisted background must fail');
   assert.ok(result.json.violations.some(v => v.rule === 'G7b' && v.selector === '.mh-search-bar' && v.detail.includes('无法解析')), JSON.stringify(result.json.violations));
   console.log('PASS unlisted unresolved background rejected by G7b');
+  const spec = join(tmp, specdir, 'glass-spec.md');
+  const specOriginal = readFileSync(spec, 'utf8');
+  writeFileSync(spec, specOriginal.replace('| `#header` | 复合', '| `.mh-search-bar` | 不可解析 | 人工伪造豁免 |\n| `#header` | 复合'));
+  result = run();
+  assert.equal(result.code, 1, 'new pending exemption must fail');
+  assert.ok(result.json.violations.some(v => v.rule === 'G7b' && v.selector === '.mh-search-bar' && v.detail.includes('待解析名单')), JSON.stringify(result.json.violations));
+  console.log('PASS adding an eighth pending selector rejected');
 } finally { rmSync(tmp, { recursive: true, force: true }); }
