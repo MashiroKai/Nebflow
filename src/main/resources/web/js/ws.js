@@ -368,7 +368,7 @@ const GLOBAL_MSG_TYPES = new Set([
   // 连接（无 sessionId）。🔴 必须入 GLOBAL：否则会被下方视图路由当会话内事件
   // ⇒ setActiveView(primary)，任一端开/关页签都把其他端正在看的视图抢走
   // （projectCreated 同律）。消费点 = canvas.js applyLiveTabsFrame（幂等收敛）。
-  'canvasTabsChanged',
+  'canvasTabsChanged', 'canvasWriterChanged',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

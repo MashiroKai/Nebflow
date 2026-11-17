@@ -55,6 +55,7 @@ function createCanvasWriterClient(transport) {
   let role = 'reader';
   let epoch = null;
   let generation = 0;
+  let pendingWrite = Promise.resolve();
   return {
     role: () => role,
     async refresh() {
@@ -77,8 +78,15 @@ function createCanvasWriterClient(transport) {
     },
     async put(payload) {
       if (role !== 'writer') return false;
-      const result = await transport.put(payload, epoch);
-      if (!result) { this.lost(); transport.failed?.(); }
+      const capturedEpoch = epoch;
+      const run = async () => {
+        if (role !== 'writer' || epoch !== capturedEpoch) return false;
+        const result = await transport.put(payload, capturedEpoch);
+        if (!result) { this.lost(); transport.failed?.(); }
+        return result;
+      };
+      const result = pendingWrite.then(run, run);
+      pendingWrite = result.catch(() => false);
       return result;
     },
   };
@@ -5721,6 +5729,13 @@ function bindPersistReconnect() {
       liveTabsWsBound = true;
       // 服务端写穿广播（他端开/关/切/排序 → PUT 落盘成功外推）：就地收敛。
       // 自己 PUT 的回声同样进这里——收敛幂等（集合/顺序已一致即零动作）。
+      onMessage('canvasWriterChanged', (msg) => {
+        const current = canvasWriter.credentials();
+        if (current && Number.isSafeInteger(msg.epoch) && msg.epoch > current.epoch) {
+          if (pendingPersistPayload || persistDirty) localUnsynced = true;
+          canvasWriter.lost();
+        }
+      });
       onMessage('canvasTabsChanged', (msg) => {
         const parsed = parseTabsData(msg);
         if (parsed) applyLiveTabsFrame(parsed);
