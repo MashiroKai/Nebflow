@@ -126,8 +126,6 @@ import { consumeApplied, consumeResolved, consumeAskState } from './askEditRevie
 export const INTERNAL_CLASSES = [
   'ask-fab', 'ask-dock', 'ask-col', 'ask-colwrap', 'ask-input',
   'ask-bub', 'ask-send', 'ask-stop', 'ask-sess-dot',
-  // ask-mail 批（2026-11-16）：dock 内的会话地址行（可复制）。
-  'ask-addr',
   // 记事本批（2026-11-05）：同一组件的第二对节点，同样只在本模块内建/查。
   'note-fab', 'note-dock', 'note-body',
   // canvas-inline-diff-review（2026-11-16）：提案 diff 卡一族随问答路径整体退役
@@ -843,21 +841,6 @@ function wireElements() {
   });
   el.send.addEventListener('click', () => submit());
   el.stop.addEventListener('click', () => stopAsk());
-  // ask-mail 批（2026-11-16）：地址行点击 = 复制**完整**地址（视觉可截断，复制
-  // 绝不截断——dataset.askAddr 是 syncAddrRow 注的全文）。停冒泡：dock 本体的点击
-  // 防外溢腿不受影响；复制成功给一瞬 is-copied 着色（bgAgents 地址 chip 同式，
-  // 不弹 toast——复制是最轻的动作，反馈不打断）。
-  el.addr.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const full = el.addr.dataset.askAddr || '';
-    if (!full) return;
-    try {
-      const p = navigator.clipboard && navigator.clipboard.writeText(full);
-      if (p && p.catch) p.catch(() => {});
-    } catch { /* 老引擎/无权限：粘不到剪贴板也不报错，行文本仍可手选 */ }
-    el.addr.classList.add('is-copied');
-    setTimeout(() => el.addr.classList.remove('is-copied'), 1200);
-  });
   // 多行草稿自动长高（主会话 textarea 同式：auto → scrollHeight，封顶留 dock 紧凑形态）。
   el.input.addEventListener('input', () => {
     el.input.style.height = 'auto';
