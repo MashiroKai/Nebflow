@@ -268,6 +268,19 @@ async function bootApp(page) {
 
 const frames = (captured, type) => captured.filter((f) => f.type === type);
 
+test('旧待办隐藏决策卡结构化内容，普通待办仍显示', async ({ page }) => {
+  const h = await bootApp(page);
+  await h.waitRows(4);
+  h.sendFrame({ type: 'scheduledTaskList', sessionId: SID, scope: 'all', tasks: [
+    { id: 'decision', kind: 'todo', sessionId: SID, project: '__decision_card_mvp__', name: '卡', detail: '{"summary":"secret-json"}', content: '{"summary":"secret-json"}' },
+    { id: 'normal', kind: 'todo', sessionId: SID, content: '普通待办' },
+  ] });
+  await h.waitRows(1);
+  const rows = await page.evaluate(async () => (await import('/js/todoStore.js')).todoStore.allItems());
+  expect(rows.map(row => row.id)).toEqual(['normal']);
+  expect(JSON.stringify(rows)).not.toContain('secret-json');
+});
+
 test('null 来源不回填当前会话且不可错误寻址', async ({ page }) => {
   const h = await bootApp(page);
   await h.waitRows(4);

@@ -307,7 +307,9 @@ function isTodoRow(row) {
   if (!row || typeof row.id !== 'string' || !row.id) return false;
   const kind = row.kind == null ? null : String(row.kind);
   if (kind != null && kind !== 'todo') return false;
-  return !MIRROR_NAME_RE.test(String(row.name || ''));
+  // Decision-card payloads are structured JSON, not editable legacy todos.
+  // Hide rather than risk displaying or overwriting the raw payload.
+  return row.project !== '__decision_card_mvp__' && !MIRROR_NAME_RE.test(String(row.name || ''));
 }
 
 /** 后端行 → 读口形状（映射单点；渲染层只认这里产出的键）。 */

@@ -151,7 +151,8 @@ function isOverdue(t) {
 }
 
 function isTodoTask(t) {
-  return t.kind === 'todo';
+  // Legacy surface cannot safely edit the decision-card JSON payload.
+  return t.kind === 'todo' && t.project !== '__decision_card_mvp__';
 }
 
 /**
@@ -1697,7 +1698,7 @@ onMessage('scheduledTaskList', (msg) => {
     inboxTodos = (msg.tasks || []).filter(isTodoTask);
     saveCachedInbox(inboxTodos);
   } else {
-    tasks = msg.tasks || [];
+    tasks = (msg.tasks || []).filter(t => t.project !== '__decision_card_mvp__');
     if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
   }
   renderList();
