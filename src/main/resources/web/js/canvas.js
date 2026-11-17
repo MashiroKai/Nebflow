@@ -1111,7 +1111,7 @@ function showUpdateHint(entry) {
     // 圆钮簇（z:10）之下（与下方冲突条同修，见彼处注释）。
     'position:relative', 'z-index:5',
     'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
-    'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
+    'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
     'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
@@ -1176,7 +1176,7 @@ function showExternalConflict(entry) {
     // 的是代码页签）。relative+z:5 抬到滚动面之上、圆钮簇（z:10）之下。
     'position:relative', 'z-index:5',
     'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
-    'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
+    'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
     'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',

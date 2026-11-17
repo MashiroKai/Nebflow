@@ -23,6 +23,7 @@
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +50,9 @@ const server = createServer((req, res) => {
   const file = join(WEB_DIR, p);
   if (!file.startsWith(WEB_DIR)) { res.writeHead(403); res.end(); return; }
   try {
-    const body = readFileSync(file);
+    const body = process.env.CAR_BASELINE && p === '/js/canvas.js'
+      ? execFileSync('git', ['show', `${process.env.CAR_BASELINE}:src/main/resources/web/js/canvas.js`], { cwd: resolve(HERE, '..') })
+      : readFileSync(file);
     res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream' });
     res.end(body);
   } catch {
@@ -332,6 +335,14 @@ test('E4 dirty tab: no auto refresh, hint appears, click refreshes per refreshDi
   expect(reads.length, 'dirty tab: NO auto refresh dispatched').toBe(readsBaseline);
   await expect(page.locator(`${sel} .canvas-update-hint`), 'lightweight update hint visible').toHaveCount(1);
   await expect(page.locator(`${sel} .canvas-update-hint`)).toContainText('磁盘');
+  const unobscured = await page.locator(`${sel} .canvas-update-hint-text`).evaluate(el => {
+    const r = el.getBoundingClientRect();
+    return [0.15, 0.5, 0.85].every(x => {
+      const top = document.elementFromPoint(r.left + r.width * x, r.top + r.height / 2);
+      return top && el.contains(top);
+    });
+  });
+  expect(unobscured, 'hint text is not covered by floating chrome').toBe(true);
   await page.screenshot({ path: '/private/tmp/car-evid/e4-dirty-hint.png', clip: await page.evaluate(() => {
     const r = document.getElementById('canvas-panel').getBoundingClientRect();
     return { x: r.x, y: r.y, width: Math.min(560, r.width), height: 220 };
