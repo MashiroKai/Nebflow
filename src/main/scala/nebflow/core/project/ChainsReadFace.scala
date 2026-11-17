@@ -250,7 +250,16 @@ object ChainsReadFace:
   )(rec: DelegateRegistry.Record): IO[Json] =
     IO.blocking {
       val key = ChainStore.keyFor(rec.taskId, rec.id)
-      val live = registry.get(rec.id).map(_ => Json.obj("status" -> "running".asJson))
+      // Agent-side progress, not registry membership or subprocess noise, is the
+      // only available freshness signal. A restart marker is superseded only
+      // by activity from a subsequent revival.
+      val now = System.currentTimeMillis()
+      val live = registry.get(rec.id).filter { agent =>
+        val at = agent.lastActivityMs
+        at > 0 && at <= now && now - at <= 30L * 60L * 1000L &&
+          rec.restartInterruptedAt.forall(at > _)
+      }.map(_ => Json.obj("status" -> "running".asJson))
+        .orElse(Some(Json.obj("status" -> "interrupted".asJson)))
       val verdict = latestVerdict(key)
       rec.asJson.asObject match
         case Some(obj) =>

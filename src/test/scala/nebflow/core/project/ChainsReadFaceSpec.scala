@@ -44,7 +44,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    if os.exists(tempRoot / ".legacy-settled.json") then os.remove(tempRoot / ".legacy-settled.json")
+    if os.exists(tempRoot / "delegates" / ".legacy-settled.json") then os.remove(tempRoot / "delegates" / ".legacy-settled.json")
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
     if os.exists(tempRoot / "delegates") then nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     if os.exists(tempRoot / "chains") then nebflow.ForceRemove.removeAll(tempRoot / "chains")
@@ -53,7 +53,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     if os.exists(tempRoot / "c4b-alias-root") then nebflow.ForceRemove.removeAll(tempRoot / "c4b-alias-root")
 
   override def afterEach(context: munit.AfterEach): Unit =
-    if os.exists(tempRoot / ".legacy-settled.json") then os.remove(tempRoot / ".legacy-settled.json")
+    if os.exists(tempRoot / "delegates" / ".legacy-settled.json") then os.remove(tempRoot / "delegates" / ".legacy-settled.json")
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
 
   private def mkResources(system: ActorSystem, llm: LlmHandle[IO]): IO[SharedResources] =
@@ -116,7 +116,8 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       sessionId = sid,
       ref = null.asInstanceOf[nebflow.actor.ActorRef[AgentCommand]], // 读面只查键在册，零取用
       kind = AgentKind.Delegate,
-      rootSessionId = sid
+      rootSessionId = sid,
+      lastActivityMs = System.currentTimeMillis()
     )
 
   test("only explicitly marked records are hidden from both windows") {
@@ -127,7 +128,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     val result = nebflow.core.delegate.LegacySettledManifest.generate()
     assertEquals(result, (2, true))
     assertEquals(nebflow.core.delegate.LegacySettledManifest.generate(), (2, false))
-    os.write.over(tempRoot / ".legacy-settled.json", s"{\"version\":1,\"ids\":[\"${hidden.id}\"]}", createFolders = true)
+    os.write.over(tempRoot / "delegates" / ".legacy-settled.json", s"{\"version\":1,\"ids\":[\"${hidden.id}\"]}", createFolders = true)
     for
       active <- ChainsReadFace.rowsJson(Map.empty)
       history <- ChainsReadFace.rowsJson(Map.empty, archived = true)
@@ -136,6 +137,26 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         .flatMap(_.hcursor.get[String]("id").toOption).toSet
       assertEquals(ids(active), Set.empty[String])
       assertEquals(ids(history), Set(visible.id))
+  }
+
+  test("fresh activity runs; 676-hour stale and restart markers do not") {
+    val now = System.currentTimeMillis()
+    val fresh = record("delegate-fresh-test", None)
+    val stale = record("delegate-stale-test", None)
+    val restart = record("delegate-restart-test", None).copy(restartInterruptedAt = Some(now - 1000L))
+    List(fresh, stale, restart).foreach(DelegateRegistry.put)
+    val registry = Map(
+      fresh.id -> agentRecord(fresh.id).copy(lastActivityMs = now),
+      stale.id -> agentRecord(stale.id).copy(lastActivityMs = now - 676L * 3600000L),
+      restart.id -> agentRecord(restart.id).copy(lastActivityMs = now - 2000L)
+    )
+    ChainsReadFace.rowsJson(registry).map { body =>
+      val rows = body.hcursor.get[List[io.circe.Json]]("rows").toOption.get
+      def status(id: String) = rows.find(_.hcursor.get[String]("id").toOption.contains(id)).get.hcursor.downField("live").get[String]("status").toOption
+      assertEquals(status(fresh.id), Some("running"))
+      assertEquals(status(stale.id), Some("interrupted"))
+      assertEquals(status(restart.id), Some("interrupted"))
+    }
   }
 
   // ── C1 行投影 ───────────────────────────────────────────────────────────
@@ -178,10 +199,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       assertEquals(live.hcursor.downField("verdict").get[String]("reason").toOption, Some("branch ready"))
       val dead =
         rows.find(_.hcursor.get[String]("id").toOption.contains(deadRec.id)).getOrElse(fail("dead row missing"))
-      assert(
-        dead.hcursor.downField("live").focus.isEmpty,
-        "no registry presence ⇒ no live key (adapter keeps authority)"
-      )
+      assertEquals(dead.hcursor.downField("live").get[String]("status").toOption, Some("interrupted"))
       // 无判词键：deadRec 的键 = delegateId 回落（keyFor）——42 行不属它。
       assert(dead.hcursor.downField("verdict").focus.isEmpty, "no verdict row on its own key ⇒ no verdict key")
       // 无 taskStatus 供给 = 键缺席（旧投影，缺键容忍）。

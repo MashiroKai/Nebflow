@@ -65,9 +65,10 @@ export function initBgMergedPanel() {
   // 一行，签与行集当场打架。口径与 data-bg-row-total / 头部计数同源：一行一个数。
   const sync = () => {
     if (!grpLabel || !grpList) return;
-    const n = grpList.querySelectorAll('.bg-task-row').length;
-    grpLabel.hidden = n === 0;
-    grpLabel.textContent = t('bg.sectionAgents') + (n > 0 ? ' · ' + n : '');
+    const rows = grpList.querySelectorAll('.bg-task-row').length;
+    const n = Number(grpList.getAttribute('data-bg-active-count') || 0);
+    grpLabel.hidden = rows === 0;
+    grpLabel.textContent = t('bg.sectionAgents') + ' · ' + n;
   };
   grpMo = new MutationObserver(sync);
   grpMo.observe(gList, { childList: true });

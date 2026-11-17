@@ -2723,6 +2723,7 @@ export function renderBgAgentDropdown() {
   // 行集收敛批（2026-11-02 第二律）：模型单点把「本帧渲染的本地行数」写进列表
   // 属性（data-bg-row-total），与头部计数同源同值——回归可机械核对「签 vs 行集」。
   listEl.setAttribute('data-bg-row-total', String(model.total));
+  listEl.setAttribute('data-bg-active-count', String(model.activeCount));
   // ui-status-redesign：statusIcon() 兜底占位（<i data-lucide>）在此升级为真图标
   // （vendor lib 已就绪时上面已是内联 SVG，此调用零替换、幂等）。
   createIconsIn(listEl);
