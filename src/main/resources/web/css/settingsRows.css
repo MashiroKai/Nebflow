@@ -338,12 +338,6 @@
   body.mobile-layer #settings-content {
     padding-bottom: calc(var(--set-panel-pad-b) + var(--dock-h) + var(--dock-gap) + var(--dock-inset-b));
   }
-  /* The mobile page title is sticky over the page-body scrollport. When this
-     tall card is brought into view, its first explanatory rows must start below
-     that title rather than scrolling beneath its translucent glass. */
-  body.mobile-layer #model-chain-section {
-    scroll-margin-top: calc(var(--mtitle-h) + var(--mtitle-lead));
-  }
   body.mobile-layer .set-nav,
   body.mobile-layer .set-row {
     /* 与 mf-hub-row 同一条热区表达式（44 触控下限，工作台行族实测 50 档）。 */
