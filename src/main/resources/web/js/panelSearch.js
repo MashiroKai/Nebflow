@@ -56,12 +56,13 @@ function buildMsgSearch() {
 
   const note = document.createElement('div');
   note.className = 'mh-search-note';
-  note.textContent = t('mhsearch.capNote');
+  note.textContent = t('mhsearch.scanPartial');
 
   engine = createSocialMessageSearch({
     input,
     resultsHost: results,
     statusEl: status,
+    boundedGateway: true,
     // 有查询 ⇒ 会话列表让位、结果流自滚（CSS 判据 = .has-query，与手机页同构）。
     onHasQuery: (has) => wrap.classList.toggle('has-query', has),
   });

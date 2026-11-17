@@ -341,6 +341,28 @@ export function createSocialMessageSearch(host) {
       for (const conv of descHits) resultsHost.appendChild(buildDescHitRow(conv, log));
     }
 
+    if (host.boundedGateway) {
+      try {
+        const result = await api.searchSocialMessages(q, convs.map(c => String(c.conversationId)));
+        if (mySeq !== seq || signal.aborted) return;
+        const byId = new Map(convs.map(c => [String(c.conversationId), c]));
+        let total = 0;
+        for (const conv of convs) {
+          const hits = (result.hits || []).filter(h => String(h.conversationId) === String(conv.conversationId));
+          if (!hits.length || !byId.has(String(conv.conversationId))) continue;
+          const header = document.createElement('div');
+          header.className = 'mh-sr-group';
+          header.textContent = convGroupLabel(conv, hits.length);
+          resultsHost.appendChild(header);
+          for (const hit of hits) { resultsHost.appendChild(buildResultRow(conv, hit.message, q, log)); total++; }
+        }
+        setStatus(`${total ? t('mhsearch.resultCount', { n: total }) : t('mhsearch.noResults')} · ${t('mhsearch.scanScope', { pages: result.pages })}${result.truncated ? ' · ' + t('mhsearch.scanPartial') : ''}${result.failed ? ' · ' + t('mhsearch.scanFailed') : ''}`);
+      } catch {
+        if (mySeq === seq) setStatus(t('mhsearch.scanFailed'));
+      }
+      return;
+    }
+
     let total = 0;
     let cursor = 0;
     const workers = [0, 1].map(async () => {

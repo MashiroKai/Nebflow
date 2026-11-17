@@ -855,6 +855,20 @@ export async function getConversations() {
  *  Server keyset is FORWARD-only (store.rs: id > after, ASC, limit clamp 1..200)
  *  — 「load older」 history windows backwards client-side via id arithmetic
  *  (messages.js HISTORY_WINDOW). */
+export async function searchSocialMessages(query, conversations) {
+  if (!MOCK) return req('POST', '/api/conversations/search', { query, conversations });
+  await delay();
+  const store = mockStore();
+  const hits = [];
+  for (const conversationId of conversations.slice(0, 24)) {
+    const messages = (store.messages[conversationId] || []).slice(0, 200);
+    for (const message of messages) {
+      if (typeof message.body === 'string' && message.body.toLowerCase().includes(query.toLowerCase())) hits.push({ conversationId, message });
+    }
+  }
+  return { hits, pages: conversations.length, truncated: true, failed: false };
+}
+
 export async function getMessages(conversationId, { after = 0, limit = 50 } = {}) {
   const a = Math.max(0, Math.floor(Number(after) || 0));
   const l = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)));

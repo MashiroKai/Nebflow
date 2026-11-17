@@ -537,6 +537,29 @@ private[gateway] object SocialRoutes:
               fs.refreshConversations().flatMap(convs => Ok(convs.asJson))
         }
 
+      /** Bounded partial search over the conversations visible to the caller. */
+      case req @ POST -> Root / "conversations" / "search" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                val q = body.hcursor.get[String]("query").getOrElse("").trim
+                val ids = body.hcursor.get[List[String]]("conversations").getOrElse(Nil)
+                if q.isEmpty || q.length > 256 || ids.size > 256 then BadRequest(Json.obj("error" -> "invalid query".asJson))
+                else fs.searchSocial(q, ids).flatMap {
+                  case Left(err) => friendErr(err)
+                  case Right(result) =>
+                    Ok(Json.obj(
+                      "hits" -> result.hits.map(h => Json.obj("conversationId" -> h.conversationId.asJson, "message" -> h.message.asJson)).asJson,
+                      "pages" -> result.pages.asJson,
+                      "truncated" -> result.truncated.asJson,
+                      "failed" -> result.failed.asJson
+                    ))
+                }
+              }
+        }
+
       /** keyset 分页拉消息。?after=N&limit=N */
       case req @ GET -> Root / "conversations" / conversationId / "messages" =>
         withAuth(req) {
