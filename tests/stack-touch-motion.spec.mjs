@@ -59,6 +59,21 @@ for (const [name,dx,dy,close] of [['up',0,-80,true],['down',0,80,true],['below',
   console.log(JSON.stringify({case:name,activeBefore,before,after})); await page.screenshot({path:`${out}/canvas-${name}-after.png`}); await ctx.close();
  });
 }
+test('mobile canvas horizontal direction amplitude probe', async ({browser}) => {
+ for (const dx of [-100,100]) {
+  const {ctx,page}=await canvasPage(browser);
+  await page.getByRole('tab',{name:'看板'}).click(); await page.locator('.mf-cv-stack').click();
+  const panel=page.locator('.mf-deck-card.on'); await expect(panel).toBeVisible();
+  const box=await panel.boundingBox(); const x=Math.round(box.x+box.width/2), y=Math.round(box.y+30);
+  const before=await panel.getAttribute('data-tab-id');
+  await page.mouse.move(x,y); await page.mouse.down(); await page.mouse.move(x+dx,y,{steps:5});
+  const value=await panel.evaluate(e=>parseFloat(e.style.getPropertyValue('--dtx')));
+  console.log(JSON.stringify({component:'canvas-deck',dx,dragX:value}));
+  expect(Math.abs(value)).toBeCloseTo(100,1); await page.mouse.up();
+  await expect.poll(()=>page.locator('.mf-deck-card.on').getAttribute('data-tab-id')).not.toBe(before);
+  await ctx.close();
+ }
+});
 test('mobile reading scroll preserves tab collection', async ({browser}) => {
  const {ctx,page}=await canvasPage(browser); await page.getByRole('tab',{name:'看板'}).click();
  const scroll=page.locator('.mf-cv-host .canvas-md-scroll'); await expect(scroll).toBeVisible();
