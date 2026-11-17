@@ -2318,6 +2318,12 @@ private[gateway] object PresenceRoutes:
                           case Right(models) => Ok(Json.obj("models" -> models.asJson))
                           case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
                         }
+                  }.handleErrorWith {
+                    case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+                      BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+                    case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+                      BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+                    case e => IO.raiseError(e)
                   }
             end if
           }

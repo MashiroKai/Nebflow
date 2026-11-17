@@ -207,7 +207,13 @@ private[gateway] object ConfigRoutes:
       // 值的唯一出现位置是响应体。
       case req @ GET -> Root / "config" / "provider-keys" =>
         withAuth(req) {
-          ConfigService.revealProviderApiKeys.flatMap(Ok(_))
+          ConfigService.revealProviderApiKeys.flatMap(Ok(_)).handleErrorWith {
+            case e: IllegalStateException if e.getMessage == "Credential reference is missing" =>
+              BadRequest(Json.obj("error" -> "Credential reference is missing".asJson))
+            case e: IllegalStateException if e.getMessage == "Credential reference is unreadable" =>
+              BadRequest(Json.obj("error" -> "Credential reference is unreadable".asJson))
+            case e => IO.raiseError(e)
+          }
         }
 
       // GET /api/config/candidates —— 候选集与配置一致性自查面
