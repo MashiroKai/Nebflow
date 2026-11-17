@@ -2,6 +2,13 @@
 // TODO: reconcile fields, length counting and document boundaries with §零.
 // TODO: validate visibility/ownership before using counts as an entry badge.
 
+// Temporary code-point counting until the author confirms the counting algorithm.
+export function validateNewDecisionCard({ summary = '', content = '' }) {
+  const summaryLength = Array.from(summary).length;
+  const contentLength = Array.from(content).length;
+  return { summaryValid: summaryLength >= 40 && summaryLength <= 100, contentValid: contentLength <= 300 };
+}
+
 /** Project a ScheduledTask todo without modifying or truncating its source. */
 export function todoToDecisionCard(task) {
   if (!task || task.kind !== 'todo' || task.id == null || String(task.id) === '') return null;
@@ -19,6 +26,13 @@ export function todoToDecisionCard(task) {
     status: task.completedAt == null ? 'unresolved' : 'completed',
     source: { type: 'todo', id: String(task.id), sessionId: task.sessionId || null },
   };
+}
+
+/** Conservative scope restriction, not a verified authorization check. */
+export function currentSessionDecisionCards(rows, sessionId) {
+  if (typeof sessionId !== 'string' || !sessionId) return [];
+  return rows.filter(row => row && typeof row.sessionId === 'string' && row.sessionId === sessionId)
+    .map(todoToDecisionCard).filter(Boolean);
 }
 
 /** Count unique unresolved IDs in an already permission-filtered card set. */
