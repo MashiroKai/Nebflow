@@ -2045,10 +2045,10 @@ body.mobile-layer .mf-dots {
      错行 42px」的根因。定位腿见文件尾块（position/bottom/居中）。 */
   margin: 0;
   padding: 0 var(--ds-space-3);
-  border-radius: var(--ds-radius-pill);
-  border: 1px solid var(--glass-border);
-  background: var(--ds-wash-16);
-  box-shadow: var(--ds-shadow-dots);
+  border-radius: var(--nf-glass-dots-radius);
+  border: 1px solid var(--nf-glass-dots-border);
+  background: var(--nf-glass-dots-bg);
+  box-shadow: var(--nf-glass-dots-shadow);
   touch-action: none;
   cursor: grab;
   transition: transform 180ms cubic-bezier(0.22, 0.61, 0.36, 1), background 180ms ease;
