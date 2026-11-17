@@ -700,7 +700,8 @@ function renderChainSectionBody(container) {
   draft.appendChild(row);
   // Keep unchanged rows and controls mounted so saves do not steal focus or scroll.
   for (const fresh of [...draft.children]) {
-    const key = fresh.dataset.role ? `[data-role="${fresh.dataset.role}"]` : '#small-llm-settings-row';
+    const role = fresh.getAttribute('data-role');
+    const key = role ? `[data-role="${role}"]` : '#small-llm-settings-row';
     const current = container.querySelector(key);
     if (!current) container.appendChild(fresh);
     else if (current.outerHTML !== fresh.outerHTML) {
@@ -708,7 +709,7 @@ function renderChainSectionBody(container) {
       const activeId = active?.id;
       const activeSelect = active?.tagName === 'SELECT';
       current.replaceWith(fresh);
-      if (activeId) fresh.querySelector(`#${CSS.escape(activeId)}`)?.focus({ preventScroll: true });
+      if (activeId) /** @type {HTMLElement|null} */ (fresh.querySelector(`#${CSS.escape(activeId)}`))?.focus({ preventScroll: true });
       else if (activeSelect) fresh.querySelector('select')?.focus({ preventScroll: true });
     }
   }

@@ -81,7 +81,7 @@ function capsuleIcon(tone) {
  * 手机层 chrome 挂载（bgAgentPopup.openStepPopup 调用；桌面 ⇒ null，调用方走原路径）。
  * @param {{overlay: HTMLElement, modal: HTMLElement, bar: {stopBtn: HTMLButtonElement,
  *   retryBtn: HTMLButtonElement, retriesEl: HTMLElement, uptimeEl: HTMLElement},
- *   nodeSessionId: string, agentName: string}} spec
+ *   nodeSessionId: string, agentName: string, taskDescription?: string}} spec
  * @returns {{sheetBody: HTMLElement, sheetAnchor: HTMLElement, refresh: (meta: any) => void,
  *   autoExpandStrip: (host: HTMLElement, sid: string) => void}|null}
  */
