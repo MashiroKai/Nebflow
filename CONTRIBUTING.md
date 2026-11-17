@@ -74,16 +74,16 @@ CI runs the smoke suite against a freshly built JAR, so a green local run plus g
 
 ## Branches and commits
 
-Development uses a long-lived **feat base branch** as the feature integration baseline. Its actual Git ref must be identified by the author; `feat:base` describes its role, not a literal Git branch name (Git branch names cannot contain a colon).
+The author designated `feat/base` on 2026-11-17 as this repository's **only long-lived feat base branch** and feature integration baseline. It was created from local `main` at `0f9f5aab762f601d382e8121fc7c994f366d4c06`.
 
-1. Create every development branch from the feat base branch, including fixes and batches. Use a scoped `feat/<topic>` or `bug/<topic>` name; existing `fix/*` branches need not be renamed.
-2. After development and verification, merge the development branch back into the feat base branch, **not directly into `main`**.
-3. Promote the integrated feat base to `main` in a single feat:base-to-main merge, subject to author approval.
-4. Only the author controls pushing `main` to release; agents must not do it. Release lines remain downstream only.
+1. Create every development branch from `feat/base`, including fixes and batches. Use a scoped `feat/<topic>` or `bug/<topic>` name; existing `fix/*` branches need not be renamed.
+2. After development and verification, merge the development branch back into `feat/base`, **not directly into `main`**.
+3. Promote the integrated `feat/base` to `main` in a single feat:base-to-main merge, subject to author approval.
+4. Only the author personally pushes `main` to release; no one may do it on the author's behalf. Release lines remain downstream only.
 
 ```mermaid
 flowchart LR
-  B[long-lived feat base] --> D[feat/* or bug/* development]
+  B[feat/base] --> D[feat/* or bug/* development]
   D -->|verified merge| B
   B -->|single feat:base merge| M[main]
   M -->|author only| R[release]
