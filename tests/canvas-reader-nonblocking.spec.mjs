@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -14,13 +14,17 @@ test('reader can browse without takeover; rejected write notifies once', async (
   const dir = mkdtempSync(join(tmpdir(), 'canvas-reader-'));
   const home = join(dir, 'home'), data = join(home, '.stand');
   mkdirSync(data, { recursive: true });
+  const resolvedData = realpathSync(data);
+  const productionData = realpathSync('/Users/kaiyu/.stand');
+  console.log(`[isolation] resolved_data_root=${resolvedData} production_equal=${resolvedData === productionData}`);
+  if (resolvedData === productionData || resolvedData.startsWith(productionData + '/')) throw Error('refusing production data root');
   writeFileSync(join(data, 'nebflow.json'), JSON.stringify({workSchedule:{enabled:false},safety:{defaultMode:'auto-all'}}));
   writeFileSync(join(data, 'onboarding.json'), JSON.stringify({state:'skipped'}));
   const sid='reader-fixture', now=Date.now();
   mkdirSync(join(data,'sessions'), {recursive:true});
   writeFileSync(join(data,'sessions','_index.json'), JSON.stringify({activeId:sid,sessions:[{id:sid,name:'Reader fixture',createdAt:now,updatedAt:now,hasUnread:false,agentName:'Nebula'}],folders:[]}));
   writeFileSync(join(data,'sessions',`${sid}.json`), JSON.stringify([{role:'user',content:'reader fixture message',timestamp:now}]));
-  writeFileSync(join(data,'sessions',`${sid}.ui.json`), JSON.stringify([{type:'user',text:'reader fixture message',attachments:[],timestamp:now}]));
+  writeFileSync(join(data,'sessions',`${sid}.ui.json`), JSON.stringify([{type:'user',text:'reader fixture message',attachments:[{type:'file',name:'reader-fixture.md',path:join(home,'reader-fixture.md')}],timestamp:now}]));
   writeFileSync(join(home,'reader-fixture.md'),'# Real reader fixture\n\nREAL_READER_CONTENT\n');
   const socket = createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
   const port = socket.address().port; await new Promise((ok, fail) => socket.close(e => e ? fail(e) : ok()));
@@ -42,15 +46,20 @@ test('reader can browse without takeover; rejected write notifies once', async (
       await context.route('**/js/canvas.js', route => route.fulfill({status:200,contentType:'application/javascript',body:source}));
     }
     const page = await context.newPage(); const errors = [];
+    page.on('response', async r => { if (new URL(r.url()).pathname.endsWith('/canvas.js')) { const body=await r.text().catch(()=> ''); console.log('[canvas-module]', r.url(), 'status',r.status(),'old-reader-modal',body.includes("if (role === 'reader') mod.showCanvasTakeover"),'fixed-reader-guard',body.includes('Initial reader state is browsing')); } });
     page.on('pageerror', e => errors.push(`pageerror: ${e.stack || String(e)}`));
     page.on('console', m => { if(m.type()==='error') errors.push(`console.error: ${m.text()} ${JSON.stringify(m.location())}`); });
     page.on('response', r => { if(r.status()>=400) console.log('[http-error]',r.status(),new URL(r.url()).pathname); });
     await page.goto(`${base}/?ticket=${encodeURIComponent(ticket)}`, {waitUntil:'domcontentloaded'});
     await page.waitForSelector('#activity-bar',{state:'attached',timeout:30000});
-    if (process.env.READER_MODAL_NEGATIVE) await page.waitForTimeout(3000);
+    await page.waitForFunction(() => document.readyState === 'complete');
+    if (process.env.READER_MODAL_NEGATIVE || process.env.READER_MODAL_FIXED) {
+      await page.evaluate(async()=>{const m=await import('/js/canvas.js'); m.initCanvas();});
+      if (process.env.READER_MODAL_NEGATIVE) await page.locator('#takeover-box').waitFor({state:'visible',timeout:10000});
+    }
     await page.screenshot({path:process.env.READER_SCREENSHOT || info.outputPath('initial.png')});
     await expect(page.locator('#modal-overlay.on #takeover-box')).toBeHidden();
-    if (process.env.READER_MODAL_NEGATIVE) {
+    if (process.env.READER_MODAL_NEGATIVE || process.env.READER_MODAL_FIXED) {
       await expect(page.locator('#takeover-box')).toBeHidden({timeout:5000});
       return;
     }
@@ -58,14 +67,15 @@ test('reader can browse without takeover; rejected write notifies once', async (
     await expect(page.locator('#chat')).toContainText('reader fixture message');
     console.log('[mobile-message-rows]', await page.locator('#chat .row').count());
     const puts = []; page.on('request', r => { if (new URL(r.url()).pathname === '/api/canvas-tabs' && r.method() === 'PUT') puts.push(r.url()); });
-    await page.evaluate(async path => { const m=await import('/js/explorer.js'); m.openExplorerAt(path); }, home);
-    const file = page.locator('.explorer-item.explorer-file').filter({hasText:'reader-fixture.md'});
-    await expect(file).toBeAttached({timeout:15000});
-    await page.screenshot({path:process.env.READER_FILE_SCREENSHOT || info.outputPath('file-entry.png')});
-    console.log('[file-entry-visibility]', JSON.stringify(await file.evaluate(el=>({display:getComputedStyle(el).display,sidebar:getComputedStyle(document.querySelector('#sidebar')).display,activity:getComputedStyle(document.querySelector('#activity-bar')).display}))));
+    const file = page.locator('#chat .fc-name').filter({hasText:'reader-fixture.md'});
     await expect(file).toBeVisible({timeout:15000});
+    console.log('[attachment-name-title]',await file.getAttribute('title'));
+    await page.evaluate(() => { window.__readerOpen=[]; window.addEventListener('workspace-open-item', e => window.__readerOpen.push(e.detail)); });
     await file.click();
+    console.log('[attachment-open-event]',JSON.stringify(await page.evaluate(()=>window.__readerOpen)));
+    await page.screenshot({path:'/private/tmp/reader-attachment-click.png'});
     await expect(page.locator('#canvas-content')).toContainText('REAL_READER_CONTENT',{timeout:15000});
+    await page.screenshot({path:process.env.READER_FILE_SCREENSHOT || info.outputPath('file-open.png')});
     expect(puts).toHaveLength(0);
     await page.evaluate(() => { window.__readerNotices=[]; const old=window.__showToast; window.__showToast=(...args)=>{window.__readerNotices.push(args); return old?.(...args);}; });
     // Simulate a stale cached writer epoch; the isolated gateway itself rejects it.
