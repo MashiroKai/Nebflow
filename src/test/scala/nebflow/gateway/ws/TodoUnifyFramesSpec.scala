@@ -270,6 +270,27 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
   // ③ completeTodo = 软删 + DoneRecord + 新老帧双发
   // ==================================================================
 
+  test("decision payload round trips in list and cannot be completed without answer support") {
+    withRig { (c, res) =>
+      val decision = nebflow.core.scheduler.TodoDecision(question = "Choose", options = List("A", "B"))
+      for
+        _ <- res.scheduledTaskStore.addTask(todo("decision-1").copy(decision = Some(decision)))
+        listed <- send(c, "listScheduledTasks", """{"type":"listScheduledTasks","sessionId":"s1","scope":"all"}""")
+        frames <- send(c, "completeTodo", """{"type":"completeTodo","sessionId":"s1","id":"decision-1"}""")
+        retry <- send(c, "completeTodo", """{"type":"completeTodo","sessionId":"s1","id":"decision-1"}""")
+        onDisk <- res.scheduledTaskStore.loadTasks("s1")
+        done <- res.doneRecordStore.loadAll
+      yield
+        val rows = listed.head.hcursor.downField("tasks").focus.flatMap(_.asArray).getOrElse(Vector.empty)
+        assertEquals(rows.head.hcursor.downField("decision").get[String]("question").toOption, Some("Choose"))
+        assertEquals(types(frames), List("error"))
+        assertEquals(types(retry), List("error"))
+        assertEquals(onDisk.head.decision, Some(decision))
+        assertEquals(onDisk.head.completedAt, None)
+        assertEquals(done.length, 0)
+    }
+  }
+
   test("③ completeTodo：行未物删（completedAt 置位）、DoneRecord 一条 via:ws、新帧与老帧同发") {
     withRig { (c, res) =>
       for

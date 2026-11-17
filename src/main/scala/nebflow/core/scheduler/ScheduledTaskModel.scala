@@ -6,6 +6,20 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 import java.time.{Instant, ZoneId, ZonedDateTime}
 import java.util.UUID
 
+/** Structured decision metadata attached to a todo. Secret values must never be stored here. */
+case class TodoDecision(
+  question: String,
+  options: List[String] = Nil,
+  multiSelect: Boolean = false,
+  allowOther: Boolean = false,
+  secret: Boolean = false,
+  expiresAt: Option[Long] = None
+)
+
+object TodoDecision:
+  given Configuration = Configuration.default.withDefaults
+  given Codec[TodoDecision] = ConfiguredCodec.derived
+
 /** A scheduled task attached to a session — fires once or on a recurring schedule. */
 case class ScheduledTask(
   id: String,
@@ -122,7 +136,9 @@ case class ScheduledTask(
   completedAt: Option[Long] = None,
   source: Option[String] = None,
   /** Store-owned monotonic version; legacy rows start at zero. Never ordered by trigger time. */
-  revision: Long = 0L
+  revision: Long = 0L,
+  /** Optional decision metadata; absent on legacy and ordinary todos. */
+  decision: Option[TodoDecision] = None
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
