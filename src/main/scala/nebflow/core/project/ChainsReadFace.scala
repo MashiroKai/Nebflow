@@ -131,7 +131,8 @@ object ChainsReadFace:
       // （非破坏性确认/忽略旗 ∨ 存量归档旗））——存储式归档写点已退役，读面不再看旗本身。
       val readings: Map[String, nebflow.core.delegate.DelegateVisibility.Reading] =
         records.map(r => r.id -> nebflow.core.delegate.DelegateVisibility.readOf(r.id)).toMap
-      val scoped = records.filter(rec => readings.get(rec.id).exists(_.historyWindow) == archived)
+      val scoped = records.filter(rec => !nebflow.core.delegate.LegacySettledManifest.contains(rec.id) &&
+        readings.get(rec.id).exists(_.historyWindow) == archived)
       val windowed: IO[List[DelegateRegistry.Record]] =
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)

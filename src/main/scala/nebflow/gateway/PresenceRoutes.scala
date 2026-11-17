@@ -1096,7 +1096,9 @@ private[gateway] object PresenceRoutes:
               case Left(_) => BadRequest(Json.obj("error" -> "malformed JSON body".asJson))
               case Right(body) =>
                 val value = body.hcursor.get[String]("value").toOption.getOrElse("").trim
-                if value.isEmpty then
+                if value.isEmpty && nebflow.core.delegate.LegacySettledManifest.contains(id) then
+                  Conflict(Json.obj("error" -> "disposition undo unavailable for hidden legacy record".asJson))
+                else if value.isEmpty then
                   IO.blocking(nebflow.core.delegate.DelegateRegistry.clearDisposition(id)).flatMap {
                     case Left(err) => NotFound(Json.obj("error" -> err.asJson))
                     case Right(_) =>

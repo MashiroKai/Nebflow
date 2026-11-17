@@ -44,6 +44,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
+    if os.exists(tempRoot / ".legacy-settled.json") then os.remove(tempRoot / ".legacy-settled.json")
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
     if os.exists(tempRoot / "delegates") then nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     if os.exists(tempRoot / "chains") then nebflow.ForceRemove.removeAll(tempRoot / "chains")
@@ -52,6 +53,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     if os.exists(tempRoot / "c4b-alias-root") then nebflow.ForceRemove.removeAll(tempRoot / "c4b-alias-root")
 
   override def afterEach(context: munit.AfterEach): Unit =
+    if os.exists(tempRoot / ".legacy-settled.json") then os.remove(tempRoot / ".legacy-settled.json")
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
 
   private def mkResources(system: ActorSystem, llm: LlmHandle[IO]): IO[SharedResources] =
@@ -116,6 +118,25 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       kind = AgentKind.Delegate,
       rootSessionId = sid
     )
+
+  test("only explicitly marked records are hidden from both windows") {
+    val hidden = record("delegate-legacy-hidden", Some("901")).copy(archivedAt = Some(123456L))
+    val visible = record("delegate-new-unmarked", Some("902")).copy(archivedAt = Some(123457L))
+    DelegateRegistry.put(hidden)
+    DelegateRegistry.put(visible)
+    val result = nebflow.core.delegate.LegacySettledManifest.generate()
+    assertEquals(result, (2, true))
+    assertEquals(nebflow.core.delegate.LegacySettledManifest.generate(), (2, false))
+    os.write.over(tempRoot / ".legacy-settled.json", s"{\"version\":1,\"ids\":[\"${hidden.id}\"]}", createFolders = true)
+    for
+      active <- ChainsReadFace.rowsJson(Map.empty)
+      history <- ChainsReadFace.rowsJson(Map.empty, archived = true)
+    yield
+      def ids(body: io.circe.Json) = body.hcursor.downField("rows").as[List[io.circe.Json]].getOrElse(Nil)
+        .flatMap(_.hcursor.get[String]("id").toOption).toSet
+      assertEquals(ids(active), Set.empty[String])
+      assertEquals(ids(history), Set(visible.id))
+  }
 
   // ── C1 行投影 ───────────────────────────────────────────────────────────
 
