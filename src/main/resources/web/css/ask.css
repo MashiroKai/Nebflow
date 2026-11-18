@@ -492,11 +492,12 @@ body.mobile-layer .note-dock .ds-resize-handle {
 .ask-state-text { white-space: nowrap; }
 .ask-state-next,
 .ask-state-text { min-width: 0; }
-.ask-state-next { opacity: 0.85; }
+/* 换行段（下一步）自成的每一行都右对齐，与整行右缘钉位一致。 */
+.ask-state-next { opacity: 0.85; text-align: right; }
 .ask-state-next[hidden] { display: none; }
-/* 三段之间的可读分隔（视觉一行：`状态 · 下一步 · 诊断摘要`）；无障碍串也读得通。 */
-.ask-state-next::before,
-.ask-state-diag::before { content: '·'; margin-right: var(--ds-space-1); opacity: 0.6; }
+/* 分隔符**不在 CSS 里**：它是「跟随前一段」的文本尾巴（askDock.js 的 ASK_SEP，
+   U+00A0 + `·`）。段首型 `::before` 会在窄屏折行时把 `·` 顶到下一行行首——本文件
+   刻意不留任何 `.ask-state-*::before` 分隔符（闸 S12 断言这一点）。 */
 /* 可复制的诊断摘要（状态码 + 脱敏错误摘要 + 耗时 + sid）：单行省略，点一下复制
    全文（README 里的复现线索）。它是 inline 的一枚文字钮，不是第二套控件语言。 */
 .ask-state-diag {

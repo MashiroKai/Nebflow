@@ -356,6 +356,36 @@ if (mod) {
   if (!violations.some(x => x.code === 'S11')) pass('S11', '超时阈值单点（ASK_SILENCE_MS，消费方零硬编码）');
 }
 
+// ══ S12 分隔符只能「跟随前一段」（折行时不落行首）════════════════════════
+// 作者 2026-11-18 细观感令：375px 窄屏一折行，段首型 ::before 分隔符就把一枚孤零零
+// 的 `·` 顶到下一行行首。S12 把成因（段首分隔符）与形态（NBSP 黏在前一段尾巴上）
+// 都钉住——运行期的「行首首字符」实测在 tests/ask-status-narrow-matrix.mjs。
+const CSS = join(WEB, 'css', 'ask.css');
+const cssSrc = existsSync(CSS) ? readFileSync(CSS, 'utf8') : '';
+const cssBlock = blockOf(cssSrc, '.ask-state-line {', '.ask-state-line.is-error');
+if (cssBlock === null) {
+  v('S12', CSS, '找不到 .ask-state-line 样式块——折行分隔符判定失守', '.ask-state-line {');
+} else {
+  assert(!/\.ask-state-[a-z-]+::before/.test(cssBlock), 'S12', CSS,
+    '状态行里出现了段首型 `::before` 分隔符——窄屏折行时它会把 `·` 顶到下一行行首', '::before');
+}
+const sepDefs = [...dockSrc.matchAll(/const\s+ASK_SEP\s*=\s*'([^']*)'/g)].map(m => m[1]);
+assert(sepDefs.length === 1, 'S12', DOCK, `ASK_SEP 定义 ${sepDefs.length} 处（分隔符必须单点，恰好 1 处）`, 'const ASK_SEP');
+if (sepDefs.length === 1) {
+  assert(sepDefs[0].startsWith('\u00A0') || sepDefs[0].startsWith('\\u00A0'), 'S12', DOCK,
+    `ASK_SEP 字面量 ${JSON.stringify(sepDefs[0])} 未以 U+00A0（不换行空格）起头——普通空格会重新给出断点`, 'const ASK_SEP');
+}
+const statusBlock = blockOf(dockSrc, 'function syncTurnStatus(', '\n}\n');
+if (statusBlock === null) {
+  v('S12', DOCK, '找不到 syncTurnStatus()——分隔符消费形态判定失守', 'function syncTurnStatus(');
+} else {
+  const uses = (statusBlock.match(/ASK_SEP/g) || []).length;
+  assert(uses >= 2, 'S12', DOCK, `syncTurnStatus 里 ASK_SEP 只用了 ${uses} 处（文案段与下一步段各要跟随一枚）`, 'ASK_SEP');
+  assert(!/ASK_SEP\s*\+/.test(statusBlock) && !/=\s*ASK_SEP\b/.test(statusBlock), 'S12', DOCK,
+    '分隔符被当成段首写法（`ASK_SEP + …` / `= ASK_SEP`）——它只许追加在前一段的文本尾巴上', 'ASK_SEP');
+}
+if (!violations.some(x => x.code === 'S12')) pass('S12', '折行分隔符跟随前一段（CSS 零段首 ::before + ASK_SEP 单点 NBSP 黏着）');
+
 // ══ 报告 ══════════════════════════════════════════════════════════════
 function report() {
   const ok = violations.length === 0;
