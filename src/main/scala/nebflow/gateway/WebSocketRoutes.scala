@@ -3443,6 +3443,44 @@ object WebSocketRoutes:
     else None
 
   /**
+   * 陈旧后台代理面板批（2026-11-08）：子代理**任务记录的终态词表**——面板行的
+   * 「已结束」硬事实来源。
+   *
+   * 病灶（面板滞留 + 荒谬时长）：`filterActiveAgents` 只按 `kind` 过滤注册表
+   * （Delegate/Flow/SubTask），**不看这一行背后是否早就干完了**——任务记录已
+   * `completed` 而注册表行仍在册（收殓腿失败 / 重启竞态 / 长尾）时，快照照旧把它
+   * 当「在飞」下发；前端行仍在 `!terminal` 分支 ⇒ 运行时长 `now - startedAt` 无上界
+   * 地走表（作者实证：一行挂着 690h）。本词表把「任务记录已终态」这一**硬事实**
+   * 随快照出帧，前端据此冻结为「已结束 + 真实时长」。
+   *
+   * 只收 SubAgentTask.status 的终态词（见 `SubAgentTaskModels`）——`running` /
+   * `restarting` / `ready-to-merge` / `removed` 都不是「干完了」，一律不标。
+   */
+  val TerminalTaskStatuses: Set[String] = Set("completed", "failed", "cancelled")
+
+  /**
+   * 时长合理性上界（面板「拒绝荒谬时长」的唯一尺子）：7 天（604800000 ms）。超过即
+   * 视为不可信读数（时钟漂移 / 时间戳错配 / 陈旧行）——面板一律**不渲染时长**，而不是
+   * 显示一个荒谬值（作者实证的 690h = 28.75 天正是本尺子要拦下的形态）。
+   * 前端同一把尺子：`bgAgents.js` 的 `BG_DURATION_MAX_MS`（同值同理由）。
+   */
+  val MaxPlausibleDurationMs: Long = 7L * 24L * 60L * 60L * 1000L
+
+  /**
+   * 面板行的「真实时长」单一推导缝（纯函数，可直接单测）：
+   * 需要逐字满足 THEN 条件才出值——起点已知（>0）、终点已知、终点不早于起点、
+   * 且时长不超过 [[MaxPlausibleDurationMs]]；任一不满足 ⇒ None（前端零渲染，
+   * 绝不显示负数 / null / 荒谬时长）。
+   */
+  def endedDurationMs(startedAt: Long, endedAt: Option[Long]): Option[Long] =
+    endedAt.flatMap { end =>
+      if startedAt <= 0L || end < startedAt then None
+      else
+        val dur = end - startedAt
+        if dur > MaxPlausibleDurationMs then None else Some(dur)
+    }
+
+  /**
    * One entry of the getActiveAgents ("activeAgents") restore reply.
    *
    * Contract: agentId == sessionId. The frontend keys its bg-agent map by
@@ -3486,8 +3524,18 @@ object WebSocketRoutes:
     mailAddress: Option[String] = None,
     freezeTruth: Option[nebflow.actor.FreezeTruth] =
       None, // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
-    taskStatus: Option[String] =
-      None // 面板行活性位批（2026-11-18 · 方案 A）: SubAgentTask.status——重启中断标记（`pending-recovery`）的载体，活性位据此把「执行已停、等人工恢复」的行判成非活跃；缺省 None = 旧调用方逐字节兼容
+    // 陈旧后台代理面板批（2026-11-08）：**底层任务记录的终态硬事实**。任务记录
+    // （SubAgentTaskStore）已终态而注册表行仍在册 = 这一行其实早就干完了；面板据此
+    // 「显式结束 + 真实时长」而不是让运行时长无上界地走表（作者实证 690h 滞留行）。
+    // 缺省 None = 无任务记录（node-/dispatcher- 等 Flow 行从不落任务记录）/ 旧调用方
+    // ⇒ ended=false，行为与旧版逐字节一致（向后兼容）。
+    //
+    // 同一字段亦为面板行活性位批（2026-11-18 · 方案 A）的载体：重启中断标记
+    // （`pending-recovery`）据此把「执行已停、等人工恢复」的行判成非活跃（见下方
+    // [[panelRowActivity]] 调用）。两批对 `taskStatus` 的读法互不冲突（读法 = 词表
+    // 判终态 / 等值判 `pending-recovery`），故单字段双用途保留。
+    taskStatus: Option[String] = None,
+    taskEndedAt: Option[Long] = None
   ): Json =
     // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
     // （AgentStreamEvent.Frozen）/ 工具面（AgentControl status）同判定单点
@@ -3519,6 +3567,11 @@ object WebSocketRoutes:
       frozen = truth.frozen,
       pendingRecovery = taskStatus.contains(SubAgentStartupRecovery.PendingRecoveryStatus)
     )
+    // 陈旧后台代理面板批（2026-11-08）：终态硬事实（任务记录终态 ⇒ 行其实已结束），单点判定。
+    // 与上面的活性位**正交共存**：activity 答「此刻是否真在跑」，isEnded 答「底层任务记录
+    // 是否已终态」（冻结/停靠的未终态行两个读数都为真，互不覆盖）。
+    val isEnded: Boolean =
+      taskStatus.map(s => TerminalTaskStatuses.contains(s.trim.toLowerCase)).getOrElse(false)
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
@@ -3573,6 +3626,16 @@ object WebSocketRoutes:
       "activeState" -> activity.wire.asJson,
       "startedAt" -> rec.startedAt.asJson,
       "retryCount" -> retryCount.getOrElse(0).asJson,
+      // ── 陈旧后台代理面板批（2026-11-08）：终态硬事实 + 真实时长 ──────────────
+      // taskStatus = 底层 SubAgentTask.status 原样（"" = 无任务记录，falsy 契约同
+      // project/taskId）；ended = 该 status ∈ TerminalTaskStatuses（任务记录说「干完了」
+      // ——注册表行滞留不再冒充在飞）；endedAt = 任务记录的 completedAt；
+      // durationMs = 由 endedDurationMs 单点推导的真实时长（起点/终点/上界任一不合
+      // ⇒ null = 「荒谬时长」被拒收，前端零渲染）。
+      "taskStatus" -> taskStatus.getOrElse("").asJson,
+      "ended" -> isEnded.asJson,
+      "endedAt" -> (if isEnded then taskEndedAt else None).asJson,
+      "durationMs" -> (if isEnded then endedDurationMs(rec.startedAt, taskEndedAt) else None).asJson,
       // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 待命停靠时刻（epoch ms；
       // null = 非待命）。快照行的「待命」徽标数据源——delegateWaiting 实时帧
       // （mode=standby）在浏览器刷新后靠本字段复原（delegateTitle 同款读面一次

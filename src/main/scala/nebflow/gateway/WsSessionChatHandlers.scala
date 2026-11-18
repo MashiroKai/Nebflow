@@ -1428,7 +1428,11 @@ private[gateway] object WsSessionChatHandlers:
                                 // ——SubAgentTask.status（`pending-recovery` = 执行已停、等人工恢复）
                                 // 在落盘侧已经知道，快照行必须照抄这一事实（旧调用方缺省 None =
                                 // 逐字节兼容）。只加位，不筛行、不动恢复入口。
-                                taskStatus = taskOpt.map(_.status)
+                                // 陈旧后台代理面板批（2026-11-08）：**同一份** taskOpt 同时出终态
+                                // 硬事实（status + completedAt）——本拍已读一次，零额外 IO ⇒ 面板
+                                // 行能「显式结束 + 真实时长」，不再让滞留行的运行时长无上界走表。
+                                taskStatus = taskOpt.map(_.status),
+                                taskEndedAt = taskOpt.flatMap(_.completedAt)
                               )
                             }
                           }
