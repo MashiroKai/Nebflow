@@ -93,6 +93,23 @@
           "name": "④ 点头像 = 新标签页开官网（本页不导航；锚点三属性齐备）"
         }
       ]
+    },
+    {
+      "requirement": "PIC-REQ-005",
+      "scenario": "PIC-SCN-006",
+      "implementation": [
+        "openspec/changes/profile-complete/proposal.md",
+        "openspec/changes/profile-complete/design.md",
+        "openspec/changes/profile-complete/tasks.md",
+        "openspec/changes/profile-complete/specs/profile-identity-completion/spec.md",
+        "openspec/changes/profile-complete/trace.json"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The claim is a written scope statement — each field's reading chain with file:line, and the layer that owns the binding this client cannot read — not an executable behaviour. The rendered side is asserted by tests/profile-complete.spec.mjs; the chain itself can only be read against the named sources.",
+        "steps": "Read openspec/changes/profile-complete/design.md (the data-chain table) and compare it with the named sources: src/main/resources/web/js/neblink.js (the device.githubLogin mapping), src/main/resources/web/js/settingsIdentity.js (getIdentityReadout / bindingGapNote / ensureIdentityLive), src/main/resources/web/js/friendsApi.js (searchUser → relation_status 'self'), src/main/scala/nebflow/gateway/NeblinkRoutes.scala:296-298 (githubLogin / displayName / email in the status payload), src/main/scala/nebflow/neblink/identity/NeblinkEnrollment.scala:160 (githubUsername persisted at enrollment) and src/main/scala/nebflow/gateway/AuthRoutes.scala (beginPkceLogin: the provider identity is gone after the OIDC round trip).",
+        "expected": "Every readable field resolves to a named source at the stated layer, and the Google binding is written as unreadable (no identity claim in the sign-in credential, no such field in the upstream profile contract) with the website account page named as the owner — no invented or guessed reading anywhere."
+      }
     }
   ]
 }
