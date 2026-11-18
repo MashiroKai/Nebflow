@@ -1130,8 +1130,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // 快照让位——切类是显式用户动作）；槽空 ⇒ 钉链照旧（零行为变化）。
             // 🔴 组合序 = 槽链 > 钉链 > base：slotChainOf 槽未配置时返回 None，
             // 钉链照常物化（T2 快照稳定面不回归的判据）。
+            // 🔴 归槽批（2026-11-18）：delegate 身份的槽**由记录 mode 判**（真相来源
+            // = `DelegateRegistry.Record.mode`，读面用 raw 版 `rawModeOf`——`modeFaceOf`
+            // 的 isModeWord 过滤会把「有 mode 但不识别」折成「没有 mode」，吞掉兜底
+            // 要陈述的真信息）。不再按 `delegate-` 前缀一律归 subagent：生产实证
+            // kernel 808 + dispatcher 96 条全是 `delegate-nebflow-<8hex>` 形状，旧判据
+            // 让它们全部吃 subagent 槽链（「配置 cmdcode 实际跑 terra」的成因）。
+            // 未归槽（mode 缺席/不识别）⇒ slotChainOf 返回 None ⇒ 原样走钉链/base；
+            // 可读原因由 ModelRoles 单点记 WARN（兜底不许吞真信息）。组合序未动。
             agentModel = nebflow.core.ModelRoles
-              .slotChainOf(stateForLlm.sessionId)
+              .slotChainOf(
+                stateForLlm.sessionId,
+                nebflow.core.delegate.DelegateRegistry.rawModeOf(stateForLlm.sessionId)
+              )
               .orElse(agentModelWithPin(freshDef.model, effectivePin)),
             // 派发钉链剔除账本（缺陷批 2026-11-06）：spawn 时因满载被链首扫描剔出的
             // 候选连原因随请求下发——进候选账本 seeded 层。没有它，这些候选既不在链上

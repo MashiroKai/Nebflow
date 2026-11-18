@@ -972,6 +972,20 @@ object DelegateRegistry:
         find(sid).flatMap(_.mode).filter(DualModeConfig.isModeWord)
 
   /**
+   * 记录的 **raw** mode 词读面（归槽批 2026-11-18）。
+   *
+   * 与 [[modeFaceOf]] 同门（delegate 会话 + 记录在场），**但不做 `isModeWord` 过滤**：
+   * 模型归槽判据必须能分开「mode 缺席（`None`）」与「mode 在场但不识别」（值域外的
+   * 存量词，如已退役的 `merger`）——静默折叠成 `None` 会把这两件事混成一件，正是
+   * 「兜底吞真信息」。消费点 = `ModelRoles.slotChainOf` 的请求面单点（未归槽 ⇒ 不覆写
+   * 槽链 + 记一条可读原因）。非 delegate 会话 / 记录缺席 ⇒ None。
+   */
+  def rawModeOf(sessionId: Option[String]): Option[String] =
+    sessionId
+      .filter(sid => DelegateSessions.isDelegateSession(Some(sid)))
+      .flatMap(sid => find(sid).flatMap(_.mode))
+
+  /**
    * 后台任务归属批（作者令 2026-10-31「后台任务行标归属」）：开启任务的会话的
    * delegate 批次短名读面（Record.name，≤12 字）——与面板命名批的 delegateName
    * 链同源同判据（isDelegateSession + find + name trim），复用不新造。无双模式

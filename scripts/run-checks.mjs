@@ -61,6 +61,7 @@ export const CHECKS = [
     ['evidence-manifests', 'check-evidence-manifests'], ['scala-layers', 'check-scala-layers'],
     ['dispatcher-seal', 'check-dispatcher-seal'],
     ['node-stuck-notify', 'check-node-stuck-notify'],
+    ['delegate-mode-slot', 'check-delegate-mode-slot'],
   ].map(([name, script]) => nodeCheck(name, script, ['static'])),
   { name: 'tooling-lint', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, 'node_modules/eslint/bin/eslint.js', 'eslint.config.mjs',
