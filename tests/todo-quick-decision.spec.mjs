@@ -756,7 +756,10 @@ ok('E4 阈值以下（慢速 -40px，非快弹）不切卡 + 回弹归位',
   && (underThreshold.pose === 'matrix(1, 0, 0, 1, 0, 0)' || underThreshold.dqdx === '0px' || underThreshold.dqdx === '0.0px'),
   JSON.stringify({ id: underThreshold.itemId, last: underThreshold.last, pose: underThreshold.pose }));
 
-const flick = await touchDrag(page, startX, startY, -40, 0, { steps: 5, stepMs: 12 });
+// 快弹腿：合成触摸的步距收紧到 6ms（名义 30ms）—— 判据不变（仍是「<200ms 的短距
+// 快弹切卡」），只是让 CDP 往返在 200ms 窗口里留出余量（改前 stepMs 12 时
+// 实测 dt 落在 173–203ms 之间，机器负载一高就假红）。
+const flick = await touchDrag(page, startX, startY, -40, 0, { steps: 5, stepMs: 6 });
 void flick;
 await page.waitForTimeout(560);
 const afterFlick = await page.evaluate(readCard());

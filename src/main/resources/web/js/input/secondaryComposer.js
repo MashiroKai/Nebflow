@@ -62,6 +62,23 @@ export const SEND_ICON = 'send';
 export const STOP_ICON = 'square';
 
 /**
+ * 次级输入框的自增高封顶（**唯一声明点**）。
+ * `SECONDARY_COMPOSER_MAX_H` = 主会话输入框的既有封顶 200px
+ * （js/input.js 的 autosize `Math.min(input.scrollHeight, 200)` 与
+ * css/input.css `#input-area textarea { max-height: 200px }` 同值）——
+ * 要求「跟主会话这个一样，可以根据内容长度变化」的面（待办详情页回复框）
+ * 传这个常量，别再各写一个数字（改前详情页在这里自己压了第三个数 132）。
+ * `..._COMPACT` = Canvas Ask 面沿用的紧凑档 120（其既有闸钉着该几何，本批不动；
+ * 数字在此命名，不再以裸默认值散落）。
+ *
+ * 落队注（移植口径）：字形路径取 **HEAD 侧**——lucide `<i data-lucide>` 占位 + createIconsIn
+ * 换图（见下方 turnGlyph 注）；作者侧的 svgNode/inline `<path d=…>` 字形**不取**
+ * （HEAD 侧已是全站单一字形路径，在此再写一份 svg 构形 = 第二套字形）。
+ */
+export const SECONDARY_COMPOSER_MAX_H = 200;
+export const SECONDARY_COMPOSER_MAX_H_COMPACT = 120;
+
+/**
  * 字形占位（`<i data-lucide=…>`）——与 index.html 静态标记同形，由
  * `createIconsIn()` 换成 vendored lucide 的同一份几何。本函数**不**自建 SVG：
  * 任何在此处新写的 `<path d=…>` 都是第二套字形。
@@ -107,7 +124,7 @@ export function createSecondaryComposer(opts = {}) {
     sendLabel = '', stopLabel = '',
     sendHook = '', stopHook = '',
     withStop = false,
-    rows = 1, maxHeight = 120,
+    rows = 1, maxHeight = SECONDARY_COMPOSER_MAX_H_COMPACT,
     onSend = null, keys, onInput = null,
   } = opts;
 

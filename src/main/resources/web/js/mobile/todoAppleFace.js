@@ -32,7 +32,7 @@ import { bindImeGuard, commitEnter } from '../imeGuard.js';
 import state from '../state.js';
 // 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令）：详情页「回复这个
 // 待办」的输入条 = Canvas Ask 那一条（同一装配点 js/input/secondaryComposer.js）。
-import { createSecondaryComposer } from '../input/secondaryComposer.js';
+import { createSecondaryComposer, SECONDARY_COMPOSER_MAX_H } from '../input/secondaryComposer.js';
 // 列表选择器（作者令「标签必须有列表来选择」）：站内唯一列表菜单组件——手机层
 // 自动变成全屏动作表（可滚动 + 左上返回 + 点空白/Esc 收起，见 contextMenu.js
 // 与 mobileLayer.css「弹窗退场批」B 族），不在本页另造第二套列表。
@@ -954,7 +954,10 @@ function buildItem(root, section, nav) {
     placeholder: t('todoface.replyPh'),
     ariaLabel: t('todoface.replyPh'),
     sendLabel: t('todoface.send'),
-    maxHeight: 132,
+    // 自增高封顶 = 主会话输入框同一口径（作者令「应该跟主会话这个一样，可以
+    // 根据内容长度变化」）。唯一声明点 = secondaryComposer.js 的常量；本页
+    // 不再自己压一个 132（改前这里就是第三个数）。
+    maxHeight: SECONDARY_COMPOSER_MAX_H,
     onSend: () => { void sendReply(); },
   });
   replyBox.appendChild(replyInput.root);

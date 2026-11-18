@@ -100,15 +100,11 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-root {
   padding-bottom: var(--mobile-scroll-end);
   box-sizing: border-box;
 }
-/* item 页覆写：底带不是 FAB 而是 .ta-tool（贴键盘/贴 dock 的胶囊带）。 */
+/* item 页覆写：底带不是 FAB 而是 .ta-tool（贴键盘/贴 dock 的胶囊带）+ 其上的
+   回复输入带。两条带的位置都读**同一个**底部栈变量（见 §C 的声明），
+   `.ta-root` 只让位工具胶囊那一条 —— 回复带是 sticky 在流内自占位。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
-  padding-bottom: max(
-    28px,
-    calc(
-      max(var(--ta-kb, 0px), var(--mobile-dock-top))
-      + 8px + var(--bottom-band-d, 48px) + 8px
-    )
-  );
+  padding-bottom: max(28px, var(--ta-band-stack));
 }
 
 /* ═══ A · Lists home page ═══════════════════════════════════════════════ */
@@ -661,6 +657,35 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-empty[hidden] { 
 
 /* ═══ C · Create / edit state ═══════════════════════════════════════════ */
 
+/* ── 详情页底部栈单源（作者令 2026-11-18「回复对话框必须挨着底部，像主会话输入框
+   那样；底部 dock / 安全区净空复用单源 --mobile-dock-clearance，不要自算像素」）
+   ───────────────────────────────────────────────────────────────────────
+   `--ta-band-bottom` = 底部两件（`.ta-tool` 工具胶囊带 + 其上 `.ta-reply` 回复带）
+   共同的锚点：键盘弹起时让给键盘（`--ta-kb`，由 visualViewport 腿写字），
+   否则让给 dock —— dock 腿**不手算像素**，直接取站内净空单源
+   `--mobile-dock-clearance`（mobileLayer.css：实测 dock 高 + --dock-gap +
+   --dock-inset-b + safe-area）。改前这里自己拼了
+   `--dock-h + --dock-inset-b + env(safe-area-inset-bottom)` ——既漏了
+   `--dock-gap`（少让 10px）又是第二套算法，本批收编到本变量一个落点。
+   `--ta-band-h` = 工具带带高，**只有一个来源** `--bottom-band-d`（mobileLayer.css
+   的底部带直径档）——`.ta-tool` 的 height 与本页的让位/贴底计算都读它，
+   本文件不再出现 48px/44px 这类裸数字。
+   `--ta-band-stack` = 整条工具带的占位高度（锚点 + 呼吸缝 + 带高 + 呼吸缝），
+   `.ta-root` 的让位、回复带的贴底偏移都读它 ⇒ 本页零第二处算底部像素。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
+  --ta-band-bottom: max(var(--ta-kb, 0px), var(--mobile-dock-clearance));
+  --ta-band-h: var(--bottom-band-d, 44px);
+  --ta-band-stack: calc(
+    var(--ta-band-bottom) + var(--ds-space-2) + var(--ta-band-h) + var(--ds-space-2)
+  );
+  /* sticky 的贴底偏移：参照系是 `.mobile-page-body` 的**内容盒**底缘，而页体自己
+    已经让过一条 `--mobile-dock-clearance`（mobileLayer.css 的页体底距）——
+     所以这里必须把那一条减掉，否则 dock 净空被叠两次（实测：不减则贴底缝 80px
+     而不是 8px）。键盘腿弹起时 `--ta-band-bottom` 换成 `--ta-kb`，减掉的仍只是
+     页体那一条常量净空 ⇒ 键盘弹起时回复框照样跟着工具带一起上移。 */
+  --ta-reply-stick: calc(var(--ta-band-stack) - var(--mobile-dock-clearance));
+}
+
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit {
   flex: 1 1 auto;
   min-height: 0;
@@ -771,7 +796,23 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-prio {
    发送圆钮几何 = 组件类 `.ds-turn-btn`（design-system.css §①b 单源）。
    ⇒ 本文件**只写这一面的几何**，零第二套造型声明（check-input-surface.mjs I2）。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply {
-  margin-top: 12px;
+  /* ── 贴底锚定（作者令 2026-11-18「详情页的回复对话框必须挨着底部，像主会话输入框
+     那样，并根据内容长度变化」）────────────────────────────────────────────
+     sticky + `margin-top: auto`，两条腿合成一个「挨着底部」：
+       · 内容短（页体不滚）：弹性列的 auto 外边距把它压到 `.ta-edit` 底缘 ——
+         也就是 `.ta-root` 让位（--ta-band-stack）之后的位置 = 工具胶囊带正上方；
+       · 内容长（页体滚动）：它仍占自己**流内**的槽位（滚到底时末行恒在它上方，
+         不会被它盖住），同时 sticky 让它常驻在工具带之上 —— 与主会话输入框
+         「一直在底部、正文从它下面划过」是同一条腿。
+     贴底偏移 = 单源 `--ta-band-stack`（锚点 + 工具带整条），本页零自算像素。
+     底色 = 页底色（--color-bg，与 .mobile-page 同源），正文从它下面划过时
+     不漏字；输入件自身仍是次级输入框模板的玻璃壳。 */
+  position: sticky;
+  bottom: var(--ta-reply-stick);
+  margin-top: auto;
+  z-index: 9;
+  padding-top: var(--ds-space-2);
+  background: var(--color-bg);
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input {
   width: 100%;
@@ -784,9 +825,13 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input {
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input textarea {
   flex: 1 1 auto;
   min-width: 0;
-  max-height: 132px;
-  /* 高度上限必须配对可滚轴（铁律 9·③：上限 + hidden/clip = 静默裁切）——上限只给
-     紧凑形态，超出的长回复在 textarea 内自滚，不许被裁掉看不见。 */
+  /* 高度由 JS 的内容自适应写（secondaryComposer 的 autosize，封顶 = 主会话同一
+     口径 SECONDARY_COMPOSER_MAX_H）；**不在这里写第三个 max-height**。
+     超过封顶后：高度停在封顶值，正文改为**卡内滚**（overflow-y:auto）而不是被
+     裁掉、也不是继续把上方内容顶走（改前这里是 max-height:132px + overflow:hidden
+     ⇒ 超出即静默截断，正是作者要的「不截断」的反面）。
+     落队注：#18 的 `max-height:132px`（配对 `overflow-y:auto` 的那一版）本支收编为
+     JS 单源（200px 档），可滚轴不变。 */
   overflow-y: auto;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-error {
@@ -828,11 +873,12 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
   position: fixed;
   left: var(--mpad-x);
   right: var(--mpad-x);
-  bottom: calc(
-    max(var(--ta-kb, 0px), var(--mobile-dock-top))
-    + 8px
-  );
-  height: var(--bottom-band-d, 48px);
+  /* 底部栈单源（本页 §C 的 --ta-band-bottom）：键盘弹起让给键盘，否则让给
+     dock —— dock 腿取净空单源 --mobile-dock-clearance，不再自算像素。
+     落队注：本条替代 2026-11-17 的 `--bottom-band-d` 那版自算式（同一规则的后一
+     迭代，作者线上更晚）。 */
+  bottom: calc(var(--ta-band-bottom) + var(--ds-space-2));
+  height: var(--ta-band-h);
   display: flex;
   align-items: center;
   justify-content: space-around;
