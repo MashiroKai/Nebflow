@@ -18,11 +18,13 @@ import { chatViews, setActiveView, activeView } from './chatView.js';
 import { emit } from './events.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchNeblinkStatus, neblinkSettingsHTML, accountCardHTML, bindNeblinkEvents } from './neblink.js';
-// 件四 · 设置页身份卡本地化（作者令 2026-11-02）：头像在上 + 用户名/邮箱单行胶囊，
-// 点胶囊 = App 内个人资料面（不再跳官网）。卡片结构/绘制/资料面全在该叶子模块，
-// 本文件只调两个入口（settingsIdentityCardHTML 出结构，paintSettingsIdentity 出读数）。
-import { settingsIdentityCardHTML, paintSettingsIdentity } from './settingsIdentity.js';
+// neblink 设置页取数/绑定面（`fetchNeblinkStatus` / `neblinkSettingsHTML` /
+// `accountCardHTML` / `bindNeblinkEvents`）随账户栏整件退役（2026-11-18 16:36 作者令）
+// —— 设置页不再持有任何 neblink 读数面或事件绑定；账号/设备面的取数各自归
+// `neblink.js` 的其它消费方（工作台 hero / 个人主页 / 联系人面板）。
+// settingsIdentity.js 的设置页身份卡入口（`settingsIdentityCardHTML` /
+// `paintSettingsIdentity`）同样无调用点：身份与头像的权威展示已迁工作台 hero
+// （account-hero-dedupe 批 2026-11-07）；本文件身份面零残留。
 // settings-ios-rows 批（2026-11-06 作者令）：设置页行/卡/chevron/动作钮的结构单点。
 import { setCard, setGroup, setNavRow, setRow } from './settingsRows.js';
 // updateCheck.js（更新检查/更新执行链）已随 auth-trim 批（2026-10-20 作者令）整体删除：
@@ -133,17 +135,13 @@ export function openSettingsPanel() {
   renderSettings();
 }
 
-/** Close the Settings modal and stop its periodic NebLink refresh. */
+/** Close the Settings modal. */
 export function closeSettingsPanel() {
   const ov = document.getElementById('settings-overlay');
   window.__settingsDisclosure = { providers: false, models: false };
   if (ov) popLayer(ov); // B4：出栈 + 回焦
   ov?.classList.remove('on');
   scheduleDraft = null;   // #334: closing the panel discards unsaved edits
-  if (window._neblinkRefreshTimer) {
-    clearInterval(window._neblinkRefreshTimer);
-    window._neblinkRefreshTimer = null;
-  }
 }
 
 /** Return whether the settings modal is currently shown. */
@@ -834,16 +832,14 @@ function effortFromConfig() {
 // 7 个 i18n 键一并移除；`PUT /api/safety/mode` 的前端调用点随之归零（REST 端点
 // 由后端保留，供外部/脚本使用）。档位的**唯一 UI 入口 = 顶栏盾牌**
 // （`web/js/main.js` `initSafetyToggle`，写的是同一条全局持久路径）。
-let settingsLayerObserver = null;
+// 账户栏整件退役（作者令 2026-11-18 16:36「设置里的账户这一栏完全移除」）：
+// 设置页原有 `[data-panel-group="account"]` 分组（`<h2>账号</h2>` + `accountCardHTML`
+// 账号卡）**整栏移除**——不是隐藏、不留空容器、不留死样式/i18n 键。账号读数与设备子区
+// 的权威展示 = 工作台 hero（`.mf-me-entry`）+ 个人主页（`mobile/meFace.js`）；逐设备登出
+// 仍在个人主页设备清单（`profileDevices.js`）与桌面个人资料面，设置页零复述。
+// 由此：正文不再有 `mobileAccountLayer` 数据集/层切换重渲（那套机制只服务账号卡两档
+// 形态）——设置页 HTML 自此与层无关，`settingsLayerObserver` 一并退役。
 export function renderSettings() {
-  if (!settingsLayerObserver) {
-    settingsLayerObserver = new MutationObserver(() => {
-      const content = document.getElementById('settings-content');
-      const layer = String(document.body.classList.contains('mobile-layer'));
-      if (content?.hasChildNodes() && content.dataset.mobileAccountLayer !== layer) renderSettings();
-    });
-    settingsLayerObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-  }
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
   // Build language selector options
@@ -857,18 +853,6 @@ export function renderSettings() {
     `<option value="${code}" ${code === getLocale() ? 'selected' : ''}>${localeLabels[code] || code}</option>`
   ).join('');
 
-  // 2026-09-06 作者裁定：账号区与设备互联统一为一个区块——设备属于账号，
-  // 登录态头像下方直接放设备列表，未登录态只有 logo + 一句「不可用」说明，
-  // 不再有独立的 neblink settings-section。
-  // 件四 · 设置页身份卡本地化（作者令 2026-11-02「头像在上，下面是用户名和邮箱…
-  // 点击胶囊直接进自己的 profile 设置页」）：头像在上 + 用户名/邮箱单行胶囊，两档
-  // 形态同一 DOM（手机层由 mobileLayer.css 同族规则适配）。**手机层也渲染** ——
-  // 「设置页头像入口手机层不渲染」是手机顶栏批（2026-10-31）的旧口径，本批按作者
-  // 新令就地推翻：身份卡回到设置页两档并在场（设备区仍在联系人页，不搬回）。
-  // 点胶囊 = App 内个人资料面；点头像 = 换头像流程 / 未登录登录卡（activityBar
-  // 既有委托统一承担，本文件不绑任何点击）。
-  const mobileLayer = typeof document !== 'undefined' && document.body.classList.contains('mobile-layer');
-  content.dataset.mobileAccountLayer = String(mobileLayer);
   // settings-progressive-disclosure 批：供应商与模型只在每次新开设置时折叠；
   // renderSettings 会因 WS echo 重建 DOM，展开状态需跨同一设置会话保留。
   const settingsDisclosure = window.__settingsDisclosure || (window.__settingsDisclosure = {
@@ -882,7 +866,6 @@ export function renderSettings() {
   // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
   // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
-    <section class="sp-panel-group" data-panel-group="account"><h2>${t('settings.account')}</h2>${accountCardHTML({ mobile: mobileLayer })}</section>
     <section class="sp-panel-group" data-panel-group="general"><h2>${t('settings.general')}</h2>
       ${setCard({ body: setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` })) })}
       ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
@@ -992,14 +975,12 @@ export function renderSettings() {
       </div>
     ` })}</section>`;
 
-  for (const name of ['account', 'general', 'models', 'runtime', 'advanced', 'about']) {
+  for (const name of ['general', 'models', 'runtime', 'advanced', 'about']) {
     const group = content.querySelector(`[data-panel-group="${name}"]`);
     if (group) content.appendChild(group);
   }
-  paintSettingsIdentity();
   bindSettingsDisclosure(content);
   bindSettingsEvents(content, cfg);
-  bindNeblinkEvents(() => renderSettings(), content);
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
@@ -1018,16 +999,6 @@ export function renderSettings() {
   // 保留旧值），保存路径零改动。
   // Provider credentials are fetched only after an explicit reveal action.
 
-  // friendseal batch (2026-09-25 ①-A): the settings-page device expansion
-  // area (chat entry per device). Lazy import — the P2-4 cycle-cut precedent:
-  // the builder lives in messages.js (the device chat's owner face, which
-  // statically imports neblink.js), so a static import here would create a
-  // new cycle. Idempotent mount; the refresh tick below re-mounts it.
-  const devicesSlot = document.getElementById('settings-devices-slot');
-  if (devicesSlot) {
-    import('./messages.js').then((m) => m.mountSettingsDevices(devicesSlot)).catch(() => {});
-  }
-
   // device-provenance 批（2026-10-23）的「消息设备标记」设置区已随标注全自动批
   // （2026-10-26 作者令「消息来源识别应该是自动的」）整区退役：来源识别由
   // deviceIdentity.js 按花名册自动判定（登录会话→账号设备名；配对设备→登记名；
@@ -1044,44 +1015,11 @@ export function renderSettings() {
     }
   });
 
-  // Refresh neblink peers periodically while settings panel is open
-  const refreshNeblink = () => {
-    fetchNeblinkStatus().then(() => {
-      // Match both states: logged in (.neblink-logged-in) and logged out
-      // (.neblink-login-section) so login/logout swaps render correctly.
-      const neblinkDiv = content.querySelector('.neblink-logged-in, .neblink-login-section');
-      if (neblinkDiv && document.getElementById('settings-content').contains(neblinkDiv)) {
-        const wrapper = document.createElement('div');
-        wrapper.innerHTML = neblinkSettingsHTML();
-        neblinkDiv.replaceWith(wrapper.firstElementChild);
-        bindNeblinkEvents(() => renderSettings(), content);
-      }
-      // Keep the avatar section in lockstep with login/avatar changes.
-      paintSettingsIdentity();
-      // friendseal (2026-09-25 ①-A): keep the device expansion area in
-      // lockstep with peer/presence/login changes on the same tick.
-      const devicesSlot = document.getElementById('settings-devices-slot');
-      if (devicesSlot) {
-        import('./messages.js').then((m) => m.mountSettingsDevices(devicesSlot)).catch(() => {});
-      }
-    });
-  };
-  refreshNeblink();
-  // O10 解绑（设备会话统一批 MVP-1）：修前把 3s 轮询**挂在 renderSettings 内**且从不清除
-  // ⇒ 设置面板一开过，轮询就永久驻留（面板不在场也每 3s 打一次 /api/neblink/status）。
-  // 现在 tick 内先判「设置内容是否仍在可见布局里」，不可见即停表并自注销。
-  // 在线态刷新语义不变（面板在场时仍 3s 一拍）；联系人面板设备段的 online 面
-  // **不依赖本表**，只依赖 WS `peerListChanged` 推送（neblink.js notifyStatusSubscribers）。
-  if (window._neblinkRefreshTimer) clearInterval(window._neblinkRefreshTimer);
-  window._neblinkRefreshTimer = setInterval(() => {
-    const content = document.getElementById('settings-content');
-    if (!content || content.offsetParent === null) {
-      clearInterval(window._neblinkRefreshTimer);
-      window._neblinkRefreshTimer = null;
-      return;
-    }
-    refreshNeblink();
-  }, 3000);
+  // neblink 设置页刷新面（3s 在线态轮询 + 账号卡/身份卡/设备子区重画）随账户栏整件
+  // 退役（2026-11-18 16:36 作者令）：设置页已无 `.neblink-logged-in` /
+  // `.neblink-login-section` / `#settings-devices-slot` / `#settings-identity-card`
+  // 任一面，`_neblinkRefreshTimer` 不再起表（在线态刷新只在工作台 hero / 个人主页 /
+  // 联系人面板，均各自订阅 WS `peerListChanged`，不依赖本表）。
 }
 
 // ── Settings avatar section — 已迁入 settingsIdentity.js（件四，作者令 2026-11-02）──

@@ -272,8 +272,9 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
     };
   });
   // 设备区 label 子句已除名（设备列表 2026-09-15 迁联系人面板——该子句自迁址起误红，
-  // 基线复核 2026-10-20）；auth-trim：登出键退役 + 只读身份行在位。
-  ok('T5 NL 号修改入口零残留 + 登出键已退役（auth-trim）+ 只读身份行在位', !nl.label && !nl.value && !nl.editBtn && !nl.input && !nl.cached && !nl.logout && nl.roLine, JSON.stringify(nl));
+  // 基线复核 2026-10-20）；auth-trim：登出键退役。账户栏整件退役（作者令 2026-11-18）：
+  // 只读身份行 `roLine` 随之删除 ⇒ 判据反转（在位 → 不存在）。
+  ok('T5 NL 号修改入口零残留 + 登出键已退役（auth-trim）+ 账户栏整件退役', !nl.label && !nl.value && !nl.editBtn && !nl.input && !nl.cached && !nl.logout && !nl.roLine, JSON.stringify(nl));
   await page.close();
 }
 

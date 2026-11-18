@@ -17,7 +17,7 @@ import { clearDeviceMessageCache } from './fmDropboxCache.js';
 import { openLocalStore, clear as clearLocalStore } from './localStore.js';
 import { escapeHtml } from './utils.js';
 import { t, getLocale } from './i18n.js';
-import { setCard } from './settingsRows.js';
+
 import { onMessage, sendWs } from './ws.js';
 import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvatarProfile } from './avatarCache.js';
 // knownAccounts.js（切换账号的本地账号记忆）已随 auth-trim 批（2026-10-20 作者令）
@@ -428,106 +428,20 @@ function notifyStatusSubscribers() {
   }
 }
 
-/** One account card for desktop settings and the mobile profile detail. */
-export function accountCardHTML({ mobile = false } = {}) {
-  return setCard({ title: t('settings.account'), id: 'account-card', body: `
-    ${neblinkSettingsHTML()}
-    ${mobile ? '' : '<div id="settings-devices-slot"></div>'}` });
-}
-
-export function neblinkSettingsHTML() {
-  const local = neblinkState.device || {};
-  const peers = neblinkState.peers || [];
-
-  // If pairing in progress
-  if (neblinkState.pairing) {
-    return `<div class="neblink-login-section">
-      <div class="neblink-pairing-status">${t('neblink.pairing') || '正在配对...'}</div>
-    </div>`;
-  }
-
-  // If not logged in — one-line "unavailable" note only (2026-09-06
-  // unification: avatar + device link are one settings block). The logo is
-  // already rendered by the avatar entry right above (avatarViewState falls
-  // back to the product logo when logged out) and owns the login click, so
-  // there is intentionally no second logo, no login button and no device
-  // section here.
-  if (!neblinkState.loggedIn) {
-    // 失败面（缺陷 A）：文案已是**三段式**（原因 + 下一步 + 诊断码），由
-    // `loginFailureText` 单点组装（i18n 优先，后端分类串兜底）。
-    const pairErr = neblinkState.pairError
-      ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
-    // 「清理并重登」入口的**门控**：只有本地凭据文件类分类才显示（网络/服务端类故障
-    // 点了也没用）。修前本面板在未登录态**没有任何出口**（上游 §5.2）——登出键只在
-    // 已登录分支渲染 ⇒ 用户被卡在「登录失败 + 无法清理」。
-    const cleanupCode = neblinkState.pairErrorCode || neblinkState.credentialIssue?.code || '';
-    const cleanup = LOCAL_FILE_CODES.includes(cleanupCode)
-      ? `<div class="neblink-account-actions">
-        <button class="neblink-switch-btn" id="neblink-cleanup-btn" type="button">${t('neblink.cleanupRelogin')}</button>
-      </div>`
-      : '';
-    // 状态面降级（判据 G6）：非 2xx 的**可见**读数（修前 `if (!resp.ok) return;` 零痕迹）。
-    const degraded = neblinkState.statusDegraded
-      ? `<div class="neblink-error">${escapeHtml(t('neblink.statusDegraded', { status: String(neblinkState.statusDegraded.status) }))}</div>`
-      : '';
-    // 本机凭据面读数（被动来源：坏件在**下一次登录尝试之前**就已经可判读，上游 §4 S4）。
-    const issue = (!pairErr && neblinkState.credentialIssue)
-      ? `<div class="neblink-error">${escapeHtml(loginFailureText(neblinkState.credentialIssue))}</div>` : '';
-    // 登录入口 = 头像（本块上方由 avatar entry 渲染并持有登录点击）。配对码卡
-    // 已按作者令移除：账号登录即入网（/api/device/register 自动默认网络）。
-    return `<div class="neblink-login-section">
-      <div class="neblink-logged-out-hint">${t('neblink.loggedOutHint')}</div>
-      ${degraded}
-      ${pairErr}
-      ${issue}
-      ${cleanup}
-    </div>`;
-  }
-
-  // ── 登录态设置账号块（auth-trim 批，2026-10-20 作者令）────────────────────
-  // 作者裁定：产品全走纯官网路径，控制台不承担认证态管理 ⇒ 设置页「切换账号 /
-  // 退出登录」两键整体退役（登出/切号只在官网门户操作）。本块降为**只读登录态展示**：
-  //   · `kickedLine`（2026-09-14 作者令 C+B 的被动可见状态行，语义不变，保留）；
-  //   · `whoLine`（谁登录着，只读 — `neblink.loggedInAs`，无任何动作入口）。
-  //   · `logoutLine`（新增，2026-11「退出登录没有入口」修复批，见下方块注）。
-  // 历史备注：切换账号弹窗（knownAccounts.js 账号记忆 + 单窗续登链
-  // `switchLogoutAndLogin`/`watchSwitchHandoff`/`openSwitchAccountModal`）随两键
-  // 整体删除；RP end-session 链本体（`openEndSessionHandoff`）仍服务「清理并重登」
-  // 修复入口（本文件未登录失败面 + activityBar 登录错误面共用），后端 /auth
-  // 落地页族（含 switch handoff 标记）照旧服务官网/修复路径。
-  //
-  // 早期史（设备列表 ①④，作者 2026-09-15）：设备入口已迁联系人面板
-  // （`contacts.js` `buildDevicesEntry`/`buildDeviceRows`/`deviceRow`）；
-  // NL 号入口已随 09-05 裁定移除（NL 号统一 = 官网 Username）。
-
-  // 踢旧批（2026-09-14，作者 17:07 裁定 C+B·客户端一刀）——**案 B 客户端腿**：
-  // 被服务端 `disconnect` 帧踢下线后，本机必须**被动可见**（修前零用户感知）。
-  // 形态遵一期口径（User.md:36 / messages.js:991「无横幅无提示音」）：
-  //   · 只做**状态行**（下方这一条），无横幅、无 toast、无声音；
-  //   · `autoReconnectParked` ⇒ 明确告知「自动重连已暂停，需重新登录」——这是本批
-  //     对「须用户显式再登录」的用户侧说明（后端停摆态见 NeblinkRelayTunnel.park）。
-  // 取数 = /api/neblink/status 的 `relay.signedOutElsewhere`（本地网关↔浏览器侧加法
-  // 字段；服务端 wire 零变化）。老网关缺该字段 ⇒ undefined ⇒ 不渲染（降级安全）。
-  const kicked = neblinkState.relay?.signedOutElsewhere === true;
-  const kickedLine = kicked
-    ? `<div class="neblink-kicked-notice" role="status">
-      <span class="neblink-kicked-dot" aria-hidden="true"></span>
-      <span class="neblink-kicked-text"><strong>${t('neblink.signedOutElsewhere')}</strong> · ${t('neblink.signedOutElsewhereHint')}</span>
-    </div>`
-    : '';
-
-  // 只读登录态：谁登录着（displayName 优先，回退 email）。纯展示，零动作。
-  const who = (neblinkState.device?.displayName || neblinkState.device?.email || '').trim();
-  const whoLine = who
-    ? `<div class="neblink-account-ro" role="status">${escapeHtml(t('neblink.loggedInAs', { name: who }))}</div>`
-    : '';
-
-  return `
-    <div class="neblink-logged-in">
-      ${kickedLine}
-      ${whoLine}
-    </div>`;
-}
+// ── 「登录账号」账户卡已整件退役（作者令 2026-11-18）────────────────────────
+// 原 `accountCardHTML()` / `neblinkSettingsHTML()`（桌面设置账号卡 + 手机个人主页
+// 底部账号卡）随作者 2026-11-18 16:36「设置里的账户这一栏完全移除」+ 16:45
+// 「底部的账户栏 功能重复 信息重复 …不要有重复的功能和信息」整体删除：
+//   · 其唯一内容 = 只读「登录账号：<名>」行（`neblink.loggedInAs`），与工作台 hero、
+//     个人主页读数组（用户名/昵称/邮箱/GitHub/Google）及设备行身份完全重复；
+//   · 逐设备登出与身份读数各有权威面（个人主页设备清单 `profileDevices.js` /
+//     工作台 hero），本文件不再持有任何账号卡渲染。
+// 连带退役的独占面：`#account-card` / `#settings-devices-slot` / `.neblink-logged-in`
+// / `.neblink-account-ro` / `.neblink-kicked-*` / `.neblink-logged-out-hint` /
+// `.neblink-pairing-status` / `.neblink-error` / `.neblink-account-actions` /
+// `#neblink-cleanup-btn` 及其独占 i18n 键（清理见本批交付报告）。
+// `openEndSessionHandoff` / `loginFailureText` / `LOCAL_FILE_CODES` 三件**保留**：
+// 它们是 activityBar 登录失败面与个人主页设备清单的共享实现，非本卡独占。
 
 /** Map a raw platform string (e.g. "macos", "windows") to a friendly label +
  *  inline SVG icon for the device row. Falls back to a generic device icon. */
@@ -821,47 +735,11 @@ export function openEndSessionHandoff(continueToLogin = false) {
 }
 
 // ---- Bind events after HTML insert ----
-const accountBindings = new WeakSet();
-/** @param {() => void} rerender @param {Document|HTMLElement} [root] */
-export function bindNeblinkEvents(rerender, root = document) {
-  // Scoped mobile cards already subscribe through onNeblinkStatus; never steal
-  // the retained desktop Settings callback or clear it during mobile teardown.
-  if (root === document) _rerender = rerender;
-
-  // 「切换账号 / 退出登录」两键及其绑定已随 auth-trim 批（2026-10-20 作者令）删除。
-  // 原共用 RP-initiated logout 链（`initiateLogout`，2026-09-06 起：POST + 预约窗 →
-  // 本地 8 步拆除 → 提供方 end-session → /auth/logged-out 落地页；`continueToLogin`
-  // 单窗续登标记 2026-09-16）**本体保留**为 `openEndSessionHandoff` —— 它现在是
-  // 「清理并重登」修复入口的独占持有者（见下），后端 /auth 路由族照旧。
-
-  // 「清理并重登」入口（缺陷 A / 上游 §8.2 第 6 项）：**复用既有链路**，零新轮子 ——
-  // 走 `openEndSessionHandoff(true)`（RP end-session → 本地拆除 → 落地页续登）。
-  // 它之所以能真的「清理」，靠的是后端那笔修复：end-session 的凭据读点失败**不再跳过
-  // 本地拆除**（判据 G5）⇒ 坏件即使读不开，拆除仍执行（`DeviceCredential.clear`
-  // 删不掉时再走改名留档兜底）⇒ 下一次登录从干净盘重建。跳转必须在手势栈里同步
-  // 发生（popup-blocker），故直接调用。
-  const cleanupBtn = /** @type {HTMLButtonElement|null} */ (root.querySelector('#neblink-cleanup-btn'));
-  if (cleanupBtn && !accountBindings.has(cleanupBtn)) {
-    accountBindings.add(cleanupBtn);
-    cleanupBtn.addEventListener('click', () => {
-      cleanupBtn.disabled = true;
-      openEndSessionHandoff(true);
-    });
-  }
-
-  // 配对码卡提交绑定已随卡片移除（作者令 2026-10-13「不需要本机配对码」）——
-  // 唯一入网路径 = 头像账号登录。
-
-  // NL 号入口已移除（09-05 裁定）——原 edit/cancel/input/save 绑定随区块删除。
-
-  // 🔴 设置账号段的**设备列表绑定整组已摘除**（①④，作者 2026-09-15）：随设备行模板
-  // 一并删除的有 —— 「更新」键、stable/beta 频道键、取消键三组绑定，以及
-  // `.dropbox-clickable`（设备名 → **旧设备窗** `openDropbox`）绑定。这些选择器的
-  // DOM 来源（`.neblink-peers-list` / `.neblink-peer`）已不存在（见上方本文件
-  // `neblinkSettingsHTML` 的移除项清单），留着就是永不命中的死绑定。
-  // 设备入口本体见 `contacts.js` 的「设备」点进展开（→ `openDeviceChat`，新设备会话窗）。
-  return () => { if (root === document && _rerender === rerender) _rerender = null; };
-}
+// 原 `bindNeblinkEvents()`（设置账号卡 / 个人主页账号卡的插入后绑定；含
+// `#neblink-cleanup-btn` → `openEndSessionHandoff(true)`、以及 `_rerender` 登记）
+// 随「登录账号」账户卡整件退役（2026-11-18 作者令）：账户卡已无 DOM 来源 ⇒ 零绑定面。
+// 「清理并重登」链路本体（`openEndSessionHandoff`）**保留**，仍服务 activityBar 登录
+// 失败面；`_rerender` 保留为可空重绘钩子（当前无登记方，调用点全部安全空转）。
 
 // ---- Switch-account modal（已退役，auth-trim 批 2026-10-20 作者令）----
 // 原整段切换账号机制 —— `switchLogoutAndLogin`（单窗续登链）、`watchSwitchHandoff`

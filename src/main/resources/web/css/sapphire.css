@@ -446,8 +446,6 @@
 .config-actions button,
 .agent-detail-save-btn,
 .option-btn,
-.neblink-peer-update-btn,
-.neblink-ch-btn,
 .epub-nav-btn,
 .code-copy-btn,
 #modal-cancel,
@@ -465,8 +463,6 @@
   .config-actions button:hover,
   .agent-detail-save-btn:hover,
   .option-btn:not(.picked):hover,
-  .neblink-peer-update-btn:hover,
-  .neblink-ch-btn:hover,
   .epub-nav-btn:hover,
   .code-copy-btn:not(.copied):hover,
   #modal-cancel:hover,
@@ -483,7 +479,6 @@
 .config-actions button:active,
 .agent-detail-save-btn:active,
 .option-btn:not(.picked):active,
-.neblink-peer-update-btn:active,
 .neblink-ch-btn:active,
 .epub-nav-btn:active,
 .code-copy-btn:not(.copied):active,
@@ -1197,8 +1192,7 @@ button.glass-control,
 .cfg-btn:not(.cfg-btn-primary),
 .fm-msg-btn,
 .fm-search-btn,
-.fm-device-desc-btn,
-.neblink-switch-btn {
+.fm-device-desc-btn {
   background: var(--btn-secondary-bg);
   border-color: var(--btn-secondary-stroke);
   color: var(--btn-secondary-ink);
@@ -1209,8 +1203,7 @@ button.glass-control,
   .cfg-btn:not(.cfg-btn-primary):hover,
   .fm-msg-btn:hover,
   .fm-search-btn:hover,
-  .fm-device-desc-btn:hover,
-  .neblink-switch-btn.neblink-switch-btn:hover {
+  .fm-device-desc-btn:hover {
     border-color: var(--btn-secondary-stroke-hover);
     color: var(--btn-secondary-ink);
   }
@@ -1220,8 +1213,7 @@ button.glass-control:active,
 .cfg-btn:not(.cfg-btn-primary):active,
 .fm-msg-btn:active,
 .fm-search-btn:active,
-.fm-device-desc-btn:active,
-.neblink-switch-btn.neblink-switch-btn:active {
+.fm-device-desc-btn:active {
   border-color: var(--btn-secondary-stroke-hover);
   background: var(--btn-secondary-bg);
 }
@@ -1232,8 +1224,7 @@ button.glass-control:active,
     .cfg-btn:not(.cfg-btn-primary):hover,
     .fm-msg-btn:hover,
     .fm-search-btn:hover,
-    .fm-device-desc-btn:hover,
-    .neblink-switch-btn.neblink-switch-btn:hover {
+    .fm-device-desc-btn:hover {
       background: var(--btn-secondary-fill-hover);
     }
 }
@@ -1242,8 +1233,7 @@ button.glass-control:active,
   .cfg-btn:not(.cfg-btn-primary):active,
   .fm-msg-btn:active,
   .fm-search-btn:active,
-  .fm-device-desc-btn:active,
-  .neblink-switch-btn.neblink-switch-btn:active {
+  .fm-device-desc-btn:active {
     background: var(--btn-unavailable-bg);
   }
 }
@@ -1373,7 +1363,7 @@ button.glass-control.fm-req-accept:active {
     button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
     button.glass-control.fm-gs-action.fm-gs-danger, button.fm-req-decline,
     button.glass-control, .cfg-btn:not(.cfg-btn-primary),
-    .fm-msg-btn, .fm-search-btn, .fm-device-desc-btn, .neblink-switch-btn,
+    .fm-msg-btn, .fm-search-btn, .fm-device-desc-btn,
     .fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
     .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
@@ -1385,7 +1375,7 @@ button.glass-control.fm-req-accept:active {
     button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
     button.glass-control.fm-gs-action.fm-gs-danger, button.fm-req-decline,
     button.glass-control, .cfg-btn:not(.cfg-btn-primary),
-    .fm-msg-btn, .fm-search-btn, .fm-device-desc-btn, .neblink-switch-btn,
+    .fm-msg-btn, .fm-search-btn, .fm-device-desc-btn,
     .fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
     .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,

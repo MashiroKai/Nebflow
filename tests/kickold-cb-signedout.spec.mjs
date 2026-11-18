@@ -1,29 +1,21 @@
-// kickold-cb-signedout.spec.mjs — 「被踢下线」被动提示（案 B 客户端腿）真渲染验收。
+// kickold-cb-signedout.spec.mjs — 「账户栏整件退役」后的模块边界验收
+// （2026-11-18 作者令改写；原文 = 「被踢下线」被动提示案 B 客户端腿真渲染验收）。
 //
-// 批：登录「踢旧下线」实施批（作者 2026-09-14 17:07 裁定 C+B · 客户端一刀）。
-// 契约（前端只读不派生；真源 = 网关本地状态面 /api/neblink/status 的
-// `relay.signedOutElsewhere` / `relay.autoReconnectParked`，见 NeblinkRelayTunnel.statusJson）：
-//   形态 = **状态行级**（与设备行同族的一行）——🔴 无横幅、无浮层、无 toast、无声音
-//        （一期口径 /Users/kaiyu/.nebflow/User.md:36；代码锚 messages.js「无横幅无提示音」）；
-//   文案 = 「已在别处登录 · 本机会话已被另一台设备接管，自动重连已暂停——重新登录即可恢复」；
-//   降级 = 字段缺失（老网关）⇒ **不渲染**（宁可不显示，不误报）；
-//   布局 = 状态行不出面板容器、文案不被裁（三端视口 × 亮/暗双主题）。
+// 🔴 原文的渲染面 = 生产 `js/neblink.js` 的 `neblinkSettingsHTML()`（设置账号卡 /
+//    个人主页底部账号卡的单点）。2026-11-18 作者令（16:36「设置里的账户这一栏完全
+//    移除」+ 16:45「底部的账户栏 功能重复 信息重复…不要有重复的功能和信息」）已把
+//    该账户卡**整件退役** ⇒ 原文全部断言（状态行/提示行在位、文案、形态合规）作废。
+// 🔴 判据随之反转 = 本 spec 现在的受检点：账户卡渲染 API 与其选择器族**零发射**
+//    （不是隐藏；DOM 零命中）。
+// 🔴 语义变化申报：被踢下线被动提示（`relay.signedOutElsewhere` 只读取数，2026-09-14
+//    作者裁定 C+B）是账户卡的内件 ⇒ 随卡退役后**无 UI 载体**（见本批报告「未证/变化项」）；
+//    登出链本体 `openEndSessionHandoff` **保留**（activityBar 登录失败面共用）。
 //
-// 🔴 **本文件全部状态载荷均为 FIXTURE（人工构造，非生产实测）**：`/api/neblink/status`
-//    的响应由本文件内联定义并经 `page.route` 注入，不来自任何真实运行实例；真实
-//    「被踢态」实例在真浏览器里的读数未在本批完成（见节点报告「未证项」）。
-//    🔴 禁把本 fixture 读数冒充生产实测。
-//    与之互补的真实链路读数（非法装置面）：真 JVM 实例 + 真 WS socket 推 `disconnect`
-//    帧 ⇒ 停摆 + 零自动重登，见 src/test/.../NeblinkRelayTunnelKickParkSpec.scala。
-//
-// 渲染面 = **生产模块本身**：本页只挂载生产 CSS（base.css + neblink.css，亮/暗由
-//    prefers-color-scheme 供给）+ 生产 `js/neblink.js` 的 `neblinkSettingsHTML()`。
-//    不 boot 整个 app 外壳（零 ws/会话 fixture ⇒ 读数稳定、与外壳状态无关）。
+// 渲染面 = 生产模块本身（真 CSS + 真 i18n + 真 `js/neblink.js`）。
+// 🔴 状态载荷全为 FIXTURE（人工构造，非生产实测）——禁把 fixture 读数冒充生产实测。
 //
 // 运行（cwd = 主仓，node_modules 在那里）：
-//   node node_modules/@playwright/test/cli.js test --config /tmp/qa-kickold/pw.config.mjs signedout
-// 改动前对照（验红）：NEBFLOW_WEB_ROOT=/Users/kaiyu/Claude\ code/Nebflow/src/main/resources/web
-//   ⇒ 同一命令必红（改动前无该状态行）。
+//   node node_modules/@playwright/test/cli.js test --config <pw.config> kickold
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -61,7 +53,7 @@ const STATUS_KICKED = {
   },
   peers: [],
 };
-/** 降级态（老网关 / 未被踢）：字段缺失 ⇒ 不得渲染状态行。 */
+/** 降级态（老网关 / 未被踢）：字段缺失。 */
 const STATUS_CLEAN = {
   loggedIn: true,
   relay: { available: true, authRejected: false, lastRejectedStatusCode: null, lastRejectedAt: null, selfHeal: 'not-attempted' },
@@ -72,7 +64,7 @@ const STATUS_CLEAN = {
 /** 最小宿主页：真 CSS + 真 i18n locale + 生产 neblink 模块。 */
 const HOST_PAGE = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<title>kickold-cb render harness</title>
+<title>kickold-cb retirement harness</title>
 <link rel="stylesheet" href="/css/base.css">
 <link rel="stylesheet" href="/css/neblink.css">
 <style>body{display:block;padding:24px}#host{width:320px;background:var(--color-surface);padding:12px;border-radius:10px}</style>
@@ -99,97 +91,58 @@ async function bootPanel(page, status) {
   });
   await page.routeWebSocket(/\/ws/, () => { /* 外壳未 boot，WS 保持静默 */ });
   await page.goto('http://localhost:1/harness');
-  // 用**生产模块**渲染面板（真 i18n + 真状态归一化 + 真 HTML 模板）。
+  // 真状态归一化仍走生产模块（fetchNeblinkStatus），但账户卡不再有渲染 API 可调。
   await page.evaluate(async () => {
     const nb = await import('/js/neblink.js');
     await nb.fetchNeblinkStatus();
-    document.getElementById('host').innerHTML = nb.neblinkSettingsHTML();
   });
   await page.waitForTimeout(120);
 }
 
-const THEMES = ['light', 'dark'];
-const VIEWPORTS = [
-  { label: 'narrow', width: 900, height: 700 },
-  { label: 'mid', width: 1280, height: 800 },
-  { label: 'wide', width: 1680, height: 1000 },
+/** 账户卡退役清单：渲染 API + 选择器族（DOM 零发射）。 */
+const RETIRED_SELECTORS = [
+  '#account-card', '#settings-devices-slot',
+  '.neblink-login-section', '.neblink-logged-in', '.neblink-account-ro',
+  '.neblink-logged-out-hint', '.neblink-kicked-notice', '.neblink-error',
+  '.neblink-account-actions', '.neblink-switch-btn',
 ];
 
-for (const theme of THEMES) {
-  for (const vp of VIEWPORTS) {
-    test.describe(`被踢下线被动提示 — ${theme} / ${vp.label}(${vp.width}x${vp.height})`, () => {
-      test.use({ colorScheme: theme, viewport: { width: vp.width, height: vp.height } });
+for (const theme of ['light', 'dark']) {
+  test.describe(`账户栏整件退役 — ${theme}`, () => {
+    test.use({ colorScheme: theme, viewport: { width: 1280, height: 800 } });
 
-      test('状态行渲染 / 形态合规（无横幅无声音）/ 不溢出裁切 / 降级不渲染（fixture 载荷）', async ({ page }) => {
-        const pageErrors = [];
-        page.on('pageerror', (e) => pageErrors.push(e.message));
-        await bootPanel(page, STATUS_KICKED);
-
-        const notice = page.locator('.neblink-kicked-notice');
-        await expect(notice).toHaveCount(1);
-
-        const r = await page.evaluate(() => {
-          const n = document.querySelector('.neblink-kicked-notice');
-          const host = document.getElementById('host');
-          const cs = getComputedStyle(n);
-          const nb = n.getBoundingClientRect();
-          const hb = host.getBoundingClientRect();
-          // 横幅/浮层/声音面探测：固定定位元素、aria-live、<audio>、toast 类名。
-          const fixed = [...document.querySelectorAll('*')].filter((el) => {
-            const s = getComputedStyle(el);
-            return s.position === 'fixed' || s.position === 'sticky';
-          }).map((el) => el.className || el.tagName);
-          const live = [...document.querySelectorAll('[aria-live]')].map((el) => el.className || el.tagName);
-          return {
-            title: n.querySelector('strong')?.textContent || '',
-            text: n.querySelector('.neblink-kicked-text')?.textContent || '',
-            dotBg: getComputedStyle(n.querySelector('.neblink-kicked-dot')).backgroundColor,
-            color: cs.color,
-            bg: cs.backgroundColor,
-            borderLeft: cs.borderLeftColor,
-            noticeOverflow: n.scrollWidth - n.clientWidth,
-            insideHost: nb.left >= hb.left - 1 && nb.right <= hb.right + 1,
-            fixedCount: fixed.length,
-            fixed,
-            liveCount: live.length,
-            audioCount: document.querySelectorAll('audio').length,
-            toastCount: document.querySelectorAll('[class*="toast" i], [class*="banner" i], .neblink-error').length,
-          };
-        });
-
-        // ① 文案（真 i18n，zh-CN）
-        expect(r.title).toBe('已在别处登录');
-        expect(r.text).toContain('已在别处登录');
-        expect(r.text).toContain('自动重连已暂停');
-        expect(r.text).toContain('重新登录即可恢复');
-        // ② 形态合规：零横幅 / 零 aria-live / 零声音 / 零 toast
-        expect(r.fixedCount, `fixed/sticky elements: ${JSON.stringify(r.fixed)}`).toBe(0);
-        expect(r.liveCount).toBe(0);
-        expect(r.audioCount).toBe(0);
-        expect(r.toastCount).toBe(0);
-        // ③ 可读（两主题都有实色底/字色，不是透明继承）
-        expect(r.bg).not.toBe('rgba(0, 0, 0, 0)');
-        expect(r.color).not.toBe('rgba(0, 0, 0, 0)');
-        expect(r.dotBg).not.toBe('rgba(0, 0, 0, 0)');
-        // ④ 布局：不出容器、不裁切
-        expect(r.noticeOverflow, 'notice text truncated').toBeLessThanOrEqual(1);
-        expect(r.insideHost, 'notice escaped its panel container').toBe(true);
-        // ⑤ 零脚本错误
-        expect(pageErrors).toEqual([]);
-
-        await page.screenshot({
-          path: `/tmp/qa-kickold/render-${theme}-${vp.label}.png`,
-          clip: { x: 0, y: 0, width: vp.width, height: Math.min(vp.height, 400) },
-        });
-        console.log(`[reading ${theme}/${vp.label}] ${JSON.stringify(r)}`);
+    test('neblink.js 不再导出账户卡渲染 API（登出链本体保留）', async ({ page }) => {
+      const pageErrors = [];
+      page.on('pageerror', (e) => pageErrors.push(e.message));
+      await bootPanel(page, STATUS_KICKED);
+      const api = await page.evaluate(async () => {
+        const nb = await import('/js/neblink.js');
+        return {
+          settingsHTML: typeof nb.neblinkSettingsHTML,
+          accountCard: typeof nb.accountCardHTML,
+          bind: typeof nb.bindNeblinkEvents,
+          endSession: typeof nb.openEndSessionHandoff,
+        };
       });
-
-      test('降级态：relay 无 signedOutElsewhere 字段 ⇒ 不渲染状态行（老网关兼容）', async ({ page }) => {
-        await bootPanel(page, STATUS_CLEAN);
-        await expect(page.locator('.neblink-kicked-notice')).toHaveCount(0);
-        // 面板其余部分仍渲染（不是整块塌掉）
-        await expect(page.locator('.neblink-logged-in')).toHaveCount(1);
-      });
+      expect(api.settingsHTML, 'neblinkSettingsHTML must be retired (no longer exported)').toBe('undefined');
+      expect(api.accountCard, 'accountCardHTML must be retired (no longer exported)').toBe('undefined');
+      expect(api.bind, 'bindNeblinkEvents must be retired (no longer exported)').toBe('undefined');
+      expect(api.endSession, 'openEndSessionHandoff must survive (activityBar shares it)').toBe('function');
+      expect(pageErrors).toEqual([]);
     });
-  }
+
+    test('账户卡选择器族零发射（含被踢提示行 / 只读身份行 / 未登录提示行）', async ({ page }) => {
+      await bootPanel(page, STATUS_KICKED);
+      for (const sel of RETIRED_SELECTORS) {
+        await expect(page.locator(sel), `retired selector ${sel} must be zero-hit`).toHaveCount(0);
+      }
+    });
+
+    test('降级态（老网关缺字段）同样零发射 —— 判据不依赖载荷', async ({ page }) => {
+      await bootPanel(page, STATUS_CLEAN);
+      for (const sel of RETIRED_SELECTORS) {
+        await expect(page.locator(sel), `retired selector ${sel} must be zero-hit (clean payload)`).toHaveCount(0);
+      }
+    });
+  });
 }

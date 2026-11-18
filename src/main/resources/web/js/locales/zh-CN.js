@@ -1412,7 +1412,6 @@ export default {
   'settings.advanced': '高级',
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
-  'settings.account': '账号',
   'settings.general': '通用',
   'settings.modelsAndServices': '模型与服务',
   'profile.cancelEdit': '取消修改',
@@ -2351,29 +2350,22 @@ export default {
   'neblink.reachDirect': 'P2P 直连已建立',
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
-  // 自解释批（2026-11-04 铁律 8）：删尾句「登录后自动入网」= 行为教学/能力说明；
-  // 「未登录」+「点击上方头像登录」= 空态状态 + 下一步动作（细则 b 空态，保留）。
-  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号',
-  // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
-  // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
+  // 「清理并重登」入口（缺陷 A，2026-09-18）：**保留** —— activityBar 登录失败面仍用
+  // （`#login-cleanup` → `openEndSessionHandoff(true)`）。
   'neblink.cleanupRelogin': '清理并重登',
-  'neblink.statusDegraded': '状态读取失败（HTTP {status}），下面显示的可能不是最新状态',
-  // 配对码卡（门户 MVP E7, 2026-10-10）：6 位码 → POST /api/neblink/enroll。
-  // 被踢下线被动提示（踢旧批案 B，2026-09-14）：**状态行级**——无横幅、无声音
-  // （一期口径见 User.md 第 36 行；代码锚 messages.js「无横幅无提示音」）。
-  'neblink.signedOutElsewhere': '已在别处登录',
-  'neblink.signedOutElsewhereHint': '本机会话已被另一台设备接管，自动重连已暂停——重新登录即可恢复',
+  // 账户卡的 `neblink.loggedOutHint` / `neblink.statusDegraded` /
+  // `neblink.signedOutElsewhere(提示)` / `neblink.pairing` / `neblink.loggedInAs` /
+  // `settings.account` 七键随「登录账号」账户卡整件退役（2026-11-18 作者令）：卡片没了，
+  // 全仓零引用（grep 实证 ⇒ zh/en 对称删除）。
   'neblink.deviceDescHint': '此描述对 Agent 可见，Agent 会根据你的描述自动选择合适的设备执行任务',
   'neblink.save': '保存',
-  'neblink.update': '更新',
   'neblink.stable': '稳定版',
   'neblink.beta': '测试版',
   'neblink.cancel': '取消',
   // 远端更新的三态文案（`neblink.updating` / `neblink.restarting` / `neblink.updateTimeout`）
-  // 随件五（2026-11-02「联系人里的设备更新去掉，现在统一由官网进行统一更新」）删除：
-  // 三键的唯一消费者是联系人设备行的行内回显，该面退役后全仓零引用（grep 实证）。
-  // `neblink.update` **保留**——设置页设备区每行仍用（`messages.js` 的
-  // `[data-settings-device-update]`，fleet 批 2026-11-01）。
+  // 随件五（2026-11-02「联系人里的设备更新去掉，现在统一由官网进行统一更新」）删除。
+  // `neblink.update` 亦已删除：其唯一消费者 = 设置页设备区每行（fleet 批 2026-11-01），
+  // 该区随「登录账号」账户卡整件退役（2026-11-18 作者令）⇒ 全仓零引用。
 
   // ── 全设备统一更新（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一版本，
   //    并全程有状态卡片引导」）──────────────────────────────────────────────
@@ -2394,7 +2386,6 @@ export default {
   'fleet.cancel': '中断',
   'fleet.retry': '重试失败项',
   'fleet.startConfirm': '开始全部更新',
-  'fleet.startAction': '全部更新',
   'fleet.updateThisDevice': '更新此设备',
   'fleet.thisDevice': '本机',
   'fleet.online': '在线',
@@ -2459,10 +2450,10 @@ export default {
   'fleet.branch.manual': '需手动',
   'fleet.branch.queued': '待上线补推',
 
-  // 登录态只读展示（auth-trim 批 2026-10-20 作者令）：谁登录着，无动作入口。
-  // 原「切换账号 / 退出登录」键组（switchAccount/logout/loggingOut/useOtherAccount/
-  // currentTag）已随两键退役删除 —— 登出/切号只在官网门户操作。
-  'neblink.loggedInAs': '登录账号：{name}',
+  // 登录态只读展示的 `neblink.loggedInAs`（「登录账号：{name}」）已随「登录账号」账户卡
+  // 整件退役（2026-11-18 作者令）删除；auth-trim 批（2026-10-20 作者令）的
+  // 「切换账号 / 退出登录」键组（switchAccount/logout/loggingOut/useOtherAccount/currentTag）
+  // 早随两键删除 —— 登出/切号只在官网门户操作。
   // 退出登录键（2026-11「退出登录没有入口」修复批，作者裁「只修退不出」——本批
   // 豁免 auth-trim 批「控制台不承担认证态管理」那条裁定的范围，仅限退出）：设置
   // 账号段的次级键 + 头像菜单项共用同一条文案。切号仍只在官网门户操作。

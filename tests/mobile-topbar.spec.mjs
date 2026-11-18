@@ -155,16 +155,16 @@ test('T2 头像搬家：工作台顶部 hero 是身份唯一展示，设置页�
   await expect(page.locator('#settings-identity-capsule')).toHaveCount(0);
   await expect(page.locator('#settings-devices-slot')).toHaveCount(0);
   await expect(page.locator('#settings-modal .neblink-peer')).toHaveCount(0);
-  // 账号段保留的只有**功能分项**（既有账号卡 = 登录账号读数），不是身份复述。
-  await expect(page.locator('#settings-content #account-card')).toHaveCount(1);
-  // ⚠️ 2026-11-18 修残（本轮 rebase 到 f5300f375 后本行由绿转红，判据被更晚的裁定作废）：
-  // 基线 commit f5d437347「Unify settings model cards and remove settings logout」
-  // （2026-11-18 09:23:56，晚于本批作者原话 08:54）把 `#neblink-logout` 从 `neblink.js`
-  // 整件删除 —— 设置页账号卡的会话动作退役，卡内只剩只读登录态读数。本批的登出动作
-  // 只在**个人资料面**且按设备域（每行一台）—— 设置页不复述，故断言 0 而非 1。
-  await expect(page.locator('#settings-content #account-card #neblink-logout')).toHaveCount(0);
-  await expect(page.locator('#settings-content #account-card #neblink-cleanup-btn')).toHaveCount(0);
-  await expect(page.locator('#settings-content #account-card .neblink-account-ro')).toHaveCount(1);
+  // 账户栏整件退役（作者令 2026-11-18 16:36「设置里的账户这一栏完全移除」/
+  // 16:45「底部的账户栏 功能重复 信息重复」）：账号分组、账号卡、只读「登录账号」
+  // 读数行、登出/修复键一律不存在——账号读数与设备子区的权威展示 = 工作台 hero
+  // （`.mf-me-entry`）+ 个人主页，设置页零复述。
+  await expect(page.locator('#settings-content [data-panel-group="account"]')).toHaveCount(0);
+  await expect(page.locator('#settings-content #account-card')).toHaveCount(0);
+  await expect(page.locator('#settings-content .neblink-account-ro')).toHaveCount(0);
+  await expect(page.locator('#settings-content .neblink-logged-in')).toHaveCount(0);
+  await expect(page.locator('#settings-content .neblink-login-section')).toHaveCount(0);
+  await expect(page.locator('#settings-content #neblink-cleanup-btn')).toHaveCount(0);
   await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
   // 联系人页设备段完好（设备只在联系人展示）。
   await dockTo(page, 'contacts');
@@ -189,6 +189,15 @@ test('T3 个人主页单页：子页与空动作整族退役，身份读数与�
   await expect(me.locator('.mf-me-avatar-frame.huge')).toHaveCount(1);
   await expect(me.locator('.mf-me-avatar-logo')).toHaveCount(1);
   await expect(me.locator('.mf-me-avatar-photo')).toHaveCount(1);
+
+  // ②′ 底部「登录账号」重复栏已整件退役（作者令 2026-11-18 16:45「底部的账户栏
+  //    功能重复 信息重复…不要有重复的功能和信息」）：其信息与上方账号读数组
+  //    （用户名/昵称/邮箱/GitHub/Google）+ 资料卡身份完全重复 ⇒ 不是隐藏——
+  //    DOM 为零命中（`.mf-account-card` / `.neblink-account-ro` / 账号卡壳一律不在场）。
+  await expect(me.locator('.mf-account-card')).toHaveCount(0);
+  await expect(me.locator('.neblink-account-ro')).toHaveCount(0);
+  await expect(me.locator('.neblink-logged-in')).toHaveCount(0);
+  await expect(me.locator('.neblink-login-section')).toHaveCount(0);
 
   // ③ 只读身份读数（件四口径不变）：字段 = 账号服务真实读数；零可编辑控件、
   //    零 <a href>、官网编辑指引为纯文本。

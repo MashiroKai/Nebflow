@@ -1459,7 +1459,6 @@ export default {
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
-  'settings.account': 'Account',
   'settings.general': 'General',
   'settings.modelsAndServices': 'Models & services',
   'profile.cancelEdit': 'Cancel changes',
@@ -2434,22 +2433,14 @@ export default {
   'neblink.reachDirect': 'Direct P2P connection established',
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
-  // Self-explaining batch (2026-11-04, rule 8): dropped the trailing "signing in joins
-  // the network automatically" (behaviour teaching). State + next step stay.
-  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account',
-  // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
-  // "clean up and sign in again" entry (local credential-file class only);
-  // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
+  // "Clean up and sign in again" (defect A, 2026-09-18): KEPT — activityBar's login
+  // failure face still uses it (#login-cleanup → openEndSessionHandoff(true)).
   'neblink.cleanupRelogin': 'Clean up and sign in again',
-  'neblink.statusDegraded': 'Status read failed (HTTP {status}) — what you see below may be stale',
-  // Pairing-code card (portal MVP E7, 2026-10-10): 6-digit code → POST /api/neblink/enroll.
-  // Kicked-offline passive notice (kickold batch, case B, 2026-09-14): STATUS-LINE
-  // level only — no banner, no sound (一期口径, User.md:36).
-  'neblink.signedOutElsewhere': 'Signed in elsewhere',
-  'neblink.signedOutElsewhereHint': 'Another device took over this session; automatic reconnect is paused — sign in again to resume.',
+  // Account-card keys (neblink.loggedOutHint / statusDegraded / signedOutElsewhere
+  // (+Hint) / pairing / loggedInAs / settings.account) were removed with the account
+  // card (2026-11-18 author ruling): zero references repo-wide (grep-verified).
   'neblink.deviceDescHint': 'Visible to agents — they use this description to automatically pick the right device for a task',
   'neblink.save': 'Save',
-  'neblink.update': 'Update',
   'neblink.stable': 'Stable',
   'neblink.beta': 'Beta',
   'neblink.cancel': 'Cancel',
@@ -2458,8 +2449,8 @@ export default {
   // update inside contacts — updates are unified on the website now"): their only
   // consumer was the contacts device row's inline echo, and after that face retired
   // they had zero references repo-wide (grep-verified).
-  // `neblink.update` STAYS — the settings device area still uses it per row
-  // (`messages.js` `[data-settings-device-update]`, fleet batch 2026-11-01).
+  // `neblink.update` is also gone: its only consumer was the settings device area
+  // per row (fleet batch 2026-11-01), retired with the account card (2026-11-18).
 
   // ── Fleet-wide unified update (fleet batch 2026-11-01: "one click brings every
   //    device to the same version, with a status card guiding the whole way") ──
@@ -2481,7 +2472,6 @@ export default {
   'fleet.cancel': 'Stop',
   'fleet.retry': 'Retry failed',
   'fleet.startConfirm': 'Update everything',
-  'fleet.startAction': 'Update all',
   'fleet.updateThisDevice': 'Update this device',
   'fleet.thisDevice': 'this device',
   'fleet.online': 'online',
@@ -2539,11 +2529,10 @@ export default {
   'fleet.branch.manual': 'manual',
   'fleet.branch.queued': 'push when online',
 
-  // Read-only signed-in display (auth-trim batch 2026-10-20 author ruling): who is
-  // signed in, no action entry. The former switch/logout key group (switchAccount/
-  // logout/loggingOut/useOtherAccount/currentTag) is removed with the two buttons —
-  // sign-out and account switching live on the website portal only.
-  'neblink.loggedInAs': 'Signed in as: {name}',
+  // Read-only signed-in display key `neblink.loggedInAs` ("Signed in as: {name}") was
+  // removed with the account card (2026-11-18 author ruling). The former switch/logout
+  // key group (switchAccount/logout/loggingOut/useOtherAccount/currentTag) is removed
+  // with the two buttons — sign-out and account switching live on the website portal.
   // Sign-out key (2026-11 "no way out" fix batch, author ruling "fix only the
   // sign-out"): shared by the settings account secondary key and the avatar
   // menu item. Account switching still lives on the website portal only.

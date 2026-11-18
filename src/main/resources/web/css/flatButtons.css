@@ -80,7 +80,7 @@
   .memory-btn, .mp-mode-btn, .pp-btn, .reminder-create-btn,
   .cfg-eye-btn, .cfg-btn-save, .session-delete, .folder-delete,
   .settings-collapse-toggle, .fm-msg-btn, .fm-attach-btn, .fm-device-desc-btn,
-  .fm-modal-close, .fm-gs-open, .neblink-switch-btn, .login-modal-btn,
+  .fm-modal-close, .fm-gs-open, .login-modal-btn,
   .agent-detail-prompt-toggle, .activity-avatar,
   /* 手机层搜索浮钮：原只有 hover/focus 共用一条底色规则、没有描边环 ⇒ 进本表 */
   .mh-search-fab,

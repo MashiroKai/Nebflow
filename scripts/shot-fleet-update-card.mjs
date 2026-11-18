@@ -188,25 +188,23 @@ for (const scheme of ['dark', 'light']) {
   });
   await s.boot({ config: { llm: { providers: {} }, features: { friends: false } } });
 
-  // ① 设备页：两个入口在场（「全部更新」+ 每行「更新此设备」）
+  // ① 设置页设备区已随账户栏整件退役（作者令 2026-11-18）：不再有设备槽 /
+  //    「全部更新」/ 每行「更新此设备」入口 —— fleet 卡改由模块 API 直接打开拍摄。
   await s.page.evaluate(async () => {
     const { openSettingsPanel } = await import('/js/sidebar.js');
     openSettingsPanel();
   });
-  await s.page.waitForSelector('#settings-devices-slot [data-fleet-open]', { timeout: 15000 });
+  await s.page.waitForSelector('#settings-content [data-panel-group="general"]', { timeout: 15000 });
   await settle(s.page);
-  const entry = await s.page.evaluate(() => {
-    const slot = document.getElementById('settings-devices-slot');
-    return {
-      open: !![...slot.querySelectorAll('[data-fleet-open]')].length,
-      perRow: [...slot.querySelectorAll('[data-settings-device-update]')].length,
-      rows: [...slot.querySelectorAll('[data-settings-device-row]')].length,
-      label: (slot.querySelector('[data-fleet-open]') || {}).textContent || '',
-    };
-  });
-  ok(`[${scheme}] A6 设备页入口：「全部更新」+ 每行「更新此设备」`,
-    entry.open && entry.perRow === 3 && entry.rows === 4,
-    `open=${entry.open} perRow=${entry.perRow} rows=${entry.rows} label=${entry.label.trim()}`);
+  const retired = await s.page.evaluate(() => ({
+    slot: !!document.getElementById('settings-devices-slot'),
+    fleetOpen: document.querySelectorAll('[data-fleet-open]').length,
+    perRow: document.querySelectorAll('[data-settings-device-update]').length,
+    accountGroup: !!document.querySelector('#settings-content [data-panel-group="account"]'),
+  }));
+  ok(`[${scheme}] A6 设置页设备/账户区整件退役（槽位 / 全部更新 / 每行更新 / 账号分组 全零命中）`,
+    !retired.slot && retired.fleetOpen === 0 && retired.perRow === 0 && !retired.accountGroup,
+    JSON.stringify(retired));
   const devShot = join(OUT, `20261102_fleet-devices-${scheme}.png`);
   await s.page.screenshot({ path: devShot, animations: 'disabled' });
   console.log(`saved ${devShot}`);

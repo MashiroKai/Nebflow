@@ -14,7 +14,8 @@
 //      window.open —— 上一批「零官网出口」的裁定理由不变，见下）。
 //   ④ 设备清单：`profileDevices.js` 单点（本机 + 对端；名称/平台/最近活动/状态/
 //      本机标记 + 逐设备独立退出）。与桌面资料面**同一份标记与同一份动作实现**。
-//   ⑤ 账号卡：`neblink.js accountCardHTML`（既有登出链，零新增）。
+//   （原 ⑤「账号卡」= 底部「登录账号」栏，整件退役：作者令 2026-11-18 16:45
+//     「底部的账户栏 功能重复 信息重复」——与上方读数组 + 设备行身份完全重复。）
 //
 // ══ 为什么子页退役（不是「少了一个入口」，是那条入口本身就是假面）════════
 // 修前 me-user / me-avatar / me-bind 三页只读同一个读数、各带一句「接口暂无」；
@@ -27,7 +28,7 @@
 // 模块纪律：叶子模块（只 import neblink / brand / utils / activityBar /
 // settingsIdentity / profileDevices / i18n / dom）。不 import navController。
 
-import { getNeblinkState, avatarViewState, paintAvatarSlot, noteAvatarFailure, onNeblinkStatus, accountCardHTML, bindNeblinkEvents, fetchNeblinkStatus } from '../neblink.js';
+import { avatarViewState, paintAvatarSlot, noteAvatarFailure, onNeblinkStatus, fetchNeblinkStatus } from '../neblink.js';
 import { brand, getProfileUrl } from '../brand.js';
 import { createIconsIn } from '../utils.js';
 import { showLoginModal } from '../activityBar.js';
@@ -45,7 +46,6 @@ function ttSync(zh, en) {
 
 /** 状态拍 → 页面重绘（登录/登出/头像变更/设备增减；页不在 DOM 时零成本跳过）。 */
 const paintCbs = new Set();
-const accountTeardowns = new WeakMap();
 let unsubscribeStatus = null;
 
 /** @param {HTMLElement} body */
@@ -147,21 +147,11 @@ function buildMeHome(body) {
   ensureDeviceListLive(devHost);
   paintDeviceList(devHost);
 
-  // ⑤ 账号卡（`neblink.js accountCardHTML` 单点）。基线 f5d437347（2026-11-18 09:23
-  //    「remove settings logout」）后账号卡已退化为**只读登录态读数**（零会话动作），
-  //    本批据此把「本机登出」的入口收敛到设备清单本机行（`openEndSessionHandoff`），
-  //    卡体本身零新增、零改动。
-  const account = el(body, 'mf-account-card');
-  let releaseAccount = () => {};
-  const paintAccount = () => {
-    if (!account.isConnected) return;
-    releaseAccount();
-    account.innerHTML = accountCardHTML({ mobile: true });
-    releaseAccount = bindNeblinkEvents(paintAccount, account);
-  };
-  accountTeardowns.set(body, () => { releaseAccount(); });
-  paintAccount();
-  paintCbs.add(paintAccount);
+  // ⑤ 底部「登录账号」账户卡**整件退役**（作者令 2026-11-18 16:45「底部的账户栏
+  //    功能重复 信息重复 …不要有重复的功能和信息」）：它与上方「账号」读数组
+  //    （用户名/昵称/邮箱/GitHub/Google）**完全重复**，也与设备行身份信息重复。
+  //    本页身份/头像的权威展示 = 资料卡 + 只读读数组；逐设备登出 = 设备清单
+  //    （`profileDevices.js`）——账户卡移除后本页零新增、零残留。
 
   const paintIdentity = () => {
     const s = getIdentityReadout();
@@ -215,8 +205,6 @@ export function buildMeFace(pageId, body, nav) {
     unsubscribeStatus = onNeblinkStatus(() => { for (const cb of [...paintCbs]) { try { cb(); } catch { /* One face must not block the others. */ } } });
   }
   return () => {
-    accountTeardowns.get(body)?.();
-    accountTeardowns.delete(body);
     for (const cb of ownCbs) paintCbs.delete(cb);
     if (!paintCbs.size) { unsubscribeStatus?.(); unsubscribeStatus = null; }
   };

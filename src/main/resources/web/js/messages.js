@@ -6221,139 +6221,17 @@ export function devicePeers() {
   return [...self, ...peers.filter((p) => String(p.deviceId) !== selfId)];
 }
 
-// ── Settings-page device expansion area (friendseal batch ①-A, 2026-09-25) ──
-// The device face's way back to the settings page (author ruling ①: the
-// expansion area under the settings avatar; the 2026-09-15 order that had
-// moved the device entry to the contacts panel is archived by the same
-// ruling). Form = reuse the contacts host's device block classes verbatim
-// (`.fm-nf-entry` entry row + `.neblink-peer` rows; friends.css /
-// neblink.css load unconditionally — zero new CSS, zero new view), with ONE
-// implementation: this module owns devicePeers / deviceLabel / openDeviceChat
-// and renders from them; contacts.js keeps its own host copy untouched
-// (zero diff — with the friends seal as the default that host simply never
-// renders). Rows carry NO remote-update entry (the settings area is the chat
-// entry face: click a row → openDeviceChat; the hotupdate entry stays owned
-// by the contacts host). sidebar.js mounts the slot via a lazy import (no new
-// static cycle) and the settings refresh tick re-mounts it, so peer/presence
-// changes keep the area current while settings is open.
-let settingsDevicesExpanded = true; // one click into a chat is the point (ruling ①)
-let settingsDevicesBound = false;
-
-/** The area's HTML ('' when logged out — the neblink logged-out hint above
- *  owns that face). Dataset attributes are the QA assertion face (same
- *  contract family as the contacts device block). */
-export function settingsDevicesHTML() {
-  if (!getNeblinkState().loggedIn) return '';
-  const devs = devicePeers();
-  const chevron = settingsDevicesExpanded ? 'chevron-down' : 'chevron-right';
-  const entry =
-    `<div class="fm-nf-entry fm-devices-entry" data-settings-devices-entry="1" role="button" tabindex="0"` +
-    ` aria-expanded="${settingsDevicesExpanded}">` +
-    `<span class="fm-nf-icon"><i data-lucide="laptop"></i></span>` +
-    `<span class="fm-nf-label">${escapeHtml(t('contacts.sectionDevices'))}</span>` +
-    `<span class="fm-nf-chevron"><i data-lucide="${chevron}"></i></span>` +
-    `</div>`;
-  let rows = '';
-  if (settingsDevicesExpanded) {
-    const list = devs.length === 0
-      ? `<div class="fm-empty">${escapeHtml(t('contacts.devicesEmpty'))}</div>`
-      : devs.map(settingsDeviceRowHTML).join('');
-    // 全设备统一更新（fleet 批 2026-11-01，作者令：控制台设置·设备页要有「全部更新」）：
-    // 动作入口 = 本行；实际渲染/进度全在 `fleetUpdate.js` 的阻塞式状态卡里（本段只管
-    // 一个键，不复制卡片、不复制任何进度状态）。
-    const fleetBar =
-      `<div class="fm-device-fleet-bar" data-fleet-entry="1">` +
-      `<button class="fleet-btn" data-fleet-open="1" type="button">${escapeHtml(t('fleet.startAction'))}</button>` +
-      `</div>`;
-    rows = fleetBar +
-      `<div class="fm-device-list" data-settings-device-section="1" data-device-count="${devs.length}">${list}</div>`;
-  }
-  return entry + rows;
-}
-
-function settingsDeviceRowHTML(d) {
-  const icon = platformDisplay(d.platform).icon;
-  const statusText = escapeHtml(platformDisplay(d.platform).text || '');
-  const cls = 'neblink-peer fm-device-row' + (d.online === true ? '' : ' neblink-peer-offline');
-  // 每行「更新此设备」（作者令：每台设备单行也有更新动作）。本机行不挂——本机更新
-  // 由「全部更新」腿统一交编排器，单挂一个键只会出重复入口。
-  const updateBtn = d.isLocal
-    ? ''
-    : `<button class="neblink-peer-update-btn" data-settings-device-update="${escapeHtml(String(d.deviceName || ''))}" type="button">${escapeHtml(t('neblink.update'))}</button>`;
-  return `<div class="${cls}" role="button" tabindex="0" data-settings-device-row="1" data-device-id="${escapeHtml(String(d.deviceId || ''))}">` +
-    `<span class="neblink-peer-icon">${icon}</span>` +
-    `<span class="neblink-peer-name">${escapeHtml(deviceLabel(d))}</span>` +
-    presenceBadgeHTML({ ...d, isLocal: false }) +
-    `<span class="neblink-peer-status">${statusText}</span>` +
-    updateBtn +
-    `</div>`;
-}
-
-/** Mount (idempotent) the settings device area into the sidebar slot. */
-export function mountSettingsDevices(slot) {
-  if (!slot) return;
-  bindSettingsDevicesOnce();
-  slot.innerHTML = settingsDevicesHTML();
-  createIconsIn(slot);
-}
-
-function bindSettingsDevicesOnce() {
-  if (settingsDevicesBound) return;
-  settingsDevicesBound = true;
-  // Document-level delegation (the bindSettingsAccountEntry precedent in
-  // activityBar.js): the settings refresh tick replaces this area's DOM on
-  // every beat, so binding per-mount would stack listeners; one delegated
-  // pair follows re-renders for free.
-  document.addEventListener('click', (e) => {
-    const target = e.target instanceof Element ? e.target : null;
-    if (!target) return;
-    // 全设备统一更新（fleet 批 2026-11-01）：本区的两个键都只是**打开入口**——
-    // 「全部更新」开阻塞卡（确认 + 进度 + 收口全在那张卡里），「更新此设备」走既有
-    // `remoteUpdate` 单台腿再开同一张卡。动态 import 规避 messages↔fleetUpdate 的
-    // 静态环（fleetUpdate 依赖 neblink.js，而本文件已在环上）。
-    if (target.closest('[data-fleet-open]')) {
-      e.stopPropagation();
-      import('./fleetUpdate.js').then((m) => m.openFleetUpdatePanel()).catch(() => {});
-      return;
-    }
-    const updateBtn = target.closest('[data-settings-device-update]');
-    if (updateBtn instanceof HTMLElement) {
-      e.stopPropagation(); // 行激活（→ 开设备会话窗）让位：更新键只做更新
-      const dn = updateBtn.dataset.settingsDeviceUpdate || '';
-      if (dn) {
-        import('./fleetUpdate.js').then((m) => m.updateSingleDevice(dn)).catch(() => {});
-      }
-      return;
-    }
-    const row = target.closest('[data-settings-device-row]');
-    if (row instanceof HTMLElement) {
-      // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
-      // `dataset` — narrow to HTMLElement. Runtime-equivalent: the selector
-      // only ever matches this HTML row div.
-      const d = devicePeers().find((p) => String(p.deviceId || '') === row.dataset.deviceId);
-      if (!d) return;
-      ensureDeviceChatWiring();
-      openDeviceChat(d);
-      return;
-    }
-    if (target.closest('[data-settings-devices-entry]')) {
-      settingsDevicesExpanded = !settingsDevicesExpanded;
-      mountSettingsDevices(document.getElementById('settings-devices-slot'));
-    }
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const target = e.target instanceof Element ? e.target : null;
-    if (!target) return;
-    if (target.closest('[data-settings-device-row]') || target.closest('[data-settings-devices-entry]')) {
-      e.preventDefault();
-      // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
-      // `click()` — type assertion only; the code already assumed HTMLElement
-      // (SVG targets have no .click() at runtime either).
-      /** @type {HTMLElement} */ (target).click();
-    }
-  });
-}
+// ── Settings-page device expansion area — 整件退役（作者令 2026-11-18）──────
+// 原 「设置账号卡」内的设备展开区（`settingsDevicesHTML` / `mountSettingsDevices` /
+// `bindSettingsDevicesOnce` / `settingsDeviceRowHTML` + `#settings-devices-slot`）随
+// 「登录账号」账户卡整件移除（2026-11-18 16:36/16:45 作者令）——卡片没了，槽位永不
+// 存在 ⇒ 整组不可达。设备会话入口仍在联系人面板（`contacts.js` 的
+// `[data-devices-entry]` → `openDeviceChat`），本模块的 `devicePeers` /
+// `openDeviceChat` / `ensureDeviceChatWiring` 保留（联系人面板与别处共用）。
+// 连带退役的独占面：`[data-settings-devices-entry]` / `[data-settings-device-row]` /
+// `[data-settings-device-section]` / `[data-settings-device-update]` / `[data-fleet-entry]`
+// / `[data-fleet-open]` 及 `.fm-device-fleet-bar` 与 i18n `neblink.update` /
+// `fleet.startAction`（本区唯一消费者）。
 
 /** 本机设备 id（MVP-2 方向重算 P2 的**比对基准**）。
  *  数据源 = `getNeblinkState().device.deviceId`（与 `devicePeers` 同一 state 单点，

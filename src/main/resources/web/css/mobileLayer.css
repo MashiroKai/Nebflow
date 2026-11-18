@@ -2642,8 +2642,8 @@ body.mobile-layer .mf-me-entry .mf-me-meta {
   width: 100%;
 }
 body.mobile-layer .mf-me-entry :is(.mf-me-name, .mf-me-sub) { max-width: 100%; }
-body.mobile-layer .mf-account-card { margin: var(--ds-space-6) var(--ds-space-4); }
-body.mobile-layer .mf-account-card .neblink-account-actions { padding: var(--ds-space-4); }
+/* `body.mobile-layer .mf-account-card`（个人主页底部「登录账号」重复栏）与其
+   `.neblink-account-actions` 子件随账户卡整件退役（作者令 2026-11-18）——零发射点。 */
 /* Adopted secondary faces are pages, never desktop glass skirts. */
 body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::after,
 body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::before {
@@ -4954,7 +4954,7 @@ body.mobile-layer :is(
   .tfl-empty, .tfl-empty-all,
   /* 设置面 */
   .cfg-label, .cfg-hint, .entry-sub, .st-badge, .set-card-title, .set-row-hint,
-  .neblink-logged-out-hint, .mchain-empty, .mp-note,
+  .mchain-empty, .mp-note,
   /* 插件面 */
   .plugins-stats-item, .plugins-section-hint, .plugins-section-title,
   .plugins-card-meta, .plugins-item-summary,

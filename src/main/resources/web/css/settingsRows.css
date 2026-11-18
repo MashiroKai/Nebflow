@@ -325,10 +325,8 @@
 #settings-content .about-info { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
 #settings-content .about-conn { margin-top: var(--ds-space-1); }
 
-/* 账号修复操作随面板安全区内缩。 */
-#settings-content .neblink-account-actions {
-  padding: 0 var(--set-row-pad-x) var(--ds-space-2);
-}
+/* `#settings-content .neblink-account-actions`（账号修复操作安全区内缩）随账户卡
+   整件退役（作者令 2026-11-18）——零发射点。 */
 
 /* ── 移动端尺寸档（同一形态、换档；桌面零命中）─────────────────────────────
    手机层：正文 17 / 图标 22 / 行高 max(50, 44) —— 数值来自 mobileLayer.css 既有

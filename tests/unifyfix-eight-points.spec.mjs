@@ -190,25 +190,29 @@ try {
         const content = document.getElementById('settings-content');
         return {
           peersList: content.querySelectorAll('.neblink-peers-list').length,
-          // friendseal 批（2026-09-25）在设置页加了受许可的设备展开区
-          // （#settings-devices-slot，行复用 .neblink-peer 家族）⇒ R1b 只清点
-          // 槽位**之外**的设备行（原裸计数自该批起误红，基线复核 2026-10-20）。
-          peerRows: [...content.querySelectorAll('.neblink-peer')].filter(el => !el.closest('#settings-devices-slot')).length,
+          // 账户栏整件退役（作者令 2026-11-18）：设置页原有的 #settings-devices-slot
+          // （设备行复用 .neblink-peer 家族）+ 账号卡一并删除 ⇒ 裸计数即判据，
+          // 不再需要「槽位之外」的豁免。
+          peerRows: content.querySelectorAll('.neblink-peer').length,
           clickable: content.querySelectorAll('.dropbox-clickable').length,
           switchBtn: !!content.querySelector('#neblink-switch-btn'),
           logoutBtn: !!content.querySelector('#neblink-logout-btn'),
           roLine: !!content.querySelector('.neblink-account-ro'),
           accountBlock: !!content.querySelector('.neblink-logged-in'),
           peerUpdateBtns: content.querySelectorAll('.neblink-peer-update-btn, .neblink-ch-btn, .neblink-ch-cancel').length,
+          accountGroup: !!content.querySelector('[data-panel-group="account"]'),
+          accountCard: !!content.querySelector('#account-card'),
         };
       });
       ok('R1a', '设置账号段无设备列表容器（.neblink-peers-list 0 命中）', settings.peersList === 0, `count=${settings.peersList}`);
-      ok('R1b', '设置账号段无设备行（.neblink-peer 0 命中，#settings-devices-slot 受许可槽位除外）', settings.peerRows === 0, `count=${settings.peerRows}`);
+      ok('R1b', '设置页无设备行（.neblink-peer 0 命中）', settings.peerRows === 0, `count=${settings.peerRows}`);
       ok('R1c', '设置页无旧设备窗入口（.dropbox-clickable 0 命中）', settings.clickable === 0, `count=${settings.clickable}`);
       ok('R1d', '设置页无「更新/频道」设备键组残留', settings.peerUpdateBtns === 0, `count=${settings.peerUpdateBtns}`);
       ok('G1', '设置账号段两键已退役（auth-trim 2026-10-20：登出/切号只在官网门户）', !settings.switchBtn && !settings.logoutBtn,
         `switch=${settings.switchBtn} logout=${settings.logoutBtn}`);
-      ok('G1b', '设置账号块仍渲染（未把整块删掉）+ 只读身份行在位', settings.accountBlock === true && settings.roLine === true);
+      ok('G1b', '设置账号栏整件退役（2026-11-18 作者令）：账号分组/账号卡/只读身份行全不存在',
+        settings.accountGroup === false && settings.accountCard === false && settings.accountBlock === false && settings.roLine === false,
+        `group=${settings.accountGroup} card=${settings.accountCard} block=${settings.accountBlock} roLine=${settings.roLine}`);
       await page.keyboard.press('Escape');
       await sleep(300);
 

@@ -36,6 +36,10 @@ export const CHECKS = [
     argv: [process.execPath, 'tests/mobile-decision-preview-occlusion.spec.mjs'] },
   { name: 'media-gallery', profiles: ['frontend'], timeoutMs: 120_000,
     argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/mobile-image-gallery.spec.mjs', 'tests/media-click-unify.spec.mjs', '--workers=1'] },
+  // 账户栏整件退役（作者令 2026-11-18）**渲染级**闸：真实形态（手机全屏设置页 +
+  // 桌面设置页 + 个人主页）断言该栏零命中；源码级同判据 = check-panel-uniform。
+  { name: 'settings-account-removed', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/settings-account-removed.mjs'] },
   nodeCheck('bubble-side', 'check-bubble-side'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),
