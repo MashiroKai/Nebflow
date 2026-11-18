@@ -167,6 +167,52 @@ test.describe('B1 — 右键菜单项', () => {
     await context.close();
   });
 
+  test('touch hold opens selection actions; moving cancels', async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+    await page.waitForFunction(() => window.__ready === true);
+    const id = await page.evaluate(() => window.__renderUserRow('before selected after'));
+    await page.evaluate(id => {
+      document.body.classList.add('mobile-layer');
+      const row = window.__rowById(id);
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode()) && !node.textContent.includes('before selected after')) {}
+      const range = document.createRange();
+      range.setStart(node, 7); range.setEnd(node, 15);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    }, id);
+    const row = page.locator(`.row[data-msg-id="${id}"]`).first();
+    const box = await row.boundingBox();
+    const x = Math.round(box.x + box.width / 2), y = Math.round(box.y + box.height / 2);
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    await expect(page.locator('.fm-context-menu')).toBeVisible({ timeout: 3000 });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect(page.locator('.fm-context-menu')).toContainText('Ask');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.fm-context-menu')).toHaveCount(0);
+    // Start the cancellation leg on a fresh page to avoid native selection handles.
+    await page.reload();
+    await page.waitForFunction(() => window.__ready === true);
+    const id2 = await page.evaluate(() => { document.body.classList.add('mobile-layer'); return window.__renderUserRow('before selected after'); });
+    await page.evaluate(id => {
+      const row = window.__rowById(id);
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode()) && !node.textContent.includes('before selected after')) {}
+      const range = document.createRange(); range.setStart(node, 7); range.setEnd(node, 15);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    }, id2);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + 25, y, id: 1 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(750);
+    await expect(page.locator('.fm-context-menu')).toHaveCount(0);
+    await context.close();
+  });
+
   test('用户文本行菜单 = 复制 + 引用；工具卡行 = 仅引用', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const userId = await page.evaluate(() => window.__renderUserRow('用户的一条消息'));

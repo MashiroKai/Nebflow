@@ -433,6 +433,7 @@ export function attachQuoteMenu(rowEl, d) {
   });
   // Only act on an existing selection: leave native text selection gestures alone.
   let touchTimer = 0;
+  let suppressTouchClick = false;
   let touchX = 0;
   let touchY = 0;
   const cancelTouch = () => { if (touchTimer) clearTimeout(touchTimer); touchTimer = 0; };
@@ -443,14 +444,17 @@ export function attachQuoteMenu(rowEl, d) {
     if (!s || s.isCollapsed || !s.rangeCount || !rowEl.contains(s.getRangeAt(0).startContainer) || !rowEl.contains(s.getRangeAt(0).endContainer)) return;
     touchX = e.touches[0].clientX;
     touchY = e.touches[0].clientY;
-    touchTimer = setTimeout(() => { touchTimer = 0; openQuoteMenuForRow(rowEl, touchX, touchY); }, 600);
+    touchTimer = setTimeout(() => { touchTimer = 0; suppressTouchClick = openQuoteMenuForRow(rowEl, touchX, touchY); }, 600);
   }, { passive: true });
   rowEl.addEventListener('touchmove', (e) => {
     const touch = e.touches[0];
     if (!touch || Math.hypot(touch.clientX - touchX, touch.clientY - touchY) > 10) cancelTouch();
   }, { passive: true });
-  rowEl.addEventListener('touchend', cancelTouch, { passive: true });
-  rowEl.addEventListener('touchcancel', cancelTouch, { passive: true });
+  rowEl.addEventListener('touchend', (e) => {
+    cancelTouch();
+    if (suppressTouchClick) { e.preventDefault(); suppressTouchClick = false; }
+  }, { passive: false });
+  rowEl.addEventListener('touchcancel', () => { cancelTouch(); suppressTouchClick = false; }, { passive: true });
   rowEl.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     // 手机端长按退役批（2026-10-31 作者令）：触屏长按不再弹引用/复制菜单——
