@@ -73,7 +73,6 @@ const NEAR_WHITE_LITERAL_LEDGER = {
   'src/main/resources/web/css/input.css': 4,
   'src/main/resources/web/css/modal.css': 1,
   'src/main/resources/web/css/nav.css': 1,
-  'src/main/resources/web/css/neblink.css': 1,
   'src/main/resources/web/css/perception.css': 2,
   'src/main/resources/web/css/projectPanel.css': 1,
   'src/main/resources/web/css/reminder.css': 2,
