@@ -3469,6 +3469,11 @@ body.mobile-layer .note-dock { --ask-seed-size: var(--mtap-lg, 48px); }
 body.mobile-layer .note-dock {
   --note-seed-x0: calc(-1 * (var(--ask-fab-size) + var(--ds-space-2) + (16px - var(--ask-fab-gap))));
 }
+/* Ask's morph seed shares the dock's 12px anchor, while its FAB uses 16px.
+   Offset only the closed seed, preserving the expanded panel's alignment. */
+body.mobile-layer .ask-dock.closed .ask-input {
+  transform: translate(calc(var(--ask-fab-gap) - 16px), calc(10px + var(--ask-seed-size)));
+}
 /* ── 建群面板（统一面板批 2026-11-06）：顶栏返回圆钮 / 右下悬浮加号 = 手机 48 档 ──
    尺寸档与页面壳返回钮 `.mobile-back-btn`、手机 `.ask-fab` 同一档
    （48 = --mtap-lg / 图标 20 = --micon-sm）；桌面档 40 由 `.g2-fab` 基准承担

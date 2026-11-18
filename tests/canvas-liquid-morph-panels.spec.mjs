@@ -178,7 +178,7 @@ async function runPanel({ label, scheme, viewport, reducedMotion = 'no-preferenc
   await mobileToCanvas(page);
   const tag = `${label}-${scheme}-${viewport.width}x${viewport.height}${reducedMotion === 'reduce' ? '-reduce' : ''}`;
 
-  const rest = await page.evaluate((sel) => {
+  const rest = await page.evaluate(({ sel, fabSel }) => {
     const s = document.querySelector(sel);
     if (!s) return null;
     const cs = getComputedStyle(s);
@@ -191,15 +191,18 @@ async function runPanel({ label, scheme, viewport, reducedMotion = 'no-preferenc
       dockOp: dcs ? +dcs.opacity : 1, dockTf: dcs ? dcs.transform : 'none',
       closed: dock ? dock.classList.contains('closed') : false,
       fab: (() => {
-        const f = document.querySelector('.ask-fab');
-        return f ? +f.getBoundingClientRect().width.toFixed(1) : null;
+        const f = document.querySelector(fabSel);
+        if (!f) return null;
+        const b = f.getBoundingClientRect();
+        return { w: b.width, h: b.height, dx: r.x - b.x, dy: r.y - b.y };
       })(),
     };
-  }, surfSel);
-  ok(`N1[${tag}] 隐藏态材质就位：玻璃面 backdrop-filter 非 none + 容器零 opacity/transform + 种子 ≈ fab 档`,
+  }, { sel: surfSel, fabSel });
+  ok(`N1[${tag}] 隐藏态材质就位且种子与入口同位同尺寸`,
     !!rest && !!rest.bf && rest.bf !== 'none' && rest.closed && rest.dockOp === 1 && rest.dockTf === 'none'
-    && rest.w > 0 && rest.fab !== null && Math.abs(rest.w - rest.fab) <= 2,
-    rest ? `bf=${rest.bf} dockOp=${rest.dockOp} tf=${rest.dockTf} seed=${rest.w}x${rest.h} fab=${rest.fab}` : 'no surface');
+    && rest.w > 0 && rest.fab !== null && Math.abs(rest.w - rest.fab.w) <= 1 && Math.abs(rest.h - rest.fab.h) <= 1
+    && Math.abs(rest.fab.dx) <= 1 && Math.abs(rest.fab.dy) <= 1,
+    rest ? `bf=${rest.bf} dockOp=${rest.dockOp} tf=${rest.dockTf} seed=${rest.w}x${rest.h} fab=${JSON.stringify(rest.fab)}` : 'no surface');
 
   await startSampler(page, surfSel, reducedMotion === 'reduce' ? 500 : 900);
   await page.locator(fabSel).click();
@@ -222,7 +225,7 @@ async function runPanel({ label, scheme, viewport, reducedMotion = 'no-preferenc
   ok(`N2c[${tag}] 逐帧容器零 transform（backdrop root 不形成）`,
     rep.tfMid.length === 0, `tfMid=${rep.tfMid.length}`);
   ok(`N2d[${tag}] 起手帧仍是种子几何（不是一步跳满）`,
-    !!rep.first && rep.first.w <= (rest ? rest.fab + 8 : 48) + 1,
+    !!rep.first && rep.first.w <= (rest?.fab ? rest.fab.w + 8 : 48) + 1,
     rep.first ? `firstW=${rep.first.w} firstH=${rep.first.h}` : 'no frame');
   if (reducedMotion === 'reduce') {
     ok(`N4[${tag}] reduced-motion 退化为直接成型（宽度读数 ≤ 3 档）`,
