@@ -24,6 +24,7 @@
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
+import { mountAskTodoSection } from '../askTodoList.js';
 import { bindImeGuard, commitEnter } from '../imeGuard.js';
 import state from '../state.js';
 
@@ -412,6 +413,14 @@ function clearChrome(section) {
  * @returns {{ root: HTMLElement, render: () => void }}
  */
 function buildHome(root, section, nav) {
+  // ── 溢出转待办承载区（溢出转待办批 2026-11-18 作者令）───────────────
+  // 「超出对话分页的待答问题」在本全屏待办页顶部承载并可**就地作答**。
+  // 判据与状态单点都在 askPending（transferredAsks / submitAskAnswer），本文件
+  // 只提供一个宿主容器；区内的后续刷新由 askTodoList 自己的归属监听驱动。
+  // 无转入项时该区为空 ⇒ 不占位、不显形（零视觉增量）。
+  const askHost = elIn(root, 'div', 'ta-askhost');
+  mountAskTodoSection(askHost);
+
   // ── Four-card matrix (2x2): white outline icon top-left / large white
   // count top-right / white label bottom-left ──
   const grid = elIn(root, 'div', 'ta-grid');

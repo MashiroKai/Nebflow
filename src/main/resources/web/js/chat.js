@@ -23,7 +23,7 @@ import { t } from './i18n.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
 import { stripChannelProvenance } from './channelProvenance.js';
 import { sendWs, onMessage } from './ws.js';
-import { askSourceParts, removePendingAsk } from './askPending.js';
+import { askSourceParts, removePendingAsk, askAnswerFrame, notifyAskPlacement } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 菜单/引用条/引用块/跳转收口在
 // msgQuote.js 单模块（chat.js 只挂点，不复制逻辑）。
@@ -3378,14 +3378,13 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
         // 无秘密题 ⇒ 与改前逐字节同帧（secretSlots 键缺席）。
         // askuser-dragdrop 批（2026-10-19）：随卡回传的已落盘附件走 `attachments`
         // 可选键（逐键解析向后兼容；空数组 ⇒ 键缺席，帧与改前逐字节同形）。
-        state.ws.send(JSON.stringify({
-          type: 'askUserAnswer',
+        state.ws.send(JSON.stringify(askAnswerFrame({
           sessionId: targetSid,
+          requestId,
           answers,
-          ...(Array.isArray(secretSlots) && secretSlots.length > 0 ? { secretSlots } : {}),
-          ...(Array.isArray(answerAttachments) && answerAttachments.length > 0 ? { attachments: answerAttachments } : {}),
-          ...(requestId && { requestId })
-        }));
+          secretSlots,
+          answerAttachments,
+        })));
       }
       // D6 批 F2: card-answer resolves the pending slot locally — the hub does
       // not echo a frame for card answers, so this callback is the only
@@ -3406,8 +3405,8 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
           state.ws.send(JSON.stringify({ type: 'askUserCancel', requestId, by: 'web' }));
         } else {
           // 理论不可达（live 卡恒带 requestId，hub 是唯一 id 源）；无 id 兜底保留
-          // 改前哨兵行为，不静默无操作。
-          state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'] }));
+          // 改前哨兵行为，不静默无操作。（同走 askAnswerFrame —— 帧只有一处构造。）
+          state.ws.send(JSON.stringify(askAnswerFrame({ sessionId: targetSid, answers: ['__cancelled__'] })));
         }
       }
       removePendingAsk(requestId);
@@ -3481,6 +3480,9 @@ export function reclaimAskUserCards(chat, requestId, opts = {}) {
     const row = box.closest('.row.ai');
     (row || box).remove();
   });
+  // 溢出转待办批（2026-11-18）：卡被摘除 = 该问题可能就此离开对话分页窗口 ⇒
+  // 显式补一次归属重估（不依赖 DOM 观察者的时序；重估本身幂等且防抖环）。
+  if (cards.length) notifyAskPlacement();
   return cards.length;
 }
 

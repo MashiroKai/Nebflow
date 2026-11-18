@@ -37,6 +37,9 @@ export const CHECKS = [
   { name: 'media-gallery', profiles: ['frontend'], timeoutMs: 120_000,
     argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/mobile-image-gallery.spec.mjs', 'tests/media-click-unify.spec.mjs', '--workers=1'] },
   nodeCheck('bubble-side', 'check-bubble-side'),
+  // 溢出转待办批（2026-11-18 作者令）：判据单点 / 帧构造单点 / 模板单点 / 定位面
+  // 不交叉 / 不新增通知族——「待办已答而原卡仍可作答」的不对称态在源码面就不成立。
+  nodeCheck('ask-todo-lifecycle', 'check-ask-todo-lifecycle'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),
   nodeCheck('circular', 'check-circular'),
