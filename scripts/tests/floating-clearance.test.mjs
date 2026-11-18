@@ -12,6 +12,7 @@ for (const [name, bad, expected] of [
   ['absolute dock', '#mobile-dock { position: absolute; }', /floating chrome/],
   ['viewport height', '.content { height: 100vh; }', /100vh/],
   ['clipped scroller', '.mobile-page-body { height: 200px; overflow: hidden; }', /clips overflow/],
+  ['unregistered floating host', 'body.mobile-layer .new-floating-toolbar { position: fixed; bottom: 0; }', /unregistered fixed mobile host/],
 ]) test(`rejects ${name}`, () => {
   const source = `${css}\n${bad}`;
   assert.ok(check(source).some(e => expected.test(e)));

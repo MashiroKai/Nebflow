@@ -371,7 +371,7 @@ body.mobile-layer {
   --mchrome-top: var(--ds-space-4);      /* 16 —— 桥桌面间距阶梯（透传悬浮批，同值换源） */
   --mchrome-btn: var(--band-d);
   --mchrome-breathe: var(--ds-space-2);  /* 8 —— 同上（簇顶/呼吸两字面量随批归 --ds-* 桥） */
-  --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
+  --mchrome-clear: calc(var(--mchrome-top) + var(--mobile-top-measured, var(--mchrome-btn)) + var(--mchrome-breathe));
   --mchrome-inset: var(--mchrome-clear);
   /* canvas 正文顶部安全区（canvas-overlap-fix 批 2026-11-05）：**手机档唯一覆写点**。
      桌面值在 sapphire.css 出生（= --cv-head-clear 56）；手机层顶栏是 48 圆钮簇 +

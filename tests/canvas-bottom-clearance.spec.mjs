@@ -359,10 +359,20 @@ record('B1', '手机 390 · 滚到底：末行完整停在底部浮钮带之上�
   `浮钮=${M.chrome.filter((c) => c.visible).map((c) => `${c.sel}(top ${c.top},h ${c.h})`).join(' / ')}`);
 record('B2', '手机 390 · 呼吸上限：空隙 ≤60px',
   gapM !== null && gapM <= 60, `空隙=${gapM}px（阈值 ≤60）`);
-record('B3', '手机 390 · 控件让位收进滚动视口边界',
+const expectedPhonePadding = await phone.page.evaluate(() => {
+  const scroller = document.querySelector('.mobile-page[data-page="canvas"] .canvas-md-scroll');
+  const probe = document.createElement('div');
+  probe.style.paddingBottom = 'max(var(--canvas-bottom-clearance, 0px), var(--mobile-dock-clearance))';
+  scroller.appendChild(probe);
+  const value = parseFloat(getComputedStyle(probe).paddingBottom);
+  probe.remove();
+  return value;
+});
+record('B3', '手机 390 · 视口延伸至 pane 底，浮层净空位于滚动内容末端',
   Math.abs(M.clearanceVarPx - (M.predicted ?? -999)) <= 0.5 && !!M.scroller?.box
-  && Math.abs(M.pane.bottom - M.scroller.box.bottom - Math.max(76, M.clearanceVarPx)) <= 1,
-  `变量=${M.clearanceVar}；独立算得 ${M.predicted}px；视口底=${M.scroller?.box?.bottom}；pane 底=${M.pane?.bottom}`);
+  && Math.abs(M.pane.bottom - M.scroller.box.bottom) <= 1
+  && Math.abs(M.padBottom - expectedPhonePadding) <= 1,
+  `变量=${M.clearanceVar}；独立算得 ${M.predicted}px；视口底=${M.scroller?.box?.bottom}；pane 底=${M.pane?.bottom}；内距=${M.padBottom}；预期=${expectedPhonePadding}`);
 record('B4', '手机 390 · 长文档确实可滚且已到 max',
   !!M.scroller && M.scroller.maxScroll > 100 && Math.abs(M.scroller.st - M.scroller.maxScroll) <= 2,
   `scrollTop=${M.scroller?.st} / max=${M.scroller?.maxScroll}（sh=${M.scroller?.sh} ch=${M.scroller?.ch}）`);

@@ -2860,6 +2860,16 @@ export function activateNav() {
   (/** @type {any} */ (window)).__nfDeckProbeReset = () => { deckSnapBuilds = 0; deckSnapMaxMs = 0; deckSnapLastMs = 0; };
   ensureContainer();
   buildDock();
+  // Measure the shared top-control size, rather than its zero-height band.
+  const topProbe = document.createElement('button');
+  topProbe.className = 'g2-fab';
+  topProbe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;top:0';
+  document.body.appendChild(topProbe);
+  const measureTop = () => document.body.style.setProperty('--mobile-top-measured', `${topProbe.getBoundingClientRect().height}px`);
+  measureTop();
+  const topObserver = new ResizeObserver(measureTop);
+  topObserver.observe(topProbe);
+  unsubs.push(() => { topObserver.disconnect(); topProbe.remove(); document.body.style.removeProperty('--mobile-top-measured'); });
   watchCanvasContent();
   watchOverlayClose();
   watchCanvasEvents();

@@ -46,7 +46,7 @@ try {
     return { scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, clientHeight: scroller.clientHeight,
       target: el.outerHTML.slice(0, 400), rect: r.toJSON(), scroller: s.toJSON(), x, y,
       hit: hit?.outerHTML.slice(0, 400), hitTarget: hit === el || el.contains(hit),
-      previewHidden: getComputedStyle(document.querySelector('.decision-preview-entry')).display === 'none' };
+      previewHidden: !document.querySelector('.decision-preview-entry') || getComputedStyle(document.querySelector('.decision-preview-entry')).display === 'none' };
   });
   writeFileSync(`${out}/geometry.json`, JSON.stringify(result, null, 2));
   await page.screenshot({ path: `${out}/settings-bottom.png`, animations: 'disabled' });
