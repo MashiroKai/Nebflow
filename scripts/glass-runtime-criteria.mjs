@@ -43,7 +43,7 @@ export function parseCriteria(specPath = SPEC_PATH) {
     if (!Number.isFinite(n)) throw new Error(`阈值非数字：${line}`);
     out[k] = n;
   }
-  for (const k of ['effectMin', 'inertMax', 'flatEdgeMax', 'degradeMinAlpha']) {
+  for (const k of ['effectMin', 'inertMax', 'flatEdgeMax', 'occluderMinAlpha', 'degradeMinAlpha']) {
     if (!Number.isFinite(out[k])) throw new Error(`阈值块缺 ${k}`);
   }
   return out;

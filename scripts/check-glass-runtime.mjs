@@ -80,7 +80,7 @@ const JSON_OUT = process.argv.includes('--json');
 const INVENTORY = process.argv.includes('--inventory');
 const THEMES = (argOf('--themes', 'dark,light') || '').split(',').filter(Boolean);
 // 阈值全部来自设计规范（见文件头 import）：本闸**零数字**。
-const { effectMin: EFFECT_MIN, inertMax: INERT_MAX, flatEdgeMax: FLAT_EDGE_MAX, degradeMinAlpha: DEGRADE_MIN_ALPHA } = CRITERIA;
+const { effectMin: EFFECT_MIN, inertMax: INERT_MAX, flatEdgeMax: FLAT_EDGE_MAX, occluderMinAlpha: OCCLUDER_MIN_ALPHA, degradeMinAlpha: DEGRADE_MIN_ALPHA } = CRITERIA;
 
 if (!existsSync(join(WEB, 'index.html'))) {
   console.error(`装配错误：${WEB}/index.html 不存在（--root 指向 web 树）`);
@@ -381,7 +381,7 @@ for (const theme of THEMES) {
         const box = { x: s.rect.x * 2 + 2, y: s.rect.y * 2 + 2, w: s.rect.w * 2 - 4, h: s.rect.h * 2 - 4 };
         const diff = await meanAbsDiff(page, baseline, off, box);
         // 遮挡实测：该面盒内取样点是否被压在其上、不透明的元素盖住（身份 + 几何）
-        const coverProbe = await page.evaluate((gid) => {
+        const coverProbe = await page.evaluate(({ gid, occluderMinAlpha }) => {
           const el = document.querySelector(`[data-gr-idx="${gid}"]`);
           if (!el) return { covered: false, samples: 0, occluders: [] };
           const r = el.getBoundingClientRect();
@@ -405,7 +405,7 @@ for (const theme of THEMES) {
               if (a === el || el.contains(a)) continue;      // 该面自己的子件不算遮挡
               const cs = getComputedStyle(a);
               const al = alpha(cs.backgroundColor);
-              if (al >= 0.9 || (cs.backgroundImage && cs.backgroundImage !== 'none')) {
+              if (al >= occluderMinAlpha || (cs.backgroundImage && cs.backgroundImage !== 'none')) {
                 const q = a.getBoundingClientRect();
                 hit = { sel: key(a), alpha: +al.toFixed(3), bg: cs.backgroundColor, rect: [+q.x.toFixed(1), +q.y.toFixed(1), +q.width.toFixed(1), +q.height.toFixed(1)] };
                 break;
@@ -414,7 +414,7 @@ for (const theme of THEMES) {
             if (hit) { coveredPts++; if (!occl.has(hit.sel)) occl.set(hit.sel, hit); }
           }
           return { covered: pts.length > 0 && coveredPts === pts.length, samples: pts.length, coveredPts, occluders: [...occl.values()] };
-        }, s.gid);
+        }, { gid: s.gid, occluderMinAlpha: OCCLUDER_MIN_ALPHA });
         // 藏起该面自己：量背板平整度（证据），并保留该面可见度读数
         await page.evaluate((gid) => { const e = document.querySelector(`[data-gr-idx="${gid}"]`); if (e) e.style.visibility = 'hidden'; }, s.gid);
         await page.waitForTimeout(40);
