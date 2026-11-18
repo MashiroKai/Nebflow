@@ -557,12 +557,20 @@ Advance: the chain's nodes run in THIS session's workspace by default (that is s
     ExecutorRegistry.resolveRequested(input("executor").flatMap(_.asString)) match
       case Left(err) => IO.pure(Left(ToolError(err)))
       case Right(ExecutorRegistry.ResolvedSelection.Internal) =>
-        // 模式参数（delegate-param-decisions 批 2026-11-04）：解析单点 = 纯函数
+        // 模式参数（delegate-param-decisions 批 2026-11-04）：词表解析单点 = 纯函数
         // [[nebflow.core.delegate.ModeParam.resolve]]——不填 ⇒ 确定性 kernel；
         // `auto` ⇒ 显式报错（分配器已删除，不静默映射）；其它词 ⇒ 显式报错。
-        // 这里零 IO、零端口、零配置读取 ⇒ spawn 路径无模型调用。
+        // dispatcher-seal 批 2026-11-18：解析外面套封存闸
+        // [[nebflow.core.delegate.DispatcherSeal.resolveForDispatch]]——封存态
+        // （缺省）下 `mode=dispatcher` 显式拒（绝不静默降级 kernel）；开关 =
+        // stand.json `delegate.dispatcherMode`（"sealed"/"enabled"），此处热读
+        // （Try 护体先例 = BackoffSupervisor 的 delegateProgressNotifications），
+        // 词表解析本身仍零模型调用。
         val modeParam = input("mode").flatMap(_.asString).map(_.trim.toLowerCase).filter(_.nonEmpty)
-        nebflow.core.delegate.ModeParam.resolve(modeParam) match
+        val dispatcherSealMode = nebflow.core.delegate.DispatcherSeal.modeFromConfigNode(
+          scala.util.Try(nebflow.shared.Config.loadServiceConfig().delegate).toOption.flatten
+        )
+        nebflow.core.delegate.DispatcherSeal.resolveForDispatch(modeParam, dispatcherSealMode) match
           case Right(modeDecision) =>
             internalSpawn(
               project,

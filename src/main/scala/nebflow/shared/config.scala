@@ -705,6 +705,15 @@ case class NebflowServiceConfig(
    * 类型化节主要服务 GET /api/config 透传可见与 PATCH 深合并可写。
    */
   msgTokens: Option[MsgTokensConfig] = None,
+  /**
+   * Delegate 引擎开关节（dispatcher-seal 批 2026-11-18）——顶层 `delegate` 节原样
+   * JSON——[[nebflow.core.delegate.DispatcherSeal]] fail-safe 解析：键
+   * `dispatcherMode` = `"sealed"`（缺省：节/键缺失与非法词都落这里，fail-closed）/
+   * `"enabled"`（恢复 dispatcher 派发）。派发点热读，改动即席生效；本批只封「新
+   * 派发入口」，dispatcher 实现与读面一行不动。旧 `delegate.dualMode` 键在该节内
+   * 残留不影响解码（原样 JSON，无 schema）。
+   */
+  delegate: Option[io.circe.Json] = None,
   delegateProgressNotifications: Option[Boolean] = None
 )
 

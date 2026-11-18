@@ -6,9 +6,11 @@
 
 跨会话 delegate 任务：分发、生命周期、终态结算与设备腿（引擎不托管工作树；合并由作者显式决定）。
 
+> **dispatcher 模式封存**（2026-11-18，dispatcher-seal 批）：dispatcher 会话反复挂死——起链正常，节点到终态后父会话不再被唤醒（不继续、不交回、不报错，一挂 2h+）。`mode=dispatcher` 派发被显式拒（错误码 `DELEGATE_DISPATCHER_SEALED`，绝不静默降级 kernel）；实现全保留，恢复 = `stand.json` 顶层 `delegate` 节 `dispatcherMode` 置 `"enabled"`（缺省/非法词 = `"sealed"`，fail-closed；派发点热读即席生效）。详见 [`DispatcherSeal.scala`](DispatcherSeal.scala)。
+
 **入口建议**：先读 [`DelegateRegistry.scala`](DelegateRegistry.scala)（持久身份的单一地址簿）。
 
-## 文件（23）
+## 文件（24）
 
 | 文件 | 说明 |
 |---|---|
@@ -24,6 +26,7 @@
 | [`DelegateWorkReport.scala`](DelegateWorkReport.scala) | DelegateWorkReport —— 合并轮 finish 交付的工作结果附页（delegate-finish-report 修复批 2026-10-25 · 作者令逐字：「delegate report merg |
 | [`DeviceDelegate.scala`](DeviceDelegate.scala) | 设备腿 delegate 通道（v2.1 阶段 1 §A.3 / §E 阶段 1「项目分布执行」）。 通道**：presence WS 结构化消息（既有数据通道单点，`sendData`）+ relay 兜底 |
 | [`DeviceResultOutbox.scala`](DeviceResultOutbox.scala) | DeviceResultOutbox —— **跨设备完成件的持久待发区**（台账 #944 跨设备回报丢件腿）。 == 病灶（2026-10-26 实证链，Windows 侧日志 + Mac 侧日志双侧对账）== |
+| [`DispatcherSeal.scala`](DispatcherSeal.scala) | DispatcherSeal —— **dispatcher 模式封存闸**（dispatcher-seal 批 2026-11-18 · 作者令「dispatcher模式封存…让kernel来做」）：dispatcher 会话在节点终态后父会话反复不再被唤. |
 | [`DualMode.scala`](DualMode.scala) | DualModeConfig —— **delegate 双模式总闸**（设计 `docs/design/20261028_213056_delegate-dual-mode-redesign__delegate-neb |
 | [`ExternalJudgeHook.scala`](ExternalJudgeHook.scala) | ExternalJudgeHook —— 外部 delegate 终态判定的**接线缝**（external-executors 批 #1225 留缝；判定机本体归 worktree-judge-fifo 批 #1224 |
 | [`MergeAcceptance.scala`](MergeAcceptance.scala) | MergeAcceptance —— 合并轮终态的**机械验收闸**（引擎加固批 2026-10-09，上游审计 #31 结论 P1-1①）. |
