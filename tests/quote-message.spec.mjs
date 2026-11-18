@@ -194,10 +194,13 @@ test.describe('B1 — 右键菜单项', () => {
     await page.keyboard.press('Escape');
     await expect(page.locator('.fm-context-menu')).toHaveCount(0);
     // Start the cancellation leg on a fresh page to avoid native selection handles.
-    await page.reload();
-    await page.waitForFunction(() => window.__ready === true);
-    const id2 = await page.evaluate(() => { document.body.classList.add('mobile-layer'); return window.__renderUserRow('before selected after'); });
-    await page.evaluate(id => {
+    const context2 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const page2 = await context2.newPage();
+    await page2.goto(`http://127.0.0.1:${port}${HARNESS_PATH}?move-case=1`);
+    await page2.waitForFunction(() => window.__ready === true);
+    const cdp2 = await context2.newCDPSession(page2);
+    const id2 = await page2.evaluate(() => { document.body.classList.add('mobile-layer'); return window.__renderUserRow('before selected after'); });
+    await page2.evaluate(id => {
       const row = window.__rowById(id);
       const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
       let node;
@@ -205,11 +208,18 @@ test.describe('B1 — 右键菜单项', () => {
       const range = document.createRange(); range.setStart(node, 7); range.setEnd(node, 15);
       window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
     }, id2);
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + 25, y, id: 1 }] });
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await page.waitForTimeout(750);
-    await expect(page.locator('.fm-context-menu')).toHaveCount(0);
+    await page2.evaluate(() => { window.__touchMoves = []; document.addEventListener('touchmove', e => window.__touchMoves.push(e.touches[0]?.clientX), { capture: true }); });
+    const box2 = await page2.locator(`.row[data-msg-id="${id2}"] .bubble`).boundingBox();
+    const x2 = Math.round(box2.x + box2.width / 2), y2 = Math.round(box2.y + box2.height / 2);
+    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x2, y: y2, id: 1 }] });
+    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x2 + 5, y: y2, id: 1 }] });
+    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x2 + 25, y: y2, id: 1 }] });
+    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x2 + 50, y: y2, id: 1 }] });
+    await page2.waitForTimeout(750);
+    expect(await page2.evaluate(start => window.__touchMoves.some(px => Math.abs(px - start) > 10), x2), 'touchmove delivered beyond threshold').toBe(true);
+    await expect(page2.locator('.fm-context-menu')).toHaveCount(0);
+    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await context2.close();
     await context.close();
   });
 

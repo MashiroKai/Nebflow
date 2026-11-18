@@ -7,8 +7,8 @@ import { chromium } from 'playwright';
 import { establishSession } from './helpers/session-rail.mjs';
 
 const repo = '/private/tmp/stand-selask';
-const root = '/private/tmp/qa-selask-live-fixture';
-const privateHome = '/private/tmp/selask-live-user';
+const root = `/private/tmp/qa-selask-live-${process.pid}`;
+const privateHome = `/private/tmp/qa-selask-user-${process.pid}`;
 const artifacts = '/private/tmp/selask-live-evidence';
 const jar = '/Users/kaiyu/Claude code/Stand/target/scala-3.5.2/stand-assembly-2026.11.8-beta.1.jar';
 if (root === '/Users/kaiyu/.stand' || !root.startsWith('/private/tmp/')) throw Error('unsafe root');
@@ -35,7 +35,9 @@ try {
   if ([6138,8080,8097].includes(port) || [6138,8080,8097].includes(mockPort)) throw Error('protected port');
   const env = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin', HOME: privateHome, NEBFLOW_HOME_DIR: root, MOCK_PORT: String(mockPort) };
   mkdirSync(root, { recursive: true });
-  writeFileSync(`${root}/nebflow.json`, JSON.stringify({ workSchedule: { enabled: false }, safety: { defaultMode: 'auto-all' }, llm: { providers: { mock: { baseUrl: `http://127.0.0.1:${mockPort}/v1/`, apiKey: 'sk-fixture-stub', protocol: 'openai', models: [{ id: 'mock-1', maxTokens: 8192, contextWindow: 128000 }] } } } }));
+  writeFileSync(`${root}/stand.json`, JSON.stringify({ workSchedule: { enabled: false }, safety: { defaultMode: 'auto-all' }, llm: { providers: { mock: { baseUrl: `http://127.0.0.1:${mockPort}/v1/`, apiKey: 'fixture-only-placeholder', protocol: 'openai', models: [{ id: 'mock-1', contextWindow: 128000 }] } }, fallback: { preferred: 'mock/mock-1' } } }));
+  mkdirSync(`${root}/agents/Nebula`, { recursive: true });
+  writeFileSync(`${root}/agents/Nebula/agent.json`, JSON.stringify({ name: 'Nebula', model: { preferred: 'mock/mock-1' } }));
   writeFileSync(`${root}/onboarding.json`, JSON.stringify({ state: 'skipped' }));
   console.log(`root=${root} gatewayPort=${port} mockPort=${mockPort}`);
   gateway = spawn('/Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home/bin/java', ['--add-opens', 'java.base/java.lang=ALL-UNNAMED', '-Dnebflow.webdist=dev', '-cp', `${repo}/src/main/resources:${jar}`, 'nebflow.Main', '--home', root, '--port', String(port), '--no-browser', '--foreground', 'start'], { cwd: repo, env: { ...env, NEBFLOW_GATEWAY_PORT: String(port) }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -70,6 +72,7 @@ try {
     console.log(`activeSession=${activeId}`);
     const warm = await fetch(`${base}/api/sessions/${activeId}/turn`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ content: 'fixture warmup', timeoutSec: 30 }) });
     console.log(`warmup status=${warm.status} hits=${hits} response=${(await warm.text()).slice(0, 300)}`);
+    if (!warm.ok || hits === 0) throw Error('warmup did not reach loopback model');
     await page.waitForFunction(() => window.__frames.some(f => f.type === 'historyPage'), null, { timeout: 30000 });
     await page.evaluate(async () => {
       const chat = await import('/js/chat.js');
