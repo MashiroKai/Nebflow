@@ -6357,3 +6357,96 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 @media (prefers-reduced-motion: reduce) {
   .msg-token-chip { transition: none; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   溢出转待办承载区（溢出转待办批 2026-11-18 · 作者令「超出对话分页的 AskUser
+   问题自动转入待办，不再弹窗和计数气泡显示…共同管理卡片的生命周期」）
+
+   落点：待办面内的**行内区**（手机全屏待办首页顶部 / 桌面待办面板列表顶部），
+   不是浮层、不是弹窗、不是第四种通知 —— 它没有任何 fixed/absolute/z-index，
+   随待办面滚动流。材质与选项一律复用既有单源：
+     · 卡面 = `--glass-control-*` 族（与 .ask-pending-row 同一配方）
+     · 选项 = chat.css `.option-btn` / `.option-btn.picked`（提问卡同款）
+   ══════════════════════════════════════════════════════════════════════ */
+.ask-todo-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  margin: 0 0 var(--ds-space-2);
+}
+.ask-todo-section:empty { display: none; }
+.ask-todo-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-hair);
+  padding: 0 var(--ds-space-hair);
+}
+.ask-todo-head-title {
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  color: var(--color-warning);
+}
+.ask-todo-head-hint {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+}
+.ask-todo-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border: 1px solid var(--glass-control-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--glass-control-bg);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+}
+.ask-todo-card.is-answered { opacity: 0.55; }
+.ask-todo-src {
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+.ask-todo-q {
+  font-size: var(--ds-fs-body);
+  line-height: 1.4;
+  color: var(--color-text);
+}
+.ask-todo-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space-1);
+}
+.ask-todo-other {
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: var(--ds-radius-input);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--ds-fs-body);
+}
+.ask-todo-note {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+}
+.ask-todo-row {
+  display: flex;
+  justify-content: flex-end;
+}
+.ask-todo-submit {
+  padding: var(--ds-space-1h) var(--ds-space-3);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--ds-radius-card-md);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--ds-fs-body);
+  cursor: pointer;
+}
+.ask-todo-submit:disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}

@@ -42,6 +42,7 @@ import { isImeComposing } from './imeGuard.js';
 import { bindComposerKeys } from './input/composer.js';
 import { sessionShowsNodeEntries } from './taskList.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } from './todoStore.js';
+import { mountAskTodoSection } from './askTodoList.js';
 // 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
 // 待办截止时刻从裸 `<input type="datetime-local">` 收编为同款点选面。交互单源
 // = ./timeWheel.js；隐藏输入 `.tfl-due-input` 保留为值域载体（saveEditing /
@@ -1303,6 +1304,10 @@ class TodoFace {
     this.listInner.textContent = '';
     // 抽屉宿主（手机腿）同拍清场：表单只在一处，绝不同屏两份
     if (this.mobile && this.sheetBody) this.sheetBody.textContent = '';
+    // 溢出转待办承载区（溢出转待办批 2026-11-18 作者令）：超出对话分页的待答问题
+    // 在桌面待办面顶部承载并可**就地作答**。判据/状态单点都在 askPending，本处只
+    // 提供列表容器；区内后续刷新由 askTodoList 的归属监听驱动（幂等重挂）。
+    mountAskTodoSection(this.listInner);
     for (const item of items) {
       if (this.completingRows.has(item.id) && this.completingEls.get(item.id)) {
         // 完成动画在飞：沿用既有 DOM（动画不因重渲打断）

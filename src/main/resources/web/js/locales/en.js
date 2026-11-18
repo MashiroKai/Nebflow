@@ -1842,6 +1842,13 @@ export default {
   'askUser.rejectUnknown': 'That question is no longer active — the card is still open, please answer again',
   'askUser.rejectNoMatch': 'No matching pending question — please answer again',
   'askUser.rejectGeneric': 'Answer not accepted — please answer again',
+  // Overflow → todo batch (author order 2026-11-18): a pending question past the
+  // loaded conversation page moves into the todo face — no popup, no badge count;
+  // both answer sites share one state and one resolution point.
+  'askUser.todoSectionTitle': 'Pending questions · moved to todos ({n})',
+  'askUser.todoSectionHint': 'These questions are past the loaded conversation page: no popup, not counted in the badge; answering here flips the original card to answered',
+  'askUser.todoSubmit': 'Submit answer',
+  'askUser.todoManual': 'Answer this one on its original card (secret value / directory picker)',
   // askuser-secret batch (2026-10-08): secret-question face (showOptions secret
   // branch) + the plain-text-reflux rejection toast (hub reason
   // "secret-slot-mismatch", spec §5.1).
