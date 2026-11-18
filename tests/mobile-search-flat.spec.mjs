@@ -56,8 +56,8 @@ const SID = 'flat-search-session';
 /** 阈值算术镜像（js/mobile/socialSearch.js：COLLAPSE_AT=24 / EXPAND_AT=4）。 */
 const COLLAPSE_AT = 24;
 const EXPAND_AT = 4;
-/** 搜索带高（css/mobileSearchFlat.css --mhsc-band = 48 + 12）。 */
-const BAND_H = 60;
+/** 搜索带高（css/mobileSearchFlat.css --mhsc-band = 48 + 2 × 16）。 */
+const BAND_H = 80;
 const LEGACY = !!process.env.SEARCH7_LEGACY_TREE;
 const EVID = process.env.SEARCH7_EVID_DIR || null;
 
@@ -723,7 +723,7 @@ test('mobile-search-flat: messages + contacts（九组判据，双页同源）',
     expect(Math.round(s0.bar.width), '① bar 宽 343').toBe(343);
     expect(Math.round(s0.bar.left), '① bar 左缘 16').toBe(16);
     expect(Math.round(s0.bar.right), '① bar 右缘 359').toBe(359);
-    expect(Math.round(s0.bar.top), '① bar 顶 8（带高 60 内垂直居中：(60-44)/2）').toBe(8);
+    expect(Math.round(s0.bar.top), '① 搜索条在实测带内垂直居中').toBe((BAND_H - Math.round(s0.bar.height)) / 2);
     expect(s0.dockH, `① 搜索带高 = ${BAND_H}`).toBe(BAND_H);
     // 材质场（glass-top-overlays 批 2026-11-06 换代）：条浮在滚动列表之上 ⇒
     // 必须吃唯一毛玻璃标准（.nf-glass：玻璃底 + blur(24px) saturate(1.15)，单一材质批 2026-11-15 +
