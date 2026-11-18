@@ -47,7 +47,7 @@ import { escapeHtml, createIconsIn } from './utils.js';
 import { t } from './i18n.js';
 import { brand, getProfileUrl } from './brand.js';
 import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
-import { deviceListHTML, paintDeviceList, bindDeviceList, ensureDeviceListLive, getDeviceList } from './profileDevices.js';
+import { buildDeviceList, paintDeviceList, bindDeviceList, ensureDeviceListLive, deviceIdKey } from './profileDevices.js';
 
 // ── 自身身份读数（用户名 / userId）─────────────────────────────────────────
 // 缓存键 = 当前账号 email（登录态改变或 email 改变才重探）。结论只有两种：
@@ -385,7 +385,7 @@ function ensureProfileFace() {
       <p class="sp-note" role="note">${escapeHtml(t('profile.editOnWebsite', { where: profileUrlText() }))}</p>
       <p class="sp-note sp-note-warn" role="note">${escapeHtml(t('settings.accountServiceUnavailable'))}</p>
       <div class="pd-section-label" role="heading" aria-level="3">${escapeHtml(t('profile.deviceSection'))}</div>
-      <div class="sp-fields" id="settings-profile-devices">${deviceListHTML()}</div>
+      <div class="sp-fields" id="settings-profile-devices"></div>
     </div>`;
   document.body.appendChild(overlay);
 
@@ -397,6 +397,13 @@ function ensureProfileFace() {
     if (e.key === 'Escape' && !overlay.hidden) close();
   });
   mobileSheetBack(overlay, close);
+  // 设备清单挂载（标记单点 = profileDevices.buildDeviceList()；本面只挂，零第二套
+  // HTML 串 —— 清单节点本身不参与上面那条 overlay 模板串）。
+  const devHost = overlay.querySelector('#settings-profile-devices');
+  if (devHost instanceof HTMLElement) {
+    devHost.replaceChildren(buildDeviceList());
+    devHost.dataset.pdIds = deviceIdKey();
+  }
   bindDeviceList(overlay, paintProfileFace); // 逐设备退出（本机行 = 既有唯一登出链）
   ensureDeviceListLive(overlay);
   if (typeof lucide !== 'undefined') createIconsIn(overlay);
@@ -460,11 +467,9 @@ function paintProfileFace() {
   // 退出动作的禁用态），文本读数每次拍都刷。
   const devHost = overlay.querySelector('#settings-profile-devices');
   if (devHost instanceof HTMLElement) {
-    const list = getDeviceList();
-    const wanted = [list.current ? list.current.id : '', ...list.peers.map((p) => p.id)]
-      .filter(Boolean).join('|');
+    const wanted = deviceIdKey();
     if (devHost.dataset.pdIds !== wanted) {
-      devHost.innerHTML = deviceListHTML();
+      devHost.replaceChildren(buildDeviceList());
       devHost.dataset.pdIds = wanted;
       bindDeviceList(devHost, paintProfileFace);
     }

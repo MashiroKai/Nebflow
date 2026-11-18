@@ -156,7 +156,9 @@ export const PAGES = [
   // 🔴 profile-multidevice 批（单页资料）：`me-user` / `me-avatar` / `me-bind`
   // 三个层级子页**整族退役** —— 它们只读同一份读数、各带一句「接口暂无」，
   // 加上「编辑资料」空动作 = 四条通往同一张纸的路。本页成为唯一资料页。
-  { id: 'me',        tabId: null, icon: 'user-round', zh: '个人资料', en: 'Profile' },
+  //   页名沿用作者原话「个人主页」（与桌面账号菜单 `activity.profile` 同一名字，
+  //   本批**不**另起「个人资料」第二种叫法 —— 本仓禁第二套命名）。
+  { id: 'me',        tabId: null, icon: 'user-round', zh: '个人主页', en: 'Profile' },
   // 弹窗退场批③（作者令「不再有展开式配置：点配置项进下一层级铺满屏、左上
   // 返回」）：设置页三处 chevron 折叠体的层级子页——内容面 = 收编桌面
   // .settings-collapse-body 节点（settingsSub.js 锚点惯例，桌面零改动）。

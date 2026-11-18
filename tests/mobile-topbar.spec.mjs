@@ -155,9 +155,16 @@ test('T2 头像搬家：工作台顶部 hero 是身份唯一展示，设置页�
   await expect(page.locator('#settings-identity-capsule')).toHaveCount(0);
   await expect(page.locator('#settings-devices-slot')).toHaveCount(0);
   await expect(page.locator('#settings-modal .neblink-peer')).toHaveCount(0);
-  // 账号段保留的只有**功能分项**（既有账号卡 = 登录账号读数 + 退出登录），不是身份复述。
+  // 账号段保留的只有**功能分项**（既有账号卡 = 登录账号读数），不是身份复述。
   await expect(page.locator('#settings-content #account-card')).toHaveCount(1);
-  await expect(page.locator('#settings-content #neblink-logout')).toHaveCount(1);
+  // ⚠️ 2026-11-18 修残（本轮 rebase 到 f5300f375 后本行由绿转红，判据被更晚的裁定作废）：
+  // 基线 commit f5d437347「Unify settings model cards and remove settings logout」
+  // （2026-11-18 09:23:56，晚于本批作者原话 08:54）把 `#neblink-logout` 从 `neblink.js`
+  // 整件删除 —— 设置页账号卡的会话动作退役，卡内只剩只读登录态读数。本批的登出动作
+  // 只在**个人资料面**且按设备域（每行一台）—— 设置页不复述，故断言 0 而非 1。
+  await expect(page.locator('#settings-content #account-card #neblink-logout')).toHaveCount(0);
+  await expect(page.locator('#settings-content #account-card #neblink-cleanup-btn')).toHaveCount(0);
+  await expect(page.locator('#settings-content #account-card .neblink-account-ro')).toHaveCount(1);
   await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
   // 联系人页设备段完好（设备只在联系人展示）。
   await dockTo(page, 'contacts');

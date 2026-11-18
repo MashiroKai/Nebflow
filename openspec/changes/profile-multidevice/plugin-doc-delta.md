@@ -1,6 +1,27 @@
-# Plugin doc delta — device-scoped identity surface (ready to land in `stand-dev`)
+# Plugin doc delta — device-scoped identity surfaces (landable patch, NOT LANDED)
 
-**Status**: NOT LANDED. The `stand-dev` plugin source lives at `/Users/kaiyu/.stand/plugins/stand-dev/` (outside this repository and outside this task's worktree/branch). The dispatch brief asked for "appropriate plugin documentation"; writing into that path would be a second repository outside the assigned seat, so this file carries the delta verbatim for the plugin owner to land, instead of an unowned write.
+**Status**: NOT LANDED — and this batch is not authorized to land it. The `stand-dev` plugin is a separate, source-managed repository (`git@github.com:MashiroKai/stand-dev.git`); its working checkouts live inside the protected production data root — `/Users/kaiyu/.stand/plugins/stand-dev/` (the installed copy the live instance loads) and `/Users/kaiyu/.stand/plugin-repos/stand-dev/` (the source clone). Writing to either is a **live-configuration change** (it moves the plugin digest, which the panel surfaces as 「内容已变更」) with its own authority requirement, and the batch brief forbids touching the data root. So the rule is carried here, in the repository that owns the batch, as a patch the plugin owner applies.
+
+**Where the rule applies in the plugin**: `skills/stand-dev/references/frontend/stand-frontend.md` (frontend discipline) and `skills/stand-dev/references/design/design-spec.md` (design rules). Add the section below; nothing else in the plugin changes.
+
+**How to land it** (owner-run, outside this batch):
+
+```sh
+cd /Users/kaiyu/.stand/plugin-repos/stand-dev
+# paste the 「Device-scoped identity surfaces」 section into
+#   skills/stand-dev/references/frontend/stand-frontend.md
+# and cross-reference it from
+#   skills/stand-dev/references/design/design-spec.md
+git add skills/stand-dev/references/frontend/stand-frontend.md skills/stand-dev/references/design/design-spec.md
+git commit -m "Document device-scoped identity surfaces"
+# then re-install the plugin so the installed copy matches the source (separately authorized)
+```
+
+**In-repo half of the same rule**: the normative form is landed here as this change's spec delta (`specs/device-identity-surfaces/spec.md`) and its rationale in `design.md` — the repository-tracked half. The plugin half is the reusable form for *other* surfaces (contacts, project device pickers, agent device selection).
+
+## The spec delta is the normative form
+
+`specs/device-identity-surfaces/spec.md` carries this as `DIS-REQ-001..005` with scenarios; `design.md` carries the reasoning and the file:line scope statements. The section below is the same rule written for a plugin reference, where "must" replaces requirement IDs.
 
 ## Proposed rule (add under the plugin's frontend/design discipline references)
 

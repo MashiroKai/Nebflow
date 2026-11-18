@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "change": "profile-multidevice",
+  "mappings": [
+    {
+      "requirement": "DIS-REQ-001",
+      "scenario": "DIS-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js",
+        "src/main/resources/web/js/settingsIdentity.js",
+        "src/main/resources/web/js/mobile/meFace.js",
+        "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
+      ],
+      "tests": [
+        "tests/profile-multidevice.spec.mjs",
+        "tests/profile-devices-geometry.spec.mjs",
+        "tests/profile-multidevice-video.mjs"
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-001",
+      "scenario": "DIS-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js",
+        "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
+      ],
+      "tests": [
+        "tests/profile-multidevice.spec.mjs",
+        "tests/profile-multidevice-video.mjs"
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-002",
+      "scenario": "DIS-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js"
+      ],
+      "tests": [
+        "tests/profile-multidevice.spec.mjs"
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-002",
+      "scenario": "DIS-SCN-004",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js",
+        "src/main/resources/web/js/dom.js",
+        "src/main/resources/web/js/settingsIdentity.js",
+        "src/main/resources/web/js/mobile/meFace.js"
+      ],
+      "tests": [
+        "scripts/check-component-contract.mjs",
+        "tests/profile-multidevice.spec.mjs"
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-003",
+      "scenario": "DIS-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js"
+      ],
+      "tests": [
+        "tests/profile-multidevice.spec.mjs",
+        "tests/profile-devices-geometry.spec.mjs"
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-004",
+      "scenario": "DIS-SCN-006",
+      "implementation": [
+        "src/main/resources/web/js/mobile/navController.js",
+        "src/main/resources/web/js/mobile/meFace.js",
+        "src/main/resources/web/js/settingsIdentity.js"
+      ],
+      "tests": [
+        "tests/mobile-topbar.spec.mjs",
+        "tests/profile-multidevice.spec.mjs",
+        "tests/settings-identity-card.spec.mjs"
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-005",
+      "scenario": "DIS-SCN-007",
+      "implementation": [
+        "openspec/changes/profile-multidevice/design.md",
+        "js/profileDevices.js",
+        "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The claim is a written scope statement (which domain a change touches, with source locations), not an executable behaviour. Console sessions carry no device id in GatewaySessionStore.SessionRecord, so no test can assert the boundary; the source reading is the evidence.",
+        "steps": "Read openspec/changes/profile-multidevice/design.md and compare it with js/profileDevices.js (device identity readout and sign-out scoping), src/main/scala/nebflow/gateway/NeblinkRoutes.scala:546-590 (device-scoped route) and the SessionRecord definition (no device id field).",
+        "expected": "The writing names the device identity source and the sign-out scope with file:line, and states console-session transparency as the boundary of the change instead of leaving it implicit."
+      }
+    }
+  ]
+}

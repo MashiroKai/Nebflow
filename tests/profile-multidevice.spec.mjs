@@ -225,17 +225,17 @@ for (const mobile of [false, true]) {
 //    用 `document.querySelector('[data-device-list="1"]')` —— 只回**第一张**表，
 //    第二张表永远不随状态拍更新（设备增减 / 在线态变化停在建表那一刻，静默陈旧）。
 //    判据构造：第一张表 = 手机 me 页自己的清单（它有面内绘制回调兜底，无论修不修
-//    都会刷新）；第二张表 = 用**生产同一份标记**（deviceListHTML）追加进 DOM 的清单，
-//    它不在任何面的绘制回调里 ⇒ 只有模块订阅刷得到它。一拍之后两张表必须同读数。
+//    都会刷新）；第二张表 = 用**生产同一份标记**（profileDevices.buildDeviceList()）追加进
+//    DOM 的清单，它不在任何面的绘制回调里 ⇒ 只有模块订阅刷得到它。一拍之后两张表必须同读数。
 test('mobile: one status tick repaints every live device list, not just the first', async ({ page }) => {
   const peers = [{ deviceId: 'dev-kai', deviceName: 'KAI', platform: 'windows', lastSeen: Date.now() - 60_000, online: true, directOnline: true }];
   await boot(page, true, { peers });
   await openMobileMe(page);
   await page.evaluate(async () => {
-    const { deviceListHTML } = await import('/js/profileDevices.js');
+    const { buildDeviceList } = await import('/js/profileDevices.js');
     const host = document.createElement('div');
     host.id = 'pd-second-list-host';
-    host.innerHTML = deviceListHTML();
+    host.replaceChildren(buildDeviceList());
     document.body.appendChild(host);
   });
   const metaOf = (sel) => page.locator(`${sel} .pd-device-row[data-device-id="dev-kai"] .pd-device-meta`).textContent();

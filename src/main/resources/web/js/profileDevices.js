@@ -29,7 +29,7 @@
 // settingsIdentity / activityBar / navController，无回边成环。
 
 import { getNeblinkState, getAuthToken, onNeblinkStatus, openEndSessionHandoff, platformDisplay } from './neblink.js';
-import { escapeHtml } from './utils.js';
+import { h } from './dom.js';
 import { t } from './i18n.js';
 
 /** @typedef {{id: string, name: string, platform: string, lastSeen: number|null,
@@ -96,6 +96,16 @@ export function getDeviceList() {
   return { current, peers };
 }
 
+/**
+ * 当前设备集合的幂等键（本机 id + 对端 id，顺序敏感）。两个消费面共用 —— 「设备
+ * 集合变了才重建行」的重建判据只此一处（重建会吃掉正在进行的退出动作的禁用态）。
+ * @returns {string}
+ */
+export function deviceIdKey() {
+  const { current, peers } = getDeviceList();
+  return [current ? current.id : '', ...peers.map((p) => p.id)].filter(Boolean).join('|');
+}
+
 /** 单行副行文案：`平台 · 状态 · 最近活动 <时间>`（逐段都能缺；全缺 = 未知）。 */
 export function deviceMetaText(dev) {
   const parts = [platformDisplay(dev.platform).text, statusText(dev.online)];
@@ -104,38 +114,68 @@ export function deviceMetaText(dev) {
 }
 
 /**
- * 设备清单 HTML（共享标记，两个面逐字同一份 ⇒ 不存在两套列表）。
- * 行 = `data-device-id` + `data-device-current`，退出键 = `[data-device-signout]`。
- * @returns {string}
+ * SVG 串 → 可插入节点。走 XML 文档解析 + `importNode`（**不经活 DOM 的 HTML
+ * 解析面**）⇒ 图标这条唯一需要解析标记的支路也不得回退到裸 innerHTML 赋值
+ * （`scripts/check-component-contract.mjs` R5：新文件五项计数必须为 0；该闸是
+ * **文本级**判据、不剥注释，故此处连注释里的字面量形态也不写）。
+ * 解析失败 ⇒ `null`（图标缺位；读数不假造、不抛）。
+ * @param {string} markup @returns {Node|null}
  */
-export function deviceListHTML() {
+function svgNode(markup) {
+  try {
+    const doc = new DOMParser().parseFromString(String(markup || ''), 'image/svg+xml');
+    const root = doc.documentElement;
+    if (!root || String(root.nodeName).toLowerCase() === 'parsererror') return null;
+    return document.importNode(root, true);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 设备清单节点（**唯一**标记源，两个消费面共用这一份 ⇒ 不存在两套列表）。
+ * 构建走 `dom.js` 的 `h()`：零 HTML 串落 DOM（R5），文本一律 `textContent`
+ * ⇒ 不需要第二套转义口径。
+ * 行 = `data-device-id` + `data-device-current`，退出键 = `[data-device-signout]`。
+ * 名称/副行建时即填一次初值（免空帧），其后由 `paintDeviceList` 单点刷。
+ * @returns {HTMLElement}
+ */
+export function buildDeviceList() {
   const { current, peers } = getDeviceList();
   const all = current ? [current, ...peers] : peers;
+  const box = h('div', { class: 'pd-devices', 'data-device-list': '1' });
   if (!all.length) {
-    return `<div class="pd-devices" data-device-list="1">
-      <p class="pd-device-empty" role="note">${escapeHtml(t('profile.deviceNone'))}</p>
-    </div>`;
+    box.append(h('p', { class: 'pd-device-empty', role: 'note', text: t('profile.deviceNone') }));
+    return box;
   }
-  const rows = all.map((dev) => {
-    const { icon } = platformDisplay(dev.platform);
-    const badge = dev.current
-      ? `<span class="pd-device-badge">${escapeHtml(t('profile.deviceCurrent'))}</span>`
-      : '';
-    return `
-      <div class="pd-device-row" data-device-id="${escapeHtml(dev.id)}" data-device-current="${dev.current ? '1' : '0'}">
-        <span class="pd-device-icon" aria-hidden="true">${icon}</span>
-        <span class="pd-device-main">
-          <span class="pd-device-name"><span class="pd-device-name-text"></span>${badge}</span>
-          <span class="pd-device-meta"></span>
-        </span>
-        <button class="pd-device-signout glass-control" type="button"
-          data-device-signout="${escapeHtml(dev.id)}"
-          aria-label="${escapeHtml(t(dev.current ? 'profile.deviceSignOutCurrent' : 'profile.deviceSignOut'))}">${escapeHtml(t('profile.deviceSignOut'))}</button>
-      </div>`;
-  }).join('');
-  return `<div class="pd-devices" data-device-list="1">${rows}
-      <p class="pd-device-notice" role="status" hidden></p>
-    </div>`;
+  for (const dev of all) {
+    const nameWrap = h('span', { class: 'pd-device-name' }, [
+      h('span', { class: 'pd-device-name-text', text: dev.name }),
+      dev.current ? h('span', { class: 'pd-device-badge', text: t('profile.deviceCurrent') }) : null,
+    ]);
+    const row = h('div', {
+      class: 'pd-device-row',
+      'data-device-id': dev.id,
+      'data-device-current': dev.current ? '1' : '0',
+      'data-device-online': dev.online === true ? 'online' : dev.online === false ? 'offline' : 'unknown',
+    }, [
+      h('span', { class: 'pd-device-icon', 'aria-hidden': 'true' }, svgNode(platformDisplay(dev.platform).icon)),
+      h('span', { class: 'pd-device-main' }, [
+        nameWrap,
+        h('span', { class: 'pd-device-meta', text: deviceMetaText(dev) }),
+      ]),
+      h('button', {
+        class: 'pd-device-signout glass-control',
+        type: 'button',
+        'data-device-signout': dev.id,
+        'aria-label': t(dev.current ? 'profile.deviceSignOutCurrent' : 'profile.deviceSignOut'),
+        text: t('profile.deviceSignOut'),
+      }),
+    ]);
+    box.append(row);
+  }
+  box.append(h('p', { class: 'pd-device-notice', role: 'status', hidden: true }));
+  return box;
 }
 
 /**
@@ -237,7 +277,7 @@ export function bindDeviceList(root, rerender) {
     const btn = e.target instanceof Element ? e.target.closest('[data-device-signout]') : null;
     // 宿主收窄到 `HTMLButtonElement`（本批修残：原为 HTMLElement ⇒ `btn.disabled`
     // 在 checkJs 下报 TS2339 ×3，`js-types` 闸因「新文件带 3 错」恒红）。行内退出键
-    // 由 deviceListHTML() 出结构，恒为 `<button type="button">` ⇒ 收窄不丢任何真实目标。
+    // 由 buildDeviceList() 出结构，恒为 `<button type="button">` ⇒ 收窄不丢任何真实目标。
     if (!(btn instanceof HTMLButtonElement)) return;
     e.stopPropagation();
     const id = btn.dataset.deviceSignout || '';

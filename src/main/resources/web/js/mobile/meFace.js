@@ -32,7 +32,7 @@ import { brand, getProfileUrl } from '../brand.js';
 import { createIconsIn } from '../utils.js';
 import { showLoginModal } from '../activityBar.js';
 import { getIdentityReadout } from '../settingsIdentity.js';
-import { deviceListHTML, paintDeviceList, bindDeviceList, ensureDeviceListLive, getDeviceList } from '../profileDevices.js';
+import { buildDeviceList, paintDeviceList, bindDeviceList, ensureDeviceListLive, deviceIdKey } from '../profileDevices.js';
 import { t } from '../i18n.js';
 
 /** 同步文案（建面时语言已定；单页四组标签共用）。 */
@@ -138,14 +138,19 @@ function buildMeHome(body) {
   el(body, 'mf-me-hint').textContent =
     t('profile.editOnWebsite', { where: websiteText() });
 
-  // ④ 设备清单（与桌面资料面同一份标记 + 同一份动作实现）。
+  // ④ 设备清单（与桌面资料面同一份标记 + 同一份动作实现；标记由
+  //    profileDevices.buildDeviceList() 单点产出，本面只做挂载 —— 零第二套 HTML 串）。
   el(body, 'mf-hub-label mf-me-grouplabel').textContent = t('profile.deviceSection');
   const devHost = el(body, 'mf-hub-rows mf-me-fields');
-  devHost.innerHTML = deviceListHTML();
+  devHost.replaceChildren(buildDeviceList());
   bindDeviceList(devHost, () => { for (const cb of [...paintCbs]) { try { cb(); } catch { /* 一个面不得阻断其它面 */ } } });
   ensureDeviceListLive(devHost);
+  paintDeviceList(devHost);
 
-  // ⑤ 账号卡（本机登出 = 既有唯一链，零新增）。
+  // ⑤ 账号卡（`neblink.js accountCardHTML` 单点）。基线 f5d437347（2026-11-18 09:23
+  //    「remove settings logout」）后账号卡已退化为**只读登录态读数**（零会话动作），
+  //    本批据此把「本机登出」的入口收敛到设备清单本机行（`openEndSessionHandoff`），
+  //    卡体本身零新增、零改动。
   const account = el(body, 'mf-account-card');
   let releaseAccount = () => {};
   const paintAccount = () => {
@@ -172,11 +177,9 @@ function buildMeHome(body) {
   paintCbs.add(paintIdentity);
   paintCbs.add(() => {
     // 设备集合变了才重建行（重建会吃掉正在进行的退出动作的禁用态）。
-    const list = getDeviceList();
-    const wanted = [list.current ? list.current.id : '', ...list.peers.map((p) => p.id)]
-      .filter(Boolean).join('|');
+    const wanted = deviceIdKey();
     if (devHost.dataset.pdIds !== wanted) {
-      devHost.innerHTML = deviceListHTML();
+      devHost.replaceChildren(buildDeviceList());
       devHost.dataset.pdIds = wanted;
       bindDeviceList(devHost, () => { for (const cb of [...paintCbs]) { try { cb(); } catch { /* 同上 */ } } });
     }
