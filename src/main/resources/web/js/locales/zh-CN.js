@@ -787,6 +787,8 @@ export default {
   'todoComplete.title': '待办',
   'todoComplete.noMatch': '无匹配待办',
   'todoComplete.detailUnavailable': '这条待办不在当前列表里',
+  // 卡片点击腿（todo-card-click-left 批，2026-11-18）：输入框被拆除时不许静默。
+  'todoComplete.composerMissing': '找不到可输入的对话框，引用没插入',
   'slash.title': '斜杠命令',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',
@@ -3401,6 +3403,8 @@ export default {
   'schedCard.keep': '保留',
   'schedCard.noChange': '没有改动',
   'schedCard.readFailed': '引擎状态未读回',
+  // 卡片点击腿（todo-card-click-left 批，2026-11-18）：整卡可点 ⇒ 补 `#` 待办引用。
+  'schedCard.refHint': '点卡片补 # 待办引用',
   'schedCard.errOffline': '未连接引擎，改动未提交',
   'schedCard.errTimeout': '引擎未回执，改动未确认',
   'schedCard.errGone': '条目已不存在，改动未保存',

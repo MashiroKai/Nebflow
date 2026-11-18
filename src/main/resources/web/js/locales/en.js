@@ -832,6 +832,8 @@ export default {
   'todoComplete.title': 'Todos',
   'todoComplete.noMatch': 'No matching todos',
   'todoComplete.detailUnavailable': 'This todo is not in the current list',
+  // Card-click leg (todo-card-click-left, 2026-11-18): never fail silently.
+  'todoComplete.composerMissing': 'No input box to insert the reference into',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',
@@ -3491,6 +3493,8 @@ export default {
   'schedCard.keep': 'Keep',
   'schedCard.noChange': 'Nothing changed',
   'schedCard.readFailed': 'Engine state not read back',
+  // Card-click leg (todo-card-click-left, 2026-11-18): the whole card appends a `#` reference.
+  'schedCard.refHint': 'Click the card to reference this todo as #',
   'schedCard.errOffline': 'Not connected to the engine — change not submitted',
   'schedCard.errTimeout': 'No engine receipt — change unconfirmed',
   'schedCard.errGone': 'Entry no longer exists — change not saved',
