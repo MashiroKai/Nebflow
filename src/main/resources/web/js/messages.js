@@ -2095,7 +2095,7 @@ function attSig(m) {
   // 📌 selfattach 批：**字节源**同样进签名（`deviceOutPath` 值 / 句柄在场与否）——
   //    路径或句柄到达/退场即须重填卡片（否则「台账帧补上路径」永远画不出来）。
   return a.map(x => (x && x.state === 'device')
-    ? `dev:${(x.deviceStatus || '')}:${(x.deviceSavedPath || '')}:${(x.deviceOutPath || '')}:${x.deviceOutHandle ? 'h' : '-'}:${(typeof x.devicePct === 'number' ? x.devicePct : '')}`
+    ? `dev:${(x.deviceStatus || '')}:${(x.deviceSavedPath || '')}:${(x.deviceOutPath || '')}:${(x.deviceImageCopyPath || '')}:${x.deviceOutHandle ? 'h' : '-'}:${(typeof x.devicePct === 'number' ? x.devicePct : '')}`
     : `${(x && x.id) || ''}:${(x && x.state) || ''}`).join(',');
 }
 
@@ -6456,6 +6456,7 @@ function deviceFileAsAttachment(m, ours) {
     deviceOutHandle: ours ? outFileHandleOf(m.transferId) : null,
     // selfattach 片 1（B′ 腿）：**发送端本机真实路径**（后台台账字段，跨刷新存活，agent 腿专有）。
     deviceOutPath: m.deviceOutPath || '',
+    deviceImageCopyPath: m.imageCopyPath || '',
     // 传输 id：本机句柄表与预览 tab id 的稳定键（收/发两向都有，值来自台账/wire）。
     deviceTransferId: m.transferId || '',
     deviceOut: ours,
@@ -6481,6 +6482,8 @@ function deviceFileAsAttachment(m, ours) {
 function deviceByteSourceOf(att) {
   const status = (att && att.deviceStatus) ? String(att.deviceStatus) : '';
   if (status !== 'completed') return { kind: 'none' };
+  const imageCopy = (att && att.deviceImageCopyPath) ? String(att.deviceImageCopyPath) : '';
+  if (imageCopy) return { kind: 'path', path: imageCopy };
   const file = (att && att.deviceOutHandle) ? att.deviceOutHandle : null;
   if (file) return { kind: 'blob', file };
   const saved = (att && att.deviceSavedPath) ? String(att.deviceSavedPath) : '';

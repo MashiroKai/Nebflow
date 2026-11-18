@@ -54,11 +54,12 @@ case class DropboxMessage(
    *  不含本键；它只随**本机**台账（`messages.json`）与**本机**前端帧
    *  （`dropbox-message` / `dropbox-get-history`）流动。
    *
-   *  🔴 零字节复制 / 零留存：只记字符串本身，不产生任何副本、暂存件或缓存件。
+   * This field records an existing path; browser image copies use imageCopyPath.
    *
    *  默认值 ⇒ 旧 JSON（无该键）照旧解码 = 无值。
    */
   deviceOutPath: String = "",
+  imageCopyPath: String = "",
   // ===== 单条消息多附件（附件腿批，2026-09-12）=====
   // 一条消息最多 9 件（AttachContract.MaxAttachmentsPerMessage）；N 件共用同一 batchId，
   // 各自一个 attachmentIndex。默认值保证旧 JSON 兼容（旧消息 = 单件）。
@@ -145,6 +146,7 @@ object DropboxMessage:
     "status",
     "savedPath",
     "deviceOutPath",
+    "imageCopyPath",
     "batchId",
     "attachmentIndex",
     "attachmentCount",
@@ -178,6 +180,7 @@ object DropboxMessage:
       status <- c.get[Option[String]]("status").map(_.getOrElse(""))
       savedPath <- c.get[Option[String]]("savedPath").map(_.getOrElse(""))
       deviceOutPath <- c.get[Option[String]]("deviceOutPath").map(_.getOrElse(""))
+      imageCopyPath <- c.get[Option[String]]("imageCopyPath").map(_.getOrElse(""))
       batchId <- c.get[Option[String]]("batchId").map(_.getOrElse(""))
       attachmentIndex <- c.get[Option[Int]]("attachmentIndex").map(_.getOrElse(0))
       attachmentCount <- c.get[Option[Int]]("attachmentCount").map(_.getOrElse(1))
@@ -197,6 +200,7 @@ object DropboxMessage:
       status = status,
       savedPath = savedPath,
       deviceOutPath = deviceOutPath,
+      imageCopyPath = imageCopyPath,
       batchId = batchId,
       attachmentIndex = attachmentIndex,
       attachmentCount = attachmentCount,

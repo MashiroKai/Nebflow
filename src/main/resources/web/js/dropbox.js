@@ -634,7 +634,7 @@ function showDropboxNotice(deviceId, text) {
 function msgSignature(m) {
   return [
     m.kind, m.direction, m.ts, m.text, m.status, m.fileName, m.fileSize,
-    m.savedPath, m.bytesReceived, m.totalBytes, m.downloadedBytes,
+    m.savedPath, m.imageCopyPath, m.bytesReceived, m.totalBytes, m.downloadedBytes,
   ].map(v => (v === undefined || v === null ? '' : String(v))).join('\u0001');
 }
 
@@ -970,7 +970,7 @@ export function initDropbox() {
   // File transfer completed/failed (both sides)
   onMessage('dropbox-file-complete', (msg) => {
     const inner = msg.msg || {};
-    const { transferId, success, savedPath } = inner;
+    const { transferId, success, savedPath, imageCopyPath } = inner;
     // 🔴 只删「待上传队列」那半（上传交接已完成）——发送侧**句柄表**（`outFileHandles`）
     //    不在此删除：完成态的卡正是要用它取字节（selfattach 批 · 片 2）。
     delete pendingUploads[transferId];
@@ -991,6 +991,7 @@ export function initDropbox() {
     if (m) {
       m.status = success ? 'completed' : 'failed';
       if (savedPath) m.savedPath = savedPath;
+      if (imageCopyPath) m.imageCopyPath = imageCopyPath;
       afterDeviceMessageChange(msg.deviceId);
     }
   });

@@ -127,9 +127,11 @@ final class DropboxService private (
     // 与 DeviceDelegate arming 行的 ns= 指纹及分发面 svc= 指纹三方对照。
     loadMessages *> loadTransfers *> sweepOrphanTemps *>
       neblinkService.addDataHandler(handleDataMessage) *>
-      IO.blocking(logger.infoSync(
-        s"P6 probe: dropbox data handler registered ns=${System.identityHashCode(neblinkService)}"
-      ))
+      IO.blocking(
+        logger.infoSync(
+          s"P6 probe: dropbox data handler registered ns=${System.identityHashCode(neblinkService)}"
+        )
+      )
 
   /**
    * 启动清孤儿：temp 目录里有、但没有任何**活跃**会话引用的文件 ⇒ 删除。
@@ -1032,6 +1034,9 @@ final class DropboxService private (
               yield Left(err)
             case Right(senderWhole) =>
               for
+                _ <- persistBrowserImage(t, tempPath, senderWhole).onError { case _ =>
+                  IO.blocking(if os.exists(tempPath) then os.remove(tempPath) else ())
+                }
                 rateHint <- peerRateHint(t.peerDeviceId)
                 _ <- updateTransferStatus(transferId, "transferring") *>
                   updateMessageStatus(t.peerDeviceId, t.msgId, "transferring")
@@ -1085,7 +1090,51 @@ final class DropboxService private (
         end for
     }
 
-  /** 允许进入上传/续传的状态（P0-2 同号重试的三个合法入口态）。 */
+  /** Publish browser image bytes before the transport deletes its staging file. */
+  private def persistBrowserImage(t: FileTransfer, tempPath: os.Path, digest: String): IO[Unit] =
+    messagesRef.get.flatMap { messages =>
+      val browserImage = t.mimeType.toLowerCase(java.util.Locale.ROOT).startsWith("image/") &&
+        messages.getOrElse(t.peerDeviceId, Nil).exists(m => m.msgId == t.msgId && m.deviceOutPath.isEmpty)
+      if !browserImage then IO.unit
+      else
+        IO.blocking {
+          require(digest.matches("[0-9a-f]{64}"), "invalid image digest")
+          val dir = (PathUtil.dataRoot / "dropbox" / "image-copies").toNIO
+          java.nio.file.Files.createDirectories(dir)
+          if java.nio.file.Files.getFileStore(dir).supportsFileAttributeView("posix") then
+            java.nio.file.Files
+              .setPosixFilePermissions(dir, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"))
+          val target = dir.resolve(digest)
+          val staged = java.nio.file.Files.createTempFile(dir, ".image-", ".part")
+          try
+            java.nio.file.Files.copy(tempPath.toNIO, staged, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            if java.nio.file.Files.getFileStore(dir).supportsFileAttributeView("posix") then
+              java.nio.file.Files
+                .setPosixFilePermissions(staged, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+            java.nio.file.Files.move(
+              staged,
+              target,
+              java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+              java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+          finally java.nio.file.Files.deleteIfExists(staged)
+          target.toString
+        }.flatMap { path =>
+          messagesRef.update { messages =>
+            messages.updated(
+              t.peerDeviceId,
+              messages.getOrElse(t.peerDeviceId, Nil).map { message =>
+                if message.msgId == t.msgId then message.copy(imageCopyPath = path) else message
+              }
+            )
+          } *> messagesRef.get.flatMap { messages =>
+            IO.blocking(os.write.over(messagesPath, messages.asJson.spaces2, createFolders = true))
+          }
+        }
+      end if
+    }
+
+  /** 允许进入上传/续传的状态（P0-2 同号续传的三个合法入口态）。 */
   private val retryableOutStates: Set[String] = Set("accepted", "failed", "transferring")
 
   /** 记录块级进展：推进 `bytesReceived` + `lastProgressAt`（看门狗按它计时），并通知前端。 */
@@ -1167,10 +1216,18 @@ final class DropboxService private (
           // 带重试的确认仍失败 ⇒ 显式 failed，不再靠 31 min 看门狗迟可见。
           logger.warn(s"file-complete could not be delivered to ${t.peerDeviceId} — marking failed explicitly") *>
             markTransferFailed(transferId, t.peerDeviceId, t.msgId, "file-complete could not be delivered to peer")
+      imageCopyPath <- messagesRef.get.map(
+        _.getOrElse(t.peerDeviceId, Nil).find(_.msgId == t.msgId).map(_.imageCopyPath).getOrElse("")
+      )
       _ <- notifyFrontend(
         "dropbox-file-complete",
         t.peerDeviceId,
-        Json.obj("transferId" -> transferId.asJson, "msgId" -> t.msgId.asJson, "success" -> true.asJson)
+        Json.obj(
+          "transferId" -> transferId.asJson,
+          "msgId" -> t.msgId.asJson,
+          "success" -> true.asJson,
+          "imageCopyPath" -> imageCopyPath.asJson
+        )
       )
       _ <- persistTransfers
     yield Right(())

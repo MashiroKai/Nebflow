@@ -253,7 +253,36 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
         // （本批实测读数 `[READING SELFATTACH-B2] … keys=18`）。「新键在编码面必
         // 在场」意图不变，计数钉随行键面演化更 18。主断言（B′ 恒空串）不受影响
         // （本批合跑读数 `browserLegDeviceOutPath=''` ✓）。
-        assertEquals(row.productElementNames.size, 18, "台账行键数 = 18（新键在编码面必在场）")
+        assertEquals(row.productElementNames.size, 19, "ledger includes the durable image path field")
+    }
+
+  test("browser image remains available from the sender ledger after transfer"):
+    withSender { (ms, svc, peerFrames, _, root) =>
+      for
+        bytes <- IO.pure(Array.tabulate[Byte](1000)(i => (i % 251).toByte))
+        recvDir <- IO.blocking(os.temp.dir(prefix = "nb-image-receiver-"))
+        holder <- Ref.of[IO, Option[ChunkReceiver]](None)
+        _ <- svc.offerFiles("dev-2", List(DropboxService.FileSpec("browser.png", bytes.length.toLong, "image/png")))
+        tid <- awaitFrameId(peerFrames, "file-offer", 10.seconds)
+        _ <- holder.set(
+          Some(new ChunkReceiver(tid, bytes.length.toLong, AttachContract.ChunkSize, recvDir / "recv.bin"))
+        )
+        _ <- ms.handleDataMessage(
+          Json.obj("kind" -> "file-response".asJson, "transferId" -> tid.asJson, "accepted" -> true.asJson)
+        )
+        sent <- svc.uploadAndRelay(tid, fs2.Stream.emits(bytes).covary[IO], Some(new DeferredLoopback(holder)))
+        _ = assert(sent.isRight, s"transfer failed: $sent")
+        raw <- IO.blocking(os.read(root / "dropbox" / "messages.json"))
+        ledger = io.circe.parser.parse(raw).toOption.get
+        row = ledger.hcursor.downField("dev-2").downArray
+        path = row.downField("imageCopyPath").as[String].getOrElse("")
+        _ = assert(path.nonEmpty, "sender history must contain the durable image path")
+        copied <- IO.blocking(os.read.bytes(os.Path(path)))
+        _ = assert(copied.sameElements(bytes), "durable image bytes must match the upload")
+        digest = ChunkedTransfer.sha256Hex(copied)
+        _ <- IO(println(s"[IMAGE-COPY] path=$path sha256=$digest"))
+        _ <- IO.blocking(os.remove.all(recvDir))
+      yield ()
     }
 
 end SenderOutPathLedgerSpec

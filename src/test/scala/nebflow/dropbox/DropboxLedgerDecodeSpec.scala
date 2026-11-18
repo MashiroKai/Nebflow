@@ -147,7 +147,7 @@ class DropboxLedgerDecodeSpec extends FunSuite:
 
   test("④ 编码器未动：解出后再编码 ⇒ 18 键齐备（persistMessages 形态不变；xferb 批 +errorCode/+errorDetail）") {
     val out = one(OnlyRequired).asJson.asObject.getOrElse(fail("encoded message is not an object"))
-    assertEquals(out.keys.toList.sorted.size, 18)
+    assertEquals(out.keys.toList.sorted.size, 19)
     assertEquals(out("msgId"), Some(io.circe.Json.fromString("r-1")))
     assertEquals(out("origin"), Some(io.circe.Json.fromString("user")))
     // selfattach 批：新键在编码面**必在场**（值可为空串）——本机前端帧据此读路径。
@@ -162,6 +162,6 @@ class DropboxLedgerDecodeSpec extends FunSuite:
     assertEquals(declared, fields, "字段集与键集漂移 ⇒ 必须同批更新缺席语义（本 spec 即守卫）")
     assertEquals(DropboxMessage.RequiredKeys.toSet.intersect(DropboxMessage.OptionalKeys.toSet), Set.empty[String])
     assertEquals(DropboxMessage.RequiredKeys.size, 4)
-    assertEquals(DropboxMessage.OptionalKeys.size, 14)
+    assertEquals(DropboxMessage.OptionalKeys.size, 15)
   }
 end DropboxLedgerDecodeSpec
