@@ -45,6 +45,7 @@ export const CHECKS = [
   nodeCheck('freeze-replay', 'check-freeze-replay-silence'),
   nodeCheck('canvas-hint', 'check-canvas-hint-tokens'),
   nodeCheck('canvas-buttons', 'check-canvas-buttons'),
+  nodeCheck('canvas-families', 'check-canvas-families', ['static']),
   nodeCheck('toggle', 'check-toggle-unify'),
   nodeCheck('scroll-pill', 'check-scroll-pill-center'),
   nodeCheck('input-surface', 'check-input-surface'),

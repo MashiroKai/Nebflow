@@ -14,6 +14,8 @@
     "check:frontend": "node scripts/check-provider-buttons.mjs && node scripts/run-checks.mjs --profile frontend && npm run check:panel-uniform",
     "check:panel-uniform": "node scripts/check-panel-uniform.mjs",
     "check:canvas-buttons": "node scripts/check-canvas-buttons.mjs",
+    "check:canvas-families": "node scripts/check-canvas-families.mjs",
+    "check:canvas-button-geom": "node tests/canvas-button-unify-geom.spec.mjs",
     "check:mobile-band-ruler": "node tests/mobile-band-ruler.spec.mjs",
     "check:mobile-touch-target": "node tests/mobile-touch-target.spec.mjs",
     "check:askinput-off-pending-text": "node tests/askinput-off-pending-text.spec.mjs",
