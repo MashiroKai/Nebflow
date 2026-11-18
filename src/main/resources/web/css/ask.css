@@ -631,6 +631,17 @@ body.mobile-layer .note-dock .ds-resize-handle {
 }
 .ask-col::-webkit-scrollbar { display: none; }
 
+/* ── Card 卡行（card-tool-revive 批 2026-11-18 作者裁定②）──────────────────
+ * ask 会话里 Card 工具返回的 HTML 卡在对话列里显形的行几何。
+ * 为什么需要这一段：`.ask-col` 是 `align-items: flex-end` 的 flex 列——子元素默认
+ * 按内容宽右贴（气泡族靠各自 max-width 控宽），而卡必须**占满列宽**（卡内容宽常
+ * 大于气泡帽，与主会话卡行 `.row.card-content > div { width: 100% }` 同语义）。
+ * 材质/圆角/描边**零本地声明**：卡本体由渲染单源 cardRegistry 产出
+ * （`.html-card-wrap` / `.html-card-iframe`，chat.css 段落），本组件只给行宽。
+ * 防复活钉：tests/ask-dock-card-leg.spec.mjs C3（iframe 盒宽 = 列内容盒宽）。 */
+.ask-card-row { width: 100%; }
+.ask-card-host { width: 100%; }
+
 /* ═══ 会话地址行（ask-mail 批 2026-11-16）═══════════════════════════════════
  * ask 会话的 Mail 可达地址（`ask:<sessionId>`）常驻面板头部右贴：编排方经
  * Mail 向该地址续聊（双向通道的门牌）。形态 = chat.css `.ask-mail-addr` /

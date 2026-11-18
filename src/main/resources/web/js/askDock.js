@@ -2011,6 +2011,34 @@ function consumeFrame(msg) {
       // + 重载文件页签）。会话内不再留痕——审阅事实由 askState.review 回放。
       consumeResolved(msg);
       return;
+    case 'toolEnd': {
+      // card-tool-revive 批（2026-11-18 作者裁定②）：Card 工具在 ask 会话里的
+      // `toolEnd` 帧此前落 default 静默消费（内核 frameKind 不认它）—— 卡「能调用、
+      // 能返回真载荷」却不显形。本分支只消费**卡载荷帧**（`___<AGENT>_HTML___` 哨兵，
+      // 与主会话 chat.js 同一认脸口径）；其余工具帧原样透明（内核 consume 对该 kind
+      // 返回 false = 零副作用）。toolStart 无载荷（实测 content 为空串），故无对应渲染
+      // 分支：卡的显形点就是载荷到达这一拍。
+      // 渲染腿零重写：行 DOM 见共用件 askDialog.js 的 render() 卡行分支（抽取批后
+      // render 已整段搬进内核），渲染单源 = cardRegistry.renderWithRegistry。
+      if (msg.isError) return;
+      const cardContent = typeof msg.content === 'string' ? msg.content : '';
+      if (!/^___\w+_HTML___/.test(cardContent.trim())) return;
+      if (!(entry === activeSession() && isOpen())) entry.unread = true;
+      const cardMsg = { role: 'card', text: cardContent, label: msg.label || '' };
+      // 落列位置 = 当前流式 ai 泡**之前**：卡是这一拍的中间产物，末位必须仍是 ai
+      // 泡，流式增量腿（内核 updateStreaming 认末元素为 ai 泡）判据不受影响。
+      const tail = entry.msgs[entry.msgs.length - 1];
+      if (tail && tail.role === 'ai') entry.msgs.splice(entry.msgs.length - 1, 0, cardMsg);
+      else entry.msgs.push(cardMsg);
+      // 卡载荷**不落** localStorage：本地转录持久面只收 user/ai 两族（SESS_MAX_MSGS
+      // 容量闸与「行小」律，见 persistSession），卡是重开局面的过程件——重载后由
+      // 新一轮工具调用再现，不占持久容量。
+      if (entry === activeSession()) {
+        if (isOpen()) { dlg.render(); dlg.settleCol(0); } // 卡 = 过程件，不进未读「真实新消息」计数
+        syncUnreadDot();
+      }
+      return;
+    }
     default:
       // 问答内核帧（含 thinking / tool* / usageUpdate / compact* 等过程帧——
       // frameKind 返回 null，内核静默不消费；透明纪律 §6）。

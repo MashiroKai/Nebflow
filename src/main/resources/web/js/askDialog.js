@@ -39,6 +39,14 @@ import { createTurnToggle, requestTurnInterrupt } from './input/composer.js';
 import { createSecondaryComposer } from './input/secondaryComposer.js';
 import { handleSlash } from './input/slashCommands.js';
 import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js';
+// card-tool-revive 批（2026-11-18 作者裁定②）：ask 会话里 Card 工具返回的 HTML 卡
+// 由对话列显形——渲染**复用唯一单源** cardRegistry.renderWithRegistry（哨兵解析 +
+// 沙箱 iframe + 主题注入那一套语义原样借用），零第二套渲染、零裸 HTML 内联、零自造
+// 材质。cleanupCardIframes = 同单源的释放契约（整列清空前必须 disconnect 观察者，
+// 否则卡 iframe 的独立 browsing context 会泄漏）。
+// 移植说明：作者线该腿写在 askDock.js 的 render()；抽取批后 render 整段在此，故
+// 卡行分支随之落在这里（两档共用同一 render；role='card' 的消息只在 canvas 档出现）。
+import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -226,11 +234,27 @@ export function createAskDialog(cfg) {
     // ── 转录渲染 ──────────────────────────────────────────────────────────
     render() {
       const s = cfg.activeSession();
+      // 卡 iframe 释放（渲染单源的硬契约）：整列清空/重建前必须让每张卡的
+      // IntersectionObserver 松开并丢掉 srcdoc，否则独立 browsing context（每张
+      // 2–10MB）会被观察者钉住永不回收（cardRegistry.cleanupCardIframes 头注）。
+      cleanupCardIframes(col);
       col.textContent = '';
       if (!s) return;
       // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不呈现。
       const vis = s.msgs.filter((m) => m.role !== 'sys');
       vis.forEach((m) => {
+        // card-tool-revive 批（2026-11-18 作者裁定②）——卡载荷行：ask 面**唯一**的
+        // iframe 落点。渲染腿 = cardRegistry.renderWithRegistry（哨兵解析 + 沙箱
+        // `allow-scripts allow-same-origin` iframe + 主题注入，与主会话卡行同一单源），
+        // 本函数只给宿主节点与行几何；卡行不参与气泡族（不进 askBubbleClass）。
+        if (m.role === 'card') {
+          const row = h('div', { class: 'ask-card-row' });
+          const host = h('div', { class: 'ask-card-host' });
+          row.appendChild(host);
+          col.appendChild(row);
+          renderWithRegistry(host, m.text, m.label || 'Card');
+          return;
+        }
         // glass-unify 批 2026-11-05：气泡挂唯一毛玻璃工具类 `.nf-glass`。
         const b = h('div', { class: askBubbleClass(m.role) });
         if (m.role === 'user') b.textContent = m.text;
