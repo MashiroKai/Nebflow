@@ -200,6 +200,16 @@ export function auditHandoff({ askTools, assembler }) {
     if (!/ToolRegistry\.TOOL_MAP/.test(code)) {
       problems.push(`${F.assembler}: the derived tool list must come from the registry (ToolRegistry.TOOL_MAP)`);
     }
+    // 「清单不许手写第二份」：提示词里任何**逐条工具名清单**都是第二个真源。判据是
+    // 形状（`- <名字>: <说明>`，就是 toolListSection 生成的那种行），不是名字表——
+    // 闸里写名字表本身就成了第三份清单。
+    const handWritten = code
+      .split('\n')
+      .map((line, i) => [i + 1, line])
+      .filter(([, line]) => /^\s*-\s+[A-Za-z][A-Za-z0-9_]*(?:\s*[/,]\s*[A-Za-z][A-Za-z0-9_]*)*\s*:/.test(line));
+    if (handWritten.length) {
+      problems.push(`${F.assembler}: the prompt still hand-writes a tool inventory (line ${handWritten[0][0]}) — the list must be produced by toolListSection()`);
+    }
     if (!/本会话只能编辑它对应的那份文档/.test(code)) {
       problems.push(`${F.assembler}: the prompt must state constraint 1 (this session edits only its bound document)`);
     }

@@ -156,6 +156,17 @@ test('the prompt must derive its tool list and state both hard constraints', () 
     .some((p) => p.includes('constraint 2')));
 });
 
+test('a hand-written tool inventory in the prompt is refused as a second source of truth', () => {
+  const handWritten = goodAssembler.replace(
+    '  def toolListSection(): String = ToolRegistry.TOOL_MAP.values.map(t => s"- ${t.name}").mkString\n',
+    '  val toolList = """\n- Read / Glob / Grep: read and search the current file\n- Bash: a query-only shell face\n- ask_edit / ask_write: edit THIS file only\n"""\n',
+  );
+  const problems = auditHandoff({ askTools: goodAskTools, assembler: handWritten });
+  assert.ok(problems.some((p) => p.includes('hand-writes a tool inventory')), problems.join('; '));
+  // 生成面的那行 `s"- $n: $capped"` 不是手抄清单（名字位是插值），不得误判。
+  assert.deepEqual(auditHandoff({ askTools: goodAskTools, assembler: goodAssembler }), []);
+});
+
 test('comment stripping keeps prose from tripping the criteria', () => {
   const prose = [
     'object AskPathBoundary {',
