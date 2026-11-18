@@ -9,8 +9,9 @@
 // 所以本闸全部打在**真手指路径 + 会话真收**上：
 //
 //   R1  现状定位：展开态引用钮在挂、可见、**渲染命中盒** ≥44×44（手机触控下限）
-//   R2  明确含义：钮内可见文字含「引用」+ 钮内字形是单源引用入口 svg
-//       （`data-icon="quote-entry"`）；箭头装饰符 `↗` 整条退役（textContent 不含）
+//   R2  明确含义（图标钮）：钮内可见面 = 单源引用入口 svg（`data-icon="quote-entry"`）、
+//       **零文本子节点 / 零可见文字**（作者令 2026-11-18 22:10「只有一个图标…不需要文字」），
+//       名字靠 `aria-label`；箭头装饰符 `↗` 整条退役（textContent 不含）
 //   R3  指针可达：钮盒内 5 点 elementFromPoint 顶层 ∈ {钮自身, 钮的后代}
 //   R4  真手指点得到：**touchscreen tap** 钮 → composer 附件条出引用 chip
 //   R5  真引用身份：该 chip 的 refType / refId / 标签名 / 源路径 = 被点那一签的身份
@@ -20,6 +21,8 @@
 //   R9  展开态既有内容与几何回归：展开 ≥ 常态宽、钮 ⊆ 签、展开签不与两侧悬浮钮交叠
 //       （canvas-overlap-guard 2026-11-17 既有合同）
 //   R10 桌面不回归：桌面腿零手机控件 + 既有右键「引用当前页」通路照旧出 chip
+//   R11 无障碍名字按 locale（en 档 = "Quote this Canvas"）：图标钮无可见文字，
+//       名字全在 aria-label 上，而 aria-label 是 locale 派生的 ⇒ 不能只验 zh 档
 //
 // ── 唯一引用通路（零第三套引用体系）────────────────────────────────────────
 // 本钮 → `quoteActiveCardRef()` →（canvas.js）`refForTab` → `appendRefToActiveView`
@@ -93,12 +96,12 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
 
 // 注入红自检：把本批修的两条病根**原样**注回修后树（同特异性、文档末位 ⇒ 生效）。
-//  ① 命中层修复回退（position static + z-index auto）⇒ 真手指点不到 ⇒ R4 必红；
-//  ② 可见文字回退（label 隐藏）⇒ 「明确含义」丧失 ⇒ R2 必红。
-// 门禁若注了这两条还全绿 = 假绿（断言没打在真手指/真文字上）。
+//  ① 命中层修复回退（position static + z-index auto）⇒ 真手指点不到 ⇒ R3/R4 必红；
+//  ② 钮内图标摘掉（`↗` 换成图标是本批的②；摘掉图标 = 回到零含义）⇒ R2 必红。
+// 门禁若注了这两条还全绿 = 假绿（断言没打在真手指/真图标上）。
 const INJECT_BREAK = `
 body.mobile-layer .mf-strip-quote { position: static; z-index: auto; }
-body.mobile-layer .mf-strip-quote-label { display: none; }
+body.mobile-layer .mf-strip-quote svg { display: none; }
 `;
 
 const rows = [];
@@ -116,19 +119,22 @@ const { chromium } = pw;
 const browser = await chromium.launch();
 const jserr = [];
 
-/** 起一档视口（手机 hasTouch 才能走真 touchscreen tap）。 */
-async function boot({ width, height, mobile }) {
+/** 起一档视口（手机 hasTouch 才能走真 touchscreen tap）。locale 可按档指定：
+ *  钮是**图标钮**（无可见文字），名字源是 locale 派生的 `aria-label`（zh「引用此看板」/
+ *  en「Quote this Canvas」）⇒ 无障碍名字必须在两档 locale 下各验一次（R2 = zh 档，
+ *  R11 = en 档）。 */
+async function boot({ width, height, mobile, locale = 'zh-CN' }) {
   const ctx = await browser.newContext({
-    viewport: { width, height }, colorScheme: 'dark', locale: 'zh-CN', hasTouch: !!mobile,
+    viewport: { width, height }, colorScheme: 'dark', locale, hasTouch: !!mobile,
   });
-  await ctx.addInitScript(() => {
+  await ctx.addInitScript((loc) => {
     for (const k of ['nebflow', 'neblink']) {
       localStorage.setItem(k + '_token', 't');
-      localStorage.setItem(k + '_locale', 'zh-CN');
+      localStorage.setItem(k + '_locale', loc);
       localStorage.setItem(k + '_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
     }
     localStorage.setItem('stand_sw', '0');
-  });
+  }, locale);
   await ctx.route('**/api/**', (r) => r.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
   const sent = [];
   await ctx.routeWebSocket(/\/ws/, (ws) => {
@@ -175,7 +181,21 @@ const QUOTE_PROBE = `(() => {
   const r = q.getBoundingClientRect();
   const cs = getComputedStyle(q);
   const rsc = parseFloat(chip.style.getPropertyValue('--rsc')) || 1;
-  const label = q.querySelector('.mf-strip-quote-label');
+  const label = q.querySelector('.mf-strip-quote-label');   // 已退役：恒 null（负向对账）
+  /** 钮子元素里的**文本节点**集合（图标钮必须为空：无文本子节点、零可见文字）。 */
+  const textNodes = (() => {
+    const out = [];
+    const walk = (n) => {
+      for (const c of n.childNodes) {
+        if (c.nodeType === 3) { if ((c.nodeValue || '').trim()) out.push(c.nodeValue); }
+        else if (c.nodeType === 1) walk(c);
+      }
+    };
+    walk(q);
+    return out;
+  })();
+  /** 可访问名字（aria-label 优先；无则退到 role=button 的 textContent）——唯一名字源。 */
+  const accName = (q.getAttribute('aria-label') || '').trim();
   // 指针可达：钮盒内 5 点（中心 + 四分之一内点）顶层命中
   const pts = [0.5, 0.25, 0.75].flatMap(fx => [0.35, 0.65].map(fy => ({ fx, fy })));
   const hits = pts.map(({ fx, fy }) => {
@@ -191,16 +211,14 @@ const QUOTE_PROBE = `(() => {
     unscaled: { w: R(r.width / rsc), h: R(r.height / rsc) },
     display: cs.display, visibility: cs.visibility, opacity: cs.opacity,
     pointerEvents: cs.pointerEvents, position: cs.position, zIndex: cs.zIndex,
-    text: q.textContent,                          // 可见文字（含箭头则红）
-    labelText: label ? label.textContent : null,
-    labelRendered: (() => {                       // 「有字」必须是**画出来的**字
-      if (!label) return null;
-      const cs = getComputedStyle(label);
-      const b = label.getBoundingClientRect();
-      return { display: cs.display, visibility: cs.visibility, opacity: cs.opacity, w: R(b.width), h: R(b.height) };
-    })(),
-    aria: q.getAttribute('aria-label'), role: q.getAttribute('role'),
+    text: q.textContent,                          // 可见文字（有字即红：本钮是图标钮）
+    textNodes,                                    // 文本节点集合（必须空）
+    accName,                                      // 可访问名字（aria-label）
+    legacyLabelEl: !!label,                       // 退役的可见文字元素是否复辟（恒 false）
+    aria: q.getAttribute('aria-label'), role: q.getAttribute('role'), tabindex: q.getAttribute('tabindex'),
+    title: q.getAttribute('title'),
     svgIcon: svg ? svg.getAttribute('data-icon') : null,
+    svgBox: (() => { if (!svg) return null; const b = svg.getBoundingClientRect(); return { w: R(b.width), h: R(b.height) }; })(),
     hits, hitAllQuote: hits.every(h => h === 'quote'),
     chipBox: (() => { const c = chip.getBoundingClientRect(); return { w: R(c.width), h: R(c.height), l: R(c.left), r: R(c.right) }; })(),
     chipLabel: (chip.querySelector('.mf-strip-label') || {}).textContent || '',
@@ -253,14 +271,18 @@ async function mobileLeg(tag, selftest) {
     `chips=${tabCount} expanded=${q.expanded} found=${!!q.found} cls=${q.cls} box=${JSON.stringify(q.box)}`
     + ` unscaled=${JSON.stringify(q.unscaled)} display=${q.display} pos=${q.position} z=${q.zIndex}`);
 
-  // ── R2 明确含义：可见文字「引用」+ 单源引用入口 svg；`↗` 装饰符退役 ──────
-  const lr = q.labelRendered;
-  record('R2', '钮 = 有字控件（渲染出「引用」+ 单源引用入口 svg），箭头装饰符 ↗ 已退役',
-    !!q.labelText && /引用/.test(q.labelText) && q.svgIcon === 'quote-entry'
-      && !!lr && lr.display !== 'none' && lr.visibility === 'visible' && +lr.opacity > 0
-      && lr.w > 0 && lr.h > 0 && !/↗/.test(String(q.text || '')),
-    `labelText=${JSON.stringify(q.labelText)} labelRendered=${JSON.stringify(lr)} svgIcon=${q.svgIcon}`
-    + ` textContent=${JSON.stringify(q.text)} aria=${JSON.stringify(q.aria)} role=${q.role}`);
+  // ── R2 图标钮：单源图标 + 零文本子节点 + 有可达名字；`↗` 装饰符退役 ───────
+  // 口径（作者令 2026-11-18 22:10「引用只需要一个小图标就行了 不需要文字」）：本钮
+  // **不是有字控件**，可见面只有一枚单源图标；「它是什么」由 aria-label 承担。
+  const r2ok = !!q.found && q.svgIcon === 'quote-entry' && !!q.svgBox && q.svgBox.w > 0 && q.svgBox.h > 0
+    && q.textNodes.length === 0 && String(q.text || '').trim() === '' && !/↗/.test(String(q.text || ''))
+    && q.legacyLabelEl === false && String(q.accName || '') === '引用此看板' && q.title === q.accName
+    && q.role === 'button' && q.tabindex === '0';
+  record('R2', '钮 = 图标钮（单源引用入口 svg）：零文本子节点、零可见文字、名字靠 aria-label，箭头 ↗ 已退役',
+    r2ok,
+    `svgIcon=${q.svgIcon} svgBox=${JSON.stringify(q.svgBox)} textNodes=${JSON.stringify(q.textNodes)}`
+    + ` textContent=${JSON.stringify(q.text)} legacyLabel=${q.legacyLabelEl} accName=${JSON.stringify(q.accName)}`
+    + ` aria=${JSON.stringify(q.aria)} role=${q.role} tabindex=${q.tabindex}`);
 
   // ── R3 指针可达：钮盒内 5 点顶层命中恒为钮（或其子）────────────────────
   record('R3', '指针可达：钮盒内 5 点 elementFromPoint 顶层 = 钮自身/其后代',
@@ -450,6 +472,40 @@ await mobileLeg(SELFTEST ? 'selftest-m375' : 'm375', SELFTEST);
   record('R10', '桌面不回归：零手机环带控件 ∧ 既有右键「引用当前页」照旧出引用 chip',
     mobileOnly === 0 && !!menuText && /引用当前页/.test(menuText) && dref.n === 1 && dtabs.tabQuote === 0,
     `mobileOnlyNodes=${mobileOnly} menu=${JSON.stringify(menuText)} refChips=${dref.n} chip=${JSON.stringify(dref.chips[0] || null)} desktopTabs=${JSON.stringify(dtabs)}`);
+  await ctx.close();
+}
+
+// ── R11 无障碍名字按 locale（en 档）：R2 的 en 侧对账 ────────────────────────
+// 为什么必须有这一档：图标钮**没有可见文字**，名字全在 aria-label 上，而 aria-label 是
+// locale 派生的（navController 的 tt：读 `key('locale')` 同源键 → zh「引用此看板」/
+// en「Quote this Canvas」）。只在 zh 档断言等于把「按 locale 断言」漏成「按 zh 断言」；
+// 产品侧任何把 aria 文案写死 / 落到 en 之外的字面，都会在这一档报红。图标钮的
+// 「零可见文字」在 en 档同样要成立（两档都不许冒出文字）。
+{
+  const { ctx, page } = await boot({ width: 375, height: 812, mobile: true, locale: 'en' });
+  for (const d of [DOCS[0], DOCS[1]]) await openDoc(page, d, true);
+  await openDoc(page, DOCS[2], false);
+  await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click({ timeout: 8000 }).catch(() => {});
+  await sleep(1000);
+  await page.tap('.mf-strip-chip.on').catch((e) => { jserr.push(`tap chip(en): ${String(e).slice(0, 100)}`); });
+  await sleep(500);
+  // 语言源读法：branding.js 的 key('locale') 前缀随品牌派生、且 boot 期会把 legacy
+  // `nebflow_locale` 迁移成品牌前缀键并删掉旧键 ⇒ 不能写死键名，按后缀找现存那一枚。
+  const loc = await page.evaluate(() => {
+    const k = Object.keys(localStorage).find((x) => x.endsWith('_locale'));
+    return k ? localStorage.getItem(k) : null;
+  });
+  const q = await page.evaluate(QUOTE_PROBE);
+  record('R11', '无障碍名字按 locale（en 档 = "Quote this Canvas"）：图标钮零可见文字 ∧ title 同名',
+    loc === 'en' && !!q.found && q.svgIcon === 'quote-entry'
+      && String(q.accName || '') === 'Quote this Canvas' && /Quote/.test(String(q.aria || ''))
+      && !/引用/.test(String(q.aria || '')) && q.title === q.accName && q.textNodes.length === 0
+      && String(q.text || '').trim() === '' && q.role === 'button' && q.tabindex === '0'
+      && q.box.w >= 44 && q.box.h >= 44,
+    `appLocale=${JSON.stringify(loc)} accName=${JSON.stringify(q.accName)} aria=${JSON.stringify(q.aria)}`
+    + ` title=${JSON.stringify(q.title)} textNodes=${JSON.stringify(q.textNodes)} textContent=${JSON.stringify(q.text)}`
+    + ` svgIcon=${q.svgIcon} role=${q.role} tabindex=${q.tabindex} box=${JSON.stringify(q.box)}`);
+  await page.screenshot({ path: join(OUT, `${SELFTEST ? 'selftest-' : ''}m375-en-quote.png`) });
   await ctx.close();
 }
 

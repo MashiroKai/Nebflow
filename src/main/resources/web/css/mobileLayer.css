@@ -2039,15 +2039,18 @@ body.mobile-layer .mf-strip-chip.on {
     ① 本钮升为定位元素 + `z-index:1`（签本身 z-index:2/3 是 z 序上下文；1 > ::before
        的 auto）⇒ 命中面归钮。签自己的 44×44 外扩热区（`.mf-strip-chip::before`）在
        钮以外**原样保留** —— 签规则零改动，只有钮占的那一块让给钮（这正是「钮要能点」）。
-    ② 可见内容换成**同名控件**：单源引用入口字形（js/quoteLogo.js `QUOTE_ENTRY_ICON`，
-       与 composer footer 引用键 / 气泡引用牌同一枚）+ 可见文字「引用」；钮面 = 全站
-       唯一毛玻璃配方（blur 由 css/glass.css 成员表供给，本文件零 backdrop-filter 字样）
-       + 发丝边，**零投影**（flat-button 契约：按钮面禁厚度道具）。
-       箭头 `↗` 整条退役 —— 不留装饰符、不加 tooltip 糊过去。
-   几何：命中盒 = 钮自身盒（`--mhit` 44，WCAG 2.5.5 触控下限）；可见钮面 = ::after
-   内侧 28px 胶囊（钮面不撑命中盒）。签的内容宽预算按**实测量**扣减（chipInnerWidth
-   读钮 getBoundingClientRect，见上方展开档注释），故钮变宽只会挤窄 label、不会让签
-   越预算外借 44px（canvas-overlap-guard 批 2026-11-17 修过的那条病根）。 */
+    ② 可见内容换成**单源引用入口图标**（js/quoteLogo.js `QUOTE_ENTRY_ICON`，与
+       composer footer 引用键 / 气泡引用牌同一枚），**无可见文字、无文本子节点**
+       （作者令 2026-11-18 22:10 逐字「引用只需要一个小图标就行了 不需要文字」——
+       同日早些的「保留可见文字」裁定以此为准）。钮面 = 全站唯一毛玻璃配方（blur 由
+       css/glass.css 成员表供给，本文件零 backdrop-filter 字样）+ 发丝边，**零投影**
+       （flat-button 契约：按钮面禁厚度道具）。箭头 `↗` 整条退役。
+       语义/可达性：aria-label（唯一名字源）+ role=button + tabindex=0（见 navController）。
+   几何：**视觉面小、热区不缩** —— 命中盒 = 钮自身盒（`--mhit` 44，WCAG 2.5.5 触控
+   下限）；可见钮面 = ::after 内侧 28px 胶囊（钮面不撑命中盒，也不吃事件）。签的内容宽
+   预算按**实测量**扣减（chipInnerWidth 读钮 getBoundingClientRect，见上方展开档注释），
+   故钮变宽只会挤窄 label、不会让签越预算外借 44px（canvas-overlap-guard 批 2026-11-17
+   修过的那条病根）。 */
 body.mobile-layer .mf-strip-quote {
   display: none;
   /* ① 命中层修复（本批）：定位 + z-index 1 ⇒ 居于签 ::before（z-index:auto）之上。 */
@@ -2056,14 +2059,11 @@ body.mobile-layer .mf-strip-quote {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  gap: var(--ds-space-1);
   min-width: var(--mhit, 44px);
   height: var(--mhit, 44px);
-  padding: 0 var(--ds-space-2);
+  padding: 0;
   border-radius: var(--ds-radius-pill);
   color: var(--ds-text);
-  font-size: var(--ds-fs-body);
-  font-weight: var(--ds-fw-btn);
   cursor: pointer;
   touch-action: manipulation;
   user-select: none;
@@ -2087,9 +2087,10 @@ body.mobile-layer .mf-strip-quote::after {
 }
 /* 按下反馈：亮度档（扁平契约允许；不用投影/浮雕造厚度）。 */
 body.mobile-layer .mf-strip-quote:active { filter: brightness(0.92); }
-/* 钮内字形（单源 QUOTE_ENTRY_ICON 只带 viewBox，尺寸由宿主单点）与文字。 */
+/* 钮内字形（单源 QUOTE_ENTRY_ICON 只带 viewBox，尺寸由宿主单点）—— 本钮**只有**这枚
+   图标，无文字（作者令 2026-11-18 22:10）；故此前那条 `.mf-strip-quote-label` 规则
+   已随可见文字一并删除。 */
 body.mobile-layer .mf-strip-quote svg { width: 16px; height: 16px; flex: 0 0 auto; }
-body.mobile-layer .mf-strip-quote-label { white-space: nowrap; }
 body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-quote { display: inline-flex; }
 body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label { flex: 1 1 auto; }
 body.mobile-layer .mf-strip-label {

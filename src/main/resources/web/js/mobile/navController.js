@@ -1137,8 +1137,9 @@ function syncCanvasPage() {
       // 元素，命中序上被签的 ::before 热区伪元素整片压住 ⇒ 真手指点不到（9/9 采样点
       // elementFromPoint 顶层恒为签本体）= 作者读到的「没什么意义」。
       // 故本批两件：① 命中层修复（css/mobileLayer.css `.mf-strip-quote` 升定位 +
-      // z-index）；② 可见内容换成**同名控件** —— 单源引用入口字形 + 可见文字「引用」。
-      // 箭头 `↗` 整条退役，不留装饰符。
+      // z-index）；② 可见内容换成**同名控件的图标** —— 单源引用入口字形，**无文字**
+      // （作者令 2026-11-18 22:10「引用只需要一个小图标就行了 不需要文字」）。
+      // 箭头 `↗` 整条退役，不留装饰符、不加 tooltip 糊过去。
       //
       // 引用通路 = **单源复用**（零第三套引用体系）：本钮 →`quoteActiveCardRef()`
       // →（canvas.js）`refForTab` → `appendRefToActiveView` —— 与桌面右键「引用当前页」
@@ -1151,12 +1152,14 @@ function syncCanvasPage() {
       quote.setAttribute('tabindex', '0');
       quote.setAttribute('aria-label', tt('引用此看板', 'Quote this Canvas'));
       quote.title = tt('引用此看板', 'Quote this Canvas');
-      // 字形（单源）+ 可见文字（Label in Name：aria-label「引用此看板」包含可见「引用」）
-      const quoteLabel = document.createElement('span');
-      quoteLabel.className = 'mf-strip-quote-label';
-      quoteLabel.textContent = tt('引用', 'Quote');
+      // 钮面 = **一枚小图标**（作者令 · 2026-11-18 22:10 逐字「引用只需要一个小图标就行
+      // 了 不需要文字」；同日早些的「保留可见文字」裁定以此为准，本钮**不留可见文字、
+      // 不留文本子节点**）。字形 = 单源引用入口 `QUOTE_ENTRY_ICON`（js/quoteLogo.js，
+      // 与 composer footer 引用键 / 气泡引用牌同一枚）。
+      // 语义与可达性不靠可见字面承担，由 aria-label（唯一名字源）+ role=button +
+      // tabindex=0 承担；命中盒仍 ≥44px（视觉面小、热区不缩：css 里 `--mhit` 撑盒，
+      // `::after` 只画 28px 面）。箭头 `↗` 仍整条退役（换的是图标，不是回退装饰符）。
       quote.innerHTML = QUOTE_ENTRY_ICON;
-      quote.appendChild(quoteLabel);
       /** 引用动作（唯一引用通路）。setActiveTab 先行 = 引用对象是**刚点的那一签**的
        *  身份（不是「碰巧的活动签」）；goHome() 把会话页（composer）带到前台，落框
        *  聚焦由通路自己完成（appendRefToActiveView → view.dom.input.focus）。
