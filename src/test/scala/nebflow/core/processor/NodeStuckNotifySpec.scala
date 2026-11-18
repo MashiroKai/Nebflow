@@ -159,6 +159,8 @@ class NodeStuckNotifySpec extends CatsEffectSuite:
       assert(t.contains("[node-stuck]"), t)
       assert(t.contains("cause=waiting-for-user"), t)
       assert(t.contains("node=n-1"), t)
+      // 「哪个会话」必须在通报正文里可读（不只落在审计行）
+      assert(t.contains("session=node-sess-1"), t)
       assert(t.contains("state: WaitingForUser"), t)
       assert(t.contains("duration: 20m0s"), t)
       assert(t.contains("activity:"), t)

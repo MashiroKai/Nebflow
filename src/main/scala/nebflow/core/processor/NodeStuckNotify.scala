@@ -188,7 +188,7 @@ object NodeStuckNotify:
         case Some(t) if t.viaRoot => s"${t.sessionId} (root fallback: no live dispatcher for this node)"
         case Some(t) => t.sessionId
         case None => "(none — no live dispatcher and no live root; audit event written, delivery skipped)"
-    s"""[node-stuck] cause=$cause node=${nodeRef.nodeId} project=${nodeRef.project} — no progress for ${humanDuration(ageMs)}.
+    s"""[node-stuck] cause=$cause node=${nodeRef.nodeId} project=${nodeRef.project} session=${rec.sessionId} — no progress for ${humanDuration(ageMs)}.
        |state: ${stateLine(rec, cause)}
        |duration: ${humanDuration(ageMs)} (> threshold ${humanDuration(thresholdMs)})
        |activity: $activity
