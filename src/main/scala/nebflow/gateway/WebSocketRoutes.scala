@@ -61,6 +61,12 @@ class WebSocketRoutes(
    */
   nfTicketStore: NfTicketStore = NfTicketStore.unsafeDefault(),
   /**
+   * 按对象复用批（2026-11-18）：`GET /api/nf-obj/<cid>/<name>` 的内容寻址索引。
+   * 铸票面（nfTicketRoutes）与取字节面（nfObjRoutes）必须共享同一个实例，否则
+   * 铸票时注册的 cid 在取数面查不到。缺省 = memoized 单例（既有构造点零改动）。
+   */
+  nfObjStore: NfObjStore = NfObjStore.memoized,
+  /**
    * C1-5 injection seam: the credential-namespace policy the read and the
    * signing endpoints share. Memoized so the R2 inode scan is a one-off.
    */
@@ -1040,7 +1046,12 @@ class WebSocketRoutes(
     ) <+> StaticRoutes.jsRoutes <+> StaticRoutes.assetsRoutes <+> NfFileRoutes.nfFileRoutes(
       nfTicketStore,
       nfPathPolicy
-    ) <+> NfFileRoutes.nfTicketRoutes(tokenRef, nfTicketStore, nfPathPolicy, sessions) <+> NfFileRoutes
+    ) <+> NfFileRoutes.nfTicketRoutes(tokenRef, nfTicketStore, nfPathPolicy, sessions, objects = nfObjStore) <+> NfFileRoutes
+      .nfObjRoutes(
+        tokenRef,
+        nfObjStore,
+        sessions
+      ) <+> NfFileRoutes
       .nfAuthcheckRoutes(
         tokenRef,
         sessions

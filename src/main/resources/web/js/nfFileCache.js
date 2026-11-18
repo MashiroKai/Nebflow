@@ -576,7 +576,12 @@ export async function nfViewerSource(p) {
   if (!shared) {
     shared = (async () => {
       const nfTicket = await import('./nfTicket.js');
-      const ticketedUrl = await nfTicket.queuedTicketUrl(absPath);
+      // 按对象复用批（2026-11-18·第 1 件）：URL 取**内容寻址优先**形态 ——
+      // `contentAddressedUrl` 在铸票应答带回 cid（且非流式件）时给
+      // `/api/nf-obj/<cid>/<name>`，与 Card/iframe 腿（injectTickets 同一升级）
+      // **逐字同 URL** ⇒ 第二条腿是浏览器 HTTP 缓存命中（零字节、零请求）。
+      // cid 缺席（旧 mock / 大件）⇒ 逐字回落既有票据 URL，行为零差异。
+      const ticketedUrl = await nfTicket.contentAddressedUrl(absPath);
       let url = (await nfTicket.largeFileDirectUrl(absPath)) || ticketedUrl;
       // ── 票链自愈 + 升级路径（Pop 图片 403 批 2026-10-24）────────────────────
       // 修前形态：取数腿 401/403 直抛「HTTP 403」进各 viewer 终态错误面板——无重试
