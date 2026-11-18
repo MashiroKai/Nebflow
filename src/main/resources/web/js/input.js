@@ -63,7 +63,7 @@ export { enterAskMode, cancelAskMode, enterSkillMode, cancelSkillMode, enterComp
 import { addFileAttachment, pendingAttCount, isRefOnlyFrame, syncRefOnlyGate, showAttError, joinAbsPath } from './input/attachments.js';
 export { addFileAttachment, wireAttachmentsOf, isRefOnlyFrame, syncRefOnlyGate, appendRefToActiveView, initGlobalFileDrop } from './input/attachments.js';
 // 输入行为包（2026-11-02 作者令）：键盘契约装配 + 中断帧单点（ask 与主会话共用）。
-import { bindComposerKeys, requestTurnInterrupt } from './input/composer.js';
+import { bindComposerKeys, requestTurnInterrupt, growComposerInput } from './input/composer.js';
 
 // ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
 // 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
@@ -1630,7 +1630,7 @@ export function initInput(view) {
   // Auto-resize textarea + 同步纯引用帧闸（文本变化会改变闸判据）。
   input.addEventListener('input', () => {
     input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    growComposerInput(input);
     syncRefOnlyGate(view);
     // 输入使闸解除时（blocked→false）占位符立即回到附件/通用文案 ——
     // 闸文案由输入框自身 placeholder 承担（#531，2026-10-18）。
@@ -1884,7 +1884,7 @@ export function initInput(view) {
         input.value = state.inputHistory[view.historyIndex];
         recallHistoryAttachments(view);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
         input.setSelectionRange(input.value.length, input.value.length);
         return true;
       }
@@ -1900,7 +1900,7 @@ export function initInput(view) {
         }
         recallHistoryAttachments(view);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
         input.setSelectionRange(input.value.length, input.value.length);
         return true;
       }
@@ -1959,7 +1959,7 @@ export function initInput(view) {
         input.focus();
         input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
       },
       onText: (text) => {
         // Replace interim with final text + trailing space
@@ -1972,7 +1972,7 @@ export function initInput(view) {
         voiceBaseline = input.value;
         input.setSelectionRange(voiceAnchor, voiceAnchor);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
       },
       onState: (state, data) => {
         updateVoiceUI(state, data);

@@ -133,3 +133,26 @@ export function createTurnToggle(chrome) {
 export function requestTurnInterrupt(sessionId) {
   sendWs({ type: 'interrupt', sessionId });
 }
+
+/**
+ * ④ 自适应行高（autosize）唯一底座 —— composer 统一批（2026-11-18 作者令
+ * 「主会话与消息联系人 composer 真正统一为同一组件……含 autosize」）。
+ *
+ * Why this exists: before this batch the grow line
+ * `input.style.height = Math.min(input.scrollHeight, 200) + 'px'` was written out
+ * INLINE at five sites in `input.js` and the fm composer had no autosize at all
+ * (single-line `<input>`), so the two composers could not agree on height. The
+ * measurement now lives HERE once; every consumer calls it (主会话 = input.js
+ * 五处调用点，语句逐字节等价；消息面 = fmComposer 的 input 事件).
+ *
+ * Callers that need a two-pass measure set `height:'auto'` first (input.js does),
+ * then call this — the primitive deliberately holds ONLY the capped measurement
+ * so the primary window's growth stays byte-identical to pre-batch behavior.
+ *
+ * @param {HTMLTextAreaElement|HTMLInputElement|null} input
+ * @param {number} [max] cap in px (主会话既有档 = 200)
+ */
+export function growComposerInput(input, max = 200) {
+  if (!input) return;
+  input.style.height = Math.min(input.scrollHeight, max) + 'px';
+}
