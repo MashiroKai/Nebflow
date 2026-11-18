@@ -185,6 +185,10 @@ test('real reader, claim, persist, preemption', async ({browser}, info) => {
     if(a) await a.context.close(); if(b) await b.context.close();
     s.child.stdin.write('quit\n'); const result=await Promise.race([s.exit,new Promise(r=>setTimeout(()=>r(null),60000))]);
     if(!result) throw Error(`isolated instance did not exit: ${s.dir}, ${s.port}`);
-    console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} home=${s.dir}`);
+    const probe = createServer(); probe.listen(s.port,'127.0.0.1'); await once(probe,'listening');
+    await new Promise((ok,fail)=>probe.close(e=>e?fail(e):ok()));
+    rmSync(s.dir,{recursive:true});
+    expect(existsSync(s.dir)).toBe(false);
+    console.log(`[iso] exit=${result.code} signal=${result.signal} port=${s.port} port_free=true home_removed=true`);
   }
 });
