@@ -13,16 +13,6 @@
       "owner": "noclip-unified-fix (作者排期)"
     },
     {
-      "key": "src/main/resources/web/css/ask.css::cap-without-scroll::.selection-ask-panel",
-      "file": "src/main/resources/web/css/ask.css",
-      "line": 203,
-      "rule": "cap-without-scroll",
-      "selector": ".selection-ask-panel",
-      "severity": "P3",
-      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
-      "owner": "noclip-unified-fix (作者排期)"
-    },
-    {
       "key": "src/main/resources/web/css/ask.css::cap-without-scroll::body.mobile-layer .ask-fab",
       "file": "src/main/resources/web/css/ask.css",
       "line": 740,
@@ -1853,6 +1843,16 @@
       "owner": "noclip-unified-fix (作者排期)"
     },
     {
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::float-overflow-hidden::body.mobile-layer .mobile-page[data-page=\"todo-quick-decision\"] .ta-qd-card",
+      "file": "src/main/resources/web/css/mobile-todo-apple.css",
+      "line": 923,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mobile-page[data-page=\"todo-quick-decision\"] .ta-qd-card",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（本文件 :949 .ta-qd-scroll 是卡片直接子级、overflow-y:auto + -webkit-overflow-scrolling:touch + overscroll-behavior:contain，长题/长选项在里面自滚；卡片本体只有 min-height:0 无 height/max-height 上限，且无 position，裁切只服 --ds-radius-2xl 圆角。作者裁定 1（2026-11-19）按既有豁免族具名登记）",
+      "owner": "—"
+    },
+    {
       "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .dock-badge",
       "file": "src/main/resources/web/css/mobileLayer.css",
       "line": 746,
@@ -1988,16 +1988,6 @@
       "line": 5644,
       "rule": "cap-without-scroll",
       "selector": "body.mobile-layer .tfl-menu-row.is-sep::before",
-      "severity": "P3",
-      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
-      "owner": "noclip-unified-fix (作者排期)"
-    },
-    {
-      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer #mobile-pages::before",
-      "file": "src/main/resources/web/css/mobileLayer.css",
-      "line": 806,
-      "rule": "cap-without-scroll",
-      "selector": "body.mobile-layer #mobile-pages::before",
       "severity": "P3",
       "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
       "owner": "noclip-unified-fix (作者排期)"
