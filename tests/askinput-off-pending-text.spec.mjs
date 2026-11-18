@@ -156,20 +156,16 @@ async function phaseA(sid) {
     `actual_answered=${!!answeredFrame}${answeredFrame ? ` via=${answeredFrame.via} requestId=${answeredFrame.requestId}` : ''}`,
   );
 
-  // A2+A3：文本之后点选仍命中卡片（= 卡片未被文本消费）∧ 工具结果 = 点选项
+  // Answers arrive separately after the immediate nonblocking acknowledgement.
+  const boundary = ws.frames.length;
   ws.send({ type: 'askUserAnswer', sessionId: sid, requestId: rid, answers: [CLICK_OPTION] });
-  const doneFrame = await ws.waitForOrNull((f) => JSON.stringify(f).includes('MOCK_DONE'), 60000);
-  const doneBlob = doneFrame ? JSON.stringify(doneFrame) : '';
-  check(
-    'A2 卡片未被文本消费：文本之后点选仍命中 → 工具结果 = 点选项',
-    !!doneFrame && doneBlob.includes(CLICK_OPTION),
-    `tool_result=${doneBlob.slice(0, 220)}`,
-  );
-  check(
-    'A3 工具结果不含输入框文本标记（文本没成为 answers）',
-    !ws.blob().includes(`MOCK_DONE(${MARKER}`),
-    `text_became_answer=${ws.blob().includes(`MOCK_DONE(${MARKER}`)}`,
-  );
+  const doneFrame = await ws.waitForOrNull((f) => ws.frames.indexOf(f) >= boundary && f.type === 'askUserClosed' && f.requestId === rid && f.reason === 'answered', 60000);
+  check('A2 点选后同一张卡已作答关闭', !!doneFrame, `closed=${JSON.stringify(doneFrame)}`);
+  const history = await api(`/sessions/${encodeURIComponent(sid)}/history`);
+  const rows = history.json?.messages || [];
+  const answer = rows.find((row) => row.answerOf === rid);
+  const doneBlob = answer ? JSON.stringify(answer) : '';
+  check('A3 持久答案含选项且不含输入文本', !!answer && doneBlob.includes(CLICK_OPTION) && !doneBlob.includes(MARKER), `answer_present=${!!answer}`);
 
   ws.close();
   return { rid, framesA: ws.frames.length };
@@ -218,7 +214,10 @@ async function openApp(browser, theme, viewport) {
   page.on('console', (m) => { if (m.type() === 'error') errs.push(`console.error: ${m.text()} ${(m.location()?.url || '')}`); });
   page.on('requestfailed', (r) => errs.push(`requestfailed: ${r.url()} ${r.failure()?.errorText || ''}`));
   page.on('response', (r) => { if (r.status() >= 400) errs.push(`http ${r.status()}: ${r.url()}`); });
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  const ticketResponse = await ctx.request.post(`${BASE}/api/auth/console-ticket`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  if (!ticketResponse.ok()) throw new Error(`console ticket failed: ${ticketResponse.status()}`);
+  const { ticket } = await ticketResponse.json();
+  await page.goto(`/?ticket=${encodeURIComponent(ticket)}`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#search-btn', { state: 'visible', timeout: 30000 });
   const ob = await page.waitForSelector('.onboarding-overlay', { state: 'attached', timeout: 4000 }).then(() => true).catch(() => false);
   if (ob) {

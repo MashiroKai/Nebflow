@@ -335,12 +335,13 @@ const dockTo = async (id) => {
 /** 工作台 hub 行 → 详情页。行不存在（如 todo 无 hub 行，只能从消息页顶行 /
  *  nf:mobile-todo-entry 事件进）时回落真实导航 API —— 与用户路径同一条
  *  pushPage 链，不是伪造 DOM。 */
-const hubTo = async (face) => {
+const hubTo = async (face, { strictUI = false } = {}) => {
   await dockTo('workbench');
   const row = page.locator(`.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="${face}"]`);
   if (await row.count()) {
     await row.first().click();
   } else {
+    if (strictUI) throw new Error(`hub UI entry missing: ${face}`);
     await page.evaluate(async (pid) => {
       const nav = await import('/js/mobile/navController.js');
       nav.pushPage(pid);
@@ -371,7 +372,7 @@ await measurePanel('me', async () => {
   await page.locator('.mobile-page[data-page="workbench"] .mf-me-entry').click();
   await page.waitForTimeout(400);
 });
-await measurePanel('settings', () => hubTo('settings'));
+await measurePanel('settings', () => hubTo(process.env.TT_INJECT_WRONG_NAV === '1' ? '__missing_test_target__' : 'settings', { strictUI: true }));
 await measurePanel('reminder', () => hubTo('reminder'));
 await measurePanel('daemon', () => hubTo('daemon'));
 await measurePanel('background', () => hubTo('background'));
