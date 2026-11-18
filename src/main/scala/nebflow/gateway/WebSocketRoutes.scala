@@ -1020,15 +1020,18 @@ class WebSocketRoutes(
             // 不进模型上下文）。地址 = MailAddress.AskPrefix + 会话 id（单源，零推导）。
             val mailAddress =
               nebflow.core.delegate.MailAddress.AskPrefix + req.askSessionId
-            val rendered =
-              s"来自文件问答 · ${req.fileName}\n\n${req.question}\n\n（续聊该问答会话：Mail(address=\"$mailAddress\")）"
+            // ask-scope 批（2026-11-18）：人读正文 = 结构化块（AskHandoffWire 单点），
+            // 机器可读面 = metadata.handoff（同一份编码）；主会话两条腿拿同一份数据。
+            val handoff = nebflow.core.ask.AskHandoffWire.of(req)
+            val rendered = nebflow.core.ask.AskHandoffWire.injectedBody(handoff, mailAddress)
             val metadata = io.circe.JsonObject(
               "askSession" -> req.askSessionId.asJson,
               "file" -> req.file.asJson,
               "fileName" -> req.fileName.asJson,
               "leg" -> req.leg.asJson,
               "contextRefs" -> Json.fromValues(req.contextRefs).asJson,
-              "askMailAddress" -> mailAddress.asJson
+              "askMailAddress" -> mailAddress.asJson,
+              "handoff" -> nebflow.core.ask.AskHandoffWire.json(handoff)
             )
             handleBridgeAgentCommand(
               mainSid,

@@ -153,6 +153,9 @@ export const CHECKS = [
     ['delegate-mode-slot', 'check-delegate-mode-slot'],
     ['perm-presentation', 'check-perm-presentation'],
     ['permission-gate', 'check-permission-gate'],
+    // ask 写面收窄闸（ask-scope 批 2026-11-18）：ask 身份只能编辑它绑定的那份文档
+    // ——判决单点唯一（身份归一）、每次判决留痕、工具面无直写、转交结构化。
+    ['ask-write-scope', 'check-ask-write-scope'],
   ].map(([name, script]) => nodeCheck(name, script, ['static'])),
   { name: 'tooling-lint', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, 'node_modules/eslint/bin/eslint.js', 'eslint.config.mjs',

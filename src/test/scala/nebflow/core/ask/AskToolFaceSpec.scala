@@ -53,25 +53,28 @@ final class AskToolFaceSpec extends munit.FunSuite:
     }
   }
 
-  test("F5 Ask prompt advertises the query-only Bash face and the proposal tools") {
+  test("F5 Ask prompt derives the tool list from the registry and states both hard constraints") {
     val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "context")
-    assert(prompt.contains("Read / Glob / Grep"))
-    assert(prompt.contains("WebSearch / WebFetch"))
-    assert(prompt.contains("message_record_search"))
-    assert(prompt.contains("send_message_to_main_chat"))
-    assert(prompt.contains("QUERY-ONLY, fail-closed shell face"))
+    // ask-scope 批（2026-11-18）：清单**派生**（注册表 = 唯一来源），逐条落 `- <name>:` 行。
+    AskSessions.AllowedTools.foreach { n =>
+      assert(prompt.contains(s"- $n:"), clue(n))
+    }
+    assert(prompt.contains("QUERY-ONLY, fail-closed"), "the Bash face must stay documented as query-only")
     assert(prompt.contains("grep, rg, ls,"))
     assert(prompt.contains("log/show/diff/status"))
-    assert(prompt.contains("ask_edit / ask_write"))
-    assert(prompt.contains("NOT modified until the user accepts"))
-    assert(prompt.contains("only\n  when the user explicitly requests"))
+    assert(prompt.contains("本会话只能编辑它对应的那份文档"), "constraint 1 (bound document only)")
+    assert(prompt.contains("复杂任务转交主会话"), "constraint 2 (hand complex tasks to the main session)")
+    assert(prompt.contains("task = 做什么"), "the structured handoff fields must be named")
+    assert(prompt.contains("expected = 期望产出"), "the structured handoff fields must be named")
     assert(prompt.contains("/vault/notes.md"))
     assert(!prompt.contains("GitQuery"))
     assert(!prompt.contains("read_file_content"))
     assert(!prompt.contains("没有任何写/执行/编排工具"))
+    assert(!prompt.contains("- Write:"), "the ask face must not advertise Write")
+    assert(!prompt.contains("- Edit:"), "the ask face must not advertise Edit")
     val handoff = nebflow.core.tools.SendMessageToMainChatTool.description
-    assert(handoff.contains("message channel to the main session"))
-    assert(handoff.contains("ONLY when the user explicitly asks"))
+    assert(handoff.contains("only outbound channel"))
+    assert(handoff.contains("STRUCTURED handoff request"))
     assert(!handoff.contains("only outbound action"))
   }
 end AskToolFaceSpec

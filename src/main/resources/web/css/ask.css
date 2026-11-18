@@ -297,6 +297,7 @@ nf-ask-dock { display: contents; }
 .ask-dock.closed .ask-state-line,
 .note-dock.closed .note-status,
 .note-dock.closed .note-body > *,
+.ask-dock.closed .ask-handoff,
 .ask-dock.closed .ask-input > * { visibility: hidden; }
 .ask-dock.closed .ds-resize-handle,
 .note-dock.closed .ds-resize-handle { visibility: hidden; }
@@ -453,6 +454,29 @@ body.mobile-layer .note-dock .ds-resize-handle {
   text-align: right;
 }
 .note-status[hidden] { display: none; }
+
+/* 转交状态行（ask-scope 批 2026-11-18）：作者令「转交必须机器可读 + UI 可见
+   （Ask 面板要有明确状态，如「已转交主会话」+ 转交内容摘要），不许静默」。
+   与记事本存储状态行同族（「安静的一行事实」档）：**几何只在这里声明**，
+   字色取下方 comment 成员块的同一 dim 令牌；标签色 = 身份/状态绿 --color-primary
+   （与 ask 未读通知点同一单源）。不新造面板、不弹窗、不遮内容——它只是面板 flex
+   列里的一行（有事实才占位，无事实 [hidden] 零占位）。 */
+.ask-handoff {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.4;
+  display: flex;
+  gap: var(--ds-space-half);
+  align-items: baseline;
+  min-width: 0;
+}
+.ask-handoff[hidden] { display: none; }
+.ask-handoff-tag { color: var(--color-primary); white-space: nowrap; }
+.ask-handoff.failed .ask-handoff-tag { color: var(--cv-hint-color-dim); }
+.ask-handoff-body { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 
 /* ══ Ask 状态行（状态可见性与失败上报批 2026-11-18）════════════════════════
@@ -757,7 +781,8 @@ body.mobile-layer .note-dock .ds-resize-handle {
 /* 记事本存储状态行（持久化缺陷批 2026-11-05）：以**成员身份**取同一 dim 令牌与
    显式 opacity:1——本块是「安静的一行事实」的色来源，`.note-status` 自己的规则
    里零色声明（N8 判据）。 */
-.note-status {
+.note-status,
+.ask-handoff {
   color: var(--cv-hint-color-dim);
   opacity: 1;
 }

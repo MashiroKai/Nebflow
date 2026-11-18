@@ -221,7 +221,13 @@ object AskBashExecutor:
 
 end AskBashExecutor
 
-/** post-hook pre-routing 边界的 ask Bash 单点（AgentSessionExecution 消费）。 */
+/** post-hook pre-routing 边界的 ask Bash 单点（AgentSessionExecution 消费）。
+  *
+  * ask-scope 批（2026-11-18）：本面是**只读执行器**，不是写通道（无 shell ⇒ 无
+  * 重定向/无替换/无组合），因此不参与 AskPathBoundary 的路径判决；但**每一次拒绝
+  * 都落 [[AskWriteAudit]]**（身份 / 工具 / 原始命令 / 时间 / 结果 / 理由）——
+  * 「用 shell 试写别的文件」是有审计留痕的越权尝试，不是无声失败。放行不记账
+  * （只读查询是正常业务，记账会把审计面灌成流水；判决面仍逐条可复核）。 */
 object AskBashFace:
 
   /** 入参抽取 + 校验 + 执行。返回 (result, isError)。 */
@@ -232,12 +238,24 @@ object AskBashFace:
       .flatMap(_.asNumber.flatMap(_.toLong))
       .getOrElse(AskBashExecutor.TimeoutMsDefault)
     val refusalPrefix = "Ask Bash refused (file-bound query-only face): "
+    val identity = ctx.sessionId.getOrElse("")
+    def refused(reason: String): IO[(String, Boolean)] =
+      val msg = refusalPrefix + reason
+      AskWriteAudit.record(
+        identity = identity,
+        tool = "Bash",
+        requested = command,
+        canonical = "",
+        allowed = false,
+        reason = msg
+      )
+      IO.pure((msg, true))
     if command.trim.isEmpty then IO.pure((refusalPrefix + "empty command", true))
     else if background then
-      IO.pure((refusalPrefix + "background execution is not available on the query-only face", true))
+      refused("background execution is not available on the query-only face")
     else
       AskBashGuard.validate(command) match
-        case Left(why) => IO.pure((refusalPrefix + why, true))
+        case Left(why) => refused(why)
         case Right(validated) =>
           AskBashExecutor
             .run(validated, ctx.sessionCwd, timeoutMs)

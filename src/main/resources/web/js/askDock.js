@@ -208,7 +208,7 @@ const ICONS = {
     ]),
 };
 
-/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number, mailAddress?: string, turn?: object|null}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number, mailAddress?: string, turn?: object|null, handoff?: {ok: boolean, task: string, paths: Array<string>, reason: string, expected: string, summary: string, error: string}|null}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
 let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）
@@ -318,6 +318,9 @@ async function sessionFor(absPath, fileName) {
       msgs: loadPersisted(sid) || [],
       stateSent: false,
       unread: false,
+      // ask-scope 批（2026-11-18）：本会话最近一次转交事实（面板状态行数据面）。
+      // 会话内事实（非持久语义——服务端才是转交权威；重载后面板不再自称「已转交」）。
+      handoff: null,
     };
     sessions.set(absPath, s);
   }
@@ -419,8 +422,15 @@ function buildDialog() {
   // 与输入条之间（与记事本 `.note-status` 同一处方）；DOM 归本文件造，槽位用的是
   // 内核已暴露的输入条引用——不在内核里再添一套状态展示。
   const stateLine = buildStateLine();
-  if (dlg.inputRow && dlg.inputRow.parentNode === dlg.panel) dlg.panel.insertBefore(stateLine, dlg.inputRow);
-  else dlg.panel.appendChild(stateLine);
+  // 转交状态行（ask-scope 批 2026-11-18）：同一条缝——面板内独立一行事实，只出在
+  // 本会话有转交事实时（写入见 renderHandoff）。作者线里它与状态行同写在旧
+  // buildDialog 的返回 DOM；本树面板已由内核 createAskDialog 造壳（抽取批），故
+  // 改为经 dlg.inputRow 槽位插入——DOM 形态（`.ask-handoff`[data-ask-handoff]）与
+  // 作者线逐字相同。
+  const handoffLine = buildHandoffLine();
+  const anchor = (dlg.inputRow && dlg.inputRow.parentNode === dlg.panel) ? dlg.inputRow : null;
+  dlg.panel.insertBefore(handoffLine, anchor); // anchor=null ⇒ 落到面板尾
+  dlg.panel.insertBefore(stateLine, anchor);
   return dlg.panel;
 }
 
@@ -492,6 +502,27 @@ function buildStateLine() {
   }, [stateText, stateNext, stateDiag]);
   line.hidden = true;
   return line;
+}
+
+/**
+ * 转交状态行（ask-scope 批 2026-11-18）：作者令「转交必须机器可读 + UI 可见（Ask
+ * 面板要有明确状态，如「已转交主会话」+ 转交内容摘要），不许静默」。
+ *
+ * 形态 = 面板内的一行事实（不弹窗、不遮内容、不进气泡列——气泡面仍是两族制）；
+ * 内容由 renderHandoff() 写入，无事实时整行 hidden（零占位、零空行）。
+ * 结构与作者线逐字一致（`.ask-handoff` + data-ask-handoff + role=status）；
+ * 差异只在**挂点**：作者线直接写在旧 buildDialog 的返回 DOM 里，本树该面板已由
+ * 内核 createAskDialog 造壳（抽取批 2026-11-18），故改由 buildDialog 经
+ * dlg.inputRow 槽位插入——DOM 形态与归属不变（本文件造、本文件写）。
+ */
+function buildHandoffLine() {
+  return h('div', {
+    class: 'ask-handoff',
+    'data-ask-handoff': true,
+    hidden: true,
+    role: 'status',
+    'aria-live': 'polite',
+  });
 }
 
 /**
@@ -601,6 +632,8 @@ function ensureInner() {
     stateText: dock.querySelector('.ask-state-text'),
     stateNext: dock.querySelector('.ask-state-next'),
     stateDiag: dock.querySelector('.ask-state-diag'),
+    // 转交状态行（ask-scope 批）：唯一写点 = renderHandoff()。
+    handoff: dock.querySelector('[data-ask-handoff]'),
     resize: askSurface.handle,
     input: dock.querySelector('textarea'),
     send: dock.querySelector('.ask-send'),
@@ -1087,6 +1120,7 @@ function onMount(host, ctx) {
     restoreSize(el.noteSurface);
     syncSeat();
     syncTurnStatus(); // 状态可见性批：首挂即落一次（默认空闲 = 状态行隐藏）
+    renderHandoff(); // ask-scope 批：转交状态行随同一条重投影腿（同一份会话事实）
     return; // 首挂：与改前 mount() 尾部逐字同义
   }
   // 宿主迁移后补一拍（同一批节点、同一份会话状态；全部幂等）
@@ -1099,7 +1133,8 @@ function onMount(host, ctx) {
     dlg.snapCol(); // ask-stream-ui：宿主迁移前若已贴底，迁移后保持贴底（改前 render 自带钉底同义）
   }
   dlg.setTurnChrome(activeSession());
-  syncTurnStatus(); // 状态可见性批：宿主迁移后重投影（同一份回合事实，零重建）
+    syncTurnStatus(); // 状态可见性批：宿主迁移后重投影（同一份回合事实，零重建）
+    renderHandoff(); // ask-scope 批：转交状态行随同一条重投影腿
 }
 
 // 组件注册（light DOM；tag 必须 nf- 前缀，由 component.js.define 硬闸）。
@@ -1155,7 +1190,8 @@ function syncToActiveTab() {
   const switched = file !== currentFile;
   currentFile = file;
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
-  syncTurnStatus(); // 状态可见性批：切卡即重投影（新会话的回合事实与草稿各归各位）
+    syncTurnStatus(); // 状态可见性批：切卡即重投影（新会话的回合事实与草稿各归各位）
+    renderHandoff(); // ask-scope 批：切卡即随会话呈现/撤除转交事实（同一条重投影腿）
   if (!switched) { syncSeat(); return; }
   // The composer DOM is shared, but its turn state belongs to the active file.
   dlg.setTurnChrome(activeSession());
@@ -1316,6 +1352,7 @@ async function open() {
   dlg.snapCol(); // ask-stream-ui：开窗即读 = 从最新一条起（未读清零 + 胶囊收敛）
   askOpen(s);
   syncTurnStatus(); // 状态可见性批：开窗即落当前状态（含「会话未连接」前置口径）
+  renderHandoff(); // ask-scope 批：开窗即落当前会话的转交事实
   syncSeat();
   setTimeout(() => { try { el.input.focus(); } catch { /* detached */ } }, 260);
 }
@@ -1326,6 +1363,7 @@ function close() {
   dlg.closeDom();
   el.fab.classList.remove('open');
   syncTurnStatus(); // 收起即隐状态行（isOpen() 参与判定，收起点零残留）
+  renderHandoff(); // ask-scope 批：收起即隐转交状态行（同一条判定腿）
   syncUnreadDot(); // 已读收起 → 点/pulse 不亮；有未读 → pulse 提示（仅未读时）
 }
 
@@ -1631,6 +1669,41 @@ async function syncNoteForFile() {
 // createAskDialog cfg）。落列跟随律（贴底钉底 / 离底绝不抢滚动位 / typing 不计
 // 不数）、双泡修复律（发问不预压空 ai 泡）等注释随代码一起搬走，不在此另写。
 
+/**
+ * 转交状态行（ask-scope 批 2026-11-18）：作者令「转交必须机器可读 + UI 可见（Ask
+ * 面板要有明确状态，如「已转交主会话」+ 转交内容摘要），不许静默」。
+ *
+ * 形态 = 面板内的一行事实（不弹窗、不遮内容、不进气泡列——气泡面仍是两族制）：
+ *   · 有转交事实 ⇒ 「已转交主会话」标签 + 结构化摘要（task · N 个路径 · 期望产出）；
+ *   · 失败腿 ⇒ 「转交未送达：<error>」（显式可读，绝不静默）；
+ *   · 无事实 ⇒ 整行 `hidden`（零占位、零空行）。
+ * 数据面 = 帧（askHandoffAck，两条腿同帧）落在会话记录上；切会话即随会话呈现。
+ *
+ * 写点：作者线里 render() 末尾调它；抽取批后 render() 已整段搬进共用件
+ * askDialog.js（内核不认转交语义），故这里改由 **canvas 档的重投影点** 调用：
+ * 挂载 / 宿主迁移 / 切卡 / 开窗 / 收窗 + 收到 askHandoffAck（幂等，代价一次
+ * querySelector 命中后的属性写）。这是本文件 `.ask-handoff` 的唯一写点。
+ */
+function renderHandoff() {
+  if (!el || !el.handoff) return;
+  const s = activeSession();
+  const hd = s && s.handoff;
+  if (!hd) {
+    el.handoff.hidden = true;
+    el.handoff.textContent = '';
+    return;
+  }
+  const tag = hd.ok ? tt('已转交主会话', 'Handed off') : tt('转交未送达', 'Handoff failed');
+  const body = hd.ok
+    ? (hd.summary || hd.task || '')
+    : (hd.error || tt('未知错误', 'unknown error'));
+  el.handoff.classList.toggle('failed', !hd.ok);
+  el.handoff.textContent = '';
+  el.handoff.appendChild(h('span', { class: 'ask-handoff-tag' }, [tag]));
+  el.handoff.appendChild(h('span', { class: 'ask-handoff-body' }, [body]));
+  el.handoff.hidden = false;
+}
+
 // ── 后端 WS 域（发 + 收）───────────────────────────────────────────────────
 
 function askOpen(s) {
@@ -1906,10 +1979,25 @@ function consumeFrame(msg) {
   }
   if (!entry) return; // 本页未见过的 ask 会话（其它设备/页面）——忽略。
   switch (msg.type) {
-    case 'askHandoffAck':
-      // v2.1：转交回执收进不可见处——不呈现（§7 转交机制不变，ack 静默消费；
-      // 主会话侧 injected 气泡承担转交可见性）。
+    case 'askHandoffAck': {
+      // ask-scope 批（2026-11-18）：转交回执**不再静默**——面板状态行呈现
+      // 「已转交主会话 + 摘要」（或「转交未送达 + 错误」）。两条腿同帧（工具腿
+      // send_message_to_main_chat / dock 腿 askHandoff），故本条腿覆盖全部转交。
+      // v2.1 减法纪律不受扰：气泡面仍只出 user/ai 两族（状态行走面板内独立一行，
+      // 不落气泡列、不进转录）。
+      const hd = msg.handoff || {};
+      entry.handoff = {
+        ok: msg.ok !== false,
+        task: hd.task || msg.question || '',
+        paths: Array.isArray(hd.paths) ? hd.paths : [],
+        reason: hd.reason || '',
+        expected: hd.expected || '',
+        summary: msg.summary || msg.question || hd.task || '',
+        error: msg.error || '',
+      };
+      if (entry === activeSession()) renderHandoff();
       return;
+    }
     case 'askEditApplied':
       // canvas-inline-diff-review：ask_edit/ask_write 直接落盘回执 → 审阅页签
       // （askEditReview）。未读律同流帧（用户不在看着 = 绿点唤回）——审阅页签
