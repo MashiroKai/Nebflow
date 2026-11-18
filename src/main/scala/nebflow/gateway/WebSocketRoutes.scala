@@ -2057,6 +2057,21 @@ class WebSocketRoutes(
                         val ownerAccess = handshakeCredential.collect { case Credential.ViaSession(record) =>
                           OwnerAccess.fromAuthenticatedSession(record, attachmentOwnerStore)
                         }
+                        // attachment-persistence 批（2026-11-18，P0「已发送的文件过一会失效」）：
+                        // 落盘身份必须与**读取面**（StaticRoutes.uploadsRoutes 的
+                        // `ownsResource("attachment", "<sid>/<file>")`）同一把钥匙。
+                        // 修前两处错：① 准入用 `access.ownsSession(msgSessionId)` 拿**聊天会话
+                        // id**去查 owner 台账的 `session:<id>` 行 —— 那些行按**网关会话 id**
+                        // （GatewaySessionStore.newSessionId()，32B base64url，例
+                        // `1lau2fyJhwUO_C0UMypAVqHwFLKOx7YteP0-uzocQjo`）注册，而 msgSessionId 是
+                        // 会话 UUID（例 `1b3416b2-09df-44a8-b8b3-d15aa75dfa98`），两个 id 空间从不
+                        // 相交 ⇒ 恒 false ⇒ 附件永不落盘；② 落盘登记用 2 参 commit（resourceId
+                        // = 裸文件名），而读取面要的是 `<sid>/<file>` ⇒ 即使落了盘也 403（2 参
+                        // commit 见 AttachmentCommitService.commit(access,key,content)）。
+                        // 现在：准入 = 已认证会话主体（ownerAccess 在场；Bearer/未知主体由
+                        // OwnerStore.createResource 的 fail-closed 拦下），落盘登记一律用
+                        // **URL 形状**的 resourceId —— 读取面的按账号授权因此真正生效。
+                        val attachmentScope: Option[String] = AttachmentScope.segmentOf(msgSessionId)
                         val uploadRoot = Config.NebflowHome.toNIO.resolve("uploads").resolve(msgSessionId)
                         val attachmentWrites = attachments.zipWithIndex.traverse_ { case (att, attIdx) =>
                           val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
@@ -2072,31 +2087,28 @@ class WebSocketRoutes(
                             val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "").replaceAll("[^A-Za-z0-9._-]", "_")
                             val keyResult = ResourceKey.from(s"${System.nanoTime()}_$stem.$ext")
                             val decoded = scala.util.Try(java.util.Base64.getDecoder.decode(data)).toOption
-                            (ownerAccess, decoded, keyResult.toOption) match
-                              case (Some(access), Some(bytes), Some(key)) =>
-                                access.ownsSession(msgSessionId).flatMap {
-                                  case false =>
-                                    blocks += ContentBlock.Image(data, mimeType)
-                                    IO(
-                                      logger
-                                        .warn(s"Image '$name' rejected: session is not owned by handshake principal")
-                                    )
-                                  case true =>
-                                    AttachmentCommitService
-                                      .at(uploadRoot)
-                                      .commit(access, key, new java.io.ByteArrayInputStream(bytes))
-                                      .attempt
-                                      .map {
-                                        case Right(path) =>
-                                          savedPaths(attIdx) = path.toString
-                                          blocks += ContentBlock.Image(data, mimeType)
-                                          blocks += ContentBlock.Text(s"[用户附加图片: $path]")
-                                          logger.info(s"Saved image '$name' to $path")
-                                        case Left(error) =>
-                                          blocks += ContentBlock.Image(data, mimeType)
-                                          logger.warn(s"Image '$name' was not persisted: ${error.getMessage}")
-                                      }
-                                }
+                            (ownerAccess, attachmentScope, decoded, keyResult.toOption) match
+                              case (Some(access), Some(sid), Some(bytes), Some(key)) =>
+                                AttachmentCommitService
+                                  .at(uploadRoot)
+                                  .commit(access, key, s"$sid/${key.value}", new java.io.ByteArrayInputStream(bytes))
+                                  .attempt
+                                  // flatMap（不是 map）：分支体必须**产出** IO 而不是被
+                                  // 顺手当成值丢掉。修前用 `.map { … logger.info(…) }`，
+                                  // 分支末表达式是 IO[Unit] ⇒ 整个 map 变成 IO[IO[Unit]]，
+                                  // 内层 IO 永不被执行 ⇒ "Saved image/not persisted" 两条
+                                  // 日志在落盘腿静默消失（本 P0 因此 9 天不可见）。
+                                  .flatMap {
+                                    case Right(path) =>
+                                      IO {
+                                        savedPaths(attIdx) = path.toString
+                                        blocks += ContentBlock.Image(data, mimeType)
+                                        blocks += ContentBlock.Text(s"[用户附加图片: $path]")
+                                      } *> logger.info(s"Saved image '$name' to $path")
+                                    case Left(error) =>
+                                      IO(blocks += ContentBlock.Image(data, mimeType)) *>
+                                        logger.warn(s"Image '$name' was not persisted: ${error.getMessage}")
+                                  }
                               case _ =>
                                 blocks += ContentBlock.Image(data, mimeType)
                                 IO(
@@ -2143,29 +2155,21 @@ class WebSocketRoutes(
                                 val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
                                 val keyResult = ResourceKey.from(s"${System.nanoTime()}_$safeName")
                                 val decoded = scala.util.Try(java.util.Base64.getDecoder.decode(data)).toOption
-                                (ownerAccess, decoded, keyResult.toOption) match
-                                  case (Some(access), Some(bytes), Some(key)) =>
-                                    access.ownsSession(msgSessionId).flatMap {
-                                      case false =>
-                                        IO(
-                                          logger.warn(
-                                            s"Attachment '$name' rejected: session is not owned by handshake principal"
-                                          )
-                                        )
-                                      case true =>
-                                        AttachmentCommitService
-                                          .at(uploadRoot)
-                                          .commit(access, key, new java.io.ByteArrayInputStream(bytes))
-                                          .attempt
-                                          .map {
-                                            case Right(path) =>
-                                              savedPaths(attIdx) = path.toString
-                                              blocks += ContentBlock.Text(s"[用户附加文件: $path]")
-                                              logger.info(s"Saved attachment '$name' to $path")
-                                            case Left(error) =>
-                                              logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
-                                          }
-                                    }
+                                (ownerAccess, attachmentScope, decoded, keyResult.toOption) match
+                                  case (Some(access), Some(sid), Some(bytes), Some(key)) =>
+                                    AttachmentCommitService
+                                      .at(uploadRoot)
+                                      .commit(access, key, s"$sid/${key.value}", new java.io.ByteArrayInputStream(bytes))
+                                      .attempt
+                                      .flatMap {
+                                        case Right(path) =>
+                                          IO {
+                                            savedPaths(attIdx) = path.toString
+                                            blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                                          } *> logger.info(s"Saved attachment '$name' to $path")
+                                        case Left(error) =>
+                                          logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
+                                      }
                                   case _ =>
                                     IO(
                                       logger.warn(
@@ -2182,7 +2186,13 @@ class WebSocketRoutes(
                           end if
                         }
 
-                        attachmentWrites *> {
+                        // IO.defer：本块**必须**在 attachmentWrites 跑完之后才求值。
+                        // `*>` 的右参数是 by-value 的 IO（cats-effect `def *>[B](that: IO[B])`），
+                        // 直接写 `attachmentWrites *> { … val attJson = … savedPaths … }` 会在
+                        // **构造**期就 eager 求值整块 —— 那时 savedPaths 还是空 Map，attJson
+                        // 落 path:null，即使落盘成功也照样断裂。这正是本 P0 的第二处根因
+                        // （第一处是上面的 owner 身份错配）；defer 之后读盘与写盘才同序。
+                        attachmentWrites *> IO.defer {
                           val sessionName = metaOpt.map(_.name).getOrElse("-")
                           val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
                           logger.info(s"${logger.hl(sessionName)} User message: ${content

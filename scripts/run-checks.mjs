@@ -65,6 +65,10 @@ export const CHECKS = [
   // 陈旧面板行批（2026-11-18）：后台智能体面板「活跃行 ⊆ 引擎活跃快照」不变量——
   // durable store 的重启打断行（pending-recovery）曾被折成「进行中」+ 690h 时钟。
   nodeCheck('bg-panel-active-liveness', 'check-bg-panel-active-liveness'),
+  // 附件持久化批（2026-11-18 P0「我发送出去的文件过一会还是会出现这种失效的问题」）：
+  // 用户附件落盘身份 / 读取面授权键 / attJson 延迟求值 / footer 下载键四条链的源码闸
+  // （端到端回归见 tests/attachment-persistence.spec.mjs，需真实例）。
+  nodeCheck('attachment-persistence', 'check-attachment-persistence'),
   ...[
     ['js-types', 'check-js-types'], ['ime', 'check-ime-guard'],
     ['component-contract', 'check-component-contract'], ['takeover-identify', 'check-takeover-identify'],
