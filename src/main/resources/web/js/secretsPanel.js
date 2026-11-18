@@ -711,6 +711,28 @@ function draftHTML() {
     </div>`;
 }
 
+/** One chip as a REAL element. The tag bar builds its chips this way (DOM
+ *  construction — the component-contract gate counts bare markup assignments
+ *  per file and only allows that number to fall, so the toolbar adds none);
+ *  the row's sub lane renders the same face as HTML text inside the row
+ *  template, which is why chipHTML stays. Both carry an identical class /
+ *  `data-tag` / `data-on` / `aria-pressed` face, so the one delegated click
+ *  handler serves both without knowing which built them.
+ * @param {string} tag
+ * @param {boolean} on
+ * @returns {HTMLButtonElement}
+ */
+function chipNode(tag, on) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'secrets-chip';
+  b.dataset.tag = tag;
+  b.textContent = `#${tag}`;
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  if (on) b.setAttribute('data-on', '');
+  return b;
+}
+
 /** The tag bar: every tag present in the loaded set as a toggle chip, plus a
  *  clear chip while any filter is active. Purely a view over already-loaded
  *  metadata — it never issues a request. */
@@ -723,11 +745,17 @@ function renderToolbar() {
   if (sh instanceof HTMLElement) sh.setAttribute('data-active', filterQuery || filterTags.size ? 'true' : 'false');
   if (bar) {
     const tags = allTags();
-    bar.innerHTML =
-      (filterQuery || filterTags.size
-        ? `<button type="button" class="secrets-chip secrets-chip-clear" data-tag-clear>${escapeHtml(t('secrets.clearFilters'))}</button>`
-        : '') +
-      tags.map((to) => chipHTML(to, filterTags.has(to))).join('');
+    const nodes = [];
+    if (filterQuery || filterTags.size) {
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'secrets-chip secrets-chip-clear';
+      clear.dataset.tagClear = '';
+      clear.textContent = t('secrets.clearFilters');
+      nodes.push(clear);
+    }
+    tags.forEach((to) => nodes.push(chipNode(to, filterTags.has(to))));
+    bar.replaceChildren(...nodes);
     bar.hidden = tags.length === 0 && !filterQuery && filterTags.size === 0;
   }
   if (count) {
