@@ -36,7 +36,7 @@ test('rapid sends are excluded; rapid answers accumulate', () => {
   assert.equal(count, 2);
 });
 test('removed-before-observer rows are ignored; terminal is guarded by busy', () => {
-  assert.match(mainSrc, /if \(n\.isConnected\) arrived\.push/);
+  assert.match(mainSrc, /!n\.isConnected && rec\.unreadRows\.delete\(n\)/);
   assert.match(askSrc, /settleCol\(wasBusy && last && last\.role === 'ai' \? \[last\] : \[\]\)/);
   assert.equal(askPath([], 1), 1);
 });

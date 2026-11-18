@@ -2113,7 +2113,7 @@ function viewChat(view) {
 function pillRecord(view) {
   let rec = _pillRecords.get(view);
   if (!rec) {
-    rec = { el: null, pill: null, count: 0, atBottom: true, obs: null };
+    rec = { el: null, pill: null, count: 0, unreadRows: new Set(), atBottom: true, obs: null };
     _pillRecords.set(view, rec);
   }
   // Mirror onto the view's own stream state (per-view, as specified).
@@ -2154,6 +2154,7 @@ function ensureScrollPill(view) {
       : document.getElementById('input-area')),
     onReturn: () => {
       rec.count = 0;
+      rec.unreadRows.clear();
       if (view.stream) view.stream.scrollSnapped = true;
     },
   });
@@ -2241,7 +2242,7 @@ export function syncScrollPill(view, atBottom) {
   const chat = viewChat(view) || view.dom.chat;
   if (atBottom === undefined) atBottom = isNearBottom(chat);
   rec.atBottom = atBottom;
-  if (atBottom) rec.count = 0; // reached the bottom (any cause) → nothing unseen
+  if (atBottom) { rec.count = 0; rec.unreadRows.clear(); } // Reaching bottom marks all seen.
   // 显隐口径单源在组件：无未读但距底 ≥ SHOW_AFTER_PX ⇒ 「回到底部」；
   // 有未读 ⇒ 「↓ N 条新消息」——同一枚胶囊的两个文案档（单实现批 2026-11-06）。
   pill.sync({ count: rec.count, atBottom });
@@ -2279,6 +2280,9 @@ export function initScrollFollow(view, opts = {}) {
     const arrived = [];
     const viewportH = chat.clientHeight || 0;
     for (const m of mutations) {
+      for (const n of m.removedNodes) {
+        if (!n.isConnected && rec.unreadRows.delete(n)) rec.count = Math.max(0, rec.count - 1);
+      }
       // Only rows appended at the END are new messages. `previousSibling` is
       // null for `chat.prepend(...)` (scroll-up pagination loading OLDER
       // messages) — those rows sit above the reading position and must never
@@ -2295,7 +2299,10 @@ export function initScrollFollow(view, opts = {}) {
         // streamed content reaches that size) — it never counts as "a message
         // you have not seen".
         if (viewportH > 0 && n.getBoundingClientRect().height >= viewportH) continue;
-        if (n.isConnected) arrived.push({ role: 'ai' });
+        if (n.isConnected && rec.atBottom === false && !rec.unreadRows.has(n)) {
+          rec.unreadRows.add(n);
+          arrived.push({ role: 'ai' });
+        }
       }
     }
     // Rows that arrive while the user is away from the bottom are the only
