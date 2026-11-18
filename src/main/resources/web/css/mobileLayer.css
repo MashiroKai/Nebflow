@@ -2980,7 +2980,9 @@ body.mobile-layer .ask-dock .ds-turn-btn {
    消息面 .fm-input-bar 停在 6px，两面在手机上差 2px = 作者点名的分叉）。 */
 body.mobile-layer #input-bar,
 body.mobile-layer .fm-input-bar {
-  padding: var(--ds-space-1) var(--ds-space-2);
+  /* 内距收紧批（2026-11-18 作者令）：横向 8px → 6px，与桌面档同档同值 ——
+     视口差异只留纵向（4px），横向两面/两档一致（两侧各让 2px）。 */
+  padding: var(--ds-space-1) var(--ds-space-1h);
 }
 body.mobile-layer #mic-orb-wrap {
   margin: -8px 0;

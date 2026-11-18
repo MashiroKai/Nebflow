@@ -46,8 +46,11 @@
   pointer-events: auto;
   border-radius: var(--ds-radius-shell);
   /* 瘦身批：垂直内 padding 8px → 6px（横向不动；mic-orb 64px/图标钮 36px
-     为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。 */
-  padding: var(--ds-space-1h) var(--ds-space-2);
+     为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。
+     内距收紧批（2026-11-18 作者令「两边留白边距差不多 + 文字离两边近一点、
+     可用空间大一点」）：横向 8px → 6px（= 纵向同一档 --ds-space-1h ⇒ 外壳
+     自身四向内距同值）。实测两侧各让 2px（读数见 tests/composer-input-inset-metrics.spec.mjs）。 */
+  padding: var(--ds-space-1h) var(--ds-space-1h);
   display: flex;
   align-items: center;
   gap: var(--ds-space-1);
@@ -761,8 +764,11 @@
 #input,
 .fm-input {
   /* 瘦身批：垂直内 padding 8px → 6px（横向 14px 不动；多行增长逻辑读
-     scrollHeight，与本 padding 无耦合）。 */
-  padding: var(--ds-space-1h) 14px;
+     scrollHeight，与本 padding 无耦合）。
+     内距收紧批（2026-11-18）：横向 14px 字面量 → 裸件族单源 token
+     `--nf-field-pad-x`（= --ds-space-3 = 12px，stand-tokens.css 声明「= #input-bar」
+     的那一枚）；一处动作同时完成**去面内字面量**与**再收紧 2px/侧**，两面同值。 */
+  padding: var(--ds-space-1h) var(--nf-field-pad-x);
   font-size: var(--ds-fs-bubble);
   width: 100%;
   line-height: 1.4;
