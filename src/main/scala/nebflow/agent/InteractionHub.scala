@@ -25,10 +25,11 @@ import nebflow.shared.NebflowLogger
  *
  * The hub has no external state dependencies (two in-memory Refs). If it
  * crashes, the actor system restarts it; in-flight pending requests are lost
- * and the requesting agents keep waiting (R1, wait-timeout-fix: there is no
- * permission timeout anymore — same exposure as AskUser's unbounded wait).
- * The stuck turn remains user-cancellable via Interrupt, which is the
- * guaranteed exit; the restarted hub serves FUTURE requests.
+ * and the requesting agents keep waiting. permission-landing 批 P1（2026-11-18）
+ * 后权限等待一律有界（AgentCore.awaitPermissionDecisionBounded：可配置超时 +
+ * 失败关闭），丢失槽位的最坏代价 = 等到超时按拒绝收口，不再无限挂起（AskUser 的
+ * 无界等待面维持既有口径，不在本批范围）。The stuck turn remains user-cancellable
+ * via Interrupt; the restarted hub serves FUTURE requests.
  */
 object InteractionHub:
   private val logger = NebflowLogger.forName("nebflow.agent.interaction")
@@ -95,31 +96,51 @@ object InteractionHub:
               rootWsSend.update(_ - rootSessionId) *> IO.pure(behavior)
             case InteractionHubCommand.Request(req) =>
               // 重启孤儿对账批：槽位注册随行记账（best-effort，绝不阻断提问链）。
-              val ledgerRecord =
-                ledger.fold(IO.unit)(l => l.record(PendingAskLedger.Entry.of(req, firstQuestionExcerpt(req.payload))))
+              def ledgerRecord(r: InteractionRequest): IO[Unit] =
+                ledger.fold(IO.unit)(l => l.record(PendingAskLedger.Entry.of(r, firstQuestionExcerpt(r.payload))))
               // 待办分家批 + 改版批（2026-10-31）：AskUser 挂起 ⇒ ask- 待办镜像；
               // Permission / McpPermission 挂起 ⇒ perm- 待批准镜像（用户面收件箱，
               // 见设计稿 docs/20261031_222806_todo-inbox-redesign）。两类卡终态
               // 销账共用 bridge.retire（双前缀幂等清）。
-              val todoAttach = todoBridge.fold(IO.unit)(b =>
-                // InteractionKind 三值穷尽（Permission/AskUser/McpPermission）：
-                // 三类卡全镜像——AskUser → ask- 待决策，Permission/McpPermission →
-                // perm- 待批准（改版批 2026-10-31 用户面收件箱，见设计稿
-                // docs/20261031_222806_todo-inbox-redesign）。终态销账共用
-                // bridge.retire（双前缀幂等清）。
-                req.kind match
-                  case InteractionKind.AskUser =>
-                    b.attach(
-                      req.rootSessionId,
-                      req.requestId,
-                      firstQuestionExcerpt(req.payload),
-                      req.sourceAgent,
-                      nebflow.core.scheduler.AskTodoBridge.payloadProject(req.payload)
-                    )
-                  case InteractionKind.Permission | InteractionKind.McpPermission =>
-                    b.attachPermission(req.rootSessionId, req.requestId, req.payload, req.sourceAgent)
-              )
-              ctx.forkTurn(handleRequest(pending, rootWsSend, req) *> ledgerRecord *> todoAttach) *> IO.pure(behavior)
+              def todoAttach(r: InteractionRequest): IO[Unit] =
+                todoBridge.fold(IO.unit)(b =>
+                  // InteractionKind 三值穷尽（Permission/AskUser/McpPermission）：
+                  // 三类卡全镜像——AskUser → ask- 待决策，Permission/McpPermission →
+                  // perm- 待批准（改版批 2026-10-31 用户面收件箱，见设计稿
+                  // docs/20261031_222806_todo-inbox-redesign）。终态销账共用
+                  // bridge.retire（双前缀幂等清）。
+                  r.kind match
+                    case InteractionKind.AskUser =>
+                      b.attach(
+                        r.rootSessionId,
+                        r.requestId,
+                        firstQuestionExcerpt(r.payload),
+                        r.sourceAgent,
+                        nebflow.core.scheduler.AskTodoBridge.payloadProject(r.payload)
+                      )
+                    case InteractionKind.Permission | InteractionKind.McpPermission =>
+                      b.attachPermission(r.rootSessionId, r.requestId, r.payload, r.sourceAgent)
+                )
+              // permission-landing 批 P0（2026-11-18）：落点解析前置。目标 root 不可达
+              //（项目节点的挂载根常无本进程客户端：rootWsSend 只登记经 WS spawn 的
+              // root——WebSocketRoutes.doSpawnRootAgent ⇒ registerRootInteraction）时
+              // **不再**全 root 扇出 fallback 帧（前端全局 toast = 原生弹窗形态，弹窗
+              // 禁令），而是把整张卡**重定锚**到字典序最小的可达 root：pending 槽 /
+              // 台账 / 待办镜像 / 渲染帧全部使用同一个落点 root ⇒ 权限请求总能落到
+              // 真实可达的会话。零可达 ⇒ 保持原落点（槽位仍注册，迟到作答仍能收口；
+              // 等待方的有界超时是唯一兜底，绝不再无限挂起）。
+              val resolveLanding: IO[(InteractionRequest, Option[String])] = rootWsSend.get.map { m =>
+                if m.contains(req.rootSessionId) then (req, None)
+                else
+                  m.keySet.filterNot(_ == req.rootSessionId).toList.sorted.headOption match
+                    case Some(landing) => (req.copy(rootSessionId = landing), Some(req.rootSessionId))
+                    case None          => (req, None)
+              }
+              ctx.forkTurn(
+                resolveLanding.flatMap { (landing, retargetedFrom) =>
+                  handleRequest(pending, rootWsSend, landing, retargetedFrom) *> ledgerRecord(landing) *> todoAttach(landing)
+                }
+              ) *> IO.pure(behavior)
             case InteractionHubCommand.Answered(ans) =>
               ctx.forkTurn(handleAnswered(pending, rootWsSend, ans, ledger, todoBridge)) *> IO.pure(behavior)
             case InteractionHubCommand.DecideBridgePermission(rid, root, kind, approved, reply) =>
@@ -186,7 +207,8 @@ object InteractionHub:
   private def handleRequest(
     pending: Ref[IO, Map[String, PendingRequest]],
     rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
-    req: InteractionRequest
+    req: InteractionRequest,
+    retargetedFrom: Option[String] = None
   ): IO[Unit] =
     val render = req.kind match
       case InteractionKind.Permission => renderPermission(req)
@@ -194,6 +216,18 @@ object InteractionHub:
       // P0-1 / P-M1（spec §2.4）：第三种 kind 的分支。与 askPermission / askUser
       // 同款「加 kind 分支」形态，零渲染层重构（payload 走自由 Json 先例）。
       case InteractionKind.McpPermission => renderMcpPermission(req)
+    // permission-landing 批 P0：重定锚帧带原因标——前端在可达落点的对话流内渲染
+    // 卡片时据此注明「原目标会话 X 不可达，已转入本会话呈现」（badge 行，弹窗禁令
+    // 下不弹任何原生形态）。直投帧逐字节不变（None ⇒ 恒等）。
+    val frame =
+      retargetedFrom.fold(render)(from =>
+        render.deepMerge(
+          Json.obj(
+            "retargetedFrom" -> from.asJson,
+            "retargetReason" -> "target-root-unreachable".asJson
+          )
+        )
+      )
     for
       _ <- logger.info(
         s"InteractionRequest kind=${req.kind}"
@@ -225,45 +259,28 @@ object InteractionHub:
           (ws(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> req.rootSessionId.asJson)).handleErrorWith(_ =>
             IO.unit
           ) *>
-            ws(render).handleErrorWith { e =>
+            ws(frame).handleErrorWith { e =>
               logger.warn(
                 s"InteractionRequest render failed: ${e.getClass.getSimpleName}"
               ) *> IO.unit
-            }).void
-        case None =>
-          // F4 (#433): the target root session is unreachable (deleted /
-          // zombie / never had a client). Rendering into it would park the
-          // card in a graveyard no one watches — invisible = unanswerable
-          // (and since R1, wait-timeout-fix, there is no timeout that would
-          // eventually deny it). Fan the card out to ALL other
-          // registered roots instead, flagged `fallback: true` so the frontend
-          // shows a global actionable toast rather than routing the card into
-          // a session it cannot open. Answers still match by requestId, so a
-          // user answering from any window completes the pending deferred.
-          val others = send.toList.filterNot(_._1 == req.rootSessionId)
-          if others.isEmpty then
-            logger.warn(
-              "InteractionRequest dropped: no root wsSend registered"
-            )
-          else
-            others.traverse_ { case (sid, ws) =>
-              ws(
-                render.deepMerge(
-                  Json.obj(
-                    "fallback" -> true.asJson,
-                    "fallbackRoot" -> req.rootSessionId.asJson
-                  )
-                )
-              ).handleErrorWith { e =>
-                logger.warn(
-                  s"InteractionRequest fallback render failed: ${e.getClass.getSimpleName}"
-                ) *> IO.unit
-              }
-            } *>
+            }).void *>
+            // permission-landing 批 P0：重定锚日志（可归因——落点会话、原目标、
+            // requestId 全落一行）。
+            retargetedFrom.traverse_(from =>
               logger.warn(
-                s"InteractionRequest root unreachable — fanned out to ${others.size} registered root(s) with fallback flag"
+                s"InteractionRequest root unreachable (rootSessionId=$from) — card retargeted to reachable root " +
+                  s"${req.rootSessionId} (requestId=${req.requestId})"
               )
-          end if
+            )
+        case None =>
+          // permission-landing 批 P0：零可达（解析与渲染之间 root 恰好全部掉线）。
+          // 槽位保留：迟到的 requestId 作答仍能收口；等待方一律持有界超时
+          //（AgentCore.awaitPermissionDecisionBounded）失败关闭——不扇出 fallback
+          // 帧（弹窗禁令）、不无限挂起。
+          logger.warn(
+            s"InteractionRequest has no reachable root wsSend (rootSessionId=${req.rootSessionId}) — " +
+              "slot retained for a late answer; the requester's bounded wait is the backstop"
+          )
     yield ()
 
     end for

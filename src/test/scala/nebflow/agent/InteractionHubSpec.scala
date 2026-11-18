@@ -430,10 +430,12 @@ class InteractionHubSpec extends CatsEffectSuite:
     end for
   }
 
-  // ===== F4 (#433): unreachable-root fanout =====
+  // ===== permission-landing 批 P0（2026-11-18）：不可达 root 的落点重定锚 =====
+  //（取代 F4 #433 的全 root fallback 扇出——全局 toast = 原生弹窗形态，弹窗禁令后
+  // 不再存在；现口径 = 单一确定性可达落点 + 原因标，答复按 requestId 收口。）
 
-  test("F4: unreachable root fans the card out to other registered roots with fallback flag") {
-    val system = nebflow.actor.ActorSystem("hub-test-f4a")
+  test("P0 retarget: unreachable root lands the card on the lexicographically-first reachable root, no fallback frame") {
+    val system = nebflow.actor.ActorSystem("hub-test-landing-a")
     for
       hub <- mkHub(system)
       sentA <- Ref.of[IO, List[Json]](Nil)
@@ -441,33 +443,55 @@ class InteractionHubSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sentA.update(_ :+ j))
       _ <- hub ! InteractionHubCommand.RegisterRoot("live-root-2", (j: Json) => sentB.update(_ :+ j))
       deferred <- Deferred[IO, Boolean]
-      // root "zombie" never registered — the incident shape
-      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-1", deferred, rootSid = "zombie"))
+      // root "zombie" never registered — the incident shape (project node whose
+      // mount root has no in-process client window)
+      _ <- hub ! InteractionHubCommand.Request(permRequest("landing-1", deferred, rootSid = "zombie"))
       _ <- IO.sleep(100.millis)
       eventsA <- sentA.get
       eventsB <- sentB.get
       cardA = eventsA.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
-      cardB = eventsB.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
       _ <- system.stopAll
     yield
-      // both live roots got the card, flagged fallback with the zombie root id
-      assertEquals(cardA.hcursor.downField("fallback").as[Boolean], Right(true))
-      assertEquals(cardB.hcursor.downField("fallback").as[Boolean], Right(true))
-      assertEquals(cardA.hcursor.downField("fallbackRoot").as[String], Right("zombie"))
-      assertEquals(cardB.hcursor.downField("fallbackRoot").as[String], Right("zombie"))
-      // requestId preserved so an answer from ANY window completes the pending
-      assertEquals(cardA.hcursor.downField("requestId").as[String], Right("f4-1"))
+      // single deterministic landing (lexicographic min) — NOT a fanout
+      assertEquals(cardA.hcursor.downField("sessionId").as[String], Right("live-root"))
+      assertEquals(eventsB.count(_.hcursor.downField("type").as[String].contains("askPermission")), 0)
+      // in-chat card shape: no fallback flag (that was the native-toast pathway),
+      // retarget attribution carried instead
+      assertEquals(cardA.hcursor.downField("fallback").focus, None)
+      assertEquals(cardA.hcursor.downField("retargetedFrom").as[String], Right("zombie"))
+      assertEquals(cardA.hcursor.downField("retargetReason").as[String], Right("target-root-unreachable"))
+      // requestId preserved so the answer completes the pending slot
+      assertEquals(cardA.hcursor.downField("requestId").as[String], Right("landing-1"))
     end for
   }
 
-  test("F4: answering a fanned-out card by requestId completes the pending deferred") {
-    val system = nebflow.actor.ActorSystem("hub-test-f4b")
+  test("P0 direct: reachable root keeps the byte-identical direct route (no retarget keys)") {
+    val system = nebflow.actor.ActorSystem("hub-test-landing-b")
+    for
+      hub <- mkHub(system)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
+      deferred <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("landing-2", deferred, rootSid = "root-1"))
+      _ <- IO.sleep(100.millis)
+      events <- sent.get
+      card = events.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
+      _ <- system.stopAll
+    yield
+      assertEquals(card.hcursor.downField("sessionId").as[String], Right("root-1"))
+      assertEquals(card.hcursor.downField("retargetedFrom").focus, None)
+      assertEquals(card.hcursor.downField("retargetReason").focus, None)
+    end for
+  }
+
+  test("P0 retarget + answer: a card answered from its landing session by requestId completes the pending deferred") {
+    val system = nebflow.actor.ActorSystem("hub-test-landing-c")
     for
       hub <- mkHub(system)
       sent <- Ref.of[IO, List[Json]](Nil)
       _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sent.update(_ :+ j))
       deferred <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-2", deferred, rootSid = "zombie"))
+      _ <- hub ! InteractionHubCommand.Request(permRequest("landing-3", deferred, rootSid = "zombie"))
       _ <- IO.sleep(100.millis)
       card = sent.get.map(_.find(_.hcursor.downField("type").as[String].contains("askPermission")).get).unsafeRunSync()
       // user answers from the LIVE window (sessionId = live-root), card was for zombie —
@@ -485,17 +509,26 @@ class InteractionHubSpec extends CatsEffectSuite:
     end for
   }
 
-  test("F4: no registered roots at all keeps the original WARN-drop behavior") {
-    val system = nebflow.actor.ActorSystem("hub-test-f4c")
+  test("P0 zero-reachable: slot is retained (late answer still lands) instead of dropping the request") {
+    val system = nebflow.actor.ActorSystem("hub-test-landing-d")
     for
       hub <- mkHub(system)
       deferred <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-3", deferred, rootSid = "zombie"))
+      _ <- hub ! InteractionHubCommand.Request(permRequest("landing-4", deferred, rootSid = "zombie"))
       _ <- IO.sleep(100.millis)
-      // pending slot still registered — the deferred remains completable
-      completed <- deferred.tryGet
+      // no client ever saw a card — the deferred must remain unsettled (the
+      // requester's bounded wait owns the fail-closed conclusion) …
+      before <- deferred.tryGet
+      // … but the slot stays answerable: a root registering later + answering by
+      // requestId (bridge leg) still wakes the waiter
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("landing-4", "zombie", Json.obj("approved" -> Json.fromBoolean(true)))
+      )
+      answered <- deferred.get.timeout(2.seconds)
       _ <- system.stopAll
-    yield assertEquals(completed, None) // timed-out path still owns auto-deny
+    yield
+      assertEquals(before, None)
+      assertEquals(answered, true)
     end for
   }
 
