@@ -405,7 +405,7 @@ async function legacyRedLeg(page, pageId, s0, tag) {
 test('FMA-SCN-001 ordinary page keeps accessible name without title capsule', async ({ page }) => {
   await bootApp(page);
   await dockTo(page, 'workbench');
-  await page.locator('[data-hero-settings]').click();
+  await page.locator('[data-hub-page="settings"]').click();
   const section = page.locator('.mobile-page[data-page="settings"]');
   await expect(section).toBeVisible();
   await expect(section).toHaveAttribute('aria-label', /\S/);
@@ -499,7 +499,7 @@ for (const [theme, name] of [
     expect(Math.abs(searchRect.dx)).toBeLessThanOrEqual(1);
     expect(Math.abs(searchRect.dy)).toBeLessThanOrEqual(1);
     await dockTo(page, 'workbench');
-    await page.locator('[data-hero-settings]').click();
+    await page.locator('[data-hub-page="settings"]').click();
     const back = page.locator('.mobile-page[data-page="settings"] .mobile-back-btn');
     await expect(back).toBeVisible();
     for (const button of [back]) {
@@ -539,7 +539,7 @@ test('FMA-SCN-002 collapsed search and back icons center in their controls', asy
   }
   await centered(search);
   await dockTo(page, 'workbench');
-  await page.locator('[data-hero-settings]').click();
+  await page.locator('[data-hub-page="settings"]').click();
   await centered(page.locator('.mobile-page[data-page="settings"] .mobile-back-btn'));
 });
 
@@ -573,7 +573,7 @@ test('FMA-SCN-004 reduced motion cancelled edge returns immediately', async ({ p
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await bootApp(page);
   await dockTo(page, 'workbench');
-  await page.locator('[data-hero-settings]').click();
+  await page.locator('[data-hub-page="settings"]').click();
   const section = page.locator('.mobile-page[data-page="settings"]');
   await expect(section).toBeVisible();
   await page.mouse.move(2, 200);
