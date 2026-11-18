@@ -108,9 +108,14 @@ function sourceLegs() {
   const geomRe = /(^|;|\s)(width|height|min-width|min-height|border-radius)\s*:/;
   const sendGeom = geomRe.test(sendBlock);
   const stopGeom = /\S/.test(stopBlock) && geomRe.test(stopBlock);
-  const html = readWeb('index.html');
-  const sendTag = (html.match(/<button id="send-btn"[^>]*>/) || [''])[0];
-  const stopTag = (html.match(/<button id="stop-btn"[^>]*>/) || [''])[0];
+  // ★ 读取面再锚（2026-11-18 ask-button-unify 回批）：主会话 send/stop 标记的**真实
+  //   出生地**是 `js/chatUi.js` 的模板字面量（自 523a21209 起由 index.html 静态迁走，
+  //   见该文件 `#send-btn` / `#stop-btn` 两行）—— 旧腿读 index.html 只能得空串，
+  //   属**查找面过期**的假红，非产品缺陷。改读出生地；断言语义与原来逐条同义
+  //   （两钮都挂同一组件类）并补上同一份字形的 lucide 名（同源证据更硬）。
+  const chatUi = readWeb('js/chatUi.js');
+  const sendTag = (chatUi.match(/<button id="send-btn"[^>]*>[\s\S]*?<\/button>/) || [''])[0];
+  const stopTag = (chatUi.match(/<button id="stop-btn"[^>]*>[\s\S]*?<\/button>/) || [''])[0];
   const dockJs = readWeb('js/askDock.js');
   return {
     turnDefs, turnDefFiles,
@@ -354,7 +359,7 @@ const buttonProps = (page) => page.evaluate(() => {
     return {
       cls: String(el.className || ''),
       width: cs.width, height: cs.height, borderRadius: cs.borderRadius,
-      padding: cs.padding, flexShrink: cs.flexShrink,
+      padding: cs.padding, flexShrink: cs.flexShrink, display: cs.display,
       bg: cs.backgroundColor, borderColor: cs.borderColor, color: cs.color,
       iconW: ss ? ss.width : null, iconH: ss ? ss.height : null, strokeW: ss ? ss.strokeWidth : null,
       hitInset: { top: af.top, right: af.right, bottom: af.bottom, left: af.left },
@@ -424,8 +429,10 @@ test('a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一', async ({ p
   check('c4 input.css `#send-btn` 块零几何声明（宽高/圆角已上抬组件层）',
     !src.sendGeom, `geom=${src.sendGeom}`);
   check('c5 input.css `#stop-btn` 无几何块残留', !src.stopGeom, `geom=${src.stopGeom}`);
-  check('c6 主会话 DOM 挂同一组件类（index.html #send-btn/#stop-btn）',
-    /ds-turn-btn ds-turn-btn--send/.test(src.sendTag) && /ds-turn-btn ds-turn-btn--stop/.test(src.stopTag),
+  check('c6 主会话 DOM 挂同一组件类（js/chatUi.js #send-btn/#stop-btn；标记出生地）',
+    /ds-turn-btn ds-turn-btn--send/.test(src.sendTag) && /ds-turn-btn ds-turn-btn--stop/.test(src.stopTag)
+    // 同源证据加硬：主会话两钮的字形占位名 = 面板腿同一份（lucide send / square）
+    && /data-lucide="send"/.test(src.sendTag) && /data-lucide="square"/.test(src.stopTag),
     `${src.sendTag} | ${src.stopTag}`);
   check('c7 面板 DOM 挂同一组件类（askDock.js）', src.dockSend && src.dockStop,
     JSON.stringify({ send: src.dockSend, stop: src.dockStop }));
@@ -525,24 +532,78 @@ test('a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一', async ({ p
   //   吃画布 chrome 40 档」被新令覆盖，桌面两腿回到**同源同值**（组件类同一份，
   //   几何/图标档/线宽/命中胶囊逐值相等）。不变量：同一组件类 + 圆形 + 语义色 +
   //   与主会话逐值同档（改为相对判据，值单源在 design-system.css，不在本文件抄数）。
-  // ★ 只替换**被新令作废的那一条**（`width === '40px'` 画布 chrome 40 档）为相对判据
-  //   dock ≡ main；`color === 'rgb(7,193,96)'` 这条**原样保留**——它在改前树上就红
-  //   （现盘 color = 白墨、绿在 background，12:52 ② 的文字口径与实现早已分叉），
-  //   属既有红：本批不硬修、也不扩大（改前/改后同一谓词、同一条 FAIL）。
+  // ★ 回批再锚（2026-11-18 第二条；整合批实测的三条假红，**只按原意重锚**）：
+  //   ① 「语义绿/红」原先挂在 `color`（墨色）通道 —— 实现里语义色在 **background**、
+  //      墨是白（主会话腿同）。把该谓词**移到它真实所在的通道**：`bg === 语义色` 且
+  //      `bg ≡ main.bg`，另补 `color ≡ main.color` 钉住墨色逐值同档。断言语义（语义色
+  //      在场 + 两腿同档）与原来同义 —— 不是放宽到「无颜色断言」。
+  //   ② c9 补**命中面实证**：先让遮挡的独立 toast 退场（环境性遮挡，非钮不可点），
+  //      再在**同一条**钮中心/底缘坐标取 elementFromPoint —— 不许挪点、不许退回
+  //      「元素存在即通过」。
+  //   ③ c10 的 rest 态 stop 为 0×0 是**产品口径**：design-system.css
+  //      `.ds-turn-btn--stop{display:none}`（两处共用初始态；busy 由
+  //      js/input/composer.js applyTurnChrome 以内联 display:flex 上位）⇒ rest 断言改为
+  //      「隐藏（display:none 且 0×0）」；「几何不缩水」改到 **busy 臂**上量（与 m 腿同式）。
+  const hitProbe = await page.evaluate(() => {
+    const btn = document.querySelector('.ask-dock .ask-send');
+    if (!btn) return { missing: true };
+    const r = btn.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const desc = (el) => (el ? el.tagName.toLowerCase() + (typeof el.className === 'string' && el.className
+      ? '.' + el.className.split(/\s+/).filter(Boolean).join('.') : '') : 'null');
+    const probe = (x, y) => {
+      const el = document.elementFromPoint(x, y);
+      return { x: Math.round(x), y: Math.round(y), at: desc(el), own: !!(el && (el === btn || btn.contains(el))) };
+    };
+    const center = [cx, r.top + r.height / 2];
+    const bottom = [cx, r.bottom - 2];
+    const withToast = { center: probe(center[0], center[1]), bottom: probe(bottom[0], bottom[1]) };
+    const toasts = [...document.querySelectorAll('.nebflow-toast')].filter((t) => t.classList.contains('show'));
+    const toastTexts = toasts.map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80));
+    toasts.forEach((t) => t.remove());                     // 退场后仍在**同一对坐标**上量
+    const afterDismiss = { center: probe(center[0], center[1]), bottom: probe(bottom[0], bottom[1]) };
+    return {
+      box: { left: +r.left.toFixed(2), top: +r.top.toFixed(2), w: +r.width.toFixed(2), h: +r.height.toFixed(2) },
+      toastTexts, withToast, afterDismiss,
+    };
+  });
+  readings.hitProbe = hitProbe;
+  // busy 臂（与 m 腿同式；rest 态 stop 是 display:none ⇒ 几何比较要有非零读数才不空洞）
+  await page.evaluate(() => {
+    const s = document.querySelector('.ask-dock .ask-send');
+    const t = document.querySelector('.ask-dock .ask-stop');
+    if (s && t) { s.style.display = 'none'; t.style.display = 'flex'; }
+  });
+  await page.waitForTimeout(120);
+  const bpBusy = await buttonProps(page);
+  readings.buttonsBusy = bpBusy;
+  await page.evaluate(() => {
+    const s = document.querySelector('.ask-dock .ask-send');
+    const t = document.querySelector('.ask-dock .ask-stop');
+    if (s && t) { s.style.display = ''; t.style.display = ''; }
+  });
+  await page.waitForTimeout(120);
   check('c9 send：同组件类 + 圆形 + 语义绿 + 与主会话逐值同档（2026-11-18 同源令）',
     /ds-turn-btn/.test(bp.dockSend.cls) && bp.dockSend.borderRadius === '50%'
-    && bp.dockSend.color === 'rgb(7, 193, 96)'
+    && bp.dockSend.bg === 'rgb(7, 193, 96)' && bp.dockSend.bg === bp.mainSend.bg
+    && bp.dockSend.color === bp.mainSend.color
     && bp.dockSend.width === bp.mainSend.width && bp.dockSend.height === bp.mainSend.height
     && bp.dockSend.iconW === bp.mainSend.iconW && bp.dockSend.strokeW === bp.mainSend.strokeW
-    && bp.dockSend.bg === bp.mainSend.bg,
-    JSON.stringify({ main: bp.mainSend, dock: bp.dockSend, diff: dSend }));
-  check('c10 stop：同组件类 + 圆形 + 语义红 + 与主会话逐值同档',
+    && !!hitProbe.afterDismiss && hitProbe.afterDismiss.center.own && hitProbe.afterDismiss.bottom.own,
+    JSON.stringify({ main: bp.mainSend, dock: bp.dockSend, diff: dSend, hit: hitProbe }));
+  check('c10 stop：同组件类 + 圆形 + 语义红 + 与主会话逐值同档（rest 隐藏 / busy 不缩水）',
     /ds-turn-btn/.test(bp.dockStop.cls) && bp.dockStop.borderRadius === '50%'
-    && bp.dockStop.color === 'rgb(244, 67, 54)'
-    && bp.dockStop.width === bp.mainStop.width && bp.dockStop.height === bp.mainStop.height
-    && bp.dockStop.iconW === bp.mainStop.iconW && bp.dockStop.strokeW === bp.mainStop.strokeW
-    && bp.dockStop.bg === bp.mainStop.bg,
-    JSON.stringify({ main: bp.mainStop, dock: bp.dockStop, diff: dStop }));
+    && bp.dockStop.bg === 'rgb(244, 67, 54)' && bp.dockStop.bg === bp.mainStop.bg
+    && bp.dockStop.color === bp.mainStop.color
+    // rest 口径：stop 隐藏（display:none 且 0×0）—— 产品口径见上方 ★ ③
+    && bp.dockStop.display === 'none' && bp.dockStop.box.w === 0 && bp.dockStop.box.h === 0
+    && bp.mainStop.display === 'none' && bp.mainStop.box.w === 0 && bp.mainStop.box.h === 0
+    // busy 臂：stop 上位时几何/图标/线宽与主会话**逐值同档**（不缩水）
+    && bpBusy.dockStop.display !== 'none' && bpBusy.dockStop.box.w > 0
+    && bpBusy.dockStop.width === bp.mainSend.width && bpBusy.dockStop.height === bp.mainSend.height
+    && bpBusy.dockStop.iconW === bp.mainSend.iconW && bpBusy.dockStop.strokeW === bp.mainSend.strokeW
+    && bpBusy.dockStop.borderRadius === '50%',
+    JSON.stringify({ main: bp.mainStop, dock: bp.dockStop, dockBusy: bpBusy.dockStop, diff: dStop }));
   check('c11 两处都挂同一 .ds-* 组件类（send）',
     /(^|\s)ds-turn-btn(\s|$)/.test(bp.mainSend.cls) && /(^|\s)ds-turn-btn(\s|$)/.test(bp.dockSend.cls),
     `${bp.mainSend.cls} | ${bp.dockSend.cls}`);
