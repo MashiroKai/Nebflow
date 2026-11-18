@@ -83,10 +83,24 @@ final class PdfCache(
   def mediaPath(sha: String, rel: String): os.Path = entryDir(sha) / os.RelPath(rel)
 
   /**
+   * Entry-relative page index (`index.json`) — the ask leg's discovery surface.
+   *
+   * The index is what makes "read the manifest/directory first, then only the
+   * matching pages" true: the ask resolves a question's terms against the index
+   * (term → posting list of page numbers) and then opens ONLY those pages,
+   * instead of reading every page file to find out which ones match.
+   */
+  def indexPath(sha: String): os.Path = entryDir(sha) / "index.json"
+
+  /**
    * Read a COMPLETE entry, or `None`. Never parses, never repairs.
    *
-   * A manifest whose `markdown_version` is not the current one is a miss (an
-   * entry produced by an older shape must be rebuilt, never half-served).
+   * Completeness is part of the contract, not a convention: an entry is served
+   * only when the manifest is readable, carries the current `markdown_version`,
+   * AND its page index is present. An entry produced by an older shape is a miss
+   * (it must be rebuilt, never half-served), and the same goes for a manifest
+   * without the index its own version promises — the ask leg would otherwise have
+   * no honest way to select pages without reading the whole document.
    */
   def lookup(sha: String): IO[Option[PdfManifest]] =
     IO.blocking {
@@ -94,7 +108,13 @@ final class PdfCache(
       if !os.exists(meta) then None
       else
         PdfManifest.decode(os.read(meta)) match
-          case Right(m) if m.markdownVersion == PdfParser.MarkdownVersion => Some(m)
+          case Right(m) if m.markdownVersion == PdfParser.MarkdownVersion =>
+            if os.exists(indexPath(sha)) then Some(m)
+            else
+              logger.infoSync(
+                s"pdf-cache incomplete sha=${sha.take(12)} markdown_version=${m.markdownVersion} — index.json is absent, treating as a miss"
+              )
+              None
           case Right(m) =>
             logger.infoSync(
               s"pdf-cache stale sha=${sha.take(12)} markdown_version=${m.markdownVersion} != ${PdfParser.MarkdownVersion} — treating as a miss"
@@ -166,7 +186,10 @@ final class PdfCache(
     // "this install cannot parse" from "this PDF cannot be parsed".
     PdfParser.materializeScript(scriptDir) match
       case Left(missing) => IO.pure(Left(missing))
-      case Right(script) => parseWithScript(sha, pdf, displayName, script)
+      case Right(script) =>
+        // Counted at the one point a parser subprocess is about to run — the
+        // observable the single-flight contract is judged on.
+        IO.delay(PdfCache.countParseStart(root)) *> parseWithScript(sha, pdf, displayName, script)
 
   private def parseWithScript(
     sha: String,
@@ -216,13 +239,44 @@ final class PdfCache(
     if !os.exists(meta) then None
     else PdfManifest.decode(os.read(meta)).toOption.filter(_.markdownVersion == PdfParser.MarkdownVersion)
 
-  /** Read one page's Markdown from a COMPLETE entry (an on-demand page read). */
+  /**
+   * Read one page's Markdown from a COMPLETE entry (an on-demand page read).
+   *
+   * Every call is counted ([[PdfCache.pageReadsFor]]) — the page-read count is
+   * the observable that makes "only the matching pages were opened" a fact a
+   * reviewer can re-derive, rather than a claim about an internal loop.
+   */
   def readPage(sha: String, page: Int): IO[Either[String, String]] =
     IO.blocking {
+      PdfCache.countPageRead(root)
       val p = pagePath(sha, page)
       if !os.exists(p) then Left(s"page $page is not in the cache entry for ${sha.take(12)}")
       else Right(os.read(p))
     }.handleErrorWith(e => IO.pure(Left(s"cannot read page $page: ${e.getMessage}")))
+
+  /**
+   * Read the entry's page index. This is a DISCOVERY read (it holds terms, not
+   * page bodies), so it is deliberately not counted as a page read.
+   */
+  def readIndex(sha: String): IO[Option[PdfIndex]] =
+    IO.blocking {
+      val p = indexPath(sha)
+      if !os.exists(p) then None
+      else
+        PdfIndex.decode(os.read(p)) match
+          case Right(idx) if idx.markdownVersion == PdfParser.MarkdownVersion => Some(idx)
+          case Right(idx) =>
+            logger.infoSync(
+              s"pdf-index stale sha=${sha.take(12)} markdown_version=${idx.markdownVersion} != ${PdfParser.MarkdownVersion} — ignoring"
+            )
+            None
+          case Left(why) =>
+            logger.warnSync(s"pdf-index unreadable sha=${sha.take(12)}: $why — ignoring")
+            None
+    }.handleErrorWith { e =>
+      logger.warnSync(s"pdf-index read failed sha=${sha.take(12)}: ${e.getMessage}")
+      IO.pure(None)
+    }
 
   /** Number of entries currently on disk (evidence + cleanup accounting). */
   def entryCount: IO[Int] =
@@ -247,3 +301,63 @@ object PdfCache:
   /** Cache for one instance data root. */
   def forDataRoot(dataRoot: os.Path): PdfCache =
     new PdfCache(rootFor(dataRoot), scriptDirFor(dataRoot))
+
+  // ── process-wide instance registry (P0: the HTTP ask leg) ────────────────
+  //
+  // A cache instance carries the in-memory single-flight map, the manifest it
+  // has already read and the writer lock for one data root. Constructing a NEW
+  // one per HTTP request throws all three away: four concurrent asks for the
+  // same document then run four parses (each its own flight registry), four
+  // publication races and four times the disk work — the dedup only ever worked
+  // for callers that happened to share an instance.
+  //
+  // One instance per data root is the correct granularity: the data root is the
+  // single configuration input, so process-wide sharing cannot leak across
+  // instances (each Stand process has its own data root), and a test that points
+  // `PathUtil` at a fresh temp root still gets a fresh, isolated cache.
+  private val shared = new java.util.concurrent.ConcurrentHashMap[String, PdfCache]()
+
+  /** The process-wide cache for one data root (created once, then reused). */
+  def sharedForDataRoot(dataRoot: os.Path): PdfCache =
+    val key = dataRoot.toString
+    val existing = shared.get(key)
+    if existing != null then existing
+    else
+      val fresh = forDataRoot(dataRoot)
+      val raced = shared.putIfAbsent(key, fresh)
+      if raced != null then raced else fresh
+
+  /**
+   * Drop the process-wide instance for one data root.
+   *
+   * The registry lives for the process (that is the point), so a harness that
+   * points the data root at a fresh temp directory and then deletes it must be
+   * able to retire the instance in the same step — otherwise a later test that
+   * reuses the path would inherit a cache holding a vanished entry.
+   */
+  def forgetShared(dataRoot: os.Path): Unit = shared.remove(dataRoot.toString)
+
+  // ── observability counters (keyed by cache root) ─────────────────────────
+  //
+  // Process-wide and keyed by the cache root, so a metric answers "how many
+  // parses did this instance start for this data root" regardless of how many
+  // cache instances a caller built — that is exactly the fact the single-flight
+  // fix has to be judged on.
+  private val parsesStarted = new java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicLong]()
+  private val pagesRead = new java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicLong]()
+
+  private def counter(
+    into: java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicLong],
+    root: os.Path
+  ): java.util.concurrent.atomic.AtomicLong =
+    into.computeIfAbsent(root.toString, _ => new java.util.concurrent.atomic.AtomicLong())
+
+  private def countPageRead(root: os.Path): Unit = counter(pagesRead, root).incrementAndGet()
+
+  private[pdf] def countParseStart(root: os.Path): Unit = counter(parsesStarted, root).incrementAndGet()
+
+  /** Parses started for one cache root since the process began. */
+  def parseStartsFor(root: os.Path): Long = counter(parsesStarted, root).get()
+
+  /** Page Markdown reads performed for one cache root since the process began. */
+  def pageReadsFor(root: os.Path): Long = counter(pagesRead, root).get()
