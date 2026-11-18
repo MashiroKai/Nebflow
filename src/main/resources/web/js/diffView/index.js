@@ -209,6 +209,6 @@ export async function mountDiff(host, opts = {}) {
 
   const api = { view, destroy, setWrap, getWrap: () => wrap };
   // 测试/取证接缝：把组件 api 挂在编辑宿主上（规格与截图脚本读取虚拟化读数）。
-  editorHost.__nfDiffApi = api;
+  /** @type {any} */ (editorHost).__nfDiffApi = api;
   return api;
 }
