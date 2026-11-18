@@ -41,7 +41,6 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
 // 为什么在产品侧：打包后 `/js/xxx.js` 路由不存在、导出名被压成单字母别名，
 // 验证脚本只能从产品自己的模块图取到**同一实例**，否则键盘闸永远只能验源树。
 installProbeSurface();
-installDecisionCardPreview();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
 // mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
@@ -62,7 +61,6 @@ import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArr
 // 清单 provider。两个模块都在这里 import 一次，引擎与渲染从此各有一份真源。
 import './todoComplete.js';
 import { todoStore } from './todoStore.js';
-import { installDecisionCardPreview } from './decisionCardPreview.js';
 import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
 import { initHotStampWatch } from './hotStamp.js'; // 台账 #919：热更新地基——asset stamp 轮询自愈（端点缺席 = 静默空转）
 // 冻结状态两套真相批（2026-11-05）：冻结面的合并/派生单点在 freezeState.js

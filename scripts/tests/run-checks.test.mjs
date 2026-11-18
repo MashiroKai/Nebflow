@@ -22,6 +22,7 @@ test('registry names are unique and all checks have explicit bounded argv', () =
   assert.ok(CHECKS.find(check => check.name === 'js-types').timeoutMs > 120_000);
   assert.ok(!selectChecks('static').find(check => check.name === 'sdd').argv.includes('--base'));
   assert.ok(selectChecks('frontend').every(check => !check.argv.join(' ').includes('node_modules')));
+  assert.ok(selectChecks('frontend').some(check => check.name === 'mobile-decision-preview-occlusion' && check.argv.includes('tests/mobile-decision-preview-occlusion.spec.mjs')));
   assert.deepEqual(selectChecks('sdd-changed', 'main')[0].argv.slice(-2), ['--base', 'main']);
   assert.throws(() => selectChecks('unknown'));
   assert.throws(() => selectChecks('sdd-changed'));

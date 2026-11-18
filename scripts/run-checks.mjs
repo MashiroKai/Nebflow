@@ -24,6 +24,8 @@ export const CHECKS = [
     argv: [process.execPath, 'tests/chat-ui-computed.mjs'] },
   { name: 'mobile-canvas-hit-clearance', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-canvas-hit-clearance.spec.mjs'] },
+  { name: 'mobile-decision-preview-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
+    argv: [process.execPath, 'tests/mobile-decision-preview-occlusion.spec.mjs'] },
   { name: 'media-gallery', profiles: ['frontend'], timeoutMs: 120_000,
     argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/mobile-image-gallery.spec.mjs', 'tests/media-click-unify.spec.mjs', '--workers=1'] },
   nodeCheck('bubble-side', 'check-bubble-side'),
