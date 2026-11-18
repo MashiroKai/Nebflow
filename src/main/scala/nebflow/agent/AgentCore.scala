@@ -125,26 +125,69 @@ object AgentCore:
     (total, lastFp)
 
   /**
-   * R1 (wait-timeout-fix, 2026-09-03 作者裁定①): the permission-confirmation
-   * wait primitive — completes ONLY when the user answers, no timeout. This is
-   * the single seam for the "permission waits are unbounded" invariant;
-   * WaitTimeoutR1PermissionSpec pins it with a virtual clock (pending across
-   * 6min ≫ the removed 5min PermissionTimeout → still waiting; late answer
-   * honored). Caller: AgentCore.askUserPermission (the only permission wait).
+   * permission-landing 批 P1（2026-11-18 重派裁定）：权限等待超时上限（毫秒）。
+   *
+   * - 可配置：环境变量 `NEBFLOW_PERMISSION_WAIT_TIMEOUT_SEC`（>0 才生效）。
+   * - 缺省 600_000（10min）。理由：R1（2026-09-03）移除的是「5min 硬顶在用户
+   *   **能答** 时抢先自动拒绝」；本批要堵的是另一面——用户**答不了**（目标会话
+   *   不可达 / 无人盯屏 / 卡从未渲染）时请求方无限挂起（现场实测节点
+   *   WaitingForUser 40-60min、父链级联 Idle）。10min = 比被移除的 5min 宽松
+   *   一倍（离开座位的普通人仍来得及批），又比卡死现场小一个量级（链上停滞
+   *   的代价上限被钉死在 10min）。
+   * - 超时结局 = 失败关闭（fail-closed deny）：绝不放行，只按拒绝收口。
    */
-  def awaitPermissionDecision(deferred: cats.effect.Deferred[IO, Boolean]): IO[Boolean] =
-    deferred.get
+  def permissionWaitTimeoutMs: Long =
+    sys.env
+      .get("NEBFLOW_PERMISSION_WAIT_TIMEOUT_SEC")
+      .flatMap(_.trim.toLongOption)
+      .filter(_ > 0)
+      .map(_ * 1000L)
+      .getOrElse(600_000L)
+
+  /** 权限等待结局：用户真实答复，或超时（等待方据此失败关闭，绝不静默）。 */
+  enum PermissionWaitOutcome:
+    /** 用户真实答复（approved=true 允许 / false 拒绝——#12 劝停计数只对这条腿生效）。 */
+    case Answered(approved: Boolean)
+    /** 有界截止到期：等待期间无任何可达窗口作答 ⇒ 调用方按拒绝收口并写明原因。 */
+    case TimedOut(afterMs: Long)
 
   /**
-   * P0-1（2026-09-20）：mcpPermission 卡的等待原语 —— 与 [[awaitPermissionDecision]]
-   * **同一不变式**（只由用户答复完成、无超时、Interrupt 唯一出口），只是答复型别
-   * 携带 `scope` / `upgradeMode`（spec §2.4）。第二个 seam 而非改造第一个：
-   * 内置工具审批链的等待语义逐字不变（A1-8）。
+   * permission-landing 批 P1：**有界**权限等待原语（取代 R1 的无界
+   * `deferred.get`——2026-11-18 重派裁定推翻「等待无超时」口径：等待方必须有
+   * 超时）。等待期内用户作答 ⇒ [[PermissionWaitOutcome.Answered]] 如实返回
+   *（迟到回答照常生效，R1 的「人能答时不抢先拒绝」语义保留）；到期 ⇒ 先执行
+   * `withdraw`（调用方用 InteractionHubCommand.CloseRequest 精确回收槽位 + 广播
+   * 关卡帧，卡片不再挂在没人听的位置）再以 [[PermissionWaitOutcome.TimedOut]]
+   * 返回——由调用方写一条可读的失败关闭结论（不计入 #12 用户拒绝计数）。
+   * `timeoutMs <= 0` 防御性视为无界（唯一产线取值来自 [[permissionWaitTimeoutMs]]
+   * 的 >0 过滤，正常不可达）。
    */
-  def awaitMcpPermissionDecision(
-    deferred: cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer]
-  ): IO[nebflow.shared.McpPermissionAnswer] =
-    deferred.get
+  def awaitPermissionDecisionBounded(
+    deferred: cats.effect.Deferred[IO, Boolean],
+    timeoutMs: Long,
+    withdraw: IO[Unit]
+  ): IO[PermissionWaitOutcome] =
+    if timeoutMs <= 0 then deferred.get.map(PermissionWaitOutcome.Answered(_))
+    else
+      deferred.get
+        .map(PermissionWaitOutcome.Answered(_))
+        .timeoutTo(timeoutMs.millis, withdraw.as(PermissionWaitOutcome.TimedOut(timeoutMs)))
+
+  /**
+   * P0-1（2026-09-20）+ permission-landing 批 P1：mcpPermission 卡的有界等待原语
+   * ——与 [[awaitPermissionDecisionBounded]] 同一不变式（有界、超时失败关闭、
+   * 迟到回答照常生效），只是答复型别携带 `scope` / `upgradeMode`（spec §2.4）。
+   */
+  def awaitMcpPermissionDecisionBounded(
+    deferred: cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer],
+    timeoutMs: Long,
+    withdraw: IO[Unit]
+  ): IO[Either[Long, nebflow.shared.McpPermissionAnswer]] =
+    if timeoutMs <= 0 then deferred.get.map(Right(_))
+    else
+      deferred.get
+        .map(Right(_))
+        .timeoutTo(timeoutMs.millis, withdraw.as(Left(timeoutMs)))
 
   /**
    * #12 劝停: error text for the n-th user denial of `toolName` within one

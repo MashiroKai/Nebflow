@@ -25,14 +25,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
 
   protected val MaxDepth = 5
 
-  // R1 (wait-timeout-fix, 2026-09-03 作者裁定): the 5-minute PermissionTimeout
-  // is REMOVED. A permission confirmation is a human-in-the-loop wait — the
-  // same class as AskUser — and must never auto-deny on a timer. The old
-  // "popup missed / WS issue / AFK" lockup concern is covered by visibility
-  // mechanisms instead: the hub card + F4 fallback broadcast (unreachable root
-  // → toast on every other registered root) + pending replay on session
-  // resubscribe. The guaranteed exit is the user's own cancel (Interrupt →
-  // registry back to Idle), not a timer. See AgentCore.awaitPermissionDecision.
+  // R1（wait-timeout-fix，2026-09-03）→ permission-landing 批 P1（2026-11-18 重派
+  // 裁定「超时必到」）：R1 移除的是「用户**能答**时 5min 定时器抢先自动拒绝」；
+  // 但「用户**答不了**」（目标会话不可达 / 卡从未渲染到任何窗口）时无界等待成了
+  // 纯债务（现场：节点 WaitingForUser 40-60min、父链级联 Idle）。现口径 = 有界
+  // 等待（AgentCore.awaitPermissionDecisionBounded，可配置
+  // NEBFLOW_PERMISSION_WAIT_TIMEOUT_SEC，缺省 10min）：等待期内作答照常生效（R1
+  // 保住的那半边），到期失败关闭（deny）+ 可读结论 + 精确撤卡（CloseRequest），
+  // 不计入 #12 用户拒绝。Interrupt 仍是任何时刻的用户出口。
 
   // Nebula 专属工具的剥离语义已收口到 AgentCore.exclusiveToolsFor 单点
   // （2026-09-05 dream 准入例外：MemoryNote 对 dream 放开，动作面仍限修订）。
@@ -2087,9 +2087,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               // P2: every agent (root or sub-agent) sends the request straight to
               // the InteractionHub — no depth/parentRef relay chain. The hub holds
               // the Deferred, renders the card in the Nebula window and routes the
-              // answer back by requestId. NO timeout on the requesting side
-              // (R1, wait-timeout-fix): the wait is indefinite, isomorphic to
-              // AskUser (actor ask timeout=None).
+              // answer back by requestId. permission-landing 批 P1（2026-11-18）后
+              // 等待**有界**：AgentCore.awaitPermissionDecisionBounded（重派裁定
+              // 「等待方必须有超时」取代 R1 的无界口径）——到期失败关闭、可读结论、
+              // 不计用户拒绝。
               val sourceAgent = toolCtx.agentDef.map(_.name).getOrElse("unknown")
               val sourceSession = state.sessionId.getOrElse("")
               val rootSessionId =
@@ -2102,7 +2103,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 // the removed 5min timer being < the 10min stuck threshold).
                 // Paired un-mark below: decision landed → Processing.
                 _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser)
-                _ <- sendPermissionRequest(
+                ridOpt <- sendPermissionRequest(
                   toolCtx,
                   state,
                   permJson,
@@ -2111,29 +2112,46 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   sourceSession,
                   rootSessionId
                 )
-                // R1: wait indefinitely for the user's decision (no auto-deny).
-                approved <- AgentCore.awaitPermissionDecision(deferred)
+                // permission-landing 批 P1：有界等待——等待期内用户作答 ⇒ 如实返回
+                //（迟到回答照常生效）；到期 ⇒ 先按 requestId 精确撤回槽位
+                //（CloseRequest：关卡帧广播到所有可能显卡的窗口）再以 TimedOut
+                // 失败关闭收口。
+                decision <- AgentCore.awaitPermissionDecisionBounded(
+                  deferred,
+                  AgentCore.permissionWaitTimeoutMs,
+                  withdrawPermissionRequest(toolCtx.sharedResources, ridOpt)
+                )
                 _ <- permissionDeferredRef.set(None)
                 // R2 closure: the decision landed — restore Processing with a
                 // fresh activity stamp so the watcher's idle window restarts here
                 // (paired with the WaitingForUser mark above).
                 _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Processing)
-                result <-
-                  if approved then executeTool(call, toolCtx)
-                  else
-                    // #12 劝停（用户 2026-08-20 批准）：第 ≥2 次用户拒绝时注入
-                    // system-reminder——对齐 retryableHint 模式，防 LLM 无限重试。
-                    // （R1 移除超时后不存在「超时不计数」路径——这里的每一次拒绝
-                    // 都是用户真实操作。）
-                    permissionDenialsRef
-                      .modify { m =>
-                        val n = m.getOrElse(call.name, 0) + 1
-                        (m.updated(call.name, n), n)
-                      }
-                      .flatMap { n =>
-                        val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
-                        logToolStructured(call, toolCtx, r).as(r)
-                      }
+                result <- decision match
+                  case AgentCore.PermissionWaitOutcome.TimedOut(afterMs) =>
+                    // 超时 = 失败关闭：按拒绝处理，但**不计入** #12 用户拒绝计数
+                    //（非用户真实操作），结论文本写明原因与调参入口。
+                    val r = ToolExecResult(
+                      s"权限等待超时（${afterMs / 1000}s，可用环境变量 NEBFLOW_PERMISSION_WAIT_TIMEOUT_SEC 调整）："
+                        + "等待期间无任何可达窗口作答，已失败关闭——本次按拒绝处理（未计入用户拒绝）",
+                      isError = true
+                    )
+                    logToolStructured(call, toolCtx, r).as(r)
+                  case AgentCore.PermissionWaitOutcome.Answered(approved) =>
+                    if approved then executeTool(call, toolCtx)
+                    else
+                      // #12 劝停（用户 2026-08-20 批准）：第 ≥2 次用户拒绝时注入
+                      // system-reminder——对齐 retryableHint 模式，防 LLM 无限重试。
+                      //（permission-landing 批 P1 后超时腿走上面的 TimedOut 分支、
+                      // 不进本计数——这里的每一次拒绝都是用户真实操作。）
+                      permissionDenialsRef
+                        .modify { m =>
+                          val n = m.getOrElse(call.name, 0) + 1
+                          (m.updated(call.name, n), n)
+                        }
+                        .flatMap { n =>
+                          val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
+                          logToolStructured(call, toolCtx, r).as(r)
+                        }
               yield result
               end for
             }
@@ -2141,7 +2159,31 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       }.flatten
     }
 
-  /** Send a permission request to the InteractionHub (P2), or fall back to P1 local render. */
+  /**
+   * permission-landing 批 P1（2026-11-18）：超时撤回——按 requestId **精确**回收 hub
+   * 槽位（`CloseRequest`：幂等 + 广播 askUserClosed 关卡帧到所有可能显卡的窗口）。
+   * 与 `CleanupForSession` 的区别同 #147 接线段：不按 sourceSession 批量回收，同
+   * 会话其它 pending 卡不受牵连。`ridOpt=None`（hub 未接线 / 本地渲染腿）⇒ no-op。
+   */
+  private def withdrawPermissionRequest(
+    resourcesOpt: Option[AgentRuntimePort],
+    requestIdOpt: Option[String]
+  ): IO[Unit] =
+    requestIdOpt.traverse_ { rid =>
+      resourcesOpt.traverse_(_.interactionHubRef.get.flatMap {
+        case Some(hub) => (hub ! InteractionHubCommand.CloseRequest(rid)).void
+        case None      => IO.unit
+      })
+    }
+
+  /**
+   * Send a permission request to the InteractionHub (P2), or fall back to P1 local render.
+   *
+   * permission-landing 批 P1（2026-11-18）：返回 `Some(requestId)`（hub 路径）——
+   * 调用方的有界等待到期时凭它精确撤回槽位（`CloseRequest`：关卡帧广播 + 幂等回收），
+   * 卡片不再挂在「没人在听」的位置。`None` = hub 未接线（early boot / 隔离单测），
+   * 超时撤回无可撤对象。
+   */
   private def sendPermissionRequest(
     toolCtx: ToolContext,
     state: AgentState,
@@ -2150,7 +2192,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     sourceAgent: String,
     sourceSession: String,
     rootSessionId: String
-  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+  )(using ctx: ActorContext[AgentCommand]): IO[Option[String]] =
     // Origin attribution for the permission card: flow name (parsed from
     // sessionName "flowName/nodeId" set by FlowDagExecutor, confirmed via
     // agentRegistry kind == Flow so a standalone agent whose sessionName happens
@@ -2169,24 +2211,26 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       enrichment =
         flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
       enriched = permJson.deepMerge(enrichment)
-      _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
+      rid <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
         case Some(hub) =>
-          (hub ! InteractionHubCommand.Request(
-            InteractionRequest(
-              // #250 第⑤项：requestId 熵强化（单点生成器，作用域 perm-）
-              requestId = InteractionRequestId.forPermission(),
-              kind = InteractionKind.Permission,
-              payload = enriched,
-              reply = InteractionReply.PermissionReply(deferred),
-              rootSessionId = rootSessionId,
-              sourceAgent = sourceAgent,
-              sourceSession = sourceSession
-            )
-          )).void
+          IO.delay(InteractionRequestId.forPermission()).flatTap { rid =>
+            (hub ! InteractionHubCommand.Request(
+              InteractionRequest(
+                // #250 第⑤项：requestId 熵强化（单点生成器，作用域 perm-）
+                requestId = rid,
+                kind = InteractionKind.Permission,
+                payload = enriched,
+                reply = InteractionReply.PermissionReply(deferred),
+                rootSessionId = rootSessionId,
+                sourceAgent = sourceAgent,
+                sourceSession = sourceSession
+              )
+            )).void
+          }.map(Some(_))
         case None =>
           // Hub not spawned (early boot / tests): P1 fallback — the requesting
           // agent holds the Deferred itself and renders locally.
-          (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
+          ((ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
             state.wsSend(
               enriched.deepMerge(
                 Json.obj(
@@ -2195,9 +2239,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   "sourceSession" -> sourceSession.asJson
                 )
               )
-            )
+            )).as(None)
       }
-    yield ()
+    yield rid
 
     end for
 
@@ -2243,7 +2287,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               for
                 // R2：等待期标记 WaitingForUser（与内置审批卡同款，watcher 不误判 stuck）
                 _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser)
-                _ <- sendMcpPermissionRequest(
+                ridOpt <- sendMcpPermissionRequest(
                   toolCtx,
                   state,
                   cardJson,
@@ -2252,24 +2296,38 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   sourceSession,
                   rootSessionId
                 )
-                // R1：无限等待（无超时、无自动拒绝）
-                answer <- AgentCore.awaitMcpPermissionDecision(deferred)
+                // permission-landing 批 P1：与内置审批卡同款有界等待——到期先按
+                // requestId 精确撤回槽位（CloseRequest）再失败关闭（可读结论、
+                // 不计用户拒绝），等待期内作答照常生效。
+                decision <- AgentCore.awaitMcpPermissionDecisionBounded(
+                  deferred,
+                  AgentCore.permissionWaitTimeoutMs,
+                  withdrawPermissionRequest(toolCtx.sharedResources, ridOpt)
+                )
                 _ <- answerRef.set(None)
                 _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Processing)
-                result <-
-                  if answer.approved then executeTool(call, toolCtx)
-                  else
-                    // 拒绝路径语义 = 现内置 deny 分支同款：调用返回 deny 结果给模型（spec §2.3）
-                    // （P0-2 的 scope=session 由 InteractionHub 在答复单点记录，见 InteractionHub.complete）
-                    permissionDenialsRef
-                      .modify { m =>
-                        val n = m.getOrElse(call.name, 0) + 1
-                        (m.updated(call.name, n), n)
-                      }
-                      .flatMap { n =>
-                        val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
-                        logToolStructured(call, toolCtx, r).as(r)
-                      }
+                result <- decision match
+                  case Left(afterMs) =>
+                    val r = ToolExecResult(
+                      s"mcpPermission 等待超时（${afterMs / 1000}s，可用环境变量 NEBFLOW_PERMISSION_WAIT_TIMEOUT_SEC 调整）："
+                        + "等待期间无任何可达窗口作答，已失败关闭——本次按拒绝处理（未计入用户拒绝）",
+                      isError = true
+                    )
+                    logToolStructured(call, toolCtx, r).as(r)
+                  case Right(answer) =>
+                    if answer.approved then executeTool(call, toolCtx)
+                    else
+                      // 拒绝路径语义 = 现内置 deny 分支同款：调用返回 deny 结果给模型（spec §2.3）
+                      // （P0-2 的 scope=session 由 InteractionHub 在答复单点记录，见 InteractionHub.complete）
+                      permissionDenialsRef
+                        .modify { m =>
+                          val n = m.getOrElse(call.name, 0) + 1
+                          (m.updated(call.name, n), n)
+                        }
+                        .flatMap { n =>
+                          val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
+                          logToolStructured(call, toolCtx, r).as(r)
+                        }
               yield result
               end for
             }
@@ -2292,7 +2350,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     sourceAgent: String,
     sourceSession: String,
     rootSessionId: String
-  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+  )(using ctx: ActorContext[AgentCommand]): IO[Option[String]] =
     val resourcesOpt = toolCtx.sharedResources
     for
       recordOpt <- resourcesOpt
@@ -2304,21 +2362,23 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       enrichment =
         flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
       enriched = cardJson.deepMerge(enrichment)
-      _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
+      rid <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
         case Some(hub) =>
-          (hub ! InteractionHubCommand.Request(
-            InteractionRequest(
-              requestId = InteractionRequestId.forPermission(),
-              kind = InteractionKind.McpPermission,
-              payload = enriched,
-              reply = InteractionReply.McpPermissionReply(deferred),
-              rootSessionId = rootSessionId,
-              sourceAgent = sourceAgent,
-              sourceSession = sourceSession
-            )
-          )).void
+          IO.delay(InteractionRequestId.forPermission()).flatTap { rid =>
+            (hub ! InteractionHubCommand.Request(
+              InteractionRequest(
+                requestId = rid,
+                kind = InteractionKind.McpPermission,
+                payload = enriched,
+                reply = InteractionReply.McpPermissionReply(deferred),
+                rootSessionId = rootSessionId,
+                sourceAgent = sourceAgent,
+                sourceSession = sourceSession
+              )
+            )).void
+          }.map(Some(_))
         case None =>
-          IO.delay(
+          (IO.delay(
             NebflowLogger
               .forName("nebflow.audit")
               .infoSync(
@@ -2330,9 +2390,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             deferred
               .complete(nebflow.shared.McpPermissionAnswer(approved = false, scope = None, upgradeMode = None))
               .void
-              .handleErrorWith(_ => IO.unit)
+              .handleErrorWith(_ => IO.unit)).as(None)
       }
-    yield ()
+    yield rid
 
     end for
 
