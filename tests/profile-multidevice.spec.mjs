@@ -7,6 +7,9 @@
 //      在导航表里不复存在（点不到 = 真退役，不是藏起来）。
 //   ② 只读身份 + 官网编辑指引：资料面零可编辑控件、零指向官网账号页的 <a href>、
 //      零 window.open；指引以**纯文本**给出落点。
+//      ⚠️ profile-complete 批（2026-11-18 作者令「在个人主页再次点击头像要能跳转
+//      官网」）把手机 me 页的外链裁定收窄为「恰有一枚 = 资料卡大头像（官网出口）」；
+//      桌面资料面与「编辑落点」那段纯文本指引的零外链口径**不变**（本 spec 判据同步）。
 //   ③ 设备清单：名称 / 平台 / 最近活动 / 状态 / 本机标记 —— 每行都有。
 //   ④ 逐设备独立退出：本机行 = 既有唯一登出链（end-session），**不发**设备域请求；
 //      对端行 = 只带**该行自己的** deviceId 的设备域请求，**不发** end-session、
@@ -49,7 +52,7 @@ async function boot(page, mobile, { peers = PEERS } = {}) {
         { method: req.method(), path: p }).catch(() => {});
       if (p === '/api/neblink/status') {
         return route.fulfill({
-          json: { loggedIn: true, device: { ...SELF, displayName: 'Fixture User', email: 'fixture@example.test' }, peers },
+          json: { loggedIn: true, device: { ...SELF, displayName: 'Fixture User', email: 'fixture@example.test', githubLogin: 'FixtureGitHub' }, peers },
         });
       }
       if (p === '/api/users/search') {
@@ -147,7 +150,14 @@ for (const mobile of [false, true]) {
     } else {
       const me = page.locator('.mobile-page[data-page="me"]');
       await expect(me.locator('input, select, textarea, [contenteditable="true"], [role="switch"]')).toHaveCount(0);
-      await expect(me.locator('a[href]')).toHaveCount(0);
+      // ⚠️ profile-complete 批（2026-11-18）：手机个人主页**恰有一枚**外链 = 资料卡
+      //    大头像（官网出口，作者令「在个人主页再次点击头像要能跳转官网」）。旧判据
+      //    「零 <a href>」按新裁定收窄为「外链只有头像这一枚」；桌面资料面仍零外链。
+      await expect(me.locator('a[href]')).toHaveCount(1);
+      const avatar = me.locator('.mf-me-avatar-frame.huge');
+      await expect(avatar).toHaveAttribute('href', 'https://mystand.space');
+      await expect(avatar).toHaveAttribute('target', '_blank');
+      await expect(avatar).toHaveAttribute('rel', 'noopener noreferrer');
       await expect(me.locator('.mf-me-hint')).toContainText('mystand.space');
       expect(await page.evaluate(() => window.__openCalls.length)).toBe(0);
     }

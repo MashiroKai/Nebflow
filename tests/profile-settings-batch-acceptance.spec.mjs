@@ -17,6 +17,15 @@
 //    + **零假可编辑控件**（身份卡与资料面 input/select/textarea/[contenteditable]/
 //    [role=switch] 计数恒 0）」。缺口已在交付报告"账号服务能力矩阵"逐条列出。
 //
+// ⚠️ ⑤ 的判据在 profile-complete 批（2026-11-18 作者令「个人主页信息很多都没获取全
+//    比如 github 绑定信息」「在个人主页再次点击头像要能跳转官网」）后**逐条更新**：
+//    · GitHub 绑定 = 真实读数（`status.device.githubLogin`；该字段一直由
+//      `/api/neblink/status` 返回，修前只是前端未映射）—— 不再是「未知」；
+//    · Google 绑定 = 未知 **且必须有缺口说明**（作者令「不许留未知而不解释」）；
+//    · 外链审计从**全文档**收窄为**面域**（身份卡 / 资料面）：本批有意在手机个人主页
+//      加了一枚官网出口（资料卡大头像），由 `tests/profile-complete.spec.mjs` 与
+//      `tests/mobile-topbar.spec.mjs` T3 的正面判据守着；身份卡与资料面仍零外链。
+//
 // 零 console error 是硬判据：全腿 page.on('console'|'pageerror') 采集，末尾断言空数组。
 //
 // Self-contained（零后端）：静态路由直服 src/main/resources/web + fm_api_mock 数据面 +
@@ -43,6 +52,7 @@ const CONV = '.mobile-page[data-page="conversation"]';
 const SELF = {
   id: 'dev-self', name: 'Mashiro-Mac', platform: 'macos', userDescription: '',
   displayName: '测试用户', email: 'me@example.com', avatarUrl: '',
+  githubLogin: 'FixtureGitHub',
 };
 const PEERS = [{ deviceId: 'dev-kai', deviceName: 'KAI', platform: 'windows', online: true, directOnline: true }];
 
@@ -360,17 +370,24 @@ test.describe('七条机械断言 · 手机腿（375×812）', () => {
     const face = await page.evaluate(() => {
       const ov = document.getElementById('settings-profile-overlay');
       const f = (id) => ov?.querySelector(`.sp-field[data-sp-field="${id}"] .sp-value`)?.textContent?.trim() || '';
+      const bind = ov?.querySelector('#settings-profile-bindnote');
       return {
         cls: ov?.className || '', username: f('username'), nickname: f('nickname'), email: f('email'),
         github: f('github'), google: f('google'),
+        bindNote: bind && !bind.hidden ? (bind.textContent || '').trim() : '',
         editable: ov ? ov.querySelectorAll('input, select, textarea, [contenteditable], [role="switch"]').length : -1,
         anchors: ov ? ov.querySelectorAll('a').length : -1,
       };
     });
     console.log('[⑤] 资料面读数', JSON.stringify(face));
     expect(face.username, '⑤ 资料面 username = 真实读路值').toBe('Mashiro');
-    expect(face.github, '⑤ GitHub 绑定 = 未知（上游无接口，禁造假态）').toBe('未知');
-    expect(face.google, '⑤ Google 绑定 = 未知（上游无接口）').toBe('未知');
+    // ⚠️ profile-complete 批（2026-11-18）改判据：GitHub 绑定不再写死「未知」——
+    //    真源 = `status.device.githubLogin`（一直由 `/api/neblink/status` 返回），
+    //    本批起映射并渲染。Google 绑定本机仍无来源 ⇒ 未知 + 一句缺口说明（见下）。
+    expect(face.github, '⑤ GitHub 绑定 = status.device.githubLogin（真实读数）').toBe('FixtureGitHub');
+    expect(face.google, '⑤ Google 绑定 = 未知（本机读路确实没有该数据）').toBe('未知');
+    expect(face.bindNote, '⑤ 读不到的位必须有解释（作者令「不许留未知而不解释」）').toContain('Google');
+    expect(face.bindNote, '⑤ 缺口说明不得把读到的 GitHub 也算进去').not.toContain('GitHub');
     await page.locator('#settings-profile-overlay > .mfs-back').click();
     await expect(page.locator('#settings-profile-overlay')).toBeHidden();
 
@@ -381,15 +398,22 @@ test.describe('七条机械断言 · 手机腿（375×812）', () => {
     await page.keyboard.press('Escape');
     await expect(page.locator('#settings-profile-overlay')).toBeHidden();
 
-    const audit = await page.evaluate(() => ({
-      openCalls: (/** @type {any} */ (window)).__openCalls.length,
-      portalHrefs: [...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href') || '')
-        .filter((h) => /mystand\.space/i.test(h)),
-      cardAnchors: document.getElementById('settings-identity-card')?.querySelectorAll('a').length ?? -1,
-    }));
+    // 外链审计（**面域**口径，profile-complete 批收窄）：本批给手机个人主页加了一枚
+    // 有意为之的官网出口（资料卡大头像，作者令「再次点击头像跳转官网」；由
+    // tests/profile-complete.spec.mjs / mobile-topbar T3 正面判据守着）。本 spec 的
+    // 断言对象 = 设置页身份卡 + 资料面这两块：那里**仍**零外链、零 window.open。
+    const audit = await page.evaluate(() => {
+      const surfaces = [document.getElementById('settings-identity-card'), document.getElementById('settings-profile-overlay')];
+      return {
+        openCalls: (/** @type {any} */ (window)).__openCalls.length,
+        surfaceHrefs: surfaces.flatMap((s) => (s ? [...s.querySelectorAll('a[href]')] : []))
+          .map((a) => a.getAttribute('href') || '').filter((h) => /mystand\.space/i.test(h)),
+        cardAnchors: document.getElementById('settings-identity-card')?.querySelectorAll('a').length ?? -1,
+      };
+    });
     console.log('[⑤] 外链审计', JSON.stringify(audit));
     expect(audit.openCalls, '⑤ 全程 window.open 调用 0 次').toBe(0);
-    expect(audit.portalHrefs, '⑤ 零指向官网账号页的 <a href>').toEqual([]);
+    expect(audit.surfaceHrefs, '⑤ 身份卡 / 资料面内零指向官网账号页的 <a href>').toEqual([]);
     expect(audit.cardAnchors, '⑤ 身份卡内零 <a> 元素').toBe(0);
   });
 

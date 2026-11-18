@@ -98,6 +98,32 @@ export function getProfileUrl() {
 }
 
 /**
+ * Website home URL — the product's official site root.
+ *
+ * Used by the profile page's avatar entry (profile-complete batch, 2026-11-18:
+ * "tapping the avatar on the profile page opens the official website"). Author
+ * wording names the bare origin, so no path and no landing hint are appended.
+ *
+ * Same provenance discipline as `getProfileUrl()` / `getWebsiteLoginUrl()`:
+ * only an absolute https value is honoured, and the origin is derived from the
+ * injected profile URL rather than `brand.domain` (which ships the brand.conf
+ * placeholder `neblink.example`). Fallback = the live product origin.
+ */
+const HOME_URL_FALLBACK = 'https://mystand.space';
+
+export function getHomeUrl() {
+  const raw = /** @type {Brand} */ (brand).profileUrl;
+  if (typeof raw === 'string' && raw.startsWith('https://')) {
+    try {
+      return new URL(raw).origin;
+    } catch {
+      // fall through to the static fallback
+    }
+  }
+  return HOME_URL_FALLBACK;
+}
+
+/**
  * Website sign-in URL for the console gate ("sign in via the website").
  *
  * The website session is the console's other front door: the site mints a

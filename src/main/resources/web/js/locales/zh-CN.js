@@ -3413,6 +3413,10 @@ export default {
   'profile.deviceSignOutFailed': '退出请求未送达，该设备登录态未改变。',
   'profile.deviceSignOutRemoteUnsupported': '该设备的凭据在其本机保存，本机无法代为退出；请到那台设备上退出登录。',
   'profile.editOnWebsite': '身份资料为只读读数；修改请前往官网账号页 {where}。',
+  // profile-complete 批（作者令 2026-11-18「信息很多都没获取全…不许留未知而不解释」）：
+  // 绑定读数的缺口说明，逐字段出句（zh/en 同键对称）。
+  'profile.githubUnavailable': '账号服务未返回 GitHub 绑定用户名（该读数来自登录时下发的 GitHub 账号）。',
+  'profile.googleUnavailable': 'Google 绑定只在官网账号页维护，本机账号服务与登录凭据都不含该读数。',
   'profile.signedIn': '已登录',
 };
 
