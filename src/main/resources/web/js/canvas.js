@@ -957,7 +957,7 @@ function teardownTab(id, opts = {}) {
   entry.tabEl.remove();
   tabs.delete(id);
   const wasReaderLocal = readerLocalTabs.delete(id);
-  if (!opts.silent && !wasReaderLocal) recordTombstone(id);
+  if (!opts.silent && !wasReaderLocal && canvasWriter.role() === 'writer') recordTombstone(id);
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
   persistTabs();
   deckNotifyRemoved(id);
@@ -974,7 +974,6 @@ function teardownTab(id, opts = {}) {
  *  @param {{discardDirty?: boolean}} [opts] 关闭确认之后的内部腿专用
  *    （用户已经点过「关闭并丢弃」），外部调用一律不传。 */
 export function closeTab(id, opts = {}) {
-  if (!readerLocalTabs.has(id) && !allowCanvasMutation()) return;
   const entry = tabs.get(id);
   if (!entry) return;
 

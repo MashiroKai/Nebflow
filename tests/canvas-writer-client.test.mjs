@@ -50,6 +50,27 @@ test('failed save transitions to unsynced reader without canvas takeover handler
   assert.doesNotMatch(source.slice(begin, end), /showCanvasTakeover|takeoverModal|localStorage\.removeItem/);
 });
 
+test('reader can close shared tabs consecutively in order', () => {
+  const source = readFileSync(new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
+  const begin = source.indexOf('export function closeTab(');
+  const end = source.indexOf('/** Promote a preview', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const closed = [];
+  const makeEntry = id => ({ id, tabEl: { style: {}, addEventListener() {} }, paneEl: { style: {} } });
+  const tabs = new Map([['a', makeEntry('a')], ['b', makeEntry('b')], ['c', makeEntry('c')]]);
+  const context = { tabs, activeTabId: 'a', window: {}, isTabDirty: () => false,
+    independentWins: new Map(), cardWinWatch: new Map(), setTimeout: fn => fn(),
+    teardownTab: id => { closed.push(id); tabs.delete(id); },
+    setActiveTab: id => { context.activeTabId = id; }, closeCanvas() {}, syncCanvasPanelButtons() {},
+    allowCanvasMutation: () => false, readerLocalTabs: new Set() };
+  vm.runInNewContext(source.slice(begin, end).replace('export function closeTab', 'function closeTab'), context);
+  context.closeTab('a');
+  context.closeTab('b');
+  assert.deepEqual(closed, ['a', 'b']);
+  assert.deepEqual([...tabs.keys()], ['c']);
+  assert.equal(context.activeTabId, 'c');
+});
+
 test('reader guards are silent and server rejections notify once per reason', () => {
   const source = readFileSync(process.env.CANVAS_TEST_SOURCE || new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const notices = [];
