@@ -501,7 +501,7 @@ object SearchIndexService:
         val (hits, total, degraded) =
           if andExpr.nonEmpty then
             val (h, t) = execMatch(andExpr)
-            if h.nonEmpty then (h, t, false)
+            if t > 0 then (h, t, false)
             else if orExpr.nonEmpty then
               val (h2, t2) = execMatch(orExpr)
               (h2, t2, h2.nonEmpty)
@@ -513,10 +513,20 @@ object SearchIndexService:
             val (h3, t3) = execLike(likePattern)
             (h3, t3, true)
 
+        // Existing indexes may contain CJK bigrams joined to adjacent ASCII
+        // tokens (e.g. 语音abc); unicode61 then cannot match 语音. Fall back
+        // against the original text only on a zero-total CJK query, including
+        // old indexes, without changing normal MATCH or pagination semantics.
+        val (finalHits, finalTotal, finalDegraded) =
+          if total == 0 && q.text.exists(CjkBigram.isCjk) then
+            val (fallbackHits, fallbackTotal) = execLike("%" + q.text.trim + "%")
+            (fallbackHits, fallbackTotal, true)
+          else (hits, total, degraded)
+
         Right(QueryResult(
-          hits, total,
-          etagOf(q, hits, versionsOf(fs.conn, hits.map(_.sid).distinct)),
-          degraded))
+          finalHits, finalTotal,
+          etagOf(q, finalHits, versionsOf(fs.conn, finalHits.map(_.sid).distinct)),
+          finalDegraded))
       end if
   end runQuery
 

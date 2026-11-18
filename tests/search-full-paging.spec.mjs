@@ -324,6 +324,36 @@ for (const mobile of [true, false]) {
       await expect(page.locator('#search-results')).not.toHaveAttribute('data-loading', 'true');
       expect(calls).toBeGreaterThanOrEqual(2);
     });
+    test('late non-cooperative index response cannot overwrite timeout', async ({ page }) => {
+      test.setTimeout(45000);
+      await bootApp(page);
+      await page.locator(mobile ? '[data-chrome="search"]' : '#search-btn').click();
+      await page.evaluate(() => {
+        const original = window.fetch;
+        window.fetch = (input, options) => {
+          if (String(input).includes('/api/search/chat?')) {
+            return new Promise(resolve => {
+              window.__releaseLateSearch = () => resolve(new Response(JSON.stringify({
+                hits: [{ sid: 'paging-root-session', ord: 1, kind: 'message', ts: 1,
+                  snippet: 'late result', extra: { role: 'user' } }], total: 1, degraded: false,
+              }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+            });
+          }
+          return original(input, options);
+        };
+      });
+      await page.locator('#search-keyword').fill('检索');
+      await page.waitForFunction(() => typeof window.__releaseLateSearch === 'function');
+      await expect(page.locator('#search-status')).toContainText('搜索超时', { timeout: 20000 });
+      await page.evaluate(async () => {
+        window.__releaseLateSearch();
+        await new Promise(resolve => setTimeout(resolve, 200));
+      });
+      await expect(page.locator('#search-status')).toContainText('搜索超时');
+      await expect(page.locator('#search-status button')).toBeEnabled();
+      await expect(page.locator('#search-results')).not.toHaveAttribute('data-loading', 'true');
+      await expect(page.locator('#search-results')).not.toContainText('late result');
+    });
     test('index 500 and hanging fallback also reaches retryable timeout', async ({ page }) => {
       test.setTimeout(45000);
       await bootApp(page);
