@@ -5161,6 +5161,18 @@ onMessage('activeAgents', (msg) => {
       taskTitle: a.taskTitle || '',
       startedAt: a.startedAt || (prev && prev.startedAt) || null,
       status: a.status || '',
+      // 面板行活性位批（2026-11-18 · 方案 A）：引擎**权威活性位**随快照出帧（后端
+      // WebSocketRoutes.panelRowActivity 单点派生：注册表在册 ∧ status==Processing ∧
+      // 未停靠/未冻结/未重启中断 ⇒ true）。与上一行 `status`（turn 相位）显式分家——
+      // 相位说「actor 在哪个阶段」，本键说「此刻是不是真在跑」。快照是权威（同
+      // project/kind 合并类）；旧后端无此键 ⇒ undefined，呈现面行为与今天逐字一致
+      // （**禁止把「未提供」当 false**，见 bgRowState / bgTaskRowHtml 的判据）。
+      engineActive: typeof a.active === 'boolean'
+        ? a.active
+        : (prev && typeof prev.engineActive === 'boolean' ? prev.engineActive : undefined),
+      // 同一判据的分类线值（running / standby / frozen / pending-recovery / idle）——
+      // 取证与副行读词用；缺席 = 空串（falsy 契约同 project/taskId）。
+      engineActiveState: a.activeState || (prev && prev.engineActiveState) || '',
       // 案A 待命批 2026-10-31（状态矩阵批收编）：快照行带 standbySince（DelegateRegistry
       // 待命停靠时刻）⇒ 待命徽标随刷新复原（delegateWaiting 实时帧的恢复脸；快照缺席
       // ⇒ 保留本地 waiting 值，不降级已渲染行）。

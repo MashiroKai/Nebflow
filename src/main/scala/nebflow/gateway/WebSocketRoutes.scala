@@ -3334,9 +3334,11 @@ object WebSocketRoutes:
   /**
    * Which AgentRegistry entries getActiveAgents should report as running.
    *
-   * Task-lifecycle kinds (Delegate/Flow/SubTask) are reported
-   * as-is: their presence in the registry means the task is in flight
-   * (they unregister on completion).
+   * **本函数交付的是「在册行」，不是「在跑行」**（方案 A 批 2026-11-18 更正旧注释）：
+   * 它按 kind 全量导出注册表条目，**没有第二个判据**——行集一字不动（刷新复原、复原
+   * 入口、唤醒徽标都靠它）。「在册即飞」只对短命子代理成立；delegate 后来长出长命停靠态
+   * （待命 / 错误冻结 / 重启中断），行内 `status` 又只是 turn 相位 ⇒ 活性位必须另给：
+   * 每行随帧出 [[panelRowActivity]] 的 `active` / `activeState`，呈现面照读、不许自造第二权威。
    *
    * Team agents are LONG-LIVED: activateAgent registers them on the first
    * Mail and they stay in the registry while idle, waiting for the next
@@ -3353,6 +3355,48 @@ object WebSocketRoutes:
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
     val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
     IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
+
+  /**
+   * 面板行活性档（方案 A 批 2026-11-18 · 作者令「行集一字不动，只加一个权威活性位」）：
+   * 后台智能体面板**每一行**「此刻是否真在跑」的落点分类。`active` 是本仓唯一的活性布尔位，
+   * `wire` 是同一判据的分类线值（取证 / 前端读词用）。
+   */
+  enum PanelActivity(val wire: String, val active: Boolean):
+    case Running extends PanelActivity("running", true)
+    case Standby extends PanelActivity("standby", false)
+    case Frozen extends PanelActivity("frozen", false)
+    case PendingRecovery extends PanelActivity("pending-recovery", false)
+    case Idle extends PanelActivity("idle", false)
+
+  /**
+   * 面板行「权威活性位」的**唯一判据**（根因见
+   * `<数据根>/projects/stand/.stand/docs/agent-panel-active-source__20261118_163504.md`）。
+   *
+   * 为什么必须由引擎给：[[filterActiveAgents]] 按 kind 全量导出内存注册表条目——它是
+   * **行集导入器**，不是活性判据；行内既有的 `status` 是 **turn 相位**
+   * （Idle/Processing/Waiting/Frozen…），也不是「是否在跑」。两条进料（注册表快照 ∪
+   * 落盘任务行）都不带活性位，前端只能对未知值走保守侧（一律折成 active）——长命停靠态
+   * （待命 / 错误冻结 / 重启中断）于是被画成「进行中」并挂上运行时钟。
+   *
+   * 判据（与 [[sessionBusyStates]] 同一条单点，再叠「停靠 / 冻结 / 重启中断」分类）：
+   *   - 停靠事实（待命槽 / 冻结槽 / 重启中断行）优先 ⇒ 对应非活跃档——注册表相位与落盘槽
+   *     打架时取保守侧（「不在跑」比「在跑」代价小：错了只是少挂一枚时钟，反过来是幽灵行）；
+   *   - 否则 `status == Processing` ⇒ [[PanelActivity.Running]]（active = true）；
+   *   - 其余（Idle / Waiting / WaitingForUser / Error…）⇒ [[PanelActivity.Idle]]（非活跃）。
+   *
+   * 只读投影：纯函数、零 IO、零类依赖，不改行集、不改注册表生命周期、不动唤醒/恢复入口。
+   */
+  def panelRowActivity(
+    status: AgentStatus,
+    standbySince: Option[Long] = None,
+    frozen: Boolean = false,
+    pendingRecovery: Boolean = false
+  ): PanelActivity =
+    if pendingRecovery then PanelActivity.PendingRecovery
+    else if frozen then PanelActivity.Frozen
+    else if standbySince.exists(_ > 0) then PanelActivity.Standby
+    else if status == AgentStatus.Processing then PanelActivity.Running
+    else PanelActivity.Idle
 
   /**
    * 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：activeAgents 快照面
@@ -3426,7 +3470,9 @@ object WebSocketRoutes:
     // 两个推导点就是两种形态的温床）。None = 本 kind 无 Mail 面 ⇒ 空串（falsy 契约）。
     mailAddress: Option[String] = None,
     freezeTruth: Option[nebflow.actor.FreezeTruth] =
-      None // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
+      None, // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
+    taskStatus: Option[String] =
+      None // 面板行活性位批（2026-11-18 · 方案 A）: SubAgentTask.status——重启中断标记（`pending-recovery`）的载体，活性位据此把「执行已停、等人工恢复」的行判成非活跃；缺省 None = 旧调用方逐字节兼容
   ): Json =
     // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
     // （AgentStreamEvent.Frozen）/ 工具面（AgentControl status）同判定单点
@@ -3448,6 +3494,16 @@ object WebSocketRoutes:
       if truth.frozen then
         Some(nebflow.actor.FreezeDisplay.ofWire(truth.reasonWire, truth.since, System.currentTimeMillis()))
       else None
+    // 面板行活性位批（2026-11-18 · 方案 A · 作者令「行集一字不动，只加一个权威活性位」）：
+    // 本行的「此刻是否真在跑」由 [[panelRowActivity]] 单点给（与 sessionBusyStates 同一条
+    // 轴：`status == Processing`），再叠停靠/冻结/重启中断分类——三者任一在场即非活跃。
+    // 行集、既有字段、待命/冻结徽标与恢复/唤醒入口一律不动：本轮**只加位**。
+    val activity: PanelActivity = panelRowActivity(
+      rec.status,
+      standbySince = standbySince,
+      frozen = truth.frozen,
+      pendingRecovery = taskStatus.contains(SubAgentStartupRecovery.PendingRecoveryStatus)
+    )
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
@@ -3490,6 +3546,16 @@ object WebSocketRoutes:
       // Ephemeral 不落 taskStore）。不加 agentStatus 变更广播（改动面大，裁定
       // 不做——快照轮询由前端按需刷新）。
       "status" -> rec.status.toString.asJson,
+      // 面板行活性位批（2026-11-18 · 方案 A）：**权威活性位**随行出帧——`active` 是唯一的
+      // 「是否在跑」布尔位（判据单点 [[panelRowActivity]]，与 sessionBusyStates 同轴），
+      // `activeState` 是同一判据的分类线值（running / standby / frozen / pending-recovery /
+      // idle）供取证与前端读词。与上面 `status`（turn 相位）显式分家：相位说「actor 在哪个
+      // 阶段」，活性位说「它此刻是不是真在跑」——呈现面只许读这位，不许再从相位猜
+      // （猜错的样子就是作者报障：29 天龄待恢复行标着「进行中」+ 690h 时钟）。
+      // 缺省调用方（旧测试）不传 taskStatus ⇒ 仍得一位（非停靠行 = status==Processing），
+      // 故本键**恒在**，前端「未提供」只对旧后端成立。
+      "active" -> activity.active.asJson,
+      "activeState" -> activity.wire.asJson,
       "startedAt" -> rec.startedAt.asJson,
       "retryCount" -> retryCount.getOrElse(0).asJson,
       // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 待命停靠时刻（epoch ms；

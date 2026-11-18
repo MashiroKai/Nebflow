@@ -1419,7 +1419,12 @@ private[gateway] object WsSessionChatHandlers:
                                 // frozenReason）在这一处合流，面板与唤醒闸此后读同一份读数。
                                 freezeTruth = Some(
                                   nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince)
-                                )
+                                ),
+                                // 面板行活性位批（2026-11-18 · 方案 A）：重启中断标记随行入活性位
+                                // ——SubAgentTask.status（`pending-recovery` = 执行已停、等人工恢复）
+                                // 在落盘侧已经知道，快照行必须照抄这一事实（旧调用方缺省 None =
+                                // 逐字节兼容）。只加位，不筛行、不动恢复入口。
+                                taskStatus = taskOpt.map(_.status)
                               )
                             }
                           }

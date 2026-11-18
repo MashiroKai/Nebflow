@@ -235,6 +235,13 @@ function bgRowState(info) {
   if (isFailedSnapshotStatus(info.status)) return 'error';
   const st = info.status || '';
   if (st === 'Idle' || st === 'WaitingForUser' || st === 'idle') return 'idle';
+  // 面板行活性位批（2026-11-18 · 方案 A）：**引擎权威活性位在场时它说了算**——快照行每行
+  // 随帧带 `active`（后端 WebSocketRoutes.panelRowActivity 单点：注册表在册 ∧
+  // status==Processing ∧ 未停靠/未冻结/未重启中断）。位为假 ⇒ 本行不是在跑（末档
+  // 'active' 从此**只**留给引擎说在跑的行：幽灵行不再靠本地状态词猜）；位为真 ⇒ 其 status
+  // 必为 Processing，本就走末档 'active'，行为与今天逐字相同。位**缺席**（旧后端 / durable
+  // store 行不带此键）⇒ 同样逐字与今天一致——不许把「未提供」当 false 一棍打死。
+  if (info.engineActive === false) return 'idle';
   return 'active';
 }
 
@@ -2161,7 +2168,10 @@ export function bgTaskRowHtml(id, info, opts = {}) {
   // （执行已停、等人工恢复）不是「已运行 N」——29 天龄的记录会渲染出 690h45m 这种荒谬
   // 读数（本批要根除的形态）。时长算术本身不改（now − startedAt，epoch ms 差，与时区
   // 无关）；在飞行照旧走表，空闲/等待行照旧走表。
-  const notRunning = terminal || rowState === 'pending-recovery';
+  // 面板行活性位批（2026-11-18 · 方案 A）：**引擎权威活性位为假 ⇒ 不挂运行时钟**（与
+  // bgRowState 同一判据、同一保守侧）——停靠/冻结/重启中断行不是「已运行 N」；位缺席
+  // （旧后端 / durable store 行）⇒ 判据逐字与今天一致（不许把「未提供」当 false）。
+  const notRunning = terminal || rowState === 'pending-recovery' || info.engineActive === false;
   const uptimePart = (!notRunning && info.startedAt && !longIdle)
     ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
     : '';
