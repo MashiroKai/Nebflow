@@ -187,8 +187,14 @@ const reviewOf = (page, sid) => page.evaluate((tabId) => {
     chunks: pane.querySelectorAll('.cm-deletedChunk').length,
     chunkAccept: pane.querySelectorAll('.nf-dv-chunkbtn-accept').length,
     chunkReject: pane.querySelectorAll('.nf-dv-chunkbtn-reject').length,
-    acceptAllDisabled: (pane.querySelector('.nf-ar-accept-all') || {}).disabled === true,
-    rejectAllDisabled: (pane.querySelector('.nf-ar-reject-all') || {}).disabled === true,
+    // 同义重锚（作者令 2026-11-19：审阅动作区单源落共享组件 js/diffView 的 review
+    // 模式）：全量钮由头部 `.nf-ar-accept-all` / `.nf-ar-reject-all`（已删净）迁到
+    // 组件内 `.nf-dv-accept-all` / `.nf-dv-reject-all`。语义与断言强度不变，且补齐
+    // 「在场」显式断言（旧写法用 `!disabled` 兼判存在，元素缺失时也恒真 = 隐性弱化）。
+    acceptAllPresent: !!pane.querySelector('.nf-dv-accept-all'),
+    rejectAllPresent: !!pane.querySelector('.nf-dv-reject-all'),
+    acceptAllDisabled: (pane.querySelector('.nf-dv-accept-all') || {}).disabled === true,
+    rejectAllDisabled: (pane.querySelector('.nf-dv-reject-all') || {}).disabled === true,
     conflict: !!pane.querySelector('.nf-ar-conflict[role="alert"]'),
     folds: pane.querySelectorAll('.cm-collapsedLines').length,
     waiting: !!(dv && dv.getAttribute('data-waiting') === '1'),
@@ -252,9 +258,10 @@ try {
     rv.open && rv.dels.length === 1 && rv.dels[0].includes('beta')
       && rv.adds.length === 2 && rv.adds.some((t) => t.includes('BETA')) && rv.adds.some((t) => t.includes('DELTA')),
     JSON.stringify({ dels: rv.dels, adds: rv.adds }));
-  ok('R1d 动作面在场：逐块接受/拒绝钮（共享组件改壳）+ 全量接受/拒绝钮（均可点）',
-    rv.open && rv.chunkAccept === 1 && rv.chunkReject === 1 && !rv.acceptAllDisabled && !rv.rejectAllDisabled,
-    JSON.stringify({ accept: rv.chunkAccept, reject: rv.chunkReject, all: rv.acceptAllDisabled }));
+  ok('R1d 动作面在场：逐块接受/拒绝钮（共享组件改壳）+ 全量接受/拒绝钮（均在组件内且可点）',
+    rv.open && rv.chunkAccept === 1 && rv.chunkReject === 1
+      && rv.acceptAllPresent && rv.rejectAllPresent && !rv.acceptAllDisabled && !rv.rejectAllDisabled,
+    JSON.stringify({ accept: rv.chunkAccept, reject: rv.chunkReject, allPresent: rv.acceptAllPresent, all: rv.acceptAllDisabled }));
 
   // ── R1e 长未变段折叠（原文档全文的可读性面，非硬截断）──────────────────
   const LONG_BASE = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n') + '\n';
@@ -321,6 +328,22 @@ try {
   wsSend(appliedFrame(sid, abs, 'notes.md', TWO_BASE, TWO_CUR, TWO_HUNKS));
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
   await sleep(200);
+  // R3a0 全量接受·**点击路**（组件内全量钮）：点击 → askEditAccept 无 hunkId 外发
+  //      （同一动作面、同一语义，非第二套协议）→ resolved(done, 余块) → 审阅保持。
+  await page.click('.nf-dv-accept-all');
+  await sleep(300);
+  const clickAllAccept = inbound.filter((m) => m.type === 'askEditAccept').pop();
+  ok('R3a0 点击「全部接受」（组件内全量钮）→ askEditAccept 无 hunkId 外发（既有全量语义）',
+    !!clickAllAccept && clickAllAccept.sessionId === sid && !('hunkId' in clickAllAccept),
+    JSON.stringify(clickAllAccept));
+  wsSend({
+    type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'done',
+    review: {
+      path: abs, fileName: 'notes.md', baseText: TWO_BASE, currentText: TWO_CUR,
+      hunks: TWO_HUNKS, count: 1, updatedAt: Date.now(),
+    },
+  });
+  await sleep(400);
   const readsBeforeAll = readsOf();
   await page.keyboard.press('Meta+Enter');
   await sleep(300);
@@ -343,7 +366,7 @@ try {
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
   await sleep(200);
   const readsBeforeRejectAll = readsOf();
-  await page.click('.nf-ar-reject-all');
+  await page.click('.nf-dv-reject-all');
   await sleep(300);
   const rejectAll = inbound.filter((m) => m.type === 'askEditReject').pop();
   ok('R4a 全量拒绝 → askEditReject 无 hunkId 外发',
@@ -379,7 +402,7 @@ try {
   await shot(page, 'r5-hunk-rejected');
 
   // ── R6 冲突过期（显式提示，绝不静默覆盖）─────────────────────────────────
-  await page.click('.nf-ar-accept-all');
+  await page.click('.nf-dv-accept-all');
   await sleep(300);
   wsSend({
     type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'error',
