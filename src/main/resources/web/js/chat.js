@@ -2375,7 +2375,12 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     !answerAttachmentsAllowed(questions) &&
     questions.some(q => q && q.options && q.options.length > 0 &&
       q.freeInput !== false && q.allowOther !== false &&
-      q.secret !== true && q.dirPicker !== true);
+      q.secret !== true && q.dirPicker !== true &&
+      // permission-landing 批续做（2026-11-18）：卡显式 opt-out「其他…」附件入口。
+      // 权限卡现在带 requestId（只为卡盒 data-request-id 寻址，见 renderPermissionPrompt），
+      // 但权限作答**无附件通道**（permissionAnswer 无 attachments 键）⇒ 不给它挂一个
+      // 投递无门的附件控件（与 secret/dirPicker 同族的 fail-closed 口径）。
+      q.otherAttach !== false);
   let pendingOtherMount = false;
   function mountOtherAttachments() {
     if (answerAttach || !otherAttachEligible) return;
@@ -3817,9 +3822,14 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     upgradeLabel = t('chat.permUpgradeAutoAll');
     permOptions.splice(1, 0, { label: upgradeLabel, desc: t('chat.permUpgradeAutoAllDesc'), cls: 'perm-upgrade-option' });
   }
+  // otherAttach:false（permission-landing 批续做 2026-11-18）：权限卡带 requestId 只为
+  // 卡盒 data-request-id（超时撤回/关卡帧寻址），**不带** askuser「其他…」态的附件入口
+  //（权限作答没有 attachments 通道，挂上去也是投递无门；口径见 showOptions 的
+  // otherAttachEligible）。
   const items = [{
     question: questionText,
-    options: permOptions
+    options: permOptions,
+    otherAttach: false
   }];
   showOptions(bubble, items, (answers) => {
     // approved only on Allow or the upgrade option (Other/custom text stays
@@ -3858,10 +3868,14 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     // Remove the permission prompt row from DOM immediately after denying
     row.remove();
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
-  }, undefined, undefined, requestId);
-  // permission-landing 批 P1/P2：requestId 落到卡盒（data-request-id）——超时撤回
-  //（hub CloseRequest ⇒ askUserClosed{reason:"caller-withdrew"}）与作答翻面由此
-  // 寻址到本卡，卡不再挂在「没人在听」的位置。
+  }, undefined, requestId);
+  // permission-landing 批 P1/P2 续做（2026-11-18）：requestId 走 showOptions 的**第 7 参**
+  //（= 卡盒 data-request-id）——超时撤回（hub CloseRequest ⇒ askUserClosed{reason:
+  // "caller-withdrew"}，main.js ⇒ closeAskUserCard 按 `.option-box[data-request-id]`
+  // 寻址）与作答翻面由此找到本卡，卡不再挂在「没人在听」的位置。
+  // 🔴 上一版把 requestId 当第 8 参传（`undefined, undefined, requestId`）：showOptions
+  // 只到第 7 参，第 8 参被静默丢弃 ⇒ 权限卡从未被贴标（js-types 的
+  // `chat.js(3861,28): error TS2554: Expected 0-7 arguments, but got 8` 就是这条）。
   smartScroll();
 }
 
