@@ -3218,8 +3218,10 @@ body.mobile-layer .cvv-time {
   gap: var(--ds-space-2);
   padding: var(--cv-pad-bar-sm, 4px);
   border-radius: var(--cv-radius-bar-sm, 10px);
-  background: var(--cv-bg, var(--glass-bg));
-  border: 1px solid var(--cv-border, var(--glass-border));
+  /* 材质（background / border / backdrop-filter）不在本文件 —— 本按钮组已并入
+     glass.css「按钮组：一份实现、两个消费族」那条共享声明（与手机待办组
+     .ta-pill 同一条规则，canvas-button-unify 批 2026-11-18）。此处零复制。
+     投影仍走 --cv-shadow 单源（与 .nf-glass 同 token 同值，不构成第二套材质）。 */
   box-shadow: var(--cv-shadow);
 }
 /* 冷启动批③（2026-10-30）：控件条玻璃对齐主对话输入框 #input-bar 同款 ——
@@ -4445,17 +4447,25 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
    本钮在手机层恒离场（零占位零位移）。 */
 body.mobile-layer .canvas-pop-btn,
 body.card-window .canvas-pop-btn { display: none !important; }
-/* Shared canvas control face; the float shadow resolves per theme. */
-.canvas-button.canvas-button {
-  border-radius: var(--ds-radius-pill);
-  box-shadow: var(--ds-shadow-float);
-}
-@media (hover: hover) {
-  .canvas-button.canvas-button:hover {
-    background: var(--cv-hover-bg);
-    transform: scale(var(--cv-hover-scale));
-  }
-}
+/* ── Canvas 单钮：本处不再有「Canvas 私有面」────────────────────────────
+   canvas-button-unify 批（2026-11-18）。此前这里是**第二份 Canvas 定义**：
+
+     .canvas-button.canvas-button { border-radius: var(--ds-radius-pill);
+                                    box-shadow: var(--ds-shadow-float) }
+     @media (hover:hover) .canvas-button.canvas-button:hover { … }
+
+   两处病根都出在「双类把特异性抬到 (0,2,0)」：
+     · box-shadow：split.css 在 index.html:73 加载，glass.css 在 :120 —— 双类
+       规则压过 glass.css 圆钮族的「零投影」裁定（扁平化批 2026-11-05 逐字退役
+       --cv-shadow：「圆钮的『浮』由 backdrop 玻璃采样 + 1px 描边表达」）⇒ 全站
+       唯一一次「按钮不许带影」的裁定被这 4 行推翻；
+     · border-radius: --ds-radius-pill：压过族自己的圆角档（.epub-nav-btn 的
+       --ds-radius-input = .ds-btn 同档）⇒ canvas 钮圆角另成一套。
+   收编口径（同 .ask-send/.ask-stop 先例，见 design-system.css §①b「纯身份钩子」）：
+   `.canvas-button` 自此**零自有声明** —— 几何/行中线由各族既有类给（全部走
+   --ds-* / --cv-* 令牌）、材质由 glass.css 共享毛玻璃配方给、六态由
+   flatButtons.css 共享态层给。第二份定义再现 ⇒ scripts/check-canvas-buttons.mjs
+   判红（G-CB3）。 */
 
 /* ── 环卡卡头「在独立窗口打开」钮（批⑤后独立窗唯一可见卡头入口；标题头
    #canvas-pop-btn 同批退役）────────────────────────────────────────── */

@@ -182,7 +182,6 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
 .epub-bar-menu,
 .epub-toc,
 .epub-anno-bar,
-.canvas-zoom-bar,
 .nf-findbar,
 .wg-tip,
 .nf-term-tip,
@@ -215,12 +214,20 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
   background: var(--nf-glass-input-bg);
 }
 
-/* Mobile todo chrome uses the shared glass recipe; layout stays in its page CSS. */
+/* 按钮组：**一份实现、两个消费族**（canvas-button-unify 批 2026-11-18）。
+   作者令：Canvas 的按钮组要用与手机待办右上角那组**同一份实现**，不是照抄外观。
+     · 手机待办组 = .ta-cluster > .ta-pill（容器吃玻璃）> .ta-pill-btn（自身零材质）
+     · Canvas 组   = .canvas-zoom-bar（容器吃玻璃）> .canvas-zoom-btn（transparent）
+   两族此前各写一份玻璃（本表 + split.css `.canvas-zoom-bar` 里复制的
+   background/border），本批把 Canvas 组并进**这一条声明** ⇒ 改配方只改这里。
+   几何/落位仍留各族文件（split.css / mobile-todo-apple.css），口径是
+   「材质归包、几何留面」——同一条声明、两个成员，不是两份视觉复制。 */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu,
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool,
+.canvas-zoom-bar {
   background: var(--nf-glass-bg);
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
   backdrop-filter: var(--nf-glass-input-filter);
