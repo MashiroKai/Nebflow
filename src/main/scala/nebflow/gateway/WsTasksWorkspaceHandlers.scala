@@ -361,16 +361,48 @@ private[gateway] object WsTasksWorkspaceHandlers:
     // 在 ScheduledTask.clampPriority 单点，库内不出现 4/‑1）。定时任务面不消费。
     val crPriority = hc.downField("priority").as[Int].toOption
       .map(nebflow.core.scheduler.ScheduledTask.clampPriority).getOrElse(0)
-    if crKindTodo && crSessionId.nonEmpty && crContent.nonEmpty then
+    // 待办数据模型与命名规范批（2026-11-18）：可选 decision（选项集）。
+    // 🔴 本腿恒为**作者自建**（服务端记 source="user"）⇒ 判定 = 提醒（选项不必备）；
+    //    带了 decision 则形态必须成立（≥1 选项、逐条 title 非空白、媒体引用成形），
+    //    否则拒绝。前端**不能**伪造 source（身份不采信帧内值）⇒ 前端也创建不出「待办」
+    //    （待办 = agent 派发，只走 Schedule 工具面 ⇒ 选项必备）。
+    val crDecision = nebflow.core.scheduler.TodoTaxonomy.decodeDecision(json)
+    val crDecisionViolation = crDecision.left.toOption.orElse(
+      nebflow.core.scheduler.TodoTaxonomy
+        .validateCreate(
+          Option.when(crKindTodo)(nebflow.core.scheduler.ScheduledTask.KindTodo),
+          Some(nebflow.core.scheduler.TodoTaxonomy.SourceUser),
+          crDecision.toOption.flatten
+        )
+        .left
+        .toOption
+    )
+    if crDecisionViolation.isDefined then
+      val v = crDecisionViolation.get
+      logger.warnSync(s"Rejected createScheduledTask(decision): ${v.code} (session=$crSessionId)")
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "createScheduledTask".asJson,
+          "code" -> v.code.asJson,
+          "requestId" -> createRequestId.asJson,
+          "message" -> v.message.asJson
+        )
+      )
+    else if crKindTodo && crSessionId.nonEmpty && crContent.nonEmpty then
       val surfaceAt = nebflow.core.scheduler.ScheduledTask.nextTodoSurfaceAt(
         System.currentTimeMillis(), java.time.ZoneId.systemDefault()
       )
       val todo = nebflow.core.scheduler.ScheduledTask.create(
         crSessionId, crContent, surfaceAt, None, None, crName,
         Some(nebflow.core.scheduler.ScheduledTask.KindTodo), None, crProject,
-        crPriority, crDetail
+        crPriority, crDetail,
+        crDecision.toOption.flatten.map(nebflow.core.scheduler.TodoTaxonomy.normalizeDecision)
       )
-      val userTodo = todo.copy(id = createRequestId.getOrElse(todo.id), source = Some("user"))
+      val userTodo = todo.copy(
+        id = createRequestId.getOrElse(todo.id),
+        source = Some(nebflow.core.scheduler.TodoTaxonomy.SourceUser)
+      )
       (for
         saved <- createRequestId match
           case Some(_) => sharedResources.scheduledTaskStore.addUserTodoOnce(userTodo)
@@ -409,7 +441,12 @@ private[gateway] object WsTasksWorkspaceHandlers:
               // 报告库里真实的完成态，不能回显请求里的初始快照。
               "priority" -> saved.priority.asJson,
               "completed" -> saved.isCompleted.asJson,
-              "completedAt" -> saved.completedAt.asJson
+              "completedAt" -> saved.completedAt.asJson,
+              // 待办数据模型批（2026-11-18）：类判（reminder/todo/task/engine_mirror）
+              // 与决策选项集——同一判定函数 classify，各入口不再各判各的。
+              "todoClass" -> nebflow.core.scheduler.TodoClass
+                .wire(nebflow.core.scheduler.TodoTaxonomy.classify(saved)).asJson,
+              "decision" -> saved.decision.asJson
             )
           )
         )
@@ -578,6 +615,11 @@ private[gateway] object WsTasksWorkspaceHandlers:
       "priority" -> t.priority.asJson,
       "completed" -> t.isCompleted.asJson,
       "completedAt" -> t.completedAt.asJson,
+      // 待办数据模型批（2026-11-18）：三面判定单点（提醒/待办/定时任务；引擎镜像
+      // 用户面显示为「待办」）——前端据 `todoClass` 分流文案与入口，不再自己从
+      // kind+source 推。纯增量键，老前端零感知。
+      "todoClass" -> nebflow.core.scheduler.TodoClass
+        .wire(nebflow.core.scheduler.TodoTaxonomy.classify(t)).asJson,
       "decision" -> t.decision.asJson
     )
 

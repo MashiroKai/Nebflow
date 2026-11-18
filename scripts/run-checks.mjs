@@ -75,6 +75,9 @@ export const CHECKS = [
   { name: 'canvas-button-diff', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/canvas-button-unify-diff.spec.mjs'] },
   nodeCheck('canvas-families', 'check-canvas-families', ['static']),
+  // 待办选项闸（待办数据模型与命名规范批 2026-11-18，作者令「每个待办必须要有选项」）：
+  // 源码级断言「写侧强制点在且先于创建 / 强制面只绑待办 / 媒体是引用且可多张」。
+  nodeCheck('todo-options', 'check-todo-options', ['static']),
   nodeCheck('toggle', 'check-toggle-unify'),
   nodeCheck('scroll-pill', 'check-scroll-pill-center'),
   nodeCheck('input-surface', 'check-input-surface'),

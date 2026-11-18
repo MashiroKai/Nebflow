@@ -272,7 +272,15 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
 
   test("decision payload round trips in list and cannot be completed without answer support") {
     withRig { (c, res) =>
-      val decision = nebflow.core.scheduler.TodoDecision(question = "Choose", options = List("A", "B"))
+      // 待办数据模型批（2026-11-18）：options 由裸字符串升级为结构化 DecisionOption
+      // （title 必填、可选 media 叠卡）。
+      val decision = nebflow.core.scheduler.TodoDecision(
+        question = "Choose",
+        options = List(
+          nebflow.core.scheduler.DecisionOption(id = "o1", title = "A"),
+          nebflow.core.scheduler.DecisionOption(id = "o2", title = "B")
+        )
+      )
       for
         _ <- res.scheduledTaskStore.addTask(todo("decision-1").copy(decision = Some(decision)))
         listed <- send(c, "listScheduledTasks", """{"type":"listScheduledTasks","sessionId":"s1","scope":"all"}""")
@@ -283,6 +291,11 @@ class TodoUnifyFramesSpec extends CatsEffectSuite:
       yield
         val rows = listed.head.hcursor.downField("tasks").focus.flatMap(_.asArray).getOrElse(Vector.empty)
         assertEquals(rows.head.hcursor.downField("decision").get[String]("question").toOption, Some("Choose"))
+        // 待办数据模型批：三面判定由服务端下发（reminder/todo/task/engine_mirror）。
+        assert(
+          rows.head.hcursor.get[String]("todoClass").toOption.exists(Set("reminder", "todo", "task", "engine_mirror")),
+          "列表行必须带 todoClass（服务端判定单点）"
+        )
         assertEquals(types(frames), List("error"))
         assertEquals(types(retry), List("error"))
         assertEquals(onDisk.head.decision, Some(decision))
