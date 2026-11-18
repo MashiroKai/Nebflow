@@ -29,8 +29,8 @@ website's behaviour.
 | --- | --- | --- | --- | --- | --- |
 | `before.png` | 64083 | 390 × 844 | still | — | — |
 | `after.png` | 73625 | 390 × 844 | still | — | — |
-| `desktop-before.png` | 134319 | 1280 × 800 | still | — | — |
-| `desktop-after.png` | 145013 | 1280 × 800 | still | — | — |
+| `desktop-before.png` | 134345 | 1280 × 800 | still | — | — |
+| `desktop-after.png` | 145054 | 1280 × 800 | still | — | — |
 | `fields-before-after.gif` | 63956 | 390 × 844 | 2 | 1/1 (avg) | 2 s |
 | `avatar-jump.gif` | 86466 | 390 × 844 | 3 | 1/1 (avg) | 3 s |
 

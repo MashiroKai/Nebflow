@@ -124,7 +124,7 @@ function buildMeHome(body) {
   //    `<a>` 直落官网首页、新标签页打开（`rel="noopener noreferrer"`）。几何与
   //    绘制全走既有 `.mf-me-avatar-frame` 规则（标签从 div 换 a，类名与结构逐字不变）。
   const card = el(body, 'mf-me-card sp-identity');
-  const frame = el(card, 'mf-me-avatar-frame huge', 'a');
+  const frame = /** @type {HTMLAnchorElement} */ (el(card, 'mf-me-avatar-frame huge', 'a'));
   frame.href = getHomeUrl();
   frame.target = '_blank';
   frame.rel = 'noopener noreferrer';
