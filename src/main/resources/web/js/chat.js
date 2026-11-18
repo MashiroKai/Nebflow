@@ -4778,3 +4778,58 @@ export function finalizeStreamingFaces(view) {
   removeWorkline(v);
 }
 
+
+/**
+ * 统一「模型不可用」卡渲染（model-fallback-card 批，2026-11-18 作者裁定 14:37）。
+ *
+ * 一张卡、全槽共用：槽/标签/供应商/模型/失败分类（HTTP 状态码 / 错误码 / 超时）
+ * / 可采取的动作（测试 LLM · 手动切换 · 保持现状）。动作三态回帧
+ * `{type:'modelUnavailableAnswer', requestId, action, modelRef?}`（网关 → hub →
+ * 等待方 deferred：switch ⇒ 就地写回该槽 model.preferred 并让原请求继续完成）。
+ * `reportOnly` 帧（300s 超时回报）只展示不可答。
+ */
+export function renderModelUnavailable(msg) {
+  const host = document.createElement('div');
+  host.className = 'model-unavailable-card';
+  const c = (v) => (v === null || v === undefined ? '-' : String(v));
+  const fail = msg.failureCode ? `${c(msg.failureLabel)}（code ${c(msg.failureCode)}）` : c(msg.failureLabel);
+  host.dataset.cardType = 'modelUnavailable';
+  host.dataset.cardKind = 'unified';
+  host.innerHTML =
+    `<div class="muc-head">模型不可用 · 槽 ${c(msg.slotLabel)}(${c(msg.slot)})</div>` +
+    `<div class="muc-body">` +
+    `<div class="muc-row">provider/model：<b>${c(msg.modelRef)}</b></div>` +
+    `<div class="muc-row">失败分类：<b>${fail}</b></div>` +
+    `<div class="muc-row muc-detail">${c(msg.detail)}</div>` +
+    (msg.test ? `<div class="muc-test">测试 LLM：${msg.test.ok ? '成功' : '失败'} · ${c(msg.test.latencyMs)}ms` +
+      (msg.test.ok ? '' : ` · ${c(msg.test.failureLabel)}`) + `</div>` : '') +
+    (msg.note ? `<div class="muc-note">${c(msg.note)}</div>` : '') +
+    `</div>`;
+  if (!msg.reportOnly) {
+    const acts = document.createElement('div');
+    acts.className = 'muc-actions';
+    const send = (action, modelRef) => {
+      const frame = { type: 'modelUnavailableAnswer', requestId: msg.requestId, action };
+      if (modelRef) frame.modelRef = modelRef;
+      if (typeof sendWs === 'function') sendWs(frame);
+      host.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    };
+    const options = (msg.actions || [])
+      .find((a) => a.id === 'switch')?.options || [];
+    const pick = document.createElement('select');
+    pick.className = 'muc-pick';
+    options.forEach((o) => { const opt = document.createElement('option'); opt.value = o; opt.textContent = o; pick.appendChild(opt); });
+    const bTest = document.createElement('button');
+    bTest.textContent = '测试 LLM';
+    bTest.onclick = () => send('test', pick.value || msg.modelRef);
+    const bSwitch = document.createElement('button');
+    bSwitch.textContent = '切换';
+    bSwitch.onclick = () => send('switch', pick.value);
+    const bDismiss = document.createElement('button');
+    bDismiss.textContent = '保持现状';
+    bDismiss.onclick = () => send('dismiss');
+    acts.append(pick, bTest, bSwitch, bDismiss);
+    host.appendChild(acts);
+  }
+  return host;
+}

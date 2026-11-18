@@ -76,6 +76,7 @@ import {
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
   renderCompactDoneCard,
   showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
+  renderModelUnavailable,
   reclaimAskUserCards,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
@@ -1877,6 +1878,23 @@ onMessage('maxTokens', (msg, view) => {
 });
 
 // --- AskUser / Permission ---
+onMessage('modelUnavailable', (msg, view) => {
+  // model-fallback-card 批（2026-11-18 作者裁定 14:37）：统一「模型不可用」卡
+  // ——任何槽共用同一张（`msg.slot` 是载荷字段）。best-effort 追加进当前会话流
+  // （容器缺失 = 不抛，卡仍可就地由调用方挂载）。
+  try {
+    const host =
+      document.getElementById('chat-stream') ||
+      document.querySelector('.chat-stream') ||
+      document.getElementById('messages');
+    const card = renderModelUnavailable(msg);
+    if (host && card) host.appendChild(card);
+    else console.warn('[modelUnavailable] no chat container; card not mounted', msg && msg.slot);
+  } catch (e) {
+    console.warn('[modelUnavailable] render failed', e);
+  }
+});
+
 onMessage('askUser', (msg, view) => {
   const sid = msg.sessionId;
   // AskUser is an interactive question, not an unread message arrival.
