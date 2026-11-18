@@ -2867,9 +2867,7 @@ export default {
   'usage.legend.hitRate': '— · 25% · 50% · 75% · 100%',
   'usage.weekLabel': '{dir}{pct}% vs last week',
   'usage.noData': '—',
-  'perm.fallbackTitle': '{agent} requests permission (target session unreachable)',
-  'perm.fallbackApprove': 'Approve',
-  'perm.fallbackDeny': 'Deny',
+  'perm.retargetNote': 'target session {from} was unreachable — rerouted here',
 
   // === UI remnant localization (activity bar / panel titles / empty states) ===
   'activity.login': 'Login',

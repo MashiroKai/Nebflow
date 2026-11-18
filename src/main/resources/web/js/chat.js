@@ -3682,7 +3682,7 @@ function formatHistoryAnswer(answerText) {
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, sourceTeam, requestId, safetyMode) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, sourceTeam, requestId, safetyMode, retargetedFrom) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -3741,6 +3741,18 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     sourceBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>' +
       '<span>' + escapeHtml(t('chat.permSource', { agent: agentLabel, session: shortSession })) + '</span>';
     bubble.appendChild(sourceBadge);
+  }
+
+  // permission-landing 批 P2（2026-11-18）：落点重定锚标注。后端把原目标 root 不可达
+  // 的卡重定锚到本会话（帧带 retargetedFrom/retargetReason）——卡片照常在对话流内
+  // 渲染与作答，但必须**写明原因**（原目标会话短 id），不再退回全局 toast
+  //（原生弹窗形态，已随本批整体退役）。
+  if (retargetedFrom) {
+    const retargetBadge = document.createElement('div');
+    retargetBadge.className = 'perm-source-badge';
+    retargetBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>' +
+      '<span>' + escapeHtml(t('perm.retargetNote', { from: String(retargetedFrom).substring(0, 12) })) + '</span>';
+    bubble.appendChild(retargetBadge);
   }
 
   row.appendChild(bubble);
@@ -3832,7 +3844,10 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     // Remove the permission prompt row from DOM immediately after denying
     row.remove();
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
-  });
+  }, undefined, undefined, requestId);
+  // permission-landing 批 P1/P2：requestId 落到卡盒（data-request-id）——超时撤回
+  //（hub CloseRequest ⇒ askUserClosed{reason:"caller-withdrew"}）与作答翻面由此
+  // 寻址到本卡，卡不再挂在「没人在听」的位置。
   smartScroll();
 }
 

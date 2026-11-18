@@ -232,7 +232,6 @@ import { applyVoiceSeal } from './voiceSeal.js';
 import { stopThinkingTimer } from './main/thinkingTimer.js';
 import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/freeze.js';
 import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators } from './main/historyIndicators.js';
-import { showGlobalPermissionToast, dismissGlobalPermissionToasts } from './main/permToast.js';
 import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck, bgScopeRootForBucket, refreshAllBgAgentIndicators } from './main/bgAgents.js';
 // 术语统一批（2026-11-06 作者令「统一 根据英文」）：身份/类型徽标词只从单源词表取
 // （js/termWords.js）——后台任务面板的 mode chip 不再走 locale 键。
@@ -2039,20 +2038,12 @@ onMessage('interactionAnswerRejected', (msg) => {
 
 onMessage('askPermission', (msg, view) => {
   const sid = msg.sessionId;
-  // F4 (#433): fallback card — the card's target root session is unreachable
-  // (deleted / zombie / never had a client). The backend fanned it out to all
-  // roots with fallback:true; render a global actionable toast instead of
-  // routing the card into a session that cannot be opened. Also catch the
-  // un-flagged variant whose sessionId is not in the session list (older
-  // backend or non-flagged graveyard route). Answers match by requestId, so
-  // answering from this toast completes the pending request from any window.
-  if (msg.fallback || (sid && !state.sessionAgentMap[sid])) {
-    showGlobalPermissionToast(msg);
-    if (msg.sourceSession && state.sessionAgentMap[msg.sourceSession]) {
-      setSessionAttention(msg.sourceSession, true);
-    }
-    return;
-  }
+  // permission-landing 批 P2（2026-11-18）：F4 #433 的全局 fallback toast 腿整体
+  // 退役（原生弹窗形态，弹窗禁令）。后端现在把原目标 root 不可达的卡**重定锚**到
+  // 一个真实可达的 root（帧带 retargetedFrom/retargetReason，卡片在落点会话的
+  // 对话流内渲染并注明原因）；sid 不在 sessionAgentMap 的旧帧（后端未升级/列表
+  // 未加载）不再弹 toast——非活动会话统一走 saveMsg 持久化，会话打开时恢复。
+  //
   // 🔴 Silent auto-approve path REMOVED (permshield F1, 2026-09-13, per S1's
   // backend disposition): this block used to auto-answer `permissionAnswer
   // {approved:true}` with zero user interaction for any session the client had
@@ -2076,16 +2067,15 @@ onMessage('askPermission', (msg, view) => {
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode, msg.retargetedFrom);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId, safetyMode: msg.safetyMode }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId, safetyMode: msg.safetyMode, retargetedFrom: msg.retargetedFrom }, sid);
   }
 });
 
 onMessage('permissionExpired', (msg, view) => {
   const sid = msg.sessionId;
-  dismissGlobalPermissionToasts(sid); // F4 (#433): retire any fallback toast for this root
   if (!sid) return;
   // Mark as answered so the prompt isn't re-created on session switch
   state.answeredPermissions.add(sid);

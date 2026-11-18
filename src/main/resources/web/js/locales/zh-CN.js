@@ -2781,9 +2781,7 @@ export default {
   'usage.legend.hitRate': '— · 25% · 50% · 75% · 100%',
   'usage.weekLabel': '较上周 {dir}{pct}%',
   'usage.noData': '—',
-  'perm.fallbackTitle': '{agent} 请求权限（目标会话不可达）',
-  'perm.fallbackApprove': '允许',
-  'perm.fallbackDeny': '拒绝',
+  'perm.retargetNote': '原目标会话 {from} 不可达，已转入本会话呈现',
 
   // === 界面残留汉化(活动栏 / 面板标题 / 空状态等) ===
   'activity.login': '登录',

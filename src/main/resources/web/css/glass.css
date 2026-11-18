@@ -104,11 +104,10 @@
    新增一处毛玻璃 = 往本表加一个选择器（或给元素挂 .nf-glass 类）；
    不许在别的文件里重写 backdrop-filter —— scripts/check-glass-unify.mjs 会红。 */
 
-/* 桌面面级成员（86 条独立选择器） */
+/* 桌面面级成员（85 条独立选择器；permission-landing 批摘除 .global-perm-toast） */
 .ask-dock .ds-turn-btn,
 .bypass-toggle:hover,
 .header-dropdown-menu,
-.global-perm-toast,
 /* 顶部悬浮头两面成对入册（contact-panel-unify 收编批 2026-11-06）：材质在本文件
    上方的「顶部悬浮头」共享声明里成套给出（玻璃底/描边/内高光/零下边缘），此处
    成对登记保证**任何一面被单独摘掉时账本立刻可见**，并为 G7b 的 T1/T22 提供成员面。 */
