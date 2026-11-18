@@ -6,7 +6,8 @@
 //   2. 消息页（会话列表 + 展开式搜索态）
 //   3. 联系人页（好友行 + 展开式搜索态）
 //   4. canvas 页
-//   5. 工作台 + meFace 层级（me / me-user / me-avatar / me-bind）
+//   5. 工作台 + meFace 单页（me：资料卡 + 只读身份 + 设备清单；子页已退役
+//      2026-11-18 profile-multidevice 批 ⇒ 取景 5b-me / 5c-me-devices / 5d-me-identity）
 //
 // 用法：node tests/mobile-emergency-shots.mjs [outDir]
 import { chromium } from 'playwright-core';
@@ -62,7 +63,7 @@ async function makePage(colorScheme) {
     if (p === '/') p = '/index.html';
     if (p === '/api/sessions') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'Smoke', agentName: 'Nebula' }], activeId: SID }) });
     if (p.includes('/agents/Nebula/agent.json')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ displayName: '笨笨' }) });
-    if (p === '/api/neblink/status') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '', email: 'me@example.com', displayName: '测试用户' }, peers: [] }) });
+    if (p === '/api/neblink/status') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '', email: 'me@example.com', displayName: '测试用户' }, peers: [{ deviceId: 'd2', deviceName: '笔记本', platform: 'windows', userDescription: '', avatarUrl: '', lastSeen: NOW - 120000, online: true, directOnline: true }] }) });
     if (p === '/api/friends') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ friends: [WIRE_FRIEND, WIRE_FRIEND2], incoming: [], outgoing: [] }) });
     if (p === '/api/conversations') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ conversationId: 'c-1', friend: WIRE_FRIEND, lastMessage: { body: '晚上一起吃饭吗', timestamp: NOW - 3000 }, unreadCount: 2 }, { conversationId: 'c-2', friend: WIRE_FRIEND2, lastMessage: { body: '文档我传到 canvas 了', timestamp: NOW - 40000 }, unreadCount: 0 }]) });
     if (p.startsWith('/api/')) return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
@@ -168,19 +169,16 @@ for (const scheme of ['dark', 'light']) {
   await page.locator('.mobile-page[data-page="workbench"] .mf-me-entry').click();
   await sleep(500);
   await shot(page, '5b-me', scheme);
-  await page.locator('.mobile-page[data-page="me"] .mf-hub-row[data-me-page="me-user"]').click();
-  await sleep(500);
-  await shot(page, '5c-me-user', scheme);
-  await page.locator('.mobile-page[data-page="me-user"] .mobile-back-btn').click();
+  // ⚠️ 2026-11-18 修残：本处原为三个层级子页取景（5c-me-user / 5d-me-avatar /
+  // 5e-me-bind，点击 `.mf-hub-row[data-me-page=…]`）—— 这三个子页已随
+  // profile-multidevice 批整族退役（入口行不在场 ⇒ 旧脚本在此必超时）。
+  // 改为单页 face 的两个真实取景：设备清单（本批新增面）+ 身份读数区。
+  await page.locator('.mobile-page[data-page="me"] [data-device-list="1"]').scrollIntoViewIfNeeded();
+  await sleep(400);
+  await shot(page, '5c-me-devices', scheme);
+  await page.locator('.mobile-page[data-page="me"] .mf-me-card').scrollIntoViewIfNeeded();
   await sleep(300);
-  await page.locator('.mobile-page[data-page="me"] .mf-hub-row[data-me-page="me-avatar"]').click();
-  await sleep(500);
-  await shot(page, '5d-me-avatar', scheme);
-  await page.locator('.mobile-page[data-page="me-avatar"] .mobile-back-btn').click();
-  await sleep(300);
-  await page.locator('.mobile-page[data-page="me"] .mf-hub-row[data-me-page="me-bind"]').click();
-  await sleep(500);
-  await shot(page, '5e-me-bind', scheme);
+  await shot(page, '5d-me-identity', scheme);
   await ctx.close();
 }
 

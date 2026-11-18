@@ -25,8 +25,10 @@ const PEERS = [
   { deviceId: 'dev-old', deviceName: 'OldBox', platform: 'linux', lastSeen: Date.now() - 3 * 86_400_000, online: false, directOnline: false },
 ];
 
-/** 桩化 boot：设备读数 = 上游 /api/neblink/status 的真实形状；请求全量留痕。 */
-async function boot(page, mobile) {
+/** 桩化 boot：设备读数 = 上游 /api/neblink/status 的真实形状；请求全量留痕。
+ *  `peers` 可传数组（同一引用被路由桩闭包捕获 ⇒ 测试中途改元素 = 服务端读数变化，
+ *  用于「状态拍刷新两张表」的判据）。 */
+async function boot(page, mobile, { peers = PEERS } = {}) {
   await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1600, height: 1000 });
   await page.addInitScript(({ peers }) => {
     localStorage.setItem('nebflow_token', 'test');
@@ -47,7 +49,7 @@ async function boot(page, mobile) {
         { method: req.method(), path: p }).catch(() => {});
       if (p === '/api/neblink/status') {
         return route.fulfill({
-          json: { loggedIn: true, device: { ...SELF, displayName: 'Fixture User', email: 'fixture@example.test' }, peers: PEERS },
+          json: { loggedIn: true, device: { ...SELF, displayName: 'Fixture User', email: 'fixture@example.test' }, peers },
         });
       }
       if (p === '/api/users/search') {
@@ -217,3 +219,40 @@ for (const mobile of [false, true]) {
     expect(afterSelf.filter(p => p.endsWith('/sign-out'))).toEqual(peerSignOuts);
   });
 }
+
+// ⑤ 活体刷新（修残 2026-11-18 独立评审判定③）：`ensureDeviceListLive` 是
+//    profileDevices.js 的**模块级单飞订阅**，注释承诺「清单在场时重绘」；修前实现
+//    用 `document.querySelector('[data-device-list="1"]')` —— 只回**第一张**表，
+//    第二张表永远不随状态拍更新（设备增减 / 在线态变化停在建表那一刻，静默陈旧）。
+//    判据构造：第一张表 = 手机 me 页自己的清单（它有面内绘制回调兜底，无论修不修
+//    都会刷新）；第二张表 = 用**生产同一份标记**（deviceListHTML）追加进 DOM 的清单，
+//    它不在任何面的绘制回调里 ⇒ 只有模块订阅刷得到它。一拍之后两张表必须同读数。
+test('mobile: one status tick repaints every live device list, not just the first', async ({ page }) => {
+  const peers = [{ deviceId: 'dev-kai', deviceName: 'KAI', platform: 'windows', lastSeen: Date.now() - 60_000, online: true, directOnline: true }];
+  await boot(page, true, { peers });
+  await openMobileMe(page);
+  await page.evaluate(async () => {
+    const { deviceListHTML } = await import('/js/profileDevices.js');
+    const host = document.createElement('div');
+    host.id = 'pd-second-list-host';
+    host.innerHTML = deviceListHTML();
+    document.body.appendChild(host);
+  });
+  const metaOf = (sel) => page.locator(`${sel} .pd-device-row[data-device-id="dev-kai"] .pd-device-meta`).textContent();
+  const tick = async (online) => {
+    peers[0].online = online;
+    await page.evaluate(async () => (await import('/js/neblink.js')).fetchNeblinkStatus());
+    await page.waitForTimeout(300);
+  };
+  // 第一张表（有面内回调兜底）基线读数。
+  expect(await metaOf('.mobile-page[data-page="me"]')).toContain('Online');
+  // 一拍：对端转离线 —— 两张表都必须刷成新读数。
+  await tick(false);
+  expect(await metaOf('.mobile-page[data-page="me"]')).toContain('Offline');
+  expect(await metaOf('#pd-second-list-host'), '第二张清单必须同拍刷新（修前恒停留在建表时刻的空读数）').toContain('Offline');
+  expect(await page.locator('#pd-second-list-host .pd-device-row[data-device-id="dev-kai"]').getAttribute('data-device-online')).toBe('offline');
+  // 再一拍：转回在线 —— 第二张表必须继续跟随（证明它是活体，不是一次性补画）。
+  await tick(true);
+  expect(await metaOf('#pd-second-list-host')).toContain('Online');
+  expect(await page.locator('#pd-second-list-host .pd-device-row[data-device-id="dev-kai"]').getAttribute('data-device-online')).toBe('online');
+});

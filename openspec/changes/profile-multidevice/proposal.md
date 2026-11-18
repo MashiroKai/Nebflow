@@ -18,7 +18,7 @@ At the same time the console is multi-device but presents itself as single-devic
 
 - Frontend: `js/profileDevices.js` (new), `js/settingsIdentity.js`, `js/mobile/meFace.js`, `js/mobile/navController.js`, `css/settingsRows.css`, locales `zh-CN` / `en`.
 - Backend: one route in `gateway/NeblinkRoutes.scala`.
-- Tests: `tests/profile-multidevice.spec.mjs` (new); `tests/settings-identity-card.spec.mjs` and `tests/mobile-round2.spec.mjs` updated for the retired subpages.
+- Tests: `tests/profile-multidevice.spec.mjs` (new); `tests/settings-identity-card.spec.mjs` and `tests/mobile-round2.spec.mjs` updated for the retired subpages. Repair batch (2026-11-18) adds `tests/profile-devices-geometry.spec.mjs` (new) and rewrites `tests/mobile-topbar.spec.mjs` T2/T3.
 
 ### Non-goals
 
@@ -37,3 +37,13 @@ At the same time the console is multi-device but presents itself as single-devic
 ## Verification limits
 
 `tests/profile-multidevice.spec.mjs` drives a stubbed REST/WS surface in a real browser (mobile and desktop viewports): it proves the rendered list contents, the current-device marker, that the peer row issues exactly one request carrying exactly its own `deviceId` and no other, that the peer row never triggers the end-session chain, that the current-device row triggers it, and that no edit action, subpage, editable control, anchor or `window.open` exists. It does **not** prove live cross-device behaviour, does not contact a real gateway, and does not establish rendered geometry, safe areas, occlusion or contrast — those need a real instance and screenshots. Passing static lint is not acceptance evidence for any of it.
+
+## Repair batch (2026-11-18, independent review)
+
+An independent review of this change found three blockers; the intent above is unchanged by the repair.
+
+- **The backend leg did not compile.** `IO.pure(...)` wrapped the http4s DSL responses in the peer (`409`) and unknown-device (`404`) arms, so the `for` comprehension's arms met at `Response[IO] | IO[Response[IO]]` and `yield resp` failed with `[E007] Type Mismatch` (line 585). The DSL values are now returned directly; `sbt compile` is green.
+- **The mobile device card was clipped by flex shrink.** `.mobile-page-body` is both the scroll container and a column flex container, and `.mf-hub-rows` carries `overflow: hidden` — per spec an `overflow` non-`visible` flex item gets an automatic minimum size of zero, so the card was compressed (content 300px, box 101.3px at 390×844) with `scrollHeight == clientHeight` (no scroll range) and 4 of 6 rows unreachable by pointer. Both `.mf-me-fields` blocks are now `flex: none`, and the per-row sign-out key reaches the mobile 44px hit floor (`--mtap`).
+- **`profileDevices.js ensureDeviceListLive` repainted only the first list.** `document.querySelector('[data-device-list="1"]')` returned the first list only, so a second live list stayed stale forever; one status tick now repaints every live list.
+
+Verification added by the repair: `tests/profile-devices-geometry.spec.mjs` (layout truth, per-row touch reachability, the mobile 44×44 hit box, a coordinate tap for the peer row, and an anti-vacuous detector self-check) and a live-repaint test in `tests/profile-multidevice.spec.mjs`. `tests/mobile-topbar.spec.mjs` T3 (retired subpages) and T2 (already red before the repair — the settings-page identity card was removed by the 2026-11-07 account-hero-dedupe ruling, commit `488d8f8bb`) were rewritten to the current product.

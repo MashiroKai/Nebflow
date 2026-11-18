@@ -141,10 +141,14 @@ export function deviceListHTML() {
 /**
  * 绘制清单文本（建表与重绘共用；元素不在场零成本）。
  * 只改文本与状态位，**不重建行**（重建会吃掉正在进行的退出动作的焦点/禁用态）。
+ * `root` 可传容器（其下含清单）**或**清单元素本身 —— 状态拍订阅要逐表重绘，
+ * 手里拿到的正是清单节点（见 ensureDeviceListLive）。
  * @param {ParentNode} root
  */
 export function paintDeviceList(root) {
-  const list = root.querySelector('[data-device-list="1"]');
+  const list = root instanceof Element && root.matches('[data-device-list="1"]')
+    ? root
+    : root.querySelector('[data-device-list="1"]');
   if (!(list instanceof HTMLElement)) return;
   const { current, peers } = getDeviceList();
   /** @type {Map<string, ProfileDevice>} */
@@ -231,7 +235,10 @@ export function bindDeviceList(root, rerender) {
   boundLists.add(list);
   list.addEventListener('click', async (e) => {
     const btn = e.target instanceof Element ? e.target.closest('[data-device-signout]') : null;
-    if (!(btn instanceof HTMLElement)) return;
+    // 宿主收窄到 `HTMLButtonElement`（本批修残：原为 HTMLElement ⇒ `btn.disabled`
+    // 在 checkJs 下报 TS2339 ×3，`js-types` 闸因「新文件带 3 错」恒红）。行内退出键
+    // 由 deviceListHTML() 出结构，恒为 `<button type="button">` ⇒ 收窄不丢任何真实目标。
+    if (!(btn instanceof HTMLButtonElement)) return;
     e.stopPropagation();
     const id = btn.dataset.deviceSignout || '';
     const row = btn.closest('.pd-device-row');
@@ -255,13 +262,18 @@ export function bindDeviceList(root, rerender) {
 
 /** 状态拍订阅（清单在场时重绘；单飞，禁每次绘制加新闭包）。 */
 let subscribed = false;
-/** @param {ParentNode} root */
+/** 🔴 修残（2026-11-18 独立评审判定）：修前用 `document.querySelector('[data-device-list="1"]')`
+ * —— `querySelector` **只回第一张表**，而两张消费面（桌面资料面 / 手机 me 页）
+ * 的清单可以同时在 DOM 里活着（页面栈 non-live 面 display:none 但仍然在树上），
+ * 于是「第二张表永远不随状态拍更新」：设备增减、在线态变化只画在其中一张上，
+ * 另一张停在建表那一刻的旧读数（静默陈旧 = 本仓禁止的缺陷族）。现改为逐表重绘
+ * （`querySelectorAll` + 每表各自重绘），订阅仍是单飞。
+ * @param {ParentNode} root */
 export function ensureDeviceListLive(root) {
   if (subscribed) return;
   subscribed = true;
   onNeblinkStatus(() => {
-    const list = document.querySelector('[data-device-list="1"]');
-    if (list) paintDeviceList(document);
+    for (const list of document.querySelectorAll('[data-device-list="1"]')) paintDeviceList(list);
   });
   void root;
 }

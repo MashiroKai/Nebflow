@@ -2689,6 +2689,27 @@ body.mobile-layer .mf-me-login { flex: none; }
 body.mobile-layer .mf-me-grouplabel { margin: 0 14px; padding-left: var(--ds-space-inline-x); padding-right: var(--ds-space-inline-x); }
 /* 个人主页账号行卡（无 .mf-hub 容器兜边距，壳级补 14px 侧距；分组标签紧贴其上）。 */
 body.mobile-layer .mobile-page[data-page="me"] .mf-hub-rows { margin: 0 14px; }
+/* 🔴 profile-multidevice 修残（2026-11-18 独立评审判定②实锤）：`.mobile-page-body`
+   是「滚动容器 + 列向 flex」双身份（第 916 行块），而 `.mf-hub-rows` 声明了
+   `overflow: hidden` —— 按 CSS 规范，overflow 非 visible 的 flex 项自动最小尺寸
+   归零（min-height:auto 失效），于是设备卡/身份卡在收缩算法里被压扁、行内容被
+   overflow:hidden **裁掉且不可滚**：修前实测 390×844（本机 + 5 对端），设备卡
+   内容高 300px / 可见高 101.3px，页体 scrollHeight == clientHeight（无滚动条），
+   6 行中 dev-1…dev-4 四行的中心 elementFromPoint 命中不到自己 —— 不止「看着被
+   切」，是真的点不到。修法 = 页内这两个块不参与收缩（`flex: none` ⇒ 按内容取高），
+   超出部分交给页体滚动，与同页 `.mf-me-card` / `.mf-hub` 的「块级件不收缩」口径
+   一致（器械读数见 tests/profile-devices-geometry.spec.mjs）。 */
+body.mobile-layer .mobile-page[data-page="me"] .mf-me-fields { flex: none; }
+/* 逐设备退出键的手机档触控面（同批评审判定延伸）：`.glass-control` 只给材质不给
+   尺寸，修前行内退出键实测 50.9×17 —— 高度不足 --mtap（= --ds-hit-row 44px），
+   低于本仓手机触控下限（tests/mobile-touch-target.spec.mjs 的作者令判据）。
+   补 --mtap 高 + 横向内距后命中盒 50.9×44 达标；规则限定手机层与个人主页，
+   桌面个人资料面（鼠标档）不动。 */
+body.mobile-layer .mobile-page[data-page="me"] .pd-device-signout {
+  min-height: var(--mtap);
+  padding-left: var(--ds-space-3);
+  padding-right: var(--ds-space-3);
+}
 /* 入口行右值（当前读数，如用户名/绑定的邮箱）。 */
 body.mobile-layer .mf-hub-row-val {
   flex: none;

@@ -560,26 +560,28 @@ private[gateway] object NeblinkRoutes:
                   )
                 )
               else if isPeer then
-                IO.pure(
-                  Conflict(
-                    Json.obj(
-                      "ok" -> false.asJson,
-                      "deviceId" -> deviceId.asJson,
-                      "scope" -> "remote".asJson,
-                      "code" -> "remote-sign-out-unsupported".asJson,
-                      "error" -> "remote device sign-out is not supported".asJson
-                    )
+                // 405 之外的第二诚实读数（见上注）：DSL 构件 `Conflict(…)` 本身已是
+                // `IO[Response[IO]]`（http4s dsl + CirceEntityCodec），**再包一层
+                // `IO.pure` 就是 IO[IO[Response]]** —— 与上面本机腿的
+                // `IO[Response[IO]]` 取 lub 后落到 `Response[IO] | IO[Response[IO]]`，
+                // 编译器在 `yield resp` 报 E007 type mismatch（2026-11-18 独立评审判
+                // ③实锤：本 case 自 6b7b7328c 起从未通过编译）。此处直出 DSL 读数。
+                Conflict(
+                  Json.obj(
+                    "ok" -> false.asJson,
+                    "deviceId" -> deviceId.asJson,
+                    "scope" -> "remote".asJson,
+                    "code" -> "remote-sign-out-unsupported".asJson,
+                    "error" -> "remote device sign-out is not supported".asJson
                   )
                 )
               else
-                IO.pure(
-                  NotFound(
-                    Json.obj(
-                      "ok" -> false.asJson,
-                      "deviceId" -> deviceId.asJson,
-                      "code" -> "unknown-device".asJson,
-                      "error" -> "unknown device".asJson
-                    )
+                NotFound(
+                  Json.obj(
+                    "ok" -> false.asJson,
+                    "deviceId" -> deviceId.asJson,
+                    "code" -> "unknown-device".asJson,
+                    "error" -> "unknown device".asJson
                   )
                 )
           yield resp

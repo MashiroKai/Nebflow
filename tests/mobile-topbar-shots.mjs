@@ -1,5 +1,5 @@
 // mobile-topbar-shots.mjs — 手机端工作台顶栏批双主题截图（作者令 2026-10-31）：
-//   工作台新顶（头像入口 + 无顶栏标题）/ 个人主页 / 个人主页层级子页（用户名）
+//   工作台新顶（头像入口 + 无顶栏标题）/ 个人主页 / 个人主页设备清单
 //   × dark/light。产物 = <outDir>（由参数指定）。
 //
 // 用法：node tests/mobile-topbar-shots.mjs <outDir>
@@ -73,16 +73,18 @@ for (const scheme of ['dark', 'light']) {
   await m.locator('.mobile-page[data-page="workbench"] .mf-me-entry').click();
   await sleep(500);
   await m.screenshot({ path: join(OUT, `me-home-${scheme}.png`) });
-  // 层级子页（用户名 → 铺满屏配置层，左上「<」返回）。
-  await m.locator('.mobile-page[data-page="me"] .mf-hub-row[data-me-page="me-user"]').click();
-  await sleep(500);
-  await m.screenshot({ path: join(OUT, `me-username-${scheme}.png`) });
-  // 设置页（件四·2026-11-02：身份卡已回到设置页 = 头像在上 +
-  // 用户名/邮箱胶囊；设备区仍在联系人页。文件名保留不改，避免证据引用键变。含旧名的照片含义已变）。
-  await m.locator('.mobile-page[data-page="me-user"] .mobile-back-btn').click();
-  await sleep(300);
+  // ⚠️ 2026-11-18 修残：本处原为「层级子页（用户名 → 铺满屏配置层）」取景
+  // （`.mf-hub-row[data-me-page="me-user"]`）—— me-user / me-avatar / me-bind 三个
+  // 层级子页已随 profile-multidevice 批整族退役（入口行不在场 ⇒ 旧脚本在此必超时）。
+  // 改为单页 face 的第二个取景：设备清单（本批新增面，逐设备独立退出）。
+  await m.locator('.mobile-page[data-page="me"] [data-device-list="1"]').scrollIntoViewIfNeeded();
+  await sleep(400);
+  await m.screenshot({ path: join(OUT, `me-devices-${scheme}.png`) });
   await m.locator('.mobile-page[data-page="me"] .mobile-back-btn').click();
   await sleep(300);
+  // 设置页（文件名保留不改，避免证据引用键变；含旧名的照片含义已变：
+  // 2026-11-07 account-hero-dedupe 批起设置页**不再有**身份卡/头像位 —— 身份与
+  // 头像的唯一权威展示 = 工作台顶部 hero；设备区仍在联系人页）。
   await m.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
   await sleep(600);
   await m.screenshot({ path: join(OUT, `settings-no-avatar-${scheme}.png`) });
