@@ -300,8 +300,38 @@ for (const vp of VIEWPORTS) {
       }
       ok(tag('A2 裸件契约：两面内件边框宽同值'), mainField.borderTopW === fmField.borderTopW,
         `main=${mainField.borderTopW} fm=${fmField.borderTopW}`);
-      ok(tag('A3 placeholder 两面同源非空'), !!mainField.ph && !!fmField.ph,
-        `main=${JSON.stringify(mainField.ph)} fm=${JSON.stringify(fmField.ph)}`);
+      // A3 placeholder 同源（composer 统一批 2026-11-18）：两面的 DOM 值必须逐字等于
+      // **同一个共享函数** js/input/composer.js `composerPlaceholder()` 对该面声明的
+      // baseToken 的产出 —— 不是「两面都是非空」，而是「两面的值都由那一份判据产出」。
+      // 四条上下文分支（通用/语音/引用帧/附件计数）同批在共享函数上逐条钉死。
+      const ph = await page.evaluate(async () => {
+        const { composerPlaceholder } = await import('/js/input/composer.js');
+        const q = (s) => document.querySelector(s);
+        const m = q('#input');
+        const f = q('.fm-input');
+        const ctx = (baseToken) => ({ baseToken, voiceActive: false, refOnly: false, attachments: 0 });
+        return {
+          mainDom: m ? m.placeholder : null, fmDom: f ? f.placeholder : null,
+          mainSrc: composerPlaceholder(ctx('input.placeholder')),
+          fmSrc: composerPlaceholder(ctx('messages.inputPlaceholder')),
+          generic: composerPlaceholder(ctx('input.placeholder')),
+          listening: composerPlaceholder({ baseToken: 'input.placeholder', voiceActive: true }),
+          refOnly: composerPlaceholder({ baseToken: 'input.placeholder', refOnly: true }),
+          attCounted: composerPlaceholder({ baseToken: 'input.placeholder', attachments: 2 }),
+        };
+      });
+      ok(tag('A3 placeholder 主会话 DOM === 共享函数产出'), !!ph.mainDom && ph.mainDom === ph.mainSrc,
+        `dom=${JSON.stringify(ph.mainDom)} src=${JSON.stringify(ph.mainSrc)}`);
+      ok(tag('A3 placeholder 消息面 DOM === 共享函数产出'), !!ph.fmDom && ph.fmDom === ph.fmSrc,
+        `dom=${JSON.stringify(ph.fmDom)} src=${JSON.stringify(ph.fmSrc)}`);
+      // 附件计数分支在手机层**按既有作者令恒为通用文案**（附件条已图标化，文案不
+      // 再点名文件）⇒ 该分支只断言「有产出」，不要求与通用档不同；语音/引用帧两档
+      // 在两视口都必须与通用档不同。
+      ok(tag('A3 placeholder 共享函数带全部上下文分支'),
+        !!ph.generic && !!ph.listening && !!ph.refOnly && !!ph.attCounted
+        && ph.listening !== ph.generic && ph.refOnly !== ph.generic,
+        `generic=${JSON.stringify(ph.generic)} listening=${JSON.stringify(ph.listening)} `
+        + `refOnly=${JSON.stringify(ph.refOnly)} att2=${JSON.stringify(ph.attCounted)}`);
       writeFileSync(join(EVID, `composer-field-${vp.name}.json`), JSON.stringify({ main: mainField, fm: fmField }, null, 2));
     }
     const caps = await page.evaluate(() => {
