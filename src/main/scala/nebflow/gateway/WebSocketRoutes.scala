@@ -1464,8 +1464,9 @@ class WebSocketRoutes(
           // the closing head tag. The served body therefore differs from the
           // source bytes, which is why this route does not use StaticFile's
           // conditional-request handling (a jar-entry Last-Modified must not
-          // vouch for content we mutated) — the response stays no-cache with
-          // no validators.
+          // vouch for content we mutated) — the validator is the served-bytes
+          // WEAK ETag computed by StaticRoutes.brandInjectedResponse
+          // (静态面重验证批 2026-11-18: no-cache + If-None-Match ⇒ 304).
           // console-fastpath 批 2026-10-23·腿②：隧道脸（TunnelOriginMark）分发到
           // 首开内联打包面（[[StaticRoutes.indexResponseFor]]），直连脸逐字原应答。
           StaticRoutes.indexResponseFor(req)

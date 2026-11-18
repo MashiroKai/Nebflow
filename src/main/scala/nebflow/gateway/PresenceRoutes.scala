@@ -1044,6 +1044,15 @@ private[gateway] object PresenceRoutes:
         }
 
       // Authenticated console scope, with no private content broadcast through WsHub.
+      //
+      // 滚动面重验证批（2026-11-18，作者令「尽量节省资源」）：本端点是控制台
+      // **最高频**的读面——`delegateChainProvider.js` 每 5s 一拍拉当前 root 的
+      // 作用域任务行（每天约 17 280 次/开着的控制台），此前既无 ETag 也无
+      // Cache-Control，前端恒 `cache:'no-store'` ⇒ **每拍都全量重发整个行集**。
+      // 现在走 HttpCache 条件协商（同一实现面，与 /api/chains、/api/delegates
+      // 同族）：载荷内容 ETag + `private, no-cache`，未变 ⇒ 304 零体。载荷字节
+      // 与 200 腿逐字不变（投影/字段零改动），客户端拿到 304 时 `fetch` 自动
+      // 复用已存体——语义等价，只省字节。
       case req @ GET -> Root / "subagent-tasks" / rootSessionId =>
         withAuth(req) {
           if !nebflow.core.delegate.DelegateRegistry.validId(rootSessionId) then
@@ -1052,12 +1061,11 @@ private[gateway] object PresenceRoutes:
             sharedResources.agentRegistry.get.flatMap { registry =>
               sharedResources.subAgentTaskStore.findAllTasks().flatMap { tasks =>
                 val rows = ChainsReadFace.scopedTaskRows(rootSessionId, tasks, registry)
-                Ok(
-                  Json.obj(
-                    "rootSessionId" -> rootSessionId.asJson,
-                    "tasks" -> rows.map(ChainsReadFace.taskVisibilityJson).asJson
-                  )
+                val body = Json.obj(
+                  "rootSessionId" -> rootSessionId.asJson,
+                  "tasks" -> rows.map(ChainsReadFace.taskVisibilityJson).asJson
                 )
+                HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
               }
             }
         }
