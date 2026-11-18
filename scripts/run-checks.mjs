@@ -71,14 +71,12 @@ export const CHECKS = [
   nodeCheck('freeze-state', 'check-freeze-state'),
   nodeCheck('flat-buttons', 'check-flat-buttons'),
   nodeCheck('glass', 'check-glass-unify'),
-  // 运行时毛玻璃闸（glass-runtime 批 2026-11-18）：check-glass-unify 只读**源码配方**
-  // （单一源 / α / 配方逐值），读不到「浏览器有没有真的在采样」——一个面的 backdrop-filter
-  // 写对了、computed 值也逐字正确，但祖先里有个 backdrop root 把它切断时，它照样绿。
-  // 本闸拍真像素判三条：R1 采样式生效（摘掉 backdrop-filter 必须改变像素）/
-  // R2 祖先 backdrop root 扫描 / R3 降级档（html.no-backdrop）落不透明实底。
-  // 需 chromium（full channel，headless-shell 对小圆元素模糊保真度不足）。
   { name: 'glass-runtime', profiles: ['frontend'], timeoutMs: 300_000,
     argv: [process.execPath, 'scripts/check-glass-runtime.mjs'] },
+  // 边框权重闸（dark-border-weight 批 2026-11-18）：暗档「边框太明显」——
+  // 同一条白细边在亮底 1.03/ΔE00 0.89、在暗底 3.24/ΔE00 27.11；本闸量暗档绝对
+  // 上限 + 暗亮同权重 + 玻璃细边单源 + 近白字面量台账。B3/B4 纯静态，B1/B2 需渲染。
+  nodeCheck('border-weight', 'check-border-weight'),
   nodeCheck('freeze-silence', 'check-freeze-silence'),
   nodeCheck('freeze-replay', 'check-freeze-replay-silence'),
   nodeCheck('canvas-hint', 'check-canvas-hint-tokens'),

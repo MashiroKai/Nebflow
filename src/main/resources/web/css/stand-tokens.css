@@ -405,6 +405,34 @@ html[data-theme="dark"] {
      11-11「毛玻璃一律不透底」；本批把全站唯一材质定回基准件配方，旧档名
      （--nf-glass-bg/-hover/-filter/-blur/-saturate）全部降为指向本组的别名
      ——存量消费链（sapphire.css --glass-* / --cv-*）不改名即换材质。 */
+  /* ── 发丝边（hairline）强度族 —— 全站透明色描边的**唯一档位来源** ───────────
+     dark-border-weight 批 2026-11-18（作者令逐字：「现在的边框 在暗色模式下
+     太明显了 需要优化一下」）
+
+     为什么必须分主题给 α（而不是一个值走天下）：半透明描边的**可见强度**不是
+     α 本身，而是 α 与底色的合成结果。同一条白光细边 α .35：
+       · 亮档落在 #f5f6f8 上 ⇒ 对比度 1.028、ΔE00 0.89（几乎不可见 —— 这正是
+         「whisper edge, feels like real glass」的设计意图）；
+       · 暗档落在 #13161c 上 ⇒ 对比度 3.241、ΔE00 27.11（一条亮线，放大 30 倍）。
+     实测（scripts/audit-border-weight.mjs，2026-11-18 清点，8 场景 × 暗亮两档 ×
+     真 Chromium）：暗档 415 条边框读数里，白光细边占 90 个面 / 358 条边 ——
+     其中 α .35 的 342 条**全部** ΔE00 > 10（最大 3.241 / 27.11）；作者看到的
+     「边框太明显」主体就是它。根因 = 暗档这一格被写成与亮档同一个字面量
+     （da9f834df 起），而它自己的注释写的是 rgba(255,255,255,.06)。
+
+     档位怎么定的（不是手感）：站内既有暗档中性发丝档实测落在
+     对比度 1.16–1.48 / ΔE00 3.8–9.0 —— --color-border #2a2d35 对 #13161c =
+     1.316/7.33；--color-frame-border #282b33 对 #15181f = 1.255/6.00；
+     --nf-field-border-color（正文色 14%）对 #1c1f27 = 1.475/8.99。
+     本族暗档取 α .06 ⇒ 1.165 / 4.38，落在该带的**下缘**：最淡，但仍在
+     「可感知的发丝」区间（ΔE00 > JND 2.3），且与文件自有的参照物记载
+     （暗档细边 .06）逐值一致。
+
+     纪律：α **只在这里给**；--nf-glass-border-color 只做引用，其它任何面不许
+     再写白/黑发丝边的 α 字面量（机检：scripts/check-border-weight.mjs）。 */
+  --nf-hairline-ink: 255 255 255;   /* 发丝边通道基色（白光；暗档同一枚，靠 α 分档） */
+  --nf-hairline-a: 0.35;            /* 亮档 α：浅底上的发丝边（⇒ #f5f6f8 上 1.028 / ΔE00 0.89） */
+  --nf-hairline-a-dark: 0.06;       /* 暗档 α：深底上的**同感知权重**发丝边（⇒ #13161c 上 1.165 / ΔE00 4.38） */
   --nf-glass-input-bg: rgba(255, 255, 255, 0.16);            /* 亮档沿用原白色色相，保留玻璃透明度 */
   --nf-glass-input-filter: blur(24px) saturate(1.15); /* 唯一模糊配方 */
   /* Canvas 三点基准：暂作为具名引用，不改变全局旧玻璃消费方；全局迁移须
@@ -427,7 +455,7 @@ html[data-theme="dark"] {
   --nf-glass-saturate: 1.15;                         /* 唯一饱和度 = 基准件原值 */
   /* 唯一模糊配方别名：glass.css 内全部 backdrop-filter 只准消费 input-filter */
   --nf-glass-filter: var(--nf-glass-input-filter);
-  --nf-glass-border-color: #ffffff59;      /* 细边 = 参照物白光细边 rgba(255,255,255,.35) */
+  --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a));   /* 细边 = 发丝边族（唯一档位来源，见上） */
   --nf-glass-border: 1px solid var(--nf-glass-border-color);
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
   /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
@@ -446,7 +474,10 @@ html[data-theme="dark"] {
   --nf-glass-bg: var(--nf-glass-input-bg);   /* 别名：唯一底 */
   /* hover 升一档：α .941 → .980（Δ = 10/255 ≥ 8/255；亮档同款层级语义） */
   --nf-glass-bg-hover: #181c26fa;
-  --nf-glass-border-color: #ffffff59;      /* 参照物暗档细边 rgba(255,255,255,.06) */
+  /* 暗档细边：**不再复用亮档 α**。α .35 的白边落在深底上会被放大到
+     3.241 / ΔE00 27.11（= 作者报障的「太明显」）；改引发丝边族暗档档位
+     ⇒ 1.165 / ΔE00 4.38，与站内既有暗档中性发丝档同带。 */
+  --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a-dark));
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
   --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
 }
@@ -455,7 +486,7 @@ html[data-theme="dark"] {
     --nf-glass-input-bg: rgba(24, 28, 38, 0.16);
     --nf-glass-bg: var(--nf-glass-input-bg);
     --nf-glass-bg-hover: #181c26fa;
-    --nf-glass-border-color: #ffffff59;
+    --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a-dark));
     --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
     --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
   }
@@ -464,7 +495,7 @@ html[data-theme="light"] {
   --nf-glass-input-bg: rgba(255, 255, 255, 0.16);
   --nf-glass-bg: var(--nf-glass-input-bg);
   --nf-glass-bg-hover: #ffffff;
-  --nf-glass-border-color: #ffffff59;
+  --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a));
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
   /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
      只跳过以 `--x:` 起头的行，多行值里的续行会被当成裸色值计数（本批实测：写成
