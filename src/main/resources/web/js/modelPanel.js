@@ -30,7 +30,6 @@ import { statusIcon, escapeHtml } from './utils.js';
 import { mobileSheetBack } from './mobile/popSheet.js';
 import { createDepVisibility } from './depVisibility.js';
 import { rootNameParams } from './rootName.js';
-import { setRow } from './settingsRows.js';
 
 // ── Shared helpers (model refs + chain display) ────────────
 
@@ -588,17 +587,28 @@ function buildFollowerBlock(container, role, commit) {
  * 追加（该面自己读过，失败即隐藏自己那组）。
  * @param {HTMLElement} container #model-chain-section-body
  */
+function settingsModelCard(title, id, status) {
+  const card = document.createElement('div');
+  card.className = 'mp-roleblock mp-settings-role-panel';
+  const label = document.createElement('label');
+  label.className = 'mp-role-head mp-role-name';
+  label.htmlFor = id;
+  label.textContent = title;
+  card.appendChild(label);
+  if (status) {
+    const note = document.createElement('div');
+    note.className = 'mp-note';
+    note.textContent = status;
+    card.appendChild(note);
+  }
+  return card;
+}
+
 function renderSettingsRoleSelector(container, refreshTarget = container) {
   for (const role of ROLES) {
     const st = roleState.get(role);
-    const row = document.createElement('div');
-    row.className = 'mp-roleblock mp-settings-role-panel';
+    const row = settingsModelCard(roleLabel(role), `model-role-select-${role}`);
     row.dataset.role = role;
-    const label = document.createElement('label');
-    label.className = 'mp-role-head mp-role-name';
-    label.htmlFor = `model-role-select-${role}`;
-    label.textContent = roleLabel(role);
-    row.appendChild(label);
 
     if (!st?.data) {
       const status = document.createElement('div');
@@ -667,17 +677,15 @@ function renderChainSectionBody(container) {
   const draft = document.createElement('div');
   renderSettingsRoleSelector(draft, container);
   const small = roleState.get(SMALL_LLM);
-  const row = document.createElement('div');
+  const row = settingsModelCard(t('model.smallLlm'), 'small-llm-select', small?.data
+    ? (small.data.mode === 'explicit' ? t('model.independent') : t('model.smallLlmFallback')) : '');
   row.id = 'small-llm-settings-row';
   const refs = getAllModelRefs();
   const selected = small?.data?.mode === 'explicit' ? chainRefs(small.data.chain)[0] : '';
   const options = `<option value="">${esc(t('model.smallLlmFallback'))}</option>` + refs.map(ref =>
     `<option value="${esc(ref)}"${ref === selected ? ' selected' : ''}>${esc(ref)}</option>`
   ).join('');
-  row.insertAdjacentHTML('beforeend', setRow({
-    title: t('model.smallLlm'),
-    control: `<select class="cfg-select set-field" aria-label="${esc(t('model.smallLlm'))}"${small?.data ? '' : ' disabled'}>${options}</select>`,
-  }));
+  row.insertAdjacentHTML('beforeend', `<select id="small-llm-select" class="mp-add-select mp-settings-role-model" aria-label="${esc(t('model.smallLlm'))}"${small?.data ? '' : ' disabled'}>${options}</select>`);
   row.querySelector('select').addEventListener('change', (event) => {
     const target = /** @type {HTMLSelectElement} */ (event.target);
     void putChain(SMALL_LLM, target.value ? [target.value] : null);
@@ -721,7 +729,7 @@ function renderChainSectionBody(container) {
     list.className = 'mp-group-list';
     container.appendChild(list);
   }
-  renderSwitchGroups(list, { collapsible: true });
+  renderSwitchGroups(list, { settings: true });
 }
 
 /** 拉取 Nebula 最新读数 + 两面状态投影 → 重绘节内容（seq 守卫丢弃陈旧响应）。 */
@@ -829,7 +837,7 @@ function switchOptionLabel(name, entry) {
  *  - 读数失败 ⇒ 返回 null（调用方不渲染该组，面板不炸）；
  *  - 未配置任何 provider ⇒ 组内一行空态提示 + 禁用的 select（绝不造假选项）。
  * @param {(typeof SWITCH_FACES)[number]} face
- * @param {{collapsible?: boolean}} [opts] true ⇒ 折叠形态（<details>/<summary>，默认合上）
+ * @param {{collapsible?: boolean, settings?: boolean}} [opts] true ⇒ 折叠形态（<details>/<summary>，默认合上）
  * @returns {HTMLElement|null}
  */
 function buildSwitchGroup(face, opts = {}) {
@@ -840,8 +848,10 @@ function buildSwitchGroup(face, opts = {}) {
   const current = typeof status[face.pointer] === 'string' ? status[face.pointer] : '';
   const collapsible = opts.collapsible === true;
 
-  const root = document.createElement(collapsible ? 'details' : 'div');
-  root.className = 'mp-group';
+  const root = opts.settings
+    ? settingsModelCard(t(face.titleKey), 'imagegen-settings-select', names.includes(current) ? t('model.independent') : t('settings.cfgCard.keyMissing'))
+    : document.createElement(collapsible ? 'details' : 'div');
+  if (!opts.settings) root.className = 'mp-group';
   root.dataset.group = face.group;
 
   const head = document.createElement(collapsible ? 'summary' : 'div');
@@ -902,9 +912,16 @@ function buildSwitchGroup(face, opts = {}) {
     });
   }
 
-  body.appendChild(sel);
-  root.appendChild(head);
-  root.appendChild(body);
+  if (opts.settings) {
+    sel.id = 'imagegen-settings-select';
+    sel.className = 'mp-add-select mp-settings-role-model';
+    if (names.length === 0) root.appendChild(body.firstChild);
+    root.appendChild(sel);
+  } else {
+    body.appendChild(sel);
+    root.appendChild(head);
+    root.appendChild(body);
+  }
   return root;
 }
 
@@ -913,7 +930,7 @@ function buildSwitchGroup(face, opts = {}) {
  * 设置页 `#model-chain-section-body` 尾部的 `.mp-group-list`）。
  * 所有面都读不到 ⇒ 容器留空且隐藏（不占位、不炸面）。
  * @param {HTMLElement|null} container
- * @param {{collapsible?: boolean}} [opts]
+ * @param {{collapsible?: boolean, settings?: boolean}} [opts]
  */
 function renderSwitchGroups(container, opts = {}) {
   if (!container) return;

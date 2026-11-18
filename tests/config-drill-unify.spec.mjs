@@ -171,6 +171,37 @@ function sectionRowRefs(page) {
     [...document.querySelectorAll('#model-chain-section-body .mp-row')].map(r => r.textContent.trim()));
 }
 
+test('settings model cards share structure at desktop and mobile widths', async ({ page }) => {
+  await bootPage(page);
+  await page.evaluate(async () => {
+    const host = document.createElement('div');
+    host.id = 'model-chain-section-body';
+    host.style.cssText = 'position:fixed;inset:0;overflow:auto;padding:16px;background:var(--color-bg);z-index:99999';
+    document.body.appendChild(host);
+    const { mountModelChainSection } = await import('/js/modelPanel.js');
+    mountModelChainSection(host);
+  });
+  const host = page.locator('#model-chain-section-body').last();
+  await expect(host.locator('#small-llm-settings-row select')).toBeVisible();
+  await expect(host.locator('[data-group="imagegen"] select')).toBeVisible();
+  for (const width of [1000, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const card of [host.locator('[data-role="node"]'), host.locator('#small-llm-settings-row'), host.locator('[data-group="imagegen"]')]) {
+      await expect(card).toHaveClass(/mp-settings-role-panel/);
+      await expect(card.locator('label.mp-role-name')).toBeVisible();
+      await expect(card.locator('.mp-note')).toBeVisible();
+      const geometry = await card.evaluate(el => {
+        const title = el.querySelector('label');
+        const select = el.querySelector('select');
+        return { titleFits: title.scrollWidth <= title.clientWidth, card: el.clientWidth, select: select.getBoundingClientRect().width, inner: el.clientWidth - parseFloat(getComputedStyle(el).paddingLeft) - parseFloat(getComputedStyle(el).paddingRight) };
+      });
+      expect(geometry.titleFits).toBeTruthy();
+      expect(Math.abs(geometry.select - geometry.inner)).toBeLessThan(2);
+    }
+    await host.screenshot({ path: `/tmp/stand-settings-cards-${width}.png` });
+  }
+});
+
 // ── ②-U2 回退链节：显式链渲染 + 加模型保存形状 ────────────────────────────
 test('U2 chain section renders the explicit chain (same .mp-row face as /model) and add-model saves via PUT', async ({ page }) => {
   const errors = watchErrors(page);

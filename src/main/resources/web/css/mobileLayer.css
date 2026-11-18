@@ -2650,7 +2650,6 @@ body.mobile-layer .mf-me-entry .mf-me-meta {
 body.mobile-layer .mf-me-entry :is(.mf-me-name, .mf-me-sub) { max-width: 100%; }
 body.mobile-layer .mf-account-card { margin: var(--ds-space-6) var(--ds-space-4); }
 body.mobile-layer .mf-account-card .neblink-account-actions { padding: var(--ds-space-4); }
-body.mobile-layer .mf-account-card .neblink-logout-btn { width: 100%; border-radius: var(--ds-radius-input); }
 /* Adopted secondary faces are pages, never desktop glass skirts. */
 body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::after,
 body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::before {

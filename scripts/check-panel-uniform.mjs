@@ -10,6 +10,10 @@ const profile = read(web + 'js/profileFace.js');
 const me = read(web + 'js/mobile/meFace.js');
 const sidebar = read(web + 'js/sidebar.js');
 const design = read(web + 'css/design-system.css');
+const model = read(web + 'js/modelPanel.js');
+const neblink = read(web + 'js/neblink.js');
+const activity = read(web + 'js/activityBar.js');
+const modal = read(web + 'css/modal.css');
 const errors = [];
 const check = (condition, message) => { if (!condition) errors.push(message); };
 check(/mf-me-card sp-identity/.test(me) && /mf-me-avatar-frame huge/.test(me), 'personal identity must use shared centered structure and huge avatar');
@@ -21,7 +25,12 @@ check(/pf-edit-bar ds-chrome-band/.test(profile) && /g2-fab pf-edit-submit/.test
 check(/bar\.hidden = !dirty/.test(profile) && /save\.hidden = true/.test(profile), 'pending actions only; no duplicate inline save');
 check(/if \(!isMobileLayer\(\)\)\s*\{[^}]*profile-face-close/s.test(profile), 'mobile back and desktop close must not duplicate');
 for (const group of ['account', 'general', 'models', 'runtime', 'advanced', 'about']) check(sidebar.includes(`data-panel-group="${group}"`), `missing settings group ${group}`);
+check(/settingsModelCard\(roleLabel\(role\)/.test(model) && /settingsModelCard\(t\('model.smallLlm'\)/.test(model) && /settingsModelCard\(t\(face.titleKey\)/.test(model), 'role, small model and image generation must share settingsModelCard');
+check(/renderSwitchGroups\(list, \{ settings: true \}\)/.test(model) && /mp-add-select mp-settings-role-model/.test(model), 'both additional settings must use full-width role controls');
+check(/\.mp-settings-role-model\s*\{[^}]*width:\s*100%/s.test(modal), 'settings model controls must fill their card');
+check(!/id="neblink-logout"|querySelector\('#neblink-logout'\)/.test(neblink), 'settings must not render or bind logout');
+check(/openEndSessionHandoff\(false\)/.test(activity), 'account menu must retain logout');
 if (errors.length) {
   for (const error of errors) console.error('FAIL panel-uniform:', error);
   process.exitCode = 1;
-} else console.log('PASS panel-uniform: registered identity, contact controls, duplicate guard and six settings groups');
+} else console.log('PASS panel-uniform: registered identity, contact controls, six settings groups and shared model cards');

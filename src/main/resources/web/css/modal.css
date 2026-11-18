@@ -1330,8 +1330,8 @@
    满宽铺开，节内顶距归 0（节自带 hint 间距）。 */
 .chain-section-face .mp-editor { margin-top: var(--ds-space-2); }
 .mp-settings-role-panel { display: flex; flex-direction: column; gap: var(--ds-space-2); padding: var(--ds-space-3); margin-bottom: var(--ds-space-2); }
-.mp-settings-role-panel .mp-role-head { padding: 0; }
-.mp-settings-role-model { width: 100%; min-height: 44px; }
+.mp-settings-role-panel .mp-role-head { padding: 0; white-space: normal; overflow-wrap: anywhere; }
+.mp-settings-role-model { width: 100%; min-width: 0; min-height: 44px; }
 #model-chain-section-body .chain-section-error { padding: var(--ds-space-6) var(--ds-space-3); }
 #model-chain-section-body:empty { display: none; }
 .mp-roleblock {
