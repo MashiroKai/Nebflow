@@ -91,7 +91,7 @@
 
 import { key } from './branding.js';
 import state from './state.js';
-import { sendWs, setAskFrameSink, onReconnect, requestTurnInterrupt } from './ws.js';
+import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
 import { activeCanvasEntry } from './canvas.js';
 import { isAskableFile } from './mdHtmlGate.js';
 // 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包，参考主 agent
@@ -99,8 +99,9 @@ import { isAskableFile } from './mdHtmlGate.js';
 // 统一实现（主会话同源）——组字期 Enter 只确认候选不发送、组字结束后才发送、
 // Shift+Enter 换行；生成中发送钮转中断钮（与主会话 send/stop 同律）。
 // （发送/中断的状态机实例随「Ask 对话框内核」搬进 askDialog.js；本文件只留 Esc
-// 的组字判据 isImeComposing。）
-import { isImeComposing } from './input/composer.js';
+// 的组字判据 isImeComposing 与中断动作 stopAsk 的帧出口 requestTurnInterrupt——
+// 两者都取自本包/内核的同一单点。）
+import { isImeComposing, requestTurnInterrupt } from './input/composer.js';
 // 组件化范式试点批（ask-paradigm-a）：DOM 构形走 dom.js 的 h()/frag()（零 HTML 串），
 // 元素注册与生命周期走 component.js 的 define()（light DOM，禁开阴影根）。
 import { h, frag } from './dom.js';
