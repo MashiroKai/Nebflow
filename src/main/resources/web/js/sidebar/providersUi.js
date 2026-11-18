@@ -622,7 +622,7 @@ export function showProviderForm({title, fields, onCancel, onConfirm, extraActio
               ${windowsRowsHTML(f.value)}
               <button class="tw-add-row" type="button" data-window-add>${t('provider.unavailableWindowsAdd')}</button>
             </div>` :
-            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" ${NO_SPELL} ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeOffSvg}</button></div>` :
+            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="password" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" ${NO_SPELL} ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeOffSvg}</button></div>` :
             f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${NO_SPELL} ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
             `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${NO_SPELL} ${f.disabled ? 'disabled' : ''} ${f.title ? `title="${escapeHtml(f.title)}"` : ''}>`}
           </div>`;
@@ -686,15 +686,27 @@ export function showProviderForm({title, fields, onCancel, onConfirm, extraActio
     btn.addEventListener('click', () => btn.closest('.cfg-model-row').remove());
   });
 
-  // Wire up eye toggle. 明文直显（作者令 2026-10-27）后默认态 = 已揭示：
-  // 判掩码只认内联 disc（初始无内联样式 = 明文），首击即真实切换到遮蔽。
+  // Reveal a configured image key only on explicit request; never overwrite a draft.
   overlay.querySelectorAll('.cfg-eye-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const input = btn.parentElement.querySelector('input');
-      const inputStyle = /** @type {{webkitTextSecurity?: string}} */ (input.style);
-      const isMasked = inputStyle.webkitTextSecurity === 'disc';
-      inputStyle.webkitTextSecurity = isMasked ? 'none' : 'disc';
-      btn.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
+      if (input.type === 'password' && !input.value && input.dataset.revealSecretRef) {
+        btn.disabled = true;
+        try {
+          const resp = await fetch(`/api/secrets/${encodeURIComponent(input.dataset.revealSecretRef)}/value`, {
+            headers: authHeaders(), cache: 'no-store',
+          });
+          if (!resp.ok) throw new Error('reveal failed');
+          const data = await resp.json();
+          if (!input.value && overlay.isConnected) input.value = data.value || '';
+        } catch {
+          window.__showToast?.(t('settings.saveFailed'), 'error');
+          return;
+        } finally { btn.disabled = false; }
+      }
+      const reveal = input.type === 'password';
+      input.type = reveal ? 'text' : 'password';
+      btn.innerHTML = reveal ? eyeOffSvg : eyeSvg;
     });
   });
 

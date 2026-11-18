@@ -164,13 +164,18 @@ const DOMAIN_SPECS = {
       ];
     },
     extraActionsHTML: imagegenTestButtonHTML,
-    bindExtra(overlay) {
+    bindExtra(overlay, ctx) {
       bindImagegenTestButtons(overlay, imagegenFormReader);
+      const ref = this.providers()[ctx.existingName]?.keyRef;
+      const input = overlay.querySelector('[data-field="apiKey"]');
+      if (!ref || !ctx.keyConfigured || !input) return;
+      input.dataset.revealSecretRef = ref;
     },
     async persist(values, ctx) {
       const name = values.name.trim();
       if (values.apiKey && values.apiKey.trim()) {
-        const okKey = await writeSecret(`imagegen-${name.toLowerCase()}-key`.slice(0, 64), values.apiKey.trim());
+        const ref = existingKeyRef(this.providers(), ctx.existingName, name, `imagegen-${name.toLowerCase()}-key`.slice(0, 64));
+        const okKey = await writeSecret(ref, values.apiKey.trim());
         if (!okKey) return false;
       }
       const patch = { type: values.type, model: values.model.trim() };

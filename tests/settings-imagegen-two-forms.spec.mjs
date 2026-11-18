@@ -86,6 +86,10 @@ function wireRoutes(page, st, ledger) {
     const req = route.request();
     const url = new URL(req.url());
     const name = decodeURIComponent(url.pathname.split('/').pop() || '');
+    if (req.method() === 'GET' && url.pathname.endsWith('/value')) {
+      ledger.reveals = (ledger.reveals || 0) + 1;
+      return route.fulfill({ json: { value: 'fixture-secret' } });
+    }
     if (req.method() === 'POST' || req.method() === 'PUT') {
       ledger.secrets.push({ method: req.method(), name, value: JSON.parse(req.postData() || '{}').value });
       const exists = st.existingSecrets.has(name);
@@ -193,6 +197,47 @@ test('B1+B2. seal=ON 既有 provider：投影值在位 + 键位徽标 + 零 keyR
   expect(dump.key, 'missing-key state badge (zh 词面 = fourfix 定版「未配置」)').toBe('未配置');
   expect(dump.model, 'model id rides the meta line').toContain('cogview-3-flash');
   await expectNoPointerWording(page);
+});
+
+test('existing image provider: endpoint roundtrip and explicit masked key reveal', async ({ page }) => {
+  const ledger = { secrets: [], sectionPuts: [] };
+  const st = { status: { compiledIn: true, enabled: true, defaultProvider: 'zhipu', providers: { zhipu: { type: 'cogview', model: 'model', baseUrl: 'https://example.invalid/v1', keyRef: 'custom-ref', keyConfigured: true } } } };
+  await bootPage(page, st, ledger);
+  await page.click('.cfg-card[data-provider="zhipu"]');
+  const input = page.locator('#cfg-modal [data-field="apiKey"]');
+  await expect(page.locator('#cfg-modal [data-field="baseUrl"]')).toHaveValue('https://example.invalid/v1');
+  await expect(input).toHaveAttribute('type', 'password');
+  expect(ledger.reveals || 0).toBe(0);
+  await page.click('#cfg-modal .cfg-eye-btn');
+  await expect(input).toHaveAttribute('type', 'text');
+  await expect(input).toHaveValue('fixture-secret');
+  expect(ledger.reveals).toBe(1);
+  await page.fill('#cfg-modal [data-field="apiKey"]', 'replacement');
+  await page.click('#cfg-modal-save');
+  expect(ledger.secrets[0].name).toBe('custom-ref');
+});
+
+test('mobile provider form touch: protocol, text, eye and action geometry', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, recordVideo: { dir: 'test-results/provider-motion', size: { width: 375, height: 812 } } });
+  const page = await context.newPage();
+  try {
+    const ledger = { secrets: [], sectionPuts: [] };
+    await bootPage(page, { status: { compiledIn: true, enabled: true, providers: {} } }, ledger);
+    await openForm(page);
+    const trigger = page.locator('#cfg-modal [data-field="type"]').locator('..').locator('.nf-select-trigger');
+    await trigger.tap();
+    const option = page.locator('.nf-select-menu .nf-select-opt', { hasText: 'cogview' });
+    await expect(option).toBeVisible();
+    await option.tap();
+    await expect(page.locator('#cfg-modal [data-field="type"]')).toHaveValue('cogview');
+    await page.locator('#cfg-modal [data-field="model"]').tap();
+    await page.locator('#cfg-modal [data-field="model"]').fill('model');
+    await page.locator('#cfg-modal .cfg-eye-btn').tap();
+    await expect(page.locator('#cfg-modal [data-field="apiKey"]')).toHaveAttribute('type', 'text');
+    const geometry = await page.locator('#cfg-modal .cfg-modal-actions .cfg-btn').evaluateAll(buttons => buttons.map(b => ({ width: b.getBoundingClientRect().width, height: b.getBoundingClientRect().height, whiteSpace: getComputedStyle(b).whiteSpace, radius: getComputedStyle(b).borderRadius })));
+    expect(geometry).toHaveLength(4);
+    for (const g of geometry) { expect(g.width).toBeGreaterThanOrEqual(44); expect(g.height).toBeGreaterThanOrEqual(44); expect(g.whiteSpace).toBe('nowrap'); expect(g.radius).toBe(geometry[0].radius); }
+  } finally { await context.close(); }
 });
 
 test('B3. 新用户空白：providers 空 → 全空新增面（零 zhipu/cogview 特化值）', async ({ page }) => {

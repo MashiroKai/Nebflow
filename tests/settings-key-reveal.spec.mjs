@@ -195,8 +195,11 @@ test('T2 provider edit modal prefills the REAL key in plaintext; untouched save 
 
   const st = await keyFieldState(page);
   expect(st.value, '🔴 the edit field shows the stored key verbatim (明文直显)').toBe(KIMI_KEY);
-  expect(st.security, 'field face is plaintext (no disc), eye = optional mask').toBe('none');
-  expect(st.eyeGlyph, 'eye starts on the revealed face (eye-off glyph)').toContain('M17.94');
+  expect(st.security, 'configured key is masked by default').toBe('disc');
+  await page.click('#cfg-modal .cfg-eye-btn');
+  expect((await keyFieldState(page)).security, 'eye reveals the key').toBe('none');
+  await page.click('#cfg-modal .cfg-eye-btn');
+  expect((await keyFieldState(page)).security, 'eye masks the key again').toBe('disc');
 
   // 保存逻辑不变：不动字段直接保存 → updateConfig payload 携带所见明文。
   await page.click('#cfg-modal-save');
@@ -229,7 +232,7 @@ test('T3 save a rotated key, reload the settings page, the field shows the store
   await openKimiModal(page);
   const st = await keyFieldState(page);
   expect(st.value, '🔴 after reload the field equals the stored value (plaintext)').toBe(KIMI_KEY_ROTATED);
-  expect(st.security, 'still the plaintext face').toBe('none');
+  expect(st.security, 'masked by default').toBe('disc');
 });
 
 // ══ T4 · 未配置 = 空态而非掩码 ══════════════════════════════════════════
@@ -243,7 +246,7 @@ test('T4 unconfigured faces show the EMPTY state, not a mask: keyless provider �
   const anon = await keyFieldState(page);
   expect(anon.value, '🔴 no stored key → the field is EMPTY (never "***", never dots)').toBe('');
   expect(anon.placeholder, 'the placeholder carries the keep-*** hint, no fake value').toContain('***');
-  expect(anon.security, 'empty state is the plaintext face').toBe('none');
+  expect(anon.security, 'empty field remains password type').toBe('disc');
   await page.evaluate(() => document.getElementById('cfg-modal')?.remove());
 });
 

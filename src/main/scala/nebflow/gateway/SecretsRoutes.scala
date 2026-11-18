@@ -294,6 +294,7 @@ private[gateway] object SecretsRoutes:
                   // Name only in the log — the value never enters it.
                   secretsLogger.info(s"Secret value read: $name").flatMap { _ =>
                     Ok(Json.obj("name" -> name.asJson, "value" -> value.asJson))
+                      .map(_.putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("Cache-Control"), "no-store")))
                   }
                 case Left(err) => secretsErrorResponse(err)
               }

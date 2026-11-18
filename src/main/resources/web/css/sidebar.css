@@ -1493,6 +1493,16 @@
   border-top: 1px solid var(--color-frame-border-light);
 }
 .cfg-modal-actions .cfg-btn { padding: var(--ds-space-1h) var(--ds-space-4); }
+/* Provider editor action family: two columns rather than four squeezed labels. */
+#cfg-modal .cfg-modal-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#cfg-modal .cfg-modal-actions .cfg-btn {
+  min-width: var(--mtap, 44px);
+  min-height: var(--mtap, 44px);
+  padding: 0 var(--ds-space-3);
+  font-size: var(--ds-fs-btn);
+  border-radius: var(--ds-radius-pill);
+  white-space: nowrap;
+}
 .cfg-btn-save {
   border-color: rgb(var(--sapphire) / 0.35) !important;
   color: rgb(var(--sapphire)) !important;
