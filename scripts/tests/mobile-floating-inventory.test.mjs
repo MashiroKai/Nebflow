@@ -17,7 +17,7 @@ for (const [name, file, pattern] of [
   ['message search', 'mobileSearchFlat.css', /padding-top: calc\(var\(--mhsc-band\)/g],
   ['session identity', 'mobileLayer.css', /padding-top: calc\(104px/g],
   ['modal drawer', 'mobileLayer.css', /overflow-y: auto/g],
-  ['selection Ask dialog (source occlusion exempt)', 'ask.css', /overflow: auto/g],
+  ['selection Ask dialog (source occlusion exempt)', 'ask.css', /overflow-y: auto/g],
 ]) test(`rejects missing ${name} responsibility`, () => {
   const errors = checkInventory(f => f === file ? source(f).replace(pattern, 'removed') : source(f));
   assert.ok(errors.some(e => e.startsWith(`${name}:`)), errors.join('\n'));

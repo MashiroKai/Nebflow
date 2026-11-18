@@ -90,38 +90,33 @@
 //     逐字节同义。ctx.on 登记的全局监听随断开自动拆、重连自动挂回。
 
 import { key } from './branding.js';
-import { askBubbleClass, chatComposerClass } from './chatUi.js';
 import state from './state.js';
 import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
 import { activeCanvasEntry } from './canvas.js';
-// 修复批 2026-10-31（作者令 ①）：ai 气泡渲染复用主会话渲染腿
-// utils.renderMarkdownWithMath（代码块/表格/列表/数学全套，含 marked+KaTeX
-// 护栏与 LRU）——渲染腿零重写；user 气泡维持 textContent 纯文本面。
-import { renderMarkdownWithMath } from './utils.js';
 import { isAskableFile } from './mdHtmlGate.js';
 // 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包，参考主 agent
 // 会话窗口的输入模式」）：键盘/IME 组字态/发送判定/中断状态机 = input/composer.js
 // 统一实现（主会话同源）——组字期 Enter 只确认候选不发送、组字结束后才发送、
 // Shift+Enter 换行；生成中发送钮转中断钮（与主会话 send/stop 同律）。
-import { bindComposerKeys, createTurnToggle, requestTurnInterrupt, isImeComposing } from './input/composer.js';
-// 斜杠命令先审（ask 面三修③ 2026-11-11）：dock 发送此前把一切文本当 askQuestion
-// 发送，`/model` 被误发成提问（叠加 dock 自动抢焦点 = 「/model 无反应」的成因链）。
-// handleSlash = 主会话 send 同一单源（input.js 同构位调用它）。
-import { handleSlash } from './input/slashCommands.js';
+// （发送/中断的状态机实例随「Ask 对话框内核」搬进 askDialog.js；本文件只留 Esc
+// 的组字判据 isImeComposing。）
+import { isImeComposing } from './input/composer.js';
 // 组件化范式试点批（ask-paradigm-a）：DOM 构形走 dom.js 的 h()/frag()（零 HTML 串），
 // 元素注册与生命周期走 component.js 的 define()（light DOM，禁开阴影根）。
 import { h, frag } from './dom.js';
 import { define } from './component.js';
+// 抽取批（2026-11-18 作者令「选区操作重做」④）：Ask **对话框内核**（气泡列 + 输入条 +
+// 流式/提交/中断/贴底跟随）抽成共用件 askDialog.js —— canvas 档与选区档各自 new 一份
+// 实例（同一实现、两份座位/绑定），本文件只留画布侧脚手架（入口钮/记事本/可见性闸/
+// 座位/会话账与落盘/拖拽改尺寸/画布专属帧）。
+import { createAskDialog, svgNode } from './askDialog.js';
 // canvas-inline-diff-review（2026-11-16）：diff 审阅退出会话问答路径（提案 diff
 // 卡整体退役），ask_edit/ask_write 的直接落盘审阅态由 askEditReview 模块在 canvas
 // 审阅页签呈现——本模块只把 askEdit* 帧路由过去，不再自持任何审阅态。
 import { consumeApplied, consumeResolved, consumeAskState } from './askEditReview.js';
-// ask-stream-ui（2026-11-17 作者令「这里的设计可以参考主会话的实现」）：气泡列
-// 贴底跟随 + 「↓N 条新消息 / 回到底部」胶囊复用**会话面唯一组件** js/scrollPill.js
-//（主会话 utils.js syncScrollPill 与好友/群/设备窗 messages.js fmSyncFollowPill
-// 同一工厂、同一 `.scroll-new-pill` 形态 chat.css、同一容差/动效）；思考期 spinner
-// 复用主会话三点族 chat.css `.thinking-dot`（workline.js startWorklineDots 同源）。
-import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js';
+// ask-stream-ui（2026-11-17）的气泡列贴底跟随 + 「↓N 条新消息」胶囊（scrollPill.js
+// 唯一工厂）与思考期 spinner（chat.css `.thinking-dot` 族）随「Ask 对话框内核」搬进
+// askDialog.js —— canvas 档与选区档同一条腿，本文件不再直接依赖 scrollPill.js。
 
 /**
  * 组件内部结构类名（单点声明；门禁 scripts/check-component-contract.mjs R4 的解析面）。
@@ -147,26 +142,9 @@ function tt(zh, en) {
 }
 
 // ── 图标（lucide 同族线性图标；SVG 命名空间构形）────────────────────────
-// 为什么不用 h()：dom.js 的 h() 走 document.createElement，只能造 **HTML 命名空间**
-// 元素——`<svg>`/`<path>` 落在 HTML 命名空间里不参与 SVG 绘制（图标会整块消失）。
-// 因此这里用一个同口径的微型构造器：createElementNS + setAttribute + appendChild，
-// 同样零 HTML 串、零 innerHTML（门禁 R5 计数为 0）。
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/**
- * 造一个 SVG 命名空间节点。
- * @param {string} tag SVG 标签名
- * @param {Record<string, string>} [attrs] 属性表（viewBox 等大小写敏感名原样写）
- * @param {Node[]} [children] 子节点
- * @returns {SVGElement}
- */
-function svgNode(tag, attrs, children) {
-  const node = document.createElementNS(SVG_NS, tag);
-  if (attrs) for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
-  if (children) for (const child of children) node.appendChild(child);
-  return node;
-}
-
+// 构形器 svgNode 单点 = askDialog.js（抽取批：Ask 对话框内核连同它的发送/中断图标
+// 一起搬走，画布侧只留入口钮/记事本三枚；「命名空间必须 createElementNS」的理由
+// 见该文件同名函数注）。
 const STROKE = { fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
 
 const ICONS = {
@@ -174,11 +152,6 @@ const ICONS = {
     [svgNode('path', { d: 'M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z' })]),
   close: () => svgNode('svg', { class: 'ask-fab-ic-close', viewBox: '0 0 24 24', 'stroke-width': '2.2', ...STROKE },
     [svgNode('path', { d: 'm18 15-6-6-6 6' })]),
-  send: () => svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
-    [svgNode('path', { d: 'M12 19V5M5 12l7-7 7 7' })]),
-  // 中断钮（输入行为包批）：与主会话 #stop-btn 同语（lucide square 族）——红圆白方停标。
-  stop: () => svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
-    [svgNode('rect', { x: '6', y: '6', width: '12', height: '12', rx: '2' })]),
   // 记事本批：便签/记事本语义（与 chat/close 同一线性图标族、同一 24 视框与
   // stroke-width 2 —— 18px 下读得出「一页带横线的纸」，不引入第二套图标语言）。
   note: () => svgNode('svg', { class: 'note-fab-ic', viewBox: '0 0 24 24', 'stroke-width': '2', ...STROKE },
@@ -193,17 +166,13 @@ const sessions = new Map(); // key: absPath
 let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
 let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）
 let wired = false; // 元素级监听/观察器已绑（节点复用 ⇒ 只绑一次）
-let turnToggle = null; // 中断状态机（createTurnToggle；建一次，单 dock 对）
+// 抽取批（2026-11-18）：气泡列贴底跟随 latch / 胶囊 / typing / 中断状态机实例
+// 全部随「Ask 对话框内核」搬进 askDialog.js —— 本文件经 dlg.* 驱动（同一条腿，
+// 只是所有者换成了对话框实例）。
+/** @type {ReturnType<typeof createAskDialog>|null} */
+let dlg = null;
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
-// ── ask-stream-ui（2026-11-17）：气泡列贴底跟随的宿主状态（单 dock 一份）──────
-//   · colSnapped = 跟随意图 latch（写入点只有两个：本列唯一滚动监听 + 显式贴底
-//     snapCol——主会话 view.stream.scrollSnapped 同律）；
-//   · colUnseen = 离底期间到达的**真实新消息**条数（主会话口径：typing 流式行 =
-//     过程指示，不计不数）；胶囊本体的显隐/文案/几何全在 scrollPill.js 组件里。
-let colSnapped = true;
-let colUnseen = 0;
-let askPill = null;
 // 记事本批（2026-11-05）：当前草稿归属（absPath + 与 ask 同式的 sid）与落盘防抖拍。
 let notePath = '';
 let noteSid = '';
@@ -370,49 +339,37 @@ function buildFab() {
  *   <button class="ask-send ds-turn-btn ds-turn-btn--send">
  *   <button class="ask-stop ds-turn-btn ds-turn-btn--stop">
  */
-function buildDock() {
-  // ── 单小边框批（作者令 2026-11-05 09:32「左上角那个拖动按钮，只要一个小边框
-  //    就行，不要那个叠起来的正方形」）──
-  // 旧 DOM 在把手内挂了一枚 `.ds-resize-grip`，内里三枚 `<i>` 各画一条 L 形
-  // 描边（translate 2/4/6px、opacity .55/.35/.2）⇒ 与 ::before 的直角弧在同一
-  // 角上共四条线，叠成「两层方块」。整族退役：**可见描边只剩 ::before 那一条
-  // 直角弧**（形态单源 = design-system.css .ds-resize-handle::before），把手本体
-  // 仍是 44×44 透明热区（HIG 下限不缩）。
-  const handle = h('div', {
-    class: 'ds-resize-handle',
-    'data-ask-resize': true,
-    role: 'separator',
-    tabindex: '0',
-    'aria-label': tt('拖拽调整面板大小', 'Resize panel'),
-    title: tt('拖拽调整面板大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)'),
-  });
-
-  const input = h('textarea', {
-    rows: '1',
+function buildDialog() {
+  dlg = createAskDialog({
+    tt,
+    panelClass: 'ask-dock',
     placeholder: tt('针对这份文件提问…', 'Ask about this file…'),
-    'aria-label': tt('提问', 'Question'),
+    activeSession,
+    canSubmit: () => !!currentFile && isAskableFile(currentFile),
+    ensureSession: () => ensureActiveSession(),
+    ensureBound: (s) => askOpen(s),
+    send: (s, v) => sendWs({
+      type: 'askQuestion', sessionId: s.sid, content: v, mainSessionId: state.activeSessionId || '',
+    }),
+    frameKind: canvasFrameKind,
+    onUnread: () => syncUnreadDot(),
+    onPersist: (s) => persistSession(s),
+    onStateExtra: (msg) => consumeAskState(msg),
   });
-  const send = h('button', {
-    type: 'button',
-    class: 'ask-send ds-turn-btn ds-turn-btn--send',
-    'aria-label': tt('发送', 'Send'),
-  }, [ICONS.send()]);
-  const stop = h('button', {
-    type: 'button',
-    class: 'ask-stop ds-turn-btn ds-turn-btn--stop',
-    'aria-label': tt('停止回答', 'Stop answering'),
-  }, [ICONS.stop()]);
+  return dlg.panel;
+}
 
-  return h('div', { class: 'ask-dock closed' }, [
-    handle,
-    // main（ask-fade-content-opacity 批）已把 .ask-veil 遮罩条退役——渐隐归
-    // .ask-col 的 mask-image，本组件不复活任何渐隐元素。
-    h('div', { class: 'ask-colwrap' }, [h('div', { class: 'ask-col' })]),
-    // 输入条 = 毛玻璃唯一工具类 `.nf-glass`（glass-unify 批）：材质/描边/内高光/
-    // 模糊全部来自 stand-tokens.css 的 --nf-glass-* 单源，本组件零本地材质声明。
-    // `ask-input` 身份类保留（既有 spec 选择器），它在本文件只承载几何与焦点态。
-    h('div', { class: chatComposerClass('ask') }, [input, send, stop]),
-  ]);
+/** canvas 档帧名 → 对话框内核动作（选区档另有一张表，见 selectionAsk.js）。 */
+function canvasFrameKind(msg) {
+  switch (msg.type) {
+    case 'askState': return 'state';
+    case 'textDelta': return 'delta';
+    case 'done': return 'done';
+    case 'interrupted': return 'interrupted';
+    case 'error': return 'error';
+    case 'user': return 'user';
+    default: return null;
+  }
 }
 
 /**
@@ -480,7 +437,7 @@ function ensureInner() {
   if (el) return;
   const fab = buildFab();
   const noteFab = buildNoteFab();
-  const dock = buildDock();
+  const dock = buildDialog();
   const noteDock = buildNoteDock();
   // 尺寸面（两个面板 = 同一段状态机的两个入参，见头注「记事本批」）：
   //   ask  = 列高受控（--ask-col-maxh），底部件输入条占高；
@@ -845,47 +802,19 @@ function reclampSize() {
 
 function wireElements() {
   el.fab.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  // Ask 对话框内核（发送/中断钮、输入条按键与 IME、多行长高、贴底跟随/胶囊、
+  // 气泡穿入输入条的中线实测）全部随内核搬进 askDialog.js —— 这里只把画布侧
+  // 「窗内点击/按下不外溢」的一条补上（内核的 wire() 已挡一次，与记事本同写法）。
+  dlg.wire();
   el.dock.addEventListener('click', (e) => e.stopPropagation());
   el.dock.addEventListener('pointerdown', (e) => e.stopPropagation());
-  // 中断状态机实例（包工厂）：busy()/idle() 驱动发送↔中断钮互换（applyTurnChrome
-  // 与主会话 setBusy/clearBusy 同一实现）。
-  turnToggle = createTurnToggle({
-    sendBtn: /** @type {HTMLElement} */ (el.send),
-    stopBtn: /** @type {HTMLElement} */ (el.stop),
-  });
-  el.send.addEventListener('click', () => submit());
-  el.stop.addEventListener('click', () => stopAsk());
-  // 多行草稿自动长高（主会话 textarea 同式：auto → scrollHeight，封顶留 dock 紧凑形态）。
-  el.input.addEventListener('input', () => {
-    el.input.style.height = 'auto';
-    el.input.style.height = Math.min(el.input.scrollHeight, 120) + 'px';
-  });
-  // 键盘/IME/发送判定 = 主会话同一实现（包装配；组字期 Enter 只确认候选）。
-  bindComposerKeys(el.input, { onSend: () => { submit(); } });
   el.input.addEventListener('focus', syncSeat);
-  // ── ask-stream-ui（2026-11-17）：贴底跟随 + 「↓N 条新消息 / 回到底部」胶囊 ──
-  // 与主会话同一组件、同一语义（作者令「参考主会话的实现」）：胶囊本体 =
-  // scrollPill.js 唯一工厂（好友/群窗 messages.js fmSyncFollowPill 是非主窗消费
-  // 的先例——形态 chat.css `.scroll-new-pill` 单源、贴底容差 AT_BOTTOM_PX、
-  // 回底拐点 SHOW_AFTER_PX、平滑贴底与 reduced-motion 全在组件里）。本文件只留
-  // 两项宿主状态（上方 colSnapped/colUnseen）：
-  //   · **本列唯一滚动监听**（主会话 B4 纪律同律：一滚动事件一次几何探测）——
-  //     重读贴底 latch 并同步胶囊（回底即清零），只读不写滚动位；
-  //   · 落列跟随单点 = settleCol（smartScroll/shouldFollowBottom 的 ask 对应，
-  //     见 render 段）；胶囊落位参照 = 输入条顶缘（textarea 长高/手机档变化由
-  //     组件 park 现算，与主窗 #input-area 参照同构）。
-  askPill = createScrollPill({
-    host: el.dock,
-    scrollEl: el.col,
-    anchor: () => el.inputRow,
-    onReturn: () => { colUnseen = 0; colSnapped = true; },
-  });
-  el.col.addEventListener('scroll', () => {
-    if (!el) return;
-    colSnapped = bottomDistance(el.col) < AT_BOTTOM_PX;
-    if (colSnapped) colUnseen = 0;
-    if (askPill) askPill.sync({ count: colUnseen, atBottom: colSnapped });
-  }, { passive: true });
+  // ── 记事本批（2026-11-05）：入口钮 / 浮窗自身的事件 ─────────────────────
+  // 开合与 ask 同律：钮再点即收；窗内点击/按下不外溢（画布空白点击的收起腿只
+  // 认 #canvas-content 本体，这里再挡一道，与 ask dock 同写法）。
+  el.noteFab.addEventListener('click', (e) => { e.stopPropagation(); toggleNote(); });
+  el.noteDock.addEventListener('click', (e) => e.stopPropagation());
+  el.noteDock.addEventListener('pointerdown', (e) => e.stopPropagation());
   // ── 记事本批（2026-11-05）：入口钮 / 浮窗自身的事件 ─────────────────────
   // 开合与 ask 同律：钮再点即收；窗内点击/按下不外溢（画布空白点击的收起腿只
   // 认 #canvas-content 本体，这里再挡一道，与 ask dock 同写法）。
@@ -983,44 +912,9 @@ function wireObserversOnce() {
     // 画布开合（宽度过渡）会移动右下角座位——面板尺寸变化即重算。
     const panel = document.getElementById('canvas-panel');
     if (panel) new ResizeObserver(() => syncSeat()).observe(panel);
-    // ── 气泡穿入输入条批（作者令 2026-11-05 16:50）─────────────────────────
-    // 「气泡消息要能从输入框底下穿过，截止位置为输入框中间部分」。
-    // 几何契约：气泡列的**盒底** = 输入条垂直中线（见 ask.css .ask-colwrap
-    // 的负 margin），输入条以更高 z 序盖在气泡上 ⇒ 视觉上气泡钻到输入条下面
-    // 被它截住，而不是在它上面 6px 就断层。
-    // 中线随内容变（textarea 从 1 行长到 120px、手机档 44/48 钮、安全区内距），
-    // 所以不能写死 px —— 由本 RO 实测输入条高度写 `--ask-under = h / 2`。
-    const measureUnder = () => {
-      if (!el || !el.inputRow) return;
-      // 下一帧再量：RO 回调可能落在「输入条刚插入、发送钮/字号还没落位」的那一拍，
-      // 量到的是半成品高度（实测 34.8 而非 58 ⇒ 中线偏 6px）。
-      requestAnimationFrame(() => {
-        // ⚠ 必须用 offsetHeight（布局高度），不能用 getBoundingClientRect()：
-        // 偏移/位移腿（液态形变批起：收起态玻璃面 = 位移到 fab 圆心的种子）会让
-        // bbox 返回**变换后**的几何，量到的不是输入条布局高 ⇒ 中线偏。
-        // 而 ResizeObserver 观察的是 border-box（不受 transform 影响），高度不会
-        // 再变 ⇒ 这个错值不会被第二次回调纠正。布局高度对此免疫。
-        //
-        // 液态形变批（作者令 2026-11-07 12:22）：收起态输入条 = --ask-fab-size
-        // 正圆种子，展开首帧还在形变中途 —— 这两段量到的都不是稳态输入条高度，
-        // 写了会把气泡列底缘垫错。稳态（无 .closed）才写，形变结束后 RO 会再响。
-        if (!el || !el.dock || el.dock.classList.contains('closed')) return;
-        const h = el.inputRow.offsetHeight;
-        if (h > 0) el.dock.style.setProperty('--ask-under', (h / 2).toFixed(2) + 'px');
-        // ask-stream-ui：输入条高度变了 = 胶囊落位参照（anchor）顶缘动了 —— 可见
-        // 中的胶囊就地重落（主窗 #input-area RO → refreshScrollPill 同构）。
-        if (askPill) askPill.refresh();
-        // 输入条高度变化同时会动列的视口高（面板 flex 列互挤）：跟随意图在身则
-        // 原地重钉底，否则钉底那一下留下的旧 scrollHeight 会差几 px 常驻
-        // （实测开窗回放差 8px；主会话输入条长高跟随意图同律——读历史不受扰，
-        // colSnapped=false 时零动作）。
-        if (colSnapped && el.col) el.col.scrollTop = el.col.scrollHeight;
-      });
-    };
-    if (el && el.inputRow) {
-      measureUnder();
-      new ResizeObserver(measureUnder).observe(el.inputRow);
-    }
+    // 气泡穿入输入条批（作者令 2026-11-05 16:50「气泡消息要能从输入框底下穿过，
+    // 截止位置为输入框中间部分」）的中线实测（`--ask-under = 输入条高 / 2`）随
+    // 「Ask 对话框内核」搬进 askDialog.js 的 wire()——单点一份，两个消费者同律。
   }
   if (typeof MutationObserver === 'function') {
     // 排布批③：角落圆钮簇晚于切卡事件挂载（readFile 异步渲染腿把查找/源码钮
@@ -1073,14 +967,10 @@ function onMount(host, ctx) {
   syncSeat();
   reclampSize();
   if (isOpen()) {
-    render();
-    snapCol(); // ask-stream-ui：宿主迁移前若已贴底，迁移后保持贴底（改前 render 自带钉底同义）
+    dlg.render();
+    dlg.snapCol(); // ask-stream-ui：宿主迁移前若已贴底，迁移后保持贴底（改前 render 自带钉底同义）
   }
-  if (turnToggle) {
-    const s = activeSession();
-    if (s && s.busy) turnToggle.busy();
-    else turnToggle.idle();
-  }
+  dlg.setTurnChrome(activeSession());
 }
 
 // 组件注册（light DOM；tag 必须 nf- 前缀，由 component.js.define 硬闸）。
@@ -1138,18 +1028,14 @@ function syncToActiveTab() {
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
   if (!switched) { syncSeat(); return; }
   // The composer DOM is shared, but its turn state belongs to the active file.
-  if (turnToggle) {
-    const session = activeSession();
-    if (session && session.busy) turnToggle.busy();
-    else turnToggle.idle();
-  }
-  removeTyping();
+  dlg.setTurnChrome(activeSession());
+  dlg.removeTyping();
   syncNoteForFile(); // 记事本批：切卡即切记事本（每文件一份草稿；旧草稿先 flush）
   syncUnreadDot(); // 通知点随 active session 的未读态落位（绿点只在有未读时显示）
   if (isOpen()) {
     if (currentFile) {
-      render();
-      snapCol(); // ask-stream-ui：切会话 = 新视图从底起读（旧会话的 latch/计数不带入）
+      dlg.render();
+      dlg.snapCol(); // ask-stream-ui：切会话 = 新视图从底起读（旧会话的 latch/计数不带入）
       // 切卡即切 session（作者令⑦）：新文件的会话未回放过 → 即刻 askOpen
       // （绑定 + 历史回放；服务端为权威，重复帧幂等）。
       ensureActiveSession().then((loaded) => {
@@ -1270,7 +1156,7 @@ function syncSeat() {
 
 // ── 开合（作者令⑧：transform-origin 锚定按钮圆心，开合同一曲线）───────────
 
-function isOpen() { return !!el && !el.dock.classList.contains('closed'); }
+function isOpen() { return !!dlg && dlg.isOpen(); }
 
 // ── FAB 通知点（作者令 2026-10-29「三修②」：绿点=未读通知，无未读不显示）──
 // 旧口径「has-sess = 会话有过消息 → 紫点常显」退役。未读判定单点：AI/注入帧
@@ -1293,11 +1179,11 @@ async function open() {
   if (!s) return;
   s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
   restoreSize(el.askSurface); // 持久化缺陷批：尺寸偏好与记事本同一条恢复腿
-  el.dock.classList.remove('closed');
+  dlg.openDom();
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
-  render();
-  snapCol(); // ask-stream-ui：开窗即读 = 从最新一条起（未读清零 + 胶囊收敛）
+  dlg.render();
+  dlg.snapCol(); // ask-stream-ui：开窗即读 = 从最新一条起（未读清零 + 胶囊收敛）
   askOpen(s);
   syncSeat();
   setTimeout(() => { try { el.input.focus(); } catch { /* detached */ } }, 260);
@@ -1306,7 +1192,7 @@ async function open() {
 /** 组件方法 close()：收起对话框（原型 close() 的对外契约，签名不变）。 */
 function close() {
   if (!el) return;
-  el.dock.classList.add('closed');
+  dlg.closeDom();
   el.fab.classList.remove('open');
   syncUnreadDot(); // 已读收起 → 点/pulse 不亮；有未读 → pulse 提示（仅未读时）
 }
@@ -1605,100 +1491,13 @@ async function syncNoteForFile() {
   requestNote(sid); // 引擎侧真源对账（每文件独立生命周期，与问答回放零同步）
 }
 
-// ── 渲染（升腾入场 + 顶带 12px 内容级渐隐由 CSS mask 承担）────────────────
-// glass-unify 批 2026-11-05：原「按龄渐隐」腿已退役（见下方 render() 内注释）。
-
-// ── ask-stream-ui（2026-11-17）：落列跟随单点（主会话 smartScroll/shouldFollowBottom 同律）──
-// 旧路径：render/textDelta/appendTyping 各自无条件 `scrollTop = scrollHeight`——
-// 用户上翻读历史时任何新内容都会把滚动位抢走（本批根治点）。新律：
-//   · 贴底（latch 或几何，shouldFollowBottom 同式）⇒ rAF 跟随钉底；
-//   · 离底 ⇒ **绝不写滚动位**（阅读位置不动），真实新消息计数进胶囊（主会话
-//     countsAsRealMessage 口径的 ask 对应：user/ai 两族气泡计数，typing 流式行 =
-//     过程指示不计不数）。
-/** 贴底判定（容差 = 组件 AT_BOTTOM_PX 44px，与主会话 NEAR_BOTTOM_PX 同档实测值）。 */
-function colAtBottom() {
-  return !!el && bottomDistance(el.col) < AT_BOTTOM_PX;
-}
-/** 跟随意图（latch 优先、几何兜底——utils.shouldFollowBottom 同式）。 */
-function colFollows() {
-  return colSnapped === true || colAtBottom();
-}
-/** 胶囊同步（atBottom 已有本帧判定就带上，组件不再二次探测）。 */
-function askPillSync(count, atBottom) {
-  if (!askPill) return;
-  askPill.sync(atBottom === true ? { count: 0, atBottom: true } : { count });
-}
-/**
- * 落列后调用的唯一跟随决定：跟随钉底 / 计数进胶囊。
- * @param {number} arrived 本次落列的**真实新消息**条数（typing 等过程行传 0）
- */
-function settleCol(arrived) {
-  if (!el) return;
-  if (colFollows()) {
-    colSnapped = true;
-    colUnseen = 0;
-    requestAnimationFrame(() => { if (el) el.col.scrollTop = el.col.scrollHeight; });
-    askPillSync(0, true);
-  } else {
-    if (arrived > 0) colUnseen += arrived;
-    askPillSync(colUnseen);
-  }
-}
-/** 显式贴底（开窗/切会话/本机点停）：latch 的第二个写点 + 胶囊收敛为隐藏。 */
-function snapCol() {
-  if (!el) return;
-  colSnapped = true;
-  colUnseen = 0;
-  requestAnimationFrame(() => { if (el) el.col.scrollTop = el.col.scrollHeight; });
-  askPillSync(0, true);
-}
-
-function render() {
-  if (!el) return;
-  const s = activeSession();
-  el.col.textContent = '';
-  if (!s) return;
-  // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不
-  // 呈现（收进不可见处；主会话回问在 consumeFrame 已按 §7 落 user 族）。
-  const vis = s.msgs.filter((m) => m.role !== 'sys');
-  vis.forEach((m) => {
-    // glass-unify 批 2026-11-05：气泡挂**唯一毛玻璃工具类** `.nf-glass`
-    // （作者令「这三处全部吃你这一批正在立的唯一毛玻璃标准，不许为 ask 气泡
-    // 另造一套等效样式」）。材质/描边/内高光/模糊全部来自 --nf-glass-* 单源，
-    // 本组件零本地材质声明；`ask-bub` / `user` / `ai` 三个身份类只承载几何与
-    // 语义色（气泡最大宽度、圆角、user 侧 sapphire tint）。
-    const b = h('div', { class: askBubbleClass(m.role) });
-    // ① 修复批 2026-10-31：ai 族走主会话渲染腿（markdown 全套）；user 族
-    // 维持 textContent（用户输入纯文本面，与主会话一致）。渲染腿复用不重写。
-    // ⚠ **本模块唯一的 HTML 落点 = markdown 渲染腿**（renderMarkdownWithMath 的
-    // 返回值只能经元素 innerHTML 落到 ai 气泡：它是既有渲染腿的产物，自带
-    // marked+KaTeX 护栏）；业务 DOM（气泡壳、图标、拖柄、输入条）一律走 h()/frag()。
-    if (m.role === 'user') b.textContent = m.text;
-    else b.innerHTML = renderMarkdownWithMath(m.text);
-    // History bubbles never change opacity: not by age, not by scroll position. A bubble
-    // that crosses the column's top edge is clipped by the column, so every visible part
-    // of it stays fully legible. (FCC-REQ-004)
-    el.col.appendChild(b);
-  });
-  // ask-stream-ui：render 不再自带滚动——落列后的跟随/计数由调用点经 settleCol/
-  // snapCol 单点决定（本函数只建 DOM；整列同步重建不产生中间布局拍，离底时的
-  // 阅读位置原样保留）。
-}
-
-/** 流式增量更新（不整列重渲——textDelta 高频）。 */
-function updateStreamingBubble(s) {
-  if (!el || s !== activeSession()) return;
-  const last = s.msgs[s.msgs.length - 1];
-  const node = el.col.lastElementChild;
-  if (!node || !node.classList.contains('ai')) {
-    render();
-    return;
-  }
-  // 主会话流式同律：cache:false 直解析（每帧重解析增长文本，不进 LRU 挤占）。
-  // （同一 HTML 落点：markdown 渲染腿，见 render() 的注释。）
-  node.innerHTML = last ? renderMarkdownWithMath(last.text, true, { cache: false }) : '';
-  el.col.scrollTop = el.col.scrollHeight;
-}
+// ── 渲染 / 落列跟随 / 思考指示 / 发送中断（抽取批 2026-11-18）──────────────
+// 这四族（colAtBottom/colFollows/askPillSync/settleCol/snapCol、render/
+// updateStreamingBubble、appendTyping/updateTypingText/removeTyping、submit/
+// armTurn/settleTurn/stopAsk + 静默看门）**整段搬进共用件 askDialog.js**——
+// 同一实现、两份实例；本文件经 `dlg.*` 驱动（canvas 档的绑定缝见 buildDialog 的
+// createAskDialog cfg）。落列跟随律（贴底钉底 / 离底绝不抢滚动位 / typing 不计
+// 不数）、双泡修复律（发问不预压空 ai 泡）等注释随代码一起搬走，不在此另写。
 
 // ── 后端 WS 域（发 + 收）───────────────────────────────────────────────────
 
@@ -1711,127 +1510,26 @@ function askOpen(s) {
   });
 }
 
-async function submit() {
-  // 斜杠先审（ask 面三修③ 2026-11-11）：白名单命中（现仅 UI-only 的 /model）
-  // ⇒ 本地开面板、清输入、零 WS 零气泡；未命中 ⇒ '/' 仍是纯文本（封存面语义
-  // 不扩，SLASH_ALLOWED 未被本调用面放大），原样走 ask 链 —— 主会话 send 的
-  // handleSlash 先审同律。
-  if (el) {
-    const slashText = el.input.value.trim();
-    if (slashText && handleSlash(slashText)) {
-      el.input.value = '';
-      el.input.style.height = 'auto'; // 多行草稿清空后回落单行（下方发送同式）
-      return;
-    }
-  }
-  if (!el || !currentFile || !isAskableFile(currentFile)) return; // 硬闸复核（冗余守卫；批⑩ 判据 = md/html + 电子书并集）
-  const s = await ensureActiveSession();
-  if (!s) return;
-  const v = el.input.value.trim();
-  if (!v) return;
-  el.input.value = '';
-  el.input.style.height = 'auto'; // 多行草稿发送后回落单行（主会话 send 同律）
-  // ④ 双泡修复批 2026-10-31（作者截图：等待小气泡上方叠多余空泡）：发问时
-  // **不再预压空 ai 泡**——等待期只有 typing 一件；首个 textDelta 落 ai 泡时
-  // removeTyping() 单点换泡（双泡根因 = 空 ai 泡 + typing 泡并存）。
-  s.msgs.push({ role: 'user', text: v });
-  persistSession(s); // 发问即落盘（持久批：重载/竞态现场问题不丢）
-  render();
-  settleCol(1); // 本机发问 = 1 条真实新消息（主会话 .row.user 计入口径同律：贴底跟随、离底计数）
-  appendTyping();
-  armTurn(s); // 中断状态机：生成中 = 发送钮让位中断钮（输入行为包批）
-  if (!s.stateSent) askOpen(s); // 未绑定先补一拍（历史回放与流式都依赖 askState）
-  sendWs({ type: 'askQuestion', sessionId: s.sid, content: v, mainSessionId: state.activeSessionId || '' });
-}
-
-// ── 中断状态机（输入行为包批 2026-11-02；与主会话 send/stop 同律）────────────
-// busy 面 = 发送钮让位中断钮（包 applyTurnChrome 语句同源）；臂点 = submit 与
-// 首个流帧（他机发问现场——本页没发过 askQuestion 也可能收到 textDelta）；收点 =
-// done / error / interrupted 终态帧 + 用户点停（本地先收，终态帧幂等再收）+
-// askState 回放见「转录已答完」（断线中 turn 已终了的形态）+ 静默看门（终态帧
-// 丢失兜底——纯 UI 收口，不掐服务端，主会话看门同哲学）。已生成部分保留、可
-// 继续追问（主会话中断后 UI 态同律）。
-
-/** 臂：该会话 turn 在飞 → 中断钮上位（活动会话才动 chrome；幂等）。 */
-function armTurn(s) {
-  s.busy = true;
-  s.lastFrameAt = Date.now();
-  if (s === activeSession() && turnToggle) turnToggle.busy();
-}
-
-/** 收：终态（busy 清 + 中断钮让位；幂等——重复终态帧/重复点击零副作用）。 */
-function settleTurn(s) {
-  if (!s) return;
-  s.busy = false;
-  if (s === activeSession() && turnToggle) turnToggle.idle();
-}
-
-/** 用户点停：帧出口走包单点（与主会话 #stop-btn 逐字节同帧）；UI 即刻收口
- *  （主会话 stop 同律「reset UI immediately」）——typing 撤除、已生成 ai 泡保留。 */
-function stopAsk() {
-  const s = activeSession();
-  if (!s || !s.busy) return;
-  requestTurnInterrupt(s.sid);
-  settleTurn(s);
-  if (isOpen()) { removeTyping(); render(); snapCol(); } // 本机动作 → 保持改前「点停即钉底」行为
-}
+// 发送（submit）/ 中断状态机（armTurn/settleTurn/stopAsk）/ 静默看门 / typing 三件
+// 随「Ask 对话框内核」搬进 askDialog.js（see 上方「渲染 / 落列跟随 / …」段）。
 
 // 静默看门：busy 期间 180s 无任何流帧 ⇒ 本地收口（终态帧丢失形态）。帧到即续臂
 // （lastFrameAt 刷新），活跃流永不误收；不 server-interrupt（freezetimeout B2
 // 「到点只呈现，不发 interrupt」同哲学——这里连呈现都不用，只还按钮）。
+// 抽取批：收口本体（busy 清 + 中断钮让位）在内核 dlg.settleTurn，本文件只负责
+// **遍历 canvas 会话账**（账归本文件所有）。
 setInterval(() => {
   const now = Date.now();
   for (const s of sessions.values()) {
-    if (s.busy && now - (s.lastFrameAt || 0) > 180000) settleTurn(s);
+    if (s.busy && now - (s.lastFrameAt || 0) > 180000) dlg?.settleTurn(s);
   }
 }, 5000);
 
-let typingNode = null;
-let streamPersistAt = 0; // 流式落盘节流拍（持久批；800ms 一写，done 终局兜底）
-function appendTyping() {
-  if (!el) return;
-  removeTyping();
-  // One transient line reuses the existing Ask stream; it is status-only, never expandable.
-  // ── ask-stream-ui（2026-11-17 作者令「思考中的时候应该设计一个 spinner」）──
-  // 思考期（submit → 首个非空 textDelta）= 三点 spinner +「思考中」：dots 复用
-  // 主会话思考族形态（chat.css `.thinking-dot` 全局面，workline.js
-  // startWorklineDots 同一构造——纯 CSS 脉动，无 JS 计时器）；文案 = 主会话
-  // token chat.thinking.now 的字面（zh 思考中 / en Thinking，tt() 双语保真）。
-  // 首个非空 token 由 updateTypingText 把整行替换为流式文本（dots 让位首 token，
-  // 主会话同律）⇒ spinner 与既有流式指示（横向单行预览）**不同相**，零并存打架。
-  const tp = h('div', {
-    class: 'ask-stream-line',
-    role: 'status',
-    'aria-live': 'polite',
-    'aria-label': tt('正在生成回答', 'Generating answer'),
-  }, [
-    h('span', { class: 'ask-thinking-dots', 'aria-hidden': 'true' }, [
-      h('span', { class: 'thinking-dot' }),
-      h('span', { class: 'thinking-dot' }),
-      h('span', { class: 'thinking-dot' }),
-    ]),
-    h('span', { class: 'ask-thinking-label' }, tt('思考中', 'Thinking')),
-  ]);
-  el.col.appendChild(tp);
-  // 流式行 = 过程指示（主会话口径不计不数）：只贴底跟随，离底不写滚动位。
-  if (colFollows()) el.col.scrollTop = el.col.scrollHeight;
-  typingNode = tp;
-}
-function updateTypingText(text) {
-  if (!typingNode || !typingNode.isConnected || typeof text !== 'string') return;
-  // 思考期保持 spinner：零/空文本不换相——首个**非空** token 才把行整替为流式
-  // 文本（空 delta 不灭 dots，主会话「dots 直到首 token」同律）。
-  if (!text) return;
-  typingNode.textContent = text;
-  // Keep the newest generated tail in view without making the line interactive.
-  typingNode.scrollLeft = typingNode.scrollWidth;
-}
-function removeTyping() {
-  if (typingNode && typingNode.isConnected) typingNode.remove();
-  typingNode = null;
-}
-
-/** ws.js ask 拦截面：sessionId 前缀 `ask-` 的帧全部进这里（主视图零交集）。 */
+/** ws.js ask 拦截面：sessionId 前缀 `ask-` 的帧全部进这里（主视图零交集）。
+ *  抽取批（2026-11-18）：问答内核帧（askState / textDelta / done / interrupted /
+ *  error / user）**不再在本文件里各写一遍**——统一交给共用件 askDialog 的
+ *  `dlg.consume(msg, entry)`（同一实现，canvas 档与选区档同律）；本文件只留
+ *  画布专属帧（记事本 / 待审编辑 / 转交回执）与会话账反查。 */
 function consumeFrame(msg) {
   const sid = msg.sessionId || '';
   // 记事本持久批（2026-11-05）：记事本帧**不依赖 ask 会话账**——记事本与问答是
@@ -1841,169 +1539,33 @@ function consumeFrame(msg) {
   if (msg.type === 'askNoteAck') { applyNoteAck(msg); return; }
   // 绑定面：sid 客户端同式派生（sha256 前 8 hex），map 内按 sid 反查即得文件。
   let entry = null;
-  let file = '';
-  for (const [f, s] of sessions) {
-    if (s.sid && s.sid === sid) { entry = s; file = f; break; }
+  for (const s of sessions.values()) {
+    if (s.sid && s.sid === sid) { entry = s; break; }
   }
   if (!entry) return; // 本页未见过的 ask 会话（其它设备/页面）——忽略。
-
   switch (msg.type) {
-    case 'askState': {
-      const prevLen = entry.msgs.length; // ask-stream-ui：回放落列的增量基数（对账补齐按到达计数）
-      entry.sid = msg.sessionId || entry.sid;
-      entry.fileName = msg.fileName || entry.fileName;
-      // ask-mail 批（2026-11-16）：引擎下发的会话 Mail 地址（`ask:<sid>` 逐字，
-      // 与本地派生同式——引擎字段优先，仅存内存不落盘：每帧 askState 都重发）。
-      if (typeof msg.mailAddress === 'string' && msg.mailAddress) entry.mailAddress = msg.mailAddress;
-      // ④ 双泡修复批伴随守卫：submit 先 askOpen 后 askQuestion，回放帧快照可能
-      // 早于本拍提问落账——整表替换会把刚发的 user 泡抹掉（视觉丢问）。
-      // 持久批 2026-11-01 升级为「永不缩水」合并（头注动机链）：ask 转录是
-      // 只追加流，本地比快照长 ⇒ 快照必是过期/竞态残影（WS 重连重放 + 发问
-      // 竞态现场），保留本地不换血；本地空或快照更长 ⇒ 采纳快照（服务端对账
-      // 追平，含他机续问）。旧守卫「只保最后一条 user 问」的 AI 答整表抹除
-      // 即本批根治点。
-      const serverMsgs = Array.isArray(msg.messages)
-        ? msg.messages
-            .filter((m) => m && typeof m.text === 'string')
-            .map((m) => ({
-              role: m.role === 'user' ? 'user' : m.role === 'sys' ? 'sys' : 'ai',
-              text: m.text,
-            }))
-        : entry.msgs;
-      const localLastUser = entry.msgs.filter((m) => m.role === 'user').slice(-1)[0];
-      const adopted = serverMsgs.length >= entry.msgs.length ? serverMsgs : entry.msgs;
-      const adoptedLastUser = adopted.filter((m) => m.role === 'user').slice(-1)[0];
-      entry.msgs = adopted;
-      // 本地发问尚不在账（回放快照早于本拍提问落账）⇒ 补挂到尾。幂等双闸：
-      // 末位问文本相同不挂；问已在账内任意位（服务端已落账）不挂。
-      if (
-        localLastUser &&
-        localLastUser.role === 'user' &&
-        (!adoptedLastUser || adoptedLastUser.text !== localLastUser.text) &&
-        !entry.msgs.some((m) => m.role === 'user' && m.text === localLastUser.text)
-      ) {
-        entry.msgs = entry.msgs.concat([localLastUser]);
-      }
-      persistSession(entry);
-      // canvas-inline-diff-review：待审编辑回放（askState.review）路由给审阅页签
-      // 模块播种（重载/换端后 canvas 审阅页签重建；会话内不再承载审阅面）。
-      consumeAskState(msg);
-      // 断线中 turn 已终了的形态（输入行为包批）：回放转录末条已是 ai 答复而本地
-      // 仍臂着 busy ⇒ 服务端为权威，即刻收口（幂等；turn 真在飞时转录末条是 user 问）。
-      if (entry.busy && adopted.length && adopted[adopted.length - 1].role === 'ai') settleTurn(entry);
-      if (file === currentFile) {
-        // 回放即读（用户此刻正看着该会话）：未读清零 + 通知点落位。
-        if (isOpen()) {
-          entry.unread = false;
-          removeTyping();
-          render();
-          settleCol(Math.max(0, entry.msgs.length - prevLen)); // 对账增量按真实到达计数（开窗/切会话侧已 snapCol）
-        }
-        syncUnreadDot();
-      }
-      break;
-    }
-    case 'textDelta': {
-      // 未读判定（ask 三修②）：到达时用户不在看着（dock 收起 ∨ 后台文件）即记未读。
-      if (!(entry === activeSession() && isOpen())) entry.unread = true;
-      armTurn(entry); // 流帧即活性（臂 + 看门续臂；他机发问现场也臂上中断态）
-      const last = entry.msgs[entry.msgs.length - 1];
-      if (!last || last.role !== 'ai') entry.msgs.push({ role: 'ai', text: '' });
-      const ai = entry.msgs[entry.msgs.length - 1];
-      ai.text += msg.delta || '';
-      if (entry === activeSession() && isOpen()) {
-        updateTypingText(ai.text);
-        // ask-stream-ui：流式行是过程指示（主会话口径不计不数）——只贴底跟随，
-        // 离底绝不写滚动位（读历史不被流式拉走）。
-        if (colFollows()) el.col.scrollTop = el.col.scrollHeight;
-      }
-      // 流式落盘节流（持久批）：textDelta 高频，800ms 一拍写 localStorage；
-      // 终局由 done 全量落盘兜底。
-      const nowMs = Date.now();
-      if (nowMs - streamPersistAt > 800) { streamPersistAt = nowMs; persistSession(entry); }
-      if (entry === activeSession()) syncUnreadDot();
-      break;
-    }
-    case 'done': {
-      if (!(entry === activeSession() && isOpen())) entry.unread = true;
-      settleTurn(entry); // 终态收口（输入行为包批：中断钮让位，幂等）
-      const last = entry.msgs[entry.msgs.length - 1];
-      if (last && last.role === 'ai' && !last.text && msg.finalText) last.text = msg.finalText;
-      persistSession(entry);
-      if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 定稿 ai 泡 = 1 条真实新消息
-        syncUnreadDot();
-      }
-      break;
-    }
-    case 'interrupted': {
-      // 中断终态（输入行为包批）：点停后服务端回执到达——本地多半已收口（幂等
-      // 再收）；已生成部分保留（partial ai 泡在转录里，不撤不重置），可继续追问
-      // （主会话中断后 UI 态同律）。非在看点收未读（部分答案也值得唤回）。
-      if (!(entry === activeSession() && isOpen())) entry.unread = true;
-      settleTurn(entry);
-      persistSession(entry);
-      if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 部分答案落泡 = 1 条真实新消息
-        syncUnreadDot();
-      }
-      break;
-    }
-    case 'error': {
-      // v2.1：错误不再起 sys 气泡——文本落助手气泡槽（问答面只出两族）。
-      if (!(entry === activeSession() && isOpen())) entry.unread = true;
-      settleTurn(entry); // 终态收口（同 done）
-      const last = entry.msgs[entry.msgs.length - 1];
-      const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
-      if (last && last.role === 'ai' && !last.text) last.text = errText;
-      else entry.msgs.push({ role: 'ai', text: errText });
-      persistSession(entry);
-      if (entry === activeSession()) {
-        if (isOpen()) { removeTyping(); render(); settleCol(1); } // 错误落助手泡槽 = 1 条真实新消息
-        syncUnreadDot();
-      }
-      break;
-    }
-    case 'askHandoffAck': {
+    case 'askHandoffAck':
       // v2.1：转交回执收进不可见处——不呈现（§7 转交机制不变，ack 静默消费；
       // 主会话侧 injected 气泡承担转交可见性）。
-      break;
-    }
-    case 'askEditApplied': {
+      return;
+    case 'askEditApplied':
       // canvas-inline-diff-review：ask_edit/ask_write 直接落盘回执 → 审阅页签
       // （askEditReview）。未读律同流帧（用户不在看着 = 绿点唤回）——审阅页签
       // 开在 canvas，dock 未开也应唤回。
       if (!(entry === activeSession() && isOpen())) entry.unread = true;
       consumeApplied(msg);
       syncUnreadDot();
-      break;
-    }
-    case 'askEditResolved': {
+      return;
+    case 'askEditResolved':
       // Accept/Reject/Dismiss 终态 → 审阅页签模块（更新重渲 / 冲突条 / 清账收页签
       // + 重载文件页签）。会话内不再留痕——审阅事实由 askState.review 回放。
       consumeResolved(msg);
-      break;
-    }
-    case 'user': {
-      // 注入族（injected:true）：主会话回问腿（后端 WsAskHandlers.askReply 以
-      // ExternalEvent(source=main) 注入 ask 会话 → AgentActor 发 injected user
-      // 帧）。§7 契约即「以用户消息形态呈现」（前缀「主会话回问：」由后端注入
-      // 文本携带）——v2.1 起直接进 user 族气泡（问答面两族制，零 sys 呈现）。
-      if (msg.injected) {
-        if (!(entry === activeSession() && isOpen())) entry.unread = true;
-        entry.msgs.push({ role: 'user', text: msg.text || '' });
-        persistSession(entry);
-        if (entry === activeSession()) {
-          if (isOpen()) { removeTyping(); render(); settleCol(1); } // 注入问 = 1 条真实新消息
-          syncUnreadDot();
-        }
-      }
-      break;
-    }
+      return;
     default:
-      // thinking / tool* / usageUpdate / compact* 等过程帧：透明纪律（§6）
-      // 不进气泡列，静默消费。
-      break;
+      // 问答内核帧（含 thinking / tool* / usageUpdate / compact* 等过程帧——
+      // frameKind 返回 null，内核静默不消费；透明纪律 §6）。
+      dlg.consume(msg, entry);
+      return;
   }
 }
 

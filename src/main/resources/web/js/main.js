@@ -4138,7 +4138,7 @@ onMessage('bgRateAlert', (msg) => {
 });
 
 // --- /ask command ---
-import { selectionAskFrame } from './selectionAsk.js';
+import { selectionAskFrame, initSelectionAsk } from './selectionAsk.js';
 onMessage('askTextDelta', (msg, view) => {
   if (selectionAskFrame('askTextDelta', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
@@ -4720,6 +4720,7 @@ initBackSwipe();
   depth: Number(document.documentElement.dataset.backSwipeDepth || 0),
 });
 initAskDock(); // canvas ask mode 批（2026-10-28）：右下角入口 + 每文件独立会话气泡列
+initSelectionAsk(); // 选区 Ask 批（2026-11-18）：气泡同侧选区按钮 + 共用件 Ask 对话框
 initAskEditReview(); // canvas-inline-diff-review（2026-11-16）：审阅页签动作/快捷键接线
 initColResizers();
 // #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页

@@ -14,8 +14,16 @@ const inventory = [
   ['session identity', 'mobileLayer.css', /\.mh-idhead\s*$/, /position\s*:\s*absolute/, /\[data-page='conversation'\]\s+\.fm-flow\s*$/, /padding-top\s*:[^;]*104px/],
   ['reminder FAB', 'mobileLayer.css', /#reminder-panel\s+\.reminder-fab-add\s*$/, /bottom\s*:[^;]*--mobile-dock-clearance/, /#reminder-panel\s+\.reminder-panel-body\s*$/, /padding\s*:[^;]*--mobile-scroll-end/],
   // Selection Ask is dismissible and may cover its source while open; it is
-  // not a persistent chrome bar. Its answer owns its own overflow scrolling.
-  ['selection Ask dialog (source occlusion exempt)', 'ask.css', /^\.selection-ask-panel\s*$/, /position\s*:\s*fixed/, /^\.selection-ask-answer\s*$/, /overflow\s*:\s*auto/],
+  // not a persistent chrome bar. Its answer owns its own overflow scrolling
+  // (the transcript column `.ask-col` scrolls inside the dialog box).
+  // ⚠ 选区 Ask 抽取批（2026-11-18，作者令「复用既有组件/链路不另造第二套」）：
+  // 本面的落点从自建卡片（`.selection-ask-panel` + `.selection-ask-answer`，已整族
+  // 退役）改为**共用件对话框**的第二份实例——覆盖层 = `.ask-dock.selection-dock`
+  // （同一 `.ask-dock` 壳的视口浮定位档，position: fixed），滚动归属 = 共用的
+  // `.ask-col` 转录列（overflow-y: auto）。责任面（可关闭、可遮源、自身滚动）逐条
+  // 不变，只是选择器跟着落点走；旧选择器已不存在，留在这里会让这条清单检查一个
+  // 已退役的面（假红）。
+  ['selection Ask dialog (source occlusion exempt)', 'ask.css', /^\.ask-dock\.selection-dock\s*$/, /position\s*:\s*fixed/, /^\.ask-col\s*$/, /overflow-y\s*:\s*auto/],
   ['modal drawer', 'mobileLayer.css', /^\.mf-drawer\s*$/, /position\s*:\s*absolute/, /^\.mf-drawer-body\s*$/, /overflow-y\s*:\s*auto/],
 ];
 export function checkInventory(get = css) {

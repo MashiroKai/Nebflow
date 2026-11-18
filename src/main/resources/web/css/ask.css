@@ -200,20 +200,44 @@ nf-ask-dock { display: contents; }
   margin-right: calc(var(--ask-fab-size) + var(--ds-space-2));
 }
 
-.selection-ask-panel {
+/* ═══ 选区 Ask（2026-11-18 作者令「选区操作重做」③ + 抽取批④）═══════════
+ * 旧面（2026-11-09 选区三件批）的 `.selection-ask-panel` 卡片与它的
+ * `.selection-ask-answer` 一起**整族退役**：选区提问不再另起一张窗边框卡，改走
+ * 共用件 `.ask-dock` 对话框（第二消费者）。两条新规则：
+ *   ① `.selection-ask-btn` —— 选中气泡里的文字即在**该气泡归属侧**旁边出现的一枚
+ *      小玻璃按钮（侧别由 selectionAsk.js 按实测几何写 data-ask-side，本文件只吃
+ *      几何与材质）；
+ *   ② `.ask-dock.selection-dock` —— 同一个对话框内核的第二份实例：座位从画布右下角
+ *      （绝对定位、锚 fab）换成**视口浮定位**（fixed，left/top 由 selectionAsk.js
+ *      按触发按钮那一侧写；`auto` 打掉基线里的 right/bottom 钉位）。除座位外的
+ *      形态/材质/开合/手机档全部继承 `.ask-dock` 既有规则（零第二套）。 */
+.selection-ask-btn {
   position: fixed;
-  z-index: var(--z-modal, 1000);
-  inset: auto var(--ds-space-4) var(--ds-space-4) auto;
-  width: min(32rem, calc(100vw - 2 * var(--ds-space-4)));
-  max-height: 70vh;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-2);
-  padding: var(--ds-space-4);
-  border-radius: var(--ds-radius-shell);
+  z-index: calc(var(--z-ask-dock, 24) + 1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  min-height: 28px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-pill, 999px);
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-fs-btn, 12px);
+  font-weight: 500;
+  cursor: pointer;
+  /* 材质（底/描边/模糊）**一律不吃本文件**：节点挂唯一毛玻璃工具类 `.nf-glass`
+   * （glass.css 单一源）。本规则只留几何 + 字档 —— 玻璃规范 G1「双源」红线即此。 */
 }
-.selection-ask-panel > div:first-child { display: flex; justify-content: space-between; align-items: center; }
-.selection-ask-answer { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.selection-ask-btn[hidden] { display: none; }
+.selection-ask-btn:hover { border-color: var(--ds-text-muted); }
+.selection-ask-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: 1px; }
+
+.ask-dock.selection-dock {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  max-height: min(60vh, 420px);
+}
 
 /* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══
  * 记事本批（2026-11-05）：`.note-dock` 是本规则的**成员**（不是副本）——同一座位

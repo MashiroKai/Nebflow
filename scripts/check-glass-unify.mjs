@@ -36,7 +36,12 @@
 //     其它文件出现 `--nf-glass-*: <字面量>` ⇒ 红（引用 `var(--nf-glass-*)` 不限）。
 //  G5 绕过工具类：canvas ask 的气泡与输入条必须挂 `.nf-glass`
 //     （作者令 2026-11-05 16:50「这三处全部吃唯一毛玻璃标准，不许为 ask 气泡
-//      另造一套等效样式」）⇒ js/askDock.js 里造这两个节点时缺类即红。
+//      另造一套等效样式」）⇒ **造这两个节点的文件**缺类即红。
+//     ⚠ 选区 Ask 抽取批（2026-11-18，作者令「复用既有组件/链路不另造第二套」）：
+//     这两个节点（ask-bub / ask-input）的**建造点**从 js/askDock.js 迁到共用件
+//     js/askDialog.js（选区 Ask 是同一对话框内核的第二消费者）——判据的口径不变，
+//     只把被检文件跟着建造点走：askDock.js 现在是**配置方**，它不再亲手建这两个
+//     节点，留在旧文件上检查会让「谁在造节点」与「检查谁」错位（红线会假绿）。
 //  G6 配方被降档（单一质感批 2026-11-15 重写）：唯一模糊配方
 //     `--nf-glass-input-filter` 必须**逐值**等于 `blur(24px) saturate(1.15)`
 //     （= 主输入框配方，参照物逐值）。理由 = 唯一材质的定义本身就是这组值：
@@ -95,7 +100,8 @@ const CSS_DIR = join(WEB, 'css');
 const JS_DIR = join(WEB, 'js');
 const TOKENS = join(CSS_DIR, 'stand-tokens.css');
 const SINGLE_SOURCE = join(CSS_DIR, 'glass.css');
-const ASK_DOCK = join(JS_DIR, 'askDock.js');
+// 建造点（选区 Ask 抽取批 2026-11-18 随节点迁址；见文件头 G5 注释）。
+const ASK_DIALOG = join(JS_DIR, 'askDialog.js');
 const SOCIAL_SEARCH = join(JS_DIR, 'mobile', 'socialSearch.js');
 const INDEX_HTML = join(WEB, 'index.html');
 /** 规范正文（G7 的登记面清单与例外清单都在这里，脚本只读不写）。 */
@@ -491,17 +497,17 @@ for (const f of readdirSync(CSS_DIR).filter((x) => x.endsWith('.css')).sort()) {
 }
 
 // G5 —— canvas ask 的气泡/输入条 + 手机常驻搜索条必须走 .nf-glass
-if (!existsSync(ASK_DOCK)) {
+if (!existsSync(ASK_DIALOG)) {
   add({
     rule: 'G5',
-    file: rel(ASK_DOCK),
+    file: rel(ASK_DIALOG),
     line: 0,
     selector: '-',
-    detail: 'js/askDock.js 不存在',
+    detail: 'js/askDialog.js 不存在',
     why: '环境异常：ask 面无法核对',
   });
 } else {
-  const askSrc = readFileSync(ASK_DOCK, 'utf8');
+  const askSrc = readFileSync(ASK_DIALOG, 'utf8');
   const checks = [
     { re: /class:\s*askBubbleClass\(m\.role\)/, label: 'ask 气泡（ask-bub）', hint: 'chatUi.js askBubbleClass' },
     { re: /class:\s*chatComposerClass\('ask'\)/, label: 'ask 输入条（ask-input）', hint: 'chatUi.js chatComposerClass' },
@@ -510,7 +516,7 @@ if (!existsSync(ASK_DOCK)) {
     if (!c.re.test(askSrc)) {
       add({
         rule: 'G5',
-        file: rel(ASK_DOCK),
+        file: rel(ASK_DIALOG),
         line: 0,
         selector: c.label,
         detail: `缺少 .nf-glass（应形如 ${c.hint}）`,

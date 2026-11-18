@@ -377,39 +377,34 @@ function resolveQuoteDesc(rowEl, d) {
 
 /** 行上下文菜单的**单点出口**（桌面右键；手机端长按腿已随手机端长按退役批
  *  2026-10-31 作者令整条退役——触屏触达改走消息 footer 信息条：时间/下载/引用钮）：
- *  有正文 ⇒ 复制 + 引用，其余 ⇒ 仅引用；壳 = showPopupMenu（好友窗/联系人行
- *  同一玻璃面板）。 */
-// Bound surrounding text to keep explanations useful without sending the whole row.
+ *  无选区的整行右键 ⇒ 有正文则 复制 + 引用，其余 ⇒ 仅引用；壳 = showPopupMenu
+ *  （好友窗/联系人行同一玻璃面板）。
+ *
+ *  ⚠ **选区收敛批（作者令 2026-11-18 逐字：「选中的复制和引用去掉 就只保留ask
+ *  然后是选中就在气泡的旁边 … 出现一个ask按钮」）**：**有选区 ⇒ 本菜单不出**
+ *  （直接 return false，零 .fm-context-menu）。选区的唯一动作面 = 气泡归属侧旁边
+ *  那枚 Ask 按钮（js/selectionAsk.js：选中即出、点击开共用件 Ask 对话框）；
+ *  「复制」「引用」两项**永不进选区面**。无选区的消息级右键逐字不变（既有
+ *  footer 引用钮 / 右键引用链零改动）。
+ *
+ *  上一批（2026-11-09 选区三件）在这里挂过的 Ask 菜单项与它的 before/after 快照
+ *  组装已整段退役——快照组装搬到 selectionAsk.js（selectionSnapshot），菜单不再
+ *  承载选区动作（选区面与消息面就此分开，两处零重叠）。 */
 export const SELECTION_CONTEXT_CHARS = 300;
 export function openQuoteMenuForRow(rowEl, x, y) {
   const d = (rowEl && rowEl.__nfQuoteDesc) || null;
   if (!rowEl || !d) return false;
-  const items = [];
   const selection = window.getSelection();
   const selected = selection && !selection.isCollapsed && selection.rangeCount &&
     rowEl.contains(selection.getRangeAt(0).startContainer) &&
     rowEl.contains(selection.getRangeAt(0).endContainer) ? selection.toString() : '';
-  const body = selected || String(d.text || '');
+  if (selected.trim()) return false; // 选区面归 Ask 按钮（本菜单不出；复制/引用不进选区）
+  const items = [];
+  const body = String(d.text || '');
   if (body.trim()) {
     items.push({ label: t('messages.copy'), onClick: () => { navigator.clipboard?.writeText(body).catch(() => {}); } });
   }
-  const quote = resolveQuoteDesc(rowEl, d);
-  if (selected) Object.assign(quote, { kind: 'text', text: selected, attachments: [] });
-  items.push({ label: t('messages.quote'), onClick: () => startQuote(quote) });
-  if (selected) {
-    // Snapshot the range before the menu takes focus.
-    const range = selection.getRangeAt(0);
-    const bubble = range.startContainer.parentElement?.closest('.bubble');
-    const scope = bubble && bubble.contains(range.endContainer) ? bubble : rowEl;
-    const before = document.createRange();
-    before.selectNodeContents(scope);
-    before.setEnd(range.startContainer, range.startOffset);
-    const after = document.createRange();
-    after.selectNodeContents(scope);
-    after.setStart(range.endContainer, range.endOffset);
-    const snapshot = { selected, before: before.toString().slice(-SELECTION_CONTEXT_CHARS), after: after.toString().slice(0, SELECTION_CONTEXT_CHARS) };
-    items.push({ label: 'Ask', onClick: () => import('./selectionAsk.js').then(m => m.openSelectionAsk(snapshot)) });
-  }
+  items.push({ label: t('messages.quote'), onClick: () => startQuote(resolveQuoteDesc(rowEl, d)) });
   showPopupMenu(x, y, items);
   return true;
 }
