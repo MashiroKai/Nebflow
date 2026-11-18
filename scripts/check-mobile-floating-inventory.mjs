@@ -7,8 +7,32 @@ import { fileURLToPath } from 'node:url';
 const css = name => readFileSync(new URL(`../src/main/resources/web/css/${name}`, import.meta.url), 'utf8');
 const inventory = [
   ['todo top capsule', 'mobile-todo-apple.css', /\.ta-pill\s*$/, /height\s*:\s*var\(--mcap-h\)/, /\.mobile-page-body\s*$/, /padding-top\s*:[^;]*--mchrome-clear/],
+  // 落队注：'todo bottom FAB' 行取 HEAD 侧——本树（滚域末端净空单源批 2026-11-18）
+  // 的 `.ta-root` 让位消费 `--mobile-scroll-end`（值仍由 dock 让位派生，见本文件
+  // 末尾的同名链断言）；作者线上的 `--mpage-fab-clearance` 那版是同一 owner 的
+  // 更早形态，本树已收编。
   ['todo bottom FAB', 'mobile-todo-apple.css', /\.ta-fab-wrap\s*$/, /position\s*:\s*absolute/, /\.ta-root\s*$/, /padding-bottom\s*:[^;]*--mobile-scroll-end/],
-  ['todo editor tool', 'mobile-todo-apple.css', /\.ta-tool\s*$/, /position\s*:\s*fixed/, /\[data-page="todo-apple-item"\]\s+\.ta-root\s*$/, /padding-bottom\s*:[\s\S]*--ta-kb[\s\S]*--bottom-band-d/],
+  // 'todo editor tool' clearance owner (re-pointed 2026-11-18): the anchor is
+  // declared on the PAGE element (`body.mobile-layer .mobile-page[data-page=
+  // "todo-apple-item"]` token block), not on `.ta-root` — `.ta-tool` is appended
+  // to `.mobile-page-body` and is `.ta-root`'s SIBLING, so it can only inherit a
+  // page-level custom property. The block still carries all three legs once:
+  // keyboard (--ta-kb), dock (--mobile-dock-clearance) and band height
+  // (--bottom-band-d); `.ta-root` then consumes the derived --ta-band-stack,
+  // which the 'todo reply footer' row below asserts.
+  ['todo editor tool', 'mobile-todo-apple.css', /\.ta-tool\s*$/, /position\s*:\s*fixed/,
+    /\[data-page="todo-apple-item"\]\s*$/,
+    /(?=[\s\S]*--ta-kb)(?=[\s\S]*--bottom-band-d)(?=[\s\S]*--mobile-dock-clearance)/],
+  // 'todo reply footer' (2026-11-18): the detail page's reply band is an IN-FLOW
+  // footer — it declares no positioning at all — so its clearance owner is
+  // `.ta-root`'s bottom padding, which reserves the band stack net of the page
+  // body's own dock clearance (`.mobile-page-body` already lets one clearance
+  // through, so the root must not add it twice). Asserting both halves keeps
+  // "the reply sits 8px above the band" a source-level responsibility instead of
+  // a computed coincidence.
+  ['todo reply footer', 'mobile-todo-apple.css', /\.ta-reply\s*$/, /flex\s*:\s*0 0 auto/,
+    /\[data-page="todo-apple-item"\]\s+\.ta-root\s*$/,
+    /(?=[\s\S]*padding-bottom)(?=[\s\S]*--ta-band-stack)(?=[\s\S]*--mobile-dock-clearance)/],
   ['message search', 'mobileSearchFlat.css', /\.mh-search-dock:not\(\.has-query\)\s*$/, /position\s*:\s*absolute/, /#fm-conversations/, /padding-top\s*:[^;]*--mhsc-band/],
   ['contact search', 'mobileSearchFlat.css', /\.mh-search-dock:not\(\.has-query\)\s*$/, /position\s*:\s*absolute/, /#fm-contacts-body/, /padding-top\s*:[^;]*--mhsc-band/],
   ['session identity', 'mobileLayer.css', /\.mh-idhead\s*$/, /position\s*:\s*absolute/, /\[data-page='conversation'\]\s+\.fm-flow\s*$/, /padding-top\s*:[^;]*104px/],

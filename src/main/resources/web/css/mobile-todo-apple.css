@@ -101,10 +101,20 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-root {
   box-sizing: border-box;
 }
 /* item 页覆写：底带不是 FAB 而是 .ta-tool（贴键盘/贴 dock 的胶囊带）+ 其上的
-   回复输入带。两条带的位置都读**同一个**底部栈变量（见 §C 的声明），
-   `.ta-root` 只让位工具胶囊那一条 —— 回复带是 sticky 在流内自占位。 */
+   回复带（.ta-reply，流内页脚）。两条带的位置都读**同一个**底部栈变量
+   （见 §C 的声明）；`.ta-root` 让位整条工具带，回复带作为最后一个 flex 孩子
+   落在让位线之上（缝 = 栈里的第二条呼吸缝 = --ds-space-2 = 8px）。
+   `flex: 1 1 auto`（不再是共享骨架的 `1 0 auto`）：本页的正文区 `.ta-edit`
+   自己滚（见 §C），所以根件高度必须被**钳**在页高内，长正文不再把页体顶长。
+   ⚠️ 让位量是「栈 − 页体自己那条净空」：`.ta-root` 的底缘**不是视口底缘** ——
+   `.mobile-page-body`（mobileLayer.css §页体）自己已经有
+   `padding-bottom: var(--mobile-dock-clearance)`（375×812 = 72px）。不减这一条
+   就把 dock 净空叠两次，实测贴底缝变 80px 而不是 8px。B1 逐值量这条缝，
+   页体底距一改闸立刻红。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
-  padding-bottom: max(28px, var(--ta-band-stack));
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: max(28px, calc(var(--ta-band-stack) - var(--mobile-dock-clearance)));
 }
 
 /* ═══ A · Lists home page ═══════════════════════════════════════════════ */
@@ -670,29 +680,41 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-empty[hidden] { 
    `--ta-band-h` = 工具带带高，**只有一个来源** `--bottom-band-d`（mobileLayer.css
    的底部带直径档）——`.ta-tool` 的 height 与本页的让位/贴底计算都读它，
    本文件不再出现 48px/44px 这类裸数字。
-   `--ta-band-stack` = 整条工具带的占位高度（锚点 + 呼吸缝 + 带高 + 呼吸缝），
-   `.ta-root` 的让位、回复带的贴底偏移都读它 ⇒ 本页零第二处算底部像素。 */
+   `--ta-band-stack` = 整条工具带的占位高度（锚点 + 呼吸缝 + 带高 + 呼吸缝）。
+   `.ta-root` 的让位读它**减去页体自己那条净空**（见 §骨架的 item 覆写），
+   `.ta-tool` 的 bottom 读它的前两者 ⇒ 本页零第二处底部像素。
+   ⚠️ 这一族必须声明在**页元素**（`[data-page="todo-apple-item"]`）上：
+   `.ta-tool` 挂在 `.mobile-page-body` 下、与 `.ta-root` 是**兄弟**，写在
+   `.ta-root` 里它继承不到。（不变量由 scripts/check-mobile-floating-inventory.mjs
+   的 'todo editor tool' 行钉着。） */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
   --ta-band-bottom: max(var(--ta-kb, 0px), var(--mobile-dock-clearance));
   --ta-band-h: var(--bottom-band-d, 44px);
   --ta-band-stack: calc(
     var(--ta-band-bottom) + var(--ds-space-2) + var(--ta-band-h) + var(--ds-space-2)
   );
-  /* sticky 的贴底偏移：参照系是 `.mobile-page-body` 的**内容盒**底缘，而页体自己
-    已经让过一条 `--mobile-dock-clearance`（mobileLayer.css 的页体底距）——
-     所以这里必须把那一条减掉，否则 dock 净空被叠两次（实测：不减则贴底缝 80px
-     而不是 8px）。键盘腿弹起时 `--ta-band-bottom` 换成 `--ta-kb`，减掉的仍只是
-     页体那一条常量净空 ⇒ 键盘弹起时回复框照样跟着工具带一起上移。 */
-  --ta-reply-stick: calc(var(--ta-band-stack) - var(--mobile-dock-clearance));
 }
 
+/* 正文区 = **本页自己的滚动面**（与主会话 `.fm-flow` 同一个角色）：高度被钳在
+   页高内、内部滚动 ⇒ 长正文不会把 `.ta-root` 顶长，回复带（它的下一个兄弟）
+   就永远在最底、正文从它上方划过（不是从它下面）。滚动条按手机层既有口径隐藏
+   （同 `.mobile-page-body`）。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   display: flex;
   flex-direction: column;
   padding: 0 var(--mpad-x);
 }
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit::-webkit-scrollbar { display: none; }
+/* 正文件（标题行 / 正文域 / 元信息行）**不许被挤扁**：回复条自增高时正文区变矮，
+   这时要的是「正文原样、区域滚」，不是把 textarea 压成一条缝（默认
+   `flex-shrink: 1` 会把它压扁）。配合上面的 overflow-y:auto，超出的正文由
+   正文区滚出去，末行仍在回复条之上（B5 逐值量）。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit > * { flex-shrink: 0; }
 /* New row: caret + grey placeholder + (i) info button on the right */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-newrow {
   display: flex;
@@ -798,21 +820,19 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-prio {
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply {
   /* ── 贴底锚定（作者令 2026-11-18「详情页的回复对话框必须挨着底部，像主会话输入框
      那样，并根据内容长度变化」）────────────────────────────────────────────
-     sticky + `margin-top: auto`，两条腿合成一个「挨着底部」：
-       · 内容短（页体不滚）：弹性列的 auto 外边距把它压到 `.ta-edit` 底缘 ——
-         也就是 `.ta-root` 让位（--ta-band-stack）之后的位置 = 工具胶囊带正上方；
-       · 内容长（页体滚动）：它仍占自己**流内**的槽位（滚到底时末行恒在它上方，
-         不会被它盖住），同时 sticky 让它常驻在工具带之上 —— 与主会话输入框
-         「一直在底部、正文从它下面划过」是同一条腿。
-     贴底偏移 = 单源 `--ta-band-stack`（锚点 + 工具带整条），本页零自算像素。
-     底色 = 页底色（--color-bg，与 .mobile-page 同源），正文从它下面划过时
-     不漏字；输入件自身仍是次级输入框模板的玻璃壳。 */
-  position: sticky;
-  bottom: var(--ta-reply-stick);
+     本件是 `.ta-root` 弹性列里的**最后一个孩子**（DOM 上是 `.ta-edit` 的兄弟，
+     见 js/mobile/todoAppleFace.js 的 buildItem）：
+       · `flex: 0 0 auto` = 永不伸缩，恒占自己的高度（自增高时向上长，不挤压正文）；
+       · 底缘 = `.ta-root` 内容盒底缘 = 让位线（padding-bottom: --ta-band-stack）
+         之上 —— 缝就是栈尾那条呼吸缝（--ds-space-2 = 8px），与 `.ta-tool` 顶缘对齐；
+       · 正文长时由 `.ta-edit` 自己滚（它是本页的滚动面），所以正文**永远在回复条
+         上方**，不需要 sticky/底色/z-index 去盖住任何东西。
+     ⇒ 零定位声明、零自算像素：贴底完全由「让位 + 兄弟顺序 + flex」给出，
+     机制与主会话「滚动面 + 常驻底条」逐条同构。 */
+  flex: 0 0 auto;
   margin-top: auto;
-  z-index: 9;
-  padding-top: var(--ds-space-2);
-  background: var(--color-bg);
+  padding: var(--ds-space-2) var(--mpad-x) 0;
+  box-sizing: border-box;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input {
   width: 100%;

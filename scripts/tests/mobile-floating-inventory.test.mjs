@@ -14,6 +14,7 @@ for (const [name, file, pattern] of [
   ['todo bottom FAB', 'mobile-todo-apple.css', /padding-bottom: var\(--mobile-scroll-end\)/g],
   ['reminder FAB', 'mobileLayer.css', /padding: 0 0 max\(var\(--mobile-scroll-end\)/g],
   ['todo editor tool', 'mobile-todo-apple.css', /--ta-kb/g],
+  ['todo reply footer', 'mobile-todo-apple.css', /--ta-band-stack/g],
   ['message search', 'mobileSearchFlat.css', /padding-top: calc\(var\(--mhsc-band\)/g],
   ['session identity', 'mobileLayer.css', /padding-top: calc\(104px/g],
   ['modal drawer', 'mobileLayer.css', /overflow-y: auto/g],

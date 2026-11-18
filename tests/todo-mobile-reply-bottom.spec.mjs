@@ -10,14 +10,20 @@
 //   B3 高度读数四态：空 / 单行 / 多行 / 超上限，逐态量 textarea 高度（px）。
 //   B4 超上限 = **卡内滚**：高度停在封顶值（= 主会话同一口径 200），
 //      scrollHeight > clientHeight（内容在件内滚），件不再长高。
-//   B5 超上限不顶走正文：页体仍可滚（scrollHeight > clientHeight），且**滚到底**
-//      时正文末行的底缘仍在回复框顶缘之上（回复框 sticky 在流内自占位）。
+//   B5 超上限不顶走正文：**正文区 `.ta-edit` 是本页的滚动面**（scrollHeight >
+//      clientHeight），页体本身不再被长正文顶长（`.mobile-page-body` 不滚）；
+//      正文区滚到底时正文末行的底缘仍在回复框顶缘之上（回复条是它的兄弟页脚，
+//      不在正文下面）。
 //   B6 四态下回复框都仍贴底、都仍不被 dock 截断（自增高不会把自己顶出底部）。
 //   B7 单源：件自身 computed max-height = none（CSS 不再压第三个数）、
 //      次级输入框封顶常量 = 200 = 主会话口径、实测封顶 = 200。
 //   B8 真提交：填字 → 点发送 → 用户帧逐字进主会话（`#<待办名>·<id> <正文>`），件清空。
 //   B9 形态仍是次级输入框模板（`.ta-reply-input` = nf-glass 外壳 + 裸件 + ds-turn-btn）。
-//   B10 sticky 单脚本面（position: sticky）——「像主会话输入框那样一直在底部」的机制。
+//   B10 贴底机制 = **流内页脚**（与主会话「滚动面 + 常驻底条」同构）：`.ta-reply`
+//      是 `.ta-root` 的最后一个 flex 孩子、`flex: 0 0 auto`、底缘落在 `.ta-root`
+//      的让位线（--ta-band-stack）之上；**零定位声明**（computed position =
+//      static）—— 不是 sticky/fixed 压住正文，也不给浮动发现闸（floating-discovery
+//      ratchet）添新定位选择器。
 //
 // 运行：
 //   node tests/todo-mobile-reply-bottom.spec.mjs
@@ -47,6 +53,15 @@ const FRAMES = join(OUT, 'frames-detail');
 rmSync(FRAMES, { recursive: true, force: true });
 mkdirSync(SHOTS, { recursive: true });
 mkdirSync(FRAMES, { recursive: true });
+// EvidenceTemp batch contract (scripts/check-evidence-manifests.mjs): a batch
+// that writes into the stand-evidence namespace MUST carry a manifest.json, or
+// the fail-closed TTL sweep skips it and retention becomes unbounded. The task
+// pins this batch's dir (TMR_OUT), so the manifest is written here instead of
+// relocating through the shared helper.
+writeFileSync(
+  join(OUT, 'manifest.json'),
+  JSON.stringify({ createdAt: new Date().toISOString(), project: 'stand', batch: 'todo-decisioncard-20261118' }) + '\n',
+);
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -156,6 +171,8 @@ const READ = `(() => {
   const shell = pageEl.querySelector('.ta-reply-input');
   const dock = document.querySelector('#mobile-dock');
   const bodyScroll = pageEl.querySelector('.mobile-page-body');
+  const edit = pageEl.querySelector('.ta-edit');
+  const root = pageEl.querySelector('.ta-root');
   const cs = reply ? getComputedStyle(reply) : null;
   const tcs = ta ? getComputedStyle(ta) : null;
   const rb = box(reply); const tb = box(tool);
@@ -166,6 +183,11 @@ const READ = `(() => {
     replyPosition: cs ? cs.position : null,
     replyZ: cs ? cs.zIndex : null,
     replyBg: cs ? cs.backgroundColor : null,
+    replyFlexGrow: cs ? cs.flexGrow : null,
+    replyFlexShrink: cs ? cs.flexShrink : null,
+    replyIsLastChild: !!(reply && root && reply.parentElement === root && root.lastElementChild === reply),
+    editOverflowY: edit ? getComputedStyle(edit).overflowY : null,
+    editScroll: edit ? { scrollTop: f(edit.scrollTop), scrollH: edit.scrollHeight, clientH: edit.clientHeight } : null,
     shellCls: shell ? shell.className : null,
     scrollBtnCls: shell ? (shell.querySelector('button') || {}).className || null : null,
     page: bodyScroll ? { scrollTop: f(bodyScroll.scrollTop), scrollH: bodyScroll.scrollHeight, clientH: bodyScroll.clientHeight } : null,
@@ -173,6 +195,7 @@ const READ = `(() => {
     varBandBottom: cs ? cs.getPropertyValue('--ta-band-bottom').trim() : null,
     varBandStack: cs ? cs.getPropertyValue('--ta-band-stack').trim() : null,
     gapPx: rb && tb ? f(tb.top - rb.bottom) : null,
+    padBottom: cs ? cs.paddingBottom : null,
   };
 })()`;
 
@@ -198,8 +221,12 @@ ok('B1 回复框贴底锚定：底缘与工具胶囊带顶缘只差一条呼吸�
 ok('B2 两条带都在底部 dock 之上（回复框底缘 ≤ 工具带底缘 ≤ dock 上缘）',
   !!base.dock && base.reply.bottom <= base.tool.bottom + 0.5 && base.tool.bottom <= base.dock.top + 0.5,
   JSON.stringify({ reply: base.reply, tool: base.tool, dock: base.dock }));
-ok('B10 贴底机制 = sticky（不是 fixed 自算像素）',
-  base.replyPosition === 'sticky', String(base.replyPosition));
+ok('B10 贴底机制 = 流内页脚且零定位：.ta-reply 是 .ta-root 最后一个 flex 孩子（flex 0 0 auto）、'
+  + 'position = static；正文区 .ta-edit 是本页滚动面（overflow-y: auto）',
+  base.replyPosition === 'static' && base.replyIsLastChild === true
+  && base.replyFlexGrow === '0' && base.replyFlexShrink === '0' && base.editOverflowY === 'auto',
+  JSON.stringify({ position: base.replyPosition, lastChild: base.replyIsLastChild, flexGrow: base.replyFlexGrow,
+    flexShrink: base.replyFlexShrink, editOverflowY: base.editOverflowY, zIndex: base.replyZ, bg: base.replyBg }));
 
 /* ── B3 四种状态的高度读数 ── */
 const H = {};
@@ -246,29 +273,48 @@ ok('B9 形态 = 次级输入框模板（.ta-reply-input = nf-glass 外壳 + 裸�
   && /ds-turn-btn/.test(String(base.scrollBtnCls)),
   JSON.stringify({ shell: base.shellCls, input: base.ta.tag, send: base.scrollBtnCls }));
 
-/* ── B5 超上限不顶走正文：页体仍可滚，滚到底末行底缘仍在回复框顶缘之上 ── */
+/* ── B5 超上限不顶走正文：回复条到封顶时（现在页面处于 B4 的超限态）正文区被挤矮但
+   **不挤扁**（内容超高 ⇒ 正文区自己滚），页体不被顶长，滚到底末行底缘仍在回复框顶缘之上 ── */
 const bottomProof = await page.evaluate(`(() => {
   const pageEl = document.querySelector(".mobile-page[data-page='todo-apple-item']");
   const body = pageEl.querySelector('.mobile-page-body');
+  const edit = pageEl.querySelector('.ta-edit');
   const reply = pageEl.querySelector('.ta-reply');
   const notes = pageEl.querySelector('.ta-notes');
+  const title = pageEl.querySelector('.ta-title-input');
   body.scrollTop = body.scrollHeight;
+  const beforeScroll = +edit.scrollTop.toFixed(1);
+  edit.scrollTop = edit.scrollHeight;
   const rb = reply.getBoundingClientRect();
+  const eb = edit.getBoundingClientRect();
   const nb = notes.getBoundingClientRect();
-  return { scrollTop: +body.scrollTop.toFixed(1), scrollH: body.scrollHeight, clientH: body.clientHeight,
-    replyTop: +rb.top.toFixed(2), replyBottom: +rb.bottom.toFixed(2), notesBottom: +nb.bottom.toFixed(2),
-    notesBottomAboveReply: nb.bottom <= rb.top + 1 };
+  const tb = title.getBoundingClientRect();
+  return { replyH: +rb.height.toFixed(2), editScrollTopBefore: beforeScroll,
+    editScrollTop: +edit.scrollTop.toFixed(1), editScrollH: edit.scrollHeight, editClientH: edit.clientHeight,
+    editH: +eb.height.toFixed(2), editBottom: +eb.bottom.toFixed(2),
+    bodyScrollH: body.scrollHeight, bodyClientH: body.clientHeight,
+    replyTop: +rb.top.toFixed(2), replyBottom: +rb.bottom.toFixed(2),
+    titleH: +tb.height.toFixed(2), notesH: +nb.height.toFixed(2),
+    notesBottom: +nb.bottom.toFixed(2),
+    notesBottomAboveReply: nb.bottom <= rb.top + 1,
+    contentRegionAboveReply: eb.bottom <= rb.top + 1 };
 })()`);
 probe.bottomProof = bottomProof;
-ok('B5 超上限不顶走正文：页体仍可滚且滚到底时正文末行底缘 ≤ 回复框顶缘（sticky 流内自占位）',
-  bottomProof.scrollH > bottomProof.clientH + 20 && bottomProof.notesBottomAboveReply === true,
+ok('B5 超上限不顶走正文：回复条在封顶态时正文区被挤矮但内容不被挤扁（正文区 scrollH > clientH 可滚）、'
+  + '页体不被顶长（body 不滚），滚到底时正文末行底缘 ≤ 回复框顶缘',
+  bottomProof.replyH >= 199
+  && bottomProof.editScrollH > bottomProof.editClientH + 20
+  && bottomProof.titleH > 0 && bottomProof.notesH > 0
+  && bottomProof.bodyScrollH <= bottomProof.bodyClientH + 1
+  && bottomProof.contentRegionAboveReply === true
+  && bottomProof.notesBottomAboveReply === true,
   JSON.stringify(bottomProof));
 await page.screenshot({ path: join(SHOTS, '06-content-bottom-not-covered.png') });
 
 /* ── B6 四态下仍贴底 + 不被 dock 截断 ── */
 const sticks = {};
 for (const [name, text] of Object.entries({ empty: '', one: '单行', multi: '一\n二\n三\n四', over: Array.from({ length: 40 }, (_, i) => `超限 ${i}`).join('\n') })) {
-  await page.evaluate(() => { const b = document.querySelector(".mobile-page[data-page='todo-apple-item'] .mobile-page-body"); b.scrollTop = 0; });
+  await page.evaluate(() => { const b = document.querySelector(".mobile-page[data-page='todo-apple-item'] .ta-edit"); b.scrollTop = 0; });
   await setValue(text);
   await page.waitForTimeout(240);
   const r = await read();
@@ -301,7 +347,7 @@ ok('Z 零页面错误（pageerror/console.error 去噪后）', pageErrors.length
 /* ── 证据腿：录「贴底 → 单行 → 多行 → 超限卡内滚 → 滚到底 → 提交」── */
 let media = null;
 try {
-  await page.evaluate(() => { const b = document.querySelector(".mobile-page[data-page='todo-apple-item'] .mobile-page-body"); b.scrollTop = 0; });
+  await page.evaluate(() => { const b = document.querySelector(".mobile-page[data-page='todo-apple-item'] .ta-edit"); b.scrollTop = 0; });
   await setValue('');
   await sleep(500);
   const cdp = await ctx.newCDPSession(page);
@@ -333,7 +379,7 @@ try {
   }
   await sleep(700);
   // 页体滚到底（证明正文不被回复框盖住）
-  await page.evaluate(`(() => { const b = document.querySelector(".mobile-page[data-page='todo-apple-item'] .mobile-page-body"); b.scrollTop = b.scrollHeight; })()`);
+  await page.evaluate(`(() => { const b = document.querySelector(".mobile-page[data-page='todo-apple-item'] .ta-edit"); b.scrollTop = b.scrollHeight; })()`);
   await sleep(800);
   await setValue('回复：这条详情页回执');
   await sleep(650);

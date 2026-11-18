@@ -948,7 +948,14 @@ function buildItem(root, section, nav) {
   // 回复/恢复这个待办 = **次级 LLM 输入框**唯一模板（作者令 2026-11-18）：
   // 与 Canvas Ask 输入条同一装配点、同一玻璃外壳、同一裸件 textarea、同一
   // ds-turn-btn 圆钮 —— 图2 里那个脱样式的小「发送」按钮随批退役。
-  const replyBox = elIn(wrap, 'div', 'ta-reply');
+  // 作者令 2026-11-18 追加批：「详情页正文可以默认展开 但是这个对话框应该挨着底部
+  // 而且应该跟主会话这个一样 可以根据内容长度变化」。
+  // 装配点 = **`root`（.ta-root）的最后一个孩子**，不是 `.ta-edit` 的——正文区
+  // `.ta-edit` 是**本页自己的滚动面**（overflow-y:auto），回复条是它的**流内页脚**
+  // （flex: 0 0 auto + margin-top:auto），与主会话「`.fm-flow` 滚 + 输入条是
+  // 兄弟节点常驻底部」是同一条结构。这样贴底不需要任何定位（position）声明，
+  // 正文永远不会滚到回复条下面（改前它在 `.ta-edit` 里，只能用 sticky 压住）。
+  const replyBox = elIn(root, 'div', 'ta-reply');
   const replyInput = createSecondaryComposer({
     identity: 'ta-reply-input',
     placeholder: t('todoface.replyPh'),
