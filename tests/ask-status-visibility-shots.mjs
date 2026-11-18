@@ -35,6 +35,16 @@ const RAW = join(OUT, 'raw');
 const VIDEO = join(OUT, 'video');
 const SHOTS = join(OUT, 'shots');
 for (const d of [OUT, RAW, VIDEO, SHOTS]) mkdirSync(d, { recursive: true });
+// 证据批清单（scripts/check-evidence-manifests.mjs 的 A-face 契约：任何往
+// stand-evidence 命名空间写产物的脚本，必须同时落 manifest.json —— 缺清单的批次
+// 在引擎 TTL 回收面是 fail-closed，等于永远不会被回收）。
+writeFileSync(join(OUT, 'manifest.json'), JSON.stringify({
+  createdAt: new Date().toISOString(),
+  project: 'stand',
+  batch: 'ask-status-visibility-20261118',
+  task: 'ask-status-visibility',
+  source: 'tests/ask-status-visibility-shots.mjs',
+}, null, 2) + '\n');
 
 const PORT = Number(process.env.PORT || 8321);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -310,6 +320,18 @@ async function scenarioDisconnect(page, label, steps) {
   await step(page, 'offline-会话未连接（帧已排队，给出路）', steps, `${label}-disconnect-02-offline`);
 }
 
+async function scenarioBusy(page, label, steps) {
+  await page.fill('.ask-dock textarea', '会话还在回答时再问一句。');
+  await page.press('.ask-dock textarea', 'Enter');
+  await page.waitForTimeout(1200);
+  await step(page, 'waiting-第一问等待响应', steps, `${label}-busy-01-waiting`);
+  // 服务端报「忙」（同一条腿已在回答 / 队列满）：真实形态见 gateway 的 error 帧——
+  // 本处按同一文本面注入（分类器认 /busy|already answering|queue full/）。
+  wsSend({ type: 'error', sessionId: SID, message: 'session busy: already answering this session' });
+  await page.waitForTimeout(1600);
+  await step(page, 'busy-会话忙碌（前置不可用 + 出路）', steps, `${label}-busy-02-busy`);
+}
+
 async function scenarioNon2xx(page, label, steps) {
   await page.fill('.ask-dock textarea', '让模型返回一个 500 看看。');
   await page.press('.ask-dock textarea', 'Enter');
@@ -381,6 +403,7 @@ scenarioDisconnect.gif = false;
 scenarioNon2xx.gif = false;
 scenarioParse.gif = false;
 scenarioTimeout.gif = false;
+scenarioBusy.gif = false;
 
 const mobile = { width: 375, height: 812, mobile: true };
 const desktop = { width: 1280, height: 800, mobile: false };
@@ -391,6 +414,7 @@ if (PHASE === 'all' || PHASE === 'mobile') {
   await run({ label: 'mobile-fail-disconnect', ...mobile, scenario: scenarioDisconnect });
   await run({ label: 'mobile-fail-non2xx', ...mobile, scenario: scenarioNon2xx });
   await run({ label: 'mobile-fail-parse', ...mobile, scenario: scenarioParse });
+  await run({ label: 'mobile-fail-busy', ...mobile, scenario: scenarioBusy });
   await run({ label: 'mobile-fail-timeout', ...mobile, scenario: scenarioTimeout });
 }
 if (PHASE === 'all' || PHASE === 'desktop') {

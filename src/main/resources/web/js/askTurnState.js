@@ -260,7 +260,13 @@ export function askTurnState(input) {
     if (kind === ASK_FAILURE.TIMEOUT) return ASK_STATE.TIMEOUT;
     return ASK_STATE.FAILED;
   }
-  if (t && t.aborted) return ASK_STATE.ABORTED;
+  if (t && t.aborted) {
+    // 中止是**临时**终态：驻留到期即回空闲/待发送——它不是失败，不需要常驻提醒
+    // （已生成的部分留在转录里，可继续追问）。failed/timeout 相反：常驻到下一次
+    // 提交为止（出问题了必须一直看得见，直到用户采取行动）。
+    if (!t.settledAt || now - t.settledAt < dwell) return ASK_STATE.ABORTED;
+    return typeof i.draft === 'string' && i.draft.trim() ? ASK_STATE.DRAFT : ASK_STATE.IDLE;
+  }
   if (t && t.timedOut) return ASK_STATE.TIMEOUT;
   if (t && t.inflight) {
     if (t.queued && i.connected === false) return ASK_STATE.OFFLINE;
@@ -356,10 +362,13 @@ export function classifyAskFailure(input) {
   else if (status >= 400 || /model|provider|upstream|rate ?limit|\b429\b|\b5\d\d\b/i.test(message)) kind = ASK_FAILURE.MODEL;
   const safe = redactDiagnostics(message).slice(0, 160);
   const parts = [];
+  // 顺序 = 窄屏可读性：会话号 → **耗时** → 状态码 → 错误摘要。诊断线在手机上会被
+  // 省略号截尾（单行 + ellipsis），所以两枚短字段必须排在长摘要之前，保证
+  // 「状态码 / 耗时」这两项任何屏宽都看得见；摘要被截时点一下复制全文。
   if (i.sid) parts.push(String(i.sid));
+  if (elapsedMs) parts.push(secsText(elapsedMs) + 's');
   if (status) parts.push('HTTP ' + status);
   if (safe) parts.push(safe);
-  if (elapsedMs) parts.push(secsText(elapsedMs) + 's');
   return { kind, status, message: safe, elapsedMs, diagnostic: parts.join(' · ') };
 }
 

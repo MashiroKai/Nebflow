@@ -194,7 +194,8 @@ const toastCalls = (dockSrc.match(/__showToast\s*\(|showToast\s*\(/g) || []).len
 assert(toastCalls >= 1, 'S6', DOCK, '失败必须有 toast 错误档（未见 __showToast/showToast 调用）', 'showToast');
 assert(toastCalls <= 2, 'S6', DOCK, `toast 调用点 ${toastCalls} 处（只许失败上报这一个单点）`, 'showToast');
 assert(!/nebflow-toast/.test(dockSrc), 'S6', DOCK, '不得自建 toast 样式族（nebflow-toast* 归 js/modal.js + css/modal.css 单源）', 'nebflow-toast');
-assert(!/TOAST_TYPES/.test(dockSrc), 'S6', DOCK, '不得自建通知类型表（TOAST_TYPES 单源在 js/modal.js）', 'TOAST_TYPES');
+assert(!/TOAST_TYPES|TOAST_ICONS/.test(dockSrc), 'S6', DOCK,
+  '不得自建通知类型/图标表（单源在 js/modal.js：本基点是 TOAST_ICONS，notice-unify 批会收成 TOAST_TYPES——两个名字都拦）', 'TOAST_TYPES');
 if (!violations.some(x => x.code === 'S6')) pass('S6', '通知三型复用：toast error 档 + 就地 inline，零新样式族');
 
 // ══ S7 取消 ≠ 失败 ═════════════════════════════════════════════════════

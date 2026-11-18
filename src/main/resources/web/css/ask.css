@@ -494,6 +494,9 @@ body.mobile-layer .note-dock .ds-resize-handle {
 .ask-state-text { min-width: 0; }
 .ask-state-next { opacity: 0.85; }
 .ask-state-next[hidden] { display: none; }
+/* 三段之间的可读分隔（视觉一行：`状态 · 下一步 · 诊断摘要`）；无障碍串也读得通。 */
+.ask-state-next::before,
+.ask-state-diag::before { content: '·'; margin-right: var(--ds-space-1); opacity: 0.6; }
 /* 可复制的诊断摘要（状态码 + 脱敏错误摘要 + 耗时 + sid）：单行省略，点一下复制
    全文（README 里的复现线索）。它是 inline 的一枚文字钮，不是第二套控件语言。 */
 .ask-state-diag {
