@@ -17,8 +17,11 @@
 //      且不等于正文本身）
 //   N5 可关闭：通知必须带 closable，且 modal.js 的 showToast 真的实现关闭钮
 //   N6 hint 渲染：modal.js 真的把 opts.hint 渲染成 .nebflow-toast-hint
-//   N7 富通知不改旧面：modal.js 只有在 closable/hint 在场时才切富结构
-//      （普通 toast 的 DOM 与旧版一致 —— 本批不碰其他通知）
+//   N7 富通知不改旧面：modal.js 的富结构门 = **形状开关集合**（closable / hint /
+//      action）的析取 —— 任一在场才切富结构，三开关全不在必为 false（普通 toast 的
+//      DOM 与旧版一致 —— 本批不碰其他通知）。判据随 notice-unify 批（2026-11-18 裁定
+//      ①）从「两开关字面」放宽到「三开关集合」：action（正文列动作钮）是合法形状开关，
+//      不改类型数；集合不全 / 出现常量 / 非析取即红（防恒真把普通 toast 拖进富结构）。
 //
 // 用法：
 //   node scripts/check-canvas-save-notice.mjs                    # 当前树（门禁用）
@@ -96,9 +99,19 @@ if (!canvasJs || !modalJs) {
   const modalHint = /opts\.hint/.test(modalJs) && /nebflow-toast-hint/.test(modalJs);
   check('N6', modalHint, `modal renders opts.hint -> .nebflow-toast-hint=${modalHint}`);
 
-  // N7 —— 富结构只在 closable/hint 在场时启用（普通 toast 面零改动）。
-  const richGate = /const rich = !!\(opts\.closable \|\| opts\.hint\)/.test(modalJs);
-  check('N7', richGate, `rich layout gated on closable||hint=${richGate}`);
+  // N7 —— 富结构只在形状开关（closable / hint / action）任一在场时启用（普通 toast 面零改动）。
+  // 判据 = rich 门恰为三开关的 `!!(… || … || …)` 析取，且不出现 true/false 常量：
+  //   三开关全不在 ⇒ false（保零回退）；恒真 / 集合不全 / 非析取 ⇒ 红。
+  const richLine = /(?:const|let|var)\s+rich\s*=\s*([^\n;]+)/.exec(modalJs);
+  const richExpr = richLine ? richLine[1].trim() : '';
+  const richTerms = (/^!!\(([^()]*)\)$/.exec(richExpr)?.[1] ?? '')
+    .split('||').map((t) => t.trim()).filter(Boolean);
+  const richWanted = ['opts.closable', 'opts.hint', 'opts.action'];
+  const richGate = richTerms.length === richWanted.length
+    && richWanted.every((t) => richTerms.includes(t))
+    && !/\b(?:true|false)\b/.test(richExpr);
+  check('N7', richGate,
+    `rich gate = ${richExpr || '(not found)'} — switches=[${richTerms.join(', ') || 'none'}]`);
 }
 
 const fails = results.filter((r) => !r.ok);
