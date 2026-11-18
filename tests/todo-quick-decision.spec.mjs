@@ -77,13 +77,22 @@ const SID = 'todo-quick-decision-root';
 const VW = 375;
 const VH = 812;
 
-let pass = 0, fail = 0;
+let pass = 0, fail = 0, skipped = 0;
 const lines = [];
 const ok = (name, cond, detail = '') => {
   const line = `${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`;
   console.log(line);
   lines.push(line);
   if (cond) pass++; else fail++;
+};
+/** SKIP 口径（作者令）：SKIP 既不记 PASS 也不记 FAIL ⇒ 整闸 exit 2；
+ *  CI 档（CI 环境变量或 QD_CI=1）下 SKIP 记 FAIL ⇒ exit 1。 */
+const SKIP_IS_FAIL = !!(process.env.CI || process.env.QD_CI);
+const skip = (name, why) => {
+  const line = `SKIP  ${name}${why ? '  — ' + why : ''}`;
+  console.log(line);
+  lines.push(line);
+  skipped++;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const probe = {};
@@ -998,7 +1007,11 @@ ok('E4 阈值以下（慢速 -40px，非快弹）不切卡 + 回弹归位',
 // 快弹腿：合成触摸的步距收紧到 6ms（名义 30ms）—— 判据不变（仍是「<200ms 的短距
 // 快弹切卡」），只是让 CDP 往返在 200ms 窗口里留出余量（改前 stepMs 12 时
 // 实测 dt 落在 173–203ms 之间，机器负载一高就假红）。
-const flick = await touchDrag(page, startX, startY, -40, 0, { steps: 5, stepMs: 6 });
+// 快弹腿的**输入节拍**收紧（判据本身不动：仍是「moved && dt < 200ms」）——
+// 原 5 步 × 6ms 睡眠 + 6 次 CDP 往返，在 CPU 争用下实测 dt 217–351ms：
+// 是**模拟器**没打出「快弹」，不是应用的手势分支错。改成 3 步、零睡眠，
+// 让模拟的拖动真的落在应用的 200ms 窗口内。
+const flick = await touchDrag(page, startX, startY, -40, 0, { steps: 3, stepMs: 0 });
 void flick;
 await page.waitForTimeout(560);
 const afterFlick = await page.evaluate(readCard());
@@ -1158,17 +1171,21 @@ try {
   console.log(`      [证据] ${frames.length} 帧 → GIF ${JSON.stringify(media.gif.probe.streams && media.gif.probe.streams[0])} / MP4 ${JSON.stringify(media.mp4.probe.streams && media.mp4.probe.streams[0])}`);
 } catch (e) {
   probe.mediaError = String((e && e.message) || e);
-  console.log('      [证据] 录制腿失败：' + probe.mediaError);
+  // 录制腿不可得（无 ffmpeg / screencast 失败）= 真 SKIP：既不是 PASS 也不是
+  // FAIL ⇒ 整闸 exit 2（CI 档记 FAIL）。不再静默吞。
+  skip('Z 交付媒体 ≤10MB（对真值文件量尺，GIF 与 MP4）', '录制/转码腿不可得：' + probe.mediaError);
 }
 
 /* ── 落盘 ───────────────────────────────────────────────────────────── */
 writeFileSync(join(OUT, 'probe.json'), JSON.stringify(probe, null, 2) + '\n');
 writeFileSync(join(OUT, 'result.txt'),
   `# todo-quick-decision gate (author 2026-11-18)\nWEB=${WEB}\nOUT=${OUT}\n\n`
-  + lines.join('\n') + `\n\nPASS ${pass} / FAIL ${fail}\n`
+  + lines.join('\n') + `\n\nPASS ${pass} / FAIL ${fail} / SKIP ${skipped}\n`
   + (media ? `\nGIF ${media.gif.path}\n  ${JSON.stringify(media.gif.probe)}\nMP4 ${media.mp4.path}\n  ${JSON.stringify(media.mp4.probe)}\n` : ''));
-console.log(`\n=== ${pass} passed, ${fail} failed ===`);
+console.log(`\n=== ${pass} passed, ${fail} failed, ${skipped} skipped ===`);
 console.log(`evidence: ${OUT}`);
 await ctx.close();
 await browser.close();
-process.exit(fail ? 1 : 0);
+// 退出码：红 ⇒ 1；无红但有 SKIP ⇒ 2（SKIP 既不是 PASS 也不是 FAIL）；CI 档下
+// SKIP 记 FAIL ⇒ 1；全绿无 SKIP ⇒ 0。
+process.exit(fail || (SKIP_IS_FAIL && skipped) ? 1 : (skipped ? 2 : 0));
