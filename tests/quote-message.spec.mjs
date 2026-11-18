@@ -100,6 +100,27 @@ async function newPage(browser) {
 /* ═══════════ B1 — 右键菜单（文本行 = 复制+引用；工具行 = 仅引用）═══════════ */
 
 test.describe('B1 — 右键菜单项', () => {
+  test('selected text is quoted instead of the entire message', async ({ browser }) => {
+    const { context, page } = await newPage(browser);
+    const id = await page.evaluate(() => window.__renderUserRow('before selected after'));
+    const result = await page.evaluate(async id => {
+      const row = window.__rowById(id);
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode()) && !node.textContent.includes('before selected after')) {}
+      const range = document.createRange();
+      range.setStart(node, 7);
+      range.setEnd(node, 15);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      await window.__startQuoteOn(id);
+      return window.__quoteStripState();
+    }, id);
+    expect(result.chipText).toContain('selected');
+    expect(result.chipText).not.toContain('before');
+    await context.close();
+  });
   test('用户文本行菜单 = 复制 + 引用；工具卡行 = 仅引用', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const userId = await page.evaluate(() => window.__renderUserRow('用户的一条消息'));

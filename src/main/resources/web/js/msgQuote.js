@@ -383,11 +383,17 @@ export function openQuoteMenuForRow(rowEl, x, y) {
   const d = (rowEl && rowEl.__nfQuoteDesc) || null;
   if (!rowEl || !d) return false;
   const items = [];
-  const body = String(d.text || '');
+  const selection = window.getSelection();
+  const selected = selection && !selection.isCollapsed && selection.rangeCount &&
+    rowEl.contains(selection.getRangeAt(0).startContainer) &&
+    rowEl.contains(selection.getRangeAt(0).endContainer) ? selection.toString() : '';
+  const body = selected || String(d.text || '');
   if (body.trim()) {
     items.push({ label: t('messages.copy'), onClick: () => { navigator.clipboard?.writeText(body).catch(() => {}); } });
   }
-  items.push({ label: t('messages.quote'), onClick: () => startQuote(resolveQuoteDesc(rowEl, d)) });
+  const quote = resolveQuoteDesc(rowEl, d);
+  if (selected) Object.assign(quote, { kind: 'text', text: selected, attachments: [] });
+  items.push({ label: t('messages.quote'), onClick: () => startQuote(quote) });
   showPopupMenu(x, y, items);
   return true;
 }
