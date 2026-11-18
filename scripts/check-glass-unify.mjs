@@ -890,6 +890,103 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   }
 }
 
+// ── G8 composer 外壳材质单定义（composer 统一批 2026-11-18 新增）───────────
+// 判据 = 「同一个壳的材质只许有一条声明」：主会话 `#input-bar` 与消息三面
+// `.fm-input-bar` 的材质（background / backdrop-filter / box-shadow / border）
+// 必须出自 **`.nf-glass` 那一条共享块**（`#input-bar` 进同一选择器表；`.fm-input-bar`
+// 由工厂挂 `.nf-glass` 类）。任一**第二处独立声明**（名 `#input-bar` 或
+// `.fm-input-bar` 的自有规则块，自己写材质属性）⇒ 红。
+// Why: G1 管「配方值不许在 glass.css 外」，G2 管「值必须是唯一 token」，两者都
+// 拦不住「同一个壳在 glass.css 内部再画一遍」—— 统一批前 `#input-bar` 正是这样
+// 与 `.nf-glass` 逐字重复了五个声明（2026-11-18 收纳）。
+const SHARED_GLASS_SELECTOR = '.nf-glass';
+const COMPOSER_SHELL_SELECTORS = new Set(['#input-bar', '.fm-input-bar']);
+const MATERIAL_PROPS = new Set([
+  'background', 'background-color', 'background-image',
+  'backdrop-filter', '-webkit-backdrop-filter',
+  'box-shadow', 'border', 'border-color', 'border-width', 'border-style',
+]);
+const g8 = { sharedBlocks: [], soloBlocks: [], degradeBlocks: [], sharedHasShell: false };
+{
+  const src = readFileSync(SINGLE_SOURCE, 'utf8');
+  for (const rule of walkRules(src)) {
+    const sels = rule.selector.split(',').map((s) => s.trim());
+    const isShared = sels.includes(SHARED_GLASS_SELECTOR);
+    const mat = rule.decls.filter((d) => MATERIAL_PROPS.has(d.prop));
+    if (!mat.length) continue;
+    const shellSels = sels.filter((s) => COMPOSER_SHELL_SELECTORS.has(s) || s.endsWith(' #input-bar') || s.endsWith(' .fm-input-bar'));
+    if (isShared) {
+      g8.sharedBlocks.push(rule);
+      if (sels.some((s) => COMPOSER_SHELL_SELECTORS.has(s))) g8.sharedHasShell = true;
+      continue;
+    }
+    if (!shellSels.length) continue;
+    // 降级档不算「第二套材质」：`@supports not (...)` / `html.no-backdrop` 上下文里的
+    // 块只写 backdrop-filter:none（= 摘除毛玻璃）+ 实底回落，性质与材质声明相反
+    // ——与 G1/G2 对 `none` 的既有放行口径一致。
+    const inDegradeCtx = rule.atStack.some((a) => /^@supports\s+not/i.test(a))
+      || sels.some((s) => s.includes('no-backdrop'));
+    const onlyNone = mat.every((d) => /^none\s*(!important)?$/i.test(d.value));
+    if (inDegradeCtx || onlyNone) { g8.degradeBlocks.push({ rule, shellSels }); continue; }
+    g8.soloBlocks.push({ rule, shellSels });
+  }
+  if (g8.sharedBlocks.length !== 1) {
+    add({
+      file: rel(SINGLE_SOURCE),
+      line: g8.sharedBlocks[0] ? g8.sharedBlocks[0].line : 1,
+      rule: 'G8a',
+      selector: SHARED_GLASS_SELECTOR,
+      detail: `共享材质块出现 ${g8.sharedBlocks.length} 处（应 1 处：${SHARED_GLASS_SELECTOR} 那一条）`,
+      why: '唯一的玻璃材质声明块只能有一条；两条 = 同一配方写了两遍',
+    });
+  }
+  if (!g8.sharedHasShell) {
+    add({
+      file: rel(SINGLE_SOURCE),
+      line: g8.sharedBlocks[0] ? g8.sharedBlocks[0].line : 1,
+      rule: 'G8b',
+      selector: '#input-bar / .fm-input-bar',
+      detail: 'composer 外壳未与 .nf-glass 共用同一条材质块（#input-bar 不在共享块选择器表里）',
+      why: '主输入条与消息三面输入条必须是同一条材质声明；分叉 = 两个壳两套值',
+    });
+  }
+  // 唯一具名例外 = **级联复述块**（cascade re-assertion）：glass.css 尾部的
+  // `#input-bar, #queue-bar.visible` 块不是第二套材质，而是把主输入条的参照材质
+  // 「放到降级组之后」再述一遍（同值同特异度，只为压过 @supports not 的实底回落）。
+  // 判据 = 至多一块 + 材质值与共享块逐值相同；多一块、或值不同 ⇒ 红（原 `#input-bar`
+  // 独立块正是这样被收掉的：它与共享块同值但**不是**末尾复述位）。
+  const sharedValues = new Map();
+  if (g8.sharedBlocks.length === 1) {
+    for (const d of g8.sharedBlocks[0].decls) if (MATERIAL_PROPS.has(d.prop)) sharedValues.set(d.prop, d.value);
+  }
+  if (g8.soloBlocks.length > 1) {
+    for (const { rule, shellSels } of g8.soloBlocks) {
+      add({
+        file: rel(SINGLE_SOURCE),
+        line: rule.line,
+        rule: 'G8c',
+        selector: shellSels.join(', '),
+        detail: 'composer 外壳独立材质声明块多于一块（只许共享块 + 末尾同值复述块）',
+        why: '第二处独立声明 = 同一个壳换个选择器又画一遍材质（composer 统一批要收掉的分叉）',
+      });
+    }
+  } else if (g8.soloBlocks.length === 1) {
+    const { rule, shellSels } = g8.soloBlocks[0];
+    const divergent = rule.decls.filter((d) => MATERIAL_PROPS.has(d.prop)
+      && sharedValues.has(d.prop) && d.value !== sharedValues.get(d.prop));
+    if (divergent.length) {
+      add({
+        file: rel(SINGLE_SOURCE),
+        line: rule.line,
+        rule: 'G8c',
+        selector: shellSels.join(', '),
+        detail: `独立材质块的值与共享块不同（${divergent.map((d) => `${d.prop}:${d.value}`).join(' · ')}）`,
+        why: '复述块只准复述共享块的同一组值；值不同 = 第二套材质',
+      });
+    }
+  }
+}
+
 // 成员台账（信息面，不判红）
 const members = (() => {
   const src = readFileSync(SINGLE_SOURCE, 'utf8');

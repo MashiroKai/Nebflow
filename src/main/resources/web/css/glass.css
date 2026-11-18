@@ -73,7 +73,15 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 .nf-glass,
 .glass,
-.glass-control {
+.glass-control,
+#input-bar {
+  /* 🔴 composer 统一批（2026-11-18）：主会话输入条外壳 `#input-bar` 的材质声明
+     并进**这一条**共享块（此前 `#queue-bar.visible` 之后另起一条 id 级 `#input-bar`
+     块 —— 同一套值写了两遍，正是「同一个壳换个选择器再画一遍材质」的分叉）。
+     并存口径：主输入条进本表（选择器特异性与旧 id 块逐值相同 = 计算值零漂移）；
+     消息三面 `.fm-input-bar` 由工厂挂 `.nf-glass` 类走同一块（js/chatUi.js
+     chatComposerClass('messages')）。第二处独立材质声明 =
+     scripts/check-glass-unify.mjs 的 G8 红。 */
   background: var(--nf-glass-input-bg);
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
   backdrop-filter: var(--nf-glass-input-filter);
@@ -425,18 +433,14 @@ html[data-theme="light"] {
    2026-11-06 20:12 作者令「主会话输入框的样式也变了，之前的就很好了」⇒ 基准件
    回归 recalibrate 前原配方（--nf-glass-input-*，stand-tokens.css 单源）；全局
    玻璃档（--nf-glass-* 一族与 --glass-bg）不动 —— 基准件是参照物本身，不随全局档走。
-   🔴 措辞钉（ask 面三修② 2026-11-11 实测修复）：本块注释正文里禁把「星号紧跟
+   🔴 composer 统一批（2026-11-18）：材质声明块已并进本文件顶部 `.nf-glass` 共享块
+   （`#input-bar` 进同一选择器表），本处只留 ::before 折射线 —— 材质与消息面同一条
+   声明（G8 把「第二处独立声明」判红）。
+   🔴 措辞钉（ask 面三修② 2026-11-11 实测修复）：注释里禁把「星号紧跟
    斜杠」的字面序列写进任何形如 `--x-*` 的 token 名后（旧稿在 `--nf-glass-*` 后
    直书该序列，注释在其后提前闭合，残文被当选择器垃圾 ⇒ 浏览器把整条 #input-bar
    规则连声明一起丢弃 = CSSOM 缺失、border/浮影消失）。防复活钉：tests/ask-glass-drag
    G1e。 */
-#input-bar {
-  background: var(--nf-glass-input-bg);
-  -webkit-backdrop-filter: var(--nf-glass-input-filter);
-  backdrop-filter: var(--nf-glass-input-filter);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--cv-shadow);
-}
 #input-bar::before,
 .fm-input-bar::before {
   content: '';
