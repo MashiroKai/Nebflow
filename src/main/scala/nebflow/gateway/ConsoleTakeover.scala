@@ -78,8 +78,9 @@ import nebflow.shared.{Branding, NebflowLogger}
  *      但**只有当双方身份都可证且不同**才判冲突（见 [[ConsoleTakeover.verdict]]）：
  *      任一方 clientId 不明（老缓存页/升级窗）⇒ 宁可**不提示不踢**（假阴性可接受，
  *      假阳性不可接受——误报会让人以为账号被盗）。
- *   2. 历史 retake 方法仍在本类中，HTTP 和 WebSocket 入口已移除；
- *      状态机与 Canvas writer 的后续收敛尚未完成。
+ *   2. Canvas 写者席位另行独占（[[ConsoleTakeover.claimCanvas]]，2026-11-18 作者令）：
+ *      **单写者、非抢占**——无写者才授予（单实例正常写），已有写者时第二个窗口
+ *      的申请被拒（只读可看），零卡片零提示；拒写走真实「保存失败」文案。
  * 旧主回连（owner==他会话 且 本实例 ∈ pastOwners）**不自动反抢**：回连是机器自动
  * 行为（休眠唤醒/抖动重连），不携带用户意图；若回连即反抢，则 B 操作中 A 的后台
  * 标签醒来即可隐身夺权——正是要防的误踢。回连方落被踢面（本连接收 `takeover`
@@ -131,12 +132,17 @@ final class ConsoleTakeover(
       IO.blocking(canvasLock.acquire()) *> poll(fa).guarantee(IO(canvasLock.release()))
     }
 
-  // Default claims preempt; expectedEpoch opts into strict compare-and-set.
+  // 单写者独占、**非抢占**（2026-11-18 作者令：多开只做检测，第二窗口只读）。
+  // 授予条件 = 当前无写者，或写者就是本标签（刷新/重连的自我续位）；已有别的写者
+  // ⇒ None（只读），绝不翻位。expectedEpoch 仍是严格 compare-and-set（并发同 epoch
+  // 只有一个赢家）。旧口径「缺省抢占」随「取回控制权」状态机一并退役。
   def claimCanvas(principal: String, client: String, tab: String, expectedEpoch: Option[Long] = None): IO[Option[Long]] =
     val key = ConsoleTakeover.holderOf(principal, Some(client))
     canvasExclusive {
       controlRef.modify { state =>
+        val mine = state.writer.exists(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab)
         if expectedEpoch.exists(_ != state.canvasEpoch) then (state, None)
+        else if state.writer.isDefined && !mine then (state, None)
         else
           val next = Math.addExact(state.canvasEpoch, 1L)
           val writer = ConsoleTakeover.CanvasWriter(principal, client, tab, next)
@@ -451,8 +457,9 @@ final class ConsoleTakeover(
             val prev = pruned.get(key).getOrElse(ConsoleTakeover.Instance(key, sessionId, None, Set.empty, now))
             pruned.updated(key, ConsoleTakeover.merged(prev, sessionId, meta, Set(connId), now))
           }
-          // 所有权与历史随标签走：迁移不是身份变化，不得把 owner 让给一个已不存在的键。
-          _ <- oldKey.traverse_(old => canvasExclusive(controlRef.update(s => if s.owner.contains(old) then s.copy(owner = Some(key), writer = None) else s)))
+          // 所有权与历史随标签走：迁移是**同一次落地的换键**（在带声明腿），不是身份
+          // 变化，故 owner 随迁、写者席位不动（写入由 epoch 栅栏判定，与 holder 键无关）。
+          _ <- oldKey.traverse_(old => canvasExclusive(controlRef.update(s => if s.owner.contains(old) then s.copy(owner = Some(key)) else s)))
           _ <- oldKey.traverse_ { old =>
                  pastOwnersRef.update { v =>
                    v.map { case (k, t) => (if k == old then key else k, t) }

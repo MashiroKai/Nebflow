@@ -5,12 +5,27 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.shared.{NebflowServiceConfig, ServiceLlmConfig}
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.Authorization
 
+/**
+ * Canvas 单写者席位 + 拒写文案的路线级契约（2026-11-18 作者令）。
+ *
+ * 数据根隔离：成功写穿腿会落到 `PathUtil.dataRoot / canvas_tabs.json`——若不换根，
+ * 跑一次 spec 就会改写真实 `~/.stand`（生产实例的数据根）。故本套件全程换到临时根，
+ * 结束后还原。
+ */
 class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
+
+  private val originalRoot: os.Path = PathUtil.dataRoot
+  private val isolatedRoot: os.Path = os.temp.dir(prefix = "canvas-writer-spec-")
+
+  override def beforeAll(): Unit = PathUtil.setDataRoot(isolatedRoot)
+  override def afterAll(): Unit =
+    PathUtil.setDataRoot(originalRoot)
+    try os.remove.all(isolatedRoot) catch case _: Throwable => ()
   test("concurrent claims with the same observed epoch have one winner") {
     val token = "canvas-writer-test-token"
     val routes = new RestApiRoutes(
@@ -28,36 +43,73 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
       assertEquals(List(a, b).count(_ == Status.Conflict), 1)
     }
   }
-  test("concurrent preemptive claims leave exactly one writer and fence the earlier epoch") {
+  test("a single browser instance never triggers a console takeover prompt (zero false positives)") {
+    for
+      sent <- Ref.of[IO, Vector[(String, Json)]](Vector.empty)
+      takeover = new ConsoleTakeover((id, frame) => sent.update(_ :+ (id -> frame)), nebflow.shared.NebflowLogger.forName("test"))
+      meta = ConsoleTakeover.ClientMeta(
+        clientId = Some("client-a"),
+        ua = Some("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1"),
+        ip = Some("1.2.3.4")
+      )
+      _ <- takeover.onConnect("session-a", "conn-a", meta)
+      // 同一实例的第二条连接（刷新 / 第二标签 / 静默重座）+ 在带声明腿：恒同 holder。
+      _ <- takeover.onConnect("session-a", "conn-b", meta)
+      _ <- takeover.onIdentifyDeclared("session-a", "conn-b", Some(meta))
+      frames <- sent.get
+      _ = assertEquals(frames, Vector.empty[(String, Json)])
+      owner <- takeover.owner
+      _ = assertEquals(owner, Some("c:client-a"))
+    yield ()
+  }
+
+  test("a second tab cannot claim while a writer is held and its PUT stays rejected") {
     val token = "canvas-writer-test-token"
     val routes = new RestApiRoutes(
       tokenRef = Ref.unsafe[IO, String](token),
-      configRef = Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
-      sharedResources = null, sessionStore = null, wsRoutes = null
+      configRef = Ref.unsafe[IO, NebflowServiceConfig](
+        NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
+      ),
+      sharedResources = null,
+      sessionStore = null,
+      wsRoutes = null
     ).routes
     def call(method: Method, path: String, body: Json): IO[Response[IO]] =
       val req = Request[IO](method, Uri.unsafeFromString(path))
-        .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token))).withEntity(body)
-      routes(req).value.map(_.getOrElse(fail("route fell through")))
+        .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token)))
+        .withEntity(body)
+      routes(req).value.map(_.getOrElse(fail(s"route fell through: $path")))
     def identity(tab: String): Json = Json.obj("clientId" -> "browser-a".asJson, "tabInstanceId" -> tab.asJson)
-    def claim(tab: String): IO[(String, Long)] =
-      call(Method.POST, "/canvas-writer/claim", identity(tab)).flatMap { r =>
-        assertEquals(r.status, Status.Ok)
-        r.as[Json].map(j => (tab, j.hcursor.get[Long]("epoch").toOption.get))
-      }
-    def put(pair: (String, Long)): IO[Response[IO]] =
-      call(Method.PUT, "/canvas-tabs", identity(pair._1).deepMerge(
-        Json.obj("epoch" -> pair._2.asJson, "v" -> 2.asJson, "tabs" -> Json.arr())))
     for
-      claims <- (claim("a"), claim("b")).parTupled
-      sorted = List(claims._1, claims._2).sortBy(_._2)
-      _ = assertEquals(sorted.map(_._2), List(1L, 2L))
-      earlier <- put(sorted.head)
-      _ = assertEquals(earlier.status, Status.Conflict)
-      rejected <- earlier.as[Json]
-      _ = assertEquals(rejected.hcursor.get[String]("error").toOption, Some("stale_writer_epoch"))
-      winner <- put(sorted.last)
-      _ = assertEquals(List(earlier.status, winner.status).count(_ == Status.Ok), 1)
+      first <- call(Method.POST, "/canvas-writer/claim", identity("tab-a"))
+      _ = assertEquals(first.status, Status.Ok)
+      firstBody <- first.as[Json]
+      _ = assertEquals(firstBody.hcursor.get[String]("role").toOption, Some("writer"))
+      firstEpoch = firstBody.hcursor.get[Long]("epoch").toOption.get
+      _ = assertEquals(firstEpoch, 1L)
+      // 真多开：第二个窗口的席位申请被拒（非抢占），明确原因 + 真实保存失败文案。
+      second <- call(Method.POST, "/canvas-writer/claim", identity("tab-b"))
+      _ = assertEquals(second.status, Status.Conflict)
+      secondBody <- second.as[Json]
+      _ = assertEquals(secondBody.hcursor.get[String]("error").toOption, Some("writer_already_held"))
+      _ = assertEquals(secondBody.hcursor.get[String]("message").toOption, Some("保存失败，本次修改未保存到服务器。"))
+      _ = assertEquals(secondBody.hcursor.get[String]("role").toOption, Some("reader"))
+      // 单实例正常写：持位写者照常写穿（并把权威存档落到隔离根）。
+      writer <- call(Method.PUT, "/canvas-tabs", identity("tab-a").deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
+      ))
+      _ = assertEquals(writer.status, Status.Ok)
+      // 只读可看：GET 照常返回权威存档。
+      stored <- call(Method.GET, "/canvas-tabs", Json.obj())
+      _ = assertEquals(stored.status, Status.Ok)
+      // 服务端拒写：第二窗口的 PUT 落栅栏外。
+      readerPut <- call(Method.PUT, "/canvas-tabs", identity("tab-b").deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
+      ))
+      _ = assertEquals(readerPut.status, Status.Conflict)
+      readerBody <- readerPut.as[Json]
+      _ = assertEquals(readerBody.hcursor.get[String]("error").toOption, Some("stale_writer_epoch"))
+      _ = assertEquals(readerBody.hcursor.get[String]("message").toOption, Some("保存失败，本次修改未保存到服务器。"))
     yield ()
   }
 
@@ -97,7 +149,7 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
     }
   }
 
-  test("two tabs of one browser compete and a reader PUT is rejected") {
+  test("concurrent claims for the empty writer slot leave exactly one writer") {
     val token = "canvas-writer-test-token"
     val routes = new RestApiRoutes(
       tokenRef = Ref.unsafe[IO, String](token),
@@ -114,35 +166,24 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
         .withEntity(body)
       routes(req).value.map(_.getOrElse(fail(s"route fell through: $path")))
     def identity(tab: String): Json = Json.obj("clientId" -> "browser-a".asJson, "tabInstanceId" -> tab.asJson)
+    def claim(tab: String): IO[Response[IO]] = call(Method.POST, "/canvas-writer/claim", identity(tab))
     for
-      first <- call(Method.POST, "/canvas-writer/claim", identity("tab-a"))
-      _ = assertEquals(first.status, Status.Ok)
-      firstBody <- first.as[Json]
-      _ = assertEquals(firstBody.hcursor.get[String]("role").toOption, Some("writer"))
-      firstEpoch = firstBody.hcursor.get[Long]("epoch").toOption.get
-      _ = assertEquals(firstEpoch, 1L)
-      second <- call(Method.POST, "/canvas-writer/claim", identity("tab-b"))
-      _ = assertEquals(second.status, Status.Ok)
-      secondBody <- second.as[Json]
-      secondEpoch = secondBody.hcursor.get[Long]("epoch").toOption.get
-      _ = assertEquals(secondBody.hcursor.get[String]("role").toOption, Some("writer"))
-      _ = assertEquals(secondEpoch, firstEpoch + 1L)
-      reader <- call(Method.PUT, "/canvas-tabs", identity("tab-a").deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
+      pair <- (claim("tab-a"), claim("tab-b")).parTupled
+      statuses = List(pair._1.status, pair._2.status)
+      _ = assertEquals(statuses.count(_ == Status.Ok), 1)
+      _ = assertEquals(statuses.count(_ == Status.Conflict), 1)
+      winner <- if pair._1.status == Status.Ok then IO.pure(pair._1) else IO.pure(pair._2)
+      winnerBody <- winner.as[Json]
+      winnerEpoch = winnerBody.hcursor.get[Long]("epoch").toOption.get
+      loserTab = if pair._1.status == Status.Ok then "tab-b" else "tab-a"
+      loserPut <- call(Method.PUT, "/canvas-tabs", identity(loserTab).deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> winnerEpoch.asJson)
       ))
-      _ = assertEquals(reader.status, Status.Conflict)
-      rejection <- reader.as[Json]
-      _ = assertEquals(rejection.hcursor.get[String]("error").toOption, Some("stale_writer_epoch"))
-      writer <- call(Method.PUT, "/canvas-tabs", identity("tab-b").deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> secondEpoch.asJson)
+      _ = assertEquals(loserPut.status, Status.Conflict)
+      winnerTab = if pair._1.status == Status.Ok then "tab-a" else "tab-b"
+      winnerPut <- call(Method.PUT, "/canvas-tabs", identity(winnerTab).deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> winnerEpoch.asJson)
       ))
-      _ = assertEquals(writer.status, Status.Ok)
-      stored <- call(Method.GET, "/canvas-tabs", Json.obj())
-      _ = assertEquals(stored.status, Status.Ok)
-      storedBody <- stored.as[Json]
-      _ = assertEquals(storedBody.hcursor.get[Int]("v").toOption, Some(2))
-      third <- call(Method.POST, "/canvas-writer/claim", identity("tab-a"))
-      thirdBody <- third.as[Json]
-      _ = assertEquals(thirdBody.hcursor.get[Long]("epoch").toOption, Some(secondEpoch + 1L))
+      _ = assertEquals(winnerPut.status, Status.Ok)
     yield ()
   }

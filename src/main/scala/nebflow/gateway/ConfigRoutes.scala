@@ -145,7 +145,14 @@ private[gateway] object ConfigRoutes:
                     case Some(epoch) =>
                       wsHub.broadcast(Json.obj("type" -> "canvasWriterChanged".asJson, "epoch" -> epoch.asJson)) *>
                         Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
-                    case None => Conflict(Json.obj("error" -> "concurrent_writer_claim".asJson))
+                    case None =>
+                      // 非抢占席位的正常拒绝（真多开：已有写者）⇒ 明确原因 + 真实
+                      // 保存失败文案；前端静默落只读，不弹接管/让出卡片。
+                      Conflict(Json.obj(
+                        "error" -> "writer_already_held".asJson,
+                        "message" -> "保存失败，本次修改未保存到服务器。".asJson,
+                        "role" -> "reader".asJson
+                      ))
                   }
                 case (Some(id), Some(t)) =>
                   c.get[Long]("epoch").toOption match

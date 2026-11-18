@@ -70,18 +70,23 @@ function createCanvasWriterClient(transport) {
     credentials: () => role === 'writer' ? { epoch } : null,
     lost() { generation++; role = 'reader'; epoch = null; transport.changed?.(role, true); },
     async claim() {
-      if (transport.canClaim && !transport.canClaim()) return;
       generation++;
       const result = await transport.claim();
       if (result?.role === 'writer' && Number.isSafeInteger(result.epoch)) {
         role = 'writer'; epoch = result.epoch; transport.changed?.(role);
       }
     },
+    // 单实例即位（2026-11-18 作者令：只检测多开，不加第二种提示）。写路径到达时
+    // 若尚未即位，先静默申请一次：后端「无写者」才授予（真多开的第二个窗口拿
+    // 不到，保持只读）；拒授 ⇒ 走 transport.failed 的真实「保存失败」文案。
     async put(payload) {
-      if (role !== 'writer') return false;
-      const capturedEpoch = epoch;
       const run = async () => {
-        if (role !== 'writer' || epoch !== capturedEpoch) return false;
+        if (role !== 'writer') {
+          await this.claim();
+          if (role !== 'writer') { transport.failed?.(); return false; }
+        }
+        const capturedEpoch = epoch;
+        if (role !== 'writer') return false;
         const result = await transport.put(payload, capturedEpoch);
         if (role !== 'writer' || epoch !== capturedEpoch) return false;
         if (!result) { this.lost(); transport.failed?.(); }
@@ -91,22 +96,25 @@ function createCanvasWriterClient(transport) {
       pendingWrite = result.catch(() => false);
       return result;
     },
+    // 页面卸载让位（刷新/关窗/换页）：先把写权还回空位，否则下一个窗口
+    // 会因「已有写者」永久落只读。尽力而为（keepalive）。
+    async release() {
+      if (role !== 'writer') return;
+      const capturedEpoch = epoch;
+      generation++; role = 'reader'; epoch = null; transport.changed?.(role);
+      await transport.release?.(capturedEpoch);
+    },
   };
 }
 // END CANVAS WRITER CLIENT
 
 const canvasTabInstanceId = globalThis.crypto?.randomUUID?.() || `tab-${Date.now()}-${Math.random()}`;
 const canvasIdentity = () => ({ clientId: deviceClientId(), tabInstanceId: canvasTabInstanceId });
-let writerStatusEl = null;
-let writerClaimEl = null;
 let localUnsynced = false;
 function writerChanged(role, lost = false) {
   // A writer transition is not proof of another console. Preserve local data
   // without presenting the console conflict dialog.
   if (lost) localUnsynced = true;
-  if (writerStatusEl) writerStatusEl.textContent = localUnsynced
-    ? 'Canvas：存在仅本地变更，不会自动同步。' : (role === 'writer' ? 'Canvas：可写' : 'Canvas：只读');
-  if (writerClaimEl) writerClaimEl.hidden = role === 'writer';
   if (role !== 'writer') {
     if (serverPersistTimer) clearTimeout(serverPersistTimer);
     serverPersistTimer = null;
@@ -116,7 +124,6 @@ function writerChanged(role, lost = false) {
 }
 const writerRejectionNotices = new Set();
 function writerNotice(message, reason) {
-  if (writerStatusEl) writerStatusEl.textContent = localUnsynced ? `${message} 存在仅本地变更，不会自动同步。` : message;
   if (reason && !writerRejectionNotices.has(reason)) {
     writerRejectionNotices.add(reason);
     window.__showToast?.(message, 'info');
@@ -124,7 +131,6 @@ function writerNotice(message, reason) {
 }
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,
-  canClaim: () => { if (localUnsynced) { writerNotice('请刷新后再取得控制权。'); return false; } return true; },
   failed: () => { localUnsynced = true; writerChanged('reader'); writerNotice('Canvas 保存失败，本地变更已保留。', 'save-failed'); },
   async query() {
     try {
@@ -139,9 +145,11 @@ const canvasWriter = createCanvasWriterClient({
         method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(canvasIdentity()),
       });
-      if (!response.ok) { writerNotice('取得 Canvas 控制权失败，请重试。'); return null; }
+      // 拒授是常态（真多开 ⇒ 已有写者），不是错误：静默返回 null，文案由写路径
+      // 的 failed() 统一点出（真实「保存失败」，不用「取得控制权」措辞）。
+      if (!response.ok) return null;
       return await response.json();
-    } catch { writerNotice('无法连接服务端，Canvas 保持只读。'); return null; }
+    } catch { return null; }
   },
   async put(payload, epoch) {
     try {
@@ -152,6 +160,14 @@ const canvasWriter = createCanvasWriterClient({
       if (response.ok) return true;
       return false;
     } catch { return false; }
+  },
+  async release(epoch) {
+    try {
+      await fetch('/api/canvas-writer/release', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ ...canvasIdentity(), epoch }), keepalive: true,
+      });
+    } catch { /* 卸载路径：让位尽力而为，失败交给服务端陈旧清扫 */ }
   },
 });
 function allowCanvasMutation() {
@@ -5744,7 +5760,7 @@ function flushPendingPersist() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') flushPendingPersist();
 });
-window.addEventListener('pagehide', flushPendingPersist);
+window.addEventListener('pagehide', () => { flushPendingPersist(); canvasWriter.release(); });
 
 let persistReconnectBound = false;
 /** canvas-tab-sync 批：远端帧点名的激活页签尚未落地（文件签 readFile 在途）
