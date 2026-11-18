@@ -1119,10 +1119,57 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-label
   color: var(--color-text);
   overflow-wrap: anywhere;
 }
-body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-status {
-  font-size: var(--mfs-min);
-  color: var(--color-text-muted);
+/* ── ③ 输入区（回答框）: the card's third band (author 2026-11-18: 决策卡视角
+   must carry the question AND an answer field). It is `flex: none` at the card's
+   bottom, so the scroller above it keeps every drop of remaining height and the
+   field is on screen the moment the card opens — a long content never pushes it
+   away and nothing is truncated.
+   Field recipe (font/line/caret/placeholder + the autosize cap) is the existing
+   shared `body.mobile-layer .tfl-hit-reply` rule — the cap has ONE source, in
+   mobileLayer.css; this block owns the BAND's layout only (no second ladder).
+   Send key reuses the existing text-button recipe `.ta-create-save`.
+   Bottom clearance: the card's bottom edge already sits inside `.ta-root`
+   (`padding-bottom: calc(var(--mobile-dock-clearance) + --ds-space-3)`), and
+   `--mobile-dock-clearance` (mobileLayer.css) is the dock-clearance single
+   source — this band adds no clearance constant of its own. Width comes from
+   `--mpad-x` / `--ds-space-4` — the page's existing horizontal insets —
+   so a card-width change stays a one-place edit (see the batch report). */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-3);
+  border-top: 1px solid var(--glass-border);
 }
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-input {
+  box-sizing: border-box;
+  min-height: var(--mtap);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--nf-glass-input-bg);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-send {
+  flex: none;
+  min-height: var(--mtap);
+  padding: 0 var(--ds-space-3);
+  border: none;
+  background: transparent;
+  font-size: var(--mfs-body);
+  cursor: pointer;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-error {
+  min-height: var(--ds-space-5);
+  color: var(--color-error);
+  font-size: var(--mfs-min);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-error:empty { display: none; }
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-empty {
   flex: 1 1 auto;
   display: flex;

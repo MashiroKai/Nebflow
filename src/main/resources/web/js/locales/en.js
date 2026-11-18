@@ -3375,7 +3375,6 @@ export default {
   // page's decision rows).
   'todoapple.quickDecision': 'Quick decision',
   'todoapple.quickCount': '{n} of {m}',
-  'todoapple.answerNotWired': 'Answering is not wired up',
   'todoface.tagSave': 'Save',
   'todoface.tagErrEmpty': 'Name cannot be empty',
   'todoface.tagErrDup': 'A tag with this name already exists',

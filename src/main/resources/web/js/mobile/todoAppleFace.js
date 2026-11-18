@@ -1117,15 +1117,24 @@ function saveDraft(nav) {
 //     left/right swipe switches todos (the author's 2026-11-18 request — the
 //     dating-app card view).
 //
-//     What the card shows: the todo's own content (name + detail) and, when
-//     the row carries one, its question + options. Every value is a real row
-//     field; nothing is invented and nothing is written back (answering is not
-//     wired — the fact line says so, same fact as the list page's decision
-//     rows). Card order = todoStore.openItems() (the store's own order).
+//     What the card shows, top to bottom (order fixed by the author's
+//     2026-11-18 report — 手机上「只看得见内容」: 问题/选项原先排在长正文之后，
+//     a long detail buried them below the fold):
+//       ① the todo's title, and — when the row carries one — its decision
+//          question + options (native radio/checkbox, one label per option);
+//       ② the todo's long content (detail), scrolled inside `.ta-qd-scroll`;
+//       ③ an answer field pinned at the card's bottom band, wired to the
+//          EXISTING reply chain (input.js `sendPrimaryTodoReply`).
+//     Every value is a real row field; nothing is invented.
+//     Card order = todoStore.openItems() (the store's own order).
 //
-//     Height policy: the card is a elastic flex box between the counter line
-//     and the page bottom; its content scrolls inside `.ta-qd-scroll`, so a
-//     long content / question / option list scrolls instead of being clipped.
+//     Height policy: the card is an elastic flex column between the counter line
+//     and the page bottom; the head band (question/options/content) scrolls
+//     inside `.ta-qd-scroll` and the answer band is `flex: none` at the card's
+//     bottom, so a long content scrolls instead of clipping the question or
+//     pushing the answer field off the card. The card's bottom edge sits inside
+//     `.ta-root`, which carries `--mobile-dock-clearance` (the dock-clearance
+//     single source) ⇒ the answer band is never truncated by the dock.
 //     `.ta-qd-opt-body` is the per-option layout slot (column flow: media
 //     above the label) — the mount point for the media group, see the batch
 //     report §待对齐.
@@ -1160,9 +1169,14 @@ const QD_EDGE_PX = 24;
 /** Card cursor (which todo is on the card) — module state, reset on page entry. */
 let qdIndex = 0;
 /** Selected option indices per todo id: view state on this device only, never a
- *  data write (the answer is not wired anywhere). */
+ *  data write (selection is a local view state; only the answer field is wired
+ *  out, through the existing reply chain). */
 /** @type {Map<string, Set<number>>} */
 const qdAnswers = new Map();
+/** Un-sent answer text per todo id: typing survives a swipe (text is never lost
+ *  and never lands on the wrong todo). Cleared once the reply is sent. */
+/** @type {Map<string, string>} */
+const qdDrafts = new Map();
 /** @type {ReturnType<typeof setTimeout>|null} */
 let qdTimer = null;
 
@@ -1193,6 +1207,26 @@ function buildQuick(root, section) {
   card.setAttribute('role', 'group');
   card.setAttribute('tabindex', '0');
   const scroll = elIn(card, 'div', 'ta-qd-scroll');
+  // ── ③ 输入区（回答框）: the card's third band, pinned below the scroller.
+  // Answer exit = the EXISTING reply chain (input.js `sendPrimaryTodoReply`, the
+  // very same exit the list page's reply box and the row interaction box use):
+  // the verbatim `#<todo name>·<id> <answer>` user message goes to the primary
+  // session. This module never builds a frame itself.
+  // The field recipe (typography + the single autosize cap) is inherited from
+  // the shared `.tfl-hit-reply` rule in css/mobileLayer.css — no second ladder;
+  // the page's own CSS block only owns the band's layout.
+  const answer = elIn(card, 'div', 'ta-qd-answer');
+  const answerRow = elIn(answer, 'div', 'ta-qd-answer-row');
+  const answerInput = /** @type {HTMLTextAreaElement} */ (elIn(answerRow, 'textarea', 'ta-qd-answer-input tfl-hit-reply'));
+  answerInput.rows = 1;
+  answerInput.placeholder = t('todoface.replyPh');
+  answerInput.setAttribute('aria-label', t('todoface.replyPh'));
+  const answerSend = btnEl('ta-qd-answer-send ta-create-save');
+  answerSend.type = 'button';
+  answerSend.textContent = t('todoface.send');
+  answerRow.appendChild(answerSend);
+  const answerError = elIn(answer, 'div', 'ta-qd-answer-error');
+  answerError.setAttribute('role', 'alert');
   const empty = elIn(wrap, 'div', 'ta-qd-empty');
   empty.hidden = true;
 
@@ -1219,6 +1253,42 @@ function buildQuick(root, section) {
     if (multi) { if (on) s.add(i); else s.delete(i); }
     else { s.clear(); if (on) s.add(i); }
   };
+
+  /** Answer field autosize: measure at `height:auto`, then clamp by the CSS cap
+   *  (that cap lives in exactly one place — the shared `.tfl-hit-reply` rule). */
+  const autosizeAnswer = () => {
+    answerInput.style.height = 'auto';
+    const cap = Number.parseFloat(getComputedStyle(answerInput).maxHeight);
+    const next = Number.isFinite(cap) && cap > 0
+      ? Math.min(answerInput.scrollHeight, cap) : answerInput.scrollHeight;
+    answerInput.style.height = `${next}px`;
+  };
+  answerInput.addEventListener('input', autosizeAnswer);
+
+  /** Submit the answer through the existing reply chain. The machine-readable
+   *  trace `data-qd-answer-last` is what the gate reads (never a guess). */
+  const submitAnswer = async () => {
+    const item = quickItems()[qdIndex];
+    const text = answerInput.value.trim();
+    if (!item || !text || answerSend.disabled) return;
+    answerSend.disabled = true;
+    answerError.textContent = '';
+    let ok = false;
+    try {
+      const { sendPrimaryTodoReply } = await import('../input.js');
+      ok = sendPrimaryTodoReply(`#${item.name}·${item.id} ${text}`);
+    } catch (err) { console.error('[todoAppleFace] answer 出口不可得:', err); }
+    answerSend.disabled = false;
+    if (ok) {
+      qdDrafts.delete(item.id);
+      answerInput.value = '';
+      autosizeAnswer();
+    } else {
+      answerError.textContent = t('todoapple.replyFailed');
+    }
+    card.dataset.qdAnswerLast = JSON.stringify({ itemId: item.id, ok, sent: text });
+  };
+  answerSend.addEventListener('click', () => { void submitAnswer(); });
 
   /** Release without a switch (under threshold, or head/tail): stop + spring back. */
   const springBack = () => {
@@ -1264,6 +1334,10 @@ function buildQuick(root, section) {
     if (g) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (card.hidden) return;
+    // The answer band is a text surface, not a gesture surface: a drag that
+    // starts inside it belongs to the field (text selection / caret), never to
+    // the card switch. Same discipline as the shell's edge band.
+    if (e.target instanceof Element && e.target.closest('.ta-qd-answer')) return;
     if (e.clientX <= QD_EDGE_PX || e.clientX >= window.innerWidth - QD_EDGE_PX) return;
     g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), claimed: false };
   });
@@ -1353,6 +1427,10 @@ function buildQuick(root, section) {
   /** @returns {void} */
   function render() {
     const items = quickItems();
+    // Park the in-progress answer on the todo that is on the card BEFORE the card
+    // changes (swipe / page entry): the text follows its todo, never the card.
+    const prevId = card.dataset.itemId;
+    if (prevId) qdDrafts.set(prevId, answerInput.value);
     if (qdIndex >= items.length) qdIndex = Math.max(0, items.length - 1);
     if (qdIndex < 0) qdIndex = 0;
     const reading = t('todoapple.quickCount', { n: String(qdIndex + 1), m: String(items.length) });
@@ -1364,7 +1442,12 @@ function buildQuick(root, section) {
     card.setAttribute('aria-label', reading);
     scroll.replaceChildren();
     const item = items[qdIndex];
-    if (!item) { delete card.dataset.itemId; return; }
+    if (!item) {
+      delete card.dataset.itemId;
+      answerInput.value = '';
+      answerError.textContent = '';
+      return;
+    }
     card.dataset.itemId = item.id;   // machine-readable: which todo is on the card
 
     // Meta line: only the fields the row actually carries (no empty shells).
@@ -1387,9 +1470,11 @@ function buildQuick(root, section) {
     if (item.due != null) meta.appendChild(el('span', 'ta-qd-chip', dueText(item.due)));
     if (meta.childElementCount) scroll.appendChild(meta);
 
-    // The todo's own content: name (short title) + detail (the long content).
+    // Read order fixed by the author's 2026-11-18 report (问答在正文之下 ⇒ 手机上
+    // 只看得见内容): the todo's own title / question / options come FIRST, the long
+    // content follows and scrolls. Nothing is added — the same fields, resequenced
+    // so the question and its options are on screen the moment the card opens.
     scroll.appendChild(el('div', 'ta-qd-title', item.name || '—'));
-    if (item.detail) scroll.appendChild(el('div', 'ta-qd-content', item.detail));
 
     const dec = item.decision;
     if (dec) {
@@ -1403,9 +1488,18 @@ function buildQuick(root, section) {
         list.setAttribute('role', dec.multiSelect ? 'group' : 'radiogroup');
         options.forEach((option, i) => { list.appendChild(optionRow(item, i, option, !!dec.multiSelect)); });
         scroll.appendChild(list);
-        scroll.appendChild(el('div', 'ta-qd-status', t('todoapple.answerNotWired')));
       }
     }
+
+    // The todo's long content (detail) comes after the question/options: a long
+    // body scrolls inside `.ta-qd-scroll` instead of burying the question.
+    if (item.detail) scroll.appendChild(el('div', 'ta-qd-content', item.detail));
+
+    // The answer field follows the card: this todo's parked draft, this todo's
+    // label. The band itself sits outside the scroller (CSS, pinned).
+    answerInput.value = qdDrafts.get(item.id) || '';
+    answerError.textContent = '';
+    autosizeAnswer();
     if (typeof lucide !== 'undefined') createIconsIn(card);
   }
 

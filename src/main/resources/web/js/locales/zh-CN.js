@@ -3282,7 +3282,6 @@ export default {
   // 一处键；禁教学句，只写事实）。
   'todoapple.quickDecision': '快速决策',
   'todoapple.quickCount': '第 {n} / {m} 条',
-  'todoapple.answerNotWired': '回答未接线',
   'todoface.tagSave': '保存',
   'todoface.tagErrEmpty': '名称不能为空',
   'todoface.tagErrDup': '已有同名标签',

@@ -21,6 +21,14 @@
 //   E5 滚动与选中并存：长内容下卡片内滚（scrollHeight > clientHeight）可下滑；
 //      竖滑不切卡；下滑之后再点选项仍能选中（选中态走 :has(:checked)）；
 //      点击不改变滚动位；选项槽可承载高块（媒体位留槽的版式与高度策略）。
+//   D  问题可见 + 回答输入区（作者 2026-11-18 报障批「手机端待办 决策卡视角
+//      问题和回答输入框呢 现在怎么好像只有内容？」）：长正文不得把问题顶到折叠线
+//      下（未滚动时 `.ta-qd-q` 完整落在卡片可视区内 + 问题排在正文之前）；卡内
+//      必须有真回答框（textarea + 发送键，卡底固定带、不在滚动面内、底缘不被
+//      dock 截断）；真填字读回真值；真提交出帧逐字进既有回复链路
+//      （`#<待办名>·<id> <回答>`）；提交后输入框清空；长正文滚到底输入框仍在原位；
+//      回答之后左右滑仍切卡。
+//      ⚠️ D 组整组对**未修源码**直跑必红（QD_WEB_ROOT=<未修树>）——检测力自证。
 //
 // 运行：
 //   node tests/todo-quick-decision.spec.mjs
@@ -79,6 +87,10 @@ const ok = (name, cond, detail = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const probe = {};
+/** Page→server frames, recorded on the stub socket. The answer submit leg reads
+ *  the reply chain's real output here (the frame content is the acceptance
+ *  readout, not a UI guess). */
+const sentFrames = [];
 
 const NOISE = /Failed to load resource|fetching the script|ResizeObserver loop completed/i;
 const pageErrors = [];
@@ -160,12 +172,17 @@ async function boot() {
     sendConfig();
     sendSessions();
     ws.onMessage((raw) => {
+      sentFrames.push(String(raw));
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.type === 'getConfig') sendConfig();
       else if (m.type === 'getSessions' || m.type === 'listSessions') sendSessions();
       else if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
       else if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
       else if (m.type === 'listScheduledTasks') ws.send(JSON.stringify({ type: 'scheduledTaskList', scope: 'session', tasks: [] }));
+      // Answer-submit leg: turn terminal. Zero-backend fixture has no engine
+      // assistant turn, so without this `done` the busy gate would stay set and
+      // silently swallow a second send (same stub as tests/todo-row-reply.spec.mjs).
+      else if (typeof m.content === 'string' && m.sessionId) ws.send(JSON.stringify({ type: 'done', sessionId: m.sessionId }));
     });
   });
 
@@ -268,6 +285,57 @@ const poseX = (pose) => {
   const parts = m[1].split(',').map((v) => Number(v.trim()));
   return Number.isFinite(parts[4]) ? parts[4] : null;
 };
+
+/* ── 问题可见 + 回答输入区读数（作者 2026-11-18 报障腿）─────────────────
+   几何全部相对卡片可视盒量：问题「可见」= 其盒落在卡内且卡未滚动；
+   输入框「不被 dock 截断」= 其底缘不越过 dock 上缘。 */
+const readAnswer = () => `(() => {
+  const card = document.querySelector('${CARD_SEL} .ta-qd-card');
+  if (!card) return null;
+  const cardBox = card.getBoundingClientRect();
+  const box = (el) => { if (!el) return null; const b = el.getBoundingClientRect();
+    return { top: +b.top.toFixed(2), bottom: +b.bottom.toFixed(2), left: +b.left.toFixed(2), right: +b.right.toFixed(2), h: +b.height.toFixed(2) }; };
+  const q = card.querySelector('.ta-qd-q');
+  const content = card.querySelector('.ta-qd-content');
+  const ta = card.querySelector('.ta-qd-answer-input');
+  const send = card.querySelector('.ta-qd-answer-send');
+  const dock = document.querySelector('#mobile-dock');
+  const scroll = card.querySelector('.ta-qd-scroll');
+  const qr = q ? q.getBoundingClientRect() : null;
+  const tr = ta ? ta.getBoundingClientRect() : null;
+  const dr = dock ? dock.getBoundingClientRect() : null;
+  return {
+    card: { top: +cardBox.top.toFixed(2), bottom: +cardBox.bottom.toFixed(2) },
+    dock: dr ? { top: +dr.top.toFixed(2), bottom: +dr.bottom.toFixed(2) } : null,
+    scrollTop: scroll ? +scroll.scrollTop.toFixed(1) : null,
+    q: box(q), content: box(content),
+    questionText: q ? q.textContent : '',
+    contentText: content ? content.textContent.slice(0, 24) : '',
+    qInCard: !!(qr && qr.top >= cardBox.top - 1 && qr.bottom <= cardBox.bottom + 1),
+    order: { qBeforeContent: !!(qr && content && qr.top < content.getBoundingClientRect().top) },
+    answer: ta ? {
+      present: true, tag: ta.tagName.toLowerCase(), value: ta.value,
+      type: ta.type, placeholder: ta.placeholder, ariaLabel: ta.getAttribute('aria-label'),
+      sendPresent: !!send, sendText: send ? send.textContent : null,
+      sendTag: send ? send.tagName.toLowerCase() : null,
+      ...box(ta),
+      inCard: tr.top >= cardBox.top - 1 && tr.bottom <= cardBox.bottom + 1,
+      aboveDock: !dr || tr.bottom <= dr.top + 0.5,
+      maxHeight: getComputedStyle(ta).maxHeight,
+      cls: ta.className,
+    } : { present: false },
+    status: (card.querySelector('.ta-qd-status') || {}).textContent || '',
+    error: (card.querySelector('.ta-qd-answer-error') || {}).textContent || '',
+    lastAnswer: card.dataset.qdAnswerLast || null,
+    answerInScroller: !!card.querySelector('.ta-qd-scroll .ta-qd-answer'),
+  };
+})()`;
+
+/* 用户帧检索：stub socket 录制里带 content 的用户消息帧（回复链路的真实出帧）。 */
+const userContentFrames = () => sentFrames
+  .map((raw) => { try { return JSON.parse(raw); } catch { return null; } })
+  .filter((m) => m && typeof m.content === 'string' && m.sessionId === SID)
+  .map((m) => m.content);
 
 /* ══════════════════════ 主腿 ══════════════════════ */
 
@@ -400,10 +468,97 @@ ok('E3 选项行 = 原生 radio（与列表页同一控制件）+ 3 条',
   JSON.stringify({ types: card0.optTypes, role: card0.role }));
 ok('E3 每行都有媒体位槽（.ta-qd-opt-body，媒体组挂载点）',
   card0.slotCount === 3, JSON.stringify({ slotCount: card0.slotCount }));
-ok('E3 回答未接线 = 卡上事实行（不是假按钮）', card0.status === '回答未接线', String(card0.status));
 ok('E3 卡上 id 可机读（data-item-id = 当前待办）', card0.itemId === 'qd-1', String(card0.itemId));
 ok('E4 卡片 touch-action = pan-y（横轴不让给浏览器）', card0.touchAction === 'pan-y', String(card0.touchAction));
 await page.screenshot({ path: join(SHOTS, '03-quick-card-1.png') });
+
+/* ── D 问题可见 + 回答输入区（作者 2026-11-18：「问题和回答输入框呢？现在怎么
+   好像只有内容？」）────────────────────────────────────────────────────────
+   这一组是**对未修源码直跑必红**的检测腿：问题被长正文顶到折叠线下、或卡内
+   没有回答框时，D1–D9 会整组报红 —— 判据全部取真几何/真出帧，不看声明。 */
+const ANSWER_TEXT = '选 A：先把待办数据模型的字段对齐做完';
+const qa0 = await page.evaluate(readAnswer());
+probe.qa0 = qa0;
+ok('D1 问题在卡首屏可见（未滚动时 .ta-qd-q 完整落在卡片可视区内，未被裁）',
+  !!qa0.q && qa0.questionText === '本周先推进哪一件？' && qa0.qInCard === true && qa0.scrollTop === 0,
+  JSON.stringify({ q: qa0.q, card: qa0.card, scrollTop: qa0.scrollTop, text: qa0.questionText, inCard: qa0.qInCard }));
+ok('D2 问题/选项排在长正文之前（长正文不再把问题顶到折叠线下）',
+  qa0.order.qBeforeContent === true, JSON.stringify(qa0.order));
+ok('D3 回答输入框在场（卡内真 textarea + 真发送键）',
+  qa0.answer.present === true && qa0.answer.tag === 'textarea'
+  && qa0.answer.sendPresent === true && qa0.answer.sendTag === 'button',
+  JSON.stringify({ present: qa0.answer.present, tag: qa0.answer.tag, send: qa0.answer.sendText, sendTag: qa0.answer.sendTag }));
+ok('D4 输入区 = 卡底固定带：在卡内 + 底缘不被底部 dock 截断',
+  qa0.answer.inCard === true && qa0.answer.aboveDock === true,
+  JSON.stringify({ answer: { top: qa0.answer.top, bottom: qa0.answer.bottom, h: qa0.answer.h },
+    card: qa0.card, dock: qa0.dock }));
+ok('D4 输入区不在滚动面内（长内容滚动时输入框不跟着走）',
+  qa0.answerInScroller === false, String(qa0.answerInScroller));
+
+// 没修源码这一支根本没有回答框：后面每条输入腿直接判红（不挂起、不误报超时），
+// 「对未修源码直跑应报红」因此是一组干净的 FAIL，而不是一次崩溃。
+if (qa0.answer.present === true) {
+  await page.locator(`${CARD_SEL} .ta-qd-answer-input`).fill(ANSWER_TEXT);
+  await page.waitForTimeout(160);
+  const typed = await page.evaluate(readAnswer());
+  probe.typed = typed;
+  ok('D5 输入框可输入（真填字 → 读回真值）', typed.answer.value === ANSWER_TEXT,
+    JSON.stringify({ value: typed.answer.value, placeholder: typed.answer.placeholder, aria: typed.answer.ariaLabel }));
+  await page.screenshot({ path: join(SHOTS, '10-answer-typed.png') });
+
+  const framesBefore = userContentFrames().length;
+  await page.locator(`${CARD_SEL} .ta-qd-answer-send`).click();
+  await page.waitForTimeout(460);
+  const framesAfter = userContentFrames();
+  const afterSend = await page.evaluate(readAnswer());
+  probe.answerSubmit = { before: framesBefore, frames: framesAfter, last: afterSend.lastAnswer };
+  ok('D6 真提交：回答逐字进既有回复链路（用户帧 = #待办名·id + 回答）',
+    framesAfter.length === framesBefore + 1
+    && framesAfter[framesAfter.length - 1] === `#周会先讲哪件事·qd-1 ${ANSWER_TEXT}`,
+    JSON.stringify({ frames: framesAfter, last: afterSend.lastAnswer }));
+  ok('D7 提交后输入框清空 + 无错误行',
+    afterSend.answer.value === '' && afterSend.error === '',
+    JSON.stringify({ value: afterSend.answer.value, error: afterSend.error }));
+
+  // 长正文滚到底：输入区仍钉在卡底、仍在卡内、仍不被 dock 截断
+  await page.evaluate(`(() => { const s = document.querySelector('${CARD_SEL} .ta-qd-scroll'); s.scrollTop = s.scrollHeight; })()`);
+  await page.waitForTimeout(220);
+  const deep = await page.evaluate(readAnswer());
+  probe.answerDeepScroll = deep;
+  ok('D8 长正文滚到底后输入框仍在卡内 + 不被 dock 截断 + 位置不动（滚动面 ≠ 输入区）',
+    deep.scrollTop > 0 && deep.answer.inCard === true && deep.answer.aboveDock === true
+    && Math.abs(deep.answer.top - qa0.answer.top) <= 1,
+    JSON.stringify({ scrollTop: deep.scrollTop, answerTop: deep.answer.top, beforeTop: qa0.answer.top,
+      card: deep.card, dock: deep.dock }));
+  await page.screenshot({ path: join(SHOTS, '11-content-bottom-answer-pinned.png') });
+  await page.evaluate(`(() => { const s = document.querySelector('${CARD_SEL} .ta-qd-scroll'); s.scrollTop = 0; })()`);
+  await page.waitForTimeout(180);
+} else {
+  probe.typed = null;
+  ok('D5 输入框可输入（真填字 → 读回真值）', false, '卡内没有回答输入框（未修源码）');
+  ok('D6 真提交：回答逐字进既有回复链路（用户帧 = #待办名·id + 回答）', false, '卡内没有回答输入框（未修源码）');
+  ok('D7 提交后输入框清空 + 无错误行', false, '卡内没有回答输入框（未修源码）');
+  ok('D8 长正文滚到底后输入框仍在卡内 + 不被 dock 截断 + 位置不动（滚动面 ≠ 输入区）',
+    false, '卡内没有回答输入框（未修源码）');
+}
+
+// 左右滑仍在：回答区不吃横滑手势（手势从卡面中部起，与 E4 同一条腿）
+const dStage = await page.evaluate(`(${RECT})('${CARD_SEL} .ta-qd-stage')`);
+const dX = Math.round(dStage.cx);
+const dY = Math.round(dStage.y + 120);
+await touchDrag(page, dX, dY, -140, 0, { steps: 10, stepMs: 14 });
+await page.waitForTimeout(620);
+const afterAnswerSwipe = await page.evaluate(readCard());
+probe.afterAnswerSwipe = afterAnswerSwipe;
+ok('D9 回答之后左滑仍切卡（选项/回答区不吞横滑）',
+  afterAnswerSwipe.itemId === 'qd-2' && afterAnswerSwipe.count === '第 2 / 3 条',
+  JSON.stringify({ id: afterAnswerSwipe.itemId, count: afterAnswerSwipe.count }));
+await touchDrag(page, dX, dY, 140, 0, { steps: 10, stepMs: 14 });
+await page.waitForTimeout(620);
+const restored = await page.evaluate(readCard());
+probe.answerSwipeRestored = restored;
+ok('D9 滑回第一条（1 / 3，为后续 E5 腿复位）', restored.itemId === 'qd-1', JSON.stringify({ id: restored.itemId }));
+await page.screenshot({ path: join(SHOTS, '12-answer-band-after-swipe.png') });
 
 /* ── E5 长内容可下滑（卡片内滚，不是页面滚）+ 滚动与选中并存 ───────────── */
 const scroll0 = await page.evaluate(`(() => {
@@ -722,6 +877,13 @@ try {
     await sleep(500);
   } else {
     await sleep(400);
+  }
+  // 拍③2：回答区（本批新增）—— 有输入框就真填字 + 真提交（未修源码这一支跳过）
+  if (await page.evaluate(() => !!document.querySelector('.ta-qd-answer-input'))) {
+    await page.locator('.ta-qd-answer-input').fill('选 A：先把待办数据模型的字段对齐做完');
+    await sleep(700);
+    await page.locator('.ta-qd-answer-send').click();
+    await sleep(700);
   }
   // 拍④：返回列表页
   await page.locator(`${CARD_SEL} .mobile-back-btn`).click();
