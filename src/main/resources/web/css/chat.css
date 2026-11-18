@@ -5039,6 +5039,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-stack-view .media-layer.is-buried { display: none; }
 
 .pop-expand-view.show { display: flex; }
+.pop-expanded-card { display: flex; flex-direction: column; align-items: flex-start; }
+.pop-item-footer { margin-top: var(--ds-space-1); }
+
 /* zcode-484 D3: the expanded face keeps each media's OWN aspect ratio. The
    layers used to be a fixed 256px tall with `object-fit: cover` inherited from
    `.pop-img/.pop-video`, so an expanded portrait shot was cropped exactly like

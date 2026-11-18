@@ -407,7 +407,7 @@ export function attachQuoteMenu(rowEl, d) {
   scheduleQuoteButtonMount(rowEl);
   rowEl.addEventListener('nf-pop-expanded', () => {
     const expanded = Array.from(rowEl.querySelectorAll('.pop-stack-area')).some(stack => stack.popExpanded?.());
-    rowEl.querySelectorAll(':scope > .duration-badge > .msg-quote-btn').forEach(btn => { btn.hidden = expanded; });
+    rowEl.querySelectorAll(':scope > .duration-badge > .msg-quote-btn, :scope > .duration-badge > .msg-group-dl').forEach(btn => { btn.hidden = expanded; });
   });
   rowEl.addEventListener('contextmenu', (e) => {
     e.preventDefault();

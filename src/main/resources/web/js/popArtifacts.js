@@ -732,8 +732,18 @@ function buildMediaStack(items, opts) {
     // 展开后每个媒体项拥有自己的 footer 引用入口；描述符仅包含本项，
     // 身份仍由 startItemQuote 从所属行统一解析。
     const itemQuote = quoteDescFor ? quoteDescFor(item, i) : null;
-    if (itemQuote) layer.appendChild(createMsgQuoteButton(itemQuote));
-    expandView.appendChild(layer);
+    const card = document.createElement('div');
+    card.className = 'pop-expanded-card';
+    card.appendChild(layer);
+    if (itemQuote) {
+      const footer = document.createElement('div');
+      footer.className = 'duration-badge pop-item-footer';
+      const download = createMediaDownloadButton(item);
+      if (download) footer.appendChild(download);
+      footer.appendChild(createMsgQuoteButton(itemQuote));
+      card.appendChild(footer);
+    }
+    expandView.appendChild(card);
     return layer;
   });
   // 字节填充句柄（dry 腿宿主，见头注）：每件 = 折叠层 + 展开层两枚媒体元素。
@@ -1324,9 +1334,8 @@ export function buildUserMediaRow(attachments, opts) {
  * （多件行 footer 仍带时间档）。字节两腿（path / 内联 data:）皆缺 ⇒ 不挂键
  * （零假按钮；attachmentsSaved 补丁腿重渲后 path 到位即补挂）。 */
 function buildMediaRowFooterBadge(items, ts) {
-  const single = items && items.length === 1 ? items[0] : null;
   const badge = createMsgFooterBadge(ts, '');
-  const dlBtn = createMediaDownloadButton(single);
+  const dlBtn = items && items.length > 1 ? createGroupDownloadButton(items) : createMediaDownloadButton(items && items[0]);
   if (dlBtn) {
     if (badge.childElementCount > 0) {
       const div = document.createElement('span');
@@ -1348,6 +1357,81 @@ const DL_CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none
 // 字形导出（fm-att-card-unify 批 2026-11-02）：三窗下载键与主会话 footer 下载键
 // 同一枚 SVG 单点（禁第二份拷贝——字形漂移即第二套样式）。
 export { DOWNLOAD_SVG, DL_CHECK_SVG };
+
+// Store-only ZIP keeps the group a single download without a compression dependency.
+function createGroupDownloadButton(items) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'msg-copy msg-dl msg-group-dl';
+  btn.title = t('messages.attachDownload');
+  btn.setAttribute('aria-label', btn.title);
+  btn.innerHTML = DOWNLOAD_SVG;
+  let busy = false;
+  btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    if (busy) return;
+    busy = true;
+    const urls = [];
+    try {
+      const entries = [];
+      const used = new Set();
+      for (const [i, item] of items.entries()) {
+        let url = item.src && item.src.startsWith('data:') ? item.src : '';
+        if (!url && item.path) {
+          ({ url } = await nfViewerSource({ absPath: item.path, objectUrl: null, pane: null }));
+          urls.push(url);
+        }
+        if (!url) throw new Error('Attachment has no downloadable source');
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Attachment download failed');
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let name = (item.name || String(item.path || '').split('/').pop() || `file-${i + 1}`).replace(/[\\/]/g, '_');
+        while (used.has(name)) name = `${i + 1}-${name}`;
+        used.add(name);
+        entries.push({ name, bytes });
+      }
+      if (entries.length > 65535) throw new Error('Too many attachments for ZIP');
+      const parts = [], central = [];
+      let offset = 0;
+      const encoder = new TextEncoder();
+      for (const entry of entries) {
+        const name = encoder.encode(entry.name);
+        if (name.length > 65535 || entry.bytes.length > 0xffffffff || offset + entry.bytes.length + name.length + 30 > 0xffffffff) throw new Error('Attachment exceeds ZIP size limit');
+        let crc = 0xffffffff;
+        for (const byte of entry.bytes) {
+          crc ^= byte;
+          for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+        }
+        crc = (crc ^ 0xffffffff) >>> 0;
+        const local = new Uint8Array(30 + name.length), l = new DataView(local.buffer);
+        l.setUint32(0, 0x04034b50, true); l.setUint16(4, 20, true); l.setUint16(6, 0x800, true);
+        l.setUint32(14, crc, true); l.setUint32(18, entry.bytes.length, true); l.setUint32(22, entry.bytes.length, true);
+        l.setUint16(26, name.length, true); local.set(name, 30);
+        const dir = new Uint8Array(46 + name.length), d = new DataView(dir.buffer);
+        d.setUint32(0, 0x02014b50, true); d.setUint16(4, 20, true); d.setUint16(6, 20, true); d.setUint16(8, 0x800, true);
+        d.setUint32(16, crc, true); d.setUint32(20, entry.bytes.length, true); d.setUint32(24, entry.bytes.length, true);
+        d.setUint16(28, name.length, true); d.setUint32(42, offset, true); dir.set(name, 46);
+        parts.push(local, entry.bytes); central.push(dir); offset += local.length + entry.bytes.length;
+      }
+      const centralSize = central.reduce((sum, dir) => sum + dir.length, 0);
+      const end = new Uint8Array(22), eocd = new DataView(end.buffer);
+      eocd.setUint32(0, 0x06054b50, true); eocd.setUint16(8, entries.length, true); eocd.setUint16(10, entries.length, true);
+      eocd.setUint32(12, centralSize, true); eocd.setUint32(16, offset, true);
+      const archive = URL.createObjectURL(new Blob([...parts, ...central, end], { type: 'application/zip' }));
+      const a = document.createElement('a'); a.href = archive; a.download = 'attachments.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(archive), 60_000);
+      btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1500);
+    } catch (err) {
+      console.warn('[popArtifacts] group download failed', err);
+      btn.classList.add('copy-failed'); setTimeout(() => btn.classList.remove('copy-failed'), 2000);
+    } finally {
+      urls.forEach(url => URL.revokeObjectURL(url));
+      busy = false;
+    }
+  });
+  return btn;
+}
 
 /** 下载键工厂（单件行专用；不可下载 ⇒ null）。成功态复用 .copied 绿勾 1.5s
  *  自清（复制钮同节奏）；失败态复用 .copy-failed 红键 2s 自清 + console 取证。 */
