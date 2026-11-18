@@ -785,7 +785,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input text
   flex: 1 1 auto;
   min-width: 0;
   max-height: 132px;
-  overflow: hidden;
+  /* 高度上限必须配对可滚轴（铁律 9·③：上限 + hidden/clip = 静默裁切）——上限只给
+     紧凑形态，超出的长回复在 textarea 内自滚，不许被裁掉看不见。 */
+  overflow-y: auto;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-error {
   min-height: 18px;
