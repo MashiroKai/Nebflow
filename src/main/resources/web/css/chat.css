@@ -3180,6 +3180,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-shadow: none;
   border-radius: 0;
   padding: 0;
+  /* 提问卡宿主泡的横向预算 —— 与纯文字气泡分开的**单源槽**（缺省值家 =
+     design-system.css `--ds-ask-card-max-w`，＝80% 计算值同 .bubble ⇒ 桌面
+     逐字不变；手机层把同一槽放宽到整列，见 mobileLayer.css 手机令牌块）。
+     本行只消费 var()，不写任何数值 —— 2026-11-18 手机叠卡裁切批：卡内叠卡
+     「展开 N + 卡脸 + 扇形露边」的固有宽度大于 80% 列宽，窄列下被
+     `.option-scroll` 的 overflow-x:hidden 裁掉右缘（375×812 实测裁 28.9px）。 */
+  max-width: var(--ds-ask-card-max-w);
 }
 /* B-3 题卡文字气泡化（askuser-bubblename 批 2026-10-06，作者 19:43 令）：
    onboarding 题泡的题文（lead + 问句，.ob-body 段落）不再裸坐纸面——它自身

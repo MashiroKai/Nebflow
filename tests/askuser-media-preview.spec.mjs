@@ -170,8 +170,21 @@ const LONG_ITEMS = [
   },
 ];
 
-/* ── 启动 ───────────────────────────────────────────────────────────────── */
+/** 叠卡裁切批夹具（2026-11-18）：6 个媒体组选项 + **长标题 / 长描述** —— 复现作者报的
+ *  「手机端叠卡显示不完整」现场（选项文字换行、卡身撑到宿主横向上限）。 */
+const LONG_MEDIA_ITEMS = [{
+  question: '长卡下滑验收：请选一个方案（内容超高必须可滚动）',
+  options: [0, 1, 2, 3, 4, 5].map((i) => ({
+    label: `方案 ${i + 1}：这一档比较长的标题文字用于检验换行与裁切`,
+    description: `第 ${i + 1} 套设计说明文字，这是一段较长的描述，用来把选项卡撑到自然宽度上限以复现裁切`,
+    preview: { type: 'media', items: [
+      { kind: 'image', src: imgs[i % imgs.length], name: `a${i}.png` },
+      { kind: 'image', src: imgs[(i + 1) % imgs.length], name: `b${i}.png` },
+      { kind: 'image', src: imgs[(i + 2) % imgs.length], name: `c${i}.png` }] },
+  })),
+}];
 
+/* ── 启动 ───────────────────────────────────────────────────────────────── */
 /** 起真应用外壳 + WS 桩；返回可**主动推帧**的句柄。 */
 async function bootWithAsk(page, { history, items, requestId } = {}) {
   let route = null;
@@ -583,6 +596,162 @@ test.describe('C7 点媒体面 = 选中该选项；点「展开」不选中', ()
     expect(afterPill.picked, '展开钮不选中').toEqual([3]);
     opened.push(afterFace);
     await shot(page, 'c7-face-pick');
+    await ctx.close();
+  });
+});
+
+/* ── C8 手机全屏页「叠卡内容完整可见」闸（2026-11-18 作者报障）───────────────
+   作者令逐字（2026-11-18）：「手机端的叠卡显示有些不完整 允许它问题卡片横向占用
+   空间大一点 让内容能完整显示」。
+   病灶（375×812 实测，被测树 = 未修源码）：提问卡宿主泡吃的是**消息列宽** 80%
+   ⇒ 卡身 274.4 / 内容盒 242.4 < 叠卡行固有宽 265.3（展开钮 81.3 + 缝 16 + 卡脸
+   168）；扇形末层再向右探 32.4 ⇒ 前景卡脸右缘越过 `.option-scroll`
+   （overflow-x:hidden）裁剪盒 28.9px、扇形末层越 61.3px ⇒ 图被切、露边被切。
+   判据（几何读数，不读 class 猜）：
+     ① 真手机全屏页（body.mobile-layer）；
+     ② 卡内一切**已绘制**像素（含旋转层 AABB）都在 `.option-scroll` 裁剪盒内；
+     ③ 前景卡脸完整落位（右缘 ≤ 裁剪盒右缘）；
+     ④ 叠卡行固有宽 ≤ 滚动区内容盒宽（卡脸装得下，而非靠缩小/裁切糊过去）；
+     ⑤ 宿主泡 max-width **来自 token**（computed == var(--ds-ask-card-max-w) 解析值）；
+     ⑥ 页面零横向滚动。
+   红/绿：未修源码直跑 ⇒ ②/③/④ 红；`--ds-ask-card-max-w` 回 80% ⇒ 同样红；
+   本批修复 ⇒ 绿。 */
+test.describe('C8 手机全屏页：叠卡内容完整可见（无裁切）', () => {
+  test('375×812 真全屏页：卡脸与扇形露边全数在裁剪盒内；宽度来自 token', async ({ browser }) => {
+    const ctx = await browser.newContext({
+      viewport: { width: 375, height: 812 },
+      isMobile: true, hasTouch: true, deviceScaleFactor: 2, colorScheme: 'light',
+    });
+    const page = await ctx.newPage();
+    await bootWithAsk(page, { items: LONG_MEDIA_ITEMS, requestId: 'rid-mobile-clip' });
+    await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 20000 });
+    await page.waitForTimeout(600);
+
+    const r = await page.evaluate(() => {
+      const box = document.querySelector('#chat .option-box');
+      const bubble = box.parentElement;
+      const scroll = box.querySelector('.option-scroll');
+      const scs = getComputedStyle(scroll);
+      // overflow:hidden 的裁剪区 = padding box（border box − border 宽）。
+      const clipRight = scroll.getBoundingClientRect().right - (parseFloat(scs.borderRightWidth) || 0);
+      const clipLeft = scroll.getBoundingClientRect().left + (parseFloat(scs.borderLeftWidth) || 0);
+      // 一切后代中「最右/最左已绘制缘」——旋转层的 getBoundingClientRect = 旋转后 AABB。
+      let worstR = -Infinity, worstEl = '', worstL = Infinity;
+      scroll.querySelectorAll('*').forEach((el) => {
+        const b = el.getBoundingClientRect();
+        if (b.width <= 0 || b.height <= 0) return;
+        if (b.right > worstR) { worstR = b.right; worstEl = el.className.toString().split(' ').slice(0, 2).join('.') || el.tagName; }
+        if (b.left < worstL) worstL = b.left;
+      });
+      const host = box.querySelector('.option-preview-media');
+      const area = host && host.querySelector('.pop-stack-area');
+      const pill = area && area.querySelector('.pill');
+      const view = host && host.querySelector('.pop-stack-view');
+      const layers = host ? [...host.querySelectorAll('.pop-stack-view .media-layer')] : [];
+      const back = layers[2];
+      const gap = area ? parseFloat(getComputedStyle(area).columnGap || getComputedStyle(area).gap || '0') : 0;
+      const intrinsic = pill && view ? pill.getBoundingClientRect().width + gap + view.getBoundingClientRect().width : 0;
+      const scrollContentW = scroll.getBoundingClientRect().width
+        - parseFloat(scs.paddingLeft || '0') - parseFloat(scs.paddingRight || '0')
+        - (parseFloat(scs.borderLeftWidth) || 0) - (parseFloat(scs.borderRightWidth) || 0);
+      // token 解析：宿主泡的 computed max-width 必须等于该槽的解析值。
+      const probe = document.createElement('div');
+      probe.style.maxWidth = 'var(--ds-ask-card-max-w)';
+      bubble.appendChild(probe);
+      const resolved = getComputedStyle(probe).maxWidth;
+      probe.remove();
+      const label = box.querySelector('.option-btn .option-text');
+      return {
+        mobileLayer: document.body.classList.contains('mobile-layer'),
+        tokenDeclared: getComputedStyle(bubble).getPropertyValue('--ds-ask-card-max-w').trim(),
+        hostMaxWidth: getComputedStyle(bubble).maxWidth,
+        tokenResolved: resolved,
+        clipLeft: +clipLeft.toFixed(1), clipRight: +clipRight.toFixed(1),
+        worstPaintedRight: +worstR.toFixed(1), worstPaintedEl: worstEl, worstPaintedLeft: +worstL.toFixed(1),
+        overflowPx: +(worstR - clipRight).toFixed(1), overflowLeftPx: +(clipLeft - worstL).toFixed(1),
+        faceRight: view ? +view.getBoundingClientRect().right.toFixed(1) : null,
+        backRight: back ? +back.getBoundingClientRect().right.toFixed(1) : null,
+        intrinsicW: +intrinsic.toFixed(1), scrollContentW: +scrollContentW.toFixed(1),
+        labelH: label ? +label.getBoundingClientRect().height.toFixed(1) : 0,
+        labelText: label ? label.innerText : '',
+        labelOverflow: label ? getComputedStyle(label).textOverflow : null,
+        docScrollW: document.documentElement.scrollWidth, viewportW: window.innerWidth,
+        boxW: +box.getBoundingClientRect().width.toFixed(1),
+        rowW: +bubble.parentElement.getBoundingClientRect().width.toFixed(1),
+      };
+    });
+
+    expect(r.mobileLayer, '作者看到的真形态 = 手机全屏页（非弹窗/内嵌面板）').toBe(true);
+    // ② 零裁切（**本闸主判据**：作者报的「叠卡显示不完整」）：卡内一切已绘制像素
+    //    （含扇形旋转层的 AABB）都在裁剪盒内。未修源码直跑 ⇒ 这里红，读数 =
+    //    前景卡脸越 28.9px / 扇形末层越 61.3px。
+    expect(r.overflowPx, `叠卡右缘溢出裁剪盒（${r.worstPaintedEl}，裁剪盒右 ${r.clipRight}）—— 内容被切`)
+      .toBeLessThanOrEqual(0.5);
+    expect(r.overflowLeftPx, '叠卡左缘不得溢出裁剪盒').toBeLessThanOrEqual(0.5);
+    // ③ 前景卡脸完整落位（作者截图里被切的那一块图）。
+    expect(r.faceRight, '前景卡脸右缘必须在裁剪盒内（作者报的「被切的那一行/那一块」）')
+      .toBeLessThanOrEqual(r.clipRight + 0.5);
+    // 扇形末层（作者截图里探出的橙色边）同样不能挨刀。
+    expect(r.backRight, '扇形末层右缘必须在裁剪盒内').toBeLessThanOrEqual(r.clipRight + 0.5);
+    // ④ 卡脸装得下：叠卡行固有宽 ≤ 滚动区内容盒宽（不是靠缩小/裁切/省略号糊过去）。
+    expect(r.intrinsicW, '叠卡行固有宽必须装进滚动区内容盒（内容完整而非被裁）')
+      .toBeLessThanOrEqual(r.scrollContentW + 0.5);
+    // 选项文字完好：长标题换行完整（无省略号截断，且有实际高度）。
+    expect(r.labelText).toContain('用于检验换行与裁切');
+    expect(r.labelOverflow === 'ellipsis', '标题不得改成省略号截断').toBe(false);
+    expect(r.labelH, '长标题有实际渲染高度（换行后完整）').toBeGreaterThan(18);
+    // ⑥ 页面零横向滚动；卡身确实变宽（作者裁定的「横向占用空间大一点」真的生效）。
+    expect(r.docScrollW, '页面零横向滚动').toBeLessThanOrEqual(r.viewportW + 1);
+    expect(r.boxW, '提问卡在手机层放宽到接近整列（作者裁定）').toBeGreaterThan(r.rowW * 0.9);
+    // ⑤ 宽度来自 token：宿主泡的 computed max-width == var(--ds-ask-card-max-w) 解析值。
+    expect(r.tokenDeclared, '手机层必须把 --ds-ask-card-max-w 落在同一个单源槽').not.toBe('');
+    expect(r.hostMaxWidth, '宿主泡 max-width 必须由 --ds-ask-card-max-w 解析而来（非就地字面量）')
+      .toBe(r.tokenResolved);
+    await shot(page, 'c8-mobile-complete');
+    await ctx.close();
+  });
+});
+
+/* ── C9 桌面零回归闸：提问卡宿主不得在桌面被放宽 ────────────────────────────
+   手机层的放宽必须**只在 body.mobile-layer 下**发生。桌面判据 = 提问卡宿主泡
+   （.bubble.ob-ghost-seat）的 max-width 与普通消息泡（.bubble）**逐值相等**
+   （即仍 == --ds-bubble-max-w = 80%）。任何人把 --ds-ask-card-max-w 的缺省改成
+   更宽 ⇒ 本闸红。 */
+test.describe('C9 桌面零回归：提问卡宿主宽度仍与消息泡同档', () => {
+  test('1280×900：宿主 max-width == 普通气泡 max-width（80%），卡身几何不因本批变宽', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light' });
+    const page = await ctx.newPage();
+    await bootWithAsk(page, { items: LONG_MEDIA_ITEMS, requestId: 'rid-desk-regress' });
+
+    const r = await page.evaluate(() => {
+      const box = document.querySelector('#chat .option-box');
+      const bubble = box.parentElement;
+      const plain = document.querySelector('#chat .row .bubble:not(.ob-ghost-seat)');
+      const scroll = box.querySelector('.option-scroll');
+      const scs = getComputedStyle(scroll);
+      const clipRight = scroll.getBoundingClientRect().right - (parseFloat(scs.borderRightWidth) || 0);
+      const host = box.querySelector('.option-preview-media');
+      const layers = host ? [...host.querySelectorAll('.pop-stack-view .media-layer')] : [];
+      return {
+        mobileLayer: document.body.classList.contains('mobile-layer'),
+        hostMaxWidth: getComputedStyle(bubble).maxWidth,
+        plainMaxWidth: plain ? getComputedStyle(plain).maxWidth : null,
+        tokenAsk: getComputedStyle(bubble).getPropertyValue('--ds-ask-card-max-w').trim(),
+        tokenBubble: getComputedStyle(bubble).getPropertyValue('--ds-bubble-max-w').trim(),
+        boxW: +box.getBoundingClientRect().width.toFixed(1),
+        clipRight: +clipRight.toFixed(1),
+        backRight: layers[2] ? +layers[2].getBoundingClientRect().right.toFixed(1) : null,
+        docScrollW: document.documentElement.scrollWidth, viewportW: window.innerWidth,
+      };
+    });
+
+    expect(r.mobileLayer, '桌面不该进手机层').toBe(false);
+    expect(r.tokenAsk, '桌面缺省 = 消息列宽档（同槽缺省值）').toBe(r.tokenBubble);
+    expect(r.hostMaxWidth, '桌面提问卡宿主仍与普通气泡同档（零回归）').toBe(r.plainMaxWidth);
+    expect(r.hostMaxWidth, '桌面档 = 80%').toBe('80%');
+    expect(r.backRight, '桌面叠卡本就完整（扇形末层在裁剪盒内）').toBeLessThanOrEqual(r.clipRight + 0.5);
+    expect(r.docScrollW).toBeLessThanOrEqual(r.viewportW + 1);
+    await shot(page, 'c9-desktop-no-regression');
     await ctx.close();
   });
 });

@@ -267,6 +267,15 @@
        被 scripts/check-msgstyle-single-source.mjs A3 规则逐字钉死在 sapphire.css，
        两档两制并存是门禁钉死的单源现状，禁在本层起同值第二槽。 */
   --ds-bubble-max-w: 80%;        /* 主对话气泡列宽（chat.css .bubble 既有值档） */
+  /* 提问卡宿主泡（AskUser / 权限 / onboarding 的 `.bubble.ai.ob-ghost-seat`）的
+     横向预算槽 —— 与 .bubble 分开，因为卡内要装消息面叠卡（展开钮 + 卡脸 +
+     右侧扇形露边），比一条纯文字气泡需要更多横向空间。
+     值的家**只有本行**：缺省 = `var(--ds-bubble-max-w)`（＝桌面既盘计算值逐字，
+     不是新值、零漂移）；手机层在 css/mobileLayer.css 的手机令牌块里把**同一个
+     槽**放宽到整列（作者令 2026-11-18「手机端的叠卡显示有些不完整…允许它问题卡片
+     横向占用空间大一点，让内容能完整显示」）。
+     消费面（chat.css `.bubble.ai.ob-ghost-seat`）只写 `var()`，零第二份数值。 */
+  --ds-ask-card-max-w: var(--ds-bubble-max-w);
   --ds-bubble-pad: 10px 14px;    /* 主对话气泡内距既有值档 */
   --ds-fs-bubble: 14.5px;        /* 主对话气泡字档（2026-09-12 ③-4 裁定：主对话 14.5px、
                                     好友面 13px 保持——档外既有值以具名槽收编，禁再派生） */
