@@ -738,3 +738,54 @@ html[data-theme="dark"] {
     --nf-toggle-knob-bg: var(--st-text);
   }
 }
+
+/* ── 共享差异组件 token 族（diffView/diffViewCm 批，2026-11-19；作者裁定
+   「手机diff 按推荐」）─────────────────────────────────────────────────────
+   选型报告 §三 主推 = CodeMirror 6 + @codemirror/merge，两个差异面（delegate
+   diff、canvas ask diff）共用同一组件。本节是该组件**唯一**的色值/几何落脚点：
+   组件 JS（js/diffView/theme.js）只写 `var(--nf-dv-*)` 引用，零字面量 ——
+   硬不变式②「新增视觉元素走既有设计语言单源」。
+
+   对比度（D5 判据 ≥4.5:1，正文档）：前景一律 `--color-text`（亮 #1b1e26 / 暗
+   #e8eaed），底色为低透明度语义 tint。实测值见报告 D1–D9 对照表（浏览器
+   getComputedStyle 复合读数，非声明值推算）。行号/折叠带专用前景 `--nf-dv-
+   gutter-fg` 取灰族实值（`--color-text-muted` 亮档 3.1:1 不达标，不能直接用）。
+
+   几何（D6/D7）：--nf-dv-hit = 44px 触控下限（HIG / WCAG 2.5.5）；正文
+   --nf-dv-fs 13px / 行高 1.55（现状 11px/16.5px 是 D7）。--nf-dv-top-band
+   = 56px 卡头让位带（D4：ask 面沿用 delegate 面既有常量，两面对齐）。 */
+:root {
+  --nf-dv-bg: var(--color-surface);
+  --nf-dv-fg: var(--color-text);
+  --nf-dv-gutter-bg: var(--color-bg);
+  --nf-dv-gutter-fg: #5b616b;
+  --nf-dv-border: var(--color-border);
+  --nf-dv-add-bg: rgba(63, 185, 80, 0.14);
+  --nf-dv-del-bg: rgba(248, 81, 73, 0.12);
+  --nf-dv-add-word: rgba(63, 185, 80, 0.34);
+  --nf-dv-del-word: rgba(248, 81, 73, 0.30);
+  --nf-dv-fold-bg: var(--color-bg);
+  --nf-dv-fold-fg: #5b616b;
+  --nf-dv-selection: rgba(88, 166, 255, 0.22);
+  --nf-dv-fs: 13px;
+  --nf-dv-lh: 1.55;
+  --nf-dv-gutter-fs: 11px;
+  --nf-dv-hit: 44px;
+  --nf-dv-top-band: 56px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --nf-dv-bg: var(--color-surface);
+    --nf-dv-fg: var(--color-text);
+    --nf-dv-gutter-bg: var(--color-bg);
+    --nf-dv-gutter-fg: #9aa2ae;
+    --nf-dv-border: var(--color-border);
+    --nf-dv-add-bg: rgba(63, 185, 80, 0.16);
+    --nf-dv-del-bg: rgba(248, 81, 73, 0.14);
+    --nf-dv-add-word: rgba(63, 185, 80, 0.34);
+    --nf-dv-del-word: rgba(248, 81, 73, 0.32);
+    --nf-dv-fold-bg: var(--color-bg);
+    --nf-dv-fold-fg: #9aa2ae;
+    --nf-dv-selection: rgba(88, 166, 255, 0.28);
+  }
+}

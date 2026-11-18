@@ -169,9 +169,17 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
-  padding: 56px 0 var(--ds-space-3);
+  /* 迁移批 2026-11-19：滚动权移交共享组件底座（CodeMirror .cm-scroller）——
+     组件要自持滚动才启得动视口虚拟化（D9）。本容器改为绑定高弹性列，
+     文件头（D4 的 56px 让位带）与手机文件条为不滚动的定宽头段。
+     `overflow:auto` 退役 ⇒ position:sticky 在此不滚动容器内退化为静态头
+     （几何 = 恒在顶部，不再有「钉住/静止两态」——判据变更见本批 spec 留痕）。 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--nf-dv-top-band) 0 0;
 }
+.fcv-dvhost { flex: 1 1 auto; min-height: 0; min-width: 0; }
 /* ── 粘顶文件头标题胶囊（2026-10-22 作者三令批）────────────────────────────
    作者令①居中 ②全量 frosted token ③动画节奏放慢（慢一点/自然一点/流畅一点，
    参考 0.3-0.45s + 温和缓动）。旧全宽实条（border-bottom 分隔线 + color-bg 底
@@ -750,3 +758,95 @@ span.nf-rcpt-note { cursor: default; }
 }
 .nf-ar-hunkbar .nf-ar-btn { margin-left: auto; }
 .nf-ar-hunkbar .nf-ar-btn + .nf-ar-btn { margin-left: 0; }
+
+/* ══ 共享差异组件（js/diffView/，2026-11-19 迁移批）═════════════════════════
+   作者裁定 2026-11-18「手机diff 按推荐」：两个差异面（delegate diff =
+   diffCanvas.js、canvas ask diff = askEditReview.js）共用**同一组件**（单源，
+   硬不变式①）；组件底座 = CodeMirror 6 + @codemirror/merge（随包分发台账见
+   package.json.vendorAssets）。
+
+   本节与 css/stand-tokens.css 的 `--nf-dv-*` 族一起，是报告 D1–D9 的样式落点：
+   · 几何/触控走 token（D6 44px / D7 13px·1.55 / D4 56px 让位带）；
+   · 色值零字面量（全部引用 `--nf-dv-*` 与既有 --ds-*/--color-* token 族）；
+   · 覆盖 @codemirror/merge 自带逐块按钮的绝对定位于铺排（改壳为行内 44px 带，
+     D4/D6 的「可点面被浮钮压住 / 目标 <44px」就在这一处消掉）。 */
+.nf-dv {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--nf-dv-bg);
+}
+.nf-dv-editor { flex: 1 1 auto; min-height: 0; min-width: 0; }
+.nf-dv .cm-editor { height: 100%; }
+/* 折行开关（D1）：两个面共用的同一颗开关，触控档 44px。 */
+.nf-dv-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border-bottom: var(--ds-border-width) solid var(--nf-dv-border);
+}
+.nf-dv-wrapbtn {
+  min-height: var(--nf-dv-hit);
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  color: var(--color-primary);
+  background: rgb(var(--sapphire) / 0.13);
+  border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.25);
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+}
+.nf-dv-wrapbtn[aria-pressed='true'] { background: rgb(var(--sapphire) / 0.22); }
+.nf-dv-wrapbtn:focus-visible { outline: 2px solid var(--btn-focus-ring, var(--color-primary)); outline-offset: 2px; }
+
+/* 逐块接受/拒绝（D6 核心）：merge 默认把按钮绝对定位在行尾、高约 17px；改壳为
+   **行内动作带**（position: static）＋每颗 ≥44px，绝不被顶部浮钮/卡头压住。 */
+.nf-dv .cm-deletedChunk { padding-left: 0; }
+.nf-dv .cm-deletedChunk .cm-chunkButtons {
+  position: static;
+  inset-inline-end: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  background: none;
+}
+.nf-dv .cm-deletedChunk .cm-chunkButtons button,
+.nf-dv .nf-dv-chunkbtn {
+  min-height: var(--nf-dv-hit);
+  min-width: 72px;
+  margin: 0;
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--ds-radius-chip);
+  border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.25);
+  color: var(--color-primary);
+  background: rgb(var(--sapphire) / 0.13);
+  cursor: pointer;
+}
+.nf-dv .nf-dv-chunkbtn-reject {
+  color: var(--color-danger, var(--nf-review-danger-fallback));
+  background: rgba(248, 81, 73, 0.10);
+  border-color: rgba(248, 81, 73, 0.30);
+}
+.nf-dv .cm-deletedChunk .cm-chunkButtons button:focus-visible,
+.nf-dv .nf-dv-chunkbtn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+/* ask 面让位带（D4）：审阅页签顶部留出卡头浮钮带，与 delegate 面同一条 56px 常量。 */
+.nf-ar-shell { padding-top: var(--nf-dv-top-band); }
+
+/* ask 审阅面容器（迁移批 2026-11-19）：.nf-ar-shell 承载 56px 让位带 + 标题条
+   （不滚动头段）+ 共享组件编辑面（自持滚动）。 */
+.nf-ar-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.nf-ar-editor { flex: 1 1 auto; min-height: 0; min-width: 0; }
+/* waiting 面（防双发）：逐块钮整组禁用（组件已把按钮改壳为 ≥44px 元素）。 */
+.nf-dv[data-waiting='1'] .nf-dv-chunkbtn { opacity: 0.5; pointer-events: none; }

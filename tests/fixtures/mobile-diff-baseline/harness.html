@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<!-- mobile-diff-baseline harness.html — 共享差异组件（js/diffView）的**手机真全屏
+     形态**验收基准（2026-11-19 迁移批；作者裁定「手机diff 按推荐」验收形态铁律：
+     375×812 全屏页，禁用弹窗/内嵌面板）。
+
+     本页把共享组件直接挂进 document body 的整屏页（#app 固定铺满视口），两个
+     形态各占一页：delegate（read 面，统一差异文本输入）与 review（ask 面，
+     基线/现文 + 可审块表 + 逐块回调）。
+     /css、/js、/vendor 由 spec 从真实前端源码树同源投送（零公网）。
+-->
+<html lang="zh-CN" data-baseline="mobile-diff">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>mobile-diff-baseline</title>
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/stand-tokens.css">
+  <link rel="stylesheet" href="/css/design-system.css">
+  <link rel="stylesheet" href="/css/diffView.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg); color: var(--color-text); }
+    #app { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .page[hidden] { display: none; }
+    /* 两个面各自的让位带壳（与产品接线同一 token）。 */
+    #page-delegate { padding-top: var(--nf-dv-top-band); }
+    #page-delegate > .nf-dv, #page-review > .nf-ar-shell > .nf-ar-editor { min-height: 0; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="page" id="page-delegate"></div>
+    <div class="page" id="page-review" hidden></div>
+  </div>
+  <script type="module">
+    import { mountDiff } from '/js/diffView/index.js';
+
+    // ── 载荷：delegate = 统一差异文本（含 VCS 元信息 + 超长行 + 长未变段）──
+    const LONG_LINE = '+' + 'export const LONG = ' + 'x'.repeat(760) + ';';
+    const ctxRun = Array.from({ length: 30 }, (_, i) => ' context line ' + i);
+    const DELEGATE_DIFF = [
+      'diff --git a/src/app/main.ts b/src/app/main.ts',
+      'index 1a2b3c4..5d6e7f8 100644',
+      '--- a/src/app/main.ts',
+      '+++ b/src/app/main.ts',
+      '@@ -1,34 +1,36 @@',
+      ' const keep0 = 1;',
+      '-const removed = 2;',
+      '+const added = 2;',
+      ...ctxRun,
+      LONG_LINE,
+      '+const tail = 9;',
+      ' const keepEnd = 3;',
+    ].join('\n');
+
+    // ── 载荷：review = 基线/现文 + 两个可审块（首行改写 + 尾部追加）──
+    const REV_BASE = [
+      'alpha', 'beta', 'gamma',
+      ...Array.from({ length: 30 }, (_, i) => 'gap' + i),
+      'omega',
+    ].join('\n') + '\n';
+    const REV_CURRENT = REV_BASE.replace('alpha', 'ALPHA').replace('omega', 'omega\nOMEGA-NEW\n');
+    const REV_HUNKS = [
+      { id: 'h0', oldStart: 0, oldCount: 1, newStart: 0, newCount: 1, added: 1, removed: 1 },
+      { id: 'h1', oldStart: 33, oldCount: 1, newStart: 33, newCount: 2, added: 2, removed: 1 },
+    ];
+
+    const state = { chunkActions: [], apis: {} };
+
+    async function mountDelegate() {
+      const host = document.getElementById('page-delegate');
+      state.apis.delegate = await mountDiff(host, { diffText: DELEGATE_DIFF, mode: 'read' });
+    }
+    async function mountReview() {
+      const host = document.getElementById('page-review');
+      const shell = document.createElement('div');
+      shell.className = 'nf-ar-shell';
+      const head = document.createElement('div');
+      head.className = 'nf-ar-head';
+      head.textContent = 'review · notes.md';
+      const editor = document.createElement('div');
+      editor.className = 'nf-ar-editor';
+      shell.append(head, editor);
+      host.appendChild(shell);
+      state.apis.review = await mountDiff(editor, {
+        original: REV_BASE, current: REV_CURRENT, mode: 'review', hunks: REV_HUNKS,
+        onChunkAction: (hunkId, action) => state.chunkActions.push({ hunkId, action }),
+      });
+    }
+
+    window.__showPage = (name) => {
+      document.getElementById('page-delegate').hidden = name !== 'delegate';
+      document.getElementById('page-review').hidden = name !== 'review';
+    };
+    window.__chunkActions = () => state.chunkActions;
+    window.__resetChunkActions = () => { state.chunkActions = []; };
+    window.__api = (which) => state.apis[which] || null;
+
+    await mountDelegate();
+    await mountReview();
+    window.__ready = true;
+  </script>
+</body>
+</html>
