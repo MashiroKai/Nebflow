@@ -2584,6 +2584,86 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   outline: 1.5px solid var(--color-primary);
   outline-offset: 2px;
 }
+/* ══ AskUser 选项媒体预览 + 长卡下滑（askuser-media 批 2026-11-18）══════════
+   作者令逐字：「要能填充图片和视频 并且支持多张叠卡显示 … 这个也可以给待办应用上」/
+   「要可以支持下滑查看」。
+
+   形不新造：媒体组的叠卡 = 消息面既有 `.ds-media-stack` 族（design-system.css ⑨，
+   令牌单源）；单件面 = 消息面 `.pop-media-flat`；单枚视频的静帧/播放键/时长/进度
+   全在既有 `.pop-media` 面内。本节只加**宿主侧几何**（选项卡里放多大、怎么排、
+   怎么滚动）—— 零第二套叠卡、零第二套媒体卡。
+
+   选择器一律 ≥(0,3,0)（`.option-opts .option-btn.has-media`）：同文件的
+   「askuser-hybrid 表格行」段（`.option-opts .option-btn`，(0,2,0)，见本文件后段
+   3117+）把选项行重皮成全宽透明行，本节要压过它，声明顺序不参与胜负。 */
+
+/* 滚动区（题文 + 选项区）：内容超高才出现滚动条（短卡零视觉变化 ⇒ 零回归）。
+   `--ask-options-max-h` 可被宿主（如待办决策卡）收小/放大；缺省 = 视口 64% 与
+   560px 取小。`overscroll-behavior: contain` = 滚到尽头不把聊天列一起带着滚。 */
+.option-scroll {
+  max-height: var(--ask-options-max-h, min(64vh, 560px));
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  /* 媒体卡的选中描边（`.option-preview-media` 的 outline-offset）不吃裁剪：
+     左右各留 2px。 */
+  padding: 2px;
+  margin: -2px;
+}
+
+/* 「其他…」自由输入行 / 选项行的既有布局不受滚动区包裹影响（wrapper 仍是块级流）。 */
+.option-scroll > .option-q-wrapper { display: block; }
+
+/* 媒体选项行 = 竖排卡（媒体在上、文字在下），整行占满（覆盖 hybrid 表格行档）。 */
+.option-opts .option-btn.has-media,
+.ask-card .opt-row .option-btn.has-media {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--ds-space-2);
+  width: 100%;
+  box-sizing: border-box;
+}
+.option-opts.multi .option-btn.has-media { width: 100%; }
+/* 卡内媒体体（媒体面 + label/description）；单选腿的 radio 线稿圈（::before）留在顶行。 */
+.option-media-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  width: 100%;
+}
+.option-btn.has-media .option-text {
+  text-align: left;
+  min-width: 0;
+}
+
+/* 媒体面宿主：叠卡卡脸尺度仍是**单源变量** `--ds-media-face-w`（design-system.css
+   ⑨ 声明 220px）——宿主只在本作用域改它的值（168px 选项卡档），组件内部
+   （折叠卡脸宽 / 展开列宽 / 展开行 refit）读的仍是同一个变量，零第二套几何算术。 */
+.option-preview-media {
+  --ds-media-face-w: 168px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  /* fit-content（不是 auto）⇒ 不被 `.option-media-body` 的 align-items:stretch
+     拉满行宽：选中描边贴着媒体面本身（与消息面「选中环贴着卡」同语言）。 */
+  width: fit-content;
+  max-width: 100%;
+}
+/* 单件面 = 消息面 flat 卡（`.pop-media-flat`，宽度由 fitLayer 按媒体自身比例写内联，
+   上限 220 ⇒ 不放大、不裁剪）。不动它的宽度，只兜住不撑破宿主。 */
+.option-preview-media--single .pop-media-flat { max-width: 100%; }
+.option-preview-media .option-media-stack { max-width: 100%; }
+
+/* 媒体选项被选中：绿描边套在媒体面上（与既有 `.option-btn.picked.has-preview
+   .option-preview` 的选中环同语言、同 width/offset）。 */
+.option-opts .option-btn.has-media.picked .option-preview-media,
+.ask-card .opt-row .option-btn.has-media.picked .option-preview-media {
+  outline: 1.5px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--ds-radius-card-md);
+}
+
 /* AskUser card animations (onboarding spec §7 A-1/A-2): card fade-in on
    insert, per-question reveal when a dependsOn branch becomes visible. */
 @keyframes ob-card-in {

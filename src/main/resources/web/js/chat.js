@@ -975,6 +975,10 @@ import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, a
 // popArtifacts.js，主会话/社交三窗照用）。缩略帧字节腿 = 同一 `hydrateMedia`
 // （nfFileCache 账本 ⇒ 预览与灯箱复用同一份字节，零重复抓取）。
 import { openMediaLightbox, hydrateMedia, clearMediaFailure } from './popArtifacts.js';
+// askuser-media 批（2026-11-18）：选项预览（swatch / 单图小缩略 / 视频 / 媒体组叠卡）
+// 的数据形态与渲染单点——独立模块，供待办等第二宿主复用（同一 `options[].preview`
+// 形状）。媒体组的叠卡**不新造**：该模块直接喂消息面既有组件 buildMediaStack。
+import { buildAskPreviewNode, askPreviewKind } from './askMediaPreview.js';
 
 /** quote-message 一期：AskUser 卡首个 question 的纯文本（剥 HTML 标签；镜像
  *  persistence.js askUserQuestionText 的剥标签先例 —— chat.js 不反向 import
@@ -2162,63 +2166,54 @@ function rejectAskAnswer(e, payload, candidateIds) {
  *  contain — full fit, never crop (cover clipped square viewBox-only SVG
  *  icons in the 56×40 slot, author report 2026-09-07).
  *  Returns '' when the preview is absent/invalid so the button renders exactly
- *  like the pre-preview version (E1/E3 zero regression). */
-function buildOptionPreview(pv) {
-  if (!pv || typeof pv !== 'object') return '';
-  if (pv.type === 'swatch') {
-    const colors = Array.isArray(pv.colors) ? pv.colors.filter(c => typeof c === 'string' && c.trim()) : [];
-    if (colors.length === 0) return ''; // E3: empty swatch → no preview
-    const inner = colors.map((c, i) =>
-      `<span class="preview-swatch" style="background:${escapeHtml(c.trim())};${i > 0 ? 'border-left:1px solid var(--color-surface)' : ''}"></span>`
-    ).join('');
-    return `<span class="option-preview" aria-hidden="true">${inner}</span>`;
-  }
-  if (pv.type === 'image' && pv.src) {
-    // §6 preview fades in on load (200ms ease-out); on error the slot hides
-    // itself (E2) — label/desc stay clickable either way.
-    return `<span class="option-preview" aria-hidden="true"><img class="preview-img" src="${escapeHtml(normalizeSvgDataUri(pv.src))}" alt="" loading="lazy" onload="this.classList.add('nf-loaded')" onerror="this.closest('.option-preview').style.display='none'"></span>`;
-  }
-  return '';
+ *  like the pre-preview version (E1/E3 zero regression).
+ *
+ *  askuser-media 批（2026-11-18）：形态与渲染整体迁到**单点模块**
+ *  `askMediaPreview.js`（可被待办等第二宿主复用；媒体组直接喂消息面既有叠卡
+ *  组件 `buildMediaStack`）。本函数退化为一行委托 —— 旧两形态（swatch / 单图
+ *  小缩略）在该模块内**markup 逐字保留**（零回归）。
+ *  @returns {HTMLElement|null} */
+function buildOptionPreviewEl(pv) {
+  return buildAskPreviewNode(pv);
 }
 
-/** Compat fallback for viewBox-only SVG data-URI previews (author report
- *  2026-09-07): LLM-generated icon srcs commonly carry a viewBox but no
- *  width/height attrs, and concrete sizing for dimensionless SVGs is
- *  under-specified across engines. Inject explicit intrinsic dimensions taken
- *  from the viewBox so object-fit: contain letterboxes deterministically
- *  everywhere. Strictly fail-open: any surprise (non-SVG src, unparseable
- *  payload, existing dims, degenerate viewBox) returns the src untouched —
- *  the CSS contain fix alone still renders those. Non-data-URI srcs (http,
- *  png/jpeg data-URIs) are never touched (E1/E3 zero-regression surface). */
-function normalizeSvgDataUri(src) {
-  if (typeof src !== 'string' || !src.startsWith('data:image/svg+xml')) return src;
-  const comma = src.indexOf(',');
-  if (comma < 0) return src;
-  const header = src.slice(0, comma + 1);
-  const body = src.slice(comma + 1);
-  let svg;
-  if (/;base64/i.test(header)) {
-    try {
-      svg = new TextDecoder().decode(Uint8Array.from(atob(body), (ch) => ch.charCodeAt(0)));
-    } catch { return src; }
-  } else {
-    try { svg = decodeURIComponent(body); } catch { return src; }
+/** 选项的文字内容（label + 可选 description）——**DOM 构建单点**。
+ *  askuser-media 批（2026-11-18）：改前这两行走 `escapeHtml(...)` + 裸 innerHTML 赋值；
+ *  本批改为 DOM 构建（`textContent` 天然免注入），渲染结果**逐节点等价**（同 class、
+ *  同文本），同时让 `chat.js` 的组件契约闸 R5「裸 innerHTML」计数**只减不增**
+ *  （`scripts/check-component-contract.mjs`：基线内文件超过基线即红）。
+ *  `wrapInSpan`：true ⇒ 文字包一层 `.option-text`（带预览的选项行用，既有形态）；
+ *  false ⇒ 文字直接落在宿主上（无预览单选行的既有形态）。 */
+function fillOptionText(host, label, desc, wrapInSpan) {
+  const target = wrapInSpan ? document.createElement('span') : host;
+  if (wrapInSpan) target.className = 'option-text';
+  target.appendChild(document.createTextNode(label));
+  if (desc) {
+    const d = document.createElement('div');
+    d.className = 'option-desc';
+    d.textContent = desc;
+    target.appendChild(d);
   }
-  const tag = svg.match(/<svg\b[^>]*>/i);
-  if (!tag) return src;
-  if (/\bwidth\s*=|\bheight\s*=/i.test(tag[0])) return src; // already has intrinsic dims
-  const vb = tag[0].match(/\bviewBox\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
-  if (!vb) return src;
-  const dims = (vb[1] ?? vb[2]).trim().split(/[\s,]+/).map(Number);
-  if (dims.length !== 4 || dims.some(n => !Number.isFinite(n)) || dims[2] <= 0 || dims[3] <= 0) return src;
-  const fixed = svg.replace(tag[0], tag[0].replace(/^<svg/i, `<svg width="${dims[2]}" height="${dims[3]}" `));
-  if (/;base64/i.test(header)) {
-    const bytes = new TextEncoder().encode(fixed);
-    let bin = '';
-    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-    return header + btoa(bin);
-  }
-  return header + encodeURIComponent(fixed);
+  if (wrapInSpan) host.appendChild(target);
+  return host;
+}
+
+/** 媒体选项的**卡片体**（askuser-media 批 2026-11-18）：媒体面在上、文字在下
+ *  （label + 可选 description），整块占满选项行宽。
+ *
+ *  选中语义（本批裁定）：点击**媒体面本身**也要选中该选项——媒体组的叠卡组件
+ *  把「面内真点击」经 `onPick` 回灌到选项按钮的既有 pick 逻辑（同一个 `onclick`），
+ *  而拖划/横滑翻页、`展开 N`、视频播放键各自消费自己的事件（不选中）。
+ *  `btn.onclick` 在此刻**尚未赋值**（调用方随后才挂）——闭包惰性求值，点击时才读。 */
+function buildOptionMediaBody(pv, label, desc, btn) {
+  const body = document.createElement('div');
+  body.className = 'option-media-body';
+  const node = buildAskPreviewNode(pv, {
+    onPick: () => { if (typeof btn.onclick === 'function') btn.onclick(); },
+  });
+  if (node) body.appendChild(node);
+  fillOptionText(body, label, desc, true);
+  return body;
 }
 
 /** Broadcast an answered/locked AskUser card to every Canvas iframe so their
@@ -2384,6 +2379,13 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   const confirmLabel = doneLabel || t('chat.confirm');
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
   const questionWrappers = [];
+  // askuser-media 批（2026-11-18）长内容下滑：题的正文与选项区收进**一个滚动区**
+  // （`.option-scroll`，`max-height` + `overflow-y:auto`），按钮行留在区外常驻可见。
+  // 作者令逐字：「待办的决策卡片比较长，因此要可以支持下滑查看」。
+  // 零回归：内容不超高时 `max-height` 不生效、滚动条不出现 ⇒ 短卡视觉与改前一致。
+  // 滚动不吞点击：滚动容器只接管拖拽/滚轮，`click`（= 选择）照常抵达 `.option-btn`。
+  const scrollDiv = document.createElement('div');
+  scrollDiv.className = 'option-scroll';
 
   // --- Conditional branching helpers ---
   // The DOM mechanics (display toggle, reveal animation, hide-reset hooking)
@@ -2508,7 +2510,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       hint.className = 'option-secret-hint';
       hint.textContent = item.ephemeral ? t('askUser.secretEphemeralHint') : t('askUser.secretHint');
       wrapper.appendChild(hint);
-      box.appendChild(wrapper);
+      scrollDiv.appendChild(wrapper);
       updateVisibility();
       return; // secret 题到此为止：下面的选项/自由输入/草稿机制整段跳过
     }
@@ -2608,9 +2610,19 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (isMulti) {
           btn.dataset.label = label;
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
+          const mediaPreview = preview && askPreviewKind(preview) === 'media';
           if (preview) btn.classList.add('has-preview');
-          btn.innerHTML = '<span class="option-check"></span>' + (preview ? buildOptionPreview(preview) : '') + '<span class="option-text">' +
-            escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '') + '</span>';
+          const check = document.createElement('span');
+          check.className = 'option-check';
+          btn.appendChild(check);
+          if (mediaPreview) {
+            btn.classList.add('has-media');
+            btn.appendChild(buildOptionMediaBody(preview, label, desc, btn));
+          } else {
+            const pvNode = buildOptionPreviewEl(preview);
+            if (pvNode) btn.appendChild(pvNode);
+            fillOptionText(btn, label, desc, true);
+          }
           btn.onclick = () => {
             btn.classList.toggle('picked');
             syncMulti(qi);
@@ -2620,11 +2632,16 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         } else {
           btn.dataset.label = label;
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
+          const pvNode = buildOptionPreviewEl(preview);
           if (preview) btn.classList.add('has-preview');
-          if (preview) {
-            btn.innerHTML = buildOptionPreview(preview) + '<span class="option-text">' + escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '') + '</span>';
+          if (preview && askPreviewKind(preview) === 'media') {
+            btn.classList.add('has-media');
+            btn.appendChild(buildOptionMediaBody(preview, label, desc, btn));
+          } else if (pvNode) {
+            btn.appendChild(pvNode);
+            fillOptionText(btn, label, desc, true);
           } else {
-            btn.innerHTML = escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '');
+            fillOptionText(btn, label, desc, false);
           }
           btn.onclick = () => {
             answers[qi] = label;
@@ -2762,9 +2779,12 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // revealFallbackInput() 按需挂载（降级兜底，②-6）。
     if (freeInput) optsDiv.appendChild(customInput);
     wrapper.appendChild(optsDiv);
-    box.appendChild(wrapper);
+    scrollDiv.appendChild(wrapper);
     if (isMulti) syncMulti(qi); // pick up restored Other text, if any (needs the DOM in place)
   });
+
+  // 滚动区在按钮行之前入盒（题/选项可滚；取消/确认常驻可见）。
+  box.appendChild(scrollDiv);
 
   // Apply initial visibility after all questions are in DOM
   updateVisibility();

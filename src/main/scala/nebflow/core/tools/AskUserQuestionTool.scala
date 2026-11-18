@@ -52,6 +52,18 @@ object AskUserQuestionTool extends Tool:
     "The failing dimension is the PATH/LOCATION, never the file type: any readable local " +
       "file type is accepted (registered types render in Canvas; everything else downloads on click)."
 
+  /**
+   * 选项预览（`preview`）的四种形态说明（askuser-media 批 2026-11-18）。
+   * 单点：schema 的 `preview.description` 插值引用本常量（禁第二份散文）。
+   */
+  val previewDescription: String =
+    "Optional inline preview for this option. Four forms (old two unchanged): " +
+      "{type:'swatch', colors:[...]} = 1-5 color stripes; {type:'image', src:'<url|path>'} = one image thumbnail; " +
+      "{type:'video', src:'<url|path>', poster:'<url|path>'} = one video (still frame + click to play); " +
+      "{type:'media', items:[{kind:'image'|'video', src, poster?, name?, path?}, ...]} = a media GROUP — " +
+      "with 2+ entries it renders as a stacked card group and the option card scrolls when it gets long. " +
+      "Sources accept a remote URL (https://…, data:…) or a local absolute path (/…, ~/…). Omit for no preview."
+
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question — never ask clarifying questions in plain text.
 
@@ -81,9 +93,11 @@ Guidelines:
 - The UI always provides an "Other..." option so the user can type freely even for multiple-choice.
 - Independent questions are shown together and can be answered at once.
 
-Visual selection support (askuser-canvas direction C):
+Visual selection support (askuser-canvas direction C; askuser-media batch 2026-11-18):
 - Set `canvas` on a question (absolute file path) to auto-open a comparison page in the Canvas panel when the question appears.
-- Set `preview` on an option to embed an inline thumbnail: `{"type": "swatch", "colors": ["#hex", ...]}` shows 1-5 color stripes; `{"type": "image", "src": "<url>"}` shows an image.
+- Set `preview` on an option to embed an inline visual: `{"type":"swatch","colors":["#hex", ...]}` (1-5 color stripes), `{"type":"image","src":"<url|path>"}` (one thumbnail), `{"type":"video","src":"<url|path>","poster":"<url|path>"}` (still frame + click to play), or `{"type":"media","items":[{"kind":"image"|"video","src":"<url|path>","name":"..."}, ...]}` for a MEDIA GROUP.
+- A media group with 2+ entries renders as a stacked card group (front card in full, the rest peeking; swipe or arrow keys switch, the "expand" pill lists them all) — reuse it whenever an option is chosen by LOOKING at media (e.g. "which design?"). `src`/`poster` accept a remote URL (https://..., data:...) or a local absolute path (/, ~/) — local paths are served through the app's file ticket, never read into your context.
+- Put the visual in `preview` and the words in `label`/`description`; the option card caps its own height and scrolls, so a long media list never clips.
 
 Secret questions (secret: true):
 - Use for API keys, tokens, passwords, verification codes — anything the user must not paste as plain text. The question renders a password box instead of options.
@@ -184,11 +198,11 @@ Behavior:
                       .obj("type" -> "string".asJson, "description" -> "Optional explanation".asJson),
                     "preview" -> io.circe.Json.obj(
                       "type" -> "object".asJson,
-                      "description" -> "Optional inline preview for this option: {type:'swatch', colors:[...]} shows 1-5 color stripes; {type:'image', src:'<url>'} shows an image thumbnail. Omit for no preview.".asJson,
+                      "description" -> previewDescription.asJson,
                       "properties" -> io.circe.Json.obj(
                         "type" -> io.circe.Json.obj(
                           "type" -> "string".asJson,
-                          "description" -> "'swatch' or 'image'".asJson
+                          "description" -> "'swatch' | 'image' | 'video' | 'media'".asJson
                         ),
                         "colors" -> io.circe.Json.obj(
                           "type" -> "array".asJson,
@@ -197,7 +211,44 @@ Behavior:
                         ),
                         "src" -> io.circe.Json.obj(
                           "type" -> "string".asJson,
-                          "description" -> "For image: the thumbnail URL".asJson
+                          "description" -> ("For image/video: the media source — a remote URL (https://…, data:…) " +
+                            "or a local absolute path (/…, ~/…; local sources are served through the app's file ticket).").asJson
+                        ),
+                        "poster" -> io.circe.Json.obj(
+                          "type" -> "string".asJson,
+                          "description" -> "For video: optional still-frame cover (same remote-URL / local-path forms as `src`).".asJson
+                        ),
+                        "items" -> io.circe.Json.obj(
+                          "type" -> "array".asJson,
+                          "description" -> ("For type 'media': the media group — 1+ entries. With 2+ entries they render as a " +
+                            "STACKED CARD GROUP (front card in full, the following ones peeking at the edge; swipe/keyboard to " +
+                            "switch, a pill expands the full list). Use this whenever an option is best chosen by LOOKING at media.").asJson,
+                          "items" -> io.circe.Json.obj(
+                            "type" -> "object".asJson,
+                            "properties" -> io.circe.Json.obj(
+                              "kind" -> io.circe.Json.obj(
+                                "type" -> "string".asJson,
+                                "description" -> "'image' or 'video'".asJson
+                              ),
+                              "src" -> io.circe.Json.obj(
+                                "type" -> "string".asJson,
+                                "description" -> "Remote URL (https://…, data:…) or local absolute path (/…, ~/…).".asJson
+                              ),
+                              "poster" -> io.circe.Json.obj(
+                                "type" -> "string".asJson,
+                                "description" -> "For a video entry: optional still-frame cover.".asJson
+                              ),
+                              "name" -> io.circe.Json.obj(
+                                "type" -> "string".asJson,
+                                "description" -> "Display name (alt text / failure note).".asJson
+                              ),
+                              "path" -> io.circe.Json.obj(
+                                "type" -> "string".asJson,
+                                "description" -> "Local absolute path when the bytes live on disk (preferred over a path-shaped src).".asJson
+                              )
+                            ),
+                            "required" -> io.circe.Json.arr("kind".asJson)
+                          )
                         )
                       )
                     )
@@ -301,7 +352,16 @@ Behavior:
                   yield AskPreview(
                     `type` = t,
                     colors = pv.hcursor.downField("colors").as[List[String]].toOption,
-                    src = pv.hcursor.downField("src").as[String].toOption
+                    src = pv.hcursor.downField("src").as[String].toOption,
+                    // askuser-media 批 2026-11-18：两个新键**宽松透传**（缺席 ⇒ None，
+                    // 前端据 type 裁决）——旧载荷解析结果逐字节不变。
+                    poster = pv.hcursor.downField("poster").as[String].toOption,
+                    items = pv.hcursor
+                      .downField("items")
+                      .as[List[io.circe.Json]]
+                      .toOption
+                      .map(_.flatMap(parseMediaItem))
+                      .filter(_.nonEmpty)
                   )
                   Some(AskOption(label, desc, preview))
               }
@@ -322,6 +382,22 @@ Behavior:
         end if
       end if
     }.toList
+
+  /**
+   * 解析媒体组里的一件（askuser-media 批 2026-11-18）。宽松读、**不静默改写**：
+   *   · `kind` 缺席/空 ⇒ 按 `"image"` 兜底（与单件 `{type:'image'}` 同语义）；
+   *   · `src`/`path` 皆无 ⇒ 该件 `None`（无可渲染字节 ⇒ 不进组；整组全空 ⇒
+   *     前端按无预览裁决，与「colors 为空」同一先例）；
+   *   · 空串一律折成 `None`（禁 `""` 造出「有值但取不到字节」的半件）。
+   */
+  def parseMediaItem(raw: io.circe.Json): Option[AskPreviewMedia] =
+    def str(k: String): Option[String] =
+      raw.hcursor.downField(k).as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    val kind = str("kind").orElse(str("type")).getOrElse("image")
+    val src = str("src")
+    val path = str("path")
+    if src.isEmpty && path.isEmpty then None
+    else Some(AskPreviewMedia(kind = kind, src = src, poster = str("poster"), name = str("name"), path = path))
 
   /** Error text returned when headless mode blocks an AskUser call. */
   val HeadlessErrorMessage =

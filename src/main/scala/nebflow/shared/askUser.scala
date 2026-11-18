@@ -8,14 +8,51 @@ import java.util.concurrent.atomic.AtomicReference
 case class QuestionDependency(ref: String, equals: String)
 
 /**
- * 选项内嵌预览（askuser-canvas 方向 C §2.1）：swatch 色板或图片缩略图。
- * 前端在 56×40 槽内渲染；type 未知 / colors 为空 / src 缺失时前端按无预览
+ * 选项内嵌预览里的**一件媒体**（askuser-media 批 2026-11-18 · 作者令
+ * 「要能填充图片和视频 并且支持多张叠卡显示」）。
+ *
+ * 形态 = **消息面媒体件的同一形状**（`popArtifacts.js` 的 pop-item：
+ * `{kind, src, path, name}`）——「同源」不是比喻：前端把本 case class 直接喂给
+ * 消息面既有的叠卡组件 `buildMediaStack`，零第二套媒体模型、零第二套叠卡几何。
+ *
+ *  - `kind`：`"image"` | `"video"`（其余值前端按无预览裁决，解析侧宽松透传）。
+ *  - `src`：**两种来源**都要支持——远端 URL（`https://…` / `data:`）直取；
+ *    本地路径（`/abs/x.png` 或 `~/x.png`）由前端走既有票腿（/api/nf-file）。
+ *    判据在前端单点（[[askPreviewMedia.js]]）：带 scheme 视作 URL，否则视作路径。
+ *  - `path`：显式本地绝对路径（给了就用它走票腿，`src` 作为直显 URL 腿仍优先）。
+ *  - `poster`（仅 video）：静帧封面图（远端 URL / 本地路径同 `src` 口径）。
+ *  - `name`：显示名（alt / 失败注记行用）。
+ */
+case class AskPreviewMedia(
+  kind: String,
+  src: Option[String] = None,
+  poster: Option[String] = None,
+  name: Option[String] = None,
+  path: Option[String] = None
+)
+
+/**
+ * 选项内嵌预览（askuser-canvas 方向 C §2.1；askuser-media 批 2026-11-18 扩容）。
+ * 前端在选项卡内渲染；type 未知 / colors 为空 / 无可渲染媒体时前端按**无预览**
  * 渲染（零回归），因此解析保持宽松透传、由前端裁决。
+ *
+ * 四种形态（**严格向后兼容**——前两种是改前既有形态，字段/语义逐字不变）：
+ *   ① `type = "swatch"` + `colors`：1~5 条色带（既有）。 
+ *   ② `type = "image"`  + `src`：单张图片缩略（既有）。
+ *   ③ `type = "video"`  + `src` [+ `poster`]：单段视频（静帧 + 可播放）。
+ *   ④ `type = "media"`  + `items`：**媒体组**——≥2 件时以**叠卡**呈现（前一张
+ *      完整 + 后面几张露边 + 可切换/展开），1 件时退化为单件面。
+ *
+ * 「媒体组」是本批对外的**稳定数据形态**（另三支在飞批次复用同一形状，见报告）。
  */
 case class AskPreview(
   `type`: String,
   colors: Option[List[String]] = None,
-  src: Option[String] = None
+  src: Option[String] = None,
+  /** 仅 `type = "video"`：静帧封面图。 */
+  poster: Option[String] = None,
+  /** 仅 `type = "media"`：媒体组（≥1 件；空组等同无预览）。 */
+  items: Option[List[AskPreviewMedia]] = None
 )
 
 /** 提问项 */

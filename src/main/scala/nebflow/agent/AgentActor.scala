@@ -1339,6 +1339,21 @@ object AgentActor extends AgentCore with AgentSession:
             val pvFields = scala.collection.mutable.ListBuffer("type" -> pv.`type`.asJson)
             pv.colors.foreach(cs => pvFields += "colors" -> cs.asJson)
             pv.src.foreach(s => pvFields += "src" -> s.asJson)
+            // askuser-media 批 2026-11-18：两个新键**只在场发**（`poster` / `items`）
+            // —— swatch / 单图 / 无预览的旧载荷逐字节不变（`AskUserBuildJsonSpec`
+            // 字节契约 V11a–V11c 不受影响）。`items` 走**与消息面媒体件同形**的
+            // 字段名（kind/src/poster/name/path），前端直接喂叠卡组件。
+            pv.poster.foreach(p => pvFields += "poster" -> p.asJson)
+            pv.items.filter(_.nonEmpty).foreach { list =>
+              pvFields += "items" -> Json.fromValues(list.map { m =>
+                val mf = scala.collection.mutable.ListBuffer("kind" -> m.kind.asJson)
+                m.src.foreach(s => mf += "src" -> s.asJson)
+                m.poster.foreach(p => mf += "poster" -> p.asJson)
+                m.name.foreach(n => mf += "name" -> n.asJson)
+                m.path.foreach(p => mf += "path" -> p.asJson)
+                Json.obj(mf.toList*)
+              })
+            }
             optFields += "preview" -> Json.obj(pvFields.toList*)
           }
           Json.obj(optFields.toList*)

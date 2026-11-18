@@ -423,6 +423,12 @@ function mediaFace(item, interactive, natural) {
     video.preload = 'metadata';
     video.playsInline = true;
     video.dataset.nfName = item.name || item.path || '';
+    // askuser-media 批（2026-11-18）：`item.poster` = 调用方自带的**静帧封面**
+    // （远端 URL 或本地路径）。它是 video 元素的原生 poster 属性——只在「尚未解出
+    // 任何一帧」时显示，故与既有「内容封面」抓帧（videoCover.js，解出帧后覆盖层
+    // 淡出让位）天然分工：poster 先行、抓帧随后、两者都缺 ⇒ 现状黑底 + 播放键。
+    // 单点在此 ⇒ 叠卡面 / 展开面 / 单件 flat 面三个宿主同时获得该支持。
+    if (typeof item.poster === 'string' && item.poster.trim()) video.poster = item.poster.trim();
     // Expanded face: native controls from the start. Stack face: the ring is
     // the affordance while paused; controls appear while playing.
     video.controls = expandedFace;
