@@ -31,7 +31,12 @@
 import { h } from './dom.js';
 import { askBubbleClass, chatComposerClass } from './chatUi.js';
 import { renderMarkdownWithMath } from './utils.js';
-import { bindComposerKeys, createTurnToggle, requestTurnInterrupt } from './input/composer.js';
+import { createTurnToggle, requestTurnInterrupt } from './input/composer.js';
+// 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令「把 Canvas Ask 用的那一套
+// 输入框整理成统一模板，放进站内单源」）：本内核的输入条装配点与待办详情面共用同一份
+// 工厂——外壳 / 裸件 / 发送·中断钮 / 两个字形全在那一边产出，本文件不再自建这段 DOM、
+// 也不再各自绑键道（裁定 2 选项①：模板成为唯一装配点）。
+import { createSecondaryComposer } from './input/secondaryComposer.js';
 import { handleSlash } from './input/slashCommands.js';
 import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js';
 
@@ -52,8 +57,6 @@ export function svgNode(tag, attrs, children) {
   if (children) for (const child of children) node.appendChild(child);
   return node;
 }
-
-const STROKE = { fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
 
 /**
  * markdown 正文落点 —— **本模块唯一的 HTML 落点**（业务 DOM 一律走 h()/textContent）。
@@ -78,14 +81,9 @@ function setMarkdownHtml(node, text, streaming) {
   node.replaceChildren(...Array.from(parsed.body.childNodes, (n) => document.importNode(n, true)));
 }
 
-/** 对话框自有的两枚图标（发送 / 中断）；canvas 档入口钮的图标仍留在 askDock.js。 */
-export const DIALOG_ICONS = {
-  send: () => svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
-    [svgNode('path', { d: 'M12 19V5M5 12l7-7 7 7' })]),
-  // 中断钮（输入行为包批）：与主会话 #stop-btn 同语（lucide square 族）——红圆白方停标。
-  stop: () => svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
-    [svgNode('rect', { x: '6', y: '6', width: '12', height: '12', rx: '2' })]),
-};
+/** 对话框自有的两枚图标（发送 / 中断）已随输入条装配点收进唯一来源：
+ *  js/input/secondaryComposer.js 的 composerSendIcon / composerStopIcon（markup 逐字节
+ *  等同原字形）；canvas 档入口钮的图标仍留在 askDock.js（自有 svgNode/STROKE）。 */
 
 /**
  * @typedef {Object} AskSession
@@ -129,24 +127,25 @@ export function createAskDialog(cfg) {
     'aria-label': tt('拖拽调整面板大小', 'Resize panel'),
     title: tt('拖拽调整面板大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)'),
   });
-  const input = h('textarea', {
-    rows: '1',
+  // 输入条 = **次级 LLM 输入框唯一模板**（js/input/secondaryComposer.js）：毛玻璃外壳
+  // （唯一工具类处由 chatComposerClass('ask') 给）+ 裸件 textarea + 发送/中断圆钮
+  // （.ds-turn-btn 组件类）+ 两个字形，全部由那一个装配点产出——本文件不再自建这段
+  // DOM（改模板两个面一起变）。身份类 `ask-input` 仍是对话 UI 词汇单源，两个钩子类
+  // ask-send / ask-stop 传给工厂；键道与多行长高也随工厂（onSend 一并装配）。
+  const composer = createSecondaryComposer({
+    class: chatComposerClass('ask'),
     placeholder: cfg.placeholder,
-    'aria-label': tt('提问', 'Question'),
+    ariaLabel: tt('提问', 'Question'),
+    sendLabel: tt('发送', 'Send'),
+    stopLabel: tt('停止回答', 'Stop answering'),
+    sendHook: 'ask-send',
+    stopHook: 'ask-stop',
+    withStop: true,
+    onSend: () => { dlg.submit(); },
   });
-  const send = h('button', {
-    type: 'button',
-    class: 'ask-send ds-turn-btn ds-turn-btn--send',
-    'aria-label': tt('发送', 'Send'),
-  }, [DIALOG_ICONS.send()]);
-  const stop = h('button', {
-    type: 'button',
-    class: 'ask-stop ds-turn-btn ds-turn-btn--stop',
-    'aria-label': tt('停止回答', 'Stop answering'),
-  }, [DIALOG_ICONS.stop()]);
+  const { root: inputRow, input, sendBtn: send, stopBtn: stop } = composer;
   const col = h('div', { class: 'ask-col' });
   const colwrap = h('div', { class: 'ask-colwrap' }, [col]);
-  const inputRow = h('div', { class: chatComposerClass('ask') }, [input, send, stop]);
   const panel = h('div', { class: (cfg.panelClass || 'ask-dock') + ' closed' }, [
     handle,
     colwrap,
@@ -179,15 +178,11 @@ export function createAskDialog(cfg) {
         sendBtn: /** @type {HTMLElement} */ (send),
         stopBtn: /** @type {HTMLElement} */ (stop),
       });
-      send.addEventListener('click', () => { dlg.submit(); });
       stop.addEventListener('click', () => { dlg.stopAsk(); });
-      // 多行草稿自动长高（主会话 textarea 同式：auto → scrollHeight，封顶留 dock 紧凑形态）。
-      input.addEventListener('input', () => {
-        input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-      });
-      // 键盘/IME/发送判定 = 主会话同一实现（包装配；组字期 Enter 只确认候选）。
-      bindComposerKeys(input, { onSend: () => { dlg.submit(); } });
+      // 发送点击 / 多行自动长高 / 键盘·IME·发送判定三条腿已随「次级 LLM 输入框」模板收进
+      // js/input/secondaryComposer.js（createSecondaryComposer 的 onSend 一次性装配，
+      // 键道走 input/composer.js 同一实现）——此处若再绑一次，一次 Enter / 一次点击会
+      // 发出两条 askQuestion（模板一条 + 本处一条）。
       // ── ask-stream-ui（2026-11-17）：贴底跟随 + 「↓N 条新消息 / 回到底部」胶囊 ──
       askPill = createScrollPill({
         host: panel,

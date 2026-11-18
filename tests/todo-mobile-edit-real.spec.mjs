@@ -112,14 +112,16 @@ try {
   });
   assert.deepEqual(afterExit, { name: '原事项名', detail: '原详情' }, 'leaving the item page without saving must not write the todo');
 
-  // Reopen the item, reveal the notes field with the info button, edit both
-  // fields and save with the item page save button.
+  // Reopen the item; 作者令 2026-11-18「详情页应该标题正文要能完整显示」⇒ the
+  // notes (正文) field is already revealed on entry to the item page, so the (i)
+  // key is a collapse/expand toggle rather than the only way in. Edit both fields
+  // and save with the item page save button.
   await itemBody.click();
   await page.waitForFunction(() => document.querySelector(".mobile-page[data-page='todo-apple-item']")?.classList.contains('live'));
   await titleInput.fill('手机编辑后名称');
-  await itemPage.locator('.ta-info').click();
   const notes = itemPage.locator('.ta-notes');
   await notes.waitFor({ state: 'visible' });
+  assert.equal(await notes.inputValue(), '原详情', 'item page must show the current body without an extra tap');
   await notes.fill('手机编辑后详情');
   await page.waitForTimeout(500);
   const editorState = await itemPage.evaluate((el) => {

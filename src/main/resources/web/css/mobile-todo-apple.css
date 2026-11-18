@@ -132,7 +132,10 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-card {
   font-family: inherit;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* 动效收敛批（2026-11-18）：按下位移走站内动效 token（--dur-1 微变换档 /
+     --ease-std 唯一几何曲线），改前是本文件私设的 0.18s + 回弹曲线
+     cubic-bezier(0.34,1.56,0.64,1)（站内第二条曲线，已退役）。 */
+  transition: transform var(--dur-1) var(--ease-std);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card:active { transform: scale(0.97); }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-today { background: var(--ta-c-today); }
@@ -379,6 +382,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn {
   color: var(--color-frame-text-bright, var(--color-frame-text));
   cursor: pointer;
   touch-action: manipulation;
+  /* 动效收敛批（2026-11-18）：选中态（.on）此前是硬切，补 token 过渡。 */
+  transition: background-color var(--dur-2) var(--ease-std), color var(--dur-2) var(--ease-std);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn svg,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn svg,
@@ -410,6 +415,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu {
   box-sizing: border-box;
   border-radius: 14px;
   z-index: 7;
+  /* 动效收敛批（2026-11-18）：展开面入场 = 站内唯一 modalIn 档（改前硬切）。 */
+  animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu[hidden] { display: none; }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-row {
@@ -556,7 +563,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-check-circle {
   box-sizing: border-box;
   border: 2px solid var(--color-text-muted);
   border-radius: 50%;
-  transition: background-color 0.16s ease, border-color 0.16s ease;
+  /* 动效收敛批（2026-11-18）：勾选态换色走 token（--dur-2 hover/色彩档 +
+     --ease-std），改前是私设的 0.16s ease。 */
+  transition: background-color var(--dur-2) var(--ease-std), border-color var(--dur-2) var(--ease-std);
 }
 /* Completed: fill + geometric check mark (zero glyph dependency; strikethrough
    and dimming below) */
@@ -667,15 +676,19 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-newrow {
   min-height: 48px;
 }
 /* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：名编辑域 = textarea
-   （js/mobile/todoAppleFace.js 同批换元素），44 = 单行起步厚度，内容长随长。 */
+   （js/mobile/todoAppleFace.js 同批换元素），44 = 单行起步厚度，内容长随长。
+   作者报障批（2026-11-18「详情页应该标题正文要能完整显示」）：改前这里压着
+   `max-height:132px + overflow:auto` —— 长标题被截成一个内部滚动框（实测
+   scrollHeight 远超 clientHeight）。改后：高度上限交给 JS 的内容自适应
+   （autosizeField auto → scrollHeight），容器自身不再截断、不再出滚动条。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input {
   box-sizing: border-box;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 44px;
-  max-height: 132px;
-  overflow: auto;
-  resize: vertical;
+  max-height: none;
+  overflow: hidden;
+  resize: none;
   color: var(--color-text);
   font-size: var(--mfs-body);
   font-family: inherit;
@@ -713,6 +726,10 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes {
   line-height: 1.4;
   resize: none;
   outline: none;
+  /* 作者报障批（2026-11-18「正文要能完整显示」）：正文高度由 JS 内容自适应
+     写死（autosizeField），容器自身不截断、不出内部滚动条（改前是固定 3 行高
+     + 浏览器默认裁切）。 */
+  overflow: hidden;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes[hidden] { display: none; }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes::placeholder { color: var(--color-text-muted); }
@@ -744,6 +761,37 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-prio {
   width: 4px;
   height: 12px;
   border-radius: var(--ds-radius-thin);
+}
+
+/* ── 回复/恢复这个待办 = 次级 LLM 输入框（唯一模板 js/input/secondaryComposer.js）
+   材质（玻璃底/描边/内高光）= 站内玻璃单源 glass.css 的 `.nf-glass`；
+   外壳圆角 + 内件裸件造型 = 站内输入面单源 css/inputSurface.css 的
+   「输入条外壳成员 / 裸件成员」表（本批把 `.ta-reply-input` 与
+   `.ta-reply-input textarea` 登记进去）；
+   发送圆钮几何 = 组件类 `.ds-turn-btn`（design-system.css §①b 单源）。
+   ⇒ 本文件**只写这一面的几何**，零第二套造型声明（check-input-surface.mjs I2）。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply {
+  margin-top: 12px;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1);
+  box-sizing: border-box;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 132px;
+  overflow: hidden;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-error {
+  min-height: 18px;
+  padding-top: 4px;
+  font-size: var(--mfs-min);
+  color: var(--color-error);
 }
 /* Save = rightmost blue circular check in the top bar (g2-fab base: 48 +
    sapphire fill + always-white ink) */
@@ -828,6 +876,17 @@ body.mobile-layer .mobile-page:is([data-page="tasks"], [data-page="todo-apple-li
   display: flex;
   align-items: flex-end;
   background: transparent;
+  /* 作者报障批（2026-11-18 图3「新建待办弹窗底部被 dock 压住/截断」）——
+     实测定性：**dock 遮挡**，不是浮层自身高度算出界。几何链：`.mobile-page`
+     铺满整个视口（mobileLayer.css:815 `top:0; bottom:0`），页面末端的让位历来
+     由**滚动面**自己承担；而本浮层是 `inset:0` + `align-items:flex-end` 的
+     贴底浮层，最后一段（dock 高 54 + --dock-inset-b 8 + safe ≈ 62px）恰好落在
+     body 级 fixed 浮件 `#mobile-dock`（z 200）之下，而 `#mobile-pages` 是
+     z 156 的兄弟层 ⇒ dock 恒画在浮层之上。修法 = 同一条 `--mobile-dock-clearance`
+     （与待办页滚动末端、详情页底部工具胶囊同一把尺），浮层底缘恒在 dock 上缘
+     之上；浮层自身 `max-height` 的百分比口径落在缩小后的内容盒上，长表单自动
+     改走内部滚动，不再被裁切。 */
+  padding-bottom: var(--mobile-dock-clearance);
 }
 body.mobile-layer .ta-create-sheet {
   width: 100%;
@@ -836,6 +895,10 @@ body.mobile-layer .ta-create-sheet {
   box-sizing: border-box;
   padding: 12px var(--mpad-x) max(16px, env(safe-area-inset-bottom, 0px));
   border-radius: var(--ds-radius-xl) var(--ds-radius-xl) 0 0;
+  /* 动效收敛批（2026-11-18）：浮层入场 = 站内唯一入场键帧 modalIn + 动效 token
+     （--ds-dur-layer / --ds-ease-enter，与 secrets/social/design-system 的 .ds-layer
+     同一个「层」档），改前是硬切。 */
+  animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);
 }
 body.mobile-layer .ta-create-actions,
 body.mobile-layer .ta-create-options {
@@ -1066,4 +1129,20 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-empty {
   text-align: center;
   color: var(--color-text-muted);
   font-size: var(--mfs-sub);
+}
+/* ── 减动效（与 design-system.css 的全局守卫同律）─────────────────────────
+   本文件入册的入场键帧（modalIn 档）与 token 过渡在 prefers-reduced-motion 下
+   压近零 —— 与「动效 token 单源」同一凭据，消费面不各写一份 reduce 块。 */
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .ta-create-sheet,
+  body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu {
+    animation-duration: 0.01ms;
+  }
+  body.mobile-layer .mobile-page[data-page="tasks"] .ta-card,
+  body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-check-circle,
+  body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn,
+  body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn,
+  body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn {
+    transition-duration: 0.01ms;
+  }
 }

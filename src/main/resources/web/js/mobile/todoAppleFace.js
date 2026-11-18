@@ -30,6 +30,17 @@ import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
 import { isAskRow, buildAskCardForRow } from '../askTodoQuestion.js';
 import { bindImeGuard, commitEnter } from '../imeGuard.js';
 import state from '../state.js';
+// 次级 LLM 输入框唯一模板（todo-mobile 批 2026-11-18 作者令）：详情页「回复这个
+// 待办」的输入条 = Canvas Ask 那一条（同一装配点 js/input/secondaryComposer.js）。
+import { createSecondaryComposer } from '../input/secondaryComposer.js';
+// 列表选择器（作者令「标签必须有列表来选择」）：站内唯一列表菜单组件——手机层
+// 自动变成全屏动作表（可滚动 + 左上返回 + 点空白/Esc 收起，见 contextMenu.js
+// 与 mobileLayer.css「弹窗退场批」B 族），不在本页另造第二套列表。
+import { showPopupMenu } from '../contextMenu.js';
+// 统一定时器（作者令「调整定时应该使用我们统一的定时器设置风格」）：时间滚轮
+// 单点面的唯一入口（scheduled-task / scheduleCard / sidebar / todoFace 同源；
+// 手机层自动走 sheet 皮）。
+import { openPoint } from '../timeWheel.js';
 
 const DAY = 86_400_000;
 
@@ -114,14 +125,6 @@ function startOfToday() {
   return d.getTime();
 }
 
-/** A given hour today (anchor time for the toolbar "date" cycle — same-day reminders). */
-/** @param {number} hour @returns {number} */
-function todayAt(hour) {
-  const d = new Date();
-  d.setHours(hour, 0, 0, 0);
-  return d.getTime();
-}
-
 /** Priority color (PRIORITY_COLORS is number-keyed; per-step reads avoid an index-signature error). */
 /** @param {number} p @returns {string} */
 function priorityColor(p) {
@@ -149,6 +152,97 @@ function dueText(ms) {
   if (ms >= from && ms < from + DAY) return `${t('todoapple.today')} ${hm}`;
   if (ms >= from + DAY && ms < from + 2 * DAY) return `${t('todoapple.dueTomorrow')} ${hm}`;
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+/**
+ * 多行编辑域身高跟随内容（作者令「详情页应该标题正文要能完整显示」：容器高度
+ * 不再由 CSS max-height 截断，也不出现内部滚动条）。手法与次级 LLM 输入框模板
+ * 同一条（auto → scrollHeight）。
+ * @param {HTMLTextAreaElement} node
+ * @param {number} [cap] 上限（px；省略 = 不封顶）
+ */
+function autosizeField(node, cap) {
+  if (!node) return;
+  node.style.height = 'auto';
+  const next = node.scrollHeight;
+  node.style.height = `${typeof cap === 'number' ? Math.min(next, cap) : next}px`;
+}
+
+// ── 统一定时器 / 列表选择器 / 点空白收起（作者令 2026-11-18）───────────────
+// 三条腿都**只调站内既有单源**，不在本页再造第二套：
+//   · 定时 = timeWheel.openPoint（手机层自动 sheet 皮；与定时任务页/待办桌面面
+//     同一个面板、同一档几何、同一收起语义）；
+//   · 列表 = contextMenu.showPopupMenu（手机层 = 全屏可滚动动作表 + 左上返回）；
+//   · 点空白收起 = 本模块唯一一处 document 级 pointerdown（首页展开面）。
+
+/** 2 位补零（时间滚轮 date/time 串口径：YYYY-MM-DD / HH:mm）。 */
+/** @param {number} n @returns {string} */
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+/** 时间戳 → 触发钮落点（本地时区串；null = 无定时 ⇒ 清空数据集，选择器以
+ *  「今天 09:00」起手但不写回草稿——「定时默认不打开」）。 */
+/** @param {number|null} ms @returns {{date: string, time: string}|null} */
+function pointOf(ms) {
+  if (ms == null) return null;
+  const d = new Date(ms);
+  return { date: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`, time: `${pad2(d.getHours())}:${pad2(d.getMinutes())}` };
+}
+
+/** 时间滚轮确认值 → 时间戳（ISO 无 Z = 本地时区，与面板显示同一把钟）。 */
+/** @param {{date: string, time: string}} v @returns {number|null} */
+function msOfPoint(v) {
+  const ms = new Date(`${v.date}T${v.time}`).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * 把一个按钮接到统一定时器（单点面）上。
+ * @param {HTMLElement} btn 触发钮（本页的「日期」键）
+ * @param {() => number|null} getMs 读草稿当前值
+ * @param {(ms: number) => void} setMs 面板确认后写回草稿
+ * @returns {() => void} 从草稿重绘触发钮落点（render 时调；面板确认路径同样经它）
+ */
+function bindPointTrigger(btn, getMs, setMs) {
+  const paint = () => {
+    const p = pointOf(getMs());
+    if (p) { btn.dataset.date = p.date; btn.dataset.time = p.time; }
+    else { delete btn.dataset.date; delete btn.dataset.time; }
+  };
+  paint();
+  btn.addEventListener('click', () => {
+    paint();
+    openPoint(btn, {
+      onConfirm: (v) => {
+        const ms = msOfPoint(v);
+        if (ms == null) return;
+        btn.dataset.date = v.date;
+        btn.dataset.time = v.time;
+        setMs(ms);
+      },
+    });
+  });
+  return paint;
+}
+
+/**
+ * 标签列表选择器（作者令「标签必须有列表来选择 因为以后可能会有很多标签」）。
+ * 列表 = 站内唯一列表菜单组件（手机层 = 全屏动作表，纵向可滚 + 左上返回 +
+ * 点空白/Esc 收起）；当前标签带选中态。
+ * @param {HTMLElement} trigger
+ * @param {() => string|null} getTagId
+ * @param {(tagId: string|null) => void} setTagId
+ */
+function openTagPicker(trigger, getTagId, setTagId) {
+  const rect = trigger.getBoundingClientRect();
+  const current = getTagId();
+  /** @type {Array<{label: string, checked: boolean, onClick: () => void}>} */
+  const items = todoStore.tags.map((tg) => ({
+    label: tg.name,
+    checked: tg.id === current,
+    onClick: () => setTagId(tg.id),
+  }));
+  items.push({ label: t('todoapple.none'), checked: current == null, onClick: () => setTagId(null) });
+  showPopupMenu(rect.left, rect.bottom + 6, items);
 }
 
 // ── Module state (list target / item target / draft / home inline state) ──
@@ -259,14 +353,11 @@ function openCreateSheet(section, initialTagId, trigger) {
     tag.textContent = `${t('todoapple.toTag')}: ${tagId ? (todoStore.tagById(tagId)?.name || t('todoapple.none')) : t('todoapple.none')}`;
   };
   renderOptions();
+  // 重要度：作者 2026-11-18 明示「重要度可以这么切换」⇒ 保持点击循环（不改）。
   flag.addEventListener('click', () => { priority = (priority + 1) % 4; renderOptions(); });
-  tag.addEventListener('click', () => {
-    const tags = todoStore.tags;
-    if (!tags.length) return;
-    const index = tags.findIndex((entry) => entry.id === tagId);
-    tagId = tags[(index + 1) % tags.length].id;
-    renderOptions();
-  });
+  // 标签：作者令「标签必须有列表来选择 因为以后可能会有很多标签」⇒ 点击换成
+  // 站内列表菜单（全屏可滚动动作表）；不再是「点击推进到下一个」的循环。
+  tag.addEventListener('click', () => openTagPicker(tag, () => tagId, (next) => { tagId = next; renderOptions(); }));
   const close = () => {
     document.removeEventListener('nf:mobile-nav', onNavigate);
     overlay.remove();
@@ -339,6 +430,30 @@ function resetDraft() {
   draft = { title: '', notes: '', due: null, priority: 0, tagId: listTarget.tagId || (first ? first.id : null) };
 }
 
+// ── 点空白收起（作者令 2026-11-18「点击空白处要能关闭各种弹窗面板」）──────
+// 首页三处**展开面**（搜索条 / 新建列表行 / 更多菜单）此前只能再点同一颗钮才
+// 收——点空白没有任何反应。判定只此一处：document 级 pointerdown（捕获相），
+// 命中「胶囊本体 / 菜单 / 搜索条 / 新建列表行」之外即收起三面。
+// 排除胶囊是必要的：pointerdown 先于 click，若此处把 moreOpen 关掉，紧接着的
+// 胶囊 click 会立刻把它翻回来（同一击抖动一次）。
+// 弹窗/选择器的点空白收起归各自单源：创建浮层 = 自己的 overlay 命中判定；
+// 列表选择器 = contextMenu 的全局收起；定时面板 = timeWheel 的 outsideCloser。
+let dismissBound = false;
+function bindPanelDismiss() {
+  if (dismissBound) return;
+  dismissBound = true;
+  document.addEventListener('pointerdown', (event) => {
+    if (!moreOpen && !searchOpen && !newListOpen) return;
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest('.ta-pill, .ta-menu, .ta-searchbar, .ta-row-new')) return;
+    moreOpen = false;
+    searchOpen = false;
+    newListOpen = false;
+    const home = mounts.get('tasks');
+    if (home) home.render();
+  }, true);
+}
+
 // ── Keyboard avoidance (minimal visualViewport implementation; imeGuard only
 // knows composition state, not keyboard geometry) ──
 // The toolbar must hug the keyboard. Implementation: listen to visualViewport
@@ -388,6 +503,7 @@ function ensureSubscribed() {
     window.addEventListener('locale-changed', () => rerenderAll());
   }
   bindKeyboardAvoidance();
+  bindPanelDismiss();
 }
 
 /** Page shell (section) — floating chrome (capsule/FAB/toolbar) hangs here so it does not scroll with the body. */
@@ -805,13 +921,6 @@ function buildList(root, section, nav) {
 // C · Create / edit state (todo-apple-item)
 // ══════════════════════════════════════════════════════════════════════
 
-/** Toolbar "date" cycle: none → today 21:00 → tomorrow 21:00 → none (real due write). */
-function cycleDue() {
-  if (draft.due == null) { draft.due = todayAt(21); return; }
-  if (draft.due < startOfToday() + DAY) { draft.due = todayAt(21) + DAY; return; }
-  draft.due = null;
-}
-
 /**
  * @param {HTMLElement} root
  * @param {HTMLElement} section
@@ -830,33 +939,46 @@ function buildItem(root, section, nav) {
   row.appendChild(infoBtn);
   const notes = /** @type {HTMLTextAreaElement} */ (elIn(wrap, 'textarea', 'ta-notes'));
   notes.rows = 3;
-  notes.hidden = true;
+  // 详情页（编辑态）默认把**正文**摊开（作者令「详情页应该标题正文要能完整显示」）；
+  // 新建态仍默认收起（作者令「定时区/展开面默认不打开」的同一条收敛口径），点 (i) 展开。
+  let notesOpen = !!itemTarget;
+  notes.hidden = !notesOpen;
   bindImeGuard(notes);
   const meta = elIn(wrap, 'div', 'ta-meta');
+  // 回复/恢复这个待办 = **次级 LLM 输入框**唯一模板（作者令 2026-11-18）：
+  // 与 Canvas Ask 输入条同一装配点、同一玻璃外壳、同一裸件 textarea、同一
+  // ds-turn-btn 圆钮 —— 图2 里那个脱样式的小「发送」按钮随批退役。
   const replyBox = elIn(wrap, 'div', 'ta-reply');
-  const reply = /** @type {HTMLTextAreaElement} */ (elIn(replyBox, 'textarea', 'ta-notes'));
-  reply.placeholder = t('todoface.replyPh');
-  reply.setAttribute('aria-label', t('todoface.replyPh'));
-  const replySend = btnEl('ta-create-save');
-  replySend.type = 'button';
-  replySend.textContent = t('todoface.send');
-  replyBox.appendChild(replySend);
-  const replyError = elIn(replyBox, 'div', 'ta-create-error');
+  const replyInput = createSecondaryComposer({
+    identity: 'ta-reply-input',
+    placeholder: t('todoface.replyPh'),
+    ariaLabel: t('todoface.replyPh'),
+    sendLabel: t('todoface.send'),
+    maxHeight: 132,
+    onSend: () => { void sendReply(); },
+  });
+  replyBox.appendChild(replyInput.root);
+  const replyError = elIn(replyBox, 'div', 'ta-reply-error');
   replyError.setAttribute('role', 'alert');
-  replySend.addEventListener('click', async () => {
+  let replySending = false;
+  /** 回复这个待办：经主会话同一条发送腿（不吞主会话草稿/附件）。 */
+  async function sendReply() {
     const item = todoStore.allItems().find((entry) => entry.id === itemTarget);
-    const text = reply.value.trim();
-    if (!item || !text || replySend.disabled) return;
-    replySend.disabled = true;
+    const text = replyInput.input.value.trim();
+    if (!item || !text || replySending) return;
+    replySending = true;
     let ok = false;
     try {
       const { sendPrimaryTodoReply } = await import('../input.js');
       ok = sendPrimaryTodoReply(`#${item.title}·${item.id} ${text}`);
     } catch { ok = false; }
-    replySend.disabled = false;
-    if (ok) { reply.value = ''; replyError.textContent = ''; }
-    else replyError.textContent = t('todoapple.replyFailed');
-  });
+    replySending = false;
+    if (ok) {
+      replyInput.input.value = '';
+      replyInput.autosize();
+      replyError.textContent = '';
+    } else replyError.textContent = t('todoapple.replyFailed');
+  }
 
   // Top bar, three pieces: back on the left (page shell "<"), capsule on the
   // right, blue circular check save at the far right.
@@ -904,23 +1026,26 @@ function buildItem(root, section, nav) {
   const tDue = toolBtn('calendar', t('todoapple.toDue'));
   const tFlag = toolBtn('flag', t('todoapple.toPriority'));
   const tTag = toolBtn('hash', t('todoapple.toTag'));
-  tDue.el.addEventListener('click', () => { cycleDue(); render(); });
+  // 日期：作者令 2026-11-18「日期也用选择器（不是点击循环）」「调整定时应该使用
+  // 我们统一的定时器设置风格」⇒ 点击打开站内统一的时间滚轮单点面（与定时任务页
+  // / 待办桌面面同一个面板）。落点串由草稿驱动：无定时 = 不写 dataset ⇒ 面板以
+  // 「今天 09:00」起手但不写回草稿（定时默认不打开）。
+  tDue.el.setAttribute('aria-haspopup', 'dialog');
+  tDue.el.setAttribute('aria-expanded', 'false');
+  const paintDue = bindPointTrigger(tDue.el, () => draft.due, (ms) => { draft.due = ms; render(); });
+  // 重要度：作者明示「重要度可以这么切换」⇒ 保持点击循环（不改）。
   tFlag.el.addEventListener('click', () => { draft.priority = (draft.priority + 1) % 4; render(); });
-  tTag.el.addEventListener('click', () => {
-    const tags = todoStore.tags;
-    if (!tags.length) return;
-    const i = tags.findIndex((x) => x.id === draft.tagId);
-    if (i < 0) draft.tagId = tags[0] ? tags[0].id : null;
-    else draft.tagId = i + 1 < tags.length ? tags[i + 1].id : null;
-    render();
-  });
+  // 标签：作者令「标签必须有列表来选择 因为以后可能会有很多标签」⇒ 站内列表菜单
+  // （手机层 = 全屏可滚动动作表）；不再是「点击推进到下一个」的循环。
+  tTag.el.addEventListener('click', () => openTagPicker(tTag.el, () => draft.tagId, (next) => { draft.tagId = next; render(); }));
 
   infoBtn.addEventListener('click', () => {
-    notes.hidden = !notes.hidden;
-    if (!notes.hidden) notes.focus();
+    notesOpen = !notesOpen;
+    notes.hidden = !notesOpen;
+    if (notesOpen) { autosizeField(notes); notes.focus(); }
   });
-  input.addEventListener('input', () => { draft.title = input.value; });
-  notes.addEventListener('input', () => { draft.notes = notes.value; });
+  input.addEventListener('input', () => { draft.title = input.value; autosizeField(input); });
+  notes.addEventListener('input', () => { draft.notes = notes.value; autosizeField(notes); });
   input.addEventListener('keydown', (e) => { if (commitEnter(e, input)) saveDraft(nav); });
 
   /** @returns {void} */
@@ -929,6 +1054,10 @@ function buildItem(root, section, nav) {
     if (document.activeElement !== input) input.value = draft.title;
     if (document.activeElement !== notes) notes.value = draft.notes;
     notes.placeholder = t('todoapple.notes');
+    // 标题/正文身高跟随内容（「完整显示」：容器高度不再由 CSS max-height 截断，
+    // 也不需要内部滚动条）。焦点在域内时不写身高，避免打字时抖一行。
+    if (document.activeElement !== input) autosizeField(input);
+    if (notesOpen && !notes.hidden && document.activeElement !== notes) autosizeField(notes);
 
     // Draft summary (date / priority / tag chips; absent values are not shown
     // = no shell without an entity)
@@ -949,6 +1078,7 @@ function buildItem(root, section, nav) {
     }
 
     // Toolbar readings mirror the current draft values
+    paintDue();
     tDue.label.textContent = draft.due == null ? t('todoapple.noDue') : dueText(draft.due);
     tFlag.label.textContent = priorityLabel(draft.priority);
     tTag.label.textContent = tg ? tg.name : t('todoapple.toTag');

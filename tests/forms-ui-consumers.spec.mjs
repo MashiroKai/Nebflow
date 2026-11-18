@@ -252,10 +252,13 @@ test('FRM-SCN-002 mobile todo edit submits a null tag when the tag is cleared an
     await clickLast(page, '.ta-save');
     expect(await tagOf('i2')).toBe('t1');
 
-    // Cycle the single tag to "none" and save: the clearing is submitted.
+    // Clear the single tag through the station list menu (作者令 2026-11-18:
+    // 「标签必须有列表来选择」—— tag key 不再是「点击推进到下一个」的循环，
+    // 而是打开列表菜单；末项 = 无标签）and save: the clearing is submitted.
     await page.evaluate(() => window.__todoNav.push('tasks'));
     await openMobileTodoItem(page, 'Clear me');
     await page.locator('.ta-tool-btn').nth(2).evaluate((el) => el.click());
+    await page.locator('.fm-context-menu button:not(.mfs-back)').last().click();
     await clickLast(page, '.ta-save');
     expect(await tagOf('i1')).toBeNull();
   } finally {
@@ -283,11 +286,13 @@ test('FRM-SCN-002 mobile todo edit puts an empty project on the wire when the ta
     await page.waitForTimeout(300);
     expect(await updates()).toEqual([]);
 
-    // Cycle the single tag to "none" and save: the gateway is told to clear the assignment (empty project).
+    // Clear the single tag through the station list menu (作者令 2026-11-18) and
+    // save: the gateway is told to clear the assignment (empty project).
     await page.evaluate(() => window.__todoNav.push('tasks'));
     await openMobileTodoItem(page, 'Clear me');
     await page.evaluate(() => { window.__wsSent.length = 0; });
     await page.locator('.ta-tool-btn').nth(2).evaluate((el) => el.click());
+    await page.locator('.fm-context-menu button:not(.mfs-back)').last().click();
     await clickLast(page, '.ta-save');
     await expect.poll(async () => (await updates()).length).toBe(1);
     expect((await updates())[0]).toEqual({ type: 'updateScheduledTask', id: 'todo-1', project: '', sessionId: SID });

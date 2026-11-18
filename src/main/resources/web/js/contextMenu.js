@@ -46,7 +46,7 @@ export function isPopupMenuOpen() { return !!menuEl; }
  * Show a popup menu at (x, y).
  * @param {number} x clientX
  * @param {number} y clientY
- * @param {Array<{label: string, danger?: boolean, onClick?: () => void}>} items
+ * @param {Array<{label: string, danger?: boolean, checked?: boolean, onClick?: () => void}>} items
  */
 export function showPopupMenu(x, y, items) {
   hidePopupMenu();
@@ -61,7 +61,17 @@ export function showPopupMenu(x, y, items) {
     btn.type = 'button';
     btn.setAttribute('role', 'menuitem');
     if (item.danger) btn.className = 'danger';
-    btn.textContent = item.label;
+    // 值语义档（todo-mobile 批 2026-11-18）：列表选择器的**选中态**。作者令
+    // 「标签必须有列表来选择」（条目多、要能一眼看出当前值）⇒ 当前项带钩 +
+    // 无障碍态（menuitemradio + aria-checked）。既有调用方一律不传 checked
+    // ⇒ 按钮的文字与属性逐字节不变（零回归）。
+    if (item.checked) {
+      btn.setAttribute('role', 'menuitemradio');
+      btn.setAttribute('aria-checked', 'true');
+      btn.textContent = `✓ ${item.label}`;
+    } else {
+      btn.textContent = item.label;
+    }
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       hidePopupMenu();
