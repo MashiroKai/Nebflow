@@ -203,10 +203,24 @@ export function bgAgentKindFromSession(sessionId) {
 /** Row state machine (spec §3): done > stuck > waiting > frozen > error > idle > active.
  *  `waiting`（held-receipt 投递可靠性批 2026-10-21 fix 4）：delegate ready-to-merge
  *  显式停靠态（引擎 Waiting 状态 / delegateWaiting 帧）——「等合并轮提醒」的显式
- *  等待，不再貌似 Idle 完成。 */
+ *  等待，不再貌似 Idle 完成。
+ *
+ *  陈旧面板行批（2026-11-18 · 作者报障「面板大量陈旧行标着在跑、时长 690h+」）：
+ *  `pending-recovery` 档位的**缺失**是本报障的根因——durable store（SubAgentTaskStore
+ *  的 `/api/subagent-tasks/<root>` 投影）把重启打断的任务记为 `status='pending-recovery'`
+ *  （执行已停、后端零通知、等人工恢复），而 [[bgScopeStoreInfo]] 只认
+ *  completed/cancelled/failed 三态，其余一律折成 'Processing' ⇒ 这些行**落进本函数
+ *  的末档 'active'**：状态图标走「进行中」、`terminal` 判否 ⇒ 行尾还挂上一枚「已运行」
+ *  时钟（now − spawnedAt，实测 690h45m ≈ 29 天——不是单位/时区错，是这条**本已不在跑**
+ *  的 29 天龄记录被当成在飞行）。同一份 store 数据的另一条呈现链 [[bgStoreChildState]]
+ *  早已有这一档（模型粒度批 2026-11-06 20:36）——两条链判据打架正是病根；本条把主行径
+ *  补齐到同一判据（词表复用既有 `delegate.pendingRecovery`，不新增第三套提示体系）。 */
 function bgRowState(info) {
   const execution = taskExecutionPresentation(info);
   if (execution) return execution.state;
+  // 重启中断待恢复 = 不在跑（与 bgStoreChildState 同判据；排在 done/stuck 之前不进
+  // 活态档，排在 waiting/idle 之前因为「执行已停」比「自愿停靠」更硬）。
+  if (info && info.pendingRecovery) return 'pending-recovery';
   if (info.done) return 'done';
   if (info.stuck) return 'stuck';
   // 错误冻结批（2026-11-01）：**错误冻结**优先于 waiting/idle——冻结 = 就地停住
@@ -766,6 +780,11 @@ function bgScopeStoreInfo(child, parentSid) {
   const c = child && typeof child === 'object' ? child : {};
   const status = String(c.status || '');
   return {
+    // 陈旧面板行批（2026-11-18）：durable store 的 `pending-recovery`（SubAgentStartupRecovery
+    // 标记的重启打断行）**原样带出**给状态机——旧实现在此把它折进 'Processing'（见下
+    // status 三元），面板因此把 29 天龄的待恢复行画成「进行中」。判据与 [[bgStoreChildState]]
+    // 同源同值（两条呈现链不许再打架）。
+    pendingRecovery: status === 'pending-recovery',
     sessionId: String(c.taskId || ''),
     parentSessionId: String(c.parentSessionId || parentSid || ''),
     name: String(c.agentName || ''),
@@ -1994,11 +2013,15 @@ export function bgTaskRowHtml(id, info, opts = {}) {
   // 用既有的 waiting 点，需人介入保持 frozen 点）。
   const freezeKind = rowState === 'frozen' ? freezeKindOf(info) : '';
   const execution = taskExecutionPresentation(info);
+  // 陈旧面板行批（2026-11-18）：待恢复档的词取自既有单键 `delegate.pendingRecovery`
+  // （与 bgStoreChildHtml / bgRowStatus 的 'pending-recovery' 行同一枚词——不新增词表）。
   const statusLabel = execution ? execution.label : chainContinued
     ? t('subagents.chainRunning')
     : rowState === 'frozen'
       ? t(freezeBadgeKey(freezeKind))
-      : t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
+      : rowState === 'pending-recovery'
+        ? t('delegate.pendingRecovery')
+        : t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
   const chainTip = chainContinued
     ? t('subagents.chainRunningTip', { n: Number(opts.chainCount) || 0 })
     : '';
@@ -2134,8 +2157,20 @@ export function bgTaskRowHtml(id, info, opts = {}) {
   const idleDetail = (rowState === 'idle' || rowState === 'waiting') ? bgIdleDetail(info) : null;
   const longIdle = !!(idleDetail && idleDetail.stale);
   // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
-  const uptimePart = (!terminal && info.startedAt && !longIdle)
+  // 陈旧面板行批（2026-11-18）：口径加一条一一**不在跑的行不挂运行时钟**。待恢复行
+  // （执行已停、等人工恢复）不是「已运行 N」——29 天龄的记录会渲染出 690h45m 这种荒谬
+  // 读数（本批要根除的形态）。时长算术本身不改（now − startedAt，epoch ms 差，与时区
+  // 无关）；在飞行照旧走表，空闲/等待行照旧走表。
+  const notRunning = terminal || rowState === 'pending-recovery';
+  const uptimePart = (!notRunning && info.startedAt && !longIdle)
     ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
+    : '';
+  // 待恢复行的**逐行恢复入口**（与 store 子条目行同款单点：同一徽标类、同一 REST 缝
+  // [[delegateApi.restoreDelegate]]、接线在 renderBgAgentDropdown 的 [data-bg-restore]
+  // 绑定）——「不在跑、等你决定的身份」与在飞行显式分家：给它词，也给它出口。
+  const pendingRecoveryChip = rowState === 'pending-recovery'
+    ? '<button class="bg-task-wake" type="button" data-bg-restore="' + escapeHtml(sid)
+      + '" title="' + escapeHtml(t('delegate.restore')) + '">' + escapeHtml(t('delegate.restore')) + '</button>'
     : '';
   // Retries chip: only when >0 (0 is noise — user ruling ②).
   const retries = info.retryCount || 0;
@@ -2364,6 +2399,7 @@ export function bgTaskRowHtml(id, info, opts = {}) {
       '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
         namePart +
         bgStatusHtml(statusState, { label: statusLabel, title: execution?.reason || chainTip, tone: statusTone }) +
+        pendingRecoveryChip +
         uptimePart +
       '</div>' +
       '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' +
