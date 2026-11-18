@@ -26,7 +26,6 @@ HTTP/WS 网关：路由装配、鉴权、会话与连接守卫。
 | [`ConfigRoutes.scala`](ConfigRoutes.scala) | 配置域(config,F 步 2026-09-24):原 RestApiRoutes.routes 巨型 match 的 /config(GET+PATCH)、/safety 全族、/canvas-tabs 全族 cas |
 | [`ConsoleAssetBatchRoutes.scala`](ConsoleAssetBatchRoutes.scala) | 静态资产批量打包面（console-fastpath 批 2026-10-23，作者令腿②「请求打包」）： `POST /api/console-assets` 一次请求打包至多 [[MaxPathsPerRequest |
 | [`ConsoleTakeover.scala`](ConsoleTakeover.scala) | 控制台单实例 · 接管注册表（2026-10-27 批，设计稿 `reports/20261027_231456_console-single-instance/DESIGN.md`）。 |
-| [`ConsoleTakeoverRoutes.scala`](ConsoleTakeoverRoutes.scala) | 控制台单实例 · 【重新接管】HTTP 腿（接管必达批 2026-11-01 作者令①）。 `POST /api/takeover/retake` —— 被顶出页面点【重新接管】的**必达**入口： |
 | [`ConsoleTicketRoutes.scala`](ConsoleTicketRoutes.scala) | `GET /?ticket=<one-time console ticket>` — the redemption face that trades a short-lived portal/break-glass ti |
 | [`ExplorerWatchSession.scala`](ExplorerWatchSession.scala) | Per-connection Explorer watch subscriptions (explorer-rt · design card chain-n-1981ce87, case C hybrid — push  |
 | [`FsOps.scala`](FsOps.scala) | 伴生对象侧 logger（#159/#176 wtsurv 批，2026-09-14）：`deletePathsSafely` 是 纯核**（companion 成员，spec 直接静态调用），其**成功分支的审计留痕* |

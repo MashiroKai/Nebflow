@@ -78,14 +78,8 @@ import nebflow.shared.{Branding, NebflowLogger}
  *      但**只有当双方身份都可证且不同**才判冲突（见 [[ConsoleTakeover.verdict]]）：
  *      任一方 clientId 不明（老缓存页/升级窗）⇒ 宁可**不提示不踢**（假阴性可接受，
  *      假阳性不可接受——误报会让人以为账号被盗）。
- *   2. retake：被踢面用户点【重新接管】⇒ owner 翻回 + 向前主活跃连接推帧（反向踢）
- *      + 回执。两腿同核（[[ConsoleTakeover.claimAndReverseKick]] 单源）：
- *        · ws 腿：`takeoverRetake` 帧（WebSocketRoutes 收流管拦截）——回执经本连接
- *          出站队列（连接活时零跳）；
- *        · HTTP 腿（接管必达批 2026-11-01 作者令①）：`POST /api/takeover/retake`
- *          （[[ConsoleTakeoverRoutes]]，session-rail only）——回执同步随 HTTP 响应
- *          必达，不依赖本会话 ws 存活（死连接/僵尸/重连窗口上的帧腿结构性缺口，
- *          「重新接管不一定成功」的根因面）。
+ *   2. 历史 retake 方法仍在本类中，HTTP 和 WebSocket 入口已移除；
+ *      状态机与 Canvas writer 的后续收敛尚未完成。
  * 旧主回连（owner==他会话 且 本实例 ∈ pastOwners）**不自动反抢**：回连是机器自动
  * 行为（休眠唤醒/抖动重连），不携带用户意图；若回连即反抢，则 B 操作中 A 的后台
  * 标签醒来即可隐身夺权——正是要防的误踢。回连方落被踢面（本连接收 `takeover`
@@ -367,16 +361,7 @@ final class ConsoleTakeover(
       }
 
   /**
-   * 【重新接管】HTTP 腿（接管必达批 2026-11-01 作者令①）：实例身份来自 HttpOnly
-   * cookie（会话）+ 请求声明的 clientId（`ConsoleTakeoverRoutes`，session-rail
-   * only）——**不要求本会话在连接账上有活连接**。修的是 ws 腿的结构性缺口：
-   *   · 被顶出页面的 ws 可能已死（后台标签心跳断喂/僵尸回收/重连窗口）——帧腿
-   *     的 sendWs 静默入队死 socket、回执可被出站队列溢出拆连吞掉；
-   *   · HTTP 响应同步返回 = 回执必达（无队列、无心跳竞态面）。
-   * 所有权翻面 + 反向踢语义与 ws 腿逐字一致（同一 [[claimAndReverseKick]] 单源）；
-   * 被踢端推送尽力而为 + 重连补推（pastOwners 规则）兜底，最终一致不变。
-   * 误报根修批：holder 与本页 ws 入账同一个键（= 同 clientId）⇒ 翻位后 reload 的
-   * 新连接认得出「这就是我」，不会再自我判冲突。
+   * 旧会话 retake 方法：HTTP 路由已移除，方法暂留待后端状态机收敛。
    */
   def retakeBySession(sessionId: String, clientId: Option[String] = None): IO[ConsoleTakeover.RetakeOutcome] =
     if !enabled then IO.pure(ConsoleTakeover.RetakeOutcome.Disabled)
