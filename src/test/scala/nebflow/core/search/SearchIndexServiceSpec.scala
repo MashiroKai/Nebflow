@@ -108,14 +108,13 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
   }
 
   test("CJK 邻接 ASCII 时零 MATCH 回落原文子串并遵守会话过滤") {
-    seed(List(
-      doc("mixed-a", 0, "message", 1000L, "语音abc识别"),
-      doc("mixed-b", 0, "message", 2000L, "语音abc识别")
-    ))
+    seed((0 until 800).map(i => doc("mixed-a", i, "message", 1000L, "语音abc识别")).toList :+
+      doc("mixed-b", 0, "message", 2000L, "语音abc识别"))
     SearchIndexService.query(face, q("语音", kinds = List("message"), sid = Some("mixed-a"))).map { r =>
       val res = r.toOption.get
-      assertEquals(res.total, 1)
-      assertEquals(res.hits.map(_.sid), List("mixed-a"))
+      assertEquals(res.total, 800)
+      assertEquals(res.hits.size, 50)
+      assert(res.hits.forall(_.sid == "mixed-a"))
       assert(res.degraded)
     }
   }
