@@ -28,17 +28,18 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CSS_DIR = join(ROOT, 'src', 'main', 'resources', 'web', 'css');
-const SPEC_PATH = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'design-language-tokens.md',
-);
-const LEDGER_PATH = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'assets', 'tokens.css',
-);
+/** 规范面（单源在 stand-dev 插件包内；本仓不再保留第二份拷贝）。 */
+const SPEC_PATH = resolveDesignSpec('references/frontend/design-tokens-ledger.md');
+/** 令牌账本资产（同上，随包走）。 */
+const LEDGER_PATH = resolveDesignSpec('assets/design-system/tokens.css');
+if (!SPEC_PATH || !LEDGER_PATH) {
+  console.error(`design-spec-sync 不可跑 —— ${specMissingMessage('references/frontend/design-tokens-ledger.md + assets/design-system/tokens.css')}`);
+  process.exit(2);
+}
 const AS_JSON = process.argv.includes('--json');
 
 const BEGIN = '<!-- design-spec-scale:begin -->';
@@ -88,13 +89,13 @@ function resolveValue(value, tokens, depth = 0) {
 /** spec 表：marker 块内的 `| 变量 | 值 | 用在哪 |` 行。 */
 function readSpec() {
   if (!existsSync(SPEC_PATH)) {
-    return { error: `spec 文件缺失：${relative(ROOT, SPEC_PATH)}` };
+    return { error: `spec 文件缺失：${SPEC_PATH}` };
   }
   const text = readFileSync(SPEC_PATH, 'utf8');
   const b = text.indexOf(BEGIN);
   const e = text.indexOf(END);
   if (b < 0 || e < 0 || e < b) {
-    return { error: `spec 机械校验块缺失（需 ${BEGIN} … ${END}）：${relative(ROOT, SPEC_PATH)}` };
+    return { error: `spec 机械校验块缺失（需 ${BEGIN} … ${END}）：${SPEC_PATH}` };
   }
   const rows = [];
   for (const raw of text.slice(b + BEGIN.length, e).split('\n')) {
@@ -215,7 +216,7 @@ if (AS_JSON) {
   console.log(JSON.stringify({
     gate: 'design-spec-sync',
     ok,
-    spec: relative(ROOT, SPEC_PATH),
+    spec: SPEC_PATH,
     specRows: spec.rows ? spec.rows.length : 0,
     ledgerChecked,
     red,
@@ -223,7 +224,7 @@ if (AS_JSON) {
   }, null, 2));
 } else {
   console.log('design-spec-sync —— 设计规格刻度 spec ↔ 令牌源 防漂移闸');
-  console.log(`  spec 表：${relative(ROOT, SPEC_PATH)}`);
+  console.log(`  spec 表：${SPEC_PATH}`);
   console.log(`  spec 行数：${spec.rows ? spec.rows.length : 0} · 账本对位比对：${ledgerChecked} 条`);
   for (const i of info) console.log(`  INFO ${i}`);
   if (ok) {

@@ -1084,7 +1084,8 @@ button.glass-control.fm-login-btn:disabled {
      本族是「六态里与厚度无关的那一半」的单源槽：按下幅度、焦点环、禁用档、
      hover / 触屏隔离口径。**厚度道具（投影、inset 浮雕、渐变、drop-shadow）
      在这族里结构上没有槽位**——不是遗漏，是契约：要给按钮加影，必须先在规范
-     文件 `seed/plugins/design-language/.../flat-button-spec.md` 的「例外清单」
+     文件（唯一一份在 stand-dev 插件包 `<包根>/references/frontend/flat-button-spec.md`）
+     的「例外清单」
      写明理由，否则 `scripts/check-flat-buttons.mjs` 直接红。
      六态定义与允许项正文见同规范文件 §2；本处只落可执行值。 */
   --btn-press-scale: 0.98;        /* 按下幅度（桌面档；2% 触感，不配阴影） */

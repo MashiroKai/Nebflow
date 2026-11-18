@@ -2,7 +2,8 @@
    design-system.css — Stand 设计体系**令牌层 + 组件类层**（单源）
    ═══════════════════════════════════════════════════════════════════════
 
-   规范权威 = seed/plugins/design-language/skills/design-language/SKILL.md
+   规范权威 = stand-dev 插件包 `references/frontend/`（令牌账本 design-tokens-ledger.md
+   + 组件契约 component-contract.md；本仓不保留第二份拷贝）
    （八节：配色/字体/字距行高/圆角阴影/间距栅格/动画/组件固定尺寸档/文案 tone），
    基准 = mystand.space 官网 design tokens × 客户端 Sapphire Glass。
 
@@ -31,7 +32,7 @@
    ── 谁在消费 ─────────────────────────────────────────────────
    · 设置页（sidebar.css §Settings Modal content / modal.css cfg-input 族）——
      本批已改走 `--ds-*`（示范面）；
-   · 设计体系文档页 docs/design-language/design-system-token-batch/kit.html
+   · 设计体系文档页样张（历史 kit.html，随本批文档归档，仓内已无该目录）
      的五组件样张；
    · 后续新面（面板/卡片/列表）按 SKILL.md §10 使用流三步取值取形。
    ═══════════════════════════════════════════════════════════════════════ */
@@ -519,8 +520,8 @@
   --ds-resize-step: 16px;            /* 键盘步进（←→ 改宽 / ↑↓ 改高；4px 栅格的 4 倍档） */
 
   /* ── ⑲ 面板设计语言槽（panel-language 批 2026-11-06，作者令 3(c)(d)(e)）──
-     面板族唯一版式令牌。规范单点 = seed/plugins/design-language/skills/design-language/
-     references/panel-spec.md（与 glass-spec.md 并列）；机检 = scripts/check-panel-unify.mjs
+     面板族唯一版式令牌。规范单点 = stand-dev 插件包 `<包根>/references/frontend/
+     panel-spec.md（与 glass-spec.md 并列）；机检 = scripts/check-panel-unify.mjs
      （make panel-unify / FRONTEND_GATES）。纪律：**本段只做面板语义命名，值全部 =
      既有刻度的别名或既有读数**（唯一新数值 = --ds-panel-title-lh 1.4，作者令逐字
      「15px/600/1.4 档」，按 --ds-fs-bubble 14.5 具名例外槽先例出生）——
@@ -669,8 +670,7 @@
   /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
      五组件 = 按钮 / 行 / 徽标 / 输入 / 卡（SKILL.md §7 固定尺寸档）。
      所有值走 `--ds-*`；本层不覆盖任何既有类，只在 `.ds-*` 命名空间内生效
-     ⇒ 引入即用，零回归面。文档页样张 = docs/design-language/
-     design-system-token-batch/kit.html（本批 kit 段）。 */
+     ⇒ 引入即用，零回归面。文档页样张 = 历史 kit.html（随本批文档归档）。 */
   
   /* ① 按钮：主 = 墨族实心（2026-10-30 作者令「按钮不要绿色」），次级 = 玻璃，
      危险 = ghost + hover 红。三档，禁第二实色族。

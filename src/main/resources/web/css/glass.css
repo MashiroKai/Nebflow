@@ -46,7 +46,7 @@
  *   ① 值       = css/stand-tokens.css 的 `--nf-glass-*` 段（设计令牌单一源）
  *   ② 类/配方  = 本文件 `.nf-glass` + 下方「成员登记表」（前端唯一工具类）
  *   ③ 机检     = scripts/check-glass-unify.mjs（门禁成员）
- *   ④ 词条     = design-language 插件 flat-button-spec 同族的 glass-spec.md
+ *   ④ 词条     = stand-dev 插件包内 flat-button-spec 同族的 glass-spec.md
  *                （插件侧术语条目，新人只看文档也能找到同一份标准）
  *
  * 唯一形态 = **近实底，但反映背景内容颜色**（参照物 = 主会话输入框，逐值同档）：
@@ -420,7 +420,7 @@ html[data-theme="light"] {
      · 消费者 ①  `#header`          主会话顶栏（参照物）——几何/内部件留 css/chat.css
      · 消费者 ②  `.fm-modal-header` 好友/群/设备会话窗顶栏——几何/内部件留 css/friends.css
      · 令牌  = css/stand-tokens.css 的 `--nf-head-*` 段（高度/内距/圆角/玻璃底单源）
-     · 规范  = design-language 插件 glass-spec.md §7.2 登记面 T1 / T22（原稿 T21
+     · 规范  = stand-dev 插件包 glass-spec.md §7.2 登记面 T1 / T22（原稿 T21
        号位在 rebase 时被手机 canvas 玻璃带占用，两边并列保留、本面顺延 T22）
    收编文件清单（改这四面之一都要回到本块对账）：css/chat.css、css/friends.css、
    css/stand-tokens.css、css/glass.css（本块）。

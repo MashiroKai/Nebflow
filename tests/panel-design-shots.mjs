@@ -1,4 +1,5 @@
-// design-language-shots.mjs — 三面板设计语言统一批 前后对照截图（作者令 2026-10-21）
+// panel-design-shots.mjs — 三面板设计语言统一批 前后对照截图（作者令 2026-10-21）
+// （2026-11-18 single-source-rehome 批随规范单源外置改名，仓内不再出现退役包名。）
 //
 // 面板：① 设置页（#settings-modal）② 密钥面板（#secrets-modal）③ AskUser 密钥请求卡片
 // （.option-box secret 题）。真实 DOM + 真实 CSS（静态服务 web/ 树 + WS/REST mock），
@@ -11,7 +12,7 @@
 //   light-4-ask-card.png / dark-4-ask-card.png           AskUser 密钥请求卡片
 // console 错误全程收集，结尾汇报（视觉验证纪律：无新增错误）。
 //
-// 运行：TAG=before SHOTS_DIR=… node tests/design-language-shots.mjs
+// 运行：TAG=before SHOTS_DIR=… node tests/panel-design-shots.mjs
 
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -25,7 +26,7 @@ const WEB = resolve(HERE, '../src/main/resources/web');
 const PORT = Number(process.env.PORT || 8177);
 const BASE = `http://127.0.0.1:${PORT}`;
 const TAG = process.env.TAG || 'before';
-const SHOTS_DIR = join(process.env.SHOTS_DIR || resolve(HERE, '../evidence/design-language-shots'), TAG);
+const SHOTS_DIR = join(process.env.SHOTS_DIR || resolve(HERE, '../evidence/panel-design-shots'), TAG);
 mkdirSync(SHOTS_DIR, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

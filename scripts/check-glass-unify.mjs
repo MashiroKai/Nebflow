@@ -72,9 +72,9 @@
 //         在 CSS 里根本不存在（陈旧例外）⇒ 红（防「豁免一条、然后面没了也没人删」）。
 //     例外清单**不在本脚本里**（与 flat-buttons 同规）：豁免 = 改规范，脚本只执行。
 //
-// 判据与术语的**规范侧**（人读条文、例外登记）在
-//   src/main/resources/seed/plugins/design-language/skills/design-language/
-//   references/glass-spec.md
+// 判据与术语的**规范侧**（人读条文、例外登记）在 stand-dev 插件包内
+//   <包根>/references/frontend/glass-spec.md
+// （包根定位见 scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝）。
 // 本脚本只做它机械可判的那部分；改判据要先改规范。
 //
 // 用法：
@@ -86,6 +86,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 // `--root=<dir>` 允许把判据跑在**另一个检出**上（改前/改后对照实证用：
 //   git archive <main-tip> | tar -x -C /tmp/before
@@ -104,11 +105,13 @@ const SINGLE_SOURCE = join(CSS_DIR, 'glass.css');
 const ASK_DIALOG = join(JS_DIR, 'askDialog.js');
 const SOCIAL_SEARCH = join(JS_DIR, 'mobile', 'socialSearch.js');
 const INDEX_HTML = join(WEB, 'index.html');
-/** 规范正文（G7 的登记面清单与例外清单都在这里，脚本只读不写）。 */
-const SPEC = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'glass-spec.md',
-);
+/** 规范正文（G7 的登记面清单与例外清单都在这里，脚本只读不写）。
+ *  单源在 stand-dev 插件包内；本仓无第二份拷贝。 */
+const SPEC = resolveDesignSpec('references/frontend/glass-spec.md');
+if (!SPEC) {
+  console.error(`✗ glass-unify gate 不可跑 —— ${specMissingMessage('references/frontend/glass-spec.md')}`);
+  process.exit(2);
+}
 
 /** 唯一合法配方值（G2 白名单）：全站只有主输入框一种毛玻璃质感；
  *  幕布（scrim）不是毛玻璃面，借自己的 8px 单源 token。 */
@@ -771,7 +774,7 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   g7.surfaces = eff.size;
 
   // ④ 规范里的两张表（登记面清单 / 例外清单）
-  const specSrc = existsSync(SPEC) ? readFileSync(SPEC, 'utf8') : '';
+  const specSrc = readFileSync(SPEC, 'utf8');
   const tables = [];
   if (specSrc) {
     let cur = null;
@@ -793,12 +796,12 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   for (const row of pendingTable?.rows || []) {
     const [sel, reason, evidence] = row.map(clean);
     if (!sel || !reason || !evidence || pending.has(sel) || !allowedPending.has(sel)) {
-      add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: sel || '-', detail: '待解析名单缺字段或重复', why: '豁免须逐项列出理由与证据缺口' });
+      add({ rule: 'G7b', file: SPEC, line: 0, selector: sel || '-', detail: '待解析名单缺字段或重复', why: '豁免须逐项列出理由与证据缺口' });
     } else pending.set(sel, { reason, evidence });
   }
 
   if (!regTable) {
-    add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: '-', detail: '缺少「顶部悬浮面清单」表', why: '没有登记面清单 = 顶部悬浮面无约束；先改规范再加面' });
+    add({ rule: 'G7b', file: SPEC, line: 0, selector: '-', detail: '缺少「顶部悬浮面清单」表', why: '没有登记面清单 = 顶部悬浮面无约束；先改规范再加面' });
   } else {
     for (const row of regTable.rows) {
       const [id, face, selector, material] = row;
@@ -852,7 +855,7 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
       }
       g7.registry.push(entry);
       if (!entry.ok) {
-        add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: sel, detail: entry.detail, why: `登记面材质漂移：顶部悬浮面清单 ${entry.id}` });
+        add({ rule: 'G7b', file: SPEC, line: 0, selector: sel, detail: entry.detail, why: `登记面材质漂移：顶部悬浮面清单 ${entry.id}` });
       }
     }
   }
@@ -860,7 +863,7 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   // ⑤ 例外清单（判据号 + 理由；空理由 / 陈旧例外 ⇒ 红）
   const exemptSelectors = new Set();
   if (!excTable) {
-    add({ rule: 'G7c', file: rel(SPEC), line: 0, selector: '-', detail: '缺少「例外清单」表', why: '例外必须有具名登记处；没有表 = 豁免无账本' });
+    add({ rule: 'G7c', file: SPEC, line: 0, selector: '-', detail: '缺少「例外清单」表', why: '例外必须有具名登记处；没有表 = 豁免无账本' });
   } else {
     for (const row of excTable.rows) {
       const sel = clean(row[0]);
@@ -869,13 +872,13 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
       if (!sel) continue;
       g7.exemptRows.push({ sel, rule: ruleId, reason });
       if (!reason || reason.length < 8) {
-        add({ rule: 'G7c', file: rel(SPEC), line: 0, selector: sel, detail: '例外理由为空/过短', why: '例外必须写明理由（空理由 = 无效例外）' });
+        add({ rule: 'G7c', file: SPEC, line: 0, selector: sel, detail: '例外理由为空/过短', why: '例外必须写明理由（空理由 = 无效例外）' });
       }
       const base = baseOf(sel);
       const realExists = eff.has(base) || eff.has(sel) || glassBases.has(base)
         || [...eff.keys()].some((k) => k.startsWith(base));
       if (!realExists) {
-        add({ rule: 'G7c', file: rel(SPEC), line: 0, selector: sel, detail: '陈旧例外：CSS 里找不到这个元素', why: '例外指向的面已不存在 ⇒ 删掉这行（豁免不许空转）' });
+        add({ rule: 'G7c', file: SPEC, line: 0, selector: sel, detail: '陈旧例外：CSS 里找不到这个元素', why: '例外指向的面已不存在 ⇒ 删掉这行（豁免不许空转）' });
       }
       exemptSelectors.add(base);
       exemptSelectors.add(sel);
@@ -1088,7 +1091,7 @@ if (violations.length) {
   console.error(`        唯一模糊配方逐值 = ${PINNED_INPUT_FILTER}（幕布类允许 var(--nf-glass-scrim-blur)）。`);
   console.error('        顶部悬浮可透出面（G7）：不是挂 .nf-glass / 进成员表，就是进规范的');
   console.error('        例外清单写明理由 —— 不许半透明洗色底 + 零模糊悄悄留着。');
-  console.error('        规范条文与例外登记：design-language/references/glass-spec.md');
+  console.error('        规范条文与例外登记：stand-dev 插件 <包根>/references/frontend/glass-spec.md');
   process.exit(1);
 }
 

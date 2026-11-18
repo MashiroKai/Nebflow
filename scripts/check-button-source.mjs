@@ -34,19 +34,18 @@ import { join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isButtonSelector, walkRules, BUTTON_SEGMENTS, SOFT_SEGMENTS, MODIFIERS } from './lib/button-face.mjs';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
-const SPEC_PATH = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'flat-button-spec.md',
-);
+/** 规范正文（§6 按钮族登记表；单源在 stand-dev 插件包内，本仓无第二份拷贝）。 */
+const SPEC_PATH = resolveDesignSpec('references/frontend/flat-button-spec.md');
 const FLAT_LAYER = join(WEB, 'css', 'flatButtons.css');
 const BASELINE_PATH = join(ROOT, 'scripts', 'button-source-baseline.json');
 const ARGS = new Set(process.argv.slice(2));
 
-if (!existsSync(SPEC_PATH)) {
-  console.error(`环境错误：规范文件缺失 ${relative(ROOT, SPEC_PATH)}`);
+if (!SPEC_PATH) {
+  console.error(specMissingMessage('references/frontend/flat-button-spec.md'));
   process.exit(2);
 }
 if (!existsSync(FLAT_LAYER)) {

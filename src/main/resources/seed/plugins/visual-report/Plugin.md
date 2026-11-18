@@ -16,7 +16,7 @@ visual-report 是可视化报告包：节点按场景出图与人读报告。共
   内容透底（α < .45 且 blur 小，底下的正文看得出来 = 脏）。唯一落点 =
   令牌 `css/stand-tokens.css` 的 `--nf-glass-*` + 类 `css/glass.css` 的 `.nf-glass`
   + 机检 `scripts/check-glass-unify.mjs` + 规范
-  `.../design-language/references/glass-spec.md`。为 Stand 出**界面截图/UI 图**
+  `stand-dev` 插件包 `<包根>/references/frontend/glass-spec.md`。为 Stand 出**界面截图/UI 图**
   时必须按这一档画，不许自拟第二档。
 - **样张与验收基准**：`skills/core/references/demos/`（场景示例落此）。
 - **文档批纪律**：凡交付属于项目知识库的 markdown/HTML 文档（报告/设计稿/复盘），必读 `skills/wiki-docs/SKILL.md` 三条强制条款，交付前跑 `skills/wiki-docs/scripts/check_wiki_docs.py` 校验。

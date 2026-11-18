@@ -1173,7 +1173,7 @@
 }
 
 /* ── Config Buttons ────────────────────────────────────────────────────────
-   设计语言批 2026-10-21（账本 design-language §2/§4/§5/§7）：面板按钮档 =
+   设计语言批 2026-10-21（账本在 stand-dev 插件包 tokens 章 §2/§4/§5/§7）：面板按钮档 =
    12px 字（11px 判偏整改）/ 6px 16px 栅格距（5px 判偏）；主档墨族实底
    （--btn-primary-* 墨族 token 单源，2026-10-30 按钮体系批：原绿实底
    --color-primary 降级为身份/状态绿）；sm 档 12px 字 4px 12px。
@@ -1337,7 +1337,7 @@
   /* 面板标题条唯一版式（panel-language 批 2026-11-06，作者令 3(e)「顶部文字大小等
      面板设计……统一整理出一套面板的设计语言」）：cfg-modal 族所有面板头统一
      15px/600/1.4 三令牌（--ds-panel-title-*，design-system.css §⑲；
-     机检 = scripts/check-panel-unify.mjs P1，规范 = design-language panel-spec.md）。
+     机检 = scripts/check-panel-unify.mjs P1，规范 = stand-dev 插件包 panel-spec.md）。
      改前 = --ds-fs-subtitle(14px)/600 裸字重，同族各面各写。 */
   font-size: var(--ds-panel-title-fs);
   font-weight: var(--ds-panel-title-fw);

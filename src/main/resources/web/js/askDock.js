@@ -1233,7 +1233,7 @@ function onTabClosed() {
 //    移动端让位切换条同口径。）
 
 /** 记事本种子落点对账（P2 续批④ 位置感知液态形变）：闭态种子的落点 = **note
- *  入口钮圆心**（apple-design-language §5.2「起点取被操作真实控件的 rect 中心」；
+ *  入口钮圆心**（stand-dev 插件包 `references/frontend/` 的苹果设计语言文档 §5.2「起点取被操作真实控件的 rect 中心」；
  *  改前种子恒 `translateY(…)` 只落 dock 右下角正下方 = ask 钮位——note 钮在
  *  ask 钮左邻一格，形变起手读作「ask 钮长出记事本」）。两条位移以**实测 rect**
  *  派生写进 --note-seed-dx/--note-seed-dy（座位 fixed/absolute、epub 阅读器

@@ -11,10 +11,11 @@
 //   轴 2 写成多长、放哪档 → **本脚本**（预算表 + 存量基线）
 // 本脚本只判轴 2：**键名段 → 位置档 → 字数上限**，逐条 locale 文案值比对。
 //
-// 数据面 = 规范文件的长度预算表：
-//   src/main/resources/seed/plugins/design-language/skills/design-language/
-//   references/explanatory-copy-spec.md 的「## 2. 长度预算表」节
-//   （列：键名段 | 位置档 | zh 上限 | en 上限 | 说明）。缺表/空表 = 红（没规范就是没约束）。
+// 数据面 = 规范文件的长度预算表（单源在 stand-dev 插件包内
+//   <包根>/references/frontend/explanatory-copy-spec.md 的「## 2. 长度预算表」节
+//   （列：键名段 | 位置档 | zh 上限 | en 上限 | 说明）。包根定位见
+//   scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝。
+//   缺表/空表 = 红（没规范就是没约束）。
 // 判定面 = scripts/lib/locale-entries.mjs（locale 文案值，单源；与 check-self-explaining
 // 同一份实现）。**代码注释不算**。
 //
@@ -30,19 +31,17 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readLocales } from './lib/locale-entries.mjs';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
 const LOCALES_DIR = join(WEB, 'js', 'locales');
-const SPEC_PATH = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'explanatory-copy-spec.md',
-);
+const SPEC_PATH = resolveDesignSpec('references/frontend/explanatory-copy-spec.md');
 const BASELINE_PATH = join(ROOT, 'scripts', 'copy-budget-baseline.json');
 const ARGS = new Set(process.argv.slice(2));
 
-if (!existsSync(SPEC_PATH)) {
-  console.error(`环境错误：规范文件缺失 ${relative(ROOT, SPEC_PATH)}`);
+if (!SPEC_PATH) {
+  console.error(specMissingMessage('references/frontend/explanatory-copy-spec.md'));
   process.exit(2);
 }
 

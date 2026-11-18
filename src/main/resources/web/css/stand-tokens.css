@@ -623,8 +623,8 @@ html[data-theme="light"] {
  *      声明过的变体 + 元素级兜底；**全站唯一**允许写输入面造型的文件）
  *   ③ 机检 = `scripts/check-input-surface.mjs`（I1 令牌单源 / I2 造型单源 /
  *      I3 数值单源 / I4 蓝不进输入面 / I5 JS 注入面 / I6 豁免清单在规范里）
- * 规范正文 = `seed/plugins/design-language/skills/design-language/references/
- *   input-surface-spec.md`（与 flat-button-spec / glass-spec 同族）。
+ * 规范正文 = stand-dev 插件包 `<包根>/references/frontend/
+ *   input-surface-spec.md`（与 flat-button-spec / glass-spec 同族；本仓无第二份拷贝）。
  * ══════════════════════════════════════════════════════════════════════════ */
 :root {
   --nf-field-bg: var(--nf-glass-bg);                  /* = #input-bar 玻璃底 */

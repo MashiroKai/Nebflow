@@ -23,9 +23,9 @@
 // ——同批 `check-button-source.mjs`（B1 内联绕过 / B2 族登记同步）import 同一份，
 // 两处各写一份判定 = 下一批必然漂移。
 //
-// 例外清单**不在本脚本里**：本脚本从规范文件
-//   src/main/resources/seed/plugins/design-language/skills/design-language/
-//   references/flat-button-spec.md
+// 例外清单**不在本脚本里**：本脚本从规范文件（单源在 stand-dev 插件包内
+//   <包根>/references/frontend/flat-button-spec.md，包根定位见
+//   scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝）
 // 的「例外清单」表逐行读取（每行 = 选择器 + 属性族 + 理由）。缺表 = 红（没有规范
 // 就是没有约束）；表里每条例外必须写明理由，空理由 = 红。改判据要改规范，改豁免
 // 也要改规范 —— 脚本只是规范的执行面。
@@ -40,13 +40,16 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isButtonSelector, walkRules } from './lib/button-face.mjs';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CSS_DIR = join(ROOT, 'src', 'main', 'resources', 'web', 'css');
-const SPEC_PATH = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'flat-button-spec.md',
-);
+/** 规范正文（例外清单登记处；单源在 stand-dev 插件包内，本仓无第二份拷贝）。 */
+const SPEC_PATH = resolveDesignSpec('references/frontend/flat-button-spec.md');
+if (!SPEC_PATH) {
+  console.error(`✗ flat-button gate 不可跑 —— ${specMissingMessage('references/frontend/flat-button-spec.md')}`);
+  process.exit(2);
+}
 
 /** 禁厚度项（判据单一真源；规范文件的 §1 逐字同表）。 */
 const FORBIDDEN = [
@@ -91,7 +94,7 @@ const FORBIDDEN = [
  */
 function loadExceptions() {
   if (!existsSync(SPEC_PATH)) {
-    return { ok: false, reason: `规范文件缺失：${relative(ROOT, SPEC_PATH)}`, list: [] };
+    return { ok: false, reason: `规范文件缺失：${SPEC_PATH}`, list: [] };
   }
   const text = readFileSync(SPEC_PATH, 'utf8');
   const idx = text.indexOf('## 例外清单');
@@ -179,7 +182,7 @@ const effective = hits.filter((h) => !exceptionCovers(h, exceptions.list));
 
 if (jsonOut) {
   console.log(JSON.stringify({
-    specPath: relative(ROOT, SPEC_PATH),
+    specPath: SPEC_PATH,
     specOk: exceptions.ok,
     specReason: exceptions.reason || null,
     cssFiles: files.length,

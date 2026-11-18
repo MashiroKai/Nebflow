@@ -32,17 +32,17 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, relative, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const SPEC_PATH = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'disclosure-dedup-spec.md',
-);
+/** 规范面（单源在 stand-dev 插件包内；本仓不再保留第二份拷贝）。 */
+const SPEC_PATH = resolveDesignSpec('references/frontend/disclosure-dedup-spec.md');
+/** 存量基线（本仓自己的判定面数据，随闸留在本仓）。 */
 const BASELINE_PATH = join(ROOT, 'scripts', 'ui-structure-baseline.json');
 const ARGS = new Set(process.argv.slice(2));
 
-if (!existsSync(SPEC_PATH)) {
-  console.error(`环境错误：规范文件缺失 ${relative(ROOT, SPEC_PATH)}`);
+if (!SPEC_PATH) {
+  console.error(specMissingMessage('references/frontend/disclosure-dedup-spec.md'));
   process.exit(2);
 }
 
