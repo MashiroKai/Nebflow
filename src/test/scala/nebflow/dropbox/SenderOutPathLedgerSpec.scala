@@ -256,6 +256,10 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
         assertEquals(row.productElementNames.size, 19, "ledger includes the durable image path field")
     }
 
+  test("image storage warning threshold includes the boundary"):
+    assert(!DropboxService.imageCopyLimitReached(DropboxService.ImageCopyWarningBytes - 1))
+    assert(DropboxService.imageCopyLimitReached(DropboxService.ImageCopyWarningBytes))
+
   test("browser image remains available from the sender ledger after transfer"):
     withSender { (ms, svc, peerFrames, _, root) =>
       for
