@@ -20,6 +20,14 @@ export const CHECKS = [
   nodeCheck('floating-clearance', 'check-floating-clearance'),
   nodeCheck('floating-discovery', 'check-floating-discovery'),
   nodeCheck('mobile-floating-inventory', 'check-mobile-floating-inventory'),
+  // no-clip floating（作者令 2026-11-18 22:01）：浮层/卡四边完整可见（顶部尤其）+
+  // 文本不截断 + 高度上限必配可滚轴。既有三道 floating-* 闸是「声明式」（clearance 契约 /
+  // positioned selector 棘轮 / 清册声明），不查裁切组合 ⇒ 本条补位其能力缺口，非第二套体系。
+  // 静态腿自带具名台账（scripts/noclip-floating-baseline.json，只许缩短、新增须作者裁定）；
+  // 运行时几何腿在真全屏手机形态下测视口四边 + 自裁 + 祖先 overflow/clip-path/contain。
+  nodeCheck('noclip-floating', 'check-noclip-floating'),
+  { name: 'noclip-floating-geometry', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/noclip-floating-geometry.spec.mjs'] },
   nodeCheck('design-tokens', 'check-design-tokens'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
   nodeCheck('message-item-unify', 'check-message-item-unify'),
