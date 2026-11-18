@@ -1385,6 +1385,11 @@ object AgentActor extends AgentCore with AgentSession:
         if item.ephemeral then
           base += "ephemeral" -> true.asJson
           item.ttlSec.foreach(t => base += "ttlSec" -> t.asJson)
+        // 可查询批（2026-11-18）：说明与关键词标签只在场发——没有它们的历史
+        // 载荷逐字节不变（与上面四个键同一条「只在场发」纪律）。两者都是
+        // 元数据（这个凭据干什么用），与值无关。
+        item.secretDescription.foreach(d => base += "secretDescription" -> d.asJson)
+        if item.secretTags.nonEmpty then base += "secretTags" -> item.secretTags.asJson
       Json.obj(base.toList*)
     })
     Json.obj(fields.toList*)

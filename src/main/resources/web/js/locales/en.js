@@ -3274,6 +3274,18 @@ export default {
   // (层级收进批, author ruling 2026-11-01: the badge concept is gone; en/zh
   // drop the same keys in the same batch).
   'secrets.referencedBy': 'Referenced by {refs}',
+  // 可查询批 (author ruling 2026-11-18 21:31): description + keyword tags +
+  // the query-face copy. Same key set as zh-CN, same batch.
+  'secrets.searchPlaceholder': 'Search name, description, tags or consumers…',
+  'secrets.description': 'Description',
+  'secrets.descriptionPlaceholder': 'What is this credential for? (queryable; not a value)',
+  'secrets.tags': 'Tags',
+  'secrets.tagsPlaceholder': 'Keyword tags, comma separated, e.g. cloud, deploy',
+  'secrets.path': 'Path',
+  'secrets.count': '{n} secret(s)',
+  'secrets.countFiltered': '{n} of {total} secret(s)',
+  'secrets.clearFilters': 'Clear filters ✕',
+  'secrets.noMatch': 'No secrets match. Try another keyword, or clear the filters to see all.',
   'secrets.deleteTitle': 'Delete secret',
   'secrets.deleteConfirm': 'This cannot be undone. Delete "{name}"?',
   'secrets.deleteConfirmRefs': '"{name}" is referenced by: {refs}. Deleting breaks them. This cannot be undone.',

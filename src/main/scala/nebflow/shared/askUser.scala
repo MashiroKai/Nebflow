@@ -110,7 +110,18 @@ case class AskItem(
    * ephemeral 题的存活秒数（钳位 10–86400；缺省 600 = 10 分钟）。非 ephemeral
    * 题忽略。
    */
-  ttlSec: Option[Int] = None
+  ttlSec: Option[Int] = None,
+  /**
+   * secret 题的**可查询元数据**（可查询批，作者令 2026-11-18 21:31「新建 secret
+   * 时可带说明与标签」）：说明（这道题问的是什么凭据、干什么用）与关键词标签，
+   * 落库时随值一起写进 `secrets-meta.json` 侧车——于是这次落库的密钥**从诞生起
+   * 就可被查询**（`stand secrets show <name>` / `stand secrets list --tag …`）。
+   *
+   * 🔴 零值字段：两者描述的都是「这个凭据是干什么用的」，与值无关，也不会被
+   * 任何读面拼进值文件；侧车本身也从不承载值。非 secret 题忽略。
+   */
+  secretDescription: Option[String] = None,
+  secretTags: List[String] = Nil
 )
 
 case class AskOption(

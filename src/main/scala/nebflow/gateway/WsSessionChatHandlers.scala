@@ -339,7 +339,11 @@ private[gateway] object WsSessionChatHandlers:
                 value = value,
                 nameHint = spec.secretName,
                 ephemeral = spec.ephemeral,
-                ttlSec = spec.ttlSec
+                ttlSec = spec.ttlSec,
+                // 可查询批（2026-11-18）：题卡随行的说明/标签随值一起落到元数据
+                // 侧车——从诞生起就可被 `stand secrets show` / `--tag` 查到。
+                description = spec.description,
+                tags = spec.tags
               )
             )
             .map {

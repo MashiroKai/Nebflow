@@ -1197,6 +1197,20 @@
         <button type="button" id="secrets-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
       </div>
       <div class="secrets-modal-body">
+        <!-- 可查询批（作者令 2026-11-18 21:31「secret 要加上说明和关键词 tag，
+             方便被查询使用，同时据此对面板布局和显示进行优化」）：the query
+             face sits above the list — a free-text search box plus the tag bar
+             (one toggle chip per tag present in the store, the selection being
+             an AND filter) and a live count line. Text-free shell: every
+             caption/placeholder is applied by js/secretsPanel.js through t(). -->
+        <div class="secrets-toolbar">
+          <div class="secrets-searchbox">
+            <i data-lucide="search" class="secrets-search-glyph"></i>
+            <input type="search" id="secrets-search-input" class="secrets-input" autocomplete="off" spellcheck="false">
+          </div>
+          <div id="secrets-tagbar" class="secrets-tagbar"></div>
+        </div>
+        <div id="secrets-count" class="secrets-count" role="status" aria-live="polite"></div>
         <div id="secrets-section" class="social-section">
           <div id="secrets-list" class="secrets-list"></div>
         </div>

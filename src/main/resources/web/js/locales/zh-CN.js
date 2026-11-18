@@ -3185,6 +3185,17 @@ export default {
   // 「权限过宽/仅所有者可读写」两态徽标键已随徽标概念退役（层级收进批，
   // 作者令 2026-11-01：红标整概念退役，en/zh 同批同删，键集两边一致）。
   'secrets.referencedBy': '被引用：{refs}',
+  // 可查询批（作者令 2026-11-18 21:31）：说明 + 关键词标签 + 查询面文案。
+  'secrets.searchPlaceholder': '搜索名称、说明、标签或消费方…',
+  'secrets.description': '说明',
+  'secrets.descriptionPlaceholder': '这个凭据是干什么用的？（可查询，值无关）',
+  'secrets.tags': '标签',
+  'secrets.tagsPlaceholder': '关键词标签，逗号分隔，例如 cloud, deploy',
+  'secrets.path': '存放路径',
+  'secrets.count': '共 {n} 个密钥',
+  'secrets.countFiltered': '筛出 {n} / {total} 个密钥',
+  'secrets.clearFilters': '清除筛选 ✕',
+  'secrets.noMatch': '没有匹配的密钥。换个关键词或点「清除筛选」看全部。',
   'secrets.deleteTitle': '删除密钥',
   'secrets.deleteConfirm': '删除后不可恢复，确定删除「{name}」？',
   'secrets.deleteConfirmRefs': '「{name}」正被引用：{refs}。删除会导致它们失联，删除后不可恢复。',

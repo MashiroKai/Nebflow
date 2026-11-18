@@ -184,7 +184,8 @@ class SecretsStore(
   def setMetadata(
     name: String,
     variableName: Option[String] = None,
-    description: Option[String] = None
+    description: Option[String] = None,
+    tags: List[String] = Nil
   ): IO[Either[Failure, Unit]] =
     validateName(name) match
       case Left(f) => IO.pure(Left(f))
@@ -197,9 +198,14 @@ class SecretsStore(
               if !Files.exists(path(name).toNIO) then Left(Failure.UnknownSecret(name))
               else
                 val current = SecretsCatalog.load(dataRoot)
+                // Tags fold through the shared normalizer here (not at each
+                // call site): the CLI, the REST PATCH and the AskUser sink all
+                // land on this method, so the facet can never hold a
+                // non-keyword string regardless of which door was used.
                 val next = SecretsCatalog.Meta(
                   variableName.filter(_.nonEmpty),
-                  description.filter(_.nonEmpty).getOrElse("")
+                  description.filter(_.nonEmpty).getOrElse(""),
+                  SecretsCatalog.normalizeTags(tags)
                 )
                 if next == SecretsCatalog.Meta(None, "") then SecretsCatalog.save(dataRoot, current - name)
                 else SecretsCatalog.save(dataRoot, current.updated(name, next))
@@ -219,25 +225,6 @@ class SecretsStore(
     catch case e: Exception => logger.warn(s"secrets catalog refresh failed: ${describe(e, secretsDir.toString)}")
 
   // ── Read face (metadata only — never a value) ──────────────────────────
-
-  /**
-   * One listed secret: name, size (bytes), mtime (epoch millis), the mode
-   * string (`0600` on a POSIX readback, `null` where the OS has no POSIX
-   * view), the referencing ids, and the two catalogue fields
-   * ([[SecretsCatalog]] — variable name + description; the third field of the
-   * catalogue model, the value, is the file itself and is never read back).
-   * No `value` key exists anywhere in this shape — enforced structurally by
-   * the routes spec.
-   */
-  final case class Entry(
-    name: String,
-    size: Long,
-    mtime: Long,
-    mode: Option[String],
-    refs: List[String],
-    variableName: String,
-    description: String
-  )
 
   /**
    * List everything under `secretsDir`. A missing directory is an empty list
@@ -268,11 +255,66 @@ class SecretsStore(
               mode = modeOf(secretsDir / n),
               refs = refs.getOrElse(n, Nil),
               variableName = SecretsCatalog.variableNameOf(n, meta),
-              description = SecretsCatalog.descriptionOf(n, meta)
+              description = SecretsCatalog.descriptionOf(n, meta),
+              tags = SecretsCatalog.tagsOf(n, meta)
             )
           )
         )
     }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, secretsDir.toString)))))
+
+  /**
+   * The metadata of ONE name — the read face behind `stand secrets show`.
+   *
+   * Two sources, in order: a real credential file at `<secretsDir>/<name>`
+   * (`stored = true`, size/mtime/mode read from the file's own metadata —
+   * never its bytes), else a sidecar-only record (`stored = false`) for a
+   * name whose bytes live in a MANAGED namespace (`.askuser/` from the
+   * AskUser secret flow; `social-*` / `daemon-*` panels) while its
+   * description/tags were recorded here. A name with neither is
+   * `404 unknown_secret`, exactly like [[pointer]].
+   *
+   * 🔴 No branch opens a secret file: the existence probe is
+   * `Files.isRegularFile` and the two numbers are `size` / `mtime`.
+   */
+  def show(name: String): IO[Either[Failure, Entry]] =
+    validateName(name) match
+      case Left(f) => IO.pure(Left(f))
+      case Right(_) =>
+        IO.blocking {
+          val target = path(name)
+          val meta = SecretsCatalog.load(dataRoot)
+          if Files.isRegularFile(target.toNIO) then
+            Right(
+              Entry(
+                name = name,
+                size = Files.size(target.toNIO),
+                mtime = Files.getLastModifiedTime(target.toNIO).toMillis,
+                mode = modeOf(target),
+                refs = referencedByAll().getOrElse(name, Nil),
+                variableName = SecretsCatalog.variableNameOf(name, meta),
+                description = SecretsCatalog.descriptionOf(name, meta),
+                tags = SecretsCatalog.tagsOf(name, meta),
+                stored = true
+              )
+            )
+          else
+            meta.get(name) match
+              case Some(m) =>
+                Right(
+                  Entry(
+                    name = name,
+                    size = 0L,
+                    mtime = 0L,
+                    mode = None,
+                    refs = Nil,
+                    variableName = SecretsCatalog.variableNameOf(name, meta),
+                    description = SecretsCatalog.descriptionOf(name, meta),
+                    tags = m.tags,
+                    stored = false
+                  )
+                )
+              case None => Left(Failure.UnknownSecret(name))
+        }.handleErrorWith(e => IO.pure(Left(Failure.Io(describe(e, name)))))
 
   // ── Write face ─────────────────────────────────────────────────────────
 
@@ -684,6 +726,38 @@ object SecretsStore:
    * rather than the shape itself.
    */
   final case class Pointer(name: String, variableName: String, description: String, location: String)
+
+  /**
+   * One listed secret: name, size (bytes), mtime (epoch millis), the mode
+   * string (`0600` on a POSIX readback, `null` where the OS has no POSIX
+   * view), the referencing ids, and the catalogue fields
+   * ([[SecretsCatalog]] — variable name + description + keyword tags; the
+   * value field of the catalogue model is the file itself and is never read
+   * back). No `value` key exists anywhere in this shape — enforced
+   * structurally by the routes spec.
+   *
+   * `stored` distinguishes a real credential file (`true`, every `list` row)
+   * from a metadata-only record (`false`, `show` on a name that has a sidecar
+   * entry but no top-level file — the managed `.askuser/` namespace keeps its
+   * bytes in a subdirectory while its description/tags still answer queries).
+   *
+   * It lives on the companion (not inside the class) for the same reason
+   * [[Pointer]] does（可查询批 2026-11-18: the shared query matcher
+   * [[SecretsQuery]] and the CLI both name this type; a class-nested case
+   * class is path-dependent on a store INSTANCE, which would force every
+   * signature to mention a particular store rather than the shape itself).
+   */
+  final case class Entry(
+    name: String,
+    size: Long,
+    mtime: Long,
+    mode: Option[String],
+    refs: List[String],
+    variableName: String,
+    description: String,
+    tags: List[String] = Nil,
+    stored: Boolean = true
+  )
 
   /** Name contract: lowercase start, `[a-z0-9._-]`, 1-64 chars. */
   val NamePattern: java.util.regex.Pattern = java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9._-]{0,63}$")

@@ -186,6 +186,17 @@ Behavior:
                 "type" -> "integer".asJson,
                 "description" -> "TTL seconds for an ephemeral secret question (10-86400; default 600).".asJson
               ),
+              "secretDescription" -> io.circe.Json.obj(
+                "type" -> "string".asJson,
+                "description" ->
+                  "Optional description for a secret question — what this credential is for. Stored as queryable metadata (never the value), so `stand secrets show <name>` and `stand secrets list --keyword …` can find it later.".asJson
+              ),
+              "secretTags" -> io.circe.Json.obj(
+                "type" -> "array".asJson,
+                "description" ->
+                  "Optional keyword tags for a secret question (e.g. [\"cloud\",\"deploy\"]), queryable via `stand secrets list --tag …` and the secrets panel's chips. Lowercased and normalized server-side; describes the credential, never its value.".asJson,
+                "items" -> io.circe.Json.obj("type" -> "string".asJson)
+              ),
               "options" -> io.circe.Json.obj(
                 "type" -> "array".asJson,
                 "description" -> "Predefined choices for this question".asJson,
@@ -337,6 +348,24 @@ Behavior:
           val secretName = q.hcursor.downField("secretName").as[String].toOption.map(_.trim).filter(_.nonEmpty)
           val ephemeral = q.hcursor.downField("ephemeral").as[Boolean].toOption.getOrElse(false)
           val ttlSec = q.hcursor.downField("ttlSec").as[Int].toOption.filter(_ > 0)
+          // 可查询批（2026-11-18）：secret 题的说明与关键词标签——只有 secret 题
+          // 才读（非 secret 题携带这两个键 = 面外参数，与选项一样静默剥除，判据
+          // 与「secret 胜出」同一处）。tags 接受数组或逗号串两种形态，都过共享
+          // 归一器（`SecretsCatalog.normalizeTags`），落库面不再二次归一。
+          val secretDescription =
+            if secret then q.hcursor.downField("secretDescription").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            else None
+          val secretTags =
+            if !secret then Nil
+            else
+              q.hcursor.downField("secretTags").focus match
+                case Some(j) if j.isArray =>
+                  nebflow.core.secrets.SecretsCatalog.normalizeTags(
+                    j.asArray.getOrElse(Vector.empty).flatMap(_.asString)
+                  )
+                case Some(j) if j.isString =>
+                  nebflow.core.secrets.SecretsCatalog.parseTags(j.asString.getOrElse(""))
+                case _ => Nil
           val options = q.hcursor.downField("options").as[List[io.circe.Json]].getOrElse(Nil)
           val opts =
             if secret then Nil // secret 胜出：密码面不携带选项（规格 §5.7）
@@ -376,7 +405,9 @@ Behavior:
               secret = secret,
               secretName = secretName,
               ephemeral = ephemeral,
-              ttlSec = ttlSec
+              ttlSec = ttlSec,
+              secretDescription = secretDescription,
+              secretTags = secretTags
             )
           )
         end if

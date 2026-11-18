@@ -86,7 +86,15 @@ object AskUserSecretSink:
     value: String,
     nameHint: Option[String] = None,
     ephemeral: Boolean = false,
-    ttlSec: Option[Int] = None
+    ttlSec: Option[Int] = None,
+    /**
+     * 可查询批（2026-11-18）：新建 secret 时可带的说明与关键词标签，写进共享
+     * 元数据侧车（`<dataRoot>/secrets-meta.json`），让这次落库的凭据**从诞生
+     * 起就可被查询**。🔴 两者都是元数据（这个凭据干什么用），与值无关；侧车
+     * 从不承载值，本对象也没有第二条读值路径被打开。
+     */
+    description: Option[String] = None,
+    tags: List[String] = Nil
   )
 
   /** secrets 目录（默认安装 = `~/.nebflow/secrets`）。 */
@@ -150,6 +158,7 @@ object AskUserSecretSink:
           case Left(f) => Left(f)
           case Right(_) =>
             if req.ephemeral then recordDeadline(dir, name, ttlOf(req))
+            recordMetadata(dataRoot, name, req)
             Right(
               Receipt(
                 keyRef = name,
@@ -158,6 +167,25 @@ object AskUserSecretSink:
                 ephemeral = req.ephemeral
               )
             )
+
+  /**
+   * 可查询批（2026-11-18）：把题卡随行的说明与标签写进共享元数据侧车，键 = 这次
+   * 落库的名字（`.askuser/` 受管名下，`SecretsStore.list` 结构上不枚举它，但
+   * `SecretsStore.show(name)` 会走侧车分支把这个记录答出来——`stand secrets
+   * show <name>` 因此可用）。
+   *
+   * 元数据写失败**不影响落库结论**：值已经存好了，把一个成功的存储报成失败才是
+   * 更坏的谎（与 `SecretsStore.refreshCatalog` 同一 warn-not-abort 形状）。零字段
+   * 请求（没带说明也没带标签）不写、不建空条目。
+   */
+  private def recordMetadata(dataRoot: os.Path, name: String, req: StoreRequest): Unit =
+    val description = req.description.map(_.trim).filter(_.nonEmpty)
+    val tags = SecretsCatalog.normalizeTags(req.tags)
+    if description.nonEmpty || tags.nonEmpty then
+      try
+        val current = SecretsCatalog.load(dataRoot)
+        SecretsCatalog.save(dataRoot, current.updated(name, SecretsCatalog.Meta(None, description.getOrElse(""), tags)))
+      catch case _: Throwable => ()
 
   private def ttlOf(req: StoreRequest): Int =
     req.ttlSec.fold(DefaultTtlSec)(t => t.max(MinTtlSec).min(MaxTtlSec))

@@ -574,7 +574,16 @@ object InteractionHub:
                 idx = i,
                 secretName = item.hcursor.downField("secretName").as[String].toOption.map(_.trim).filter(_.nonEmpty),
                 ephemeral = item.hcursor.downField("ephemeral").as[Boolean].toOption.getOrElse(false),
-                ttlSec = item.hcursor.downField("ttlSec").as[Int].toOption.filter(_ > 0)
+                ttlSec = item.hcursor.downField("ttlSec").as[Int].toOption.filter(_ > 0),
+                // 可查询批（2026-11-18）：随题卡下发的说明与标签，落库时写进
+                // 元数据侧车。两者都是元数据字段，闸门仍是「值只在 secretSlots」。
+                description = item.hcursor.downField("secretDescription").as[String].toOption.map(_.trim).filter(_.nonEmpty),
+                tags =
+                  if item.hcursor.downField("secret").as[Boolean].toOption.getOrElse(false) then
+                    nebflow.core.secrets.SecretsCatalog.normalizeTags(
+                      item.hcursor.downField("secretTags").as[List[String]].getOrElse(Nil)
+                    )
+                  else Nil
               )
           }
         }
