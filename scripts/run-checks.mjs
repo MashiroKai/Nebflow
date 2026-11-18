@@ -19,6 +19,7 @@ export const CHECKS = [
   nodeCheck('css-structure', 'check-css-structure'),
   nodeCheck('floating-clearance', 'check-floating-clearance'),
   nodeCheck('floating-discovery', 'check-floating-discovery'),
+  nodeCheck('mobile-floating-inventory', 'check-mobile-floating-inventory'),
   nodeCheck('design-tokens', 'check-design-tokens'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
   nodeCheck('chat-ui', 'check-chat-ui'),

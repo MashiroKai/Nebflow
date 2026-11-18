@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// RETIRED: this test targets the removed .tfl-* mobile face. Its active-route
+// replacement is tests/todo-create-bottom.spec.mjs; that test currently needs
+// updating for the current create sheet and must not be counted as passing.
 // todo-mobile-topmenu.spec.mjs — 手机端待办页「顶部⋯两级菜单 + 新建从顶部」实施项
 // ① / ② 的自足验收（todo-mobile-revamp 批 · 2026-11-06）。
 //

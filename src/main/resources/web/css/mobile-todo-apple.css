@@ -89,7 +89,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
   /* H 批（ui-unify-panels 2026-11-17）：末尾让位不再用裸 28px —— 每页按自己的
      底带垫整条钮带（tasks/list = 右下 FAB --mpage-fab-clearance；item = 底部
      键盘工具胶囊 .ta-tool 的整条带），滚动到头时末行底缘恒在底带上缘之上。 */
-  padding-bottom: max(28px, var(--mpage-fab-clearance, 28px));
+  padding-bottom: calc(var(--mobile-dock-clearance) + var(--mpage-fab-clearance));
   box-sizing: border-box;
 }
 /* item 页覆写：底带不是 FAB 而是 .ta-tool（贴键盘/贴 dock 的胶囊带）。 */
@@ -446,7 +446,7 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-n {
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap {
   position: absolute;
   right: var(--mpad-x);
-  bottom: 16px;
+  bottom: calc(var(--mobile-dock-clearance) + var(--ds-space-2));
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);
   z-index: 7;
