@@ -626,6 +626,44 @@ object LlmInterface extends LlmRuntime:
             alarm *> skipsLine
 
           val handle = new LlmHandle[IO]:
+
+            /**
+             * 请求入口候选账本的 **seeded 层单点**（模型路由记账批 2026-11-18）——
+             * 流面 `sendStream` 与非流面 `send` 共用同一实现。
+             *
+             * 为什么必须是单点（作者令：UI / 报告面与实际解析不一致或误导必须修）：
+             * 两面此前各自拼这张账本，非流面带 `allowlistExclusionsFor` 一腿、流面
+             * 漏掉 ⇒ 流面账本里「配置可见、未 disabled、但不在本请求生效链上」的模型
+             * **一条原因都没有** ⇒ `expected - chain - skipped` 恒非空
+             * （[[nebflow.shared.CandidateDisposition.silentExclusions]]）⇒ 每个流式
+             * 请求都打一行 `SILENT-EXCLUSION … dropped with NO recorded reason` 的
+             * ERROR 假报（现网实测 4036 行/日；非流面同形请求零告警），链穷尽时
+             * 终局处置表还对作者谎称 `M SILENTLY EXCLUDED (… this is a bug, not
+             * provider failure)` —— 说的却是从未进过路由的配置模型。
+             *
+             * 账本口径 = **实际生效路由**（`llm.fallback.preferred`，fallback 废除批
+             * 后链深恒 1）与「配置可见全集」[[ProviderRegistry.expectedCandidateRefs]]
+             * 的逐条差额，每条都带原因：配置级剔除（disabled / 不在配置）+
+             * `not in selected chain` + 派发钉链剔除（`req.pinSkips` = spawn 时因
+             * provider 满载被链首扫描剔出的候选，`PinnedChain.preExcluded`，本就是
+             * 请求前的事实）。没有它，这些候选既不在链上也没有原因 ⇒ 假 SILENTLY
+             * EXCLUDED（现网实证 UTSC/glm-5.3-flash）。缺省 Nil = 既有行为零变化。
+             */
+            def seededSkipLedger(
+              req: LlmRequest,
+              droppedKnown: List[(String, CandidateSkipCause)],
+              schedSkips: List[(String, CandidateSkipCause)]
+            ): IO[List[(String, CandidateSkipCause)]] =
+              for
+                configSkips <- registry.configLevelExclusions()
+                requestConfig <- registry.currentConfig
+                // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：
+                // 链成员 = preferred 一根——`fallbacks` 是死数据，声明它们的授权/审计面
+                // 只会产生噪音（model-eligibility 批的 not-in-selected-chain 记账同理）。
+                chainRefs = requestConfig.llm.fallback.toList.flatMap(c => c.preferred.toList)
+                globalAllowlistSkips <- registry.allowlistExclusionsFor(chainRefs, req.agentModel)
+              yield droppedKnown ++ schedSkips ++ configSkips ++ globalAllowlistSkips ++ req.pinSkips
+
             def send(req: LlmRequest): IO[LlmResponse] =
               val start = System.currentTimeMillis()
               (for
@@ -646,22 +684,14 @@ object LlmInterface extends LlmRuntime:
                 // 这里能拦住；全受限在此显式报错（带原因）。
                 schedRes <- applyScheduleGateDetailed(filtered, registry)
                 (schedAvailable, schedSkips) = schedRes
-                configSkips <- registry.configLevelExclusions()
-                requestConfig <- registry.currentConfig
-                // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：
-                // 链成员 = preferred 一根——`fallbacks` 是死数据，声明它们的授权/审计面
-                // 只会产生噪音（model-eligibility 批的 not-in-selected-chain 记账同理）。
-                chainRefs = requestConfig.llm.fallback.toList.flatMap(c => c.preferred.toList)
-                globalAllowlistSkips <- registry.allowlistExclusionsFor(chainRefs, req.agentModel)
+                // 请求入口账本 seeded 层 = 流面/非流面**单一实现**（[[seededSkipLedger]]）：
+                // 配置级剔除 + 「不在本请求生效链上」(`not in selected chain`) +
+                // 派发钉链剔除，逐条带原因。
+                seededSkips <- seededSkipLedger(req, droppedKnown, schedSkips)
                 // 审计基准 = 配置可见全集（model-eligibility 批）：未授权 ref 由
-                // globalAllowlistSkips 逐条带原因进账本，因此「配置里有、本请求没试」
+                // seededSkipLedger 逐条带原因进账本，因此「配置里有、本请求没试」
                 // 不再沉默——不需要把基准收窄成已解析候选集（收窄反而看不见真丢件）。
                 expected <- registry.expectedCandidateRefs()
-                // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn 时因
-                // provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，本就是
-                // 请求前的事实）——并入 seeded 层。没有它，这些候选既不在链上也没有
-                // 原因 ⇒ SILENTLY EXCLUDED（现网实证 UTSC/glm-5.3-flash）。
-                seededSkips = droppedKnown ++ schedSkips ++ configSkips ++ globalAllowlistSkips ++ req.pinSkips
                 healthSkipped <- healthMonitor.filterCandidatesDetailed(schedAvailable)
                 (up, healthSkips) = healthSkipped
                 allSkips = mergeSkips(
@@ -855,14 +885,17 @@ object LlmInterface extends LlmRuntime:
                         // （带原因），不进 120s 全灭闸等待。
                         schedRes <- applyScheduleGateDetailed(filtered, registry)
                         (schedAvailable, schedSkips) = schedRes
-                        configSkips <- registry.configLevelExclusions()
+                        // 请求入口账本 seeded 层 = 流面/非流面**单一实现**（[[seededSkipLedger]]）：
+                        // 本面此前漏掉配置级 authorization 腿（`allowlistExclusionsFor`），
+                        // 「配置可见、未 disabled、却不在本请求生效链上」的模型因此一条原因
+                        // 都没有 ⇒ `silentExclusions` 恒非空 ⇒ 每个流式请求一行
+                        // SILENT-EXCLUSION ERROR 假报，链穷尽时终局处置表还对作者谎称
+                        // 「SILENTLY EXCLUDED … this is a bug」（说的却是从未进过路由的
+                        // 配置模型）。改由单点出账，两面结构上不可再分叉。
+                        seededSkips <- seededSkipLedger(req, droppedKnown, schedSkips)
                         // 审计基准同非流面 = 配置可见全集（model-eligibility 批；
                         // fallback 废除批不改该基准——未授权/未配置 ref 各有带原因记账）。
                         expected <- registry.expectedCandidateRefs()
-                        // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn
-                        // 时因 provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，
-                        // 请求前的事实）——并入 seeded 层，不静默（UTSC 现网形态根治）。
-                        seededSkips = mergeSkips(droppedKnown ++ schedSkips, configSkips ++ req.pinSkips)
                         _ <- logCandidateLedger(
                           req,
                           expected,
