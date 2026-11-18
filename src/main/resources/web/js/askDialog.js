@@ -252,7 +252,7 @@ export function createAskDialog(cfg) {
           const host = h('div', { class: 'ask-card-host' });
           row.appendChild(host);
           col.appendChild(row);
-          renderWithRegistry(host, m.text, m.label || 'Card');
+          renderWithRegistry(host, m.text, 'Card');
           return;
         }
         // glass-unify 批 2026-11-05：气泡挂唯一毛玻璃工具类 `.nf-glass`。

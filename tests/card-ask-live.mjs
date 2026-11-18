@@ -25,13 +25,16 @@ import { readFileSync, mkdirSync, writeFileSync, appendFileSync, existsSync, rmS
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { evidenceOut } from '../scripts/lib/evidence-batch.mjs';
 
 const HOME = process.env.CARD_HOME || '/tmp/card-ask-live-home';
 const FILE = process.env.CARD_FIXTURE || '/tmp/card-ask-live-fixture/能量谱抽样说明.md';
 const NAME = FILE.split('/').pop();
 const PORT = Number(process.env.CARD_PORT || 8499);
 const BASE = `http://127.0.0.1:${PORT}`;
-const EVIDENCE = process.env.CARD_EVIDENCE || '/Users/kaiyu/stand-evidence/card-tool-revive-20261118/05-live';
+// 证据目录：默认走仓内共享的 EvidenceTemp 批次助手（带 manifest.json 的可回收批），
+// CARD_EVIDENCE 显式覆盖时以覆盖为准（本批实跑就是喂了绝对路径固定批）。
+const EVIDENCE = evidenceOut(process.env.CARD_EVIDENCE, 'stand', 'card-ask-live');
 const QUESTION = 'CARD_NOW 请把本文档的三个抽样点读数渲染成一张卡片。';
 const LEG = (process.argv[2] || 'all').toLowerCase();
 
