@@ -16,6 +16,7 @@
     "check:canvas-buttons": "node scripts/check-canvas-buttons.mjs",
     "check:canvas-families": "node scripts/check-canvas-families.mjs",
     "check:canvas-button-geom": "node tests/canvas-button-unify-geom.spec.mjs",
+    "check:canvas-button-diff": "node tests/canvas-button-unify-diff.spec.mjs",
     "check:mobile-band-ruler": "node tests/mobile-band-ruler.spec.mjs",
     "check:mobile-touch-target": "node tests/mobile-touch-target.spec.mjs",
     "check:askinput-off-pending-text": "node tests/askinput-off-pending-text.spec.mjs",
