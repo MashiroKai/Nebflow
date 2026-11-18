@@ -2,10 +2,8 @@ package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
-import nebflow.actor.AgentDef
 import nebflow.core.ask.AskSessions
-import nebflow.core.delegate.DualModeConfig
-import nebflow.core.tools.{CardTool, ToolContext, ToolRegistry}
+import nebflow.core.tools.{Tool, ToolContext, ToolRegistry}
 
 /**
  * Card tool revive · authorization-face gate (card-tool-revive batch, 2026-11-18).
@@ -17,103 +15,41 @@ import nebflow.core.tools.{CardTool, ToolContext, ToolRegistry}
  *   ① **Card 被授予 Ask 之外的身份** —— 任一非 ask 身份的装配面或 LLM 面出现
  *      `Card` ⇒ 「②」组断言红；
  *   ② **Ask 拿不到 Card** —— ask 早退面缺 `Card` ⇒ 「①」组断言红。
- *      **未修源码直跑本 spec 即红**（复活前注册表无 `Card` ⇒ ①b 与 ① 双双红）。
+ *      **未修源码直跑本 spec 即红**（复活前注册表无 `Card` ⇒ ① 与 ①b 红；
+ *      且基线还有一个真实的 allowed-set 泄漏面 ⇒ ② 也红）。
  *
- * 跑法：单测直调 `AgentCore.buildAllowedToolSet` / `buildToolList`（protected ⇒
- * 经先例 `AllowedToolSetSpec.CoreProbe` 的 `extends AgentCore` 探针暴露；`AgentCore`
- * 是 `private[agent] trait`，故本 spec 与先例同住 `nebflow.agent` 包）。
+ * 身份枚举**不在本文件**：逐身份读数走 [[ToolFaceReadings]] 那一份（作者令
+ * 「枚举机制请做成可复用的一份」）——本 spec 只消费它，禁在此另写第二套表。
+ * 改身份/加身份一律改 `ToolFaceReadings.Identities`。
  */
 class CardToolReviveFaceSpec extends munit.FunSuite:
 
-  // AgentCore.buildAllowedToolSet / buildToolList are protected; expose via a stub.
-  private object CoreProbe extends AgentCore:
+  private val AskLeg = "ask (Canvas Ask session leg)"
 
-    def allowed(
-      defn: AgentDef,
-      isSubTaskWorker: Boolean = false,
-      isFlowNode: Boolean = false,
-      projectBoardSession: Boolean = false,
-      isDispatcher: Boolean = false,
-      delegateSession: Boolean = false,
-      askSession: Boolean = false,
-      delegateMode: Option[String] = None
-    ): Set[String] =
-      buildAllowedToolSet(
-        defn,
-        depth = 0,
-        isSubTaskWorker = isSubTaskWorker,
-        isFlowNode = isFlowNode,
-        isTeamLead = false,
-        userFacingNode = false,
-        guardrailsOn = false,
-        projectBoardSession = projectBoardSession,
-        flowNodeSession = false,
-        isDispatcher = isDispatcher,
-        delegateSession = delegateSession,
-        askSession = askSession,
-        delegateMode = delegateMode
-      )
+  /**
+   * Resolve Card through the **registry**, never through the `CardTool` symbol.
+   *
+   * 这是「未修源码直跑即红」的关键：复活前树上没有 `CardTool` 这个类型，若本
+   * spec 直接引它，基线只会**编译失败**（红在编译期，不是红在断言）。走注册表
+   * 查名 ⇒ 本 spec 在基线树上照常编译并**断言失败**，闸的检测力可被逐条读出。
+   */
+  private def cardTool: Tool =
+    ToolRegistry.TOOL_MAP.getOrElse("Card", fail("Card is not registered — the revive is absent"))
 
-    /** The face that actually reaches the LLM (allowedSet ∩ registered schemas). */
-    def face(
-      defn: AgentDef,
-      isFlowNode: Boolean = false,
-      projectBoardSession: Boolean = false,
-      isDispatcher: Boolean = false,
-      delegateSession: Boolean = false,
-      askSession: Boolean = false,
-      delegateMode: Option[String] = None
-    ): List[String] =
-      buildToolList(
-        defn,
-        depth = 0,
-        isFlowNode = isFlowNode,
-        projectBoardSession = projectBoardSession,
-        isDispatcher = isDispatcher,
-        delegateSession = delegateSession,
-        askSession = askSession,
-        delegateMode = delegateMode
-      ).getOrElse(Nil).map(_.name)
-
-  end CoreProbe
-
-  private def mkDef(
-    name: String,
-    tools: List[String] = Nil,
-    category: String = "standalone"
-  ): AgentDef = AgentDef(name = name, description = "", tools = tools, category = category)
-
-  /** 非 ask 身份的逐条读数表（身份标签 → 该身份装配面）。 */
-  private def nonAskReadings: List[(String, Set[String])] = List(
-    "Nebula root (converged, empty declaration)" -> CoreProbe.allowed(mkDef("Nebula")),
-    "Nebula root (declaration escape: tools=[Card])" -> CoreProbe.allowed(mkDef("Nebula", List("Card"))),
-    "Nebula root (declaration escape: tools=[*])" -> CoreProbe.allowed(mkDef("Nebula", List("*"))),
-    "dream agent" -> CoreProbe.allowed(mkDef("dream")),
-    "general agent (tools=[*])" -> CoreProbe.allowed(mkDef("general", List("*"))),
-    "standalone agent (declaration escape: tools=[Card])" -> CoreProbe.allowed(mkDef("myagent", List("Card"))),
-    "team agent (tools=[*])" -> CoreProbe.allowed(mkDef("backend", List("*"), category = "team")),
-    "flow agent (tools=[*])" -> CoreProbe.allowed(mkDef("scanner", List("*"), category = "flow")),
-    "project node (isFlowNode + projectBoardSession)" ->
-      CoreProbe.allowed(mkDef("nebflow", List("*")), isFlowNode = true, projectBoardSession = true),
-    "dispatcher session" -> CoreProbe.allowed(mkDef("nebflow", List("*")), isDispatcher = true),
-    "subagent / SubTask worker" -> CoreProbe.allowed(mkDef("nebflow"), isSubTaskWorker = true),
-    "delegate session (dispatcher mode)" ->
-      CoreProbe.allowed(mkDef("nebflow"), delegateSession = true, delegateMode = Some(DualModeConfig.ModeDispatcher)),
-    "delegate session (kernel mode)" ->
-      CoreProbe.allowed(mkDef("nebflow"), delegateSession = true, delegateMode = Some(DualModeConfig.ModeKernel))
-  )
+  private def nonAskRows: List[ToolFaceReadings.Row] =
+    ToolFaceReadings.rows.filterNot(_.label == AskLeg)
 
   // ── ① Ask 拿得到 Card ────────────────────────────────────────────────────
 
   test("① Canvas Ask is the ONE identity whose face carries Card"):
-    val askFace = CoreProbe.allowed(mkDef("ask"), askSession = true)
+    val ask = ToolFaceReadings.row(AskLeg)
     assert(
-      askFace.contains("Card"),
-      s"the ask early-return face must carry Card; got ${askFace.toList.sorted}"
+      ask.allowedHas("Card"),
+      s"the ask early-return face must carry Card; got ${ask.allowed.toList.sorted}"
     )
     // ask 面是封闭集（早退，先于一切声明/固定/插件授予）——逐字相等，不是包含。
     assertEquals(
-      askFace,
+      ask.allowed,
       AskSessions.AllowedTools,
       "the ask face must be exactly AskSessions.AllowedTools (closed set)"
     )
@@ -122,8 +58,10 @@ class CardToolReviveFaceSpec extends munit.FunSuite:
     // 都会让两侧失配。
     assert(AskSessions.AskExclusiveTools.contains("Card"), "Card must ride AskExclusiveTools (the single point)")
     // LLM 实际面：注册表里能取到 Card 的 schema（否则名字进集也发不出去）。
-    val askLlmFace = CoreProbe.face(mkDef("ask"), askSession = true)
-    assert(askLlmFace.contains("Card"), s"Card schema must reach the ask LLM face; got ${askLlmFace.sorted}")
+    assert(
+      ask.llmFaceHas("Card"),
+      s"Card schema must reach the ask LLM face; got ${ask.llmFace.toList.sorted}"
+    )
 
   test("①b Card is registered, with the original parameter face and no new capability"):
     assert(ToolRegistry.TOOL_MAP.contains("Card"), "Card must be registered in ToolRegistry")
@@ -136,32 +74,14 @@ class CardToolReviveFaceSpec extends munit.FunSuite:
   // ── ② 其余身份一律拿不到 ────────────────────────────────────────────────
 
   test("② no non-ask identity can see Card — neither in the allowed set nor on the LLM face"):
-    nonAskReadings.foreach { case (label, face) =>
-      assert(!face.contains("Card"), s"Card leaked onto a non-ask identity: $label => ${face.toList.sorted}")
+    val rows = nonAskRows
+    assert(rows.nonEmpty, "the shared readings table lost its non-ask identities")
+    rows.foreach { r =>
+      assert(!r.allowedHas("Card"), s"Card leaked onto a non-ask identity (allowed set): ${r.label} => ${r.allowed.toList.sorted}")
+      assert(!r.llmFaceHas("Card"), s"Card leaked onto a non-ask identity (LLM face): ${r.label} => ${r.llmFace.toList.sorted}")
     }
 
-  test("②b the LLM face (buildToolList) is Card-free for every non-ask identity"):
-    val llmFaces = List(
-      "Nebula root" -> CoreProbe.face(mkDef("Nebula")),
-      "Nebula root (escape: [Card])" -> CoreProbe.face(mkDef("Nebula", List("Card"))),
-      "Nebula root (escape: [*])" -> CoreProbe.face(mkDef("Nebula", List("*"))),
-      "general agent ([*])" -> CoreProbe.face(mkDef("general", List("*"))),
-      "standalone (escape: [Card])" -> CoreProbe.face(mkDef("myagent", List("Card"))),
-      "team agent ([*])" -> CoreProbe.face(mkDef("backend", List("*"), category = "team")),
-      "flow agent ([*])" -> CoreProbe.face(mkDef("scanner", List("*"), category = "flow")),
-      "project node" -> CoreProbe.face(mkDef("nebflow", List("*")), isFlowNode = true, projectBoardSession = true),
-      "dispatcher session" -> CoreProbe.face(mkDef("nebflow", List("*")), isDispatcher = true),
-      "delegate session" -> CoreProbe.face(
-        mkDef("nebflow"),
-        delegateSession = true,
-        delegateMode = Some(DualModeConfig.ModeDispatcher)
-      )
-    )
-    llmFaces.foreach { case (label, face) =>
-      assert(!face.contains("Card"), s"Card schema reached a non-ask LLM face: $label")
-    }
-
-  test("②c the plugin builtin whitelist cannot smuggle Card in"):
+  test("②c the plugin builtin whitelist and the remote-executable set cannot smuggle Card in"):
     assert(
       !nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.contains("Card"),
       "Card must not be plugin-grantable"
@@ -175,7 +95,7 @@ class CardToolReviveFaceSpec extends munit.FunSuite:
 
   test("③ the in-tool identity gate refuses any non-ask context before any side effect"):
     val refused =
-      CardTool
+      cardTool
         .call(
           JsonObject("html" -> io.circe.Json.fromString("<div>should never render</div>")),
           ToolContext(projectRoot = "/tmp", sessionId = None)
@@ -189,7 +109,7 @@ class CardToolReviveFaceSpec extends munit.FunSuite:
     )
     // 普通会话 id（delegate-… 形态）同样拒。
     val refusedDelegate =
-      CardTool
+      cardTool
         .call(
           JsonObject("html" -> io.circe.Json.fromString("<div>x</div>")),
           ToolContext(projectRoot = "/tmp", sessionId = Some("delegate-abcdef01"))
@@ -198,7 +118,7 @@ class CardToolReviveFaceSpec extends munit.FunSuite:
     assert(refusedDelegate.isLeft, "a delegate- session must be refused by the in-tool gate")
     // 主会话 uuid 形态同样拒。
     val refusedUuid =
-      CardTool
+      cardTool
         .call(
           JsonObject("html" -> io.circe.Json.fromString("<div>x</div>")),
           ToolContext(projectRoot = "/tmp", sessionId = Some("3f2b0c1a-1111-2222-3333-444455556666"))
@@ -210,18 +130,18 @@ class CardToolReviveFaceSpec extends munit.FunSuite:
 
   test("④ Pop keeps its Nebula-exclusive face — the Card revival does not widen it"):
     // Pop 的「不可授予他人」红线单点 = `AgentCore.RootExclusiveTools`（注释里称
-    // NebulaExclusiveTools 的那一集；非 Nebula 身份一律剥）。
+    // NebulaExclusiveTools 的那一集；非 Nebula 身份一律剥）。本批零触碰。
     assert(AgentCore.RootExclusiveTools.contains("Pop"), "Pop stays Nebula-exclusive")
     assert(!AgentCore.RootExclusiveTools.contains("Card"), "Card must not ride the Nebula-exclusive set")
     assert(ToolRegistry.TOOL_MAP.contains("Pop"), "Pop stays registered")
     // Pop 不在 ask 面（ask 面是封闭集，Card 的复活不得顺带把 Pop 带进去）。
     assert(!AskSessions.AllowedTools.contains("Pop"), "Pop must NOT enter the ask face")
     // Pop 仍只挂在 Nebula 的编排面上；Card 仍不在 Nebula 面。
-    val nb = CoreProbe.allowed(mkDef("Nebula"))
-    assert(nb.contains("Pop"), "Pop stays on the Nebula root face")
-    assert(!nb.contains("Card"), "Nebula root face must stay Card-free")
-    val general = CoreProbe.allowed(mkDef("general", List("*")))
-    assert(!general.contains("Pop"), "Pop stays off the general face")
+    val nb = ToolFaceReadings.row("Nebula root (converged, decl=[])")
+    assert(nb.allowedHas("Pop"), "Pop stays on the Nebula root face")
+    assert(!nb.allowedHas("Card"), "Nebula root face must stay Card-free")
+    val general = ToolFaceReadings.row("general (tools=[*])")
+    assert(!general.allowedHas("Pop"), "Pop stays off the general face")
 
   test("④b Pop keeps its delegation red line (not plugin-grantable, not remoteable)"):
     assert(
