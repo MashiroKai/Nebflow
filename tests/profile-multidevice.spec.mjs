@@ -87,9 +87,14 @@ async function openMobileMe(page) {
   await expect(page.locator('.mobile-page[data-page="me"]')).toHaveClass(/live/);
 }
 
-/** 桌面：设置页身份卡胶囊 → 资料面（手机同一条腿，见 openProfileFace 唯一入口）。 */
+/**
+ * 桌面：开个人资料面。入口 = `settingsIdentity.openProfileFace()` 这一个模块出口
+ * （设置页身份卡胶囊在现行产品里已退役 —— `tests/settings-identity-card.spec.mjs`
+ * 断言 `#settings-identity-card` 计数为 0；本 spec 走同一模块出口，不依赖已退役的
+ * DOM 入口）。
+ */
 async function openProfileFace(page) {
-  await page.locator('#settings-identity-capsule').click();
+  await page.evaluate(async () => (await import('/js/settingsIdentity.js')).openProfileFace());
   await expect(page.locator('#settings-profile-overlay')).toBeVisible();
 }
 
