@@ -40,13 +40,15 @@ async function boot(page, mobile, loggedIn = false) {
   } else await page.locator('#settings-btn').click();
   await expect(page.locator('#settings-content')).toBeVisible();
 }
-test('mobile workbench visible entry opens the profile face', async ({ page }) => {
+test('mobile workbench entry opens the single profile page (no edit action, no subpages)', async ({ page }) => {
   await boot(page, true, true);
   await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
   await page.locator('.mobile-page[data-page="workbench"] .mf-me-entry').click();
   await expect(page.locator('.mobile-page[data-page="me"]')).toHaveClass(/live/);
-  await page.locator('#me-edit-profile').click();
-  await expect(page.locator('#settings-profile-overlay')).toBeVisible();
+  // profile-multidevice：单页资料 —— 无「编辑资料」空动作、无层级子页入口。
+  await expect(page.locator('#me-edit-profile')).toHaveCount(0);
+  await expect(page.locator('.mobile-page[data-page="me"] [data-me-page]')).toHaveCount(0);
+  await expect(page.locator('.mobile-page[data-page="me"] [data-device-list="1"]')).toHaveCount(1);
 });
 
 for (const mobile of [false, true]) {

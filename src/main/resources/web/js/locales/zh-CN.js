@@ -3411,4 +3411,23 @@ export default {
   'schedCard.errGone': '条目已不存在，改动未保存',
   'schedCard.errEngine': '引擎拒绝：{detail}',
   'schedCard.errGeneric': '写入失败，改动未保存',
+  // ── profile-multidevice 批（单页资料 / 只读身份 / 设备清单含逐设备退出）──
+  'profile.deviceSection': '设备',
+  'profile.deviceCurrent': '本机',
+  'profile.deviceSignOut': '退出',
+  'profile.deviceSignOutCurrent': '退出本机登录',
+  'profile.deviceOnline': '在线',
+  'profile.deviceOffline': '离线',
+  'profile.deviceLastSeen': '最近活动 {when}',
+  'profile.deviceSeenNow': '刚刚',
+  'profile.deviceSeenMinutes': '{n} 分钟前',
+  'profile.deviceSeenHours': '{n} 小时前',
+  'profile.deviceSeenDays': '{n} 天前',
+  'profile.deviceNone': '账号服务暂未返回设备清单。',
+  'profile.deviceSignOutQueued': '已向该设备发出退出请求；对端上是否生效以该设备自身登录态为准。',
+  'profile.deviceSignOutFailed': '退出请求未送达，该设备登录态未改变。',
+  'profile.deviceSignOutRemoteUnsupported': '该设备的凭据在其本机保存，本机无法代为退出；请到那台设备上退出登录。',
+  'profile.editOnWebsite': '身份资料为只读读数；修改请前往官网账号页 {where}。',
+  'profile.signedIn': '已登录',
 };
+

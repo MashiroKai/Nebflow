@@ -149,23 +149,22 @@ export const PAGES = [
   // 手机接入 social 详情页随联系人页顶入口行整链撤除（作者令 2026-10-31
   // 22:55 撤除批，仅手机端；桌面 #social-btn/#social-overlay 不动）。
   { id: 'conversation', tabId: null,   icon: 'message-circle',  zh: '会话',   en: 'Conversation' },
-  // 手机顶栏批（2026-10-31 作者令④）：个人主页 + 层级配置子页（苹果层级式
-  // 点进下一层铺满屏、左上返回 —— 复用既有详情页壳，返回钮/pop 语义零新建）。
-  // 内容面 = 账号读数（/api/neblink/status 的 id_token claims + /api/users/search 自证探针，
-  // 单点 = settingsIdentity.js getIdentityReadout）。**件四（2026-11-02 作者令）起配置/
-  // 编辑动作不再跳官网**，而是就地开 App 内个人资料面
-  // （settingsIdentity.js openProfileFace）—— 四个 me 子页零外链。
-  { id: 'me',        tabId: null, icon: 'user-round', zh: '个人主页', en: 'Profile' },
-  { id: 'me-user',   tabId: null, icon: 'user-round', zh: '用户名',   en: 'Username' },
-  { id: 'me-avatar', tabId: null, icon: 'image',      zh: '头像',     en: 'Avatar' },
-  { id: 'me-bind',   tabId: null, icon: 'link',       zh: '绑定',     en: 'Bindings' },
+  // 手机顶栏批（2026-10-31 作者令④）：个人主页。内容面 = 账号读数
+  // （/api/neblink/status 的 id_token claims + /api/users/search 自证探针，
+  // 单点 = settingsIdentity.js getIdentityReadout）+ 官网编辑指引 + 设备清单
+  // （单点 = profileDevices.js，含逐设备独立退出）。
+  // 🔴 profile-multidevice 批（单页资料）：`me-user` / `me-avatar` / `me-bind`
+  // 三个层级子页**整族退役** —— 它们只读同一份读数、各带一句「接口暂无」，
+  // 加上「编辑资料」空动作 = 四条通往同一张纸的路。本页成为唯一资料页。
+  { id: 'me',        tabId: null, icon: 'user-round', zh: '个人资料', en: 'Profile' },
   // 弹窗退场批③（作者令「不再有展开式配置：点配置项进下一层级铺满屏、左上
   // 返回」）：设置页三处 chevron 折叠体的层级子页——内容面 = 收编桌面
   // .settings-collapse-body 节点（settingsSub.js 锚点惯例，桌面零改动）。
   ...SETTINGS_SUB.map((d) => ({ id: d.id, tabId: /** @type {string | null} */ (null), icon: 'chevron-right', zh: d.zh, en: d.en })),
 ];
-/** 个人主页层级页 id 集（buildSection 面内容分派；meFace.js 单点实现）。 */
-const ME_PAGE_IDS = new Set(['me', 'me-user', 'me-avatar', 'me-bind']);
+/** 个人资料页 id 集（buildSection 面内容分派；meFace.js 单点实现）。
+ *  profile-multidevice 批：单页 ⇒ 只剩 `me`（三个子页整族退役，见 PAGES 注）。 */
+const ME_PAGE_IDS = new Set(['me']);
 const PAGE_BY_ID = new Map(PAGES.map((p) => [p.id, p]));
 /** 面板页 id 集（项目/图谱/插件——承载桌面画板 pane 的页）。栈顶 = 面板页时
  *  canvas-open 上升沿/切卡事件是面板开页签的副产物，自动弹 canvas 页会把刚

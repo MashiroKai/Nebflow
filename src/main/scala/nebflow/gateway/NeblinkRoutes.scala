@@ -522,6 +522,69 @@ private[gateway] object NeblinkRoutes:
           AuthRoutes.performLocalLogout(ms) *> Ok(ApiJson.ok)
         }
 
+      // 设备域退出（profile-multidevice 批）：个人资料页设备清单里「逐设备独立退出」
+      // 的**唯一**后端面。前端 profileDevices.js 对**除本机外**的每一行按该行自己的
+      // `deviceId` 调本端点（本机行走上面那条既有登出链 —— 它额外承担 provider RP
+      // 登出，见 openEndSessionHandoff 的注记）。
+      //
+      // 判据（授权 + 隔离，本批红线）：
+      //   · 授权 = `withNeblink`（与 /neblink/logout 同一凭据门）—— 控制台未带令牌
+      //     不可达，侧效应面不漏给匿名。
+      //   · 隔离 = 路径段 `deviceId` **必查花名册**：只认①本机 id（`ms.identity`），
+      //     ②`ms.peers` 里真实存在的对端。其余一律 404 ⇒ 本端点**不是**任意 id 透传
+      //     口（没有「猜一个 id 就去戳别的东西」的面）。
+      //   · 设备域 = 本机腿只调 `performLocalLogout`（与 /neblink/logout **同一实现**，
+      //     禁第二份拆除逻辑）：它清的是**本机那一份**设备凭据 + 本机 relay/presence，
+      //     对端凭据各自存在于对端设备的凭据文件里，本进程无从触及 —— 这就是「退出
+      //     一台不动另一台」的机制依据，不是靠前端不写代码。
+      //
+      // 对端腿的显式拒绝（非目标，见 openspec/changes/profile-multidevice/proposal.md
+      // 的 non-goals）：跨设备远端凭据拆除需要收端配合的命令通道（「远端更新」那条
+      // 通道已按作者令退役），本批不重建。故对已配对设备返回 **409 +
+      // `code:"remote-sign-out-unsupported"`** —— 诚实读数，禁 200 假装已退出
+      // （本仓禁止的「静默不达」缺陷族）。
+      case req @ POST -> Root / "neblink" / "devices" / deviceId / "sign-out" =>
+        withNeblink(req) { ms =>
+          for
+            id <- ms.identity
+            peersList <- ms.peers
+            selfId = id.deviceId
+            isPeer = peersList.exists(_.deviceId == deviceId)
+            resp <-
+              if deviceId == selfId then
+                AuthRoutes.performLocalLogout(ms) *> Ok(
+                  Json.obj(
+                    "ok" -> true.asJson,
+                    "deviceId" -> selfId.asJson,
+                    "scope" -> "local".asJson
+                  )
+                )
+              else if isPeer then
+                IO.pure(
+                  Conflict(
+                    Json.obj(
+                      "ok" -> false.asJson,
+                      "deviceId" -> deviceId.asJson,
+                      "scope" -> "remote".asJson,
+                      "code" -> "remote-sign-out-unsupported".asJson,
+                      "error" -> "remote device sign-out is not supported".asJson
+                    )
+                  )
+                )
+              else
+                IO.pure(
+                  NotFound(
+                    Json.obj(
+                      "ok" -> false.asJson,
+                      "deviceId" -> deviceId.asJson,
+                      "code" -> "unknown-device".asJson,
+                      "error" -> "unknown device".asJson
+                    )
+                  )
+                )
+          yield resp
+        }
+
       // RP-initiated logout (OIDC Session Management, RP-logout fix
       // 2026-09-06; POST + gate since the 2026-09-20 closeout batch) — local
       // teardown FIRST (same steps as POST /neblink/logout above, credential read

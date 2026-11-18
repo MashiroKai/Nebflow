@@ -353,3 +353,74 @@
   body.mobile-layer .set-row-hint { font-size: var(--mfs-min); }
   body.mobile-layer .set-btn { height: var(--mtap); }
 }
+
+/* ── 设备清单行（profile-multidevice 批）──────────────────────────────────
+   共享标记：桌面个人资料面（#settings-profile-overlay）与手机个人资料页
+   （mobile/meFace.js）逐字同一份 `.pd-*` 结构，避免两套列表在两条 CSS 里漂移。
+   材质/颜色全部消费既有 token（零裸色值、零新灰底 —— 行分隔线走
+   --color-frame-border-light，与 .sp-field 同一条）。 */
+.pd-section-label {
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+}
+.pd-devices { display: flex; flex-direction: column; min-width: 0; }
+.pd-device-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) 0;
+  border-top: 1px solid var(--color-frame-border-light);
+  min-width: 0;
+}
+.pd-device-row:first-child { border-top: none; }
+.pd-device-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-muted);
+}
+.pd-device-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pd-device-name {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-width: 0;
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+}
+.pd-device-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 本机标记：纯文字 + 既有边框色描边（零新色、零灰底）。 */
+.pd-device-badge {
+  flex: none;
+  padding: 0 var(--ds-space-1);
+  border: 1px solid var(--color-frame-input-border);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+}
+.pd-device-meta {
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pd-device-signout { flex: none; }
+.pd-device-notice,
+.pd-device-empty {
+  margin: 0;
+  padding: var(--ds-space-2) 0;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+}

@@ -45,8 +45,9 @@ import { getNeblinkState, avatarViewState, paintAvatarSlot, noteAvatarFailure, o
 import { searchUser } from './friendsApi.js';
 import { escapeHtml, createIconsIn } from './utils.js';
 import { t } from './i18n.js';
-import { brand } from './brand.js';
+import { brand, getProfileUrl } from './brand.js';
 import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
+import { deviceListHTML, paintDeviceList, bindDeviceList, ensureDeviceListLive, getDeviceList } from './profileDevices.js';
 
 // ── 自身身份读数（用户名 / userId）─────────────────────────────────────────
 // 缓存键 = 当前账号 email（登录态改变或 email 改变才重探）。结论只有两种：
@@ -116,6 +117,24 @@ function ensureSelfProbe() {
     };
     notify();
   });
+}
+
+/**
+ * 官网账号页的**纯文本**读数（profile-multidevice 批：编辑落点在官网，本面只给
+ * 指引）。刻意**不**产 `<a href>`、不 `window.open` —— 上一批已裁定「零官网出口」
+ * 的理由（跳官网不能替代编辑，只造成「看着能改其实没改」的假面）依然成立；本批
+ * 变的是**说清楚去哪儿改**，不是把出口装回来。同一条纪律由既有验收断言
+ * `tests/profile-settings-batch-acceptance.spec.mjs:392`（文档内零指向官网账号页的
+ * `<a href>`）机械守住。
+ * @returns {string} 例 `mystand.space/profile`
+ */
+function profileUrlText() {
+  try {
+    const u = new URL(getProfileUrl());
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return String(brand.domain || '');
+  }
 }
 
 /** 未读到的值一律显「未知」（禁空白禁占位假值）。 */
@@ -363,7 +382,10 @@ function ensureProfileFace() {
         </div>`).join('')}
       </div>
       <p class="sp-note" role="note">${escapeHtml(t('settings.profileReadonlyNote'))}</p>
+      <p class="sp-note" role="note">${escapeHtml(t('profile.editOnWebsite', { where: profileUrlText() }))}</p>
       <p class="sp-note sp-note-warn" role="note">${escapeHtml(t('settings.accountServiceUnavailable'))}</p>
+      <div class="pd-section-label" role="heading" aria-level="3">${escapeHtml(t('profile.deviceSection'))}</div>
+      <div class="sp-fields" id="settings-profile-devices">${deviceListHTML()}</div>
     </div>`;
   document.body.appendChild(overlay);
 
@@ -375,6 +397,8 @@ function ensureProfileFace() {
     if (e.key === 'Escape' && !overlay.hidden) close();
   });
   mobileSheetBack(overlay, close);
+  bindDeviceList(overlay, paintProfileFace); // 逐设备退出（本机行 = 既有唯一登出链）
+  ensureDeviceListLive(overlay);
   if (typeof lucide !== 'undefined') createIconsIn(overlay);
   profileOverlay = overlay;
   return overlay;
@@ -431,6 +455,21 @@ function paintProfileFace() {
   setField('email', orUnknown(id.email));
   setField('github', t('settings.identityUnknown'), true);
   setField('google', t('settings.identityUnknown'), true);
+
+  // 设备清单（profile-multidevice 批）：设备集合变了才重建行（重建会吃掉正在进行的
+  // 退出动作的禁用态），文本读数每次拍都刷。
+  const devHost = overlay.querySelector('#settings-profile-devices');
+  if (devHost instanceof HTMLElement) {
+    const list = getDeviceList();
+    const wanted = [list.current ? list.current.id : '', ...list.peers.map((p) => p.id)]
+      .filter(Boolean).join('|');
+    if (devHost.dataset.pdIds !== wanted) {
+      devHost.innerHTML = deviceListHTML();
+      devHost.dataset.pdIds = wanted;
+      bindDeviceList(devHost, paintProfileFace);
+    }
+    paintDeviceList(devHost);
+  }
 }
 
 /** 打开 App 内个人资料面（唯一入口：身份卡胶囊 / activityBar 账号菜单 / 手机 me 页）。 */

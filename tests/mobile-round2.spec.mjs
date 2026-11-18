@@ -126,7 +126,7 @@ for (const engine of engines) {
         await page.locator('#settings-content').evaluate(el => el.scrollTo(0, el.scrollHeight));
         // Leftward swipe from the right edge, retaining left-edge rightward back too.
         const returns = [];
-        for (const id of ['settings', 'me', 'me-user', 'me-avatar', 'me-bind', 'plugins', 'settings-stt', 'settings-ttl']) {
+        for (const id of ['settings', 'me', 'plugins', 'settings-stt', 'settings-ttl']) {
           await page.evaluate(async id => { const nav = await import('/js/mobile/navController.js'); nav.dockTo('workbench'); nav.pushPage(id); }, id);
           await settle(page);
           await drag(width - 5, width - 155, 360);
@@ -148,13 +148,13 @@ for (const engine of engines) {
         }
         // Capture a trusted cancellation after a committed-distance touch drag.
         if (engine === 'chromium') {
-          await page.evaluate(async () => { const n = await import('/js/mobile/navController.js'); n.dockTo('workbench'); n.pushPage('me-user'); });
+          await page.evaluate(async () => { const n = await import('/js/mobile/navController.js'); n.dockTo('workbench'); n.pushPage('me'); });
           const cdp = await context.newCDPSession(page);
           await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: width - 5, y: 360 }] });
           await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: width - 155, y: 360 }] });
           await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
           await settle(page);
-          check(await page.evaluate(() => window.__nfMobileNav.top) === 'me-user', '07 cancelled native edge gesture does not return');
+          check(await page.evaluate(() => window.__nfMobileNav.top) === 'me', '07 cancelled native edge gesture does not return');
           await cdp.detach();
         }
         await shot('07-returned');
@@ -174,12 +174,12 @@ for (const engine of engines) {
         row.readings.stacks = [];
         for (const count of [2, 3, 5]) {
           await page.evaluate(async count => {
-            const nav = await import('/js/mobile/navController.js'); nav.dockTo('workbench'); nav.pushPage('me-user');
+            const nav = await import('/js/mobile/navController.js'); nav.dockTo('workbench'); nav.pushPage('me');
             const { buildMediaStack } = await import('/js/popArtifacts.js');
             document.querySelector('#round2-stack')?.remove();
             const stack = buildMediaStack(Array.from({ length: count }, (_, i) => ({ kind: 'image', name: `Fixture ${i + 1}`, src: 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="220" height="280"><rect width="220" height="280" fill="${['#426b91', '#536f42', '#8b6251', '#655a89', '#417b79'][i]}"/><text x="30" y="140" fill="white" font-size="30">Image ${i + 1}</text></svg>`) })), { onOpen: () => {} });
             stack.id = 'round2-stack';
-            const body = document.querySelector('[data-page="me-user"] .mobile-page-body');
+            const body = document.querySelector('[data-page="me"] .mobile-page-body');
             body.appendChild(stack); stack.style.margin = '80px 0';
             body.scrollTop = 0;
           }, count);
@@ -213,7 +213,7 @@ for (const engine of engines) {
           await view.scrollIntoViewIfNeeded();
           const lowerStatic = before.layers.slice(1, Math.min(3, count)).every((l, i) => JSON.stringify(l.rect) === JSON.stringify(middle.layers[i + 1].rect));
           check(lowerStatic && JSON.stringify(before.layers[0].rect) !== JSON.stringify(middle.layers[0].rect) && middle.parent === 'none', `08 ${count} cards only top moves during drag`);
-          check(after.index === 1 && after.page === 'me-user', `08 ${count} cards swipe advances without returning`);
+          check(after.index === 1 && after.page === 'me', `08 ${count} cards swipe advances without returning`);
           row.readings.stacks.push({ count, before, middle, outgoing, animations, after, lowerStatic });
           await drag(width - 5, width - 155, box.y + box.height / 2);
           check(await page.evaluate(() => window.__nfMobileNav.top) === 'workbench', `08 ${count} cards right edge returns not switches`);

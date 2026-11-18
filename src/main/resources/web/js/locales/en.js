@@ -3507,4 +3507,23 @@ export default {
   'schedCard.errGone': 'Entry no longer exists — change not saved',
   'schedCard.errEngine': 'Engine rejected: {detail}',
   'schedCard.errGeneric': 'Write failed — change not saved',
+  // ── profile-multidevice batch (single-page profile / read-only identity / device list) ──
+  'profile.deviceSection': 'Devices',
+  'profile.deviceCurrent': 'This device',
+  'profile.deviceSignOut': 'Sign out',
+  'profile.deviceSignOutCurrent': 'Sign out on this device',
+  'profile.deviceOnline': 'Online',
+  'profile.deviceOffline': 'Offline',
+  'profile.deviceLastSeen': 'Last active {when}',
+  'profile.deviceSeenNow': 'just now',
+  'profile.deviceSeenMinutes': '{n} min ago',
+  'profile.deviceSeenHours': '{n} h ago',
+  'profile.deviceSeenDays': '{n} d ago',
+  'profile.deviceNone': 'The account service returned no device list.',
+  'profile.deviceSignOutQueued': 'Sign-out request sent to that device; whether it takes effect is decided by that device own session.',
+  'profile.deviceSignOutFailed': 'The sign-out request was not delivered; that device session is unchanged.',
+  'profile.deviceSignOutRemoteUnsupported': 'That device keeps its own credential locally, so this device cannot sign it out - sign out on that device itself.',
+  'profile.editOnWebsite': 'Identity fields are read-only readings; to edit them go to the website account page {where}.',
+  'profile.signedIn': 'Signed in',
 };
+
