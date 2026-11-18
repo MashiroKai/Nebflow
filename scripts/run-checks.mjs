@@ -50,6 +50,11 @@ export const CHECKS = [
   nodeCheck('freeze-replay', 'check-freeze-replay-silence'),
   nodeCheck('canvas-hint', 'check-canvas-hint-tokens'),
   nodeCheck('canvas-buttons', 'check-canvas-buttons'),
+  // canvas 保存失败通知批（2026-11-18 P0「老是出现 canvas 保存失败的通知」）：
+  // 静态腿钉「跨刷新去重 / 正文逐字 / 可执行下一步 / 可关闭」四条声明不变量。
+  nodeCheck('canvas-save-notice', 'check-canvas-save-notice'),
+  { name: 'canvas-save-failure-dedup', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/canvas-save-failure-dedup.spec.mjs', '--workers=1'] },
   { name: 'canvas-button-geom', profiles: ['frontend'], timeoutMs: 180_000,
     argv: [process.execPath, 'tests/canvas-button-unify-geom.spec.mjs'] },
   { name: 'canvas-button-diff', profiles: ['frontend'], timeoutMs: 240_000,
