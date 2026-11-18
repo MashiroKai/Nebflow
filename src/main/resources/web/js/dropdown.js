@@ -214,6 +214,29 @@ export function syncSelectFace(select) {
   if (al) trigger.setAttribute('aria-label', al);
 }
 
+/**
+ * 「同一字段只有一份控件」不变量的**元素级拥有**（inline）：
+ *   包裹层 inline-grid 栈 + 触发件与原生 select 同格叠放 + 原生件不可见/指针穿透。
+ * ① 为什么 inline：这条不变量此前**只写在 css/dropdown.css 里**（.nf-select 网格栈
+ *    + .nf-select-native 的隐藏），而收编动作写在 js/dropdown.js 里 —— 两份资产两条
+ *    生命周期（分别缓存 / 分别更新 / 半下发）。任一侧缺席时收编照旧发生（trigger 的
+ *    脸来自 css/inputSurface.css 的 .nf-field--select，是**另一个**文件，照旧生效），
+ *    栈与隐藏却一起失效 ⇒ 同字段两个控件。
+ * ② 值必须与 css/dropdown.css 的同名声明**逐值一致**（D2 = scripts/
+ *    check-dropdown-single-control.mjs 对账两处，禁分叉）。
+ * ③ 只写「控件计数」相关的这几条（栈 + 隐藏）；宽/内距/字族等几何仍归样式单源
+ *    （cfg-language 那些站点 inline width:auto 不受影响）。
+ */
+function ownStack(wrap, trigger, select) {
+  wrap.style.display = 'inline-grid';
+  wrap.style.verticalAlign = 'middle';
+  wrap.style.maxWidth = '100%';
+  trigger.style.gridArea = '1 / 1';
+  select.style.gridArea = '1 / 1';
+  select.style.opacity = '0';
+  select.style.pointerEvents = 'none';
+}
+
 function enhance(select) {
   if (select.dataset[FLAG]) return;
   // 真列表框与当场不可见的不收编（后者由属性突变再触发）。
@@ -244,18 +267,15 @@ function enhance(select) {
   // 键盘位由 trigger 接（可见焦点 = 标准文件给 .nf-field 的 :focus-visible 环）。
   select.tabIndex = -1;
   select.classList.add(NATIVE_CLASS);
-  // 🔴 「同字段两个控件」修复批（2026-11-18 作者报障「电脑端的下拉选框，怎么有重复」）：
-  // 被替换的原生 select 的**不可见**从「只由 css/dropdown.css 一条声明负责」改成
-  // **本组件自己拥有**（inline）。断因：JS 与 CSS 是分别缓存/分别更新的两份资产
-  // （SW 缓存、重启期间逐条 cherry-pick 的落盘即属此类），任一侧陈旧或半更新时，
-  // 替换掉的旧控件会重新可见 ⇒ 同一个字段同屏出现两个控件（统一 trigger + 原生
-  // select）。inline 声明优先级高于任何非 important 的表内声明 ⇒ 只要收编发生，
-  // 旧控件就没有第二条可见路径，与样式资产状态无关。
-  // 契约不变：opacity:0 仍算可操作/可见（selectOption / inputValue / 站点 .value
-  // 读写全部照旧）；values 与 css/dropdown.css 的同名声明**必须逐值一致**
-  // （scripts/check-dropdown-single-control.mjs 对账两处，避免分叉）。
-  select.style.opacity = '0';
-  select.style.pointerEvents = 'none';
+  // 🔴 「同字段两个控件」根因修复批（2026-11-18 作者实拍报障「电脑端的下拉选框，
+  // 怎么有重复」+ 两张现网截图）：作者那两张实拍里，**栈与隐藏一起失效**——
+  // 设置页模型卡 = 胶囊按钮在上、通栏原生 select（同值 + 右侧大箭头）在下；
+  // delegate 弹窗头 = 胶囊与原生件的「字 + 箭头」并排。这正是「脚本腿在、样式腿
+  // 不在」的形态（trigger 的脸由 inputSurface.css 供，与 dropdown.css 无关）。
+  // ⇒ 把这条不变量收归组件自己拥有（ownStack，见其文档）；契约不变：原生 select
+  // 仍是唯一状态载体（.value 读写 / change / Playwright selectOption 全部照旧，
+  // opacity:0 仍算可见可操作）。
+  ownStack(wrap, trigger, select);
 
   wrap.appendChild(trigger);
   wrap.appendChild(select);
