@@ -111,7 +111,7 @@ async function bootPage(browserType, nfFileScript) {
   });
   const ticketMock = await installTicketMock(page);
   // configData 契约（main.js）：`msg.config` = nebflow.json 原文的**字符串**。
-  const cfgFrame = { type: 'configData', config: JSON.stringify({ features: {} }) };
+  const cfgFrame = { type: 'configData', onboarding: 'done', config: JSON.stringify({ features: {} }) };
   await page.routeWebSocket(/\/ws/, (ws) => {
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }

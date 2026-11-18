@@ -499,6 +499,7 @@ function SCRIPT() {
     },
     {
       id: 'outtone', seg: t('onboarding.seg.expect'), scope: 'user', kind: 'choice',
+      lead: [],
       q: t('ob2.q.outtone'),
       options: [
         { label: t('ob2.opt.outtone.direct'), desc: t('ob2.opt.outtone.directDesc') },

@@ -42,6 +42,11 @@ const ruleBody = (hay, selectorSrc) => {
   return m ? m[1] : null;
 };
 
+const questionScript = ob.slice(ob.indexOf('function SCRIPT() {'), ob.indexOf('// ── Answer collection'));
+const questionEntries = [...questionScript.matchAll(/id: '([^']+)'[^\n]*kind: '[^']+'[\s\S]*?(?=\n    \},)/g)];
+assert('SCRIPT.lead', 'Every onboarding question supplies a lead array',
+  questionEntries.length > 0 && questionEntries.every(entry => /\blead:\s*\[/.test(entry[0])));
+
 console.log('点 3 · 「最近半年…」整题移除（无悬空引用）');
 for (const [tag, src] of [['zh', zh], ['en', en]]) {
   assert(`P3.${tag}a`, `locales/${tag}：ob2.q.focus / lead / ph / label 四键整键删除`,
