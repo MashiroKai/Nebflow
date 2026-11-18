@@ -164,9 +164,40 @@ need(fieldCap.length === 1 && fieldCap[0] === field[0],
   `M11 .fm-input 自适应上限第二处定义：` +
   fieldCap.filter(b => b !== field[0]).map(b => `css/${b.file}:${b.line}`).join(', '));
 
+// ── M12 上下文占位文案单源（composer 统一批 2026-11-18）────────────────────
+// 判据：`composerPlaceholder` 只许在 js/input/composer.js 定义一次；两个消费面
+// （主会话 js/input.js、消息面 js/messages/fmComposer.js）都必须经它取文案，
+// 且两面都不得再持有「直接写 input.placeholder = t(...)」的分支副本。
+const JS_ROOT = `${ROOT}src/main/resources/web/js/`;
+/** @param {string} dir @param {string[]} acc */
+function walkJs(dir, acc = []) {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = `${dir}${e.name}`;
+    if (e.isDirectory()) walkJs(`${p}/`, acc);
+    else if (e.name.endsWith('.js')) acc.push(p.slice(JS_ROOT.length));
+  }
+  return acc;
+}
+const jsFiles = walkJs(JS_ROOT);
+const phDefs = jsFiles.filter(f => /export function composerPlaceholder\s*\(/.test(readFileSync(`${JS_ROOT}${f}`, 'utf8')));
+need(phDefs.length === 1 && phDefs[0] === 'input/composer.js',
+  `M12 composerPlaceholder 定义 ${phDefs.length} 处（应只在 js/input/composer.js 一处）：${phDefs.join(', ')}`);
+const composerSrc = read('input/composer.js');
+for (const tok of ['input.ph.drag', 'input.ph.listening', 'input.refOnlyHint', 'input.ph.attachments']) {
+  need(composerSrc.includes(tok), `M12 input/composer.js 的 composerPlaceholder 缺 ${tok} 分支（判据未收全）`);
+}
+const inputSrc = read('input.js');
+need(/composerPlaceholder\s*\(/.test(inputSrc), 'M12 js/input.js 未经 composerPlaceholder 取文案');
+need(!/input\.placeholder\s*=\s*t\(/.test(inputSrc), 'M12 js/input.js 仍有直写 input.placeholder = t(...)（第二份判据）');
+const fmSrc = read('messages/fmComposer.js');
+need(/composerPlaceholder\s*\(/.test(fmSrc), 'M12 js/messages/fmComposer.js 未经 composerPlaceholder 取文案');
+need(/'messages\.inputPlaceholder'/.test(fmSrc), 'M12 js/messages/fmComposer.js 未声明自己的 baseToken');
+need(!/input\.placeholder\s*=\s*t\(/.test(fmSrc), 'M12 js/messages/fmComposer.js 仍有直写 input.placeholder = t(...)（第二份判据）');
+need(/input\.placeholder = opts\.placeholder/.test(read('chatUi.js')), 'M12 js/chatUi.js 工厂未从调用方接收 placeholder（注入面应单点）');
+
 if (errors.length) {
   console.error(`check-message-item-unify FAILED (${errors.length}):`);
   errors.forEach(e => console.error('  ✗ ' + e));
   process.exit(1);
 }
-console.log('check-message-item-unify OK (M1–M5 JS 四类单份 + M6–M11 CSS 单定义：气泡/附件区/叠卡与通用 footer/composer 外壳与内件)');
+console.log('check-message-item-unify OK (M1–M5 JS 四类单份 + M6–M11 CSS 单定义 + M12 上下文占位文案单源：气泡/附件区/叠卡与通用 footer/composer 外壳与内件/placeholder)');

@@ -37,6 +37,7 @@
 
 import { bindImeGuard, isImeComposing, commitEnter } from '../imeGuard.js';
 import { sendWs } from '../ws.js';
+import { t } from '../i18n.js';
 
 // Re-export the composition predicates so consumers take the whole input
 // contract from ONE module face (语义权威仍在 imeGuard.js——本包只转发，不复制).
@@ -155,4 +156,62 @@ export function requestTurnInterrupt(sessionId) {
 export function growComposerInput(input, max = 200) {
   if (!input) return;
   input.style.height = Math.min(input.scrollHeight, max) + 'px';
+}
+
+/**
+ * ⑤ 上下文占位文案（contextual placeholder）唯一判据 —— composer 统一批
+ * （2026-11-18 作者令「主会话与消息联系人 composer 真正统一……含 placeholder」）。
+ *
+ * Why this exists: before this batch the primary window resolved its placeholder
+ * in TWO copies inside `input.js` (`updateInputPlaceholder` in the per-view
+ * scope + the voice scope's `refreshPlaceholder`, plus three direct writes on
+ * the voice/drag paths), while the fm three-face composer carried a single
+ * hard-coded `messages.inputPlaceholder` and never consulted any judgement at
+ * all. The branch order now lives HERE once; every surface passes its own
+ * context and takes the string back (主会话 = input.js 四处调用点，
+ * 消息面 = messages/fmComposer.js).
+ *
+ * Branch order (frozen by the primary window's shipped behavior; move-only):
+ *   1. dragActive   — voice-bubble drag in flight  → `input.ph.drag`
+ *   2. voiceActive  — dictation open               → `input.ph.listening`
+ *   3. refOnly      — pure-reference frame (send gated, #531 author ruling
+ *                     2026-10-18: the gate copy sits in the input's own
+ *                     placeholder slot, never in a separate hint row)
+ *                                                  → `input.refOnlyHint`
+ *   4. attachments  — count from the RENDERED strip (>0) → mobile layer keeps
+ *                     the surface's base line (`input.placeholder`, author
+ *                     ruling 2026-11-02: mobile attachment strip is icon-only
+ *                     so the text never names files); desktop keeps the
+ *                     counted `input.ph.attachments` line.
+ *   5. otherwise    — the surface's declared base token (`baseToken`).
+ *
+ * `baseToken` is the ONE per-surface input: the primary window declares
+ * `'input.placeholder'`, the fm faces declare `'messages.inputPlaceholder'`
+ * (both entries live in the same locale tables). Everything else — the
+ * mobile-layer test included — is identical for every surface, so two surfaces
+ * given the same context vector produce the same string out of this one
+ * function (判据 = 同源，不是两套并行文案).
+ *
+ * @param {{ baseToken?: string, voiceActive?: boolean, refOnly?: boolean,
+ *           attachments?: number, dragActive?: boolean }} [ctx]
+ * @returns {string}
+ */
+export function composerPlaceholder(ctx = {}) {
+  const {
+    baseToken = 'input.placeholder',
+    voiceActive = false,
+    refOnly = false,
+    attachments = 0,
+    dragActive = false,
+  } = ctx;
+  if (dragActive) return t('input.ph.drag');
+  if (voiceActive) return t('input.ph.listening');
+  if (refOnly) return t('input.refOnlyHint');
+  if (attachments > 0) {
+    const mobile = typeof document !== 'undefined'
+      && !!document.body && document.body.classList.contains('mobile-layer');
+    if (mobile) return t(baseToken);
+    return t('input.ph.attachments').replace('%n', String(attachments));
+  }
+  return t(baseToken);
 }

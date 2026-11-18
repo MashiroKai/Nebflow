@@ -32,7 +32,7 @@ import { startDictation, stopDictation, sttEnabled } from '../voiceEngine.js';
 // 自带注册 IME 守卫与 Enter 判定 —— `bindComposerKeys` 就是主会话 `input.js` 走的
 // 那一份契约（组字前置短路 → cascade → commitEnter），Shift+Enter 交还浏览器默认
 // 换行（textarea），本文件只留 `onSend` 接线；autosize 同走 `growComposerInput`。
-import { bindComposerKeys, growComposerInput } from '../input/composer.js';
+import { bindComposerKeys, growComposerInput, composerPlaceholder } from '../input/composer.js';
 
 /**
  * 装配一条 fm 输入条（三面同款）。返回引用给宿主（messages.js）挂状态收敛。
@@ -73,7 +73,7 @@ export function buildFmComposer(opts) {
   const { bar, input, micBtn, sendBtn, attachBtn, attachInput } = composer({
     variant: 'compact',
     micLabel: t('messages.voiceInput'),
-    placeholder: t('messages.inputPlaceholder'),
+    placeholder: composerPlaceholder({ baseToken: 'messages.inputPlaceholder' }),
     sendLabel: t('messages.send'),
     attachLabel: t('dropbox.attachFile'),
     canAttach: opts.canAttach === true,
@@ -92,10 +92,21 @@ export function buildFmComposer(opts) {
   let voiceAnchor = 0;      // 当前语音段插入锚点（字符偏移）
   let voiceInterimLen = 0;  // 当前占位 interim 文本长度
   // micBtn 由工厂装配（形态/属性/字形单源在 chatUi.js）；反馈态类在此切换。
+  // 占位文案 = 全站单点 composerPlaceholder（composer 统一批 2026-11-18）：本面
+  // 声明自己的 baseToken（`messages.inputPlaceholder`），语音/引用帧/附件/通用四条
+  // 分支的**判据**与主会话共用同一份实现（含 mobile-layer 附件恒文案档）。本面
+  // 无附件条与纯引用帧闸 ⇒ 两个上下文参数恒为默认；语音态随麦克风态机刷新。
+  const refreshPlaceholder = () => {
+    input.placeholder = composerPlaceholder({
+      baseToken: 'messages.inputPlaceholder',
+      voiceActive,
+    });
+  };
   const setMicState = (s) => {
     micBtn.classList.toggle('recording', s === 'listening' || s === 'speaking');
     micBtn.classList.toggle('processing', s === 'processing');
     micBtn.setAttribute('aria-pressed', String(s === 'listening' || s === 'speaking'));
+    refreshPlaceholder();
   };
   const stopVoice = () => {
     if (!voiceActive) return;
