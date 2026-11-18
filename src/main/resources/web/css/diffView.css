@@ -179,7 +179,7 @@
   overflow: hidden;
   padding: var(--nf-dv-top-band) 0 0;
 }
-.fcv-dvhost { flex: 1 1 auto; min-height: 0; min-width: 0; }
+.fcv-dvhost { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
 /* ── 粘顶文件头标题胶囊（2026-10-22 作者三令批）────────────────────────────
    作者令①居中 ②全量 frosted token ③动画节奏放慢（慢一点/自然一点/流畅一点，
    参考 0.3-0.45s + 温和缓动）。旧全宽实条（border-bottom 分隔线 + color-bg 底
@@ -767,13 +767,14 @@ span.nf-rcpt-note { cursor: default; }
 
    本节与 css/stand-tokens.css 的 `--nf-dv-*` 族一起，是报告 D1–D9 的样式落点：
    · 几何/触控走 token（D6 44px / D7 13px·1.55 / D4 56px 让位带）；
-   · 色值零字面量（全部引用 `--nf-dv-*` 与既有 --ds-*/--color-* token 族）；
+   · 色值零字面量（全部引用既有 `--nf-dv-*` 与 `--ds-*` / `--color-*` token 族）；
    · 覆盖 @codemirror/merge 自带逐块按钮的绝对定位于铺排（改壳为行内 44px 带，
      D4/D6 的「可点面被浮钮压住 / 目标 <44px」就在这一处消掉）。 */
 .nf-dv {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1 1 auto;
+  height: auto;
   min-height: 0;
   min-width: 0;
   background: var(--nf-dv-bg);
@@ -847,6 +848,6 @@ span.nf-rcpt-note { cursor: default; }
   min-height: 0;
   min-width: 0;
 }
-.nf-ar-editor { flex: 1 1 auto; min-height: 0; min-width: 0; }
+.nf-ar-editor { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
 /* waiting 面（防双发）：逐块钮整组禁用（组件已把按钮改壳为 ≥44px 元素）。 */
 .nf-dv[data-waiting='1'] .nf-dv-chunkbtn { opacity: 0.5; pointer-events: none; }

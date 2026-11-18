@@ -207,5 +207,8 @@ export async function mountDiff(host, opts = {}) {
   // 挂载后若已被后续 mount 取代，立即拆掉（切换文件竞态）。
   if (mountGen.get(host) !== gen) destroy();
 
-  return { view, destroy, setWrap, getWrap: () => wrap };
+  const api = { view, destroy, setWrap, getWrap: () => wrap };
+  // 测试/取证接缝：把组件 api 挂在编辑宿主上（规格与截图脚本读取虚拟化读数）。
+  editorHost.__nfDiffApi = api;
+  return api;
 }

@@ -96,6 +96,38 @@
     window.__resetChunkActions = () => { state.chunkActions = []; };
     window.__api = (which) => state.apis[which] || null;
 
+    /** D9 基准（性能读数取证）：按行数造统一差异载荷，计时「转换 + 挂载」与
+     *  挂载后的两连 rAF 帧间隔；返回文档行数 vs 已挂 DOM 行数（虚拟化读数）。 */
+    window.__benchDelegate = async (lines) => {
+      const host = document.createElement('div');
+      host.className = 'page';
+      document.getElementById('app').appendChild(host);
+      const rows = ['diff --git a/bench b/bench', 'index 111..222 100644', '--- a/bench', '+++ b/bench', `@@ -1,${lines} +1,${lines} @@`];
+      for (let i = 0; i < lines; i++) {
+        const k = i % 3;
+        rows.push((k === 0 ? '+' : k === 1 ? '-' : ' ') + ' line ' + i + ' lorem ipsum dolor sit amet');
+      }
+      const diffText = rows.join('\n');
+      const t0 = performance.now();
+      const api = await mountDiff(host, { diffText, mode: 'read' });
+      const mountMs = performance.now() - t0;
+      const gapMs = await new Promise((r) => {
+        const a = performance.now();
+        requestAnimationFrame(() => requestAnimationFrame(() => r(performance.now() - a)));
+      });
+      const out = {
+        lines,
+        mountMs: +mountMs.toFixed(1),
+        postGapMs: +gapMs.toFixed(1),
+        docLines: api.view.state.doc.lines,
+        mounted: host.querySelectorAll('.cm-line').length,
+        scrollHeight: host.querySelector('.cm-scroller').scrollHeight,
+      };
+      api.destroy();
+      host.remove();
+      return out;
+    };
+
     await mountDelegate();
     await mountReview();
     window.__ready = true;
