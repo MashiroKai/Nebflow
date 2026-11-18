@@ -27,6 +27,11 @@ export const CHECKS = [
     argv: [process.execPath, 'tests/chat-ui-computed.mjs'] },
   { name: 'mobile-canvas-hit-clearance', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-canvas-hit-clearance.spec.mjs'] },
+  // canvas 底部控件行「可见且可点」闸（作者报障 2026-11-18：左下两钮 + 中间三点被
+  // 手机 dock 整片盖住）。既有 mobile-canvas-hit-clearance 主动跳过不可点控件、
+  // 既有 mobile-canvas-toolbar-layout 长期红着没人当闸 ⇒ 这类缺陷在闸下不可见。
+  { name: 'canvas-controls-dock-clearance', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/canvas-controls-dock-clearance.spec.mjs'] },
   { name: 'mobile-decision-preview-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-decision-preview-occlusion.spec.mjs'] },
   { name: 'media-gallery', profiles: ['frontend'], timeoutMs: 120_000,

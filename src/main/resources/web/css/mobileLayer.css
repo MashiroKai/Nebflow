@@ -4789,7 +4789,27 @@ body.mobile-layer .sp-field {
 body.mobile-layer .mf-canvas-page {
   /* 小点条高单源（点条本体 height / 余量公式 / 中线配平三处共用）。 */
   --mf-dots-h: 26px;
-  /* 底部控件行几何单源 = 页面底缘起算：16 底缝 + 一枚 48 圆钮。 */
+  /* ── 底部控件行的真底缘（作者报障 2026-11-18 16:36 修复）─────────────────
+     报障逐字：「canvas 的左侧按钮和中间三个点都没了现在」。根因不在按钮自身
+     （今天那批 canvas 按钮统一只改 flatButtons/glass/split —— 改前/改后本行几何
+     逐值相同，见 tests/canvas-controls-dock-clearance.spec.mjs 的读数），而在
+     **这把底锚尺**：本页宿主是全视口高（.mobile-page = top:0/bottom:0 +
+     #mobile-pages::before 只在 dock 带区垫底），dock 是 fixed z200 的实体浮层压
+     在页底上 ⇒ 行内件写「bottom:16」的落点是**视口底**，不是**页内容底**。
+     实测 375×812（打桩真 DOM）：dock y750..804；左下两钮（引用 72/查找 16）
+     y748..796、三点条 y759..785 ⇒ 整条落进 dock 带区，被画在 dock 底下
+     （elementFromPoint 命中 `#mobile-dock .dock-key/dock-center`）= 看不见 + 点不到。
+     同排的右锚气泡钮（ask.css `body.mobile-layer .ask-fab`）一直好好的，正因为
+     它是唯一走「dock 高 + 底距 + safe」这把尺的同排件 —— 这也解释了作者为何只
+     报左下与中间（右侧无恙）。
+     底锚表达式逐字同 ask.css 那一条（两族自此同带共中线：cy 极差 ≤1px 由
+     tests/canvas-controls-dock-clearance.spec.mjs M4 断言）。改这里必须同步
+     ask.css 的 ask-fab 那一处（同一把尺，不许各写一份）。 */
+  --mf-row-bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + var(--ds-space-4));
+  /* 阅读面底缘让位（.canvas-md-scroll 的 bottom）仍按「16 底缝 + 一枚 48 圆钮」起算：
+     它的语义是「正文可滚到控件行之上」的**可滚余量**，与控件自身落位是两把尺
+     ——正文允许从浮件底下穿过（mobile-canvas-hit-clearance 的不变量），故不随
+     --mf-row-bottom 上移，避免把阅读区无谓收窄。 */
   --mf-ctrl-row: calc(16px + var(--mtap-lg, 48px));
 }
 body.mobile-layer .mf-dots {
@@ -4798,9 +4818,9 @@ body.mobile-layer .mf-dots {
   right: 0;
   width: max-content;
   margin-inline: auto;
-  /* 垂直中心 = 48 圆钮中心（bottom 16 + 48 的行内居中）：26 高与 48 差 22，
-     各让 11 ⇒ 点条底距 = 16 + 11 = 27。 */
-  bottom: calc(16px + (var(--mtap-lg, 48px) - var(--mf-dots-h, 26px)) / 2);
+  /* 垂直中心 = 同排 48 圆钮中心（底锚取 --mf-row-bottom 的同一把尺）：26 高与
+     48 差 22，各让 11 ⇒ 点条底距 = 行底锚 + 11。 */
+  bottom: calc(var(--mf-row-bottom) + (var(--mtap-lg, 48px) - var(--mf-dots-h, 26px)) / 2);
   z-index: 20;   /* 浮在文档区之上（同 DOM 序也在后，双保险） */
 }
 /* 居中腿刻意不走 transform（已知陷阱）：`.mf-dots.is-grip` 的长按放大要独占
@@ -4819,7 +4839,10 @@ body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-zoom-bar 
 }
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-ref-select,
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
-  bottom: var(--ds-space-4);
+  /* 底锚 = dock 之上的那把尺（--mf-row-bottom，几何单源见 .mf-canvas-page 块）：
+     写死 --ds-space-4（16）的旧档落在**视口底**、被 dock 胶囊整片盖住 ⇒ 不可见不可点
+     （作者报障 2026-11-18）。 */
+  bottom: var(--mf-row-bottom);
 }
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
   left: var(--ds-space-4);
