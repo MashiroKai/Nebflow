@@ -189,9 +189,15 @@
   align-items: center;
   gap: var(--ds-space-1);
   background: rgba(7,193,96,0.15);
-  /* Capsule + thin ring — the "oval ring" around the count */
+  /* Capsule + thin ring — the "oval ring" around the count.
+     dark-border-color 批（2026-11-18 作者令「只收敛第一项」）：指示环改走**语义彩边族**
+     单源（--nf-hairline-tint-green：通道 7 193 96 + 明暗两档 α 只在
+     css/stand-tokens.css 给一次）。改前这里的字面量 rgba(7,193,96,.35) 无暗档覆写，
+     暗档落在 #14171e 上被放大到 1.972 / ΔE00 28.831；现暗档 α .105 ⇒ 1.171 / 13.670
+     （色相保留：合成 h* 180.6°，距绿轴 0.6°）。亮档 α 仍是 .35，逐值不变。
+     纪律：本面零字面量（机检 B3/C4）。动画（.bg-dot 的 bg-pulse）与亮/灭、状态绑定不变。 */
   border-radius: var(--ds-radius-pill);
-  border: 1px solid rgba(7,193,96,0.35);
+  border: 1px solid var(--nf-hairline-tint-green);
   padding: var(--ds-space-half) var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   color: var(--color-primary);
@@ -223,9 +229,14 @@
      rgb(... / alpha) syntax; rgba(var(--sapphire), a) is INVALID and silently
      dropped (this is why the capsule looked "gone"). */
   background: rgb(var(--accent-agent-light) / 0.15);
-  /* Capsule + thin ring — the "oval ring" around the count */
+  /* Capsule + thin ring — the "oval ring" around the count.
+     dark-border-color 批：指示环改走语义彩边族单源（--nf-hairline-tint-sapphire，
+     亮档通道 = --accent-agent-light、暗档通道 = --sapphire，两枚通道仍由 sapphire.css
+     单源；α 只在 stand-tokens.css 给一次）。改前亮档 .35 / 暗档 .35 都写在本文件，
+     暗档落在 #14171e 上 1.598 / ΔE00 14.166；现暗档 α .13 ⇒ 1.165 / 5.639，
+     亮档 α .35 逐值不变（零回归）。本面零字面量（机检 B3/C4）。 */
   border-radius: var(--ds-radius-pill);
-  border: 1px solid rgb(var(--accent-agent-light) / 0.35);
+  border: 1px solid var(--nf-hairline-tint-sapphire);
   padding: var(--ds-space-half) var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   /* Unified panel spec §6.2 (20260830): counter hue = agent blue; light theme
@@ -240,7 +251,8 @@
 @media (prefers-color-scheme: dark) {
   #bgagent-indicator {
     background: rgb(var(--sapphire) / 0.15);
-    border-color: rgb(var(--sapphire) / 0.35);
+    /* 环色不再在此覆写：暗档通道/α 由 --nf-hairline-tint-sapphire 在
+       stand-tokens.css 的暗档解析块给出（单一源，本文件零环色字面量）。 */
     color: rgb(var(--sapphire));
   }
   #bgagent-indicator:hover { background: rgb(var(--sapphire) / 0.25); }
@@ -737,12 +749,14 @@
    零新色板 token（visual-style: reuse before inventing）。 */
 .bg-task-origin.bg-origin-delegate {
   color: rgb(var(--accent-agent-light));
-  border-color: rgb(var(--accent-agent-light) / 0.35);
+  /* 归属环改走语义彩边族单源（--nf-hairline-tint-sapphire，与 #bgagent-indicator
+     同一枚：亮档通道 --accent-agent-light / 暗档通道 --sapphire，α 只在
+     stand-tokens.css 给一次）。改前亮/暗两处各写一份 .35 字面量。 */
+  border-color: var(--nf-hairline-tint-sapphire);
 }
 @media (prefers-color-scheme: dark) {
   .bg-task-origin.bg-origin-delegate {
     color: rgb(var(--sapphire));
-    border-color: rgb(var(--sapphire) / 0.35);
   }
 }
 /* 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：开启任务的

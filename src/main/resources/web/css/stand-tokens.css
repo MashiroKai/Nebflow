@@ -433,6 +433,50 @@ html[data-theme="dark"] {
   --nf-hairline-ink: 255 255 255;   /* 发丝边通道基色（白光；暗档同一枚，靠 α 分档） */
   --nf-hairline-a: 0.35;            /* 亮档 α：浅底上的发丝边（⇒ #f5f6f8 上 1.028 / ΔE00 0.89） */
   --nf-hairline-a-dark: 0.06;       /* 暗档 α：深底上的**同感知权重**发丝边（⇒ #13161c 上 1.165 / ΔE00 4.38） */
+
+  /* ── 语义彩边族（彩色发丝边）—— dark-border-color 批 2026-11-18 ────────────
+     作者裁定（2026-11-18）：「只收敛第一项」= 三枚彩色 α .35 指示环一并收敛；
+     第二项（亮档 `.bubble.ai hr` 那条，已收敛为 --color-border）保持现状不动。
+     本族只服务第一项，第二项逐字节不动。
+
+     为什么彩色面必须单列（而不是并入中性发丝边族）：中性族的档位是**纯亮度权重**
+     （白光 α 只推 L*），彩边还要同时承担**色相载荷**，两条读数的增长速率不同——
+     品牌绿 (7 193 96) 落在 #14171e 上 α .10 时 ΔE00 已 12.96 而对比度只 1.16；
+     同底白光 α .10 则是 1.60 / ΔE00 19.0。故彩边暗档 α 由**不变式**定，不由手感定。
+
+     暗档 α 的定法（不变式；机检 scripts/check-border-weight.mjs 的 C1/C2/C3）：
+       C1 不放大   ：暗档 ΔE00 ≤ 亮档同面 ΔE00（继承 B2 语义）
+       C2 色相可指认：合成 Lab 色相距**色相族轴** ≤ 10°（绿 180° / 蓝 270°），
+                     且合成 chroma ≥ 相邻底色 chroma × 1.5
+       C3 亮度权重 ：暗档对比度 ∈ 1.16–1.48（与站内既有暗档中性发丝档同带）
+     实测（dropdown 场景 · 真 Chromium · 参照面 = 元素外侧底色 bgOuter，与改前
+     读数同一装置同一参照）：
+       绿环 α .105 ⇒ 合成 #132925、上比 1.171、ΔE00 13.670、h* 180.6°（距轴 0.6°）、
+                     C* 10.0（底 5.42 的 1.85×）—— C1/C2/C3 全过
+       蓝环 α .13  ⇒ 合成 #1d2533、上比 1.165、ΔE00 5.639、h* −85.4°（距轴 4.6°）、
+                     C* 10.3（底 5.42 的 1.90×）—— C1/C2/C3 全过
+       改前 α .35  ⇒ 绿 1.972 / ΔE00 28.831（C1/C2/C3 全红）、蓝 1.598 / 14.166（C3 红）
+
+     为什么绿环暗档 α 不是 .06（≠ 中性族暗档档位）：绿要在偏蓝的深底 #14171e
+     （Lab h* −82.9°）上**合成后仍读成绿**，需 g > b ⇒ α·(193−96) > 7 ⇒ α ≳ 0.11；
+     α .06 的合成是 #132122（h* 205°，已落到青蓝一侧），色相不可指认。同色相通道
+     只是 (7 193 96) 的标量倍数，α·k 需 ≈ 0.124，ΔE00 恒 ≈ 14 ⇒ 同色相下无解
+     （α ∈ [0.01,0.35] 穷举 0 解），故取「色相优先」一支，把 ΔE00 落在带外并在
+     报告里分别陈述「数值进带」与「语义仍成立」。
+
+     纪律：通道与 α **只在这里给一次**；四个解析块（:root / html[data-theme=dark] /
+     @media dark / html[data-theme=light]）只写
+     `rgb(var(--nf-hairline-<hue>-ink[-dark]) / var(--nf-hairline-<hue>-a[-dark]))`
+     形态的引用，消费面（chat.css 三面）只写 var(--nf-hairline-tint-*)，零字面量
+     （机检 B3 单一源 / C4 消费面零字面量）。 */
+  --nf-hairline-green-ink: 7 193 96;   /* 后台任务指示环通道基色（与 --color-primary 同色相的品牌绿） */
+  --nf-hairline-green-a: 0.35;         /* 亮档 α：沿用改前值，本批不动（零回归） */
+  --nf-hairline-green-a-dark: 0.105;   /* 暗档 α：色相优先 + 亮度权重进带（实测 1.171 / ΔE00 13.670） */
+  --nf-hairline-sapphire-ink: var(--accent-agent-light);   /* 亮档通道 = 既有加深 sapphire（sapphire.css 单一源） */
+  --nf-hairline-sapphire-ink-dark: var(--sapphire);        /* 暗档通道 = 蓝族母色（sapphire.css 单一源） */
+  --nf-hairline-sapphire-a: 0.35;      /* 亮档 α：沿用改前值，本批不动（零回归） */
+  --nf-hairline-sapphire-a-dark: 0.13; /* 暗档 α：C1/C2/C3 全过（实测 1.165 / ΔE00 5.639） */
+
   --nf-glass-input-bg: rgba(255, 255, 255, 0.16);            /* 亮档沿用原白色色相，保留玻璃透明度 */
   --nf-glass-input-filter: blur(24px) saturate(1.15); /* 唯一模糊配方 */
   /* Canvas 三点基准：暂作为具名引用，不改变全局旧玻璃消费方；全局迁移须
@@ -456,6 +500,9 @@ html[data-theme="dark"] {
   /* 唯一模糊配方别名：glass.css 内全部 backdrop-filter 只准消费 input-filter */
   --nf-glass-filter: var(--nf-glass-input-filter);
   --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a));   /* 细边 = 发丝边族（唯一档位来源，见上） */
+  /* 语义彩边（三枚指示环）的亮档解析：四个解析块里只写引用、零字面量（机检 B3/C4） */
+  --nf-hairline-tint-green: rgb(var(--nf-hairline-green-ink) / var(--nf-hairline-green-a));
+  --nf-hairline-tint-sapphire: rgb(var(--nf-hairline-sapphire-ink) / var(--nf-hairline-sapphire-a));
   --nf-glass-border: 1px solid var(--nf-glass-border-color);
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
   /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
@@ -478,6 +525,9 @@ html[data-theme="dark"] {
      3.241 / ΔE00 27.11（= 作者报障的「太明显」）；改引发丝边族暗档档位
      ⇒ 1.165 / ΔE00 4.38，与站内既有暗档中性发丝档同带。 */
   --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a-dark));
+  /* 语义彩边暗档解析：绿环走 -green-a-dark、蓝环走 -sapphire-ink-dark + -sapphire-a-dark */
+  --nf-hairline-tint-green: rgb(var(--nf-hairline-green-ink) / var(--nf-hairline-green-a-dark));
+  --nf-hairline-tint-sapphire: rgb(var(--nf-hairline-sapphire-ink-dark) / var(--nf-hairline-sapphire-a-dark));
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
   --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
 }
@@ -487,6 +537,8 @@ html[data-theme="dark"] {
     --nf-glass-bg: var(--nf-glass-input-bg);
     --nf-glass-bg-hover: #181c26fa;
     --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a-dark));
+    --nf-hairline-tint-green: rgb(var(--nf-hairline-green-ink) / var(--nf-hairline-green-a-dark));
+    --nf-hairline-tint-sapphire: rgb(var(--nf-hairline-sapphire-ink-dark) / var(--nf-hairline-sapphire-a-dark));
     --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
     --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
   }
@@ -496,6 +548,8 @@ html[data-theme="light"] {
   --nf-glass-bg: var(--nf-glass-input-bg);
   --nf-glass-bg-hover: #ffffff;
   --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a));
+  --nf-hairline-tint-green: rgb(var(--nf-hairline-green-ink) / var(--nf-hairline-green-a));
+  --nf-hairline-tint-sapphire: rgb(var(--nf-hairline-sapphire-ink) / var(--nf-hairline-sapphire-a));
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
   /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
      只跳过以 `--x:` 起头的行，多行值里的续行会被当成裸色值计数（本批实测：写成
