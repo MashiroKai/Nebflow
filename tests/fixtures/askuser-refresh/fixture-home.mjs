@@ -10,8 +10,7 @@
 // 🔴 隔离与写根纪律：
 //   * **只写 `$NEBFLOW_HOME_DIR` 之下**（本脚本的**唯一**写入面；装配前过 `writeguard` 写根断言，
 //     越界即 fail-fast 非零退出；装配中的幂等重置过 `delguard` 删除守卫）。
-//   * **零 repo 写、零宿主数据根（`~/.nebflow`）写**：agent 定义取**本仓** `src/main/resources/seed/agents/**`
-//     （repo-tracked ⇒ 装配面可重复、不随宿主配置漂移），`Nebula` 面由本脚本**合成**最小定义。
+//   * **零 repo 写、零宿主数据根写**：agent 定义使用产品代码内置的定义，不复制已退役的 seed。
 //   * 输出目录 = 调用方给的既有目录（本件无任何硬编码绝对输出路径）。
 //
 // 用法：
@@ -23,7 +22,7 @@
 //   🔴 负控（无需起实例，只跑断言）：
 //     NEBFLOW_HOME_DIR=~/.nebflow/docs/x NB_DRY_RUN=1 node tests/fixtures/askuser-refresh/fixture-home.mjs   # 期望 rc=3（写根拒绝）
 
-import { mkdirSync, writeFileSync, readFileSync, cpSync, existsSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, relative, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -36,13 +35,6 @@ const HOME = process.env.NEBFLOW_HOME_DIR;
 const MOCK_PORT = Number(process.env.MOCK_PORT || 19000);
 const PROJECT = process.env.FIXTURE_PROJECT || 'qa-e2eask-refresh';
 const EPOCH = Number(process.env.FIXTURE_EPOCH || 1757000000000);
-const SEED_AGENTS = join(REPO, 'src/main/resources/seed/agents');
-// 夹具内 agent 面：seed 有的取 seed（repo-tracked ⇒ 确定性）；`Nebula` 只有宿主面 ⇒ 合成最小定义。
-// 🔴 2026-09-21（chain-askuserdup 批）：原清单含 `kernel`，而该 seed agent 已于
-// `e50b885e7`（promptopt W1，seed 4 → 3）退役 ⇒ 本 provisioner 自那之后**结构性跑不起来**
-// （`seed agent missing` 非零退出）。按现读 seed 面收敛（general / project-dispatcher），
-// 与退役后的 seed 树逐条对齐。
-const AGENTS_FROM_SEED = ['general', 'project-dispatcher'];
 const MODE = process.argv[2] && process.argv[2].startsWith('--') ? process.argv[2] : '--provision';
 
 if (!HOME) { console.error('[fixture] NEBFLOW_HOME_DIR required'); process.exit(1); }
@@ -114,25 +106,8 @@ function provision() {
   // 2) onboarding 预跳过（异步遮罩会拦截指针事件 —— QA 既有教训）
   writeFileSync(join(HOME, 'onboarding.json'), JSON.stringify({ state: 'skipped' }) + '\n');
 
-  // 3) agent 定义
-  for (const a of AGENTS_FROM_SEED) {
-    const src = join(SEED_AGENTS, a);
-    if (!existsSync(src)) { console.error(`[fixture] seed agent missing: ${src}`); process.exit(4); }
-    mkdirSync(join(HOME, 'agents', a), { recursive: true });
-    for (const f of ['agent.json', 'system.md']) {
-      if (existsSync(join(src, f))) cpSync(join(src, f), join(HOME, 'agents', a, f));
-    }
-  }
-  // `Nebula`：spec 经 `POST /api/callbacks/inject {agent:'Nebula'}` 注入 ExternalEvent（宿主面才有该定义）
-  // ⇒ 夹具内合成最小定义（无宿主读 ⇒ 装配面可重复）
-  mkdirSync(join(HOME, 'agents', 'Nebula'), { recursive: true });
-  writeFileSync(join(HOME, 'agents', 'Nebula', 'agent.json'), JSON.stringify({
-    name: 'Nebula', displayName: 'Nebula', preset: 'general', skills: [],
-    description: 'fixture-local minimal Nebula def (askuser-refresh e2e)',
-  }, null, 2) + '\n');
-  writeFileSync(join(HOME, 'agents', 'Nebula', 'system.md'), '# Nebula (fixture)\n\nE2E fixture agent definition.\n');
-
-  // 4) 一个挂载项目 + 工作区（spec 经 REST 建会话；项目面供 agent/工具面可解析）
+  // AgentLibrary supplies built-in definitions directly; no on-disk seed or sidecar.
+  // 3) 一个挂载项目 + 工作区（spec 经 REST 建会话；项目面供 agent/工具面可解析）
   mkdirSync(join(WS, '.nebflow'), { recursive: true });
   writeFileSync(join(WS, 'AGENTS.md'), `# ${PROJECT}\n\naskuser-refresh e2e fixture workspace.\n`);
   mkdirSync(PROJ_DIR, { recursive: true });

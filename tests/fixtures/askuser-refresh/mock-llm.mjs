@@ -141,3 +141,8 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => console.log(`mock-llm on 127.0.0.1:${PORT}`));
+// The isolated runner owns stdin and requests an orderly shutdown after the gateway exits.
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (data) => {
+  if (data.trim() === 'quit') server.close(() => process.exit(0));
+});

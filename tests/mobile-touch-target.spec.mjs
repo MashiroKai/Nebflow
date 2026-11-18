@@ -169,7 +169,7 @@ async function seedFixtures() {
     const cv = await import('/js/canvas.js');
     cv.openTab('tt-a', '甲文档', { type: 'tt-a' });
     cv.openTab('tt-b', '乙文档', { type: 'tt-b' });
-  }, SID).catch(() => {});
+  }, SID);
   await page.waitForTimeout(400);
 }
 
@@ -321,7 +321,15 @@ async function measurePanel(panelId, openFn) {
 const dockTo = async (id) => {
   await page.evaluate(() => document.getElementById('nebflow-login-modal')?.remove());
   await page.locator(`#mobile-dock .dock-key[data-dock="${id}"]`).click();
-  await page.waitForFunction((pid) => document.querySelector(`.mobile-page[data-page="${pid}"]`)?.classList.contains('live'), id, { timeout: 8000 }).catch(() => {});
+  if (id === 'chat') {
+    await page.waitForFunction(async () => {
+      const s = (await import('/js/mobile/navController.js')).navState();
+      return s.home === 'chat' && s.top === 'chat' && s.stack.length === 1 && !document.querySelector('.mobile-page.live');
+    }, null, { timeout: 8000 });
+    await page.locator('#input-bar').waitFor({ state: 'visible', timeout: 8000 });
+  } else {
+    await page.waitForFunction((pid) => document.querySelector(`.mobile-page[data-page="${pid}"]`)?.classList.contains('live'), id, { timeout: 8000 });
+  }
   await page.waitForTimeout(250);
 };
 /** 工作台 hub 行 → 详情页。行不存在（如 todo 无 hub 行，只能从消息页顶行 /
@@ -331,14 +339,14 @@ const hubTo = async (face) => {
   await dockTo('workbench');
   const row = page.locator(`.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="${face}"]`);
   if (await row.count()) {
-    await row.first().click().catch(() => {});
+    await row.first().click();
   } else {
     await page.evaluate(async (pid) => {
       const nav = await import('/js/mobile/navController.js');
       nav.pushPage(pid);
     }, face);
   }
-  await page.waitForFunction((pid) => document.querySelector(`.mobile-page[data-page="${pid}"]`)?.classList.contains('live'), face, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction((pid) => document.querySelector(`.mobile-page[data-page="${pid}"]`)?.classList.contains('live'), face, { timeout: 8000 });
   await page.waitForTimeout(400);
 };
 
@@ -388,7 +396,7 @@ await measurePanel('projects', () => hubTo('projects'));
 await measurePanel('graph', () => hubTo('graph'));
 await measurePanel('search', async () => {
   await dockTo('chat');
-  await page.locator('.mobile-chrome-btn[data-chrome="search"], .mh-chrome-btn[data-chrome="search"]').first().click().catch(() => {});
+  await page.locator('.mobile-chrome-btn[data-chrome="search"], .mh-chrome-btn[data-chrome="search"]').first().click();
   await page.waitForTimeout(400);
 });
 
