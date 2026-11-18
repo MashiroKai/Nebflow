@@ -258,7 +258,7 @@ test.describe('B2-B4 — 引用态', () => {
     expect(strip.hostId, 'chip 宿主 = 附件条 #attachment-preview（与附件同条带）').toBe('attachment-preview');
     expect(strip.aboveInput, 'chip 整体位于输入框上方').toBe(true);
     expect(strip.refType, 'chip refType=chat-message').toBe('chat-message');
-    expect(strip.chipText).toContain('Nebula：');
+    expect(strip.chipText).toContain('主 Agent：');
     expect(strip.chipText).toContain('第一条助手结论');
     expect(strip.hasRemove, '✕（实心圆白）在场').toBe(true);
     expect(await page.evaluate(() => window.__pendingQuoteCount()), 'pendingAttachments 恰 1 条引用').toBe(1);
@@ -302,7 +302,7 @@ test.describe('B5 — 发送后引用块', () => {
     const shape = await page.evaluate(id => window.__quoteShape(id), rowId);
     expect(shape, '引用块在场').toBeTruthy();
     expect(shape.quoteBlockFirst, '引用块在气泡正上方').toBe(true);
-    expect(shape.sender, '被引用者名加粗 span').toBe('Nebula');
+    expect(shape.sender, '被引用者名加粗 span').toBe('主 Agent');
     expect(shape.text).toContain('这是被引用的助手结论'.slice(0, 10));
     expect(shape.inBubbleRefCards, 'chat-message ref 不进气泡 ref 卡循环').toBe(0);
     expect(shape.hasBubble, '正文气泡在场').toBe(true);
@@ -456,11 +456,11 @@ test.describe('B11 — footer 引用按钮', () => {
     const injBtn = await page.evaluate(id => window.__quoteButtonOn(id), injId);
     expect(injBtn.present, '注入行带引用钮').toBe(true);
 
-    // 点 AI 行按钮 → Nebula 摘要（时长徽章腿的按钮同样可用）
+    // 点 AI 行按钮 → 主 Agent 摘要（时长徽章腿的按钮同样可用）
     await page.evaluate(id => window.__clickQuoteButtonOn(id), ids[0]);
     const strip = await page.evaluate(() => window.__quoteStripState());
     expect(strip.hidden, '引用 chip 可见').toBe(false);
-    expect(strip.chipText).toContain('Nebula：');
+    expect(strip.chipText).toContain('主 Agent：');
     expect(strip.chipText).toContain('带时长徽章的历史助手行');
 
     // 边界（按钮 ⊆ footer）：工具卡行右键可用但无 footer ⇒ 无引用钮，右键仍是引用入口
