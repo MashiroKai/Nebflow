@@ -585,7 +585,6 @@ function buildFollowerBlock(container, role, commit) {
  * 节级渲染：Nebula 数据读数失败 ⇒ 台账 #937 同款显式降级面（节级缩小版），
  * 不静默半死。生图一组**与本节的 Nebula 状态互不连坐**——降级面之后照常
  * 追加（该面自己读过，失败即隐藏自己那组）。
- * @param {HTMLElement} container #model-chain-section-body
  */
 function settingsModelCard(title, id, status) {
   const card = document.createElement('div');

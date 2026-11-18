@@ -362,8 +362,8 @@ function showProviderModal(existingName, existingData, onSave) {
       },
     ],
     bindExtra(overlay) {
-      const input = overlay.querySelector('[data-field="apiKey"]');
-      if (input && existingName && p.apiKey) input.dataset.revealProviderId = existingName;
+      const input = overlay.querySelector('input[data-field="apiKey"]');
+      if (input instanceof HTMLInputElement && existingName && p.apiKey) input.dataset.revealProviderId = existingName;
     },
     async onConfirm(values) {
       const name = values.name.trim();
@@ -645,7 +645,8 @@ export function showProviderForm({title, fields, onCancel, onConfirm, extraActio
   });
 
   // Reveal a configured image key only on explicit request; never overwrite a draft.
-  overlay.querySelectorAll('.cfg-eye-btn').forEach(btn => {
+  overlay.querySelectorAll('button.cfg-eye-btn').forEach(btn => {
+    if (!(btn instanceof HTMLButtonElement)) return;
     btn.addEventListener('click', async () => {
       const input = btn.parentElement.querySelector('input');
       if (input.type === 'password' && !input.value && (input.dataset.revealSecretRef || input.dataset.revealProviderId)) {

@@ -167,8 +167,8 @@ const DOMAIN_SPECS = {
     bindExtra(overlay, ctx) {
       bindImagegenTestButtons(overlay, imagegenFormReader);
       const ref = this.providers()[ctx.existingName]?.keyRef;
-      const input = overlay.querySelector('[data-field="apiKey"]');
-      if (!ref || !ctx.keyConfigured || !input) return;
+      const input = overlay.querySelector('input[data-field="apiKey"]');
+      if (!ref || !ctx.keyConfigured || !(input instanceof HTMLInputElement)) return;
       input.dataset.revealSecretRef = ref;
     },
     async persist(values, ctx) {
