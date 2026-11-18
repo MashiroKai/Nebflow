@@ -215,7 +215,9 @@ async function pinch(page, client, cx, cy, dist0, dist1, steps = 12, onStep = nu
   await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   // 松手后的回弹/收束走得是 200ms 过渡 ⇒ 等**paint 追上状态**，不等固定毫秒。
   // （步进里的 `sleep(12)` 保留：那是手指移动速度的输入仿真，不是「等落定」。）
-  await waitPainted(page);
+  // allowClosed：有些触屏手势本来就以**关闭查看器**收尾（适应态下滑关闭，M5）——
+  // 关闭是合法终态；若浮层是被误关的，随后读 VIEW/档位的断言会显式报错，不会静默绿。
+  await waitPainted(page, true);
 }
 async function dragTouch(page, client, x0, y0, x1, y1, steps = 10, onStep = null) {
   await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0, id: 7 }] });
@@ -227,7 +229,7 @@ async function dragTouch(page, client, x0, y0, x1, y1, steps = 10, onStep = null
     await sleep(14);
   }
   await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await waitPainted(page);
+  await waitPainted(page, true);
 }
 
 /** 锚点不变式读数：pivot 下的**归一化内容点**在缩放前后是否仍落在 pivot 上。 */
@@ -251,29 +253,29 @@ function anchorError(before, after, pivot) {
  *   ③ 一旦将来滚轮路径也加上过渡，同样的固定等待会直接读到中间帧。
  * pan 属性是取整值（`Math.round`）而内联 transform 是 `toFixed(2)` ⇒ 位置容差 0.5px。
  */
-async function waitPainted(page) {
-  await page.waitForFunction(() => {
+async function waitPainted(page, allowClosed = false) {
+  await page.waitForFunction((allow) => {
     const lb = document.querySelector('.nf-lightbox');
-    if (!lb || !lb.classList.contains('on')) return false;
-    const el = lb.querySelector('.nf-lightbox-img') || lb.querySelector('.nf-lightbox-av');
-    if (!el) return false;
+    if (!lb || !lb.classList.contains('on')) return !!allow;   // 见 allowClosed 的说明
     const z = Number(lb.getAttribute('data-nf-lb-zoom'));
     const tx = Number(lb.getAttribute('data-nf-lb-pan-x'));
     const ty = Number(lb.getAttribute('data-nf-lb-pan-y'));
     if (!Number.isFinite(z) || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
-    const cs = getComputedStyle(el);
-    if (cs.opacity !== '1') return false;              // 进场过渡未完：几何此时无意义
-    let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
-    const m = cs.transform;
-    if (m && m !== 'none') {
-      const hit = /^matrix\(([^)]+)\)$/.exec(m);
-      if (!hit) return false;                          // matrix3d 不该出现在这条腿上
-      [a, b, c, d, e, f] = hit[1].split(',').map(Number);
-    }
-    return Math.abs(a - z) < 1e-3 && Math.abs(d - z) < 1e-3
-        && Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9
-        && Math.abs(e - tx) <= 0.5 && Math.abs(f - ty) <= 0.5;
-  }, null, { timeout: 8000 });
+    // 视频/音频腿里，ensureDom 建的 `.nf-lightbox-img` **仍在 DOM 但 opacity:0、零盒**
+    // （实测），真正在画的是 `.nf-lightbox-av` ⇒ 只在「真的在画」的候选里比不变式，
+    // 否则会一直盯着一张不动的隐藏图而误超时。
+    const cands = [lb.querySelector('.nf-lightbox-av'), lb.querySelector('.nf-lightbox-img')]
+      .filter(Boolean)
+      .filter((el) => { const cs = getComputedStyle(el); return cs.opacity === '1' && el.getBoundingClientRect().width > 0; });
+    if (!cands.length) return false;
+    return cands.some((el) => {
+      const m = getComputedStyle(el).transform;
+      let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+      if (m && m !== 'none') { const hit = /^matrix\(([^)]+)\)$/.exec(m); if (!hit) return false; [a, b, c, d, e, f] = hit[1].split(',').map(Number); }
+      return Math.abs(a - z) < 1e-3 && Math.abs(d - z) < 1e-3 && Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9
+          && Math.abs(e - tx) <= 0.5 && Math.abs(f - ty) <= 0.5;
+    });
+  }, allowClosed, { timeout: 8000 });
 }
 
 /* ══════════════════ 手机腿（375×812，真触屏仿真） ══════════════════ */

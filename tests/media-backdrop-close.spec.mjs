@@ -169,20 +169,25 @@ const VIEW = () => {
 async function waitPainted(page) {
   await page.waitForFunction(() => {
     const lb = document.querySelector('.nf-lightbox');
-    if (!lb || !lb.classList.contains('on')) return false;
-    const el = lb.querySelector('.nf-lightbox-img') || lb.querySelector('.nf-lightbox-av');
-    if (!el) return false;
+    if (!lb || !lb.classList.contains('on')) return false;   // 见 allowClosed 的说明
     const z = Number(lb.getAttribute('data-nf-lb-zoom'));
     const tx = Number(lb.getAttribute('data-nf-lb-pan-x'));
     const ty = Number(lb.getAttribute('data-nf-lb-pan-y'));
     if (!Number.isFinite(z) || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
-    const cs = getComputedStyle(el);
-    if (cs.opacity !== '1') return false;
-    let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
-    const m = cs.transform;
-    if (m && m !== 'none') { const hit = /^matrix\(([^)]+)\)$/.exec(m); if (!hit) return false; [a, b, c, d, e, f] = hit[1].split(',').map(Number); }
-    return Math.abs(a - z) < 1e-3 && Math.abs(d - z) < 1e-3 && Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9
-        && Math.abs(e - tx) <= 0.5 && Math.abs(f - ty) <= 0.5;
+    // 视频/音频腿里，ensureDom 建的 `.nf-lightbox-img` **仍在 DOM 但 opacity:0、零盒**
+    // （实测），真正在画的是 `.nf-lightbox-av` ⇒ 只在「真的在画」的候选里比不变式，
+    // 否则会一直盯着一张不动的隐藏图而误超时。
+    const cands = [lb.querySelector('.nf-lightbox-av'), lb.querySelector('.nf-lightbox-img')]
+      .filter(Boolean)
+      .filter((el) => { const cs = getComputedStyle(el); return cs.opacity === '1' && el.getBoundingClientRect().width > 0; });
+    if (!cands.length) return false;
+    return cands.some((el) => {
+      const m = getComputedStyle(el).transform;
+      let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+      if (m && m !== 'none') { const hit = /^matrix\(([^)]+)\)$/.exec(m); if (!hit) return false; [a, b, c, d, e, f] = hit[1].split(',').map(Number); }
+      return Math.abs(a - z) < 1e-3 && Math.abs(d - z) < 1e-3 && Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9
+          && Math.abs(e - tx) <= 0.5 && Math.abs(f - ty) <= 0.5;
+    });
   }, null, { timeout: 8000 });
 }
 
