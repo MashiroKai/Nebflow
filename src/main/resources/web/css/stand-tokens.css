@@ -616,7 +616,7 @@ html[data-theme="light"] {
   --set-chevron-opacity: 0.55;                 /* chevron 退到副值档，不抢标题 */
   /* 动作钮右缘对齐量 = chevron 盒宽 20（副值的对齐 = 负 gap 抵消，见 settingsRows.css） */
   --set-chevron-align-gap: var(--set-chevron-box);
-  --set-btn-h: 28px;                           /* 28 动作钮高（行内动作与行为按钮同高） */
+  --set-btn-h: var(--mtap, 44px);              /* md 档动作钮高（唯一档：设置页内部与服务商编辑窗动作族同高；--mtap 只在手机层定义 ⇒ 桌面取 44 兜底） */
   --set-btn-pad-x: var(--ds-space-3);          /* 12 动作钮左右内距 */
 }
 

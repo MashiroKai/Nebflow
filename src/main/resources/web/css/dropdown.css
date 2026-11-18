@@ -23,6 +23,21 @@
 .nf-select > * {
   grid-area: 1 / 1;
 }
+
+/* ── 满宽档：包裹层随被包裹字段的宽度意图（塌宽修复 2026-11-18）────────────
+   作者报「生图配置选择协议点不动」的根因就在这两条之间：inline-grid 是
+   **shrink-to-fit** 盒，而被包裹的 select 自己声明的 `width:100%`
+   （`.cfg-input` = 表单整行字段档，css/sidebar.css:1352）是对**它的包含块**
+   （包裹层撑出的 grid 区）解析的 —— 于是整行字段塌成触发钮的 max-content：
+   实测桌面 366px→144px、手机 343px→144px（行里 200 余 px 全是死区，点上去
+   什么也不发生，读起来就是「点不动」）。
+   `.cfg-input` 档（整行字段）包裹层随之取满宽；设置页行内
+   `style="width:auto"` 的 `.cfg-select` 档（#cfg-language / #cfg-thinking-effort）
+   不受影响，仍是 inline-grid —— 它们本来就该缩到内容宽。 */
+.nf-select:has(> select.cfg-input) {
+  display: grid;
+  width: 100%;
+}
 .nf-select .nf-select-native {
   opacity: 0;
   pointer-events: none;

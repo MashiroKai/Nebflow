@@ -329,16 +329,25 @@ function showProviderModal(existingName, existingData, onSave) {
   // The eye fetches just this provider only on explicit activation.
   const apiKeyFace = '';
 
+  // 协议选项（作者令 2026-11-18「已配置的…在设置里应该要可见」）：两条已登记适配器
+  // + **存量值补回** —— 存量 protocol 不在表内时把它放回面上，否则 select 会静默落到
+  // 首项：已配置的协议在表单里消失、保存时被悄悄改写（与 providerPanel.js 的
+  // adapterSelectOptions 同一口径）。
+  const protocolOptions = [
+    { value: 'anthropic', label: 'messages' },
+    { value: 'openai', label: 'chat/completions' },
+  ];
+  if (p.protocol && !protocolOptions.some((o) => o.value === p.protocol)) {
+    protocolOptions.push({ value: p.protocol, label: protocolFormLabel(p.protocol) });
+  }
+
   showProviderForm({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
     fields: [
       {key: 'name', label: t('provider.id'), type: 'text', value: existingName || '', placeholder: t('provider.idPlaceholder'), disabled: isEdit},
       {key: 'baseUrl', label: t('provider.baseUrl'), type: 'text', value: p.baseUrl || '', placeholder: 'https://api.example.com/v1'},
       {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: apiKeyFace, placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
-      {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: [
-        { value: 'anthropic', label: 'messages' },
-        { value: 'openai', label: 'chat/completions' },
-      ]},
+      {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: protocolOptions},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
       // 不可用时段 = **provider 级唯一一份**（config-single-source 批，作者裁定④
       // 2026-11-05「不需要逐 model 设置，按 provider 统一设置就行，一个 provider

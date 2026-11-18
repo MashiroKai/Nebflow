@@ -246,6 +246,11 @@ for (const cell of MATRIX) {
     // settings-ios-rows 批（main 平行批）后设置节 = .set-card；服务商面板首帧
     // 由 bindProviderPanel 同步画——等卡 + 首帧标签都在场再开测。
     await page.waitForSelector('#settings-content .set-card', { timeout: 15000 });
+    // settings-progressive-disclosure 批：服务商面板在**渐进披露体**里，默认折叠
+    // ⇒ 不展开则 .nf-ptab 永不在场（本判据此前一直红在等它）。展开后再等面板。
+    // 点击走 evaluate（窄视口下设置浮层不是「可见可点」态，真实 click 会被 #chat
+    // 拦截——与本文件切换类型标签的既有口径一致：测版式，不测入口动效）。
+    await page.evaluate(() => document.querySelector('[data-settings-disclosure="providers"]')?.click());
     await page.waitForSelector('#provider-panel-host .nf-ptab', { timeout: 15000 });
     await page.waitForTimeout(400);
 

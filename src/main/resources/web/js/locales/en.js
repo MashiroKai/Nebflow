@@ -1277,6 +1277,9 @@ export default {
   'settings.cfgCard.inUse': 'In use',
   'settings.cfgCard.keyConfigured': 'Saved',
   'settings.cfgCard.keyMissing': 'Not configured',
+  // Endpoint readout (author 2026-11-18: configured endpoints must be visible in
+  // settings). Configured ⇒ the card shows the URL; unconfigured ⇒ this line.
+  'settings.cfgCard.endpointDefault': 'Default endpoint',
   'settings.cfgCard.models': '{n} models',
   'settings.cfgCard.emptyHint': 'No provider yet — fill in the form below and save.',
   // (jev-retire batch 2026-11-16: the whole settings.jev* key family — enabled

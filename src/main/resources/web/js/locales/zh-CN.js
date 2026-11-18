@@ -1236,6 +1236,9 @@ export default {
   'settings.cfgCard.inUse': '当前使用',
   'settings.cfgCard.keyConfigured': '已保存',
   'settings.cfgCard.keyMissing': '未配置',
+  // 端点读数（2026-11-18 作者令「端点的配置这些……在设置里应该要可见」）：
+  // 已配置 ⇒ 卡片如实显示 URL；未配置 ⇒ 这一句显式写出（不留白）。
+  'settings.cfgCard.endpointDefault': '默认端点',
   'settings.cfgCard.models': '{n} 个模型',
   'settings.cfgCard.emptyHint': '尚未配置提供方——填写下方表单并保存。',
   // （jev-retire 批 2026-11-16：settings.jev* 整族键——启用开关/健康徽标/

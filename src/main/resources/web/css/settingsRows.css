@@ -236,12 +236,18 @@
 
 /* ── 动作按钮（行内动作 + 成组行为按钮，同一尺寸令牌）──────────────────────
    .set-btn 只覆盖**几何**（高度 / 内距 / 圆角半径族 / 字号），色与悬停态仍归
-   既有 .cfg-btn / .cfg-btn-primary（风格单点不搬家）。 */
+   既有 .cfg-btn / .cfg-btn-primary（风格单点不搬家）。
+   md 档统一（作者令 2026-11-18「底部的这些按钮的设计 大小有些失衡……这些按钮的
+   样式 大小应该要有极致的控制 统一的要求」）：本族的几何**就是**服务商编辑窗
+   动作族（css/sidebar.css 的 `#cfg-modal .cfg-modal-actions .cfg-btn`）那一档
+   —— 最小 44×44 命中盒（--set-btn-h = var(--mtap, 44px)）/ 左右内距
+   --set-btn-pad-x = --ds-space-3 / 字号 --ds-fs-btn / pill 圆角 / 不折行。
+   两族共用同一批令牌值，不新开第二套几何。 */
 .set-btn {
   height: var(--set-btn-h);
   min-height: var(--set-btn-h);
   padding: 0 var(--set-btn-pad-x);
-  border-radius: var(--ds-radius-button);
+  border-radius: var(--ds-radius-pill);
   font-size: var(--ds-fs-btn);
   display: inline-flex;
   align-items: center;
@@ -352,6 +358,18 @@
   body.mobile-layer .set-row-val,
   body.mobile-layer .set-row-hint { font-size: var(--mfs-min); }
   body.mobile-layer .set-btn { height: var(--mtap); }
+  /* md 档跨视口同档（作者令 2026-11-18「这些按钮的样式 大小应该要有极致的控制
+     统一的要求」）：手机层不再让动作族掉回本面横距/字号（--mpad-x 16 / 13px），
+     两族在手机层仍是同一个 md 档（44 命中盒 / --ds-space-3 内距 / --ds-fs-btn /
+     pill / 不折行）。特异度必须压得过 mobileLayer.css 的
+     `body.mobile-layer #settings-modal .cfg-btn`（同等特异度、且该文件在本文件
+     **之后**加载 ⇒ 平手也输；`button.set-btn` 多带一个类型选择器才赢）。 */
+  body.mobile-layer #settings-modal button.set-btn {
+    height: var(--mtap);
+    min-height: var(--mtap);
+    padding: 0 var(--set-btn-pad-x);
+    font-size: var(--ds-fs-btn);
+  }
 }
 
 /* ── 设备清单行（profile-multidevice 批）──────────────────────────────────

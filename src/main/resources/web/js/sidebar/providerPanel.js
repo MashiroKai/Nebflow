@@ -105,7 +105,8 @@ const DOMAIN_SPECS = {
             name,
             badge: protocolFormLabel(pc.protocol),
             models,
-            metaExtra: `<span class="cfg-card-sub">${escapeHtml(t('settings.cfgCard.models', { n: models.length }))}</span>`,
+            metaExtra: `<span class="cfg-card-sub">${escapeHtml(t('settings.cfgCard.models', { n: models.length }))}</span>`
+              + `<span class="cfg-card-sub">${escapeHtml(endpointText(pc.baseUrl))}</span>`,
             active: false,
           };
         });
@@ -141,13 +142,13 @@ const DOMAIN_SPECS = {
           name,
           badge: pc.type ? String(pc.type) : '',
           models: pc.model ? [String(pc.model)] : [],
-          metaExtra: keyBadgeHTML(!!pc.keyConfigured),
+          metaExtra: keyBadgeHTML(!!pc.keyConfigured)
+            + `<span class="cfg-card-sub">${escapeHtml(endpointText(pc.baseUrl))}</span>`,
           active: false,
         };
       });
     },
     fields(of, ctx) {
-      const adapters = adapterOptions('imagegen');
       return [
         nameField(of),
         {
@@ -155,7 +156,7 @@ const DOMAIN_SPECS = {
           label: t('provider.protocol'),
           type: 'select',
           value: of.type || '',
-          options: [{ value: '', label: t('settings.imagegenTypePlaceholder') }, ...adapters.map((a) => ({ value: a, label: a }))],
+          options: adapterSelectOptions('imagegen', of.type),
           disabled: false,
         },
         { key: 'model', label: t('settings.imagegenModel'), type: 'text', value: of.model || '', placeholder: t('settings.imagegenModelPlaceholder') },
@@ -194,6 +195,21 @@ const DOMAIN_SPECS = {
 
 // ── 小件 ────────────────────────────────────────────────────────────────────
 
+/**
+ * 端点读数（作者令 2026-11-18「端点的配置这些……在设置里应该要可见」）：
+ * **已配置 ⇒ 如实显示 URL**；**未配置 ⇒ 显式写出「默认端点」**（未配置显示
+ * 占位是正确的，不是 bug —— 这里把「没配」写成一句可读的话，不留白、也不假装
+ * 有一个端点）。端点不是凭据（密钥永远只在表单里按需揭示、面板零渲染）。
+ * 用的是既有 `.cfg-card-sub`（已登记的可折行长文本件）⇒ 长 URL 在卡内折行，
+ * 不顶宽、不新增造型件。
+ * @param {unknown} baseUrl
+ * @returns {string}
+ */
+function endpointText(baseUrl) {
+  const url = String(baseUrl == null ? '' : baseUrl).trim();
+  return url || t('settings.cfgCard.endpointDefault');
+}
+
 /** key 在位性徽标（三域同一组共用键，与旧窗逐字同款）。 */
 function keyBadgeHTML(configured) {
   return configured
@@ -230,6 +246,23 @@ function secretField(ctx) {
 function adapterOptions(domain) {
   const list = typeFace && typeFace.adapters && typeFace.adapters[domain];
   return Array.isArray(list) ? list : [];
+}
+
+/**
+ * 协议选择器的选项表（作者令 2026-11-18「已配置的…在设置里应该要可见」）：
+ * 占位选项 + 后端投影的适配器清单；**存量值不在清单里时把它补回**（本构建没编入
+ * 该适配器 / 引擎侧枚举改了名）——否则 select 会静默落到首项，已配置的协议在面上
+ * 消失、保存时被悄悄改写。与 `renderModelIdSelect` 的「存量值补回」同一口径。
+ * @param {string} domain
+ * @param {unknown} current 存量值（'' = 新增面）
+ * @returns {Array<{value:string,label:string}>}
+ */
+function adapterSelectOptions(domain, current) {
+  const opts = [{ value: '', label: t('settings.imagegenTypePlaceholder') }]
+    .concat(adapterOptions(domain).map((a) => ({ value: String(a), label: String(a) })));
+  const cur = String(current == null ? '' : current).trim();
+  if (cur && !opts.some((o) => o.value === cur)) opts.push({ value: cur, label: cur });
+  return opts;
 }
 
 function fieldValue(overlay, key) {
