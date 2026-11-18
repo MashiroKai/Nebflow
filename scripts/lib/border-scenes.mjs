@@ -77,10 +77,18 @@ export const BORDER_SCENES = [
       for (const t of [
         { taskId: 't1', description: '构建前端 bundle', startedAt: 1757000000000, kind: 'local', origin: 'nebula', originLabel: 'Nebula' },
         { taskId: 't2', description: '跑 e2e 冒烟', startedAt: 1757000001000, kind: 'remote', origin: 'node', originLabel: 'DESKTOP-V7EUCHT' },
+        // dark-border-family 批（2026-11-18）补一枚 **node 来源 + kernel 模式** 的任务行：
+        // 让 `.bg-origin-node` 与 `.bg-mode-kernel` 两个同族面**真渲染** —— 否则 C 组
+        // 采不到它们的 computed 读数（此前装置里这两枚从不出现，闸就没有观测对象）。
+        //   · origin='node' 且 originLabel 空 ⇒ chainForTask 返回空链 ⇒ origin chip 走
+        //     「类别槽位」（bg-origin-node，与 delegate chip 同族同值）；标签回退 = 会话
+        //     id（此处 'node-KAI'，即来源节点名），非 id 裸值。
+        //   · ownerMode='kernel' ⇒ 同行的模式标注 chip（bg-mode-kernel）。
+        { taskId: 't3', description: 'subagent 侧编译 mobile 分包', startedAt: 1757000002000, kind: 'local', origin: 'node', originLabel: '', ownerMode: 'kernel', sessionId: 'node-KAI' },
       ]) await s.frame({
-        type: 'backgroundTaskUpdate', sessionId: sid, rootSessionId: sid,
+        type: 'backgroundTaskUpdate', sessionId: t.sessionId || sid, rootSessionId: sid,
         taskId: t.taskId, description: t.description, status: 'running',
-        startedAt: t.startedAt, heartbeat: null, kind: t.kind, origin: t.origin, originLabel: t.originLabel,
+        startedAt: t.startedAt, heartbeat: null, kind: t.kind, origin: t.origin, originLabel: t.originLabel, ownerMode: t.ownerMode,
       });
       await s.page.waitForTimeout(300);
       await s.page.click('#bg-indicator');

@@ -52,6 +52,12 @@ const CROPS = {
     // 实测：暗/亮两档包围盒逐值相同（布局与主题无关）。
     { name: 'indicator-ring', x: 660, y: 0, w: 280, h: 120, labelAt: 'bottom' },
     { name: 'origin-chip', x: 552, y: 50, w: 300, h: 190, labelAt: 'bottom' },
+    // dark-border-family 批（2026-11-18）：被验对象换成两枚**同族 chip**
+    // （.bg-origin-node / .bg-mode-kernel），按探针实测包围盒加一块裁切。
+    // 实测（暗/亮逐值相同，布局与主题无关）：t3 行 .bg-task-origin.bg-origin-node
+    // = (498,219,64,17)、.bg-task-mode.bg-mode-kernel = (566,219,47,17)。
+    // 矩形只在 CROPS 里写一次，before/after 两腿共用（同机位同裁切的结构保证）。
+    { name: 'family-chips', x: 470, y: 195, w: 300, h: 68, labelAt: 'bottom' },
   ],
   explorer: [{ name: 'frame', x: 0, y: 0, w: 400, h: 260 }],
   'mobile-chat': [{ name: 'frame', x: 0, y: 0, w: 390, h: 240 }],
