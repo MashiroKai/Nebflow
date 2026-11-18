@@ -911,6 +911,10 @@ export default {
   'subagents.waitingBg': '等后台任务 ×{count}：{desc}（{dur}）',
   'subagents.waitingReceipts': '等子代理回执 ×{count}',
   'subagents.longIdle': '空闲 {mins} 分钟，无在飞工作',
+  // 陈旧后台代理面板批（2026-11-08）：底层任务记录已终态而注册表行滞留 ⇒ 行显式标
+  // 「已结束」，运行时长冻结为真实时长（荒谬值拒收、零渲染）。
+  'subagents.ended': '已结束',
+  'subagents.endedTip': '该会话已结束（任务记录已终态）——时长为真实运行时长，不再走表',
   'subagents.status.stuck': '卡死',
   'subagents.status.error': '失败',
   'subagents.status.frozen': '已冻结',

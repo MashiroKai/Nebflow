@@ -5268,6 +5268,14 @@ onMessage('activeAgents', (msg) => {
       unreadReceipts: typeof a.unreadReceipts === 'number' ? a.unreadReceipts : ((prev && prev.unreadReceipts) || 0),
       outstandingSubagents: typeof a.outstandingSubagents === 'number' ? a.outstandingSubagents : ((prev && prev.outstandingSubagents) || 0),
       lastActivityMs: typeof a.lastActivityMs === 'number' ? a.lastActivityMs : ((prev && prev.lastActivityMs) || 0),
+      // 陈旧后台代理面板批（2026-11-08）：终态硬事实随快照落行（引擎侧 = 底层
+      // SubAgentTask 记录已终态 ⇒ 这一行其实早就干完了；注册表行滞留不再冒充在飞）。
+      // 合并纪律：ended 单调（本地已收到的终态事实优先于缺席的快照行），时长/终点
+      // 以快照为准、快照缺席回落本地（同 project/kind 合并类——不降级已渲染行）。
+      taskStatus: a.taskStatus || ((prev && prev.taskStatus) || ''),
+      ended: a.ended === true || !!(prev && prev.ended),
+      endedAt: (typeof a.endedAt === 'number' ? a.endedAt : ((prev && prev.endedAt) || null)),
+      durationMs: (typeof a.durationMs === 'number' ? a.durationMs : ((prev && prev.durationMs) || null)),
       // 本行已被本次快照覆盖 ⇒ 陈旧窗关闭（陈旧判据见下方分类 ③）。
       _missSince: null,
     };

@@ -959,6 +959,11 @@ export default {
   'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
   'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',
   'subagents.longIdle': 'idle {mins} min, nothing in flight',
+  // Stale background-agent panel batch (2026-11-08): the underlying task record went
+  // terminal while the registry row lingered ⇒ the row says "Ended" explicitly and the
+  // clock freezes at the real duration (implausible durations are rejected, not shown).
+  'subagents.ended': 'Ended',
+  'subagents.endedTip': 'This session has ended (its task record is terminal) — the duration is the real one and no longer ticks',
   'subagents.status.stuck': 'Stuck',
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
