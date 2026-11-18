@@ -619,7 +619,18 @@ class ProviderRegistry(
       }
     }
 
-  /** Explain configured models excluded by the selected chain authorization. */
+  /**
+   * Explain configured models excluded by the selected chain authorization.
+   *
+   * fallback 废除批对齐（SILENT-EXCLUSION 误报修复，2026-11-18）：授权面 =
+   * `preferred` **单根**——与链构造出口 [[getCandidatesForAgentUnfiltered]]
+   * （`fallbacks` 死数据不进链）及可观测面 `candidatePlan`（尾链 ref 已按
+   * `not in selected chain` 报 excluded）同一裁定。旧读法把 `agent.fallbacks`
+   * 也算授权 ⇒ 尾链 ref 既不在链上、又拿不到跳过原因 ⇒ 每个请求都落
+   * `SILENT-EXCLUSION` 假警报（生产实证 delegate-nebflow-57cb97d5：9 个
+   * fallback 尾 ref 反复报警而无人真丢候选——真警报被噪音淹没）。授权面收窄后，
+   * 尾链 ref 逐条带 `not-configured (not in selected chain)` 进账本。
+   */
   def allowlistExclusionsFor(
     selectedChain: List[String],
     agentModel: Option[AgentModelConfig]
@@ -627,7 +638,7 @@ class ProviderRegistry(
     configRef.get.map { config =>
       val allowed = agentModel match
         case Some(agent) if agent.preferred.isDefined || agent.fallbacks.nonEmpty =>
-          agent.preferred.toList ++ agent.fallbacks
+          agent.preferred.toList
         case _ => selectedChain
       val allowedSet = allowed.toSet
       config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>

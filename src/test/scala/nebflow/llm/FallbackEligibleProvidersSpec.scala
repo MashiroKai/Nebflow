@@ -373,6 +373,61 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
   }
 
   // =====================================================================
+  // 验收 9（SILENT-EXCLUSION 误报批 2026-11-18）：生产 delegate-nebflow-57cb97d5
+  // 形态——subagent 槽 sidecar 带旧 fallback 尾（PUT / 旧面板落盘的死数据）。
+  // 链构造只读 preferred（fallback 废除批），授权审计面（allowlistExclusionsFor）
+  // 旧读法把 fallbacks 也算授权 ⇒ 尾链 ref 既不在链上又拿不到原因 ⇒ 每请求一条
+  // 「N configured candidate(s) dropped with NO recorded reason」假警报。授权面
+  // 收窄为 preferred 单根后：调用照常走 preferred（成功 + meta 与配置一致）、
+  // 尾链逐条带 `not in selected chain` 原因进账本、零静默排除、尾链零请求
+  // （不得借机放宽候选链）。
+  // =====================================================================
+  test("A9: preferred 可用 + 旧 fallback 尾 ⇒ 调用成功且 meta=preferred；尾链逐条带原因、零 SILENT-EXCLUSION、尾链零请求") {
+    val spec = List("live" -> "ok", "f2" -> "ok", "f3" -> "ok")
+    val chain = AgentModelConfig(preferred = Some("live/m1"), fallbacks = List("f2/m1", "f3/m1"))
+    withFarm(spec) { (ports, hits) =>
+      for
+        cfgRef <- Ref.of[IO, NebflowServiceConfig](mkConfig(ports))
+        overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+        triple <- LlmInterface.createLlm(overrides, None, Some(cfgRef))
+        (handle, registry, _, release) = triple
+        // —— 账本面（与 interface.scala logCandidateLedger 同一输入形状）——
+        expected <- registry.expectedCandidateRefs()
+        allowSkips <- registry.allowlistExclusionsFor(Nil, Some(chain))
+        resolved <- registry.getCandidatesForAgentUnfiltered(Some(chain))
+        ledger = CandidateDisposition(
+          chain = resolved.map(c => s"${c.providerId}/${c.model}"),
+          tried = Nil,
+          skipped = allowSkips,
+          expected = expected
+        )
+        // —— 调用面（真实 HTTP，一次完成的 LLM 调用）——
+        res <- handle.send(req("eligible-a9", Some(chain))).attempt
+        _ <- release
+      yield
+        assertEquals(res.map(_.meta.providerId), Right("live"), s"调用必须落在 preferred provider 上：$res")
+        assertEquals(res.map(_.meta.model), Right("m1"), s"生效 model 必须与配置 ref 一致：$res")
+        assert(res.exists(_.reply.nonEmpty), s"必须带回文：$res")
+        assertEquals(hits("live").get(), 1, "preferred 恰好被调用一次")
+        assertEquals(hits("f2").get(), 0, "fallback 尾是死数据，不得被暗中启用（禁止放宽候选链）")
+        assertEquals(hits("f3").get(), 0, "fallback 尾是死数据，不得被暗中启用（禁止放宽候选链）")
+        assertEquals(
+          allowSkips.map(_._1).sorted,
+          List("f2/m1", "f3/m1"),
+          s"尾链 ref 必须逐条拿到跳过原因（不再『无理由丢弃』）：$allowSkips"
+        )
+        allowSkips.foreach { case (_, cause) =>
+          assert(cause.describe.contains("not in selected chain"), s"原因必须是链授权面：${cause.describe}")
+        }
+        assertEquals(
+          ledger.silentExclusions,
+          Nil,
+          s"授权面 = preferred 后不得再报静默排除：${ledger.render()}"
+        )
+    }
+  }
+
+  // =====================================================================
   // A7（派发钉链剔除）：pin 路径记录的候选若不在该 agent 的授权链中，
   // 仅保留排除原因，不可通过储备层回补为请求候选。
   // ==============================================================end FallbackEligibleProvidersSpec
