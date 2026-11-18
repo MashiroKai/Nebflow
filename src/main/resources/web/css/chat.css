@@ -1849,7 +1849,18 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.bubble.ai hr, .bubble.injected hr, .ask-bub.ai hr { border: none; border-top: 1px solid #eee; margin: var(--ds-space-2) 0; }
+/* dark-border-weight 批 2026-11-18：本条 hr 曾有**两个字面量、两套开关域** ——
+   基规则写死 `#eee`，@media (prefers-color-scheme: dark) 里再写死 `#2a2d35`
+   （区别：前者无条件，后者只在系统色方案上生效）。两个字面量都不在发丝线令牌族里。
+   实测（scripts/audit-border-weight.mjs，同机位 computed）：亮档 #eee 落在白气泡上 =
+   1.073 / ΔE00 1.95 —— **低于 JND 2.3，即亮档这条分隔线其实看不见**；暗档
+   1.316 / 7.33 正常。于是它不是「暗档太亮」（那条另有根因），而是**亮档隐形 +
+   暗亮不同权重**（暗−亮 ΔE00 差 5.37，超本批不变量 5.0 —— 这条正是被
+   scripts/check-border-weight.mjs 的 B2 判据抓出来的）。
+   收敛：改走全站通用分隔线令牌 --color-border（单源；亮 #ddd / 暗 #2a2d35），
+   两档实测 1.256/5.46 与 1.316/7.33，差 1.87 —— 两档同权重，且亮档所用的
+   #ddd 正是**全站 hr 在亮档本来的颜色**，层级不变。 */
+.bubble.ai hr, .bubble.injected hr, .ask-bub.ai hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .bubble.ai strong, .bubble.injected strong, .ask-bub.ai strong { font-weight: 600; }
 
 /* Agent badge — 曾在此定义（`chat.css` 与 `split.css` 双份声明 = D2 缺陷：后者
@@ -2104,7 +2115,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .bubble.ai pre::-webkit-scrollbar-thumb:hover, .bubble.injected pre::-webkit-scrollbar-thumb:hover, .ask-bub.ai pre::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
   .bubble.ai code, .bubble.injected code, .ask-bub.ai code { background: rgba(255,255,255,0.08); }
   .bubble.ai th, .bubble.injected th, .ask-bub.ai th { background: #22252e; }
-  .bubble.ai hr, .bubble.injected hr, .ask-bub.ai hr { border-top-color: #2a2d35; }
+  /* dark-border-weight 批 2026-11-18：本条 `border-top-color: #2a2d35` 已随上面
+     基规则改走 --color-border 而**逐值冗余** —— 该令牌在本块同一个
+     prefers-color-scheme: dark 条件下也解析成 #2a2d35，同特异度、更靠后本是它
+     在赢；删掉它后两档实测值不变（暗 1.316 / ΔE00 7.33、亮 1.256 / 5.46），
+     而暗档块里少了一个「第二处写死的发丝线色」。 */
 
   /* 工具卡暗档整段退役（ui-unification-20261103-chat-stream）：.ds-tool-card
      族全槽语义令牌，暗档由 --ds-* 别名自动解析，无双写。 */

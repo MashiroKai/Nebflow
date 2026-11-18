@@ -46,6 +46,10 @@ export const CHECKS = [
   nodeCheck('freeze-state', 'check-freeze-state'),
   nodeCheck('flat-buttons', 'check-flat-buttons'),
   nodeCheck('glass', 'check-glass-unify'),
+  // 边框权重闸（dark-border-weight 批 2026-11-18）：暗档「边框太明显」——
+  // 同一条白细边在亮底 1.03/ΔE00 0.89、在暗底 3.24/ΔE00 27.11；本闸量暗档绝对
+  // 上限 + 暗亮同权重 + 玻璃细边单源 + 近白字面量台账。B3/B4 纯静态，B1/B2 需渲染。
+  nodeCheck('border-weight', 'check-border-weight'),
   nodeCheck('freeze-silence', 'check-freeze-silence'),
   nodeCheck('freeze-replay', 'check-freeze-replay-silence'),
   nodeCheck('canvas-hint', 'check-canvas-hint-tokens'),
