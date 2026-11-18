@@ -91,7 +91,7 @@
 
 import { key } from './branding.js';
 import state from './state.js';
-import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
+import { sendWs, setAskFrameSink, onReconnect, requestTurnInterrupt } from './ws.js';
 import { activeCanvasEntry } from './canvas.js';
 import { isAskableFile } from './mdHtmlGate.js';
 // 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包，参考主 agent
@@ -114,6 +114,31 @@ import { createAskDialog, svgNode } from './askDialog.js';
 // 卡整体退役），ask_edit/ask_write 的直接落盘审阅态由 askEditReview 模块在 canvas
 // 审阅页签呈现——本模块只把 askEdit* 帧路由过去，不再自持任何审阅态。
 import { consumeApplied, consumeResolved, consumeAskState } from './askEditReview.js';
+// ── 状态可见性与失败上报批（作者令 2026-11-18：「Canvas Ask 对话框的状态显示
+//    不足…LLM 失败也没有报错」）────────────────────────────────────────────
+// 状态判定与失败分类**全部**收在 js/askTurnState.js 一个纯模块里（单点 + 投影；
+// 该模块零 import、零 DOM，scripts/check-ask-status.mjs 直接真跑它）。本文件只做
+// 两件事：把事实喂进去、把结论渲染出来——**不许再判一次状态、不许再拼一份文案**
+// （门禁 S2/S3/S4 把这条钉死：本文件出现任何状态字面量即红）。
+//   · 事实 → askTurnState()  → 状态 id（唯一判定）
+//   · 状态 → askStateView()  → 文案/观感/进度/诊断（唯一投影，本文件只读一次）
+//   · 原始失败 → reportAskFailure() 单点：classifyAskFailure() 分类 + 就地 inline
+//     + 复用既有通知三型里的 toast **error 档**（js/modal.js 的 __showToast 全局桥，
+//     本文件不自建任何通知样式族）。
+// 时间线（谁在什么时候上报；内核抽取批后，回合机制在内核、事实与投影在本文件）：
+//   内核 submit 的 cfg.send 返回值（经通用挂钩 cfg.onQueued 回传）→ noteAskQueued()
+//   流帧 textDelta → 首个 token 记 firstTokenAt、逐帧累计 chars（生成中的进度）
+//   error 帧      → reportAskFailure（LLM 侧失败）
+//   askError 帧   → reportAskFailure（服务端拒答；改前落在 switch 的 default 分支
+//                   被**静默消费**——本批新增该 case）
+//   静默看门      → askSilenceWatch()：ASK_SILENCE_MS 无帧 ⇒ reportAskFailure(超时)
+//                   （改前这条只 settleTurn()：按钮还回来、界面零痕迹）
+//   done/interrupted → 终态；interrupted 走「已中止」观感，**不是失败**（不弹错）。
+// 帧事实的喂入口 = 内核 consume 的通用挂钩 cfg.onFrame(kind, msg, s)（内核只给
+// 「哪一帧到了」，帧语义与上报仍收在本文件这一处）。
+import {
+  askTurnState, askStateView, classifyAskFailure, ASK_SILENCE_MS,
+} from './askTurnState.js';
 // ask-stream-ui（2026-11-17）的气泡列贴底跟随 + 「↓N 条新消息」胶囊（scrollPill.js
 // 唯一工厂）与思考期 spinner（chat.css `.thinking-dot` 族）随「Ask 对话框内核」搬进
 // askDialog.js —— canvas 档与选区档同一条腿，本文件不再直接依赖 scrollPill.js。
@@ -127,6 +152,9 @@ import { consumeApplied, consumeResolved, consumeAskState } from './askEditRevie
 export const INTERNAL_CLASSES = [
   'ask-fab', 'ask-dock', 'ask-col', 'ask-colwrap', 'ask-input',
   'ask-bub', 'ask-send', 'ask-stop', 'ask-sess-dot',
+  // 状态可见性与失败上报批（2026-11-18）：状态行三段仍只在本模块内建/查
+  //（唯一写点 = syncTurnStatus；`.ask-state-line` 是组件私有身份，不是通知族）。
+  'ask-state-line', 'ask-state-text', 'ask-state-next', 'ask-state-diag',
   // 记事本批（2026-11-05）：同一组件的第二对节点，同样只在本模块内建/查。
   'note-fab', 'note-dock', 'note-body',
   // canvas-inline-diff-review（2026-11-16）：提案 diff 卡一族随问答路径整体退役
@@ -134,12 +162,30 @@ export const INTERNAL_CLASSES = [
 ];
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
-function tt(zh, en) {
+/** 界面语言档（状态投影按它取文案；与 tt() 同一个探测口，不再各探一次）。 */
+function uiLang() {
   let lang = '';
   try { lang = localStorage.getItem(key('locale')) || ''; } catch { /* private mode */ }
   if (!lang) lang = document.documentElement.lang || navigator.language || '';
-  return /^zh/i.test(lang) ? zh : en;
+  return /^zh/i.test(lang) ? 'zh' : 'en';
 }
+function tt(zh, en) {
+  return uiLang() === 'zh' ? zh : en;
+}
+
+/**
+ * 状态行三段之间的分隔符（**唯一**一处；作者 2026-11-18 细观感令）。
+ *
+ * 形态 = **跟随前一段**：分隔符拼进前一段的文本尾巴，且前面挂一枚 U+00A0（不换行
+ * 空格）把它与前一段的末字黏住。折行时它只能停在上一行的**行尾**，到不了下一行的
+ * **行首**——`.ask-state-text` 本来就是 `white-space: nowrap`（整段原子），
+ * `.ask-state-next` 是唯一可换行的一段，它自己的尾巴由这枚 NBSP 兜住。
+ *
+ * 改前是 `.ask-state-*::before { content: '·' }`（段首型）：375px 窄屏一折行，第二行
+ * 就顶着一个孤零零的 `·`（实拍 `…/shots/mobile-fail-disconnect-disconnect-02-offline.png`）。
+ * 前缀必须是 U+00A0，不许退化成普通空格（那会重新给出断点）——闸 S12 断言这个形态。
+ */
+const ASK_SEP = '\u00A0·';
 
 // ── 图标（lucide 同族线性图标；SVG 命名空间构形）────────────────────────
 // 构形器 svgNode 单点 = askDialog.js（抽取批：Ask 对话框内核连同它的发送/中断图标
@@ -161,7 +207,7 @@ const ICONS = {
     ]),
 };
 
-/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number, mailAddress?: string}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number, mailAddress?: string, turn?: object|null}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
 let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）
@@ -348,14 +394,32 @@ function buildDialog() {
     canSubmit: () => !!currentFile && isAskableFile(currentFile),
     ensureSession: () => ensureActiveSession(),
     ensureBound: (s) => askOpen(s),
-    send: (s, v) => sendWs({
-      type: 'askQuestion', sessionId: s.sid, content: v, mainSessionId: state.activeSessionId || '',
-    }),
+    // 状态可见性与失败上报批：sendWs 的返回值**不再被丢弃**（内核把它经通用挂钩
+    // cfg.onQueued 原样回传）——false = 连接未开、帧进了 ws.js 的 pending 队列
+    //（有界，连接恢复后按序补发）⇒ 落「已提交排队 / 会话未连接」态，界面直说现状
+    // 并给出路（改前这一处境零可见性：问完就一个转圈）。
+    send: (s, v) => sendWs({ type: 'askQuestion', sessionId: s.sid, content: v, mainSessionId: state.activeSessionId || '' }),
+    // 帧入队可见性（上同）：挂钩本体是通用的，这里只把回调指到本文件的上报单点。
+    onQueued: (s, sent) => { noteAskQueued(s, !sent); },
+    // 帧事实喂入口（状态可见性与失败上报批）：内核 consume 每收一帧就回调一次
+    //（通用挂钩，内核不知道帧语义）；本文件按 msg.type 记事实/上报/重投影。
+    onFrame: (kind, msg, s) => { onKernelFrame(msg, kind, s); },
+    // 草稿变化即时重投影：「待发送 ⇄ 空闲」这一拍不必等 1s 节拍（状态可见性批）。
+    onInput: () => { syncTurnStatus(); },
+    // 中止动作（取消 ≠ 失败）：canvas 档自己收口回合事实（settleTurn({cancel:true})）
+    // 并即刻还 UI；内核的 dlg.stopAsk 仍是未挂钩档（选区档）的默认实现。
+    onStop: () => { stopAsk(); },
     frameKind: canvasFrameKind,
     onUnread: () => syncUnreadDot(),
     onPersist: (s) => persistSession(s),
     onStateExtra: (msg) => consumeAskState(msg),
   });
+  // 状态行（状态可见性与失败上报批）：面板自己的独立一行，坐落在 `.ask-colwrap`
+  // 与输入条之间（与记事本 `.note-status` 同一处方）；DOM 归本文件造，槽位用的是
+  // 内核已暴露的输入条引用——不在内核里再添一套状态展示。
+  const stateLine = buildStateLine();
+  if (dlg.inputRow && dlg.inputRow.parentNode === dlg.panel) dlg.panel.insertBefore(stateLine, dlg.inputRow);
+  else dlg.panel.appendChild(stateLine);
   return dlg.panel;
 }
 
@@ -367,9 +431,66 @@ function canvasFrameKind(msg) {
     case 'done': return 'done';
     case 'interrupted': return 'interrupted';
     case 'error': return 'error';
+    // 服务端拒答帧（askQuestion/askHandoff/askReply 的校验失败，见
+    // gateway/WsAskHandlers.scala:186-193 等）：动作与 error 帧同律（落助手气泡槽 +
+    // 收口回合）——改前这张表没有它 ⇒ frameKind 返回 null ⇒ 内核静默不消费
+    //（「点了发送什么都没发生」的一条根因）。帧面区分（上报口径）在本文件的
+    // onKernelFrame 里按 msg.type 保留。
+    case 'askError': return 'error';
     case 'user': return 'user';
     default: return null;
   }
+}
+
+/**
+ * 状态行（状态可见性与失败上报批 2026-11-18）。
+ *
+ * 它是**就地 inline** 那一型（通知三型 = toast / banner / inline，收敛结论在
+ * feat/notice-unify-20261118）：一处就地的状态语言，不新开第四个样式族、不碰
+ * toast 类名族（`.nebflow-toast*` 归 js/modal.js + css/modal.css 单源）。
+ *
+ * 位置刻意放在 `.ask-colwrap` 与 `.ask-input` **之间**（与记事本的 `.note-status`
+ * 同一处方）：它是面板自己的独立一行，不进气泡列——气泡列是「答案面」，而
+ * `.ask-stream-line` 那一条单行仍是**流式文本预览**（既有 spec 按逐字内容与
+ * 计算样式钉着它，本批零触碰）。
+ *
+ * 三段：
+ *   · `.ask-state-text` —— 状态文案（+ 进度/耗时），**唯一写点**在 syncTurnStatus；
+ *   · `.ask-state-next` —— 可执行的下一步（只有前置不可用/失败才给）；
+ *   · `.ask-state-diag` —— 可复制的诊断摘要（状态码/错误摘要/耗时/sid，已脱敏）；
+ *     默认隐藏，点一下复制到剪贴板（复现线索）。
+ * role=status + aria-live=polite：屏幕阅读器同样拿得到状态变化。
+ */
+function buildStateLine() {
+  const stateText = h('span', { class: 'ask-state-text' });
+  const stateNext = h('span', { class: 'ask-state-next' });
+  const stateDiag = h('button', {
+    type: 'button',
+    class: 'ask-state-diag',
+    title: tt('复制诊断摘要', 'Copy diagnostic summary'),
+  });
+  stateDiag.hidden = true;
+  stateDiag.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const text = stateDiag.textContent || '';
+    if (!text) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        void navigator.clipboard.writeText(text).catch(() => {});
+      }
+    } catch { /* 剪贴板不可用：摘要本身可选可读，不静默吞错误提示以外的东西 */ }
+    const prev = stateDiag.getAttribute('title') || '';
+    stateDiag.setAttribute('title', tt('已复制', 'Copied'));
+    setTimeout(() => { try { stateDiag.setAttribute('title', prev); } catch { /* detached */ } }, 1200);
+  });
+  const line = h('div', {
+    class: 'ask-state-line',
+    'data-ask-state-line': true,
+    role: 'status',
+    'aria-live': 'polite',
+  }, [stateText, stateNext, stateDiag]);
+  line.hidden = true;
+  return line;
 }
 
 /**
@@ -474,6 +595,11 @@ function ensureInner() {
     col: dock.querySelector('.ask-col'),
     colwrap: dock.querySelector('.ask-colwrap'),
     inputRow: dock.querySelector('.ask-input'),
+    // 状态行（状态可见性与失败上报批）：唯一写点 = syncTurnStatus()。
+    stateLine: dock.querySelector('[data-ask-state-line]'),
+    stateText: dock.querySelector('.ask-state-text'),
+    stateNext: dock.querySelector('.ask-state-next'),
+    stateDiag: dock.querySelector('.ask-state-diag'),
     resize: askSurface.handle,
     input: dock.querySelector('textarea'),
     send: dock.querySelector('.ask-send'),
@@ -959,6 +1085,7 @@ function onMount(host, ctx) {
     restoreSize(el.askSurface);
     restoreSize(el.noteSurface);
     syncSeat();
+    syncTurnStatus(); // 状态可见性批：首挂即落一次（默认空闲 = 状态行隐藏）
     return; // 首挂：与改前 mount() 尾部逐字同义
   }
   // 宿主迁移后补一拍（同一批节点、同一份会话状态；全部幂等）
@@ -971,6 +1098,7 @@ function onMount(host, ctx) {
     dlg.snapCol(); // ask-stream-ui：宿主迁移前若已贴底，迁移后保持贴底（改前 render 自带钉底同义）
   }
   dlg.setTurnChrome(activeSession());
+  syncTurnStatus(); // 状态可见性批：宿主迁移后重投影（同一份回合事实，零重建）
 }
 
 // 组件注册（light DOM；tag 必须 nf- 前缀，由 component.js.define 硬闸）。
@@ -1026,6 +1154,7 @@ function syncToActiveTab() {
   const switched = file !== currentFile;
   currentFile = file;
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
+  syncTurnStatus(); // 状态可见性批：切卡即重投影（新会话的回合事实与草稿各归各位）
   if (!switched) { syncSeat(); return; }
   // The composer DOM is shared, but its turn state belongs to the active file.
   dlg.setTurnChrome(activeSession());
@@ -1185,6 +1314,7 @@ async function open() {
   dlg.render();
   dlg.snapCol(); // ask-stream-ui：开窗即读 = 从最新一条起（未读清零 + 胶囊收敛）
   askOpen(s);
+  syncTurnStatus(); // 状态可见性批：开窗即落当前状态（含「会话未连接」前置口径）
   syncSeat();
   setTimeout(() => { try { el.input.focus(); } catch { /* detached */ } }, 260);
 }
@@ -1194,6 +1324,7 @@ function close() {
   if (!el) return;
   dlg.closeDom();
   el.fab.classList.remove('open');
+  syncTurnStatus(); // 收起即隐状态行（isOpen() 参与判定，收起点零残留）
   syncUnreadDot(); // 已读收起 → 点/pulse 不亮；有未读 → pulse 提示（仅未读时）
 }
 
@@ -1510,20 +1641,250 @@ function askOpen(s) {
   });
 }
 
-// 发送（submit）/ 中断状态机（armTurn/settleTurn/stopAsk）/ 静默看门 / typing 三件
-// 随「Ask 对话框内核」搬进 askDialog.js（see 上方「渲染 / 落列跟随 / …」段）。
+// 发送（submit）/ typing 三件 / 中断**机制**（busy 位与中断钮让位）随「Ask 对话框
+// 内核」搬进 askDialog.js（see 上方「渲染 / 落列跟随 / …」段）；本文件保留
+//   · 中断**动作**（stopAsk，经 buildDialog 的 cfg.onStop 挂钩回内核停止钮）与
+//     回合**事实**（s.turn）、状态行投影、失败上报（状态可见性批 2026-11-18）。
 
-// 静默看门：busy 期间 180s 无任何流帧 ⇒ 本地收口（终态帧丢失形态）。帧到即续臂
-// （lastFrameAt 刷新），活跃流永不误收；不 server-interrupt（freezetimeout B2
-// 「到点只呈现，不发 interrupt」同哲学——这里连呈现都不用，只还按钮）。
-// 抽取批：收口本体（busy 清 + 中断钮让位）在内核 dlg.settleTurn，本文件只负责
-// **遍历 canvas 会话账**（账归本文件所有）。
-setInterval(() => {
-  const now = Date.now();
-  for (const s of sessions.values()) {
-    if (s.busy && now - (s.lastFrameAt || 0) > 180000) dlg?.settleTurn(s);
+// ── 状态可见性与失败上报批（2026-11-18）：回合事实 + 单点投影 + 失败上报 ──────
+// 内核管机制，本段只做三件事，且**不做任何状态判定**（判定唯一 = js/askTurnState.js）：
+//   · 记录事实（s.turn：在飞 / 是否送达 / 首 token 时刻 / 已产出字数 / 失败分类 /
+//     中止 / 超时 / 终态时刻）——帧事实由内核的通用挂钩 cfg.onFrame 喂进来；
+//   · 重投影状态行（syncTurnStatus，唯一写点）；
+//   · 失败上报单点（reportAskFailure：分类 + 就地 inline + toast error 档）。
+
+/** 该会话的回合记录（懒建；字段语义 = js/askTurnState.js 的 askTurnState 入参）。 */
+function turnOf(s) {
+  if (!s) return null;
+  if (!s.turn) {
+    s.turn = {
+      inflight: false, queued: false, sentAt: 0, firstTokenAt: 0, lastFrameAt: 0,
+      chars: 0, failure: null, aborted: false, timedOut: false, settledAt: 0,
+    };
   }
-}, 5000);
+  return s.turn;
+}
+
+/**
+ * 臂：该会话 turn 在飞 → 中断钮上位（机制在内核 dlg.armTurn：busy 位 + chrome；幂等）。
+ * 已是在飞（流帧续臂）⇒ 只刷新 lastFrameAt / 投影响应，**不清事实**
+ * （首个 token 时刻与已产出字数要跨整条流累计；清掉 = 进度面每帧归零）。
+ * @param {any} s @param {{queued?: boolean, sentAt?: number}} [opts]
+ */
+function armTurn(s, opts) {
+  const t = turnOf(s);
+  const o = opts || {};
+  if (!t.inflight) {
+    t.queued = !!o.queued;
+    t.sentAt = o.sentAt || Date.now();
+    t.firstTokenAt = 0;
+    t.chars = 0;
+    t.failure = null;
+    t.aborted = false;
+    t.timedOut = false;
+    t.settledAt = 0;
+  }
+  t.inflight = true;
+  t.lastFrameAt = Date.now();
+  dlg?.armTurn(s); // 机制（busy + 中断钮让位）唯一实现在内核
+  syncTurnStatus();
+}
+
+/**
+ * 收：终态（机制在内核 dlg.settleTurn：busy 清 + 中断钮让位；幂等——重复终态帧/
+ * 重复点击零副作用）。
+ * @param {any} s
+ * @param {{cancel?: boolean, timeout?: boolean, failure?: object|null}} [outcome]
+ */
+function settleTurn(s, outcome) {
+  if (!s) return;
+  const t = turnOf(s);
+  const o = outcome || {};
+  t.inflight = false;
+  t.queued = false;
+  t.settledAt = Date.now();
+  if (o.cancel) t.aborted = true; // 用户/服务端主动中止：**不是失败**
+  if (o.timeout) t.timedOut = true;
+  t.failure = o.failure || null;
+  dlg?.settleTurn(s); // 机制唯一实现在内核
+  syncTurnStatus();
+}
+
+/** 用户点停（画布档；经 buildDialog 的 cfg.onStop 挂在内核停止钮上）：帧出口走包
+ *  单点（与主会话 #stop-btn 逐字节同帧）；UI 即刻收口（主会话 stop 同律「reset UI
+ *  immediately」）——typing 撤除、已生成 ai 泡保留。中止 = 「已中止」态，**不是
+ *  失败**：不弹错、不落错误样式（作者令明写）。 */
+function stopAsk() {
+  const s = activeSession();
+  if (!s || !s.busy) return;
+  requestTurnInterrupt(s.sid);
+  settleTurn(s, { cancel: true });
+  if (isOpen()) { dlg.removeTyping(); dlg.render(); dlg.snapCol(); } // 本机动作 → 点停即钉底
+}
+
+/**
+ * 失败上报**单点**（分类 → 落状态 → 就地 inline 投影 → toast error 档）。
+ * 四条曾静默/易静默的路径全部汇到这里：error 帧 / askError 帧 / 静默看门超时 /
+ * 帧入队失败外的显式失败。**取消不走这里**（走 settleTurn({cancel:true})）。
+ *
+ * 诊断线索 = classifyAskFailure() 产出的 `diagnostic`（状态码 + 脱敏后的错误摘要
+ * + 耗时 + sid），落 `.ask-state-diag`，点一下复制——**凭据永不出现在这条线上**
+ * （脱敏是 js/askTurnState.js 的 redactDiagnostics 单点做的，不是纪律口号）。
+ *
+ * @param {any} s 会话记录
+ * @param {{message?: string, status?: number, name?: string, busy?: boolean,
+ *   aborted?: boolean, timedOut?: boolean}} [raw] 原始事实
+ */
+function reportAskFailure(s, raw) {
+  if (!s) return;
+  const t = turnOf(s);
+  const now = Date.now();
+  const wsOpen = !!(state.ws && state.ws.readyState === 1);
+  const failure = classifyAskFailure({
+    message: raw && raw.message,
+    status: raw && raw.status,
+    name: raw && raw.name,
+    online: typeof navigator === 'undefined' || !('onLine' in navigator) ? true : navigator.onLine,
+    wsOpen: wsOpen || !!state.connected,
+    busy: !!(raw && raw.busy),
+    aborted: !!(raw && raw.aborted),
+    timedOut: !!(raw && raw.timedOut),
+    elapsedMs: t.sentAt ? now - t.sentAt : 0,
+    sid: s.sid,
+  });
+  settleTurn(s, { failure });
+  const view = lastTurnView;
+  if (view && view.toast && s === activeSession()) {
+    // 通知三型复用：toast 的 **error 档**（js/modal.js 单一来源的全局桥；本文件
+    // 不自建样式族、不自建类型表）。可执行的下一步在就地状态行上（`.ask-state-next`），
+    // toast 只承担「这一下出问题了」的即时可见性——两种型别各司其职，不重复堆字。
+    if (typeof window !== 'undefined' && window.__showToast) {
+      window.__showToast(view.label, view.toast);
+    }
+  }
+}
+
+/** 帧未送达（内核 cfg.send 返回 false ⇒ 进了 ws.js 的 pending 队列）：落「已提交
+ *  排队 / 会话未连接」。改前这个返回值被当场丢弃 ⇒ 这一处境在界面上**完全不可见**。 */
+function noteAskQueued(s, queued) {
+  const t = turnOf(s);
+  if (!t) return;
+  t.queued = !!queued;
+  syncTurnStatus();
+}
+
+/** 最近一次投影结论（reportAskFailure 读它决定是否弹 toast——投影只读一次）。 */
+let lastTurnView = null;
+
+/**
+ * 状态行投影（**唯一**写点）：事实 → askTurnState() → askStateView() → 写 DOM。
+ * 本文件只在这里读一次投影；别处不许再拼状态文案（门禁 S4）。
+ */
+function syncTurnStatus() {
+  if (!el || !el.stateLine) return;
+  const s = activeSession();
+  const now = Date.now();
+  const turn = s ? s.turn : null;
+  const turnState = askTurnState({
+    connected: !!state.connected,
+    open: isOpen(),
+    draft: el.input ? el.input.value : '',
+    turn,
+    now,
+  });
+  const view = askStateView(turnState, { lang: uiLang(), turn, now });
+  const hint = view.hint || '';
+  const diag = view.diagnostic || '';
+  // 分隔符**跟随前一段**（见 ASK_SEP）：有后续段才补一枚，补在前一段的文本尾巴上。
+  const text = (view.detail ? `${view.label} · ${view.detail}` : view.label) + (hint || diag ? ASK_SEP : '');
+  const hintText = hint ? hint + (diag ? ASK_SEP : '') : '';
+  const shown = !view.quiet && isOpen();
+  el.stateLine.hidden = !shown;
+  el.stateLine.classList.toggle('is-warn', view.tone === 'warn');
+  el.stateLine.classList.toggle('is-error', view.tone === 'error');
+  if (el.stateText.textContent !== text) el.stateText.textContent = text;
+  if (el.stateNext.textContent !== hintText) el.stateNext.textContent = hintText;
+  el.stateNext.hidden = !hint;
+  if (el.stateDiag.textContent !== diag) el.stateDiag.textContent = diag;
+  el.stateDiag.hidden = !diag;
+  lastTurnView = view;
+  return view;
+}
+
+// 静默看门（改前：只 dlg.settleTurn —— 按钮还回来、界面**零痕迹**，正是作者报的
+// 「失败了也没报错」那条）。现在同一条判定走失败上报单点 = 就地 inline + toast。
+// 帧到即续臂（lastFrameAt 刷新），活跃流永不误收；不 server-interrupt
+// （freezetimeout B2「到点只呈现，不发 interrupt」同哲学——现在连**呈现**也有了）。
+// 阈值 = js/askTurnState.js 的 ASK_SILENCE_MS 单点（本文件零硬编码）。
+function askSilenceWatch(now) {
+  for (const s of sessions.values()) {
+    const t = s.turn;
+    if (t && t.inflight && now - (t.lastFrameAt || 0) > ASK_SILENCE_MS) {
+      reportAskFailure(s, {
+        message: tt('等待响应超时：长时间没有任何流式帧', 'Timed out: no stream frame for a long time'),
+        timedOut: true,
+      });
+    }
+  }
+}
+// 1s 一拍：既续看门，也让「已等 N 秒 / 已 N 字」与终态驻留到期（→ 空闲）跟着走。
+setInterval(() => {
+  askSilenceWatch(Date.now());
+  syncTurnStatus();
+}, 1000);
+
+/**
+ * 内核帧事实喂入口（通用挂钩 cfg.onFrame 的消费者；内核只报「哪一帧到了」，
+ * 帧语义/上报口径收在这一处）。按**线上帧名**（msg.type）分支——内核的动作已按
+ * 画布档的 frameKind 表执行（askError 与 error 同律），这里只补本文件的事实与投影。
+ */
+function onKernelFrame(kind, msg, entry) {
+  switch (msg.type) {
+    case 'askState': {
+      // 回放可能刚把回合判终（内核同一帧内 settleTurn）⇒ 重投影一拍。
+      syncTurnStatus();
+      break;
+    }
+    case 'textDelta': {
+      // 进度面：首个**非空** token = 「等待响应 → 正在生成」的翻相点（与
+      // updateTypingText 的 dots→文本同相）；chars = 已产出量近似。续臂由事实层做
+      // （已是在飞时只刷 lastFrameAt，首 token 时刻与累计字数跨整条流保留）。
+      armTurn(entry);
+      const tr = turnOf(entry);
+      if (!tr.firstTokenAt && msg.delta) tr.firstTokenAt = Date.now();
+      tr.chars += (msg.delta || '').length;
+      syncTurnStatus();
+      break;
+    }
+    case 'done': {
+      settleTurn(entry);
+      break;
+    }
+    case 'interrupted': {
+      // 中断终态：走 **cancel** 收口 = 「已中止」态，**不是失败**（不弹错、不落
+      // 错误样式；作者令：取消/中止不是失败）。
+      settleTurn(entry, { cancel: true });
+      break;
+    }
+    case 'error': {
+      // LLM 侧失败：分类后的状态行文案 + 可执行的下一步 + 可复制的诊断摘要 + toast
+      // error 档。气泡文案逐字不变（内核按同一帧落泡），**失败上报只从这一条腿出**。
+      reportAskFailure(entry, { message: msg.message, status: msg.status, name: msg.name });
+      break;
+    }
+    case 'askError': {
+      // 服务端拒答帧（askQuestion/askHandoff/askReply 的校验失败，见
+      // gateway/WsAskHandlers.scala:186-193 等）。**改前这个 type 在消费者的
+      // switch 里根本没有 case ⇒ 被静默消费** ——「点了发送什么都没发生」的另一条
+      // 根因（本批新增）。与 error 帧同待遇：分类 + 落泡（内核同律）+ 就地状态行 + toast。
+      reportAskFailure(entry, { message: msg.message });
+      break;
+    }
+    default:
+      break;
+  }
+  void kind;
+}
 
 /** ws.js ask 拦截面：sessionId 前缀 `ask-` 的帧全部进这里（主视图零交集）。
  *  抽取批（2026-11-18）：问答内核帧（askState / textDelta / done / interrupted /

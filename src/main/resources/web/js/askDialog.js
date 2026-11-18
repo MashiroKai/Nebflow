@@ -105,11 +105,18 @@ function setMarkdownHtml(node, text, streaming) {
  * @property {(s: AskSession) => boolean} canSubmit 发送前硬闸
  * @property {() => Promise<AskSession|null>} ensureSession 取/建会话
  * @property {(s: AskSession) => void} ensureBound 发送前绑定帧
- * @property {(s: AskSession, text: string) => void} send 发送腿
+ * @property {(s: AskSession, text: string) => any} send 发送腿（返回值原样经 onQueued 回传）
  * @property {(msg: any) => ('state'|'delta'|'done'|'interrupted'|'error'|'user'|null)} frameKind 帧名→动作
  * @property {(s: AskSession) => void} [onUnread] 未读点等消费者副作用
  * @property {(s: AskSession) => void} [onPersist] 落盘
  * @property {(msg: any, s: AskSession) => void} [onStateExtra] askState 的消费者附加腿
+ * @property {() => void} [onInput] 草稿变化（input 事件）的消费者腿（状态可见性批）
+ * @property {(s: AskSession, sent: any) => void} [onQueued] send 返回值的消费者腿
+ *   （状态可见性批：sendWs 返回 false ⇒ 帧入 pending 队列；改前该返回值被丢弃）
+ * @property {(kind: string, msg: any, s: AskSession) => void} [onFrame] 每**消费**一帧
+ *   后的通用回调（状态可见性批：内核只报「哪一帧到了」，帧语义归消费者）
+ * @property {() => void} [onStop] 覆盖停止钮动作（状态可见性批：canvas 档在消费者
+ *   侧收口回合事实；缺省 = 本内核的 dlg.stopAsk）
  * @property {string} [panelClass] 面板类（缺省 'ask-dock'）
  */
 
@@ -141,6 +148,8 @@ export function createAskDialog(cfg) {
     sendHook: 'ask-send',
     stopHook: 'ask-stop',
     withStop: true,
+    // 草稿变化的消费者腿（状态可见性批）：状态行的「待发送 ⇄ 空闲」跟着输入走。
+    onInput: cfg.onInput || null,
     onSend: () => { dlg.submit(); },
   });
   const { root: inputRow, input, sendBtn: send, stopBtn: stop } = composer;
@@ -178,7 +187,7 @@ export function createAskDialog(cfg) {
         sendBtn: /** @type {HTMLElement} */ (send),
         stopBtn: /** @type {HTMLElement} */ (stop),
       });
-      stop.addEventListener('click', () => { dlg.stopAsk(); });
+      stop.addEventListener('click', () => { if (cfg.onStop) cfg.onStop(); else dlg.stopAsk(); });
       // 发送点击 / 多行自动长高 / 键盘·IME·发送判定三条腿已随「次级 LLM 输入框」模板收进
       // js/input/secondaryComposer.js（createSecondaryComposer 的 onSend 一次性装配，
       // 键道走 input/composer.js 同一实现）——此处若再绑一次，一次 Enter / 一次点击会
@@ -324,7 +333,10 @@ export function createAskDialog(cfg) {
       dlg.appendTyping();
       dlg.armTurn(s);
       if (!s.stateSent) cfg.ensureBound(s);
-      cfg.send(s, v);
+      // 状态可见性批（通用挂钩）：send 的返回值原样回传消费者——canvas 档据它落
+      // 「已提交排队 / 会话未连接」态；改前这个返回值在消费侧被当场丢弃。
+      const sent = cfg.send(s, v);
+      cfg.onQueued?.(s, sent);
     },
 
     /** 臂：该会话 turn 在飞 → 中断钮上位（活动会话才动 chrome；幂等）。 */
@@ -374,6 +386,10 @@ export function createAskDialog(cfg) {
     consume(msg, entry) {
       const kind = cfg.frameKind(msg);
       if (!kind) return false;
+      // 状态可见性批（通用挂钩）：每**消费**一帧回调一次 cfg.onFrame —— 内核只说
+      // 「哪一帧到了」，帧语义/呈现口径留在消费者（canvas 档 = askDock.onKernelFrame；
+      // 未挂钩的档零影响）。
+      const consumed = () => { cfg.onFrame?.(kind, msg, entry); return true; };
       switch (kind) {
         case 'state': {
           const prevLen = entry.msgs.length;
@@ -415,7 +431,7 @@ export function createAskDialog(cfg) {
             }
             cfg.onUnread?.(entry);
           }
-          return true;
+          return consumed();
         }
         case 'delta': {
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
@@ -431,7 +447,7 @@ export function createAskDialog(cfg) {
           const nowMs = Date.now();
           if (nowMs - streamPersistAt > 800) { streamPersistAt = nowMs; cfg.onPersist?.(entry); }
           if (entry === cfg.activeSession()) cfg.onUnread?.(entry);
-          return true;
+          return consumed();
         }
         case 'done': {
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
@@ -443,7 +459,7 @@ export function createAskDialog(cfg) {
             if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol(1); }
             cfg.onUnread?.(entry);
           }
-          return true;
+          return consumed();
         }
         case 'interrupted': {
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
@@ -453,7 +469,7 @@ export function createAskDialog(cfg) {
             if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol(1); }
             cfg.onUnread?.(entry);
           }
-          return true;
+          return consumed();
         }
         case 'error': {
           // v2.1：错误不再起 sys 气泡——文本落助手气泡槽（问答面只出两族）。
@@ -468,7 +484,7 @@ export function createAskDialog(cfg) {
             if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol(1); }
             cfg.onUnread?.(entry);
           }
-          return true;
+          return consumed();
         }
         case 'user': {
           // 注入族（injected:true）：迁移自 askDock（canvas 回问腿）；选区档同一条腿。
@@ -481,7 +497,7 @@ export function createAskDialog(cfg) {
               cfg.onUnread?.(entry);
             }
           }
-          return true;
+          return consumed();
         }
         default:
           return false;

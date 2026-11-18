@@ -118,6 +118,9 @@ export const CHECKS = [
   nodeCheck('todo-options', 'check-todo-options', ['static']),
   nodeCheck('toggle', 'check-toggle-unify'),
   nodeCheck('scroll-pill', 'check-scroll-pill-center'),
+  // Canvas Ask 状态可见性与失败上报闸（2026-11-18）：状态判定单点 + 失败不许静默
+  // + 文案完整 + 凭据不出诊断线（形态见 scripts/check-ask-status.mjs 头注）。
+  nodeCheck('ask-status', 'check-ask-status'),
   nodeCheck('input-surface', 'check-input-surface'),
   nodeCheck('dropdown-single-control', 'check-dropdown-single-control'),
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),

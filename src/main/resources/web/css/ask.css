@@ -294,6 +294,7 @@ nf-ask-dock { display: contents; }
    ——地址行是面板内容件（同 colwrap 律：只显隐、不参与玻璃面形变）。 */
 .ask-dock.closed .ask-addr,
 .ask-dock.closed .ask-colwrap,
+.ask-dock.closed .ask-state-line,
 .note-dock.closed .note-status,
 .note-dock.closed .note-body > *,
 .ask-dock.closed .ask-input > * { visibility: hidden; }
@@ -452,6 +453,68 @@ body.mobile-layer .note-dock .ds-resize-handle {
   text-align: right;
 }
 .note-status[hidden] { display: none; }
+
+
+/* ══ Ask 状态行（状态可见性与失败上报批 2026-11-18）════════════════════════
+ * 出处（作者令逐字）：「Canvas Ask 对话框的状态显示不足 我不知道它在干嘛 是否
+ * 正常 LLM 失败也没有报错等 需要补充更多的信息」。
+ *
+ * 这一块是**就地 inline** 那一型（通知三型 = toast / banner / inline；收敛结论见
+ * feat/notice-unify-20261118）——**刻意不新开第四个样式族**：
+ *   · 类名 `.ask-state-line` 是组件私有身份（INTERNAL_CLASSES），不是通知族；
+ *   · 零 toast 类名（`.nebflow-toast*` 归 js/modal.js + css/modal.css 单源）；
+ *   · 零新色值：中性档吃既有 dim 令牌（与 .note-status 同一枚），两档「出问题了」
+ *     吃既有 --ds-warn-icon / --ds-danger-icon（design-system.css）。
+ *
+ * 位置 = 面板自己的独立一行（`.ask-colwrap` 与 `.ask-input` 之间），与记事本
+ * `.note-status` 同一处方：不进气泡列（气泡列 = 答案面，`.ask-stream-line` 那一条
+ * 单行仍是流式文本预览，本批零触碰）、不压输入条、不参与玻璃面形变（收起态随
+ * 其余内容件一起 visibility:hidden，见下方收起隐身名单）。
+ *
+ * 观感两类（作者令点名的区分）：正常干活 = 中性 dim（不抢注意力）；前置不可用 =
+ * warn 档；失败 = error 档。三段是并列的 flex 项，右对齐（面板右缘钉位）。 */
+.ask-state-line {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.4;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 0 var(--ds-space-1);
+  color: var(--cv-hint-color-dim);
+  opacity: 1;
+}
+.ask-state-line[hidden] { display: none; }
+.ask-state-text { white-space: nowrap; }
+.ask-state-next,
+.ask-state-text { min-width: 0; }
+.ask-state-next { opacity: 0.85; }
+.ask-state-next[hidden] { display: none; }
+/* 可复制的诊断摘要（状态码 + 脱敏错误摘要 + 耗时 + sid）：单行省略，点一下复制
+   全文（README 里的复现线索）。它是 inline 的一枚文字钮，不是第二套控件语言。 */
+.ask-state-diag {
+  min-width: 0;
+  max-width: 100%;
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.ask-state-diag[hidden] { display: none; }
+.ask-state-line.is-warn { color: var(--ds-warn-icon); }
+.ask-state-line.is-error { color: var(--ds-danger-icon); }
 
 
 /* 气泡列：从按钮位置长出；顶缘渐隐 = 内容本体 alpha 渐到 0（作者令 2026-11-04
