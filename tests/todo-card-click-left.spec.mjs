@@ -518,6 +518,24 @@ async function leg(spec) {
     }
 
     // ── C. 卡内既有入口未被吞 ────────────────────────────────────────────
+    // C0 枚举：先把**卡内全部交互件**列出来（逐项回归的对账表）。
+    // 「快速决策入口」在消息流卡片里今天并不存在（那是移动待办 app 的面，属
+    // feat/todo-quick-decision-20261118）；本表如实列出实际存在的入口 —— 不做
+    // "探望不到的入口"的假回归，也不留"以后新增的入口被整卡点击吞掉"的口子：
+    // 白名单已含 [role=button]/[tabindex]/label，下面的 C11 专门钉这条护栏。
+    const entries = await page.evaluate((sel) => {
+      const card = document.querySelector(sel + ' .schedule-card');
+      const sel2 = 'button,a[href],input,textarea,select,label,[role="button"],[tabindex],[data-sched-act]';
+      return [...card.querySelectorAll(sel2)].map((el) => ({
+        tag: el.tagName,
+        act: el.getAttribute('data-sched-act') || '',
+        cls: String(el.className || '').split(/\s+/).filter(Boolean).slice(0, 2).join('.'),
+        txt: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 14),
+      }));
+    }, agentSel);
+    check(`${tag} · C0 卡内交互件枚举（对账表：每个入口都在白名单里、都必须让路）`,
+      entries.length >= 2 && entries.every((e) => e.tag === 'BUTTON' || e.act), JSON.stringify(entries));
+
     // C1 取消钮：走原有二次确认（且不触达 composer）
     await clickInner(page, `${agentSel} [data-sched-act="cancel"]`);
     const confirmShown = await page.locator(`${agentSel} [data-sched-act="cancel-yes"]`).count();
@@ -555,6 +573,33 @@ async function leg(spec) {
     await clickInner(page, `${agentSel} [data-sched-act="discard"]`);
     check(`${tag} · C10 「放弃修改」退回查看态（原行为）`,
       await page.locator(`${agentSel} .schedule-card-form`).count() === 0);
+
+    // C11 护栏：卡里**任何一个**「像交互件的东西」都必须能被白名单认出来让路 ——
+    // 包括本批之后才可能加进来的入口（role=button / tabindex / label）。
+    // 判据：逐个用卡内那条真实委托的同一判据（closest(CARD_INTERACTIVE_SEL)）判一遍，
+    // 有一个认不出来 = 整卡点击会把它吞掉 ⇒ 红。
+    const guard = await page.evaluate((sel) => {
+      const CARD_INTERACTIVE_SEL = ['button', 'a[href]', 'input', 'textarea', 'select', 'label',
+        '[role="button"]', '[tabindex]', '[data-sched-act]',
+        '.schedule-card-form', '.schedule-card-actions'].join(',');
+      const card = document.querySelector(sel + ' .schedule-card');
+      const probe = document.createElement('span');
+      probe.setAttribute('role', 'button');       // 未来入口形态 1
+      probe.className = 'schedule-card-chip-item';
+      const probe2 = document.createElement('span');
+      probe2.setAttribute('tabindex', '0');       // 未来入口形态 2
+      card.appendChild(probe); card.appendChild(probe2);
+      const all = [...card.querySelectorAll('*')];
+      const uncovered = all.filter((el) => {
+        const looksInteractive = el.matches('button,a[href],input,textarea,select,label,[role="button"],[tabindex]');
+        return looksInteractive && !el.closest(CARD_INTERACTIVE_SEL);
+      }).length;
+      const covered = all.filter((el) => el.closest(CARD_INTERACTIVE_SEL)).length;
+      probe.remove(); probe2.remove();
+      return { uncovered, covered };
+    }, agentSel);
+    check(`${tag} · C11 护栏：卡内所有"像交互件"的元素都被白名单认出让路（含未来入口形态）`,
+      guard.uncovered === 0 && guard.covered >= 4, JSON.stringify(guard));
 
     // ── E. 真引用：提交 → 模型侧收到的读数 + 消息 chip 身份 ───────────────
     await clearComposer(page);
