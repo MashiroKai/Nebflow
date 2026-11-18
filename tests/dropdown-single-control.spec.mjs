@@ -1,24 +1,32 @@
 #!/usr/bin/env node
 // dropdown-single-control.spec.mjs — 「同一字段只渲染一个下拉控件」真渲染检查
-// （2026-11-18 作者报障「电脑端的下拉选框，怎么有重复」修复批，作者令：统一
+// （2026-11-18 作者实拍报障「电脑端的下拉选框，怎么有重复」修复批，作者令：统一
 //   必须形成自动化检测 ⇒ 本文件断言受影响字段的可见控件数，不是看源码）。
 //
-// 判据（每个受影响字段各一行）：可见下拉控件数 === 1。
+// 判据（每个受影响字段各一行）：可见下拉控件数 === 1，且那一个必须是统一 trigger
+// （旧原生 select 不许是可见的那一个），且包裹层里不留第二行（触发件与包裹层同框）。
 //   控件 = ① 统一 trigger（.nf-select-trigger，渲染中）+ ② 被替换的原生
-//   <select>（若仍渲染 = 旧控件复活）+ ③ 同字段容器里的其余 <select>（半迁移残留）。
+//   <select>（若仍渲染 = 旧控件复活）+ ③ 同一行容器里的其余 <select>（半迁移残留）。
 //
-// 两种资产状态各测一遍（都要求 1/1）：
-//   · as-shipped：源树本来的样子；
-//   · hiding-ineffective：往页面注入「覆盖 css/dropdown.css 隐藏声明」的非
-//     important 规则（模拟 CSS 资产陈旧/半更新 —— 作者现场最可能的成因）。
-//     修复前此状态下每个字段都变 2（统一 trigger + 复活的原生 select）；
-//     修复后旧控件的不可见由收编器 inline 拥有 ⇒ 状态无关，恒为 1。
+// 三个资产状态各测一遍：
+//   · as-shipped            ：源树本来的样子（健康态，恒 1）；
+//   · stack-ineffective     ：把 css/dropdown.css 整条不变量的**全部声明**都压掉
+//                             （栈 display / 同格 grid-area / 隐藏 opacity+pointer-events）
+//                             —— 即作者两张实拍的状态：收编照旧发生（trigger 的脸来自
+//                             另一个文件 css/inputSurface.css），栈与隐藏一起失效 ⇒
+//                             设置页模型卡 = 胶囊在上 + 通栏原生 select（同值 + 右侧大箭头）
+//                             在下；delegate 弹窗头 = 胶囊的「字 + 箭头」与原生件并排。
+//                             修复前此状态下每字段 = 2（且包裹层多出一行）；
+//                             修复后不变量由收编器 inline 拥有 ⇒ 状态无关，恒为 1。
+//   · hiding-ineffective    ：只压掉隐藏那一条（窄口径回归；修复前 = 2，两个控件叠在同一格）。
 //
-// 视口：桌面 1280×800 与手机 375×812（作者令两视口都要）。
-// 运行：node tests/dropdown-single-control.spec.mjs
-//   可选 env：WEB_DIR=<web 根>（改前树对照用）· VIDEO=1（录 webm）· LOG=<日志路径>
-// 产出：<LOG>（默认 /private/tmp/dropdown-single-control/log.txt）+ VIDEO=1 时
-//       <视频目录>/<state>/<viewport>.webm；任一 FAIL ⇒ exit 1。
+// 视口：桌面 1280×800 与手机 375×812（作者令两视口都要）；两处受影响面都测：
+//   设置页模型配置卡（9 个字段）+ delegate 弹窗头（#bgagent-model-switch）。
+// 用法：node tests/dropdown-single-control.spec.mjs
+//   可选 env：WEB_DIR=<web 根>（改前树对照用）· SHOTS=1（写取景帧）·
+//            SHOTS_DIR=<帧目录> · TAG=<前/后标签> · LOG=<日志路径>
+// 产出：<LOG>（默认 /private/tmp/dropdown-single-control/log.txt）；SHOTS=1 时
+//       <SHOTS_DIR>/<TAG>-<viewport>-<state>-<place>.png；任一 FAIL ⇒ exit 1。
 
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
@@ -32,27 +40,43 @@ const WEB_DIR = resolve(process.env.WEB_DIR || join(ROOT, 'src/main/resources/we
 const PORT = Number(process.env.PORT || 8397);
 const BASE = `http://127.0.0.1:${PORT}`;
 const LOG = process.env.LOG || '/private/tmp/dropdown-single-control/log.txt';
-const VIDEO = process.env.VIDEO === '1';
-const VIDEO_DIR = process.env.VIDEO_DIR || '/private/tmp/dropdown-single-control/video';
+const SHOTS = process.env.SHOTS === '1';
+const SHOTS_DIR = process.env.SHOTS_DIR || '/private/tmp/dropdown-single-control/shots';
+const TAG = process.env.TAG || 'after';
 const SID = 'dropdown-single-root';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 mkdirSync(dirname(LOG), { recursive: true });
 writeFileSync(LOG, '');
-if (VIDEO) mkdirSync(VIDEO_DIR, { recursive: true });
+if (SHOTS) mkdirSync(SHOTS_DIR, { recursive: true });
 
-const FIELDS = [
+const SETTINGS_FIELDS = [
   'cfg-language', 'cfg-thinking-effort',
   'model-role-select-Nebula', 'model-role-select-kernel', 'model-role-select-project-dispatcher',
   'model-role-select-node', 'model-role-select-subagent',
   'small-llm-select', 'imagegen-settings-select',
 ];
+const DELEGATE_FIELD = 'bgagent-model-switch';
 const PROVIDERS = {
   zhipu: { baseUrl: 'https://api.zhipu.example/v1/', apiKey: '***', protocol: 'openai', models: [{ id: 'glm-5.3-flash' }] },
-  cmdcode: { baseUrl: 'https://api.cmd.example/v1/', apiKey: '***', protocol: 'openai', models: [{ id: 'deepseek/deepseek-v4.1-flash' }] },
+  cmdcode: { baseUrl: 'https://api.cmd.example/v1/', apiKey: '***', protocol: 'openai', models: [{ id: 'IricalGpt/gpt-6.1-terra' }, { id: 'IricalGpt/gpt-6.1-luna' }] },
 };
-// 非 important 的替换声明：只在「该隐藏声明不是生效声明」时起作用（模拟 CSS 资产
-// 陈旧/半更新），对被收编器 inline 拥有的不可见无效 —— 这正是修复的分界。
-const HIDING_RULE = '.nf-select .nf-select-native { opacity: 1; pointer-events: auto; }';
+// 显式独立配置的槽（复刻作者实拍：subagent 钉 terra、通用小 LLM 钉 luna）。
+const EXPLICIT = {
+  Nebula: { preferred: 'cmdcode/IricalGpt/gpt-6.1-luna', fallbacks: [] },
+  subagent: { preferred: 'cmdcode/IricalGpt/gpt-6.1-terra', fallbacks: [] },
+  'small-llm': { preferred: 'cmdcode/IricalGpt/gpt-6.1-luna', fallbacks: [] },
+};
+// 三个资产状态（非 important 的压条：修复前它们就是生效声明，修复后被收编器的
+// inline 声明压住 —— 这正是「不变量归谁拥有」的分界）。
+const STATES = {
+  'as-shipped': '',
+  // 整份 dropdown.css 的不变量全部压掉：栈 + 同格 + 隐藏（作者实拍形态）。
+  'stack-ineffective': `.nf-select { display: inline; vertical-align: baseline; max-width: none; }
+.nf-select > * { grid-area: auto; }
+.nf-select .nf-select-native { opacity: 1; pointer-events: auto; }`,
+  // 只压隐藏一条（窄口径）。
+  'hiding-ineffective': '.nf-select .nf-select-native { opacity: 1; pointer-events: auto; }',
+};
 
 let pass = 0;
 let fail = 0;
@@ -78,9 +102,7 @@ const webServer = createServer((req, res) => {
 });
 await new Promise((r) => webServer.listen(PORT, '127.0.0.1', r));
 
-const chain = { preferred: 'zhipu/glm-5.3-flash', fallbacks: [] };
-
-/** 页内读数：每个受影响字段的可见下拉控件数拆解。 */
+/** 页内读数：每个受影响字段的可见下拉控件数 + 包裹层有没有多出的第二行。 */
 const MEASURE = (fields) => fields.map((id) => {
   const sel = document.getElementById(id);
   if (!sel) return { id, present: false, count: 0 };
@@ -94,17 +116,22 @@ const MEASURE = (fields) => fields.map((id) => {
   const trigger = wrap ? wrap.querySelector('.nf-select-trigger') : null;
   const container = (wrap || sel).parentElement;
   const others = container ? [...container.querySelectorAll('select')].filter((s) => s !== sel) : [];
+  const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { top: +r.top.toFixed(1), left: +r.left.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) }; };
+  const wb = box(wrap); const tb = box(trigger);
+  // 第二行残留：包裹层比触发件高，或触发件不在包裹层顶部（栈失效 ⇒ 旧控件另起一行）。
+  const residualRow = !!(wb && tb && (wb.h - tb.h > 1 || tb.top - wb.top > 1));
   return {
     id, present: true,
     triggerRendered: rendered(trigger),
     nativeRendered: rendered(sel),
     othersRendered: others.filter(rendered).length,
     count: (rendered(trigger) ? 1 : 0) + (rendered(sel) ? 1 : 0) + others.filter(rendered).length,
+    residualRow,
   };
 });
 
-async function boot(browser, viewport, recordPath) {
-  const ctx = await browser.newContext({ viewport, colorScheme: 'light', ...(recordPath ? { recordVideo: { dir: recordPath, size: viewport } } : {}) });
+async function boot(browser, viewport) {
+  const ctx = await browser.newContext({ viewport, colorScheme: 'light' });
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't');
     localStorage.setItem('neblink_token', 't');
@@ -121,8 +148,8 @@ async function boot(browser, viewport, recordPath) {
     if (p === '/api/sessions') return r.fulfill({ json: { sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }], activeId: SID } });
     if (/\/api\/agents\/[^/]+\/model$/.test(p)) {
       const role = decodeURIComponent(p.split('/')[3]);
-      const own = role === 'Nebula' ? chain : null;
-      const effective = own || chain;
+      const own = EXPLICIT[role] || null;
+      const effective = own || EXPLICIT.Nebula;
       return r.fulfill({ json: { mode: own ? 'explicit' : 'follow', chain: own, effectiveChain: effective, resolvedFrom: 'seed', current: effective.preferred, settable: true } });
     }
     return r.fulfill({ json: {} });
@@ -130,7 +157,10 @@ async function boot(browser, viewport, recordPath) {
   await page.routeWebSocket(/\/ws/, (ws) => {
     const sendConfig = () => ws.send(JSON.stringify({
       type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {},
-      config: JSON.stringify({ llm: { providers: PROVIDERS } }),
+      config: JSON.stringify({
+        llm: { providers: PROVIDERS },
+        imagegen: { defaultProvider: 'zhipu', providers: { zhipu: { type: 'openai', model: 'cogview-4' } } },
+      }),
     }));
     sendConfig();
     ws.send(JSON.stringify({ type: 'serverConfig', version: '1.4.0', streamTimeoutMs: 600000 }));
@@ -158,38 +188,85 @@ async function openSettings(page, mobile) {
   await sleep(400);
   const disclosure = page.locator('#model-chain-section [data-settings-disclosure="models"]');
   if (await disclosure.count() && (await disclosure.getAttribute('aria-expanded')) !== 'true') await disclosure.click();
-  await page.waitForSelector('#model-chain-section-body [data-role="Nebula"]', { state: 'attached', timeout: 15000 });
+  await page.waitForSelector('#model-chain-section-body [data-role="subagent"]', { state: 'attached', timeout: 15000 });
   await page.evaluate(() => document.getElementById('model-chain-section')?.scrollIntoView({ block: 'start' }));
   await sleep(600);
 }
 
-/** 一条腿 = 一个视口：as-shipped 与 hiding-ineffective 两种状态各测一次。 */
-async function leg(browser, viewport, mobile, label) {
-  const recordPath = VIDEO ? join(VIDEO_DIR, label) : null;
-  const { ctx, page, errors } = await boot(browser, viewport, recordPath);
+/** delegate 弹窗头（作者实拍第一处）：真模块 openStepPopup。 */
+async function openDelegate(page) {
+  await page.evaluate(async ([sid]) => {
+    const m = await import('/js/bgAgentPopup.js');
+    m.openStepPopup(sid, 'Beta发布', '下拉重复复核');
+  }, [SID]);
+  await page.waitForSelector(`#${DELEGATE_FIELD}`, { state: 'attached', timeout: 15000 });
+  await sleep(700);
+}
+
+const clipOf = (page, boxes, pad) => {
+  const view = page.viewportSize();
+  const xs = boxes.filter(Boolean);
+  if (!xs.length) return null;
+  const left = Math.max(0, Math.min(...xs.map((b) => b.x)) - pad);
+  const top = Math.max(0, Math.min(...xs.map((b) => b.y)) - pad);
+  const right = Math.min(view.width, Math.max(...xs.map((b) => b.x + b.width)) + pad);
+  const bottom = Math.min(view.height, Math.max(...xs.map((b) => b.y + b.height)) + pad);
+  const clip = { x: left, y: top, width: right - left, height: bottom - top };
+  return clip.width >= 8 && clip.height >= 8 ? clip : null; // 全在视口外 ⇒ 不拍空帧
+};
+const boxesIn = (page, sels) => page.evaluate((args) => args.flatMap((sel) => [...document.querySelectorAll(sel)].map((el) => {
+  const r = el.getBoundingClientRect();
+  return { x: r.x, y: r.y, width: r.width, height: r.height };
+})), sels);
+
+/** 取景帧：设置页两处受影响卡（delegate 打开前）。 */
+async function shootSettings(page, viewport, state) {
+  await page.evaluate(() => document.querySelector('[data-role="subagent"]')?.scrollIntoView({ block: 'center' }));
+  await sleep(300);
+  await page.screenshot({ path: join(SHOTS_DIR, `${TAG}-${viewport}-${state}-settings-viewport.png`) });
+  const clip = clipOf(page, await boxesIn(page, ['[data-role="subagent"]', '#small-llm-settings-row']), 10);
+  if (clip) await page.screenshot({ path: join(SHOTS_DIR, `${TAG}-${viewport}-${state}-settings.png`), clip });
+  else log(`INFO  [${viewport}/${state}] settings 取景跳过（区域在视口外）`);
+}
+
+/** 取景帧：delegate 弹窗头部一行（作者实拍第一处）。 */
+async function shootDelegate(page, viewport, state) {
+  const clip = clipOf(page, await boxesIn(page, ['.flow-agent-header', `#${DELEGATE_FIELD}`, '.nf-select-trigger']), 14);
+  if (clip) await page.screenshot({ path: join(SHOTS_DIR, `${TAG}-${viewport}-${state}-delegate.png`), clip });
+  else log(`INFO  [${viewport}/${state}] delegate 取景跳过（区域在视口外）`);
+}
+
+/** 一条腿 = 一个视口 × 一个状态。 */
+async function leg(browser, viewport, mobile, label, state) {
+  const { ctx, page, errors } = await boot(browser, viewport);
   try {
     await openSettings(page, mobile);
-    const asShipped = await page.evaluate(MEASURE, FIELDS);
-    const present = asShipped.filter((r) => r.present);
-    const okCount = present.filter((r) => r.count === 1).length;
-    const badShipped = present.filter((r) => r.count !== 1);
-    log(`${badShipped.length ? 'FAIL' : 'PASS'}  [${label}/as-shipped] 受影响字段可见下拉控件数 = ${okCount}/${present.length}`
-      + (badShipped.length ? ` — 多控件的字段：${badShipped.map((r) => `${r.id}(count=${r.count}, trigger=${r.triggerRendered}, native=${r.nativeRendered}, extra=${r.othersRendered})`).join('; ')}` : ''));
-    if (badShipped.length) fail++; else pass++;
+    if (STATES[state]) { await page.addStyleTag({ content: STATES[state] }); await sleep(300); }
+    const settings = await page.evaluate(MEASURE, SETTINGS_FIELDS);
+    const present = settings.filter((r) => r.present);
+    const bad = present.filter((r) => r.count !== 1 || r.nativeRendered || r.residualRow);
+    log(`${bad.length ? 'FAIL' : 'PASS'}  [${label}/settings/${state}] 受影响字段单控件 = ${present.length - bad.length}/${present.length}`
+      + (bad.length ? ` — 不合格：${bad.map((r) => `${r.id}(count=${r.count}, trigger=${r.triggerRendered}, native=${r.nativeRendered}, extra=${r.othersRendered}, 第二行=${r.residualRow})`).join('; ')}` : ''));
+    if (bad.length) fail++; else pass++;
+    if (SHOTS) await shootSettings(page, label, state);
 
-    await page.addStyleTag({ content: HIDING_RULE });
-    await sleep(300);
-    const degraded = await page.evaluate(MEASURE, FIELDS);
-    const present2 = degraded.filter((r) => r.present);
-    const ok2 = present2.filter((r) => r.count === 1).length;
-    const badDeg = present2.filter((r) => r.count !== 1);
-    log(`${badDeg.length ? 'FAIL' : 'PASS'}  [${label}/hiding-ineffective] 受影响字段可见下拉控件数 = ${ok2}/${present2.length}`
-      + (badDeg.length ? ` — 多控件的字段：${badDeg.map((r) => `${r.id}(count=${r.count}, trigger=${r.triggerRendered}, native=${r.nativeRendered}, extra=${r.othersRendered})`).join('; ')}` : ''));
-    if (badDeg.length) fail++; else pass++;
-
-    if (badDeg.length) await page.screenshot({ path: join(dirname(LOG), `${label}-duplicate.png`) }).catch(() => {});
-    log(`INFO  [${label}] 字段清单：${present.map((r) => r.id).join(', ') || '(无)'}`);
-    log(`INFO  [${label}] 页面 JS 异常 = ${errors.length}${errors.length ? ' — ' + errors.slice(0, 3).join(' | ') : ''}`);
+    await openDelegate(page);
+    if (STATES[state]) { await page.addStyleTag({ content: STATES[state] }); await sleep(300); }
+    const header = await page.evaluate(MEASURE, [DELEGATE_FIELD]);
+    const h = header.find((r) => r.present);
+    if (!h || (!h.triggerRendered && !h.nativeRendered && h.othersRendered === 0)) {
+      // 该视口这一面根本没渲染（如手机层头部只留会话 chrome）⇒ 无「两个控件」可言，
+      // 计为 n/a（不计入分母），并把它写清楚而不是静默放过。
+      log(`N/A   [${label}/delegate/${state}] #${DELEGATE_FIELD} 未渲染（该视口这一面无下拉控件）`);
+    } else {
+      const hBad = h.count !== 1 || h.nativeRendered || h.residualRow;
+      log(`${hBad ? 'FAIL' : 'PASS'}  [${label}/delegate/${state}] #${DELEGATE_FIELD} 单控件 = ${hBad ? '0/1' : '1/1'}`
+        + ` — count=${h.count}, trigger=${h.triggerRendered}, native=${h.nativeRendered}, extra=${h.othersRendered}, 第二行=${h.residualRow}`);
+      if (hBad) fail++; else pass++;
+    }
+    if (SHOTS) await shootDelegate(page, label, state);
+    log(`INFO  [${label}/${state}] 字段清单：${present.map((r) => r.id).join(', ') || '(无)'}`);
+    log(`INFO  [${label}/${state}] 页面 JS 异常 = ${errors.length}${errors.length ? ' — ' + errors.slice(0, 3).join(' | ') : ''}`);
   } finally {
     await ctx.close();
   }
@@ -197,12 +274,14 @@ async function leg(browser, viewport, mobile, label) {
 
 const browser = await chromium.launch();
 try {
-  await leg(browser, { width: 1280, height: 800 }, false, 'desktop-1280x800');
-  await leg(browser, { width: 375, height: 812 }, true, 'mobile-375x812');
+  for (const state of Object.keys(STATES)) {
+    await leg(browser, { width: 1280, height: 800 }, false, 'desktop-1280x800', state);
+    await leg(browser, { width: 375, height: 812 }, true, 'mobile-375x812', state);
+  }
 } finally {
   await browser.close();
   webServer.close();
 }
-log(`SUMMARY pass=${pass} fail=${fail} · web=${WEB_DIR} · log=${LOG}`);
+log(`SUMMARY pass=${pass} fail=${fail} · web=${WEB_DIR} · tag=${TAG} · log=${LOG}`);
 writeFileSync(LOG, out.join('\n') + '\n');
 process.exit(fail === 0 ? 0 : 1);
