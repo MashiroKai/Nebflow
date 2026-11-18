@@ -1,18 +1,22 @@
 // capture-mobile-overlay-ab.mjs — 手机端浮层三件批：同机位 before/after 视频 + 静帧取证。
 //
 // 用法：
-//   node scripts/capture-mobile-overlay-ab.mjs <label> <webRoot> <outDir>
+//   node scripts/capture-mobile-overlay-ab.mjs <label> <webRoot> [outDir]
 // 例：
 //   node scripts/capture-mobile-overlay-ab.mjs before "/Users/kaiyu/Claude code/Stand/src/main/resources/web" /Users/kaiyu/stand-evidence/mobile-overlay-glass-20261118
 //   node scripts/capture-mobile-overlay-ab.mjs after  "$PWD/src/main/resources/web"                          /Users/kaiyu/stand-evidence/mobile-overlay-glass-20261118
+// 缺省 outDir = 共享证据批 helper（`<tmp>/stand-evidence/<project>/<task>-<uuid>/<yyyyMMdd>/`，
+// 带 manifest.json、无 .active ⇒ 引擎 TTL 清扫可回收）。显式 outDir 语义不变。
 //
 // 视口：375×812（作者真实形态）与 1280×800（桌面回归面）。
 // 同一份 harness（静态文件面 = 真实 web 树；WS 帧桩；零后端、零 sbt、非 6138/8080/8097）。
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, extname, normalize, basename } from 'node:path';
+import { evidenceOut } from './lib/evidence-batch.mjs';
 
-const [label = 'x', WEB = process.cwd(), OUT = process.cwd()] = process.argv.slice(2);
+const [label = 'x', WEB = process.cwd(), OUT_ARG] = process.argv.slice(2);
+const OUT = evidenceOut(OUT_ARG, 'mobile-overlay-glass', `capture-${label}`);
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 const SID = 'overlay-evidence-session';
 mkdirSync(OUT, { recursive: true });
