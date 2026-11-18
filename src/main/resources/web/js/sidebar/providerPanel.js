@@ -50,7 +50,7 @@ import { escapeHtml } from '../utils.js';
 import { authHeaders } from '../flowHelpers.js';
 import { toggleHTML, setToggleState } from '../toggle.js';
 import { providerCardHTML, addProviderButtonHTML, bindCardRemove, bindCardSelect } from '../cfgProviderCard.js';
-import { showProviderForm, showProviderModal, protocolFormLabel, saveProviderWithAck, flushConfigToServer, revealProviderApiKeys } from './providersUi.js';
+import { showProviderForm, showProviderModal, protocolFormLabel, saveProviderWithAck, flushConfigToServer } from './providersUi.js';
 import { imagegenTestButtonHTML, imagegenTestResultsHTML, bindImagegenTestButtons } from './imagegenTestButton.js';
 
 /** 面板宿主 id（sidebar.js renderSettings 里唯一挂点）。 */
@@ -418,8 +418,7 @@ function openProviderForm(name) {
   if (type === 'llm') {
     const providers = /** @type {Record<string, any>} */ (state.parsedConfig && state.parsedConfig.llm && state.parsedConfig.llm.providers) || {};
     const existing = name ? providers[name] : null;
-    Promise.resolve(revealProviderApiKeys()).catch(() => {}).then(() => {
-      showProviderModal(name || null, existing || null, async (newName, data) => {
+    showProviderModal(name || null, existing || null, async (newName, data) => {
         const ok = await spec.persist({}, { name: newName, existingName: name || '', data });
         if (!ok) {
           window.__showToast?.(t('settings.saveFailed'), 'error');
@@ -428,7 +427,6 @@ function openProviderForm(name) {
         paintProviderPanel();
         return true;
       });
-    });
     return;
   }
 

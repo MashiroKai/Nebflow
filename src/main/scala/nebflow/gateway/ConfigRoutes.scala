@@ -271,6 +271,21 @@ private[gateway] object ConfigRoutes:
           }
         }
 
+      // Single-provider explicit reveal. Audit the event without logging caller-controlled text.
+      case req @ GET -> Root / "config" / "provider-keys" / id =>
+        withAuth(req) {
+          ConfigService.revealProviderApiKey(id).flatMap {
+            case Some(value) =>
+              nebflow.shared.NebflowLogger.forName("nebflow.gateway.config")
+                .info("Provider credential revealed").flatMap { _ =>
+                  Ok(Json.obj("value" -> value.asJson)).map(_.putHeaders(
+                    Header.Raw(org.typelevel.ci.CIString("Cache-Control"), "no-store")
+                  ))
+                }
+            case None => NotFound(Json.obj("error" -> "Provider credential not found".asJson))
+          }.handleErrorWith(_ => BadRequest(Json.obj("error" -> "Provider credential unavailable".asJson)))
+        }
+
       // GET /api/config/provider-keys —— 设置页 apikey 明文回读（作者令
       // 2026-10-27 10:33「设置里配置的 apikey 直接显示」：JeV 配置节 + LLM API
       // 配置节明文直显）。owner 鉴权与设置写同门槛（withAuth = GatewayAuth

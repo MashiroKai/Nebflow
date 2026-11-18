@@ -124,6 +124,15 @@ object ConfigService:
     }))
   }
 
+  /** Resolve only the requested provider; never resolve neighbouring credentials. */
+  def revealProviderApiKey(id: String): IO[Option[String]] = IO.blocking {
+    val raw = if os.exists(configPath) then os.read(configPath) else "{}"
+    parse(raw).toOption
+      .flatMap(_.hcursor.downField("llm").downField("providers").downField(id).downField("apiKey").as[String].toOption)
+      .filter(_.nonEmpty)
+      .map(key => nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, key, "provider-settings"))
+  }
+
   def getConfig: IO[String] = IO.blocking {
     // Read-side masking (keyaudit-quickfix ③): the wire faces (REST
     // GET /api/config, WS getConfig) must not echo the stored keys. Every

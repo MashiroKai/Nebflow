@@ -60,7 +60,7 @@ import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
 // 本文件保持单向 import(子模块不得反向 import
 // sidebar.js),公共导出面(批次前 41 符号)经下方 `export ... from` 显式转发,
 // 外部 import 方零改动。
-import { escapeHtml, revealProviderApiKeys } from './sidebar/providersUi.js';
+import { escapeHtml } from './sidebar/providersUi.js';
 // 服务商面板（provider-add-tabs 批 2026-11-06 作者令「添加服务商统一成标签切换
 // 类型 + 单一服务商面板」）：LLM / 生图 / JeV 三类服务商从此只有**一个面** ——
 // 类型标签 + 一张列表 + 一套表单骨架全部在 sidebar/providerPanel.js（本文件只
@@ -1016,7 +1016,7 @@ export function renderSettings() {
   // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
   // 弹窗打开时已在手。失败静默——弹窗退回既有空态（留空保存 = "***" = 引擎
   // 保留旧值），保存路径零改动。
-  revealProviderApiKeys().catch(() => {});
+  // Provider credentials are fetched only after an explicit reveal action.
 
   // friendseal batch (2026-09-25 ①-A): the settings-page device expansion
   // area (chat entry per device). Lazy import — the P2-4 cycle-cut precedent:

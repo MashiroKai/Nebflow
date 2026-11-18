@@ -114,11 +114,12 @@ async function bootPage(page, opts = {}) {
   /** @type {any[]} */ const wsFrames = [];
 
   await page.route('**/api/**', (r) => r.fulfill({ json: {} })); // catch-all (lowest priority)
-  await page.route('**/api/config/provider-keys', (r) => {
+  await page.route('**/api/config/provider-keys/*', (r) => {
     reveal.count += 1;
     reveal.auth = r.request().headers()['authorization'] || '';
     if (revealStatus !== 200) return r.fulfill({ status: revealStatus, body: 'boom' });
-    return r.fulfill({ json: { providers: { ...store, ...revealProviders } } });
+    const id = decodeURIComponent(new URL(r.request().url()).pathname.split('/').pop());
+    return r.fulfill({ json: { value: store[id] || revealProviders[id] || '' } });
   });
   // 统一服务商面板投影（provider-add-tabs 批：生图读 GET 面；jev 域投影已随
   // JeV 退役摘除——jev-retire 批 2026-11-16）。
@@ -186,17 +187,16 @@ async function keyFieldState(page) {
 test('T2 provider edit modal prefills the REAL key in plaintext; untouched save sends it verbatim; the readback rides the auth header and fires once', async ({ page }) => {
   const h = await bootPage(page);
   await openSettings(page);
-  // 进页预取（renderSettings → revealProviderApiKeys）：恰一次、带 owner 鉴权头。
-  await expect.poll(() => h.reveal.count, { timeout: 5000 }).toBe(1);
-  expect(h.reveal.auth, 'the readback rides the owner auth header').toBe('Bearer t');
-
+  expect(h.reveal.count).toBe(0);
   await openKimiModal(page);
-  expect(h.reveal.count, 'card click reuses the prefetch (single-flight/cache, no second fetch)').toBe(1);
-
+  expect(h.reveal.count, 'opening editor does not fetch credentials').toBe(0);
   const st = await keyFieldState(page);
-  expect(st.value, '🔴 the edit field shows the stored key verbatim (明文直显)').toBe(KIMI_KEY);
+  expect(st.value).toBe('');
   expect(st.security, 'configured key is masked by default').toBe('disc');
   await page.click('#cfg-modal .cfg-eye-btn');
+  expect(h.reveal.count).toBe(1);
+  expect(h.reveal.auth).toBe('Bearer t');
+  await expect(page.locator('#cfg-modal [data-field="apiKey"]')).toHaveValue(KIMI_KEY);
   expect((await keyFieldState(page)).security, 'eye reveals the key').toBe('none');
   await page.click('#cfg-modal .cfg-eye-btn');
   expect((await keyFieldState(page)).security, 'eye masks the key again').toBe('disc');
@@ -231,8 +231,10 @@ test('T3 save a rotated key, reload the settings page, the field shows the store
   await openSettings(page);
   await openKimiModal(page);
   const st = await keyFieldState(page);
-  expect(st.value, '🔴 after reload the field equals the stored value (plaintext)').toBe(KIMI_KEY_ROTATED);
+  expect(st.value).toBe('');
   expect(st.security, 'masked by default').toBe('disc');
+  await page.click('#cfg-modal .cfg-eye-btn');
+  await expect(page.locator('#cfg-modal [data-field="apiKey"]')).toHaveValue(KIMI_KEY_ROTATED);
 });
 
 // ══ T4 · 未配置 = 空态而非掩码 ══════════════════════════════════════════
@@ -254,10 +256,11 @@ test('T4 unconfigured faces show the EMPTY state, not a mask: keyless provider �
 test('T5 a rejected (403) readback degrades to the legacy blank field — no faked value, no crash', async ({ page }) => {
   const h = await bootPage(page, { revealStatus: 403 });
   await openSettings(page);
-  await expect.poll(() => h.reveal.count, { timeout: 5000 }).toBe(1);
-
+  expect(h.reveal.count).toBe(0);
   await page.click('.cfg-card[data-provider="kimi"]');
   await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 5000 });
+  await page.click('#cfg-modal .cfg-eye-btn');
+  expect(h.reveal.count).toBe(1);
   const st = await keyFieldState(page);
   expect(st.value, '🔴 no reveal → empty field (the "***" keep-stored path stays intact)').toBe('');
   // 空字段直存 = 旧语义闭环：payload 回 "***"（引擎保留旧值）。

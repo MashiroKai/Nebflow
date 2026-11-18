@@ -153,6 +153,23 @@ class ConfigKeyRevealSpec extends CatsEffectSuite:
     val base = Request[IO](Method.GET, Uri.unsafeFromString(path))
     if withToken then base.withHeaders(Headers("Authorization" -> s"Bearer $TestToken")) else base
 
+  test("single-provider reveal is authenticated, scoped and not cacheable") {
+    writeSeed()
+    val routes = mkRoutes().routes
+    for
+      denied <- routes(get("/config/provider-keys/kimi", withToken = false)).value
+      allowed <- routes(get("/config/provider-keys/kimi", withToken = true)).value
+      missing <- routes(get("/config/provider-keys/unknown", withToken = true)).value
+      body <- allowed.get.as[Json]
+    yield
+      assertEquals(denied.get.status, Status.Forbidden)
+      assertEquals(allowed.get.status, Status.Ok)
+      assertEquals(allowed.get.headers.get(org.typelevel.ci.CIString("Cache-Control")).map(_.head.value), Some("no-store"))
+      assertEquals(body.hcursor.downField("value").as[String], Right("sk-real-kimi-1"))
+      assertEquals(body.asObject.map(_.keys.toSet), Some(Set("value")))
+      assertEquals(missing.get.status, Status.NotFound)
+  }
+
   test("GET /config/provider-keys 无令牌 ⇒ 403（owner 鉴权与设置写同门槛；门在业务之前）") {
     mkRoutes().routes(get("/config/provider-keys", withToken = false))
       .value

@@ -96,50 +96,6 @@ function flushConfigToServer() {
   sendWs({type: 'updateConfig', config: json});
 }
 
-// ── 设置页 apikey 明文回读（作者令 2026-10-27 10:33「设置里配置的 apikey，
-//    直接显示就行了，比如 JeV 的以及我们 llm api 的」）────────────────────────
-// GET /api/config/provider-keys（owner 鉴权，与设置写同门槛的 withAuth 面）→
-// llm.providers.<id>.apiKey 真值，只落本模块内存 map，用于编辑弹窗把已存 key
-// 预填成明文。JeV 配置节的 keyRef 无需此路径——那是指针名，config 读面本就
-// 逐字回传（打码只发生在 provider apiKey / search.apiKey 形态字段上）。
-// 🔴 纪律：明文只进弹窗输入框，不入 localStorage / 不打日志 / 不上卡面；
-// 拉取失败或无鉴权 ⇒ map 保持空 ⇒ 弹窗退回既有空态（留空保存 = 回 "***" =
-// 引擎保留旧值），保存路径零改动。60s 缓存与 refreshSecretsEntryCount 同约。
-/** @type {Record<string, string>} */
-let revealedProviderKeys = {};
-/** @type {Promise<Record<string, string>>|null} */
-let revealInflight = null;
-let revealAt = 0;
-
-/** Fetch (cached ≤60s, single-flight) the real provider apiKeys. Resolves
- *  with the map even on failure (empty map ⇒ legacy blank-field fallback). */
-export function revealProviderApiKeys() {
-  if (revealInflight) return revealInflight;
-  if (revealAt && Date.now() - revealAt < 60000) return Promise.resolve(revealedProviderKeys);
-  revealInflight = fetch('/api/config/provider-keys', { headers: authHeaders() })
-    .then(r => (r.ok ? r.json() : null))
-    .then(data => {
-      // Defensive shaping: strings only — anything unexpected never lands.
-      const provs = data && typeof data.providers === 'object' && data.providers ? data.providers : {};
-      /** @type {Record<string, string>} */
-      const next = {};
-      for (const [id, v] of Object.entries(provs)) {
-        if (typeof v === 'string' && v) next[id] = v;
-      }
-      revealedProviderKeys = next;
-      revealAt = Date.now();
-      return revealedProviderKeys;
-    })
-    .catch(() => revealedProviderKeys)
-    .finally(() => { revealInflight = null; });
-  return revealInflight;
-}
-
-/** The revealed real key for one provider id ('' = unknown ⇒ blank field). */
-function revealedApiKeyFor(name) {
-  return (name && revealedProviderKeys[name]) || '';
-}
-
 // --- Provider model-list auto-fetch (B1) ---
 // Model choices fetched for the currently open provider modal. Set on a
 // successful POST /api/provider/models; renderModelRowContent reads it so
@@ -369,11 +325,9 @@ function showProviderModal(existingName, existingData, onSave) {
   // 文本框逗号串 → 段列表（每段一颗原子段字段），days 由面板的星期多选面编辑，
   // 保存形状仍是后端的 `{from,to,days?}`（wire 契约零改）。
   const uwList = Array.isArray(p.unavailableWindows) ? p.unavailableWindows : [];
-  // 明文直显（作者令 2026-10-27）：编辑既有 provider 时，config 读面上的
-  // "***" 用回读真值替换（revealProviderApiKeys 已在设置页打开时预取、卡点
-  // 点击时再兜一次）；回读未落地/失败 ⇒ '' = 既有空态（占位符提示留为 ***
-  // 保持不变）。保存逻辑不变：字段里的明文原样进 payload，留空回 "***"。
-  const apiKeyFace = p.apiKey && p.apiKey !== '***' ? p.apiKey : revealedApiKeyFor(existingName);
+  // Never prefetch credentials; an empty edit preserves the stored value.
+  // The eye fetches just this provider only on explicit activation.
+  const apiKeyFace = '';
 
   showProviderForm({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
@@ -407,6 +361,10 @@ function showProviderModal(existingName, existingData, onSave) {
         placeholder: t('provider.maxConcurrentActorsPh'),
       },
     ],
+    bindExtra(overlay) {
+      const input = overlay.querySelector('[data-field="apiKey"]');
+      if (input && existingName && p.apiKey) input.dataset.revealProviderId = existingName;
+    },
     async onConfirm(values) {
       const name = values.name.trim();
       if (!name) { window.__showToast?.(t('provider.idRequired'), 'error'); return; }
@@ -690,10 +648,13 @@ export function showProviderForm({title, fields, onCancel, onConfirm, extraActio
   overlay.querySelectorAll('.cfg-eye-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const input = btn.parentElement.querySelector('input');
-      if (input.type === 'password' && !input.value && input.dataset.revealSecretRef) {
+      if (input.type === 'password' && !input.value && (input.dataset.revealSecretRef || input.dataset.revealProviderId)) {
         btn.disabled = true;
         try {
-          const resp = await fetch(`/api/secrets/${encodeURIComponent(input.dataset.revealSecretRef)}/value`, {
+          const path = input.dataset.revealSecretRef
+            ? `/api/secrets/${encodeURIComponent(input.dataset.revealSecretRef)}/value`
+            : `/api/config/provider-keys/${encodeURIComponent(input.dataset.revealProviderId)}`;
+          const resp = await fetch(path, {
             headers: authHeaders(), cache: 'no-store',
           });
           if (!resp.ok) throw new Error('reveal failed');
