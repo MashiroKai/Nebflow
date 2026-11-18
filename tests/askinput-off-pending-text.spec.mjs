@@ -214,6 +214,10 @@ async function openApp(browser, theme, viewport) {
   await ctx.route('**/api/agents/Nebula/avatar/meta', route => route.fulfill({ status: 200, json: {} }));
   await ctx.route(`${BASE}/agents/Nebula/agent.json`, route => route.request().method() === 'GET'
     ? route.fulfill({ status: 200, json: {} }) : route.continue());
+  // The direct gateway is not a portal host. Stop relay discovery without
+  // introducing an unrelated expected 404 into this input-focused fixture.
+  await ctx.route(`${BASE}/api/portal/status`, route => route.request().method() === 'GET'
+    ? route.fulfill({ status: 200, json: {} }) : route.continue());
   const page = await ctx.newPage();
   const errs = [];
   page.on('pageerror', (e) => errs.push(`pageerror: ${e.message}`));
@@ -236,7 +240,8 @@ async function openApp(browser, theme, viewport) {
 }
 
 // 既有 e2e 家族的白名单靶点（fresh fixture home 下 by design 触发）——其余判 FAIL
-const NOISE = [/\/api\/nf-authcheck/, /console\.error: .*\/api\/canvas-tabs/, /http 404: .*\/api\/canvas-tabs/];
+const NOISE = [/\/api\/nf-authcheck/, /console\.error: .*\/api\/canvas-tabs/, /http 404: .*\/api\/canvas-tabs/,
+  /^requestfailed: http:\/\/(?:127\.0\.0\.1|localhost):\d+\/api\/nf-reach net::ERR_ABORTED$/];
 const realErrors = (errs) => errs.filter((e) => !NOISE.some((re) => re.test(e)));
 
 /** 页面内取卡片/气泡状态。 */
