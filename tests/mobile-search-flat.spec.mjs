@@ -678,6 +678,18 @@ test('FMA-SCN-003 search uses actual composer material', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('default search controls geometry readings', async ({ page }) => {
+  await bootApp(page);
+  for (const id of ['messages', 'contacts']) {
+    await dockTo(page, id);
+    await expect(page.locator(`.mobile-page[data-page="${id}"] .mh-search-bar`)).toBeVisible();
+    const state = await readState(page, id);
+    console.log(`FLOAT_DEFAULT ${id} ${JSON.stringify({bar: state.bar, dockH: state.dockH})}`);
+    expect(state.bar.width).toBeGreaterThan(0);
+    expect(state.bar.height).toBeGreaterThan(0);
+  }
+});
+
 test('mobile-search-flat: messages + contacts（九组判据，双页同源）', async ({ page }) => {
   await bootApp(page);
   const errors = watchErrors(page);

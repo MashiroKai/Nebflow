@@ -546,15 +546,11 @@ async function main() {
   ok('C6 完成圈同色（定时任务 completed 圆 --color-info ⇄ 待办完成圈 sapphire，同值蓝）',
     pairEq(colorPairs.doneCircle) && !!doneRow && !!doneRow.circle && doneRow.circle.border === doneRow.circle.bg,
     JSON.stringify({ pair: colorPairs.doneCircle, doneRow }));
-  ok('C5 待办确认键规格（sapphire 圆钮 + 白墨、扁平、≥44、恒最右）',
-    !!todoFormPrimary
-    && todoFormPrimary.bg === todoRows.tokens.sapphire
-    && todoFormPrimary.color === todoRows.tokens.sendInk
-    && todoFormPrimary.rightmost === true
-    && todoFormPrimary.h >= 43.5
-    && ['none',''].includes(todoFormPrimary.shadow)
-    && !String(todoFormPrimary.bgImage).includes('gradient'),
-    JSON.stringify({ todo: todoFormPrimary, sapphire: todoRows.tokens.sapphire, ink: todoRows.tokens.sendInk, rem: formInfo && formInfo.confirmStyle && formInfo.confirmStyle.color }));
+  // C5 retired: it asserted the former round editor-page save button, while
+  // current creation opens a sheet with a different action. The current sheet
+  // entry/cancel path is tested in todo-create-bottom.spec.mjs; this does not
+  // replace C5's former visual or save-operation coverage.
+  console.log('SKIP C5: retired editor-page confirm styling; current create sheet differs');
 
   /* ── 375 暗：两页 ─────────────────────────────────────────────────── */
   await page.evaluate(() => { document.documentElement.setAttribute('data-theme', 'dark'); document.documentElement.style.colorScheme = 'dark'; });

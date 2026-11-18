@@ -370,6 +370,15 @@ async function scanFixedBands(page) {
 test.describe('三种会话页头同构 + 悬浮身份头（375×812）', () => {
   test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
 
+  test('default friend identity control geometry reading', async ({ page }) => {
+    await bootApp(page);
+    await openFriend(page);
+    const reading = await page.locator(`${CONV_PAGE} .fm-modal .mh-idhead`).evaluate(el => ({head: el.getBoundingClientRect().toJSON(), avatar: el.querySelector('.fm-modal-avatar')?.getBoundingClientRect().toJSON()}));
+    console.log(`FLOAT_IDENTITY ${JSON.stringify(reading)}`);
+    expect(reading.head.width).toBeGreaterThan(0);
+    expect(reading.head.height).toBeGreaterThan(0);
+  });
+
   test('① ② ③ ⑤ 好友/群/设备与主对话同构：双钮 + 悬浮身份头，无横贯顶栏带', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page);

@@ -5325,7 +5325,7 @@ body.mobile-layer #reminder-panel .reminder-create-btn { display: none; }
 body.mobile-layer #reminder-panel .reminder-panel-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 0 max(var(--mpage-fab-clearance), var(--canvas-bottom-clearance, 0px));
+  padding: 0 0 max(calc(var(--mobile-dock-clearance) + var(--mpage-fab-clearance)), var(--canvas-bottom-clearance, 0px));
 }
 /* 空载页脚条（桌面版 2px 呼吸垫，手机页面态零用）⇒ 隐去，列表直抵页底缘。 */
 body.mobile-layer #reminder-panel .reminder-panel-footer { display: none; }
@@ -5352,7 +5352,7 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
   display: inline-flex;
   position: absolute;
   right: var(--mpage-fab-inset);
-  bottom: var(--mpage-fab-inset);
+  bottom: calc(var(--mobile-dock-clearance) + var(--ds-space-2));
   z-index: 2;
 }
 

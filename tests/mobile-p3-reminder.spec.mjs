@@ -224,13 +224,16 @@ test('T5 create entries: 右下悬浮加号（Canvas 档）→ 底部抽屉；�
 
   // ③ 点加号 ⇒ 底部抽屉开、表单落在抽屉体内（不在 .reminder-panel-body 里）
   await fab.click();
-  await expect(page.locator('#reminder-panel .mf-drawer-box')).toBeVisible();
-  await expect(page.locator('#reminder-panel .mf-drawer-body #reminder-inline-input')).toBeVisible();
+  await expect(page.locator('.mobile-page[data-page="reminder"] .mf-drawer-box')).toBeVisible();
+  await expect(page.locator('.mobile-page[data-page="reminder"] .mf-drawer-box')).toHaveClass(/is-open/);
+  await page.locator('.mobile-page[data-page="reminder"] .mf-drawer-box').evaluate(async el => { await Promise.all(el.getAnimations().map(animation => animation.finished.catch(() => {}))); });
+  console.log(`FLOAT_DRAWER ${JSON.stringify(await page.locator('.mobile-page[data-page="reminder"] .mf-drawer-box').boundingBox())}`);
+  await expect(page.locator('.mobile-page[data-page="reminder"] .mf-drawer-body #reminder-inline-input')).toBeVisible();
 
   // ④ 抽屉「取消」⇒ 表单清场、抽屉收起（列表回到铺满态）
-  await page.locator('#reminder-panel .mf-drawer-cancel-btn').click();
+  await page.locator('.mobile-page[data-page="reminder"] .mf-drawer-cancel-btn').click();
   await expect(page.locator('#reminder-inline-input')).toHaveCount(0);
-  await expect(page.locator('#reminder-panel .mf-drawer-box')).toBeHidden();
+  await expect(page.locator('.mobile-page[data-page="reminder"] .mf-drawer-box')).toBeHidden();
 
   // ⑤ 空态引导（开放点④：空态入口；tasks 空 + 非 creating 才显示）同一抽屉
   harness?.sendTasks([]);
@@ -241,6 +244,6 @@ test('T5 create entries: 右下悬浮加号（Canvas 档）→ 底部抽屉；�
   // 命中用 dispatchEvent（真点击动作性检查会撞上 smooth-scroll 重渲不稳定窗口；
   // 行为腿 = 同一 body click 委托路径）。
   await empty.dispatchEvent('click');
-  await expect(page.locator('#reminder-panel .mf-drawer-body #reminder-inline-input')).toBeVisible();
+  await expect(page.locator('.mobile-page[data-page="reminder"] .mf-drawer-body #reminder-inline-input')).toBeVisible();
   expect(errors).toEqual([]);
 });
