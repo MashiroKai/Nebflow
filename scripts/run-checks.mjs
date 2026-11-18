@@ -52,6 +52,9 @@ export const CHECKS = [
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),
   nodeCheck('panel-unify', 'check-panel-unify'),
   nodeCheck('settings-ios-rows', 'check-settings-ios-rows'),
+  // 陈旧面板行批（2026-11-18）：后台智能体面板「活跃行 ⊆ 引擎活跃快照」不变量——
+  // durable store 的重启打断行（pending-recovery）曾被折成「进行中」+ 690h 时钟。
+  nodeCheck('bg-panel-active-liveness', 'check-bg-panel-active-liveness'),
   ...[
     ['js-types', 'check-js-types'], ['ime', 'check-ime-guard'],
     ['component-contract', 'check-component-contract'], ['takeover-identify', 'check-takeover-identify'],
