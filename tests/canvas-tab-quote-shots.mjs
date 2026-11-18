@@ -8,6 +8,9 @@
 //
 // 用法：
 //   node tests/canvas-tab-quote-shots.mjs --web=<dir> --out=<dir> --tag=before|after [--port=N]
+//   不带 `--out` ⇒ 默认落**证据批目录**（`scripts/lib/evidence-batch.mjs`：
+//   `<tmp>/stand-evidence/<project>/<task>-<uuid>/<yyyyMMdd>/`，自带 manifest.json，
+//   可被引擎 TTL 回收）；显式 `--out` 语义不变（覆盖优先）。
 // 产物：<out>/<tag>-expanded-<theme>.png、<out>/<tag>-quote-closeup-<theme>.png、
 //       <out>/<tag>-readout.json
 
@@ -16,6 +19,7 @@ import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlaywright } from '../scripts/lib/visual-harness.mjs';
+import { evidenceBatch } from '../scripts/lib/evidence-batch.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
@@ -26,7 +30,7 @@ const argOf = (k, d) => {
 const WEB_DIR = resolve(argOf('web', process.env.NEBFLOW_WEB_ROOT || join(ROOT, 'src/main/resources/web')));
 const PORT = Number(argOf('port', 18482));
 const BASE = `http://127.0.0.1:${PORT}`;
-const OUT = resolve(argOf('out', '/Users/kaiyu/stand-evidence/canvas-tab-reference-20261118/compare'));
+const OUT = resolve(argOf('out', null) || evidenceBatch('canvas-tab-reference', 'quote-shots'));
 const TAG = argOf('tag', 'after');
 mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

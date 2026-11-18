@@ -78,7 +78,7 @@ import { avatarImgNode } from '../avatarRender.js';
 // 手机看板页「引用」钮字样（canvas-tab-reference 批 2026-11-18）：**单源引用入口字形**
 // —— 与 composer footer 引用键 / 气泡引用牌同一枚（quoteLogo.js 是叶子方向：只 import
 // i18n.js / fileIcon.js，对本模块零回边 ⇒ scripts/check-circular.mjs 不新增环）。
-import { QUOTE_ENTRY_ICON } from '../quoteLogo.js';
+import { quoteEntryIconNode } from '../quoteLogo.js';
 
 /**
  * 底 dock 五栏（作者 2026-10-29 令逐字顺序；顺序钉死 = spec 断言面）。
@@ -1159,7 +1159,11 @@ function syncCanvasPage() {
       // 语义与可达性不靠可见字面承担，由 aria-label（唯一名字源）+ role=button +
       // tabindex=0 承担；命中盒仍 ≥44px（视觉面小、热区不缩：css 里 `--mhit` 撑盒，
       // `::after` 只画 28px 面）。箭头 `↗` 仍整条退役（换的是图标，不是回退装饰符）。
-      quote.innerHTML = QUOTE_ENTRY_ICON;
+      // 落 DOM 走**既有安全构建路径**：`quoteEntryIconNode()`（quoteLogo.js 把同一份
+      // 单源字形转成节点）→ `replaceChildren`，本处零裸 HTML 串赋值
+      // （component-contract R5；本批判据见 scripts/check-component-contract.mjs）。
+      const quoteIcon = quoteEntryIconNode();
+      if (quoteIcon) quote.replaceChildren(quoteIcon);
       /** 引用动作（唯一引用通路）。setActiveTab 先行 = 引用对象是**刚点的那一签**的
        *  身份（不是「碰巧的活动签」）；goHome() 把会话页（composer）带到前台，落框
        *  聚焦由通路自己完成（appendRefToActiveView → view.dom.input.focus）。

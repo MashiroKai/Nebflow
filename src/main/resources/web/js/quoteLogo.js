@@ -62,6 +62,26 @@ export function quoteEntryIcon() {
   return QUOTE_ENTRY_ICON;
 }
 
+/** 引用入口图标**节点**（与 `QUOTE_ENTRY_ICON` 同源同形：字形就是上面那一条，
+ *  本函数只把**同一份 markup** 转成可插入节点，零第二份 path / 属性抄写）。
+ *
+ *  为什么需要它：宿主若需要的是**节点**（例如把钮面直接建出来），拿字符串灌进元素的
+ *  历史形态会被门禁拦下 —— `scripts/check-component-contract.mjs` R5 判裸 HTML 串赋值，
+ *  且该判据是**文本级、不剥注释**（引此条时连注释里的字面量形态也不写）。
+ *  解析走 XML 文档 + `importNode`（与 profileDevices.js 的「SVG 串 → 节点」同口径：
+ *  不经活 DOM 的 HTML 解析面），解析失败 ⇒ `null`（图标缺位；不抛、不假造节点）。
+ *  @returns {Element|null} */
+export function quoteEntryIconNode() {
+  try {
+    const doc = new DOMParser().parseFromString(QUOTE_ENTRY_ICON, 'image/svg+xml');
+    const root = doc.documentElement;
+    if (!root || String(root.nodeName).toLowerCase() === 'parsererror') return null;
+    return document.importNode(root, true);
+  } catch {
+    return null;
+  }
+}
+
 /** 图片/视频引用牌在**没有内联缩略**时的字形（历史腿；不伪造缩略）。 */
 export const QUOTE_LOGO_IMAGE = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
   + '<rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.6"/>'
