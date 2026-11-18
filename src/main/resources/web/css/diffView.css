@@ -631,16 +631,7 @@ span.nf-rcpt-note { cursor: default; }
 }
 .nf-ar-added { color: var(--color-success, var(--nf-review-success-fallback)); }
 .nf-ar-removed { color: var(--color-danger, var(--nf-review-danger-fallback)); }
-.nf-ar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--ds-space-1h);
-}
-.nf-ar-waiting {
-  font-size: var(--ds-fs-meta);
-  color: var(--color-text-muted, var(--nf-review-muted-fallback));
-}
-/* 通用钮：紧凑 24px 命中档（页签内次级动作面）。 */
+/* 通用钮：紧凑 24px 命中档（页签内次级动作面 = 冲突条的重试/保留现状两颗）。 */
 .nf-ar-btn {
   min-height: 24px;
   padding: 0 var(--ds-space-2);
@@ -654,14 +645,8 @@ span.nf-rcpt-note { cursor: default; }
               border-color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
               opacity var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
 }
-.nf-ar-btn-danger {
-  color: var(--color-danger, var(--nf-review-danger-fallback));
-  background: rgba(248, 81, 73, 0.10);
-  border-color: rgba(248, 81, 73, 0.30);
-}
 @media (hover: hover) {
   .nf-ar-btn:hover { background: rgb(var(--sapphire) / 0.22); }
-  .nf-ar-btn-danger:hover { background: rgba(248, 81, 73, 0.18); }
 }
 .nf-ar-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .nf-ar-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
@@ -785,10 +770,28 @@ span.nf-rcpt-note { cursor: default; }
 .nf-dv-toolbar {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
   gap: var(--ds-space-1h);
+  row-gap: var(--ds-space-1);
   padding: var(--ds-space-1) var(--ds-space-2);
   border-bottom: var(--ds-border-width) solid var(--nf-dv-border);
+}
+/* 动作区（review 专用）居左、工具区居右：靠 `margin-right:auto` 而非改
+   justify-content —— read 模式只有工具区一颗折行钮，几何与迁移批**逐值一致**
+   （`flex-end` + 单子 = 右缘，加 `space-between` 会把它挪到左缘 = 零回归破）。 */
+.nf-dv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  margin-right: auto;
+}
+.nf-dv-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
 }
 .nf-dv-wrapbtn {
   min-height: var(--nf-dv-hit);
@@ -823,15 +826,15 @@ span.nf-rcpt-note { cursor: default; }
   padding: 0 var(--ds-space-3);
   font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
   border-radius: var(--ds-radius-chip);
-  border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.25);
-  color: var(--color-primary);
-  background: rgb(var(--sapphire) / 0.13);
+  border: var(--ds-border-width) solid var(--nf-dv-accept-border);
+  color: var(--nf-dv-accept-fg);
+  background: var(--nf-dv-accept-bg);
   cursor: pointer;
 }
 .nf-dv .nf-dv-chunkbtn-reject {
-  color: var(--color-danger, var(--nf-review-danger-fallback));
-  background: rgba(248, 81, 73, 0.10);
-  border-color: rgba(248, 81, 73, 0.30);
+  color: var(--nf-dv-reject-fg);
+  background: var(--nf-dv-reject-bg);
+  border-color: var(--nf-dv-reject-border);
 }
 .nf-dv .cm-deletedChunk .cm-chunkButtons button:focus-visible,
 .nf-dv .nf-dv-chunkbtn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
@@ -849,5 +852,98 @@ span.nf-rcpt-note { cursor: default; }
   min-width: 0;
 }
 .nf-ar-editor { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
-/* waiting 面（防双发）：逐块钮整组禁用（组件已把按钮改壳为 ≥44px 元素）。 */
-.nf-dv[data-waiting='1'] .nf-dv-chunkbtn { opacity: 0.5; pointer-events: none; }
+/* waiting 面（防双发）：动作钮整组禁用（逐块 + 全量；折行/文件切换不动 —— 等待期
+   仍可观察另一文件）。 */
+.nf-dv[data-waiting='1'] .nf-dv-chunkbtn,
+.nf-dv[data-waiting='1'] .nf-dv-actionbtn { opacity: 0.5; pointer-events: none; }
+
+/* ══ 审阅动作区（作者令 2026-11-19「diff 的逐块接受和全部接受的 UI 要设计一下」）══
+   逐块钮（行内动作带，见上）+ 全量钮（工具条左端）＝唯一动作区；read 模式组件根本
+   不建这些节点 ⇒ DOM 零残留（模式闸门）。「全部接受」= 逐块动作的批量化，走既有
+   回调同一语义（hunkId=null ⇒ 消费面发 askEditAccept 不带 hunkId），本节只管呈现。
+   几何：全部钮与逐块钮同落 --nf-dv-hit（≥44px）；色值全走 --nf-dv-* token（零字面量）。 */
+.nf-dv-actionbtn {
+  min-height: var(--nf-dv-hit);
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--ds-radius-chip);
+  border: var(--ds-border-width) solid var(--nf-dv-accept-border);
+  color: var(--nf-dv-accept-fg);
+  background: var(--nf-dv-accept-bg);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              border-color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.nf-dv-actionbtn.nf-dv-reject-all {
+  color: var(--nf-dv-reject-fg);
+  background: var(--nf-dv-reject-bg);
+  border-color: var(--nf-dv-reject-border);
+}
+@media (hover: hover) {
+  .nf-dv-actionbtn:hover { background: var(--nf-dv-accept-bg-strong); }
+  .nf-dv-actionbtn.nf-dv-reject-all:hover { background: var(--nf-dv-reject-bg-strong); }
+}
+.nf-dv-actionbtn:focus-visible { outline: 2px solid var(--btn-focus-ring, var(--color-primary)); outline-offset: 2px; }
+.nf-dv-actionbtn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* 状态可见（已接受/已拒绝后的呈现要能看出）：动作发出即就地落 data-chunk-state，
+   动作带底 tint + 行内状态标签（前景 = 正文 token，双主题对比度由 --nf-dv-fg 保证）。 */
+.nf-dv .cm-deletedChunk[data-chunk-state='accepted'] .cm-chunkButtons { background: var(--nf-dv-state-ok-bg); }
+.nf-dv .cm-deletedChunk[data-chunk-state='rejected'] .cm-chunkButtons { background: var(--nf-dv-state-no-bg); }
+.nf-dv .cm-deletedChunk[data-chunk-state] .cm-chunkButtons button { opacity: 0.55; }
+.nf-dv-chunkstate {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0 var(--ds-space-2);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  color: var(--nf-dv-fg);
+  white-space: nowrap;
+}
+
+/* ══ 多文件（作者令 2026-11-19「多文件 diff 适配」）════════════════════════════
+   设计取舍：一段差异文本含多文件段时按**文件分节**；分节列表常驻在编辑面之上，
+   单文件折叠 = 只展开被选中的那一节（同一编辑面按节重载文档 + 合并扩展）。为什么不
+   把 N 个文件同时挂成 N 个编辑面：手机上一屏多滚轴会互相打架、且每节各自虚拟化会
+   把视口预算切碎；单选装载让「行号空间 / 折叠状态 / 滚动位置」都只属于当前文件
+   （行号不跨文件错位）。计数（+增/−删）逐节落在列表行上。
+   铁律 9：路径不截断（换行增长，无 ellipsis）；列表高度上限必配 overflow-y:auto。 */
+.nf-dv-files {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: var(--nf-dv-filelist-max);
+  overflow-y: auto;
+  border-bottom: var(--ds-border-width) solid var(--nf-dv-border);
+}
+.nf-dv-file {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: var(--nf-dv-hit);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--nf-dv-fg);
+}
+.nf-dv-file + .nf-dv-file { border-top: var(--ds-border-width) solid var(--nf-dv-border); }
+.nf-dv-file[data-active='1'] { background: var(--nf-dv-accept-bg); }
+@media (hover: hover) { .nf-dv-file:hover { background: var(--nf-dv-accept-bg); } }
+.nf-dv-file:focus-visible { outline: 2px solid var(--btn-focus-ring, var(--color-primary)); outline-offset: -2px; }
+.nf-dv-filepath {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--nf-dv-gutter-fs);
+}
+.nf-dv-filecounts {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--nf-dv-gutter-fs);
+  white-space: nowrap;
+}
+.nf-dv-fileadd { color: var(--nf-dv-accept-fg); }
+.nf-dv-filedel { color: var(--nf-dv-reject-fg); }

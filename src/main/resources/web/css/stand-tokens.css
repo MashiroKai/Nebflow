@@ -772,6 +772,25 @@ html[data-theme="dark"] {
   --nf-dv-gutter-fs: 11px;
   --nf-dv-hit: 44px;
   --nf-dv-top-band: 56px;
+  /* 审阅动作区 token（作者令 2026-11-19「逐块接受和全部接受的 UI 要设计一下」）：
+     动作钮/状态标签的唯一色值落点 —— 消费点（css/diffView.css）只写 var()，零字面量。
+     前景取既有语义文字档（`--status-success-icon` 亮 5.1:1 / `--color-danger` 亮 5.9:1，
+     双主题 ≥4.5:1，动作标签按**文字档**判达标）；底色为同色相低透明度 tint（亮暗同值，
+     由 alpha 复合随主题自动翻转）。 */
+  --nf-dv-ok-rgb: 63 185 80;
+  --nf-dv-no-rgb: 248 81 73;
+  --nf-dv-accept-fg: var(--status-success-icon);
+  --nf-dv-accept-bg: color-mix(in srgb, rgb(var(--nf-dv-ok-rgb)) 12%, var(--nf-dv-bg));
+  --nf-dv-accept-bg-strong: color-mix(in srgb, rgb(var(--nf-dv-ok-rgb)) 22%, var(--nf-dv-bg));
+  --nf-dv-accept-border: color-mix(in srgb, rgb(var(--nf-dv-ok-rgb)) 34%, var(--nf-dv-bg));
+  --nf-dv-reject-fg: var(--color-danger);
+  --nf-dv-reject-bg: color-mix(in srgb, rgb(var(--nf-dv-no-rgb)) 12%, var(--nf-dv-bg));
+  --nf-dv-reject-bg-strong: color-mix(in srgb, rgb(var(--nf-dv-no-rgb)) 22%, var(--nf-dv-bg));
+  --nf-dv-reject-border: color-mix(in srgb, rgb(var(--nf-dv-no-rgb)) 38%, var(--nf-dv-bg));
+  --nf-dv-state-ok-bg: rgb(var(--nf-dv-ok-rgb) / 0.16);
+  --nf-dv-state-no-bg: rgb(var(--nf-dv-no-rgb) / 0.16);
+  /* 多文件分节列表的高度上限（必配 overflow-y:auto —— 铁律 9「上限必有可滚轴」）。 */
+  --nf-dv-filelist-max: 30vh;
 }
 @media (prefers-color-scheme: dark) {
   :root {
