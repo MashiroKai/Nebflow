@@ -11,9 +11,11 @@ ask message is sent**, and **a cache entry path is a contract**.
 | Cache root | `<dataRoot>/pdf-cache/` | one path per instance data root |
 | Cache entry | `<dataRoot>/pdf-cache/<sha256[0:2]>/<sha256>/` | digest-named, digest-verified |
 | Manifest | `…/<sha256>/meta.json` | `schema`, `source_sha256`, `page_count`, `page_names`, `parser`, `markdown_version`, `generated_at_ms`, `media`, `table_count`, `image_count` |
+| Page index | `…/<sha256>/index.json` | the inverted index `{term: [page,…]}` the ask selects pages with; part of "a complete entry" |
 | Pages | `…/<sha256>/pages/p%04d.md` | one Markdown file per page, 1-based; image links are relative (`../media/…`) |
 | Media | `…/<sha256>/media/p%04d-<index>.<ext>` | page attribution is in the file name |
 | Parser script | `<dataRoot>/pdf-cache/_parser/pdf_parse-<sha8>.py` | extracted lazily on the first parse, content-addressed |
+| Parser deps | `src/main/resources/pdf/requirements.txt` | permissive-only, pinned versions + sha256 |
 | Notes | `<dataRoot>/pdf-notes/<sha256>/p%04d.json` | keyed by document digest + 1-based page |
 | Parse/env knob | `STAND_PDF_PYTHON` (default `python3`) | the only interpreter selector |
 
@@ -61,42 +63,80 @@ Nothing in this feature deletes a cache entry or a note on its own.
   That is a known open item, not a hidden policy.
 - `pdf-notes/` is user data: no automatic reclamation, ever.
 
+## On demand: the index, not the document
+
+An ask must decide WHICH pages to open before it opens any. The previous shape
+read every page file to rank them, which made an ask cost grow with the document
+(500 pages ⇒ 500 reads for a one-page answer) and made "on demand" a claim about
+the response shape rather than about the I/O.
+
+The entry therefore carries `index.json`: an inverted index (lowercase token,
+length ≥ 2 → ascending 1-based pages) written once, at parse time, by the parser
+while the document is open anyway. An ask:
+
+1. reads the manifest (`page_count`, `page_names`) and the index — discovery;
+2. resolves the question's terms against the index and ranks the matching pages;
+3. opens EXACTLY `min(matched, MaxPagesPerAsk)` page files, one per cited page.
+
+The count is observable twice: in the answer (`page_reads.pages_opened`,
+`page_reads.whole_document_read:false`) and process-wide
+(`PdfCache.pageReadsFor(cacheRoot)`), so "only the matching pages were read" is a
+fact a reviewer re-derives rather than a claim about a loop. `markdown_version`
+2 is the shape that promises the index; a v1 entry (or any entry whose index is
+missing) is a MISS and is reparsed, never half-served.
+
+## One cache per process (the HTTP single-flight)
+
+`PdfCache` carries the in-memory single-flight map, the manifest it already read
+and the writer lock for one data root. The HTTP routes used to build a NEW
+instance per request (`PdfCache.forDataRoot` in each arm), so four concurrent
+asks for one document ran four parses and four publication races — the dedup only
+helped callers that happened to share an instance.
+
+`PdfCache.sharedForDataRoot(dataRoot)` is now the single construction point on
+the HTTP surface: one instance per data root (the data root is the single
+configuration input, so process-wide sharing cannot cross instances). The
+observable is `PdfCache.parseStartsFor(cacheRoot)` — parses started for one data
+root, counted at the one point a parser subprocess is about to run.
+
 ## Parser: license and dependency reproducibility
 
-- **Parser**: PyMuPDF (`import fitz`), reported in the manifest as
-  `{"name":"pymupdf","version":…}`; the script is
+- **Parser**: pdfplumber (MIT) for text lines and tables plus pypdf (BSD-3) for
+  the document structure, the encryption verdict and embedded images. Reported in
+  the manifest as `{"name":"pdfplumber","version":…}`; the script is
   `src/main/resources/pdf/pdf_parse.py`.
-- **License**: PyMuPDF is **AGPL-3.0** (see
-  <https://pypi.org/project/PyMuPDF/> for the license statement of the pinned
-  version). This is the single most important item to decide before shipping this
-  feature beyond a local/author-controlled instance: AGPL-3.0 is a copyleft
-  license on a *separate executable* this feature invokes, which is a materially
-  different situation from an Apache/MIT library linked into the JVM. Recorded as
-  a blocking open item in the batch report; the seam that would absorb a
-  replacement is `PdfParser` (one subprocess + one output contract).
-- **Why PyMuPDF**: reading order, table detection and image extraction with page
-  attribution in one open-source dependency. Alternatives considered and their
-  gaps, for the decision: `pypdf` (BSD-3, no tables, weak reading order),
-  `pypdfium2` (BSD-3/Apache-2.0, no table detection), Apache PDFBox (Apache-2.0,
-  JVM-native, text and images only — tables would have to be built by hand or via
-  `tabula-java`).
-- **Reproducibility**: the PyMuPDF version is recorded in every entry's
-  `meta.json`; the interpreter comes from one env knob; the script itself is
-  content-addressed under `<dataRoot>/pdf-cache/_parser/`, so the exact script
+- **License**: **no AGPL and no copyleft anywhere in this path** (author decision,
+  this batch). The previous parser was PyMuPDF (AGPL-3.0) — a copyleft license on
+  a *separate executable* this feature invokes, which is a materially different
+  situation from an Apache/MIT library linked into the JVM. It has been removed;
+  `requirements.txt` records the whole permissive set and its licenses.
+- **Reproducibility**: `src/main/resources/pdf/requirements.txt` pins every
+  package in the resolved tree (`pdfplumber==0.11.10`, `pypdf==7.1.0` and the
+  seven transitive packages) with the sha256 of its source distribution and
+  documents the hash-verified install command; the parser version is recorded in
+  every entry's `meta.json`; the interpreter comes from one env knob; the script
+  is content-addressed under `<dataRoot>/pdf-cache/_parser/`, so the exact script
   that produced an entry can be read back from the instance. The JVM adds **no**
   new library dependency (`build.sbt` is unchanged).
+- **Test fixtures**: `scripts/tests/pdf_fixture.py` writes its PDFs byte by byte
+  with the standard library (encryption via pypdf), so the fixture path adds no
+  dependency of its own and, in particular, no AGPL writer.
 - **Non-goals** (stated so they are not assumed): no multi-column reflow model
-  (reading order is PyMuPDF's sorted block order), no OCR (a scanned page yields
-  no text), no table cell type inference.
+  (reading order is pdfplumber's `(top, x0)` line order), no OCR (a scanned page
+  yields no text), no table cell type inference, no image re-encoding.
 
 ## Seams
 
-- `PdfCache` is cache + single-flight + publication. It is the only writer.
+- `PdfCache` is cache + single-flight + publication. It is the only writer, and
+  `sharedForDataRoot` is the only construction point the HTTP surface may use
+  (one instance per data root ⇒ one flight registry per process).
+- `PdfIndex` is the discovery surface read by the ask leg: term → pages. It never
+  holds page bodies.
 - `PdfParser` is the only code that spawns a process, and the only place the
   parser identity/version lives on the JVM side.
-- `PdfAsk` selects pages and renders the excerpt block; it holds the budget caps
-  (`MaxPagesPerAsk` / `MaxCharsPerPage` / `MaxCharsPerAsk`) and never loads a whole
-  document.
+- `PdfAsk` selects pages (through the index) and renders the excerpt block; it
+  holds the budget caps (`MaxPagesPerAsk` / `MaxCharsPerPage` / `MaxCharsPerAsk`)
+  and never loads a whole document.
 - `PdfNotes` is the only writer under `pdf-notes/`.
 - `PdfRoutes` is the only HTTP surface, and the only caller of `PdfCache.ensure`.
 

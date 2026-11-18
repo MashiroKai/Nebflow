@@ -77,7 +77,7 @@ private[gateway] object PdfRoutes:
         withAuth(req) {
           req.as[Json].flatMap { body =>
             val (path, sha) = docOf(body)
-            val cache = PdfCache.forDataRoot(nebflow.shared.PathUtil.dataRoot)
+            val cache = PdfCache.sharedForDataRoot(nebflow.shared.PathUtil.dataRoot)
             manifestFor(cache, path, sha).flatMap {
               case Left(err) => badRequest(err)
               case Right((digest, manifest)) =>
@@ -105,7 +105,7 @@ private[gateway] object PdfRoutes:
       case req @ GET -> Root / "pdf" / "note" =>
         withAuth(req) {
           val q = req.uri.query.params
-          val cache = PdfCache.forDataRoot(nebflow.shared.PathUtil.dataRoot)
+          val cache = PdfCache.sharedForDataRoot(nebflow.shared.PathUtil.dataRoot)
           manifestFor(cache, q.get("path"), q.get("sha256")).flatMap {
             case Left(err) => badRequest(err)
             case Right((digest, manifest)) =>
@@ -122,7 +122,7 @@ private[gateway] object PdfRoutes:
         withAuth(req) {
           req.as[Json].flatMap { body =>
             val (path, sha) = docOf(body)
-            val cache = PdfCache.forDataRoot(nebflow.shared.PathUtil.dataRoot)
+            val cache = PdfCache.sharedForDataRoot(nebflow.shared.PathUtil.dataRoot)
             val page = body.hcursor.downField("page").as[Int].toOption
             val expected = body.hcursor.downField("expected_version").as[Long].toOption
             manifestFor(cache, path, sha).flatMap {
@@ -167,7 +167,7 @@ private[gateway] object PdfRoutes:
           req.as[Json].flatMap { body =>
             val (path, sha) = docOf(body)
             val question = textOf(body, "question")
-            val cache = PdfCache.forDataRoot(nebflow.shared.PathUtil.dataRoot)
+            val cache = PdfCache.sharedForDataRoot(nebflow.shared.PathUtil.dataRoot)
             val dataRoot = nebflow.shared.PathUtil.dataRoot
             (path, sha) match
               case (_, None) if path.isEmpty => badRequest("either `path` or `sha256` is required to ask about a PDF")
@@ -199,7 +199,7 @@ private[gateway] object PdfRoutes:
       case req @ GET -> Root / "pdf" / "page" =>
         withAuth(req) {
           val q = req.uri.query.params
-          val cache = PdfCache.forDataRoot(nebflow.shared.PathUtil.dataRoot)
+          val cache = PdfCache.sharedForDataRoot(nebflow.shared.PathUtil.dataRoot)
           manifestFor(cache, q.get("path"), q.get("sha256")).flatMap {
             case Left(err) => badRequest(err)
             case Right((digest, None)) =>

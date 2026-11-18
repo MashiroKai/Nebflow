@@ -76,9 +76,36 @@ object PdfAsk:
   final case class Excerpt(page: Int, markdown: String, truncated: Boolean, score: Double, matched: List[String])
 
   /**
-   * Rank pages by term overlap. `pageText` is consulted for scoring only; the
-   * returned candidates are sorted (score desc, page asc) and already bounded by
-   * `budget`.
+   * Rank pages by the indexed terms they share with the question.
+   *
+   * `matched` comes from [[PdfIndex]] (term → posting list), NOT from a page body:
+   * this is what lets the ask know which pages are worth opening without opening
+   * anything. Ordering is (score desc, page asc) — deterministic and re-derivable.
+   */
+  def rankIndexed(
+    index: PdfIndex,
+    notes: Map[Int, String],
+    question: String,
+    budget: Int = MaxPagesPerAsk
+  ): List[Candidate] =
+    val ts = terms(question)
+    index
+      .matchedPages(ts)
+      .map { case (n, matched) =>
+        val note = notes.getOrElse(n, "")
+        val noteHit = note.nonEmpty && ts.exists(t => matched.contains(t) || note.toLowerCase.contains(t))
+        Candidate(n, matched.length.toDouble + (if noteHit then 1.0 else 0.0), matched, noteHit)
+      }
+      // Zero-score pages are not relevant: with no term overlap there is nothing
+      // to justify a citation, so they are dropped rather than padded in.
+      .filter(c => c.score > 0.0)
+      .sortBy(c => (-c.score, c.page))
+      .take(budget)
+
+  /**
+   * Rank pages by term overlap in page bodies already in hand. Retained for the
+   * legacy/in-memory case (a caller that has the text anyway); the ask path uses
+   * [[rankIndexed]] so that it never needs it.
    */
   def rankAll(pageTexts: List[(Int, String)], notes: Map[Int, String], question: String, budget: Int = MaxPagesPerAsk): List[Candidate] =
     val ts = terms(question)
@@ -137,7 +164,17 @@ object PdfAsk:
 
   /**
    * The ask: ensure a cache entry (this is the ONE place a parse can start), read
-   * the manifest, then read at most `budget` pages on demand.
+   * the manifest and the page INDEX, then read at most `budget` pages on demand.
+   *
+   * ## Discovery before reading (the on-demand contract)
+   *
+   * The ask resolves the question against `index.json` (term → pages) and only
+   * then opens the pages it decided to cite. Page bodies are opened EXACTLY
+   * `min(matched, budget)` times — the count is returned in the answer
+   * (`page_reads`) and counted process-wide (`PdfCache.pageReadsFor`), so "only
+   * the matching pages were read" is an observable fact. A document with 500
+   * pages costs the same for a question as a document with 3: one index read plus
+   * one page read per cited page.
    *
    * `notes` come from [[PdfNotes]] and are used both as ranking evidence and as a
    * flagged part of the result — a note is user context and is never presented as
@@ -161,22 +198,21 @@ object PdfAsk:
         val sha = manifest.sourceSha256
         val pages = manifest.pageCount
         for
-          texts <- IO.traverse((1 to pages).toList) { n =>
-            cache.readPage(sha, n).map {
-              case Right(t) => Some(n -> t)
-              case Left(_)  => None
-            }
-          }
           notePages <- PdfNotes.pages(dataRoot, sha)
           noteMs <- IO.traverse(notePages) { n =>
             PdfNotes.get(dataRoot, sha, n).map { j =>
               val text = j.flatMap(_.hcursor.downField("text").as[String].toOption).getOrElse("")
-              (n, text)
+              val snippet = j.flatMap(_.hcursor.downField("snippet").as[String].toOption).getOrElse("")
+              (n, (text + " " + snippet).trim)
             }
           }
           noteMap = noteMs.filter(_._2.nonEmpty).toMap
-          ranked = rankAll(texts.flatten, noteMap, question, budget + 1)
+          // Discovery: the manifest (page count / page names) plus the index.
+          // NO page body is read to decide which pages matter.
+          index <- cache.readIndex(sha)
+          ranked = index.map(idx => rankIndexed(idx, noteMap, question, budget + 1)).getOrElse(Nil)
           selected = ranked.take(budget)
+          // Only now are page bodies opened — exactly one per cited page.
           excerpts <- IO.traverse(selected) { c =>
             cache.readPage(sha, c.page).map {
               case Right(md) =>
@@ -197,6 +233,15 @@ object PdfAsk:
               "max_chars_total" -> MaxCharsPerAsk.asJson,
               "pages_read" -> excerpts.length.asJson,
               "pages_left_out" -> leftOut.asJson
+            ),
+            // The on-demand ledger: how many pages matched, how many were
+            // actually opened, and how many the document has.
+            "page_reads" -> Json.obj(
+              "matched_pages" -> ranked.length.asJson,
+              "pages_opened" -> excerpts.length.asJson,
+              "total_pages" -> pages.asJson,
+              "index_used" -> index.isDefined.asJson,
+              "whole_document_read" -> false.asJson
             ),
             "citations" -> excerpts.map(e => s"p.${e.page}".asJson).asJson,
             "excerpts" -> excerpts.map(excerptJson).asJson,
