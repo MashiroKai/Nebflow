@@ -736,6 +736,15 @@ class NodeEngine(
     Ref.unsafe[IO, Set[String]](Set.empty)
 
   /**
+   * **分发器唤醒看门狗内存态**（dispatcher-hang 修复批 2026-11-18）：per-scope 单例，
+   * 语义见 [[NodeEngine.WakeWatchdogState]]。仅 delegate 作用域引擎消费
+   * （[[dispatcherWakeWatchdog]] 的 `notifyTargetKind` 门）；per-project 引擎结构性
+   * 不触达。
+   */
+  private[project] val dispatcherWakeWatchdogState: Ref[IO, NodeEngine.WakeWatchdogState] =
+    Ref.unsafe[IO, NodeEngine.WakeWatchdogState](NodeEngine.WakeWatchdogState())
+
+  /**
    * 失败投递（P1 语义门控，spec §2.2 #3；D5 零结算为底座）：
    * ① Nebula 上报（on ∋ failed）：mode=result → 通报（旧 "Nebula" 双通报形态零漂移）；
    *    mode=signal → 只记账。
@@ -1256,6 +1265,149 @@ class NodeEngine(
     }
   end deliverStaleSummary
 
+  /**
+   * **分发器唤醒看门狗**（dispatcher-hang 修复批 2026-11-18；挂点 =
+   * [[nebflow.core.project.DelegateFlowHosts]] 的 ~30s tick，per-project 引擎结构性
+   * 不触达——`notifyTargetKind` 门）。
+   *
+   * == 问题（本批 RCA）==
+   * 节点终态 → dispatcher 唤醒链有**多处单点丢失面**：root 通知 offer 后
+   * tell-then-mark 即记账（[[nebulaDeliveredAt]] 持久锚 ⇒ 30s 补投扫描**不再重投**，
+   * NodeDelivery `:620`），而消费确认（`InputLanding.consume`）只在 turn **成功后**落
+   * （AgentIdle D3 锚点）——唤醒 turn 中途死亡 / 幂等键撞 Duplicate / 冻结窗吞帧时，
+   * 「已投递」与「已消费」之间的缺口**没有任何既有看门狗覆盖**（mount-stall 管挂载、
+   * TaskStuckWatcher 管 Processing 卡死、sweepIdleDispatchers 管拆除——都不管
+   * 「dispatcher Idle + 链无人推进」）。事故形态：dispatcher 会话静默 2h+，链上终态
+   * 结果无人承接、非终态节点无人推进。
+   *
+   * == 判据（全机械，零新持久字段）==
+   * 每 tick 现读：`capMs ≤ 0`（回滚开关）或非 delegate 作用域 ⇒ 短路。图上**有节点**
+   * （终态或非终态均可——终态未收口同样要 dispatcher 收口汇报）∧ 根会话
+   * （rootSessionId = delegate 本人）registry 有行且 `status == Idle`（Processing =
+   * 在忙不扰；Frozen = ⑬A 既有升级链的领地，本腿不越界）∧ root 通知打包窗**未武装**
+   * （有在途通知就等它）∧ 锚点静默 ≥ [[nebflow.shared.Defaults.DispatcherWakeWatchdogMs]]。
+   * 锚点 = max(图上节点时间戳[createdAt/startedAt/completedAt/notifySentAt/
+   * nebulaDeliveredAt]、根会话 `lastActivityMs`、上次看门狗唤醒)。锚点前进 ⇒ 新
+   * 静默期，唤醒预算重置——**链有进展就永不误扰**。
+   *
+   * == 动作（有界 + 可读结论）==
+   * 预算内（wakes < [[nebflow.shared.Defaults.DispatcherWakeWatchdogMaxWakes]]）⇒
+   * [[nebflow.core.delegate.DelegateNotify.inject]] 注入一条 fallback 唤醒（与节点
+   * 终态通知同通道族：`ImmediateInput` → idle 转 `UserInput` → Gated turn），identity
+   * 携 wake 序号（幂等键唯一，不与任何既有帧相撞）+ 落一行
+   * [[NodeEngine.DispatcherWakeWatchdogEventType]] 事件（outcome=wake）。预算耗尽仍
+   * 静默 ⇒ 落 outcome=exhausted 结论行（**可读结论**：链面状态留痕、看门狗停止注入、
+   * 绝不无限骚扰也绝不静默挂死）后 concluded=true 封口。注入失败（registry 行消失，
+   * reapOrphans 领地）不计次不封口。
+   */
+  private[project] def dispatcherWakeWatchdog(): IO[Unit] =
+    val capMs = nebflow.shared.Defaults.DispatcherWakeWatchdogMs
+    if capMs <= 0 || notifyTargetKind != NodeEngine.NotifyTargetKind.CreatorDelegate then IO.unit
+    else
+      resources.agentRegistry.get.flatMap { registry =>
+        registry.get(rootSessionId) match
+          case Some(rec) if rec.status == AgentStatus.Idle =>
+            for
+              snap <- store.snapshot
+              nodes = snap.nodes.values.toList
+              _ <-
+                if nodes.isEmpty then IO.unit
+                else
+                  rootNotifyWindowArmed.flatMap { armed =>
+                    if armed then IO.unit
+                    else
+                      val now = System.currentTimeMillis()
+                      val mapAnchor = nodes
+                        .flatMap(n =>
+                          List(
+                            n.createdAt,
+                            n.startedAt.getOrElse(0L),
+                            n.completedAt.getOrElse(0L),
+                            n.notifySentAt.getOrElse(0L),
+                            n.nebulaDeliveredAt.getOrElse(0L)
+                          )
+                        )
+                        .max
+                      val anchor = math.max(math.max(mapAnchor, rec.lastActivityMs), 0L)
+                      val nonTerminal = nodes.filterNot(n => NodeLifecycle.Terminal.contains(n.status))
+                      val terminal = nodes.filter(n => NodeLifecycle.Terminal.contains(n.status))
+                      dispatcherWakeWatchdogState
+                        .modify { s =>
+                          if mapAnchor > s.episodeAnchor then
+                            (NodeEngine.WakeWatchdogState(mapAnchor, s.lastWakeAt, 0, concluded = false), true)
+                          else (s, false)
+                        }
+                        .flatMap { episodeAdvanced =>
+                          dispatcherWakeWatchdogState.get.flatMap { wd =>
+                            val effLastWake = if episodeAdvanced then 0L else wd.lastWakeAt
+                            val quiet = now - math.max(anchor, effLastWake)
+                            val maxWakes = nebflow.shared.Defaults.DispatcherWakeWatchdogMaxWakes
+                            if quiet < capMs then IO.unit
+                            else if wd.wakes >= maxWakes then
+                              if wd.concluded then IO.unit
+                              else
+                                val conclusion =
+                                  s"root=$rootSessionId quietMs=$quiet wake=${wd.wakes}/$maxWakes outcome=exhausted " +
+                                    s"nonTerminal=${nonTerminal.map(n => s"${n.name}(${n.status})").mkString(",")} " +
+                                    s"terminal=${terminal.map(n => s"${n.name}(${n.status})").mkString(",")} — no chain advance after all watchdog wakes; nudging stops here, manual attention may be required"
+                                dispatcherWakeWatchdogState.update(_.copy(concluded = true)) *>
+                                  logger.warn(s"[dispatcher-wake-watchdog] exhausted for '$rootSessionId': quietMs=$quiet wakes=${wd.wakes}/$maxWakes") *>
+                                  FlowMapEventLog
+                                    .append(
+                                      notifyAuditWorkspace.getOrElse(workspace),
+                                      projectName,
+                                      "dispatcher-wake-watchdog",
+                                      NodeEngine.DispatcherWakeWatchdogEventType,
+                                      conclusion
+                                    )
+                                    .handleErrorWith(e =>
+                                      logger.warn(s"[dispatcher-wake-watchdog] conclusion append failed: ${e.getMessage}")
+                                    )
+                            else
+                              val wakeNo = wd.wakes + 1
+                              val maxWakes_ = maxWakes
+                              val nodeLine =
+                                (nonTerminal.map(n => s"${n.name}(${n.status})") ++ terminal.map(n => s"${n.name}(${n.status})"))
+                                  .mkString(", ")
+                              val text =
+                                s"[dispatcher-wake-watchdog wake #$wakeNo/$maxWakes_] No chain advance for ${quiet / 1000}s and the dispatcher " +
+                                  s"session is idle (engine fallback wake; chain nodes: $nodeLine). " +
+                                  "If non-terminal work remains, advance it now (inspect the chain, re-dispatch or finish nodes as needed). " +
+                                  "If all nodes are terminal, close out: report the chain conclusion back. Do not wait silently."
+                              val identity =
+                                s"dispatcher-wake-watchdog:$rootSessionId:${math.max(wd.episodeAnchor, mapAnchor)}:$wakeNo"
+                              nebflow.core.delegate.DelegateNotify
+                                .inject(resources.agentRegistry, rootSessionId, text, Some(identity))
+                                .flatMap {
+                                  case true =>
+                                    dispatcherWakeWatchdogState
+                                      .update(s => s.copy(wakes = s.wakes + 1, lastWakeAt = now)) *>
+                                      logger.warn(
+                                        s"[dispatcher-wake-watchdog] wake #$wakeNo/$maxWakes_ injected to '$rootSessionId' (quietMs=$quiet nodes=${nodes.size} nonTerminal=${nonTerminal.size})"
+                                      ) *>
+                                      FlowMapEventLog
+                                        .append(
+                                          notifyAuditWorkspace.getOrElse(workspace),
+                                          projectName,
+                                          "dispatcher-wake-watchdog",
+                                          NodeEngine.DispatcherWakeWatchdogEventType,
+                                          s"root=$rootSessionId quietMs=$quiet wake=$wakeNo/$maxWakes_ outcome=wake " +
+                                            s"nonTerminal=${nonTerminal.map(n => s"${n.name}(${n.status})").mkString(",")} " +
+                                            s"terminal=${terminal.map(n => s"${n.name}(${n.status})").mkString(",")}"
+                                        )
+                                        .handleErrorWith(e =>
+                                          logger.warn(s"[dispatcher-wake-watchdog] event append failed: ${e.getMessage}")
+                                        )
+                                  case false => IO.unit
+                                }
+                          }
+                      }
+                  }
+            yield ()
+          case _ => IO.unit
+      }
+  end dispatcherWakeWatchdog
+
   // `deliverDispatcherOutputToNebula` 已删净（R2「一个 Mail 统一」批 2026-09-12，
   // R7-b 桥收敛 + D-4 二次裁定）：分发器 turn 终态**不再**无条件把最终 assistant
   // 文本注入 root——root 注入面 100% 由显式载体驱动（分发器显式
@@ -1310,6 +1462,30 @@ object NodeEngine:
    * 作用域面落作用域事件流，项目面落项目流（与既有事件同锚点，未改）。
    */
   val ChainWedgedEventType: String = "chain-wedged"
+
+  /**
+   * **分发器唤醒看门狗事件类型**（dispatcher-hang 修复批 2026-11-18）：delegate 作用域
+   * 引擎每 ~30s tick 检查「图上有节点 ∧ 根会话（dispatcher 本人）Idle ∧ 锚点静默 ≥
+   * [[nebflow.shared.Defaults.DispatcherWakeWatchdogMs]]」⇒ 注入一条 fallback 唤醒并落
+   * 一行本类型事件（summary 携 `root=<delegateId> quietMs=… wake=n/max
+   * outcome=wake|exhausted nonTerminal=… terminal=…`，机械可 grep）。锚点 = 基工作区
+   * 事件流（与 [[NotifyRedirectedEventType]] 同锚点）。耗尽（outcome=exhausted）即
+   * **可读结论**：看门狗停止注入，链面状态留痕交人工/上层。
+   */
+  val DispatcherWakeWatchdogEventType: String = "dispatcher-wake-watchdog"
+
+  /**
+   * 看门狗单作用域内存态（dispatcher-hang 修复批 2026-11-18）。episode 语义：图上
+   * 锚点（节点 createdAt/startedAt/completedAt/notifySentAt/nebulaDeliveredAt 最大值）
+   * 前进 ⇒ 新静默期，`wakes`/`concluded` 重置（链有进展就重新给预算）；`lastWakeAt`
+   * 参与下次静默 gap 计算（两次唤醒之间至少隔一个阈值）。
+   */
+  private[project] final case class WakeWatchdogState(
+    episodeAnchor: Long = 0L,
+    lastWakeAt: Long = 0L,
+    wakes: Int = 0,
+    concluded: Boolean = false
+  )
 
   /** S19① 通知目标形态（判别单点；见构造参 [[NodeEngine.notifyTargetKind]]）。 */
   private[project] enum NotifyTargetKind:
