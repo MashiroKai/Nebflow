@@ -12,8 +12,7 @@
 //   （引用 = 哪个会话目录的哪个文件名指向哪个对象）。
 //
 // 用法：
-//   node scripts/nf-object-dedup-dryrun.mjs --root /Users/kaiyu/.stand/uploads \
-//        --out /Users/kaiyu/stand-evidence/media-object-cid-20261118/dedup-dryrun.json
+//   node scripts/nf-object-dedup-dryrun.mjs --root "$STAND_DATA_ROOT/uploads" --out <out.json>
 //
 // 退出码：0 = 清单产出成功；2 = 参数/路径错误。
 import { createHash } from 'node:crypto';

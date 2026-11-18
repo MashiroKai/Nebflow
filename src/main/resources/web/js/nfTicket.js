@@ -479,9 +479,12 @@ export function objNameOf(path) {
   return seg.split(/[?#]/)[0] || 'object';
 }
 
-/** `/api/nf-obj/<cid>/<name>`（凭据走 cookie/Authorization 头，绝不进 URL）。 */
+/** `/api/nf-obj/<cid>/<name>`（凭据走 cookie/Authorization 头，绝不进 URL）。
+ *  模板字面量形态是**有意的**：`check-api-routes.mjs` 只对模板插值做段归一
+ *  （整段插值 ⇒ `:` 通配段），拼接式写法会被抽成缺段的路径而与该闸
+ *  「前端调用必有后端承接」判据失配。 */
 export function objUrl(path, cid) {
-  return '/api/nf-obj/' + encodeURIComponent(cid) + '/' + encodeURIComponent(objNameOf(path));
+  return `/api/nf-obj/${encodeURIComponent(cid)}/${encodeURIComponent(objNameOf(path))}`;
 }
 
 /**
