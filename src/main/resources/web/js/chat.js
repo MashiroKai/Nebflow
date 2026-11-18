@@ -20,6 +20,9 @@ import { renderWithRegistry } from './cardRegistry.js';
 // 单一调用点 = 本文件 renderTool + persistence.js 两条历史重放腿（同一个 builder）。
 import { scheduleCardRowForTool } from './scheduleCard.js';
 import { t } from './i18n.js';
+// mobile-download 批（2026-11-18 作者令）：「下载落点」单点——AskUser 附件下载腿
+// 也经此选路（手机层分享/原下载 + 落点提示；桌面层逐字原行为）。
+import { saveFileBlob, notifyLanding } from './downloadSave.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
 import { stripChannelProvenance } from './channelProvenance.js';
 import { sendWs, onMessage } from './ws.js';
@@ -3045,15 +3048,11 @@ async function downloadAttachmentFile(path, base) {
     const resp = await fetch(await ticketUrl(path));
     if (!resp.ok) return false;
     const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = base || 'attachment';
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    // mobile-download 批（2026-11-18 作者令）：落点收归单点——手机层图片/视频走系统
+    // 分享（可入相册）/ 其它分享「存储到文件」（可指定位置）；能力不支持 ⇒ 原
+    // `<a download>` + 落点提示。桌面层逐字保留原行为。
+    const landed = await saveFileBlob(blob, base || 'attachment');
+    notifyLanding(landed);
     return true;
   } catch { return false; }
 }

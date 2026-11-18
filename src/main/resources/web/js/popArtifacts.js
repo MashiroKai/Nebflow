@@ -68,6 +68,10 @@ import { routeMediaClick, mediaKind } from './mediaOpenRoute.js';
 // state/branding，本边不成环。nfViewerSource = 取字节单点（手机端长按退役批的
 // footer 下载键同腿复用，零新增取字节路）。
 import { nfViewerUrl, nfCacheDrop, nfViewerSource } from './nfFileCache.js';
+// mobile-download 批（2026-11-18 作者令）：下载落点单点——手机层的媒体/文件下载键
+// 统一经此选路（图片/视频→系统分享→相册；其它→分享「存储到文件」；能力不支持→原下载
+// + 落点提示）；桌面层逐字保留原行为。
+import { saveFileBlob, notifyLanding } from './downloadSave.js';
 // quote-message 一期（2026-10-09）：用户媒体/文件卡行挂消息 id + 右键「引用」。
 // 摘要 = [图片]/[文件] 文件名（spec §2.5 表）。挂点在本 builder ⇒ live 发送、
 // 历史恢复（persistence.buildUserAttachmentRows）、attachmentsSaved 原位重渲
@@ -1441,11 +1445,12 @@ function createGroupDownloadButton(items) {
       const end = new Uint8Array(22), eocd = new DataView(end.buffer);
       eocd.setUint32(0, 0x06054b50, true); eocd.setUint16(8, entries.length, true); eocd.setUint16(10, entries.length, true);
       eocd.setUint32(12, centralSize, true); eocd.setUint32(16, offset, true);
-      const archive = URL.createObjectURL(new Blob([...parts, ...central, end], { type: 'application/zip' }));
-      const a = document.createElement('a'); a.href = archive; a.download = 'attachments.zip';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(archive), 60_000);
-      btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1500);
+      const archive = new Blob([...parts, ...central, end], { type: 'application/zip' });
+      // mobile-download 批（2026-11-18）：整组 zip 是一枚**普通文件** ⇒ 手机层经落点
+      // 单点走分享「存储到文件」（可指定位置）/ 能力不支持时原 `<a download>` + 落点提示。
+      const landed = await saveFileBlob(archive, 'attachments.zip');
+      if (landed.route !== 'cancelled') { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1500); }
+      notifyLanding(landed);
     } catch (err) {
       console.warn('[popArtifacts] group download failed', err);
       btn.classList.add('copy-failed'); setTimeout(() => btn.classList.remove('copy-failed'), 2000);
@@ -1491,16 +1496,17 @@ function createMediaDownloadButton(item) {
       } else {
         url = URL.createObjectURL(await (await fetch(item.src)).blob());
       }
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = item.name || String(item.path || '').split('/').pop() || 'file';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const name = item.name || String(item.path || '').split('/').pop() || 'file';
+      const blob = await (await fetch(url)).blob();
+      // mobile-download 批（2026-11-18）：落点收归单点——手机层图片/视频走系统分享
+      // （可入相册）/ 其它文件分享到「存储到文件」（可指定位置）；能力不支持 ⇒ 原
+      // `<a download>` + 落点提示。桌面层逐字保留原行为。
+      const landed = await saveFileBlob(blob, name);
+      if (landed.route !== 'cancelled') flash('copied', DL_CHECK_SVG, 1500);
+      notifyLanding(landed);
       // blob URL 由下载侧消费；延迟回收（nfViewerSource 腿的 URL 挂 document.body
       // 不会被 canvas-tab-closed 回收，这里就是它的清理点）。
       setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* already dead */ } }, 60_000);
-      flash('copied', DL_CHECK_SVG, 1500);
     } catch (err) {
       console.warn('[popArtifacts] media download failed', err);
       flash('copy-failed', DOWNLOAD_SVG, 2000);

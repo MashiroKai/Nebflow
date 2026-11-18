@@ -41,6 +41,11 @@ import { showPopupMenu, isPopupMenuOpen } from './contextMenu.js';
 import { createSessionIdentityHead } from './mobile/sessionHead.js';
 // 媒体点击统一批 P16（2026-11-11）：三窗媒体附件卡手机层 = 系统直开——层判定单点。
 import { isMobileLayer } from './mobile/popSheet.js';
+// mobile-download 批（2026-11-18 作者令「手机端的下载我不知道存哪去了」）：下载落点
+// 单点——手机层图片/视频走系统分享（可入相册）/ 其它文件分享到「存储到文件」（可指定
+// 位置）；能力不支持 ⇒ 保留原 `<a download>` 行为 + 落点提示。本文件原 `saveBlob`
+// 落点逻辑整体收编进该模块（禁第二套落点逻辑）。
+import { saveFileBlob, notifyLanding } from './downloadSave.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
@@ -2099,17 +2104,8 @@ function attSig(m) {
     : `${(x && x.id) || ''}:${(x && x.state) || ''}`).join(',');
 }
 
-function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || 'attachment';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
+// saveBlob（原落点原语）已收编进 `./downloadSave.js`（`saveFileBlob` / `downloadViaAnchor`，
+// mobile-download 批 2026-11-18）——本文件不再持有第二份落点逻辑。
 
 /** 整件 sha256（64 位小写 hex）。拿不到字节 / 无 WebCrypto（非安全上下文）⇒ `null`。
  *
@@ -3139,11 +3135,14 @@ async function downloadAttachment(att, card, btn) {
   btn.disabled = true;
   try {
     const { blob, filename } = await api.downloadAttachment(att.id);
-    saveBlob(blob, filename || (att && att.name));
-    flashDownloadKey(btn, true);
-    // 4b1 · E4（§F.1b）：**落盘尝试完成之后**才取证回执（saveBlob 抛 ⇒ 走下面的 catch ⇒ 零 E4）。
+    const landed = await saveFileBlob(blob, filename || (att && att.name));
+    // mobile-download 批：分享面板取消 ⇒ 不是「已下载」，不闪绿勾、不发 E4、不发落点提示。
+    if (landed.route !== 'cancelled') flashDownloadKey(btn, true);
+    notifyLanding(landed);
+    // 4b1 · E4（§F.1b）：**落盘尝试完成之后**才取证回执（saveFileBlob 抛 ⇒ 走下面的
+    // catch ⇒ 零 E4）。取消腿零回执（未交给任何保存面，禁造「已落盘」的假回执）。
     // 🔴 `void` = 故意 **不 await**：回执面绝不阻塞/影响下载与 UI（失败静默容忍）。
-    void ackAttachmentLanded(att, blob);
+    if (landed.route !== 'cancelled') void ackAttachmentLanded(att, blob);
   } catch (err) {
     if (err && err.status === 410) {
       // 服务端权威：元数据说 ready 但字节已按瞬态口径删除（§B.7 ③ 表）——
@@ -3297,14 +3296,16 @@ async function downloadDeviceSavedAttachment(att, card, btn, src) {
   btn.disabled = true;
   try {
     if (s.kind === 'blob') {
-      saveBlob(s.file, (att && att.name) || '');
-      flashDownloadKey(btn, true);
+      const landed = await saveFileBlob(s.file, (att && att.name) || '');
+      if (landed.route !== 'cancelled') flashDownloadKey(btn, true);
+      notifyLanding(landed);
       return;
     }
     const blob = await savedPathBlob(s.path);
     if (!blob) throw new Error('nf-file refused');
-    saveBlob(blob, (att && att.name) || String(s.path).split('/').pop());
-    flashDownloadKey(btn, true);
+    const landed = await saveFileBlob(blob, (att && att.name) || String(s.path).split('/').pop());
+    if (landed.route !== 'cancelled') flashDownloadKey(btn, true);
+    notifyLanding(landed);
   } catch {
     // 可重试（图标红态，不升终态、不动传输状态位：下载面与传输面互不覆盖）。
     flashDownloadKey(btn, false);

@@ -565,6 +565,12 @@ export default {
   'messages.attachUploading': 'Uploading — not downloadable yet',
   'messages.attachUnreadable': 'Attachment state unreadable — not downloadable',
   'messages.attachUnnamed': 'Unnamed attachment',
+  // Mobile download landing notice (mobile-download batch 2026-11-18). Rendered
+  // through the existing notification stack (window.__showToast) — no new style.
+  'download.sharedToAlbum': 'Share sheet opened · choose “Save Image/Video” to add it to Photos',
+  'download.sharedToFolder': 'Share sheet opened · choose “Save to Files” to pick a location',
+  'download.landedIosFiles': 'Downloaded · stored in Files app › Downloads on iPhone',
+  'download.landedBrowserDir': 'Downloaded to the browser download folder',
   // Attachment preview (author ruling 2026-09-15): accessible name for the
   // clickable card + the two *visible* degradation messages.
   'messages.attachPreview': 'Preview',

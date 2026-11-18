@@ -195,9 +195,21 @@ async function boot(width, height, scheme, engine) {
       value: () => new Promise(() => { /* 永不决 = 注册面静默空转 */ }),
       configurable: true,
     });
+    // mobile-download 批（2026-11-18）：本套件测的是**下载字节腿**（铸票 → /api/nf-file
+    // → 真落盘 → 字节同长），落点断言必须落在 `<a download>` 那条腿上；手机层若支持
+    // Web Share（WebKit 腿实测 navigator.canShare({files}) === true），落点会改走系统
+    // 分享面板、download 事件不再发生 ⇒ 这里显式钉「无分享能力」环境（等价于旧引擎／
+    // 不支持 Web Share L2 的形态），让本套件的下载腿照旧可断。分享路由本身由
+    // `tests/mobile-download-save.spec.mjs` 覆盖（桩断言调用参数）。
+    Object.defineProperty(navigator, 'canShare', { value: undefined, configurable: true });
+    Object.defineProperty(navigator, 'share', { value: undefined, configurable: true });
   });
   const dlCounts = { mint: 0, file: 0 };
   await page.route('**/*', (route) => {
+    // mobile-download 批（2026-11-18）harness 修正：WebKit 会把页内 `fetch(blob:)` 也暴露给
+    // page.route（URL 形态 `blob:http://…/<uuid>`）——拦下它会把 blob 内容换成本兜底应答
+    // （实测落盘字节被改写成 9B「not found」，下载字节同长断言假红）⇒ 非 http(s) 一律放行。
+    if (!/^https?:/i.test(route.request().url())) return route.continue();
     let p = decodeURIComponent(new URL(route.request().url()).pathname);
     if (p === '/') p = '/index.html';
     if (p.startsWith('/api/')) {
