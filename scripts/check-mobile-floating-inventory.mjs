@@ -13,6 +13,9 @@ const inventory = [
   ['contact search', 'mobileSearchFlat.css', /\.mh-search-dock:not\(\.has-query\)\s*$/, /position\s*:\s*absolute/, /#fm-contacts-body/, /padding-top\s*:[^;]*--mhsc-band/],
   ['session identity', 'mobileLayer.css', /\.mh-idhead\s*$/, /position\s*:\s*absolute/, /\[data-page='conversation'\]\s+\.fm-flow\s*$/, /padding-top\s*:[^;]*104px/],
   ['reminder FAB', 'mobileLayer.css', /#reminder-panel\s+\.reminder-fab-add\s*$/, /bottom\s*:[^;]*--mobile-dock-clearance/, /#reminder-panel\s+\.reminder-panel-body\s*$/, /padding\s*:[^;]*--mobile-dock-clearance[^;]*--mpage-fab-clearance/],
+  // Selection Ask is dismissible and may cover its source while open; it is
+  // not a persistent chrome bar. Its answer owns its own overflow scrolling.
+  ['selection Ask dialog (source occlusion exempt)', 'ask.css', /^\.selection-ask-panel\s*$/, /position\s*:\s*fixed/, /^\.selection-ask-answer\s*$/, /overflow\s*:\s*auto/],
   ['modal drawer', 'mobileLayer.css', /^\.mf-drawer\s*$/, /position\s*:\s*absolute/, /^\.mf-drawer-body\s*$/, /overflow-y\s*:\s*auto/],
 ];
 export function checkInventory(get = css) {

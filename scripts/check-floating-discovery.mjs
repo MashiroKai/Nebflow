@@ -9,7 +9,17 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const web = 'src/main/resources/web';
-const baseline = '99a888915fef0374092afd8b0e37637a70841b74';
+// An explicit baseline is preferable in CI; locally compare against the
+// integration branch. Missing refs must fail closed, never silently skip.
+function baselineRef() {
+  const requested = process.env.FLOAT_DISCOVERY_BASE;
+  // Default to the previous commit: comparing HEAD to itself would silently
+  // approve every committed addition on the integration branch.
+  const args = requested ? ['rev-parse', '--verify', `${requested}^{commit}`] : ['rev-parse', '--verify', 'HEAD^1^{commit}'];
+  const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`floating discovery baseline unavailable (${requested || 'HEAD^1'}): ${r.stderr.trim()}; set FLOAT_DISCOVERY_BASE to an available reviewed commit`);
+  return r.stdout.trim();
+}
 function files(dir, suffix) {
   return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
     const p = join(dir, e.name);
@@ -38,6 +48,8 @@ export function audit({ content, previous, name, kind }) {
   return added(extract(content), extract(previous)).map(x => `${name}: unreviewed ${kind === 'css' ? 'positioned selector' : 'dynamic DOM construction'}: ${x}`);
 }
 function run() {
+  let baseline;
+  try { baseline = baselineRef(); } catch (error) { return [error.message]; }
   const css = files(join(root, web, 'css'), '.css');
   const js = files(join(root, web, 'js/mobile'), '.js');
   const errors = [];
