@@ -5041,6 +5041,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-expand-view.show { display: flex; }
 .pop-expanded-card { display: flex; flex-direction: column; align-items: flex-start; }
 .pop-item-footer { margin-top: var(--ds-space-1); }
+.row.pop-artifact > .duration-badge > .msg-copy[hidden],
+.row.pop-artifact > .duration-badge > .pop-download-reason[hidden] { display: none; }
 
 /* zcode-484 D3: the expanded face keeps each media's OWN aspect ratio. The
    layers used to be a fixed 256px tall with `object-fit: cover` inherited from
