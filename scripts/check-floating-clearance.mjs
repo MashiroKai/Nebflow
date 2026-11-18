@@ -10,8 +10,8 @@ const CHROME = [
   ['dock', /#mobile-dock\s*$/, /\.mobile-page-body\s*$/, 'padding-bottom', '--mobile-dock-clearance'],
   ['page back', /\.mobile-back-btn\s*$/, /\.mobile-page:not\([^\n]+\.mobile-page-body/, 'padding-top', '--mchrome-clear'],
   ['chat top actions', /\.mh-chrome-btn\s*$/, /\.mobile-page:not\([^\n]+\.mobile-page-body/, 'padding-top', '--mchrome-clear'],
-  ['canvas tab strip', /\.mf-strip\s*$/, /canvas-md-scroll/, 'padding-bottom', '--mobile-dock-clearance'],
-  ['canvas top actions', /\.mf-cv-toolbar\s+\.g2-fab\s*$/, /canvas-md-scroll/, 'padding-bottom', '--mobile-dock-clearance'],
+  ['canvas tab strip', /\.mf-strip\s*$/, /\.mf-canvas-page\s+\.canvas-viewer-safe-top/, 'padding-top', '--mf-strip-h'],
+  ['canvas top actions', /\.mf-cv-toolbar\s+\.g2-fab\s*$/, /\.mf-canvas-page\s+\.canvas-viewer-safe-top/, 'padding-top', '--mf-strip-h'],
 ];
 export function check(css) {
   const errors = [];

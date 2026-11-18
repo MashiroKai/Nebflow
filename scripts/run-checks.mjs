@@ -18,6 +18,7 @@ if (!scriptTests.length) throw new Error('No script unit tests found; refusing b
 export const CHECKS = [
   nodeCheck('css-structure', 'check-css-structure'),
   nodeCheck('floating-clearance', 'check-floating-clearance'),
+  nodeCheck('floating-discovery', 'check-floating-discovery'),
   nodeCheck('design-tokens', 'check-design-tokens'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
   nodeCheck('chat-ui', 'check-chat-ui'),
