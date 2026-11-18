@@ -828,6 +828,18 @@ object FlowMapEventLog:
   val HostWakeType: String = "host-wake"
 
   /**
+   * **node-stuck 通报事件类型**（node-stuck-notify 批，2026-09-11）：写点 =
+   * `NodeStuckNotify.sweep`——一个 flow-map 节点被判定卡死/超窗挂等后，向它的
+   * **dispatcher**（缺席则 root）注入通报的同一次动作里，逐件留痕。追加式注册
+   * （同 [[DispatcherWakeType]] / [[HostWakeType]] 先例）。
+   *
+   * summary 为 `k=v` 单空格分隔的机器可读行（`cause=` / `state=` / `duration=` /
+   * `target=` / `delivered=` / `session=` / `node=`），供对拍与 gate 记账；
+   * `nodeId` = 被通报的节点，`chainId` 同链族事件规则（有链则写）。
+   */
+  val NodeStuckNotifiedType: String = "node-stuck-notified"
+
+  /**
    * `host-wake` 结构化 summary（`k=v` 单空格分隔、值不含空白——[[noWs]] 纪律同
    * [[dispatcherWakeSummary]]）。`wallMs`/`nanoMs` = 该窗的双钟原始读数差（取证对账
    * 面：`frozenMs = wallMs - nanoMs`）。

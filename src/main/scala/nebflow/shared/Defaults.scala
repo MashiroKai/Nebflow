@@ -932,6 +932,22 @@ object Defaults:
   /** TaskStuckWatcher scan interval. */
   val StuckWatcherIntervalSec: Int = 30
 
+  /**
+   * **node-stuck 通报的挂等轴阈值**（node-stuck-notify 批，2026-09-11）：一个
+   * flow-map 节点停在 `WaitingForUser`（等人工回答）**超过本阈值**才向 dispatcher
+   * 通报一次。判据与写点见 `NodeStuckNotify.assessWaiting`。
+   *
+   * 取 900s（15min）的理由 = **保守**：挂等的推进者是人，人的响应延迟天然是分钟级；
+   * 阈值低于人的正常响应窗就变成噪声（这正是既有卡死扫描**显式豁免**
+   * `WaitingForUser` 的理由）。15min 之后仍未落地 ⇒ 派发方/用户值得知道。
+   *
+   * system prop `nebflow.nodeStuckNotify.waitingMs`，每次调用现读（kill-switch 先例，
+   * 与 [[StuckThresholdMs]] / [[ToolPhaseStuckMs]] 同款）。无进展轴的阈值不另开
+   * 旋钮——它逐字复用卡死扫描阈值 [[StuckThresholdMs]]（与恢复链同源单点）。
+   */
+  def NodeStuckNotifyWaitingMs: Long =
+    sys.props.getOrElse("nebflow.nodeStuckNotify.waitingMs", "900000").toLong
+
   // ---- Held-receipt delivery reliability（平台修复批：delegate 回执投递可靠性）----
 
   /**
