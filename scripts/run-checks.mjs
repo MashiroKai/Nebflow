@@ -58,6 +58,7 @@ export const CHECKS = [
     ['prompt-imports', 'check-prompt-catalog-imports'], ['provider-models', 'check-provider-modellist'],
     ['local-coupling', 'check-local-coupling'], ['tag-format', 'check-tag-format'],
     ['evidence-manifests', 'check-evidence-manifests'], ['scala-layers', 'check-scala-layers'],
+    ['dispatcher-seal', 'check-dispatcher-seal'],
   ].map(([name, script]) => nodeCheck(name, script, ['static'])),
   { name: 'tooling-lint', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, 'node_modules/eslint/bin/eslint.js', 'eslint.config.mjs',
