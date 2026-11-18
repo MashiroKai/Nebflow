@@ -32,9 +32,19 @@
 #     python3 -m pip install --require-hashes --no-binary :all: -r requirements.txt
 #
 # The sha256 values below are the SOURCE distribution digests (platform
-# independent — the canonical pin). The reference install instead used the
-# cp314 macosx_11_0_arm64 wheels PyPI serves for these exact versions for the
-# four binary packages; a wheel's bytes can be re-verified with `pip hash`.
+# independent — the canonical pin), so pip runs in hash-checked mode and installs
+# from those sources: the four binary packages (Pillow / cffi / pypdfium2 /
+# cryptography) get a locally built wheel on the machine that installs. That is
+# the point — the pinned bytes are the pinned bytes on every platform, and the
+# measured install below took ~90s on a 16GB arm64 macOS box.
+#
+# Measured (2026-11-18, Python 3.14.6, macOS arm64):
+#     pdfplumber 0.11.10 | pypdf 7.1.0 | pdfminer.six 20260107 | Pillow 13.0.0
+#     pypdfium2 5.15.2 | cryptography 50.0.2 | cffi 2.1.1 | pycparser 3.12
+#     charset-normalizer 3.5.2
+#
+# One-step bootstrap (creates the venv, installs this file, prints the knob):
+#     scripts/tests/pdf_python_env.sh
 #
 # The interpreter is selected by ONE knob: `STAND_PDF_PYTHON` (default
 # `python3`). Nothing else in this feature picks an interpreter.

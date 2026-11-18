@@ -211,6 +211,26 @@ object AskContextAssembler:
 的出处。
 
 【口吻】与主会话一致：简体中文、直接、给结论再给依据；长答案先一句话结论。"""
-    persona + "\n\n" + contextBlock
+    persona + "\n\n" + contextBlock + pdfAddendumFor(fileName)
   end promptFor
+
+  /**
+   * PDF note/ask 批（2026-11-18）· PDF 模式补章：绑定 .pdf 时追加。三件事：
+   * ① 禁 Read 直读（二进制）；② 取页唯一入口 = PdfPage（懒解析：首条提问触发，
+   * 首次调用可能需等解析）；③ **答案必须引用具体页码**（端到端判定点）。
+   * 非 PDF = 空串（md/html 会话的提示词逐字节不变）。
+   */
+  def pdfAddendumFor(fileName: String): String =
+    if !AskSessions.isPdf(fileName) then ""
+    else
+      """
+
+═══ PDF 模式（本文件是 PDF，规则覆盖上文文件读取方式）═══
+· 不要用 Read 读这个 PDF（二进制，读出来是乱码）。取原文唯一入口 = PdfPage 工具
+  （参数 page=页码，1 起）；每页回 Markdown（文字/表格；图片为相对链接）。文件
+  暂未解析时首次调用会等解析完成——这正常，重试即可，不要因此答「读不到」。
+· 回答**必须引用具体页码**（如「见第 3 页」/「p.3」），引用内容须与该页原文
+  一致；跨页结论分别标页。页数上限见 PdfPage 的报头。
+· 侧栏读者可能在某页留过 note；note 是读者批注不是原文——引用时注明「读者批注」。
+· 需要页数/定位时先取第 1 页看结构，再按页号翻；不要连页大段倾倒。"""
 end AskContextAssembler

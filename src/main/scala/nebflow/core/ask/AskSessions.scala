@@ -35,7 +35,9 @@ object AskSessions:
    * canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write = 直接落盘的受限编辑
    * （仅绑定文件；落盘即入账，canvas 原文档内联 diff 逐块审阅）。 */
   val AskExclusiveTools: Set[String] =
-    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write")
+    // PDF note/ask 批（2026-11-18）：PdfPage = 绑定 PDF 的按需取页件（只读缓存
+    // 条目，不整篇载入；答案引用页码的取数面）。ask 专属同 ask_edit。
+    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write", "PdfPage")
 
   /** Closed Ask face, independent of Subagent and returned before any other role grants. */
   val AllowedTools: Set[String] =
@@ -87,6 +89,20 @@ object AskSessions:
   val AskableEbookExtensions: Set[String] = Set(".epub", ".mobi", ".azw3")
 
   /**
+   * ask 可问面 PDF 扩列（PDF note/ask 批，2026-11-18 作者令「让 pdf 支持 note
+   * 和 ask」）：.pdf 并入 ask 可问面。与电子书扩列同形：ask 侧单裁定，词条
+   * /wikilink 面不跟。差异在上下文组装——PDF **不整篇载入**（懒解析：首条
+   * askQuestion 才触发解析；提示词走 PDF 专属补章，取页走 PdfPage 工具），
+   * 见 [[AskContextAssembler.promptFor]] 的 PDF 模式段。
+   * 前端镜像 = `web/js/mdHtmlGate.js` 的 `ASKABLE_PDF_EXTENSIONS`（逐字对齐）。
+   */
+  val AskablePdfExtensions: Set[String] = Set(".pdf")
+
+  /** PDF 判据门面（与 [[isAskable]] 同一 extOf 纪律；供取页工具/组装腿复用）。 */
+  def isPdf(path: String): Boolean =
+    AskablePdfExtensions.contains(MdHtmlGate.extOf(path))
+
+  /**
    * ask 侧判据门面：仅白名单扩展名可问（大小写不敏感，`?query`/`#frag` 由
    * [[MdHtmlGate.extOf]] 先剥离）。askOpen 拒答（WsAskHandlers）与 spawn 面
    * 深防（AskServices.agentDefFor/assembleNow 复问）全部经本判据——§9-8
@@ -94,7 +110,8 @@ object AskSessions:
    */
   def isAskable(path: String): Boolean =
     MdHtmlGate.isMdHtml(path) ||
-      AskableEbookExtensions.contains(MdHtmlGate.extOf(path))
+      AskableEbookExtensions.contains(MdHtmlGate.extOf(path)) ||
+      isPdf(path)
 
   /** sha256 前 8 位 hex（会话 id 用；展示再截前 4 位）。 */
   def fileHash(canonicalPath: String): String =

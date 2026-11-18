@@ -177,7 +177,11 @@ object ToolRegistry:
       //（零直写，前端 diff 卡 Accept/Reject）+ 仅绑定文件路径。授权面同上
       // AskExclusiveTools（非 ask 角色剥除；工具内侧 isAskSession 双保险）。
       "ask_edit" -> AskEditTool,
-      "ask_write" -> AskWriteTool
+      "ask_write" -> AskWriteTool,
+      // PDF note/ask 批（2026-11-18）：ask 会话绑定 PDF 的按需取页件（只读解析
+      // 产物，不整篇载入；答案引用页码的取数面）。授权面同 ask_edit/ask_write
+      // （AskExclusiveTools 剥除非 ask 角色；工具内侧 isAskSession 双保险）。
+      "PdfPage" -> PdfPageTool
     )
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`

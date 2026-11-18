@@ -156,7 +156,14 @@ object AskLiveSources:
         IO.blocking {
           try
             val p = os.Path(absPath, os.pwd)
-            if os.isFile(p) then Some((os.read(p), os.mtime(p), os.size(p))) else None
+            // PDF note/ask 批（2026-11-18）：.pdf 不整篇载入（懒解析契约——组装
+            // 腿永不触发解析、也绝不把二进制当文本读进上下文）。文件腿以身份行
+            // 代替；取页走 PdfPage（提示词 PDF 模式补章指路）。
+            if AskSessions.isPdf(absPath) then
+              if os.isFile(p) then
+                Some((s"（PDF 文档《${p.last}》——按懒解析契约不整篇载入；问答按页取用 PdfPage 工具，见 PDF 模式补章。）", os.mtime(p), os.size(p)))
+              else None
+            else if os.isFile(p) then Some((os.read(p), os.mtime(p), os.size(p))) else None
           catch case NonFatal(e) => logger.warn(s"ask file read failed: ${e.getMessage}"); None
         }
 

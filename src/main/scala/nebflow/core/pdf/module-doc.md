@@ -63,6 +63,54 @@ Nothing in this feature deletes a cache entry or a note on its own.
   That is a known open item, not a hidden policy.
 - `pdf-notes/` is user data: no automatic reclamation, ever.
 
+## Storage rule (the fixed location of the per-page Markdown)
+
+**Rule.** Every parse product of a PDF lives under ONE root —
+`<dataRoot>/pdf-cache/` — and nowhere else. The per-page Markdown of a document is
+therefore always at
+
+```
+<dataRoot>/pdf-cache/<sha256[0:2]>/<sha256>/pages/p%04d.md
+```
+
+with `<sha256>` the digest of the document's exact bytes and a 1-based page number
+zero-padded to four digits (`pages/p0002.md` = page 2). Nothing is written next to
+the PDF, nothing into the repository, nothing into a per-project workspace: the data
+root is the only configuration input, so a cache entry path is a contract a caller
+can derive without asking the process.
+
+- The digest is computed from bytes, so the SAME location holds for the same content
+  regardless of file name or path — a renamed or moved PDF keeps its entry (and its
+  notes); an edited PDF is a different digest and therefore a different entry.
+- The entry is written atomically (staging dir + rename), so a partially written
+  directory is never mistaken for a document.
+- Page numbering in the path, the file name, the `index.json` posting lists and the
+  citation the answer prints (`p.2`) are the same 1-based number. There is no second
+  numbering convention.
+- Media extracted from a page is `<entry>/media/p%04d-<index>.<ext>`; the manifest is
+  `<entry>/meta.json`; the page index is `<entry>/index.json`. The full table is the
+  "Paths (single source each)" section above.
+- Notes are deliberately NOT in the cache: user data lives under
+  `<dataRoot>/pdf-notes/<sha256>/p%04d.json` so that reclaiming a cache entry can
+  never cost a note.
+
+**Getting the dependencies in place (the environment side of the same contract).**
+The parser is a subprocess, so the interpreter needs the pinned set from
+`src/main/resources/pdf/requirements.txt`. Neither the JVM nor a stock `python3`
+carries it, and nothing is installed into a system interpreter. The one-step
+bootstrap is `scripts/tests/pdf_python_env.sh`:
+
+```
+scripts/tests/pdf_python_env.sh                 # venv at ~/.cache/stand/pdf-venv
+export STAND_PDF_PYTHON="$HOME/.cache/stand/pdf-venv/bin/python3"
+sbt "testOnly nebflow.core.pdf.* nebflow.gateway.PdfAskHttpConcurrencySpec"
+```
+
+`STAND_PDF_PYTHON` must be exported on the **sbt process** (the Scala suites run in
+the sbt JVM), and on the process running `scripts/tests/pdf-parse.test.mjs`. The
+venv lives outside the repository and outside any data root — it is a machine
+artifact, never instance state.
+
 ## On demand: the index, not the document
 
 An ask must decide WHICH pages to open before it opens any. The previous shape

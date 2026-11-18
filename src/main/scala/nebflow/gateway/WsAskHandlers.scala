@@ -24,6 +24,8 @@ import nebflow.core.ask.{AskCooldown, AskGatewayServices, AskNoteSnapshot, AskNo
  * ═══════════════════════════════════════════════════════════════════════════ */
 private[gateway] object WsAskHandlers:
 
+  private val pdfLogger = nebflow.shared.NebflowLogger.forName("nebflow.pdf.asktrigger")
+
   val handlers: Map[String, WsDispatch.WsHandler] = Map(
     "askOpen" -> handleAskOpen,
     "askQuestion" -> handleAskQuestion,
@@ -196,6 +198,11 @@ private[gateway] object WsAskHandlers:
                 .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal): ${e.getMessage}")) *>
                 // 交互前刷新转交目标（主会话可能已切换）。
                 refreshMainIfReported(svc, sid, raw) *>
+                // PDF note/ask 批（2026-11-18）· 懒解析触发点：给 ask 发的消息是
+                // 解析的唯一触发器。绑定 PDF 时在后台起（或 join）解析——
+                // askOpen / note 腿都不碰 PdfCache.ensure，这里不 await（大文档
+                // 不许挡住提问；模型侧 PdfPage 调用自会 join 同一单飞）。
+                triggerPdfParseIfNeeded(binding) *>
                 ctx.handleUserText(sid, content, "ask-dock", fromUser = true)
           }
     end if
@@ -205,6 +212,29 @@ private[gateway] object WsAskHandlers:
     raw.hcursor.downField("mainSessionId").as[String].toOption.filter(_.nonEmpty) match
       case Some(m) => svc.registry.refreshMainSession(sid, m)
       case None => IO.unit
+
+  /**
+   * PDF note/ask 批（2026-11-18）：绑定为 PDF 时后台起（或 join）解析——fire
+   * and forget，结果只落日志（失败可读：下一次 askQuestion / PdfPage 调用会再
+   * 试并如实报错）。非 PDF 绑定 = IO.unit（零开销直通）。单飞语义由 PdfCache
+   * 自带：并发 ask / askQuestion+PdfPage 同文档只解析一遍。
+   */
+  private def triggerPdfParseIfNeeded(binding: nebflow.core.ask.AskBinding): IO[Unit] =
+    if !nebflow.core.ask.AskSessions.isPdf(binding.file) then IO.unit
+    else
+      val file = os.Path(binding.file, os.pwd)
+      if !os.exists(file) then IO.unit // PdfPage 侧会给出可读错误
+      else
+        nebflow.core.pdf.PdfCache
+          .sharedForDataRoot(nebflow.shared.PathUtil.dataRoot)
+          .ensure(file, binding.fileName)
+          .flatMap {
+            case Right(m) => IO.unit // 命中缓存 / 解析完成（含本调用起飞并完成的小文档）
+            case Left(f) =>
+              pdfLogger.warn(s"pdf parse triggered by ask message failed sha=? code=${f.code}: ${f.message}")
+          }
+          .start
+          .void
 
   // ── askHandoff：dock 输入条转交腿（§7；与工具腿同限频同投递面）────────────
 

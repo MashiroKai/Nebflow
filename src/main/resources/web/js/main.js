@@ -224,6 +224,8 @@ import { initSocialPanel } from './socialPanel.js';
 // from the settings page entry row (#btn-open-secrets). Document-level wiring,
 // so it survives the settings re-renders that rebuild that button.
 import { initSecretsPanel } from './secretsPanel.js';
+// PDF note/ask 批（2026-11-18）：PDF 页锚备注 + 提问侧栏。
+import { initPdfPanel } from './pdfPanel.js';
 import { friendsEnabled, voiceEnabled, voiceOrbEnabled, wikiGraphEnabled } from './featureFlags.js';
 // voiceseal 批（批 #508）：全双工语音 + 同源语音气泡 封存面的 DOM 挡板
 // （hidden 挡面，零删除；flag = features.voice，默认封存）。
@@ -4791,6 +4793,8 @@ initNeblink();
 initFleetUpdate();
 initSocialPanel();
 initSecretsPanel();
+// PDF note/ask 批（2026-11-18）：PDF 页锚备注 + 提问侧栏（无配置门槛，常驻注册）。
+initPdfPanel();
 initDropbox();
 // initContacts()/initMessages() are NOT called here — they are friends-feature
 // modules, started from the configData handler only when the release gate

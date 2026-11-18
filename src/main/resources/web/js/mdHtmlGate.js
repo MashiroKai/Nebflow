@@ -53,9 +53,17 @@ export function isMdHtmlFile(path) {
    MdHtmlGate（scala）保持四扩展名不动——扩列是 ask 侧单裁定，词条侧不跟。 */
 export const ASKABLE_EBOOK_EXTENSIONS = ['.epub', '.mobi', '.azw3'];
 
-/** ask 可问判据：md/html 白名单 ∪ 电子书白名单（大小写不敏感，query/frag
- *  剥离同 extOf 纪律）。 */
+/* ── ask 可问面 PDF 扩列（PDF note/ask 批，2026-11-18 作者令「让 pdf 支持
+   note 和 ask」）：.pdf 并入 ask 可问面。后端镜像 = AskSessions.
+   AskablePdfExtensions（同判据）；PDF 会话上下文不整篇载入——取页走 PdfPage
+   工具（懒解析：首条提问才触发）。词条/wikilink 面仍不跟（isMdHtmlFile）。 */
+export const ASKABLE_PDF_EXTENSIONS = ['.pdf'];
+
+/** ask 可问判据：md/html 白名单 ∪ 电子书白名单 ∪ PDF 白名单（大小写不敏感，
+ *  query/frag 剥离同 extOf 纪律）。 */
 export function isAskableFile(path) {
   if (!path || typeof path !== 'string') return false;
-  return MD_HTML_EXTENSIONS.includes(extOf(path)) || ASKABLE_EBOOK_EXTENSIONS.includes(extOf(path));
+  return MD_HTML_EXTENSIONS.includes(extOf(path))
+    || ASKABLE_EBOOK_EXTENSIONS.includes(extOf(path))
+    || ASKABLE_PDF_EXTENSIONS.includes(extOf(path));
 }
