@@ -1,0 +1,4200 @@
+{
+  "_comment": "No-clip floating 具名违例台账（作者令 2026-11-18 22:01）。现状全量登记：file:line + 违规条 + 理由 + 归属修复批。 闸只对台账外的新违例判红；台账只许缩短（修一处删一行）；新增条目必须经作者裁定——`--emit-ledger` 只打印候选，工具从不写本文件。 severity: exempt = 已核例外（理由具名）；P1/P2/P3 = 待修优先级。",
+  "generatedAt": "2026-11-18",
+  "static": [
+    {
+      "key": "src/main/resources/web/css/ask.css::cap-without-scroll::.ask-fab .ask-sess-dot",
+      "file": "src/main/resources/web/css/ask.css",
+      "line": 156,
+      "rule": "cap-without-scroll",
+      "selector": ".ask-fab .ask-sess-dot",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/ask.css::cap-without-scroll::.selection-ask-panel",
+      "file": "src/main/resources/web/css/ask.css",
+      "line": 203,
+      "rule": "cap-without-scroll",
+      "selector": ".selection-ask-panel",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/ask.css::cap-without-scroll::body.mobile-layer .ask-fab",
+      "file": "src/main/resources/web/css/ask.css",
+      "line": 740,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .ask-fab",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/ask.css::float-overflow-hidden::.note-dock .note-body",
+      "file": "src/main/resources/web/css/ask.css",
+      "line": 394,
+      "rule": "float-overflow-hidden",
+      "selector": ".note-dock .note-body",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/ask.css::text-truncation::.ask-dock .ask-addr",
+      "file": "src/main/resources/web/css/ask.css",
+      "line": 527,
+      "rule": "text-truncation",
+      "selector": ".ask-dock .ask-addr",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/ask.css::text-truncation::.ask-user-source-parent, .ask-user-source-node",
+      "file": "src/main/resources/web/css/ask.css",
+      "line": 830,
+      "rule": "text-truncation",
+      "selector": ".ask-user-source-parent, .ask-user-source-node",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/base.css::cap-without-scroll::.header-dropdown-menu::before",
+      "file": "src/main/resources/web/css/base.css",
+      "line": 394,
+      "rule": "cap-without-scroll",
+      "selector": ".header-dropdown-menu::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/canvasHint.css::text-truncation::.cv-hint-clamp",
+      "file": "src/main/resources/web/css/canvasHint.css",
+      "line": 183,
+      "rule": "text-truncation",
+      "selector": ".cv-hint-clamp",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/canvasHint.css::text-truncation::.cv-hint-oneline",
+      "file": "src/main/resources/web/css/canvasHint.css",
+      "line": 194,
+      "rule": "text-truncation",
+      "selector": ".cv-hint-oneline",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/canvasHint.css::text-truncation::[data-cv-hint-expand=\"1\"].cv-hint-clamp",
+      "file": "src/main/resources/web/css/canvasHint.css",
+      "line": 189,
+      "rule": "text-truncation",
+      "selector": "[data-cv-hint-expand=\"1\"].cv-hint-clamp",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/cards.css::cap-without-scroll::.nf-entry-item[data-state=\"done\"] .nf-entry-dot::after",
+      "file": "src/main/resources/web/css/cards.css",
+      "line": 321,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-entry-item[data-state=\"done\"] .nf-entry-dot::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/cards.css::cap-without-scroll::.nf-entry-item[data-state=\"fail\"] .nf-entry-dot::before, .nf-entry-item[data-state=\"fail\"] .nf-entry-dot::after",
+      "file": "src/main/resources/web/css/cards.css",
+      "line": 338,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-entry-item[data-state=\"fail\"] .nf-entry-dot::before, .nf-entry-item[data-state=\"fail\"] .nf-entry-dot::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.bubble.ai img, .bubble.peer img, .bubble.injected img, .ask-bub.ai img",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1667,
+      "rule": "cap-without-scroll",
+      "selector": ".bubble.ai img, .bubble.peer img, .bubble.injected img, .ask-bub.ai img",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.bubble.user.att-bubble .att-img",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1476,
+      "rule": "cap-without-scroll",
+      "selector": ".bubble.user.att-bubble .att-img",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.nf-lightbox--media .nf-lightbox-stage",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5423,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-lightbox--media .nf-lightbox-stage",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.nf-lightbox-media",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5449,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-lightbox-media",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.nf-video-cover",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5131,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-video-cover",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.ob-flow-skip-wrap",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 2774,
+      "rule": "cap-without-scroll",
+      "selector": ".ob-flow-skip-wrap",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.option-btn.picked .option-check::after",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 2313,
+      "rule": "cap-without-scroll",
+      "selector": ".option-btn.picked .option-check::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.play-ring",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5202,
+      "rule": "cap-without-scroll",
+      "selector": ".play-ring",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.pop-media-canvas",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5361,
+      "rule": "cap-without-scroll",
+      "selector": ".pop-media-canvas",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.scroll-new-pill",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 4526,
+      "rule": "cap-without-scroll",
+      "selector": ".scroll-new-pill",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::.vd-progress",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5222,
+      "rule": "cap-without-scroll",
+      "selector": ".vd-progress",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::cap-without-scroll::#bg-dropdown::before",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1059,
+      "rule": "cap-without-scroll",
+      "selector": "#bg-dropdown::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::clip-no-scroll::.bg-row-sr",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 908,
+      "rule": "clip-no-scroll",
+      "selector": ".bg-row-sr",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only，1px + clip-path: inset(50%)）惯用式，非显示面",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::clip-no-scroll::.msg-token-pop-body.clamped",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 6214,
+      "rule": "clip-no-scroll",
+      "selector": ".msg-token-pop-body.clamped",
+      "severity": "P1",
+      "reason": "高度上限 + overflow hidden/clip 且无可滚轴：内容会被静默裁掉（视觉风格 铁律 9·③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::clip-no-scroll::.row.nf-tucked",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 3688,
+      "rule": "clip-no-scroll",
+      "selector": ".row.nf-tucked",
+      "severity": "exempt",
+      "reason": "exempt: 折叠动画态（max-height:0 + opacity:0），非内容面",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::clip-no-scroll::.wsp-panel",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 4215,
+      "rule": "clip-no-scroll",
+      "selector": ".wsp-panel",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（内部列表自滚（源码注：覆写共享玻璃卡的 overflow-y:auto））",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::clip-path::.bg-row-sr",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 908,
+      "rule": "clip-path",
+      "selector": ".bg-row-sr",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only，1px + clip-path: inset(50%)）惯用式，非显示面",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::.bg-dropdown-list",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 307,
+      "rule": "float-overflow-hidden",
+      "selector": ".bg-dropdown-list",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::.fm-att-media .pop-media:has(.pop-img)",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5063,
+      "rule": "float-overflow-hidden",
+      "selector": ".fm-att-media .pop-media:has(.pop-img)",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::.html-card-wrap",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 3914,
+      "rule": "float-overflow-hidden",
+      "selector": ".html-card-wrap",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::.msg-token-pop-body.clamped",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 6214,
+      "rule": "float-overflow-hidden",
+      "selector": ".msg-token-pop-body.clamped",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::.pop-media-flat",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5242,
+      "rule": "float-overflow-hidden",
+      "selector": ".pop-media-flat",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::.search-media-card",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5688,
+      "rule": "float-overflow-hidden",
+      "selector": ".search-media-card",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::.wsp-panel",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 4215,
+      "rule": "float-overflow-hidden",
+      "selector": ".wsp-panel",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（内部列表自滚（源码注：覆写共享玻璃卡的 overflow-y:auto））",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::#bg-dropdown .bg-dropdown-list",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1092,
+      "rule": "float-overflow-hidden",
+      "selector": "#bg-dropdown .bg-dropdown-list",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::#bg-dropdown .bg-section",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1091,
+      "rule": "float-overflow-hidden",
+      "selector": "#bg-dropdown .bg-section",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::float-overflow-hidden::#header .header-center",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 89,
+      "rule": "float-overflow-hidden",
+      "selector": "#header .header-center",
+      "severity": "exempt",
+      "reason": "exempt: 桌面头中簇（pointer-events:none 定位带，非内容容器）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.ask-attachments-head .ds-att-origin",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 2661,
+      "rule": "text-truncation",
+      "selector": ".ask-attachments-head .ds-att-origin",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.ask-mail-addr",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1445,
+      "rule": "text-truncation",
+      "selector": ".ask-mail-addr",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.ask-pending-source",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 3439,
+      "rule": "text-truncation",
+      "selector": ".ask-pending-source",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.ask-pending-summary",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 3452,
+      "rule": "text-truncation",
+      "selector": ".ask-pending-summary",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.att-task-line-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1631,
+      "rule": "text-truncation",
+      "selector": ".att-task-line-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.att-task-line-opinion",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1638,
+      "rule": "text-truncation",
+      "selector": ".att-task-line-opinion",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-flow-deps",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 456,
+      "rule": "text-truncation",
+      "selector": ".bg-flow-deps",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-root-anchor-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 423,
+      "rule": "text-truncation",
+      "selector": ".bg-root-anchor-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-struct-parent-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 443,
+      "rule": "text-truncation",
+      "selector": ".bg-struct-parent-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-addr",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 963,
+      "rule": "text-truncation",
+      "selector": ".bg-task-addr",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-badge",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 803,
+      "rule": "text-truncation",
+      "selector": ".bg-task-badge",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-desc",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1140,
+      "rule": "text-truncation",
+      "selector": ".bg-task-desc",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-device",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 823,
+      "rule": "text-truncation",
+      "selector": ".bg-task-device",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-idle-detail",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 985,
+      "rule": "text-truncation",
+      "selector": ".bg-task-idle-detail",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-main .bg-task-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 649,
+      "rule": "text-truncation",
+      "selector": ".bg-task-main .bg-task-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-name-line .bg-task-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 615,
+      "rule": "text-truncation",
+      "selector": ".bg-task-name-line .bg-task-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-origin",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 708,
+      "rule": "text-truncation",
+      "selector": ".bg-task-origin",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-orphan",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 502,
+      "rule": "text-truncation",
+      "selector": ".bg-task-orphan",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-project",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 787,
+      "rule": "text-truncation",
+      "selector": ".bg-task-project",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-row-line1 > .bg-task-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 534,
+      "rule": "text-truncation",
+      "selector": ".bg-task-row-line1 > .bg-task-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-row-line3 > :not(.bg-task-sub)",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 569,
+      "rule": "text-truncation",
+      "selector": ".bg-task-row-line3 > :not(.bg-task-sub)",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bg-task-sub",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 482,
+      "rule": "text-truncation",
+      "selector": ".bg-task-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bgagent-tool",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 270,
+      "rule": "text-truncation",
+      "selector": ".bgagent-tool",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bubble.injected .nf-inject-summary",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1400,
+      "rule": "text-truncation",
+      "selector": ".bubble.injected .nf-inject-summary",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bubble.user .att-ref-card-content",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1568,
+      "rule": "text-truncation",
+      "selector": ".bubble.user .att-ref-card-content",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bubble.user .att-ref-card-source",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1560,
+      "rule": "text-truncation",
+      "selector": ".bubble.user .att-ref-card-source",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bubble.user .att-ref-card-title",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1548,
+      "rule": "text-truncation",
+      "selector": ".bubble.user .att-ref-card-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.bubble.user .att-ref-card.file-lang .fc-sub.att-ref-card-source",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 1596,
+      "rule": "text-truncation",
+      "selector": ".bubble.user .att-ref-card.file-lang .fc-sub.att-ref-card-source",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.compact-card-label",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 2053,
+      "rule": "text-truncation",
+      "selector": ".compact-card-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.error-escalation-title-text",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 4085,
+      "rule": "text-truncation",
+      "selector": ".error-escalation-title-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.fc-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5293,
+      "rule": "text-truncation",
+      "selector": ".fc-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.msg-quote-att-file-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5918,
+      "rule": "text-truncation",
+      "selector": ".msg-quote-att-file-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.msg-quote-block .msg-quote-text",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5791,
+      "rule": "text-truncation",
+      "selector": ".msg-quote-block .msg-quote-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.msg-token-chip",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 6133,
+      "rule": "text-truncation",
+      "selector": ".msg-token-chip",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.msg-token-pop-session",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 6191,
+      "rule": "text-truncation",
+      "selector": ".msg-token-pop-session",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.nf-lightbox-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5432,
+      "rule": "text-truncation",
+      "selector": ".nf-lightbox-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.nf-wl-detail",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 4776,
+      "rule": "text-truncation",
+      "selector": ".nf-wl-detail",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.nf-wl-item.nf-wl-tool > .nf-wl-label",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 4718,
+      "rule": "text-truncation",
+      "selector": ".nf-wl-item.nf-wl-tool > .nf-wl-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.notif-text",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 3360,
+      "rule": "text-truncation",
+      "selector": ".notif-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.pop-warn",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5325,
+      "rule": "text-truncation",
+      "selector": ".pop-warn",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.search-media-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5707,
+      "rule": "text-truncation",
+      "selector": ".search-media-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.search-media-url",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 5736,
+      "rule": "text-truncation",
+      "selector": ".search-media-url",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.wsp-cur",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 4338,
+      "rule": "text-truncation",
+      "selector": ".wsp-cur",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::.wsp-row-name",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 4286,
+      "rule": "text-truncation",
+      "selector": ".wsp-row-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/chat.css::text-truncation::#skill-indicator-label",
+      "file": "src/main/resources/web/css/chat.css",
+      "line": 3852,
+      "rule": "text-truncation",
+      "selector": "#skill-indicator-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/design-system.css::float-overflow-hidden::.ds-media-card",
+      "file": "src/main/resources/web/css/design-system.css",
+      "line": 1442,
+      "rule": "float-overflow-hidden",
+      "selector": ".ds-media-card",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/design-system.css::float-overflow-hidden::.ds-tool-card",
+      "file": "src/main/resources/web/css/design-system.css",
+      "line": 972,
+      "rule": "float-overflow-hidden",
+      "selector": ".ds-tool-card",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/design-system.css::float-overflow-hidden::.ds-tool-card .ds-tool-card__preview",
+      "file": "src/main/resources/web/css/design-system.css",
+      "line": 1043,
+      "rule": "float-overflow-hidden",
+      "selector": ".ds-tool-card .ds-tool-card__preview",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/design-system.css::text-truncation::.ds-side-meta",
+      "file": "src/main/resources/web/css/design-system.css",
+      "line": 1302,
+      "rule": "text-truncation",
+      "selector": ".ds-side-meta",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/design-system.css::text-truncation::.ds-side-title",
+      "file": "src/main/resources/web/css/design-system.css",
+      "line": 1287,
+      "rule": "text-truncation",
+      "selector": ".ds-side-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/design-system.css::text-truncation::.ds-tool-card .ds-tool-card__preview .label",
+      "file": "src/main/resources/web/css/design-system.css",
+      "line": 1052,
+      "rule": "text-truncation",
+      "selector": ".ds-tool-card .ds-tool-card__preview .label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/design-system.css::text-truncation::.ds-tool-card .label",
+      "file": "src/main/resources/web/css/design-system.css",
+      "line": 1005,
+      "rule": "text-truncation",
+      "selector": ".ds-tool-card .label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/design-system.css::text-truncation::.ds-tool-card .tool-img-ref",
+      "file": "src/main/resources/web/css/design-system.css",
+      "line": 1201,
+      "rule": "text-truncation",
+      "selector": ".ds-tool-card .tool-img-ref",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/diffView.css::text-truncation::.nf-ar-conflict-err",
+      "file": "src/main/resources/web/css/diffView.css",
+      "line": 674,
+      "rule": "text-truncation",
+      "selector": ".nf-ar-conflict-err",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/diffView.css::text-truncation::.nf-ar-file",
+      "file": "src/main/resources/web/css/diffView.css",
+      "line": 609,
+      "rule": "text-truncation",
+      "selector": ".nf-ar-file",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/diffView.css::text-truncation::.nf-fc-path",
+      "file": "src/main/resources/web/css/diffView.css",
+      "line": 47,
+      "rule": "text-truncation",
+      "selector": ".nf-fc-path",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/diffView.css::text-truncation::.nf-rcpt-aggregate-child > span",
+      "file": "src/main/resources/web/css/diffView.css",
+      "line": 425,
+      "rule": "text-truncation",
+      "selector": ".nf-rcpt-aggregate-child > span",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/diffView.css::text-truncation::.nf-rcpt-name",
+      "file": "src/main/resources/web/css/diffView.css",
+      "line": 360,
+      "rule": "text-truncation",
+      "selector": ".nf-rcpt-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/diffView.css::text-truncation::.nf-rcpt-summary-text",
+      "file": "src/main/resources/web/css/diffView.css",
+      "line": 430,
+      "rule": "text-truncation",
+      "selector": ".nf-rcpt-summary-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/diffView.css::text-truncation::.nfp-meta",
+      "file": "src/main/resources/web/css/diffView.css",
+      "line": 517,
+      "rule": "text-truncation",
+      "selector": ".nfp-meta",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/dropbox.css::cap-without-scroll::.dropbox-modal",
+      "file": "src/main/resources/web/css/dropbox.css",
+      "line": 3,
+      "rule": "cap-without-scroll",
+      "selector": ".dropbox-modal",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/dropbox.css::text-truncation::.dropbox-file-info-line",
+      "file": "src/main/resources/web/css/dropbox.css",
+      "line": 212,
+      "rule": "text-truncation",
+      "selector": ".dropbox-file-info-line",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/dropbox.css::text-truncation::.dropbox-file-name",
+      "file": "src/main/resources/web/css/dropbox.css",
+      "line": 204,
+      "rule": "text-truncation",
+      "selector": ".dropbox-file-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/dropdown.css::text-truncation::.nf-select-val",
+      "file": "src/main/resources/web/css/dropdown.css",
+      "line": 59,
+      "rule": "text-truncation",
+      "selector": ".nf-select-val",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/executors.css::text-truncation::.executor-card-desc",
+      "file": "src/main/resources/web/css/executors.css",
+      "line": 79,
+      "rule": "text-truncation",
+      "selector": ".executor-card-desc",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/executors.css::text-truncation::.executor-card-path",
+      "file": "src/main/resources/web/css/executors.css",
+      "line": 88,
+      "rule": "text-truncation",
+      "selector": ".executor-card-path",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::cap-without-scroll::.fm-archive-badge",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 922,
+      "rule": "cap-without-scroll",
+      "selector": ".fm-archive-badge",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::cap-without-scroll::.fm-fab",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 891,
+      "rule": "cap-without-scroll",
+      "selector": ".fm-fab",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::float-overflow-hidden::.flowmap-card",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 57,
+      "rule": "float-overflow-hidden",
+      "selector": ".flowmap-card",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.flowmap-card .solar-node.fm-node .fm-desc",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 388,
+      "rule": "text-truncation",
+      "selector": ".flowmap-card .solar-node.fm-node .fm-desc",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.flowmap-card .solar-node.fm-node .solar-node-label",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 358,
+      "rule": "text-truncation",
+      "selector": ".flowmap-card .solar-node.fm-node .solar-node-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.flowmap-card .solar-node.fm-node .solar-node-sub",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 376,
+      "rule": "text-truncation",
+      "selector": ".flowmap-card .solar-node.fm-node .solar-node-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.flowmap-summary",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 18,
+      "rule": "text-truncation",
+      "selector": ".flowmap-summary",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-cfg-badge",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 252,
+      "rule": "text-truncation",
+      "selector": ".fm-cfg-badge",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-detail-title",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 1135,
+      "rule": "text-truncation",
+      "selector": ".fm-detail-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-entry-name",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 1037,
+      "rule": "text-truncation",
+      "selector": ".fm-entry-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-entry-preview",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 1061,
+      "rule": "text-truncation",
+      "selector": ".fm-entry-preview",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-flag-queue",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 219,
+      "rule": "text-truncation",
+      "selector": ".fm-flag-queue",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-member-meta",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 1084,
+      "rule": "text-truncation",
+      "selector": ".fm-member-meta",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-member-name",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 1078,
+      "rule": "text-truncation",
+      "selector": ".fm-member-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-member-preview",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 1094,
+      "rule": "text-truncation",
+      "selector": ".fm-member-preview",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-result-summary, .fm-desc",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 319,
+      "rule": "text-truncation",
+      "selector": ".fm-result-summary, .fm-desc",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/flowMap.css::text-truncation::.fm-wait-note-text",
+      "file": "src/main/resources/web/css/flowMap.css",
+      "line": 834,
+      "rule": "text-truncation",
+      "selector": ".fm-wait-note-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::cap-without-scroll::.activity-badge",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 8,
+      "rule": "cap-without-scroll",
+      "selector": ".activity-badge",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::cap-without-scroll::.fm-fwd-note",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 863,
+      "rule": "cap-without-scroll",
+      "selector": ".fm-fwd-note",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::cap-without-scroll::.fm-msg-check",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 1991,
+      "rule": "cap-without-scroll",
+      "selector": ".fm-msg-check",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::cap-without-scroll::.fm-msg.fm-sending::before",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 1649,
+      "rule": "cap-without-scroll",
+      "selector": ".fm-msg.fm-sending::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::cap-without-scroll::.fm-pick-modal",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 2387,
+      "rule": "cap-without-scroll",
+      "selector": ".fm-pick-modal",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::clip-no-scroll::.fm-fwd-modal",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 847,
+      "rule": "clip-no-scroll",
+      "selector": ".fm-fwd-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（friends.css:860 .fm-fwd-list）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::clip-no-scroll::.fm-modal",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 640,
+      "rule": "clip-no-scroll",
+      "selector": ".fm-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（friends.css:268 .fm-modal-body）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::float-overflow-hidden::.fm-fwd-modal",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 847,
+      "rule": "float-overflow-hidden",
+      "selector": ".fm-fwd-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（friends.css:860 .fm-fwd-list）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::float-overflow-hidden::.fm-modal",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 640,
+      "rule": "float-overflow-hidden",
+      "selector": ".fm-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（friends.css:268 .fm-modal-body）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-att-device-path",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 2610,
+      "rule": "text-truncation",
+      "selector": ".fm-att-device-path",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-conv-summary",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 629,
+      "rule": "text-truncation",
+      "selector": ".fm-conv-summary",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-fwd-row-name",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 959,
+      "rule": "text-truncation",
+      "selector": ".fm-fwd-row-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-fwd-row-sub",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 966,
+      "rule": "text-truncation",
+      "selector": ".fm-fwd-row-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-fwd-target-name",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 986,
+      "rule": "text-truncation",
+      "selector": ".fm-fwd-target-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-member-name",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 2311,
+      "rule": "text-truncation",
+      "selector": ".fm-member-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-modal-id",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 1002,
+      "rule": "text-truncation",
+      "selector": ".fm-modal-id",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-modal-name",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 801,
+      "rule": "text-truncation",
+      "selector": ".fm-modal-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-msg-md a.md-ext-img",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 1391,
+      "rule": "text-truncation",
+      "selector": ".fm-msg-md a.md-ext-img",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-msg-sender",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 2562,
+      "rule": "text-truncation",
+      "selector": ".fm-msg-sender",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-req-row .fm-row-name, .fm-req-row .fm-row-sub, .fm-result-card .fm-row-name, .fm-result-card .fm-row-sub, .fm-friend-row .fm-row-name, .fm-friend-row .fm-row-sub",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 137,
+      "rule": "text-truncation",
+      "selector": ".fm-req-row .fm-row-name, .fm-req-row .fm-row-sub, .fm-result-card .fm-row-name, .fm-result-card .fm-row-sub, .fm-friend-row .fm-row-name, .fm-friend-row .fm-row-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-row-name",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 105,
+      "rule": "text-truncation",
+      "selector": ".fm-row-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.fm-row-sub",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 114,
+      "rule": "text-truncation",
+      "selector": ".fm-row-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.pf-hero-name",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 1787,
+      "rule": "text-truncation",
+      "selector": ".pf-hero-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.pf-hero-sub",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 1797,
+      "rule": "text-truncation",
+      "selector": ".pf-hero-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::.pf-modal > .sp-panel-header > span",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 1767,
+      "rule": "text-truncation",
+      "selector": ".pf-modal > .sp-panel-header > span",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/friends.css::text-truncation::#header .fm-main-head .fm-modal-id",
+      "file": "src/main/resources/web/css/friends.css",
+      "line": 2785,
+      "rule": "text-truncation",
+      "selector": "#header .fm-main-head .fm-modal-id",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/glass.css::cap-without-scroll::.ask-input::before, .note-dock .note-body::before, .ask-dock .ask-bub::before",
+      "file": "src/main/resources/web/css/glass.css",
+      "line": 551,
+      "rule": "cap-without-scroll",
+      "selector": ".ask-input::before, .note-dock .note-body::before, .ask-dock .ask-bub::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/glass.css::cap-without-scroll::#input-bar::before, .fm-input-bar::before",
+      "file": "src/main/resources/web/css/glass.css",
+      "line": 441,
+      "rule": "cap-without-scroll",
+      "selector": "#input-bar::before, .fm-input-bar::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/glass.css::cap-without-scroll::#queue-bar.visible::before",
+      "file": "src/main/resources/web/css/glass.css",
+      "line": 466,
+      "rule": "cap-without-scroll",
+      "selector": "#queue-bar.visible::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::cap-without-scroll::.att-ref-fm",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 550,
+      "rule": "cap-without-scroll",
+      "selector": ".att-ref-fm",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::clip-no-scroll::#queue-bar",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 1302,
+      "rule": "clip-no-scroll",
+      "selector": "#queue-bar",
+      "severity": "exempt",
+      "reason": "exempt: 收起态动画（max-height:0），非内容面",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::clip-no-scroll::#queue-bar.collapsed",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 1367,
+      "rule": "clip-no-scroll",
+      "selector": "#queue-bar.collapsed",
+      "severity": "P1",
+      "reason": "高度上限 + overflow hidden/clip 且无可滚轴：内容会被静默裁掉（视觉风格 铁律 9·③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.att-file .att-file-name",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 394,
+      "rule": "text-truncation",
+      "selector": ".att-file .att-file-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.att-ref-fm-name",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 575,
+      "rule": "text-truncation",
+      "selector": ".att-ref-fm-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.att-ref-fm-text",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 587,
+      "rule": "text-truncation",
+      "selector": ".att-ref-fm-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.att-ref-fm.expanded .att-ref-fm-text",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 600,
+      "rule": "text-truncation",
+      "selector": ".att-ref-fm.expanded .att-ref-fm-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.att-ref-label",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 517,
+      "rule": "text-truncation",
+      "selector": ".att-ref-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.att-taskref-opinion",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 451,
+      "rule": "text-truncation",
+      "selector": ".att-taskref-opinion",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.att-taskref-subject",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 442,
+      "rule": "text-truncation",
+      "selector": ".att-taskref-subject",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.error-recovery-strip .error-recovery-text",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 96,
+      "rule": "text-truncation",
+      "selector": ".error-recovery-strip .error-recovery-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.mention-path",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 1272,
+      "rule": "text-truncation",
+      "selector": ".mention-path",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.queue-item-att-file",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 1435,
+      "rule": "text-truncation",
+      "selector": ".queue-item-att-file",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.queue-item-text",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 1405,
+      "rule": "text-truncation",
+      "selector": ".queue-item-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/input.css::text-truncation::.voice-text",
+      "file": "src/main/resources/web/css/input.css",
+      "line": 1100,
+      "rule": "text-truncation",
+      "selector": ".voice-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/keyboard.css::clip-no-scroll::#nf-quickinput-host .quick-input-message",
+      "file": "src/main/resources/web/css/keyboard.css",
+      "line": 222,
+      "rule": "clip-no-scroll",
+      "selector": "#nf-quickinput-host .quick-input-message",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/keyboard.css::clip-path::#nf-quickinput-host .quick-input-message",
+      "file": "src/main/resources/web/css/keyboard.css",
+      "line": 222,
+      "rule": "clip-path",
+      "selector": "#nf-quickinput-host .quick-input-message",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/lightbox.css::cap-without-scroll::.nf-lightbox",
+      "file": "src/main/resources/web/css/lightbox.css",
+      "line": 17,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-lightbox",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/lightbox.css::cap-without-scroll::.nf-lightbox-close",
+      "file": "src/main/resources/web/css/lightbox.css",
+      "line": 51,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-lightbox-close",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/lightbox.css::cap-without-scroll::.nf-lightbox-opentab",
+      "file": "src/main/resources/web/css/lightbox.css",
+      "line": 250,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-lightbox-opentab",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/lightbox.css::float-overflow-hidden::.nf-lightbox-canvas",
+      "file": "src/main/resources/web/css/lightbox.css",
+      "line": 145,
+      "rule": "float-overflow-hidden",
+      "selector": ".nf-lightbox-canvas",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/lightbox.css::float-overflow-hidden::.nf-lightbox-stage",
+      "file": "src/main/resources/web/css/lightbox.css",
+      "line": 129,
+      "rule": "float-overflow-hidden",
+      "selector": ".nf-lightbox-stage",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/lightbox.css::float-overflow-hidden::.nf-lightbox[data-nf-lb-gallery=\"on\"]",
+      "file": "src/main/resources/web/css/lightbox.css",
+      "line": 222,
+      "rule": "float-overflow-hidden",
+      "selector": ".nf-lightbox[data-nf-lb-gallery=\"on\"]",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mermaid.css::cap-without-scroll::.nf-figure-open",
+      "file": "src/main/resources/web/css/mermaid.css",
+      "line": 91,
+      "rule": "cap-without-scroll",
+      "selector": ".nf-figure-open",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mermaid.css::cap-without-scroll::#nf-mermaid-stage",
+      "file": "src/main/resources/web/css/mermaid.css",
+      "line": 40,
+      "rule": "cap-without-scroll",
+      "selector": "#nf-mermaid-stage",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mermaid.css::clip-no-scroll::body > [id^='dnf-mermaid-svg-']",
+      "file": "src/main/resources/web/css/mermaid.css",
+      "line": 48,
+      "rule": "clip-no-scroll",
+      "selector": "body > [id^='dnf-mermaid-svg-']",
+      "severity": "exempt",
+      "reason": "exempt: 离屏 1px 度量容器（探针用，永不出屏）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mermaid.css::contain-clip::.nf-mermaid .nf-mermaid-body, .nf-svg .nf-svg-body",
+      "file": "src/main/resources/web/css/mermaid.css",
+      "line": 67,
+      "rule": "contain-clip",
+      "selector": ".nf-mermaid .nf-mermaid-body, .nf-svg .nf-svg-body",
+      "severity": "P2",
+      "reason": "contain: paint|strict|content 裁切后代（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mermaid.css::float-overflow-hidden::body > [id^='dnf-mermaid-svg-']",
+      "file": "src/main/resources/web/css/mermaid.css",
+      "line": 48,
+      "rule": "float-overflow-hidden",
+      "selector": "body > [id^='dnf-mermaid-svg-']",
+      "severity": "exempt",
+      "reason": "exempt: 离屏 1px 度量容器（探针用，永不出屏）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::cap-without-scroll::body.mobile-layer .mobile-page[data-page=\"tasks\"] .ta-card-ico",
+      "file": "src/main/resources/web/css/mobile-todo-apple.css",
+      "line": 136,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mobile-page[data-page=\"tasks\"] .ta-card-ico",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::cap-without-scroll::body.mobile-layer .mobile-page[data-page=\"tasks\"] .ta-cluster, body.mobile-layer .mobile-page[data-page=\"todo-apple-list\"] .ta-cluster, body.mobile-layer .mobile-page[data-page=\"todo-apple-item\"] .ta-cluster",
+      "file": "src/main/resources/web/css/mobile-todo-apple.css",
+      "line": 312,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mobile-page[data-page=\"tasks\"] .ta-cluster, body.mobile-layer .mobile-page[data-page=\"todo-apple-list\"] .ta-cluster, body.mobile-layer .mobile-page[data-page=\"todo-apple-item\"] .ta-cluster",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::cap-without-scroll::body.mobile-layer .mobile-page[data-page=\"tasks\"] .ta-row::after",
+      "file": "src/main/resources/web/css/mobile-todo-apple.css",
+      "line": 231,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mobile-page[data-page=\"tasks\"] .ta-row::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::cap-without-scroll::body.mobile-layer .mobile-page[data-page=\"todo-apple-list\"] .ta-item.is-done .ta-check-circle::after",
+      "file": "src/main/resources/web/css/mobile-todo-apple.css",
+      "line": 537,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mobile-page[data-page=\"todo-apple-list\"] .ta-item.is-done .ta-check-circle::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::float-overflow-hidden::body.mobile-layer .mobile-page[data-page=\"tasks\"] .ta-listcard",
+      "file": "src/main/resources/web/css/mobile-todo-apple.css",
+      "line": 200,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mobile-page[data-page=\"tasks\"] .ta-listcard",
+      "severity": "exempt",
+      "reason": "exempt: 圆角裁切（列表卡，非滚动体；行长高、不裁内容）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobile-todo-apple.css::text-truncation::body.mobile-layer .mobile-page[data-page=\"todo-apple-item\"] .ta-tool-label",
+      "file": "src/main/resources/web/css/mobile-todo-apple.css",
+      "line": 786,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mobile-page[data-page=\"todo-apple-item\"] .ta-tool-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .dock-badge",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 746,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .dock-badge",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-deck-thumb .thumb-grid .ghead",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2321,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-deck-thumb .thumb-grid .ghead",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-deck-thumb .thumb-img svg",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2331,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-deck-thumb .thumb-img svg",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-deck-thumb .thumb-page",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2335,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-deck-thumb .thumb-page",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-hub-row:not(:last-child)::after",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2527,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-hub-row:not(:last-child)::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-me-avatar-photo",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2630,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-me-avatar-photo",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-me-field:not(:last-child)::after",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2736,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-me-field:not(:last-child)::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-strip",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1640,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-strip",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-strip-chip",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1705,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-strip-chip",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mf-swipe-ring",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2130,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mf-swipe-ring",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mh-chrome-badge",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 557,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mh-chrome-badge",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .mh-search-clear::before",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 4083,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .mh-search-clear::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .tfl-hit-reply",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5840,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .tfl-hit-reply",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer .tfl-menu-row.is-sep::before",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5644,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer .tfl-menu-row.is-sep::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer #mobile-pages::before",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 806,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer #mobile-pages::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::cap-without-scroll::body.mobile-layer #reminder-panel .reminder-circle::after, body.mobile-layer #reminder-panel .reminder-cancel::after",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 4114,
+      "rule": "cap-without-scroll",
+      "selector": "body.mobile-layer #reminder-panel .reminder-circle::after, body.mobile-layer #reminder-panel .reminder-cancel::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::clip-no-scroll::.mf-drawer-box",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5354,
+      "rule": "clip-no-scroll",
+      "selector": ".mf-drawer-box",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（mobileLayer.css .mf-drawer-body (overflow-y:auto)）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::clip-no-scroll::body.mobile-layer .mf-cv-count",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1979,
+      "rule": "clip-no-scroll",
+      "selector": "body.mobile-layer .mf-cv-count",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::clip-path::body.mobile-layer .mf-cv-count",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1979,
+      "rule": "clip-path",
+      "selector": "body.mobile-layer .mf-cv-count",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::.mf-drawer-box",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5354,
+      "rule": "float-overflow-hidden",
+      "selector": ".mf-drawer-box",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（mobileLayer.css .mf-drawer-body (overflow-y:auto)）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .dock-key.dock-key-center .dock-center",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 671,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .dock-key.dock-key-center .dock-center",
+      "severity": "exempt",
+      "reason": "exempt: dock 中键图标槽（装饰件）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mf-deck",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2200,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mf-deck",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mf-deck-card",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2212,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mf-deck-card",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mf-deck-snap",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2360,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mf-deck-snap",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mf-deck-thumb",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2301,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mf-deck-thumb",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mf-stack-view",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2153,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mf-stack-view",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mh-tpanel .tp-bd",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5178,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mh-tpanel .tp-bd",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mobile-page",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 815,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mobile-page",
+      "severity": "exempt",
+      "reason": "exempt: 手机页面壳（固定整屏容器；内容由 .mobile-page-body 自滚）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mobile-page .tfl-hit",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5735,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mobile-page .tfl-hit",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal-header",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 4693,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal-header",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer .tfl-menu-panel, body.mobile-layer .tfl-menu-sub",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5535,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer .tfl-menu-panel, body.mobile-layer .tfl-menu-sub",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer #bg-dropdown .bg-section",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1416,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer #bg-dropdown .bg-section",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-flow",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 957,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-flow",
+      "severity": "exempt",
+      "reason": "exempt: 会话面收编（壳层 + .fm-flow 自滚）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::float-overflow-hidden::body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal, body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard, body.mobile-layer #mobile-pages .mobile-page-body > #search-modal, body.mobile-layer #mobile-pages .mobile-page-body > #reminder-panel, body.mobile-layer #mobile-pages .mobile-page-body > #daemon-panel, body.mobile-layer #mobile-pages .mobile-page-body > #bg-dropdown, body.mobile-layer #mobile-pages .mobile-page-body > #memory-modal, body.mobile-layer #mobile-pages .mobile-page-body > #mobile-task-panel, body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 999,
+      "rule": "float-overflow-hidden",
+      "selector": "body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal, body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard, body.mobile-layer #mobile-pages .mobile-page-body > #search-modal, body.mobile-layer #mobile-pages .mobile-page-body > #reminder-panel, body.mobile-layer #mobile-pages .mobile-page-body > #daemon-panel, body.mobile-layer #mobile-pages .mobile-page-body > #bg-dropdown, body.mobile-layer #mobile-pages .mobile-page-body > #memory-modal, body.mobile-layer #mobile-pages .mobile-page-body > #mobile-task-panel, body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name)",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 4629,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name)",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .bgagent-overlay .bgagent-meta-value",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 6005,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .bgagent-overlay .bgagent-meta-value",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .bgagent-overlay .bgagent-mobile-title",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5895,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .bgagent-overlay .bgagent-mobile-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .bgagent-overlay .bgagent-pill-word",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5929,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .bgagent-overlay .bgagent-pill-word",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .bgagent-overlay .bgagent-sheet-title",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5980,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .bgagent-overlay .bgagent-sheet-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .dock-key .dock-label",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 639,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .dock-key .dock-label",
+      "severity": "exempt",
+      "reason": "exempt: 按钮/标签装饰件（无内容裁切）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mf-deck-title",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2270,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mf-deck-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mf-hub-row-val",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2714,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mf-hub-row-val",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mf-me-field-value",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2746,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mf-me-field-value",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mf-me-name",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2585,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mf-me-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mf-me-sub",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 2594,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mf-me-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mh-memory-card-excerpt",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1526,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mh-memory-card-excerpt",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mh-memory-card-title",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1518,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mh-memory-card-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mh-sr-snippet",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 3528,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mh-sr-snippet",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mh-tpanel .tp-mem > span:last-child",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1198,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mh-tpanel .tp-mem > span:last-child",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mh-tpanel .tp-stats",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1091,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mh-tpanel .tp-stats",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .mh-tpanel .tp-ttl",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1165,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .mh-tpanel .tp-ttl",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 4016,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .tfl-hit-detail",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5796,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .tfl-hit-detail",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .tfl-hit-tag",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5783,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .tfl-hit-tag",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .tfl-hit-title",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5768,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .tfl-hit-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .tfl-menu-row-label",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5605,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .tfl-menu-row-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer .tfl-menu-row-sub",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5614,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer .tfl-menu-row-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer #daemon-panel .daemon-command",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 1363,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer #daemon-panel .daemon-command",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer #mobile-pages .project-card-name",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 3052,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer #mobile-pages .project-card-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer #mobile-pages .project-field-value",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 3071,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer #mobile-pages .project-field-value",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer #mobile-pages .wiki-toolbar-status",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 3093,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer #mobile-pages .wiki-toolbar-status",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/mobileLayer.css::text-truncation::body.mobile-layer.mobile-layer :is( .fm-conv-summary, .todo-entry-summary, .entry-name, .dock-key .dock-label, .mf-me-name, .mf-me-sub, .mf-me-field-value, .mf-hub-row-val, .tfl-row-badge, .tfl-row-notes, .ud-card-label, .ud-card-value, .fm-row-name, .settings-identity-username, .tp-stats )",
+      "file": "src/main/resources/web/css/mobileLayer.css",
+      "line": 5109,
+      "rule": "text-truncation",
+      "selector": "body.mobile-layer.mobile-layer :is( .fm-conv-summary, .todo-entry-summary, .entry-name, .dock-key .dock-label, .mf-me-name, .mf-me-sub, .mf-me-field-value, .mf-hub-row-val, .tfl-row-badge, .tfl-row-notes, .ud-card-label, .ud-card-value, .fm-row-name, .settings-identity-username, .tp-stats )",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::cap-without-scroll::.model-panel",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 1183,
+      "rule": "cap-without-scroll",
+      "selector": ".model-panel",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::cap-without-scroll::.search-tab::after",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 637,
+      "rule": "cap-without-scroll",
+      "selector": ".search-tab::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::cap-without-scroll::#memory-modal",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 337,
+      "rule": "cap-without-scroll",
+      "selector": "#memory-modal",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::cap-without-scroll::#modal-box::before, #delete-box::before, #conflict-box::before, #memory-modal::before, #rules-modal::before, #settings-modal::before, #search-modal::before, #onboarding-panel::before, .model-panel::before, .wsp-panel::before",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 58,
+      "rule": "cap-without-scroll",
+      "selector": "#modal-box::before, #delete-box::before, #conflict-box::before, #memory-modal::before, #rules-modal::before, #settings-modal::before, #search-modal::before, #onboarding-panel::before, .model-panel::before, .wsp-panel::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::cap-without-scroll::#rules-modal",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 441,
+      "rule": "cap-without-scroll",
+      "selector": "#rules-modal",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::cap-without-scroll::#search-date-popover::before",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 718,
+      "rule": "cap-without-scroll",
+      "selector": "#search-date-popover::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::cap-without-scroll::#search-modal",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 532,
+      "rule": "cap-without-scroll",
+      "selector": "#search-modal",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::clip-no-scroll::#settings-modal",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 505,
+      "rule": "clip-no-scroll",
+      "selector": "#settings-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（settingsRows.css / #settings-content）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::float-overflow-hidden::#settings-modal",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 505,
+      "rule": "float-overflow-hidden",
+      "selector": "#settings-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（settingsRows.css / #settings-content）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::text-truncation::.mp-group-title",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 1493,
+      "rule": "text-truncation",
+      "selector": ".mp-group-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::text-truncation::.mp-head-preview",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 1340,
+      "rule": "text-truncation",
+      "selector": ".mp-head-preview",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::text-truncation::.mp-model",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 1411,
+      "rule": "text-truncation",
+      "selector": ".mp-model",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::text-truncation::.search-result-preview",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 958,
+      "rule": "text-truncation",
+      "selector": ".search-result-preview",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/modal.css::text-truncation::.search-result-session",
+      "file": "src/main/resources/web/css/modal.css",
+      "line": 910,
+      "rule": "text-truncation",
+      "selector": ".search-result-session",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/nav.css::cap-without-scroll::.agent-notif-dot",
+      "file": "src/main/resources/web/css/nav.css",
+      "line": 104,
+      "rule": "cap-without-scroll",
+      "selector": ".agent-notif-dot",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/nav.css::clip-no-scroll::#activity-bar",
+      "file": "src/main/resources/web/css/nav.css",
+      "line": 151,
+      "rule": "clip-no-scroll",
+      "selector": "#activity-bar",
+      "severity": "P1",
+      "reason": "高度上限 + overflow hidden/clip 且无可滚轴：内容会被静默裁掉（视觉风格 铁律 9·③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/nav.css::text-truncation::.nav-agent-label",
+      "file": "src/main/resources/web/css/nav.css",
+      "line": 89,
+      "rule": "text-truncation",
+      "selector": ".nav-agent-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/neblink.css::text-truncation::.neblink-peer-name",
+      "file": "src/main/resources/web/css/neblink.css",
+      "line": 153,
+      "rule": "text-truncation",
+      "selector": ".neblink-peer-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/neblink.css::text-truncation::.neblink-update-status",
+      "file": "src/main/resources/web/css/neblink.css",
+      "line": 253,
+      "rule": "text-truncation",
+      "selector": ".neblink-update-status",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/perception.css::cap-without-scroll::.pp-cfg::before",
+      "file": "src/main/resources/web/css/perception.css",
+      "line": 200,
+      "rule": "cap-without-scroll",
+      "selector": ".pp-cfg::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/perception.css::cap-without-scroll::#perception-panel::before",
+      "file": "src/main/resources/web/css/perception.css",
+      "line": 65,
+      "rule": "cap-without-scroll",
+      "selector": "#perception-panel::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/perception.css::float-overflow-hidden::#perception-panel",
+      "file": "src/main/resources/web/css/perception.css",
+      "line": 49,
+      "rule": "float-overflow-hidden",
+      "selector": "#perception-panel",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/perception.css::text-truncation::.otp-chip .from",
+      "file": "src/main/resources/web/css/perception.css",
+      "line": 251,
+      "rule": "text-truncation",
+      "selector": ".otp-chip .from",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/perception.css::text-truncation::.pdraft-att .nm",
+      "file": "src/main/resources/web/css/perception.css",
+      "line": 272,
+      "rule": "text-truncation",
+      "selector": ".pdraft-att .nm",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/perception.css::text-truncation::.pp-e-sum",
+      "file": "src/main/resources/web/css/perception.css",
+      "line": 112,
+      "rule": "text-truncation",
+      "selector": ".pp-e-sum",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::cap-without-scroll::.dev-menu::before",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 680,
+      "rule": "cap-without-scroll",
+      "selector": ".dev-menu::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::cap-without-scroll::.proj-create-fab",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 353,
+      "rule": "cap-without-scroll",
+      "selector": ".proj-create-fab",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::cap-without-scroll::.proj-flowmap-fab",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 391,
+      "rule": "cap-without-scroll",
+      "selector": ".proj-flowmap-fab",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::clip-no-scroll::.project-live-status",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 332,
+      "rule": "clip-no-scroll",
+      "selector": ".project-live-status",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::clip-no-scroll::.project-new-mark",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 319,
+      "rule": "clip-no-scroll",
+      "selector": ".project-new-mark",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only，clip: rect(0 0 0 0)）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::clip-path::.project-live-status",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 332,
+      "rule": "clip-path",
+      "selector": ".project-live-status",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::clip-path::.project-new-mark",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 319,
+      "rule": "clip-path",
+      "selector": ".project-new-mark",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only，clip: rect(0 0 0 0)）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::text-truncation::.delegate-chain-frame",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 983,
+      "rule": "text-truncation",
+      "selector": ".delegate-chain-frame",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::text-truncation::.delegate-chain-mono",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 950,
+      "rule": "text-truncation",
+      "selector": ".delegate-chain-mono",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::text-truncation::.dev-badge .dev-badge-nm",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 815,
+      "rule": "text-truncation",
+      "selector": ".dev-badge .dev-badge-nm",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::text-truncation::.dev-item .nm",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 708,
+      "rule": "text-truncation",
+      "selector": ".dev-item .nm",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::text-truncation::.dev-note",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 637,
+      "rule": "text-truncation",
+      "selector": ".dev-note",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::text-truncation::.flowmap-back-btn .flowmap-back-name",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 189,
+      "rule": "text-truncation",
+      "selector": ".flowmap-back-btn .flowmap-back-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::text-truncation::.proj-create-path",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 590,
+      "rule": "text-truncation",
+      "selector": ".proj-create-path",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/projectPanel.css::text-truncation::.project-field-value",
+      "file": "src/main/resources/web/css/projectPanel.css",
+      "line": 29,
+      "rule": "text-truncation",
+      "selector": ".project-field-value",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/reminder.css::cap-without-scroll::.reminder-badge",
+      "file": "src/main/resources/web/css/reminder.css",
+      "line": 36,
+      "rule": "cap-without-scroll",
+      "selector": ".reminder-badge",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/reminder.css::cap-without-scroll::#reminder-panel::before",
+      "file": "src/main/resources/web/css/reminder.css",
+      "line": 88,
+      "rule": "cap-without-scroll",
+      "selector": "#reminder-panel::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/reminder.css::float-overflow-hidden::#reminder-panel",
+      "file": "src/main/resources/web/css/reminder.css",
+      "line": 55,
+      "rule": "float-overflow-hidden",
+      "selector": "#reminder-panel",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/reminder.css::text-truncation::.reminder-row-text",
+      "file": "src/main/resources/web/css/reminder.css",
+      "line": 375,
+      "rule": "text-truncation",
+      "selector": ".reminder-row-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/reminder.css::text-truncation::.schedule-card-body",
+      "file": "src/main/resources/web/css/reminder.css",
+      "line": 839,
+      "rule": "text-truncation",
+      "selector": ".schedule-card-body",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/reminder.css::text-truncation::.schedule-card-body.is-open",
+      "file": "src/main/resources/web/css/reminder.css",
+      "line": 845,
+      "rule": "text-truncation",
+      "selector": ".schedule-card-body.is-open",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/reminder.css::text-truncation::.schedule-card-name",
+      "file": "src/main/resources/web/css/reminder.css",
+      "line": 694,
+      "rule": "text-truncation",
+      "selector": ".schedule-card-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/reminder.css::text-truncation::.schedule-card-ref span",
+      "file": "src/main/resources/web/css/reminder.css",
+      "line": 761,
+      "rule": "text-truncation",
+      "selector": ".schedule-card-ref span",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sapphire.css::cap-without-scroll::.glass::before",
+      "file": "src/main/resources/web/css/sapphire.css",
+      "line": 152,
+      "rule": "cap-without-scroll",
+      "selector": ".glass::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sapphire.css::text-truncation::.agent-badge, .fm-msg-agent-badge",
+      "file": "src/main/resources/web/css/sapphire.css",
+      "line": 942,
+      "rule": "text-truncation",
+      "selector": ".agent-badge, .fm-msg-agent-badge",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/secrets.css::clip-no-scroll::#secrets-modal",
+      "file": "src/main/resources/web/css/secrets.css",
+      "line": 80,
+      "rule": "clip-no-scroll",
+      "selector": "#secrets-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（#secrets-body）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/secrets.css::float-overflow-hidden::#secrets-modal",
+      "file": "src/main/resources/web/css/secrets.css",
+      "line": 80,
+      "rule": "float-overflow-hidden",
+      "selector": "#secrets-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（#secrets-body）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/secrets.css::text-truncation::.secrets-row-name",
+      "file": "src/main/resources/web/css/secrets.css",
+      "line": 186,
+      "rule": "text-truncation",
+      "selector": ".secrets-row-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/settingsRows.css::cap-without-scroll::.set-nav + .set-nav::before, .set-nav + .set-row::before, .set-row + .set-nav::before, .set-row + .set-row::before",
+      "file": "src/main/resources/web/css/settingsRows.css",
+      "line": 84,
+      "rule": "cap-without-scroll",
+      "selector": ".set-nav + .set-nav::before, .set-nav + .set-row::before, .set-row + .set-nav::before, .set-row + .set-row::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/settingsRows.css::text-truncation::.pd-device-meta",
+      "file": "src/main/resources/web/css/settingsRows.css",
+      "line": 430,
+      "rule": "text-truncation",
+      "selector": ".pd-device-meta",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/settingsRows.css::text-truncation::.pd-device-name-text",
+      "file": "src/main/resources/web/css/settingsRows.css",
+      "line": 416,
+      "rule": "text-truncation",
+      "selector": ".pd-device-name-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/settingsRows.css::text-truncation::.set-actions .set-btn",
+      "file": "src/main/resources/web/css/settingsRows.css",
+      "line": 270,
+      "rule": "text-truncation",
+      "selector": ".set-actions .set-btn",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/settingsRows.css::text-truncation::.set-nav > .stt-status .st-badge, .set-nav > .stt-status .st-badge .badge-reason",
+      "file": "src/main/resources/web/css/settingsRows.css",
+      "line": 217,
+      "rule": "text-truncation",
+      "selector": ".set-nav > .stt-status .st-badge, .set-nav > .stt-status .st-badge .badge-reason",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/settingsRows.css::text-truncation::.set-nav-label, .set-row-label",
+      "file": "src/main/resources/web/css/settingsRows.css",
+      "line": 126,
+      "rule": "text-truncation",
+      "selector": ".set-nav-label, .set-row-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/settingsRows.css::text-truncation::.set-nav-val, .set-row-val",
+      "file": "src/main/resources/web/css/settingsRows.css",
+      "line": 140,
+      "rule": "text-truncation",
+      "selector": ".set-nav-val, .set-row-val",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/settingsRows.css::text-truncation::.set-row .set-row-ctrl .set-row-val",
+      "file": "src/main/resources/web/css/settingsRows.css",
+      "line": 195,
+      "rule": "text-truncation",
+      "selector": ".set-row .set-row-ctrl .set-row-val",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::cap-without-scroll::.cfg-modal::before",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 1310,
+      "rule": "cap-without-scroll",
+      "selector": ".cfg-modal::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::cap-without-scroll::.cfg-test-thumb",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2838,
+      "rule": "cap-without-scroll",
+      "selector": ".cfg-test-thumb",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::cap-without-scroll::.settings-avatar-photo",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 756,
+      "rule": "cap-without-scroll",
+      "selector": ".settings-avatar-photo",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::cap-without-scroll::.sp-avatar-photo",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 889,
+      "rule": "cap-without-scroll",
+      "selector": ".sp-avatar-photo",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::clip-no-scroll::#sidebar",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 6,
+      "rule": "clip-no-scroll",
+      "selector": "#sidebar",
+      "severity": "P1",
+      "reason": "高度上限 + overflow hidden/clip 且无可滚轴：内容会被静默裁掉（视觉风格 铁律 9·③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::float-overflow-hidden::.cfg-card",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 960,
+      "rule": "float-overflow-hidden",
+      "selector": ".cfg-card",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::float-overflow-hidden::.panel",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 31,
+      "rule": "float-overflow-hidden",
+      "selector": ".panel",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::float-overflow-hidden::#sidebar-panel",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 22,
+      "rule": "float-overflow-hidden",
+      "selector": "#sidebar-panel",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.agent-mgr-card .agent-mgr-desc",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 1625,
+      "rule": "text-truncation",
+      "selector": ".agent-mgr-card .agent-mgr-desc",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.agent-mgr-card .agent-mgr-name",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 1619,
+      "rule": "text-truncation",
+      "selector": ".agent-mgr-card .agent-mgr-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.cfg-card-type",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 1108,
+      "rule": "text-truncation",
+      "selector": ".cfg-card-type",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.cfg-model-test-result",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2784,
+      "rule": "text-truncation",
+      "selector": ".cfg-model-test-result",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.cfg-test-line-head",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2822,
+      "rule": "text-truncation",
+      "selector": ".cfg-test-line-head",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.creation-path",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 496,
+      "rule": "text-truncation",
+      "selector": ".creation-path",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.orb-state-row .orb-state-name",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2047,
+      "rule": "text-truncation",
+      "selector": ".orb-state-row .orb-state-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.plugins-card-desc",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2485,
+      "rule": "text-truncation",
+      "selector": ".plugins-card-desc",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.plugins-comp",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2505,
+      "rule": "text-truncation",
+      "selector": ".plugins-comp",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.plugins-item-detail .plugins-card-desc",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2384,
+      "rule": "text-truncation",
+      "selector": ".plugins-item-detail .plugins-card-desc",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.plugins-item-summary",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2358,
+      "rule": "text-truncation",
+      "selector": ".plugins-item-summary",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.plugins-skill-capsule-desc",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 2621,
+      "rule": "text-truncation",
+      "selector": ".plugins-skill-capsule-desc",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.settings-identity-email",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 817,
+      "rule": "text-truncation",
+      "selector": ".settings-identity-email",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.settings-identity-username",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 807,
+      "rule": "text-truncation",
+      "selector": ".settings-identity-username",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.sp-hero-name",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 899,
+      "rule": "text-truncation",
+      "selector": ".sp-hero-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.sp-hero-sub",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 909,
+      "rule": "text-truncation",
+      "selector": ".sp-hero-sub",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/sidebar.css::text-truncation::.st-badge .badge-reason",
+      "file": "src/main/resources/web/css/sidebar.css",
+      "line": 604,
+      "rule": "text-truncation",
+      "selector": ".st-badge .badge-reason",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/social.css::cap-without-scroll::#social-modal",
+      "file": "src/main/resources/web/css/social.css",
+      "line": 278,
+      "rule": "cap-without-scroll",
+      "selector": "#social-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（#social-body）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/social.css::clip-no-scroll::#social-modal",
+      "file": "src/main/resources/web/css/social.css",
+      "line": 28,
+      "rule": "clip-no-scroll",
+      "selector": "#social-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（#social-body）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/social.css::float-overflow-hidden::#social-modal",
+      "file": "src/main/resources/web/css/social.css",
+      "line": 28,
+      "rule": "float-overflow-hidden",
+      "selector": "#social-modal",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（#social-body）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.canvas-video-stage .nf-video-cover",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2993,
+      "rule": "cap-without-scroll",
+      "selector": ".canvas-video-stage .nf-video-cover",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.canvas-video-stage video.canvas-video",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2965,
+      "rule": "cap-without-scroll",
+      "selector": ".canvas-video-stage video.canvas-video",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.canvas-zoom-bar::before, .nf-findbar::before",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3223,
+      "rule": "cap-without-scroll",
+      "selector": ".canvas-zoom-bar::before, .nf-findbar::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.capsule-ring",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1394,
+      "rule": "cap-without-scroll",
+      "selector": ".capsule-ring",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.col-resizer::after",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3548,
+      "rule": "cap-without-scroll",
+      "selector": ".col-resizer::after",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.col-resizer::before",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3558,
+      "rule": "cap-without-scroll",
+      "selector": ".col-resizer::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.cvv-scrub-fill, .cvv-vol-fill",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3093,
+      "rule": "cap-without-scroll",
+      "selector": ".cvv-scrub-fill, .cvv-vol-fill",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.cvv-scrub-knob, .cvv-vol-knob",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3102,
+      "rule": "cap-without-scroll",
+      "selector": ".cvv-scrub-knob, .cvv-vol-knob",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.cvv-scrub-track, .cvv-vol-track",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3084,
+      "rule": "cap-without-scroll",
+      "selector": ".cvv-scrub-track, .cvv-vol-track",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.deck-card .deck-card-pop",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 4461,
+      "rule": "cap-without-scroll",
+      "selector": ".deck-card .deck-card-pop",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.deck-card .deck-card-x",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1848,
+      "rule": "cap-without-scroll",
+      "selector": ".deck-card .deck-card-x",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.deck-card .thumb-grid .ghead",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1923,
+      "rule": "cap-without-scroll",
+      "selector": ".deck-card .thumb-grid .ghead",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.deck-card .thumb-img svg",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1932,
+      "rule": "cap-without-scroll",
+      "selector": ".deck-card .thumb-img svg",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.deck-card .thumb-page",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1939,
+      "rule": "cap-without-scroll",
+      "selector": ".deck-card .thumb-page",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.epub-progress-tick",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2514,
+      "rule": "cap-without-scroll",
+      "selector": ".epub-progress-tick",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.epub-progress-ticks",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2506,
+      "rule": "cap-without-scroll",
+      "selector": ".epub-progress-ticks",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.epub-toc",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2806,
+      "rule": "cap-without-scroll",
+      "selector": ".epub-toc",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::cap-without-scroll::.wiki-canvas",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3825,
+      "rule": "cap-without-scroll",
+      "selector": ".wiki-canvas",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::clip-no-scroll::.nf-img-zoom-live",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2881,
+      "rule": "clip-no-scroll",
+      "selector": ".nf-img-zoom-live",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::clip-path::.nf-img-zoom-live",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2881,
+      "rule": "clip-path",
+      "selector": ".nf-img-zoom-live",
+      "severity": "exempt",
+      "reason": "exempt: 视觉隐藏（SR-only）惯用式",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::float-overflow-hidden::.deck-card",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1749,
+      "rule": "float-overflow-hidden",
+      "selector": ".deck-card",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::float-overflow-hidden::.deck-card .card-snap",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1883,
+      "rule": "float-overflow-hidden",
+      "selector": ".deck-card .card-snap",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::float-overflow-hidden::.deck-card .card-thumb",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1834,
+      "rule": "float-overflow-hidden",
+      "selector": ".deck-card .card-thumb",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::float-overflow-hidden::.epub-flip-layer",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2638,
+      "rule": "float-overflow-hidden",
+      "selector": ".epub-flip-layer",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::float-overflow-hidden::.epub-flip-stage",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2630,
+      "rule": "float-overflow-hidden",
+      "selector": ".epub-flip-stage",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::float-overflow-hidden::#canvas-panel",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 603,
+      "rule": "float-overflow-hidden",
+      "selector": "#canvas-panel",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::float-overflow-hidden::#deck-layer",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1676,
+      "rule": "float-overflow-hidden",
+      "selector": "#deck-layer",
+      "severity": "exempt",
+      "reason": "exempt: 卡组舞台层（visibility:hidden 收起态 + 透视容器）",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.canvas-refback-btn",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 4044,
+      "rule": "text-truncation",
+      "selector": ".canvas-refback-btn",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.canvas-tab-label",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 995,
+      "rule": "text-truncation",
+      "selector": ".canvas-tab-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.canvas-title .t-name",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1360,
+      "rule": "text-truncation",
+      "selector": ".canvas-title .t-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.cr-capsule .cr-name",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1483,
+      "rule": "text-truncation",
+      "selector": ".cr-capsule .cr-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.cr-capsule .cr-name-head",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1614,
+      "rule": "text-truncation",
+      "selector": ".cr-capsule .cr-name-head",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.deck-card .n-text",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 1816,
+      "rule": "text-truncation",
+      "selector": ".deck-card .n-text",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.dev-chip .dev-nm",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 442,
+      "rule": "text-truncation",
+      "selector": ".dev-chip .dev-nm",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.epub-anno-item-note",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2772,
+      "rule": "text-truncation",
+      "selector": ".epub-anno-item-note",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.epub-anno-item-quote",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2771,
+      "rule": "text-truncation",
+      "selector": ".epub-anno-item-quote",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.epub-menu-title",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2364,
+      "rule": "text-truncation",
+      "selector": ".epub-menu-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.epub-toc-item",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 2607,
+      "rule": "text-truncation",
+      "selector": ".epub-toc-item",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.explorer-item",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 204,
+      "rule": "text-truncation",
+      "selector": ".explorer-item",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.explorer-label",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 352,
+      "rule": "text-truncation",
+      "selector": ".explorer-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.explorer-pickup-bar .bar-msg",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 542,
+      "rule": "text-truncation",
+      "selector": ".explorer-pickup-bar .bar-msg",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.explorer-title",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 17,
+      "rule": "text-truncation",
+      "selector": ".explorer-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.nf-term-tip .ts",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3920,
+      "rule": "text-truncation",
+      "selector": ".nf-term-tip .ts",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.wg-broken .row",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 4295,
+      "rule": "text-truncation",
+      "selector": ".wg-broken .row",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.wg-detail-body .ref",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 4263,
+      "rule": "text-truncation",
+      "selector": ".wg-detail-body .ref",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.wg-tip .ts",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3858,
+      "rule": "text-truncation",
+      "selector": ".wg-tip .ts",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/split.css::text-truncation::.wg-tip.para .ts",
+      "file": "src/main/resources/web/css/split.css",
+      "line": 3868,
+      "rule": "text-truncation",
+      "selector": ".wg-tip.para .ts",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::clip-no-scroll::#task-list",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 1,
+      "rule": "clip-no-scroll",
+      "selector": "#task-list",
+      "severity": "exempt",
+      "reason": "exempt: 收起态动画（max-height:0），非内容面",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::clip-no-scroll::#task-list.has-tasks",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 9,
+      "rule": "clip-no-scroll",
+      "selector": "#task-list.has-tasks",
+      "severity": "exempt",
+      "reason": "exempt: 壳层裁切 + 内部滚动体（taskList.css .task-body-inner（源码注：滚动边界内移））",
+      "owner": "—"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-chain-folded-title",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 335,
+      "rule": "text-truncation",
+      "selector": ".task-chain-folded-title",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-chain-folded-word",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 344,
+      "rule": "text-truncation",
+      "selector": ".task-chain-folded-word",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-chain-member-name",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 516,
+      "rule": "text-truncation",
+      "selector": ".task-chain-member-name",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-chain-member-word",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 524,
+      "rule": "text-truncation",
+      "selector": ".task-chain-member-word",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-node-label",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 223,
+      "rule": "text-truncation",
+      "selector": ".task-node-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-node-meta",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 236,
+      "rule": "text-truncation",
+      "selector": ".task-node-meta",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-node-time",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 260,
+      "rule": "text-truncation",
+      "selector": ".task-node-time",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-node-word",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 248,
+      "rule": "text-truncation",
+      "selector": ".task-node-word",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/taskList.css::text-truncation::.task-stats",
+      "file": "src/main/resources/web/css/taskList.css",
+      "line": 420,
+      "rule": "text-truncation",
+      "selector": ".task-stats",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/timeWheel.css::cap-without-scroll::.tw-band",
+      "file": "src/main/resources/web/css/timeWheel.css",
+      "line": 220,
+      "rule": "cap-without-scroll",
+      "selector": ".tw-band",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/todo-face.css::cap-without-scroll::.tfl-chip-swipe-ic",
+      "file": "src/main/resources/web/css/todo-face.css",
+      "line": 540,
+      "rule": "cap-without-scroll",
+      "selector": ".tfl-chip-swipe-ic",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/todo-face.css::cap-without-scroll::.tfl-edit-detail",
+      "file": "src/main/resources/web/css/todo-face.css",
+      "line": 971,
+      "rule": "cap-without-scroll",
+      "selector": ".tfl-edit-detail",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/todo-face.css::cap-without-scroll::.tfl-mount.is-open .tfl-capsule",
+      "file": "src/main/resources/web/css/todo-face.css",
+      "line": 170,
+      "rule": "cap-without-scroll",
+      "selector": ".tfl-mount.is-open .tfl-capsule",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/todo-face.css::float-overflow-hidden::.tfl-card",
+      "file": "src/main/resources/web/css/todo-face.css",
+      "line": 275,
+      "rule": "float-overflow-hidden",
+      "selector": ".tfl-card",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/todo-face.css::float-overflow-hidden::.tfl-edit-wrap > .tfl-edit-panel",
+      "file": "src/main/resources/web/css/todo-face.css",
+      "line": 924,
+      "rule": "float-overflow-hidden",
+      "selector": ".tfl-edit-wrap > .tfl-edit-panel",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/todo-face.css::text-truncation::.tfl-row-badge",
+      "file": "src/main/resources/web/css/todo-face.css",
+      "line": 839,
+      "rule": "text-truncation",
+      "selector": ".tfl-row-badge",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/todo-page.css::float-overflow-hidden::#todo-page",
+      "file": "src/main/resources/web/css/todo-page.css",
+      "line": 13,
+      "rule": "float-overflow-hidden",
+      "selector": "#todo-page",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/usage.css::cap-without-scroll::#usage-dashboard::before",
+      "file": "src/main/resources/web/css/usage.css",
+      "line": 34,
+      "rule": "cap-without-scroll",
+      "selector": "#usage-dashboard::before",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/usage.css::text-truncation::.ud-card-label",
+      "file": "src/main/resources/web/css/usage.css",
+      "line": 82,
+      "rule": "text-truncation",
+      "selector": ".ud-card-label",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/usage.css::text-truncation::.ud-card-value",
+      "file": "src/main/resources/web/css/usage.css",
+      "line": 90,
+      "rule": "text-truncation",
+      "selector": ".ud-card-value",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/usage.css::text-truncation::.ud-dimlabel",
+      "file": "src/main/resources/web/css/usage.css",
+      "line": 177,
+      "rule": "text-truncation",
+      "selector": ".ud-dimlabel",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/usage.css::text-truncation::.ud-rank-key",
+      "file": "src/main/resources/web/css/usage.css",
+      "line": 435,
+      "rule": "text-truncation",
+      "selector": ".ud-rank-key",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/usage.css::text-truncation::.ud-table td",
+      "file": "src/main/resources/web/css/usage.css",
+      "line": 461,
+      "rule": "text-truncation",
+      "selector": ".ud-table td",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/voiceMode.css::cap-without-scroll::.vmo-exit",
+      "file": "src/main/resources/web/css/voiceMode.css",
+      "line": 154,
+      "rule": "cap-without-scroll",
+      "selector": ".vmo-exit",
+      "severity": "P3",
+      "reason": "有高度上限却无可滚轴：内容可能溢出容器或被祖先裁切，逐处判定",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/voiceMode.css::float-overflow-hidden::#voice-mode-overlay",
+      "file": "src/main/resources/web/css/voiceMode.css",
+      "line": 33,
+      "rule": "float-overflow-hidden",
+      "selector": "#voice-mode-overlay",
+      "severity": "P1",
+      "reason": "浮动定位（fixed/absolute/sticky）+ overflow hidden/clip：浮层自身或被祖先裁切（铁律 9·①）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/voiceMode.css::text-truncation::.vmo-caption",
+      "file": "src/main/resources/web/css/voiceMode.css",
+      "line": 124,
+      "rule": "text-truncation",
+      "selector": ".vmo-caption",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/voiceMode.css::text-truncation::.vmo-transcript",
+      "file": "src/main/resources/web/css/voiceMode.css",
+      "line": 133,
+      "rule": "text-truncation",
+      "selector": ".vmo-transcript",
+      "severity": "P2",
+      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
+      "owner": "noclip-unified-fix (作者排期)"
+    }
+  ],
+  "runtime": [
+    {
+      "key": "mobile-chat-ask-card::.option-box::viewport-top-clip",
+      "scenario": "mobile-chat-ask-card",
+      "selector": ".option-box",
+      "rule": "viewport-top-clip",
+      "severity": "P1",
+      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "mobile-chat-ask-card::.option-box::ancestor-overflow-top",
+      "scenario": "mobile-chat-ask-card",
+      "selector": ".option-box",
+      "rule": "ancestor-overflow-top",
+      "severity": "P1",
+      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "mobile-chat-escalation-card::.error-escalation-card::viewport-top-clip",
+      "scenario": "mobile-chat-escalation-card",
+      "selector": ".error-escalation-card",
+      "rule": "viewport-top-clip",
+      "severity": "P1",
+      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "mobile-chat-escalation-card::.error-escalation-card::ancestor-overflow-top",
+      "scenario": "mobile-chat-escalation-card",
+      "selector": ".error-escalation-card",
+      "rule": "ancestor-overflow-top",
+      "severity": "P1",
+      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "mobile-todo-decision-card::.ta-decision-detail::viewport-top-clip",
+      "scenario": "mobile-todo-decision-card",
+      "selector": ".ta-decision-detail",
+      "rule": "viewport-top-clip",
+      "severity": "P1",
+      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "mobile-todo-decision-card::.ta-decision-detail::ancestor-overflow-top",
+      "scenario": "mobile-todo-decision-card",
+      "selector": ".ta-decision-detail",
+      "rule": "ancestor-overflow-top",
+      "severity": "P1",
+      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "desktop-chat-ask-card::.option-box::viewport-top-clip",
+      "scenario": "desktop-chat-ask-card",
+      "selector": ".option-box",
+      "rule": "viewport-top-clip",
+      "severity": "P1",
+      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "desktop-chat-ask-card::.option-box::ancestor-overflow-top",
+      "scenario": "desktop-chat-ask-card",
+      "selector": ".option-box",
+      "rule": "ancestor-overflow-top",
+      "severity": "P1",
+      "reason": "决策/浮层卡高于可视区时顶部被裁（非浮层、无自滚）：应改为悬浮 + 内部可滚（铁律 9·①②③）",
+      "owner": "noclip-unified-fix (作者排期)"
+    }
+  ]
+}
