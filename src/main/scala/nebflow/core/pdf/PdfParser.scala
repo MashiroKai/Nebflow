@@ -12,10 +12,12 @@ import java.security.MessageDigest
  *
  * ## Why a subprocess, and why the script is a resource
  *
- * The parser is Python (PyMuPDF) — see `src/main/resources/pdf/pdf_parse.py` for
- * the extraction contract and `module-doc.md` in this package for the license and
- * dependency statement. Keeping it a subprocess means the JVM gains no new
- * library and the parser can be updated, versioned and tested on its own. The
+ * The parser is Python (pdfplumber + pypdf, both permissive: MIT / BSD-3) — see
+ * `src/main/resources/pdf/pdf_parse.py` for the extraction contract,
+ * `src/main/resources/pdf/requirements.txt` for the pinned dependency set and
+ * `module-doc.md` in this package for the license and dependency statement.
+ * Keeping it a subprocess means the JVM gains no new library and the parser can
+ * be updated, versioned and tested on its own. The
  * script travels as a classpath resource so a packaged install carries it (a
  * checkout-relative path would silently break in a distribution); it is extracted
  * LAZILY, on the first real parse, into
@@ -47,8 +49,12 @@ object PdfParser:
    * Markdown shape version — must equal `MARKDOWN_VERSION` in the parser script
    * (asserted by `scripts/tests/pdf-parse.test.mjs`; the two are the same fact in
    * two languages, and a mismatch would silently serve text in the wrong shape).
+   *
+   * v2: the entry also carries `index.json` (the page index the ask leg selects
+   * pages with). An entry whose `markdown_version` is not the current one is a
+   * MISS, so a v1 entry is rebuilt rather than served without an index.
    */
-  val MarkdownVersion: Int = 1
+  val MarkdownVersion: Int = 2
 
   /** Environment knob naming the interpreter (single knob; default `python3`). */
   val PythonEnv: String = "STAND_PDF_PYTHON"

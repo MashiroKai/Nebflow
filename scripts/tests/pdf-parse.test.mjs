@@ -7,8 +7,9 @@
 //   · the JVM/script version parity fact (MARKDOWN_VERSION in Python vs
 //     PdfParser.MarkdownVersion in Scala) — the same number in two languages.
 //
-// The fixtures are real PDFs written by an independent writer
-// (scripts/tests/pdf_fixture.py, PyMuPDF). No PDF is committed.
+// The fixtures are real PDFs written byte by byte by an independent writer
+// (scripts/tests/pdf_fixture.py: stdlib only, plus pypdf for the encrypted
+// one). No PDF is committed and no AGPL writer is involved.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,8 +54,10 @@ test('parser: reading order, tables, media attribution and relative links', () =
   assert.equal(verdict.ok, true);
   assert.equal(verdict.page_count, 3);
 
-  // Layout is the contract: meta.json + pages/pNNNN.md + media/pNNNN-i.ext.
+  // Layout is the contract: meta.json + index.json + pages/pNNNN.md +
+  // media/pNNNN-i.ext.
   assert.ok(existsSync(join(out, 'meta.json')));
+  assert.ok(existsSync(join(out, 'index.json')), 'the entry must carry the page index');
   assert.deepEqual(readdirSync(join(out, 'pages')).sort(), ['p0001.md', 'p0002.md', 'p0003.md']);
   assert.deepEqual(readdirSync(join(out, 'media')), ['p0003-0.png']);
 
@@ -64,17 +67,27 @@ test('parser: reading order, tables, media attribution and relative links', () =
   assert.equal(meta.pages, undefined);
   assert.equal(meta.page_count, 3);
   assert.deepEqual(meta.page_names, ['p0001.md', 'p0002.md', 'p0003.md']);
-  assert.equal(meta.parser.name, 'pymupdf');
+  assert.equal(meta.parser.name, 'pdfplumber');
   assert.match(meta.parser.version, /^\d+\./);
-  assert.equal(meta.markdown_version, 1);
+  assert.equal(meta.markdown_version, 2);
   assert.equal(meta.image_count, 1);
   assert.equal(meta.media.length, 1);
   assert.equal(meta.media[0], 'media/p0003-0.png');
   assert.ok(typeof meta.generated_at_ms === 'number' && meta.generated_at_ms > 0);
   assert.match(meta.source_sha256, /^[0-9a-f]{64}$/);
 
+  // The page index is the ask leg's discovery surface: term -> ascending pages.
+  const index = JSON.parse(readFileSync(join(out, 'index.json'), 'utf8'));
+  assert.equal(index.schema, 1);
+  assert.equal(index.markdown_version, 2);
+  assert.equal(index.page_count, 3);
+  assert.deepEqual(index.terms.r2c2, [2], 'the table cell term must resolve to page 2');
+  assert.deepEqual(index.terms.first, [1]);
+  assert.deepEqual(index.terms.page, [1, 2, 3]);
+  assert.equal(Object.keys(index.terms).every(t => t === t.toLowerCase() && t.length >= 2), true);
+
   // Reading order comes from geometry, not from insertion order: the fixture
-  // inserts "Second paragraph" BEFORE "First paragraph".
+  // writes "Second paragraph" BEFORE "First paragraph".
   const p1 = readFileSync(join(out, 'pages', 'p0001.md'), 'utf8');
   assert.ok(p1.startsWith('# Page 1\n'), 'each page file starts with its page heading');
   assert.ok(p1.indexOf('First paragraph') < p1.indexOf('Second paragraph'), `reading order wrong:\n${p1}`);

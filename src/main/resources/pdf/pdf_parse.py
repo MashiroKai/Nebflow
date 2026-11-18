@@ -8,6 +8,7 @@ parses (opening a PDF in the viewer or writing a note must never pay this cost).
 Output layout (the cache entry shape, one directory per document):
 
     <out>/meta.json                 the manifest (see MANIFEST below)
+    <out>/index.json                the page index (term -> pages), see INDEX
     <out>/pages/p%04d.md            one Markdown file per page, 1-based
     <out>/media/p%04d-<index>.<ext> one file per non-decorative embedded image
 
@@ -15,21 +16,31 @@ Every image link inside `pages/pNNNN.md` is RELATIVE to the page file
 (`../media/pNNNN-0.png`), so a page file plus the entry directory is relocatable
 as a unit and the ask leg can cite `pages/pNNNN.md` without rewriting links.
 
-Reading order: text blocks come from PyMuPDF's `page.get_text("blocks")` with
-`sort=True` (vertical band first, then horizontal within the band). That is the
-documented, reproducible order used for the Markdown body; it is NOT a
-layout-analysis heuristic (no multi-column reflow model), which is stated as an
-explicit non-goal in `src/main/scala/nebflow/core/pdf/module-doc.md`.
+INDEX (why the entry carries one): an ask must know WHICH pages mention a
+question's terms before it opens any page. `index.json` is the inverted index
+built here, once, while the document is open anyway:
 
-Tables: `page.find_tables()` (PyMuPDF's built-in table finder) yields the
-detected tables as Markdown. Text blocks whose midpoint falls inside a detected
+    {"schema":1,"markdown_version":2,"page_count":3,"terms":{"r2c2":[2],...}}
+
+Terms are lowercase alphanumeric runs of length >= 2, deduplicated per page — the
+same tokenisation the ask applies to a question, so both sides compare in one
+vocabulary. It holds TERMS, never page bodies: an ask reads the manifest and the
+index, then opens only the pages it cites.
+
+READING ORDER: pdfplumber's text lines in `(top, x0)` order — geometry, not
+insertion order. That is the documented, reproducible order used for the Markdown
+body; it is NOT a layout-analysis heuristic (no multi-column reflow model), which
+is stated as an explicit non-goal in `src/main/scala/nebflow/core/pdf/module-doc.md`.
+
+TABLES: pdfplumber's line-based table finder (`page.find_tables()`) yields the
+detected tables as Markdown. Text lines whose midpoint falls inside a detected
 table rectangle are DROPPED, so table content appears exactly once (as the
 Markdown table) instead of twice.
 
-Images: `page.get_images(full=True)` + `doc.extract_image(xref)`. Images smaller
-than --min-image-px on either side are treated as decoration and skipped. One
-image is written once per page (repeated placements on the same page share the
-file and are counted once).
+IMAGES: pypdf's `page.images` gives one entry per embedded image with its own
+data and extension; images smaller than --min-image-px on either side are treated
+as decoration and skipped. One image is written once per page (repeated
+placements on the same page share the file and are counted once).
 
 Failure contract (readable failures are the point — a caller must be able to
 tell "corrupt PDF" from "disk full"):
@@ -43,9 +54,11 @@ tell "corrupt PDF" from "disk full"):
             Nothing is written to <out> except the staging directory, which the
             caller removes; a failed run never publishes a partial entry.
 
-Parser identity: PyMuPDF (AGPL-3.0, https://pypi.org/project/PyMuPDF/), reported
-in meta.json as {"name":"pymupdf","version":<version>} so a cache entry can be
-invalidated when the parser changes.
+Parser identity: pdfplumber (MIT) for text and tables plus pypdf (BSD-3) for the
+document structure and embedded images — both permissive, no AGPL anywhere in
+this path. Reported in meta.json as {"name":"pdfplumber","version":<version>} so
+a cache entry can be invalidated when the parser changes. The pinned dependency
+set is `src/main/resources/pdf/requirements.txt`.
 """
 
 from __future__ import annotations
@@ -55,19 +68,22 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sys
 import time
 
 SCHEMA = 1
-PARSER_NAME = "pymupdf"
+INDEX_SCHEMA = 1
+PARSER_NAME = "pdfplumber"
 # Bump when the Markdown shape changes: a cache entry carrying an older
 # markdown_version is a miss (the gateway reparses instead of serving stale text).
-MARKDOWN_VERSION = 1
+# v2: the entry also carries index.json (see INDEX above).
+MARKDOWN_VERSION = 2
 
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_PARSE = 3
+
+TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 def fail(code: str, message: str) -> None:
@@ -84,14 +100,18 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+def index_terms(text: str) -> set:
+    """Tokens exactly as the ask tokenises a question (lowercase, length >= 2)."""
+    return {t for t in (m.group(0).lower() for m in TOKEN_RE.finditer(text or "")) if len(t) >= 2}
+
+
 def slug(text: str, limit: int = 60) -> str:
     """Cell text -> a Markdown-table-safe single line."""
     flat = re.sub(r"\s+", " ", text or "").strip()
     return flat.replace("|", "\\|")[:limit]
 
 
-def table_to_markdown(table) -> str:
-    rows = table.extract()
+def rows_to_markdown(rows) -> str:
     if not rows:
         return ""
     width = max(len(r) for r in rows)
@@ -110,80 +130,116 @@ def inside(rect, x, y) -> bool:
     return x0 <= x <= x1 and y0 <= y <= y1
 
 
-def extract_page(doc, page, page_no: int, out_media: str, min_px: int):
-    """Return (markdown_body, media_names, table_count, image_count)."""
-    text_blocks = []
-    for b in page.get_text("blocks", sort=True):
-        # (x0, y0, x1, y1, text, block_no, block_type); type 1 = image block.
-        if len(b) >= 7 and b[6] != 0:
-            continue
-        x0, y0, x1, y1, text = b[0], b[1], b[2], b[3], b[4]
-        body = (text or "").strip()
-        if body:
-            text_blocks.append({"rect": (x0, y0, x1, y1), "text": body})
-
-    tables = []
-    table_rects = []
+def text_lines_of(page, page_no: int):
+    """Lines with their geometry, in reading order (geometric, not insertion)."""
     try:
-        found = page.find_tables()
-        for t in found.tables:
-            md = table_to_markdown(t)
-            if md:
-                tables.append({"rect": tuple(t.bbox), "md": md})
-                table_rects.append(tuple(t.bbox))
-    except Exception as exc:  # table finding must never kill the whole parse
-        sys.stderr.write(f"table finder failed on page {page_no}: {exc}\n")
+        lines = []
+        for ln in page.extract_text_lines():
+            text = (ln.get("text") or "").strip()
+            if text:
+                lines.append(
+                    {
+                        "top": float(ln.get("top") or 0.0),
+                        "text": text,
+                        "rect": (
+                            float(ln.get("x0") or 0.0),
+                            float(ln.get("top") or 0.0),
+                            float(ln.get("x1") or 0.0),
+                            float(ln.get("bottom") or 0.0),
+                        ),
+                    }
+                )
+        return lines
+    except Exception as exc:  # a layout edge case must not lose the whole page
+        sys.stderr.write(f"text line extraction failed on page {page_no}: {exc}\n")
+        out = []
+        for i, raw in enumerate((page.extract_text() or "").split("\n")):
+            body = raw.strip()
+            if body:
+                out.append({"top": float(i), "text": body, "rect": (0.0, float(i), 1e6, float(i) + 1.0)})
+        return out
 
-    # Drop text blocks swallowed by a table (they are rendered as the table).
+
+def tables_of(page, page_no: int):
+    """Detected tables as (rect, markdown), never fatal for the page."""
+    found = []
+    try:
+        finder = page.find_tables()
+        tables = list(getattr(finder, "tables", finder))
+        for t in tables:
+            md = rows_to_markdown(t.extract())
+            if md:
+                bbox = tuple(float(v) for v in t.bbox)
+                found.append({"top": bbox[1], "rect": bbox, "md": md})
+    except Exception as exc:
+        sys.stderr.write(f"table finder failed on page {page_no}: {exc}\n")
+    return found
+
+
+def images_of(pdf_page, page_no: int, out_media: str, min_px: int, parts: list):
+    """Write the page's non-decorative images; append their relative links."""
+    media_names = []
+    try:
+        images = list(pdf_page.images)
+    except Exception as exc:
+        sys.stderr.write(f"image listing failed on page {page_no}: {exc}\n")
+        return media_names
+
+    seen = set()
+    for im in images:
+        name_attr = str(getattr(im, "name", "") or "image.png")
+        ext = name_attr.rsplit(".", 1)[-1].lower() if "." in name_attr else "png"
+        if not re.fullmatch(r"[a-z0-9]{1,5}", ext):
+            ext = "png"
+        try:
+            data = im.data
+        except Exception as exc:
+            sys.stderr.write(f"image {name_attr} on page {page_no} not extractable: {exc}\n")
+            continue
+        if not data:
+            continue
+        w = h = 0
+        try:
+            size = im.image.size
+            w, h = int(size[0]), int(size[1])
+        except Exception:
+            w = h = min_px  # unknown geometry: keep the image rather than guess
+        if w < min_px or h < min_px:
+            continue  # decoration (rules, bullets, logos)
+        key = (name_attr, len(data))
+        if key in seen:
+            continue
+        seen.add(key)
+        fname = f"p{page_no:04d}-{len(media_names)}.{ext}"
+        with open(os.path.join(out_media, fname), "wb") as fh:
+            fh.write(data)
+        media_names.append(fname)
+        parts.append(f"![page {page_no} image {len(media_names)}](../media/{fname})")
+    return media_names
+
+
+def extract_page(pdf_page, pypdf_page, page_no: int, out_media: str, min_px: int):
+    """Return (markdown_body, media_names, table_count, image_count)."""
+    lines = text_lines_of(pdf_page, page_no)
+    tables = tables_of(pdf_page, page_no)
+    table_rects = [t["rect"] for t in tables]
+
+    # Drop text lines swallowed by a table (they are rendered as the table).
     kept = []
-    for blk in text_blocks:
-        x0, y0, x1, y1 = blk["rect"]
+    for ln in lines:
+        x0, y0, x1, y1 = ln["rect"]
         mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
         if any(inside(r, mx, my) for r in table_rects):
             continue
-        kept.append(blk)
+        kept.append(ln)
 
     # Merge tables into the reading order by their top edge.
-    flow = [{"y": b["rect"][1], "kind": "text", "blk": b} for b in kept]
-    flow += [{"y": t["rect"][1], "kind": "table", "blk": t} for t in tables]
-    flow.sort(key=lambda item: (round(item["y"], 1), item["kind"]))
+    flow = [{"top": ln["top"], "kind": "text", "text": ln["text"]} for ln in kept]
+    flow += [{"top": t["top"], "kind": "table", "text": t["md"]} for t in tables]
+    flow.sort(key=lambda item: (round(item["top"], 1), item["kind"]))
 
-    parts = []
-    for item in flow:
-        if item["kind"] == "text":
-            parts.append(item["blk"]["text"])
-        else:
-            parts.append(item["blk"]["md"])
-
-    media_names = []
-    images = []
-    try:
-        images = page.get_images(full=True)
-    except Exception as exc:
-        sys.stderr.write(f"image listing failed on page {page_no}: {exc}\n")
-
-    seen = set()
-    for xref, *_ in [(im[0], im) for im in images]:
-        if xref in seen:
-            continue
-        seen.add(xref)
-        try:
-            info = doc.extract_image(xref)
-        except Exception as exc:
-            sys.stderr.write(f"image {xref} on page {page_no} not extractable: {exc}\n")
-            continue
-        w = int(info.get("width") or 0)
-        h = int(info.get("height") or 0)
-        if w < min_px or h < min_px:
-            continue  # decoration (rules, bullets, logos)
-        ext = (info.get("ext") or "png").lower()
-        if not re.fullmatch(r"[a-z0-9]{1,5}", ext):
-            ext = "png"
-        name = f"p{page_no:04d}-{len(media_names)}.{ext}"
-        with open(os.path.join(out_media, name), "wb") as fh:
-            fh.write(info["image"])
-        media_names.append(name)
-        parts.append(f"![page {page_no} image {len(media_names)}](../media/{name})")
+    parts = [item["text"] for item in flow]
+    media_names = images_of(pypdf_page, page_no, out_media, min_px, parts)
 
     body = "\n\n".join(parts).strip()
     return body, media_names, len(tables), len(media_names)
@@ -206,60 +262,91 @@ def main() -> int:
         fail("OUT_NOT_EMPTY", f"output directory already has content: {out}")
 
     try:
-        import fitz  # PyMuPDF
+        import pdfplumber  # MIT
     except Exception as exc:
-        fail("PARSE_FAILED", f"PyMuPDF (fitz) is not importable: {exc}")
+        fail("PARSE_FAILED", f"pdfplumber is not importable: {exc}")
+    try:
+        from pypdf import PdfReader  # BSD-3
+    except Exception as exc:
+        fail("PARSE_FAILED", f"pypdf is not importable: {exc}")
 
     digest = sha256_file(src)
+
+    # Structure first (page count / encryption) with pypdf, then content with
+    # pdfplumber: the encryption verdict must be a readable code, not a traceback
+    # from whichever library happens to touch the file first. An encrypted
+    # document's page tree cannot even be counted before decryption, so the
+    # encryption check comes first and answers for itself.
+    try:
+        reader = PdfReader(src)
+    except Exception as exc:
+        fail("PDF_INVALID", f"cannot open as a PDF: {exc}")
+
+    if bool(getattr(reader, "is_encrypted", False)):
+        fail("PDF_ENCRYPTED", "the document is encrypted; extraction needs a password")
+
+    try:
+        structure_pages = len(reader.pages)
+    except Exception as exc:
+        fail("PDF_INVALID", f"cannot read the page tree: {exc}")
+
+    if structure_pages <= 0:
+        fail("PDF_EMPTY", "the document has no pages")
 
     os.makedirs(os.path.join(out, "pages"), exist_ok=True)
     os.makedirs(os.path.join(out, "media"), exist_ok=True)
 
     try:
-        doc = fitz.open(src)
+        pdf = pdfplumber.open(src)
     except Exception as exc:
-        fail("PDF_INVALID", f"cannot open as a PDF: {exc}")
+        fail("PDF_INVALID", f"pdfplumber cannot open this document: {exc}")
 
     try:
-        if doc.needs_pass:
-            fail("PDF_ENCRYPTED", "the document is encrypted; extraction needs a password")
-        page_count = doc.page_count
+        page_count = len(pdf.pages)
         if page_count <= 0:
             fail("PDF_EMPTY", "the document has no pages")
 
         page_names = []
+        page_terms = []
         all_media = []
         tables_total = 0
         images_total = 0
         for i in range(page_count):
             page_no = i + 1
             try:
-                page = doc.load_page(i)
+                pdf_page = pdf.pages[i]
+                pypdf_page = reader.pages[i]
             except Exception as exc:
                 fail("PDF_INVALID", f"page {page_no} cannot be loaded: {exc}")
             try:
-                body, media, tcount, icount = extract_page(doc, page, page_no, os.path.join(out, "media"), args.min_image_px)
+                body, media, tcount, icount = extract_page(
+                    pdf_page, pypdf_page, page_no, os.path.join(out, "media"), args.min_image_px
+                )
             except Exception as exc:
                 fail("PARSE_FAILED", f"page {page_no} extraction failed: {exc}")
             tables_total += tcount
             images_total += icount
             name = f"p{page_no:04d}.md"
+            page_text = f"# Page {page_no}\n\n{body}\n"
             with open(os.path.join(out, "pages", name), "w", encoding="utf-8") as fh:
-                fh.write(f"# Page {page_no}\n\n")
-                fh.write(body)
-                fh.write("\n")
+                fh.write(page_text)
             page_names.append(name)
+            page_terms.append((page_no, index_terms(page_text)))
             all_media.extend(f"media/{m}" for m in media)
     finally:
         try:
-            doc.close()
+            pdf.close()
+        except Exception:
+            pass
+        try:
+            reader.stream.close()
         except Exception:
             pass
 
     try:
-        pymupdf_version = getattr(fitz, "__version__", None) or getattr(fitz, "VersionBind", "unknown")
+        parser_version = str(getattr(pdfplumber, "__version__", "unknown"))
     except Exception:
-        pymupdf_version = "unknown"
+        parser_version = "unknown"
 
     meta = {
         "schema": SCHEMA,
@@ -267,18 +354,33 @@ def main() -> int:
         "source_name": args.name or os.path.basename(src),
         "page_count": page_count,
         "page_names": page_names,
-        "parser": {"name": PARSER_NAME, "version": str(pymupdf_version)},
+        "parser": {"name": PARSER_NAME, "version": parser_version},
         "markdown_version": MARKDOWN_VERSION,
         "generated_at_ms": int(time.time() * 1000),
         "media": all_media,
         "table_count": tables_total,
         "image_count": images_total,
     }
-    tmp_meta = os.path.join(out, "meta.json.tmp")
-    with open(tmp_meta, "w", encoding="utf-8") as fh:
-        json.dump(meta, fh, ensure_ascii=False, indent=2, sort_keys=True)
-        fh.write("\n")
-    os.replace(tmp_meta, os.path.join(out, "meta.json"))
+
+    # The inverted index: term -> ascending pages carrying it (see INDEX above).
+    inverted = {}
+    for page_no, terms in sorted(page_terms):
+        for term in sorted(terms):
+            inverted.setdefault(term, []).append(page_no)
+    index = {
+        "schema": INDEX_SCHEMA,
+        "markdown_version": MARKDOWN_VERSION,
+        "page_count": page_count,
+        "terms": inverted,
+    }
+
+    for name, payload in (("meta.json", meta), ("index.json", index)):
+        tmp = os.path.join(out, name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp, os.path.join(out, name))
+
     sys.stdout.write(json.dumps({"ok": True, "source_sha256": digest, "page_count": page_count}) + "\n")
     return EXIT_OK
 
