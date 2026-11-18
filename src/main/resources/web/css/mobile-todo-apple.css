@@ -81,7 +81,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .mobile-page-body {
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-root,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-root,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
