@@ -21,7 +21,6 @@
     "check:mobile-touch-target": "node tests/mobile-touch-target.spec.mjs",
     "check:askinput-off-pending-text": "node tests/askinput-off-pending-text.spec.mjs",
     "check:askuser-refresh-survive": "playwright test tests/askuser-refresh-survive.spec.mjs",
-    "check:canvas-writer-live": "playwright test tests/canvas-writer-live.spec.mjs",
     "check:sdd-changed": "node scripts/run-checks.mjs --profile sdd-changed",
     "visual:baseline": "node scripts/visual-baseline.mjs --update",
     "visual:promote": "node scripts/visual-baseline.mjs --promote --i-reviewed",

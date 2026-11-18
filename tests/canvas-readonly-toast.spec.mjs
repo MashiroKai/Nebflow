@@ -22,7 +22,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await new Promise(resolve => server.close(resolve)); });
 
-test('reader opens local tabs without a notice or PUT', async ({ browser }, info) => {
+test('lone window silently takes the seat; a refused write shows the real save-failure copy and no takeover surface', async ({ browser }, info) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   const errors = [];
@@ -51,9 +51,17 @@ test('reader opens local tabs without a notice or PUT', async ({ browser }, info
     await page.screenshot({path: info.outputPath('reader.png')});
     await expect(page.locator('[data-tab-id="reader-b"].canvas-tab-pane')).toHaveCount(1);
     await expect(page.locator('[data-tab-id="reader-a"].canvas-tab-pane')).toHaveCount(1);
+    // 2026-11-18 作者令：控制台多开只做检测，无卡片、无第二种提示。孤窗会**静默**
+    // 申请写者席位并写穿；席位被服务端拒授（真多开）时才出真实「保存失败」文案。
+    // 旧的「只读/取得控制权」提示文案已随状态机退役，这里钉它们绝不再出现。
     await expect(page.getByText('Canvas 当前为只读，请先取得控制权。')).toHaveCount(0);
     await expect(page.getByText('Canvas 只读：当前标签切换仅在本地显示，不会同步。')).toHaveCount(0);
-    expect(writes).toBe(0);
+    await expect(page.getByText('取回控制权')).toHaveCount(0);
+    await expect(page.locator('#takeover-box')).toHaveCount(0);
+    // 孤窗即位后写入真的送达服务端（桩回 409）⇒ 席位申请发生过，局地不再静默丢弃。
+    // 注意写入走 debounce + 先申席位，必须轮询等待，同步断言会抢在首写之前。
+    await expect.poll(() => writes, { timeout: 10000 }).toBeGreaterThan(0);
+    await expect(page.getByText('Canvas 保存失败，本地变更已保留。')).toHaveCount(1);
     expect(errors).toEqual([]);
   } finally { await context.close(); }
 });

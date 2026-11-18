@@ -5638,7 +5638,7 @@ function recordTombstone(id) {
 
 function persistTabs() {
   // Adopting a remote snapshot is not a new local intent; never echo it back.
-  if (applyingLiveTabsFrame || canvasWriter.role() !== 'writer') return;
+  if (applyingLiveTabsFrame) return;
   // UI 批⑧：独立卡窗零存档副作用 —— 卡窗自己的单卡标签绝不能写穿服务端权威
   // 存档/本地缓存（否则会把主窗整组标签覆盖成一张卡）。
   if (cardWindowMode) return;

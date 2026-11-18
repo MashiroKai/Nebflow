@@ -16,7 +16,13 @@ try {
    '/api/projects/Example/open-in-app':{body:{ok:true}}
   }});
   await s.boot(); const {page}=s;
-  await page.waitForFunction(() => document.querySelector('.canvas-writer-controls [role="status"]')?.textContent === 'Canvas：可写');
+  // 2026-11-18 作者令：控制台多开只做检测，卡片与「取回控制权」状态机退役。
+  // 旧读口 `.canvas-writer-controls [role=status]`（值 'Canvas：可写'）随状态机一并
+  // 删除 —— 这里改钉**新语义**：不再有任何接管/让出卡片或取回控制权入口。
+  await page.waitForSelector('#activity-bar', { state: 'attached' });
+  assert.equal(await page.locator('#takeover-box, #takeover-retake, #takeover-exit').count(), 0, 'no console takeover card');
+  assert.equal(await page.locator('.canvas-writer-controls').count(), 0, 'the retired writer-status control must not come back');
+  assert.equal(await page.getByText('取回控制权').count(), 0, 'no retake affordance');
   await page.evaluate(async theme=>{document.documentElement.dataset.theme=theme; (await import('/js/projectTab.js')).openProjectsTab();},theme);
   const button=page.locator('.project-card [data-open-workspace]').first(); await button.waitFor({state:'visible'});
   for(let i=0;i<20;i++) {

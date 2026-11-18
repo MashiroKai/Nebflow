@@ -42,7 +42,6 @@ standaloneScripts.push(
 // 自足套件任务用 PW_SELFCONTAINED_ONLY=1 整体排除它们。
 const instanceBacked = [
   // Real isolated Java gateways need an exported classpath; run only explicitly, not in self-contained CI.
-  'canvas-writer-live.spec.mjs',
   'canvas-tab-live-sync.spec.mjs',
   'canvas-legacy-stale-comparison.spec.mjs',
   'smoke.spec.mjs',

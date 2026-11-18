@@ -46,7 +46,7 @@ test('reader can browse without takeover; rejected write notifies once', async (
       await context.route('**/js/canvas.js', route => route.fulfill({status:200,contentType:'application/javascript',body:source}));
     }
     const page = await context.newPage(); const errors = [];
-    page.on('response', async r => { if (new URL(r.url()).pathname.endsWith('/canvas.js')) { const body=await r.text().catch(()=> ''); console.log('[canvas-module]', r.url(), 'status',r.status(),'old-reader-modal',body.includes("if (role === 'reader') mod.showCanvasTakeover"),'fixed-reader-guard',body.includes('Initial reader state is browsing')); } });
+    page.on('response', async r => { if (new URL(r.url()).pathname.endsWith('/canvas.js')) { const body=await r.text().catch(()=> ''); console.log('[canvas-module]', r.url(), 'status',r.status(),'retired-takeover-modal',body.includes('takeoverModal'),'no-takeover-surface',!/takeover/i.test(body)); } });
     page.on('pageerror', e => errors.push(`pageerror: ${e.stack || String(e)}`));
     page.on('console', m => { if(m.type()==='error') errors.push(`console.error: ${m.text()} ${JSON.stringify(m.location())}`); });
     page.on('response', r => { if(r.status()>=400) console.log('[http-error]',r.status(),new URL(r.url()).pathname); });
@@ -86,7 +86,10 @@ test('reader can browse without takeover; rejected write notifies once', async (
     const rejection = page.waitForResponse(r => new URL(r.url()).pathname==='/api/canvas-tabs' && r.request().method()==='PUT' && r.status()===409);
     await page.evaluate(async () => { const m=await import('/js/canvas.js'); m.openTab('writer-fixture','writer fixture',{pinned:true}); });
     await rejection;
-    await expect.poll(() => page.evaluate(() => window.__readerNotices.filter(x => x[0] === 'Canvas 控制权已失效，请重新取得。').length)).toBe(1);
+    // 2026-11-18 作者令：写者席位被服务端拒授时只出**真实保存失败文案**，
+    // 「控制权已失效／请重新取得」这类接管措辞随状态机退役，绝不再出现。
+    await expect.poll(() => page.evaluate(() => window.__readerNotices.filter(x => x[0] === 'Canvas 保存失败，本地变更已保留。').length)).toBe(1);
+    expect(await page.evaluate(() => window.__readerNotices.filter(x => /控制权|接管|让出/.test(String(x[0]))).length)).toBe(0);
     console.log('[reader-browser-errors]', JSON.stringify(errors));
     expect(errors).toEqual([]);
     await page.screenshot({path:info.outputPath('rejected.png')});

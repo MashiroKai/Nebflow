@@ -551,10 +551,12 @@ final class ConsoleTakeover(
         .traverse_(p => p.conns.toList.sorted.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(now))))
     yield prevInst.map(_.conns.size).getOrElse(0)
 
-  /** 记 owner + pastOwners 账（LRU 帽内淘汰最旧）。 */
+  /** 记 owner + pastOwners 账（LRU 帽内淘汰最旧）。写者席位与 owner 标签解耦
+   *  （2026-11-18）：控制台首实例即位不得清空画布席位，否则刚即位的窗口下一次
+   *  写穿就带着过期 epoch 撞栅栏 ⇒ 单实例平白报「保存失败」（零误报优先）。 */
   private def claim(key: String): IO[Unit] =
     canvasExclusive(controlRef.update(s =>
-      if s.owner.contains(key) then s else s.copy(owner = Some(key), writer = None)
+      if s.owner.contains(key) then s else s.copy(owner = Some(key))
     )) *> recordOwner(key)
 
   private def recordOwner(key: String): IO[Unit] =

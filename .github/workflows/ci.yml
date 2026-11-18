@@ -654,10 +654,13 @@ jobs:
       - name: Mobile touch targets
         continue-on-error: true
         run: node tests/mobile-touch-target.spec.mjs --out "$RUNNER_TEMP/touch-targets.json"
-      - name: Build isolated gateway classpath
-        run: sbt e2eClasspath
-      - name: Canvas writer real gateway
-        run: npx playwright test tests/canvas-writer-live.spec.mjs
+      # 2026-11-18：`tests/canvas-writer-live.spec.mjs` 断言的是已退役的「控制台接管／
+      # 取得控制权」状态机（同一批下线：ConsoleTakeoverRoutes / takeoverModal.js），
+      # 已随本任务删除，故此处不再点名它。取代它的真实闸门是下面这条（真服务器：席位
+      # 唯一、第二窗 PUT 被拒、零误报），自足面则由 tests/canvas-readonly-toast.spec.mjs
+      # 覆盖（孤窗静默即位、被拒写只出真实保存失败文案、无任何接管面）。
+      - name: Canvas writer ownership (real gateway)
+        run: sbt "testOnly nebflow.gateway.CanvasWriterLegacyPutSpec"
 
   frontend-specs:
     name: Frontend Specs (self-contained suite, Playwright)
