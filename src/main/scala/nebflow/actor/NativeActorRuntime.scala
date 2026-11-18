@@ -6,7 +6,12 @@ import cats.syntax.all.*
 import com.typesafe.config.ConfigFactory
 import nebflow.shared.NebflowLogger
 import org.apache.pekko.actor.typed.scaladsl.Behaviors as TypedBehaviors
-import org.apache.pekko.actor.typed.{ActorRef as TypedActorRef, ActorSystem as TypedActorSystem, Behavior as TypedBehavior, *}
+import org.apache.pekko.actor.typed.{
+  ActorRef as TypedActorRef,
+  ActorSystem as TypedActorSystem,
+  Behavior as TypedBehavior,
+  *
+}
 
 import java.util.UUID
 
@@ -47,6 +52,8 @@ final class NativeActorRuntime private (
             .map(ref => NativeActorHandle(ref, terminated, stop))
       }
     }(_.stop)
+
+end NativeActorRuntime
 
 object NativeActorRuntime:
   private sealed trait Command
@@ -102,6 +109,7 @@ object NativeActorRuntime:
       requests.values.foreach(_.finish())
       requests = Map.empty
     }
+  end Gate
 
   private final case class Child(ref: TypedActorRef[?], request: Request[?], acknowledge: () => Unit, stopping: Boolean)
 
@@ -113,19 +121,37 @@ object NativeActorRuntime:
       def spawn[Msg](request: Request[Msg]): Unit =
         try
           val ref = context.spawn(
-            TypedBehaviors.intercept[Msg, Msg](() => new BehaviorInterceptor[Msg, Msg](classOf[Object].asInstanceOf[Class[Msg]]) {
-              override def aroundStart(ctx: TypedActorContext[Msg], target: BehaviorInterceptor.PreStartTarget[Msg]): TypedBehavior[Msg] =
-                val started = target.start(ctx)
-                if TypedBehavior.isAlive(started) then guardianRef ! Ready(request.id)
-                started
+            TypedBehaviors.intercept[Msg, Msg](() =>
+              new BehaviorInterceptor[Msg, Msg](classOf[Object].asInstanceOf[Class[Msg]]):
+                override def aroundStart(
+                  ctx: TypedActorContext[Msg],
+                  target: BehaviorInterceptor.PreStartTarget[Msg]
+                ): TypedBehavior[Msg] =
+                  val started = target.start(ctx)
+                  if TypedBehavior.isAlive(started) then guardianRef ! Ready(request.id)
+                  started
 
-              override def aroundReceive(ctx: TypedActorContext[Msg], message: Msg, target: BehaviorInterceptor.ReceiveTarget[Msg]): TypedBehavior[Msg] =
-                target(ctx, message)
-            })(TypedBehaviors.setup(_ => request.behavior(dispatcher))),
+                override def aroundReceive(
+                  ctx: TypedActorContext[Msg],
+                  message: Msg,
+                  target: BehaviorInterceptor.ReceiveTarget[Msg]
+                ): TypedBehavior[Msg] =
+                  target(ctx, message)
+            )(TypedBehaviors.setup(_ => request.behavior(dispatcher))),
             request.id
           )
           context.watchWith(ref, ChildTerminated(request.id))
-          children = children.updated(request.id, Child(ref, request, () => { request.ready.trySuccess(ref); () }, false))
+          children = children.updated(
+            request.id,
+            Child(
+              ref,
+              request,
+              () =>
+                request.ready.trySuccess(ref); ()
+              ,
+              false
+            )
+          )
         catch
           case NonFatal(error) =>
             request.fail(error)
@@ -171,11 +197,13 @@ object NativeActorRuntime:
       Resource.make {
         IO {
           val gate = new Gate
-          val config = ConfigFactory.parseString("""
+          val config = ConfigFactory
+            .parseString("""
             pekko.actor.provider = local
             pekko.coordinated-shutdown.run-by-jvm-shutdown-hook = off
             pekko.log-dead-letters-during-shutdown = off
-          """).withFallback(ConfigFactory.load())
+          """)
+            .withFallback(ConfigFactory.load())
           val system = TypedActorSystem(guardian(dispatcher, gate), s"stand-native-${UUID.randomUUID()}", config)
           system.whenTerminated.onComplete(_ => gate.systemTerminated())(scala.concurrent.ExecutionContext.parasitic)
           new NativeActorRuntime(system, gate)
@@ -185,3 +213,4 @@ object NativeActorRuntime:
           IO.fromFuture(IO(runtime.system.whenTerminated)).void *> IO(runtime.gate.systemTerminated())
       }
     }
+end NativeActorRuntime
