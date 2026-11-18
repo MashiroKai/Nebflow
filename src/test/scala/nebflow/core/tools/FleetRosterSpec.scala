@@ -47,6 +47,16 @@ class FleetRosterSpec extends FunSuite:
     fields = Map("cwd" -> ProfileField(cwd, now))
   )
 
+  test("self identity matches roster name and full or displayed id, never unknown names"):
+    val name = "Mashiros-MacBook-Pro-iso-a659864a"
+    val id = "6a64d249-1111-2222-3333-444444444444"
+    List(name, s"  ${name.toUpperCase}  ", id.toUpperCase, " 6A64D249 ").foreach { target =>
+      assert(FleetRoster.isSelf(target, id, name), target)
+    }
+    List("", "Mashiros", "6a64", "no-such-device").foreach { target =>
+      assert(!FleetRoster.isSelf(target, id, name), target)
+    }
+
   test("render: local row carries name/id-short/platform/version/caps keys/description"):
     val out = FleetRoster.render(Some(local), Nil, Nil, Map.empty, now, enforce = false)
     assert(out.contains("KAI (40742cd4) [online · v2026.10.26-beta.1 · windows]"), out)

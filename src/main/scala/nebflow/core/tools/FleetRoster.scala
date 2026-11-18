@@ -49,6 +49,12 @@ object FleetRoster:
     version: String
   )
 
+  /** Match only the roster's own identity, including its displayed eight-character ID. */
+  def isSelf(target: String, deviceId: String, deviceName: String): Boolean =
+    val value = target.trim
+    def same(s: String): Boolean = s.trim.nonEmpty && value.equalsIgnoreCase(s.trim)
+    value.nonEmpty && (same(deviceName) || same(deviceId) || (deviceId.trim.length >= 8 && same(deviceId.trim.take(8))))
+
   /** 一台「已知但当前不在 presence 名册」的设备（离线行的数据源）。 */
   final case class KnownOffline(
     deviceId: String,
