@@ -42,7 +42,7 @@ import { isImeComposing } from './imeGuard.js';
 import { bindComposerKeys } from './input/composer.js';
 import { sessionShowsNodeEntries } from './taskList.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } from './todoStore.js';
-import { mountAskTodoSection } from './askTodoList.js';
+import { isAskRow, buildAskCardForRow } from './askTodoQuestion.js';
 // 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
 // 待办截止时刻从裸 `<input type="datetime-local">` 收编为同款点选面。交互单源
 // = ./timeWheel.js；隐藏输入 `.tfl-due-input` 保留为值域载体（saveEditing /
@@ -1304,10 +1304,6 @@ class TodoFace {
     this.listInner.textContent = '';
     // 抽屉宿主（手机腿）同拍清场：表单只在一处，绝不同屏两份
     if (this.mobile && this.sheetBody) this.sheetBody.textContent = '';
-    // 溢出转待办承载区（溢出转待办批 2026-11-18 作者令）：超出对话分页的待答问题
-    // 在桌面待办面顶部承载并可**就地作答**。判据/状态单点都在 askPending，本处只
-    // 提供列表容器；区内后续刷新由 askTodoList 的归属监听驱动（幂等重挂）。
-    mountAskTodoSection(this.listInner);
     for (const item of items) {
       if (this.completingRows.has(item.id) && this.completingEls.get(item.id)) {
         // 完成动画在飞：沿用既有 DOM（动画不因重渲打断）
@@ -1363,6 +1359,10 @@ class TodoFace {
   // ── 行（ReminderRowView 复刻）──────────────────────────────────────────
 
   buildRow(item, editing = false) {
+    // 问句条目（溢出转待办批 2026-11-18 作者新令）：承载面 = 条目自身 —— 与普通行
+    // 同一张列表、同一套排序，但没有打卡 / 删除 / 编辑语义；行体点开 = 行内**问题卡**
+    // （单点模板 askTodoQuestion.js；作答/取消走 askPending 同一收口）。
+    if (isAskRow(item) && !editing) return this.buildAskRow(item);
     const row = el('div', 'tfl-row');
     row.dataset.id = item.id;
     row.setAttribute('role', 'option');
@@ -1442,6 +1442,47 @@ class TodoFace {
       wrap.appendChild(this.buildEditPanel(item));
       row.appendChild(wrap);
     }
+    return row;
+  }
+
+  /** 问句条目行（承载面 = 条目自身）：标题行 + 「待答」徽标 + 行内问题卡。
+   *  刻意**不带** `data-request-id`（那是对话内活卡的定位面，见源码闸 A5）。 */
+  buildAskRow(item) {
+    const row = el('div', 'tfl-row tfl-row-ask');
+    row.dataset.id = item.id;
+    // 对账读数（requestId 来源 = 条目 name 的 `ask-` 前缀，单点在 todoStore.mapRow）。
+    row.dataset.askRequestId = item.requestId;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', 'false');
+
+    const dot = el('span', 'tfl-row-dot');
+    dot.style.background = PRIORITY_COLORS[item.priority] || PRIORITY_COLORS[0];
+    row.appendChild(dot);
+
+    const main = el('div', 'tfl-row-main');
+    const titleline = el('div', 'tfl-row-titleline');
+    const title = el('span', 'tfl-row-title', item.name);
+    title.title = item.name;
+    titleline.appendChild(title);
+    const badge = el('span', 'tfl-row-badge tfl-row-askbadge', t('askUser.todoBadge'));
+    titleline.appendChild(badge);
+    main.appendChild(titleline);
+
+    const detail = el('div', 'tfl-row-detail tfl-ask-detail');
+    detail.hidden = true;
+    const card = buildAskCardForRow(item);
+    if (card) detail.appendChild(card);
+    main.appendChild(detail);
+
+    // 行体点击 = 展开/收起行内问题卡。🔴 卡内点击（选项 / 输入 / 确认 / 取消）
+    // 必须**不**冒泡到这里——否则点一个选项就把卡片自己收起来了。
+    main.addEventListener('click', (e) => {
+      if (detail.contains(/** @type {Node} */ (e.target))) return;
+      const open = detail.hidden;
+      detail.hidden = !open;
+      row.classList.toggle('tfl-row-open', open);
+    });
+    row.appendChild(main);
     return row;
   }
 

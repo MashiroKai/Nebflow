@@ -30,13 +30,20 @@
 // 但是用户往上翻消息的话还是可以通过原卡片作答，然后在待办和原卡片作答效果应该是
 // 一样的，共同管理卡片的生命周期，不能出现待办已答但原卡还可以作答的不对称现象」。
 //
+// 第二轮（作者新令逐字）：「转待办是转为具体的待办条目 而不是再待办上方显示问题」
+// —— 承载面改为**待办条目自身**（引擎 Ask 镜像行 `ask-<requestId>`，见
+// AskTodoBridge）；题目卡渲染在该条目行内（单点模板 js/askTodoQuestion.js）。
+//
 // 本模块是**判据与状态的单点**（本批新增，别处禁自算）：
 //   · `askPlacement(rid)`   ⇒ 'inline' | 'todo' | null（null = 不挂起）
-//   · `transferredAsks()`   ⇒ 转入待办的那批（含题目载荷，待办面渲染用）
+//   · `transferredAsks()`   ⇒ 转入待办的那批（todoStore 的条目可见性由它判）
 //   · `inlineAsks()`        ⇒ 仍在对话面（弹窗条 + 计数气泡）的那批
+//   · `pendingAskEntry(rid)`⇒ 待答镜像条目（**题目本体的唯一来源**，条目行不存副本）
 //   · `askAnswerFrame(...)` ⇒ 答复帧**唯一构造器**（chat.js 卡内确认腿同用）
-//   · `submitAskAnswer(...)`⇒ 待办面作答入口（与卡内作答同一收口单点）
-// 两处渲染（待办条/徽标、待办面）一律从这里的读口取，禁各自判一遍。
+//   · `cancelAskFrame(...)` ⇒ 取消帧**唯一构造器**（chat.js 卡上取消腿同用）
+//   · `submitAskAnswer(...)`⇒ 作答入口（条目侧与卡内同一收口单点）
+//   · `cancelAsk(...)`      ⇒ 取消入口（同上）
+// 两处渲染（待办条/徽标、待办条目行内问题卡）一律从这里的读口取，禁各自判一遍。
 //
 // 转出判据（依据 + 边界，逐条对应作者要求的面）：
 //   ① **对话上下文在场**（页面有 chat 宿主元素）才判定；无上下文（纯镜像夹具 /
@@ -243,7 +250,8 @@ export function pendingAskCount() { return pending.size; }
 //
 // 全部判据只在这里定义一次：`askPlacement` 是唯一「这张卡在对话面还是已转入待办」
 // 的判定函数；`inlineAsks` / `transferredAsks` 是它的两个投影读口；
-// `renderBar`（对话面）与待办面渲染器（askTodoList.js）都从这里取，禁各自再判。
+// `renderBar`（对话面）与待办条目可见性（todoStore.askSideVisible）都从这里取，
+// 禁各自再判。
 // 判据文字与边界见文件头「溢出转待办批」。
 
 /** 文档句柄（测试缝：__setDocument 可换；产品路径恒 = document）。 */
@@ -306,7 +314,9 @@ export function transferredAsks() {
   return orderedEntries().filter(e => askPlacement(e.requestId) === 'todo');
 }
 
-/** 只读投影（供待办面渲染；条目形状 = toEntry 产物，含 items 题目载荷）。 */
+/** 只读投影（供待办条目侧渲染；条目形状 = toEntry 产物，含 items 题目载荷）。
+ *  待办条目内的「问题卡」载荷**只从这里读**——题目本体（items）不在待办行里，
+ *  待办行只带身份（`ask-<requestId>`），避免同一份题目存两处而先后漂移。 */
 export function pendingAskEntry(requestId) { return pending.get(requestId) || null; }
 
 /** 归属签名（只含归属，不含时间戳）——重估防抖环的判据：签名不变即不重建。 */
@@ -439,6 +449,50 @@ export function submitAskAnswer({ requestId, sessionId, answers, answerText }) {
     detail: { sessionId: entry.sessionId || sessionId, attention: false }
   }));
   // 在飞标记随镜像摘除即失去意义（下一次提交因 not-pending 早退），下一拍清位。
+  setTimeout(() => inFlightAnswers.delete(requestId), 0);
+  return { ok: true };
+}
+
+/**
+ * 取消帧**唯一构造器**（chat.js 卡上「取消」腿同用）。字段与既有帧逐字节同形：
+ * `{type:'askUserCancel', requestId, by:'web'}`（hub `CancelRequest` 原语）。
+ * @param {{sessionId?:string, requestId:string, by?:string}} o
+ * @returns {Record<string, any>}
+ */
+export function cancelAskFrame({ sessionId, requestId, by }) {
+  return {
+    type: 'askUserCancel',
+    ...(requestId && { requestId }),
+    by: by || 'web'
+  };
+}
+
+/**
+ * 待办条目侧「取消」入口（与卡上取消**同一收口**：同一帧构造器 + 同一个卡片锁定单点）。
+ * 取消 = 卡终态的一种（hub 广播 `askUserClosed{reason:'user-cancelled'}`），本地同拍收口
+ * ⇒ 两处（待办条目 / 原卡片）同步，不出现「待办已取消而原卡仍可作答」的不对称态。
+ * @param {{requestId:string, sessionId?:string}} o
+ * @returns {{ok:boolean, reason?:string}}
+ */
+export function cancelAsk({ requestId, sessionId }) {
+  const entry = pending.get(requestId);
+  if (!entry) return { ok: false, reason: 'not-pending' };
+  if (inFlightAnswers.has(requestId)) return { ok: false, reason: 'in-flight' };
+  if (typeof wsSend !== 'function') return { ok: false, reason: 'no-transport' };
+  inFlightAnswers.add(requestId);
+  try {
+    wsSend(cancelAskFrame({ sessionId: entry.sessionId || sessionId, requestId, by: 'web' }));
+  } catch (err) {
+    inFlightAnswers.delete(requestId);
+    console.error('[askPending] cancelAsk send failed', err);
+    return { ok: false, reason: 'send-failed' };
+  }
+  const note = t('askUser.cancelledElsewhere');
+  removePendingAsk(requestId);
+  closeCard(entry.sessionId || sessionId, requestId, note);
+  window.dispatchEvent(new CustomEvent(EVENTS.SESSION_ATTENTION, {
+    detail: { sessionId: entry.sessionId || sessionId, attention: false }
+  }));
   setTimeout(() => inFlightAnswers.delete(requestId), 0);
   return { ok: true };
 }
