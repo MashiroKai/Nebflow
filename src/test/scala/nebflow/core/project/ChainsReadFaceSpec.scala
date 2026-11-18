@@ -178,6 +178,23 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     program.guarantee(system.stopAll)
   }
 
+  test("owned delegate waiting for user remains live in active rows") {
+    val system = ActorSystem(s"liveness-wait-${scala.util.Random.nextInt(100000)}")
+    val behavior = new nebflow.actor.Behavior[AgentCommand]:
+      def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[nebflow.actor.Behavior[AgentCommand]] = IO.pure(this)
+    val program = for
+      ref <- system.spawn(behavior, "waiting-holder")
+      rec = record("delegate-waiting-permission", None)
+      _ = DelegateRegistry.put(rec)
+      agents = Map(rec.id -> agentRecord(rec.id).copy(ref = ref, status = nebflow.actor.AgentStatus.WaitingForUser))
+      adopted <- nebflow.core.delegate.DelegateLiveness.adopted(system, agents)
+      body <- ChainsReadFace.rowsJson(agents, adoptedIds = adopted)
+    yield
+      assert(adopted.contains(rec.id))
+      assertEquals(liveStatus(body, rec.id), Some("running"))
+    program.guarantee(system.stopAll)
+  }
+
   // ── C1 行投影 ───────────────────────────────────────────────────────────
 
   test(

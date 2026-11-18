@@ -13,7 +13,7 @@ import nebflow.shared.PathUtil
  *      前端 `rowFromRegistry` 兜底 running：无 taskStatus ∧ reportStatus 非终态 ∧
  *      restartInterruptedAt 缺席 ⇒ running）；
  *   3. `postFixRunningHeld`        —— **修后**真活数（[[DelegateLiveness.verdictOf]] 判 running
- *      = 本实例真正收养/持有的 Processing 行）。standalone 扫描没有本实例 agentRegistry
+ *      = 本实例真正收养/持有的 Processing / WaitingForUser 行）。standalone 扫描没有本实例 agentRegistry
  *      ⇒ 传 `--held <ids.json>` 可注入一份在册快照（真实实例用）；默认空 ⇒ 0（真活地板）。
  *
  * 纪律：**零写盘、零网络、零凭据、零 6138**。仅读盘。
@@ -36,7 +36,7 @@ object DelegateLivenessScan:
     PathUtil.setDataRoot(root)
 
     // 在册快照（`--held <ids.json>`，形 {"ids":[...]}）= 本实例 agentRegistry 里持引用且
-    // Processing 的 delegate id 集。standalone 扫描没有运行中的实例 ⇒ 默认空集（真活地板 0）。
+    // Processing / WaitingForUser 的 delegate id 集。standalone 扫描没有运行中的实例 ⇒ 默认空集（真活地板 0）。
     // 判据与 DelegateLiveness 逐字同义：held id ∧ 未被打断旗覆盖（此处旗时点与活动时刻由
     // 运行实例自己在快照里先行施加——扫描只做**集合交**，不臆造 agent 细节）。
     val heldIds: Set[String] =

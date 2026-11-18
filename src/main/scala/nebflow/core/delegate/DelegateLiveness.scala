@@ -20,5 +20,5 @@ object DelegateLiveness:
     }
 
   def verdictOf(agent: Option[AgentRecord], adopted: Boolean): Verdict =
-    Verdict(adopted && agent.exists(_.status == AgentStatus.Processing))
+    Verdict(adopted && agent.exists(a => a.status == AgentStatus.Processing || a.status == AgentStatus.WaitingForUser))
 end DelegateLiveness

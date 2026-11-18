@@ -107,6 +107,7 @@ async function boot(browser, { viewport, colorScheme, locale = 'zh-CN', touch = 
       if (r.request().method() === 'PUT') {
         const body = r.request().postDataJSON();
         sim.puts.push({ role, ...body });
+        if (sim.failRole === role) return r.fulfill({ status: 500, json: { error: 'save failed' } });
         sim.chains[role] = body && body.model ? body.model : null;
       }
       const own = sim.chains[role];
@@ -294,6 +295,22 @@ async function functionalLeg(browser) {
   });
   await openSettings(page, { mobile: false });
 
+  // Failed writes must restore the server value in the live select control.
+  for (const role of ['Nebula', 'small-llm']) {
+    const selector = role === 'small-llm' ? '#small-llm-settings-row select' : '#model-role-select-Nebula';
+    sim.failRole = role;
+    const write = page.waitForResponse((response) => response.request().method() === 'PUT' &&
+      new URL(response.url()).pathname.endsWith(`/agents/${role}/model`));
+    await page.locator(selector).selectOption('kimi/kimi-for-coding');
+    await write;
+    const expected = role === 'Nebula' ? 'zhipu/glm-5.3-flash' : '';
+    const reverted = await page.waitForFunction(({ selector, expected }) => document.querySelector(selector)?.value === expected,
+      { selector, expected }, { timeout: 5000 }).then(() => true, () => false);
+    ok(tag, `${role} failed save reverts live selection`, reverted);
+    sim.failRole = null;
+  }
+  sim.puts.length = 0;
+  errors.length = 0; // The two injected HTTP 500 responses are intentional.
   // Each category writes through its existing role endpoint and reads back independently.
   for (const role of ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent']) {
     const select = page.locator(`#model-role-select-${role}`);
