@@ -2,6 +2,7 @@ package nebflow.agent
 
 import nebflow.neblink.core.*
 
+import cats.syntax.all.*
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
@@ -151,6 +152,48 @@ class ReadDeviceImageSpec extends CatsEffectSuite:
           yield (result, seen)
         }
         .guarantee(IO.blocking(stub.close()))
+    }
+
+  test("own roster identity and local execute Bash on the same local surface"):
+    Dispatcher.parallel[IO].use { dispatcher =>
+      for
+        ms <- NeblinkService.create(0, dispatcher)
+        _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
+        id <- ms.identity
+        ctx = ToolContext(projectRoot = tmpDir.toString)
+        targets = List("local", "LOCAL", id.deviceName, id.deviceId, id.deviceId.take(8))
+        results <- targets.traverse { target =>
+          val call = ToolCall("self-bash", "Bash", JsonObject(
+            "command" -> "printf self-routing-ok".asJson,
+            "device" -> target.asJson,
+            "timeout" -> 10000.asJson
+          ))
+          new TestCore().exec(call, ctx).map(target -> _)
+        }
+      yield results.foreach { (target, result) =>
+        println(s"self-route target=$target output=${result.content}")
+        assert(!result.isError, s"$target: ${result.content}")
+        assert(result.content.contains("self-routing-ok"), s"$target: ${result.content}")
+        assert(!result.content.contains("No peer devices discovered"), target)
+      }
+    }
+
+  test("unknown device never executes Bash locally"):
+    Dispatcher.parallel[IO].use { dispatcher =>
+      for
+        ms <- NeblinkService.create(0, dispatcher)
+        _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
+        ctx = ToolContext(projectRoot = tmpDir.toString)
+        call = ToolCall("unknown-bash", "Bash", JsonObject(
+          "command" -> "printf must-not-run".asJson,
+          "device" -> "definitely-no-such-device-7f93".asJson,
+          "timeout" -> 10000.asJson
+        ))
+        result <- new TestCore().exec(call, ctx)
+      yield
+        println(s"unknown-route error=${result.content}")
+        assert(result.isError, result.content)
+        assert(!result.content.contains("must-not-run"), result.content)
     }
 
   test("设备腿读图：远端 `[image: …]` 标记 ⇒ 经既有 FileTransfer 回拉 ⇒ imageBlocks 非空且块与源件一致"):

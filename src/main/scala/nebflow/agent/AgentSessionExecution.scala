@@ -2436,7 +2436,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 //   非 remoteable 工具 ⇒ 恒本机（S3 收窄不动；stray 语义下方原样保留）。
                 val explicitDeviceRaw = finalInput("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
                 val explicitLocal = explicitDeviceRaw.exists(_.equalsIgnoreCase("local"))
-                val deviceOpt = explicitDeviceRaw.filter(_ != "local")
+                val deviceOpt = explicitDeviceRaw.filterNot(_.equalsIgnoreCase("local"))
                 val remoteable = RemoteExecutor.remoteableTools.contains(call.name)
                 val sessionDefaultDevice =
                   if remoteable && !explicitLocal then ctx.sessionDevice.map(_.trim).filter(_.nonEmpty) else None
@@ -2457,7 +2457,16 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   Option.when(fleetEnforceOn && remoteable && explicitDeviceRaw.isEmpty) {
                     fleetDeviceRefusalIO(call.name, sessionDefaultDevice, ctx)
                   }
-                val execIO: IO[ToolExecResult] = askBashFace.getOrElse(enforceRefusal.getOrElse(remoteDeviceOpt match
+                val resolvedDevice: IO[Option[String]] = remoteDeviceOpt match
+                  case Some(target) =>
+                    RemoteExecutor.current.flatMap(_.neblinkServiceOpt) match
+                      case Some(svc) => svc.identity.attempt.map {
+                        case Right(id) if FleetRoster.isSelf(target, id.deviceId, id.deviceName) => None
+                        case _ => Some(target)
+                      }
+                      case None => IO.pure(Some(target))
+                  case None => IO.pure(None)
+                val execIO: IO[ToolExecResult] = askBashFace.getOrElse(enforceRefusal.getOrElse(resolvedDevice.flatMap { resolved => resolved match
                   case Some(deviceName) if RemoteExecutor.current.isDefined =>
                     var remoteInput = finalInput.remove("device")
                     // 「命令 cwd 指向设备 workspace」（跨设备批 2026-10-25）：会话默认
@@ -2497,7 +2506,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                           ToolExecResult(appended, isError = true)
                         }
                     }
-                  case _ =>
+                  case Some(deviceName) =>
+                    IO.pure(ToolExecResult(s"Device '$deviceName' cannot be routed: remote executor is unavailable.", isError = true))
+                  case None =>
                     // 非 remoteable 工具带 `device`（stray 输入：旧提示词 / 外部客户端 /
                     // hook 注入）⇒ 作者逐字三条语义，🔴 禁实现成「静默忽略」或「自动改写目标」：
                     //   ① **不投对端**——remoteDeviceOpt 对非名单工具恒 None，永不进远端分支；
@@ -2572,7 +2583,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                             imageBlocks = imageBlocks
                           )
                         }
-                    })) // close askBashFace.getOrElse( enforceRefusal.getOrElse( <remoteDeviceOpt match …> ) )
+                    } })) // resolved device, enforcement, ask face
                 execIO.handleErrorWith {
                   case _: UserAbort => IO.raiseError(new UserAbort())
                   case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
