@@ -474,7 +474,7 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
       const lb = document.querySelector('.nf-lightbox');
       return !!lb && lb.classList.contains('on') && !!lb.querySelector('video');
     }, null, { timeout: 8000 });
-    await page.waitForTimeout(300);
+    await waitPainted(page);   // 视频腿：等 av 元素**自身**已画出且 paint == 状态，不等固定毫秒
     const client = await touchClient(page);
     const v = await page.evaluate(() => {
       const el = document.querySelector('.nf-lightbox video');
