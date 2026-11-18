@@ -21,9 +21,12 @@
 //    `sweep` 有 `waitingThresholdMs` 参数；
 // ⑥ **接线**：`TaskStuckWatcher.scan` 调用 `NodeStuckNotify.sweep(`（否则判据存在
 //    但生产路径永不走）；
-// ⑦ **四场景在场**：回归 spec 内 S1–S4 四个场景标题逐字在场（缺场景 = 静默删测）；
+// ⑦ **场景在场**：回归 spec 内 S1–S6 六个场景标题逐字在场（缺场景 = 静默删测）；
 // ⑧ **通报文本四段**：`renderNotice` 内 state / duration / activity / options 四段
-//    齐备（产品契约）。
+//    齐备（产品契约）；
+// ⑨ **Duplicate 不再无痕**（修复批 2026-11-18）：`AgentIdle` 每个
+//    `LandOutcome.Duplicate` 分支都必须调用 `InputLanding.duplicateReason(`（落可读事件），
+//    且 `InputLanding` 的诊断须显式命名 `taken-input/` 残件这一静默丢件形态。
 //
 // ── 用法 ────────────────────────────────────────────────────────────────
 //   node scripts/check-node-stuck-notify.mjs           # 0 绿 / 1 红 / 2 环境错误
@@ -41,6 +44,8 @@ const WATCHER = join(ROOT, 'src/main/scala/nebflow/core/processor/TaskStuckWatch
 const DEFAULTS = join(ROOT, 'src/main/scala/nebflow/shared/Defaults.scala');
 const EVENTLOG = join(ROOT, 'src/main/scala/nebflow/core/project/FlowMapEventLog.scala');
 const SPEC = join(ROOT, 'src/test/scala/nebflow/core/processor/NodeStuckNotifySpec.scala');
+const AGENTIDLE = join(ROOT, 'src/main/scala/nebflow/agent/AgentIdle.scala');
+const INPUTLANDING = join(ROOT, 'src/main/scala/nebflow/agent/InputLanding.scala');
 
 function read(path) {
   try {
@@ -58,6 +63,8 @@ const watcher = read(WATCHER);
 const defaults = read(DEFAULTS);
 const eventlog = read(EVENTLOG);
 const spec = read(SPEC);
+const agentIdle = read(AGENTIDLE);
+const inputLanding = read(INPUTLANDING);
 
 const failures = [];
 const ok = [];
@@ -117,6 +124,8 @@ const SCENARIOS = [
   ['S2', 'productive long task'],
   ['S3', 'dispatcher absent'],
   ['S4', 'configurable threshold works'],
+  ['S5', 'no-progress / tool-timeout cause split'],
+  ['S6', 'healthy session'],
 ];
 for (const [label, needle] of SCENARIOS) {
   const re = new RegExp(`test\\("${label}: [^"]*${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^"]*"`);
@@ -129,6 +138,19 @@ const segments = ['state: ', 'duration: ', 'activity: ', 'options: '];
 const missing = segments.filter((s) => !notify.includes(s));
 if (missing.length === 0) ok.push('notice text carries state / duration / activity / options');
 else failures.push(`notice text is missing segment(s): ${missing.join(', ')}`);
+
+// ⑨ Duplicate 不再无痕（修复批 2026-11-18）：每个 `LandOutcome.Duplicate` 分支都必须在
+//    300 字符内调用 `duplicateReason(`（落一条可读事件）；且 InputLanding 提供该诊断的
+//    纯函数并把「taken-input/ 残件」这一静默丢件形态显式命名。
+const dupBranches = agentIdle.match(/LandOutcome\.Duplicate\s*=>/g) || [];
+const dupReasoned = agentIdle.match(/LandOutcome\.Duplicate\s*=>[\s\S]{0,360}?duplicateReason\(/g) || [];
+if (dupBranches.length > 0 && dupReasoned.length === dupBranches.length)
+  ok.push(`every LandOutcome.Duplicate branch (${dupBranches.length}) emits a readable reason (no silent drop)`);
+else
+  failures.push(`silent Duplicate: ${dupBranches.length} branch(es) but only ${dupReasoned.length} call duplicateReason(`);
+if (inputLanding.includes('def duplicateReason(') && inputLanding.includes('taken-input/ residue'))
+  ok.push('InputLanding.duplicateReason names the taken-input/ residue (silent-drop diagnosis)');
+else failures.push('InputLanding.duplicateReason must exist and name the taken-input/ residue');
 
 if (JSON_OUT) {
   console.log(JSON.stringify({ checks: ok.length, failures, ok }, null, 2));

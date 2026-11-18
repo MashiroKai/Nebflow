@@ -141,3 +141,36 @@ class InputLandingSpec extends CatsEffectSuite:
     os.write(blocked, "not a directory")
     nebflow.core.mail.ProducerInput.persist(sid.get, imm("result", None), "stable-id").attempt.map(r => assert(r.isLeft))
   }
+
+  // ── 修复批 2026-11-18：Duplicate 不再无痕 ─────────────────────────────────
+  test("Duplicate 不再无痕：诊断区分 taken-input 残件 / 墓碑（同一 key，两个阶段）") {
+    val key = "cid-diag"
+    (for
+      landed <- InputLanding.landImmediate(sid, imm("first", Some(key)))
+      // turn 在飞未 consume ⇒ 盘上是 taken-input 残件 ⇒ 第二次为 Duplicate 且诊断为「残件」
+      dup <- InputLanding.landImmediate(sid, imm("first", Some(key)))
+      whyResidue <- InputLanding.duplicateReason(sid, key)
+      // 正常提交后重发 ⇒ 仍 Duplicate，但诊断转为「墓碑」
+      _ <- InputLanding.consume(sid, landed)
+      dup2 <- InputLanding.landImmediate(sid, imm("first", Some(key)))
+      whyTomb <- InputLanding.duplicateReason(sid, key)
+    yield (landed, dup, whyResidue, dup2, whyTomb)).map {
+      case (landed, dup, whyResidue, dup2, whyTomb) =>
+        assertEquals(landed, InputLanding.LandOutcome.Landed(key))
+        assertEquals(dup, InputLanding.LandOutcome.Duplicate)
+        assertEquals(dup2, InputLanding.LandOutcome.Duplicate)
+        assert(whyResidue.contains("taken-input/ residue"), s"taken-input residue must be named: $whyResidue")
+        assert(whyResidue.contains(key), s"diagnostic must carry the identity: $whyResidue")
+        assert(whyTomb.contains("delivered-inputs tombstone"), s"tombstone case must be named: $whyTomb")
+    }
+  }
+
+  test("duplicateNotice 纯函数：三类来源各有可读原因（无痕 = 红）") {
+    val residue = InputLanding.duplicateNotice("k-1", Some(7L), delivered = false)
+    val tomb = InputLanding.duplicateNotice("k-2", None, delivered = true)
+    val race = InputLanding.duplicateNotice("k-3", None, delivered = false)
+    assert(residue.contains("taken-input/ residue") && residue.contains("k-1"), residue)
+    assert(tomb.contains("tombstone") && tomb.contains("k-2"), tomb)
+    assert(race.contains("no pending/taken copy") && race.contains("k-3"), race)
+    assert(InputLanding.DuplicateEvent == "input-duplicate-suppressed")
+  }

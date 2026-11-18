@@ -377,6 +377,55 @@ class NodeStuckNotifySpec extends CatsEffectSuite:
     end for
   }
 
+  test("S6: healthy session (recent activity; short park) → zero alert, zero event (no false positive)") {
+    val system = ActorSystem("node-stuck-s6")
+    for
+      _ <- IO(system)
+      tmp <- IO(os.temp.dir())
+      ws = tmp / "ws-s6"
+      resources <- mkResources(system, tmp)
+      dispatcherInbox <- Ref.of[IO, List[AgentCommand]](Nil)
+      dispatcherRef <- system.spawn(mkRecordingActor(dispatcherInbox), "dispatcher-1")
+      healthyInbox <- Ref.of[IO, List[AgentCommand]](Nil)
+      healthyRef <- system.spawn(mkRecordingActor(healthyInbox), "node-healthy")
+      parkedInbox <- Ref.of[IO, List[AgentCommand]](Nil)
+      parkedRef <- system.spawn(mkRecordingActor(parkedInbox), "node-parked")
+      now = System.currentTimeMillis()
+      // 正常推进中的会话：3s 前刚有 agent 侧事件，无工具相位。
+      healthy = AgentRecord(
+        sessionId = "node-sess-healthy",
+        ref = healthyRef,
+        kind = AgentKind.Flow,
+        rootSessionId = "root-1",
+        startedAt = now - 3600_000L,
+        status = AgentStatus.Processing,
+        lastActivityMs = now - 3000L,
+        lastProgressSignalAt = now - 3000L,
+        parentSessionId = "dispatcher-1"
+      )
+      // 合法 human-in-the-loop：挂在人工回答上仅 30s（远低于挂等阈值）。
+      parked = waitingRecord(parkedRef, now, 30 * 1000L, parent = "dispatcher-1").copy(sessionId = "node-sess-parked")
+      registry = Map(
+        healthy.sessionId -> healthy,
+        parked.sessionId -> parked,
+        "dispatcher-1" -> rootRow("dispatcher-1", dispatcherRef)
+      )
+      _ <- resources.agentRegistry.set(registry)
+      outcomes <- NodeStuckNotify.sweep(
+        resources,
+        registry,
+        now,
+        nodeProbe = sid => IO.pure(Some(NodeStuckNotify.NodeRef(ws.toString, "demo", s"n-$sid", None)))
+      )
+      cmds <- dispatcherInbox.get
+      events <- eventLines(ws)
+    yield
+      assertEquals(outcomes.size, 0, s"healthy/parked sessions must not be flagged, got $outcomes")
+      assertEquals(cmds.size, 0, s"dispatcher must get no notice for healthy sessions, got $cmds")
+      assertEquals(events.size, 0, s"no flow-map event for healthy sessions, got $events")
+    end for
+  }
+
   private def summaryCause(ev: io.circe.Json): String =
     val summary = ev.hcursor.get[String]("summary").toOption.getOrElse("")
     summary.split("\\s+").collectFirst { case s if s.startsWith("cause=") => s.stripPrefix("cause=") }.getOrElse("")

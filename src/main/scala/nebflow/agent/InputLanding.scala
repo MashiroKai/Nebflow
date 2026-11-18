@@ -113,6 +113,47 @@ private[agent] object InputLanding:
     final case class Passthrough(cause: String) extends LandOutcome
 
   /**
+   * Duplicate 短路时落下的 **agent 侧生命周期事件名**（修复批，2026-11-18：Duplicate
+   * 不再无痕）。调用点见 `AgentIdle` 两处 `LandOutcome.Duplicate` 分支。
+   */
+  val DuplicateEvent: String = "input-duplicate-suppressed"
+
+  /**
+   * Duplicate 的**可读诊断**（IO 包装：读 `taken-input/` 残件面 + 消费墓碑面）。
+   *
+   * 现场缺口（RCA 2026-11-18）：[[LandOutcome.Duplicate]] 此前是**完全静默**的短路——
+   * 同一 `clientMessageId` 既落不到 `pending-input/`、也没命中可重投的 pending 副本时，
+   * turn 被跳过而**零事件零原因**，父会话/根会话干等。本函数把三类来源显式化，供
+   * [[DuplicateEvent]] 事件正文引用（`AgentIdle` 侧落事件）。
+   */
+  def duplicateReason(sidRaw: Option[String], identity: String): IO[String] =
+    sidRaw.filter(_.trim.nonEmpty) match
+      case None => IO.pure(s"identity=$identity no-session-id — Duplicate cannot be attributed")
+      case Some(sid) =>
+        for
+          taken <- InputMailbox.scanTaken(sid)
+          delivered <- InputMailbox.deliveredContains(sid, Set(identity))
+        yield duplicateNotice(identity, taken.find(_.identity == identity).map(_.seq), delivered.contains(identity))
+
+  /**
+   * 纯函数：Duplicate 的三类来源 → 可读原因文本（单测承重面）。
+   *   - **`taken-input/` 残件**：条目在盘上但重投腿未取走 ⇒ 上一条 turn 从未提交（D3
+   *     `consume` 未走到）——本批点名的「静默丢件」毒化形态；条目会在下次 boot 的
+   *     [[InputMailbox.replayProducerInputs]] 里重投，此前该 key 的每次重发都是 Duplicate。
+   *   - **消费墓碑**（`delivered-inputs.json`）：该 key 已执行过（客户端重发 / 崩溃重放）
+   *     ⇒ 正常幂等短路。
+   *   - **两者皆无**：身份既无残件也无墓碑 ⇒ 并发取走/清理竞态，无待重投副本。
+   */
+  def duplicateNotice(identity: String, takenSeq: Option[Long], delivered: Boolean): String =
+    if takenSeq.isDefined then
+      s"identity=$identity taken-input/ residue seq=${takenSeq.get} — prior turn never committed " +
+        "(D3 consume not reached); replayed at next boot; until then every resend of this key is Duplicate"
+    else if delivered then
+      s"identity=$identity already executed (delivered-inputs tombstone) — client resend / crash replay (expected idempotent skip)"
+    else
+      s"identity=$identity no pending/taken copy to re-take (concurrent consume or cleanup race)"
+
+  /**
    * 用户输入（`UserInput`）落盘门。
    *
    * @param replyToSessionId `replyTo` 的**身份形态**（`ActorRef` 是不可序列化句柄，

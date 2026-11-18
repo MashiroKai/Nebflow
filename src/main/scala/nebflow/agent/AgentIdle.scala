@@ -345,8 +345,17 @@ private[agent] object AgentIdle:
             _ <- mintUserMsgToken(resources, stateWithFlush.sessionId, text, fromUser, blocks, clientMessageId)
             result <- landed match
               // 幂等键命中（同 key 已执行过：客户端重发 / 崩溃重放）⇒ **不开第二 turn**
+              // 修复批（2026-11-18）：不再静默——落一条可读 agent 事件（含 taken-input 残件诊断）。
               case InputLanding.LandOutcome.Duplicate =>
-                IO.pure(idle(agentDef, resources, depth, parentRef, state))
+                InputLanding
+                  .duplicateReason(stateWithFlush.sessionId, clientMessageId.getOrElse("(no-cid)"))
+                  .map { reason =>
+                    logAgentEvent(agentDef, depth, stateWithFlush.sessionId, stateWithFlush.sessionName, InputLanding.DuplicateEvent, reason)
+                    NebflowLogger.forName("nebflow.agent.idle").warn(
+                      s"${InputLanding.DuplicateEvent} session=${stateWithFlush.sessionId.getOrElse("-")} $reason"
+                    )
+                    idle(agentDef, resources, depth, parentRef, state)
+                  }
               case _ =>
                 pipeLlmCall(
                   agentDef,
@@ -1156,8 +1165,17 @@ private[agent] object AgentIdle:
               // UserInput leg / the turn-boundary immediate-input drain).
               result <- landed match
                 // 幂等键命中（同 cid 重发 / 崩溃重放）⇒ 不开第二 turn
+                // 修复批（2026-11-18）：不再静默——落一条可读 agent 事件（含 taken-input 残件诊断）。
                 case InputLanding.LandOutcome.Duplicate =>
-                  IO.pure(idle(agentDef, resources, depth, parentRef, state))
+                  InputLanding
+                    .duplicateReason(state.sessionId, imm.clientMessageId.getOrElse("(no-cid)"))
+                    .map { reason =>
+                      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, InputLanding.DuplicateEvent, reason)
+                      NebflowLogger.forName("nebflow.agent.idle").warn(
+                        s"${InputLanding.DuplicateEvent} session=${state.sessionId.getOrElse("-")} $reason"
+                      )
+                      idle(agentDef, resources, depth, parentRef, state)
+                    }
                 case _ =>
                   pipeLlmCall(
                     agentDef,
