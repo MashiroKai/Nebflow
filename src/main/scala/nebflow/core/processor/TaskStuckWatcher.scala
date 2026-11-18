@@ -539,17 +539,21 @@ object TaskStuckWatcher:
         pendingL3 <- cats.effect.Ref.of[IO, List[PendingL3]](Nil)
         // P3（§3.3/§3.4）：恢复账本（跨轮累积；内存态，同族纪律）。
         ledger <- cats.effect.Ref.of[IO, Map[String, RecoveryLedger]](Map.empty)
-        _ <- scanLoop(stopCounts, pendingL3, ledger)
+        // node-stuck-notify 批：通报幂等账本（跨轮累积；内存态，与 stopCounts/ledger 同族）。
+        notifySent <- cats.effect.Ref.of[IO, Map[String, NodeStuckNotify.Sent]](Map.empty)
+        _ <- scanLoop(stopCounts, pendingL3, ledger, notifySent)
       yield ()
 
     def scanLoop(
       stopCounts: cats.effect.Ref[IO, Map[String, Int]],
       pendingL3: cats.effect.Ref[IO, List[PendingL3]],
-      ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
+      ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]],
+      notifySent: cats.effect.Ref[IO, Map[String, NodeStuckNotify.Sent]]
     ): IO[Unit] =
-      scan(resources, wsHub, thresholdMs, stopCounts, pendingL3, ledger = ledger).handleErrorWith(e =>
-        logger.warn(s"TaskStuckWatcher scan failed (will retry next cycle): ${e.getMessage}")
-      ) *> IO.sleep(interval) >> scanLoop(stopCounts, pendingL3, ledger)
+      scan(resources, wsHub, thresholdMs, stopCounts, pendingL3, ledger = ledger, notifySent = notifySent)
+        .handleErrorWith(e =>
+          logger.warn(s"TaskStuckWatcher scan failed (will retry next cycle): ${e.getMessage}")
+        ) *> IO.sleep(interval) >> scanLoop(stopCounts, pendingL3, ledger, notifySent)
     loop
 
   end run
@@ -715,7 +719,17 @@ object TaskStuckWatcher:
      * `StopAttempts+2` 轮后经桥 Cancelled 终态收殓）——该形态仍是现行产品代码
      * （回滚开关可达，非历史遗留），由 `ProjectDispatcherLifecycleSpec` 以本缝承重。
      */
-    hardRecovery: Option[Boolean] = None
+    hardRecovery: Option[Boolean] = None,
+    /**
+     * **node-stuck 通报**（node-stuck-notify 批，2026-09-11；见 [[NodeStuckNotify]]）：
+     * 幂等账本（每会话最近一次通报的 cause/时刻，内存态、跨轮累积）。默认空 Ref =
+     * 单测一次驱动不留状态；生产由 [[run]] 的扫描循环持有同一个 Ref 与 stopCounts 同族。
+     */
+    notifySent: cats.effect.Ref[IO, Map[String, NodeStuckNotify.Sent]] = cats.effect.Ref.unsafe(Map.empty),
+    /** 挂等轴通报阈值（默认 [[nebflow.shared.Defaults.NodeStuckNotifyWaitingMs]]）。 */
+    notifyWaitingMs: Long = nebflow.shared.Defaults.NodeStuckNotifyWaitingMs,
+    /** 会话 → flow-map 节点探针（测试注入缝；默认生产探针 = 只读 store 扫描）。 */
+    nodeProbe: String => IO[Option[NodeStuckNotify.NodeRef]] = NodeStuckNotify.probeNode
   ): IO[Unit] =
     val now = System.currentTimeMillis()
     // R8 ②：复查搭**本**扫描轮（零新增定时器，设计 §3.4）——先复查上轮到期的 L3，
@@ -783,6 +797,25 @@ object TaskStuckWatcher:
               ledger.update(m =>
                 m.view.map { case (k, l) => (k, if stuckIds.contains(k) then l else l.copy(genAttempts = 0)) }.toMap
               ) *>
+              // ── node-stuck 通报（node-stuck-notify 批，2026-09-11）──────────────────
+              // 排在恢复链**之前**：先在**同一拍**里把「这个节点卡了/挂了多久、你有哪些
+              // 选项」送到 dispatcher（缺席则 root），再走既有 L1→L4 恢复动作。通报本身
+              // 非破坏、零新判据——判据复用 assessDetailed ∪ 挂等轴，且只对
+              // **已经命中阈值**的候选做一次 flow-map 定位（取数面窄化同 probeEnvLost）。
+              // fail-soft：通报面任何故障只 WARN，绝不改变本拍的识别/恢复语义。
+              NodeStuckNotify
+                .sweep(
+                  resources,
+                  registry,
+                  now,
+                  noProgressThresholdMs = thresholdMs,
+                  waitingThresholdMs = notifyWaitingMs,
+                  sent = notifySent,
+                  nodeProbe = nodeProbe
+                )
+                .handleErrorWith(e =>
+                  logger.warn(s"TaskStuckWatcher: node-stuck notify sweep failed: ${e.getMessage}")
+                ) *>
               stuck.traverse_ { (rec, assessment) =>
                 // 判据序（P1）：先分流根因类别，再进恢复链。`inflightFor` 是**只读**在飞
                 // 计数（设计 §6.1 未证项 6 的补齐）——此前判「本会话是否有在飞 LLM」只能
