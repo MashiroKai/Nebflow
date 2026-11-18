@@ -10,6 +10,27 @@
 // The fixtures are real PDFs written byte by byte by an independent writer
 // (scripts/tests/pdf_fixture.py: stdlib only, plus pypdf for the encrypted
 // one). No PDF is committed and no AGPL writer is involved.
+//
+// ── Dependency gate (why this file has a `skip` path at all) ────────────────
+//
+// The parser leg is Python (pdfplumber + pypdf). That dependency set is a
+// MACHINE-local artifact: the repository never installs into an interpreter and
+// a stock `python3` does not carry it. A repo gate must therefore not turn "this
+// checkout has not bootstrapped the venv yet" into a red — that would make a
+// local artifact a repository dependency, and `npm run check:static` (this file
+// rides the `script-tests` profile) would be red on every fresh checkout and in
+// CI. The rule, in full:
+//
+//   · probe fails, NO knob   ⇒ SKIP, loudly, carrying the bootstrap line. The
+//     skip is printed (node:test reports it and the reason names the fix), so an
+//     absent capability is never mistaken for a passing one.
+//   · probe fails, knob SET  ⇒ HARD FAIL. Someone pointed `STAND_PDF_PYTHON` at
+//     an interpreter that cannot do the job; that is a real fault, and a skip
+//     would hide exactly the breakage the knob was set to find.
+//   · probe succeeds         ⇒ RUN, with or without the knob.
+//
+// `STAND_PDF_PYTHON` is the single knob (default `python3`) — the same one the
+// Scala leg reads via `PdfParser.pythonBin()`.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,12 +44,73 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const PARSER = join(ROOT, 'src', 'main', 'resources', 'pdf', 'pdf_parse.py');
 const FIXTURE = join(ROOT, 'scripts', 'tests', 'pdf_fixture.py');
 const SCALA_PARSER = join(ROOT, 'src', 'main', 'scala', 'nebflow', 'core', 'pdf', 'PdfParser.scala');
-const PYTHON = process.env.STAND_PDF_PYTHON || 'python3';
+
+const KNOB = 'STAND_PDF_PYTHON';
+const PYTHON = process.env[KNOB] || 'python3';
+const KNOB_SET = Boolean(process.env[KNOB]);
+
+/** The one line that makes the parser runnable on a fresh checkout. */
+const BOOTSTRAP = 'scripts/tests/pdf_python_env.sh && export STAND_PDF_PYTHON="$HOME/.cache/stand/pdf-venv/bin/python3"';
+
+function probe(argv) {
+  try {
+    execFileSync(PYTHON, argv, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+    return { ok: true, detail: '' };
+  } catch (e) {
+    const tail = String(e.stderr || e.message || '').trim().split('\n').filter(Boolean).pop() || 'unknown error';
+    return { ok: false, detail: e.code === 'ENOENT' ? `interpreter "${PYTHON}" is not executable` : tail };
+  }
+}
+
+let probed = null;
+function parserDeps() {
+  if (!probed) probed = probe(['-c', 'import pdfplumber, pypdf']);
+  return probed;
+}
+
+/**
+ * Skip verdict for the parser dependency set: `null` = run, string = skip.
+ * The knob-set-but-broken case deliberately returns `null` so the test RUNS and
+ * fails on [[requireParserDeps]] instead of being skipped away.
+ */
+function parserSkipReason() {
+  const p = parserDeps();
+  if (p.ok) return null;
+  if (KNOB_SET) return null;
+  return `pdfplumber/pypdf unavailable (${p.detail}) and ${KNOB} is unset — PDF parser tests skipped. Bootstrap: ${BOOTSTRAP}`;
+}
+
+/** Runs inside a gated test body: the hard failure for a pointed-at-but-broken interpreter. */
+function requireParserDeps() {
+  const p = parserDeps();
+  if (p.ok) return;
+  assert.fail(
+    `${KNOB}="${PYTHON}" is set but pdfplumber/pypdf are unavailable (${p.detail}) — ` +
+    `refusing to skip an interpreter that was explicitly pointed at. Fix it with: ${BOOTSTRAP}`,
+  );
+}
+
+const PARSER_SKIP = parserSkipReason();
+if (PARSER_SKIP) console.warn(`[pdf-parse.test] ${PARSER_SKIP}`);
 
 const tmp = mkdtempSync(join(tmpdir(), 'pdf-parse-test-'));
 const fixtures = join(tmp, 'fixtures');
 mkdirSync(fixtures, { recursive: true });
-execFileSync(PYTHON, [FIXTURE, fixtures]);
+
+/**
+ * Build the fixtures on demand. Lazy on purpose: generating them spawns the
+ * interpreter, and a skipped run must not do that (nor throw) at import time —
+ * a module-level `execFileSync` is what made a missing venv look like a broken
+ * parser.
+ */
+let fixturesBuilt = false;
+function ensureFixtures() {
+  if (!fixturesBuilt) {
+    execFileSync(PYTHON, [FIXTURE, fixtures]);
+    fixturesBuilt = true;
+  }
+  return fixtures;
+}
 
 /** Run the parser and return {status, stdout, json}. Never throws on exit 3. */
 function runParser(args) {
@@ -46,9 +128,11 @@ function jsonLine(lines) {
   return line ? JSON.parse(line) : null;
 }
 
-test('parser: reading order, tables, media attribution and relative links', () => {
+test('parser: reading order, tables, media attribution and relative links', { skip: PARSER_SKIP ?? false }, () => {
+  requireParserDeps();
+  const fx = ensureFixtures();
   const out = join(tmp, 'entry-ok');
-  const r = runParser(['--input', join(fixtures, 'simple.pdf'), '--out', out, '--name', 'simple.pdf']);
+  const r = runParser(['--input', join(fx, 'simple.pdf'), '--out', out, '--name', 'simple.pdf']);
   assert.equal(r.status, 0, `parser must succeed: ${r.stdout}`);
   const verdict = jsonLine(r.lines);
   assert.equal(verdict.ok, true);
@@ -107,7 +191,9 @@ test('parser: reading order, tables, media attribution and relative links', () =
   assert.ok(existsSync(join(out, 'media', 'p0003-0.png')));
 });
 
-test('parser: failures are one JSON line with a distinct code, and write nothing', () => {
+test('parser: failures are one JSON line with a distinct code, and write nothing', { skip: PARSER_SKIP ?? false }, () => {
+  requireParserDeps();
+  const fx = ensureFixtures();
   const cases = [
     ['encrypted.pdf', 'PDF_ENCRYPTED'],
     ['empty.pdf', 'PDF_EMPTY'],
@@ -115,7 +201,7 @@ test('parser: failures are one JSON line with a distinct code, and write nothing
   ];
   for (const [name, code] of cases) {
     const out = join(tmp, `entry-${code}`);
-    const r = runParser(['--input', join(fixtures, name), '--out', out]);
+    const r = runParser(['--input', join(fx, name), '--out', out]);
     assert.equal(r.status, 3, `${name} must exit 3, got ${r.status}: ${r.stdout}`);
     const verdict = jsonLine(r.lines);
     assert.ok(verdict, `${name} must print a JSON verdict: ${r.stdout}`);
@@ -135,15 +221,19 @@ test('parser: failures are one JSON line with a distinct code, and write nothing
   const busy = join(tmp, 'entry-busy');
   mkdirSync(busy, { recursive: true });
   writeFileSync(join(busy, 'meta.json'), '{}');
-  const rb = runParser(['--input', join(fixtures, 'simple.pdf'), '--out', busy]);
+  const rb = runParser(['--input', join(fx, 'simple.pdf'), '--out', busy]);
   assert.equal(rb.status, 3);
   assert.equal(jsonLine(rb.lines).error, 'OUT_NOT_EMPTY');
 });
 
-test('parser: usage errors exit 2', () => {
-  const r = runParser(['--input', join(fixtures, 'simple.pdf')]);
+test('parser: usage errors exit 2', { skip: PARSER_SKIP ?? false }, () => {
+  requireParserDeps();
+  const r = runParser(['--input', join(ensureFixtures(), 'simple.pdf')]);
   assert.equal(r.status, 2);
 });
+
+// ── The three checks below read repository text only: no interpreter, no PDF,
+//    no dependency — they run unconditionally, on every checkout. ────────────
 
 test('version parity: MARKDOWN_VERSION in the script equals PdfParser.MarkdownVersion', () => {
   const py = readFileSync(PARSER, 'utf8');
@@ -190,4 +280,3 @@ test('laziness is structural: only the ask arm may reach the parse entry points'
   assert.ok(/askAsync\(/.test(ask), 'the ask route is the parse-triggering arm');
   assert.ok(!/PdfParser\.parse\b/.test(routes), 'the route layer must never call the parser directly');
 });
-

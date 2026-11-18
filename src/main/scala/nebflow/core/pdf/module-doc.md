@@ -111,6 +111,29 @@ the sbt JVM), and on the process running `scripts/tests/pdf-parse.test.mjs`. The
 venv lives outside the repository and outside any data root — it is a machine
 artifact, never instance state.
 
+**A missing dependency is not a red gate.** The dependency set is machine-local,
+so neither gate may turn "this checkout has not bootstrapped yet" into a failure —
+that would make a local artifact a repository dependency:
+
+| State | Scala suite (`PdfAskFaceSpec`) | Node suite (`pdf-parse.test.mjs`) |
+|---|---|---|
+| deps absent, `STAND_PDF_PYTHON` unset | `assume` skips the two fixture-backed tests | 3 parser tests **skip**; the reason (with the bootstrap line) is printed; the run exits 0 |
+| deps absent, `STAND_PDF_PYTHON` **set** | skip | **hard failure** — the knob was pointed at an interpreter that cannot do the job, and a skip would hide exactly that breakage |
+| deps present | the two tests really run | every test really runs |
+
+So a fresh checkout and CI are green on install alone, and the capability is
+proven only where it exists. **CI runs the parser end to end only if the runner
+bootstraps first** — one step, before any test command:
+
+```
+scripts/tests/pdf_python_env.sh
+```
+
+`node --test scripts/tests/*.test.mjs` is the self-check for both states (3 skips
+with the knob unset, 93/93 with it set). The workflow files are deliberately NOT
+touched by this batch: wiring the bootstrap into CI is a separate decision about
+runner cost and network access.
+
 ## On demand: the index, not the document
 
 An ask must decide WHICH pages to open before it opens any. The previous shape
