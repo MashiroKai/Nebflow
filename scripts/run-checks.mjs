@@ -35,6 +35,11 @@ export const CHECKS = [
     argv: [process.execPath, 'tests/canvas-controls-dock-clearance.spec.mjs'] },
   { name: 'mobile-decision-preview-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-decision-preview-occlusion.spec.mjs'] },
+  // 滚域末端净空单源批（2026-11-18 作者令「滚到底底部内容必须完整显示」）：17 个
+  // 全屏页逐页 E1–E5（过底 / 末行 ≤ dock 上缘 − 8 / 净空在内容级且 = token /
+  // token 非零 / dock 带内无卡死件）+ E0 静态单源。改到哪页漏净空即红。
+  { name: 'mobile-scroll-end', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/mobile-scroll-end.spec.mjs', '--workers=1'] },
   { name: 'media-gallery', profiles: ['frontend'], timeoutMs: 120_000,
     argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/mobile-image-gallery.spec.mjs', 'tests/media-click-unify.spec.mjs', '--workers=1'] },
   // 账户栏整件退役（作者令 2026-11-18）**渲染级**闸：真实形态（手机全屏设置页 +
