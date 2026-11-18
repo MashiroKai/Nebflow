@@ -20,19 +20,6 @@ import { mobileSheetBack } from './mobile/popSheet.js';
 import { pushLayer } from './focusTrap.js';
 
 // ---------- Session Modals ----------
-// 控制台单实例批（2026-10-27）：接管模态（#takeover-box，takeoverModal.js 持渲染）
-// 在场时，全局关闭钩子（Escape / 遮罩点击 / hideModals）必须绕行——强制二选一是
-// 互斥权的裁决点，不可被全局钩子误收。DOM 在场判别 = 零模块耦合（modal.js ←
-// takeoverModal.js 反向 import 会成环）。
-function takeoverBlocking() {
-  const box = document.getElementById('takeover-box');
-  // 在场判别按 inline display 非空且非 none（形态无关）——卡片家族批（2026-11-01）
-  // 起面板为 .nfc 家族卡（css/cards.css flex 列），显式值已 'block'→'flex'，
-  // 本判别不再耦合具体形态字面量。
-  const d = box && box.style.display;
-  return !!box && d !== 'none' && d !== '';
-}
-
 export function showNewSessionModal() {
   const { modalBox, deleteBox, modalInput, modalOverlay } = state.dom;
   deleteBox.style.display = 'none';
@@ -47,7 +34,6 @@ export function showNewSessionModal() {
 let modalLayer = null;
 
 export function hideModals() {
-  if (takeoverBlocking()) return; // 接管模态在场：不让全局关闭路径摘它的面
   state.dom.modalOverlay.classList.remove('on');
   // keyboard-first 一期：出栈即回焦（触发元素还在文档里就原样还给它；
   // 已被重渲摘掉则按 id 在新树里找，见 focusTrap.popLayer）。
@@ -396,7 +382,6 @@ export function initModals() {
   // overlay closes it as Cancel (must not strand a pending import).
   modalOverlay.onclick = (e) => {
     if (e.target !== modalOverlay) return;
-    if (takeoverBlocking()) return; // 接管模态：遮罩点击不关闭（强制二选一）
     if (conflictCallbacks) resolveConflict('cancel');
     else hideModals();
   };
@@ -404,7 +389,6 @@ export function initModals() {
   // Escape: conflict open → Cancel; otherwise close whichever modal is up.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (takeoverBlocking()) return; // 接管模态：Escape 不关闭（强制二选一）
     if (conflictCallbacks) resolveConflict('cancel');
     else hideModals();
   });
@@ -424,7 +408,6 @@ export function initModals() {
 function bindModalSheetBack() {
   armModalTrap(); // keyboard-first 一期：六个打开路径的共同尾部 = 模态层入口
   mobileSheetBack(state.dom.modalOverlay, () => {
-    if (takeoverBlocking()) return;
     if (conflictCallbacks) resolveConflict('cancel');
     else hideModals();
   });
