@@ -513,14 +513,27 @@ object SearchIndexService:
             val (h3, t3) = execLike(likePattern)
             (h3, t3, true)
 
-        // Existing indexes may contain CJK bigrams joined to adjacent ASCII
-        // tokens (e.g. 语音abc); unicode61 then cannot match 语音. Fall back
-        // against the original text only on a zero-total CJK query, including
-        // old indexes, without changing normal MATCH or pagination semantics.
+        // Merge by row identity in SQL before counting and pagination: a MATCH
+        // hit must not hide other rows whose bigram is joined to ASCII.
         val (finalHits, finalTotal, finalDegraded) =
-          if total == 0 && q.text.exists(CjkBigram.isCjk) then
-            val (fallbackHits, fallbackTotal) = execLike("%" + q.text.trim + "%")
-            (fallbackHits, fallbackTotal, true)
+          if q.text.exists(CjkBigram.isCjk) && andExpr.nonEmpty then
+            val expr = if total == 0 && orExpr.nonEmpty then orExpr else andExpr
+            val w = s"${where} AND (d.rowid IN (SELECT rowid FROM docs_fts WHERE docs_fts MATCH ?) OR d.text LIKE ? ESCAPE '\\')"
+            val pattern = "%" + escapeLike(q.text.trim) + "%"
+            def bindUnion(ps: PreparedStatement): Unit =
+              bindBase(ps, 0)
+              ps.setString(params.size + 1, expr)
+              ps.setString(params.size + 2, pattern)
+            val n = fetchCount(s"SELECT COUNT(*) FROM docs d$w", bindUnion)
+            val rows = fetch(
+              s"""SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d$w
+                 |ORDER BY d.ts DESC, d.ord DESC LIMIT ? OFFSET ?""".stripMargin,
+              ps => {
+                bindUnion(ps)
+                ps.setInt(params.size + 3, math.max(1, math.min(q.limit, 200)))
+                ps.setInt(params.size + 4, math.max(0, q.offset))
+              })
+            (rows, n, degraded || n > total)
           else (hits, total, degraded)
 
         Right(QueryResult(
