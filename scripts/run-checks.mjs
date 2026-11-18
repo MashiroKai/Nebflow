@@ -48,6 +48,7 @@ export const CHECKS = [
   nodeCheck('toggle', 'check-toggle-unify'),
   nodeCheck('scroll-pill', 'check-scroll-pill-center'),
   nodeCheck('input-surface', 'check-input-surface'),
+  nodeCheck('dropdown-single-control', 'check-dropdown-single-control'),
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),
   nodeCheck('panel-unify', 'check-panel-unify'),
   nodeCheck('settings-ios-rows', 'check-settings-ios-rows'),

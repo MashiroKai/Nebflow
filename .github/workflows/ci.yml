@@ -30,6 +30,8 @@ jobs:
       - run: npm ci
       - name: Dropdown lint
         run: node scripts/check-dropdown.mjs
+      - name: Dropdown single-control guard
+        run: node scripts/check-dropdown-single-control.mjs
       - run: npm install --no-save --no-package-lock @playwright/test@1.62.0
       - run: npx playwright install --with-deps chromium
       - run: node tests/dropdown-menu.test.mjs
