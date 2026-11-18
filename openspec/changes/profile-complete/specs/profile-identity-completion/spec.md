@@ -46,3 +46,13 @@ The personal profile's avatar SHALL be an entry to the official website. It SHAL
 - **WHEN** the user activates the avatar on the personal profile page
 - **THEN** a new tab opens at the official website while the profile page stays where it was
 - **AND** the profile page's own address is unchanged by the activation
+
+### Requirement: [PIC-REQ-005] A binding reading states its chain and its boundary
+
+A change that renders or refuses a binding reading SHALL state, in writing, where that reading comes from layer by layer, and SHALL name the layer that owns any reading it cannot reach. A binding it cannot read SHALL NOT be invented, guessed, or silently left as the unknown reading.
+
+#### Scenario: [PIC-SCN-006] The chain and the boundary are written down
+
+- **WHEN** the delivered readings and the still-unknown ones are described
+- **THEN** the writing names each field's source with file:line and says which layer owns the ones this client cannot read
+- **AND** the unreadable binding's boundary (which service owns it, and why this client has no source) is stated rather than left implicit
