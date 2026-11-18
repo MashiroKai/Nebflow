@@ -697,35 +697,20 @@ body.mobile-layer .note-dock .ds-resize-handle {
 /* 发送钮 / 中断钮：**零本地形态**（作者令 ui-unification-20261103-canvas-ask-resize
  * 「发送按钮与终止按钮样式与主会话完全统一（同一组件/同一 design-system 令牌，
  * 不得另做一套）」）。
- * 本批退役的第二套形态（git 可查）：`.ask-input .ask-send` / `.ask-stop` 曾自带
+ * 该批退役的第二套形态（git 可查）：`.ask-input .ask-send` / `.ask-stop` 曾自带
  * 32×32 正圆 + 14px 图标（比主会话 36×36 + 18px 小一档），hover/active 三档也各自
  * 声明 —— 同一对按钮在两条腿各长一套几何，正是本令要收的东西。
- * 现态：两枚按钮在 DOM 上挂 `ds-turn-btn ds-turn-btn--send|--stop`
- * （design-system.css §①b 单源），`.ask-send` / `.ask-stop` 只是**身份钩子**
- * （既有 spec 定位用，本文件零规则）。改形态改那一个组件类，两处同时生效。
- */
-
-/* Ask keeps its canvas-sized hit target; visual button states now come from
-   the same solid turn-button component as the main conversation. */
-.ask-dock .ds-turn-btn {
-  /* 尺寸 = max(画布 chrome 档, 组件尺寸槽)：桌面 chrome 40 胜出（= 顶部两钮）；
-     手机档收窄批（2026-11-04 13:52）起手机腿组件槽 = --mcv-size-circle **44**
-     （原 --mtap-lg 48）⇒ 取大者 44，热区 44 = HIG 下限（::after 收到 0，零外溢）。 */
-  width: max(var(--cv-size-circle, 40px), var(--ds-turn-btn-size, 0px));
-  height: max(var(--cv-size-circle, 40px), var(--ds-turn-btn-size, 0px));
-
-  border-radius: 50%;
-  padding: 0;
-  /* Button colors and state feedback come from the shared turn-button component. */
-}
-/* 图标档 = 组件图标槽（--ds-turn-btn-icon）优先、画布 chrome 图标档（--cv-icon 18）
-   兜底 —— 手机档收窄批 2026-11-04 13:52：「手机端发送/终止按钮小一点」把面板底钮
-   手机档收成 44 边长 / 20 图标（mobileLayer.css `body.mobile-layer .ask-dock
-   .ds-turn-btn` 换供源），桌面腿组件槽 = 18 ⇒ 与旧写法逐值同（18），零漂移。 */
-.ask-dock .ds-turn-btn svg { width: var(--ds-turn-btn-icon, var(--cv-icon, 18px)); height: var(--ds-turn-btn-icon, var(--cv-icon, 18px)); stroke-width: 2; }
-/* Ask keeps its compact geometry, but uses the same solid send/stop colors,
-   ink, hover and active states as the primary conversation. */
-.ask-dock .ds-turn-btn:disabled { opacity: 0.35; pointer-events: none; }
+ * 字形/几何收口批（ask-button-unify 2026-11-18，作者令逐字「Ask 的中止按钮中间的
+ * 方框应该和主会话的一致 发送按钮也和主会话一致吧」）：本块此前**残留三条本地覆盖**
+ * ——
+ *   ① `width/height = max(--cv-size-circle 40, 组件槽)` ⇒ 桌面 40×40 对主会话 36×36；
+ *   ② `.ds-turn-btn svg` 的图标档兜底 + `stroke-width: 2` ⇒ 线宽 2 对主会话 2.5；
+ *   ③ `:disabled { opacity: .35 }` ⇒ 组件禁用族的第二份读数（Ask 面从无 disabled
+ *      写入点，`grep disabled js/askDock.js` 零命中 ⇒ 该条不可达）。
+ * 三条全部退役：几何/线宽回到 design-system.css `.ds-turn-btn` 唯一一份，
+ * 手机腿的供源由 mobileLayer.css 的「输入条圆钮档」一条声明同时喂主会话与面板
+ * （见该块注）。`.ask-send` / `.ask-stop` 仍只是**身份钩子**（既有 spec 定位用，
+ * 本文件零规则）；改形态改那一个组件类，两处同时生效。 */
 
 /* ═══ Ask 气泡材质（作者令 2026-11-04 12:52 ② → 2026-11-05 09:32 改判）═══
    材质本体已整段移交 glass.css 单源（`.ask-dock .ask-bub` / `.ask-dock

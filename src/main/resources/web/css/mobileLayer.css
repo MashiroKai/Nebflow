@@ -3132,44 +3132,51 @@ body.mobile-layer #input-area {
    input.css 基类 18px 档在手机层被覆盖）。热区 48 天然 ≥44（HIG）。
    转回合按钮单源批（ui-unification-20261103-canvas-ask-resize）：选择器由
    `#send-btn/#stop-btn` 改挂 `.ds-turn-btn` —— 桌面/手机两档现在**只改组件变量**
-   （--ds-turn-btn-size / --ds-turn-btn-icon），几何声明全部归 design-system.css；
-   同一组件同时服务主会话与 Canvas Ask 面板两处（面板内钮一并升到 48/22，与主
-   会话逐属性相等 = 作者令「完全统一」的手机腿）。 */
+   （--ds-turn-btn-size / --ds-turn-btn-icon），几何声明全部归 design-system.css。
+   本块只是**全族 48/22 档**；输入条（主会话 + Canvas Ask 面板）是更窄的 40/18
+   档，见紧随其后的「输入条转回合圆钮手机档」块——两者以宿主选择器区分，不互相
+   覆盖。 */
 body.mobile-layer .ds-turn-btn {
   --ds-turn-btn-size: var(--mtap-lg);
   --ds-turn-btn-icon: var(--micon);
 }
 
-/* ── Ask 面板底钮手机档收窄（作者令 2026-11-04 13:52 逐字「手机端的发送按钮和
-   终止按钮 小一点」；ui-unification-20261103 mobile-send-stop）──────────────
-   只收**面板底钮**这一档：48 → 44（圆角随组件层 50% 恒等于半边长 22，图标
-   18 → 20 = 44×18/40 取整，内距 0 不变）；桌面 40 档一个字不动。
-   落地形状 = **只换组件槽的供源**（--ds-turn-btn-size / --ds-turn-btn-icon 改喂
-   上一段的手机档 token --mcv-size-circle/--mcv-icon），几何声明仍全部归
-   design-system.css ⇒ 组件零字面量，改数值只改 token 一处。
-   ① 为何不是改 `--mtap-lg`：那是手机层全族悬浮钮的 48 档（返回钮/chrome 键/
-      canvas 工具钮/光球/dock 同尺，canvas-chrome-size-align 钉死），动它 = 全站
-      手机腿一起变。
-   ② 为何本块加 `.ask-dock` 宿主：上面 `body.mobile-layer .ds-turn-btn` 是**全组件**
-      手机档（主会话 #send-btn/#stop-btn 48/22 —— 2026-11-03 22:15 作者报障批
-      的成果，本令不撤），本块更具体 ⇒ 只命中 Canvas Ask 面板输入条那两钮。
-   ③ ask.css 的 `max(画布 chrome 档 40, 组件槽)` 取大者：桌面腿取 40（未变），
-      手机腿取本块 44（> 40）⇒ 桌面/手机两档各走各的，互不牵动。 */
+/* ── 输入条转回合圆钮手机档（主会话 + Canvas Ask 面板**同一条声明**）─────────
+   ask-button-unify 2026-11-18（作者令逐字「Ask 的中止按钮中间的方框应该和主会话
+   的一致 发送按钮也和主会话一致吧」）：此前同一对按钮在输入条两侧各有**自己的
+   供源** —— 主会话腿 = 本块的 40/18 + `::after{-4px}`；Ask 面板腿 = 另一块
+   `body.mobile-layer .ask-dock .ds-turn-btn` 改喂 --mcv-size-circle/--mcv-icon
+   （视口 clamp 族，375w 解析 37.5/16.875）⇒ 同一轮里主会话 40/18/线宽 2.5、
+   面板 40/16.875/线宽 2，作者所见「不一致」正是这条分叉。
+   现态 = **一份声明、两个宿主**（选择器只多一枚成员，没有第二组值）：两腿的
+   圆钮边长 / 图标档 / ::after 命中外扩逐值同源，改一处两边同时变。
+   ① 40/18 的来历（主会话侧，逐字未动）：主输入条与光球共享 40:64 视觉盒比例，
+      send 与 stop 必须同档（busy 互换，js/input/composer.js applyTurnChrome）——
+      作者报障 2026-11-03 22:15「手机端输入框的发送按钮和终止按钮，大小怎么没有
+      统一？」之后的成果。
+   ② 2026-11-04 13:52「手机端的发送按钮和终止按钮 小一点」的语义**由本声明继续
+      满足**：面板底钮从该令的 44 档落到 40（= 主会话同档，且 ≤ 44，比原来更小），
+      不再需要第二组 token。
+   ③ `--mcv-size-circle` / `--mcv-icon` 两枚 token 仍有另一消费点（`.tfl-hit-send`
+      手机待办行内回复钮，见本文件下方同名块）⇒ 保留不撤；本块只是不再有 Ask
+      面板这一消费点。
+   ④ 为何不整体改 `body.mobile-layer .ds-turn-btn`（48/22）：那是手机层全族悬浮钮
+      档（返回钮/chrome 键/canvas 工具钮/光球/dock 同尺，canvas-chrome-size-align
+      钉死），动它 = 全站手机腿一起变；输入条这一族是独立的「40:64 视觉盒」档。 */
 /* The main composer shares a 40:64 visual-box scale with the voice orb.
-   Keep send and stop equal; the component retains its 44px expanded hit area. */
-body.mobile-layer #input-bar > .ds-turn-btn {
+   Keep send and stop equal; the component retains its 44px expanded hit area.
+   The Canvas Ask dock's input row consumes the same declaration. */
+body.mobile-layer #input-bar > .ds-turn-btn,
+body.mobile-layer .ask-dock .ds-turn-btn {
   --ds-turn-btn-size: 40px;
   --ds-turn-btn-icon: 18px;
 }
 /* Absolute insets use the padding box, one pixel inside the 1px border.
-   Four pixels there give a symmetric 3px expansion beyond the border box. */
-body.mobile-layer #input-bar > .ds-turn-btn::after {
+   Four pixels there give a symmetric 3px expansion beyond the border box.
+   Same two hosts: the hit capsule is one value, not one per surface. */
+body.mobile-layer #input-bar > .ds-turn-btn::after,
+body.mobile-layer .ask-dock .ds-turn-btn::after {
   inset: -4px;
-}
-
-body.mobile-layer .ask-dock .ds-turn-btn {
-  --ds-turn-btn-size: var(--mcv-size-circle);
-  --ds-turn-btn-icon: var(--mcv-icon);
 }
 
 /* ── 输入卡垂直收窄批（2026-11-01 22:1x 作者令「收窄输入框的上下高度，

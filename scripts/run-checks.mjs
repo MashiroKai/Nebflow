@@ -107,6 +107,11 @@ export const CHECKS = [
   // 引用 chip → 提交帧 refs 上（另含无 composer 明确提示 / 不误触 / 桌面不回归）。
   { name: 'canvas-tab-reference', profiles: ['frontend'], timeoutMs: 300_000,
     argv: [process.execPath, 'tests/canvas-tab-reference.spec.mjs'] },
+  // 转回合圆钮「主会话 ⇄ Canvas Ask 同源」闸（ask-button-unify 2026-11-18；作者令
+  // 「Ask 的中止按钮中间的方框应该和主会话的一致 发送按钮也和主会话一致吧」）：
+  // 逐值同源 + 主会话冻结常数 + 源码消重（C 腿）+ 真状态机（busy 臂/点停帧）。
+  { name: 'ask-button-unify', profiles: ['frontend'], timeoutMs: 300_000,
+    argv: [process.execPath, 'tests/ask-button-unify.spec.mjs'] },
   nodeCheck('canvas-families', 'check-canvas-families', ['static']),
   // 待办选项闸（待办数据模型与命名规范批 2026-11-18，作者令「每个待办必须要有选项」）：
   // 源码级断言「写侧强制点在且先于创建 / 强制面只绑待办 / 媒体是引用且可多张」。

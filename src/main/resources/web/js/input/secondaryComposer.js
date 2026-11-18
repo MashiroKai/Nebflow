@@ -27,10 +27,20 @@
 // createTurnToggle 驱动同一对按钮）。本模块自己只拥有形态与「多行自动长高」
 // （主会话 textarea 同式：auto → scrollHeight，封顶 maxHeight）。
 //
-// 依赖方向：叶子模块（只 import input/composer.js 的键道装配；composer.js 只
-// 到 imeGuard.js / ws.js）。零回边 ⇒ scripts/check-circular.mjs 不受影响。
+// 字形单源批（ask-button-unify 2026-11-18，作者令逐字「Ask 的中止按钮中间的方框
+// 应该和主会话的一致 发送按钮也和主会话一致吧」）：本模块此前**自带第二套字形**
+// ——自建 `svgNode` + `composerSendIcon()`（向上箭头 path）与 `composerStopIcon()`
+// （12×12 内缩方块 rect），与主会话 index.html `#send-btn`/`#stop-btn` 的
+// lucide `send` / `square` 是两份几何（方框实测 18→9px、线宽 2.4/2 对 2.5）。
+// 现态：本模块只产出**与主会话逐字节同形的字形占位** `<i data-lucide="send"|"square">`，
+// 由全站唯一转换点 `utils.createIconsIn` 换成同一份 vendored lucide 几何（与
+// index.html 的 `data-lucide` 走同一条通路）——第二套字形在此退役。
+//
+// 依赖方向：叶子模块（import input/composer.js 的键道装配 + utils.js 的图标转换
+// 单点；composer.js 只到 imeGuard.js / ws.js）。零回边 ⇒ scripts/check-circular.mjs 不受影响。
 
 import { bindComposerKeys } from './composer.js';
+import { createIconsIn } from '../utils.js';
 
 /** 站内唯一玻璃工具类（材质单源 = css/glass.css；本处只做词形登记）。 */
 export const SECONDARY_COMPOSER_GLASS = 'nf-glass';
@@ -45,42 +55,23 @@ export function secondaryComposerClass(identity = '') {
   return identity ? `${identity} ${SECONDARY_COMPOSER_GLASS}` : SECONDARY_COMPOSER_GLASS;
 }
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
+/** 发送字形名 = 主会话 index.html `#send-btn` 的同一个 lucide 名（字形单源）。 */
+export const SEND_ICON = 'send';
+/** 中断字形名 = 主会话 index.html `#stop-btn` 的同一个 lucide 名（形成
+ *  「圆内切换」的那枚方块；`square` = 18×18 满格 rect，非 Ask 旧的 12×12 内缩件）。 */
+export const STOP_ICON = 'square';
 
 /**
- * 造一个 SVG 命名空间节点（`<svg>`/`<path>` 必须走 createElementNS，否则图标
- * 整块不绘制；零 HTML 串、零 innerHTML —— 组件契约 R5 计数为 0）。
- * @param {string} tag
- * @param {Record<string, string>} [attrs]
- * @param {SVGElement[]} [children]
- * @returns {SVGElement}
+ * 字形占位（`<i data-lucide=…>`）——与 index.html 静态标记同形，由
+ * `createIconsIn()` 换成 vendored lucide 的同一份几何。本函数**不**自建 SVG：
+ * 任何在此处新写的 `<path d=…>` 都是第二套字形。
+ * @param {string} name
+ * @returns {HTMLElement}
  */
-function svgNode(tag, attrs, children) {
-  const node = /** @type {SVGElement} */ (document.createElementNS(SVG_NS, tag));
-  if (attrs) for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
-  if (children) for (const child of children) node.appendChild(child);
-  return node;
-}
-
-const STROKE = { fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
-
-/**
- * 发送字形（与主会话 #send-btn 同一线性语言；Canvas Ask 批冻结的原字形，
- * 本批收进单源后逐字节不变）。
- * @returns {SVGElement}
- */
-export function composerSendIcon() {
-  return svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
-    [svgNode('path', { d: 'M12 19V5M5 12l7-7 7 7' })]);
-}
-
-/**
- * 中断字形（lucide square 族；与主会话 #stop-btn 同语）。
- * @returns {SVGElement}
- */
-export function composerStopIcon() {
-  return svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
-    [svgNode('rect', { x: '6', y: '6', width: '12', height: '12', rx: '2' })]);
+function turnGlyph(name) {
+  const i = document.createElement('i');
+  i.setAttribute('data-lucide', name);
+  return i;
 }
 
 /**
@@ -139,7 +130,7 @@ export function createSecondaryComposer(opts = {}) {
   sendBtn.type = 'button';
   sendBtn.className = [sendHook, 'ds-turn-btn', 'ds-turn-btn--send'].filter(Boolean).join(' ');
   if (sendLabel) sendBtn.setAttribute('aria-label', sendLabel);
-  sendBtn.appendChild(composerSendIcon());
+  sendBtn.appendChild(turnGlyph(SEND_ICON));
 
   /** @type {HTMLButtonElement|null} */
   let stopBtn = null;
@@ -148,11 +139,15 @@ export function createSecondaryComposer(opts = {}) {
     stopBtn.type = 'button';
     stopBtn.className = [stopHook, 'ds-turn-btn', 'ds-turn-btn--stop'].filter(Boolean).join(' ');
     if (stopLabel) stopBtn.setAttribute('aria-label', stopLabel);
-    stopBtn.appendChild(composerStopIcon());
+    stopBtn.appendChild(turnGlyph(STOP_ICON));
   }
 
   root.append(input, sendBtn);
   if (stopBtn) root.appendChild(stopBtn);
+
+  // 字形转换：与 index.html 的 `<i data-lucide>` 走同一条替换通路（utils.js 是
+  // 全站唯一的 data-lucide → svg 转换点）——消费方不必各自记得转换。
+  createIconsIn(root);
 
   if (onSend) {
     // 键盘/IME/发送判定 = 主会话同一实现（本模块只装配，不复制判定）。
