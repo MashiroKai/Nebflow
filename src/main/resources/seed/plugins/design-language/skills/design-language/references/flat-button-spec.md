@@ -8,9 +8,11 @@ status: active
 > 作者令（2026-11-05 13:35，逐字）：
 > 「我们的按钮扁平化风格要求要落实到各处 不管是hover还是点击 或者按下。」
 >
-> 本文是**按钮扁平化的唯一规范正文**：禁止项、允许项、六态定义、单点机制、
-> 例外清单。可执行面 = `scripts/check-flat-buttons.mjs`（前端门禁链
-> `make frontend-gates` + CI），它从本文的「例外清单」节读数据 ——
+> 本文是**按钮面的唯一规范正文**，两层判据：
+> ① **扁平化**（§1–§4：六态、禁厚度道具）—— 执行器 = `scripts/check-flat-buttons.mjs`；
+> ② **统一来源**（§5–§6：唯一组件、禁内联绕过、族登记同步）—— 执行器 =
+> `scripts/check-button-source.mjs`（ui-design-requirements 批 2026-11-18 加）。
+> 两层的判据与豁免**都在本文**；「按钮面选择器」的判定单源在 `scripts/lib/button-face.mjs`。
 > **改判据改本文，改豁免也改本文**，脚本只是执行器。
 
 ## 1. 扁平的定义
@@ -108,7 +110,8 @@ status: active
 ## 4. 按钮族登记表
 
 见本批交付报告（`<dataRoot>/projects/stand/.stand/docs/flat-button-everywhere__*.md`
-§②）的盘点表：46 个登记族的六态现状、处置与证据。族表以那份表为准并随批追加。
+§②）的盘点表：46 个登记族的六态现状、处置与证据。**机器可读的族表 = 本文 §6**
+（`check-button-source.mjs` 逐行读）；§4.1 是叙述面，§6 是判据面，两者同集合。
 
 ### 4.1 随批追加的族
 
@@ -116,6 +119,110 @@ status: active
 |---|---|---|---|---|
 | toggle-unify（2026-11-05） | `.nb-toggle`（**全站唯一开关族**） | `web/css/sidebar.css` 组件节（唯一造型）+ `web/css/stand-tokens.css` 的 `--nf-toggle-*` 段（唯一数值）+ `web/js/toggle.js`（唯一行为：`toggleHTML` / `createToggle` / `bindToggle` / `setToggleState` / `setToggleBusy`） | 默认（OFF：中性底 + 1px 描边）/ hover（OFF 档描边递进一档，ON 档保绿）/ ON（实心品牌绿轨道 + 圆钮走满行程 18px）/ `:focus-visible`（`2px outline` + `2px offset`，不用影子）/ `:disabled`（`opacity .5` + `not-allowed`）/ 不确定（`aria-busy="true"` 虚线描边 + 圆钮 `.55`）/ 减少动态（`prefers-reduced-motion` ⇒ 0.01ms 瞬间落位） | 几何 = 作者裁定「A 胶囊滑块」：桌面 40×22 轨道 + 16 圆钮（方案页 `design/toggle-options/` 实测档），手机层仍走独立 iOS 档（`body.mobile-layer`，51×31）。本批收编了最后三族自画开关（`.tfl-switch` / `.daemon-autostart` / `.pp-toggle`），全仓零第二套。**未申请任何例外**：轨道/圆钮零阴影、零渐变、位移只走 translateX。 |
 | canvas-video-player（2026-11-05） | `.canvas-video-btn` | `web/css/split.css`（几何/配色）+ `web/css/flatButtons.css` 共享态层（六态）+ `web/js/viewers/video.js`（DOM/行为） | 默认（透明底 + 无边框）/ hover（`--btn-hover-bg`，关在 `(hover:hover)`）/ 按下（`--btn-press-bg` + `scale(--btn-press-scale)`）/ `:focus-visible`（2px 描边环 + 2px offset）/ `:disabled`（画中画在不支持的浏览器上）/ 触屏档（`--btn-press-scale-touch` + 更深底色） | 画布视频自研控件族（播放/静音/画中画/全屏）。进度条与音量条是 `role="slider"` 的滑轨件（不是按钮），零厚度道具走同一口径；本族随 `check-flat-buttons.mjs` 判据全绿，未申请任何例外。 |
+
+## 5. 统一来源（唯一按钮组件 / 规格）
+
+> ui-design-requirements 批（2026-11-18）：作者同轮要求 ——「全站按钮必须来自统一按钮
+> 组件/规格；出现不统一按钮（内联自定义样式绕过统一组件）必须能被 lint / 静态闸 /
+> 测试拦住」，并要求把「新按钮加入 → 同步更新统一规格与检测」写成流程。
+
+### 5.1 统一的三件（已经存在，禁止再造第四件）
+
+| 件 | 落点（唯一出生地） | 职责 |
+|---|---|---|
+| ① 令牌族 | `css/sapphire.css` 按钮 token 块（`--btn-*`）＋ `css/stand-tokens.css` 相关段 | 一切数值（幅度 / 环宽 / 色阶 / 时长 / 禁用档） |
+| ② 基类 | `css/design-system.css` 的 `.ds-btn`＝通用六态参考实现；`css/settingsRows.css` 的 `.set-btn`＝面板档尺寸 | 「六态该动哪个属性、动多少」的唯一范例 |
+| ③ 共享态层 | `css/flatButtons.css`（`index.html` 最后加载）＋ 其登记表 | 把 ①② 的**行为**补给登记族；族文件只留自己的配色与几何 |
+
+### 5.2 判据（执行器 `scripts/check-button-source.mjs`）
+
+| 号 | 判据 | 红的样子 | 处置 |
+|---|---|---|---|
+| **B1** | **禁内联造型绕过**：HTML / JS 里给按钮面元素写 `style="…"`，且 style 里含造型属性（`background*` / `color` / `border*` / `padding*` / `font-size` / `opacity` / `transform` / `transition`） | `<button class="pp-btn" style="border:none;background:transparent;box-shadow:none;color:var(--…)">` | 把造型挪回族文件 + 走令牌；确需保留 ⇒ 进 §5.3 存量基线并写明理由 |
+| **B2** | **禁登记漂移**：`css/flatButtons.css` 的登记族集合必须与本文件 §6 表**逐名同集合**（双向：CSS 多一个 ⇒ 红；本文多一个 ⇒ 红） | 加了族只改 CSS 没回填本文（或反过来） | 两处同步；不打算进共享态层的族**不要**写进 §6 |
+
+> B1 的判定面 = 按钮面元素（`<button>` / `role="button"` / 类名段命中
+> `btn/button/toggle/switch/pill/fab` 者），与扁平判据同源（`scripts/lib/button-face.mjs`）。
+
+### 5.3 例外与存量（两档，别混）
+
+- **原则性例外**：写进本文件、写明理由（扁平项进「例外清单」表；来源项在 §6 表把状态列写
+  `例外（理由）`）。**空理由 = 无效例外 = 红。**
+- **存量**：记在 `scripts/button-source-baseline.json`，**只许降不许升**；加一条 = 声称
+  「这个绕过是有意保留的」，必须在批报告里点名理由。
+
+### 5.4 新按钮加入清单（四步，缺一不可）
+
+1. **先查** §6 表与 `assets/components.css` 有没有等价族 —— 有则复用，**不新建**
+   （重复实现 = `references/disclosure-dedup-spec.md` §3.1 U6 违规）。
+2. **建族**：配色/几何只写在该族文件；六态行为交给共享态层（不在族里重抄 hover/active/focus）。
+3. **两处同步登记**：`css/flatButtons.css` 登记表加类名 **＋** 本文 §6 表加一行。
+4. **跑闸**：`node scripts/check-flat-buttons.mjs` 与 `node scripts/check-button-source.mjs`
+   两条都绿，按钮才算「加入了统一规格」。
+
+> 第 3 步不是纪律口号，是**机检强制项**（B2）：只改一处 = 门禁红。
+> 「新按钮加入时必须同步更新统一规格与检测」这条流程靠 B2 落地，而不是靠人记得。
+
+## 6. 按钮族登记表（`check-button-source.mjs` 逐行读，禁改格式）
+
+表格语义：`族（选择器）` = 被共享态层登记的按钮面类/ID（B2 逐名比对的那一列）；
+`登记项` = 共享态层为该族补的态（按=按下 / 焦=焦点可见 / 禁=禁用 / hover=悬停 / 过=状态过渡
+/ 触=触屏档 / 减=减少动效兜底；**空列为「族自身写」**）；`备注` = 例外或批次出处。
+**新增一行 = 同时在 `css/flatButtons.css` 加同名类名，否则 B2 红。**
+
+| 族（选择器） | 登记项 | 备注 |
+|---|---|---|
+| `.activity-avatar` | 焦禁 | — |
+| `.activity-btn` | 禁 | — |
+| `#agent-avatar-btn` | 按焦禁 | — |
+| `.agent-detail-prompt-toggle` | 按焦禁hover过减 | — |
+| `.canvas-close-btn` | 按焦禁hover过减 | — |
+| `.canvas-refback-btn` | 焦禁过减 | — |
+| `.canvas-video-btn` | 按焦禁hover过减 | canvas-video-player 批（2026-11-05） |
+| `.canvas-zoom-btn` | 焦禁过减 | — |
+| `.cfg-btn-save` | 按焦禁hover过减 | — |
+| `.cfg-eye-btn` | 按焦禁hover过减 | — |
+| `.ds-turn-btn` | 禁 | 基类族（六态参考实现在 `.ds-btn`） |
+| `.dvp-pill` | 按禁hover过减 | — |
+| `.explorer-action-btn` | 按禁hover过减 | — |
+| `.explorer-folder-btn` | 按禁hover过减 | — |
+| `.fm-attach-btn` | 焦 | — |
+| `.fm-device-desc-btn` | 焦 | — |
+| `.fm-fab` | 按禁hover过减 | — |
+| `.fm-gs-open` | 按焦禁hover过减 | — |
+| `.fm-modal-close` | 按焦禁hover过减 | — |
+| `.fm-modal-title-btn` | 按禁hover过减 | — |
+| `.fm-msg-btn` | 焦 | — |
+| `.folder-delete` | 按焦禁hover过减 | — |
+| `.icon-btn` | 禁 | — |
+| `.login-modal-btn` | 焦 | — |
+| `.lt-btn` | 按焦禁hover过 | canvas-button-unify 收口（2026-11-18） |
+| `.memory-btn` | 按焦禁hover过减 | — |
+| `.mh-search-fab` | 按焦禁hover过减 | 手机层搜索浮钮 |
+| `.mp-mode-btn` | 按焦禁hover过减 | — |
+| `.neblink-switch-btn` | 焦 | — |
+| `.panel-btn` | 按焦禁hover过减 | — |
+| `.panel-toggle-btn` | 按禁 | — |
+| `#perception-btn` | 按焦禁 | ID 承载族（单独成块，避免 ID 特异性污染类清单） |
+| `.pp-btn` | 按焦hover过减 | — |
+| `.proj-create-fab` | 按禁hover过减 | — |
+| `.proj-flowmap-fab` | 按禁hover过减 | — |
+| `.project-desc-edit-btn` | 按禁hover过减 | — |
+| `.project-link-btn` | 按禁hover过减 | — |
+| `.project-unmount-btn` | 按禁hover过减 | — |
+| `#reminder-btn` | 按焦禁 | ID 承载族 |
+| `.reminder-create-btn` | 焦禁 | — |
+| `.scroll-new-pill` | 禁 | — |
+| `#search-btn` | 按禁 | ID 承载族 |
+| `#send-btn` | 按 | ID 承载族（绿实色族，配色族自身写） |
+| `.session-delete` | 按焦禁hover过减 | — |
+| `.settings-avatar-entry` | 禁 | — |
+| `.settings-collapse-toggle` | 按焦禁hover过减 | — |
+| `.task-delegate-btn` | 按焦 | 本批收尾补位 |
+| `.tfl-fab-add` | 禁 | — |
+| `.todo-create-btn` | 按焦禁 | 本批收尾补位 |
+| `.tw-btn` | 按焦禁 | 本批收尾补位 |
+| `.viewer-retry-btn` | 按焦禁hover过 | canvas-button-unify 收口（2026-11-18） |
 
 ## 例外清单
 

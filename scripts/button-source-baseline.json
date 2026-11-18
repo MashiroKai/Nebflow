@@ -1,0 +1,27 @@
+{
+  "_comment": "check-button-source.mjs 存量基线（ui-design-requirements 批 2026-11-18）：每条 = 一处**判定保留**的内联造型按钮面（B1）。按 flat-button-spec.md §5.3，存量只许降不许升；加条目 = 声称「这个绕过是有意保留的」，必须在批报告里点名理由。重锚：node scripts/check-button-source.mjs --update-baseline",
+  "generatedAt": "2026-11-18T09:10:07.379Z",
+  "total": 2,
+  "allow": [
+    {
+      "key": "src/main/resources/web/js/perception.js::2342e3d58c",
+      "file": "src/main/resources/web/js/perception.js",
+      "props": [
+        "border",
+        "background",
+        "box-shadow",
+        "color"
+      ],
+      "snippet": "<button class=\"pp-btn\" style=\"…\">"
+    },
+    {
+      "key": "src/main/resources/web/js/perception.js::0130932acc",
+      "file": "src/main/resources/web/js/perception.js",
+      "props": [
+        "border-radius",
+        "padding"
+      ],
+      "snippet": "<button class=\"pp-btn primary\" style=\"…\">"
+    }
+  ]
+}

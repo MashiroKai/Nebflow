@@ -1,6 +1,7 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
   flat-buttons glass toggle toggle-geometry scroll-pill input-surface mobile-canvas-strip badge-words \
+  ui-structure copy-budget button-source \
   plugin-seed-parity check-static check-sdd test-scripts lint-tools
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -113,6 +114,20 @@ badge-words:
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
 flat-buttons:
 	node scripts/check-flat-buttons.mjs
+
+# ── 前端设计要求四条规范：单闸入口（ui-design-requirements 批 2026-11-18）────────
+# 规范正文（改判据改规范，脚本只是执行器）：
+#   seed/plugins/design-language/skills/design-language/references/
+#     disclosure-dedup-spec.md（渐进式披露 + 无重复）· explanatory-copy-spec.md（解释性文字）
+#     flat-button-spec.md §5/§6（统一按钮来源）
+ui-structure:
+	node scripts/check-ui-structure.mjs
+
+copy-budget:
+	node scripts/check-copy-budget.mjs
+
+button-source:
+	node scripts/check-button-source.mjs
 
 # ── 毛玻璃：单闸入口（与 flat-buttons 同形；CI 同名 step 调的就是它）──────────
 glass:

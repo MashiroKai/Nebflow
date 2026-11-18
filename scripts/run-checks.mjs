@@ -130,6 +130,16 @@ export const CHECKS = [
   nodeCheck('mobile-canvas-strip', 'check-mobile-canvas-strip'),
   nodeCheck('panel-unify', 'check-panel-unify'),
   nodeCheck('settings-ios-rows', 'check-settings-ios-rows'),
+  // 前端设计要求批（ui-design-requirements 2026-11-18）：作者令「浮现式披露 / 不要有重复的
+  // 功能和信息 / 统一按钮 / 解释性文字写作要求」四条规范的可执行面。三条都是纯静态扫描
+  // （无浏览器、无实例），故与其它前端闸同在 static+frontend 两个 profile 下跑。
+  // 规范正文（改判据改规范，脚本只是执行器）：
+  //   seed/plugins/design-language/skills/design-language/references/disclosure-dedup-spec.md
+  //   …/explanatory-copy-spec.md
+  //   …/flat-button-spec.md §5/§6
+  nodeCheck('ui-structure', 'check-ui-structure'),
+  nodeCheck('copy-budget', 'check-copy-budget'),
+  nodeCheck('button-source', 'check-button-source'),
   // 陈旧面板行批（2026-11-18）：后台智能体面板「活跃行 ⊆ 引擎活跃快照」不变量——
   // durable store 的重启打断行（pending-recovery）曾被折成「进行中」+ 690h 时钟。
   nodeCheck('bg-panel-active-liveness', 'check-bg-panel-active-liveness'),
@@ -159,7 +169,10 @@ export const CHECKS = [
   ].map(([name, script]) => nodeCheck(name, script, ['static'])),
   { name: 'tooling-lint', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, 'node_modules/eslint/bin/eslint.js', 'eslint.config.mjs',
-      'scripts/check-js-types.mjs', 'scripts/run-checks.mjs', 'scripts/check-sdd.mjs', 'scripts/check-openspec.mjs', 'scripts/check-message-item-unify.mjs', 'scripts/tests/'] },
+      'scripts/check-js-types.mjs', 'scripts/run-checks.mjs', 'scripts/check-sdd.mjs', 'scripts/check-openspec.mjs', 'scripts/check-message-item-unify.mjs',
+      // 前端设计要求批（2026-11-18）：三条新闸与它们的共享判定库同受 lint 覆盖。
+      'scripts/check-ui-structure.mjs', 'scripts/check-copy-budget.mjs', 'scripts/check-button-source.mjs',
+      'scripts/lib/', 'scripts/tests/'] },
   { name: 'script-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, '--test', ...scriptTests] },
   { name: 'worktree-manifest', profiles: ['static'], timeoutMs: 120_000,

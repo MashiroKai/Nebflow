@@ -259,3 +259,28 @@ last_verified: 2026-10-21
 > **两者不一致以 references 文件为准**；防漂移由 `scripts/check-design-spec-sync.mjs` 钉住
 > （spec 表 ↔ 运行时 `--ds-*` ↔ 账本 `--dl-*` 三向同值，任一向漂移即红）。改刻度顺序：
 > references 表 → design-system.css → assets/tokens.css → 跑闸。
+
+## 11. 前端设计四条要求（渐进式披露 / 无重复 / 统一按钮 / 解释性文字）
+
+> 作者令（2026-11-18 16:45，逐字）：「然后底部的账户栏 功能重复 信息重复 这个要进入我们
+> 插件的前端设计要求 渐进式披露 好的设计应该是自解释的 并且不要有重复的功能和信息」＋
+> 「而且我们要形成解释性文字的统一设计规范和写作要求在插件里」。
+> 本节是**入口与四条规则的一句话本体**；判据、预算表、登记表、正反例全在各 reference
+> 正文里（**改判据改正文，脚本只是执行器**）。
+
+| # | 规则（一句话） | 正文（判据 + 正反例） | 机检（`make frontend-gates` 已含） |
+|---|---|---|---|
+| 1 | **渐进式披露**：默认只给「当下要做判断」的摘要与入口，次要/高级/危险内容折叠或进次级页；折叠层收起时必须在场摘要与错误 | `references/disclosure-dedup-spec.md` §1（判定问句 Q1–Q6 + 折叠预算表 + 设置页反例） | `node scripts/check-ui-structure.mjs`（① 折叠预算） |
+| 2 | **单一来源·无重复**：同一栏目名 / 同一信息 / 同一功能 / 同一控件实现只允许出现一次 | `references/disclosure-dedup-spec.md` §3（U1–U6 + 三处已实锤反例 + 正例） | `node scripts/check-ui-structure.mjs`（② 标题唯一 / ③ 信息组渲染点）· `check-button-source.mjs`（B2） |
+| 3 | **统一按钮来源**：全站按钮必须来自统一按钮组件/规格；内联自造型绕过或登记漂移即红；新按钮加入 = §5.4 四步（两处同步登记 + 跑闸） | `references/flat-button-spec.md` §5/§6（判据 B1/B2 + 族登记表 + 加入清单） | `node scripts/check-button-source.mjs` ＋ `check-flat-buttons.mjs` |
+| 4 | **解释性文字**：只有三处合法落点（就地 hint / 折叠帮助 / 独立页），各有字数上限；一句一事实、说约束不说步骤、禁括号补注 | `references/explanatory-copy-spec.md`（位置档 + 长度预算表 + 写作要求 W1–W6 + 正反例） | `node scripts/check-copy-budget.mjs`（预算 + 存量基线） |
+
+**两条轴别混**（最容易被绕过的点）：
+- 「这句话**该不该存在**」（是事实还是教学）→ stand-dev `references/frontend/visual-style.md`
+  铁律 7 / 8 ＋ `scripts/check-self-explaining.mjs`，本节不复制；
+- 「该存在的那一句**怎么写、放哪、多长**」→ 本包 `references/explanatory-copy-spec.md`。
+  **不许用「它很短」为教学句辩护，也不许用「它是事实」为超长句辩护。**
+
+**机检覆盖边界（诚实声明）**：三条脚本只覆盖登记在正文里的判定面（折叠预算表 / 表 1 / 表 2 /
+族登记表 / 长度预算表）；「同一可见文案同屏出现两次」是渲染事实，静态判不出 ⇒ 记为人工评审项
+＋待建渲染腿（两文 §4/§6）。**新面先登记进正文，再受约束。**

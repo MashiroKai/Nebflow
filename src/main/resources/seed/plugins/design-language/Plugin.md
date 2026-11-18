@@ -4,7 +4,7 @@
 
 design-language 是 Stand 客户端的**唯一视觉基准包**：以官网 mystand.space 的真实 design tokens（`stand-website` 仓 `app/globals.css` @theme 块）为基准、与客户端 Sapphire Glass 玻璃体系对齐后固化的设计语言。节点装载后获得「按档取值」的能力——配色、字体阶梯、圆角阴影阶梯、间距栅格、动画时长缓动、组件固定尺寸档、文案 tone，全部给了值 + 用途 + 反例。内含 1 个 skill：
 
-- `skills/design-language/`——设计语言规范本体（SKILL.md 规则面）+ `assets/tokens.css`（token 账本，可直接引用）+ `assets/components.css`（组件原型参考实现）。
+- `skills/design-language/`——设计语言规范本体（SKILL.md 规则面）+ `assets/tokens.css`（token 账本，可直接引用）+ `assets/components.css`（组件原型参考实现）+ `references/`（各条规范的单主题正文：几何刻度 / 按钮 / 毛玻璃 / 输入面 / 面板族 / **渐进式披露与无重复 / 解释性文字写作**）。
 
 **包纪律一句话**：改任何 UI 前先查本包 token 表——值从表里取，档从表里选；表里没有的先补表再使用，禁止裸值直写。
 
@@ -23,10 +23,18 @@ design-language/                 （包根）
   Plugin.md                      ← 本文件（包根使用指导件）
   skills/
     design-language/
-      SKILL.md                   ← 规范规则面：八节规范 + 使用规则表 + 反例（注入面）
+      SKILL.md                   ← 规范规则面：十节规范 + 前端设计四条要求（§11）+ 使用规则表 + 反例（注入面）
       assets/
         tokens.css               ← token 账本：--dl-* 全量定义，亮/暗双主题，逐 token 注释值+用途+反例
         components.css           ← 组件原型参考实现：弹窗/卡/按钮/输入/行/徽标 的 sm/md/lg 固定档
+      references/                ← 单主题规范正文（改判据改这里；脚本只是执行器）
+        design-language-tokens.md   ← 四类几何刻度定版（圆角/间距/内距矩阵/字号阶梯）
+        flat-button-spec.md         ← 按钮规范：①扁平六态 §1–§4 ②统一来源 §5/§6（B1/B2 + 族登记表）
+        glass-spec.md               ← 毛玻璃唯一标准
+        input-surface-spec.md       ← 输入面唯一造型
+        panel-spec.md               ← 面板族唯一版式
+        disclosure-dedup-spec.md    ← 渐进式披露 + 单一来源无重复（Q1–Q6 / U1–U6 / 折叠预算表 / 判定面登记表）
+        explanatory-copy-spec.md    ← 解释性文字写作规范（位置档 / 长度预算表 / W1–W6）
 ```
 
 ## 4. 三件怎么配合
@@ -44,7 +52,15 @@ design-language/                 （包根）
 
 | skill 路径（自 skills/） | 一句话括注 |
 |---|---|
-| design-language/SKILL.md | 设计语言八节规范：配色/字体/字距行高/圆角阴影/间距/动画/组件尺寸档/文案 tone，逐 token 值+用途+反例 |
+| design-language/SKILL.md | 设计语言十节规范（配色/字体/字距行高/圆角阴影/间距/动画/组件尺寸档/文案 tone）＋前端设计四条要求（§11 渐进式披露 / 单一来源无重复 / 统一按钮来源 / 解释性文字），逐 token 值+用途+反例 |
+
+### 5.1 四条前端设计要求的机检对照（改判据改 references 正文）
+
+| 要求 | 正文 | 机检脚本（`make frontend-gates` 已含；单闸 target 同名） |
+|---|---|---|
+| 渐进式披露 · 无重复 | `references/disclosure-dedup-spec.md` | `scripts/check-ui-structure.mjs`（`make ui-structure`） |
+| 统一按钮来源 | `references/flat-button-spec.md` §5/§6 | `scripts/check-button-source.mjs`（`make button-source`）＋`check-flat-buttons.mjs` |
+| 解释性文字写作 | `references/explanatory-copy-spec.md` | `scripts/check-copy-budget.mjs`（`make copy-budget`） |
 
 ## 6. 选 skill 决策树
 
@@ -65,4 +81,11 @@ design-language/                 （包根）
 
 - **单源纪律**：值改客户端、账本跟随；本包与客户端 CSS 值漂移视为 bug。
 - **反例即判例**：每次视觉整改发现的跑偏值（如 10px hint、13.5px 输入、5px 按钮圆角）沉淀进 SKILL.md 反例列，防复发。
+- **判据改正文（2026-11-18 起）**：本包 `references/*.md` 是各条规范判据的**唯一正文**，
+  可执行脚本（`check-ui-structure` / `check-copy-budget` / `check-button-source` /
+  `check-flat-buttons`）逐行读正文里的**机检表**（折叠预算表 / 判定面登记表 / 族登记表 /
+  长度预算表 / 例外清单）。改判据的顺序永远是 **正文 → 脚本 → 重锚存量基线**，反了就是放水。
+- **新面先登记**：新出现一个「同一信息多处渲染」的页面面、一个新区块、一个按钮族，先把它
+  登记进对应正文的机检表，再让门禁判红；不登记的面**不受约束**（这是明示的覆盖边界，不是
+  「全站已干净」）。
 - **本文件定位**：Plugin.md 是按需 Read 面——SKILL.md 是注入面权威；两者不一致时以 SKILL.md 为准并回改本文。
