@@ -358,6 +358,9 @@
   --ds-media-letterbox: #17191f;             /* 媒体卡留黑底（墨常量：亮暗各一档） */
   --ds-shadow-media-card: 0 5px 16px rgb(0 0 0 / 0.16);      /* 叠卡卡层投影（墨α） */
   --ds-dur-stack: 0.42s;                     /* 叠卡收放/翻页既有时长档 */
+  /* Media-stack switch: sampled critically damped response, shared by all viewports. */
+  --ds-dur-stack-switch: 0.55s;
+  --ds-ease-stack-switch: linear(0, 0.18 10%, 0.42 20%, 0.62 30%, 0.77 40%, 0.87 50%, 0.93 60%, 0.965 70%, 0.984 80%, 0.995 90%, 1);
 
   /* ── ⑭ 弹层层族槽（ui-unification-20261103-overlays）──
      缺槽先扩再消费：⑦门入场加载卡/接管卡与⑧命令面板+弹层族的**层级带 /

@@ -962,8 +962,10 @@ function buildMediaStack(items, opts) {
     stack.suppressClick = true;
     view.classList.add('is-switching');
     const from = layer.style.transform || 'translate3d(0,0,0) rotate(0deg) scale(1)';
-    const duration = parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200;
-    const options = { duration, easing: 'ease-in-out' };
+    const motionStyle = getComputedStyle(view);
+    const duration = parseFloat(motionStyle.getPropertyValue('--ds-dur-stack-switch')) * 1000;
+    const easing = motionStyle.getPropertyValue('--ds-ease-stack-switch').trim();
+    const options = { duration, easing };
     // Establish final slot geometry before starting, then animate every visible
     // final slot from behind the incoming face to its actual fan transform.
     const oldFront = front;
