@@ -150,7 +150,7 @@ export function messageFooter(spec = {}) {
 /**
  * 叠卡**合起**态 footer —— 属于**整组**（一枚节点，动作作用于全部条目）。
  * @param {{ items?: any[], ts?: number, timeText?: string, label?: string,
- *           downloadFor?: (items: any[]) => HTMLElement|null }} spec
+ *           downloadFor?: (items: any[]) => HTMLButtonElement|null }} spec
  * @returns {HTMLElement} `.duration-badge.pop-stack-group-footer`
  */
 export function stackGroupFooter(spec = {}) {
@@ -185,7 +185,7 @@ export function stackGroupFooter(spec = {}) {
 /**
  * 叠卡**展开**态每卡独立 footer —— 携带该卡自己的下载键（唯一基座 =
  * `.duration-badge.pop-item-footer`；A 另可有引用钮，由调用方 append）。
- * @param {{ download?: HTMLElement|null, quote?: HTMLElement|null }} spec
+ * @param {{ download?: HTMLButtonElement|null, quote?: HTMLElement|null }} spec
  * @returns {HTMLElement} `.duration-badge.pop-item-footer`
  */
 export function stackCardFooter(spec = {}) {

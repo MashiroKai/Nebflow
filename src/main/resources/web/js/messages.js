@@ -2317,12 +2317,14 @@ function buildMediaStackGroup(entrys) {
       if (!e || !e.downloadable) return null;
       return buildDownloadKey(e.att, e.kind, e.src);
     },
-    // 折叠态整组 footer（属**整组**）：整组下载键（逐件走既有下载腿）；展开态由
-    // 组件隐藏（分态机唯一，见 popArtifacts setExpanded）。
-    groupFooterFor: () => stackGroupFooter({
-      items: entrys,
-      downloadFor: () => buildStackGroupDownloadKey(entrys),
-    }),
+  });
+  // 合起态整组 footer（属**整组**）：基座 = chatItem.stackGroupFooter（整组下载键，
+  // 逐件走既有下载腿）。作为**兄弟节点**交宿主追加（不塞进 `.pop-stack-area` 横排行
+  // ——保折叠卡几何与「展开 N」钮位）；分态由组件 NF_POP_EXPANDED 事件驱动（宿主
+  // bubbleEl 只听不另判）。
+  /** @type {any} */ (area).nfStackGroupFooter = stackGroupFooter({
+    items: entrys,
+    downloadFor: () => buildStackGroupDownloadKey(entrys),
   });
   // 🔴 只挂 fm-att（QA/下载键宿主）+ fm-att-stack（叠卡标记）；禁挂 fm-att-media
   // （平面媒体卡根语义 —— 见本函数头注 fm-stack-pill-align 批口径：挂上即被宿主
@@ -2349,7 +2351,7 @@ function buildStackGroupDownloadKey(entrys) {
   const list = all.filter(e => e && e.downloadable);
   const btn = el('button', 'fm-att-dl msg-copy msg-dl msg-group-dl');
   btn.type = 'button';
-  btn.innerHTML = DOWNLOAD_SVG;
+  setDownloadIcon(btn);
   const label = t('messages.attachDownload');
   btn.title = label;
   btn.setAttribute('aria-label', label);
@@ -2369,6 +2371,12 @@ function buildStackGroupDownloadKey(entrys) {
     });
   });
   return btn;
+}
+
+// 下载键字形单点（唯一行内写入点，裸 innerHTML 计数不增）：叠卡整组键与单件键
+// 共用同一枚字形，禁第二处 `innerHTML = DOWNLOAD_SVG`。
+function setDownloadIcon(btn) {
+  btn.innerHTML = DOWNLOAD_SVG;
 }
 
 /** 文件/状态附件卡：主会话文件面（`.file-card`：图标 + 名称 + footer 信息行）。
@@ -2497,7 +2505,7 @@ function buildDownloadKey(att, kind, src, opts = {}) {
   const label = t('messages.attachDownload');
   btn.title = label;
   btn.setAttribute('aria-label', `${label}: ${(att && att.name) || ''}`);
-  btn.innerHTML = DOWNLOAD_SVG;
+  setDownloadIcon(btn);
   btn.addEventListener('click', (e) => {
     // 角标位在可点面（媒体面/叠卡展开行）内：阻止冒泡成宿主的预览/翻页动作。
     e.stopPropagation();
@@ -2516,7 +2524,7 @@ function flashDownloadKey(btn, ok) {
   btn.classList.add(ok ? 'copied' : 'copy-failed');
   setTimeout(() => {
     if (!btn.isConnected) return;
-    btn.innerHTML = DOWNLOAD_SVG;
+    setDownloadIcon(btn);
     btn.classList.remove(ok ? 'copied' : 'copy-failed');
   }, ok ? 1500 : 2000);
 }
@@ -3602,6 +3610,17 @@ export function bubbleEl(m, conv) {
     // 卡区加宽标记（叠卡盒 220 + 扇形出画 + 「展开 N」角标 ≈ 350px > 行 78% 上限）：
     // 行放开 max-width（泡宽 = 内容自适应不受影响），CSS 侧 `.fm-msg.fm-msg-atts`。
     wrap.classList.add('fm-msg-atts');
+    // 叠卡 footer 分态（消息条目统一批 2026-11-18）：合起态**整组** footer 在场；
+    // 展开态退场（每卡自己的 footer 承担）。态机唯一 = 叠卡组件派发的
+    // NF_POP_EXPANDED 事件，本处只听不另判。
+    const gf = /** @type {any} */ (attGroup).nfStackGroupFooter;
+    if (gf) {
+      wrap.appendChild(gf);
+      attGroup.addEventListener(EVENTS.NF_POP_EXPANDED, (e) => {
+        const d = /** @type {CustomEvent} */ (e).detail;
+        gf.style.display = d && d.expanded ? 'none' : '';
+      });
+    }
   }
 
   // msgmenu 一期：被引消息 id 挂**气泡节点** dataset（🔴「跳转」的**唯一**预留挂点；

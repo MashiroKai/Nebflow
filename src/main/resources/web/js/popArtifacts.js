@@ -651,12 +651,12 @@ function buildMediaStack(items, opts) {
   // 文本/文件行同族（composer footer 动作行）。**只用动作位，不长相位置键**
   // （与 onOpen/cornerFor 同一纪律，见头注「展开 N 钮位置不是 API 参数位」）。
   const quoteDescFor = (opts && typeof opts.quoteDescFor === 'function') ? opts.quoteDescFor : null;
-  // 叠卡 footer 分态（消息条目统一批 2026-11-18）：折叠 = 整组一枚 footer
-  // （groupFooterFor）；展开 = 每卡独立 footer 带下载键（cardFooterFor）。两腿
-  // 的**基座**在 chatItem（stackGroupFooter / stackCardFooter），本组件只负责
-  // 「何时存在」+ 状态标记 data-nf-stack-footer ——精简单点；禁调用点各写一份。
+  // 展开态每卡独立 footer 的供给位（消息条目统一批 2026-11-18）：基座 =
+  // chatItem.stackCardFooter；本组件只负责「何时存在」+ 状态标记。**合起态整组
+  // footer** 由消费方按 stackGroupFooter 装配并挂在本组件派发的 NF_POP_EXPANDED
+  // 事件上（唯一态机 = 本组件；不把 footer 塞进 `.pop-stack-area` 的横排行里，
+  // 免得改动折叠卡几何与「展开 N」钮位）。
   const cardFooterFor = (opts && typeof opts.cardFooterFor === 'function') ? opts.cardFooterFor : null;
-  const groupFooterFor = (opts && typeof opts.groupFooterFor === 'function') ? opts.groupFooterFor : null;
   // 自定义载荷（expando）面：lib.dom 无这些属性 —— 同一处声明类型，两个消费者
   // （popFaces 字节填充 / popQuoteState 引用接驳点）读同一份形状。
   const area = /** @type {HTMLDivElement & {
@@ -677,15 +677,6 @@ function buildMediaStack(items, opts) {
   const expandView = document.createElement('div');
   expandView.className = 'pop-expand-view ds-media-stack__expand';
   area.append(pill, view, expandView);
-  // 折叠态整组 footer（消息条目统一批 2026-11-18）：属**整组**（一枚节点，动作作用
-  // 于全部条目）；展开态隐藏（改由每卡自己的 footer 承担）。基座 = chatItem
-  // .stackGroupFooter（调用方传入的是已装配好的节点，零第二份装配）。
-  const groupFooter = groupFooterFor ? groupFooterFor(items) : null;
-  if (groupFooter) {
-    groupFooter.classList.add('pop-stack-group-footer');
-    groupFooter.dataset.nfStackFooter = 'group';
-    area.appendChild(groupFooter);
-  }
 
   /** 展开行宽度上限 = **本节点折叠卡脸宽度**（卡面尺度单源；宿主可把卡面收小）：
    *  主会话/好友窗卡脸 220 ⇒ min(220, EXPAND_MAX.w) = EXPAND_MAX.w，逐字不变；
@@ -905,9 +896,6 @@ function buildMediaStack(items, opts) {
     pill.textContent = v ? t('chat.popCollapse') : t('chat.popExpand', { n: items.length });
     // 展开前把展开行宽度对到本节点的卡脸宽度（见 refitExpanded 头注）。
     if (v) refitExpanded();
-    // 叠卡 footer 分态（消息条目统一批 2026-11-18）：折叠 = 整组 footer 在场；
-    // 展开 = 整组 footer 退场（每卡自己的 footer 承担）。
-    if (groupFooter) groupFooter.style.display = v ? 'none' : '';
     if (!motionEnabled()) {
       // UI-G static window: no height transition and NO settle timer — the
       // two faces swap in one frame and the element keeps its natural height.
@@ -1325,13 +1313,15 @@ export function buildUserMediaRow(attachments, opts) {
   }
   const group = attachmentArea('pop-group');
   row.appendChild(group);
+  let stackArea = null;
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
   else if (media.length > 1) {
     // 单张引用入口（2026-11-02 11:00 作者令移入 footer）：叠卡每张各自的描述符
     // —— 张数 = media 组（拖动/横滑翻页的同一序）；footer 入口按当前 front 取。
-    group.appendChild(buildMediaStack(media, {
+    stackArea = buildMediaStack(media, {
       quoteDescFor: (it, i) => stackItemQuoteDesc(it, i, media.length),
-    }));
+    });
+    group.appendChild(stackArea);
   }
   files.forEach(f => group.appendChild(buildFileCard(f, {
     quoteRef: { kind: 'file', fileName: f.name || (f.path || '').split('/').pop(), path: f.path || '', attachments: [{ type: 'file', name: f.name || '', path: f.path || '' }] },
@@ -1342,7 +1332,18 @@ export function buildUserMediaRow(attachments, opts) {
   // 装配单点 = buildMediaRowFooterBadge（Pop 交付卡 footer 批 2026-11-01 起，
   // 用户媒体行与 LLM Pop 行同一装配器——零第二套装配）。
   const badge = buildMediaRowFooterBadge(items, ts);
-  if (badge) row.appendChild(badge);
+  if (badge) {
+    row.appendChild(badge);
+    // 叠卡 footer 分态（消息条目统一批 2026-11-18）：合起态 footer 属**整组**在场；
+    // 展开态退场（每卡自己的 footer 承担）。态机唯一 = 叠卡组件派发的
+    // NF_POP_EXPANDED 事件，本处只听不另判（禁第二套 expand 判断）。
+    if (stackArea) {
+      stackArea.addEventListener(EVENTS.NF_POP_EXPANDED, (e) => {
+        const d = /** @type {CustomEvent} */ (e).detail;
+        badge.style.display = d && d.expanded ? 'none' : '';
+      });
+    }
+  }
   return row;
 }
 

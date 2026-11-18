@@ -169,8 +169,12 @@ if (process.argv.includes('--dump')) {
 
 // ── 消费方要求（chat-ui-unify 批既有项 + chat-ui-package 批①②③新形态）──────
 const requirements = [
-  ['js/chat/durationBadges.js', /chatFooter\(\)/, /chatFooterDivider\(\)/, /chatFooterTime\(\)/],
-  ['js/messages.js', /chatFooter\('fm-msg-meta'\)/, /chatFooterDivider\('fm-msg-divider'\)/, /chatFooterTime\('fm-msg-time'/, /bubbleClass\(/, /fmBubbleRowClass\(/],
+  // 消息条目统一批 2026-11-18：footer 基座（chatFooter* 原语）只在 js/chatItem.js
+  // 装配；两面（durationBadges / messages.js）改为消费 chatItem.messageFooter，
+  // 只给字段/排列变体（extraClass / timeClass / dividerClass / badges / actions）。
+  ['js/chatItem.js', /chatFooter\(/, /chatFooterDivider\(/, /chatFooterTime\(/],
+  ['js/chat/durationBadges.js', /messageFooter\(/, /from '\.\.\/chatItem\.js'/],
+  ['js/messages.js', /messageFooter\(/, /extraClass: 'fm-msg-meta'/, /dividerClass: 'fm-msg-divider'/, /timeClass: 'fm-msg-time'/, /bubbleClass\(/, /fmBubbleRowClass\(/],
   ['js/messages/fmComposer.js', /composer\(\{\s*variant: 'compact'/],
   ['js/askDock.js', /chatComposerClass\('ask'\)/, /askBubbleClass\(m\.role\)/],
   ['js/main.js', /from '\.\/chatSearch\.js'/, /^import '\.\/chatMount\.js';$/m],
