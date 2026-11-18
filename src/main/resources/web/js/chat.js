@@ -3,6 +3,8 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { mainBubbleClass } from './chatUi.js';
+// 消息条目统一批 2026-11-18：气泡节点装配基座单点（chatItem.js）。
+import { messageBubbleNode } from './chatItem.js';
 import { key } from './branding.js';
 // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：TTS
 // 输出族（<voice> 块 + VoicePlayer 播报）与全双工同 flag 封存（voiceEnabled，
@@ -548,14 +550,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
 
   // Text bubble (separate)
   if (text) {
-    const bubble = document.createElement('div');
-    // stream-ux (2026-10-03): the user's own bubble enters iMessage-style —
-    // one message, one pop (scale + elastic settle), same animation family as
-    // the assistant bubbles. Opt-in class (history replay stays static).
-    // UI-G: main window only — a subagent / flow popup view renders the same
-    // bubble with no animation class at all (its container also carries
-    // `.nf-static`; this keeps the class off its DOM too).
-    bubble.className = mainBubbleClass('user', activeView.motionEnabled() ? 'nf-pop' : '');
+    const bubble = messageBubbleNode(mainBubbleClass('user', activeView.motionEnabled() ? 'nf-pop' : ''));
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never

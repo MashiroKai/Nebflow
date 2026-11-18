@@ -3,7 +3,10 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
-import { chatFooter, chatFooterDivider, chatFooterTime, fmBubbleRowClass } from './chatUi.js';
+import { fmBubbleRowClass } from './chatUi.js';
+// 消息条目统一批 2026-11-18：气泡节点 / 附件区 / footer 基座 / 叠卡 footer 分态
+// 四条腿的基座单点（chatItem.js）——本文件只给字段与排列变体。
+import { messageFooter, messageBubbleNode, attachmentArea, stackGroupFooter, stackCardFooter } from './chatItem.js';
 // bubble-side-color 批（2026-11-06）：气泡归属方判定/类名工厂单点（收编前本处
 // 直接拼 `bubble ${out ? 'user' : 'peer'}`，归属方语义散在模板串里）。
 import { bubbleClass, bubbleSideOfOutgoing } from './bubbleSide.js';
@@ -74,7 +77,7 @@ import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
 // 日期行上移批（2026-11-06 作者令②）：footer 时间回归纯时钟 formatHm（日期层
 // 上移到跨天居中日期行 fm-day-sep，formatFooterDay 单点）——formatFooterTime 的
 // 分层日期档不再进本文件。
-import { formatHm, formatFooterDay, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
+import { formatHm, formatFooterDay, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
 // follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
 // 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
@@ -2306,11 +2309,20 @@ function buildMediaStackGroup(entrys) {
         .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
         .catch(() => modalToast(t('messages.attachPreviewFailed')));
     },
-    cornerFor: (item, index) => {
+    // 展开态每卡独立 footer 的下载键（消息条目统一批 2026-11-18）：fm 鉴权下载腿
+    // 由 cardFooterFor 供给 → 基座 stackCardFooter 装配（不再走角标位——作者令
+    // 「展开后每卡独立 footer 且有下载按钮」）。
+    cardFooterFor: (item, index) => {
       const e = entrys[index];
       if (!e || !e.downloadable) return null;
-      return buildDownloadKey(e.att, e.kind, e.src, { corner: true });
+      return buildDownloadKey(e.att, e.kind, e.src);
     },
+    // 折叠态整组 footer（属**整组**）：整组下载键（逐件走既有下载腿）；展开态由
+    // 组件隐藏（分态机唯一，见 popArtifacts setExpanded）。
+    groupFooterFor: () => stackGroupFooter({
+      items: entrys,
+      downloadFor: () => buildStackGroupDownloadKey(entrys),
+    }),
   });
   // 🔴 只挂 fm-att（QA/下载键宿主）+ fm-att-stack（叠卡标记）；禁挂 fm-att-media
   // （平面媒体卡根语义 —— 见本函数头注 fm-stack-pill-align 批口径：挂上即被宿主
@@ -2326,6 +2338,37 @@ function buildMediaStackGroup(entrys) {
     });
   });
   return area;
+}
+
+/** 叠卡**合起**态整组下载键（消息条目统一批 2026-11-18）：一枚键作用于整组
+ *  （逐件走既有下载腿——好友/群 = 鉴权路由，设备 = 本机件/票据），基座 =
+ *  chatItem.stackGroupFooter 的 downloadFor 供给。任一件不可下载 ⇒ 整键禁用
+ *  （零假按钮，与主会话 groupDownloadUnavailable 同纪律）。 */
+function buildStackGroupDownloadKey(entrys) {
+  const all = entrys || [];
+  const list = all.filter(e => e && e.downloadable);
+  const btn = el('button', 'fm-att-dl msg-copy msg-dl msg-group-dl');
+  btn.type = 'button';
+  btn.innerHTML = DOWNLOAD_SVG;
+  const label = t('messages.attachDownload');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  if (!list.length || list.length !== all.length) {
+    btn.disabled = true;
+    btn.title = t('messages.groupDownloadUnavailable');
+    btn.setAttribute('aria-label', btn.title);
+    return btn;
+  }
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const host = btn.closest('.fm-att');
+    if (!host) return;
+    list.forEach((en) => {
+      if (en.kind === 'device') void downloadDeviceSavedAttachment(en.att, host, btn, en.src);
+      else void downloadAttachment(en.att, host, btn);
+    });
+  });
+  return btn;
 }
 
 /** 文件/状态附件卡：主会话文件面（`.file-card`：图标 + 名称 + footer 信息行）。
@@ -3400,7 +3443,7 @@ function attachmentGroup(atts) {
     }
   }
   if (!mediaEntrys.length && !fileAtts.length) return null;
-  const list = el('div', 'fm-att-list');
+  const list = attachmentArea('fm-att-list');
   if (mediaEntrys.length >= 2) {
     const stack = buildMediaStackGroup(mediaEntrys);
     if (stack) list.appendChild(stack);
@@ -3539,7 +3582,7 @@ export function bubbleEl(m, conv) {
   const side = bubbleSideOfOutgoing(out);
   // 外壳类拼写走 chatUi.fmBubbleRowClass()（chat-ui-package 批④词表收口：
   // `fm-msg-bubble` 不再本文件直写）；内芯（角色/归属方类）仍由 bubbleClass() 单点。
-  const bubble = el('div', fmBubbleRowClass(bubbleClass(out ? 'user' : 'peer', side)));
+  const bubble = messageBubbleNode(fmBubbleRowClass(bubbleClass(out ? 'user' : 'peer', side)));
   bubble.dataset.bubbleSide = side;
   // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
   // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
@@ -3584,7 +3627,7 @@ export function bubbleEl(m, conv) {
   // `.duration-badge`（chat.css 单点：内距/圆角/戒指影/暗档）+ 时间 `.duration-badge-time`
   // + 分隔 `.duration-badge-divider` + 复制键 `.msg-copy`。旧 `.fm-msg-*` 类保留为
   // 宿主钩子（断言面/滚动面引用），几何与配色不再由本文件另写一份。
-  const meta = chatFooter('fm-msg-meta');
+  const badges = [];
   // 批 D（作者裁定 2026-09-14 20:5x「双方可见」）：徽标**两端渲染**、无抑制逻辑
   // —— 修前判据 `out && isAgentSent(m)` 让接收侧（`out === false`）**永不进入**
   // 本分支（即便 `origin` 已修复到位，对方也看不到）⇒ 与作者诉求相左。
@@ -3595,10 +3638,8 @@ export function bubbleEl(m, conv) {
   // 选键（`messages.agentGroupBadge` 已删，禁死键/禁两套表述），全站一个键
   // `AGENT_BADGE_TEXT_KEY`；`isAgentSent` 判据零改动，附件帧与徽章同帧共存
   // （fillBubble 附件卡渲染与本分支正交 ⇒ 结构性支持 A③ 翻案）。
-  if (isAgentSent(m)) {
-    meta.appendChild(el('span', 'fm-msg-agent-badge', t(AGENT_BADGE_TEXT_KEY)));
-  }
-  if (hasForwarded(fwdKeyOf(conv, m.id))) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
+  if (isAgentSent(m)) badges.push({ className: 'fm-msg-agent-badge', text: t(AGENT_BADGE_TEXT_KEY) });
+  if (hasForwarded(fwdKeyOf(conv, m.id))) badges.push({ className: 'fm-msg-forwarded-badge', text: t('messages.forwarded') });
   const timeMs = toEpochMs(m.createdAt);
   // 日期行上移批（2026-11-06 作者令②「会话流里日期行每条都显……跨天只显示一次」）：
   //   · footer 时间 = **纯时钟** `formatHm`（12/24 偏好同档）——日期层不再落在
@@ -3609,13 +3650,10 @@ export function bubbleEl(m, conv) {
   //   · `data-ts`（跳转锚）+ `data-ts-text`（时钟就地重排）两契约保留；去掉
   //     `data-ts-text-format="day"` ⇒ 12/24 切换按纯时钟重排（timeFormat 契约）；
   //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
-  const timeSpan = chatFooterTime('fm-msg-time', timeMs ? formatHm(timeMs) : '');
-  if (timeMs) {
-    timeSpan.setAttribute('data-ts', String(timeMs));
-    timeSpan.setAttribute('data-ts-text', String(timeMs));
-    bindTimeToggle(timeSpan);
-  }
-  meta.appendChild(timeSpan);
+  // 时间/分隔/动作的 DOM 装配收归 chatItem.messageFooter（消息条目统一基座）——
+  // 本处只给**字段**（纯时钟档 formatHm）与**排列**（fm-msg-time / fm-msg-divider）。
+  // data-ts（跳转锚）/ data-ts-text（时钟就地重排）/ bindTimeToggle 恒绑三条契约
+  // 由基座按 spec 落定（与改前逐字同形）。
 
   const actions = el('span', 'fm-msg-actions');
   const copyBtn = el('button', 'fm-msg-act msg-copy');
@@ -3658,8 +3696,17 @@ export function bubbleEl(m, conv) {
   // @.2 + flex-shrink:0）—— fm-footer-align 批 2026-11-02：旧形态用
   // `.fm-msg-actions::before` 伪元素（视觉等价、结构不同），现与主会话同构：真节点、
   // 同几何、同间距档（pill gap 6 + 1 + 6 = 13px，主会话实测同档）。
-  meta.appendChild(chatFooterDivider('fm-msg-divider'));
-  meta.appendChild(actions);
+  const meta = messageFooter({
+    extraClass: 'fm-msg-meta',
+    dividerClass: 'fm-msg-divider',
+    timeClass: 'fm-msg-time',
+    alwaysTime: true,
+    timestamp: timeMs,
+    timeText: timeMs ? formatHm(timeMs) : '',
+    timeFormat: 'clock',
+    badges,
+    actions,
+  });
 
   wrap.appendChild(meta);
   // 多选态下新到/新渲染的消息也带勾选面（与既有节点同一条 `attachCheck`）。

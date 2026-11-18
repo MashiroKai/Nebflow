@@ -75,7 +75,8 @@ import { nfViewerUrl, nfCacheDrop, nfViewerSource } from './nfFileCache.js';
 import { attachQuoteMenu, nextChatMsgId, createMsgQuoteButton } from './msgQuote.js';
 // footer 信息条族（手机端长按退役批 2026-10-31 作者令）：媒体行 footer 与文本
 // 消息底部信息条同族徽章（时间 + 常用操作），durationBadges 是唯一 builder。
-import { createMsgFooterBadge } from './chat/durationBadges.js';
+// 消息条目统一批 2026-11-18：叠卡 footer 分态与附件区容器的基座单点（chatItem.js）。
+import { attachmentArea, stackCardFooter, stackGroupFooter } from './chatItem.js';
 // Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：行引用描述符的 senderName
 // 与 AI 文本行同源（rootName.js 叶子模块，零环风险）。
 import { rootDisplayName } from './rootName.js';
@@ -650,6 +651,12 @@ function buildMediaStack(items, opts) {
   // 文本/文件行同族（composer footer 动作行）。**只用动作位，不长相位置键**
   // （与 onOpen/cornerFor 同一纪律，见头注「展开 N 钮位置不是 API 参数位」）。
   const quoteDescFor = (opts && typeof opts.quoteDescFor === 'function') ? opts.quoteDescFor : null;
+  // 叠卡 footer 分态（消息条目统一批 2026-11-18）：折叠 = 整组一枚 footer
+  // （groupFooterFor）；展开 = 每卡独立 footer 带下载键（cardFooterFor）。两腿
+  // 的**基座**在 chatItem（stackGroupFooter / stackCardFooter），本组件只负责
+  // 「何时存在」+ 状态标记 data-nf-stack-footer ——精简单点；禁调用点各写一份。
+  const cardFooterFor = (opts && typeof opts.cardFooterFor === 'function') ? opts.cardFooterFor : null;
+  const groupFooterFor = (opts && typeof opts.groupFooterFor === 'function') ? opts.groupFooterFor : null;
   // 自定义载荷（expando）面：lib.dom 无这些属性 —— 同一处声明类型，两个消费者
   // （popFaces 字节填充 / popQuoteState 引用接驳点）读同一份形状。
   const area = /** @type {HTMLDivElement & {
@@ -670,6 +677,15 @@ function buildMediaStack(items, opts) {
   const expandView = document.createElement('div');
   expandView.className = 'pop-expand-view ds-media-stack__expand';
   area.append(pill, view, expandView);
+  // 折叠态整组 footer（消息条目统一批 2026-11-18）：属**整组**（一枚节点，动作作用
+  // 于全部条目）；展开态隐藏（改由每卡自己的 footer 承担）。基座 = chatItem
+  // .stackGroupFooter（调用方传入的是已装配好的节点，零第二份装配）。
+  const groupFooter = groupFooterFor ? groupFooterFor(items) : null;
+  if (groupFooter) {
+    groupFooter.classList.add('pop-stack-group-footer');
+    groupFooter.dataset.nfStackFooter = 'group';
+    area.appendChild(groupFooter);
+  }
 
   /** 展开行宽度上限 = **本节点折叠卡脸宽度**（卡面尺度单源；宿主可把卡面收小）：
    *  主会话/好友窗卡脸 220 ⇒ min(220, EXPAND_MAX.w) = EXPAND_MAX.w，逐字不变；
@@ -735,20 +751,15 @@ function buildMediaStack(items, opts) {
     const card = document.createElement('div');
     card.className = 'pop-expanded-card';
     card.appendChild(layer);
-    if (itemQuote) {
-      const footer = document.createElement('div');
-      footer.className = 'duration-badge pop-item-footer';
-      const download = createMediaDownloadButton(item);
-      if (download) {
-        footer.appendChild(download);
-        if (download.disabled) {
-          const reason = document.createElement('span');
-          reason.className = 'pop-download-reason';
-          reason.textContent = download.title;
-          footer.appendChild(reason);
-        }
-      }
-      footer.appendChild(createMsgQuoteButton(itemQuote));
+    // 展开态每卡独立 footer（消息条目统一批 2026-11-18）：基座 = chatItem
+    // .stackCardFooter；下载键优先取调用方的 cardFooterFor（fm 面 = 鉴权下载键），
+    // 否则回落主会话媒体下载键。字段/排列变体，基座一处。
+    const cardDl = cardFooterFor ? cardFooterFor(item, i) : null;
+    if (itemQuote || cardDl) {
+      const footer = stackCardFooter({
+        download: cardDl || createMediaDownloadButton(item),
+        quote: itemQuote ? createMsgQuoteButton(itemQuote) : null,
+      });
       card.appendChild(footer);
     }
     expandView.appendChild(card);
@@ -894,6 +905,9 @@ function buildMediaStack(items, opts) {
     pill.textContent = v ? t('chat.popCollapse') : t('chat.popExpand', { n: items.length });
     // 展开前把展开行宽度对到本节点的卡脸宽度（见 refitExpanded 头注）。
     if (v) refitExpanded();
+    // 叠卡 footer 分态（消息条目统一批 2026-11-18）：折叠 = 整组 footer 在场；
+    // 展开 = 整组 footer 退场（每卡自己的 footer 承担）。
+    if (groupFooter) groupFooter.style.display = v ? 'none' : '';
     if (!motionEnabled()) {
       // UI-G static window: no height transition and NO settle timer — the
       // two faces swap in one frame and the element keeps its natural height.
@@ -1309,8 +1323,7 @@ export function buildUserMediaRow(attachments, opts) {
       senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: ts || Date.now(),
     });
   }
-  const group = document.createElement('div');
-  group.className = 'pop-group';
+  const group = attachmentArea('pop-group');
   row.appendChild(group);
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
   else if (media.length > 1) {
@@ -1342,22 +1355,13 @@ export function buildUserMediaRow(attachments, opts) {
  * （多件行 footer 仍带时间档）。字节两腿（path / 内联 data:）皆缺 ⇒ 不挂键
  * （零假按钮；attachmentsSaved 补丁腿重渲后 path 到位即补挂）。 */
 function buildMediaRowFooterBadge(items, ts) {
-  const badge = createMsgFooterBadge(ts, '');
-  const dlBtn = items && items.length > 1 ? createGroupDownloadButton(items) : createMediaDownloadButton(items && items[0]);
-  if (dlBtn) {
-    if (badge.childElementCount > 0) {
-      const div = document.createElement('span');
-      div.className = 'duration-badge-divider';
-      badge.appendChild(div);
-    }
-    badge.appendChild(dlBtn);
-    if (dlBtn.disabled) {
-      const reason = document.createElement('span');
-      reason.className = 'pop-download-reason';
-      reason.textContent = dlBtn.title;
-      badge.appendChild(reason);
-    }
-  }
+  // 装配单点 = chatItem.stackGroupFooter（消息条目统一批 2026-11-18）：合起态
+  // 整组 footer 基座；本处只给字段（时间档 + 整组下载键）。
+  const badge = stackGroupFooter({
+    items,
+    ts,
+    downloadFor: (its) => (its && its.length > 1 ? createGroupDownloadButton(its) : createMediaDownloadButton(its && its[0])),
+  });
   return badge.childElementCount > 0 ? badge : null;
 }
 
@@ -1631,8 +1635,7 @@ export function buildPopArtifactRow(payload, opts) {
       senderRole: 'ai', senderName: rootDisplayName(), ts: ts || Date.now(),
     });
   }
-  const group = document.createElement('div');
-  group.className = 'pop-group';
+  const group = attachmentArea('pop-group');
   row.appendChild(group);
 
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));

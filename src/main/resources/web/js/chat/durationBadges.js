@@ -2,9 +2,7 @@
 import { t } from '../i18n.js';
 // formatFooterTime = footer-time 批（2026-10-06）的分层 footer label（今天仍为纯
 // 时钟 formatHm 语义，更早按本地日历日加日期层）——A 侧 chat.js 本簇改动随簇迁入。
-import { formatFooterTime, bindTimeToggle } from '../timeFormat.js';
-import { createMsgCopyButton } from '../utils.js';
-import { chatFooter, chatFooterDivider, chatFooterTime } from '../chatUi.js';
+import { messageFooter } from '../chatItem.js';
 
 /**
  * Format milliseconds into a human-readable duration string.
@@ -75,28 +73,13 @@ export function pickThinkingPhrase(durationMs, seed) {
  * @returns {HTMLElement}
  */
 export function createMsgFooterBadge(timestamp, copyText) {
-  const badge = chatFooter();
-  if (timestamp && timestamp > 0) {
-    const timeSpan = chatFooterTime();
-    // data-ts = 搜索跳转锚点（chatSearch.js#scrollToMessage 消费，容器级挂载点同用此属性）；
-    // data-ts-text = 时制刷新的显式声明（纯时钟文本节点，见 timeFormat.js 契约）；
-    // data-ts-text-format="day" = 本节点文本走分层 footer label（formatFooterTime，
-    // footer-time 批 2026-10-06）：时制切换就地重排仍与渲染时同一 formatter。
-    timeSpan.setAttribute('data-ts', String(timestamp));
-    timeSpan.setAttribute('data-ts-text', String(timestamp));
-    timeSpan.setAttribute('data-ts-text-format', 'day');
-    timeSpan.textContent = formatFooterTime(timestamp);
-    bindTimeToggle(timeSpan);
-    badge.appendChild(timeSpan);
-  }
-  if (copyText) {
-    if (badge.childElementCount > 0) {
-      const div = chatFooterDivider();
-      badge.appendChild(div);
-    }
-    badge.appendChild(createMsgCopyButton(copyText));
-  }
-  return badge;
+  // 装配单点 = chatItem.messageFooter（消息条目统一批 2026-11-18；本函数仅保留
+  // A 侧的字段/档位映射：分层日期 label 档 = 'day'）。
+  return messageFooter({
+    timestamp,
+    copyText,
+    timeFormat: 'day',
+  });
 }
 
 /**
@@ -118,42 +101,14 @@ export function createMsgFooterBadge(timestamp, copyText) {
  * @returns {HTMLElement}
  */
 export function createDurationBadgeElement(durationMs, model, seed, timestamp, copyText) {
-  const badge = chatFooter();
-  // Metadata for #346 summary reconstruction (not rendered — footer is
-  // time + copy only, v1.2 ruling).
-  badge.dataset.nfPhrase = pickThinkingPhrase(durationMs, seed);
-  if (model) badge.dataset.nfModel = model;
-
-  // Divider is a SEPARATOR: insert only between two existing/forthcoming
-  // elements — never as a leading or trailing orphan (v1.2 footer = time +
-  // copy only; the old leading divider was a leftover of "phrase | time").
-  const appendDivider = () => {
-    if (badge.childElementCount === 0) return;
-    const div = chatFooterDivider();
-    badge.appendChild(div);
-  };
-
-  if (timestamp) {
-    appendDivider();
-    const timeSpan = chatFooterTime();
-    // data-ts = jump anchor (chatSearch.js#scrollToMessage); data-ts-text = refresh target;
-    // data-ts-text-format="day" = layered footer label (formatFooterTime —
-    // footer-time batch 2026-10-06), same formatter on 12/24 in-place refresh.
-    timeSpan.setAttribute('data-ts', String(timestamp));
-    timeSpan.setAttribute('data-ts-text', String(timestamp));
-    timeSpan.setAttribute('data-ts-text-format', 'day');
-    timeSpan.textContent = formatFooterTime(timestamp);
-    bindTimeToggle(timeSpan);
-    badge.appendChild(timeSpan);
-  }
-
-  if (copyText) {
-    appendDivider();
-    const copyBtn = createMsgCopyButton(copyText);
-    badge.appendChild(copyBtn);
-  }
-
-  return badge;
+  // 装配单点 = chatItem.messageFooter（消息条目统一批 2026-11-18）：phrase/model
+  // 走 duration 元数据档（#346 汇总行回读，footer 本体仍只渲染时间 + 复制）。
+  return messageFooter({
+    timestamp,
+    copyText,
+    timeFormat: 'day',
+    duration: { phrase: pickThinkingPhrase(durationMs, seed), model },
+  });
 }
 
 /**
