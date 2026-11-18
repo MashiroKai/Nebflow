@@ -1515,30 +1515,10 @@
 }
 
 
-/* ── Config Toast (validation errors) ─────────────────────────────── */
-/* ui-status-redesign（分叉④=A，S7 全站归一）：全站唯一违规件「实心红底白字」
-   并入 nebflow-toast（modal.css:1140）玻璃规范——同一毛玻璃材质（--glass-control-*
-   token 系）、行首 circle-x 红图标（--status-error-icon，图标载体）+ 中性正文。
-   布局钩子（fixed/bottom/z-index/动画）保留，正文可读性回到主题 token。 */
-.cfg-toast {
-  position: fixed; bottom: 20px; right: 20px; z-index: 10000;
-  max-width: 400px; padding: var(--ds-space-block-y) var(--ds-space-4); border-radius: var(--ds-radius-xl);
-  font-size: var(--ds-fs-body); line-height: 1.4;
-  display: flex; align-items: flex-start; gap: var(--ds-space-2);
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow),
-    0 8px 24px var(--glass-control-glow);
-  color: var(--color-text);
-  animation: cfg-toast-in 0.2s ease-out;
-}
-.cfg-toast-error .st-ic { width: 15px; height: 15px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
-.cfg-toast-error .cfg-toast-msg { color: var(--ds-status-word); min-width: 0; overflow-wrap: anywhere; }
-@keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+/* ── Config validation errors ─────────────────────────────────────── */
+/* notice-unify 批（2026-11-18）：原 .cfg-toast 自绘玻璃卡（含 .cfg-toast-error /
+   .cfg-toast-msg 与 cfg-toast-in 动画）已删除 —— 该处通知并回全站唯一瞬时提示源
+   式样 .nebflow-toast（css/modal.css）；单源由 scripts/check-notice-unify.mjs 钉死。 */
 
 /* ── Agent Manager ────────────────────────────────────────────────────── */
 /* 提示文字统一（canvas-hint-text 批）：loading / empty 两态同为

@@ -273,55 +273,76 @@ function resolveConflict(action) {
 // 的类型档 token 给出，JS 串零硬编码色值）。
 // 图标不带语义色类——颜色由下方 modal.css 类型档（.nebflow-toast-*）经
 // currentColor 继承给出，避免 st-err/st-ok 直涂覆盖类型档。
+//
+// notice-unify 批（2026-11-18，作者令「形成 lint 检查…统一到 2-3 种风格和类型的
+// 通知」）：本函数 = **全站唯一的瞬时提示源**（通知族「toast」型；另两型 =
+// notificationBanner 的常驻横幅、就地 inline 提示）。视觉配方只写在 css/modal.css
+// 一处，调用方只声明**类型**（error/info/success）与**形状开关**（closable / hint /
+// action），不再各自写样式。任何第二份 toast 类名（原 cfg-toast / fm-modal-toast /
+// delegate-archive-toast）已并回本函数，由 scripts/check-notice-unify.mjs 钉死：
+// 出现第四种风格或内联手写通知样式即红。类型档固定三种——形状开关不改类型数。
 const TOAST_ICONS = { error: 'circle-x', info: 'circle-alert', success: 'circle-check' };
+/** Toast 语义类型白名单（新增第四种 → check-notice-unify 报红）。 */
+export const TOAST_TYPES = ['error', 'info', 'success'];
 /**
- * Show a brief Stand-styled toast notification.
+ * Show a brief Stand-styled toast notification — the single transient-notice source.
  * @param {string} message — text to display
- * @param {string} type — 'error' | 'info' | 'success'
- * @param {{closable?: boolean, hint?: string, closeLabel?: string}} [opts]
- *   closable — 加一个「×」亲手关闭钮（停留 8s 而非 4s，作者能读完再收走）；
- *   hint     — 次级一行的**可执行下一步**（例如「请关闭其他控制台窗口后重试」）。
+ * @param {string} [type] severity class: 'error' (default) | 'info' | 'success'
+ * @param {object} [opts] shape switches (do not change the type count):
+ *   closable (boolean) — 加一个「×」亲手关闭钮（停留 8s 而非 4s，作者能读完再收走）;
+ *   hint (string) — 次级一行的**可执行下一步**（例如「请关闭其他控制台窗口后重试」）;
+ *   closeLabel (string) — 关闭钮的 aria-label;
+ *   action ({label, onClick}) — 正文列里的动作钮（如「撤销」）。
  *   opts 缺省时 DOM 与旧版逐字节一致（普通 toast 零改动）。
  */
 export function showToast(message, type = 'error', opts = {}) {
-  const rich = !!(opts.closable || opts.hint);
+  const kind = TOAST_TYPES.includes(type) ? type : 'info';
+  const rich = !!(opts.closable || opts.hint || opts.action);
   const toast = document.createElement('div');
-  toast.className = 'nebflow-toast nebflow-toast-' + type + (rich ? ' nebflow-toast-rich' : '');
+  toast.className = 'nebflow-toast nebflow-toast-' + kind + (rich ? ' nebflow-toast-rich' : '');
   const icon = document.createElement('span');
   icon.className = 'nebflow-toast-icon';
   icon.setAttribute('aria-hidden', 'true');
-  const [iconName] = [TOAST_ICONS[type] || TOAST_ICONS.info];
-  icon.innerHTML = statusIcon(iconName, 15);
+  icon.innerHTML = statusIcon(TOAST_ICONS[kind], 15);
   const msg = document.createElement('span');
   msg.className = 'nebflow-toast-msg';
   msg.textContent = message;
-  // 非富通知：icon + msg 平铺（与旧版逐字节同构）；富通知：icon + 正文列（msg 一行、
-  // hint 一行），正文列是独立 div。两条腿都必须真的把 msg 挂进去——早前把
-  // `let body = toast` 当兜底会让普通 toast 变成 toast 自嵌套（HierarchyRequestError），
-  // 这里改成为每个分支各自 push 要挂的节点。
-  /** @type {Node[]} */
-  const content = [icon];
-  if (rich) {
-    const wrap = document.createElement('div');
-    wrap.className = 'nebflow-toast-body';
-    wrap.append(msg);
-    if (opts.hint) {
-      const hint = document.createElement('span');
-      hint.className = 'nebflow-toast-hint';
-      hint.textContent = opts.hint;
-      wrap.append(hint);
-    }
-    content.push(wrap);
-  } else {
-    content.push(msg);
-  }
-  toast.append(...content);
+  /** 退场单点：定时器与亲手关闭共用（rich 的动作钮也先走它）。 */
   let timer = null;
   const dismiss = () => {
     if (timer) { clearTimeout(timer); timer = null; }
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
   };
+  // 非富通知：icon + msg 平铺（与旧版逐字节同构）；富通知：icon + 正文列（msg 一行、
+  // hint 一行、可选动作钮一钮），正文列是独立 div。两条腿都必须真的把 msg 挂进去——
+  // 早前把 `let body = toast` 当兜底会让普通 toast 变成 toast 自嵌套（HierarchyRequestError），
+  // 这里改成为每个分支各自 push 要挂的节点。
+  /** @type {Node[]} */
+  const content = [icon];
+  if (rich) {
+    const body = document.createElement('div');
+    body.className = 'nebflow-toast-body';
+    body.append(msg);
+    if (opts.hint) {
+      const hint = document.createElement('span');
+      hint.className = 'nebflow-toast-hint';
+      hint.textContent = opts.hint;
+      body.append(hint);
+    }
+    if (opts.action && opts.action.label) {
+      const act = document.createElement('button');
+      act.type = 'button';
+      act.className = 'nebflow-toast-action';
+      act.textContent = opts.action.label;
+      act.onclick = () => { dismiss(); opts.action.onClick?.(); };
+      body.append(act);
+    }
+    content.push(body);
+  } else {
+    content.push(msg);
+  }
+  toast.append(...content);
   if (opts.closable) {
     const close = document.createElement('button');
     close.type = 'button';

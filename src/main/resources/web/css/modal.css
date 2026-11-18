@@ -1118,17 +1118,21 @@
   cursor: pointer;
 }
 
-/* Rich toast（canvas 保存失败批 2026-11-18）：图标 + 正文列 + 关闭钮三栏。
-   正文列内 msg 一行、hint 一行（次级色 = 可执行的下一步）。只有传了
-   opts.closable / opts.hint 时才是这个结构，普通 toast 的 DOM/样式零改动。 */
+/* Rich toast（canvas 保存失败批 2026-11-18 起；notice-unify 批 2026-11-18 把形状
+   开关扩到 closable / hint / action 三态）：图标 + 正文列 + 关闭钮三栏。正文列内
+   msg 一行、hint 一行（次级色 = 可执行的下一步）、可选动作钮（如「撤销」）。只有传了
+   opts.closable / opts.hint / opts.action 时才是这个结构，普通 toast 的 DOM/样式零改动。 */
 .nebflow-toast-rich {
   display: flex;
   align-items: flex-start;
   gap: var(--ds-space-2);
 }
+/* rich 走 flex gap，别再叠图标自带的右边距（否则间距翻倍）。 */
+.nebflow-toast-rich .nebflow-toast-icon { margin-right: 0; }
 .nebflow-toast-body {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   min-width: 0;
 }
 .nebflow-toast-hint {
@@ -1137,6 +1141,18 @@
   line-height: 1.35;
   color: var(--color-frame-text-dim);
 }
+.nebflow-toast-action {
+  margin-top: var(--ds-space-1h);
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.nebflow-toast-action:disabled { opacity: 0.5; cursor: default; }
 .nebflow-toast-close {
   flex: 0 0 auto;
   display: inline-flex;

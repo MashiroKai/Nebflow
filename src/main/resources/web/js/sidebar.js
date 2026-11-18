@@ -1471,13 +1471,10 @@ attachTimeTriggers(document, {
 onMessage('error', (data) => {
   if (data.message && typeof data.message === 'string' && data.message.includes('Provider')) {
     // Show validation errors from backend.
-    // ui-status-redesign（分叉④=A，S7 全站归一）：唯一违规件「实心红底白字」
-    // 并入 nebflow-toast 玻璃规范——玻璃卡 + 行首 circle-x 红图标 + 中性正文。
-    const toast = document.createElement('div');
-    toast.className = 'cfg-toast cfg-toast-error';
-    toast.innerHTML = statusIcon('circle-x', 15, 'st-err') + '<span class="cfg-toast-msg">' + escapeHtml(data.message) + '</span>';
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 5000);
+    // notice-unify 批（2026-11-18）：本处曾是**第二份 toast**（自绘 .cfg-toast 玻璃卡
+    // ＋自带 5s 生命周期）——并回全站唯一瞬时提示源 showToast（语义 = error；玻璃材质 /
+    // 图标 / token 全部单源，见 scripts/check-notice-unify.mjs）。cfg-toast 类已删除。
+    window.__showToast?.(data.message, 'error');
   }
 });
 
