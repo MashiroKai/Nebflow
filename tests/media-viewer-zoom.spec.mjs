@@ -554,6 +554,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     // transform 是同一拍（galPaint），档位到即几何到；固定 120ms 只赌 CDP 回执
     // 之后渲染器已跑完这一拍，负载下不成立。
     await waitPainted(page);
+    await expect(page.locator('.nf-lightbox')).toHaveAttribute('data-nf-lb-zoom', '1.2');
     const after = await page.evaluate(VIEW);
     await shot(page);
     expect(after.zoom).toBe(1.2);                          // 既有档位逐字保留
@@ -562,6 +563,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     // 连续滚轮继续推档，并被 5× 封顶吃掉。
     for (let i = 0; i < 14; i += 1) { await page.mouse.wheel(0, -120); await shot(page); }
     await waitPainted(page);
+    await expect(page.locator('.nf-lightbox')).toHaveAttribute('data-nf-lb-zoom', '5');
     const capped = await page.evaluate(VIEW);
     expect(capped.zoom).toBe(5);
     expect(errors).toEqual([]);
