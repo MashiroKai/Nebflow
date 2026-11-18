@@ -25,14 +25,16 @@ const inventory = [
     /(?=[\s\S]*--ta-kb)(?=[\s\S]*--bottom-band-d)(?=[\s\S]*--mobile-dock-clearance)/],
   // 'todo reply footer' (2026-11-18): the detail page's reply band is an IN-FLOW
   // footer — it declares no positioning at all — so its clearance owner is
-  // `.ta-root`'s bottom padding, which reserves the band stack net of the page
-  // body's own dock clearance (`.mobile-page-body` already lets one clearance
-  // through, so the root must not add it twice). Asserting both halves keeps
-  // "the reply sits 8px above the band" a source-level responsibility instead of
-  // a computed coincidence.
+  // `.ta-root`'s bottom padding, which reserves the band stack. Asserting both
+  // halves keeps "the reply sits 8px above the band" a source-level
+  // responsibility instead of a computed coincidence.
+  // 落队注：本树的页体底垫已被「滚域末端净空单源批」归零（`.mobile-page-body:has(> .ta-root)`
+  // ⇒ padding-bottom: 0），故 owner 只断言「padding-bottom 消费 --ta-band-stack」
+  // ——dock 净空腿仍由上一行（页元素 token 块携带 --mobile-dock-clearance）钉着，
+  // 减法口径在本树会把预留少算一条 dock 净空（实测压带 64px）。
   ['todo reply footer', 'mobile-todo-apple.css', /\.ta-reply\s*$/, /flex\s*:\s*0 0 auto/,
     /\[data-page="todo-apple-item"\]\s+\.ta-root\s*$/,
-    /(?=[\s\S]*padding-bottom)(?=[\s\S]*--ta-band-stack)(?=[\s\S]*--mobile-dock-clearance)/],
+    /(?=[\s\S]*padding-bottom)(?=[\s\S]*--ta-band-stack)/],
   ['message search', 'mobileSearchFlat.css', /\.mh-search-dock:not\(\.has-query\)\s*$/, /position\s*:\s*absolute/, /#fm-conversations/, /padding-top\s*:[^;]*--mhsc-band/],
   ['contact search', 'mobileSearchFlat.css', /\.mh-search-dock:not\(\.has-query\)\s*$/, /position\s*:\s*absolute/, /#fm-contacts-body/, /padding-top\s*:[^;]*--mhsc-band/],
   ['session identity', 'mobileLayer.css', /\.mh-idhead\s*$/, /position\s*:\s*absolute/, /\[data-page='conversation'\]\s+\.fm-flow\s*$/, /padding-top\s*:[^;]*104px/],

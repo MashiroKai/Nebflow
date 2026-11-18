@@ -114,7 +114,15 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-root {
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
   flex: 1 1 auto;
   min-height: 0;
-  padding-bottom: max(28px, calc(var(--ta-band-stack) - var(--mobile-dock-clearance)));
+  /* 落队注（移植口径 · 与作者线唯一实质差异）：本树已落「滚域末端净空单源批」
+     （mobileLayer.css L6398）——`.mobile-page-body:has(> .ta-root)` 的**页体底垫
+     归零**，净空内收进真滚域。作者线那条 `calc(--ta-band-stack - --mobile-dock-clearance)`
+     的减法前提（「页体自己已有一条 dock 净空」）在本树已不成立 ⇒ 减法会把预留
+     少算一条 dock 净空，实测回复带压住工具带 64px（= 72 − 8）。⇒ 取**本支更早
+     那一版**（`max(28px, var(--ta-band-stack))`，见 8b2eb1da3）：整条底部栈由
+     内容级一次预留，与页体归零同代。实测（tests/todo-mobile-reply-bottom.spec.mjs）
+     B1/B2/B6 缝 = 8px、回复带底缘在工具带之上、且不被 dock 截断。 */
+  padding-bottom: max(28px, var(--ta-band-stack));
 }
 
 /* ═══ A · Lists home page ═══════════════════════════════════════════════ */
