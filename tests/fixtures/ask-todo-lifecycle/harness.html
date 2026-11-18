@@ -1,27 +1,38 @@
 <!DOCTYPE html>
-<!-- ask-todo-lifecycle harness.html — 溢出转待办批（2026-11-18 作者令）的静态试验台。
-     Imports the REAL modules (askPending.js / askTodoList.js — no stubs, no bundling)
-     plus the real leaves they depend on, mounts the REAL badge/bar DOM and a real
-     待办面宿主, and exposes drivers for tests/ask-todo-lifecycle.spec.mjs.
+<!-- ask-todo-lifecycle harness.html — 溢出转待办批（2026-11-18 作者令·第二轮）的
+     静态试验台。Imports the REAL modules (askPending.js 判据单点 / todoStore.js
+     条目真源适配器 / askTodoQuestion.js 条目内问题卡模板 — no stubs, no bundling)
+     plus the real leaves they depend on, mounts the REAL badge/bar DOM, and exposes
+     drivers for tests/ask-todo-lifecycle.spec.mjs.
+
+     形态要点（作者新令「转待办是转为具体的待办条目 而不是再待办上方显示问题」）：
+       ① 引擎侧 `scheduledTaskCreated`（name = `ask-<requestId>`）经 **todoStore 的
+          真实摄入链**（isTodoRow / mapRow，见 todoStore.__hydrate 缝）进条目摊；
+       ② 条目是否显形 = todoStore 消费 askPending.askPlacement 的可见性判据；
+       ③ 条目侧问题卡 = buildAskCardForRow（产品面孔映射同一函数）。
 
      驱动面：
-       window.__note(msg)             → notePendingAsk（askUser 帧腿）
-       window.__remove(rid)           → removePendingAsk（关卡/作答收口腿）
-       window.__snapshot(asks, since) → applyPendingAskSnapshot（权威对账腿）
-       window.__badge()               → { visible, count }
-       window.__barRows()             → 弹窗条行数（#ask-pending-bar .ask-pending-row）
-       window.__todoCards()           → 待办面承载卡数（#todo-host .ask-todo-card）
-       window.__placement(rid)        → askPlacement（判据单点读数）
-       window.__cardIn(rid)           → 往 #chat 里挂一张「已加载页内」的活卡
-       window.__cardOut(rid)          → 把该活卡从页窗口摘掉
-       window.__cardState(rid)        → 'absent' | 'open' | 'locked'
-       window.__submit(o)             → submitAskAnswer（待办面作答入口）
-       window.__answerViaCard(rid, a) → 卡内作答腿（帧构造器 + removePendingAsk + 锁定单点）
-       window.__todoSubmit(rid)       → 走真实 UI（点该卡的「提交回答」）
-       window.__todoPick(rid, val)    → 走真实 UI（点该卡的某个选项）
-       window.__closerCalls           → 卡片锁定单点（closeAskUserCard）调用记录
-       window.__captured              → 出站 WS 帧（本地捕获，永不出网）
-       window.__settle()              → 等两帧（归属重估是 rAF 合并的）
+       window.__note(msg)              → 问题到达（镜像登记 + 引擎镜像条目摄入）
+       window.__remove(rid)            → removePendingAsk（关卡/作答收口腿）
+       window.__snapshot(asks, since)  → applyPendingAskSnapshot（权威对账腿）
+       window.__badge()                → { visible, count }
+       window.__barRows()              → 弹窗条行数（#ask-pending-bar .ask-pending-row）
+       window.__entryIds()             → 待办面**条目**读数 [{requestId, id, source}]（对账）
+       window.__todoCards()            → 待办面问题卡数（#todo-host .ask-todo-card）
+       window.__todoIds()              → 条目 requestId 列表（askPlacement='todo' 的那批）
+       window.__placement(rid)         → askPlacement（判据单点读数）
+       window.__cardIn(rid)            → 往 #chat 里挂一张「已加载页内」的活卡
+       window.__cardOut(rid)           → 把该活卡从页窗口摘掉
+       window.__cardState(rid)         → 'absent' | 'open' | 'locked'
+       window.__submit(o)              → submitAskAnswer（条目侧作答入口）
+       window.__cancel(rid)            → cancelAsk（条目侧取消入口）
+       window.__answerViaCard(rid, a)  → 卡内作答腿（帧构造器 + removePendingAsk + 锁定单点）
+       window.__todoSubmit(rid)        → 走真实 UI（点该条目问题卡的「提交回答」）
+       window.__todoCancel(rid)        → 走真实 UI（点该问题卡的「取消」）
+       window.__todoPick(rid, val)     → 走真实 UI（点某个选项）
+       window.__closerCalls            → 卡片锁定单点（closeAskUserCard）调用记录
+       window.__captured               → 出站 WS 帧（本地捕获，永不出网）
+       window.__settle()               → 等两帧（归属重估是 rAF 合并的）
        window.__ready
 
      🔴 试验台**不连任何 socket / 不起任何服务端口**（spec 用零端口 page.route 供盘）。
@@ -41,13 +52,14 @@
   <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
   <!-- 对话宿主：声明「已加载的对话上下文在场」（判据前置条件） -->
   <div id="chat" class="chat"></div>
-  <!-- 待办面宿主（手机全屏待办页 / 桌面待办面板 同款挂载点） -->
-  <div id="todo-host" class="ta-askhost"></div>
+  <!-- 待办面宿主（手机全屏待办页 / 桌面待办面板 同款「行内问题卡」投影面） -->
+  <div id="todo-host" class="ta-items"></div>
 
   <script type="module">
     const WEB = '/src/main/resources/web/js';
     const askPending = await import(`${WEB}/askPending.js`);
-    const askTodo = await import(`${WEB}/askTodoList.js`);
+    const talk = await import(`${WEB}/askTodoQuestion.js`);
+    const { todoStore } = await import(`${WEB}/todoStore.js`);
     const { EVENTS } = await import(`${WEB}/events.js`);
 
     window.__captured = [];
@@ -57,9 +69,7 @@
     // 卡片锁定单点（产品路径 = chat.js closeAskUserCard，动态 import）：
     // 试验台注入确定性替身，避免在裸夹具里加载整棵聊天树。语义与产品单点一致：
     // 首次锁定追加 .option-answer + .resolved（已答幂等跳过）；**已答过的问题
-    // 之后才进入页窗口的卡**（作者场景「翻回去看原卡片」）按已答锁定态落地——
-    // 与产品路径同源：历史重放卡走 chat.js renderAskUserHistory，对已答问题
-    // 恒挂 .option-answer 并 lockOptionBox（`.resolved`），绝不还原成可作答活卡。
+    // 之后才进入页窗口的卡**（作者场景「翻回去看原卡片」）按已答锁定态落地。
     const answeredIds = new Set();
     const closer = (sessionId, requestId, note) => {
       window.__closerCalls.push({ sessionId, requestId, note });
@@ -76,16 +86,42 @@
       box.appendChild(ans);
     }
 
-    askTodo.mountAskTodoSection(document.getElementById('todo-host'));
+    // 夹具模式：不拉真源（试验台零 socket）。条目摊仍走真实摄入链（__hydrate）。
+    todoStore.__seed({});
 
-    const boxOf = (rid) => {
-      const esc = window.CSS && CSS.escape ? CSS.escape(rid) : rid;
-      return document.querySelector('#chat .option-box[data-request-id="' + esc + '"]');
-    };
+    /** 引擎侧 Ask→待办镜像条目（与后端 AskTodoBridge.attach 的载荷同形）：
+     *  name = `ask-<requestId>`（来源标记 / 对账键）、kind = todo、content = 待答文案。 */
+    function engineRow(msg) {
+      const q = (msg && msg.items && msg.items[0] && msg.items[0].question) || '-';
+      return {
+        id: 'task-' + msg.requestId,
+        name: 'ask-' + msg.requestId,
+        kind: 'todo',
+        content: `[待答] ${q} — Nebula`,
+        project: msg.project || 'Stand',
+        sessionId: msg.sessionId || 'harness-session',
+        createdAt: Date.now(),
+      };
+    }
 
-    window.__note = (msg) => askPending.notePendingAsk(msg);
+    const host = document.getElementById('todo-host');
+    /** 条目侧渲染（产品面同款：surfaced 行 → buildAskCardForRow）。 */
+    function renderTodo() {
+      host.textContent = '';
+      for (const row of todoStore.surfacedItems()) {
+        if (!talk.isAskRow(row)) continue;
+        const card = talk.buildAskCardForRow(row);
+        if (card) host.appendChild(card);
+      }
+    }
+    todoStore.subscribe(renderTodo);
+
+    window.__note = (msg) => { askPending.notePendingAsk(msg); todoStore.__hydrate([engineRow(msg)]); };
     window.__remove = (rid) => askPending.removePendingAsk(rid);
-    window.__snapshot = (asks, since) => askPending.applyPendingAskSnapshot(asks, since);
+    window.__snapshot = (asks, since) => {
+      askPending.applyPendingAskSnapshot(asks, since);
+      todoStore.__hydrate((asks || []).map(engineRow));
+    };
     window.__placement = (rid) => askPending.askPlacement(rid);
     window.__count = () => askPending.pendingAskCount();
     window.__transferred = () => askPending.transferredAsks().map(e => e.requestId);
@@ -94,8 +130,17 @@
       return { visible: !el.classList.contains('hidden'), count: el.querySelector('.pa-count').textContent };
     };
     window.__barRows = () => document.querySelectorAll('#ask-pending-bar .ask-pending-row').length;
+    /** 待办面**条目**读数（作者令 (a)：id / name 可对账）。 */
+    window.__entryIds = () => todoStore.surfacedItems()
+      .filter((r) => talk.isAskRow(r))
+      .map((r) => ({ requestId: r.requestId, id: r.id, source: r.source, name: r.name }));
+    window.__todoIds = () => window.__entryIds().map((e) => e.requestId);
     window.__todoCards = () => document.querySelectorAll('#todo-host .ask-todo-card').length;
-    window.__todoIds = () => [...document.querySelectorAll('#todo-host .ask-todo-card')].map(c => c.dataset.askTodoId);
+
+    const boxOf = (rid) => {
+      const esc = window.CSS && CSS.escape ? CSS.escape(rid) : rid;
+      return document.querySelector('#chat .option-box[data-request-id="' + esc + '"]');
+    };
 
     window.__cardIn = (rid) => {
       if (boxOf(rid)) return;
@@ -106,7 +151,6 @@
       row.className = 'row ai';
       row.appendChild(box);
       document.getElementById('chat').appendChild(row);
-      // 该问题已答过（本会话内）⇒ 卡到手即已答锁定态（见上方单点替身注）。
       if (answeredIds.has(rid)) lockBox(box, (window.__closerCalls.find(c => c.requestId === rid) || {}).note || '');
     };
     window.__cardOut = (rid) => {
@@ -121,9 +165,9 @@
     };
 
     window.__submit = (o) => askPending.submitAskAnswer(o);
-    /** 卡内作答腿（chat.js 确认/取消回调的**同一收口序列**）：用同一帧构造器
-     *  askAnswerFrame 出帧 → removePendingAsk 本地收口 → 卡片锁定单点 closeAskUserCard。
-     *  「同 id 一活卡 / 各自收口」两批共用这一条驱动（绝不复刻第二套作答逻辑）。 */
+    window.__cancel = (rid) => askPending.cancelAsk({ requestId: rid });
+    /** 卡内作答腿（chat.js 确认回调的**同一收口序列**）：同一帧构造器 →
+     *  removePendingAsk 本地收口 → 卡片锁定单点。 */
     window.__answerViaCard = (rid, answers, answerText) => {
       const entry = askPending.pendingAskEntry(rid);
       if (!entry) return { ok: false, reason: 'not-pending' };
@@ -136,8 +180,13 @@
     window.__todoSubmit = (rid) => {
       const card = document.querySelector(`#todo-host .ask-todo-card[data-ask-todo-id="${rid}"]`);
       if (!card) return false;
-      const btn = card.querySelector('.ask-todo-submit');
-      btn.click();
+      card.querySelector('.ask-todo-submit').click();
+      return true;
+    };
+    window.__todoCancel = (rid) => {
+      const card = document.querySelector(`#todo-host .ask-todo-card[data-ask-todo-id="${rid}"]`);
+      if (!card) return false;
+      card.querySelector('.ask-todo-cancel').click();
       return true;
     };
     window.__todoPick = (rid, value) => {

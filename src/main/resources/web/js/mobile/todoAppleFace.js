@@ -24,7 +24,7 @@
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS } from '../todoStore.js';
-import { mountAskTodoSection } from '../askTodoList.js';
+import { isAskRow, buildAskCardForRow } from '../askTodoQuestion.js';
 import { bindImeGuard, commitEnter } from '../imeGuard.js';
 import state from '../state.js';
 
@@ -413,14 +413,6 @@ function clearChrome(section) {
  * @returns {{ root: HTMLElement, render: () => void }}
  */
 function buildHome(root, section, nav) {
-  // ── 溢出转待办承载区（溢出转待办批 2026-11-18 作者令）───────────────
-  // 「超出对话分页的待答问题」在本全屏待办页顶部承载并可**就地作答**。
-  // 判据与状态单点都在 askPending（transferredAsks / submitAskAnswer），本文件
-  // 只提供一个宿主容器；区内的后续刷新由 askTodoList 自己的归属监听驱动。
-  // 无转入项时该区为空 ⇒ 不占位、不显形（零视觉增量）。
-  const askHost = elIn(root, 'div', 'ta-askhost');
-  mountAskTodoSection(askHost);
-
   // ── Four-card matrix (2x2): white outline icon top-left / large white
   // count top-right / white label bottom-left ──
   const grid = elIn(root, 'div', 'ta-grid');
@@ -635,7 +627,8 @@ function buildHome(root, section, nav) {
 
 /** Items under the current list target (local read-only filtering; the store's filter state is never written). */
 function itemsForTarget() {
-  const all = todoStore.allItems();
+  // 可见行（含问句条目；归属变化后即时收敛）——单向读口，见 todoStore.surfacedItems。
+  const all = todoStore.surfacedItems();
   const now = Date.now();
   const from = startOfToday();
   const to = from + DAY;
@@ -714,12 +707,16 @@ function buildList(root, section, nav) {
       // Structured build (contract R5): single circle span, DOM identical to
       // the previous template string.
       check.appendChild(el('span', 'ta-check-circle'));
-      if (it.decision) {
+      // 问句条目（引擎 Ask 镜像行）没有打卡语义（销账归 ask 流）——不显圆钮动作。
+      const askRow = isAskRow(it);
+      if (askRow) {
+        row.dataset.askEntry = it.requestId; // 对账读数（非定位面）
         check.disabled = true;
-        check.setAttribute('aria-label', '决策待办，回答未接线');
+        check.setAttribute('aria-label', t('askUser.pendingTitle'));
       }
       check.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (askRow) return;
         todoStore.completeItem(it.id);
       });
       row.appendChild(check);
@@ -737,10 +734,26 @@ function buildList(root, section, nav) {
       const bodyBtn = btnEl('ta-item-body');
       bodyBtn.type = 'button';
       elIn(bodyBtn, 'span', 'ta-item-title', it.title || '—');
-      if (it.decision) elIn(bodyBtn, 'span', 'ta-item-due', '决策 · 回答未接线');
+      // 问句条目：标题旁一个「待答」标记（**行内**，不是列表上方区块）。
+      if (askRow) elIn(bodyBtn, 'span', 'ta-item-due', t('askUser.todoBadge'));
       if (it.due != null) elIn(bodyBtn, 'span', 'ta-item-due', dueText(it.due));
       row.appendChild(bodyBtn);
-      if (it.decision) {
+      if (askRow) {
+        // 承载面 = 条目自身：点开行内详情区 = **问题卡**（单点模板 askTodoQuestion.js；
+        // 作答/取消走 askPending 的同一收口 ⇒ 与原卡片两侧同步收口）。
+        bodyBtn.setAttribute('aria-expanded', 'false');
+        const detail = el('div', 'ta-decision-detail');
+        detail.hidden = true;
+        const card = buildAskCardForRow(it);
+        if (card) detail.appendChild(card);
+        bodyBtn.addEventListener('click', () => {
+          detail.hidden = !detail.hidden;
+          bodyBtn.setAttribute('aria-expanded', String(!detail.hidden));
+        });
+        itemsBox.append(row, detail);
+      } else if (it.decision) {
+        // 旧「决策待办」行（服务端带 decision 的普通待办）：保留既有只读折叠面
+        // （本轮不接线；问句条目的作答接线见上支）。
         bodyBtn.setAttribute('aria-expanded', 'false');
         const detail = el('div', 'ta-decision-detail');
         detail.hidden = true;
@@ -754,12 +767,6 @@ function buildList(root, section, nav) {
           label.appendChild(input);
           elIn(label, 'span', '', String(option));
         });
-        if (it.decision.allowOther) elIn(detail, 'div', 'ta-decision-status', '其他选项未接线');
-        const submit = btnEl('ta-decision-submit');
-        submit.type = 'button';
-        submit.disabled = true;
-        submit.textContent = '提交回答（未接线）';
-        detail.appendChild(submit);
         bodyBtn.addEventListener('click', () => {
           detail.hidden = !detail.hidden;
           bodyBtn.setAttribute('aria-expanded', String(!detail.hidden));

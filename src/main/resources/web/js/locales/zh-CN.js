@@ -1767,12 +1767,14 @@ export default {
   'askUser.rejectUnknown': '答复对应的提问已失效，卡片仍保留，请重新作答',
   'askUser.rejectNoMatch': '找不到对应的待答提问，请重新作答',
   'askUser.rejectGeneric': '答复未被接受，请重新作答',
-  // 溢出转待办批（2026-11-18 作者令）：待答问题超出对话分页 ⇒ 转入待办面承载，
-  // 不再弹窗、不进计数气泡；两处答题同一份状态同一收口。
-  'askUser.todoSectionTitle': '待答问题 · 已转待办（{n}）',
-  'askUser.todoSectionHint': '这些提问已超出对话分页：不再弹窗、不计入待答气泡；在这里回答，原卡片会同步显示已答',
+  // 溢出转待办批（2026-11-18 作者令·第二轮）：超出对话分页的待答问题 ⇒ 转为
+  // **具体待办条目**（承载面 = 条目自身），条目内的问题卡可就地作答；两处作答
+  // 同一份状态、同一收口，原卡片同步收口。
+  'askUser.todoBadge': '待答',
   'askUser.todoSubmit': '提交回答',
+  'askUser.todoCancel': '取消',
   'askUser.todoManual': '该题需在原卡片上作答（含敏感值 / 目录选择）',
+  'askUser.cancelledElsewhere': '该提问已取消',
   // askuser-secret 批（2026-10-08）：密码题面（showOptions secret 分支）+ 明文回流
   // 拒收 toast（hub reason="secret-slot-mismatch"，规格 §5.1）。
   'askUser.secretPlaceholder': '输入密钥 / 验证码（不显示明文）',

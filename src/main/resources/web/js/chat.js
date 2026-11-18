@@ -23,7 +23,7 @@ import { t } from './i18n.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
 import { stripChannelProvenance } from './channelProvenance.js';
 import { sendWs, onMessage } from './ws.js';
-import { askSourceParts, removePendingAsk, askAnswerFrame, notifyAskPlacement } from './askPending.js';
+import { askSourceParts, removePendingAsk, askAnswerFrame, cancelAskFrame, notifyAskPlacement } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 菜单/引用条/引用块/跳转收口在
 // msgQuote.js 单模块（chat.js 只挂点，不复制逻辑）。
@@ -3402,7 +3402,9 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
       // !ok → toast（main.js），卡保持既有 cancelBtn.onclick 锁定形态。
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         if (requestId) {
-          state.ws.send(JSON.stringify({ type: 'askUserCancel', requestId, by: 'web' }));
+          // 取消帧**唯一构造器**（askPending.cancelAskFrame）——待办条目侧「取消」
+          // 走的是同一个构造器 + 同一个卡片锁定单点（本批：两处取消同收口）。
+          state.ws.send(JSON.stringify(cancelAskFrame({ sessionId: targetSid, requestId, by: 'web' })));
         } else {
           // 理论不可达（live 卡恒带 requestId，hub 是唯一 id 源）；无 id 兜底保留
           // 改前哨兵行为，不静默无操作。（同走 askAnswerFrame —— 帧只有一处构造。）

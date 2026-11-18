@@ -6253,37 +6253,16 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   溢出转待办承载区（溢出转待办批 2026-11-18 · 作者令「超出对话分页的 AskUser
-   问题自动转入待办，不再弹窗和计数气泡显示…共同管理卡片的生命周期」）
+   待办**条目内**问题卡（溢出转待办批 2026-11-18 · 作者新令「转待办是转为具体的
+   待办条目 而不是再待办上方显示问题」）
 
-   落点：待办面内的**行内区**（手机全屏待办首页顶部 / 桌面待办面板列表顶部），
-   不是浮层、不是弹窗、不是第四种通知 —— 它没有任何 fixed/absolute/z-index，
-   随待办面滚动流。材质与选项一律复用既有单源：
+   落点：**待办条目自身**的行内详情区（桌面 `.tfl-row-detail` 展开面 / 手机
+   `.ta-decision-detail` 展开面）——不再是列表上方的专用区块，也没有第二条承载。
+   不是浮层、不是弹窗、不是第四种通知 —— 没有 fixed/absolute/z-index，随行内流。
+   材质与选项一律复用既有单源：
      · 卡面 = `--glass-control-*` 族（与 .ask-pending-row 同一配方）
      · 选项 = chat.css `.option-btn` / `.option-btn.picked`（提问卡同款）
    ══════════════════════════════════════════════════════════════════════ */
-.ask-todo-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-2);
-  margin: 0 0 var(--ds-space-2);
-}
-.ask-todo-section:empty { display: none; }
-.ask-todo-head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-hair);
-  padding: 0 var(--ds-space-hair);
-}
-.ask-todo-head-title {
-  font-size: var(--ds-fs-meta);
-  font-weight: 600;
-  color: var(--color-warning);
-}
-.ask-todo-head-hint {
-  font-size: var(--ds-fs-meta);
-  color: var(--color-text-muted);
-}
 .ask-todo-card {
   display: flex;
   flex-direction: column;
@@ -6329,6 +6308,16 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .ask-todo-row {
   display: flex;
   justify-content: flex-end;
+  gap: var(--ds-space-1);
+}
+.ask-todo-cancel {
+  padding: var(--ds-space-1h) var(--ds-space-3);
+  border: 1px solid var(--glass-control-border);
+  border-radius: var(--ds-radius-card-md);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--ds-fs-body);
+  cursor: pointer;
 }
 .ask-todo-submit {
   padding: var(--ds-space-1h) var(--ds-space-3);
