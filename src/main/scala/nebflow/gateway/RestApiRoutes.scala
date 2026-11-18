@@ -90,6 +90,9 @@ class RestApiRoutes(
       // askuser-dragdrop 实施批（2026-10-19，批 #551）：卡片作用域答复附件上传域
       // （/api/askuser/attachments —— 与 cancel 域同族挂载）。
       AskUserAttachmentRoutes.routes(ctx) <+>
+      // PDF note/ask 批（2026-11-18）：/api/pdf/*（open / note / ask / page）。
+      // 唯一触发解析的是 `ask`（= 发一条提问消息）；open 与 note 恒不解析。
+      PdfRoutes.routes(ctx) <+>
       ConfigRoutes.routes(ctx) <+>
       ProjectsRoutes.routes(ctx) <+> WikiRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+>
       NeblinkRoutes.routes(ctx) <+>
