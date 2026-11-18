@@ -199,6 +199,9 @@ async function openApp(browser, theme, viewport) {
     window.WebSocket = class extends OrigWS {
       constructor(...args) {
         super(...args);
+        window.__ask211ws = this;
+        const send = this.send.bind(this);
+        this.send = (raw) => { try { const m = JSON.parse(raw); if (m.type === 'immediateInput') window.__ask211.push({ ...m, outbound: true }); } catch {} return send(raw); };
         this.addEventListener('message', (ev) => {
           try {
             const m = JSON.parse(ev.data);
@@ -208,6 +211,7 @@ async function openApp(browser, theme, viewport) {
       }
     };
   }, TOKEN);
+  await ctx.route('**/api/agents/Nebula/avatar/meta', route => route.fulfill({ status: 200, json: {} }));
   const page = await ctx.newPage();
   const errs = [];
   page.on('pageerror', (e) => errs.push(`pageerror: ${e.message}`));
@@ -234,9 +238,9 @@ const NOISE = [/\/api\/nf-authcheck/, /console\.error: .*\/api\/canvas-tabs/, /h
 const realErrors = (errs) => errs.filter((e) => !NOISE.some((re) => re.test(e)));
 
 /** 页面内取卡片/气泡状态。 */
-const READ_DOM = (m) => {
+const READ_DOM = ({ marker: m, rid }) => {
   const users = [...document.querySelectorAll('.row.user')].map((r) => r.innerText || '');
-  const box = document.querySelector('.option-box[data-request-id]');
+  const box = [...document.querySelectorAll('.option-box[data-request-id]')].find(el => el.dataset.requestId === rid);
   const btns = box ? [...box.querySelectorAll('.option-btn')] : [];
   // 排队呈现回退批（2026-10-22）：队列条 = 头行-only——行级文本面退役，
   // 「在队」判据 = 头行计数在场（消息本体 = 乐观气泡，不双呈现）。
@@ -275,13 +279,22 @@ async function phaseB(sid) {
     }
     const { ctx, page, errs } = app;
 
+    const created = await api('/sessions', 'POST', { name: `askinput-${theme}-${Date.now()}`, agentName: 'Nebula' });
+    if (created.status >= 400 || !created.json?.id) throw new Error('failed to create isolated theme session');
+    sid = created.json.id;
+    await page.waitForFunction(() => window.__ask211ws?.readyState === WebSocket.OPEN);
+    await page.evaluate((s) => window.__ask211ws.send(JSON.stringify({ type: 'switchSession', sessionId: s })), sid);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(async (s) => (await import('/js/state.js')).default.activeSessionId === s, sid, { timeout: 20000 });
+    const boundary = await page.evaluate(() => window.__ask211.length);
     fireTurn(sid, ASK_PROMPT);
     let rid = null;
     try {
-      await page.waitForSelector('.option-box[data-request-id]', { state: 'visible', timeout: ASK_WAIT_MS });
-      rid = await page.evaluate(() => document.querySelector('.option-box[data-request-id]')?.dataset.requestId || null);
+      const handle = await page.waitForFunction(({ boundary, sid }) => window.__ask211.slice(boundary).find(f => f.type === 'askUser' && f.requestId && (!f.sessionId || f.sessionId === sid)), { boundary, sid }, { timeout: ASK_WAIT_MS });
+      rid = (await handle.jsonValue()).requestId;
+      await page.locator(`.option-box[data-request-id="${rid}"]`).waitFor({ state: 'visible', timeout: ASK_WAIT_MS });
     } catch (e) {
-      const diag = await page.evaluate(READ_DOM, 'zzz-none').catch(() => ({}));
+      const diag = await page.evaluate(READ_DOM, { marker: 'zzz-none', rid }).catch(() => ({}));
       check(`B0[${theme}] 卡片渲染到达（真 Chromium）`, false, `${String(e.message).slice(0, 110)} diag=${JSON.stringify(diag)}`);
       await ctx.close();
       continue;
@@ -300,7 +313,7 @@ async function phaseB(sid) {
       await page.waitForTimeout(1200);
 
       // B1：打字后文本**不丢**（队列条或气泡可见）∧ 卡片仍 pending 未锁定
-      const d1 = await page.evaluate(READ_DOM, marker);
+      const d1 = await page.evaluate(READ_DOM, { marker, rid });
       const b1 = (d1.queueHasMarker || d1.userBubbleHasMarker) && d1.cardPresent && d1.cardDisabled === false && d1.answerDivs === 0;
       check(
         `B1[${theme}/${vp.tag} ${vp.width}x${vp.height}] 打字 ⇒ 文本不丢 ∧ 卡片仍 pending 未锁定`,
@@ -311,8 +324,8 @@ async function phaseB(sid) {
 
       // B2：**立即发送**把文本真正推出去（前端 busy ⇒ 打字只进本地队列；不发帧则两侧
       // 都「绿」而毫无判别力 —— 见文件头「前端队列面的坑」）
-      const hadBtn = await page.evaluate(() => {
-        const row = [...document.querySelectorAll('.row.user')].find((r) => (r.innerText || '').includes('ASKTEXT'));
+      const hadBtn = await page.evaluate((marker) => {
+        const row = [...document.querySelectorAll('.row.user')].find((r) => (r.innerText || '').includes(marker));
         if (!row) return false;
         row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
         const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
@@ -320,10 +333,11 @@ async function phaseB(sid) {
         if (!btn) return false;
         btn.click();
         return true;
-      });
+      }, marker);
       await page.waitForTimeout(3000);
-      const d2 = await page.evaluate(READ_DOM, marker);
-      const b2 = d2.userBubbleHasMarker && d2.cardPresent && d2.cardDisabled === false && d2.answerDivs === 0;
+      const d2 = await page.evaluate(READ_DOM, { marker, rid });
+      const outbound = await page.evaluate(({ marker, sid }) => window.__ask211.some(f => f.outbound && f.content === marker && f.sessionId === sid), { marker, sid });
+      const b2 = hadBtn && outbound && d2.userBubbleHasMarker && d2.cardPresent && d2.cardDisabled === false && d2.answerDivs === 0;
       check(
         `B2[${theme}/${vp.tag}] 立即发送 ⇒ 文本以普通用户消息入流 ∧ 卡片仍 pending`,
         b2,
@@ -335,9 +349,9 @@ async function phaseB(sid) {
     // B3：刷新 ⇒ 卡片重放（同一 requestId，仍 pending）
     try {
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForSelector('.option-box[data-request-id]', { state: 'visible', timeout: 45000 });
-      const ridAfter = await page.evaluate(() => document.querySelector('.option-box[data-request-id]')?.dataset.requestId || null);
-      check(`B3[${theme}] 刷新 ⇒ 卡片重放且 requestId 不变（仍 pending）`, ridAfter === rid, `before=${rid} after=${ridAfter}`);
+      await page.locator(`.option-box[data-request-id="${rid}"]`).waitFor({ state: 'visible', timeout: 45000 });
+      const state = await page.evaluate(READ_DOM, { marker: 'unused', rid });
+      check(`B3[${theme}] 刷新 ⇒ 卡片重放且 requestId 不变（仍 pending）`, state.cardRid === rid && state.cardDisabled === false && state.answerDivs === 0, JSON.stringify(state));
     } catch (e) {
       check(`B3[${theme}] 刷新 ⇒ 卡片重放且 requestId 不变（仍 pending）`, false, String(e.message).slice(0, 140));
     }
@@ -345,11 +359,12 @@ async function phaseB(sid) {
     // B4：点选确认 ⇒ 卡片锁定（点选路径行为不变）
     try {
       await page.setViewportSize({ width: 1440, height: 900 });
-      await page.evaluate(() => document.querySelector('.option-box[data-request-id]').querySelector('.option-btn').click());
+      const card = page.locator(`.option-box[data-request-id="${rid}"]`);
+      await card.locator('.option-btn').first().click();
       await page.waitForTimeout(400);
-      await page.evaluate(() => document.querySelector('.option-box[data-request-id]').querySelector('.option-confirm').click());
+      await card.locator('.option-confirm').click();
       await page.waitForTimeout(2000);
-      const locked = await page.evaluate(() => document.querySelector('.option-box[data-request-id]')?.querySelectorAll('.option-answer').length ?? -1);
+      const locked = await card.locator('.option-answer').count();
       check(`B4[${theme}] 点选确认 ⇒ 卡片锁定（.option-answer 出现）`, locked >= 1, `answerDivs=${locked}`);
       await page.screenshot({ path: join(SHOTS, `card-answered-${theme}.png`) });
     } catch (e) {
