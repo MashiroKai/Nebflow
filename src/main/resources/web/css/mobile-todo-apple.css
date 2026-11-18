@@ -533,13 +533,31 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab svg {
   display: block;
 }
 /* 叠卡张数徽标：形态整件归既有数字角标（body.mobile-layer .dock-badge.is-count，
-   mobileLayer.css 单源 —— 胶囊几何 / --color-danger 底 / --ds-ink-inverse 字 /
-   描边 / --mfs-min 字级 / 暗档描边 --ds-badge-ring-dark 全不在此重写）；本文件只
-   补这枚钮**顶右角**的落位。 */
+   mobileLayer.css 单源 —— 胶囊几何 / --ds-ink-inverse 字 / 描边 / --mfs-min 字级 /
+   暗档描边 --ds-badge-ring-dark 全不在此重写）；本文件只补这枚钮**顶右角**的落位
+   + **计数语义的蓝色底**两件。
+
+   底色改蓝（作者令 2026-11-18「叠卡数字角标用蓝色」）——为什么是**受作用域限定**的
+   变体、不是改单源：`.dock-badge.is-count` 有两个消费面、语义不同 ——
+     (a) dock 消息键 = **未读通知计数**（作者令 2026-10-30 08:29「就像微信一样」，
+         红=通知惯例，单源按 --color-danger 保留；见 mobileLayer.css 该块注释）；
+     (b) 本叠卡钮 = **牌堆张数的纯信息计数**（非告警）。
+   改单源会把作者点名的未读通知键一并染蓝（越界改动），故只在本作用域内换底色，通知
+   面保持 --color-danger 不动。变体仍复用 .dock-badge.is-count 形态（几何/字级/落位/
+   白字全继承单源），不是第四种通知形态。
+
+   蓝取 **sapphire 族加深档 --accent-agent-light**（sapphire.css 单源；该 token 的出生
+   注释逐字 = 「deepens the sapphire badge in the light theme」，stand-tokens.css §词条
+   引用蓝 亦记「站内早已存在的加深 sapphire」，与 --term-link-ink 亮档同值）—— 它是
+   全站唯一能承载白字达 AA 的既有蓝族**实底**：--sapphire（91 127 191）对白仅 4.01:1
+   未达、--sapphire-glow（120 160 220）2.67:1 更弱；--accent-agent-light（70 99 156）
+   亮/暗两档对白皆 5.957:1。零颜色字面量（rgb(var(--…)) 是令牌组合，design-tokens 闸
+   不计）·零新色。 */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab .dock-badge.is-count {
   top: -4px;
   right: -4px;
   left: auto;
+  background: rgb(var(--accent-agent-light));
 }
 
 /* ═══ B · List detail page ══════════════════════════════════════════════ */

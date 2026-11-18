@@ -29,11 +29,23 @@
 //      （`#<待办名>·<id> <回答>`）；提交后输入框清空；长正文滚到底输入框仍在原位；
 //      回答之后左右滑仍切卡。
 //      ⚠️ D 组整组对**未修源码**直跑必红（QD_WEB_ROOT=<未修树>）——检测力自证。
+//   F  叠卡钮改造（作者令 2026-11-18 22:04「换一个图标 + 有颜色和右边的对应 + 右上角
+//      有计数」）：图标单源、同色族上色、与右侧「+」同规格；计数徽标复用既有数字角标
+//      形态（.dock-badge.is-count，不新增第四种通知形态）、落位在这枚钮右上角；徽标数
+//      = 牌堆自身长度（quickItems()，同一数据源/同一过滤），0 隐藏 / 1→N 逐张相等 /
+//      >99 记 `99+`；相邻「+」采样点不误触；tap 实测仍进快速决策页。
+//   G  叠卡角标蓝色化（作者令 2026-11-18「叠卡数字角标用蓝色」）：受作用域限定的蓝色
+//      变体（语义不同 —— 通知面 dock 未读保持红）；亮/暗两档「字 vs 胶囊底」对比
+//      ≥4.5:1（AA，实测计算样式值）；底色属 sapphire 族 token（--accent-agent-light，
+//      var() 引用零字面量）；通知面未被连带改色。
+//      ⚠️ G 组对**未修源码**直跑必红，且「改回危险红」「硬编码颜色字面量」注入必红 ——
+//      检测力自证（见批报告双向退出码表）。
 //
 // 运行：
 //   node tests/todo-quick-decision.spec.mjs
 //   QD_WEB_ROOT=<另一棵 web 树> node tests/todo-quick-decision.spec.mjs   # 改前腿/破坏腿
 //   QD_OUT=<证据目录>       node tests/todo-quick-decision.spec.mjs
+//   QD_BATCH=<批次名>       node tests/todo-quick-decision.spec.mjs       # manifest 批次名
 //   退出码：0 = 全绿；1 = 有红。
 //
 // 数据面 = routeWebSocket 帧夹具 + todoStore.__seed 夹具模式；静态面 = page.route
@@ -61,10 +73,11 @@ mkdirSync(FRAMES, { recursive: true });
 // that writes into the stand-evidence namespace MUST carry a manifest.json, or
 // the fail-closed TTL sweep would skip it and retention becomes unbounded. The
 // task pins this batch's dir (QD_OUT), so we write the manifest here rather than
-// relocate via the shared helper.
+// relocate via the shared helper. QD_BATCH names the batch (defaults to the
+// suite's own batch; a colour batch re-runs the suite into its own dir).
 writeFileSync(
   join(OUT, 'manifest.json'),
-  JSON.stringify({ createdAt: new Date().toISOString(), project: 'stand', batch: 'todo-quick-decision-20261118' }) + '\n',
+  JSON.stringify({ createdAt: new Date().toISOString(), project: 'stand', batch: process.env.QD_BATCH || 'todo-quick-decision-20261118' }) + '\n',
 );
 
 const MIME = {
@@ -591,10 +604,10 @@ ok('F3 与右侧「+」同规格（48×48 / 同底缘 / 左右内距对称 / 同
   && fabLight.quick.w === 48 && fabLight.quick.h === 48,
   JSON.stringify({ quick: `${fabLight.quick.w}x${fabLight.quick.h}@${fabLight.quick.bottom}`, plus: `${fabLight.plus.w}x${fabLight.plus.h}@${fabLight.plus.bottom}` }));
 
-ok('F4 计数徽标复用既有数字角标形态（.dock-badge.is-count，单源，不新增第四种通知形态）',
+ok('F4 计数徽标复用既有数字角标形态（.dock-badge.is-count，不新增第四种通知形态）',
   !!fabLight.badge && /(^|\s)dock-badge(\s|$)/.test(fabLight.badge.classes)
   && /(^|\s)is-count(\s|$)/.test(fabLight.badge.classes) && fabLight.badge.insideQuick
-  && fabLight.badge.pe === 'none' && fabLight.badge.bg === 'rgb(192, 57, 43)'
+  && fabLight.badge.pe === 'none' && fabLight.badge.bg === 'rgb(70, 99, 156)'
   && fabLight.badge.radius === '999px' && fabLight.badge.color === 'rgb(255, 255, 255)',
   JSON.stringify(fabLight.badge));
 
@@ -632,6 +645,114 @@ ok('F5 计数 N 张 ⇒ 显示 N，与牌堆张数逐张相等（同一数据源
 ok('F5 计数上限口径 ⇒ >99 记 `99+`（与桌面 #messages-badge 同一归一）',
   stBig.deck === 120 && stBig.visible === true && stBig.text === '99+', JSON.stringify(stBig));
 await page.screenshot({ path: join(SHOTS, '13-quick-badge-N.png') });
+
+/* ══ G 叠卡角标蓝色化（作者令 2026-11-18「叠卡数字角标用蓝色」）═════════════
+   裁定：`.dock-badge.is-count` 两个消费面语义不同 —— (a) dock 消息键 = 未读通知计数
+   （作者令 2026-10-30 08:29「就像微信一样」，红=通知惯例），(b) 本叠卡钮 = 牌堆张数的
+   纯信息计数 ⇒ 只给叠卡钮加**受作用域限定**的蓝色变体，通知面保持 --color-danger 不动。
+   判据：G1 亮/暗两档「字 vs 胶囊底」对比 ≥4.5（AA，实测计算样式值，读图不认）；
+   G2 底色属 sapphire 族（= --accent-agent-light 解析值 + Lab 色相距蓝族轴 ≤10°）；
+   G3 零颜色字面量（CSS 声明走 var() 引用，静态读源码）；G4 通知面未被连带改色。
+   检测力自证：把底改回危险红 / 硬编码颜色字面量 / 未修源码直跑 ⇒ 本组必红（见批报告）。 */
+const G_AA = 4.5;
+const readBadgeColor = () => `(() => {
+  const R = ${RECT};
+  const badge = document.querySelector('${FAB_SEL} .dock-badge');
+  const page = document.querySelector('.mobile-page[data-page="tasks"]');
+  const cs = badge ? getComputedStyle(badge) : null;
+  const pcs = page ? getComputedStyle(page) : getComputedStyle(document.body);
+  const tok = (n) => pcs.getPropertyValue(n).trim();
+  // 合成一个**不在叠卡作用域内**的数字角标（挂在 dock 上）→ 读单源底色，证明通知面
+  // 没被本批连带改色。（绝对定位、出流、读完即摘，零布局影响。）
+  const probe = document.createElement('span');
+  probe.className = 'dock-badge is-count';
+  const sink = document.getElementById('mobile-dock') || document.body;
+  sink.appendChild(probe);
+  const single = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  return {
+    bg: cs ? cs.backgroundColor : null, color: cs ? cs.color : null,
+    single,
+    tok: { accentLight: tok('--accent-agent-light'), inkInverse: tok('--ds-ink-inverse'),
+           danger: tok('--color-danger'), sapphire: tok('--sapphire') },
+    viewport: { w: innerWidth, h: innerHeight },
+    badgeRect: R('${FAB_SEL} .dock-badge'),
+  };
+})()`;
+
+await seed(page, fixture());
+await page.waitForTimeout(240);
+await page.emulateMedia({ colorScheme: 'light' });
+await page.waitForTimeout(140);
+const bcLight = await page.evaluate(readBadgeColor());
+await page.screenshot({ path: join(SHOTS, '14-badge-light-fullscreen.png') });
+await page.emulateMedia({ colorScheme: 'dark' });
+await page.waitForTimeout(180);
+const bcDark = await page.evaluate(readBadgeColor());
+await page.screenshot({ path: join(SHOTS, '15-badge-dark-fullscreen.png') });
+await page.emulateMedia({ colorScheme: 'light' });
+await page.waitForTimeout(140);
+probe.badgeColor = { light: bcLight, dark: bcDark };
+console.log(`      [证据] 手机全屏视口 ${bcLight.viewport.w}×${bcLight.viewport.h}（亮/暗各一张全屏截图 14/15）`);
+
+const badgeContrast = (fg, bg) => {
+  const f = parseRGBA(fg), b = parseRGBA(bg);
+  if (!f || !b) return null;
+  return +wcag(overBg(f, b.rgb), b.rgb).toFixed(3);
+};
+/* 蓝族归属读数：轴 = sapphire **母色**（--sapphire）自己的 Lab 色相（活读令牌，不写死
+   常数）—— 族内成员（--sapphire 278.8° / --sapphire-glow 273.7° / --accent-agent-light
+   281.1°）本就散在 ~7° 内，母色才是族的轴。同时并记既有 C2「蓝族轴 270°」的距离作
+   参考读数（不参与判据；270° 是外部近似常数，母色 278.8° 与本站加深档 281.1° 都离它
+   有点远，故本组以母色为轴，F 组既有 C2 断言与常数一字未动）。 */
+const badgeFamily = (r) => {
+  const b = parseRGBA(r.bg);
+  const s = parseRGBA(`rgb(${String(r.tok.sapphire).trim().split(/\s+/).join(',')})`);
+  if (!b || !s) return null;
+  const lab = toLab(b.rgb), base = toLab(s.rgb);
+  const hb = labHue(lab), hs = labHue(base);
+  return { composite: `rgb(${b.rgb.join(',')})`, alpha: b.a,
+    hueDeg: +hb.toFixed(1), sapphireHueDeg: +hs.toFixed(1),
+    axisDistDeg: +axisDist(hb, hs).toFixed(1),
+    stationAxisDistDeg: +axisDist(hb, 270).toFixed(1),
+    chroma: +labChroma(lab).toFixed(2) };
+};
+const cL = badgeContrast(bcLight.color, bcLight.bg);
+const cD = badgeContrast(bcDark.color, bcDark.bg);
+const fL = badgeFamily(bcLight), fD = badgeFamily(bcDark);
+probe.badgeContrast = { light: cL, dark: cD, aa: G_AA };
+probe.badgeFamily = { light: fL, dark: fD };
+
+ok(`G1 亮档「字 vs 胶囊底」对比 ≥ ${G_AA}:1（AA，实测计算样式值）`, cL !== null && cL >= G_AA,
+  JSON.stringify({ text: bcLight.color, fill: bcLight.bg, contrast: cL }));
+ok(`G1 暗档「字 vs 胶囊底」对比 ≥ ${G_AA}:1（AA，实测计算样式值）`, cD !== null && cD >= G_AA,
+  JSON.stringify({ text: bcDark.color, fill: bcDark.bg, contrast: cD }));
+ok('G2 底色 = sapphire 族加深档 token 解析值（--accent-agent-light；非 --sapphire/--sapphire-glow —— 对白未达 AA）',
+  bcLight.bg === 'rgb(70, 99, 156)' && bcDark.bg === 'rgb(70, 99, 156)'
+  && bcLight.tok.accentLight === '70 99 156'
+  && !!parseRGBA(bcLight.bg) && Math.abs(parseRGBA(bcLight.bg).rgb[0] - 70) <= 1
+  && Math.abs(parseRGBA(bcLight.bg).rgb[2] - 156) <= 1,
+  JSON.stringify({ light: bcLight.bg, dark: bcDark.bg, tok: bcLight.tok.accentLight }));
+ok('G2 底色属蓝族（Lab 色相距 sapphire 母色轴 ≤10°，亮/暗两档）',
+  !!fL && !!fD && fL.axisDistDeg <= C2_HUE_MAX && fD.axisDistDeg <= C2_HUE_MAX,
+  JSON.stringify({ light: fL, dark: fD }));
+
+// G3 零字面量：静态读 CSS 源码 —— 该选择器块的 background 声明必须是 var() 引用
+// （不改计算值也能抓到「把令牌换成硬编码字面量」——那是本组唯一的静态腿）。
+const CSS_APPLE = join(WEB, 'css', 'mobile-todo-apple.css');
+const cssText = readFileSync(CSS_APPLE, 'utf8');
+const ruleSel = '.mobile-page[data-page="tasks"] .ta-quick-fab .dock-badge.is-count';
+const ruleIdx = cssText.indexOf(ruleSel);
+const ruleBody = ruleIdx >= 0 ? cssText.slice(ruleIdx, cssText.indexOf('}', ruleIdx)) : '';
+const bgDecl = ((ruleBody.match(/background\s*:\s*([^;}]+)/) || [])[1] || '').trim();
+const bgHasVar = /\bvar\(/.test(bgDecl) && !/#[0-9a-fA-F]{3,8}\b/.test(bgDecl);
+probe.badgeLiteral = { ruleIdx, sel: ruleSel, bgDecl, bgHasVar };
+ok('G3 零颜色字面量：蓝色底走 var() 令牌引用（CSS 声明无裸 hex/rgb 值）',
+  ruleIdx >= 0 && bgHasVar, JSON.stringify(probe.badgeLiteral));
+ok('G4 通知面未被连带改色（单源 .dock-badge.is-count 在 dock 上下文仍是 --color-danger 红）',
+  bcLight.single === 'rgb(192, 57, 43)' && bcDark.single === 'rgb(242, 107, 107)'
+  && String(bcLight.tok.danger).trim() === '#c0392b',
+  JSON.stringify({ light: bcLight.single, dark: bcDark.single, danger: bcLight.tok.danger }));
 
 /* 触控实测（CDP 真指针）：tap 生效 + 相邻「+」采样点不误触 */
 await seed(page, fixture());
