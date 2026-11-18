@@ -1009,7 +1009,46 @@ body.mobile-layer #g2-edge-fade {
   body.mobile-layer .mh-idhead-name,  body.mobile-layer #mobile-dock {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-    background: var(--glass-bg);
+    /* ── 降级回落实底**一律不透明**（glass-runtime 批 2026-11-18，P0 作者报障）──
+       旧档本条写 `background: var(--glass-bg)`（= 唯一玻璃底，α .16）。α .16 是
+       **给模糊配的**：在没有 backdrop 采样的引擎里它只剩「有底色、没模糊、正文
+       原文穿出来」= 玻璃纸 —— 正是作者实拍「有些就是正常的不透字的毛玻璃效果，
+       而有些就是像这样透明的」里**透**的那一半。同屏「正常」的那一半是 `.nf-glass`
+       面（上面那条落不透明 `--color-surface`）；而 `--glass-bg` 的消费方恰好是
+       **圆钮族 `.g2-fab` / dock / 名字胶囊** —— 作者点名的那两枚 canvas 圆钮
+       就在这个名单里。故本条与 `.nf-glass` 档合并成同一条判据：降级 = 一律不透明。
+       正常引擎（支持 backdrop）零命中：本块是 `@supports not(...)`。 */
+    background: var(--color-surface);
+  }
+  /* 主输入条 / 队列条 = 基准件：降级同样落不透明实底（旧档只摘 blur、保留 α .16
+     底 = 同一种玻璃纸）。`:root` 前缀只为一个目的：压过后文非降级的 `#input-bar`
+     规则（同 id、声明序在后）—— 两条降级路径必须给出同一个答案。 */
+  :root #input-bar,
+  :root #queue-bar.visible {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--color-surface);
+  }
+  /* ── 成员登记表降级收口（glass-runtime 批 2026-11-18，P0 作者报障的系统面）──
+     上面两条只覆盖「作者可见族」（圆钮/dock/输入条/名字胶囊）。清点实测发现成员
+     表里还有若干面在降级档仍留 α .16 底 = 无模糊引擎里的玻璃纸
+     （check-glass-runtime.mjs R3 点出：手机胶囊 ::after / 页码点 / toast / 桌面四条
+     结构件）。此处按同一判据（降级 = 落不透明面 --color-surface）逐面收口；正常
+     引擎零命中（本块是 @supports not(...)）。用 `:root` 前缀只为压过后文/主题档
+     里同名的非降级声明（令牌值本身逐字不动 —— check-glass-unify G3/G7b 读的是
+     配方，不读降级档）。 */
+  :root body.mobile-layer .mf-strip-chip.on::after,
+  :root body.mobile-layer .mf-dots,
+  :root .nebflow-toast,
+  :root #activity-bar,
+  :root #sidebar,
+  :root #header,
+  :root #todo-island.tfl-card,
+  :root #canvas-panel,
+  :root .canvas-header {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--color-surface);
   }
   /* 渐隐带降级档随 doc-ask-fade 批收编到 design-system.css `.ds-edge-fade`
      （@supports / html.no-backdrop 两处），此处不再单列 —— 防双源漂移。 */
@@ -1053,16 +1092,34 @@ html.no-backdrop .g2-pill:not(.g2-pill-primary),
 html.no-backdrop body.mobile-layer .mh-idhead-name,html.no-backdrop body.mobile-layer #mobile-dock {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
-  background: var(--glass-bg);
+  /* 见上一条 @supports 块同注（glass-runtime 批 2026-11-18）：降级回落实底一律
+     不透明 —— α .16 底在无模糊引擎里是「玻璃纸」（正文原文穿出）。 */
+  background: var(--color-surface);
 }
-/* The composer is the glass reference face; degraded engines lose blur but retain
-   its original near-opaque base instead of reverting it to the translucent global
-   overlay token. */
+/* The composer is the glass reference face; degraded engines lose blur, so the
+   fallback must be an OPAQUE surface — the translucent base (α .16) only reads as
+   glass while a backdrop blur is sampling it. */
 html.no-backdrop #input-bar,
 html.no-backdrop #queue-bar.visible {
-  background: var(--nf-glass-input-bg);
+  background: var(--color-surface);
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
+}
+/* 降级收口（glass-runtime 批 2026-11-18）：见上一条 @supports 块同注 —— 逐面收口成员
+   登记表里**漏点的面**（手机胶囊 ::after / 页码点 / toast / 桌面四条结构件），不给任何
+   面留「有底色、没模糊、原文穿出」的玻璃纸。 */
+html.no-backdrop body.mobile-layer .mf-strip-chip.on::after,
+html.no-backdrop body.mobile-layer .mf-dots,
+html.no-backdrop .nebflow-toast,
+html.no-backdrop #activity-bar,
+html.no-backdrop #sidebar,
+html.no-backdrop #header,
+html.no-backdrop #todo-island.tfl-card,
+html.no-backdrop #canvas-panel,
+html.no-backdrop .canvas-header {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: var(--color-surface);
 }
 /* The composer is the baseline face, not a consumer of the translucent global
    fallback. Keep its reference material after grouped modal fallbacks in both

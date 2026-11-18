@@ -1904,19 +1904,37 @@ body.mobile-layer .mf-strip-chip {
      于是「模糊感应」与桌面同源、同一份数值、同一时长曲线（--ds-ring-dur/ease），
      手机端零新配方；旧档 `--rbl`（MAX 2.40、|k|=1 只有 0.40px）退役 ——
      作者实拍读作「手机端没有电脑端那种糊感」的根因就是它把邻位压到了 1/4 档。 */
+  /* ── 环邻位模糊**不许挂宿主**（glass-runtime 批 2026-11-18，P0 作者报障）──
+     宿主带 `filter` ⇒ 宿主成为 **backdrop root**（值恒非 none：连环心档也是
+     `blur(0px) saturate(1)`）。它的子件 `.mf-strip-chip.on::after` 是主胶囊的
+     材质层 ⇒ 那层 `backdrop-filter` 只能采「宿主自己绘制的内容」（宿主零绘制）
+     ⇒ **毛玻璃整条失效**：台上只剩 α .16 洗色底，正文原文从中穿出（作者实拍
+     「canvas 手机端的标题…像这样透明的」）。同一处 `will-change` 里的 `opacity`
+     是第二个 backdrop root 触发点（实测 `will-change: transform` 不触发）。
+     修法：模糊腿**下沉到 label**（「环邻位深度」本来就是给字的），宿主两个触发点
+     一起撤 —— 配方值/令牌/时长曲线逐字未动，只是换了挂载点。
+     实测 A/B（同一面开/关自己的 backdrop-filter，其余全等）：改前 meanΔ 1.38
+     （= 没在采样），改后 40.15（= 真采样）；判定脚本 scripts/check-glass-runtime.mjs。 */
+  transition:
+    /* 切签位移/旋转仍取 280ms（既有裁定「旋转过渡 ≤300ms、不阻塞输入」，
+       见下方 --dur-switch 注释）；**透明一条腿照抄桌面环的时长曲线**
+       （opacity 320ms ease）—— 作者口径 ④「同一配方、同一时长曲线，不重写一份」。 */
+    transform var(--dur-switch, 280ms) cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 320ms ease,
+    max-width 220ms ease;
+  will-change: transform;
+}
+/* 环邻位深度改挂 label（本批 2026-11-18）：半径与饱和仍取 design-system.css ⑯b
+   槽的两枚令牌（`--ds-ring-blur` / `--ds-ring-saturate`，与桌面 hover 上下选项
+   `.cr-capsule.is-edge` 同源），仍只乘一枚位姿系数 `--rblf`（0 = 环心全清、
+   1 = 邻位拿满一档，layoutRing 按 |k| 写）。视觉语义零变化：旧档宿主上的 filter
+   只对「字」（label）有可见作用（宿主本体/热区/透明材质层都无可见像素），
+   故下沉 = 同一张糊感，只是不再把主胶囊的 backdrop 一起关掉。 */
+body.mobile-layer .mf-strip-chip .mf-strip-label {
   filter:
     blur(calc(var(--ds-ring-blur) * var(--rblf, 0)))
     saturate(calc(1 + (var(--ds-ring-saturate) - 1) * var(--rblf, 0)));
-  transition:
-    /* 切签位移/旋转仍取 280ms（既有裁定「旋转过渡 ≤300ms、不阻塞输入」，
-       见下方 --dur-switch 注释）；**模糊与透明两条腿照抄桌面环的时长曲线**
-       （--ds-ring-dur 360ms + 同一缓出曲线 / opacity 320ms ease）——
-       作者口径 ④「同一配方、同一时长曲线，不重写一份」。 */
-    transform var(--dur-switch, 280ms) cubic-bezier(0.22, 0.61, 0.36, 1),
-    opacity 320ms ease,
-    filter var(--ds-ring-dur) var(--ds-ring-ease),
-    max-width 220ms ease;
-  will-change: transform, opacity;
+  transition: filter var(--ds-ring-dur) var(--ds-ring-ease);
 }
 /* 切换动效时长单源（作者令「旋转过渡时长 ≤300ms、不阻塞输入」）：旧 --dur-2
    档 320ms 超限，签面切换独立取 280ms —— 位移+旋转在窗内完成，输入永不阻塞
@@ -1952,10 +1970,15 @@ body.mobile-layer .mf-strip-chip::after {
   box-shadow: none;
   pointer-events: none;
 }
-/* 主胶囊 = 完整毛玻璃档（材质四件套；blur 由 glass.css 成员表供给）。 */
+/* 主胶囊 = 完整毛玻璃档（材质四件套；blur 由 glass.css 成员表供给）。
+   ── 边框四边闭合（glass-runtime 批 2026-11-18，作者报障「边框还没完全包裹住」）──
+   旧档有一句 `border-bottom-color: transparent`（桌面 `.canvas-header` 的「底缘
+   透明化」同款语言，split.css:1606）。手机端这一面**下缘没有任何承托**（正文在
+   胶囊底下滚动穿过），透明底边被读成「边框没包住」；改前实测（375×812 暗档，
+   dsf=2）：胶囊盒 device y 44.8…115.2，上缘 y44-48 有亮线（边框 + 顶缘折射线），
+   下缘 y112-116 逐行 lum 22.8 = 页面底色（**零边框行**）。本批四边同色闭合。 */
 body.mobile-layer .mf-strip-chip.on::after {
   border: 1px solid var(--glass-border);
-  border-bottom-color: transparent;
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
     var(--glass-bg);
@@ -2063,6 +2086,11 @@ body.mobile-layer .mf-strip-chip.is-expanded {
   z-index: 3;
   max-width: min(calc((100vw - 2 * var(--mchrome-inset)) / var(--rsc, 1)), 260px);
   opacity: 1;
+}
+/* 展开腿的「全名清晰」= 环邻位糊感归零（旧档写在本条的 `filter: none` 上；环邻位
+   模糊腿已在 glass-runtime 批下沉到 label，故这一档跟着下移 —— 语义不变：
+   展开签的**字**必须是清的）。 */
+body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
   filter: none;
 }
 /* 展开期两侧签退到幕后：邻签常态 opacity 0.66、底是半透明玻璃，展开签压上去会

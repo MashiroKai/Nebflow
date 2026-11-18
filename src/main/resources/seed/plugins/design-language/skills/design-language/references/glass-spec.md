@@ -274,9 +274,46 @@ status: active
 | 设计令牌单一源 | `src/main/resources/web/css/stand-tokens.css` | `--nf-glass-*` 段（唯一出生地） |
 | 前端唯一工具类 | `src/main/resources/web/css/glass.css` | `.nf-glass` + 成员登记表 |
 | 机检 | `scripts/check-glass-unify.mjs` | 门禁链 `make frontend-gates` / `make glass`（G1–G7） |
+| 运行时机检 | `scripts/check-glass-runtime.mjs` | **真渲染采样判定** R1–R3（见 §9）；配方写对 ≠ 浏览器真的在采样时，只有它能抓 |
 | 证据装置 | `scripts/capture-glass-ab.mjs` | A/B 背景承接读数（改前 / 改后 / 参照物三方） |
 | 顶部悬浮面证据 | `scripts/capture-glass-overlays.mjs` | 375/1440 × 亮/暗 × 改前/改后 逐面截图 + 读数 |
 | 规范正文 | 本文件 | 术语、形态、定律、判据、登记面清单、例外 |
 
 相关：[[flat-button-spec]]（同族的按钮规范，共用 `--nf-glass-*` 材质）；
 [[design-language]]（本规范的上级技能条目）。
+
+## 9. 运行时判据（R1–R3 · `scripts/check-glass-runtime.mjs`）
+
+> glass-runtime 批（2026-11-18）作者报障逐字：「为什么现在我都是要求使用毛玻璃
+> 效果 有些就是正常的不透字的毛玻璃模糊效果 而有些就是像这样透明的呢？这个是
+> canvas手机端的标题 并且边框还没完全包裹住」
+
+G1–G8 判的是**源码里的配方**（单一源 / α / 配方逐值）。它们**读不到运行时**：一个
+面的 `backdrop-filter` 写对了、`computed` 值也逐字正确，但浏览器**根本没在采样**
+时，静态闸照样绿。本批 P0 正是这种形态 —— 手机 canvas 主胶囊
+`.mf-strip-chip.on::after` 的配方逐字正确，但它的**宿主**带 `filter` 与
+`will-change: transform, opacity`，宿主遂成为 **backdrop root**，把子件那层
+`backdrop-filter` 的采样整条切断 ⇒ 台上只剩 α .16 洗色底、正文原文穿出。故另立
+一道**看真像素**的运行时闸：
+
+| 判据 | 命中形态 | 判红条件 |
+|---|---|---|
+| R1 **采样式生效** | 声明了毛玻璃但**什么都没做**（玻璃纸） | 对每个玻璃面拍两枪（本相 / 全站摘掉 `backdrop-filter`），面内逐像素差 < 1.0（且其背后背板非平色）⇒ 红 |
+| R2 **backdrop root 切断** | 玻璃面的祖先链上有会新建 backdrop root 的属性 | 祖先出现 `filter`≠none / `backdrop-filter`≠none / `opacity`<1 / `will-change` 含 `opacity`·`filter`·`backdrop-filter` ⇒ 红并指名那一层（R1 红时的根因行） |
+| R3 **降级档一致性** | 无 backdrop 采样引擎里留下 α 低的玻璃纸 | 加 `html.no-backdrop` 后，本相是半透明玻璃底（α ∈ (0, .90)）的面，其底必须落不透明（α ≥ .90）⇒ 红 |
+
+**backdrop root 触发点（本机 chromium 实测，2026-11-18）**：`filter` 非 none
+（含 `blur(0px)`·`saturate(1)` 这种视觉恒等值）/ `will-change: opacity` /
+`opacity` < 1 / `backdrop-filter` 非 none ⇒ **切断**；`will-change: transform` /
+`perspective` / `transform` / `contain: paint` / `isolation: isolate` ⇒ **不切断**。
+故 R2 只认实测会切断的那几个（多认 = 假阳性，漏认 = 假阴性）。
+
+**平色背板豁免**：背板是平色时，模糊一个常量色仍得常量色 —— 那不是缺陷。R1 把该
+面自己藏起来再拍一枪，量它背后背板的边缘能量；低于阈值记 `n/a`，不判红。
+
+**具名例外**：少数真缺陷面的修复需重排另一片 UI 的材质层（超出批次范围），以
+具名例外登记在脚本 `NAMED_EXCEPTIONS`，带理由与证据，并计入「例外命中」行（例外
+不命中 = 陈旧例外，会告警）。**禁止静默放宽**：任何未登记的 R1/R2/R3 红都会让闸
+FAIL。当前登记：`desktop-canvas` 的 `.canvas-header` 坐在玻璃面 `#canvas-panel` 的
+backdrop 子树里，实测其 blur 完全未采样（`blur(0px) ≡ blur(24px) ≡ blur(60px)`）——
+修复需重排桌面面板/表头材质层，属独立批次。
