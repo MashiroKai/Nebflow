@@ -221,15 +221,20 @@ try {
     ok('C3 卡占满列宽（卡壳宽 = 列内容盒宽 ±1.5px，iframe 填满卡壳内容盒；非按内容宽右贴）', Math.abs(p1.wrapW - p1.colContentW) <= 1.5 && p1.wrapW > 0 && Math.abs(p1.iframeW - (p1.wrapW - 2)) <= 1.5, JSON.stringify({ wrapW: p1.wrapW, iframeW: p1.iframeW, colContentW: p1.colContentW }));
     ok('C5 卡行在流式 ai 泡之前（末元素仍是 ai 泡，流式腿判据不受影响）', p1.cardBeforeLast || !p1.lastChildIsAi, JSON.stringify({ lastChildIsAi: p1.lastChildIsAi, cardBeforeLast: p1.cardBeforeLast }));
 
-    // C4 帧内真内容（真载荷 × 真渲染件）
-    const frame = await (await page.$('.ask-dock .ask-col iframe.html-card-iframe')).contentFrame();
-    const ring = await frame.evaluate(() => ({
-      title: document.querySelector('h3') && document.querySelector('h3').textContent.trim(),
-      rows: Array.from(document.querySelectorAll('table tr')).map((tr) => tr.textContent.replace(/\s+/g, ' ').trim()),
-      bar: !!document.querySelector('.bar'),
-      cap: document.querySelector('.cap') && document.querySelector('.cap').textContent.trim(),
-    }));
-    ok('C4 帧内真载荷内容（标题 + 4 表行 + 进度条）', ring.title === 'CARD-LIVE-OK · 能量谱抽样' && ring.rows.length === 4 && ring.bar, JSON.stringify(ring));
+    // C4 帧内真内容（真载荷 × 真渲染件）——无卡也走断言（不许以异常代替红）
+    const frameEl = await page.$('.ask-dock .ask-col iframe.html-card-iframe');
+    if (!frameEl) {
+      ok('C4 帧内真载荷内容（标题 + 4 表行 + 进度条）', false, '列内无卡 iframe');
+    } else {
+      const frame = await frameEl.contentFrame();
+      const ring = await frame.evaluate(() => ({
+        title: document.querySelector('h3') && document.querySelector('h3').textContent.trim(),
+        rows: Array.from(document.querySelectorAll('table tr')).map((tr) => tr.textContent.replace(/\s+/g, ' ').trim()),
+        bar: !!document.querySelector('.bar'),
+        cap: document.querySelector('.cap') && document.querySelector('.cap').textContent.trim(),
+      }));
+      ok('C4 帧内真载荷内容（标题 + 4 表行 + 进度条）', ring.title === 'CARD-LIVE-OK · 能量谱抽样' && ring.rows.length === 4 && ring.bar, JSON.stringify(ring));
+    }
     await shot(page, 'desktop-1600x1000-ask-dock-card');
 
     // C6 定稿后整列重渲，卡仍在（render() 重建腿认卡行）
