@@ -201,7 +201,13 @@ for (const r of results) {
   console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.detail && !r.ok ? '  [' + r.detail + ']' : ''}`);
 }
 if (JSON_OUT) {
-  try { writeFileSync(JSON_OUT, JSON.stringify({ web: WEB, results }, null, 2)); } catch { /* 读数面非关键 */ }
+  try {
+    // 读数 JSON：通过项只在 detail 是「读数」（含 @ 的位置）时保留；失败文案（如
+    // 'no controller'）只有真失败才写，避免 ok:true 旁边挂一条失败措辞误导审计。
+    const rows = results.map((r) => (r.ok && !String(r.detail ?? '').includes('@'))
+      ? { name: r.name, ok: true } : r);
+    writeFileSync(JSON_OUT, JSON.stringify({ web: WEB, results: rows }, null, 2));
+  } catch { /* 读数面非关键 */ }
 }
 
 const failed = results.filter((r) => !r.ok).length;
