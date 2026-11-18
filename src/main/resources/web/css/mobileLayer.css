@@ -2046,11 +2046,24 @@ body.mobile-layer .mf-strip-chip.on {
        css/glass.css 成员表供给，本文件零 backdrop-filter 字样）+ 发丝边，**零投影**
        （flat-button 契约：按钮面禁厚度道具）。箭头 `↗` 整条退役。
        语义/可达性：aria-label（唯一名字源）+ role=button + tabindex=0（见 navController）。
-   几何：**视觉面小、热区不缩** —— 命中盒 = 钮自身盒（`--mhit` 44，WCAG 2.5.5 触控
-   下限）；可见钮面 = ::after 内侧 28px 胶囊（钮面不撑命中盒，也不吃事件）。签的内容宽
+   几何：**视觉只有图标、热区不缩** —— 命中盒 = 钮自身盒（`--mhit` 44，网页内容无
+   障碍指南（WCAG）2.5.5 的触控下限）；钮**不带可见面**（见下条退役说明）。签的内容宽
    预算按**实测量**扣减（chipInnerWidth 读钮 getBoundingClientRect，见上方展开档注释），
-   故钮变宽只会挤窄 label、不会让签越预算外借 44px（canvas-overlap-guard 批 2026-11-17
-   修过的那条病根）。 */
+   故钮宽只会挤窄 label、不会让签越预算外借 44px（canvas-overlap-guard 批 2026-11-17
+   修过的那条病根）。
+
+   ══ 内侧胶囊面退役（作者令 2026-11-18 飞书，逐字「canvas引用按钮不要边框」）═══════
+   原档这里还有 `::after` 内侧 28px 胶囊面（`background: var(--nf-glass-input-bg)` +
+   `border: … solid var(--glass-border)`）。作者令去边框后，那层面**没有可留的东西**：
+   实测（tests/canvas-tab-quote-shots.mjs 的 faces 读数，暗亮两档）它计算出的底色与它
+   正下方、签自己的主胶囊面**逐值相同** —— 暗档都是 `rgba(24,28,38,0.16)`、亮档都是
+   `rgba(255,255,255,0.16)`（两处都取同一份唯一材质，见 css/glass.css）⇒ 去掉那条发丝
+   边之后，它画的是一块与自己底下一模一样颜色的面，肉眼零贡献。故按作者令允许的那一腿
+   （「若整块内侧胶囊面都只是为『框』服务，就一并撤掉，只留图标本身」）整块退役，
+   只留图标 + 44px 命中盒；`css/glass.css` 的成员行同步移除（面没了，成员不许空转）。
+   留痕：去边框前的读数与特写帧在 evidence 的 `compare/bordered-*`（有面）与
+   `compare/noborder-*`（无面）两组，闸侧由 canvas-tab-reference 的 R12 兜底（钮的可见面
+   零边框，含伪元素）。 */
 body.mobile-layer .mf-strip-quote {
   display: none;
   /* ① 命中层修复（本批）：定位 + z-index 1 ⇒ 居于签 ::before（z-index:auto）之上。 */
@@ -2068,22 +2081,6 @@ body.mobile-layer .mf-strip-quote {
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
-}
-/* 可见钮面（②）：内侧 28px 胶囊，画在钮内容**之下**（z-index:-1，与
-   `.mf-strip-chip::after` 同一分工）；面只画不吃事件 ⇒ 命中盒恒为钮自身盒。 */
-body.mobile-layer .mf-strip-quote::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  z-index: -1;
-  height: 28px;
-  transform: translateY(-50%);
-  border-radius: var(--ds-radius-pill);
-  border: var(--ds-border-width) solid var(--glass-border);
-  background: var(--nf-glass-input-bg);
-  pointer-events: none;
 }
 /* 按下反馈：亮度档（扁平契约允许；不用投影/浮雕造厚度）。 */
 body.mobile-layer .mf-strip-quote:active { filter: brightness(0.92); }

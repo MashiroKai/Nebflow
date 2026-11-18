@@ -118,6 +118,60 @@ async function shot(theme) {
     };
     if (chip) walk(chip);
     const svg = q ? q.querySelector('svg') : null;
+    /* 面/边/层的逐值读数（作者令 2026-11-18「canvas引用按钮不要边框」）：
+       钮的可见面含伪元素 —— 一律按「元素 + ::before + ::after」三点取样，免得
+       「元素本体没边框、边框藏在伪元素上」这种形态蒙混过去。 */
+    const faceOf = (el, pseudo) => {
+      if (!el) return null;
+      const cs = getComputedStyle(el, pseudo || undefined);
+      if (!cs) return null;
+      const bw = ['Top', 'Right', 'Bottom', 'Left'].map((s) => parseFloat(cs[`border${s}Width`]) || 0);
+      return {
+        content: cs.content,
+        borderWidth: bw,
+        borderStyle: ['Top', 'Right', 'Bottom', 'Left'].map((s) => cs[`border${s}Style`]),
+        borderColor: cs.borderTopColor,
+        borderRadius: cs.borderRadius,
+        background: cs.backgroundColor,
+        backgroundImage: cs.backgroundImage === 'none' ? 'none' : cs.backgroundImage.slice(0, 40),
+        boxShadow: cs.boxShadow,
+        outline: `${cs.outlineStyle} ${cs.outlineWidth}`,
+        backdrop: cs.backdropFilter || cs.webkitBackdropFilter || 'none',
+      };
+    };
+    const zeroBorder = (f) => !!f && f.borderWidth.every((w) => w === 0) && f.borderStyle.every((s) => s === 'none');
+    const faces = {
+      quote: faceOf(q),
+      quoteBefore: faceOf(q, '::before'),
+      quoteAfter: faceOf(q, '::after'),
+      chip: faceOf(chip),
+      chipOnAfter: faceOf(chip, '::after'),
+    };
+    // 图标对比度（WCAG 相对亮度比）：图标 currentColor 对 ① 钮可见面 ② 签面。
+    const lum = (c) => {
+      const m = /rgba?\(([^)]+)\)/.exec(String(c || ''));
+      if (!m) return null;
+      const [r, g, b] = m[1].split(',').map((x) => parseFloat(x));
+      const f = (v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+      return 0.2126 * f(r || 0) + 0.7152 * f(g || 0) + 0.0722 * f(b || 0);
+    };
+    const overOn = (fg, bg) => {              // 把带 alpha 的前景合成到 bg 上
+      const m = /rgba?\(([^)]+)\)/.exec(String(fg || ''));
+      const b2 = /rgba?\(([^)]+)\)/.exec(String(bg || ''));
+      if (!m || !b2) return null;
+      const a = m[1].split(',').length > 3 ? parseFloat(m[1].split(',')[3]) : 1;
+      const f2 = m[1].split(',').map(parseFloat), g2 = b2[1].split(',').map(parseFloat);
+      return `rgb(${[0, 1, 2].map((i) => Math.round(f2[i] * a + g2[i] * (1 - a))).join(',')})`;
+    };
+    const ratio = (c1, c2) => {
+      const l1 = lum(c1), l2 = lum(c2);
+      if (l1 === null || l2 === null) return null;
+      const a = Math.max(l1, l2), b = Math.min(l1, l2);
+      return Math.round(((a + 0.05) / (b + 0.05)) * 100) / 100;
+    };
+    const iconColor = q ? getComputedStyle(q).color : null;
+    const chipBg = getComputedStyle(chip).backgroundColor;
+    const faceBgOnChip = faces.quoteAfter ? overOn(faces.quoteAfter.background, chipBg) : null;
     return {
       found: !!q,
       chipBox: cr ? { w: R(cr.width), h: R(cr.height), l: R(cr.left), t: R(cr.top), r: R(cr.right), b: R(cr.bottom) } : null,
@@ -129,6 +183,16 @@ async function shot(theme) {
       quoteIcon: svg ? svg.getAttribute('data-icon') : null,
       stripBox: sr ? { l: R(sr.left), t: R(sr.top), r: R(sr.right), b: R(sr.bottom) } : null,
       theme: document.documentElement.dataset.theme || getComputedStyle(document.body).backgroundColor,
+      // 可见面（元素 + 两个伪元素）的边/底/圆角/投影 + 图标对比度 + 层次
+      faces,
+      borderZero: { quote: zeroBorder(faces.quote), quoteBefore: zeroBorder(faces.quoteBefore), quoteAfter: zeroBorder(faces.quoteAfter) },
+      borderZeroAll: zeroBorder(faces.quote) && (zeroBorder(faces.quoteBefore) || !faces.quoteBefore.content) && (zeroBorder(faces.quoteAfter) || !faces.quoteAfter.content),
+      iconColor, chipBg, faceBgOnChip,
+      contrast: {
+        iconOnFace: ratio(iconColor, faceBgOnChip || chipBg),
+        iconOnChip: ratio(iconColor, chipBg),
+        faceOnChip: ratio(faceBgOnChip || chipBg, chipBg),
+      },
     };
   });
 

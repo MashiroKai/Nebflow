@@ -13,6 +13,8 @@
 //       **零文本子节点 / 零可见文字**（作者令 2026-11-18 22:10「只有一个图标…不需要文字」），
 //       名字靠 `aria-label`；箭头装饰符 `↗` 整条退役（textContent 不含）
 //   R3  指针可达：钮盒内 5 点 elementFromPoint 顶层 ∈ {钮自身, 钮的后代}
+//   R12 可见面零边框：元素本体 + 两伪元素逐点断 border-width 0 ∧ border-style none
+//       （作者令 2026-11-18 飞书「canvas引用按钮不要边框」）
 //   R4  真手指点得到：**touchscreen tap** 钮 → composer 附件条出引用 chip
 //   R5  真引用身份：该 chip 的 refType / refId / 标签名 / 源路径 = 被点那一签的身份
 //   R6  会话真收到：提交后 WS 帧 refs[0].source.path = 该看板文件的绝对路径
@@ -203,6 +205,30 @@ const QUOTE_PROBE = `(() => {
     return el ? (el === q || q.contains(el) ? 'quote' : el.tagName + '.' + String(el.className).slice(0, 30)) : 'null';
   });
   const svg = q.querySelector('svg');
+  /** 可见面（元素本体 + 两个伪元素）的边框读数 —— R12 的零边框断言用。
+   *  为什么要三个点都查：边框可以藏在伪元素上（本钮改前正是「本体零边框 + ::after
+   *  一条发丝边」的形态），只查元素本体等于给这种形态开后门。 */
+  const borderOf = (el, pseudo) => {
+    if (!el) return null;
+    const cs = getComputedStyle(el, pseudo || undefined);
+    if (!cs) return null;
+    const w = ['Top', 'Right', 'Bottom', 'Left'].map((s) => parseFloat(cs['border' + s + 'Width']) || 0);
+    const st = ['Top', 'Right', 'Bottom', 'Left'].map((s) => cs['border' + s + 'Style']);
+    return {
+      content: cs.content, width: w, style: st, color: cs.borderTopColor,
+      radius: cs.borderRadius, background: cs.backgroundColor,
+      zero: w.every((x) => x === 0) && st.every((s) => s === 'none'),
+    };
+  };
+  const borders = {
+    self: borderOf(q),
+    before: borderOf(q, '::before'),
+    after: borderOf(q, '::after'),
+  };
+  // 不存在的伪元素（content:none）不算「带边」—— 它没有盒，也就没有可见面。
+  const borderZeroAll = !!borders.self && borders.self.zero
+    && (!borders.before || borders.before.zero || borders.before.content === 'none')
+    && (!borders.after || borders.after.zero || borders.after.content === 'none');
   return {
     found: true, expanded: true,
     tabId: chip.dataset.tabId || '',
@@ -215,6 +241,7 @@ const QUOTE_PROBE = `(() => {
     textNodes,                                    // 文本节点集合（必须空）
     accName,                                      // 可访问名字（aria-label）
     legacyLabelEl: !!label,                       // 退役的可见文字元素是否复辟（恒 false）
+    borders, borderZeroAll,                       // R12：可见面零边框（元素 + 两伪元素）
     aria: q.getAttribute('aria-label'), role: q.getAttribute('role'), tabindex: q.getAttribute('tabindex'),
     title: q.getAttribute('title'),
     svgIcon: svg ? svg.getAttribute('data-icon') : null,
@@ -283,6 +310,17 @@ async function mobileLeg(tag, selftest) {
     `svgIcon=${q.svgIcon} svgBox=${JSON.stringify(q.svgBox)} textNodes=${JSON.stringify(q.textNodes)}`
     + ` textContent=${JSON.stringify(q.text)} legacyLabel=${q.legacyLabelEl} accName=${JSON.stringify(q.accName)}`
     + ` aria=${JSON.stringify(q.aria)} role=${q.role} tabindex=${q.tabindex}`);
+
+  // ── R12 可见面零边框（作者令 2026-11-18 飞书逐字「canvas引用按钮不要边框」）────
+  // 口径：钮的**可见面**不带边框 —— 元素本体与其两个伪元素逐点断
+  // `border-*-width: 0` ∧ `border-*-style: none`；某伪元素 `content: none`（不存在）
+  // 不算带边（没有盒就没有面）。今日产品形态 = 面整块退役（内侧胶囊底与签主胶囊面
+  // 逐值相同 ⇒ 去边后零贡献），故本条的牙口由「把边加回去」的注入证明（见 evidence
+  // selftest/inject-D*、inject-E*）。
+  record('R12', '钮的可见面零边框（元素 + ::before/::after 逐点：border-width 0 ∧ border-style none）',
+    !!q.found && q.borderZeroAll === true,
+    `self=${JSON.stringify(q.borders && q.borders.self)} before=${JSON.stringify(q.borders && q.borders.before)}`
+    + ` after=${JSON.stringify(q.borders && q.borders.after)} borderZeroAll=${q.borderZeroAll}`);
 
   // ── R3 指针可达：钮盒内 5 点顶层命中恒为钮（或其子）────────────────────
   record('R3', '指针可达：钮盒内 5 点 elementFromPoint 顶层 = 钮自身/其后代',

@@ -144,9 +144,12 @@
 body.mobile-layer #mobile-dock,
 /* Mobile canvas: only the active capsule owns glass, never the full band. */
 body.mobile-layer .mf-strip-chip.on::after,
-/* canvas-tab-reference 批（2026-11-18）：展开签内的「引用」钮面 —— 材质单源本体在
-   mobileLayer.css 的 `.mf-strip-quote::after`（底/边/几何），此处只供给 blur。 */
-body.mobile-layer .mf-strip-quote::after,
+/* canvas-tab-reference 批（2026-11-18）：展开签内的「引用」钮**不带可见面** —— 作者令
+   同日飞书逐字「canvas引用按钮不要边框」；该面原为 `.mf-strip-quote::after` 内侧胶囊
+   （底取唯一材质 + 发丝边），实测其底色与它正下方签主胶囊面逐值相同（暗 `rgba(24,28,38,
+   0.16)` / 亮 `rgba(255,255,255,0.16)`）⇒ 去边框后它零贡献。故该面在 mobileLayer.css
+   整块退役，成员行随之删除（成员不许空转：没有面就没有第二份 blur 供给）。钮只剩图标 +
+   44px 命中盒；去边框前后的读数与特写见 evidence 的 compare/bordered-* 与 noborder-*。 */
 body.mobile-layer .mf-dots,
 body.mobile-layer .mf-swipe-ring,
 body.mobile-layer .mf-stack-view,
