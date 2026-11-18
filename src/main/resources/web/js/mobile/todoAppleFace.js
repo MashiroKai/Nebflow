@@ -694,7 +694,9 @@ function buildHome(root, section, nav) {
     // （与桌面 #messages-badge 的同一归一口径）。写回幂等（同值不写）——监听
     // 复用同一渲染链，无守卫的赋值会自触发。
     const deckN = quickItems().length;
-    const deckText = deckN > 99 ? '99+' : String(deckN);
+    // 0 张 ⇒ 空串 + hidden（与复用面 applyDockBadges 的「空串/0 ⇒ hidden」同一口径，
+    // 不靠 CSS 单独遮一个「0」字样）；>99 ⇒ `99+`。
+    const deckText = deckN === 0 ? '' : (deckN > 99 ? '99+' : String(deckN));
     if (quickCount.textContent !== deckText) quickCount.textContent = deckText;
     if (quickCount.hidden !== (deckN === 0)) quickCount.hidden = deckN === 0;
 

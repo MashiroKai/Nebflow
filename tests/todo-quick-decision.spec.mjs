@@ -623,8 +623,8 @@ const st1 = await deckAndBadge(1);
 const stN = await deckAndBadge(7);
 const stBig = await deckAndBadge(120);
 probe.fabBadgeStates = { st0, st1, stN, stBig };
-ok('F5 计数 0 张 ⇒ 徽标隐藏（不显示 0）且与牌堆张数相等',
-  st0.deck === 0 && st0.hidden === true && st0.visible === false, JSON.stringify(st0));
+ok('F5 计数 0 张 ⇒ 徽标隐藏且文本清空（不显示 0；与复用面 applyDockBadges 同一口径）',
+  st0.deck === 0 && st0.hidden === true && st0.visible === false && st0.text === '', JSON.stringify(st0));
 ok('F5 计数 1 张 ⇒ 显示 1，与牌堆张数逐张相等',
   st1.deck === 1 && st1.visible === true && st1.text === '1', JSON.stringify(st1));
 ok('F5 计数 N 张 ⇒ 显示 N，与牌堆张数逐张相等（同一数据源 quickItems()）',
