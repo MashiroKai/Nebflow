@@ -319,8 +319,11 @@ function exceptionCovers(hit, exceptions) {
   return exceptions.some((e) => {
     if (!e.valid || e.sentinel || !e.rules.includes(hit.ruleId)) return false;
     if (e.selector === '.canvas-button') {
-      return hit.file === 'split.css' && hit.selector === '.canvas-button.canvas-button' &&
-        hit.ruleId === 'F1' && hit.value === 'var(--ds-shadow-float)';
+      // canvas-button-unify 收口（2026-11-18）：例外从 split.css 私有钩子（已删）
+      // 迁到 glass.css「Canvas 单钮共享面」—— 同一个令牌值，但必须是整列
+      // `.canvas-button.族名` 复合的一条共享规则（形态逐字符校验，其余仍红）。
+      return hit.file === 'glass.css' && hit.ruleId === 'F1' && hit.value === 'var(--ds-shadow-float)' &&
+        hit.selector.split(',').map((s) => s.trim()).every((s) => /^\.canvas-button\.[a-z0-9-]+$/.test(s));
     }
     return hit.selector.includes(e.selector);
   });

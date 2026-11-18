@@ -695,6 +695,45 @@ html[data-theme="light"] {
   height: var(--cv-icon, 18px);
 }
 
+/* ── Canvas 单钮共享面（canvas-button-unify 回归修复 2026-11-18）─────────────
+   退役的私有定义 `.canvas-button.canvas-button`（split.css，本批删）此前把
+   border-radius 999px / box-shadow float **覆盖到每一枚**挂 .canvas-button 的
+   钮（(0,2,0) 压过全部 (0,1,0) 族规则与 (0,1,1) 手机钉）；删除后各族回落到
+   50%/none，计算值漂移被派发方裁定为真回归 ⇒ 本条把**同一组值**从共享层
+   供给（一份声明、N 个成员，口径同上面的组玻璃声明），基线计算值原样回来。
+   纪律：选择器一律 `.canvas-button.族名`（以族名收尾）——`.canvas-button`
+   仍是纯身份钩子（G-CB3a）；投影值只许 var(--ds-shadow-float)（G-CB3c），
+   flat 例外登记 = flat-button-spec.md「例外清单」`.canvas-button` 行。
+   不在本表的挂钮族 = 有意例外（逐条实测理由）：
+     · canvas-video-btn：从不挂 .canvas-button（js/viewers/video.js:122，钩子
+       从未覆盖它，无可回归）。
+     · canvas-zoom-btn / canvas-pan-toggle（组成员）：组面按作者令重设计为
+       胶囊成员（对照 .ta-pill-btn 实测 shadow=none、radius=999px——radius
+       由 split.css 族规则给同值）；基线成员的 float 影是被退役钩子的全覆盖
+       副产物，组重设计令（时间后者）取代之 ⇒ 成员投影 none。 */
+.canvas-button.canvas-source-toggle,
+.canvas-button.canvas-ref-select,
+.canvas-button.canvas-find-toggle,
+.canvas-button.ask-fab,
+.canvas-button.g2-fab,
+.canvas-button.canvas-pop-btn,
+.canvas-button.canvas-refback-btn,
+.canvas-button.canvas-merge-btn,
+.canvas-button.canvas-tab-close,
+.canvas-button.deck-card-pop,
+.canvas-button.deck-card-x,
+.canvas-button.glass-control,
+.canvas-button.lt-btn,
+.canvas-button.viewer-retry-btn,
+.canvas-button.xlsx-sheet-tab,
+.canvas-button.epub-anno-swatch,
+.canvas-button.epub-menu-btn,
+.canvas-button.epub-nav-btn,
+.canvas-button.epub-toc-item {
+  border-radius: var(--ds-radius-pill);
+  box-shadow: var(--ds-shadow-float);
+}
+
 /* 玻璃药丸 .g2-pill（消费方 = 接管卡次级【退出】；类名零改动，材质归包）：
    面级配方收窄为药丸（无折射线）；几何 h36 r999 沿用
 

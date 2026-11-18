@@ -16,15 +16,20 @@
 //   桌面 1280×800（desktop canvas group，实测可见件）
 //     D1  组可见且是真组：.canvas-zoom-bar 可见 + 内含 ≥2 个 .canvas-zoom-btn
 //     D2  两族同一条共享声明：桌面组材质**逐字符串等于**手机组同一读数
-//     D3  组几何走令牌：radius == --cv-radius-bar-sm；padding == --cv-pad-bar-sm
-//     D4  行中线同轴：条中线 − 同排圆钮中线 ∈ [−2, 2]（无同排圆钮则记 NA 并打印清单）
+//     D3  组几何 = 胶囊档（canvas-button-unify 收口 2026-11-18）：radius 解析值
+//         == --cv-radius-pill(999px) 且 == 手机组实测 999px；padding == 0px；
+//         gap == normal（对照 .ta-pill 实测）
+//     D4  行中线同轴：条中线 − 成员中线 ∈ [−2, 2]（无同排圆钮则记 NA 并打印清单）
 //     D5  组投影只许共享 token：box-shadow == --cv-shadow 解析值
 //
 //   Canvas 单钮 ↔ 全站按钮（同页实测）
-//     S1  .canvas-zoom-btn 尺寸 == --cv-size-circle-lg ∧ 圆角 == 50%（族自有全圆档）
-//     S2  .canvas-zoom-btn 零私有投影（box-shadow == none）
+//     S1  .canvas-zoom-btn 尺寸 == --ds-hit-tap-lg 解析值（= 手机 --band-d 同源 48）
+//         ∧ 圆角 == --cv-radius-pill 解析值（999px，== .ta-pill-btn 实测）
+//     S2  .canvas-zoom-btn 零投影（胶囊成员档：== .ta-pill-btn 实测 none；基线
+//         成员的 float 影随组重设计退役，见 glass.css 共享面例外登记）
 //     S3  every canvas-button 同时挂已登记族（身份钩子不供几何）
-//     S4  站点基准钮 .ds-btn 圆角 == --ds-radius-input（探测件，非产品件）
+//     S5  组成员 ↔ 手机胶囊成员（跨视口同规实测）：radius / shadow / padding /
+//         尺寸 / color 逐值相等
 //
 // 装置：零端口零进程（scripts/lib/visual-harness.mjs：page.route 从磁盘服务 web/，
 // MockWS 走真实 ws.js 分发）⇒ 结构上不可能碰到宿主 6138。
@@ -130,7 +135,8 @@ const DESKTOP_PROBE = `(() => {${HELPERS}
     tokens: bar ? {
       glassBg: tok(bar, '--nf-glass-bg'), glassFilter: tok(bar, '--nf-glass-input-filter'),
       glassBorder: nBorder(tok(bar, '--nf-glass-border')),
-      cvRadiusBarSm: nRadius(tok(bar, '--cv-radius-bar-sm')), cvPadBarSm: nLen(tok(bar, '--cv-pad-bar-sm')),
+      cvRadiusPill: nRadius(tok(bar, '--cv-radius-pill')), dsHitTapLg: nLen(tok(bar, '--ds-hit-tap-lg')),
+      dsShadowFloat: nShadow(tok(bar, '--ds-shadow-float')),
       cvShadow: nShadow(tok(bar, '--cv-shadow')), cvSizeCircleLg: nLen(tok(bar, '--cv-size-circle-lg')),
       dsRadiusInput: nRadius(tok(bar, '--ds-radius-input')),
     } : null,
@@ -216,9 +222,10 @@ async function main() {
     record('D2', '两族同一条共享声明：桌面组材质逐字符串 = 手机组材质',
       gD.face.bg === gM.face.bg && gD.face.bd === gM.face.bd && gD.face.border === gM.face.border,
       `bg ${gD.face.bg} == ${gM.face.bg} | bd ${gD.face.bd} == ${gM.face.bd} | border ${gD.face.border} == ${gM.face.border}`);
-    record('D3', '组几何走令牌：radius=--cv-radius-bar-sm、padding=--cv-pad-bar-sm',
-      gD.face.radius === tD.cvRadiusBarSm && gD.face.pad === tD.cvPadBarSm,
-      `radius ${gD.face.radius} vs ${tD.cvRadiusBarSm} | pad ${gD.face.pad} vs ${tD.cvPadBarSm} | gap ${gD.face.gap}`);
+    record('D3', '组几何=胶囊档：radius==--cv-radius-pill 解析值且==手机组实测、padding 0px、gap normal',
+      gD.face.radius === tD.cvRadiusPill && gM.face.radius === gD.face.radius
+        && gD.face.pad === '0px' && gD.face.gap === 'normal',
+      `radius ${gD.face.radius} vs pill=${tD.cvRadiusPill} vs mobile=${gM.face.radius} | pad ${gD.face.pad} | gap ${gD.face.gap}`);
     const ref = desktop.members[0] || null;
     const dCy = ref ? R2(gD.box.cy - ref.box.cy) : null;
     record('D4', '条中线 = 成员圆钮行中线（同排兄弟圆钮族在本夹具缺席，见 readout）',
@@ -229,31 +236,31 @@ async function main() {
       `shadow ${gD.face.shadow} vs ${tD.cvShadow}`);
   } else record('D2-D5', '桌面腿探针取到组与令牌', false, `group=${!!gD} tokens=${!!tD}`);
 
-  // ══ S1–S4 ═══════════════════════════════════════════════════════════════
+  // ══ S1–S5 ═══════════════════════════════════════════════════════════════
   if (desktop && desktop.members.length && tD) {
-    const side = parseFloat(tD.cvSizeCircleLg);
+    const side = parseFloat(tD.dsHitTapLg);
     const radii = [...new Set(desktop.members.map(m => m.face.radius))];
     const sizes = [...new Set(desktop.members.map(m => `${m.box.w}×${m.box.h}`))];
-    record('S1', 'Canvas 单钮尺寸 = --cv-size-circle-lg ∧ 圆角 = 50%（族自有全圆档）',
-      sizes.length === 1 && sizes[0] === `${side}×${side}` && radii.length === 1 && radii[0] === '50%',
-      `sizes=${JSON.stringify(sizes)} expect=${side}×${side} | radii=${JSON.stringify(radii)}`);
+    record('S1', '组成员尺寸 = --ds-hit-tap-lg 解析值 ∧ 圆角 = --cv-radius-pill 解析值',
+      sizes.length === 1 && sizes[0] === `${side}×${side}` && radii.length === 1 && radii[0] === tD.cvRadiusPill,
+      `sizes=${JSON.stringify(sizes)} expect=${side}×${side} | radii=${JSON.stringify(radii)} expect=${tD.cvRadiusPill}`);
     const shadows = [...new Set(desktop.members.map(m => m.face.shadow))];
-    record('S2', 'Canvas 单钮零私有投影（圆钮「不许带影」裁定未被第二条定义推翻）',
+    record('S2', '组成员零投影（胶囊成员档 == .ta-pill-btn 实测 none）',
       shadows.length === 1 && shadows[0] === 'none', `shadows=${JSON.stringify(shadows)}`);
     const hooks = desktop.members.filter(m => /\bcanvas-button\b/.test(m.cls));
     record('S3', 'every canvas-button 同时挂已登记族（身份钩子不供几何）',
       hooks.length === desktop.members.length,
       `members=${desktop.members.length} with hook=${hooks.length} classes=${JSON.stringify(desktop.members.map(m => m.cls))}`);
-    // 站点基准钮 .ds-btn 的 computed 探测在本夹具取不到（该规则是嵌套/作用域块，
-    // 页面里也没有渲染出来的 .ds-btn）⇒ 站点侧基准改用**真实渲染件**（S5）；
-    // 探测读数照旧留在 JSON 里备查。
-    const site = (desktop.siteBtns || []).filter(s => s.cls);
-    const g2 = site.find(s => s.sel === '.g2-fab');
-    record('S5', 'Canvas 单钮 ↔ 同页站点圆钮族：同圆角档（均全圆）且同径',
-      !!g2 && g2.face.radius === '50%' &&
-      site.filter(s => /g2-fab|canvas-close-btn|canvas-head-close/.test(s.sel)).every(s => s.face.radius === '50%') &&
-      desktop.members.every(m => m.box.w === g2.box.w && m.box.h === g2.box.h),
-      `site=${JSON.stringify(site.map(s => `${s.sel}:${s.face.radius}/${s.box.w}x${s.box.h}/shadow=${s.face.shadow}`))} | canvas=${JSON.stringify(desktop.members.map(m => `${m.face.radius}/${m.box.w}x${m.box.h}`))}`);
+    // S4 探测读数（.ds-btn 注入）仍留在 JSON 备查；站点侧基准改用跨族同规实测（S5）。
+    const mRef = mobile.members[0];
+    const dMem = desktop.members[0];
+    record('S5', '组成员 ↔ 手机胶囊成员（跨视口同规）：radius/shadow/pad/尺寸/color 逐值相等',
+      !!mRef && !!dMem &&
+      dMem.face.radius === mRef.face.radius && dMem.face.shadow === mRef.face.shadow &&
+      dMem.face.pad === mRef.face.pad && dMem.box.w === mRef.box.w && dMem.box.h === mRef.box.h &&
+      desktop.members.every(m => m.face.color === mRef.face.color),
+      `desktop=${JSON.stringify({ r: dMem.face.radius, sh: dMem.face.shadow, pad: dMem.face.pad, box: `${dMem.box.w}x${dMem.box.h}`, color: dMem.face.color })}`
+      + ` mobile=${JSON.stringify({ r: mRef.face.radius, sh: mRef.face.shadow, pad: mRef.face.pad, box: `${mRef.box.w}x${mRef.box.h}`, color: mRef.face.color })}`);
   }
 
   const stamp = new Date().toISOString();

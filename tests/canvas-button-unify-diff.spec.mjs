@@ -16,11 +16,12 @@
 // 属性面：radius / background / border / box-shadow / backdrop-filter / padding / gap /
 //         color（图标 currentColor）/ 包围盒。
 //
-// 判定：
-//   A 组材质搬家中性（.canvas-zoom-bar 的 background/border/backdrop-filter 由
-//     split.css 搬进 glass.css 共享声明 ⇒ 计算值必须逐字符串不变）。
-//   B 唯一**有意**的改动 = 退役的第二份 Canvas 定义（`.canvas-button.canvas-button`
-//     的 border-radius / box-shadow / hover 形变）落在挂 .canvas-button 的钮上。
+// 判定（canvas-button-unify 收口 2026-11-18 口径）：
+//   A 组（desktop .canvas-zoom-bar）改前↔改后差必须**恰为**对齐令的
+//     {radius/pad/gap}+盒高（材质搬运仍逐字符串中性）；手机参考组零变化。
+//   B 成员（desktop .canvas-zoom-btn）差恰为
+//     {radius/color/border/w/h/bg/shadow/transform}；
+//     单钮回归修复（radius 999px/shadow float 复归）= 让差归零，不在此表。
 //     除此之外任何计算值变化 = 回归。
 //   C 两族组对齐（手机 .ta-pill ↔ 桌面 .canvas-zoom-bar）：radius / 玻璃 bg / filter /
 //     border / padding / gap / 成员圆钮尺寸 · color / hover · active 读数必须逐值相等；
@@ -172,7 +173,11 @@ async function scanPass(browser, kind) {
   return m;
 }
 
-const FACE_KEYS = ['radius', 'bg', 'bgImage', 'bd', 'border', 'shadow', 'filter', 'pad', 'gap', 'color', 'w', 'h'];
+// 属性面 = 判定表实际比较的键。**必须含 transform**：改前成员在 hover/active 上带
+// matrix(1.05)/matrix(0.96)（退役钩子的抬亮/按下档），改后为 none —— 这是本批唯一
+// 的**行为**改变（随组重设计退役），列进表面才能被白名单显式认领；漏掉它 = 该档
+// 无论有意还是回归都看不见（A/B 变成少报）。包围盒另由 box 列单独比较。
+const FACE_KEYS = ['radius', 'bg', 'bgImage', 'bd', 'border', 'shadow', 'filter', 'pad', 'gap', 'color', 'transform', 'w', 'h'];
 
 function faceRows(snap, label) {
   const out = [];
@@ -199,12 +204,28 @@ function diffRows(a, b) {
   return out;
 }
 
-// 有意改动白名单（实测口径）：退役的第二份 Canvas 定义 = `.canvas-button.canvas-button`
-// { border-radius: var(--ds-radius-pill); box-shadow: var(--ds-shadow-float) }（全态）
-// ⇒ 挂 .canvas-button 的钮在**所有态**上只许 radius / shadow 变。凡是其它属性变了，
-// 或者非 canvas 钮件（手机待办组）有任何变化，都是回归。
-const INTENDED = new Set(['radius', 'shadow']);
-const isCanvasButtonKey = (k) => k.startsWith('desktop/member');
+// 有意改动白名单（canvas-button-unify 收口 2026-11-18 实测口径，派发方裁定）：
+//   · 组（desktop/…/group）= 组规格对齐手机待办胶囊（作者令「多个按钮的组合…
+//     使用手机端待办顶端右上角那样的样式」）：radius 10→999px、pad 4→0、gap 8→normal
+//     + 盒高 50→48（盒宽随钮数不变：40+8 缝 ≡ 48 成员并排；底锚定死 ⇒ 盒 y 随高移）。
+//   · 成员（desktop/…/member）= 成员规格对齐 .ta-pill-btn：radius 50%→999px、
+//     color muted→frame-text-bright、border 1px 透明→0px none、尺寸 40→48、
+//     hover 底 cv-hover-bg→transparent（胶囊成员零 hover 声明）、shadow float→none
+//     （胶囊成员零投影，glass.css 共享面例外登记——单钮的 float 修复不进组成员）、
+//     **transform hover matrix(1.05)→none / active matrix(0.96)→none**（胶囊成员
+//     零 hover / 零按下形变，实测 .ta-pill-btn 两态 transform 均为 none；条内
+//     「抬亮 + 按下缩放」档随组重设计退役 —— 本批唯一的行为改变，故必须列进
+//     FACE_KEYS 由本表显式认领，不许它落在判定面之外）。
+//   · 单钮回归修复（radius 999px / shadow float 自 glass.css 共享面供给）不在
+//     本表 —— 修复的目的恰是让「改后↔基线」的 radius/shadow 差**归零**，
+//     即不再出现 diff。本夹具（image pane）可测成员；source/ref/find 圆钮
+//     不在本夹具渲染面，其修复读数走 geom spec 令牌对照。
+//   · 手机待办组（mobile/…）零变化（参考系本体）。
+// 其余任何计算值变化 = 回归。
+const INTENDED_GROUP = new Set(['radius', 'pad', 'gap', 'h']);
+const INTENDED_MEMBER = new Set(['radius', 'color', 'border', 'w', 'h', 'bg', 'shadow', 'transform']);
+const INTENDED_BOX_GROUP = new Set(['h', 'y']);
+const INTENDED_BOX_MEMBER = new Set(['w', 'h', 'x', 'y']);
 
 async function main() {
   const { mod } = loadPlaywright();
@@ -231,14 +252,21 @@ async function main() {
     const a = snapshots[`base-${kind}`], b = snapshots[`current-${kind}`];
     if (!a.found || !b.found) { record(`${kind}-AB`, `改前/改后对照（${kind}）取到两族件`, false, `baseFound=${a.found} currentFound=${b.found}`); continue; }
     const diffs = diffRows(faceRows(a, kind), faceRows(b, kind));
-    record(`${kind}-A`, `${kind}：组材质/几何改前↔改后中性（非钮族件零变化）`,
-      !diffs.some((d) => /group/.test(d.key)),
-      diffs.filter((d) => /group/.test(d.key)).map((d) => `${d.key}: ${d.changed.join(',')}`).join('; ') || '组读数逐值相同');
-    const unintended = diffs.filter((d) => !isCanvasButtonKey(d.key) || d.changed.some((p) => !INTENDED.has(p)));
-    record(`${kind}-B`, `${kind}：除退役第二份定义外无计算值变化`,
-      unintended.length === 0,
-      unintended.length ? unintended.map((d) => `${d.key}: ${(d.changed || []).join(',')}`).join('; ')
-        : `有意变更=${diffs.length} 处（均落在挂 .canvas-button 的钮的 ${[...INTENDED].join('/')}）`);
+    const groupDiffs = diffs.filter((d) => /group/.test(d.key));
+    const memberDiffs = diffs.filter((d) => /member/.test(d.key));
+    const otherDiffs = diffs.filter((d) => !/group|member/.test(d.key));
+    const groupOk = groupDiffs.every((d) => d.changed.every((p) => INTENDED_GROUP.has(p))
+      && d.boxChanged.every((p) => INTENDED_BOX_GROUP.has(p)));
+    record(`${kind}-A`, `${kind}：组改前↔改后差恰为对齐令的 {${[...INTENDED_GROUP].join('/')}}（手机腿参考系零变化）`,
+      groupOk && (kind === 'mobile' ? groupDiffs.length === 0 : true),
+      groupDiffs.map((d) => `${d.key}: ${d.changed.join(',')}|box:${(d.boxChanged || []).join(',')}`).join('; ') || '组读数逐值相同');
+    const memberOk = memberDiffs.every((d) => d.changed.every((p) => INTENDED_MEMBER.has(p))
+      && d.boxChanged.every((p) => INTENDED_BOX_MEMBER.has(p)));
+    record(`${kind}-B`, `${kind}：成员改前↔改后差恰为对齐令的 {${[...INTENDED_MEMBER].join('/')}}，其余零漂移`,
+      memberOk && otherDiffs.length === 0 && (kind === 'mobile' ? memberDiffs.length === 0 : true),
+      [...memberDiffs.map((d) => `${d.key}: ${d.changed.join(',')}|box:${(d.boxChanged || []).join(',')}`),
+        ...otherDiffs.map((d) => `${d.key}: ${(d.changed || []).join(',')}`)].join('; ')
+        || '成员与参考系读数逐值相同');
     log[`${kind}Diffs`] = diffs;
   }
 

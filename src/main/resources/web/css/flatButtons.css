@@ -51,7 +51,12 @@
   .agent-detail-prompt-toggle, .panel-toggle-btn,
   .task-delegate-btn, .todo-create-btn, .tw-btn,
   /* canvas-video-player 批（2026-11-05）：画布视频控件族（播放/静音/画中画/全屏） */
-  .canvas-video-btn
+  .canvas-video-btn,
+  /* canvas-button-unify 收口（2026-11-18）归位：大文本工具条钮 / 阅读失败重试钮
+     此前唯一态层 = 退役私有钩子的 hover（随钩子删除一并消失，实测三份共享态层
+     零命中、族内零声明）。按扁平六态作者令（2026-11-05「落实到各处」）补全
+     六态，登记台账 check-canvas-families.mjs 改判 shared-flat-buttons（实测命中）。 */
+  .lt-btn, .viewer-retry-btn
 ):active {
   transform: scale(var(--btn-press-scale));
 }
@@ -82,7 +87,9 @@
   /* 本批收尾补位（盘点表里此前无焦点态的族） */
   .task-delegate-btn, .todo-create-btn, .tw-btn,
   /* canvas-video-player 批（2026-11-05）：画布视频控件族 */
-  .canvas-video-btn
+  .canvas-video-btn,
+  /* canvas-button-unify 收口（2026-11-18）：lt-btn / viewer-retry-btn 归位（同上） */
+  .lt-btn, .viewer-retry-btn
 ):focus-visible {
   outline: var(--btn-ring-w) solid var(--btn-ring);
   outline-offset: var(--btn-ring-offset);
@@ -114,7 +121,9 @@
   /* 本批收尾补位（盘点表里此前无 disabled 档的族） */
   .todo-create-btn, .tfl-fab-add, .activity-btn, .tw-btn,
   /* canvas-video-player 批（2026-11-05）：画中画在不支持的浏览器上走原生 disabled */
-  .canvas-video-btn
+  .canvas-video-btn,
+  /* canvas-button-unify 收口（2026-11-18）：lt-btn / viewer-retry-btn 归位（同上） */
+  .lt-btn, .viewer-retry-btn
 ):is(:disabled, [aria-disabled="true"]) {
   opacity: var(--btn-disabled-opacity);
   cursor: not-allowed;
@@ -142,6 +151,12 @@
   .canvas-video-btn:not(:disabled):hover {
     background-color: var(--btn-hover-bg);
   }
+  /* canvas-button-unify 收口（2026-11-18）：lt-btn / viewer-retry-btn 归位 ——
+     退役钩子的 hover 档（cv-hover-bg + 1.05）随钩子消失，本层按扁平底色阶补
+     （--btn-hover-bg 档），不复活玻璃抬亮配方。 */
+  :is(.lt-btn, .viewer-retry-btn):not(:disabled):hover {
+    background-color: var(--btn-hover-bg);
+  }
 }
 
 /* ── ⑤ 状态过渡（只过渡扁平允许项：底色 / 描边 / 字色 / 缩放 / 透明度）──────
@@ -156,7 +171,9 @@
   .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
   .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
   .agent-detail-prompt-toggle, .canvas-zoom-btn, .canvas-refback-btn,
-  .canvas-video-btn
+  .canvas-video-btn,
+  /* canvas-button-unify 收口（2026-11-18）：lt-btn / viewer-retry-btn 归位（同上） */
+  .lt-btn, .viewer-retry-btn
 ) {
   transition:
     background-color var(--btn-dur-state) ease,

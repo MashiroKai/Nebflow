@@ -48,8 +48,9 @@ if (!/\.ask-dock\.closed\s+\.ask-input\s*,\s*\.note-dock\.closed\s+\.note-body\s
              任何以 `.canvas-button` 结尾的整选择器都不得携带声明（几何或材质）。
      G-CB3b Canvas 按钮组必须与手机待办组同处 glass.css 的**同一条**玻璃声明
              （一份实现、两个成员），且组容器不得在自己文件里复制组材质。
-     G-CB3c 单钮族零私有投影（`none` 放行 —— 那是「摘除」，不是第二套）；组容器
-             的投影只许写共享 token `var(--cv-shadow)`。 */
+     G-CB3c 单钮投影两合法值：`none`（摘除）或 glass.css「Canvas 单钮共享面」
+             那一条的 `var(--ds-shadow-float)`（回归修复：退役钩子的值自共享层
+             供给，形态逐字符校验）；组容器投影只许共享 token `var(--cv-shadow)`。 */
 const stripComments = s => s.replace(/\/\*[\s\S]*?\*\//g, '');
 const rules = [];
 for (const file of readdirSync(join(web, 'css')).filter(f => f.endsWith('.css'))) {
@@ -82,6 +83,14 @@ for (const r of rules) {
   }
 }
 const CANVAS_SINGLE = /(?:\.canvas-button|\.canvas-source-toggle|\.canvas-ref-select|\.canvas-find-toggle|\.canvas-refresh-toggle|\.ask-fab|\.mf-cv-close|\.mf-cv-stack|#deck-fab|#canvas-head-close)/;
+// G-CB3c（回归修复后口径，canvas-button-unify 收口 2026-11-18）：单钮投影只许
+// ① none（摘除），或 ② **glass.css 那一条「Canvas 单钮共享面」**的
+// var(--ds-shadow-float)（退役私有钩子的回归修复值；选择器必须整列
+// `.canvas-button.族名` 复合，末段以族名收尾 ⇒ 钩子仍是身份钩子）。其它任何
+// 文件/值 = 私有第二套 ⇒ 红。判据没有放宽：合法影子从「零个」变「一条具名
+// 规则」，且该规则的形态被逐字符校验。
+const isSharedFaceRule = (file, selector) => file === 'glass.css'
+  && selector.split(',').map(s => s.trim()).every(s => /^\.canvas-button\.[a-z0-9-]+$/.test(s));
 for (const r of rules) {
   const shadow = /(?:^|[;\s{])box-shadow\s*:\s*([^;]*)/.exec(r.body);
   if (!shadow) continue;
@@ -91,7 +100,9 @@ for (const r of rules) {
     continue;
   }
   if (!CANVAS_SINGLE.test(r.selector)) continue;
-  if (value !== 'none') failures.push(`G-CB3c private shadow in ${r.file}: ${r.selector}`);
+  if (value === 'none') continue;
+  if (value === 'var(--ds-shadow-float)' && isSharedFaceRule(r.file, r.selector)) continue;
+  failures.push(`G-CB3c private shadow in ${r.file}: ${r.selector} = ${value}`);
 }
 // G-CB3d：canvas-button 是身份钩子而非面 ⇒ 每个挂它的发射点必须同时挂一个已登记
 // 族（族的几何/行中线全走 --ds-*/--cv-* 令牌）。只挂钩子 = 该钮零几何来源。

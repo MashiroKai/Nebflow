@@ -125,4 +125,4 @@ status: active
 
 | 选择器片段 | 禁项号 | 理由 |
 |---|---|---|
-| `.canvas-button` | F1 | 作者令 2026-11-16：仅 canvas 按钮统一 ask/note 阴影；仅允许 canvas 共享规则中的统一阴影令牌，其余按钮仍禁影。 |
+| `.canvas-button` | F1 | 作者令 2026-11-16：仅 canvas 按钮统一 ask/note 阴影；仅允许 canvas 共享规则中的统一阴影令牌，其余按钮仍禁影。canvas-button-unify 收口（2026-11-18）：私有钩子 `.canvas-button.canvas-button`（split.css，已删）的投影回归由 glass.css「Canvas 单钮共享面」一条整列 `.canvas-button.族名` 复合规则供给（值仍 `var(--ds-shadow-float)`，`check-flat-buttons.mjs` exceptionCovers 对该形态逐字符校验）；此外任何按钮禁影不变。 |

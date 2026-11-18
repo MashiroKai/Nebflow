@@ -3215,9 +3215,17 @@ body.mobile-layer .cvv-time {
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: var(--ds-space-2);
-  padding: var(--cv-pad-bar-sm, 4px);
-  border-radius: var(--cv-radius-bar-sm, 10px);
+  /* 组规格 = 手机待办右上角胶囊（作者令「多个按钮的组合…使用手机端待办顶端
+     右上角那样的样式」，canvas-button-unify 收口 2026-11-18）：内距 0 / 成员
+     零缝并排（gap normal）/ 胶囊圆角 999 / 胶囊高 = 成员径 48（--band-d 同源
+     = --ds-hit-tap-lg）。逐值对照 .ta-pill（mobile-todo-apple.css:320）：
+     实测两族 radius/pad/gap/border/玻璃底逐字符串相等
+     （tests/canvas-button-unify-diff.spec.mjs C1）。整体宽度随钮数，不比对。 */
+  gap: normal;
+  padding: 0;
+  height: var(--ds-hit-tap-lg, 48px);
+  box-sizing: border-box;
+  border-radius: var(--cv-radius-pill, 999px);
   /* 材质（background / border / backdrop-filter）不在本文件 —— 本按钮组已并入
      glass.css「按钮组：一份实现、两个消费族」那条共享声明（与手机待办组
      .ta-pill 同一条规则，canvas-button-unify 批 2026-11-18）。此处零复制。
@@ -3243,44 +3251,31 @@ body.mobile-layer .cvv-time {
   pointer-events: none;
 }
 .canvas-zoom-btn {
-  /* 件3 批（2026-11-05 作者令「底部的按钮的大小，应该和canvas顶部的按钮的大小
-     样式都统一」）：尺寸档从 48 收敛回顶部圆钮档（--cv-size-circle-lg = 40）+
-     圆角由条内方钮 7px 改回全圆 50% + 图标 --cv-icon(18) —— 与顶部 .g2-fab
-     （圆钮 / 内距 0 / 图标 18 / 玻璃状态档）逐项同源，「大小样式统一」按最严
-     读法落成同 token。条内距 4 与缝 8 不变（--cv-pad-bar-sm / --ds-space-2），
-     条高随内容 = 40 + 2×4 + 2×1 = 50；条中线锚 = 圆钮行中线（16 + 20 = 36）
-     ⇒ 底锚 11 不变。手机 375 档由文件尾 `body.mobile-layer` 块钉回 48/20/7px。 */
-  width: var(--cv-size-circle-lg);
-  height: var(--cv-size-circle-lg);
+  /* 成员规格 = 手机待办胶囊成员 .ta-pill-btn（作者令同上，2026-11-18 收口）：
+     径 48（--band-d 同源 --ds-hit-tap-lg）/ 圆角 999 / 边 0 / 底透明 /
+     字色 frame-text-bright / 图标 18（实测两族 svg 计算值相等）。hover/active
+     走胶囊成员语义 = **零声明**（参考 .ta-pill-btn 无 hover 无形变；实测
+     hover bg=transparent、active transform=none，diff spec C3）——条内
+     「hover 抬亮 + 按下缩放」档随组重设计一并退役。投影 = glass.css
+     「Canvas 单钮共享面」同一条（回归修复：退役钩子的 float 影自族层供给）。 */
+  width: var(--ds-hit-tap-lg, 48px);
+  height: var(--ds-hit-tap-lg, 48px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  /* 冷启动批②（2026-10-30）：hover 抬亮升级为完整玻璃控件材质（抬亮底 +
-     描边 + 内外缘）——修前只换底色，hover 态在毛玻璃条上几乎不可辨（作者
-     实证「hover 按钮直接消失」）。rest 态 1px 透明边框占位，hover 换色
-     零布局位移。 */
-  border: 1px solid transparent;
-  border-radius: 50%;
+  border: none;
+  border-radius: var(--cv-radius-pill, 999px);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--color-frame-text-bright, var(--color-frame-text));
   cursor: pointer;
-  transition: background .15s ease, color .15s ease, transform .15s ease, border-color .15s ease;
+  transition: background .15s ease, color .15s ease;
 }
-@media (hover: hover) {
-  .canvas-zoom-btn:hover {
-    background: var(--cv-hover-bg);
-    border-color: var(--cv-hover-border);
-    color: var(--color-text);
-  }
-}
-
-.canvas-zoom-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
-/* 抓手开关 is-on 档 = 同 hover 材质（latch 态常亮可读，非一次性反馈）。 */
+/* 抓手开关 is-on 档 = 胶囊选中档（与 .ta-pill-btn.on 同配方：sapphire 14% 底
+   + sapphire 字；latch 态常亮可读，非一次性反馈）。 */
 .canvas-zoom-btn.canvas-pan-toggle.is-on {
-  background: var(--cv-hover-bg);
-  border-color: var(--cv-hover-border);
-  color: var(--color-text);
+  background: rgb(var(--sapphire) / 0.14);
+  color: rgb(var(--sapphire));
 }
 .canvas-zoom-btn svg { width: var(--cv-icon); height: var(--cv-icon); }
 .canvas-zoom-pct {
@@ -3338,13 +3333,14 @@ body.mobile-layer .cvv-time {
   }
 }
 
-/* ── 件3 手机 375 档逐值钉回（2026-11-05）：桌面档收敛到顶部圆钮档后，手机档
-   **未获新令** ⇒ 尺寸/圆角/图标/槽位全按 11-02 批的 48 档尺（= --mtap-lg）原值
-   保留，桌面档零传染（对照表见 tests/ui-seven-canvas-chrome.spec.mjs §BEFORE ⑨）。 */
+/* ── 件3 手机 375 档逐值钉回（2026-11-05）：手机档尺寸/图标按 48 档尺
+   （= --mtap-lg / --micon-sm 20）原值保留。圆角 7px 钉随 canvas-button-unify
+   收口（2026-11-18）退役：退役钩子 `.canvas-button.canvas-button` 的 999px
+   自始覆盖该钉（(0,2,0) > (0,1,1)），实际渲染从未见过 7px；回归修复后
+   999px 由 glass.css「Canvas 单钮共享面」供给，本钉成死值故删。 */
 body.mobile-layer .canvas-zoom-btn {
   width: var(--mtap-lg, 48px);
   height: var(--mtap-lg, 48px);
-  border-radius: var(--cv-radius-btn-sm, 7px);   /* 手机条内方钮语义不变 */
 }
 body.mobile-layer .canvas-zoom-btn svg {
   width: var(--micon-sm, 20px);
@@ -4465,7 +4461,15 @@ body.card-window .canvas-pop-btn { display: none !important; }
    `.canvas-button` 自此**零自有声明** —— 几何/行中线由各族既有类给（全部走
    --ds-* / --cv-* 令牌）、材质由 glass.css 共享毛玻璃配方给、六态由
    flatButtons.css 共享态层给。第二份定义再现 ⇒ scripts/check-canvas-buttons.mjs
-   判红（G-CB3）。 */
+   判红（G-CB3）。
+   ── 回归修复补记（canvas-button-unify 收口 2026-11-18，派发方裁定）──────────
+   删除这份私有定义后，挂 .canvas-button 的钮计算值漂移（radius 999px→50%、
+   box-shadow float→none）被裁定为**真回归**，不是「还原扁平化裁定」——基线
+   （4cdd84c04）渲染从未见过无影的 canvas 钮。修复口径 = 「外观不变、只是来源
+   统一」：同两组值（--ds-radius-pill / --ds-shadow-float）改由 glass.css
+   「Canvas 单钮共享面」**一条声明**供给（选择器一律 `.canvas-button.族名`，
+   仍以族名收尾 ⇒ 钩子照旧零自有声明，G-CB3a 不破）。前后计算样式对照表 =
+   evidence/canvas-button-unify-supplement/diff/（diff spec 输出）。 */
 
 /* ── 环卡卡头「在独立窗口打开」钮（批⑤后独立窗唯一可见卡头入口；标题头
    #canvas-pop-btn 同批退役）────────────────────────────────────────── */
