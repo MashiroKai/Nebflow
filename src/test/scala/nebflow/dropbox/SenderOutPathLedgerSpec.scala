@@ -281,6 +281,7 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
         row = ledger.hcursor.downField("dev-2").downArray
         path = row.downField("imageCopyPath").as[String].getOrElse("")
         _ = assert(path.nonEmpty, "sender history must contain the durable image path")
+        _ = assert(path.endsWith(".png"), "the durable path must retain a previewable image extension")
         copied <- IO.blocking(os.read.bytes(os.Path(path)))
         _ = assert(copied.sameElements(bytes), "durable image bytes must match the upload")
         digest = ChunkedTransfer.sha256Hex(copied)

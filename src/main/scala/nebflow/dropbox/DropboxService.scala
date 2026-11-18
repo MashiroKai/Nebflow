@@ -1104,7 +1104,17 @@ final class DropboxService private (
           if java.nio.file.Files.getFileStore(dir).supportsFileAttributeView("posix") then
             java.nio.file.Files
               .setPosixFilePermissions(dir, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"))
-          val target = dir.resolve(digest)
+          val ext = t.mimeType.toLowerCase(java.util.Locale.ROOT).takeWhile(_ != ';') match
+            case "image/jpeg" => ".jpg"
+            case "image/png" => ".png"
+            case "image/gif" => ".gif"
+            case "image/webp" => ".webp"
+            case "image/bmp" => ".bmp"
+            case "image/avif" => ".avif"
+            case "image/tiff" => ".tiff"
+            case "image/svg+xml" => ".svg"
+            case _ => ""
+          val target = dir.resolve(digest + ext)
           val staged = java.nio.file.Files.createTempFile(dir, ".image-", ".part")
           try
             java.nio.file.Files.copy(tempPath.toNIO, staged, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
