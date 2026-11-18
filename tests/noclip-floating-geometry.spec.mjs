@@ -19,12 +19,15 @@
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evidenceOut } from '../scripts/lib/evidence-batch.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = join(HERE, '..');
 const WEB = process.env.NOCLIP_WEB_ROOT ? resolve(process.env.NOCLIP_WEB_ROOT) : join(ROOT, 'src', 'main', 'resources', 'web');
 const LEDGER = process.env.NOCLIP_LEDGER ? resolve(process.env.NOCLIP_LEDGER) : join(ROOT, 'scripts', 'noclip-floating-baseline.json');
-const OUT = process.env.NOCLIP_SHOTS_DIR || '/Users/kaiyu/stand-evidence/noclip-floating-20261118/runtime';
+// Default output = a reclaimable EvidenceTemp batch (manifest.json, TTL-swept);
+// a batch run may override with NOCLIP_SHOTS_DIR to keep its own evidence dir.
+const OUT = evidenceOut(process.env.NOCLIP_SHOTS_DIR, 'noclip-floating', 'runtime');
 const SID = 'noclip-runtime-root';
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.webm': 'video/webm', '.mp4': 'video/mp4' };
 
