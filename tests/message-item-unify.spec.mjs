@@ -1,4 +1,11 @@
-// tests/message-item-unify.spec.mjs — 消息条目统一批（2026-11-18）渲染几何与行为验收。
+// tests/message-item-unify.spec.mjs — 消息条目统一批（2026-11-18）**组件级**渲染几何
+// 与行为验收。
+//
+// ⚠️ 验收口径（2026-11-18 复核改正）：本 spec 的驱动面是自拼 HARNESS 页（只 import 生产
+// 模块），**不构成真应用页验收**。真应用页（真 index.html / 真 css 全链 / 真点击路径）
+// 的合格验收在 tests/composer-message-item-unify-app.spec.mjs（含 composer 两面
+// computed 逐值比对、附件区、叠卡两态、真键盘行为，两视口 375×812 / 1280×800）。
+// 本文件保留为**更快的组件级回归**，不是「已验收」的凭据。
 //
 // 驱动**真生产链**（非手抄 DOM）：harness 页 import 生产模块 js/chatItem.js 与
 // js/popArtifacts.js 的 buildUserMediaRow，在真实浏览器里装配气泡 / 附件区 / 叠卡 /
