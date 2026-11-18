@@ -2138,6 +2138,14 @@ export default {
   'canvas.loadingFile': '正在打开…',
   'canvas.loadFailed': '打开失败',
   'canvas.retry': '重试',
+  // Pop 文件卡乐观打开批（2026-11-18）：占位里的失败原因必须**可读且分型**——
+  // 离线 / 取不到 / 凭据判定拒绝 / 类型不支持 / 超时不再同貌，也不再有空白页。
+  'canvas.loadOffline': '网络不可用（离线），无法取到文件。',
+  'canvas.loadDenied': '无权读取该文件（凭据判定拒绝）。',
+  'canvas.loadNotFound': '文件不存在或已被清理。',
+  'canvas.loadTimeout': '取数超时，请重试。',
+  'canvas.loadCancelled': '已取消。',
+  'canvas.loadBusy': '服务繁忙，请稍后重试。',
   // canvas 文件刷新批（2026-10-25 作者令）：页签右下「重新读盘」钮。canvas-auto-
   // refresh 批（2026-11-17 作者令「去掉 改为带迟滞的自动检查变更刷新 时间窗60s」）
   // 起手动钮与 canvas.refresh 键退役；refreshDirty 保留（自动路径脏守卫复用）。

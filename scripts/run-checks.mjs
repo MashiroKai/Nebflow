@@ -55,6 +55,10 @@ export const CHECKS = [
   { name: 'canvas-button-diff', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/canvas-button-unify-diff.spec.mjs'] },
   nodeCheck('canvas-families', 'check-canvas-families', ['static']),
+  // Pop 文件卡乐观打开接线闸（pop-optimistic-canvas 批 2026-11-18）：tab-first 时序 /
+  // 环单源 / 取消真 abort / 失败可见 / 缓存 / 禁静默回落 ——「先加载、后建 tab」的回归
+  // 只有浏览器里看得见，故把不变量做成静态判据，扩进既有闸体系（不新起第二套）。
+  nodeCheck('pop-optimistic-open', 'check-pop-optimistic-open'),
   nodeCheck('toggle', 'check-toggle-unify'),
   nodeCheck('scroll-pill', 'check-scroll-pill-center'),
   nodeCheck('input-surface', 'check-input-surface'),

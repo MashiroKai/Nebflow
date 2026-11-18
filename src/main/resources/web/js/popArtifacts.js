@@ -132,7 +132,14 @@ export function openPopArtifact(filePath, title) {
       itemType: '',
       content: '',
       absPath: filePath,
-      pinned: true
+      pinned: true,
+      // Pop 文件卡乐观打开（pop-optimistic-canvas 批 2026-11-18 · 作者令逐字
+      // 「先乐观打开在canvas占位防丢失 然后在canvas用一个环来显示加载进度」）：
+      // 这一个旗标把 openWorkspaceItem 的空内容腿切到 tab-first + 进度环单点
+      // （canvas.js::openOptimisticFile），而不是「等 pop.readFile 应答才开标签」。
+      // 手机端/其它端文件尚未取到、票过期、凭据判定拒绝时，用户看到的是**占位 +
+      // 可读原因 + 重试**，不再是「点了毫无反应」（动作丢失）。
+      optimisticOpen: true
     }
   }));
 }

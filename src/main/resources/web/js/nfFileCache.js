@@ -718,10 +718,14 @@ function overloadRetryDelayMs(resp) {
  * 档2 条目的版本读数（`nfCacheReconcile` 对账用；命中判据见上「TTL」）。
  * @param {string} url
  * @param {((loaded: number, total: number) => void)|null} [onProgress]
+ * @param {{ signal?: AbortSignal }} [opts] `signal`（pop-optimistic-canvas 批
+ *   2026-11-18）：关页签 / 超时腿据此**真 abort** 在飞取件（不许后台继续下）。
+ *   缺席 = 逐字现状（无取消）。
  * @returns {Promise<{blob: Blob, total: number, lastModified: string, version: string}>}
  */
-export async function fetchBlobWithProgress(url, onProgress) {
-  const send = () => fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+export async function fetchBlobWithProgress(url, onProgress, opts) {
+  const signal = opts && opts.signal ? opts.signal : undefined;
+  const send = () => fetch(url, { credentials: 'same-origin', cache: 'no-store', signal });
   let resp = await send();
   // #750：过载腿（429/503）退避后恰一次重试。失败 body 先 cancel 归还连接，
   // 再按 Retry-After 等一拍——等待时长是服务端建议，不是本端测时。
