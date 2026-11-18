@@ -367,7 +367,20 @@ await measurePanel('settings', () => hubTo('settings'));
 await measurePanel('reminder', () => hubTo('reminder'));
 await measurePanel('daemon', () => hubTo('daemon'));
 await measurePanel('background', () => hubTo('background'));
-await measurePanel('plugins', () => hubTo('plugins'));
+await measurePanel('plugins', async () => {
+  await hubTo('plugins');
+  const add = page.locator('.mobile-page.live [data-plugins-add]');
+  await add.waitFor({ state: 'visible' });
+  const hit = await add.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const target = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return target === el || el.contains(target);
+  });
+  if (!hit) throw new Error('Add plugin center is obstructed');
+  await add.click();
+  await page.locator('.mobile-page.live [data-plugins-add-dialog]').waitFor({ state: 'visible' });
+  await page.locator('.mobile-page.live [data-plugins-add-close]').click();
+});
 await measurePanel('usage', () => hubTo('usage'));
 // ⛔ 入口收敛批 2026-11-04：'todo' 页（#todo-page）整面退役 ⇒ 无面可量，腿退役。
 // await measurePanel('todo', () => hubTo('todo'));
@@ -391,7 +404,8 @@ const report = {
     panel: r.panel,
     total: r.total,
     ok: r.total - r.bad.length,
-    pass: r.bad.length === 0,
+    skipped: r.skipped || null,
+    pass: !r.skipped && r.bad.every((item) => !!exemptHit(item)),
     bad: r.bad.map((b) => {
       const ex = exemptHit(b);
       return {
@@ -404,7 +418,9 @@ const report = {
   consoleErrors: errors,
 };
 report.summary = {
-  panelsMeasured: report.panels.length,
+  panelsAttempted: report.panels.length,
+  panelsMeasured: report.panels.filter((p) => !p.skipped).length,
+  panelsSkipped: report.panels.filter((p) => p.skipped).length,
   panelsPassing: report.panels.filter((p) => p.pass).length,
   totalTargets: report.panels.reduce((a, p) => a + p.total, 0),
   failingTargets: report.panels.reduce((a, p) => a + p.bad.filter((b) => !b.exempt).length, 0),
@@ -426,7 +442,7 @@ for (const p of report.panels) {
     + String(p.total).padStart(8)
     + String(p.ok).padStart(8)
     + String(nb + (ne ? `(+${ne}豁免)` : '')).padStart(10)
-    + `  ${nb === 0 ? 'PASS' : 'FAIL'}`,
+    + `  ${p.skipped ? `SKIP: ${p.skipped}` : nb === 0 ? 'PASS' : 'FAIL'}`,
   );
 }
 console.log('─'.repeat(56));
@@ -449,4 +465,4 @@ if (exempted.length) {
 console.log(`\nJSON: ${OUT_JSON}`);
 
 await browser.close();
-process.exit(failing.length === 0 && errors.length === 0 ? 0 : 1);
+process.exit(failing.length === 0 && errors.length === 0 && report.summary.panelsSkipped === 0 ? 0 : 1);

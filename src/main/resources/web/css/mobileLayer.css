@@ -3102,6 +3102,11 @@ body.mobile-layer #mobile-pages #plugins-content {
   padding-left: var(--ds-space-3);
   padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
+body.mobile-layer #mobile-pages [data-plugins-add] {
+  min-width: var(--mtap);
+  min-height: var(--mtap);
+  bottom: calc(var(--dock-h) + var(--dock-inset-b) + var(--dock-gap) + env(safe-area-inset-bottom, 0px)) !important;
+}
 body.mobile-layer #mobile-pages .plugins-card-list {
   display: flex;
   flex-direction: column;
