@@ -27,7 +27,8 @@
 //     存量不追溯，新增即红。
 //
 // ── 彩色语义面判据（C 组 · dark-border-color 批 2026-11-18）──────────────
-//  判据对象 = brief 指名的三枚 α .35 语义指示环（见 COLORED_RING_FACES 注册表）。
+//  判据对象 = brief 指名的 α .35 语义面（dark-border-color 批三枚指示环 ＋
+//  dark-border-family 批两枚同族 chip，共五枚；见 COLORED_RING_FACES 注册表）。
 //  它们**不复用** B1/B2 的阈值：中性发丝边的上限（比 ≤1.55 / ΔE00 ≤10）是拿白光
 //  细边标定出来的，彩边还要同时承担色相载荷，两条读数的增长速率不同（同底同 α，
 //  品牌绿的 ΔE00 增长比白光快，对比度却慢），把中性阈值套上去会去砍真正要保的东西。
@@ -89,13 +90,19 @@ const C_C2_HUE_MAX = 10;         // C2 合成 Lab 色相距色相族轴上限（
 const C_C2_CHROMA_MIN = 1.5;     // C2 合成 chroma ≥ 相邻底色 chroma × 该值
 
 /**
- * C 组判据对象注册表 = brief 指名的三枚语义指示环。键 = 场景 | 探针 sig | 边框类。
+ * C 组判据对象注册表 = brief 指名的语义面（dark-border-color 批三枚指示环 ＋
+ * dark-border-family 批两枚同族 chip）。键 = 场景 | 探针 sig | 边框类。
  * ref 固定 outer（见文件头 C 组注），axis = 色相族轴（Lab a*b* 度数：绿 180° / 蓝 270°）。
  */
 const COLORED_RING_FACES = [
   { key: 'dropdown|div#bg-indicator|border', name: '后台任务指示环(绿)', axis: 180 },
   { key: 'dropdown|span.bg-task-origin.bg-origin-delegate|border', name: 'delegate 归属环(蓝)', axis: 270 },
   { key: 'dropdown|div#bgagent-indicator|border', name: '后台 agent 指示环(蓝)', axis: 270 },
+  // dark-border-family 批（2026-11-18 作者令「#colored-edge-family-rest 做」）：与
+  // delegate 归属 chip **同族同值**（改前两处各写 α .35 字面量）的两枚面一并收进
+  // 彩边族。判据（C1–C3）与参照面（固定 outer）**逐字沿用**，不新起第二闸、不放宽。
+  { key: 'dropdown|span.bg-task-origin.bg-origin-node|border', name: 'node 归属环(蓝)', axis: 270 },
+  { key: 'dropdown|span.bg-task-mode.bg-mode-kernel|border', name: 'kernel 模式环(蓝)', axis: 270 },
 ];
 
 /** 发丝边族槽位：只许在 stand-tokens.css 定义一次。 */
@@ -111,11 +118,14 @@ const COLORED_TINT_RES = {
   '--nf-hairline-tint-green': /^rgb\(\s*var\(--nf-hairline-green-ink\)\s*\/\s*var\(--nf-hairline-green-a(?:-dark)?\)\s*\)$/,
   '--nf-hairline-tint-sapphire': /^rgb\(\s*var\(--nf-hairline-sapphire-ink(?:-dark)?\)\s*\/\s*var\(--nf-hairline-sapphire-a(?:-dark)?\)\s*\)$/,
 };
-/** 三枚消费面（CSS 侧唯一写点）：只许写 var(--nf-hairline-tint-*)，零字面量。 */
+/** 彩色语义面（CSS 侧唯一写点）：只许写 var(--nf-hairline-tint-*)，零字面量。 */
 const COLORED_CONSUMER_SITES = [
   { file: 'css/chat.css', selector: '#bg-indicator', token: '--nf-hairline-tint-green' },
   { file: 'css/chat.css', selector: '#bgagent-indicator', token: '--nf-hairline-tint-sapphire' },
   { file: 'css/chat.css', selector: '.bg-task-origin.bg-origin-delegate', token: '--nf-hairline-tint-sapphire' },
+  // dark-border-family 批：两枚同族面并入同一消费面清单（C4 零字面量 + 单源）
+  { file: 'css/chat.css', selector: '.bg-task-origin.bg-origin-node', token: '--nf-hairline-tint-sapphire' },
+  { file: 'css/chat.css', selector: '.bg-task-mode.bg-mode-kernel', token: '--nf-hairline-tint-sapphire' },
 ];
 /** 玻璃细边的四个解析块（:root / 强制暗 / 系统暗 / 强制亮）—— 恰好四份，见文件结构注。 */
 const GLASS_BORDER_SITES = 4;
@@ -613,5 +623,5 @@ if (violations.length) {
   console.error('      ③C 组是**不变式**（不放大 / 色相可指认 / 亮度权重进带），不许把 B 组的中性阈值套到彩色面。');
   process.exit(1);
 }
-console.log('\n✓ border-weight gate passed — 暗档无超阈值中性发丝边 · 发丝边族（中性+彩色）单一源 · 两张字面量台账未回升 · 三枚彩色语义环 C1/C2/C3 全过');
+console.log('\n✓ border-weight gate passed — 暗档无超阈值中性发丝边 · 发丝边族（中性+彩色）单一源 · 两张字面量台账未回升 · 五枚彩色语义面（三环 + 两同族 chip）C1/C2/C3 全过');
 process.exit(0);

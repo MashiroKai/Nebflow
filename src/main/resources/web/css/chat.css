@@ -725,7 +725,15 @@
 }
 .bg-task-origin.bg-origin-node {
   color: rgb(var(--accent-agent-light));
-  border-color: rgb(var(--accent-agent-light) / 0.35);
+  /* dark-border-family 批（2026-11-18 作者令「#colored-edge-family-rest 做」）：本面
+     与 delegate 归属 chip **同族同值**（改前亮/暗两处各写一份 rgb(… / .35)），本批
+     一并收进语义彩边族单源 —— 改挂 var(--nf-hairline-tint-sapphire)，与
+     .bg-task-origin.bg-origin-delegate 消费的**是同一枚令牌**，故合成读数逐值相同
+     （亮档通道 --accent-agent-light / α .35 逐值不变 ⇒ 亮档零回归；暗档
+     --sapphire / α .13 ⇒ 合成 #1d2533、比 1.165、ΔE00 5.639、h* 274.6°）。
+     纪律：本面零字面量、暗档不再覆写环色（机检 C4）。行为语义（.hidden 亮/灭、
+     动画、状态绑定、JS）全不动，只改边框色的来源。 */
+  border-color: var(--nf-hairline-tint-sapphire);
 }
 .bg-task-origin.bg-origin-dispatcher {
   color: var(--ds-text);
@@ -765,7 +773,12 @@
    ownerMode 缺席（旧后端/非 delegate/闸关）= 不渲染，行高零变化。 */
 .bg-task-mode.bg-mode-kernel {
   color: rgb(var(--accent-agent-light));
-  border-color: rgb(var(--accent-agent-light) / 0.35);
+  /* dark-border-family 批：kernel 模式标注面与 delegate 归属 chip 同族同值，一并
+     改挂语义彩边族单源 var(--nf-hairline-tint-sapphire)（同一枚令牌；改前亮档
+     rgb(… / .35)、暗档另写一份 rgb(var(--sapphire) / .35)）。亮档通道/α 逐值不变
+     ⇒ 亮档零回归；暗档 α .13（详见 .bg-origin-node 与 stand-tokens.css 彩边族注）。
+     纪律：本面零字面量、暗档不再覆写环色（机检 C4）。只改边框色来源，其余不动。 */
+  border-color: var(--nf-hairline-tint-sapphire);
 }
 .bg-task-mode.bg-mode-dispatcher {
   color: var(--ds-text);
@@ -773,13 +786,15 @@
 @media (prefers-color-scheme: dark) {
   .bg-task-mode.bg-mode-kernel {
     color: rgb(var(--sapphire));
-    border-color: rgb(var(--sapphire) / 0.35);
+    /* 环色不再在此覆写：暗档通道/α 由 --nf-hairline-tint-sapphire 在
+       stand-tokens.css 的暗档解析块给出（单一源，本文件零环色字面量）。 */
   }
 }
 @media (prefers-color-scheme: dark) {
   .bg-task-origin.bg-origin-node {
     color: rgb(var(--sapphire));
-    border-color: rgb(var(--sapphire) / 0.35);
+    /* 环色不再在此覆写：暗档通道/α 由 --nf-hairline-tint-sapphire 在
+       stand-tokens.css 的暗档解析块给出（单一源，本文件零环色字面量）。 */
   }
 }
 /* Background-task rows are clickable (2026-09-09 output viewing: row click
