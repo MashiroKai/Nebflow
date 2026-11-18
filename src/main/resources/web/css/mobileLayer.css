@@ -207,9 +207,8 @@
 /* ── 视口链 html 层压点（bootstrap.js 同路径加/摘，桌面永不命中）──────
    html 无法以 body 类作条件选择；r3 只压了 body，html 仍 UA 默认（height:auto）
    ⇒ iOS 上文档橡皮筋仍可拉动。此类与 body.mobile-layer 同一激活/拆除路径，
-   安全性同源。逐级覆盖回退：dvh（iOS 15.4+ 动态视口）→ svh 兜底 → 100vh。 */
+   安全性同源。逐级覆盖回退：dvh（动态视口）→ svh。 */
 html.mobile-html-layer {
-  height: 100vh;
   height: 100svh;
   height: 100dvh;
   overflow: hidden;
@@ -489,7 +488,6 @@ body.mobile-layer {
   /* ④ 动态视口：100vh（base.css）在浏览器工具栏展开时把输入卡压到底栏之下
      —— svh 兜底（旧内核降级回 100vh），dvh 随工具栏伸缩。文档级零滚动
      （滚动全部收进 #chat / 页面体内部）。 */
-  height: 100vh;
   height: 100svh;
   height: 100dvh;
   overflow: hidden;
@@ -596,6 +594,7 @@ body.mobile-layer .mh-chrome-badge[hidden] { display: none; }
 body.mobile-layer {
   --dock-center-size: 44px;
   --dock-center-lift: 0px;
+  --mobile-dock-clearance: calc(var(--mobile-dock-measured, var(--dock-h)) + var(--dock-gap) + var(--dock-inset-b) + env(safe-area-inset-bottom, 0px));
 }
 body.mobile-layer #mobile-dock {
   position: fixed;
@@ -789,8 +788,7 @@ body.mobile-layer .dock-badge.is-count {
 }
 
 /* ── 页面容器 + 页面 section（互斥 .live；微信式无动画直切）──────────
-   dock 批：页面底缘让位常驻 dock（--dock-h 单源）。悬浮胶囊批：让位面
-   扩为「胶囊底距 + 胶囊高」全带 = 新 dock 顶缘（页面内容止于胶囊上缘）。
+   页面延伸到视口底部，dock 在其上浮动；滚动面负责末端净空。
    页面切换动画退役批（作者令 2026-10-30「去掉页面切换右拉入动画…无动画直切，
    参考微信」）：删 translateX(102%) 滑入 + 0.26s 过渡 + visibility 延迟——
    隐藏 = visibility:hidden 直切，live = 直切可见，零过渡零位移。 */
@@ -817,7 +815,7 @@ body.mobile-layer #mobile-pages::before {
 body.mobile-layer .mobile-page {
   position: absolute;
   top: 0;
-  bottom: calc(var(--dock-h) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px));
+  bottom: 0;
   left: 0;
   right: 0;
   display: flex;
@@ -944,13 +942,9 @@ body.mobile-layer .mobile-page:not(.mobile-page-nohead) .mobile-page-body {
 body.mobile-layer .mobile-page-nohead .mobile-page-body {
   padding-top: calc(var(--mtitle-lead) + env(safe-area-inset-top, 0px));
 }
-/* 底部安全底距（mobile-top-clearance 批 2026-11-07；作者令逐字「底部悬浮导航
-   必须给正文留安全底距，不得压住最后一行内容」）。.mobile-page 的 bottom 已按
-   dock 几何收回，但正文末行仍与胶囊上缘零缝贴合（设置页「文件缓存」行、画布
-   正文末段被压的实拍见 reports-evidence/ui-audit-post-restart/20-fixes/）。
-   这里补胶囊高 + 呼吸缝 + 底缘内距的净空，保证滚到底时末行完整可见。 */
+/* 滚动面末端净空：实测 dock 高度、呼吸缝、底缘内距及设备安全区。 */
 body.mobile-layer .mobile-page-body {
-  padding-bottom: calc(var(--dock-h) + var(--dock-gap) + var(--dock-inset-b));
+  padding-bottom: var(--mobile-dock-clearance);
 }
 body.mobile-layer .mobile-page-body::-webkit-scrollbar { display: none; }
 /* 设备平级批 2026-10-31（作者令：会话窗 = 单一固定对话窗「像微信聊天页」，禁横向
@@ -2661,7 +2655,7 @@ body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-co
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: var(--mpage-fab-clearance);
+  padding-bottom: max(var(--mpage-fab-clearance), var(--mobile-dock-clearance));
 }
 /* 个人主页（me）：资料卡。 */
 body.mobile-layer .mf-me-card {
@@ -6145,6 +6139,11 @@ body.mobile-layer .mobile-page[data-page="canvas"] .mobile-page-body {
   padding-top: 0;
   padding-bottom: 0;
 }
+body.mobile-layer .mobile-page[data-page="canvas"] :is(.canvas-md-scroll, .canvas-txt-scroll, .canvas-tab-pane.scrollable) {
+  bottom: 0;
+  padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-dock-clearance));
+  scroll-padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-dock-clearance));
+}
 /* ── ① 消息/联系人：页体底垫撤、净空内收进收编滚区 ───────────────────── */
 body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body,
 body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body {
@@ -6152,16 +6151,16 @@ body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body {
 }
 body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body > #fm-conversations,
 body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body > #fm-contacts-body {
-  padding-bottom: calc(var(--dock-h) + var(--dock-gap) + var(--dock-inset-b, 0px));
+  padding-bottom: var(--mobile-dock-clearance);
 }
 /* 消息页查询态：结果场吃页体余量，dock 自带底净空（脚注/末条不贴 dock 缘）。 */
 body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query {
-  padding-bottom: calc(var(--dock-h) + var(--dock-gap) + var(--dock-inset-b, 0px));
+  padding-bottom: var(--mobile-dock-clearance);
 }
 /* ── ① 用量页：同法内收（P11 直子形同特异性、源序在后）────────────────── */
 body.mobile-layer .mobile-page[data-page="usage"] .mobile-page-body {
   padding-bottom: 0;
 }
 body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard {
-  padding-bottom: calc(var(--dock-h) + var(--dock-gap) + var(--dock-inset-b, 0px));
+  padding-bottom: var(--mobile-dock-clearance);
 }

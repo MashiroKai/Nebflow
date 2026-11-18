@@ -2648,6 +2648,12 @@ function buildDock() {
     dockKeys.set(def.id, btn);
   }
   document.body.appendChild(dockEl);
+  const dock = dockEl;
+  const measureDock = () => document.body.style.setProperty('--mobile-dock-measured', `${dock.getBoundingClientRect().height}px`);
+  measureDock();
+  const dockObserver = new ResizeObserver(measureDock);
+  dockObserver.observe(dock);
+  unsubs.push(() => { dockObserver.disconnect(); document.body.style.removeProperty('--mobile-dock-measured'); });
   paintDockCenterAvatar(); // 先装字形/头像再统一 createIcons（<i data-lucide> 替换腿）
   if (typeof lucide !== 'undefined') createIconsIn(dockEl);
   // 头像落点汇合订阅（本机上传/跨端收敛/会话切换都经 agentProfile.paintSlot）。

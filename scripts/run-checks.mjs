@@ -17,6 +17,7 @@ if (!scriptTests.length) throw new Error('No script unit tests found; refusing b
 // Membership is declared once here, not copied into Make or CI command lists.
 export const CHECKS = [
   nodeCheck('css-structure', 'check-css-structure'),
+  nodeCheck('floating-clearance', 'check-floating-clearance'),
   nodeCheck('design-tokens', 'check-design-tokens'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
   nodeCheck('chat-ui', 'check-chat-ui'),
