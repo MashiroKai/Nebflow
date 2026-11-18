@@ -483,6 +483,11 @@ body.mobile-layer {
   --dock-inset-x: 12px;
   --dock-inset-b: 8px;
   --dock-gap: 10px;
+  /* 社交对话悬浮输入条足迹（浮层三件批 2026-11-18）：输入条本体实测高 62px
+     （内距 6/12 + 单行输入 + 1px 描边，js/messages/fmComposer.js 恒单行）。
+     消息流的末端净空 = 本值 + --mobile-dock-clearance ⇒ 滚到底时最后一条
+     正好停在输入条顶缘之上（闸 mobile-overlay-glass G2 断言本关系成立）。 */
+  --mobile-composer-reserve: 62px;
   /* 悬浮面板底距（心跳配置浮层仍锚输入卡上方）。 */
   --mobile-float-bottom: 92px;
   /* ④ 动态视口：100vh（base.css）在浏览器工具栏展开时把输入卡压到底栏之下
@@ -802,13 +807,25 @@ body.mobile-layer #mobile-pages {
    收编根页（.mobile-page 止于胶囊上缘）的带区不再透出下层聊天根；聊天根页
    本底同 token，视觉零差。胶囊毛玻璃 backdrop 即采样该平坦底（浅暗双主题
    自适应）。::before 先于子节点绘制（页 section 几何上不与本带重叠），
-   pointer-events 随容器继承 none，零交互感知。 */
+   pointer-events 随容器继承 none，零交互感知。
+   ── 社交对话浮层三件批修订（作者令 2026-11-18 16:36「不是真透过」）──────
+   实测（375×812，修前）：本带**盖在页 section 之上**（不再是「先于子节点绘制」）
+   ⇒ dock 的 backdrop 在这一带恒为**平坦的 --color-bg**：
+     · 隐藏消息流（visibility:hidden）前后，dock 带像素逐值相同
+       （mean 24.86 → 24.86，sd 8.72 → 8.72）；把 backdrop-filter 关掉同样零变化
+       ⇒ 玻璃无内容可糊，读起来就是作者说的「半透明实底覆盖」；
+     · 把本带摘掉并把 .mobile-page 底色改红，dock 带立刻跟着变
+       （mean 24.86 → 48.12）⇒ 本带就是挡住内容的那个面。
+   修法 = 只把本带压到**页 section 之下**（z-index:-1，仍在本容器内、仍在聊天根
+   之上）：live 页是全高不透明面，天然盖住它（内容于是真正滚到 dock 玻璃背后）；
+   聊天根（无 .live 页）时本带照旧挡住宿主 #chat —— 原守卫语义一字不动。 */
 body.mobile-layer #mobile-pages::before {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: -1;
   height: calc(var(--dock-h) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px));
   background: var(--color-bg);
 }
@@ -1054,18 +1071,81 @@ body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
   /* Clearance belongs to scroll content, not a permanently clipped page body. */
   padding-top: calc(104px + env(safe-area-inset-top, 0px));
 }
-/* mobile-page-body carries a bottom scroll clearance on every page (from the
-   mobile-top-clearance pass). The conversation page's input bar is not scroll
-   content and the page shell already ends at the dock's top edge, so that
-   generic 72px pad joins the flex free-height math and lifts the input bar
-   off the dock, leaving the large blank gap seen in screenshots. The message
-   flow keeps its own scroll margin; clear the page-body bottom pad on the
-   conversation page only so the input bar stays seated. */
+/* ═══ 社交对话浮层三件批（作者令 2026-11-18 16:36 手机端实拍三条）═══════════
+   ①「消息联系人对话（以后统称社交对话）下方输入框 手机端和 dock 重叠了 而且
+      还是有截断 不是真透过 真透过是类似 canvas 这样的」
+   ②「底部 dock / 输入框改成与 canvas 同一套真毛玻璃（同一配方与 α 档）」
+   ─────────────────────────────────────────────────────────────────────
+   实测根因（375×812，修前读数）：
+     · `.fm-input-bar` in-flow，页体底让位被清零 ⇒ 它的盒子 y 738–800，
+       dock 胶囊 y 750–804 ⇒ **纵向相交 50px**（输入框 62px 里只有顶 12px
+       露在 dock 上缘之上，其余 50px 被 dock 压住 = 「截断」的实底）；
+     · dock 的 `backdrop-filter: blur(24px) saturate(1.15)` 采样的是
+       `--color-bg #13161c` 平面（消息流在 y=738 就被裁剪掉，dock 带内
+       什么都没有）⇒ 模糊常量色 = 常量色，dock 读起来是「半透明实底覆盖」
+       而不是「透过」。canvas 那套玻璃同一个配方却「真透过」，差别不在
+       令牌而在**backdrop 里有没有内容**。
+   本批落位（两条同源，均只动手机层）：
+     · 输入条改为**悬浮件**：绝对定位于页面壳，底缘 = `--mobile-dock-clearance`
+       （= dock 高 54 + 呼吸缝 10 + 底内距 8 + safe）⇒ 输入框底缘 740、
+       dock 上缘 750，**留 10px 呼吸缝、零相交**；
+     · 消息流回到**满幅**（页体底让位保持 0）⇒ 气泡滚过输入条与 dock 的
+       背后，两件玻璃采样的都是真实内容 ⇒ 与 canvas 同一种「真透过」；
+       末端净空由 `.fm-flow` 的 `padding-bottom` + `scroll-padding-bottom`
+       承担（= 输入条足迹 + dock 让位），因此最后一条消息**可以滚到**
+       输入条之上完整可读（不靠遮挡换净空）。 */
 body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-body {
   padding-bottom: 0;
 }
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-input-bar {
-  margin-bottom: var(--ds-space-3);
+  position: absolute;
+  left: var(--dock-inset-x);
+  right: var(--dock-inset-x);
+  bottom: var(--mobile-dock-clearance);
+  margin: 0;
+  z-index: 2;
+}
+/* 玻璃 backdrop 捕获修复（浮层三件批实测）：`overflow: hidden` 的祖先会把
+   `backdrop-filter` 的取材截断到该祖先自己的底面上（实测：输入条玻璃带在
+   背后气泡可见/不可见两态下像素逐值相同、sd=0.00 ⇒ 玻璃其实取到的是**平坦的
+   页底**，正是作者说的「实底覆盖」）。会话窗内只有 .fm-flow 需要裁剪（它自带
+   overflow），窗体自身不必裁 ⇒ 手机层对会话窗放开 overflow，玻璃才拿得到
+   窗内兄弟内容。 */
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal {
+  overflow: visible;
+}
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
+  padding-bottom: calc(var(--mobile-composer-reserve) + var(--mobile-dock-clearance));
+  scroll-padding-bottom: calc(var(--mobile-composer-reserve) + var(--mobile-dock-clearance));
+}
+
+/* ═══ 设置页顶栏悬空批（作者令 2026-11-18 16:36 第②条）══════════════════════
+   「设置的顶部还是有截断 就顶部返回按钮那一栏 **返回按钮应该也是悬空的按钮**」
+   ─────────────────────────────────────────────────────────────────────────
+   实测根因（375×812，修前读数）：
+     · 详情页档页体 padding-top = --mchrome-clear 72 ⇒ `#settings-modal`
+       （overflow:hidden）盒子 y 72–740，真滚域 `#settings-content`（overflow-y
+       auto，clientHeight 668 / scrollHeight 1820）**同一 72 上缘** ⇒ 滚动时行
+       在 y=72 被切出一条硬线（返回钮底缘 64 之下仅 8px）——这就是「顶部返回
+       按钮那一栏被裁掉」：切线与钮之间没有承接物，行像被一条看不见的实底栏
+       压断，而钮下没有任何内容可穿过（「不悬空」的读数）。
+     · 钮本体已是悬浮形态（`.mobile-back-btn`，absolute 16/16 · 48 圆 ·
+       g2-fab 玻璃 blur24/sat1.15），缺的只是**它下面没有可穿过的内容**。
+   本批落位（只动手机层、只动设置页；桌面零命中）：
+     · 滚域上提到页面顶缘（页体 padding-top 归零）⇒ 行从返回钮**背后穿过**，
+       钮成为悬空钮：内容经 1px 玻璃 + blur(24px) saturate(1.15) 洗过（真透过），
+       y=72 那条硬切线消失（新的内容边界 = 屏幕顶缘，滚动的正常边界）；
+     · 静止态首行仍不被钮压住：让位从「页体级」搬到「滚域内容级」
+       （同值 --mchrome-clear）—— 静止态视觉零位移，判定式记在闸
+       mobile-overlay-glass G4（scrollTop=0 时首行顶 ≥ 钮底缘）；
+     · 底部不动：`#settings-content` 既有 dock 净空照旧（设置内容止于 dock
+       上缘，不存在被 dock 裁切的行）。 */
+body.mobile-layer .mobile-page[data-page='settings'] .mobile-page-body {
+  padding-top: 0;
+}
+body.mobile-layer .mobile-page[data-page='settings'] #settings-content {
+  padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
+  scroll-padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
 }
 
 /* ── 任务页面板（taskPanel.js 数据/卡渲染同源；浮层几何退役）────────── */
