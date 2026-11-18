@@ -95,9 +95,8 @@ object InteractionHub:
               rootWsSend.update(_ - rootSessionId) *> IO.pure(behavior)
             case InteractionHubCommand.Request(req) =>
               // 重启孤儿对账批：槽位注册随行记账（best-effort，绝不阻断提问链）。
-              val ledgerRecord = ledger.fold(IO.unit)(l =>
-                l.record(PendingAskLedger.Entry.of(req, firstQuestionExcerpt(req.payload)))
-              )
+              val ledgerRecord =
+                ledger.fold(IO.unit)(l => l.record(PendingAskLedger.Entry.of(req, firstQuestionExcerpt(req.payload))))
               // 待办分家批 + 改版批（2026-10-31）：AskUser 挂起 ⇒ ask- 待办镜像；
               // Permission / McpPermission 挂起 ⇒ perm- 待批准镜像（用户面收件箱，
               // 见设计稿 docs/20261031_222806_todo-inbox-redesign）。两类卡终态
@@ -111,8 +110,10 @@ object InteractionHub:
                 req.kind match
                   case InteractionKind.AskUser =>
                     b.attach(
-                      req.rootSessionId, req.requestId,
-                      firstQuestionExcerpt(req.payload), req.sourceAgent,
+                      req.rootSessionId,
+                      req.requestId,
+                      firstQuestionExcerpt(req.payload),
+                      req.sourceAgent,
                       nebflow.core.scheduler.AskTodoBridge.payloadProject(req.payload)
                     )
                   case InteractionKind.Permission | InteractionKind.McpPermission =>
@@ -122,7 +123,9 @@ object InteractionHub:
             case InteractionHubCommand.Answered(ans) =>
               ctx.forkTurn(handleAnswered(pending, rootWsSend, ans, ledger, todoBridge)) *> IO.pure(behavior)
             case InteractionHubCommand.DecideBridgePermission(rid, root, kind, approved, reply) =>
-              ctx.forkTurn(handleBridgePermission(pending, rootWsSend, rid, root, kind, approved, reply, ledger, todoBridge)) *> IO.pure(behavior)
+              ctx.forkTurn(
+                handleBridgePermission(pending, rootWsSend, rid, root, kind, approved, reply, ledger, todoBridge)
+              ) *> IO.pure(behavior)
             case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
               // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
               ctx.forkTurn(handleListPendingAsks(pending, liveness, rootSessionId, reply)) *> IO.pure(behavior)
@@ -144,7 +147,8 @@ object InteractionHub:
               // #250 第②项：同一命令新增 `reason`（缺省 ""）——turn 被用户中断时
               // root 会话没有清理入口，是同一「等待方已死、槽位仍在」面（见
               // handleCleanupForSession 注释）。
-              ctx.forkTurn(handleCleanupForSession(pending, rootWsSend, sessionId, reason, ledger, todoBridge)) *> IO.pure(behavior)
+              ctx.forkTurn(handleCleanupForSession(pending, rootWsSend, sessionId, reason, ledger, todoBridge)) *> IO
+                .pure(behavior)
             case InteractionHubCommand.CloseRequest(requestId) =>
               // 调用侧撤回（#147 接线段 2026-09-12）：请求方自己不等了（确认超时）
               // ⇒ 精确回收**这一个**槽位并关掉卡片。与 CleanupForSession 的区别是
@@ -156,7 +160,9 @@ object InteractionHub:
               // askucancel 批（2026-10-08）：用户发起的取消——按 requestId 精确终结
               // 一个 AskUser 槽位。与上一条（调用侧撤回，#147）的差别 = kind 闸 +
               // 发起方终结通知 + 显式裁决（见 InteractionHubCommand.CancelRequest 注）。
-              ctx.forkTurn(handleCancelRequest(pending, rootWsSend, requestId, reason, by, reply, ledger, todoBridge)) *> IO.pure(behavior)
+              ctx.forkTurn(
+                handleCancelRequest(pending, rootWsSend, requestId, reason, by, reply, ledger, todoBridge)
+              ) *> IO.pure(behavior)
             case InteractionHubCommand.SecretSlotsOf(requestId, reply) =>
               // askuser-secret 批（2026-10-08）：只读 secret 槽位查询（网关作答闸的
               // 判据来源）——见 InteractionHubCommand.SecretSlotsOf 注。
@@ -190,15 +196,12 @@ object InteractionHub:
       case InteractionKind.McpPermission => renderMcpPermission(req)
     for
       _ <- logger.info(
-        s"InteractionRequest kind=${req.kind} requestId=${req.requestId} root=${req.rootSessionId} " +
-          s"sourceAgent=${req.sourceAgent}"
+        s"InteractionRequest kind=${req.kind}"
       )
       // R10/U5=F-b 审计行（ask 单点）——best-effort，绝不影响交互链。
       _ <- audit
         .info(
-          s"event=ask kind=${req.kind} requestId=${req.requestId} sourceSession=${req.sourceSession} " +
-            s"rootSessionId=${req.rootSessionId} sourceAgent=${req.sourceAgent} " +
-            s"firstQuestion=${firstQuestionExcerpt(req.payload)}"
+          s"event=ask kind=${req.kind}"
         )
         .handleErrorWith(_ => IO.unit)
       // Register BEFORE rendering so a fast answer can never miss the slot.
@@ -224,7 +227,7 @@ object InteractionHub:
           ) *>
             ws(render).handleErrorWith { e =>
               logger.warn(
-                s"InteractionRequest render failed for requestId=${req.requestId}: ${e.getMessage}"
+                s"InteractionRequest render failed: ${e.getClass.getSimpleName}"
               ) *> IO.unit
             }).void
         case None =>
@@ -240,7 +243,7 @@ object InteractionHub:
           val others = send.toList.filterNot(_._1 == req.rootSessionId)
           if others.isEmpty then
             logger.warn(
-              s"InteractionRequest dropped: no root wsSend registered for rootSessionId=${req.rootSessionId}"
+              "InteractionRequest dropped: no root wsSend registered"
             )
           else
             others.traverse_ { case (sid, ws) =>
@@ -253,13 +256,12 @@ object InteractionHub:
                 )
               ).handleErrorWith { e =>
                 logger.warn(
-                  s"InteractionRequest fallback render failed for requestId=${req.requestId} root=$sid: ${e.getMessage}"
+                  s"InteractionRequest fallback render failed: ${e.getClass.getSimpleName}"
                 ) *> IO.unit
               }
             } *>
               logger.warn(
-                s"InteractionRequest root=${req.rootSessionId} unreachable — fanned out to ${others.size} " +
-                  s"registered root(s) with fallback flag (requestId=${req.requestId}, #433 F4)"
+                s"InteractionRequest root unreachable — fanned out to ${others.size} registered root(s) with fallback flag"
               )
           end if
     yield ()
@@ -269,10 +271,12 @@ object InteractionHub:
   end handleRequest
 
   /** 审计用：问题首条 ≤200 字符（无内容时给 "-"；绝不抛）。 */
-  /** 待办镜像入面判据（改版批 2026-10-31 单点）：三类卡挂起时都会镜像进待办
+  /**
+   * 待办镜像入面判据（改版批 2026-10-31 单点）：三类卡挂起时都会镜像进待办
    *  收件箱（AskUser → ask-、Permission/McpPermission → perm-），四条终态销账
    *  路按同一判据放行（bridge.retire 双前缀幂等清，单边缺失 = no-op）。
-   *  CancelRequest 路（#147 撤回）无条件 retire——同一幂等语义，不重复判。 */
+   *  CancelRequest 路（#147 撤回）无条件 retire——同一幂等语义，不重复判。
+   */
   private def todoBridged(kind: InteractionKind): Boolean =
     kind == InteractionKind.AskUser || kind == InteractionKind.Permission || kind == InteractionKind.McpPermission
 
@@ -362,7 +366,7 @@ object InteractionHub:
       .map(m => snapshotFrames(m, Some(rootSessionId)))
       .flatMap(list => annotateAskerAlive(list, liveness))
       .flatTap(list =>
-        if list.nonEmpty then logger.info(s"ListPendingAsks root=$rootSessionId → ${list.size} pending ask(s) replayed")
+        if list.nonEmpty then logger.info(s"ListPendingAsks → ${list.size} pending ask(s) replayed")
         else IO.unit
       )
       .flatMap(list => (reply ! list).void)
@@ -412,9 +416,7 @@ object InteractionHub:
             case Some(sid) =>
               alive(sid)
                 .map(a => f.deepMerge(Json.obj("askerAlive" -> Json.fromBoolean(a))))
-                .handleErrorWith(e =>
-                  logger.warn(s"askerAlive annotate failed (sourceSession=$sid): ${e.getMessage}").as(f)
-                )
+                .handleErrorWith(e => logger.warn(s"askerAlive annotate failed: ${e.getClass.getSimpleName}").as(f))
         }
 
   /**
@@ -599,7 +601,7 @@ object InteractionHub:
         if reachable then IO.unit
         else
           logger.info(
-            s"RootReachable check: no wsSend registered for rootSessionId=$rootSessionId " +
+            "RootReachable check: no wsSend registered " +
               s"(${m.size} registered) — non-blocking ask will be declined fail-closed (B6)"
           )
       note *> (reply ! reachable).void
@@ -620,30 +622,38 @@ object InteractionHub:
     ledger: Option[PendingAskLedger],
     todoBridge: Option[nebflow.core.scheduler.AskTodoBridge]
   ): IO[Unit] =
-    pending.modify { slots =>
-      slots.get(rid) match
-        case Some(p) if rid.nonEmpty && root.nonEmpty && p.rootSessionId == root && p.kind == kind &&
-            (kind == InteractionKind.Permission || kind == InteractionKind.McpPermission) =>
-          (slots - rid, Some(p))
-        case _ => (slots, None)
-    }.flatMap {
-      case None => (reply ! false).void
-      case Some(p) =>
-        val ans = InteractionAnswered(rid, root, Json.obj("approved" -> Json.fromBoolean(approved)))
-        val delivered = p.reply match
-          case InteractionReply.PermissionReply(d) => d.complete(approved)
-          case InteractionReply.McpPermissionReply(d) =>
-            nebflow.shared.McpPermissionAnswer.decode(ans.payload).fold(IO.pure(false))(d.complete)
-          case _ => IO.pure(false)
-        (delivered.flatMap { ok =>
-          if !ok then (reply ! false).void
-          else (reply ! true).void *> (
-            complete(p, ans, rootWsSend, via = "feishu") *>
-              ledger.fold(IO.unit)(_.remove(rid)) *>
-              todoBridge.fold(IO.unit)(_.retire(rid))
-          ).handleErrorWith(e => logger.warn(s"feishu permission completion cleanup failed: ${e.getClass.getSimpleName}"))
-        }).handleErrorWith(_ => (reply ! false).void)
-    }
+    pending
+      .modify { slots =>
+        slots.get(rid) match
+          case Some(p)
+              if rid.nonEmpty && root.nonEmpty && p.rootSessionId == root && p.kind == kind &&
+                (kind == InteractionKind.Permission || kind == InteractionKind.McpPermission) =>
+            (slots - rid, Some(p))
+          case _ => (slots, None)
+      }
+      .flatMap {
+        case None => (reply ! false).void
+        case Some(p) =>
+          val ans = InteractionAnswered(rid, root, Json.obj("approved" -> Json.fromBoolean(approved)))
+          val delivered = p.reply match
+            case InteractionReply.PermissionReply(d) => d.complete(approved)
+            case InteractionReply.McpPermissionReply(d) =>
+              nebflow.shared.McpPermissionAnswer.decode(ans.payload).fold(IO.pure(false))(d.complete)
+            case _ => IO.pure(false)
+          (delivered
+            .flatMap { ok =>
+              if !ok then (reply ! false).void
+              else
+                (reply ! true).void *> (
+                  complete(p, ans, rootWsSend, via = "feishu") *>
+                    ledger.fold(IO.unit)(_.remove(rid)) *>
+                    todoBridge.fold(IO.unit)(_.retire(rid))
+                ).handleErrorWith(e =>
+                  logger.warn(s"feishu permission completion cleanup failed: ${e.getClass.getSimpleName}")
+                )
+            })
+            .handleErrorWith(_ => (reply ! false).void)
+      }
 
   private def handleAnswered(
     pending: Ref[IO, Map[String, PendingRequest]],
@@ -662,7 +672,11 @@ object InteractionHub:
       if ans.requestId.nonEmpty then
         m.get(ans.requestId) match
           case Some(p) =>
-            if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans, rootWsSend) *> ledgerRemove(ans.requestId) *> todoRetire(ans.requestId, p))
+            if answerCompletes(p, ans) then
+              (
+                m - ans.requestId,
+                complete(p, ans, rootWsSend) *> ledgerRemove(ans.requestId) *> todoRetire(ans.requestId, p)
+              )
             else
               // #12: a malformed answer must NOT consume the card — eating it
               // would strand the pending deferred forever with
@@ -708,12 +722,13 @@ object InteractionHub:
           if candidates.size > 1 then
             logger.warn(
               s"InteractionAnswered without requestId: ${candidates.size} pending cards for " +
-                s"rootSessionId=${ans.rootSessionId} — matched the oldest kind-compatible one; " +
+                "the root — matched the oldest kind-compatible one; " +
                 "possible cross-wiring, frontend should send requestId (#12)"
             )
           else IO.unit
         candidates.find { case (_, p) => answerCompletes(p, ans) } match
-          case Some((rid, p)) => (m - rid, multiWarn *> complete(p, ans, rootWsSend) *> ledgerRemove(rid) *> todoRetire(rid, p))
+          case Some((rid, p)) =>
+            (m - rid, multiWarn *> complete(p, ans, rootWsSend) *> ledgerRemove(rid) *> todoRetire(rid, p))
           case None =>
             (
               m,
@@ -725,6 +740,8 @@ object InteractionHub:
               )
             )
     }.flatten
+
+  end handleAnswered
 
   /**
    * #12: does this answer payload have the shape required to complete `p`?
@@ -791,7 +808,7 @@ object InteractionHub:
   ): IO[Unit] =
     for
       _ <- logger.warn(
-        s"InteractionAnswered dropped: $why (requestId=${ans.requestId}, root=${ans.rootSessionId})"
+        s"InteractionAnswered dropped: $reason"
       )
       sends <- rootWsSend.get
       _ <- sends.toList.traverse_ { case (sid, ws) =>
@@ -802,11 +819,9 @@ object InteractionHub:
             "rootSessionId" -> ans.rootSessionId.asJson,
             "requestId" -> ans.requestId.asJson,
             "reason" -> reason.asJson,
-            "detail" -> why.asJson
+            "detail" -> reason.asJson
           )
-        ).handleErrorWith(e =>
-          logger.warn(s"answerRejected broadcast failed requestId=${ans.requestId} root=$sid: ${e.getMessage}")
-        )
+        ).handleErrorWith(e => logger.warn(s"answerRejected broadcast failed: ${e.getClass.getSimpleName}"))
       }
     yield ()
 
@@ -841,15 +856,13 @@ object InteractionHub:
           m -- victims.map(_._1),
           for
             _ <- logger.info(
-              s"CleanupForSession $sessionId: closing ${victims.size} pending ask(s) (source session died)"
+              s"CleanupForSession: closing ${victims.size} pending ask(s) (source session died)"
             )
             // 重启孤儿对账批：批量回收随行销账（best-effort）。
             // 待办分家批 + 改版批：镜像入过面的槽位随行销账（幂等）。
             _ <- victims.traverse_ { case (rid, p) =>
               ledger.fold(IO.unit)(_.remove(rid)) *>
-                todoBridge.fold(IO.unit)(b =>
-                  if todoBridged(p.kind) then b.retire(rid) else IO.unit
-                )
+                todoBridge.fold(IO.unit)(b => if todoBridged(p.kind) then b.retire(rid) else IO.unit)
             }
             sends <- rootWsSend.get
             _ <- victims.traverse_ { case (rid, p) =>
@@ -864,7 +877,9 @@ object InteractionHub:
                 )
                 ws(if reason.nonEmpty then base.deepMerge(Json.obj("reason" -> reason.asJson)) else base)
                   .handleErrorWith(e =>
-                    logger.warn(s"askUserClosed broadcast failed requestId=$rid root=$sid: ${e.getMessage}") *> IO.unit
+                    logger.warn(
+                      s"askUserClosed broadcast failed: ${e.getClass.getSimpleName}"
+                    ) *> IO.unit
                   )
               }
             }
@@ -898,20 +913,18 @@ object InteractionHub:
       m.get(requestId) match
         case None =>
           // 幂等：已答复/已回收/从未存在 —— no-op（不报错、不广播）。
-          (m, logger.debug(s"CloseRequest for unknown requestId=$requestId (already answered or closed)"))
+          (m, logger.debug("CloseRequest for unknown request (already answered or closed)"))
         case Some(p) =>
           (
             m - requestId,
             for
               _ <- logger.info(
-                s"CloseRequest $requestId (kind=${p.kind}) — caller withdrew; closing the card"
+                s"CloseRequest (kind=${p.kind}) — caller withdrew; closing the card"
               )
               // 重启孤儿对账批：精确回收随行销账（best-effort）。
               _ <- ledger.fold(IO.unit)(_.remove(requestId))
               // 待办分家批 + 改版批：镜像入过面的槽位随行销账（幂等 no-op 容错）。
-              _ <- todoBridge.fold(IO.unit)(b =>
-                if todoBridged(p.kind) then b.retire(requestId) else IO.unit
-              )
+              _ <- todoBridge.fold(IO.unit)(b => if todoBridged(p.kind) then b.retire(requestId) else IO.unit)
               sends <- rootWsSend.get
               _ <- sends.toList.traverse_ { case (sid, ws) =>
                 ws(
@@ -924,7 +937,7 @@ object InteractionHub:
                   )
                 ).handleErrorWith(e =>
                   logger.warn(
-                    s"CloseRequest broadcast failed requestId=$requestId root=$sid: ${e.getMessage}"
+                    s"CloseRequest broadcast failed: ${e.getClass.getSimpleName}"
                   ) *> IO.unit
                 )
               }
@@ -971,7 +984,7 @@ object InteractionHub:
             m,
             respond(AskCancelOutcome.UnknownRequestId) *>
               logger.debug(
-                s"CancelRequest for unknown requestId=$requestId (already answered, closed, or never existed)"
+                "CancelRequest for unknown request (already answered, closed, or never existed)"
               )
           )
         case Some(p) if p.kind != InteractionKind.AskUser =>
@@ -979,7 +992,7 @@ object InteractionHub:
             m,
             respond(AskCancelOutcome.NotAskUser(p.kind)) *>
               logger.info(
-                s"CancelRequest refused for requestId=$requestId (kind=${p.kind} is not AskUser — " +
+                s"CancelRequest refused (kind=${p.kind} is not AskUser — " +
                   "only AskUser questions are cancellable; permission cards resolve by approve/deny)"
               )
           )
@@ -988,13 +1001,12 @@ object InteractionHub:
             m - requestId,
             for
               _ <- logger.info(
-                s"CancelRequest $requestId (kind=AskUser) — cancelled by=$by reason=$effectiveReason; closing the card"
+                "CancelRequest (kind=AskUser) — closing the card"
               )
               // R10/U5=F-b 审计行（cancel 单点）——best-effort。
               _ <- audit
                 .info(
-                  s"event=cancel requestId=$requestId sourceSession=${p.sourceSession} " +
-                    s"rootSessionId=${p.rootSessionId} kind=${p.kind} by=$by reason=$effectiveReason"
+                  s"event=cancel kind=${p.kind}"
                 )
                 .handleErrorWith(_ => IO.unit)
               // 重启孤儿对账批：用户取消终结随行销账（best-effort）。
@@ -1020,7 +1032,7 @@ object InteractionHub:
                   )
                 ).handleErrorWith(e =>
                   logger.warn(
-                    s"CancelRequest broadcast failed requestId=$requestId root=$sid: ${e.getMessage}"
+                    s"CancelRequest broadcast failed: ${e.getClass.getSimpleName}"
                   ) *> IO.unit
                 )
               }
@@ -1038,13 +1050,15 @@ object InteractionHub:
    * 关了」）：`via` 曾另有 `chat-input` 取值，随 `handleChatInputAnswer` 一并
    * 删除 ⇒ 现存唯一取值 = card（卡片入口作答）。
    */
-  private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String, attachNote: String = ""): IO[Unit] =
-    val excerpt = if answersJoined.length > 200 then answersJoined.take(200) + "..." else answersJoined
+  private def auditAnswer(
+    requestId: String,
+    p: PendingRequest,
+    answersJoined: String,
+    via: String,
+    attachNote: String = ""
+  ): IO[Unit] =
     audit
-      .info(
-        s"event=answer requestId=$requestId sourceSession=${p.sourceSession} rootSessionId=${p.rootSessionId} " +
-          s"kind=${p.kind} via=$via$attachNote answersJoined=$excerpt"
-      )
+      .info(s"event=answer kind=${p.kind} via=$via")
       .handleErrorWith(_ => IO.unit)
 
   // 可见性 `private[agent]`（同 `PendingRequest` 先例 · McpPermissionReplaySpec 形态）：
@@ -1122,10 +1136,10 @@ object InteractionHub:
           val tier = p.payload.hcursor.downField("riskTier").as[String].toOption.getOrElse("")
           if sid.nonEmpty && tool.nonEmpty && tier != "L3" then
             nebflow.core.SessionApprovals.remember(p.sourceSession, sid, tool)
-            logger.infoSync(s"mcpPermission scope=session: session=${p.sourceSession} server=$sid tool=$tool")
+            logger.infoSync("mcpPermission scope=session recorded")
           else
             logger.warnSync(
-              s"mcpPermission scope=session IGNORED (server='$sid' tool='$tool' tier='$tier') — " +
+              "mcpPermission scope=session IGNORED — " +
                 "L3 is always-ask (host red line); no session approval recorded"
             )
         case _ => ()
@@ -1150,7 +1164,7 @@ object InteractionHub:
             .mkString(";") + ")"
     for
       _ <- logger.info(
-        s"InteractionAnswered requestId=${ans.requestId} kind=${p.kind} approved=$approved answers=${answers.map(_.size)}" +
+        s"InteractionAnswered kind=${p.kind} approved=$approved answers=${answers.map(_.size)}" +
           (if answerAttachments.isEmpty then "" else s" attachments=${answerAttachments.size}")
       )
       _ <- auditAnswer(
@@ -1201,15 +1215,13 @@ object InteractionHub:
         sends.toList.traverse_ { case (_, ws) =>
           ws(
             Json.obj(
-              "type"          -> "askUserClosed".asJson,
-              "sessionId"     -> p.rootSessionId.asJson,
-              "requestId"     -> ans.requestId.asJson,
+              "type" -> "askUserClosed".asJson,
+              "sessionId" -> p.rootSessionId.asJson,
+              "requestId" -> ans.requestId.asJson,
               "sourceSession" -> p.sourceSession.asJson,
-              "reason"        -> "answered".asJson
+              "reason" -> "answered".asJson
             )
-          ).handleErrorWith(e =>
-            logger.warn(s"askUserClosed(answered) broadcast failed requestId=${ans.requestId}: ${e.getMessage}")
-          )
+          ).handleErrorWith(e => logger.warn(s"askUserClosed(answered) broadcast failed: ${e.getClass.getSimpleName}"))
         }
       }
     yield ()

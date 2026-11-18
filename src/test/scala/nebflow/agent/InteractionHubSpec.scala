@@ -4,9 +4,9 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import munit.CatsEffectSuite
+import nebflow.actor.*
 
 import scala.concurrent.duration.*
-import nebflow.actor.{InteractionAnswered, InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
 
 /**
  * P2 InteractionHub core tests:
@@ -42,6 +42,48 @@ class InteractionHubSpec extends CatsEffectSuite:
       sourceSession = "team-abc"
     )
 
+  test("hub permission audit omits sensitive source, input and exception messages") {
+    val secret = "SENTINEL_HUB_PRIVATE_8562"
+    val names = List("nebflow.agent.interaction", "nebflow.audit")
+    val appenders = names.map { name =>
+      val logger = org.slf4j.LoggerFactory.getLogger(name).asInstanceOf[ch.qos.logback.classic.Logger]
+      val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+      (logger, appender)
+    }
+    import scala.jdk.CollectionConverters.*
+    val system = nebflow.actor.ActorSystem("hub-redaction")
+    IO { appenders.foreach { case (l, a) => a.start(); l.addAppender(a) } }.bracket { _ =>
+      (for
+        hub <- mkHub(system)
+        rendered <- Deferred[IO, Unit]
+        answer <- Deferred[IO, Boolean]
+        _ <- hub ! InteractionHubCommand.RegisterRoot(
+          secret,
+          (json: Json) =>
+            if json.hcursor.downField("type").as[String].toOption.contains("askPermission") then
+              rendered.complete(()).void *> IO.raiseError(new RuntimeException(secret))
+            else IO.unit
+        )
+        request = permRequest(secret, answer, secret, secret).copy(
+          sourceSession = secret,
+          payload = Json.obj("type" -> Json.fromString("askPermission"), "input" -> Json.fromString(secret))
+        )
+        _ <- hub ! InteractionHubCommand.Request(request)
+        _ <- rendered.get.timeout(5.seconds)
+        accepted <- hub.?[Boolean](reply =>
+          InteractionHubCommand.DecideBridgePermission(secret, secret, InteractionKind.Permission, true, reply)
+        )
+        _ <- answer.get.timeout(5.seconds)
+        _ <- system.stopAll
+        events = appenders.flatMap(_._2.list.asScala.toList.map(_.getFormattedMessage))
+      yield
+        assert(accepted)
+        assert(events.exists(_.contains("event=ask")))
+        assert(events.forall(!_.contains(secret)))
+      ).guarantee(system.stopAll)
+    }(_ => IO { appenders.foreach { case (l, a) => l.detachAppender(a); a.stop() } })
+  }
+
   test("real hub admits exactly one of concurrent bridge permission decisions") {
     val system = nebflow.actor.ActorSystem("hub-bridge-race")
     (for
@@ -51,11 +93,15 @@ class InteractionHubSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => rendered.complete(()).void)
       _ <- hub ! InteractionHubCommand.Request(permRequest("race", result))
       _ <- rendered.get.timeout(5.seconds)
-      rejected <- hub.?[Boolean](reply => InteractionHubCommand.DecideBridgePermission(
-        "race", "wrong-root", InteractionKind.Permission, true, reply))
+      rejected <- hub.?[Boolean](reply =>
+        InteractionHubCommand.DecideBridgePermission("race", "wrong-root", InteractionKind.Permission, true, reply)
+      )
       decisions <- List(true, false).parTraverse { value =>
-        hub.?[Boolean](reply => InteractionHubCommand.DecideBridgePermission(
-          "race", "root-1", InteractionKind.Permission, value, reply)).map(value -> _)
+        hub
+          .?[Boolean](reply =>
+            InteractionHubCommand.DecideBridgePermission("race", "root-1", InteractionKind.Permission, value, reply)
+          )
+          .map(value -> _)
       }
       completed <- result.get.timeout(5.seconds)
     yield

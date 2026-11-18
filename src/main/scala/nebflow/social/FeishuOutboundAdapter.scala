@@ -4,8 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import nebflow.gateway.NfFilePolicy
-import nebflow.social.outbound.*
 import nebflow.shared.{AttachContract, NebflowLogger}
+import nebflow.social.outbound.*
 
 /**
  * Feishu implementation of the channel-agnostic outbound layer (socoutbound
@@ -137,7 +137,7 @@ final class FeishuOutboundAdapter(
           sendText(c.appId, c.appSecret, region, "", text).flatMap { res =>
             if res.ok then IO.pure(ChannelCallResult.ok(call, res.messageId, s"text delivered (${res.receiveIdType})"))
             else
-              val detail = s"text rejected: ${res.msg}"
+              val detail = "text rejected"
               logger
                 .warn(s"feishu outbound: $detail (code=${res.code})")
                 .as(ChannelCallResult.failed(call, res.code, detail))
@@ -150,11 +150,11 @@ final class FeishuOutboundAdapter(
           // reading carrying the channel's own code, plus a warn line (section
           // 7: every degraded path leaves a log). The message carries a PATH and
           // a CODE -- never a credential value.
-          val detail = s"image upload rejected (${up.msg}) — path ${path.toString}"
+          val detail = "image upload rejected"
           logger.warn(s"feishu outbound: $detail").as(ChannelCallResult.failed(call, up.code, detail))
         else if thenSendImage then
           IO.pure(
-            ChannelCallResult.ok(call, up.key.orElse(up.messageId), s"image uploaded key=${up.key.getOrElse("-")}")
+            ChannelCallResult.ok(call, up.key.orElse(up.messageId), "image uploaded")
           )
         else IO.pure(ChannelCallResult.ok(call, up.key, "image uploaded"))
       }
@@ -162,11 +162,11 @@ final class FeishuOutboundAdapter(
     case ChannelCall.UploadFile(path, fileName, _) =>
       uploadFile(path, fileName).flatMap { up =>
         if !up.ok then
-          val detail = s"file upload rejected (${up.msg}) — path ${path.toString}"
+          val detail = "file upload rejected"
           logger.warn(s"feishu outbound: $detail").as(ChannelCallResult.failed(call, up.code, detail))
         else
           IO.pure(
-            ChannelCallResult.ok(call, up.key.orElse(up.messageId), s"file uploaded key=${up.key.getOrElse("-")}")
+            ChannelCallResult.ok(call, up.key.orElse(up.messageId), "file uploaded")
           )
       }
 

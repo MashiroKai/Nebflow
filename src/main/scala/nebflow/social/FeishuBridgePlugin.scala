@@ -1,28 +1,17 @@
 package nebflow.social
 
-import nebflow.neblink.core.*
-
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
-import nebflow.social.outbound.{
-  AskPromptCodec,
-  OutputBlock,
-  PromptAction,
-  PromptFallback,
-  PromptView,
-  RichCall,
-  RichFeishuAdapter,
-  RichKind,
-  RichProduct
-}
-import nebflow.shared.NebflowLogger
-import nebflow.shared.SessionMeta
+import nebflow.bridge.*
+import nebflow.neblink.core.*
+import nebflow.shared.{NebflowLogger, SessionMeta}
+import nebflow.social.outbound.*
 
 import java.util.concurrent.atomic.AtomicBoolean
+
 import scala.util.Try
 
 /**
@@ -214,7 +203,12 @@ final class FeishuBridgePlugin(
   private[social] val askChatRef =
     cats.effect.Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  private[social] case class PermissionRoute(root: String, kind: nebflow.actor.InteractionKind, chat: String, message: String)
+  private[social] case class PermissionRoute(
+    root: String,
+    kind: nebflow.actor.InteractionKind,
+    chat: String,
+    message: String
+  )
   private[social] val permissionRoutes = cats.effect.Ref.unsafe[IO, Map[String, PermissionRoute]](Map.empty)
 
   /**
@@ -252,13 +246,11 @@ final class FeishuBridgePlugin(
               // depth — stay registered but unconnected, never throw.
               IO(
                 logger.warn(
-                  s"feishu bridge: no usable credential (${FeishuBridgePlugin.render(reason)}) — registered but unconnected"
+                  "feishu bridge: no usable credential — registered but unconnected"
                 )
               )
         yield ()
-      body.handleErrorWith(e =>
-        IO(logger.error(s"feishu bridge: start failed: ${e.getClass.getSimpleName}: ${e.getMessage}"))
-      ) *>
+      body.handleErrorWith(e => IO(logger.error(s"feishu bridge: start failed: ${e.getClass.getSimpleName}"))) *>
         IO(if listener.isEmpty then starting.set(false)) // failed start ⇒ a later sync may retry
 
   /**
@@ -319,7 +311,7 @@ final class FeishuBridgePlugin(
           // member can mint a binding).
           IO(
             logger.warn(
-              s"feishu bridge: message from chat ${in.chatId} dropped — sender is not on the member allowlist"
+              "feishu bridge: message dropped — sender is not on the member allowlist"
             )
           )
         case (_, None, _, _) =>
@@ -333,7 +325,7 @@ final class FeishuBridgePlugin(
         case (_, _, None, _) =>
           IO(
             logger.info(
-              s"feishu bridge: message ${in.messageId} (${in.messageType}) has no readable body — nothing injected"
+              "feishu bridge: message has no readable body — nothing injected"
             )
           )
         case (_, Some(sessionId), Some(text), _) =>
@@ -347,7 +339,7 @@ final class FeishuBridgePlugin(
             matchTextAnswer(ctx, sessionId, text).flatMap {
               case true => IO.unit // consumed: an answer forwarded, or a refusal line answered
               case false =>
-                logger.info(s"feishu bridge: chat ${in.chatId} -> session $sessionId") *>
+                logger.info("feishu bridge: inbound message routed") *>
                   ctx.injectMessage(sessionId, text, in.senderId, originOf(in))
             }
     yield ()
@@ -397,7 +389,7 @@ final class FeishuBridgePlugin(
                   forwardTextAnswer(ctx, r, sessionId, flat, actions).as(true)
                 case Left(reject) =>
                   logger.info(
-                    s"feishu bridge: ask text reply refused (${reject.line.take(24)}…) — the ONE line answers it"
+                    "feishu bridge: ask text reply refused"
                   ) *>
                     reply(sessionId, reject.line).as(true)
             case _ => IO.pure(false) // a frame without a usable rid/question set is not answerable by text
@@ -416,7 +408,7 @@ final class FeishuBridgePlugin(
           }
           if answerShaped then
             logger.info(
-              s"feishu bridge: ask text reply ambiguous — ${many.size} open asks for session $sessionId, refusing"
+              s"feishu bridge: ask text reply ambiguous — ${many.size} open asks, refusing"
             ) *>
               reply(sessionId, WeixinAskLeg.answerAmbiguousLine(many.size)).as(true)
           else IO.pure(false)
@@ -440,19 +432,22 @@ final class FeishuBridgePlugin(
   ): IO[Unit] =
     AskPromptCodec.validate(flat.views, actions) match
       case Left(why) =>
-        logger.warn(s"feishu bridge: text answer failed validation ($why) — refused, nothing forwarded")
+        logger.warn("feishu bridge: text answer failed validation — refused, nothing forwarded")
       case Right(_) =>
         val kept = AskPromptCodec.answers(flat.views, actions)
         val answers = flat.expandAnswerSlots(kept)
         // answer-landing 实施批：回执反向通道登记（微信文本腿同款——失败出口经它
         // 把「问题已作废+原因」显式送回本渠道；发送闭包 contained）。
-        AskAnswerReceipt.record(rid, AskAnswerReceipt.Entry(
-          channel = Name,
-          routeKey = rootSid,
-          send = line => reply(rootSid, line)
-        )) *>
+        AskAnswerReceipt.record(
+          rid,
+          AskAnswerReceipt.Entry(
+            channel = Name,
+            routeKey = rootSid,
+            send = line => reply(rootSid, line)
+          )
+        ) *>
           ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
-          logger.info(s"feishu bridge: text answer forwarded requestId=$rid root=$rootSid answers=${answers.size}")
+          logger.info(s"feishu bridge: text answer forwarded answers=${answers.size}")
 
   /**
    * The keyword-cancel leg (askucancel 批)：hub 全局快照过滤出**本会话窗口**的
@@ -477,17 +472,18 @@ final class FeishuBridgePlugin(
           ctx.cancelInteractionRequest(rid, "channel-cancel-keyword", FeishuBridgePlugin.Name) *>
             // answer-landing 批：问题退役 ⇒ 回执反向通道随撤（幂等）。
             AskAnswerReceipt.drop(rid) *>
-            logger.info(s"feishu bridge: ask cancelled by keyword requestId=$rid session=$sessionId") *>
+            logger.info("feishu bridge: ask cancelled by keyword") *>
             reply(sessionId, WeixinAskLeg.CancelledLine)
         case Nil =>
           // 在册零问：取消关键字按聊天透传（B-2 既有裁定），路径与改前逐字节一致。
-          logger.info(s"feishu bridge: chat ${in.chatId} -> session $sessionId") *>
+          logger.info("feishu bridge: inbound message routed") *>
             ctx.injectMessage(sessionId, text, in.senderId, originOf(in))
         case many =>
           logger.info(
-            s"feishu bridge: cancel keyword ambiguous — ${many.size} open asks for session $sessionId, refusing"
+            s"feishu bridge: cancel keyword ambiguous — ${many.size} open asks, refusing"
           ) *>
             reply(sessionId, WeixinAskLeg.cancelAmbiguousLine(many.size))
+      end match
     }
 
   // ───────── feishu-inbound-image batch (2026-10-11): the image arm (intake 前置臂) ─────────
@@ -527,15 +523,14 @@ final class FeishuBridgePlugin(
     val mid = in.messageId
     creds match
       case None =>
-        logger.warn(s"feishu bridge: image $mid not fetched — no credential resolved") *>
-          inject(s"[图片未取得] 渠道凭据未就绪，message_id=$mid")
+        logger.warn("feishu bridge: image not fetched — no credential resolved") *>
+          inject("[图片未取得] 渠道凭据未就绪")
       case Some(c) =>
         FeishuBridgePlugin.resourceKeyOf(in.messageType, in.contentRaw) match
           case None =>
-            logger.warn(s"feishu bridge: image $mid carries no image_key — nothing to fetch") *>
-              inject(s"[图片未取得] 事件未携带 image_key，message_id=$mid")
+            logger.warn("feishu bridge: image carries no image_key — nothing to fetch") *>
+              inject("[图片未取得] 事件未携带 image_key")
           case Some(key) =>
-            val safeKey = FeishuChannel.maskKey(key)
             val req = FeishuBridgePlugin.ResourceRequest(
               c.appId,
               c.appSecret,
@@ -545,22 +540,21 @@ final class FeishuBridgePlugin(
               FeishuBridgePlugin.resourceTypeOf(in.messageType)
             )
             fetchResource(req).flatMap {
-              case Left(reason) =>
-                logger.warn(s"feishu bridge: image $mid download failed ($reason)") *>
-                  inject(s"[图片未取得] 下载失败（$reason），message_id=$mid，image_key=$safeKey")
+              case Left(_) =>
+                logger.warn("feishu bridge: image download failed") *>
+                  inject("[图片未取得] 下载失败")
               case Right(bytes) =>
                 if bytes.length.toLong > FeishuBridgePlugin.MaxInboundImageBytes then
                   logger.warn(
-                    s"feishu bridge: image $mid over the inbound cap " +
+                    s"feishu bridge: image over the inbound cap " +
                       s"(${bytes.length} > ${FeishuBridgePlugin.MaxInboundImageBytes} bytes) — not landed"
                   ) *>
                     inject(
-                      s"[图片未保存] 大小超限（${bytes.length} 字节 > 上限 ${FeishuBridgePlugin.MaxInboundImageBytes} 字节），" +
-                        s"message_id=$mid，image_key=$safeKey"
+                      s"[图片未保存] 大小超限（${bytes.length} 字节 > 上限 ${FeishuBridgePlugin.MaxInboundImageBytes} 字节）"
                     )
                 else
                   IO.blocking(FeishuBridgePlugin.landInboundImage(root, sessionId, mid, bytes)).flatMap { path =>
-                    logger.info(s"feishu bridge: image $mid landed at $path (${bytes.length} bytes)") *>
+                    logger.info(s"feishu bridge: image landed (${bytes.length} bytes)") *>
                       inject(WeixinIlinkBridgePlugin.mediaLine(path.toString, Some("image"), None))
                   }
             }
@@ -618,7 +612,7 @@ final class FeishuBridgePlugin(
         )
         ctx.updateBridgeConfig(sessionId, FeishuBridgePlugin.Name, Some(cfg)) *>
           routesRef.update(_ + (in.chatId -> sessionId)) *>
-          IO(logger.info(s"feishu bridge: chat ${in.chatId} auto-bound to default session $sessionId")) *>
+          IO(logger.info("feishu bridge: chat auto-bound to default session")) *>
           // feishu-inbound-image batch: the bind tail grew the image arm (the
           // weixin C4 form — a first image BINDS exactly like a first text, and
           // what gets injected is the landed-file media line, never a
@@ -630,7 +624,7 @@ final class FeishuBridgePlugin(
       case None =>
         IO(
           logger.info(
-            s"feishu bridge: no session is bound to chat ${in.chatId} and no default session is configured — message dropped"
+            "feishu bridge: no bound or default session — message dropped"
           )
         )
     }
@@ -664,10 +658,10 @@ final class FeishuBridgePlugin(
     if res.ok then
       creds = Some(c)
       listener = Some(l)
-      logger.info(s"feishu bridge: long connection up (${res.detail})")
+      logger.info("feishu bridge: long connection up")
     else
       l.stop() // a failed handshake still owns a socket attempt — never leak it
-      logger.warn(s"feishu bridge: handshake failed (${res.detail}) — registered but unconnected")
+      logger.warn("feishu bridge: handshake failed — registered but unconnected")
 
   end openListener
 
@@ -759,7 +753,7 @@ final class FeishuBridgePlugin(
           // order — then the text tail. Media first, 正文殿后 is preserved.
           val richLeg = richs match
             case Nil => IO.unit
-            case rs  => pacer.enqueue(deliverRichAll(sessionId, rs))
+            case rs => pacer.enqueue(deliverRichAll(sessionId, rs))
           // output 块纪律渠道接线批（2026-11-01，作者令「飞书端收到的消息也要
           // 做 output 块剥离，只显示 output 块内部的内容」）：轮尾只吃单一提取
           // 源 [[OutputBlock.extractGated]]（output-block-gate 批起闸感知——闸开
@@ -767,7 +761,7 @@ final class FeishuBridgePlugin(
           // 轮 ⇒ 无可投递文本，文字腿熄灭（**不回退成发全文**）。
           val visible = OutputBlock.extractGated(text, outputBlockGate()) match
             case OutputBlock.Extracted(inner) => inner
-            case _                            => ""
+            case _ => ""
           val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
           richLeg *> textLeg
         }
@@ -797,7 +791,9 @@ final class FeishuBridgePlugin(
   end onAgentEvent
 
   private[social] def onPermissionFrame(
-    sessionId: String, c: io.circe.HCursor, kind: nebflow.actor.InteractionKind
+    sessionId: String,
+    c: io.circe.HCursor,
+    kind: nebflow.actor.InteractionKind
   ): IO[Unit] =
     (allowedRef.get, routesRef.get).tupled.flatMap { (allowed, routes) =>
       val rid = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
@@ -827,15 +823,19 @@ final class FeishuBridgePlugin(
         case (Some(rid), Some(approved), Some(operator), Some(chat), Some(message))
             if allowed.exists(x => x.nonEmpty && x == operator) =>
           bindings.get(rid) match
-            case Some(binding) if binding.chat == chat && binding.message == message && routes.get(chat).contains(binding.root) =>
+            case Some(binding)
+                if binding.chat == chat && binding.message == message && routes.get(chat).contains(binding.root) =>
               ctx.decidePermission(rid, binding.root, binding.kind, approved).attempt.flatMap {
-                case Right(true) => permissionRoutes.update(_ - rid).as(
-                  FeishuChannel.CardActionResponse(None, Some(FeishuPermissionCard.card(rid, Some(approved))) ))
+                case Right(true) =>
+                  permissionRoutes
+                    .update(_ - rid)
+                    .as(FeishuChannel.CardActionResponse(None, Some(FeishuPermissionCard.card(rid, Some(approved)))))
                 case _ => IO.pure(refused)
               }
             case _ => IO.pure(refused)
         case _ => IO.pure(refused)
     }
+  end permissionAction
 
   // ───────────── askuser-remote P1: the askUser frame leg ─────────────
 
@@ -862,7 +862,11 @@ final class FeishuBridgePlugin(
           // answer-landing 实施批（表1 ★）：卡头批名 = 提问载荷归因（project 优先，
           // 回落 nodeName）；文本降级形态同款（静态卡不动——按钮按 rid 消歧不受影响）。
           val batch =
-            c.downField("project").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            c.downField("project")
+              .as[String]
+              .toOption
+              .map(_.trim)
+              .filter(_.nonEmpty)
               .orElse(c.downField("nodeName").as[String].toOption.map(_.trim).filter(_.nonEmpty))
               .getOrElse("")
           val allViews = AskPromptCodec.viewsFromItemsJson(items)
@@ -885,7 +889,7 @@ final class FeishuBridgePlugin(
               askChatRef.update(_ + (rid -> chatId)).flatMap { _ =>
                 creds match
                   case None =>
-                    IO(logger.warn(s"feishu bridge: ask card for chat $chatId dropped — no credential resolved"))
+                    IO(logger.warn("feishu bridge: ask card dropped — no credential resolved"))
                   case Some(cr) =>
                     deliverAskMedia(cr, chatId, attachments).flatMap { undelivered =>
                       if FeishuAskCard.needsTextFallback(flat.views) then
@@ -937,19 +941,19 @@ final class FeishuBridgePlugin(
       }
       .flatMap { results =>
         val rejected = results.count(!_.ok)
-        if rejected == 0 then
-          IO(logger.info(s"feishu bridge: ask card(s) delivered to chat $chatId (cards=${results.size})"))
+        if rejected == 0 then IO(logger.info(s"feishu bridge: ask card(s) delivered (cards=${results.size})"))
         else if rejected == results.size then
           sendTextFallback(
             cr,
             chatId,
             views,
-            FeishuAskCard.fallbackReason(PromptFallback.SendRejected(results.head.code, results.head.msg)),
+            FeishuAskCard.fallbackReason(PromptFallback.SendRejected(results.head.code, "远端拒绝")),
             batch = batch
-          )        else
+          )
+        else
           IO(
             logger.warn(
-              s"feishu bridge: ask cards PARTIALLY delivered to chat $chatId " +
+              s"feishu bridge: ask cards PARTIALLY delivered " +
                 s"(ok=${results.size - rejected} rejected=$rejected) — no duplicate text card sent"
             )
           )
@@ -1001,14 +1005,14 @@ final class FeishuBridgePlugin(
                 else
                   IO(
                     logger.warn(
-                      s"feishu bridge: ask attachment media leg did not deliver (${results.count(_.ok)}/${results.size} calls ok) — keeping the path line: $p"
+                      s"feishu bridge: ask attachment media leg did not deliver (${results.count(_.ok)}/${results.size} calls ok) — keeping the path line"
                     )
                   ).as(failed :+ p)
               }
           case RichKind.Unknown(reason) =>
             IO(
               logger.warn(
-                s"feishu bridge: ask attachment not carriable by the media leg ($reason) — keeping the path line: $p"
+                "feishu bridge: ask attachment not carriable by the media leg — keeping the path line"
               )
             ).as(failed :+ p)
           case other =>
@@ -1016,7 +1020,7 @@ final class FeishuBridgePlugin(
             // an empty content here) — this arm is the total-function backstop.
             IO(
               logger.warn(
-                s"feishu bridge: ask attachment classified $other — keeping the path line: $p"
+                "feishu bridge: ask attachment not delivered — keeping the path line"
               )
             ).as(failed :+ p)
         end match
@@ -1047,9 +1051,10 @@ final class FeishuBridgePlugin(
       (if header.isEmpty then "" else header + "\n") +
         FeishuAskCard.renderText(views, reason, attachments)
     send(cr.appId, cr.appSecret, region, chatId, body).flatMap { res =>
-      if res.ok then IO(logger.info(s"feishu bridge: ask TEXT fallback delivered to chat $chatId"))
-      else IO(logger.warn(s"feishu bridge: ask TEXT fallback rejected too code=${res.code} msg=${res.msg}"))
+      if res.ok then IO(logger.info("feishu bridge: ask TEXT fallback delivered"))
+      else IO(logger.warn(s"feishu bridge: ask TEXT fallback rejected too code=${res.code}"))
     }
+  end sendTextFallback
 
   // ───────────── askuser-remote P1: the card.action.trigger leg ─────────────
 
@@ -1078,7 +1083,10 @@ final class FeishuBridgePlugin(
       permissionAction(ctx, a)
     else handleAskCardAction(ctx, a)
 
-  private def handleAskCardAction(ctx: BridgeContext, a: FeishuChannel.CardAction): IO[FeishuChannel.CardActionResponse] =
+  private def handleAskCardAction(
+    ctx: BridgeContext,
+    a: FeishuChannel.CardAction
+  ): IO[FeishuChannel.CardActionResponse] =
     val refuse: String => IO[FeishuChannel.CardActionResponse] =
       toast => IO.pure(FeishuChannel.CardActionResponse(toast = Some(toast), card = None))
     allowedRef.get.flatMap { allowed =>
@@ -1088,7 +1096,7 @@ final class FeishuBridgePlugin(
         // cannot place on the member list is refused (and logged), never answered.
         IO(
           logger.warn(
-            s"feishu bridge: card click from ${a.openId.getOrElse("<no-identity>")} refused — not on the member allowlist"
+            "feishu bridge: card click refused — not on the member allowlist"
           )
         ) *>
           refuse(FeishuAskCard.ToastCannotHandle)
@@ -1109,7 +1117,7 @@ final class FeishuBridgePlugin(
             ) match
               case Left(reject) =>
                 // chat-mismatch / expired / duplicate / malformed — each its own toast.
-                IO(logger.info(s"feishu bridge: card click refused [${reject.reason}] ${reject.detail}")) *>
+                IO(logger.info("feishu bridge: card click refused")) *>
                   refuse(FeishuAskCard.toastFor(reject))
               case Right(action) =>
                 val rid = ridRaw.getOrElse("")
@@ -1159,7 +1167,7 @@ final class FeishuBridgePlugin(
     else
       AskPromptCodec.validate(flat.views, List(action)) match
         case Left(why) =>
-          IO(logger.warn(s"feishu bridge: card click produced an invalid action ($why) — refused")) *> IO.pure(None)
+          IO(logger.warn("feishu bridge: card click produced an invalid action — refused")) *> IO.pure(None)
         case Right(_) =>
           val kept = AskPromptCodec.answers(flat.views, List(action))
           val answers = flat.expandAnswerSlots(kept)
@@ -1174,14 +1182,17 @@ final class FeishuBridgePlugin(
               if text.isEmpty then FeishuAskCard.OtherCopy else text
           // answer-landing 实施批：回执反向通道登记（文本腿同款；卡片点击腿同一
           // requestId 键——后登记覆盖前登记，幂等）。
-          AskAnswerReceipt.record(rid, AskAnswerReceipt.Entry(
-            channel = Name,
-            routeKey = rootSid,
-            send = line => reply(rootSid, line)
-          )) *>
+          AskAnswerReceipt.record(
+            rid,
+            AskAnswerReceipt.Entry(
+              channel = Name,
+              routeKey = rootSid,
+              send = line => reply(rootSid, line)
+            )
+          ) *>
             ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
             IO(
-              logger.info(s"feishu bridge: card answer forwarded requestId=$rid root=$rootSid answers=${answers.size}")
+              logger.info(s"feishu bridge: card answer forwarded answers=${answers.size}")
             ) *>
             IO.pure(
               Some(
@@ -1236,7 +1247,7 @@ final class FeishuBridgePlugin(
           creds match
             case None =>
               // 直落 IO（IO[IO[Unit]] 死日志修正，同 reply 腿）。
-              logger.warn(s"feishu bridge: rich reply for chat $chatId dropped — no credential resolved")
+              logger.warn("feishu bridge: rich reply dropped — no credential resolved")
             case Some(c) =>
               val adapter = buildRichAdapter(c, region, chatId)
               // 🔴 The adapter is called for EVERY classified item, `Unknown`
@@ -1262,17 +1273,21 @@ final class FeishuBridgePlugin(
                     val line =
                       s"[未送达] ${p.last} — 这一项发送时出现异常，其余内容照常（原件在桌面端：$p）"
                     logger.warn(
-                      s"feishu bridge: rich item delivery raised for $p " +
-                        s"(${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}) — degrading to a visible line"
+                      s"feishu bridge: rich item delivery raised (${e.getClass.getSimpleName}) — degrading to a visible line"
                     ) *> sendVisibleLine(c, chatId, line)
-                      .as(List(nebflow.social.outbound.RichLedger.of(
-                        nebflow.social.outbound.RichCall.SendText(line),
-                        ok = false,
-                        -1,
-                        None,
-                        s"item delivery raised: ${e.getClass.getSimpleName}"
-                      )))
+                      .as(
+                        List(
+                          nebflow.social.outbound.RichLedger.of(
+                            nebflow.social.outbound.RichCall.SendText(line),
+                            ok = false,
+                            -1,
+                            None,
+                            s"item delivery raised: ${e.getClass.getSimpleName}"
+                          )
+                        )
+                      )
                   }
+              end deliverOne
               val legs =
                 if RichKind.isCardContent(rich.content) then
                   adapter
@@ -1280,9 +1295,11 @@ final class FeishuBridgePlugin(
                     .handleErrorWith(e =>
                       // 直落 IO 语法（同 weixin 腿的 IO[IO[Unit]] 死日志修正）：
                       // `IO(logger.warn(...))` 的内层永不执行。
-                      logger.warn(
-                        s"feishu bridge: rich card delivery raised (${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")})"
-                      ).as(Nil)
+                      logger
+                        .warn(
+                          s"feishu bridge: rich card delivery raised (${e.getClass.getSimpleName})"
+                        )
+                        .as(Nil)
                     )
                 else
                   rich.media.foldLeft(IO.pure(List.empty[nebflow.social.outbound.RichCallResult])) { (acc, p) =>
@@ -1292,7 +1309,7 @@ final class FeishuBridgePlugin(
                 if results.isEmpty then
                   IO(
                     logger.warn(
-                      s"feishu bridge: rich reply for chat $chatId carried no deliverable media this time " +
+                      "feishu bridge: rich reply carried no deliverable media this time " +
                         "(convertible md/html items may have been suppressed as same-bytes duplicates) — " +
                         "the text reply carries the turn"
                     )
@@ -1301,7 +1318,7 @@ final class FeishuBridgePlugin(
                   val failed = results.count(!_.ok)
                   IO(
                     logger.info(
-                      s"feishu bridge: rich reply to chat $chatId items=${rich.media.size} label=${rich.label} " +
+                      s"feishu bridge: rich reply items=${rich.media.size} " +
                         s"calls=${results.size} failed=$failed"
                     )
                   )
@@ -1331,7 +1348,7 @@ final class FeishuBridgePlugin(
     send(c.appId, c.appSecret, region, chatId, line).flatMap { res =>
       if res.ok then IO.unit
       // 直落 IO 语法（IO[IO[Unit]] 死日志修正——同下 reply 腿）。
-      else logger.warn(s"feishu bridge: rich item degrade line send rejected code=${res.code} msg=${res.msg}")
+      else logger.warn(s"feishu bridge: rich item degrade line send rejected code=${res.code}")
     }
 
   /**
@@ -1353,7 +1370,7 @@ final class FeishuBridgePlugin(
       val text = m.getOrElse(sessionId, "")
       OutputBlock.extractGated(text, outputBlockGate()) match
         case OutputBlock.Unbalanced => (m, IO.unit)
-        case OutputBlock.NoBlocks   => (m - sessionId, IO.unit)
+        case OutputBlock.NoBlocks => (m - sessionId, IO.unit)
         case OutputBlock.Extracted(inner) =>
           (
             m - sessionId,
@@ -1387,7 +1404,7 @@ final class FeishuBridgePlugin(
             // 是 IO[IO[Unit]] 死日志——内层 logback 永不执行（同款隐患
             // WeixinIlinkBridgeSpec 头注 2026-10-08 已点名词退役），实况即
             // 2026-10-09 晚飞书腿整晚零出站日志、送达与否全盲的根因面。
-            case None => logger.warn(s"feishu bridge: reply for chat $chatId dropped — no credential resolved")
+            case None => logger.warn("feishu bridge: reply dropped — no credential resolved")
             case Some(c) =>
               // Channel-adapter-side text conversion (socoutbound batch, author
               // ruling #299): the OUTBOUND copy is de-marked-up so Feishu shows
@@ -1397,11 +1414,10 @@ final class FeishuBridgePlugin(
               send(c.appId, c.appSecret, region, chatId, outbound).flatMap { res =>
                 if res.ok then
                   segmentFailNoted.update(_ - sessionId) *>
-                    logger.info(s"feishu bridge: reply delivered to chat $chatId (${res.messageId.getOrElse("-")})")
+                    logger.info("feishu bridge: reply delivered")
                 else
-                  logger.warn(s"feishu bridge: send rejected code=${res.code} msg=${res.msg}") *>
-                    (if isSegment then
-                       noteSegmentFailure(sessionId, s"[上一条推送失败 code=${res.code} ${res.msg}]")
+                  logger.warn(s"feishu bridge: send rejected code=${res.code}") *>
+                    (if isSegment then noteSegmentFailure(sessionId, s"[上一条推送失败 code=${res.code}]")
                      else IO.unit)
               }
     }
@@ -1526,7 +1542,8 @@ object FeishuBridgePlugin:
    */
   def defaultFetchResource(req: ResourceRequest): IO[Either[String, Array[Byte]]] =
     IO.blocking(
-      FeishuChannel.getInboundResource(req.appId, req.appSecret, req.region, req.messageId, req.fileKey, req.resourceType)
+      FeishuChannel
+        .getInboundResource(req.appId, req.appSecret, req.region, req.messageId, req.fileKey, req.resourceType)
     ).map { r =>
       if r.ok then r.bytes.map(Right(_)).getOrElse(Left(s"code=${r.code} msg=${r.msg}"))
       else Left(s"code=${r.code} msg=${r.msg}")
