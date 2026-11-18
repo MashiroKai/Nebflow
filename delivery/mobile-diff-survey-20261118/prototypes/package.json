@@ -1,0 +1,24 @@
+{
+  "name": "mobile-diff-survey-prototypes",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Selection-survey prototypes for the Stand mobile diff view (delegate diff + canvas ask diff). Checkout-only build tooling; not a production entry point.",
+  "scripts": {
+    "bundle": "node bundle.mjs"
+  },
+  "dependencies": {
+    "@codemirror/merge": "6.12.3",
+    "@codemirror/state": "latest",
+    "@codemirror/view": "latest",
+    "@codemirror/language": "latest",
+    "@codemirror/lang-javascript": "latest",
+    "diff2html": "3.4.56",
+    "@pierre/diffs": "1.6.4",
+    "@git-diff-view/core": "0.1.8",
+    "diff": "9.0.0",
+    "shiki": "4.6.0",
+    "monaco-editor": "0.57.0",
+    "esbuild": "0.25.9"
+  }
+}

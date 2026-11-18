@@ -1,0 +1,170 @@
+{
+  "results": {
+    "codemirror-merge": {
+      "minBytes": 401433,
+      "minKB": 392,
+      "gzipKB": 133,
+      "brotliKB": 113.3,
+      "moduleCount": 15,
+      "topLevelDeps": 15,
+      "deps": [
+        "@codemirror/autocomplete",
+        "@codemirror/lang-javascript",
+        "@codemirror/language",
+        "@codemirror/merge",
+        "@codemirror/state",
+        "@codemirror/streamparser",
+        "@codemirror/view",
+        "@lezer/common",
+        "@lezer/highlight",
+        "@lezer/javascript",
+        "@lezer/lr",
+        "@marijn/find-cluster-break",
+        "crelt",
+        "style-mod",
+        "w3c-keyname"
+      ]
+    },
+    "codemirror-merge-min": {
+      "minBytes": 267560,
+      "minKB": 261.3,
+      "gzipKB": 85.4,
+      "brotliKB": 74.1,
+      "moduleCount": 11,
+      "topLevelDeps": 11,
+      "deps": [
+        "@codemirror/language",
+        "@codemirror/merge",
+        "@codemirror/state",
+        "@codemirror/streamparser",
+        "@codemirror/view",
+        "@lezer/common",
+        "@lezer/highlight",
+        "@marijn/find-cluster-break",
+        "crelt",
+        "style-mod",
+        "w3c-keyname"
+      ]
+    },
+    "diff2html": {
+      "minBytes": 45136,
+      "minKB": 44.1,
+      "gzipKB": 13,
+      "brotliKB": 11.8,
+      "moduleCount": 33,
+      "topLevelDeps": 3,
+      "deps": [
+        "@profoundlogic/hogan",
+        "diff",
+        "diff2html"
+      ]
+    },
+    "pierre-diffs": {
+      "minBytes": 11399433,
+      "minKB": 11132.3,
+      "gzipKB": 2032.7,
+      "brotliKB": 1412,
+      "moduleCount": 718,
+      "topLevelDeps": 30,
+      "deps": [
+        "@pierre/diffs",
+        "@pierre/highlights",
+        "@pierre/theme",
+        "@pierre/theming",
+        "@shikijs/core",
+        "@shikijs/engine-javascript",
+        "@shikijs/engine-oniguruma",
+        "@shikijs/langs",
+        "@shikijs/primitive",
+        "@shikijs/themes",
+        "@shikijs/types",
+        "@shikijs/vscode-textmate",
+        "ccount",
+        "character-entities-html4",
+        "character-entities-legacy",
+        "comma-separated-tokens",
+        "diff",
+        "hast-util-to-html",
+        "hast-util-whitespace",
+        "html-void-elements",
+        "oniguruma-parser",
+        "oniguruma-to-es",
+        "property-information",
+        "regex",
+        "regex-recursion",
+        "regex-utilities",
+        "shiki",
+        "space-separated-tokens",
+        "stringify-entities",
+        "zwitch"
+      ]
+    },
+    "git-diff-view-core": {
+      "minBytes": 1146438,
+      "minKB": 1119.6,
+      "gzipKB": 316.3,
+      "brotliKB": 253.2,
+      "moduleCount": 202,
+      "topLevelDeps": 6,
+      "deps": [
+        "@git-diff-view/core",
+        "@git-diff-view/lowlight",
+        "devlop",
+        "fast-diff",
+        "highlight.js",
+        "lowlight"
+      ]
+    },
+    "jsdiff": {
+      "minBytes": 23084,
+      "minKB": 22.5,
+      "gzipKB": 8.1,
+      "brotliKB": 7.4,
+      "moduleCount": 19,
+      "topLevelDeps": 1,
+      "deps": [
+        "diff"
+      ]
+    },
+    "shiki": {
+      "minBytes": 9737861,
+      "minKB": 9509.6,
+      "gzipKB": 1610.5,
+      "brotliKB": 1089.7,
+      "moduleCount": 403,
+      "topLevelDeps": 25,
+      "deps": [
+        "@shikijs/core",
+        "@shikijs/engine-javascript",
+        "@shikijs/engine-oniguruma",
+        "@shikijs/langs",
+        "@shikijs/primitive",
+        "@shikijs/themes",
+        "@shikijs/types",
+        "@shikijs/vscode-textmate",
+        "ccount",
+        "character-entities-html4",
+        "character-entities-legacy",
+        "comma-separated-tokens",
+        "hast-util-to-html",
+        "hast-util-whitespace",
+        "html-void-elements",
+        "oniguruma-parser",
+        "oniguruma-to-es",
+        "property-information",
+        "regex",
+        "regex-recursion",
+        "regex-utilities",
+        "shiki",
+        "space-separated-tokens",
+        "stringify-entities",
+        "zwitch"
+      ]
+    }
+  },
+  "vendoredBytes": {
+    "monaco": 13710837,
+    "highlight.min.js": 124980,
+    "marked.min.js": 35479
+  }
+}
