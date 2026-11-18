@@ -1165,12 +1165,10 @@ button.fm-req-decline:focus-visible {
      · 状态等价适配：`expired`（终态：灰态 + 名字划线，真名/大小保留，无键）/
        `uploading` / `unreadable`（灰态，无键——不可下载者绝不渲染成可点按钮）。 */
 .fm-att-list {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  /* 排列格式变体（容器基线排布 = chat.css `.pop-group, .fm-att-list` 单定义块，
+     2026-11-18 统一批）：本处只留**变体档**——间距档 / 落位 / 宽度档。 */
   gap: var(--ds-space-2);
   margin-top: var(--ds-space-2);
-  min-width: 0;
   max-width: 100%;
 }
 .fm-msg.out .fm-att-list { align-items: flex-end; }
@@ -2052,24 +2050,24 @@ body:not(.mobile-layer) #profile-face-overlay {
 
 /* Input bar ── 悬浮毛玻璃条（contact-panel-unify 链 · 作者令 2026-11-06：
    「输入框：同样采用悬浮、毛玻璃半透明、带大圆角的设计」）─────────────────────
-   与主会话 `#input-bar` **同一套**（逐项对齐，不是另造第二种输入面）：
+   与主会话 `#input-bar` **同一套 —— 现在是真的同一份定义**（composer 统一批
+   2026-11-18 · 作者令「dimensions / padding / rounded corners / glass tokens
+   一套」）：
+     · 外壳几何（position/radius/padding/gap/flex-shrink）与内件几何
+       （padding/字阶/行高/max-height）**移入 css/input.css** 的
+       `#input-bar, .fm-input-bar` 与 `#input, .fm-input` 两条单定义块；
+       本文件只留**落位**（margin 一档 —— 容器差异，不是组件差异）。
+       改前这里另写 `padding: 6/12` + `gap: 8` + 自己的 radius，与主条差 4px
+       两处、件型也不同（单行 input vs textarea）—— 正是作者点名的分叉。
      · 材质 = `.nf-glass`（DOM 上挂着，js/messages/fmComposer.js）⇒ 玻璃底/模糊/
        细边/三档影全走唯一毛玻璃标准；本文件零 backdrop-filter、零自写色值；
-     · 圆角 = `--ds-radius-shell`（20px，= #input-bar 外壳档；大圆角判据 ≥16px）；
-     · 内距 = `--nf-field-pad-y/-x`（6/12，= #input-bar 的内距档，取自输入面令牌段）；
-     · 内件 = `input.cfg-input.fm-input.nf-field--bare`（裸件档：外壳已给材质，
-       内件只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」）；
-     · 落位 = 流内悬浮：左右/下各留一档间距，四边不贴窗体边（作者说的「悬浮」）。
+     · 内件 = `textarea.cfg-input.fm-input.nf-field--bare`（裸件档：外壳已给材质，
+       内件只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」）。
    🔴 原 `border-top: 1px solid var(--glass-etched-border)` 与 `padding: 10/16/14`
    一并摘除 —— 那条线是「输入条有边缘」的直接成因，与本令的「无边缘+悬浮」相反。 */
 .fm-input-bar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--ds-space-2);
+  /* 落位（容器差异）：流内悬浮，左右/下各留一档间距，四边不贴窗体边。 */
   margin: 0 var(--ds-space-3) var(--ds-space-3);
-  padding: var(--nf-field-pad-y) var(--nf-field-pad-x);
-  border-radius: var(--ds-radius-shell);
 }
 
 .fm-input { flex: 1; min-width: 0; }

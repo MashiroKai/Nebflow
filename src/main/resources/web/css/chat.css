@@ -4993,9 +4993,20 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    本就列向+右对齐，:not(.user) 闸保证不触）。改前该行只有 .pop-group 一个子元素，
    行/列向视觉逐字等价——本规则只服务于徽章落位，零既有面迁移。 */
 .row.pop-artifact:not(.user) { flex-direction: column; align-items: flex-start; }
+/* 附件区容器**单一定义**（message-item 统一批 2026-11-18）：主会话 `.pop-group` 与
+   消息面 `.fm-att-list` 是同一个附件容器的两个**排列格式变体**（js/chatItem.js
+   attachmentArea(cls) 的唯一构造点）——基线排布（列向 + 起缘对齐 + 可收缩）只此一份；
+   变体各自只允许覆盖 gap / 宽度档 / 落位，不许重写基线四条。
+   值逐条等于改前两处（零视觉变更）。 */
+.pop-group,
+.fm-att-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
 .pop-group {
-  display: flex; flex-direction: column; align-items: flex-start;
-  gap: var(--ds-space-inline-gap); min-width: 0;
+  gap: var(--ds-space-inline-gap);
   /* 2026-10-30 收敛批：消费消息列宽单源 token（--msg-bubble-max-w，值的家 =
      sapphire.css「Shared message surface」③A3 判据——面内零字面量，改一处两侧同步；
      写死 78% 被 scripts/check-msgstyle-single-source.mjs「A3 面内不得再写死 78%」判红）。 */

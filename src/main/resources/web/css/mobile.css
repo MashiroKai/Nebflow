@@ -79,11 +79,15 @@
     max-width: 100%;
   }
 
-  /* iOS auto-zooms a focused input whose font-size is under 16px. */
+  /* iOS auto-zooms a focused input whose font-size is under 16px.
+     composer 统一批（2026-11-18）：手机字档是**视口级**差异，不是面差异 ——
+     `#input` 走 `#main textarea` 已收编，消息面 `.fm-input` 不在 `#main` 里，
+     改前漏掉（手机 14.5px ⇒ iOS 聚焦自动放大）。两面显式同列。 */
   #main textarea,
   #main input[type='text'],
   #main input[type='password'],
-  #main input:not([type]) {
+  #main input:not([type]),
+  .fm-input {
     font-size: var(--ds-fs-mobile-callout);
   }
 

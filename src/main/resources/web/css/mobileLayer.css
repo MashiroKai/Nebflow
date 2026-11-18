@@ -2975,7 +2975,11 @@ body.mobile-layer .ask-dock .ds-turn-btn {
    几何契约钉 + 双主题实拍：tests/composer-mobile-slim-shots.mjs（G 腿
    before 78 / after 58）。canvas 页 ask 输入条为独立组件（ask.css .ask-input
    自带几何，与主会话不共组件/几何 token）——按令分开实现先不动。 */
-body.mobile-layer #input-bar {
+/* composer 统一批（2026-11-18）：手机档的垂直收窄**同一条规则同时命名两面** ——
+   视口级的差异（手机/桌面）不是组件差异，两面必须一起变（改前只写 #input-bar，
+   消息面 .fm-input-bar 停在 6px，两面在手机上差 2px = 作者点名的分叉）。 */
+body.mobile-layer #input-bar,
+body.mobile-layer .fm-input-bar {
   padding: var(--ds-space-1) var(--ds-space-2);
 }
 body.mobile-layer #mic-orb-wrap {
