@@ -1023,18 +1023,8 @@ export function closeTab(id, opts = {}) {
   const idx = ids.indexOf(id);
   const nextId = ids[idx + 1] || ids[idx - 1] || null;
 
-  // Exit animation: fade + shrink via transform (GPU-accelerated, no reflow),
-  // then remove from DOM. Remaining tabs reflow via their existing flex transition.
-  const tabEl = entry.tabEl;
-  tabEl.style.transition = 'opacity 0.15s ease, transform 0.15s cubic-bezier(0.4,0,0.2,1)';
-  tabEl.style.opacity = '0';
-  tabEl.style.transform = 'scale(0.7)';
-  // Collapse the pane immediately
-  if (entry.paneEl && entry.paneEl.parentNode) {
-    entry.paneEl.style.opacity = '0';
-    entry.paneEl.style.transition = 'opacity 0.12s ease';
-  }
-
+  // Commit the close before returning: subsequent input must target the next
+  // card, not an outgoing card waiting for its animation or timeout.
   const finalize = () => {
     teardownTab(id);
     // F2 (2026-08-30 作者裁定 + 方案 §8.4 F2): 关闭最后一个标签不再清空共享存档。
@@ -1054,11 +1044,7 @@ export function closeTab(id, opts = {}) {
     syncCanvasPanelButtons();
   };
 
-  // Use transitionend if supported, fallback to timeout
-  let done = false;
-  const onEnd = () => { if (done) return; done = true; finalize(); };
-  tabEl.addEventListener('transitionend', onEnd, { once: true });
-  setTimeout(onEnd, 200);
+  finalize();
 }
 
 /** Promote a preview (temporary) tab to pinned (permanent).
