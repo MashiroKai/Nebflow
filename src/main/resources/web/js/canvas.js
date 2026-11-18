@@ -101,22 +101,9 @@ let writerStatusEl = null;
 let writerClaimEl = null;
 let localUnsynced = false;
 function writerChanged(role, lost = false) {
-  // Initial reader state is browsing, not an ownership loss.
-  if (lost) import('./takeoverModal.js').then(mod => {
-    if (canvasWriter.role() !== 'reader') return;
-    mod.showCanvasTakeover(async () => {
-      if (localUnsynced) {
-        if (!window.confirm('放弃未同步的本地 Canvas 标签变更并取回控制权？')) return false;
-        try { localStorage.removeItem(LS_TABS_KEY); } catch { /* storage unavailable */ }
-        localUnsynced = false;
-        try { sessionStorage.setItem('canvas-claim-after-discard', '1'); } catch { return false; }
-        window.location.reload();
-        return false;
-      }
-      await canvasWriter.claim();
-      return canvasWriter.role() === 'writer';
-    }, localUnsynced);
-  });
+  // A writer transition is not proof of another console. Preserve local data
+  // without presenting the console conflict dialog.
+  if (lost) localUnsynced = true;
   if (writerStatusEl) writerStatusEl.textContent = localUnsynced
     ? 'Canvas：存在仅本地变更，不会自动同步。' : (role === 'writer' ? 'Canvas：可写' : 'Canvas：只读');
   if (writerClaimEl) writerClaimEl.hidden = role === 'writer';
@@ -138,7 +125,7 @@ function writerNotice(message, reason) {
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,
   canClaim: () => { if (localUnsynced) { writerNotice('请刷新后再取得控制权。'); return false; } return true; },
-  failed: () => { localUnsynced = true; writerChanged('reader'); writerNotice('Canvas 控制权已失效或保存失败，当前为只读。'); },
+  failed: () => { localUnsynced = true; writerChanged('reader'); writerNotice('Canvas 保存失败，本地变更已保留。', 'save-failed'); },
   async query() {
     try {
       const query = new URLSearchParams(canvasIdentity());
@@ -163,9 +150,8 @@ const canvasWriter = createCanvasWriterClient({
         body: JSON.stringify({ ...payload, ...canvasIdentity(), epoch }),
       });
       if (response.ok) return true;
-      writerNotice(response.status === 409 ? 'Canvas 控制权已失效，请重新取得。' : 'Canvas 保存失败，请重新取得控制权。', `save:${response.status}`);
       return false;
-    } catch { writerNotice('Canvas 保存失败，已切换只读。'); return false; }
+    } catch { return false; }
   },
 });
 function allowCanvasMutation() {
@@ -4886,12 +4872,7 @@ export function quoteActiveCardRef() {
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
   writerChanged('reader');
-  try {
-    if (sessionStorage.getItem('canvas-claim-after-discard') === '1') {
-      sessionStorage.removeItem('canvas-claim-after-discard');
-      canvasWriter.claim();
-    } else canvasWriter.refresh();
-  } catch { canvasWriter.refresh(); }
+  canvasWriter.refresh();
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
   // boot 序）置位，否则卡窗会把主窗整组标签恢复进来。
   initCardWindowMode();
@@ -5784,7 +5765,7 @@ function bindPersistReconnect() {
         .then((r) => (r.ok ? r.json() : null))
         .then((serverData) => {
           const parsed = parseTabsData(serverData);
-          if (parsed) applyLiveTabsFrame(parsed);
+          if (parsed && !localUnsynced) applyLiveTabsFrame(parsed);
         })
         .catch(() => { /* 离线：待下次重连 */ });
       onMessage('takeover', () => {
@@ -5812,7 +5793,7 @@ function bindPersistReconnect() {
       });
       onMessage('canvasTabsChanged', (msg) => {
         const parsed = parseTabsData(msg);
-        if (parsed) applyLiveTabsFrame(parsed);
+        if (parsed && !localUnsynced) applyLiveTabsFrame(parsed);
       });
     })
     .catch(() => { /* ws.js 不可用 → 无重放/收敛通道，保持 dirty */ });

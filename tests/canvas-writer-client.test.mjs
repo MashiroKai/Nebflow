@@ -31,6 +31,25 @@ test('preempted client returns to reader and rejects writing', async () => {
   assert.equal(await a.put({}), false);
 });
 
+test('failed save transitions to unsynced reader without canvas takeover handler', async () => {
+  const source = readFileSync(new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
+  const begin = source.indexOf('function writerChanged(');
+  const end = source.indexOf('const writerRejectionNotices', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const notices = [];
+  const context = { localUnsynced: false, writerStatusEl: null, writerClaimEl: null,
+    serverPersistTimer: null, pendingPersistPayload: null, persistDirty: false, clearTimeout };
+  vm.runInNewContext(source.slice(begin, end), context);
+  const a = client({ claim: async () => ({role: 'writer', epoch: 1}), put: async () => false,
+    changed: context.writerChanged, failed: () => notices.push('Canvas 保存失败，本地变更已保留。') });
+  await a.claim();
+  assert.equal(await a.put({}), false);
+  assert.equal(a.role(), 'reader');
+  assert.equal(context.localUnsynced, true);
+  assert.deepEqual(notices, ['Canvas 保存失败，本地变更已保留。']);
+  assert.doesNotMatch(source.slice(begin, end), /showCanvasTakeover|takeoverModal|localStorage\.removeItem/);
+});
+
 test('reader guards are silent and server rejections notify once per reason', () => {
   const source = readFileSync(process.env.CANVAS_TEST_SOURCE || new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const notices = [];
