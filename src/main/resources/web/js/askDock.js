@@ -2043,8 +2043,12 @@ function consumeFrame(msg) {
       return;
     }
     default:
-      // 问答内核帧（含 thinking / tool* / usageUpdate / compact* 等过程帧——
-      // frameKind 返回 null，内核静默不消费；透明纪律 §6）。
+      // thinking / usageUpdate / compact* 等**未具名**过程帧：透明纪律（§6）
+      // 不进气泡列，静默消费。
+      // 注（card-tool-revive 批 2026-11-18 作者裁定②）：**载卡的工具帧已不在此列**——
+      // `toolEnd` 由上方具名 case 消费（卡载荷落成对话列里的卡行）。仍走本 default 的
+      // 只剩无载荷/非卡的工具帧（`toolStart` 的 content 实测为空串、toolCall* 等）。
+      // 内核 frameKind 返回 null ⇒ dlg.consume 静默不消费（透明纪律 §6）。
       dlg.consume(msg, entry);
       return;
   }
