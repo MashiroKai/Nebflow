@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tests/ask-todo-lifecycle-media.mjs — 溢出转待办批（2026-11-18 作者令·第二轮）的
-// **动效/交互证据**：手机 375×812 真全屏 与 桌面 1280×800 各段实录。
+// **动效/交互证据**：手机 375×812 真全屏 **暗 + 亮双档** 与 桌面 1280×800（默认深档）各段实录。
 //
 //   ① overflow-to-todo-entry  卡片超出对话分页 ⇒ **列表里出现同源待办条目**（无弹窗、无计数）
 //   ② answer-in-entry         点开条目 ⇒ 条内问题卡作答 ⇒ 条目退场、原卡片已是已答
@@ -354,59 +354,64 @@ async function page_wait(page) {
   await page.waitForTimeout(400);
 }
 
+// 主题档：手机 375×812 **暗亮双档**（作者令「手机真全屏 375×812 暗亮」）；
+// 桌面 1280×800 走默认深档（桌面证据面是几何零回归，逐值比对见 geometry/）。
+const VIEWS = [
+  { view: 'mobile-375x812', w: 375, h: 812, anchors: mobileAnchors, schemes: ['dark', 'light'] },
+  { view: 'desktop-1280x800', w: 1280, h: 800, anchors: desktopAnchors, schemes: ['dark'] },
+];
+
 try {
-  for (const [view, w, h, A] of [
-    ['mobile-375x812', 375, 812, mobileAnchors],
-    ['desktop-1280x800', 1280, 800, desktopAnchors],
-  ]) {
-    for (const [name, fn] of [
-      ['flow1-overflow-to-todo-entry', flowOverflow],
-      ['flow2-answer-in-entry', flowAnswer],
-    ]) {
-      const scene = `${view}-${name}`;
-      if (!keepScene(scene)) continue;
-      const dir = join(OUT, scene, 'frames');
-      mkdirSync(dir, { recursive: true });
-      state.i = 0;
-      const sess = await createSession(browser, { width: w, height: h, locale: 'zh-CN' });
-      let reading;
-      try {
-        await sess.boot({ sessionId: SID, messages: [] });
-        await page_wait(sess.page);
-        reading = await fn(sess.page, sess, dir, A);
-      } finally {
-        await sess.close();
+  for (const V of VIEWS) {
+    for (const scheme of V.schemes) {
+      for (const [name, fn] of [
+        ['flow1-overflow-to-todo-entry', flowOverflow],
+        ['flow2-answer-in-entry', flowAnswer],
+      ]) {
+        const scene = `${V.view}-${scheme}-${name}`;
+        if (!keepScene(scene)) continue;
+        const dir = join(OUT, scene, 'frames');
+        mkdirSync(dir, { recursive: true });
+        state.i = 0;
+        const sess = await createSession(browser, { width: V.w, height: V.h, locale: 'zh-CN', colorScheme: scheme });
+        let reading;
+        try {
+          await sess.boot({ sessionId: SID, messages: [] });
+          await page_wait(sess.page);
+          reading = await fn(sess.page, sess, dir, V.anchors);
+        } finally {
+          await sess.close();
+        }
+        const media = encode(dir, scene);
+        media.reading = reading;
+        media.pageErrors = sess.errors;
+        scenes.push({ scene, ...media });
       }
-      const media = encode(dir, scene);
-      media.reading = reading;
-      media.pageErrors = sess.errors;
-      scenes.push({ scene, ...media });
     }
   }
 
-  for (const [view, w, h, A] of [
-    ['mobile-375x812', 375, 812, mobileAnchors],
-    ['desktop-1280x800', 1280, 800, desktopAnchors],
-  ]) {
-    for (const order of ['card-first', 'todo-first']) {
-      const scene = `${view}-flow3-concurrent-${order}`;
-      if (!keepScene(scene)) continue;
-      const dir = join(OUT, scene, 'frames');
-      mkdirSync(dir, { recursive: true });
-      state.i = 0;
-      const sess = await createSession(browser, { width: w, height: h, locale: 'zh-CN' });
-      let reading;
-      try {
-        await sess.boot({ sessionId: SID, messages: [] });
-        await page_wait(sess.page);
-        reading = await flowConcurrent(sess.page, sess, dir, { ...A, order });
-      } finally {
-        await sess.close();
+  for (const V of VIEWS) {
+    for (const scheme of V.schemes) {
+      for (const order of ['card-first', 'todo-first']) {
+        const scene = `${V.view}-${scheme}-flow3-concurrent-${order}`;
+        if (!keepScene(scene)) continue;
+        const dir = join(OUT, scene, 'frames');
+        mkdirSync(dir, { recursive: true });
+        state.i = 0;
+        const sess = await createSession(browser, { width: V.w, height: V.h, locale: 'zh-CN', colorScheme: scheme });
+        let reading;
+        try {
+          await sess.boot({ sessionId: SID, messages: [] });
+          await page_wait(sess.page);
+          reading = await flowConcurrent(sess.page, sess, dir, { ...V.anchors, order });
+        } finally {
+          await sess.close();
+        }
+        const media = encode(dir, scene);
+        media.reading = reading;
+        media.pageErrors = sess.errors;
+        scenes.push({ scene, ...media });
       }
-      const media = encode(dir, scene);
-      media.reading = reading;
-      media.pageErrors = sess.errors;
-      scenes.push({ scene, ...media });
     }
   }
 } finally {
