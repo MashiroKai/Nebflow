@@ -497,18 +497,41 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
   height: var(--band-icon, 24px);
   display: block;
 }
-/* Quick-decision key (left end of the band): same base (.g2-fab) and the same
-   --band-d geometry as the + key — the material stays the shared glass recipe
-   so the blue key stays the single primary action on this page. Icon = the
-   station's stacked-card glyph (lucide layers), carried by .ta-quick-fab svg. */
+/* Quick-decision key (left end of the band): same base (.g2-fab), same
+   --band-d geometry / bottom edge / hit box as the + key, so the pair still
+   reads as one group on one line. Two changes vs the entry batch (author order
+   2026-11-18 22:04「换一个图标 + 有颜色和右边的对应 + 右上角计数」):
+     · Icon = lucide `gallery-vertical` (one stacked deck; `layers` read as
+       「图层」 and stole the canvas-layer meaning) — still the ONE glyph source,
+       carried by .ta-quick-fab svg (vendor/lucide.min.js via createIconsIn).
+     · Colour = the sapphire family, one rung BELOW the right + key: tint fill +
+       sapphire ink + sapphire semantic edge. The two keys are 同色族, while the
+       solid blue + stays this page's ONLY primary action (the entry batch's
+       stated intent). Every value is an existing token — zero colour literals in
+       this file, so the colour-semantics invariants (不放大 / 色相可指认 /
+       亮度权重带 / 单源零字面量) hold by construction; measured composite
+       readings live in the batch report (probe-readings.json + color-math). */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab {
+  position: relative;
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);
+  background: var(--sapphire-tint-15);
+  border-color: var(--sapphire-edge-strong);
+  color: rgb(var(--term-link-ink));
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab svg {
   width: var(--band-icon, 24px);
   height: var(--band-icon, 24px);
   display: block;
+}
+/* 叠卡张数徽标：形态整件归既有数字角标（body.mobile-layer .dock-badge.is-count，
+   mobileLayer.css 单源 —— 胶囊几何 / --color-danger 底 / --ds-ink-inverse 字 /
+   描边 / --mfs-min 字级 / 暗档描边 --ds-badge-ring-dark 全不在此重写）；本文件只
+   补这枚钮**顶右角**的落位。 */
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab .dock-badge.is-count {
+  top: -4px;
+  right: -4px;
+  left: auto;
 }
 
 /* ═══ B · List detail page ══════════════════════════════════════════════ */

@@ -650,12 +650,24 @@ function buildHome(root, section, nav) {
   // list behind it stays tappable.
   //
   // Left key = quick decision (the author's 2026-11-18 request: 叠卡 icon →
-  // dating-app card view). Icon = the station's existing stacked-card glyph
-  // (lucide `layers`, the same one the canvas "stacked cards" key uses) — no
-  // second icon family. Right key = the pre-existing blue + (create).
+  // dating-app card view). Icon = lucide `gallery-vertical` (author order
+  // 2026-11-18 22:04「换一个图标」) — still the station's ONE glyph source
+  // (vendor/lucide.min.js through createIconsIn), no second glyph set. `layers`
+  // read as "图层" (canvas layers) and stole the deck's meaning; a stacked-card
+  // glyph reads as one deck at a glance.
+  // Colour = the sapphire family, one rung BELOW the right `+` key: tint fill +
+  // sapphire ink + sapphire semantic edge (CSS, .ta-quick-fab). The `+` stays
+  // this page's only solid primary action. Right key = the pre-existing blue +
+  // (create); the two keys keep the same 48×48 box, bottom edge and hit box.
   const fabWrap = elIn(section, 'div', 'ta-fab-wrap');
-  const quickFab = iconBtn('ta-quick-fab g2-fab', 'layers', t('todoapple.quickDecision'));
+  const quickFab = iconBtn('ta-quick-fab g2-fab', 'gallery-vertical', t('todoapple.quickDecision'));
   quickFab.dataset.todoQuickEntry = '';
+  // 叠卡张数徽标（作者令 2026-11-18 22:04「右上角有计数」）：形态 = 既有数字角标
+  // （.dock-badge.is-count，mobileLayer.css 单源），不新起第四种通知形态；本文件
+  // 只负责读数与落位（CSS）。数 = 牌堆自己的长度，见 render()。
+  const quickCount = el('span', 'dock-badge is-count');
+  quickCount.hidden = true;
+  quickFab.appendChild(quickCount);
   const fab = iconBtn('ta-fab g2-fab', 'plus', t('todoapple.newTodo'));
   fabWrap.append(quickFab, fab);
   quickFab.addEventListener('click', () => nav.push('todo-quick-decision'));
@@ -675,6 +687,16 @@ function buildHome(root, section, nav) {
     setCard(cOverdue, t('todoapple.overdue'), todoStore.overdueCount());
     setCard(cAll, t('todoapple.all'), todoStore.openCount());
     setCard(cDone, t('todoapple.completed'), todoStore.completedCount());
+
+    // 叠卡张数徽标（作者令 2026-11-18 22:04）：数 = **牌堆自己的长度** ——
+    // quickItems() 就是快速决策页的牌堆（同一数据源、同一过滤函数），此处不另算
+    // 一份过滤条件，故徽标数与实际可滑的张数逐张相等。0 张隐藏、>99 记 `99+`
+    // （与桌面 #messages-badge 的同一归一口径）。写回幂等（同值不写）——监听
+    // 复用同一渲染链，无守卫的赋值会自触发。
+    const deckN = quickItems().length;
+    const deckText = deckN > 99 ? '99+' : String(deckN);
+    if (quickCount.textContent !== deckText) quickCount.textContent = deckText;
+    if (quickCount.hidden !== (deckN === 0)) quickCount.hidden = deckN === 0;
 
     // Capsule state
     bSearch.classList.toggle('on', searchOpen);

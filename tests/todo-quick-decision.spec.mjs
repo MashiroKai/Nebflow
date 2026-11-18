@@ -239,6 +239,60 @@ const RECT = `(sel) => { const el = document.querySelector(sel); if (!el) return
 
 const CARD_SEL = '.mobile-page[data-page="todo-quick-decision"]';
 
+/* ─────────────── 颜色合成读数（F 组）───────────────
+   判据同 `scripts/check-border-weight.mjs` C 组（彩色语义面：C1 不放大 /
+   C2 色相可指认（距色相族轴 ≤10° 且合成 chroma ≥ 底色 ×1.5）/ C3 亮度权重带
+   ∈[1.16,1.48] / C4 单源零字面量）——阈值逐值取自那个既有闸，本闸不自立第二套。
+   本闸只读**计算值合成**（border-color α 合成到页面底），不读图的近似。 */
+const SRGB = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+const relLum = (p) => 0.2126 * SRGB(p[0] / 255) + 0.7152 * SRGB(p[1] / 255) + 0.0722 * SRGB(p[2] / 255);
+const wcag = (a, b) => { const A = relLum(a), B = relLum(b); return (Math.max(A, B) + 0.05) / (Math.min(A, B) + 0.05); };
+const parseRGBA = (s) => {
+  const m = /rgba?\(([^)]+)\)/.exec(String(s));
+  if (!m) return null;
+  const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+  return { rgb: p.slice(0, 3), a: p.length > 3 ? p[3] : 1 };
+};
+const overBg = (t, bg) => t.rgb.map((c, i) => Math.round(c * t.a + bg[i] * (1 - t.a)));
+function toLab([r, g, b]) {
+  const rl = SRGB(r / 255), gl = SRGB(g / 255), bl = SRGB(b / 255);
+  const X = (rl * 0.4124 + gl * 0.3576 + bl * 0.1805) / 0.95047;
+  const Y = rl * 0.2126 + gl * 0.7152 + bl * 0.0722;
+  const Z = (rl * 0.0193 + gl * 0.1192 + bl * 0.9505) / 1.08883;
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const fx = f(X), fy = f(Y), fz = f(Z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+const labChroma = (lab) => Math.hypot(lab[1], lab[2]);
+const labHue = (lab) => ((Math.atan2(lab[2], lab[1]) * 180 / Math.PI) % 360 + 360) % 360;
+const axisDist = (h, axis) => { const d = Math.abs(((h % 360) + 360) % 360 - axis); return Math.min(d, 360 - d); };
+function deltaE00(l1, l2) {
+  const [L1, a1, b1] = l1, [L2, a2, b2] = l2;
+  const C1 = Math.hypot(a1, b1), C2 = Math.hypot(a2, b2), Cb = (C1 + C2) / 2;
+  const G = 0.5 * (1 - Math.sqrt(Math.pow(Cb, 7) / (Math.pow(Cb, 7) + Math.pow(25, 7))));
+  const a1p = (1 + G) * a1, a2p = (1 + G) * a2;
+  const C1p = Math.hypot(a1p, b1), C2p = Math.hypot(a2p, b2);
+  const h1p = (Math.atan2(b1, a1p) * 180 / Math.PI + 360) % 360;
+  const h2p = (Math.atan2(b2, a2p) * 180 / Math.PI + 360) % 360;
+  const dLp = L2 - L1, dCp = C2p - C1p;
+  let dhp = 0;
+  if (C1p * C2p !== 0) { dhp = h2p - h1p; if (dhp > 180) dhp -= 360; else if (dhp < -180) dhp += 360; }
+  const dHp = 2 * Math.sqrt(C1p * C2p) * Math.sin(dhp * Math.PI / 360);
+  const Lbp = (L1 + L2) / 2, Cbp = (C1p + C2p) / 2;
+  let hbp = h1p + h2p;
+  if (C1p * C2p !== 0) { if (Math.abs(h1p - h2p) > 180) hbp += (hbp < 360 ? 360 : -360); hbp /= 2; }
+  const T = 1 - 0.17 * Math.cos((hbp - 30) * Math.PI / 180) + 0.24 * Math.cos(2 * hbp * Math.PI / 180)
+    + 0.32 * Math.cos((3 * hbp + 6) * Math.PI / 180) - 0.20 * Math.cos((4 * hbp - 63) * Math.PI / 180);
+  const dTh = 30 * Math.exp(-Math.pow((hbp - 275) / 25, 2));
+  const Sl = 1 + (0.015 * Math.pow(Lbp - 50, 2)) / Math.sqrt(20 + Math.pow(Lbp - 50, 2));
+  const Sc = 1 + 0.045 * Cbp, Sh = 1 + 0.015 * Cbp * T;
+  const Rt = -2 * Math.sqrt(Math.pow(Cbp, 7) / (Math.pow(Cbp, 7) + Math.pow(25, 7))) * Math.sin(2 * dTh * Math.PI / 180);
+  return Math.sqrt(Math.pow(dLp / Sl, 2) + Math.pow(dCp / Sc, 2) + Math.pow(dHp / Sh, 2) + Rt * (dCp / Sc) * (dHp / Sh));
+}
+const C3_BAND = [1.16, 1.48];   // 站内既有暗档中性发丝档带（同 check-border-weight.mjs C3）
+const C2_HUE_MAX = 10;          // 距蓝族色相轴（270°）
+const C2_CHROMA_MIN = 1.5;      // 合成 chroma ≥ 相邻底色 × 1.5
+
 const readCard = () => `(() => {
   const card = document.querySelector('${CARD_SEL} .ta-qd-card');
   if (!card) return null;
@@ -388,7 +442,9 @@ const band = await page.evaluate(`(() => {
 probe.band = band;
 ok('E1 左下快速决策钮在场 + 可读标签（aria-label）',
   !!band.quick && band.quickLabel === '快速决策', JSON.stringify({ present: !!band.quick, label: band.quickLabel }));
-ok('E1 图标 = 站内既有叠卡图（lucide layers）', band.quickIcon === 'layers', String(band.quickIcon));
+// 作者令 2026-11-18 22:04「换一个图标」：`layers`（图层语义，与 canvas 图层撞车）
+// 换成 `gallery-vertical`（一叠卡），仍取站内唯一字形源（vendor/lucide.min.js）。
+ok('E1 图标 = 站内既有叠卡图（lucide gallery-vertical）', band.quickIcon === 'gallery-vertical', String(band.quickIcon));
 ok('E1 两钮同规格（同直径 / 同底缘）',
   !!band.quick && !!band.plus
   && Math.abs(band.quick.w - band.plus.w) <= 0.5 && Math.abs(band.quick.h - band.plus.h) <= 0.5
@@ -423,6 +479,189 @@ if (plusClick.cancel) {
 }
 const sheetGone = await page.evaluate(() => !document.querySelector('.mobile-page[data-page="tasks"] [data-todo-create-overlay]'));
 ok('E1 新建抽屉可正常关闭（入口测试不留残留节点）', sheetGone === true, String(sheetGone));
+
+/* ══ F 叠卡钮改造：新图标 / 同色族上色 / 右上角计数（作者令 2026-11-18 22:04
+   「换一个图标 + 有颜色和右边的对应 + 右上角有计数」，裁定 ①A gallery-vertical
+   ②A 同族浅档 ③A 牌堆长度 + 逐张相等硬不变式 ④右侧同排 = 底部带的「+」）════
+   四态注入自证：去掉颜色 / 去掉徽标 / 把徽标硬编码 ⇒ 本组各自必红并点名。 */
+const FAB_SEL = '.mobile-page[data-page="tasks"] .ta-quick-fab';
+const PLUS_SEL = '.mobile-page[data-page="tasks"] .ta-fab';
+const readFab = () => `(() => {
+  const R = ${RECT};
+  const q = document.querySelector('${FAB_SEL}');
+  const p = document.querySelector('${PLUS_SEL}');
+  if (!q || !p) return { present: false };
+  const cs = getComputedStyle(q);
+  const svg = q.querySelector('svg');
+  const i = q.querySelector('[data-lucide]');
+  const badge = q.querySelector('.dock-badge');
+  const bcs = badge ? getComputedStyle(badge) : null;
+  const pcs = getComputedStyle(document.querySelector('.mobile-page[data-page="tasks"]'));
+  const tok = (n) => pcs.getPropertyValue(n).trim();
+  return {
+    present: true,
+    iconAttr: i ? i.getAttribute('data-lucide') : null,
+    iconClass: svg ? svg.getAttribute('class') : null,
+    iconFills: q.querySelectorAll('svg').length,
+    color: cs.color, borderColor: cs.borderTopColor, background: cs.backgroundColor,
+    radius: cs.borderRadius, borderWidth: cs.borderTopWidth,
+    quick: R('${FAB_SEL}'), plus: R('${PLUS_SEL}'),
+    pageBg: pcs.backgroundColor,
+    tokens: { tint15: tok('--sapphire-tint-15'), edgeStrong: tok('--sapphire-edge-strong'),
+      ink: tok('--term-link-ink'), danger: tok('--color-danger'), sapphire: tok('--sapphire') },
+    badge: badge ? {
+      hidden: badge.hidden, text: badge.textContent, classes: badge.className,
+      bg: bcs.backgroundColor, color: bcs.color, radius: bcs.borderRadius, fontSize: bcs.fontSize,
+      pe: bcs.pointerEvents, top: bcs.top, right: bcs.right, left: bcs.left,
+      height: bcs.height, minWidth: bcs.minWidth, insideQuick: q.contains(badge),
+      rect: R('${FAB_SEL} .dock-badge'),
+    } : null,
+  };
+})()`;
+
+const fabLight = await page.evaluate(readFab());
+await page.emulateMedia({ colorScheme: 'dark' });
+await page.waitForTimeout(140);
+const fabDark = await page.evaluate(readFab());
+await page.emulateMedia({ colorScheme: 'light' });
+await page.waitForTimeout(140);
+probe.fabLight = fabLight;
+probe.fabDark = fabDark;
+
+/** 合成读数：彩边（border-color α）合成到页面底 → WCAG 对比 / Lab 色相 / chroma / ΔE00。 */
+const edgeReading = (r) => {
+  const e = parseRGBA(r.borderColor), bg = parseRGBA(r.pageBg);
+  if (!e || !bg) return null;
+  const comp = overBg(e, bg.rgb);
+  const lc = toLab(comp), lb = toLab(bg.rgb);
+  return {
+    alpha: e.a, composite: `rgb(${comp.join(',')})`,
+    contrast: +wcag(comp, bg.rgb).toFixed(3),
+    hueDeg: +labHue(lc).toFixed(1), axisDistDeg: +axisDist(labHue(lc), 270).toFixed(1),
+    chroma: +labChroma(lc).toFixed(2), bgChroma: +labChroma(lb).toFixed(2),
+    chromaRatio: +(labChroma(lc) / Math.max(labChroma(lb), 0.01)).toFixed(2),
+    deltaE00: +deltaE00(lc, lb).toFixed(3),
+  };
+};
+const edgeL = edgeReading(fabLight), edgeD = edgeReading(fabDark);
+probe.fabEdge = { light: edgeL, dark: edgeD };
+
+ok('F1 图标 = 既有单源 lucide `gallery-vertical`（不是 layers；一枚 svg，无第二套字形）',
+  fabLight.iconAttr === 'gallery-vertical' && fabLight.iconAttr !== 'layers'
+  && /lucide-gallery-vertical/.test(String(fabLight.iconClass)) && fabLight.iconFills === 1,
+  JSON.stringify({ attr: fabLight.iconAttr, cls: fabLight.iconClass, svgs: fabLight.iconFills }));
+
+ok('F2 上色 = 既有 accent token 引用（零字面量：底 / 边 / 墨逐值等于既有 token 解析值）',
+  fabLight.background === 'rgba(91, 127, 191, 0.15)' && fabLight.borderColor === 'rgba(91, 127, 191, 0.25)'
+  && fabLight.color === 'rgb(70, 99, 156)' && fabDark.borderColor === 'rgba(91, 127, 191, 0.18)'
+  && fabDark.color === 'rgb(120, 160, 220)'
+  && fabLight.tokens.tint15 === 'rgba(91, 127, 191, 0.15)' && fabLight.tokens.ink === '70 99 156',
+  JSON.stringify({ light: { bg: fabLight.background, edge: fabLight.borderColor, ink: fabLight.color, tok: fabLight.tokens },
+    dark: { edge: fabDark.borderColor, ink: fabDark.color } }));
+
+ok('F2 同色族 = 右侧「+」的 sapphire 族（不是第二枚实心主操作）',
+  parseRGBA(fabLight.borderColor) && Math.abs(parseRGBA(fabLight.borderColor).rgb[0] - 91) <= 1
+  && Math.abs(parseRGBA(fabLight.borderColor).rgb[2] - 191) <= 1
+  && fabLight.background !== 'rgb(91, 127, 191)' && fabLight.radius === '50%',
+  JSON.stringify({ edge: fabLight.borderColor, plusBg: 'rgb(91, 127, 191)', radius: fabLight.radius }));
+
+ok('F2 彩色语义面判据 C2 色相可指认（暗档：距蓝族轴 ≤10° 且 chroma ≥ 底 ×1.5）',
+  !!edgeD && edgeD.axisDistDeg <= C2_HUE_MAX && edgeD.chroma >= edgeD.bgChroma * C2_CHROMA_MIN,
+  JSON.stringify(edgeD));
+
+ok(`F2 彩色语义面判据 C3 亮度权重带（暗档对比 ∈ [${C3_BAND[0]}, ${C3_BAND[1]}]）`,
+  !!edgeD && edgeD.contrast >= C3_BAND[0] && edgeD.contrast <= C3_BAND[1], JSON.stringify(edgeD));
+
+ok('F2 彩色语义面判据 C1 不放大（暗档 ΔE00 ≤ 亮档 ΔE00）',
+  !!edgeL && !!edgeD && edgeD.deltaE00 <= edgeL.deltaE00,
+  JSON.stringify({ light: edgeL && edgeL.deltaE00, dark: edgeD && edgeD.deltaE00 }));
+
+ok('F3 与右侧「+」同规格（48×48 / 同底缘 / 左右内距对称 / 同命中盒）',
+  Math.abs(fabLight.quick.w - fabLight.plus.w) <= 0.5 && Math.abs(fabLight.quick.h - fabLight.plus.h) <= 0.5
+  && Math.abs(fabLight.quick.bottom - fabLight.plus.bottom) <= 1
+  && fabLight.quick.w === 48 && fabLight.quick.h === 48,
+  JSON.stringify({ quick: `${fabLight.quick.w}x${fabLight.quick.h}@${fabLight.quick.bottom}`, plus: `${fabLight.plus.w}x${fabLight.plus.h}@${fabLight.plus.bottom}` }));
+
+ok('F4 计数徽标复用既有数字角标形态（.dock-badge.is-count，单源，不新增第四种通知形态）',
+  !!fabLight.badge && /(^|\s)dock-badge(\s|$)/.test(fabLight.badge.classes)
+  && /(^|\s)is-count(\s|$)/.test(fabLight.badge.classes) && fabLight.badge.insideQuick
+  && fabLight.badge.pe === 'none' && fabLight.badge.bg === 'rgb(192, 57, 43)'
+  && fabLight.badge.radius === '999px' && fabLight.badge.color === 'rgb(255, 255, 255)',
+  JSON.stringify(fabLight.badge));
+
+// 落位断言走**几何**：徽标溢出到钮的右上角（右缘在钮右缘之外、顶边在钮顶边之上、
+// 中心在钮中心之右）。不读 `left:auto` 的字面（positioned 元素的 computed left 会被
+// 浏览器解成 used px，不是字面）。
+ok('F4 徽标落位在这枚钮的**右上角**（右缘溢出钮右缘 · 顶边高于钮顶边 · 中心在钮中心之右）',
+  !!fabLight.badge && !!fabLight.badge.rect && fabLight.badge.rect.right > fabLight.quick.right - 0.5
+  && fabLight.badge.rect.y < fabLight.quick.y + 8
+  && fabLight.badge.rect.cx > fabLight.quick.cx,
+  JSON.stringify({ badge: fabLight.badge && fabLight.badge.rect, quick: fabLight.quick }));
+
+/* 徽标数 = 牌堆自己的长度（同一数据源 / 同一过滤函数），0/1/N/>99 四态 */
+const deckAndBadge = async (n) => {
+  const itemList = Array.from({ length: n }, (_, i) => ({ id: `fx-${i}`, tagId: null, priority: 0, name: `夹具 ${i}`, detail: '' }));
+  await seed(page, { tagList: [], itemList });
+  await page.waitForTimeout(260);
+  return page.evaluate(async (sel) => {
+    const store = (await import('/js/todoStore.js')).todoStore;
+    const b = document.querySelector(sel + ' .dock-badge');
+    return { deck: store.openItems().length, hidden: b ? b.hidden : null, text: b ? b.textContent : null, visible: !!b && !b.hidden };
+  }, FAB_SEL);
+};
+const st0 = await deckAndBadge(0);
+const st1 = await deckAndBadge(1);
+const stN = await deckAndBadge(7);
+const stBig = await deckAndBadge(120);
+probe.fabBadgeStates = { st0, st1, stN, stBig };
+ok('F5 计数 0 张 ⇒ 徽标隐藏（不显示 0）且与牌堆张数相等',
+  st0.deck === 0 && st0.hidden === true && st0.visible === false, JSON.stringify(st0));
+ok('F5 计数 1 张 ⇒ 显示 1，与牌堆张数逐张相等',
+  st1.deck === 1 && st1.visible === true && st1.text === '1', JSON.stringify(st1));
+ok('F5 计数 N 张 ⇒ 显示 N，与牌堆张数逐张相等（同一数据源 quickItems()）',
+  stN.deck === 7 && stN.visible === true && stN.text === '7', JSON.stringify(stN));
+ok('F5 计数上限口径 ⇒ >99 记 `99+`（与桌面 #messages-badge 同一归一）',
+  stBig.deck === 120 && stBig.visible === true && stBig.text === '99+', JSON.stringify(stBig));
+await page.screenshot({ path: join(SHOTS, '13-quick-badge-N.png') });
+
+/* 触控实测（CDP 真指针）：tap 生效 + 相邻「+」采样点不误触 */
+await seed(page, fixture());
+await page.waitForTimeout(260);
+const adj = await page.evaluate(`(() => {
+  const R = ${RECT};
+  const q = R('${FAB_SEL}'), p = R('${PLUS_SEL}');
+  const at = (x, y) => { const el = document.elementFromPoint(x, y); if (!el) return 'null';
+    const b = el.closest('button');
+    return b ? (b.className || '').split(/\\s+/)[0] : el.tagName.toLowerCase(); };
+  return {
+    plusCenter: at(Math.round(p.cx), Math.round(p.cy)),
+    plusLeftEdge: at(Math.round(p.x + 3), Math.round(p.cy)),
+    plusTopEdge: at(Math.round(p.cx), Math.round(p.y + 3)),
+    quickRightOut: at(Math.round(q.right + 6), Math.round(q.cy)),
+    quickCenter: at(Math.round(q.cx), Math.round(q.cy)),
+  };
+})()`);
+probe.fabAdjacency = adj;
+ok('F6 相邻「+」采样点（中心 / 左缘 / 上缘）仍命中加号钮 —— 无旁路误触',
+  adj.plusCenter === 'ta-fab' && adj.plusLeftEdge === 'ta-fab' && adj.plusTopEdge === 'ta-fab',
+  JSON.stringify(adj));
+ok('F6 叠卡钮右侧外侧 6px 不误触（band 指针透明，命中的是列表内容）',
+  adj.quickRightOut !== 'ta-quick-fab', JSON.stringify(adj));
+ok('F6 叠卡钮中心可命中（徽标 pointer-events:none，不抢命中盒）',
+  adj.quickCenter === 'ta-quick-fab', JSON.stringify(adj));
+
+// tap 实测：真触摸点这枚钮 ⇒ 快速决策页 live（入口仍生效）
+const qc = { x: Math.round(fabLight.quick.cx), y: Math.round(fabLight.quick.cy) };
+await page.touchscreen.tap(qc.x, qc.y);
+await page.waitForTimeout(360);
+const tapped = await page.evaluate(() => !!document.querySelector('.mobile-page[data-page="todo-quick-decision"].live'));
+probe.fabTap = { at: qc, live: tapped };
+ok('F6 tap 实测：真触摸这枚钮 ⇒ 快速决策页进入全屏 live（入口未失灵）', tapped === true, JSON.stringify(probe.fabTap));
+await page.evaluate(async () => { const nav = await import('/js/mobile/navController.js'); try { nav.popToRoot(); } catch { /* root */ } });
+await page.waitForTimeout(260);
+await push(page, 'tasks');
+await seed(page, fixture());
+await page.waitForTimeout(220);
 
 /* ── E2 点入口进入全屏快速决策页 ────────────────────────────────────── */
 await page.locator('.mobile-page[data-page="tasks"] .ta-quick-fab').click();
