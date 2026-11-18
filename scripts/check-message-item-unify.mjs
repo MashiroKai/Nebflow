@@ -74,13 +74,11 @@ need(!/el\(\s*'div'\s*,\s*'fm-att-list'\s*\)/.test(msgs), 'M3 messages.js 仍有
 need(!/className\s*=\s*'pop-group'/.test(pop), 'M3 popArtifacts.js 仍有裸 pop-group 构造（第二处）');
 
 // ── M4 叠卡 footer 分态登记 ────────────────────────────────────────────────
-need(/nfStackFooter\s*=\s*'group'/.test(pop), 'M4 popArtifacts.js 未登记 data-nf-stack-footer="group"（合起态整组）');
 need(/nfStackFooter\s*=\s*'group'/.test(chatItem) && /nfStackFooter\s*=\s*'card'/.test(chatItem), 'M4 chatItem.js 叠卡 footer 基座未登记 group/card 两态');
-need(/groupFooterFor/.test(pop) && /cardFooterFor/.test(pop), 'M4 popArtifacts.js 叠卡组件缺 groupFooterFor/cardFooterFor 供给位');
-// 主会话消费面接上整组分态：
-need(/stackGroupFooter/.test(pop) && /from '\.\/chatItem\.js'/.test(pop), 'M4 主会话面未接 stackGroupFooter（整组 footer 分态未接）');
-// 消息面消费面接上两态：
-need(/groupFooterFor\s*:/.test(msgs) && /cardFooterFor\s*:/.test(msgs), 'M4 消息面 buildMediaStackGroup 未同时接 groupFooterFor 与 cardFooterFor');
+need(/cardFooterFor/.test(pop), 'M4 popArtifacts.js 叠卡组件缺 cardFooterFor 供给位（展开态每卡 footer 的下载键）');
+// 合起态整组 footer：两消费面都必须接 NF_POP_EXPANDED 分态 + 用共享基座装配。
+need(/stackGroupFooter/.test(pop) && /NF_POP_EXPANDED/.test(pop), 'M4 主会话面未按 NF_POP_EXPANDED 接整组 footer 分态');
+need(/stackGroupFooter/.test(msgs) && /NF_POP_EXPANDED/.test(msgs), 'M4 消息面未按 NF_POP_EXPANDED 接整组 footer 分态');
 
 // ── M5 四类样式单份 ────────────────────────────────────────────────────────
 need(/export function stackGroupFooter\s*\(/.test(chatItem), 'M5 chatItem.js 缺 stackGroupFooter');
