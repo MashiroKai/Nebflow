@@ -2372,12 +2372,7 @@ object GatewayMain extends IOApp:
                                                         //     双重计数（污染观测面）；隧道请求由桥接层
                                                         //     单点计数（信封 IP 键）。
                                                         val gatewayApp: org.http4s.HttpApp[IO] = Router(
-                                                          "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> ConsoleTakeoverRoutes
-                                                            .routes(
-                                                              gatewaySessions,
-                                                              consoleTakeover,
-                                                              logger
-                                                            ) <+> restApiRoutes
+                                                          "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
                                                             .presenceWsRoutes(wsb) <+> StaticRoutes
                                                             .pluginAssetsRoutes(
                                                               tokenRef,

@@ -5767,10 +5767,6 @@ function bindPersistReconnect() {
           if (parsed && !localUnsynced) applyLiveTabsFrame(parsed);
         })
         .catch(() => { /* 离线：待下次重连 */ });
-      onMessage('takeover', () => {
-        if (pendingPersistPayload || persistDirty) localUnsynced = true;
-        canvasWriter.lost();
-      });
       onReconnect(() => {
         convergeFromServer().finally(() => {
           if (!persistDirty) return;

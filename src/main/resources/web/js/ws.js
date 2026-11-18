@@ -1541,15 +1541,6 @@ export function connect() {
         return;
       }
 
-      // 控制台单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出态（consoleSuperseded，
-      // 唯一写点 = takeoverModal.js）一律不渲染新内容帧——服务端已对该会话连接断喂
-      // （ConsoleTakeover.gateFrame），此处前端兜底（旧引擎 / 本连接直发帧）。放行
-      // 白名单 = 接管协议帧（takeover 重弹 / takeoverResult 裁决）。放在 pong 之后：
-      // 通道活性水位（lastWsInboundAt）已推进，心跳面不受影响。
-      if (state.consoleSuperseded && msg.type !== 'takeover' && msg.type !== 'takeoverResult') {
-        return;
-      }
-
       if (durableTaskFrameObserver?.(msg)) return;
 
       // ── BUG 6 fix: save/restore activeView ────────────────────────────

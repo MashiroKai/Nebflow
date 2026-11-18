@@ -1172,22 +1172,10 @@ class WebSocketRoutes(
                       takeoverHolderRef = new java.util.concurrent.atomic.AtomicReference[Option[String]](
                         takeoverSession.map(sid => ConsoleTakeover.holderOf(sid, takeoverClient))
                       )
-                      // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
-                      // 内容帧闸——ConsoleTakeover.gateFrame 按**实例**裁决（owner 非本
-                      // 实例 ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧
-                      // 断喂）。误报根修批（2026-11-02）：闸键与入账键同为 holder
-                      // （clientId 优先），否则同浏览器换会话后自己的新连接会被自己掐死。
-                      // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
-                      // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
-                      // 在带声明批：闸键改读本连接实例键（握手腿初值 / identify 换轨）。
+                      // Conflict detection must never suppress content delivery.
+                      // Write authorization is enforced separately by the Canvas API.
                       gatedWsSend = (text: String, isStream: Boolean) =>
-                        takeoverHolderRef.get match
-                          case None => perConnWsSend(text, isStream)
-                          case Some(holder) =>
-                            takeover.gateFrame(holder, text).flatMap {
-                              case true => perConnWsSend(text, isStream)
-                              case false => IO.unit
-                            }
+                        perConnWsSend(text, isStream)
                       hubConnId <- wsHub.register(gatedWsSend)
 
                       // A1: the hub now hands connections pre-serialized text. The
@@ -1249,9 +1237,7 @@ class WebSocketRoutes(
                               // 声明腿同键（holderOf）⇒ 闭包三态经下方识别后归还本管、
                               // 后续帧照常进常规分派（takeoverIdentify 不是常规帧型）。
                               val handled =
-                                if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
-                                  takeover.handleRetake(hubConnId, perConnJsonSend)
-                                else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
+                                if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
                                   (ConsoleTakeover.declaredClientId(text), takeoverSession) match
                                     case (Some(cid), Some(sid)) =>
                                       // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
