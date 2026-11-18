@@ -672,7 +672,37 @@ function renderSettingsRoleSelector(container, refreshTarget = container) {
   }
 }
 
+/**
+ * 设置页「模型（按会话类别）」节的分叉披露注记（model-route 分叉不可见批）：
+ * 任一 follower 槽（kernel/dispatcher/node/subagent）显式独立配置时，在节首亮出
+ * 「这些类别已独立配置，不受主链影响」——/model 面板已有同款横幅
+ * （model.divergedBar），设置页此前缺失：作者在设置页把主链切成 cmdcode 后，
+ * delegate 会话仍跑 subagent 槽钉住的旧模型（现网：IricalGpt/gpt-6.1-terra），
+ * 而设置页没有任何一行点破这两层的分叉。
+ * 🔴 结构纪律：纯文本注记——无 <button>（model-chain-slim spec 钉设置页节内
+ * 控件面）、不带 data-role（五类行序断言的 [data-role] 选择器不得命中它）、
+ * 复用面板同款 i18n 键（两字典零新键，长度差基线不动）。
+ */
+function renderChainSectionDivergedNote(container) {
+  const forked = forkedRoles();
+  const existing = container.querySelector('#model-chain-diverged-note');
+  if (forked.length === 0) {
+    existing?.remove();
+    return;
+  }
+  const roles = forked.map(roleLabel).join(' · ');
+  let note = /** @type {HTMLElement|null} */ (existing);
+  if (!note) {
+    note = document.createElement('div');
+    note.id = 'model-chain-diverged-note';
+    note.className = 'mp-note mp-note-fork';
+    container.insertBefore(note, container.firstChild);
+  }
+  note.textContent = t('model.divergedBar', { roles });
+}
+
 function renderChainSectionBody(container) {
+  renderChainSectionDivergedNote(container);
   const draft = document.createElement('div');
   renderSettingsRoleSelector(draft, container);
   const small = roleState.get(SMALL_LLM);
