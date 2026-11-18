@@ -237,6 +237,43 @@ function anchorError(before, after, pivot) {
   return Math.hypot(px - pivot.x, py - pivot.y);
 }
 
+/**
+ * 「paint 已追上状态」——本 spec 所有「等落定」点的**唯一**判据（不再有固定毫秒）。
+ * 不变式：元素 computed transform == 浮层已写下的状态（`data-nf-lb-zoom/pan-x/pan-y`）。
+ * 为什么是这条：几何断言读的是 computed 盒，而状态是产品**同一拍**写下的（galPaint：
+ * `overlayEl.dataset.nfLbZoom = String(galZoom)` + `el.style.transform = translate(...)scale(...)`）。
+ * 两者不一致 ⇔ 有一帧动画/过渡还没落定 —— 这正是「固定毫秒等待」赌不准的那一刻：
+ *   ① 入场过渡（`.nf-lightbox-img` / `.nf-lightbox-av` 上的 200ms opacity/transform）；
+ *   ② 双击缩放（走 CSS 过渡，实测 +120ms 时 computed 仍 `matrix(1,…)`、w=300 未动，
+ *      而状态已是 zoom=2 ⇒ 旧写法读的是**动画前的几何**，锚点断言因此空转成「必绿」）；
+ *   ③ 一旦将来滚轮路径也加上过渡，同样的固定等待会直接读到中间帧。
+ * pan 属性是取整值（`Math.round`）而内联 transform 是 `toFixed(2)` ⇒ 位置容差 0.5px。
+ */
+async function waitPainted(page) {
+  await page.waitForFunction(() => {
+    const lb = document.querySelector('.nf-lightbox');
+    if (!lb || !lb.classList.contains('on')) return false;
+    const el = lb.querySelector('.nf-lightbox-img') || lb.querySelector('.nf-lightbox-av');
+    if (!el) return false;
+    const z = Number(lb.getAttribute('data-nf-lb-zoom'));
+    const tx = Number(lb.getAttribute('data-nf-lb-pan-x'));
+    const ty = Number(lb.getAttribute('data-nf-lb-pan-y'));
+    if (!Number.isFinite(z) || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
+    const cs = getComputedStyle(el);
+    if (cs.opacity !== '1') return false;              // 进场过渡未完：几何此时无意义
+    let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+    const m = cs.transform;
+    if (m && m !== 'none') {
+      const hit = /^matrix\(([^)]+)\)$/.exec(m);
+      if (!hit) return false;                          // matrix3d 不该出现在这条腿上
+      [a, b, c, d, e, f] = hit[1].split(',').map(Number);
+    }
+    return Math.abs(a - z) < 1e-3 && Math.abs(d - z) < 1e-3
+        && Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9
+        && Math.abs(e - tx) <= 0.5 && Math.abs(f - ty) <= 0.5;
+  }, null, { timeout: 8000 });
+}
+
 /* ══════════════════ 手机腿（375×812，真触屏仿真） ══════════════════ */
 
 test.describe('mobile media viewer zoom (full-screen gallery)', () => {
@@ -516,7 +553,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     // 等**状态**（缩放档已落到 1.2）而不是等固定毫秒：写入 data-* 与写入内联
     // transform 是同一拍（galPaint），档位到即几何到；固定 120ms 只赌 CDP 回执
     // 之后渲染器已跑完这一拍，负载下不成立。
-    await expect(page.locator('.nf-lightbox')).toHaveAttribute('data-nf-lb-zoom', '1.2');
+    await waitPainted(page);
     const after = await page.evaluate(VIEW);
     await shot(page);
     expect(after.zoom).toBe(1.2);                          // 既有档位逐字保留
@@ -524,7 +561,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     expect(anchorError(before, after, pivot)).toBeLessThan(2);
     // 连续滚轮继续推档，并被 5× 封顶吃掉。
     for (let i = 0; i < 14; i += 1) { await page.mouse.wheel(0, -120); await shot(page); }
-    await expect(page.locator('.nf-lightbox')).toHaveAttribute('data-nf-lb-zoom', '5');
+    await waitPainted(page);
     const capped = await page.evaluate(VIEW);
     expect(capped.zoom).toBe(5);
     expect(errors).toEqual([]);
@@ -555,7 +592,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     // ② 双指平移：像素步进 + 横向分量（鼠标滚轮不产生 deltaX）⇒ 平移，档位不变。
     const beforePan = await page.evaluate(VIEW);
     for (let i = 0; i < 5; i += 1) await page.mouse.wheel(24, -18);
-    await page.waitForTimeout(120);
+    await waitPainted(page);
     const panned = await page.evaluate(VIEW);
     expect(panned.zoom).toBe(beforePan.zoom);                        // 档位不动
     expect(panned.panX).toBeLessThan(beforePan.panX - 10);           // 内容反向跟手
@@ -577,7 +614,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     const pivot = { x: before.rect.x + 70, y: before.rect.y + 60 };
     await page.mouse.move(pivot.x, pivot.y);
     await page.mouse.dblclick(pivot.x, pivot.y);
-    await page.waitForTimeout(120);
+    await waitPainted(page);
     const after = await page.evaluate(VIEW);
     expect(after.zoom).toBe(2);
     expect(anchorError(before, after, pivot)).toBeLessThan(2);
@@ -586,7 +623,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     await page.waitForTimeout(700);
     await page.mouse.move(pivot.x, pivot.y);
     await page.mouse.dblclick(pivot.x, pivot.y);
-    await page.waitForTimeout(160);
+    await waitPainted(page);
     const restored = await page.evaluate(VIEW);
     expect(restored.zoom).toBe(1);
     expect(restored.panX).toBe(0);
@@ -613,7 +650,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     expect(before.layout.h).toBe(540);
     await page.mouse.move(before.center.x, before.center.y);
     for (let i = 0; i < 4; i += 1) await page.mouse.wheel(0, -120);
-    await page.waitForTimeout(120);
+    await waitPainted(page);
     const zoomed = await page.evaluate(VIEW);
     expect(zoomed.zoom).toBeCloseTo(2.0736, 3);
     const vp = await page.evaluate(() => {
@@ -629,7 +666,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     await page.mouse.down();
     for (let i = 1; i <= 8; i += 1) await page.mouse.move(before.center.x + (900 * i) / 8, before.center.y + (900 * i) / 8);
     await page.mouse.up();
-    await page.waitForTimeout(120);
+    await waitPainted(page);
     const panned = await page.evaluate(VIEW);
     expect(panned.panX).toBeLessThanOrEqual(slackX + 1);
     expect(panned.panY).toBeLessThanOrEqual(slackY + 1);
