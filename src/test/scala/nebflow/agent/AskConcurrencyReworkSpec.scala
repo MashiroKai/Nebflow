@@ -162,13 +162,13 @@ class AskConcurrencyReworkSpec extends CatsEffectSuite:
       req1 <- askRequest("ask-dddd000000000000", "root-1", "node-a", got1, system)
       req2 <- askRequest("ask-eeee000000000000", "root-2", "node-a", got2, system)
       _ <- hub ! InteractionHubCommand.Request(req1)
-      // 创建序的确定性前提：hub 对每条 Request 各 fork 一个 turn
-      // （InteractionHub.scala:72 ctx.forkTurn），并发下「槽注册序 ≠ 发送序」，
-      // createdAt 取的是注册时刻 ⇒ 背靠背连发两条时 sortBy(createdAt) 的输入
-      // 本身就是竞态产物（全量负载片实证 req2 先于 req1 注册、:171 顺序红）。
-      // 先等 req1 的卡渲染（handleRequest 先注册槽再渲染 ⇒ 卡可见即槽已在册），
-      // 再发 req2 —— 「req1 严格先于 req2 创建」成为确定性前提，下面的
-      // 顺序断言钉的才是实现契约（快照按 createdAt 升序）而非调度运气。
+      // 创建序的确定性前提（permission-landing 批续做 2026-11-18 已在源上收口）：hub 对每条
+      // Request 各 fork 一个 turn（`ctx.forkTurn`），并发下「槽注册序 ≠ 发送序」——原序键取的是
+      // **注册时刻**（createdAt）⇒ 背靠背连发两条时 sortBy 的输入本身就是竞态产物
+      //（全量负载片曾实证 req2 先于 req1 注册、下面的顺序断言红）。现序键 = 分支处理时同步取号
+      //（`PendingRequest.fifoSeq`，= 邮箱序）⇒ 顺序断言钉的已是实现契约本身，不再是调度运气。
+      // 下面的 awaitCond 保留：它等的是**槽已在册**（handleRequest 先注册槽再渲染 ⇒ 卡可见即槽在册），
+      // 那是快照断言的前置条件。
       _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", req1.requestId))), "第一张卡未渲染")
       _ <- hub ! InteractionHubCommand.Request(req2)
       _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", req2.requestId))), "第二张卡未渲染")
@@ -191,6 +191,12 @@ class AskConcurrencyReworkSpec extends CatsEffectSuite:
       hub <- mkHub(system)
       sent <- Ref.of[IO, List[Json]](Nil)
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
+      // root-2 必须**也在册**：permission-landing 批 P0（2026-11-18）起，未注册 root
+      // = 不可达 → 卡会被重定锚到字典序最小的可达 root（本仓只有 root-1）⇒ 两个槽的
+      // rootSessionId 都会变成 root-1，下面「按会话快照只返回本 root」的前提不成立。
+      // 本用例的语义（按 root 分域，不串扰）与兄弟正控 ③ 同源，前提同样是两个 root
+      // 都在册——补注册是修**前提**，不是放宽断言。
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-2", (j: Json) => sent.update(_ :+ j))
       got1 <- Ref.of[IO, Option[List[String]]](None)
       got2 <- Ref.of[IO, Option[List[String]]](None)
       req1 <- askRequest("ask-ffff000000000000", "root-1", "node-a", got1, system)

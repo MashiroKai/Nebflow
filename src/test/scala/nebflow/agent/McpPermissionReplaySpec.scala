@@ -31,7 +31,7 @@ class McpPermissionReplaySpec extends FunSuite:
       "allowUpgrade" -> true.asJson
     )
 
-  private def mcpPending(createdAt: Long, root: String = "root-1"): InteractionHub.PendingRequest =
+  private def mcpPending(fifoSeq: Long, root: String = "root-1"): InteractionHub.PendingRequest =
     InteractionHub.PendingRequest(
       reply = InteractionReply.McpPermissionReply(Deferred.unsafe[IO, nebflow.shared.McpPermissionAnswer]),
       rootSessionId = root,
@@ -39,10 +39,10 @@ class McpPermissionReplaySpec extends FunSuite:
       sourceSession = "sess-x",
       kind = InteractionKind.McpPermission,
       payload = mcpPayload,
-      createdAt = createdAt
+      fifoSeq = fifoSeq
     )
 
-  private def askUserPending(createdAt: Long, root: String = "root-1"): InteractionHub.PendingRequest =
+  private def askUserPending(fifoSeq: Long, root: String = "root-1"): InteractionHub.PendingRequest =
     InteractionHub.PendingRequest(
       reply = InteractionReply.AskUserReply(None),
       rootSessionId = root,
@@ -50,10 +50,10 @@ class McpPermissionReplaySpec extends FunSuite:
       sourceSession = "sess-x",
       kind = InteractionKind.AskUser,
       payload = Json.obj("items" -> Json.arr(Json.obj("question" -> "q".asJson))),
-      createdAt = createdAt
+      fifoSeq = fifoSeq
     )
 
-  private def permissionPending(createdAt: Long, root: String = "root-1"): InteractionHub.PendingRequest =
+  private def permissionPending(fifoSeq: Long, root: String = "root-1"): InteractionHub.PendingRequest =
     InteractionHub.PendingRequest(
       reply = InteractionReply.PermissionReply(Deferred.unsafe[IO, Boolean]),
       rootSessionId = root,
@@ -61,7 +61,7 @@ class McpPermissionReplaySpec extends FunSuite:
       sourceSession = "sess-x",
       kind = InteractionKind.Permission,
       payload = Json.obj("type" -> "askPermission".asJson, "toolName" -> "Write".asJson),
-      createdAt = createdAt
+      fifoSeq = fifoSeq
     )
 
   private def answered(payload: Json, root: String = "root-1"): InteractionAnswered =
@@ -137,9 +137,9 @@ class McpPermissionReplaySpec extends FunSuite:
   test("A1-7 重连重放：mcpPermission 卡进快照（replayed 只读快照 + requestId 绑定）") {
     val frames = InteractionHub.snapshotFrames(
       Map(
-        "req-mcp" -> mcpPending(createdAt = 2),
-        "req-ask" -> askUserPending(createdAt = 1),
-        "req-perm" -> permissionPending(createdAt = 3)
+        "req-mcp" -> mcpPending(fifoSeq = 2),
+        "req-ask" -> askUserPending(fifoSeq = 1),
+        "req-perm" -> permissionPending(fifoSeq = 3)
       ),
       Some("root-1")
     )
@@ -147,7 +147,7 @@ class McpPermissionReplaySpec extends FunSuite:
     val byType = frames.map(f => f.hcursor.downField("type").as[String].toOption.getOrElse("") -> f).toMap
     assertEquals(byType.keySet, Set("askUser", "mcpPermission"))
     assert(frames.forall(_.hcursor.downField("replayed").as[Boolean].toOption.contains(true)), "重放标记")
-    assertEquals(frames.head.hcursor.downField("type").as[String].toOption, Some("askUser"), "createdAt 升序")
+    assertEquals(frames.head.hcursor.downField("type").as[String].toOption, Some("askUser"), "fifoSeq 升序（= 邮箱到达序，取代原 createdAt）")
     val mcpFrame = byType("mcpPermission")
     assertEquals(mcpFrame.hcursor.downField("requestId").as[String].toOption, Some("req-mcp"), "requestId 绑定保留")
     assertEquals(mcpFrame.hcursor.downField("sessionId").as[String].toOption, Some("root-1"))
@@ -159,7 +159,7 @@ class McpPermissionReplaySpec extends FunSuite:
   }
 
   test("A1-7(只读 + root 过滤) 快照不改槽位；别的 root 不出现") {
-    val m = Map("req-mcp" -> mcpPending(createdAt = 1, root = "root-1"))
+    val m = Map("req-mcp" -> mcpPending(fifoSeq = 1, root = "root-1"))
     assertEquals(InteractionHub.snapshotFrames(m, Some("root-2")).size, 0)
     assertEquals(InteractionHub.snapshotFrames(m, Some("root-1")).size, 1)
     assertEquals(m.size, 1, "只读：快照不得改动 pending map")

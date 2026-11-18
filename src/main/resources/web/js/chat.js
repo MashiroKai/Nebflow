@@ -3750,8 +3750,22 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   if (retargetedFrom) {
     const retargetBadge = document.createElement('div');
     retargetBadge.className = 'perm-source-badge';
-    retargetBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>' +
-      '<span>' + escapeHtml(t('perm.retargetNote', { from: String(retargetedFrom).substring(0, 12) })) + '</span>';
+    // 构建器写 DOM（component-contract R5：不得新增裸 innerHTML 赋值）；
+    // textContent 免转义，svg 走 createElementNS。
+    const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    arrow.setAttribute('width', '12');
+    arrow.setAttribute('height', '12');
+    arrow.setAttribute('viewBox', '0 0 24 24');
+    arrow.setAttribute('fill', 'none');
+    arrow.setAttribute('stroke', 'currentColor');
+    arrow.setAttribute('stroke-width', '2');
+    const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    arrowPath.setAttribute('d', 'M5 12h14M13 6l6 6-6 6');
+    arrow.appendChild(arrowPath);
+    retargetBadge.appendChild(arrow);
+    const note = document.createElement('span');
+    note.textContent = t('perm.retargetNote', { from: String(retargetedFrom).substring(0, 12) });
+    retargetBadge.appendChild(note);
     bubble.appendChild(retargetBadge);
   }
 

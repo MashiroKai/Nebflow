@@ -48,6 +48,16 @@ object InteractionHub:
    * 槽位条目。可见性 `private[agent]`（而非 `private`）：P0-1 验收 A1-5/A1-7 要求对
    * **生产代码本体**（`answerCompletes` / `snapshotFrames`）取值，而非对测试自造的等价物
    * —— 故 spec 需在包内构造它。零行为影响（同包可见性放宽，不新增任何写面）。
+   *
+   * `fifoSeq`（permission-landing 批续做，2026-11-18）：FIFO /「最老在前」的**序键**，
+   * 取代原来的 `createdAt = System.currentTimeMillis()`。原时间戳取的是**槽注册时刻**，
+   * 而每条 `Request` 各 fork 一个 turn（`ctx.forkTurn`）⇒ 并发下「槽注册序 ≠ 邮箱序」，
+   * 背靠背两条 request 的 createdAt 谁先谁后是调度运气（AskConcurrencyReworkSpec ③ 的
+   * 注释已实证："全量负载片实证 req2 先于 req1 注册、:171 顺序红"），同毫秒还会并列
+   * （而 `Map.toList` 的遍历序不是插入序 ⇒ 并列时无确定性）。
+   * 现在序键在**分支处理时同步取号**（见 Request 分支的 `nextFifoSeq`，fork 之前）⇒
+   * 严格递增且 = 邮箱到达序，`sortBy(_.fifoSeq)` 的「最老/创建序」在并发下真的确定
+   *（无 requestId 的旧前端 FIFO 兜底路靠它才真是「先到先得」）。
    */
   private[agent] case class PendingRequest(
     reply: InteractionReply,
@@ -56,7 +66,7 @@ object InteractionHub:
     sourceSession: String,
     kind: InteractionKind,
     payload: Json,
-    createdAt: Long
+    fifoSeq: Long
   )
 
   /**
@@ -81,6 +91,10 @@ object InteractionHub:
     Behaviors.setup { ctx =>
       val pending: Ref[IO, Map[String, PendingRequest]] = Ref.unsafe(Map.empty)
       val rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]] = Ref.unsafe(Map.empty)
+      // permission-landing 批续做（2026-11-18）：FIFO 序源（语义见 PendingRequest.fifoSeq）。
+      // 🔴 取号必须发生在**分支处理时**（同步、= 邮箱序）；挪进 forkTurn 内就退回
+      // 「槽注册序竞态」。单调 +1，无并列。
+      val nextFifoSeq: Ref[IO, Long] = Ref.unsafe(0L)
       // db 接线第一阶（D-8 permission 重装腿）：hub 把自身注册进台账，boot 对账
       // 时未闭 permission 单经此槽重装回 pending map（数据面恢复——卡可答、答则
       // 闭单）。装配序保证：GatewayMain 上 hub spawn(:737) 先于 bootReconcile(:838)。
@@ -136,11 +150,21 @@ object InteractionHub:
                     case Some(landing) => (req.copy(rootSessionId = landing), Some(req.rootSessionId))
                     case None          => (req, None)
               }
-              ctx.forkTurn(
-                resolveLanding.flatMap { (landing, retargetedFrom) =>
-                  handleRequest(pending, rootWsSend, landing, retargetedFrom) *> ledgerRecord(landing) *> todoAttach(landing)
-                }
-              ) *> IO.pure(behavior)
+              // 落点解析 + FIFO 取号 + **槽位注册**一律在分支处理时同步完成（= 邮箱序）；
+              // 只有渲染 / 台账 / 待办镜像 fork。理由：原来的「Register BEFORE rendering
+              // so a fast answer can never miss the slot」三步全在 fork 内 ⇒ 邮箱里紧随
+              // 其后的 Answered / CloseRequest 完全可能抢在注册之前落地（答复 ⇒
+              // unknown-request-id 静默丢、取消 ⇒ 空命中），次序全凭调度运气
+              //（InteractionHubCancelSpec ② 的 «答复未落地» 即这一面）。
+              for
+                seq <- nextFifoSeq.modify(n => (n + 1L, n))
+                (landing, retargetedFrom) <- resolveLanding
+                _ <- registerPending(pending, landing, seq)
+                _ <- ctx.forkTurn(
+                  handleRequest(rootWsSend, landing, retargetedFrom) *>
+                    ledgerRecord(landing) *> todoAttach(landing)
+                )
+              yield behavior
             case InteractionHubCommand.Answered(ans) =>
               ctx.forkTurn(handleAnswered(pending, rootWsSend, ans, ledger, todoBridge)) *> IO.pure(behavior)
             case InteractionHubCommand.DecideBridgePermission(rid, root, kind, approved, reply) =>
@@ -204,11 +228,41 @@ object InteractionHub:
   // Request: store reply target, render card/question to root window
   // ============================================================
 
-  private def handleRequest(
+  /**
+   * 槽位注册（permission-landing 批续做，2026-11-18）：**必须由分支处理同步调用**
+   *（= 邮箱序），不得挪进 `ctx.forkTurn`。
+   *
+   * 原实现把注册放在本文件的渲染函数（fork 内）里，注释写着「Register BEFORE
+   * rendering so a fast answer can never miss the slot」——那句不变式只覆盖了
+   * 「渲染 vs 注册」的先后，覆盖不了**邮箱序**：注册在 fork 内 ⇒ 邮箱里紧随其后的
+   * `Answered` / `CloseRequest` 可能抢在注册之前落地（答复 ⇒ unknown-request-id
+   * 静默丢、取消 ⇒ 空命中）。同步注册后，「先注册槽再渲染」在邮箱序上真的成立。
+   *
+   * `fifoSeq` 由同一处（分支处理）取号传入 —— 序键 = 邮箱序，见
+   * [[PendingRequest.fifoSeq]]。
+   */
+  private def registerPending(
     pending: Ref[IO, Map[String, PendingRequest]],
+    req: InteractionRequest,
+    fifoSeq: Long
+  ): IO[Unit] =
+    pending.update(
+      _ + (req.requestId ->
+        PendingRequest(
+          req.reply,
+          req.rootSessionId,
+          req.sourceAgent,
+          req.sourceSession,
+          req.kind,
+          req.payload,
+          fifoSeq
+        ))
+    )
+
+  private def handleRequest(
     rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
     req: InteractionRequest,
-    retargetedFrom: Option[String] = None
+    retargetedFrom: Option[String]
   ): IO[Unit] =
     val render = req.kind match
       case InteractionKind.Permission => renderPermission(req)
@@ -238,19 +292,7 @@ object InteractionHub:
           s"event=ask kind=${req.kind}"
         )
         .handleErrorWith(_ => IO.unit)
-      // Register BEFORE rendering so a fast answer can never miss the slot.
-      _ <- pending.update(
-        _ + (req.requestId ->
-          PendingRequest(
-            req.reply,
-            req.rootSessionId,
-            req.sourceAgent,
-            req.sourceSession,
-            req.kind,
-            req.payload,
-            System.currentTimeMillis()
-          ))
-      )
+      // 槽位已由分支处理同步注册（registerPending）——此处只渲染帧。
       send <- rootWsSend.get
       _ <- send.get(req.rootSessionId) match
         case Some(ws) =>
@@ -390,7 +432,7 @@ object InteractionHub:
 
   /**
    * 多 AskUser 并发批（#250 第③项，2026-09-13 作者裁定「6 项全补」）：
-   * **全局** pending-AskUser 快照（跨 root，按 createdAt 升序）。
+   * **全局** pending-AskUser 快照（跨 root，按 fifoSeq 升序 = 邮箱到达序/创建序）。
    *
    * 口径不一致（改前）：前端重连做的是**全局**清空（`resetPendingAsks`，askPending.js），
    * 而后端重建只在「某会话 getHistory 首帧」触发（`WebSocketRoutes` 的
@@ -455,7 +497,7 @@ object InteractionHub:
               rootFilter.forall(_ == p.rootSessionId) =>
           (rid, p)
       }
-      .sortBy(_._2.createdAt)
+      .sortBy(_._2.fifoSeq)
       .map { case (rid, p) =>
         // 案 C（双开缺陷批 2026-09-21，chain-askuserdup）：重放帧带**替代语义标**
         // `replaces:true`（= 本帧替代本会话内同 requestId 的既有卡，不是一张新提问）。
@@ -734,7 +776,7 @@ object InteractionHub:
         // may not be for the matched card at all.
         val candidates = m.toList
           .filter(_._2.rootSessionId == ans.rootSessionId)
-          .sortBy(_._2.createdAt)
+          .sortBy(_._2.fifoSeq)
         val multiWarn =
           if candidates.size > 1 then
             logger.warn(
