@@ -124,10 +124,7 @@
        令牌 --set-* 在 css/stand-tokens.css。置于各面文件之后 ⇒ 行族造型不被
        旧面覆写；手机层尺寸档在 mobileLayer.css 里按移动令牌换档。 -->
   <link rel="stylesheet" href="css/settingsRows.css">
-  <!-- 卡片家族统一样式包（2026-11-01 作者 16:05 令）：基准=官网过渡卡的 cards
-       模块（token --nfc-* + .nfc 族类）。消费面 = 接管弹窗 #takeover-box +
-       门入场加载卡 .nf-entry-card；设计稿 docs/design/20261101_162000_cards-family-design__*
-       （DNA 出处/迁移清单）。置于 mobile 层之前：mobile 覆写同特异性时仍最后胜出。 -->
+  <!-- 卡片样式包供门入场加载卡使用；置于 mobile 层之前。 -->
   <link rel="stylesheet" href="css/cards.css">
   <link rel="stylesheet" href="css/mobile.css">
   <!-- mobile-ui-refactor 批：手机交互层（独立层，非响应式补丁）。全部规则挂在
@@ -1047,7 +1044,7 @@
   <!-- 弹层层族批（ui-unification-20261103-overlays）：遮罩/壳的形由
        design-system.css `.ds-overlay` / `.ds-layer` 层类族单点承担（层级带 /
        遮罩底 / 壳圆角 / 入场动效）；id 保留为 DOM 寻址钩子（modal.js 的 .on /
-       .takeover-blur 切换、focusTrap、mobileLayer 铺平、既有 spec）。 -->
+       focusTrap、mobileLayer 铺平、既有 spec）。 -->
   <div id="modal-overlay" class="ds-overlay ds-overlay--top">
     <div id="modal-box" class="ds-layer">
       <div id="modal-title">New Session</div>
