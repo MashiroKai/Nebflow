@@ -1,7 +1,6 @@
 package nebflow.social.outbound
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.shared.AttachContract
@@ -157,7 +156,15 @@ class RichOutboundSpec extends CatsEffectSuite:
     // default reads the process-global data root, which other suites mutate, so a
     // spec that used it would be coupled to their state. The long-shot seam
     // defaults to Unavailable so no test ever starts node (the offline discipline).
-    new RichFeishuAdapter(rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, renderer, () => tmpDir(), longshot)
+    new RichFeishuAdapter(
+      rec.uploadImage,
+      rec.uploadFile,
+      rec.sendMsg,
+      rec.sendText,
+      renderer,
+      () => tmpDir(),
+      longshot
+    )
 
   private val CardHtml = """<!doctype html><html><body><h1>hello card</h1></body></html>"""
 
@@ -165,6 +172,30 @@ class RichOutboundSpec extends CatsEffectSuite:
     RichKind.CardSentinel + io.circe.Json.obj("html" -> io.circe.Json.fromString(html)).noSpaces
 
   // ─────────────────── R-1 classification (pure, no IO) ───────────────────
+
+  test("failed image and file uploads do not log private paths") {
+    val marker = "SENTINEL_PRIVATE_PATH_9741"
+    val logger = org.slf4j.LoggerFactory
+      .getLogger("nebflow.social.outbound.feishu")
+      .asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    val dir = tmpDir()
+    val image = dir / s"$marker.png"
+    val file = dir / s"$marker.pdf"
+    Files.write(image.toNIO, Array[Byte](1))
+    Files.write(file.toNIO, Array[Byte](1))
+    val rec = new Recorder(imageOk = false, fileOk = false)
+    import scala.jdk.CollectionConverters.*
+    IO { appender.start(); logger.addAppender(appender) }.bracket { _ =>
+      for
+        _ <- adapter(rec).deliver(RichKind.Image, Some(image))
+        _ <- adapter(rec).deliver(RichKind.Document, Some(file))
+        messages = appender.list.asScala.toList.map(_.getFormattedMessage)
+      yield
+        assertEquals(messages.count(_.contains("upload refused")), 2)
+        assert(messages.forall(!_.contains(marker)), "private path leaked into log")
+    }(_ => IO { logger.detachAppender(appender); appender.stop() })
+  }
 
   test("R-1 classification: card marker → Card; image ext → Image; doc ext → Document; rest → Unknown") {
     val img = tmpDir() / "shot.png"
@@ -224,9 +255,17 @@ class RichOutboundSpec extends CatsEffectSuite:
         yield
           assertEquals(results.size, 1, "one intent must yield exactly one reading (count conservation)")
           assertEquals(imgs.size, 0, "an unknown kind must never upload an image")
-          assertEquals(files, List((odd, "diagram.xyz")), "the ORIGINAL bytes ride the file leg — delivered, not logged and dropped")
+          assertEquals(
+            files,
+            List((odd, "diagram.xyz")),
+            "the ORIGINAL bytes ride the file leg — delivered, not logged and dropped"
+          )
           assertEquals(msgs, List(("file", RichFeishuAdapter.fileKeyBody("file_key_1"))), "one msg_type=file send")
-          assertEquals(texts.size, 0, "a delivered file needs no companion text — zero mechanism-vocabulary leakage surface")
+          assertEquals(
+            texts.size,
+            0,
+            "a delivered file needs no companion text — zero mechanism-vocabulary leakage surface"
+          )
           assert(results.forall(_.ok), results)
       }
   }
@@ -948,7 +987,11 @@ class RichOutboundSpec extends CatsEffectSuite:
           assertEquals(texts.size, 1, "the refusal lands as one text reading")
           assert(texts.head.contains("[未渲染]"), s"the closed placeholder: ${texts.head}")
           assert(texts.head.contains(md.toString), s"the note survives the degrade: ${texts.head}")
-          assertEquals(results.size, 1, "the degrade card is the one reading (the refused upload leaves no upload reading)")
+          assertEquals(
+            results.size,
+            1,
+            "the degrade card is the one reading (the refused upload leaves no upload reading)"
+          )
           assert(results.head.ok, "the CARD was delivered — the refusal lives in the card text, not a failed send")
       }
   }
@@ -973,7 +1016,7 @@ class RichOutboundSpec extends CatsEffectSuite:
           calls <- longshot.calls.get
           texts <- rec.texts.get
           files <- rec.files.get
-          msgs  <- rec.msgs.get
+          msgs <- rec.msgs.get
         yield
           assertEquals(calls, 0, "only md/markdown/html/htm may reach the conversion seam")
           assertEquals(texts, Nil, "no [暂不支持] text card — the file itself is the deliverable")
@@ -1004,7 +1047,7 @@ class RichOutboundSpec extends CatsEffectSuite:
           calls <- longshot.calls.get
           texts <- rec.texts.get
           files <- rec.files.get
-          msgs  <- rec.msgs.get
+          msgs <- rec.msgs.get
         yield
           assertEquals(calls, 0, "txt is not a convertible class — the long-shot seam stays untouched")
           assertEquals(texts, Nil, "no degrade text — the txt file itself is the deliverable")
@@ -1029,7 +1072,7 @@ class RichOutboundSpec extends CatsEffectSuite:
           calls <- longshot.calls.get
           texts <- rec.texts.get
           files <- rec.files.get
-          msgs  <- rec.msgs.get
+          msgs <- rec.msgs.get
         yield
           assertEquals(calls, 0)
           assertEquals(files, Nil, "nothing to upload — the file is not on disk")
@@ -1059,7 +1102,7 @@ class RichOutboundSpec extends CatsEffectSuite:
           calls <- longshot.calls.get
           texts <- rec.texts.get
           files <- rec.files.get
-          msgs  <- rec.msgs.get
+          msgs <- rec.msgs.get
         yield
           assertEquals(calls, 0, "an archive is NOT a convertible file class — the long-shot seam stays untouched")
           assertEquals(texts, Nil, "no [暂不支持] text card — the archive itself is the deliverable")

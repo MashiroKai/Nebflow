@@ -2,14 +2,7 @@ package nebflow.social.outbound
 
 import cats.effect.IO
 import com.lark.oapi.Client as LarkClient
-import com.lark.oapi.service.im.v1.model.{
-  CreateFileReq,
-  CreateFileReqBody,
-  CreateImageReq,
-  CreateImageReqBody,
-  CreateMessageReq,
-  CreateMessageReqBody
-}
+import com.lark.oapi.service.im.v1.model.*
 import nebflow.shared.{AttachContract, NebflowLogger, PathUtil}
 import nebflow.social.{FeishuChannel, FeishuCredentials}
 
@@ -120,15 +113,17 @@ final class RichFeishuAdapter(
               case Some(p) => deliverDocument(p)
               case None =>
                 // onDisk 为空 = 原件不在盘上（路径不存在/非普通文件）⇒ [未送达] 面。
-                logger.warnSync(s"outbound: product not carriable by this channel — $reason")
+                logger.warnSync("outbound: product not carriable by this channel")
                 sendDegrade(RichDegrade.unknown(path, missing = true), okDetail = "unknown-kind notice delivered")
+
+        end match
 
   /**
    * An event that classified into a rich kind but carried no usable path still
    *  has to say so — the same fail-closed rule, one step earlier.
    */
   private def degradeOnly(reason: String): IO[List[RichCallResult]] =
-    logger.warnSync(s"outbound: rich product with no usable path — $reason")
+    logger.warnSync("outbound: rich product with no usable path")
     sendDegrade(RichDegrade.unknown(None, missing = true), okDetail = "missing-path notice delivered")
 
   // ────────────────── file long-shot leg（pop-social-files batch, 2026-10-20）──────────────────
@@ -160,7 +155,7 @@ final class RichFeishuAdapter(
         // 日志——返回 Unit，直包 IO 提升为读数）。
         IO {
           logger.warnSync(
-            s"outbound: long-shot duplicate suppressed for $original — same bytes already pushed (dedup)"
+            "outbound: long-shot duplicate suppressed — same bytes already pushed (dedup)"
           )
           Nil
         }
@@ -169,13 +164,14 @@ final class RichFeishuAdapter(
           longshot.shot(original, out).flatMap {
             case Left(reason) =>
               logger.warnSync(
-                s"outbound: file long-shot unavailable for $original ($reason) — degrading to the text card"
+                "outbound: file long-shot unavailable — degrading to the text card"
               )
               IO(FileLongShot.summarize(original)).flatMap(s =>
                 sendDegrade(
                   RichDegrade.unconverted(original, s),
                   okDetail = "unconverted file card delivered"
-                ))
+                )
+              )
             case Right(png) =>
               uploadImageFn(png).flatMap { up =>
                 if !up.ok then
@@ -225,7 +221,7 @@ final class RichFeishuAdapter(
     withSizeGate(p) { bytes =>
       uploadImageFn(p).flatMap { up =>
         if !up.ok then
-          logger.warn(s"outbound: image upload refused for $p (code=${up.code})") *>
+          logger.warn(s"outbound: image upload refused (code=${up.code})") *>
             sendDegrade(
               RichDegrade.renderFailed(RichDegrade.Reason.channelRejected(up.code), p, bytes),
               okDetail = s"image upload refused (code=${up.code})"
@@ -256,7 +252,7 @@ final class RichFeishuAdapter(
       val fileName = p.last
       uploadFileFn(p, fileName).flatMap { up =>
         if !up.ok then
-          logger.warn(s"outbound: file upload refused for $p (code=${up.code})") *>
+          logger.warn(s"outbound: file upload refused (code=${up.code})") *>
             sendDegrade(
               RichDegrade.renderFailed(RichDegrade.Reason.channelRejected(up.code), p, bytes),
               okDetail = s"file upload refused (code=${up.code})"
@@ -295,7 +291,7 @@ final class RichFeishuAdapter(
     renderCardPng(content).flatMap {
       case Left(reason) =>
         val line = RichDegrade.cardNotRendered(reason, content.getBytes("UTF-8").length.toLong)
-        logger.warn(s"outbound: card render failed — $reason") *>
+        logger.warn("outbound: card render failed") *>
           sendDegrade(s"$line\n${RichPlanner.InteractivePanelNote}", okDetail = "card degrade text delivered")
       case Right(png) =>
         uploadImageFn(png).flatMap { up =>
@@ -364,7 +360,7 @@ final class RichFeishuAdapter(
         AttachContract.checkFileSize(size).left.map(err => RichDegrade.tooLarge(err, p)).map(_ => size)
     }.flatMap {
       case Left(text) =>
-        logger.warn(s"outbound: product refused before upload — $text") *>
+        logger.warn("outbound: product refused before upload") *>
           sendDegrade(text, okDetail = "size/unreadable refusal delivered")
       case Right(bytes) => body(bytes)
     }
@@ -497,8 +493,8 @@ object RichFeishuAdapter:
    */
   private def reading(resp: com.lark.oapi.core.response.BaseResponse[?], messageId: Option[String]): SendResult =
     if resp == null then SendResult(ok = false, None, -1, "SDK returned a null response")
-    else if resp.success() then SendResult(ok = true, messageId, resp.getCode, Option(resp.getMsg).getOrElse(""))
-    else SendResult(ok = false, None, resp.getCode, Option(resp.getMsg).getOrElse(""))
+    else if resp.success() then SendResult(ok = true, messageId, resp.getCode, "remote response")
+    else SendResult(ok = false, None, resp.getCode, "remote response")
 
   /**
    * Production image upload —
@@ -523,11 +519,9 @@ object RichFeishuAdapter:
         val key = Option(resp.getData).flatMap(d => Option(d.getImageKey)).getOrElse("")
         if key.isEmpty then UploadResult(false, "", resp.getCode, "image upload succeeded but returned no image_key")
         else UploadResult(true, key, resp.getCode, "image uploaded")
-      else if resp != null then UploadResult(false, "", resp.getCode, Option(resp.getMsg).getOrElse(""))
+      else if resp != null then UploadResult(false, "", resp.getCode, "remote response")
       else UploadResult(false, "", -1, "SDK returned a null response")
-    }.handleErrorWith(e =>
-      IO.pure(UploadResult(false, "", -1, s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
-    )
+    }.handleErrorWith(e => IO.pure(UploadResult(false, "", -1, s"${e.getClass.getSimpleName}")))
 
   /**
    * Production file upload —
@@ -553,11 +547,9 @@ object RichFeishuAdapter:
         val key = Option(resp.getData).flatMap(d => Option(d.getFileKey)).getOrElse("")
         if key.isEmpty then UploadResult(false, "", resp.getCode, "file upload succeeded but returned no file_key")
         else UploadResult(true, key, resp.getCode, "file uploaded")
-      else if resp != null then UploadResult(false, "", resp.getCode, Option(resp.getMsg).getOrElse(""))
+      else if resp != null then UploadResult(false, "", resp.getCode, "remote response")
       else UploadResult(false, "", -1, "SDK returned a null response")
-    }.handleErrorWith(e =>
-      IO.pure(UploadResult(false, "", -1, s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
-    )
+    }.handleErrorWith(e => IO.pure(UploadResult(false, "", -1, s"${e.getClass.getSimpleName}")))
 
   /**
    * Production message send for the image / file legs (`im/v1/messages` with the
@@ -585,9 +577,7 @@ object RichFeishuAdapter:
         .build()
       val resp = client(appId, appSecret, region).im().v1().message().create(req)
       reading(resp, Option(resp).flatMap(r => Option(r.getData)).flatMap(d => Option(d.getMessageId)))
-    }.handleErrorWith(e =>
-      IO.pure(SendResult(ok = false, None, -1, s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
-    )
+    }.handleErrorWith(e => IO.pure(SendResult(ok = false, None, -1, s"${e.getClass.getSimpleName}")))
 
   /** Production text send — reuses the existing channel path. */
   def liveSendText(

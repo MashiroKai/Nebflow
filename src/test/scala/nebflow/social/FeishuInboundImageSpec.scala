@@ -70,6 +70,28 @@ class FeishuInboundImageSpec extends FunSuite:
     appSeq += 1
     (s"app-fi-$appSeq-${System.identityHashCode(this)}", s"secret-shape-only-$appSeq")
 
+  test("channel failure readings never echo upstream diagnostic text") {
+    val marker = "SENTINEL_CHANNEL_PRIVATE_8724"
+    val errorBody = Json.obj("code" -> 234001.asJson, "msg" -> marker.asJson).noSpaces.getBytes("UTF-8")
+    val tokenTransport: FeishuChannel.RawHttp = (_, _, _) => Left(marker)
+    val tokenRefusal: FeishuChannel.RawHttp = (_, _, _) => Right((400, errorBody))
+    val (app1, secret1) = freshCreds()
+    val (app2, secret2) = freshCreds()
+    val stub = new StubHttp
+    stub.tokenOk()
+    stub.routes = stub.routes.orElse { case _ => Right((400, errorBody)) }
+    val (app3, secret3) = freshCreds()
+    val readings = List(
+      FeishuChannel.getImageVia(tokenTransport)(app1, secret1, "feishu", "key").msg,
+      FeishuChannel.getImageVia(tokenRefusal)(app2, secret2, "feishu", "key").msg,
+      FeishuChannel.getImageVia(stub.toSeam)(app3, secret3, "feishu", "key").msg,
+      FeishuChannel.messageResourceErrorReading(400, errorBody)._2,
+      FeishuChannel.getMessageResourceVia(stub.toSeam)(app3, secret3, "feishu", "id", "key", marker).msg
+    )
+    assert(readings.forall(!_.contains(marker)), "upstream text leaked into failure reading")
+    assert(readings(1).contains("234001") && readings(2).contains("234001"))
+  }
+
   test("FI1 a 200 binary body lands byte-exact (the must-arrive happy path)") {
     val stub = new StubHttp
     stub.tokenOk()
@@ -119,7 +141,7 @@ class FeishuInboundImageSpec extends FunSuite:
     assert(!r.ok)
     assertEquals(r.code, 99991400, "feishu's code — the SDK used to mask this behind JsonIOException")
     assert(r.msg.contains("http=429") && r.msg.contains("endpoint=im/v1/images/:image_key"))
-    assert(r.msg.contains("code=99991400") && r.msg.contains("msg=too many requests"))
+    assert(r.msg.contains("code=99991400") && !r.msg.contains("too many requests"))
     assert(
       !r.msg.contains("JsonIOException") && !r.msg.contains("ByteArrayOutputStream"),
       s"the stream-DTO plague must never resurface, got ${r.msg}"
@@ -132,14 +154,16 @@ class FeishuInboundImageSpec extends FunSuite:
     val testKey = "diagnostic-key-do-not-leak"
     stub.routes = stub.routes.orElse {
       case url if url.endsWith("/open-apis/im/v1/images/diagnostic-key-do-not-leak") =>
-        Right((400, Json.obj("code" -> 234001.asJson, "msg" -> "Invalid request param.".asJson).noSpaces.getBytes("UTF-8")))
+        Right(
+          (400, Json.obj("code" -> 234001.asJson, "msg" -> "Invalid request param.".asJson).noSpaces.getBytes("UTF-8"))
+        )
     }
     val (appId, secret) = freshCreds()
     val r = FeishuChannel.getImageVia(stub.toSeam)(appId, secret, "feishu", testKey)
     assert(!r.ok)
     assertEquals(r.code, 234001)
     assert(r.msg.contains("http=400") && r.msg.contains("endpoint=im/v1/images/:image_key"))
-    assert(r.msg.contains("fields=code:true,msg:true") && r.msg.contains("Invalid request param."))
+    assert(r.msg.contains("fields=code:true,msg:true") && !r.msg.contains("Invalid request param."))
     assert(!r.msg.contains(testKey), "diagnostic must not contain the complete user image key")
   }
 
@@ -153,7 +177,7 @@ class FeishuInboundImageSpec extends FunSuite:
     val r = FeishuChannel.getImageVia(stub.toSeam)(appId, secret, "feishu", "img_x")
     assert(!r.ok)
     assertEquals(r.code, -1)
-    assert(r.msg.contains("token refused code=9499") && r.msg.contains("bad app_id"), s"got ${r.msg}")
+    assert(r.msg.contains("token refused code=9499") && !r.msg.contains("bad app_id"), s"got ${r.msg}")
     assert(!r.msg.contains(secret), "the secret must never ride a reading")
   }
 
@@ -172,14 +196,20 @@ class FeishuInboundImageSpec extends FunSuite:
     // 「feishu 原生 code/msg 上浮」对齐——code 取 body 里的 99991400，非 HTTP 429。
     assertEquals(
       FeishuChannel.imageErrorReading(502, "<html>gateway</html>".getBytes("UTF-8")),
-      (502, "Feishu image API refused (http=502 endpoint=im/v1/images/:image_key fields=code:false,msg:false; non-JSON body 20B)")
+      (
+        502,
+        "Feishu image API refused (http=502 endpoint=im/v1/images/:image_key fields=code:false,msg:false; non-JSON body 20B)"
+      )
     )
     assertEquals(
       FeishuChannel.imageErrorReading(
         429,
         Json.obj("code" -> 99991400L.asJson, "msg" -> "busy".asJson).noSpaces.getBytes("UTF-8")
       ),
-      (99991400, "Feishu image API refused (http=429 endpoint=im/v1/images/:image_key fields=code:true,msg:true; code=99991400 msg=busy)")
+      (
+        99991400,
+        "Feishu image API refused (http=429 endpoint=im/v1/images/:image_key fields=code:true,msg:true; code=99991400)"
+      )
     )
   }
 
@@ -309,7 +339,9 @@ class FeishuInboundImageSpec extends FunSuite:
     stub.tokenOk()
     stub.routes = stub.routes.orElse {
       case url if url.startsWith(s"https://open.feishu.cn/open-apis/im/v1/messages/$MID/resources/") =>
-        Right((400, Json.obj("code" -> 234001.asJson, "msg" -> "Invalid request param.".asJson).noSpaces.getBytes("UTF-8")))
+        Right(
+          (400, Json.obj("code" -> 234001.asJson, "msg" -> "Invalid request param.".asJson).noSpaces.getBytes("UTF-8"))
+        )
     }
     val (appId, secret) = freshCreds()
     val r = FeishuChannel.getInboundResourceVia(stub.toSeam)(appId, secret, "feishu", MID, KEY, "image")
@@ -318,7 +350,7 @@ class FeishuInboundImageSpec extends FunSuite:
     assert(r.msg.contains("leg=message-resources"), s"the diagnostic names the leg: ${r.msg}")
     assert(r.msg.contains("http=400"), s"http status rides the reading: ${r.msg}")
     assert(r.msg.contains("endpoint=im/v1/messages/:message_id/resources/:file_key"), s"endpoint rides it: ${r.msg}")
-    assert(r.msg.contains("fields=code:true,msg:true") && r.msg.contains("Invalid request param."), s"got ${r.msg}")
+    assert(r.msg.contains("fields=code:true,msg:true") && !r.msg.contains("Invalid request param."), s"got ${r.msg}")
     assert(!r.msg.contains(KEY), s"the COMPLETE key must not leak: ${r.msg}")
     // 这条 body 没回显 key，「截断」在这里是无操作——回显时的截断形由 MR8 钉死。
     assert(r.msg.length < 400, "the reading stays a one-liner, not a body dump")
@@ -349,7 +381,15 @@ class FeishuInboundImageSpec extends FunSuite:
     stub.tokenOk()
     stub.routes = stub.routes.orElse {
       case url if url.startsWith("https://open.feishu.cn/open-apis/im/v1/images/") =>
-        Right((400, Json.obj("code" -> 234008.asJson, "msg" -> "The app is not the resource sender".asJson).noSpaces.getBytes("UTF-8")))
+        Right(
+          (
+            400,
+            Json
+              .obj("code" -> 234008.asJson, "msg" -> "The app is not the resource sender".asJson)
+              .noSpaces
+              .getBytes("UTF-8")
+          )
+        )
     }
     val (appId, secret) = freshCreds()
     val r = FeishuChannel.getInboundResourceVia(stub.toSeam)(appId, secret, "feishu", "", KEY, "image")
@@ -367,7 +407,10 @@ class FeishuInboundImageSpec extends FunSuite:
     val (appId, secret) = freshCreds()
     val r = FeishuChannel.getInboundResourceVia(stub.toSeam)(appId, secret, "feishu", MID, KEY, "video")
     assert(!r.ok)
-    assert(r.msg.contains("unsupported resource type 'video'") && r.msg.contains("expected image|file"), s"got ${r.msg}")
+    assert(
+      r.msg.contains("unsupported resource type") && !r.msg.contains("video") && r.msg.contains("expected image|file"),
+      s"got ${r.msg}"
+    )
     assertEquals(stub.calls.size, 0, "no token POST, no GET — the type gate is local")
   }
 
@@ -387,14 +430,19 @@ class FeishuInboundImageSpec extends FunSuite:
     stub.tokenOk()
     stub.routes = stub.routes.orElse {
       case url if url.startsWith(s"https://open.feishu.cn/open-apis/im/v1/messages/$MID/resources/") =>
-        Right((400, Json.obj("code" -> 234003.asJson, "msg" -> s"File not in message: $KEY".asJson).noSpaces.getBytes("UTF-8")))
+        Right(
+          (
+            400,
+            Json.obj("code" -> 234003.asJson, "msg" -> s"File not in message: $KEY".asJson).noSpaces.getBytes("UTF-8")
+          )
+        )
     }
     val (appId, secret) = freshCreds()
     val r = FeishuChannel.getInboundResourceVia(stub.toSeam)(appId, secret, "feishu", MID, KEY, "image")
     assert(!r.ok)
     assertEquals(r.code, 234003)
     assert(!r.msg.contains(KEY), s"the full key must be scrubbed: ${r.msg}")
-    assert(r.msg.contains(s"File not in message: ${FeishuChannel.maskKey(KEY)}"), s"got ${r.msg}")
+    assert(!r.msg.contains("File not in message"), s"upstream text must be absent: ${r.msg}")
   }
 
   test("MR9 maskKey: short keys survive intact, long keys keep head+tail only") {

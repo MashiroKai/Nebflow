@@ -4,12 +4,7 @@ import com.lark.oapi.Client as LarkClient
 import com.lark.oapi.core.enums.BaseUrlEnum
 import com.lark.oapi.event.EventDispatcher
 import com.lark.oapi.event.cardcallback.P2CardActionTriggerHandler
-import com.lark.oapi.event.cardcallback.model.{
-  CallBackCard,
-  CallBackToast,
-  P2CardActionTrigger,
-  P2CardActionTriggerResponse
-}
+import com.lark.oapi.event.cardcallback.model.*
 import com.lark.oapi.service.im.ImService
 import com.lark.oapi.service.im.v1.model.{CreateMessageReq, CreateMessageReqBody, P2MessageReceiveV1}
 import com.lark.oapi.ws.Client as WsClient
@@ -282,7 +277,7 @@ object FeishuChannel:
                   queue.offer(inbound)
                   try handler(inbound)
                   catch case e: Exception => lastError = Some(s"handler threw ${e.getClass.getSimpleName}")
-                case Left(reason) => lastError = Some(reason)
+                case Left(_) => lastError = Some("inbound event rejected")
             end handle
         )
         // askuser-remote P1 (A-1/A-2 拍板): the SAME long-connection dispatcher
@@ -367,7 +362,7 @@ object FeishuChannel:
         ConnectResult(ok = true, connectedAt, s"websocket ready within ${readyMs}ms (region=$region)")
       catch
         case e: Exception =>
-          lastError = Some(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+          lastError = Some(s"${e.getClass.getSimpleName}")
           // A failed handshake still owns a socket attempt — close it so no
           // reconnect loop outlives this call.
           ws.foreach { c =>
@@ -448,12 +443,11 @@ object FeishuChannel:
           ok = true,
           Option(resp.getData).flatMap(d => Option(d.getMessageId)),
           resp.getCode,
-          Option(resp.getMsg).getOrElse(""),
+          "remote response",
           at,
           receiveIdType
         )
-      else if resp != null then
-        SendResult(ok = false, None, resp.getCode, Option(resp.getMsg).getOrElse(""), at, receiveIdType)
+      else if resp != null then SendResult(ok = false, None, resp.getCode, "remote response", at, receiveIdType)
       else SendResult(ok = false, None, -1, "SDK returned a null response", at, receiveIdType)
     catch
       case e: Exception =>
@@ -461,7 +455,7 @@ object FeishuChannel:
           ok = false,
           None,
           -1,
-          s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}",
+          s"${e.getClass.getSimpleName}",
           at,
           receiveIdType
         )
@@ -509,12 +503,12 @@ object FeishuChannel:
         headers.foreach { case (k, v) => builder.header(k, v) }
         val request = body match
           case Some(bytes) => builder.POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(bytes)).build()
-          case None        => builder.GET().build()
+          case None => builder.GET().build()
         val resp = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofByteArray())
         Right((resp.statusCode(), resp.body()))
       catch
         case e: Exception =>
-          Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+          Left(s"${e.getClass.getSimpleName}")
 
   /** One cached tenant token (value never leaves this map). */
   private final case class CachedToken(token: String, fetchedAt: Long)
@@ -532,7 +526,12 @@ object FeishuChannel:
    * code/msg only, the request body (which carries the secret) never rides a
    * log line.
    */
-  private[social] def tenantToken(appId: String, appSecret: String, base: String, http: RawHttp): Either[String, String] =
+  private[social] def tenantToken(
+    appId: String,
+    appSecret: String,
+    base: String,
+    http: RawHttp
+  ): Either[String, String] =
     val cacheKey = s"$appId@$base"
     tokenCache.synchronized {
       tokenCache.get(cacheKey).filter(t => System.currentTimeMillis() - t.fetchedAt < TokenTtlMs) match
@@ -542,10 +541,16 @@ object FeishuChannel:
             .obj("app_id" -> io.circe.Json.fromString(appId), "app_secret" -> io.circe.Json.fromString(appSecret))
             .noSpaces
             .getBytes("UTF-8")
-          http(s"$base/open-apis/auth/v3/tenant_access_token/internal", Map("Content-Type" -> "application/json"), Some(body)) match
-            case Left(err) => Left(s"token request failed: $err")
+          http(
+            s"$base/open-apis/auth/v3/tenant_access_token/internal",
+            Map("Content-Type" -> "application/json"),
+            Some(body)
+          ) match
+            case Left(_) => Left("token request failed")
             case Right((status, bytes)) =>
-              io.circe.parser.parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)).toOption
+              io.circe.parser
+                .parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8))
+                .toOption
                 .flatMap { j =>
                   val code = j.hcursor.downField("code").as[Long].toOption.map(_.toInt).getOrElse(-1)
                   if code == 0 then
@@ -554,12 +559,12 @@ object FeishuChannel:
                         tokenCache.update(cacheKey, CachedToken(token, System.currentTimeMillis()))
                         Some(Right(token))
                       case None => Some(Left(s"token response carried no tenant_access_token (http=$status)"))
-                  else
-                    val msg = j.hcursor.downField("msg").as[String].toOption.getOrElse("")
-                    Some(Left(s"token refused code=$code msg=$msg (http=$status)"))
+                  else Some(Left(s"token refused code=$code (http=$status)"))
                 }
                 .getOrElse(Left(s"token response was not JSON (http=$status, ${bytes.length}B)"))
+          end match
     }
+  end tenantToken
 
   // ───── 入站消息资源下载（feishu-image-endpoint 批，2026-11-07）: 两条腿与诊断 ─────
   //
@@ -601,9 +606,9 @@ object FeishuChannel:
 
     def ofMessageType(messageType: String): Option[String] =
       messageType match
-        case "image"                    => Some(Image)
+        case "image" => Some(Image)
         case "file" | "audio" | "media" => Some(File)
-        case _                          => None
+        case _ => None
 
   /**
    * 诊断里使用的 key 截断：key 不是凭据，但它又长又吵，报障只需要头尾特征。
@@ -629,7 +634,9 @@ object FeishuChannel:
    * a leg mix-up, so an endpoint-less reading is worthless for next time.
    */
   private def resourceErrorReading(status: Int, body: Array[Byte], api: String, endpoint: String): (Int, String) =
-    io.circe.parser.parse(new String(body, java.nio.charset.StandardCharsets.UTF_8)).toOption
+    io.circe.parser
+      .parse(new String(body, java.nio.charset.StandardCharsets.UTF_8))
+      .toOption
       .flatMap { j =>
         val cursor = j.hcursor
         val rawCode = cursor.downField("code").focus
@@ -641,10 +648,9 @@ object FeishuChannel:
           .map(_.toInt)
           .orElse(cursor.downField("code").as[String].toOption.flatMap(s => scala.util.Try(s.toInt).toOption))
         code.map { c =>
-          val msg = cursor.downField("msg").as[String].toOption.getOrElse("")
           (
             c,
-            s"Feishu $api refused (http=$status endpoint=$endpoint fields=code:${rawCode.isDefined},msg:${rawMsg.isDefined}; code=$c msg=$msg)"
+            s"Feishu $api refused (http=$status endpoint=$endpoint fields=code:${rawCode.isDefined},msg:${rawMsg.isDefined}; code=$c)"
           )
         }
       }
@@ -666,11 +672,16 @@ object FeishuChannel:
   /** Encode arbitrary input as one RFC 3986 path segment, never as URL syntax. */
   private def encodePathSegment(value: String): String =
     val hex = "0123456789ABCDEF"
-    value.getBytes(java.nio.charset.StandardCharsets.UTF_8).iterator.map { b =>
-      val c = b & 0xff
-      if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || "-._~".contains(c.toChar) then c.toChar.toString
-      else s"%${hex.charAt(c >>> 4)}${hex.charAt(c & 0x0f)}"
-    }.mkString
+    value
+      .getBytes(java.nio.charset.StandardCharsets.UTF_8)
+      .iterator
+      .map { b =>
+        val c = b & 0xff
+        if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || "-._~".contains(c.toChar) then
+          c.toChar.toString
+        else s"%${hex.charAt(c >>> 4)}${hex.charAt(c & 0x0f)}"
+      }
+      .mkString
 
   /**
    * `im/v1/images/:image_key` — download one image the BOT ITSELF uploaded
@@ -702,13 +713,20 @@ object FeishuChannel:
     getImageVia(rawHttpLive())(appId, appSecret, region, imageKey)
 
   /** The [[RawHttp]]-seamed core — the offline spec injects the transport here. */
-  private[social] def getImageVia(http: RawHttp)(appId: String, appSecret: String, region: String, imageKey: String): ImageResult =
+  private[social] def getImageVia(
+    http: RawHttp
+  )(appId: String, appSecret: String, region: String, imageKey: String): ImageResult =
     val base = baseOriginOf(region)
     tenantToken(appId, appSecret, base, http) match
       case Left(reason) => ImageResult(ok = false, None, -1, reason)
       case Right(token) =>
-        http(s"$base/open-apis/im/v1/images/${encodePathSegment(imageKey)}", Map("Authorization" -> s"Bearer $token"), None) match
-          case Left(_) => ImageResult(ok = false, None, -1, "image GET transport failed (endpoint=im/v1/images/:image_key)")
+        http(
+          s"$base/open-apis/im/v1/images/${encodePathSegment(imageKey)}",
+          Map("Authorization" -> s"Bearer $token"),
+          None
+        ) match
+          case Left(_) =>
+            ImageResult(ok = false, None, -1, "image GET transport failed (endpoint=im/v1/images/:image_key)")
           case Right((status, bytes)) =>
             if status >= 200 && status < 300 then
               if bytes.nonEmpty then ImageResult(ok = true, Some(bytes), status, "ok")
@@ -718,6 +736,7 @@ object FeishuChannel:
               // feishu-image-endpoint 批: 完整 key 不进读数——回显时替换为截断形
               // （cd68b495e 的「不泄露完整 key」要求保留，形态收窄为 maskKey）。
               ImageResult(ok = false, None, code, scrubKey(msg, imageKey))
+    end match
 
   end getImageVia
 
@@ -748,7 +767,14 @@ object FeishuChannel:
   /** The [[RawHttp]]-seamed core — the offline spec injects the transport here. */
   private[social] def getMessageResourceVia(
     http: RawHttp
-  )(appId: String, appSecret: String, region: String, messageId: String, fileKey: String, resourceType: String): ImageResult =
+  )(
+    appId: String,
+    appSecret: String,
+    region: String,
+    messageId: String,
+    fileKey: String,
+    resourceType: String
+  ): ImageResult =
     val base = baseOriginOf(region)
     val mid = Option(messageId).map(_.trim).getOrElse("")
     val key = Option(fileKey).map(_.trim).getOrElse("")
@@ -760,7 +786,7 @@ object FeishuChannel:
         ok = false,
         None,
         -1,
-        s"unsupported resource type '$kind' (endpoint=$MessageResourceEndpoint; expected ${ResourceKind.Allowed.mkString("|")})"
+        s"unsupported resource type (endpoint=$MessageResourceEndpoint; expected ${ResourceKind.Allowed.mkString("|")})"
       )
     else
       tenantToken(appId, appSecret, base, http) match
@@ -780,6 +806,7 @@ object FeishuChannel:
               else
                 val (code, msg) = messageResourceErrorReading(status, bytes)
                 ImageResult(ok = false, None, code, scrubKey(msg, key))
+    end if
 
   end getMessageResourceVia
 
@@ -806,7 +833,14 @@ object FeishuChannel:
   /** The [[RawHttp]]-seamed core — the offline spec pins both legs here. */
   private[social] def getInboundResourceVia(
     http: RawHttp
-  )(appId: String, appSecret: String, region: String, messageId: String, fileKey: String, resourceType: String): ImageResult =
+  )(
+    appId: String,
+    appSecret: String,
+    region: String,
+    messageId: String,
+    fileKey: String,
+    resourceType: String
+  ): ImageResult =
     if Option(messageId).map(_.trim).exists(_.nonEmpty) then
       val r = getMessageResourceVia(http)(appId, appSecret, region, messageId, fileKey, resourceType)
       if r.ok then r.copy(msg = "ok (leg=message-resources)") else r.copy(msg = s"leg=message-resources ${r.msg}")
@@ -867,12 +901,11 @@ object FeishuChannel:
           ok = true,
           Option(resp.getData).flatMap(d => Option(d.getMessageId)),
           resp.getCode,
-          Option(resp.getMsg).getOrElse(""),
+          "remote response",
           at,
           receiveIdType
         )
-      else if resp != null then
-        SendResult(ok = false, None, resp.getCode, Option(resp.getMsg).getOrElse(""), at, receiveIdType)
+      else if resp != null then SendResult(ok = false, None, resp.getCode, "remote response", at, receiveIdType)
       else SendResult(ok = false, None, -1, "SDK returned a null response", at, receiveIdType)
     catch
       case e: Exception =>
@@ -880,7 +913,7 @@ object FeishuChannel:
           ok = false,
           None,
           -1,
-          s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}",
+          s"${e.getClass.getSimpleName}",
           at,
           receiveIdType
         )
