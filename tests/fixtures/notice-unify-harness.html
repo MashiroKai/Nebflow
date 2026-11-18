@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- notice-unify-harness.html — evidence page for the notice-unify batch
+     (2026-11-18). Loads the REAL production stylesheet chain + the REAL
+     /js/modal.js and /js/notificationBanner.js modules, so the three declared
+     notification types render with their true recipe:
+       1. toast  — showToast() (transient, bottom-right float)
+       2. banner — addNotification() into #notification-banner (+ #conn-banner)
+       3. inline — .notice-card inside the chat column (in-context, non-floating)
+     The page is driven by tests/_notice-unify-evidence.mjs. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>notice-unify harness</title>
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/design-system.css">
+<link rel="stylesheet" href="/css/glass.css">
+<link rel="stylesheet" href="/css/modal.css">
+<link rel="stylesheet" href="/css/chat.css">
+<link rel="stylesheet" href="/css/liveness.css">
+<link rel="stylesheet" href="/css/sapphire.css">
+<style>
+  html, body { margin: 0; padding: 0; }
+  /* Chat-like backdrop stand-in (frosted surfaces need content behind). */
+  .backdrop {
+    position: fixed; inset: 0; padding: 16px;
+    background: repeating-linear-gradient(45deg, #6a8fd8 0 40px, #4a6ab0 40px 80px);
+  }
+  .backdrop .bubble {
+    max-width: 520px; padding: 10px 14px; border-radius: 14px;
+    font-size: 13px; line-height: 1.55; margin-bottom: 10px;
+    background: rgb(255 255 255 / 0.55); color: #1a1a1a;
+  }
+  /* Host the app's real banner container in-flow, just under the fixed conn strip. */
+  #conn-banner { position: fixed; }
+  .top-spacer { height: 46px; }
+  #notification-banner { position: relative; padding-top: 6px; }
+  #chat { padding: 14px 16px 0; box-sizing: border-box; margin-top: 96px; }
+  /* Presentation only: keep the demo inline row legible in the narrow viewport. */
+  #chat .notice-card { max-width: 100%; }
+  @media (max-width: 560px) { .row.notice { justify-content: flex-start; } }
+</style>
+</head>
+<body>
+<div class="backdrop">
+  <div class="bubble">通知族三型取证后景：右下角 toast / 顶部横幅需要有内容可透。</div>
+  <div class="bubble">第二行后景内容，用于观察毛玻璃与堆叠。</div>
+</div>
+
+<!-- Real app hosts (same ids/classes the modules write into). -->
+<div class="top-spacer"></div>
+<div id="conn-banner" class="hidden" role="status" aria-live="polite"></div>
+<div id="notification-banner"></div>
+<div id="chat">
+  <div class="row notice"><div class="notice-card notice-info">就地提示 · 不浮层</div></div>
+</div>
+
+<script>window.__noticeTest = { ready: false, pageErrors: [] };</script>
+<script>
+  window.addEventListener('error', (e) => { window.__noticeTest.pageErrors.push(String(e.message)); });
+</script>
+<script type="module">
+  const { showToast } = await import('/js/modal.js');
+  const { addNotification, dismissNotification } = await import('/js/notificationBanner.js');
+  window.__noticeTest.showToast = showToast;
+  window.__noticeTest.addNotification = addNotification;
+  window.__noticeTest.dismissNotification = dismissNotification;
+  // conn-banner (transport-state banner) — rendered exactly as ws.js does.
+  window.__noticeTest.showConnBanner = () => {
+    const el = document.getElementById('conn-banner');
+    el.innerHTML = '<span class="conn-banner-glyph">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<line x1="2" y1="2" x2="22" y2="22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/>' +
+      '<path d="M2 8.8a15 15 0 0 1 4.2-2.8"/><path d="M22 8.8a15 15 0 0 0-4.2-2.8"/>' +
+      '<path d="M5 12.5a10 10 0 0 1 3-1.9"/><path d="M19 12.5a10 10 0 0 0-3-1.9"/>' +
+      '<line x1="12" y1="20" x2="12.01" y2="20"/></svg></span><span class="conn-banner-text">连接断开 · 正在重连</span>';
+    el.classList.remove('hidden'); el.classList.add('show');
+  };
+  window.__noticeTest.hideConnBanner = () => {
+    const el = document.getElementById('conn-banner');
+    el.classList.remove('show'); el.classList.add('hidden');
+  };
+  window.__noticeTest.ready = true;
+</script>
+</body>
+</html>

@@ -22,6 +22,10 @@ export const CHECKS = [
   nodeCheck('mobile-floating-inventory', 'check-mobile-floating-inventory'),
   nodeCheck('design-tokens', 'check-design-tokens'),
   nodeCheck('message-style', 'check-msgstyle-single-source'),
+  // notice-unify 批（2026-11-18，作者令「形成 lint 检查…统一到 2-3 种风格和类型的通知」）：
+  // 通知族只允许声明的三型（toast 瞬时浮动 / banner 常驻横幅 / inline 就地提示）；
+  // 未声明的通知类名或非单源的 toast/banner 样式定义即红（第四种风格 / 内联手写通知）。
+  nodeCheck('notice-unify', 'check-notice-unify'),
   nodeCheck('chat-ui', 'check-chat-ui'),
   { name: 'chat-ui-computed', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/chat-ui-computed.mjs'] },

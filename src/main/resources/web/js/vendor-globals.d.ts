@@ -59,9 +59,23 @@ interface Window {
   copyCode(btn: HTMLElement): void;
 }
 
-/** Global toast helper (set by main.js) */
+/** Global toast helper (set by modal.js initModals). Signature mirrors
+ *  modal.js showToast — the single transient-notice source (notice-unify batch
+ *  2026-11-18): `opts` carries the shape switches only (closable = hand-close
+ *  button; hint = secondary "next step" line; action = action button inside the
+ *  body column, e.g. Undo). Absent `opts` the toast DOM is byte-identical to the
+ *  legacy plain toast. */
 interface Window {
-  __showToast?: (message: string, kind?: string) => void;
+  __showToast?: (
+    message: string,
+    kind?: string,
+    opts?: {
+      closable?: boolean,
+      hint?: string,
+      closeLabel?: string,
+      action?: { label: string, onClick?: () => void },
+    },
+  ) => void;
 }
 
 /** Global confirm dialog (set by modal.js initModals). Signature mirrors
