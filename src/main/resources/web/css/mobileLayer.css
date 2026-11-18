@@ -2777,6 +2777,15 @@ body.mobile-layer .mf-me-hint {
   line-height: 1.5;
   color: var(--color-text-muted);
 }
+/* 绑定读数缺口说明（profile-complete 批，作者令「不许留『未知』而不解释」）：
+   与 .mf-me-hint 同一排版族，但**独立类名** —— 两条提示句各有各的判据（这条解释
+   读不到绑定、那条给编辑落点），合成一个类会让「哪句在说哪件事」不可机检。 */
+body.mobile-layer .mf-me-gapnote {
+  margin: var(--ds-space-3) var(--ds-space-6) 0;
+  font-size: var(--mfs-min);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
 
 /* ── 社交页面（消息/联系人；socialFaces.js）────────────────────────── */
 /* 封存空态卡（features.friends 缺席；骨架占位 + 文案，不伪造数据）。 */

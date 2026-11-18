@@ -3498,6 +3498,8 @@ export default {
   'profile.deviceSignOutFailed': 'The sign-out request was not delivered; that device session is unchanged.',
   'profile.deviceSignOutRemoteUnsupported': 'That device keeps its own credential locally, so this device cannot sign it out - sign out on that device itself.',
   'profile.editOnWebsite': 'Identity fields are read-only readings; to edit them go to the website account page {where}.',
+  'profile.githubUnavailable': 'The account service returned no GitHub username (that reading comes from the GitHub account sent at sign-in).',
+  'profile.googleUnavailable': 'The Google binding is maintained on the website account page only; neither the local account service nor the sign-in credential carries it.',
   'profile.signedIn': 'Signed in',
 };
 

@@ -22,6 +22,12 @@
 //      子页与「编辑资料」空动作**整族退役**（导航表里也不存在 ⇒ pushPage 到不了）；
 //      me 页收成单页 = 资料卡 + 只读身份读数 + 官网编辑指引（纯文本）+ 设备清单
 //      （逐设备独立退出）。T3 判据随之改写 —— 旧判据断言的正是这批已退役的子页。
+//      ⚠️ 2026-11-18 profile-complete 批（作者令「个人主页信息很多都没获取全 比如
+//      github绑定信息」「在个人主页再次点击头像要能跳转官网」）：me 页①自己触发自证
+//      探针（用户名不再恒「未知」）；②GitHub 绑定 = `status.device.githubLogin`
+//      真实读数；③Google 绑定仍「未知」但附缺口说明；④资料卡大头像 = 官网出口
+//      （`<a target="_blank" rel="noopener noreferrer">`）—— T3 的「零 <a href>」
+//      判据改为「外链恰为头像这一枚」，其余读数字段判据同步更新。
 //
 // Run: node <stand>/node_modules/@playwright/test/cli.js test tests/mobile-topbar.spec.mjs
 
@@ -77,7 +83,7 @@ async function bootApp(page, { friends = false } = {}) {
       if (p === '/api/neblink/status') {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
           loggedIn: true,
-          device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '', email: 'me@example.com', displayName: '测试用户' },
+          device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '', email: 'me@example.com', displayName: '测试用户', githubLogin: 'MashiroKai' },
           peers: [{ deviceId: 'd2', deviceName: '笔记本', platform: 'windows', userDescription: '', avatarUrl: '', online: true }],
         }) });
       }
@@ -199,21 +205,36 @@ test('T3 个人主页单页：子页与空动作整族退役，身份读数与�
   await expect(me.locator('.neblink-logged-in')).toHaveCount(0);
   await expect(me.locator('.neblink-login-section')).toHaveCount(0);
 
-  // ③ 只读身份读数（件四口径不变）：字段 = 账号服务真实读数；零可编辑控件、
-  //    零 <a href>、官网编辑指引为纯文本。
+  // ③ 只读身份读数（件四口径不变）：字段 = 账号服务真实读数；零可编辑控件、官网
+  //    编辑指引为纯文本。⚠️ profile-complete 批（2026-11-18）改了两处，判据同步更新：
+  //    · 资料卡大头像 = **官网出口**（`<a target="_blank" rel="noopener noreferrer">`
+  //      落 `https://mystand.space`）⇒ 本页恰有**一枚** `<a href>`，且就是它；
+  //      「零外链」的旧判据变成「外链只有头像这一枚」。
+  //    · GitHub 绑定不再写死「未知」，读夹具的 `githubLogin`。
   await expect(me.locator('input, select, textarea, [contenteditable="true"], [role="switch"]')).toHaveCount(0);
-  await expect(me.locator('a[href]')).toHaveCount(0);
+  await expect(me.locator('a[href]')).toHaveCount(1);
+  const avatar = me.locator('.mf-me-avatar-frame.huge');
+  await expect(avatar).toHaveAttribute('href', 'https://mystand.space');
+  await expect(avatar).toHaveAttribute('target', '_blank');
+  await expect(avatar).toHaveAttribute('rel', 'noopener noreferrer');
   await expect(me.locator('.mf-me-hint')).toContainText('mystand.space');
   // 字段序（meFace 单页）：用户名 / 昵称 / 邮箱 / GitHub 绑定 / Google 绑定。
   // 用户名 = 自证探针（GET /api/users/search 且 relation_status==='self'）；本夹具未
-  // stub 该端点 ⇒ **未知**（禁拿昵称/邮箱冒充）；昵称/邮箱 = status 的 id_token claims。
+  // stub 该端点 ⇒ **未知**（禁拿昵称/邮箱冒充）；昵称/邮箱 = status 的 id_token claims；
+  // GitHub 绑定 = status.device.githubLogin（真实读数）；Google 绑定本机无来源 ⇒ 未知。
   const values = me.locator('.mf-me-field-value');
   await expect(values).toHaveCount(5);
   await expect(values.nth(0)).toHaveText('未知');
   await expect(values.nth(1)).toHaveText('测试用户');
   await expect(values.nth(2)).toHaveText('me@example.com');
-  await expect(values.nth(3)).toHaveText('未知');
+  await expect(values.nth(3)).toHaveText('MashiroKai');
   await expect(values.nth(4)).toHaveText('未知');
+  // 读不到的那位必须**有解释**（作者令 2026-11-18「不许留未知而不解释」）；读到的不进句。
+  const gap = me.locator('.mf-me-gapnote');
+  await expect(gap).toBeVisible();
+  await expect(gap).toContainText('Google');
+  await expect(gap).toContainText('官网账号页');
+  await expect(gap).not.toContainText('GitHub');
 
   // ④ 设备清单（读数 = neblink status 夹具：本机 d1 + 对端 d2）：本机在首位并带
   //    「本机」标记；退出键各带**该行自己的** deviceId。

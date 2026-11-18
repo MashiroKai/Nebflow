@@ -318,9 +318,14 @@ export async function fetchNeblinkStatus() {
     const wasLoggedIn = neblinkState.loggedIn;
     neblinkState.loggedIn = !!data.loggedIn;
     // Normalize local device fields to match peer field names.
-    // githubLogin is deliberately NOT mapped: the client is Logto-only now
-    // (login-chain unification 2026-09-01) and the field had no consumer in
-    // web/ — it only ever carried the legacy GitHub-enroll handle.
+    // `githubLogin` (profile-complete batch, 2026-11-18): the gateway has always
+    // returned it and the local device identity has always persisted it — the
+    // value is the GitHub account name captured from the server's
+    // `github_username` at enrollment (`NeblinkEnrollment` reads it off the
+    // register response; `NeblinkService.updateDeviceInfo` merges, so an absent
+    // incoming value keeps the stored one). It used to be unmapped because no
+    // consumer existed; the profile surfaces now render it as the GitHub
+    // binding, so it is threaded through here instead of being dropped.
     const d = data.device;
     neblinkState.device = d ? {
       deviceId: d.id,
@@ -329,6 +334,7 @@ export async function fetchNeblinkStatus() {
       capabilities: d.capabilities || {},
       userDescription: d.userDescription || '',
       avatarUrl: d.avatarUrl || '',
+      githubLogin: d.githubLogin || '',
       // Account identity hints (switch-account, 2026-09-10): decoded
       // server-side from the persisted id_token's email/name claims
       // (read-only). Empty strings when the credential predates the claims

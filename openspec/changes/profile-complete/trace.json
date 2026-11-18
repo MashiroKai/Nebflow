@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "change": "profile-complete",
+  "mappings": [
+    {
+      "requirement": "PIC-REQ-001",
+      "scenario": "PIC-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/settingsIdentity.js",
+        "src/main/resources/web/js/mobile/meFace.js",
+        "src/main/resources/web/js/friendsApi.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-complete.spec.mjs",
+          "name": "①②③ 手机个人主页：用户名 / GitHub 绑定 = 真实读数，Google 未知但附缺口说明"
+        },
+        {
+          "path": "tests/profile-settings-batch-acceptance.spec.mjs",
+          "name": "⑤"
+        }
+      ]
+    },
+    {
+      "requirement": "PIC-REQ-002",
+      "scenario": "PIC-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/neblink.js",
+        "src/main/resources/web/js/settingsIdentity.js",
+        "src/main/resources/web/js/mobile/meFace.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-complete.spec.mjs",
+          "name": "①②③ 手机个人主页：用户名 / GitHub 绑定 = 真实读数，Google 未知但附缺口说明"
+        },
+        {
+          "path": "tests/mobile-topbar.spec.mjs",
+          "name": "T3"
+        }
+      ]
+    },
+    {
+      "requirement": "PIC-REQ-003",
+      "scenario": "PIC-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/settingsIdentity.js",
+        "src/main/resources/web/js/mobile/meFace.js",
+        "src/main/resources/web/css/mobileLayer.css",
+        "src/main/resources/web/js/locales/zh-CN.js",
+        "src/main/resources/web/js/locales/en.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-complete.spec.mjs",
+          "name": "⑤ 桌面资料面同读数：GitHub 真实值 + Google 未知 + 同一句缺口说明"
+        },
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": "个人主页"
+        }
+      ]
+    },
+    {
+      "requirement": "PIC-REQ-004",
+      "scenario": "PIC-SCN-004",
+      "implementation": [
+        "src/main/resources/web/js/mobile/meFace.js",
+        "src/main/resources/web/js/brand.js",
+        "src/main/resources/web/css/mobileLayer.css"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-complete.spec.mjs",
+          "name": "④ 点头像 = 新标签页开官网（本页不导航；锚点三属性齐备）"
+        },
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": "个人主页"
+        }
+      ]
+    },
+    {
+      "requirement": "PIC-REQ-004",
+      "scenario": "PIC-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/mobile/meFace.js",
+        "src/main/resources/web/js/brand.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-complete.spec.mjs",
+          "name": "④ 点头像 = 新标签页开官网（本页不导航；锚点三属性齐备）"
+        }
+      ]
+    }
+  ]
+}
