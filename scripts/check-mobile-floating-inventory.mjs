@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url';
 const css = name => readFileSync(new URL(`../src/main/resources/web/css/${name}`, import.meta.url), 'utf8');
 const inventory = [
   ['todo top capsule', 'mobile-todo-apple.css', /\.ta-pill\s*$/, /height\s*:\s*var\(--mcap-h\)/, /\.mobile-page-body\s*$/, /padding-top\s*:[^;]*--mchrome-clear/],
-  ['todo bottom FAB', 'mobile-todo-apple.css', /\.ta-fab-wrap\s*$/, /position\s*:\s*absolute/, /\.ta-root\s*$/, /padding-bottom\s*:[^;]*--mpage-fab-clearance/],
+  ['todo bottom FAB', 'mobile-todo-apple.css', /\.ta-fab-wrap\s*$/, /position\s*:\s*absolute/, /\.ta-root\s*$/, /padding-bottom\s*:[^;]*--mobile-scroll-end/],
   ['todo editor tool', 'mobile-todo-apple.css', /\.ta-tool\s*$/, /position\s*:\s*fixed/, /\[data-page="todo-apple-item"\]\s+\.ta-root\s*$/, /padding-bottom\s*:[\s\S]*--ta-kb[\s\S]*--bottom-band-d/],
   ['message search', 'mobileSearchFlat.css', /\.mh-search-dock:not\(\.has-query\)\s*$/, /position\s*:\s*absolute/, /#fm-conversations/, /padding-top\s*:[^;]*--mhsc-band/],
   ['contact search', 'mobileSearchFlat.css', /\.mh-search-dock:not\(\.has-query\)\s*$/, /position\s*:\s*absolute/, /#fm-contacts-body/, /padding-top\s*:[^;]*--mhsc-band/],
   ['session identity', 'mobileLayer.css', /\.mh-idhead\s*$/, /position\s*:\s*absolute/, /\[data-page='conversation'\]\s+\.fm-flow\s*$/, /padding-top\s*:[^;]*104px/],
-  ['reminder FAB', 'mobileLayer.css', /#reminder-panel\s+\.reminder-fab-add\s*$/, /bottom\s*:[^;]*--mobile-dock-clearance/, /#reminder-panel\s+\.reminder-panel-body\s*$/, /padding\s*:[^;]*--mobile-dock-clearance[^;]*--mpage-fab-clearance/],
+  ['reminder FAB', 'mobileLayer.css', /#reminder-panel\s+\.reminder-fab-add\s*$/, /bottom\s*:[^;]*--mobile-dock-clearance/, /#reminder-panel\s+\.reminder-panel-body\s*$/, /padding\s*:[^;]*--mobile-scroll-end/],
   // Selection Ask is dismissible and may cover its source while open; it is
   // not a persistent chrome bar. Its answer owns its own overflow scrolling.
   ['selection Ask dialog (source occlusion exempt)', 'ask.css', /^\.selection-ask-panel\s*$/, /position\s*:\s*fixed/, /^\.selection-ask-answer\s*$/, /overflow\s*:\s*auto/],
@@ -26,6 +26,13 @@ export function checkInventory(get = css) {
     if (!rules.some(r => overlay.test(r.selector) && overlayRule.test(r.body))) errors.push(`${name}: missing overlay declaration in ${file}`);
     if (!rules.some(r => owner.test(r.selector) && ownerRule.test(r.body))) errors.push(`${name}: missing or mismatched clearance owner in ${file}`);
   }
+  // 净空 owner 一律消费单源 `--mobile-scroll-end`（滚域末端净空单源批
+  // 2026-11-18），而它自身必须仍由 dock 让位派生 —— 防止「owner 换了 token、
+  // 净空却不再含 dock 让位」的脱钩（与 check-floating-clearance 的同名链断言同源）。
+  const layer = get('mobileLayer.css').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const endDecl = layer.match(/(?:^|[\s;])--mobile-scroll-end\s*:\s*([^;]+)/);
+  if (!endDecl) errors.push('--mobile-scroll-end: missing single-source declaration in mobileLayer.css');
+  else if (!/--mobile-dock-clearance/.test(endDecl[1])) errors.push('--mobile-scroll-end: no longer derives from --mobile-dock-clearance in mobileLayer.css');
   return errors;
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -35,6 +35,10 @@ test('rejects clearance assigned to wrong canvas object through CLI', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test('rejects absent message clearance', () => {
-  const altered = css.replace(/padding-bottom: var\(--mobile-dock-clearance\);/g, 'padding-bottom: 0;');
+  const altered = css.replace(/([^{}]*#fm-conversations[^{}]*\{[^{}]*?)padding-bottom: var\(--mobile-scroll-end\)/, '$1padding-bottom: 0px');
   assert.ok(check(altered).some(e => /message scroller/.test(e)));
+});
+test('rejects broken single-source clearance chain', () => {
+  const altered = css.replace(/--mobile-scroll-end: calc\(var\(--mobile-dock-clearance\)[^;]*;/, '--mobile-scroll-end: 72px;');
+  assert.ok(check(altered).some(e => /no longer derives from/.test(e)), check(altered).join('\n'));
 });

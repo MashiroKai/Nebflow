@@ -11,7 +11,8 @@ test('todo scroll root cannot shrink below its content and clearance', () => {
 });
 for (const [name, file, pattern] of [
   ['todo top capsule', 'mobile-todo-apple.css', /padding-top: calc\(var\(--mchrome-clear\)/g],
-  ['todo bottom FAB', 'mobile-todo-apple.css', /padding-bottom: calc\(var\(--mobile-dock-clearance\) \+ var\(--mpage-fab-clearance/g],
+  ['todo bottom FAB', 'mobile-todo-apple.css', /padding-bottom: var\(--mobile-scroll-end\)/g],
+  ['reminder FAB', 'mobileLayer.css', /padding: 0 0 max\(var\(--mobile-scroll-end\)/g],
   ['todo editor tool', 'mobile-todo-apple.css', /--ta-kb/g],
   ['message search', 'mobileSearchFlat.css', /padding-top: calc\(var\(--mhsc-band\)/g],
   ['session identity', 'mobileLayer.css', /padding-top: calc\(104px/g],
