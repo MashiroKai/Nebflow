@@ -244,6 +244,18 @@ function enhance(select) {
   // 键盘位由 trigger 接（可见焦点 = 标准文件给 .nf-field 的 :focus-visible 环）。
   select.tabIndex = -1;
   select.classList.add(NATIVE_CLASS);
+  // 🔴 「同字段两个控件」修复批（2026-11-18 作者报障「电脑端的下拉选框，怎么有重复」）：
+  // 被替换的原生 select 的**不可见**从「只由 css/dropdown.css 一条声明负责」改成
+  // **本组件自己拥有**（inline）。断因：JS 与 CSS 是分别缓存/分别更新的两份资产
+  // （SW 缓存、重启期间逐条 cherry-pick 的落盘即属此类），任一侧陈旧或半更新时，
+  // 替换掉的旧控件会重新可见 ⇒ 同一个字段同屏出现两个控件（统一 trigger + 原生
+  // select）。inline 声明优先级高于任何非 important 的表内声明 ⇒ 只要收编发生，
+  // 旧控件就没有第二条可见路径，与样式资产状态无关。
+  // 契约不变：opacity:0 仍算可操作/可见（selectOption / inputValue / 站点 .value
+  // 读写全部照旧）；values 与 css/dropdown.css 的同名声明**必须逐值一致**
+  // （scripts/check-dropdown-single-control.mjs 对账两处，避免分叉）。
+  select.style.opacity = '0';
+  select.style.pointerEvents = 'none';
 
   wrap.appendChild(trigger);
   wrap.appendChild(select);
