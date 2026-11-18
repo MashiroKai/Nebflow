@@ -325,68 +325,6 @@ final class ConsoleTakeover(
         m.map { case (k, inst) => k -> (if inst.conns.contains(connId) then inst.copy(conns = inst.conns - connId) else inst) }
       }
 
-  /**
-   * 【重新接管】（收流管拦截 `takeoverRetake` 帧后调用）：owner 翻回本连接的实例 +
-   * 向前主活跃连接反向踢 + 回执。未注册连接（Bearer）⇒ ok:false。
-   */
-  def handleRetake(connId: String, reply: Json => IO[Unit]): IO[Unit] =
-    if !enabled then IO.unit
-    else
-      instancesRef.get.flatMap { m =>
-        m.collectFirst { case (k, inst) if inst.conns.contains(connId) => k } match
-          case None =>
-            logger.warn(s"console-takeover: retake from unregistered conn $connId refused") *>
-              reply(ConsoleTakeover.resultFrame(ok = false))
-          case Some(key) =>
-            IO.uncancelable { _ =>
-              for
-                cur <- controlRef.get.map(_.owner)
-                _ <- cur match
-                  case Some(c) if c == key =>
-                    // 已是 owner（竞态窗：模态未收时所有权已回）——幂等 ok，零帧。
-                    IO.unit
-                  case _ =>
-                    for
-                      _ <- claimAndReverseKick(key, cur)
-                      _ <- logWith(
-                        s"console-takeover: ${label(key)} retook console control (ws leg)" +
-                          cur.fold("")(p => s" — reverse takeover pushed to ${label(p)}"),
-                        (key +: cur.toList)*
-                      )
-                    yield ()
-                // 统一回执（already-owner 竞态腿同为幂等 ok；ok:false 只在未注册腿发）。
-                _ <- reply(ConsoleTakeover.resultFrame(ok = true))
-              yield ()
-            }
-      }
-
-  /**
-   * 旧会话 retake 方法：HTTP 路由已移除，方法暂留待后端状态机收敛。
-   */
-  def retakeBySession(sessionId: String, clientId: Option[String] = None): IO[ConsoleTakeover.RetakeOutcome] =
-    if !enabled then IO.pure(ConsoleTakeover.RetakeOutcome.Disabled)
-    else
-      val key = ConsoleTakeover.holderOf(sessionId, clientId)
-      IO.uncancelable { _ =>
-        for
-          cur <- controlRef.get.map(_.owner)
-          kicked <- cur match
-            case Some(c) if c == key =>
-              // 已是 owner（竞态窗：模态未收时所有权已回）——幂等成功，零帧。
-              IO.pure(0)
-            case _ =>
-              for
-                kicked <- claimAndReverseKick(key, cur)
-                _ <- logWith(
-                  s"console-takeover: ${label(key)} retook console control (http leg) — " +
-                    s"reverse takeover pushed to $kicked conn(s)" +
-                    cur.fold("")(p => s" of ${label(p)}"),
-                  (key +: cur.toList)*
-                )
-              yield kicked
-        yield ConsoleTakeover.RetakeOutcome.Ok(kicked)
-      }
-
   // ── 内部 ────────────────────────────────────────────────────────────────
 
   /**
@@ -593,9 +531,6 @@ final class ConsoleTakeover(
    * 返回送达连接数（无旧主/无活连接 = 0；旧主下次重连按 pastOwners 规则落被踢面
    * ——最终一致，A9 同款兜底）。
    */
-  private def claimAndReverseKick(key: String, prevOwner: Option[String]): IO[Int] =
-    claim(key) *> reverseKickAfterClaim(key, prevOwner)
-
   // Shared post-transition path: Canvas performs its state transition atomically under
   // the same lock, so it cannot call claim(key) again (that would clear its writer).
   private def reverseKickAfterClaim(key: String, prevOwner: Option[String]): IO[Int] =
@@ -736,12 +671,6 @@ object ConsoleTakeover:
         s"sid=$sid ip=${i.ip.filter(_.nonEmpty).getOrElse("-")} ua=${i.uaClass} " +
           s"end=${i.endprint.getOrElse("-")} auto=${if i.automated then "yes" else "no"}" +
           (if i.spectator then " spectator=yes" else "")
-
-  /** 【重新接管】HTTP 腿的裁决（`retakeBySession`）：Ok 带反向踢送达连接数；Disabled = 总闸关。 */
-  sealed trait RetakeOutcome extends Product with Serializable
-  object RetakeOutcome:
-    final case class Ok(kickedConns: Int) extends RetakeOutcome
-    case object Disabled extends RetakeOutcome
 
   /**
    * 接管判定（单源）：
