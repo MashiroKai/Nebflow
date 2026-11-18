@@ -599,7 +599,41 @@ body.mobile-layer .mh-chrome-badge[hidden] { display: none; }
 body.mobile-layer {
   --dock-center-size: 44px;
   --dock-center-lift: 0px;
-  --mobile-dock-clearance: calc(var(--mobile-dock-measured, var(--dock-h)) + var(--dock-gap) + var(--dock-inset-b) + env(safe-area-inset-bottom, 0px));
+  /* ── dock 座 / dock 让位 / 滚域末端净空：三层单源（滚域末端净空批 2026-11-18）
+     ① `--mobile-dock-top` = 屏底 → dock 上缘的距离 = dock 高（JS 实测优先）
+        + 底内距 + 设备安全区。**所有「离 dock 多远的浮件座位」消费本值**
+        （ask 气泡钮 / 记事本窗 / 插件加号 / 输入卡 / dock 背板带），
+        禁再手写 `--dock-h + --dock-inset-b + env(safe-area-inset-bottom)`
+        —— 改前一式在 ask.css（两处）与 mobileLayer.css（两处）各写一份，
+        改一处必须同步另一处的既存重复（作者令 2026-11-18 点名的就是它）。
+     ② `--mobile-dock-clearance` = ① + 呼吸缝 --dock-gap = 浮在 dock 之上
+        那一件（输入条等）的座位；dock 等高的消费面照旧。
+     ③ `--mobile-scroll-end` = **滚域末端净空唯一来源**：任何自持滚动面
+        （页体自身 / 收编面内滚区）的内容末尾垫高都消费这一个值，页面里
+        零字面量。层叠 = dock 让位（恒在）+ 底右悬浮钮带（--mobile-fab-layer，
+        仅钮页改写成 --mpage-fab-clearance）+ 输入条层（--mobile-composer-layer，
+        仅会话页）—— 三种浮件互不共面，同 canvas 侧「控件行 + 呼吸」的做法相加
+        （见 L4915 块：`--mf-ctrl-row` + 12px 呼吸）。 */
+  --mobile-dock-top: calc(var(--mobile-dock-measured, var(--dock-h)) + var(--dock-inset-b) + env(safe-area-inset-bottom, 0px));
+  --mobile-dock-clearance: calc(var(--mobile-dock-top) + var(--dock-gap));
+  --mobile-fab-layer: 0px;
+  --mobile-composer-layer: 0px;
+}
+/* 末端净空**声明在页壳上**：两层改写（钮带/输入条）也挂在同一个 `.mobile-page`
+   元素上 ⇒ `var()` 在该元素上解析，页级改写即时生效（写在 body 上会被 body 层
+   的 0 冻结，后代改层无效 —— 自定义属性在声明元素上完成替换）。 */
+body.mobile-layer .mobile-page {
+  --mobile-scroll-end: calc(var(--mobile-dock-clearance) + var(--mobile-fab-layer) + var(--mobile-composer-layer));
+}
+/* ① 底右悬浮钮页：浮钮出现即自动加一层钮带（项名 = 页内真实的浮钮类，
+   不枚举页 id —— 新页接同族钮类即自动纳入）。 */
+body.mobile-layer .mobile-page:has(:is(.ta-fab, .tfl-fab-add, .reminder-fab-add, .proj-create-fab, [data-plugins-add])) {
+  --mobile-fab-layer: var(--mpage-fab-clearance);
+}
+/* ② 会话页：输入条浮在 dock 之上（另一件浮件，另占一条带）⇒ 末端净空再叠
+   输入条本体高（--mobile-composer-reserve，见 L486 注）。 */
+body.mobile-layer .mobile-page[data-page='conversation'] {
+  --mobile-composer-layer: var(--mobile-composer-reserve);
 }
 body.mobile-layer #mobile-dock {
   position: fixed;
@@ -826,7 +860,8 @@ body.mobile-layer #mobile-pages::before {
   right: 0;
   bottom: 0;
   z-index: -1;
-  height: calc(var(--dock-h) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px));
+  /* dock 座 = 单源 token（改前 = dock-h + inset-b + safe 的手写展开）。 */
+  height: var(--mobile-dock-top);
   background: var(--color-bg);
 }
 body.mobile-layer .mobile-page {
@@ -959,9 +994,14 @@ body.mobile-layer .mobile-page:not(.mobile-page-nohead) .mobile-page-body {
 body.mobile-layer .mobile-page-nohead .mobile-page-body {
   padding-top: calc(var(--mtitle-lead) + env(safe-area-inset-top, 0px));
 }
-/* 滚动面末端净空：实测 dock 高度、呼吸缝、底缘内距及设备安全区。 */
+/* 滚动面末端净空（滚域内容级 reserve 单源，见文件上方 --mobile-scroll-end 注）：
+   写在**滚动内容**上（页体自身滚动时即页体 padding-bottom；页体只是外壳时
+   本值归零、净空内收进真滚域，见文件尾「滚域末端净空单源批」）。
+   语义 = 滚到底时最后一行完整可见（≥ dock 上缘 + 呼吸缝），滚动态内容仍从
+   浮件下方穿过。 */
 body.mobile-layer .mobile-page-body {
-  padding-bottom: var(--mobile-dock-clearance);
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 body.mobile-layer .mobile-page-body::-webkit-scrollbar { display: none; }
 /* 设备平级批 2026-10-31（作者令：会话窗 = 单一固定对话窗「像微信聊天页」，禁横向
@@ -1115,8 +1155,8 @@ body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal {
   overflow: visible;
 }
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
-  padding-bottom: calc(var(--mobile-composer-reserve) + var(--mobile-dock-clearance));
-  scroll-padding-bottom: calc(var(--mobile-composer-reserve) + var(--mobile-dock-clearance));
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 
 /* ═══ 设置页顶栏悬空批（作者令 2026-11-18 16:36 第②条）══════════════════════
@@ -1138,10 +1178,15 @@ body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
      · 静止态首行仍不被钮压住：让位从「页体级」搬到「滚域内容级」
        （同值 --mchrome-clear）—— 静止态视觉零位移，判定式记在闸
        mobile-overlay-glass G4（scrollTop=0 时首行顶 ≥ 钮底缘）；
-     · 底部不动：`#settings-content` 既有 dock 净空照旧（设置内容止于 dock
-       上缘，不存在被 dock 裁切的行）。 */
+     · 底部（滚域末端净空批 2026-11-18 18:17 补）：让位**同顶一样搬到滚域
+       内容级** —— 页体底垫归零（`#settings-modal` 吃满到屏底，内容从 dock
+       下方穿过），`#settings-content` 的 padding-bottom = `--mobile-scroll-end`
+       （见 L2738 与文件尾「滚域末端净空单源批」）。改前页体底垫把
+       `#settings-modal` 钳到 y740（dock 上缘 750 之上 10px）⇒ 行在同一条
+       水平线上被硬切，作者读作「底部还是被 dock 截断」。 */
 body.mobile-layer .mobile-page[data-page='settings'] .mobile-page-body {
   padding-top: 0;
+  padding-bottom: 0;
 }
 body.mobile-layer .mobile-page[data-page='settings'] #settings-content {
   padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
@@ -2735,7 +2780,10 @@ body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-co
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: max(var(--mpage-fab-clearance), var(--mobile-dock-clearance));
+  /* 末端净空 = 单源 token；`--mpage-fab-clearance` 是钮带层，本页无浮钮 ⇒ 不加
+     （改前 max() 里那 80 是复制来的钮带值，比真需求多 8px）。 */
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 /* 个人主页（me）：资料卡。 */
 body.mobile-layer .mf-me-card {
@@ -2974,10 +3022,9 @@ body.mobile-layer #input-area {
      两套语言。留白走本层外距，条内 padding 不动。 */
   padding-left: var(--dock-inset-x);
   padding-right: var(--dock-inset-x);
-  padding-bottom: calc(
-    var(--dock-h) + var(--dock-center-lift, 0px) + var(--dock-inset-b, 0px) +
-    var(--dock-gap, 0px) + env(safe-area-inset-bottom, 0px)
-  );
+  /* dock 座位消费单源 token（改前 = `--dock-h + lift + --dock-inset-b +
+     --dock-gap + env(safe)` 的手写展开，与 --mobile-dock-clearance 同值两份）。 */
+  padding-bottom: calc(var(--mobile-dock-clearance) + var(--dock-center-lift, 0px));
 }
 
 /* ── 发送钮退回纯圆（收形批⑥，作者令 10-31 22:50）──────────────────────
@@ -3122,7 +3169,10 @@ body.mobile-layer #mobile-pages .team-scroll {
   flex-direction: column;
   flex-wrap: nowrap;
   gap: var(--ds-space-3);
-  padding: var(--ds-space-3) var(--ds-space-3) calc(24px + env(safe-area-inset-bottom, 0px));
+  /* 末端净空 = 单源 token（滚域末端净空单源批 2026-11-18）：改前裸 24px + safe
+     —— 比真需求短一档（本页有 .proj-create-fab ⇒ token 自动含钮带层）。 */
+  padding: var(--ds-space-3) var(--ds-space-3) var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 body.mobile-layer #mobile-pages .team-scroll::-webkit-scrollbar { display: none; }
 body.mobile-layer #mobile-pages .team-card.project-card {
@@ -3206,12 +3256,15 @@ body.mobile-layer #mobile-pages #plugins-content {
      与本批报障的桌面形态同一个病（各面板各写裸顶垫）。 */
   padding-right: var(--ds-space-3);
   padding-left: var(--ds-space-3);
-  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  /* 末端净空 = 单源 token（改前裸 24px + safe：既漏掉钮带层、又比真实需求少）。 */
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 body.mobile-layer #mobile-pages [data-plugins-add] {
   min-width: var(--mtap);
   min-height: var(--mtap);
-  bottom: calc(var(--dock-h) + var(--dock-inset-b) + var(--dock-gap) + env(safe-area-inset-bottom, 0px)) !important;
+  /* dock 座位消费单源 token（改前 = dock 足迹的手写展开，与 clearance 同值两份）。 */
+  bottom: var(--mobile-dock-clearance) !important;
 }
 body.mobile-layer #mobile-pages .plugins-card-list {
   display: flex;
@@ -4534,6 +4587,15 @@ body.mobile-layer .proj-flowmap-fab {
   min-width: var(--mtap-lg);
   min-height: var(--mtap-lg);
 }
+/* 落位改锚 dock（滚域末端净空单源批 2026-11-18）：桌面档 `bottom:16px` 锚的是
+   **pane 底缘**；手机页面态里 pane 现在吃满到屏底（内容从 dock 下方穿过）
+   ⇒ 16px 会把钮推进 dock 带里（改前实测 748–796，dock 750–804 压住整颗）。
+   手机腿锚 dock 座：`--mobile-dock-clearance` = dock 上缘 + 呼吸缝
+   ⇒ 钮底缘 740、与 dock 顶 750 留 10px，与 .ta-fab-wrap 同一条座位语言。
+   桌面零命中（规则挂 body.mobile-layer）。 */
+body.mobile-layer .proj-create-fab {
+  bottom: var(--mobile-dock-clearance);
+}
 body.mobile-layer .proj-create-fab svg,
 body.mobile-layer .proj-flowmap-fab svg {
   width: var(--micon);
@@ -5335,7 +5397,7 @@ body.mobile-layer .tfl-mobile .tfl-undo {
 body.mobile-layer .tfl-mobile .tfl-list {
   flex: 1 1 auto;
   min-height: 0;
-  padding-bottom: max(var(--mpage-fab-clearance), var(--canvas-bottom-clearance, 0px));
+  padding-bottom: max(var(--mobile-scroll-end), var(--canvas-bottom-clearance, 0px));
 }
 /* 底部 Add footer 在手机页面态退场：新建入口收敛到右下那颗加号（一条入口，
    不在页底再摆一条通栏「添加提醒」——它会把满铺的列表顶起 30px+）。 */
@@ -5388,7 +5450,10 @@ body.mobile-layer #reminder-panel .reminder-create-btn { display: none; }
 body.mobile-layer #reminder-panel .reminder-panel-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 0 max(calc(var(--mobile-dock-clearance) + var(--mpage-fab-clearance)), var(--canvas-bottom-clearance, 0px));
+  /* 末端净空 = 单源 token（本页有 .reminder-fab-add ⇒ 自动含钮带层）。
+     改前 = calc(--mobile-dock-clearance + --mpage-fab-clearance) 的手写相加。 */
+  padding: 0 0 max(var(--mobile-scroll-end), var(--canvas-bottom-clearance, 0px));
+  scroll-padding-bottom: max(var(--mobile-scroll-end), var(--canvas-bottom-clearance, 0px));
 }
 /* 空载页脚条（桌面版 2px 呼吸垫，手机页面态零用）⇒ 隐去，列表直抵页底缘。 */
 body.mobile-layer #reminder-panel .reminder-panel-footer { display: none; }
@@ -6209,8 +6274,8 @@ body.mobile-layer .mobile-page[data-page="canvas"] .mobile-page-body {
 }
 body.mobile-layer .mobile-page[data-page="canvas"] :is(.canvas-md-scroll, .canvas-txt-scroll, .canvas-tab-pane.scrollable) {
   bottom: 0;
-  padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-dock-clearance));
-  scroll-padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-dock-clearance));
+  padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-scroll-end));
+  scroll-padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-scroll-end));
 }
 /* ── ① 消息/联系人：页体底垫撤、净空内收进收编滚区 ───────────────────── */
 body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body,
@@ -6219,16 +6284,66 @@ body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body {
 }
 body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body > #fm-conversations,
 body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body > #fm-contacts-body {
-  padding-bottom: var(--mobile-dock-clearance);
+  padding-bottom: var(--mobile-scroll-end);
 }
 /* 消息页查询态：结果场吃页体余量，dock 自带底净空（脚注/末条不贴 dock 缘）。 */
 body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query {
-  padding-bottom: var(--mobile-dock-clearance);
+  padding-bottom: var(--mobile-scroll-end);
 }
 /* ── ① 用量页：同法内收（P11 直子形同特异性、源序在后）────────────────── */
 body.mobile-layer .mobile-page[data-page="usage"] .mobile-page-body {
   padding-bottom: 0;
 }
 body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard {
-  padding-bottom: var(--mobile-dock-clearance);
+  padding-bottom: var(--mobile-scroll-end);
+}
+
+/* ═══ 滚域末端净空单源批（作者令 2026-11-18 18:17 复看对照图）══════════════════
+   作者逐字：「这张图我看底部还是被dock截断了 就是这种设计逻辑就是跟canvas一样
+   可以从下方过 但是上滑下滑的时候 要能保证底部内容完整显示」
+   ─────────────────────────────────────────────────────────────────────────
+   实测根因（375×812，逐页读数 evidence/.../raw/bottoms-*.json）：末端净空
+   加在**页体**上时只对「页体自身滚动」的页语义正确；对「页体只是外壳、真滚域
+   是收编面内滚区」的页，它是**截视口** —— 内滚区被页体内容盒钳短 72px，滚动
+   视口提前在 dock 上缘**之上 10px** 结束 ⇒ 滚动态与滚到底都在同一条水平线被
+   硬切（对照图里「密钥」卡被切平），作者读作「底部还是被 dock 截断」。
+   本批把净空**归还给真正滚动的容器**：页体归零（内容得以滚到屏底、从 dock 玻璃
+   下方穿过 = 作者「可以从下方过」），净空落在真滚域的内容级（滚到底末行完整
+   可见 = 「要能保证底部内容完整显示」）。值全部来自 --mobile-scroll-end
+   （单源，见 L599 块）——**页面里零字面量**。
+
+   ① 页体只是外壳（直子 = 收编面）：底垫归零。名单 = 「收编面统一页面化几何」
+      块（L1008）的同一串收编面 + `.ta-root`（待办三页的外壳）。三条例外，
+      逐页理由：
+        · `.wiki-graph-pane`（图谱页）：全屏画布视图（pan/zoom），**没有滚动
+          内容也没有末行**，净空无对象 ⇒ 不参与（保持既有几何，零位移）。
+        · 会话页 `.fm-modal`：由会话页块单点处理（输入条是第二件浮件，
+          净空 = 输入条层 + dock 让位，见 L1097 块）。
+        · `#daemon-panel`（心跳页）：它的底件是**面板脚注条**
+          `.daemon-panel-footer`（daemonFace.js 填的真实 chrome，不是内容）——
+          页体底垫撤掉后脚注被推到屏底 = 整条压在 dock 之下（改后实测
+          756–812）。该页的「最后一件」不需要从 dock 下方穿过（它是一根
+          脚注，不是滚动的行）⇒ 保留页体底垫，面板整体止于 dock 上缘之上
+          （脚注 684–740），滚动末行仍满足「≤ dock 上缘 − 呼吸缝」。 */
+body.mobile-layer .mobile-page-body:has(> :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #bg-dropdown, #memory-modal, #mobile-task-panel, .fm-modal, .ta-root, .canvas-tab-pane:not(.wiki-graph-pane))) {
+  padding-bottom: 0;
+  scroll-padding-bottom: 0;
+}
+/* ② 真滚域的末端净空（同一 token）：每种面一条，值零字面量。
+      改前读数（各页自负尾垫）：搜索 12px / 心跳 8px / 后台 12px / 项目 24px /
+      智能体页 ap-pane 10px / 记忆卡 12px —— 全都不够（< dock 让位 72），
+      即这几页滚到底末行都被 dock 压住一档。 */
+body.mobile-layer #search-results,
+body.mobile-layer .daemon-panel-body,
+body.mobile-layer #mobile-pages .mobile-page-body > #bg-dropdown,
+body.mobile-layer #memory-modal > .ap-pane,
+body.mobile-layer #mh-memory-cards {
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
+}
+/* 智能体页（profile）外壳：`#memory-modal` 自带 20px 内垫会把内滚域钳到
+   792（dock 上缘 750 之下 42px 全是死带）⇒ 外壳内垫归零，让位交内滚域内容级
+   （上一条规则）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #memory-modal {
+  padding-bottom: 0;
 }

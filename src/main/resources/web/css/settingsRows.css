@@ -373,11 +373,13 @@
    手机层：正文 17 / 图标 22 / 行高 max(50, 44) —— 数值来自 mobileLayer.css 既有
    移动令牌（--mfs-body / --micon / --mrow），本批只把行族接上，不新立第二套。 */
 @media (max-width: 768px) {
-  /* 手机设置页：面板底部安全区再叠一层 dock 净空 —— 滚到底时末行不被悬浮
-     导航压住（作者令 2026-11-07「滚动到底部时最后一行不被悬浮导航压住」）。 */
-  body.mobile-layer #settings-content {
-    padding-bottom: calc(var(--set-panel-pad-b) + var(--dock-h) + var(--dock-gap) + var(--dock-inset-b));
-  }
+  /* 手机设置页的末端净空**不在这里写**（滚域末端净空单源批 2026-11-18 18:17）。
+     改前此处有一条 `body.mobile-layer #settings-content { padding-bottom:
+     calc(--set-panel-pad-b + --dock-h + --dock-gap + --dock-inset-b) }`——
+     它是 mobileLayer.css 里 `#settings-content` 末端净空的**第二份定义**，
+     且特异度更低从未生效（(1,1,1) < (2,3,1)）⇒ 典型「改一处必须同步另一处」
+     的死副本。现已删除，唯一来源 = mobileLayer.css 的
+     `--mobile-scroll-end`（消费点见该文件文件尾「滚域末端净空单源批」）。 */
   body.mobile-layer .set-nav,
   body.mobile-layer .set-row {
     /* 与 mf-hub-row 同一条热区表达式（44 触控下限，工作台行族实测 50 档）。 */

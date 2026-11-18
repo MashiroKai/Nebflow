@@ -752,7 +752,11 @@ body.mobile-layer .ask-fab {
   width: 48px; height: 48px;
   position: fixed;
   right: var(--ask-fab-gap);
-  bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px);
+  /* dock 座位消费单源 token（`--mobile-dock-top` = dock 高 + 底内距 + 安全区，
+     定义在 mobileLayer.css L599 块）。改前 = 同一表达式手写展开 —— 与
+     mobileLayer.css 的插件加号 / dock 背板带 / 输入卡三处逐字重复
+     （「改一处必须同步另一处」，滚域末端净空单源批 2026-11-18 一并消掉）。 */
+  bottom: calc(var(--mobile-dock-top) + 16px);
   /* Closed morph seeds live in the dock below their action buttons. */
   z-index: 261;
 }
@@ -773,7 +777,7 @@ body.mobile-layer .note-dock {
   --ask-fade-h: var(--ds-space-3);
   position: fixed;
   right: var(--ask-fab-gap);
-  bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px + var(--ask-fab-size) + 10px);
+  bottom: calc(var(--mobile-dock-top) + 16px + var(--ask-fab-size) + 10px);
   z-index: 260;
 }
 body.mobile-layer .ask-bub { font-size: var(--ds-fs-body); padding: var(--ds-space-2) var(--ds-space-3); }
