@@ -48,6 +48,9 @@ import { figureSize } from './fenceKit.js';
 // 的媒体统一都是直接打开」）：markdown 气泡图与帧消息图片两类入口的分流单点。
 // 灯箱本体降为兜底面（桌面 pathless / 手机直开链尽空），不再是这两类入口的一级行为。
 import { routeMediaClick, mediaDirectUrl } from './mediaOpenRoute.js';
+// mobile-download 批（2026-11-18 作者令）：画廊「下载」键落点单点——手机层图片/视频
+// 走系统分享（可入相册）/ 其它「存储到文件」（可指定位置）；能力不支持 ⇒ 原下载 + 落点提示。
+import { saveFileBlob, notifyLanding } from './downloadSave.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：本地路径的字节改经 **nfFileCache 账本
 // 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
 // 账本票据链取数 + 入账（恰一次）。失败回落既有 reMint 直取腿（下方逐字保留）。
@@ -819,10 +822,12 @@ function ensureGalleryChrome() {
       if (!url) throw new Error('No media URL');
       const response = await fetch(url, { credentials: 'same-origin' });
       if (!response.ok) throw new Error('Download failed');
-      const object = URL.createObjectURL(await response.blob());
-      const a = document.createElement('a');
-      a.href = object; a.download = item.name || 'download'; a.click();
-      setTimeout(() => URL.revokeObjectURL(object), 60000);
+      // mobile-download 批（2026-11-18）：画廊「下载」键的落点收归单点——手机层
+      // 图片/视频走系统分享（可「存储到照片」入相册）/ 其它分享「存储到文件」；能力
+      // 不支持 ⇒ 原 `<a download>` + 落点提示（桌面层不经画廊，逐字零触碰）。
+      const landed = await saveFileBlob(await response.blob(), item.name || 'download');
+      if (landed.route === 'cancelled') return;
+      notifyLanding(landed);
       statusEl.textContent = label + ' ✓';
       statusEl.className = 'nf-lightbox-status'; statusEl.style.display = '';
       setTimeout(() => { if (statusEl.textContent === label + ' ✓') statusEl.style.display = 'none'; }, 2000);

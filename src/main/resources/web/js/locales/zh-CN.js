@@ -566,6 +566,12 @@ export default {
   'messages.attachUploading': '上传中，暂不可下载',
   'messages.attachUnreadable': '附件状态不可判读，暂不可下载',
   'messages.attachUnnamed': '未命名附件',
+  // 手机端下载落点提示（mobile-download 批 2026-11-18 · 作者令「手机端的下载我不知道
+  // 存哪去了」）。复用既有通知栈（window.__showToast）呈现，零新提示样式。
+  'download.sharedToAlbum': '已打开系统分享面板 · 选「存储到照片」即入相册',
+  'download.sharedToFolder': '已打开系统分享面板 · 选「存储到文件」可指定保存位置',
+  'download.landedIosFiles': '已下载 · iPhone 上存于「文件」App ›「下载」',
+  'download.landedBrowserDir': '已下载到浏览器下载目录',
   // 附件预览（作者令 2026-09-15）：卡片可点面的无障碍名 + 两条**可见**降级文案。
   'messages.attachPreview': '预览',
   'messages.attachPreviewUnsupported': '暂不支持预览该类型：{name}',
