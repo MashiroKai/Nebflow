@@ -486,7 +486,7 @@ function observeSettingsModal() {
  * 2026-11-02 件四·身份卡本地化（作者令：「现在的设计是跳转到官网，但是我是要在这里
  * 直接修改」）—— 菜单里那条「打开个人页」从 `window.open(getProfileUrl())`
  * 改为打开 **App 内个人资料面**（settingsIdentity.js `openProfileFace`）；
- * `brand.getProfileUrl()` 本身保留不删（它仍服务 takeoverModal 的退出落地等链路）。
+ * 个人资料入口现在由应用内面板提供。
  * @param {Element|null} [anchorEl] 菜单锚点（调用者传入自己那个入口元素；
  *   缺省回退到活动条头像）。
  */

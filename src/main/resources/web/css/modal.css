@@ -30,9 +30,7 @@
    （position:relative 定位基座 + 圆角 --ds-radius-shell + 入场动效
    modalIn×--ds-dur-layer×--ds-ease-enter）收编 design-system.css
    `.ds-layer` 层类族单点 —— DOM 挂 `ds-layer` 钩子类，本文件不再声明
-   position/border-radius/animation。
-   （卡片家族批 2026-11-01：#takeover-box 摘出本列表——其面板已基准化为
-   cards.css 实色家族卡 .nfc，非玻璃材质；玻璃族规则对它不再适用。） */
+   position/border-radius/animation。 */
 #modal-box,
 #delete-box,
 #conflict-box,
@@ -328,28 +326,6 @@
   padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-subtitle);
-}
-
-/* ---------- Console Takeover Modal（控制台单实例批 2026-10-27；四修批
-   2026-10-29 作者令；接管/入场同族批 2026-11-01 作者令②；卡片家族批
-   2026-11-01 作者 16:05 令）───────────────────────────────────────────────
-   面板基准化（作者令「接管弹窗重排成基准形态：居中卡+字标+标题+灰文+按钮行」）：
-   视觉全量迁 **css/cards.css**（.nfc 实色家族卡 + 官方字标双档 + 家族字阶 +
-   .nfc-error / .nfc-actions；原「玻璃族卡」面板档随本批退役——[USER-RULING]
-   申报见设计稿 §5）。本文件只留两件弹窗机制外的面：
-   · #modal-overlay.takeover-blur 整页背景模糊（四修批裁定，维持不动，见下方块）；
-   · 手机端形态在 mobileLayer.css（铺满屏例外），零触碰。
-   语义差异面不变：强制二选一——本盒在场时 modal.js 的 Escape/遮罩点击收口
-   路径必须绕行（modal.js 按 DOM 在场判别），不得被全局关闭钩子误收。 */
-
-/* 毛玻璃背景（四修批 2026-10-29 作者令）：被顶出弹窗在场时整页模糊——
-   --cv-* 玻璃族同源配方（--cv-blur/--cv-saturate → --glass-blur 24 /
-   saturate 1.15）；辅助 dim 是唯一新字面量（低 α，亮暗双档通用——毛玻璃本身
-   即隐私面，dim 只让模糊更可读）。过渡柔和（backdrop-filter 过渡 Chrome/
-   Safari 可动画）。 */
-#modal-overlay.takeover-blur {
-  background: rgba(15, 18, 24, 0.14);
-  transition: background 0.25s ease, backdrop-filter 0.25s ease;
 }
 
 /* ---------- Agent Editor Modal — retired 2026-09-06 ----------

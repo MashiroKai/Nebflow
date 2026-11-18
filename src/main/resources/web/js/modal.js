@@ -10,8 +10,7 @@ import { t } from './i18n.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { statusIcon } from './utils.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层通用确认族铺满屏 + 左上返回——
-// 返回语义 = 取消（与 Esc/遮罩点击同腿；接管模态在场时绕行，同 takeoverBlocking
-// 纪律）。桌面零变化。
+// 返回语义 = 取消（与 Esc/遮罩点击同腿）。桌面零变化。
 import { mobileSheetBack } from './mobile/popSheet.js';
 // keyboard-first 一期（2026-11-01）：确认/删除/新建会话/冲突五种模态统一入层栈 ——
 // 打开时落焦进模态、Tab 在模态内首尾相接、关闭后回焦到触发元素。接线点选在

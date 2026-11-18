@@ -354,14 +354,6 @@ const GLOBAL_MSG_TYPES = new Set([
   // 与 js/scheduleApi.js，两者都是按 id 幂等收敛，跨会话多收一帧无副作用。
   'scheduledTaskCreated', 'scheduledTaskUpdated', 'scheduledTaskDeleted',
   'scheduledTaskCompleted', 'scheduledTaskList',
-  // 控制台单实例批（2026-10-27）：接管独占两帧——均无 sessionId 的**本连接**直回/
-  // 定向帧。🔴 必须入 GLOBAL（remoteAgents 同律）：否则会被下方视图路由当会话内
-  // 事件 ⇒ setActiveView(primary) 抢走正在看的视图。
-  //   takeover        服务端→被移位实例（ConsoleTakeover fresh-claim 翻位 / 旧主
-  //                   回连 superseded 通知）：弹「控制台已在其他位置打开」模态
-  //                   （消费点 = takeoverModal.js）。
-  //   takeoverResult  【重新接管】的回执（ok ⇒ 收模态回 active）。
-  'takeover', 'takeoverResult',
   // canvas-tab-sync 批（2026-11-17）：canvas 页签跨设备实时收敛帧
   // {type:'canvasTabsChanged', v:2, tabs:[...], tombstones?, activeTabId?} ——
   // 服务端 /api/canvas-tabs PUT 落盘成功后把合并存档 wsHub.broadcast 到全部

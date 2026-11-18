@@ -144,7 +144,6 @@ body.mobile-layer .mf-deck-card,
 body.mobile-layer .mh-search-bar:not(.g2-fab),
 body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name),
 #delete-box.confirm-neutral #delete-confirm,
-#modal-overlay.takeover-blur,
 #search-date-popover,
 .cal-pill-listbox,
 .nebflow-toast,
@@ -481,8 +480,7 @@ html[data-theme="light"] {
   z-index: 1;
 }
 
-/* 对话框共享玻璃卡（modal.css 整块迁入；遮罩模糊 .takeover-blur 仍在
-   modal.css —— 消费 --cv-* 同源配方） */
+/* 对话框共享玻璃卡（modal.css 整块迁入）。 */
 #modal-box,
 #delete-box,
 #conflict-box,

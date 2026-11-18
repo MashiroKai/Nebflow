@@ -1464,8 +1464,7 @@
      `wsp-overlay ds-overlay`）。
    · 浮层壳 emit `class="ds-layer"`（index.html 六盒 + model-panel /
      wsp-panel / proj-create-panel 三条 JS 腿）。
-   · 旧 id/class 保留为 **DOM 寻址钩子**（modal.js 的 .on / .takeover-blur
-     切换、focusTrap、mobileLayer 铺平块、既有 spec 全兼容），形零复制。
+   · id/class 保留为 DOM 寻址钩子（modal.js 的 .on、focusTrap、mobileLayer）。
    · display 显隐机制留在消费面 modal.css（display:none → .on 显）：本族
      **不声明 display**——遮罩开关仍由 id 选择器（特异性 100 > 本族 10）单点
      决定，族在线只是把形交给它，零叠加副作用。
