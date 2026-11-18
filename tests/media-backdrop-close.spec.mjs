@@ -135,7 +135,16 @@ async function openStack(page) {
     const lb = document.querySelector('.nf-lightbox');
     return !!lb && lb.classList.contains('on') && !!lb.querySelector('.nf-lightbox-img.loaded');
   }, null, { timeout: 8000 });
-  await page.waitForTimeout(320);   // 走完 .loaded 的 200ms 进场过渡，量几何前先落定
+  // 量几何/点背景之前，先等**元素自身**走完 `.loaded` 的 200ms 进场过渡（opacity 1
+  // 且 transform 已到恒等态）—— 不赌固定毫秒，与 tests/media-viewer-zoom.spec.mjs 同口径。
+  await page.waitForFunction(() => {
+    const lb = document.querySelector('.nf-lightbox');
+    if (!lb || !lb.classList.contains('on')) return false;
+    const el = lb.querySelector('.nf-lightbox-img');
+    if (!el || !el.classList.contains('loaded')) return false;
+    const cs = getComputedStyle(el);
+    return cs.opacity === '1' && (cs.transform === 'none' || cs.transform === 'matrix(1, 0, 0, 1, 0, 0)');
+  }, null, { timeout: 8000 });
 }
 
 const VIEW = () => {
@@ -178,10 +187,13 @@ async function dragThenCloseReopenBackdrop(page) {
     // 旧实现的闸是 `< 160` 时间窗 ⇒ 该读数 < 160 才是一次有效探针（否则说明机器
     // 慢到探针失效，必须显式报警，不许静默绿）。
     const dragEndToClickMs = Math.round(performance.now() - (window.__nfPointerUpAt || 0));
+    // 点之前浮层**确实还开着**：否则 closedByBackdrop 会因为「本来就是关的」而变成
+    // 假绿（探针自证的第二半）。
+    const onBeforeClick = on();
     lbEl().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 10, clientY: 450 }));
     const closedByBackdrop = !on();
     return {
-      stillOnAfterDrag, closedByEsc, reopened, closedByBackdrop, zoomAtReopen,
+      stillOnAfterDrag, closedByEsc, reopened, onBeforeClick, closedByBackdrop, zoomAtReopen,
       dragEndToClickMs,
       hitAt: hitAt ? (hitAt.tagName + '|' + String(hitAt.className)) : null,
       hitIsOverlay: hitAt === lbEl(),
@@ -218,6 +230,7 @@ test.describe('backdrop close after a drag — desktop', () => {
     expect(tail.stillOnAfterDrag).toBe(true);    // 拖动收尾不误关
     expect(tail.closedByEsc).toBe(true);
     expect(tail.reopened).toBe(true);
+    expect(tail.onBeforeClick).toBe(true);       // 点背景前浮层确实还开着（探针有效）
     expect(tail.zoomAtReopen).toBe(1);           // 重开回到初始档（不残留上一轮缩放）
     expect(tail.hitIsOverlay).toBe(true);        // 落点就是遮罩自身，不是被图片盖住
     // 探针有效性：实测「拖动松手 → 点背景」落在旧实现的 160ms 窗内（否则这次
@@ -274,6 +287,7 @@ test.describe('backdrop close after a drag — mobile full-screen page', () => {
     expect(tail.stillOnAfterDrag).toBe(true);
     expect(tail.closedByEsc).toBe(true);
     expect(tail.reopened).toBe(true);
+    expect(tail.onBeforeClick).toBe(true);       // 点背景前浮层确实还开着（探针有效）
     expect(tail.hitIsOverlay).toBe(true);       // 点背景的落点确实是遮罩自身（不是被图片盖住）
     expect(tail.dragEndToClickMs).toBeLessThan(160);
     expect(tail.closedByBackdrop).toBe(true);    // ← 本批修的回归点
