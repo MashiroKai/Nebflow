@@ -94,9 +94,17 @@ export const FAMILY = {
     // input.css 的 `#input-bar, .fm-input-bar` 单一定义块（外壳几何一条）。
     identityProps: ['position', 'pointer-events', 'border-radius', 'padding', 'display',
       'align-items', 'gap', 'flex-shrink'],
+    // `bottom` 为本族**第 18 项**具名登记（2026-11-18 整合裁定 (a)：闸自己给的动作就是登记，
+    // 登记 = 具名决策点，不是阈值/例外放宽）。
+    //   来源：#9 移动浮层/玻璃批（源支 fix/mobile-overlay-glass-20261118，64886c509…e5789f52b）
+    //         把手机会话页输入条改成**悬浮件**——底缘锚 dock 净空单源。
+    //   落点（唯一）：`body.mobile-layer .mobile-page[data-page='conversation'] .fm-input-bar`
+    //         的 `bottom: var(--mobile-dock-clearance)`（css/mobileLayer.css）。
+    //   边界：仅 `bottom` 一属性、仅此页变体下的悬浮定位；不涉阈值、不改 M6–M11 判据、
+    //         不放宽任何例外表。
     variantProps: ['margin', 'margin-bottom', 'padding', 'border-color', 'background', 'outline',
       'outline-offset', 'transition', 'transition-duration', 'content', 'position', 'top', 'left',
-      'right', 'height', 'pointer-events', 'z-index'],
+      'right', 'bottom', 'height', 'pointer-events', 'z-index'],
   },
   field: {
     label: 'composer 内件',
