@@ -34,15 +34,85 @@ for (const file of ['js/viewers/readerChrome.js', 'js/viewers/annotations.js', '
 // Closed ask/note morph seeds must not paint a second glass layer below the FAB.
 const askCss = read('css/ask.css');
 if (!/\.ask-dock\.closed\s+\.ask-input\s*,\s*\.note-dock\.closed\s+\.note-body\s*\{[^}]*visibility:\s*hidden\s*;/s.test(askCss)) failures.push('closed ask/note glass seeds must be hidden');
-const css = read('css/split.css');
-if (!/\.canvas-button\.canvas-button\s*\{[^}]*border-radius:\s*var\(--ds-radius-pill\);[^}]*box-shadow:\s*var\(--ds-shadow-float\)/s.test(css) || !/\.canvas-button\.canvas-button:hover\s*\{[^}]*var\(--cv-hover-bg\)/s.test(css)) failures.push('shared canvas face incomplete');
+
+/* ── G-CB3 单一 Canvas 面（canvas-button-unify 批 2026-11-18）────────────────
+   作者令逐字口径：「单枚 Canvas 按钮共用既有全站按钮几何/行中线/毛玻璃实现」+
+   「按钮组与手机待办右上角那组用**同一份实现**，不是外观复制」。本判据把
+   「不许有第二份 Canvas 定义」变成机器判据。此前这里存在的那份第二定义是
+     .canvas-button.canvas-button { border-radius: var(--ds-radius-pill);
+                                     box-shadow: var(--ds-shadow-float) }
+   双类把特异性抬到 (0,2,0)，压过 glass.css 圆钮族的「零投影」裁定（扁平化批
+   2026-11-05 逐字退役 --cv-shadow）与 .ds-btn 的圆角档 --ds-radius-input。
+   三支：
+     G-CB3a `.canvas-button` = 纯身份钩子（同 .ask-send/.ask-stop 先例）⇒ 全仓
+             任何以 `.canvas-button` 结尾的整选择器都不得携带声明（几何或材质）。
+     G-CB3b Canvas 按钮组必须与手机待办组同处 glass.css 的**同一条**玻璃声明
+             （一份实现、两个成员），且组容器不得在自己文件里复制组材质。
+     G-CB3c 单钮族零私有投影（`none` 放行 —— 那是「摘除」，不是第二套）；组容器
+             的投影只许写共享 token `var(--cv-shadow)`。 */
+const stripComments = s => s.replace(/\/\*[\s\S]*?\*\//g, '');
+const rules = [];
 for (const file of readdirSync(join(web, 'css')).filter(f => f.endsWith('.css'))) {
-  const src = read(`css/${file}`).replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const selector = m[1].trim();
-    if (!/(?:\.canvas-button|\.canvas-source-toggle|\.canvas-ref-select|\.canvas-find-toggle|\.canvas-refresh-toggle|\.ask-fab|\.mf-cv-close|\.mf-cv-stack|#deck-fab|#canvas-head-close)/.test(selector)) continue;
-    if (/\bbox-shadow\s*:/.test(m[2]) && !(file === 'split.css' && selector === '.canvas-button.canvas-button' && /box-shadow:\s*var\(--ds-shadow-float\)\s*;/.test(m[2]))) failures.push(`${file}: private shadow in ${selector}`);
+  const src = stripComments(read(`css/${file}`));
+  for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) rules.push({ file, selector: m[1].trim(), body: m[2] });
+}
+// 选择器「末段复合选择器以该类收尾」判定：`.a.b` 与 `.b` 都算，`.x-b` 不算，
+// `.b:hover` 不算（伪类挂在复合选择器尾，不是类本身）。
+const selEndsWith = (sel, cls) => new RegExp(`(?:^|[\\s>+~])[^\\s>+~]*${cls.replace(/[.#]/g, m => '\\' + m)}$`).test(sel);
+const FACE_PROPS = /(?:^|[;\s{])(?:background(?:-color|-image)?|border(?:-radius|-color|-width|-style)?|backdrop-filter|-webkit-backdrop-filter|box-shadow|width|height|min-height|padding|font-size|gap)\s*:/;
+for (const r of rules) for (const sel of r.selector.split(',').map(s => s.trim())) {
+  if (!selEndsWith(sel, '.canvas-button')) continue;
+  if (sel.includes('.canvas-button.canvas-button')) failures.push(`G-CB3a second Canvas definition (doubled class): ${r.file} ${sel}`);
+  else if (FACE_PROPS.test(r.body)) failures.push(`G-CB3a .canvas-button must stay an identity hook; ${r.file} ${sel} still declares a face`);
+}
+const glassSrc = stripComments(read('css/glass.css'));
+const sharedGroup = [...glassSrc.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  .filter(m => /\.ta-pill\b/.test(m[1]) && /\.canvas-zoom-bar\b/.test(m[1]));
+if (!sharedGroup.length) failures.push('G-CB3b canvas button group is not a member of the shared .ta-pill glass declaration');
+else for (const prop of ['background', 'backdrop-filter', 'border']) {
+  if (!new RegExp(`(?:^|[;\\s{])${prop}\\s*:`).test(sharedGroup[0][2])) failures.push(`G-CB3b shared group declaration lost ${prop}`);
+}
+for (const r of rules) {
+  if (r.file === 'glass.css') continue;
+  for (const sel of r.selector.split(',').map(s => s.trim())) {
+    if (!selEndsWith(sel, '.canvas-zoom-bar')) continue;
+    if (/(?:^|[;\s{])(?:background(?:-color)?|backdrop-filter|-webkit-backdrop-filter|border)\s*:/.test(r.body)) {
+      failures.push(`G-CB3b ${r.file} ${sel} copies the group material; material belongs to the shared declaration`);
+    }
   }
+}
+const CANVAS_SINGLE = /(?:\.canvas-button|\.canvas-source-toggle|\.canvas-ref-select|\.canvas-find-toggle|\.canvas-refresh-toggle|\.ask-fab|\.mf-cv-close|\.mf-cv-stack|#deck-fab|#canvas-head-close)/;
+for (const r of rules) {
+  const shadow = /(?:^|[;\s{])box-shadow\s*:\s*([^;]*)/.exec(r.body);
+  if (!shadow) continue;
+  const value = shadow[1].trim();
+  if (selEndsWith(r.selector, '.canvas-zoom-bar')) {
+    if (value !== 'var(--cv-shadow)') failures.push(`G-CB3c group container shadow must be the shared token: ${r.file} ${r.selector} = ${value}`);
+    continue;
+  }
+  if (!CANVAS_SINGLE.test(r.selector)) continue;
+  if (value !== 'none') failures.push(`G-CB3c private shadow in ${r.file}: ${r.selector}`);
+}
+// G-CB3d：canvas-button 是身份钩子而非面 ⇒ 每个挂它的发射点必须同时挂一个已登记
+// 族（族的几何/行中线全走 --ds-*/--cv-* 令牌）。只挂钩子 = 该钮零几何来源。
+const REGISTERED_FAMILIES = [
+  'canvas-source-toggle', 'canvas-ref-select', 'canvas-find-toggle', 'canvas-zoom-btn',
+  'canvas-pan-toggle', 'canvas-pop-btn', 'canvas-refback-btn', 'canvas-merge-btn',
+  'canvas-tab-close', 'canvas-video-btn', 'deck-fab', 'deck-card-pop', 'deck-card-x',
+  'epub-nav-btn', 'epub-toc-item', 'epub-menu-btn', 'epub-anno-swatch', 'xlsx-sheet-tab',
+  'g2-fab', 'ask-fab', 'note-fab',
+  'lt-btn', 'viewer-retry-btn', 'nf-frame-nav-back', 'glass-control', 'mf-cv-close', 'mf-cv-stack',
+];
+const jsFiles = [...readdirSync(join(web, 'js')).filter(f => f.endsWith('.js')).map(f => `js/${f}`),
+  ...readdirSync(join(web, 'js', 'viewers')).filter(f => f.endsWith('.js')).map(f => `js/viewers/${f}`),
+  ...readdirSync(join(web, 'js', 'mobile')).filter(f => f.endsWith('.js')).map(f => `js/mobile/${f}`)];
+for (const file of jsFiles) {
+  read(file).split('\n').forEach((line, index) => {
+    if (!/class="[^"]*\bcanvas-button\b/.test(line) && !/className\s*=\s*['"][^'"]*\bcanvas-button\b/.test(line)) return;
+    if (!REGISTERED_FAMILIES.some(name => new RegExp(`(?:^|[\\s'"])${name}(?=[\\s'"$<{,;)\\]]|$)`).test(line))) {
+      failures.push(`${file}:${index + 1} canvas-button without a registered family face: ${line.trim().slice(0, 90)}`);
+    }
+  });
 }
 // Browser-backed registration and compositing guard on the actual mobile Canvas.
 // This deliberately scans the rendered fixture, not unvisited application states.
