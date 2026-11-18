@@ -87,82 +87,184 @@ need(/export function stackCardFooter\s*\(/.test(chatItem), 'M5 chatItem.js 缺 
 need(!/className\s*=\s*'[^']*pop-item-footer/.test(pop), 'M5 popArtifacts.js 手拼 .pop-item-footer（应走 stackCardFooter）');
 need(!/className\s*=\s*'[^']*pop-stack-group-footer/.test(pop), 'M5 popArtifacts.js 手拼 .pop-stack-group-footer（应走 stackGroupFooter）');
 
-// ── M6–M11 CSS 单定义（2026-11-18 复核补腿：原门只扫 JS，样式重复定义漏检）────
-// 判据 = **规则块级**：注释剥除后逐块（含 @media 内块）取「选择器 + 声明体」，
-// 对四类基元（气泡 / 附件区 / 叠卡与通用 footer / composer 外壳与内件）要求
-// 基线声明只出现在**一条**命名两侧面的规则块里；面内变体只许覆盖 gap/宽度/落位。
+// ── M6–M11 CSS 单定义（2026-11-18 复核**重写**：规范化 CSS AST 全声明审计）────
+// 原版（同日早稿）是「正则内层块 + 枚举属性在场」扫描，只问「被点名的属性出现在
+// 几个块里」，四个盲区（每条都附「造出来能红」的反证探针，见
+// tests/message-item-unify-blindspots.md）：
+//   B1 第二基座块不写枚举属性（如 `.duration-badge { padding: … }` 无 border-radius）
+//      ⇒ 旧 M9 只数带 border-radius 的块，绿；新判据按 (成员,属性,层级) 数第二份，红。
+//   B2 变体重写未枚举属性（如 `.fm-att-list { justify-content: … }`）⇒ 旧 M8 只查
+//      display/flex-direction，绿；新判据变体属性白名单外即红。
+//   B3 后代/复合上下文里的第二基座（如 `#chat .pop-item-footer { padding: … }`）
+//      ⇒ 旧 M10 只看 selExact `.pop-item-footer` 块数，绿；新判据按成员 token 收
+//      上下文变体并核属性白名单，红。
+//   B4 单侧成员独立第二份（如 @media 里 `#input { max-height: … }`）⇒ 旧 M11 只查
+//      `.fm-input` 的 max-height 块，绿；新判据 (成员,属性,层级) 唯一性即红。
+//   B5 属性值归一化缺口（`.bubble { PADDING:4px }` / 值内多空白）⇒ 旧扫描按枚举
+//      属性名子串与原始 body 正则，从未做 prop 小写/值空白归一的**声明级**比较；
+//      新判据每条声明先归一（prop 小写、值空白折叠）再入账。
+// 现行判据（全部基于同一个规范化 AST：注释剥除、@规则栈、声明按括号深度 0 的
+// `;` 切分、prop 小写、值空白折叠）：
+//   M6–M11 各对应一个「目标选择器族」（气泡/附件区/通用 footer/叠卡两态 footer/
+//      composer 外壳与内件），族内判据三条：
+//   (a) 基座第二份即红 —— 选择器项**恰好等于**成员（`.pop-group`、`#input` 等，
+//       无祖先/复合/伪类修饰）的规则块，同一 (成员, 属性, 层级) 只许声明一次。
+//       层级 = 档位语境（标准 / 暗色 / 窄屏 / 减动效 / 手机层）——跨层级的主题或
+//       断点改写是 CSS 分层机制的合法形态，不算第二份；同层级第二份就是分叉。
+//       唯一具名豁免 = glass.css 尾部「同值复述块」（G9c 级联复述教义：把参照
+//       材质放到降级组之后再述一遍）；复述值与首份**归一化后逐值相等**才放行，
+//       值不同 = 第二套材质，红。
+//   (b) 变体只许白名单属性 —— 上下文变体（祖先/复合类/伪类/`:is()` 内嵌）可以
+//       表达「格式/变体参数」（对齐方向、宽度档、落位、字体档、状态色……），
+//       属性必须在族白名单里；白名单由现存合法变体逐条登记（见 variantProps）。
+//   (c) 降级块不参战 —— `@supports not` / `html.no-backdrop` 上下文是「摘除」，
+//       归 check-glass-unify 的 G1/G9 口径，此处跳过（同值同判，不双标）。
 const CSS_ROOT = `${ROOT}src/main/resources/web/css/`;
 const cssFiles = readdirSync(CSS_ROOT).filter(f => f.endsWith('.css'));
 
-/** @returns {Array<{file:string, selector:string, body:string, line:number}>} */
-function parseBlocks(file, text) {
-  const out = [];
-  // 剥注释但保留长度（行号仍按原文计）：整块注释替换成等长空白。
+/** 规范化 CSS AST 遍历器 → { selector, decls:[{prop,value,line}], line, atStack }。
+ *  （与 check-glass-unify.mjs walkRules 同一 AST 形态：这是仓内既定的机检 AST。） */
+function* walkCssAst(text) {
   const src = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
-  const re = /([^{}]+)\{([^{}]*)\}/g; // 最内层块（@media 内块同样命中，选择器取内层）
-  let m;
-  while ((m = re.exec(src)) !== null) {
-    const selector = m[1].trim();
-    if (!selector || selector.startsWith('@')) continue;
-    out.push({ file, selector, body: m[2], line: src.slice(0, m.index).split('\n').length });
+  const lineOf = (idx) => src.slice(0, idx).split('\n').length;
+  let i = 0, selStart = 0; const stack = [];
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '{') {
+      const prelude = src.slice(selStart, i).trim();
+      if (prelude.startsWith('@')) { stack.push(prelude.replace(/\s+/g, ' ')); i++; selStart = i; continue; }
+      let j = i + 1, inner = 0;
+      while (j < src.length) {
+        if (src[j] === '{') inner++;
+        else if (src[j] === '}') { if (!inner) break; inner--; }
+        j++;
+      }
+      const body = src.slice(i + 1, j);
+      // 声明切分：只切括号深度 0 的 `;`（值内 url()/data: 的分号不受伤）。
+      const decls = [];
+      let cur = '', depth = 0;
+      for (const c of body) {
+        if (c === '(') depth++;
+        if (c === ')') depth--;
+        if (c === ';' && depth <= 0) {
+          const col = cur.indexOf(':');
+          if (col > 0) decls.push({ prop: cur.slice(0, col).trim().toLowerCase(), value: cur.slice(col + 1).trim().replace(/\s+/g, ' ') });
+          cur = ''; depth = 0;
+        } else cur += c;
+      }
+      { const col = cur.indexOf(':'); if (col > 0) decls.push({ prop: cur.slice(0, col).trim().toLowerCase(), value: cur.slice(col + 1).trim().replace(/\s+/g, ' ') }); }
+      yield { selector: prelude.replace(/\s+/g, ' '), decls, line: lineOf(selStart), atStack: [...stack] };
+      i = j + 1; selStart = i; continue;
+    }
+    if (ch === '}') { if (stack.length) stack.pop(); i++; selStart = i; continue; }
+    i++;
   }
-  return out;
 }
-const CSS_BLOCKS = cssFiles.flatMap(f => parseBlocks(f, readFileSync(`${CSS_ROOT}${f}`, 'utf8')));
-const hasSel = (b, re) => re.test(b.selector);
-// 选择器表里**存在一个恰好等于** sel 的项（排除 `::before` / 后代 / 状态修饰变体）
-const selExact = (b, sel) => b.selector.split(',').map(s => s.trim()).includes(sel);
-const hasDecl = (b, prop) => new RegExp(`(^|[;{\\s])${prop}\\s*:`, 'i').test(b.body);
 
-// M6 气泡基类单份：`.bubble` 的几何基座块（选择器就是 `.bubble`）只许 chat.css 一处。
-const bubbleGeo = CSS_BLOCKS.filter(b => b.selector === '.bubble' &&
-  (hasDecl(b, 'padding') || hasDecl(b, 'border-radius') || hasDecl(b, 'font-size') || hasDecl(b, 'max-width')));
-need(bubbleGeo.length === 1 && bubbleGeo[0].file === 'chat.css',
-  `M6 气泡基类几何出现 ${bubbleGeo.length} 处（应仅在 css/chat.css 一处）：` +
-  bubbleGeo.map(b => `css/${b.file}:${b.line}`).join(', '));
+// 族登记表：成员 token → 族；variantProps = 该族上下文变体**允许**的属性全集
+// （由现存合法变体逐条登记；新增变体属性 = 改这张表，白名单外的变体即红）。
+const FAMILY = {
+  bubble: { m6: '气泡外壳', members: ['.bubble', '.fm-msg-bubble'],
+    variantProps: ['color', 'background', 'border', 'border-color', 'border-width', 'border-bottom-right-radius', 'border-bottom-left-radius', 'border-radius', 'box-shadow', 'font-size', 'padding', 'max-width', 'margin', 'transform-origin', 'display', 'animation', 'opacity', 'overflow-wrap', 'white-space', 'flex-direction', 'gap', 'width', 'backdrop-filter', '-webkit-backdrop-filter'] },
+  attach: { m6: '附件区', members: ['.pop-group', '.fm-att-list'],
+    variantProps: ['align-items', 'max-width'] },
+  footer: { m6: '通用 footer 基座', members: ['.duration-badge'],
+    variantProps: ['font-size', 'gap'] },
+  stackCard: { m6: '叠卡展开态每卡 footer', members: ['.pop-item-footer'], variantProps: [] },
+  stackGroup: { m6: '叠卡合起态整组 footer', members: ['.pop-stack-group-footer'], variantProps: [] },
+  shell: { m6: 'composer 外壳', members: ['#input-bar', '.fm-input-bar'],
+    variantProps: ['margin', 'margin-bottom', 'padding', 'border-color', 'background', 'outline', 'outline-offset', 'transition', 'transition-duration', 'content', 'position', 'top', 'left', 'right', 'height'] },
+  field: { m6: 'composer 内件', members: ['#input', '.fm-input'],
+    variantProps: ['color', 'opacity', 'cursor', 'outline', 'box-shadow'] },
+};
+const memberToFamily = new Map(Object.values(FAMILY).flatMap((f) => f.members.map((m) => [m, f])));
 
-// M7 附件区基线单份：列向/起缘/可收缩基线必须由**一条同时命名两侧面**的块给出。
-const attBase = CSS_BLOCKS.filter(b => hasDecl(b, 'display') && /flex/.test(b.body) &&
-  hasDecl(b, 'flex-direction') && hasSel(b, /\.pop-group|\.fm-att-list/));
-need(attBase.length === 1, `M7 附件区基线块出现 ${attBase.length} 处（应 1 处，命名 .pop-group 与 .fm-att-list）：` +
-  attBase.map(b => `css/${b.file}:${b.line}`).join(', '));
-need(attBase.length === 1 && hasSel(attBase[0], /\.pop-group/) && hasSel(attBase[0], /\.fm-att-list/),
-  'M7 附件区基线块未同时命名 .pop-group 与 .fm-att-list（两面分叉定义）');
+const tierOf = (atStack, selector) => {
+  const at = atStack.join('|');
+  if (/prefers-color-scheme:\s*dark/i.test(at)) return 'dark';
+  if (/max-width/i.test(at)) return 'narrow';
+  if (/prefers-reduced-motion/i.test(at)) return 'rmotion';
+  if (/mobile-layer/.test(selector)) return 'mlayer';
+  return 'std';
+};
+const isDegrade = (atStack, selector) =>
+  atStack.some((a) => /^@supports\s+not/i.test(a)) || /html\.no-backdrop/.test(selector);
 
-// M8 附件区变体不重写基线：两侧面的变体块不得再写 display/flex-direction/align-items。
-need(!CSS_BLOCKS.some(b => (hasSel(b, /\.pop-group/) || hasSel(b, /\.fm-att-list/)) && b !== attBase[0] &&
-  (hasDecl(b, 'display') || hasDecl(b, 'flex-direction'))),
-  'M8 附件区变体块重写了基线（display / flex-direction 第二处）');
+/** 顶层切分（括号深度 0 才切）——`:is(a b, c)` 内的空白/逗号不受伤。 */
+function splitTopItems(s, sepRe) {
+  const out = []; let depth = 0; let cur = '';
+  for (const c of s) {
+    if (c === '(') depth++;
+    if (c === ')') depth--;
+    if (depth === 0 && sepRe.test(c)) { out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out.map((x) => x.trim()).filter(Boolean);
+}
+/** 复合选择器（无顶层空白）的成员 token 精确命中：类/id 各按**整 token**等值比，
+ *  `#input` 不得误吞 `#input-bar`，`.pop-group` 不得误吞 `.pop-group-item`。 */
+function memberHits(compound) {
+  const hits = new Set();
+  const tokens = [...compound.matchAll(/[.#][A-Za-z_][\w-]*/g)].map((m) => m[0]);
+  for (const tok of tokens) if (memberToFamily.has(tok)) hits.add(tok);
+  return hits;
+}
 
-// M9 通用 footer 基类单份：`.duration-badge` 基座块只许一处。
-const durBase = CSS_BLOCKS.filter(b => selExact(b, '.duration-badge') &&
-  hasDecl(b, 'border-radius'));
-need(durBase.length === 1, `M9 .duration-badge 基座出现 ${durBase.length} 处（应 1 处）：` +
-  durBase.map(b => `css/${b.file}:${b.line}`).join(', '));
-
-// M10 叠卡 footer 两态单份：`.pop-item-footer`（卡态）基座唯一；
-//      合起态整组 footer 复用 .duration-badge 基座（不得另起第二套盒样式）。
-const itemFooter = CSS_BLOCKS.filter(b => selExact(b, '.pop-item-footer'));
-need(itemFooter.length <= 1, `M10 .pop-item-footer 定义 ${itemFooter.length} 处（应 ≤1）：` +
-  itemFooter.map(b => `css/${b.file}:${b.line}`).join(', '));
-need(!CSS_BLOCKS.some(b => hasSel(b, /pop-stack-group-footer/) && hasDecl(b, 'border-radius')),
-  'M10 合起态整组 footer 自建盒样式（应复用 .duration-badge 基座）');
-
-// M11 composer 单定义（composer 统一批）：外壳几何与内件几何各一条**命名两侧面**的块。
-const shell = CSS_BLOCKS.filter(b => selExact(b, '#input-bar') && selExact(b, '.fm-input-bar'));
-need(shell.length === 1, `M11 composer 外壳单定义块出现 ${shell.length} 处（应 1 处，命名 #input-bar 与 .fm-input-bar）`);
-need(shell.length === 1 && hasDecl(shell[0], 'border-radius') && hasDecl(shell[0], 'padding') && hasDecl(shell[0], 'gap'),
-  'M11 composer 外壳单定义块缺 border-radius/padding/gap（几何未收口）');
-const shellPad = CSS_BLOCKS.filter(b => selExact(b, '.fm-input-bar') && hasDecl(b, 'padding'));
-need(shellPad.length === 1 && shellPad[0] === shell[0],
-  `M11 .fm-input-bar 内距第二处定义（应只在单定义块内）：` +
-  shellPad.filter(b => b !== shell[0]).map(b => `css/${b.file}:${b.line}`).join(', '));
-const field = CSS_BLOCKS.filter(b => selExact(b, '#input') && selExact(b, '.fm-input'));
-need(field.length === 1, `M11 composer 内件单定义块出现 ${field.length} 处（应 1 处，命名 #input 与 .fm-input）`);
-const fieldCap = CSS_BLOCKS.filter(b => selExact(b, '.fm-input') && hasDecl(b, 'max-height'));
-need(fieldCap.length === 1 && fieldCap[0] === field[0],
-  `M11 .fm-input 自适应上限第二处定义：` +
-  fieldCap.filter(b => b !== field[0]).map(b => `css/${b.file}:${b.line}`).join(', '));
+// 账本：base[(member,prop,tier)] → [{file,line,value}]；variant 命中即时判。
+const baseLedger = new Map();
+const errsM6to11 = [];
+for (const f of cssFiles) {
+  const text = readFileSync(`${CSS_ROOT}${f}`, 'utf8');
+  for (const rule of walkCssAst(text)) {
+    for (const item of splitTopItems(rule.selector, /,/)) {
+      if (isDegrade(rule.atStack, item)) continue;               // (c) 降级块不参战
+      const tier = tierOf(rule.atStack, item);
+      const classify = (ctx, hitMember) => {
+        for (const d of rule.decls) {
+          if (ctx === 'base') {
+            const key = `${hitMember}|${d.prop}|${tier}`;
+            if (!baseLedger.has(key)) baseLedger.set(key, []);
+            baseLedger.get(key).push({ file: f, line: rule.line, value: d.value, prop: d.prop });
+          } else {
+            const fam = memberToFamily.get(hitMember);
+            if (!fam.variantProps.includes(d.prop)) {
+              errsM6to11.push(`变体属性越权：css/${f}:${rule.line} ${item} 声明 ${d.prop}:${d.value.slice(0, 60)}（族「${fam.m6}」白名单外——新变体属性须登记进 FAMILY.variantProps）`);
+            }
+          }
+        }
+      };
+      if (memberToFamily.has(item)) { classify('base', item); continue; }   // 恰好等于成员 ⇒ 基座
+      // 上下文变体：主语复合（顶层复合链的最后一节）命中的成员；`:is()/:where()`
+      // 内嵌名单逐项展开后按各自主语再认一次（藏在 :is() 里不是免检通道）。
+      const chain = splitTopItems(item, /[\s>+~]/);
+      const subject = chain[chain.length - 1] || '';
+      let hits = memberHits(subject);
+      for (const grp of subject.matchAll(/:is?\(|:where\(/g)) {
+        const inner = subject.slice(subject.indexOf('(', grp.index));
+        const list = splitTopItems(inner.replace(/^\(([\s\S]*)\)$/, '$1'), /,/);
+        for (const one of list) {
+          const c2 = splitTopItems(one, /[\s>+~]/);
+          for (const m2 of memberHits(c2[c2.length - 1] || '')) hits.add(m2);
+        }
+      }
+      for (const mem of hits) classify('variant', mem);
+    }
+  }
+}
+// (a) 基座第二份即红（含 glass.css 同值复述豁免：同文件族 glass.css 且归一化值相等）。
+for (const [key, decls] of baseLedger) {
+  if (decls.length <= 1) continue;
+  const [member, prop, tier] = key.split('|');
+  const first = decls[0];
+  const rest = decls.slice(1);
+  const allRepeat = rest.every((d) => d.file === 'glass.css' && d.value === first.value);
+  if (allRepeat && first.file === 'glass.css') continue;        // G9c 同值复述块（唯一豁免）
+  for (const d of rest) {
+    errsM6to11.push(`基座第二份：css/${d.file}:${d.line} ${member} 的 ${prop}（tier=${tier}）已由 css/${first.file}:${first.line} 声明（首值 ${first.value.slice(0, 50)} / 次值 ${d.value.slice(0, 50)}）——同层级第二份 = 分叉定义，收到唯一基座块或登记变体`);
+  }
+}
+for (const e of errsM6to11) need(false, `M6–M11(AST) ${e}`);
 
 // ── M12 上下文占位文案单源（composer 统一批 2026-11-18）────────────────────
 // 判据：`composerPlaceholder` 只许在 js/input/composer.js 定义一次；两个消费面
