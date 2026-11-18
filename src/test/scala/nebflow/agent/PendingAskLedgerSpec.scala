@@ -160,7 +160,13 @@ class PendingAskLedgerSpec extends CatsEffectSuite:
     yield
       assertEquals(afterAsk.map(_.requestId).toSet, Set("lr-1", "lr-2", "lr-3"), "Request must record every slot")
       assertEquals(afterAsk.find(_.requestId == "lr-1").map(_.firstQuestion), Some("continue?"), "excerpt carried")
-      assertEquals(afterAnswer.map(_.requestId), List("lr-2", "lr-3"), "answered entry removed")
+      // permission-landing 批续做（2026-11-18）：这里断的是**销账语义**（Answered ⇒
+      // 该槽的条目消失、其余仍在），不是台账**写入序**。台账记账按设计留在
+      // forkTurn 里（best-effort，绝不阻断提问链——见 InteractionHub.Request 分支
+      // 的 ledgerRecord），故文件里的顺序 = 各 fork 的完成序（调度产物，无契约；
+      // 批内一次实测 lr-3 先于 lr-2 落盘）。原断言把无序的东西写成了 List 等值，
+      // 是「按运气过的测试」——收窄成集合等值（上一条已单独断 lr-1 的 excerpt）。
+      assertEquals(afterAnswer.map(_.requestId).toSet, Set("lr-2", "lr-3"), "answered entry removed")
       assertEquals(afterClose.map(_.requestId), List("lr-3"), "closed entry removed")
       assertEquals(afterCleanup, Nil, "cleanup cascade removes the rest")
     end for
