@@ -890,7 +890,8 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   }
 }
 
-// ── G8 composer 外壳材质单定义（composer 统一批 2026-11-18 新增）───────────
+// ── G9 composer 外壳材质单定义（composer 统一批 2026-11-18 新增；编号避开既有
+//      G8 = ask 用户气泡禁止重写标准玻璃底）────────────────────────────────────
 // 判据 = 「同一个壳的材质只许有一条声明」：主会话 `#input-bar` 与消息三面
 // `.fm-input-bar` 的材质（background / backdrop-filter / box-shadow / border）
 // 必须出自 **`.nf-glass` 那一条共享块**（`#input-bar` 进同一选择器表；`.fm-input-bar`
@@ -906,7 +907,7 @@ const MATERIAL_PROPS = new Set([
   'backdrop-filter', '-webkit-backdrop-filter',
   'box-shadow', 'border', 'border-color', 'border-width', 'border-style',
 ]);
-const g8 = { sharedBlocks: [], soloBlocks: [], degradeBlocks: [], sharedHasShell: false };
+const g9 = { sharedBlocks: [], soloBlocks: [], degradeBlocks: [], sharedHasShell: false };
 {
   const src = readFileSync(SINGLE_SOURCE, 'utf8');
   for (const rule of walkRules(src)) {
@@ -916,8 +917,8 @@ const g8 = { sharedBlocks: [], soloBlocks: [], degradeBlocks: [], sharedHasShell
     if (!mat.length) continue;
     const shellSels = sels.filter((s) => COMPOSER_SHELL_SELECTORS.has(s) || s.endsWith(' #input-bar') || s.endsWith(' .fm-input-bar'));
     if (isShared) {
-      g8.sharedBlocks.push(rule);
-      if (sels.some((s) => COMPOSER_SHELL_SELECTORS.has(s))) g8.sharedHasShell = true;
+      g9.sharedBlocks.push(rule);
+      if (sels.some((s) => COMPOSER_SHELL_SELECTORS.has(s))) g9.sharedHasShell = true;
       continue;
     }
     if (!shellSels.length) continue;
@@ -927,24 +928,24 @@ const g8 = { sharedBlocks: [], soloBlocks: [], degradeBlocks: [], sharedHasShell
     const inDegradeCtx = rule.atStack.some((a) => /^@supports\s+not/i.test(a))
       || sels.some((s) => s.includes('no-backdrop'));
     const onlyNone = mat.every((d) => /^none\s*(!important)?$/i.test(d.value));
-    if (inDegradeCtx || onlyNone) { g8.degradeBlocks.push({ rule, shellSels }); continue; }
-    g8.soloBlocks.push({ rule, shellSels });
+    if (inDegradeCtx || onlyNone) { g9.degradeBlocks.push({ rule, shellSels }); continue; }
+    g9.soloBlocks.push({ rule, shellSels });
   }
-  if (g8.sharedBlocks.length !== 1) {
+  if (g9.sharedBlocks.length !== 1) {
     add({
       file: rel(SINGLE_SOURCE),
-      line: g8.sharedBlocks[0] ? g8.sharedBlocks[0].line : 1,
-      rule: 'G8a',
+      line: g9.sharedBlocks[0] ? g9.sharedBlocks[0].line : 1,
+      rule: 'G9a',
       selector: SHARED_GLASS_SELECTOR,
-      detail: `共享材质块出现 ${g8.sharedBlocks.length} 处（应 1 处：${SHARED_GLASS_SELECTOR} 那一条）`,
+      detail: `共享材质块出现 ${g9.sharedBlocks.length} 处（应 1 处：${SHARED_GLASS_SELECTOR} 那一条）`,
       why: '唯一的玻璃材质声明块只能有一条；两条 = 同一配方写了两遍',
     });
   }
-  if (!g8.sharedHasShell) {
+  if (!g9.sharedHasShell) {
     add({
       file: rel(SINGLE_SOURCE),
-      line: g8.sharedBlocks[0] ? g8.sharedBlocks[0].line : 1,
-      rule: 'G8b',
+      line: g9.sharedBlocks[0] ? g9.sharedBlocks[0].line : 1,
+      rule: 'G9b',
       selector: '#input-bar / .fm-input-bar',
       detail: 'composer 外壳未与 .nf-glass 共用同一条材质块（#input-bar 不在共享块选择器表里）',
       why: '主输入条与消息三面输入条必须是同一条材质声明；分叉 = 两个壳两套值',
@@ -956,29 +957,29 @@ const g8 = { sharedBlocks: [], soloBlocks: [], degradeBlocks: [], sharedHasShell
   // 判据 = 至多一块 + 材质值与共享块逐值相同；多一块、或值不同 ⇒ 红（原 `#input-bar`
   // 独立块正是这样被收掉的：它与共享块同值但**不是**末尾复述位）。
   const sharedValues = new Map();
-  if (g8.sharedBlocks.length === 1) {
-    for (const d of g8.sharedBlocks[0].decls) if (MATERIAL_PROPS.has(d.prop)) sharedValues.set(d.prop, d.value);
+  if (g9.sharedBlocks.length === 1) {
+    for (const d of g9.sharedBlocks[0].decls) if (MATERIAL_PROPS.has(d.prop)) sharedValues.set(d.prop, d.value);
   }
-  if (g8.soloBlocks.length > 1) {
-    for (const { rule, shellSels } of g8.soloBlocks) {
+  if (g9.soloBlocks.length > 1) {
+    for (const { rule, shellSels } of g9.soloBlocks) {
       add({
         file: rel(SINGLE_SOURCE),
         line: rule.line,
-        rule: 'G8c',
+        rule: 'G9c',
         selector: shellSels.join(', '),
         detail: 'composer 外壳独立材质声明块多于一块（只许共享块 + 末尾同值复述块）',
         why: '第二处独立声明 = 同一个壳换个选择器又画一遍材质（composer 统一批要收掉的分叉）',
       });
     }
-  } else if (g8.soloBlocks.length === 1) {
-    const { rule, shellSels } = g8.soloBlocks[0];
+  } else if (g9.soloBlocks.length === 1) {
+    const { rule, shellSels } = g9.soloBlocks[0];
     const divergent = rule.decls.filter((d) => MATERIAL_PROPS.has(d.prop)
       && sharedValues.has(d.prop) && d.value !== sharedValues.get(d.prop));
     if (divergent.length) {
       add({
         file: rel(SINGLE_SOURCE),
         line: rule.line,
-        rule: 'G8c',
+        rule: 'G9c',
         selector: shellSels.join(', '),
         detail: `独立材质块的值与共享块不同（${divergent.map((d) => `${d.prop}:${d.value}`).join(' · ')}）`,
         why: '复述块只准复述共享块的同一组值；值不同 = 第二套材质',

@@ -81,7 +81,7 @@
      并存口径：主输入条进本表（选择器特异性与旧 id 块逐值相同 = 计算值零漂移）；
      消息三面 `.fm-input-bar` 由工厂挂 `.nf-glass` 类走同一块（js/chatUi.js
      chatComposerClass('messages')）。第二处独立材质声明 =
-     scripts/check-glass-unify.mjs 的 G8 红。 */
+     scripts/check-glass-unify.mjs 的 G9 红。 */
   background: var(--nf-glass-input-bg);
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
   backdrop-filter: var(--nf-glass-input-filter);
