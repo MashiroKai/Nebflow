@@ -27,7 +27,7 @@
 //   A3 工具结果不含输入框文本标记（文本没成为 answers）
 //   B0 真 Chromium 卡片渲染到达（requestId 现取）
 //   B1 打字 ⇒ 文本不丢（队列条/气泡可见）∧ 卡片仍 pending 未锁定   [theme × viewport]
-//   B2 立即发送 ⇒ 文本以**普通用户消息**入流（.row.user 含标记）∧ 卡片仍 pending [同]
+//   B2 立即发送：本夹具未建立 busy/queue 前置，显式标为未验证，不计入通过。
 //   B3 刷新 ⇒ 卡片重放（同一 requestId，仍 pending）
 //   B4 点选确认 ⇒ 卡片锁定（点选路径行为不变）
 //   B5 页面零错误（既有 e2e 白名单靶点外）
@@ -212,6 +212,8 @@ async function openApp(browser, theme, viewport) {
     };
   }, TOKEN);
   await ctx.route('**/api/agents/Nebula/avatar/meta', route => route.fulfill({ status: 200, json: {} }));
+  await ctx.route(`${BASE}/agents/Nebula/agent.json`, route => route.request().method() === 'GET'
+    ? route.fulfill({ status: 200, json: {} }) : route.continue());
   const page = await ctx.newPage();
   const errs = [];
   page.on('pageerror', (e) => errs.push(`pageerror: ${e.message}`));
@@ -322,28 +324,10 @@ async function phaseB(sid) {
       );
       await page.screenshot({ path: join(SHOTS, `typed-${theme}-${vp.tag}.png`) });
 
-      // B2：**立即发送**把文本真正推出去（前端 busy ⇒ 打字只进本地队列；不发帧则两侧
-      // 都「绿」而毫无判别力 —— 见文件头「前端队列面的坑」）
-      const hadBtn = await page.evaluate((marker) => {
-        const row = [...document.querySelectorAll('.row.user')].find((r) => (r.innerText || '').includes(marker));
-        if (!row) return false;
-        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
-        const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
-          .find((b) => b.textContent === '立即发送');
-        if (!btn) return false;
-        btn.click();
-        return true;
-      }, marker);
-      await page.waitForTimeout(3000);
-      const d2 = await page.evaluate(READ_DOM, { marker, rid });
-      const outbound = await page.evaluate(({ marker, sid }) => window.__ask211.some(f => f.outbound && f.content === marker && f.sessionId === sid), { marker, sid });
-      const b2 = hadBtn && outbound && d2.userBubbleHasMarker && d2.cardPresent && d2.cardDisabled === false && d2.answerDivs === 0;
-      check(
-        `B2[${theme}/${vp.tag}] 立即发送 ⇒ 文本以普通用户消息入流 ∧ 卡片仍 pending`,
-        b2,
-        `sentBtn=${hadBtn} bubble=${d2.userBubbleHasMarker} userBubbles=${d2.userBubbleCount} card=${d2.cardPresent} disabled=${d2.cardDisabled} answerDivs=${d2.answerDivs} askFrames=${d2.askFrames.join(',')}`,
-      );
-      themeState.viewports[vp.tag] = { b1, b2, rid: d2.cardRid };
+      // The current fixture does not establish a busy queue-mode session. Do not
+      // mistake direct sends or the retired bubble context menu for queue coverage.
+      console.log(`NOT VERIFIED B2[${theme}/${vp.tag}]: busy/queue precondition not established`);
+      themeState.viewports[vp.tag] = { b1, b2: null, rid: d1.cardRid };
     }
 
     // B3：刷新 ⇒ 卡片重放（同一 requestId，仍 pending）
@@ -360,8 +344,8 @@ async function phaseB(sid) {
     try {
       await page.setViewportSize({ width: 1440, height: 900 });
       const card = page.locator(`.option-box[data-request-id="${rid}"]`);
-      await card.locator('.option-btn').first().click();
-      await page.waitForTimeout(400);
+      await card.locator('.option-btn', { hasText: 'alpha' }).click();
+      await card.locator('.option-btn', { hasText: 'yes' }).click();
       await card.locator('.option-confirm').click();
       await page.waitForTimeout(2000);
       const locked = await card.locator('.option-answer').count();
@@ -394,7 +378,7 @@ async function phaseB(sid) {
   const b = await phaseB(rs.sid);
 
   const fails = results.filter((r) => !r.pass);
-  console.log(`\n[spec] LABEL=${LABEL} total=${results.length} pass=${results.length - fails.length} fail=${fails.length}`);
+  console.log(`\n[spec] LABEL=${LABEL} total=${results.length} pass=${results.length - fails.length} fail=${fails.length} unverified_B2=${THEMES.length * VIEWPORTS.length}`);
   if (fails.length) console.log('[spec] FAILED: ' + fails.map((f) => f.name).join(' ; '));
   console.log(`[spec] JSON ${JSON.stringify({ label: LABEL, marker: MARKER, chromium: b.version, phaseA: a, perTheme: b.perTheme, fails: fails.map((f) => f.name) })}`);
   process.exit(fails.length ? 1 : 0);
