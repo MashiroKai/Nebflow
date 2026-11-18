@@ -14,7 +14,7 @@ import nebflow.shared.*
  *   C-OBS-2 缺失/未知缓存读数：usage=None ⇒ UsageMissing 单列，不进分母、
  *      不假装命中或免费；零命中如实进归因；
  *   C-OBS-3 warmup 类账目与业务类分列——保温次数/成本永不混入业务率；
- *   C-OBS-4 归因类别受控样本：NewSession / ConfigChanged（tools 轴）/ 
+ *   C-OBS-4 归因类别受控样本：NewSession / ConfigChanged（tools 轴）/
  *      HistoryChanged（首个差异块位）/ CompactionRebuild（前部重建签名）/
  *      EphemeralMarkerMisplaced（marker 出现在临时段）/ PersistentBreakpointMissing（非空持久历史无 marker）/
  *      PersistentBreakpointMisplaced（持久 marker 不在尾块）/ DomainSwitched /

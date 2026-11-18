@@ -151,7 +151,7 @@ try {
   let tap;
   try {
     tap = JSON.parse(execSync('node scripts/check-mobile-tap.mjs --json', { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
-  } catch (e) { tap = { note: 'check exits non-zero on suspects', parse: undefined }; 
+  } catch (e) { tap = { note: 'check exits non-zero on suspects', parse: undefined };
     try { tap = JSON.parse(e.stdout); } catch {}
   }
 

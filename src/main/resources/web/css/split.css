@@ -2032,7 +2032,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
    加强到与聊天对话框一致」）。
    件三统一批（2026-10-28）：尺寸/阴影/hover-active 全部收进 --cv-* token 档
    （sapphire.css 单源）——尺寸 = --cv-size-circle 40、阴影 = --cv-shadow
-   （= chat #header 现值，外投影退役）、hover = --cv-hover-bg + 
+   （= chat #header 现值，外投影退役）、hover = --cv-hover-bg +
    --cv-hover-scale、active = --cv-active-scale（聊天控件同款语言）。
    单行排布批（2026-11-01 作者令 16:18「浮钮组改单行：功能钮靠左、ask 靠右，
    两端对齐」）：文档工具簇整体从底右角镜像到底左角（右锚 16 → 左锚 16，槽位
@@ -3190,7 +3190,7 @@ body.mobile-layer .cvv-time {
 /* 六项批（作者令 2026-10-23 六项③④）：右锚回 16 —— 贴齐面板右缘（移位批的
    +48 槽随簇回退一并失效，见 .canvas-source-toggle 注）；底边 18px 与圆钮簇
    （bottom:16，40px 高）视觉对中线不变（图片/PDF pane 同享）。
-   件三统一批（2026-10-28）：材质/尺寸收 --cv-* token 档 —— 面阴影 = 
+   件三统一批（2026-10-28）：材质/尺寸收 --cv-* token 档 —— 面阴影 =
    --cv-shadow（= chat #header 现值，修前 --frost-shadow 外投影退役）；内钮
    26px 档（修前 glass-control 实心 chip 面退役 —— zoom.js 去 .glass-control
    类，与查找条内钮同语言：静默 ghost + hover 抬亮，聊天控件同款）。
