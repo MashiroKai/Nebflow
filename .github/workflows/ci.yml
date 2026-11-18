@@ -627,6 +627,36 @@ jobs:
         shell: bash
         run: kill $SERVER_PID 2>/dev/null || true
 
+  review-registration-observation:
+    name: Registered browser regressions (non-blocking observation)
+    # These previously unregistered suites have known failures and fixture requirements.
+    # Report each leg independently; promotion to a blocking gate requires green evidence.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 23
+      - uses: sbt/setup-sbt@v1
+      - name: Install browser dependencies
+        run: |
+          npm ci
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium
+      - name: Mobile touch targets
+        continue-on-error: true
+        run: node tests/mobile-touch-target.spec.mjs --out "$RUNNER_TEMP/touch-targets.json"
+      - name: Build isolated gateway classpath
+        run: sbt e2eClasspath
+      - name: Canvas writer real gateway
+        run: npx playwright test tests/canvas-writer-live.spec.mjs
+
   frontend-specs:
     name: Frontend Specs (self-contained suite, Playwright)
     # 2026-10-24 CI 迁移批：补足 node 全量面。本机全量 = sbt test + tests/*.spec.mjs；

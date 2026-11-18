@@ -39,7 +39,7 @@ for (const width of [320,375,390,430]) {
  console.log(`INFO takeover card visible=${await page.locator('#modal-overlay.on #takeover-box').isVisible()} width=${width}`);
  if(process.env.BAND_NEGATIVE) await page.addStyleTag({content:'body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar { width: 31px !important; height:31px !important }'});
  if(process.env.COMPOSER_NEGATIVE) await page.addStyleTag({content:'body.mobile-layer #input-bar {padding-left:12px !important;padding-right:12px !important;gap:8px !important} .ask-input {padding-left:6px !important;gap:6px !important}'});
- if(process.env.HIT_NEGATIVE) await page.addStyleTag({content:'@media(max-width:700px){.decision-preview-entry{top:auto !important;bottom:90px !important}}'});
+ if(process.env.HIT_NEGATIVE) await page.evaluate(()=>{const e=document.createElement('button');e.className='decision-preview-entry';document.body.append(e);});
  const rows=[];
  for(const id of ['chat','messages','contacts','canvas','workbench','settings','tasks','todo-apple-item']) {
   if(id==='canvas') await page.evaluate(()=>window.dispatchEvent(new CustomEvent('workspace-open-item',{detail:{id:'band-document',title:'Canvas test',itemType:'markdown',absPath:'/fixture/band-document.md',pinned:false,background:false,content:'# Canvas'}})));
@@ -59,9 +59,9 @@ for (const width of [320,375,390,430]) {
   },id);
   rows.push(data); console.log(JSON.stringify({width,...data}));
   if(width===320) {
-   const collision=await page.evaluate(()=>{const e=document.querySelector('.decision-preview-entry'),r=e.getBoundingClientRect();const items=[...document.querySelectorAll('.mobile-page.live button, #mobile-fab-layer button, #input-bar button')].filter(n=>{const b=n.getBoundingClientRect(),s=getComputedStyle(n);return b.width&&b.height&&s.display!=='none'&&s.visibility!=='hidden'&&Math.min(r.right,b.right)>Math.max(r.left,b.left)&&Math.min(r.bottom,b.bottom)>Math.max(r.top,b.top)}).map(n=>({id:n.id,cls:n.className,rect:n.getBoundingClientRect().toJSON()}));return {entry:r.toJSON(),visible:getComputedStyle(e).display!=='none',items};});
-   console.log('PREVIEW COLLISIONS',JSON.stringify({id,...collision}));
-   if(collision.visible&&(collision.entry.left<0||collision.entry.right>width||collision.items.length)){console.log('FAIL preview collision',JSON.stringify({id,...collision}));errors++;}
+   const retiredEntry=await page.locator('.decision-preview-entry').count();
+   if(retiredEntry){console.log('FAIL retired preview entry present',id);errors++;}
+   else console.log('PASS retired preview entry absent',id);
   }
   if(id==='chat'||id==='canvas') {
    if(id==='canvas') {const fab=page.locator('.ask-fab:not(.note-fab):visible').first();if(await fab.count()) {await fab.click({timeout:3000});await page.waitForTimeout(400);}}
