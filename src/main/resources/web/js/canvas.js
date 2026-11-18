@@ -123,11 +123,36 @@ function writerChanged(role, lost = false) {
   }
 }
 const writerRejectionNotices = new Set();
+// 「保存失败」通知同因只报一次（2026-11-18 P0 作者报障「现在怎么老是出现 canvas
+// 保存失败的通知 好烦」）。页内 Set 只挡同一页里的重复；刷新页面时模块重建、
+// Set 清空 —— 而写者席位被别的控制台窗口占住（或占位者已消失、席位无人回收）时
+// 失败是**持久的**，于是每次加载都重弹一遍。去重账落到 sessionStorage（同一浏览器
+// 页签内跨刷新存活）：同因每会话只报一次；换页签/换窗口是新会话，各自的首次真实
+// 失败照报。去重只压缩重复，绝不吞掉首次失败。
+const NOTICE_SEEN_KEY = key('canvas_notice_seen');
+function noticeSeenBefore(reason) {
+  if (writerRejectionNotices.has(reason)) return true;
+  try {
+    const seen = JSON.parse(sessionStorage.getItem(NOTICE_SEEN_KEY) || '{}');
+    return !!seen[reason];
+  } catch { return false; } // storage 不可用 ⇒ 退化回页内 Set
+}
+function markNoticeSeen(reason) {
+  writerRejectionNotices.add(reason);
+  try {
+    const seen = JSON.parse(sessionStorage.getItem(NOTICE_SEEN_KEY) || '{}');
+    seen[reason] = Date.now();
+    sessionStorage.setItem(NOTICE_SEEN_KEY, JSON.stringify(seen));
+  } catch { /* 页内 Set 已覆盖本次会话 */ }
+}
+// 真失败要给**可执行的下一步**，而不是一句「保存失败」：席位是单写者、非抢占的，
+// 唯一可执行的恢复 = 让占位窗口让位。正文保持作者裁定的原句（字符串逐字不动），
+// 下一步进 toast 的 hint 次级行；通知带亲手关闭钮。
+const SAVE_FAIL_HINT = '若已打开多个控制台窗口，请关闭其他窗口后重试；仍失败请稍后重新加载页面。';
 function writerNotice(message, reason) {
-  if (reason && !writerRejectionNotices.has(reason)) {
-    writerRejectionNotices.add(reason);
-    window.__showToast?.(message, 'info');
-  }
+  if (!reason || noticeSeenBefore(reason)) return;
+  markNoticeSeen(reason);
+  window.__showToast?.(message, 'info', { closable: true, hint: SAVE_FAIL_HINT });
 }
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,

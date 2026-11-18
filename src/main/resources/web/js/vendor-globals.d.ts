@@ -61,7 +61,14 @@ interface Window {
 
 /** Global toast helper (set by main.js) */
 interface Window {
-  __showToast?: (message: string, kind?: string) => void;
+  __showToast?: (
+    message: string,
+    kind?: string,
+    /** 富通知选项（canvas 保存失败批 2026-11-18，镜像 modal.js showToast）：
+     *  closable = 加亲手关闭钮；hint = 次级一行「可执行的下一步」。缺省时
+     *  toast 的 DOM 与旧版逐字节一致。 */
+    opts?: { closable?: boolean, hint?: string, closeLabel?: string },
+  ) => void;
 }
 
 /** Global confirm dialog (set by modal.js initModals). Signature mirrors

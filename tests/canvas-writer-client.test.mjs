@@ -77,8 +77,12 @@ test('reader can close shared tabs consecutively in order', () => {
 test('reader guards are silent and server rejections notify once per reason', () => {
   const source = readFileSync(process.env.CANVAS_TEST_SOURCE || new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const notices = [];
+  // 2026-11-18 canvas-save-failure 批：被切片求值的通知区块现在多了两个模块级依赖
+  // —— branding 的 key()（派生去重账存储键）与 sessionStorage（跨刷新去重账）。
+  // 这里按沙箱形态补上：键名原样透传，sessionStorage 取空/写入丢（页内 Set 仍生效）。
   const context = { window: { __showToast: message => notices.push(message) }, writerStatusEl: null,
-    localUnsynced: false, applyingLiveTabsFrame: false, canvasWriter: { role: () => 'reader' } };
+    localUnsynced: false, applyingLiveTabsFrame: false, canvasWriter: { role: () => 'reader' },
+    key: s => s, sessionStorage: { getItem: () => null, setItem: () => {} } };
   const noticeStart = source.indexOf('const writerRejectionNotices = new Set();');
   const start = noticeStart < 0 ? source.indexOf('function writerNotice(') : noticeStart;
   const end = source.indexOf('const canvasWriter =', start);

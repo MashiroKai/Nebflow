@@ -278,10 +278,15 @@ const TOAST_ICONS = { error: 'circle-x', info: 'circle-alert', success: 'circle-
  * Show a brief Stand-styled toast notification.
  * @param {string} message — text to display
  * @param {string} type — 'error' | 'info' | 'success'
+ * @param {{closable?: boolean, hint?: string, closeLabel?: string}} [opts]
+ *   closable — 加一个「×」亲手关闭钮（停留 8s 而非 4s，作者能读完再收走）；
+ *   hint     — 次级一行的**可执行下一步**（例如「请关闭其他控制台窗口后重试」）。
+ *   opts 缺省时 DOM 与旧版逐字节一致（普通 toast 零改动）。
  */
-export function showToast(message, type = 'error') {
+export function showToast(message, type = 'error', opts = {}) {
+  const rich = !!(opts.closable || opts.hint);
   const toast = document.createElement('div');
-  toast.className = 'nebflow-toast nebflow-toast-' + type;
+  toast.className = 'nebflow-toast nebflow-toast-' + type + (rich ? ' nebflow-toast-rich' : '');
   const icon = document.createElement('span');
   icon.className = 'nebflow-toast-icon';
   icon.setAttribute('aria-hidden', 'true');
@@ -290,13 +295,47 @@ export function showToast(message, type = 'error') {
   const msg = document.createElement('span');
   msg.className = 'nebflow-toast-msg';
   msg.textContent = message;
-  toast.append(icon, msg);
-  document.body.appendChild(toast);
-  requestAnimationFrame(() => toast.classList.add('show'));
-  setTimeout(() => {
+  // 非富通知：icon + msg 平铺（与旧版逐字节同构）；富通知：icon + 正文列（msg 一行、
+  // hint 一行），正文列是独立 div。两条腿都必须真的把 msg 挂进去——早前把
+  // `let body = toast` 当兜底会让普通 toast 变成 toast 自嵌套（HierarchyRequestError），
+  // 这里改成为每个分支各自 push 要挂的节点。
+  /** @type {Node[]} */
+  const content = [icon];
+  if (rich) {
+    const wrap = document.createElement('div');
+    wrap.className = 'nebflow-toast-body';
+    wrap.append(msg);
+    if (opts.hint) {
+      const hint = document.createElement('span');
+      hint.className = 'nebflow-toast-hint';
+      hint.textContent = opts.hint;
+      wrap.append(hint);
+    }
+    content.push(wrap);
+  } else {
+    content.push(msg);
+  }
+  toast.append(...content);
+  let timer = null;
+  const dismiss = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
-  }, 4000);
+  };
+  if (opts.closable) {
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'nebflow-toast-close';
+    close.setAttribute('aria-label', opts.closeLabel || 'Dismiss');
+    // 全站关闭钮惯例 = 文本 ×（messages.js / fileSearch.js / staleTabHint.js 同族），
+    // 不引裸 innerHTML（component-contract R5）。
+    close.textContent = '×';
+    close.onclick = dismiss;
+    toast.append(close);
+  }
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  timer = setTimeout(dismiss, opts.closable ? 8000 : 4000);
 }
 
 export function confirmDeleteSession() {

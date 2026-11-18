@@ -1118,6 +1118,41 @@
   cursor: pointer;
 }
 
+/* Rich toast（canvas 保存失败批 2026-11-18）：图标 + 正文列 + 关闭钮三栏。
+   正文列内 msg 一行、hint 一行（次级色 = 可执行的下一步）。只有传了
+   opts.closable / opts.hint 时才是这个结构，普通 toast 的 DOM/样式零改动。 */
+.nebflow-toast-rich {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-2);
+}
+.nebflow-toast-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.nebflow-toast-hint {
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.35;
+  color: var(--color-frame-text-dim);
+}
+.nebflow-toast-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+}
+.nebflow-toast-close:hover { color: var(--color-text); }
+
 
 /* ── Onboarding wizard (first-run) ─────────────────────────────────────── */
 /* Overlay stays transparent (no dimming per design ruling) — it only blocks
