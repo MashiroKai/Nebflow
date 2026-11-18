@@ -754,12 +754,18 @@ function overloadRetryDelayMs(resp) {
  * 远低于票据 TTL（默认 1800s），且与任何普通 `<img src>` 消费同一份策略。
  * @param {string} url
  * @param {((loaded: number, total: number) => void)|null} [onProgress]
- * @param {{ revalidate?: boolean }} [opts] revalidate=true ⇒ 本次强制绕过 HTTP 缓存
+ * @param {{ revalidate?: boolean, signal?: AbortSignal }} [opts] revalidate=true ⇒ 本次强制绕过 HTTP
+ *   缓存（`cache: 'no-store'`，缺省 'default'）；`signal`（pop-optimistic-canvas 批
+ *   2026-11-18）：关页签 / 超时腿据此**真 abort** 在飞取件（不许后台继续下）。
+ *   两个开关各自缺席 = 逐字现状。落队并集口径（作者裁 2026-11-19）：两腿同一条
+ *   fetch —— 不许第二份取件实现。
  * @returns {Promise<{blob: Blob, total: number, lastModified: string, version: string}>}
  */
 export async function fetchBlobWithProgress(url, onProgress, opts) {
-  const cacheMode = opts && opts.revalidate ? 'no-store' : 'default';
-  const send = () => fetch(url, { credentials: 'same-origin', cache: cacheMode });
+  const o = opts || {};
+  const cacheMode = o.revalidate ? 'no-store' : 'default';
+  const signal = o.signal ? o.signal : undefined;
+  const send = () => fetch(url, { credentials: 'same-origin', cache: cacheMode, signal });
   let resp = await send();
   // #750：过载腿（429/503）退避后恰一次重试。失败 body 先 cancel 归还连接，
   // 再按 Retry-After 等一拍——等待时长是服务端建议，不是本端测时。

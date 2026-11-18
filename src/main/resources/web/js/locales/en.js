@@ -2235,6 +2235,15 @@ export default {
   'canvas.loadingFile': 'Opening…',
   'canvas.loadFailed': 'Failed to open',
   'canvas.retry': 'Retry',
+  // Pop file-card optimistic-open batch (2026-11-18): the placeholder's failure
+  // reason must be readable AND typed — offline / not found / credential-denied /
+  // unsupported / timeout are no longer the same sentence, and never a blank page.
+  'canvas.loadOffline': 'Network unavailable (offline) — cannot fetch the file.',
+  'canvas.loadDenied': 'Not allowed to read this file (credential denied).',
+  'canvas.loadNotFound': 'File not found or already removed.',
+  'canvas.loadTimeout': 'Loading timed out — retry.',
+  'canvas.loadCancelled': 'Cancelled.',
+  'canvas.loadBusy': 'Server busy — try again shortly.',
   // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button.
   // Retired by canvas-auto-refresh (2026-11-17 author order — hysteresis auto refresh,
   // 60s window); canvas.refresh key removed with the button, refreshDirty stays

@@ -314,114 +314,92 @@ export function canFetchLocalBytes(path) {
 //
 // 渲染出口仍走**既有** viewer 注册表（`renderFile`），与 `previewBlob` 同一条腿。
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const PROGRESS_RING_R = 18;
-const PROGRESS_RING_C = 2 * Math.PI * PROGRESS_RING_R;
+// 进度环 / 可见失败 / 终态注记三件的**单点**已抽到叶子模块 `progressPane.js`
+// （pop-optimistic-canvas 批 2026-11-18）——Pop 文件卡的乐观打开腿与附件预览腿
+// import **同一份**实现（禁第二套环体系）。类名/数据读数面逐字节不变。
+import { renderProgressPane, renderProgressFailure, renderProgressNote } from './progressPane.js';
 
-/** 档3 进度面板：百分比环（Content-Length 可得）或转圈（不可得）。
- *  数据读数面：`data-nf-progress` = determinate|indeterminate、`data-nf-pct` = 0..100。 */
-function renderProgressPane(paneEl, label) {
-  paneEl.classList.add('scrollable');
-  paneEl.innerHTML = '';
-  const wrap = document.createElement('div');
-  wrap.className = 'nf-progress-pane';
-  wrap.setAttribute('data-nf-progress', 'indeterminate');
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('class', 'nf-progress-ring');
-  svg.setAttribute('viewBox', '0 0 44 44');
-  const mkCircle = (cls) => {
-    const c = document.createElementNS(SVG_NS, 'circle');
-    c.setAttribute('class', cls);
-    c.setAttribute('cx', '22');
-    c.setAttribute('cy', '22');
-    c.setAttribute('r', String(PROGRESS_RING_R));
-    return c;
-  };
-  const bg = mkCircle('nf-progress-ring-bg');
-  const fg = mkCircle('nf-progress-ring-fg');
-  fg.style.strokeDasharray = String(PROGRESS_RING_C);
-  fg.style.strokeDashoffset = String(PROGRESS_RING_C);
-  svg.append(bg, fg);
-  const spinner = document.createElement('div');
-  spinner.className = 'canvas-loading-spinner nf-progress-spinner';
-  const pct = document.createElement('div');
-  pct.className = 'nf-progress-pct';
-  const lab = document.createElement('div');
-  lab.className = 'nf-progress-label';
-  lab.textContent = label;
-  wrap.append(svg, spinner, pct, lab);
-  paneEl.appendChild(wrap);
-  return {
-    /** @param {number} loaded @param {number} total */
-    setProgress(loaded, total) {
-      if (!wrap.isConnected) return;
-      if (total > 0) {
-        wrap.setAttribute('data-nf-progress', 'determinate');
-        const p = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
-        fg.style.strokeDashoffset = String(PROGRESS_RING_C * (1 - p / 100));
-        pct.textContent = `${p}%`;
-        wrap.setAttribute('data-nf-pct', String(p));
-      } else {
-        wrap.setAttribute('data-nf-progress', 'indeterminate');
-      }
-    },
-  };
-}
+// 乐观打开腿的默认取数超时（ms）：超过即判「超时」并出可读原因 + 重试键
+// （zip/被黑洞吞掉的连接不再永远转圈）。0 = 不设。
+const DEFAULT_LOAD_TIMEOUT_MS = 30000;
 
-/** 档3 可见失败态：就地错误面板 + 重试键（**禁静默**——messages.js:2588 族旧腿
- *  「blob 拿不到 ⇒ 悄悄回落文本腿」对图片零反馈，本面板即其可见化替身）。 */
-function renderProgressFailure(paneEl, err, subject, onRetry) {
-  if (!paneEl.isConnected) return;
-  paneEl.classList.add('scrollable');
-  paneEl.innerHTML = '';
-  const box = document.createElement('div');
-  box.className = 'canvas-error';
-  box.setAttribute('data-nf-error', '1');
-  const statusSuffix = err && /** @type {Error & {status?: number}} */ (err).status
-    ? ` (HTTP ${/** @type {Error & {status?: number}} */ (err).status})` : '';
-  const msg = document.createElement('div');
-  msg.textContent = `${t('canvas.loadFailed')}${statusSuffix}`;
-  const sub = document.createElement('div');
-  sub.className = 'nf-error-subject';
-  sub.textContent = subject || '';
-  box.append(msg, sub);
-  const retry = document.createElement('button');
-  retry.type = 'button';
-  retry.className = 'viewer-retry-btn';
-  retry.textContent = t('canvas.retry');
-  retry.setAttribute('data-nf-retry', '1');
-  retry.addEventListener('click', () => { if (paneEl.isConnected) onRetry(); });
-  box.appendChild(retry);
-  paneEl.appendChild(box);
-}
+/** 乐观打开腿可渲染的**文本形态**类型（读 blob.text() 交 renderFile）。  */
+const OPT_TEXT_TYPES = new Set(['code', 'json', 'csv', 'yaml', 'markdown', 'html']);
+/** 乐观打开腿可渲染的 **objectUrl 形态**类型（字节已是 blob，交 renderFile 取 objectUrl）。 */
+const OPT_BLOB_TYPES = new Set(['image', 'pdf', 'docx', 'xlsx', 'pptx', 'epub', 'video', 'mobi']);
 
-/** 终态不可重试面（unsupported / 超上限）：同一面板家族，无重试键。 */
-function renderProgressNote(paneEl, message) {
-  if (!paneEl.isConnected) return;
-  paneEl.classList.add('scrollable');
-  paneEl.innerHTML = '';
-  const box = document.createElement('div');
-  box.className = 'canvas-error';
-  box.setAttribute('data-nf-note', '1');
-  box.textContent = message;
-  paneEl.appendChild(box);
+/** fetch abort 的标准形状（`name==='AbortError'`，同 DOMException）。 */
+function abortError() {
+  const e = /** @type {Error & {name: string}} */ (new Error('aborted'));
+  e.name = 'AbortError';
+  return e;
 }
 
 /**
  * 一次「进度 → 取数 → 渲染」尝试（重试键复入同一函数 ⇒ 绕开 tab 已存在的
  * 幂等早退）。
- * @returns {Promise<'ok'|'unsupported'|'failed'>}
+ *
+ * pop-optimistic-canvas 批（2026-11-18）在本函数补三条取消/失败语义 —— 作者令
+ * 「先乐观打开在 canvas 占位防丢失，然后在 canvas 用一个环来显示加载进度」：
+ *   · `signal`：AbortSignal 原样透传给 `load`（fetch 腿据此真 abort，不是只丢结果）；
+ *   · `timeoutMs`：到期即 abort 并落**可读的「超时」** + 重试键（禁永远转圈）；
+ *   · 关页签 ⇒ abort：监听 `canvas-tab-closed`，命中本 tab id 即 abort（禁后台继续下）。
+ * abort 后两道分流：**用户取消**（页签已没 ⇒ pane 断连、静默，禁噪声）；**超时**（可见失败面）。
+ * @param {HTMLElement} paneEl
+ * @param {{ id: string, title?: string, fileName?: string, itemType?: string,
+ *   load: (h: {onProgress: (loaded: number, total: number) => void, signal?: AbortSignal}) => Promise<{blob: Blob, version?: string}>,
+ *   cacheKey?: string, absPath?: string, timeoutMs?: number, allowExcluded?: boolean }} args
+ * @returns {Promise<'ok'|'unsupported'|'failed'|'aborted'>}
  */
 async function runProgressAttempt(paneEl, args) {
   const { fileName, load, cacheKey } = args;
   const name = fileName || '';
+  const timeoutMs = Number.isFinite(args.timeoutMs) ? Number(args.timeoutMs) : DEFAULT_LOAD_TIMEOUT_MS;
+  const allowExcluded = args.allowExcluded === true;
+  // ── 取消管线（pop-optimistic-canvas 批）─────────────────────────────────
+  const ctl = new AbortController();
+  /** @type {string} 取消因（'' | 'timeout' | 'user'；闭包内写，故不窄化字面量类型） */
+  let abortReason = '';
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let timer = null;
+  const onTabClosed = (/** @type {CustomEvent} */ e) => {
+    if (!e || !e.detail || e.detail.id !== args.id) return;
+    if (!ctl.signal.aborted) { abortReason = 'user'; ctl.abort(); }
+  };
+  document.addEventListener('canvas-tab-closed', onTabClosed);
+  if (timeoutMs > 0) {
+    timer = setTimeout(() => {
+      if (!ctl.signal.aborted) { abortReason = 'timeout'; ctl.abort(); }
+    }, timeoutMs);
+  }
+  const cleanup = () => {
+    document.removeEventListener('canvas-tab-closed', onTabClosed);
+    if (timer !== null) { clearTimeout(timer); timer = null; }
+  };
   const prog = renderProgressPane(paneEl, t('canvas.loadingFile'));
+  const retry = () => { runProgressAttempt(paneEl, args).catch(() => {}); };
+  // abort 竞速臂：取数腿**必须**被取消信号终结 —— 真 fetch 腿会 reject(AbortError)，
+  // 但万一某条 loader 不认 signal（第三方实现 / 假腿），await 就会永远挂着。故用
+  // Promise.race 与 signal 竞速：取消/超时一定落地（绝不永远转圈），同时 abort() 仍
+  // 真发给下层的 fetch（不许后台继续下）。
+  const abortArm = new Promise((_, reject) => {
+    if (ctl.signal.aborted) { reject(abortError()); return; }
+    ctl.signal.addEventListener('abort', () => reject(abortError()), { once: true });
+  });
+  // 该臂可能走不到 race（缓存命中腿）⇒ 挂一个吞子，避免取消在某些路径上变成
+  // 未处理的 promise rejection（race 自己另接一手，功能不受影响）。
+  abortArm.catch(() => {});
+  // 乐观打开腿（Pop 文件卡）：渲染上下文必须带上 absPath —— html 查看器靠它解析
+  // 交付件里的**相对引用**（同目录 js/css/图片模块）；缺了就是「渲染出来但点不动」
+  // 的既有故障类。附件腿不传 absPath ⇒ 逐字现状（undefined，不覆盖既有 null）。
+  const renderBase = args.absPath ? { absPath: args.absPath } : {};
   try {
     let blob = cacheKey ? await nfCachedBlob(cacheKey) : null; // 档2：命中零取数
     if (blob) {
       prog.setProgress(1, 1);
     } else {
-      const res = await load({ onProgress: prog.setProgress });
+      if (ctl.signal.aborted) throw abortError();
+      const res = await Promise.race([load({ onProgress: prog.setProgress, signal: ctl.signal }), abortArm]);
       blob = res && res.blob;
       if (blob && cacheKey) void nfCachePut(cacheKey, blob, res.version);
     }
@@ -431,23 +409,28 @@ async function runProgressAttempt(paneEl, args) {
     let effType = args.itemType
       || itemTypeForFileName(name)
       || ((blob.size <= MAX_TEXT_BYTES && await looksTextual(blob)) ? 'code' : '');
-    if (!effType || EXCLUDED_ITEM_TYPES.has(effType)) {
-      renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }));
+    if (!effType || (!allowExcluded && EXCLUDED_ITEM_TYPES.has(effType))) {
+      renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }), retry);
       return 'unsupported';
     }
-    if (TEXT_ITEM_TYPES.has(effType)) {
+    // 乐观打开腿（allowExcluded，Pop 文件卡）：文本形态（含 html —— Pop 交付件常是
+    // HTML 动画，explorer 双击同一文件也走同一 html viewer，信任域一致）读 content；
+    // 有 objectUrl 腿的二进制/媒体形态（含 video/mobi）走 blob URL；其余可见降级。
+    const textTypes = allowExcluded ? OPT_TEXT_TYPES : TEXT_ITEM_TYPES;
+    const blobTypes = allowExcluded ? OPT_BLOB_TYPES : BLOB_ITEM_TYPES;
+    if (textTypes.has(effType)) {
       if (blob.size > MAX_TEXT_BYTES) {
-        renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }));
+        renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }), retry);
         return 'unsupported';
       }
       const content = await blob.text();
-      await renderIntoPane(paneEl, effType, { content, fileName: name, size: blob.size });
+      await renderIntoPane(paneEl, effType, { content, fileName: name, size: blob.size, ...renderBase });
       return 'ok';
     }
-    if (BLOB_ITEM_TYPES.has(effType)) {
+    if (blobTypes.has(effType)) {
       // P2 批打开闸拆分：二进制查看腿走 1 GiB 镜像闸（同 previewBlob 腿判据）。
       if (blob.size > MAX_VIEWER_BYTES) {
-        renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }));
+        renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }), retry);
         return 'unsupported';
       }
       // 重试/重挂腿：同 tab id 换新 objectURL 前先撤旧的（禁泄漏，同 closeTab 家族）。
@@ -459,16 +442,21 @@ async function runProgressAttempt(paneEl, args) {
       bindObjectUrlRevoke();
       const objectUrl = URL.createObjectURL(blob);
       objectUrls.set(args.id, objectUrl);
-      await renderIntoPane(paneEl, effType, { objectUrl, fileName: name, size: blob.size });
+      await renderIntoPane(paneEl, effType, { objectUrl, fileName: name, size: blob.size, ...renderBase });
       return 'ok';
     }
-    renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }));
+    renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }), retry);
     return 'unsupported';
   } catch (err) {
-    renderProgressFailure(paneEl, /** @type {Error} */ (err), name, () => {
-      runProgressAttempt(paneEl, args).catch(() => {});
-    });
+    if (ctl.signal.aborted || (err && /** @type {any} */ (err).name === 'AbortError')) {
+      // 用户取消（关页签）= 页签已没 ⇒ pane 断连，静默；超时 = 可见失败 + 重试。
+      if (abortReason === 'timeout') renderProgressFailure(paneEl, err, name, retry, 'timeout');
+      return abortReason === 'timeout' ? 'failed' : 'aborted';
+    }
+    renderProgressFailure(paneEl, /** @type {Error} */ (err), name, retry);
     return 'failed';
+  } finally {
+    cleanup();
   }
 }
 
@@ -478,23 +466,28 @@ async function runProgressAttempt(paneEl, args) {
  * 通用 toast——「可见」由本函数保证，「fail-silent」从此不存在）。
  *
  * @typedef {{ id: string, title?: string, fileName?: string, itemType?: string,
- *   load: (h: {onProgress: (loaded: number, total: number) => void}) => Promise<{blob: Blob, version?: string}>,
- *   cacheKey?: string }} PreviewWithProgressArgs
+ *   load: (h: {onProgress: (loaded: number, total: number) => void, signal?: AbortSignal}) => Promise<{blob: Blob, version?: string}>,
+ *   cacheKey?: string, absPath?: string, pinned?: boolean, timeoutMs?: number,
+ *   allowExcluded?: boolean }} PreviewWithProgressArgs
  *   id = Canvas tab id（重复点击即复用）；itemType 缺席时按文件名 + 内容嗅探判；
- *   load = 字节获取（调用方注入**既有**路由的流式读出器；本模块零 fetch）；
- *   cacheKey = 档2 缓存键（缺席 = 不缓存）。
+ *   load = 字节获取（调用方注入**既有**路由的流式读出器；本模块零 fetch，`signal`
+ *   由本模块下发、调用方透传给 fetch）；cacheKey = 档2 缓存键（缺席 = 不缓存）；
+ *   absPath/pinned = 页签可恢复性（Pop 文件卡腿用；附件腿不传 = 逐字现状）；
+ *   timeoutMs = 取数超时（缺省 30s；0 = 不设）；allowExcluded = 允许 html 等
+ *   排除面入渲染（Pop 文件卡腿专用；附件腿不传 = 排除面逐字不变）。
  * @param {PreviewWithProgressArgs} p
- * @returns {Promise<'ok'|'unsupported'|'failed'>}
+ * @returns {Promise<'ok'|'unsupported'|'failed'|'aborted'>}
  */
-export async function previewWithProgress({ id, title, fileName, itemType, load, cacheKey }) {
+export async function previewWithProgress({ id, title, fileName, itemType, load, cacheKey, absPath, pinned, timeoutMs, allowExcluded }) {
   if (!id || typeof load !== 'function') return 'failed';
   if (alreadyOpen(id)) return 'ok';
   // 判据先行（同步、零取数）：与 previewBlob 同一真源。openTab 的 type 用它，
   // 使 persistTabs/restore 的形态与改前 previewBlob 腿一致（restore 后重渲染同型）。
   const typeGuess = itemType || itemTypeForFileName(fileName || '');
-  // 🔴 tab-first：openTab 同步执行（面板 + 标签当帧可见），取数在其后。
-  const entry = openTab(id, title || id, { type: typeGuess || 'generic' });
+  // 🔴 tab-first：openTab 同步执行（面板 + 标签当帧可见），取数在其后 ——
+  // 「取到了才开 tab」正是 pop-optimistic-canvas 批要修的缺陷本体。
+  const entry = openTab(id, title || id, { type: typeGuess || 'generic', absPath, pinned: !!pinned });
   if (!entry) return 'failed';
   entry.paneEl.dataset.attachmentPreview = '1';
-  return runProgressAttempt(entry.paneEl, { id, title, fileName, itemType: typeGuess, load, cacheKey });
+  return runProgressAttempt(entry.paneEl, { id, title, fileName, itemType: typeGuess, load, cacheKey, timeoutMs, allowExcluded });
 }
