@@ -91,6 +91,7 @@ const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤
 const RENDER_BATCH = 50;      // lazy-render batch (spec §6.1)
 const FETCH_CONCURRENCY = 1;
 const DEBOUNCE_MS = 300;
+const SEARCH_TIMEOUT_MS = 15000;
 const PAGE_JUMP = 5;
 
 // ── 数据层检索骨架（datalayer-spec 批 2026-10-30，设计稿 §4.5 C2-C6）─────
@@ -1484,6 +1485,19 @@ function anchorEndTs(a) {
   return new Date(a.y, a.m0, a.d, 23, 59, 59, 999).getTime();
 }
 
+// A deadline covers the entire operation, including fallback and response bodies.
+// Invalidate the sequence before aborting: even a non-cooperative request cannot
+// overwrite the timeout error when it eventually completes.
+function searchDeadline(ac, seq, statusEl, resultsEl) {
+  return setTimeout(() => {
+    if (seq !== searchSeq) return;
+    ++searchSeq;
+    ac.abort();
+    resultsEl.removeAttribute('data-loading');
+    showError(statusEl, new Error(t('search.timeout')));
+  }, SEARCH_TIMEOUT_MS);
+}
+
 // ── Stream mode (browse / anchor) ──────────────────────────
 async function runStream() {
   const mySeq = ++searchSeq;
@@ -1500,6 +1514,7 @@ async function runStream() {
   streamMode = anchorDate ? 'anchor' : 'browse';
   resultsEl.dataset.loading = 'true';
   statusEl.textContent = t('search.searching');
+  const deadline = searchDeadline(ac, mySeq, statusEl, resultsEl);
 
   try {
     let sessions;
@@ -1575,6 +1590,8 @@ async function runStream() {
     if (e.name === 'AbortError' || mySeq !== searchSeq) return;
     resultsEl.removeAttribute('data-loading');
     showError(statusEl, e);
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
@@ -2103,6 +2120,7 @@ async function runSearch() {
   searchNameById = new Map();
   searchTailEl?.remove();
   searchTailEl = null;
+  const deadline = searchDeadline(ac, mySeq, statusEl, resultsEl);
 
   try {
     // C3：索引快路优先——成功（或已被更新的查询取代/中止）⇒ handled；
@@ -2237,6 +2255,8 @@ async function runSearch() {
     if (e.name === 'AbortError' || mySeq !== searchSeq) return;
     resultsEl.removeAttribute('data-loading');
     showError(statusEl, e);
+  } finally {
+    clearTimeout(deadline);
   }
 }
 

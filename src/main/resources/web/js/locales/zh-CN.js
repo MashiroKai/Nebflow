@@ -2546,6 +2546,7 @@ export default {
   'search.noResultsSuggestion': '试试缩短关键词或清除日期/类型筛选',
   'search.noSession': '当前没有活跃会话',
   'search.failed': '搜索失败',
+  'search.timeout': '搜索超时，请重试',
   'search.retry': '重试',
   'search.jumpFailed': '未能在会话中定位该消息',
   'search.typeUser': '用户',

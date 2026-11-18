@@ -28,6 +28,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+test.use({ video: 'on' });
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -135,7 +136,8 @@ async function bootApp(page) {
       return route.fulfill({
         status: 200,
         contentType: MIME[extname(file)] || 'application/octet-stream',
-        body: readFileSync(file),
+        body: readFileSync(p === '/js/chatSearch.js' && process.env.SEARCH_BASELINE_JS
+          ? process.env.SEARCH_BASELINE_JS : file),
       });
     } catch {
       return route.fulfill({ status: 404, body: 'not found' });
@@ -296,6 +298,45 @@ test.describe('桌面 1280×800', () => {
     expect(errors, errors.join('\n')).toEqual([]);
   });
 });
+
+// A hanging index request must not leave either search face in loading forever.
+for (const mobile of [true, false]) {
+  test.describe(`search deadline ${mobile ? 'mobile' : 'desktop'}`, () => {
+    test.use({ viewport: mobile ? { width: 375, height: 812 } : { width: 1280, height: 900 },
+      hasTouch: mobile });
+    test('hung index ends in retryable error; retry succeeds', async ({ page }) => {
+      test.setTimeout(45000);
+      await bootApp(page);
+      await page.locator(mobile ? '[data-chrome="search"]' : '#search-btn').click();
+      let calls = 0;
+      await page.route('**/api/search/chat?**', async route => {
+        calls++;
+        if (calls === 1) return; // deliberately never complete the intercepted request
+        await route.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify({ hits: [], total: 0, degraded: false }) });
+      });
+      await page.locator('#search-keyword').fill('检索');
+      await expect(page.locator('#search-status')).toContainText('正在搜索');
+      await expect(page.locator('#search-status')).toContainText('搜索超时', { timeout: 20000 });
+      await expect(page.locator('#search-results')).not.toHaveAttribute('data-loading', 'true');
+      await page.locator('#search-status button').click();
+      await expect(page.locator('#search-status')).toContainText('0 条结果');
+      await expect(page.locator('#search-results')).not.toHaveAttribute('data-loading', 'true');
+      expect(calls).toBeGreaterThanOrEqual(2);
+    });
+    test('index 500 and hanging fallback also reaches retryable timeout', async ({ page }) => {
+      test.setTimeout(45000);
+      await bootApp(page);
+      await page.locator(mobile ? '[data-chrome="search"]' : '#search-btn').click();
+      await page.route('**/api/search/chat?**', route => route.fulfill({ status: 500, body: 'error' }));
+      await page.route(`**/api/sessions/${SID}/history*`, () => {});
+      await page.locator('#search-keyword').fill('检索');
+      await expect(page.locator('#search-status')).toContainText('搜索超时', { timeout: 20000 });
+      await expect(page.locator('#search-results')).not.toHaveAttribute('data-loading', 'true');
+      await expect(page.locator('#search-status button')).toBeEnabled();
+    });
+  });
+}
 
 // ── 真数据验收（SEARCH_REAL_API=1）：本机真实索引 + 改后前端，取尽全部命中 ──────
 test.describe('真数据（SEARCH_REAL_API=1）', () => {

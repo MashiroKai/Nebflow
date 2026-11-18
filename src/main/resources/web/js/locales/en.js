@@ -2629,6 +2629,7 @@ export default {
   'search.noResultsSuggestion': 'Try a shorter keyword or clear the date/type filters',
   'search.noSession': 'No active session',
   'search.failed': 'Search failed',
+  'search.timeout': 'Search timed out. Please retry.',
   'search.retry': 'Retry',
   'search.jumpFailed': 'Could not locate the message in the session',
   'search.typeUser': 'User',
