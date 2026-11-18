@@ -379,6 +379,8 @@ function resolveQuoteDesc(rowEl, d) {
  *  2026-10-31 作者令整条退役——触屏触达改走消息 footer 信息条：时间/下载/引用钮）：
  *  有正文 ⇒ 复制 + 引用，其余 ⇒ 仅引用；壳 = showPopupMenu（好友窗/联系人行
  *  同一玻璃面板）。 */
+// Bound surrounding text to keep explanations useful without sending the whole row.
+export const SELECTION_CONTEXT_CHARS = 300;
 export function openQuoteMenuForRow(rowEl, x, y) {
   const d = (rowEl && rowEl.__nfQuoteDesc) || null;
   if (!rowEl || !d) return false;
@@ -394,6 +396,20 @@ export function openQuoteMenuForRow(rowEl, x, y) {
   const quote = resolveQuoteDesc(rowEl, d);
   if (selected) Object.assign(quote, { kind: 'text', text: selected, attachments: [] });
   items.push({ label: t('messages.quote'), onClick: () => startQuote(quote) });
+  if (selected) {
+    // Snapshot the range before the menu takes focus.
+    const range = selection.getRangeAt(0);
+    const bubble = range.startContainer.parentElement?.closest('.bubble');
+    const scope = bubble && bubble.contains(range.endContainer) ? bubble : rowEl;
+    const before = document.createRange();
+    before.selectNodeContents(scope);
+    before.setEnd(range.startContainer, range.startOffset);
+    const after = document.createRange();
+    after.selectNodeContents(scope);
+    after.setStart(range.endContainer, range.endOffset);
+    const snapshot = { selected, before: before.toString().slice(-SELECTION_CONTEXT_CHARS), after: after.toString().slice(0, SELECTION_CONTEXT_CHARS) };
+    items.push({ label: 'Ask', onClick: () => import('./selectionAsk.js').then(m => m.openSelectionAsk(snapshot)) });
+  }
   showPopupMenu(x, y, items);
   return true;
 }
@@ -415,6 +431,26 @@ export function attachQuoteMenu(rowEl, d) {
     const expanded = Array.from(rowEl.querySelectorAll('.pop-stack-area')).some(stack => stack.popExpanded?.());
     rowEl.querySelectorAll(':scope > .duration-badge > .msg-quote-btn, :scope > .duration-badge > .msg-group-dl, :scope > .duration-badge > .pop-download-reason').forEach(btn => { btn.hidden = expanded; });
   });
+  // Only act on an existing selection: leave native text selection gestures alone.
+  let touchTimer = 0;
+  let touchX = 0;
+  let touchY = 0;
+  const cancelTouch = () => { if (touchTimer) clearTimeout(touchTimer); touchTimer = 0; };
+  rowEl.addEventListener('touchstart', (e) => {
+    cancelTouch();
+    if (e.touches.length !== 1) return;
+    const s = window.getSelection();
+    if (!s || s.isCollapsed || !s.rangeCount || !rowEl.contains(s.getRangeAt(0).startContainer) || !rowEl.contains(s.getRangeAt(0).endContainer)) return;
+    touchX = e.touches[0].clientX;
+    touchY = e.touches[0].clientY;
+    touchTimer = setTimeout(() => { touchTimer = 0; openQuoteMenuForRow(rowEl, touchX, touchY); }, 600);
+  }, { passive: true });
+  rowEl.addEventListener('touchmove', (e) => {
+    const touch = e.touches[0];
+    if (!touch || Math.hypot(touch.clientX - touchX, touch.clientY - touchY) > 10) cancelTouch();
+  }, { passive: true });
+  rowEl.addEventListener('touchend', cancelTouch, { passive: true });
+  rowEl.addEventListener('touchcancel', cancelTouch, { passive: true });
   rowEl.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     // 手机端长按退役批（2026-10-31 作者令）：触屏长按不再弹引用/复制菜单——

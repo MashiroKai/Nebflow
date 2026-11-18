@@ -6,6 +6,7 @@ import { key } from './branding.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
 import { sendWs, onReconnect, onMessage } from './ws.js';
 import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState, clearAttachmentStripAnimated } from './chat.js';
+import { selectionAskPending } from './selectionAsk.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
@@ -226,6 +227,9 @@ export function send(resendId) {
   const resendText = !text && isResend ? (state.inputHistory[state.inputHistory.length - 1] || '') : text;
   const effText = isResend ? resendText : text;
   const isBusy = state.busySessionIds.has(v.sessionId) || state.compactingSessionIds.has(v.sessionId);
+  // Selection Ask frames share this session and have no request correlation ID.
+  // Do not admit another local turn until its terminal frame arrives.
+  if (selectionAskPending(v.sessionId)) return;
   // If in skill mode, send as skill activation
   if (v.skillMode) {
     const skillName = v.skillModeName;

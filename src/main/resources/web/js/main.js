@@ -4149,7 +4149,9 @@ onMessage('bgRateAlert', (msg) => {
 });
 
 // --- /ask command ---
+import { selectionAskFrame } from './selectionAsk.js';
 onMessage('askTextDelta', (msg, view) => {
+  if (selectionAskFrame('askTextDelta', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   // Accumulate ask text for ALL sessions
@@ -4160,6 +4162,7 @@ onMessage('askTextDelta', (msg, view) => {
   if (view) appendAskAnswer(msg.delta);
 });
 onMessage('askDone', (msg, view) => {
+  if (selectionAskFrame('askDone', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
   const durationMs = consumeTurnDuration(sid) || msg.durationMs;
   const buf = sid ? state.sessionAskBuffers[sid] : null;
@@ -4185,6 +4188,7 @@ onMessage('askDone', (msg, view) => {
   if (activeView?.stream?.currentThinkingBubble) finishThinking();
 });
 onMessage('askError', (msg, view) => {
+  if (selectionAskFrame('askError', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
   if (sid) delete state.sessionAskBuffers[sid];
   if (view) renderAskError(msg.message);

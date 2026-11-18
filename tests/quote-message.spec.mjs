@@ -53,38 +53,49 @@ function freePort() {
     const srv = net.createServer();
     srv.listen(0, '127.0.0.1', () => {
       const p = srv.address().port;
-      srv.close(() => resolve(p));
+      srv.close(() => {
+        if ([6138, 8080, 8097].includes(p)) reject(new Error(`protected port selected: ${p}`));
+        else resolve(p);
+      });
     });
     srv.on('error', reject);
   });
 }
 
 function startStaticServer(p, dir) {
-  return spawn('python3', ['-m', 'http.server', String(p), '--bind', '127.0.0.1', '--directory', dir], {
-    stdio: 'ignore',
-  });
+  const script = `import functools, http.server, sys, threading\nhandler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[2])\nserver = http.server.ThreadingHTTPServer(('127.0.0.1', int(sys.argv[1])), handler)\nthread = threading.Thread(target=server.serve_forever)\nthread.start()\nprint('ready', flush=True)\nsys.stdin.readline()\nserver.shutdown()\nthread.join()\nserver.server_close()`;
+  return spawn('python3', ['-u', '-c', script, String(p), dir], { stdio: ['pipe', 'pipe', 'ignore'] });
 }
 
-async function waitUntilUp(url, tries = 60) {
-  for (let i = 0; i < tries; i++) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch { /* not up yet */ }
-    await new Promise(r => setTimeout(r, 100));
-  }
-  throw new Error(`static server never came up at ${url}`);
+function serverReady(server) {
+  return new Promise((resolve, reject) => {
+    server.stdout.once('data', resolve);
+    server.once('error', reject);
+    server.once('exit', code => reject(new Error(`server exited before ready: ${code}`)));
+  });
 }
 
 test.beforeAll(async () => {
   expect(fs.existsSync(path.join(REPO_ROOT, HARNESS_PATH.replace(/^\//, '')))).toBe(true);
   port = await freePort();
-  servers.push(startStaticServer(port, REPO_ROOT));
-  await waitUntilUp(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+  console.log(`quote harness port=${port}; data root unused`);
+  const server = startStaticServer(port, REPO_ROOT);
+  servers.push(server);
+  await serverReady(server);
 });
 
 test.afterAll(async () => {
-  for (const s of servers) s.kill('SIGTERM');
+  for (const server of servers) {
+    const exited = new Promise(resolve => server.once('exit', resolve));
+    server.stdin.end('quit\n');
+    await exited;
+    expect(() => process.kill(server.pid, 0)).toThrow();
+    const probe = net.createServer();
+    await new Promise((resolve, reject) => {
+      probe.once('error', reject);
+      probe.listen(port, '127.0.0.1', () => probe.close(resolve));
+    });
+  }
 });
 
 async function newPage(browser) {
@@ -121,6 +132,41 @@ test.describe('B1 — 右键菜单项', () => {
     expect(result.chipText).not.toContain('before');
     await context.close();
   });
+  test('selected Ask sends bounded context and quotes the returned explanation', async ({ browser }) => {
+    const { context, page } = await newPage(browser);
+    const id = await page.evaluate(() => window.__renderUserRow('before selected after'));
+    await page.evaluate(id => {
+      const socket = new EventTarget();
+      socket.readyState = WebSocket.OPEN;
+      socket.send = data => { window.__selectionFrame = JSON.parse(data); };
+      window.__setSelectionSocket(socket);
+      const row = window.__rowById(id);
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode()) && !node.textContent.includes('before selected after')) {}
+      const range = document.createRange();
+      range.setStart(node, 7); range.setEnd(node, 15);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+      Array.from(document.querySelectorAll('.fm-context-menu button')).find(button => button.textContent === 'Ask').click();
+    }, id);
+    await expect(page.locator('.selection-ask-panel')).toBeVisible();
+    const frame = await page.evaluate(() => window.__selectionFrame);
+    expect(frame.type).toBe('ask');
+    expect(frame.question).toContain('<before>\nbefore ');
+    expect(frame.question).toContain('<selection>\nselected\n</selection>');
+    expect(frame.question).toContain(' after\n</after>');
+    await page.evaluate(async () => {
+      const ask = await import('/src/main/resources/web/js/selectionAsk.js');
+      ask.selectionAskFrame('askTextDelta', { sessionId: 'quote-harness', delta: 'Synthetic explanation.' });
+      ask.selectionAskFrame('askDone', { sessionId: 'quote-harness' });
+    });
+    await expect(page.locator('.selection-ask-answer')).toHaveText('Synthetic explanation.');
+    await page.locator('.selection-ask-panel button').last().click();
+    await expect(page.locator('#attachment-preview')).toContainText('Synthetic explanation.');
+    await context.close();
+  });
+
   test('用户文本行菜单 = 复制 + 引用；工具卡行 = 仅引用', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const userId = await page.evaluate(() => window.__renderUserRow('用户的一条消息'));

@@ -22,6 +22,7 @@
   <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
   <link rel="stylesheet" href="/src/main/resources/web/css/input.css">
   <link rel="stylesheet" href="/src/main/resources/web/css/split.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/ask.css">
   <!-- 手机层样式（引用入口移入 footer 批 2026-11-02）：footer 引用键的手机档
        几何（--mtap-lg 48）在 css/mobileLayer.css 的 body.mobile-layer 作用域里 ——
        手机腿（375×812）显式挂该姿态类后量到的是真机档。桌面腿零变化（全部规则
@@ -70,6 +71,7 @@
     chatViews.primary.setSession('quote-harness');
     state.activeSessionId = 'quote-harness';
     state.ws = { readyState: 1, send: () => {} };
+    window.__setSelectionSocket = socket => { state.ws = socket; };
 
     const chatMod = await import(`${WEB}/chat.js`);
     const popMod = await import(`${WEB}/popArtifacts.js`);

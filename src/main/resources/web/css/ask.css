@@ -200,6 +200,21 @@ nf-ask-dock { display: contents; }
   margin-right: calc(var(--ask-fab-size) + var(--ds-space-2));
 }
 
+.selection-ask-panel {
+  position: fixed;
+  z-index: var(--z-modal, 1000);
+  inset: auto var(--ds-space-4) var(--ds-space-4) auto;
+  width: min(32rem, calc(100vw - 2 * var(--ds-space-4)));
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-4);
+  border-radius: var(--ds-radius-shell);
+}
+.selection-ask-panel > div:first-child { display: flex; justify-content: space-between; align-items: center; }
+.selection-ask-answer { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══
  * 记事本批（2026-11-05）：`.note-dock` 是本规则的**成员**（不是副本）——同一座位
  * /同一宽档 `--ask-dock-w`/同一条开合曲线/同一 z 序；它只是把气泡列换成一块
