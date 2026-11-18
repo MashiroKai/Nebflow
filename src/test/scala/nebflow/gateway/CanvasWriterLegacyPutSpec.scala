@@ -92,6 +92,7 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
     routes(request).value.map(_.getOrElse(fail("route fell through"))).flatMap { response =>
       IO(assertEquals(response.status, Status.Conflict)) *> response.as[Json].map { json =>
         assertEquals(json.hcursor.get[String]("error").toOption, Some("canvas_read_only"))
+        assertEquals(json.hcursor.get[String]("message").toOption, Some("保存失败，本次修改未保存到服务器。"))
       }
     }
   }

@@ -207,9 +207,9 @@ private[gateway] object ConfigRoutes:
               case (Some(id), Some(t), Some(e)) =>
                 canvasTakeover.withCanvasWriter(principal, id, t, e)(save).flatMap {
                   case Some(response) => IO.pure(response)
-                  case None => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson, "role" -> "reader".asJson))
+                  case None => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson, "message" -> "保存失败，本次修改未保存到服务器。".asJson, "role" -> "reader".asJson))
                 }
-              case _ => Conflict(Json.obj("error" -> "canvas_read_only".asJson, "role" -> "reader".asJson))
+              case _ => Conflict(Json.obj("error" -> "canvas_read_only".asJson, "message" -> "保存失败，本次修改未保存到服务器。".asJson, "role" -> "reader".asJson))
           }
         }
 
