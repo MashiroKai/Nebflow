@@ -739,7 +739,15 @@ function buildMediaStack(items, opts) {
       const footer = document.createElement('div');
       footer.className = 'duration-badge pop-item-footer';
       const download = createMediaDownloadButton(item);
-      if (download) footer.appendChild(download);
+      if (download) {
+        footer.appendChild(download);
+        if (download.disabled) {
+          const reason = document.createElement('span');
+          reason.className = 'pop-download-reason';
+          reason.textContent = download.title;
+          footer.appendChild(reason);
+        }
+      }
       footer.appendChild(createMsgQuoteButton(itemQuote));
       card.appendChild(footer);
     }
@@ -1343,6 +1351,12 @@ function buildMediaRowFooterBadge(items, ts) {
       badge.appendChild(div);
     }
     badge.appendChild(dlBtn);
+    if (dlBtn.disabled) {
+      const reason = document.createElement('span');
+      reason.className = 'pop-download-reason';
+      reason.textContent = dlBtn.title;
+      badge.appendChild(reason);
+    }
   }
   return badge.childElementCount > 0 ? badge : null;
 }
@@ -1358,6 +1372,10 @@ const DL_CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none
 // 同一枚 SVG 单点（禁第二份拷贝——字形漂移即第二套样式）。
 export { DOWNLOAD_SVG, DL_CHECK_SVG };
 
+function hasDownloadSource(item) {
+  return !!(item && (item.path || (typeof item.src === 'string' && item.src.startsWith('data:'))));
+}
+
 // Store-only ZIP keeps the group a single download without a compression dependency.
 function createGroupDownloadButton(items) {
   const btn = document.createElement('button');
@@ -1366,6 +1384,12 @@ function createGroupDownloadButton(items) {
   btn.title = t('messages.attachDownload');
   btn.setAttribute('aria-label', btn.title);
   btn.innerHTML = DOWNLOAD_SVG;
+  if (items.some(item => !hasDownloadSource(item))) {
+    btn.disabled = true;
+    btn.title = t('messages.groupDownloadUnavailable');
+    btn.setAttribute('aria-label', btn.title);
+    return btn;
+  }
   let busy = false;
   btn.addEventListener('click', async e => {
     e.stopPropagation();
@@ -1437,8 +1461,6 @@ function createGroupDownloadButton(items) {
  *  自清（复制钮同节奏）；失败态复用 .copy-failed 红键 2s 自清 + console 取证。 */
 function createMediaDownloadButton(item) {
   if (!item) return null;
-  const hasInline = typeof item.src === 'string' && item.src.startsWith('data:');
-  if (!item.path && !hasInline) return null;
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'msg-copy msg-dl';
@@ -1446,6 +1468,12 @@ function createMediaDownloadButton(item) {
   btn.title = label;
   btn.setAttribute('aria-label', label);
   btn.innerHTML = DOWNLOAD_SVG;
+  if (!hasDownloadSource(item)) {
+    btn.disabled = true;
+    btn.title = t('messages.attachUnavailable');
+    btn.setAttribute('aria-label', btn.title);
+    return btn;
+  }
   let busy = false;
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();

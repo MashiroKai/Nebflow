@@ -556,6 +556,8 @@ export default {
   'messages.attachNoFiles': 'No file to send',
   'messages.attachEmptyFile': '{name} is an empty file (0 bytes) — not sent',
   'messages.attachDownload': 'Download',
+  'messages.attachUnavailable': 'Download unavailable: no file source',
+  'messages.groupDownloadUnavailable': 'Group download unavailable: some files have no source',
   'messages.attachDownloading': 'Downloading…',
   'messages.attachDownloaded': 'Downloaded',
   'messages.attachDownloadFailed': 'Download failed — click to retry',

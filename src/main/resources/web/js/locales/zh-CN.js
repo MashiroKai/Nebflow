@@ -557,6 +557,8 @@ export default {
   'messages.attachEmptyFile': '{name} 是空文件（0 字节），未发送',
   // 4b 腿 A-2：附件卡片文案（§B.7 三态可判读；「已过期」与「下载失败」**必须**分得开）
   'messages.attachDownload': '下载',
+  'messages.attachUnavailable': '无文件来源，无法下载',
+  'messages.groupDownloadUnavailable': '部分文件无来源，无法整组下载',
   'messages.attachDownloading': '下载中…',
   'messages.attachDownloaded': '已下载',
   'messages.attachDownloadFailed': '下载失败，点击重试',
