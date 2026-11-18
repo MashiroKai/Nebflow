@@ -42,7 +42,17 @@ const CROPS = {
   settings: [{ name: 'frame', x: 240, y: 0, w: 720, h: 220 }],
   modal: [{ name: 'frame', x: 360, y: 300, w: 720, h: 240 }],
   canvas: [{ name: 'frame', x: 300, y: 0, w: 720, h: 220 }],
-  dropdown: [{ name: 'frame', x: 900, y: 0, w: 540, h: 260 }],
+  dropdown: [
+    { name: 'frame', x: 900, y: 0, w: 540, h: 260 },
+    // dark-border-color 批（2026-11-18）：被验对象换成三枚语义指示环，故按探针实测
+    // 的包围盒加两块裁切（矩形只在 CROPS 里写一次，before/after 两腿共用 —— 这就是
+    // 「同机位、同底图、同裁切」的结构保证，不靠两次手感对齐）。
+    //   indicator-ring：#bg-indicator(726,31,36,21) + #bgagent-indicator(767,31,36,21)
+    //   origin-chip   ：两枚 .bg-task-origin 归属 chip(567,112,60,20 / 567,167,124,17)
+    // 实测：暗/亮两档包围盒逐值相同（布局与主题无关）。
+    { name: 'indicator-ring', x: 660, y: 0, w: 280, h: 120, labelAt: 'bottom' },
+    { name: 'origin-chip', x: 552, y: 50, w: 300, h: 190, labelAt: 'bottom' },
+  ],
   explorer: [{ name: 'frame', x: 0, y: 0, w: 400, h: 260 }],
   'mobile-chat': [{ name: 'frame', x: 0, y: 0, w: 390, h: 240 }],
 };
@@ -141,7 +151,10 @@ function compose() {
       //    字条用 ImageMagick（本机 ffmpeg 无 drawtext 滤镜 —— 实测 "No such filter"）。
       const sbs = join(OUT, `${stem}-crop-${crop.name}-sbs.png`);
       const cropArgs = ['-crop', `${crop.w}x${crop.h}+${crop.x}+${crop.y}`, '+repage'];
-      const label = (txt) => ['-font', LABEL_FONT, '-fill', 'white', '-undercolor', '#000000b8', '-pointsize', '22', '-annotate', '+10+30', txt];
+      // 标注位：默认左上；crop.labelAt='bottom' 时落到裁切块左下（小块裁切内容在上半，
+      // 左上标注会盖住被验的那 1px 边 —— 实测 140x48 的环区整块被字条盖死）。
+      const label = (txt) => ['-font', LABEL_FONT, '-fill', 'white', '-undercolor', '#000000b8', '-pointsize', '22',
+        '-annotate', crop.labelAt === 'bottom' ? `+10+${crop.h - 8}` : '+10+30', txt];
       execFileSync('magick', [
         '(', join(OUT, b), ...cropArgs, ...label('BEFORE 改前'), ')',
         '(', join(OUT, a), ...cropArgs, ...label('AFTER 改后'), ')',
