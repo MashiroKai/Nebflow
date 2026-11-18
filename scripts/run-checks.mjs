@@ -60,6 +60,7 @@ export const CHECKS = [
     ['local-coupling', 'check-local-coupling'], ['tag-format', 'check-tag-format'],
     ['evidence-manifests', 'check-evidence-manifests'], ['scala-layers', 'check-scala-layers'],
     ['dispatcher-seal', 'check-dispatcher-seal'],
+    ['node-stuck-notify', 'check-node-stuck-notify'],
   ].map(([name, script]) => nodeCheck(name, script, ['static'])),
   { name: 'tooling-lint', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, 'node_modules/eslint/bin/eslint.js', 'eslint.config.mjs',
