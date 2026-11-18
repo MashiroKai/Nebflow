@@ -202,7 +202,7 @@ const VIEW = () => {
 async function touchClient(page) {
   return page.context().newCDPSession(page);
 }
-async function pinch(client, cx, cy, dist0, dist1, steps = 12, onStep = null) {
+async function pinch(page, client, cx, cy, dist0, dist1, steps = 12, onStep = null) {
   const at = (d) => [{ x: cx - d / 2, y: cy, id: 1 }, { x: cx + d / 2, y: cy, id: 2 }];
   await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(dist0) });
   for (let i = 1; i <= steps; i += 1) {
@@ -213,9 +213,11 @@ async function pinch(client, cx, cy, dist0, dist1, steps = 12, onStep = null) {
     await sleep(12);
   }
   await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await sleep(260);   // 让 CSS 回弹过渡跑完
+  // 松手后的回弹/收束走得是 200ms 过渡 ⇒ 等**paint 追上状态**，不等固定毫秒。
+  // （步进里的 `sleep(12)` 保留：那是手指移动速度的输入仿真，不是「等落定」。）
+  await waitPainted(page);
 }
-async function dragTouch(client, x0, y0, x1, y1, steps = 10, onStep = null) {
+async function dragTouch(page, client, x0, y0, x1, y1, steps = 10, onStep = null) {
   await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0, id: 7 }] });
   for (let i = 1; i <= steps; i += 1) {
     await client.send('Input.dispatchTouchEvent', {
@@ -225,7 +227,7 @@ async function dragTouch(client, x0, y0, x1, y1, steps = 10, onStep = null) {
     await sleep(14);
   }
   await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await sleep(260);
+  await waitPainted(page);
 }
 
 /** 锚点不变式读数：pivot 下的**归一化内容点**在缩放前后是否仍落在 pivot 上。 */
@@ -292,7 +294,7 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
     const base = await page.evaluate(VIEW);
     // 两指中点刻意偏离视口中心：只有锚点成立时缩放后该内容点才不动（居中缩放会被逮住）。
     const pivot = { x: base.center.x - 86, y: base.center.y - 40 };
-    await pinch(client, pivot.x, pivot.y, 120, 240, 10, async () => shot(page));
+    await pinch(page, client, pivot.x, pivot.y, 120, 240, 10, async () => shot(page));
     const after = await page.evaluate(VIEW);
     await shot(page);
 
@@ -318,7 +320,7 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
 
     const client = await touchClient(page);
     const base = await page.evaluate(VIEW);
-    await pinch(client, base.center.x, base.center.y, 120, 264, 8);   // ≈×2.2，两轴都可平移
+    await pinch(page, client, base.center.x, base.center.y, 120, 264, 8);   // ≈×2.2，两轴都可平移
     const zoomed = await page.evaluate(VIEW);
     expect(zoomed.zoom).toBeGreaterThan(2);
     // 期望硬边界：±(内容屏幕边长 − 视口边长)/2（与 mediaZoom.axisBounds 同式）。
@@ -332,13 +334,13 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
     expect(slackY).toBeGreaterThan(10);
 
     // 跟手：拖 (+120,+120) 期间 pan 读数随指推进。
-    await dragTouch(client,
+    await dragTouch(page, client,
       base.center.x, base.center.y, base.center.x + 120, base.center.y + 120, 8,
       async () => shot(page));
     const mid = await page.evaluate(VIEW);
     expect(mid.panX).toBeGreaterThan(zoomed.panX + 60);
     // 大幅越界拖（+400,+400）→ 松手钳回硬边界，绝不驻留界外。
-    await dragTouch(client, base.center.x, base.center.y, base.center.x + 400, base.center.y + 400, 8);
+    await dragTouch(page, client, base.center.x, base.center.y, base.center.x + 400, base.center.y + 400, 8);
     const bounded = await page.evaluate(VIEW);
     await shot(page);
     expect(Math.abs(bounded.panX)).toBeLessThanOrEqual(slackX + 1);
@@ -363,10 +365,10 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
     const client = await touchClient(page);
     const base = await page.evaluate(VIEW);
     expect(base.total).toBe(2);
-    await pinch(client, base.center.x, base.center.y, 120, 264, 8);
+    await pinch(page, client, base.center.x, base.center.y, 120, 264, 8);
     expect((await page.evaluate(VIEW)).zoom).toBeGreaterThan(2);
     // 一路拖到左边界再继续拖过阈 ⇒ 切到下一张（放大态也保得住左右切换）。
-    await dragTouch(client, base.center.x + 40, base.center.y, base.center.x - 420, base.center.y, 12,
+    await dragTouch(page, client, base.center.x + 40, base.center.y, base.center.x - 420, base.center.y, 12,
       async () => shot(page));
     const after = await page.evaluate(VIEW);
     await shot(page);
@@ -387,9 +389,9 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
     const client = await touchClient(page);
     const base = await page.evaluate(VIEW);
     // 先放大到 ×2.2，再一路捏到远低于最小档（240 → 40）：阻尼后松手回弹。
-    await pinch(client, base.center.x, base.center.y, 120, 264, 8);
+    await pinch(page, client, base.center.x, base.center.y, 120, 264, 8);
     expect((await page.evaluate(VIEW)).zoom).toBeGreaterThan(2);
-    await pinch(client, base.center.x, base.center.y, 240, 40, 12, async () => shot(page));
+    await pinch(page, client, base.center.x, base.center.y, 240, 40, 12, async () => shot(page));
     const after = await page.evaluate(VIEW);
     await shot(page);
     expect(after.on).toBe(true);          // 关键：回弹，不是关闭
@@ -413,15 +415,15 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
     const client = await touchClient(page);
     const base = await page.evaluate(VIEW);
     // 先走一轮缩放（放大 → 缩回），确认两套手势互不吞。
-    await pinch(client, base.center.x, base.center.y, 120, 264, 8);
+    await pinch(page, client, base.center.x, base.center.y, 120, 264, 8);
     expect((await page.evaluate(VIEW)).zoom).toBeGreaterThan(2);
-    await pinch(client, base.center.x, base.center.y, 240, 110, 8);
+    await pinch(page, client, base.center.x, base.center.y, 240, 110, 8);
     expect((await page.evaluate(VIEW)).zoom).toBe(1);
     // ① 适应态横滑 = 切下一张（既有手势，逐字保留）。
-    await dragTouch(client, base.center.x + 40, base.center.y, base.center.x - 160, base.center.y, 8);
+    await dragTouch(page, client, base.center.x + 40, base.center.y, base.center.x - 160, base.center.y, 8);
     expect((await page.evaluate(VIEW)).index).toBe(1);
     // ② 适应态下滑 = 关闭（既有手势，逐字保留）。
-    await dragTouch(client, base.center.x, base.center.y - 60, base.center.x, base.center.y + 180, 10);
+    await dragTouch(page, client, base.center.x, base.center.y - 60, base.center.x, base.center.y + 180, 10);
     const after = await page.evaluate(VIEW);
     expect(after.on).toBe(false);
     expect(errors).toEqual([]);
@@ -436,8 +438,8 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
     await openViaPopCard(page, { type: 'image', name: 'tall.png', path: 'docs/tall.png' });
     const client = await touchClient(page);
     let base = await page.evaluate(VIEW);
-    await pinch(client, base.center.x - 60, base.center.y, 120, 240, 10);
-    await dragTouch(client, base.center.x, base.center.y, base.center.x + 90, base.center.y + 90, 8);
+    await pinch(page, client, base.center.x - 60, base.center.y, 120, 240, 10);
+    await dragTouch(page, client, base.center.x, base.center.y, base.center.x + 90, base.center.y + 90, 8);
     const zoomed = await page.evaluate(VIEW);
     expect(zoomed.zoom).toBeGreaterThan(1.9);
     expect(Math.abs(zoomed.panX) + Math.abs(zoomed.panY)).toBeGreaterThan(10);
@@ -479,26 +481,26 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
     });
     // ① 原生控件带（元素盒下沿 56px）内的捏合：缩放管线必须让位（zoom 恒 1）。
     const bandY = v.bottom - 20;
-    await pinch(client, v.x + v.w / 2, bandY, 120, 260, 8);
+    await pinch(page, client, v.x + v.w / 2, bandY, 120, 260, 8);
     const afterBand = await page.evaluate(VIEW);
     expect(afterBand.zoom).toBe(1);
     // ② 画面上的捏合：同一套缩放能力（视频也走缩放）。
     const bodyY = v.y + Math.min(40, v.h * 0.25);
-    await pinch(client, v.x + v.w / 2, bodyY, 120, 260, 10, async () => shot(page));
+    await pinch(page, client, v.x + v.w / 2, bodyY, 120, 260, 10, async () => shot(page));
     const afterBody = await page.evaluate(VIEW);
     await shot(page);
     expect(afterBody.zoom).toBeGreaterThan(1.8);
     expect(afterBody.hasVideo).toBe(true);
     // ③ 放大态下视频面上单指拖动 = 平移（画面与图片同规），且不触发切图/关闭。
-    await dragTouch(client, v.x + v.w / 2 + 40, bodyY, v.x + v.w / 2 - 40, bodyY, 8);
+    await dragTouch(page, client, v.x + v.w / 2 + 40, bodyY, v.x + v.w / 2 - 40, bodyY, 8);
     const afterVideoPan = await page.evaluate(VIEW);
     expect(afterVideoPan.zoom).toBeGreaterThan(1.8);   // 平移不改档位
     expect(afterVideoPan.panX).not.toBe(afterBody.panX);
     expect(afterVideoPan.on).toBe(true);
     // ④ 缩回适应档后，视频面上的单指下滑**不关闭**（关闭仍走遮罩/返回钮/Esc）。
-    await pinch(client, v.x + v.w / 2, bodyY, 260, 60, 10);
+    await pinch(page, client, v.x + v.w / 2, bodyY, 260, 60, 10);
     expect((await page.evaluate(VIEW)).zoom).toBe(1);
-    await dragTouch(client, v.x + v.w / 2, bodyY, v.x + v.w / 2, bodyY + 220, 10);
+    await dragTouch(page, client, v.x + v.w / 2, bodyY, v.x + v.w / 2, bodyY + 220, 10);
     const afterFitDrag = await page.evaluate(VIEW);
     expect(afterFitDrag.on).toBe(true);
     expect(afterFitDrag.zoom).toBe(1);
@@ -518,8 +520,8 @@ test.describe('mobile media viewer zoom (full-screen gallery)', () => {
       requestAnimationFrame(loop);
     });
     const t0 = Date.now();
-    await pinch(client, base.center.x, base.center.y, 120, 260, 24);
-    await dragTouch(client, base.center.x + 60, base.center.y, base.center.x - 60, base.center.y + 60, 24);
+    await pinch(page, client, base.center.x, base.center.y, 120, 260, 24);
+    await dragTouch(page, client, base.center.x + 60, base.center.y, base.center.x - 60, base.center.y + 60, 24);
     const el = Date.now() - t0;
     const frames = await page.evaluate(() => window.__rafFrames);
     const fps = Math.round((frames / el) * 1000);

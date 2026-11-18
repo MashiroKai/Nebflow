@@ -162,6 +162,31 @@ const VIEW = () => {
 };
 
 /**
+ * 「paint 已追上状态」：元素 computed transform == 浮层已写下的状态
+ * （`data-nf-lb-zoom/pan-x/pan-y`）。与 tests/media-viewer-zoom.spec.mjs 同一判据 ——
+ * 松手后的回弹/收束走得是 200ms 过渡，等**状态**而不是等固定毫秒。
+ */
+async function waitPainted(page) {
+  await page.waitForFunction(() => {
+    const lb = document.querySelector('.nf-lightbox');
+    if (!lb || !lb.classList.contains('on')) return false;
+    const el = lb.querySelector('.nf-lightbox-img') || lb.querySelector('.nf-lightbox-av');
+    if (!el) return false;
+    const z = Number(lb.getAttribute('data-nf-lb-zoom'));
+    const tx = Number(lb.getAttribute('data-nf-lb-pan-x'));
+    const ty = Number(lb.getAttribute('data-nf-lb-pan-y'));
+    if (!Number.isFinite(z) || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
+    const cs = getComputedStyle(el);
+    if (cs.opacity !== '1') return false;
+    let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+    const m = cs.transform;
+    if (m && m !== 'none') { const hit = /^matrix\(([^)]+)\)$/.exec(m); if (!hit) return false; [a, b, c, d, e, f] = hit[1].split(',').map(Number); }
+    return Math.abs(a - z) < 1e-3 && Math.abs(d - z) < 1e-3 && Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9
+        && Math.abs(e - tx) <= 0.5 && Math.abs(f - ty) <= 0.5;
+  }, null, { timeout: 8000 });
+}
+
+/**
  * 确定性尾段（本闸的核心）：**同一个 JS 任务**里做完「拖动松手 → 关 → 重开 → 点背景」。
  * 时间差被压到毫秒级 ⇒ 旧实现的 160ms 时间窗必然吞掉那一枚点背景（必然红），
  * 新实现的一次性闸与时间无关（必然绿）。
@@ -272,7 +297,7 @@ test.describe('backdrop close after a drag — mobile full-screen page', () => {
       await sleep(12);
     }
     await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await sleep(280);
+    await waitPainted(page);                 // 等回弹过渡落定（paint == 状态），不等固定毫秒
     expect((await page.evaluate(VIEW)).zoom).toBeGreaterThan(1);
 
     // 真触屏单指平移（放大态 = 平移会话）。
