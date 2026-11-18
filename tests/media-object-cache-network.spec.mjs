@@ -53,6 +53,11 @@ const OUT = process.env.OUT || '/Users/kaiyu/stand-evidence/media-object-cache-2
 const TAG = process.env.TAG || 'after';
 const SHOTS = join(OUT, `${TAG}-shots`);
 mkdirSync(SHOTS, { recursive: true });
+// evidence-manifests 闸（check-evidence-manifests.mjs）：写 stand-evidence 命名空间的
+// 装置必须落 manifest.json（EvidenceTemp 的 TTL 清扫对缺 manifest 的目录 fail-closed）。
+writeFileSync(join(OUT, 'manifest.json'), JSON.stringify({
+  createdAt: new Date().toISOString(), project: 'stand', batch: 'media-object-cache-20261118',
+}) + '\n');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
