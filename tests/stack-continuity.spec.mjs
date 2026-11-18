@@ -8,9 +8,8 @@
 // 真渲染帧（无夹具、无示意图）。
 //
 // 关键事实（红侧勘察结论，写死进采样设计）：
-//  · options.easing:'ease-in-out' 作用于整段迭代进度（Web Animations 模型），
-//    关键帧 offset .45/.46 处在**缓和后**进度空间：offset .45 对应墙钟 ≈47.4%
-//    —— 传送实际发生在墙钟 47%→48% 帧之间，故跳变窗口取 42–50% 全覆盖。
+//  · effect easing 映射墙钟时间到关键帧进度；实际 z 翻转时刻随曲线变化。
+//    测试二分查找计算样式 zIndex 的变化，并检查交接两侧的遮挡。
 //  · .row{animation:fadeIn .2s}（chat.css）是**入列动画**：建栈后 0.2s 内拖拽
 //    会把行透明度混进证据帧（红侧首跑的"灰纱"假象）。因此建栈后必须等全部
 //    CSS 动画落定再拖。
@@ -268,8 +267,18 @@ for (const variant of ['fwd', 'rev']) {
       await dragSwitch(page, info0.view, variant === 'fwd' ? -75 : 75);
       const info1 = await layerInfo(page);
       expect(info1.anims).toBe(3);
+      let lo = 0, hi = 100;
+      await seek(page, lo);
+      const initialZ = (await layerInfo(page)).layers[0].z;
+      for (let i = 0; i < 20; i++) {
+        const mid = (lo + hi) / 2;
+        await seek(page, mid);
+        if ((await layerInfo(page)).layers[0].z === initialZ) lo = mid;
+        else hi = mid;
+      }
+      const jumpFrames = Array.from({ length: 9 }, (_, i) => +(hi + i - 4).toFixed(4));
       const shots = {}, infos = {};
-      for (const p of JUMP_FRAMES) {
+      for (const p of jumpFrames) {
         await seek(page, p);
         infos[p] = await layerInfo(page);
         const buf = await page.screenshot();
@@ -277,8 +286,8 @@ for (const variant of ['fwd', 'rev']) {
         writeFileSync(`${out}/jump-${variant}-${p}.png`, buf);
       }
       const pairMetrics = [];
-      for (let k = 1; k < JUMP_FRAMES.length; k++) {
-        const a = JUMP_FRAMES[k - 1], b = JUMP_FRAMES[k];
+      for (let k = 1; k < jumpFrames.length; k++) {
+        const a = jumpFrames[k - 1], b = jumpFrames[k];
         const d = await pngDiff(lab, shots[a], shots[b]);
         writeFileSync(`${out}/jumpdiff-${variant}-${a}-${b}.png`, Buffer.from(d.heat, 'base64'));
         pairMetrics.push({
@@ -301,11 +310,16 @@ for (const variant of ['fwd', 'rev']) {
         if (m.changed > 25000) fails.push(`pair ${m.pair[0]}-${m.pair[1]}: changed ${m.changed} > 25000`);
         if (Math.abs(m.outgoingDx) > 16) fails.push(`pair ${m.pair[0]}-${m.pair[1]}: outgoing Δx ${m.outgoingDx}px > 16`);
       }
+      // Locate the actual discrete z-index change rather than assuming a wall-clock
+      // percentage: the effect timing function maps wall time to keyframe offsets.
       const overlaps = {};
-      for (const p of [45, 46, 47, 48]) {
+      for (const p of [lo, hi]) {
+        await seek(page, p);
+        infos[p] = await layerInfo(page);
         overlaps[p] = overlapAt(p);
         if (overlaps[p].length) fails.push(`z flip visible at ${p}%: outgoing overlaps badges ${overlaps[p]}`);
       }
+      console.log(`z-flip-${variant}`, JSON.stringify({ lo, hi, overlaps }));
       writeFileSync(`${out}/metrics-jump-${variant}.json`, JSON.stringify({
         pairMetrics, overlaps, anims: info1.anims,
       }, null, 2));
