@@ -3258,6 +3258,12 @@ export default {
   'todoapple.noDue': '无日期',
   'todoapple.none': '无',
   'todoapple.dueTomorrow': '明天',
+  // 快速决策视角（todo-quick-decision 批 2026-11-18）：入口钮名 + 卡位读数 +
+  // 回答未接线的事实行（与列表页既有「决策 · 回答未接线」同一事实，措辞收敛为
+  // 一处键；禁教学句，只写事实）。
+  'todoapple.quickDecision': '快速决策',
+  'todoapple.quickCount': '第 {n} / {m} 条',
+  'todoapple.answerNotWired': '回答未接线',
   'todoface.tagSave': '保存',
   'todoface.tagErrEmpty': '名称不能为空',
   'todoface.tagErrDup': '已有同名标签',

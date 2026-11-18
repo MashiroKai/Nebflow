@@ -2,10 +2,11 @@
    mobile-todo-apple.css — Mobile todo pages laid out in the Apple Reminders
    information architecture.
 
-   Scope: every rule is anchored on `body.mobile-layer` plus one of the three
+   Scope: every rule is anchored on `body.mobile-layer` plus one of the four
    exact page selectors ([data-page="tasks" | "todo-apple-list" |
-   "todo-apple-item"]) — zero effect on desktop and on other mobile pages, so
-   existing `tests/mobile-*` assertion surfaces are untouched by this file.
+   "todo-apple-item" | "todo-quick-decision"]) — zero effect on desktop and on
+   other mobile pages, so existing `tests/mobile-*` assertion surfaces are
+   untouched by this file.
 
    Color discipline (the four card families stay on tokens; dark theme must
    keep the cards distinguishable):
@@ -29,7 +30,8 @@
    from here) ───────────────────────────────────────────────────────────── */
 body.mobile-layer .mobile-page[data-page="tasks"],
 body.mobile-layer .mobile-page[data-page="todo-apple-list"],
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
+body.mobile-layer .mobile-page[data-page="todo-apple-item"],
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] {
   /* Four card families (token-derived, pressed darker for white-text contrast) */
   --ta-c-today: color-mix(in srgb, rgb(var(--sapphire)) 84%, #0a0c10);
   --ta-c-overdue: color-mix(in srgb, var(--color-error) 78%, #140505);
@@ -42,7 +44,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
 @media (prefers-color-scheme: dark) {
   body.mobile-layer .mobile-page[data-page="tasks"],
   body.mobile-layer .mobile-page[data-page="todo-apple-list"],
-  body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
+  body.mobile-layer .mobile-page[data-page="todo-apple-item"],
+  body.mobile-layer .mobile-page[data-page="todo-quick-decision"] {
     /* Dark theme: pressed darker still, but the two grey cards must stay
        clearly separated ("All" takes dark grey at --color-text-dim 34%,
        "Completed" mid grey at --color-text-muted 70%; measured background
@@ -73,14 +76,16 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
    C1). */
 body.mobile-layer .mobile-page[data-page="tasks"] .mobile-page-body,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .mobile-page-body,
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .mobile-page-body {
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .mobile-page-body,
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .mobile-page-body {
   padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
 }
 
 /* ── Page body root (shared skeleton of the three pages) ────────────────── */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-root,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-root,
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root,
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-root {
   flex: 1 0 auto;
   min-height: 0;
   display: flex;
@@ -434,26 +439,35 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-n {
   font-variant-numeric: tabular-nums;
 }
 
-/* Bottom-right blue circular FAB (+) — built on the `.g2-fab` base class the
-   spec pins (material / 48 geometry / spring, all single-sourced) at the
-   `--mtap-lg` size step. **Placement shell = .ta-fab-wrap**: the C1 probe
-   (tests/mobile-chrome-clearance.spec.mjs) counts visible .g2-fab elements
-   that carry position:absolute|fixed into ctrlBottom (the top button band
-   bottom edge). If the bottom FAB itself carried either positioning property
-   into that roster, the first body element of the home page (the four cards)
-   could never satisfy "body top >= ctrlBottom". Fix = move the positioning
-   properties onto an unclassed wrapper (the wrapper is not in the scan
-   roster) while the button itself keeps g2-fab's material/geometry/press
-   single source. #deck-fab / .ask-fab sit out of the scan roster for the same
-   reason. */
+/* Bottom button band — two round keys on one line: quick decision (left) +
+   new todo (right, the blue FAB). **Placement shell = .ta-fab-wrap**: the C1
+   probe (tests/mobile-chrome-clearance.spec.mjs) counts visible .g2-fab
+   elements that carry position:absolute|fixed into ctrlBottom (the top button
+   band bottom edge). If a bottom FAB itself carried either positioning
+   property into that roster, the first body element of the home page (the four
+   cards) could never satisfy "body top >= ctrlBottom". Fix = move the
+   positioning properties onto an unclassed wrapper (the wrapper is not in the
+   scan roster) while the buttons themselves keep g2-fab's material/geometry/
+   press single source. #deck-fab / .ask-fab sit out of the scan roster for the
+   same reason.
+   quick-decision batch (2026-11-18): the shell is now the **band** for both
+   keys — left/right insets are the same --mpad-x, so the pair reads as one
+   group on the same bottom line with symmetric spacing and zero overlap. The
+   band is pointer-transparent (it is a positioning host, not a hit target):
+   the list behind it stays tappable, only the keys themselves take pointers. */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap {
   position: absolute;
+  left: var(--mpad-x);
   right: var(--mpad-x);
   bottom: calc(var(--mobile-dock-clearance) + var(--ds-space-2));
-  width: var(--band-d, 48px);
   height: var(--band-d, 48px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
   z-index: 7;
 }
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap > .g2-fab { pointer-events: auto; }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab {
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);
@@ -466,6 +480,19 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab:hover {
   background: rgb(var(--sapphire));
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
+  width: var(--band-icon, 24px);
+  height: var(--band-icon, 24px);
+  display: block;
+}
+/* Quick-decision key (left end of the band): same base (.g2-fab) and the same
+   --band-d geometry as the + key — the material stays the shared glass recipe
+   so the blue key stays the single primary action on this page. Icon = the
+   station's stacked-card glyph (lucide layers), carried by .ta-quick-fab svg. */
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab {
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
+}
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab svg {
   width: var(--band-icon, 24px);
   height: var(--band-icon, 24px);
   display: block;
@@ -841,3 +868,202 @@ body.mobile-layer .ta-create-notes { min-height: 76px; margin-top: 8px; resize: 
 body.mobile-layer .ta-create-options { flex-wrap: wrap; }
 
 /* No-backdrop fallback is provided by the shared glass component. */
+
+/* ═══ D · Quick decision page (todo-quick-decision) ══════════════════════
+   One card in the middle of the page; left/right swipe switches todos (the
+   author's 2026-11-18 card view). Page structure = a counter line + a stage
+   that the card fills.
+
+   Pose single source = `--qd-dx` (the finger-follow offset the module writes);
+   the transform lives here — the same split as the canvas deck's `--dtx`.
+   The two settle legs take the motion tokens: exit = --ds-dur-hover /
+   --ds-ease-std, enter = --ds-dur-surface / --ds-ease-enter (the module's
+   timers mirror those token values; the batch gate pins both against the
+   tokens, so there is no second duration ladder).
+
+   Height policy: the card fills the stage (elastic flex box) and its content
+   scrolls inside .ta-qd-scroll — a long content / question / option list
+   scrolls instead of being clipped. Each option's .ta-qd-opt-body is the
+   column-flow slot the per-option media group will be inserted into (media
+   above the label); the scroller carries whatever height it adds. */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  padding: 0 var(--mpad-x);
+  box-sizing: border-box;
+}
+/* Height chain: the page body is the shell's flex column (definite height), so
+   the card must be able to SHRINK to it (flex-shrink 1 + min-height 0) —
+   otherwise the card grows to its content and the whole PAGE scrolls instead of
+   the card's own scroller. This page carries no FAB, so the root's FAB-band
+   padding is replaced by the dock band + one gap step (the sheet behind the
+   card ends just above the dock). */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-root {
+  flex: 1 1 auto;
+  padding-bottom: calc(var(--mobile-dock-clearance) + var(--ds-space-3));
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--ds-space-6);
+  color: var(--color-text-muted);
+  font-size: var(--mfs-min);
+  font-variant-numeric: tabular-nums;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--ds-radius-2xl);
+  transform: translate3d(var(--qd-dx, 0px), 0, 0);
+  /* Vertical panning stays with the browser (the inner scroller); the
+     horizontal axis is never claimed natively, so the finger-follow leg keeps
+     receiving pointer events. */
+  touch-action: pan-y;
+  will-change: transform;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card[data-qd-settle="exit"] {
+  transition: transform var(--ds-dur-hover) var(--ds-ease-std);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card[data-qd-settle="enter"] {
+  transition: transform var(--ds-dur-surface) var(--ds-ease-enter);
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card { transition: none; }
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card[hidden],
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-head[hidden],
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-empty[hidden] { display: none; }
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* The scroller is the nearest scroll container of every card element, so the
+     EFFECTIVE touch-action of a touch inside the card is decided here (the
+     chain stops at the nearest scrollport). Without this the scroller's own
+     automatic 2-D panning lets the compositor claim a horizontal drag and cut
+     the pointer stream with pointercancel (measured: pointercancel arrived on
+     the 2nd touchmove). pan-y keeps vertical panning native and leaves the
+     horizontal axis to the card gesture. */
+  touch-action: pan-y;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-5) var(--ds-space-4) var(--ds-space-6);
+  box-sizing: border-box;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-height: var(--ds-space-6);
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-chip);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text-muted);
+  font-size: var(--mfs-min);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-dot {
+  flex: none;
+  width: var(--ds-space-2);
+  height: var(--ds-space-2);
+  border-radius: 50%;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-title {
+  margin: 0;
+  font-size: var(--mfs-body);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-content {
+  margin: 0;
+  font-size: var(--mfs-sub);
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-q {
+  font-size: var(--mfs-callout);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+  min-height: var(--mtap);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  box-sizing: border-box;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--nf-glass-input-bg);
+  cursor: pointer;
+}
+/* Selected option = the shared sapphire selection step (same family as the
+   station's pressed/selected档); state comes from the native control, so the
+   row needs no class bookkeeping in JS. */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt:has(.ta-qd-opt-input:checked) {
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: color-mix(in srgb, rgb(var(--sapphire)) 14%, transparent);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-input {
+  flex: none;
+  width: var(--ds-space-5);
+  height: var(--ds-space-5);
+  accent-color: rgb(var(--sapphire));
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-label {
+  font-size: var(--mfs-sub);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-status {
+  font-size: var(--mfs-min);
+  color: var(--color-text-muted);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--mfs-sub);
+}

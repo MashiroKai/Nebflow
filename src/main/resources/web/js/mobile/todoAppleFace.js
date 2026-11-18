@@ -1,16 +1,19 @@
 // mobile/todoAppleFace.js — Mobile todo pages laid out in the Apple Reminders
 // information architecture.
 //
-// Three pages (registered in navController.PAGES; page shell, back button and
+// Four pages (registered in navController.PAGES; page shell, back button and
 // slide transitions all reuse the existing pushPage/popPage/bindEdgeBack —
 // this module only produces page-body content, no new navigation semantics):
-//   tasks            lists home: white three-icon capsule top-right + 2x2
-//                    colored four-card matrix + "My Lists" large-radius card
-//                    (todoStore.tags) + blue FAB bottom-right
-//   todo-apple-list  list detail: large colored title left-aligned + hollow
-//                    check-circle rows + centered empty state
-//   todo-apple-item  create/edit: placeholder input row + (i) info button +
-//                    keyboard-hugging toolbar
+//   tasks                lists home: white three-icon capsule top-right + 2x2
+//                        colored four-card matrix + "My Lists" large-radius card
+//                        (todoStore.tags) + bottom button band (left = quick
+//                        decision, right = the blue + FAB)
+//   todo-apple-list      list detail: large colored title left-aligned + hollow
+//                        check-circle rows + centered empty state
+//   todo-apple-item      create/edit: placeholder input row + (i) info button +
+//                        keyboard-hugging toolbar
+//   todo-quick-decision  quick decision: one card in the middle (content +
+//                        question + options), left/right swipe switches todos
 //
 // Data discipline: complete/create/edit all go through todoStore (in-memory
 // store, pure frontend mock); the backend is never touched and no new entities
@@ -520,13 +523,25 @@ function buildHome(root, section, nav) {
   mDone.addEventListener('click', () => { moreOpen = false; openList('completed', null, nav); });
   mAll.addEventListener('click', () => { moreOpen = false; openList('all', null, nav); });
 
-  // ── Blue FAB bottom-right (+): new todo (defaults to the first tag) ──
-  // Positioning shell = .ta-fab-wrap (absolute placement, kept out of the
-  // chrome scan band — see the CSS note); button body = .ta-fab.g2-fab
-  // (the spec-pinned base class: material/geometry/spring single source).
+  // ── Bottom button band: quick-decision entry (left) + new todo FAB (right) ──
+  // One positioning host (.ta-fab-wrap; absolute placement, kept out of the
+  // chrome scan band — see the CSS note) spans the content width and lays the
+  // two round buttons out with space-between. Both are the same base class
+  // (.g2-fab = material/geometry/spring single source) at the same --band-d
+  // size, one at each end of the same bottom line ⇒ one group, symmetric
+  // insets, zero overlap. The band itself is pointer-transparent (CSS) so the
+  // list behind it stays tappable.
+  //
+  // Left key = quick decision (the author's 2026-11-18 request: 叠卡 icon →
+  // dating-app card view). Icon = the station's existing stacked-card glyph
+  // (lucide `layers`, the same one the canvas "stacked cards" key uses) — no
+  // second icon family. Right key = the pre-existing blue + (create).
   const fabWrap = elIn(section, 'div', 'ta-fab-wrap');
+  const quickFab = iconBtn('ta-quick-fab g2-fab', 'layers', t('todoapple.quickDecision'));
+  quickFab.dataset.todoQuickEntry = '';
   const fab = iconBtn('ta-fab g2-fab', 'plus', t('todoapple.newTodo'));
-  fabWrap.appendChild(fab);
+  fabWrap.append(quickFab, fab);
+  quickFab.addEventListener('click', () => nav.push('todo-quick-decision'));
   fab.addEventListener('click', () => openCreateSheet(section, null, fab));
 
   /** @returns {void} */
@@ -952,13 +967,313 @@ function saveDraft(nav) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// D · Quick decision page (todo-quick-decision): one card in the middle,
+//     left/right swipe switches todos (the author's 2026-11-18 request — the
+//     dating-app card view).
+//
+//     What the card shows: the todo's own content (name + detail) and, when
+//     the row carries one, its question + options. Every value is a real row
+//     field; nothing is invented and nothing is written back (answering is not
+//     wired — the fact line says so, same fact as the list page's decision
+//     rows). Card order = todoStore.openItems() (the store's own order).
+//
+//     Height policy: the card is a elastic flex box between the counter line
+//     and the page bottom; its content scrolls inside `.ta-qd-scroll`, so a
+//     long content / question / option list scrolls instead of being clipped.
+//     `.ta-qd-opt-body` is the per-option layout slot (column flow: media
+//     above the label) — the mount point for the media group, see the batch
+//     report §待对齐.
+//
+//     Gesture: the follow-the-finger pose is written into --qd-dx (JS writes
+//     the value, CSS owns the transform — the same convention as the canvas
+//     deck's --dtx); release settles on the design tokens --ds-dur-hover /
+//     --ds-dur-surface with --ds-ease-std / --ds-ease-enter. Commit params are
+//     the ones the mobile layer's own swipes already use (navController
+//     EDGE_AXIS_PX 8 / EDGE_FLICK_MS 200 / threshold max(80px, 22% width)) —
+//     one gesture recipe, not a second one.
+//     Head/tail: an over-swipe never wraps — it stops and springs back.
+// ══════════════════════════════════════════════════════════════════════
+
+/** Gesture/motion constants of the card. Exported so the gate can pin them
+ *  against the tokens they mirror (single source = the CSS custom properties). */
+export const QUICK_DECISION_MOTION = {
+  axisPx: 8,      // axis lock — same value as navController EDGE_AXIS_PX
+  flickMs: 200,   // flick window — same value as navController EDGE_FLICK_MS
+  flickPx: 28,    // short-fast-swipe leg — same formula as the shell's commit test
+  minPx: 80,      // commit floor — same formula as navController / backSwipe
+  ratio: 0.22,    // commit ratio of the band width — same formula
+  exitMs: 160,    // = --ds-dur-hover (exit leg)
+  enterMs: 240,   // = --ds-dur-surface (enter leg)
+};
+
+/** A gesture that starts inside this margin is left to the page shell's own
+ *  edge band (navController EDGE_BAND_PX = 20 = the back gesture); from the
+ *  screen edge the shell owns the drag, never this card. */
+const QD_EDGE_PX = 24;
+
+/** Card cursor (which todo is on the card) — module state, reset on page entry. */
+let qdIndex = 0;
+/** Selected option indices per todo id: view state on this device only, never a
+ *  data write (the answer is not wired anywhere). */
+/** @type {Map<string, Set<number>>} */
+const qdAnswers = new Map();
+/** @type {ReturnType<typeof setTimeout>|null} */
+let qdTimer = null;
+
+/** Row shape the quick card reads (the store's read-only projection). */
+/** @typedef {{id:string, tagId:string|null, name:string, detail:string, due:number|null,
+ *   priority:number, completed:boolean, createdAt:number,
+ *   decision?:{question?:string, options?:string[], multiSelect?:boolean, allowOther?:boolean}|null}} QdRow */
+
+/** The card queue = open todos in the store's own order (no second sort recipe).
+ *  @returns {QdRow[]} */
+function quickItems() { return todoStore.openItems(); }
+
+/**
+ * @param {HTMLElement} root
+ * @param {HTMLElement} section
+ * @returns {{ root: HTMLElement, render: () => void }}
+ */
+function buildQuick(root, section) {
+  const wrap = elIn(root, 'div', 'ta-qd');
+  const head = elIn(wrap, 'div', 'ta-qd-head');
+  const count = elIn(head, 'div', 'ta-qd-count');
+  const stage = elIn(wrap, 'div', 'ta-qd-stage');
+  const card = elIn(stage, 'div', 'ta-qd-card nf-glass');
+  // Focusable group: the keyboard leg (ArrowLeft/ArrowRight switch cards) rides
+  // the same handler as the swipe leg — a swipe-only surface would have no
+  // pointer-free path to the next todo. Same shape as the card faces that are
+  // focusable for arrow-key paging elsewhere in the station.
+  card.setAttribute('role', 'group');
+  card.setAttribute('tabindex', '0');
+  const scroll = elIn(card, 'div', 'ta-qd-scroll');
+  const empty = elIn(wrap, 'div', 'ta-qd-empty');
+  empty.hidden = true;
+
+  const cancelSettle = () => { if (qdTimer) { clearTimeout(qdTimer); qdTimer = null; } };
+  const reduceMotion = () => {
+    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+  };
+  /** Follow-the-finger pose (single writer of --qd-dx; CSS owns the transform). */
+  /** @param {number} px */
+  const pose = (px) => { card.style.setProperty('--qd-dx', `${px.toFixed(1)}px`); };
+
+  /** Selected set for one todo (created on first use). */
+  /** @param {string} id @returns {Set<number>} */
+  const selectedSet = (id) => {
+    let s = qdAnswers.get(id);
+    if (!s) { s = new Set(); qdAnswers.set(id, s); }
+    return s;
+  };
+  /** Selection never runs through render(): the card's scroll position survives
+   *  a tap (scrolling and selecting coexist).
+   *  @param {string} id @param {number} i @param {boolean} on @param {boolean} multi */
+  const selectOption = (id, i, on, multi) => {
+    const s = selectedSet(id);
+    if (multi) { if (on) s.add(i); else s.delete(i); }
+    else { s.clear(); if (on) s.add(i); }
+  };
+
+  /** Release without a switch (under threshold, or head/tail): stop + spring back. */
+  const springBack = () => {
+    cancelSettle();
+    if (reduceMotion()) { delete card.dataset.qdSettle; pose(0); return; }
+    card.dataset.qdSettle = 'enter';
+    pose(0);
+    qdTimer = setTimeout(() => { card.dataset.qdSettle = ''; qdTimer = null; },
+      QUICK_DECISION_MOTION.enterMs + 40);
+  };
+
+  /** Two legs: the current card leaves toward the swipe, the next one enters
+   *  from the opposite side (both legs on token durations).
+   *  @param {number} target @param {number} dir */
+  const slide = (target, dir) => {
+    const items = quickItems();
+    if (target < 0 || target >= items.length) { springBack(); return; }
+    if (reduceMotion()) { qdIndex = target; render(); pose(0); return; }
+    const w = stage.getBoundingClientRect().width || card.getBoundingClientRect().width || 320;
+    cancelSettle();
+    card.dataset.qdSettle = 'exit';
+    pose(-dir * w);
+    qdTimer = setTimeout(() => {
+      qdIndex = target;
+      render();
+      delete card.dataset.qdSettle;   // the entry jump must not animate
+      pose(dir * w * 0.4);
+      void card.offsetWidth;          // flush the jump, then animate to rest
+      card.dataset.qdSettle = 'enter';
+      pose(0);
+      qdTimer = setTimeout(() => { card.dataset.qdSettle = ''; qdTimer = null; },
+        QUICK_DECISION_MOTION.enterMs + 40);
+    }, QUICK_DECISION_MOTION.exitMs);
+  };
+
+  // ── Pointer gesture (touch and mouse on the same leg; the inner scroller
+  // keeps its vertical pan — `touch-action: pan-y` in CSS means the browser
+  // never claims the horizontal axis, so the finger-follow stays live) ──
+  /** @type {{id:number,x0:number,y0:number,t0:number,claimed:boolean}|null} */
+  let g = null;
+
+  stage.addEventListener('pointerdown', (e) => {
+    if (g) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (card.hidden) return;
+    if (e.clientX <= QD_EDGE_PX || e.clientX >= window.innerWidth - QD_EDGE_PX) return;
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), claimed: false };
+  });
+
+  stage.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    if (!g.claimed) {
+      if (Math.abs(dx) <= QUICK_DECISION_MOTION.axisPx && Math.abs(dy) <= QUICK_DECISION_MOTION.axisPx) return;
+      if (Math.abs(dy) >= Math.abs(dx)) { g = null; return; }   // vertical intent = the scroller's
+      g.claimed = true;
+      cancelSettle();
+      delete card.dataset.qdSettle;   // follow the finger: no transition
+      card.dataset.qdDrag = '1';
+    }
+    pose(dx);
+  });
+
+  /** @param {PointerEvent} e */
+  const release = (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const st = g;
+    g = null;
+    if (!st.claimed) return;
+    const dx = e.clientX - st.x0;
+    const dy = e.clientY - st.y0;
+    const dt = Date.now() - st.t0;
+    delete card.dataset.qdDrag;
+    const w = stage.getBoundingClientRect().width || window.innerWidth;
+    const moved = Math.abs(dx) > Math.max(QUICK_DECISION_MOTION.minPx, w * QUICK_DECISION_MOTION.ratio)
+      || (Math.abs(dx) > QUICK_DECISION_MOTION.flickPx && dt < QUICK_DECISION_MOTION.flickMs);
+    // Swipe left = next todo, swipe right = previous todo: the direction only
+    // switches the card, it is never a decision.
+    const dir = dx < 0 ? 1 : -1;
+    const items = quickItems();
+    const target = qdIndex + dir;
+    const switched = moved && target >= 0 && target < items.length;
+    // Machine-readable trace of the last gesture (same convention as the
+    // shell's data-back-swipe-last) — the gate reads this, not a guess.
+    card.dataset.qdLast = JSON.stringify({
+      dx: Math.round(dx), dy: Math.round(dy), dt, dir, moved, switched, index: qdIndex,
+    });
+    if (!switched) { springBack(); return; }   // head/tail (or under threshold): stop + rebound
+    slide(target, dir);
+  };
+  stage.addEventListener('pointerup', release);
+  stage.addEventListener('pointercancel', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const claimed = g.claimed;
+    g = null;
+    if (claimed) springBack();
+  });
+
+  // Keyboard leg (ArrowLeft/ArrowRight switch cards) — skipped while a control
+  // inside the card has focus, so the native radio-group arrow keys keep working.
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const t0 = e.target instanceof Element ? e.target : null;
+    if (t0 && t0.closest('input, textarea, select')) return;
+    const items = quickItems();
+    const target = qdIndex + (e.key === 'ArrowRight' ? 1 : -1);
+    const switched = target >= 0 && target < items.length;
+    card.dataset.qdLast = JSON.stringify({ key: e.key, switched, index: qdIndex });
+    if (!switched) { springBack(); return; }   // head/tail: stop + rebound
+    e.preventDefault();
+    slide(target, e.key === 'ArrowRight' ? 1 : -1);
+  });
+
+  /** One option row. `.ta-qd-opt-body` = the layout slot the per-option media
+   *  group will be inserted into (column flow: media above the label).
+   *  @param {QdRow} item @param {number} i @param {string} option @param {boolean} multi
+   *  @returns {HTMLElement} */
+  const optionRow = (item, i, option, multi) => {
+    const row = el('label', 'ta-qd-opt');
+    const input = inputEl('ta-qd-opt-input');
+    input.type = multi ? 'checkbox' : 'radio';
+    input.name = `ta-qd-${item.id}`;
+    input.checked = selectedSet(item.id).has(i);
+    const body = el('span', 'ta-qd-opt-body');
+    body.appendChild(el('span', 'ta-qd-opt-label', String(option)));
+    row.append(input, body);
+    input.addEventListener('change', () => selectOption(item.id, i, input.checked, multi));
+    return row;
+  };
+
+  /** @returns {void} */
+  function render() {
+    const items = quickItems();
+    if (qdIndex >= items.length) qdIndex = Math.max(0, items.length - 1);
+    if (qdIndex < 0) qdIndex = 0;
+    const reading = t('todoapple.quickCount', { n: String(qdIndex + 1), m: String(items.length) });
+    head.hidden = items.length === 0;
+    card.hidden = items.length === 0;
+    empty.hidden = items.length > 0;
+    empty.textContent = t('todoapple.emptyDone');
+    count.textContent = items.length ? reading : '';
+    card.setAttribute('aria-label', reading);
+    scroll.replaceChildren();
+    const item = items[qdIndex];
+    if (!item) { delete card.dataset.itemId; return; }
+    card.dataset.itemId = item.id;   // machine-readable: which todo is on the card
+
+    // Meta line: only the fields the row actually carries (no empty shells).
+    const meta = el('div', 'ta-qd-meta');
+    const tg = item.tagId ? todoStore.tagById(item.tagId) : null;
+    if (tg) {
+      const chip = el('span', 'ta-qd-chip');
+      const dot = el('span', 'ta-qd-dot');
+      dot.style.background = tg.color;
+      chip.append(dot, el('span', '', tg.name));
+      meta.appendChild(chip);
+    }
+    if (item.priority > 0) {
+      const chip = el('span', 'ta-qd-chip');
+      const dot = el('span', 'ta-qd-dot');
+      dot.style.background = priorityColor(item.priority);
+      chip.append(dot, el('span', '', priorityLabel(item.priority)));
+      meta.appendChild(chip);
+    }
+    if (item.due != null) meta.appendChild(el('span', 'ta-qd-chip', dueText(item.due)));
+    if (meta.childElementCount) scroll.appendChild(meta);
+
+    // The todo's own content: name (short title) + detail (the long content).
+    scroll.appendChild(el('div', 'ta-qd-title', item.name || '—'));
+    if (item.detail) scroll.appendChild(el('div', 'ta-qd-content', item.detail));
+
+    const dec = item.decision;
+    if (dec) {
+      if (dec.question) scroll.appendChild(el('div', 'ta-qd-q', String(dec.question)));
+      const options = Array.isArray(dec.options) ? dec.options : [];
+      if (options.length) {
+        const list = el('div', 'ta-qd-opts');
+        // Single-select → radiogroup; multi-select → checkbox group. Native
+        // controls, same as the list page's decision rows (no second control
+        // recipe); selection state is local view state.
+        list.setAttribute('role', dec.multiSelect ? 'group' : 'radiogroup');
+        options.forEach((option, i) => { list.appendChild(optionRow(item, i, option, !!dec.multiSelect)); });
+        scroll.appendChild(list);
+        scroll.appendChild(el('div', 'ta-qd-status', t('todoapple.answerNotWired')));
+      }
+    }
+    if (typeof lucide !== 'undefined') createIconsIn(card);
+  }
+
+  return { root, render };
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // Mount entry (dispatched by navController.ensurePanelContent; idempotent)
 // ══════════════════════════════════════════════════════════════════════
 
 /**
  * Build one of the three page bodies into `body` (idempotent: repeated calls
  * only re-render).
- * @param {string} pageId 'tasks' | 'todo-apple-list' | 'todo-apple-item'
+ * @param {string} pageId 'tasks' | 'todo-apple-list' | 'todo-apple-item' | 'todo-quick-decision'
  * @param {Element|null} body page body container
  * @param {TaNav} nav injected navigation (pushPage/popPage; avoids a static
  *   cycle with navController)
@@ -993,6 +1308,12 @@ export function mountTodoAppleInto(pageId, body, nav) {
     built = buildHome(root, section, nav);
   } else if (pageId === 'todo-apple-list') {
     built = buildList(root, section, nav);
+  } else if (pageId === 'todo-quick-decision') {
+    // Re-entry restarts the queue and drops a settle timer left over from the
+    // previous mount (a stale timer must never pose the new card).
+    if (qdTimer) { clearTimeout(qdTimer); qdTimer = null; }
+    qdIndex = 0;
+    built = buildQuick(root, section);
   } else {
     resetDraft();
     built = buildItem(root, section, nav);

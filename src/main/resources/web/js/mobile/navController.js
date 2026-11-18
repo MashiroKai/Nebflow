@@ -129,6 +129,12 @@ export const PAGES = [
   // aria-label.
   { id: 'todo-apple-list', tabId: null, icon: 'list-todo',      zh: '待办列表', en: 'To-Do List' },
   { id: 'todo-apple-item', tabId: null, icon: 'square-pen',     zh: '待办详情', en: 'To-Do' },
+  // 快速决策视角（todo-quick-decision 批 2026-11-18，作者令「首页右下角左侧加
+  // 一枚叠卡图标钮，点进去进入 dating app 视角左右滑切换待办」）：详情页（无
+  // tabId ⇒ 非 dock 根页），内容面 = todoAppleFace.js 的 buildQuick（同一支
+  // 待办面的第四页，不新起模块）。图标 = 站内既有叠卡图（lucide layers，与
+  // 看板堆叠卡视图同一枚）。返回路径 = 页壳左上返回钮 + 右滑边缘手势（既有）。
+  { id: 'todo-quick-decision', tabId: null, icon: 'layers',     zh: '快速决策', en: 'Quick decision' },
   // 搜索页标题（三点入口批 2026-11-05 页名胶囊定为唯一标题；2026-11-06 作者令
   // 「不要有省略 那就用搜索两个字吧」——「搜索聊天记录」整族写法退役，页名胶囊
   // 随 search.title 同批改「搜索」）；面内部那枚重复的 `.search-modal-header`
@@ -634,6 +640,7 @@ async function ensurePanelContent(pageId) {
     case 'tasks':   // Apple todo face home (entry: top-left round button)
     case 'todo-apple-list':
     case 'todo-apple-item':
+    case 'todo-quick-decision':
       // The face rebuilds the whole page body idempotently; nav is injected so
       // the face never imports this module.
       mountTodoAppleInto(pageId, bodyOf(pageId), { push: pushPage, pop: popPage });

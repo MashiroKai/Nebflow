@@ -3350,6 +3350,12 @@ export default {
   'todoapple.noDue': 'No date',
   'todoapple.none': 'None',
   'todoapple.dueTomorrow': 'Tomorrow',
+  // Quick-decision face (todo-quick-decision, 2026-11-18): entry label, card
+  // reading, and the "answering is not wired" fact line (same fact as the list
+  // page's decision rows).
+  'todoapple.quickDecision': 'Quick decision',
+  'todoapple.quickCount': '{n} of {m}',
+  'todoapple.answerNotWired': 'Answering is not wired up',
   'todoface.tagSave': 'Save',
   'todoface.tagErrEmpty': 'Name cannot be empty',
   'todoface.tagErrDup': 'A tag with this name already exists',
