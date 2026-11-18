@@ -4,7 +4,7 @@ import io.circe.Json
 import io.circe.parser.*
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.shared.{AskItem, AskOption, AskPreview}
+import nebflow.shared.{AskItem, AskOption, AskPreview, AskPreviewMedia}
 
 /**
  * AskUserQuestion `multiple` support (question-level multi-select):
@@ -223,6 +223,132 @@ class AskUserQuestionToolSpec extends FunSuite:
     val preview = optProps.flatMap(_("preview")).flatMap(_.asObject)
     assert(preview.isDefined, "option items schema must document `preview`")
     assertEquals(preview.flatMap(_("type")).flatMap(_.asString), Some("object"))
+  }
+
+  // ============================================================
+  // askuser-media 批（2026-11-18）：选项预览的视频 / 媒体组
+  // ============================================================
+
+  private def previewOf(previewJson: io.circe.Json): Option[AskPreview] =
+    AskUserQuestionTool
+      .parseItems(
+        List(
+          questionJson(
+            "question" -> "Which design?".asJson,
+            "options" -> Json.arr(Json.obj("label" -> "A".asJson, "preview" -> previewJson))
+          )
+        )
+      )
+      .head
+      .options
+      .head
+      .preview
+
+  test("parseMediaItem: kind/src/poster/name/path are decoded") {
+    val m = AskUserQuestionTool.parseMediaItem(
+      Json.obj(
+        "kind" -> "video".asJson,
+        "src" -> "https://cdn.example.com/clip.mp4".asJson,
+        "poster" -> "/Users/x/cover.jpg".asJson,
+        "name" -> "clip.mp4".asJson,
+        "path" -> "/Users/x/clip.mp4".asJson
+      )
+    )
+    assertEquals(
+      m,
+      Some(
+        AskPreviewMedia(
+          kind = "video",
+          src = Some("https://cdn.example.com/clip.mp4"),
+          poster = Some("/Users/x/cover.jpg"),
+          name = Some("clip.mp4"),
+          path = Some("/Users/x/clip.mp4")
+        )
+      )
+    )
+  }
+
+  test("parseMediaItem: kind absent defaults to image; blank fields fold to None") {
+    val m = AskUserQuestionTool.parseMediaItem(
+      Json.obj("src" -> " /tmp/a.png ".asJson, "name" -> "  ".asJson, "poster" -> "".asJson)
+    )
+    assertEquals(m, Some(AskPreviewMedia(kind = "image", src = Some("/tmp/a.png"))))
+  }
+
+  test("parseMediaItem: entry with neither src nor path is dropped") {
+    assertEquals(AskUserQuestionTool.parseMediaItem(Json.obj("kind" -> "image".asJson, "name" -> "x".asJson)), None)
+  }
+
+  test("parseItems: video preview is decoded (type + src + poster)") {
+    val pv = previewOf(Json.obj("type" -> "video".asJson, "src" -> "/tmp/a.mp4".asJson, "poster" -> "/tmp/a.jpg".asJson))
+    assertEquals(pv.map(_.`type`), Some("video"))
+    assertEquals(pv.flatMap(_.src), Some("/tmp/a.mp4"))
+    assertEquals(pv.flatMap(_.poster), Some("/tmp/a.jpg"))
+    assertEquals(pv.flatMap(_.items), None)
+  }
+
+  test("parseItems: media group is decoded in order, blank/garbage entries dropped") {
+    val pv = previewOf(
+      Json.obj(
+        "type" -> "media".asJson,
+        "items" -> Json.arr(
+          Json.obj("kind" -> "image".asJson, "src" -> "https://example.com/a.png".asJson, "name" -> "a.png".asJson),
+          Json.obj("kind" -> "video".asJson, "src" -> "/tmp/b.mp4".asJson, "poster" -> "https://example.com/b.jpg".asJson),
+          Json.obj("kind" -> "image".asJson), // no src/path ⇒ dropped
+          "not-an-object".asJson // non-object ⇒ dropped
+        )
+      )
+    )
+    assertEquals(pv.map(_.`type`), Some("media"))
+    assertEquals(
+      pv.flatMap(_.items),
+      Some(
+        List(
+          AskPreviewMedia(kind = "image", src = Some("https://example.com/a.png"), name = Some("a.png")),
+          AskPreviewMedia(kind = "video", src = Some("/tmp/b.mp4"), poster = Some("https://example.com/b.jpg"))
+        )
+      )
+    )
+  }
+
+  test("parseItems: empty media group folds to None (no preview, option kept)") {
+    val pv = previewOf(Json.obj("type" -> "media".asJson, "items" -> Json.arr()))
+    assertEquals(pv.flatMap(_.items), None)
+    assertEquals(pv.map(_.`type`), Some("media"))
+  }
+
+  test("inputSchema: preview documents the four forms incl. media group + items") {
+    val schema = AskUserQuestionTool.inputSchema
+    val preview = schema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_("questions"))
+      .flatMap(_.asObject)
+      .flatMap(_("items"))
+      .flatMap(_.asObject)
+      .flatMap(_("properties"))
+      .flatMap(_.asObject)
+      .flatMap(_("options"))
+      .flatMap(_.asObject)
+      .flatMap(_("items"))
+      .flatMap(_.asObject)
+      .flatMap(_("properties"))
+      .flatMap(_.asObject)
+      .flatMap(_("preview"))
+      .flatMap(_.asObject)
+    val props = preview.flatMap(_("properties")).flatMap(_.asObject)
+    assert(props.flatMap(_("src")).isDefined, "preview must document `src`")
+    assert(props.flatMap(_("poster")).isDefined, "preview must document `poster`")
+    val groupItems = props.flatMap(_("items")).flatMap(_.asObject)
+    assert(groupItems.isDefined, "preview must document the `items` media group")
+    val itemProps = groupItems.flatMap(_("items")).flatMap(_.asObject).flatMap(_("properties")).flatMap(_.asObject)
+    assertEquals(
+      itemProps.map(_.keys.toSet),
+      Some(Set("kind", "src", "poster", "name", "path")),
+      "media group entries must document the reuse-contract fields"
+    )
+    assert(preview.flatMap(_("description")).flatMap(_.asString).exists(_.contains("media GROUP")))
+    assert(AskUserQuestionTool.previewDescription.contains("'video'"))
+    assert(AskUserQuestionTool.previewDescription.contains("'media'"))
   }
 
   // ============================================================

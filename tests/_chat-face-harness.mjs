@@ -56,9 +56,12 @@ export function historyFixture(n = 8, { lastRole = 'ai' } = {}) {
 /**
  * 启动主会话面并等到消息列落地。
  * @param {import('@playwright/test').Page} page
- * @param {{history?: any[]}} [opts]
+ * @param {{history?: any[], onWsRoute?: (ws: any) => void}} [opts]
+ *   `onWsRoute`（可选，零回归）：拿到 WS 桩的 route 句柄 ⇒ 测试可在 boot 之后
+ *   **主动推帧**（如 `{type:'askUser', …}`）驱动真实 onMessage 分支 —— askuser-media
+ *   批 2026-11-18 为「真 ask 卡」验收加的可选钩子；既有调用方不传 = 逐字不变。
  */
-export async function bootChat(page, { history = historyFixture() } = {}) {
+export async function bootChat(page, { history = historyFixture(), onWsRoute } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 'e2e-token');
     localStorage.setItem('nebflow_locale', 'zh-CN');
@@ -91,6 +94,7 @@ export async function bootChat(page, { history = historyFixture() } = {}) {
   });
 
   await page.routeWebSocket(/\/ws/, (ws) => {
+    if (typeof onWsRoute === 'function') onWsRoute(ws);
     const sendConfig = () => ws.send(JSON.stringify({
       type: 'configData', config: '{"features":{}}', configured: true, onboarding: 'done', models: [], defaults: {},
     }));
