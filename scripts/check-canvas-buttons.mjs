@@ -31,6 +31,9 @@ for (const file of ['js/viewers/readerChrome.js', 'js/viewers/annotations.js', '
     if (!/class="[^"]*\bcanvas-button\b/.test(match[0])) failures.push(`${file}: button missing shared class: ${match[0].slice(0, 100)}`);
   }
 }
+// Closed ask/note morph seeds must not paint a second glass layer below the FAB.
+const askCss = read('css/ask.css');
+if (!/\.ask-dock\.closed\s+\.ask-input\s*,\s*\.note-dock\.closed\s+\.note-body\s*\{[^}]*visibility:\s*hidden\s*;/s.test(askCss)) failures.push('closed ask/note glass seeds must be hidden');
 const css = read('css/split.css');
 if (!/\.canvas-button\.canvas-button\s*\{[^}]*border-radius:\s*var\(--ds-radius-pill\);[^}]*box-shadow:\s*var\(--ds-shadow-float\)/s.test(css) || !/\.canvas-button\.canvas-button:hover\s*\{[^}]*var\(--cv-hover-bg\)/s.test(css)) failures.push('shared canvas face incomplete');
 for (const file of readdirSync(join(web, 'css')).filter(f => f.endsWith('.css'))) {

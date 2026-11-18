@@ -268,9 +268,16 @@ nf-ask-dock { display: contents; }
 .ask-dock .ask-input,
 .note-dock .note-body {
   transform-origin: 100% 100%;
-  transition-property: width, height, border-radius, transform, padding;
-  transition-duration: var(--lm-dur);
+  transition-property: width, height, border-radius, transform, padding, visibility;
+  transition-duration: var(--lm-dur), var(--lm-dur), var(--lm-dur), var(--lm-dur), var(--lm-dur), 0s;
   transition-timing-function: var(--lm-ease);
+  transition-delay: 0s;
+}
+/* Closed morph seeds otherwise stack a second glass face beneath their FAB. */
+.ask-dock.closed .ask-input,
+.note-dock.closed .note-body {
+  visibility: hidden;
+  transition-delay: 0s, 0s, 0s, 0s, 0s, var(--lm-dur);
 }
 /* 收起态种子形态：fab 尺寸正圆 + 位移（10px 座缝 + 种子直径）落到 fab 圆心方向。
    种子直径单源 = --ask-seed-size（桌面 = --ask-fab-size / 手机档 = --mtap-lg 48，
