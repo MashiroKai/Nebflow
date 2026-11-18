@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "change": "media-viewer-zoom",
+  "mappings": [
+    {
+      "requirement": "MVZ-REQ-001",
+      "scenario": "MVZ-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/lightbox.js",
+        "src/main/resources/web/js/mediaZoom.js",
+        "src/main/resources/web/css/lightbox.css"
+      ],
+      "tests": [
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "M1: pinch zooms, anchored at the finger midpoint" },
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "M2: single-finger pan tracks and stops at the hard bound" },
+        { "path": "scripts/tests/media-zoom.test.mjs", "name": "Z5: pinch anchors at the finger midpoint and follows it" }
+      ]
+    },
+    {
+      "requirement": "MVZ-REQ-001",
+      "scenario": "MVZ-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/lightbox.js",
+        "src/main/resources/web/js/mediaZoom.js"
+      ],
+      "tests": [
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "D1: mouse wheel zooms anchored at the cursor" },
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "D2: trackpad pinch (ctrl+wheel) zooms; two-finger pan pans" },
+        { "path": "scripts/tests/media-zoom.test.mjs", "name": "Z7: wheel vs trackpad classification" }
+      ]
+    },
+    {
+      "requirement": "MVZ-REQ-002",
+      "scenario": "MVZ-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/lightbox.js",
+        "src/main/resources/web/js/mediaZoom.js"
+      ],
+      "tests": [
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "M5: the shipped fit-state gestures survive a zoom round-trip" },
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "M3: over-pan at the edge continues into the next image" },
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "D3: dblclick zooms at the click point; Esc and arrows stay intact" },
+        { "path": "tests/mobile-image-gallery.spec.mjs", "name": "G2: horizontal drag advances the page; rubber band holds at group ends" },
+        { "path": "scripts/tests/media-zoom.test.mjs", "name": "Z6: fit-state drags keep the shipped switch / close gestures" }
+      ]
+    },
+    {
+      "requirement": "MVZ-REQ-002",
+      "scenario": "MVZ-SCN-004",
+      "implementation": [
+        "src/main/resources/web/js/lightbox.js",
+        "src/main/resources/web/css/lightbox.css"
+      ],
+      "tests": [
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "M7: video zooms on its picture, and the native control band is never swallowed" }
+      ]
+    },
+    {
+      "requirement": "MVZ-REQ-003",
+      "scenario": "MVZ-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/lightbox.js",
+        "src/main/resources/web/js/mediaZoom.js"
+      ],
+      "tests": [
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "M4: pinching below the minimum springs back to fit — it does not close" },
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "D4: desktop drag pans when zoomed, clamped at the bound" },
+        { "path": "scripts/tests/media-zoom.test.mjs", "name": "Z3: per-axis closure bounds" }
+      ]
+    },
+    {
+      "requirement": "MVZ-REQ-003",
+      "scenario": "MVZ-SCN-006",
+      "implementation": [
+        "src/main/resources/web/js/lightbox.js"
+      ],
+      "tests": [
+        { "path": "tests/media-viewer-zoom.spec.mjs", "name": "M6: reopening the same image starts from the initial view" }
+      ]
+    }
+  ]
+}

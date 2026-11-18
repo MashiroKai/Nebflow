@@ -52,6 +52,15 @@ import { routeMediaClick, mediaDirectUrl } from './mediaOpenRoute.js';
 // 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
 // 账本票据链取数 + 入账（恰一次）。失败回落既有 reMint 直取腿（下方逐字保留）。
 import { nfViewerSource, nfCacheDrop } from './nfFileCache.js';
+// 媒体查看器缩放批（2026-11-18 作者令逐字「媒体素材 图片 视频这些 手机端要支持手势
+// 放大缩小 电脑端也要支持鼠标滚轮以及触控板手势」）：缩放/平移的**纯算术与判定表**
+// 在 js/mediaZoom.js（零 DOM，可被 node --test 直接断言）；本文件只做事件分流与
+// DOM 读写。坐标系与边界口径见该模块头注（视口中心为原点）。
+import {
+  ZOOM_MIN, PINCH_MIN_DIST, EDGE_SWITCH_PX,
+  clampZoom, axisBounds, rubber, overrun, anchorZoom, pinchView, fitDragOutcome,
+  createWheelClassifier, wheelPanDelta, wheelZoomFactor, doubleTapTarget,
+} from './mediaZoom.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层灯箱补左上返回（灯箱本已全屏；桌面零变化）。
 import { registerOverlayBack } from './gesture/backSwipe.js';
 
@@ -119,16 +128,38 @@ let galPagerEl = null;
 /** .nf-lightbox-opentab 「在标签页打开」次级入口钮。 */
 let galTabBtnEl = null;
 let galMediaEl = null;
+/* ── 缩放/平移态（媒体查看器缩放批 2026-11-18）─────────────────────────
+   (galZoom, galPanX, galPanY) 是唯一真值，坐标 = **视口中心相对**；galGesture 是
+   「跟手层」（既有横滑/下滑的实时位移与淡出），绘画时与缩放态合成 ⇒ 变换只有一个
+   写点。改前，拖动直接覆写 imgEl.style.transform，与缩放态互相打架：放大后横滑会
+   把缩放整块抹掉，且桌面拖动只看得到「有没有放大」而看不到放大到哪 —— 这是本批
+   修掉的根因，不是新加的花样。 */
 let galZoom = 1, galPanX = 0, galPanY = 0;
+/** @type {{dx: number, dy: number, ds: number, opacity: number}|null} 跟手层（null = 恒等）。 */
+let galGesture = null;
 let galMouseDrag = null;
 /** 滑切换序号：慢腿（blob 铸 URL 等）不得盖掉更新的滑。 */
 let galSlideSeq = 0;
 /** 本组 item.blob 腿铸出的 objectURL（关闭/换组时统一回收）。 */
 const galBlobUrls = [];
-/** 跟手拖动态：{id,x0,y0,t0,axis:'x'|'y'|0,dx,dy}；axis=0 未定轴。 */
+/** 跟手拖动态：{id,x0,y0,t0,axis,mode,dx,dy,tx0,ty0,over}；axis=0 未定轴。 */
 let galDrag = null;
 /** 最近一次成轴拖动的松手时刻（拖完松手那一下不当作点遮罩关闭）。 */
 let galDragEndAt = 0;
+/** 触屏指针登记（pointerId → 视口坐标）：≥2 即进入捏合会话。 */
+/** @type {Map<number, {x: number, y: number}>} */
+const galPts = new Map();
+/** 捏合会话基线（视口中心相对坐标）：baseS/baseTx/baseTy + baseMid/baseDist。 */
+/** @type {{baseS: number, baseTx: number, baseTy: number,
+ *          baseMid: {x: number, y: number}, baseDist: number}|null} */
+let galPinch = null;
+/** 捏合收束挂起旗：双指同时离屏时（后一枚 pointerup 紧跟），收束权挂到那一枚上。 */
+let galPendingPinch = false;
+/** 收尾 click 吞掉旗（放大态拖动松手会续派一次 click：不当作遮罩关闭，
+ *  也不当作视频「点画面切换播放」）。 */
+let galSwallowClick = false;
+/** 滚轮判别器（有状态：触控板会话粘连；见 mediaZoom.js 的判定次序）。 */
+const galClassifyWheel = createWheelClassifier();
 
 /** The proxied local path behind an /api/nf-file URL ('' when not one). */
 function nfPathOf(src) {
@@ -647,9 +678,10 @@ export function openLightbox(src, alt, path) {
 function presentImage(src, alt, path) {
   if (!src && !path) return;
   // Reset to loading state
-  imgEl.style.transition = '';   // 画廊跟手/滑动的内联样式清零（跟指位移不带到新图）
-  imgEl.style.transform = '';
-  imgEl.style.opacity = '';
+  // 缩放/平移 + 跟手层复位到初始档（换图/重开同一张不残留上一张的缩放与位移）；
+  // 内联 transition/transform/opacity 一并清零，让 CSS 的 loaded 过渡重新接管。
+  galGesture = null;
+  galSnapToFit();
   imgEl.classList.remove('loaded');
   imgEl.removeAttribute('src');
   delete imgEl.dataset.nfLbRetried; // 账本自愈旗标按次开清零（每开恰一次自愈机会）
@@ -812,8 +844,22 @@ function clearGalleryState() {
   galIndex = 0;
   galSlideSeq += 1;               // 作废在飞的滑装载
   galDrag = null;
-  galZoom = 1; galPanX = 0; galPanY = 0; galMouseDrag = null;
-  if (galMediaEl) { galMediaEl.pause(); galMediaEl.removeAttribute('src'); galMediaEl.remove(); galMediaEl = null; }
+  galPts.clear();                 // 指针登记/捏合会话/跟手层一并清零
+  galPinch = null;
+  galGesture = null;
+  galSwallowClick = false;
+  galPendingPinch = false;
+  if (galTransitionTimer) { clearTimeout(galTransitionTimer); galTransitionTimer = 0; }
+  galZoom = ZOOM_MIN; galPanX = 0; galPanY = 0; galMouseDrag = null;
+  if (galMediaEl) {
+    galMediaEl.pause();
+    galMediaEl.removeAttribute('src');
+    galMediaEl.style.transition = '';
+    galMediaEl.style.transform = '';
+    galMediaEl.style.opacity = '';
+    galMediaEl.remove();
+    galMediaEl = null;
+  }
   if (imgEl) {
     imgEl.style.display = '';
     imgEl.style.transition = '';
@@ -839,8 +885,13 @@ function galGo(i) {
   galIndex = Math.min(Math.max(0, i), galItems.length - 1);
   updateGalChrome();
   const item = galItems[galIndex];
-  galZoom = 1; galPanX = 0; galPanY = 0;
-  overlayEl.dataset.nfLbZoom = '1';
+  // 换图 = 回到初始态（作者令「再次打开同一张时回到初始态」，横向切图同理）：
+  // 缩放/平移档与捏合会话一并清零，再绘画一次落下 data-* 读数。
+  galGesture = null;
+  galPinch = null;
+  galDrag = null;
+  galZoom = ZOOM_MIN; galPanX = 0; galPanY = 0;
+  galPaint();
   if (galMediaEl) { galMediaEl.pause(); galMediaEl.removeAttribute('src'); galMediaEl.remove(); galMediaEl = null; }
   imgEl.style.display = item.kind === 'image' ? '' : 'none';
   const seq = ++galSlideSeq;
@@ -941,55 +992,284 @@ export function openImageGallery(items, index) {
   return true;
 }
 
-/** 画廊跟手手势（ensureDom 装一次；只在画廊态起作用——非画廊的浮层点击/滚轮
- *  语义零变化）：横滑跟手位移（组端橡皮筋 ×0.3）松手过阈/快弹切图；下滑跟手
- *  （图随指位移 + 淡出）松手过阈/快弹关闭；其余回弹。纯点按不拦截（遮罩点按
- *  关闭 / 图上点按无动作 = 既有语义）。 */
+/** 当前变换目标（图片腿 = imgEl；视频腿 = galMediaEl）。 */
+function galTarget() {
+  return galMediaEl || imgEl;
+}
+
+/** 浮层中心 + 内容 layout 边长。layout 尺寸不受 transform 影响 ⇒ 直接读 offset*，
+ *  免得 getBoundingClientRect 把当前缩放算进去（那就是「缩放改变边界、边界改变
+ *  缩放」的自锁）。 */
+function galFrame() {
+  const el = galTarget();
+  const r = overlayEl.getBoundingClientRect();
+  const vw = r.width || 1, vh = r.height || 1;
+  return {
+    cx: r.left + vw / 2, cy: r.top + vh / 2, vw, vh,
+    w: el ? el.offsetWidth || 0 : 0,
+    h: el ? el.offsetHeight || 0 : 0,
+  };
+}
+
+/** 变换唯一写点：缩放态 ∘ 跟手层。恒等态**清空内联样式** —— 让
+ *  .nf-lightbox-img.loaded / .nf-gal-in-{left,right} 的 CSS 过渡档重新接管
+ *  （横滑切图的进场档依赖 CSS 类，内联 transform 会把它整块盖住）。 */
+function galPaint() {
+  if (!overlayEl) return;
+  overlayEl.dataset.nfLbZoom = String(galZoom);
+  overlayEl.dataset.nfLbPanX = String(Math.round(galPanX));
+  overlayEl.dataset.nfLbPanY = String(Math.round(galPanY));
+  const el = galTarget();
+  if (!el) return;
+  const g = galGesture;
+  const dx = galPanX + (g ? g.dx : 0);
+  const dy = galPanY + (g ? g.dy : 0);
+  const s = galZoom * (g ? g.ds : 1);
+  el.style.transform = (dx === 0 && dy === 0 && s === 1)
+    ? ''
+    : `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px) scale(${s.toFixed(4)})`;
+  const opacity = g ? g.opacity : 1;
+  el.style.opacity = opacity < 1 ? String(Math.max(0, opacity)) : '';
+}
+
+/** 按目标档算钳制盒（soft = 橡皮筋；pin = 触屏腿：装得下的轴钉回居中）。 */
+function galClampView(s, tx, ty, pin, soft) {
+  const f = galFrame();
+  const x = axisBounds(f.w * s, f.vw, pin);
+  const y = axisBounds(f.h * s, f.vh, pin);
+  return {
+    tx: soft ? rubber(tx, x.min, x.max) : Math.min(x.max, Math.max(x.min, tx)),
+    ty: soft ? rubber(ty, y.min, y.max) : Math.min(y.max, Math.max(y.min, ty)),
+    bounds: { x, y },
+  };
+}
+
+/** 写下一档（硬钳制）并重绘；pin = 触屏腿。 */
+function galSetView(s, tx, ty, pin) {
+  galZoom = clampZoom(s);
+  const c = galClampView(galZoom, tx, ty, pin, false);
+  galPanX = c.tx;
+  galPanY = c.ty;
+  galPaint();
+}
+
+/** 连续缩放/平移期间关掉 transform 过渡，停手 180ms 后交还。
+ *  为什么必须关：.nf-lightbox-img / .nf-lightbox-av 挂着 200ms 的 transform 过渡（进场
+ *  淡入与回弹都靠它）。若滚轮逐格拉档也走这条过渡，每一次滚轮的 200ms 动画都会被下一次
+ *  滚轮重新起头 ⇒ 缩放整体滞后于手（实测：一格滚轮 +120ms 才走到 1.198 而非 1.2）。
+ *  所以：**跟手期间零过渡**（位移/缩放在事件那一帧就落地），**收束的一拍交还过渡**
+ *  （回弹、双击还原仍然是平滑的 200ms）。 */
+let galTransitionTimer = 0;
+function galHoldTransition() {
+  const el = galTarget();
+  if (el) el.style.transition = 'none';
+  if (galTransitionTimer) clearTimeout(galTransitionTimer);
+  galTransitionTimer = setTimeout(() => {
+    galTransitionTimer = 0;
+    const t = galTarget();
+    if (t) t.style.transition = '';
+  }, 180);
+}
+
+/** 复位到适应档并居中（回弹 / 双击还原 / 换图的共同收束档）。内联 transition 交还
+ *  CSS ⇒ 200ms 过渡由既有档位承担（reduced-motion 由 CSS 直切，不另写动画引擎）。 */
+function galSnapToFit() {
+  if (galTransitionTimer) { clearTimeout(galTransitionTimer); galTransitionTimer = 0; }
+  const el = galTarget();
+  if (el) el.style.transition = '';
+  galZoom = ZOOM_MIN; galPanX = 0; galPanY = 0; galGesture = null;
+  galPaint();
+}
+
+/** 视频/音频**原生控件带**（元素盒下沿起量）：落在这里的指针与滚轮一律交给元素
+ *  自己 —— 作者令「缩放手势不得吞掉播放控件区域的操作」。取值 56px = 浏览器原生
+ *  控件条的实际高度档（Chromium / Safari 48–56px）取上界，保证整条控件被让开；
+ *  音频无画面 ⇒ 整件都算控件面。 */
+const AV_CONTROL_BAND_PX = 56;
+
+/** 指针/滚轮落点是否在媒体自身的原生控件带上。 */
+function galOnAvControl(target, x, y) {
+  const el = galMediaEl;
+  if (!el || !target || !el.contains(/** @type {Node} */ (target))) return false;
+  if (el.tagName === 'AUDIO') return true;
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return false;
+  return x >= r.left && x <= r.right && y >= r.bottom - AV_CONTROL_BAND_PX;
+}
+
+/** 画廊手势与缩放（ensureDom 装一次；只在画廊态起作用——非画廊的浮层点击/滚轮
+ *  语义零变化）。作者令 2026-11-18 逐字：「媒体素材 图片 视频这些 手机端要支持
+ *  手势放大缩小 电脑端也要支持鼠标滚轮以及触控板手势」。
+ *
+ *  ── 既有手势与新缩放手势如何共存（判定表；两态行为可不同）──────────────
+ *  适应态（s=1） 单指横滑 = 切上/下一张（组端橡皮筋 ×0.3、不越组）、单指下滑
+ *                跟手 + 淡出 = 关闭、其余回弹 —— 判据与改前逐字同值
+ *                （阈值搬进 mediaZoom.fitDragOutcome，改前是内联算术）；
+ *  放大态（s>1） 单指拖动 = 平移（界外橡皮筋、松手回弹到硬边界）；**已到该轴
+ *                边界继续拖过 EDGE_SWITCH_PX(72px) = 切图**（微信同款「边界续滑」，
+ *                放大态也保住左右切换）；下滑关闭在放大态**不启用**（放大态的下向
+ *                拖动是平移，不是关闭；关闭仍走遮罩点按 / 返回钮 / 返回手势 / Esc）；
+ *  双指（任何态） 捏合 = 以两指中点为锚缩放 + 中点位移合成为平移；下越最小档 =
+ *                橡皮筋阻尼，松手回弹到适应屏幕（不是关闭，理由见报告）；
+ *  视频面        单指手势在适应态不参与切图/关闭（那是画面自己的操作面），只在
+ *                放大态平移；起始落在原生控件带的指针一律不被接管。
+ *
+ *  两条输入腿刻意分开（语义不同）：触屏腿 = pointer 多点管线；鼠标腿 = wheel /
+ *  dblclick / 放大态按住拖动。 */
 function bindGalleryGestures() {
   const active = () => overlayEl.getAttribute('data-nf-lb-gallery') === 'on'
     && lmode === 'img' && !!galItems;
-  const paintZoom = () => {
-    imgEl.style.transform = `translate(${galPanX}px, ${galPanY}px) scale(${galZoom})`;
-    overlayEl.dataset.nfLbZoom = String(galZoom);
+  /** 组内当前项（可能为 null）。 */
+  const current = () => (galItems ? galItems[galIndex] || null : null);
+  /** 本项是否参与缩放（音频没有画面，零缩放语义 —— 它的手势与改前一样全让给元素）。 */
+  const zoomable = () => {
+    const it = current();
+    return !!it && (it.kind === 'image' || it.kind === 'video');
   };
-  overlayEl.addEventListener('wheel', e => {
-    if (!active() || galItems[galIndex].kind !== 'image' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  const twoPts = () => [...galPts.values()].slice(0, 2);
+  const distOf = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const midOf = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  /** 光标锚点（视口中心相对）；不在媒体面上（合成滚轮 / 遮罩上）⇒ null = 居中缩放。 */
+  const pivotOf = (e) => {
+    const el = galTarget();
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return null;
+    const f = galFrame();
+    return { x: e.clientX - f.cx, y: e.clientY - f.cy };
+  };
+
+  /* ── 鼠标腿 ①：滚轮 / 触控板（作者令「鼠标滚轮以及触控板手势」）────────
+     分类见 mediaZoom.createWheelClassifier：ctrl/meta（触控板捏合或 ctrl+滚轮）、
+     行模式、孤立大步 = 缩放；带横向分量或小步连续 = 双指平移。缩放锚点 = **光标
+     位置**（「滚到哪放大哪」，不是中心缩放）。 */
+  overlayEl.addEventListener('wheel', (e) => {
+    if (!active() || !zoomable()) return;
+    if (galOnAvControl(e.target, e.clientX, e.clientY)) return;   // 控件带上：交给元素自己
+    const kind = galClassifyWheel(e, performance.now());
+    if (kind === 'ignore') return;
     e.preventDefault();
-    galZoom = Math.min(5, Math.max(1, galZoom * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
-    if (galZoom === 1) galPanX = galPanY = 0;
-    paintZoom();
+    galHoldTransition();
+    if (kind === 'zoom') {
+      const next = anchorZoom(
+        { s: galZoom, tx: galPanX, ty: galPanY },
+        galZoom * wheelZoomFactor(e.deltaY),
+        pivotOf(e),
+      );
+      galSetView(next.s, next.tx, next.ty, false);
+      return;
+    }
+    const d = wheelPanDelta(e);
+    galSetView(galZoom, galPanX + d.dx, galPanY + d.dy, false);
   }, { passive: false });
-  overlayEl.addEventListener('dblclick', e => {
-    if (!active() || e.target !== imgEl) return;
-    galZoom = galZoom === 1 ? 2 : 1; galPanX = galPanY = 0; paintZoom();
+
+  /* ── 鼠标腿 ②：双击 fit ↔ 2×（锚 = 双击点；视频不夺原生双击全屏）────── */
+  overlayEl.addEventListener('dblclick', (e) => {
+    if (!active()) return;
+    const it = current();
+    if (!it || it.kind !== 'image') return;
+    const pivot = pivotOf(e);
+    // 目标判定用**命中测试**（该点是否在媒体盒内），不只用 e.target：放大态按住
+    // 拖动会 `setPointerCapture`，而指针捕获会把随后的 click/dblclick 重定向到捕获
+    // 元素（实测：捕获中 e.target = .nf-lightbox 而 elementFromPoint = img）—— 只认
+    // e.target === imgEl 的话，放大之后的双击还原永远收不到（本批实测逮到的真 bug）。
+    // pivot 非空 = 点在媒体盒内且不受捕获影响；pivot 为空时仍保留既有的
+    // 「合成 dblclick 直落在 img 上」腿（既有桌面 spec 就是这样派的）。
+    if (!pivot && e.target !== galTarget()) return;
+    const next = doubleTapTarget(galZoom);
+    if (next <= ZOOM_MIN) { galSnapToFit(); return; }
+    const v = anchorZoom({ s: galZoom, tx: galPanX, ty: galPanY }, next, pivot);
+    galSetView(v.s, v.tx, v.ty, false);
   });
+  /* ── 键盘：←/→ 切图（既有面零改动；缩放态下同样生效） ── */
   document.addEventListener('keydown', e => {
     if (!active() || !overlayEl.classList.contains('on') || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     if (e.target instanceof Element && e.target.closest('video, audio, input, textarea')) return;
     e.preventDefault(); e.stopPropagation(); galSlide(e.key === 'ArrowRight' ? 1 : -1);
   }, true);
+
+  /* ── 指针起手：鼠标腿（放大态按住拖动平移）与触屏腿（捏合 / 单指）分流 ── */
   overlayEl.addEventListener('pointerdown', (e) => {
-    if (!active() || galDrag) return;
+    if (!active()) return;
+    galSwallowClick = false;
     if (e.pointerType === 'mouse' && !document.body.classList.contains('mobile-layer')) {
-      if (e.button === 0 && galZoom > 1 && e.target === imgEl) {
-        galMouseDrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
-        try { overlayEl.setPointerCapture(e.pointerId); } catch (err) { /* released */ }
-      }
+      // 桌面鼠标腿：只在放大态按住拖动 = 平移（既有行为逐字保留）。视频面同规，
+      // 但让开原生控件带。
+      if (e.button !== 0 || galZoom <= ZOOM_MIN || !zoomable()) return;
+      if (galOnAvControl(e.target, e.clientX, e.clientY)) return;
+      if (e.target !== galTarget()) return;
+      galMouseDrag = { id: e.pointerId, x: e.clientX, y: e.clientY, tx: galPanX, ty: galPanY };
+      galHoldTransition();
+      try { overlayEl.setPointerCapture(e.pointerId); } catch (err) { /* released */ }
       return;
     }
-    if (e.target.closest && e.target.closest('video, audio')) return;
+    // 触屏腿。
+    if (galOnAvControl(e.target, e.clientX, e.clientY)) return;   // 原生控件带：不接手
     // 控件起手不进拖动（关闭/在标签页打开/返回钮自己处理点击）。
     if (e.target.closest && e.target.closest('button, .nf-lightbox-bar')) return;
+    if (galPts.has(e.pointerId)) return;
+    galPendingPinch = false;                // 新手势：作废上一轮挂起的收束
+    const p = { x: e.clientX, y: e.clientY };
+    galPts.set(e.pointerId, p);
     try { overlayEl.setPointerCapture(e.pointerId); } catch (err) { /* 已释放 */ }
-    galDrag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), axis: 0, dx: 0, dy: 0 };
+    galHoldTransition();                     // 跟手期间零过渡（见 galHoldTransition）
+    if (galPts.size === 2) {
+      if (!zoomable()) { galPts.delete(e.pointerId); return; }
+      const [a, b] = twoPts();
+      const f = galFrame();
+      const mid = midOf(a, b);
+      galPinch = {
+        baseS: galZoom, baseTx: galPanX, baseTy: galPanY,
+        baseMid: { x: mid.x - f.cx, y: mid.y - f.cy },
+        baseDist: Math.max(PINCH_MIN_DIST, distOf(a, b)),
+      };
+      galDrag = null;               // 第二指落下：单指会话让位给捏合
+      return;
+    }
+    if (galPts.size > 1) return;    // 三指以上不定义语义（不吞、不乱动）
+    // 单指会话：视频面在适应态不参与切图/关闭（那是画面自己的操作面），
+    // 故只在放大态（= 平移）为它开会话。
+    const mode = galZoom > ZOOM_MIN * 1.001 ? 'pan' : 'fit';
+    galGesture = null;
+    if (mode === 'fit') {
+      const it = current();
+      if (it && it.kind !== 'image') return;
+    }
+    galDrag = {
+      id: e.pointerId, x0: p.x, y0: p.y, t0: performance.now(),
+      axis: 0, mode, dx: 0, dy: 0, tx0: galPanX, ty0: galPanY, over: 0,
+    };
   });
   overlayEl.addEventListener('pointermove', (e) => {
-    if (galMouseDrag && e.pointerId === galMouseDrag.id && active()) {
-      galPanX += e.clientX - galMouseDrag.x; galPanY += e.clientY - galMouseDrag.y;
-      galMouseDrag.x = e.clientX; galMouseDrag.y = e.clientY; paintZoom(); return;
+    if (!active()) return;
+    const cur = galPts.get(e.pointerId);
+    if (cur) { cur.x = e.clientX; cur.y = e.clientY; }
+
+    if (galMouseDrag && e.pointerId === galMouseDrag.id) {
+      galHoldTransition();
+      galSetView(galZoom,
+        galMouseDrag.tx + (e.clientX - galMouseDrag.x),
+        galMouseDrag.ty + (e.clientY - galMouseDrag.y), false);
+      return;
     }
-    if (!galDrag || e.pointerId !== galDrag.id || !active()) return;
+
+    if (cur && galPinch && galPts.size >= 2) {
+      if (!zoomable()) return;
+      galHoldTransition();
+      const [a, b] = twoPts();
+      const f = galFrame();
+      const mid = midOf(a, b);
+      const v = pinchView(galPinch, { baseDist: galPinch.baseDist },
+        { x: mid.x - f.cx, y: mid.y - f.cy }, distOf(a, b));
+      const c = galClampView(v.s, v.tx, v.ty, true, false);
+      galZoom = v.s; galPanX = c.tx; galPanY = c.ty;
+      galPaint();
+      return;
+    }
+
+    if (!cur || !galDrag || e.pointerId !== galDrag.id) return;
     const d = galDrag;
     d.dx = e.clientX - d.x0;
     d.dy = e.clientY - d.y0;
@@ -997,44 +1277,114 @@ function bindGalleryGestures() {
       if (Math.abs(d.dx) < DRAG_SLOP && Math.abs(d.dy) < DRAG_SLOP) return;
       d.axis = Math.abs(d.dx) > Math.abs(d.dy) ? 'x' : 'y';
     }
-    imgEl.style.transition = 'none';   // 跟手帧不进过渡
+    if (d.mode === 'pan') {
+      // 放大态：单指平移（触屏腿 pin=true：装得下的轴钉居中；界外橡皮筋）。
+      galHoldTransition();
+      const wantX = d.tx0 + d.dx, wantY = d.ty0 + d.dy;
+      const c = galClampView(galZoom, wantX, wantY, true, true);
+      galPanX = c.tx; galPanY = c.ty;
+      // 「已到该轴边界继续拖」的量（用**未阻尼**的期望值量：阻尼只是手感，
+      // 不该抬高切图门槛）。
+      d.over = 0;
+      if (d.axis === 'x') {
+        if (d.dx < 0 && wantX < c.bounds.x.min) d.over = c.bounds.x.min - wantX;
+        else if (d.dx > 0 && wantX > c.bounds.x.max) d.over = wantX - c.bounds.x.max;
+      }
+      galPaint();
+      return;
+    }
+    // 适应态：既有跟手档（横滑位移 / 下滑位移 + 淡出），与缩放态在绘画层合成。
     if (d.axis === 'x') {
       const atEdge = (galIndex === 0 && d.dx > 0) || (galIndex === galItems.length - 1 && d.dx < 0);
-      imgEl.style.transform = `translateX(${(atEdge ? d.dx * 0.3 : d.dx).toFixed(1)}px)`;
+      galGesture = { dx: atEdge ? d.dx * 0.3 : d.dx, dy: 0, ds: 1, opacity: 1 };
     } else {
       const p = Math.min(1, Math.max(0, d.dy / 320));
-      imgEl.style.transform = `translateY(${(d.dy * 0.9).toFixed(1)}px) scale(${(1 - p * 0.15).toFixed(3)})`;
-      imgEl.style.opacity = String(1 - p * 0.6);
+      galGesture = { dx: 0, dy: d.dy * 0.9, ds: 1 - p * 0.15, opacity: 1 - p * 0.6 };
     }
+    galPaint();
   });
+  /** 捏合收束：下越最小档（橡皮筋把档位压到 ≤1）/ 取消 ⇒ 回弹到适应屏幕居中；
+   *  否则把平移钳回硬边界。缓速回弹由 CSS 200ms 过渡承担。 */
+  const finishPinch = () => {
+    const el = galTarget();
+    if (el) el.style.transition = '';
+    if (galZoom <= ZOOM_MIN * 1.01) { galSnapToFit(); return; }
+    galSetView(galZoom, galPanX, galPanY, true);
+  };
+
   const end = (e, cancelled) => {
-    if (galMouseDrag && e.pointerId === galMouseDrag.id) { galMouseDrag = null; galDragEndAt = Date.now(); return; }
-    if (!galDrag || e.pointerId !== galDrag.id) return;
+    if (galMouseDrag && e.pointerId === galMouseDrag.id) {
+      galMouseDrag = null;
+      galDragEndAt = Date.now();
+      const el = galTarget();
+      if (el) el.style.transition = '';
+      return;
+    }
+    const known = galPts.has(e.pointerId) || (galDrag && e.pointerId === galDrag.id) || !!galPinch;
+    if (!known) return;
+    galPts.delete(e.pointerId);
+    try { overlayEl.releasePointerCapture(e.pointerId); } catch (err) { /* 已释放 */ }
+
+    if (galPinch) {
+      if (galPts.size >= 2) return;                 // 还在捏合中
+      galPinch = null;
+      const rest = [...galPts.entries()][0];
+      if (rest && !cancelled) {
+        // 双指 → 单指收指：残留触点接管平移（基点重置防跳变；viewers/image.js 同语义）。
+        // 两指**同时**离屏时也会走这一腿（后一枚 pointerup 紧跟其后）：所以这里只把
+        // 收束权挂起（galPendingPinch），由那一枚的收尾真正执行。
+        galDrag = {
+          id: rest[0], x0: rest[1].x, y0: rest[1].y, t0: performance.now(),
+          axis: 0, mode: 'pan', dx: 0, dy: 0, tx0: galPanX, ty0: galPanY, over: 0,
+        };
+        galPendingPinch = true;
+        return;
+      }
+      finishPinch();
+      return;
+    }
+
+    if (!galDrag || e.pointerId !== galDrag.id) { galDrag = null; galPendingPinch = false; return; }
     const d = galDrag;
     galDrag = null;
-    if (!d.axis) return;               // 纯点按：click 语义自己走
-    galDragEndAt = Date.now();
-    if (!galItems) return;             // 拖动途中画廊已关：无收尾动作
-    const dt = Math.max(1, Date.now() - d.t0);
-    if (d.axis === 'x') {
-      const dir = d.dx < 0 ? 1 : -1;
-      const commit = !cancelled
-        && (Math.abs(d.dx) > 72 || (Math.abs(d.dx) > 24 && Math.abs(d.dx) / dt > 0.45))
-        && galIndex + dir >= 0 && galIndex + dir < galItems.length;
-      imgEl.style.transition = '';
-      imgEl.style.transform = '';      // 回弹（不过阈）或让位给 galSlide 进场档
-      if (commit) galSlide(dir);
-    } else {
-      const commit = !cancelled && d.dy > 0
-        && (d.dy > 110 || (d.dy > 40 && d.dy / dt > 0.5));
-      if (commit) { closeLightbox(); return; }   // 关闭路径的内联样式复位在 clearGalleryState
-      imgEl.style.transition = '';
-      imgEl.style.transform = '';
-      imgEl.style.opacity = '';
+    if (!d.axis) {
+      // 纯点按：click 语义自己走；但若这一枚是捏合收束的挂起腿，收束仍要执行。
+      if (galPendingPinch) { galPendingPinch = false; finishPinch(); }
+      return;
     }
+    galPendingPinch = false;
+    galDragEndAt = Date.now();
+    if (!galItems) return;                  // 拖动途中画廊已关：无收尾动作
+    const el = galTarget();
+    if (el) el.style.transition = '';
+    if (d.mode === 'pan') {
+      galSwallowClick = true;               // 放大态拖动收尾：吃掉这一次 click
+      if (!cancelled && d.over > EDGE_SWITCH_PX) { galSlide(d.dx < 0 ? 1 : -1); return; }
+      if (galZoom <= ZOOM_MIN * 1.01) { galSnapToFit(); return; }   // 捏合缩到最小档的收束
+      galSetView(galZoom, galPanX, galPanY, true);
+      return;
+    }
+    const outcome = fitDragOutcome({
+      dx: d.dx, dy: d.dy, dt: performance.now() - d.t0,
+      atFirst: galIndex === 0, atLast: galIndex === galItems.length - 1, cancelled,
+    });
+    galGesture = null;
+    galPaint();                             // 复位内联变换（让位给进场档 / 回弹过渡）
+    if (outcome.kind === 'switch') galSlide(outcome.dir);
+    else if (outcome.kind === 'close') closeLightbox();
   };
   overlayEl.addEventListener('pointerup', (e) => end(e, false));
   overlayEl.addEventListener('pointercancel', (e) => end(e, true));
+
+  // 放大态拖动收尾的合成 click：不切开视频的播放/暂停。（遮罩点按关闭由
+  // ensureDom 的 galDragEndAt 闸挡，见那边的点击处理器。）
+  overlayEl.addEventListener('click', (e) => {
+    if (!galSwallowClick) return;
+    galSwallowClick = false;
+    if (!galMediaEl || e.target !== galMediaEl) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 }
 
 /** 桌面 Canvas 单点的懒包装（媒体点击统一批 P16）：lightbox.js 是轻叶子，禁静态

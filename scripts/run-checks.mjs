@@ -40,6 +40,11 @@ export const CHECKS = [
   // 桌面设置页 + 个人主页）断言该栏零命中；源码级同判据 = check-panel-uniform。
   { name: 'settings-account-removed', profiles: ['frontend'], timeoutMs: 180_000,
     argv: [process.execPath, 'tests/settings-account-removed.mjs'] },
+  // 媒体查看器缩放批（2026-11-18 作者令）：手机捏合/平移 + 桌面滚轮锚点/触控板 + 视频，
+  // 以及「既有手势未被吃掉」的回归面。纯状态机/闭包边界的单测在 script-tests 的
+  // scripts/tests/media-zoom.test.mjs（static 档）。
+  { name: 'media-viewer-zoom', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/media-viewer-zoom.spec.mjs', '--workers=1'] },
   nodeCheck('bubble-side', 'check-bubble-side'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),
