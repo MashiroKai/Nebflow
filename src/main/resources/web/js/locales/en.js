@@ -1392,10 +1392,11 @@ export default {
   'settings.modelChainTitle': 'Model (per session class)',
   'settings.modelChainDisclosureTitle': 'Model (per session class)',
   'settings.modelChainSectionHint': 'Session class models sync with /model.',
+  'settings.modelModeUnifiedNote': '{roles} follow the main session.',
   'settings.modelRoleTabs': 'Choose a conversation category',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
-  'model.modeUnified': 'Unified',
+  'model.modeUnified': 'All follow main',
   'model.modeSeparate': 'Per-role',
   'model.mainChain': '{agent} primary chain',
   'model.mainChainDesc': 'Every role follows this chain by default',

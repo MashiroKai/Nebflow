@@ -246,6 +246,10 @@
 .set-btn {
   height: var(--set-btn-h);
   min-height: var(--set-btn-h);
+  /* 最小 44×44 命中盒的另一半：纯图标钮（后台智能体的停/恢复，16 图标 + 24
+     内距 + 2 边框 = 42）在宽度上差 2px；宽度地板与高度同令牌，命中盒成方。
+     文本钮本就更宽，不受影响；成组网格（.set-actions .set-btn）另行 min-width:0。 */
+  min-width: var(--set-btn-h);
   padding: 0 var(--set-btn-pad-x);
   border-radius: var(--ds-radius-pill);
   font-size: var(--ds-fs-btn);
@@ -277,6 +281,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 整行钮（.set-btn-block 在动作网格内）= 独占一行、左右缘贴网格内容缘
+   （= 上方/下方 .set-row 的读数右缘同一条 x）。高级区批（2026-11-18 作者实拍
+   「按钮排布太乱」）：修前文件缓存清空键嵌在读数行里，右缘内收一个 chevron
+   盒宽而与上方动作网格错位 20px；收进本网格并独占一行后三条对齐（网格内容缘 =
+   读数行内容缘 = 卡内距 16）由同一处 padding 推出。 */
+.set-actions .set-btn.set-btn-block { flex: 1 1 100%; }
 .set-actions:first-child { padding-top: var(--ds-space-1h); }
 
 /* 行内动作钮右缘 = chevron 盒左缘：ctrl span 是末位子件，右缘贴行内容缘 ⇒
@@ -321,9 +331,40 @@
 .set-collapse-body[hidden] { display: none; }
 .set-sub { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
 
+/* ── 模型配置两模式控件（模型配置两模式批 2026-11-18）───────────────────────
+   形态整件复用 /model 面板的 .mp-modes / .mp-mode-btn（全站唯一两模式控件；
+   modal.css 供造型）——本文件只补**设置页节内**的落位：面板头那一条
+   `margin-left: auto` 在卡内会把控件顶到右缘，本节要从左基线起排。
+   左右基线 = 0：本节挂在 .set-disclosure-body 里，横向内距已由该层给足（16）。 */
+.set-modes {
+  margin: 0 0 var(--ds-space-2);
+  justify-content: flex-start;
+  align-self: stretch;
+}
+
 /* ── 关于卡 ──────────────────────────────────────────────────────────────── */
 #settings-content .about-info { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
-#settings-content .about-conn { margin-top: var(--ds-space-1); }
+/* 连接读数同行（栏目去重批 2026-11-18）：label 与值分列两端，行网格 = 同卡
+   .set-row 的「左标题 / 右读数」口径（竖向节奏也同档）。修前 label 与
+   「图标 + 词面」在一个文本流里，窄卡上被折成两行。 */
+#settings-content .about-conn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  min-height: var(--set-row-h);
+  font-size: var(--ds-fs-body);
+}
+#settings-content .about-conn-label { color: var(--ds-text); min-width: 0; }
+#settings-content .about-conn-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-fs-hint);
+  white-space: nowrap;
+}
+#settings-content .about-version { color: var(--ds-text-muted); font-size: var(--ds-fs-hint); }
 
 /* `#settings-content .neblink-account-actions`（账号修复操作安全区内缩）随账户卡
    整件退役（作者令 2026-11-18）——零发射点。 */

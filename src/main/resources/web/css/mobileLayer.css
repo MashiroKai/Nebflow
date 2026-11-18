@@ -2700,16 +2700,13 @@ body.mobile-layer .mobile-page[data-page="me"] .mf-hub-rows { margin: 0 14px; }
    超出部分交给页体滚动，与同页 `.mf-me-card` / `.mf-hub` 的「块级件不收缩」口径
    一致（器械读数见 tests/profile-devices-geometry.spec.mjs）。 */
 body.mobile-layer .mobile-page[data-page="me"] .mf-me-fields { flex: none; }
-/* 逐设备退出键的手机档触控面（同批评审判定延伸）：`.glass-control` 只给材质不给
-   尺寸，修前行内退出键实测 50.9×17 —— 高度不足 --mtap（= --ds-hit-row 44px），
-   低于本仓手机触控下限（tests/mobile-touch-target.spec.mjs 的作者令判据）。
-   补 --mtap 高 + 横向内距后命中盒 50.9×44 达标；规则限定手机层与个人主页，
-   桌面个人资料面（鼠标档）不动。 */
-body.mobile-layer .mobile-page[data-page="me"] .pd-device-signout {
-  min-height: var(--mtap);
-  padding-left: var(--ds-space-3);
-  padding-right: var(--ds-space-3);
-}
+/* 逐设备退出键的手机档触控面 —— 🔴 按钮形态统一批（2026-11-18）本规则**整条撤除**：
+   它的历史原因是「.glass-control 只给材质不给尺寸」，而该键现在挂设置页动作族
+   （.cfg-btn.set-btn），几何已由令牌单源给出（--set-btn-h = var(--mtap,44px) /
+   --set-btn-pad-x = --ds-space-3 / --ds-radius-pill）——本规则逐值等于族令牌，
+   留着就是同一件事的第二个真相（改一处忘一处必然分叉）。真渲染复核：删后手机层
+   命中盒仍为 44 高（tests/settings-structure-shots.mjs 读数），
+   tests/mobile-touch-target.spec.mjs 的下限判据不回归。 */
 /* 入口行右值（当前读数，如用户名/绑定的邮箱）。 */
 body.mobile-layer .mf-hub-row-val {
   flex: none;
@@ -6034,14 +6031,19 @@ body.mobile-layer .bgagent-overlay .bgagent-sheet-actions {
   border-top: var(--ds-border-width) dashed var(--ds-border-hairline);
 }
 body.mobile-layer .bgagent-overlay .bgagent-sheet-actions[hidden] { display: none; }
-body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn {
-  width: var(--ds-hit-row);
-  height: var(--ds-hit-row);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-control-bg);
-}
-body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn svg { width: 16px; height: 16px; }
+/* 按钮形态统一批（2026-11-18 作者实拍「包括后台智能体的恢复按钮也是」）本规则瘦身：
+   `width/height: --ds-hit-row` + 自写 `1px 描边 + 玻璃底` 整件撤除 —— 那三行与桌面
+   flowAgentPopup.js 注入串里的 `28px × 28px / 50%` 是**两处像素真相**，也正是
+   「桌面圆钮（描边透明底）/ 手机方钮（玻璃底描边）」的成因。几何与配色现在都从
+   动作族令牌来（标记挂 .cfg-btn.set-btn ⇒ 44 命中盒 / pill 圆角 / 次操作描边档），
+   本层只保留本面自有的两件事：retry 的蓝 tint（该钮已迁出页脚 ⇒ 页脚作用域的
+   tint 规则够不着它）与图标本体档。 */
 body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-retry { color: rgb(var(--sapphire)); }
+body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn svg {
+  width: var(--set-icon-size);
+  height: var(--set-icon-size);
+  stroke-width: 2.5;
+}
 body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn.readonly { opacity: 0.35; }
 body.mobile-layer .bgagent-overlay .bgagent-sheet-retries {
   font-size: var(--ds-fs-meta);

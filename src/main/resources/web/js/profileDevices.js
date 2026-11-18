@@ -165,7 +165,16 @@ export function buildDeviceList() {
         h('span', { class: 'pd-device-meta', text: deviceMetaText(dev) }),
       ]),
       h('button', {
-        class: 'pd-device-signout glass-control',
+        // 按钮形态统一批（2026-11-18 作者逐字：「然后就是退出按钮 我们要用我们统一的
+        // 按钮风格 …这个退出按钮太丑了」）：修前挂 `.glass-control`（材质类，只给配方
+        // 不给几何）⇒ 落到 sapphire.css 的 `button.glass-control` 毯式「次操作 = 描边」
+        // 档：透明底 + 1px 描边 + **零圆角**（真渲染实测 radius: 0px / border 1px）＝
+        // 作者实拍里那枚「描边方形」。与本页所有动作钮（.cfg-btn.set-btn：中性底 +
+        // pill 圆角 + 44 命中盒）不是一族。
+        // 修后 = 设置页动作族（.cfg-btn 配色 + .set-btn 几何令牌），与同页
+        // 「编辑原始 JSON / 清空文件缓存 / 保存 STT 配置」逐值同档；零新类、零新令牌。
+        // 机检：scripts/check-settings-button-uniform.mjs（B1 登记表 + B2 禁内联几何）。
+        class: 'pd-device-signout cfg-btn set-btn',
         type: 'button',
         'data-device-signout': dev.id,
         'aria-label': t(dev.current ? 'profile.deviceSignOutCurrent' : 'profile.deviceSignOut'),

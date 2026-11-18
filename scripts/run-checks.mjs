@@ -78,6 +78,10 @@ export const CHECKS = [
   // 用户附件落盘身份 / 读取面授权键 / attJson 延迟求值 / footer 下载键四条链的源码闸
   // （端到端回归见 tests/attachment-persistence.spec.mjs，需真实例）。
   nodeCheck('attachment-persistence', 'check-attachment-persistence'),
+  // 设置页结构治理批（2026-11-18）：栏目名去重（section 头 vs 卡内标题逐对核）+
+  // 按钮形态统一（退出 / 后台智能体恢复·停 登记进设置页动作族；按钮规则禁字面量几何）。
+  nodeCheck('settings-section-dedupe', 'check-settings-section-dedupe', ['static']),
+  nodeCheck('settings-button-uniform', 'check-settings-button-uniform', ['static']),
   ...[
     ['js-types', 'check-js-types'], ['ime', 'check-ime-guard'],
     ['component-contract', 'check-component-contract'], ['takeover-identify', 'check-takeover-identify'],

@@ -1347,10 +1347,14 @@ export default {
   'settings.modelChainTitle': '模型（按会话类别）',
   'settings.modelChainDisclosureTitle': '模型（按会话类别）',
   'settings.modelChainSectionHint': '各会话类别的模型与 /model 同步。',
+  // 模型配置两模式批（2026-11-18 作者逐字：「要么全部跟随主会话 然后才是分开配置」）：
+  // unified 档的诚实读数行——只列**真的在跟随**的类别（服务端链为空的 follower），
+  // 与同节上方「已独立配置，不受主链影响」的分叉注记读同一份状态，两行不自相矛盾。
+  'settings.modelModeUnifiedNote': '{roles} 跟随主会话。',
   'settings.modelRoleTabs': '选择会话类别',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
-  'model.modeUnified': '统一配置',
+  'model.modeUnified': '全部跟随主会话',
   'model.modeSeparate': '分开配置',
   'model.mainChain': '{agent} 主链',
   'model.mainChainDesc': '所有角色默认跟随此链',

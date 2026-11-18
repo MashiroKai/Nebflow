@@ -871,7 +871,13 @@ export function renderSettings() {
       ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
     </section>
     <section class="sp-panel-group" data-panel-group="runtime"><h2>${t('settings.runtime')}</h2>
-    ${setCard({ title: t('settings.runtime'), body: `
+    <!-- 栏目名去重批（2026-11-18 作者实拍报障「每一栏都出现两次栏目名 比如高级 高级」）：
+         单卡分区的卡内标题与 section 标题逐字相同 ⇒ 二取一，保留**卡外**的 section
+         标题（它是全页分组节奏的唯一承载体，删掉会让本组脱离「组标题 + 白卡」的版式），
+         卡内标题整件撤除。多卡分区（模型与服务：服务商 / 模型（按会话类别）/ 密钥）
+         的卡内标题与 section 标题不同名 ⇒ 一个不动。机检：
+         scripts/check-settings-section-dedupe.mjs 逐对核（红/绿自证）。 -->
+    ${setCard({ body: `
       ${setGroup(
         setRow({
           title: t('settings.thinkingMode'),
@@ -939,19 +945,28 @@ export function renderSettings() {
       })}` })}
     </section>
     <section class="sp-panel-group" data-panel-group="advanced"><h2>${t('settings.advanced')}</h2>
-    ${setCard({ title: t('settings.advanced'), body: `
+    <!-- 栏目名去重（见上方 runtime 段注）：section 标题「高级」与卡内标题逐字相同 ⇒
+         卡内标题撤除，保留卡外 section 标题。 -->
+    ${setCard({ body: `
+      <!-- 高级区按钮排布重做（2026-11-18 作者实拍报障「这里的按钮排布也太乱太丑了」）：
+           修前 = 两枚动作钮（.set-actions 等分列）+ 文件缓存读数行里**又嵌一枚**动作钮
+           ⇒ 三枚钮两种宽度、右缘两条 x（动作钮贴卡内容缘，行内钮再内收一个 chevron 盒宽
+           = 本卡内没有任何 chevron 行可对齐，纯粹是错位）。修后 = 全部动作钮收进**同一张
+           .set-actions 网格**（同高 44 / 同内距 / 同圆角 / 同间隙），缓存读数退回**纯读数行**
+           （.set-row + .set-row-val，行内零按钮）；清空键占满整行（.set-btn-block，
+           .set-actions 内跨列）。同排对齐、间距一致、可点区一致三件一次到位；
+           用的全是既有类与既有令牌（零新组件、零新令牌）。 -->
+      ${setGroup(setRow({
+        title: t('settings.fileCache'),
+        control: `<span id="nf-cache-usage" role="status" class="set-row-val">…</span>`,
+      }))}
       <div class="set-actions">
         <button class="cfg-btn set-btn" id="btn-toggle-json" title="${t('settings.editRawJson')}">${t('settings.editRawJson')}</button>
         ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn set-btn" id="btn-rerun-onboarding" title="${t('settings.rerunOnboarding')}">${t('settings.rerunOnboarding')}</button>` : ''}
-      </div>
-      <!-- 文件缓存行（M2 · 设计 v1 §6.4/§7 表5）：占用读数（nfCacheStats 同步 seam，
-           分桶明细进 title）+ 清空键（nfCacheReset seam，两段式确认 = 按钮第二击
-           即确认位）。settings-ios-rows 批：清空键与上方行为按钮同一尺寸令牌
-           .set-btn，右缘与全页 chevron 列同 x。 -->
-      ${setRow({
-        title: t('settings.fileCache'),
-        control: `<span id="nf-cache-usage" role="status" class="set-row-val">…</span><button class="cfg-btn set-btn" id="btn-clear-nf-cache" type="button" title="${t('settings.fileCacheClear')}">${t('settings.fileCacheClear')}</button>`,
-      })}` })}
+        <!-- 文件缓存清空键（M2 · 设计 v1 §6.4/§7 表5）：nfCacheReset seam，
+             两段式确认 = 按钮第二击即确认位（逻辑零改动，只换落位）。 -->
+        <button class="cfg-btn set-btn set-btn-block" id="btn-clear-nf-cache" type="button" title="${t('settings.fileCacheClear')}">${t('settings.fileCacheClear')}</button>
+      </div>` })}
     ${setCard({ hidden: !state.settingsShowJson, id: 'json-editor-section', body: `
       <div class="config-editor-wrap">
         <textarea id="config-editor" spellcheck="false">${escapeHtml(state.configText)}</textarea>
@@ -966,12 +981,19 @@ export function renderSettings() {
           仍在）。更新功能已随 auth-trim 批（2026-10-20 作者令）退役。 */ ''}
     </section>
     <section class="sp-panel-group" data-panel-group="about"><h2>${t('settings.about')}</h2>
-    ${setCard({ title: t('settings.about'), body: `
+    <!-- 栏目名去重（见 runtime 段注）：section 标题「关于」与卡内标题逐字相同 ⇒
+         卡内标题撤除。卡体还顺带修了旧排版的“连接状态: / ⤷ 已连接”两行错位
+         （作者实拍「重复信息」清单第 4 条）：连接读数收进**同一行**（label + 图标
+         + 词面），与 .set-row 的「左标题右读数」同格。 -->
+    ${setCard({ body: `
       <div class="about-info">
-        <div>${brand.productName} ${state.serverVersion || '...'}</div>
-        <div class="about-conn">${t('settings.connection')}: ${state.connected
-          ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
-          : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
+        <div class="about-version">${brand.productName} ${state.serverVersion || '...'}</div>
+        <div class="about-conn">
+          <span class="about-conn-label">${t('settings.connection')}</span>
+          <span class="about-conn-value">${state.connected
+            ? statusIcon('circle-check', 14, 'st-ok') + '<span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
+            : statusIcon('wifi-off', 14, 'st-err') + '<span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</span>
+        </div>
       </div>
     ` })}</section>`;
 
