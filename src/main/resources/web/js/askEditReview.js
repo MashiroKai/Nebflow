@@ -92,12 +92,20 @@ function ensureTab(sid) {
 
 // ── 动作（WS 外发；waiting 防双发）──────────────────────────────────────────
 
+/** 当前在列的组件 api（sid → api）。动作发出时用它在**原位**落等待面 —— 不整页
+ *  重渲，否则「已接受/已拒绝」的就地状态与等待面会被刚建好的树立刻抹掉。 */
+/** @type {Map<string, any>} */
+const liveApi = new Map();
+
 function send(action, sid, hunkId) {
   const st = reviewState(sid);
   if (!st || st.waiting) return;
   st.waiting = { action, hunkId };
   st.error = '';
-  render(sid);
+  // waiting 面就地落地（组件已就绪）；组件尚在装载 ⇒ 回退整页重渲（状态不丢）。
+  const api = liveApi.get(sid);
+  if (api && typeof api.setWaiting === 'function') api.setWaiting(true);
+  else render(sid);
   const frame = { type: action === 'dismiss' ? 'askEditDismiss' : action === 'accept' ? 'askEditAccept' : 'askEditReject', sessionId: sid };
   if (hunkId) frame.hunkId = hunkId;
   sendWs(frame);
@@ -127,7 +135,9 @@ function render(sid) {
   // 面同一条 56px 常量 --nf-dv-top-band，两个面共用同一层壳）。
   const shell = h('div', { class: 'nf-ar-shell' });
 
-  // 顶栏：文件 + 计数 + 全量动作（快捷键 ⌘↩ / ⌘⌫ 同一动作面）。
+  // 顶栏：文件 + 计数。（全量动作钮 + 等待面**不在这里** —— 作者令 2026-11-19
+  // 把审阅动作区收进共享组件 js/diffView 的 review 模式（单源）；头部重复的那两颗
+  // 已删净，避免同屏出现两处「全部接受」。）
   const head = h('div', { class: 'nf-ar-head' }, [
     h('div', { class: 'nf-ar-headpill' }, [
       h('span', { class: 'nf-ar-file', title: st.path }, st.fileName || st.path),
@@ -137,21 +147,6 @@ function render(sid) {
         h('span', { class: 'nf-ar-removed' }, `−${removed}`),
         ` · ${tt(`${st.hunks.length} 块待审`, `${st.hunks.length} block${st.hunks.length === 1 ? '' : 's'} to review`)}`,
       ]),
-    ]),
-    h('div', { class: 'nf-ar-actions' }, [
-      waiting ? h('span', { class: 'nf-ar-waiting' }, tt('已发送…', 'Sent…')) : null,
-      h('button', {
-        type: 'button',
-        class: 'nf-ar-btn nf-ar-accept-all',
-        'aria-label': tt('全部接受（保留全部改动）', 'Accept all (keep every change)'),
-        ...(waiting ? { disabled: '' } : {}),
-      }, tt('全部接受 ⌘↩', 'Accept all ⌘↩')),
-      h('button', {
-        type: 'button',
-        class: 'nf-ar-btn nf-ar-btn-danger nf-ar-reject-all',
-        'aria-label': tt('全部拒绝（回退全部改动）', 'Reject all (revert every change)'),
-        ...(waiting ? { disabled: '' } : {}),
-      }, tt('全部拒绝 ⌘⌫', 'Reject all ⌘⌫')),
     ]),
   ]);
   shell.appendChild(head);
@@ -191,12 +186,11 @@ function render(sid) {
     current: currentText,
     mode: 'review',
     hunks,
+    waiting,
     onChunkAction: (hunkId, action) => send(action, sid, hunkId),
   }).then((api) => {
-    // waiting 面：逐块钮整组禁用（防双发；漂移按同一份组件 DOM 落）。
-    const root = api && api.view ? api.view.dom : editor.querySelector('.nf-dv');
-    const box = (api && api.view ? api.view.dom.closest('.nf-dv') : null) || editor.querySelector('.nf-dv') || root;
-    if (box) box.setAttribute('data-waiting', waiting ? '1' : '0');
+    liveApi.set(sid, api);
+    api.setWaiting(waiting);   // waiting 面（防双发）：动作钮（逐块 + 全量）整组禁用
   }).catch(() => { /* 组件装载失败：head 仍在（可见响应面），不静默炸页 */ });
 }
 
@@ -236,6 +230,7 @@ export function consumeResolved(msg) {
     // 审阅页签收起。
     refreshFileTabByPath(st.path);
     reviews.delete(sid);
+    liveApi.delete(sid);
     closeTab(tabIdOf(sid));
   }
 }
@@ -267,10 +262,9 @@ export function initAskEditReview() {
     if (!pane) return;
     const sid = (pane.dataset.tabId || '').slice('askreview:'.length);
     if (!sid) return;
-    // 逐块接受/拒绝由共享组件（js/diffView）经 onChunkAction 回调上抛，不再走
-    // DOM 委托（迁移批 2026-11-19）；此处只留全量动作与冲突条动作。
-    if (target.closest('.nf-ar-accept-all') && !target.disabled) { send('accept', sid); return; }
-    if (target.closest('.nf-ar-reject-all') && !target.disabled) { send('reject', sid); return; }
+    // 逐块接受/拒绝 **与** 全量接受/拒绝全部由共享组件（js/diffView）经
+    // onChunkAction 回调上抛（作者令 2026-11-19：审阅动作区单源落在组件）；此处只留
+    // 冲突条动作（重试 / 保留现状并关闭）。
     if (target.closest('.nf-ar-retry')) {
       const st = reviewState(sid);
       if (st && st.waiting === null) {
