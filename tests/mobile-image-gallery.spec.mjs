@@ -179,6 +179,47 @@ function galState(page) {
   });
 }
 
+/** 「描画已落定」判据（同 tests/media-viewer-zoom.spec.mjs，本批判定名：
+ *  *用墙钟时间/固定毫秒顶替可观测状态条件*）：
+ *  元素 computed transform == 浮层已写下的状态（`data-nf-lb-zoom/pan-x/pan-y`）。
+ *  候选元素必须**真的在画**：computed opacity === 1 且有盒 —— 视频/音频腿里
+ *  `ensureDom` 建的 `.nf-lightbox-img` 常驻但 `opacity:0`、零盒（实测），盯着它必误超时。
+ *  本 spec 的手势面不含缩放 ⇒ 不变式退化为「恒等 transform 且已 `loaded`」。 */
+async function waitPainted(page) {
+  await page.waitForFunction(() => {
+    const lb = document.querySelector('.nf-lightbox');
+    if (!lb || !lb.classList.contains('on')) return false;
+    const z = Number(lb.getAttribute('data-nf-lb-zoom') || 1);
+    const tx = Number(lb.getAttribute('data-nf-lb-pan-x') || 0);
+    const ty = Number(lb.getAttribute('data-nf-lb-pan-y') || 0);
+    if (!Number.isFinite(z) || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
+    const cands = [lb.querySelector('.nf-lightbox-av'), lb.querySelector('.nf-lightbox-img')]
+      .filter(Boolean)
+      .filter((el) => { const cs = getComputedStyle(el); return cs.opacity === '1' && el.getBoundingClientRect().width > 0; });
+    if (!cands.length) return false;
+    return cands.some((el) => {
+      const m = getComputedStyle(el).transform;
+      let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+      if (m && m !== 'none') { const hit = /^matrix\(([^)]+)\)$/.exec(m); if (!hit) return false; [a, b, c, d, e, f] = hit[1].split(',').map(Number); }
+      return Math.abs(a - z) < 1e-3 && Math.abs(d - z) < 1e-3 && Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9
+          && Math.abs(e - tx) <= 0.5 && Math.abs(f - ty) <= 0.5;
+    });
+  }, null, { timeout: 8000 });
+}
+
+/** 收起态的可观测终态：浮层 `.nf-lightbox` 的 `display` 已回到 `none`（或元素已移除）。
+ *  关闭是**瞬时** display 切换（`.nf-lightbox{display:none}` / `.on{display:flex}`），
+ *  所以这条通常立刻成立 —— 它的价值是把「等 300ms 再截图」变成「等状态」，
+ *  机器慢时不会截到半关的画面。 */
+async function waitClosedPainted(page) {
+  await page.waitForFunction(() => {
+    const lb = document.querySelector('.nf-lightbox');
+    if (!lb) return true;
+    if (lb.classList.contains('on')) return false;
+    return getComputedStyle(lb).display === 'none';
+  }, null, { timeout: 8000 });
+}
+
 /** 鼠标拖动（Playwright mouse 面派发对应 pointer 事件——bindGalleryGestures
  *  的 pointerdown/move/up 消费面）。分步 move 产生跟手帧。 */
 async function drag(page, x, y, dx, dy, steps = 8) {
@@ -186,6 +227,8 @@ async function drag(page, x, y, dx, dy, steps = 8) {
   await page.mouse.down();
   for (let i = 1; i <= steps; i++) {
     await page.mouse.move(x + (dx * i) / steps, y + (dy * i) / steps);
+    // 保留（不适用）：16ms = **拖动手势的输入节拍**（模拟手指逐帧移动），不是「等落定」。
+    // 去掉它拖拽就变成一次跳跃，测的是另一种手势；产品侧没有可观测能替代它。
     await page.waitForTimeout(16);
   }
   await page.mouse.up();
@@ -236,7 +279,7 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
     expect(st.openCalls).toBe(0);
     expect(errors).toEqual([]);
     if (SHOTS_DIR) {
-      await page.waitForTimeout(400);
+      await waitPainted(page);
       await page.screenshot({ path: join(SHOTS_DIR, 'gal-1-open-pager.png') });
     }
   });
@@ -271,14 +314,16 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
     expect(st.pagerText).toBe('3 / 3');
     // 组端橡皮筋：末张再左滑不过阈也不越界（页码停在 3 / 3）。
     await drag(page, 187, 400, -120, 0);
-    await page.waitForTimeout(300);
+    // 橡皮筋回弹走得是 CSS 过渡 ⇒ 等 **paint 追上状态**（组端不回退 ⇒ transform 回到钳位值），
+    // 不赌固定毫秒：机器慢时旧写法会读在半回弹的几何上。
+    await waitPainted(page);
     st = await galState(page);
     expect(st.index).toBe('2');
     expect(st.pagerText).toBe('3 / 3');
     expect(st.on).toBe(true);
     expect(errors).toEqual([]);
     if (SHOTS_DIR) {
-      await page.waitForTimeout(400);
+      await waitPainted(page);
       await page.screenshot({ path: join(SHOTS_DIR, 'gal-2-swipe-pager.png') });
     }
   });
@@ -316,6 +361,12 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
     // 900。武装窗的解除闸 = 用户意图事件（pointerdown/mousedown…）——真实用户
     // 点开画廊的那次按下天然解除；本夹具的点击是 JS 派发（无指针事件），须补
     // 一枚同语义的意图事件，滚动位从此只受锁滚规则管。
+    // 保留（不适用，理由写在此处）：这 700ms 等的**不是动画**，而是另一个子系统的
+    // 定时器链——persistence.js:1050-1055 的底钉三拍（立刻 + rAF + 100ms + 500ms）与
+    // settleBottom 的 1200ms 武装窗（SETTLE_MS，chat/settleBottom.js:58）。产品侧没有
+    // 「最后一拍已过」的可观测（那两个文件只导出 SETTLE_MS/cancelSettleBottom/settleBottom，
+    // 内部 raf/timer/done 不外露）；而武装窗的**显式解除闸**就是下一行的用户意图事件，
+    // 夹具用的正是它。要变得可观测得先给产品加导出（生产代码改动，超出本次测试卫生范围）。
     await page.waitForTimeout(700);
     await page.evaluate(() => { document.dispatchEvent(new Event('pointerdown')); });
     await page.evaluate(() => { document.getElementById('chat').scrollTop = 900; });
@@ -334,7 +385,7 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
     expect(st.scrollTop).toBe(900);      // 关闭回原滚动位
     expect(errors).toEqual([]);
     if (SHOTS_DIR) {
-      await page.waitForTimeout(300);
+      await waitClosedPainted(page);
       await page.screenshot({ path: join(SHOTS_DIR, 'gal-3b-closed-restored.png') });
     }
   });
@@ -362,7 +413,7 @@ test.describe('mobile image gallery (WeChat-style overlay)', () => {
     expect(st.openCalls).toBe(0);
     expect(errors).toEqual([]);
     if (SHOTS_DIR) {
-      await page.waitForTimeout(400);
+      await waitPainted(page);
       await page.screenshot({ path: join(SHOTS_DIR, 'gal-4-single.png') });
     }
   });
@@ -525,7 +576,7 @@ test.describe('desktop zero-change control (D0)', () => {
     expect(await page.evaluate(() => window.__nfOpenItems.length)).toBe(0);
     expect(errors).toEqual([]);
     if (SHOTS_DIR) {
-      await page.waitForTimeout(600);
+      await waitPainted(page);
       await page.screenshot({ path: join(SHOTS_DIR, 'desktop-single-after.png') });
     }
   });
