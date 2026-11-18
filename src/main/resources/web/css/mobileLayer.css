@@ -2023,20 +2023,73 @@ body.mobile-layer .mf-strip-chip.on {
    文字宽，长标题才吃到 max-width 上限 ⇒ 只有真溢出时才发生淡化）。
    text-overflow 显式钉 clip：任何继承或浏览器默认都不会再画「…」。
    DOM 不动 ⇒ title / aria-selected / 读屏全名全保留（模糊只是视觉）。 */
-/* 引用操作在展开标签内出现，独立 ≥44px 触控热区。 */
+/* 引用操作落在展开签内，独立 ≥44px 触控热区。
+   ══ canvas-tab-reference 批（2026-11-18；作者令逐字「手机端我现在无法引用 canvas
+   标签页 我需要点击标签页顶部 展开之后 我可以有一个引用按钮 现在是一个箭头 没什么
+   意义」）═══════════════════════════════════════════════════════════════════
+   病根两条（改前实测，见本批报告 §①）：
+    ① **死控件** —— 改前 `.mf-strip-quote` 是**静态流内**的 span，而签的 ::before
+       热区伪元素（下方 `.mf-strip-chip::before`：position:absolute / z-index:auto）
+       在绘制序与命中序上都压它一头 ⇒ 展开态里箭头盒内 9/9 采样点（3×3 网格）的
+       elementFromPoint 顶层恒为**签本体**：真手指点下去命中的是签（只收/放展开），
+       span 上的 click 处理器**永不可达**。合成 `el.click()` 有效（证明线还在）——
+       所以它不是「没接线」，是「手指点不到」，这正是作者读到的「没什么意义」。
+    ② **装饰符** —— 可见内容只有 `↗` 一枚箭头字形：零文字、零钮面，读不出「这是引用」。
+   修法：
+    ① 本钮升为定位元素 + `z-index:1`（签本身 z-index:2/3 是 z 序上下文；1 > ::before
+       的 auto）⇒ 命中面归钮。签自己的 44×44 外扩热区（`.mf-strip-chip::before`）在
+       钮以外**原样保留** —— 签规则零改动，只有钮占的那一块让给钮（这正是「钮要能点」）。
+    ② 可见内容换成**同名控件**：单源引用入口字形（js/quoteLogo.js `QUOTE_ENTRY_ICON`，
+       与 composer footer 引用键 / 气泡引用牌同一枚）+ 可见文字「引用」；钮面 = 全站
+       唯一毛玻璃配方（blur 由 css/glass.css 成员表供给，本文件零 backdrop-filter 字样）
+       + 发丝边，**零投影**（flat-button 契约：按钮面禁厚度道具）。
+       箭头 `↗` 整条退役 —— 不留装饰符、不加 tooltip 糊过去。
+   几何：命中盒 = 钮自身盒（`--mhit` 44，WCAG 2.5.5 触控下限）；可见钮面 = ::after
+   内侧 28px 胶囊（钮面不撑命中盒）。签的内容宽预算按**实测量**扣减（chipInnerWidth
+   读钮 getBoundingClientRect，见上方展开档注释），故钮变宽只会挤窄 label、不会让签
+   越预算外借 44px（canvas-overlap-guard 批 2026-11-17 修过的那条病根）。 */
 body.mobile-layer .mf-strip-quote {
   display: none;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
+  /* ① 命中层修复（本批）：定位 + z-index 1 ⇒ 居于签 ::before（z-index:auto）之上。 */
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  color: var(--color-text-primary);
+  gap: var(--ds-space-1);
+  min-width: var(--mhit, 44px);
+  height: var(--mhit, 44px);
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
+  color: var(--ds-text);
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
   cursor: pointer;
   touch-action: manipulation;
   user-select: none;
+  -webkit-user-select: none;
 }
+/* 可见钮面（②）：内侧 28px 胶囊，画在钮内容**之下**（z-index:-1，与
+   `.mf-strip-chip::after` 同一分工）；面只画不吃事件 ⇒ 命中盒恒为钮自身盒。 */
+body.mobile-layer .mf-strip-quote::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  z-index: -1;
+  height: 28px;
+  transform: translateY(-50%);
+  border-radius: var(--ds-radius-pill);
+  border: var(--ds-border-width) solid var(--glass-border);
+  background: var(--nf-glass-input-bg);
+  pointer-events: none;
+}
+/* 按下反馈：亮度档（扁平契约允许；不用投影/浮雕造厚度）。 */
+body.mobile-layer .mf-strip-quote:active { filter: brightness(0.92); }
+/* 钮内字形（单源 QUOTE_ENTRY_ICON 只带 viewBox，尺寸由宿主单点）与文字。 */
+body.mobile-layer .mf-strip-quote svg { width: 16px; height: 16px; flex: 0 0 auto; }
+body.mobile-layer .mf-strip-quote-label { white-space: nowrap; }
 body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-quote { display: inline-flex; }
 body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label { flex: 1 1 auto; }
 body.mobile-layer .mf-strip-label {

@@ -2215,6 +2215,9 @@ export default {
   'canvas.closeTab': 'Close tab',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',
+  // canvas-tab-reference (2026-11-18): explicit notice when the reference cannot
+  // reach a composer (this leg used to fail silently).
+  'canvas.refNoComposer': 'The reference did not reach the input box (the chat composer is not ready yet). Open the chat and tap Quote again.',
   'canvas.unreadableTitle': 'File unreadable',
   'canvas.unreadableHint': 'The file does not exist or was cleaned up; it cannot be read.',
   'canvas.unreadablePathHint': 'The path is invalid; it cannot be read.',

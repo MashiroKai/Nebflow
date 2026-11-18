@@ -2141,6 +2141,9 @@ export default {
   'canvas.closeTab': '关闭标签页',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',
+  // canvas-tab-reference 批（2026-11-18）：引用落不进 composer 时的明确提示
+  // （改前该腿静默 —— 点了引用钮什么也看不到）。
+  'canvas.refNoComposer': '引用没送进输入框（对话输入框还没就绪）。打开对话后再点一次引用。',
   'canvas.unreadableTitle': '文件不可读',
   'canvas.unreadableHint': '文件不存在或被清理，无法读取。',
   'canvas.unreadablePathHint': '路径非法，无法读取。',

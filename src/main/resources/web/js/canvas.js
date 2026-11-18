@@ -4899,14 +4899,26 @@ function initCapsuleRing() {
 
 /** 手机长按引用通路（navController 卡头长按钮消费）：引用当前活动卡片进聊天，
  *  与桌面右键菜单「引用当前页」同一 appendRefToActiveView 通路（动态 import
- *  防 input.js 静态回边）。无文件可引（面板页签等）toast 与菜单同文案。 */
+ *  防 input.js 静态回边）。无文件可引（面板页签等）toast 与菜单同文案。
+ *
+ *  canvas-tab-reference 批（2026-11-18）：改前「没有可用 composer」那一腿是
+ *  **静默**的 —— `appendRefToActiveView` 的 view 空臂返回 false，调用方不读返回值
+ *  ⇒ 点了引用钮什么也看不到。本批把该腿补成**明确提示**：复用既有 toast 单源
+ *  （`window.__showToast`，modal.js 挂的站内唯一提示面 —— 零第四种通知形态）。
+ *  返回值随之升为 `Promise<boolean>`（false = 没进框，且屏上已有提示）；两个调用点
+ *  （手机看板页展开档引用钮 / 卡头长按）都不读返回值，行为不回退。
+ *  @returns {Promise<boolean>} */
 export function quoteActiveCardRef() {
   const entry = activeTabId ? tabs.get(activeTabId) : null;
-  if (!entry) return false;
+  if (!entry) return Promise.resolve(false);
   const ref = refForTab(entry);
-  if (!ref) { window.__showToast?.(t('canvas.noRef'), 'info'); return false; }
-  import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
-  return true;
+  if (!ref) { window.__showToast?.(t('canvas.noRef'), 'info'); return Promise.resolve(false); }
+  return import('./input.js').then(({ appendRefToActiveView }) => {
+    const ok = appendRefToActiveView(ref);
+    // 无可用 composer（对话输入框未在场）：明确提示，绝不静默什么都不做。
+    if (!ok) window.__showToast?.(t('canvas.refNoComposer'), 'info');
+    return ok;
+  });
 }
 
 /** Initialize canvas event listeners. Call on DOM ready. */

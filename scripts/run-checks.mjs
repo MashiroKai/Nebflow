@@ -90,6 +90,12 @@ export const CHECKS = [
     argv: [process.execPath, 'tests/canvas-button-unify-geom.spec.mjs'] },
   { name: 'canvas-button-diff', profiles: ['frontend'], timeoutMs: 240_000,
     argv: [process.execPath, 'tests/canvas-button-unify-diff.spec.mjs'] },
+  // 手机看板页展开档「引用」钮闸（canvas-tab-reference 批 2026-11-18）。为什么必须是
+  // 真手指路径：该面改前是「看起来在、手指点不到」的死控件 —— 只读 DOM 的断言对
+  // 改前形态（死控件 / 装饰符箭头）会全绿。本闸打在 touchscreen tap → composer 出
+  // 引用 chip → 提交帧 refs 上（另含无 composer 明确提示 / 不误触 / 桌面不回归）。
+  { name: 'canvas-tab-reference', profiles: ['frontend'], timeoutMs: 300_000,
+    argv: [process.execPath, 'tests/canvas-tab-reference.spec.mjs'] },
   nodeCheck('canvas-families', 'check-canvas-families', ['static']),
   // 待办选项闸（待办数据模型与命名规范批 2026-11-18，作者令「每个待办必须要有选项」）：
   // 源码级断言「写侧强制点在且先于创建 / 强制面只绑待办 / 媒体是引用且可多张」。

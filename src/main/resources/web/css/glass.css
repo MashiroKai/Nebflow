@@ -144,6 +144,9 @@
 body.mobile-layer #mobile-dock,
 /* Mobile canvas: only the active capsule owns glass, never the full band. */
 body.mobile-layer .mf-strip-chip.on::after,
+/* canvas-tab-reference 批（2026-11-18）：展开签内的「引用」钮面 —— 材质单源本体在
+   mobileLayer.css 的 `.mf-strip-quote::after`（底/边/几何），此处只供给 blur。 */
+body.mobile-layer .mf-strip-quote::after,
 body.mobile-layer .mf-dots,
 body.mobile-layer .mf-swipe-ring,
 body.mobile-layer .mf-stack-view,

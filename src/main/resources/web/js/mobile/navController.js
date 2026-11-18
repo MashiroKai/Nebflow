@@ -75,6 +75,10 @@ import { brand } from '../brand.js';
 import { wikiGraphEnabled } from '../featureFlags.js';
 import { agentAvatarDataUrl, onAgentAvatarChange } from '../agentProfile.js';
 import { avatarImgNode } from '../avatarRender.js';
+// 手机看板页「引用」钮字样（canvas-tab-reference 批 2026-11-18）：**单源引用入口字形**
+// —— 与 composer footer 引用键 / 气泡引用牌同一枚（quoteLogo.js 是叶子方向：只 import
+// i18n.js / fileIcon.js，对本模块零回边 ⇒ scripts/check-circular.mjs 不新增环）。
+import { QUOTE_ENTRY_ICON } from '../quoteLogo.js';
 
 /**
  * 底 dock 五栏（作者 2026-10-29 令逐字顺序；顺序钉死 = spec 断言面）。
@@ -1124,26 +1128,53 @@ function syncCanvasPage() {
       label.className = 'mf-strip-label';
       label.textContent = d.label;
       chip.appendChild(label);
+      // ── 引用钮（canvas-tab-reference 批 2026-11-18）────────────────────────
+      // 作者令逐字：「手机端我现在无法引用 canvas 标签页 我需要点击标签页顶部
+      // 展开之后 我可以有一个引用按钮 现在是一个箭头 没什么意义」。
+      //
+      // 改前实测（本批报告 §①）：「箭头」= 本 span 的 `↗` 字形 —— 线是通的
+      // （合成 el.click() 确实把引用送进 #attachment-preview），但它是**静态流内**
+      // 元素，命中序上被签的 ::before 热区伪元素整片压住 ⇒ 真手指点不到（9/9 采样点
+      // elementFromPoint 顶层恒为签本体）= 作者读到的「没什么意义」。
+      // 故本批两件：① 命中层修复（css/mobileLayer.css `.mf-strip-quote` 升定位 +
+      // z-index）；② 可见内容换成**同名控件** —— 单源引用入口字形 + 可见文字「引用」。
+      // 箭头 `↗` 整条退役，不留装饰符。
+      //
+      // 引用通路 = **单源复用**（零第三套引用体系）：本钮 →`quoteActiveCardRef()`
+      // →（canvas.js）`refForTab` → `appendRefToActiveView` —— 与桌面右键「引用当前页」
+      // 同一条通路、同一枚 chip 组件（composer 附件条 `.att-ref`）。另一支
+      // feat/todo-card-click-left 的「点待办卡片补 # 引用」走的是同一条
+      // appendRefToActiveView；本批不改通路、只改入口的外观与命中层。
       const quote = document.createElement('span');
       quote.className = 'mf-strip-quote';
       quote.setAttribute('role', 'button');
       quote.setAttribute('tabindex', '0');
       quote.setAttribute('aria-label', tt('引用此看板', 'Quote this Canvas'));
       quote.title = tt('引用此看板', 'Quote this Canvas');
-      quote.textContent = '↗';
-      quote.addEventListener('click', (event) => {
-        event.stopPropagation();
+      // 字形（单源）+ 可见文字（Label in Name：aria-label「引用此看板」包含可见「引用」）
+      const quoteLabel = document.createElement('span');
+      quoteLabel.className = 'mf-strip-quote-label';
+      quoteLabel.textContent = tt('引用', 'Quote');
+      quote.innerHTML = QUOTE_ENTRY_ICON;
+      quote.appendChild(quoteLabel);
+      /** 引用动作（唯一引用通路）。setActiveTab 先行 = 引用对象是**刚点的那一签**的
+       *  身份（不是「碰巧的活动签」）；goHome() 把会话页（composer）带到前台，落框
+       *  聚焦由通路自己完成（appendRefToActiveView → view.dom.input.focus）。
+       *  送不进去时 canvas.js 出口在屏上给明确提示（既有 toast 单源，绝不静默）。 */
+      const doQuote = () => {
         setActiveTab(d.id);
         goHome();
         quoteActiveCardRef();
+      };
+      quote.addEventListener('click', (event) => {
+        event.stopPropagation();
+        doQuote();
       });
       quote.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           event.stopPropagation();
-          setActiveTab(d.id);
-          goHome();
-          quoteActiveCardRef();
+          doQuote();
         }
       });
       chip.appendChild(quote);
