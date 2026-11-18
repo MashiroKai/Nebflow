@@ -178,7 +178,15 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
 .explorer-context-menu, .canvas-tab-context-menu, .fm-context-menu,
 .explorer-selection-bar,
 .explorer-pickup-bar,
-#canvas-panel,
+/* 桌面画布壳的材质层 = **壳的伪元素**，不是壳本体（glass-desktop-header 批
+   2026-11-18）。理由见 glass-spec.md §9「材质层重排律」：本面挂 backdrop-filter
+   ⇒ 本面成为 **backdrop root** ⇒ 其**后代**的 backdrop-filter 只能采到 root 自己
+   绘制的像素、采不到 root 的同级子件 ⇒ 面板里那枚 `.canvas-header` 的模糊整条
+   失效（实测 blur(0px) ≡ blur(24px) ≡ blur(60px)，正文原文从胶囊里穿出）。
+   把材质挪到 `#canvas-panel::before`（伪元素**不是**任何后代的祖先）后，表头恢复
+   真采样；面板自身的观感不变（壳底色 + 伪元素模糊，见 split.css 该伪元素的几何）。
+   几何/落位仍留在 split.css —— 本表只给配方。 */
+#canvas-panel::before,
 .canvas-header,
 .canvas-tab.active,
 .cr-capsule,
@@ -1049,6 +1057,13 @@ body.mobile-layer #g2-edge-fade {
     backdrop-filter: none;
     background: var(--color-surface);
   }
+  /* 材质层重排（glass-desktop-header 批 2026-11-18）：桌面画布壳的模糊已挪到
+     `::before`（见成员登记表该条）。降级档同摘 —— 壳本体落不透明 `--color-surface`
+     已在上一组；伪元素自身零底，只需摘模糊（缺此条 = 降级引擎里白跑一次 blur）。 */
+  :root #canvas-panel::before {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
   /* 渐隐带降级档随 doc-ask-fade 批收编到 design-system.css `.ds-edge-fade`
      （@supports / html.no-backdrop 两处），此处不再单列 —— 防双源漂移。 */
 }
@@ -1119,6 +1134,12 @@ html.no-backdrop .canvas-header {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   background: var(--color-surface);
+}
+/* 材质层重排（glass-desktop-header 批 2026-11-18）：同上一组同注 —— 壳的模糊在
+   `::before` 上，降级档一并摘掉。 */
+html.no-backdrop #canvas-panel::before {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 /* The composer is the baseline face, not a consumer of the translucent global
    fallback. Keep its reference material after grouped modal fallbacks in both

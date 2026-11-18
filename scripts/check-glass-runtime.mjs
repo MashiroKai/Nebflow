@@ -86,15 +86,16 @@ if (!existsSync(join(WEB, 'index.html'))) {
 }
 
 // ── 具名例外（每条必须带理由 + 证据；未登记者一律判红）─────────────────────
-const NAMED_EXCEPTIONS = [
-  {
-    id: 'desktop-canvas-header-under-panel-backdrop-root',
-    match: (v) => v.scene === 'desktop-canvas' && /canvas-header/.test(v.sel),
-    rules: ['R1', 'R2'],
-    reason:
-      '桌面画布表头 `.canvas-header` 坐在 `#canvas-panel` 的 backdrop 子树里；`#canvas-panel` 自身是玻璃面（css/glass.css:174），其 backdrop-filter 使 panel 成为 backdrop root，切断表头的采样。实测：表头 blur(0px) ≡ blur(24px) ≡ blur(60px)，面内 edge 恒 7.47 ⇒ 表头的模糊完全没生效（Chromium 对嵌套 backdrop-filter 的局限）。修复需重排桌面面板/表头材质层，属独立批次（本批范围为手机 canvas = 作者报障面）。证据：glass-runtime-20261118 批 diag4 Part2 + 清点表 desktop-canvas 行。',
-  },
-];
+// glass-desktop-header 批（2026-11-18）：唯一的旧例外
+// `desktop-canvas-header-under-panel-backdrop-root` 已**撤除** —— 真缺陷已修，
+// 不再需要豁免。修法 = 把壳的模糊从 `#canvas-panel` 挪到 `#canvas-panel::before`
+// （伪元素不是表头的祖先 ⇒ 不切断；见 css/split.css「材质层重排」注 +
+// glass-spec.md §9）。该条的反证（坏源码直跑必须报红）见批证据目录
+// `~/<evidence-root>/glass-desktop-header-20261118/`：改前树直跑 exit 1
+//（R2 × 6 条 violation 指 `#canvas-panel`），改后树 exit 0。
+// 注意：本闸的 desktop-canvas 腿自本批起渲染正文并把首行滚到表头之下 —— 空面板的
+// 背板近乎平色，量的只是边缘噪声（改前实测 Δpx 1.202，抓不到玻璃纸）。
+const NAMED_EXCEPTIONS = [];
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.ico': 'image/x-icon', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf', '.map': 'application/json', '.wasm': 'application/wasm', '.mp4': 'video/mp4', '.pdf': 'application/pdf' };
 const SID = 'glass-runtime-session';
@@ -201,6 +202,24 @@ const SCENES = {
     async setup(page) {
       await page.evaluate(() => import('/js/canvas.js').then((c) => { c.openTab('d1', 'design-spec-value-converge.md', { type: 'spec' }); if (c.openPanel) c.openPanel(); }));
       await page.waitForTimeout(500);
+      // glass-desktop-header 批（2026-11-18）：与 mobile-canvas 腿同规 —— 表头玻璃
+      // 的判据是「面板**正文**从胶囊底下穿过时有没有真被糊」。空面板的背板近乎平色，
+      // 量出来的是边缘噪声，抓不到「玻璃纸」（改前实测 Δpx 1.202 = 打不中）。
+      // 故本腿渲染正文并把首行滚到表头之下（几何与 mobile 腿同一手法）。
+      await page.evaluate(async (md) => {
+        const pane = document.querySelector('#canvas-content .canvas-tab-pane.active') || document.querySelector('#canvas-content .canvas-tab-pane');
+        if (!pane) return;
+        const mod = await import('/js/viewers/markdown.js');
+        await mod.default.render(pane, { content: md, absPath: '/tmp/gr.md', fileName: 'design-spec-value-converge.md', anchor: null, readOnly: true });
+      }, MD_BODY);
+      await page.waitForTimeout(300);
+      await page.evaluate(() => {
+        const sc = document.querySelector('#canvas-content .canvas-md-scroll') || document.querySelector('.canvas-md-scroll');
+        if (!sc) return;
+        const el = sc.querySelector('h1, p');
+        if (el) sc.scrollTop += Math.max(0, el.getBoundingClientRect().top - 26);
+      });
+      await page.waitForTimeout(280);
       const h = page.locator('.canvas-header').first();
       if (await h.count()) await h.hover({ timeout: 3000 }).catch(() => { });
       await page.waitForTimeout(300);

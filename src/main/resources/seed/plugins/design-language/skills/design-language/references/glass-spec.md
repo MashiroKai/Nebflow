@@ -311,9 +311,56 @@ G1–G8 判的是**源码里的配方**（单一源 / α / 配方逐值）。它
 **平色背板豁免**：背板是平色时，模糊一个常量色仍得常量色 —— 那不是缺陷。R1 把该
 面自己藏起来再拍一枪，量它背后背板的边缘能量；低于阈值记 `n/a`，不判红。
 
-**具名例外**：少数真缺陷面的修复需重排另一片 UI 的材质层（超出批次范围），以
-具名例外登记在脚本 `NAMED_EXCEPTIONS`，带理由与证据，并计入「例外命中」行（例外
-不命中 = 陈旧例外，会告警）。**禁止静默放宽**：任何未登记的 R1/R2/R3 红都会让闸
-FAIL。当前登记：`desktop-canvas` 的 `.canvas-header` 坐在玻璃面 `#canvas-panel` 的
-backdrop 子树里，实测其 blur 完全未采样（`blur(0px) ≡ blur(24px) ≡ blur(60px)`）——
-修复需重排桌面面板/表头材质层，属独立批次。
+**判据面要有背板**：R1 只在「面后面真的有可糊的东西」时才判得出玻璃纸。空面板 /
+空背板会让背板近乎平色，量到的是边缘噪声 —— **桌面 `desktop-canvas` 腿因此与
+`mobile-canvas` 腿同规：渲染正文并把首行滚到表头之下**（空面板下改前的表头
+Δpx 只有 1.202，抓不到缺陷；有正文时同一缺陷由 R2 指名到 `#canvas-panel`）。
+
+### 9.1 采样律 · 材质层重排律（glass-desktop-header 批 2026-11-18）
+
+**律一（祖先即断）**：本面**或任一祖先**挂非 `none` 的 `backdrop-filter` ⇒ 该元素
+成为 **backdrop root** ⇒ 其**后代**的 `backdrop-filter` 只能采到该 root **自己绘制**
+的像素，**采不到该 root 的同级子件**。后果 = 后代的模糊落在常量上，**档位怎么调都不
+改变像素**（真缺陷，不是静默放宽）。
+
+- 实测（桌面 canvas 表头）：`#canvas-panel`（壳，成员表在册）挂 `blur(24px)`，面板里
+  那枚 `.canvas-header` 遂 `blur(0px) ≡ blur(24px) ≡ blur(60px)`（同面开/关自身 bf 的
+  面内 Δpx ≈ 1 量级 = 边缘噪声），正文原文从胶囊里**原样穿出**。
+- 微测定位（同机、同页、同一处正文，**只换探针宿主**；面内背板边缘能量 edge 为读数，
+  edge 高 = 正文原样穿出、被压低 = 真在糊）：`body`（fixed）**0.33**（真糊）／
+  `#canvas-panel` 内 **9.41**（不糊）／把壳的 `backdrop-filter` 摘掉 **0.33**（立刻真糊）；
+  壳的 `overflow` / `border-radius` / 表头自身的 `transform`·`perspective`·`overflow`
+  与 `position:absolute` 全部不影响读数 ⇒ **根因唯一 = 壳本体那层 `backdrop-filter`**。
+
+**律二（重排律 / 唯一修法）**：要让某面的模糊真生效，**承载材质的那一层不得是该面
+（或任何后代面）的祖先**。三选一：
+
+1. 把材质挪到**同一元素的伪元素**（`::before`/`::after`）—— 伪元素不是任何后代的祖先；
+2. 或挪到同一壳内的**兄弟背衬层**（在流或定位均可，只要不在后代的祖先链上）；
+3. 或把那个「后代玻璃面」搬出该子树。
+
+只改「表头自己怎么写」是**无效**的（律一与后代面的写法无关）；只改壳的其它属性
+（`overflow`/`border-radius`/`opacity`）也无效。本批落法 = `#canvas-panel` 只留
+底色/描边/面影，**模糊挪到 `#canvas-panel::before`**；该伪元素用**在流子件**落位
+（壳是 flex 容器、唯一 DOM 子件 `#canvas-slide` 出流 ⇒ 伪元素是壳里唯一的在流项，
+`flex:1` 即铺满壳 content box），**不新增定位盒** —— 材质背衬不是浮层，不该被
+`check-floating-discovery` 当成新增定位盒要求人工复核。
+
+**律三（同源 / 不同断点）**：手机主胶囊（T12 `.mf-strip-chip.on::after`）与桌面表头
+（T2 `.canvas-header`）**材质同源**（都在 `css/glass.css` 成员登记表、逐值
+`var(--nf-glass-input-filter)`，不许两套），但**断点不同**：手机是**宿主**
+`.mf-strip-chip` 的 `filter` + `will-change: opacity`；桌面是**祖先壳** `#canvas-panel`
+的 `backdrop-filter`。故修复分别落在 `mobileLayer.css` 与 `split.css`（各自的几何/落位
+文件），**不是两套配方、也不是两套判据** —— 判据就是上面律一。
+
+**律四（玻璃上的玻璃 = 反模式）**：任何「玻璃面上浮一枚玻璃子件」的结构都落在律一下
+（子件永远采不到宿主同级的内容）。新面一律按律二落材质层；`check-glass-runtime.mjs`
+R2 会在祖先链上指名那一层，R1 会拿真像素复核。
+
+### 9.2 具名例外（当前：无）
+
+`desktop-canvas` 的 `.canvas-header`（原登记
+`desktop-canvas-header-under-panel-backdrop-root`，R1+R2）**已随本批修复并撤除登记** ——
+真缺陷不许静默放宽，修好了就把豁免删掉。反证（闸自证检测力）：**改前树 + 本闸脚本直跑
+= 退出 1**（R2 × 6 条 violation，逐条指名祖先 `div#canvas-panel`）；**改后树直跑 = 退出 0**。
+证据目录见批报告 `glass-desktop-header-20261118`。
