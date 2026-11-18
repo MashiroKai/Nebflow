@@ -157,9 +157,23 @@ async function openViaPopCard(page, atts) {
     const lb = document.querySelector('.nf-lightbox');
     return !!lb && lb.classList.contains('on') && !!lb.querySelector('.nf-lightbox-img.loaded');
   }, null, { timeout: 8000 });
-  // 入场档（.loaded 的 200ms transform 过渡）走完再量几何：否则 base 拍读到的 rect
-  // 还停在 scale(0.96)⇒scale(1) 之间，锚点不变式会被这一拍误差污染。
-  await page.waitForTimeout(320);
+  // 入场档（`.loaded` 的 opacity/transform 200ms 过渡）**真的落定**再量几何。
+  // 为什么要等条件而不是等固定毫秒（本批 2026-11-18 修）：CSS 过渡的起点是
+  // 「类落地后的第一个样式重算帧」，负载下这一帧会被推迟上百毫秒 —— 固定
+  // `waitForTimeout(320)` 便可能落在过渡**起点之前**，即 base 拍读到的是
+  // scale(0.96)⇒scale(1) 的中间值（本批实测 before.rect.w=299.43 而布局 300，
+  // 页内帧时间线显示该过渡 t≈35ms 起、t≈370ms 才到 matrix(1,…)）；随后
+  // `after.rect.w` 精确等于 360 = 300×1.2，于是 1px 容差被这 0.6~1.3px 穿透
+  // —— D1 的 `toBeLessThan(1)` 间歇红（整档 4 跑 1 红 / 单跑 25 跑 2 红）。
+  // 判据 = 元素**自身**的 computed transform/opacity 已到恒等态，与机器快慢无关。
+  await page.waitForFunction(() => {
+    const lb = document.querySelector('.nf-lightbox');
+    if (!lb || !lb.classList.contains('on')) return false;
+    const el = lb.querySelector('.nf-lightbox-img');
+    if (!el || !el.classList.contains('loaded')) return false;
+    const cs = getComputedStyle(el);
+    return cs.opacity === '1' && (cs.transform === 'none' || cs.transform === 'matrix(1, 0, 0, 1, 0, 0)');
+  }, null, { timeout: 8000 });
 }
 
 /** 画廊态几何/读数单点（各断言面共用；rect 是**变换后**的盒 ⇒ 锚点不变式可直接
@@ -499,7 +513,10 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     const pivot = { x: before.rect.x + 80, y: before.rect.y + 90 };
     await page.mouse.move(pivot.x, pivot.y);
     await page.mouse.wheel(0, -120);
-    await page.waitForTimeout(120);
+    // 等**状态**（缩放档已落到 1.2）而不是等固定毫秒：写入 data-* 与写入内联
+    // transform 是同一拍（galPaint），档位到即几何到；固定 120ms 只赌 CDP 回执
+    // 之后渲染器已跑完这一拍，负载下不成立。
+    await expect(page.locator('.nf-lightbox')).toHaveAttribute('data-nf-lb-zoom', '1.2');
     const after = await page.evaluate(VIEW);
     await shot(page);
     expect(after.zoom).toBe(1.2);                          // 既有档位逐字保留
@@ -507,7 +524,7 @@ test.describe('desktop media viewer zoom (wheel / trackpad / dblclick)', () => {
     expect(anchorError(before, after, pivot)).toBeLessThan(2);
     // 连续滚轮继续推档，并被 5× 封顶吃掉。
     for (let i = 0; i < 14; i += 1) { await page.mouse.wheel(0, -120); await shot(page); }
-    await page.waitForTimeout(120);
+    await expect(page.locator('.nf-lightbox')).toHaveAttribute('data-nf-lb-zoom', '5');
     const capped = await page.evaluate(VIEW);
     expect(capped.zoom).toBe(5);
     expect(errors).toEqual([]);

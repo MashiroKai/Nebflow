@@ -144,8 +144,15 @@ let galSlideSeq = 0;
 const galBlobUrls = [];
 /** 跟手拖动态：{id,x0,y0,t0,axis,mode,dx,dy,tx0,ty0,over}；axis=0 未定轴。 */
 let galDrag = null;
-/** 最近一次成轴拖动的松手时刻（拖完松手那一下不当作点遮罩关闭）。 */
-let galDragEndAt = 0;
+/** 遮罩「刚拖完」一次性闸：成轴拖动松手时置位，由随后的那一枚合成 click 消费
+ *  （见 ensureDom 的遮罩点按处理器）。
+ *  为什么是**一次性旗标而不是时间窗**（媒体查看器缩放批 2026-11-18 修）：改前用的是
+ *  `Date.now() - galDragEndAt < 160`，而 galDragEndAt 是模块级时刻、**关灯箱/重开都
+ *  不清零** ⇒ 上一轮拖动的收尾时刻会漏到下一轮：只要「拖完松手 → 关 → 重开 → 点背景」
+ *  整串落在 160ms 内，重开后的第一次点背景就被当成上一轮拖动的余波吞掉（本批实测
+ *  读数 delta=158ms：同一份源码快机跑红、慢机跑绿 = 间歇红的唯一变量）。闸的语义本来
+ *  就是「拖动收尾续派的那一枚 click」，与墙上时钟无关 —— 改成一次性消费即确定。 */
+let galSuppressBackdrop = false;
 /** 触屏指针登记（pointerId → 视口坐标）：≥2 即进入捏合会话。 */
 /** @type {Map<number, {x: number, y: number}>} */
 const galPts = new Map();
@@ -348,11 +355,12 @@ function ensureDom() {
 
   overlayEl.append(closeBtn, imgEl, statusEl);
   // Backdrop click closes; clicks on the image itself do not.
-  // 画廊态多一道「刚拖完」闸：跟手拖动松手会续派一次 click 到遮罩，不当作关闭
-  // （非画廊路径的判据逐字不变——Date 差恒大于闸窗）。
+  // 画廊态多一道「刚拖完」闸：跟手拖动松手会续派一次 click 到遮罩（指针捕获把它
+  // 重定向到浮层），那一枚不当作关闭 —— 闸是**一次性旗标**（拖动收尾置位、这一枚
+  // click 消费掉），不是时间窗；非画廊路径走不到这里（旗标恒为 false）。
   overlayEl.addEventListener('click', (e) => {
+    if (galSuppressBackdrop) { galSuppressBackdrop = false; return; }
     if (e.target !== overlayEl) return;
-    if (galItems && Date.now() - galDragEndAt < 160) return;
     closeLightbox();
   });
   document.body.appendChild(overlayEl);
@@ -848,6 +856,7 @@ function clearGalleryState() {
   galPinch = null;
   galGesture = null;
   galSwallowClick = false;
+  galSuppressBackdrop = false;    // 关灯箱即复位：闸绝不跨「开」存活
   galPendingPinch = false;
   if (galTransitionTimer) { clearTimeout(galTransitionTimer); galTransitionTimer = 0; }
   galZoom = ZOOM_MIN; galPanX = 0; galPanY = 0; galMouseDrag = null;
@@ -1194,6 +1203,7 @@ function bindGalleryGestures() {
   overlayEl.addEventListener('pointerdown', (e) => {
     if (!active()) return;
     galSwallowClick = false;
+    galSuppressBackdrop = false;   // 新手势起手：作废上一轮遗留的收尾闸
     if (e.pointerType === 'mouse' && !document.body.classList.contains('mobile-layer')) {
       // 桌面鼠标腿：只在放大态按住拖动 = 平移（既有行为逐字保留）。视频面同规，
       // 但让开原生控件带。
@@ -1315,7 +1325,7 @@ function bindGalleryGestures() {
   const end = (e, cancelled) => {
     if (galMouseDrag && e.pointerId === galMouseDrag.id) {
       galMouseDrag = null;
-      galDragEndAt = Date.now();
+      galSuppressBackdrop = true;    // 平移松手续派的 click 不当作点遮罩
       const el = galTarget();
       if (el) el.style.transition = '';
       return;
@@ -1353,7 +1363,9 @@ function bindGalleryGestures() {
       return;
     }
     galPendingPinch = false;
-    galDragEndAt = Date.now();
+    // 成轴拖动（平移或横滑/下滑）松手会续派一次 click：置一次性闸给它消费，
+    // 否则那一枚会被当成「点遮罩」而误关（旧实现是 160ms 时间窗，见旗标声明处）。
+    galSuppressBackdrop = true;
     if (!galItems) return;                  // 拖动途中画廊已关：无收尾动作
     const el = galTarget();
     if (el) el.style.transition = '';
@@ -1377,7 +1389,7 @@ function bindGalleryGestures() {
   overlayEl.addEventListener('pointercancel', (e) => end(e, true));
 
   // 放大态拖动收尾的合成 click：不切开视频的播放/暂停。（遮罩点按关闭由
-  // ensureDom 的 galDragEndAt 闸挡，见那边的点击处理器。）
+  // ensureDom 的 galSuppressBackdrop 一次性闸挡，见那边的点击处理器。）
   overlayEl.addEventListener('click', (e) => {
     if (!galSwallowClick) return;
     galSwallowClick = false;

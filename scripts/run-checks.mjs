@@ -51,6 +51,12 @@ export const CHECKS = [
   // scripts/tests/media-zoom.test.mjs（static 档）。
   { name: 'media-viewer-zoom', profiles: ['frontend'], timeoutMs: 240_000,
     argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/media-viewer-zoom.spec.mjs', '--workers=1'] },
+  // 遮罩点按关闭回归闸（2026-11-18）：#7 缩放批引入的间歇红 —— 平移→关→重开之后第一次
+  // 点背景关不掉（原文是用 160ms 时间窗判「刚拖完」，重开后的点背景被窗吞掉）。
+  // 现在把「拖动松手→关→重开→点背景」放进同一 JS 任务 ⇒ 与机器快慢无关；桌面 + 手机
+  // 全屏页两形态都跑（tests/media-backdrop-close.spec.mjs）。
+  { name: 'media-backdrop-close', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/media-backdrop-close.spec.mjs', '--workers=1'] },
   nodeCheck('bubble-side', 'check-bubble-side'),
   nodeCheck('self-explaining', 'check-self-explaining'),
   nodeCheck('badge-words', 'check-badge-words'),
