@@ -37,6 +37,13 @@ const FRAMES = join(OUT, `frames-${MIN}`);
 rmSync(FRAMES, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 mkdirSync(FRAMES, { recursive: true });
+// EvidenceTemp batch contract (scripts/check-evidence-manifests.mjs): every
+// writer into the stand-evidence namespace must carry a manifest.json, or the
+// fail-closed TTL sweep skips the batch and retention becomes unbounded.
+writeFileSync(
+  join(OUT, 'manifest.json'),
+  JSON.stringify({ createdAt: new Date().toISOString(), project: 'stand', batch: 'todo-decisioncard-20261118' }) + '\n',
+);
 const MEDIA_CAP = 10 * 1024 * 1024;
 
 const MIME = {

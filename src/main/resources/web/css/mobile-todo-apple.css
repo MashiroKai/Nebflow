@@ -1173,6 +1173,10 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-label
    Field recipe (font/line/caret/placeholder + the autosize cap) is the existing
    shared `body.mobile-layer .tfl-hit-reply` rule — the cap has ONE source, in
    mobileLayer.css; this block owns the BAND's layout only (no second ladder).
+   Field SURFACE (background / border / radius / shadow) is likewise not written
+   here: a bare `textarea` already matches css/inputSurface.css's single field
+   rule (`:where(textarea, .nf-field)`, all values from `--nf-field-*`), which is
+   why check-input-surface.mjs I2 stays green (2026-11-18 fix).
    Send key reuses the existing text-button recipe `.ta-create-save`.
    Bottom clearance: the card's bottom edge already sits inside `.ta-root`
    (`padding-bottom: calc(var(--mobile-dock-clearance) + --ds-space-3)`), and
@@ -1194,12 +1198,13 @@ body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-ro
   gap: var(--ds-space-2);
 }
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-input {
+  /* 造型（玻璃底/中性边/圆角/影）**不在这里写** —— 裸 `textarea` 元素本身就落在
+     css/inputSurface.css 的站内唯一输入面造型规则里（`:where(textarea, .nf-field)`，
+     背景/边框/圆角/影全部走 `--nf-field-*` 单源）。本规则只写这一面的几何
+     （内距 / 触控下限 / 盒模型），check-input-surface.mjs I2 因此为绿。 */
   box-sizing: border-box;
   min-height: var(--mtap);
   padding: var(--ds-space-2) var(--ds-space-3);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-input);
-  background: var(--nf-glass-input-bg);
 }
 body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-send {
   flex: none;
