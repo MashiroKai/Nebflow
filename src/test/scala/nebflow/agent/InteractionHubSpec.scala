@@ -42,6 +42,29 @@ class InteractionHubSpec extends CatsEffectSuite:
       sourceSession = "team-abc"
     )
 
+  test("real hub admits exactly one of concurrent bridge permission decisions") {
+    val system = nebflow.actor.ActorSystem("hub-bridge-race")
+    (for
+      hub <- mkHub(system)
+      rendered <- Deferred[IO, Unit]
+      result <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => rendered.complete(()).void)
+      _ <- hub ! InteractionHubCommand.Request(permRequest("race", result))
+      _ <- rendered.get.timeout(5.seconds)
+      rejected <- hub.?[Boolean](reply => InteractionHubCommand.DecideBridgePermission(
+        "race", "wrong-root", InteractionKind.Permission, true, reply))
+      decisions <- List(true, false).parTraverse { value =>
+        hub.?[Boolean](reply => InteractionHubCommand.DecideBridgePermission(
+          "race", "root-1", InteractionKind.Permission, value, reply)).map(value -> _)
+      }
+      completed <- result.get.timeout(5.seconds)
+    yield
+      assert(!rejected)
+      assertEquals(decisions.count(_._2), 1)
+      assertEquals(completed, decisions.find(_._2).get._1)
+    ).guarantee(system.stopAll)
+  }
+
   test("permission request renders card at rootSessionId with requestId and source") {
     val system = nebflow.actor.ActorSystem("hub-test")
     for

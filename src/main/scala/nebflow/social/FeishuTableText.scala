@@ -6,14 +6,19 @@ private[social] object FeishuTableText:
     val lines = text.split("\n", -1).toVector
     val out = Vector.newBuilder[String]
     var i = 0
-    var fence = false
+    var fence: Option[(Char, Int)] = None
     while i < lines.size do
       val line = lines(i)
-      if line.trim.startsWith("```") || line.trim.startsWith("~~~") then
-        fence = !fence
+      val trimmed = line.trim
+      val marker = trimmed.headOption.filter(c => c == '`' || c == '~')
+      val count = marker.fold(0)(c => trimmed.takeWhile(_ == c).length)
+      val opens = fence.isEmpty && count >= 3
+      val closes = fence.exists { case (c, n) => marker.contains(c) && count >= n && trimmed.drop(count).trim.isEmpty }
+      if opens || closes then
+        fence = if closes then None else marker.map(_ -> count)
         out += line
         i += 1
-      else if !fence && i + 1 < lines.size then
+      else if fence.isEmpty && i + 1 < lines.size then
         val header = cells(line)
         val separator = cells(lines(i + 1))
         if header.nonEmpty && separator.size == header.size &&

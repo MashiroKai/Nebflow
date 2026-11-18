@@ -212,6 +212,8 @@ val x = 1
     assertEquals(FeishuTableText.render(escaped), escaped)
     val fenced = "```\n| A | B |\n| --- | --- |\n| x | y |\n```"
     assertEquals(FeishuTableText.render(fenced), fenced)
+    val mixedFences = "````\n~~~\n```\n| A | B |\n| --- | --- |\n| x | y |\n````"
+    assertEquals(FeishuTableText.render(mixedFences), mixedFences)
   }
 
   test("OB-R8 every plan satisfies the no-silent-drop invariants") {
