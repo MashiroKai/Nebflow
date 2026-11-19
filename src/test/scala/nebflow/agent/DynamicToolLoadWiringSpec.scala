@@ -81,4 +81,19 @@ class DynamicToolLoadWiringSpec extends FunSuite:
       assertEquals(none.advertisedTools, Nil)
     finally ToolRegistry.unregisterTool(probe)
 
+  test("撤权竞态：通告不是授权——旧通告仍在场，执行门已撤权 ⇒ 门拒绝（防发现后撤销）"):
+    register()
+    try
+      val granted = pluginDef(Some("deepseek/deepseek-v4-flash"))
+      val planWithGrant = CoreProbe.planFor(granted)
+      assert(planWithGrant.advertisedTools.exists(_.name == probe), "撤权前：通告在场")
+      // 撤权 = 运行时 AgentDef 的 pluginMcpServers 不再含该 server（NodeEngine 的
+      // 授予面）；执行门重评面（allowed）按当前 def 判 —— 通告文本不是授权凭据。
+      val revoked = granted.copy(pluginMcpServers = Nil)
+      assert(
+        !CoreProbe.allowed(revoked).contains(probe),
+        "撤权后执行门必须拒绝该工具（旧通告在场 ≠ 授权；双保险的第二半）"
+      )
+    finally ToolRegistry.unregisterTool(probe)
+
 end DynamicToolLoadWiringSpec
