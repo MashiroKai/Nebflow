@@ -71,6 +71,31 @@ object LlmInterface extends LlmRuntime:
   private[llm] var streamInactivityOverride: Option[(FiniteDuration, FiniteDuration)] = None
 
   /**
+   * 直连路由选择器（direct-connect 批 2026-11-19，作者令「把我配置的llm 都改直连」）。
+   *
+   * 由 [[createLlm]] 在 boot 期按 `llm.providers.*.baseUrl` 的 host 集装配
+   * （[[LlmProxyRouting.fromConfig]]）并安装于此；两处 LLM `HttpClient`
+   * （[[makeAttemptTransport]] per-attempt + [[createLlm]] shared）在构建时读取：
+   * 命中直连 host 走 NO_PROXY，其余回落系统代理。
+   *
+   * `None` = 未启用/未装配（含所有测试路径）⇒ 两处都不设 `.proxy(...)`，
+   * **零行为变化**（沿用默认选择器 = 本批前现状）。
+   *
+   * 生效条件：**重启后生效**（boot 期装配 + per-attempt 请求期读取）；回滚 =
+   * `-Dnebflow.llm.directConnect=false`（[[nebflow.shared.Defaults.LlmDirectConnect]]）
+   * 或回退本批 commit。
+   */
+  @volatile private[llm] var providerProxySelector: Option[java.net.ProxySelector] = None
+
+  /** 给 `HttpClient.Builder` 按需挂上 [[providerProxySelector]]（None ⇒ 原样返回）。 */
+  private def withProviderProxy(
+    b: java.net.http.HttpClient.Builder
+  ): java.net.http.HttpClient.Builder =
+    providerProxySelector match
+      case Some(sel) => b.proxy(sel)
+      case None      => b
+
+  /**
    * 模型不可用时段闸（model-schedule-unavailable 批，2026-10-29 作者令 17:44）：
    * 请求级**补滤单点**——输入 = 合并后的候选列表（会话 override ++ 链候选）。
    * 链候选已在 ProviderRegistry 链出口滤过（此处幂等）；override 候选只有这里
@@ -338,11 +363,12 @@ object LlmInterface extends LlmRuntime:
     if !Defaults.PerRequestTransport then IO.pure(None)
     else
       Dispatcher.parallel[IO].allocated.flatMap { case (dispatcher, releaseDispatcher) =>
-        val client = java.net.http.HttpClient
-          .newBuilder()
-          .version(java.net.http.HttpClient.Version.HTTP_1_1)
-          .connectTimeout(java.time.Duration.ofSeconds(Defaults.LlmConnectTimeoutSec.toLong))
-          .build()
+        val client = withProviderProxy(
+          java.net.http.HttpClient
+            .newBuilder()
+            .version(java.net.http.HttpClient.Version.HTTP_1_1)
+            .connectTimeout(java.time.Duration.ofSeconds(Defaults.LlmConnectTimeoutSec.toLong))
+        ).build()
         val backend = HttpClientFs2Backend.usingClient[IO](client, dispatcher)
         val abort = abortedRef.set(true) *> IO(abortHttpClient(client)).attempt.void
         val release =
@@ -459,15 +485,24 @@ object LlmInterface extends LlmRuntime:
     //     the pin; the documented next diagnostic step is disabling TLS 1.3
     //     session resumption (a switch for diagnosing, not a speed-up: it
     //     costs ~222 ms per cold request).
-    val httpClient = java.net.http.HttpClient
-      .newBuilder()
-      .version(java.net.http.HttpClient.Version.HTTP_1_1)
-      // Hard-recovery §2.2 配套小修: bound TCP establishment — a half-open
-      // dial after a VPN switch must fail within 30s, not hang forever (the
-      // JDK default connect timeout is infinite).
-      .connectTimeout(java.time.Duration.ofSeconds(Defaults.LlmConnectTimeoutSec.toLong))
-      .build()
     Dispatcher.parallel[IO].allocated.flatMap { case (dispatcher, releaseDispatcher) =>
+      // direct-connect 批（2026-11-19，作者令「把我配置的llm 都改直连」）：在
+      // 装配本 client 前加载一次配置（**惰性：与原 config 读点同处 flatMap 内，
+      // 仍在 IO 求值期执行，不改原时序**），按 `llm.providers.*.baseUrl` 的 host
+      // 集构造直连选择器（命中 host 走 NO_PROXY，其余回落系统代理；未启用/无 host
+      // ⇒ None 零行为变化），并安装到 providerProxySelector 供 per-attempt client
+      // （makeAttemptTransport，请求期构建）读取。**重启后生效。**
+      val config = Config.loadServiceConfig(options.flatMap(_.configPath))
+      providerProxySelector = LlmProxyRouting.fromConfig(config, Defaults.LlmDirectConnect)
+      val httpClient = withProviderProxy(
+        java.net.http.HttpClient
+          .newBuilder()
+          .version(java.net.http.HttpClient.Version.HTTP_1_1)
+          // Hard-recovery §2.2 配套小修: bound TCP establishment — a half-open
+          // dial after a VPN switch must fail within 30s, not hang forever (the
+          // JDK default connect timeout is infinite).
+          .connectTimeout(java.time.Duration.ofSeconds(Defaults.LlmConnectTimeoutSec.toLong))
+      ).build()
       val backend = HttpClientFs2Backend.usingClient[IO](httpClient, dispatcher)
       // Release is idempotent: both the graceful `.guarantee` path (server
       // stopped normally) and the JVM shutdown hook (Ctrl+C / SIGTERM) call
@@ -505,7 +540,7 @@ object LlmInterface extends LlmRuntime:
           case true => (true, IO.unit)
         }.flatten
       IO.pure(backend).flatMap { backend =>
-        val config = Config.loadServiceConfig(options.flatMap(_.configPath))
+        // config 已在上面（装配直连选择器时）加载 —— 同一值复用，不重复读盘。
         val cfgRef: Ref[IO, NebflowServiceConfig] = configRef.getOrElse(Ref.unsafe(config))
         val registry = ProviderRegistry(cfgRef, backend)
         val healthMonitor = ProviderHealthMonitor(registry)

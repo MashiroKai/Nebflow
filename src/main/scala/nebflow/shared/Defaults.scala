@@ -1943,6 +1943,19 @@ object Defaults:
   def LlmConnectTimeoutSec: Int =
     sys.props.getOrElse("nebflow.hardRecovery.connectTimeoutSec", "30").toInt
 
+  /**
+   * LLM 直连绕过本机代理（direct-connect 批，作者令 2026-11-19 16:06
+   * 「可以加进去。把我配置的llm 都改直连吧」）：默认 **true**——引擎 JVM 从
+   * macOS 系统代理继承 `http(s).proxyHost=127.0.0.1:7890`，每个新连接白付
+   * ~1.0s（同端点直连 p50 0.396s vs 代理 1.313s，N=15/臂实测）。true 时
+   * `llm.providers.*.baseUrl` 的 host 全部走直连（NO_PROXY），其余 host 仍
+   * 回落系统代理；false = **完全回到本批前现状**（两处 HttpClient 均不设
+   * `.proxy`，沿用默认选择器）——回滚开关，**重启后生效**。见
+   * [[nebflow.llm.LlmProxyRouting]]。
+   */
+  def LlmDirectConnect: Boolean =
+    sys.props.getOrElse("nebflow.llm.directConnect", "true").toBoolean
+
   // ---- 记忆检索库自动入库（memory-recall 批 2026-10-22）----
   //
   // 作者令：「这个进库 应该要是我们使用stand自动的能力」——主 agent 会话消息落盘
