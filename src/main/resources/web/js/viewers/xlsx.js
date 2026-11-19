@@ -4,6 +4,7 @@
 import { escapeHtml } from './shared.js';
 import { reMint } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
+import { tryOfficeConvert, revokePaneBlobUrls } from './pptx.js';
 
 /** XLSX viewer — fetch binary, parse with SheetJS, render first sheet as table
  *
@@ -16,6 +17,15 @@ import { nfViewerUrl } from '../nfFileCache.js';
  *  即定局，落既有错误面板。blob 腿无可刷新的凭据 ⇒ 不重试（image.js 同守卫）。 */
 async function viewXlsx(pane, { absPath, fileName, objectUrl }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading spreadsheet...</div>`;
+  revokePaneBlobUrls(pane);
+  let fallback = false;
+  if (absPath && !objectUrl) {
+    try {
+      if (await tryOfficeConvert(pane, { absPath, fileName }, {})) return;
+    } catch (_) { /* conversion failure falls back to the frontend viewer */ }
+    if (!pane.isConnected) return;
+    fallback = true;
+  }
   const fetchBytes = async (/** @type {string} */ url) => {
     const resp = await fetch(url);
     if (!resp.ok) {
@@ -65,6 +75,7 @@ async function viewXlsx(pane, { absPath, fileName, objectUrl }) {
       `<button class="canvas-button xlsx-sheet-tab ${i === 0 ? 'active' : ''}" data-sheet="${escapeHtml(name)}">${escapeHtml(name)}</button>`
     ).join('');
     pane.innerHTML = `
+      ${fallback ? '<div class="office-fallback-notice" role="status">PDF preview unavailable; showing simplified spreadsheet view.</div>' : ''}
       <div class="canvas-xlsx-viewer">
         <div class="xlsx-sheet-bar">${sheetTabs}</div>
         <div class="xlsx-sheet-content">${html}</div>

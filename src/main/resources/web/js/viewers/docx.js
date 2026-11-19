@@ -4,6 +4,7 @@
 import { escapeHtml } from './shared.js';
 import { reMint } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
+import { tryOfficeConvert, revokePaneBlobUrls } from './pptx.js';
 
 /** DOCX viewer — fetch binary, convert to HTML via mammoth.js
  *
@@ -19,6 +20,15 @@ async function viewDocx(pane, { absPath, fileName, objectUrl }) {
   if (!absPath && !objectUrl) {
     pane.innerHTML = `<div class="canvas-error">No file path provided for DOCX viewer.</div>`;
     return;
+  }
+  revokePaneBlobUrls(pane);
+  let fallback = false;
+  if (absPath && !objectUrl) {
+    try {
+      if (await tryOfficeConvert(pane, { absPath, fileName }, {})) return;
+    } catch (_) { /* conversion failure falls back to the frontend viewer */ }
+    if (!pane.isConnected) return;
+    fallback = true;
   }
   const fetchBytes = async (/** @type {string} */ url) => {
     const resp = await fetch(url);
@@ -80,7 +90,7 @@ async function viewDocx(pane, { absPath, fileName, objectUrl }) {
       }
     );
     const html = result.value || '<p style="color:var(--color-text-muted)">Document is empty.</p>';
-    pane.innerHTML = `<div class="canvas-md-viewer">${html}</div>`;
+    pane.innerHTML = `${fallback ? '<div class="office-fallback-notice" role="status">PDF preview unavailable; showing simplified document view.</div>' : ''}<div class="canvas-md-viewer">${html}</div>`;
     pane.classList.add('scrollable');
   } catch (err) {
     pane.innerHTML = `<div class="canvas-error">Failed to render DOCX: ${escapeHtml(err.message)}</div>`;
