@@ -87,12 +87,13 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     serverPort: Int,
     budget: DialBudget = DialBudget.Default,
     schedule: PresenceDialSchedule = PresenceDialSchedule.Production,
-    reachLedger: Option[P2pReachability] = None
+    reachLedger: Option[P2pReachability] = None,
+    dialHook: (String, Int, Long) => Unit = (_, _, _) => ()
   )(use: (NeblinkService, NeblinkPresenceService) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(serverPort, dispatcher, 300.millis)
-        ps = new NeblinkPresenceService(ms, serverPort, budget, EvictionPolicy.Default, schedule, reachLedger)(
+        ps = new NeblinkPresenceService(ms, serverPort, budget, EvictionPolicy.Default, schedule, reachLedger, dialHook)(
           dispatcher
         )
         _ = ms.setPresenceService(ps)
@@ -212,7 +213,8 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     )
   }
 
-  test("P1 实拨：并发轮 ≈ max（1×预算），串行对照臂 ≈ Σ（2×预算）——同方法只翻调度开关") {
+  test("P1 实拨：并发轮 ≈ max（1×预算），串行对照臂 ≈ Σ（2×预算）——同方法只翻调度开关".tag(munit.Tag("host-smoke"))) {
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for network timing smoke")
     assume(!windowsBlackholeUnsupported, "Windows 环回无黑洞语义 ⇒ 黑洞对照臂跳过")
     val port = closedPort()
     val eps = List(s"http://127.0.0.2:$port", s"http://127.0.0.3:$port")
@@ -244,6 +246,48 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
         s"并发 ${concurrentMs}ms 必须显著快于串行 ${legacyMs}ms（本批收益的机器可判形式）"
       )
     }
+  }
+
+  test("P1 fake legs: parallel candidates start before release, serial starts after release") {
+    val port = closedPort()
+    val eps = List(s"http://127.0.0.2:$port", s"http://127.0.0.3:$port")
+    def check(schedule: PresenceDialSchedule, parallel: Boolean): IO[Unit] =
+      val first = new java.util.concurrent.CountDownLatch(1)
+      val second = new java.util.concurrent.CountDownLatch(1)
+      val releaseA = new java.util.concurrent.CountDownLatch(1)
+      val releaseB = new java.util.concurrent.CountDownLatch(1)
+      val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+      val hook: (String, Int, Long) => Unit = (host, _, _) =>
+        val a = host.endsWith(".2")
+        events.add(if a then "start-a" else "start-b")
+        (if a then first else second).countDown()
+        if !(if a then releaseA else releaseB).await(8, java.util.concurrent.TimeUnit.SECONDS) then
+          throw new IllegalStateException("test gate timed out")
+        events.add(if a then "release-a" else "release-b")
+        throw new java.util.concurrent.TimeoutException("fake timeout")
+      withStack(port, schedule = schedule, dialHook = hook) { (_, ps) =>
+        (for
+          fiber <- ps.connect(peer("event-order", eps)).start
+          _ <- IO.blocking(assert(first.await(5, java.util.concurrent.TimeUnit.SECONDS), "first leg did not start"))
+          _ <- IO.blocking {
+            if parallel then assert(second.await(5, java.util.concurrent.TimeUnit.SECONDS), "parallel leg did not start")
+            else assertEquals(second.getCount, 1L, "serial second leg cannot start before first releases")
+            releaseA.countDown()
+            assert(second.await(5, java.util.concurrent.TimeUnit.SECONDS), "second leg did not start")
+            releaseB.countDown()
+          }
+          _ <- fiber.joinWithNever
+          round <- IO(roundOf(ps, "event-order"))
+          _ <- IO {
+            import scala.jdk.CollectionConverters.*
+            val seen = events.iterator().asScala.toList
+            if parallel then assert(seen.indexOf("start-b") < seen.indexOf("release-a"))
+            else assert(seen.indexOf("release-a") < seen.indexOf("start-b"))
+            assertEquals(round.failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Timeout, nebflow.neblink.relay.DialFailureClass.Timeout))
+          }
+        yield ()).guarantee(IO { releaseA.countDown(); releaseB.countDown() })
+      }
+    check(PresenceDialSchedule.Production, true) *> check(PresenceDialSchedule.LegacySerial, false)
   }
 
   test("P1 并发度有界：6 候选一轮只拨 4，其余截断留痕（truncated=true）等下一拍") {
