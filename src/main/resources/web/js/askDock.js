@@ -92,13 +92,8 @@
 import { key } from './branding.js';
 import state from './state.js';
 import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
-import { activeCanvasEntry, activeCanvasPane } from './canvas.js';
-import { isAskableFile, isPdfFile } from './mdHtmlGate.js';
-// PDF note/ask 批残留面收口（文本层批 2026-11-19）：侧边栏面板全链已删净（见
-// scripts/check-pdf-entry-single-source.mjs），PDF 的 note/ask 只剩本文件这两颗钮。
-// 页锚备注走既有 /api/pdf 域（复用路由，零新增），认证头走 flowHelpers 单点
-// （与全站 REST 调用同源）。
-import { authHeaders } from './flowHelpers.js';
+import { activeCanvasEntry } from './canvas.js';
+import { isAskableFile } from './mdHtmlGate.js';
 // 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包，参考主 agent
 // 会话窗口的输入模式」）：键盘/IME 组字态/发送判定/中断状态机 = input/composer.js
 // 统一实现（主会话同源）——组字期 Enter 只确认候选不发送、组字结束后才发送、
@@ -120,9 +115,6 @@ import { createAskDialog, svgNode } from './askDialog.js';
 // 卡整体退役），ask_edit/ask_write 的直接落盘审阅态由 askEditReview 模块在 canvas
 // 审阅页签呈现——本模块只把 askEdit* 帧路由过去，不再自持任何审阅态。
 import { consumeApplied, consumeResolved, consumeAskState } from './askEditReview.js';
-// 文本层批（2026-11-19）：PDF 的「选中 → ask」与 chat 选区档共用**同一**提问
-// 组装件（selectionAsk.buildQuestion，上下文围栏口径单源）——不写第二份。
-import { buildQuestion as buildSelectionQuestion } from './selectionAsk.js';
 // ── 状态可见性与失败上报批（作者令 2026-11-18：「Canvas Ask 对话框的状态显示
 //    不足…LLM 失败也没有报错」）────────────────────────────────────────────
 // 状态判定与失败分类**全部**收在 js/askTurnState.js 一个纯模块里（单点 + 投影；
@@ -238,35 +230,6 @@ let noteLocalOk = true;
 const noteEntries = new Map();
 let noteWriteSequence = 0;
 let noteStatus = '';
-
-// ── PDF 页锚备注态（文本层批 2026-11-19）──────────────────────────────────
-// 与通用记事本**互斥**（同一扇 .note-dock，只切内容模型）：`pdfMode=true` 时
-// 记事本读写的都是「PDF 某一页的备注 + 该页选中摘录」，数据落
-// `<dataRoot>/pdf-notes/<sha256>/p%04d.json`（PdfNotes.scala），经既有
-// `/api/pdf/open` + `/api/pdf/note` 两条 REST 腿读写（**零新路由/帧/参数**）。
-// 通用档（md/文本/canvas 文档）一行未动：每文件一份纯文本草稿，落 localStorage
-// `note:<sid>` + 引擎 `<dataRoot>/ask/notes/<sid>.md`。
-let pdfMode = false;
-let pdfNoteTimer = 0;
-/** 切页/切卡竞态代际：只有最后一代的回包允许落 UI（与 ask 的回放同律）。 */
-let pdfNoteSeq = 0;
-const pdfNote = {
-  path: '',
-  sha256: '',
-  page: 0,
-  version: 0,
-  text: '',
-  dirty: false,
-  loading: false,
-  parsed: false,
-  pageCount: null,
-  notePages: /** @type {number[]} */ ([]),
-  // 页锚备注的「本页选中摘录」。必须在**看见选中的那一拍**记账：点入口钮
-  // （mousedown）与聚焦记事本输入面都会收起 DOM 选区，落盘时再读 live 选区
-  // 只会拿到空串（自动验收实测：摘录是内容模型的一部分，不是「此刻还选着才带」
-  // 的瞬时装饰）。
-  snippet: '',
-};
 
 // ── 每文档会话持久（2026-11-01 作者令批；头注「文档会话持久批」）────────────
 // 键形 = key('ask:sess:<sid>')（branding 命名空间同源）；值 = {ts, msgs:[user/ai]}。
@@ -1012,12 +975,12 @@ function wireElements() {
   el.noteFab.addEventListener('click', (e) => { e.stopPropagation(); toggleNote(); });
   el.noteDock.addEventListener('click', (e) => e.stopPropagation());
   el.noteDock.addEventListener('pointerdown', (e) => e.stopPropagation());
-  // 重复绑定拆迁（文本层批 2026-11-19）：以上三件（noteFab click / noteDock
-  // click / noteDock pointerdown）在基线里被逐字绑了**两遍**（同一 wireElements
-  // 内两组同文注释 + 同三条语句）。md 档无感（openNote 首个 await 在摘 .closed
-  // 之前 ⇒ 第二拍仍读到「未开」再开一次，结果同形）；PDF 档是**功能断点**
-  // （点一次 = toggle 两次 = 开又收 ⇒ 单击不开窗）。同一份 DOM 只需一次绑定，
-  // 拆掉重复的第二组。
+  // ── 记事本批（2026-11-05）：入口钮 / 浮窗自身的事件 ─────────────────────
+  // 开合与 ask 同律：钮再点即收；窗内点击/按下不外溢（画布空白点击的收起腿只
+  // 认 #canvas-content 本体，这里再挡一道，与 ask dock 同写法）。
+  el.noteFab.addEventListener('click', (e) => { e.stopPropagation(); toggleNote(); });
+  el.noteDock.addEventListener('click', (e) => e.stopPropagation());
+  el.noteDock.addEventListener('pointerdown', (e) => e.stopPropagation());
   // 纯文本草稿：write-through 防抖 250ms（输入即存，切换卡/关窗/失焦都 flush）。
   el.noteText.addEventListener('input', noteInputChanged);
   el.noteText.addEventListener('blur', flushNote);
@@ -1049,10 +1012,6 @@ function wireGlobals(ctx) {
   ctx.on(document, 'nf:mobile-nav', () => syncGate());
   // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
   ctx.on(document, 'nf-reader-mounted', () => syncSeat());
-  // 文本层批（2026-11-19）：PDF 正文可选中 ⇒ 记事本开窗时随选中页重锚
-  // （`selectionchange` 覆盖鼠标/触屏/键盘三种选法；守门在 onPdfSelectionChanged
-  // 内部——非 PDF 态零动作）。
-  ctx.on(document, 'selectionchange', () => onPdfSelectionChanged());
   // Capture sees panel interactions even when the existing panel handlers stop bubbling.
   // Track all pointers, including those starting inside a panel, so a second finger
   // cannot dismiss it during a drag, selection, resize, or navigation gesture.
@@ -1382,9 +1341,6 @@ async function open() {
   // 电子书扩展名白名单；§7-A4 冗余守卫双层防呆）。
   if (!currentFile || !isAskableFile(currentFile)) return;
   if (isNoteOpen()) closeNote(); // 记事本批：视图排他（两个浮窗同座位，不叠压）
-  // 文本层批：PDF 的选区必须在**点钮这一拍**同步读下（await 之后的聚焦与默认
-  // 动作都会把它收掉 ⇒ 再读只得到空串，预填形同虚设）。
-  const selAtOpen = pdfSelection();
   const s = await ensureActiveSession();
   if (!s) return;
   s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
@@ -1395,7 +1351,6 @@ async function open() {
   dlg.render();
   dlg.snapCol(); // ask-stream-ui：开窗即读 = 从最新一条起（未读清零 + 胶囊收敛）
   askOpen(s);
-  prefillAskFromSelection(selAtOpen); // 文本层批：PDF 选中正文直接成为提问正文（同一组装件）
   syncTurnStatus(); // 状态可见性批：开窗即落当前状态（含「会话未连接」前置口径）
   renderHandoff(); // ask-scope 批：开窗即落当前会话的转交事实
   syncSeat();
@@ -1524,15 +1479,6 @@ function noteEntry(sid) {
 }
 /** Input handler body（命名函数：可执行测试切片可直接驱动它，不依赖事件绑定）。 */
 function noteInputChanged() {
-  if (pdfMode) {
-    // PDF 态：脏标 + 页锚状态行即时重投影，防抖后落盘（关窗/失焦/切页立即 flush）。
-    pdfNote.text = el.noteText.value;
-    pdfNote.dirty = true;
-    renderPdfNoteStatus({ page_verified: pdfNote.parsed });
-    if (pdfNoteTimer) clearTimeout(pdfNoteTimer);
-    pdfNoteTimer = setTimeout(() => { pdfNoteTimer = 0; flushPdfNote(); }, 400);
-    return;
-  }
   if (noteSid) { const entry = noteEntry(noteSid); entry.text = el.noteText.value; entry.dirty = true; saveNoteEntry(noteSid, entry); }
   if (noteTimer) clearTimeout(noteTimer);
   noteTimer = setTimeout(() => { noteTimer = 0; flushNote(); }, 250);
@@ -1583,7 +1529,6 @@ function scheduleNotePush(sid, text, delay) {
   }, typeof delay === 'number' ? delay : NOTE_PUSH_DELAY_MS);
 }
 function flushNote() {
-  if (pdfMode) { flushPdfNote(); return; }
   if (noteTimer) { clearTimeout(noteTimer); noteTimer = 0; }
   if (!el || !notePath || !noteSid) return;
   const entry = noteEntry(noteSid);
@@ -1656,25 +1601,6 @@ function isNoteOpen() { return !!el && !el.noteDock.classList.contains('closed')
 async function openNote() {
   if (!currentFile || !isAskableFile(currentFile)) return;
   if (isOpen()) close(); // 视图排他（同座位只坐一个浮窗）
-  if (isPdfFile(currentFile)) {
-    // PDF 态：同一扇窗，内容是「当前页（或选中页）的备注」。通用档的
-    // notePath/noteSid 一并置空 ⇒ 两套数据面永不串写。
-    pdfMode = true;
-    notePath = ''; noteSid = '';
-    // 旧文件（或上一拍）的脏稿先落 —— 必须在清台/换 sha 之前（否则清成空稿写回）。
-    flushPdfNote();
-    if (pdfNote.path !== currentFile) { pdfReset(); el.noteText.value = ''; }
-    // 点钮这一拍的选区（同步读：任何 await 之后 mousedown/聚焦都会把它收掉）。
-    const selAtOpen = pdfSelection();
-    restoreSize(el.noteSurface); // 尺寸偏好同一恢复腿
-    syncNoteSeed();
-    el.noteDock.classList.remove('closed');
-    el.noteFab.setAttribute('aria-pressed', 'true');
-    syncSeat();
-    await openPdfNote(selAtOpen);
-    setTimeout(() => { try { el.noteText.focus(); } catch { /* detached */ } }, 260);
-    return;
-  }
   const path = currentFile;
   const sid = await ensureSid(path);
   if (!sid || currentFile !== path) return; // 派生期间切卡/关卡：让 syncNoteForFile 收口
@@ -1711,24 +1637,15 @@ function toggleNote() {
 /** 切卡即切记事本（每文件一份草稿）：旧草稿先 flush，再按新文件的 sid 注水。 */
 async function syncNoteForFile() {
   if (!el) return;
-  flushNote(); // 旧态先落（pdfMode 此刻仍是上一拍的值）
+  flushNote();
   if (!currentFile) {
     // 无文件卡：清空内存面（草稿本身已按文件落盘，不丢），窗一起收。
-    pdfMode = false; pdfReset();
     notePath = '';
     noteSid = '';
     el.noteText.value = '';
     closeNote();
     return;
   }
-  if (isPdfFile(currentFile)) {
-    // PDF 态：同一颗钮、同一扇窗，内容模型切「页锚备注」（数据面见 PdfNotes）。
-    pdfMode = true;
-    notePath = ''; noteSid = '';
-    syncPdfNoteForFile();
-    return;
-  }
-  pdfMode = false; pdfReset();
   const path = currentFile;
   const sid = await ensureSid(path);
   if (!sid || currentFile !== path) return; // 派生期间又切卡：以最新一拍为准
@@ -1742,226 +1659,6 @@ async function syncNoteForFile() {
   el.noteText.value = entry.text;
   if (entry.held) showNoteConflict(sid); else setNoteStatus(noteLocalOk ? '' : 'mirror-off');
   requestNote(sid); // 引擎侧真源对账（每文件独立生命周期，与问答回放零同步）
-}
-
-// ── PDF 页锚备注（文本层批 2026-11-19 作者令「让 canvas 的 note 和 ask 支持
-//    pdf 的阅读」）───────────────────────────────────────────────────────────
-// 单源纪律：入口仍是 `.note-fab` / `.ask-fab` 两颗既有钮、仍是同一扇 `.note-dock`
-// / `.ask-dock`（同一壳、同一类、同一 token），**只切内容模型**——通用档是
-// 「每文件一份纯文本草稿」，PDF 档是「页锚（文档摘要 + 1 起页码）+ 该页选中摘录」。
-// 数据面**复用** PDF note/ask 批已落地的 REST 域（`/api/pdf/open`、`/api/pdf/note`）
-// 与 `pdf-notes/<sha256>/p%04d.json`（PdfNotes.scala）——本段不新增任何路由、帧或
-// 参数；页锚与选区的**读法**收在 viewers/pdf.js 一处（`pane._nfPdfPage()`
-// / `pane._nfPdfSelection()`），本文件只消费那两条读数。
-// 懒解析判据原样成立：打开与读/写备注都**不触发解析**（只有 ask 腿会）。
-
-/** 当前活动 canvas pane 且是 PDF 视口（带两条读数钩子）——否则 null。 */
-function pdfPane() {
-  const pane = /** @type {any} */ (activeCanvasPane());
-  return pane && typeof pane._nfPdfPage === 'function' ? pane : null;
-}
-
-/** 视口当前页（1 起；钩子缺席时回落 1）。 */
-function pdfCurrentPage() {
-  const pane = pdfPane();
-  const n = pane ? Number(pane._nfPdfPage()) : 1;
-  return Number.isInteger(n) && n > 0 ? n : 1;
-}
-
-/** 本 viewer 文本层内的选区 {page, text}；层外/跨页/null 一律 null。 */
-function pdfSelection() {
-  const pane = pdfPane();
-  if (!pane || typeof pane._nfPdfSelection !== 'function') return null;
-  try { return pane._nfPdfSelection(); } catch { return null; }
-}
-
-/** 状态行直写（与通用档 `setNoteStatus(kind)` 同一条元素；PDF 事实句不打表）。 */
-function writeNoteStatusLine(text) {
-  noteStatus = '';
-  if (!el || !el.noteStatus) return;
-  el.noteStatus.textContent = text || '';
-  el.noteStatus.hidden = !(text || '');
-}
-
-/** 本页选中摘录记账（见 pdfNote.snippet 注）：只有落在当前页锚且非空才收。 */
-function capturePdfSnippet() {
-  const sel = pdfSelection();
-  if (sel && sel.page === pdfNote.page && sel.text && sel.text.trim()) { pdfNote.snippet = sel.text; return true; }
-  return false;
-}
-
-/** 页锚状态行：页号 + 页界判定 + 选中摘录/保存态（全部是事实，不教学）。 */
-function renderPdfNoteStatus(meta) {
-  if (!pdfMode) return;
-  const parts = [tt(`第 ${pdfNote.page} 页`, `p. ${pdfNote.page}`)];
-  if (meta && meta.out_of_range) parts.push(tt('超出页数', 'out of range'));
-  else if (meta && meta.page_verified === false) parts.push(tt('页界未验证（未解析）', 'page unverified (not parsed)'));
-  capturePdfSnippet(); // 摘录随身（选区一收就不可逆）
-  if (pdfNote.snippet) parts.push(tt('已带选中摘录', 'selection captured'));
-  parts.push(pdfNote.dirty ? tt('未保存', 'unsaved') : tt('已保存', 'saved'));
-  writeNoteStatusLine(parts.join(' · '));
-}
-
-/** REST 腿（认证头单源 = flowHelpers.authHeaders；只调既有 /api/pdf 域）。 */
-async function pdfApi(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(opts.headers || {}) },
-  });
-  let body = {};
-  try { body = await res.json(); } catch { body = {}; }
-  return { ok: res.ok, status: res.status, body };
-}
-
-/** 文档身份（sha256）+ 解析态 + 有备注的页集：`POST /api/pdf/open`，**不解析**。 */
-async function ensurePdfDoc(path) {
-  if (pdfNote.path === path && pdfNote.sha256) return true;
-  const { ok, body } = await pdfApi('/api/pdf/open', { method: 'POST', body: JSON.stringify({ path }) });
-  if (!ok) return false;
-  pdfNote.path = path;
-  pdfNote.sha256 = String(body.sha256 || '');
-  pdfNote.parsed = !!body.parsed;
-  const m = body.manifest || null;
-  pdfNote.pageCount = m && typeof m.page_count === 'number' ? m.page_count : null;
-  pdfNote.notePages = Array.isArray(body.note_pages) ? body.note_pages : [];
-  return !!pdfNote.sha256;
-}
-
-/** 读某页备注（`GET /api/pdf/note`，**不解析**）并上台（代际守卫防切页竞态）。 */
-async function loadPdfPage(page) {
-  const path = pdfNote.path;
-  const sha = pdfNote.sha256;
-  if (!sha) { writeNoteStatusLine(tt('无法读取该 PDF 的身份', 'Cannot read this PDF identity')); return; }
-  const seq = ++pdfNoteSeq;
-  pdfNote.loading = true;
-  const { ok, body } = await pdfApi(`/api/pdf/note?sha256=${encodeURIComponent(sha)}&page=${page}`);
-  if (seq !== pdfNoteSeq || pdfNote.path !== path) return; // 已被更晚的一拍取代
-  pdfNote.loading = false;
-  if (!ok) { writeNoteStatusLine(tt('读取失败：', 'Read failed: ') + (body.error || 'unknown')); return; }
-  const note = body.note || null;
-  pdfNote.page = page;
-  pdfNote.version = note ? Number(note.version || 0) : 0;
-  pdfNote.text = note ? String(note.text || '') : '';
-  pdfNote.dirty = false;
-  pdfNote.snippet = ''; // 换页：摘录随页锚重置，再由本拍 live 选区补记
-  if (el) el.noteText.value = pdfNote.text;
-  renderPdfNoteStatus(body);
-}
-
-/** 写当前页备注：`POST /api/pdf/note`（条件写；snippet = 该页选中正文，可空）。 */
-async function savePdfNote() {
-  const path = pdfNote.path;
-  const sha = pdfNote.sha256;
-  const page = pdfNote.page;
-  const text = pdfNote.text;
-  if (!sha || page < 1) return;
-  // 摘录 = 记账下来的本页选中（开窗/改选那一拍收的），选中已收起时仍随备注落盘。
-  const snippet = pdfNote.snippet || (() => {
-    const sel = pdfSelection();
-    return sel && sel.page === page ? sel.text : '';
-  })();
-  const seq = pdfNoteSeq;
-  const { ok, status, body } = await pdfApi('/api/pdf/note', {
-    method: 'POST',
-    body: JSON.stringify({ sha256: sha, page, text, snippet, expected_version: pdfNote.version }),
-  });
-  if (seq !== pdfNoteSeq || pdfNote.path !== path) return;
-  if (status === 409) {
-    pdfNote.version = Number(body.current_version || 0);
-    pdfNote.dirty = true;
-    writeNoteStatusLine(tt(`冲突：第 ${page} 页备注已被他处修改（当前版本 ${pdfNote.version}）——重开本窗读回`,
-      `Conflict: p.${page} changed elsewhere (version ${pdfNote.version}) — reopen to reload`));
-    return;
-  }
-  if (!ok) {
-    pdfNote.dirty = true;
-    writeNoteStatusLine(tt('保存失败：', 'Save failed: ') + (body.error || 'unknown'));
-    return;
-  }
-  pdfNote.version = Number(body.version || 0);
-  if (Array.isArray(body.note_pages)) pdfNote.notePages = body.note_pages;
-  renderPdfNoteStatus({ page_verified: pdfNote.parsed });
-}
-
-/** 脏稿落盘（防抖 / 关窗 / 失焦 / 切页四个触发点同一条腿）。 */
-function flushPdfNote() {
-  if (pdfNoteTimer) { clearTimeout(pdfNoteTimer); pdfNoteTimer = 0; }
-  if (!el || !pdfNote.path || !pdfNote.dirty || pdfNote.loading) return;
-  pdfNote.text = el.noteText.value;
-  pdfNote.dirty = false;
-  void savePdfNote();
-}
-
-/** 打开记事本（PDF 态）：按「选中页 ∨ 视口当前页」读回（脏稿由 openNote 先落）。
- *  `preSel` = 点钮那一拍**同步**读到的选区（此刻还在；入输入面聚焦后选区就收了）
- *  ——开窗的摘录记账必须用它，不能等回包再读 live 选区。 */
-async function openPdfNote(preSel) {
-  const path = currentFile;
-  const loaded = await ensurePdfDoc(path);
-  if (currentFile !== path) return; // 派生期间切卡：让 syncPdfNoteForFile 收口
-  if (!loaded) { writeNoteStatusLine(tt('打开失败：无法读取该 PDF', 'Open failed: cannot read this PDF')); return; }
-  const sel = (preSel && preSel.text && preSel.text.trim()) ? preSel : pdfSelection();
-  await loadPdfPage(sel ? sel.page : pdfCurrentPage());
-  if (sel && sel.text && sel.text.trim() && pdfNote.page === sel.page) {
-    pdfNote.snippet = sel.text; // 开窗那一拍的选中摘录（页锚随它）
-    renderPdfNoteStatus({ page_verified: pdfNote.parsed });
-  }
-}
-
-/** 切卡注水（PDF 态）：窗未开 ⇒ 不取数（开窗时再读）；窗开着 ⇒ 换到新文件的
- *  页锚（旧文件的脏稿已由 syncNoteForFile 的 flushNote 收口）。 */
-async function syncPdfNoteForFile() {
-  pdfReset(); // 新文件：先清上一份页锚（并作废在途回包）
-  if (!isNoteOpen()) return;
-  const path = currentFile;
-  const loaded = await ensurePdfDoc(path);
-  if (!loaded || currentFile !== path) return;
-  const sel = pdfSelection();
-  await loadPdfPage(sel ? sel.page : pdfCurrentPage());
-}
-
-/** 离开 PDF 态：清内存面（备注本身按页落盘，不丢）。 */
-function pdfReset() {
-  if (pdfNoteTimer) { clearTimeout(pdfNoteTimer); pdfNoteTimer = 0; }
-  pdfNoteSeq++;
-  pdfNote.path = '';
-  pdfNote.sha256 = '';
-  pdfNote.page = 0;
-  pdfNote.version = 0;
-  pdfNote.text = '';
-  pdfNote.dirty = false;
-  pdfNote.loading = false;
-  pdfNote.parsed = false;
-  pdfNote.pageCount = null;
-  pdfNote.notePages = [];
-  pdfNote.snippet = '';
-}
-
-/** 选文 → 页锚重锚（开窗且草稿干净时才跟随；有脏稿绝不抢页）。 */
-function onPdfSelectionChanged() {
-  if (!pdfMode || !isNoteOpen()) return;
-  const sel = pdfSelection();
-  if (!sel) return;
-  if (sel.page === pdfNote.page) {
-    // 同页：只换摘录（此处必须记账——选区离开文本层就不可逆）。
-    capturePdfSnippet();
-    renderPdfNoteStatus({ page_verified: pdfNote.parsed });
-    return;
-  }
-  if (pdfNote.dirty || pdfNote.loading) return;
-  void loadPdfPage(sel.page);
-}
-
-/** 选文 → 提问正文（开窗即填；已有手写正文绝不覆盖）——与 chat 选区档同一条
- *  组装腿（selectionAsk.buildQuestion），入口仍是 `.ask-fab` 这一颗钮。 */
-function prefillAskFromSelection(preSel) {
-  if (!el || !isPdfFile(currentFile)) return;
-  const sel = (preSel && preSel.text && preSel.text.trim()) ? preSel : pdfSelection();
-  if (!sel || !sel.text || !sel.text.trim()) return;
-  if (el.input.value.trim()) return;
-  el.input.value = buildSelectionQuestion({ selected: sel.text, before: '', after: '' });
-  el.input.style.height = 'auto';
-  el.input.style.height = Math.min(el.input.scrollHeight, 120) + 'px';
 }
 
 // ── 渲染 / 落列跟随 / 思考指示 / 发送中断（抽取批 2026-11-18）──────────────
