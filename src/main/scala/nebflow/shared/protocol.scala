@@ -71,7 +71,15 @@ end Message
 case class ToolDefinition(
   name: String,
   description: String,
-  inputSchema: JsonObject
+  inputSchema: JsonObject,
+  /**
+   * Provider-native deferred loading flag (dynload 批 2026-11-19). Set only by
+   * [[nebflow.llm.DynamicToolLoad.plan]] for legs classified
+   * [[nebflow.llm.ToolLoadMode.Deferred]]; adapters that know the marker emit
+   * `defer_loading: true` (deferred entries stay OUT of the cached system prefix).
+   * Default false ⇒ every existing construction is byte-identical on the wire.
+   */
+  deferLoading: Boolean = false
 )
 
 // ===== Tool Call =====

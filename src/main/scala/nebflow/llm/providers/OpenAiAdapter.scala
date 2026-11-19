@@ -212,7 +212,7 @@ class OpenAiAdapter(
     }
 
   private def toolDefJson(t: ToolDefinition): Json =
-    Json.obj(
+    val base = Json.obj(
       "type" -> "function".asJson,
       "function" -> Json.obj(
         "name" -> t.name.asJson,
@@ -220,6 +220,10 @@ class OpenAiAdapter(
         "parameters" -> Json.fromJsonObject(t.inputSchema)
       )
     )
+    // dynload 批（2026-11-19）：原生 deferred 标记。仅在 DynamicToolLoad 判定为
+    // Deferred 档时置位（本腿恒 ExecutionGate ⇒ 该键不出现，wire 逐字节不变）；
+    // 支持 tool_search 的部署会按此标记把条目不纳入前缀。
+    if t.deferLoading then base.deepMerge(Json.obj("defer_loading" -> Json.True)) else base
 
   private def toOpenAiTools(tools: List[ToolDefinition]): Json =
     Json.fromValues(tools.map(toolDefJson))

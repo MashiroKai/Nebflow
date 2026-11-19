@@ -201,18 +201,27 @@ class AnthropicAdapter(
 
   private def toAnthropicTools(tools: List[ToolDefinition]): Json =
     val toolJsons = tools.map { t =>
-      Json.obj(
+      val base = Json.obj(
         "name" -> t.name.asJson,
         "description" -> t.description.asJson,
         "input_schema" -> Json.fromJsonObject(t.inputSchema)
       )
+      // dynload 批（2026-11-19）：原生 deferred 条目——供应商文档明确
+      // 「Deferred tools are not included in the system-prompt prefix」，故该标记
+      // 使新装载工具可缓存前缀字节不动。仅 DynamicToolLoad 的 Deferred 档置位。
+      if t.deferLoading then base.deepMerge(Json.obj("defer_loading" -> Json.True)) else base
     }
-    // Add cache_control to the last tool definition to extend the cache prefix through tools
+    // Add cache_control to the last **non-deferred** tool definition to extend the
+    // cache prefix through tools (a marker on a deferred entry caches nothing — the
+    // documented deferred entries sit outside the system prefix). Fallback: last tool,
+    // which reproduces the pre-dynload behaviour byte-for-byte when nothing is deferred.
+    val markIdx =
+      val i = tools.lastIndexWhere(!_.deferLoading)
+      if i >= 0 then i else tools.length - 1
     if toolJsons.isEmpty then Json.fromValues(Nil)
     else
-      val (init, last) = (toolJsons.init, toolJsons.last)
-      val lastWithCache = last.deepMerge(Json.obj("cache_control" -> Json.obj("type" -> "ephemeral".asJson)))
-      Json.fromValues(init :+ lastWithCache)
+      val marked = toolJsons(markIdx).deepMerge(Json.obj("cache_control" -> Json.obj("type" -> "ephemeral".asJson)))
+      Json.fromValues(toolJsons.updated(markIdx, marked))
 
   /** Build the system field as content blocks with cache_control on the stable prefix. */
   private def buildSystemBlocks(params: SendMessageParams): Json =
