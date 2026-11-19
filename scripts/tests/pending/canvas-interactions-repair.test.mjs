@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-const source = p => readFileSync(new URL('../src/main/resources/web/' + p, import.meta.url), 'utf8');
+const source = p => readFileSync(new URL('../../../src/main/resources/web/' + p, import.meta.url), 'utf8');
 
 test('FCI-SCN-001 stale term responses are invalidated', async () => {
   const code = source('js/termTip.js');

@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { wakeableOf } from '../src/main/resources/web/js/freezeState.js';
-const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+import { wakeableOf } from '../../../src/main/resources/web/js/freezeState.js';
+const read = path => readFileSync(new URL('../../../' + path, import.meta.url), 'utf8');
 
 // ── Behaviour on the production pure module ──────────────────────────────────────────────────────────────────────
 test('FRM-SCN-005 wakeableOf follows the authoritative block', () => {
@@ -72,7 +72,7 @@ test('FRM-SCN-007 active count excludes retained history and structural parent',
 // Playwright consumer specs (tests/forms-ui-consumers.spec.mjs) and the Scala specs named in the OpenSpec trace.
 test('forms structure pins: the edited lines are still in place', () => {
   assert.match(read('src/main/resources/web/js/sidebar/providersUi.js'), /if \(saved === true\) close\(\)/);
-  assert.match(read('src/main/resources/web/js/mobile/todoAppleFace.js'), /\n    patch\.tagId = draft\.tagId;/);
+  assert.match(read('src/main/resources/web/js/mobile/todoAppleFace.js'), /\n {4}patch\.tagId = draft\.tagId;/);
   const face = read('src/main/resources/web/js/todoFace.js');
   assert.match(face, /const createRow =/);
   assert.match(face, /\.tfl-row\.tfl-row-editing\[data-id=/);

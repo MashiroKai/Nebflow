@@ -65,6 +65,18 @@ const instanceBacked = [
   // 是独立脚本（②），本就不在收集面；其 CI 编排见 ci.yml frontend-smoke。
 ];
 
+// ③ `tests/*.test.mjs` = node:test / 独立 runner 单测（不是 Playwright 套件），
+// 被收集器 import 时顶层即执行：bgagent-mobile-detail-retirement 收集期就跑起自带探针
+// （自述 NOT RUN、需真浏览器 harness），delegate-chain-throttle 顶层 `new vm.SourceTextModule`
+// 直接 TypeError ⇒ 整轮收集 exit 1 + `Error: No tests found`。二者各有闸门归属：
+// delegate-chain-throttle 由 scripts/run-checks.mjs 点名（须带 --experimental-vm-modules），
+// bgagent-mobile-detail-retirement 判定弃用（自述 NOT RUN，待作者裁删除/归档）。
+// 2026-11-19 普查收编批的前后收集证据见 /Users/kaiyu/stand-evidence/gate-collection-20261119/。
+standaloneScripts.push(
+  'delegate-chain-throttle.test.mjs',
+  'bgagent-mobile-detail-retirement.test.mjs',
+);
+
 const testIgnore = [...standaloneScripts];
 if (process.env.PW_SELFCONTAINED_ONLY === '1') testIgnore.push(...instanceBacked);
 

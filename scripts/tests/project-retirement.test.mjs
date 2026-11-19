@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const read = path => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+const read = path => readFileSync(new URL('../../' + path, import.meta.url), 'utf8');
 
 test('FRB-SCN-003 project list does not expose panorama', () => {
   const source = read('src/main/resources/web/js/projectTab.js');

@@ -40,7 +40,7 @@ import assert from "node:assert/strict";
 import {
   readReseatContext,
   resolveReseatTarget,
-} from "../src/main/resources/web/js/reseatTarget.js";
+} from "../../src/main/resources/web/js/reseatTarget.js";
 
 const CARD_SEARCH = "?card-window=1&path=%2Ftmp%2Fnotes%2Fa.md&title=Notes%20A";
 const MAIN_SEARCH = "";

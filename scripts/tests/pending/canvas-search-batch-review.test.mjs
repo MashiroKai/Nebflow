@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-const source = readFileSync(new URL('../src/main/resources/web/js/chatSearch.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../../src/main/resources/web/js/chatSearch.js', import.meta.url), 'utf8');
 function fixture() {
   const start = source.indexOf('function selIdOf(');
   const end = source.indexOf('// v3.2: the date tab', start);
@@ -30,7 +30,7 @@ test('FCI-SCN-004 selection semantics independent of active descendant',()=>{
 });
 test('FCI-SCN-004 selected media follows desktop and mobile router', async()=>{
   const route = source.slice(source.indexOf('function routeSelectedFile('), source.indexOf('/** Grid activation:', source.indexOf('function routeSelectedFile(')));
-  const mediaSource = readFileSync(new URL('../src/main/resources/web/js/mediaOpenRoute.js', import.meta.url), 'utf8');
+  const mediaSource = readFileSync(new URL('../../../src/main/resources/web/js/mediaOpenRoute.js', import.meta.url), 'utf8');
   const routeMedia = mediaSource.slice(mediaSource.indexOf('export function routeMediaClick(')).replace('export function','function');
   for (const mobile of [false,true]) {
     const calls=[];

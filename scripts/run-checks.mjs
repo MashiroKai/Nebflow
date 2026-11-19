@@ -13,6 +13,12 @@ const nodeCheck = (name, script, profiles = ['static', 'frontend']) => ({
 const scriptTests = readdirSync(new URL('./tests/', import.meta.url))
   .filter(name => name.endsWith('.test.mjs')).sort().map(name => `scripts/tests/${name}`);
 if (!scriptTests.length) throw new Error('No script unit tests found; refusing broad test discovery');
+// scripts/tests/pending/ 刻意不收（2026-11-19 普查收编批）：三个 A 组普查红文件
+// （canvas-interactions-repair / canvas-search-batch-review / forms-repair）在那里待裁，
+// 收进去等于把红闸注册进闸门；待裁后再决定改写或删。
+const weixinTests = readdirSync(new URL('../tools/weixin-sidecar/', import.meta.url))
+  .filter(name => name.endsWith('.test.mjs')).sort().map(name => `tools/weixin-sidecar/${name}`);
+if (!weixinTests.length) throw new Error('No weixin-sidecar unit tests found; refusing broad test discovery');
 
 // Membership is declared once here, not copied into Make or CI command lists.
 export const CHECKS = [
@@ -89,6 +95,22 @@ export const CHECKS = [
     argv: ['python3', '-B', 'scripts/check-logo-matrix.py'] },
   { name: 'cli-logo-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: ['python3', '-B', 'scripts/tests/test-cli-banner-payload.py'] },
+  // 2026-11-19 普查收编批：三个 python 单测此前谁都不跑（check:commit-attribution
+  // 只在 CI 跑脚本本体、其单测连 CI 也没跑）。这里按名注册为 static 档闸。
+  { name: 'commit-attribution-tests', profiles: ['static'], timeoutMs: 120_000,
+    argv: ['python3', '-B', 'scripts/tests/commit-attribution.test.py'] },
+  { name: 'visual-report-paths-tests', profiles: ['static'], timeoutMs: 120_000,
+    argv: ['python3', '-B', 'scripts/tests/test-visual-report-paths.py'] },
+  { name: 'stand-wt-tests', profiles: ['static'], timeoutMs: 120_000,
+    argv: ['python3', '-B', 'scripts/tests/test_stand_wt.py'] },
+  // 微信侧车单测（九个 *.test.mjs）按目录点名收集，防目录新增文件漏跑。
+  { name: 'weixin-sidecar-tests', profiles: ['static'], timeoutMs: 180_000,
+    argv: [process.execPath, '--test', ...weixinTests] },
+  // delegate-chain-throttle：顶层用 vm.SourceTextModule，必须带 --experimental-vm-modules，
+  // 否则纯 node 跑出 TypeError: vm.SourceTextModule is not a constructor（runner 旗标问题，
+  // 不是测试缺陷）。
+  { name: 'delegate-chain-throttle', profiles: ['static'], timeoutMs: 120_000,
+    argv: [process.execPath, '--experimental-vm-modules', 'tests/delegate-chain-throttle.test.mjs'] },
   nodeCheck('sdd', 'check-sdd', ['static']),
   nodeCheck('sdd-changed', 'check-sdd', ['sdd-changed']),
 ];
