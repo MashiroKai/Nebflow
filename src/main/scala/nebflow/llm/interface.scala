@@ -747,7 +747,7 @@ object LlmInterface extends LlmRuntime:
                   if candidates.isEmpty then
                     logger.error(
                       s"MODEL-CHAIN-EMPTY session=${req.sessionId} agent=${req.agentId} " +
-                        s"layer=${nebflow.core.ModelRoles.slotOfSessionId(Some(req.sessionId)).getOrElse(req.agentId)}: " +
+                        s"layer=${nebflow.core.ModelRoles.slotOfSessionId(Some(req.sessionId), nebflow.core.delegate.DelegateRegistry.rawModeOf(Some(req.sessionId))).getOrElse(req.agentId)}: " +
                         s"no explicit model; old behavior would select ${nebflow.core.SchemePolicy.legacySeedCandidate().getOrElse("none")}; " +
                         "dispatch rejected; configure a model explicitly"
                     )
@@ -949,7 +949,7 @@ object LlmInterface extends LlmRuntime:
                           if candidates.isEmpty then
                             logger.error(
                               s"MODEL-CHAIN-EMPTY session=${req.sessionId} agent=${req.agentId} " +
-                                s"layer=${nebflow.core.ModelRoles.slotOfSessionId(Some(req.sessionId)).getOrElse(req.agentId)}: " +
+                                s"layer=${nebflow.core.ModelRoles.slotOfSessionId(Some(req.sessionId), nebflow.core.delegate.DelegateRegistry.rawModeOf(Some(req.sessionId))).getOrElse(req.agentId)}: " +
                                 s"no explicit model; old behavior would select ${nebflow.core.SchemePolicy.legacySeedCandidate().getOrElse("none")}; " +
                                 "dispatch rejected; configure a model explicitly"
                             )
