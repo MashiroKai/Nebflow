@@ -1320,7 +1320,7 @@ private[project] trait NodeStarter:
 end NodeStarter
 
 private[project] object NodeStarter:
-  private[project] def bridgeName(sessionId: String): String = s"nodebridge-${sessionId.take(8)}"
+  private[project] def bridgeName(sessionId: String): String = s"nodebridge-$sessionId"
 
 
   /** Bounded grace for a deferred-cancelled session to stop itself (see [[NodeStarter.settleDeferredCancel]]). */
