@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "change": "retire-jev",
+  "mappings": [
+    {
+      "requirement": "RJV-REQ-001",
+      "scenario": "RJV-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/llm/decision/LlmAllocator.scala",
+        "src/main/scala/nebflow/core/SchemePolicy.scala",
+        "src/main/scala/nebflow/llm/decision/PluginAllocatorMachine.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/llm/decision/LlmAllocatorSpec.scala",
+          "name": "production candidate selection reads the small model and falls back when unconfigured"
+        },
+        {
+          "path": "src/test/scala/nebflow/llm/decision/LlmAllocatorSpec.scala",
+          "name": "log ① success: exactly ONE allocation decision line, carrying plugins and rationale"
+        }
+      ]
+    },
+    {
+      "requirement": "RJV-REQ-001",
+      "scenario": "RJV-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/llm/decision/LlmAllocator.scala",
+        "src/main/scala/nebflow/core/ModelRoles.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/llm/decision/PluginAllocatorFallbackSpec.scala",
+          "name": "leg bookkeeping: total failure → channel Down with the classified reason; legs show llm Down"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ModelRolesSpec.scala",
+          "name": "small LLM fallback logs WARN while configured selection does not"
+        }
+      ]
+    }
+  ]
+}

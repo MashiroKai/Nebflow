@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "change": "permission-timeout-narrow-gate",
+  "mappings": [
+    {
+      "requirement": "PTG-REQ-001",
+      "scenario": "PTG-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/CommandRisk.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/CommandRiskSpec.scala",
+          "name": "read-only commands carry no risk class"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/tools/CommandRiskSpec.scala",
+          "name": "substring look-alikes are not mistaken for risk primitives"
+        }
+      ]
+    },
+    {
+      "requirement": "PTG-REQ-001",
+      "scenario": "PTG-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AgentInstructionWriteGate.scala",
+        "scripts/check-permission-gate.mjs"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/AgentInstructionWriteGateSpec.scala",
+          "name": "trigger is target AND risk: a risk primitive on another file never gates"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/tools/AgentInstructionWriteGateSpec.scala",
+          "name": "delete, egress and credential risk classes gate only when the target is named"
+        }
+      ]
+    },
+    {
+      "requirement": "PTG-REQ-002",
+      "scenario": "PTG-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/agent/AgentCore.scala",
+        "scripts/check-permission-gate.mjs"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/PermissionWaitBoundedSpec.scala",
+          "name": "P1 超时腿: 到期以 TimedOut 结算、withdraw 恰好执行一次、deferred 不被完成"
+        },
+        {
+          "path": "src/test/scala/nebflow/agent/PermissionWaitBoundedSpec.scala",
+          "name": "P1 撤回收口: 超时撤回（CloseRequest）后迟到作答被拒——等待方不复活、卡已关"
+        }
+      ]
+    }
+  ]
+}

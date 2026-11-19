@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "change": "canvas-ask-restricted-edit",
+  "mappings": [
+    {
+      "requirement": "CAE-REQ-001",
+      "scenario": "CAE-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskEditReviews.scala",
+        "src/main/scala/nebflow/core/ask/AskSessions.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
+          "name": "applyChange writes the disk immediately and records the aggregate review"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
+          "name": "reject-all reverts the file to the review base"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
+          "name": "accept(hunk) marks that block reviewed without writing; the rest stays pending"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-001",
+      "scenario": "CAE-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskEditReviews.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
+          "name": "capture refuses other paths, relative paths, traversal and foreign sessions"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
+          "name": "capture refuses symlinks, binary content and missing files"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
+          "name": "accept and reject both refuse explicitly when the file changed during review; dismiss is the escape"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-002",
+      "scenario": "CAE-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskBashGuard.scala",
+        "src/main/scala/nebflow/core/ask/AskSessions.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskBashGuardSpec.scala",
+          "name": "validator refuses unknown and write commands"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskBashGuardSpec.scala",
+          "name": "validator is fail-closed on parse failures and limits"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskBashGuardSpec.scala",
+          "name": "executor runs read-only git subcommands with the pager pinned off"
+        }
+      ]
+    }
+  ]
+}

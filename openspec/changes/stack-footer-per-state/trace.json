@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "change": "stack-footer-per-state",
+  "mappings": [
+    {
+      "requirement": "SFP-REQ-001",
+      "scenario": "SFP-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/msgQuote.js",
+        "src/main/resources/web/js/popArtifacts.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/stackcard-quote.spec.mjs",
+          "name": "叠卡面零引用钮、拖动仍翻页且 footer 键跟随 front、行级引用钮照旧"
+        },
+        {
+          "path": "tests/stackcard-quote.spec.mjs",
+          "name": "单图消息：引用无张序、摘要无「第 N/M 张」、平铺面无叠卡 ⇒ footer 单张键隐身"
+        }
+      ]
+    }
+  ]
+}

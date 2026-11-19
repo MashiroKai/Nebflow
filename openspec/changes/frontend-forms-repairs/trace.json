@@ -15,16 +15,8 @@
           "name": "FRM-SCN-001 validation failure keeps the form open without sending anything"
         },
         {
-          "path": "tests/forms-ui-consumers.spec.mjs",
-          "name": "FRM-SCN-001 a JeV save that fails on the network says so and keeps the draft"
-        },
-        {
           "path": "tests/forms-provider-consumer.spec.mjs",
           "name": "FRM-SCN-001 actual provider form keeps values after failed confirmation and closes on retry"
-        },
-        {
-          "path": "tests/settings-imagegen-two-forms.spec.mjs",
-          "name": "B5. 既有 provider 重录：POST 409 → PUT 覆写 → 已配置态 + 表单关闭"
         }
       ]
     },
@@ -48,14 +40,6 @@
         {
           "path": "src/test/scala/nebflow/gateway/ws/WsUpdateConfigRequestIdSpec.scala",
           "name": "a saved config is acknowledged with the request id of that save"
-        },
-        {
-          "path": "tests/time-wheel-picker.spec.mjs",
-          "name": "L2 保存：provider 表单发出一条带 requestId 的 updateConfig 并等到回执才关闭"
-        },
-        {
-          "path": "tests/settings-key-reveal.spec.mjs",
-          "name": "T3 save a rotated key, reload the settings page, the field shows the stored value in plaintext"
         }
       ]
     },
@@ -87,11 +71,11 @@
       "tests": [
         {
           "path": "tests/forms-ui-consumers.spec.mjs",
-          "name": "FRM-SCN-002 mobile todo edit puts an empty project on the wire when the tag is cleared and sends nothing when it is untouched"
+          "name": "FRM-SCN-002 mobile todo edit submits a null tag when the tag is cleared and keeps it otherwise"
         },
         {
           "path": "tests/forms-ui-consumers.spec.mjs",
-          "name": "FRM-SCN-002 mobile todo edit submits a null tag when the tag is cleared and keeps it otherwise"
+          "name": "FRM-SCN-002 mobile todo edit puts an empty project on the wire when the tag is cleared and sends nothing when it is untouched"
         }
       ]
     },
@@ -127,10 +111,6 @@
         {
           "path": "tests/forms-ui-consumers.spec.mjs",
           "name": "FRM-SCN-009 mobile scheduled drawer keeps its draft across a refresh and rebuilds it for a reopened or different target"
-        },
-        {
-          "path": "tests/forms-ui-consumers.spec.mjs",
-          "name": "FRM-SCN-003 desktop scheduled-task draft survives a refresh and is rebuilt for another target"
         }
       ]
     },
@@ -138,41 +118,33 @@
       "requirement": "FRM-REQ-003",
       "scenario": "FRM-SCN-004",
       "implementation": [
-        "src/main/resources/web/js/sidebar/providerPanel.js",
-        "src/main/resources/web/js/sidebar/jevTestButton.js",
-        "src/main/scala/nebflow/gateway/PresenceRoutes.scala"
-      ],
-      "tests": [
         {
-          "path": "tests/forms-ui-consumers.spec.mjs",
-          "name": "FRM-SCN-004 JeV probe from the real provider form sends the adapter id, form endpoint/model and the unsaved key"
-        },
-        {
-          "path": "src/test/scala/nebflow/gateway/infra/JevProvidersAlignmentSpec.scala",
-          "name": "POST /api/jev/test: adapter id, form model and unsaved key reach the upstream; an instance name is refused"
-        },
-        {
-          "path": "tests/forms-provider-consumer.spec.mjs",
-          "name": "FRM-SCN-004 JeV probe sends current model and unsaved key"
-        },
-        {
-          "path": "tests/jev-imagegen-test-buttons.spec.mjs",
-          "name": "J5. 请求形状（表单覆写腿）"
+          "path": "src/main/resources/web/js/sidebar/jevTestButton.js",
+          "deleted": true
         }
-      ]
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The JeV probe implementation and its covering tests were deleted by the JeV retirement (jev-retire batch, 2026-11-16): src/main/resources/web/js/sidebar/jevTestButton.js, src/test/scala/nebflow/gateway/infra/JevProvidersAlignmentSpec.scala and tests/jev-imagegen-test-buttons.spec.mjs no longer exist, and /api/jev/test was retired with them. No synonym test survives; this requirement is superseded and needs the author to rule on dropping it.",
+        "steps": "Confirm the retirement in git history (jev-retire batch, 2026-11-16) and check that src/main/resources/web/js/sidebar/jevTestButton.js and tests/jev-imagegen-test-buttons.spec.mjs are absent from the tree.",
+        "expected": "The trace records the deletion rather than a fabricated passing test; FRM-REQ-003 (JeV probe) is void once the author rules the retirement supersedes it."
+      }
     },
     {
       "requirement": "FRM-REQ-003",
       "scenario": "FRM-SCN-013",
       "implementation": [
-        "src/main/resources/web/js/sidebar/jevTestButton.js"
-      ],
-      "tests": [
         {
-          "path": "tests/forms-ui-consumers.spec.mjs",
-          "name": "FRM-SCN-004 JeV probe without an adapter sends nothing and asks for one"
+          "path": "src/main/resources/web/js/sidebar/jevTestButton.js",
+          "deleted": true
         }
-      ]
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "Same retirement as FRM-SCN-004: the JeV probe button that refused a probe without a chosen adapter was deleted with the JeV domain, so no implementation or named test survives for this scenario.",
+        "steps": "Check that src/main/resources/web/js/sidebar/jevTestButton.js and its specs are absent from the tree after the jev-retire batch (2026-11-16).",
+        "expected": "The trace records the deletion instead of asserting a passing test; the scenario is void until the author rules on FRM-REQ-003."
+      }
     },
     {
       "requirement": "FRM-REQ-004",
@@ -225,10 +197,6 @@
         {
           "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
           "name": "PUT kernel chain clears only differing kernel pins; main, other-category and unknown-category pins are kept"
-        },
-        {
-          "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
-          "name": "PUT category chain clears the persisted pin only for that category's sessions"
         }
       ]
     },
@@ -240,10 +208,6 @@
         "src/main/scala/nebflow/core/ModelRoles.scala"
       ],
       "tests": [
-        {
-          "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
-          "name": "PUT hot-applies: class change retains matching pins, purges out-of-chain pins; fallback is not a member"
-        },
         {
           "path": "src/test/scala/nebflow/core/ModelRolesSpec.scala",
           "name": "pinOwnerSlot owns slot families and main conversations, not slotless background families or blank ids"
@@ -278,22 +242,6 @@
         {
           "path": "tests/forms-repair.test.mjs",
           "name": "FRM-SCN-007 active count excludes retained history and structural parent"
-        },
-        {
-          "path": "tests/bg-flow-chain-visibility.spec.mjs",
-          "name": "T3 延续态（live 行已离场）：主桶空 + 注册行镜像 → 快照恢复链行合成延续组头「链运行中」，徽标计数 > 0"
-        },
-        {
-          "path": "tests/bg-panel-row-dedup.spec.mjs",
-          "name": "H3 计数同源：面板头 total == 实际渲染行数（五种通路组合）"
-        },
-        {
-          "path": "tests/bg-panel-struct-parent.spec.mjs",
-          "name": "①②⑦ 活跃后代 ⇒ 结构父显示（注册行身份/零计数）；已完成后代保留；全终态父默认收起"
-        },
-        {
-          "path": "tests/delegate-ui-twolayer.spec.mjs",
-          "name": "T2 面板两级化（C2/R6）"
         }
       ]
     },
@@ -311,10 +259,6 @@
         {
           "path": "tests/forms-ui-consumers.spec.mjs",
           "name": "FRM-SCN-007 a running flow step counts as active while a pending step stays listed without counting"
-        },
-        {
-          "path": "tests/forms-repair.test.mjs",
-          "name": "FRM-SCN-007 active count excludes retained history and structural parent"
         }
       ]
     },

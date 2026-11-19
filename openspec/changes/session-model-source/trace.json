@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "change": "session-model-source",
+  "mappings": [
+    {
+      "requirement": "SMS-REQ-001",
+      "scenario": "SMS-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SharedResources.scala",
+        "src/main/scala/nebflow/gateway/WsConfigHandlers.scala",
+        "src/main/scala/nebflow/core/ModelRoles.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ModelRolesSpec.scala",
+          "name": "effectiveModel：槽未命中 ⇒ base 原样透传（不改写、不造候选；槽已配置腿依赖真实 dataRoot，运行时单点见头注）"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ModelRolesSpec.scala",
+          "name": "回归：组合序不变（槽链 > 派发钉链 > agent 自身链）；未归槽 ⇒ 钉链/agent 链原样"
+        }
+      ]
+    },
+    {
+      "requirement": "SMS-REQ-001",
+      "scenario": "SMS-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/llm/registry.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/llm/ReloadStaleSessionModelSpec.scala",
+          "name": "E2E: stale session override after reload gracefully skips to the new chain (#33)"
+        },
+        {
+          "path": "src/test/scala/nebflow/llm/ReloadStaleSessionModelSpec.scala",
+          "name": "request-time filter: stale override is skipped even without a reload (#33)"
+        }
+      ]
+    }
+  ]
+}
