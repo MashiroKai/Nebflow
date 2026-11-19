@@ -17,6 +17,12 @@
   （不因缺渲染器崩一枪）。
 - 语法不成立的 mermaid 块：保留原始源码文本（不空白、不吞），该块失败不拖垮整张图。
 - 负控开关 `SOCIAL_MD_NO_MERMAID=1`：跳过 mermaid pass（出图退回未渲染态）。
+- **脚本级闸**（`scripts/tests/social-md-shot-mermaid.test.mjs`，注册进既有
+  `script-tests` 腿 `node --test scripts/tests/*.test.mjs`，不新增 profile 面）：
+  直跑本脚本生成真实产物，断言截图前 2 个 mermaid 围栏已换成真 SVG、1 个普通
+  ```js 代码块未被误伤；并用 `SOCIAL_MD_NO_MERMAID=1` 做负控 —— 同一谓词在负控档
+  **必须为假**，且两档产物逐字节不同。配套：脚本新增 `SOCIAL_MD_RENDER_REPORT=<path>`
+  （仅在该 env 指向路径时写一份截图前 DOM 状态 JSON；生产默认不落新产物）。
 
 ## Why
 

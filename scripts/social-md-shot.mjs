@@ -22,6 +22,10 @@
 //    零新依赖、零第二份渲染路径。vendored 面找不到 mermaid ⇒ 与 marked 一样的
 //    响亮降级：stderr 记一行、mermaid 块退回源码文本，exit 0（不因缺渲染器崩一枪）。
 //    负控开关 SOCIAL_MD_NO_MERMAID=1：跳过 mermaid pass（出图应退回未渲染态）。
+//    脚本级闸 = scripts/tests/social-md-shot-mermaid.test.mjs（注册进既有 script-tests
+//    腿）：直跑本脚本 + 打开渲染报告（`SOCIAL_MD_RENDER_REPORT=<path>` ⇒ 写一份
+//    截图前 DOM 状态的 JSON，生产默认不落这个文件），断言 mermaid 围栏已换成 SVG、
+//    普通代码块未被误伤，并以 SOCIAL_MD_NO_MERMAID=1 做负控。
 //
 // 契约（与 social-html-shot.mjs 完全同款）：
 //   成功：写 outPng（fullPage 整页截图，尺寸由内容决定），stdout 一行
@@ -130,18 +134,19 @@ const tmpHtml = `${output.replace(/\.png$/i, '')}.auto.html`;
 writeFileSync(tmpHtml, pageHtml);
 
 /** mermaid 围栏 → SVG 的就地渲染（在页面里跑既有 vendored 库）。
- *  返回 undefined 表示本枪没跑 mermaid pass（禁用或缺库），调用方照常出图。 */
+ *  返回 `{ ran, reason? }`：`ran=false` 表示本枪没跑 mermaid pass（禁用 / 缺库 /
+ *  全局缺失），调用方照常出图，原因进渲染报告。 */
 async function renderMermaidFences(page) {
   if (process.env.SOCIAL_MD_NO_MERMAID === '1') {
     console.error('mermaid: skipped (SOCIAL_MD_NO_MERMAID=1)');
-    return;
+    return { ran: false, reason: 'disabled' };
   }
   const mermaidPath = findVendor(
     join('src', 'main', 'resources', 'web', 'vendor', 'mermaid', 'mermaid.min.js'),
     'NEBFLOW_MERMAID_JS');
   if (!mermaidPath) {
     console.error('mermaid.min.js not found (walked up from scripts/); mermaid fences stay as code text');
-    return;
+    return { ran: false, reason: 'vendor-not-found' };
   }
   await page.addScriptTag({ path: mermaidPath });
   // 页面面：与前端 js/mermaidRenderer.js 同一纪律 —— strict 消毒、无 htmlLabels、
@@ -194,16 +199,46 @@ async function renderMermaidFences(page) {
   if (stats.ok) {
     console.error(`mermaid: ${stats.rendered}/${stats.total} block(s) rendered` +
       (stats.failed ? `, ${stats.failed} failed (source kept)` : ''));
-  } else {
-    console.error('mermaid: ' + stats.reason);
+    return { ran: true };
   }
+  console.error('mermaid: ' + stats.reason);
+  return { ran: false, reason: String(stats.reason || 'unknown') };
+}
+
+/**
+ * 截图前的页面状态快照（机器可读，闸用）：mermaid 围栏是否已换成 SVG、
+ * 普通代码块是否留存。纯 DOM 读、零改写，不影响产物 PNG。
+ * 仅当 env `SOCIAL_MD_RENDER_REPORT` 指向一个路径时才写出（生产默认不落新产物）；
+ * 闸（scripts/tests/social-md-shot-mermaid.test.mjs）直跑本脚本时打开它。
+ */
+async function collectPageReport(page, pass) {
+  const dom = await page.evaluate(() => {
+    const left = Array.from(document.querySelectorAll('pre > code.language-mermaid'));
+    const figures = Array.from(document.querySelectorAll('.mermaid-figure'))
+      .filter((f) => f.querySelector('svg'));
+    const plain = Array.from(document.querySelectorAll('pre > code'))
+      .filter((c) => !c.classList.contains('language-mermaid'));
+    return {
+      mermaidBlocksTotal: left.length + figures.length,
+      mermaidRendered: figures.length,
+      mermaidRemaining: left.length,
+      plainCodeBlocks: plain.length,
+      plainCodeLanguages: plain.map((c) =>
+        Array.from(c.classList).find((n) => n.startsWith('language-')) || ''),
+    };
+  });
+  return { ...dom, mermaidRan: pass.ran, mermaidSkipReason: pass.reason ?? null };
 }
 
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   await page.goto(pathToFileURL(tmpHtml).href, { waitUntil: 'load', timeout: timeoutMs });
-  await renderMermaidFences(page);
+  const pass = await renderMermaidFences(page);
+  const reportPath = process.env.SOCIAL_MD_RENDER_REPORT;
+  if (reportPath) {
+    writeFileSync(reportPath, JSON.stringify(await collectPageReport(page, pass), null, 2) + '\n');
+  }
   await page.waitForTimeout(250); // 给晚到的布局/字体一拍稳定时间
   await page.screenshot({ path: output, fullPage: true, timeout: timeoutMs });
   console.log(`ok ${output}`);
