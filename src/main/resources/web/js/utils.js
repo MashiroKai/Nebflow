@@ -551,8 +551,8 @@ const RE_MATH_INLINE_PAREN = /(^|[^\\])\\\((\S(?:[^\n]*\S)?)\\\)/g;
 const RE_PRE_TAG = /<pre[^>]*>|<\/pre>/g;
 const RE_VOICE_RESTORE = /VOICEBLOCK(\d+)END/g;
 const RE_OUTPUT_RESTORE = /OUTPUTBLOCK(\d+)END/g;
-const RE_OUTPUT_PAIR = /<output>([\s\S]*?)<\/output>/g;
-const RE_OUTPUT_ANY_TAG = /<\/?output>/g;
+const RE_OUTPUT_PAIR = /<report>([\s\S]*?)<\/report>/g;
+const RE_OUTPUT_ANY_TAG = /<\/?report>/g;
 const RE_MENTION_RESTORE = /MENTIONBLOCK(\d+)END/g;
 const RE_TODO_RESTORE = /TODOBLOCK(\d+)END/g;
 // msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用形态
@@ -694,23 +694,23 @@ function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
     text = text.replace(RE_VOICE, '$1');
   }
   // output 块语法批（作者令 2026-10-31 16:13，16:16 修订标签式）：成对
-  // `<output>…</output>` 标签 = 用户可见内容。提取照 voice 块同构（占位符
+  // `<report>…</report>` 标签 = 用户可见内容。提取照 voice 块同构（占位符
   // 先行、marked 后恢复）；平衡闸照 ```human 围栏「整段等闭合」同构——全部
   // 成对闭合才提取，散标签（流式中间态/手误）转义为字面文本：marked 会把裸
-  // `<output>` 当 HTML 块把后续内容整段吞掉，必须先行掐断。无标签文本零改动
+  // `<report>` 当 HTML 块把后续内容整段吞掉，必须先行掐断。无标签文本零改动
   // （降级语义：未包裹的旧内容照常全显，不吞历史消息）。
   // output-block-gate 批（作者令「把 output 块相关的内容先关闭……」）：总闸
   // `outputBlock.enabled`（缺席 = 关）关闭 ⇒ 提取分支整体旁路，全部标签走
   // 散标签同一转义腿（字面现形，内容零丢失）＝全文直出，无掩码；与渠道剥离
   // 面同一键（scala OutputBlock.enabledFromConfig）。闸一开提取路径原样回归。
   const outputBlocks = [];
-  if (text.indexOf('<output>') !== -1 || text.indexOf('</output>') !== -1) {
+  if (text.indexOf('<report>') !== -1 || text.indexOf('</report>') !== -1) {
     // 围栏安全批（作者令：块形态就是为了避开 md 语法冲突，提取器不能反被
     // 围栏骗了）：扫描/提取都先过 _maskCodeFences 掩码——围栏内的字面标签
     // 是代码内容，不触发剥离，也吃不到转义（转义会腐蚀围栏体）。与渠道侧
     // 单一实现源（scala nebflow.social.outbound.OutputBlock）同一条规则。
     const masked = _maskCodeFences(text);
-    if (outputBlockEnabled() && _outputTagsBalancedOn(masked)) {
+    if (_outputTagsBalancedOn(masked)) {
       // 成对闭合 ⇒ 占位替换只落在围栏外的对上：掩码串上找对、按 1:1 偏移
       // 回原文 splice（尾→头，偏移保持有效；块序 = 出现序）。
       const pairs = [];
@@ -730,7 +730,7 @@ function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
       }
     } else {
       // 散标签（流式中间态/手误）只在围栏外转义为字面文本：marked 会把裸
-      // `<output>` 当 HTML 块把后续内容整段吞掉，必须先行掐断。
+      // `<report>` 当 HTML 块把后续内容整段吞掉，必须先行掐断。
       const tags = [];
       RE_OUTPUT_ANY_TAG.lastIndex = 0;
       let tm;
@@ -740,7 +740,7 @@ function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
       for (let i = tags.length - 1; i >= 0; i--) {
         const s = tags[i];
         text =
-          text.slice(0, s.start) + (s.tag === '<output>' ? '&lt;output&gt;' : '&lt;/output&gt;') + text.slice(s.end);
+          text.slice(0, s.start) + (s.tag === '<report>' ? '&lt;report&gt;' : '&lt;/report&gt;') + text.slice(s.end);
       }
     }
   }
@@ -757,14 +757,14 @@ function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
   return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer, !stream);
 }
 
-// ── <output> user-visible block (output 块语法批 2026-10-31) ────────────────
+// ── <report> user-visible block (output 块语法批 2026-10-31) ────────────────
 // 设计稿：docs/design/20261030_human-readable-presentation.zh-CN.md §11。
 // 单管线透明面：标签不现形、内容照 markdown 渲染——canvas md viewer / wiki
 // docs / flow 卡 / report 卡四面经此 pass 读得了 output 文档；聊天气泡面的
 // 「只显块内容 + 角标展开」摘除语义在 chat.js/outputTag.js（不在管线内做，
 // 那里需要源文本级的摘除与原文回填）。
 //
-/** Source-level gate: true only when the text has ≥1 `<output>...</output>` pair
+/** Source-level gate: true only when the text has ≥1 `<report>...</report>` pair
  *  AND every tag is properly paired in order (no stray close, no nesting). The
  *  fast indexOf pre-check keeps the per-frame streaming hot path at one cheap
  *  scan for the overwhelmingly common no-tag case (same shape as
@@ -777,13 +777,13 @@ function _outputTagsBalanced(text) {
 /** The balance walk on an ALREADY-masked text (fence regions are NUL runs, so
  *  their literal tags are invisible to the scan). */
 function _outputTagsBalancedOn(masked) {
-  if (masked.indexOf('<output>') === -1) return false;
+  if (masked.indexOf('<report>') === -1) return false;
   let open = false;
   let saw = false;
-  const re = /<\/?output>/g;
+  const re = /<\/?report>/g;
   let m;
   while ((m = re.exec(masked)) !== null) {
-    if (m[0] === '<output>') {
+    if (m[0] === '<report>') {
       if (open) return false; // nesting = not the agreed shape
       open = true;
       saw = true;
@@ -797,22 +797,27 @@ function _outputTagsBalancedOn(masked) {
 
 /** 同长掩码：``` 围栏区逐字符替换为 NUL（换行保留 ⇒ 偏移与原文 1:1）。围栏
  *  安全批（作者令原文：块形态当初就是为了避开 md 语法冲突，提取器不能反被
- *  围栏骗了）：围栏内字面 <output> 是内容不是结构。开栏 = trim 后以 ```
+ *  围栏骗了）：围栏内字面 <report> 是内容不是结构。开栏 = trim 后以 ```
  *  开头的行；关栏 = trim 后仅 ≥3 个反引号的行（CommonMark；同 ```human 闸的
  *  读法）；未闭合围栏跑到底。与渠道侧单一实现源（scala
  *  nebflow.social.outbound.OutputBlock.maskFences）同一条规则。 */
 function _maskCodeFences(text) {
-  if (text.indexOf('```') === -1) return text;
   const lines = text.split('\n');
-  let inFence = false;
+  let fence = 0;
   for (let i = 0; i < lines.length; i++) {
-    const t = lines[i].trim();
-    if (inFence) {
-      lines[i] = '\u0000'.repeat(lines[i].length);
-      if (t.length >= 3 && /^`+$/.test(t)) inFence = false;
-    } else if (t.startsWith('```')) {
-      lines[i] = '\u0000'.repeat(lines[i].length);
-      inFence = true;
+    const line = lines[i];
+    const t = line.trim();
+    const ticks = (t.match(/^`+/) || [''])[0].length;
+    if (fence) {
+      lines[i] = '\u0000'.repeat(line.length);
+      if (ticks >= fence && !t.slice(ticks).trim()) fence = 0;
+    } else if (t.startsWith('>')) {
+      lines[i] = '\u0000'.repeat(line.length);
+    } else if (ticks >= 3) {
+      lines[i] = '\u0000'.repeat(line.length);
+      fence = ticks;
+    } else {
+      lines[i] = line.replace(/(`+)([\s\S]*?)\1/g, m => '\u0000'.repeat(m.length));
     }
   }
   return lines.join('\n');
@@ -825,7 +830,6 @@ function _maskCodeFences(text) {
  *  applyOutputFace / defer-output 标记整条链随之熄灭，聊天气泡回全文渲染；
  *  与管线提取面（renderMarkdownWithMath）同一开关。 */
 export function extractOutputInner(text) {
-  if (!outputBlockEnabled()) return null; // 缺席 = 关（默认 OFF，作者令）
   const masked = _maskCodeFences(text);
   if (!_outputTagsBalancedOn(masked)) return null;
   const parts = [];

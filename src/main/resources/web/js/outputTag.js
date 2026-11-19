@@ -27,7 +27,7 @@ import { renderMarkdownWithMath, escapeHtml, extractOutputInner } from './utils.
 
 /** True when `text` carries ≥1 balanced `<output>...</output>` pair. */
 export function hasOutputBlock(text) {
-  return extractOutputInner(text) !== null;
+  return typeof text === 'string' && text.length > 0;
 }
 
 /** Normal-face render: tags invisible, only the wrapped content visible.
@@ -37,10 +37,10 @@ export function hasOutputBlock(text) {
  *  face, and the inner content is rendered into it. */
 export function applyOutputFace(bubble, fullText) {
   const inner = extractOutputInner(fullText);
-  if (inner === null) return false;
   bubble.dataset.nfOutput = '1';
   bubble._nfOutputFull = fullText;
-  bubble.innerHTML = renderMarkdownWithMath(inner);
+  bubble.innerHTML = inner === null ? '' : renderMarkdownWithMath(inner);
+  bubble.hidden = inner === null || !inner.trim();
   return true;
 }
 
@@ -51,11 +51,13 @@ export function applyOutputFace(bubble, fullText) {
 export function setOutputExpanded(bubble, expanded) {
   if (!bubble || !bubble._nfOutputFull) return;
   if (expanded) {
+    bubble.hidden = false;
     bubble.classList.add('nf-output-raw');
     bubble.innerHTML = '<pre class="nf-output-raw-pre">' + escapeHtml(bubble._nfOutputFull) + '</pre>';
   } else {
     bubble.classList.remove('nf-output-raw');
     const inner = extractOutputInner(bubble._nfOutputFull);
-    bubble.innerHTML = renderMarkdownWithMath(inner !== null ? inner : bubble._nfOutputFull);
+    bubble.hidden = inner === null || !inner.trim();
+    bubble.innerHTML = inner === null ? '' : renderMarkdownWithMath(inner);
   }
 }

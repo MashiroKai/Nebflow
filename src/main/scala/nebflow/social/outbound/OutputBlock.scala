@@ -59,11 +59,10 @@ object OutputBlock:
    * behavior: full raw text ships, segment-by-segment — the strip, the HOLD
    * and the no-full-text-fallback semantics are all bypassed together).
    */
-  def extractGated(text: String, gateOn: Boolean): Verdict =
-    if gateOn then extract(text) else Extracted(text)
+  def extractGated(text: String, gateOn: Boolean): Verdict = extract(text)
 
-  private val OpenTag = "<output>"
-  private val TagRe   = "</?output>".r
+  private val OpenTag = "<report>"
+  private val TagRe   = "</?report>".r
 
   /** The fence-mask char: NUL — never occurs in engine text, never matches the
     * tag regex; the mask preserves offsets 1:1 so pair bodies slice off the
@@ -146,26 +145,36 @@ object OutputBlock:
    * as-is.
    */
   private def maskFences(text: String): String =
-    if !text.contains("```") then text
-    else
-      val sb      = new StringBuilder(text.length)
-      var inFence = false
-      val lines   = text.split("\n", -1)
-      val n       = lines.length
-      var i       = 0
-      while i < n do
-        val line = lines(i)
-        val t    = line.trim
-        if inFence then
-          appendMask(sb, line)
-          if t.length >= 3 && t.forall(_ == '`') then inFence = false
-        else if t.startsWith("```") then
-          appendMask(sb, line)
-          inFence = true
-        else sb.append(line)
-        if i < n - 1 then sb.append('\n')
-        i += 1
-      sb.toString
+    val sb = new StringBuilder(text.length)
+    var fence = 0
+    val lines = text.split("\n", -1)
+    for (line, index) <- lines.zipWithIndex do
+      val t = line.trim
+      val ticks = t.takeWhile(_ == '`').length
+      if fence > 0 then
+        appendMask(sb, line)
+        if ticks >= fence && t.drop(ticks).trim.isEmpty then fence = 0
+      else if t.startsWith(">") then appendMask(sb, line)
+      else if ticks >= 3 then
+        appendMask(sb, line)
+        fence = ticks
+      else
+        var i = 0
+        while i < line.length do
+          if line(i) == '`' then
+            val start = i
+            while i < line.length && line(i) == '`' do i += 1
+            val delimiter = line.substring(start, i)
+            val end = line.indexOf(delimiter, i)
+            if end >= 0 then
+              appendMask(sb, line.substring(start, end + delimiter.length))
+              i = end + delimiter.length
+            else sb.append(delimiter)
+          else
+            sb.append(line(i))
+            i += 1
+      if index < lines.length - 1 then sb.append('\n')
+    sb.toString
 
   /** Append `line` char-for-char masked (length preserved). */
   private def appendMask(sb: StringBuilder, line: String): Unit =

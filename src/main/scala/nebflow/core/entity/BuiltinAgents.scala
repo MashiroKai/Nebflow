@@ -239,14 +239,7 @@ object BuiltinAgents:
 
   /** 渲染后的 Nebula 提示词（自报家门 = 用户起的显示名）。 */
   private def NebulaPrompt: String =
-    val rendered = NebulaPromptTemplate.replace("{{agent_display_name}}", displayNameForRoot)
-    if nebflow.shared.OutputBlockGate.enabled() then rendered
-    else
-      // output 块总闸·提示词面（prompt-face 补批 2026-11-01，作者令「把 output
-      // 块相关的内容先关闭」）：Voice 节 output 块 bullet 整行剥除——闸关时根
-      // 提示词零 output 块指令（与 order-375 段、delegate brief、节点脚注、
-      // subagent 包装四处共闸，同一键 `outputBlock.enabled` 同一读数）。
-      rendered.replace(s"$NebulaOutputVoiceBullet\n", "")
+    NebulaPromptTemplate.replace("{{agent_display_name}}", displayNameForRoot)
 
   private val DispatcherPromptTemplate: String = PromptCatalog.Roles.DispatcherPromptTemplate
 

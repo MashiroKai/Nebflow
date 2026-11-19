@@ -17,7 +17,7 @@ import { voiceEnabled } from './featureFlags.js';
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, extractOutputInner, escapeHtml, appendTextWithMentions, appendUserTextWithFences, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 // schedule-created-card 批（2026-11-05）：Schedule 工具创建/编辑成功后落卡片行。
 // 单一调用点 = 本文件 renderTool + persistence.js 两条历史重放腿（同一个 builder）。
@@ -838,7 +838,9 @@ export function appendAiText(text, mark) {
         if (!target.bubble.isConnected) return;
         const stats = _aiStreamStats;
         const t0 = stats ? performance.now() : 0;
-        renderStreamMarkdown(target.bubble, target.bubble._nfText || '', true,
+        const visible = extractOutputInner(target.bubble._nfText || '') || '';
+        target.bubble.hidden = !visible;
+        renderStreamMarkdown(target.bubble, visible, true,
           imgKeepFor(target.bubble), false, target.mark || null);
         // 流式光标：与思考 / agent / ask 三条腿同源；终态收口渲染整棵换掉它
         // （finalizeStreamingFaces 另有 ·cursor 扫尾兜底）。
@@ -1002,7 +1004,9 @@ export function appendAgentText(agentId, text) {
       if (!target.bubble.isConnected) return;
       // stream:true — 这是逐帧重渲的流式快照：图围栏保持代码块，消息收尾腿才出图
       // （rich-render 批判据，见 utils.js renderMarkdownWithMath 的 opts.stream）。
-      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false, stream: true }) + '<span class="cursor"></span>';
+      const visible = extractOutputInner(target.bubble._nfText || '') || '';
+      target.bubble.hidden = !visible;
+      target.bubble.innerHTML = renderMarkdownWithMath(visible, true, { cache: false, stream: true }) + '<span class="cursor"></span>';
       rafScrollChat(target);
     });
 }
@@ -1014,7 +1018,7 @@ export function finishAgent(agentId) {
     if (!a.text || a.text.trim() === '') {
       if (a.row) a.row.remove();
     } else {
-      a.bubble.innerHTML = renderMarkdownWithMath(a.text);
+      applyOutputFace(a.bubble, a.text);
       // v1.2 unified footer (2026-09-06 补齐批): agent rows get time + copy.
       if (a.row) a.row.appendChild(createMsgFooterBadge(Date.now(), a.text));
       // 跟随钉底（2026-10-08，与 finishAi 同族同修）：agent 流式帧经

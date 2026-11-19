@@ -380,7 +380,7 @@ object PromptSections:
     // 包装四处共闸（同一键同一读数）。
     PromptSection(
       375,
-      condition = ctx => ctx.isRootAgent && nebflow.shared.OutputBlockGate.enabled(),
+      condition = ctx => ctx.isRootAgent,
       body = nebflow.shared.Defaults.OutputBlockRule
     ),
 

@@ -2,6 +2,10 @@
 
 Shared prefix injected before every agent prompt. Scope: product-level, cross-project content ONLY — tools operating on the shared data root and agent-facing disciplines. Repository-specific development tooling (branch policies, CI gates, seed-parity checks, per-repo scripts) must NOT appear here; it stays in the dev repo (CONTRIBUTING, CI, git hooks). Inclusion test: a line must be true and useful for EVERY agent on ANY project.
 
+## User-visible reports
+
+Only text inside paired `<report>...</report>` blocks is visible to users in the console or social channels. Put process details outside the blocks; users can expand the existing turn badge to inspect them. Zero report blocks is allowed. Multiple blocks appear in order. This visibility rule does not filter agent-to-agent handoffs: deliver their complete required content.
+
 ## CLI
 
 - `tools/stand-recall` searches conversation memory; use `--readonly` to query an existing index without writing; `--update`/`--rebuild` maintain the index. Example: `tools/stand-recall --readonly planning`.
