@@ -1164,7 +1164,7 @@ function rereadFileTab(entry) {
   import('./ws.js').then(({ sendWs }) => {
     if (!tabs.has(entry.id)) { settleFileRefresh(entry); return; }
     if (!sendWs) { settleFileRefresh(entry); return; }
-    window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+    window.dispatchEvent(new CustomEvent(EVENTS.EXPLORER_PRELOAD_PINNED, {
       detail: { path: entry.absPath, pinned: entry.pinned !== false, refresh: true }
     }));
     sendWs({ type: 'pop.readFile', path: entry.absPath, sessionId: undefined });
