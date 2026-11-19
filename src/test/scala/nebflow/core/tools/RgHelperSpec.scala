@@ -128,7 +128,8 @@ class RgHelperSpec extends FunSuite:
     finally os.remove.all(tmp)
   }
 
-  test("real host, launchd-minimal PATH: resolution lands on /opt/homebrew/bin/rg when present") {
+  test("real host, launchd-minimal PATH: resolution lands on /opt/homebrew/bin/rg when present".tag(munit.Tag("host-smoke"))) {
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 to run host-dependent smoke")
     val probeDirs = List("/opt/homebrew/bin", "/usr/local/bin", "/snap/bin")
     val expected = probeDirs.map(d => java.nio.file.Path.of(d, rgName)).find(java.nio.file.Files.isRegularFile(_))
     assume(
