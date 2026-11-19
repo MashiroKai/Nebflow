@@ -184,6 +184,13 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
     val oldRoot = PathUtil.dataRoot
     val root = os.temp.dir(prefix = "unconfigured-model-")
     PathUtil.setDataRoot(root)
+    nebflow.core.delegate.DelegateRegistry.put(
+      nebflow.core.delegate.DelegateRegistry.Record(
+        id = "delegate-unconfigured", executor = "nebflow", cwd = root.toString,
+        project = None, taskId = None, parentSessionId = "parent", title = "unconfigured model",
+        createdAt = 0L, mode = Some("subagent")
+      )
+    )
     os.write(
       root / Branding.configFileName,
       """{"llm":{"providers":{"p":{"baseUrl":"http://127.0.0.1:1","apiKey":"fixture","protocol":"openai","models":[{"id":"legacy","contextWindow":8192}]}}}}"""
