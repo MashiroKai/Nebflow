@@ -8,6 +8,14 @@
 //   本闸**直跑该脚本生成真实产物 PNG**（正常档 + 负控档各一张），并读它的截图前
 //   渲染报告（env `SOCIAL_MD_RENDER_REPORT=<path>` ⇒ 该脚本写一份 DOM 状态 JSON）。
 //
+// 🔴 CI 可用性纪律（作者令 2026-11-19）：本闸真跑 Chromium，而 CI 的 static 腿是
+//    **全新检出、可能没装浏览器** ⇒ 缺件时必须**显式 `t.skip('<原因>')`**（跳过可见），
+//    绝不静默 exit 0 掩盖。探测三件：① playwright 包在；② `chromium.executablePath()`
+//    指向的文件在；③ 真拉一次 chromium 成功（覆盖「装了但起不来」）。任一缺 ⇒ SKIP。
+//    本机（开发机）为何能真跑：仓根 `node_modules/playwright`（devDependency，`npm ci`
+//    装上）且已 `npx playwright install chromium`，浏览器落在
+//    `~/Library/Caches/ms-playwright/chromium-*/…`（macOS）。
+//
 // 判据（顺序即优先级：行为级在前，报告面在后）：
 //   B1 正常档 exit 0、产物是有效 PNG；
 //   B2 负控档（SOCIAL_MD_NO_MERMAID=1）exit 0（降级不崩）、产物是有效 PNG；
@@ -22,12 +30,12 @@
 //
 // 运行：node --test scripts/tests/social-md-shot-mermaid.test.mjs（由既有
 //  script-tests 腿 `node --test scripts/tests/*.test.mjs` 自动纳入，不新增 profile 面）。
-// 前置：仓根 node_modules/playwright + 已装 chromium（与 tests/*.spec.mjs 同款依赖）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +43,41 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const SCRIPT = join(ROOT, 'scripts', 'social-md-shot.mjs');
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/**
+ * 浏览器级前置探测。缺件 ⇒ 返回 `{ ok:false, reason }`，调用方 `t.skip(reason)`
+ * （跳过在测试报告里可见，退出码 0；不是静默 exit 0，也不是假装通过）。
+ * 探测独立于被测脚本（直接起 chromium），所以脚本级回归仍会在真跑档被抓。
+ */
+async function probeBrowser() {
+  const pkgDir = join(ROOT, 'node_modules', 'playwright');
+  if (!existsSync(pkgDir)) {
+    return { ok: false, reason: `playwright 未安装（缺 ${pkgDir}；先 npm ci）` };
+  }
+  /** @type {any} */
+  let chromium;
+  try {
+    chromium = createRequire(join(ROOT, 'package.json'))('playwright').chromium;
+  } catch (e) {
+    return { ok: false, reason: 'playwright 不可加载：' + (e && e.message) };
+  }
+  let exe = '';
+  try {
+    exe = chromium.executablePath();
+  } catch (e) {
+    return { ok: false, reason: 'chromium.executablePath() 失败：' + (e && e.message) };
+  }
+  if (!exe || !existsSync(exe)) {
+    return { ok: false, reason: `chromium 未安装（期望 ${exe}；跑 npx playwright install chromium）` };
+  }
+  try {
+    const browser = await chromium.launch({ headless: true });
+    await browser.close();
+  } catch (e) {
+    return { ok: false, reason: 'chromium 无法启动：' + (e && e.message) };
+  }
+  return { ok: true, exe };
+}
 
 // 夹具与验收夹具同形：flowchart + sequenceDiagram + 一个普通 js 代码块 + 正文。
 const FIXTURE_MD = [
@@ -96,7 +139,15 @@ const readReport = (path) => JSON.parse(readFileSync(path, 'utf8'));
 const mermaidFullyRendered = (rep) =>
   rep.mermaidRan === true && rep.mermaidRemaining === 0 && rep.mermaidRendered === 2;
 
-test('md 长图腿：mermaid 围栏换成 SVG、普通代码块未误伤（含负控）', () => {
+test('md 长图腿：mermaid 围栏换成 SVG、普通代码块未误伤（含负控）', async (t) => {
+  const probe = await probeBrowser();
+  if (!probe.ok) {
+    // 显式 SKIP：跳过可见、退出码 0，但不假装通过（绝不静默 exit 0 掩盖）。
+    t.skip(`本机缺浏览器级前置，未跑真实产物闸：${probe.reason}`);
+    return;
+  }
+  console.log(`NOTE  浏览器前置就绪（${probe.exe}），本闸真跑产品腿`);
+
   const dir = mkdtempSync(join(tmpdir(), 'social-md-shot-mermaid-'));
   try {
     // ── 正常档 ──

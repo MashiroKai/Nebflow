@@ -23,6 +23,11 @@
   ```js 代码块未被误伤；并用 `SOCIAL_MD_NO_MERMAID=1` 做负控 —— 同一谓词在负控档
   **必须为假**，且两档产物逐字节不同。配套：脚本新增 `SOCIAL_MD_RENDER_REPORT=<path>`
   （仅在该 env 指向路径时写一份截图前 DOM 状态 JSON；生产默认不落新产物）。
+  **CI 可用性**：本闸真跑 Chromium，而 CI 的 static 腿是全新检出、可能没装浏览器。
+  故闸先做浏览器级前置探测（playwright 包在 / `chromium.executablePath()` 指向的文件在 /
+  真拉一次成功），缺件时**显式 `t.skip('<原因>')`**（跳过在报告里可见、退出码 0），
+  **绝不静默 exit 0 掩盖**；前置就绪时才真跑。本机（开发机）有
+  `node_modules/playwright` + 已装 chromium（`~/Library/Caches/ms-playwright/`）故真跑。
 
 ## Why
 
