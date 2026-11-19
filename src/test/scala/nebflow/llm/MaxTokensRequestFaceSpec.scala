@@ -320,9 +320,9 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
     }
   }
 
-  // ── P6: clamp still bounds legacy budgets; effort class preserved ───────
-
-  test("P6: legacy budget 100000 -> clamped to 32768, OpenAI reasoning_effort stays 'high'") {
+  // P6: Anthropic clamps legacy budgets; OpenAI omits effort without an endpoint/model allowlist.
+  // The explicit allowlist superseded budget-to-effort conversion (a11508289, bf6941b57, a85c0a144).
+  test("P6: legacy budget is clamped for Anthropic and omitted from unallowlisted OpenAI effort") {
     capture(
       "anthropic/thinking-legacy-huge",
       LlmProtocol.Anthropic,
@@ -351,8 +351,8 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
         openAiBodies.foreach { b =>
           assertEquals(
             field(b, "reasoning_effort").flatMap(_.asString),
-            Some("high"),
-            s"a clamped 32768 budget must still read as the 'high' effort class (8192 read as 'medium'): $b"
+            None,
+            s"legacy budget must not infer effort for an unallowlisted endpoint: $b"
           )
         }
       }

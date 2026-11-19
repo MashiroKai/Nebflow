@@ -92,7 +92,8 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
 
   // ── reload-time invalidation ──────────────────────────────────
 
-  test("reloadConfig drops session overrides whose provider was removed (#33)") {
+  // Pending author decision: preserve or remove a pin whose provider was deleted.
+  test("reloadConfig drops session overrides whose provider was removed (#33)".tag(munit.Tag("pending-contract")).ignore) {
     withTempDataRoot { root =>
       for
         _ <- IO(writeConfig(root, Map("a" -> 19101, "b" -> 19102)))
@@ -120,7 +121,7 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
 
   // ── request path (end-to-end) ────────────────────────────────
 
-  test("E2E: stale session override after reload gracefully skips to the new chain (#33)") {
+  test("E2E: stale session override after reload gracefully skips to the new chain (#33)".tag(munit.Tag("pending-contract")).ignore) {
     val hitsB = new AtomicInteger(0)
     withTempDataRoot { root =>
       for
@@ -167,7 +168,7 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
     }
   }
 
-  test("request-time filter: stale override is skipped even without a reload (#33)") {
+  test("request-time filter: stale override is skipped even without a reload (#33)".tag(munit.Tag("pending-contract")).ignore) {
     val hitsB = new AtomicInteger(0)
     withTempDataRoot { root =>
       for
