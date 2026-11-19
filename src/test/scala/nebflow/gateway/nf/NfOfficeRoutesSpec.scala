@@ -170,7 +170,7 @@ class NfOfficeRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("cache key follows source mtime (source edit → re-convert)") {
+  test("timestamp-only change reuses cached conversion") {
     withTempCache { cache =>
       withSeedFile("deck.pptx", "PK".getBytes) { (f, ticket) =>
         val ledger = Ledger()
@@ -180,8 +180,8 @@ class NfOfficeRoutesSpec extends CatsEffectSuite:
         val p = f.toFile
         p.setLastModified(p.lastModified() + 5000)
         val r2 = get(rt, s"/api/nf-office?path=${f}&ticket=$ticket").get
-        assertEquals(headerOf(r2, "X-Nf-Office-Cache"), "miss")
-        assertEquals(ledger.count, 2)
+        assertEquals(headerOf(r2, "X-Nf-Office-Cache"), "hit")
+        assertEquals(ledger.count, 1)
       }
     }
   }
@@ -242,17 +242,23 @@ class NfOfficeRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("cacheKey follows mtime/size changes") {
+  test("cacheKey follows bytes and converter legs, not path or mtime") {
     withTempDir { dir =>
       val f = os.Path(dir) / "k.pptx"
+      val copy = os.Path(dir) / "copy.pptx"
       os.write(f, "v1")
+      os.write(copy, "v1")
+      val originalTime = Files.getLastModifiedTime(f.toNIO)
       val k1 = NfOfficeRoutes.cacheKey(f, "soffice")
-      os.write.append(f, "more bytes")
-      val f2 = f.toIO
-      f2.setLastModified(f2.lastModified() + 5000)
+      assertEquals(NfOfficeRoutes.cacheKey(copy, "soffice"), k1)
+      Files.setLastModifiedTime(f.toNIO, java.nio.file.attribute.FileTime.fromMillis(originalTime.toMillis + 5000))
+      assertEquals(NfOfficeRoutes.cacheKey(f, "soffice"), k1, "mtime alone must not change the key")
+      assert(NfOfficeRoutes.cacheKey(f, "other") != k1, "converter legs must change the key")
+      os.write.over(f, "v2")
+      Files.setLastModifiedTime(f.toNIO, originalTime)
       val k2 = NfOfficeRoutes.cacheKey(f, "soffice")
-      assert(k1 != k2, "content change must move the cache key")
-      assertEquals(NfOfficeRoutes.cacheKey(f, "soffice"), k2, "stable within unchanged source")
+      assert(k1 != k2, "same-size replacement with restored mtime must change the key")
+      assertEquals(NfOfficeRoutes.cacheKey(f, "soffice"), k2)
     }
   }
 
