@@ -53,6 +53,14 @@ export const CHECKS = [
   // 既有 mobile-canvas-toolbar-layout 长期红着没人当闸 ⇒ 这类缺陷在闸下不可见。
   { name: 'canvas-controls-dock-clearance', profiles: ['frontend'], timeoutMs: 180_000,
     argv: [process.execPath, 'tests/canvas-controls-dock-clearance.spec.mjs'] },
+  // canvas 底部控件带**全族逐钮命中**闸 + 负控（作者令 2026-11-19）：11-18 把左下两钮 /
+  // 中页点条 / 右气泡钮收进底锚后，11-19 新增的审阅全量动作带 `.nf-dv-allbar` 漏在带外
+  // ——流内末件贴视口底 ⇒ 整条落进 #mobile-dock，看不见也点不到。上面那道闸只跑文档画布
+  // 页（不含审阅面），且它是「逐件过判据」不是「族清单覆盖率」。本闸把族清单（唯一真源 =
+  // css/mobileLayer.css 的同名注释块）编成 BAND_FAMILY，逐钮取中心点 elementFromPoint，
+  // 并带**负控**（撤掉本次修复 ⇒ 同一判据必红，否则判据对缺陷不敏感 = 闸自己红）。
+  { name: 'canvas-band-hittability', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/canvas-band-hittability.spec.mjs'] },
   { name: 'mobile-decision-preview-occlusion', profiles: ['frontend'], timeoutMs: 120_000,
     argv: [process.execPath, 'tests/mobile-decision-preview-occlusion.spec.mjs'] },
   // 滚域末端净空单源批（2026-11-18 作者令「滚到底底部内容必须完整显示」）：17 个
