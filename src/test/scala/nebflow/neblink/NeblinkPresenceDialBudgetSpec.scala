@@ -602,21 +602,35 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
     val epA = blackholeEndpoint(port, 2)
     val epB = blackholeEndpoint(port, 3)
     val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val started = new java.util.concurrent.CountDownLatch(2)
+    val gate = new java.util.concurrent.CountDownLatch(1)
     val hook: (String, Int, Long) => Unit = (host, _, budget) =>
       events.add(s"start:$host:$budget")
+      started.countDown()
+      if !gate.await(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("T1 fixture gate timed out")
       events.add(s"timeout:$host")
       throw new java.util.concurrent.TimeoutException("fixture timeout")
     withStack(port, dialHook = hook) { (_, ps) =>
       val p = peer("axis", List(epA, epB))
-      for
-        _ <- ps.connect(p)
+      (for
+        fiber <- ps.connect(p).start
+        _ <- IO.blocking {
+          assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS), "both dial legs must start")
+          events.add("release")
+          gate.countDown()
+        }
+        _ <- fiber.joinWithNever
         r1 <- IO(roundOf(ps, "axis"))
-      yield (r1, epA, epB)
+      yield (r1, epA, epB)).guarantee(IO(gate.countDown()))
     }.map { case (r1, epA, epB) =>
       import scala.jdk.CollectionConverters.*
       val observed = events.iterator().asScala.toList
       assertEquals(observed.count(_.startsWith("start:")), 2)
       assertEquals(observed.count(_.startsWith("timeout:")), 2)
+      val releaseIndex = observed.indexOf("release")
+      assertEquals(releaseIndex, 2, "both starts precede release")
+      assert(observed.drop(releaseIndex + 1).forall(_.startsWith("timeout:")), "results follow release")
       assertEquals(
         r1.failures.map(_._2),
         List(DialFailureClass.Timeout, DialFailureClass.Timeout),
