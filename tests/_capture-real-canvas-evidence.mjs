@@ -256,6 +256,24 @@ async function main() {
       W.prototype = Orig.prototype; W.CONNECTING = 0; W.OPEN = 1; W.CLOSING = 2; W.CLOSED = 3; window.WebSocket = W;
     });
     const page = await ctx.newPage();
+    // 负控腿（`STAND_KNOCKOUT_RELOAD=1`）：同装置、真点按，只把本批修复的 force 支路
+    // 换成等价「撤掉」写法 —— 用来拍「接受后页签仍是被接受前快照」的**修复前**帧。
+    if (process.env.STAND_KNOCKOUT_RELOAD === '1') {
+      const cand = [join(REPO, 'target', 'scala-3.5.2', 'classes', 'web', 'js', 'canvas.js'),
+        join(REPO, 'src', 'main', 'resources', 'web', 'js', 'canvas.js')];
+      const canvasJs = cand.find((p) => existsSync(p));
+      await page.route('**/js/canvas.js', (route) => {
+        let src = readFileSync(canvasJs, 'utf8');
+        // 两处一起复原成修复前形态：①严格相等找签（realpath 与开签字符串不同 ⇒ 静默不刷）；
+        // ②force 支路撤掉。两条同时在场才是真机上那个「接受后仍是被接受前快照」的态。
+        const k1 = '  const entry = findFileTab(absPath);';
+        if (src.includes(k1)) src = src.replace(k1, '  let entry = null; for (const e of tabs.values()) if (e.absPath === absPath) entry = e;');
+        const k2 = '  if (opts.force === true) forceRereadFileTab(entry);';
+        if (src.includes(k2)) src = src.replace(k2, '  if (false) forceRereadFileTab(entry);');
+        route.fulfill({ status: 200, contentType: 'application/javascript', body: src });
+      });
+      log('[knockout] force 支路已中和（修复前态）', canvasJs);
+    }
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 200)));
     page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text().slice(0, 200)); });
