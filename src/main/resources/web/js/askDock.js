@@ -232,12 +232,22 @@ let noteWriteSequence = 0;
 let noteStatus = '';
 
 // ── 每文档会话持久（2026-11-01 作者令批；头注「文档会话持久批」）────────────
-// 键形 = key('ask:sess:<sid>')（branding 命名空间同源）；值 = {ts, msgs:[user/ai]}。
+// 键形 = key('ask:sess:<sid>')（branding 命名空间同源）；值 = {ts, msgs:[<持久行>]}。
+// 行族 = PERSISTED_ROLES（**读写同一条**：写入过滤与读取过滤共用一份判别，不许
+// 各写一遍——两份口径漂移就会写出「存得进读不回」的隐形丢行）。
 // 容量闸：每会话尾留 60 行（= 服务端回放档 200 的常用子集，localStorage 行小）、
 // 全局至多 24 份会话（ts 最旧先淘汰——切卡即触碰，活跃文档自然留驻）。
 const SESS_STORE_PREFIX = 'ask:sess:';
 const SESS_MAX_MSGS = 60;
 const SESS_MAX_SESSIONS = 24;
+
+/** 转录持久面的行族（**单点**：persistSession 与 loadPersisted 共用）。
+ *  `card` = Card 工具载荷行（`___<AGENT>_HTML___`），与内存转录同形（role/text
+ *  两字段、零新字段）。卡行曾按「过程件、重开局面的过程件、不占持久容量」被排除
+ *  （card-tool-revive 批 2026-11-18 的设计选择）；作者令 2026-11-19「要留存」
+ *  改判：回看/重载后卡本体必须**同一份载荷**仍在列内（不是重新渲染成文本或占位），
+ *  故卡行与 user/ai 同族落盘。 */
+const PERSISTED_ROLES = ['user', 'ai', 'card'];
 
 /** 读某会话的本地转录（无/坏/私密模式 ⇒ null——调用方回落空账）。 */
 function loadPersisted(sid) {
@@ -248,7 +258,7 @@ function loadPersisted(sid) {
     const v = JSON.parse(raw);
     if (!v || !Array.isArray(v.msgs)) return null;
     const msgs = v.msgs
-      .filter((m) => m && typeof m.text === 'string' && (m.role === 'user' || m.role === 'ai'))
+      .filter((m) => m && typeof m.text === 'string' && PERSISTED_ROLES.includes(m.role))
       .map((m) => ({ role: m.role, text: m.text }));
     return msgs;
   } catch { return null; }
@@ -259,7 +269,7 @@ function persistSession(s) {
   if (!s || !s.sid) return;
   try {
     const rows = s.msgs
-      .filter((m) => m.role === 'user' || m.role === 'ai')
+      .filter((m) => PERSISTED_ROLES.includes(m.role))
       .slice(-SESS_MAX_MSGS)
       .map((m) => ({ role: m.role, text: m.text }));
     localStorage.setItem(key(SESS_STORE_PREFIX + s.sid), JSON.stringify({ ts: Date.now(), msgs: rows }));
@@ -2033,9 +2043,12 @@ function consumeFrame(msg) {
       const tail = entry.msgs[entry.msgs.length - 1];
       if (tail && tail.role === 'ai') entry.msgs.splice(entry.msgs.length - 1, 0, cardMsg);
       else entry.msgs.push(cardMsg);
-      // 卡载荷**不落** localStorage：本地转录持久面只收 user/ai 两族（SESS_MAX_MSGS
-      // 容量闸与「行小」律，见 persistSession），卡是重开局面的过程件——重载后由
-      // 新一轮工具调用再现，不占持久容量。
+      // 卡载荷落 localStorage 转录持久面（作者令 2026-11-19「要留存」）：卡行与
+      // user/ai 同族进 PERSISTED_ROLES，写穿单点 = persistSession（SESS_MAX_MSGS
+      // 容量闸照旧 60 行、私密模式/quota 仍静默降级）。与内核 consume 的每一拍同律：
+      // **突变即写穿**，不依赖后续帧兜底——卡帧后若一直无终态帧，卡也必须已落盘
+      // （否则「回看时卡不在」正是本条要修的形态）。
+      persistSession(entry);
       if (entry === activeSession()) {
         if (isOpen()) { dlg.render(); dlg.settleCol([]); } // 卡 = 过程件，不进未读「真实新消息」计数（空数组 = 零条新消息；计数策略改数组入参后同一语义）
         syncUnreadDot();
