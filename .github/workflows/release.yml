@@ -19,7 +19,12 @@ name: Beta Release
 
 on:
   push:
-    branches: [release/beta]
+    # 双认触发线（2026-11-19）：`release/beta` 是现役命名，但远端 `refs/heads/release`
+    # 占位导致 `release/beta` 物理不可创建（directory file conflict）⇒ 该线自改名起
+    # 从未生效；`beta` 是历史触发线（最近 5 次运行全部 event=push branch=beta）。
+    # 两条都认：新增 beta 通道使 push 事件可发版（无需 workflow_dispatch，绕开
+    # Actions:write 权限缺口）；未来 `release` 占位移除后 `release/beta` 亦自动复活。
+    branches: [beta, release/beta]
   workflow_dispatch:
     # 发布前 E2E 门禁的无污染验证路径（同 auto-release #437 先例）：dry_run=true
     # （默认）跑 build+e2e 全链但跳过 tag/release/COS；发布验证期间门禁红线时
