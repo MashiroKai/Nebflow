@@ -115,9 +115,11 @@ function ensureDialog() {
     autocomplete: 'off',
   });
   const err = h('div', { class: 'wsp-err xopen-err', hidden: true });
-  const cancelBtn = h('button', { class: 'wsp-cancel xopen-cancel-btn', type: 'button' });
-  const paste = h('button', { class: 'wsp-cancel xopen-paste-btn', type: 'button' });
-  const open = h('button', { class: 'wsp-pick xopen-open-btn', type: 'button' });
+  // 属性键序照抄字符串版（`type` 在 `class` 前）⇒ outerHTML 与改动前逐字节相同，
+  // 等价性可直接用 diff 证明，不靠「属性顺序无所谓」的口头理由。
+  const cancelBtn = h('button', { type: 'button', class: 'wsp-cancel xopen-cancel-btn' });
+  const paste = h('button', { type: 'button', class: 'wsp-cancel xopen-paste-btn' });
+  const open = h('button', { type: 'button', class: 'wsp-pick xopen-open-btn' });
   const foot = h('div', { class: 'wsp-foot' }, [
     h('span', { class: 'wsp-foot-slot' }),
     h('span', { class: 'wsp-cur' }),
