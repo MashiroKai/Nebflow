@@ -92,8 +92,8 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
 
   // ── reload-time invalidation ──────────────────────────────────
 
-  // Pending author decision: preserve or remove a pin whose provider was deleted.
-  test("reloadConfig drops session overrides whose provider was removed (#33)".tag(munit.Tag("pending-contract")).ignore) {
+  // Author ruling B: preserve explicit pins on reload (registry.scala:571–574).
+  test("reloadConfig preserves session overrides whose provider was removed (#33)") {
     withTempDataRoot { root =>
       for
         _ <- IO(writeConfig(root, Map("a" -> 19101, "b" -> 19102)))
@@ -110,18 +110,19 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
             staleIds <- registry.reloadConfig(Some(overrides))
             remaining <- overrides.get
             _ <- release
-          yield (staleIds, remaining)
+          yield (staleIds, remaining, candA.get, candB.get)
         }
-        (staleIds, remaining) = result
+        (staleIds, remaining, candA, candB) = result
       yield
-        assertEquals(staleIds, List("s1"), "only the session whose provider was removed must be dropped")
-        assertEquals(remaining.keySet, Set("s2"), "overrides for still-configured providers must survive")
+        // registry.scala:571–574 preserves explicit pins during reload.
+        assertEquals(staleIds, Nil)
+        assertEquals(remaining, Map("s1" -> candA, "s2" -> candB))
     }
   }
 
   // ── request path (end-to-end) ────────────────────────────────
 
-  test("E2E: stale session override after reload gracefully skips to the new chain (#33)".tag(munit.Tag("pending-contract")).ignore) {
+  test("E2E: stale session override after reload fails without switching (#33)") {
     val hitsB = new AtomicInteger(0)
     withTempDataRoot { root =>
       for
@@ -136,14 +137,14 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
               candA <- registry.getCandidateForRef("a/m1")
               _ <- IO(assert(candA.isDefined, "a/m1 must resolve in initial config"))
               _ <- overrides.set(Map("s1" -> candA.get))
-              // Hot-reload removes provider "a" → the override for s1 is dropped.
+              // Hot-reload removes provider "a" but retains the explicit pin.
               _ <- IO(writeConfig(root, Map("b" -> 19112)))
               staleIds <- registry.reloadConfig(Some(overrides))
               t0 <- IO.monotonic
               chunks <- handle
                 .sendStream(request("s1"), onAttempt = Some(a => attempts.update(_ :+ a)))
                 .compile
-                .toList
+                .toList.attempt
               elapsed <- IO.monotonic.map(_ - t0)
               remaining <- overrides.get
               _ <- release
@@ -153,10 +154,11 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
         _ <- IO.blocking(serverB.stop(0))
         allAttempts <- attempts.get
       yield
-        assertEquals(staleIds, List("s1"), "reload must drop the stale override for s1")
-        assertEquals(remaining.keySet, Set.empty)
-        assert(chunks.exists { case _: StreamChunk.Done => true; case _ => false }, "turn must complete end-to-end")
-        assertEquals(hitsB.get, 1, "the new chain's provider must serve exactly one request")
+        // registry.scala:571–574 and interface.scala:915–925,990–1005: pin persists; no fallback.
+        assertEquals(staleIds, Nil)
+        assertEquals(remaining.keySet, Set("s1"))
+        assert(chunks.left.toOption.exists(_.isInstanceOf[nebflow.shared.FallbackExhaustedError]))
+        assertEquals(hitsB.get, 0, "the role chain must not replace the explicit pin")
         assert(
           allAttempts.forall(_.providerId != "a"),
           s"the stale provider must never be attempted: $allAttempts"
@@ -168,7 +170,7 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
     }
   }
 
-  test("request-time filter: stale override is skipped even without a reload (#33)".tag(munit.Tag("pending-contract")).ignore) {
+  test("request-time filter: stale explicit pin fails without switching (#33)") {
     val hitsB = new AtomicInteger(0)
     withTempDataRoot { root =>
       for
@@ -196,7 +198,7 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
             chunks <- handle
               .sendStream(request("s1"), onAttempt = Some(a => attempts.update(_ :+ a)))
               .compile
-              .toList
+              .toList.attempt
             elapsed <- IO.monotonic.map(_ - t0)
             _ <- release
           yield (chunks, elapsed)
@@ -205,8 +207,9 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
         _ <- IO.blocking(serverB.stop(0))
         allAttempts <- attempts.get
       yield
-        assert(chunks.exists { case _: StreamChunk.Done => true; case _ => false }, "turn must complete end-to-end")
-        assertEquals(hitsB.get, 1, "the valid provider must serve the request")
+        // interface.scala:915–925,990–1005: the explicit pin does not fall back.
+        assert(chunks.left.toOption.exists(_.isInstanceOf[nebflow.shared.FallbackExhaustedError]))
+        assertEquals(hitsB.get, 0, "the valid role provider must not replace the pin")
         assert(
           allAttempts.forall(_.providerId != "a"),
           s"the unknown provider must be skipped before any attempt: $allAttempts"
