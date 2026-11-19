@@ -133,6 +133,9 @@ object InjectedInboxMirror:
   /** 追加写入面（唯一 IO 依赖）：目标会话 id + 待写行 ⇒ 落盘。 */
   type Append = (String, UiMessage.User) => IO[Unit]
 
+  final case class Failure(target: String, reason: String)
+  final case class Result(completed: List[String], failed: List[Failure])
+
   /**
    * 镜像落盘腿（发射点调用）：解析目标集后**逐目标**写入同一份 UI 行。
    *
@@ -148,11 +151,17 @@ object InjectedInboxMirror:
     source: String,
     ui: UiMessage.User,
     append: Append
-  ): IO[List[String]] =
+  ): IO[Result] =
     val tgts = targets(emitterSid, source, candidates)
     tgts.traverse { t =>
-      append(t, ui)
-        .handleErrorWith(e => logger.warn(s"injected inbox mirror failed: target=${t.take(32)} err=${e.getMessage}"))
-        .as(t)
+      IO.defer(append(t, ui)).attempt.flatMap {
+        case Right(_) => IO.pure(Right(t))
+        case Left(e) =>
+          val reason = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+          logger.warn(s"injected inbox mirror failed: target=${t.take(32)} err=$reason")
+            .attempt.as(Left(Failure(t, reason)))
+      }
+    }.map { outcomes =>
+      Result(outcomes.collect { case Right(t) => t }, outcomes.collect { case Left(f) => f })
     }
 end InjectedInboxMirror
