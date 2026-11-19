@@ -25,6 +25,8 @@
 
 import { t } from './i18n.js';
 import { key } from './branding.js';
+import { EVENTS } from './events.js';
+import { h } from './dom.js';
 
 /** 服务端唯一入口（`ExternalOpenRoutes`）。 */
 const OPEN_URL = '/api/nf-external/open';
@@ -52,7 +54,7 @@ const REASON_KEYS = {
 
 /** @type {HTMLElement|null} */
 let overlay = null;
-/** @type {HTMLElement|null} */
+/** @type {HTMLInputElement|null} */
 let inputEl = null;
 /** @type {HTMLElement|null} */
 let errEl = null;
@@ -99,49 +101,55 @@ function setBusy(next) {
 }
 
 /** 建（一次）对话框。壳与控件全部复用既有 `.wsp-*` 族 + `.modal-input`：
- *  形零新增，只多一个 `.xopen-panel` 宽度档（见 css/chat.css 的 xopen 段）。 */
+ *  形零新增，只多一个 `.xopen-panel` 宽度档（见 css/chat.css 的 xopen 段）。
+ *  DOM 走 `dom.js::h` 构建器（零 HTML 串）：结构与字符串拼版逐节点同形（同名同序
+ *  同属性），文本仍一律 textContent（下面 i18n 赋值处）。 */
 function ensureDialog() {
   if (overlay) return overlay;
-  const root = document.createElement('div');
-  root.className = 'wsp-overlay ds-overlay xopen-overlay';
-  root.innerHTML =
-    '<div class="wsp-panel ds-layer xopen-panel" role="dialog" aria-modal="true">' +
-      '<div class="wsp-title"></div>' +
-      '<div class="wsp-crumbs xopen-hint"></div>' +
-      '<input class="modal-input xopen-input" type="text" spellcheck="false" autocomplete="off" />' +
-      '<div class="wsp-err xopen-err" hidden></div>' +
-      '<div class="wsp-foot">' +
-        '<span class="wsp-foot-slot"></span>' +
-        '<span class="wsp-cur"></span>' +
-        '<span class="wsp-foot-btns">' +
-          '<button type="button" class="wsp-cancel xopen-paste-btn"></button>' +
-          '<button type="button" class="wsp-cancel xopen-cancel-btn"></button>' +
-          '<button type="button" class="wsp-pick xopen-open-btn"></button>' +
-        '</span>' +
-      '</div>' +
-    '</div>';
+  const titleEl = h('div', { class: 'wsp-title' });
+  const hintEl = h('div', { class: 'wsp-crumbs xopen-hint' });
+  const input = h('input', {
+    class: 'modal-input xopen-input',
+    type: 'text',
+    spellcheck: 'false',
+    autocomplete: 'off',
+  });
+  const err = h('div', { class: 'wsp-err xopen-err', hidden: true });
+  const cancelBtn = h('button', { class: 'wsp-cancel xopen-cancel-btn', type: 'button' });
+  const paste = h('button', { class: 'wsp-cancel xopen-paste-btn', type: 'button' });
+  const open = h('button', { class: 'wsp-pick xopen-open-btn', type: 'button' });
+  const foot = h('div', { class: 'wsp-foot' }, [
+    h('span', { class: 'wsp-foot-slot' }),
+    h('span', { class: 'wsp-cur' }),
+    h('span', { class: 'wsp-foot-btns' }, [paste, cancelBtn, open]),
+  ]);
+  const panel = h('div', {
+    class: 'wsp-panel ds-layer xopen-panel',
+    role: 'dialog',
+    'aria-modal': 'true',
+  }, [titleEl, hintEl, input, err, foot]);
+  const root = h('div', { class: 'wsp-overlay ds-overlay xopen-overlay' }, panel);
   document.body.appendChild(root);
   overlay = root;
-  inputEl = /** @type {HTMLElement} */ (root.querySelector('.xopen-input'));
-  errEl = /** @type {HTMLElement} */ (root.querySelector('.xopen-err'));
-  openBtn = /** @type {HTMLButtonElement} */ (root.querySelector('.xopen-open-btn'));
-  pasteBtn = /** @type {HTMLButtonElement} */ (root.querySelector('.xopen-paste-btn'));
-  const cancelBtn = /** @type {HTMLButtonElement} */ (root.querySelector('.xopen-cancel-btn'));
+  inputEl = input;
+  errEl = err;
+  openBtn = open;
+  pasteBtn = paste;
 
-  root.querySelector('.wsp-title').textContent = t('externalOpen.title');
-  root.querySelector('.xopen-hint').textContent = t('externalOpen.hint');
-  inputEl.setAttribute('placeholder', t('externalOpen.placeholder'));
+  titleEl.textContent = t('externalOpen.title');
+  hintEl.textContent = t('externalOpen.hint');
+  input.setAttribute('placeholder', t('externalOpen.placeholder'));
   cancelBtn.textContent = t('externalOpen.cancel');
-  pasteBtn.textContent = t('externalOpen.paste');
-  openBtn.textContent = t('externalOpen.open');
+  paste.textContent = t('externalOpen.paste');
+  open.textContent = t('externalOpen.open');
 
   cancelBtn.addEventListener('click', closeDialog);
-  openBtn.addEventListener('click', () => submit(/** @type {any} */ (inputEl).value));
-  pasteBtn.addEventListener('click', () => pasteInto());
-  inputEl.addEventListener('keydown', (e) => {
+  open.addEventListener('click', () => submit(input.value));
+  paste.addEventListener('click', () => pasteInto());
+  input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      submit(/** @type {any} */ (inputEl).value);
+      submit(input.value);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       closeDialog();
@@ -159,8 +167,8 @@ async function pasteInto() {
   try {
     const text = await navigator.clipboard.readText();
     if (inputEl && text) {
-      /** @type {any} */ (inputEl).value = text.trim();
-      /** @type {any} */ (inputEl).focus();
+      inputEl.value = text.trim();
+      inputEl.focus();
     } else if (!text) {
       showError(t('externalOpen.clipboardEmpty'));
     }
@@ -177,9 +185,9 @@ export function openExternalDialog(prefill) {
   setBusy(false);
   if (overlay) overlay.hidden = false;
   if (inputEl) {
-    if (typeof prefill === 'string' && prefill) /** @type {any} */ (inputEl).value = prefill;
-    /** @type {any} */ (inputEl).focus();
-    /** @type {any} */ (inputEl).select();
+    if (typeof prefill === 'string' && prefill) inputEl.value = prefill;
+    inputEl.focus();
+    inputEl.select();
   }
 }
 
@@ -199,10 +207,14 @@ function explain(resp, rawText) {
   return t('externalOpen.failed', { msg: 'HTTP ' + resp.status });
 }
 
-/** 服务端回 ok 后的唯一打开腿：派发既有 workspace-open-item 事件。 */
+/** 服务端回 ok 后的唯一打开腿：派发既有 workspace-open-item 事件。
+ *  事件名走 `events.js` 常量表（R3 事件名单源）；选项与改动前逐字相同 ——
+ *  **不**改成 `emit()`：`emit` 固定 `bubbles:true`，本处既有语义是默认
+ *  `bubbles:false`（与 `popArtifacts.js::openPopArtifact` 同一形态），派发目标
+ *  本就是 window，冒泡与否不改变投递，但换掉就不是行为等价了。 */
 function openAbsPath(absPath, fileName) {
   const title = fileName || String(absPath || '').split('/').pop() || 'file';
-  window.dispatchEvent(new CustomEvent('workspace-open-item', {
+  window.dispatchEvent(new CustomEvent(EVENTS.WORKSPACE_OPEN_ITEM, {
     detail: {
       id: 'file:' + absPath,
       title,
