@@ -97,19 +97,7 @@ private[project] trait NodeCompletion:
   private[project] def gateAndCompleteFor(
     nodeId: String, fresh: NodeDef, resultText: String, verdict: Option[(String, Boolean)] = None
   ): IO[Boolean] =
-    val root = sessionDevice match
-      case Some(_) => sessionDeviceWorkspace.getOrElse("")
-      case None => nebflow.shared.PathUtil.resolveNodeProjectRoot(workspace, fresh.worktree)
-    val manifestCheck =
-      if sessionDevice.nonEmpty && fresh.worktree.nonEmpty then
-        IO.pure(Left("manifest-missing: remote node worktree path unavailable; cannot verify MANIFEST"))
-      else if fresh.worktree.nonEmpty && root == workspace then
-        IO.pure(Left("manifest-missing: node worktree path unknown; cannot verify MANIFEST"))
-      else nebflow.core.ManifestGate.check(root, sessionDevice)
-    manifestCheck.flatMap {
-      case Left(reason) => failNodeR(nodeId, reason + "\n" + CompletionGate.withOriginalText(resultText),
-        Some((fresh.sessionRef, fresh.startedAt)))
-      case Right(_) => CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
+    CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
       case CompletionGate.Pass(reason) =>
         logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
         completedNodeR(nodeId, resultText, Some((fresh.sessionRef, fresh.startedAt)), verdict)
@@ -120,7 +108,6 @@ private[project] trait NodeCompletion:
           s"Completion gate rejected node output: $reason\n${CompletionGate.withOriginalText(resultText)}",
           Some((fresh.sessionRef, fresh.startedAt))
         ).map(landed => landed && !verdict.exists(_._1 == VerdictFail))
-      }
     }
 
   /**

@@ -195,7 +195,6 @@ private[agent] object AgentFinishTurn:
       val handle = resources.protectedExecutions(state.sessionId.get)
       val sid = handle.admission.sessionId
       for
-        manifest <- nebflow.core.ManifestGate.checkDelegate(sid)
         task <- resources.subAgentTaskStore.findByTaskId(sid).flatMap(row =>
           IO.fromOption(row.filter(_.runId.contains(handle.admission.executionId)))(
             new IllegalStateException("terminal-task-binding-unavailable")))
@@ -203,11 +202,10 @@ private[agent] object AgentFinishTurn:
         trimmed = text.trim
         hasText = trimmed.nonEmpty && trimmed != Defaults.MaxTokensStubText
         diagnostic <- BackoffSupervisor.protectedCompletionDiagnostic(sid, newMessages, hasText)
-        payload = manifest.fold(identity, _ => (if hasText then s"\"${task.description}\":\n$trimmed" else s"\"${task.description}\" (no text output)") + diagnostic)
-        eventType = if manifest.isLeft then "failed" else "completed"
+        payload = (if hasText then s"\"${task.description}\":\n$trimmed" else s"\"${task.description}\" (no text output)") + diagnostic
         envelope = Json.obj(
           "source" -> "delegate".asJson,
-          "eventType" -> eventType.asJson,
+          "eventType" -> "completed".asJson,
           "payload" -> payload.asJson,
           "metadata" -> Json.obj(
             "description" -> task.description.asJson, "agentName" -> task.agentName.asJson,

@@ -241,11 +241,7 @@ final class ExecutionCommitStore private (
             case (ExecutionChainObservation.Verified(state), records)
                 if state.phase == "terminal" && state.attemptId == attempt.attemptId &&
                   state.incarnationId == attempt.incarnationId && state.terminalResultRef.contains(resultRef) =>
-              state.terminalPayload match
-                case Some((_, payload)) => (payload.hcursor.get[String]("eventType"), payload.hcursor.get[String]("payload")) match
-                  case (Right(eventType), Right(text)) => store.projectProtectedTerminalSync(records.head._1.ownerBinding, attempt.sessionId, attempt.executionId, resultRef, eventType, text)
-                  case _ => Left("invalid-terminal-payload")
-                case None => Left("terminal-payload-unavailable")
+              store.projectProtectedTerminalSync(records.head._1.ownerBinding, attempt.sessionId, attempt.executionId, resultRef)
             case _ => Left("terminal-unverified")
       }
     }
@@ -837,9 +833,7 @@ final class ExecutionCommitStore private (
                 if installed != payload || hash(canonical(installed)) != payloadHash then Left("terminal-envelope-conflict")
                 else
                   confirm(path)
-                  (payload.hcursor.get[String]("eventType"), payload.hcursor.get[String]("payload")) match
-                    case (Right(eventType), Right(text)) => store.projectProtectedTerminalSync(records.head._1.ownerBinding, sessionId, executionId, resultRef, eventType, text)
-                    case _ => Left("invalid-terminal-payload")
+                  store.projectProtectedTerminalSync(records.head._1.ownerBinding, sessionId, executionId, resultRef)
               case _ => Left("terminal-reference-unavailable")
           case _ => Left("terminal-uncommitted")
       catch case e: Exception => Left(s"terminal-repair-failed: ${e.getClass.getSimpleName}")

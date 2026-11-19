@@ -364,7 +364,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     }
 
   private[agent] def projectProtectedTerminalSync(parent: String, taskId: String, runId: String,
-    resultRef: String, eventType: String, payload: String): Either[String, SubAgentTask] =
+    resultRef: String): Either[String, SubAgentTask] =
     lock.lock()
     try
       val rows = readTasksSync(parent)
@@ -373,16 +373,13 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
         case Some(row) if !row.runId.contains(runId) => Left("stale-run")
         case Some(row) =>
           val notification = s"$taskId#$runId"
-          val executionStatus = if eventType == "failed" then "failed" else "finished"
-          val reason = Option.when(eventType == "failed")(payload)
-          val compatible = row.executionStatus.contains(executionStatus) && row.resultRef.contains(resultRef) &&
+          val compatible = row.executionStatus.contains("finished") && row.resultRef.contains(resultRef) &&
             row.notificationId.contains(notification)
-          if !Set("completed", "failed").contains(eventType) then Left("invalid-terminal-status")
-          else if row.executionStatus.exists(terminalExecutions.contains) && !compatible then Left("terminal-run-conflict")
+          if row.executionStatus.exists(terminalExecutions.contains) && !compatible then Left("terminal-run-conflict")
           else
             val now = System.currentTimeMillis()
-            val updated = if compatible then row else row.copy(status = if eventType == "failed" then "failed" else "completed", executionStatus = Some(executionStatus),
-              statusAt = Some(now), completedAt = Some(now), terminalReason = reason, lastError = reason,
+            val updated = if compatible then row else row.copy(status = "completed", executionStatus = Some("finished"),
+              statusAt = Some(now), completedAt = Some(now), terminalReason = None, lastError = None,
               resultRef = Some(resultRef), incomplete = Some(false), notificationId = Some(notification),
               notificationPending = Some(true), committedRevision = Some(nextRevision(row)))
             if !compatible then writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))

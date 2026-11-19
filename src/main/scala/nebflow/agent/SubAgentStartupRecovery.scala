@@ -495,7 +495,7 @@ object SubAgentStartupRecovery:
                 }
               }
             case nebflow.shared.ExecutionProtection.Protected(List(run)) if task.runId.contains(run) &&
-                task.executionStatus.exists(Set("finished", "failed").contains) && task.notificationId.contains(s"${task.taskId}#$run") =>
+                task.executionStatus.contains("finished") && task.notificationId.contains(s"${task.taskId}#$run") =>
               val encoded = java.util.Base64.getUrlEncoder.withoutPadding()
                 .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))
               val expected = sessionStore.executionAuthorityRoot.toAbsolutePath.normalize()
