@@ -191,6 +191,9 @@ export const CHECKS = [
     // dispatcher 重设计 P0「抽件」外壳闸（2026-11-19）：只断言子会话原语的
     // 抽取面 + 单源（行为断言在 Scala 行为闸 SubagentPrimitiveSpec.scala）。
     ['subagent-primitives', 'check-subagent-primitives'],
+    // dispatcher 重设计 P1「放开原语可见性」外壳闸（2026-11-19）：只断言复用面
+    // 五个成员恰好放宽为 `private[core]` + 本节点零新读者（行为件另派）。
+    ['subagent-primitive-visibility', 'check-subagent-primitive-visibility'],
     ['node-stuck-notify', 'check-node-stuck-notify'],
     ['delegate-mode-slot', 'check-delegate-mode-slot'],
     ['perm-presentation', 'check-perm-presentation'],
