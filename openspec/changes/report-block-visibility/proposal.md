@@ -6,7 +6,7 @@ Only root-session messages expose paired `<report>...</report>` bodies on the us
 
 ## Scope and unresolved implementation
 
-The root-only prompt is assembled in the `isRootAgent` section, not the shared prefix. Frontend scope must be derived from the owning session's verified agent identity, not the primary window, because the primary view may display non-root sessions. The session-agent map is populated from session lists, so loading and unknown-identity states require explicit handling. Social bindings accept arbitrary session identifiers; root identity must be verified before filtering rather than inferred from channel membership. These scope controls are not yet implemented in the current draft.
+The root-only prompt is assembled in the `isRootAgent` section, not the shared prefix. Events must carry `isRoot` stamped by the emitting actor using `RootAgentIdentity.isRootAgent(agentDef, depth)`, never inferred from window, channel or ID. Persist the emitting identity on history messages and propagate it to all live and replay rendering paths. Social bridges must select filtering using the bound emitting session's authoritative source flag; unknown identity must not be guessed. Existing historical messages without flags require an explicit migration or conservative handling. The actor stamp is a draft; history, UI, and channel consumers are not yet wired, and its coverage of all emitters remains unverified.
 
 ## Parsing and acceptance
 

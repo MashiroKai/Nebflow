@@ -1163,7 +1163,12 @@ object AgentActor extends AgentCore with AgentSession:
                 latestUsage = None,
                 pendingAskUser = None,
                 pendingPermission = None,
-                wsSend = wsSend,
+                wsSend = json =>
+                  val tagged = json.asObject match
+                    case Some(obj) if !obj.contains("isRoot") =>
+                      io.circe.Json.fromJsonObject(obj.add("isRoot", RootAgentIdentity.isRootAgent(Some(agentDef), depth).asJson))
+                    case _ => json
+                  wsSend(tagged),
                 readTracker = readTracker,
                 fileHistory = fileHistory,
                 contextWindow = contextWindow,
