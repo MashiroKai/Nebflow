@@ -476,6 +476,38 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     }
   }
 
+  test("fake leg: refused failure is classified and recorded in the production round") {
+    val port = closedPort()
+    val ep = s"http://127.0.0.2:$port"
+    val started = new java.util.concurrent.CountDownLatch(1)
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val hook: (String, Int, Long) => Unit = (_, _, _) =>
+      events.add("start")
+      started.countDown()
+      if !gate.await(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("refused gate not released")
+      events.add("refused")
+      throw new java.net.ConnectException("fixture refused")
+    withStack(port, dialHook = hook) { (_, ps) =>
+      (for
+        fiber <- ps.connect(peer("fake-refused", List(ep))).start
+        _ <- IO.blocking {
+          assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+          events.add("release")
+          gate.countDown()
+        }
+        _ <- fiber.joinWithNever
+        _ <- IO {
+          import scala.jdk.CollectionConverters.*
+          assertEquals(events.iterator().asScala.toList, List("start", "release", "refused"))
+          assertEquals(roundOf(ps, "fake-refused").failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Refused))
+          assert(ps.dialStatus("fake-refused").exists(_.error.nonEmpty))
+        }
+      yield ()).guarantee(IO(gate.countDown()))
+    }
+  }
+
   test("fake leg: budget expires without release and is recorded as timeout") {
     val port = closedPort()
     val ep = s"http://127.0.0.2:$port"
