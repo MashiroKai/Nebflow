@@ -563,7 +563,7 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       (request, waiter) <- AskHostLedger.beginForCall("worker", "root", "agent", "question", "timeout-call")
       result <- AskHostTool.awaitReply(request.correlationId, waiter, 20.millis)
       rows <- AskHostLedger.recover
-      _ = assert(result.isLeft, s"expected timeout: $result")
+      _ = assert(result.exists(_.contains("TIMEOUT")), "timeout must yield the neutral timeout notice")
       _ = assert(rows.isEmpty)
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
