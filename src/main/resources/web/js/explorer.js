@@ -2018,18 +2018,6 @@ export function initExplorer() {
     });
   }
 
-  // Open External File button（external-open 批 2026-11-19）：项目外路径 / 公网
-  // URL 的唯一入口。本按钮只开对话框（js/externalOpen.js），**不**参与根切换
-  // ——树根与会话工程域不动，打开的文件走既有的 pop.readFile 打开腿。
-  const extOpenBtn = /** @type {(HTMLElement & {_bound?: boolean})|null} */ (document.getElementById('explorer-open-external-btn'));
-  if (extOpenBtn && !extOpenBtn._bound) {
-    extOpenBtn._bound = true;
-    extOpenBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      import('./externalOpen.js').then(({ openExternalDialog }) => openExternalDialog()).catch(() => {});
-    });
-  }
-
   // New File button
   const newFileBtn = /** @type {(HTMLElement & {_bound?: boolean})|null} */ (document.getElementById('explorer-new-file-btn'));
   if (newFileBtn && !newFileBtn._bound) {

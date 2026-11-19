@@ -4534,29 +4534,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-text-muted);
 }
 
-/* ── external-open 批（2026-11-19）：打开外部文件 / URL 对话框 ──────────────
-   壳与控件**零新形**：`.wsp-overlay`/`.ds-overlay`（遮罩形）+ `.wsp-panel`/
-   `.ds-layer`（玻璃卡壳与入场）+ `.wsp-title` + `.wsp-foot`/`.wsp-cancel`/
-   `.wsp-pick` + `.modal-input`（蚀刻输入）全部复用上一段与 modal.css 既有族；
-   本段只补本面独有的两个量：面板宽度（一行绝对路径要放得下 → 560px，仍受
-   `.wsp-panel` 的 `max-width: calc(100vw - 48px)` 约束，手机端自然收窄）与
-   输入框/提示行的下边距（`.modal-input` 自身零外边距，行距由容器给）。 */
-.xopen-panel {
-  width: 560px;
-}
-.xopen-panel .xopen-input {
-  margin-bottom: var(--ds-space-3);
-}
-.xopen-panel .xopen-hint {
-  margin-bottom: var(--ds-space-3);
-}
-/* [hidden] 守卫（与 .wsp-err[hidden] 同族）：`.wsp-overlay { display:flex }` 按
-   级联来源压过 UA 的 `[hidden]{display:none}` —— 少了这一条，关闭对话只是把
-   hidden 属性挂上、面板照旧在场（本批第一次截图证据就是这样露馅的）。 */
-.xopen-overlay[hidden] {
-  display: none;
-}
-
 /* ── pickeruni: goto direct-entry row + server-side search row ────────────
    Two rows, one each: the jump (locating action) above the filter (narrowing
    action), full list width, no change to the 520px panel layout. All material

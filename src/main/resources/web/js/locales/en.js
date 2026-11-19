@@ -3560,34 +3560,5 @@ export default {
   'profile.githubUnavailable': 'The account service returned no GitHub username (that reading comes from the GitHub account sent at sign-in).',
   'profile.googleUnavailable': 'The Google binding is maintained on the website account page only; neither the local account service nor the sign-in credential carries it.',
   'profile.signedIn': 'Signed in',
-
-  // external-open batch (2026-11-19, author order "support pulling external files
-  // into canvas"): dialog copy + a user-readable sentence per server refusal reason
-  // (the reason vocabulary mirrors ExternalOpenRoutes / ExternalOpenPolicy).
-  'externalOpen.title': 'Open external file',
-  'externalOpen.hint': 'Paste an absolute path to any readable local file, or an http(s) link; remote content is type-sniffed, stored, then opened.',
-  'externalOpen.placeholder': '/Users/.../report.pdf or https://example.com/pic.png',
-  'externalOpen.open': 'Open',
-  'externalOpen.cancel': 'Cancel',
-  'externalOpen.paste': 'Paste',
-  'externalOpen.busy': 'Opening...',
-  'externalOpen.empty': 'Paste an absolute path or a link first.',
-  'externalOpen.clipboardEmpty': 'The clipboard holds no text.',
-  'externalOpen.clipboardBlocked': 'This browser will not let the page read the clipboard; press Command-V / Ctrl-V in the field instead.',
-  'externalOpen.failed': 'Could not open: {msg}',
-  'externalOpen.err.credentialPath': 'This is a credential location or a credential-shaped file (~/.ssh, ~/.aws, the secrets subtree, auth.json, *.pem ...) - this entry point always refuses it.',
-  'externalOpen.err.credentialHardlink': 'This file shares an inode with a credential file (hard link); refused.',
-  'externalOpen.err.credentialRequired': 'Your session has expired - sign in again and retry.',
-  'externalOpen.err.privateAddress': 'This link points at a loopback / private / link-local / metadata address; fetching it is refused.',
-  'externalOpen.err.scheme': 'Only http and https links are allowed.',
-  'externalOpen.err.host': 'This link has no usable host name.',
-  'externalOpen.err.malformed': 'This is not a valid link.',
-  'externalOpen.err.unresolved': 'This domain resolves to no address.',
-  'externalOpen.err.redirects': 'Too many redirects (a redirect into a private address is refused as well).',
-  'externalOpen.err.tooLarge': 'The file exceeds this entry point size limit.',
-  'externalOpen.err.timeout': 'The fetch timed out (connect or total deadline).',
-  'externalOpen.err.fetchFailed': 'The fetch failed (the origin answered an error or the connection dropped).',
-  'externalOpen.err.notFound': 'There is no readable regular file at this path.',
-  'externalOpen.err.notAbsolute': 'Give an absolute path (starting with / or ~/).',
 };
 
