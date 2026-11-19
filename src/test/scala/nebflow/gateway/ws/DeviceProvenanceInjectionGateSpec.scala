@@ -77,13 +77,8 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
     )
   }
 
-  test("①b dispatchUserText: the marker reaches the model via ImmediateInput only (device.fold ⇒ compose)") {
-    val markerLeg = "device.fold(content)(nebflow.bridge.DeviceProvenance.compose(_, content))"
-    assert(
-      wsRoutesCode.contains(markerLeg),
-      s"模型面前缀合成缺席：期望含 `$markerLeg`"
-    )
-  }
+  // The model/display separation is checked through the real message handler in
+  // ConsoleQuoteDeliverySpec (device marker in ImmediateInput, bare UI row on disk).
 
   test("② the typeless leg prepends the marker BLOCK (prependMarker), never rewrites the content") {
     assert(
