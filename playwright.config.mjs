@@ -66,15 +66,15 @@ const instanceBacked = [
 ];
 
 // ③ `tests/*.test.mjs` = node:test / 独立 runner 单测（不是 Playwright 套件），
-// 被收集器 import 时顶层即执行：bgagent-mobile-detail-retirement 收集期就跑起自带探针
-// （自述 NOT RUN、需真浏览器 harness），delegate-chain-throttle 顶层 `new vm.SourceTextModule`
-// 直接 TypeError ⇒ 整轮收集 exit 1 + `Error: No tests found`。二者各有闸门归属：
-// delegate-chain-throttle 由 scripts/run-checks.mjs 点名（须带 --experimental-vm-modules），
-// bgagent-mobile-detail-retirement 判定弃用（自述 NOT RUN，待作者裁删除/归档）。
+// 被收集器 import 时顶层即执行：`delegate-chain-throttle.test.mjs` 顶层
+// `new vm.SourceTextModule` 直接 TypeError ⇒ 整轮收集 exit 1 + `Error: No tests found`。
+// 它有闸门归属：scripts/run-checks.mjs 点名（须带 --experimental-vm-modules）。
+// （另一个同类 `bgagent-mobile-detail-retirement.test.mjs` 已于 2026-11-19 普查收编批
+// 判定弃用并 `git rm` —— 自述 NOT RUN、需真浏览器 harness；其 testIgnore 条目一并删除，
+// 配置不留死条目。）
 // 2026-11-19 普查收编批的前后收集证据见 /Users/kaiyu/stand-evidence/gate-collection-20261119/。
 standaloneScripts.push(
   'delegate-chain-throttle.test.mjs',
-  'bgagent-mobile-detail-retirement.test.mjs',
 );
 
 const testIgnore = [...standaloneScripts];

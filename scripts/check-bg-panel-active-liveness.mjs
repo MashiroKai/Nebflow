@@ -19,7 +19,7 @@
 //   判据：状态真相在引擎侧（哪些实例在跑），呈现面只许**照抄**，不许把「记录存在」
 //   读成「正在跑」。本闸把这条判据变成可执行断言——破坏实现即红。
 //
-// 提取方式（与 tests/subagent-visibility.test.mjs 同法）：从真实源文件切出被闸的
+// 提取方式（与 scripts/tests/subagent-visibility.test.mjs 同法）：从真实源文件切出被闸的
 // 函数体进 vm —— 闸吃的是**真代码**，不是复刻件（复刻件会与实现一起漂移）。
 //
 // Run: node scripts/check-bg-panel-active-liveness.mjs    （exit 0 = 绿，1 = 红）

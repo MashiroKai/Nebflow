@@ -6,13 +6,23 @@
       "requirement": "FRB-REQ-001",
       "scenario": "FRB-SCN-001",
       "implementation": ["src/main/resources/web/js/bgAgentMobileChrome.js", "openspec/changes/frontend-bgagent-mobile-detail-repairs/proposal.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/design.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/tasks.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/specs/bgagent-mobile-detail/spec.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/trace.json"],
-      "tests": [{"path":"tests/bgagent-mobile-detail-retirement.test.mjs","name":"FRB-SCN-001 worktree and plugin omitted"}]
+      "tests": [],
+      "manual": {
+        "reason": "The only automated probe for this scenario was a repository visual-harness consumer probe that was never run (its own header declared NOT RUN) because it needs the visual harness plus an isolated, supervised browser; it was retired with the 2026-11-19 test-collection batch, so no automated test can stand in for this confirmation.",
+        "steps": "Run the repository visual harness against an isolated instance with a stubbed /api/delegates payload for a delegate record carrying plugin and worktree fields, open its mobile background-agent detail at 375x812, scroll the detail, then dismiss it.",
+        "expected": "Neither the plugin nor the worktree field is presented, source, creation time and task details stay readable, and dismissing the detail works without a console error."
+      }
     },
     {
       "requirement": "FRB-REQ-001",
       "scenario": "FRB-SCN-002",
       "implementation": ["src/main/resources/web/js/bgAgentMobileChrome.js"],
-      "tests": [{"path":"tests/bgagent-mobile-detail-retirement.test.mjs","name":"FRB-SCN-002 desktop close retained"}]
+      "tests": [],
+      "manual": {
+        "reason": "The desktop leg of the same change had no automated test once the visual-harness probe was retired (2026-11-19 test-collection batch): the probe declared itself NOT RUN and needed the visual harness plus an isolated, supervised browser.",
+        "steps": "Run the repository visual harness against an isolated instance, open the same delegate record's background-agent detail on desktop at 1440x900, then close it again.",
+        "expected": "The existing desktop detail and its controls stay available, no mobile detail shell is installed, and closing the detail behaves as before."
+      }
     }
   ]
 }

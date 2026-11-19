@@ -13,9 +13,10 @@ const nodeCheck = (name, script, profiles = ['static', 'frontend']) => ({
 const scriptTests = readdirSync(new URL('./tests/', import.meta.url))
   .filter(name => name.endsWith('.test.mjs')).sort().map(name => `scripts/tests/${name}`);
 if (!scriptTests.length) throw new Error('No script unit tests found; refusing broad test discovery');
-// scripts/tests/pending/ 刻意不收（2026-11-19 普查收编批）：三个 A 组普查红文件
-// （canvas-interactions-repair / canvas-search-batch-review / forms-repair）在那里待裁，
-// 收进去等于把红闸注册进闸门；待裁后再决定改写或删。
+// 本目录即收集面（平目录，不递归）：2026-11-19 普查收编批曾把三个普查红文件停在
+// scripts/tests/pending/ 躲避收集；作者裁定「改写重锚后注册、不许删」后，三条
+// （canvas-interactions-repair / canvas-search-batch-review / forms-repair）已重锚回本目录
+// 并随本腿注册，pending/ 随之删除。
 const weixinTests = readdirSync(new URL('../tools/weixin-sidecar/', import.meta.url))
   .filter(name => name.endsWith('.test.mjs')).sort().map(name => `tools/weixin-sidecar/${name}`);
 if (!weixinTests.length) throw new Error('No weixin-sidecar unit tests found; refusing broad test discovery');

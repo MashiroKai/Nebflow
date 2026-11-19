@@ -10,7 +10,7 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-001 pending writes belong to their files"
         }
       ]
@@ -23,7 +23,7 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-002 late other-file receipt cannot change current status"
         }
       ]
@@ -36,7 +36,7 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-013 read error retains draft and blocks a put"
         }
       ]
@@ -101,7 +101,7 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "initial edit before first read holds unseen server text"
         }
       ]
@@ -114,7 +114,7 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "empty offline draft persists with base across reload"
         }
       ]
@@ -127,7 +127,7 @@
       ],
       "tests": [
         {
-          "path": "tests/data-todo-reference.test.mjs",
+          "path": "scripts/tests/data-todo-reference.test.mjs",
           "name": "duplicate names do not resolve by order and id references choose exactly one"
         }
       ]
@@ -171,7 +171,7 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-013 read error retains draft and blocks a put"
         }
       ]
@@ -267,19 +267,19 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-020 a late conflict receipt for text that already equals the draft adopts the base"
         },
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-020 a late receipt for an earlier write cannot clear the current flight"
         },
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-020 a late ack after a reconnect read cannot roll the known base back"
         },
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-020 a stale server read cannot lower the known base"
         }
       ]
@@ -292,11 +292,11 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-021 explicit choice of the server version adopts it without sending"
         },
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-021 an unrecognised conflict choice keeps both versions for a later choice"
         }
       ]
@@ -309,11 +309,11 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-022 a version-required receipt whose stored text equals the draft adopts the base"
         },
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-022 unknown base blocks the first put until a matching server read arrives"
         }
       ]
@@ -326,7 +326,7 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-023 an explicit clear is sent with its base and stays empty across reload"
         }
       ]
@@ -400,15 +400,15 @@
       ],
       "tests": [
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-027 the input handler marks the draft dirty, persists it and pushes it"
         },
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-027 reconnect clears the flight and re-reads a dirty draft"
         },
         {
-          "path": "tests/data-note-queue.test.mjs",
+          "path": "scripts/tests/data-note-queue.test.mjs",
           "name": "FDC-SCN-027 flush writes the current text to the draft and schedules the push"
         }
       ]
