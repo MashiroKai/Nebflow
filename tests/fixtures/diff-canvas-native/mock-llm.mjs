@@ -15,21 +15,19 @@
 import http from 'node:http';
 
 const PORT = Number(process.argv[2] || 18990);
-// 取证批需要**多个可审块**（才能在同一回合里演「逐块接受 / 逐块拒绝 / 全部接受」）。
-// 一个 ask_edit 的两处改动若隔 ≥4 行未变（组件的 collapseUnchanged.minSize=4），
-// 组件就把它算作**两个 hunk** ⇒ 一次 ask 回合即得两个可审块。
-// 两相（phase）按用户文本区分：'phase2' → 第二相，否则第一相。
-const PHASES = (() => {
+// 取证批需要**多个可审块**（同一回合里演「逐块拒绝 / 逐块接受 / 底部带全部接受」）。
+// 一个 ask_edit 的改动行若两两隔 ≥4 行未变（组件的 collapseUnchanged.minSize=4），
+// 组件就把每处改动算作**一个 hunk** ⇒ 一次 ask 回合即得三个可审块。
+// 缺省 = 把 notes.md 的行 2 / 9 / 16 各改一处（行 2..16 一个整段替换）。
+const EDITS = (() => {
   try {
-    const raw = process.env.MOCK_ASK_PHASES;
-    if (raw) { const j = JSON.parse(raw); if (j && Array.isArray(j.p1) && Array.isArray(j.p2)) return j; }
+    const raw = process.env.MOCK_ASK_EDITS;
+    if (raw) { const j = JSON.parse(raw); if (Array.isArray(j) && j.length) return j; }
   } catch { /* fall through to default */ }
-  return {
-    // 行距：beta(2) … iota(9) 之间隔 6 行未变 ⇒ 两个可审块。
-    p1: [{ old: 'beta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\niota', new: 'BETA-REVIEWED\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\nIOTA-REVIEWED' }],
-    // 行距：kappa(10) … rho(17) 之间隔 6 行未变 ⇒ 两个可审块（与第一相行段不相交）。
-    p2: [{ old: 'kappa\nlambda\nmu\nnu\nxi\nomicron\npi\nrho', new: 'KAPPA-REVIEWED\nlambda\nmu\nnu\nxi\nomicron\npi\nRHO-REVIEWED' }],
-  };
+  return [{
+    old: 'beta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\niota\nkappa\nlambda\nmu\nnu\nxi\nomicron\npi',
+    new: 'BETA-REVIEWED\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\nIOTA-REVIEWED\nkappa\nlambda\nmu\nnu\nxi\nomicron\nPI-REVIEWED',
+  }];
 })();
 
 function msgText(m) {
@@ -68,9 +66,7 @@ function decide(messages) {
   }
   const u = lastUserText(messages);
   if (u.includes('delegate now')) return { kind: 'delegate' };
-  if (u.includes('do ask edit now')) {
-    return { kind: 'ask-edit', path: boundPath(messages), edits: u.includes('phase2') ? PHASES.p2 : PHASES.p1 };
-  }
+  if (u.includes('do ask edit now')) return { kind: 'ask-edit', path: boundPath(messages), edits: EDITS };
   return { kind: 'ok' };
 }
 

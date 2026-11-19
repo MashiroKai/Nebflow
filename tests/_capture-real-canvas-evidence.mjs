@@ -77,11 +77,11 @@ function git(cwd, args) {
 }
 
 const PROJECT = 'real-canvas-demo';
-// notes.md 种子（17 行）：两相 ask_edit 各改**行距 ≥6 行**的两处 ⇒ 组件
-// （collapseUnchanged.minSize=4）把每次改动算作**两个可审块**（够演接受 + 拒绝），
-// 且两相改动落在不相交的行段（第二相不依赖第一相的结果串）。
+// notes.md 种子（24 行）：一次 ask_edit 把行 2 / 9 / 16 各改一处（两两隔 6 行未变）
+// ⇒ 组件（collapseUnchanged.minSize=4）把它算作**三个可审块**，于是同一回合里能依次演
+// 「逐块拒绝（留余量可拍）/ 逐块接受（留余量可拍）/ 底部控件带全部接受（收口）」。
 const NOTES_SEED = 'alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\niota\n'
-  + 'kappa\nlambda\nmu\nnu\nxi\nomicron\npi\nrho\n';
+  + 'kappa\nlambda\nmu\nnu\nxi\nomicron\npi\nrho\nsigma\ntau\nupsilon\nphi\nchi\npsi\nomega\n';
 let iso = null;
 let mock = null;
 
@@ -477,8 +477,11 @@ async function main() {
     const tabList = () => page.evaluate(() => [...document.querySelectorAll('.canvas-tab-pane')].map((e) => e.dataset.tabId));
     const chunkState = () => page.evaluate((sel) => {
       const p = document.querySelector(sel);
-      if (!p) return { reviewPane: false };
-      return { reviewPane: true, states: [...p.querySelectorAll('[data-chunk-state]')].map((c) => c.getAttribute('data-chunk-state')),
+      const active = [...document.querySelectorAll('.canvas-tab-pane')].filter((e) => e.classList.contains('active')).map((e) => e.dataset.tabId);
+      if (!p) return { reviewPane: false, activeTabs: active };
+      return { reviewPane: true, reviewPaneDisplay: getComputedStyle(p).display, activeTabs: active,
+        states: [...p.querySelectorAll('[data-chunk-state]')].map((c) => c.getAttribute('data-chunk-state')),
+        title: (p.querySelector('.nf-dv-title-status') || {}).textContent || null,
         pendingChunkButtons: p.querySelectorAll('.nf-dv-chunkbtn').length };
     }, reviewSel).catch(() => null);
 
@@ -506,39 +509,46 @@ async function main() {
       await page.waitForSelector(sel, { state: 'visible', timeout: 8000 }).catch((e) => log(`chunk-${kind} visible wait err`, String(e).slice(0, 120)));
       await page.locator(sel).first().click({ timeout: 6000 }).catch((e) => log(`chunk-${kind} click err`, String(e).slice(0, 140)));
     };
+    /** 等引擎回帧后的余量落定（逐块动作是异步收口的：点完当场还是旧树）。 */
+    const waitChunkButtons = async (n, timeout = 9000) => {
+      const end = Date.now() + timeout;
+      let s = null;
+      while (Date.now() < end) {
+        s = await chunkState();
+        if (s && s.pendingChunkButtons === n) return s;
+        await sleep(200);
+      }
+      return s;
+    };
 
     // ── 真点按 A：逐块「拒绝」（块 1）→ 行内状态可见变化（data-chunk-state=rejected）
     //    先拒后接：拒绝后审阅里**还剩一块**，于是这一帧能看见「块数 2→1」的可见变化
     //    （若最后一块才点，引擎立刻收口，页签当场消失，拍不到余量）。──
     await clickChunk('reject');
     const afterReject = await chunkState();     // 真点刚落地就取（mousedown 同步落态）
-    await sleep(300); await grab();
+    await sleep(1200); await grab();
     log('after real chunk-reject', JSON.stringify(afterReject));
     await shot(page, 'askreview-mobile-light-chunk-rejected-375x812.png', { ...(await canvasCredential(page, `askreview:${sid}`)), clickEffect: { action: '逐块拒绝（真点 · mousedown 就地落态）', before: beforeClicks, ...afterReject } });
     await page.emulateMedia({ colorScheme: 'dark' }); await sleep(600);
     await shot(page, 'askreview-mobile-dark-chunk-rejected-375x812.png', await canvasCredential(page, `askreview:${sid}`));
     await page.emulateMedia({ colorScheme: 'light' }); await sleep(700); await grab();
-    const afterRejectSettled = await chunkState();
+    const afterRejectSettled = await waitChunkButtons(4);
+    log('after reject settled', JSON.stringify(afterRejectSettled));
 
     // ── 真点按 B：逐块「接受」（余下的块）→ 行内状态可见变化（data-chunk-state=accepted）──
     await clickChunk('accept');
     const afterAccept = await chunkState();
-    await sleep(300); await grab();
+    await sleep(1200); await grab();
     log('after real chunk-accept', JSON.stringify(afterAccept));
     await shot(page, 'askreview-mobile-light-chunk-accepted-375x812.png', { ...(await canvasCredential(page, `askreview:${sid}`)), clickEffect: { action: '逐块接受（真点 · mousedown 就地落态）', before: afterRejectSettled, ...afterAccept } });
     await page.emulateMedia({ colorScheme: 'dark' }); await sleep(600);
     await shot(page, 'askreview-mobile-dark-chunk-accepted-375x812.png', await canvasCredential(page, `askreview:${sid}`));
     await page.emulateMedia({ colorScheme: 'light' }); await sleep(900); await grab();
-    // 第 1 回合两块都由逐块动作了结 ⇒ 引擎收口（真帧 askEditResolved）⇒ 审阅页签收起。
-    await sleep(900); await grab();
-    const tabsAfterRound1 = await tabList();
-    const fileAfterRound1 = readFileSync(notesAbs, 'utf8');
-    log('round1 settled', JSON.stringify({ tabsAfterRound1, fileAfterRound1 }));
-
-    // ── 第 2 回合：底部控件带「全部接受」真点 → 审阅收口 + 盘上定稿 ──────────
+    const afterAcceptSettled = await waitChunkButtons(2);
+    log('after accept settled', JSON.stringify(afterAcceptSettled));
+    // ── 真点按 C：底部控件带「全部接受」真点 → 审阅收口（真帧 askEditResolved）──
     //    这颗钮正是本次被 `#mobile-dock` 压住的那一颗：修复前它点不到，所以这一击
-    //    本身就是「修复生效」的行为证据（不只是几何）。
-    const round2 = await openAskRound('do ask edit now phase2');
+    //    本身就是「修复生效」的行为证据（不只是几何）。──
     const reviewOpenBefore = (await tabList()).some((t) => String(t).startsWith(`askreview:${sid}`));
     await showCanvasPage();
     await switchTo(`askreview:${sid}`); await sleep(400); await grab(); await sleep(300); await grab();
@@ -548,8 +558,8 @@ async function main() {
     const resolvedTabs = await tabList();
     const fileAfterAcceptAll = readFileSync(notesAbs, 'utf8');
     log('tabs after real accept-all', JSON.stringify(resolvedTabs), 'file=', JSON.stringify(fileAfterAcceptAll));
-    await shot(page, 'askreview-mobile-light-acceptall-resolved-375x812.png', { ...(await canvasCredential(page, 'file:')), clickEffect: { action: '全部接受（真点 · 底部控件带那颗钮）', round2Hunks: round2, reviewOpenBefore, reviewClosedAfter: !resolvedTabs.some((t) => String(t).startsWith(`askreview:${sid}`)), tabsAfter: resolvedTabs, fileOnDisk: fileAfterAcceptAll } });
-    report.notes.push({ realClicks: { before: beforeClicks, chunkRejected: afterReject, chunkRejectedSettled: afterRejectSettled, chunkAccepted: afterAccept, round1: { tabsAfterRound1, fileAfterRound1 }, round2: { hunks: round2, reviewOpenBefore, resolvedTabs, fileOnDisk: fileAfterAcceptAll } } });
+    await shot(page, 'askreview-mobile-light-acceptall-resolved-375x812.png', { ...(await canvasCredential(page, 'file:')), clickEffect: { action: '全部接受（真点 · 底部控件带那颗钮）', reviewOpenBefore, reviewClosedAfter: !resolvedTabs.some((t) => String(t).startsWith(`askreview:${sid}`)), tabsAfter: resolvedTabs, fileOnDisk: fileAfterAcceptAll } });
+    report.notes.push({ realClicks: { before: beforeClicks, chunkRejected: afterReject, chunkRejectedSettled: afterRejectSettled, chunkAccepted: afterAccept, acceptAll: { reviewOpenBefore, resolvedTabs, fileOnDisk: fileAfterAcceptAll } } });
 
     console.log('DIAG ' + JSON.stringify({ errors: errors.slice(0, 8), fileChangesChip: fcOk }));
     const frames = await page.evaluate(() => ({ in: (window.__nfFrames.in || []).map((f) => f.type || Object.keys(f).slice(0, 3)).slice(-25) }));
