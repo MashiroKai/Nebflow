@@ -155,11 +155,14 @@ export function buildDescHitRow(conv, log = logEvent) {
  *   input: HTMLInputElement,
  *   resultsHost: HTMLElement,
  *   statusEl: HTMLElement,
+ *   boundedGateway?: boolean,
  *   onHasQuery?: (has:boolean)=>void,
  *   log?: (kind:string, extra?:object)=>void,
  * }} host
  *   · input = 查询串单一源（清空 = 清场回列表）；
  *   · resultsHost/statusEl = 结果流与状态行宿主（组头/行/「加载更多」直挂）；
+ *   · boundedGateway = 该实例走「服务端受限网关检索」腿（`api.searchSocialMessages`）；
+ *     缺省 = 纯本地扫描（手机腿不传，桌面消息面板传 true）；
  *   · onHasQuery = 查询态翻转回调（宿主切版面：列表让位/回位）。
  * @returns {{
  *   onValueInput: ()=>void, submitNow: ()=>void, hardReset: ()=>void,
@@ -471,7 +474,11 @@ export function buildSearchClear(input, shell) {
  *  · 桌面消息面板 / 联系人搜索块：直接用 .sf-field 档（几何单源
  *    css/searchField.css）；
  *  · 追加件（如联系人页的提交键）由调用方自行 append —— 本骨架不锁死；
- *  · has-text 态随输入翻转（clear 显隐判据）。 */
+ *  · has-text 态随输入翻转（clear 显隐判据）。
+ * @param {HTMLInputElement} input 查询串输入框（骨架给它挂 'sf-field-input'）。
+ * @param {{placeholder?: string, shellClass?: string}} [opts]
+ *   两端可选追加：placeholder 落 input.placeholder；shellClass 追加到壳类名。
+ */
 export function buildFieldShell(input, { placeholder, shellClass } = {}) {
   const shell = document.createElement('div');
   shell.className = 'sf-field nf-glass' + (shellClass ? ` ${shellClass}` : '');

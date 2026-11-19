@@ -289,7 +289,7 @@ export function createAskDialog(cfg) {
     },
     /**
      * 落列后调用的唯一跟随决定：跟随钉底 / 计数进胶囊。
-     * @param {Array<{role:string}>} arrived Newly arrived transcript messages.
+     * @param {Array<{role:string, self?:boolean}>} arrived Newly arrived transcript messages.
      */
     settleCol(arrived = []) {
       if (dlg.colFollows()) {
