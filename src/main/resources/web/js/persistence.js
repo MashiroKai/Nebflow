@@ -939,6 +939,8 @@ export function restoreFromStorage(opts = {}) {
       const dInfo = dangerI18nKeys[level];
       // 三要素块（报障批 2026-11-19）：两条历史重放腿与 live 腿共用同一 builder
       // ⇒ 刷新/重开后的卡上，命令正文、为什么危险、作用域一处不少。
+      // 落点同 live 腿（视觉返工批 2026-11-19 19:38）：卡盒建好、贴上泡之后再插到
+      // 问句之前 —— 三要素是**原卡内容流的前几行**，不是卡外的新框。
       const histDetail = permDetailFrom({ toolName: m.toolName, input: m.input, permDetail: m.permDetail });
       if (dInfo) {
         bubble.classList.add(dInfo.cls);
@@ -948,7 +950,6 @@ export function restoreFromStorage(opts = {}) {
         banner.innerHTML = '<span>' + escapeHtml(t(dInfo.key, { detail: riskLabel })) + '</span>';
         bubble.appendChild(banner);
       }
-      renderPermDetail(bubble, histDetail, t);
       row.appendChild(bubble);
       chat.appendChild(row);
       const box = document.createElement('div');
@@ -969,6 +970,7 @@ export function restoreFromStorage(opts = {}) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
+      renderPermDetail(box, histDetail, t, { level, before: q });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
@@ -1441,6 +1443,8 @@ function buildHistoryRow(m, i, ctx) {
       const dInfo = dangerI18nKeys[level];
       // 三要素块（报障批 2026-11-19）：两条历史重放腿与 live 腿共用同一 builder
       // ⇒ 刷新/重开后的卡上，命令正文、为什么危险、作用域一处不少。
+      // 落点同 live 腿（视觉返工批 2026-11-19 19:38）：卡盒建好、贴上泡之后再插到
+      // 问句之前 —— 三要素是**原卡内容流的前几行**，不是卡外的新框。
       const histDetail = permDetailFrom({ toolName: m.toolName, input: m.input, permDetail: m.permDetail });
       if (dInfo) {
         bubble.classList.add(dInfo.cls);
@@ -1450,7 +1454,6 @@ function buildHistoryRow(m, i, ctx) {
         banner.innerHTML = '<span>' + escapeHtml(t(dInfo.key, { detail: riskLabel })) + '</span>';
         bubble.appendChild(banner);
       }
-      renderPermDetail(bubble, histDetail, t);
       row.appendChild(bubble);
       fragment.appendChild(row);
       const box = document.createElement('div');
@@ -1471,6 +1474,7 @@ function buildHistoryRow(m, i, ctx) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
+      renderPermDetail(box, histDetail, t, { level, before: q });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');

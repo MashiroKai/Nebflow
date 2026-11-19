@@ -2928,6 +2928,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     const labelSpan = confirmBtn.querySelector('span');
     if (labelSpan) labelSpan.textContent = uploading ? t('askUser.attachUploadingLabel') : confirmLabel;
   }
+  // 交出卡盒（视觉返工批 2026-11-19 19:38）：审批卡要把三要素插进**本卡**内容流
+  // （问句之前），而卡盒就在这里建成 ⇒ 返回它，免调用方二次查询 DOM。
+  return box;
 }
 
 // ---------- Workspace dir picker（Project「选择工作区」卡） ----------
@@ -3781,9 +3784,10 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     bubble.appendChild(retargetBadge);
   }
 
-  // 三要素块（命令正文 / 为什么危险 / 作用域）：徽标之后、问句之前。
-  // 单一渲染点 = permDetail.js（历史重放腿同款，见 persistence.js / historyReplay.js）。
-  renderPermDetail(bubble, detailInfo, t);
+  // 三要素（命令正文 / 为什么危险 / 作用域）：**原卡内容流的前几行**（视觉返工批
+  // 2026-11-19 19:38，作者「要在原权限卡的基础上进行优化，外部的大方框去掉」）——
+  // 因此不在这里挂，等 showOptions 交出卡盒后插到问句之前（见文件后半）。
+  // 单一渲染点 = permDetail.js（历史重放腿同款，见 persistence.js）。
 
   row.appendChild(bubble);
   appendChatRow(chat, row);
@@ -3839,7 +3843,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     options: permOptions,
     otherAttach: false
   }];
-  showOptions(bubble, items, (answers) => {
+  const cardBox = showOptions(bubble, items, (answers) => {
     // approved only on Allow or the upgrade option (Other/custom text stays
     // non-approving, same as the pre-escalation semantics).
     const approved = answers[0] === allowLabel || (upgradeLabel !== null && answers[0] === upgradeLabel);
@@ -3877,6 +3881,13 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     row.remove();
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   }, undefined, requestId);
+  // 三要素插到原卡内容流的最前面（问句之前）：命令正文 → 理由一行 → 作用域一行，
+  // 再往下才是「允许 Bash？」与选项 —— 先看清事实，再作答。
+  if (cardBox && cardBox.firstElementChild) {
+    renderPermDetail(cardBox, detailInfo, t, { level, before: cardBox.firstElementChild });
+  } else if (cardBox) {
+    renderPermDetail(cardBox, detailInfo, t, { level });
+  }
   // permission-landing 批 P1/P2 续做（2026-11-18）：requestId 走 showOptions 的**第 7 参**
   //（= 卡盒 data-request-id）——超时撤回（hub CloseRequest ⇒ askUserClosed{reason:
   // "caller-withdrew"}，main.js ⇒ closeAskUserCard 按 `.option-box[data-request-id]`

@@ -3984,28 +3984,24 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .perm-danger-banner .st-ic { flex-shrink: 0; }
 
-/* Warning level (git ops, may lose data) */
-.bubble.ai.perm-warning {
-  border: 1px solid var(--color-warning);
-}
+/* 档位语义 = 横幅图标 + 淡底一处。视觉返工批 2026-11-19 19:38（作者逐字
+   「太丑了这也，要在原权限卡的基础上进行优化，然后外部的大方框去掉」）：改前三档
+   还在**整个气泡外圈**描彩边（1px/2px 彩框把横幅+正文+卡盒一起箍住 ⇒ 框里套框，
+   观感笨重），与 `.bubble.ai.ob-ghost-seat` 的既有裁定（气泡去面、只有卡盒是面）
+   直接冲突。现彩边只留在横幅自身、气泡零面 —— 语义色一处不丢，外面那圈大方框没有。
+   Warning level (git ops, may lose data) */
 .bubble.ai.perm-warning .perm-danger-banner {
   background: rgba(255, 193, 7, 0.1);
   color: var(--status-word);
 }
 
 /* Dangerous level (deletion, kill, destructive ops) */
-.bubble.ai.perm-dangerous {
-  border: 1px solid var(--status-error-icon);
-}
 .bubble.ai.perm-dangerous .perm-danger-banner {
   background: rgba(244, 67, 54, 0.1);
   color: var(--status-word);
 }
 
 /* Critical level (system destruction) */
-.bubble.ai.perm-critical {
-  border: 2px solid var(--status-error-icon);
-}
 .bubble.ai.perm-critical .perm-danger-banner {
   background: rgba(244, 67, 54, 0.12);
   color: var(--status-word);
@@ -4041,49 +4037,27 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 
 /* ===== Approval-card three elements (defect batch 2026-11-19) =====
-   命令正文 / 为什么危险 / 作用域。三块都在气泡内、都在问句之前 ——
-   用户先看清「要做什么、为什么拦、在哪做」，再决定允许还是拒绝。
+   命令正文 / 为什么危险 / 作用域。视觉返工批（2026-11-19 19:38，作者「要在原权限卡
+   的基础上进行优化，然后外部的大方框去掉」）：三块**内联在原卡内容流里**（卡盒的
+   问句之前），**不新增**外层容器/边框/背景 —— 上一版给它们套了一个带框的新容器，
+   整卡读作「框里套框」。样式只沿用既有语言：
+     · 命令 = `.bubble.ai pre` 的既有淡底 code 块（无边框）+ 折叠上限；
+     · 理由 = 一行（徽标 + 人话标签 + 闸/规则次要字色）；
+     · 作用域 = 一行轻量键值（键次要字色 / 值等宽），不装盒子。
    折叠纪律：命令默认 6 行（`--perm-cmd-lines` 单点），全文在 DOM 里，
    展开后不设上限（不静默截断）。 */
-.perm-detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-2);
-  margin-bottom: var(--ds-space-2);
-  min-width: 0;
-}
-.perm-detail-block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space-1);
-  min-width: 0;
-}
-.perm-detail-label {
-  font-size: var(--ds-fs-meta);
-  color: var(--ds-text-muted);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-.perm-cmd {
+/* 选择器带 `.bubble.ai`+`pre`：既要压过 `.bubble.ai pre` 的既有内距，又只作用于本块。
+   高度上限 = 6 行正文 + 上内距；折叠态**不留**底部内距 —— 滚动容器的裁切边在
+   padding 边，留着的话第 7 行会在那 10px 里露出半个字。 */
+.bubble.ai pre.perm-cmd {
   --perm-cmd-lines: 6;
-  margin: 0;
-  padding: var(--ds-space-1h) var(--ds-space-2);
-  border-radius: var(--ds-radius-badge);
-  background: var(--glass-etched-bg);
-  border: 1px solid var(--sapphire-edge);
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: var(--ds-fs-hint);
-  line-height: 1.6;
-  color: var(--color-frame-text);
-  /* 换行逐字保留；长行横向滚动而不是折成一团（命令的可读性优先） */
-  white-space: pre;
-  overflow: auto;
-  max-height: calc(var(--perm-cmd-lines) * 1.6em);
-  max-width: 100%;
+  max-height: calc(var(--perm-cmd-lines) * 1.4em + var(--ds-space-2));
+  padding-bottom: 0;
   overscroll-behavior: contain;
 }
-.perm-cmd.expanded {
+.bubble.ai pre.perm-cmd.expanded {
   max-height: none;
+  padding-bottom: var(--ds-space-block-y);
 }
 .perm-cmd:focus-visible {
   outline: 2px solid var(--sapphire-edge);
@@ -4091,49 +4065,82 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .perm-cmd-toggle {
   align-self: flex-start;
-  background: none;
-  border: none;
+  margin: 0 0 var(--ds-space-2);
   padding: 0;
+  border: 0;
+  background: none;
   font-size: var(--ds-fs-meta);
-  color: var(--ds-link-term, var(--sapphire-edge));
+  color: var(--ds-text-muted);
+  text-align: left;
   cursor: pointer;
+}
+.perm-cmd-toggle:hover {
+  color: var(--color-frame-text);
   text-decoration: underline;
 }
 .perm-cmd-toggle[hidden] {
   display: none;
 }
+/* 理由一行：允许折行（窄屏/超长规则 id），但绝不占一块区域。 */
 .perm-reason {
-  font-size: var(--ds-fs-hint);
-  color: var(--color-frame-text);
-  overflow-wrap: anywhere;
-}
-.perm-reason-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--ds-space-1h);
-  font-size: var(--ds-fs-meta);
-  color: var(--ds-text-muted);
+  align-items: baseline;
+  gap: var(--ds-space-1) var(--ds-space-2);
+  margin-bottom: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text);
+  min-width: 0;
+}
+.perm-reason-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .perm-risk-badge {
+  flex: 0 0 auto;
   padding: 0 var(--ds-space-1);
-  border-radius: var(--ds-radius-chip);
   border: 1px solid currentColor;
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-meta);
+  line-height: 1.6;
 }
 .perm-risk-badge.lv-1 { color: var(--color-warning); }
 .perm-risk-badge.lv-2,
 .perm-risk-badge.lv-3 { color: var(--status-error-icon); }
 .perm-reason-gate,
 .perm-reason-rule {
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
   overflow-wrap: anywhere;
 }
-.perm-scope-row {
+/* 闸名 + 规则 id 成组：整组折行，不让「规则」孤零零掉到下一行最左。 */
+.perm-reason-meta {
   display: flex;
-  gap: var(--ds-space-1h);
-  font-size: var(--ds-fs-hint);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--ds-space-1h);
   min-width: 0;
 }
+/* 作用域一行：设备 · 工作目录 · 目标路径（键次要字色，值等宽、可折可滚）。 */
+.perm-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--ds-space-3);
+  margin-bottom: var(--ds-space-2);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+  min-width: 0;
+}
+.perm-scope-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-space-1h);
+  min-width: 0;
+  max-width: 100%;
+}
 .perm-scope-key {
-  flex-shrink: 0;
+  flex: 0 0 auto;
   color: var(--ds-text-muted);
 }
 .perm-scope-val {
@@ -4143,10 +4150,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   min-width: 0;
 }
 
-/* 窄屏（手机 375）：正文与作用域不撑破卡面，命令靠横向滚动而不是压扁 */
+/* 窄屏（手机 375）：作用域每项各占一行（长绝对路径不撑破卡面），命令靠横向滚动
+   而不是压扁 —— 与 `.bubble.ai pre` 既有窄屏行为一致，不另起一套。 */
 @media (max-width: 520px) {
-  .perm-cmd { font-size: var(--ds-fs-meta); }
-  .perm-scope-row { flex-direction: column; gap: 0; }
+  .perm-scope {
+    flex-direction: column;
+    gap: var(--ds-space-half);
+  }
 }
 
 /* Inline code for showing command/file detail in permission prompt */

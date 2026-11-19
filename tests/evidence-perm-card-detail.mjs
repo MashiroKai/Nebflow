@@ -345,7 +345,7 @@ async function run() {
         }
         return out.join(' < ');
       };
-      const details = [...document.querySelectorAll('.perm-detail')].map((el) => ({
+      const details = [...document.querySelectorAll('.option-box')].map((el) => ({
         chain: chain(el),
         visible: !!(el.offsetParent || el.getClientRects().length),
         cmd: (el.querySelector('.perm-cmd')?.textContent || '').slice(0, 60),
@@ -376,13 +376,13 @@ async function run() {
     throw new Error('approval card never entered the DOM');
   }
   await waitCard(page);
-  await page.waitForFunction(() => !!document.querySelector('.perm-detail .perm-cmd'), null, { timeout: 30000 });
+  await page.waitForFunction(() => !!document.querySelector('.option-box .perm-cmd'), null, { timeout: 30000 });
   await page.waitForTimeout(500);
   const cardState = await page.evaluate(() => {
-    const cmd = document.querySelector('.perm-detail .perm-cmd');
-    const reason = document.querySelector('.perm-detail .perm-reason');
-    const scope = [...document.querySelectorAll('.perm-detail .perm-scope-row')].map((r) => r.textContent);
-    const badge = document.querySelector('.perm-detail .perm-risk-badge');
+    const cmd = document.querySelector('.option-box .perm-cmd');
+    const reason = document.querySelector('.option-box .perm-reason');
+    const scope = [...document.querySelectorAll('.option-box .perm-scope-item')].map((r) => r.textContent);
+    const badge = document.querySelector('.option-box .perm-risk-badge');
     const src = document.querySelector('.perm-source-badge');
     return {
       cmd: cmd ? cmd.textContent : '',
@@ -403,7 +403,7 @@ async function run() {
 
   // 默认折叠 = 6 行（多行正文不得撑满整屏，也不得静默截断 ⇒ scrollHeight 更大）
   const collapsed = await page.evaluate(() => {
-    const pre = document.querySelector('.perm-detail .perm-cmd');
+    const pre = document.querySelector('.option-box .perm-cmd');
     const cs = getComputedStyle(pre);
     const lineH = parseFloat(cs.lineHeight) || 0;
     const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
@@ -416,10 +416,15 @@ async function run() {
     `contentH=${collapsed.contentH} 6 行=${(collapsed.lineH * 6).toFixed(1)} clientH=${collapsed.clientH} scrollH=${collapsed.scrollH}`);
 
   // ── 截图：1440 亮/暗 ──
+  // 暗档要**两条一起**切（视觉返工批 2026-11-19）：`html[data-theme]` 只管面板 token，
+  // chat.css 的暗档规则挂在 `@media (prefers-color-scheme: dark)` 上 —— 只翻 dataset
+  // 会拍出一张「像亮档」的假暗图（上一版 02/05 就是这样）。
   await shoot(page, '01-desktop-1440-light.png');
+  await page.emulateMedia({ colorScheme: 'dark' });
   await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await page.waitForTimeout(400);
   await shoot(page, '02-desktop-1440-dark.png');
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   await page.waitForTimeout(200);
 
@@ -434,7 +439,7 @@ async function run() {
   });
   // 卡圈（含展开后的高度）作为固定裁切框：先滚到卡顶，再量一次展开态
   const rowRect = () => page.evaluate(() => {
-    const detail = document.querySelector('.perm-detail');
+    const detail = document.querySelector('.option-box');
     const row = detail?.closest('.row') || detail;
     if (!row) return null;
     row.scrollIntoView({ block: 'start' });
@@ -489,7 +494,7 @@ async function run() {
   await mpage.waitForTimeout(600);
   const mobileOverflow = await mpage.evaluate(() => {
     const pre = document.querySelector('.perm-cmd');
-    const bubble = document.querySelector('.perm-detail');
+    const bubble = document.querySelector('.option-box');
     return {
       docScrollW: document.documentElement.scrollWidth,
       preW: pre ? pre.clientWidth : 0,
@@ -500,6 +505,8 @@ async function run() {
   check('B9 手机 375 无横向溢出（卡面不撑破）', !mobileOverflow.overflow,
     `scrollWidth=${mobileOverflow.docScrollW} cmdW=${mobileOverflow.preW}`);
   await shoot(mpage, '04-mobile-375-light.png', { full: true });
+  // 同桌面腿：dataset + prefers-color-scheme 两条一起切，才是真暗档。
+  await mpage.emulateMedia({ colorScheme: 'dark' });
   await mpage.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
   await mpage.waitForTimeout(400);
   await shoot(mpage, '05-mobile-375-dark.png', { full: true });
@@ -523,7 +530,7 @@ async function run() {
   const writeRoute = await bringCard(page);
   check('B10a 第二张卡（Write）进入页面', writeRoute !== 'missing', writeRoute);
   await waitCard(page);
-  await page.waitForFunction(() => !!document.querySelector('.perm-detail .perm-scope-row'), null, { timeout: 30000 });
+  await page.waitForFunction(() => !!document.querySelector('.option-box .perm-scope-item'), null, { timeout: 30000 });
   await page.waitForTimeout(400);
   await shoot(page, '06-desktop-1440-write-card.png');
   // 拒绝 Write 卡（同样不落盘）
@@ -599,7 +606,7 @@ async function activeSessionHint(page) {
  *  可见性口径——前端有 content-visibility 优化会误判）。 */
 async function present(page, timeoutMs) {
   try {
-    await page.waitForFunction(() => !!document.querySelector('.perm-detail .perm-cmd') && !!document.querySelector('.option-box'), null, { timeout: timeoutMs });
+    await page.waitForFunction(() => !!document.querySelector('.option-box .perm-cmd') && !!document.querySelector('.option-box'), null, { timeout: timeoutMs });
     return true;
   } catch {
     return false;
@@ -632,9 +639,9 @@ async function bringCard(page) {
 
 /** 等审批卡进 DOM 并滚到卡面。 */
 async function waitCard(page, timeoutMs = 90000) {
-  await page.waitForFunction(() => !!document.querySelector('.perm-detail .perm-cmd'), null, { timeout: timeoutMs });
+  await page.waitForFunction(() => !!document.querySelector('.option-box .perm-cmd'), null, { timeout: timeoutMs });
   const rect = await page.evaluate(() => {
-    const el = document.querySelector('.perm-detail');
+    const el = document.querySelector('.option-box');
     el.scrollIntoView({ block: 'center' });
     const r = el.getBoundingClientRect();
     return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
