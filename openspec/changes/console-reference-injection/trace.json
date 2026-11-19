@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "change": "console-reference-injection",
+  "mappings": [
+    {
+      "requirement": "CRI-REQ-001",
+      "scenario": "CRI-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/ConsoleQuoteResolver.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/ConsoleQuoteResolverSpec.scala",
+          "name": "author references expand short bodies, fold long bodies with queryable handles, and mark missing IDs"
+        }
+      ]
+    },
+    {
+      "requirement": "CRI-REQ-001",
+      "scenario": "CRI-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/ConsoleQuoteResolver.scala",
+        "src/main/scala/nebflow/core/msgtokens/MsgTokenRegistry.scala",
+        "src/main/scala/nebflow/gateway/SessionRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/ConsoleQuoteResolverSpec.scala",
+          "name": "structured snapshots retain short text, long query handles, missing markers and media metadata"
+        }
+      ]
+    },
+    {
+      "requirement": "CRI-REQ-001",
+      "scenario": "CRI-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/ConsoleQuoteResolver.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/ConsoleQuoteResolverSpec.scala",
+          "name": "quoted local image path resolves to an absolute readable file"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "change": "askhost-recovery",
+  "mappings": [
+    {
+      "requirement": "AHR-REQ-001",
+      "scenario": "AHR-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AskHostTools.scala",
+        "src/main/scala/nebflow/agent/AgentCore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/AskHostToolsSpec.scala",
+          "name": "crash recovery accepts a delayed answer by the original request id without a live waiter"
+        }
+      ]
+    },
+    {
+      "requirement": "AHR-REQ-001",
+      "scenario": "AHR-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AskHostTools.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/AskHostToolsSpec.scala",
+          "name": "duplicate decision is accepted only once and distinct pending requests remain independent"
+        }
+      ]
+    },
+    {
+      "requirement": "AHR-REQ-001",
+      "scenario": "AHR-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AskHostTools.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/AskHostToolsSpec.scala",
+          "name": "request replay is suppressed after the mailbox has taken and consumed it"
+        }
+      ]
+    }
+  ]
+}
